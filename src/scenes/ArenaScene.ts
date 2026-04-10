@@ -1953,7 +1953,6 @@ export class ArenaScene extends Phaser.Scene {
           this.flamethrowerHoldMs = 0;
           this.flamethrowerTickAccum = 0;
         }
-        this.pointerWasDown = pointer.isDown;
 
         // ── E: Flame Dash (+ Propulsion upgrade) ──────────────────
         if (!this.armageddonActive && Phaser.Input.Keyboard.JustDown(this.eKey)) {
@@ -2545,6 +2544,7 @@ export class ArenaScene extends Phaser.Scene {
         }
       }
     }
+    this.pointerWasDown = pointer.isDown;
 
     // ── Player water world effects ────────────────────────────────
     if (this.elementId === 'water') {
@@ -3290,16 +3290,15 @@ export class ArenaScene extends Phaser.Scene {
               this.shadowBlackHoleSprite.lineStyle(3, 0x8800cc, 0.85);
               this.shadowBlackHoleSprite.strokeCircle(this.player.x, this.player.y, pulse + 8);
             }
-            // Pull NPC toward player
+            // Pull NPC toward player (override AI movement)
             const nBody = this.npc.body as Phaser.Physics.Arcade.Body;
-            const toDx = this.player.x - this.npc.x;
-            const toDy = this.player.y - this.npc.y;
-            const toDist = Math.sqrt(toDx * toDx + toDy * toDy) || 1;
-            const pullStrength = 120;
-            nBody.setVelocity(
-              nBody.velocity.x + (toDx / toDist) * pullStrength * (delta / 1000) * 60,
-              nBody.velocity.y + (toDy / toDist) * pullStrength * (delta / 1000) * 60,
-            );
+            const bDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
+            if (bDist > 12) {
+              const bAngle = Math.atan2(this.player.y - this.npc.y, this.player.x - this.npc.x);
+              nBody.setVelocity(Math.cos(bAngle) * 160, Math.sin(bAngle) * 160);
+            } else {
+              nBody.setVelocity(0, 0);
+            }
           }
         }
       }
