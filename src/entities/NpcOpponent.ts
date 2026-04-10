@@ -36,6 +36,7 @@ export interface NpcAiState {
   chargedBeamReady: boolean;
   earthShieldHp: number;
   oilDroneCount?: number;
+  shadowPlayerSnared?: boolean;
 }
 
 export class NpcOpponent extends Fighter {
@@ -216,6 +217,9 @@ export class NpcOpponent extends Fighter {
     }
     if (this.element.id === 'oil') {
       return this.doOilAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'shadow') {
+      return this.doShadowAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
     return null;
   }
@@ -502,6 +506,43 @@ export class NpcOpponent extends Fighter {
     // Default: command drones if any
     if (droneCount > 0 && dist < 400) {
       if (this.castAbility('drone-command', buildContext(aimX, aimY))) return 'drone-command';
+    }
+
+    return null;
+  }
+
+  private doShadowAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    _aiState: NpcAiState,
+  ): string | null {
+    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+
+    if (!skipSpecials) {
+      // 1. Tentacle — extend toward player when in attack range
+      if (dist < 280) {
+        if (this.castAbility('tentacle', buildContext(target.x, target.y))) return 'tentacle';
+      }
+
+      // 2. Snap Trap — place at own feet occasionally
+      if (dist < 200) {
+        if (this.castAbility('snap-trap', buildContext(this.x, this.y))) return 'snap-trap';
+      }
+
+      // 3. Dark bomb — fire at player when in range
+      if (dist < 400) {
+        if (this.castAbility('dark-drain', buildContext(aimX, aimY))) return 'dark-drain';
+      }
+    }
+
+    // Default: dark bomb
+    if (dist < 500) {
+      if (this.castAbility('dark-drain', buildContext(aimX, aimY))) return 'dark-drain';
     }
 
     return null;

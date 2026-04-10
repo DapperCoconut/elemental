@@ -82,6 +82,14 @@ export class BootScene extends Phaser.Scene {
     gfx.fillCircle(5, 5, 5);
     gfx.generateTexture('proj-oil', 10, 10);
 
+    // Shadow element texture (dark purple circle)
+    gfx.clear();
+    gfx.fillStyle(0x220033);
+    gfx.fillCircle(24, 24, 22);
+    gfx.lineStyle(3, 0x8800cc);
+    gfx.strokeCircle(24, 24, 22);
+    gfx.generateTexture('elem-shadow', 48, 48);
+
     gfx.destroy();
 
     this.scene.start('TitleScene');

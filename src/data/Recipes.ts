@@ -6,7 +6,8 @@ export interface Recipe {
 }
 
 export const RECIPES: Recipe[] = [
-  { ingredients: ['fire', 'water'], result: 'oil', resultName: 'Oil', resultEmoji: '🛢️' },
+  { ingredients: ['fire', 'water'], result: 'oil',    resultName: 'Oil',    resultEmoji: '🛢️' },
+  { ingredients: ['fire', 'air'],   result: 'shadow', resultName: 'Shadow', resultEmoji: '🌑' },
 ];
 
 export function findRecipe(a: string, b: string): Recipe | undefined {

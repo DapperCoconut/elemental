@@ -8,7 +8,8 @@ const ELEMENT_COLORS: Record<string, number> = {
   life:  0x44cc44,
   air:   0xaaddff,
   earth: 0x887755,
-  oil:   0x664400,
+  oil:    0x664400,
+  shadow: 0x330044,
 };
 
 const ELEMENT_EMOJIS: Record<string, string> = {
@@ -17,7 +18,8 @@ const ELEMENT_EMOJIS: Record<string, string> = {
   life:  '🌿',
   air:   '💨',
   earth: '🪨',
-  oil:   '🛢️',
+  oil:    '🛢️',
+  shadow: '🌑',
 };
 
 const BASE_ELEMENT_IDS = ['fire', 'water', 'life', 'air', 'earth'];
@@ -94,10 +96,10 @@ export class ShopScene extends Phaser.Scene {
     const hasPrevPage = this.currentPage > 0;
 
     if (hasPrevPage) {
-      const leftBtn = this.add.rectangle(22, height / 2, 30, 64, 0x330066)
+      const leftBtn = this.add.rectangle(cx - 90, 36, 28, 28, 0x330066)
         .setStrokeStyle(1, 0x9944ff).setInteractive({ useHandCursor: true });
-      this.add.text(22, height / 2, '◀', {
-        fontSize: '14px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
+      this.add.text(cx - 90, 36, '◀', {
+        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
       }).setOrigin(0.5).setDepth(1);
       leftBtn
         .on('pointerover', () => leftBtn.setFillStyle(0x550099))
@@ -106,10 +108,10 @@ export class ShopScene extends Phaser.Scene {
     }
 
     if (hasNextPage) {
-      const rightBtn = this.add.rectangle(width - 22, height / 2, 30, 64, 0x330066)
+      const rightBtn = this.add.rectangle(cx + 90, 36, 28, 28, 0x330066)
         .setStrokeStyle(1, 0x9944ff).setInteractive({ useHandCursor: true });
-      this.add.text(width - 22, height / 2, '▶', {
-        fontSize: '14px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
+      this.add.text(cx + 90, 36, '▶', {
+        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
       }).setOrigin(0.5).setDepth(1);
       rightBtn
         .on('pointerover', () => rightBtn.setFillStyle(0x550099))

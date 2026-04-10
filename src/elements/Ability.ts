@@ -38,6 +38,12 @@ export interface CastContext {
   launchDrone: (x: number, y: number) => void;
   placeFirewall: (x: number, y: number) => void;
   startOverdrive: (x: number, y: number) => void;
+  // Shadow
+  launchDarkBomb: (x: number, y: number) => void;
+  activateTentacle: (x: number, y: number) => void;
+  placeSnapTrap: () => void;
+  activateShadowDance: () => void;
+  startBlackHole: () => void;
 }
 
 export interface Ability {

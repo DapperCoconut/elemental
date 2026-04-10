@@ -21,7 +21,8 @@ const ELEMENTS: ElementDef[] = [
 ];
 
 const COMBINED_ELEMENTS: ElementDef[] = [
-  { id: 'oil', name: 'Oil', emoji: '🛢️', color: 0x664400, available: true },
+  { id: 'oil',    name: 'Oil',    emoji: '🛢️', color: 0x664400, available: true },
+  { id: 'shadow', name: 'Shadow', emoji: '🌑', color: 0x330044, available: true },
 ];
 
 const DIFF_COLORS = [0x22cc44, 0x88cc22, 0xddaa00, 0xee5500, 0xcc0022];

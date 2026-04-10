@@ -11,6 +11,7 @@ import { lifeElement } from '../elements/life';
 import { airElement, fireHitscan, fireBounceHitscan } from '../elements/air';
 import { earthElement } from '../elements/earth';
 import { oilElement } from '../elements/oil';
+import { shadowElement } from '../elements/shadow';
 import * as PlayerData from '../data/PlayerData';
 import { getTotalRewardMult } from '../data/Mutations';
 
@@ -75,22 +76,44 @@ interface Drone {
   owner: 'player' | 'npc';
 }
 
+interface DarkCloud {
+  sprite: Phaser.GameObjects.Arc;
+  expiresAt: number;
+  x: number;
+  y: number;
+  radius: number;
+  tickAccum: number;
+  owner: 'player' | 'npc';
+}
+
+interface SnapTrap {
+  sprite: Phaser.GameObjects.Arc;
+  label: Phaser.GameObjects.Text;
+  expiresAt: number;
+  x: number;
+  y: number;
+  triggered: boolean;
+  owner: 'player' | 'npc';
+}
+
 const ELEMENT_MAP: Record<string, Element> = {
-  fire: fireElement,
-  water: waterElement,
-  life: lifeElement,
-  air: airElement,
-  earth: earthElement,
-  oil: oilElement,
+  fire:   fireElement,
+  water:  waterElement,
+  life:   lifeElement,
+  air:    airElement,
+  earth:  earthElement,
+  oil:    oilElement,
+  shadow: shadowElement,
 };
 
 const ELEMENT_TEXTURES: Record<string, string> = {
-  fire: 'elem-fire',
-  water: 'elem-water',
-  life: 'elem-life',
-  air: 'elem-air',
-  earth: 'elem-earth',
-  oil: 'elem-oil',
+  fire:   'elem-fire',
+  water:  'elem-water',
+  life:   'elem-life',
+  air:    'elem-air',
+  earth:  'elem-earth',
+  oil:    'elem-oil',
+  shadow: 'elem-shadow',
 };
 
 export class ArenaScene extends Phaser.Scene {
@@ -283,6 +306,36 @@ export class ArenaScene extends Phaser.Scene {
   // NPC oil state
   private npcDrones: Drone[] = [];
 
+  // Shadow state (shared cloud/trap arrays)
+  private shadowDarkClouds: DarkCloud[] = [];
+  private shadowSnapTraps: SnapTrap[] = [];
+  // Player shadow
+  private shadowDrainHoldAccum = 0;
+  private shadowDrainCloudAccum = 0;
+  private shadowTentacleActive = false;
+  private shadowTentacleEnd = 0;
+  private shadowTentacleX = 0;
+  private shadowTentacleY = 0;
+  private shadowTentacleSprite: Phaser.GameObjects.Graphics | null = null;
+  private shadowNpcSnaredUntil = 0;
+  private shadowNpcStunnedUntil = 0;
+  private shadowDanceCharge = 0;
+  private shadowDanceChargeBar: Phaser.GameObjects.Rectangle | null = null;
+  private shadowBlackHoleCharging = false;
+  private shadowBlackHoleChargeStart = 0;
+  private shadowBlackHoleChargeVisual: Phaser.GameObjects.Arc | null = null;
+  private shadowBlackHoleActive = false;
+  private shadowBlackHoleEnd = 0;
+  private shadowBlackHoleSprite: Phaser.GameObjects.Graphics | null = null;
+  // NPC shadow
+  private npcShadowTentacleActive = false;
+  private npcShadowTentacleEnd = 0;
+  private npcShadowTentacleX = 0;
+  private npcShadowTentacleY = 0;
+  private npcShadowTentacleSprite: Phaser.GameObjects.Graphics | null = null;
+  private shadowPlayerSnaredUntil = 0;
+  private shadowPlayerStunnedUntil = 0;
+
   // Player upgrade state
   private activeUpgrades: string[] = [];
   // Flameshredder (Click upgrade) — NPC burns from player fireballs
@@ -451,6 +504,33 @@ export class ArenaScene extends Phaser.Scene {
     this.playerOverdriveTickAccum = 0;
     this.playerOverdriveGraphics = null;
     this.npcDrones = [];
+
+    this.shadowDarkClouds = [];
+    this.shadowSnapTraps = [];
+    this.shadowDrainHoldAccum = 0;
+    this.shadowDrainCloudAccum = 0;
+    this.shadowTentacleActive = false;
+    this.shadowTentacleEnd = 0;
+    this.shadowTentacleX = 0;
+    this.shadowTentacleY = 0;
+    this.shadowTentacleSprite = null;
+    this.shadowNpcSnaredUntil = 0;
+    this.shadowNpcStunnedUntil = 0;
+    this.shadowDanceCharge = 0;
+    this.shadowDanceChargeBar = null;
+    this.shadowBlackHoleCharging = false;
+    this.shadowBlackHoleChargeStart = 0;
+    this.shadowBlackHoleChargeVisual = null;
+    this.shadowBlackHoleActive = false;
+    this.shadowBlackHoleEnd = 0;
+    this.shadowBlackHoleSprite = null;
+    this.npcShadowTentacleActive = false;
+    this.npcShadowTentacleEnd = 0;
+    this.npcShadowTentacleX = 0;
+    this.npcShadowTentacleY = 0;
+    this.npcShadowTentacleSprite = null;
+    this.shadowPlayerSnaredUntil = 0;
+    this.shadowPlayerStunnedUntil = 0;
 
     this.activeUpgrades = PlayerData.getActiveUpgrades(this.elementId);
     this.npcBurningUntil = 0;
@@ -812,6 +892,11 @@ export class ArenaScene extends Phaser.Scene {
       'drone-destroy':  0xff6600,
       'firewall':       0xff8800,
       'overdrive':      0xff4400,
+      'dark-drain':     0x660088,
+      'tentacle':       0x440066,
+      'snap-trap':      0x550077,
+      'shadow-dance':   0x220044,
+      'black-hole':     0x110033,
     };
 
     abilities.forEach((ab, i) => {
@@ -1070,6 +1155,59 @@ export class ArenaScene extends Phaser.Scene {
           this.playerOverdriveGraphics = this.add.graphics().setDepth(7);
         }
       },
+      launchDarkBomb: (x, y) => {
+        const bomb = this.add.circle(this.player.x, this.player.y, 10, 0x660088, 0.95)
+          .setStrokeStyle(2, 0xcc44ff).setDepth(8);
+        this.tweens.add({
+          targets: bomb, x, y, duration: 380, ease: 'Power2',
+          onComplete: () => {
+            const boom = this.add.circle(x, y, 8, 0x8800cc, 0.8).setDepth(8);
+            this.tweens.add({ targets: boom, scaleX: 7, scaleY: 7, alpha: 0, duration: 350, onComplete: () => boom.destroy() });
+            bomb.destroy();
+            if (Phaser.Math.Distance.Between(x, y, this.npc.x, this.npc.y) <= 50) {
+              this.npc.takeDamage(25);
+              this.spawnHitFlash(this.npc.x, this.npc.y, 0x8800cc);
+            }
+            this.spawnShadowDarkCloud(x, y, 'player');
+          },
+        });
+      },
+      activateTentacle: (x, y) => {
+        this.shadowTentacleActive = true;
+        this.shadowTentacleEnd = this.time.now + 3000;
+        this.shadowTentacleX = x;
+        this.shadowTentacleY = y;
+        if (!this.shadowTentacleSprite) {
+          this.shadowTentacleSprite = this.add.graphics().setDepth(6);
+        }
+      },
+      placeSnapTrap: () => {
+        const spr = this.add.circle(this.player.x, this.player.y, 18, 0x440066, 0.85)
+          .setStrokeStyle(2, 0xcc44ff).setDepth(3);
+        const lbl = this.add.text(this.player.x, this.player.y, '⚡', { fontSize: '10px' }).setOrigin(0.5).setDepth(4);
+        this.shadowSnapTraps.push({
+          sprite: spr, label: lbl,
+          expiresAt: this.time.now + 12000,
+          x: this.player.x, y: this.player.y,
+          triggered: false, owner: 'player',
+        });
+      },
+      activateShadowDance: () => {
+        if (this.shadowDanceCharge < 35) return;
+        this.shadowDanceCharge = 0;
+        this.player.heal(25);
+        const flash = this.add.circle(this.player.x, this.player.y, 40, 0x8800cc, 0.5).setDepth(8);
+        this.tweens.add({ targets: flash, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 500, onComplete: () => flash.destroy() });
+      },
+      startBlackHole: () => {
+        this.shadowBlackHoleCharging = true;
+        this.shadowBlackHoleChargeStart = this.time.now;
+        if (this.shadowBlackHoleChargeVisual) this.shadowBlackHoleChargeVisual.destroy();
+        this.shadowBlackHoleChargeVisual = this.add.circle(this.player.x, this.player.y, 24, 0xffcc00, 0.6).setDepth(9);
+        this.tweens.add({ targets: this.shadowBlackHoleChargeVisual, scaleX: 1.3, scaleY: 1.3, alpha: 0.3, yoyo: true, repeat: -1, duration: 300 });
+        this.nukeChanneling = true;
+        this.nukeChannelEnd = this.time.now + 3100;
+      },
     };
   }
 
@@ -1226,6 +1364,45 @@ export class ArenaScene extends Phaser.Scene {
       },
       placeFirewall: () => { /* NPC does not use firewall */ },
       startOverdrive: () => { /* NPC does not use overdrive */ },
+      launchDarkBomb: (x, y) => {
+        const bomb = this.add.circle(this.npc.x, this.npc.y, 10, 0x440066, 0.85)
+          .setStrokeStyle(2, 0x8800cc).setDepth(8);
+        this.tweens.add({
+          targets: bomb, x, y, duration: 380, ease: 'Power2',
+          onComplete: () => {
+            const boom = this.add.circle(x, y, 8, 0x440066, 0.7).setDepth(8);
+            this.tweens.add({ targets: boom, scaleX: 7, scaleY: 7, alpha: 0, duration: 350, onComplete: () => boom.destroy() });
+            bomb.destroy();
+            if (Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) <= 50) {
+              this.player.takeDamage(25);
+              this.spawnHitFlash(this.player.x, this.player.y, 0x8800cc);
+            }
+            this.spawnShadowDarkCloud(x, y, 'npc');
+          },
+        });
+      },
+      activateTentacle: (x, y) => {
+        this.npcShadowTentacleActive = true;
+        this.npcShadowTentacleEnd = this.time.now + 3000;
+        this.npcShadowTentacleX = x;
+        this.npcShadowTentacleY = y;
+        if (!this.npcShadowTentacleSprite) {
+          this.npcShadowTentacleSprite = this.add.graphics().setDepth(6);
+        }
+      },
+      placeSnapTrap: () => {
+        const spr = this.add.circle(this.npc.x, this.npc.y, 18, 0x220033, 0.75)
+          .setStrokeStyle(2, 0x8800cc).setDepth(3);
+        const lbl = this.add.text(this.npc.x, this.npc.y, '⚡', { fontSize: '10px' }).setOrigin(0.5).setDepth(4);
+        this.shadowSnapTraps.push({
+          sprite: spr, label: lbl,
+          expiresAt: this.time.now + 12000,
+          x: this.npc.x, y: this.npc.y,
+          triggered: false, owner: 'npc',
+        });
+      },
+      activateShadowDance: () => { /* NPC does not track shadow dance charge */ },
+      startBlackHole: () => { /* NPC does not use black hole */ },
     };
   }
 
@@ -1333,6 +1510,11 @@ export class ArenaScene extends Phaser.Scene {
       launchDrone: () => {},
       placeFirewall: () => {},
       startOverdrive: () => {},
+      launchDarkBomb: () => {},
+      activateTentacle: () => {},
+      placeSnapTrap: () => {},
+      activateShadowDance: () => {},
+      startBlackHole: () => {},
     };
   }
 
@@ -1558,6 +1740,13 @@ export class ArenaScene extends Phaser.Scene {
       duration: 120,
       onComplete: () => cone.destroy(),
     });
+  }
+
+  private spawnShadowDarkCloud(x: number, y: number, owner: 'player' | 'npc'): void {
+    const spr = this.add.circle(x, y, 36, 0x330044, 0.55).setDepth(3);
+    spr.setStrokeStyle(1, 0x8800cc, 0.5);
+    this.tweens.add({ targets: spr, scaleX: 1.2, scaleY: 1.2, alpha: 0.35, yoyo: true, repeat: -1, duration: 700 });
+    this.shadowDarkClouds.push({ sprite: spr, expiresAt: this.time.now + 6000, x, y, radius: 36, tickAccum: 0, owner });
   }
 
   private pointToSegmentDist(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
@@ -2320,6 +2509,41 @@ export class ArenaScene extends Phaser.Scene {
           this.player.castAbility('overdrive', this.buildPlayerContext(mouseX, mouseY));
         }
       }
+    } else if (this.elementId === 'shadow') {
+      if (!this.nukeChanneling) {
+        if (pointer.isDown) {
+          this.shadowDrainHoldAccum += delta;
+          if (this.shadowDrainHoldAccum >= 300) {
+            // Cloud mode: spawn dark cloud every 600ms
+            this.shadowDrainCloudAccum += delta;
+            if (this.shadowDrainCloudAccum >= 600) {
+              this.shadowDrainCloudAccum -= 600;
+              this.spawnShadowDarkCloud(mouseX, mouseY, 'player');
+            }
+          }
+        } else {
+          if (this.pointerWasDown && this.shadowDrainHoldAccum < 300) {
+            // Tap: launch dark bomb
+            this.player.castAbility('dark-drain', this.buildPlayerContext(mouseX, mouseY));
+          }
+          this.shadowDrainHoldAccum = 0;
+          this.shadowDrainCloudAccum = 0;
+        }
+        if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
+          this.player.castAbility('tentacle', this.buildPlayerContext(mouseX, mouseY));
+        }
+        if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
+          this.player.castAbility('snap-trap', playerCtx);
+        }
+        if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
+          if (this.shadowDanceCharge >= 35) {
+            this.player.castAbility('shadow-dance', playerCtx);
+          }
+        }
+        if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
+          this.player.castAbility('black-hole', playerCtx);
+        }
+      }
     }
 
     // ── Player water world effects ────────────────────────────────
@@ -2926,6 +3150,197 @@ export class ArenaScene extends Phaser.Scene {
       }
     }
 
+    // ── Shadow per-frame ─────────────────────────────────────────
+    if (this.elementId === 'shadow' || this.npcElement.id === 'shadow') {
+      // Dark cloud ticks (both owners)
+      for (let ci = this.shadowDarkClouds.length - 1; ci >= 0; ci--) {
+        const cloud = this.shadowDarkClouds[ci];
+        if (time >= cloud.expiresAt) {
+          cloud.sprite.destroy();
+          this.shadowDarkClouds.splice(ci, 1);
+          continue;
+        }
+        cloud.tickAccum += delta;
+        if (cloud.tickAccum >= 1000) {
+          cloud.tickAccum -= 1000;
+          if (cloud.owner === 'player') {
+            // Heal player, damage NPC
+            if (Phaser.Math.Distance.Between(cloud.x, cloud.y, this.player.x, this.player.y) <= cloud.radius + 14) {
+              const prevHp = this.player.hp;
+              this.player.heal(3);
+              const healed = this.player.hp - prevHp;
+              if (healed > 0) {
+                this.shadowDanceCharge = Math.min(35, this.shadowDanceCharge + healed);
+              }
+            }
+            if (Phaser.Math.Distance.Between(cloud.x, cloud.y, this.npc.x, this.npc.y) <= cloud.radius + 14) {
+              this.npc.takeDamage(2);
+              this.spawnHitFlash(this.npc.x, this.npc.y, 0x660088);
+            }
+          } else {
+            // NPC cloud: heal NPC, damage player
+            if (Phaser.Math.Distance.Between(cloud.x, cloud.y, this.npc.x, this.npc.y) <= cloud.radius + 14) {
+              this.npc.heal(3);
+            }
+            if (Phaser.Math.Distance.Between(cloud.x, cloud.y, this.player.x, this.player.y) <= cloud.radius + 14) {
+              this.player.takeDamage(2);
+            }
+          }
+        }
+      }
+
+      // Snap trap checks
+      for (let ti = this.shadowSnapTraps.length - 1; ti >= 0; ti--) {
+        const trap = this.shadowSnapTraps[ti];
+        if (time >= trap.expiresAt || trap.triggered) {
+          trap.sprite.destroy(); trap.label.destroy();
+          this.shadowSnapTraps.splice(ti, 1);
+          continue;
+        }
+        if (trap.owner === 'player') {
+          if (Phaser.Math.Distance.Between(trap.x, trap.y, this.npc.x, this.npc.y) <= 28) {
+            trap.triggered = true;
+            this.npc.takeDamage(20);
+            this.spawnHitFlash(this.npc.x, this.npc.y, 0xcc44ff);
+            this.shadowNpcStunnedUntil = time + 1000;
+          }
+        } else {
+          if (Phaser.Math.Distance.Between(trap.x, trap.y, this.player.x, this.player.y) <= 28) {
+            trap.triggered = true;
+            this.player.takeDamage(20);
+            this.spawnHitFlash(this.player.x, this.player.y, 0xcc44ff);
+            this.shadowPlayerStunnedUntil = time + 1000;
+          }
+        }
+      }
+
+      // Player shadow per-frame
+      if (this.elementId === 'shadow') {
+        // Tentacle draw + snare detection
+        if (this.shadowTentacleActive) {
+          if (time >= this.shadowTentacleEnd) {
+            this.shadowTentacleActive = false;
+            if (this.shadowTentacleSprite) { this.shadowTentacleSprite.destroy(); this.shadowTentacleSprite = null; }
+          } else {
+            if (this.shadowTentacleSprite) {
+              this.shadowTentacleSprite.clear();
+              this.shadowTentacleSprite.lineStyle(5, 0x8800cc, 0.7);
+              this.shadowTentacleSprite.lineBetween(this.player.x, this.player.y, this.shadowTentacleX, this.shadowTentacleY);
+            }
+            // Check if NPC touches tentacle line
+            if (this.shadowNpcSnaredUntil < time) {
+              const d = this.pointToSegmentDist(this.npc.x, this.npc.y, this.player.x, this.player.y, this.shadowTentacleX, this.shadowTentacleY);
+              if (d <= 22) {
+                this.shadowNpcSnaredUntil = time + 2000;
+                this.shadowTentacleActive = false;
+                if (this.shadowTentacleSprite) { this.shadowTentacleSprite.destroy(); this.shadowTentacleSprite = null; }
+              }
+            }
+          }
+        }
+
+        // NPC snare
+        if (time < this.shadowNpcSnaredUntil) {
+          (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+        }
+
+        // NPC stun (from snap trap)
+        if (time < this.shadowNpcStunnedUntil) {
+          (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+        }
+
+        // Shadow dance charge bar (small bar above player)
+        if (!this.shadowDanceChargeBar) {
+          this.shadowDanceChargeBar = this.add.rectangle(
+            this.player.x, this.player.y - 40, 0, 5, 0x8800cc, 0.8,
+          ).setDepth(12).setOrigin(0, 0.5);
+        }
+        const barMaxW = 40;
+        const barX = this.player.x - barMaxW / 2;
+        this.shadowDanceChargeBar.setPosition(barX, this.player.y - 40);
+        this.shadowDanceChargeBar.setSize(Math.min(barMaxW, (this.shadowDanceCharge / 35) * barMaxW), 5);
+
+        // Black hole chargeup → activation
+        if (this.shadowBlackHoleCharging) {
+          if (this.shadowBlackHoleChargeVisual) {
+            this.shadowBlackHoleChargeVisual.setPosition(this.player.x, this.player.y - 40);
+          }
+          if (time >= this.shadowBlackHoleChargeStart + 3000) {
+            this.shadowBlackHoleCharging = false;
+            this.nukeChanneling = false;
+            if (this.shadowBlackHoleChargeVisual) { this.shadowBlackHoleChargeVisual.destroy(); this.shadowBlackHoleChargeVisual = null; }
+            // Activate black hole at player position
+            this.shadowBlackHoleActive = true;
+            this.shadowBlackHoleEnd = time + 10000;
+            this.shadowBlackHoleSprite = this.add.graphics().setDepth(5);
+          }
+        }
+
+        // Black hole active: draw + pull NPC
+        if (this.shadowBlackHoleActive) {
+          if (time >= this.shadowBlackHoleEnd) {
+            this.shadowBlackHoleActive = false;
+            if (this.shadowBlackHoleSprite) { this.shadowBlackHoleSprite.destroy(); this.shadowBlackHoleSprite = null; }
+          } else {
+            if (this.shadowBlackHoleSprite) {
+              const pulse = 18 + Math.sin(time * 0.006) * 4;
+              this.shadowBlackHoleSprite.clear();
+              this.shadowBlackHoleSprite.fillStyle(0x000000, 0.6);
+              this.shadowBlackHoleSprite.fillCircle(this.player.x, this.player.y, pulse);
+              this.shadowBlackHoleSprite.lineStyle(3, 0x8800cc, 0.85);
+              this.shadowBlackHoleSprite.strokeCircle(this.player.x, this.player.y, pulse + 8);
+            }
+            // Pull NPC toward player
+            const nBody = this.npc.body as Phaser.Physics.Arcade.Body;
+            const toDx = this.player.x - this.npc.x;
+            const toDy = this.player.y - this.npc.y;
+            const toDist = Math.sqrt(toDx * toDx + toDy * toDy) || 1;
+            const pullStrength = 120;
+            nBody.setVelocity(
+              nBody.velocity.x + (toDx / toDist) * pullStrength * (delta / 1000) * 60,
+              nBody.velocity.y + (toDy / toDist) * pullStrength * (delta / 1000) * 60,
+            );
+          }
+        }
+      }
+
+      // NPC shadow per-frame
+      if (this.npcElement.id === 'shadow') {
+        // NPC tentacle
+        if (this.npcShadowTentacleActive) {
+          if (time >= this.npcShadowTentacleEnd) {
+            this.npcShadowTentacleActive = false;
+            if (this.npcShadowTentacleSprite) { this.npcShadowTentacleSprite.destroy(); this.npcShadowTentacleSprite = null; }
+          } else {
+            if (this.npcShadowTentacleSprite) {
+              this.npcShadowTentacleSprite.clear();
+              this.npcShadowTentacleSprite.lineStyle(5, 0x440066, 0.7);
+              this.npcShadowTentacleSprite.lineBetween(this.npc.x, this.npc.y, this.npcShadowTentacleX, this.npcShadowTentacleY);
+            }
+            if (this.shadowPlayerSnaredUntil < time) {
+              const d = this.pointToSegmentDist(this.player.x, this.player.y, this.npc.x, this.npc.y, this.npcShadowTentacleX, this.npcShadowTentacleY);
+              if (d <= 22) {
+                this.shadowPlayerSnaredUntil = time + 2000;
+                this.npcShadowTentacleActive = false;
+                if (this.npcShadowTentacleSprite) { this.npcShadowTentacleSprite.destroy(); this.npcShadowTentacleSprite = null; }
+              }
+            }
+          }
+        }
+
+        // Player snare from NPC tentacle
+        if (time < this.shadowPlayerSnaredUntil) {
+          (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+        }
+
+        // Player stun from NPC snap trap
+        if (time < this.shadowPlayerStunnedUntil) {
+          (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+        }
+      }
+
+    }
+
     // ── Dodge (Space) ────────────────────────────────────────────
     if (Phaser.Input.Keyboard.JustDown(this.spaceKey) && !this.dodgeOnCooldown && !this.isDodging && !this.nukeChanneling) {
       this.dodgeOnCooldown = true;
@@ -2970,6 +3385,7 @@ export class ArenaScene extends Phaser.Scene {
       chargedBeamReady: this.npcAirConsecutiveHits >= 3,
       earthShieldHp: this.npc.shieldHp,
       oilDroneCount: this.npcDrones.length,
+      shadowPlayerSnared: time < this.shadowPlayerSnaredUntil || time < this.shadowPlayerStunnedUntil,
     };
 
     const npcPreDashX = this.npc.x;
