@@ -4,6 +4,8 @@ interface SaveData {
   shards: number;
   owned: Record<string, string[]>;   // elementId → owned slot keys
   active: Record<string, string[]>;  // elementId → toggled-on slot keys
+  nuclei: number;                    // Elemental Nucleus count
+  unlockedElements: string[];        // combined element IDs unlocked via Lab
 }
 
 function load(): SaveData {
@@ -15,12 +17,14 @@ function load(): SaveData {
         shards: parsed.shards ?? 0,
         owned: parsed.owned ?? {},
         active: parsed.active ?? {},
+        nuclei: parsed.nuclei ?? 0,
+        unlockedElements: parsed.unlockedElements ?? [],
       };
     }
   } catch {
     // corrupted save — start fresh
   }
-  return { shards: 0, owned: {}, active: {} };
+  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [] };
 }
 
 function save(data: SaveData): void {
@@ -80,4 +84,34 @@ export function toggleUpgrade(elementId: string, slot: string): void {
 
 export function getActiveUpgrades(elementId: string): string[] {
   return load().active[elementId] ?? [];
+}
+
+export function getNuclei(): number {
+  return load().nuclei;
+}
+
+export function addNuclei(amount: number): void {
+  const data = load();
+  data.nuclei += amount;
+  save(data);
+}
+
+export function spendNucleus(): boolean {
+  const data = load();
+  if (data.nuclei < 1) return false;
+  data.nuclei -= 1;
+  save(data);
+  return true;
+}
+
+export function isElementUnlocked(id: string): boolean {
+  return load().unlockedElements.includes(id);
+}
+
+export function unlockElement(id: string): void {
+  const data = load();
+  if (!data.unlockedElements.includes(id)) {
+    data.unlockedElements = [...data.unlockedElements, id];
+  }
+  save(data);
 }

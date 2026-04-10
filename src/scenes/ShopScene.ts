@@ -8,6 +8,7 @@ const ELEMENT_COLORS: Record<string, number> = {
   life:  0x44cc44,
   air:   0xaaddff,
   earth: 0x887755,
+  oil:   0x664400,
 };
 
 const ELEMENT_EMOJIS: Record<string, string> = {
@@ -16,13 +17,22 @@ const ELEMENT_EMOJIS: Record<string, string> = {
   life:  '🌿',
   air:   '💨',
   earth: '🪨',
+  oil:   '🛢️',
 };
+
+const BASE_ELEMENT_IDS = ['fire', 'water', 'life', 'air', 'earth'];
 
 export class ShopScene extends Phaser.Scene {
   private shardText!: Phaser.GameObjects.Text;
+  private nucleiText!: Phaser.GameObjects.Text;
+  private currentPage = 0;
 
   constructor() {
     super({ key: 'ShopScene' });
+  }
+
+  init(data: { page?: number }): void {
+    this.currentPage = data?.page ?? 0;
   }
 
   create(): void {
@@ -54,6 +64,13 @@ export class ShopScene extends Phaser.Scene {
     }).setOrigin(1, 0);
     this.refreshShardDisplay();
 
+    // Nucleus counter
+    this.nucleiText = this.add.text(width - 16, 38, `⚛️ ×${PlayerData.getNuclei()}`, {
+      fontSize: '14px',
+      fontFamily: '"Arial Black", sans-serif',
+      color: '#cc88ff',
+    }).setOrigin(1, 0);
+
     // Back button
     const backBtn = this.add
       .rectangle(52, 36, 88, 36, 0x222233)
@@ -69,10 +86,50 @@ export class ShopScene extends Phaser.Scene {
       .on('pointerout', () => { backBtn.setFillStyle(0x222233); backLabel.setColor('#aaaaaa'); })
       .on('pointerdown', () => this.scene.start('TitleScene'));
 
-    // Element columns
-    const elements = ALL_UPGRADES;
-    const colW = Math.floor(width / elements.length);
+    // ── Page navigation ──────────────────────────────────────────
+    const combinedIds = ALL_UPGRADES
+      .map((e) => e.elementId)
+      .filter((id) => !BASE_ELEMENT_IDS.includes(id) && PlayerData.isElementUnlocked(id));
+    const hasNextPage = this.currentPage === 0 && combinedIds.length > 0;
+    const hasPrevPage = this.currentPage > 0;
+
+    if (hasPrevPage) {
+      const leftBtn = this.add.rectangle(22, height / 2, 30, 64, 0x330066)
+        .setStrokeStyle(1, 0x9944ff).setInteractive({ useHandCursor: true });
+      this.add.text(22, height / 2, '◀', {
+        fontSize: '14px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
+      }).setOrigin(0.5).setDepth(1);
+      leftBtn
+        .on('pointerover', () => leftBtn.setFillStyle(0x550099))
+        .on('pointerout',  () => leftBtn.setFillStyle(0x330066))
+        .on('pointerdown', () => this.scene.restart({ page: this.currentPage - 1 }));
+    }
+
+    if (hasNextPage) {
+      const rightBtn = this.add.rectangle(width - 22, height / 2, 30, 64, 0x330066)
+        .setStrokeStyle(1, 0x9944ff).setInteractive({ useHandCursor: true });
+      this.add.text(width - 22, height / 2, '▶', {
+        fontSize: '14px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
+      }).setOrigin(0.5).setDepth(1);
+      rightBtn
+        .on('pointerover', () => rightBtn.setFillStyle(0x550099))
+        .on('pointerout',  () => rightBtn.setFillStyle(0x330066))
+        .on('pointerdown', () => this.scene.restart({ page: this.currentPage + 1 }));
+    }
+
+    // ── Element columns ──────────────────────────────────────────
+    const elements = this.currentPage === 0
+      ? ALL_UPGRADES.filter((e) => BASE_ELEMENT_IDS.includes(e.elementId))
+      : ALL_UPGRADES.filter((e) => combinedIds.includes(e.elementId));
+
+    const colW = elements.length > 0 ? Math.floor(width / elements.length) : width;
     const colStartY = 80;
+
+    if (elements.length === 0) {
+      this.add.text(cx, height / 2, 'No unlocked elements on this page.\nDiscover combined elements in the LAB.', {
+        fontSize: '16px', fontFamily: 'Arial, sans-serif', color: '#555577', align: 'center',
+      }).setOrigin(0.5);
+    }
 
     elements.forEach((elemUpgrades, colIdx) => {
       const elementId = elemUpgrades.elementId;
@@ -91,9 +148,9 @@ export class ShopScene extends Phaser.Scene {
       }).setOrigin(0.5);
 
       // Slot buttons
-      const SLOT_KEYS = ['click', 'e', 'r', 'f', 'q'];
+      const SLOT_KEYS    = ['click', 'e', 'r', 'f', 'q'];
       const SLOT_DISPLAY = ['Click', 'E', 'R', 'F', 'Q'];
-      const SLOT_PRICES = [10, 20, 35, 50, 75];
+      const SLOT_PRICES  = [10, 20, 35, 50, 75];
 
       const btnW = colW - 16;
       const btnH = 82;
@@ -106,99 +163,91 @@ export class ShopScene extends Phaser.Scene {
         const upgDef: UpgradeDef | undefined = upgrades.find((u) => u.slot === slot);
         const price = upgDef?.price ?? SLOT_PRICES[slotIdx];
 
-        const owned = PlayerData.isUpgradeOwned(elementId, slot);
-        const active = PlayerData.isUpgradeActive(elementId, slot);
+        const owned         = PlayerData.isUpgradeOwned(elementId, slot);
+        const active        = PlayerData.isUpgradeActive(elementId, slot);
         const hasUpgradeDef = upgDef !== undefined;
 
-        // Determine button color
-        let fillColor = 0x1a1a1a;
+        let fillColor   = 0x1a1a1a;
         let borderColor = 0x333333;
-        let labelColor = '#555555';
+        let labelColor  = '#555555';
 
         if (owned && active) {
-          fillColor = 0x0d2b0d;
-          borderColor = 0x33aa33;
-          labelColor = '#44ff44';
+          fillColor = 0x0d2b0d; borderColor = 0x33aa33; labelColor = '#44ff44';
         } else if (owned && !active) {
-          fillColor = 0x2b0d0d;
-          borderColor = 0xaa3333;
-          labelColor = '#ff4444';
+          fillColor = 0x2b0d0d; borderColor = 0xaa3333; labelColor = '#ff4444';
         } else if (hasUpgradeDef) {
-          fillColor = 0x1a1a2b;
-          borderColor = 0x444466;
-          labelColor = '#aaaaaa';
+          fillColor = 0x1a1a2b; borderColor = 0x444466; labelColor = '#aaaaaa';
         }
 
         const btn = this.add
           .rectangle(bx, by, btnW, btnH, fillColor)
           .setStrokeStyle(1, borderColor);
 
-        // Slot key label
         this.add.text(bx, by - 26, `[${SLOT_DISPLAY[slotIdx]}]`, {
-          fontSize: '10px',
-          fontFamily: 'Arial, sans-serif',
-          color: '#666666',
+          fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#666666',
         }).setOrigin(0.5);
 
         if (hasUpgradeDef && upgDef) {
-          // Name
           this.add.text(bx, by - 12, upgDef.name, {
-            fontSize: '11px',
-            fontFamily: '"Arial Black", sans-serif',
-            color: labelColor,
+            fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: labelColor,
           }).setOrigin(0.5);
 
-          // Description (word-wrap)
           this.add.text(bx, by + 6, upgDef.description, {
-            fontSize: '9px',
-            fontFamily: 'Arial, sans-serif',
-            color: '#777777',
-            wordWrap: { width: btnW - 8 },
-            align: 'center',
+            fontSize: '9px', fontFamily: 'Arial, sans-serif', color: '#777777',
+            wordWrap: { width: btnW - 8 }, align: 'center',
           }).setOrigin(0.5);
 
-          // Status / price
           const statusStr = owned
             ? (active ? 'ACTIVE — click to disable' : 'OWNED — click to enable')
             : `💎 ${price} shards`;
           this.add.text(bx, by + 32, statusStr, {
-            fontSize: '9px',
-            fontFamily: 'Arial, sans-serif',
+            fontSize: '9px', fontFamily: 'Arial, sans-serif',
             color: owned ? (active ? '#33aa33' : '#aa3333') : '#ffcc44',
           }).setOrigin(0.5);
 
-          // Interactivity
           btn.setInteractive({ useHandCursor: true });
-
-          btn.on('pointerover', () => {
-            btn.setStrokeStyle(2, 0xffffff);
-          });
-          btn.on('pointerout', () => {
-            btn.setStrokeStyle(1, borderColor);
-          });
-          btn.on('pointerdown', () => {
-            if (!PlayerData.isUpgradeOwned(elementId, slot)) {
-              // Purchase
-              if (PlayerData.spendShards(price)) {
-                PlayerData.purchaseUpgrade(elementId, slot);
-                this.scene.restart();
+          btn
+            .on('pointerover', () => btn.setStrokeStyle(2, 0xffffff))
+            .on('pointerout',  () => btn.setStrokeStyle(1, borderColor))
+            .on('pointerdown', () => {
+              if (!PlayerData.isUpgradeOwned(elementId, slot)) {
+                if (PlayerData.spendShards(price)) {
+                  PlayerData.purchaseUpgrade(elementId, slot);
+                  this.scene.restart({ page: this.currentPage });
+                }
+              } else {
+                PlayerData.toggleUpgrade(elementId, slot);
+                this.scene.restart({ page: this.currentPage });
               }
-            } else {
-              // Toggle
-              PlayerData.toggleUpgrade(elementId, slot);
-              this.scene.restart();
-            }
-          });
+            });
         } else {
-          // No upgrade defined for this slot yet
           this.add.text(bx, by, 'Coming Soon', {
-            fontSize: '11px',
-            fontFamily: 'Arial, sans-serif',
-            color: '#333333',
+            fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#333333',
           }).setOrigin(0.5);
         }
       });
     });
+
+    // ── Elemental Nucleus purchase ────────────────────────────────
+    const nucY = height - 22;
+    const nucBtn = this.add
+      .rectangle(cx, nucY, 270, 32, 0x220044, 1)
+      .setStrokeStyle(1, 0x9944ff)
+      .setInteractive({ useHandCursor: true })
+      .setDepth(5);
+    this.add.text(cx, nucY, '⚛️ Elemental Nucleus  —  💎 100 shards', {
+      fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
+    }).setOrigin(0.5).setDepth(6);
+    nucBtn
+      .on('pointerover', () => nucBtn.setFillStyle(0x440088))
+      .on('pointerout',  () => nucBtn.setFillStyle(0x220044))
+      .on('pointerdown', () => {
+        if (PlayerData.spendShards(100)) {
+          PlayerData.addNuclei(1);
+          this.nucleiText.setText(`⚛️ ×${PlayerData.getNuclei()}`);
+          this.refreshShardDisplay();
+        }
+      });
   }
 
   private refreshShardDisplay(): void {

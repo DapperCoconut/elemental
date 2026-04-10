@@ -10,6 +10,7 @@ import { waterElement } from '../elements/water';
 import { lifeElement } from '../elements/life';
 import { airElement, fireHitscan, fireBounceHitscan } from '../elements/air';
 import { earthElement } from '../elements/earth';
+import { oilElement } from '../elements/oil';
 import * as PlayerData from '../data/PlayerData';
 import { getTotalRewardMult } from '../data/Mutations';
 
@@ -65,12 +66,22 @@ interface Plant {
   accum: number; // timer accumulator for life/thorn plant special effects
 }
 
+interface Drone {
+  sprite: Phaser.GameObjects.Arc;
+  hp: number;
+  maxHp: number;
+  orbitAngle: number;
+  shielded: boolean;
+  owner: 'player' | 'npc';
+}
+
 const ELEMENT_MAP: Record<string, Element> = {
   fire: fireElement,
   water: waterElement,
   life: lifeElement,
   air: airElement,
   earth: earthElement,
+  oil: oilElement,
 };
 
 const ELEMENT_TEXTURES: Record<string, string> = {
@@ -79,6 +90,7 @@ const ELEMENT_TEXTURES: Record<string, string> = {
   life: 'elem-life',
   air: 'elem-air',
   earth: 'elem-earth',
+  oil: 'elem-oil',
 };
 
 export class ArenaScene extends Phaser.Scene {
@@ -257,6 +269,20 @@ export class ArenaScene extends Phaser.Scene {
   private npcBullRushDrApplied = false;
   private npcBullRushAura: Phaser.GameObjects.Arc | null = null;
 
+  // Player oil state
+  private playerDrones: Drone[] = [];
+  private playerFirewallSprite: Phaser.GameObjects.Rectangle | null = null;
+  private playerFirewallHp = 0;
+  private playerFirewallX = 0;
+  private playerFirewallY = 0;
+  private playerOverdriveActive = false;
+  private playerOverdriveEnd = 0;
+  private playerOverdriveAngle = 0;
+  private playerOverdriveTickAccum = 0;
+  private playerOverdriveGraphics: Phaser.GameObjects.Graphics | null = null;
+  // NPC oil state
+  private npcDrones: Drone[] = [];
+
   // Player upgrade state
   private activeUpgrades: string[] = [];
   // Flameshredder (Click upgrade) — NPC burns from player fireballs
@@ -413,6 +439,18 @@ export class ArenaScene extends Phaser.Scene {
     this.npcBullRushLastHit = 0;
     this.npcBullRushDrApplied = false;
     this.npcBullRushAura = null;
+
+    this.playerDrones = [];
+    this.playerFirewallSprite = null;
+    this.playerFirewallHp = 0;
+    this.playerFirewallX = 0;
+    this.playerFirewallY = 0;
+    this.playerOverdriveActive = false;
+    this.playerOverdriveEnd = 0;
+    this.playerOverdriveAngle = 0;
+    this.playerOverdriveTickAccum = 0;
+    this.playerOverdriveGraphics = null;
+    this.npcDrones = [];
 
     this.activeUpgrades = PlayerData.getActiveUpgrades(this.elementId);
     this.npcBurningUntil = 0;
@@ -769,6 +807,11 @@ export class ArenaScene extends Phaser.Scene {
       'shield-slam':    0xbb9955,
       'shield-break':   0xcc8833,
       'bull-rush':      0xcc4400,
+      'drone-command':  0xffaa00,
+      'drone-summon':   0xcc7700,
+      'drone-destroy':  0xff6600,
+      'firewall':       0xff8800,
+      'overdrive':      0xff4400,
     };
 
     abilities.forEach((ab, i) => {
@@ -966,6 +1009,67 @@ export class ArenaScene extends Phaser.Scene {
         this.earthBullRushAura = this.add.circle(this.player.x, this.player.y, 36, 0xcc4400, 0.4).setDepth(6);
         this.tweens.add({ targets: this.earthBullRushAura, alpha: 0.15, yoyo: true, repeat: -1, duration: 220 });
       },
+      spawnDrone: () => {
+        if (this.playerDrones.length >= 6) return;
+        const angle = (this.playerDrones.length / 6) * Math.PI * 2;
+        const sprite = this.add.circle(
+          this.player.x + Math.cos(angle) * 60,
+          this.player.y + Math.sin(angle) * 60,
+          8, 0xffaa00, 0.9,
+        ).setDepth(8);
+        this.playerDrones.push({ sprite, hp: 15, maxHp: 15, orbitAngle: angle, shielded: false, owner: 'player' });
+      },
+      commandDrones: (x, y) => {
+        for (const drone of this.playerDrones) {
+          const laser = this.add.graphics().setDepth(8);
+          laser.lineStyle(2, 0xffaa00, 0.8);
+          laser.lineBetween(drone.sprite.x, drone.sprite.y, x, y);
+          this.tweens.add({ targets: laser, alpha: 0, duration: 220, onComplete: () => laser.destroy() });
+          if (Phaser.Math.Distance.Between(x, y, this.npc.x, this.npc.y) <= 40) {
+            this.npc.takeDamage(3);
+            this.spawnHitFlash(this.npc.x, this.npc.y, 0xffaa00);
+          }
+        }
+      },
+      launchDrone: (x, y) => {
+        if (this.playerDrones.length === 0) return;
+        const drone = this.playerDrones.pop()!;
+        const dmg = Math.max(1, drone.hp);
+        this.tweens.add({
+          targets: drone.sprite, x, y, duration: 500, ease: 'Power2',
+          onComplete: () => {
+            const boom = this.add.circle(x, y, 8, 0xff6600, 0.9).setDepth(8);
+            this.tweens.add({ targets: boom, scaleX: 8, scaleY: 8, alpha: 0, duration: 400, onComplete: () => boom.destroy() });
+            drone.sprite.destroy();
+            if (Phaser.Math.Distance.Between(x, y, this.npc.x, this.npc.y) <= 60) {
+              this.npc.takeDamage(dmg);
+              this.spawnHitFlash(this.npc.x, this.npc.y, 0xff6600);
+            }
+          },
+        });
+      },
+      placeFirewall: (x, y) => {
+        if (this.playerFirewallSprite) this.playerFirewallSprite.destroy();
+        this.playerFirewallSprite = this.add.rectangle(x, y, 120, 60, 0xff6600, 0.45)
+          .setStrokeStyle(2, 0xff8800).setDepth(3);
+        this.playerFirewallHp = 100;
+        this.playerFirewallX = x;
+        this.playerFirewallY = y;
+      },
+      startOverdrive: (x, y) => {
+        if (this.playerDrones.length === 0) return;
+        const angle = Math.atan2(y - this.player.y, x - this.player.x);
+        const duration = 2000 * this.playerDrones.length;
+        this.playerOverdriveActive = true;
+        this.playerOverdriveEnd = this.time.now + duration;
+        this.playerOverdriveAngle = angle;
+        this.playerOverdriveTickAccum = 0;
+        this.nukeChanneling = true;
+        this.nukeChannelEnd = this.playerOverdriveEnd;
+        if (!this.playerOverdriveGraphics) {
+          this.playerOverdriveGraphics = this.add.graphics().setDepth(7);
+        }
+      },
     };
   }
 
@@ -1081,6 +1185,47 @@ export class ArenaScene extends Phaser.Scene {
         this.npcBullRushAura = this.add.circle(this.npc.x, this.npc.y, 36, 0xcc4400, 0.4).setDepth(6);
         this.tweens.add({ targets: this.npcBullRushAura, alpha: 0.15, yoyo: true, repeat: -1, duration: 220 });
       },
+      spawnDrone: () => {
+        if (this.npcDrones.length >= 4) return;
+        const angle = (this.npcDrones.length / 4) * Math.PI * 2;
+        const sprite = this.add.circle(
+          this.npc.x + Math.cos(angle) * 60,
+          this.npc.y + Math.sin(angle) * 60,
+          8, 0xffaa00, 0.7,
+        ).setDepth(8);
+        this.npcDrones.push({ sprite, hp: 15, maxHp: 15, orbitAngle: angle, shielded: false, owner: 'npc' });
+      },
+      commandDrones: (x, y) => {
+        for (const drone of this.npcDrones) {
+          const laser = this.add.graphics().setDepth(8);
+          laser.lineStyle(2, 0xffaa00, 0.65);
+          laser.lineBetween(drone.sprite.x, drone.sprite.y, x, y);
+          this.tweens.add({ targets: laser, alpha: 0, duration: 220, onComplete: () => laser.destroy() });
+          if (Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) <= 40) {
+            this.player.takeDamage(3);
+            this.spawnHitFlash(this.player.x, this.player.y, 0xffaa00);
+          }
+        }
+      },
+      launchDrone: (x, y) => {
+        if (this.npcDrones.length === 0) return;
+        const drone = this.npcDrones.pop()!;
+        const dmg = Math.max(1, drone.hp);
+        this.tweens.add({
+          targets: drone.sprite, x, y, duration: 500, ease: 'Power2',
+          onComplete: () => {
+            const boom = this.add.circle(x, y, 8, 0xff6600, 0.8).setDepth(8);
+            this.tweens.add({ targets: boom, scaleX: 8, scaleY: 8, alpha: 0, duration: 400, onComplete: () => boom.destroy() });
+            drone.sprite.destroy();
+            if (Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) <= 60) {
+              this.player.takeDamage(dmg);
+              this.spawnHitFlash(this.player.x, this.player.y, 0xff6600);
+            }
+          },
+        });
+      },
+      placeFirewall: () => { /* NPC does not use firewall */ },
+      startOverdrive: () => { /* NPC does not use overdrive */ },
     };
   }
 
@@ -1183,6 +1328,11 @@ export class ArenaScene extends Phaser.Scene {
         }
       },
       startBullRush: () => { /* clone does not use bull rush */ },
+      spawnDrone: () => {},
+      commandDrones: () => {},
+      launchDrone: () => {},
+      placeFirewall: () => {},
+      startOverdrive: () => {},
     };
   }
 
@@ -1408,6 +1558,15 @@ export class ArenaScene extends Phaser.Scene {
       duration: 120,
       onComplete: () => cone.destroy(),
     });
+  }
+
+  private pointToSegmentDist(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    if (len2 === 0) return Phaser.Math.Distance.Between(px, py, ax, ay);
+    const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+    return Phaser.Math.Distance.Between(px, py, ax + t * dx, ay + t * dy);
   }
 
   // ── Update loop ──────────────────────────────────────────────────
@@ -2138,6 +2297,29 @@ export class ArenaScene extends Phaser.Scene {
           }
         } // end !eKey.isDown
       }
+    } else if (this.elementId === 'oil') {
+      if (!this.nukeChanneling) {
+        // Click: Drone Command (fire at cursor)
+        if (pointer.isDown) {
+          this.player.castAbility('drone-command', playerCtx);
+        }
+        // E: Drone Summon
+        if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
+          this.player.castAbility('drone-summon', playerCtx);
+        }
+        // R: Drone Destroy (launch drone bomb at cursor)
+        if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
+          this.player.castAbility('drone-destroy', this.buildPlayerContext(mouseX, mouseY));
+        }
+        // F: Firewall at cursor
+        if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
+          this.player.castAbility('firewall', this.buildPlayerContext(mouseX, mouseY));
+        }
+        // Q: Overdrive
+        if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
+          this.player.castAbility('overdrive', this.buildPlayerContext(mouseX, mouseY));
+        }
+      }
     }
 
     // ── Player water world effects ────────────────────────────────
@@ -2629,6 +2811,121 @@ export class ArenaScene extends Phaser.Scene {
       if (s.fired) this.painRainShadows.splice(i, 1);
     }
 
+    // ── Oil per-frame (player) ────────────────────────────────────
+    if (this.elementId === 'oil') {
+      // Orbit drones evenly around player
+      const pCount = this.playerDrones.length;
+      for (let di = 0; di < pCount; di++) {
+        const drone = this.playerDrones[di];
+        drone.orbitAngle += delta * 0.0025;
+        const angle = drone.orbitAngle + (di * Math.PI * 2 / Math.max(1, pCount));
+        drone.sprite.setPosition(
+          this.player.x + Math.cos(angle) * 60,
+          this.player.y + Math.sin(angle) * 60,
+        );
+      }
+      // Drones absorb NPC projectiles
+      for (let di = this.playerDrones.length - 1; di >= 0; di--) {
+        const drone = this.playerDrones[di];
+        for (const go of allActiveProj) {
+          const proj = go as Projectile;
+          if (!proj.active || proj.isFromPlayer) continue;
+          if (Phaser.Math.Distance.Between(proj.x, proj.y, drone.sprite.x, drone.sprite.y) <= 20) {
+            drone.hp -= proj.damage;
+            proj.setActive(false).setVisible(false);
+            (proj.body as Phaser.Physics.Arcade.Body).stop();
+            break;
+          }
+        }
+        if (drone.hp <= 0) {
+          drone.sprite.destroy();
+          this.playerDrones.splice(di, 1);
+        }
+      }
+      // Firewall absorbs NPC projectiles
+      if (this.playerFirewallSprite && this.playerFirewallHp > 0) {
+        for (const go of allActiveProj) {
+          const proj = go as Projectile;
+          if (!proj.active || proj.isFromPlayer) continue;
+          if (Math.abs(proj.x - this.playerFirewallX) <= 60 && Math.abs(proj.y - this.playerFirewallY) <= 30) {
+            this.playerFirewallHp -= proj.damage;
+            proj.setActive(false).setVisible(false);
+            (proj.body as Phaser.Physics.Arcade.Body).stop();
+            if (this.playerFirewallHp <= 0) {
+              this.playerFirewallSprite.destroy();
+              this.playerFirewallSprite = null;
+              break;
+            }
+          }
+        }
+      }
+      // Overdrive beam
+      if (this.playerOverdriveActive) {
+        if (time >= this.playerOverdriveEnd) {
+          this.playerOverdriveActive = false;
+          this.nukeChanneling = false;
+          if (this.playerOverdriveGraphics) {
+            this.playerOverdriveGraphics.destroy();
+            this.playerOverdriveGraphics = null;
+          }
+        } else {
+          // Slowly rotate toward cursor
+          const tgtAng = Math.atan2(mouseY - this.player.y, mouseX - this.player.x);
+          const diff = Phaser.Math.Angle.Wrap(tgtAng - this.playerOverdriveAngle);
+          const rotSpeed = (18 * Math.PI / 180) * delta / 1000;
+          this.playerOverdriveAngle += Math.sign(diff) * Math.min(Math.abs(diff), rotSpeed);
+          const beamEndX = this.player.x + Math.cos(this.playerOverdriveAngle) * 1000;
+          const beamEndY = this.player.y + Math.sin(this.playerOverdriveAngle) * 1000;
+          if (this.playerOverdriveGraphics) {
+            this.playerOverdriveGraphics.clear();
+            this.playerOverdriveGraphics.lineStyle(22, 0xff6600, 0.6);
+            this.playerOverdriveGraphics.lineBetween(this.player.x, this.player.y, beamEndX, beamEndY);
+          }
+          this.playerOverdriveTickAccum += delta;
+          if (this.playerOverdriveTickAccum >= 100) {
+            this.playerOverdriveTickAccum -= 100;
+            const d = this.pointToSegmentDist(this.npc.x, this.npc.y, this.player.x, this.player.y, beamEndX, beamEndY);
+            if (d <= 30) {
+              this.npc.takeDamage(15);
+              this.spawnHitFlash(this.npc.x, this.npc.y, 0xff6600);
+            }
+          }
+        }
+      }
+    }
+
+    // ── Oil per-frame (NPC) ───────────────────────────────────────
+    if (this.npcElement.id === 'oil') {
+      const nCount = this.npcDrones.length;
+      for (let di = 0; di < nCount; di++) {
+        const drone = this.npcDrones[di];
+        drone.orbitAngle += delta * 0.0025;
+        const angle = drone.orbitAngle + (di * Math.PI * 2 / Math.max(1, nCount));
+        drone.sprite.setPosition(
+          this.npc.x + Math.cos(angle) * 60,
+          this.npc.y + Math.sin(angle) * 60,
+        );
+      }
+      // NPC drones absorb player projectiles
+      for (let di = this.npcDrones.length - 1; di >= 0; di--) {
+        const drone = this.npcDrones[di];
+        for (const go of allActiveProj) {
+          const proj = go as Projectile;
+          if (!proj.active || !proj.isFromPlayer) continue;
+          if (Phaser.Math.Distance.Between(proj.x, proj.y, drone.sprite.x, drone.sprite.y) <= 20) {
+            drone.hp -= proj.damage;
+            proj.setActive(false).setVisible(false);
+            (proj.body as Phaser.Physics.Arcade.Body).stop();
+            break;
+          }
+        }
+        if (drone.hp <= 0) {
+          drone.sprite.destroy();
+          this.npcDrones.splice(di, 1);
+        }
+      }
+    }
+
     // ── Dodge (Space) ────────────────────────────────────────────
     if (Phaser.Input.Keyboard.JustDown(this.spaceKey) && !this.dodgeOnCooldown && !this.isDodging && !this.nukeChanneling) {
       this.dodgeOnCooldown = true;
@@ -2672,6 +2969,7 @@ export class ArenaScene extends Phaser.Scene {
       windTrapActive: time < this.npcWindTrapExpiry,
       chargedBeamReady: this.npcAirConsecutiveHits >= 3,
       earthShieldHp: this.npc.shieldHp,
+      oilDroneCount: this.npcDrones.length,
     };
 
     const npcPreDashX = this.npc.x;

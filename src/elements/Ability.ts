@@ -33,6 +33,11 @@ export interface CastContext {
   slamCaster: () => void;
   dealMeleeDamage: (range: number, damage: number, knockback?: number) => void;
   startBullRush: () => void;
+  spawnDrone: () => void;
+  commandDrones: (x: number, y: number) => void;
+  launchDrone: (x: number, y: number) => void;
+  placeFirewall: (x: number, y: number) => void;
+  startOverdrive: (x: number, y: number) => void;
 }
 
 export interface Ability {

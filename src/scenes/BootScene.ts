@@ -68,6 +68,20 @@ export class BootScene extends Phaser.Scene {
     gfx.strokeCircle(24, 24, 22);
     gfx.generateTexture('elem-earth', 48, 48);
 
+    // Oil element texture (dark amber circle)
+    gfx.clear();
+    gfx.fillStyle(0x664400);
+    gfx.fillCircle(24, 24, 22);
+    gfx.lineStyle(3, 0xaa6600);
+    gfx.strokeCircle(24, 24, 22);
+    gfx.generateTexture('elem-oil', 48, 48);
+
+    // Oil drone laser projectile (small amber circle)
+    gfx.clear();
+    gfx.fillStyle(0xffaa00);
+    gfx.fillCircle(5, 5, 5);
+    gfx.generateTexture('proj-oil', 10, 10);
+
     gfx.destroy();
 
     this.scene.start('TitleScene');

@@ -215,6 +215,7 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
       },
     ],
   },
+  { elementId: 'oil', upgrades: [] },
 ];
 
 export function getElementUpgrades(elementId: string): UpgradeDef[] {

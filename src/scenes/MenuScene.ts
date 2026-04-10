@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { DIFFICULTY_PRESETS } from '../entities/NpcOpponent';
 import { SHARD_REWARDS } from '../data/Upgrades';
 import { MUTATIONS, activeMutationIds } from '../data/Mutations';
+import * as PlayerData from '../data/PlayerData';
 
 interface ElementDef {
   id: string;
@@ -19,12 +20,17 @@ const ELEMENTS: ElementDef[] = [
   { id: 'earth', name: 'Earth', emoji: '🪨', color: 0x887755, available: true  },
 ];
 
+const COMBINED_ELEMENTS: ElementDef[] = [
+  { id: 'oil', name: 'Oil', emoji: '🛢️', color: 0x664400, available: true },
+];
+
 const DIFF_COLORS = [0x22cc44, 0x88cc22, 0xddaa00, 0xee5500, 0xcc0022];
 
 export class MenuScene extends Phaser.Scene {
   private selectionPhase: 'player' | 'enemy' | 'difficulty' = 'player';
   private playerChoice: string | null = null;
   private enemyChoice: string | null = null;
+  private elemPage = 0;
 
   private phaseObjects: Phaser.GameObjects.GameObject[] = [];
 
@@ -37,6 +43,7 @@ export class MenuScene extends Phaser.Scene {
     this.selectionPhase = 'player';
     this.playerChoice = null;
     this.enemyChoice = null;
+    this.elemPage = 0;
     this.phaseObjects = [];
 
     const { width, height } = this.scale;
@@ -72,6 +79,10 @@ export class MenuScene extends Phaser.Scene {
     this.renderPhase(width, height, cx);
   }
 
+  private findElement(id: string): ElementDef | undefined {
+    return ELEMENTS.find((e) => e.id === id) ?? COMBINED_ELEMENTS.find((e) => e.id === id);
+  }
+
   private renderPhase(width: number, height: number, cx: number): void {
     for (const obj of this.phaseObjects) {
       if (obj.active) (obj as Phaser.GameObjects.GameObject & { destroy(): void }).destroy();
@@ -97,7 +108,7 @@ export class MenuScene extends Phaser.Scene {
     this.phaseObjects.push(subtitleObj);
 
     if (!isPlayerPhase && this.playerChoice) {
-      const chosen = ELEMENTS.find((e) => e.id === this.playerChoice);
+      const chosen = this.findElement(this.playerChoice);
       if (chosen) {
         const indicator = this.add.text(cx, 196, `YOU:  ${chosen.emoji} ${chosen.name}`, {
           fontSize: '15px',
@@ -108,13 +119,62 @@ export class MenuScene extends Phaser.Scene {
       }
     }
 
+    // Determine which elements to show on this page
+    const unlockedCombined = COMBINED_ELEMENTS.filter((e) => PlayerData.isElementUnlocked(e.id));
+    const hasCombinedPage = unlockedCombined.length > 0;
+    const currentElements = this.elemPage === 0 ? ELEMENTS : unlockedCombined;
+
+    // Page arrows
+    if (this.elemPage > 0) {
+      // Left arrow — go back to base elements
+      const leftBtn = this.add.rectangle(28, height / 2 + 20, 32, 64, 0x330066)
+        .setStrokeStyle(1, 0x9944ff).setInteractive({ useHandCursor: true });
+      const leftLbl = this.add.text(28, height / 2 + 20, '◀', {
+        fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
+      }).setOrigin(0.5).setDepth(1);
+      leftBtn
+        .on('pointerover', () => leftBtn.setFillStyle(0x550099))
+        .on('pointerout',  () => leftBtn.setFillStyle(0x330066))
+        .on('pointerdown', () => {
+          this.elemPage = 0;
+          this.renderPhase(width, height, cx);
+        });
+      this.phaseObjects.push(leftBtn, leftLbl);
+    }
+
+    if (this.elemPage === 0 && hasCombinedPage) {
+      // Right arrow — go to combined elements
+      const rightBtn = this.add.rectangle(width - 28, height / 2 + 20, 32, 64, 0x330066)
+        .setStrokeStyle(1, 0x9944ff).setInteractive({ useHandCursor: true });
+      const rightLbl = this.add.text(width - 28, height / 2 + 20, '▶', {
+        fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
+      }).setOrigin(0.5).setDepth(1);
+      rightBtn
+        .on('pointerover', () => rightBtn.setFillStyle(0x550099))
+        .on('pointerout',  () => rightBtn.setFillStyle(0x330066))
+        .on('pointerdown', () => {
+          this.elemPage = 1;
+          this.renderPhase(width, height, cx);
+        });
+      this.phaseObjects.push(rightBtn, rightLbl);
+    }
+
+    // Element cards
     const cardW = 140;
     const cardH = 150;
     const gap = 16;
-    const totalW = ELEMENTS.length * cardW + (ELEMENTS.length - 1) * gap;
+    const totalW = currentElements.length * cardW + (currentElements.length - 1) * gap;
     const startX = cx - totalW / 2;
 
-    ELEMENTS.forEach((el, i) => {
+    if (currentElements.length === 0) {
+      const noElems = this.add.text(cx, height / 2 + 20, 'No combined elements discovered yet.\nVisit the LAB to unlock Oil (Fire + Water).', {
+        fontSize: '14px', fontFamily: 'Arial, sans-serif', color: '#555577', align: 'center',
+      }).setOrigin(0.5);
+      this.phaseObjects.push(noElems);
+      return;
+    }
+
+    currentElements.forEach((el, i) => {
       const bx = startX + i * (cardW + gap) + cardW / 2;
       const by = height / 2 + 20;
 
@@ -158,16 +218,15 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private renderDifficultyPhase(width: number, height: number, cx: number): void {
-    const playerEl = ELEMENTS.find((e) => e.id === this.playerChoice);
-    const enemyEl  = ELEMENTS.find((e) => e.id === this.enemyChoice);
+    const playerEl = this.findElement(this.playerChoice ?? '');
+    const enemyEl  = this.findElement(this.enemyChoice ?? '');
 
-    const diffBtnY  = 228;  // difficulty button centers
-    const descY     = 292;  // hover description
-    const mutTitleY = 335;  // "MUTATIONS" label
-    const mutRow0Y  = 374;  // centre of toggle row 1
-    const mutRow1Y  = 450;  // centre of toggle row 2
+    const diffBtnY  = 228;
+    const descY     = 292;
+    const mutTitleY = 335;
+    const mutRow0Y  = 374;
+    const mutRow1Y  = 450;
 
-    // Subtitle
     const subtitle = this.add.text(cx, 155, 'Choose difficulty', {
       fontSize: '20px',
       fontFamily: 'Arial, sans-serif',
@@ -175,7 +234,6 @@ export class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this.phaseObjects.push(subtitle);
 
-    // Matchup indicator
     if (playerEl && enemyEl) {
       const indicator = this.add.text(
         cx, 186,
@@ -185,7 +243,6 @@ export class MenuScene extends Phaser.Scene {
       this.phaseObjects.push(indicator);
     }
 
-    // Difficulty buttons
     const btnW = 148;
     const btnH = 60;
     const btnGap = 10;
@@ -310,6 +367,7 @@ export class MenuScene extends Phaser.Scene {
     if (this.selectionPhase === 'player') {
       this.playerChoice = elementId;
       this.selectionPhase = 'enemy';
+      this.elemPage = 0; // reset page for enemy selection
     } else if (this.selectionPhase === 'enemy') {
       this.enemyChoice = elementId;
       this.selectionPhase = 'difficulty';

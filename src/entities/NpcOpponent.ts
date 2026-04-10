@@ -35,6 +35,7 @@ export interface NpcAiState {
   windTrapActive: boolean;
   chargedBeamReady: boolean;
   earthShieldHp: number;
+  oilDroneCount?: number;
 }
 
 export class NpcOpponent extends Fighter {
@@ -212,6 +213,9 @@ export class NpcOpponent extends Fighter {
     }
     if (this.element.id === 'earth') {
       return this.doEarthAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'oil') {
+      return this.doOilAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
     return null;
   }
@@ -460,6 +464,44 @@ export class NpcOpponent extends Fighter {
     // 5. Stab — fallback melee
     if (dist < 130) {
       if (this.castAbility('stab', buildContext(target.x, target.y))) return 'stab';
+    }
+
+    return null;
+  }
+
+  private doOilAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    const droneCount = aiState.oilDroneCount ?? 0;
+    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+
+    if (!skipSpecials) {
+      // 1. Summon drones (up to 4)
+      if (droneCount < 4) {
+        if (this.castAbility('drone-summon', buildContext(this.x, this.y))) return 'drone-summon';
+      }
+
+      // 2. Command drones at player when in range
+      if (droneCount > 0 && dist < 400) {
+        if (this.castAbility('drone-command', buildContext(aimX, aimY))) return 'drone-command';
+      }
+
+      // 3. Launch drone bomb when close
+      if (droneCount > 0 && dist < 250) {
+        if (this.castAbility('drone-destroy', buildContext(target.x, target.y))) return 'drone-destroy';
+      }
+    }
+
+    // Default: command drones if any
+    if (droneCount > 0 && dist < 400) {
+      if (this.castAbility('drone-command', buildContext(aimX, aimY))) return 'drone-command';
     }
 
     return null;

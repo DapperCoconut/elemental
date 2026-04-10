@@ -33,7 +33,7 @@ export class TitleScene extends Phaser.Scene {
     const buttons: Array<{ label: string; sub?: string; color: number; borderColor: number; action: (() => void) | null }> = [
       { label: 'PLAY',  color: 0x1a2a1a, borderColor: 0x44cc44, action: () => this.scene.start('MenuScene') },
       { label: 'SHOP',  color: 0x1a1a2a, borderColor: 0x4466ff, action: () => this.scene.start('ShopScene') },
-      { label: 'LAB',   sub: 'COMING SOON', color: 0x1a1a1a, borderColor: 0x333333, action: null },
+      { label: 'LAB',   color: 0x1a1a2a, borderColor: 0x9944ff, action: () => this.scene.start('LabScene') },
     ];
 
     const btnW = 220;
