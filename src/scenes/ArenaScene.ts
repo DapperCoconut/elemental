@@ -3369,7 +3369,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── NPC AI ───────────────────────────────────────────────────
     const aiState: NpcAiState = {
-      isLocked: this.npcNukeChanneling || this.npcEarthSlamActive || this.npcEarthSlamBouncing || this.shadowBlackHoleActive || (this.shadowTentacleHooked && this.shadowTentacleActive),
+      isLocked: this.npcNukeChanneling || this.npcEarthSlamActive || this.npcEarthSlamBouncing,
       hasActiveGeyser: this.geysers.some((g) => g.owner === 'npc'),
       flameBodyActive: this.npcFlameBodyActive,
       projectiles: this.projectiles,
@@ -3458,7 +3458,7 @@ export class ArenaScene extends Phaser.Scene {
         const dragDist = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, tMx, tMy);
         if (dragDist > 20) {
           const dragAngle = Math.atan2(tMy - this.npc.y, tMx - this.npc.x);
-          nBody.setVelocity(Math.cos(dragAngle) * 420, Math.sin(dragAngle) * 420);
+          nBody.setVelocity(Math.cos(dragAngle) * 200, Math.sin(dragAngle) * 200);
         } else {
           nBody.setVelocity(0, 0);
         }
