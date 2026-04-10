@@ -316,6 +316,7 @@ export class ArenaScene extends Phaser.Scene {
   private shadowTentacleEnd = 0;
   private shadowTentacleX = 0;
   private shadowTentacleY = 0;
+  private shadowTentacleHooked = false; // true when NPC is hooked and being dragged
   private shadowTentacleSprite: Phaser.GameObjects.Graphics | null = null;
   private shadowNpcSnaredUntil = 0;
   private shadowNpcStunnedUntil = 0;
@@ -510,6 +511,7 @@ export class ArenaScene extends Phaser.Scene {
     this.shadowDrainHoldAccum = 0;
     this.shadowDrainCloudAccum = 0;
     this.shadowTentacleActive = false;
+    this.shadowTentacleHooked = false;
     this.shadowTentacleEnd = 0;
     this.shadowTentacleX = 0;
     this.shadowTentacleY = 0;
@@ -1173,12 +1175,22 @@ export class ArenaScene extends Phaser.Scene {
         });
       },
       activateTentacle: (x, y) => {
+        // Close-range hook: only hooks if NPC is within 220px
+        const hookDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
         this.shadowTentacleActive = true;
-        this.shadowTentacleEnd = this.time.now + 3000;
-        this.shadowTentacleX = x;
-        this.shadowTentacleY = y;
+        this.shadowTentacleHooked = hookDist <= 220;
+        this.shadowTentacleEnd = this.time.now + (this.shadowTentacleHooked ? 3000 : 600);
+        // Tentacle endpoint: toward cursor but clamped to 200px range
+        const angle = Math.atan2(y - this.player.y, x - this.player.x);
+        const reach = Math.min(200, Phaser.Math.Distance.Between(this.player.x, this.player.y, x, y));
+        this.shadowTentacleX = this.player.x + Math.cos(angle) * reach;
+        this.shadowTentacleY = this.player.y + Math.sin(angle) * reach;
         if (!this.shadowTentacleSprite) {
           this.shadowTentacleSprite = this.add.graphics().setDepth(6);
+        }
+        if (this.shadowTentacleHooked) {
+          this.npc.takeDamage(10);
+          this.spawnHitFlash(this.npc.x, this.npc.y, 0x8800cc);
         }
       },
       placeSnapTrap: () => {
@@ -3216,38 +3228,32 @@ export class ArenaScene extends Phaser.Scene {
 
       // Player shadow per-frame
       if (this.elementId === 'shadow') {
-        // Tentacle draw + snare detection
+        // Tentacle draw + drag
         if (this.shadowTentacleActive) {
           if (time >= this.shadowTentacleEnd) {
             this.shadowTentacleActive = false;
+            this.shadowTentacleHooked = false;
             if (this.shadowTentacleSprite) { this.shadowTentacleSprite.destroy(); this.shadowTentacleSprite = null; }
           } else {
-            if (this.shadowTentacleSprite) {
-              this.shadowTentacleSprite.clear();
-              this.shadowTentacleSprite.lineStyle(5, 0x8800cc, 0.7);
-              this.shadowTentacleSprite.lineBetween(this.player.x, this.player.y, this.shadowTentacleX, this.shadowTentacleY);
-            }
-            // Check if NPC touches tentacle line
-            if (this.shadowNpcSnaredUntil < time) {
-              const d = this.pointToSegmentDist(this.npc.x, this.npc.y, this.player.x, this.player.y, this.shadowTentacleX, this.shadowTentacleY);
-              if (d <= 22) {
-                this.shadowNpcSnaredUntil = time + 2000;
-                this.shadowTentacleActive = false;
-                if (this.shadowTentacleSprite) { this.shadowTentacleSprite.destroy(); this.shadowTentacleSprite = null; }
+            const tSpr = this.shadowTentacleSprite;
+            if (tSpr) {
+              tSpr.clear();
+              if (this.shadowTentacleHooked) {
+                // Hooked: draw from player to NPC, show drag chain
+                tSpr.lineStyle(6, 0x8800cc, 0.85);
+                tSpr.lineBetween(this.player.x, this.player.y, this.npc.x, this.npc.y);
+                tSpr.lineStyle(2, 0xcc44ff, 0.5);
+                tSpr.lineBetween(this.player.x, this.player.y, this.npc.x, this.npc.y);
+              } else {
+                // Miss: draw short whip toward endpoint and expire
+                tSpr.lineStyle(4, 0x8800cc, 0.6);
+                tSpr.lineBetween(this.player.x, this.player.y, this.shadowTentacleX, this.shadowTentacleY);
               }
             }
           }
         }
 
-        // NPC snare
-        if (time < this.shadowNpcSnaredUntil) {
-          (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-        }
-
-        // NPC stun (from snap trap)
-        if (time < this.shadowNpcStunnedUntil) {
-          (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-        }
+        // (NPC drag + stun handled after doAI in "Shadow NPC overrides" section)
 
         // Shadow dance charge bar (small bar above player)
         if (!this.shadowDanceChargeBar) {
@@ -3290,15 +3296,7 @@ export class ArenaScene extends Phaser.Scene {
               this.shadowBlackHoleSprite.lineStyle(3, 0x8800cc, 0.85);
               this.shadowBlackHoleSprite.strokeCircle(this.player.x, this.player.y, pulse + 8);
             }
-            // Pull NPC toward player (override AI movement)
-            const nBody = this.npc.body as Phaser.Physics.Arcade.Body;
-            const bDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
-            if (bDist > 12) {
-              const bAngle = Math.atan2(this.player.y - this.npc.y, this.player.x - this.npc.x);
-              nBody.setVelocity(Math.cos(bAngle) * 160, Math.sin(bAngle) * 160);
-            } else {
-              nBody.setVelocity(0, 0);
-            }
+            // NPC velocity override handled after doAI (see "Black hole pull" section)
           }
         }
       }
@@ -3371,7 +3369,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── NPC AI ───────────────────────────────────────────────────
     const aiState: NpcAiState = {
-      isLocked: this.npcNukeChanneling || this.npcEarthSlamActive || this.npcEarthSlamBouncing,
+      isLocked: this.npcNukeChanneling || this.npcEarthSlamActive || this.npcEarthSlamBouncing || this.shadowBlackHoleActive || (this.shadowTentacleHooked && this.shadowTentacleActive),
       hasActiveGeyser: this.geysers.some((g) => g.owner === 'npc'),
       flameBodyActive: this.npcFlameBodyActive,
       projectiles: this.projectiles,
@@ -3436,6 +3434,38 @@ export class ArenaScene extends Phaser.Scene {
     }
     if (npcCastId === 'charged-beam') {
       this.npcAirConsecutiveHits = 0;
+    }
+
+    // ── Shadow NPC overrides (after doAI so they take effect) ──────
+    if (this.elementId === 'shadow') {
+      const nBody = this.npc.body as Phaser.Physics.Arcade.Body;
+
+      // Black hole: pull NPC toward player
+      if (this.shadowBlackHoleActive && time < this.shadowBlackHoleEnd) {
+        const bDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
+        if (bDist > 12) {
+          const bAngle = Math.atan2(this.player.y - this.npc.y, this.player.x - this.npc.x);
+          nBody.setVelocity(Math.cos(bAngle) * 200, Math.sin(bAngle) * 200);
+        } else {
+          nBody.setVelocity(0, 0);
+        }
+      }
+
+      // Tentacle: drag NPC toward cursor
+      if (this.shadowTentacleHooked && this.shadowTentacleActive) {
+        const tMx = this.input.activePointer.worldX;
+        const tMy = this.input.activePointer.worldY;
+        const dragDist = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, tMx, tMy);
+        if (dragDist > 20) {
+          const dragAngle = Math.atan2(tMy - this.npc.y, tMx - this.npc.x);
+          nBody.setVelocity(Math.cos(dragAngle) * 220, Math.sin(dragAngle) * 220);
+        } else {
+          nBody.setVelocity(0, 0);
+        }
+      }
+
+      // Stun from snap trap
+      if (time < this.shadowNpcStunnedUntil) nBody.setVelocity(0, 0);
     }
 
     // ── Rebirth glow follows NPC ─────────────────────────────────
