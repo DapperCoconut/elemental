@@ -1178,11 +1178,11 @@ export class ArenaScene extends Phaser.Scene {
         // Close-range hook: only hooks if NPC is within 220px
         const hookDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
         this.shadowTentacleActive = true;
-        this.shadowTentacleHooked = hookDist <= 220;
+        this.shadowTentacleHooked = hookDist <= 110;
         this.shadowTentacleEnd = this.time.now + (this.shadowTentacleHooked ? 3000 : 600);
         // Tentacle endpoint: toward cursor but clamped to 200px range
         const angle = Math.atan2(y - this.player.y, x - this.player.x);
-        const reach = Math.min(200, Phaser.Math.Distance.Between(this.player.x, this.player.y, x, y));
+        const reach = Math.min(100, Phaser.Math.Distance.Between(this.player.x, this.player.y, x, y));
         this.shadowTentacleX = this.player.x + Math.cos(angle) * reach;
         this.shadowTentacleY = this.player.y + Math.sin(angle) * reach;
         if (!this.shadowTentacleSprite) {
@@ -3445,7 +3445,7 @@ export class ArenaScene extends Phaser.Scene {
         const bDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
         if (bDist > 12) {
           const bAngle = Math.atan2(this.player.y - this.npc.y, this.player.x - this.npc.x);
-          nBody.setVelocity(Math.cos(bAngle) * 200, Math.sin(bAngle) * 200);
+          nBody.setVelocity(Math.cos(bAngle) * 67, Math.sin(bAngle) * 67);
         } else {
           nBody.setVelocity(0, 0);
         }
@@ -3458,7 +3458,7 @@ export class ArenaScene extends Phaser.Scene {
         const dragDist = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, tMx, tMy);
         if (dragDist > 20) {
           const dragAngle = Math.atan2(tMy - this.npc.y, tMx - this.npc.x);
-          nBody.setVelocity(Math.cos(dragAngle) * 220, Math.sin(dragAngle) * 220);
+          nBody.setVelocity(Math.cos(dragAngle) * 420, Math.sin(dragAngle) * 420);
         } else {
           nBody.setVelocity(0, 0);
         }
