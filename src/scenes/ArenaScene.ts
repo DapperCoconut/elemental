@@ -2959,6 +2959,10 @@ export class ArenaScene extends Phaser.Scene {
           this.spawnHitFlash(target.x, target.y, 0x0099ff);
         }
       }
+      // NPC heals double when standing in its own puddles
+      if (p.owner === 'npc' && Phaser.Math.Distance.Between(p.x, p.y, this.npc.x, this.npc.y) <= p.radius) {
+        this.npc.heal(4 * delta / 250);
+      }
     }
 
     // ── Geyser expiry ─────────────────────────────────────────────
