@@ -330,10 +330,14 @@ export class ArenaScene extends Phaser.Scene {
   private shadowBlackHoleSprite: Phaser.GameObjects.Graphics | null = null;
   // NPC shadow
   private npcShadowTentacleActive = false;
+  private npcShadowTentacleHooked = false;
   private npcShadowTentacleEnd = 0;
   private npcShadowTentacleX = 0;
   private npcShadowTentacleY = 0;
   private npcShadowTentacleSprite: Phaser.GameObjects.Graphics | null = null;
+  private npcShadowDragTargetX = 0;
+  private npcShadowDragTargetY = 0;
+  private npcShadowDragNextChangeAt = 0;
   private shadowPlayerSnaredUntil = 0;
   private shadowPlayerStunnedUntil = 0;
 
@@ -527,10 +531,14 @@ export class ArenaScene extends Phaser.Scene {
     this.shadowBlackHoleEnd = 0;
     this.shadowBlackHoleSprite = null;
     this.npcShadowTentacleActive = false;
+    this.npcShadowTentacleHooked = false;
     this.npcShadowTentacleEnd = 0;
     this.npcShadowTentacleX = 0;
     this.npcShadowTentacleY = 0;
     this.npcShadowTentacleSprite = null;
+    this.npcShadowDragTargetX = 0;
+    this.npcShadowDragTargetY = 0;
+    this.npcShadowDragNextChangeAt = 0;
     this.shadowPlayerSnaredUntil = 0;
     this.shadowPlayerStunnedUntil = 0;
 
@@ -1393,13 +1401,22 @@ export class ArenaScene extends Phaser.Scene {
           },
         });
       },
-      activateTentacle: (x, y) => {
+      activateTentacle: (_x, _y) => {
+        const hookDist = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y);
         this.npcShadowTentacleActive = true;
-        this.npcShadowTentacleEnd = this.time.now + 3000;
-        this.npcShadowTentacleX = x;
-        this.npcShadowTentacleY = y;
+        this.npcShadowTentacleHooked = hookDist <= 110;
+        this.npcShadowTentacleEnd = this.time.now + (this.npcShadowTentacleHooked ? 3000 : 600);
         if (!this.npcShadowTentacleSprite) {
           this.npcShadowTentacleSprite = this.add.graphics().setDepth(6);
+        }
+        if (this.npcShadowTentacleHooked) {
+          this.player.takeDamage(10);
+          this.spawnHitFlash(this.player.x, this.player.y, 0x440066);
+          // Pick initial random drag target
+          const { width, height } = this.scale;
+          this.npcShadowDragTargetX = Phaser.Math.Between(80, width - 80);
+          this.npcShadowDragTargetY = Phaser.Math.Between(80, height - 80);
+          this.npcShadowDragNextChangeAt = this.time.now + 700;
         }
       },
       placeSnapTrap: () => {
@@ -1924,6 +1941,15 @@ export class ArenaScene extends Phaser.Scene {
       else if (this.pressureCharging) moveMult *= 0.75;    // Pressure Charge: 75% speed
 
       playerBody.setVelocity(vx * moveMult, vy * moveMult);
+    }
+
+    // ── NPC tentacle drag on player ───────────────────────────────
+    if (this.npcShadowTentacleHooked && this.npcShadowTentacleActive && !this.isDodging) {
+      const dragDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npcShadowDragTargetX, this.npcShadowDragTargetY);
+      if (dragDist > 20) {
+        const dragAngle = Math.atan2(this.npcShadowDragTargetY - this.player.y, this.npcShadowDragTargetX - this.player.x);
+        playerBody.setVelocity(Math.cos(dragAngle) * 200, Math.sin(dragAngle) * 200);
+      }
     }
 
     // ── Player abilities ─────────────────────────────────────────
@@ -3307,27 +3333,37 @@ export class ArenaScene extends Phaser.Scene {
         if (this.npcShadowTentacleActive) {
           if (time >= this.npcShadowTentacleEnd) {
             this.npcShadowTentacleActive = false;
+            this.npcShadowTentacleHooked = false;
             if (this.npcShadowTentacleSprite) { this.npcShadowTentacleSprite.destroy(); this.npcShadowTentacleSprite = null; }
           } else {
             if (this.npcShadowTentacleSprite) {
               this.npcShadowTentacleSprite.clear();
-              this.npcShadowTentacleSprite.lineStyle(5, 0x440066, 0.7);
-              this.npcShadowTentacleSprite.lineBetween(this.npc.x, this.npc.y, this.npcShadowTentacleX, this.npcShadowTentacleY);
-            }
-            if (this.shadowPlayerSnaredUntil < time) {
-              const d = this.pointToSegmentDist(this.player.x, this.player.y, this.npc.x, this.npc.y, this.npcShadowTentacleX, this.npcShadowTentacleY);
-              if (d <= 22) {
-                this.shadowPlayerSnaredUntil = time + 2000;
-                this.npcShadowTentacleActive = false;
-                if (this.npcShadowTentacleSprite) { this.npcShadowTentacleSprite.destroy(); this.npcShadowTentacleSprite = null; }
+              if (this.npcShadowTentacleHooked) {
+                // Draw tentacle from NPC to player
+                this.npcShadowTentacleSprite.lineStyle(6, 0x440066, 0.9);
+                this.npcShadowTentacleSprite.lineBetween(this.npc.x, this.npc.y, this.player.x, this.player.y);
+                this.npcShadowTentacleSprite.lineStyle(2, 0x8800cc, 0.5);
+                this.npcShadowTentacleSprite.lineBetween(this.npc.x, this.npc.y, this.player.x, this.player.y);
+              } else {
+                // Miss whip
+                const angle = Math.atan2(this.player.y - this.npc.y, this.player.x - this.npc.x);
+                this.npcShadowTentacleSprite.lineStyle(4, 0x440066, 0.6);
+                this.npcShadowTentacleSprite.lineBetween(
+                  this.npc.x, this.npc.y,
+                  this.npc.x + Math.cos(angle) * 100,
+                  this.npc.y + Math.sin(angle) * 100,
+                );
               }
             }
-          }
-        }
 
-        // Player snare from NPC tentacle
-        if (time < this.shadowPlayerSnaredUntil) {
-          (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+            // Periodically pick a new random drag target
+            if (this.npcShadowTentacleHooked && time >= this.npcShadowDragNextChangeAt) {
+              const { width, height } = this.scale;
+              this.npcShadowDragTargetX = Phaser.Math.Between(80, width - 80);
+              this.npcShadowDragTargetY = Phaser.Math.Between(80, height - 80);
+              this.npcShadowDragNextChangeAt = time + 700;
+            }
+          }
         }
 
         // Player stun from NPC snap trap
