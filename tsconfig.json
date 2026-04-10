@@ -6,7 +6,8 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "lib": ["ES2020", "DOM"]
+    "lib": ["ES2020", "DOM"],
+    "noEmit": true
   },
   "include": ["src/**/*", "vite.config.ts"]
 }

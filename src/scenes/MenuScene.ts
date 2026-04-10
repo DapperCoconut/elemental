@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { DIFFICULTY_PRESETS } from '../entities/NpcOpponent';
 import { SHARD_REWARDS } from '../data/Upgrades';
+import { MUTATIONS, activeMutationIds } from '../data/Mutations';
 
 interface ElementDef {
   id: string;
@@ -32,6 +33,7 @@ export class MenuScene extends Phaser.Scene {
   }
 
   create(): void {
+    activeMutationIds.clear();
     this.selectionPhase = 'player';
     this.playerChoice = null;
     this.enemyChoice = null;
@@ -159,8 +161,14 @@ export class MenuScene extends Phaser.Scene {
     const playerEl = ELEMENTS.find((e) => e.id === this.playerChoice);
     const enemyEl  = ELEMENTS.find((e) => e.id === this.enemyChoice);
 
+    const diffBtnY  = 228;  // difficulty button centers
+    const descY     = 292;  // hover description
+    const mutTitleY = 335;  // "MUTATIONS" label
+    const mutRow0Y  = 374;  // centre of toggle row 1
+    const mutRow1Y  = 450;  // centre of toggle row 2
+
     // Subtitle
-    const subtitle = this.add.text(cx, 158, 'Choose difficulty', {
+    const subtitle = this.add.text(cx, 155, 'Choose difficulty', {
       fontSize: '20px',
       fontFamily: 'Arial, sans-serif',
       color: '#888888',
@@ -170,7 +178,7 @@ export class MenuScene extends Phaser.Scene {
     // Matchup indicator
     if (playerEl && enemyEl) {
       const indicator = this.add.text(
-        cx, 194,
+        cx, 186,
         `${playerEl.emoji} ${playerEl.name}   vs   ${enemyEl.emoji} ${enemyEl.name}`,
         { fontSize: '16px', fontFamily: 'Arial, sans-serif', color: '#ffcc44' },
       ).setOrigin(0.5);
@@ -179,15 +187,13 @@ export class MenuScene extends Phaser.Scene {
 
     // Difficulty buttons
     const btnW = 148;
-    const btnH = 80;
+    const btnH = 60;
     const btnGap = 10;
     const totalW = DIFFICULTY_PRESETS.length * btnW + (DIFFICULTY_PRESETS.length - 1) * btnGap;
     const startX = cx - totalW / 2;
-    const by = height / 2 + 30;
 
-    // Description text area (shown on hover, updated dynamically)
-    const descText = this.add.text(cx, by + btnH / 2 + 30, '', {
-      fontSize: '13px',
+    const descText = this.add.text(cx, descY, '', {
+      fontSize: '12px',
       fontFamily: 'Arial, sans-serif',
       color: '#aaaaaa',
       align: 'center',
@@ -206,48 +212,97 @@ export class MenuScene extends Phaser.Scene {
       const bx = startX + i * (btnW + btnGap) + btnW / 2;
       const color = DIFF_COLORS[i];
       const btn = this.add
-        .rectangle(bx, by, btnW, btnH, color, 0.75)
+        .rectangle(bx, diffBtnY, btnW, btnH, color, 0.75)
         .setStrokeStyle(2, color)
         .setInteractive({ useHandCursor: true });
 
-      const labelText = this.add.text(bx, by - 12, diff.label.toUpperCase(), {
-        fontSize: '14px',
+      const labelText = this.add.text(bx, diffBtnY - 8, diff.label.toUpperCase(), {
+        fontSize: '13px',
         fontFamily: '"Arial Black", sans-serif',
         color: '#ffffff',
       }).setOrigin(0.5);
 
-      const hpText = this.add.text(bx, by + 6, `HP: ${diff.hp}`, {
-        fontSize: '11px',
+      const hpText = this.add.text(bx, diffBtnY + 8, `HP: ${diff.hp}  💎+${SHARD_REWARDS[i]}`, {
+        fontSize: '10px',
         fontFamily: 'Arial, sans-serif',
         color: '#eeeeee',
       }).setOrigin(0.5);
 
-      const shardText = this.add.text(bx, by + 22, `💎 +${SHARD_REWARDS[i]}`, {
-        fontSize: '10px',
-        fontFamily: 'Arial, sans-serif',
-        color: '#ffcc44',
-      }).setOrigin(0.5);
-
       btn
-        .on('pointerover', () => {
-          btn.setAlpha(1);
-          btn.setStrokeStyle(3, 0xffffff);
-          descText.setText(DIFF_DESCRIPTIONS[i]);
-        })
-        .on('pointerout', () => {
-          btn.setAlpha(0.75);
-          btn.setStrokeStyle(2, color);
-          descText.setText('');
-        })
+        .on('pointerover', () => { btn.setAlpha(1); btn.setStrokeStyle(3, 0xffffff); descText.setText(DIFF_DESCRIPTIONS[i]); })
+        .on('pointerout',  () => { btn.setAlpha(0.75); btn.setStrokeStyle(2, color); descText.setText(''); })
         .on('pointerdown', () => {
           this.scene.start('ArenaScene', {
             elementId: this.playerChoice,
             enemyElementId: this.enemyChoice,
             difficulty: diff.level,
+            mutations: [...activeMutationIds],
           });
         });
 
-      this.phaseObjects.push(btn, labelText, hpText, shardText);
+      this.phaseObjects.push(btn, labelText, hpText);
+    });
+
+    // ── Mutation toggles (2 rows × 4 cols) ──────────────────────────
+    const mutTitle = this.add.text(cx, mutTitleY, '— MUTATIONS —', {
+      fontSize: '11px',
+      fontFamily: '"Arial Black", sans-serif',
+      color: '#aaaaaa',
+    }).setOrigin(0.5);
+    this.phaseObjects.push(mutTitle);
+
+    const togW = 172;
+    const togH = 44;
+    const togGapX = 10;
+    const cols = 4;
+    const totalTogW = cols * togW + (cols - 1) * togGapX;
+    const togStartX = cx - totalTogW / 2;
+    const rowY = [mutRow0Y, mutRow1Y];
+
+    MUTATIONS.forEach((mut, idx) => {
+      const col = idx % cols;
+      const row = Math.floor(idx / cols);
+      const tx = togStartX + col * (togW + togGapX) + togW / 2;
+      const ty = rowY[row];
+
+      const isOn = () => activeMutationIds.has(mut.id);
+      const getColor  = () => isOn() ? 0x1a3a1a : 0x252535;
+      const getBorder = () => isOn() ? 0x55ee55 : 0x9999bb;
+
+      const tog = this.add
+        .rectangle(tx, ty, togW, togH, getColor(), 1)
+        .setStrokeStyle(2, getBorder())
+        .setInteractive({ useHandCursor: true });
+
+      const togLabel = this.add.text(tx, ty - 7, `${mut.emoji} ${mut.name}`, {
+        fontSize: '12px',
+        fontFamily: '"Arial Black", sans-serif',
+        color: isOn() ? '#88ff88' : '#cccccc',
+      }).setOrigin(0.5);
+
+      const togDesc = this.add.text(tx, ty + 9, mut.description, {
+        fontSize: '9px',
+        fontFamily: 'Arial, sans-serif',
+        color: isOn() ? '#66dd66' : '#999999',
+      }).setOrigin(0.5);
+
+      const refresh = () => {
+        tog.setFillStyle(getColor(), 1);
+        tog.setStrokeStyle(2, getBorder());
+        togLabel.setColor(isOn() ? '#88ff88' : '#cccccc');
+        togDesc.setColor(isOn() ? '#66dd66' : '#999999');
+      };
+
+      tog
+        .on('pointerover', () => tog.setStrokeStyle(3, 0xffffff))
+        .on('pointerout',  () => tog.setStrokeStyle(2, getBorder()))
+        .on('pointerdown', () => {
+          if (isOn()) activeMutationIds.delete(mut.id);
+          else activeMutationIds.add(mut.id);
+          refresh();
+        });
+
+      this.phaseObjects.push(tog, togLabel, togDesc);
     });
   }
 

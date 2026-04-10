@@ -14,6 +14,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public incomingDamageMultiplier = 1;
   public chargeRatio = 0;   // 0–1, drives the yellow charge bar in HealthBar
   public lastIncomingDamage = 0; // set in takeDamage() before shield check — used by reflect upgrades
+  /** Multiply all ability cooldowns by this factor (< 1 = faster, e.g. Rebirth post-revival). */
+  public cooldownMult = 1;
 
   private cooldowns: Map<string, number> = new Map();
   private healthBar: HealthBar;
@@ -110,7 +112,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     if (!ability) return false;
 
     const now = Date.now();
-    if (now - (this.cooldowns.get(abilityId) ?? 0) < ability.cooldown) return false;
+    if (now - (this.cooldowns.get(abilityId) ?? 0) < ability.cooldown * this.cooldownMult) return false;
 
     this.cooldowns.set(abilityId, now);
     ability.cast(ctx);

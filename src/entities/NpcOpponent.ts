@@ -46,6 +46,14 @@ export class NpcOpponent extends Fighter {
   private lastFlameBodyToggle = -10000;
   private readonly difficulty: DifficultyConfig;
 
+  /** Set by ArenaScene when the Mastered mutation is active. */
+  public isMastered = false;
+
+  // ── Charge state (all AI can charge; Mastered makes it meaningful) ──
+  private chargeUntil = 0;
+  private chargingAbility = '';
+  private lastChargeDecision = -1; // -1 = uninitialised; set to `time` on first AI tick
+
   constructor(
     scene: Phaser.Scene,
     x: number,
@@ -65,6 +73,10 @@ export class NpcOpponent extends Fighter {
     aiState: NpcAiState,
   ): string | null {
     if (aiState.isLocked) return null;
+
+    // Initialise charge cooldown on the very first tick so mastered NPCs don't
+    // immediately charge before moving.
+    if (this.lastChargeDecision < 0) this.lastChargeDecision = time;
 
     const dist = Phaser.Math.Distance.Between(this.x, this.y, target.x, target.y);
     const hpRatio = this.hp / this.maxHp;
@@ -86,6 +98,24 @@ export class NpcOpponent extends Fighter {
 
     const body = this.body as Phaser.Physics.Arcade.Body;
     const angleToTarget = Phaser.Math.Angle.Between(this.x, this.y, target.x, target.y);
+
+    // ── Active charge: hold position and fire when ready ─────────
+    if (this.chargeUntil > 0) {
+      body.setVelocity(0, 0);
+      if (time >= this.chargeUntil) {
+        const abilityId = this.chargingAbility;
+        this.chargeUntil = 0;
+        this.chargingAbility = '';
+        const aimOffsetRad2 = (Math.random() * 2 - 1) * this.difficulty.aimOffsetDeg * (Math.PI / 180);
+        const aimAngle2 = angleToTarget + aimOffsetRad2;
+        const aimX2 = this.x + Math.cos(aimAngle2) * dist;
+        const aimY2 = this.y + Math.sin(aimAngle2) * dist;
+        if (this.castAbility(abilityId, buildContext(aimX2, aimY2))) {
+          return abilityId + '-charged';
+        }
+      }
+      return null;
+    }
 
     // ── Compute aimed target position (with difficulty offset) ────
     const aimOffsetRad = (Math.random() * 2 - 1) * this.difficulty.aimOffsetDeg * (Math.PI / 180);
@@ -139,11 +169,19 @@ export class NpcOpponent extends Fighter {
           break;
         }
         case 'attack': {
-          const strafeAngle = angleToTarget + this.strafeDir * (Math.PI / 2);
-          body.setVelocity(
-            Math.cos(strafeAngle) * this.speed * 0.6,
-            Math.sin(strafeAngle) * this.speed * 0.6,
-          );
+          // Earth rushes into melee; others strafe
+          if (this.element.id === 'earth') {
+            body.setVelocity(
+              Math.cos(angleToTarget) * this.speed,
+              Math.sin(angleToTarget) * this.speed,
+            );
+          } else {
+            const strafeAngle = angleToTarget + this.strafeDir * (Math.PI / 2);
+            body.setVelocity(
+              Math.cos(strafeAngle) * this.speed * 0.6,
+              Math.sin(strafeAngle) * this.speed * 0.6,
+            );
+          }
           break;
         }
         case 'retreat': {
@@ -188,7 +226,7 @@ export class NpcOpponent extends Fighter {
     aimY: number,
     aiState: NpcAiState,
   ): string | null {
-    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skipSpecials) {
       // 1. Flame Nuke — close range, decent HP
@@ -196,29 +234,37 @@ export class NpcOpponent extends Fighter {
         if (this.castAbility('flame-nuke', buildContext(this.x, this.y))) return 'flame-nuke';
       }
 
-      // 2. Pressure Bomb — mid range (aimed at offset position)
+      // 2. Pressure Bomb — mid range
       if (dist >= 140 && dist <= 360) {
         if (this.castAbility('pressure-bomb', buildContext(aimX, aimY))) return 'pressure-bomb';
       }
 
-      // 3. Flame Dash — gap-close when far (aimed with offset)
+      // 3. Flame Dash — gap-close when far
       if (dist > 220) {
         if (this.castAbility('flame-dash', buildContext(aimX, aimY))) return 'flame-dash';
       }
 
-      // 4. Flame Body toggle — Nightmare only, on when HP > 30%, off when <= 30%
-      if (this.difficulty.level >= 5) {
+      // 4. Flame Body toggle — Nightmare always; Mastered at any difficulty
+      if (this.difficulty.level >= 5 || this.isMastered) {
         const wantsFlameBody = hpRatio > 0.30;
-        if (wantsFlameBody !== aiState.flameBodyActive && time - this.lastFlameBodyToggle > 3000) {
+        if (wantsFlameBody !== aiState.flameBodyActive && time - this.lastFlameBodyToggle > 2500) {
           if (this.castAbility('flame-body', buildContext(this.x, this.y))) {
             this.lastFlameBodyToggle = time;
             return 'flame-body';
           }
         }
       }
+
+      // 5. Mastered: schedule charge for a heavy pressure-bomb every ~9s
+      if (this.isMastered && !this.chargeUntil && time - this.lastChargeDecision > 9000) {
+        this.lastChargeDecision = time;
+        this.chargeUntil = time + Phaser.Math.Between(3000, 6000);
+        this.chargingAbility = 'pressure-bomb';
+        return 'start-charge';
+      }
     }
 
-    // 5. Fireball default (uses offset aim)
+    // Default: Fireball
     if (this.aiState === 'attack' || this.aiState === 'chase') {
       if (this.castAbility('fireball', buildContext(aimX, aimY))) return 'fireball';
     }
@@ -236,7 +282,7 @@ export class NpcOpponent extends Fighter {
     aimY: number,
     aiState: NpcAiState,
   ): string | null {
-    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skipSpecials) {
       // 1. Water Shield — low HP, no active charge
@@ -258,9 +304,17 @@ export class NpcOpponent extends Fighter {
       if (!aiState.hasActiveGeyser) {
         if (this.castAbility('geyser', buildContext(this.x, this.y))) return 'geyser';
       }
+
+      // 5. Mastered: schedule charge for pain-rain every ~10s
+      if (this.isMastered && !this.chargeUntil && time - this.lastChargeDecision > 10000) {
+        this.lastChargeDecision = time;
+        this.chargeUntil = time + Phaser.Math.Between(2000, 4000);
+        this.chargingAbility = 'pain-rain';
+        return 'start-charge';
+      }
     }
 
-    // 5. Water Cut default (uses offset aim)
+    // 6. Water Cut default (uses offset aim)
     if (this.castAbility('water-cut', buildContext(aimX, aimY))) return 'water-cut';
 
     return null;
@@ -279,7 +333,7 @@ export class NpcOpponent extends Fighter {
     // Don't use abilities while dragging — focus on the drag
     if (aiState.thornDragActive) return null;
 
-    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skipSpecials) {
       // 1. Plant — maintain 2 defensive plants near self, 1 offensive near enemy
@@ -338,7 +392,7 @@ export class NpcOpponent extends Fighter {
       return buildContext(this.x + Math.cos(missAng) * 600, this.y + Math.sin(missAng) * 600);
     };
 
-    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skipSpecials) {
       // 1. Charged Beam — 50% hit chance regardless of difficulty
@@ -378,12 +432,14 @@ export class NpcOpponent extends Fighter {
     aimY: number,
     aiState: NpcAiState,
   ): string | null {
-    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
     const shield = aiState.earthShieldHp;
 
     if (!skipSpecials) {
-      // 1. Perfect Shield — use whenever off cooldown (massive shield gain)
-      if (this.castAbility('perfect-shield', buildContext(this.x, this.y))) return 'perfect-shield';
+      // 1. Bull Rush — use when HP is low or at medium range for aggression
+      if ((hpRatio < 0.5 || dist < 300) && shield >= 20) {
+        if (this.castAbility('bull-rush', buildContext(target.x, target.y))) return 'bull-rush';
+      }
 
       // 2. Shield Up — keep shield topped up
       if (shield < 60) {

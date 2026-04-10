@@ -20,7 +20,7 @@ type SceneWithFighters = Phaser.Scene & {
   player?: { x: number; y: number; takeDamage?: (n: number) => void };
 };
 
-function fireHitscan(ctx: CastContext, damage: number, lineColor: number, reportResult: boolean): void {
+export function fireHitscan(ctx: CastContext, damage: number, lineColor: number, reportResult: boolean): void {
   const dx = ctx.targetX - ctx.casterX;
   const dy = ctx.targetY - ctx.casterY;
   const len = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -48,6 +48,64 @@ function fireHitscan(ctx: CastContext, damage: number, lineColor: number, report
   const hit = !!opp && pointToSegmentDist(opp.x, opp.y, ctx.casterX, ctx.casterY, endX, endY) <= 30;
   if (hit) opp!.takeDamage?.(damage);
   if (reportResult) ctx.reportAirSnipeResult(hit);
+}
+
+/** Q upgrade: hitscan that bounces off walls up to `maxBounces` times. */
+export function fireBounceHitscan(
+  ctx: CastContext,
+  damage: number,
+  maxBounces: number,
+  W: number,
+  H: number,
+): void {
+  let sx = ctx.casterX, sy = ctx.casterY;
+  let dx = ctx.targetX - ctx.casterX;
+  let dy = ctx.targetY - ctx.casterY;
+  const len = Math.sqrt(dx * dx + dy * dy) || 1;
+  dx /= len; dy /= len;
+
+  const gfx  = ctx.scene.add.graphics().setDepth(8);
+  const core = ctx.scene.add.graphics().setDepth(9);
+  gfx.lineStyle(5, 0x88ccff, 1);
+  core.lineStyle(2, 0xffffff, 1);
+
+  const scene = ctx.scene as SceneWithFighters;
+  const opp   = ctx.isPlayerCaster ? scene.npc : scene.player;
+  let hit = false;
+  let remaining = 900;
+
+  for (let bounce = 0; bounce <= maxBounces && remaining > 0; bounce++) {
+    let tMin = remaining;
+    let hitWall: 'h' | 'v' | null = null;
+
+    if (dx < -0.0001) { const t = (0 - sx)   / dx; if (t > 0.1 && t < tMin) { tMin = t; hitWall = 'v'; } }
+    if (dx >  0.0001) { const t = (W - sx)   / dx; if (t > 0.1 && t < tMin) { tMin = t; hitWall = 'v'; } }
+    if (dy < -0.0001) { const t = (0 - sy)   / dy; if (t > 0.1 && t < tMin) { tMin = t; hitWall = 'h'; } }
+    if (dy >  0.0001) { const t = (H - sy)   / dy; if (t > 0.1 && t < tMin) { tMin = t; hitWall = 'h'; } }
+
+    const ex = sx + dx * tMin;
+    const ey = sy + dy * tMin;
+
+    gfx.beginPath();  gfx.moveTo(sx, sy);  gfx.lineTo(ex, ey);  gfx.strokePath();
+    core.beginPath(); core.moveTo(sx, sy); core.lineTo(ex, ey); core.strokePath();
+
+    if (!hit && opp && pointToSegmentDist(opp.x, opp.y, sx, sy, ex, ey) <= 30) {
+      opp.takeDamage?.(damage);
+      hit = true;
+    }
+
+    remaining -= tMin;
+    if (!hitWall || bounce === maxBounces) break;
+    if (hitWall === 'v') dx = -dx;
+    else                  dy = -dy;
+    sx = ex + dx * 0.5;
+    sy = ey + dy * 0.5;
+  }
+
+  ctx.scene.tweens.add({
+    targets: [gfx, core], alpha: 0, duration: 350,
+    onComplete: () => { gfx.destroy(); core.destroy(); },
+  });
 }
 
 const airSnipe: Ability = {

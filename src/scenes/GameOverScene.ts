@@ -7,14 +7,15 @@ export class GameOverScene extends Phaser.Scene {
     super({ key: 'GameOverScene' });
   }
 
-  create(data: { playerWon: boolean; difficulty: number }): void {
+  create(data: { playerWon: boolean; difficulty: number; rewardMult?: number }): void {
     const { width, height } = this.scale;
     const cx = width / 2;
     const cy = height / 2;
 
     this.add.rectangle(cx, cy, width, height, 0x0d0d1a);
 
-    const shardsEarned = data.playerWon ? SHARD_REWARDS[data.difficulty - 1] : 0;
+    const baseShard = data.playerWon ? SHARD_REWARDS[data.difficulty - 1] : 0;
+    const shardsEarned = Math.round(baseShard * (data.rewardMult ?? 1));
     if (shardsEarned > 0) {
       PlayerData.addShards(shardsEarned);
     }
@@ -38,7 +39,8 @@ export class GameOverScene extends Phaser.Scene {
     }).setOrigin(0.5);
 
     if (shardsEarned > 0) {
-      this.add.text(cx, cy + 18, `+${shardsEarned} 💎`, {
+      const multLabel = (data.rewardMult ?? 1) > 1 ? ` ×${data.rewardMult!.toFixed(2)}` : '';
+      this.add.text(cx, cy + 18, `+${shardsEarned} 💎${multLabel}`, {
         fontSize: '22px',
         fontFamily: '"Arial Black", sans-serif',
         color: '#ffcc00',

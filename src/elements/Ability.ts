@@ -32,6 +32,7 @@ export interface CastContext {
   setShieldHp: (amount: number) => void;
   slamCaster: () => void;
   dealMeleeDamage: (range: number, damage: number, knockback?: number) => void;
+  startBullRush: () => void;
 }
 
 export interface Ability {

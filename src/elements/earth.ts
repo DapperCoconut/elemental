@@ -27,11 +27,12 @@ const stab: Ability = {
 const shieldUp: Ability = {
   id: 'shield-up',
   name: 'Shield Up',
-  description: '+20 shield HP (max 100)',
+  description: 'Hold E: charge shield at 5/s (max 100)',
   displayKey: 'E',
-  cooldown: 3000,
+  cooldown: 0,
   cast(ctx: CastContext) {
-    ctx.setShieldHp(Math.min(100, ctx.getShieldHp() + 20));
+    // NPC use: instant +10 shield
+    ctx.setShieldHp(Math.min(100, ctx.getShieldHp() + 10));
 
     // Visual: brown ring pulse
     const ring = ctx.scene.add.circle(ctx.casterX, ctx.casterY, 18, 0x997744, 0.7).setDepth(4);
@@ -88,32 +89,14 @@ const shieldBreak: Ability = {
   },
 };
 
-const perfectShield: Ability = {
-  id: 'perfect-shield',
-  name: 'Perfect Shield',
-  description: '+20 shield, double all. Excess → 1%/pt speed 30s',
+const bullRush: Ability = {
+  id: 'bull-rush',
+  name: 'Bull Rush',
+  description: 'Rage 6s toward cursor — heavy knockback, 20% DR',
   displayKey: 'Q',
-  cooldown: 30000,
+  cooldown: 40000,
   cast(ctx: CastContext) {
-    let shield = ctx.getShieldHp();
-    shield = (shield + 20) * 2;
-    const excess = Math.max(0, shield - 100);
-    ctx.setShieldHp(Math.min(100, shield));
-
-    if (excess > 0) {
-      const mult = 1 + excess / 100;
-      ctx.setCasterSpeedMultiplier(mult);
-      ctx.scene.time.delayedCall(30000, () => {
-        ctx.setCasterSpeedMultiplier(1);
-      });
-    }
-
-    // Visual: gold aura burst
-    const ring = ctx.scene.add.circle(ctx.casterX, ctx.casterY, 20, 0xffdd44, 0.9).setDepth(4);
-    ctx.scene.tweens.add({
-      targets: ring, scaleX: 9, scaleY: 9, alpha: 0, duration: 600,
-      onComplete: () => ring.destroy(),
-    });
+    ctx.startBullRush();
   },
 };
 
@@ -122,5 +105,5 @@ export const earthElement: Element = {
   name: 'Earth',
   color: 0x887755,
   emoji: '🪨',
-  abilities: [stab, shieldUp, shieldSlam, shieldBreak, perfectShield],
+  abilities: [stab, shieldUp, shieldSlam, shieldBreak, bullRush],
 };

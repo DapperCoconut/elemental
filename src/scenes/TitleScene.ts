@@ -87,5 +87,35 @@ export class TitleScene extends Phaser.Scene {
       fontSize: '13px',
       color: '#444444',
     }).setOrigin(0.5);
+
+    // Secret code: WWSSADADBA → 9999 shards
+    const SECRET = ['W', 'W', 'S', 'S', 'A', 'D', 'A', 'D', 'B', 'A'];
+    let secretIdx = 0;
+    let notificationText: Phaser.GameObjects.Text | null = null;
+    this.input.keyboard!.on('keydown', (event: KeyboardEvent) => {
+      const key = event.key.toUpperCase();
+      if (key === SECRET[secretIdx]) {
+        secretIdx++;
+        if (secretIdx === SECRET.length) {
+          secretIdx = 0;
+          PlayerData.addShards(9999);
+          if (notificationText) notificationText.destroy();
+          notificationText = this.add.text(cx, height - 60, '✨ +9999 Shards!', {
+            fontSize: '20px',
+            fontFamily: '"Arial Black", sans-serif',
+            color: '#ffcc44',
+            stroke: '#884400',
+            strokeThickness: 3,
+          }).setOrigin(0.5).setDepth(100);
+          this.tweens.add({
+            targets: notificationText, alpha: 0, y: height - 100,
+            delay: 2000, duration: 1000,
+            onComplete: () => { notificationText?.destroy(); notificationText = null; },
+          });
+        }
+      } else {
+        secretIdx = key === SECRET[0] ? 1 : 0;
+      }
+    });
   }
 }
