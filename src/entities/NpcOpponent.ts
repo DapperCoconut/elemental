@@ -216,10 +216,10 @@ export class NpcOpponent extends Fighter {
       return this.doEarthAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
     if (this.element.id === 'oil') {
-      return this.doOilAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+      return this.doOilAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState, angleToTarget);
     }
     if (this.element.id === 'shadow') {
-      return this.doShadowAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+      return this.doShadowAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState, angleToTarget);
     }
     return null;
   }
@@ -482,9 +482,16 @@ export class NpcOpponent extends Fighter {
     aimX: number,
     aimY: number,
     aiState: NpcAiState,
+    angleToTarget: number,
   ): string | null {
     const droneCount = aiState.oilDroneCount ?? 0;
     const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+
+    // Tight aim for drone-command (10% of normal offset)
+    const sharpOffsetRad = (Math.random() * 2 - 1) * this.difficulty.aimOffsetDeg * 0.1 * (Math.PI / 180);
+    const sharpAngle = angleToTarget + sharpOffsetRad;
+    const sharpX = this.x + Math.cos(sharpAngle) * dist;
+    const sharpY = this.y + Math.sin(sharpAngle) * dist;
 
     if (!skipSpecials) {
       // 1. Summon drones (up to 4)
@@ -492,9 +499,9 @@ export class NpcOpponent extends Fighter {
         if (this.castAbility('drone-summon', buildContext(this.x, this.y))) return 'drone-summon';
       }
 
-      // 2. Command drones at player when in range
+      // 2. Command drones at player — sharp aim
       if (droneCount > 0 && dist < 400) {
-        if (this.castAbility('drone-command', buildContext(aimX, aimY))) return 'drone-command';
+        if (this.castAbility('drone-command', buildContext(sharpX, sharpY))) return 'drone-command';
       }
 
       // 3. Launch drone bomb when close
@@ -503,9 +510,9 @@ export class NpcOpponent extends Fighter {
       }
     }
 
-    // Default: command drones if any
+    // Default: command drones — sharp aim
     if (droneCount > 0 && dist < 400) {
-      if (this.castAbility('drone-command', buildContext(aimX, aimY))) return 'drone-command';
+      if (this.castAbility('drone-command', buildContext(sharpX, sharpY))) return 'drone-command';
     }
 
     return null;
@@ -520,8 +527,15 @@ export class NpcOpponent extends Fighter {
     aimX: number,
     aimY: number,
     _aiState: NpcAiState,
+    angleToTarget: number,
   ): string | null {
     const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+
+    // Tight aim for dark-drain (10% of normal offset)
+    const sharpOffsetRad = (Math.random() * 2 - 1) * this.difficulty.aimOffsetDeg * 0.1 * (Math.PI / 180);
+    const sharpAngle = angleToTarget + sharpOffsetRad;
+    const sharpX = this.x + Math.cos(sharpAngle) * dist;
+    const sharpY = this.y + Math.sin(sharpAngle) * dist;
 
     if (!skipSpecials) {
       // 1. Tentacle — extend toward player when in attack range
@@ -534,15 +548,15 @@ export class NpcOpponent extends Fighter {
         if (this.castAbility('snap-trap', buildContext(this.x, this.y))) return 'snap-trap';
       }
 
-      // 3. Dark bomb — fire at player when in range
+      // 3. Dark bomb — sharp aim
       if (dist < 400) {
-        if (this.castAbility('dark-drain', buildContext(aimX, aimY))) return 'dark-drain';
+        if (this.castAbility('dark-drain', buildContext(sharpX, sharpY))) return 'dark-drain';
       }
     }
 
-    // Default: dark bomb
+    // Default: dark bomb — sharp aim
     if (dist < 500) {
-      if (this.castAbility('dark-drain', buildContext(aimX, aimY))) return 'dark-drain';
+      if (this.castAbility('dark-drain', buildContext(sharpX, sharpY))) return 'dark-drain';
     }
 
     return null;
