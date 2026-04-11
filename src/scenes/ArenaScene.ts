@@ -19,6 +19,7 @@ import { crystalElement } from '../elements/crystal';
 import { soulElement } from '../elements/soul';
 import { huntElement } from '../elements/hunt';
 import { sandElement } from '../elements/sand';
+import { P2InputState, emptyP2Input } from '../network/P2InputState';
 import * as PlayerData from '../data/PlayerData';
 import { getTotalRewardMult } from '../data/Mutations';
 
@@ -236,6 +237,17 @@ export class ArenaScene extends Phaser.Scene {
   private npcDifficulty!: DifficultyConfig;
   private isPvP = false;
 
+  // Network PvP
+  private isNetworkPvP = false;
+  private networkRole: 'host' | 'guest' | null = null;
+  private networkManager: import('../network/NetworkManager').NetworkManager | null = null;
+  private stateSendAccum = 0;
+  private readonly STATE_SEND_INTERVAL = 50; // ms (20 Hz)
+  private networkTick = 0;
+  private p2NetworkAimX = 0.5;
+  private p2NetworkAimY = 0.5;
+  private guestInputSeq = 0;
+
   // P2 input keys (PvP only)
   private p2UpKey!: Phaser.Input.Keyboard.Key;
   private p2DownKey!: Phaser.Input.Keyboard.Key;
@@ -263,7 +275,8 @@ export class ArenaScene extends Phaser.Scene {
   // P2 combat state
   private p2DodgeOnCooldown = false;
   private p2IsDodging = false;
-  private p2ClickWasDown = false;
+  private p2Input: P2InputState = emptyP2Input();
+  private p2PrevInput: P2InputState = emptyP2Input();
   private p2ActiveUpgrades: string[] = [];
 
   // P2 fire-specific state (mirrors player fire state, used when P2 picks fire)
@@ -275,7 +288,6 @@ export class ArenaScene extends Phaser.Scene {
   private p2PressureChargeVisual: Phaser.GameObjects.Arc | null = null;
   private p2PressureLastTargetX = 0;
   private p2PressureLastTargetY = 0;
-  private p2FKeyWasDown = false;
   private p2FKeyHeldSince = 0;
 
   // Input keys
@@ -739,9 +751,11 @@ export class ArenaScene extends Phaser.Scene {
     super({ key: 'ArenaScene' });
   }
 
-  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; isPvP?: boolean }): void {
+  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; isPvP?: boolean; isNetworkPvP?: boolean; networkRole?: 'host' | 'guest' }): void {
     this.elementId = data.elementId ?? 'fire';
     this.isPvP = data.isPvP ?? false;
+    this.isNetworkPvP = data.isNetworkPvP ?? false;
+    this.networkRole = data.networkRole ?? null;
     const enemyElementId = data.enemyElementId ?? (this.elementId === 'fire' ? 'water' : 'fire');
     this.npcElementId = enemyElementId;
     const difficultyLevel = Math.max(1, Math.min(5, data.difficulty ?? 3));
@@ -759,7 +773,8 @@ export class ArenaScene extends Phaser.Scene {
     this.playerSpeedMult = 1;
     this.p2DodgeOnCooldown = false;
     this.p2IsDodging = false;
-    this.p2ClickWasDown = false;
+    this.p2Input = emptyP2Input();
+    this.p2PrevInput = emptyP2Input();
     this.p2ActiveUpgrades = [];
     this.p2AbilityBars = [];
     this.p2ReticleX = 0;
@@ -772,8 +787,12 @@ export class ArenaScene extends Phaser.Scene {
     this.p2PressureChargeVisual = null;
     this.p2PressureLastTargetX = 0;
     this.p2PressureLastTargetY = 0;
-    this.p2FKeyWasDown = false;
     this.p2FKeyHeldSince = 0;
+    this.stateSendAccum = 0;
+    this.networkTick = 0;
+    this.p2NetworkAimX = 0.5;
+    this.p2NetworkAimY = 0.5;
+    this.guestInputSeq = 0;
 
     this.flameBodyActive = false;
     this.flameBodyTickAccum = 0;
@@ -1361,11 +1380,32 @@ export class ArenaScene extends Phaser.Scene {
       );
     }
 
+    // ── Network PvP wiring ────────────────────────────────────────
+    if (this.isNetworkPvP) {
+      this.networkManager = this.registry.get('networkManager') ?? null;
+      if (this.networkManager) {
+        if (this.networkRole === 'host') {
+          this.networkManager.onInputReceived((input) => {
+            this.p2Input = input;
+            if (input.aimX !== undefined) this.p2NetworkAimX = input.aimX;
+            if (input.aimY !== undefined) this.p2NetworkAimY = input.aimY;
+          });
+        } else if (this.networkRole === 'guest') {
+          this.networkManager.onStateReceived((state) => this.reconcileNetworkState(state));
+        }
+        this.networkManager.onDisconnected(() => this.handleNetworkDisconnect());
+      }
+    }
+
     // ── Defeat + damage events ────────────────────────────────────
-    this.player.once('defeated', () => this.endGame(false));
+    this.player.once('defeated', () => {
+      if (this.networkRole === 'guest') return; // guest waits for host's gameOver packet
+      this.endGame(false);
+    });
 
     const registerNpcDefeat = () => {
       this.npc.once('defeated', () => {
+        if (this.networkRole === 'guest') return; // guest waits for host's gameOver packet
         if (!this.isPvP && this.mutations.has('rebirth') && !this.npcRebirthUsed) {
           this.npcRebirthUsed = true;
           this.npc.isInvincible = true;
@@ -1430,7 +1470,8 @@ export class ArenaScene extends Phaser.Scene {
     this.fKey     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.F);
     this.spaceKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
 
-    if (this.isPvP) {
+    if (this.isPvP && !this.isNetworkPvP) {
+      // Local PvP: bind P2 keyboard controls
       this.p2UpKey    = kb.addKey(Phaser.Input.Keyboard.KeyCodes.UP);
       this.p2DownKey  = kb.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN);
       this.p2LeftKey  = kb.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT);
@@ -1447,6 +1488,13 @@ export class ArenaScene extends Phaser.Scene {
       this.p2DodgeKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.FORWARD_SLASH);
 
       this.p2ReticleX = W - 180;
+      this.p2ReticleY = cy;
+      this.p2Reticle = this.add.circle(this.p2ReticleX, this.p2ReticleY, 12, 0x000000, 0)
+        .setStrokeStyle(2, this.npcElement.color, 0.8)
+        .setDepth(30);
+    } else if (this.isNetworkPvP && this.networkRole === 'guest') {
+      // Network guest: show mouse-following reticle for aim feedback
+      this.p2ReticleX = W / 2;
       this.p2ReticleY = cy;
       this.p2Reticle = this.add.circle(this.p2ReticleX, this.p2ReticleY, 12, 0x000000, 0)
         .setStrokeStyle(2, this.npcElement.color, 0.8)
@@ -1672,6 +1720,28 @@ export class ArenaScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(23);
   }
 
+  // ── P2 input reading ─────────────────────────────────────────────
+
+  private readLocalP2Input(): P2InputState {
+    return {
+      up:       this.p2UpKey.isDown,
+      down:     this.p2DownKey.isDown,
+      left:     this.p2LeftKey.isDown,
+      right:    this.p2RightKey.isDown,
+      aimUp:    this.p2AimUpKey.isDown,
+      aimDown:  this.p2AimDownKey.isDown,
+      aimLeft:  this.p2AimLeftKey.isDown,
+      aimRight: this.p2AimRightKey.isDown,
+      click:    this.p2ClickKey.isDown,
+      e:        this.p2EKey.isDown,
+      r:        this.p2RKey.isDown,
+      f:        this.p2FKey.isDown,
+      q:        this.p2QKey.isDown,
+      dodge:    this.p2DodgeKey.isDown,
+      seq:      this.p2Input.seq + 1,
+    };
+  }
+
   // ── P2 ability input (PvP mode, Fire element only in v1) ─────────
 
   private processP2Abilities(
@@ -1686,8 +1756,8 @@ export class ArenaScene extends Phaser.Scene {
     if (eid === 'fire') {
       if (!this.npcNukeChanneling || this.npcArmageddonActive) {
         // ── U: Fireball / Flamethrower ────────────────────────
-        if (this.p2ClickKey.isDown) {
-          const justPressed = !this.p2ClickWasDown;
+        if (this.p2Input.click) {
+          const justPressed = !this.p2PrevInput.click;
           this.p2FlamethrowerHoldMs += delta;
           if (justPressed) {
             this.npc.castAbility('fireball', p2Ctx);
@@ -1720,7 +1790,7 @@ export class ArenaScene extends Phaser.Scene {
         }
 
         // ── O: Flame Dash ──────────────────────────────────────
-        if (!this.npcArmageddonActive && Phaser.Input.Keyboard.JustDown(this.p2EKey)) {
+        if (!this.npcArmageddonActive && this.p2Input.e && !this.p2PrevInput.e) {
           const dashStartX = this.npc.x;
           const dashStartY = this.npc.y;
           if (this.npc.castAbility('flame-dash', p2Ctx) && this.hasP2Upgrade('e')) {
@@ -1745,7 +1815,7 @@ export class ArenaScene extends Phaser.Scene {
         // ── P: Pressure Bomb / Pressure Charge upgrade ─────────
         if (!this.npcArmageddonActive) {
           if (this.hasP2Upgrade('r')) {
-            if (this.p2RKey.isDown) {
+            if (this.p2Input.r) {
               if (!this.p2PressureCharging && this.npc.getCooldownRatio('pressure-bomb') >= 1) {
                 this.p2PressureCharging = true;
                 this.p2PressureChargeStart = time;
@@ -1804,7 +1874,7 @@ export class ArenaScene extends Phaser.Scene {
               this.npc.triggerCooldown('pressure-bomb');
             }
           } else {
-            if (Phaser.Input.Keyboard.JustDown(this.p2RKey)) {
+            if (this.p2Input.r && !this.p2PrevInput.r) {
               this.npc.castAbility('pressure-bomb', p2Ctx);
             }
           }
@@ -1813,9 +1883,9 @@ export class ArenaScene extends Phaser.Scene {
         // ── ;: Flame Body / Flame Affinity upgrade ─────────────
         if (!this.npcArmageddonActive) {
           if (this.hasP2Upgrade('f')) {
-            const fDown = this.p2FKey.isDown;
+            const fDown = this.p2Input.f;
             if (fDown) {
-              if (!this.p2FKeyWasDown) this.p2FKeyHeldSince = time;
+              if (!this.p2PrevInput.f) this.p2FKeyHeldSince = time;
               const held = time - this.p2FKeyHeldSince;
               if (held >= 1000 && !this.npcEnhancedFlameBody) {
                 this.npcEnhancedFlameBody = true;
@@ -1827,7 +1897,7 @@ export class ArenaScene extends Phaser.Scene {
                 this.npc.chargeRatio = Math.min(1, held / 1000);
               }
             } else {
-              if (this.p2FKeyWasDown) {
+              if (this.p2PrevInput.f) {
                 const held = time - this.p2FKeyHeldSince;
                 if (held < 1000) {
                   const wasActive = this.npcFlameBodyActive;
@@ -1842,16 +1912,15 @@ export class ArenaScene extends Phaser.Scene {
                 }
               }
             }
-            this.p2FKeyWasDown = fDown;
           } else {
-            if (Phaser.Input.Keyboard.JustDown(this.p2FKey)) {
+            if (this.p2Input.f && !this.p2PrevInput.f) {
               return 'flame-body';
             }
           }
         }
 
         // ── ': Flame Nuke / Armageddon upgrade ────────────────
-        if (Phaser.Input.Keyboard.JustDown(this.p2QKey)) {
+        if (this.p2Input.q && !this.p2PrevInput.q) {
           if (this.hasP2Upgrade('q') && this.npc.getCooldownRatio('flame-nuke') >= 1) {
             this.npc.triggerCooldown('flame-nuke');
             this.npcNukeChanneling = true;
@@ -3552,6 +3621,7 @@ export class ArenaScene extends Phaser.Scene {
         difficulty: this.isPvP ? 0 : this.npcDifficulty.level,
         rewardMult: (!this.isPvP && playerWon) ? getTotalRewardMult() : undefined,
         isPvP: this.isPvP,
+        isNetworkPvP: this.isNetworkPvP,
       });
     });
   }
@@ -4019,21 +4089,45 @@ export class ArenaScene extends Phaser.Scene {
     const mouseX = pointer.worldX;
     const mouseY = pointer.worldY;
 
+    // ── P2 input (PvP) ───────────────────────────────────────────
+    if (this.isPvP && !this.isNetworkPvP) {
+      // Local PvP: read from keyboard
+      this.p2PrevInput = this.p2Input;
+      this.p2Input = this.readLocalP2Input();
+    } else if (this.isNetworkPvP && this.networkRole === 'guest') {
+      // Network guest: read P1 keys/mouse and send to host
+      this.p2PrevInput = this.p2Input;
+      const inp = this.buildGuestInput(mouseX, mouseY);
+      this.p2Input = inp;
+      this.networkManager?.sendInput(inp);
+    }
+    // Network host: p2Input is set by onInputReceived callback — nothing to do here
+
     // ── P2 aim reticle (PvP) ─────────────────────────────────────
     let p2TargetX = 0;
     let p2TargetY = 0;
-    if (this.isPvP) {
+    if (this.isPvP && !this.isNetworkPvP) {
+      // Local PvP: IJKL-driven reticle
       const reticleSpeed = 400;
       let rx = 0, ry = 0;
-      if (this.p2AimLeftKey.isDown)  rx -= reticleSpeed;
-      if (this.p2AimRightKey.isDown) rx += reticleSpeed;
-      if (this.p2AimUpKey.isDown)    ry -= reticleSpeed;
-      if (this.p2AimDownKey.isDown)  ry += reticleSpeed;
+      if (this.p2Input.aimLeft)  rx -= reticleSpeed;
+      if (this.p2Input.aimRight) rx += reticleSpeed;
+      if (this.p2Input.aimUp)    ry -= reticleSpeed;
+      if (this.p2Input.aimDown)  ry += reticleSpeed;
       this.p2ReticleX = Phaser.Math.Clamp(this.p2ReticleX + rx * (delta / 1000), 0, this.scale.width);
       this.p2ReticleY = Phaser.Math.Clamp(this.p2ReticleY + ry * (delta / 1000), 0, this.scale.height);
       this.p2Reticle.setPosition(this.p2ReticleX, this.p2ReticleY);
       p2TargetX = this.p2ReticleX;
       p2TargetY = this.p2ReticleY;
+    } else if (this.isNetworkPvP && this.networkRole === 'host') {
+      // Host: use aim coords received from guest
+      p2TargetX = this.p2NetworkAimX * this.scale.width;
+      p2TargetY = this.p2NetworkAimY * this.scale.height;
+    } else if (this.isNetworkPvP && this.networkRole === 'guest') {
+      // Guest: use own mouse as aim for local prediction + show reticle
+      p2TargetX = mouseX;
+      p2TargetY = mouseY;
+      if (this.p2Reticle) this.p2Reticle.setPosition(mouseX, mouseY);
     }
 
     // ── Channel expiry ────────────────────────────────────────────
@@ -4218,7 +4312,9 @@ export class ArenaScene extends Phaser.Scene {
     // ── Player movement ─────────────────────────────────────────
     const playerBody = this.player.body as Phaser.Physics.Arcade.Body;
 
-    if (this.nukeChanneling && !this.armageddonActive && !this.airBeamWalking) {
+    if (this.networkRole === 'guest') {
+      // Guest does not control P1 — position is reconciled from host state
+    } else if (this.nukeChanneling && !this.armageddonActive && !this.airBeamWalking) {
       // Standard nuke: fully locked
       playerBody.setVelocity(0, 0);
     } else if (!this.isDodging) {
@@ -4257,10 +4353,10 @@ export class ArenaScene extends Phaser.Scene {
       const npcBody = this.npc.body as Phaser.Physics.Arcade.Body;
       if (!this.p2IsDodging && !(this.npcFrozenUntil > time) && !this.npcNukeChanneling) {
         let nvx = 0, nvy = 0;
-        if (this.p2LeftKey.isDown)  nvx -= this.npc.speed;
-        if (this.p2RightKey.isDown) nvx += this.npc.speed;
-        if (this.p2UpKey.isDown)    nvy -= this.npc.speed;
-        if (this.p2DownKey.isDown)  nvy += this.npc.speed;
+        if (this.p2Input.left)  nvx -= this.npc.speed;
+        if (this.p2Input.right) nvx += this.npc.speed;
+        if (this.p2Input.up)    nvy -= this.npc.speed;
+        if (this.p2Input.down)  nvy += this.npc.speed;
         if (nvx !== 0 && nvy !== 0) { nvx *= 0.7071; nvy *= 0.7071; }
         npcBody.setVelocity(nvx * this.npcSpeedMult, nvy * this.npcSpeedMult);
       } else if (this.npcFrozenUntil > time && !this.p2IsDodging) {
@@ -4270,6 +4366,8 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Player abilities ─────────────────────────────────────────
     const playerCtx = this.buildPlayerContext(mouseX, mouseY);
+
+    if (this.networkRole !== 'guest') { // guest does not control P1
 
     if (this.elementId === 'fire') {
       if (!this.nukeChanneling || this.armageddonActive) {
@@ -5911,8 +6009,10 @@ export class ArenaScene extends Phaser.Scene {
 
     }
 
+    } // end if (this.networkRole !== 'guest')
+
     // ── Dodge (Space) ────────────────────────────────────────────
-    if (Phaser.Input.Keyboard.JustDown(this.spaceKey) && !this.dodgeOnCooldown && !this.isDodging && !this.nukeChanneling) {
+    if (this.networkRole !== 'guest' && Phaser.Input.Keyboard.JustDown(this.spaceKey) && !this.dodgeOnCooldown && !this.isDodging && !this.nukeChanneling) {
       this.dodgeOnCooldown = true;
       this.isDodging = true;
       this.player.isInvincible = true;
@@ -5941,13 +6041,13 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── P2 dodge (PvP) ────────────────────────────────────────────
-    if (this.isPvP && Phaser.Input.Keyboard.JustDown(this.p2DodgeKey) && !this.p2DodgeOnCooldown && !this.p2IsDodging && !this.npcNukeChanneling) {
+    if (this.isPvP && this.p2Input.dodge && !this.p2PrevInput.dodge && !this.p2DodgeOnCooldown && !this.p2IsDodging && !this.npcNukeChanneling) {
       this.p2DodgeOnCooldown = true;
       this.p2IsDodging = true;
       this.npc.isInvincible = true;
 
-      let dx = (this.p2RightKey.isDown ? 1 : 0) - (this.p2LeftKey.isDown ? 1 : 0);
-      let dy = (this.p2DownKey.isDown ? 1 : 0) - (this.p2UpKey.isDown ? 1 : 0);
+      let dx = (this.p2Input.right ? 1 : 0) - (this.p2Input.left ? 1 : 0);
+      let dy = (this.p2Input.down ? 1 : 0) - (this.p2Input.up ? 1 : 0);
       if (dx === 0 && dy === 0) {
         const angle = Phaser.Math.Angle.Between(this.npc.x, this.npc.y, p2TargetX, p2TargetY);
         dx = Math.cos(angle);
@@ -5982,7 +6082,6 @@ export class ArenaScene extends Phaser.Scene {
           if (this.npcFlameBodyAura) { this.npcFlameBodyAura.destroy(); this.npcFlameBodyAura = null; }
         }
       }
-      this.p2ClickWasDown = this.p2ClickKey.isDown;
     } else {
     // ── NPC AI ───────────────────────────────────────────────────
     const aiState: NpcAiState = {
@@ -7172,6 +7271,15 @@ export class ArenaScene extends Phaser.Scene {
       }
     }
 
+    // ── Host: broadcast authoritative state to guest at 20 Hz ────
+    if (this.isNetworkPvP && this.networkRole === 'host' && this.networkManager) {
+      this.stateSendAccum += delta;
+      if (this.stateSendAccum >= this.STATE_SEND_INTERVAL) {
+        this.stateSendAccum -= this.STATE_SEND_INTERVAL;
+        this.networkManager.sendState(this.buildStatePacket());
+      }
+    }
+
     // ── Update HUD cooldown bars ─────────────────────────────────
     for (const entry of this.abilityBars) {
       if (entry.abilityId === 'flame-body') {
@@ -7219,5 +7327,100 @@ export class ArenaScene extends Phaser.Scene {
         }
       }
     }
+  }
+
+  // ── Network PvP helpers ──────────────────────────────────────────
+
+  private buildGuestInput(mouseX: number, mouseY: number): import('../network/P2InputState').P2InputState {
+    const pointer = this.input.activePointer;
+    return {
+      up:    this.wKey.isDown,
+      down:  this.sKey.isDown,
+      left:  this.aKey.isDown,
+      right: this.dKey.isDown,
+      aimUp: false, aimDown: false, aimLeft: false, aimRight: false,
+      click: pointer.isDown,
+      e:     this.eKey.isDown,
+      r:     this.rKey.isDown,
+      f:     this.fKey.isDown,
+      q:     this.qKey.isDown,
+      dodge: this.spaceKey.isDown,
+      aimX:  mouseX / this.scale.width,
+      aimY:  mouseY / this.scale.height,
+      seq:   ++this.guestInputSeq,
+    };
+  }
+
+  private buildStatePacket(): import('../network/NetworkTypes').StatePacket {
+    const snap = (f: Fighter): import('../network/NetworkTypes').FighterSnapshot => {
+      const body = f.body as Phaser.Physics.Arcade.Body;
+      return {
+        x: f.x, y: f.y,
+        vx: body.velocity.x, vy: body.velocity.y,
+        hp: f.hp, maxHp: f.maxHp,
+        shieldCharges: f.shieldCharges,
+        shieldHp: f.shieldHp,
+        chargeRatio: f.chargeRatio,
+        isInvincible: f.isInvincible,
+        cooldownMult: f.cooldownMult,
+      };
+    };
+    const packet: import('../network/NetworkTypes').StatePacket = {
+      type: 'state',
+      tick: ++this.networkTick,
+      player: snap(this.player),
+      npc: snap(this.npc),
+    };
+    if (this.gameEnded) {
+      // Note: player won = npc was defeated; derive from NPC hp
+      packet.gameOver = { playerWon: this.npc.hp <= 0 };
+    }
+    return packet;
+  }
+
+  private reconcileNetworkState(state: import('../network/NetworkTypes').StatePacket): void {
+    // Lerp positions toward authoritative values for smooth correction
+    const LERP = 0.3;
+    this.player.x += (state.player.x - this.player.x) * LERP;
+    this.player.y += (state.player.y - this.player.y) * LERP;
+    this.npc.x    += (state.npc.x - this.npc.x) * LERP;
+    this.npc.y    += (state.npc.y - this.npc.y) * LERP;
+
+    // Directly set HP and shield state
+    this.player.hp = state.player.hp;
+    this.npc.hp    = state.npc.hp;
+    this.player.shieldCharges = state.player.shieldCharges;
+    this.npc.shieldCharges    = state.npc.shieldCharges;
+    this.player.shieldHp = state.player.shieldHp;
+    this.npc.shieldHp    = state.npc.shieldHp;
+    this.player.chargeRatio = state.player.chargeRatio;
+    this.npc.chargeRatio    = state.npc.chargeRatio;
+    this.player.isInvincible = state.player.isInvincible;
+    this.npc.isInvincible    = state.npc.isInvincible;
+
+    // Handle game over from host
+    if (state.gameOver && !this.gameEnded) {
+      // From guest's perspective: playerWon (host's player won) means guest (npc) lost
+      this.endGame(!state.gameOver.playerWon);
+    }
+  }
+
+  private handleNetworkDisconnect(): void {
+    if (this.gameEnded) return;
+    this.gameEnded = true; // prevent further processing
+
+    const { width, height } = this.scale;
+    const overlay = this.add.rectangle(width / 2, height / 2, width, height, 0x000000, 0.7).setDepth(50);
+    const msg = this.add.text(width / 2, height / 2, 'OPPONENT DISCONNECTED', {
+      fontSize: '32px', fontFamily: '"Arial Black", sans-serif',
+      color: '#ff4444', stroke: '#000000', strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(51);
+    // suppress lint warning
+    void overlay; void msg;
+
+    this.time.delayedCall(3000, () => {
+      this.registry.remove('networkManager');
+      this.scene.start('TitleScene');
+    });
   }
 }

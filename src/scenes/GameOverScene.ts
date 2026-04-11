@@ -7,7 +7,7 @@ export class GameOverScene extends Phaser.Scene {
     super({ key: 'GameOverScene' });
   }
 
-  create(data: { playerWon: boolean; difficulty: number; rewardMult?: number; isPvP?: boolean }): void {
+  create(data: { playerWon: boolean; difficulty: number; rewardMult?: number; isPvP?: boolean; isNetworkPvP?: boolean }): void {
     const { width, height } = this.scale;
     const cx = width / 2;
     const cy = height / 2;
@@ -21,7 +21,11 @@ export class GameOverScene extends Phaser.Scene {
     }
 
     let title: string, subtitle: string, titleColor: string;
-    if (data.isPvP) {
+    if (data.isNetworkPvP) {
+      [title, subtitle, titleColor] = data.playerWon
+        ? ['YOU WIN!',  'Great match!', '#ff8800']
+        : ['YOU LOSE', 'Better luck next time!', '#44aaff'];
+    } else if (data.isPvP) {
       [title, subtitle, titleColor] = data.playerWon
         ? ['PLAYER 1 WINS!', 'Great match!', '#ff8800']
         : ['PLAYER 2 WINS!', 'Great match!', '#44aaff'];

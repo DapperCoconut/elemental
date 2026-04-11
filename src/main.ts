@@ -6,6 +6,7 @@ import { ShopScene } from './scenes/ShopScene';
 import { LabScene } from './scenes/LabScene';
 import { ArenaScene } from './scenes/ArenaScene';
 import { GameOverScene } from './scenes/GameOverScene';
+import { NetworkScene } from './scenes/NetworkScene';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -19,7 +20,7 @@ const config: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
-  scene: [BootScene, TitleScene, MenuScene, ShopScene, LabScene, ArenaScene, GameOverScene],
+  scene: [BootScene, TitleScene, MenuScene, ShopScene, LabScene, ArenaScene, GameOverScene, NetworkScene],
 };
 
 new Phaser.Game(config);
