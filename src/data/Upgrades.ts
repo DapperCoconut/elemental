@@ -222,6 +222,7 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
   { elementId: 'crystal', upgrades: [] },
   { elementId: 'soul',    upgrades: [] },
   { elementId: 'hunt',    upgrades: [] },
+  { elementId: 'sand',    upgrades: [] },
 ];
 
 export function getElementUpgrades(elementId: string): UpgradeDef[] {

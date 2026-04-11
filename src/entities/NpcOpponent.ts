@@ -46,6 +46,12 @@ export interface NpcAiState {
   npcHuntTrailActive?: boolean;
   playerBleeding?: boolean;
   huntBloodMoonActive?: boolean;
+  npcSandBlinded?: boolean;
+  npcSandGlassForm?: boolean;
+  npcSandHeat?: number;
+  npcSandTornadoActive?: boolean;
+  playerSandDecoyX?: number;
+  playerSandDecoyY?: number;
 }
 
 export class NpcOpponent extends Fighter {
@@ -247,6 +253,9 @@ export class NpcOpponent extends Fighter {
     }
     if (this.element.id === 'hunt') {
       return this.doHuntAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState, angleToTarget);
+    }
+    if (this.element.id === 'sand') {
+      return this.doSandAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState, angleToTarget);
     }
     return null;
   }
@@ -772,6 +781,71 @@ export class NpcOpponent extends Fighter {
 
     // Default: Laser Beam — sharp aim
     if (this.castAbility('crystal-laser', buildContext(sharpX, sharpY))) return 'crystal-laser';
+
+    return null;
+  }
+
+  private doSandAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+    angleToTarget: number,
+  ): string | null {
+    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    // If blinded: 50% chance to skip entire turn
+    if (aiState.npcSandBlinded && Math.random() < 0.5) return null;
+    // In glass form: only fire shards (handled per-frame in ArenaScene), no other abilities
+    if (aiState.npcSandGlassForm) return 'glass-minigun';
+
+    // Sharp aim for hitscan flintlock (10% of difficulty offset)
+    const sharpOffsetRad = (Math.random() * 2 - 1) * this.difficulty.aimOffsetDeg * 0.10 * (Math.PI / 180);
+    const sharpAngle = angleToTarget + sharpOffsetRad;
+    const sharpX = this.x + Math.cos(sharpAngle) * dist;
+    const sharpY = this.y + Math.sin(sharpAngle) * dist;
+
+    // Use player decoy as target when it exists
+    const decoyX = aiState.playerSandDecoyX;
+    const decoyY = aiState.playerSandDecoyY;
+    const useDecoy = decoyX !== undefined && decoyY !== undefined;
+    const flintX = useDecoy ? decoyX : sharpX;
+    const flintY = useDecoy ? decoyY : sharpY;
+
+    const heat = aiState.npcSandHeat ?? 0;
+    const tornadoActive = aiState.npcSandTornadoActive ?? false;
+
+    if (!skipSpecials) {
+      // Glass Meld — when heat >= 90
+      if (heat >= 90) {
+        if (this.castAbility('sand-glass', buildContext(this.x, this.y))) return 'sand-glass';
+      }
+
+      // Mirage — when low HP, dash away
+      if (hpRatio < 0.35) {
+        const awayAngle = Phaser.Math.Angle.Between(target.x, target.y, this.x, this.y);
+        const awayX = this.x + Math.cos(awayAngle) * 220;
+        const awayY = this.y + Math.sin(awayAngle) * 220;
+        if (this.castAbility('sand-mirage', buildContext(awayX, awayY))) return 'sand-mirage';
+      }
+
+      // Blinding Sand — when player is close
+      if (dist < 200) {
+        if (this.castAbility('sand-blinding', buildContext(aimX, aimY))) return 'sand-blinding';
+      }
+
+      // Tornado toggle — on when heat < 55 and healthy; off when heat >= 55
+      const wantTornado = heat < 55 && hpRatio > 0.35;
+      if (wantTornado !== tornadoActive) {
+        if (this.castAbility('sand-tornado', buildContext(this.x, this.y))) return 'sand-tornado';
+      }
+    }
+
+    // Default: Flintlock hitscan (aim at decoy if present, else player)
+    if (this.castAbility('sand-flintlock', buildContext(flintX, flintY))) return 'sand-flintlock';
 
     return null;
   }

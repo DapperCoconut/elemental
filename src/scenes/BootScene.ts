@@ -174,6 +174,30 @@ export class BootScene extends Phaser.Scene {
     gfx.fillCircle(4, 4, 4);
     gfx.generateTexture('proj-hunt-pellet', 8, 8);
 
+    // Sand element texture (sandy tan circle)
+    gfx.clear();
+    gfx.fillStyle(0xddbb77);
+    gfx.fillCircle(24, 24, 22);
+    gfx.lineStyle(3, 0xffdd99);
+    gfx.strokeCircle(24, 24, 22);
+    gfx.generateTexture('elem-sand', 48, 48);
+
+    // Sand blinding ball (large tan circle)
+    gfx.clear();
+    gfx.fillStyle(0xddbb77);
+    gfx.fillCircle(12, 12, 12);
+    gfx.lineStyle(2, 0xffdd99);
+    gfx.strokeCircle(12, 12, 12);
+    gfx.generateTexture('proj-sand-ball', 24, 24);
+
+    // Sand glass shard (small cyan-white rect)
+    gfx.clear();
+    gfx.fillStyle(0xaaddff);
+    gfx.fillRect(0, 2, 8, 4);
+    gfx.lineStyle(1, 0xeeffff);
+    gfx.strokeRect(0, 2, 8, 4);
+    gfx.generateTexture('proj-sand-shard', 8, 8);
+
     gfx.destroy();
 
     this.scene.start('TitleScene');

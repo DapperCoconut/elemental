@@ -13,6 +13,7 @@ export const RECIPES: Recipe[] = [
   { ingredients: ['water', 'earth'], result: 'crystal', resultName: 'Crystal', resultEmoji: '💎' },
   { ingredients: ['life', 'air'],   result: 'soul',    resultName: 'Soul',    resultEmoji: '👻' },
   { ingredients: ['life', 'fire'],  result: 'hunt',    resultName: 'Hunt',    resultEmoji: '🐺' },
+  { ingredients: ['earth', 'air'], result: 'sand',    resultName: 'Sand',    resultEmoji: '⏳' },
 ];
 
 export function findRecipe(a: string, b: string): Recipe | undefined {

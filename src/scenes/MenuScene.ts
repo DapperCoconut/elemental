@@ -28,6 +28,7 @@ const COMBINED_ELEMENTS: ElementDef[] = [
   { id: 'crystal', name: 'Crystal', emoji: '💎', color: 0x88ccff, available: true },
   { id: 'soul',    name: 'Soul',    emoji: '👻', color: 0xccaaff, available: true },
   { id: 'hunt',    name: 'Hunt',    emoji: '🐺', color: 0xcc4400, available: true },
+  { id: 'sand',    name: 'Sand',    emoji: '⏳', color: 0xddbb77, available: true },
 ];
 
 const DIFF_COLORS = [0x22cc44, 0x88cc22, 0xddaa00, 0xee5500, 0xcc0022];

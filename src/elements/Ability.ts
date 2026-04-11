@@ -77,6 +77,12 @@ export interface CastContext {
   huntBloodHunt: () => void;
   huntBloodMoon: () => void;
   huntUntransform: () => void;
+  // Sand
+  sandFlintlock: (tx: number, ty: number) => void;
+  sandBlindingSand: (tx: number, ty: number) => void;
+  sandToggleTornado: () => void;
+  sandMirage: (tx: number, ty: number) => void;
+  sandActivateGlass: () => void;
 }
 
 export interface Ability {
