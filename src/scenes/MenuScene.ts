@@ -38,6 +38,7 @@ export class MenuScene extends Phaser.Scene {
   private playerChoice: string | null = null;
   private enemyChoice: string | null = null;
   private elemPage = 0;
+  private isPvP = false;
 
   private phaseObjects: Phaser.GameObjects.GameObject[] = [];
 
@@ -45,7 +46,8 @@ export class MenuScene extends Phaser.Scene {
     super({ key: 'MenuScene' });
   }
 
-  create(): void {
+  create(data?: { isPvP?: boolean }): void {
+    this.isPvP = data?.isPvP ?? false;
     activeMutationIds.clear();
     this.selectionPhase = 'player';
     this.playerChoice = null;
@@ -72,13 +74,16 @@ export class MenuScene extends Phaser.Scene {
       strokeThickness: 5,
     }).setOrigin(0.5);
 
-    this.add.text(cx, height - 24, 'Defeat the enemy to win!', {
+    this.add.text(cx, height - 24, this.isPvP ? 'Two players, one keyboard!' : 'Defeat the enemy to win!', {
       fontSize: '13px',
       color: '#666666',
     }).setOrigin(0.5);
 
-    this.add.text(cx, height - 48, 'WASD — move   •   Click / E / R / F / Q — abilities   •   SPACE — Dodge', {
-      fontSize: '13px',
+    const controlsHint = this.isPvP
+      ? 'P1: WASD+Mouse  •  P2: Arrows+IJKL(aim)+U/O/P/;/\'(abilities)+/(dodge)'
+      : 'WASD — move   •   Click / E / R / F / Q — abilities   •   SPACE — Dodge';
+    this.add.text(cx, height - 48, controlsHint, {
+      fontSize: '11px',
       fontFamily: 'Arial, sans-serif',
       color: '#555555',
     }).setOrigin(0.5);
@@ -106,7 +111,9 @@ export class MenuScene extends Phaser.Scene {
   private renderElementPhase(width: number, height: number, cx: number): void {
     const isPlayerPhase = this.selectionPhase === 'player';
 
-    const subtitle = isPlayerPhase ? 'Choose your element' : 'Choose enemy element';
+    const subtitle = isPlayerPhase
+      ? (this.isPvP ? 'Player 1: Choose your element' : 'Choose your element')
+      : (this.isPvP ? 'Player 2: Choose your element (more coming soon)' : 'Choose enemy element');
     const subtitleObj = this.add.text(cx, 158, subtitle, {
       fontSize: '20px',
       fontFamily: 'Arial, sans-serif',
@@ -126,15 +133,21 @@ export class MenuScene extends Phaser.Scene {
       }
     }
 
+    // In PvP mode P2 phase: only Fire is available until more elements are ported
+    const pvpP2Phase = this.isPvP && !isPlayerPhase;
+
     // Determine which elements to show on this page
     const unlockedCombined = COMBINED_ELEMENTS.filter((e) => PlayerData.isElementUnlocked(e.id));
     const PAGE_SIZE = 5;
     const combinedPages = Math.max(1, Math.ceil(unlockedCombined.length / PAGE_SIZE));
     const maxPage = unlockedCombined.length > 0 ? combinedPages : 0; // 0 = no combined pages
-    const totalPages = 1 + maxPage; // page 0 = base, pages 1..maxPage = combined
+    const totalPages = pvpP2Phase ? 1 : 1 + maxPage; // page 0 = base, pages 1..maxPage = combined
 
     let currentElements: ElementDef[];
-    if (this.elemPage === 0) {
+    if (pvpP2Phase) {
+      // Only Fire is implemented for P2 in this version
+      currentElements = ELEMENTS.filter((e) => e.id === 'fire');
+    } else if (this.elemPage === 0) {
       currentElements = ELEMENTS;
     } else {
       const start = (this.elemPage - 1) * PAGE_SIZE;
@@ -391,6 +404,14 @@ export class MenuScene extends Phaser.Scene {
       this.elemPage = 0; // reset page for enemy selection
     } else if (this.selectionPhase === 'enemy') {
       this.enemyChoice = elementId;
+      if (this.isPvP) {
+        this.scene.start('ArenaScene', {
+          elementId: this.playerChoice,
+          enemyElementId: this.enemyChoice,
+          isPvP: true,
+        });
+        return;
+      }
       this.selectionPhase = 'difficulty';
     }
     this.renderPhase(width, height, cx);

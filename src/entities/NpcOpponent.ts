@@ -60,12 +60,6 @@ export class NpcOpponent extends Fighter {
   private lastFlameBodyToggle = -10000;
   private readonly difficulty: DifficultyConfig;
 
-  /** Set by ArenaScene when the Mastered mutation is active. */
-  public isMastered = false;
-
-  // ── Hunt state ──
-  public npcHuntRoarLocked = false;
-
   // ── Charge state (all AI can charge; Mastered makes it meaningful) ──
   private chargeUntil = 0;
   private chargingAbility = '';

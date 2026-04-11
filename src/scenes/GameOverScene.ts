@@ -7,22 +7,29 @@ export class GameOverScene extends Phaser.Scene {
     super({ key: 'GameOverScene' });
   }
 
-  create(data: { playerWon: boolean; difficulty: number; rewardMult?: number }): void {
+  create(data: { playerWon: boolean; difficulty: number; rewardMult?: number; isPvP?: boolean }): void {
     const { width, height } = this.scale;
     const cx = width / 2;
     const cy = height / 2;
 
     this.add.rectangle(cx, cy, width, height, 0x0d0d1a);
 
-    const baseShard = data.playerWon ? SHARD_REWARDS[data.difficulty - 1] : 0;
+    const baseShard = (!data.isPvP && data.playerWon) ? SHARD_REWARDS[data.difficulty - 1] : 0;
     const shardsEarned = Math.round(baseShard * (data.rewardMult ?? 1));
     if (shardsEarned > 0) {
       PlayerData.addShards(shardsEarned);
     }
 
-    const [title, subtitle, titleColor] = data.playerWon
-      ? ['VICTORY!', 'The flames triumph! 🔥', '#ff8800']
-      : ['DEFEATED', 'Better luck next time...', '#44aaff'];
+    let title: string, subtitle: string, titleColor: string;
+    if (data.isPvP) {
+      [title, subtitle, titleColor] = data.playerWon
+        ? ['PLAYER 1 WINS!', 'Great match!', '#ff8800']
+        : ['PLAYER 2 WINS!', 'Great match!', '#44aaff'];
+    } else {
+      [title, subtitle, titleColor] = data.playerWon
+        ? ['VICTORY!', 'The flames triumph! 🔥', '#ff8800']
+        : ['DEFEATED', 'Better luck next time...', '#44aaff'];
+    }
 
     this.add.text(cx, cy - 110, title, {
       fontSize: '80px',

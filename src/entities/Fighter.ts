@@ -18,6 +18,10 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public cooldownMult = 1;
   /** If set, called with the damage amount before shields; return true to absorb the hit entirely. */
   public damageAbsorber: ((amount: number) => boolean) | null = null;
+  /** Set by ArenaScene when the Mastered mutation is active. Default false for non-NPC fighters. */
+  public isMastered = false;
+  /** Used by Hunt element roar lock. Default false for non-NPC fighters. */
+  public npcHuntRoarLocked = false;
 
   private cooldowns: Map<string, number> = new Map();
   private healthBar: HealthBar;

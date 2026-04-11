@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { Fighter } from '../entities/Fighter';
 import { Player } from '../entities/Player';
 import { NpcOpponent, NpcAiState, DIFFICULTY_PRESETS, DifficultyConfig } from '../entities/NpcOpponent';
 import { Projectile } from '../combat/Projectile';
@@ -226,12 +227,56 @@ const ELEMENT_TEXTURES: Record<string, string> = {
 
 export class ArenaScene extends Phaser.Scene {
   private player!: Player;
-  private npc!: NpcOpponent;
+  private npc!: Fighter;
   private projectiles!: Phaser.Physics.Arcade.Group;
   private playerElement!: Element;
   private npcElement!: Element;
   private elementId = 'fire';
+  private npcElementId = 'water';
   private npcDifficulty!: DifficultyConfig;
+  private isPvP = false;
+
+  // P2 input keys (PvP only)
+  private p2UpKey!: Phaser.Input.Keyboard.Key;
+  private p2DownKey!: Phaser.Input.Keyboard.Key;
+  private p2LeftKey!: Phaser.Input.Keyboard.Key;
+  private p2RightKey!: Phaser.Input.Keyboard.Key;
+  private p2AimUpKey!: Phaser.Input.Keyboard.Key;
+  private p2AimDownKey!: Phaser.Input.Keyboard.Key;
+  private p2AimLeftKey!: Phaser.Input.Keyboard.Key;
+  private p2AimRightKey!: Phaser.Input.Keyboard.Key;
+  private p2ClickKey!: Phaser.Input.Keyboard.Key;
+  private p2EKey!: Phaser.Input.Keyboard.Key;
+  private p2RKey!: Phaser.Input.Keyboard.Key;
+  private p2FKey!: Phaser.Input.Keyboard.Key;
+  private p2QKey!: Phaser.Input.Keyboard.Key;
+  private p2DodgeKey!: Phaser.Input.Keyboard.Key;
+
+  // P2 aim reticle
+  private p2Reticle!: Phaser.GameObjects.Arc;
+  private p2ReticleX = 0;
+  private p2ReticleY = 0;
+
+  // P2 HUD
+  private p2AbilityBars: AbilityBarEntry[] = [];
+
+  // P2 combat state
+  private p2DodgeOnCooldown = false;
+  private p2IsDodging = false;
+  private p2ClickWasDown = false;
+  private p2ActiveUpgrades: string[] = [];
+
+  // P2 fire-specific state (mirrors player fire state, used when P2 picks fire)
+  private p2FlamethrowerHoldMs = 0;
+  private p2FlamethrowerTickAccum = 0;
+  private p2PressureCharging = false;
+  private p2PressureChargeStart = 0;
+  private p2PressureTremorAccum = 0;
+  private p2PressureChargeVisual: Phaser.GameObjects.Arc | null = null;
+  private p2PressureLastTargetX = 0;
+  private p2PressureLastTargetY = 0;
+  private p2FKeyWasDown = false;
+  private p2FKeyHeldSince = 0;
 
   // Input keys
   private wKey!: Phaser.Input.Keyboard.Key;
@@ -313,6 +358,8 @@ export class ArenaScene extends Phaser.Scene {
   private npcFlameBodyAura: Phaser.GameObjects.Arc | null = null;
   private npcNukeChanneling = false;
   private npcNukeChannelEnd = 0;
+  private npcArmageddonActive = false;
+  private npcEnhancedFlameBody = false;
   private npcSplashActiveUntil = 0;
   private npcSplashDropAccum = 0;
   private npcGeyserBuffUntil = 0;
@@ -692,9 +739,11 @@ export class ArenaScene extends Phaser.Scene {
     super({ key: 'ArenaScene' });
   }
 
-  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[] }): void {
+  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; isPvP?: boolean }): void {
     this.elementId = data.elementId ?? 'fire';
+    this.isPvP = data.isPvP ?? false;
     const enemyElementId = data.enemyElementId ?? (this.elementId === 'fire' ? 'water' : 'fire');
+    this.npcElementId = enemyElementId;
     const difficultyLevel = Math.max(1, Math.min(5, data.difficulty ?? 3));
     const difficultyConfig = DIFFICULTY_PRESETS[difficultyLevel - 1];
     this.npcDifficulty = difficultyConfig;
@@ -708,6 +757,23 @@ export class ArenaScene extends Phaser.Scene {
     this.isDodging = false;
     this.abilityBars = [];
     this.playerSpeedMult = 1;
+    this.p2DodgeOnCooldown = false;
+    this.p2IsDodging = false;
+    this.p2ClickWasDown = false;
+    this.p2ActiveUpgrades = [];
+    this.p2AbilityBars = [];
+    this.p2ReticleX = 0;
+    this.p2ReticleY = 0;
+    this.p2FlamethrowerHoldMs = 0;
+    this.p2FlamethrowerTickAccum = 0;
+    this.p2PressureCharging = false;
+    this.p2PressureChargeStart = 0;
+    this.p2PressureTremorAccum = 0;
+    this.p2PressureChargeVisual = null;
+    this.p2PressureLastTargetX = 0;
+    this.p2PressureLastTargetY = 0;
+    this.p2FKeyWasDown = false;
+    this.p2FKeyHeldSince = 0;
 
     this.flameBodyActive = false;
     this.flameBodyTickAccum = 0;
@@ -732,6 +798,8 @@ export class ArenaScene extends Phaser.Scene {
     this.npcFlameBodyAura = null;
     this.npcNukeChanneling = false;
     this.npcNukeChannelEnd = 0;
+    this.npcArmageddonActive = false;
+    this.npcEnhancedFlameBody = false;
     this.npcSplashActiveUntil = 0;
     this.npcSplashDropAccum = 0;
     this.npcGeyserBuffUntil = 0;
@@ -1027,10 +1095,15 @@ export class ArenaScene extends Phaser.Scene {
     const playerTexture = ELEMENT_TEXTURES[this.elementId] ?? 'elem-fire';
     const npcTexture    = ELEMENT_TEXTURES[enemyElementId]  ?? 'elem-water';
     this.player = new Player(this, 180, cy, this.playerElement, playerTexture);
-    this.npc = new NpcOpponent(this, W - 180, cy, this.npcElement, npcTexture, difficultyConfig);
+    if (this.isPvP) {
+      this.npc = new Player(this, W - 180, cy, this.npcElement, npcTexture);
+      this.p2ActiveUpgrades = PlayerData.getActiveUpgrades(this.npcElementId);
+    } else {
+      this.npc = new NpcOpponent(this, W - 180, cy, this.npcElement, npcTexture, difficultyConfig);
+    }
 
     // ── Apply mutations ──────────────────────────────────────────────
-    this.mutations = new Set(data.mutations ?? []);
+    this.mutations = new Set(this.isPvP ? [] : (data.mutations ?? []));
     if (this.mutations.has('healthy')) {
       const bonus = Math.round(this.npc.maxHp * 0.5);
       this.npc.maxHp += bonus; this.npc.hp = this.npc.maxHp;
@@ -1293,7 +1366,7 @@ export class ArenaScene extends Phaser.Scene {
 
     const registerNpcDefeat = () => {
       this.npc.once('defeated', () => {
-        if (this.mutations.has('rebirth') && !this.npcRebirthUsed) {
+        if (!this.isPvP && this.mutations.has('rebirth') && !this.npcRebirthUsed) {
           this.npcRebirthUsed = true;
           this.npc.isInvincible = true;
           const flash = this.add.circle(this.npc.x, this.npc.y, 50, 0x00ffff, 0.8).setDepth(15);
@@ -1357,16 +1430,49 @@ export class ArenaScene extends Phaser.Scene {
     this.fKey     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.F);
     this.spaceKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
 
+    if (this.isPvP) {
+      this.p2UpKey    = kb.addKey(Phaser.Input.Keyboard.KeyCodes.UP);
+      this.p2DownKey  = kb.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN);
+      this.p2LeftKey  = kb.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT);
+      this.p2RightKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT);
+      this.p2AimUpKey    = kb.addKey(Phaser.Input.Keyboard.KeyCodes.I);
+      this.p2AimDownKey  = kb.addKey(Phaser.Input.Keyboard.KeyCodes.K);
+      this.p2AimLeftKey  = kb.addKey(Phaser.Input.Keyboard.KeyCodes.J);
+      this.p2AimRightKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.L);
+      this.p2ClickKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.U);
+      this.p2EKey     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.O);
+      this.p2RKey     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.P);
+      this.p2FKey     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.SEMICOLON);
+      this.p2QKey     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.QUOTES);
+      this.p2DodgeKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.FORWARD_SLASH);
+
+      this.p2ReticleX = W - 180;
+      this.p2ReticleY = cy;
+      this.p2Reticle = this.add.circle(this.p2ReticleX, this.p2ReticleY, 12, 0x000000, 0)
+        .setStrokeStyle(2, this.npcElement.color, 0.8)
+        .setDepth(30);
+    }
+
     // ── HUD ────────────────────────────────────────────────────────
     this.createHUD(W, H);
+    if (this.isPvP) this.createP2HUD(W, H);
 
     // ── Arena labels ───────────────────────────────────────────────
-    this.add.text(180, 20, `${this.playerElement.emoji} YOU`, {
-      fontSize: '14px', color: '#ffffff',
-    }).setOrigin(0.5).setDepth(20);
-    this.add.text(W - 180, 20, `ENEMY ${this.npcElement.emoji}`, {
-      fontSize: '14px', color: '#aaaaaa',
-    }).setOrigin(0.5).setDepth(20);
+    if (this.isPvP) {
+      this.add.text(180, 20, `${this.playerElement.emoji} P1`, {
+        fontSize: '14px', color: '#ffffff',
+      }).setOrigin(0.5).setDepth(20);
+      this.add.text(W - 180, 20, `P2 ${this.npcElement.emoji}`, {
+        fontSize: '14px', color: '#aaddff',
+      }).setOrigin(0.5).setDepth(20);
+    } else {
+      this.add.text(180, 20, `${this.playerElement.emoji} YOU`, {
+        fontSize: '14px', color: '#ffffff',
+      }).setOrigin(0.5).setDepth(20);
+      this.add.text(W - 180, 20, `ENEMY ${this.npcElement.emoji}`, {
+        fontSize: '14px', color: '#aaaaaa',
+      }).setOrigin(0.5).setDepth(20);
+    }
 
     if (this.elementId === 'soul') {
       this.soulGhostText = this.add.text(cx, 52, '👻 0', {
@@ -1511,6 +1617,274 @@ export class ArenaScene extends Phaser.Scene {
       color: '#888888',
       align: 'center',
     }).setOrigin(0.5).setDepth(23);
+  }
+
+  private createP2HUD(W: number, _H: number): void {
+    const hudY = 30;
+    const cardW = 130;
+    const cardH = 48;
+    const abilities = this.npcElement.id === 'hunt'
+      ? this.npcElement.abilities.slice(0, 5)
+      : this.npcElement.abilities;
+
+    this.add.rectangle(W / 2, hudY, W, cardH + 4, 0x0a0a18, 0.95).setDepth(20);
+
+    const totalWidth = 5 * cardW;
+    const startX = W / 2 - totalWidth / 2 + cardW / 2;
+
+    // P2 key labels for display (mirrors Click/E/R/F/Q)
+    const p2KeyLabels = ['U', 'O', 'P', ';', '\''];
+
+    abilities.forEach((ab, i) => {
+      const x = startX + i * cardW;
+
+      this.add
+        .rectangle(x, hudY, cardW - 4, cardH - 4, 0x1a1a30)
+        .setStrokeStyle(1, 0x333355)
+        .setDepth(21);
+
+      const fill = this.add
+        .rectangle(x - (cardW - 4) / 2, hudY, 0, cardH - 4, 0x4488ff, 0.45)
+        .setOrigin(0, 0.5)
+        .setDepth(22);
+
+      this.add.text(x, hudY - 6, `[${p2KeyLabels[i]}] ${ab.name}`, {
+        fontSize: '11px',
+        fontFamily: 'Arial, sans-serif',
+        color: '#aaddff',
+      }).setOrigin(0.5, 0.5).setDepth(23);
+
+      this.add.text(x, hudY + 8, ab.description, {
+        fontSize: '9px',
+        color: '#000000',
+        wordWrap: { width: cardW - 12 },
+        maxLines: 2,
+        align: 'center',
+      }).setOrigin(0.5, 0.5).setDepth(23);
+
+      this.p2AbilityBars.push({ fill, abilityId: ab.id, maxWidth: cardW - 4 });
+    });
+
+    this.add.text(W - 50, hudY, '[/]\nDodge', {
+      fontSize: '11px',
+      color: '#666688',
+      align: 'center',
+    }).setOrigin(0.5).setDepth(23);
+  }
+
+  // ── P2 ability input (PvP mode, Fire element only in v1) ─────────
+
+  private processP2Abilities(
+    time: number,
+    delta: number,
+    p2Ctx: CastContext,
+    p2TargetX: number,
+    p2TargetY: number,
+  ): string | null {
+    const eid = this.npcElement.id;
+
+    if (eid === 'fire') {
+      if (!this.npcNukeChanneling || this.npcArmageddonActive) {
+        // ── U: Fireball / Flamethrower ────────────────────────
+        if (this.p2ClickKey.isDown) {
+          const justPressed = !this.p2ClickWasDown;
+          this.p2FlamethrowerHoldMs += delta;
+          if (justPressed) {
+            this.npc.castAbility('fireball', p2Ctx);
+          } else if (this.p2FlamethrowerHoldMs > 120) {
+            this.p2FlamethrowerTickAccum += delta;
+            if (this.p2FlamethrowerTickAccum >= 100) {
+              this.p2FlamethrowerTickAccum -= 100;
+              const dist = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y);
+              if (dist <= 180) {
+                const dirX = p2TargetX - this.npc.x;
+                const dirY = p2TargetY - this.npc.y;
+                const dirLen = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
+                const dot = (dirX / dirLen) * ((this.player.x - this.npc.x) / dist)
+                          + (dirY / dirLen) * ((this.player.y - this.npc.y) / dist);
+                if (dot > 0.866) {
+                  const ftDmg = this.npcEnhancedFlameBody ? 8 : 4;
+                  this.player.takeDamage(ftDmg);
+                  this.spawnHitFlash(this.player.x, this.player.y, 0xff5500);
+                  if (this.hasP2Upgrade('click')) {
+                    this.playerBurningUntil = Math.max(this.playerBurningUntil, time + 3000);
+                  }
+                }
+              }
+              this.spawnFlamethrowerCone(this.npc.x, this.npc.y, p2TargetX, p2TargetY);
+            }
+          }
+        } else {
+          this.p2FlamethrowerHoldMs = 0;
+          this.p2FlamethrowerTickAccum = 0;
+        }
+
+        // ── O: Flame Dash ──────────────────────────────────────
+        if (!this.npcArmageddonActive && Phaser.Input.Keyboard.JustDown(this.p2EKey)) {
+          const dashStartX = this.npc.x;
+          const dashStartY = this.npc.y;
+          if (this.npc.castAbility('flame-dash', p2Ctx) && this.hasP2Upgrade('e')) {
+            for (let i = 1; i <= 4; i++) {
+              this.time.delayedCall(i * 70, () => {
+                if (!this.npc.active) return;
+                const t = i / 4;
+                const ex = dashStartX + (this.npc.x - dashStartX) * t;
+                const ey = dashStartY + (this.npc.y - dashStartY) * t;
+                const distToPlayer = Phaser.Math.Distance.Between(ex, ey, this.player.x, this.player.y);
+                if (distToPlayer <= 50) {
+                  this.player.takeDamage(Phaser.Math.Between(5, 8));
+                  this.spawnHitFlash(this.player.x, this.player.y, 0xff6600);
+                }
+                const ring = this.add.circle(ex, ey, 8, 0xff6600, 0.8).setDepth(4);
+                this.tweens.add({ targets: ring, scaleX: 5, scaleY: 5, alpha: 0, duration: 280, onComplete: () => ring.destroy() });
+              });
+            }
+          }
+        }
+
+        // ── P: Pressure Bomb / Pressure Charge upgrade ─────────
+        if (!this.npcArmageddonActive) {
+          if (this.hasP2Upgrade('r')) {
+            if (this.p2RKey.isDown) {
+              if (!this.p2PressureCharging && this.npc.getCooldownRatio('pressure-bomb') >= 1) {
+                this.p2PressureCharging = true;
+                this.p2PressureChargeStart = time;
+                this.p2PressureTremorAccum = 0;
+                this.npc.incomingDamageMultiplier = 1.5;
+                const cv = this.add.circle(this.npc.x, this.npc.y, 12, 0xff8800, 0.6).setDepth(4);
+                this.tweens.add({ targets: cv, scaleX: 0.5, scaleY: 0.5, yoyo: true, repeat: -1, duration: 300 });
+                this.p2PressureChargeVisual = cv;
+              }
+              if (this.p2PressureCharging) {
+                if (this.p2PressureChargeVisual) this.p2PressureChargeVisual.setPosition(this.npc.x, this.npc.y);
+                this.p2PressureLastTargetX = p2TargetX;
+                this.p2PressureLastTargetY = p2TargetY;
+                const heldMs = time - this.p2PressureChargeStart;
+                const chargeLevel = heldMs >= 6000 ? 2 : heldMs >= 3000 ? 1 : 0;
+                this.npc.chargeRatio = Math.min(1, heldMs / 6000);
+                if (chargeLevel >= 1) {
+                  this.p2PressureTremorAccum += delta;
+                  if (this.p2PressureTremorAccum >= 1000) {
+                    this.p2PressureTremorAccum -= 1000;
+                    const tremorDmg = chargeLevel === 2 ? 6 : 3;
+                    for (let ti = 0; ti < 5; ti++) {
+                      const ang = (Math.PI * 2 / 5) * ti;
+                      const tx = p2TargetX + Math.cos(ang) * 70;
+                      const ty = p2TargetY + Math.sin(ang) * 70;
+                      if (Phaser.Math.Distance.Between(tx, ty, this.player.x, this.player.y) <= 40) {
+                        this.player.takeDamage(tremorDmg);
+                      }
+                      const tremor = this.add.circle(tx, ty, 6, 0xff6600, 0.7).setDepth(4);
+                      this.tweens.add({ targets: tremor, scaleX: 4, scaleY: 4, alpha: 0, duration: 300, onComplete: () => tremor.destroy() });
+                    }
+                  }
+                } else {
+                  this.p2PressureTremorAccum = 0;
+                }
+              }
+            } else if (this.p2PressureCharging) {
+              this.p2PressureCharging = false;
+              this.npc.chargeRatio = 0;
+              this.npc.incomingDamageMultiplier = 1;
+              if (this.p2PressureChargeVisual) { this.p2PressureChargeVisual.destroy(); this.p2PressureChargeVisual = null; }
+              const heldMs = time - this.p2PressureChargeStart;
+              const chargeLevel = heldMs >= 6000 ? 2 : heldMs >= 3000 ? 1 : 0;
+              const dmgMult = chargeLevel === 2 ? 2 : chargeLevel === 1 ? 1.5 : 1;
+              const finalDmg = Math.round(32 * dmgMult);
+              const mx = this.p2PressureLastTargetX;
+              const my = this.p2PressureLastTargetY;
+              if (Phaser.Math.Distance.Between(mx, my, this.player.x, this.player.y) <= 100) {
+                this.player.takeDamage(finalDmg);
+                this.spawnHitFlash(this.player.x, this.player.y, 0xff8800);
+              }
+              const ring = this.add.circle(mx, my, 10, 0xff8800, 0.9).setDepth(4);
+              this.tweens.add({ targets: ring, scaleX: 10, scaleY: 10, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
+              const core = this.add.circle(mx, my, 6, 0xffffff, 0.95).setDepth(5);
+              this.tweens.add({ targets: core, scaleX: 4, scaleY: 4, alpha: 0, duration: 180, onComplete: () => core.destroy() });
+              this.npc.triggerCooldown('pressure-bomb');
+            }
+          } else {
+            if (Phaser.Input.Keyboard.JustDown(this.p2RKey)) {
+              this.npc.castAbility('pressure-bomb', p2Ctx);
+            }
+          }
+        }
+
+        // ── ;: Flame Body / Flame Affinity upgrade ─────────────
+        if (!this.npcArmageddonActive) {
+          if (this.hasP2Upgrade('f')) {
+            const fDown = this.p2FKey.isDown;
+            if (fDown) {
+              if (!this.p2FKeyWasDown) this.p2FKeyHeldSince = time;
+              const held = time - this.p2FKeyHeldSince;
+              if (held >= 1000 && !this.npcEnhancedFlameBody) {
+                this.npcEnhancedFlameBody = true;
+                this.npcFlameBodyActive = true;
+                this.npcFlameBodyTickAccum = 0;
+                if (this.npcFlameBodyAura) this.npcFlameBodyAura.destroy();
+                this.npcFlameBodyAura = this.add.circle(this.npc.x, this.npc.y, 40, 0xff2200, 0.4).setDepth(3);
+              } else if (!this.npcEnhancedFlameBody) {
+                this.npc.chargeRatio = Math.min(1, held / 1000);
+              }
+            } else {
+              if (this.p2FKeyWasDown) {
+                const held = time - this.p2FKeyHeldSince;
+                if (held < 1000) {
+                  const wasActive = this.npcFlameBodyActive;
+                  this.npcFlameBodyActive = !wasActive;
+                  this.npcEnhancedFlameBody = false;
+                  this.npcFlameBodyTickAccum = 0;
+                  if (this.npcFlameBodyAura) { this.npcFlameBodyAura.destroy(); this.npcFlameBodyAura = null; }
+                  if (this.npcFlameBodyActive) {
+                    this.npcFlameBodyAura = this.add.circle(this.npc.x, this.npc.y, 30, 0xff6600, 0.25).setDepth(3);
+                    return 'flame-body';
+                  }
+                }
+              }
+            }
+            this.p2FKeyWasDown = fDown;
+          } else {
+            if (Phaser.Input.Keyboard.JustDown(this.p2FKey)) {
+              return 'flame-body';
+            }
+          }
+        }
+
+        // ── ': Flame Nuke / Armageddon upgrade ────────────────
+        if (Phaser.Input.Keyboard.JustDown(this.p2QKey)) {
+          if (this.hasP2Upgrade('q') && this.npc.getCooldownRatio('flame-nuke') >= 1) {
+            this.npc.triggerCooldown('flame-nuke');
+            this.npcNukeChanneling = true;
+            this.npcNukeChannelEnd = time + 2000;
+            this.npcArmageddonActive = true;
+
+            const charge = this.add.circle(this.npc.x, this.npc.y, 10, 0xff2200, 0.6).setDepth(6);
+            this.tweens.add({ targets: charge, scaleX: 22, scaleY: 22, alpha: 0.15, duration: 2000, onComplete: () => charge.destroy() });
+
+            this.time.delayedCall(2000, () => {
+              this.npcArmageddonActive = false;
+              this.npcNukeChanneling = false;
+              const isBurning = this.playerBurningUntil > this.time.now;
+              const dmg = isBurning ? 120 : 80;
+              const radius = 264;
+              const distToPlayer = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y);
+              if (distToPlayer <= radius) {
+                this.player.takeDamage(dmg);
+                this.spawnHitFlash(this.player.x, this.player.y, 0xff4400);
+              }
+              const boom = this.add.circle(this.npc.x, this.npc.y, 12, 0xff4400, 0.9).setDepth(5);
+              this.tweens.add({ targets: boom, scaleX: 22, scaleY: 22, alpha: 0, duration: 700, onComplete: () => boom.destroy() });
+              const boomCore = this.add.circle(this.npc.x, this.npc.y, 8, 0xffffff, 1).setDepth(6);
+              this.tweens.add({ targets: boomCore, scaleX: 9, scaleY: 9, alpha: 0, duration: 320, onComplete: () => boomCore.destroy() });
+            });
+          } else if (!this.hasP2Upgrade('q')) {
+            this.npc.castAbility('flame-nuke', this.buildNpcContext(this.npc.x, this.npc.y));
+          }
+        }
+      }
+    }
+
+    return null;
   }
 
   // ── Context builders ────────────────────────────────────────────
@@ -3157,6 +3531,10 @@ export class ArenaScene extends Phaser.Scene {
     return this.activeUpgrades.includes(slot);
   }
 
+  private hasP2Upgrade(slot: string): boolean {
+    return this.p2ActiveUpgrades.includes(slot);
+  }
+
   private endGame(playerWon: boolean): void {
     if (this.gameEnded) return;
     this.gameEnded = true;
@@ -3171,8 +3549,9 @@ export class ArenaScene extends Phaser.Scene {
     this.time.delayedCall(700, () => {
       this.scene.start('GameOverScene', {
         playerWon,
-        difficulty: this.npcDifficulty.level,
-        rewardMult: playerWon ? getTotalRewardMult() : undefined,
+        difficulty: this.isPvP ? 0 : this.npcDifficulty.level,
+        rewardMult: (!this.isPvP && playerWon) ? getTotalRewardMult() : undefined,
+        isPvP: this.isPvP,
       });
     });
   }
@@ -3640,6 +4019,23 @@ export class ArenaScene extends Phaser.Scene {
     const mouseX = pointer.worldX;
     const mouseY = pointer.worldY;
 
+    // ── P2 aim reticle (PvP) ─────────────────────────────────────
+    let p2TargetX = 0;
+    let p2TargetY = 0;
+    if (this.isPvP) {
+      const reticleSpeed = 400;
+      let rx = 0, ry = 0;
+      if (this.p2AimLeftKey.isDown)  rx -= reticleSpeed;
+      if (this.p2AimRightKey.isDown) rx += reticleSpeed;
+      if (this.p2AimUpKey.isDown)    ry -= reticleSpeed;
+      if (this.p2AimDownKey.isDown)  ry += reticleSpeed;
+      this.p2ReticleX = Phaser.Math.Clamp(this.p2ReticleX + rx * (delta / 1000), 0, this.scale.width);
+      this.p2ReticleY = Phaser.Math.Clamp(this.p2ReticleY + ry * (delta / 1000), 0, this.scale.height);
+      this.p2Reticle.setPosition(this.p2ReticleX, this.p2ReticleY);
+      p2TargetX = this.p2ReticleX;
+      p2TargetY = this.p2ReticleY;
+    }
+
     // ── Channel expiry ────────────────────────────────────────────
     if (this.nukeChanneling && time >= this.nukeChannelEnd) { this.nukeChanneling = false; this.player.chargeRatio = 0; }
     if (this.npcNukeChanneling && time >= this.npcNukeChannelEnd) this.npcNukeChanneling = false;
@@ -3854,6 +4250,22 @@ export class ArenaScene extends Phaser.Scene {
     // ── Frozen player ─────────────────────────────────────────────
     if (this.playerFrozenUntil > time && !this.isDodging) {
       playerBody.setVelocity(0, 0);
+    }
+
+    // ── P2 movement (PvP) ─────────────────────────────────────────
+    if (this.isPvP) {
+      const npcBody = this.npc.body as Phaser.Physics.Arcade.Body;
+      if (!this.p2IsDodging && !(this.npcFrozenUntil > time) && !this.npcNukeChanneling) {
+        let nvx = 0, nvy = 0;
+        if (this.p2LeftKey.isDown)  nvx -= this.npc.speed;
+        if (this.p2RightKey.isDown) nvx += this.npc.speed;
+        if (this.p2UpKey.isDown)    nvy -= this.npc.speed;
+        if (this.p2DownKey.isDown)  nvy += this.npc.speed;
+        if (nvx !== 0 && nvy !== 0) { nvx *= 0.7071; nvy *= 0.7071; }
+        npcBody.setVelocity(nvx * this.npcSpeedMult, nvy * this.npcSpeedMult);
+      } else if (this.npcFrozenUntil > time && !this.p2IsDodging) {
+        (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+      }
     }
 
     // ── Player abilities ─────────────────────────────────────────
@@ -5528,6 +5940,50 @@ export class ArenaScene extends Phaser.Scene {
       this.time.delayedCall(1000, () => { this.dodgeOnCooldown = false; });
     }
 
+    // ── P2 dodge (PvP) ────────────────────────────────────────────
+    if (this.isPvP && Phaser.Input.Keyboard.JustDown(this.p2DodgeKey) && !this.p2DodgeOnCooldown && !this.p2IsDodging && !this.npcNukeChanneling) {
+      this.p2DodgeOnCooldown = true;
+      this.p2IsDodging = true;
+      this.npc.isInvincible = true;
+
+      let dx = (this.p2RightKey.isDown ? 1 : 0) - (this.p2LeftKey.isDown ? 1 : 0);
+      let dy = (this.p2DownKey.isDown ? 1 : 0) - (this.p2UpKey.isDown ? 1 : 0);
+      if (dx === 0 && dy === 0) {
+        const angle = Phaser.Math.Angle.Between(this.npc.x, this.npc.y, p2TargetX, p2TargetY);
+        dx = Math.cos(angle);
+        dy = Math.sin(angle);
+      } else {
+        const len = Math.sqrt(dx * dx + dy * dy);
+        dx /= len;
+        dy /= len;
+      }
+
+      (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(dx * 520, dy * 520);
+
+      const p2Trail = this.add.circle(this.npc.x, this.npc.y, 18, 0x4488ff, 0.4);
+      this.tweens.add({ targets: p2Trail, alpha: 0, scaleX: 0.5, scaleY: 0.5, duration: 300, onComplete: () => p2Trail.destroy() });
+
+      this.time.delayedCall(280, () => {
+        if (this.npc.active) { this.npc.isInvincible = false; this.p2IsDodging = false; }
+      });
+      this.time.delayedCall(1000, () => { this.p2DodgeOnCooldown = false; });
+    }
+
+    // ── NPC AI / P2 abilities ─────────────────────────────────────
+    if (this.isPvP) {
+      const p2Ctx = this.buildNpcContext(p2TargetX, p2TargetY);
+      const p2CastId = this.processP2Abilities(time, delta, p2Ctx, p2TargetX, p2TargetY);
+      if (p2CastId === 'flame-body') {
+        this.npcFlameBodyActive = !this.npcFlameBodyActive;
+        this.npcFlameBodyTickAccum = 0;
+        if (this.npcFlameBodyActive) {
+          this.npcFlameBodyAura = this.add.circle(this.npc.x, this.npc.y, 30, 0xff6600, 0.25).setDepth(3);
+        } else {
+          if (this.npcFlameBodyAura) { this.npcFlameBodyAura.destroy(); this.npcFlameBodyAura = null; }
+        }
+      }
+      this.p2ClickWasDown = this.p2ClickKey.isDown;
+    } else {
     // ── NPC AI ───────────────────────────────────────────────────
     const aiState: NpcAiState = {
       isLocked: this.npcNukeChanneling || this.npcEarthSlamActive || this.npcEarthSlamBouncing || this.npcFrozenUntil > time,
@@ -5560,9 +6016,9 @@ export class ArenaScene extends Phaser.Scene {
 
     const npcPreDashX = this.npc.x;
     const npcPreDashY = this.npc.y;
-    const npcCastId = this.npc.doAI(
+    const npcCastId = (this.npc as NpcOpponent).doAI(
       this.player,
-      (tx, ty) => this.buildNpcContext(tx, ty),
+      (tx: number, ty: number) => this.buildNpcContext(tx, ty),
       time,
       aiState,
     );
@@ -5608,6 +6064,7 @@ export class ArenaScene extends Phaser.Scene {
     if (npcCastId === 'charged-beam') {
       this.npcAirConsecutiveHits = 0;
     }
+    } // end !isPvP else
 
     // ── Ice per-frame ─────────────────────────────────────────────
     if (this.elementId === 'ice' || this.npcElement.id === 'ice') {
@@ -6749,6 +7206,17 @@ export class ArenaScene extends Phaser.Scene {
         }
       } else {
         entry.fill.setSize(entry.maxWidth * this.player.getCooldownRatio(entry.abilityId), entry.fill.height);
+      }
+    }
+
+    // P2 HUD cooldown bars (PvP)
+    if (this.isPvP) {
+      for (const entry of this.p2AbilityBars) {
+        if (entry.abilityId === 'flame-body') {
+          entry.fill.setSize(this.npcFlameBodyActive ? entry.maxWidth : 0, entry.fill.height);
+        } else {
+          entry.fill.setSize(entry.maxWidth * this.npc.getCooldownRatio(entry.abilityId), entry.fill.height);
+        }
       }
     }
   }
