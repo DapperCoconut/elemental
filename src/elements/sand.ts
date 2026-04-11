@@ -1,55 +1,55 @@
 import { Element } from './Element';
 import { Ability, CastContext } from './Ability';
 
-const sandFlintlockAbility: Ability = {
-  id: 'sand-flintlock',
-  name: 'Flintlock',
-  description: 'Hitscan shot (12 dmg, 2s reload). Fire early for +20 heat.',
+const timeBarrage: Ability = {
+  id: 'time-barrage',
+  name: 'Barrage',
+  description: 'Hold click: fire accelerating projectiles that ramp up in speed over 3s.',
   displayKey: 'Click',
-  cooldown: 2000,
-  cast(ctx: CastContext) { ctx.sandFlintlock(ctx.targetX, ctx.targetY); },
+  cooldown: 0,
+  cast(ctx: CastContext) { ctx.timeBarrage(ctx.targetX, ctx.targetY); },
 };
 
-const sandBlindingSand: Ability = {
-  id: 'sand-blinding',
-  name: 'Blinding Sand',
-  description: '3 large balls at shotgun range — blind target (50% less attacks, 5s)',
+const timeWarp: Ability = {
+  id: 'time-warp',
+  name: 'Time Warp',
+  description: 'Fire a fast large orb. Hits teleport the enemy back 3s, leaving puddles that slow by 25% and charge Q. 3s CD.',
   displayKey: 'E',
   cooldown: 3000,
-  cast(ctx: CastContext) { ctx.sandBlindingSand(ctx.targetX, ctx.targetY); },
+  cast(ctx: CastContext) { ctx.timeWarp(ctx.targetX, ctx.targetY); },
 };
 
-const sandTornado: Ability = {
-  id: 'sand-tornado',
-  name: 'Tornado Force',
-  description: 'Toggle: +50% speed, 50% evasion, +10 heat/s',
+const timeRemain: Ability = {
+  id: 'time-remain',
+  name: 'Remain',
+  description: '3s yellow aura: absorb all damage. Afterwards take 80%. Every 10 absorbed damage spawns a puddle. 12s CD.',
   displayKey: 'R',
-  cooldown: 0,
-  cast(ctx: CastContext) { ctx.sandToggleTornado(); },
+  cooldown: 12000,
+  cast(ctx: CastContext) { ctx.timeRemain(); },
 };
 
-const sandMirage: Ability = {
-  id: 'sand-mirage',
-  name: 'Mirage',
-  description: 'Leave a 75 HP decoy (AI attacks it), then dash toward cursor',
+const timeHalt: Ability = {
+  id: 'time-halt',
+  name: 'Halt',
+  description: '6s: area slows projectiles & enemy 50%. Click/E projectiles move at 2x speed while active. 12s CD.',
   displayKey: 'F',
-  cooldown: 8000,
-  cast(ctx: CastContext) { ctx.sandMirage(ctx.targetX, ctx.targetY); },
+  cooldown: 12000,
+  cast(ctx: CastContext) { ctx.timeHalt(); },
 };
 
-const sandGlass: Ability = {
-  id: 'sand-glass',
-  name: 'Glass Meld',
-  description: 'Requires 90 heat. Hold Click: rapid glass shards. Drains 5 heat/s, cancels at 30 heat.',
+const timeTimeless: Ability = {
+  id: 'time-timeless',
+  name: 'Timeless',
+  description: '3s with 0 cooldowns. Charges by standing in time puddles (10s total). Cannot use while active.',
   displayKey: 'Q',
   cooldown: 0,
-  cast(ctx: CastContext) { ctx.sandActivateGlass(); },
+  cast(ctx: CastContext) { ctx.timeTimeless(); },
 };
 
 export const sandElement: Element = {
   id: 'sand',
-  name: 'Sand',
-  color: 0xddbb77,
+  name: 'Time',
+  color: 0xffdd44,
   emoji: '⏳',
-  abilities: [sandFlintlockAbility, sandBlindingSand, sandTornado, sandMirage, sandGlass],
+  abilities: [timeBarrage, timeWarp, timeRemain, timeHalt, timeTimeless],
 };

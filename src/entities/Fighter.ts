@@ -16,6 +16,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public lastIncomingDamage = 0; // set in takeDamage() before shield check — used by reflect upgrades
   /** Multiply all ability cooldowns by this factor (< 1 = faster, e.g. Rebirth post-revival). */
   public cooldownMult = 1;
+  /** If set, called with the damage amount before shields; return true to absorb the hit entirely. */
+  public damageAbsorber: ((amount: number) => boolean) | null = null;
 
   private cooldowns: Map<string, number> = new Map();
   private healthBar: HealthBar;
@@ -52,6 +54,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     if (this.isInvincible) return;
     amount = Math.round(amount * this.incomingDamageMultiplier);
     this.lastIncomingDamage = amount;
+
+    if (this.damageAbsorber && this.damageAbsorber(amount)) return;
 
     if (this.shieldCharges > 0) {
       this.shieldCharges--;

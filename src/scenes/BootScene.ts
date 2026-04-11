@@ -174,29 +174,39 @@ export class BootScene extends Phaser.Scene {
     gfx.fillCircle(4, 4, 4);
     gfx.generateTexture('proj-hunt-pellet', 8, 8);
 
-    // Sand element texture (sandy tan circle)
+    // Time element texture (golden yellow circle)
     gfx.clear();
-    gfx.fillStyle(0xddbb77);
+    gfx.fillStyle(0xffdd44);
     gfx.fillCircle(24, 24, 22);
-    gfx.lineStyle(3, 0xffdd99);
+    gfx.lineStyle(3, 0xffffaa);
     gfx.strokeCircle(24, 24, 22);
     gfx.generateTexture('elem-sand', 48, 48);
 
-    // Sand blinding ball (large tan circle)
+    // Time Warp orb (large golden-white orb)
     gfx.clear();
-    gfx.fillStyle(0xddbb77);
-    gfx.fillCircle(12, 12, 12);
-    gfx.lineStyle(2, 0xffdd99);
-    gfx.strokeCircle(12, 12, 12);
-    gfx.generateTexture('proj-sand-ball', 24, 24);
+    gfx.fillStyle(0xffee88);
+    gfx.fillCircle(14, 14, 14);
+    gfx.lineStyle(3, 0xffffff);
+    gfx.strokeCircle(14, 14, 14);
+    gfx.generateTexture('proj-time-orb', 28, 28);
 
-    // Sand glass shard (small cyan-white rect)
+    // Time barrage shard (small golden diamond)
     gfx.clear();
-    gfx.fillStyle(0xaaddff);
-    gfx.fillRect(0, 2, 8, 4);
-    gfx.lineStyle(1, 0xeeffff);
-    gfx.strokeRect(0, 2, 8, 4);
-    gfx.generateTexture('proj-sand-shard', 8, 8);
+    gfx.fillStyle(0xffdd44);
+    gfx.fillRect(1, 3, 6, 4);
+    gfx.lineStyle(1, 0xffffaa);
+    gfx.strokeRect(1, 3, 6, 4);
+    gfx.generateTexture('proj-time-shard', 8, 10);
+
+    // Keep sand-ball/sand-shard as aliases for legacy references
+    gfx.clear();
+    gfx.fillStyle(0xffdd44);
+    gfx.fillCircle(12, 12, 12);
+    gfx.generateTexture('proj-sand-ball', 24, 24);
+    gfx.clear();
+    gfx.fillStyle(0xffdd44);
+    gfx.fillRect(1, 3, 6, 4);
+    gfx.generateTexture('proj-sand-shard', 8, 10);
 
     gfx.destroy();
 

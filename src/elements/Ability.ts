@@ -77,12 +77,18 @@ export interface CastContext {
   huntBloodHunt: () => void;
   huntBloodMoon: () => void;
   huntUntransform: () => void;
-  // Sand
+  // Sand (legacy)
   sandFlintlock: (tx: number, ty: number) => void;
   sandBlindingSand: (tx: number, ty: number) => void;
   sandToggleTornado: () => void;
   sandMirage: (tx: number, ty: number) => void;
   sandActivateGlass: () => void;
+  // Time (replaces Sand)
+  timeBarrage: (tx: number, ty: number) => void;
+  timeWarp: (tx: number, ty: number) => void;
+  timeRemain: () => void;
+  timeHalt: () => void;
+  timeTimeless: () => void;
 }
 
 export interface Ability {

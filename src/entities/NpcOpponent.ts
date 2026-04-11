@@ -46,12 +46,9 @@ export interface NpcAiState {
   npcHuntTrailActive?: boolean;
   playerBleeding?: boolean;
   huntBloodMoonActive?: boolean;
-  npcSandBlinded?: boolean;
-  npcSandGlassForm?: boolean;
-  npcSandHeat?: number;
-  npcSandTornadoActive?: boolean;
-  playerSandDecoyX?: number;
-  playerSandDecoyY?: number;
+  npcTimeRemainActive?: boolean;
+  npcTimeHaltActive?: boolean;
+  npcTimeTimelessReady?: boolean;
 }
 
 export class NpcOpponent extends Fighter {
@@ -255,7 +252,7 @@ export class NpcOpponent extends Fighter {
       return this.doHuntAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState, angleToTarget);
     }
     if (this.element.id === 'sand') {
-      return this.doSandAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState, angleToTarget);
+      return this.doTimeAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState, angleToTarget);
     }
     return null;
   }
@@ -785,7 +782,7 @@ export class NpcOpponent extends Fighter {
     return null;
   }
 
-  private doSandAbilities(
+  private doTimeAbilities(
     target: Fighter,
     buildContext: (tX: number, tY: number) => CastContext,
     time: number,
@@ -797,56 +794,32 @@ export class NpcOpponent extends Fighter {
     angleToTarget: number,
   ): string | null {
     const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    // If blinded: 50% chance to skip entire turn
-    if (aiState.npcSandBlinded && Math.random() < 0.5) return null;
-    // In glass form: only fire shards (handled per-frame in ArenaScene), no other abilities
-    if (aiState.npcSandGlassForm) return 'glass-minigun';
-
-    // Sharp aim for hitscan flintlock (10% of difficulty offset)
-    const sharpOffsetRad = (Math.random() * 2 - 1) * this.difficulty.aimOffsetDeg * 0.10 * (Math.PI / 180);
-    const sharpAngle = angleToTarget + sharpOffsetRad;
-    const sharpX = this.x + Math.cos(sharpAngle) * dist;
-    const sharpY = this.y + Math.sin(sharpAngle) * dist;
-
-    // Use player decoy as target when it exists
-    const decoyX = aiState.playerSandDecoyX;
-    const decoyY = aiState.playerSandDecoyY;
-    const useDecoy = decoyX !== undefined && decoyY !== undefined;
-    const flintX = useDecoy ? decoyX : sharpX;
-    const flintY = useDecoy ? decoyY : sharpY;
-
-    const heat = aiState.npcSandHeat ?? 0;
-    const tornadoActive = aiState.npcSandTornadoActive ?? false;
+    // Remain active: skip abilities (absorbing damage phase)
+    if (aiState.npcTimeRemainActive) return null;
 
     if (!skipSpecials) {
-      // Glass Meld — when heat >= 90
-      if (heat >= 90) {
-        if (this.castAbility('sand-glass', buildContext(this.x, this.y))) return 'sand-glass';
+      // Timeless — when charged and low-moderate HP
+      if (aiState.npcTimeTimelessReady) {
+        if (this.castAbility('time-timeless', buildContext(this.x, this.y))) return 'time-timeless';
       }
 
-      // Mirage — when low HP, dash away
-      if (hpRatio < 0.35) {
-        const awayAngle = Phaser.Math.Angle.Between(target.x, target.y, this.x, this.y);
-        const awayX = this.x + Math.cos(awayAngle) * 220;
-        const awayY = this.y + Math.sin(awayAngle) * 220;
-        if (this.castAbility('sand-mirage', buildContext(awayX, awayY))) return 'sand-mirage';
+      // Remain — activate when HP is low (12s CD handled by castAbility)
+      if (hpRatio < 0.40) {
+        if (this.castAbility('time-remain', buildContext(this.x, this.y))) return 'time-remain';
       }
 
-      // Blinding Sand — when player is close
-      if (dist < 200) {
-        if (this.castAbility('sand-blinding', buildContext(aimX, aimY))) return 'sand-blinding';
+      // Halt — when player is close or barrage is ramped up
+      if (dist < 220 && !aiState.npcTimeHaltActive) {
+        if (this.castAbility('time-halt', buildContext(this.x, this.y))) return 'time-halt';
       }
 
-      // Tornado toggle — on when heat < 55 and healthy; off when heat >= 55
-      const wantTornado = heat < 55 && hpRatio > 0.35;
-      if (wantTornado !== tornadoActive) {
-        if (this.castAbility('sand-tornado', buildContext(this.x, this.y))) return 'sand-tornado';
+      // Time Warp — shoot orb toward player
+      if (dist < 320) {
+        if (this.castAbility('time-warp', buildContext(aimX, aimY))) return 'time-warp';
       }
     }
 
-    // Default: Flintlock hitscan (aim at decoy if present, else player)
-    if (this.castAbility('sand-flintlock', buildContext(flintX, flintY))) return 'sand-flintlock';
-
+    // Barrage is handled per-frame in ArenaScene; nothing else to cast
     return null;
   }
 

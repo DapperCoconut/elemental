@@ -177,6 +177,21 @@ interface HuntTrailCircle {
   expiresAt: number;
 }
 
+interface TimePuddle {
+  sprite: Phaser.GameObjects.Arc;
+  expiresAt: number;
+  x: number;
+  y: number;
+  radius: number;
+  owner: 'player' | 'npc';
+}
+
+interface PosSnapshot {
+  x: number;
+  y: number;
+  t: number;
+}
+
 const ELEMENT_MAP: Record<string, Element> = {
   fire:   fireElement,
   water:  waterElement,
@@ -592,27 +607,56 @@ export class ArenaScene extends Phaser.Scene {
   private npcHuntBloodMoonFilter: Phaser.GameObjects.Rectangle | null = null;
   private npcHuntBloodMoonTickAccum = 0;
 
-  // Sand — player
-  private sandHeat = 0;
-  private sandHeatDepletionAccum = 0;
-  private sandFireAccum = 0;
-  private sandTornadoActive = false;
-  private sandTornadoAura: Phaser.GameObjects.Arc | null = null;
-  private sandGlassForm = false;
-  private sandGlassShardAccum = 0;
-  private sandDecoy: { sprite: Phaser.GameObjects.Arc; hp: number; x: number; y: number } | null = null;
-  private sandHeatText: Phaser.GameObjects.Text | null = null;
-  private sandBlindedUntil = 0;
-  // Sand — NPC
-  private npcSandHeat = 0;
-  private npcSandHeatDepletionAccum = 0;
-  private npcSandFireAccum = 0;
-  private npcSandTornadoActive = false;
-  private npcSandTornadoAura: Phaser.GameObjects.Arc | null = null;
-  private npcSandGlassForm = false;
-  private npcSandGlassShardAccum = 0;
-  private npcSandDecoy: { sprite: Phaser.GameObjects.Arc; hp: number; x: number; y: number } | null = null;
-  private npcSandBlindedUntil = 0;
+  // Time (replaces Sand) — shared
+  private timePuddles: TimePuddle[] = [];
+  private playerPosHistory: PosSnapshot[] = [];
+  private npcPosHistory: PosSnapshot[] = [];
+  private posHistoryAccum = 0;
+  // Time — player
+  private timeBarrageActive = false;
+  private timeBarrageStart = 0;
+  private timeBarrageAccum = 0;
+  private lastTimeWarpCast = -99999;
+  private timeNpcTeleporting = false;
+  private timeNpcTeleportStart = 0;
+  private timeNpcTeleportFromX = 0;
+  private timeNpcTeleportFromY = 0;
+  private timeNpcTeleportToX = 0;
+  private timeNpcTeleportToY = 0;
+  private timeNpcTeleportPuddleAccum = 0;
+  private timeRemainActive = false;
+  private timeRemainEnd = 0;
+  private timeRemainAbsorbed = 0;
+  private timeRemainAura: Phaser.GameObjects.Arc | null = null;
+  private timeHaltActive = false;
+  private timeHaltEnd = 0;
+  private timeHaltAura: Phaser.GameObjects.Arc | null = null;
+  private timeSlowedProjs: Map<Projectile, { vx: number; vy: number }> = new Map();
+  private timeTimelessActive = false;
+  private timeTimelessEnd = 0;
+  private timeTimelessCharge = 0;
+  private timeTimelessChargeBar: Phaser.GameObjects.Rectangle | null = null;
+  // Time — NPC
+  private npcTimeBarrageAccum = 0;
+  private npcTimeBarrageStart = 0;
+  private npcPlayerTeleporting = false;
+  private npcPlayerTeleportStart = 0;
+  private npcPlayerTeleportFromX = 0;
+  private npcPlayerTeleportFromY = 0;
+  private npcPlayerTeleportToX = 0;
+  private npcPlayerTeleportToY = 0;
+  private npcPlayerTeleportPuddleAccum = 0;
+  private npcTimeRemainActive = false;
+  private npcTimeRemainEnd = 0;
+  private npcTimeRemainAbsorbed = 0;
+  private npcTimeRemainAura: Phaser.GameObjects.Arc | null = null;
+  private npcTimeHaltActive = false;
+  private npcTimeHaltEnd = 0;
+  private npcTimeHaltAura: Phaser.GameObjects.Arc | null = null;
+  private npcTimeSlowedProjs: Map<Projectile, { vx: number; vy: number }> = new Map();
+  private npcTimeTimelessActive = false;
+  private npcTimeTimelessEnd = 0;
+  private npcTimeTimelessCharge = 0;
 
   // Player upgrade state
   private activeUpgrades: string[] = [];
@@ -882,17 +926,28 @@ export class ArenaScene extends Phaser.Scene {
     this.huntNormalFills = []; this.huntBeastFills = [];
     if (this.npc) { this.npc.npcHuntRoarLocked = false; }
 
-    this.sandHeat = 0; this.sandHeatDepletionAccum = 0; this.sandFireAccum = 0;
-    this.sandTornadoActive = false; this.sandGlassForm = false; this.sandGlassShardAccum = 0;
-    this.sandBlindedUntil = 0;
-    if (this.sandTornadoAura) { this.sandTornadoAura.destroy(); this.sandTornadoAura = null; }
-    if (this.sandDecoy) { this.sandDecoy.sprite.destroy(); this.sandDecoy = null; }
-    this.sandHeatText = null;
-    this.npcSandHeat = 0; this.npcSandHeatDepletionAccum = 0; this.npcSandFireAccum = 0;
-    this.npcSandTornadoActive = false; this.npcSandGlassForm = false; this.npcSandGlassShardAccum = 0;
-    this.npcSandBlindedUntil = 0;
-    if (this.npcSandTornadoAura) { this.npcSandTornadoAura.destroy(); this.npcSandTornadoAura = null; }
-    if (this.npcSandDecoy) { this.npcSandDecoy.sprite.destroy(); this.npcSandDecoy = null; }
+    // Time reset
+    for (const p of this.timePuddles) p.sprite.destroy();
+    this.timePuddles = [];
+    this.playerPosHistory = []; this.npcPosHistory = []; this.posHistoryAccum = 0;
+    this.timeBarrageActive = false; this.timeBarrageStart = 0; this.timeBarrageAccum = 0;
+    this.lastTimeWarpCast = -99999;
+    this.timeNpcTeleporting = false;
+    this.timeRemainActive = false; this.timeRemainAbsorbed = 0;
+    if (this.timeRemainAura) { this.timeRemainAura.destroy(); this.timeRemainAura = null; }
+    this.timeHaltActive = false;
+    if (this.timeHaltAura) { this.timeHaltAura.destroy(); this.timeHaltAura = null; }
+    this.timeSlowedProjs.clear();
+    this.timeTimelessActive = false; this.timeTimelessCharge = 0;
+    this.timeTimelessChargeBar = null;
+    this.npcTimeBarrageAccum = 0; this.npcTimeBarrageStart = 0;
+    this.npcPlayerTeleporting = false;
+    this.npcTimeRemainActive = false; this.npcTimeRemainAbsorbed = 0;
+    if (this.npcTimeRemainAura) { this.npcTimeRemainAura.destroy(); this.npcTimeRemainAura = null; }
+    this.npcTimeHaltActive = false;
+    if (this.npcTimeHaltAura) { this.npcTimeHaltAura.destroy(); this.npcTimeHaltAura = null; }
+    this.npcTimeSlowedProjs.clear();
+    this.npcTimeTimelessActive = false; this.npcTimeTimelessCharge = 0;
 
     this.activeUpgrades = PlayerData.getActiveUpgrades(this.elementId);
     this.npcBurningUntil = 0;
@@ -1033,19 +1088,28 @@ export class ArenaScene extends Phaser.Scene {
       (a, b) => {
         const proj = (a instanceof Projectile ? a : b) as Projectile;
         if (!proj.active || !proj.isFromPlayer) return;
-        // Sand blinding ball: blind NPC, no damage
-        if (proj.texture.key === 'proj-sand-ball') {
-          this.npcSandBlindedUntil = Math.max(this.npcSandBlindedUntil, this.time.now + 5000);
+        // Time Warp orb: teleport NPC back 3 seconds
+        if (proj.texture.key === 'proj-time-orb') {
+          if (!this.timeNpcTeleporting && this.npcPosHistory.length > 0) {
+            const targetT = this.time.now - 3000;
+            let best = this.npcPosHistory[0];
+            for (const snap of this.npcPosHistory) {
+              if (Math.abs(snap.t - targetT) < Math.abs(best.t - targetT)) best = snap;
+            }
+            this.timeNpcTeleporting = true;
+            this.timeNpcTeleportStart = this.time.now;
+            this.timeNpcTeleportFromX = this.npc.x;
+            this.timeNpcTeleportFromY = this.npc.y;
+            this.timeNpcTeleportToX = best.x;
+            this.timeNpcTeleportToY = best.y;
+            this.timeNpcTeleportPuddleAccum = 0;
+            this.spawnHitFlash(this.npc.x, this.npc.y, 0xffdd44);
+          }
           proj.setActive(false).setVisible(false);
           (proj.body as Phaser.Physics.Arcade.Body).stop();
           return;
         }
-        // NPC sand heat: take more damage at high heat
         let _npcDmg = proj.damage;
-        if (this.npcElement.id === 'sand') {
-          if (this.npcSandHeat >= 80) _npcDmg = Math.round(_npcDmg * 1.35);
-          else if (this.npcSandHeat >= 60) _npcDmg = Math.round(_npcDmg * 1.20);
-        }
         this.npc.takeDamage(_npcDmg);
         this.spawnHitFlash(proj.x, proj.y, 0xff6600);
         // Hunt Blood Pact: heal player for 50% of damage dealt
@@ -1104,16 +1168,23 @@ export class ArenaScene extends Phaser.Scene {
       (a, b) => {
         const proj = (a instanceof Projectile ? a : b) as Projectile;
         if (!proj.active || proj.isFromPlayer) return;
-        // Sand blinding ball (NPC fires): blind player, no damage
-        if (proj.texture.key === 'proj-sand-ball') {
-          this.sandBlindedUntil = Math.max(this.sandBlindedUntil, this.time.now + 5000);
-          proj.setActive(false).setVisible(false);
-          (proj.body as Phaser.Physics.Arcade.Body).stop();
-          return;
-        }
-        // Sand tornado evasion (50% dodge while active)
-        if (this.elementId === 'sand' && this.sandTornadoActive && Math.random() < 0.5) {
-          this.spawnDamageNumber(this.player.x, this.player.y - 34, -1); // DODGED
+        // Time Warp orb (NPC fires): teleport player back 3 seconds
+        if (proj.texture.key === 'proj-time-orb') {
+          if (!this.npcPlayerTeleporting && this.playerPosHistory.length > 0) {
+            const targetT = this.time.now - 3000;
+            let best = this.playerPosHistory[0];
+            for (const snap of this.playerPosHistory) {
+              if (Math.abs(snap.t - targetT) < Math.abs(best.t - targetT)) best = snap;
+            }
+            this.npcPlayerTeleporting = true;
+            this.npcPlayerTeleportStart = this.time.now;
+            this.npcPlayerTeleportFromX = this.player.x;
+            this.npcPlayerTeleportFromY = this.player.y;
+            this.npcPlayerTeleportToX = best.x;
+            this.npcPlayerTeleportToY = best.y;
+            this.npcPlayerTeleportPuddleAccum = 0;
+            this.spawnHitFlash(this.player.x, this.player.y, 0xffdd44);
+          }
           proj.setActive(false).setVisible(false);
           (proj.body as Phaser.Physics.Arcade.Body).stop();
           return;
@@ -1138,12 +1209,7 @@ export class ArenaScene extends Phaser.Scene {
           (proj.body as Phaser.Physics.Arcade.Body).stop();
           return;
         }
-        // Sand heat: player takes more damage at high heat
         let _playerDmg = proj.damage;
-        if (this.elementId === 'sand') {
-          if (this.sandHeat >= 80) _playerDmg = Math.round(_playerDmg * 1.35);
-          else if (this.sandHeat >= 60) _playerDmg = Math.round(_playerDmg * 1.20);
-        }
         this.player.takeDamage(_playerDmg);
         this.spawnHitFlash(proj.x, proj.y, 0x00aaff);
         // NPC Hunt Blood Pact: heal NPC for 50% of damage dealt
@@ -1308,12 +1374,7 @@ export class ArenaScene extends Phaser.Scene {
         stroke: '#220044', strokeThickness: 3,
       }).setOrigin(0.5).setDepth(20);
     }
-    if (this.elementId === 'sand') {
-      this.sandHeatText = this.add.text(cx, 52, '🌡️ 0', {
-        fontSize: '18px', fontFamily: '"Arial Black", sans-serif', color: '#ffdd99',
-        stroke: '#553300', strokeThickness: 3,
-      }).setOrigin(0.5).setDepth(20);
-    }
+    // Time element: charge bar rendered per-frame above player; no separate HUD text needed
   }
 
   // ── HUD ─────────────────────────────────────────────────────────
@@ -1383,11 +1444,11 @@ export class ArenaScene extends Phaser.Scene {
       'hunt-blood-hunt':  0xbb0011,
       'hunt-blood-moon':  0x880000,
       'hunt-untransform': 0x664422,
-      'sand-flintlock':   0xddbb77,
-      'sand-blinding':    0xffcc66,
-      'sand-tornado':     0xeedd88,
-      'sand-mirage':      0xffaa44,
-      'sand-glass':       0x88eeff,
+      'time-barrage':     0xffdd44,
+      'time-warp':        0xffffaa,
+      'time-remain':      0xffee66,
+      'time-halt':        0xddcc00,
+      'time-timeless':    0xffffff,
     };
 
     abilities.forEach((ab, i) => {
@@ -2146,65 +2207,63 @@ export class ArenaScene extends Phaser.Scene {
         const burst = this.add.circle(this.player.x, this.player.y, 20, 0x664422, 0.7).setDepth(8);
         this.tweens.add({ targets: burst, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 300, onComplete: () => burst.destroy() });
       },
-      // Sand
-      sandFlintlock: (tx, ty) => {
-        const px = this.player.x, py = this.player.y;
-        const dx = tx - px, dy = ty - py;
-        const len = Math.sqrt(dx * dx + dy * dy) || 1;
-        const line = new Phaser.Geom.Line(px, py, px + (dx / len) * 650, py + (dy / len) * 650);
-        const npcCircle = new Phaser.Geom.Circle(this.npc.x, this.npc.y, 22);
-        if (Phaser.Geom.Intersects.LineToCircle(line, npcCircle)) {
-          let dmg = 12;
-          if (this.npcElement.id === 'sand') {
-            if (this.npcSandHeat >= 80) dmg = Math.round(dmg * 1.35);
-            else if (this.npcSandHeat >= 60) dmg = Math.round(dmg * 1.20);
-          }
-          this.npc.takeDamage(dmg);
-          this.spawnHitFlash(this.npc.x, this.npc.y, 0xffdd99);
-          if (this.huntBloodPactActive && this.time.now < this.huntBloodPactEnd) this.player.heal(Math.ceil(dmg * 0.5));
-        }
-        const flash = this.add.line(0, 0, px, py, px + (dx / len) * 500, py + (dy / len) * 500, 0xffeecc, 0.9)
-          .setLineWidth(2).setDepth(12);
-        this.tweens.add({ targets: flash, alpha: 0, duration: 120, onComplete: () => flash.destroy() });
-      },
-      sandBlindingSand: (tx, ty) => {
-        const baseAngle = Math.atan2(ty - this.player.y, tx - this.player.x);
-        for (const deg of [-20, 0, 20]) {
-          const rad = baseAngle + deg * Math.PI / 180;
-          const proj = new Projectile(this, this.player.x, this.player.y, 'proj-sand-ball', 0, true);
-          this.projectiles.add(proj);
-          proj.launch(Math.cos(rad) * 320, Math.sin(rad) * 320);
-          this.time.delayedCall(375, () => { if (proj.active) { proj.setActive(false).setVisible(false); (proj.body as Phaser.Physics.Arcade.Body).stop(); } });
-        }
-      },
-      sandToggleTornado: () => {
-        this.sandTornadoActive = !this.sandTornadoActive;
-        if (this.sandTornadoAura) { this.sandTornadoAura.destroy(); this.sandTornadoAura = null; }
-        if (this.sandTornadoActive) {
-          this.sandTornadoAura = this.add.circle(this.player.x, this.player.y, 40, 0xddbb77, 0.25).setDepth(3);
-          this.tweens.add({ targets: this.sandTornadoAura, scaleX: 1.3, scaleY: 1.3, alpha: 0.15, yoyo: true, repeat: -1, duration: 400 });
-        }
-      },
-      sandMirage: (tx, ty) => {
-        if (this.sandDecoy) { this.sandDecoy.sprite.destroy(); }
-        const decoySprite = this.add.circle(this.player.x, this.player.y, 22, 0xddbb77, 0.5)
-          .setStrokeStyle(2, 0xffdd99, 0.5).setDepth(5);
-        this.tweens.add({ targets: decoySprite, alpha: 0.2, yoyo: true, repeat: -1, duration: 500 });
-        this.sandDecoy = { sprite: decoySprite, hp: 75, x: this.player.x, y: this.player.y };
+      // Time
+      timeBarrage: () => { /* firing handled per-frame in the input section */ },
+      timeWarp: (tx, ty) => {
         const dx = tx - this.player.x, dy = ty - this.player.y;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        (this.player.body as Phaser.Physics.Arcade.Body).setVelocity((dx / dist) * 640, (dy / dist) * 640);
-        this.isDodging = true;
-        this.player.isInvincible = true;
-        this.time.delayedCall(280, () => { if (this.player.active) { this.player.isInvincible = false; this.isDodging = false; } });
+        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        const speed = 208 * (this.timeHaltActive ? 2 : 1);
+        const orb = new Projectile(this, this.player.x, this.player.y, 'proj-time-orb', 0, true);
+        this.projectiles.add(orb);
+        orb.launch((dx / len) * speed, (dy / len) * speed);
+        this.time.delayedCall(4000, () => { if (orb.active) { orb.setActive(false).setVisible(false); (orb.body as Phaser.Physics.Arcade.Body).stop(); } });
+        const flash = this.add.circle(this.player.x, this.player.y, 16, 0xffdd44, 0.6).setDepth(9);
+        this.tweens.add({ targets: flash, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 300, onComplete: () => flash.destroy() });
       },
-      sandActivateGlass: () => {
-        if (this.sandHeat < 90) return;
-        this.sandGlassForm = true;
-        this.sandGlassShardAccum = 0;
-        const glassFlash = this.add.circle(this.player.x, this.player.y, 28, 0x88eeff, 0.7).setDepth(15);
-        this.tweens.add({ targets: glassFlash, scaleX: 2.2, scaleY: 2.2, alpha: 0, duration: 350, onComplete: () => glassFlash.destroy() });
+      timeRemain: () => {
+        this.timeRemainActive = true;
+        this.timeRemainEnd = this.time.now + 3000;
+        this.timeRemainAbsorbed = 0;
+        if (this.timeRemainAura) this.timeRemainAura.destroy();
+        this.timeRemainAura = this.add.circle(this.player.x, this.player.y, 40, 0xffdd44, 0.35).setDepth(4);
+        this.tweens.add({ targets: this.timeRemainAura, alpha: 0.6, yoyo: true, repeat: -1, duration: 350 });
+        this.player.damageAbsorber = (amount: number) => {
+          const prev10 = Math.floor(this.timeRemainAbsorbed / 10);
+          this.timeRemainAbsorbed += amount;
+          const new10 = Math.floor(this.timeRemainAbsorbed / 10);
+          for (let p = prev10; p < new10; p++) {
+            const angle = Math.random() * Math.PI * 2;
+            const r = 20 + Math.random() * 40;
+            this.spawnTimePuddle(this.player.x + Math.cos(angle) * r, this.player.y + Math.sin(angle) * r, 'player');
+          }
+          return true;
+        };
       },
+      timeHalt: () => {
+        this.timeHaltActive = true;
+        this.timeHaltEnd = this.time.now + 6000;
+        if (this.timeHaltAura) this.timeHaltAura.destroy();
+        this.timeHaltAura = this.add.circle(this.player.x, this.player.y, 120, 0xffdd44, 0.06)
+          .setStrokeStyle(2, 0xffdd44, 0.5).setDepth(3);
+        const hFlash = this.add.circle(this.player.x, this.player.y, 30, 0xffdd44, 0.5).setDepth(10);
+        this.tweens.add({ targets: hFlash, scaleX: 4, scaleY: 4, alpha: 0, duration: 400, onComplete: () => hFlash.destroy() });
+      },
+      timeTimeless: () => {
+        if (this.timeTimelessActive) return;
+        if (this.timeTimelessCharge < 10000) return;
+        this.timeTimelessActive = true;
+        this.timeTimelessEnd = this.time.now + 3000;
+        this.timeTimelessCharge = 0;
+        this.player.cooldownMult = 0.001;
+        const tFlash = this.add.circle(this.player.x, this.player.y, 50, 0xffdd44, 0.55).setDepth(12);
+        this.tweens.add({ targets: tFlash, scaleX: 3.5, scaleY: 3.5, alpha: 0, duration: 600, onComplete: () => tFlash.destroy() });
+      },
+      // Legacy sand no-ops (keep for compiler compatibility)
+      sandFlintlock: () => {},
+      sandBlindingSand: () => {},
+      sandToggleTornado: () => {},
+      sandMirage: () => {},
+      sandActivateGlass: () => {},
     };
   }
 
@@ -2740,68 +2799,63 @@ export class ArenaScene extends Phaser.Scene {
         (this.npc.body as Phaser.Physics.Arcade.Body).setCircle(22, 2, 2);
         this.npc.triggerCooldown('hunt-transform');
       },
-      // Sand (NPC)
-      sandFlintlock: (tx, ty) => {
-        const px = this.npc.x, py = this.npc.y;
-        const dx = tx - px, dy = ty - py;
-        const len = Math.sqrt(dx * dx + dy * dy) || 1;
-        const line = new Phaser.Geom.Line(px, py, px + (dx / len) * 650, py + (dy / len) * 650);
-        const playerCircle = new Phaser.Geom.Circle(this.player.x, this.player.y, 22);
-        if (Phaser.Geom.Intersects.LineToCircle(line, playerCircle)) {
-          // Tornado evasion
-          if (this.sandTornadoActive && Math.random() < 0.5) {
-            this.spawnDamageNumber(this.player.x, this.player.y - 34, -1);
-          } else {
-            let dmg = 12;
-            if (this.elementId === 'sand') {
-              if (this.sandHeat >= 80) dmg = Math.round(dmg * 1.35);
-              else if (this.sandHeat >= 60) dmg = Math.round(dmg * 1.20);
-            }
-            this.player.takeDamage(dmg);
-            this.spawnHitFlash(this.player.x, this.player.y, 0xffdd99);
-            if (this.npcHuntBloodPactActive && this.time.now < this.npcHuntBloodPactEnd) this.npc.heal(Math.ceil(dmg * 0.5));
-          }
-        }
-        const flash = this.add.line(0, 0, px, py, px + (dx / len) * 500, py + (dy / len) * 500, 0xffeecc, 0.9)
-          .setLineWidth(2).setDepth(12);
-        this.tweens.add({ targets: flash, alpha: 0, duration: 120, onComplete: () => flash.destroy() });
-      },
-      sandBlindingSand: (tx, ty) => {
-        const baseAngle = Math.atan2(ty - this.npc.y, tx - this.npc.x);
-        for (const deg of [-20, 0, 20]) {
-          const rad = baseAngle + deg * Math.PI / 180;
-          const proj = new Projectile(this, this.npc.x, this.npc.y, 'proj-sand-ball', 0, false);
-          this.projectiles.add(proj);
-          proj.launch(Math.cos(rad) * 320, Math.sin(rad) * 320);
-          this.time.delayedCall(375, () => { if (proj.active) { proj.setActive(false).setVisible(false); (proj.body as Phaser.Physics.Arcade.Body).stop(); } });
-        }
-      },
-      sandToggleTornado: () => {
-        this.npcSandTornadoActive = !this.npcSandTornadoActive;
-        if (this.npcSandTornadoAura) { this.npcSandTornadoAura.destroy(); this.npcSandTornadoAura = null; }
-        if (this.npcSandTornadoActive) {
-          this.npcSandTornadoAura = this.add.circle(this.npc.x, this.npc.y, 40, 0xddbb77, 0.25).setDepth(3);
-          this.tweens.add({ targets: this.npcSandTornadoAura, scaleX: 1.3, scaleY: 1.3, alpha: 0.15, yoyo: true, repeat: -1, duration: 400 });
-        }
-      },
-      sandMirage: (tx, ty) => {
-        if (this.npcSandDecoy) { this.npcSandDecoy.sprite.destroy(); }
-        const decoySprite = this.add.circle(this.npc.x, this.npc.y, 22, 0xddbb77, 0.5)
-          .setStrokeStyle(2, 0xffdd99, 0.5).setDepth(5);
-        this.tweens.add({ targets: decoySprite, alpha: 0.2, yoyo: true, repeat: -1, duration: 500 });
-        this.npcSandDecoy = { sprite: decoySprite, hp: 75, x: this.npc.x, y: this.npc.y };
+      // Time (NPC)
+      timeBarrage: () => { /* NPC barrage handled per-frame */ },
+      timeWarp: (tx, ty) => {
         const dx = tx - this.npc.x, dy = ty - this.npc.y;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity((dx / dist) * 640, (dy / dist) * 640);
-        this.time.delayedCall(280, () => { (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0); });
+        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        const speed = 208 * (this.npcTimeHaltActive ? 2 : 1);
+        const orb = new Projectile(this, this.npc.x, this.npc.y, 'proj-time-orb', 0, false);
+        this.projectiles.add(orb);
+        orb.launch((dx / len) * speed, (dy / len) * speed);
+        this.time.delayedCall(4000, () => { if (orb.active) { orb.setActive(false).setVisible(false); (orb.body as Phaser.Physics.Arcade.Body).stop(); } });
+        const flash = this.add.circle(this.npc.x, this.npc.y, 16, 0xffdd44, 0.6).setDepth(9);
+        this.tweens.add({ targets: flash, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 300, onComplete: () => flash.destroy() });
       },
-      sandActivateGlass: () => {
-        if (this.npcSandHeat < 90) return;
-        this.npcSandGlassForm = true;
-        this.npcSandGlassShardAccum = 0;
-        const glassFlash = this.add.circle(this.npc.x, this.npc.y, 28, 0x88eeff, 0.7).setDepth(15);
-        this.tweens.add({ targets: glassFlash, scaleX: 2.2, scaleY: 2.2, alpha: 0, duration: 350, onComplete: () => glassFlash.destroy() });
+      timeRemain: () => {
+        this.npcTimeRemainActive = true;
+        this.npcTimeRemainEnd = this.time.now + 3000;
+        this.npcTimeRemainAbsorbed = 0;
+        if (this.npcTimeRemainAura) this.npcTimeRemainAura.destroy();
+        this.npcTimeRemainAura = this.add.circle(this.npc.x, this.npc.y, 40, 0xffdd44, 0.35).setDepth(4);
+        this.tweens.add({ targets: this.npcTimeRemainAura, alpha: 0.6, yoyo: true, repeat: -1, duration: 350 });
+        this.npc.damageAbsorber = (amount: number) => {
+          const prev10 = Math.floor(this.npcTimeRemainAbsorbed / 10);
+          this.npcTimeRemainAbsorbed += amount;
+          const new10 = Math.floor(this.npcTimeRemainAbsorbed / 10);
+          for (let p = prev10; p < new10; p++) {
+            const angle = Math.random() * Math.PI * 2;
+            const r = 20 + Math.random() * 40;
+            this.spawnTimePuddle(this.npc.x + Math.cos(angle) * r, this.npc.y + Math.sin(angle) * r, 'npc');
+          }
+          return true;
+        };
       },
+      timeHalt: () => {
+        this.npcTimeHaltActive = true;
+        this.npcTimeHaltEnd = this.time.now + 6000;
+        if (this.npcTimeHaltAura) this.npcTimeHaltAura.destroy();
+        this.npcTimeHaltAura = this.add.circle(this.npc.x, this.npc.y, 120, 0xffdd44, 0.06)
+          .setStrokeStyle(2, 0xffdd44, 0.5).setDepth(3);
+        const hFlash = this.add.circle(this.npc.x, this.npc.y, 30, 0xffdd44, 0.5).setDepth(10);
+        this.tweens.add({ targets: hFlash, scaleX: 4, scaleY: 4, alpha: 0, duration: 400, onComplete: () => hFlash.destroy() });
+      },
+      timeTimeless: () => {
+        if (this.npcTimeTimelessActive) return;
+        if (this.npcTimeTimelessCharge < 10000) return;
+        this.npcTimeTimelessActive = true;
+        this.npcTimeTimelessEnd = this.time.now + 3000;
+        this.npcTimeTimelessCharge = 0;
+        this.npc.cooldownMult = 0.001;
+        const tFlash = this.add.circle(this.npc.x, this.npc.y, 50, 0xffdd44, 0.55).setDepth(12);
+        this.tweens.add({ targets: tFlash, scaleX: 3.5, scaleY: 3.5, alpha: 0, duration: 600, onComplete: () => tFlash.destroy() });
+      },
+      // Legacy sand no-ops
+      sandFlintlock: () => {},
+      sandBlindingSand: () => {},
+      sandToggleTornado: () => {},
+      sandMirage: () => {},
+      sandActivateGlass: () => {},
     };
   }
 
@@ -2947,7 +3001,12 @@ export class ArenaScene extends Phaser.Scene {
       huntBloodHunt: () => {},
       huntBloodMoon: () => {},
       huntUntransform: () => {},
-      // Sand — no-ops for clone
+      // Time — no-ops for clone
+      timeBarrage: () => {},
+      timeWarp: () => {},
+      timeRemain: () => {},
+      timeHalt: () => {},
+      timeTimeless: () => {},
       sandFlintlock: () => {},
       sandBlindingSand: () => {},
       sandToggleTornado: () => {},
@@ -3420,29 +3479,11 @@ export class ArenaScene extends Phaser.Scene {
     this.tweens.add({ targets: flash, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 350, onComplete: () => flash.destroy() });
   }
 
-  private triggerSandExplosion(x: number, y: number, owner: 'player' | 'npc'): void {
-    if (owner === 'player') {
-      this.player.applySelfDamage(30);
-      if (Phaser.Math.Distance.Between(x, y, this.npc.x, this.npc.y) <= 130) {
-        this.npc.takeDamage(30);
-        this.spawnHitFlash(this.npc.x, this.npc.y, 0xffdd99);
-      }
-    } else {
-      this.npc.applySelfDamage(30);
-      if (Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) <= 130) {
-        let dmg = 30;
-        if (this.elementId === 'sand') {
-          if (this.sandHeat >= 80) dmg = Math.round(dmg * 1.35);
-          else if (this.sandHeat >= 60) dmg = Math.round(dmg * 1.20);
-        }
-        this.player.takeDamage(dmg);
-        this.spawnHitFlash(this.player.x, this.player.y, 0xffdd99);
-      }
-    }
-    const boom = this.add.circle(x, y, 12, 0xffdd99, 0.9).setDepth(12);
-    this.tweens.add({ targets: boom, scaleX: 10, scaleY: 10, alpha: 0, duration: 500, onComplete: () => boom.destroy() });
-    const core = this.add.circle(x, y, 6, 0xffffff, 0.95).setDepth(13);
-    this.tweens.add({ targets: core, scaleX: 5, scaleY: 5, alpha: 0, duration: 250, onComplete: () => core.destroy() });
+  private spawnTimePuddle(x: number, y: number, owner: 'player' | 'npc'): void {
+    const spr = this.add.circle(x, y, 28, 0xffdd44, 0.32).setDepth(2)
+      .setStrokeStyle(2, 0xffffaa, 0.5);
+    this.tweens.add({ targets: spr, alpha: 0.14, yoyo: true, repeat: -1, duration: 900 });
+    this.timePuddles.push({ sprite: spr, expiresAt: this.time.now + 5000, x, y, radius: 28, owner });
   }
 
   private spawnShadowDarkCloud(x: number, y: number, owner: 'player' | 'npc'): void {
@@ -3705,7 +3746,7 @@ export class ArenaScene extends Phaser.Scene {
     } else if (this.elementId === 'hunt') {
       this.playerSpeedMult = this.huntBeastForm ? 1.5 : 1;
     } else if (this.elementId === 'sand') {
-      this.playerSpeedMult = this.sandTornadoActive ? 1.5 : 1;
+      this.playerSpeedMult = 1;
     } else if (this.elementId === 'earth') {
       this.playerSpeedMult = this.hasUpgrade('e') ? 1 + this.player.shieldHp / 100 : 1;
       if (this.earthShieldShedActive) {
@@ -3725,8 +3766,30 @@ export class ArenaScene extends Phaser.Scene {
     this.npcSpeedMult = 1;
     if (this.npcFlameBodyActive) this.npcSpeedMult = 2;
     else if (time < this.npcGeyserBuffUntil) this.npcSpeedMult = 1.5;
-    else if (this.npcElement.id === 'sand' && this.npcSandTornadoActive) this.npcSpeedMult = 1.5;
+    // (Time element NPC has no speed buff of its own)
 
+    // Time puddle slows (25%)
+    if (this.timePuddles.length > 0) {
+      const npcInPuddle = this.timePuddles.some(
+        (p) => p.owner === 'player' && Phaser.Math.Distance.Between(p.x, p.y, this.npc.x, this.npc.y) <= p.radius,
+      );
+      if (npcInPuddle) this.npcSpeedMult *= 0.75;
+      const playerInNpcPuddle = this.timePuddles.some(
+        (p) => p.owner === 'npc' && Phaser.Math.Distance.Between(p.x, p.y, this.player.x, this.player.y) <= p.radius,
+      );
+      if (playerInNpcPuddle) this.playerSpeedMult *= 0.75;
+    }
+    // Halt zone slows (50%)
+    if (this.timeHaltActive) {
+      if (Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y) <= 120) {
+        this.npcSpeedMult *= 0.5;
+      }
+    }
+    if (this.npcTimeHaltActive) {
+      if (Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y) <= 120) {
+        this.playerSpeedMult *= 0.5;
+      }
+    }
     // Ice frost slow on NPC
     if (this.npcFrostStacks > 0) this.npcSpeedMult *= (1 - this.npcFrostStacks * 0.1);
     if (this.npcBlockUpActive) this.npcSpeedMult *= 0.5;
@@ -4585,39 +4648,53 @@ export class ArenaScene extends Phaser.Scene {
         }
       }
     } else if (this.elementId === 'sand') {
-      if (!this.sandGlassForm) {
-        // Click: Flintlock (manual CD; firing early costs +20 heat)
-        if (pointer.isDown && !this.pointerWasDown) {
-          // Blinded: 50% chance to fumble
-          if (this.sandBlindedUntil > time && Math.random() < 0.5) {
-            // miss — play visual anyway
-            const blink = this.add.circle(this.player.x, this.player.y, 10, 0xddbb77, 0.4).setDepth(12);
-            this.tweens.add({ targets: blink, alpha: 0, scaleX: 2, scaleY: 2, duration: 200, onComplete: () => blink.destroy() });
-          } else {
-            const ready = this.player.getCooldownRatio('sand-flintlock') >= 1;
-            this.player.triggerCooldown('sand-flintlock');
-            if (!ready) this.sandHeat = Math.min(100, this.sandHeat + 20);
-            playerCtx.sandFlintlock(mouseX, mouseY);
-          }
+      // Click: Barrage (hold to fire, accelerates over 3s)
+      if (pointer.isDown) {
+        if (!this.timeBarrageActive) {
+          this.timeBarrageActive = true;
+          this.timeBarrageStart = time;
+          this.timeBarrageAccum = 0;
         }
-        // E: Blinding Sand
+        const barrageElapsed = (time - this.timeBarrageStart) / 1000;
+        const interval = Math.max(60, 200 - 140 * Math.min(1, barrageElapsed / 3));
+        this.timeBarrageAccum += delta;
+        while (this.timeBarrageAccum >= interval) {
+          this.timeBarrageAccum -= interval;
+          const dx = mouseX - this.player.x, dy = mouseY - this.player.y;
+          const len = Math.sqrt(dx * dx + dy * dy) || 1;
+          const baseSpeed = 300 + 350 * Math.min(1, barrageElapsed / 3);
+          const speed = baseSpeed * (this.timeHaltActive ? 2 : 1);
+          const spread = (Math.random() - 0.5) * 0.28;
+          const cos = Math.cos(spread), sn = Math.sin(spread);
+          const vx = (dx / len * cos - dy / len * sn) * speed;
+          const vy = (dx / len * sn + dy / len * cos) * speed;
+          const shardDmg = this.timeHaltActive ? 2 : 1;
+          const shard = new Projectile(this, this.player.x, this.player.y, 'proj-time-shard', shardDmg, true);
+          this.projectiles.add(shard);
+          shard.launch(vx, vy);
+        }
+      } else {
+        this.timeBarrageActive = false;
+      }
+      // E/R/F/Q blocked while barrage is held
+      if (!this.timeBarrageActive) {
+        // E: Time Warp
         if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
-          this.player.castAbility('sand-blinding', playerCtx);
+          this.player.castAbility('time-warp', playerCtx);
         }
-        // R: Tornado Force toggle
+        // R: Remain
         if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
-          playerCtx.sandToggleTornado();
+          this.player.castAbility('time-remain', playerCtx);
         }
-        // F: Mirage
+        // F: Halt
         if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
-          this.player.castAbility('sand-mirage', playerCtx);
+          this.player.castAbility('time-halt', playerCtx);
         }
-        // Q: Glass Meld (condition: heat >= 90)
+        // Q: Timeless (charge-gated, no CD)
         if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
-          playerCtx.sandActivateGlass();
+          playerCtx.timeTimeless();
         }
       }
-      // Glass form: minigun shard fire is handled in per-frame
     }
     this.pointerWasDown = pointer.isDown;
 
@@ -5476,12 +5553,9 @@ export class ArenaScene extends Phaser.Scene {
       npcHuntTrailActive: this.npcHuntTrailActive,
       playerBleeding: this.playerBleeding,
       huntBloodMoonActive: this.huntBloodMoonActive,
-      npcSandBlinded: this.npcSandBlindedUntil > time,
-      npcSandGlassForm: this.npcSandGlassForm,
-      npcSandHeat: this.npcSandHeat,
-      npcSandTornadoActive: this.npcSandTornadoActive,
-      playerSandDecoyX: this.sandDecoy?.x,
-      playerSandDecoyY: this.sandDecoy?.y,
+      npcTimeRemainActive: this.npcTimeRemainActive,
+      npcTimeHaltActive: this.npcTimeHaltActive,
+      npcTimeTimelessReady: this.npcTimeTimelessCharge >= 10000,
     };
 
     const npcPreDashX = this.npc.x;
@@ -6148,150 +6222,210 @@ export class ArenaScene extends Phaser.Scene {
       }
     }
 
-    // ── Sand per-frame ───────────────────────────────────────────
+    // ── Time per-frame ───────────────────────────────────────────
     if (this.elementId === 'sand' || this.npcElement.id === 'sand') {
-      // ── Player sand ──
+      // Record position snapshots every 100ms (keep last 4 seconds = 40 entries)
+      this.posHistoryAccum += delta;
+      while (this.posHistoryAccum >= 100) {
+        this.posHistoryAccum -= 100;
+        this.npcPosHistory.push({ x: this.npc.x, y: this.npc.y, t: time });
+        this.playerPosHistory.push({ x: this.player.x, y: this.player.y, t: time });
+        while (this.npcPosHistory.length > 40) this.npcPosHistory.shift();
+        while (this.playerPosHistory.length > 40) this.playerPosHistory.shift();
+      }
+
+      // ── Player time ──
       if (this.elementId === 'sand') {
-        // Heat depletion: 2/s
-        this.sandHeatDepletionAccum += delta;
-        const depleteTicks = Math.floor(this.sandHeatDepletionAccum / 500);
-        if (depleteTicks > 0) {
-          this.sandHeat = Math.max(0, this.sandHeat - depleteTicks);
-          this.sandHeatDepletionAccum -= depleteTicks * 500;
+        // Timeless timeout
+        if (this.timeTimelessActive && time >= this.timeTimelessEnd) {
+          this.timeTimelessActive = false;
+          this.player.cooldownMult = 1;
         }
-        // Tornado: +10 heat/s, aura follows player
-        if (this.sandTornadoActive) {
-          this.sandHeat = Math.min(100, this.sandHeat + 10 * delta / 1000);
-          if (this.sandTornadoAura) this.sandTornadoAura.setPosition(this.player.x, this.player.y);
+
+        // Remain timeout: deal 80% of absorbed damage
+        if (this.timeRemainActive && time >= this.timeRemainEnd) {
+          this.timeRemainActive = false;
+          this.player.damageAbsorber = null;
+          if (this.timeRemainAura) { this.timeRemainAura.destroy(); this.timeRemainAura = null; }
+          const finalDmg = Math.round(this.timeRemainAbsorbed * 0.8);
+          if (finalDmg > 0) this.player.takeDamage(finalDmg);
+          this.timeRemainAbsorbed = 0;
         }
-        // Glass form: drain 5 heat/s, fire shards on hold-click, cancel at ≤30 heat
-        if (this.sandGlassForm) {
-          this.sandHeat = Math.max(0, this.sandHeat - 5 * delta / 1000);
-          if (this.sandHeat <= 30) {
-            this.sandGlassForm = false;
-            this.sandGlassShardAccum = 0;
-          } else if (this.input.activePointer.isDown) {
-            this.sandGlassShardAccum += delta;
-            while (this.sandGlassShardAccum >= 80) {
-              this.sandGlassShardAccum -= 80;
-              const gPtr = this.input.activePointer;
-              const gdx = gPtr.x - this.player.x, gdy = gPtr.y - this.player.y;
-              const glen = Math.sqrt(gdx * gdx + gdy * gdy) || 1;
-              const spread = (Math.random() - 0.5) * 0.35;
-              const gcos = Math.cos(spread), gsin = Math.sin(spread);
-              const gvx = (gdx / glen * gcos - gdy / glen * gsin) * 650;
-              const gvy = (gdx / glen * gsin + gdy / glen * gcos) * 650;
-              const shard = new Projectile(this, this.player.x, this.player.y, 'proj-sand-shard', 3, true);
-              this.projectiles.add(shard);
-              shard.launch(gvx, gvy);
+        if (this.timeRemainActive && this.timeRemainAura) this.timeRemainAura.setPosition(this.player.x, this.player.y);
+
+        // Halt timeout + aura + projectile slowing
+        if (this.timeHaltActive) {
+          if (time >= this.timeHaltEnd) {
+            this.timeHaltActive = false;
+            if (this.timeHaltAura) { this.timeHaltAura.destroy(); this.timeHaltAura = null; }
+            // Restore all slowed projectiles
+            for (const [proj, vel] of this.timeSlowedProjs) {
+              if (proj.active) (proj.body as Phaser.Physics.Arcade.Body).setVelocity(vel.vx, vel.vy);
             }
+            this.timeSlowedProjs.clear();
           } else {
-            this.sandGlassShardAccum = 0;
+            if (this.timeHaltAura) this.timeHaltAura.setPosition(this.player.x, this.player.y);
+            // Slow/restore projectiles in radius
+            for (const child of this.projectiles.getChildren()) {
+              const proj = child as Projectile;
+              if (!proj.active) continue;
+              const body = proj.body as Phaser.Physics.Arcade.Body;
+              const inZone = Phaser.Math.Distance.Between(proj.x, proj.y, this.player.x, this.player.y) <= 120;
+              if (inZone) {
+                if (!this.timeSlowedProjs.has(proj)) {
+                  // Store the true original velocity before we touch it
+                  this.timeSlowedProjs.set(proj, { vx: body.velocity.x, vy: body.velocity.y });
+                }
+                // Each frame: hold at 15% of original
+                const orig = this.timeSlowedProjs.get(proj)!;
+                body.setVelocity(orig.vx * 0.15, orig.vy * 0.15);
+              } else if (this.timeSlowedProjs.has(proj)) {
+                // Restore original when leaving zone
+                const orig = this.timeSlowedProjs.get(proj)!;
+                body.setVelocity(orig.vx, orig.vy);
+                this.timeSlowedProjs.delete(proj);
+              }
+            }
           }
         }
-        // Fire DOT at 90+ heat: 3 dmg/s
-        if (this.sandHeat >= 90) {
-          this.sandFireAccum += delta;
-          while (this.sandFireAccum >= 1000) {
-            this.sandFireAccum -= 1000;
-            this.player.applySelfDamage(3);
+
+        // NPC teleporting back (from player's Time Warp)
+        if (this.timeNpcTeleporting) {
+          const elapsed = time - this.timeNpcTeleportStart;
+          const progress = Math.min(1, elapsed / 1000);
+          const nx = this.timeNpcTeleportFromX + (this.timeNpcTeleportToX - this.timeNpcTeleportFromX) * progress;
+          const ny = this.timeNpcTeleportFromY + (this.timeNpcTeleportToY - this.timeNpcTeleportFromY) * progress;
+          this.npc.setPosition(nx, ny);
+          this.timeNpcTeleportPuddleAccum += delta;
+          while (this.timeNpcTeleportPuddleAccum >= 200) {
+            this.timeNpcTeleportPuddleAccum -= 200;
+            this.spawnTimePuddle(nx, ny, 'player');
           }
-        } else {
-          this.sandFireAccum = 0;
+          if (progress >= 1) this.timeNpcTeleporting = false;
         }
-        // Overheat explosion at 100
-        if (this.sandHeat >= 100) {
-          this.sandHeat = 50;
-          this.triggerSandExplosion(this.player.x, this.player.y, 'player');
+
+        // Timeless charge bar (above player)
+        if (!this.timeTimelessChargeBar) {
+          this.timeTimelessChargeBar = this.add.rectangle(
+            this.player.x, this.player.y - 40, 0, 5, 0xffdd44, 0.85,
+          ).setDepth(12).setOrigin(0, 0.5);
         }
-        // Update heat UI
-        if (this.sandHeatText) this.sandHeatText.setText(`🌡️ ${Math.floor(this.sandHeat)}`);
-        // Decoy cleanup
-        if (this.sandDecoy && this.sandDecoy.hp <= 0) {
-          this.sandDecoy.sprite.destroy();
-          this.sandDecoy = null;
+        const tBarMaxW = 40;
+        this.timeTimelessChargeBar.setPosition(this.player.x - tBarMaxW / 2, this.player.y - 40);
+        this.timeTimelessChargeBar.setSize(Math.min(tBarMaxW, (this.timeTimelessCharge / 10000) * tBarMaxW), 5);
+
+        // Charge Q from standing in player-owned time puddles
+        if (!this.timeTimelessActive) {
+          const inPuddle = this.timePuddles.some(
+            (p) => p.owner === 'player' && Phaser.Math.Distance.Between(p.x, p.y, this.player.x, this.player.y) <= p.radius,
+          );
+          if (inPuddle) this.timeTimelessCharge = Math.min(10000, this.timeTimelessCharge + delta);
         }
       }
 
-      // ── NPC sand ──
+      // ── NPC time ──
       if (this.npcElement.id === 'sand') {
-        this.npcSandHeatDepletionAccum += delta;
-        const npcDeplete = Math.floor(this.npcSandHeatDepletionAccum / 500);
-        if (npcDeplete > 0) {
-          this.npcSandHeat = Math.max(0, this.npcSandHeat - npcDeplete);
-          this.npcSandHeatDepletionAccum -= npcDeplete * 500;
+        // Timeless timeout
+        if (this.npcTimeTimelessActive && time >= this.npcTimeTimelessEnd) {
+          this.npcTimeTimelessActive = false;
+          this.npc.cooldownMult = 1;
         }
-        if (this.npcSandTornadoActive) {
-          this.npcSandHeat = Math.min(100, this.npcSandHeat + 10 * delta / 1000);
-          if (this.npcSandTornadoAura) this.npcSandTornadoAura.setPosition(this.npc.x, this.npc.y);
+
+        // Remain timeout
+        if (this.npcTimeRemainActive && time >= this.npcTimeRemainEnd) {
+          this.npcTimeRemainActive = false;
+          this.npc.damageAbsorber = null;
+          if (this.npcTimeRemainAura) { this.npcTimeRemainAura.destroy(); this.npcTimeRemainAura = null; }
+          const npcFinalDmg = Math.round(this.npcTimeRemainAbsorbed * 0.8);
+          if (npcFinalDmg > 0) this.npc.takeDamage(npcFinalDmg);
+          this.npcTimeRemainAbsorbed = 0;
         }
-        if (this.npcSandGlassForm) {
-          this.npcSandHeat = Math.max(0, this.npcSandHeat - 5 * delta / 1000);
-          if (this.npcSandHeat <= 30) {
-            this.npcSandGlassForm = false;
-            this.npcSandGlassShardAccum = 0;
+        if (this.npcTimeRemainActive && this.npcTimeRemainAura) this.npcTimeRemainAura.setPosition(this.npc.x, this.npc.y);
+
+        // Halt timeout + aura + projectile slowing (NPC zone)
+        if (this.npcTimeHaltActive) {
+          if (time >= this.npcTimeHaltEnd) {
+            this.npcTimeHaltActive = false;
+            if (this.npcTimeHaltAura) { this.npcTimeHaltAura.destroy(); this.npcTimeHaltAura = null; }
+            for (const [proj, vel] of this.npcTimeSlowedProjs) {
+              if (proj.active) (proj.body as Phaser.Physics.Arcade.Body).setVelocity(vel.vx, vel.vy);
+            }
+            this.npcTimeSlowedProjs.clear();
           } else {
-            // NPC glass minigun toward player
-            this.npcSandGlassShardAccum += delta;
-            while (this.npcSandGlassShardAccum >= 100) {
-              this.npcSandGlassShardAccum -= 100;
-              const ndx = this.player.x - this.npc.x, ndy = this.player.y - this.npc.y;
-              const nlen = Math.sqrt(ndx * ndx + ndy * ndy) || 1;
-              const aimOff = (Math.random() * 2 - 1) * this.npcDifficulty.aimOffsetDeg * 0.5 * (Math.PI / 180);
-              const nAngle = Math.atan2(ndy, ndx) + aimOff + (Math.random() - 0.5) * 0.3;
-              void nlen;
-              const nShard = new Projectile(this, this.npc.x, this.npc.y, 'proj-sand-shard', 3, false);
-              this.projectiles.add(nShard);
-              nShard.launch(Math.cos(nAngle) * 650, Math.sin(nAngle) * 650);
+            if (this.npcTimeHaltAura) this.npcTimeHaltAura.setPosition(this.npc.x, this.npc.y);
+            for (const child of this.projectiles.getChildren()) {
+              const proj = child as Projectile;
+              if (!proj.active) continue;
+              const body = proj.body as Phaser.Physics.Arcade.Body;
+              const inZone = Phaser.Math.Distance.Between(proj.x, proj.y, this.npc.x, this.npc.y) <= 120;
+              if (inZone) {
+                if (!this.npcTimeSlowedProjs.has(proj)) {
+                  this.npcTimeSlowedProjs.set(proj, { vx: body.velocity.x, vy: body.velocity.y });
+                }
+                const orig = this.npcTimeSlowedProjs.get(proj)!;
+                body.setVelocity(orig.vx * 0.15, orig.vy * 0.15);
+              } else if (this.npcTimeSlowedProjs.has(proj)) {
+                const orig = this.npcTimeSlowedProjs.get(proj)!;
+                body.setVelocity(orig.vx, orig.vy);
+                this.npcTimeSlowedProjs.delete(proj);
+              }
             }
           }
         }
-        if (this.npcSandHeat >= 90) {
-          this.npcSandFireAccum += delta;
-          while (this.npcSandFireAccum >= 1000) {
-            this.npcSandFireAccum -= 1000;
-            this.npc.applySelfDamage(3);
+
+        // Player teleporting back (from NPC's Time Warp)
+        if (this.npcPlayerTeleporting) {
+          const pElapsed = time - this.npcPlayerTeleportStart;
+          const pProgress = Math.min(1, pElapsed / 1000);
+          const px = this.npcPlayerTeleportFromX + (this.npcPlayerTeleportToX - this.npcPlayerTeleportFromX) * pProgress;
+          const py = this.npcPlayerTeleportFromY + (this.npcPlayerTeleportToY - this.npcPlayerTeleportFromY) * pProgress;
+          this.player.setPosition(px, py);
+          this.npcPlayerTeleportPuddleAccum += delta;
+          while (this.npcPlayerTeleportPuddleAccum >= 200) {
+            this.npcPlayerTeleportPuddleAccum -= 200;
+            this.spawnTimePuddle(px, py, 'npc');
+          }
+          if (pProgress >= 1) this.npcPlayerTeleporting = false;
+        }
+
+        // NPC barrage: fire time shards toward player (accelerates over 3s of continuous firing)
+        const npcBarrageDist = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y);
+        if (npcBarrageDist <= 400 && !this.npcTimeRemainActive) {
+          const nbElapsed = (time - this.npcTimeBarrageStart) / 1000;
+          const nbInterval = Math.max(80, 200 - 120 * Math.min(1, nbElapsed / 3));
+          this.npcTimeBarrageAccum += delta;
+          while (this.npcTimeBarrageAccum >= nbInterval) {
+            this.npcTimeBarrageAccum -= nbInterval;
+            const ndx = this.player.x - this.npc.x, ndy = this.player.y - this.npc.y;
+            const nlen = Math.sqrt(ndx * ndx + ndy * ndy) || 1;
+            const nbSpeed = (300 + 200 * Math.min(1, nbElapsed / 3)) * (this.npcTimeHaltActive ? 2 : 1);
+            const aimOff = (Math.random() * 2 - 1) * this.npcDifficulty.aimOffsetDeg * 0.6 * (Math.PI / 180);
+            const nAngle = Math.atan2(ndy, ndx) + aimOff + (Math.random() - 0.5) * 0.18;
+            const nShard = new Projectile(this, this.npc.x, this.npc.y, 'proj-time-shard', 4, false);
+            this.projectiles.add(nShard);
+            nShard.launch(Math.cos(nAngle) * nbSpeed, Math.sin(nAngle) * nbSpeed);
           }
         } else {
-          this.npcSandFireAccum = 0;
+          // Reset barrage ramp when out of range
+          this.npcTimeBarrageStart = time;
+          this.npcTimeBarrageAccum = 0;
         }
-        if (this.npcSandHeat >= 100) {
-          this.npcSandHeat = 50;
-          this.triggerSandExplosion(this.npc.x, this.npc.y, 'npc');
-        }
-        if (this.npcSandDecoy && this.npcSandDecoy.hp <= 0) {
-          this.npcSandDecoy.sprite.destroy();
-          this.npcSandDecoy = null;
+
+        // NPC timeless charge from standing in NPC puddles
+        if (!this.npcTimeTimelessActive) {
+          const npcInOwnPuddle = this.timePuddles.some(
+            (p) => p.owner === 'npc' && Phaser.Math.Distance.Between(p.x, p.y, this.npc.x, this.npc.y) <= p.radius,
+          );
+          if (npcInOwnPuddle) this.npcTimeTimelessCharge = Math.min(10000, this.npcTimeTimelessCharge + delta);
         }
       }
 
-      // ── Decoy hit detection ──
-      // NPC projectiles intercepted by player decoy
-      if (this.sandDecoy) {
-        for (const go of this.projectiles.getChildren()) {
-          const proj = go as Projectile;
-          if (!proj.active || proj.isFromPlayer) continue;
-          if (Phaser.Math.Distance.Between(proj.x, proj.y, this.sandDecoy.x, this.sandDecoy.y) <= 22) {
-            this.sandDecoy.hp -= proj.damage;
-            proj.setActive(false).setVisible(false);
-            (proj.body as Phaser.Physics.Arcade.Body).stop();
-            this.spawnHitFlash(this.sandDecoy.x, this.sandDecoy.y, 0xddbb77);
-            break;
-          }
-        }
-      }
-      // Player projectiles intercepted by NPC decoy
-      if (this.npcSandDecoy) {
-        for (const go of this.projectiles.getChildren()) {
-          const proj = go as Projectile;
-          if (!proj.active || !proj.isFromPlayer) continue;
-          if (Phaser.Math.Distance.Between(proj.x, proj.y, this.npcSandDecoy.x, this.npcSandDecoy.y) <= 22) {
-            this.npcSandDecoy.hp -= proj.damage;
-            proj.setActive(false).setVisible(false);
-            (proj.body as Phaser.Physics.Arcade.Body).stop();
-            this.spawnHitFlash(this.npcSandDecoy.x, this.npcSandDecoy.y, 0xddbb77);
-            break;
-          }
+      // ── Time puddle tick/expire ──
+      for (let i = this.timePuddles.length - 1; i >= 0; i--) {
+        const p = this.timePuddles[i];
+        if (time >= p.expiresAt) {
+          p.sprite.destroy();
+          this.timePuddles.splice(i, 1);
         }
       }
     }
