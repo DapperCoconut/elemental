@@ -1492,13 +1492,6 @@ export class ArenaScene extends Phaser.Scene {
       this.p2Reticle = this.add.circle(this.p2ReticleX, this.p2ReticleY, 12, 0x000000, 0)
         .setStrokeStyle(2, this.npcElement.color, 0.8)
         .setDepth(30);
-    } else if (this.isNetworkPvP && this.networkRole === 'guest') {
-      // Network guest: show mouse-following reticle for aim feedback
-      this.p2ReticleX = W / 2;
-      this.p2ReticleY = cy;
-      this.p2Reticle = this.add.circle(this.p2ReticleX, this.p2ReticleY, 12, 0x000000, 0)
-        .setStrokeStyle(2, this.npcElement.color, 0.8)
-        .setDepth(30);
     }
 
     // ── HUD ────────────────────────────────────────────────────────
@@ -3608,6 +3601,17 @@ export class ArenaScene extends Phaser.Scene {
     if (this.gameEnded) return;
     this.gameEnded = true;
 
+    // Network host: send final gameOver state packet now, before update() stops ticking
+    if (this.isNetworkPvP && this.networkRole === 'host' && this.networkManager) {
+      this.networkManager.sendState({
+        type: 'state',
+        tick: ++this.networkTick,
+        player: { x: this.player.x, y: this.player.y, vx: 0, vy: 0, hp: this.player.hp, maxHp: this.player.maxHp, shieldCharges: this.player.shieldCharges, shieldHp: this.player.shieldHp, chargeRatio: this.player.chargeRatio, isInvincible: this.player.isInvincible, cooldownMult: this.player.cooldownMult },
+        npc:    { x: this.npc.x,    y: this.npc.y,    vx: 0, vy: 0, hp: this.npc.hp,    maxHp: this.npc.maxHp,    shieldCharges: this.npc.shieldCharges,    shieldHp: this.npc.shieldHp,    chargeRatio: this.npc.chargeRatio,    isInvincible: this.npc.isInvincible,    cooldownMult: this.npc.cooldownMult },
+        gameOver: { playerWon },
+      });
+    }
+
     this.cameras.main.flash(
       350,
       playerWon ? 255 : 0,
@@ -4124,10 +4128,9 @@ export class ArenaScene extends Phaser.Scene {
       p2TargetX = this.p2NetworkAimX * this.scale.width;
       p2TargetY = this.p2NetworkAimY * this.scale.height;
     } else if (this.isNetworkPvP && this.networkRole === 'guest') {
-      // Guest: use own mouse as aim for local prediction + show reticle
+      // Guest: use own mouse as aim for local prediction
       p2TargetX = mouseX;
       p2TargetY = mouseY;
-      if (this.p2Reticle) this.p2Reticle.setPosition(mouseX, mouseY);
     }
 
     // ── Channel expiry ────────────────────────────────────────────
@@ -7379,12 +7382,20 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private reconcileNetworkState(state: import('../network/NetworkTypes').StatePacket): void {
-    // Lerp positions toward authoritative values for smooth correction
-    const LERP = 0.3;
-    this.player.x += (state.player.x - this.player.x) * LERP;
-    this.player.y += (state.player.y - this.player.y) * LERP;
-    this.npc.x    += (state.npc.x - this.npc.x) * LERP;
-    this.npc.y    += (state.npc.y - this.npc.y) * LERP;
+    // Apply authoritative velocity — Phaser physics will extrapolate at 60fps between 20Hz updates
+    (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(state.player.vx, state.player.vy);
+    (this.npc.body    as Phaser.Physics.Arcade.Body).setVelocity(state.npc.vx,    state.npc.vy);
+
+    // Snap position if drift is significant; ignore tiny differences to avoid jitter
+    const SNAP_THRESHOLD = 8;
+    if (Math.abs(this.player.x - state.player.x) > SNAP_THRESHOLD || Math.abs(this.player.y - state.player.y) > SNAP_THRESHOLD) {
+      this.player.x = state.player.x;
+      this.player.y = state.player.y;
+    }
+    if (Math.abs(this.npc.x - state.npc.x) > SNAP_THRESHOLD || Math.abs(this.npc.y - state.npc.y) > SNAP_THRESHOLD) {
+      this.npc.x = state.npc.x;
+      this.npc.y = state.npc.y;
+    }
 
     // Directly set HP and shield state
     this.player.hp = state.player.hp;

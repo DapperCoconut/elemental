@@ -23,4 +23,11 @@ const config: Phaser.Types.Core.GameConfig = {
   scene: [BootScene, TitleScene, MenuScene, ShopScene, LabScene, ArenaScene, GameOverScene, NetworkScene],
 };
 
-new Phaser.Game(config);
+const game = new Phaser.Game(config);
+
+// Keep the game loop running when the tab loses focus.
+// Required for networked PvP: both tabs must keep ticking to send/receive inputs
+// even when one is in the background.
+game.events.on(Phaser.Core.Events.HIDDEN, () => {
+  game.loop.wake();
+});
