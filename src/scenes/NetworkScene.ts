@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { PeerJSNetworkManager } from '../network/PeerJSNetworkManager';
 import { LobbyPacket } from '../network/NetworkTypes';
-import * as PlayerData from '../data/PlayerData';
+
 
 interface ElementDef {
   id: string;
@@ -26,7 +26,6 @@ const ALL_ELEMENTS: ElementDef[] = [
   { id: 'sand',    name: 'Time',    emoji: '⏳', color: 0xffdd44 },
 ];
 
-const COMBINED_IDS = new Set(['oil','shadow','ice','growth','crystal','soul','hunt','sand']);
 
 type Screen = 'role' | 'connecting' | 'waiting' | 'join-input' | 'element-pick' | 'waiting-opponent';
 
@@ -289,9 +288,10 @@ export class NetworkScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this.push(title);
 
-    const available = ALL_ELEMENTS.filter((e) =>
-      !COMBINED_IDS.has(e.id) || PlayerData.isElementUnlocked(e.id),
-    );
+    // Only elements fully implemented in processP2Abilities() are available.
+    // Expand this set as elements are ported.
+    const NETWORK_SUPPORTED: Set<string> = new Set(['fire']);
+    const available = ALL_ELEMENTS.filter((e) => NETWORK_SUPPORTED.has(e.id));
 
     const cardW = 120;
     const cardH = 135;
