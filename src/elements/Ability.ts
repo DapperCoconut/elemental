@@ -40,10 +40,43 @@ export interface CastContext {
   startOverdrive: (x: number, y: number) => void;
   // Shadow
   launchDarkBomb: (x: number, y: number) => void;
+  // Ice
+  fireIceSpike: (targetX: number, targetY: number) => void;
+  fireFrostBlast: (targetX: number, targetY: number) => void;
+  toggleBlockUp: () => void;
+  startSkate: () => void;
+  fireFrozenSolid: (targetX: number, targetY: number) => void;
   activateTentacle: (x: number, y: number) => void;
   placeSnapTrap: () => void;
   activateShadowDance: () => void;
   startBlackHole: () => void;
+  // Growth
+  fireGrowthClick: (tx: number, ty: number) => void;
+  openMutateMenu: () => void;
+  fireInfect: (tx: number, ty: number) => void;
+  activateBloat: () => void;
+  triggerMutantMorph: () => void;
+  // Crystal
+  fireCrystalLaser: (tx: number, ty: number) => void;
+  placeCrystalNode: (tx: number, ty: number) => void;
+  startCrystalBarrage: (tx: number, ty: number) => void;
+  placeCrystalPortal: (tx: number, ty: number) => void;
+  activateCrystalTrick: () => void;
+  // Soul
+  fireSoulOrb: (tx: number, ty: number) => void;
+  summonGhost: (ghostType: 'basic' | 'ghoul' | 'banshee' | 'knight') => void;
+  soulSacrifice: () => void;
+  soulConsume: () => void;
+  // Hunt
+  huntThrowGrenade: (tx: number, ty: number, holdMs: number) => void;
+  huntHuntersTrail: () => void;
+  huntBloodPact: () => void;
+  huntTransform: () => void;
+  huntSlash: (tx: number, ty: number) => void;
+  huntLeap: (tx: number, ty: number) => void;
+  huntBloodHunt: () => void;
+  huntBloodMoon: () => void;
+  huntUntransform: () => void;
 }
 
 export interface Ability {

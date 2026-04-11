@@ -37,6 +37,15 @@ export interface NpcAiState {
   earthShieldHp: number;
   oilDroneCount?: number;
   shadowPlayerSnared?: boolean;
+  playerFrostStacks?: number;
+  iceBlockActive?: boolean;
+  npcGrowthBloatActive?: boolean;
+  crystalNodeCount?: number;
+  npcSoulGhosts?: number;
+  npcHuntBeastForm?: boolean;
+  npcHuntTrailActive?: boolean;
+  playerBleeding?: boolean;
+  huntBloodMoonActive?: boolean;
 }
 
 export class NpcOpponent extends Fighter {
@@ -50,6 +59,9 @@ export class NpcOpponent extends Fighter {
 
   /** Set by ArenaScene when the Mastered mutation is active. */
   public isMastered = false;
+
+  // ── Hunt state ──
+  public npcHuntRoarLocked = false;
 
   // ── Charge state (all AI can charge; Mastered makes it meaningful) ──
   private chargeUntil = 0;
@@ -74,7 +86,7 @@ export class NpcOpponent extends Fighter {
     time: number,
     aiState: NpcAiState,
   ): string | null {
-    if (aiState.isLocked) return null;
+    if (aiState.isLocked || this.npcHuntRoarLocked) return null;
 
     // Initialise charge cooldown on the very first tick so mastered NPCs don't
     // immediately charge before moving.
@@ -220,6 +232,21 @@ export class NpcOpponent extends Fighter {
     }
     if (this.element.id === 'shadow') {
       return this.doShadowAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState, angleToTarget);
+    }
+    if (this.element.id === 'ice') {
+      return this.doIceAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState, angleToTarget);
+    }
+    if (this.element.id === 'growth') {
+      return this.doGrowthAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState, angleToTarget);
+    }
+    if (this.element.id === 'crystal') {
+      return this.doCrystalAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState, angleToTarget);
+    }
+    if (this.element.id === 'soul') {
+      return this.doSoulAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState, angleToTarget);
+    }
+    if (this.element.id === 'hunt') {
+      return this.doHuntAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState, angleToTarget);
     }
     return null;
   }
@@ -449,11 +476,6 @@ export class NpcOpponent extends Fighter {
         if (this.castAbility('bull-rush', buildContext(target.x, target.y))) return 'bull-rush';
       }
 
-      // 2. Shield Up — keep shield topped up
-      if (shield < 60) {
-        if (this.castAbility('shield-up', buildContext(this.x, this.y))) return 'shield-up';
-      }
-
       // 3. Shield Slam — close range dash with decent shield
       if (dist < 200 && shield >= 30) {
         if (this.castAbility('shield-slam', buildContext(target.x, target.y))) return 'shield-slam';
@@ -557,6 +579,269 @@ export class NpcOpponent extends Fighter {
     // Default: dark bomb — sharp aim
     if (dist < 500) {
       if (this.castAbility('dark-drain', buildContext(sharpX, sharpY))) return 'dark-drain';
+    }
+
+    return null;
+  }
+
+  private doIceAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+    angleToTarget: number,
+  ): string | null {
+    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+
+    // Sharp aim for ice spike (15% of normal offset)
+    const sharpOffsetRad = (Math.random() * 2 - 1) * this.difficulty.aimOffsetDeg * 0.15 * (Math.PI / 180);
+    const sharpAngle = angleToTarget + sharpOffsetRad;
+    const sharpX = this.x + Math.cos(sharpAngle) * dist;
+    const sharpY = this.y + Math.sin(sharpAngle) * dist;
+
+    const playerFrostStacks = aiState.playerFrostStacks ?? 0;
+
+    if (!skipSpecials) {
+      // 1. Frozen Solid — highest priority, aim at player
+      if (dist < 500) {
+        if (this.castAbility('frozen-solid', buildContext(target.x, target.y))) return 'frozen-solid';
+      }
+
+      // 2. Frost Blast — if player has >= 2 frost stacks
+      if (playerFrostStacks >= 2) {
+        if (this.castAbility('frost-blast', buildContext(target.x, target.y))) return 'frost-blast';
+      }
+
+      // 3. Block Up — toggle on when low HP
+      if (hpRatio < 0.55 && !aiState.iceBlockActive) {
+        if (this.castAbility('block-up', buildContext(this.x, this.y))) return 'block-up';
+      } else if (hpRatio >= 0.70 && aiState.iceBlockActive) {
+        if (this.castAbility('block-up', buildContext(this.x, this.y))) return 'block-up';
+      }
+
+      // 4. Skate — escape when player is close
+      if (dist < 200) {
+        if (this.castAbility('skate', buildContext(this.x, this.y))) return 'skate';
+      }
+    }
+
+    // Default: Ice Spike — sharp aim
+    if (this.castAbility('ice-spike', buildContext(sharpX, sharpY))) return 'ice-spike';
+
+    return null;
+  }
+
+  private doGrowthAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+    angleToTarget: number,
+  ): string | null {
+    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+
+    // Sharp aim (15% offset) for click attacks
+    const sharpOffsetRad = (Math.random() * 2 - 1) * this.difficulty.aimOffsetDeg * 0.15 * (Math.PI / 180);
+    const sharpAngle = angleToTarget + sharpOffsetRad;
+    const sharpX = this.x + Math.cos(sharpAngle) * dist;
+    const sharpY = this.y + Math.sin(sharpAngle) * dist;
+
+    if (!skipSpecials) {
+      // 1. Mutate — use whenever off cooldown (always beneficial)
+      if (this.castAbility('mutate', buildContext(this.x, this.y))) return 'mutate';
+
+      // 2. Bloat — when low HP
+      if (hpRatio < 0.60 && !aiState.npcGrowthBloatActive) {
+        if (this.castAbility('bloat', buildContext(this.x, this.y))) return 'bloat';
+      }
+
+      // 3. Infect — when in range
+      if (dist < 400) {
+        if (this.castAbility('infect', buildContext(sharpX, sharpY))) return 'infect';
+      }
+
+      // 4. Mutant Morph — every ~30s
+      if (this.castAbility('mutant-morph', buildContext(this.x, this.y))) return 'mutant-morph';
+    }
+
+    // Default: growth-click
+    if (this.castAbility('growth-click', buildContext(sharpX, sharpY))) return 'growth-click';
+
+    return null;
+  }
+
+  private doSoulAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+    angleToTarget: number,
+  ): string | null {
+    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const ghosts = aiState.npcSoulGhosts ?? 0;
+
+    // Sharp aim (10% offset) for orb placement
+    const sharpOffsetRad = (Math.random() * 2 - 1) * this.difficulty.aimOffsetDeg * 0.10 * (Math.PI / 180);
+    const sharpAngle = angleToTarget + sharpOffsetRad;
+    const sharpX = this.x + Math.cos(sharpAngle) * dist;
+    const sharpY = this.y + Math.sin(sharpAngle) * dist;
+
+    if (!skipSpecials) {
+      // 1. Undead Charge — 5 ghosts ready
+      if (ghosts >= 5) {
+        if (this.castAbility('undead-charge', buildContext(this.x, this.y))) return 'undead-charge';
+      }
+
+      // 2. Sacrifice — when ghost count < 2 and HP is healthy enough
+      if (ghosts < 2 && hpRatio > 0.35) {
+        if (this.castAbility('soul-sacrifice', buildContext(this.x, this.y))) return 'soul-sacrifice';
+      }
+
+      // 3. Summon — when ghosts available (NPC context auto-upgrades to best type)
+      if (ghosts >= 1) {
+        if (this.castAbility('soul-summon', buildContext(this.x, this.y))) return 'soul-summon';
+      }
+
+      // 4. Consume — when HP is low
+      if (hpRatio < 0.45) {
+        if (this.castAbility('soul-consume', buildContext(this.x, this.y))) return 'soul-consume';
+      }
+    }
+
+    // Default: Spirit Propel orb toward player
+    if (this.castAbility('soul-orb', buildContext(sharpX, sharpY))) return 'soul-orb';
+
+    return null;
+  }
+
+  private doCrystalAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+    angleToTarget: number,
+  ): string | null {
+    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+
+    // Sharp aim (10% offset) for laser
+    const sharpOffsetRad = (Math.random() * 2 - 1) * this.difficulty.aimOffsetDeg * 0.10 * (Math.PI / 180);
+    const sharpAngle = angleToTarget + sharpOffsetRad;
+    const sharpX = this.x + Math.cos(sharpAngle) * dist;
+    const sharpY = this.y + Math.sin(sharpAngle) * dist;
+
+    if (!skipSpecials) {
+      // 1. Trick of the Light — when low HP
+      if (hpRatio < 0.55) {
+        if (this.castAbility('crystal-trick', buildContext(this.x, this.y))) return 'crystal-trick';
+      }
+
+      // 2. Barrage — when in range
+      if (dist < 380) {
+        if (this.castAbility('crystal-barrage', buildContext(target.x, target.y))) return 'crystal-barrage';
+      }
+
+      // 3. Place Crystal — build up to 3 nodes around NPC position
+      if ((aiState.crystalNodeCount ?? 0) < 3) {
+        const ox = (Math.random() - 0.5) * 130;
+        const oy = (Math.random() - 0.5) * 130;
+        if (this.castAbility('crystal-place', buildContext(this.x + ox, this.y + oy))) return 'crystal-place';
+      }
+
+      // 4. Portal — place occasionally
+      if (this.castAbility('crystal-portal', buildContext(
+        this.x + (Math.random() - 0.5) * 200,
+        this.y + (Math.random() - 0.5) * 200,
+      ))) return 'crystal-portal';
+    }
+
+    // Default: Laser Beam — sharp aim
+    if (this.castAbility('crystal-laser', buildContext(sharpX, sharpY))) return 'crystal-laser';
+
+    return null;
+  }
+
+  private doHuntAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+    _angleToTarget: number,
+  ): string | null {
+    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const inBeastForm = aiState.npcHuntBeastForm ?? false;
+    const bloodMoonDebuff = aiState.huntBloodMoonActive ?? false;
+
+    // Blood moon 20% attack penalty on bleeding NPC
+    if (bloodMoonDebuff && Math.random() < 0.20) return null;
+
+    if (!inBeastForm) {
+      if (!skipSpecials) {
+        // Transform — transition once enough time has passed (NPC transforms aggressively)
+        if (this.castAbility('hunt-transform', buildContext(this.x, this.y))) return 'hunt-transform';
+
+        // Blood pact when low HP
+        if (hpRatio < 0.45) {
+          if (this.castAbility('hunt-blood-pact', buildContext(this.x, this.y))) return 'hunt-blood-pact';
+        }
+
+        // Hunter's trail when not active
+        if (!aiState.npcHuntTrailActive) {
+          if (this.castAbility('hunt-trail', buildContext(this.x, this.y))) return 'hunt-trail';
+        }
+
+        // Grenade at medium range
+        if (dist < 380 && dist > 80) {
+          if (this.castAbility('hunt-grenade', buildContext(aimX, aimY))) return 'hunt-grenade';
+        }
+      }
+
+      // Default: shotgun
+      if (this.castAbility('hunt-shotgun', buildContext(aimX, aimY))) return 'hunt-shotgun';
+    } else {
+      if (!skipSpecials) {
+        // Blood hunt if player is bleeding and on CD
+        if (aiState.playerBleeding) {
+          if (this.castAbility('hunt-blood-hunt', buildContext(this.x, this.y))) return 'hunt-blood-hunt';
+        }
+
+        // Blood moon
+        if (this.castAbility('hunt-blood-moon', buildContext(this.x, this.y))) return 'hunt-blood-moon';
+
+        // Explosive leap when far from target
+        if (dist > 180) {
+          if (this.castAbility('hunt-leap', buildContext(aimX, aimY))) return 'hunt-leap';
+        }
+
+        // Untransform when low HP to regain shotgun flexibility
+        if (hpRatio < 0.25) {
+          if (this.castAbility('hunt-untransform', buildContext(this.x, this.y))) return 'hunt-untransform';
+        }
+      }
+
+      // Default: slash when close
+      if (dist < 110) {
+        if (this.castAbility('hunt-slash', buildContext(aimX, aimY))) return 'hunt-slash';
+      }
     }
 
     return null;

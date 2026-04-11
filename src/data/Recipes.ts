@@ -8,6 +8,11 @@ export interface Recipe {
 export const RECIPES: Recipe[] = [
   { ingredients: ['fire', 'water'], result: 'oil',    resultName: 'Oil',    resultEmoji: '🛢️' },
   { ingredients: ['fire', 'air'],   result: 'shadow', resultName: 'Shadow', resultEmoji: '🌑' },
+  { ingredients: ['water', 'air'],  result: 'ice',    resultName: 'Ice',    resultEmoji: '🧊' },
+  { ingredients: ['water', 'life'],  result: 'growth',  resultName: 'Growth',  resultEmoji: '🦠' },
+  { ingredients: ['water', 'earth'], result: 'crystal', resultName: 'Crystal', resultEmoji: '💎' },
+  { ingredients: ['life', 'air'],   result: 'soul',    resultName: 'Soul',    resultEmoji: '👻' },
+  { ingredients: ['life', 'fire'],  result: 'hunt',    resultName: 'Hunt',    resultEmoji: '🐺' },
 ];
 
 export function findRecipe(a: string, b: string): Recipe | undefined {

@@ -23,6 +23,11 @@ const ELEMENTS: ElementDef[] = [
 const COMBINED_ELEMENTS: ElementDef[] = [
   { id: 'oil',    name: 'Oil',    emoji: '🛢️', color: 0x664400, available: true },
   { id: 'shadow', name: 'Shadow', emoji: '🌑', color: 0x330044, available: true },
+  { id: 'ice',    name: 'Ice',    emoji: '🧊', color: 0x88ccff, available: true },
+  { id: 'growth',  name: 'Growth',  emoji: '🦠', color: 0x88bb22, available: true },
+  { id: 'crystal', name: 'Crystal', emoji: '💎', color: 0x88ccff, available: true },
+  { id: 'soul',    name: 'Soul',    emoji: '👻', color: 0xccaaff, available: true },
+  { id: 'hunt',    name: 'Hunt',    emoji: '🐺', color: 0xcc4400, available: true },
 ];
 
 const DIFF_COLORS = [0x22cc44, 0x88cc22, 0xddaa00, 0xee5500, 0xcc0022];
@@ -122,12 +127,27 @@ export class MenuScene extends Phaser.Scene {
 
     // Determine which elements to show on this page
     const unlockedCombined = COMBINED_ELEMENTS.filter((e) => PlayerData.isElementUnlocked(e.id));
-    const hasCombinedPage = unlockedCombined.length > 0;
-    const currentElements = this.elemPage === 0 ? ELEMENTS : unlockedCombined;
+    const PAGE_SIZE = 5;
+    const combinedPages = Math.max(1, Math.ceil(unlockedCombined.length / PAGE_SIZE));
+    const maxPage = unlockedCombined.length > 0 ? combinedPages : 0; // 0 = no combined pages
+    const totalPages = 1 + maxPage; // page 0 = base, pages 1..maxPage = combined
+
+    let currentElements: ElementDef[];
+    if (this.elemPage === 0) {
+      currentElements = ELEMENTS;
+    } else {
+      const start = (this.elemPage - 1) * PAGE_SIZE;
+      currentElements = unlockedCombined.slice(start, start + PAGE_SIZE);
+    }
+
+    // Page indicator
+    const pageLabel = this.add.text(cx, height / 2 + 110, `${this.elemPage + 1} / ${totalPages}`, {
+      fontSize: '12px', fontFamily: 'Arial, sans-serif', color: '#555566',
+    }).setOrigin(0.5);
+    this.phaseObjects.push(pageLabel);
 
     // Page arrows
     if (this.elemPage > 0) {
-      // Left arrow — go back to base elements
       const leftBtn = this.add.rectangle(28, height / 2 + 20, 32, 64, 0x330066)
         .setStrokeStyle(1, 0x9944ff).setInteractive({ useHandCursor: true });
       const leftLbl = this.add.text(28, height / 2 + 20, '◀', {
@@ -137,14 +157,13 @@ export class MenuScene extends Phaser.Scene {
         .on('pointerover', () => leftBtn.setFillStyle(0x550099))
         .on('pointerout',  () => leftBtn.setFillStyle(0x330066))
         .on('pointerdown', () => {
-          this.elemPage = 0;
+          this.elemPage--;
           this.renderPhase(width, height, cx);
         });
       this.phaseObjects.push(leftBtn, leftLbl);
     }
 
-    if (this.elemPage === 0 && hasCombinedPage) {
-      // Right arrow — go to combined elements
+    if (this.elemPage < totalPages - 1 && (this.elemPage > 0 || unlockedCombined.length > 0)) {
       const rightBtn = this.add.rectangle(width - 28, height / 2 + 20, 32, 64, 0x330066)
         .setStrokeStyle(1, 0x9944ff).setInteractive({ useHandCursor: true });
       const rightLbl = this.add.text(width - 28, height / 2 + 20, '▶', {
@@ -154,7 +173,7 @@ export class MenuScene extends Phaser.Scene {
         .on('pointerover', () => rightBtn.setFillStyle(0x550099))
         .on('pointerout',  () => rightBtn.setFillStyle(0x330066))
         .on('pointerdown', () => {
-          this.elemPage = 1;
+          this.elemPage++;
           this.renderPhase(width, height, cx);
         });
       this.phaseObjects.push(rightBtn, rightLbl);
@@ -167,7 +186,7 @@ export class MenuScene extends Phaser.Scene {
     const totalW = currentElements.length * cardW + (currentElements.length - 1) * gap;
     const startX = cx - totalW / 2;
 
-    if (currentElements.length === 0) {
+    if (this.elemPage > 0 && currentElements.length === 0) {
       const noElems = this.add.text(cx, height / 2 + 20, 'No combined elements discovered yet.\nVisit the LAB to unlock Oil (Fire + Water).', {
         fontSize: '14px', fontFamily: 'Arial, sans-serif', color: '#555577', align: 'center',
       }).setOrigin(0.5);

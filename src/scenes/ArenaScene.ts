@@ -12,6 +12,11 @@ import { airElement, fireHitscan, fireBounceHitscan } from '../elements/air';
 import { earthElement } from '../elements/earth';
 import { oilElement } from '../elements/oil';
 import { shadowElement } from '../elements/shadow';
+import { iceElement } from '../elements/ice';
+import { growthElement } from '../elements/growth';
+import { crystalElement } from '../elements/crystal';
+import { soulElement } from '../elements/soul';
+import { huntElement } from '../elements/hunt';
 import * as PlayerData from '../data/PlayerData';
 import { getTotalRewardMult } from '../data/Mutations';
 
@@ -96,6 +101,81 @@ interface SnapTrap {
   owner: 'player' | 'npc';
 }
 
+interface CrystalNode {
+  sprite: Phaser.GameObjects.Arc;
+  x: number;
+  y: number;
+  owner: 'player' | 'npc';
+}
+
+interface CrystalPortalGate {
+  sprite: Phaser.GameObjects.Arc;
+  label: Phaser.GameObjects.Text;
+  x: number;
+  y: number;
+  owner: 'player' | 'npc';
+}
+
+interface CrystalClone {
+  sprite: Phaser.GameObjects.Arc;
+  hp: number;
+  maxHp: number;
+  offsetX: number;
+  offsetY: number;
+  hpBar: Phaser.GameObjects.Rectangle;
+  hpBg: Phaser.GameObjects.Rectangle;
+}
+
+interface SoulOrb {
+  sprite: Phaser.GameObjects.Arc;
+  expiresAt: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  owner: 'player' | 'npc';
+  lastContactTick: number;
+}
+
+interface SoulSummon {
+  sprite: Phaser.GameObjects.Arc;
+  hp: number;
+  maxHp: number;
+  type: 'basic' | 'ghoul' | 'banshee' | 'knight';
+  owner: 'player' | 'npc';
+  lastContactTick: number;
+  ghoulShootAccum: number;
+  dx: number;
+  dy: number;
+}
+
+interface IcyTrail {
+  sprite: Phaser.GameObjects.Arc;
+  expiresAt: number;
+  x: number;
+  y: number;
+  radius: number;
+  frostTickAccum: number;
+  owner: 'player' | 'npc';
+}
+
+interface HuntGrenade {
+  sprite: Phaser.GameObjects.Arc;
+  x: number; y: number;
+  startX: number; startY: number;
+  vx: number; vy: number;
+  explodeAt: number;
+  selfDamage: boolean;
+  owner: 'player' | 'npc';
+  stopped: boolean;
+}
+
+interface HuntTrailCircle {
+  sprite: Phaser.GameObjects.Arc;
+  x: number; y: number;
+  expiresAt: number;
+}
+
 const ELEMENT_MAP: Record<string, Element> = {
   fire:   fireElement,
   water:  waterElement,
@@ -104,6 +184,11 @@ const ELEMENT_MAP: Record<string, Element> = {
   earth:  earthElement,
   oil:    oilElement,
   shadow: shadowElement,
+  ice:     iceElement,
+  growth:  growthElement,
+  crystal: crystalElement,
+  soul:    soulElement,
+  hunt:    huntElement,
 };
 
 const ELEMENT_TEXTURES: Record<string, string> = {
@@ -114,6 +199,11 @@ const ELEMENT_TEXTURES: Record<string, string> = {
   earth:  'elem-earth',
   oil:    'elem-oil',
   shadow: 'elem-shadow',
+  ice:     'elem-ice',
+  growth:  'elem-growth',
+  crystal: 'elem-crystal',
+  soul:    'elem-soul',
+  hunt:    'elem-hunt',
 };
 
 export class ArenaScene extends Phaser.Scene {
@@ -278,6 +368,7 @@ export class ArenaScene extends Phaser.Scene {
   private cloneEarthSlamHitDealt = false;
 
   // NPC earth-specific state
+  private npcEarthShieldTickAccum = 0;
   private npcEarthShieldAura: Phaser.GameObjects.Arc | null = null;
   private npcEarthSlamActive = false;
   private npcEarthSlamEnd = 0;
@@ -340,6 +431,163 @@ export class ArenaScene extends Phaser.Scene {
   private npcShadowDragNextChangeAt = 0;
   private shadowPlayerSnaredUntil = 0;
   private shadowPlayerStunnedUntil = 0;
+
+  // Ice — frost stacks (both fighters)
+  private npcFrostStacks = 0;
+  private playerFrostStacks = 0;
+  private npcFrostVisual: Phaser.GameObjects.Text | null = null;
+  private playerFrostVisual: Phaser.GameObjects.Text | null = null;
+  // Ice — player
+  private playerBlockUpActive = false;
+  private playerBlockUpAura: Phaser.GameObjects.Arc | null = null;
+  private playerFrozenUntil = 0;
+  // Ice — NPC
+  private npcBlockUpActive = false;
+  private npcBlockUpAura: Phaser.GameObjects.Arc | null = null;
+  private npcFrozenUntil = 0;
+  // Ice — shared
+  private icyTrails: IcyTrail[] = [];
+
+  // Growth — player
+  private growthMorphType: 'spores' | 'claws' | 'virus' = 'spores';
+  private growthDamageMult = 1.0;
+  private growthLingerBonus = 0;
+  private growthViralBonus = 0;
+  private growthBloatCdMs = 10000;
+  private growthInfectExtraProj = 0;
+  private growthInfectCdMs = 8000;
+  private growthRegenRate = 0;
+  private growthRegenAccum = 0;
+  private growthScaleBonus = 0;
+  private growthBloatActive = false;
+  private growthBloatEnd = 0;
+  private growthBloatAura: Phaser.GameObjects.Arc | null = null;
+  private growthMutateMenuOpen = false;
+  private growthMutateButtons: Phaser.GameObjects.GameObject[] = [];
+  private lastPlayerInfectCast = -99999;
+  private lastPlayerBloatCast = -99999;
+  // Growth — NPC
+  private npcGrowthMorphType: 'spores' | 'claws' | 'virus' = 'spores';
+  private npcGrowthDamageMult = 1.0;
+  private npcGrowthLingerBonus = 0;
+  private npcGrowthViralBonus = 0;
+  private npcGrowthBloatCdMs = 10000;
+  private npcGrowthInfectExtraProj = 0;
+  private npcGrowthRegenRate = 0;
+  private npcGrowthRegenAccum = 0;
+  private npcGrowthScaleBonus = 0;
+  private npcGrowthBloatActive = false;
+  private npcGrowthBloatEnd = 0;
+  private npcGrowthBloatAura: Phaser.GameObjects.Arc | null = null;
+  private lastNpcInfectCast = -99999;
+  private lastNpcBloatCast = -99999;
+  // Growth — toxic DOT
+  private npcToxicUntil = 0;
+  private npcToxicDps = 0;
+  private npcToxicTickAccum = 0;
+  private npcToxicAura: Phaser.GameObjects.Arc | null = null;
+  private playerToxicUntil = 0;
+  private playerToxicDps = 0;
+  private playerToxicTickAccum = 0;
+  private playerToxicAura: Phaser.GameObjects.Arc | null = null;
+
+  // Crystal — player
+  private crystalNodes: CrystalNode[] = [];
+  private crystalPortals: CrystalPortalGate[] = [];
+  private crystalClones: CrystalClone[] = [];
+  private crystalTrickEnd = 0;
+  private crystalBarrageActive = false;
+  private crystalBarrageEnd = 0;
+  private crystalBarrageAccum = 0;
+  private crystalBarrageShots = 0;
+  private crystalBarrageTX = 0;
+  private crystalBarrageTY = 0;
+  private crystalPortalCooldown = 0;
+  // Crystal — NPC
+  private npcCrystalNodes: CrystalNode[] = [];
+  private npcCrystalPortals: CrystalPortalGate[] = [];
+  private npcCrystalClones: CrystalClone[] = [];
+  private npcCrystalTrickEnd = 0;
+  private npcCrystalBarrageActive = false;
+  private npcCrystalBarrageEnd = 0;
+  private npcCrystalBarrageAccum = 0;
+  private npcCrystalBarrageShots = 0;
+  private npcCrystalBarrageTX = 0;
+  private npcCrystalBarrageTY = 0;
+  private npcCrystalPortalCooldown = 0;
+
+  // Soul — player
+  private soulGhosts = 0;
+  private soulGhostText: Phaser.GameObjects.Text | null = null;
+  private playerSoulOrbs: SoulOrb[] = [];
+  private playerSoulSummons: SoulSummon[] = [];
+  private soulEHolding = false;
+  private soulEHoldStart = 0;
+  private soulEHoldVisual: Phaser.GameObjects.Arc | null = null;
+  private lastPlayerSoulOrbCast = -99999;
+  private lastPlayerSummon = -99999;
+  private lastPlayerSacrifice = -99999;
+  private lastPlayerConsume = -99999;
+  // Soul — NPC
+  private npcSoulGhosts = 0;
+  private npcSoulOrbs: SoulOrb[] = [];
+  private npcSoulSummons: SoulSummon[] = [];
+  private lastNpcSoulOrbCast = -99999;
+  private lastNpcSummon = -99999;
+  private lastNpcSacrifice = -99999;
+  private lastNpcConsume = -99999;
+
+  // Hunt — player
+  private huntBeastForm = false;
+  private huntGrenadeHolding = false;
+  private huntGrenadeHoldStart = 0;
+  private huntGrenadeVisual: Phaser.GameObjects.Arc | null = null;
+  private huntGrenades: HuntGrenade[] = [];
+  private huntTrailActive = false;
+  private huntTrailEnd = 0;
+  private huntTrailAccum = 0;
+  private huntTrailCircles: HuntTrailCircle[] = [];
+  private huntBloodPactActive = false;
+  private huntBloodPactEnd = 0;
+  private huntBloodPactAura: Phaser.GameObjects.Arc | null = null;
+  private huntLeapActive = false;
+  private huntLeapEnd = 0;
+  private huntLeapTargetX = 0;
+  private huntLeapTargetY = 0;
+  private npcBleeding = false;
+  private npcBleedingUntil = 0;
+  private npcBleedAura: Phaser.GameObjects.Arc | null = null;
+  private npcHuntSlowUntil = 0;
+  private huntBloodMoonActive = false;
+  private huntBloodMoonEnd = 0;
+  private huntBloodMoonFilter: Phaser.GameObjects.Rectangle | null = null;
+  private huntBloodMoonTickAccum = 0;
+  private huntNormalHudCards: Phaser.GameObjects.GameObject[] = [];
+  private huntBeastHudCards: Phaser.GameObjects.GameObject[] = [];
+  private huntNormalFills: AbilityBarEntry[] = [];
+  private huntBeastFills: AbilityBarEntry[] = [];
+  // Hunt — NPC
+  private npcHuntBeastForm = false;
+  private npcHuntGrenades: HuntGrenade[] = [];
+  private npcHuntTrailActive = false;
+  private npcHuntTrailEnd = 0;
+  private npcHuntTrailAccum = 0;
+  private npcHuntTrailCircles: HuntTrailCircle[] = [];
+  private npcHuntBloodPactActive = false;
+  private npcHuntBloodPactEnd = 0;
+  private npcHuntBloodPactAura: Phaser.GameObjects.Arc | null = null;
+  private npcHuntLeapActive = false;
+  private npcHuntLeapEnd = 0;
+  private npcHuntLeapTargetX = 0;
+  private npcHuntLeapTargetY = 0;
+  private playerBleeding = false;
+  private playerBleedingUntil = 0;
+  private playerBleedAura: Phaser.GameObjects.Arc | null = null;
+  private playerHuntSlowUntil = 0;
+  private npcHuntBloodMoonActive = false;
+  private npcHuntBloodMoonEnd = 0;
+  private npcHuntBloodMoonFilter: Phaser.GameObjects.Rectangle | null = null;
+  private npcHuntBloodMoonTickAccum = 0;
 
   // Player upgrade state
   private activeUpgrades: string[] = [];
@@ -484,6 +732,7 @@ export class ArenaScene extends Phaser.Scene {
     this.earthShieldShedBonus = 0;
     this.earthShieldShedAura = null;
 
+    this.npcEarthShieldTickAccum = 0;
     this.npcEarthShieldAura = null;
     this.npcEarthSlamActive = false;
     this.npcEarthSlamEnd = 0;
@@ -541,6 +790,72 @@ export class ArenaScene extends Phaser.Scene {
     this.npcShadowDragNextChangeAt = 0;
     this.shadowPlayerSnaredUntil = 0;
     this.shadowPlayerStunnedUntil = 0;
+
+    this.npcFrostStacks = 0;
+    this.playerFrostStacks = 0;
+    this.npcFrostVisual = null;
+    this.playerFrostVisual = null;
+    this.playerBlockUpActive = false;
+    this.playerBlockUpAura = null;
+    this.playerFrozenUntil = 0;
+    this.npcBlockUpActive = false;
+    this.npcBlockUpAura = null;
+    this.npcFrozenUntil = 0;
+    this.icyTrails = [];
+
+    for (const n of this.crystalNodes) n.sprite.destroy();
+    for (const p of this.crystalPortals) { p.sprite.destroy(); p.label.destroy(); }
+    for (const c of this.crystalClones) { c.sprite.destroy(); c.hpBar.destroy(); c.hpBg.destroy(); }
+    this.crystalNodes = []; this.crystalPortals = []; this.crystalClones = [];
+    this.crystalTrickEnd = 0; this.crystalBarrageActive = false;
+    this.crystalPortalCooldown = 0;
+
+    for (const n of this.npcCrystalNodes) n.sprite.destroy();
+    for (const p of this.npcCrystalPortals) { p.sprite.destroy(); p.label.destroy(); }
+    for (const c of this.npcCrystalClones) { c.sprite.destroy(); c.hpBar.destroy(); c.hpBg.destroy(); }
+    this.npcCrystalNodes = []; this.npcCrystalPortals = []; this.npcCrystalClones = [];
+    this.npcCrystalTrickEnd = 0; this.npcCrystalBarrageActive = false;
+    this.npcCrystalPortalCooldown = 0;
+
+    for (const o of this.playerSoulOrbs) o.sprite.destroy();
+    for (const s of this.playerSoulSummons) s.sprite.destroy();
+    for (const o of this.npcSoulOrbs) o.sprite.destroy();
+    for (const s of this.npcSoulSummons) s.sprite.destroy();
+    this.playerSoulOrbs = []; this.playerSoulSummons = [];
+    this.npcSoulOrbs = []; this.npcSoulSummons = [];
+    this.soulGhosts = 0; this.npcSoulGhosts = 0;
+    this.soulGhostText = null;
+    this.soulEHolding = false; this.soulEHoldStart = 0;
+    if (this.soulEHoldVisual) { this.soulEHoldVisual.destroy(); this.soulEHoldVisual = null; }
+    this.lastPlayerSoulOrbCast = -99999; this.lastPlayerSummon = -99999;
+    this.lastPlayerSacrifice = -99999; this.lastPlayerConsume = -99999;
+    this.lastNpcSoulOrbCast = -99999; this.lastNpcSummon = -99999;
+    this.lastNpcSacrifice = -99999; this.lastNpcConsume = -99999;
+
+    for (const g of this.huntGrenades) g.sprite.destroy();
+    for (const c of this.huntTrailCircles) c.sprite.destroy();
+    for (const g of this.npcHuntGrenades) g.sprite.destroy();
+    for (const c of this.npcHuntTrailCircles) c.sprite.destroy();
+    this.huntGrenades = []; this.huntTrailCircles = [];
+    this.npcHuntGrenades = []; this.npcHuntTrailCircles = [];
+    this.huntBeastForm = false; this.npcHuntBeastForm = false;
+    this.huntGrenadeHolding = false;
+    if (this.huntGrenadeVisual) { this.huntGrenadeVisual.destroy(); this.huntGrenadeVisual = null; }
+    this.huntTrailActive = false; this.npcHuntTrailActive = false;
+    this.huntBloodPactActive = false; this.npcHuntBloodPactActive = false;
+    if (this.huntBloodPactAura) { this.huntBloodPactAura.destroy(); this.huntBloodPactAura = null; }
+    if (this.npcHuntBloodPactAura) { this.npcHuntBloodPactAura.destroy(); this.npcHuntBloodPactAura = null; }
+    this.huntLeapActive = false; this.npcHuntLeapActive = false;
+    this.npcBleeding = false; this.playerBleeding = false;
+    if (this.npcBleedAura) { this.npcBleedAura.destroy(); this.npcBleedAura = null; }
+    if (this.playerBleedAura) { this.playerBleedAura.destroy(); this.playerBleedAura = null; }
+    this.npcHuntSlowUntil = 0; this.playerHuntSlowUntil = 0;
+    this.huntBloodMoonActive = false; this.npcHuntBloodMoonActive = false;
+    if (this.huntBloodMoonFilter) { this.huntBloodMoonFilter.destroy(); this.huntBloodMoonFilter = null; }
+    if (this.npcHuntBloodMoonFilter) { this.npcHuntBloodMoonFilter.destroy(); this.npcHuntBloodMoonFilter = null; }
+    this.huntNormalHudCards = []; this.huntBeastHudCards = [];
+    this.huntNormalFills = []; this.huntBeastFills = [];
+    if (this.npc) { this.npc.npcHuntRoarLocked = false; }
 
     this.activeUpgrades = PlayerData.getActiveUpgrades(this.elementId);
     this.npcBurningUntil = 0;
@@ -683,6 +998,8 @@ export class ArenaScene extends Phaser.Scene {
         if (!proj.active || !proj.isFromPlayer) return;
         this.npc.takeDamage(proj.damage);
         this.spawnHitFlash(proj.x, proj.y, 0xff6600);
+        // Hunt Blood Pact: heal player for 50% of damage dealt
+        if (this.huntBloodPactActive && this.time.now < this.huntBloodPactEnd) this.player.heal(Math.ceil(proj.damage * 0.5));
         // Flameshredder: fireball hit also applies burning DOT
         if (proj.texture.key === 'proj-fire' && this.hasUpgrade('click')) {
           this.npcBurningUntil = Math.max(this.npcBurningUntil, this.time.now + 3000);
@@ -695,6 +1012,34 @@ export class ArenaScene extends Phaser.Scene {
           const len = Math.sqrt(vx * vx + vy * vy) || 1;
           const nb = this.npc.body as Phaser.Physics.Arcade.Body;
           nb.setVelocity(nb.velocity.x + (vx / len) * 180, nb.velocity.y + (vy / len) * 180);
+        }
+        // Ice spike: frost stacks + unfreeze bonus
+        if (proj.texture.key === 'proj-ice') {
+          if (this.npcFrozenUntil > this.time.now) {
+            this.npcFrozenUntil = 0;
+            for (let fi = 0; fi < 3; fi++) this.addFrostStack('npc');
+          } else {
+            this.addFrostStack('npc');
+          }
+        }
+        // Growth infect dagger: apply toxic DOT to NPC
+        if (proj.texture.key === 'proj-growth-dagger') {
+          this.npcToxicUntil = this.time.now + 5000 + this.growthLingerBonus;
+          this.npcToxicDps = 2 + this.growthViralBonus;
+          this.npcToxicTickAccum = 0;
+        }
+        // NPC bloat: NPC hit triggers AOE on player
+        if (this.npcGrowthBloatActive) {
+          this.npcGrowthBloatActive = false;
+          this.npcGrowthBloatEnd = 0;
+          if (this.npcGrowthBloatAura) { this.npcGrowthBloatAura.destroy(); this.npcGrowthBloatAura = null; }
+          const bloatDmg = Math.round(20 * this.npcGrowthDamageMult);
+          if (Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y) <= 120) {
+            this.player.takeDamage(bloatDmg);
+            this.spawnHitFlash(this.player.x, this.player.y, 0xdddd00);
+          }
+          const bloatExp = this.add.circle(this.npc.x, this.npc.y, 120, 0xdddd00, 0.3).setDepth(8);
+          this.tweens.add({ targets: bloatExp, scaleX: 1.4, scaleY: 1.4, alpha: 0, duration: 350, onComplete: () => bloatExp.destroy() });
         }
         proj.setActive(false).setVisible(false);
         (proj.body as Phaser.Physics.Arcade.Body).stop();
@@ -731,9 +1076,39 @@ export class ArenaScene extends Phaser.Scene {
         }
         this.player.takeDamage(proj.damage);
         this.spawnHitFlash(proj.x, proj.y, 0x00aaff);
+        // NPC Hunt Blood Pact: heal NPC for 50% of damage dealt
+        if (this.npcHuntBloodPactActive && this.time.now < this.npcHuntBloodPactEnd) this.npc.heal(Math.ceil(proj.damage * 0.5));
         // Mastered Flameshredder: NPC fireballs apply burning DOT to player
         if (proj.texture.key === 'proj-fire' && this.npc.isMastered) {
           this.playerBurningUntil = Math.max(this.playerBurningUntil, this.time.now + 3000);
+        }
+        // Ice spike: frost stacks + unfreeze bonus
+        if (proj.texture.key === 'proj-ice') {
+          if (this.playerFrozenUntil > this.time.now) {
+            this.playerFrozenUntil = 0;
+            for (let fi = 0; fi < 3; fi++) this.addFrostStack('player');
+          } else {
+            this.addFrostStack('player');
+          }
+        }
+        // Growth infect dagger (NPC): apply toxic DOT to player
+        if (proj.texture.key === 'proj-growth-dagger') {
+          this.playerToxicUntil = this.time.now + 5000 + this.npcGrowthLingerBonus;
+          this.playerToxicDps = 2 + this.npcGrowthViralBonus;
+          this.playerToxicTickAccum = 0;
+        }
+        // Player bloat: player hit triggers AOE on NPC
+        if (this.growthBloatActive) {
+          this.growthBloatActive = false;
+          this.growthBloatEnd = 0;
+          if (this.growthBloatAura) { this.growthBloatAura.destroy(); this.growthBloatAura = null; }
+          const bloatDmg = Math.round(20 * this.growthDamageMult);
+          if (Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y) <= 120) {
+            this.npc.takeDamage(bloatDmg);
+            this.spawnHitFlash(this.npc.x, this.npc.y, 0xdddd00);
+          }
+          const bloatExp = this.add.circle(this.player.x, this.player.y, 120, 0xdddd00, 0.3).setDepth(8);
+          this.tweens.add({ targets: bloatExp, scaleX: 1.4, scaleY: 1.4, alpha: 0, duration: 350, onComplete: () => bloatExp.destroy() });
         }
         proj.setActive(false).setVisible(false);
         (proj.body as Phaser.Physics.Arcade.Body).stop();
@@ -856,6 +1231,13 @@ export class ArenaScene extends Phaser.Scene {
     this.add.text(W - 180, 20, `ENEMY ${this.npcElement.emoji}`, {
       fontSize: '14px', color: '#aaaaaa',
     }).setOrigin(0.5).setDepth(20);
+
+    if (this.elementId === 'soul') {
+      this.soulGhostText = this.add.text(cx, 52, '👻 0', {
+        fontSize: '18px', fontFamily: '"Arial Black", sans-serif', color: '#ccaaff',
+        stroke: '#220044', strokeThickness: 3,
+      }).setOrigin(0.5).setDepth(20);
+    }
   }
 
   // ── HUD ─────────────────────────────────────────────────────────
@@ -864,11 +1246,14 @@ export class ArenaScene extends Phaser.Scene {
     const hudY = H - 30;
     const cardW = 130;
     const cardH = 48;
-    const abilities = this.playerElement.abilities;
+    // Hunt has 10 abilities (5 normal + 5 beast); only show 5 at a time
+    const abilities = this.elementId === 'hunt'
+      ? this.playerElement.abilities.slice(0, 5)
+      : this.playerElement.abilities;
 
     this.add.rectangle(W / 2, hudY, W, cardH + 4, 0x0a0a18, 0.95).setDepth(20);
 
-    const totalWidth = abilities.length * cardW;
+    const totalWidth = 5 * cardW; // always 5-wide layout for consistency
     const startX = W / 2 - totalWidth / 2 + cardW / 2;
 
     const fillColors: Record<string, number> = {
@@ -907,12 +1292,27 @@ export class ArenaScene extends Phaser.Scene {
       'snap-trap':      0x550077,
       'shadow-dance':   0x220044,
       'black-hole':     0x110033,
+      'soul-orb':         0xccaaff,
+      'soul-summon':      0x9966cc,
+      'soul-sacrifice':   0x7722aa,
+      'soul-consume':     0x553388,
+      'undead-charge':    0x440066,
+      'hunt-shotgun':     0xff4400,
+      'hunt-grenade':     0xff6600,
+      'hunt-trail':       0xcc3300,
+      'hunt-blood-pact':  0xaa0022,
+      'hunt-transform':   0x882200,
+      'hunt-slash':       0xff2200,
+      'hunt-leap':        0xdd4400,
+      'hunt-blood-hunt':  0xbb0011,
+      'hunt-blood-moon':  0x880000,
+      'hunt-untransform': 0x664422,
     };
 
     abilities.forEach((ab, i) => {
       const x = startX + i * cardW;
 
-      this.add
+      const bg = this.add
         .rectangle(x, hudY, cardW - 4, cardH - 4, 0x1a1a30)
         .setStrokeStyle(1, 0x333355)
         .setDepth(21);
@@ -922,13 +1322,13 @@ export class ArenaScene extends Phaser.Scene {
         .setOrigin(0, 0.5)
         .setDepth(22);
 
-      this.add.text(x, hudY - 6, `[${ab.displayKey}] ${ab.name}`, {
+      const lbl = this.add.text(x, hudY - 6, `[${ab.displayKey}] ${ab.name}`, {
         fontSize: '11px',
         fontFamily: 'Arial, sans-serif',
         color: '#dddddd',
       }).setOrigin(0.5, 0.5).setDepth(23);
 
-      this.add.text(x, hudY + 8, ab.description, {
+      const desc = this.add.text(x, hudY + 8, ab.description, {
         fontSize: '9px',
         color: '#000000',
         wordWrap: { width: cardW - 12 },
@@ -937,7 +1337,32 @@ export class ArenaScene extends Phaser.Scene {
       }).setOrigin(0.5, 0.5).setDepth(23);
 
       this.abilityBars.push({ fill, abilityId: ab.id, maxWidth: cardW - 4 });
+
+      if (this.elementId === 'hunt') {
+        this.huntNormalHudCards.push(bg, fill, lbl, desc);
+      }
     });
+
+    // Hunt beast-form HUD (hidden until transform)
+    if (this.elementId === 'hunt') {
+      this.huntNormalFills = [...this.abilityBars];
+      const beastAbilities = this.playerElement.abilities.slice(5);
+      beastAbilities.forEach((ab, i) => {
+        const x = startX + i * cardW;
+        const bg = this.add.rectangle(x, hudY, cardW - 4, cardH - 4, 0x220011)
+          .setStrokeStyle(1, 0x882233).setDepth(21).setVisible(false);
+        const fill = this.add.rectangle(x - (cardW - 4) / 2, hudY, 0, cardH - 4, fillColors[ab.id] ?? 0xaa2233, 0.5)
+          .setOrigin(0, 0.5).setDepth(22).setVisible(false);
+        const lbl = this.add.text(x, hudY - 6, `[${ab.displayKey}] ${ab.name}`, {
+          fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#ffaaaa',
+        }).setOrigin(0.5, 0.5).setDepth(23).setVisible(false);
+        const desc = this.add.text(x, hudY + 8, ab.description, {
+          fontSize: '9px', color: '#000000', wordWrap: { width: cardW - 12 }, maxLines: 2, align: 'center',
+        }).setOrigin(0.5, 0.5).setDepth(23).setVisible(false);
+        this.huntBeastFills.push({ fill, abilityId: ab.id, maxWidth: cardW - 4 });
+        this.huntBeastHudCards.push(bg, fill, lbl, desc);
+      });
+    }
 
     this.add.text(W - 50, hudY, '[SPC]\nDodge', {
       fontSize: '11px',
@@ -961,6 +1386,7 @@ export class ArenaScene extends Phaser.Scene {
         if (Phaser.Math.Distance.Between(cx, cy, this.npc.x, this.npc.y) <= radius) {
           this.npc.takeDamage(damage);
           this.spawnHitFlash(this.npc.x, this.npc.y, 0xff6600);
+          if (this.huntBloodPactActive && this.time.now < this.huntBloodPactEnd) this.player.heal(Math.ceil(damage * 0.5));
         }
       },
       dashCaster: (vx, vy) => {
@@ -1228,6 +1654,417 @@ export class ArenaScene extends Phaser.Scene {
         this.nukeChanneling = true;
         this.nukeChannelEnd = this.time.now + 3100;
       },
+      // Ice
+      fireIceSpike: (tx, ty) => {
+        const dx = tx - this.player.x;
+        const dy = ty - this.player.y;
+        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        const proj = new Projectile(this, this.player.x, this.player.y, 'proj-ice', 8, true);
+        this.projectiles.add(proj);
+        proj.launch((dx / len) * 520, (dy / len) * 520);
+      },
+      fireFrostBlast: (tx, ty) => {
+        if (this.npcFrostStacks === 0) return;
+        const dx = tx - this.player.x;
+        const dy = ty - this.player.y;
+        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        const angle = Math.atan2(dy / len, dx / len);
+        const endX = this.player.x + Math.cos(angle) * 1200;
+        const endY = this.player.y + Math.sin(angle) * 1200;
+        this.spawnFrostBeamVisual(this.player.x, this.player.y, endX, endY);
+        const d = this.pointToSegmentDist(this.npc.x, this.npc.y, this.player.x, this.player.y, endX, endY);
+        if (d <= 32) {
+          this.npc.takeDamage(this.npcFrostStacks * 10);
+          this.spawnHitFlash(this.npc.x, this.npc.y, 0x88ccff);
+          this.clearFrostStacks('npc');
+        }
+      },
+      toggleBlockUp: () => {
+        this.playerBlockUpActive = !this.playerBlockUpActive;
+        this.player.incomingDamageMultiplier = this.playerBlockUpActive
+          ? this.frostDamageMultiplier(this.playerFrostStacks) * 0.75
+          : this.frostDamageMultiplier(this.playerFrostStacks);
+        if (this.playerBlockUpActive) {
+          if (!this.playerBlockUpAura) {
+            this.playerBlockUpAura = this.add.circle(this.player.x, this.player.y, 28, 0x88ccff, 0.25)
+              .setStrokeStyle(2, 0xcceeff, 0.8).setDepth(3);
+          }
+        } else {
+          if (this.playerBlockUpAura) { this.playerBlockUpAura.destroy(); this.playerBlockUpAura = null; }
+        }
+      },
+      startSkate: () => {
+        const playerBody = this.player.body as Phaser.Physics.Arcade.Body;
+        let dx = (this.dKey.isDown ? 1 : 0) - (this.aKey.isDown ? 1 : 0);
+        let dy = (this.sKey.isDown ? 1 : 0) - (this.wKey.isDown ? 1 : 0);
+        if (dx === 0 && dy === 0) {
+          const ptr = this.input.activePointer;
+          const a = Math.atan2(ptr.worldY - this.player.y, ptr.worldX - this.player.x);
+          dx = Math.cos(a); dy = Math.sin(a);
+        } else {
+          const l = Math.sqrt(dx * dx + dy * dy); dx /= l; dy /= l;
+        }
+        playerBody.setVelocity(dx * 500, dy * 500);
+        this.player.isInvincible = true;
+        for (let i = 0; i < 5; i++) {
+          this.time.delayedCall(i * 55, () => {
+            if (this.player.active) this.spawnIcyTrail(this.player.x, this.player.y, 'player');
+          });
+        }
+        this.time.delayedCall(275, () => { if (this.player.active) this.player.isInvincible = false; });
+      },
+      fireFrozenSolid: (tx, ty) => {
+        const angle = Math.atan2(ty - this.player.y, tx - this.player.x);
+        this.spawnFrozenSolidVisual(this.player.x, this.player.y, angle);
+        const npcAngle = Math.atan2(this.npc.y - this.player.y, this.npc.x - this.player.x);
+        const diff = Math.abs(Phaser.Math.Angle.Wrap(npcAngle - angle));
+        if (diff <= Math.PI / 8) {
+          if (this.npcFrozenUntil > this.time.now) {
+            this.npcFrozenUntil = 0;
+            for (let fi = 0; fi < 3; fi++) this.addFrostStack('npc');
+          } else {
+            this.npcFrozenUntil = this.time.now + 3000;
+            this.spawnHitFlash(this.npc.x, this.npc.y, 0x88ccff);
+          }
+        }
+      },
+      // Growth
+      fireGrowthClick: (tx, ty) => {
+        const angle = Math.atan2(ty - this.player.y, tx - this.player.x);
+        if (this.growthMorphType === 'spores') {
+          const angles = [-12, -6, 0, 6, 12];
+          for (const deg of angles) {
+            const a = angle + deg * (Math.PI / 180);
+            const proj = new Projectile(this, this.player.x, this.player.y, 'proj-growth', Math.round(3 * this.growthDamageMult), true);
+            this.projectiles.add(proj);
+            const vx = Math.cos(a) * 400;
+            const vy = Math.sin(a) * 400;
+            proj.launch(vx, vy);
+            const pb = proj.body as Phaser.Physics.Arcade.Body;
+            this.tweens.add({ targets: pb.velocity, x: 0, y: 0, duration: 600,
+              onComplete: () => { this.time.delayedCall(200, () => { if (proj.active) { proj.setActive(false).setVisible(false); } }); } });
+          }
+        } else if (this.growthMorphType === 'claws') {
+          const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
+          if (dist <= 120) {
+            const ptr = this.input.activePointer;
+            const dx = ptr.worldX - this.player.x; const dy = ptr.worldY - this.player.y;
+            const len = Math.sqrt(dx * dx + dy * dy) || 1;
+            const toNx = this.npc.x - this.player.x; const toNy = this.npc.y - this.player.y;
+            const dot = (dx / len) * (toNx / dist) + (dy / len) * (toNy / dist);
+            if (dot > 0.4) {
+              this.npc.takeDamage(Math.round(15 * this.growthDamageMult));
+              this.spawnHitFlash(this.npc.x, this.npc.y, 0x88bb22);
+            }
+          }
+          const slashAngle = Math.atan2(ty - this.player.y, tx - this.player.x);
+          const slash = this.add.rectangle(
+            this.player.x + Math.cos(slashAngle) * 50, this.player.y + Math.sin(slashAngle) * 50,
+            50, 10, 0x88bb22, 0.8,
+          ).setRotation(slashAngle).setDepth(6);
+          this.tweens.add({ targets: slash, scaleX: 0.3, alpha: 0, duration: 140, onComplete: () => slash.destroy() });
+        } else {
+          // virus: 3 projectiles like life petal shot
+          const spreadAngles = [-15, 0, 15];
+          for (const deg of spreadAngles) {
+            const a = angle + deg * (Math.PI / 180);
+            const proj = new Projectile(this, this.player.x, this.player.y, 'proj-growth', Math.round(8 * this.growthDamageMult), true);
+            this.projectiles.add(proj);
+            proj.launch(Math.cos(a) * 480, Math.sin(a) * 480);
+          }
+        }
+      },
+      openMutateMenu: () => {
+        if (this.growthMutateMenuOpen) return;
+        this.growthMutateMenuOpen = true;
+        const GROWTH_MUTATIONS = [
+          { id: 'healthier', name: 'Healthier', description: '+10 max HP', emoji: '💚' },
+          { id: 'deadly', name: 'Deadly', description: '+15% damage', emoji: '💀' },
+          { id: 'linger', name: 'Linger', description: '+3s toxic duration', emoji: '⏳' },
+          { id: 'viral', name: 'Viral', description: '+2 toxic DPS', emoji: '🧬' },
+          { id: 'grow', name: 'Grow', description: '+20 HP, +20% size', emoji: '📈' },
+          { id: 'shrink', name: 'Shrink', description: '-20 HP, -20% size', emoji: '📉' },
+          { id: 'buffer', name: 'Buffer', description: '-2s bloat CD', emoji: '🛡️' },
+          { id: 'spray', name: 'Spray', description: '+1 infect projectile', emoji: '🗡️' },
+          { id: 'quick', name: 'Quick', description: '-1s infect CD', emoji: '⚡' },
+          { id: 'regenerative', name: 'Regenerative', description: '+1 HP/s regen', emoji: '♻️' },
+        ];
+        const pool = [...GROWTH_MUTATIONS];
+        const picks: typeof pool = [];
+        for (let p = 0; p < 3; p++) {
+          picks.push(pool[Math.floor(Math.random() * pool.length)]);
+        }
+        const W = this.scale.width;
+        const H = this.scale.height;
+        const btnW = 200; const btnH = 60; const gap = 12;
+        const startY = H / 2 - (btnH + gap);
+        for (let p = 0; p < 3; p++) {
+          const mut = picks[p];
+          const by = startY + p * (btnH + gap);
+          const bg = this.add.rectangle(W / 2, by, btnW, btnH, 0x223322, 1)
+            .setStrokeStyle(2, 0x88bb22).setDepth(30).setInteractive({ useHandCursor: true });
+          const lbl = this.add.text(W / 2, by - 10, `${mut.emoji} ${mut.name}`, { fontSize: '14px', fontFamily: '"Arial Black"', color: '#aadd44' }).setOrigin(0.5).setDepth(31);
+          const desc = this.add.text(W / 2, by + 12, mut.description, { fontSize: '10px', color: '#888888' }).setOrigin(0.5).setDepth(31);
+          bg.on('pointerover', () => bg.setFillStyle(0x334433));
+          bg.on('pointerout', () => bg.setFillStyle(0x223322));
+          bg.on('pointerdown', () => {
+            this.applyGrowthMutation(mut.id, 'player');
+            for (const obj of this.growthMutateButtons) {
+              if ((obj as Phaser.GameObjects.GameObject).active) (obj as Phaser.GameObjects.GameObject & { destroy(): void }).destroy();
+            }
+            this.growthMutateButtons = [];
+            this.growthMutateMenuOpen = false;
+          });
+          this.growthMutateButtons.push(bg, lbl, desc);
+        }
+      },
+      fireInfect: (tx, ty) => {
+        if (this.time.now - this.lastPlayerInfectCast < this.growthInfectCdMs) return;
+        this.lastPlayerInfectCast = this.time.now;
+        const baseAngle = Math.atan2(ty - this.player.y, tx - this.player.x);
+        const count = 1 + this.growthInfectExtraProj;
+        for (let i = 0; i < count; i++) {
+          const spread = count > 1 ? (i - (count - 1) / 2) * 8 * (Math.PI / 180) : 0;
+          const a = baseAngle + spread;
+          const proj = new Projectile(this, this.player.x, this.player.y, 'proj-growth-dagger', Math.round(5 * this.growthDamageMult), true);
+          this.projectiles.add(proj);
+          proj.launch(Math.cos(a) * 520, Math.sin(a) * 520);
+        }
+      },
+      activateBloat: () => {
+        if (this.time.now - this.lastPlayerBloatCast < this.growthBloatCdMs) return;
+        this.lastPlayerBloatCast = this.time.now;
+        this.growthBloatActive = true;
+        this.growthBloatEnd = this.time.now + 5000;
+        if (this.growthBloatAura) this.growthBloatAura.destroy();
+        this.growthBloatAura = this.add.circle(this.player.x, this.player.y, 30, 0xdddd00, 0.3)
+          .setStrokeStyle(2, 0xffff44, 0.8).setDepth(5);
+        this.tweens.add({ targets: this.growthBloatAura, alpha: 0.5, yoyo: true, repeat: -1, duration: 500 });
+      },
+      triggerMutantMorph: () => {
+        const morphTypes: Array<'spores' | 'claws' | 'virus'> = ['spores', 'claws', 'virus'];
+        this.growthMorphType = morphTypes[Math.floor(Math.random() * morphTypes.length)];
+        const morphNames = { spores: 'SPORES', claws: 'CLAWS', virus: 'VIRUS' };
+        const txt = this.add.text(this.player.x, this.player.y - 50, morphNames[this.growthMorphType],
+          { fontSize: '14px', fontFamily: '"Arial Black"', color: '#88bb22', stroke: '#003300', strokeThickness: 3 }).setOrigin(0.5).setDepth(15);
+        this.tweens.add({ targets: txt, y: txt.y - 30, alpha: 0, duration: 900, onComplete: () => txt.destroy() });
+      },
+      // Crystal
+      fireCrystalLaser: (tx, ty) => {
+        this.fireCrystalLaserFrom(this.player.x, this.player.y, tx, ty, 8, true);
+        for (const cl of this.crystalClones) {
+          this.fireCrystalLaserFrom(this.player.x + cl.offsetX, this.player.y + cl.offsetY, tx, ty, 8, true);
+        }
+      },
+      placeCrystalNode: (tx, ty) => {
+        const playerNodes = this.crystalNodes.filter((n) => n.owner === 'player');
+        if (playerNodes.length >= 3) {
+          playerNodes[0].sprite.destroy();
+          this.crystalNodes.splice(this.crystalNodes.indexOf(playerNodes[0]), 1);
+        }
+        const spr = this.add.circle(tx, ty, 14, 0x44aaff, 0.75)
+          .setStrokeStyle(2, 0xaaeeff, 0.9).setDepth(4);
+        this.tweens.add({ targets: spr, scaleX: 1.4, scaleY: 1.4, duration: 120, yoyo: true });
+        this.crystalNodes.push({ sprite: spr, x: tx, y: ty, owner: 'player' });
+      },
+      startCrystalBarrage: (tx, ty) => {
+        this.crystalBarrageActive = true;
+        this.crystalBarrageEnd = this.time.now + 3000;
+        this.crystalBarrageAccum = 0;
+        this.crystalBarrageShots = 0;
+        this.crystalBarrageTX = tx;
+        this.crystalBarrageTY = ty;
+      },
+      placeCrystalPortal: (tx, ty) => {
+        const playerPortals = this.crystalPortals.filter((p) => p.owner === 'player');
+        if (playerPortals.length >= 2) {
+          playerPortals[0].sprite.destroy(); playerPortals[0].label.destroy();
+          this.crystalPortals.splice(this.crystalPortals.indexOf(playerPortals[0]), 1);
+        }
+        const idx = this.crystalPortals.filter((p) => p.owner === 'player').length;
+        const color = idx === 0 ? 0xaa44ff : 0xff44aa;
+        const lbl = idx === 0 ? 'A' : 'B';
+        const spr = this.add.circle(tx, ty, 18, color, 0.5)
+          .setStrokeStyle(3, color, 0.9).setDepth(4);
+        this.tweens.add({ targets: spr, alpha: 0.2, yoyo: true, repeat: -1, duration: 700 });
+        const lblObj = this.add.text(tx, ty, lbl, {
+          fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#ffffff',
+        }).setOrigin(0.5).setDepth(5);
+        this.crystalPortals.push({ sprite: spr, label: lblObj, x: tx, y: ty, owner: 'player' });
+      },
+      activateCrystalTrick: () => {
+        for (const cl of this.crystalClones) { cl.sprite.destroy(); cl.hpBar.destroy(); cl.hpBg.destroy(); }
+        this.crystalClones = [];
+        this.crystalTrickEnd = this.time.now + 12000;
+        for (const off of [{ x: -58, y: 12 }, { x: 58, y: 12 }]) {
+          const cx = this.player.x + off.x, cy = this.player.y + off.y;
+          const hpBg = this.add.rectangle(cx, cy - 28, 30, 4, 0x333333).setDepth(12);
+          const hpBar = this.add.rectangle(cx - 15, cy - 28, 30, 4, 0x44aaff).setDepth(13).setOrigin(0, 0.5);
+          const spr = this.add.circle(cx, cy, 16, 0x88ccff, 0.85)
+            .setStrokeStyle(2, 0xaaeeff).setDepth(11);
+          this.crystalClones.push({ sprite: spr, hp: 50, maxHp: 50, offsetX: off.x, offsetY: off.y, hpBar, hpBg });
+        }
+      },
+      // Soul
+      fireSoulOrb: (tx, ty) => {
+        if (this.time.now - this.lastPlayerSoulOrbCast < 800) return;
+        this.lastPlayerSoulOrbCast = this.time.now;
+        const dx = tx - this.player.x, dy = ty - this.player.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const speed = 104;
+        const ox = this.player.x + (dx / dist) * 32;
+        const oy = this.player.y + (dy / dist) * 32;
+        const spr = this.add.circle(ox, oy, 12, 0xccaaff, 0.7)
+          .setStrokeStyle(2, 0xeeddff, 0.9).setDepth(7);
+        this.tweens.add({ targets: spr, alpha: 0.4, yoyo: true, repeat: -1, duration: 400 });
+        this.playerSoulOrbs.push({ sprite: spr, expiresAt: this.time.now + 3000, x: ox, y: oy, vx: (dx / dist) * speed, vy: (dy / dist) * speed, owner: 'player', lastContactTick: -99999 });
+      },
+      summonGhost: (ghostType) => {
+        const cost = ghostType === 'basic' ? 1 : ghostType === 'ghoul' ? 2 : ghostType === 'banshee' ? 3 : 5;
+        if (this.soulGhosts < cost) return;
+        if (this.time.now - this.lastPlayerSummon < 2000) return;
+        this.lastPlayerSummon = this.time.now;
+        this.soulGhosts -= cost;
+        if (this.soulGhostText) this.soulGhostText.setText(`👻 ${this.soulGhosts}`);
+        this.spawnSoulGhost(ghostType, this.player.x, this.player.y, 'player');
+      },
+      soulSacrifice: () => {
+        if (this.time.now - this.lastPlayerSacrifice < 3000) return;
+        this.lastPlayerSacrifice = this.time.now;
+        this.player.applySelfDamage(10);
+        this.soulGhosts++;
+        if (this.soulGhostText) this.soulGhostText.setText(`👻 ${this.soulGhosts}`);
+        const flash = this.add.circle(this.player.x, this.player.y, 20, 0x9944ff, 0.6).setDepth(8);
+        this.tweens.add({ targets: flash, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 300, onComplete: () => flash.destroy() });
+      },
+      soulConsume: () => {
+        if (this.time.now - this.lastPlayerConsume < 3000) return;
+        this.lastPlayerConsume = this.time.now;
+        const consumeR = 150;
+        for (let i = this.playerSoulSummons.length - 1; i >= 0; i--) {
+          const gs = this.playerSoulSummons[i];
+          if (Phaser.Math.Distance.Between(gs.sprite.x, gs.sprite.y, this.player.x, this.player.y) <= consumeR) {
+            this.player.heal(Math.floor(gs.hp / 2));
+            gs.sprite.destroy();
+            this.playerSoulSummons.splice(i, 1);
+          }
+        }
+        const ring = this.add.circle(this.player.x, this.player.y, 10, 0xccaaff, 0.5).setDepth(8);
+        this.tweens.add({ targets: ring, scaleX: 15, scaleY: 15, alpha: 0, duration: 400, onComplete: () => ring.destroy() });
+      },
+      // Hunt
+      huntThrowGrenade: (tx, ty, holdMs) => {
+        const dx = tx - this.player.x, dy = ty - this.player.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const speed = 500;
+        const maxDist = 145;
+        const ox = this.player.x, oy = this.player.y;
+        const spr = this.add.circle(ox, oy, 10, 0xff6600, 0.9).setStrokeStyle(2, 0xffaa00, 1).setDepth(8);
+        this.huntGrenades.push({
+          sprite: spr, x: ox, y: oy, startX: ox, startY: oy,
+          vx: (dx / dist) * speed, vy: (dy / dist) * speed,
+          explodeAt: this.time.now + (3000 - holdMs),
+          selfDamage: false, owner: 'player', stopped: false,
+        });
+      },
+      huntHuntersTrail: () => {
+        this.huntTrailActive = true;
+        this.huntTrailEnd = this.time.now + 3000;
+        this.huntTrailAccum = 0;
+        const flash = this.add.circle(this.player.x, this.player.y, 24, 0xcc3300, 0.5).setDepth(6);
+        this.tweens.add({ targets: flash, scaleX: 2, scaleY: 2, alpha: 0, duration: 300, onComplete: () => flash.destroy() });
+      },
+      huntBloodPact: () => {
+        this.huntBloodPactActive = true;
+        this.huntBloodPactEnd = this.time.now + 5000;
+        if (this.huntBloodPactAura) this.huntBloodPactAura.destroy();
+        this.huntBloodPactAura = this.add.circle(this.player.x, this.player.y, 28, 0xaa0022, 0.35).setDepth(4);
+        this.tweens.add({ targets: this.huntBloodPactAura, alpha: 0.15, yoyo: true, repeat: -1, duration: 600 });
+      },
+      huntTransform: () => {
+        this.huntBeastForm = true;
+        this.player.setScale(1.2);
+        (this.player.body as Phaser.Physics.Arcade.Body).setCircle(26, 3, 3);
+        this.huntToggleBeastHud(true);
+        const burst = this.add.circle(this.player.x, this.player.y, 20, 0xcc2200, 0.8).setDepth(8);
+        this.tweens.add({ targets: burst, scaleX: 3, scaleY: 3, alpha: 0, duration: 350, onComplete: () => burst.destroy() });
+      },
+      huntSlash: (tx, ty) => {
+        const dx = tx - this.player.x, dy = ty - this.player.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const pb = this.player.body as Phaser.Physics.Arcade.Body;
+        pb.setVelocity((dx / dist) * 500, (dy / dist) * 500);
+        this.isDodging = true;
+        this.time.delayedCall(160, () => {
+          if (!this.player.active) return;
+          pb.setVelocity(0, 0);
+          this.isDodging = false;
+          const slashDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
+          if (slashDist <= 85) {
+            this.npc.takeDamage(20);
+            this.spawnHitFlash(this.npc.x, this.npc.y, 0xff2200);
+            if (this.huntBloodPactActive && this.time.now < this.huntBloodPactEnd) this.player.heal(10);
+            // Apply bleeding
+            this.npcBleeding = true;
+            this.npcBleedingUntil = this.time.now + 8000;
+            if (!this.npcBleedAura) {
+              this.npcBleedAura = this.add.circle(this.npc.x, this.npc.y, 22, 0xcc0000, 0.25).setDepth(3);
+              this.tweens.add({ targets: this.npcBleedAura, alpha: 0.1, yoyo: true, repeat: -1, duration: 700 });
+            }
+            const kb = this.npc.body as Phaser.Physics.Arcade.Body;
+            const toNx = this.npc.x - this.player.x, toNy = this.npc.y - this.player.y;
+            const nd2 = Math.sqrt(toNx * toNx + toNy * toNy) || 1;
+            kb.setVelocity((toNx / nd2) * 500, (toNy / nd2) * 500);
+          }
+          const arc = this.add.circle(this.player.x + (dx / dist) * 45, this.player.y + (dy / dist) * 45, 18, 0xff3300, 0.7).setDepth(8);
+          this.tweens.add({ targets: arc, scaleX: 3.5, scaleY: 0.8, alpha: 0, duration: 200, onComplete: () => arc.destroy() });
+        });
+      },
+      huntLeap: (tx, ty) => {
+        this.huntLeapActive = true;
+        this.huntLeapEnd = this.time.now + 2000;
+        this.huntLeapTargetX = tx;
+        this.huntLeapTargetY = ty;
+        this.player.isInvincible = true;
+        this.player.setAlpha(0.08);
+        (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+        this.nukeChanneling = true;
+        this.nukeChannelEnd = this.time.now + 2000;
+      },
+      huntBloodHunt: () => {
+        if (!this.npcBleeding) return;
+        // Teleport to just beside NPC
+        const angle = Math.random() * Math.PI * 2;
+        this.player.setPosition(this.npc.x + Math.cos(angle) * 60, this.npc.y + Math.sin(angle) * 60);
+        // Lock player 1s (roar)
+        this.nukeChanneling = true;
+        this.nukeChannelEnd = this.time.now + 1000;
+        (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+        // Apply slow to NPC
+        this.npcHuntSlowUntil = this.time.now + 3000;
+        // Roar visual
+        const roar = this.add.circle(this.player.x, this.player.y, 18, 0xff0000, 0.8).setDepth(9);
+        this.tweens.add({ targets: roar, scaleX: 4, scaleY: 4, alpha: 0, duration: 800, onComplete: () => roar.destroy() });
+        const roar2 = this.add.circle(this.player.x, this.player.y, 10, 0xffffff, 1).setDepth(10);
+        this.tweens.add({ targets: roar2, scaleX: 3, scaleY: 3, alpha: 0, duration: 500, onComplete: () => roar2.destroy() });
+      },
+      huntBloodMoon: () => {
+        this.huntBloodMoonActive = true;
+        this.huntBloodMoonEnd = this.time.now + 12000;
+        this.huntBloodMoonTickAccum = 0;
+        if (this.huntBloodMoonFilter) this.huntBloodMoonFilter.destroy();
+        const { width, height } = this.scale;
+        this.huntBloodMoonFilter = this.add.rectangle(width / 2, height / 2, width, height, 0x440000, 0.12).setDepth(50);
+      },
+      huntUntransform: () => {
+        this.huntBeastForm = false;
+        this.player.setScale(1.0);
+        (this.player.body as Phaser.Physics.Arcade.Body).setCircle(22, 2, 2);
+        this.huntToggleBeastHud(false);
+        this.player.triggerCooldown('hunt-transform');
+        const burst = this.add.circle(this.player.x, this.player.y, 20, 0x664422, 0.7).setDepth(8);
+        this.tweens.add({ targets: burst, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 300, onComplete: () => burst.destroy() });
+      },
     };
   }
 
@@ -1243,6 +2080,7 @@ export class ArenaScene extends Phaser.Scene {
       dealAoeDamage: (cx, cy, radius, damage) => {
         if (Phaser.Math.Distance.Between(cx, cy, this.player.x, this.player.y) <= radius) {
           this.player.takeDamage(damage);
+          if (this.npcHuntBloodPactActive && this.time.now < this.npcHuntBloodPactEnd) this.npc.heal(Math.ceil(damage * 0.5));
         }
       },
       dashCaster: (vx, vy) => {
@@ -1307,7 +2145,7 @@ export class ArenaScene extends Phaser.Scene {
         else { this.npcAirConsecutiveHits = 0; }
       },
       quickShotActive: this.npcQuickShotCharged,
-      addShieldHp: (amount) => { this.npc.shieldHp = Math.min(100, this.npc.shieldHp + amount); },
+      addShieldHp: (amount) => { if (this.npcElement.id !== 'earth') this.npc.shieldHp = Math.min(100, this.npc.shieldHp + amount); },
       getShieldHp: () => this.npc.shieldHp,
       setShieldHp: (amount) => { this.npc.shieldHp = Math.max(0, amount); },
       slamCaster: () => {
@@ -1432,6 +2270,336 @@ export class ArenaScene extends Phaser.Scene {
       },
       activateShadowDance: () => { /* NPC does not track shadow dance charge */ },
       startBlackHole: () => { /* NPC does not use black hole */ },
+      // Ice
+      fireIceSpike: (tx, ty) => {
+        const dx = tx - this.npc.x;
+        const dy = ty - this.npc.y;
+        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        const proj = new Projectile(this, this.npc.x, this.npc.y, 'proj-ice', 8, false);
+        this.projectiles.add(proj);
+        proj.launch((dx / len) * 480, (dy / len) * 480);
+      },
+      fireFrostBlast: (tx, ty) => {
+        if (this.playerFrostStacks === 0) return;
+        const dx = tx - this.npc.x;
+        const dy = ty - this.npc.y;
+        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        const angle = Math.atan2(dy / len, dx / len);
+        const endX = this.npc.x + Math.cos(angle) * 1200;
+        const endY = this.npc.y + Math.sin(angle) * 1200;
+        this.spawnFrostBeamVisual(this.npc.x, this.npc.y, endX, endY);
+        const d = this.pointToSegmentDist(this.player.x, this.player.y, this.npc.x, this.npc.y, endX, endY);
+        if (d <= 32) {
+          this.player.takeDamage(this.playerFrostStacks * 10);
+          this.spawnHitFlash(this.player.x, this.player.y, 0x88ccff);
+          this.clearFrostStacks('player');
+        }
+      },
+      toggleBlockUp: () => {
+        this.npcBlockUpActive = !this.npcBlockUpActive;
+        this.npc.incomingDamageMultiplier = this.npcBlockUpActive
+          ? this.frostDamageMultiplier(this.npcFrostStacks) * 0.75
+          : this.frostDamageMultiplier(this.npcFrostStacks);
+        if (this.npcBlockUpActive) {
+          if (!this.npcBlockUpAura) {
+            this.npcBlockUpAura = this.add.circle(this.npc.x, this.npc.y, 28, 0x88ccff, 0.25)
+              .setStrokeStyle(2, 0xcceeff, 0.8).setDepth(3);
+          }
+        } else {
+          if (this.npcBlockUpAura) { this.npcBlockUpAura.destroy(); this.npcBlockUpAura = null; }
+        }
+      },
+      startSkate: () => {
+        // NPC skate: dash away from player + leave trail
+        const dx = this.npc.x - this.player.x;
+        const dy = this.npc.y - this.player.y;
+        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        const nBody = this.npc.body as Phaser.Physics.Arcade.Body;
+        nBody.setVelocity((dx / len) * 480, (dy / len) * 480);
+        this.npc.isInvincible = true;
+        for (let i = 0; i < 4; i++) {
+          this.time.delayedCall(i * 55, () => {
+            if (this.npc.active) this.spawnIcyTrail(this.npc.x, this.npc.y, 'npc');
+          });
+        }
+        this.time.delayedCall(220, () => { if (this.npc.active) this.npc.isInvincible = false; });
+      },
+      fireFrozenSolid: (tx, ty) => {
+        const angle = Math.atan2(ty - this.npc.y, tx - this.npc.x);
+        this.spawnFrozenSolidVisual(this.npc.x, this.npc.y, angle);
+        const playerAngle = Math.atan2(this.player.y - this.npc.y, this.player.x - this.npc.x);
+        const diff = Math.abs(Phaser.Math.Angle.Wrap(playerAngle - angle));
+        if (diff <= Math.PI / 8) {
+          if (this.playerFrozenUntil > this.time.now) {
+            this.playerFrozenUntil = 0;
+            for (let fi = 0; fi < 3; fi++) this.addFrostStack('player');
+          } else {
+            this.playerFrozenUntil = this.time.now + 3000;
+            this.spawnHitFlash(this.player.x, this.player.y, 0x88ccff);
+          }
+        }
+      },
+      // Growth
+      fireGrowthClick: (tx, ty) => {
+        const angle = Math.atan2(ty - this.npc.y, tx - this.npc.x);
+        if (this.npcGrowthMorphType === 'spores') {
+          const angles = [-12, -6, 0, 6, 12];
+          for (const deg of angles) {
+            const a = angle + deg * (Math.PI / 180);
+            const proj = new Projectile(this, this.npc.x, this.npc.y, 'proj-growth', Math.round(3 * this.npcGrowthDamageMult), false);
+            this.projectiles.add(proj);
+            proj.launch(Math.cos(a) * 380, Math.sin(a) * 380);
+            const pb = proj.body as Phaser.Physics.Arcade.Body;
+            this.tweens.add({ targets: pb.velocity, x: 0, y: 0, duration: 600,
+              onComplete: () => { this.time.delayedCall(200, () => { if (proj.active) { proj.setActive(false).setVisible(false); } }); } });
+          }
+        } else if (this.npcGrowthMorphType === 'claws') {
+          const dist = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y);
+          if (dist <= 120) {
+            this.player.takeDamage(Math.round(15 * this.npcGrowthDamageMult));
+            this.spawnHitFlash(this.player.x, this.player.y, 0x88bb22);
+          }
+        } else {
+          const spreadAngles = [-15, 0, 15];
+          for (const deg of spreadAngles) {
+            const a = angle + deg * (Math.PI / 180);
+            const proj = new Projectile(this, this.npc.x, this.npc.y, 'proj-growth', Math.round(8 * this.npcGrowthDamageMult), false);
+            this.projectiles.add(proj);
+            proj.launch(Math.cos(a) * 460, Math.sin(a) * 460);
+          }
+        }
+      },
+      openMutateMenu: () => {
+        // NPC auto-picks one random mutation
+        const mutations = ['healthier','deadly','linger','viral','grow','shrink','buffer','spray','quick','regenerative'];
+        this.applyGrowthMutation(mutations[Math.floor(Math.random() * mutations.length)], 'npc');
+      },
+      fireInfect: (tx, ty) => {
+        if (this.time.now - this.lastNpcInfectCast < 8000) return;
+        this.lastNpcInfectCast = this.time.now;
+        const baseAngle = Math.atan2(ty - this.npc.y, tx - this.npc.x);
+        const count = 1 + this.npcGrowthInfectExtraProj;
+        for (let i = 0; i < count; i++) {
+          const spread = count > 1 ? (i - (count - 1) / 2) * 8 * (Math.PI / 180) : 0;
+          const a = baseAngle + spread;
+          const proj = new Projectile(this, this.npc.x, this.npc.y, 'proj-growth-dagger', Math.round(5 * this.npcGrowthDamageMult), false);
+          this.projectiles.add(proj);
+          proj.launch(Math.cos(a) * 490, Math.sin(a) * 490);
+        }
+      },
+      activateBloat: () => {
+        if (this.time.now - this.lastNpcBloatCast < this.npcGrowthBloatCdMs) return;
+        this.lastNpcBloatCast = this.time.now;
+        this.npcGrowthBloatActive = true;
+        this.npcGrowthBloatEnd = this.time.now + 5000;
+        if (this.npcGrowthBloatAura) this.npcGrowthBloatAura.destroy();
+        this.npcGrowthBloatAura = this.add.circle(this.npc.x, this.npc.y, 30, 0xdddd00, 0.3)
+          .setStrokeStyle(2, 0xffff44, 0.8).setDepth(5);
+        this.tweens.add({ targets: this.npcGrowthBloatAura, alpha: 0.5, yoyo: true, repeat: -1, duration: 500 });
+      },
+      triggerMutantMorph: () => {
+        const morphTypes: Array<'spores' | 'claws' | 'virus'> = ['spores', 'claws', 'virus'];
+        this.npcGrowthMorphType = morphTypes[Math.floor(Math.random() * morphTypes.length)];
+      },
+      // Crystal
+      fireCrystalLaser: (tx, ty) => {
+        this.fireCrystalLaserFrom(this.npc.x, this.npc.y, tx, ty, 8, false);
+        for (const cl of this.npcCrystalClones) {
+          this.fireCrystalLaserFrom(this.npc.x + cl.offsetX, this.npc.y + cl.offsetY, tx, ty, 8, false);
+        }
+      },
+      placeCrystalNode: (tx, ty) => {
+        if (this.npcCrystalNodes.length >= 3) {
+          this.npcCrystalNodes[0].sprite.destroy();
+          this.npcCrystalNodes.shift();
+        }
+        const spr = this.add.circle(tx, ty, 14, 0x44aaff, 0.5)
+          .setStrokeStyle(2, 0xaaeeff, 0.7).setDepth(4);
+        this.npcCrystalNodes.push({ sprite: spr, x: tx, y: ty, owner: 'npc' });
+      },
+      startCrystalBarrage: (tx, ty) => {
+        this.npcCrystalBarrageActive = true;
+        this.npcCrystalBarrageEnd = this.time.now + 3000;
+        this.npcCrystalBarrageAccum = 0;
+        this.npcCrystalBarrageShots = 0;
+        this.npcCrystalBarrageTX = tx;
+        this.npcCrystalBarrageTY = ty;
+      },
+      placeCrystalPortal: (tx, ty) => {
+        if (this.npcCrystalPortals.length >= 2) {
+          this.npcCrystalPortals[0].sprite.destroy(); this.npcCrystalPortals[0].label.destroy();
+          this.npcCrystalPortals.shift();
+        }
+        const idx = this.npcCrystalPortals.length;
+        const color = idx === 0 ? 0xaa44ff : 0xff44aa;
+        const lbl = idx === 0 ? 'A' : 'B';
+        const spr = this.add.circle(tx, ty, 18, color, 0.35)
+          .setStrokeStyle(3, color, 0.7).setDepth(4);
+        this.tweens.add({ targets: spr, alpha: 0.1, yoyo: true, repeat: -1, duration: 700 });
+        const lblObj = this.add.text(tx, ty, lbl, {
+          fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#888888',
+        }).setOrigin(0.5).setDepth(5);
+        this.npcCrystalPortals.push({ sprite: spr, label: lblObj, x: tx, y: ty, owner: 'npc' });
+      },
+      activateCrystalTrick: () => {
+        for (const cl of this.npcCrystalClones) { cl.sprite.destroy(); cl.hpBar.destroy(); cl.hpBg.destroy(); }
+        this.npcCrystalClones = [];
+        this.npcCrystalTrickEnd = this.time.now + 12000;
+        for (const off of [{ x: -58, y: 12 }, { x: 58, y: 12 }]) {
+          const cx = this.npc.x + off.x, cy = this.npc.y + off.y;
+          const hpBg = this.add.rectangle(cx, cy - 28, 30, 4, 0x333333).setDepth(12);
+          const hpBar = this.add.rectangle(cx - 15, cy - 28, 30, 4, 0x44aaff).setDepth(13).setOrigin(0, 0.5);
+          const spr = this.add.circle(cx, cy, 16, 0x88ccff, 0.65)
+            .setStrokeStyle(2, 0xaaeeff).setDepth(11);
+          this.npcCrystalClones.push({ sprite: spr, hp: 50, maxHp: 50, offsetX: off.x, offsetY: off.y, hpBar, hpBg });
+        }
+      },
+      // Soul
+      fireSoulOrb: (tx, ty) => {
+        if (this.time.now - this.lastNpcSoulOrbCast < 800) return;
+        this.lastNpcSoulOrbCast = this.time.now;
+        const dx = tx - this.npc.x, dy = ty - this.npc.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const speed = 104;
+        const ox = this.npc.x + (dx / dist) * 32;
+        const oy = this.npc.y + (dy / dist) * 32;
+        const spr = this.add.circle(ox, oy, 12, 0x9966cc, 0.6)
+          .setStrokeStyle(2, 0xbb88ee, 0.8).setDepth(7);
+        this.tweens.add({ targets: spr, alpha: 0.3, yoyo: true, repeat: -1, duration: 400 });
+        this.npcSoulOrbs.push({ sprite: spr, expiresAt: this.time.now + 3000, x: ox, y: oy, vx: (dx / dist) * speed, vy: (dy / dist) * speed, owner: 'npc', lastContactTick: -99999 });
+      },
+      summonGhost: (ghostType) => {
+        // NPC auto-upgrades to best affordable ghost type
+        let actualType = ghostType;
+        if (actualType !== 'knight') {
+          if (this.npcSoulGhosts >= 3) actualType = 'banshee';
+          else if (this.npcSoulGhosts >= 2) actualType = 'ghoul';
+          else if (this.npcSoulGhosts >= 1) actualType = 'basic';
+          else return;
+        }
+        const cost = actualType === 'basic' ? 1 : actualType === 'ghoul' ? 2 : actualType === 'banshee' ? 3 : 5;
+        if (this.npcSoulGhosts < cost) return;
+        if (this.time.now - this.lastNpcSummon < 2000) return;
+        this.lastNpcSummon = this.time.now;
+        this.npcSoulGhosts -= cost;
+        this.spawnSoulGhost(actualType, this.npc.x, this.npc.y, 'npc');
+      },
+      soulSacrifice: () => {
+        if (this.time.now - this.lastNpcSacrifice < 3000) return;
+        this.lastNpcSacrifice = this.time.now;
+        this.npc.applySelfDamage(10);
+        this.npcSoulGhosts++;
+      },
+      soulConsume: () => {
+        if (this.time.now - this.lastNpcConsume < 3000) return;
+        this.lastNpcConsume = this.time.now;
+        const consumeR = 150;
+        for (let i = this.npcSoulSummons.length - 1; i >= 0; i--) {
+          const gs = this.npcSoulSummons[i];
+          if (Phaser.Math.Distance.Between(gs.sprite.x, gs.sprite.y, this.npc.x, this.npc.y) <= consumeR) {
+            this.npc.heal(Math.floor(gs.hp / 2));
+            gs.sprite.destroy();
+            this.npcSoulSummons.splice(i, 1);
+          }
+        }
+      },
+      // Hunt
+      huntThrowGrenade: (tx, ty, holdMs) => {
+        const dx = tx - this.npc.x, dy = ty - this.npc.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const speed = 500;
+        const ox = this.npc.x, oy = this.npc.y;
+        const spr = this.add.circle(ox, oy, 10, 0xcc4400, 0.9).setStrokeStyle(2, 0xff8800, 1).setDepth(8);
+        this.npcHuntGrenades.push({
+          sprite: spr, x: ox, y: oy, startX: ox, startY: oy,
+          vx: (dx / dist) * speed, vy: (dy / dist) * speed,
+          explodeAt: this.time.now + (3000 - holdMs),
+          selfDamage: false, owner: 'npc', stopped: false,
+        });
+      },
+      huntHuntersTrail: () => {
+        this.npcHuntTrailActive = true;
+        this.npcHuntTrailEnd = this.time.now + 3000;
+        this.npcHuntTrailAccum = 0;
+      },
+      huntBloodPact: () => {
+        this.npcHuntBloodPactActive = true;
+        this.npcHuntBloodPactEnd = this.time.now + 5000;
+        if (this.npcHuntBloodPactAura) this.npcHuntBloodPactAura.destroy();
+        this.npcHuntBloodPactAura = this.add.circle(this.npc.x, this.npc.y, 28, 0xaa0022, 0.25).setDepth(4);
+        this.tweens.add({ targets: this.npcHuntBloodPactAura, alpha: 0.08, yoyo: true, repeat: -1, duration: 600 });
+      },
+      huntTransform: () => {
+        this.npcHuntBeastForm = true;
+        this.npc.setScale(1.2);
+        (this.npc.body as Phaser.Physics.Arcade.Body).setCircle(26, 3, 3);
+        const burst = this.add.circle(this.npc.x, this.npc.y, 20, 0xcc2200, 0.8).setDepth(8);
+        this.tweens.add({ targets: burst, scaleX: 3, scaleY: 3, alpha: 0, duration: 350, onComplete: () => burst.destroy() });
+      },
+      huntSlash: (tx, ty) => {
+        const dx = tx - this.npc.x, dy = ty - this.npc.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const nb = this.npc.body as Phaser.Physics.Arcade.Body;
+        nb.setVelocity((dx / dist) * 500, (dy / dist) * 500);
+        this.time.delayedCall(160, () => {
+          if (!this.npc.active) return;
+          nb.setVelocity(0, 0);
+          const slashDist = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y);
+          if (slashDist <= 85) {
+            this.player.takeDamage(20);
+            this.spawnHitFlash(this.player.x, this.player.y, 0xff2200);
+            if (this.npcHuntBloodPactActive && this.time.now < this.npcHuntBloodPactEnd) this.npc.heal(10);
+            // Apply bleeding to player
+            this.playerBleeding = true;
+            this.playerBleedingUntil = this.time.now + 8000;
+            if (!this.playerBleedAura) {
+              this.playerBleedAura = this.add.circle(this.player.x, this.player.y, 22, 0xcc0000, 0.25).setDepth(3);
+              this.tweens.add({ targets: this.playerBleedAura, alpha: 0.1, yoyo: true, repeat: -1, duration: 700 });
+            }
+            const pb2 = this.player.body as Phaser.Physics.Arcade.Body;
+            const toPx = this.player.x - this.npc.x, toPy = this.player.y - this.npc.y;
+            const pd2 = Math.sqrt(toPx * toPx + toPy * toPy) || 1;
+            pb2.setVelocity((toPx / pd2) * 500, (toPy / pd2) * 500);
+          }
+        });
+      },
+      huntLeap: (tx, ty) => {
+        this.npcHuntLeapActive = true;
+        this.npcHuntLeapEnd = this.time.now + 2000;
+        this.npcHuntLeapTargetX = tx;
+        this.npcHuntLeapTargetY = ty;
+        this.npc.isInvincible = true;
+        this.npc.setAlpha(0.15);
+        (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+      },
+      huntBloodHunt: () => {
+        if (!this.playerBleeding) return;
+        const angle = Math.random() * Math.PI * 2;
+        this.npc.setPosition(this.player.x + Math.cos(angle) * 60, this.player.y + Math.sin(angle) * 60);
+        // Lock NPC 1s (roar)
+        this.npc.npcHuntRoarLocked = true;
+        this.time.delayedCall(1000, () => { this.npc.npcHuntRoarLocked = false; });
+        (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+        // Slow player
+        this.playerHuntSlowUntil = this.time.now + 3000;
+        // Roar visual
+        const roar = this.add.circle(this.npc.x, this.npc.y, 18, 0xff0000, 0.8).setDepth(9);
+        this.tweens.add({ targets: roar, scaleX: 4, scaleY: 4, alpha: 0, duration: 800, onComplete: () => roar.destroy() });
+      },
+      huntBloodMoon: () => {
+        this.npcHuntBloodMoonActive = true;
+        this.npcHuntBloodMoonEnd = this.time.now + 12000;
+        this.npcHuntBloodMoonTickAccum = 0;
+        if (this.npcHuntBloodMoonFilter) this.npcHuntBloodMoonFilter.destroy();
+        const { width, height } = this.scale;
+        this.npcHuntBloodMoonFilter = this.add.rectangle(width / 2, height / 2, width, height, 0x440000, 0.10).setDepth(49);
+      },
+      huntUntransform: () => {
+        this.npcHuntBeastForm = false;
+        this.npc.setScale(1.0);
+        (this.npc.body as Phaser.Physics.Arcade.Body).setCircle(22, 2, 2);
+        this.npc.triggerCooldown('hunt-transform');
+      },
     };
   }
 
@@ -1544,6 +2712,39 @@ export class ArenaScene extends Phaser.Scene {
       placeSnapTrap: () => {},
       activateShadowDance: () => {},
       startBlackHole: () => {},
+      // Ice — no-ops for clone
+      fireIceSpike: () => {},
+      fireFrostBlast: () => {},
+      toggleBlockUp: () => {},
+      startSkate: () => {},
+      fireFrozenSolid: () => {},
+      // Growth — no-ops for clone
+      fireGrowthClick: () => {},
+      openMutateMenu: () => {},
+      fireInfect: () => {},
+      activateBloat: () => {},
+      triggerMutantMorph: () => {},
+      // Crystal — no-ops for clone
+      fireCrystalLaser: () => {},
+      placeCrystalNode: () => {},
+      startCrystalBarrage: () => {},
+      placeCrystalPortal: () => {},
+      activateCrystalTrick: () => {},
+      // Soul — no-ops for clone
+      fireSoulOrb: () => {},
+      summonGhost: () => {},
+      soulSacrifice: () => {},
+      soulConsume: () => {},
+      // Hunt — no-ops for clone
+      huntThrowGrenade: () => {},
+      huntHuntersTrail: () => {},
+      huntBloodPact: () => {},
+      huntTransform: () => {},
+      huntSlash: () => {},
+      huntLeap: () => {},
+      huntBloodHunt: () => {},
+      huntBloodMoon: () => {},
+      huntUntransform: () => {},
     };
   }
 
@@ -1771,11 +2972,342 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
+  private frostDamageMultiplier(stacks: number): number {
+    if (stacks >= 5) return 1.45;
+    if (stacks >= 4) return 1.30;
+    if (stacks >= 3) return 1.20;
+    return 1.0;
+  }
+
+  private addFrostStack(target: 'player' | 'npc'): void {
+    if (target === 'npc') {
+      this.npcFrostStacks = Math.min(5, this.npcFrostStacks + 1);
+      this.npc.incomingDamageMultiplier = this.frostDamageMultiplier(this.npcFrostStacks);
+    } else {
+      this.playerFrostStacks = Math.min(5, this.playerFrostStacks + 1);
+      this.player.incomingDamageMultiplier = this.frostDamageMultiplier(this.playerFrostStacks);
+    }
+  }
+
+  private clearFrostStacks(target: 'player' | 'npc'): void {
+    if (target === 'npc') {
+      this.npcFrostStacks = 0;
+      this.npc.incomingDamageMultiplier = 1;
+    } else {
+      this.playerFrostStacks = 0;
+      this.player.incomingDamageMultiplier = 1;
+    }
+  }
+
+  private spawnIcyTrail(x: number, y: number, owner: 'player' | 'npc'): void {
+    const spr = this.add.circle(x, y, 32, 0x88ccff, 0.35).setDepth(2)
+      .setStrokeStyle(1, 0xcceeff, 0.5);
+    this.tweens.add({ targets: spr, alpha: 0.15, duration: 4800, yoyo: true, repeat: 0 });
+    this.icyTrails.push({ sprite: spr, expiresAt: this.time.now + 5000, x, y, radius: 32, frostTickAccum: 0, owner });
+  }
+
+  private spawnFrozenSolidVisual(x: number, y: number, angle: number): void {
+    const gfx = this.add.graphics().setDepth(7);
+    const half = Math.PI / 8; // 22.5° half-angle
+    const len = 1200;
+    gfx.fillStyle(0x88ccff, 0.25);
+    gfx.lineStyle(2, 0xcceeff, 0.8);
+    gfx.beginPath();
+    gfx.moveTo(x, y);
+    gfx.lineTo(x + Math.cos(angle - half) * len, y + Math.sin(angle - half) * len);
+    gfx.lineTo(x + Math.cos(angle + half) * len, y + Math.sin(angle + half) * len);
+    gfx.closePath();
+    gfx.fillPath();
+    gfx.strokePath();
+    this.tweens.add({ targets: gfx, alpha: 0, duration: 450, onComplete: () => gfx.destroy() });
+  }
+
+  private spawnFrostBeamVisual(x1: number, y1: number, x2: number, y2: number): void {
+    const gfx = this.add.graphics().setDepth(8);
+    gfx.lineStyle(10, 0x88ccff, 0.7);
+    gfx.lineBetween(x1, y1, x2, y2);
+    gfx.lineStyle(3, 0xffffff, 0.9);
+    gfx.lineBetween(x1, y1, x2, y2);
+    this.tweens.add({ targets: gfx, alpha: 0, duration: 280, onComplete: () => gfx.destroy() });
+  }
+
+  // ── Crystal helpers ──────────────────────────────────────────────
+
+  /** Returns the distance t along the ray (ox+t*dx, oy+t*dy) where it first intersects the circle. Returns null if no hit. */
+  private rayCircleIntersect(ox: number, oy: number, dx: number, dy: number, cx: number, cy: number, r: number): number | null {
+    const fx = ox - cx, fy = oy - cy;
+    const b = 2 * (fx * dx + fy * dy);
+    const c = fx * fx + fy * fy - r * r;
+    const disc = b * b - 4 * c; // a = 1 (direction normalized)
+    if (disc < 0) return null;
+    const sqrtDisc = Math.sqrt(disc);
+    const t1 = (-b - sqrtDisc) / 2;
+    const t2 = (-b + sqrtDisc) / 2;
+    if (t1 > 1) return t1;
+    if (t2 > 1) return t2;
+    return null;
+  }
+
+  /**
+   * Fire a hitscan laser from (startX,startY) toward (toX,toY).
+   * Reflects off crystal nodes (±22.5°, ×2 damage per bounce).
+   * Redirects through own portal gates toward nearest enemy.
+   */
+  private fireCrystalLaserFrom(startX: number, startY: number, toX: number, toY: number, baseDamage: number, isFromPlayer: boolean): void {
+    const len0 = Math.sqrt((toX - startX) ** 2 + (toY - startY) ** 2) || 1;
+    let dx = (toX - startX) / len0;
+    let dy = (toY - startY) / len0;
+    let ox = startX, oy = startY;
+    let dmg = baseDamage;
+
+    const target = isFromPlayer ? this.npc : this.player;
+    const allCrystals = [...this.crystalNodes, ...this.npcCrystalNodes];
+    const ownPortals = isFromPlayer ? this.crystalPortals : this.npcCrystalPortals;
+    const CRYSTAL_R = 14, ENEMY_R = 22, PORTAL_R = 20;
+    const MAX_DIST = this.scale.width + this.scale.height;
+    const MAX_BOUNCES = 5;
+
+    const segments: {x1: number, y1: number, x2: number, y2: number}[] = [];
+    let lastBounced: CrystalNode | null = null;
+    let portalUsed = false;
+
+    for (let bounce = 0; bounce <= MAX_BOUNCES; bounce++) {
+      let minT = MAX_DIST;
+      let hitType: 'crystal' | 'portal' | 'enemy' | 'none' = 'none';
+      let hitCrystal: CrystalNode | null = null;
+      let hitPortal: CrystalPortalGate | null = null;
+
+      for (const c of allCrystals) {
+        if (c === lastBounced) continue;
+        const t = this.rayCircleIntersect(ox, oy, dx, dy, c.x, c.y, CRYSTAL_R);
+        if (t !== null && t > 2 && t < minT) { minT = t; hitType = 'crystal'; hitCrystal = c; hitPortal = null; }
+      }
+
+      if (!portalUsed && ownPortals.length === 2) {
+        for (const p of ownPortals) {
+          const t = this.rayCircleIntersect(ox, oy, dx, dy, p.x, p.y, PORTAL_R);
+          if (t !== null && t > 2 && t < minT) { minT = t; hitType = 'portal'; hitPortal = p; hitCrystal = null; }
+        }
+      }
+
+      const tEnemy = this.rayCircleIntersect(ox, oy, dx, dy, target.x, target.y, ENEMY_R);
+      if (tEnemy !== null && tEnemy > 2 && tEnemy < minT) { minT = tEnemy; hitType = 'enemy'; hitCrystal = null; hitPortal = null; }
+
+      // Clamp to nearest wall if nothing hit
+      if (hitType === 'none') {
+        let wallT = MAX_DIST;
+        if (dx > 0.001) wallT = Math.min(wallT, (this.scale.width  - ox) / dx);
+        else if (dx < -0.001) wallT = Math.min(wallT, -ox / dx);
+        if (dy > 0.001) wallT = Math.min(wallT, (this.scale.height - oy) / dy);
+        else if (dy < -0.001) wallT = Math.min(wallT, -oy / dy);
+        minT = Math.max(0, Math.min(minT, wallT));
+      }
+
+      const endX = ox + dx * minT;
+      const endY = oy + dy * minT;
+      segments.push({ x1: ox, y1: oy, x2: endX, y2: endY });
+
+      if (hitType === 'enemy') {
+        target.takeDamage(dmg);
+        this.spawnHitFlash(target.x, target.y, 0x88eeff);
+        break;
+      } else if (hitType === 'crystal' && hitCrystal) {
+        dmg *= 2;
+        // Reflect direction off crystal surface normal
+        const nx = (endX - hitCrystal.x) / CRYSTAL_R;
+        const ny = (endY - hitCrystal.y) / CRYSTAL_R;
+        const dot = dx * nx + dy * ny;
+        let rdx = dx - 2 * dot * nx;
+        let rdy = dy - 2 * dot * ny;
+        // Random ±22.5° spread
+        const spread = (Math.random() - 0.5) * (Math.PI / 4);
+        const cs = Math.cos(spread), sn = Math.sin(spread);
+        dx = rdx * cs - rdy * sn;
+        dy = rdx * sn + rdy * cs;
+        const rlen = Math.sqrt(dx * dx + dy * dy) || 1;
+        dx /= rlen; dy /= rlen;
+        ox = endX + dx * 3;
+        oy = endY + dy * 3;
+        lastBounced = hitCrystal;
+        this.tweens.add({ targets: hitCrystal.sprite, alpha: 1, scaleX: 1.3, scaleY: 1.3, duration: 80, yoyo: true });
+      } else if (hitType === 'portal' && hitPortal) {
+        const other = ownPortals.find((p) => p !== hitPortal)!;
+        const tdx = target.x - other.x, tdy = target.y - other.y;
+        const tlen = Math.sqrt(tdx * tdx + tdy * tdy) || 1;
+        dx = tdx / tlen; dy = tdy / tlen;
+        ox = other.x + dx * 3;
+        oy = other.y + dy * 3;
+        portalUsed = true;
+        lastBounced = null;
+      } else {
+        break;
+      }
+    }
+
+    // Draw beam segments (color shifts from cyan → white → gold with each bounce)
+    const gfx = this.add.graphics();
+    gfx.setDepth(15);
+    const beamColors = [0x88eeff, 0xaaffff, 0xffffff, 0xffee88, 0xffcc44];
+    for (let si = 0; si < segments.length; si++) {
+      gfx.lineStyle(3, beamColors[Math.min(si, beamColors.length - 1)], 1);
+      gfx.lineBetween(segments[si].x1, segments[si].y1, segments[si].x2, segments[si].y2);
+    }
+    this.tweens.add({ targets: gfx, alpha: 0, duration: 160, onComplete: () => gfx.destroy() });
+  }
+
+  private applyGrowthMutation(id: string, target: 'player' | 'npc'): void {
+    const fighter = target === 'player' ? this.player : this.npc;
+    const isPlayer = target === 'player';
+    switch (id) {
+      case 'healthier':
+        fighter.maxHp += 10;
+        fighter.heal(10);
+        break;
+      case 'deadly':
+        if (isPlayer) this.growthDamageMult += 0.15;
+        else this.npcGrowthDamageMult += 0.15;
+        break;
+      case 'linger':
+        if (isPlayer) this.growthLingerBonus += 3000;
+        else this.npcGrowthLingerBonus += 3000;
+        break;
+      case 'viral':
+        if (isPlayer) this.growthViralBonus += 2;
+        else this.npcGrowthViralBonus += 2;
+        break;
+      case 'grow': {
+        fighter.maxHp += 20;
+        fighter.heal(20);
+        const newScaleG = 1 + Math.max(-0.6, (isPlayer ? this.growthScaleBonus : this.npcGrowthScaleBonus) + 0.2);
+        if (isPlayer) { this.growthScaleBonus += 0.2; } else { this.npcGrowthScaleBonus += 0.2; }
+        fighter.setScale(newScaleG);
+        break;
+      }
+      case 'shrink': {
+        fighter.maxHp = Math.max(20, fighter.maxHp - 20);
+        if (fighter.hp > fighter.maxHp) fighter.hp = fighter.maxHp;
+        const newScaleS = Math.max(0.4, 1 + (isPlayer ? this.growthScaleBonus : this.npcGrowthScaleBonus) - 0.2);
+        if (isPlayer) { this.growthScaleBonus -= 0.2; } else { this.npcGrowthScaleBonus -= 0.2; }
+        fighter.setScale(newScaleS);
+        break;
+      }
+      case 'buffer':
+        if (isPlayer) this.growthBloatCdMs = Math.max(2000, this.growthBloatCdMs - 2000);
+        else this.npcGrowthBloatCdMs = Math.max(2000, this.npcGrowthBloatCdMs - 2000);
+        break;
+      case 'spray':
+        if (isPlayer) this.growthInfectExtraProj += 1;
+        else this.npcGrowthInfectExtraProj += 1;
+        break;
+      case 'quick':
+        if (isPlayer) this.growthInfectCdMs = Math.max(2000, this.growthInfectCdMs - 1000);
+        break;
+      case 'regenerative':
+        if (isPlayer) this.growthRegenRate += 1;
+        else this.npcGrowthRegenRate += 1;
+        break;
+    }
+    // Flash to confirm
+    const flash = this.add.circle(fighter.x, fighter.y, 22, 0x88bb22, 0.7).setDepth(12);
+    this.tweens.add({ targets: flash, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 350, onComplete: () => flash.destroy() });
+  }
+
   private spawnShadowDarkCloud(x: number, y: number, owner: 'player' | 'npc'): void {
     const spr = this.add.circle(x, y, 36, 0x330044, 0.55).setDepth(3);
     spr.setStrokeStyle(1, 0x8800cc, 0.5);
     this.tweens.add({ targets: spr, scaleX: 1.2, scaleY: 1.2, alpha: 0.35, yoyo: true, repeat: -1, duration: 700 });
     this.shadowDarkClouds.push({ sprite: spr, expiresAt: this.time.now + 6000, x, y, radius: 36, tickAccum: 0, owner });
+  }
+
+  private spawnSoulGhost(type: 'basic' | 'ghoul' | 'banshee' | 'knight', x: number, y: number, owner: 'player' | 'npc'): void {
+    const hp = type === 'basic' ? 25 : type === 'ghoul' ? 20 : type === 'banshee' ? 100 : 125;
+    const r = type === 'banshee' ? 31 : type === 'knight' ? 20 : 21;
+    const colors: Record<string, number> = { basic: 0xaaaaff, ghoul: 0x8844aa, banshee: 0xddaaff, knight: 0xffaacc };
+    const spr = this.add.circle(x, y, r, colors[type], 0.75)
+      .setStrokeStyle(2, 0xeeeeff, 0.6).setDepth(8);
+    this.tweens.add({ targets: spr, scaleX: 0.88, scaleY: 0.88, yoyo: true, repeat: -1, duration: 600 });
+
+    const angle = Math.random() * Math.PI * 2;
+    const dx = type === 'knight' ? Math.cos(angle) : 0;
+    const dy = type === 'knight' ? Math.sin(angle) : 0;
+
+    const summon: SoulSummon = { sprite: spr, hp, maxHp: hp, type, owner, lastContactTick: -99999, ghoulShootAccum: 0, dx, dy };
+    if (owner === 'player') this.playerSoulSummons.push(summon);
+    else this.npcSoulSummons.push(summon);
+  }
+
+  private updateSoulSummon(
+    gs: SoulSummon,
+    enemy: { x: number; y: number; takeDamage(n: number): void },
+    time: number,
+    delta: number,
+    isPlayerOwned: boolean,
+  ): void {
+    const pad = 34;
+    const W = this.scale.width, H = this.scale.height;
+    const speed = gs.type === 'basic' ? 90 : gs.type === 'banshee' ? 75 : gs.type === 'knight' ? 750 : 60;
+    const sx = gs.sprite.x, sy = gs.sprite.y;
+
+    if (gs.type === 'basic' || gs.type === 'banshee') {
+      const dx = enemy.x - sx, dy = enemy.y - sy;
+      const len = Math.sqrt(dx * dx + dy * dy) || 1;
+      gs.sprite.setPosition(sx + (dx / len) * speed * (delta / 1000), sy + (dy / len) * speed * (delta / 1000));
+    } else if (gs.type === 'ghoul') {
+      const dx = enemy.x - sx, dy = enemy.y - sy;
+      const len = Math.sqrt(dx * dx + dy * dy) || 1;
+      const targetDist = 250;
+      if (len > targetDist + 40) {
+        gs.sprite.setPosition(sx + (dx / len) * speed * (delta / 1000), sy + (dy / len) * speed * (delta / 1000));
+      } else if (len < targetDist - 40) {
+        gs.sprite.setPosition(sx - (dx / len) * speed * (delta / 1000), sy - (dy / len) * speed * (delta / 1000));
+      }
+      gs.ghoulShootAccum += delta;
+      if (gs.ghoulShootAccum >= 2000) {
+        gs.ghoulShootAccum = 0;
+        const blen = len || 1;
+        const bolt = new Projectile(this, gs.sprite.x, gs.sprite.y, 'proj-soul-bolt', 10, isPlayerOwned);
+        this.projectiles.add(bolt);
+        bolt.launch((dx / blen) * 380, (dy / blen) * 380);
+      }
+    } else {
+      // knight: bounce off walls
+      let nx = sx + gs.dx * speed * (delta / 1000);
+      let ny = sy + gs.dy * speed * (delta / 1000);
+      if (nx < pad || nx > W - pad) { gs.dx *= -1; nx = Math.max(pad, Math.min(W - pad, nx)); }
+      if (ny < pad || ny > H - pad) { gs.dy *= -1; ny = Math.max(pad, Math.min(H - pad, ny)); }
+      gs.sprite.setPosition(nx, ny);
+    }
+
+    // Clamp to arena
+    gs.sprite.setPosition(
+      Math.max(pad, Math.min(W - pad, gs.sprite.x)),
+      Math.max(pad, Math.min(H - pad, gs.sprite.y)),
+    );
+
+    // Contact damage (ghoul: no contact, uses bolts)
+    if (gs.type !== 'ghoul' && time - gs.lastContactTick >= 1000) {
+      const contactRange = gs.type === 'banshee' ? 60 : gs.type === 'knight' ? 42 : 43;
+      const contactDmg = gs.type === 'basic' ? 5 : gs.type === 'banshee' ? 12 : 8;
+      if (Phaser.Math.Distance.Between(gs.sprite.x, gs.sprite.y, enemy.x, enemy.y) <= contactRange) {
+        enemy.takeDamage(contactDmg);
+        this.spawnHitFlash(enemy.x, enemy.y, 0xccaaff);
+        gs.lastContactTick = time;
+      }
+    }
+
+    // Check if hit by enemy projectiles
+    for (const go of this.projectiles.getChildren()) {
+      const proj = go as Projectile;
+      if (!proj.active) continue;
+      const isEnemyProj = isPlayerOwned ? !proj.isFromPlayer : proj.isFromPlayer;
+      if (!isEnemyProj) continue;
+      if (Phaser.Math.Distance.Between(proj.x, proj.y, gs.sprite.x, gs.sprite.y) <= 20) {
+        gs.hp -= proj.damage;
+        proj.setActive(false).setVisible(false);
+        (proj.body as Phaser.Physics.Arcade.Body).stop();
+        break;
+      }
+    }
   }
 
   private pointToSegmentDist(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
@@ -1785,6 +3317,44 @@ export class ArenaScene extends Phaser.Scene {
     if (len2 === 0) return Phaser.Math.Distance.Between(px, py, ax, ay);
     const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
     return Phaser.Math.Distance.Between(px, py, ax + t * dx, ay + t * dy);
+  }
+
+  // ── Hunt helpers ─────────────────────────────────────────────────
+
+  private huntToggleBeastHud(toBeast: boolean): void {
+    for (const o of this.huntNormalHudCards) (o as unknown as { setVisible: (v: boolean) => void }).setVisible(!toBeast);
+    for (const o of this.huntBeastHudCards) (o as unknown as { setVisible: (v: boolean) => void }).setVisible(toBeast);
+    this.abilityBars = toBeast ? this.huntBeastFills : this.huntNormalFills;
+  }
+
+  private spawnGrenadeExplosion(x: number, y: number, selfDamage: boolean, owner: 'player' | 'npc'): void {
+    const radius = 130;
+    const dmg = 35;
+    if (owner === 'player') {
+      const nd = Phaser.Math.Distance.Between(x, y, this.npc.x, this.npc.y);
+      if (nd <= radius) {
+        this.npc.takeDamage(dmg);
+        this.spawnHitFlash(this.npc.x, this.npc.y, 0xff6600);
+        if (this.huntBloodPactActive && this.time.now < this.huntBloodPactEnd) this.player.heal(Math.ceil(dmg * 0.5));
+      }
+      if (selfDamage && Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) <= radius) {
+        this.player.applySelfDamage(20);
+      }
+    } else {
+      const pd = Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y);
+      if (pd <= radius) {
+        this.player.takeDamage(dmg);
+        this.spawnHitFlash(this.player.x, this.player.y, 0xff6600);
+        if (this.npcHuntBloodPactActive && this.time.now < this.npcHuntBloodPactEnd) this.npc.heal(Math.ceil(dmg * 0.5));
+      }
+      if (selfDamage && Phaser.Math.Distance.Between(x, y, this.npc.x, this.npc.y) <= radius) {
+        this.npc.applySelfDamage(20);
+      }
+    }
+    const ring = this.add.circle(x, y, 10, 0xff6600, 0.9).setDepth(8);
+    this.tweens.add({ targets: ring, scaleX: 13, scaleY: 13, alpha: 0, duration: 420, onComplete: () => ring.destroy() });
+    const core = this.add.circle(x, y, 6, 0xffcc44, 1).setDepth(9);
+    this.tweens.add({ targets: core, scaleX: 4, scaleY: 4, alpha: 0, duration: 210, onComplete: () => core.destroy() });
   }
 
   // ── Update loop ──────────────────────────────────────────────────
@@ -1899,6 +3469,8 @@ export class ArenaScene extends Phaser.Scene {
     // ── Speed multipliers ─────────────────────────────────────────
     if (this.elementId === 'fire') {
       this.playerSpeedMult = this.flameBodyActive ? 2 : 1;
+    } else if (this.elementId === 'hunt') {
+      this.playerSpeedMult = this.huntBeastForm ? 1.5 : 1;
     } else if (this.elementId === 'earth') {
       this.playerSpeedMult = this.hasUpgrade('e') ? 1 + this.player.shieldHp / 100 : 1;
       if (this.earthShieldShedActive) {
@@ -1919,6 +3491,34 @@ export class ArenaScene extends Phaser.Scene {
     if (this.npcFlameBodyActive) this.npcSpeedMult = 2;
     else if (time < this.npcGeyserBuffUntil) this.npcSpeedMult = 1.5;
 
+    // Ice frost slow on NPC
+    if (this.npcFrostStacks > 0) this.npcSpeedMult *= (1 - this.npcFrostStacks * 0.1);
+    if (this.npcBlockUpActive) this.npcSpeedMult *= 0.5;
+    // Ice frost slow on player
+    if (this.playerFrostStacks > 0) {
+      this.playerSpeedMult *= (1 - this.playerFrostStacks * 0.1);
+    }
+    if (this.playerBlockUpActive) this.playerSpeedMult *= 0.5;
+
+    // Hunt trail boost on player
+    if (this.elementId === 'hunt') {
+      const onTrail = this.huntTrailCircles.some(
+        (c) => Phaser.Math.Distance.Between(this.player.x, this.player.y, c.x, c.y) <= 30,
+      );
+      if (onTrail) this.playerSpeedMult *= 1.5;
+      // NPC blood hunt slow on player
+      if (time < this.playerHuntSlowUntil) this.playerSpeedMult *= 0.5;
+    }
+    // NPC hunt speed adjustments
+    if (this.npc.element.id === 'hunt' && this.npcHuntBeastForm) this.npcSpeedMult = Math.max(this.npcSpeedMult, 1.5);
+    if (time < this.npcHuntSlowUntil) this.npcSpeedMult *= 0.5;
+    // NPC trail boost
+    if (this.npc.element.id === 'hunt') {
+      const npcOnTrail = this.npcHuntTrailCircles.some(
+        (c) => Phaser.Math.Distance.Between(this.npc.x, this.npc.y, c.x, c.y) <= 30,
+      );
+      if (npcOnTrail) this.npcSpeedMult *= 1.5;
+    }
 
     // ── Player movement ─────────────────────────────────────────
     const playerBody = this.player.body as Phaser.Physics.Arcade.Body;
@@ -1950,6 +3550,11 @@ export class ArenaScene extends Phaser.Scene {
         const dragAngle = Math.atan2(this.npcShadowDragTargetY - this.player.y, this.npcShadowDragTargetX - this.player.x);
         playerBody.setVelocity(Math.cos(dragAngle) * 200, Math.sin(dragAngle) * 200);
       }
+    }
+
+    // ── Frozen player ─────────────────────────────────────────────
+    if (this.playerFrozenUntil > time && !this.isDodging) {
+      playerBody.setVelocity(0, 0);
     }
 
     // ── Player abilities ─────────────────────────────────────────
@@ -2581,6 +4186,168 @@ export class ArenaScene extends Phaser.Scene {
           this.player.castAbility('black-hole', playerCtx);
         }
       }
+    } else if (this.elementId === 'ice') {
+      if (!this.nukeChanneling) {
+        // Click — Ice Spike
+        if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
+          this.player.castAbility('frost-blast', playerCtx);
+        }
+        if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
+          this.player.castAbility('block-up', playerCtx);
+        }
+        if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
+          this.player.castAbility('skate', playerCtx);
+        }
+        if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
+          this.player.castAbility('frozen-solid', playerCtx);
+        }
+        if (pointer.isDown) {
+          this.player.castAbility('ice-spike', playerCtx);
+        }
+      }
+    } else if (this.elementId === 'crystal') {
+      if (!this.nukeChanneling) {
+        if (pointer.isDown) {
+          this.player.castAbility('crystal-laser', playerCtx);
+        }
+        if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
+          this.player.castAbility('crystal-place', playerCtx);
+        }
+        if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
+          this.player.castAbility('crystal-barrage', playerCtx);
+        }
+        if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
+          this.player.castAbility('crystal-portal', playerCtx);
+        }
+        if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
+          this.player.castAbility('crystal-trick', playerCtx);
+        }
+      }
+    } else if (this.elementId === 'growth') {
+      if (!this.nukeChanneling && !this.growthMutateMenuOpen) {
+        if (pointer.isDown) {
+          this.player.castAbility('growth-click', playerCtx);
+        }
+        if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
+          this.player.castAbility('mutate', playerCtx);
+        }
+        if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
+          // Manual cooldown handled inside fireInfect callback
+          playerCtx.fireInfect(mouseX, mouseY);
+        }
+        if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
+          playerCtx.activateBloat();
+        }
+        if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
+          this.player.castAbility('mutant-morph', playerCtx);
+        }
+      }
+    } else if (this.elementId === 'soul') {
+      // Click: Spirit Propel orb
+      if (pointer.isDown && !this.pointerWasDown) {
+        playerCtx.fireSoulOrb(mouseX, mouseY);
+      }
+
+      // R: Sacrifice
+      if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
+        playerCtx.soulSacrifice();
+      }
+
+      // F: Consume
+      if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
+        playerCtx.soulConsume();
+      }
+
+      // Q: Undead Charge (costs 5 ghosts)
+      if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
+        if (this.soulGhosts >= 5) {
+          playerCtx.summonGhost('knight');
+        }
+      }
+
+      // E: Summon — hold mechanic
+      const eDown = this.eKey.isDown;
+      if (eDown && !this.soulEHolding) {
+        this.soulEHolding = true;
+        this.soulEHoldStart = time;
+        if (this.soulEHoldVisual) this.soulEHoldVisual.destroy();
+        this.soulEHoldVisual = this.add.circle(this.player.x, this.player.y - 36, 8, 0xccaaff, 0.6).setDepth(15);
+        this.tweens.add({ targets: this.soulEHoldVisual, scaleX: 1.5, scaleY: 1.5, alpha: 0.3, yoyo: true, repeat: -1, duration: 300 });
+      } else if (!eDown && this.soulEHolding) {
+        // Released — determine ghost type by hold duration
+        this.soulEHolding = false;
+        if (this.soulEHoldVisual) { this.soulEHoldVisual.destroy(); this.soulEHoldVisual = null; }
+        const holdMs = time - this.soulEHoldStart;
+        // Quick tap (<200ms) → instant basic ghost (no ghost cost)
+        if (holdMs < 200) {
+          playerCtx.summonGhost('basic');
+        } else {
+          let ghostType: 'basic' | 'ghoul' | 'banshee' = 'basic';
+          if (holdMs >= 2000 && this.soulGhosts >= 3) ghostType = 'banshee';
+          else if (holdMs >= 1000 && this.soulGhosts >= 2) ghostType = 'ghoul';
+          playerCtx.summonGhost(ghostType);
+        }
+      }
+    } else if (this.elementId === 'hunt') {
+      if (!this.huntBeastForm) {
+        // ── Normal form ──────────────────────────────────────────
+        // Click: Shotgun
+        if (pointer.isDown && !this.pointerWasDown) {
+          this.player.castAbility('hunt-shotgun', playerCtx);
+        }
+        // E: Grenade hold mechanic
+        if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
+          if (this.player.getCooldownRatio('hunt-grenade') >= 1) {
+            this.player.triggerCooldown('hunt-grenade');
+            this.huntGrenadeHoldStart = time;
+            this.huntGrenadeHolding = true;
+            if (this.huntGrenadeVisual) this.huntGrenadeVisual.destroy();
+            this.huntGrenadeVisual = this.add.circle(this.player.x, this.player.y, 10, 0xff6600, 0.9).setDepth(12);
+          }
+        }
+        if (!this.eKey.isDown && this.huntGrenadeHolding) {
+          const holdMs = time - this.huntGrenadeHoldStart;
+          if (holdMs < 3000) {
+            playerCtx.huntThrowGrenade(mouseX, mouseY, holdMs);
+          }
+          this.huntGrenadeHolding = false;
+          if (this.huntGrenadeVisual) { this.huntGrenadeVisual.destroy(); this.huntGrenadeVisual = null; }
+        }
+        // R: Hunter's Trail
+        if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
+          this.player.castAbility('hunt-trail', playerCtx);
+        }
+        // F: Blood Pact
+        if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
+          this.player.castAbility('hunt-blood-pact', playerCtx);
+        }
+        // Q: Transform
+        if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
+          this.player.castAbility('hunt-transform', playerCtx);
+        }
+      } else {
+        // ── Beast form ───────────────────────────────────────────
+        // Click: Slash
+        if (pointer.isDown && !this.pointerWasDown) {
+          this.player.castAbility('hunt-slash', playerCtx);
+        }
+        // E: Explosive Leap
+        if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
+          this.player.castAbility('hunt-leap', playerCtx);
+        }
+        // R: Blood Hunt (requires bleed)
+        if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
+          if (this.npcBleeding) this.player.castAbility('hunt-blood-hunt', playerCtx);
+        }
+        // F: Blood Moon
+        if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
+          this.player.castAbility('hunt-blood-moon', playerCtx);
+        }
+        // Q: Untransform
+        if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
+          this.player.castAbility('hunt-untransform', playerCtx);
+        }
+      }
     }
     this.pointerWasDown = pointer.isDown;
 
@@ -2644,12 +4411,12 @@ export class ArenaScene extends Phaser.Scene {
             this.earthSlamActive = false;
             this.earthSlamBouncing = true;
             this.earthSlamBounceEnd = time + 5000;
-            this.earthSlamLastWallHit = time;
+            this.earthSlamLastWallHit = time - 9999; // allow immediate re-bounce
             // Nudge out of wall, then launch
-            if (playerBody.blocked.left)  this.player.x += 6;
-            if (playerBody.blocked.right) this.player.x -= 6;
-            if (playerBody.blocked.up)    this.player.y += 6;
-            if (playerBody.blocked.down)  this.player.y -= 6;
+            if (playerBody.blocked.left)  this.player.x += 14;
+            if (playerBody.blocked.right) this.player.x -= 14;
+            if (playerBody.blocked.up)    this.player.y += 14;
+            if (playerBody.blocked.down)  this.player.y -= 14;
             let bounceAng: number;
             if (this.hasUpgrade('r')) {
               const ptr = this.input.activePointer;
@@ -2660,7 +4427,7 @@ export class ArenaScene extends Phaser.Scene {
               if (playerBody.blocked.right) awayX -= 1;
               if (playerBody.blocked.up)    awayY += 1;
               if (playerBody.blocked.down)  awayY -= 1;
-              bounceAng = Math.atan2(awayY || 0, awayX || 1) + (Math.random() - 0.5) * (Math.PI * 0.89);
+              bounceAng = Math.atan2(awayY || 0, awayX || 1) + (Math.random() - 0.5) * (Math.PI * 0.38);
             }
             playerBody.setVelocity(Math.cos(bounceAng) * 950, Math.sin(bounceAng) * 950);
             if (this.player.shieldHp === 0) {
@@ -2680,14 +4447,14 @@ export class ArenaScene extends Phaser.Scene {
         } else {
           const bl = playerBody.blocked;
           const wallHit = bl.left || bl.right || bl.up || bl.down;
-          if (wallHit && time - this.earthSlamLastWallHit > 150) {
+          if (wallHit && time - this.earthSlamLastWallHit > 60) {
             this.earthSlamLastWallHit = time;
             // Nudge out of wall to prevent sticking
-            if (bl.left)  this.player.x += 6;
-            if (bl.right) this.player.x -= 6;
-            if (bl.up)    this.player.y += 6;
-            if (bl.down)  this.player.y -= 6;
-            // Compute bounce angle — cursor-guided if R upgrade, else random
+            if (bl.left)  this.player.x += 14;
+            if (bl.right) this.player.x -= 14;
+            if (bl.up)    this.player.y += 14;
+            if (bl.down)  this.player.y -= 14;
+            // Compute bounce angle — cursor-guided if R upgrade, else away from wall ±35°
             let wallAng: number;
             if (this.hasUpgrade('r')) {
               const ptr = this.input.activePointer;
@@ -2698,7 +4465,7 @@ export class ArenaScene extends Phaser.Scene {
               if (bl.right) awayX -= 1;
               if (bl.up)    awayY += 1;
               if (bl.down)  awayY -= 1;
-              wallAng = Math.atan2(awayY || 0, awayX || 1) + (Math.random() - 0.5) * (Math.PI * 0.89);
+              wallAng = Math.atan2(awayY || 0, awayX || 1) + (Math.random() - 0.5) * (Math.PI * 0.38);
             }
             playerBody.setVelocity(Math.cos(wallAng) * 950, Math.sin(wallAng) * 950);
             if (this.player.shieldHp === 0) {
@@ -2809,18 +4576,18 @@ export class ArenaScene extends Phaser.Scene {
             this.npcEarthSlamActive = false;
             this.npcEarthSlamBouncing = true;
             this.npcEarthSlamBounceEnd = time + 5000;
-            this.npcEarthSlamLastWallHit = time;
-            if (npcBody.blocked.left)  this.npc.x += 6;
-            if (npcBody.blocked.right) this.npc.x -= 6;
-            if (npcBody.blocked.up)    this.npc.y += 6;
-            if (npcBody.blocked.down)  this.npc.y -= 6;
+            this.npcEarthSlamLastWallHit = time - 9999;
+            if (npcBody.blocked.left)  this.npc.x += 14;
+            if (npcBody.blocked.right) this.npc.x -= 14;
+            if (npcBody.blocked.up)    this.npc.y += 14;
+            if (npcBody.blocked.down)  this.npc.y -= 14;
             let npcAwayX = 0, npcAwayY = 0;
             if (npcBody.blocked.left)  npcAwayX += 1;
             if (npcBody.blocked.right) npcAwayX -= 1;
             if (npcBody.blocked.up)    npcAwayY += 1;
             if (npcBody.blocked.down)  npcAwayY -= 1;
             const npcBaseAng = Math.atan2(npcAwayY || 0, npcAwayX || 1);
-            const npcAng = npcBaseAng + (Math.random() - 0.5) * (Math.PI * 0.89);
+            const npcAng = npcBaseAng + (Math.random() - 0.5) * (Math.PI * 0.38);
             npcBody.setVelocity(Math.cos(npcAng) * 950, Math.sin(npcAng) * 950);
             if (this.npc.shieldHp === 0) {
               this.npc.takeDamage(5);
@@ -2838,19 +4605,19 @@ export class ArenaScene extends Phaser.Scene {
         } else {
           const nbl = npcBody.blocked;
           const npcWallHit = nbl.left || nbl.right || nbl.up || nbl.down;
-          if (npcWallHit && time - this.npcEarthSlamLastWallHit > 150) {
+          if (npcWallHit && time - this.npcEarthSlamLastWallHit > 60) {
             this.npcEarthSlamLastWallHit = time;
-            if (nbl.left)  this.npc.x += 6;
-            if (nbl.right) this.npc.x -= 6;
-            if (nbl.up)    this.npc.y += 6;
-            if (nbl.down)  this.npc.y -= 6;
+            if (nbl.left)  this.npc.x += 14;
+            if (nbl.right) this.npc.x -= 14;
+            if (nbl.up)    this.npc.y += 14;
+            if (nbl.down)  this.npc.y -= 14;
             let npcAwayX2 = 0, npcAwayY2 = 0;
             if (nbl.left)  npcAwayX2 += 1;
             if (nbl.right) npcAwayX2 -= 1;
             if (nbl.up)    npcAwayY2 += 1;
             if (nbl.down)  npcAwayY2 -= 1;
             const npcBase2 = Math.atan2(npcAwayY2 || 0, npcAwayX2 || 1);
-            const npcWallAng = npcBase2 + (Math.random() - 0.5) * (Math.PI * 0.89);
+            const npcWallAng = npcBase2 + (Math.random() - 0.5) * (Math.PI * 0.38);
             npcBody.setVelocity(Math.cos(npcWallAng) * 950, Math.sin(npcWallAng) * 950);
             if (this.npc.shieldHp === 0) {
               this.npc.takeDamage(5);
@@ -2867,6 +4634,13 @@ export class ArenaScene extends Phaser.Scene {
             }
           }
         }
+      }
+
+      // NPC earth shield passive regen: +10 every 2s
+      this.npcEarthShieldTickAccum += delta;
+      if (this.npcEarthShieldTickAccum >= 2000) {
+        this.npcEarthShieldTickAccum -= 2000;
+        this.npc.shieldHp = Math.min(100, this.npc.shieldHp + 10);
       }
 
       // NPC earth shield aura + counter label
@@ -3409,7 +5183,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── NPC AI ───────────────────────────────────────────────────
     const aiState: NpcAiState = {
-      isLocked: this.npcNukeChanneling || this.npcEarthSlamActive || this.npcEarthSlamBouncing,
+      isLocked: this.npcNukeChanneling || this.npcEarthSlamActive || this.npcEarthSlamBouncing || this.npcFrozenUntil > time,
       hasActiveGeyser: this.geysers.some((g) => g.owner === 'npc'),
       flameBodyActive: this.npcFlameBodyActive,
       projectiles: this.projectiles,
@@ -3423,6 +5197,15 @@ export class ArenaScene extends Phaser.Scene {
       earthShieldHp: this.npc.shieldHp,
       oilDroneCount: this.npcDrones.length,
       shadowPlayerSnared: time < this.shadowPlayerSnaredUntil || time < this.shadowPlayerStunnedUntil,
+      playerFrostStacks: this.playerFrostStacks,
+      iceBlockActive: this.npcBlockUpActive,
+      npcGrowthBloatActive: this.npcGrowthBloatActive,
+      crystalNodeCount: this.npcCrystalNodes.length,
+      npcSoulGhosts: this.npcSoulGhosts,
+      npcHuntBeastForm: this.npcHuntBeastForm,
+      npcHuntTrailActive: this.npcHuntTrailActive,
+      playerBleeding: this.playerBleeding,
+      huntBloodMoonActive: this.huntBloodMoonActive,
     };
 
     const npcPreDashX = this.npc.x;
@@ -3476,6 +5259,81 @@ export class ArenaScene extends Phaser.Scene {
       this.npcAirConsecutiveHits = 0;
     }
 
+    // ── Ice per-frame ─────────────────────────────────────────────
+    if (this.elementId === 'ice' || this.npcElement.id === 'ice') {
+      // Icy trail ticks: slow enemy + inflict frost stacks
+      for (let ti = this.icyTrails.length - 1; ti >= 0; ti--) {
+        const trail = this.icyTrails[ti];
+        if (time >= trail.expiresAt) {
+          trail.sprite.destroy();
+          this.icyTrails.splice(ti, 1);
+          continue;
+        }
+        // Slow the enemy standing in the trail
+        const enemyTarget = trail.owner === 'player' ? this.npc : this.player;
+        const trailDist = Phaser.Math.Distance.Between(trail.x, trail.y, enemyTarget.x, enemyTarget.y);
+        if (trailDist <= trail.radius) {
+          if (trail.owner === 'player') {
+            // NPC slow — npcSpeedMult is applied after this section in post-AI velocity multiplier
+            this.npcSpeedMult *= 0.8;
+            // Frost tick every 1200ms
+            trail.frostTickAccum += delta;
+            if (trail.frostTickAccum >= 1200) {
+              trail.frostTickAccum -= 1200;
+              this.addFrostStack('npc');
+            }
+          } else {
+            // Player slow — movement already applied, directly scale current velocity
+            const trailPlayerBody = this.player.body as Phaser.Physics.Arcade.Body;
+            trailPlayerBody.velocity.x *= 0.8;
+            trailPlayerBody.velocity.y *= 0.8;
+            trail.frostTickAccum += delta;
+            if (trail.frostTickAccum >= 1200) {
+              trail.frostTickAccum -= 1200;
+              this.addFrostStack('player');
+            }
+          }
+        }
+      }
+
+      // Frost visual indicators above fighters
+      const frostNpcLabel = this.npcFrostStacks > 0 ? `❄️×${this.npcFrostStacks}` : '';
+      if (frostNpcLabel) {
+        if (!this.npcFrostVisual) {
+          this.npcFrostVisual = this.add.text(this.npc.x, this.npc.y - 42, frostNpcLabel,
+            { fontSize: '12px', fontFamily: 'Arial', color: '#aaddff' }).setOrigin(0.5).setDepth(10);
+        } else {
+          this.npcFrostVisual.setText(frostNpcLabel).setPosition(this.npc.x, this.npc.y - 42);
+        }
+      } else if (this.npcFrostVisual) {
+        this.npcFrostVisual.destroy(); this.npcFrostVisual = null;
+      }
+
+      const frostPlayerLabel = this.playerFrostStacks > 0 ? `❄️×${this.playerFrostStacks}` : '';
+      if (frostPlayerLabel) {
+        if (!this.playerFrostVisual) {
+          this.playerFrostVisual = this.add.text(this.player.x, this.player.y - 42, frostPlayerLabel,
+            { fontSize: '12px', fontFamily: 'Arial', color: '#aaddff' }).setOrigin(0.5).setDepth(10);
+        } else {
+          this.playerFrostVisual.setText(frostPlayerLabel).setPosition(this.player.x, this.player.y - 42);
+        }
+      } else if (this.playerFrostVisual) {
+        this.playerFrostVisual.destroy(); this.playerFrostVisual = null;
+      }
+
+      // Block up aura positions
+      if (this.playerBlockUpAura) this.playerBlockUpAura.setPosition(this.player.x, this.player.y);
+      if (this.npcBlockUpAura) this.npcBlockUpAura.setPosition(this.npc.x, this.npc.y);
+
+      // Frozen overlays (blue tint flash)
+      if (this.playerFrozenUntil > 0 && time >= this.playerFrozenUntil) {
+        this.playerFrozenUntil = 0;
+      }
+      if (this.npcFrozenUntil > 0 && time >= this.npcFrozenUntil) {
+        this.npcFrozenUntil = 0;
+      }
+    }
+
     // ── Shadow NPC overrides (after doAI so they take effect) ──────
     if (this.elementId === 'shadow') {
       const nBody = this.npc.body as Phaser.Physics.Arcade.Body;
@@ -3506,6 +5364,512 @@ export class ArenaScene extends Phaser.Scene {
 
       // Stun from snap trap
       if (time < this.shadowNpcStunnedUntil) nBody.setVelocity(0, 0);
+    }
+
+    // ── Frozen NPC override (ice element) ────────────────────────
+    if (this.npcFrozenUntil > time) {
+      (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+    }
+
+    // ── Growth per-frame ─────────────────────────────────────────
+    if (this.elementId === 'growth' || this.npcElement.id === 'growth') {
+      // Toxic DOT — NPC
+      if (this.npcToxicUntil > time) {
+        if (!this.npcToxicAura) {
+          this.npcToxicAura = this.add.circle(this.npc.x, this.npc.y, 26, 0x88bb22, 0.3).setDepth(7);
+        }
+        this.npcToxicAura.setPosition(this.npc.x, this.npc.y);
+        this.npcToxicTickAccum += delta;
+        if (this.npcToxicTickAccum >= 1000) {
+          this.npcToxicTickAccum -= 1000;
+          this.npc.takeDamage(this.npcToxicDps);
+          this.spawnHitFlash(this.npc.x, this.npc.y, 0x88bb22);
+        }
+      } else {
+        this.npcToxicTickAccum = 0;
+        if (this.npcToxicAura) { this.npcToxicAura.destroy(); this.npcToxicAura = null; }
+      }
+
+      // Toxic DOT — player
+      if (this.playerToxicUntil > time) {
+        if (!this.playerToxicAura) {
+          this.playerToxicAura = this.add.circle(this.player.x, this.player.y, 26, 0x88bb22, 0.3).setDepth(7);
+        }
+        this.playerToxicAura.setPosition(this.player.x, this.player.y);
+        this.playerToxicTickAccum += delta;
+        if (this.playerToxicTickAccum >= 1000) {
+          this.playerToxicTickAccum -= 1000;
+          this.player.applySelfDamage(this.playerToxicDps);
+          this.spawnHitFlash(this.player.x, this.player.y, 0x88bb22);
+        }
+      } else {
+        this.playerToxicTickAccum = 0;
+        if (this.playerToxicAura) { this.playerToxicAura.destroy(); this.playerToxicAura = null; }
+      }
+
+      // Bloat aura positions + expiry
+      if (this.growthBloatActive) {
+        if (time >= this.growthBloatEnd) {
+          this.growthBloatActive = false;
+          if (this.growthBloatAura) { this.growthBloatAura.destroy(); this.growthBloatAura = null; }
+        } else if (this.growthBloatAura) {
+          this.growthBloatAura.setPosition(this.player.x, this.player.y);
+        }
+      }
+      if (this.npcGrowthBloatActive) {
+        if (time >= this.npcGrowthBloatEnd) {
+          this.npcGrowthBloatActive = false;
+          if (this.npcGrowthBloatAura) { this.npcGrowthBloatAura.destroy(); this.npcGrowthBloatAura = null; }
+        } else if (this.npcGrowthBloatAura) {
+          this.npcGrowthBloatAura.setPosition(this.npc.x, this.npc.y);
+        }
+      }
+
+      // Regeneration — player
+      if (this.growthRegenRate > 0) {
+        this.growthRegenAccum += delta;
+        const regenInterval = 1000 / this.growthRegenRate;
+        while (this.growthRegenAccum >= regenInterval) {
+          this.growthRegenAccum -= regenInterval;
+          this.player.heal(1);
+        }
+      }
+      // Regeneration — NPC
+      if (this.npcGrowthRegenRate > 0) {
+        this.npcGrowthRegenAccum += delta;
+        const npcRegenInterval = 1000 / this.npcGrowthRegenRate;
+        while (this.npcGrowthRegenAccum >= npcRegenInterval) {
+          this.npcGrowthRegenAccum -= npcRegenInterval;
+          this.npc.heal(1);
+        }
+      }
+    }
+
+    // ── Crystal per-frame ─────────────────────────────────────────
+    if (this.elementId === 'crystal' || this.npcElement.id === 'crystal') {
+      const BARRAGE_INTERVAL = 100; // 30 shots over 3s
+      const allCrystals = [...this.crystalNodes, ...this.npcCrystalNodes];
+      const allActiveProj = this.projectiles.getChildren();
+
+      // Player barrage ticks
+      if (this.crystalBarrageActive) {
+        if (time >= this.crystalBarrageEnd || this.crystalBarrageShots >= 30) {
+          this.crystalBarrageActive = false;
+        } else {
+          this.crystalBarrageAccum += delta;
+          while (this.crystalBarrageAccum >= BARRAGE_INTERVAL && this.crystalBarrageShots < 30) {
+            this.crystalBarrageAccum -= BARRAGE_INTERVAL;
+            this.crystalBarrageShots++;
+            const baseAngle = Math.atan2(this.crystalBarrageTY - this.player.y, this.crystalBarrageTX - this.player.x);
+            const angle = baseAngle + (Math.random() - 0.5) * 0.85;
+            const proj = new Projectile(this, this.player.x, this.player.y, 'proj-crystal-shard', 4, true);
+            this.projectiles.add(proj);
+            proj.launch(Math.cos(angle) * 430, Math.sin(angle) * 430);
+            for (const cl of this.crystalClones) {
+              const cx = this.player.x + cl.offsetX, cy = this.player.y + cl.offsetY;
+              const ca = Math.atan2(this.crystalBarrageTY - cy, this.crystalBarrageTX - cx) + (Math.random() - 0.5) * 0.85;
+              const cp = new Projectile(this, cx, cy, 'proj-crystal-shard', 4, true);
+              this.projectiles.add(cp);
+              cp.launch(Math.cos(ca) * 430, Math.sin(ca) * 430);
+            }
+          }
+        }
+      }
+
+      // NPC barrage ticks
+      if (this.npcCrystalBarrageActive) {
+        if (time >= this.npcCrystalBarrageEnd || this.npcCrystalBarrageShots >= 30) {
+          this.npcCrystalBarrageActive = false;
+        } else {
+          this.npcCrystalBarrageAccum += delta;
+          while (this.npcCrystalBarrageAccum >= BARRAGE_INTERVAL && this.npcCrystalBarrageShots < 30) {
+            this.npcCrystalBarrageAccum -= BARRAGE_INTERVAL;
+            this.npcCrystalBarrageShots++;
+            const baseAngle = Math.atan2(this.npcCrystalBarrageTY - this.npc.y, this.npcCrystalBarrageTX - this.npc.x);
+            const angle = baseAngle + (Math.random() - 0.5) * 0.85;
+            const proj = new Projectile(this, this.npc.x, this.npc.y, 'proj-crystal-shard', 4, false);
+            this.projectiles.add(proj);
+            proj.launch(Math.cos(angle) * 430, Math.sin(angle) * 430);
+            for (const cl of this.npcCrystalClones) {
+              const cx = this.npc.x + cl.offsetX, cy = this.npc.y + cl.offsetY;
+              const ca = Math.atan2(this.npcCrystalBarrageTY - cy, this.npcCrystalBarrageTX - cx) + (Math.random() - 0.5) * 0.85;
+              const cp = new Projectile(this, cx, cy, 'proj-crystal-shard', 4, false);
+              this.projectiles.add(cp);
+              cp.launch(Math.cos(ca) * 430, Math.sin(ca) * 430);
+            }
+          }
+        }
+      }
+
+      // Crystal shard hits crystal node → explosion
+      for (const go of allActiveProj) {
+        const proj = go as Projectile;
+        if (!proj.active || proj.texture.key !== 'proj-crystal-shard') continue;
+        for (const node of allCrystals) {
+          if (Phaser.Math.Distance.Between(proj.x, proj.y, node.x, node.y) <= 18) {
+            const tgt = proj.isFromPlayer ? this.npc : this.player;
+            if (Phaser.Math.Distance.Between(node.x, node.y, tgt.x, tgt.y) <= 60) {
+              tgt.takeDamage(10);
+              this.spawnHitFlash(tgt.x, tgt.y, 0x88eeff);
+            }
+            const exp = this.add.circle(node.x, node.y, 10, 0x88eeff, 0.5).setDepth(8);
+            this.tweens.add({ targets: exp, scaleX: 6, scaleY: 6, alpha: 0, duration: 260, onComplete: () => exp.destroy() });
+            this.tweens.add({ targets: node.sprite, alpha: 1, scaleX: 1.45, scaleY: 1.45, duration: 90, yoyo: true });
+            proj.setActive(false).setVisible(false);
+            break;
+          }
+        }
+      }
+
+      // Portal teleportation — player
+      if (this.crystalPortals.length === 2 && time - this.crystalPortalCooldown > 1000) {
+        for (let pi = 0; pi < 2; pi++) {
+          const gate = this.crystalPortals[pi];
+          const other = this.crystalPortals[1 - pi];
+          if (Phaser.Math.Distance.Between(this.player.x, this.player.y, gate.x, gate.y) <= 22) {
+            this.player.setPosition(other.x, other.y);
+            (playerBody).setVelocity(0, 0);
+            this.crystalPortalCooldown = time;
+            const flash = this.add.circle(other.x, other.y, 22, 0xcc88ff, 0.7).setDepth(15);
+            this.tweens.add({ targets: flash, scaleX: 2.5, alpha: 0, duration: 320, onComplete: () => flash.destroy() });
+            break;
+          }
+        }
+      }
+
+      // Portal teleportation — NPC
+      if (this.npcCrystalPortals.length === 2 && time - this.npcCrystalPortalCooldown > 1000) {
+        for (let pi = 0; pi < 2; pi++) {
+          const gate = this.npcCrystalPortals[pi];
+          const other = this.npcCrystalPortals[1 - pi];
+          if (Phaser.Math.Distance.Between(this.npc.x, this.npc.y, gate.x, gate.y) <= 22) {
+            this.npc.setPosition(other.x, other.y);
+            (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+            this.npcCrystalPortalCooldown = time;
+            const flash = this.add.circle(other.x, other.y, 22, 0xcc88ff, 0.6).setDepth(15);
+            this.tweens.add({ targets: flash, scaleX: 2.5, alpha: 0, duration: 320, onComplete: () => flash.destroy() });
+            break;
+          }
+        }
+      }
+
+      // Player crystal clones — follow player, update HP bars, check incoming projectiles
+      if (time > this.crystalTrickEnd && this.crystalClones.length > 0) {
+        for (const cl of this.crystalClones) { cl.sprite.destroy(); cl.hpBar.destroy(); cl.hpBg.destroy(); }
+        this.crystalClones = [];
+      } else {
+        for (let ci = this.crystalClones.length - 1; ci >= 0; ci--) {
+          const cl = this.crystalClones[ci];
+          const cx = this.player.x + cl.offsetX, cy = this.player.y + cl.offsetY;
+          cl.sprite.setPosition(cx, cy);
+          cl.hpBg.setPosition(cx, cy - 28);
+          const barW = Math.max(0, (cl.hp / cl.maxHp) * 30);
+          cl.hpBar.setSize(barW, 4).setPosition(cx - 15 + barW / 2, cy - 28);
+          // Check NPC projectile hits
+          for (const go of allActiveProj) {
+            const proj = go as Projectile;
+            if (!proj.active || proj.isFromPlayer) continue;
+            if (Phaser.Math.Distance.Between(proj.x, proj.y, cx, cy) <= 20) {
+              cl.hp -= proj.damage;
+              proj.setActive(false).setVisible(false);
+              if (cl.hp <= 0) {
+                cl.sprite.destroy(); cl.hpBar.destroy(); cl.hpBg.destroy();
+                this.crystalClones.splice(ci, 1);
+              }
+              break;
+            }
+          }
+        }
+      }
+
+      // NPC crystal clones — follow NPC, check player projectile hits
+      if (time > this.npcCrystalTrickEnd && this.npcCrystalClones.length > 0) {
+        for (const cl of this.npcCrystalClones) { cl.sprite.destroy(); cl.hpBar.destroy(); cl.hpBg.destroy(); }
+        this.npcCrystalClones = [];
+      } else {
+        for (let ci = this.npcCrystalClones.length - 1; ci >= 0; ci--) {
+          const cl = this.npcCrystalClones[ci];
+          const cx = this.npc.x + cl.offsetX, cy = this.npc.y + cl.offsetY;
+          cl.sprite.setPosition(cx, cy);
+          cl.hpBg.setPosition(cx, cy - 28);
+          const barW = Math.max(0, (cl.hp / cl.maxHp) * 30);
+          cl.hpBar.setSize(barW, 4).setPosition(cx - 15 + barW / 2, cy - 28);
+          for (const go of allActiveProj) {
+            const proj = go as Projectile;
+            if (!proj.active || !proj.isFromPlayer) continue;
+            if (proj.texture.key === 'proj-crystal-shard') continue; // handled in shard-vs-node check
+            if (Phaser.Math.Distance.Between(proj.x, proj.y, cx, cy) <= 20) {
+              cl.hp -= proj.damage;
+              proj.setActive(false).setVisible(false);
+              if (cl.hp <= 0) {
+                cl.sprite.destroy(); cl.hpBar.destroy(); cl.hpBg.destroy();
+                this.npcCrystalClones.splice(ci, 1);
+              }
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // ── Soul per-frame ─────────────────────────────────────────────
+    if (this.elementId === 'soul' || this.npcElement.id === 'soul') {
+      // Update ghost counter UI
+      if (this.soulGhostText) this.soulGhostText.setText(`👻 ${this.soulGhosts}`);
+
+      // E hold visual position + color by tier
+      if (this.soulEHolding && this.soulEHoldVisual) {
+        const holdMs = time - this.soulEHoldStart;
+        const holdFrac = Math.min(1, holdMs / 2000);
+        this.soulEHoldVisual.setPosition(this.player.x, this.player.y - 36);
+        this.soulEHoldVisual.setRadius(8 + holdFrac * 10);
+        // Tier colors: basic=light purple, ghoul=dark purple, banshee=bright lavender
+        const tierColor = holdMs >= 2000 ? 0xffffff : holdMs >= 1000 ? 0x440077 : 0xccaaff;
+        this.soulEHoldVisual.setFillStyle(tierColor, 0.6);
+      }
+
+      // Spirit Propel orbs — player
+      for (let i = this.playerSoulOrbs.length - 1; i >= 0; i--) {
+        const orb = this.playerSoulOrbs[i];
+        if (time >= orb.expiresAt) {
+          orb.sprite.destroy();
+          this.playerSoulOrbs.splice(i, 1);
+          continue;
+        }
+        orb.x += orb.vx * delta / 1000;
+        orb.y += orb.vy * delta / 1000;
+        orb.sprite.setPosition(orb.x, orb.y);
+        if (time - orb.lastContactTick >= 1000) {
+          if (Phaser.Math.Distance.Between(orb.x, orb.y, this.npc.x, this.npc.y) <= 34) {
+            this.npc.takeDamage(10);
+            this.spawnHitFlash(this.npc.x, this.npc.y, 0xccaaff);
+            this.soulGhosts++;
+            orb.lastContactTick = time;
+            const ft = this.add.text(this.player.x, this.player.y - 30, '+1 👻', { fontSize: '14px', color: '#ccaaff' }).setDepth(20);
+            this.tweens.add({ targets: ft, y: ft.y - 28, alpha: 0, duration: 800, onComplete: () => ft.destroy() });
+          }
+        }
+      }
+
+      // Spirit Propel orbs — NPC
+      for (let i = this.npcSoulOrbs.length - 1; i >= 0; i--) {
+        const orb = this.npcSoulOrbs[i];
+        if (time >= orb.expiresAt) {
+          orb.sprite.destroy();
+          this.npcSoulOrbs.splice(i, 1);
+          continue;
+        }
+        orb.x += orb.vx * delta / 1000;
+        orb.y += orb.vy * delta / 1000;
+        orb.sprite.setPosition(orb.x, orb.y);
+        if (time - orb.lastContactTick >= 1000) {
+          if (Phaser.Math.Distance.Between(orb.x, orb.y, this.player.x, this.player.y) <= 34) {
+            this.player.takeDamage(10);
+            this.spawnHitFlash(this.player.x, this.player.y, 0x9966cc);
+            this.npcSoulGhosts++;
+            orb.lastContactTick = time;
+          }
+        }
+      }
+
+      // Soul summons — player
+      for (let i = this.playerSoulSummons.length - 1; i >= 0; i--) {
+        const gs = this.playerSoulSummons[i];
+        if (gs.hp <= 0) { gs.sprite.destroy(); this.playerSoulSummons.splice(i, 1); continue; }
+        this.updateSoulSummon(gs, this.npc, time, delta, true);
+      }
+
+      // Soul summons — NPC
+      for (let i = this.npcSoulSummons.length - 1; i >= 0; i--) {
+        const gs = this.npcSoulSummons[i];
+        if (gs.hp <= 0) { gs.sprite.destroy(); this.npcSoulSummons.splice(i, 1); continue; }
+        this.updateSoulSummon(gs, this.player, time, delta, false);
+      }
+    }
+
+    // ── Hunt per-frame ───────────────────────────────────────────
+    if (this.elementId === 'hunt' || this.npc.element.id === 'hunt') {
+      // Grenade hold visual (player)
+      if (this.huntGrenadeHolding && this.huntGrenadeVisual) {
+        const holdMs = time - this.huntGrenadeHoldStart;
+        const holdFrac = Math.min(1, holdMs / 3000);
+        this.huntGrenadeVisual.setPosition(this.player.x, this.player.y);
+        this.huntGrenadeVisual.setRadius(10 + holdFrac * 8);
+        if (holdMs >= 3000) {
+          // Auto-explode with self-damage
+          this.spawnGrenadeExplosion(this.player.x, this.player.y, true, 'player');
+          this.huntGrenadeHolding = false;
+          this.huntGrenadeVisual.destroy(); this.huntGrenadeVisual = null;
+        }
+      }
+
+      // Grenades in flight — player
+      for (let i = this.huntGrenades.length - 1; i >= 0; i--) {
+        const g = this.huntGrenades[i];
+        if (!g.stopped) {
+          g.x += g.vx * delta / 1000;
+          g.y += g.vy * delta / 1000;
+          if (Phaser.Math.Distance.Between(g.startX, g.startY, g.x, g.y) >= 145) g.stopped = true;
+          g.sprite.setPosition(g.x, g.y);
+        }
+        if (time >= g.explodeAt) {
+          this.spawnGrenadeExplosion(g.x, g.y, g.selfDamage, g.owner);
+          g.sprite.destroy(); this.huntGrenades.splice(i, 1);
+        }
+      }
+
+      // Grenades in flight — NPC
+      for (let i = this.npcHuntGrenades.length - 1; i >= 0; i--) {
+        const g = this.npcHuntGrenades[i];
+        if (!g.stopped) {
+          g.x += g.vx * delta / 1000;
+          g.y += g.vy * delta / 1000;
+          if (Phaser.Math.Distance.Between(g.startX, g.startY, g.x, g.y) >= 145) g.stopped = true;
+          g.sprite.setPosition(g.x, g.y);
+        }
+        if (time >= g.explodeAt) {
+          this.spawnGrenadeExplosion(g.x, g.y, g.selfDamage, g.owner);
+          g.sprite.destroy(); this.npcHuntGrenades.splice(i, 1);
+        }
+      }
+
+      // Hunter's Trail — enemy drops circles while trail active (player trail tracks NPC)
+      if (this.huntTrailActive) {
+        if (time > this.huntTrailEnd) {
+          this.huntTrailActive = false;
+        } else {
+          this.huntTrailAccum += delta;
+          if (this.huntTrailAccum >= 150) {
+            this.huntTrailAccum -= 150;
+            const s = this.add.circle(this.npc.x, this.npc.y, 30, 0xff4400, 0.18).setDepth(2);
+            this.huntTrailCircles.push({ sprite: s, x: this.npc.x, y: this.npc.y, expiresAt: time + 2000 });
+          }
+        }
+      }
+      for (let i = this.huntTrailCircles.length - 1; i >= 0; i--) {
+        const c = this.huntTrailCircles[i];
+        if (time > c.expiresAt) { c.sprite.destroy(); this.huntTrailCircles.splice(i, 1); }
+      }
+
+      // NPC trail tracks player
+      if (this.npcHuntTrailActive) {
+        if (time > this.npcHuntTrailEnd) {
+          this.npcHuntTrailActive = false;
+        } else {
+          this.npcHuntTrailAccum += delta;
+          if (this.npcHuntTrailAccum >= 150) {
+            this.npcHuntTrailAccum -= 150;
+            const s = this.add.circle(this.player.x, this.player.y, 30, 0xcc4400, 0.15).setDepth(2);
+            this.npcHuntTrailCircles.push({ sprite: s, x: this.player.x, y: this.player.y, expiresAt: time + 2000 });
+          }
+        }
+      }
+      for (let i = this.npcHuntTrailCircles.length - 1; i >= 0; i--) {
+        const c = this.npcHuntTrailCircles[i];
+        if (time > c.expiresAt) { c.sprite.destroy(); this.npcHuntTrailCircles.splice(i, 1); }
+      }
+
+      // Blood Pact aura — player
+      if (this.huntBloodPactActive) {
+        if (time > this.huntBloodPactEnd) {
+          this.huntBloodPactActive = false;
+          if (this.huntBloodPactAura) { this.huntBloodPactAura.destroy(); this.huntBloodPactAura = null; }
+        } else if (this.huntBloodPactAura) {
+          this.huntBloodPactAura.setPosition(this.player.x, this.player.y);
+        }
+      }
+      // Blood Pact aura — NPC
+      if (this.npcHuntBloodPactActive) {
+        if (time > this.npcHuntBloodPactEnd) {
+          this.npcHuntBloodPactActive = false;
+          if (this.npcHuntBloodPactAura) { this.npcHuntBloodPactAura.destroy(); this.npcHuntBloodPactAura = null; }
+        } else if (this.npcHuntBloodPactAura) {
+          this.npcHuntBloodPactAura.setPosition(this.npc.x, this.npc.y);
+        }
+      }
+
+      // Bleeding auras
+      if (this.npcBleeding) {
+        if (time > this.npcBleedingUntil) {
+          this.npcBleeding = false;
+          if (this.npcBleedAura) { this.npcBleedAura.destroy(); this.npcBleedAura = null; }
+        } else if (this.npcBleedAura) {
+          this.npcBleedAura.setPosition(this.npc.x, this.npc.y);
+        }
+      }
+      if (this.playerBleeding) {
+        if (time > this.playerBleedingUntil) {
+          this.playerBleeding = false;
+          if (this.playerBleedAura) { this.playerBleedAura.destroy(); this.playerBleedAura = null; }
+        } else if (this.playerBleedAura) {
+          this.playerBleedAura.setPosition(this.player.x, this.player.y);
+        }
+      }
+
+      // Blood Moon — player (NPC bleeding gets chip damage + attack penalty tracked via aiState)
+      if (this.huntBloodMoonActive) {
+        if (time > this.huntBloodMoonEnd) {
+          this.huntBloodMoonActive = false;
+          if (this.huntBloodMoonFilter) { this.huntBloodMoonFilter.destroy(); this.huntBloodMoonFilter = null; }
+        } else if (this.npcBleeding) {
+          this.huntBloodMoonTickAccum += delta;
+          if (this.huntBloodMoonTickAccum >= 2000) {
+            this.huntBloodMoonTickAccum -= 2000;
+            this.npc.takeDamage(5);
+            if (this.huntBloodPactActive && time < this.huntBloodPactEnd) this.player.heal(3);
+          }
+        }
+      }
+      // Blood Moon — NPC
+      if (this.npcHuntBloodMoonActive) {
+        if (time > this.npcHuntBloodMoonEnd) {
+          this.npcHuntBloodMoonActive = false;
+          if (this.npcHuntBloodMoonFilter) { this.npcHuntBloodMoonFilter.destroy(); this.npcHuntBloodMoonFilter = null; }
+        } else if (this.playerBleeding) {
+          this.npcHuntBloodMoonTickAccum += delta;
+          if (this.npcHuntBloodMoonTickAccum >= 2000) {
+            this.npcHuntBloodMoonTickAccum -= 2000;
+            this.player.takeDamage(5);
+            if (this.npcHuntBloodPactActive && time < this.npcHuntBloodPactEnd) this.npc.heal(3);
+          }
+        }
+      }
+
+      // Explosive Leap — player lands
+      if (this.huntLeapActive && time >= this.huntLeapEnd) {
+        this.huntLeapActive = false;
+        this.player.setPosition(this.huntLeapTargetX, this.huntLeapTargetY);
+        this.player.isInvincible = false;
+        this.player.setAlpha(1);
+        this.nukeChanneling = false;
+        // AoE explosion on landing
+        const landDist = Phaser.Math.Distance.Between(this.huntLeapTargetX, this.huntLeapTargetY, this.npc.x, this.npc.y);
+        if (landDist <= 120) {
+          this.npc.takeDamage(30);
+          this.spawnHitFlash(this.npc.x, this.npc.y, 0xff4400);
+          if (this.huntBloodPactActive && time < this.huntBloodPactEnd) this.player.heal(15);
+        }
+        const boom = this.add.circle(this.huntLeapTargetX, this.huntLeapTargetY, 10, 0xff4400, 0.9).setDepth(9);
+        this.tweens.add({ targets: boom, scaleX: 12, scaleY: 12, alpha: 0, duration: 400, onComplete: () => boom.destroy() });
+        const boomC = this.add.circle(this.huntLeapTargetX, this.huntLeapTargetY, 6, 0xffcc00, 1).setDepth(10);
+        this.tweens.add({ targets: boomC, scaleX: 4, scaleY: 4, alpha: 0, duration: 200, onComplete: () => boomC.destroy() });
+      }
+
+      // Explosive Leap — NPC lands
+      if (this.npcHuntLeapActive && time >= this.npcHuntLeapEnd) {
+        this.npcHuntLeapActive = false;
+        this.npc.setPosition(this.npcHuntLeapTargetX, this.npcHuntLeapTargetY);
+        this.npc.isInvincible = false;
+        this.npc.setAlpha(1);
+        const landDist2 = Phaser.Math.Distance.Between(this.npcHuntLeapTargetX, this.npcHuntLeapTargetY, this.player.x, this.player.y);
+        if (landDist2 <= 120) {
+          this.player.takeDamage(30);
+          this.spawnHitFlash(this.player.x, this.player.y, 0xff4400);
+          if (this.npcHuntBloodPactActive && time < this.npcHuntBloodPactEnd) this.npc.heal(15);
+        }
+        const boom2 = this.add.circle(this.npcHuntLeapTargetX, this.npcHuntLeapTargetY, 10, 0xff4400, 0.9).setDepth(9);
+        this.tweens.add({ targets: boom2, scaleX: 12, scaleY: 12, alpha: 0, duration: 400, onComplete: () => boom2.destroy() });
+      }
     }
 
     // ── Rebirth glow follows NPC ─────────────────────────────────

@@ -217,6 +217,11 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
   },
   { elementId: 'oil',    upgrades: [] },
   { elementId: 'shadow', upgrades: [] },
+  { elementId: 'ice',    upgrades: [] },
+  { elementId: 'growth',  upgrades: [] },
+  { elementId: 'crystal', upgrades: [] },
+  { elementId: 'soul',    upgrades: [] },
+  { elementId: 'hunt',    upgrades: [] },
 ];
 
 export function getElementUpgrades(elementId: string): UpgradeDef[] {
