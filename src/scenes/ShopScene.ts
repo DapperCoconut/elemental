@@ -92,7 +92,10 @@ export class ShopScene extends Phaser.Scene {
     const combinedIds = ALL_UPGRADES
       .map((e) => e.elementId)
       .filter((id) => !BASE_ELEMENT_IDS.includes(id) && PlayerData.isElementUnlocked(id));
-    const hasNextPage = this.currentPage === 0 && combinedIds.length > 0;
+    const COMBINED_PER_PAGE = 5;
+    const totalCombinedPages = combinedIds.length > 0 ? Math.ceil(combinedIds.length / COMBINED_PER_PAGE) : 0;
+    const totalPages = 1 + totalCombinedPages;
+    const hasNextPage = this.currentPage < totalPages - 1;
     const hasPrevPage = this.currentPage > 0;
 
     if (hasPrevPage) {
@@ -120,9 +123,14 @@ export class ShopScene extends Phaser.Scene {
     }
 
     // ── Element columns ──────────────────────────────────────────
-    const elements = this.currentPage === 0
-      ? ALL_UPGRADES.filter((e) => BASE_ELEMENT_IDS.includes(e.elementId))
-      : ALL_UPGRADES.filter((e) => combinedIds.includes(e.elementId));
+    let elements;
+    if (this.currentPage === 0) {
+      elements = ALL_UPGRADES.filter((e) => BASE_ELEMENT_IDS.includes(e.elementId));
+    } else {
+      const startIdx = (this.currentPage - 1) * COMBINED_PER_PAGE;
+      const pageIds = combinedIds.slice(startIdx, startIdx + COMBINED_PER_PAGE);
+      elements = ALL_UPGRADES.filter((e) => pageIds.includes(e.elementId));
+    }
 
     const colW = elements.length > 0 ? Math.floor(width / elements.length) : width;
     const colStartY = 80;

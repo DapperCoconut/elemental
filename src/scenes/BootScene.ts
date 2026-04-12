@@ -174,6 +174,62 @@ export class BootScene extends Phaser.Scene {
     gfx.fillCircle(4, 4, 4);
     gfx.generateTexture('proj-hunt-pellet', 8, 8);
 
+    // Hunt vampire stake (dark red elongated rectangle)
+    gfx.clear();
+    gfx.fillStyle(0x880033);
+    gfx.fillRect(0, 4, 20, 6);
+    gfx.fillStyle(0xcc2255);
+    gfx.fillTriangle(20, 0, 20, 14, 28, 7);
+    gfx.generateTexture('proj-hunt-stake', 28, 14);
+
+    // Gravity element texture (dark purple circle with lighter purple stroke)
+    gfx.clear();
+    gfx.fillStyle(0x441177);
+    gfx.fillCircle(24, 24, 22);
+    gfx.lineStyle(3, 0xaa55ee);
+    gfx.strokeCircle(24, 24, 22);
+    gfx.generateTexture('elem-gravity', 48, 48);
+
+    // Creation element texture (dark orange circle with bright orange stroke)
+    gfx.clear();
+    gfx.fillStyle(0x883311);
+    gfx.fillCircle(24, 24, 22);
+    gfx.lineStyle(3, 0xcc6622);
+    gfx.strokeCircle(24, 24, 22);
+    gfx.generateTexture('elem-creation', 48, 48);
+
+    // Creation copper bolt (small orange-brown circle)
+    gfx.clear();
+    gfx.fillStyle(0xcc6622);
+    gfx.fillCircle(6, 6, 6);
+    gfx.generateTexture('proj-creation-copper', 12, 12);
+
+    // Creation silver bolt (small light-grey circle)
+    gfx.clear();
+    gfx.fillStyle(0xccccdd);
+    gfx.fillCircle(6, 6, 6);
+    gfx.generateTexture('proj-creation-silver', 12, 12);
+
+    // Creation gold bolt (small yellow circle)
+    gfx.clear();
+    gfx.fillStyle(0xffdd22);
+    gfx.fillCircle(6, 6, 6);
+    gfx.generateTexture('proj-creation-gold', 12, 12);
+
+    // Creation dagger (thin white rectangle)
+    gfx.clear();
+    gfx.fillStyle(0xeeeeff);
+    gfx.fillRect(0, 2, 18, 4);
+    gfx.generateTexture('proj-creation-dagger', 18, 8);
+
+    // Creation scythe (magenta rectangle)
+    gfx.clear();
+    gfx.fillStyle(0xcc22aa);
+    gfx.fillRect(0, 0, 16, 10);
+    gfx.lineStyle(2, 0xff44ee);
+    gfx.strokeRect(0, 0, 16, 10);
+    gfx.generateTexture('proj-creation-scythe', 16, 10);
+
     // Time element texture (golden yellow circle)
     gfx.clear();
     gfx.fillStyle(0xffdd44);

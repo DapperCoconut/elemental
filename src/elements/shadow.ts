@@ -4,7 +4,7 @@ import { Ability, CastContext } from './Ability';
 const darkDrain: Ability = {
   id: 'dark-drain',
   name: 'Dark Drain',
-  description: 'Tap: dark bomb (25 dmg + leaves cloud). Hold: spawn clouds that heal you & damage enemy.',
+  description: 'Tap: dark bomb (10 dmg + leaves cloud). Hold: spawn clouds that heal you & damage enemy.',
   displayKey: 'Click',
   cooldown: 800,
   cast(ctx: CastContext) {

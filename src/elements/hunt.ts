@@ -125,6 +125,53 @@ const huntUntransform: Ability = {
   cast(ctx: CastContext) { ctx.huntUntransform(); },
 };
 
+// ── Vampire form (Q+ upgrade) ────────────────────────────────────
+
+const huntVampireStake: Ability = {
+  id: 'hunt-vampire-stake',
+  name: 'Stake',
+  description: 'Fire a large stake (15 dmg, applies bleed 6s). Click+ = +25% dmg vs bleeding.',
+  displayKey: 'Click',
+  cooldown: 1200,
+  cast(ctx: CastContext) { ctx.huntVampireStake(ctx.targetX, ctx.targetY); },
+};
+
+const huntGarlicTrap: Ability = {
+  id: 'hunt-garlic-trap',
+  name: 'Garlic Trap',
+  description: 'Place trap (pulses 8 dmg/2s, 8s). 2× dmg if enemy bleeding. E+ = 25% slow 3s.',
+  displayKey: 'E',
+  cooldown: 6000,
+  cast(ctx: CastContext) { ctx.huntGarlicTrap(ctx.targetX, ctx.targetY); },
+};
+
+const huntBatForm: Ability = {
+  id: 'hunt-bat-form',
+  name: 'Bat Form',
+  description: '75% smaller, +50% speed, 20% DR (3s). R+ = 6s, cancelable; dodge = 5dmg AOE + 3HP.',
+  displayKey: 'R',
+  cooldown: 10000,
+  cast(ctx: CastContext) { ctx.huntBatForm(); },
+};
+
+const huntVampireDrain: Ability = {
+  id: 'hunt-vampire-drain',
+  name: 'Drain Aura',
+  description: 'Drain nearby enemy (6 dmg/s, heals you 4/s, 6s). F+ = +15% speed.',
+  displayKey: 'F',
+  cooldown: 8000,
+  cast(ctx: CastContext) { ctx.huntVampireDrain(); },
+};
+
+const huntVampireUntransform: Ability = {
+  id: 'hunt-vampire-untransform',
+  name: 'Revert',
+  description: 'Return to hunter form.',
+  displayKey: 'Q',
+  cooldown: 0,
+  cast(ctx: CastContext) { ctx.huntUntransform(); },
+};
+
 export const huntElement: Element = {
   id: 'hunt',
   name: 'Hunt',
@@ -133,5 +180,6 @@ export const huntElement: Element = {
   abilities: [
     huntShotgun, huntGrenade, huntHuntersTrail, huntBloodPact, huntTransform,
     huntSlash, huntLeap, huntBloodHunt, huntBloodMoon, huntUntransform,
+    huntVampireStake, huntGarlicTrap, huntBatForm, huntVampireDrain, huntVampireUntransform,
   ],
 };

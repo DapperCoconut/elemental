@@ -13,7 +13,9 @@ export const RECIPES: Recipe[] = [
   { ingredients: ['water', 'earth'], result: 'crystal', resultName: 'Crystal', resultEmoji: '💎' },
   { ingredients: ['life', 'air'],   result: 'soul',    resultName: 'Soul',    resultEmoji: '👻' },
   { ingredients: ['life', 'fire'],  result: 'hunt',    resultName: 'Hunt',    resultEmoji: '🐺' },
-  { ingredients: ['earth', 'air'], result: 'sand',    resultName: 'Time',    resultEmoji: '⏳' },
+  { ingredients: ['earth', 'air'],  result: 'sand',    resultName: 'Time',    resultEmoji: '⏳' },
+  { ingredients: ['earth', 'life'], result: 'gravity', resultName: 'Gravity', resultEmoji: '🌌' },
+  { ingredients: ['earth', 'fire'], result: 'creation', resultName: 'Creation', resultEmoji: '⚒️' },
 ];
 
 export function findRecipe(a: string, b: string): Recipe | undefined {

@@ -64,7 +64,7 @@ export interface CastContext {
   activateCrystalTrick: () => void;
   // Soul
   fireSoulOrb: (tx: number, ty: number) => void;
-  summonGhost: (ghostType: 'basic' | 'ghoul' | 'banshee' | 'knight') => void;
+  summonGhost: (ghostType: 'basic' | 'ghoul' | 'banshee' | 'knight' | 'corpse' | 'necromancer') => void;
   soulSacrifice: () => void;
   soulConsume: () => void;
   // Hunt
@@ -77,6 +77,10 @@ export interface CastContext {
   huntBloodHunt: () => void;
   huntBloodMoon: () => void;
   huntUntransform: () => void;
+  huntVampireStake: (tx: number, ty: number) => void;
+  huntGarlicTrap: (tx: number, ty: number) => void;
+  huntBatForm: () => void;
+  huntVampireDrain: () => void;
   // Sand (legacy)
   sandFlintlock: (tx: number, ty: number) => void;
   sandBlindingSand: (tx: number, ty: number) => void;
@@ -89,6 +93,19 @@ export interface CastContext {
   timeRemain: () => void;
   timeHalt: () => void;
   timeTimeless: () => void;
+  // Gravity
+  gravitySlash: (x1: number, y1: number, x2: number, y2: number) => void;
+  gravityMeteorShadow: (x: number, y: number) => void;
+  gravityMeteorRainNpcBurst: (tx: number, ty: number) => void;
+  gravitySpaceSlam: () => void;
+  gravityGravBombSnap: (x: number, y: number) => void;
+  gravityLunarLanding: () => void;
+  // Creation
+  creationDaggerSpray: (tx: number, ty: number, count: number) => void;
+  creationBolt: (tx: number, ty: number, tier: 'copper' | 'silver' | 'gold') => void;
+  creationScytheLaunch: (tx: number, ty: number) => void;
+  creationBlock: (x: number, y: number, w: number, h: number) => void;
+  creationMaze: () => void;
 }
 
 export interface Ability {

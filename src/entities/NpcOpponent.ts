@@ -248,6 +248,12 @@ export class NpcOpponent extends Fighter {
     if (this.element.id === 'sand') {
       return this.doTimeAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState, angleToTarget);
     }
+    if (this.element.id === 'gravity') {
+      return this.doGravityAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState, angleToTarget);
+    }
+    if (this.element.id === 'creation') {
+      return this.doCreationAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState, angleToTarget);
+    }
     return null;
   }
 
@@ -884,6 +890,74 @@ export class NpcOpponent extends Fighter {
         if (this.castAbility('hunt-slash', buildContext(aimX, aimY))) return 'hunt-slash';
       }
     }
+
+    return null;
+  }
+
+  private doGravityAbilities(
+    _target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    _time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    _aiState: NpcAiState,
+    _angleToTarget: number,
+  ): string | null {
+    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+
+    if (!skipSpecials) {
+      // Lunar landing when low HP
+      if (hpRatio < 0.35) {
+        if (this.castAbility('lunar-landing', buildContext(this.x, this.y))) return 'lunar-landing';
+      }
+      // Space Slam when close
+      if (dist < 180) {
+        if (this.castAbility('space-slam', buildContext(aimX, aimY))) return 'space-slam';
+      }
+      // Grav Bomb snap
+      if (this.castAbility('grav-bomb', buildContext(aimX, aimY))) return 'grav-bomb';
+      // Meteor Rain (NPC burst version)
+      if (this.castAbility('meteor-rain', buildContext(aimX, aimY))) return 'meteor-rain';
+    }
+
+    // Click: coin-flip between slash and single meteor shadow via space-slash cast()
+    if (this.castAbility('space-slash', buildContext(aimX, aimY))) return 'space-slash';
+
+    return null;
+  }
+
+  private doCreationAbilities(
+    _target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    _time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    _aiState: NpcAiState,
+    _angleToTarget: number,
+  ): string | null {
+    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+
+    if (!skipSpecials) {
+      // Use maze when low HP
+      if (hpRatio < 0.35) {
+        if (this.castAbility('maze-of-doom', buildContext(this.x, this.y))) return 'maze-of-doom';
+      }
+      // Place block when enemy is close
+      if (dist < 140) {
+        if (this.castAbility('creation-block', buildContext(aimX, aimY))) return 'creation-block';
+      }
+      // Scythe of doom
+      if (this.castAbility('scythe-of-doom', buildContext(aimX, aimY))) return 'scythe-of-doom';
+      // Charged bolt (weighted random tier)
+      if (this.castAbility('charged-bolt', buildContext(aimX, aimY))) return 'charged-bolt';
+    }
+
+    // Dagger spray fallback
+    if (this.castAbility('dagger-spray', buildContext(aimX, aimY))) return 'dagger-spray';
 
     return null;
   }

@@ -102,6 +102,7 @@ export interface P2Scene {
   npcFirewallHp: number;
   npcFirewallX: number;
   npcFirewallY: number;
+  npcFirewallAngle: number;
   npcOverdriveActive: boolean;
   npcOverdriveEnd: number;
   npcOverdriveAngle: number;
@@ -415,12 +416,14 @@ export function processP2Abilities(
       if (scene.p2Input.r && !scene.p2PrevInput.r) {
         scene.npc.castAbility('drone-destroy', scene.buildNpcContext(p2TargetX, p2TargetY));
       }
-      // F: Firewall — handled directly (NPC context is a no-op)
+      // F: Firewall — handled directly (NPC context is a no-op); long side faces P2
       if (scene.p2Input.f && !scene.p2PrevInput.f && scene.npc.getCooldownRatio('firewall') >= 1) {
         scene.npc.triggerCooldown('firewall');
         if (scene.npcFirewallSprite) scene.npcFirewallSprite.destroy();
+        const fwAngle = Math.atan2(scene.npc.y - p2TargetY, scene.npc.x - p2TargetX) - Math.PI / 2;
+        scene.npcFirewallAngle = fwAngle;
         scene.npcFirewallSprite = scene.add.rectangle(p2TargetX, p2TargetY, 120, 60, 0xff6600, 0.45)
-          .setStrokeStyle(2, 0xff9900, 0.9).setDepth(7);
+          .setStrokeStyle(2, 0xff9900, 0.9).setDepth(7).setRotation(fwAngle);
         scene.npcFirewallHp = 100;
         scene.npcFirewallX = p2TargetX;
         scene.npcFirewallY = p2TargetY;
@@ -430,7 +433,7 @@ export function processP2Abilities(
           && scene.npc.getCooldownRatio('overdrive') >= 1
           && scene.npcDrones.length > 0) {
         scene.npc.triggerCooldown('overdrive');
-        const duration = 2000 * scene.npcDrones.length;
+        const duration = 500 * scene.npcDrones.length;
         scene.npcOverdriveActive = true;
         scene.npcOverdriveEnd = time + duration;
         scene.npcOverdriveAngle = Math.atan2(p2TargetY - scene.npc.y, p2TargetX - scene.npc.x);
