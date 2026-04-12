@@ -113,7 +113,7 @@ export class MenuScene extends Phaser.Scene {
 
     const subtitle = isPlayerPhase
       ? (this.isPvP ? 'Player 1: Choose your element' : 'Choose your element')
-      : (this.isPvP ? 'Player 2: Choose your element (more coming soon)' : 'Choose enemy element');
+      : (this.isPvP ? 'Player 2: Choose your element' : 'Choose enemy element');
     const subtitleObj = this.add.text(cx, 158, subtitle, {
       fontSize: '20px',
       fontFamily: 'Arial, sans-serif',
@@ -133,21 +133,15 @@ export class MenuScene extends Phaser.Scene {
       }
     }
 
-    // In PvP mode P2 phase: only Fire is available until more elements are ported
-    const pvpP2Phase = this.isPvP && !isPlayerPhase;
-
     // Determine which elements to show on this page
     const unlockedCombined = COMBINED_ELEMENTS.filter((e) => PlayerData.isElementUnlocked(e.id));
     const PAGE_SIZE = 5;
     const combinedPages = Math.max(1, Math.ceil(unlockedCombined.length / PAGE_SIZE));
     const maxPage = unlockedCombined.length > 0 ? combinedPages : 0; // 0 = no combined pages
-    const totalPages = pvpP2Phase ? 1 : 1 + maxPage; // page 0 = base, pages 1..maxPage = combined
+    const totalPages = 1 + maxPage; // page 0 = base, pages 1..maxPage = combined
 
     let currentElements: ElementDef[];
-    if (pvpP2Phase) {
-      // Only Fire is implemented for P2 in this version
-      currentElements = ELEMENTS.filter((e) => e.id === 'fire');
-    } else if (this.elemPage === 0) {
+    if (this.elemPage === 0) {
       currentElements = ELEMENTS;
     } else {
       const start = (this.elemPage - 1) * PAGE_SIZE;
