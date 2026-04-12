@@ -1621,8 +1621,15 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── HUD ────────────────────────────────────────────────────────
-    this.createHUD(W, H);
-    if (this.isPvP) this.createP2HUD(W, H);
+    // Online PvP: each tab only shows its own player's HUD.
+    // Host controls P1 → bottom HUD only. Guest controls P2 → top HUD only.
+    if (this.isNetworkPvP) {
+      if (this.networkRole === 'host') this.createHUD(W, H);
+      else this.createP2HUD(W, H);
+    } else {
+      this.createHUD(W, H);
+      if (this.isPvP) this.createP2HUD(W, H);
+    }
 
     // ── Arena labels ───────────────────────────────────────────────
     if (this.isPvP) {
@@ -1799,8 +1806,11 @@ export class ArenaScene extends Phaser.Scene {
     const totalWidth = 5 * cardW;
     const startX = W / 2 - totalWidth / 2 + cardW / 2;
 
-    // P2 key labels for display (mirrors Click/E/R/F/Q)
-    const p2KeyLabels = ['U', 'O', 'P', ';', '\''];
+    // In Local PvP, P2 uses U/O/P/;/' for abilities and / for dodge.
+    // In Online PvP, P2 uses the same keys as P1 (Click/E/R/F/Q and Space).
+    const p2KeyLabels = this.isNetworkPvP
+      ? null  // use ab.displayKey
+      : ['U', 'O', 'P', ';', '\''];
 
     abilities.forEach((ab, i) => {
       const x = startX + i * cardW;
@@ -1815,7 +1825,8 @@ export class ArenaScene extends Phaser.Scene {
         .setOrigin(0, 0.5)
         .setDepth(22);
 
-      this.add.text(x, hudY - 6, `[${p2KeyLabels[i]}] ${ab.name}`, {
+      const keyLabel = p2KeyLabels ? p2KeyLabels[i] : ab.displayKey;
+      this.add.text(x, hudY - 6, `[${keyLabel}] ${ab.name}`, {
         fontSize: '11px',
         fontFamily: 'Arial, sans-serif',
         color: '#aaddff',
@@ -1832,7 +1843,8 @@ export class ArenaScene extends Phaser.Scene {
       this.p2AbilityBars.push({ fill, abilityId: ab.id, maxWidth: cardW - 4 });
     });
 
-    this.add.text(W - 50, hudY, '[/]\nDodge', {
+    const dodgeLabel = this.isNetworkPvP ? '[SPC]' : '[/]';
+    this.add.text(W - 50, hudY, `${dodgeLabel}\nDodge`, {
       fontSize: '11px',
       color: '#666688',
       align: 'center',
