@@ -290,7 +290,7 @@ export class NetworkScene extends Phaser.Scene {
 
     // Only elements fully implemented in processP2Abilities() are available.
     // Expand this set as elements are ported.
-    const NETWORK_SUPPORTED: Set<string> = new Set(['fire']);
+    const NETWORK_SUPPORTED: Set<string> = new Set(['fire', 'ice', 'crystal', 'oil', 'growth', 'water', 'earth', 'soul', 'air', 'life', 'shadow', 'hunt', 'sand']);
     const available = ALL_ELEMENTS.filter((e) => NETWORK_SUPPORTED.has(e.id));
 
     const cardW = 120;

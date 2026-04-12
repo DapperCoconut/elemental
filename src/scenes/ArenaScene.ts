@@ -290,6 +290,83 @@ export class ArenaScene extends Phaser.Scene {
   private p2PressureLastTargetY = 0;
   private p2FKeyHeldSince = 0;
 
+  // P2 shared aim — persisted each frame for use in per-frame blocks
+  private p2LastAimX = 0;
+  private p2LastAimY = 0;
+
+  // P2 water-specific state
+  private p2PainRainHolding = false;
+  private p2PainRainHoldAccum = 0;
+
+  // P2 earth-specific state
+  private p2EarthShieldShedHolding = false;
+  private p2EarthShieldShedStart = 0;
+
+  // NPC earth shield shed state (needed when P2 picks earth with F upgrade)
+  private npcEarthShieldShedActive = false;
+  private npcEarthShieldShedEnd = 0;
+  private npcEarthShieldShedBonus = 0;
+  private npcEarthShieldShedAura: Phaser.GameObjects.Arc | null = null;
+
+  // P2 soul-specific state
+  private p2SoulEHolding = false;
+  private p2SoulEHoldStart = 0;
+  private p2SoulEHoldVisual: Phaser.GameObjects.Arc | null = null;
+
+  // P2 air-specific state
+  private p2AirElectroHolding = false;
+  private p2AirElectroHeldSince = 0;
+  private p2AirElectroChargeVisual: Phaser.GameObjects.Arc | null = null;
+
+  // NPC air state (needed when P2 picks air with E/Q upgrades)
+  private npcAirElectroCharged = false;
+  private npcAirBeamWalking = false;   // allow NPC movement during air beam channel
+
+  // P2 shadow-specific state
+  private p2ShadowDrainHoldAccum = 0;
+  private p2ShadowDrainCloudAccum = 0;
+
+  // NPC shadow dance charge (needed when P2 picks shadow — NPC context is a no-op)
+  private npcShadowDanceCharge = 0;
+
+  // NPC shadow black hole state (needed when P2 picks shadow — NPC context is a no-op)
+  private npcShadowBlackHoleCharging = false;
+  private npcShadowBlackHoleChargeStart = 0;
+  private npcShadowBlackHoleChargeVisual: Phaser.GameObjects.Arc | null = null;
+  private npcShadowBlackHoleActive = false;
+  private npcShadowBlackHoleEnd = 0;
+  private npcShadowBlackHoleSprite: Phaser.GameObjects.Graphics | null = null;
+
+  // P2 life-specific state
+  private p2LifeRHolding = false;
+  private p2LifeRHoldStart = 0;
+  private p2LifeRChargeVisual: Phaser.GameObjects.Arc | null = null;
+  private p2LifeFHolding = false;
+  private p2LifeFHoldStart = 0;
+  private p2LifeFChargeVisual: Phaser.GameObjects.Arc | null = null;
+  private p2LifeQHolding = false;
+  private p2LifeQHoldStart = 0;
+  private p2LifeQChargeVisual: Phaser.GameObjects.Arc | null = null;
+
+  // P2 hunt-specific state
+  private p2HuntGrenadeHolding = false;
+  private p2HuntGrenadeHoldStart = 0;
+  private p2HuntGrenadeVisual: Phaser.GameObjects.Arc | null = null;
+
+  // P2 sand-specific state
+  private p2TimeBarrageActive = false;
+
+  // NPC oil state — needed when P2 picks oil (firewall + overdrive are no-ops in buildNpcContext)
+  private npcFirewallSprite: Phaser.GameObjects.Rectangle | null = null;
+  private npcFirewallHp = 0;
+  private npcFirewallX = 0;
+  private npcFirewallY = 0;
+  private npcOverdriveActive = false;
+  private npcOverdriveEnd = 0;
+  private npcOverdriveAngle = 0;
+  private npcOverdriveTickAccum = 0;
+  private npcOverdriveGraphics: Phaser.GameObjects.Graphics | null = null;
+
   // Input keys
   private wKey!: Phaser.Input.Keyboard.Key;
   private aKey!: Phaser.Input.Keyboard.Key;
@@ -914,6 +991,55 @@ export class ArenaScene extends Phaser.Scene {
     this.playerOverdriveTickAccum = 0;
     this.playerOverdriveGraphics = null;
     this.npcDrones = [];
+    this.npcFirewallSprite = null;
+    this.npcFirewallHp = 0;
+    this.npcFirewallX = 0;
+    this.npcFirewallY = 0;
+    this.npcOverdriveActive = false;
+    this.npcOverdriveEnd = 0;
+    this.npcOverdriveAngle = 0;
+    this.npcOverdriveTickAccum = 0;
+    this.npcOverdriveGraphics = null;
+    this.p2LastAimX = 0;
+    this.p2LastAimY = 0;
+    this.p2PainRainHolding = false;
+    this.p2PainRainHoldAccum = 0;
+    this.p2EarthShieldShedHolding = false;
+    this.p2EarthShieldShedStart = 0;
+    this.npcEarthShieldShedActive = false;
+    this.npcEarthShieldShedEnd = 0;
+    this.npcEarthShieldShedBonus = 0;
+    this.npcEarthShieldShedAura = null;
+    this.p2SoulEHolding = false;
+    this.p2SoulEHoldStart = 0;
+    this.p2SoulEHoldVisual = null;
+    this.p2AirElectroHolding = false;
+    this.p2AirElectroHeldSince = 0;
+    this.p2AirElectroChargeVisual = null;
+    this.npcAirElectroCharged = false;
+    this.npcAirBeamWalking = false;
+    this.p2ShadowDrainHoldAccum = 0;
+    this.p2ShadowDrainCloudAccum = 0;
+    this.npcShadowDanceCharge = 0;
+    this.npcShadowBlackHoleCharging = false;
+    this.npcShadowBlackHoleChargeStart = 0;
+    this.npcShadowBlackHoleChargeVisual = null;
+    this.npcShadowBlackHoleActive = false;
+    this.npcShadowBlackHoleEnd = 0;
+    this.npcShadowBlackHoleSprite = null;
+    this.p2LifeRHolding = false;
+    this.p2LifeRHoldStart = 0;
+    this.p2LifeRChargeVisual = null;
+    this.p2LifeFHolding = false;
+    this.p2LifeFHoldStart = 0;
+    this.p2LifeFChargeVisual = null;
+    this.p2LifeQHolding = false;
+    this.p2LifeQHoldStart = 0;
+    this.p2LifeQChargeVisual = null;
+    this.p2HuntGrenadeHolding = false;
+    this.p2HuntGrenadeHoldStart = 0;
+    this.p2HuntGrenadeVisual = null;
+    this.p2TimeBarrageActive = false;
 
     this.shadowDarkClouds = [];
     this.shadowSnapTraps = [];
@@ -1942,6 +2068,664 @@ export class ArenaScene extends Phaser.Scene {
           } else if (!this.hasP2Upgrade('q')) {
             this.npc.castAbility('flame-nuke', this.buildNpcContext(this.npc.x, this.npc.y));
           }
+        }
+      }
+    } else if (eid === 'ice') {
+      if (!this.npcNukeChanneling) {
+        // Click: Ice Spike
+        if (this.p2Input.click) {
+          this.npc.castAbility('ice-spike', p2Ctx);
+        }
+        // E: Frost Blast
+        if (this.p2Input.e && !this.p2PrevInput.e) {
+          this.npc.castAbility('frost-blast', p2Ctx);
+        }
+        // R: Block Up
+        if (this.p2Input.r && !this.p2PrevInput.r) {
+          this.npc.castAbility('block-up', p2Ctx);
+        }
+        // F: Skate
+        if (this.p2Input.f && !this.p2PrevInput.f) {
+          this.npc.castAbility('skate', p2Ctx);
+        }
+        // Q: Frozen Solid
+        if (this.p2Input.q && !this.p2PrevInput.q) {
+          this.npc.castAbility('frozen-solid', p2Ctx);
+        }
+      }
+    } else if (eid === 'crystal') {
+      if (!this.npcNukeChanneling) {
+        // Click: Crystal Laser
+        if (this.p2Input.click) {
+          this.npc.castAbility('crystal-laser', p2Ctx);
+        }
+        // E: Place Crystal
+        if (this.p2Input.e && !this.p2PrevInput.e) {
+          this.npc.castAbility('crystal-place', p2Ctx);
+        }
+        // R: Crystal Barrage
+        if (this.p2Input.r && !this.p2PrevInput.r) {
+          this.npc.castAbility('crystal-barrage', p2Ctx);
+        }
+        // F: Crystal Portal
+        if (this.p2Input.f && !this.p2PrevInput.f) {
+          this.npc.castAbility('crystal-portal', p2Ctx);
+        }
+        // Q: Trick of Light
+        if (this.p2Input.q && !this.p2PrevInput.q) {
+          this.npc.castAbility('crystal-trick', p2Ctx);
+        }
+      }
+    } else if (eid === 'oil') {
+      if (!this.npcNukeChanneling) {
+        // Click: Drone Command
+        if (this.p2Input.click) {
+          this.npc.castAbility('drone-command', p2Ctx);
+        }
+        // E: Drone Summon
+        if (this.p2Input.e && !this.p2PrevInput.e) {
+          this.npc.castAbility('drone-summon', p2Ctx);
+        }
+        // R: Drone Destroy (launch toward aim)
+        if (this.p2Input.r && !this.p2PrevInput.r) {
+          this.npc.castAbility('drone-destroy', this.buildNpcContext(p2TargetX, p2TargetY));
+        }
+        // F: Firewall — handled directly (NPC context is a no-op)
+        if (this.p2Input.f && !this.p2PrevInput.f && this.npc.getCooldownRatio('firewall') >= 1) {
+          this.npc.triggerCooldown('firewall');
+          if (this.npcFirewallSprite) this.npcFirewallSprite.destroy();
+          this.npcFirewallSprite = this.add.rectangle(p2TargetX, p2TargetY, 120, 60, 0xff6600, 0.45)
+            .setStrokeStyle(2, 0xff9900, 0.9).setDepth(7);
+          this.npcFirewallHp = 100;
+          this.npcFirewallX = p2TargetX;
+          this.npcFirewallY = p2TargetY;
+        }
+        // Q: Overdrive — handled directly (NPC context is a no-op)
+        if (this.p2Input.q && !this.p2PrevInput.q
+            && this.npc.getCooldownRatio('overdrive') >= 1
+            && this.npcDrones.length > 0) {
+          this.npc.triggerCooldown('overdrive');
+          const duration = 2000 * this.npcDrones.length;
+          this.npcOverdriveActive = true;
+          this.npcOverdriveEnd = time + duration;
+          this.npcOverdriveAngle = Math.atan2(p2TargetY - this.npc.y, p2TargetX - this.npc.x);
+          this.npcOverdriveTickAccum = 0;
+          this.npcNukeChanneling = true;
+          this.npcNukeChannelEnd = this.npcOverdriveEnd;
+          if (!this.npcOverdriveGraphics) {
+            this.npcOverdriveGraphics = this.add.graphics().setDepth(7);
+          }
+        }
+      }
+    } else if (eid === 'growth') {
+      if (!this.npcNukeChanneling) {
+        // Click: Growth Click (form depends on npcGrowthMorphType)
+        if (this.p2Input.click) {
+          this.npc.castAbility('growth-click', p2Ctx);
+        }
+        // E: Mutate (opens mutate picker — NPC context handles it automatically)
+        if (this.p2Input.e && !this.p2PrevInput.e) {
+          this.npc.castAbility('mutate', p2Ctx);
+        }
+        // R: Infect
+        if (this.p2Input.r && !this.p2PrevInput.r) {
+          p2Ctx.fireInfect(p2TargetX, p2TargetY);
+        }
+        // F: Bloat
+        if (this.p2Input.f && !this.p2PrevInput.f) {
+          p2Ctx.activateBloat();
+        }
+        // Q: Mutant Morph
+        if (this.p2Input.q && !this.p2PrevInput.q) {
+          this.npc.castAbility('mutant-morph', p2Ctx);
+        }
+      }
+    } else if (eid === 'water') {
+      // Click: Water Cut
+      if (this.p2Input.click) {
+        this.npc.castAbility('water-cut', p2Ctx);
+      }
+      // E: Splash
+      if (this.p2Input.e && !this.p2PrevInput.e) {
+        if (this.npc.castAbility('splash', p2Ctx)) {
+          this.npcSplashActiveUntil = time + 2000;
+          this.npcSplashDropAccum = 0;
+        }
+      }
+      // R: Geyser
+      if (this.p2Input.r && !this.p2PrevInput.r) {
+        this.npc.castAbility('geyser', p2Ctx);
+      }
+      // F: Water Shield
+      if (this.p2Input.f && !this.p2PrevInput.f) {
+        this.npc.castAbility('water-shield', p2Ctx);
+      }
+      // Q: Pain Rain (upgrade: hold to channel)
+      if (this.hasP2Upgrade('q')) {
+        if (this.p2Input.q && !this.p2PrevInput.q) {
+          if (this.npc.castAbility('pain-rain', p2Ctx)) {
+            this.p2PainRainHolding = true;
+            this.p2PainRainHoldAccum = 0;
+          }
+        }
+        if (this.p2Input.q && this.p2PainRainHolding) {
+          this.p2PainRainHoldAccum += delta;
+          if (this.p2PainRainHoldAccum >= 250) {
+            this.p2PainRainHoldAccum -= 250;
+            this.createPainRain('npc', 15, 0, 100);
+          }
+        }
+        if (!this.p2Input.q) this.p2PainRainHolding = false;
+      } else {
+        if (this.p2Input.q && !this.p2PrevInput.q) {
+          this.npc.castAbility('pain-rain', p2Ctx);
+        }
+      }
+    } else if (eid === 'earth') {
+      if (!this.npcEarthSlamActive && !this.npcEarthSlamBouncing && !this.npcBullRushActive) {
+        // E: Shield Up — hold to charge
+        if (this.p2Input.e && this.npc.shieldHp < 100) {
+          this.npc.shieldHp = Math.min(100, this.npc.shieldHp + 8.75 * (delta / 1000));
+        }
+        if (!this.p2Input.e) {
+          // Click: Stab (damage scales with speed if upgraded)
+          if (this.p2Input.click) {
+            if (this.hasP2Upgrade('click')) {
+              const speedScale = this.npcSpeedMult;
+              const scaledCtx = { ...p2Ctx, dealMeleeDamage: (range: number, dmg: number, kb = 0) => p2Ctx.dealMeleeDamage(range, Math.round(dmg * speedScale), kb) };
+              this.npc.castAbility('stab', scaledCtx);
+            } else {
+              this.npc.castAbility('stab', p2Ctx);
+            }
+          }
+          // R: Shield Slam
+          if (this.p2Input.r && !this.p2PrevInput.r) {
+            this.npc.castAbility('shield-slam', p2Ctx);
+          }
+          // F: Shield Break / Shield Shed (upgrade)
+          if (this.hasP2Upgrade('f')) {
+            if (this.p2Input.f && !this.p2PrevInput.f) {
+              this.p2EarthShieldShedHolding = true;
+              this.p2EarthShieldShedStart = time;
+              this.npc.chargeRatio = 0;
+            }
+            if (this.p2EarthShieldShedHolding) {
+              this.npc.chargeRatio = Math.min(1, (time - this.p2EarthShieldShedStart) / 2000);
+              if (!this.p2Input.f) {
+                this.p2EarthShieldShedHolding = false;
+                this.npc.chargeRatio = 0;
+                this.npc.castAbility('shield-break', p2Ctx);
+              } else if (time - this.p2EarthShieldShedStart >= 2000) {
+                this.p2EarthShieldShedHolding = false;
+                this.npc.chargeRatio = 0;
+                const shedAmount = this.npc.shieldHp;
+                this.npc.shieldHp = 0;
+                const bonus = shedAmount * 0.03;
+                this.npcEarthShieldShedActive = true;
+                this.npcEarthShieldShedEnd = time + 6000;
+                this.npcEarthShieldShedBonus = bonus;
+                if (this.npcEarthShieldShedAura) this.npcEarthShieldShedAura.destroy();
+                this.npcEarthShieldShedAura = this.add.circle(this.npc.x, this.npc.y, 32, 0xffcc44, 0.5).setDepth(6);
+                this.tweens.add({ targets: this.npcEarthShieldShedAura, alpha: 0.1, yoyo: true, repeat: -1, duration: 300 });
+                this.spawnHitFlash(this.npc.x, this.npc.y, 0xffcc44);
+              }
+            }
+          } else {
+            if (this.p2Input.f && !this.p2PrevInput.f) {
+              this.npc.castAbility('shield-break', p2Ctx);
+            }
+          }
+          // Q: Bull Rush
+          if (this.p2Input.q && !this.p2PrevInput.q) {
+            this.npc.castAbility('bull-rush', p2Ctx);
+          }
+        }
+      }
+    } else if (eid === 'soul') {
+      // Click: Spirit Propel orb (on first press)
+      if (this.p2Input.click && !this.p2PrevInput.click) {
+        p2Ctx.fireSoulOrb(p2TargetX, p2TargetY);
+      }
+      // R: Sacrifice
+      if (this.p2Input.r && !this.p2PrevInput.r) {
+        p2Ctx.soulSacrifice();
+      }
+      // F: Consume
+      if (this.p2Input.f && !this.p2PrevInput.f) {
+        p2Ctx.soulConsume();
+      }
+      // Q: Undead Charge (costs 5 ghosts)
+      if (this.p2Input.q && !this.p2PrevInput.q) {
+        if (this.npcSoulGhosts >= 5) {
+          p2Ctx.summonGhost('knight');
+        }
+      }
+      // E: Summon — hold mechanic (tap=basic, 1s=ghoul, 2s=banshee)
+      if (this.p2Input.e && !this.p2SoulEHolding) {
+        this.p2SoulEHolding = true;
+        this.p2SoulEHoldStart = time;
+        if (this.p2SoulEHoldVisual) this.p2SoulEHoldVisual.destroy();
+        this.p2SoulEHoldVisual = this.add.circle(this.npc.x, this.npc.y - 36, 8, 0xccaaff, 0.6).setDepth(15);
+        this.tweens.add({ targets: this.p2SoulEHoldVisual, scaleX: 1.5, scaleY: 1.5, alpha: 0.3, yoyo: true, repeat: -1, duration: 300 });
+      } else if (!this.p2Input.e && this.p2SoulEHolding) {
+        this.p2SoulEHolding = false;
+        if (this.p2SoulEHoldVisual) { this.p2SoulEHoldVisual.destroy(); this.p2SoulEHoldVisual = null; }
+        const holdMs = time - this.p2SoulEHoldStart;
+        if (holdMs < 200) {
+          p2Ctx.summonGhost('basic');
+        } else {
+          let ghostType: 'basic' | 'ghoul' | 'banshee' = 'basic';
+          if (holdMs >= 2000 && this.npcSoulGhosts >= 3) ghostType = 'banshee';
+          else if (holdMs >= 1000 && this.npcSoulGhosts >= 2) ghostType = 'ghoul';
+          p2Ctx.summonGhost(ghostType);
+        }
+      }
+    } else if (eid === 'air') {
+      if (!this.npcNukeChanneling) {
+        // ── Click: Air Snipe (or electro charged shot) ────────────
+        if (this.p2Input.click) {
+          const snipeBase = this.buildNpcContext(p2TargetX, p2TargetY);
+          if (this.npcAirElectroCharged && this.npc.getCooldownRatio('air-snipe') >= 1) {
+            // Electro charged shot: instant, 1.5× damage, miss = 20 self-damage
+            this.npc.triggerCooldown('air-snipe');
+            this.npcAirElectroCharged = false;
+            if (this.p2AirElectroChargeVisual) { this.p2AirElectroChargeVisual.destroy(); this.p2AirElectroChargeVisual = null; }
+            this.npc.chargeRatio = 0;
+            const electroCtx = {
+              ...snipeBase,
+              lockCaster: () => {},
+              quickShotActive: true,
+              reportAirSnipeResult: (hit: boolean) => {
+                if (hit) { this.npcAirConsecutiveHits = Math.min(this.npcAirConsecutiveHits + 1, 3); }
+                else {
+                  this.npcAirConsecutiveHits = 0;
+                  this.npc.applySelfDamage(20);
+                  this.spawnHitFlash(this.npc.x, this.npc.y, 0xaaddff);
+                }
+              },
+            };
+            fireHitscan(electroCtx, 45, 0xffee44, true);
+          } else {
+            // Normal snipe — P2 click upgrade removes lock
+            const noLockCtx = this.hasP2Upgrade('click')
+              ? { ...snipeBase, lockCaster: (_d: number) => {} }
+              : snipeBase;
+            if (this.npc.castAbility('air-snipe', noLockCtx)) {
+              if (this.npcQuickShotCharged) this.npcQuickShotCharged = false;
+            }
+          }
+        }
+
+        // ── E: Quick Shot / Electro Charge (upgrade) ──────────────
+        if (this.hasP2Upgrade('e')) {
+          if (this.p2Input.e && !this.p2PrevInput.e) {
+            this.p2AirElectroHolding = true;
+            this.p2AirElectroHeldSince = time;
+            if (this.p2AirElectroChargeVisual) this.p2AirElectroChargeVisual.destroy();
+            this.p2AirElectroChargeVisual = this.add.circle(this.npc.x, this.npc.y, 10, 0xffee44, 0.9).setDepth(8);
+          }
+          if (this.p2AirElectroHolding) {
+            if (this.p2AirElectroChargeVisual) this.p2AirElectroChargeVisual.setPosition(this.npc.x, this.npc.y);
+            if (!this.p2Input.e) {
+              // Released early → normal quick-shot
+              this.p2AirElectroHolding = false;
+              if (this.p2AirElectroChargeVisual) { this.p2AirElectroChargeVisual.destroy(); this.p2AirElectroChargeVisual = null; }
+              this.npc.chargeRatio = 0;
+              this.npc.castAbility('quick-shot', p2Ctx);
+            } else if (time - this.p2AirElectroHeldSince >= 1500) {
+              // Fully charged
+              this.p2AirElectroHolding = false;
+              this.npcAirElectroCharged = true;
+              if (this.p2AirElectroChargeVisual) { this.p2AirElectroChargeVisual.destroy(); this.p2AirElectroChargeVisual = null; }
+              this.p2AirElectroChargeVisual = this.add.circle(this.npc.x, this.npc.y, 22, 0xffee44, 0.7).setDepth(8);
+              this.tweens.add({ targets: this.p2AirElectroChargeVisual, alpha: 0.2, yoyo: true, repeat: -1, duration: 280 });
+            }
+          }
+          if (this.npcAirElectroCharged && this.p2AirElectroChargeVisual) {
+            this.p2AirElectroChargeVisual.setPosition(this.npc.x, this.npc.y);
+          }
+        } else {
+          if (this.p2Input.e && !this.p2PrevInput.e) {
+            this.npc.castAbility('quick-shot', p2Ctx);
+          }
+        }
+
+        // ── R: Wind Trap ──────────────────────────────────────────
+        if (this.p2Input.r && !this.p2PrevInput.r) {
+          this.npc.castAbility('wind-trap', this.buildNpcContext(p2TargetX, p2TargetY));
+        }
+
+        // ── F: Grapple ────────────────────────────────────────────
+        if (this.p2Input.f && !this.p2PrevInput.f) {
+          this.npc.castAbility('grapple', this.buildNpcContext(p2TargetX, p2TargetY));
+        }
+
+        // ── Q: Charged Beam (upgrade: bounce + walk) ──────────────
+        if (this.p2Input.q && !this.p2PrevInput.q && this.npcAirConsecutiveHits >= 3) {
+          if (this.hasP2Upgrade('q')) {
+            if (this.npc.getCooldownRatio('charged-beam') >= 1) {
+              this.npc.triggerCooldown('charged-beam');
+              this.npcAirConsecutiveHits = 0;
+              this.npcNukeChanneling = true;
+              this.npcAirBeamWalking = true;
+              this.npcNukeChannelEnd = time + 1500;
+              const capX = p2TargetX, capY = p2TargetY;
+              const { width: W, height: H } = this.scale;
+              const chargeVis = this.add.circle(this.npc.x, this.npc.y, 14, 0x88ccff, 0.8).setDepth(8);
+              this.tweens.add({ targets: chargeVis, scaleX: 5, scaleY: 5, alpha: 0.1, duration: 1500, onComplete: () => chargeVis.destroy() });
+              this.time.delayedCall(1500, () => {
+                this.npcAirBeamWalking = false;
+                this.npcNukeChanneling = false;
+                this.npc.chargeRatio = 0;
+                fireBounceHitscan(
+                  this.buildNpcContext(capX, capY),
+                  100, 3, W, H,
+                );
+              });
+            }
+          } else {
+            if (this.npc.castAbility('charged-beam', this.buildNpcContext(p2TargetX, p2TargetY))) {
+              this.npcAirConsecutiveHits = 0;
+            }
+          }
+        }
+      }
+    } else if (eid === 'life') {
+      // ── Click: Petal Shotgun (or Petal Burst upgrade) ─────────────
+      if (this.p2Input.click) {
+        if (this.hasP2Upgrade('click')) {
+          if (this.npc.getCooldownRatio('petal-shotgun') >= 1) {
+            this.npc.triggerCooldown('petal-shotgun');
+            const FIVE_ANGLES = [-30, -15, 0, 15, 30];
+            const dx = p2TargetX - this.npc.x;
+            const dy = p2TargetY - this.npc.y;
+            const baseAngle = Math.atan2(dy, dx);
+            const speed = 480;
+            const spawnDist = 32;
+            for (const deg of FIVE_ANGLES) {
+              const angle = baseAngle + deg * (Math.PI / 180);
+              const proj = new Projectile(
+                this,
+                this.npc.x + Math.cos(angle) * spawnDist,
+                this.npc.y + Math.sin(angle) * spawnDist,
+                'proj-life', 5, false,
+              );
+              this.projectiles.add(proj);
+              proj.launch(Math.cos(angle) * speed, Math.sin(angle) * speed);
+            }
+          }
+        } else {
+          this.npc.castAbility('petal-shotgun', p2Ctx);
+        }
+      }
+
+      // ── E: Plant ────────────────────────────────────────────────
+      if (this.p2Input.e && !this.p2PrevInput.e) {
+        this.npc.castAbility('plant', p2Ctx);
+      }
+
+      // ── R: Grow / Life Root upgrade ──────────────────────────────
+      if (this.hasP2Upgrade('r')) {
+        if (this.p2Input.r && !this.p2PrevInput.r) {
+          this.p2LifeRHolding = true;
+          this.p2LifeRHoldStart = time;
+          if (this.p2LifeRChargeVisual) this.p2LifeRChargeVisual.destroy();
+          this.p2LifeRChargeVisual = this.add.circle(this.npc.x, this.npc.y, 28, 0x88ffaa, 0.4).setDepth(4);
+        }
+        if (this.p2Input.r && this.p2LifeRHolding) {
+          if (this.p2LifeRChargeVisual) this.p2LifeRChargeVisual.setPosition(this.npc.x, this.npc.y);
+          this.npc.chargeRatio = Math.min(1, (time - this.p2LifeRHoldStart) / 3000);
+          if (time - this.p2LifeRHoldStart >= 3000) {
+            this.p2LifeRHolding = false;
+            if (this.p2LifeRChargeVisual) { this.p2LifeRChargeVisual.destroy(); this.p2LifeRChargeVisual = null; }
+            this.npc.chargeRatio = 0;
+            this.npcConvertToLifePlant();
+            this.npc.triggerCooldown('grow');
+          }
+        }
+        if (!this.p2Input.r && this.p2PrevInput.r && this.p2LifeRHolding) {
+          this.p2LifeRHolding = false;
+          if (this.p2LifeRChargeVisual) { this.p2LifeRChargeVisual.destroy(); this.p2LifeRChargeVisual = null; }
+          this.npc.chargeRatio = 0;
+          this.npc.castAbility('grow', p2Ctx);
+        }
+      } else {
+        if (this.p2Input.r && !this.p2PrevInput.r) {
+          this.npc.castAbility('grow', p2Ctx);
+        }
+      }
+
+      // ── F: Thorns / Thorn Trap upgrade ──────────────────────────
+      if (this.hasP2Upgrade('f')) {
+        if (this.p2Input.f && !this.p2PrevInput.f) {
+          this.p2LifeFHolding = true;
+          this.p2LifeFHoldStart = time;
+          if (this.p2LifeFChargeVisual) this.p2LifeFChargeVisual.destroy();
+          this.p2LifeFChargeVisual = this.add.circle(this.npc.x, this.npc.y, 28, 0xff4444, 0.4).setDepth(4);
+        }
+        if (this.p2Input.f && this.p2LifeFHolding) {
+          if (this.p2LifeFChargeVisual) this.p2LifeFChargeVisual.setPosition(this.npc.x, this.npc.y);
+          this.npc.chargeRatio = Math.min(1, (time - this.p2LifeFHoldStart) / 3000);
+          if (time - this.p2LifeFHoldStart >= 3000) {
+            this.p2LifeFHolding = false;
+            if (this.p2LifeFChargeVisual) { this.p2LifeFChargeVisual.destroy(); this.p2LifeFChargeVisual = null; }
+            this.npc.chargeRatio = 0;
+            this.npcConvertToThornPlant();
+            this.npc.triggerCooldown('thorns');
+          }
+        }
+        if (!this.p2Input.f && this.p2PrevInput.f && this.p2LifeFHolding) {
+          this.p2LifeFHolding = false;
+          if (this.p2LifeFChargeVisual) { this.p2LifeFChargeVisual.destroy(); this.p2LifeFChargeVisual = null; }
+          this.npc.chargeRatio = 0;
+          this.npc.castAbility('thorns', p2Ctx);
+        }
+      } else {
+        if (this.p2Input.f && !this.p2PrevInput.f) {
+          this.npc.castAbility('thorns', p2Ctx);
+        }
+      }
+
+      // ── Q: Thorn Drag / Overgrowth upgrade ──────────────────────
+      if (this.hasP2Upgrade('q')) {
+        if (this.p2Input.q && !this.p2PrevInput.q) {
+          this.p2LifeQHolding = true;
+          this.p2LifeQHoldStart = time;
+          if (this.p2LifeQChargeVisual) this.p2LifeQChargeVisual.destroy();
+          this.p2LifeQChargeVisual = this.add.circle(this.npc.x, this.npc.y, 35, 0x44ff44, 0.3).setDepth(4);
+        }
+        if (this.p2Input.q && this.p2LifeQHolding) {
+          if (this.p2LifeQChargeVisual) this.p2LifeQChargeVisual.setPosition(this.npc.x, this.npc.y);
+          this.npc.chargeRatio = Math.min(1, (time - this.p2LifeQHoldStart) / 8000);
+          if (time - this.p2LifeQHoldStart >= 8000) {
+            this.p2LifeQHolding = false;
+            if (this.p2LifeQChargeVisual) { this.p2LifeQChargeVisual.destroy(); this.p2LifeQChargeVisual = null; }
+            this.npc.chargeRatio = 0;
+            this.npcTriggerOvergrowth();
+            this.npc.triggerCooldown('thorn-drag');
+          }
+        }
+        if (!this.p2Input.q && this.p2PrevInput.q && this.p2LifeQHolding) {
+          this.p2LifeQHolding = false;
+          if (this.p2LifeQChargeVisual) { this.p2LifeQChargeVisual.destroy(); this.p2LifeQChargeVisual = null; }
+          this.npc.chargeRatio = 0;
+          if (this.npc.castAbility('thorn-drag', p2Ctx)) {
+            this.npcThornDragActiveUntil = time + 2000;
+            this.npcThornDragTickAccum = 0;
+            this.npcThornDragAura = this.add.circle(this.npc.x, this.npc.y, 30, 0x44ff44, 0.3).setDepth(3);
+          }
+        }
+      } else {
+        if (this.p2Input.q && !this.p2PrevInput.q) {
+          if (this.npc.castAbility('thorn-drag', p2Ctx)) {
+            this.npcThornDragActiveUntil = time + 2000;
+            this.npcThornDragTickAccum = 0;
+            this.npcThornDragAura = this.add.circle(this.npc.x, this.npc.y, 30, 0x44ff44, 0.3).setDepth(3);
+          }
+        }
+      }
+    } else if (eid === 'shadow') {
+      if (!this.npcNukeChanneling) {
+        // ── Click: Dark Drain (tap = bomb, hold = clouds) ─────────
+        if (this.p2Input.click) {
+          this.p2ShadowDrainHoldAccum += delta;
+          if (this.p2ShadowDrainHoldAccum >= 300) {
+            // Cloud mode
+            this.p2ShadowDrainCloudAccum += delta;
+            if (this.p2ShadowDrainCloudAccum >= 600) {
+              this.p2ShadowDrainCloudAccum -= 600;
+              this.spawnShadowDarkCloud(p2TargetX, p2TargetY, 'npc');
+            }
+          }
+        } else {
+          if (this.p2PrevInput.click && this.p2ShadowDrainHoldAccum < 300) {
+            // Tap: launch dark bomb
+            this.npc.castAbility('dark-drain', this.buildNpcContext(p2TargetX, p2TargetY));
+          }
+          this.p2ShadowDrainHoldAccum = 0;
+          this.p2ShadowDrainCloudAccum = 0;
+        }
+
+        // ── E: Tentacle ────────────────────────────────────────────
+        if (this.p2Input.e && !this.p2PrevInput.e) {
+          this.npc.castAbility('tentacle', this.buildNpcContext(p2TargetX, p2TargetY));
+        }
+
+        // ── R: Snap Trap ───────────────────────────────────────────
+        if (this.p2Input.r && !this.p2PrevInput.r) {
+          this.npc.castAbility('snap-trap', p2Ctx);
+        }
+
+        // ── F: Shadow Dance (manual: check npcShadowDanceCharge) ──
+        if (this.p2Input.f && !this.p2PrevInput.f) {
+          if (this.npcShadowDanceCharge >= 35 && this.npc.getCooldownRatio('shadow-dance') >= 1) {
+            this.npc.triggerCooldown('shadow-dance');
+            this.npcShadowDanceCharge = 0;
+            this.npc.heal(25);
+            const flash = this.add.circle(this.npc.x, this.npc.y, 40, 0x8800cc, 0.5).setDepth(8);
+            this.tweens.add({ targets: flash, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 500, onComplete: () => flash.destroy() });
+          }
+        }
+
+        // ── Q: Black Hole (manual: NPC context is no-op) ──────────
+        if (this.p2Input.q && !this.p2PrevInput.q && this.npc.getCooldownRatio('black-hole') >= 1) {
+          this.npc.triggerCooldown('black-hole');
+          this.npcShadowBlackHoleCharging = true;
+          this.npcShadowBlackHoleChargeStart = time;
+          if (this.npcShadowBlackHoleChargeVisual) this.npcShadowBlackHoleChargeVisual.destroy();
+          this.npcShadowBlackHoleChargeVisual = this.add.circle(this.npc.x, this.npc.y, 24, 0xffcc00, 0.6).setDepth(9);
+          this.tweens.add({ targets: this.npcShadowBlackHoleChargeVisual, scaleX: 1.3, scaleY: 1.3, alpha: 0.3, yoyo: true, repeat: -1, duration: 300 });
+          this.npcNukeChanneling = true;
+          this.npcNukeChannelEnd = time + 3100;
+        }
+      }
+    } else if (eid === 'hunt') {
+      const inBeastForm = this.npcHuntBeastForm;
+      if (!inBeastForm) {
+        // ── Normal form ──────────────────────────────────────────
+
+        // Click: Shotgun
+        if (this.p2Input.click && !this.p2PrevInput.click) {
+          this.npc.castAbility('hunt-shotgun', p2Ctx);
+        }
+
+        // E: Grenade hold mechanic
+        if (this.p2Input.e && !this.p2PrevInput.e) {
+          if (this.npc.getCooldownRatio('hunt-grenade') >= 1) {
+            this.npc.triggerCooldown('hunt-grenade');
+            this.p2HuntGrenadeHoldStart = time;
+            this.p2HuntGrenadeHolding = true;
+            if (this.p2HuntGrenadeVisual) this.p2HuntGrenadeVisual.destroy();
+            this.p2HuntGrenadeVisual = this.add.circle(this.npc.x, this.npc.y, 10, 0xff6600, 0.9).setDepth(12);
+          }
+        }
+        if (!this.p2Input.e && this.p2HuntGrenadeHolding) {
+          const holdMs = time - this.p2HuntGrenadeHoldStart;
+          if (holdMs < 3000) {
+            p2Ctx.huntThrowGrenade(p2TargetX, p2TargetY, holdMs);
+          }
+          this.p2HuntGrenadeHolding = false;
+          if (this.p2HuntGrenadeVisual) { this.p2HuntGrenadeVisual.destroy(); this.p2HuntGrenadeVisual = null; }
+        }
+
+        // R: Hunter's Trail
+        if (this.p2Input.r && !this.p2PrevInput.r) {
+          this.npc.castAbility('hunt-trail', p2Ctx);
+        }
+
+        // F: Blood Pact
+        if (this.p2Input.f && !this.p2PrevInput.f) {
+          this.npc.castAbility('hunt-blood-pact', p2Ctx);
+        }
+
+        // Q: Transform
+        if (this.p2Input.q && !this.p2PrevInput.q) {
+          this.npc.castAbility('hunt-transform', p2Ctx);
+        }
+      } else {
+        // ── Beast form ───────────────────────────────────────────
+
+        // Click: Slash
+        if (this.p2Input.click && !this.p2PrevInput.click) {
+          this.npc.castAbility('hunt-slash', p2Ctx);
+        }
+
+        // E: Explosive Leap
+        if (this.p2Input.e && !this.p2PrevInput.e) {
+          this.npc.castAbility('hunt-leap', p2Ctx);
+        }
+
+        // R: Blood Hunt (requires player to be bleeding)
+        if (this.p2Input.r && !this.p2PrevInput.r) {
+          if (this.playerBleeding) this.npc.castAbility('hunt-blood-hunt', p2Ctx);
+        }
+
+        // F: Blood Moon
+        if (this.p2Input.f && !this.p2PrevInput.f) {
+          this.npc.castAbility('hunt-blood-moon', p2Ctx);
+        }
+
+        // Q: Untransform
+        if (this.p2Input.q && !this.p2PrevInput.q) {
+          this.npc.castAbility('hunt-untransform', p2Ctx);
+        }
+      }
+    } else if (eid === 'sand') {
+      // Click: Barrage (hold to fire, accelerates over 3s)
+      if (this.p2Input.click) {
+        if (!this.p2TimeBarrageActive) {
+          this.p2TimeBarrageActive = true;
+          this.npcTimeBarrageStart = time;
+          this.npcTimeBarrageAccum = 0;
+        }
+      } else {
+        if (this.p2TimeBarrageActive) {
+          this.p2TimeBarrageActive = false;
+          this.npcTimeBarrageStart = time;
+          this.npcTimeBarrageAccum = 0;
+        }
+      }
+
+      // E/R/F/Q blocked while barrage is held
+      if (!this.p2TimeBarrageActive) {
+        // E: Time Warp
+        if (this.p2Input.e && !this.p2PrevInput.e) {
+          this.npc.castAbility('time-warp', p2Ctx);
+        }
+
+        // R: Remain
+        if (this.p2Input.r && !this.p2PrevInput.r) {
+          this.npc.castAbility('time-remain', p2Ctx);
+        }
+
+        // F: Halt
+        if (this.p2Input.f && !this.p2PrevInput.f) {
+          this.npc.castAbility('time-halt', p2Ctx);
+        }
+
+        // Q: Timeless (charge-gated, no CD)
+        if (this.p2Input.q && !this.p2PrevInput.q) {
+          p2Ctx.timeTimeless();
         }
       }
     }
@@ -3587,6 +4371,68 @@ export class ArenaScene extends Phaser.Scene {
     }
   }
 
+  // NPC variants of life plant helpers — used when P2 picks life with R/F/Q upgrades
+  private npcConvertToLifePlant(): void {
+    if (this.npcPlants.some((p) => p.type === 'life')) return;
+    let closest: Plant | null = null;
+    let closestDist = Infinity;
+    for (const p of this.npcPlants) {
+      if (p.type !== 'normal') continue;
+      const d = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, p.x, p.y);
+      if (d < closestDist) { closestDist = d; closest = p; }
+    }
+    if (!closest) return;
+    closest.type = 'life';
+    closest.hp = 100;
+    closest.maxHp = 100;
+    closest.accum = 0;
+    closest.sprite.setFillStyle(0xaaffaa, 0.75);
+    closest.label.setText('🌼');
+    closest.healthBar.destroy();
+    closest.healthBar = new HealthBar(this, 100);
+    const bloom = this.add.circle(closest.x, closest.y, 12, 0xaaffaa, 0.9).setDepth(6);
+    this.tweens.add({ targets: bloom, scaleX: 8, scaleY: 8, alpha: 0, duration: 600, onComplete: () => bloom.destroy() });
+  }
+
+  private npcConvertToThornPlant(): void {
+    if (this.npcPlants.filter((p) => p.type === 'thorn').length >= 2) return;
+    let closest: Plant | null = null;
+    let closestDist = Infinity;
+    for (const p of this.npcPlants) {
+      if (p.type !== 'normal') continue;
+      const d = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, p.x, p.y);
+      if (d < closestDist) { closestDist = d; closest = p; }
+    }
+    if (!closest) return;
+    closest.type = 'thorn';
+    closest.hp = 50;
+    closest.maxHp = 50;
+    closest.accum = 0;
+    closest.sprite.setFillStyle(0xff2222, 0.75);
+    closest.label.setText('🌵');
+    closest.healthBar.destroy();
+    closest.healthBar = new HealthBar(this, 50);
+    const burst = this.add.circle(closest.x, closest.y, 12, 0xff2222, 0.9).setDepth(6);
+    this.tweens.add({ targets: burst, scaleX: 8, scaleY: 8, alpha: 0, duration: 400, onComplete: () => burst.destroy() });
+  }
+
+  private npcTriggerOvergrowth(): void {
+    const plants = [...this.npcPlants];
+    this.npcPlants = [];
+    for (const p of plants) {
+      const boom = this.add.circle(p.x, p.y, 12, 0x44ff44, 0.8).setDepth(6);
+      this.tweens.add({ targets: boom, scaleX: 6, scaleY: 6, alpha: 0, duration: 450, onComplete: () => boom.destroy() });
+      p.sprite.destroy(); p.label.destroy(); p.healthBar.destroy();
+      for (let i = 0; i < 10; i++) {
+        const angle = (i / 10) * Math.PI * 2;
+        const speed = 480;
+        const proj = new Projectile(this, p.x + Math.cos(angle) * 20, p.y + Math.sin(angle) * 20, 'proj-life', 8, false);
+        this.projectiles.add(proj);
+        proj.launch(Math.cos(angle) * speed, Math.sin(angle) * speed);
+      }
+    }
+  }
+
   // ── Game over ────────────────────────────────────────────────────
 
   private hasUpgrade(slot: string): boolean {
@@ -4132,6 +4978,8 @@ export class ArenaScene extends Phaser.Scene {
       p2TargetX = mouseX;
       p2TargetY = mouseY;
     }
+    this.p2LastAimX = p2TargetX;
+    this.p2LastAimY = p2TargetY;
 
     // ── Channel expiry ────────────────────────────────────────────
     if (this.nukeChanneling && time >= this.nukeChannelEnd) { this.nukeChanneling = false; this.player.chargeRatio = 0; }
@@ -4259,6 +5107,16 @@ export class ArenaScene extends Phaser.Scene {
     this.npcSpeedMult = 1;
     if (this.npcFlameBodyActive) this.npcSpeedMult = 2;
     else if (time < this.npcGeyserBuffUntil) this.npcSpeedMult = 1.5;
+    if (this.npcEarthShieldShedActive) {
+      if (time > this.npcEarthShieldShedEnd) {
+        this.npcEarthShieldShedActive = false;
+        this.npcEarthShieldShedBonus = 0;
+        if (this.npcEarthShieldShedAura) { this.npcEarthShieldShedAura.destroy(); this.npcEarthShieldShedAura = null; }
+      } else {
+        this.npcSpeedMult += this.npcEarthShieldShedBonus;
+        if (this.npcEarthShieldShedAura) this.npcEarthShieldShedAura.setPosition(this.npc.x, this.npc.y);
+      }
+    }
     // (Time element NPC has no speed buff of its own)
 
     // Time puddle slows (25%)
@@ -4339,9 +5197,12 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── NPC tentacle drag on player ───────────────────────────────
     if (this.npcShadowTentacleHooked && this.npcShadowTentacleActive && !this.isDodging) {
-      const dragDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npcShadowDragTargetX, this.npcShadowDragTargetY);
+      // In PvP, drag toward P2's aim position; in AI mode, drag toward random AI target
+      const dragTargetX = this.isPvP ? this.p2LastAimX : this.npcShadowDragTargetX;
+      const dragTargetY = this.isPvP ? this.p2LastAimY : this.npcShadowDragTargetY;
+      const dragDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, dragTargetX, dragTargetY);
       if (dragDist > 20) {
-        const dragAngle = Math.atan2(this.npcShadowDragTargetY - this.player.y, this.npcShadowDragTargetX - this.player.x);
+        const dragAngle = Math.atan2(dragTargetY - this.player.y, dragTargetX - this.player.x);
         playerBody.setVelocity(Math.cos(dragAngle) * 200, Math.sin(dragAngle) * 200);
       }
     }
@@ -4354,7 +5215,7 @@ export class ArenaScene extends Phaser.Scene {
     // ── P2 movement (PvP) ─────────────────────────────────────────
     if (this.isPvP) {
       const npcBody = this.npc.body as Phaser.Physics.Arcade.Body;
-      if (!this.p2IsDodging && !(this.npcFrozenUntil > time) && !this.npcNukeChanneling) {
+      if (!this.p2IsDodging && !(this.npcFrozenUntil > time) && !(this.npcNukeChanneling && !this.npcAirBeamWalking)) {
         let nvx = 0, nvy = 0;
         if (this.p2Input.left)  nvx -= this.npc.speed;
         if (this.p2Input.right) nvx += this.npc.speed;
@@ -5556,10 +6417,16 @@ export class ArenaScene extends Phaser.Scene {
         this.npcSplashDropAccum += delta;
         if (this.npcSplashDropAccum >= 150) {
           this.npcSplashDropAccum -= 150;
-          // Drop puddle near player with aim scatter based on difficulty
-          const splashMissRange = this.npcDifficulty.aimOffsetDeg * 2.2; // ~0 on Nightmare, ~110 on Easy
-          const splashX = this.player.x + Phaser.Math.Between(-splashMissRange, splashMissRange);
-          const splashY = this.player.y + Phaser.Math.Between(-splashMissRange, splashMissRange);
+          // In PvP, drop puddle at P2 aim position; in AI mode, drop near player with aim scatter
+          let splashX: number, splashY: number;
+          if (this.isPvP) {
+            splashX = this.p2LastAimX;
+            splashY = this.p2LastAimY;
+          } else {
+            const splashMissRange = this.npcDifficulty.aimOffsetDeg * 2.2; // ~0 on Nightmare, ~110 on Easy
+            splashX = this.player.x + Phaser.Math.Between(-splashMissRange, splashMissRange);
+            splashY = this.player.y + Phaser.Math.Between(-splashMissRange, splashMissRange);
+          }
           const spr = this.add.circle(splashX, splashY, 36, 0x0066bb, 0.5).setDepth(2);
           this.tweens.add({ targets: spr, scaleX: 1.3, scaleY: 1.3, alpha: 0.25, duration: 800 });
           this.puddles.push({ sprite: spr, expiresAt: time + 1000, x: splashX, y: splashY, radius: 36, tickAccum: 0, owner: 'npc' });
@@ -5824,6 +6691,52 @@ export class ArenaScene extends Phaser.Scene {
           this.npcDrones.splice(di, 1);
         }
       }
+      // NPC firewall absorbs player projectiles (P2 oil F ability)
+      if (this.npcFirewallSprite && this.npcFirewallHp > 0) {
+        for (const go of allActiveProj) {
+          const proj = go as Projectile;
+          if (!proj.active || !proj.isFromPlayer) continue;
+          if (Math.abs(proj.x - this.npcFirewallX) <= 60 && Math.abs(proj.y - this.npcFirewallY) <= 30) {
+            this.npcFirewallHp -= proj.damage;
+            proj.setActive(false).setVisible(false);
+            (proj.body as Phaser.Physics.Arcade.Body).stop();
+            if (this.npcFirewallHp <= 0) {
+              this.npcFirewallSprite.destroy();
+              this.npcFirewallSprite = null;
+              break;
+            }
+          }
+        }
+      }
+      // NPC overdrive beam (P2 oil Q ability) — rotates toward P2 aim
+      if (this.npcOverdriveActive) {
+        if (time >= this.npcOverdriveEnd) {
+          this.npcOverdriveActive = false;
+          this.npcNukeChanneling = false;
+          if (this.npcOverdriveGraphics) { this.npcOverdriveGraphics.destroy(); this.npcOverdriveGraphics = null; }
+        } else {
+          const tgtAng = Math.atan2(this.p2LastAimY - this.npc.y, this.p2LastAimX - this.npc.x);
+          const diff = Phaser.Math.Angle.Wrap(tgtAng - this.npcOverdriveAngle);
+          const rotSpeed = (18 * Math.PI / 180) * delta / 1000;
+          this.npcOverdriveAngle += Math.sign(diff) * Math.min(Math.abs(diff), rotSpeed);
+          const beamEndX = this.npc.x + Math.cos(this.npcOverdriveAngle) * 1000;
+          const beamEndY = this.npc.y + Math.sin(this.npcOverdriveAngle) * 1000;
+          if (this.npcOverdriveGraphics) {
+            this.npcOverdriveGraphics.clear();
+            this.npcOverdriveGraphics.lineStyle(22, 0xff6600, 0.6);
+            this.npcOverdriveGraphics.lineBetween(this.npc.x, this.npc.y, beamEndX, beamEndY);
+          }
+          this.npcOverdriveTickAccum += delta;
+          if (this.npcOverdriveTickAccum >= 100) {
+            this.npcOverdriveTickAccum -= 100;
+            const d = this.pointToSegmentDist(this.player.x, this.player.y, this.npc.x, this.npc.y, beamEndX, beamEndY);
+            if (d <= 30) {
+              this.player.takeDamage(15);
+              this.spawnHitFlash(this.player.x, this.player.y, 0xff6600);
+            }
+          }
+        }
+      }
     }
 
     // ── Shadow per-frame ─────────────────────────────────────────
@@ -5856,7 +6769,12 @@ export class ArenaScene extends Phaser.Scene {
           } else {
             // NPC cloud: heal NPC, damage player
             if (Phaser.Math.Distance.Between(cloud.x, cloud.y, this.npc.x, this.npc.y) <= cloud.radius + 14) {
+              const prevNpcHp = this.npc.hp;
               this.npc.heal(3);
+              const npcHealed = this.npc.hp - prevNpcHp;
+              if (npcHealed > 0) {
+                this.npcShadowDanceCharge = Math.min(35, this.npcShadowDanceCharge + npcHealed);
+              }
             }
             if (Phaser.Math.Distance.Between(cloud.x, cloud.y, this.player.x, this.player.y) <= cloud.radius + 14) {
               this.player.takeDamage(2);
@@ -6007,6 +6925,44 @@ export class ArenaScene extends Phaser.Scene {
         // Player stun from NPC snap trap
         if (time < this.shadowPlayerStunnedUntil) {
           (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+        }
+
+        // NPC black hole (P2 shadow Q ability): chargeup → activation
+        if (this.npcShadowBlackHoleCharging) {
+          if (this.npcShadowBlackHoleChargeVisual) {
+            this.npcShadowBlackHoleChargeVisual.setPosition(this.npc.x, this.npc.y);
+          }
+          if (time >= this.npcShadowBlackHoleChargeStart + 3000) {
+            this.npcShadowBlackHoleCharging = false;
+            this.npcNukeChanneling = false;
+            if (this.npcShadowBlackHoleChargeVisual) { this.npcShadowBlackHoleChargeVisual.destroy(); this.npcShadowBlackHoleChargeVisual = null; }
+            this.npcShadowBlackHoleActive = true;
+            this.npcShadowBlackHoleEnd = time + 10000;
+            this.npcShadowBlackHoleSprite = this.add.graphics().setDepth(5);
+          }
+        }
+
+        // NPC black hole active: draw + pull player toward NPC
+        if (this.npcShadowBlackHoleActive) {
+          if (time >= this.npcShadowBlackHoleEnd) {
+            this.npcShadowBlackHoleActive = false;
+            if (this.npcShadowBlackHoleSprite) { this.npcShadowBlackHoleSprite.destroy(); this.npcShadowBlackHoleSprite = null; }
+          } else {
+            if (this.npcShadowBlackHoleSprite) {
+              const pulse = 18 + Math.sin(time * 0.006) * 4;
+              this.npcShadowBlackHoleSprite.clear();
+              this.npcShadowBlackHoleSprite.fillStyle(0x000000, 0.6);
+              this.npcShadowBlackHoleSprite.fillCircle(this.npc.x, this.npc.y, pulse);
+              this.npcShadowBlackHoleSprite.lineStyle(3, 0x8800cc, 0.85);
+              this.npcShadowBlackHoleSprite.strokeCircle(this.npc.x, this.npc.y, pulse + 8);
+            }
+            // Pull player toward NPC
+            const bDist = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y);
+            if (bDist > 12) {
+              const bAngle = Math.atan2(this.npc.y - this.player.y, this.npc.x - this.player.x);
+              (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(bAngle) * 67, Math.sin(bAngle) * 67);
+            }
+          }
         }
       }
 
@@ -6612,6 +7568,20 @@ export class ArenaScene extends Phaser.Scene {
         }
       }
 
+      // Grenade hold visual (P2 in PvP)
+      if (this.isPvP && this.p2HuntGrenadeHolding && this.p2HuntGrenadeVisual) {
+        const p2HoldMs = time - this.p2HuntGrenadeHoldStart;
+        const p2HoldFrac = Math.min(1, p2HoldMs / 3000);
+        this.p2HuntGrenadeVisual.setPosition(this.npc.x, this.npc.y);
+        this.p2HuntGrenadeVisual.setRadius(10 + p2HoldFrac * 8);
+        if (p2HoldMs >= 3000) {
+          // Auto-explode with self-damage
+          this.spawnGrenadeExplosion(this.npc.x, this.npc.y, true, 'npc');
+          this.p2HuntGrenadeHolding = false;
+          this.p2HuntGrenadeVisual.destroy(); this.p2HuntGrenadeVisual = null;
+        }
+      }
+
       // Grenades in flight — player
       for (let i = this.huntGrenades.length - 1; i >= 0; i--) {
         const g = this.huntGrenades[i];
@@ -6948,24 +7918,30 @@ export class ArenaScene extends Phaser.Scene {
         }
 
         // NPC barrage: fire time shards toward player (accelerates over 3s of continuous firing)
-        const npcBarrageDist = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y);
-        if (npcBarrageDist <= 400 && !this.npcTimeRemainActive) {
+        // In PvP: driven by p2TimeBarrageActive (click held); in AI: auto-fires within range
+        const npcBarrageReady = this.isPvP ? this.p2TimeBarrageActive && !this.npcTimeRemainActive
+          : Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y) <= 400 && !this.npcTimeRemainActive;
+        if (npcBarrageReady) {
           const nbElapsed = (time - this.npcTimeBarrageStart) / 1000;
-          const nbInterval = Math.max(80, 200 - 120 * Math.min(1, nbElapsed / 3));
+          // PvP uses same acceleration curve as player (200→60ms over 3s); AI uses 200→80ms
+          const nbInterval = this.isPvP ? Math.max(60, 200 - 140 * Math.min(1, nbElapsed / 3))
+            : Math.max(80, 200 - 120 * Math.min(1, nbElapsed / 3));
           this.npcTimeBarrageAccum += delta;
           while (this.npcTimeBarrageAccum >= nbInterval) {
             this.npcTimeBarrageAccum -= nbInterval;
             const ndx = this.player.x - this.npc.x, ndy = this.player.y - this.npc.y;
             const nlen = Math.sqrt(ndx * ndx + ndy * ndy) || 1;
             const nbSpeed = (300 + 200 * Math.min(1, nbElapsed / 3)) * (this.npcTimeHaltActive ? 2 : 1);
-            const aimOff = (Math.random() * 2 - 1) * this.npcDifficulty.aimOffsetDeg * 0.6 * (Math.PI / 180);
-            const nAngle = Math.atan2(ndy, ndx) + aimOff + (Math.random() - 0.5) * 0.18;
-            const nShard = new Projectile(this, this.npc.x, this.npc.y, 'proj-time-shard', 4, false);
+            const aimOff = this.isPvP ? 0 : (Math.random() * 2 - 1) * this.npcDifficulty.aimOffsetDeg * 0.6 * (Math.PI / 180);
+            const spread = this.isPvP ? (Math.random() - 0.5) * 0.28 : (Math.random() - 0.5) * 0.18;
+            const nAngle = Math.atan2(ndy, ndx) + aimOff + spread;
+            const shardDmg = this.isPvP ? (this.npcTimeHaltActive ? 2 : 1) : 4;
+            const nShard = new Projectile(this, this.npc.x, this.npc.y, 'proj-time-shard', shardDmg, false);
             this.projectiles.add(nShard);
             nShard.launch(Math.cos(nAngle) * nbSpeed, Math.sin(nAngle) * nbSpeed);
           }
-        } else {
-          // Reset barrage ramp when out of range
+        } else if (!this.isPvP) {
+          // Reset barrage ramp when AI is out of range
           this.npcTimeBarrageStart = time;
           this.npcTimeBarrageAccum = 0;
         }
