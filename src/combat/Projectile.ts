@@ -3,6 +3,7 @@ import Phaser from 'phaser';
 export class Projectile extends Phaser.Physics.Arcade.Image {
   public readonly damage: number;
   public readonly isFromPlayer: boolean;
+  public isPowered = false;
 
   constructor(
     scene: Phaser.Scene,

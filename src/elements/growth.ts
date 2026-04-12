@@ -15,7 +15,7 @@ const growthClick: Ability = {
 const mutate: Ability = {
   id: 'mutate',
   name: 'Mutate',
-  description: 'Choose 1 of 3 random permanent mutations.',
+  description: 'Choose 1 of 3 random permanent mutations. E+ upgrade: hold E to auto-pick when off cooldown.',
   displayKey: 'E',
   cooldown: 3000,
   cast(ctx: CastContext) {
@@ -48,7 +48,7 @@ const bloat: Ability = {
 const mutantMorph: Ability = {
   id: 'mutant-morph',
   name: 'Mutant Morph',
-  description: 'Randomly change Click to Spores, Claws, or Virus.',
+  description: 'Randomly change Click to Spores, Claws, or Virus. Q+ upgrade adds Plague Bomb and Bacterium.',
   displayKey: 'Q',
   cooldown: 30000,
   cast(ctx: CastContext) {

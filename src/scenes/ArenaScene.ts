@@ -20,6 +20,8 @@ import { crystalElement } from '../elements/crystal';
 import { soulElement } from '../elements/soul';
 import { huntElement } from '../elements/hunt';
 import { sandElement } from '../elements/sand';
+import { gravityElement } from '../elements/gravity';
+import { creationElement } from '../elements/creation';
 import { P2InputState, emptyP2Input } from '../network/P2InputState';
 import * as PlayerData from '../data/PlayerData';
 import { getTotalRewardMult } from '../data/Mutations';
@@ -78,10 +80,22 @@ interface Plant {
 
 interface Drone {
   sprite: Phaser.GameObjects.Arc;
-  hp: number;
-  maxHp: number;
+  shotsLeft: number;        // 3 = full, 1 = critical, 0 = spent (destroyed)
   orbitAngle: number;
   shielded: boolean;
+  healedByFirewall: boolean; // F upgrade: can only be healed once per drone
+  meleeCooldownUntil: number; // E upgrade: per-drone melee cooldown timestamp
+  owner: 'player' | 'npc';
+}
+
+interface OilPuddle {
+  sprite: Phaser.GameObjects.Arc;
+  x: number;
+  y: number;
+  expiresAt: number;
+  ignited: boolean;
+  igniteTickAccum: number;
+  radius: number;
   owner: 'player' | 'npc';
 }
 
@@ -102,6 +116,7 @@ interface SnapTrap {
   x: number;
   y: number;
   triggered: boolean;
+  radius: number;
   owner: 'player' | 'npc';
 }
 
@@ -189,10 +204,119 @@ interface TimePuddle {
   owner: 'player' | 'npc';
 }
 
+interface GravSlash {
+  line: Phaser.GameObjects.Line;
+  x1: number; y1: number; x2: number; y2: number;
+  fireAt: number;
+  owner: 'player' | 'npc';
+  damage: number;
+  knockback: number;
+}
+
+interface GravMeteorShadow {
+  sprite: Phaser.GameObjects.Arc;
+  fireAt: number;
+  x: number; y: number;
+  owner: 'player' | 'npc';
+  damage: number;
+  radius: number;
+  directHitRadius: number;
+  directBonus: number;
+  frozen: boolean;
+}
+
+interface GravFirePuddle {
+  sprite: Phaser.GameObjects.Arc;
+  expiresAt: number;
+  x: number; y: number;
+  radius: number;
+  tickAccum: number;
+  owner: 'player' | 'npc';
+}
+
 interface PosSnapshot {
   x: number;
   y: number;
   t: number;
+}
+
+interface CreationCrucibleBolt {
+  tier: 'copper' | 'silver' | 'gold';
+  icon: Phaser.GameObjects.Rectangle;
+}
+
+interface CreationDagger {
+  sprite: Phaser.GameObjects.Rectangle;
+  vx: number;
+  vy: number;
+  damage: number;
+  owner: 'player' | 'npc';
+  hitSet: Set<string>;
+}
+
+interface CreationBoltInFlight {
+  sprite: Phaser.GameObjects.Arc;
+  vx: number;
+  vy: number;
+  tier: 'copper' | 'silver' | 'gold';
+  damage: number;
+  owner: 'player' | 'npc';
+}
+
+interface CreationScythe {
+  sprite: Phaser.GameObjects.Rectangle;
+  hp: number;
+  maxHp: number;
+  vx: number;
+  vy: number;
+  owner: 'player' | 'npc';
+  lastContactTick: number;
+  hpBar: Phaser.GameObjects.Rectangle;
+  hpBg: Phaser.GameObjects.Rectangle;
+}
+
+interface CreationBlocker {
+  rect: Phaser.GameObjects.Rectangle;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  hp: number;
+  maxHp: number;
+  owner: 'player' | 'npc';
+  hpBar: Phaser.GameObjects.Rectangle;
+  hpBg: Phaser.GameObjects.Rectangle;
+}
+
+interface CreationMazeWall {
+  rect: Phaser.GameObjects.Rectangle;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  owner: 'player' | 'npc';
+  expireAt: number;
+}
+
+interface CreationMedkit {
+  sprite: Phaser.GameObjects.Rectangle;
+  label: Phaser.GameObjects.Text;
+  x: number;
+  y: number;
+  expireAt: number;
+  owner: 'player' | 'npc';
+}
+
+interface CreationPulse {
+  x: number;
+  y: number;
+  remaining: number;
+  lastPulseAt: number;
+  intervalMs: number;
+  range: number;
+  kind: 'heal' | 'damage';
+  magnitude: number;
+  owner: 'player' | 'npc';
 }
 
 const ELEMENT_MAP: Record<string, Element> = {
@@ -209,6 +333,8 @@ const ELEMENT_MAP: Record<string, Element> = {
   soul:    soulElement,
   hunt:    huntElement,
   sand:    sandElement,
+  gravity: gravityElement,
+  creation: creationElement,
 };
 
 const ELEMENT_TEXTURES: Record<string, string> = {
@@ -225,6 +351,8 @@ const ELEMENT_TEXTURES: Record<string, string> = {
   soul:    'elem-soul',
   hunt:    'elem-hunt',
   sand:    'elem-sand',
+  gravity: 'elem-gravity',
+  creation: 'elem-creation',
 };
 
 export class ArenaScene extends Phaser.Scene {
@@ -544,13 +672,18 @@ export class ArenaScene extends Phaser.Scene {
   private playerFirewallHp = 0;
   private playerFirewallX = 0;
   private playerFirewallY = 0;
+  private playerFirewallAngle = 0;
   private playerOverdriveActive = false;
   private playerOverdriveEnd = 0;
   private playerOverdriveAngle = 0;
   private playerOverdriveTickAccum = 0;
   private playerOverdriveGraphics: Phaser.GameObjects.Graphics | null = null;
+  private playerOverdriveDroneCount = 0;
+  private playerOilPuddles: OilPuddle[] = [];
   // NPC oil state
   private npcDrones: Drone[] = [];
+  private npcFirewallAngle = 0;
+  private npcOilPuddles: OilPuddle[] = [];
 
   // Shadow state (shared cloud/trap arrays)
   private shadowDarkClouds: DarkCloud[] = [];
@@ -566,6 +699,7 @@ export class ArenaScene extends Phaser.Scene {
   private shadowTentacleSprite: Phaser.GameObjects.Graphics | null = null;
   private shadowNpcSnaredUntil = 0;
   private shadowNpcStunnedUntil = 0;
+  private shadowNpcThrowUntil = 0;
   private shadowDanceCharge = 0;
   private shadowDanceChargeBar: Phaser.GameObjects.Rectangle | null = null;
   private shadowBlackHoleCharging = false;
@@ -586,6 +720,18 @@ export class ArenaScene extends Phaser.Scene {
   private npcShadowDragNextChangeAt = 0;
   private shadowPlayerSnaredUntil = 0;
   private shadowPlayerStunnedUntil = 0;
+  // Shadow — upgrade state
+  private shadowConsumeActive = false;
+  private shadowConsumeEnd = 0;
+  private shadowConsumeTickAccum = 0;
+  private shadowConsumeAura: Phaser.GameObjects.Arc | null = null;
+  private shadowConfusionUntil = 0;
+  private shadowConfusionAngle = 0;
+  private shadowConfusionNextChange = 0;
+  private shadowCloudExposureAccum = 0;
+  private shadowDanceUpgradeDodgeUntil = 0;
+  private shadowDanceUpgradeCooldownUntil = 0;
+  private shadowBHPuddleAccum = 0;
 
   // Ice — frost stacks (both fighters)
   private npcFrostStacks = 0;
@@ -602,9 +748,25 @@ export class ArenaScene extends Phaser.Scene {
   private npcFrozenUntil = 0;
   // Ice — shared
   private icyTrails: IcyTrail[] = [];
+  // Ice upgrades state
+  private playerBlackIceMorphActive = false;
+  private playerBlackIceAura: Phaser.GameObjects.Arc | null = null;
+  private npcVoidFrostStacks = 0;
+  private npcVoidFrostVisual: Phaser.GameObjects.Text | null = null;
+  private npcVoidFrostTickAccum = 0;
+  private npcVoidFrostThawAccum = 0;
+  private npcVoidedUntil = 0;
+  private npcVoidedDps = 0;
+  private npcVoidedTickAccum = 0;
+  private npcVoidedVisual: Phaser.GameObjects.Text | null = null;
+  private playerIceConsecHits = 0;
+  private playerNextIcePowered = false;
+  private playerIcePendingSet: Set<Projectile> = new Set();
+  private playerIceSpeedBoostUntil = 0;
+  private npcFrozenSolidAmpReady = false;
 
   // Growth — player
-  private growthMorphType: 'spores' | 'claws' | 'virus' = 'spores';
+  private growthMorphType: 'spores' | 'claws' | 'virus' | 'plague-bomb' | 'bacterium' = 'spores';
   private growthDamageMult = 1.0;
   private growthLingerBonus = 0;
   private growthViralBonus = 0;
@@ -621,6 +783,20 @@ export class ArenaScene extends Phaser.Scene {
   private growthMutateButtons: Phaser.GameObjects.GameObject[] = [];
   private lastPlayerInfectCast = -99999;
   private lastPlayerBloatCast = -99999;
+  // Growth — upgrade/mutation extra state
+  private growthBloatAoeRadius = 120;
+  private growthInfectBounces = 0;
+  private growthInfectHitboxMult = 1.0;
+  private growthFungalStacks = 0;
+  private growthGreedBonus = 0;
+  private growthSneezeStacks = 0;
+  private growthCoughStacks = 0;
+  private growthSneezeAura: Phaser.GameObjects.Arc | null = null;
+  private growthCoughAura: Phaser.GameObjects.Arc | null = null;
+  private growthSneezeAccum = 0;
+  private growthSpreadStacks = 0;
+  private growthBacteriaList: Array<{ sprite: Phaser.GameObjects.Arc; hp: number; lastContactTime: number }> = [];
+  private growthInfectBouncers: Array<{ proj: Projectile; bouncesDone: number }> = [];
   // Growth — NPC
   private npcGrowthMorphType: 'spores' | 'claws' | 'virus' = 'spores';
   private npcGrowthDamageMult = 1.0;
@@ -820,6 +996,74 @@ export class ArenaScene extends Phaser.Scene {
   private armageddonActive = false;
   private armageddonChargeVisual: Phaser.GameObjects.Arc | null = null;
 
+  // Gravity-specific state
+  private gravPointerDownX = 0;
+  private gravPointerDownY = 0;
+  private gravClickArmed = false;
+  private gravEKeyWasDown = false;
+  private gravEKeyHeldSince = 0;
+  private gravMeteorRainHolding = false;
+  private gravMeteorRainAura: Phaser.GameObjects.Arc | null = null;
+  private gravMeteorRainRecorded: { x: number; y: number }[] = [];
+  private gravMeteorRainLiveCount = 0;
+  private gravBombHolding = false;
+  private gravBombHoldStart = 0;
+  private gravBombVisual: Phaser.GameObjects.Arc | null = null;
+  private gravBombLastX = 0;
+  private gravBombLastY = 0;
+  private gravSpaceSlamLockUntil = 0;
+  private gravLunarShadow: Phaser.GameObjects.Arc | null = null;
+  private gravLunarRadius = 0;
+  private gravLunarFireAt = 0;
+  private gravLunarOwner: 'player' | 'npc' = 'player';
+  private gravSlashes: GravSlash[] = [];
+  private gravMeteorShadows: GravMeteorShadow[] = [];
+  private gravFirePuddles: GravFirePuddle[] = [];
+  // NPC gravity state
+  private npcGravSpaceSlamLockUntil = 0;
+
+  // Creation-specific state
+  // Crucible (shared world object, one per match)
+  private crucibleSprite: Phaser.GameObjects.Rectangle | null = null;
+  private crucibleLabel: Phaser.GameObjects.Text | null = null;
+  private crucibleX = 0;
+  private crucibleY = 0;
+  private crucibleBolts: CreationCrucibleBolt[] = [];
+  // Crafting
+  private creatCraftInProgress = false;
+  private creatCraftStartTime = 0;
+  private creatCraftDuration = 5000;
+  private creatCraftOwner: 'player' | 'npc' = 'player';
+  // Dagger click-hold
+  private creatDaggerHolding = false;
+  private creatDaggerHoldStart = 0;
+  private creatDaggerHoldX = 0;
+  private creatDaggerHoldY = 0;
+  private creatDaggerPreviews: Phaser.GameObjects.Line[] = [];
+  // Bolt E-charge
+  private creatBoltHolding = false;
+  private creatBoltHoldStart = 0;
+  private creatBoltChargeOrb: Phaser.GameObjects.Arc | null = null;
+  // F-block drag
+  private creatBlockDragging = false;
+  private creatBlockDragStartX = 0;
+  private creatBlockDragStartY = 0;
+  private creatBlockPreview: Phaser.GameObjects.Rectangle | null = null;
+  // Shared in-flight arrays (owner field distinguishes sides)
+  private creatDaggers: CreationDagger[] = [];
+  private creatBolts: CreationBoltInFlight[] = [];
+  private creatScythes: CreationScythe[] = [];
+  private creatPulses: CreationPulse[] = [];
+  // Persistent world objects
+  private creatBlockers: CreationBlocker[] = [];
+  private creatMazeWalls: CreationMazeWall[] = [];
+  private creatMedkit: CreationMedkit | null = null;
+  // Buff timers
+  private creatDamageReductionEnd = 0;
+  private creatPrevIncomingDamageMult = 1;
+  private creatSpeedBoostEnd = 0;
+  private creatPrevSpeedMult = -1;
+
   // Shared world effects (owner-aware)
   private puddles: Puddle[] = [];
   private geysers: Geyser[] = [];
@@ -986,21 +1230,26 @@ export class ArenaScene extends Phaser.Scene {
     this.playerFirewallHp = 0;
     this.playerFirewallX = 0;
     this.playerFirewallY = 0;
+    this.playerFirewallAngle = 0;
     this.playerOverdriveActive = false;
     this.playerOverdriveEnd = 0;
     this.playerOverdriveAngle = 0;
     this.playerOverdriveTickAccum = 0;
     this.playerOverdriveGraphics = null;
+    this.playerOverdriveDroneCount = 0;
+    this.playerOilPuddles = [];
     this.npcDrones = [];
     this.npcFirewallSprite = null;
     this.npcFirewallHp = 0;
     this.npcFirewallX = 0;
     this.npcFirewallY = 0;
+    this.npcFirewallAngle = 0;
     this.npcOverdriveActive = false;
     this.npcOverdriveEnd = 0;
     this.npcOverdriveAngle = 0;
     this.npcOverdriveTickAccum = 0;
     this.npcOverdriveGraphics = null;
+    this.npcOilPuddles = [];
     this.p2LastAimX = 0;
     this.p2LastAimY = 0;
     this.p2PainRainHolding = false;
@@ -1054,6 +1303,7 @@ export class ArenaScene extends Phaser.Scene {
     this.shadowTentacleSprite = null;
     this.shadowNpcSnaredUntil = 0;
     this.shadowNpcStunnedUntil = 0;
+    this.shadowNpcThrowUntil = 0;
     this.shadowDanceCharge = 0;
     this.shadowDanceChargeBar = null;
     this.shadowBlackHoleCharging = false;
@@ -1073,6 +1323,17 @@ export class ArenaScene extends Phaser.Scene {
     this.npcShadowDragNextChangeAt = 0;
     this.shadowPlayerSnaredUntil = 0;
     this.shadowPlayerStunnedUntil = 0;
+    this.shadowConsumeActive = false;
+    this.shadowConsumeEnd = 0;
+    this.shadowConsumeTickAccum = 0;
+    if (this.shadowConsumeAura) { this.shadowConsumeAura.destroy(); this.shadowConsumeAura = null; }
+    this.shadowConfusionUntil = 0;
+    this.shadowConfusionAngle = 0;
+    this.shadowConfusionNextChange = 0;
+    this.shadowCloudExposureAccum = 0;
+    this.shadowDanceUpgradeDodgeUntil = 0;
+    this.shadowDanceUpgradeCooldownUntil = 0;
+    this.shadowBHPuddleAccum = 0;
 
     this.npcFrostStacks = 0;
     this.playerFrostStacks = 0;
@@ -1085,6 +1346,21 @@ export class ArenaScene extends Phaser.Scene {
     this.npcBlockUpAura = null;
     this.npcFrozenUntil = 0;
     this.icyTrails = [];
+    this.playerBlackIceMorphActive = false;
+    this.playerBlackIceAura = null;
+    this.npcVoidFrostStacks = 0;
+    this.npcVoidFrostVisual = null;
+    this.npcVoidFrostTickAccum = 0;
+    this.npcVoidFrostThawAccum = 0;
+    this.npcVoidedUntil = 0;
+    this.npcVoidedDps = 0;
+    this.npcVoidedTickAccum = 0;
+    this.npcVoidedVisual = null;
+    this.playerIceConsecHits = 0;
+    this.playerNextIcePowered = false;
+    this.playerIcePendingSet = new Set();
+    this.playerIceSpeedBoostUntil = 0;
+    this.npcFrozenSolidAmpReady = false;
 
     for (const n of this.crystalNodes) n.sprite.destroy();
     for (const p of this.crystalPortals) { p.sprite.destroy(); p.label.destroy(); }
@@ -1162,6 +1438,105 @@ export class ArenaScene extends Phaser.Scene {
     if (this.npcTimeHaltAura) { this.npcTimeHaltAura.destroy(); this.npcTimeHaltAura = null; }
     this.npcTimeSlowedProjs.clear();
     this.npcTimeTimelessActive = false; this.npcTimeTimelessCharge = 0;
+
+    // Creation reset
+    if (this.crucibleSprite) { this.crucibleSprite.destroy(); this.crucibleSprite = null; }
+    if (this.crucibleLabel) { this.crucibleLabel.destroy(); this.crucibleLabel = null; }
+    for (const b of this.crucibleBolts) b.icon.destroy();
+    this.crucibleBolts = [];
+    this.creatCraftInProgress = false; this.creatCraftStartTime = 0;
+    this.creatDaggerHolding = false; this.creatDaggerHoldStart = 0;
+    for (const l of this.creatDaggerPreviews) l.destroy();
+    this.creatDaggerPreviews = [];
+    this.creatBoltHolding = false;
+    if (this.creatBoltChargeOrb) { this.creatBoltChargeOrb.destroy(); this.creatBoltChargeOrb = null; }
+    this.creatBlockDragging = false;
+    if (this.creatBlockPreview) { this.creatBlockPreview.destroy(); this.creatBlockPreview = null; }
+    for (const d of this.creatDaggers) d.sprite.destroy();
+    this.creatDaggers = [];
+    for (const b of this.creatBolts) b.sprite.destroy();
+    this.creatBolts = [];
+    for (const s of this.creatScythes) { s.sprite.destroy(); s.hpBar.destroy(); s.hpBg.destroy(); }
+    this.creatScythes = [];
+    this.creatPulses = [];
+    for (const bl of this.creatBlockers) { bl.rect.destroy(); bl.hpBar.destroy(); bl.hpBg.destroy(); }
+    this.creatBlockers = [];
+    for (const w of this.creatMazeWalls) w.rect.destroy();
+    this.creatMazeWalls = [];
+    if (this.creatMedkit) { this.creatMedkit.sprite.destroy(); this.creatMedkit.label.destroy(); this.creatMedkit = null; }
+    this.creatDamageReductionEnd = 0; this.creatPrevIncomingDamageMult = 1;
+    this.creatSpeedBoostEnd = 0; this.creatPrevSpeedMult = -1;
+
+    // Gravity reset
+    this.gravPointerDownX = 0; this.gravPointerDownY = 0; this.gravClickArmed = false;
+    this.gravEKeyWasDown = false; this.gravEKeyHeldSince = 0;
+    this.gravMeteorRainHolding = false;
+    if (this.gravMeteorRainAura) { this.gravMeteorRainAura.destroy(); this.gravMeteorRainAura = null; }
+    this.gravMeteorRainRecorded = []; this.gravMeteorRainLiveCount = 0;
+    this.gravBombHolding = false; this.gravBombHoldStart = 0;
+    if (this.gravBombVisual) { this.gravBombVisual.destroy(); this.gravBombVisual = null; }
+    this.gravBombLastX = 0; this.gravBombLastY = 0;
+    this.gravSpaceSlamLockUntil = 0; this.npcGravSpaceSlamLockUntil = 0;
+    if (this.gravLunarShadow) { this.gravLunarShadow.destroy(); this.gravLunarShadow = null; }
+    this.gravLunarFireAt = 0; this.gravLunarRadius = 0;
+    for (const s of this.gravSlashes) { s.line.destroy(); }
+    this.gravSlashes = [];
+    for (const s of this.gravMeteorShadows) { s.sprite.destroy(); }
+    this.gravMeteorShadows = [];
+    for (const p of this.gravFirePuddles) { p.sprite.destroy(); }
+    this.gravFirePuddles = [];
+
+    // Growth reset
+    this.growthMorphType = 'spores';
+    this.growthDamageMult = 1.0;
+    this.growthLingerBonus = 0;
+    this.growthViralBonus = 0;
+    this.growthBloatCdMs = 10000;
+    this.growthInfectExtraProj = 0;
+    this.growthInfectCdMs = 8000;
+    this.growthRegenRate = 0;
+    this.growthRegenAccum = 0;
+    this.growthScaleBonus = 0;
+    this.growthBloatActive = false;
+    this.growthBloatEnd = 0;
+    if (this.growthBloatAura) { this.growthBloatAura.destroy(); this.growthBloatAura = null; }
+    for (const btn of this.growthMutateButtons) (btn as unknown as { destroy(): void }).destroy();
+    this.growthMutateButtons = [];
+    this.growthMutateMenuOpen = false;
+    this.lastPlayerInfectCast = -99999;
+    this.lastPlayerBloatCast = -99999;
+    this.growthBloatAoeRadius = 120;
+    this.growthInfectBounces = 0;
+    this.growthInfectHitboxMult = 1.0;
+    this.growthFungalStacks = 0;
+    this.growthGreedBonus = 0;
+    this.growthSneezeStacks = 0;
+    this.growthCoughStacks = 0;
+    if (this.growthSneezeAura) { this.growthSneezeAura.destroy(); this.growthSneezeAura = null; }
+    if (this.growthCoughAura) { this.growthCoughAura.destroy(); this.growthCoughAura = null; }
+    this.growthSneezeAccum = 0;
+    this.growthSpreadStacks = 0;
+    for (const b of this.growthBacteriaList) b.sprite.destroy();
+    this.growthBacteriaList = [];
+    this.growthInfectBouncers = [];
+    this.npcGrowthMorphType = 'spores';
+    this.npcGrowthDamageMult = 1.0;
+    this.npcGrowthLingerBonus = 0;
+    this.npcGrowthViralBonus = 0;
+    this.npcGrowthBloatCdMs = 10000;
+    this.npcGrowthInfectExtraProj = 0;
+    this.npcGrowthRegenRate = 0;
+    this.npcGrowthRegenAccum = 0;
+    this.npcGrowthScaleBonus = 0;
+    this.npcGrowthBloatActive = false;
+    this.npcGrowthBloatEnd = 0;
+    if (this.npcGrowthBloatAura) { this.npcGrowthBloatAura.destroy(); this.npcGrowthBloatAura = null; }
+    this.lastNpcInfectCast = -99999;
+    this.lastNpcBloatCast = -99999;
+    this.npcToxicUntil = 0; this.npcToxicDps = 0; this.npcToxicTickAccum = 0;
+    if (this.npcToxicAura) { this.npcToxicAura.destroy(); this.npcToxicAura = null; }
+    this.playerToxicUntil = 0; this.playerToxicDps = 0; this.playerToxicTickAccum = 0;
+    if (this.playerToxicAura) { this.playerToxicAura.destroy(); this.playerToxicAura = null; }
 
     this.activeUpgrades = PlayerData.getActiveUpgrades(this.elementId);
     this.npcBurningUntil = 0;
@@ -1329,6 +1704,13 @@ export class ArenaScene extends Phaser.Scene {
           return;
         }
         let _npcDmg = proj.damage;
+        // Q+: Shatter Strike — next hit on frozen enemy deals 25% more
+        if (this.npcFrozenSolidAmpReady && this.npcFrozenUntil > this.time.now) {
+          _npcDmg = Math.round(_npcDmg * 1.25);
+          this.npcFrozenSolidAmpReady = false;
+          const st = this.add.text(this.npc.x, this.npc.y - 30, 'SHATTER!', { fontSize: '11px', color: '#88ccff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
+          this.tweens.add({ targets: st, y: st.y - 20, alpha: 0, duration: 1200, onComplete: () => st.destroy() });
+        }
         this.npc.takeDamage(_npcDmg);
         this.spawnHitFlash(proj.x, proj.y, 0xff6600);
         // Hunt Blood Pact: heal player for 50% of damage dealt
@@ -1346,17 +1728,37 @@ export class ArenaScene extends Phaser.Scene {
           const nb = this.npc.body as Phaser.Physics.Arcade.Body;
           nb.setVelocity(nb.velocity.x + (vx / len) * 180, nb.velocity.y + (vy / len) * 180);
         }
-        // Ice spike: frost stacks + unfreeze bonus
+        // Ice spike: frost stacks + unfreeze bonus + Click+ tracking
         if (proj.texture.key === 'proj-ice') {
+          // Click+: consecutive hit tracking
+          if (this.hasUpgrade('click') && this.playerIcePendingSet.has(proj)) {
+            this.playerIcePendingSet.delete(proj);
+            this.playerIceConsecHits++;
+            if (this.playerIceConsecHits >= 3) {
+              this.playerNextIcePowered = true;
+              this.playerIceConsecHits = 0;
+              const pt = this.add.text(this.player.x, this.player.y - 36, 'POWERED!', { fontSize: '11px', color: '#cceeff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
+              this.tweens.add({ targets: pt, y: pt.y - 20, alpha: 0, duration: 1200, onComplete: () => pt.destroy() });
+            }
+          }
           if (this.npcFrozenUntil > this.time.now) {
             this.npcFrozenUntil = 0;
             for (let fi = 0; fi < 3; fi++) this.addFrostStack('npc');
           } else {
             this.addFrostStack('npc');
+            // Powered shot: apply extra frost stack
+            if (proj.isPowered) this.addFrostStack('npc');
           }
         }
-        // Growth infect dagger: apply toxic DOT to NPC
+        // Growth infect dagger: apply toxic DOT to NPC, R+ bonus on already-infected
         if (proj.texture.key === 'proj-growth-dagger') {
+          if (this.hasUpgrade('r') && this.npcToxicUntil > this.time.now) {
+            const bonus = Math.round(proj.damage * 0.25);
+            this.npc.takeDamage(bonus);
+            this.spawnHitFlash(this.npc.x, this.npc.y, 0xccff44);
+            const ft = this.add.text(this.npc.x, this.npc.y - 35, `+${bonus} EXPLOIT`, { fontSize: '10px', color: '#ccff44', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
+            this.tweens.add({ targets: ft, y: ft.y - 20, alpha: 0, duration: 900, onComplete: () => ft.destroy() });
+          }
           this.npcToxicUntil = this.time.now + 5000 + this.growthLingerBonus;
           this.npcToxicDps = 2 + this.growthViralBonus;
           this.npcToxicTickAccum = 0;
@@ -1408,6 +1810,26 @@ export class ArenaScene extends Phaser.Scene {
           (proj.body as Phaser.Physics.Arcade.Body).stop();
           return;
         }
+        // E+ shadow consume: immune to damage while consuming
+        if (this.elementId === 'shadow' && this.shadowConsumeActive) {
+          proj.setActive(false).setVisible(false);
+          (proj.body as Phaser.Physics.Arcade.Body).stop();
+          return;
+        }
+        // F+ shadow dance: 25% dodge for 8s after full-bar use
+        if (this.elementId === 'shadow' && this.time.now < this.shadowDanceUpgradeDodgeUntil && Math.random() < 0.25) {
+          this.spawnDamageNumber(this.player.x, this.player.y - 34, -1);
+          proj.setActive(false).setVisible(false);
+          (proj.body as Phaser.Physics.Arcade.Body).stop();
+          return;
+        }
+        // Q+ shadow black hole: 25% dodge while charging
+        if (this.elementId === 'shadow' && this.shadowBlackHoleCharging && this.hasUpgrade('q') && Math.random() < 0.25) {
+          this.spawnDamageNumber(this.player.x, this.player.y - 34, -1);
+          proj.setActive(false).setVisible(false);
+          (proj.body as Phaser.Physics.Arcade.Body).stop();
+          return;
+        }
         // F upgrade: 50% dodge while mid-grapple
         if (this.isGrappling && this.hasUpgrade('f') && Math.random() < 0.5) {
           this.spawnDamageNumber(this.player.x, this.player.y - 34, -1); // DODGED
@@ -1452,18 +1874,31 @@ export class ArenaScene extends Phaser.Scene {
           this.playerToxicDps = 2 + this.npcGrowthViralBonus;
           this.playerToxicTickAccum = 0;
         }
-        // Player bloat: player hit triggers AOE on NPC
+        // Player bloat: player hit triggers AOE on NPC (F+ hold prevents trigger)
         if (this.growthBloatActive) {
-          this.growthBloatActive = false;
-          this.growthBloatEnd = 0;
-          if (this.growthBloatAura) { this.growthBloatAura.destroy(); this.growthBloatAura = null; }
-          const bloatDmg = Math.round(20 * this.growthDamageMult);
-          if (Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y) <= 120) {
-            this.npc.takeDamage(bloatDmg);
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0xdddd00);
+          const fLocked = this.hasUpgrade('f') && this.fKey.isDown;
+          if (!fLocked) {
+            this.growthBloatActive = false;
+            this.growthBloatEnd = 0;
+            if (this.growthBloatAura) { this.growthBloatAura.destroy(); this.growthBloatAura = null; }
+            const bloatDmg = Math.round(20 * this.growthDamageMult);
+            const aoeR = this.growthBloatAoeRadius;
+            if (Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y) <= aoeR) {
+              this.npc.takeDamage(bloatDmg);
+              this.spawnHitFlash(this.npc.x, this.npc.y, 0xdddd00);
+              const ft = this.add.text(this.npc.x, this.npc.y - 30, `💥 ${bloatDmg}`, { fontSize: '11px', color: '#ffff44', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
+              this.tweens.add({ targets: ft, y: ft.y - 25, alpha: 0, duration: 900, onComplete: () => ft.destroy() });
+            }
+            const bloatExp = this.add.circle(this.player.x, this.player.y, aoeR, 0xdddd00, 0.3).setDepth(8);
+            this.tweens.add({ targets: bloatExp, scaleX: 1.4, scaleY: 1.4, alpha: 0, duration: 350, onComplete: () => bloatExp.destroy() });
+            // Fungal Flourish: heal on bloat trigger
+            if (this.growthFungalStacks > 0) {
+              const healAmt = this.growthFungalStacks * 10;
+              this.player.heal(healAmt);
+              const hft = this.add.text(this.player.x, this.player.y - 40, `🍄 +${healAmt}`, { fontSize: '11px', color: '#88ff44', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
+              this.tweens.add({ targets: hft, y: hft.y - 25, alpha: 0, duration: 900, onComplete: () => hft.destroy() });
+            }
           }
-          const bloatExp = this.add.circle(this.player.x, this.player.y, 120, 0xdddd00, 0.3).setDepth(8);
-          this.tweens.add({ targets: bloatExp, scaleX: 1.4, scaleY: 1.4, alpha: 0, duration: 350, onComplete: () => bloatExp.destroy() });
         }
         proj.setActive(false).setVisible(false);
         (proj.body as Phaser.Physics.Arcade.Body).stop();
@@ -1621,6 +2056,16 @@ export class ArenaScene extends Phaser.Scene {
         .setDepth(30);
     }
 
+    // ── Creation: spawn crucible ───────────────────────────────────
+    if (this.elementId === 'creation' || this.npcElementId === 'creation') {
+      this.crucibleX = cx;
+      this.crucibleY = cy;
+      this.crucibleSprite = this.add.rectangle(cx, cy, 48, 48, 0x660066, 0.7)
+        .setStrokeStyle(2, 0xaa44cc, 0.9).setDepth(3);
+      this.crucibleLabel = this.add.text(cx, cy + 36, 'Crucible',
+        { fontSize: '11px', fontFamily: 'Arial', color: '#ddaaff' }).setOrigin(0.5).setDepth(4);
+    }
+
     // ── HUD ────────────────────────────────────────────────────────
     // Online PvP: each tab only shows its own player's HUD.
     // Host controls P1 → bottom HUD only. Guest controls P2 → top HUD only.
@@ -1730,6 +2175,16 @@ export class ArenaScene extends Phaser.Scene {
       'time-remain':      0xffee66,
       'time-halt':        0xddcc00,
       'time-timeless':    0xffffff,
+      'space-slash':      0x8844cc,
+      'meteor-rain':      0xaa66ee,
+      'space-slam':       0x6622aa,
+      'grav-bomb':        0xcc88ff,
+      'lunar-landing':    0x4422aa,
+      'dagger-spray':     0xcc6622,
+      'charged-bolt':     0xddaa44,
+      'scythe-of-doom':   0xcc44aa,
+      'creation-block':   0x884422,
+      'maze-of-doom':     0x882288,
     };
 
     abilities.forEach((ab, i) => {
@@ -2050,15 +2505,20 @@ export class ArenaScene extends Phaser.Scene {
       },
       spawnDrone: () => {
         if (this.playerDrones.length >= 6) return;
-        const angle = (this.playerDrones.length / 6) * Math.PI * 2;
+        const count = this.playerDrones.length;
+        const spawnAngle = (count / 6) * Math.PI * 2;
         const sprite = this.add.circle(
-          this.player.x + Math.cos(angle) * 60,
-          this.player.y + Math.sin(angle) * 60,
+          this.player.x + Math.cos(spawnAngle) * 60,
+          this.player.y + Math.sin(spawnAngle) * 60,
           8, 0xffaa00, 0.9,
         ).setDepth(8);
-        this.playerDrones.push({ sprite, hp: 15, maxHp: 15, orbitAngle: angle, shielded: false, owner: 'player' });
+        this.playerDrones.push({
+          sprite, shotsLeft: 3, orbitAngle: spawnAngle,
+          shielded: false, healedByFirewall: false, meleeCooldownUntil: 0, owner: 'player',
+        });
       },
       commandDrones: (x, y) => {
+        // All drones fire, each expending one shot
         for (const drone of this.playerDrones) {
           const laser = this.add.graphics().setDepth(8);
           laser.lineStyle(2, 0xffaa00, 0.8);
@@ -2068,12 +2528,59 @@ export class ArenaScene extends Phaser.Scene {
             this.npc.takeDamage(3);
             this.spawnHitFlash(this.npc.x, this.npc.y, 0xffaa00);
           }
+          drone.shotsLeft -= 1;
+          // Destroy enemy projectiles along this laser's path
+          for (const go of this.projectiles.getChildren()) {
+            const proj = go as Projectile;
+            if (!proj.active || proj.isFromPlayer) continue;
+            if (this.pointToSegmentDist(proj.x, proj.y, drone.sprite.x, drone.sprite.y, x, y) <= 14) {
+              proj.setActive(false).setVisible(false);
+              (proj.body as Phaser.Physics.Arcade.Body).stop();
+            }
+          }
+        }
+        // R upgrade: ignite oil puddles near cursor
+        if (this.hasUpgrade('r')) {
+          for (const p of this.playerOilPuddles) {
+            if (!p.ignited && Phaser.Math.Distance.Between(x, y, p.x, p.y) <= p.radius + 20) {
+              p.ignited = true;
+              const remaining = p.expiresAt - this.time.now;
+              p.expiresAt = this.time.now + remaining * 0.5;
+              p.sprite.setFillStyle(0xff4400, 0.65);
+            }
+          }
+        }
+        // Destroy drones with 0 shots; Click+ launches them as bombs instead of disappearing
+        for (let di = this.playerDrones.length - 1; di >= 0; di--) {
+          if (this.playerDrones[di].shotsLeft <= 0) {
+            const dead = this.playerDrones[di];
+            const spawnX = dead.sprite.x, spawnY = dead.sprite.y;
+            dead.sprite.destroy();
+            this.playerDrones.splice(di, 1);
+            if (this.hasUpgrade('click')) {
+              const bx = x, by = y;
+              // Spawn a fresh projectile circle so the original sprite's lifecycle doesn't matter
+              const bomb = this.add.circle(spawnX, spawnY, 7, 0xff6600, 0.9).setDepth(9);
+              this.tweens.add({
+                targets: bomb, x: bx, y: by, duration: 400, ease: 'Power2',
+                onComplete: () => {
+                  const boom = this.add.circle(bx, by, 8, 0xff6600, 0.9).setDepth(8);
+                  this.tweens.add({ targets: boom, scaleX: 8, scaleY: 8, alpha: 0, duration: 400, onComplete: () => boom.destroy() });
+                  bomb.destroy();
+                  if (Phaser.Math.Distance.Between(bx, by, this.npc.x, this.npc.y) <= 60) {
+                    this.npc.takeDamage(5);
+                    this.spawnHitFlash(this.npc.x, this.npc.y, 0xff6600);
+                  }
+                },
+              });
+            }
+          }
         }
       },
       launchDrone: (x, y) => {
         if (this.playerDrones.length === 0) return;
         const drone = this.playerDrones.pop()!;
-        const dmg = Math.max(1, drone.hp);
+        const dmg = Math.max(5, drone.shotsLeft * 5);
         this.tweens.add({
           targets: drone.sprite, x, y, duration: 500, ease: 'Power2',
           onComplete: () => {
@@ -2084,21 +2591,27 @@ export class ArenaScene extends Phaser.Scene {
               this.npc.takeDamage(dmg);
               this.spawnHitFlash(this.npc.x, this.npc.y, 0xff6600);
             }
+            if (this.hasUpgrade('r')) this.spawnOilPuddle(x, y, 'player');
           },
         });
       },
       placeFirewall: (x, y) => {
         if (this.playerFirewallSprite) this.playerFirewallSprite.destroy();
+        // Rotate so the long side (120px) faces the player
+        const angle = Math.atan2(this.player.y - y, this.player.x - x) - Math.PI / 2;
+        this.playerFirewallAngle = angle;
+        const fwHp = this.hasUpgrade('f') ? 200 : 100;
         this.playerFirewallSprite = this.add.rectangle(x, y, 120, 60, 0xff6600, 0.45)
-          .setStrokeStyle(2, 0xff8800).setDepth(3);
-        this.playerFirewallHp = 100;
+          .setStrokeStyle(2, 0xff8800).setDepth(3).setRotation(angle);
+        this.playerFirewallHp = fwHp;
         this.playerFirewallX = x;
         this.playerFirewallY = y;
       },
       startOverdrive: (x, y) => {
         if (this.playerDrones.length === 0) return;
         const angle = Math.atan2(y - this.player.y, x - this.player.x);
-        const duration = 2000 * this.playerDrones.length;
+        const duration = 500 * this.playerDrones.length;
+        this.playerOverdriveDroneCount = this.playerDrones.length;
         this.playerOverdriveActive = true;
         this.playerOverdriveEnd = this.time.now + duration;
         this.playerOverdriveAngle = angle;
@@ -2119,7 +2632,7 @@ export class ArenaScene extends Phaser.Scene {
             this.tweens.add({ targets: boom, scaleX: 7, scaleY: 7, alpha: 0, duration: 350, onComplete: () => boom.destroy() });
             bomb.destroy();
             if (Phaser.Math.Distance.Between(x, y, this.npc.x, this.npc.y) <= 50) {
-              this.npc.takeDamage(25);
+              this.npc.takeDamage(10);
               this.spawnHitFlash(this.npc.x, this.npc.y, 0x8800cc);
             }
             this.spawnShadowDarkCloud(x, y, 'player');
@@ -2127,12 +2640,17 @@ export class ArenaScene extends Phaser.Scene {
         });
       },
       activateTentacle: (x, y) => {
-        // Close-range hook: only hooks if NPC is within 220px
+        // Close-range hook: only hooks if NPC is within 110px
         const hookDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
         this.shadowTentacleActive = true;
         this.shadowTentacleHooked = hookDist <= 110;
-        this.shadowTentacleEnd = this.time.now + (this.shadowTentacleHooked ? 3000 : 600);
-        // Tentacle endpoint: toward cursor but clamped to 200px range
+        // R+: check if a trap is near cursor — extend duration for drag
+        const hasTrapNearby = this.hasUpgrade('r') && this.shadowSnapTraps.some(
+          t => t.owner === 'player' && !t.triggered &&
+               Phaser.Math.Distance.Between(t.x, t.y, x, y) <= 55,
+        );
+        this.shadowTentacleEnd = this.time.now + (this.shadowTentacleHooked ? 3000 : hasTrapNearby ? 3000 : 600);
+        // Tentacle endpoint: toward cursor but clamped to 100px range
         const angle = Math.atan2(y - this.player.y, x - this.player.x);
         const reach = Math.min(100, Phaser.Math.Distance.Between(this.player.x, this.player.y, x, y));
         this.shadowTentacleX = this.player.x + Math.cos(angle) * reach;
@@ -2146,20 +2664,36 @@ export class ArenaScene extends Phaser.Scene {
         }
       },
       placeSnapTrap: () => {
-        const spr = this.add.circle(this.player.x, this.player.y, 18, 0x440066, 0.85)
+        const trapRadius = this.hasUpgrade('r') ? 27 : 18;
+        const spr = this.add.circle(this.player.x, this.player.y, trapRadius, 0x440066, 0.85)
           .setStrokeStyle(2, 0xcc44ff).setDepth(3);
         const lbl = this.add.text(this.player.x, this.player.y, '⚡', { fontSize: '10px' }).setOrigin(0.5).setDepth(4);
         this.shadowSnapTraps.push({
           sprite: spr, label: lbl,
           expiresAt: this.time.now + 12000,
           x: this.player.x, y: this.player.y,
-          triggered: false, owner: 'player',
+          triggered: false, radius: trapRadius, owner: 'player',
         });
       },
       activateShadowDance: () => {
-        if (this.shadowDanceCharge < 35) return;
-        this.shadowDanceCharge = 0;
-        this.player.heal(25);
+        if (this.hasUpgrade('f')) {
+          if (this.shadowDanceCharge <= 0 || this.time.now < this.shadowDanceUpgradeCooldownUntil) return;
+          this.shadowDanceUpgradeCooldownUntil = this.time.now + 2000;
+          const ratio = Math.min(1, this.shadowDanceCharge / 35);
+          const wasFull = this.shadowDanceCharge >= 35;
+          this.shadowDanceCharge = 0;
+          const healAmt = wasFull ? 38 : Math.round((5 + ratio * 15) * 1.5);
+          this.player.heal(healAmt);
+          if (wasFull) {
+            this.shadowDanceUpgradeDodgeUntil = this.time.now + 8000;
+            const dTxt = this.add.text(this.player.x, this.player.y - 44, '👻 PHANTOM STEP', { fontSize: '10px', color: '#cc44ff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
+            this.tweens.add({ targets: dTxt, y: dTxt.y - 18, alpha: 0, duration: 1400, onComplete: () => dTxt.destroy() });
+          }
+        } else {
+          if (this.shadowDanceCharge < 35) return;
+          this.shadowDanceCharge = 0;
+          this.player.heal(38);
+        }
         const flash = this.add.circle(this.player.x, this.player.y, 40, 0x8800cc, 0.5).setDepth(8);
         this.tweens.add({ targets: flash, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 500, onComplete: () => flash.destroy() });
       },
@@ -2177,12 +2711,18 @@ export class ArenaScene extends Phaser.Scene {
         const dx = tx - this.player.x;
         const dy = ty - this.player.y;
         const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        const isPowered = this.playerNextIcePowered;
+        if (isPowered) this.playerNextIcePowered = false;
         const proj = new Projectile(this, this.player.x, this.player.y, 'proj-ice', 8, true);
+        if (isPowered) { proj.setScale(1.2); proj.isPowered = true; }
         this.projectiles.add(proj);
         proj.launch((dx / len) * 520, (dy / len) * 520);
+        if (this.hasUpgrade('click')) this.playerIcePendingSet.add(proj);
       },
       fireFrostBlast: (tx, ty) => {
-        if (this.npcFrostStacks === 0) return;
+        const isBlackIce = this.playerBlackIceMorphActive;
+        const targetStacks = isBlackIce ? this.npcVoidFrostStacks : this.npcFrostStacks;
+        if (targetStacks === 0) return;
         const dx = tx - this.player.x;
         const dy = ty - this.player.y;
         const len = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -2192,23 +2732,65 @@ export class ArenaScene extends Phaser.Scene {
         this.spawnFrostBeamVisual(this.player.x, this.player.y, endX, endY);
         const d = this.pointToSegmentDist(this.npc.x, this.npc.y, this.player.x, this.player.y, endX, endY);
         if (d <= 32) {
-          this.npc.takeDamage(this.npcFrostStacks * 10);
-          this.spawnHitFlash(this.npc.x, this.npc.y, 0x88ccff);
-          this.clearFrostStacks('npc');
+          this.npc.takeDamage(Math.round(targetStacks * 7.5));
+          this.spawnHitFlash(this.npc.x, this.npc.y, isBlackIce ? 0x9900ff : 0x88ccff);
+          if (isBlackIce) {
+            // Apply voided debuff
+            const voidedDps = targetStacks >= 5 ? 3 : targetStacks >= 3 ? 2 : 1;
+            this.npcVoidedUntil = this.time.now + 5000;
+            this.npcVoidedDps = voidedDps;
+            this.npcVoidedTickAccum = 0;
+            this.npcVoidFrostStacks = 0;
+            this.npc.incomingDamageMultiplier = 1;
+            const vt = this.add.text(this.npc.x, this.npc.y - 30, 'VOIDED', { fontSize: '11px', color: '#cc88ff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
+            this.tweens.add({ targets: vt, y: vt.y - 20, alpha: 0, duration: 1200, onComplete: () => vt.destroy() });
+          } else {
+            // E+: keep residual frost stacks
+            if (this.hasUpgrade('e')) {
+              const stacks = this.npcFrostStacks;
+              this.clearFrostStacks('npc');
+              if (stacks >= 5) {
+                this.npcFrostStacks = 2;
+                this.npc.incomingDamageMultiplier = this.frostDamageMultiplier(2);
+              } else if (stacks >= 3) {
+                this.npcFrostStacks = 1;
+                this.npc.incomingDamageMultiplier = this.frostDamageMultiplier(1);
+              }
+            } else {
+              this.clearFrostStacks('npc');
+            }
+          }
         }
       },
       toggleBlockUp: () => {
-        this.playerBlockUpActive = !this.playerBlockUpActive;
-        this.player.incomingDamageMultiplier = this.playerBlockUpActive
-          ? this.frostDamageMultiplier(this.playerFrostStacks) * 0.75
-          : this.frostDamageMultiplier(this.playerFrostStacks);
-        if (this.playerBlockUpActive) {
-          if (!this.playerBlockUpAura) {
-            this.playerBlockUpAura = this.add.circle(this.player.x, this.player.y, 28, 0x88ccff, 0.25)
-              .setStrokeStyle(2, 0xcceeff, 0.8).setDepth(3);
+        if (this.hasUpgrade('r')) {
+          // R+: Black Ice Morph replaces Block Up
+          this.playerBlackIceMorphActive = !this.playerBlackIceMorphActive;
+          if (this.playerBlackIceMorphActive) {
+            this.player.incomingDamageMultiplier = this.frostDamageMultiplier(this.playerFrostStacks) * 1.20;
+            if (!this.playerBlackIceAura) {
+              this.playerBlackIceAura = this.add.circle(this.player.x, this.player.y, 30, 0x220044, 0.4)
+                .setStrokeStyle(2, 0x9900ff, 0.9).setDepth(3);
+            }
+            const mt = this.add.text(this.player.x, this.player.y - 36, 'BLACK ICE', { fontSize: '11px', color: '#cc88ff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
+            this.tweens.add({ targets: mt, y: mt.y - 20, alpha: 0, duration: 1200, onComplete: () => mt.destroy() });
+          } else {
+            this.player.incomingDamageMultiplier = this.frostDamageMultiplier(this.playerFrostStacks);
+            if (this.playerBlackIceAura) { this.playerBlackIceAura.destroy(); this.playerBlackIceAura = null; }
           }
         } else {
-          if (this.playerBlockUpAura) { this.playerBlockUpAura.destroy(); this.playerBlockUpAura = null; }
+          this.playerBlockUpActive = !this.playerBlockUpActive;
+          this.player.incomingDamageMultiplier = this.playerBlockUpActive
+            ? this.frostDamageMultiplier(this.playerFrostStacks) * 0.75
+            : this.frostDamageMultiplier(this.playerFrostStacks);
+          if (this.playerBlockUpActive) {
+            if (!this.playerBlockUpAura) {
+              this.playerBlockUpAura = this.add.circle(this.player.x, this.player.y, 28, 0x88ccff, 0.25)
+                .setStrokeStyle(2, 0xcceeff, 0.8).setDepth(3);
+            }
+          } else {
+            if (this.playerBlockUpAura) { this.playerBlockUpAura.destroy(); this.playerBlockUpAura = null; }
+          }
         }
       },
       startSkate: () => {
@@ -2222,7 +2804,7 @@ export class ArenaScene extends Phaser.Scene {
         } else {
           const l = Math.sqrt(dx * dx + dy * dy); dx /= l; dy /= l;
         }
-        playerBody.setVelocity(dx * 500, dy * 500);
+        playerBody.setVelocity(dx * 650, dy * 650);
         this.player.isInvincible = true;
         for (let i = 0; i < 5; i++) {
           this.time.delayedCall(i * 55, () => {
@@ -2243,25 +2825,31 @@ export class ArenaScene extends Phaser.Scene {
           } else {
             this.npcFrozenUntil = this.time.now + 3000;
             this.spawnHitFlash(this.npc.x, this.npc.y, 0x88ccff);
+            if (this.hasUpgrade('q')) this.npcFrozenSolidAmpReady = true;
           }
         }
       },
       // Growth
       fireGrowthClick: (tx, ty) => {
         const angle = Math.atan2(ty - this.player.y, tx - this.player.x);
-        if (this.growthMorphType === 'spores') {
-          const angles = [-12, -6, 0, 6, 12];
-          for (const deg of angles) {
+        const fireBonus = this.hasUpgrade('click') && Math.random() < 0.15;
+        const fireSpores = (ox: number, oy: number) => {
+          const sporeSpeed = 400 * (1 + this.growthSpreadStacks * 0.2);
+          const sporeAngles = [-12, -6, 0, 6, 12];
+          for (const deg of sporeAngles) {
             const a = angle + deg * (Math.PI / 180);
-            const proj = new Projectile(this, this.player.x, this.player.y, 'proj-growth', Math.round(3 * this.growthDamageMult), true);
+            const proj = new Projectile(this, ox, oy, 'proj-growth', Math.round(5 * this.growthDamageMult), true);
             this.projectiles.add(proj);
-            const vx = Math.cos(a) * 400;
-            const vy = Math.sin(a) * 400;
+            const vx = Math.cos(a) * sporeSpeed;
+            const vy = Math.sin(a) * sporeSpeed;
             proj.launch(vx, vy);
             const pb = proj.body as Phaser.Physics.Arcade.Body;
             this.tweens.add({ targets: pb.velocity, x: 0, y: 0, duration: 600,
               onComplete: () => { this.time.delayedCall(200, () => { if (proj.active) { proj.setActive(false).setVisible(false); } }); } });
           }
+        };
+        if (this.growthMorphType === 'spores') {
+          fireSpores(this.player.x, this.player.y);
         } else if (this.growthMorphType === 'claws') {
           const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
           if (dist <= 120) {
@@ -2271,7 +2859,8 @@ export class ArenaScene extends Phaser.Scene {
             const toNx = this.npc.x - this.player.x; const toNy = this.npc.y - this.player.y;
             const dot = (dx / len) * (toNx / dist) + (dy / len) * (toNy / dist);
             if (dot > 0.4) {
-              this.npc.takeDamage(Math.round(15 * this.growthDamageMult));
+              const clawDmg = Math.round((15 + this.growthSpreadStacks * 5) * this.growthDamageMult);
+              this.npc.takeDamage(clawDmg);
               this.spawnHitFlash(this.npc.x, this.npc.y, 0x88bb22);
             }
           }
@@ -2281,42 +2870,95 @@ export class ArenaScene extends Phaser.Scene {
             50, 10, 0x88bb22, 0.8,
           ).setRotation(slashAngle).setDepth(6);
           this.tweens.add({ targets: slash, scaleX: 0.3, alpha: 0, duration: 140, onComplete: () => slash.destroy() });
-        } else {
-          // virus: 3 projectiles like life petal shot
-          const spreadAngles = [-15, 0, 15];
-          for (const deg of spreadAngles) {
-            const a = angle + deg * (Math.PI / 180);
+        } else if (this.growthMorphType === 'virus') {
+          const virusCount = 3 + this.growthSpreadStacks;
+          const spreadStep = virusCount > 1 ? 30 / (virusCount - 1) : 0;
+          for (let vi = 0; vi < virusCount; vi++) {
+            const degOffset = virusCount > 1 ? -15 + vi * spreadStep : 0;
+            const a = angle + degOffset * (Math.PI / 180);
             const proj = new Projectile(this, this.player.x, this.player.y, 'proj-growth', Math.round(8 * this.growthDamageMult), true);
             this.projectiles.add(proj);
             proj.launch(Math.cos(a) * 480, Math.sin(a) * 480);
+          }
+        } else if (this.growthMorphType === 'plague-bomb') {
+          const bombRadius = Math.round(80 * (1 + this.growthSpreadStacks * 0.2));
+          const bomb = this.add.circle(this.player.x, this.player.y, 10, 0x88bb22, 0.9)
+            .setStrokeStyle(2, 0xccff44).setDepth(8);
+          this.tweens.add({
+            targets: bomb, x: tx, y: ty, duration: 420, ease: 'Power2',
+            onComplete: () => {
+              const boom = this.add.circle(tx, ty, 8, 0x88bb22, 0.8).setDepth(8);
+              this.tweens.add({ targets: boom, scaleX: bombRadius / 8, scaleY: bombRadius / 8, alpha: 0, duration: 380, onComplete: () => boom.destroy() });
+              bomb.destroy();
+              const dmg = Math.round(15 * this.growthDamageMult);
+              if (Phaser.Math.Distance.Between(tx, ty, this.npc.x, this.npc.y) <= bombRadius) {
+                this.npc.takeDamage(dmg);
+                this.spawnHitFlash(this.npc.x, this.npc.y, 0x88bb22);
+                const ft = this.add.text(this.npc.x, this.npc.y - 30, `💥 ${dmg}`, { fontSize: '11px', color: '#aadd44', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
+                this.tweens.add({ targets: ft, y: ft.y - 25, alpha: 0, duration: 900, onComplete: () => ft.destroy() });
+              }
+            },
+          });
+        } else if (this.growthMorphType === 'bacterium') {
+          const bacteriumHp = 10 + this.growthSpreadStacks * 5;
+          const bSprite = this.add.circle(this.player.x, this.player.y, 8, 0x55cc22, 0.9)
+            .setStrokeStyle(2, 0xaaff44).setDepth(4);
+          this.growthBacteriaList.push({ sprite: bSprite, hp: bacteriumHp, lastContactTime: -99999 });
+        }
+        // Click+: 15% chance to fire 3 bonus spores regardless of evolution
+        if (fireBonus) {
+          const bAngles = [-8, 0, 8];
+          const bonusSpeed = 400 * (1 + this.growthSpreadStacks * 0.2);
+          for (const deg of bAngles) {
+            const a = angle + deg * (Math.PI / 180);
+            const proj = new Projectile(this, this.player.x, this.player.y, 'proj-growth', Math.round(5 * this.growthDamageMult), true);
+            this.projectiles.add(proj);
+            proj.launch(Math.cos(a) * bonusSpeed, Math.sin(a) * bonusSpeed);
+            const pb = proj.body as Phaser.Physics.Arcade.Body;
+            this.tweens.add({ targets: pb.velocity, x: 0, y: 0, duration: 600,
+              onComplete: () => { this.time.delayedCall(200, () => { if (proj.active) { proj.setActive(false).setVisible(false); } }); } });
           }
         }
       },
       openMutateMenu: () => {
         if (this.growthMutateMenuOpen) return;
         this.growthMutateMenuOpen = true;
-        const GROWTH_MUTATIONS = [
-          { id: 'healthier', name: 'Healthier', description: '+10 max HP', emoji: '💚' },
-          { id: 'deadly', name: 'Deadly', description: '+15% damage', emoji: '💀' },
-          { id: 'linger', name: 'Linger', description: '+3s toxic duration', emoji: '⏳' },
-          { id: 'viral', name: 'Viral', description: '+2 toxic DPS', emoji: '🧬' },
-          { id: 'grow', name: 'Grow', description: '+20 HP, +20% size', emoji: '📈' },
-          { id: 'shrink', name: 'Shrink', description: '-20 HP, -20% size', emoji: '📉' },
-          { id: 'buffer', name: 'Buffer', description: '-2s bloat CD', emoji: '🛡️' },
-          { id: 'spray', name: 'Spray', description: '+1 infect projectile', emoji: '🗡️' },
-          { id: 'quick', name: 'Quick', description: '-1s infect CD', emoji: '⚡' },
-          { id: 'regenerative', name: 'Regenerative', description: '+1 HP/s regen', emoji: '♻️' },
+        const BASE_MUTATIONS = [
+          { id: 'healthier',    name: 'Healthier',    description: '+10 max HP',             emoji: '💚' },
+          { id: 'deadly',       name: 'Deadly',       description: '+15% damage',             emoji: '💀' },
+          { id: 'linger',       name: 'Linger',       description: '+3s toxic duration',      emoji: '⏳' },
+          { id: 'viral',        name: 'Viral',        description: '+2 toxic DPS',            emoji: '🧬' },
+          { id: 'grow',         name: 'Grow',         description: '+20 HP, +20% size',       emoji: '📈' },
+          { id: 'shrink',       name: 'Shrink',       description: '-20 HP, -20% size',       emoji: '📉' },
+          { id: 'buffer',       name: 'Buffer',       description: '-0.5s bloat CD',          emoji: '🛡️' },
+          { id: 'spray',        name: 'Spray',        description: '+1 infect projectile',    emoji: '🗡️' },
+          { id: 'quick',        name: 'Quick',        description: '-0.5s infect CD',         emoji: '⚡' },
+          { id: 'regenerative', name: 'Regenerative', description: '+1 HP/s regen',           emoji: '♻️' },
         ];
-        const pool = [...GROWTH_MUTATIONS];
+        const ADVANCED_MUTATIONS = [
+          { id: 'chunk',          name: 'Chunk',          description: '+10% bloat AOE radius',               emoji: '💥' },
+          { id: 'relapse',        name: 'Relapse',        description: 'Infect bounces off +1 wall',          emoji: '↩️' },
+          { id: 'gene-enhance',   name: 'Gene Enhance',   description: 'Remove 20s from Q cooldown now',      emoji: '🧪' },
+          { id: 'spread',         name: 'Spread',         description: 'Evo bonus (spores: +20% range, virus: +1 shot, claws: +5 dmg, plague: +20% AOE, bacterium: +5 HP)', emoji: '🌿' },
+          { id: 'uber-infect',    name: 'Uber-Infect',    description: '+20% infect hitbox',                  emoji: '🔬' },
+          { id: 'fungal-flourish',name: 'Fungal Flourish',description: 'Heal 10 HP (+10 per stack) when bloat explodes', emoji: '🍄' },
+          { id: 'greed',          name: 'Greed',          description: '+1 option in future Mutate menus',    emoji: '🤑' },
+          { id: 'sneeze',         name: 'Sneeze',         description: 'Green aura deals +1 tick dmg/s to nearby enemy', emoji: '🤧' },
+          { id: 'cough',          name: 'Cough',          description: 'Yellow aura slows nearby enemy by 5% more', emoji: '😷' },
+        ];
+        const pool = this.hasUpgrade('e') ? [...BASE_MUTATIONS, ...ADVANCED_MUTATIONS] : [...BASE_MUTATIONS];
         const picks: typeof pool = [];
-        for (let p = 0; p < 3; p++) {
-          picks.push(pool[Math.floor(Math.random() * pool.length)]);
+        const numPicks = 3 + this.growthGreedBonus;
+        const poolCopy = [...pool];
+        for (let p = 0; p < numPicks && poolCopy.length > 0; p++) {
+          const idx = Math.floor(Math.random() * poolCopy.length);
+          picks.push(poolCopy.splice(idx, 1)[0]);
         }
         const W = this.scale.width;
         const H = this.scale.height;
-        const btnW = 200; const btnH = 60; const gap = 12;
-        const startY = H / 2 - (btnH + gap);
-        for (let p = 0; p < 3; p++) {
+        const btnW = 220; const btnH = 58; const gap = 10;
+        const startY = H / 2 - ((btnH + gap) * (picks.length - 1)) / 2;
+        for (let p = 0; p < picks.length; p++) {
           const mut = picks[p];
           const by = startY + p * (btnH + gap);
           const bg = this.add.rectangle(W / 2, by, btnW, btnH, 0x223322, 1)
@@ -2328,7 +2970,7 @@ export class ArenaScene extends Phaser.Scene {
           bg.on('pointerdown', () => {
             this.applyGrowthMutation(mut.id, 'player');
             for (const obj of this.growthMutateButtons) {
-              if ((obj as Phaser.GameObjects.GameObject).active) (obj as Phaser.GameObjects.GameObject & { destroy(): void }).destroy();
+              if ((obj as Phaser.GameObjects.GameObject).active) (obj as unknown as { destroy(): void }).destroy();
             }
             this.growthMutateButtons = [];
             this.growthMutateMenuOpen = false;
@@ -2337,7 +2979,8 @@ export class ArenaScene extends Phaser.Scene {
         }
       },
       fireInfect: (tx, ty) => {
-        if (this.time.now - this.lastPlayerInfectCast < this.growthInfectCdMs) return;
+        const effectiveCd = Math.max(1000, this.growthInfectCdMs);
+        if (this.time.now - this.lastPlayerInfectCast < effectiveCd) return;
         this.lastPlayerInfectCast = this.time.now;
         const baseAngle = Math.atan2(ty - this.player.y, tx - this.player.x);
         const count = 1 + this.growthInfectExtraProj;
@@ -2347,10 +2990,20 @@ export class ArenaScene extends Phaser.Scene {
           const proj = new Projectile(this, this.player.x, this.player.y, 'proj-growth-dagger', Math.round(5 * this.growthDamageMult), true);
           this.projectiles.add(proj);
           proj.launch(Math.cos(a) * 520, Math.sin(a) * 520);
+          // Uber-infect: scale hitbox
+          if (this.growthInfectHitboxMult > 1) {
+            const body = proj.body as Phaser.Physics.Arcade.Body;
+            body.setSize(Math.round(12 * this.growthInfectHitboxMult), Math.round(8 * this.growthInfectHitboxMult));
+          }
+          // Relapse: enable wall bounce tracking
+          if (this.growthInfectBounces > 0) {
+            this.growthInfectBouncers.push({ proj, bouncesDone: 0 });
+          }
         }
       },
       activateBloat: () => {
-        if (this.time.now - this.lastPlayerBloatCast < this.growthBloatCdMs) return;
+        const effectiveBloatCd = Math.max(1000, this.growthBloatCdMs);
+        if (this.time.now - this.lastPlayerBloatCast < effectiveBloatCd) return;
         this.lastPlayerBloatCast = this.time.now;
         this.growthBloatActive = true;
         this.growthBloatEnd = this.time.now + 5000;
@@ -2360,9 +3013,10 @@ export class ArenaScene extends Phaser.Scene {
         this.tweens.add({ targets: this.growthBloatAura, alpha: 0.5, yoyo: true, repeat: -1, duration: 500 });
       },
       triggerMutantMorph: () => {
-        const morphTypes: Array<'spores' | 'claws' | 'virus'> = ['spores', 'claws', 'virus'];
-        this.growthMorphType = morphTypes[Math.floor(Math.random() * morphTypes.length)];
-        const morphNames = { spores: 'SPORES', claws: 'CLAWS', virus: 'VIRUS' };
+        const morphPool: Array<'spores' | 'claws' | 'virus' | 'plague-bomb' | 'bacterium'> = ['spores', 'claws', 'virus'];
+        if (this.hasUpgrade('q')) { morphPool.push('plague-bomb', 'bacterium'); }
+        this.growthMorphType = morphPool[Math.floor(Math.random() * morphPool.length)];
+        const morphNames: Record<string, string> = { spores: 'SPORES', claws: 'CLAWS', virus: 'VIRUS', 'plague-bomb': 'PLAGUE BOMB', bacterium: 'BACTERIUM' };
         const txt = this.add.text(this.player.x, this.player.y - 50, morphNames[this.growthMorphType],
           { fontSize: '14px', fontFamily: '"Arial Black"', color: '#88bb22', stroke: '#003300', strokeThickness: 3 }).setOrigin(0.5).setDepth(15);
         this.tweens.add({ targets: txt, y: txt.y - 30, alpha: 0, duration: 900, onComplete: () => txt.destroy() });
@@ -2634,12 +3288,72 @@ export class ArenaScene extends Phaser.Scene {
         const tFlash = this.add.circle(this.player.x, this.player.y, 50, 0xffdd44, 0.55).setDepth(12);
         this.tweens.add({ targets: tFlash, scaleX: 3.5, scaleY: 3.5, alpha: 0, duration: 600, onComplete: () => tFlash.destroy() });
       },
+      // Gravity
+      gravitySlash: (x1, y1, x2, y2) => {
+        const line = this.add.line(0, 0, x1, y1, x2, y2, 0xaa44ff, 0.85).setLineWidth(4).setDepth(6).setOrigin(0, 0);
+        this.tweens.add({ targets: line, alpha: 0, duration: 500, onComplete: () => line.destroy() });
+        this.gravSlashes.push({ line, x1, y1, x2, y2, fireAt: this.time.now + 500, owner: 'player', damage: 18, knockback: 400 });
+      },
+      gravityMeteorShadow: (x, y) => {
+        this.spawnGravMeteorShadow(x, y, 'player', false);
+      },
+      gravityMeteorRainNpcBurst: () => { /* player no-op */ },
+      gravitySpaceSlam: () => {
+        const H = this.scale.height;
+        const targetY = H - 40;
+        this.npc.takeDamage(25);
+        this.spawnHitFlash(this.npc.x, this.npc.y, 0x8844cc);
+        // Slam line visual
+        const slamLine = this.add.line(0, 0, this.npc.x, this.npc.y, this.npc.x, targetY, 0xaa44ff, 0.7).setLineWidth(6).setDepth(7).setOrigin(0, 0);
+        this.tweens.add({ targets: slamLine, alpha: 0, duration: 300, onComplete: () => slamLine.destroy() });
+        // Impact ring
+        const ring = this.add.circle(this.npc.x, targetY, 10, 0x8844cc, 0.8).setDepth(7);
+        this.tweens.add({ targets: ring, scaleX: 8, scaleY: 8, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
+        // Force enemy to floor
+        this.npc.y = targetY;
+        const nb = this.npc.body as Phaser.Physics.Arcade.Body;
+        nb.setVelocity(0, 0);
+        this.gravSpaceSlamLockUntil = this.time.now + 300;
+      },
+      gravityGravBombSnap: (x, y) => {
+        if (Phaser.Math.Distance.Between(x, y, this.npc.x, this.npc.y) <= 120) {
+          this.npc.x = x; this.npc.y = y;
+          (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+          const ring = this.add.circle(x, y, 10, 0x8844cc, 0.85).setDepth(6);
+          this.tweens.add({ targets: ring, scaleX: 13, scaleY: 13, alpha: 0, duration: 320, onComplete: () => ring.destroy() });
+          const core = this.add.circle(x, y, 6, 0xffffff, 0.9).setDepth(7);
+          this.tweens.add({ targets: core, scaleX: 3, scaleY: 3, alpha: 0, duration: 180, onComplete: () => core.destroy() });
+        }
+      },
+      gravityLunarLanding: () => {
+        if (this.gravLunarShadow) { this.gravLunarShadow.destroy(); this.gravLunarShadow = null; }
+        const W = this.scale.width; const H = this.scale.height;
+        const lRadius = Math.min(W, H) * 0.44;
+        this.gravLunarRadius = lRadius;
+        this.gravLunarShadow = this.add.circle(W / 2, H / 2, lRadius, 0x221144, 0.55).setDepth(3);
+        this.gravLunarFireAt = this.time.now + 3000;
+        this.gravLunarOwner = 'player';
+        // Pulsing tween on the shadow
+        this.tweens.add({ targets: this.gravLunarShadow, alpha: 0.75, yoyo: true, repeat: -1, duration: 600 });
+      },
       // Legacy sand no-ops (keep for compiler compatibility)
       sandFlintlock: () => {},
       sandBlindingSand: () => {},
       sandToggleTornado: () => {},
       sandMirage: () => {},
       sandActivateGlass: () => {},
+      // Creation
+      creationDaggerSpray: (tx, ty, count) => {
+        this.spawnCreationDaggers(this.player.x, this.player.y, tx, ty, count, 'player');
+      },
+      creationBolt: (tx, ty, tier) => {
+        this.spawnCreationBolt(this.player.x, this.player.y, tx, ty, tier, 'player');
+      },
+      creationScytheLaunch: (_tx, _ty) => {
+        this.spawnCreationScythe(this.player.x, this.player.y, this.npc.x, this.npc.y, 'player');
+      },
+      creationBlock: (x, y, w, h) => { this.spawnCreationBlocker(x, y, w, h, 'player'); },
+      creationMaze: () => { this.spawnCreationMaze('player'); },
     };
   }
 
@@ -2758,13 +3472,17 @@ export class ArenaScene extends Phaser.Scene {
       },
       spawnDrone: () => {
         if (this.npcDrones.length >= 4) return;
-        const angle = (this.npcDrones.length / 4) * Math.PI * 2;
+        const count = this.npcDrones.length;
+        const angle = (count / 4) * Math.PI * 2;
         const sprite = this.add.circle(
           this.npc.x + Math.cos(angle) * 60,
           this.npc.y + Math.sin(angle) * 60,
           8, 0xffaa00, 0.7,
         ).setDepth(8);
-        this.npcDrones.push({ sprite, hp: 15, maxHp: 15, orbitAngle: angle, shielded: false, owner: 'npc' });
+        this.npcDrones.push({
+          sprite, shotsLeft: 3, orbitAngle: angle,
+          shielded: false, healedByFirewall: false, meleeCooldownUntil: 0, owner: 'npc',
+        });
       },
       commandDrones: (x, y) => {
         for (const drone of this.npcDrones) {
@@ -2776,12 +3494,13 @@ export class ArenaScene extends Phaser.Scene {
             this.player.takeDamage(3);
             this.spawnHitFlash(this.player.x, this.player.y, 0xffaa00);
           }
+          drone.shotsLeft -= 1;
         }
       },
       launchDrone: (x, y) => {
         if (this.npcDrones.length === 0) return;
         const drone = this.npcDrones.pop()!;
-        const dmg = Math.max(1, drone.hp);
+        const dmg = Math.max(5, drone.shotsLeft * 5);
         this.tweens.add({
           targets: drone.sprite, x, y, duration: 500, ease: 'Power2',
           onComplete: () => {
@@ -2807,7 +3526,7 @@ export class ArenaScene extends Phaser.Scene {
             this.tweens.add({ targets: boom, scaleX: 7, scaleY: 7, alpha: 0, duration: 350, onComplete: () => boom.destroy() });
             bomb.destroy();
             if (Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) <= 50) {
-              this.player.takeDamage(25);
+              this.player.takeDamage(10);
               this.spawnHitFlash(this.player.x, this.player.y, 0x8800cc);
             }
             this.spawnShadowDarkCloud(x, y, 'npc');
@@ -2840,7 +3559,7 @@ export class ArenaScene extends Phaser.Scene {
           sprite: spr, label: lbl,
           expiresAt: this.time.now + 12000,
           x: this.npc.x, y: this.npc.y,
-          triggered: false, owner: 'npc',
+          triggered: false, radius: 18, owner: 'npc',
         });
       },
       activateShadowDance: () => { /* NPC does not track shadow dance charge */ },
@@ -2865,7 +3584,7 @@ export class ArenaScene extends Phaser.Scene {
         this.spawnFrostBeamVisual(this.npc.x, this.npc.y, endX, endY);
         const d = this.pointToSegmentDist(this.player.x, this.player.y, this.npc.x, this.npc.y, endX, endY);
         if (d <= 32) {
-          this.player.takeDamage(this.playerFrostStacks * 10);
+          this.player.takeDamage(Math.round(this.playerFrostStacks * 7.5));
           this.spawnHitFlash(this.player.x, this.player.y, 0x88ccff);
           this.clearFrostStacks('player');
         }
@@ -2890,7 +3609,7 @@ export class ArenaScene extends Phaser.Scene {
         const dy = this.npc.y - this.player.y;
         const len = Math.sqrt(dx * dx + dy * dy) || 1;
         const nBody = this.npc.body as Phaser.Physics.Arcade.Body;
-        nBody.setVelocity((dx / len) * 480, (dy / len) * 480);
+        nBody.setVelocity((dx / len) * 620, (dy / len) * 620);
         this.npc.isInvincible = true;
         for (let i = 0; i < 4; i++) {
           this.time.delayedCall(i * 55, () => {
@@ -2921,7 +3640,7 @@ export class ArenaScene extends Phaser.Scene {
           const angles = [-12, -6, 0, 6, 12];
           for (const deg of angles) {
             const a = angle + deg * (Math.PI / 180);
-            const proj = new Projectile(this, this.npc.x, this.npc.y, 'proj-growth', Math.round(3 * this.npcGrowthDamageMult), false);
+            const proj = new Projectile(this, this.npc.x, this.npc.y, 'proj-growth', Math.round(5 * this.npcGrowthDamageMult), false);
             this.projectiles.add(proj);
             proj.launch(Math.cos(a) * 380, Math.sin(a) * 380);
             const pb = proj.body as Phaser.Physics.Arcade.Body;
@@ -3226,12 +3945,73 @@ export class ArenaScene extends Phaser.Scene {
         const tFlash = this.add.circle(this.npc.x, this.npc.y, 50, 0xffdd44, 0.55).setDepth(12);
         this.tweens.add({ targets: tFlash, scaleX: 3.5, scaleY: 3.5, alpha: 0, duration: 600, onComplete: () => tFlash.destroy() });
       },
+      // Gravity (NPC)
+      gravitySlash: (x1, y1, x2, y2) => {
+        const line = this.add.line(0, 0, x1, y1, x2, y2, 0xaa44ff, 0.85).setLineWidth(4).setDepth(6).setOrigin(0, 0);
+        this.tweens.add({ targets: line, alpha: 0, duration: 500, onComplete: () => line.destroy() });
+        this.gravSlashes.push({ line, x1, y1, x2, y2, fireAt: this.time.now + 500, owner: 'npc', damage: 18, knockback: 400 });
+      },
+      gravityMeteorShadow: (x, y) => {
+        this.spawnGravMeteorShadow(x, y, 'npc', false);
+      },
+      gravityMeteorRainNpcBurst: (tx, ty) => {
+        for (let i = 0; i < 4; i++) {
+          const ox = (Math.random() - 0.5) * 160;
+          const oy = (Math.random() - 0.5) * 160;
+          this.spawnGravMeteorShadow(tx + ox, ty + oy, 'npc', false);
+        }
+      },
+      gravitySpaceSlam: () => {
+        const H = this.scale.height;
+        const targetY = H - 40;
+        this.player.takeDamage(25);
+        this.spawnHitFlash(this.player.x, this.player.y, 0x8844cc);
+        const slamLine = this.add.line(0, 0, this.player.x, this.player.y, this.player.x, targetY, 0xaa44ff, 0.7).setLineWidth(6).setDepth(7).setOrigin(0, 0);
+        this.tweens.add({ targets: slamLine, alpha: 0, duration: 300, onComplete: () => slamLine.destroy() });
+        const ring = this.add.circle(this.player.x, targetY, 10, 0x8844cc, 0.8).setDepth(7);
+        this.tweens.add({ targets: ring, scaleX: 8, scaleY: 8, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
+        this.player.y = targetY;
+        (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+        this.npcGravSpaceSlamLockUntil = this.time.now + 300;
+      },
+      gravityGravBombSnap: (x, y) => {
+        if (Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) <= 120) {
+          this.player.x = x; this.player.y = y;
+          (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+          const ring = this.add.circle(x, y, 10, 0x8844cc, 0.85).setDepth(6);
+          this.tweens.add({ targets: ring, scaleX: 13, scaleY: 13, alpha: 0, duration: 320, onComplete: () => ring.destroy() });
+          const core = this.add.circle(x, y, 6, 0xffffff, 0.9).setDepth(7);
+          this.tweens.add({ targets: core, scaleX: 3, scaleY: 3, alpha: 0, duration: 180, onComplete: () => core.destroy() });
+        }
+      },
+      gravityLunarLanding: () => {
+        if (this.gravLunarShadow) { this.gravLunarShadow.destroy(); this.gravLunarShadow = null; }
+        const W = this.scale.width; const H = this.scale.height;
+        const lRadius = Math.min(W, H) * 0.44;
+        this.gravLunarRadius = lRadius;
+        this.gravLunarShadow = this.add.circle(W / 2, H / 2, lRadius, 0x221144, 0.55).setDepth(3);
+        this.gravLunarFireAt = this.time.now + 3000;
+        this.gravLunarOwner = 'npc';
+        this.tweens.add({ targets: this.gravLunarShadow, alpha: 0.75, yoyo: true, repeat: -1, duration: 600 });
+      },
       // Legacy sand no-ops
       sandFlintlock: () => {},
       sandBlindingSand: () => {},
       sandToggleTornado: () => {},
       sandMirage: () => {},
       sandActivateGlass: () => {},
+      // Creation (NPC)
+      creationDaggerSpray: (tx, ty, count) => {
+        this.spawnCreationDaggers(this.npc.x, this.npc.y, tx, ty, count, 'npc');
+      },
+      creationBolt: (tx, ty, tier) => {
+        this.spawnCreationBolt(this.npc.x, this.npc.y, tx, ty, tier, 'npc');
+      },
+      creationScytheLaunch: (_tx, _ty) => {
+        this.spawnCreationScythe(this.npc.x, this.npc.y, this.player.x, this.player.y, 'npc');
+      },
+      creationBlock: (x, y, w, h) => { this.spawnCreationBlocker(x, y, w, h, 'npc'); },
+      creationMaze: () => { this.spawnCreationMaze('npc'); },
     };
   }
 
@@ -3388,6 +4168,19 @@ export class ArenaScene extends Phaser.Scene {
       sandToggleTornado: () => {},
       sandMirage: () => {},
       sandActivateGlass: () => {},
+      // Gravity — no-ops for clone
+      gravitySlash: () => {},
+      gravityMeteorShadow: () => {},
+      gravityMeteorRainNpcBurst: () => {},
+      gravitySpaceSlam: () => {},
+      gravityGravBombSnap: () => {},
+      gravityLunarLanding: () => {},
+      // Creation (clone stubs)
+      creationDaggerSpray: () => {},
+      creationBolt: () => {},
+      creationScytheLaunch: () => {},
+      creationBlock: () => {},
+      creationMaze: () => {},
     };
   }
 
@@ -3632,6 +4425,35 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
+  // ── Oil helpers ──────────────────────────────────────────────────
+
+  private spawnOilPuddle(x: number, y: number, owner: 'player' | 'npc'): void {
+    const sprite = this.add.circle(x, y, 30, 0x332200, 0.55).setDepth(2);
+    const puddle: OilPuddle = {
+      sprite, x, y, expiresAt: this.time.now + 12000,
+      ignited: false, igniteTickAccum: 0, radius: 30, owner,
+    };
+    if (owner === 'player') this.playerOilPuddles.push(puddle);
+    else this.npcOilPuddles.push(puddle);
+  }
+
+  private fireOverdriveSalvoBomb(tx: number, ty: number): void {
+    const ox = this.player.x, oy = this.player.y;
+    const bomb = this.add.circle(ox, oy, 7, 0xffaa00, 0.9).setDepth(8);
+    this.tweens.add({
+      targets: bomb, x: tx, y: ty, duration: 450, ease: 'Power2',
+      onComplete: () => {
+        const boom = this.add.circle(tx, ty, 7, 0xff6600, 0.9).setDepth(8);
+        this.tweens.add({ targets: boom, scaleX: 6, scaleY: 6, alpha: 0, duration: 350, onComplete: () => boom.destroy() });
+        bomb.destroy();
+        if (Phaser.Math.Distance.Between(tx, ty, this.npc.x, this.npc.y) <= 50) {
+          this.npc.takeDamage(10);
+          this.spawnHitFlash(this.npc.x, this.npc.y, 0xff6600);
+        }
+      },
+    });
+  }
+
   // ── Visual helpers ───────────────────────────────────────────────
 
   private spawnHitFlash(x: number, y: number, color: number): void {
@@ -3703,11 +4525,18 @@ export class ArenaScene extends Phaser.Scene {
 
   private addFrostStack(target: 'player' | 'npc'): void {
     if (target === 'npc') {
-      this.npcFrostStacks = Math.min(5, this.npcFrostStacks + 1);
-      this.npc.incomingDamageMultiplier = this.frostDamageMultiplier(this.npcFrostStacks);
+      if (this.playerBlackIceMorphActive) {
+        // Black Ice Morph: add void frost instead of regular frost (no slow, but DOT)
+        this.npcVoidFrostStacks = Math.min(5, this.npcVoidFrostStacks + 1);
+        this.npc.incomingDamageMultiplier = this.frostDamageMultiplier(this.npcVoidFrostStacks);
+      } else {
+        this.npcFrostStacks = Math.min(5, this.npcFrostStacks + 1);
+        this.npc.incomingDamageMultiplier = this.frostDamageMultiplier(this.npcFrostStacks);
+      }
     } else {
       this.playerFrostStacks = Math.min(5, this.playerFrostStacks + 1);
-      this.player.incomingDamageMultiplier = this.frostDamageMultiplier(this.playerFrostStacks);
+      const baseMult = this.frostDamageMultiplier(this.playerFrostStacks);
+      this.player.incomingDamageMultiplier = this.playerBlackIceMorphActive ? baseMult * 1.20 : baseMult;
     }
   }
 
@@ -3717,13 +4546,16 @@ export class ArenaScene extends Phaser.Scene {
       this.npc.incomingDamageMultiplier = 1;
     } else {
       this.playerFrostStacks = 0;
-      this.player.incomingDamageMultiplier = 1;
+      this.player.incomingDamageMultiplier = this.playerBlackIceMorphActive ? 1.20 : 1;
     }
   }
 
   private spawnIcyTrail(x: number, y: number, owner: 'player' | 'npc'): void {
-    const spr = this.add.circle(x, y, 32, 0x88ccff, 0.35).setDepth(2)
-      .setStrokeStyle(1, 0xcceeff, 0.5);
+    const isVoid = owner === 'player' && this.playerBlackIceMorphActive;
+    const fillColor = isVoid ? 0x440066 : 0x88ccff;
+    const strokeColor = isVoid ? 0x9900ff : 0xcceeff;
+    const spr = this.add.circle(x, y, 32, fillColor, 0.35).setDepth(2)
+      .setStrokeStyle(1, strokeColor, 0.5);
     this.tweens.add({ targets: spr, alpha: 0.15, duration: 4800, yoyo: true, repeat: 0 });
     this.icyTrails.push({ sprite: spr, expiresAt: this.time.now + 5000, x, y, radius: 32, frostTickAccum: 0, owner });
   }
@@ -3914,24 +4746,75 @@ export class ArenaScene extends Phaser.Scene {
         break;
       }
       case 'buffer':
-        if (isPlayer) this.growthBloatCdMs = Math.max(2000, this.growthBloatCdMs - 2000);
-        else this.npcGrowthBloatCdMs = Math.max(2000, this.npcGrowthBloatCdMs - 2000);
+        if (isPlayer) this.growthBloatCdMs = Math.max(1000, this.growthBloatCdMs - 500);
+        else this.npcGrowthBloatCdMs = Math.max(1000, this.npcGrowthBloatCdMs - 500);
         break;
       case 'spray':
         if (isPlayer) this.growthInfectExtraProj += 1;
         else this.npcGrowthInfectExtraProj += 1;
         break;
       case 'quick':
-        if (isPlayer) this.growthInfectCdMs = Math.max(2000, this.growthInfectCdMs - 1000);
+        if (isPlayer) this.growthInfectCdMs = Math.max(1000, this.growthInfectCdMs - 500);
         break;
       case 'regenerative':
         if (isPlayer) this.growthRegenRate += 1;
         else this.npcGrowthRegenRate += 1;
         break;
+      // E+ advanced mutations (player only)
+      case 'chunk':
+        if (isPlayer) this.growthBloatAoeRadius = Math.round(this.growthBloatAoeRadius * 1.1);
+        break;
+      case 'relapse':
+        if (isPlayer) this.growthInfectBounces += 1;
+        break;
+      case 'gene-enhance':
+        if (isPlayer) {
+          this.player.reduceCooldown('mutant-morph', 20000);
+          const ft = this.add.text(fighter.x, fighter.y - 40, '🧪 Q -20s!', { fontSize: '12px', color: '#aadd44', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(15);
+          this.tweens.add({ targets: ft, y: ft.y - 30, alpha: 0, duration: 1200, onComplete: () => ft.destroy() });
+        }
+        break;
+      case 'spread':
+        if (isPlayer) this.growthSpreadStacks += 1;
+        break;
+      case 'uber-infect':
+        if (isPlayer) this.growthInfectHitboxMult += 0.2;
+        break;
+      case 'fungal-flourish':
+        if (isPlayer) this.growthFungalStacks += 1;
+        break;
+      case 'greed':
+        if (isPlayer) this.growthGreedBonus += 1;
+        break;
+      case 'sneeze':
+        if (isPlayer) this.growthSneezeStacks += 1;
+        break;
+      case 'cough':
+        if (isPlayer) this.growthCoughStacks += 1;
+        break;
     }
     // Flash to confirm
     const flash = this.add.circle(fighter.x, fighter.y, 22, 0x88bb22, 0.7).setDepth(12);
     this.tweens.add({ targets: flash, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 350, onComplete: () => flash.destroy() });
+  }
+
+  private spawnGravMeteorShadow(x: number, y: number, owner: 'player' | 'npc', frozen: boolean): void {
+    // Cap frozen player shadows at 5 (FIFO — remove oldest frozen player shadow)
+    if (frozen && owner === 'player') {
+      const frozenPlayerShadows = this.gravMeteorShadows.filter(s => s.frozen && s.owner === 'player');
+      if (frozenPlayerShadows.length >= 5) {
+        const oldest = frozenPlayerShadows[0];
+        oldest.sprite.destroy();
+        this.gravMeteorShadows.splice(this.gravMeteorShadows.indexOf(oldest), 1);
+      }
+    }
+    const spr = this.add.circle(x, y, 22, 0x221144, 0.7).setDepth(5)
+      .setStrokeStyle(2, 0x8844cc, 0.8);
+    if (frozen) {
+      // Pulsing while waiting for record-release
+      this.tweens.add({ targets: spr, alpha: 0.4, yoyo: true, repeat: -1, duration: 500 });
+    }
+    this.gravMeteorShadows.push({ sprite: spr, fireAt: frozen ? Infinity : this.time.now + 1500, x, y, owner, damage: 14, radius: 70, directHitRadius: 28, directBonus: 16, frozen });
   }
 
   private spawnTimePuddle(x: number, y: number, owner: 'player' | 'npc'): void {
@@ -4037,6 +4920,175 @@ export class ArenaScene extends Phaser.Scene {
         break;
       }
     }
+  }
+
+  // ── Creation helpers ─────────────────────────────────────────────
+
+  private spawnCreationDaggers(fromX: number, fromY: number, tx: number, ty: number, count: number, owner: 'player' | 'npc'): void {
+    const dx = tx - fromX, dy = ty - fromY;
+    const len = Math.hypot(dx, dy) || 1;
+    const perp = { x: -dy / len, y: dx / len };
+    const speed = 620;
+    for (let i = 0; i < count; i++) {
+      const offset = (i - (count - 1) / 2) * 14;
+      const ox = fromX + perp.x * offset;
+      const oy = fromY + perp.y * offset;
+      const spr = this.add.rectangle(ox, oy, 18, 4, 0xeeeeff, 0.9).setDepth(7);
+      this.creatDaggers.push({ sprite: spr, vx: (dx / len) * speed, vy: (dy / len) * speed, damage: 8, owner, hitSet: new Set() });
+    }
+  }
+
+  private spawnCreationBolt(fromX: number, fromY: number, tx: number, ty: number, tier: 'copper' | 'silver' | 'gold', owner: 'player' | 'npc'): void {
+    const dx = tx - fromX, dy = ty - fromY;
+    const len = Math.hypot(dx, dy) || 1;
+    const speed = 380;
+    const colors: Record<string, number> = { copper: 0xcc6622, silver: 0xccccdd, gold: 0xffdd22 };
+    const damages: Record<string, number> = { copper: 5, silver: 10, gold: 15 };
+    const spr = this.add.circle(fromX + (dx / len) * 24, fromY + (dy / len) * 24, 7, colors[tier], 0.9)
+      .setStrokeStyle(1, 0xffffff, 0.5).setDepth(7);
+    this.creatBolts.push({ sprite: spr, vx: (dx / len) * speed, vy: (dy / len) * speed, tier, damage: damages[tier], owner });
+  }
+
+  private spawnCreationScythe(fromX: number, fromY: number, tx: number, ty: number, owner: 'player' | 'npc'): void {
+    const dx = tx - fromX, dy = ty - fromY;
+    const len = Math.hypot(dx, dy) || 1;
+    const maxHp = 25;
+    const spr = this.add.rectangle(fromX + (dx / len) * 30, fromY + (dy / len) * 30, 20, 12, 0xcc22aa, 0.9)
+      .setStrokeStyle(2, 0xff44ee, 0.9).setDepth(8);
+    const hpBg = this.add.rectangle(fromX, fromY - 20, 28, 4, 0x333333).setDepth(9);
+    const hpBar = this.add.rectangle(fromX - 14, fromY - 20, 28, 4, 0xcc22aa).setDepth(10).setOrigin(0, 0.5);
+    this.creatScythes.push({ sprite: spr, hp: maxHp, maxHp, vx: (dx / len) * 260, vy: (dy / len) * 260, owner, lastContactTick: -99999, hpBar, hpBg });
+  }
+
+  private spawnCreationBlocker(cx: number, cy: number, w: number, h: number, owner: 'player' | 'npc'): void {
+    const maxHp = 125;
+    const rect = this.add.rectangle(cx, cy, w, h, 0xcc8844, 0.55)
+      .setStrokeStyle(2, 0xff9955, 0.9).setDepth(4);
+    const hpBg = this.add.rectangle(cx, cy - h / 2 - 6, w, 4, 0x333333).setDepth(5);
+    const hpBar = this.add.rectangle(cx - w / 2, cy - h / 2 - 6, w, 4, 0xcc8844).setDepth(6).setOrigin(0, 0.5);
+    this.creatBlockers.push({ rect, x: cx, y: cy, w, h, hp: maxHp, maxHp, owner, hpBar, hpBg });
+  }
+
+  private spawnCreationMaze(owner: 'player' | 'npc'): void {
+    const W = this.scale.width, H = this.scale.height;
+    const caster = owner === 'player' ? this.player : this.npc;
+    const expireAt = this.time.now + 10000;
+    let placed = 0;
+    for (let attempt = 0; attempt < 200 && placed < 18; attempt++) {
+      const w = 30 + Math.random() * 90;
+      const h = 30 + Math.random() * 90;
+      const x = 50 + Math.random() * (W - 100);
+      const y = 50 + Math.random() * (H - 100);
+      if (Math.abs(x - caster.x) < w / 2 + 50 && Math.abs(y - caster.y) < h / 2 + 50) continue;
+      if (this.crucibleSprite && Math.abs(x - this.crucibleX) < w / 2 + 40 && Math.abs(y - this.crucibleY) < h / 2 + 40) continue;
+      const rect = this.add.rectangle(x, y, w, h, 0x882288, 0.5).setStrokeStyle(2, 0xcc55cc, 0.9).setDepth(4);
+      this.creatMazeWalls.push({ rect, x, y, w, h, owner, expireAt });
+      placed++;
+    }
+  }
+
+  private resolveCrucibleCraft(time: number): void {
+    const tiers = this.crucibleBolts.map((b) => b.tier).sort();
+    const key = tiers.map((t) => t[0]).join(''); // e.g. 'ccg', 'sss', 'ggg'
+    const owner = this.creatCraftOwner;
+    const caster = owner === 'player' ? this.player : this.npc;
+    const enemy = owner === 'player' ? this.npc : this.player;
+    const cx = this.crucibleX, cy = this.crucibleY;
+
+    // Clear bolt icons and craft state
+    for (const b of this.crucibleBolts) b.icon.destroy();
+    this.crucibleBolts = [];
+    this.creatCraftInProgress = false;
+
+    // Craft resolution flash
+    const craftBurst = this.add.circle(cx, cy, 12, 0xffdd44, 0.9).setDepth(8);
+    this.tweens.add({ targets: craftBurst, scaleX: 4, scaleY: 4, alpha: 0, duration: 400, onComplete: () => craftBurst.destroy() });
+
+    if (key === 'ccc') {
+      // 3 copper: 8 copper bolts radiate from crucible
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2;
+        const speed = 380;
+        const spr = this.add.circle(cx, cy, 7, 0xcc6622, 0.9).setStrokeStyle(1, 0xffffff, 0.4).setDepth(7);
+        this.creatBolts.push({ sprite: spr, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, tier: 'copper', damage: 5, owner });
+      }
+    } else if (key === 'ccs') {
+      // 2 copper + 1 silver: scythe from crucible
+      this.spawnCreationScythe(cx, cy, enemy.x, enemy.y, owner);
+    } else if (key === 'css') {
+      // 1 copper + 2 silver: medkit
+      const mkSpr = this.add.rectangle(cx + 40, cy, 20, 20, 0x44ff88, 0.85)
+        .setStrokeStyle(2, 0xaaffcc, 0.9).setDepth(5);
+      const mkLabel = this.add.text(cx + 40, cy, '+25', { fontSize: '11px', color: '#ffffff' }).setOrigin(0.5).setDepth(6);
+      this.creatMedkit = { sprite: mkSpr, label: mkLabel, x: cx + 40, y: cy, expireAt: time + 5000, owner };
+    } else if (key === 'sss') {
+      // 3 silver: heal pulses (3x, 10 HP, range 110)
+      this.creatPulses.push({ x: cx, y: cy, remaining: 3, lastPulseAt: time - 1666, intervalMs: 1666, range: 110, kind: 'heal', magnitude: 10, owner });
+    } else if (key === 'ggg') {
+      // 3 gold: 4 beams in + shape, then 25% damage reduction 15s
+      const beamLength = 200;
+      const angles = [0, Math.PI / 2, Math.PI, Math.PI * 1.5];
+      for (const ang of angles) {
+        const bx = cx + Math.cos(ang) * beamLength / 2;
+        const by = cy + Math.sin(ang) * beamLength / 2;
+        const bw = Math.abs(Math.cos(ang)) > 0.5 ? beamLength : 6;
+        const bh = Math.abs(Math.sin(ang)) > 0.5 ? beamLength : 6;
+        const beam = this.add.rectangle(bx, by, bw, bh, 0xffdd22, 0.8).setDepth(8);
+        this.tweens.add({ targets: beam, alpha: 0, duration: 400, onComplete: () => beam.destroy() });
+        if (Math.abs(enemy.x - bx) <= bw / 2 + 22 && Math.abs(enemy.y - by) <= bh / 2 + 22) {
+          enemy.takeDamage(35);
+          this.spawnHitFlash(enemy.x, enemy.y, 0xffdd22);
+        }
+      }
+      this.creatPrevIncomingDamageMult = caster.incomingDamageMultiplier;
+      caster.incomingDamageMultiplier *= 0.75;
+      this.creatDamageReductionEnd = time + 15000;
+    } else if (key === 'ccg') {
+      // 2 copper + 1 gold: robot (ghoul)
+      this.spawnSoulGhost('ghoul', cx, cy, owner);
+    } else if (key === 'cgg') {
+      // 1 copper + 2 gold: damage pulses (3x, 15 dmg, range 110)
+      this.creatPulses.push({ x: cx, y: cy, remaining: 3, lastPulseAt: time - 1666, intervalMs: 1666, range: 110, kind: 'damage', magnitude: 15, owner });
+    } else if (key === 'gss') {
+      // 1 gold + 2 silver: 5 fire DOT pools at random positions
+      const W = this.scale.width, H = this.scale.height;
+      const pad = 50;
+      for (let fi = 0; fi < 5; fi++) {
+        let px = pad + Math.random() * (W - pad * 2);
+        let py = pad + Math.random() * (H - pad * 2);
+        // Retry to avoid walls
+        for (let r = 0; r < 10; r++) {
+          if (px > pad && px < W - pad && py > pad && py < H - pad) break;
+          px = pad + Math.random() * (W - pad * 2);
+          py = pad + Math.random() * (H - pad * 2);
+        }
+        const puddleSpr = this.add.circle(px, py, 35, 0xff4422, 0.55).setDepth(2).setStrokeStyle(1, 0xff8844, 0.5);
+        this.tweens.add({ targets: puddleSpr, alpha: 0.3, yoyo: true, repeat: -1, duration: 800 });
+        this.gravFirePuddles.push({ sprite: puddleSpr, expiresAt: time + 8000, x: px, y: py, radius: 35, tickAccum: 0, owner });
+      }
+    } else if (key === 'ggs') {
+      // 2 gold + 1 silver: 30% speed boost 15s
+      this.creatPrevSpeedMult = owner === 'player' ? this.playerSpeedMult : this.npcSpeedMult;
+      if (owner === 'player') this.playerSpeedMult = (this.creatPrevSpeedMult !== -1 ? this.creatPrevSpeedMult : 1) * 1.3;
+      else this.npcSpeedMult = (this.creatPrevSpeedMult !== -1 ? this.creatPrevSpeedMult : 1) * 1.3;
+      this.creatSpeedBoostEnd = time + 15000;
+      const speedFlash = this.add.circle(caster.x, caster.y, 20, 0x44aaff, 0.6).setDepth(9);
+      this.tweens.add({ targets: speedFlash, scaleX: 3, scaleY: 3, alpha: 0, duration: 400, onComplete: () => speedFlash.destroy() });
+    }
+  }
+
+  private pushFighterOutOfRect(body: Phaser.Physics.Arcade.Body, bx: number, by: number, bw: number, bh: number): void {
+    const cx = body.x + body.width / 2;
+    const cy = body.y + body.height / 2;
+    const dx = cx - bx;
+    const dy = cy - by;
+    const halfW = bw / 2 + body.width / 2;
+    const halfH = bh / 2 + body.height / 2;
+    if (Math.abs(dx) >= halfW || Math.abs(dy) >= halfH) return;
+    const ox = halfW - Math.abs(dx);
+    const oy = halfH - Math.abs(dy);
+    if (ox < oy) body.x += (dx < 0 ? -ox : ox);
+    else body.y += (dy < 0 ? -oy : oy);
   }
 
   private pointToSegmentDist(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
@@ -4275,6 +5327,13 @@ export class ArenaScene extends Phaser.Scene {
     }
     // (Time element NPC has no speed buff of its own)
 
+    // Oil puddle slows (20%) — player's puddles slow NPC
+    if (this.elementId === 'oil' && this.playerOilPuddles.length > 0) {
+      const npcOnOilPuddle = this.playerOilPuddles.some(
+        (p) => Phaser.Math.Distance.Between(p.x, p.y, this.npc.x, this.npc.y) <= p.radius,
+      );
+      if (npcOnOilPuddle) this.npcSpeedMult *= 0.8;
+    }
     // Time puddle slows (25%)
     if (this.timePuddles.length > 0) {
       const npcInPuddle = this.timePuddles.some(
@@ -4305,6 +5364,8 @@ export class ArenaScene extends Phaser.Scene {
       this.playerSpeedMult *= (1 - this.playerFrostStacks * 0.1);
     }
     if (this.playerBlockUpActive) this.playerSpeedMult *= 0.5;
+    // Ice F+: speed boost from stepping on own skate trail
+    if (this.elementId === 'ice' && this.playerIceSpeedBoostUntil > time) this.playerSpeedMult *= 1.2;
 
     // Hunt trail boost on player
     if (this.elementId === 'hunt') {
@@ -4318,6 +5379,12 @@ export class ArenaScene extends Phaser.Scene {
     // NPC hunt speed adjustments
     if (this.npc.element.id === 'hunt' && this.npcHuntBeastForm) this.npcSpeedMult = Math.max(this.npcSpeedMult, 1.5);
     if (time < this.npcHuntSlowUntil) this.npcSpeedMult *= 0.5;
+    // Growth Cough aura slow
+    if (this.elementId === 'growth' && this.growthCoughStacks > 0) {
+      if (Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y) <= 120) {
+        this.npcSpeedMult *= Math.max(0.1, 1 - this.growthCoughStacks * 0.05);
+      }
+    }
     // NPC trail boost
     if (this.npc.element.id === 'hunt') {
       const npcOnTrail = this.npcHuntTrailCircles.some(
@@ -5001,13 +6068,28 @@ export class ArenaScene extends Phaser.Scene {
           this.shadowDrainCloudAccum = 0;
         }
         if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
-          this.player.castAbility('tentacle', this.buildPlayerContext(mouseX, mouseY));
+          if (this.shadowConsumeActive && this.hasUpgrade('e')) {
+            // Throw NPC toward cursor — stun briefly so AI doesn't cancel velocity
+            this.shadowConsumeActive = false;
+            if (this.shadowConsumeAura) { this.shadowConsumeAura.destroy(); this.shadowConsumeAura = null; }
+            const throwAngle = Math.atan2(mouseY - this.player.y, mouseX - this.player.x);
+            (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(
+              Math.cos(throwAngle) * 800, Math.sin(throwAngle) * 800,
+            );
+            this.shadowNpcThrowUntil = Math.max(this.shadowNpcThrowUntil, this.time.now + 600);
+          } else {
+            this.player.castAbility('tentacle', this.buildPlayerContext(mouseX, mouseY));
+          }
         }
         if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
           this.player.castAbility('snap-trap', playerCtx);
         }
         if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
-          if (this.shadowDanceCharge >= 35) {
+          if (this.hasUpgrade('f')) {
+            if (this.shadowDanceCharge > 0 && this.time.now >= this.shadowDanceUpgradeCooldownUntil) {
+              this.player.castAbility('shadow-dance', playerCtx);
+            }
+          } else if (this.shadowDanceCharge >= 35) {
             this.player.castAbility('shadow-dance', playerCtx);
           }
         }
@@ -5057,13 +6139,14 @@ export class ArenaScene extends Phaser.Scene {
         if (pointer.isDown) {
           this.player.castAbility('growth-click', playerCtx);
         }
+        // E: Mutate (press opens manual menu; E+ hold auto-picks in per-frame)
         if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
           this.player.castAbility('mutate', playerCtx);
         }
         if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
-          // Manual cooldown handled inside fireInfect callback
           playerCtx.fireInfect(mouseX, mouseY);
         }
+        // F: Bloat activate on press (F+ hold-to-lock handled in collision handler)
         if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
           playerCtx.activateBloat();
         }
@@ -5224,6 +6307,241 @@ export class ArenaScene extends Phaser.Scene {
         if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
           playerCtx.timeTimeless();
         }
+      }
+    } else if (this.elementId === 'gravity') {
+      // ── GRAVITY INPUT ─────────────────────────────────────────────
+
+      // Click: tap = single meteor shadow; drag = space slash
+      // Track pointer down/up (separate from global pointerWasDown so we don't interfere)
+      if (pointer.isDown && !this.gravClickArmed) {
+        this.gravPointerDownX = mouseX;
+        this.gravPointerDownY = mouseY;
+        this.gravClickArmed = true;
+      }
+      if (!pointer.isDown && this.gravClickArmed) {
+        this.gravClickArmed = false;
+        const dx = mouseX - this.gravPointerDownX;
+        const dy = mouseY - this.gravPointerDownY;
+        const dragDist = Math.hypot(dx, dy);
+        const DRAG_THRESHOLD = 24;
+
+        if (this.gravMeteorRainHolding) {
+          // In record mode: place a frozen meteor shadow
+          this.spawnGravMeteorShadow(mouseX, mouseY, 'player', true);
+          this.gravMeteorRainLiveCount++;
+        } else if (this.player.getCooldownRatio('space-slash') >= 1) {
+          if (dragDist >= DRAG_THRESHOLD) {
+            // Space Slash
+            playerCtx.gravitySlash(this.gravPointerDownX, this.gravPointerDownY, mouseX, mouseY);
+            this.player.triggerCooldown('space-slash');
+          } else {
+            // Single tap meteor
+            playerCtx.gravityMeteorShadow(mouseX, mouseY);
+            this.player.triggerCooldown('space-slash');
+          }
+        }
+      }
+
+      // E: Meteor Rain — hold to record, tap to replay
+      if (this.eKey.isDown && !this.gravEKeyWasDown) {
+        // Rising edge: start recording session
+        this.gravEKeyHeldSince = time;
+        this.gravMeteorRainHolding = true;
+        this.gravMeteorRainLiveCount = 0;
+        if (this.gravMeteorRainAura) this.gravMeteorRainAura.destroy();
+        this.gravMeteorRainAura = this.add.circle(this.player.x, this.player.y, 30, 0x8844cc, 0.35).setDepth(4);
+        this.tweens.add({ targets: this.gravMeteorRainAura, alpha: 0.6, yoyo: true, repeat: -1, duration: 400 });
+      }
+      if (this.gravMeteorRainHolding && this.gravMeteorRainAura) {
+        this.gravMeteorRainAura.setPosition(this.player.x, this.player.y);
+      }
+      if (!this.eKey.isDown && this.gravEKeyWasDown) {
+        // Falling edge
+        const heldMs = time - this.gravEKeyHeldSince;
+        if (this.gravMeteorRainAura) { this.gravMeteorRainAura.destroy(); this.gravMeteorRainAura = null; }
+
+        if (this.gravMeteorRainLiveCount > 0) {
+          // Recording session with shadows placed: save pattern + convert frozen to live
+          this.gravMeteorRainRecorded = this.gravMeteorShadows
+            .filter(s => s.frozen && s.owner === 'player')
+            .map(s => ({ x: s.x, y: s.y }));
+          for (const s of this.gravMeteorShadows) {
+            if (s.frozen && s.owner === 'player') {
+              s.frozen = false;
+              s.fireAt = time + 1500;
+            }
+          }
+        } else if (heldMs < 150) {
+          // Quick tap with no shadows placed: replay saved pattern
+          if (this.player.getCooldownRatio('meteor-rain') >= 1 && this.gravMeteorRainRecorded.length > 0) {
+            for (const pos of this.gravMeteorRainRecorded) {
+              this.spawnGravMeteorShadow(pos.x, pos.y, 'player', false);
+            }
+            this.player.triggerCooldown('meteor-rain');
+          }
+        }
+        this.gravMeteorRainHolding = false;
+        this.gravMeteorRainLiveCount = 0;
+      }
+      this.gravEKeyWasDown = this.eKey.isDown;
+
+      // R: Space Slam
+      if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
+        this.player.castAbility('space-slam', playerCtx);
+      }
+
+      // F: Grav Bomb — tap / short-hold = snap; hold ≥2s + release = explosion
+      if (this.fKey.isDown) {
+        if (!this.gravBombHolding && this.player.getCooldownRatio('grav-bomb') >= 1) {
+          this.gravBombHolding = true;
+          this.gravBombHoldStart = time;
+          this.gravBombLastX = mouseX;
+          this.gravBombLastY = mouseY;
+          if (this.gravBombVisual) this.gravBombVisual.destroy();
+          this.gravBombVisual = this.add.circle(mouseX, mouseY, 120, 0x8844cc, 0.18)
+            .setStrokeStyle(2, 0xaa66ff, 0.6).setDepth(4);
+        }
+        if (this.gravBombHolding) {
+          this.gravBombLastX = mouseX;
+          this.gravBombLastY = mouseY;
+          if (this.gravBombVisual) this.gravBombVisual.setPosition(mouseX, mouseY);
+          this.player.chargeRatio = Math.min(1, (time - this.gravBombHoldStart) / 2000);
+        }
+      } else if (this.gravBombHolding) {
+        // Released
+        const heldMs = time - this.gravBombHoldStart;
+        this.gravBombHolding = false;
+        this.player.chargeRatio = 0;
+        if (this.gravBombVisual) { this.gravBombVisual.destroy(); this.gravBombVisual = null; }
+        const mx = this.gravBombLastX;
+        const my = this.gravBombLastY;
+        if (heldMs >= 2000) {
+          // Charged explosion
+          if (Phaser.Math.Distance.Between(mx, my, this.npc.x, this.npc.y) <= 100) {
+            this.npc.takeDamage(40);
+            this.spawnHitFlash(this.npc.x, this.npc.y, 0x8844cc);
+          }
+          const exRing = this.add.circle(mx, my, 10, 0x8844cc, 0.9).setDepth(6);
+          this.tweens.add({ targets: exRing, scaleX: 10, scaleY: 10, alpha: 0, duration: 350, onComplete: () => exRing.destroy() });
+          const exCore = this.add.circle(mx, my, 6, 0xffffff, 0.95).setDepth(7);
+          this.tweens.add({ targets: exCore, scaleX: 4, scaleY: 4, alpha: 0, duration: 180, onComplete: () => exCore.destroy() });
+        } else {
+          // Tap snap
+          playerCtx.gravityGravBombSnap(mx, my);
+        }
+        this.player.triggerCooldown('grav-bomb');
+      }
+
+      // Q: Lunar Landing
+      if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
+        this.player.castAbility('lunar-landing', playerCtx);
+      }
+    } else if (this.elementId === 'creation') {
+      // ── CREATION INPUT ────────────────────────────────────────────
+
+      // Click — Dagger Spray: hold to add more daggers (up to 5), release to fire
+      if (pointer.isDown && !this.creatDaggerHolding) {
+        if (this.player.getCooldownRatio('dagger-spray') >= 1) {
+          this.creatDaggerHolding = true;
+          this.creatDaggerHoldStart = time;
+          this.creatDaggerHoldX = this.player.x;
+          this.creatDaggerHoldY = this.player.y;
+        }
+      }
+      if (this.creatDaggerHolding) {
+        const count = Math.min(5, 1 + Math.floor((time - this.creatDaggerHoldStart) / 600));
+        // Redraw preview lines
+        while (this.creatDaggerPreviews.length < count) {
+          this.creatDaggerPreviews.push(this.add.line(0, 0, 0, 0, 0, 0, 0xeeeeff, 0.35).setOrigin(0, 0).setDepth(5));
+        }
+        while (this.creatDaggerPreviews.length > count) {
+          this.creatDaggerPreviews.pop()!.destroy();
+        }
+        const dx = mouseX - this.creatDaggerHoldX;
+        const dy = mouseY - this.creatDaggerHoldY;
+        const len = Math.hypot(dx, dy) || 1;
+        const perp = { x: -dy / len, y: dx / len };
+        for (let i = 0; i < count; i++) {
+          const offset = (i - (count - 1) / 2) * 14;
+          const ox = this.player.x + perp.x * offset;
+          const oy = this.player.y + perp.y * offset;
+          this.creatDaggerPreviews[i].setTo(ox, oy, mouseX + perp.x * offset, mouseY + perp.y * offset);
+        }
+      }
+      if (!pointer.isDown && this.creatDaggerHolding) {
+        this.creatDaggerHolding = false;
+        const count = Math.min(5, 1 + Math.floor((time - this.creatDaggerHoldStart) / 600));
+        for (const l of this.creatDaggerPreviews) l.destroy();
+        this.creatDaggerPreviews = [];
+        playerCtx.creationDaggerSpray(mouseX, mouseY, count);
+        this.player.triggerCooldown('dagger-spray');
+      }
+
+      // E — Charged Bolt: hold to charge tier
+      if (this.eKey.isDown && !this.creatBoltHolding) {
+        if (this.player.getCooldownRatio('charged-bolt') >= 1) {
+          this.creatBoltHolding = true;
+          this.creatBoltHoldStart = time;
+          if (this.creatBoltChargeOrb) this.creatBoltChargeOrb.destroy();
+          this.creatBoltChargeOrb = this.add.circle(this.player.x, this.player.y - 38, 8, 0xcc6622, 0.9).setDepth(15);
+          this.tweens.add({ targets: this.creatBoltChargeOrb, scaleX: 1.4, scaleY: 1.4, alpha: 0.5, yoyo: true, repeat: -1, duration: 250 });
+        }
+      }
+      if (this.creatBoltHolding && this.creatBoltChargeOrb) {
+        // Update orb color by charge
+        const held = time - this.creatBoltHoldStart;
+        const tierColor = held >= 1000 ? 0xffdd22 : held >= 500 ? 0xccccdd : 0xcc6622;
+        this.creatBoltChargeOrb.setFillStyle(tierColor, 0.9);
+        this.creatBoltChargeOrb.setPosition(this.player.x, this.player.y - 38);
+      }
+      if (!this.eKey.isDown && this.creatBoltHolding) {
+        this.creatBoltHolding = false;
+        if (this.creatBoltChargeOrb) { this.creatBoltChargeOrb.destroy(); this.creatBoltChargeOrb = null; }
+        const held = time - this.creatBoltHoldStart;
+        const tier: 'copper' | 'silver' | 'gold' = held >= 1000 ? 'gold' : held >= 500 ? 'silver' : 'copper';
+        playerCtx.creationBolt(mouseX, mouseY, tier);
+        this.player.triggerCooldown('charged-bolt');
+      }
+
+      // R — Scythe of Doom
+      if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
+        this.player.castAbility('scythe-of-doom', playerCtx);
+      }
+
+      // F — Create: drag to define rectangle, release to spawn
+      if (this.fKey.isDown && !this.creatBlockDragging) {
+        if (this.player.getCooldownRatio('creation-block') >= 1) {
+          this.creatBlockDragging = true;
+          this.creatBlockDragStartX = mouseX;
+          this.creatBlockDragStartY = mouseY;
+          if (this.creatBlockPreview) this.creatBlockPreview.destroy();
+          this.creatBlockPreview = this.add.rectangle(mouseX, mouseY, 0, 0, 0xcc8844, 0.3)
+            .setStrokeStyle(2, 0xff9955, 0.8).setDepth(5);
+        }
+      }
+      if (this.creatBlockDragging && this.creatBlockPreview) {
+        const rw = Math.min(200, Math.abs(mouseX - this.creatBlockDragStartX));
+        const rh = Math.min(200, Math.abs(mouseY - this.creatBlockDragStartY));
+        const rx = this.creatBlockDragStartX + (mouseX > this.creatBlockDragStartX ? 1 : -1) * rw / 2;
+        const ry = this.creatBlockDragStartY + (mouseY > this.creatBlockDragStartY ? 1 : -1) * rh / 2;
+        this.creatBlockPreview.setPosition(rx, ry).setSize(rw, rh);
+      }
+      if (!this.fKey.isDown && this.creatBlockDragging) {
+        this.creatBlockDragging = false;
+        const rw = Math.min(200, Math.abs(mouseX - this.creatBlockDragStartX));
+        const rh = Math.min(200, Math.abs(mouseY - this.creatBlockDragStartY));
+        if (this.creatBlockPreview) { this.creatBlockPreview.destroy(); this.creatBlockPreview = null; }
+        if (rw >= 12 && rh >= 12) {
+          const rx = this.creatBlockDragStartX + (mouseX > this.creatBlockDragStartX ? 1 : -1) * rw / 2;
+          const ry = this.creatBlockDragStartY + (mouseY > this.creatBlockDragStartY ? 1 : -1) * rh / 2;
+          playerCtx.creationBlock(rx, ry, rw, rh);
+          this.player.triggerCooldown('creation-block');
+        }
+      }
+
+      // Q — Maze of Doom
+      if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
+        this.player.castAbility('maze-of-doom', playerCtx);
       }
     }
     this.pointerWasDown = pointer.isDown;
@@ -5736,41 +7054,72 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Oil per-frame (player) ────────────────────────────────────
     if (this.elementId === 'oil') {
-      // Orbit drones evenly around player
+      // Orbit drones evenly around player, spaced to avoid overlap
       const pCount = this.playerDrones.length;
+      const orbitR = Math.max(60, 40 + pCount * 8);
       for (let di = 0; di < pCount; di++) {
         const drone = this.playerDrones[di];
         drone.orbitAngle += delta * 0.0025;
         const angle = drone.orbitAngle + (di * Math.PI * 2 / Math.max(1, pCount));
         drone.sprite.setPosition(
-          this.player.x + Math.cos(angle) * 60,
-          this.player.y + Math.sin(angle) * 60,
+          this.player.x + Math.cos(angle) * orbitR,
+          this.player.y + Math.sin(angle) * orbitR,
         );
+        // Visual indicator: color + radius reflect remaining shots
+        const col = drone.shotsLeft >= 3 ? 0xffaa00 : drone.shotsLeft === 2 ? 0xff6600 : 0xff2200;
+        const rad = drone.shotsLeft >= 3 ? 8 : drone.shotsLeft === 2 ? 7 : 5;
+        drone.sprite.setFillStyle(col, 0.9);
+        drone.sprite.setRadius(rad);
       }
-      // Drones absorb NPC projectiles
+      // Destroy drones whose shots are exhausted (no puddle — only Drone Destroy and Overdrive spawn puddles)
       for (let di = this.playerDrones.length - 1; di >= 0; di--) {
-        const drone = this.playerDrones[di];
-        for (const go of allActiveProj) {
-          const proj = go as Projectile;
-          if (!proj.active || proj.isFromPlayer) continue;
-          if (Phaser.Math.Distance.Between(proj.x, proj.y, drone.sprite.x, drone.sprite.y) <= 20) {
-            drone.hp -= proj.damage;
-            proj.setActive(false).setVisible(false);
-            (proj.body as Phaser.Physics.Arcade.Body).stop();
-            break;
-          }
-        }
-        if (drone.hp <= 0) {
-          drone.sprite.destroy();
+        if (this.playerDrones[di].shotsLeft <= 0) {
+          this.playerDrones[di].sprite.destroy();
           this.playerDrones.splice(di, 1);
         }
       }
-      // Firewall absorbs NPC projectiles
+      // E upgrade: drone melee attack
+      if (this.hasUpgrade('e')) {
+        for (const drone of this.playerDrones) {
+          if (time >= drone.meleeCooldownUntil) {
+            const md = Phaser.Math.Distance.Between(drone.sprite.x, drone.sprite.y, this.npc.x, this.npc.y);
+            if (md <= 25) {
+              this.npc.takeDamage(5);
+              this.spawnHitFlash(this.npc.x, this.npc.y, 0xffaa00);
+              drone.meleeCooldownUntil = time + 1000;
+            }
+          }
+        }
+      }
+      // F upgrade: drone heals 1 shot when passing through firewall (once per drone)
+      if (this.hasUpgrade('f') && this.playerFirewallSprite && this.playerFirewallHp > 0) {
+        const fwCos = Math.cos(-this.playerFirewallAngle);
+        const fwSin = Math.sin(-this.playerFirewallAngle);
+        for (const drone of this.playerDrones) {
+          if (!drone.healedByFirewall) {
+            const relX = drone.sprite.x - this.playerFirewallX;
+            const relY = drone.sprite.y - this.playerFirewallY;
+            const localX = fwCos * relX - fwSin * relY;
+            const localY = fwSin * relX + fwCos * relY;
+            if (Math.abs(localX) <= 60 && Math.abs(localY) <= 30) {
+              drone.shotsLeft = Math.min(3, drone.shotsLeft + 1);
+              drone.healedByFirewall = true;
+            }
+          }
+        }
+      }
+      // Firewall absorbs NPC projectiles (rotated bounds check)
       if (this.playerFirewallSprite && this.playerFirewallHp > 0) {
+        const fwCos = Math.cos(-this.playerFirewallAngle);
+        const fwSin = Math.sin(-this.playerFirewallAngle);
         for (const go of allActiveProj) {
           const proj = go as Projectile;
           if (!proj.active || proj.isFromPlayer) continue;
-          if (Math.abs(proj.x - this.playerFirewallX) <= 60 && Math.abs(proj.y - this.playerFirewallY) <= 30) {
+          const relX = proj.x - this.playerFirewallX;
+          const relY = proj.y - this.playerFirewallY;
+          const localX = fwCos * relX - fwSin * relY;
+          const localY = fwSin * relX + fwCos * relY;
+          if (Math.abs(localX) <= 60 && Math.abs(localY) <= 30) {
             this.playerFirewallHp -= proj.damage;
             proj.setActive(false).setVisible(false);
             (proj.body as Phaser.Physics.Arcade.Body).stop();
@@ -5782,11 +7131,47 @@ export class ArenaScene extends Phaser.Scene {
           }
         }
       }
+      // R upgrade: oil puddle ticks and expiry
+      if (this.hasUpgrade('r')) {
+        for (let pi = this.playerOilPuddles.length - 1; pi >= 0; pi--) {
+          const p = this.playerOilPuddles[pi];
+          if (time >= p.expiresAt) {
+            p.sprite.destroy();
+            this.playerOilPuddles.splice(pi, 1);
+            continue;
+          }
+          if (p.ignited) {
+            p.igniteTickAccum += delta;
+            if (p.igniteTickAccum >= 300) {
+              p.igniteTickAccum -= 300;
+              if (Phaser.Math.Distance.Between(this.npc.x, this.npc.y, p.x, p.y) <= p.radius) {
+                this.npc.takeDamage(2);
+                this.spawnHitFlash(this.npc.x, this.npc.y, 0xff4400);
+              }
+            }
+          }
+        }
+      }
       // Overdrive beam
       if (this.playerOverdriveActive) {
         if (time >= this.playerOverdriveEnd) {
           this.playerOverdriveActive = false;
           this.nukeChanneling = false;
+          // Destroy all remaining drones when overdrive ends
+          for (const drone of this.playerDrones) {
+            if (this.hasUpgrade('r')) this.spawnOilPuddle(drone.sprite.x, drone.sprite.y, 'player');
+            drone.sprite.destroy();
+          }
+          // Q upgrade: fire salvo bombs toward cursor, one per original drone
+          if (this.hasUpgrade('q')) {
+            const salvoCX = mouseX, salvoCY = mouseY;
+            for (let i = 0; i < this.playerOverdriveDroneCount; i++) {
+              this.time.delayedCall(i * 500, () => {
+                this.fireOverdriveSalvoBomb(salvoCX, salvoCY);
+              });
+            }
+          }
+          this.playerDrones = [];
           if (this.playerOverdriveGraphics) {
             this.playerOverdriveGraphics.destroy();
             this.playerOverdriveGraphics = null;
@@ -5820,39 +7205,40 @@ export class ArenaScene extends Phaser.Scene {
     // ── Oil per-frame (NPC) ───────────────────────────────────────
     if (this.npcElement.id === 'oil') {
       const nCount = this.npcDrones.length;
+      const nOrbitR = Math.max(60, 40 + nCount * 8);
       for (let di = 0; di < nCount; di++) {
         const drone = this.npcDrones[di];
         drone.orbitAngle += delta * 0.0025;
         const angle = drone.orbitAngle + (di * Math.PI * 2 / Math.max(1, nCount));
         drone.sprite.setPosition(
-          this.npc.x + Math.cos(angle) * 60,
-          this.npc.y + Math.sin(angle) * 60,
+          this.npc.x + Math.cos(angle) * nOrbitR,
+          this.npc.y + Math.sin(angle) * nOrbitR,
         );
+        // Visual indicator
+        const col = drone.shotsLeft >= 3 ? 0xffaa00 : drone.shotsLeft === 2 ? 0xff6600 : 0xff2200;
+        const rad = drone.shotsLeft >= 3 ? 8 : drone.shotsLeft === 2 ? 7 : 5;
+        drone.sprite.setFillStyle(col, 0.7);
+        drone.sprite.setRadius(rad);
       }
-      // NPC drones absorb player projectiles
+      // Remove 0-shot NPC drones
       for (let di = this.npcDrones.length - 1; di >= 0; di--) {
-        const drone = this.npcDrones[di];
-        for (const go of allActiveProj) {
-          const proj = go as Projectile;
-          if (!proj.active || !proj.isFromPlayer) continue;
-          if (Phaser.Math.Distance.Between(proj.x, proj.y, drone.sprite.x, drone.sprite.y) <= 20) {
-            drone.hp -= proj.damage;
-            proj.setActive(false).setVisible(false);
-            (proj.body as Phaser.Physics.Arcade.Body).stop();
-            break;
-          }
-        }
-        if (drone.hp <= 0) {
-          drone.sprite.destroy();
+        if (this.npcDrones[di].shotsLeft <= 0) {
+          this.npcDrones[di].sprite.destroy();
           this.npcDrones.splice(di, 1);
         }
       }
-      // NPC firewall absorbs player projectiles (P2 oil F ability)
+      // NPC firewall absorbs player projectiles (P2 oil F ability, rotated bounds)
       if (this.npcFirewallSprite && this.npcFirewallHp > 0) {
+        const fwCos = Math.cos(-this.npcFirewallAngle);
+        const fwSin = Math.sin(-this.npcFirewallAngle);
         for (const go of allActiveProj) {
           const proj = go as Projectile;
           if (!proj.active || !proj.isFromPlayer) continue;
-          if (Math.abs(proj.x - this.npcFirewallX) <= 60 && Math.abs(proj.y - this.npcFirewallY) <= 30) {
+          const relX = proj.x - this.npcFirewallX;
+          const relY = proj.y - this.npcFirewallY;
+          const localX = fwCos * relX - fwSin * relY;
+          const localY = fwSin * relX + fwCos * relY;
+          if (Math.abs(localX) <= 60 && Math.abs(localY) <= 30) {
             this.npcFirewallHp -= proj.damage;
             proj.setActive(false).setVisible(false);
             (proj.body as Phaser.Physics.Arcade.Body).stop();
@@ -5869,6 +7255,8 @@ export class ArenaScene extends Phaser.Scene {
         if (time >= this.npcOverdriveEnd) {
           this.npcOverdriveActive = false;
           this.npcNukeChanneling = false;
+          for (const drone of this.npcDrones) drone.sprite.destroy();
+          this.npcDrones = [];
           if (this.npcOverdriveGraphics) { this.npcOverdriveGraphics.destroy(); this.npcOverdriveGraphics = null; }
         } else {
           const tgtAng = Math.atan2(this.p2LastAimY - this.npc.y, this.p2LastAimX - this.npc.x);
@@ -5906,34 +7294,34 @@ export class ArenaScene extends Phaser.Scene {
           continue;
         }
         cloud.tickAccum += delta;
-        if (cloud.tickAccum >= 1000) {
-          cloud.tickAccum -= 1000;
+        if (cloud.tickAccum >= 400) {
+          cloud.tickAccum -= 400;
           if (cloud.owner === 'player') {
             // Heal player, damage NPC
             if (Phaser.Math.Distance.Between(cloud.x, cloud.y, this.player.x, this.player.y) <= cloud.radius + 14) {
               const prevHp = this.player.hp;
-              this.player.heal(3);
+              this.player.heal(1.5);
               const healed = this.player.hp - prevHp;
               if (healed > 0) {
                 this.shadowDanceCharge = Math.min(35, this.shadowDanceCharge + healed);
               }
             }
             if (Phaser.Math.Distance.Between(cloud.x, cloud.y, this.npc.x, this.npc.y) <= cloud.radius + 14) {
-              this.npc.takeDamage(2);
+              this.npc.takeDamage(1);
               this.spawnHitFlash(this.npc.x, this.npc.y, 0x660088);
             }
           } else {
             // NPC cloud: heal NPC, damage player
             if (Phaser.Math.Distance.Between(cloud.x, cloud.y, this.npc.x, this.npc.y) <= cloud.radius + 14) {
               const prevNpcHp = this.npc.hp;
-              this.npc.heal(3);
+              this.npc.heal(1.5);
               const npcHealed = this.npc.hp - prevNpcHp;
               if (npcHealed > 0) {
                 this.npcShadowDanceCharge = Math.min(35, this.npcShadowDanceCharge + npcHealed);
               }
             }
             if (Phaser.Math.Distance.Between(cloud.x, cloud.y, this.player.x, this.player.y) <= cloud.radius + 14) {
-              this.player.takeDamage(2);
+              this.player.takeDamage(1);
             }
           }
         }
@@ -5948,18 +7336,18 @@ export class ArenaScene extends Phaser.Scene {
           continue;
         }
         if (trap.owner === 'player') {
-          if (Phaser.Math.Distance.Between(trap.x, trap.y, this.npc.x, this.npc.y) <= 28) {
+          if (Phaser.Math.Distance.Between(trap.x, trap.y, this.npc.x, this.npc.y) <= trap.radius + 10) {
             trap.triggered = true;
             this.npc.takeDamage(20);
             this.spawnHitFlash(this.npc.x, this.npc.y, 0xcc44ff);
-            this.shadowNpcStunnedUntil = time + 1000;
+            this.shadowNpcStunnedUntil = time + 2000;
           }
         } else {
-          if (Phaser.Math.Distance.Between(trap.x, trap.y, this.player.x, this.player.y) <= 28) {
+          if (Phaser.Math.Distance.Between(trap.x, trap.y, this.player.x, this.player.y) <= trap.radius + 10) {
             trap.triggered = true;
             this.player.takeDamage(20);
             this.spawnHitFlash(this.player.x, this.player.y, 0xcc44ff);
-            this.shadowPlayerStunnedUntil = time + 1000;
+            this.shadowPlayerStunnedUntil = time + 2000;
           }
         }
       }
@@ -5983,7 +7371,12 @@ export class ArenaScene extends Phaser.Scene {
                 tSpr.lineStyle(2, 0xcc44ff, 0.5);
                 tSpr.lineBetween(this.player.x, this.player.y, this.npc.x, this.npc.y);
               } else {
-                // Miss: draw short whip toward endpoint and expire
+                // Miss/drag: track cursor for trap drag (R+)
+                if (this.hasUpgrade('r')) {
+                  const ptr = this.input.activePointer;
+                  this.shadowTentacleX = ptr.worldX;
+                  this.shadowTentacleY = ptr.worldY;
+                }
                 tSpr.lineStyle(4, 0x8800cc, 0.6);
                 tSpr.lineBetween(this.player.x, this.player.y, this.shadowTentacleX, this.shadowTentacleY);
               }
@@ -6035,6 +7428,48 @@ export class ArenaScene extends Phaser.Scene {
               this.shadowBlackHoleSprite.strokeCircle(this.player.x, this.player.y, pulse + 8);
             }
             // NPC velocity override handled after doAI (see "Black hole pull" section)
+            // Q+ puddle rain every 1.5s while active
+            if (this.hasUpgrade('q')) {
+              this.shadowBHPuddleAccum += delta;
+              if (this.shadowBHPuddleAccum >= 1500) {
+                this.shadowBHPuddleAccum -= 1500;
+                this.spawnShadowDarkCloud(this.player.x, this.player.y, 'player');
+              }
+            }
+          }
+        }
+
+        // Click+ confusion: track NPC exposure to player clouds
+        if (this.hasUpgrade('click')) {
+          const npcInCloud = this.shadowDarkClouds.some(
+            c => c.owner === 'player' && Phaser.Math.Distance.Between(c.x, c.y, this.npc.x, this.npc.y) <= c.radius + 14,
+          );
+          if (npcInCloud) {
+            this.shadowCloudExposureAccum += delta;
+            if (this.shadowCloudExposureAccum >= 3000 && time > this.shadowConfusionUntil) {
+              this.shadowConfusionUntil = time + 6000;
+              this.shadowCloudExposureAccum = 0;
+              this.spawnHitFlash(this.npc.x, this.npc.y, 0x8800cc);
+              const confTxt = this.add.text(this.npc.x, this.npc.y - 30, '😵 CONFUSED', { fontSize: '11px', color: '#cc44ff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
+              this.tweens.add({ targets: confTxt, y: confTxt.y - 20, alpha: 0, duration: 1200, onComplete: () => confTxt.destroy() });
+            }
+          } else {
+            this.shadowCloudExposureAccum = Math.max(0, this.shadowCloudExposureAccum - delta * 0.5);
+          }
+        }
+
+        // R+ snap trap drag: traps near tentacle endpoint follow it
+        if (this.hasUpgrade('r') && this.shadowTentacleActive) {
+          const tipX = this.shadowTentacleHooked ? this.npc.x : this.shadowTentacleX;
+          const tipY = this.shadowTentacleHooked ? this.npc.y : this.shadowTentacleY;
+          for (const trap of this.shadowSnapTraps) {
+            if (trap.owner !== 'player' || trap.triggered) continue;
+            if (Phaser.Math.Distance.Between(trap.x, trap.y, tipX, tipY) <= 55) {
+              trap.x = tipX;
+              trap.y = tipY;
+              trap.sprite.setPosition(tipX, tipY);
+              trap.label.setPosition(tipX, tipY);
+            }
           }
         }
       }
@@ -6230,7 +7665,7 @@ export class ArenaScene extends Phaser.Scene {
 
     const npcPreDashX = this.npc.x;
     const npcPreDashY = this.npc.y;
-    const npcCastId = (this.npc as NpcOpponent).doAI(
+    const npcCastId = (this.shadowConsumeActive || this.time.now < this.shadowNpcThrowUntil) ? null : (this.npc as NpcOpponent).doAI(
       this.player,
       (tx: number, ty: number) => this.buildNpcContext(tx, ty),
       time,
@@ -6282,7 +7717,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Ice per-frame ─────────────────────────────────────────────
     if (this.elementId === 'ice' || this.npcElement.id === 'ice') {
-      // Icy trail ticks: slow enemy + inflict frost stacks
+      // Icy trail ticks: slow enemy + inflict frost/void-frost stacks + F+ owner speed boost
       for (let ti = this.icyTrails.length - 1; ti >= 0; ti--) {
         const trail = this.icyTrails[ti];
         if (time >= trail.expiresAt) {
@@ -6295,9 +7730,9 @@ export class ArenaScene extends Phaser.Scene {
         const trailDist = Phaser.Math.Distance.Between(trail.x, trail.y, enemyTarget.x, enemyTarget.y);
         if (trailDist <= trail.radius) {
           if (trail.owner === 'player') {
-            // NPC slow — npcSpeedMult is applied after this section in post-AI velocity multiplier
-            this.npcSpeedMult *= 0.8;
-            // Frost tick every 1200ms
+            // Void frost trails don't slow — regular frost trails do
+            if (!this.playerBlackIceMorphActive) this.npcSpeedMult *= 0.8;
+            // Frost/void-frost tick every 1200ms
             trail.frostTickAccum += delta;
             if (trail.frostTickAccum >= 1200) {
               trail.frostTickAccum -= 1200;
@@ -6315,6 +7750,42 @@ export class ArenaScene extends Phaser.Scene {
             }
           }
         }
+        // F+: stepping on own trail grants speed boost
+        if (this.hasUpgrade('f') && trail.owner === 'player') {
+          const ownerDist = Phaser.Math.Distance.Between(trail.x, trail.y, this.player.x, this.player.y);
+          if (ownerDist <= trail.radius) {
+            this.playerIceSpeedBoostUntil = Math.max(this.playerIceSpeedBoostUntil, time + 3000);
+          }
+        }
+      }
+
+      // Void frost DOT + thaw (black ice morph)
+      if (this.npcVoidFrostStacks > 0) {
+        const vfDps = this.npcVoidFrostStacks >= 5 ? 4 : this.npcVoidFrostStacks >= 3 ? 2 : 1;
+        this.npcVoidFrostTickAccum += delta;
+        if (this.npcVoidFrostTickAccum >= 1000) {
+          this.npcVoidFrostTickAccum -= 1000;
+          this.npc.takeDamage(vfDps);
+          this.spawnHitFlash(this.npc.x, this.npc.y, 0x9900ff);
+        }
+        // Thaw: 1 stack every 3 seconds
+        this.npcVoidFrostThawAccum += delta;
+        if (this.npcVoidFrostThawAccum >= 3000) {
+          this.npcVoidFrostThawAccum -= 3000;
+          this.npcVoidFrostStacks = Math.max(0, this.npcVoidFrostStacks - 1);
+          this.npc.incomingDamageMultiplier = this.npcVoidFrostStacks > 0
+            ? this.frostDamageMultiplier(this.npcVoidFrostStacks) : 1;
+        }
+      }
+
+      // Voided debuff DOT
+      if (this.npcVoidedUntil > time) {
+        this.npcVoidedTickAccum += delta;
+        if (this.npcVoidedTickAccum >= 1000) {
+          this.npcVoidedTickAccum -= 1000;
+          this.npc.takeDamage(this.npcVoidedDps);
+          this.spawnHitFlash(this.npc.x, this.npc.y, 0x6600cc);
+        }
       }
 
       // Frost visual indicators above fighters
@@ -6328,6 +7799,32 @@ export class ArenaScene extends Phaser.Scene {
         }
       } else if (this.npcFrostVisual) {
         this.npcFrostVisual.destroy(); this.npcFrostVisual = null;
+      }
+
+      // Void frost visual
+      const vfLabel = this.npcVoidFrostStacks > 0 ? `☠️×${this.npcVoidFrostStacks}` : '';
+      if (vfLabel) {
+        if (!this.npcVoidFrostVisual) {
+          this.npcVoidFrostVisual = this.add.text(this.npc.x, this.npc.y - 54, vfLabel,
+            { fontSize: '12px', fontFamily: 'Arial', color: '#cc88ff' }).setOrigin(0.5).setDepth(10);
+        } else {
+          this.npcVoidFrostVisual.setText(vfLabel).setPosition(this.npc.x, this.npc.y - 54);
+        }
+      } else if (this.npcVoidFrostVisual) {
+        this.npcVoidFrostVisual.destroy(); this.npcVoidFrostVisual = null;
+      }
+
+      // Voided status visual
+      const voidedLabel = this.npcVoidedUntil > time ? '🔮 VOIDED' : '';
+      if (voidedLabel) {
+        if (!this.npcVoidedVisual) {
+          this.npcVoidedVisual = this.add.text(this.npc.x, this.npc.y - 66, voidedLabel,
+            { fontSize: '10px', fontFamily: 'Arial', color: '#cc66ff' }).setOrigin(0.5).setDepth(10);
+        } else {
+          this.npcVoidedVisual.setPosition(this.npc.x, this.npc.y - 66);
+        }
+      } else if (this.npcVoidedVisual) {
+        this.npcVoidedVisual.destroy(); this.npcVoidedVisual = null;
       }
 
       const frostPlayerLabel = this.playerFrostStacks > 0 ? `❄️×${this.playerFrostStacks}` : '';
@@ -6345,6 +7842,7 @@ export class ArenaScene extends Phaser.Scene {
       // Block up aura positions
       if (this.playerBlockUpAura) this.playerBlockUpAura.setPosition(this.player.x, this.player.y);
       if (this.npcBlockUpAura) this.npcBlockUpAura.setPosition(this.npc.x, this.npc.y);
+      if (this.playerBlackIceAura) this.playerBlackIceAura.setPosition(this.player.x, this.player.y);
 
       // Frozen overlays (blue tint flash)
       if (this.playerFrozenUntil > 0 && time >= this.playerFrozenUntil) {
@@ -6372,19 +7870,68 @@ export class ArenaScene extends Phaser.Scene {
 
       // Tentacle: drag NPC toward cursor
       if (this.shadowTentacleHooked && this.shadowTentacleActive) {
-        const tMx = this.input.activePointer.worldX;
-        const tMy = this.input.activePointer.worldY;
-        const dragDist = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, tMx, tMy);
-        if (dragDist > 20) {
-          const dragAngle = Math.atan2(tMy - this.npc.y, tMx - this.npc.x);
-          nBody.setVelocity(Math.cos(dragAngle) * 200, Math.sin(dragAngle) * 200);
+        // E+ consume trigger: NPC dragged to player
+        if (this.hasUpgrade('e') && !this.shadowConsumeActive) {
+          const cDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
+          if (cDist <= 22) {
+            this.shadowConsumeActive = true;
+            this.shadowConsumeEnd = time + 3000;
+            this.shadowConsumeTickAccum = 0;
+            this.shadowTentacleActive = false;
+            this.shadowTentacleHooked = false;
+            if (this.shadowTentacleSprite) { this.shadowTentacleSprite.destroy(); this.shadowTentacleSprite = null; }
+            if (this.shadowConsumeAura) this.shadowConsumeAura.destroy();
+            this.shadowConsumeAura = this.add.circle(this.player.x, this.player.y, 30, 0x8800cc, 0.4).setDepth(7);
+            this.tweens.add({ targets: this.shadowConsumeAura, alpha: 0.85, yoyo: true, repeat: -1, duration: 180 });
+          }
+        }
+        if (!this.shadowConsumeActive) {
+          const tMx = this.input.activePointer.worldX;
+          const tMy = this.input.activePointer.worldY;
+          const dragDist = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, tMx, tMy);
+          if (dragDist > 20) {
+            const dragAngle = Math.atan2(tMy - this.npc.y, tMx - this.npc.x);
+            nBody.setVelocity(Math.cos(dragAngle) * 200, Math.sin(dragAngle) * 200);
+          } else {
+            nBody.setVelocity(0, 0);
+          }
+        }
+      }
+
+      // E+ consume: NPC held at player position, taking damage
+      if (this.shadowConsumeActive) {
+        const cBody = this.npc.body as Phaser.Physics.Arcade.Body;
+        if (time >= this.shadowConsumeEnd) {
+          this.shadowConsumeActive = false;
+          if (this.shadowConsumeAura) { this.shadowConsumeAura.destroy(); this.shadowConsumeAura = null; }
         } else {
-          nBody.setVelocity(0, 0);
+          cBody.reset(this.player.x, this.player.y);
+          cBody.setVelocity(0, 0);
+          if (this.shadowConsumeAura) this.shadowConsumeAura.setPosition(this.player.x, this.player.y);
+          this.shadowConsumeTickAccum += delta;
+          if (this.shadowConsumeTickAccum >= 1000) {
+            this.shadowConsumeTickAccum -= 1000;
+            this.npc.takeDamage(2);
+            this.spawnHitFlash(this.npc.x, this.npc.y, 0x8800cc);
+          }
         }
       }
 
       // Stun from snap trap
       if (time < this.shadowNpcStunnedUntil) nBody.setVelocity(0, 0);
+
+      // Click+ confusion: random movement
+      if (this.hasUpgrade('click') && time < this.shadowConfusionUntil) {
+        if (time >= this.shadowConfusionNextChange) {
+          this.shadowConfusionAngle = Math.random() * Math.PI * 2;
+          this.shadowConfusionNextChange = time + Phaser.Math.Between(400, 800);
+        }
+        const confBody = this.npc.body as Phaser.Physics.Arcade.Body;
+        confBody.setVelocity(
+          Math.cos(this.shadowConfusionAngle) * 130 * this.npcSpeedMult,
+          Math.sin(this.shadowConfusionAngle) * 130 * this.npcSpeedMult,
+        );
+      }
     }
 
     // ── Frozen NPC override (ice element) ────────────────────────
@@ -6462,6 +8009,135 @@ export class ArenaScene extends Phaser.Scene {
         while (this.npcGrowthRegenAccum >= npcRegenInterval) {
           this.npcGrowthRegenAccum -= npcRegenInterval;
           this.npc.heal(1);
+        }
+      }
+
+      // Player-only growth upgrade effects
+      if (this.elementId === 'growth') {
+        // E+ auto-pick: hold E to auto-select mutation when off cooldown
+        if (this.hasUpgrade('e') && this.eKey.isDown && !this.growthMutateMenuOpen) {
+          if (this.player.getCooldownRatio('mutate') >= 1) {
+            const autoPool = [
+              { id: 'healthier', name: 'Healthier', emoji: '💚' },
+              { id: 'deadly', name: 'Deadly', emoji: '💀' },
+              { id: 'linger', name: 'Linger', emoji: '⏳' },
+              { id: 'viral', name: 'Viral', emoji: '🧬' },
+              { id: 'grow', name: 'Grow', emoji: '📈' },
+              { id: 'shrink', name: 'Shrink', emoji: '📉' },
+              { id: 'buffer', name: 'Buffer', emoji: '🛡️' },
+              { id: 'spray', name: 'Spray', emoji: '🗡️' },
+              { id: 'quick', name: 'Quick', emoji: '⚡' },
+              { id: 'regenerative', name: 'Regenerative', emoji: '♻️' },
+              { id: 'chunk', name: 'Chunk', emoji: '💥' },
+              { id: 'relapse', name: 'Relapse', emoji: '↩️' },
+              { id: 'gene-enhance', name: 'Gene Enhance', emoji: '🧪' },
+              { id: 'spread', name: 'Spread', emoji: '🌿' },
+              { id: 'uber-infect', name: 'Uber-Infect', emoji: '🔬' },
+              { id: 'fungal-flourish', name: 'Fungal Flourish', emoji: '🍄' },
+              { id: 'greed', name: 'Greed', emoji: '🤑' },
+              { id: 'sneeze', name: 'Sneeze', emoji: '🤧' },
+              { id: 'cough', name: 'Cough', emoji: '😷' },
+            ];
+            const picked = autoPool[Math.floor(Math.random() * autoPool.length)];
+            this.applyGrowthMutation(picked.id, 'player');
+            this.player.triggerCooldown('mutate');
+            const ft = this.add.text(this.player.x, this.player.y - 45, `${picked.emoji} ${picked.name}!`, { fontSize: '12px', color: '#aadd44', fontFamily: 'Arial Black', stroke: '#003300', strokeThickness: 2 }).setOrigin(0.5).setDepth(15);
+            this.tweens.add({ targets: ft, y: ft.y - 30, alpha: 0, duration: 1200, onComplete: () => ft.destroy() });
+          }
+        }
+
+        // Sneeze aura — tick damage to nearby NPC
+        if (this.growthSneezeStacks > 0) {
+          if (!this.growthSneezeAura) {
+            this.growthSneezeAura = this.add.circle(this.player.x, this.player.y, 120, 0x44cc22, 0.12)
+              .setStrokeStyle(1, 0x88ff44, 0.4).setDepth(3);
+          }
+          this.growthSneezeAura.setPosition(this.player.x, this.player.y);
+          this.growthSneezeAccum += delta;
+          if (this.growthSneezeAccum >= 1000) {
+            this.growthSneezeAccum -= 1000;
+            const sneezeDmg = this.growthSneezeStacks;
+            if (Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y) <= 120) {
+              this.npc.takeDamage(sneezeDmg);
+              this.spawnHitFlash(this.npc.x, this.npc.y, 0x88ff44);
+              const ft = this.add.text(this.npc.x, this.npc.y - 20, `🤧 ${sneezeDmg}`, { fontSize: '10px', color: '#88ff44' }).setOrigin(0.5).setDepth(12);
+              this.tweens.add({ targets: ft, y: ft.y - 15, alpha: 0, duration: 700, onComplete: () => ft.destroy() });
+            }
+          }
+        } else if (this.growthSneezeAura) {
+          this.growthSneezeAura.destroy(); this.growthSneezeAura = null;
+        }
+
+        // Cough aura — position update
+        if (this.growthCoughStacks > 0) {
+          if (!this.growthCoughAura) {
+            this.growthCoughAura = this.add.circle(this.player.x, this.player.y, 120, 0xdddd00, 0.12)
+              .setStrokeStyle(1, 0xffff44, 0.4).setDepth(3);
+          }
+          this.growthCoughAura.setPosition(this.player.x, this.player.y);
+        } else if (this.growthCoughAura) {
+          this.growthCoughAura.destroy(); this.growthCoughAura = null;
+        }
+
+        // Bacteria — move toward NPC, contact damage, take damage from NPC projectiles
+        for (let bi = this.growthBacteriaList.length - 1; bi >= 0; bi--) {
+          const bac = this.growthBacteriaList[bi];
+          if (!bac.sprite.active || bac.hp <= 0) {
+            if (bac.sprite.active) bac.sprite.destroy();
+            this.growthBacteriaList.splice(bi, 1);
+            continue;
+          }
+          const bdist = Phaser.Math.Distance.Between(bac.sprite.x, bac.sprite.y, this.npc.x, this.npc.y);
+          if (bdist > 18) {
+            const speed = 150 * (delta / 1000);
+            bac.sprite.x += ((this.npc.x - bac.sprite.x) / bdist) * speed;
+            bac.sprite.y += ((this.npc.y - bac.sprite.y) / bdist) * speed;
+          } else if (time - bac.lastContactTime >= 1000) {
+            bac.lastContactTime = time;
+            this.npc.takeDamage(5);
+            this.spawnHitFlash(this.npc.x, this.npc.y, 0x55cc22);
+            const ft = this.add.text(this.npc.x, this.npc.y - 20, '🦠 5', { fontSize: '10px', color: '#88ff44', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
+            this.tweens.add({ targets: ft, y: ft.y - 20, alpha: 0, duration: 700, onComplete: () => ft.destroy() });
+          }
+          // NPC projectile hits bacteria
+          for (const child of this.projectiles.getChildren()) {
+            const p = child as Projectile;
+            if (!p.active || p.isFromPlayer) continue;
+            if (Phaser.Math.Distance.Between(p.x, p.y, bac.sprite.x, bac.sprite.y) <= 12) {
+              bac.hp -= p.damage;
+              p.setActive(false).setVisible(false);
+              (p.body as Phaser.Physics.Arcade.Body).stop();
+              this.spawnHitFlash(bac.sprite.x, bac.sprite.y, 0xff4444);
+              if (bac.hp <= 0) {
+                bac.sprite.destroy();
+                this.growthBacteriaList.splice(bi, 1);
+              }
+              break;
+            }
+          }
+        }
+
+        // Infect wall bounce (Relapse)
+        if (this.growthInfectBouncers.length > 0) {
+          const W = this.scale.width;
+          const H = this.scale.height;
+          for (let ri = this.growthInfectBouncers.length - 1; ri >= 0; ri--) {
+            const entry = this.growthInfectBouncers[ri];
+            if (!entry.proj.active) { this.growthInfectBouncers.splice(ri, 1); continue; }
+            const body = entry.proj.body as Phaser.Physics.Arcade.Body;
+            const atLeft  = entry.proj.x <= 12 && body.velocity.x < 0;
+            const atRight = entry.proj.x >= W - 12 && body.velocity.x > 0;
+            const atTop   = entry.proj.y <= 12 && body.velocity.y < 0;
+            const atBot   = entry.proj.y >= H - 12 && body.velocity.y > 0;
+            if (atLeft || atRight || atTop || atBot) {
+              if (atLeft || atRight) body.velocity.x *= -1;
+              if (atTop || atBot) body.velocity.y *= -1;
+              entry.bouncesDone++;
+              if (entry.bouncesDone >= this.growthInfectBounces) {
+                this.growthInfectBouncers.splice(ri, 1);
+              }
+            }
+          }
         }
       }
     }
@@ -7264,6 +8940,370 @@ export class ArenaScene extends Phaser.Scene {
       }
     }
 
+    // ── Gravity per-frame ────────────────────────────────────────
+    if (this.elementId === 'gravity' || this.npcElement.id === 'gravity') {
+      // Space Slash telegraphs: resolve damage + knockback after 500ms delay
+      for (let i = this.gravSlashes.length - 1; i >= 0; i--) {
+        const sl = this.gravSlashes[i];
+        if (time >= sl.fireAt) {
+          sl.line.destroy();
+          this.gravSlashes.splice(i, 1);
+          const target = sl.owner === 'player' ? this.npc : this.player;
+          const d = this.pointToSegmentDist(target.x, target.y, sl.x1, sl.y1, sl.x2, sl.y2);
+          if (d <= 40) {
+            target.takeDamage(sl.damage);
+            this.spawnHitFlash(target.x, target.y, 0x8844cc);
+            // Knockback in drag direction
+            const kx = sl.x2 - sl.x1;
+            const ky = sl.y2 - sl.y1;
+            const klen = Math.hypot(kx, ky) || 1;
+            (target.body as Phaser.Physics.Arcade.Body).setVelocity((kx / klen) * sl.knockback, (ky / klen) * sl.knockback);
+          }
+        }
+      }
+
+      // Meteor shadows: resolve when fireAt reached (skip frozen ones)
+      for (let i = this.gravMeteorShadows.length - 1; i >= 0; i--) {
+        const ms = this.gravMeteorShadows[i];
+        if (ms.frozen) continue;
+        if (time >= ms.fireAt) {
+          ms.sprite.destroy();
+          this.gravMeteorShadows.splice(i, 1);
+          // Falling meteor visual
+          const impactRing = this.add.circle(ms.x, ms.y, 10, 0xff8822, 0.9).setDepth(8);
+          this.tweens.add({ targets: impactRing, scaleX: 8, scaleY: 8, alpha: 0, duration: 400, onComplete: () => impactRing.destroy() });
+          const impactCore = this.add.circle(ms.x, ms.y, 7, 0xffffff, 0.95).setDepth(9);
+          this.tweens.add({ targets: impactCore, scaleX: 3, scaleY: 3, alpha: 0, duration: 200, onComplete: () => impactCore.destroy() });
+          // Small purple flash
+          const gravFlash = this.add.circle(ms.x, ms.y, 8, 0x8844cc, 0.7).setDepth(7);
+          this.tweens.add({ targets: gravFlash, scaleX: 10, scaleY: 10, alpha: 0, duration: 350, onComplete: () => gravFlash.destroy() });
+          const target = ms.owner === 'player' ? this.npc : this.player;
+          const dist = Phaser.Math.Distance.Between(ms.x, ms.y, target.x, target.y);
+          if (dist <= ms.radius) {
+            const dmg = dist <= ms.directHitRadius ? ms.damage + ms.directBonus : ms.damage;
+            target.takeDamage(dmg);
+            this.spawnHitFlash(target.x, target.y, 0xaa66ff);
+          }
+        }
+      }
+
+      // Grav Bomb hold drag: pull enemy toward cursor only if inside the vortex circle (runs after doAI)
+      if (this.gravBombHolding) {
+        const distToVortex = Phaser.Math.Distance.Between(this.gravBombLastX, this.gravBombLastY, this.npc.x, this.npc.y);
+        if (distToVortex <= 120) {
+          const gdx = this.gravBombLastX - this.npc.x;
+          const gdy = this.gravBombLastY - this.npc.y;
+          const gd = Math.hypot(gdx, gdy) || 1;
+          const nb2 = this.npc.body as Phaser.Physics.Arcade.Body;
+          nb2.velocity.x += (gdx / gd) * 55;
+          nb2.velocity.y += (gdy / gd) * 55;
+        }
+      }
+
+      // Space Slam: keep target locked at floor for a brief window
+      if (time < this.gravSpaceSlamLockUntil) {
+        const H = this.scale.height;
+        this.npc.y = H - 40;
+        const nb3 = this.npc.body as Phaser.Physics.Arcade.Body;
+        nb3.velocity.y = Math.min(nb3.velocity.y, 0);
+      }
+      if (time < this.npcGravSpaceSlamLockUntil) {
+        const H = this.scale.height;
+        this.player.y = H - 40;
+        const pb3 = this.player.body as Phaser.Physics.Arcade.Body;
+        pb3.velocity.y = Math.min(pb3.velocity.y, 0);
+      }
+
+      // Lunar Landing: detonate when fireAt reached
+      if (this.gravLunarShadow && time >= this.gravLunarFireAt) {
+        const lsX = this.gravLunarShadow.x;
+        const lsY = this.gravLunarShadow.y;
+        const lsR = this.gravLunarRadius;
+        this.gravLunarShadow.destroy();
+        this.gravLunarShadow = null;
+
+        // Massive impact visuals
+        const bigRing = this.add.circle(lsX, lsY, 10, 0xff8822, 0.9).setDepth(9);
+        this.tweens.add({ targets: bigRing, scaleX: lsR / 5, scaleY: lsR / 5, alpha: 0, duration: 600, onComplete: () => bigRing.destroy() });
+        const bigCore = this.add.circle(lsX, lsY, 10, 0xffffff, 0.95).setDepth(10);
+        this.tweens.add({ targets: bigCore, scaleX: 12, scaleY: 12, alpha: 0, duration: 300, onComplete: () => bigCore.destroy() });
+        const gravPulse = this.add.circle(lsX, lsY, 12, 0x8844cc, 0.7).setDepth(8);
+        this.tweens.add({ targets: gravPulse, scaleX: lsR / 6, scaleY: lsR / 6, alpha: 0, duration: 500, onComplete: () => gravPulse.destroy() });
+
+        // Deal damage to enemy inside the shadow circle
+        const target = this.gravLunarOwner === 'player' ? this.npc : this.player;
+        if (Phaser.Math.Distance.Between(lsX, lsY, target.x, target.y) <= lsR) {
+          target.takeDamage(60);
+          this.spawnHitFlash(target.x, target.y, 0xaa66ff);
+        }
+
+        // Spawn 20 fire puddles randomly inside the shadow circle
+        for (let pi = 0; pi < 20; pi++) {
+          // Uniform random point in circle: use sqrt of uniform random for radius
+          const r = lsR * 0.9 * Math.sqrt(Math.random());
+          const angle = Math.random() * Math.PI * 2;
+          const px = lsX + Math.cos(angle) * r;
+          const py = lsY + Math.sin(angle) * r;
+          const puddleSpr = this.add.circle(px, py, 35, 0xff4422, 0.55).setDepth(2)
+            .setStrokeStyle(1, 0xff8844, 0.5);
+          this.tweens.add({ targets: puddleSpr, alpha: 0.3, yoyo: true, repeat: -1, duration: 800 });
+          this.gravFirePuddles.push({ sprite: puddleSpr, expiresAt: time + 8000, x: px, y: py, radius: 35, tickAccum: 0, owner: this.gravLunarOwner });
+        }
+      }
+
+      // Gravity fire puddle tick + expiry
+      for (let i = this.gravFirePuddles.length - 1; i >= 0; i--) {
+        const fp = this.gravFirePuddles[i];
+        if (time > fp.expiresAt) {
+          fp.sprite.destroy();
+          this.gravFirePuddles.splice(i, 1);
+          continue;
+        }
+        const fTarget = fp.owner === 'player' ? this.npc : this.player;
+        if (Phaser.Math.Distance.Between(fp.x, fp.y, fTarget.x, fTarget.y) <= fp.radius) {
+          fp.tickAccum += delta;
+          if (fp.tickAccum >= 300) {
+            fp.tickAccum -= 300;
+            fTarget.takeDamage(4);
+            this.spawnHitFlash(fTarget.x, fTarget.y, 0xff6633);
+          }
+        }
+      }
+    }
+
+    // ── Creation per-frame ────────────────────────────────────────
+    if (this.elementId === 'creation' || this.npcElement.id === 'creation') {
+      // 1. Craft timer
+      if (this.creatCraftInProgress && time >= this.creatCraftStartTime + this.creatCraftDuration) {
+        this.resolveCrucibleCraft(time);
+      }
+
+      // 2. Bolt charge orb position update (if E held by player, handled in input block but orb may drift)
+      // (already done in input block)
+
+      // 3. Daggers in flight
+      const W2 = this.scale.width, H2 = this.scale.height;
+      for (let i = this.creatDaggers.length - 1; i >= 0; i--) {
+        const d = this.creatDaggers[i];
+        d.sprite.x += d.vx * (delta / 1000);
+        d.sprite.y += d.vy * (delta / 1000);
+        if (d.sprite.x < 0 || d.sprite.x > W2 || d.sprite.y < 0 || d.sprite.y > H2) {
+          d.sprite.destroy();
+          this.creatDaggers.splice(i, 1);
+          continue;
+        }
+        const dTarget = d.owner === 'player' ? this.npc : this.player;
+        const targetId = d.owner === 'player' ? 'npc' : 'player';
+        if (!d.hitSet.has(targetId) && Phaser.Math.Distance.Between(d.sprite.x, d.sprite.y, dTarget.x, dTarget.y) <= 20) {
+          dTarget.takeDamage(d.damage);
+          this.spawnHitFlash(dTarget.x, dTarget.y, 0xeeeeff);
+          d.hitSet.add(targetId);
+          // Daggers pierce — don't destroy
+        }
+      }
+
+      // 4. Bolts in flight
+      for (let i = this.creatBolts.length - 1; i >= 0; i--) {
+        const b = this.creatBolts[i];
+        b.sprite.x += b.vx * (delta / 1000);
+        b.sprite.y += b.vy * (delta / 1000);
+        if (b.sprite.x < 0 || b.sprite.x > W2 || b.sprite.y < 0 || b.sprite.y > H2) {
+          b.sprite.destroy();
+          this.creatBolts.splice(i, 1);
+          continue;
+        }
+        // Check crucible hit
+        if (this.crucibleSprite && Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, this.crucibleX, this.crucibleY) <= 30) {
+          if (this.creatCraftInProgress) {
+            // Discard during craft
+            const puff = this.add.circle(b.sprite.x, b.sprite.y, 6, 0x888888, 0.5).setDepth(6);
+            this.tweens.add({ targets: puff, alpha: 0, scaleX: 1.5, scaleY: 1.5, duration: 200, onComplete: () => puff.destroy() });
+          } else if (this.crucibleBolts.length < 3) {
+            const iconColors: Record<string, number> = { copper: 0xcc6622, silver: 0xccccdd, gold: 0xffdd22 };
+            const iconX = this.crucibleX - 16 + this.crucibleBolts.length * 16;
+            const iconY = this.crucibleY - 28;
+            const icon = this.add.rectangle(iconX, iconY, 12, 12, iconColors[b.tier], 0.9)
+              .setStrokeStyle(1, 0xffffff, 0.5).setDepth(5);
+            this.crucibleBolts.push({ tier: b.tier, icon });
+            if (this.crucibleBolts.length === 3) {
+              this.creatCraftInProgress = true;
+              this.creatCraftStartTime = time;
+              this.creatCraftOwner = b.owner;
+              // Crafting indicator on crucible
+              const craftFlash = this.add.circle(this.crucibleX, this.crucibleY, 28, 0xffdd44, 0.3).setDepth(6);
+              this.tweens.add({ targets: craftFlash, alpha: 0.7, scaleX: 1.2, scaleY: 1.2, yoyo: true, repeat: -1, duration: 400 });
+              this.time.delayedCall(this.creatCraftDuration + 50, () => craftFlash.destroy());
+            }
+          }
+          b.sprite.destroy();
+          this.creatBolts.splice(i, 1);
+          continue;
+        }
+        // Check enemy hit
+        const bTarget = b.owner === 'player' ? this.npc : this.player;
+        if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, bTarget.x, bTarget.y) <= 18) {
+          bTarget.takeDamage(b.damage);
+          this.spawnHitFlash(bTarget.x, bTarget.y, 0xffaa44);
+          b.sprite.destroy();
+          this.creatBolts.splice(i, 1);
+        }
+      }
+
+      // 5. Scythe steering + contact + absorption
+      for (let i = this.creatScythes.length - 1; i >= 0; i--) {
+        const sc = this.creatScythes[i];
+        const scTarget = sc.owner === 'player' ? this.npc : this.player;
+        const sdx = scTarget.x - sc.sprite.x;
+        const sdy = scTarget.y - sc.sprite.y;
+        const slen = Math.hypot(sdx, sdy) || 1;
+        const scytheSpeed = 260;
+        sc.vx = (sdx / slen) * scytheSpeed;
+        sc.vy = (sdy / slen) * scytheSpeed;
+        sc.sprite.x += sc.vx * (delta / 1000);
+        sc.sprite.y += sc.vy * (delta / 1000);
+        // Update HP bar
+        const hpFrac = Math.max(0, sc.hp / sc.maxHp);
+        sc.hpBg.setPosition(sc.sprite.x, sc.sprite.y - 16);
+        sc.hpBar.setPosition(sc.sprite.x - 14, sc.sprite.y - 16).setSize(28 * hpFrac, 4);
+        // Contact damage — destroy on hit
+        if (Phaser.Math.Distance.Between(sc.sprite.x, sc.sprite.y, scTarget.x, scTarget.y) <= 28) {
+          scTarget.takeDamage(32);
+          this.spawnHitFlash(scTarget.x, scTarget.y, 0xcc22aa);
+          sc.hp = 0; // triggers destruction below
+        }
+        // Absorb enemy projectiles
+        for (const go of this.projectiles.getChildren()) {
+          const proj = go as Projectile;
+          if (!proj.active) continue;
+          const isEnemyProj = sc.owner === 'player' ? !proj.isFromPlayer : proj.isFromPlayer;
+          if (!isEnemyProj) continue;
+          if (Phaser.Math.Distance.Between(proj.x, proj.y, sc.sprite.x, sc.sprite.y) <= 20) {
+            sc.hp -= proj.damage;
+            proj.setActive(false).setVisible(false);
+            (proj.body as Phaser.Physics.Arcade.Body).stop();
+            break;
+          }
+        }
+        if (sc.hp <= 0) {
+          sc.sprite.destroy(); sc.hpBar.destroy(); sc.hpBg.destroy();
+          this.creatScythes.splice(i, 1);
+        }
+      }
+
+      // 6. Pulse tick
+      for (let i = this.creatPulses.length - 1; i >= 0; i--) {
+        const pu = this.creatPulses[i];
+        if (pu.remaining <= 0) { this.creatPulses.splice(i, 1); continue; }
+        if (time - pu.lastPulseAt >= pu.intervalMs) {
+          pu.lastPulseAt = time;
+          pu.remaining--;
+          const ring = this.add.circle(pu.x, pu.y, 10, pu.kind === 'heal' ? 0x44ff88 : 0xff4422, 0.6).setDepth(7);
+          this.tweens.add({ targets: ring, scaleX: pu.range / 10, scaleY: pu.range / 10, alpha: 0, duration: 400, onComplete: () => ring.destroy() });
+          if (pu.kind === 'heal') {
+            const healer = pu.owner === 'player' ? this.player : this.npc;
+            healer.heal(pu.magnitude);
+          } else {
+            const puTarget = pu.owner === 'player' ? this.npc : this.player;
+            if (Phaser.Math.Distance.Between(pu.x, pu.y, puTarget.x, puTarget.y) <= pu.range) {
+              puTarget.takeDamage(pu.magnitude);
+              this.spawnHitFlash(puTarget.x, puTarget.y, 0xff4422);
+            }
+          }
+        }
+      }
+
+      // 7. Medkit expiry + pickup
+      if (this.creatMedkit) {
+        const mk = this.creatMedkit;
+        const mkOwner = mk.owner === 'player' ? this.player : this.npc;
+        if (Phaser.Math.Distance.Between(mk.x, mk.y, mkOwner.x, mkOwner.y) <= 30) {
+          mkOwner.heal(25);
+          const healFlash = this.add.circle(mkOwner.x, mkOwner.y, 20, 0x44ff88, 0.6).setDepth(9);
+          this.tweens.add({ targets: healFlash, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 300, onComplete: () => healFlash.destroy() });
+          mk.sprite.destroy(); mk.label.destroy();
+          this.creatMedkit = null;
+        } else if (time > mk.expireAt) {
+          mk.sprite.destroy(); mk.label.destroy();
+          this.creatMedkit = null;
+        }
+      }
+
+      // 8 & 9. Blocker and maze wall projectile absorption + movement push-out
+      const allProj = this.projectiles.getChildren() as Projectile[];
+      for (let bi = this.creatBlockers.length - 1; bi >= 0; bi--) {
+        const bl = this.creatBlockers[bi];
+        // Absorb enemy projectiles
+        for (const proj of allProj) {
+          if (!proj.active) continue;
+          const isEnemyProj = bl.owner === 'player' ? !proj.isFromPlayer : proj.isFromPlayer;
+          if (!isEnemyProj) continue;
+          if (Math.abs(proj.x - bl.x) <= bl.w / 2 && Math.abs(proj.y - bl.y) <= bl.h / 2) {
+            bl.hp -= proj.damage;
+            proj.setActive(false).setVisible(false);
+            (proj.body as Phaser.Physics.Arcade.Body).stop();
+            bl.hpBar.setSize(Math.max(0, (bl.hp / bl.maxHp)) * bl.w, 4);
+            if (bl.hp <= 0) {
+              bl.rect.destroy(); bl.hpBar.destroy(); bl.hpBg.destroy();
+              this.creatBlockers.splice(bi, 1);
+              break;
+            }
+          }
+        }
+        if (bi < this.creatBlockers.length) {
+          // Push both fighters out
+          this.pushFighterOutOfRect(this.player.body as Phaser.Physics.Arcade.Body, bl.x, bl.y, bl.w, bl.h);
+          this.pushFighterOutOfRect(this.npc.body as Phaser.Physics.Arcade.Body, bl.x, bl.y, bl.w, bl.h);
+        }
+      }
+      // Maze walls
+      const casterBody = (this.elementId === 'creation' ? this.player : this.npc).body as Phaser.Physics.Arcade.Body;
+      for (let mi = this.creatMazeWalls.length - 1; mi >= 0; mi--) {
+        const mw = this.creatMazeWalls[mi];
+        // Absorb enemy projectiles
+        const mwEnemyIsPlayer = mw.owner !== 'player';
+        for (const proj of allProj) {
+          if (!proj.active) continue;
+          const isEnemyProj = mw.owner === 'player' ? !proj.isFromPlayer : proj.isFromPlayer;
+          if (!isEnemyProj) continue;
+          if (Math.abs(proj.x - mw.x) <= mw.w / 2 && Math.abs(proj.y - mw.y) <= mw.h / 2) {
+            proj.setActive(false).setVisible(false);
+            (proj.body as Phaser.Physics.Arcade.Body).stop();
+          }
+        }
+        // Push non-caster fighter out
+        const nonCasterBody = mwEnemyIsPlayer
+          ? (this.player.body as Phaser.Physics.Arcade.Body)
+          : (this.npc.body as Phaser.Physics.Arcade.Body);
+        if (nonCasterBody !== casterBody) {
+          this.pushFighterOutOfRect(nonCasterBody, mw.x, mw.y, mw.w, mw.h);
+        } else {
+          // If somehow same, push npc
+          this.pushFighterOutOfRect(this.npc.body as Phaser.Physics.Arcade.Body, mw.x, mw.y, mw.w, mw.h);
+        }
+        // Expiry
+        if (time >= mw.expireAt) {
+          mw.rect.destroy();
+          this.creatMazeWalls.splice(mi, 1);
+        }
+      }
+
+      // 10. Speed boost expiry
+      if (this.creatPrevSpeedMult !== -1 && time >= this.creatSpeedBoostEnd) {
+        const boostOwner = this.creatCraftOwner; // last craft owner who got the boost
+        if (boostOwner === 'player') this.playerSpeedMult = this.creatPrevSpeedMult;
+        else this.npcSpeedMult = this.creatPrevSpeedMult;
+        this.creatPrevSpeedMult = -1;
+      }
+
+      // 11. Damage reduction expiry
+      if (this.creatDamageReductionEnd > 0 && time >= this.creatDamageReductionEnd) {
+        const drOwner = this.creatCraftOwner;
+        if (drOwner === 'player') this.player.incomingDamageMultiplier = this.creatPrevIncomingDamageMult;
+        else this.npc.incomingDamageMultiplier = this.creatPrevIncomingDamageMult;
+        this.creatDamageReductionEnd = 0;
+      }
+    }
+
     // ── Post-AI NPC velocity multiplier ──────────────────────────
     if (this.npcNukeChanneling) {
       (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
@@ -7391,8 +9431,20 @@ export class ArenaScene extends Phaser.Scene {
     const wb = this.physics.world.bounds;
     const allProj = this.projectiles.getChildren().slice() as Projectile[];
     for (const p of allProj) {
-      if (!p.active) { p.destroy(); continue; }
+      if (!p.active) {
+        // Click+: if a tracked ice spike is deactivated without being in pending set, it hit already — no action
+        if (this.playerIcePendingSet.has(p)) {
+          this.playerIcePendingSet.delete(p);
+          this.playerIceConsecHits = 0; // inactive without hit means it was destroyed by something else
+        }
+        p.destroy(); continue;
+      }
       if (p.x < wb.left - 60 || p.x > wb.right + 60 || p.y < wb.top - 60 || p.y > wb.bottom + 60) {
+        // Click+: ice spike went off-screen = miss
+        if (this.playerIcePendingSet.has(p)) {
+          this.playerIcePendingSet.delete(p);
+          this.playerIceConsecHits = 0;
+        }
         p.destroy();
       }
     }
@@ -7447,6 +9499,20 @@ export class ArenaScene extends Phaser.Scene {
         } else {
           entry.fill.setSize(entry.maxWidth * (this.airConsecutiveHits / 3), entry.fill.height);
         }
+      } else if (entry.abilityId === 'grav-bomb') {
+        if (this.gravBombHolding) {
+          entry.fill.setSize(entry.maxWidth * this.player.chargeRatio, entry.fill.height);
+        } else {
+          entry.fill.setSize(entry.maxWidth * this.player.getCooldownRatio('grav-bomb'), entry.fill.height);
+        }
+      } else if (entry.abilityId === 'infect') {
+        const infectCd = Math.max(1000, this.growthInfectCdMs);
+        const infectRatio = Math.min(1, (this.time.now - this.lastPlayerInfectCast) / infectCd);
+        entry.fill.setSize(entry.maxWidth * infectRatio, entry.fill.height);
+      } else if (entry.abilityId === 'bloat') {
+        const bloatCd = Math.max(1000, this.growthBloatCdMs);
+        const bloatRatio = Math.min(1, (this.time.now - this.lastPlayerBloatCast) / bloatCd);
+        entry.fill.setSize(entry.maxWidth * bloatRatio, entry.fill.height);
       } else {
         entry.fill.setSize(entry.maxWidth * this.player.getCooldownRatio(entry.abilityId), entry.fill.height);
       }

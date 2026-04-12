@@ -132,6 +132,12 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     this.cooldowns.set(abilityId, Date.now());
   }
 
+  /** Reduce remaining cooldown of an ability by byMs milliseconds (cannot make it readier than fully ready). */
+  reduceCooldown(abilityId: string, byMs: number): void {
+    const stored = this.cooldowns.get(abilityId) ?? 0;
+    this.cooldowns.set(abilityId, stored - byMs);
+  }
+
   /** Returns 0 = on cooldown, 1 = ready */
   getCooldownRatio(abilityId: string): number {
     const ability = this.element.abilities.find((a) => a.id === abilityId);
