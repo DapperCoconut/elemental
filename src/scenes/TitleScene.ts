@@ -101,9 +101,9 @@ export class TitleScene extends Phaser.Scene {
     }).setOrigin(1, 0);
 
     // Footer hint
-    this.add.text(cx, height - 24, 'Defeat the enemy to win!', {
+    this.add.text(cx, height - 24, 'Defeat the enemy to win! Copyright 2026 - All Rights Reserved', {
       fontSize: '13px',
-      color: '#444444',
+      color: '#666666',
     }).setOrigin(0.5);
 
     // Secret code: WWSSADADBA → 9999 shards
