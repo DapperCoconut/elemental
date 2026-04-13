@@ -13,7 +13,7 @@ const timeBarrage: Ability = {
 const timeWarp: Ability = {
   id: 'time-warp',
   name: 'Time Warp',
-  description: 'Fire a fast large orb. Hits teleport the enemy back 3s, leaving puddles that slow by 25% and charge Q. 3s CD.',
+  description: 'Fire a fast large orb. Hits deal 20 damage and teleport the enemy back 3s, leaving puddles that slow by 25% and charge Q. 3s CD.',
   displayKey: 'E',
   cooldown: 3000,
   cast(ctx: CastContext) { ctx.timeWarp(ctx.targetX, ctx.targetY); },
@@ -40,7 +40,7 @@ const timeHalt: Ability = {
 const timeTimeless: Ability = {
   id: 'time-timeless',
   name: 'Timeless',
-  description: '3s with 0 cooldowns. Charges by standing in time puddles (10s total). Cannot use while active.',
+  description: 'Pause all projectile movement and enemy AI for 8s. You can still move freely. Charges by standing in time puddles (10s total).',
   displayKey: 'Q',
   cooldown: 0,
   cast(ctx: CastContext) { ctx.timeTimeless(); },

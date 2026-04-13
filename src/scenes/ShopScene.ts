@@ -4,23 +4,39 @@ import { ALL_UPGRADES, getElementUpgrades, getUpgradePrice, UpgradeDef } from '.
 import { GAUNTLET_COST } from '../data/GauntletData';
 
 const ELEMENT_COLORS: Record<string, number> = {
-  fire:  0xff4400,
-  water: 0x0088ff,
-  life:  0x44cc44,
-  air:   0xaaddff,
-  earth: 0x887755,
-  oil:    0x664400,
-  shadow: 0x330044,
+  fire:     0xff4400,
+  water:    0x0088ff,
+  life:     0x44cc44,
+  air:      0xaaddff,
+  earth:    0x887755,
+  oil:      0x664400,
+  shadow:   0x330044,
+  ice:      0x88ccff,
+  growth:   0x88bb22,
+  crystal:  0x88ccff,
+  soul:     0xccaaff,
+  hunt:     0xcc4400,
+  sand:     0xffdd44,
+  gravity:  0x8844cc,
+  creation: 0xcc6622,
 };
 
 const ELEMENT_EMOJIS: Record<string, string> = {
-  fire:  '🔥',
-  water: '💧',
-  life:  '🌿',
-  air:   '💨',
-  earth: '🪨',
-  oil:    '🛢️',
-  shadow: '🌑',
+  fire:     '🔥',
+  water:    '💧',
+  life:     '🌿',
+  air:      '💨',
+  earth:    '🪨',
+  oil:      '🛢️',
+  shadow:   '🌑',
+  ice:      '🧊',
+  growth:   '🦠',
+  crystal:  '💎',
+  soul:     '👻',
+  hunt:     '🐺',
+  sand:     '⏳',
+  gravity:  '🌌',
+  creation: '⚒️',
 };
 
 const BASE_ELEMENT_IDS = ['fire', 'water', 'life', 'air', 'earth'];

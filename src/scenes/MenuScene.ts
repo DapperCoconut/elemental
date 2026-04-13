@@ -1,8 +1,31 @@
 import Phaser from 'phaser';
 import { DIFFICULTY_PRESETS } from '../entities/NpcOpponent';
-import { SHARD_REWARDS } from '../data/Upgrades';
+import { SHARD_REWARDS, getElementUpgrades } from '../data/Upgrades';
 import { MUTATIONS, activeMutationIds } from '../data/Mutations';
 import * as PlayerData from '../data/PlayerData';
+import { Element } from '../elements/Element';
+import { fireElement } from '../elements/fire';
+import { waterElement } from '../elements/water';
+import { lifeElement } from '../elements/life';
+import { airElement } from '../elements/air';
+import { earthElement } from '../elements/earth';
+import { oilElement } from '../elements/oil';
+import { shadowElement } from '../elements/shadow';
+import { iceElement } from '../elements/ice';
+import { growthElement } from '../elements/growth';
+import { crystalElement } from '../elements/crystal';
+import { soulElement } from '../elements/soul';
+import { huntElement } from '../elements/hunt';
+import { sandElement } from '../elements/sand';
+import { gravityElement } from '../elements/gravity';
+import { creationElement } from '../elements/creation';
+
+const ELEMENT_DATA_MAP: Record<string, Element> = {
+  fire: fireElement, water: waterElement, life: lifeElement, air: airElement,
+  earth: earthElement, oil: oilElement, shadow: shadowElement, ice: iceElement,
+  growth: growthElement, crystal: crystalElement, soul: soulElement, hunt: huntElement,
+  sand: sandElement, gravity: gravityElement, creation: creationElement,
+};
 
 interface ElementDef {
   id: string;
@@ -43,6 +66,7 @@ export class MenuScene extends Phaser.Scene {
   private isPvP = false;
 
   private phaseObjects: Phaser.GameObjects.GameObject[] = [];
+  private infoOverlayObjects: Phaser.GameObjects.GameObject[] = [];
 
   constructor() {
     super({ key: 'MenuScene' });
@@ -243,7 +267,23 @@ export class MenuScene extends Phaser.Scene {
         }).setOrigin(0.5);
       }
 
-      this.phaseObjects.push(card, emojiText, nameText, statusText);
+      // "i" info button — top-right corner of card
+      const iBtnX = bx + cardW / 2 - 14;
+      const iBtnY = by - cardH / 2 + 14;
+      const iCircle = this.add.circle(iBtnX, iBtnY, 11, 0x222244, 0.9)
+        .setStrokeStyle(1, 0x8888cc, 0.9).setDepth(3).setInteractive({ useHandCursor: true });
+      const iLabel = this.add.text(iBtnX, iBtnY, 'i', {
+        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#aaaaff',
+      }).setOrigin(0.5).setDepth(4);
+      iCircle
+        .on('pointerover', () => iCircle.setFillStyle(0x4444aa, 0.95))
+        .on('pointerout',  () => iCircle.setFillStyle(0x222244, 0.9))
+        .on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+          ptr.event.stopPropagation();
+          this.showElementInfo(el.id, width, height, cx);
+        });
+
+      this.phaseObjects.push(card, emojiText, nameText, statusText, iCircle, iLabel);
     });
   }
 
@@ -391,6 +431,115 @@ export class MenuScene extends Phaser.Scene {
 
       this.phaseObjects.push(tog, togLabel, togDesc);
     });
+  }
+
+  private closeElementInfo(): void {
+    for (const obj of this.infoOverlayObjects) {
+      if (obj.active) (obj as Phaser.GameObjects.GameObject & { destroy(): void }).destroy();
+    }
+    this.infoOverlayObjects = [];
+  }
+
+  private showElementInfo(elementId: string, width: number, height: number, cx: number): void {
+    this.closeElementInfo();
+
+    const element = ELEMENT_DATA_MAP[elementId];
+    if (!element) return;
+    const upgrades = getElementUpgrades(elementId);
+
+    // Full-screen dark backdrop
+    const bg = this.add.rectangle(cx, height / 2, width, height, 0x05050f, 0.97).setDepth(50);
+    bg.setInteractive(); // capture clicks so they don't fall through
+    this.infoOverlayObjects.push(bg);
+
+    // Header
+    const header = this.add.text(cx, 45, `${element.emoji}  ${element.name.toUpperCase()}`, {
+      fontSize: '32px', fontFamily: '"Arial Black", sans-serif', color: '#' + element.color.toString(16).padStart(6, '0'),
+      stroke: '#000000', strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(51);
+    this.infoOverlayObjects.push(header);
+
+    const subHdr = this.add.text(cx, 80, '— ABILITIES & UPGRADES —', {
+      fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#555577',
+    }).setOrigin(0.5).setDepth(51);
+    this.infoOverlayObjects.push(subHdr);
+
+    // Divider
+    const divLine = this.add.line(cx, 97, -width / 2 + 40, 0, width / 2 - 40, 0, 0x223355, 0.5).setDepth(51).setLineWidth(1);
+    this.infoOverlayObjects.push(divLine);
+
+    // List each ability + its upgrade
+    const startY = 115;
+    const rowH = (height - startY - 60) / element.abilities.length;
+    element.abilities.forEach((ab, idx) => {
+      const rowY = startY + idx * rowH;
+      const upgrade = upgrades.find((u) => u.slot === ab.displayKey.toLowerCase());
+
+      // Ability row background
+      const rowBg = this.add.rectangle(cx, rowY + rowH / 2 - 4, width - 80, rowH - 8, 0x0d0d22, 0.7)
+        .setStrokeStyle(1, 0x222244, 0.5).setDepth(51);
+      this.infoOverlayObjects.push(rowBg);
+
+      // Key badge
+      const keyColor = '#' + element.color.toString(16).padStart(6, '0');
+      const keyBadge = this.add.text(120, rowY + rowH * 0.28, `[${ab.displayKey}]`, {
+        fontSize: '15px', fontFamily: '"Arial Black", sans-serif', color: keyColor,
+        stroke: '#000000', strokeThickness: 2,
+      }).setOrigin(0.5).setDepth(52);
+      this.infoOverlayObjects.push(keyBadge);
+
+      // Ability name
+      const cdSec = ab.cooldown >= 1000 ? `  ${ab.cooldown / 1000}s CD` : '';
+      const abilityName = this.add.text(180, rowY + rowH * 0.28, `${ab.name}${cdSec}`, {
+        fontSize: '14px', fontFamily: '"Arial Black", sans-serif', color: '#ddddee',
+      }).setOrigin(0, 0.5).setDepth(52);
+      this.infoOverlayObjects.push(abilityName);
+
+      // Ability description
+      const abilityDesc = this.add.text(180, rowY + rowH * 0.55, ab.description, {
+        fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#888899',
+        wordWrap: { width: width - 260 },
+      }).setOrigin(0, 0.5).setDepth(52);
+      this.infoOverlayObjects.push(abilityDesc);
+
+      // Upgrade info
+      if (upgrade) {
+        const upgradeLabel = this.add.text(width - 60, rowY + rowH * 0.28, `${upgrade.displayKey}+  ${upgrade.name}`, {
+          fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc44',
+          stroke: '#553300', strokeThickness: 2,
+        }).setOrigin(1, 0.5).setDepth(52);
+        this.infoOverlayObjects.push(upgradeLabel);
+
+        const upgradeDesc = this.add.text(width - 60, rowY + rowH * 0.62, upgrade.description, {
+          fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#aa8833',
+          wordWrap: { width: 320 }, align: 'right',
+        }).setOrigin(1, 0.5).setDepth(52);
+        this.infoOverlayObjects.push(upgradeDesc);
+      } else {
+        const noUpgrade = this.add.text(width - 60, rowY + rowH * 0.45, 'No upgrade yet', {
+          fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#444455',
+        }).setOrigin(1, 0.5).setDepth(52);
+        this.infoOverlayObjects.push(noUpgrade);
+      }
+
+      // Row divider
+      if (idx < element.abilities.length - 1) {
+        const rl = this.add.line(cx, rowY + rowH - 4, -width / 2 + 40, 0, width / 2 - 40, 0, 0x1a1a33, 0.4).setDepth(51).setLineWidth(1);
+        this.infoOverlayObjects.push(rl);
+      }
+    });
+
+    // Back button
+    const backBtn = this.add.rectangle(60, 30, 90, 32, 0x221133, 0.9)
+      .setStrokeStyle(2, 0x9944ff, 0.8).setDepth(55).setInteractive({ useHandCursor: true });
+    const backLbl = this.add.text(60, 30, '◀  BACK', {
+      fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
+    }).setOrigin(0.5).setDepth(56);
+    backBtn
+      .on('pointerover', () => backBtn.setFillStyle(0x440077, 0.95))
+      .on('pointerout',  () => backBtn.setFillStyle(0x221133, 0.9))
+      .on('pointerdown', () => this.closeElementInfo());
+    this.infoOverlayObjects.push(backBtn, backLbl);
   }
 
   private handleElementClick(elementId: string, width: number, height: number, cx: number): void {

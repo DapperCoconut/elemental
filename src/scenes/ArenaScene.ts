@@ -283,6 +283,7 @@ interface CreationDagger {
   damage: number;
   owner: 'player' | 'npc';
   hitSet: Set<string>;
+  cutSet: Set<CreationBlocker>; // blocks already cut by this dagger
 }
 
 interface CreationBoltInFlight {
@@ -292,6 +293,9 @@ interface CreationBoltInFlight {
   tier: 'copper' | 'silver' | 'gold';
   damage: number;
   owner: 'player' | 'npc';
+  isRocket?: boolean;
+  targetX?: number;
+  targetY?: number;
 }
 
 interface CreationScythe {
@@ -327,6 +331,8 @@ interface CreationMazeWall {
   h: number;
   owner: 'player' | 'npc';
   expireAt: number;
+  spiked?: boolean;
+  spikeAccum?: number;
 }
 
 interface CreationMedkit {
@@ -348,6 +354,45 @@ interface CreationPulse {
   kind: 'heal' | 'damage';
   magnitude: number;
   owner: 'player' | 'npc';
+}
+
+interface CreationSpeedPad {
+  rect: Phaser.GameObjects.Rectangle;
+  x: number; y: number; w: number; h: number;
+  hp: number; maxHp: number;
+  hpBar: Phaser.GameObjects.Rectangle;
+  hpBg: Phaser.GameObjects.Rectangle;
+  owner: 'player' | 'npc';
+}
+
+interface CreationSpikedBlock {
+  rect: Phaser.GameObjects.Rectangle;
+  x: number; y: number; w: number; h: number;
+  hp: number; maxHp: number;
+  hpBar: Phaser.GameObjects.Rectangle;
+  hpBg: Phaser.GameObjects.Rectangle;
+  owner: 'player' | 'npc';
+  tickAccum: number;
+  invincible: boolean; // true for maze-spawned spiked blocks
+}
+
+interface CreationMech {
+  sprite: Phaser.GameObjects.Rectangle;
+  stage: 1 | 2 | 3;
+  hp: number;
+  maxHp: number;
+  hpBar: Phaser.GameObjects.Rectangle;
+  hpBg: Phaser.GameObjects.Rectangle;
+  rocketAccum: number;
+  dodgeCdUntil: number;
+}
+
+interface GravMeteorRushShadow {
+  rect: Phaser.GameObjects.Rectangle;
+  fireAt: number;
+  clickX: number;
+  clickY: number;
+  edge: 'top' | 'bottom' | 'left' | 'right';
 }
 
 const ELEMENT_MAP: Record<string, Element> = {
@@ -889,6 +934,7 @@ export class ArenaScene extends Phaser.Scene {
   private crystalPortalBarrageGraceUntil = -99999;  // F+ grace: portal open for shards
   private crystalPortalSpeedBuffUntil = -99999;     // F+: speed boost after teleport
   private crystalBeamMines: CrystalBeamMine[] = []; // E+: explosive mines from moving-crystal bounce
+  private crystalLaserPreviewGfx: Phaser.GameObjects.Graphics | null = null; // faint aim line
 
   // Soul — player
   private soulGhosts = 0;
@@ -1055,6 +1101,25 @@ export class ArenaScene extends Phaser.Scene {
   private npcTimeTimelessEnd = 0;
   private npcTimeTimelessCharge = 0;
 
+  // Time upgrades — player
+  private timeBarrageOverheatTriggered = false;
+  private timeWarpSavedPos: { x: number; y: number } | null = null;
+  private timeWarpSavedMarker: Phaser.GameObjects.Arc | null = null;
+  private timeWarpTriggerPending = false; // E+ second press
+  private timeGlassMode = false;
+  private timeGlassHoldStart = 0;
+  private timeGlassHolding = false;
+  private timeGlassModeAura: Phaser.GameObjects.Arc | null = null;
+  private timeGlassChargeCircle: Phaser.GameObjects.Arc | null = null;
+  private timeGlassChargeText: Phaser.GameObjects.Text | null = null;
+  private timeHaltZoomMode = false;
+  private timeHpHistory: Array<{ t: number; hp: number }> = [];
+  private timeHpHistoryAccum = 0;
+  // Time Q rework: freeze state
+  private timeFreezeFrozenVelocities: Map<Phaser.GameObjects.GameObject, { vx: number; vy: number }> = new Map();
+  private timeFreezeNpcVelX = 0;
+  private timeFreezeNpcVelY = 0;
+
   // Player upgrade state
   private activeUpgrades: string[] = [];
   // Flameshredder (Click upgrade) — NPC burns from player fireballs
@@ -1106,6 +1171,22 @@ export class ArenaScene extends Phaser.Scene {
   // NPC gravity state
   private npcGravSpaceSlamLockUntil = 0;
 
+  // Gravity upgrades
+  private gravMeteorStormAccum = 0;
+  private gravAnchor: { x: number; y: number; sprite: Phaser.GameObjects.Arc; line: Phaser.GameObjects.Line; expireAt: number } | null = null;
+  private gravMeteorRushShadows: GravMeteorRushShadow[] = [];
+  private gravMoonActive = false;
+  private gravMoonHolding = false;
+  private gravMoonHoldStart = 0;
+  private gravMoonHp = 0;
+  private gravMoonSprite: Phaser.GameObjects.Arc | null = null;
+  private gravMoonHpBar: Phaser.GameObjects.Rectangle | null = null;
+  private gravMoonHpBg: Phaser.GameObjects.Rectangle | null = null;
+  private gravMoonRamCooldown = 0;
+  private gravQWasDown = false;
+  private gravMoonChargeCircle: Phaser.GameObjects.Arc | null = null;
+  private gravMoonChargeText: Phaser.GameObjects.Text | null = null;
+
   // Creation-specific state
   // Crucible (shared world object, one per match)
   private crucibleSprite: Phaser.GameObjects.Rectangle | null = null;
@@ -1147,6 +1228,40 @@ export class ArenaScene extends Phaser.Scene {
   private creatPrevIncomingDamageMult = 1;
   private creatSpeedBoostEnd = 0;
   private creatPrevSpeedMult = -1;
+
+  // Creation upgrades
+  private creatLastCraftKey: string | null = null;
+  private creatBoltElectroMode = false;
+  private creatBuildMode = false;
+  private creatBuildBlockDragging = false;
+  private creatBuildBlockDragStartX = 0;
+  private creatBuildBlockDragStartY = 0;
+  private creatBuildBlockPreview: CreationBlocker | null = null;
+  private creatBuildNewBlockPreview: Phaser.GameObjects.Rectangle | null = null;
+  private creatBuildNewBlockCdUntil = 0;
+  private creatBuildLaunchCdUntil = 0;
+  private creatBuildLaunchArrows: Phaser.GameObjects.Text[] = [];
+  private creatSpeedPads: CreationSpeedPad[] = [];
+  private creatSpikedBlocks: CreationSpikedBlock[] = [];
+  private creatBuildSpeedPadDragging = false;
+  private creatBuildSpeedPadDragStartX = 0;
+  private creatBuildSpeedPadDragStartY = 0;
+  private creatBuildSpeedPadPreview: Phaser.GameObjects.Rectangle | null = null;
+  private creatBuildSpeedPadDragRef: CreationSpeedPad | null = null;
+  private creatBuildSpeedPadCdUntil = 0;
+  private creatBuildSpikedDragging = false;
+  private creatBuildSpikedDragStartX = 0;
+  private creatBuildSpikedDragStartY = 0;
+  private creatBuildSpikedPreview: Phaser.GameObjects.Rectangle | null = null;
+  private creatBuildSpikedDragRef: CreationSpikedBlock | null = null;
+  private creatBuildSpikedCdUntil = 0;
+  private creatPlayerSpeedPadEnd = 0;
+  private creatNpcSlowEnd = 0;
+  private creatNpcSlowMult = 1;
+  private creatMechHolding = false;
+  private creatMechHoldStart = 0;
+  private creatMechStageVisual: Phaser.GameObjects.Text | null = null;
+  private creatMech: CreationMech | null = null;
 
   // Shared world effects (owner-aware)
   private puddles: Puddle[] = [];
@@ -1458,6 +1573,7 @@ export class ArenaScene extends Phaser.Scene {
     this.crystalShredderActive = false; this.crystalShredderTickAccum = 0; this.crystalClickHoldStart = -99999;
     this.crystalPortalLaserCooldown = -99999; this.crystalPortalShredderGraceUntil = -99999;
     this.crystalPortalBarrageGraceUntil = -99999; this.crystalPortalSpeedBuffUntil = -99999;
+    if (this.crystalLaserPreviewGfx) { this.crystalLaserPreviewGfx.destroy(); this.crystalLaserPreviewGfx = null; }
 
     for (const n of this.npcCrystalNodes) n.sprite.destroy();
     for (const p of this.npcCrystalPortals) { p.sprite.destroy(); p.label.destroy(); }
@@ -1552,6 +1668,20 @@ export class ArenaScene extends Phaser.Scene {
     this.npcTimeSlowedProjs.clear();
     this.npcTimeTimelessActive = false; this.npcTimeTimelessCharge = 0;
 
+    // Time upgrade reset
+    this.timeBarrageOverheatTriggered = false;
+    this.timeWarpSavedPos = null;
+    if (this.timeWarpSavedMarker) { this.timeWarpSavedMarker.destroy(); this.timeWarpSavedMarker = null; }
+    this.timeWarpTriggerPending = false;
+    this.timeGlassMode = false; this.timeGlassHolding = false; this.timeGlassHoldStart = 0;
+    if (this.timeGlassModeAura) { this.timeGlassModeAura.destroy(); this.timeGlassModeAura = null; }
+    if (this.timeGlassChargeCircle) { this.timeGlassChargeCircle.destroy(); this.timeGlassChargeCircle = null; }
+    if (this.timeGlassChargeText) { this.timeGlassChargeText.destroy(); this.timeGlassChargeText = null; }
+    this.timeHaltZoomMode = false;
+    this.timeHpHistory = []; this.timeHpHistoryAccum = 0;
+    this.timeFreezeFrozenVelocities.clear();
+    this.timeFreezeNpcVelX = 0; this.timeFreezeNpcVelY = 0;
+
     // Creation reset
     if (this.crucibleSprite) { this.crucibleSprite.destroy(); this.crucibleSprite = null; }
     if (this.crucibleLabel) { this.crucibleLabel.destroy(); this.crucibleLabel = null; }
@@ -1580,6 +1710,30 @@ export class ArenaScene extends Phaser.Scene {
     this.creatDamageReductionEnd = 0; this.creatPrevIncomingDamageMult = 1;
     this.creatSpeedBoostEnd = 0; this.creatPrevSpeedMult = -1;
 
+    // Creation upgrade reset
+    this.creatLastCraftKey = null; this.creatBoltElectroMode = false;
+    this.creatBuildMode = false; this.creatBuildBlockDragging = false;
+    if (this.creatBuildBlockPreview) { this.creatBuildBlockPreview = null; }
+    if (this.creatBuildNewBlockPreview) { this.creatBuildNewBlockPreview.destroy(); this.creatBuildNewBlockPreview = null; }
+    this.creatBuildNewBlockCdUntil = 0;
+    this.creatBuildLaunchCdUntil = 0;
+    for (const a of this.creatBuildLaunchArrows) a.destroy();
+    this.creatBuildLaunchArrows = [];
+    for (const sp of this.creatSpeedPads) { sp.rect.destroy(); sp.hpBar.destroy(); sp.hpBg.destroy(); }
+    this.creatSpeedPads = [];
+    for (const sb of this.creatSpikedBlocks) { sb.rect.destroy(); sb.hpBar.destroy(); sb.hpBg.destroy(); }
+    this.creatSpikedBlocks = [];
+    this.creatBuildSpeedPadDragging = false; this.creatBuildSpeedPadDragRef = null;
+    if (this.creatBuildSpeedPadPreview) { this.creatBuildSpeedPadPreview.destroy(); this.creatBuildSpeedPadPreview = null; }
+    this.creatBuildSpeedPadCdUntil = 0;
+    this.creatBuildSpikedDragging = false; this.creatBuildSpikedDragRef = null;
+    if (this.creatBuildSpikedPreview) { this.creatBuildSpikedPreview.destroy(); this.creatBuildSpikedPreview = null; }
+    this.creatBuildSpikedCdUntil = 0;
+    this.creatPlayerSpeedPadEnd = 0; this.creatNpcSlowEnd = 0; this.creatNpcSlowMult = 1;
+    this.creatMechHolding = false; this.creatMechHoldStart = 0;
+    if (this.creatMechStageVisual) { this.creatMechStageVisual.destroy(); this.creatMechStageVisual = null; }
+    if (this.creatMech) { this.creatMech.sprite.destroy(); this.creatMech.hpBar.destroy(); this.creatMech.hpBg.destroy(); this.creatMech = null; }
+
     // Gravity reset
     this.gravPointerDownX = 0; this.gravPointerDownY = 0; this.gravClickArmed = false;
     this.gravEKeyWasDown = false; this.gravEKeyHeldSince = 0;
@@ -1598,6 +1752,19 @@ export class ArenaScene extends Phaser.Scene {
     this.gravMeteorShadows = [];
     for (const p of this.gravFirePuddles) { p.sprite.destroy(); }
     this.gravFirePuddles = [];
+
+    // Gravity upgrade reset
+    this.gravMeteorStormAccum = 0;
+    if (this.gravAnchor) { this.gravAnchor.sprite.destroy(); this.gravAnchor.line.destroy(); this.gravAnchor = null; }
+    for (const rs of this.gravMeteorRushShadows) rs.rect.destroy();
+    this.gravMeteorRushShadows = [];
+    this.gravMoonActive = false; this.gravMoonHolding = false; this.gravMoonHoldStart = 0; this.gravMoonHp = 0;
+    if (this.gravMoonSprite) { this.gravMoonSprite.destroy(); this.gravMoonSprite = null; }
+    if (this.gravMoonHpBar) { this.gravMoonHpBar.destroy(); this.gravMoonHpBar = null; }
+    if (this.gravMoonHpBg) { this.gravMoonHpBg.destroy(); this.gravMoonHpBg = null; }
+    this.gravMoonRamCooldown = 0; this.gravQWasDown = false;
+    if (this.gravMoonChargeCircle) { this.gravMoonChargeCircle.destroy(); this.gravMoonChargeCircle = null; }
+    if (this.gravMoonChargeText) { this.gravMoonChargeText.destroy(); this.gravMoonChargeText = null; }
 
     // Growth reset
     this.growthMorphType = 'spores';
@@ -1828,9 +1995,30 @@ export class ArenaScene extends Phaser.Scene {
       (a, b) => {
         const proj = (a instanceof Projectile ? a : b) as Projectile;
         if (!proj.active || !proj.isFromPlayer) return;
-        // Time Warp orb: teleport NPC back 3 seconds
+        // Time Warp orb: deal 20 damage + teleport NPC back 3 seconds (or save pos with E+)
         if (proj.texture.key === 'proj-time-orb') {
-          if (!this.timeNpcTeleporting && this.npcPosHistory.length > 0) {
+          // E+ Delayed Warp: save position, don't teleport yet
+          if (this.elementId === 'sand' && this.hasUpgrade('e')) {
+            this.npc.takeDamage(20);
+            this.spawnHitFlash(this.npc.x, this.npc.y, 0xffdd44);
+            this.showFloatingText(this.npc.x, this.npc.y - 24, '20', '#ffdd44');
+            if (this.npcPosHistory.length > 0) {
+              const targetT = this.time.now - 3000;
+              let best = this.npcPosHistory[0];
+              for (const snap of this.npcPosHistory) {
+                if (Math.abs(snap.t - targetT) < Math.abs(best.t - targetT)) best = snap;
+              }
+              if (this.timeWarpSavedMarker) this.timeWarpSavedMarker.destroy();
+              this.timeWarpSavedPos = { x: best.x, y: best.y };
+              this.timeWarpSavedMarker = this.add.circle(best.x, best.y, 18, 0xffdd44, 0.4)
+                .setStrokeStyle(2, 0xffffff, 0.7).setDepth(6);
+              this.tweens.add({ targets: this.timeWarpSavedMarker, alpha: 0.15, yoyo: true, repeat: -1, duration: 600 });
+              this.showFloatingText(this.player.x, this.player.y - 32, '⏱ Saved!', '#ffdd44');
+            }
+          } else if (!this.timeNpcTeleporting && this.npcPosHistory.length > 0) {
+            this.npc.takeDamage(20);
+            this.spawnHitFlash(this.npc.x, this.npc.y, 0xffdd44);
+            this.showFloatingText(this.npc.x, this.npc.y - 24, '20', '#ffdd44');
             const targetT = this.time.now - 3000;
             let best = this.npcPosHistory[0];
             for (const snap of this.npcPosHistory) {
@@ -1843,7 +2031,6 @@ export class ArenaScene extends Phaser.Scene {
             this.timeNpcTeleportToX = best.x;
             this.timeNpcTeleportToY = best.y;
             this.timeNpcTeleportPuddleAccum = 0;
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0xffdd44);
           }
           proj.setActive(false).setVisible(false);
           (proj.body as Phaser.Physics.Arcade.Body).stop();
@@ -2007,6 +2194,10 @@ export class ArenaScene extends Phaser.Scene {
           return;
         }
         let _playerDmg = proj.damage;
+        // Glass Mode: 100x damage = instant death (unless Remain is absorbing)
+        if (this.elementId === 'sand' && this.timeGlassMode && !this.timeRemainActive) {
+          _playerDmg = _playerDmg * 100;
+        }
         this.player.takeDamage(_playerDmg);
         this.spawnHitFlash(proj.x, proj.y, 0x00aaff);
         // NPC Hunt Blood Pact: heal NPC for 50% of damage dealt
@@ -3212,20 +3403,24 @@ export class ArenaScene extends Phaser.Scene {
           playerNodes[0].sprite.destroy();
           this.crystalNodes.splice(this.crystalNodes.indexOf(playerNodes[0]), 1);
         }
-        // Spawn at player position and travel toward cursor (like a fireball)
         const dx = tx - this.player.x, dy = ty - this.player.y;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const speed = 67;
-        const vx = (dx / dist) * speed, vy = (dy / dist) * speed;
-        // Long side faces player: angle = travel direction (perpendicular to player view)
-        const travelAngleDeg = Math.atan2(dy, dx) * 180 / Math.PI;
-        const spr = this.add.rectangle(this.player.x, this.player.y, 6, 28, 0xaaeeff, 0.9)
-          .setStrokeStyle(1, 0xeeffff, 1).setDepth(4).setAngle(travelAngleDeg);
-        this.tweens.add({ targets: spr, scaleX: 1.3, scaleY: 1.3, duration: 120, yoyo: true });
-        // E+: keep moving past the target; base: stop at target
-        const targetX = this.hasUpgrade('e') ? Infinity : tx;
-        const targetY = this.hasUpgrade('e') ? Infinity : ty;
-        this.crystalNodes.push({ sprite: spr, x: this.player.x, y: this.player.y, owner: 'player', vx, vy, moving: true, targetX, targetY, lastPortalTime: -99999 });
+        const angleDeg = Math.atan2(dy, dx) * 180 / Math.PI;
+        if (this.hasUpgrade('e')) {
+          // E+: crystal glides from player toward cursor and keeps moving
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          const speed = 67;
+          const vx = (dx / dist) * speed, vy = (dy / dist) * speed;
+          const spr = this.add.rectangle(this.player.x, this.player.y, 6, 28, 0xaaeeff, 0.9)
+            .setStrokeStyle(1, 0xeeffff, 1).setDepth(4).setAngle(angleDeg);
+          this.tweens.add({ targets: spr, scaleX: 1.3, scaleY: 1.3, duration: 120, yoyo: true });
+          this.crystalNodes.push({ sprite: spr, x: this.player.x, y: this.player.y, owner: 'player', vx, vy, moving: true, targetX: Infinity, targetY: Infinity, lastPortalTime: -99999 });
+        } else {
+          // Base: place instantly at cursor position
+          const spr = this.add.rectangle(tx, ty, 6, 28, 0xaaeeff, 0.9)
+            .setStrokeStyle(1, 0xeeffff, 1).setDepth(4).setAngle(angleDeg);
+          this.tweens.add({ targets: spr, scaleX: 1.3, scaleY: 1.3, duration: 120, yoyo: true });
+          this.crystalNodes.push({ sprite: spr, x: tx, y: ty, owner: 'player', vx: 0, vy: 0, moving: false, targetX: tx, targetY: ty, lastPortalTime: -99999 });
+        }
       },
       startCrystalBarrage: (tx, ty) => {
         this.crystalBarrageActive = true;
@@ -3588,6 +3783,19 @@ export class ArenaScene extends Phaser.Scene {
         this.timeRemainAura = this.add.circle(this.player.x, this.player.y, 40, 0xffdd44, 0.35).setDepth(4);
         this.tweens.add({ targets: this.timeRemainAura, alpha: 0.6, yoyo: true, repeat: -1, duration: 350 });
         this.player.damageAbsorber = (amount: number) => {
+          // Glass Mode R+: absorb fully, no delayed damage
+          if (this.timeGlassMode && this.hasUpgrade('r')) {
+            // Just absorb, spawn puddles, don't accumulate for later
+            const prev10 = Math.floor(this.timeRemainAbsorbed / 10);
+            this.timeRemainAbsorbed += amount;
+            const new10 = Math.floor(this.timeRemainAbsorbed / 10);
+            for (let p = prev10; p < new10; p++) {
+              const angle = Math.random() * Math.PI * 2;
+              const r = 20 + Math.random() * 40;
+              this.spawnTimePuddle(this.player.x + Math.cos(angle) * r, this.player.y + Math.sin(angle) * r, 'player');
+            }
+            return true;
+          }
           const prev10 = Math.floor(this.timeRemainAbsorbed / 10);
           this.timeRemainAbsorbed += amount;
           const new10 = Math.floor(this.timeRemainAbsorbed / 10);
@@ -3612,11 +3820,44 @@ export class ArenaScene extends Phaser.Scene {
         if (this.timeTimelessActive) return;
         if (this.timeTimelessCharge < 10000) return;
         this.timeTimelessActive = true;
-        this.timeTimelessEnd = this.time.now + 3000;
+        // Q+: HP Rewind — restore HP to 5s ago
+        if (this.hasUpgrade('q')) {
+          const targetT = this.time.now - 5000;
+          let best = this.timeHpHistory[0];
+          for (const entry of this.timeHpHistory) {
+            if (Math.abs(entry.t - targetT) < Math.abs((best?.t ?? 0) - targetT)) best = entry;
+          }
+          if (best) {
+            const diff = best.hp - this.player.hp;
+            const oldHp = this.player.hp;
+            this.player.hp = Math.max(1, Math.min(this.player.maxHp, best.hp));
+            (this.player as unknown as { updateHealthBar?: () => void }).updateHealthBar?.();
+            const label = diff > 0 ? `+${diff} HP REWIND` : `${diff} HP REWIND`;
+            const col = diff >= 0 ? '#44ff88' : '#ff4444';
+            this.showFloatingText(this.player.x, this.player.y - 30, label, col);
+            const rwFlash = this.add.circle(this.player.x, this.player.y, 30, diff >= 0 ? 0x44ff88 : 0xff4444, 0.5).setDepth(12);
+            this.tweens.add({ targets: rwFlash, scaleX: 3, scaleY: 3, alpha: 0, duration: 500, onComplete: () => rwFlash.destroy() });
+            void oldHp;
+          }
+        }
+        this.timeTimelessEnd = this.time.now + 8000;
         this.timeTimelessCharge = 0;
-        this.player.cooldownMult = 0.001;
+        // Freeze all projectiles
+        this.timeFreezeFrozenVelocities.clear();
+        for (const child of this.projectiles.getChildren()) {
+          const proj = child as Projectile;
+          if (!proj.active) continue;
+          const body = proj.body as Phaser.Physics.Arcade.Body;
+          this.timeFreezeFrozenVelocities.set(proj, { vx: body.velocity.x, vy: body.velocity.y });
+          body.setVelocity(0, 0);
+        }
+        // Freeze NPC
+        const npcBody = this.npc.body as Phaser.Physics.Arcade.Body;
+        this.timeFreezeNpcVelX = npcBody.velocity.x;
+        this.timeFreezeNpcVelY = npcBody.velocity.y;
         const tFlash = this.add.circle(this.player.x, this.player.y, 50, 0xffdd44, 0.55).setDepth(12);
         this.tweens.add({ targets: tFlash, scaleX: 3.5, scaleY: 3.5, alpha: 0, duration: 600, onComplete: () => tFlash.destroy() });
+        this.showFloatingText(this.player.x, this.player.y - 40, 'TIME FROZEN', '#ffdd44');
       },
       // Gravity
       gravitySlash: (x1, y1, x2, y2) => {
@@ -3640,10 +3881,22 @@ export class ArenaScene extends Phaser.Scene {
         const ring = this.add.circle(this.npc.x, targetY, 10, 0x8844cc, 0.8).setDepth(7);
         this.tweens.add({ targets: ring, scaleX: 8, scaleY: 8, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
         // Force enemy to floor
+        const slamX = this.npc.x;
         this.npc.y = targetY;
         const nb = this.npc.body as Phaser.Physics.Arcade.Body;
         nb.setVelocity(0, 0);
         this.gravSpaceSlamLockUntil = this.time.now + 300;
+        // R+: Gravity Anchor
+        if (this.hasUpgrade('r')) {
+          if (this.gravAnchor) { this.gravAnchor.sprite.destroy(); this.gravAnchor.line.destroy(); }
+          const anchorSpr = this.add.circle(slamX, targetY, 10, 0x5511aa, 0.9)
+            .setStrokeStyle(3, 0xaa44ff, 0.9).setDepth(8);
+          this.tweens.add({ targets: anchorSpr, scaleX: 1.4, scaleY: 1.4, yoyo: true, repeat: -1, duration: 400 });
+          const anchorLine = this.add.line(0, 0, slamX, targetY, this.npc.x, this.npc.y, 0x8844cc, 0.5)
+            .setLineWidth(2).setDepth(7).setOrigin(0, 0);
+          this.gravAnchor = { x: slamX, y: targetY, sprite: anchorSpr, line: anchorLine, expireAt: this.time.now + 3000 };
+          this.showFloatingText(slamX, targetY - 24, '⚓ Anchored!', '#aa44ff');
+        }
       },
       gravityGravBombSnap: (x, y) => {
         if (Phaser.Math.Distance.Between(x, y, this.npc.x, this.npc.y) <= 120) {
@@ -5094,6 +5347,91 @@ export class ArenaScene extends Phaser.Scene {
     this.tweens.add({ targets: gfx, alpha: 0, duration: 160, onComplete: () => gfx.destroy() });
   }
 
+  // Returns beam segments for preview drawing (no damage, no side effects)
+  private computeCrystalPreviewSegments(startX: number, startY: number, toX: number, toY: number, isFromPlayer: boolean): {x1: number, y1: number, x2: number, y2: number}[] {
+    const len0 = Math.sqrt((toX - startX) ** 2 + (toY - startY) ** 2) || 1;
+    let dx = (toX - startX) / len0;
+    let dy = (toY - startY) / len0;
+    let ox = startX, oy = startY;
+
+    const target = isFromPlayer ? this.npc : this.player;
+    const allCrystals = [...this.crystalNodes, ...this.npcCrystalNodes];
+    const ownPortals = isFromPlayer ? this.crystalPortals : this.npcCrystalPortals;
+    const CRYSTAL_R = 14, ENEMY_R = 22, PORTAL_R = 20;
+    const MAX_DIST = this.scale.width + this.scale.height;
+    const MAX_BOUNCES = 5;
+
+    const segments: {x1: number, y1: number, x2: number, y2: number}[] = [];
+    let lastBounced: CrystalNode | null = null;
+    let portalUsed = false;
+
+    for (let bounce = 0; bounce <= MAX_BOUNCES; bounce++) {
+      let minT = MAX_DIST;
+      let hitType: 'crystal' | 'portal' | 'enemy' | 'none' = 'none';
+      let hitCrystal: CrystalNode | null = null;
+      let hitPortal: CrystalPortalGate | null = null;
+
+      for (const c of allCrystals) {
+        if (c === lastBounced) continue;
+        const t = this.rayCircleIntersect(ox, oy, dx, dy, c.x, c.y, CRYSTAL_R);
+        if (t !== null && t > 2 && t < minT) { minT = t; hitType = 'crystal'; hitCrystal = c; hitPortal = null; }
+      }
+
+      if (!portalUsed && ownPortals.length === 2) {
+        for (const p of ownPortals) {
+          const t = this.rayCircleIntersect(ox, oy, dx, dy, p.x, p.y, PORTAL_R);
+          if (t !== null && t > 2 && t < minT) { minT = t; hitType = 'portal'; hitPortal = p; hitCrystal = null; }
+        }
+      }
+
+      const tEnemy = this.rayCircleIntersect(ox, oy, dx, dy, target.x, target.y, ENEMY_R);
+      if (tEnemy !== null && tEnemy > 2 && tEnemy < minT) { minT = tEnemy; hitType = 'enemy'; hitCrystal = null; hitPortal = null; }
+
+      if (hitType === 'none') {
+        let wallT = MAX_DIST;
+        if (dx > 0.001) wallT = Math.min(wallT, (this.scale.width  - ox) / dx);
+        else if (dx < -0.001) wallT = Math.min(wallT, -ox / dx);
+        if (dy > 0.001) wallT = Math.min(wallT, (this.scale.height - oy) / dy);
+        else if (dy < -0.001) wallT = Math.min(wallT, -oy / dy);
+        minT = Math.max(0, Math.min(minT, wallT));
+      }
+
+      const endX = ox + dx * minT;
+      const endY = oy + dy * minT;
+      segments.push({ x1: ox, y1: oy, x2: endX, y2: endY });
+
+      if (hitType === 'enemy') {
+        break;
+      } else if (hitType === 'crystal' && hitCrystal) {
+        const nx = (endX - hitCrystal.x) / CRYSTAL_R;
+        const ny = (endY - hitCrystal.y) / CRYSTAL_R;
+        const dot = dx * nx + dy * ny;
+        dx = dx - 2 * dot * nx;
+        dy = dy - 2 * dot * ny;
+        const rlen = Math.sqrt(dx * dx + dy * dy) || 1;
+        dx /= rlen; dy /= rlen;
+        ox = endX + dx * 3;
+        oy = endY + dy * 3;
+        lastBounced = hitCrystal;
+      } else if (hitType === 'portal' && hitPortal) {
+        const other = ownPortals.find((p) => p !== hitPortal)!;
+        const portalCd = isFromPlayer ? this.crystalPortalLaserCooldown : this.npcCrystalPortalLaserCooldown;
+        if (this.time.now - portalCd >= 2000) {
+          const tdx = target.x - other.x, tdy = target.y - other.y;
+          const tlen = Math.sqrt(tdx * tdx + tdy * tdy) || 1;
+          dx = tdx / tlen; dy = tdy / tlen;
+        }
+        ox = other.x + dx * 3;
+        oy = other.y + dy * 3;
+        portalUsed = true;
+        lastBounced = null;
+      } else {
+        break;
+      }
+    }
+    return segments;
+  }
+
   private applyGrowthMutation(id: string, target: 'player' | 'npc'): void {
     const fighter = target === 'player' ? this.player : this.npc;
     const isPlayer = target === 'player';
@@ -5184,10 +5522,11 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private spawnGravMeteorShadow(x: number, y: number, owner: 'player' | 'npc', frozen: boolean): void {
-    // Cap frozen player shadows at 5 (FIFO — remove oldest frozen player shadow)
+    // Cap frozen player shadows (FIFO — remove oldest frozen player shadow)
     if (frozen && owner === 'player') {
       const frozenPlayerShadows = this.gravMeteorShadows.filter(s => s.frozen && s.owner === 'player');
-      if (frozenPlayerShadows.length >= 5) {
+      const maxFrozen = this.hasUpgrade('e') ? 10 : 5;
+      if (frozenPlayerShadows.length >= maxFrozen) {
         const oldest = frozenPlayerShadows[0];
         oldest.sprite.destroy();
         this.gravMeteorShadows.splice(this.gravMeteorShadows.indexOf(oldest), 1);
@@ -5381,12 +5720,13 @@ export class ArenaScene extends Phaser.Scene {
     const len = Math.hypot(dx, dy) || 1;
     const perp = { x: -dy / len, y: dx / len };
     const speed = 620;
+    const angle = Math.atan2(dy, dx); // long axis aligns with travel direction
     for (let i = 0; i < count; i++) {
-      const offset = (i - (count - 1) / 2) * 14;
+      const offset = (i - (count - 1) / 2) * 10;
       const ox = fromX + perp.x * offset;
       const oy = fromY + perp.y * offset;
-      const spr = this.add.rectangle(ox, oy, 18, 4, 0xeeeeff, 0.9).setDepth(7);
-      this.creatDaggers.push({ sprite: spr, vx: (dx / len) * speed, vy: (dy / len) * speed, damage: 8, owner, hitSet: new Set() });
+      const spr = this.add.rectangle(ox, oy, 18, 4, 0xeeeeff, 0.9).setRotation(angle).setDepth(7);
+      this.creatDaggers.push({ sprite: spr, vx: (dx / len) * speed, vy: (dy / len) * speed, damage: 8, owner, hitSet: new Set(), cutSet: new Set() });
     }
   }
 
@@ -5409,7 +5749,7 @@ export class ArenaScene extends Phaser.Scene {
       .setStrokeStyle(2, 0xff44ee, 0.9).setDepth(8);
     const hpBg = this.add.rectangle(fromX, fromY - 20, 28, 4, 0x333333).setDepth(9);
     const hpBar = this.add.rectangle(fromX - 14, fromY - 20, 28, 4, 0xcc22aa).setDepth(10).setOrigin(0, 0.5);
-    this.creatScythes.push({ sprite: spr, hp: maxHp, maxHp, vx: (dx / len) * 260, vy: (dy / len) * 260, owner, lastContactTick: -99999, hpBar, hpBg });
+    this.creatScythes.push({ sprite: spr, hp: maxHp, maxHp, vx: (dx / len) * 87, vy: (dy / len) * 87, owner, lastContactTick: -99999, hpBar, hpBg });
   }
 
   private spawnCreationBlocker(cx: number, cy: number, w: number, h: number, owner: 'player' | 'npc'): void {
@@ -5421,36 +5761,75 @@ export class ArenaScene extends Phaser.Scene {
     this.creatBlockers.push({ rect, x: cx, y: cy, w, h, hp: maxHp, maxHp, owner, hpBar, hpBg });
   }
 
+  private spawnCreationMech(stage: 1 | 2 | 3): void {
+    if (this.creatMech) { this.creatMech.sprite.destroy(); this.creatMech.hpBar.destroy(); this.creatMech.hpBg.destroy(); this.creatMech = null; }
+    const mechHp = stage === 3 ? 60 : stage === 2 ? 40 : 20;
+    const mechColor = stage === 3 ? 0x5511aa : stage === 2 ? 0x8844cc : 0xbb88ee;
+    const mSpr = this.add.rectangle(this.player.x, this.player.y + 28, 32, 32, mechColor, 0.9).setStrokeStyle(2, 0xffffff, 0.5).setDepth(3);
+    const mHpBg = this.add.rectangle(this.player.x, this.player.y + 50, 34, 5, 0x333333, 0.8).setDepth(4);
+    const mHpBar = this.add.rectangle(this.player.x - 17, this.player.y + 50, 34, 5, 0x8844cc, 0.9).setDepth(5).setOrigin(0, 0.5);
+    this.creatMech = { sprite: mSpr, stage, hp: mechHp, maxHp: mechHp, hpBar: mHpBar, hpBg: mHpBg, rocketAccum: 0, dodgeCdUntil: 0 };
+    if (!this.player.damageAbsorber) {
+      this.player.damageAbsorber = (amt: number) => {
+        if (!this.creatMech) return false;
+        this.creatMech.hp -= amt;
+        const ratio = Math.max(0, this.creatMech.hp / this.creatMech.maxHp);
+        this.creatMech.hpBar.setScale(ratio, 1);
+        this.spawnHitFlash(this.creatMech.sprite.x, this.creatMech.sprite.y, 0x8844cc);
+        if (this.creatMech.hp <= 0) {
+          const ex = this.add.circle(this.creatMech.sprite.x, this.creatMech.sprite.y, 30, 0x8844cc, 0.7).setDepth(8);
+          this.tweens.add({ targets: ex, scaleX: 3, scaleY: 3, alpha: 0, duration: 400, onComplete: () => ex.destroy() });
+          this.creatMech.sprite.destroy(); this.creatMech.hpBar.destroy(); this.creatMech.hpBg.destroy(); this.creatMech = null;
+          this.player.damageAbsorber = null;
+          this.showFloatingText(this.player.x, this.player.y - 40, 'MECH DESTROYED', '#ff4422');
+        }
+        return true;
+      };
+    }
+    this.showFloatingText(this.player.x, this.player.y - 40, `MECH STAGE ${stage}`, '#bb88ee');
+    this.player.triggerCooldown('scythe-of-doom');
+  }
+
   private spawnCreationMaze(owner: 'player' | 'npc'): void {
     const W = this.scale.width, H = this.scale.height;
     const caster = owner === 'player' ? this.player : this.npc;
     const expireAt = this.time.now + 10000;
+    const enhanced = owner === 'player' && this.hasUpgrade('q');
+    const targetCount = enhanced ? 36 : 18;
+    const maxAttempts = enhanced ? 400 : 200;
     let placed = 0;
-    for (let attempt = 0; attempt < 200 && placed < 18; attempt++) {
+    for (let attempt = 0; attempt < maxAttempts && placed < targetCount; attempt++) {
       const w = 30 + Math.random() * 90;
       const h = 30 + Math.random() * 90;
       const x = 50 + Math.random() * (W - 100);
       const y = 50 + Math.random() * (H - 100);
       if (Math.abs(x - caster.x) < w / 2 + 50 && Math.abs(y - caster.y) < h / 2 + 50) continue;
       if (this.crucibleSprite && Math.abs(x - this.crucibleX) < w / 2 + 40 && Math.abs(y - this.crucibleY) < h / 2 + 40) continue;
-      const rect = this.add.rectangle(x, y, w, h, 0x882288, 0.5).setStrokeStyle(2, 0xcc55cc, 0.9).setDepth(4);
-      this.creatMazeWalls.push({ rect, x, y, w, h, owner, expireAt });
+      const isSpiked = enhanced && Math.random() < 0.25;
+      const wallColor = isSpiked ? 0xcc2222 : 0x882288;
+      const strokeColor = isSpiked ? 0xff4444 : 0xcc55cc;
+      const rect = this.add.rectangle(x, y, w, h, wallColor, 0.5).setStrokeStyle(2, strokeColor, 0.9).setDepth(4);
+      this.creatMazeWalls.push({ rect, x, y, w, h, owner, expireAt, spiked: isSpiked, spikeAccum: 0 });
       placed++;
     }
   }
 
-  private resolveCrucibleCraft(time: number): void {
-    const tiers = this.crucibleBolts.map((b) => b.tier).sort();
-    const key = tiers.map((t) => t[0]).join(''); // e.g. 'ccg', 'sss', 'ggg'
-    const owner = this.creatCraftOwner;
+  private resolveCrucibleCraft(time: number, forceKey?: string, forceOwner?: 'player' | 'npc'): void {
+    const tiers = forceKey ? [] : this.crucibleBolts.map((b) => b.tier).sort();
+    const key = forceKey ?? tiers.map((t) => t[0]).join(''); // e.g. 'ccg', 'sss', 'ggg'
+    const owner = forceOwner ?? this.creatCraftOwner;
+    // Save last craft key for E+ Electro Bolt
+    if (!forceKey) this.creatLastCraftKey = key;
     const caster = owner === 'player' ? this.player : this.npc;
     const enemy = owner === 'player' ? this.npc : this.player;
     const cx = this.crucibleX, cy = this.crucibleY;
 
-    // Clear bolt icons and craft state
-    for (const b of this.crucibleBolts) b.icon.destroy();
-    this.crucibleBolts = [];
-    this.creatCraftInProgress = false;
+    // Clear bolt icons and craft state (skip when re-crafting via Electro Bolt)
+    if (!forceKey) {
+      for (const b of this.crucibleBolts) b.icon.destroy();
+      this.crucibleBolts = [];
+      this.creatCraftInProgress = false;
+    }
 
     // Craft resolution flash
     const craftBurst = this.add.circle(cx, cy, 12, 0xffdd44, 0.9).setDepth(8);
@@ -5833,6 +6212,12 @@ export class ArenaScene extends Phaser.Scene {
       // F+ Knight speed buff: +45%
       if (time < this.soulKnightSpeedBuffUntil) this.playerSpeedMult *= 1.45;
       // F+ Ghoul buff: +50% soul orb projectile speed (not movement — handled in fireSoulOrb)
+    } else if (this.elementId === 'creation') {
+      this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
+      // Speed pad boost (F+ Build Mode)
+      if (time < this.creatPlayerSpeedPadEnd) this.playerSpeedMult *= 1.25;
+      // Mech stage 3 speed bonus
+      if (this.creatMech && this.creatMech.stage === 3) this.playerSpeedMult = Math.max(this.playerSpeedMult, 1.4);
     } else {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
     }
@@ -5870,9 +6255,13 @@ export class ArenaScene extends Phaser.Scene {
       );
       if (playerInNpcPuddle) this.playerSpeedMult *= 0.75;
     }
-    // Halt zone slows (50%)
+    // Halt zone slows (50%) or Zoom mode (+50% NPC speed + player speed)
     if (this.timeHaltActive) {
-      if (Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y) <= 120) {
+      const inZone = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y) <= 120;
+      if (this.timeHaltZoomMode) {
+        if (inZone) this.npcSpeedMult *= 1.5;
+        this.playerSpeedMult *= 1.5;
+      } else if (inZone) {
         this.npcSpeedMult *= 0.5;
       }
     }
@@ -5880,6 +6269,10 @@ export class ArenaScene extends Phaser.Scene {
       if (Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y) <= 120) {
         this.playerSpeedMult *= 0.5;
       }
+    }
+    // Glass Mode: +25% player speed
+    if (this.elementId === 'sand' && this.timeGlassMode) {
+      this.playerSpeedMult *= 1.25;
     }
     // Ice frost slow on NPC
     if (this.npcFrostStacks > 0) this.npcSpeedMult *= (1 - this.npcFrostStacks * 0.1);
@@ -6957,47 +7350,126 @@ export class ArenaScene extends Phaser.Scene {
         }
       }
     } else if (this.elementId === 'sand') {
-      // Click: Barrage (hold to fire, accelerates over 3s)
+      // Click: Barrage (hold to fire, accelerates over 3s; 5s with Overdrive upgrade)
       if (pointer.isDown) {
         if (!this.timeBarrageActive) {
           this.timeBarrageActive = true;
           this.timeBarrageStart = time;
           this.timeBarrageAccum = 0;
+          this.timeBarrageOverheatTriggered = false;
         }
         const barrageElapsed = (time - this.timeBarrageStart) / 1000;
-        const interval = Math.max(60, 200 - 140 * Math.min(1, barrageElapsed / 3));
+        const rampDuration = this.hasUpgrade('click') ? 5 : 3;
+        const interval = Math.max(60, 200 - 140 * Math.min(1, barrageElapsed / rampDuration));
         this.timeBarrageAccum += delta;
         while (this.timeBarrageAccum >= interval) {
           this.timeBarrageAccum -= interval;
           const dx = mouseX - this.player.x, dy = mouseY - this.player.y;
           const len = Math.sqrt(dx * dx + dy * dy) || 1;
-          const baseSpeed = 300 + 350 * Math.min(1, barrageElapsed / 3);
-          const speed = baseSpeed * (this.timeHaltActive ? 2 : 1);
+          const baseSpeed = 300 + 350 * Math.min(1, barrageElapsed / rampDuration);
+          const speed = baseSpeed * (this.timeHaltActive && !this.timeHaltZoomMode ? 2 : 1);
           const spread = (Math.random() - 0.5) * 0.28;
           const cos = Math.cos(spread), sn = Math.sin(spread);
           const vx = (dx / len * cos - dy / len * sn) * speed;
           const vy = (dx / len * sn + dy / len * cos) * speed;
-          const shardDmg = this.timeHaltActive ? 2 : 1;
+          const shardDmg = this.timeHaltActive && !this.timeHaltZoomMode ? 2 : 1;
           const shard = new Projectile(this, this.player.x, this.player.y, 'proj-time-shard', shardDmg, true);
           this.projectiles.add(shard);
           shard.launch(vx, vy);
         }
+        // Overdrive overheat: trigger after 5s of continuous barrage
+        if (this.hasUpgrade('click') && barrageElapsed >= 5 && !this.timeBarrageOverheatTriggered) {
+          this.timeBarrageOverheatTriggered = true;
+          this.timeBarrageActive = false;
+          // AOE explosion — damages self AND nearby enemy
+          const ohRing = this.add.circle(this.player.x, this.player.y, 12, 0xff8822, 0.9).setDepth(11);
+          this.tweens.add({ targets: ohRing, scaleX: 7, scaleY: 7, alpha: 0, duration: 450, onComplete: () => ohRing.destroy() });
+          this.player.takeDamage(20);
+          this.spawnHitFlash(this.player.x, this.player.y, 0xff8822);
+          const ohDistToNpc = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
+          if (ohDistToNpc <= 84) {
+            this.npc.takeDamage(20);
+            this.spawnHitFlash(this.npc.x, this.npc.y, 0xff8822);
+          }
+          // Set self on fire (reuse npc burn pattern but on player)
+          this.playerBurningUntil = Math.max(this.playerBurningUntil, time + 4000);
+        }
       } else {
         this.timeBarrageActive = false;
       }
-      // E/R/F/Q blocked while barrage is held
-      if (!this.timeBarrageActive) {
-        // E: Time Warp
+      // E/R/F/Q blocked while barrage is held (unless Glass Mode)
+      const barrageBlocked = this.timeBarrageActive && !this.timeGlassMode;
+      if (!barrageBlocked) {
+        // E: Time Warp (or trigger Delayed Warp if saved pos exists)
         if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
-          this.player.castAbility('time-warp', playerCtx);
+          if (this.hasUpgrade('e') && this.timeWarpSavedPos) {
+            // Trigger the drag to saved position
+            this.timeWarpTriggerPending = true;
+          } else {
+            this.player.castAbility('time-warp', playerCtx);
+          }
         }
-        // R: Remain
-        if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
-          this.player.castAbility('time-remain', playerCtx);
+        // R: Remain (or Glass Mode toggle with upgrade)
+        if (this.hasUpgrade('r')) {
+          if (this.rKey.isDown && !this.timeGlassHolding) {
+            this.timeGlassHolding = true;
+            this.timeGlassHoldStart = time;
+            if (!this.timeGlassChargeCircle) {
+              this.timeGlassChargeCircle = this.add.circle(this.player.x, this.player.y, 36, 0xffffff, 0.12)
+                .setStrokeStyle(2, 0xaaaaff, 0.7).setDepth(12);
+              this.tweens.add({ targets: this.timeGlassChargeCircle, scaleX: 1.2, scaleY: 1.2, alpha: 0.3, yoyo: true, repeat: -1, duration: 200 });
+            }
+            if (!this.timeGlassChargeText) {
+              this.timeGlassChargeText = this.add.text(this.player.x, this.player.y - 52, 'Charging 0%', { fontSize: '11px', color: '#aaaaff' }).setOrigin(0.5).setDepth(13);
+            }
+          }
+          if (this.timeGlassHolding && this.timeGlassChargeCircle && this.timeGlassChargeText) {
+            const chargePct = Math.min(100, Math.round((time - this.timeGlassHoldStart) / 3000 * 100));
+            this.timeGlassChargeText.setText(`Charging ${chargePct}%`).setPosition(this.player.x, this.player.y - 52);
+            this.timeGlassChargeCircle.setPosition(this.player.x, this.player.y);
+          }
+          if (!this.rKey.isDown && this.timeGlassHolding) {
+            this.timeGlassHolding = false;
+            if (this.timeGlassChargeCircle) { this.timeGlassChargeCircle.destroy(); this.timeGlassChargeCircle = null; }
+            if (this.timeGlassChargeText) { this.timeGlassChargeText.destroy(); this.timeGlassChargeText = null; }
+            const heldMs = time - this.timeGlassHoldStart;
+            if (heldMs >= 3000) {
+              // Toggle glass mode
+              this.timeGlassMode = !this.timeGlassMode;
+              if (this.timeGlassMode) {
+                if (this.timeGlassModeAura) this.timeGlassModeAura.destroy();
+                this.timeGlassModeAura = this.add.circle(this.player.x, this.player.y, 32, 0xffffff, 0.15)
+                  .setStrokeStyle(2, 0xffffff, 0.6).setDepth(4);
+                this.tweens.add({ targets: this.timeGlassModeAura, alpha: 0.35, yoyo: true, repeat: -1, duration: 300 });
+                this.showFloatingText(this.player.x, this.player.y - 36, 'GLASS MODE', '#ffffff');
+              } else {
+                if (this.timeGlassModeAura) { this.timeGlassModeAura.destroy(); this.timeGlassModeAura = null; }
+                this.showFloatingText(this.player.x, this.player.y - 36, 'Glass Off', '#888888');
+              }
+            } else {
+              // Short press → normal Remain
+              this.player.castAbility('time-remain', playerCtx);
+            }
+          }
+        } else {
+          if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
+            this.player.castAbility('time-remain', playerCtx);
+          }
         }
-        // F: Halt
+        // F: Halt (or zoom toggle)
         if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
-          this.player.castAbility('time-halt', playerCtx);
+          if (this.hasUpgrade('f') && this.timeHaltActive) {
+            // Toggle zoom mode
+            this.timeHaltZoomMode = !this.timeHaltZoomMode;
+            const modeLabel = this.timeHaltZoomMode ? 'ZOOM MODE' : 'HALT MODE';
+            const modeColor = this.timeHaltZoomMode ? '#44aaff' : '#ffdd44';
+            if (this.timeHaltAura) {
+              this.timeHaltAura.setStrokeStyle(2, this.timeHaltZoomMode ? 0x44aaff : 0xffdd44, 0.5);
+            }
+            this.showFloatingText(this.player.x, this.player.y - 36, modeLabel, modeColor);
+          } else {
+            this.player.castAbility('time-halt', playerCtx);
+          }
         }
         // Q: Timeless (charge-gated, no CD)
         if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
@@ -7023,8 +7495,35 @@ export class ArenaScene extends Phaser.Scene {
 
         if (this.gravMeteorRainHolding) {
           // In record mode: place a frozen meteor shadow
-          this.spawnGravMeteorShadow(mouseX, mouseY, 'player', true);
-          this.gravMeteorRainLiveCount++;
+          const maxShadows = this.hasUpgrade('e') ? 10 : 5;
+          const frozenCount = this.gravMeteorShadows.filter(s => s.frozen && s.owner === 'player').length;
+          if (frozenCount < maxShadows) {
+            this.spawnGravMeteorShadow(mouseX, mouseY, 'player', true);
+            this.gravMeteorRainLiveCount++;
+          }
+        } else if (this.gravBombHolding && this.hasUpgrade('f')) {
+          // F+ Meteor Rush: click inside grav bomb radius spawns a rush shadow
+          const distToBomb = Math.hypot(mouseX - this.gravBombLastX, mouseY - this.gravBombLastY);
+          if (distToBomb <= 120 && dragDist < DRAG_THRESHOLD) {
+            const W = this.scale.width, H = this.scale.height;
+            const edges: Array<'top' | 'bottom' | 'left' | 'right'> = ['top', 'bottom', 'left', 'right'];
+            const edge = edges[Math.floor(Math.random() * 4)];
+            // Bar orientation matches meteor travel direction:
+            // top/bottom → meteor travels vertically → vertical bar strip at x=clickX
+            // left/right → meteor travels horizontally → horizontal bar strip at y=clickY
+            let rw = 0, rh = 0, shadowCx = 0, shadowCy = 0;
+            if (edge === 'top') { rw = 24; rh = mouseY; shadowCx = mouseX; shadowCy = mouseY / 2; }
+            else if (edge === 'bottom') { rw = 24; rh = H - mouseY; shadowCx = mouseX; shadowCy = mouseY + (H - mouseY) / 2; }
+            else if (edge === 'left') { rw = mouseX; rh = 24; shadowCx = mouseX / 2; shadowCy = mouseY; }
+            else { rw = W - mouseX; rh = 24; shadowCx = mouseX + (W - mouseX) / 2; shadowCy = mouseY; }
+            const rushRect = this.add.rectangle(shadowCx, shadowCy, rw, rh, 0x221144, 0.55)
+              .setStrokeStyle(2, 0x8844cc, 0.7).setDepth(5);
+            this.tweens.add({ targets: rushRect, alpha: 0.2, yoyo: true, repeat: 2, duration: 250 });
+            this.gravMeteorRushShadows.push({ rect: rushRect, fireAt: time + 1500, clickX: mouseX, clickY: mouseY, edge });
+          } else if (this.player.getCooldownRatio('space-slash') >= 1 && dragDist >= DRAG_THRESHOLD) {
+            playerCtx.gravitySlash(this.gravPointerDownX, this.gravPointerDownY, mouseX, mouseY);
+            this.player.triggerCooldown('space-slash');
+          }
         } else if (this.player.getCooldownRatio('space-slash') >= 1) {
           if (dragDist >= DRAG_THRESHOLD) {
             // Space Slash
@@ -7038,9 +7537,22 @@ export class ArenaScene extends Phaser.Scene {
         }
       }
 
+      // Meteor Storm (Click+): auto-spawn shadows near cursor while holding
+      if (pointer.isDown && this.hasUpgrade('click')) {
+        this.gravMeteorStormAccum += delta;
+        while (this.gravMeteorStormAccum >= 1000) {
+          this.gravMeteorStormAccum -= 1000;
+          const ox = (Math.random() - 0.5) * 100;
+          const oy = (Math.random() - 0.5) * 100;
+          this.spawnGravMeteorShadow(mouseX + ox, mouseY + oy, 'player', false);
+        }
+      } else {
+        this.gravMeteorStormAccum = 0;
+      }
+
       // E: Meteor Rain — hold to record, tap to replay
       if (this.eKey.isDown && !this.gravEKeyWasDown) {
-        // Rising edge: start recording session
+        // Rising edge: start recording session (E+ allows up to 10 shadows)
         this.gravEKeyHeldSince = time;
         this.gravMeteorRainHolding = true;
         this.gravMeteorRainLiveCount = 0;
@@ -7128,13 +7640,63 @@ export class ArenaScene extends Phaser.Scene {
         this.player.triggerCooldown('grav-bomb');
       }
 
-      // Q: Lunar Landing
-      if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
-        this.player.castAbility('lunar-landing', playerCtx);
+      // Q: Lunar Landing (or Moon Rider with Q+)
+      if (this.hasUpgrade('q')) {
+        if (this.qKey.isDown && !this.gravQWasDown && !this.gravMoonActive) {
+          this.gravMoonHolding = true;
+          this.gravMoonHoldStart = time;
+          if (!this.gravMoonChargeCircle) {
+            this.gravMoonChargeCircle = this.add.circle(this.player.x, this.player.y + 32, 28, 0xccbbee, 0.18)
+              .setStrokeStyle(2, 0xccbbee, 0.6).setDepth(12);
+            this.tweens.add({ targets: this.gravMoonChargeCircle, scaleX: 1.3, scaleY: 1.3, alpha: 0.4, yoyo: true, repeat: -1, duration: 250 });
+          }
+          if (!this.gravMoonChargeText) {
+            this.gravMoonChargeText = this.add.text(this.player.x, this.player.y - 50, 'Mounting 0%', { fontSize: '11px', color: '#ccbbee' }).setOrigin(0.5).setDepth(13);
+          }
+        }
+        if (this.gravMoonHolding && this.gravMoonChargeCircle && this.gravMoonChargeText) {
+          const mountPct = Math.min(100, Math.round((time - this.gravMoonHoldStart) / 3000 * 100));
+          this.gravMoonChargeText.setText(`Mounting ${mountPct}%`).setPosition(this.player.x, this.player.y - 50);
+          this.gravMoonChargeCircle.setPosition(this.player.x, this.player.y + 32);
+        }
+        if (!this.qKey.isDown && this.gravQWasDown) {
+          if (this.gravMoonChargeCircle) { this.gravMoonChargeCircle.destroy(); this.gravMoonChargeCircle = null; }
+          if (this.gravMoonChargeText) { this.gravMoonChargeText.destroy(); this.gravMoonChargeText = null; }
+          if (this.gravMoonHolding) {
+            this.gravMoonHolding = false;
+            const heldMs = time - this.gravMoonHoldStart;
+            if (heldMs >= 3000 && this.player.getCooldownRatio('lunar-landing') >= 1 && !this.gravMoonActive) {
+              // Mount the moon
+              this.gravMoonActive = true;
+              this.gravMoonHp = 100;
+              const moonR = 24; // 50% bigger than player (~16px)
+              if (this.gravMoonHpBg) this.gravMoonHpBg.destroy();
+              if (this.gravMoonHpBar) this.gravMoonHpBar.destroy();
+              if (this.gravMoonSprite) this.gravMoonSprite.destroy();
+              this.gravMoonSprite = this.add.circle(this.player.x, this.player.y + moonR + 8, moonR, 0xccbbee, 0.85)
+                .setStrokeStyle(3, 0xffffff, 0.5).setDepth(3);
+              this.gravMoonHpBg = this.add.rectangle(this.player.x, this.player.y + moonR * 2 + 16, 40, 4, 0x333333).setDepth(9);
+              this.gravMoonHpBar = this.add.rectangle(this.player.x - 20, this.player.y + moonR * 2 + 16, 40, 4, 0xccbbee).setDepth(10).setOrigin(0, 0.5);
+              this.player.triggerCooldown('lunar-landing');
+              this.showFloatingText(this.player.x, this.player.y - 30, '🌕 Moon Rider!', '#ccbbee');
+            } else {
+              // Short press: regular lunar landing
+              if (this.player.getCooldownRatio('lunar-landing') >= 1) {
+                this.player.castAbility('lunar-landing', playerCtx);
+              }
+            }
+          }
+        }
+        this.gravQWasDown = this.qKey.isDown;
+      } else {
+        if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
+          this.player.castAbility('lunar-landing', playerCtx);
+        }
       }
     } else if (this.elementId === 'creation') {
       // ── CREATION INPUT ────────────────────────────────────────────
 
+      if (!this.creatBuildMode) {
       // Click — Dagger Spray: hold to add more daggers (up to 5), release to fire
       if (pointer.isDown && !this.creatDaggerHolding) {
         if (this.player.getCooldownRatio('dagger-spray') >= 1) {
@@ -7158,7 +7720,7 @@ export class ArenaScene extends Phaser.Scene {
         const len = Math.hypot(dx, dy) || 1;
         const perp = { x: -dy / len, y: dx / len };
         for (let i = 0; i < count; i++) {
-          const offset = (i - (count - 1) / 2) * 14;
+          const offset = (i - (count - 1) / 2) * 10;
           const ox = this.player.x + perp.x * offset;
           const oy = this.player.y + perp.y * offset;
           this.creatDaggerPreviews[i].setTo(ox, oy, mouseX + perp.x * offset, mouseY + perp.y * offset);
@@ -7186,58 +7748,327 @@ export class ArenaScene extends Phaser.Scene {
       if (this.creatBoltHolding && this.creatBoltChargeOrb) {
         // Update orb color by charge
         const held = time - this.creatBoltHoldStart;
-        const tierColor = held >= 1000 ? 0xffdd22 : held >= 500 ? 0xccccdd : 0xcc6622;
-        this.creatBoltChargeOrb.setFillStyle(tierColor, 0.9);
+        const electroThresh = 3000; // 2s past gold (gold at 1000ms)
+        if (this.hasUpgrade('e') && held >= electroThresh) {
+          this.creatBoltElectroMode = true;
+          this.creatBoltChargeOrb.setFillStyle(0x44ddff, 0.9);
+        } else {
+          const tierColor = held >= 1000 ? 0xffdd22 : held >= 500 ? 0xccccdd : 0xcc6622;
+          this.creatBoltChargeOrb.setFillStyle(tierColor, 0.9);
+        }
         this.creatBoltChargeOrb.setPosition(this.player.x, this.player.y - 38);
       }
       if (!this.eKey.isDown && this.creatBoltHolding) {
         this.creatBoltHolding = false;
         if (this.creatBoltChargeOrb) { this.creatBoltChargeOrb.destroy(); this.creatBoltChargeOrb = null; }
         const held = time - this.creatBoltHoldStart;
-        const tier: 'copper' | 'silver' | 'gold' = held >= 1000 ? 'gold' : held >= 500 ? 'silver' : 'copper';
-        playerCtx.creationBolt(mouseX, mouseY, tier);
-        this.player.triggerCooldown('charged-bolt');
-      }
-
-      // R — Scythe of Doom
-      if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
-        this.player.castAbility('scythe-of-doom', playerCtx);
-      }
-
-      // F — Create: drag to define rectangle, release to spawn
-      if (this.fKey.isDown && !this.creatBlockDragging) {
-        if (this.player.getCooldownRatio('creation-block') >= 1) {
-          this.creatBlockDragging = true;
-          this.creatBlockDragStartX = mouseX;
-          this.creatBlockDragStartY = mouseY;
-          if (this.creatBlockPreview) this.creatBlockPreview.destroy();
-          this.creatBlockPreview = this.add.rectangle(mouseX, mouseY, 0, 0, 0xcc8844, 0.3)
-            .setStrokeStyle(2, 0xff9955, 0.8).setDepth(5);
-        }
-      }
-      if (this.creatBlockDragging && this.creatBlockPreview) {
-        const rw = Math.min(200, Math.abs(mouseX - this.creatBlockDragStartX));
-        const rh = Math.min(200, Math.abs(mouseY - this.creatBlockDragStartY));
-        const rx = this.creatBlockDragStartX + (mouseX > this.creatBlockDragStartX ? 1 : -1) * rw / 2;
-        const ry = this.creatBlockDragStartY + (mouseY > this.creatBlockDragStartY ? 1 : -1) * rh / 2;
-        this.creatBlockPreview.setPosition(rx, ry).setSize(rw, rh);
-      }
-      if (!this.fKey.isDown && this.creatBlockDragging) {
-        this.creatBlockDragging = false;
-        const rw = Math.min(200, Math.abs(mouseX - this.creatBlockDragStartX));
-        const rh = Math.min(200, Math.abs(mouseY - this.creatBlockDragStartY));
-        if (this.creatBlockPreview) { this.creatBlockPreview.destroy(); this.creatBlockPreview = null; }
-        if (rw >= 12 && rh >= 12) {
-          const rx = this.creatBlockDragStartX + (mouseX > this.creatBlockDragStartX ? 1 : -1) * rw / 2;
-          const ry = this.creatBlockDragStartY + (mouseY > this.creatBlockDragStartY ? 1 : -1) * rh / 2;
-          playerCtx.creationBlock(rx, ry, rw, rh);
-          this.player.triggerCooldown('creation-block');
+        if (this.creatBoltElectroMode && this.creatLastCraftKey) {
+          // E+ Electro Bolt: re-craft last recipe
+          this.creatBoltElectroMode = false;
+          const flash = this.add.circle(this.player.x, this.player.y, 40, 0x44ddff, 0.7).setDepth(15);
+          this.tweens.add({ targets: flash, scaleX: 3, scaleY: 3, alpha: 0, duration: 350, onComplete: () => flash.destroy() });
+          this.showFloatingText(this.player.x, this.player.y - 40, 'ELECTRO!', '#44ddff');
+          this.resolveCrucibleCraft(time, this.creatLastCraftKey, 'player');
+          this.player.triggerCooldown('charged-bolt');
+        } else {
+          this.creatBoltElectroMode = false;
+          const tier: 'copper' | 'silver' | 'gold' = held >= 1000 ? 'gold' : held >= 500 ? 'silver' : 'copper';
+          playerCtx.creationBolt(mouseX, mouseY, tier);
+          this.player.triggerCooldown('charged-bolt');
         }
       }
 
-      // Q — Maze of Doom
-      if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
-        this.player.castAbility('maze-of-doom', playerCtx);
+      // R — Scythe of Doom (or Mech Constructor with R+ upgrade)
+      if (this.hasUpgrade('r')) {
+        if (this.rKey.isDown && !this.creatMechHolding) {
+          this.creatMechHolding = true;
+          this.creatMechHoldStart = time;
+          if (this.creatMechStageVisual) this.creatMechStageVisual.destroy();
+          this.creatMechStageVisual = this.add.text(this.player.x, this.player.y - 55, 'Building... 0%', { fontSize: '12px', color: '#bb88ee' }).setOrigin(0.5).setDepth(15);
+        }
+        if (this.creatMechHolding && this.creatMechStageVisual) {
+          const mechHeld = time - this.creatMechHoldStart;
+          // Show which stage is being built (1 during 0-3s, 2 during 3-6s, 3 during 6-9s)
+          const buildingStage = Math.min(3, Math.floor(mechHeld / 3000) + 1);
+          const stagePct = Math.min(100, Math.round((mechHeld % 3000) / 3000 * 100));
+          const stageColor = buildingStage === 3 ? '#9966ff' : buildingStage === 2 ? '#cc88ff' : '#bb88ee';
+          this.creatMechStageVisual.setStyle({ color: stageColor }).setText(`Stage ${buildingStage} ${stagePct}%`).setPosition(this.player.x, this.player.y - 55);
+          // Auto-activate at 9s (stage 3 complete)
+          if (mechHeld >= 9000) {
+            this.creatMechHolding = false;
+            if (this.creatMechStageVisual) {
+              const sv = this.creatMechStageVisual;
+              sv.setStyle({ color: '#ffdd44' }).setText('FINISHED!');
+              this.time.delayedCall(900, () => { if (sv.active) sv.destroy(); });
+              this.creatMechStageVisual = null;
+            }
+            this.spawnCreationMech(3);
+          }
+        }
+        if (!this.rKey.isDown && this.creatMechHolding) {
+          this.creatMechHolding = false;
+          if (this.creatMechStageVisual) { this.creatMechStageVisual.destroy(); this.creatMechStageVisual = null; }
+          const mechHeld = time - this.creatMechHoldStart;
+          // Stage is determined by full 3s periods completed
+          const stage = Math.min(3, Math.floor(mechHeld / 3000)) as 0 | 1 | 2 | 3;
+          if (stage >= 1) {
+            this.spawnCreationMech(stage as 1 | 2 | 3);
+          } else {
+            // Short press: normal scythe
+            this.player.castAbility('scythe-of-doom', playerCtx);
+          }
+        }
+        // Mech explosive dodge (stage 2+): space bar when mech is active
+        if (this.creatMech && this.creatMech.stage >= 2 && Phaser.Input.Keyboard.JustDown(this.spaceKey) && time >= this.creatMech.dodgeCdUntil) {
+          this.creatMech.dodgeCdUntil = time + 3000;
+          const exRing = this.add.circle(this.player.x, this.player.y, 10, 0xbb88ee, 0.8).setDepth(9);
+          this.tweens.add({ targets: exRing, scaleX: 6, scaleY: 6, alpha: 0, duration: 350, onComplete: () => exRing.destroy() });
+          if (Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y) <= 80) {
+            this.npc.takeDamage(15);
+            this.spawnHitFlash(this.npc.x, this.npc.y, 0xbb88ee);
+          }
+          this.showFloatingText(this.player.x, this.player.y - 40, 'MECH DODGE', '#bb88ee');
+        }
+      } else {
+        if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
+          this.player.castAbility('scythe-of-doom', playerCtx);
+        }
+      }
+      } // end !creatBuildMode
+
+      if (this.hasUpgrade('f') && this.creatBuildMode) {
+        // ── Build Mode ──────────────────────────────────────────────
+        // Click: create/drag blocks, speed pads, spiked blocks
+        if (pointer.isDown && !this.creatBuildBlockDragging && !this.creatBuildSpeedPadDragging && !this.creatBuildSpikedDragging && !this.pointerWasDown) {
+          // Check existing blocks first, then speed pads, then spiked blocks
+          let foundBlock: CreationBlocker | null = null;
+          for (const b of this.creatBlockers) {
+            if (b.owner === 'player' && Math.abs(mouseX - b.x) <= b.w / 2 + 5 && Math.abs(mouseY - b.y) <= b.h / 2 + 5) {
+              foundBlock = b; break;
+            }
+          }
+          let foundSpeedPad: CreationSpeedPad | null = null;
+          if (!foundBlock) {
+            for (const b of this.creatSpeedPads) {
+              if (b.owner === 'player' && Math.abs(mouseX - b.x) <= b.w / 2 + 5 && Math.abs(mouseY - b.y) <= b.h / 2 + 5) {
+                foundSpeedPad = b; break;
+              }
+            }
+          }
+          let foundSpiked: CreationSpikedBlock | null = null;
+          if (!foundBlock && !foundSpeedPad) {
+            for (const b of this.creatSpikedBlocks) {
+              if (b.owner === 'player' && Math.abs(mouseX - b.x) <= b.w / 2 + 5 && Math.abs(mouseY - b.y) <= b.h / 2 + 5) {
+                foundSpiked = b; break;
+              }
+            }
+          }
+          if (foundBlock) {
+            this.creatBuildBlockDragging = true;
+            this.creatBuildBlockDragStartX = mouseX - foundBlock.x;
+            this.creatBuildBlockDragStartY = mouseY - foundBlock.y;
+            this.creatBuildBlockPreview = foundBlock;
+          } else if (foundSpeedPad) {
+            this.creatBuildSpeedPadDragging = true;
+            this.creatBuildSpeedPadDragStartX = mouseX - foundSpeedPad.x;
+            this.creatBuildSpeedPadDragStartY = mouseY - foundSpeedPad.y;
+            this.creatBuildSpeedPadDragRef = foundSpeedPad;
+          } else if (foundSpiked) {
+            this.creatBuildSpikedDragging = true;
+            this.creatBuildSpikedDragStartX = mouseX - foundSpiked.x;
+            this.creatBuildSpikedDragStartY = mouseY - foundSpiked.y;
+            this.creatBuildSpikedDragRef = foundSpiked;
+          } else if (time >= this.creatBuildNewBlockCdUntil) {
+            // New block creation (gated by 2s cooldown)
+            this.creatBuildBlockDragging = true;
+            this.creatBuildBlockDragStartX = mouseX;
+            this.creatBuildBlockDragStartY = mouseY;
+            this.creatBuildBlockPreview = null; // null = creating new
+            if (this.creatBuildNewBlockPreview) this.creatBuildNewBlockPreview.destroy();
+            this.creatBuildNewBlockPreview = this.add.rectangle(mouseX, mouseY, 0, 0, 0xcc8844, 0.3)
+              .setStrokeStyle(2, 0xff9955, 0.8).setDepth(5);
+          }
+        }
+        // Dragging existing block
+        if (pointer.isDown && this.creatBuildBlockDragging) {
+          if (this.creatBuildBlockPreview) {
+            const nx = mouseX - this.creatBuildBlockDragStartX;
+            const ny = mouseY - this.creatBuildBlockDragStartY;
+            this.creatBuildBlockPreview.x = nx; this.creatBuildBlockPreview.y = ny;
+            this.creatBuildBlockPreview.rect.setPosition(nx, ny);
+            this.creatBuildBlockPreview.hpBar.setPosition(nx - this.creatBuildBlockPreview.w / 2, ny - this.creatBuildBlockPreview.h / 2 - 8);
+            this.creatBuildBlockPreview.hpBg.setPosition(nx, ny - this.creatBuildBlockPreview.h / 2 - 8);
+          } else if (this.creatBuildNewBlockPreview) {
+            // Creating new block: update preview size
+            const rw = Math.min(200, Math.abs(mouseX - this.creatBuildBlockDragStartX));
+            const rh = Math.min(200, Math.abs(mouseY - this.creatBuildBlockDragStartY));
+            const rx = this.creatBuildBlockDragStartX + (mouseX > this.creatBuildBlockDragStartX ? 1 : -1) * rw / 2;
+            const ry = this.creatBuildBlockDragStartY + (mouseY > this.creatBuildBlockDragStartY ? 1 : -1) * rh / 2;
+            this.creatBuildNewBlockPreview.setPosition(rx, ry).setSize(rw, rh);
+          }
+        }
+        // Dragging speed pad
+        if (pointer.isDown && this.creatBuildSpeedPadDragging && this.creatBuildSpeedPadDragRef) {
+          const sp = this.creatBuildSpeedPadDragRef;
+          const nx = mouseX - this.creatBuildSpeedPadDragStartX;
+          const ny = mouseY - this.creatBuildSpeedPadDragStartY;
+          sp.x = nx; sp.y = ny;
+          sp.rect.setPosition(nx, ny);
+          sp.hpBar.setPosition(nx - sp.w / 2, ny - sp.h / 2 - 6);
+          sp.hpBg.setPosition(nx, ny - sp.h / 2 - 6);
+        }
+        // Dragging spiked block
+        if (pointer.isDown && this.creatBuildSpikedDragging && this.creatBuildSpikedDragRef) {
+          const sb = this.creatBuildSpikedDragRef;
+          const nx = mouseX - this.creatBuildSpikedDragStartX;
+          const ny = mouseY - this.creatBuildSpikedDragStartY;
+          sb.x = nx; sb.y = ny;
+          sb.rect.setPosition(nx, ny);
+          sb.hpBar.setPosition(nx - sb.w / 2, ny - sb.h / 2 - 6);
+          sb.hpBg.setPosition(nx, ny - sb.h / 2 - 6);
+        }
+        if (!pointer.isDown && this.creatBuildBlockDragging) {
+          this.creatBuildBlockDragging = false;
+          if (!this.creatBuildBlockPreview) {
+            // Create new block
+            const rw = Math.min(200, Math.abs(mouseX - this.creatBuildBlockDragStartX));
+            const rh = Math.min(200, Math.abs(mouseY - this.creatBuildBlockDragStartY));
+            if (this.creatBuildNewBlockPreview) { this.creatBuildNewBlockPreview.destroy(); this.creatBuildNewBlockPreview = null; }
+            if (rw >= 12 && rh >= 12) {
+              const rx = this.creatBuildBlockDragStartX + (mouseX > this.creatBuildBlockDragStartX ? 1 : -1) * rw / 2;
+              const ry = this.creatBuildBlockDragStartY + (mouseY > this.creatBuildBlockDragStartY ? 1 : -1) * rh / 2;
+              playerCtx.creationBlock(rx, ry, rw, rh);
+              this.creatBuildNewBlockCdUntil = time + 2000;
+            }
+          }
+          this.creatBuildBlockPreview = null;
+        }
+        if (!pointer.isDown && this.creatBuildSpeedPadDragging) {
+          this.creatBuildSpeedPadDragging = false;
+          this.creatBuildSpeedPadDragRef = null;
+        }
+        if (!pointer.isDown && this.creatBuildSpikedDragging) {
+          this.creatBuildSpikedDragging = false;
+          this.creatBuildSpikedDragRef = null;
+        }
+        // E — Launch all player blocks toward cursor
+        if (Phaser.Input.Keyboard.JustDown(this.eKey) && time >= this.creatBuildLaunchCdUntil) {
+          this.creatBuildLaunchCdUntil = time + 5000;
+          // Show arrows for 1.5s then move
+          const arrows: Phaser.GameObjects.Text[] = [];
+          for (const b of this.creatBlockers) {
+            if (b.owner !== 'player') continue;
+            const arr = this.add.text(b.x, b.y, '→', { fontSize: '18px', color: '#ffcc44' }).setOrigin(0.5).setDepth(12)
+              .setRotation(Math.atan2(mouseY - b.y, mouseX - b.x));
+            arrows.push(arr);
+            this.creatBuildLaunchArrows.push(arr);
+          }
+          for (const b of this.creatSpeedPads) {
+            if (b.owner !== 'player') continue;
+            const arr = this.add.text(b.x, b.y, '→', { fontSize: '18px', color: '#44aaff' }).setOrigin(0.5).setDepth(12)
+              .setRotation(Math.atan2(mouseY - b.y, mouseX - b.x));
+            arrows.push(arr);
+            this.creatBuildLaunchArrows.push(arr);
+          }
+          for (const b of this.creatSpikedBlocks) {
+            if (b.owner !== 'player') continue;
+            const arr = this.add.text(b.x, b.y, '→', { fontSize: '18px', color: '#ff4422' }).setOrigin(0.5).setDepth(12)
+              .setRotation(Math.atan2(mouseY - b.y, mouseX - b.x));
+            arrows.push(arr);
+            this.creatBuildLaunchArrows.push(arr);
+          }
+          this.time.delayedCall(1500, () => {
+            for (const a of arrows) a.destroy();
+            const W = this.scale.width, H = this.scale.height;
+            // Launch blocks: fast movement toward cursor each frame (handled via vx/vy in per-frame section)
+            for (const b of this.creatBlockers) {
+              if (b.owner !== 'player') continue;
+              const dx = mouseX - b.x, dy = mouseY - b.y;
+              const len = Math.sqrt(dx * dx + dy * dy) || 1;
+              (b as any).launchVx = (dx / len) * 600; (b as any).launchVy = (dy / len) * 600;
+              (b as any).launchUntil = this.time.now + 2000;
+            }
+            for (const b of this.creatSpeedPads) {
+              if (b.owner !== 'player') continue;
+              const dx = mouseX - b.x, dy = mouseY - b.y;
+              const len = Math.sqrt(dx * dx + dy * dy) || 1;
+              (b as any).launchVx = (dx / len) * 600; (b as any).launchVy = (dy / len) * 600;
+              (b as any).launchUntil = this.time.now + 2000;
+            }
+            for (const b of this.creatSpikedBlocks) {
+              if (b.owner !== 'player') continue;
+              const dx = mouseX - b.x, dy = mouseY - b.y;
+              const len = Math.sqrt(dx * dx + dy * dy) || 1;
+              (b as any).launchVx = (dx / len) * 600; (b as any).launchVy = (dy / len) * 600;
+              (b as any).launchUntil = this.time.now + 2000;
+            }
+          });
+        }
+        // R — Speed pad
+        if (Phaser.Input.Keyboard.JustDown(this.rKey) && time >= this.creatBuildSpeedPadCdUntil) {
+          this.creatBuildSpeedPadCdUntil = time + 6000;
+          const pw = 60, ph = 20;
+          const padSpr = this.add.rectangle(mouseX, mouseY, pw, ph, 0x44aaff, 0.75).setStrokeStyle(2, 0x88ddff, 0.9).setDepth(4);
+          const padHpBg = this.add.rectangle(mouseX, mouseY - ph / 2 - 6, pw, 4, 0x333333, 0.8).setDepth(5);
+          const padHpBar = this.add.rectangle(mouseX - pw / 2, mouseY - ph / 2 - 6, pw, 4, 0x44aaff, 0.9).setDepth(6).setOrigin(0, 0.5);
+          this.creatSpeedPads.push({ rect: padSpr, x: mouseX, y: mouseY, w: pw, h: ph, hp: 40, maxHp: 40, hpBar: padHpBar, hpBg: padHpBg, owner: 'player' });
+          this.showFloatingText(mouseX, mouseY - 30, 'SPEED PAD', '#44aaff');
+        }
+        // F — Exit build mode
+        if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
+          this.creatBuildMode = false;
+          this.showFloatingText(this.player.x, this.player.y - 40, 'Build Mode OFF', '#aaaaaa');
+        }
+        // Q — Spike block
+        if (Phaser.Input.Keyboard.JustDown(this.qKey) && time >= this.creatBuildSpikedCdUntil) {
+          this.creatBuildSpikedCdUntil = time + 20000;
+          const sw = 50, sh = 50;
+          const spkSpr = this.add.rectangle(mouseX, mouseY, sw, sh, 0xcc2222, 0.8).setStrokeStyle(2, 0xff4444, 0.9).setDepth(4);
+          const spkHpBg = this.add.rectangle(mouseX, mouseY - sh / 2 - 6, sw, 4, 0x333333, 0.8).setDepth(5);
+          const spkHpBar = this.add.rectangle(mouseX - sw / 2, mouseY - sh / 2 - 6, sw, 4, 0xcc2222, 0.9).setDepth(6).setOrigin(0, 0.5);
+          this.creatSpikedBlocks.push({ rect: spkSpr, x: mouseX, y: mouseY, w: sw, h: sh, hp: 50, maxHp: 50, hpBar: spkHpBar, hpBg: spkHpBg, owner: 'player', tickAccum: 0, invincible: false });
+          this.showFloatingText(mouseX, mouseY - 30, 'SPIKE BLOCK', '#cc2222');
+        }
+      } else {
+        // ── Normal F — Create: drag to define rectangle, release to spawn
+        if (this.hasUpgrade('f') && Phaser.Input.Keyboard.JustDown(this.fKey)) {
+          this.creatBuildMode = true;
+          this.showFloatingText(this.player.x, this.player.y - 40, 'Build Mode ON', '#bb88ff');
+        } else {
+          if (this.fKey.isDown && !this.creatBlockDragging) {
+            if (this.player.getCooldownRatio('creation-block') >= 1) {
+              this.creatBlockDragging = true;
+              this.creatBlockDragStartX = mouseX;
+              this.creatBlockDragStartY = mouseY;
+              if (this.creatBlockPreview) this.creatBlockPreview.destroy();
+              this.creatBlockPreview = this.add.rectangle(mouseX, mouseY, 0, 0, 0xcc8844, 0.3)
+                .setStrokeStyle(2, 0xff9955, 0.8).setDepth(5);
+            }
+          }
+          if (this.creatBlockDragging && this.creatBlockPreview) {
+            const rw = Math.min(200, Math.abs(mouseX - this.creatBlockDragStartX));
+            const rh = Math.min(200, Math.abs(mouseY - this.creatBlockDragStartY));
+            const rx = this.creatBlockDragStartX + (mouseX > this.creatBlockDragStartX ? 1 : -1) * rw / 2;
+            const ry = this.creatBlockDragStartY + (mouseY > this.creatBlockDragStartY ? 1 : -1) * rh / 2;
+            this.creatBlockPreview.setPosition(rx, ry).setSize(rw, rh);
+          }
+          if (!this.fKey.isDown && this.creatBlockDragging) {
+            this.creatBlockDragging = false;
+            const rw = Math.min(200, Math.abs(mouseX - this.creatBlockDragStartX));
+            const rh = Math.min(200, Math.abs(mouseY - this.creatBlockDragStartY));
+            if (this.creatBlockPreview) { this.creatBlockPreview.destroy(); this.creatBlockPreview = null; }
+            if (rw >= 12 && rh >= 12) {
+              const rx = this.creatBlockDragStartX + (mouseX > this.creatBlockDragStartX ? 1 : -1) * rw / 2;
+              const ry = this.creatBlockDragStartY + (mouseY > this.creatBlockDragStartY ? 1 : -1) * rh / 2;
+              playerCtx.creationBlock(rx, ry, rw, rh);
+              this.player.triggerCooldown('creation-block');
+            }
+          }
+        }
+        // Q — Maze of Doom
+        if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
+          this.player.castAbility('maze-of-doom', playerCtx);
+        }
       }
     }
     this.pointerWasDown = pointer.isDown;
@@ -8933,6 +9764,20 @@ export class ArenaScene extends Phaser.Scene {
         }
       }
 
+      // Laser aim preview: faint line showing beam path from player toward cursor
+      if (this.elementId === 'crystal') {
+        if (!this.crystalLaserPreviewGfx) {
+          this.crystalLaserPreviewGfx = this.add.graphics().setDepth(14);
+        }
+        this.crystalLaserPreviewGfx.clear();
+        const previewSegs = this.computeCrystalPreviewSegments(this.player.x, this.player.y, mouseX, mouseY, true);
+        for (let si = 0; si < previewSegs.length; si++) {
+          const alpha = Math.max(0.08, 0.22 - si * 0.04);
+          this.crystalLaserPreviewGfx.lineStyle(1.5, 0x88eeff, alpha);
+          this.crystalLaserPreviewGfx.lineBetween(previewSegs[si].x1, previewSegs[si].y1, previewSegs[si].x2, previewSegs[si].y2);
+        }
+      }
+
       // Click+ shredder: continuous laser toward cursor (1 dmg/tick, 100ms interval)
       if (this.elementId === 'crystal' && this.crystalShredderActive) {
         this.crystalShredderTickAccum += delta;
@@ -9709,19 +10554,45 @@ export class ArenaScene extends Phaser.Scene {
 
       // ── Player time ──
       if (this.elementId === 'sand') {
-        // Timeless timeout
+        // Timeless timeout — restore frozen projectiles and NPC
         if (this.timeTimelessActive && time >= this.timeTimelessEnd) {
           this.timeTimelessActive = false;
-          this.player.cooldownMult = 1;
+          // Restore frozen projectile velocities
+          for (const [go, vel] of this.timeFreezeFrozenVelocities) {
+            const proj = go as Projectile;
+            if (proj.active) {
+              (proj.body as Phaser.Physics.Arcade.Body).setVelocity(vel.vx, vel.vy);
+            }
+          }
+          this.timeFreezeFrozenVelocities.clear();
         }
 
-        // Remain timeout: deal 80% of absorbed damage
+        // Keep projectiles frozen while Timeless is active (including newly-spawned ones)
+        if (this.timeTimelessActive) {
+          for (const child of this.projectiles.getChildren()) {
+            const proj = child as Projectile;
+            if (!proj.active) continue;
+            const body = proj.body as Phaser.Physics.Arcade.Body;
+            // Store velocity if not yet frozen (new projectile spawned after freeze start)
+            if (!this.timeFreezeFrozenVelocities.has(proj)) {
+              this.timeFreezeFrozenVelocities.set(proj, { vx: body.velocity.x, vy: body.velocity.y });
+            }
+            body.setVelocity(0, 0);
+          }
+          // Keep NPC frozen in place
+          const frozenNpcBody = this.npc.body as Phaser.Physics.Arcade.Body;
+          frozenNpcBody.setVelocity(0, 0);
+        }
+
+        // Remain timeout: deal 80% of absorbed damage (0 if Glass Mode R+)
         if (this.timeRemainActive && time >= this.timeRemainEnd) {
           this.timeRemainActive = false;
           this.player.damageAbsorber = null;
           if (this.timeRemainAura) { this.timeRemainAura.destroy(); this.timeRemainAura = null; }
-          const finalDmg = Math.round(this.timeRemainAbsorbed * 0.8);
-          if (finalDmg > 0) this.player.takeDamage(finalDmg);
+          if (!(this.timeGlassMode && this.hasUpgrade('r'))) {
+            const finalDmg = Math.round(this.timeRemainAbsorbed * 0.8);
+            if (finalDmg > 0) this.player.takeDamage(finalDmg);
+          }
           this.timeRemainAbsorbed = 0;
         }
         if (this.timeRemainActive && this.timeRemainAura) this.timeRemainAura.setPosition(this.player.x, this.player.y);
@@ -9730,33 +10601,52 @@ export class ArenaScene extends Phaser.Scene {
         if (this.timeHaltActive) {
           if (time >= this.timeHaltEnd) {
             this.timeHaltActive = false;
+            this.timeHaltZoomMode = false;
             if (this.timeHaltAura) { this.timeHaltAura.destroy(); this.timeHaltAura = null; }
-            // Restore all slowed projectiles
+            // Restore all slowed/boosted projectiles
             for (const [proj, vel] of this.timeSlowedProjs) {
               if (proj.active) (proj.body as Phaser.Physics.Arcade.Body).setVelocity(vel.vx, vel.vy);
             }
             this.timeSlowedProjs.clear();
           } else {
             if (this.timeHaltAura) this.timeHaltAura.setPosition(this.player.x, this.player.y);
-            // Slow/restore projectiles in radius
-            for (const child of this.projectiles.getChildren()) {
-              const proj = child as Projectile;
-              if (!proj.active) continue;
-              const body = proj.body as Phaser.Physics.Arcade.Body;
-              const inZone = Phaser.Math.Distance.Between(proj.x, proj.y, this.player.x, this.player.y) <= 120;
-              if (inZone) {
-                if (!this.timeSlowedProjs.has(proj)) {
-                  // Store the true original velocity before we touch it
-                  this.timeSlowedProjs.set(proj, { vx: body.velocity.x, vy: body.velocity.y });
+            if (this.timeHaltZoomMode) {
+              // Zoom mode: boost projectiles by 50%, restore those that leave
+              for (const child of this.projectiles.getChildren()) {
+                const proj = child as Projectile;
+                if (!proj.active) continue;
+                const body = proj.body as Phaser.Physics.Arcade.Body;
+                const inZone = Phaser.Math.Distance.Between(proj.x, proj.y, this.player.x, this.player.y) <= 120;
+                if (inZone) {
+                  if (!this.timeSlowedProjs.has(proj)) {
+                    this.timeSlowedProjs.set(proj, { vx: body.velocity.x, vy: body.velocity.y });
+                  }
+                  const orig = this.timeSlowedProjs.get(proj)!;
+                  body.setVelocity(orig.vx * 1.5, orig.vy * 1.5);
+                } else if (this.timeSlowedProjs.has(proj)) {
+                  const orig = this.timeSlowedProjs.get(proj)!;
+                  body.setVelocity(orig.vx, orig.vy);
+                  this.timeSlowedProjs.delete(proj);
                 }
-                // Each frame: hold at 15% of original
-                const orig = this.timeSlowedProjs.get(proj)!;
-                body.setVelocity(orig.vx * 0.15, orig.vy * 0.15);
-              } else if (this.timeSlowedProjs.has(proj)) {
-                // Restore original when leaving zone
-                const orig = this.timeSlowedProjs.get(proj)!;
-                body.setVelocity(orig.vx, orig.vy);
-                this.timeSlowedProjs.delete(proj);
+              }
+            } else {
+              // Halt mode: slow projectiles to 15%
+              for (const child of this.projectiles.getChildren()) {
+                const proj = child as Projectile;
+                if (!proj.active) continue;
+                const body = proj.body as Phaser.Physics.Arcade.Body;
+                const inZone = Phaser.Math.Distance.Between(proj.x, proj.y, this.player.x, this.player.y) <= 120;
+                if (inZone) {
+                  if (!this.timeSlowedProjs.has(proj)) {
+                    this.timeSlowedProjs.set(proj, { vx: body.velocity.x, vy: body.velocity.y });
+                  }
+                  const orig = this.timeSlowedProjs.get(proj)!;
+                  body.setVelocity(orig.vx * 0.15, orig.vy * 0.15);
+                } else if (this.timeSlowedProjs.has(proj)) {
+                  const orig = this.timeSlowedProjs.get(proj)!;
+                  body.setVelocity(orig.vx, orig.vy);
+                  this.timeSlowedProjs.delete(proj);
+                }
               }
             }
           }
@@ -9793,6 +10683,36 @@ export class ArenaScene extends Phaser.Scene {
             (p) => p.owner === 'player' && Phaser.Math.Distance.Between(p.x, p.y, this.player.x, this.player.y) <= p.radius,
           );
           if (inPuddle) this.timeTimelessCharge = Math.min(10000, this.timeTimelessCharge + delta);
+        }
+
+        // Glass Mode aura follows player
+        if (this.timeGlassMode && this.timeGlassModeAura) {
+          this.timeGlassModeAura.setPosition(this.player.x, this.player.y);
+        }
+
+        // HP history for Q+ HP Rewind (record every 500ms, keep 8s)
+        this.timeHpHistoryAccum += delta;
+        while (this.timeHpHistoryAccum >= 500) {
+          this.timeHpHistoryAccum -= 500;
+          this.timeHpHistory.push({ t: time, hp: this.player.hp });
+          while (this.timeHpHistory.length > 0 && time - this.timeHpHistory[0].t > 8000) {
+            this.timeHpHistory.shift();
+          }
+        }
+
+        // E+ Delayed Warp: drag NPC to saved position
+        if (this.timeWarpTriggerPending && this.timeWarpSavedPos && !this.timeNpcTeleporting) {
+          this.timeWarpTriggerPending = false;
+          this.timeNpcTeleporting = true;
+          this.timeNpcTeleportStart = time;
+          this.timeNpcTeleportFromX = this.npc.x;
+          this.timeNpcTeleportFromY = this.npc.y;
+          this.timeNpcTeleportToX = this.timeWarpSavedPos.x;
+          this.timeNpcTeleportToY = this.timeWarpSavedPos.y;
+          this.timeNpcTeleportPuddleAccum = 0;
+          this.timeWarpSavedPos = null;
+          if (this.timeWarpSavedMarker) { this.timeWarpSavedMarker.destroy(); this.timeWarpSavedMarker = null; }
+          this.showFloatingText(this.player.x, this.player.y - 32, '⏩ Drag!', '#ffdd44');
         }
       }
 
@@ -10096,6 +11016,13 @@ export class ArenaScene extends Phaser.Scene {
             target.takeDamage(dmg);
             this.spawnHitFlash(target.x, target.y, 0xaa66ff);
           }
+          // E+: 15% chance to leave a fire pool on impact
+          if (ms.owner === 'player' && this.hasUpgrade('e') && Math.random() < 0.15) {
+            const puddleSpr = this.add.circle(ms.x, ms.y, 35, 0xff4422, 0.55).setDepth(2)
+              .setStrokeStyle(1, 0xff8844, 0.5);
+            this.tweens.add({ targets: puddleSpr, alpha: 0.3, yoyo: true, repeat: -1, duration: 800 });
+            this.gravFirePuddles.push({ sprite: puddleSpr, expiresAt: time + 8000, x: ms.x, y: ms.y, radius: 35, tickAccum: 0, owner: 'player' });
+          }
         }
       }
 
@@ -10163,6 +11090,133 @@ export class ArenaScene extends Phaser.Scene {
         }
       }
 
+      // Gravity Anchor (R+): tether enemy near anchor point
+      if (this.gravAnchor) {
+        const anc = this.gravAnchor;
+        if (time >= anc.expireAt) {
+          anc.sprite.destroy(); anc.line.destroy(); this.gravAnchor = null;
+        } else {
+          anc.line.setTo(anc.x, anc.y, this.npc.x, this.npc.y);
+          const distToAnc = Phaser.Math.Distance.Between(anc.x, anc.y, this.npc.x, this.npc.y);
+          const maxDist = 150;
+          if (distToAnc > maxDist) {
+            const pullDx = anc.x - this.npc.x;
+            const pullDy = anc.y - this.npc.y;
+            const pullLen = Math.hypot(pullDx, pullDy) || 1;
+            const nb = this.npc.body as Phaser.Physics.Arcade.Body;
+            const pullStr = (distToAnc - maxDist) * 5;
+            nb.velocity.x += (pullDx / pullLen) * pullStr;
+            nb.velocity.y += (pullDy / pullLen) * pullStr;
+          }
+        }
+      }
+
+      // Meteor Rush shadows (F+): resolve when fireAt reached
+      for (let i = this.gravMeteorRushShadows.length - 1; i >= 0; i--) {
+        const rs = this.gravMeteorRushShadows[i];
+        if (time >= rs.fireAt) {
+          rs.rect.destroy();
+          this.gravMeteorRushShadows.splice(i, 1);
+          const W = this.scale.width, H = this.scale.height;
+          // Determine start position and velocity based on edge
+          let startX = rs.clickX, startY = rs.clickY;
+          let vx = 0, vy = 0;
+          const rushSpeed = 900;
+          if (rs.edge === 'top') { startX = rs.clickX; startY = -30; vy = rushSpeed; }
+          else if (rs.edge === 'bottom') { startX = rs.clickX; startY = H + 30; vy = -rushSpeed; }
+          else if (rs.edge === 'left') { startX = -30; startY = rs.clickY; vx = rushSpeed; }
+          else { startX = W + 30; startY = rs.clickY; vx = -rushSpeed; }
+          // Spawn as a fast-moving meteor projectile (manual movement)
+          const rushSpr = this.add.circle(startX, startY, 23, 0xff8822, 0.9).setDepth(8)
+            .setStrokeStyle(2, 0xffffff, 0.5);
+          this.tweens.add({ targets: rushSpr, alpha: 0.7, yoyo: true, repeat: -1, duration: 100 });
+          // Add to gravMeteorShadows as a fake live meteor that immediately impacts from its position
+          // We'll track it manually with a special marker: use existing shadow with offset
+          const fakeMs = { sprite: rushSpr as unknown as Phaser.GameObjects.Arc, fireAt: time + (rs.edge === 'top' || rs.edge === 'bottom' ? H / rushSpeed * 1000 : W / rushSpeed * 1000), x: startX, y: startY, owner: 'player' as const, damage: 14, radius: 70, directHitRadius: 28, directBonus: 16, frozen: false, vx, vy };
+          // Move it manually each frame until it hits or leaves screen
+          // Use a timer to move and check
+          const rushInterval = this.time.addEvent({
+            delay: 16,
+            loop: true,
+            callback: () => {
+              if (!rushSpr.active) { rushInterval.remove(); return; }
+              rushSpr.x += vx * 0.016;
+              rushSpr.y += vy * 0.016;
+              if (rushSpr.x < -60 || rushSpr.x > W + 60 || rushSpr.y < -60 || rushSpr.y > H + 60) {
+                rushSpr.destroy(); rushInterval.remove(); return;
+              }
+              const rushDist = Phaser.Math.Distance.Between(rushSpr.x, rushSpr.y, this.npc.x, this.npc.y);
+              if (rushDist <= fakeMs.radius) {
+                const dmg = rushDist <= fakeMs.directHitRadius ? fakeMs.damage + fakeMs.directBonus : fakeMs.damage;
+                this.npc.takeDamage(dmg);
+                this.spawnHitFlash(this.npc.x, this.npc.y, 0xaa66ff);
+                // Impact visual
+                const impRing = this.add.circle(rushSpr.x, rushSpr.y, 12, 0xff8822, 0.9).setDepth(8);
+                this.tweens.add({ targets: impRing, scaleX: 6, scaleY: 6, alpha: 0, duration: 300, onComplete: () => impRing.destroy() });
+                rushSpr.destroy(); rushInterval.remove();
+              }
+            },
+          });
+          void fakeMs;
+        }
+      }
+
+      // Moon Rider (Q+): update moon position, handle ramming and damage absorption
+      if (this.gravMoonActive && this.gravMoonSprite) {
+        const moonR = 24;
+        this.gravMoonSprite.setPosition(this.player.x, this.player.y + moonR + 8);
+        if (this.gravMoonHpBg) this.gravMoonHpBg.setPosition(this.player.x, this.player.y + moonR * 2 + 18);
+        if (this.gravMoonHpBar) {
+          this.gravMoonHpBar.setPosition(this.player.x - 20, this.player.y + moonR * 2 + 18);
+          this.gravMoonHpBar.setSize(40 * Math.max(0, this.gravMoonHp / 100), 4);
+        }
+        // Speed boost
+        this.playerSpeedMult *= 1.25;
+        // Ram: if moon overlaps enemy, launch them
+        const moonDist = Phaser.Math.Distance.Between(this.gravMoonSprite.x, this.gravMoonSprite.y, this.npc.x, this.npc.y);
+        if (moonDist <= moonR + 18 && time > this.gravMoonRamCooldown) {
+          this.gravMoonRamCooldown = time + 800;
+          this.npc.takeDamage(15);
+          this.spawnHitFlash(this.npc.x, this.npc.y, 0xccbbee);
+          this.showFloatingText(this.npc.x, this.npc.y - 24, '15', '#ccbbee');
+          // Launch enemy toward nearest wall but cap
+          const W2 = this.scale.width, H2 = this.scale.height;
+          const launchDx = this.npc.x - this.player.x;
+          const launchDy = this.npc.y - this.player.y;
+          const launchLen = Math.hypot(launchDx, launchDy) || 1;
+          const targetWallX = launchDx > 0 ? W2 - 60 : 60;
+          const targetWallY = launchDy > 0 ? H2 - 60 : 60;
+          const capX = Math.abs(launchDx) > Math.abs(launchDy) ? targetWallX : this.npc.x + (launchDx / launchLen) * 200;
+          const capY = Math.abs(launchDy) > Math.abs(launchDx) ? targetWallY : this.npc.y + (launchDy / launchLen) * 200;
+          const nb = this.npc.body as Phaser.Physics.Arcade.Body;
+          nb.setVelocity((capX - this.npc.x) * 4, (capY - this.npc.y) * 4);
+        }
+        // Moon absorbs incoming hits (damage absorber on player)
+        if (!this.player.damageAbsorber) {
+          this.player.damageAbsorber = (amount: number) => {
+            if (!this.gravMoonActive || !this.gravMoonSprite) return false;
+            this.gravMoonHp -= amount;
+            if (this.gravMoonHpBar) this.gravMoonHpBar.setSize(40 * Math.max(0, this.gravMoonHp / 100), 4);
+            this.spawnHitFlash(this.gravMoonSprite.x, this.gravMoonSprite.y, 0xccbbee);
+            if (this.gravMoonHp <= 0) {
+              // Moon destroyed
+              this.gravMoonActive = false;
+              if (this.gravMoonSprite) { this.gravMoonSprite.destroy(); this.gravMoonSprite = null; }
+              if (this.gravMoonHpBar) { this.gravMoonHpBar.destroy(); this.gravMoonHpBar = null; }
+              if (this.gravMoonHpBg) { this.gravMoonHpBg.destroy(); this.gravMoonHpBg = null; }
+              this.player.damageAbsorber = null;
+              this.showFloatingText(this.player.x, this.player.y - 30, 'Moon Destroyed!', '#ff8888');
+              const moonBurst = this.add.circle(this.player.x, this.player.y, 14, 0xccbbee, 0.8).setDepth(9);
+              this.tweens.add({ targets: moonBurst, scaleX: 5, scaleY: 5, alpha: 0, duration: 400, onComplete: () => moonBurst.destroy() });
+            }
+            return true;
+          };
+        }
+      } else if (!this.gravMoonActive && this.player.damageAbsorber && this.elementId === 'gravity') {
+        // Clear moon absorber if moon died
+        this.player.damageAbsorber = null;
+      }
+
       // Gravity fire puddle tick + expiry
       for (let i = this.gravFirePuddles.length - 1; i >= 0; i--) {
         const fp = this.gravFirePuddles[i];
@@ -10224,8 +11278,23 @@ export class ArenaScene extends Phaser.Scene {
           this.creatBolts.splice(i, 1);
           continue;
         }
-        // Check crucible hit
-        if (this.crucibleSprite && Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, this.crucibleX, this.crucibleY) <= 30) {
+        // Rockets: explode at target position instead of entering crucible
+        if (b.isRocket && b.targetX !== undefined && b.targetY !== undefined) {
+          if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, b.targetX, b.targetY) <= 20) {
+            const rktRing = this.add.circle(b.sprite.x, b.sprite.y, 10, 0xee8800, 0.85).setDepth(8);
+            this.tweens.add({ targets: rktRing, scaleX: 5, scaleY: 5, alpha: 0, duration: 300, onComplete: () => rktRing.destroy() });
+            const rktTarget = b.owner === 'player' ? this.npc : this.player;
+            if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, rktTarget.x, rktTarget.y) <= 50) {
+              rktTarget.takeDamage(b.damage);
+              this.spawnHitFlash(rktTarget.x, rktTarget.y, 0xee8800);
+            }
+            b.sprite.destroy();
+            this.creatBolts.splice(i, 1);
+            continue;
+          }
+        }
+        // Check crucible hit (skip rockets)
+        if (!b.isRocket && this.crucibleSprite && Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, this.crucibleX, this.crucibleY) <= 30) {
           if (this.creatCraftInProgress) {
             // Discard during craft
             const puff = this.add.circle(b.sprite.x, b.sprite.y, 6, 0x888888, 0.5).setDepth(6);
@@ -10268,7 +11337,7 @@ export class ArenaScene extends Phaser.Scene {
         const sdx = scTarget.x - sc.sprite.x;
         const sdy = scTarget.y - sc.sprite.y;
         const slen = Math.hypot(sdx, sdy) || 1;
-        const scytheSpeed = 260;
+        const scytheSpeed = 87; // slowed 3x from original 260
         sc.vx = (sdx / slen) * scytheSpeed;
         sc.vy = (sdy / slen) * scytheSpeed;
         sc.sprite.x += sc.vx * (delta / 1000);
@@ -10344,6 +11413,32 @@ export class ArenaScene extends Phaser.Scene {
       const allProj = this.projectiles.getChildren() as Projectile[];
       for (let bi = this.creatBlockers.length - 1; bi >= 0; bi--) {
         const bl = this.creatBlockers[bi];
+        // Handle launched movement (from Build Mode E)
+        const blLaunch = bl as any;
+        if (blLaunch.launchUntil && time < blLaunch.launchUntil) {
+          bl.x += blLaunch.launchVx * (delta / 1000);
+          bl.y += blLaunch.launchVy * (delta / 1000);
+          bl.rect.setPosition(bl.x, bl.y);
+          bl.hpBg.setPosition(bl.x, bl.y - bl.h / 2 - 8);
+          bl.hpBar.setPosition(bl.x - bl.w / 2, bl.y - bl.h / 2 - 8);
+          // Delete if offscreen
+          const W3 = this.scale.width, H3 = this.scale.height;
+          if (bl.x < -bl.w || bl.x > W3 + bl.w || bl.y < -bl.h || bl.y > H3 + bl.h) {
+            bl.rect.destroy(); bl.hpBar.destroy(); bl.hpBg.destroy();
+            this.creatBlockers.splice(bi, 1);
+            continue;
+          }
+          // Deal contact damage to enemy while launched
+          if (bl.owner === 'player' && Math.abs(this.npc.x - bl.x) <= bl.w / 2 + 18 && Math.abs(this.npc.y - bl.y) <= bl.h / 2 + 18) {
+            this.npc.takeDamage(20);
+            this.spawnHitFlash(this.npc.x, this.npc.y, 0xcc88ff);
+            bl.rect.destroy(); bl.hpBar.destroy(); bl.hpBg.destroy();
+            this.creatBlockers.splice(bi, 1);
+            continue;
+          }
+        } else if (blLaunch.launchUntil && time >= blLaunch.launchUntil) {
+          delete blLaunch.launchUntil; delete blLaunch.launchVx; delete blLaunch.launchVy;
+        }
         // Absorb enemy projectiles
         for (const proj of allProj) {
           if (!proj.active) continue;
@@ -10382,6 +11477,18 @@ export class ArenaScene extends Phaser.Scene {
             (proj.body as Phaser.Physics.Arcade.Body).stop();
           }
         }
+        // Spiked walls: tick damage BEFORE pushout (while enemy is still potentially in range)
+        if (mw.spiked) {
+          mw.spikeAccum = (mw.spikeAccum ?? 0) + delta;
+          if (mw.spikeAccum >= 500) {
+            mw.spikeAccum -= 500;
+            const spikeTarget = mwEnemyIsPlayer ? this.player : this.npc;
+            if (Math.abs(spikeTarget.x - mw.x) <= mw.w / 2 + 30 && Math.abs(spikeTarget.y - mw.y) <= mw.h / 2 + 30) {
+              spikeTarget.takeDamage(8);
+              this.spawnHitFlash(spikeTarget.x, spikeTarget.y, 0xcc2222);
+            }
+          }
+        }
         // Push non-caster fighter out
         const nonCasterBody = mwEnemyIsPlayer
           ? (this.player.body as Phaser.Physics.Arcade.Body)
@@ -10413,6 +11520,149 @@ export class ArenaScene extends Phaser.Scene {
         if (drOwner === 'player') this.player.incomingDamageMultiplier = this.creatPrevIncomingDamageMult;
         else this.npc.incomingDamageMultiplier = this.creatPrevIncomingDamageMult;
         this.creatDamageReductionEnd = 0;
+      }
+
+      if (this.elementId === 'creation') {
+        // 12. (Spiked maze wall damage is handled inline in the shared maze wall loop above)
+
+        // 13. Mech per-frame (R+)
+        if (this.creatMech) {
+          const mech = this.creatMech;
+          // Follow player
+          mech.sprite.setPosition(this.player.x, this.player.y + 32);
+          mech.hpBg.setPosition(this.player.x, this.player.y + 52);
+          mech.hpBar.setPosition(this.player.x - 17, this.player.y + 52);
+          // Auto rocket (toward cursor)
+          mech.rocketAccum += delta;
+          if (mech.rocketAccum >= 2000) {
+            mech.rocketAccum -= 2000;
+            const ptr = this.input.activePointer;
+            const rCount = mech.stage === 3 ? 2 : 1;
+            for (let ri = 0; ri < rCount; ri++) {
+              const rOffX = ri === 0 ? 0 : 20;
+              const rtx = ptr.worldX + rOffX;
+              const rty = ptr.worldY;
+              const rdx = rtx - mech.sprite.x;
+              const rdy = rty - mech.sprite.y;
+              const rlen = Math.hypot(rdx, rdy) || 1;
+              const rSpr = this.add.circle(mech.sprite.x, mech.sprite.y, 6, 0xee8800, 0.9).setDepth(7);
+              this.creatBolts.push({ sprite: rSpr, vx: (rdx / rlen) * 420, vy: (rdy / rlen) * 420, tier: 'gold', damage: 10, owner: 'player', isRocket: true, targetX: rtx, targetY: rty });
+            }
+          }
+        }
+
+        // 14. Speed pads (F+ Build Mode)
+        for (let spi = this.creatSpeedPads.length - 1; spi >= 0; spi--) {
+          const sp = this.creatSpeedPads[spi];
+          // Handle launched movement
+          const spLaunch = sp as any;
+          if (spLaunch.launchUntil && time < spLaunch.launchUntil) {
+            sp.x += spLaunch.launchVx * (delta / 1000);
+            sp.y += spLaunch.launchVy * (delta / 1000);
+            sp.rect.setPosition(sp.x, sp.y);
+            sp.hpBg.setPosition(sp.x, sp.y - sp.h / 2 - 6);
+            sp.hpBar.setPosition(sp.x - sp.w / 2, sp.y - sp.h / 2 - 6);
+            // Delete if offscreen
+            const spW3 = this.scale.width, spH3 = this.scale.height;
+            if (sp.x < -sp.w || sp.x > spW3 + sp.w || sp.y < -sp.h || sp.y > spH3 + sp.h) {
+              sp.rect.destroy(); sp.hpBar.destroy(); sp.hpBg.destroy();
+              this.creatSpeedPads.splice(spi, 1);
+              continue;
+            }
+            // Check NPC hit
+            if (sp.owner === 'player' && Math.abs(this.npc.x - sp.x) <= sp.w / 2 + 18 && Math.abs(this.npc.y - sp.y) <= sp.h / 2 + 18) {
+              this.npc.takeDamage(12);
+              this.spawnHitFlash(this.npc.x, this.npc.y, 0x44aaff);
+              // Apply slow to NPC
+              this.creatNpcSlowMult = 0.8; this.creatNpcSlowEnd = time + 3000;
+              sp.rect.destroy(); sp.hpBar.destroy(); sp.hpBg.destroy();
+              this.creatSpeedPads.splice(spi, 1);
+              continue;
+            }
+          } else if (spLaunch.launchUntil && time >= spLaunch.launchUntil) {
+            delete spLaunch.launchUntil; delete spLaunch.launchVx; delete spLaunch.launchVy;
+          }
+          // Player overlap: +25% speed for 3s
+          if (sp.owner === 'player' && Math.abs(this.player.x - sp.x) <= sp.w / 2 + 16 && Math.abs(this.player.y - sp.y) <= sp.h / 2 + 16) {
+            this.creatPlayerSpeedPadEnd = time + 3000;
+          }
+        }
+        // Apply NPC slow (from launched speed pad)
+        if (time < this.creatNpcSlowEnd) this.npcSpeedMult *= this.creatNpcSlowMult;
+
+        // 15. Spiked blocks (F+ Build Mode)
+        for (let sbi = this.creatSpikedBlocks.length - 1; sbi >= 0; sbi--) {
+          const sb = this.creatSpikedBlocks[sbi];
+          // Handle launched movement
+          const sbLaunch = sb as any;
+          if (sbLaunch.launchUntil && time < sbLaunch.launchUntil) {
+            sb.x += sbLaunch.launchVx * (delta / 1000);
+            sb.y += sbLaunch.launchVy * (delta / 1000);
+            sb.rect.setPosition(sb.x, sb.y);
+            sb.hpBg.setPosition(sb.x, sb.y - sb.h / 2 - 6);
+            sb.hpBar.setPosition(sb.x - sb.w / 2, sb.y - sb.h / 2 - 6);
+            // Delete if offscreen
+            const sbW3 = this.scale.width, sbH3 = this.scale.height;
+            if (sb.x < -sb.w || sb.x > sbW3 + sb.w || sb.y < -sb.h || sb.y > sbH3 + sb.h) {
+              sb.rect.destroy(); sb.hpBar.destroy(); sb.hpBg.destroy();
+              this.creatSpikedBlocks.splice(sbi, 1);
+              continue;
+            }
+            if (sb.owner === 'player' && Math.abs(this.npc.x - sb.x) <= sb.w / 2 + 18 && Math.abs(this.npc.y - sb.y) <= sb.h / 2 + 18) {
+              this.npc.takeDamage(25);
+              this.spawnHitFlash(this.npc.x, this.npc.y, 0xcc2222);
+              this.showFloatingText(this.npc.x, this.npc.y - 30, '25', '#cc2222');
+              if (!sb.invincible) { sb.rect.destroy(); sb.hpBar.destroy(); sb.hpBg.destroy(); this.creatSpikedBlocks.splice(sbi, 1); continue; }
+            }
+          } else if (sbLaunch.launchUntil && time >= sbLaunch.launchUntil) {
+            delete sbLaunch.launchUntil; delete sbLaunch.launchVx; delete sbLaunch.launchVy;
+          }
+          // Stationary: tick damage to adjacent enemy
+          sb.tickAccum += delta;
+          if (sb.tickAccum >= 300) {
+            sb.tickAccum -= 300;
+            const sbTarget = sb.owner === 'player' ? this.npc : this.player;
+            if (Math.abs(sbTarget.x - sb.x) <= sb.w / 2 + 22 && Math.abs(sbTarget.y - sb.y) <= sb.h / 2 + 22) {
+              sbTarget.takeDamage(5);
+              this.spawnHitFlash(sbTarget.x, sbTarget.y, 0xcc2222);
+            }
+          }
+        }
+
+        // 16. Click+ Blade Split: each dagger can cut any number of different blocks, but not the same block twice
+        if (this.hasUpgrade('click')) {
+          for (const d of this.creatDaggers) {
+            if (d.owner !== 'player') continue;
+            for (let bi = this.creatBlockers.length - 1; bi >= 0; bi--) {
+              const bl = this.creatBlockers[bi];
+              if (d.cutSet.has(bl)) continue; // this dagger already cut this block
+              if (Math.abs(d.sprite.x - bl.x) <= bl.w / 2 + 20 && Math.abs(d.sprite.y - bl.y) <= bl.h / 2 + 20) {
+                // Split block: determine cut axis based on dagger direction
+                const absDx = Math.abs(d.vx), absDy = Math.abs(d.vy);
+                const splitH = absDx >= absDy; // moving mostly horizontal → split top/bottom halves
+                const halfHp = bl.hp;
+                const ox = bl.x, oy = bl.y, ow = bl.w, oh = bl.h, oOwner = bl.owner;
+                const gap = 6;
+                // Remove original
+                bl.rect.destroy(); bl.hpBar.destroy(); bl.hpBg.destroy();
+                this.creatBlockers.splice(bi, 1);
+                // Spawn two halves, add them to this dagger's cutSet so it won't re-cut them
+                if (splitH) {
+                  this.spawnCreationBlocker(ox, oy - oh / 4 - gap, ow, oh / 2, oOwner);
+                  const h1 = this.creatBlockers[this.creatBlockers.length - 1]; h1.hp = halfHp; d.cutSet.add(h1);
+                  this.spawnCreationBlocker(ox, oy + oh / 4 + gap, ow, oh / 2, oOwner);
+                  const h2 = this.creatBlockers[this.creatBlockers.length - 1]; h2.hp = halfHp; d.cutSet.add(h2);
+                } else {
+                  this.spawnCreationBlocker(ox - ow / 4 - gap, oy, ow / 2, oh, oOwner);
+                  const h1 = this.creatBlockers[this.creatBlockers.length - 1]; h1.hp = halfHp; d.cutSet.add(h1);
+                  this.spawnCreationBlocker(ox + ow / 4 + gap, oy, ow / 2, oh, oOwner);
+                  const h2 = this.creatBlockers[this.creatBlockers.length - 1]; h2.hp = halfHp; d.cutSet.add(h2);
+                }
+                break; // move to next dagger after one cut
+              }
+            }
+          }
+        }
       }
     }
 
