@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import * as PlayerData from '../data/PlayerData';
+import { GAUNTLET_COST } from '../data/GauntletData';
 
 export class TitleScene extends Phaser.Scene {
   constructor() {
@@ -29,38 +30,53 @@ export class TitleScene extends Phaser.Scene {
       strokeThickness: 5,
     }).setOrigin(0.5);
 
-    // Buttons
+    // Buttons — 3×2 grid
+    const gauntletUnlocked = PlayerData.isGauntletUnlocked();
     const buttons: Array<{ label: string; sub?: string; color: number; borderColor: number; action: (() => void) | null }> = [
       { label: 'PLAY',       color: 0x1a2a1a, borderColor: 0x44cc44, action: () => this.scene.start('MenuScene', { isPvP: false }) },
       { label: 'LOCAL PVP',  color: 0x2a1a1a, borderColor: 0xff4444, action: () => this.scene.start('MenuScene', { isPvP: true }) },
       { label: 'ONLINE PVP', color: 0x1a1a1a, borderColor: 0xff8844, action: () => this.scene.start('NetworkScene') },
       { label: 'SHOP',       color: 0x1a1a2a, borderColor: 0x4466ff, action: () => this.scene.start('ShopScene') },
       { label: 'LAB',        color: 0x1a1a2a, borderColor: 0x9944ff, action: () => this.scene.start('LabScene') },
+      {
+        label: 'GAUNTLETS',
+        sub: gauntletUnlocked ? undefined : `🔒 Unlock in Shop (💎${GAUNTLET_COST})`,
+        color: 0x2a1a00,
+        borderColor: 0xffaa00,
+        action: gauntletUnlocked ? () => this.scene.start('GauntletSelectScene') : null,
+      },
     ];
 
     const btnW = 220;
     const btnH = 72;
-    const btnGap = 24;
-    const totalH = buttons.length * btnH + (buttons.length - 1) * btnGap;
-    const startY = cy - totalH / 2 + 40;
+    const btnGap = 20;
+    const cols = 3;
+    const rows = 2;
+    const gridW = cols * btnW + (cols - 1) * btnGap;
+    const gridH = rows * btnH + (rows - 1) * btnGap;
+    const gridStartX = cx - gridW / 2 + btnW / 2;
+    const gridStartY = cy - gridH / 2 + btnH / 2 + 35;
 
     buttons.forEach((b, i) => {
-      const by = startY + i * (btnH + btnGap);
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const bx = gridStartX + col * (btnW + btnGap);
+      const by = gridStartY + row * (btnH + btnGap);
       const isLocked = b.action === null;
       const alpha = isLocked ? 0.35 : 0.8;
 
       const rect = this.add
-        .rectangle(cx, by, btnW, btnH, b.color, alpha)
+        .rectangle(bx, by, btnW, btnH, b.color, alpha)
         .setStrokeStyle(2, b.borderColor);
 
-      this.add.text(cx, by - (b.sub ? 8 : 0), b.label, {
-        fontSize: '26px',
+      this.add.text(bx, by - (b.sub ? 8 : 0), b.label, {
+        fontSize: '22px',
         fontFamily: '"Arial Black", sans-serif',
         color: isLocked ? '#444444' : '#ffffff',
       }).setOrigin(0.5);
 
       if (b.sub) {
-        this.add.text(cx, by + 16, b.sub, {
+        this.add.text(bx, by + 16, b.sub, {
           fontSize: '11px',
           fontFamily: 'Arial, sans-serif',
           color: '#444444',

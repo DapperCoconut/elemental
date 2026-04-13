@@ -22,6 +22,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public isMastered = false;
   /** Used by Hunt element roar lock. Default false for non-NPC fighters. */
   public npcHuntRoarLocked = false;
+  /** Gauntlet boost: multiplies all incoming damage (stacks with incomingDamageMultiplier). Default 1. */
+  public gauntletDamageTakenMult = 1;
 
   private cooldowns: Map<string, number> = new Map();
   private healthBar: HealthBar;
@@ -56,7 +58,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
   takeDamage(amount: number): void {
     if (this.isInvincible) return;
-    amount = Math.round(amount * this.incomingDamageMultiplier);
+    amount = Math.round(amount * this.incomingDamageMultiplier * this.gauntletDamageTakenMult);
     this.lastIncomingDamage = amount;
 
     if (this.damageAbsorber && this.damageAbsorber(amount)) return;
@@ -98,6 +100,12 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
   heal(amount: number): void {
     this.hp = Math.min(this.maxHp, this.hp + amount);
+  }
+
+  setMaxHp(newMax: number): void {
+    this.maxHp = newMax;
+    this.hp = newMax;
+    this.healthBar.setMaxHp(newMax);
   }
 
   /** Like takeDamage but bypasses isInvincible — used for self-inflicted effects. */

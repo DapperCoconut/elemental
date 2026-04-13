@@ -6,6 +6,8 @@ interface SaveData {
   active: Record<string, string[]>;  // elementId → toggled-on slot keys
   nuclei: number;                    // Elemental Nucleus count
   unlockedElements: string[];        // combined element IDs unlocked via Lab
+  gauntletUnlocked: boolean;
+  gauntletsCompleted: string[];      // base element IDs of completed gauntlets
 }
 
 function load(): SaveData {
@@ -19,12 +21,14 @@ function load(): SaveData {
         active: parsed.active ?? {},
         nuclei: parsed.nuclei ?? 0,
         unlockedElements: parsed.unlockedElements ?? [],
+        gauntletUnlocked: parsed.gauntletUnlocked ?? false,
+        gauntletsCompleted: parsed.gauntletsCompleted ?? [],
       };
     }
   } catch {
     // corrupted save — start fresh
   }
-  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [] };
+  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [] };
 }
 
 function save(data: SaveData): void {
@@ -112,6 +116,28 @@ export function unlockElement(id: string): void {
   const data = load();
   if (!data.unlockedElements.includes(id)) {
     data.unlockedElements = [...data.unlockedElements, id];
+  }
+  save(data);
+}
+
+export function isGauntletUnlocked(): boolean {
+  return load().gauntletUnlocked;
+}
+
+export function unlockGauntlet(): void {
+  const data = load();
+  data.gauntletUnlocked = true;
+  save(data);
+}
+
+export function getCompletedGauntlets(): string[] {
+  return load().gauntletsCompleted;
+}
+
+export function completeGauntlet(elementId: string): void {
+  const data = load();
+  if (!data.gauntletsCompleted.includes(elementId)) {
+    data.gauntletsCompleted = [...data.gauntletsCompleted, elementId];
   }
   save(data);
 }

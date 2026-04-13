@@ -46,6 +46,10 @@ export class HealthBar {
     }
   }
 
+  setMaxHp(newMax: number): void {
+    this.maxHp = newMax;
+  }
+
   destroy(): void {
     this.graphics.destroy();
   }

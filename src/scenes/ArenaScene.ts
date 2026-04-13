@@ -544,6 +544,8 @@ export class ArenaScene extends Phaser.Scene {
   private isDodging = false;
   private gameEnded = false;
   private playerSpeedMult = 1;
+  private gauntletState: import('../data/GauntletData').GauntletState | null = null;
+  private gauntletSpeedMult = 1;
 
   // Player fire-specific state
   private flameBodyActive = false;
@@ -1155,7 +1157,7 @@ export class ArenaScene extends Phaser.Scene {
     super({ key: 'ArenaScene' });
   }
 
-  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; isPvP?: boolean; isNetworkPvP?: boolean; networkRole?: 'host' | 'guest' }): void {
+  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; isPvP?: boolean; isNetworkPvP?: boolean; networkRole?: 'host' | 'guest'; gauntlet?: import('../data/GauntletData').GauntletState }): void {
     this.elementId = data.elementId ?? 'fire';
     this.isPvP = data.isPvP ?? false;
     this.isNetworkPvP = data.isNetworkPvP ?? false;
@@ -1175,6 +1177,8 @@ export class ArenaScene extends Phaser.Scene {
     this.isDodging = false;
     this.abilityBars = [];
     this.playerSpeedMult = 1;
+    this.gauntletState = data.gauntlet ?? null;
+    this.gauntletSpeedMult = 1;
     this.p2DodgeOnCooldown = false;
     this.p2IsDodging = false;
     this.p2Input = emptyP2Input();
@@ -1782,6 +1786,39 @@ export class ArenaScene extends Phaser.Scene {
       this.add.text(cx, cy / 2 - 38, `CLONE ${this.npcElement.emoji}`, {
         fontSize: '12px', color: '#888888',
       }).setOrigin(0.5).setDepth(20);
+    }
+
+    // ── Gauntlet boosts & boss modifications ───────────────────────
+    if (this.gauntletState) {
+      const gs = this.gauntletState;
+
+      // Player HP boost
+      const healthBoosts = gs.boosts.filter((b) => b === 'health').length;
+      if (healthBoosts > 0) {
+        this.player.setMaxHp(200 + healthBoosts * 50);
+      }
+
+      // Player speed + cooldown boost
+      const speedBoosts = gs.boosts.filter((b) => b === 'speed').length;
+      if (speedBoosts > 0) {
+        this.gauntletSpeedMult = Math.pow(1.25, speedBoosts);
+        this.player.cooldownMult = Math.pow(0.9, speedBoosts);
+      }
+
+      // NPC incoming damage boost (Strength+)
+      const strengthBoosts = gs.boosts.filter((b) => b === 'strength').length;
+      if (strengthBoosts > 0) {
+        this.npc.gauntletDamageTakenMult = Math.pow(1.2, strengthBoosts);
+        if (this.clone) this.clone.gauntletDamageTakenMult = Math.pow(1.2, strengthBoosts);
+      }
+
+      // Boss fight modifications (fight 6)
+      if (gs.currentFight === 6) {
+        this.npc.setScale(2);
+        (this.npc.body as Phaser.Physics.Arcade.Body).setCircle(44, -20, -20);
+        this.npc.maxHp = this.npc.maxHp * 5;
+        this.npc.hp = this.npc.maxHp;
+      }
     }
 
     // ── Overlap callbacks ─────────────────────────────────────────
@@ -4724,13 +4761,25 @@ export class ArenaScene extends Phaser.Scene {
     );
 
     this.time.delayedCall(700, () => {
-      this.scene.start('GameOverScene', {
-        playerWon,
-        difficulty: this.isPvP ? 0 : this.npcDifficulty.level,
-        rewardMult: (!this.isPvP && playerWon) ? getTotalRewardMult() : undefined,
-        isPvP: this.isPvP,
-        isNetworkPvP: this.isNetworkPvP,
-      });
+      if (this.gauntletState) {
+        if (playerWon) {
+          this.scene.start('GauntletIntermediaryScene', { gauntlet: this.gauntletState });
+        } else {
+          this.scene.start('GameOverScene', {
+            playerWon: false,
+            difficulty: this.npcDifficulty.level,
+            isGauntlet: true,
+          });
+        }
+      } else {
+        this.scene.start('GameOverScene', {
+          playerWon,
+          difficulty: this.isPvP ? 0 : this.npcDifficulty.level,
+          rewardMult: (!this.isPvP && playerWon) ? getTotalRewardMult() : undefined,
+          isPvP: this.isPvP,
+          isNetworkPvP: this.isNetworkPvP,
+        });
+      }
     });
   }
 
@@ -5887,7 +5936,7 @@ export class ArenaScene extends Phaser.Scene {
 
       if (vx !== 0 && vy !== 0) { vx *= 0.7071; vy *= 0.7071; }
 
-      let moveMult = this.playerSpeedMult;
+      let moveMult = this.playerSpeedMult * this.gauntletSpeedMult;
       if (this.armageddonActive) moveMult *= 0.2;          // Armageddon: 20% speed
       else if (this.pressureCharging) moveMult *= 0.75;    // Pressure Charge: 75% speed
 

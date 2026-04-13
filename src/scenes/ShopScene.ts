@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import * as PlayerData from '../data/PlayerData';
 import { ALL_UPGRADES, getElementUpgrades, getUpgradePrice, UpgradeDef } from '../data/Upgrades';
+import { GAUNTLET_COST } from '../data/GauntletData';
 
 const ELEMENT_COLORS: Record<string, number> = {
   fire:  0xff4400,
@@ -238,26 +239,71 @@ export class ShopScene extends Phaser.Scene {
       });
     });
 
-    // ── Elemental Nucleus purchase ────────────────────────────────
-    const nucY = height - 22;
-    const nucBtn = this.add
-      .rectangle(cx, nucY, 270, 32, 0x220044, 1)
-      .setStrokeStyle(1, 0x9944ff)
-      .setInteractive({ useHandCursor: true })
-      .setDepth(5);
-    this.add.text(cx, nucY, '⚛️ Elemental Nucleus  —  💎 100 shards', {
-      fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
-    }).setOrigin(0.5).setDepth(6);
-    nucBtn
-      .on('pointerover', () => nucBtn.setFillStyle(0x440088))
-      .on('pointerout',  () => nucBtn.setFillStyle(0x220044))
-      .on('pointerdown', () => {
-        if (PlayerData.spendShards(100)) {
-          PlayerData.addNuclei(1);
-          this.nucleiText.setText(`⚛️ ×${PlayerData.getNuclei()}`);
-          this.refreshShardDisplay();
-        }
-      });
+    // ── Bottom purchase row ───────────────────────────────────────
+    const bottomY = height - 22;
+    const gauntletUnlocked = PlayerData.isGauntletUnlocked();
+
+    if (gauntletUnlocked) {
+      // Nucleus button centered
+      const nucBtn = this.add
+        .rectangle(cx, bottomY, 270, 32, 0x220044, 1)
+        .setStrokeStyle(1, 0x9944ff)
+        .setInteractive({ useHandCursor: true })
+        .setDepth(5);
+      this.add.text(cx, bottomY, '⚛️ Elemental Nucleus  —  💎 100 shards', {
+        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
+      }).setOrigin(0.5).setDepth(6);
+      nucBtn
+        .on('pointerover', () => nucBtn.setFillStyle(0x440088))
+        .on('pointerout',  () => nucBtn.setFillStyle(0x220044))
+        .on('pointerdown', () => {
+          if (PlayerData.spendShards(100)) {
+            PlayerData.addNuclei(1);
+            this.nucleiText.setText(`⚛️ ×${PlayerData.getNuclei()}`);
+            this.refreshShardDisplay();
+          }
+        });
+    } else {
+      // Nucleus button on the right, Gauntlets unlock on the left
+      const nucX = cx + 160;
+      const nucBtn = this.add
+        .rectangle(nucX, bottomY, 270, 32, 0x220044, 1)
+        .setStrokeStyle(1, 0x9944ff)
+        .setInteractive({ useHandCursor: true })
+        .setDepth(5);
+      this.add.text(nucX, bottomY, '⚛️ Elemental Nucleus  —  💎 100 shards', {
+        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
+      }).setOrigin(0.5).setDepth(6);
+      nucBtn
+        .on('pointerover', () => nucBtn.setFillStyle(0x440088))
+        .on('pointerout',  () => nucBtn.setFillStyle(0x220044))
+        .on('pointerdown', () => {
+          if (PlayerData.spendShards(100)) {
+            PlayerData.addNuclei(1);
+            this.nucleiText.setText(`⚛️ ×${PlayerData.getNuclei()}`);
+            this.refreshShardDisplay();
+          }
+        });
+
+      const gauntX = cx - 160;
+      const gauntBtn = this.add
+        .rectangle(gauntX, bottomY, 270, 32, 0x221100, 1)
+        .setStrokeStyle(1, 0xffaa00)
+        .setInteractive({ useHandCursor: true })
+        .setDepth(5);
+      this.add.text(gauntX, bottomY, `🏆 Unlock Gauntlets  —  💎 ${GAUNTLET_COST} shards`, {
+        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc66',
+      }).setOrigin(0.5).setDepth(6);
+      gauntBtn
+        .on('pointerover', () => gauntBtn.setFillStyle(0x442200))
+        .on('pointerout',  () => gauntBtn.setFillStyle(0x221100))
+        .on('pointerdown', () => {
+          if (PlayerData.spendShards(GAUNTLET_COST)) {
+            PlayerData.unlockGauntlet();
+            this.scene.restart({ page: this.currentPage });
+          }
+        });
+    }
   }
 
   private refreshShardDisplay(): void {
