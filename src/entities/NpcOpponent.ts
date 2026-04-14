@@ -3,6 +3,7 @@ import { Fighter } from './Fighter';
 import { Element } from '../elements/Element';
 import { CastContext } from '../elements/Ability';
 import { Projectile } from '../combat/Projectile';
+import { slimeElement } from '../elements/slime';
 
 type AiState = 'chase' | 'attack' | 'retreat';
 
@@ -35,6 +36,7 @@ export interface NpcAiState {
   windTrapActive: boolean;
   chargedBeamReady: boolean;
   earthShieldHp: number;
+  npcEarthRocksActive?: boolean;
   oilDroneCount?: number;
   shadowPlayerSnared?: boolean;
   playerFrostStacks?: number;
@@ -49,6 +51,12 @@ export interface NpcAiState {
   npcTimeRemainActive?: boolean;
   npcTimeHaltActive?: boolean;
   npcTimeTimelessReady?: boolean;
+  // Fate (alt-life)
+  fateSlotMachineCount?: number;
+  fateLuckyQueued?: boolean;
+  fateUnluckyQueued?: boolean;
+  fateKarmaActive?: boolean;
+  nearOwnSlotMachine?: boolean;
 }
 
 export class NpcOpponent extends Fighter {
@@ -59,8 +67,10 @@ export class NpcOpponent extends Fighter {
   private nextStrafeDirChange = 0;
   private lastFlameBodyToggle = -10000;
   private readonly difficulty: DifficultyConfig;
+  /** When true, the NPC stays put (Boss mutation): casts abilities but never moves. */
+  public stationary = false;
 
-  // ── Charge state (all AI can charge; Mastered makes it meaningful) ──
+  // ── Charge state ──────────────────────────────────────────────────
   private chargeUntil = 0;
   private chargingAbility = '';
   private lastChargeDecision = -1; // -1 = uninitialised; set to `time` on first AI tick
@@ -84,6 +94,12 @@ export class NpcOpponent extends Fighter {
     aiState: NpcAiState,
   ): string | null {
     if (aiState.isLocked || this.npcHuntRoarLocked) return null;
+
+    // Dummy element: stand completely still, do nothing
+    if (this.element.id === 'dummy') {
+      (this.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+      return null;
+    }
 
     // Initialise charge cooldown on the very first tick so mastered NPCs don't
     // immediately charge before moving.
@@ -208,6 +224,9 @@ export class NpcOpponent extends Fighter {
       }
     }
 
+    // ── Stationary override (Boss mutation) ──────────────────────
+    if (this.stationary) body.setVelocity(0, 0);
+
     // ── Ability decisions ─────────────────────────────────────────
     if (this.element.id === 'fire') {
       return this.doFireAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
@@ -254,6 +273,190 @@ export class NpcOpponent extends Fighter {
     if (this.element.id === 'creation') {
       return this.doCreationAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState, angleToTarget);
     }
+    if (this.element.id === 'electricity') {
+      return this.doElectricityAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'slime') {
+      return this.doSlimeAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'fate') {
+      return this.doFateAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'sound') {
+      return this.doSoundAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'light') {
+      return this.doLightAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    return null;
+  }
+
+  private doSlimeAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    _time: number,
+    dist: number,
+    _hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    void target; void aiState;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    void skipSpecials;
+
+    // Default: launch a slime projectile toward the player
+    if (this.aiState === 'attack' || this.aiState === 'chase') {
+      if (this.castAbility('slime-shot', buildContext(aimX, aimY))) {
+        const ctx = buildContext(aimX, aimY);
+        const dx = aimX - this.x;
+        const dy = aimY - this.y;
+        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        const speed = 480;
+        const proj = new Projectile(ctx.scene, this.x + (dx / len) * 32, this.y + (dy / len) * 32, 'proj-slime', 10, false);
+        ctx.projectiles.add(proj);
+        proj.launch((dx / len) * speed, (dy / len) * speed);
+        // Close range: fire a few more slimes spread
+        if (dist < 200) {
+          for (const offset of [-18, 18]) {
+            const ang = Math.atan2(dy, dx) + offset * (Math.PI / 180);
+            const sp2 = new Projectile(ctx.scene, this.x + Math.cos(ang) * 32, this.y + Math.sin(ang) * 32, 'proj-slime', 8, false);
+            ctx.projectiles.add(sp2);
+            sp2.launch(Math.cos(ang) * speed, Math.sin(ang) * speed);
+          }
+        }
+        return 'slime-shot';
+      }
+    }
+    return null;
+  }
+
+  private doFateAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    void time; void target;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const slotCount = aiState.fateSlotMachineCount ?? 0;
+
+    if (!skipSpecials) {
+      // 1. Maintain slot machines (place up to 2 near self for passive pressure)
+      if (slotCount < 2) {
+        const px = this.x + Phaser.Math.Between(-50, 50);
+        const py = this.y + Phaser.Math.Between(-50, 50);
+        if (this.castAbility('fate-slots', buildContext(px, py))) return 'fate-slots';
+      }
+
+      // 2. Reel the slot machine if standing near one (simulated by using chargeUntil)
+      if (aiState.nearOwnSlotMachine && slotCount > 0 && this.chargeUntil <= 0) {
+        this.chargeUntil = time + 2000;
+        this.chargingAbility = 'fate-slots-reel';
+        return null;
+      }
+      if (this.chargingAbility === 'fate-slots-reel' && this.chargeUntil > 0 && time >= this.chargeUntil) {
+        // Reel resolved — let ArenaScene handle the spin via aiState flag; clear charge
+        this.chargeUntil = 0;
+        this.chargingAbility = '';
+      }
+
+      // 3. Force lucky if not already lucky and cooldown is ready
+      if (!aiState.fateLuckyQueued) {
+        if (this.castAbility('fate-force', buildContext(this.x, this.y))) return 'fate-force';
+      }
+
+      // 4. Karma when low HP or close range
+      if ((hpRatio < 0.60 || dist < 200) && !aiState.fateKarmaActive) {
+        if (this.castAbility('fate-karma', buildContext(this.x, this.y))) return 'fate-karma';
+      }
+
+      // 5. Roll of Fate when desperate
+      if (hpRatio < 0.40) {
+        if (this.castAbility('fate-roll', buildContext(aimX, aimY))) return 'fate-roll';
+      }
+    }
+
+    // 6. Draw (card barrage) as default attack
+    if (this.aiState === 'attack' || this.aiState === 'chase') {
+      if (this.castAbility('fate-draw', buildContext(aimX, aimY))) return 'fate-draw';
+    }
+
+    return null;
+  }
+
+  // suppress unused import warning — slimeElement is referenced via side-effect import for tree-shaking protection
+  private _slimeRef = slimeElement.id;
+
+  private doElectricityAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    _time: number,
+    dist: number,
+    _hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    void target; void aiState;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+
+    if (!skipSpecials) {
+      // Electro Dash — gap close when far (no-op cast, just for cooldown pacing)
+      if (dist > 220) {
+        if (this.castAbility('electro-dash', buildContext(aimX, aimY))) return 'electro-dash';
+      }
+    }
+
+    // Default: Electro Ball
+    if (this.aiState === 'attack' || this.aiState === 'chase') {
+      if (this.castAbility('electro-ball', buildContext(aimX, aimY))) return 'electro-ball';
+    }
+    return null;
+  }
+
+  private doSoundAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    _time: number,
+    dist: number,
+    _hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    void aiState;
+    const AIR_HIT_CHANCES = [0.20, 0.35, 0.50, 0.65, 0.80];
+    const hitChance = AIR_HIT_CHANCES[this.difficulty.level - 1];
+    const angleToTarget = Phaser.Math.Angle.Between(this.x, this.y, target.x, target.y);
+    const soundAimCtx = (chance: number) => {
+      if (Math.random() < chance) return buildContext(target.x, target.y);
+      const side = Math.random() < 0.5 ? 1 : -1;
+      const missAng = angleToTarget + side * (Math.PI / 2 + (Math.random() - 0.5) * Math.PI / 3);
+      return buildContext(this.x + Math.cos(missAng) * 600, this.y + Math.sin(missAng) * 600);
+    };
+
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+
+    if (!skipSpecials) {
+      // Screech Barrier — place on player when close
+      if (dist < 260) {
+        if (this.castAbility('screech-barrier', buildContext(target.x, target.y))) return 'screech-barrier';
+      }
+      // Sound Grapple — gap close when far
+      if (dist > 380) {
+        if (this.castAbility('sound-grapple', buildContext(target.x, target.y))) return 'sound-grapple';
+      }
+    }
+
+    // Default: rhythm shot hitscan
+    if (this.aiState === 'attack' || this.aiState === 'chase') {
+      if (this.castAbility('rhythm-shot', soundAimCtx(hitChance))) return 'rhythm-shot';
+    }
     return null;
   }
 
@@ -267,7 +470,7 @@ export class NpcOpponent extends Fighter {
     aimY: number,
     aiState: NpcAiState,
   ): string | null {
-    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skipSpecials) {
       // 1. Flame Nuke — close range, decent HP
@@ -285,8 +488,8 @@ export class NpcOpponent extends Fighter {
         if (this.castAbility('flame-dash', buildContext(aimX, aimY))) return 'flame-dash';
       }
 
-      // 4. Flame Body toggle — Nightmare always; Mastered at any difficulty
-      if (this.difficulty.level >= 5 || this.isMastered) {
+      // 4. Flame Body toggle — Nightmare only
+      if (this.difficulty.level >= 5) {
         const wantsFlameBody = hpRatio > 0.30;
         if (wantsFlameBody !== aiState.flameBodyActive && time - this.lastFlameBodyToggle > 2500) {
           if (this.castAbility('flame-body', buildContext(this.x, this.y))) {
@@ -294,14 +497,6 @@ export class NpcOpponent extends Fighter {
             return 'flame-body';
           }
         }
-      }
-
-      // 5. Mastered: schedule charge for a heavy pressure-bomb every ~9s
-      if (this.isMastered && !this.chargeUntil && time - this.lastChargeDecision > 9000) {
-        this.lastChargeDecision = time;
-        this.chargeUntil = time + Phaser.Math.Between(3000, 6000);
-        this.chargingAbility = 'pressure-bomb';
-        return 'start-charge';
       }
     }
 
@@ -323,7 +518,7 @@ export class NpcOpponent extends Fighter {
     aimY: number,
     aiState: NpcAiState,
   ): string | null {
-    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skipSpecials) {
       // 1. Water Shield — low HP, no active charge
@@ -346,13 +541,6 @@ export class NpcOpponent extends Fighter {
         if (this.castAbility('geyser', buildContext(this.x, this.y))) return 'geyser';
       }
 
-      // 5. Mastered: schedule charge for pain-rain every ~10s
-      if (this.isMastered && !this.chargeUntil && time - this.lastChargeDecision > 10000) {
-        this.lastChargeDecision = time;
-        this.chargeUntil = time + Phaser.Math.Between(2000, 4000);
-        this.chargingAbility = 'pain-rain';
-        return 'start-charge';
-      }
     }
 
     // 6. Water Cut default (uses offset aim)
@@ -374,7 +562,7 @@ export class NpcOpponent extends Fighter {
     // Don't use abilities while dragging — focus on the drag
     if (aiState.thornDragActive) return null;
 
-    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skipSpecials) {
       // 1. Plant — maintain 2 defensive plants near self, 1 offensive near enemy
@@ -433,7 +621,7 @@ export class NpcOpponent extends Fighter {
       return buildContext(this.x + Math.cos(missAng) * 600, this.y + Math.sin(missAng) * 600);
     };
 
-    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skipSpecials) {
       // 1. Charged Beam — 50% hit chance regardless of difficulty
@@ -466,38 +654,80 @@ export class NpcOpponent extends Fighter {
   private doEarthAbilities(
     target: Fighter,
     buildContext: (tX: number, tY: number) => CastContext,
-    time: number,
+    _time: number,
+    dist: number,
+    hpRatio: number,
+    _aimX: number,
+    _aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    // NPC Earth AI delegates heavy logic to ArenaScene; just signal which ability to use.
+    // ArenaScene reads the returned id and executes the actual effect in updateEarthKit().
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const hasShield = aiState.earthShieldHp > 0;
+
+    if (!skipSpecials) {
+      // 1. Golem Ritual — when shield is up and HP is low
+      if (hasShield && hpRatio < 0.6) {
+        if (this.castAbility('golem-ritual', buildContext(target.x, target.y))) return 'golem-ritual';
+      }
+      // 2. Quake — medium range
+      if (dist < 250) {
+        if (this.castAbility('quake', buildContext(target.x, target.y))) return 'quake';
+      }
+      // 3. Rock Dance — if no rocks active
+      if (!aiState.npcEarthRocksActive) {
+        if (this.castAbility('rock-dance', buildContext(target.x, target.y))) return 'rock-dance';
+      }
+      // 4. Repair — when shield broken or low
+      if (!hasShield || aiState.earthShieldHp < 25) {
+        if (this.castAbility('repair', buildContext(target.x, target.y))) return 'repair';
+      }
+    }
+
+    // 5. Bash — close melee
+    if (dist < 160) {
+      if (this.castAbility('bash', buildContext(target.x, target.y))) return 'bash';
+    }
+
+    return null;
+  }
+
+  private doLightAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    _time: number,
     dist: number,
     hpRatio: number,
     aimX: number,
     aimY: number,
     aiState: NpcAiState,
   ): string | null {
-    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    const shield = aiState.earthShieldHp;
+    // NPC Light AI delegates heavy logic to ArenaScene (via updateLightKit reacting to npcCastId).
+    void target; void aiState;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skipSpecials) {
-      // 1. Bull Rush — use when HP is low or at medium range for aggression
-      if ((hpRatio < 0.5 || dist < 300) && shield >= 20) {
-        if (this.castAbility('bull-rush', buildContext(target.x, target.y))) return 'bull-rush';
+      // 1. Prayer — when HP low
+      if (hpRatio < 0.6) {
+        if (this.castAbility('prayer', buildContext(aimX, aimY))) return 'prayer';
       }
-
-      // 3. Shield Slam — close range dash with decent shield
-      if (dist < 200 && shield >= 30) {
-        if (this.castAbility('shield-slam', buildContext(target.x, target.y))) return 'shield-slam';
+      // 2. Skewer — when close
+      if (dist < 200) {
+        if (this.castAbility('skewer', buildContext(aimX, aimY))) return 'skewer';
       }
-
-      // 4. Shield Break — very close range with enough shield to deal damage
-      if (dist < 140 && shield >= 40) {
-        if (this.castAbility('shield-break', buildContext(this.x, this.y))) return 'shield-break';
+      // 3. Photon Orbs
+      if (this.castAbility('photon-orbs', buildContext(aimX, aimY))) return 'photon-orbs';
+      // 4. Photosynthespark — when not adjacent (will charge in during accel)
+      if (dist > 150) {
+        if (this.castAbility('photo-spark', buildContext(aimX, aimY))) return 'photo-spark';
       }
     }
 
-    // 5. Stab — fallback melee
-    if (dist < 130) {
-      if (this.castAbility('stab', buildContext(target.x, target.y))) return 'stab';
+    // 5. Light Stab / spear tap
+    if (dist < 160) {
+      if (this.castAbility('light-stab', buildContext(aimX, aimY))) return 'light-stab';
     }
-
     return null;
   }
 
@@ -513,7 +743,7 @@ export class NpcOpponent extends Fighter {
     angleToTarget: number,
   ): string | null {
     const droneCount = aiState.oilDroneCount ?? 0;
-    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     // Tight aim for drone-command (10% of normal offset)
     const sharpOffsetRad = (Math.random() * 2 - 1) * this.difficulty.aimOffsetDeg * 0.1 * (Math.PI / 180);
@@ -557,7 +787,7 @@ export class NpcOpponent extends Fighter {
     _aiState: NpcAiState,
     angleToTarget: number,
   ): string | null {
-    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     // Tight aim for dark-drain (10% of normal offset)
     const sharpOffsetRad = (Math.random() * 2 - 1) * this.difficulty.aimOffsetDeg * 0.1 * (Math.PI / 180);
@@ -601,7 +831,7 @@ export class NpcOpponent extends Fighter {
     aiState: NpcAiState,
     angleToTarget: number,
   ): string | null {
-    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     // Sharp aim for ice spike (15% of normal offset)
     const sharpOffsetRad = (Math.random() * 2 - 1) * this.difficulty.aimOffsetDeg * 0.15 * (Math.PI / 180);
@@ -652,7 +882,7 @@ export class NpcOpponent extends Fighter {
     aiState: NpcAiState,
     angleToTarget: number,
   ): string | null {
-    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     // Sharp aim (15% offset) for click attacks
     const sharpOffsetRad = (Math.random() * 2 - 1) * this.difficulty.aimOffsetDeg * 0.15 * (Math.PI / 180);
@@ -695,7 +925,7 @@ export class NpcOpponent extends Fighter {
     aiState: NpcAiState,
     angleToTarget: number,
   ): string | null {
-    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
     const ghosts = aiState.npcSoulGhosts ?? 0;
 
     // Sharp aim (10% offset) for orb placement
@@ -743,7 +973,7 @@ export class NpcOpponent extends Fighter {
     aiState: NpcAiState,
     angleToTarget: number,
   ): string | null {
-    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     // Sharp aim (10% offset) for laser
     const sharpOffsetRad = (Math.random() * 2 - 1) * this.difficulty.aimOffsetDeg * 0.10 * (Math.PI / 180);
@@ -793,7 +1023,7 @@ export class NpcOpponent extends Fighter {
     aiState: NpcAiState,
     angleToTarget: number,
   ): string | null {
-    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
     // Remain active: skip abilities (absorbing damage phase)
     if (aiState.npcTimeRemainActive) return null;
 
@@ -834,7 +1064,7 @@ export class NpcOpponent extends Fighter {
     aiState: NpcAiState,
     _angleToTarget: number,
   ): string | null {
-    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
     const inBeastForm = aiState.npcHuntBeastForm ?? false;
     const bloodMoonDebuff = aiState.huntBloodMoonActive ?? false;
 
@@ -905,7 +1135,7 @@ export class NpcOpponent extends Fighter {
     _aiState: NpcAiState,
     _angleToTarget: number,
   ): string | null {
-    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skipSpecials) {
       // Lunar landing when low HP
@@ -939,7 +1169,7 @@ export class NpcOpponent extends Fighter {
     _aiState: NpcAiState,
     _angleToTarget: number,
   ): string | null {
-    const skipSpecials = !this.isMastered && this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skipSpecials) {
       // Use maze when low HP

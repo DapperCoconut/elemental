@@ -24,6 +24,7 @@ const waterCut: Ability = {
     );
     ctx.projectiles.add(proj);
     proj.launch((dx / len) * speed, (dy / len) * speed);
+    proj.setRotation(Math.atan2(dy, dx));
   },
 };
 
@@ -63,7 +64,7 @@ const waterShield: Ability = {
 const painRain: Ability = {
   id: 'pain-rain',
   name: 'Pain Rain',
-  description: '50 raindrops fall across the arena',
+  description: '200 raindrops fall across the arena',
   displayKey: 'Q',
   cooldown: 50000,
   cast(ctx) {

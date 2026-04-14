@@ -106,6 +106,12 @@ export interface CastContext {
   creationScytheLaunch: (tx: number, ty: number) => void;
   creationBlock: (x: number, y: number, w: number, h: number) => void;
   creationMaze: () => void;
+  // Fate (alt-life)
+  fateSpawnSlotMachine: (x: number, y: number) => void;
+  fateDrawCards: (targetX: number, targetY: number) => void;
+  fateForceLucky: () => void;
+  fateKarmaBegin: () => void;
+  fateRandomUltimate: () => void;
 }
 
 export interface Ability {

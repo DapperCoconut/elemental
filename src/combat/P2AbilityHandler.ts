@@ -41,9 +41,8 @@ export interface P2Scene {
   npcTriggerOvergrowth(): void;
 
   // ── Read-only arena state ────────────────────────────────────────
-  readonly npcEarthSlamActive: boolean;
-  readonly npcEarthSlamBouncing: boolean;
-  readonly npcBullRushActive: boolean;
+  readonly npcEarthBashActive: boolean;
+  readonly npcEarthGolemActive: boolean;
   readonly npcHuntBeastForm: boolean;
   readonly npcDrones: { length: number };
   readonly playerBleeding: boolean;
@@ -73,14 +72,10 @@ export interface P2Scene {
   p2PainRainHolding: boolean;
   p2PainRainHoldAccum: number;
 
-  // ── Mutable state: earth ─────────────────────────────────────────
+  // ── Mutable state: earth (new kit) ───────────────────────────────
   npcSpeedMult: number;
-  p2EarthShieldShedHolding: boolean;
-  p2EarthShieldShedStart: number;
-  npcEarthShieldShedActive: boolean;
-  npcEarthShieldShedEnd: number;
-  npcEarthShieldShedBonus: number;
-  npcEarthShieldShedAura: Phaser.GameObjects.Arc | null;
+  npcEarthRepairActive: boolean;
+  npcEarthRepairEnd: number;
 
   // ── Mutable state: soul ──────────────────────────────────────────
   npcSoulGhosts: number;
@@ -510,63 +505,24 @@ export function processP2Abilities(
       }
     }
   } else if (eid === 'earth') {
-    if (!scene.npcEarthSlamActive && !scene.npcEarthSlamBouncing && !scene.npcBullRushActive) {
-      // E: Shield Up — hold to charge
-      if (scene.p2Input.e && scene.npc.shieldHp < 100) {
-        scene.npc.shieldHp = Math.min(100, scene.npc.shieldHp + 8.75 * (delta / 1000));
+    // New Earth kit — abilities handled by ArenaScene.updateEarthKit(); P2 just fires cooldowns.
+    if (!scene.npcEarthBashActive && !scene.npcEarthGolemActive) {
+      if (scene.p2Input.click && !scene.p2PrevInput.click) {
+        scene.npc.castAbility('bash', p2Ctx);
       }
-      if (!scene.p2Input.e) {
-        // Click: Stab (damage scales with speed if upgraded)
-        if (scene.p2Input.click) {
-          if (scene.hasP2Upgrade('click')) {
-            const speedScale = scene.npcSpeedMult;
-            const scaledCtx = { ...p2Ctx, dealMeleeDamage: (range: number, dmg: number, kb = 0) => p2Ctx.dealMeleeDamage(range, Math.round(dmg * speedScale), kb) };
-            scene.npc.castAbility('stab', scaledCtx);
-          } else {
-            scene.npc.castAbility('stab', p2Ctx);
-          }
-        }
-        // R: Shield Slam
-        if (scene.p2Input.r && !scene.p2PrevInput.r) {
-          scene.npc.castAbility('shield-slam', p2Ctx);
-        }
-        // F: Shield Break / Shield Shed (upgrade)
-        if (scene.hasP2Upgrade('f')) {
-          if (scene.p2Input.f && !scene.p2PrevInput.f) {
-            scene.p2EarthShieldShedHolding = true;
-            scene.p2EarthShieldShedStart = time;
-            scene.npc.chargeRatio = 0;
-          }
-          if (scene.p2EarthShieldShedHolding) {
-            scene.npc.chargeRatio = Math.min(1, (time - scene.p2EarthShieldShedStart) / 2000);
-            if (!scene.p2Input.f) {
-              scene.p2EarthShieldShedHolding = false;
-              scene.npc.chargeRatio = 0;
-              scene.npc.castAbility('shield-break', p2Ctx);
-            } else if (time - scene.p2EarthShieldShedStart >= 2000) {
-              scene.p2EarthShieldShedHolding = false;
-              scene.npc.chargeRatio = 0;
-              const shedAmount = scene.npc.shieldHp;
-              scene.npc.shieldHp = 0;
-              const bonus = shedAmount * 0.03;
-              scene.npcEarthShieldShedActive = true;
-              scene.npcEarthShieldShedEnd = time + 6000;
-              scene.npcEarthShieldShedBonus = bonus;
-              if (scene.npcEarthShieldShedAura) scene.npcEarthShieldShedAura.destroy();
-              scene.npcEarthShieldShedAura = scene.add.circle(scene.npc.x, scene.npc.y, 32, 0xffcc44, 0.5).setDepth(6);
-              scene.tweens.add({ targets: scene.npcEarthShieldShedAura, alpha: 0.1, yoyo: true, repeat: -1, duration: 300 });
-              scene.spawnHitFlash(scene.npc.x, scene.npc.y, 0xffcc44);
-            }
-          }
-        } else {
-          if (scene.p2Input.f && !scene.p2PrevInput.f) {
-            scene.npc.castAbility('shield-break', p2Ctx);
-          }
-        }
-        // Q: Bull Rush
-        if (scene.p2Input.q && !scene.p2PrevInput.q) {
-          scene.npc.castAbility('bull-rush', p2Ctx);
-        }
+      if (scene.p2Input.e && !scene.p2PrevInput.e && !scene.npcEarthRepairActive) {
+        scene.npc.castAbility('repair', p2Ctx);
+        scene.npcEarthRepairActive = true;
+        scene.npcEarthRepairEnd = time + 3000;
+      }
+      if (scene.p2Input.r && !scene.p2PrevInput.r) {
+        scene.npc.castAbility('rock-dance', p2Ctx);
+      }
+      if (scene.p2Input.f && !scene.p2PrevInput.f) {
+        scene.npc.castAbility('quake', p2Ctx);
+      }
+      if (scene.p2Input.q && !scene.p2PrevInput.q) {
+        scene.npc.castAbility('golem-ritual', p2Ctx);
       }
     }
   } else if (eid === 'soul') {

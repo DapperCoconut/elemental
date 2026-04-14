@@ -249,7 +249,7 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
 
     // Next fight info
     const nextFightLabel = isBossFight
-      ? `⚠️ BOSS FIGHT — ${elDef.name.toUpperCase()} (2× size, 5× HP)`
+      ? `⚠️ BOSS FIGHT — ${elDef.name.toUpperCase()} 👹 (stationary, 500 HP)`
       : `Next: Fight ${nextFight} / 6  •  ${nextDiffLabel}`;
     this.add.text(cx, nextBtnY + 50, nextFightLabel, {
       fontSize: '13px',
@@ -288,19 +288,19 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
     const isBoss = gs.currentFight === 6;
 
     if (isBoss) {
-      // Boss fight: same element as gauntlet, no mutation, Nightmare difficulty
+      // Boss fight: same element as gauntlet, Boss mutation, Nightmare difficulty
       this.scene.start('ArenaScene', {
-        elementId: gs.gauntletElement,
+        elementId: gs.playerElement,
         enemyElementId: gs.gauntletElement,
         difficulty: 5,
-        mutations: [],
+        mutations: ['boss'],
         gauntlet: gs,
       });
     } else {
       // Regular fight: use pre-generated order/mutation (currentFight is now 2-5, index = currentFight - 1)
       const idx = gs.currentFight - 1;
       this.scene.start('ArenaScene', {
-        elementId: gs.gauntletElement,
+        elementId: gs.playerElement,
         enemyElementId: gs.fightOrder[idx],
         difficulty: GAUNTLET_DIFFICULTY[idx],
         mutations: [gs.fightMutations[idx]],

@@ -3,6 +3,7 @@ import { DIFFICULTY_PRESETS } from '../entities/NpcOpponent';
 import { SHARD_REWARDS, getElementUpgrades } from '../data/Upgrades';
 import { MUTATIONS, activeMutationIds } from '../data/Mutations';
 import * as PlayerData from '../data/PlayerData';
+
 import { Element } from '../elements/Element';
 import { fireElement } from '../elements/fire';
 import { waterElement } from '../elements/water';
@@ -19,12 +20,24 @@ import { huntElement } from '../elements/hunt';
 import { sandElement } from '../elements/sand';
 import { gravityElement } from '../elements/gravity';
 import { creationElement } from '../elements/creation';
+import { electricityElement } from '../elements/electricity';
+import { slimeElement } from '../elements/slime';
+import { fateElement } from '../elements/fate';
+import { soundElement } from '../elements/sound';
+import { lightElement } from '../elements/light';
+import { dummyElement } from '../elements/dummy';
 
 const ELEMENT_DATA_MAP: Record<string, Element> = {
   fire: fireElement, water: waterElement, life: lifeElement, air: airElement,
   earth: earthElement, oil: oilElement, shadow: shadowElement, ice: iceElement,
   growth: growthElement, crystal: crystalElement, soul: soulElement, hunt: huntElement,
   sand: sandElement, gravity: gravityElement, creation: creationElement,
+  electricity: electricityElement,
+  slime: slimeElement,
+  fate: fateElement,
+  sound: soundElement,
+  light: lightElement,
+  dummy: dummyElement,
 };
 
 interface ElementDef {
@@ -56,7 +69,27 @@ const COMBINED_ELEMENTS: ElementDef[] = [
   { id: 'creation', name: 'Creation', emoji: '⚒️', color: 0xcc6622, available: true },
 ];
 
+/** Alt-elements unlocked by beating a gauntlet. Each entry maps to the gauntlet ID needed. */
+const ALT_ELEMENT_UNLOCK_MAP: Record<string, string> = {
+  electricity: 'fire',
+  slime: 'water',
+  fate: 'life',
+  sound: 'air',
+  light: 'earth',
+};
+
+const ALT_ELEMENTS: ElementDef[] = [
+  { id: 'electricity', name: 'Electricity', emoji: '⚡', color: 0xffee00, available: true },
+  { id: 'slime', name: 'Slime', emoji: '🟢', color: 0x66cc44, available: true },
+  { id: 'fate', name: 'Fate', emoji: '🃏', color: 0x88eecc, available: true },
+  { id: 'sound', name: 'Sound', emoji: '🔊', color: 0xff66cc, available: true },
+  { id: 'light', name: 'Light', emoji: '✨', color: 0xfff4a8, available: true },
+];
+
 const DIFF_COLORS = [0x22cc44, 0x88cc22, 0xddaa00, 0xee5500, 0xcc0022];
+
+// WWSSADADBA (Konami-style, using WASD mapping: W=Up S=Down A=Left D=Right then B A)
+const DUMMY_SEQUENCE = ['W','W','S','S','A','D','A','D','B','A'];
 
 export class MenuScene extends Phaser.Scene {
   private selectionPhase: 'player' | 'enemy' | 'difficulty' = 'player';
@@ -67,6 +100,7 @@ export class MenuScene extends Phaser.Scene {
 
   private phaseObjects: Phaser.GameObjects.GameObject[] = [];
   private infoOverlayObjects: Phaser.GameObjects.GameObject[] = [];
+  private konamiBuffer: string[] = [];
 
   constructor() {
     super({ key: 'MenuScene' });
@@ -114,11 +148,27 @@ export class MenuScene extends Phaser.Scene {
       color: '#555555',
     }).setOrigin(0.5);
 
+    // Konami sequence listener (WWSSADADBA → unlock Dummy enemy)
+    this.konamiBuffer = [];
+    this.input.keyboard!.on('keydown', (evt: KeyboardEvent) => {
+      this.konamiBuffer.push(evt.key.toUpperCase());
+      if (this.konamiBuffer.length > DUMMY_SEQUENCE.length) this.konamiBuffer.shift();
+      if (this.konamiBuffer.join('') === DUMMY_SEQUENCE.join('')) {
+        if (!PlayerData.isDummyUnlocked()) {
+          PlayerData.unlockDummy();
+          this.renderPhase(width, height, cx);
+        }
+      }
+    });
+
     this.renderPhase(width, height, cx);
   }
 
   private findElement(id: string): ElementDef | undefined {
-    return ELEMENTS.find((e) => e.id === id) ?? COMBINED_ELEMENTS.find((e) => e.id === id);
+    if (id === 'dummy') return { id: 'dummy', name: 'Dummy', emoji: '🎯', color: 0x888888, available: true };
+    return ELEMENTS.find((e) => e.id === id)
+      ?? COMBINED_ELEMENTS.find((e) => e.id === id)
+      ?? ALT_ELEMENTS.find((e) => e.id === id);
   }
 
   private renderPhase(width: number, height: number, cx: number): void {
@@ -160,18 +210,25 @@ export class MenuScene extends Phaser.Scene {
     }
 
     // Determine which elements to show on this page
+    const completedGauntlets = PlayerData.getCompletedGauntlets();
     const unlockedCombined = COMBINED_ELEMENTS.filter((e) => PlayerData.isElementUnlocked(e.id));
+    const unlockedAlt = ALT_ELEMENTS.filter((e) => {
+      const neededGauntlet = ALT_ELEMENT_UNLOCK_MAP[e.id];
+      return neededGauntlet ? completedGauntlets.includes(neededGauntlet) : false;
+    });
+    // Pool all non-base unlocked elements together for pagination
+    const unlockedExtra = [...unlockedCombined, ...unlockedAlt];
     const PAGE_SIZE = 5;
-    const combinedPages = Math.max(1, Math.ceil(unlockedCombined.length / PAGE_SIZE));
-    const maxPage = unlockedCombined.length > 0 ? combinedPages : 0; // 0 = no combined pages
-    const totalPages = 1 + maxPage; // page 0 = base, pages 1..maxPage = combined
+    const extraPages = Math.max(1, Math.ceil(unlockedExtra.length / PAGE_SIZE));
+    const maxPage = unlockedExtra.length > 0 ? extraPages : 0; // 0 = no extra pages
+    const totalPages = 1 + maxPage; // page 0 = base, pages 1..maxPage = combined/alt
 
     let currentElements: ElementDef[];
     if (this.elemPage === 0) {
       currentElements = ELEMENTS;
     } else {
       const start = (this.elemPage - 1) * PAGE_SIZE;
-      currentElements = unlockedCombined.slice(start, start + PAGE_SIZE);
+      currentElements = unlockedExtra.slice(start, start + PAGE_SIZE);
     }
 
     // Page indicator
@@ -197,7 +254,7 @@ export class MenuScene extends Phaser.Scene {
       this.phaseObjects.push(leftBtn, leftLbl);
     }
 
-    if (this.elemPage < totalPages - 1 && (this.elemPage > 0 || unlockedCombined.length > 0)) {
+    if (this.elemPage < totalPages - 1 && (this.elemPage > 0 || unlockedExtra.length > 0)) {
       const rightBtn = this.add.rectangle(width - 28, height / 2 + 20, 32, 64, 0x330066)
         .setStrokeStyle(1, 0x9944ff).setInteractive({ useHandCursor: true });
       const rightLbl = this.add.text(width - 28, height / 2 + 20, '▶', {
@@ -221,7 +278,7 @@ export class MenuScene extends Phaser.Scene {
     const startX = cx - totalW / 2;
 
     if (this.elemPage > 0 && currentElements.length === 0) {
-      const noElems = this.add.text(cx, height / 2 + 20, 'No combined elements discovered yet.\nVisit the LAB to unlock Oil (Fire + Water).', {
+      const noElems = this.add.text(cx, height / 2 + 20, 'No extra elements discovered yet.\nVisit the LAB to unlock combined elements,\nor complete Gauntlets to unlock Alt-Elements.', {
         fontSize: '14px', fontFamily: 'Arial, sans-serif', color: '#555577', align: 'center',
       }).setOrigin(0.5);
       this.phaseObjects.push(noElems);
@@ -285,6 +342,21 @@ export class MenuScene extends Phaser.Scene {
 
       this.phaseObjects.push(card, emojiText, nameText, statusText, iCircle, iLabel);
     });
+
+    // Dummy enemy — shown only on enemy phase when unlocked via konami code
+    if (!isPlayerPhase && PlayerData.isDummyUnlocked()) {
+      const dy = height / 2 + 130;
+      const dBtn = this.add.rectangle(cx, dy, 180, 32, 0x333333)
+        .setStrokeStyle(2, 0xaaaaaa).setInteractive({ useHandCursor: true });
+      const dLbl = this.add.text(cx, dy, '🎯  DUMMY MODE', {
+        fontSize: '14px', fontFamily: '"Arial Black", sans-serif', color: '#bbbbbb',
+      }).setOrigin(0.5).setDepth(1);
+      dBtn
+        .on('pointerover', () => dBtn.setFillStyle(0x555555))
+        .on('pointerout',  () => dBtn.setFillStyle(0x333333))
+        .on('pointerdown', () => this.handleElementClick('dummy', width, height, cx));
+      this.phaseObjects.push(dBtn, dLbl);
+    }
   }
 
   private renderDifficultyPhase(width: number, height: number, cx: number): void {
@@ -293,9 +365,10 @@ export class MenuScene extends Phaser.Scene {
 
     const diffBtnY  = 228;
     const descY     = 292;
-    const mutTitleY = 335;
-    const mutRow0Y  = 374;
-    const mutRow1Y  = 450;
+    const mutTitleY = 327;
+    const mutRow0Y  = 364;
+    const mutRow1Y  = 415;
+    const mutRow2Y  = 466;
 
     const subtitle = this.add.text(cx, 155, 'Choose difficulty', {
       fontSize: '20px',
@@ -370,7 +443,7 @@ export class MenuScene extends Phaser.Scene {
       this.phaseObjects.push(btn, labelText, hpText);
     });
 
-    // ── Mutation toggles (2 rows × 4 cols) ──────────────────────────
+    // ── Mutation toggles (3 rows × 4 cols) ──────────────────────────
     const mutTitle = this.add.text(cx, mutTitleY, '— MUTATIONS —', {
       fontSize: '11px',
       fontFamily: '"Arial Black", sans-serif',
@@ -379,16 +452,16 @@ export class MenuScene extends Phaser.Scene {
     this.phaseObjects.push(mutTitle);
 
     const togW = 172;
-    const togH = 44;
+    const togH = 40;
     const togGapX = 10;
-    const cols = 4;
-    const totalTogW = cols * togW + (cols - 1) * togGapX;
+    const mutCols = 4;
+    const totalTogW = mutCols * togW + (mutCols - 1) * togGapX;
     const togStartX = cx - totalTogW / 2;
-    const rowY = [mutRow0Y, mutRow1Y];
+    const rowY = [mutRow0Y, mutRow1Y, mutRow2Y];
 
     MUTATIONS.forEach((mut, idx) => {
-      const col = idx % cols;
-      const row = Math.floor(idx / cols);
+      const col = idx % mutCols;
+      const row = Math.floor(idx / mutCols);
       const tx = togStartX + col * (togW + togGapX) + togW / 2;
       const ty = rowY[row];
 

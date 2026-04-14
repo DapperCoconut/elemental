@@ -14,17 +14,28 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public incomingDamageMultiplier = 1;
   public chargeRatio = 0;   // 0–1, drives the yellow charge bar in HealthBar
   public lastIncomingDamage = 0; // set in takeDamage() before shield check — used by reflect upgrades
-  /** Multiply all ability cooldowns by this factor (< 1 = faster, e.g. Rebirth post-revival). */
+  /** Multiply all ability cooldowns by this factor (< 1 = faster, e.g. Reborn post-revival). */
   public cooldownMult = 1;
   /** If set, called with the damage amount before shields; return true to absorb the hit entirely. */
   public damageAbsorber: ((amount: number) => boolean) | null = null;
-  /** Set by ArenaScene when the Mastered mutation is active. Default false for non-NPC fighters. */
-  public isMastered = false;
   /** Used by Hunt element roar lock. Default false for non-NPC fighters. */
   public npcHuntRoarLocked = false;
   /** Gauntlet boost: multiplies all incoming damage (stacks with incomingDamageMultiplier). Default 1. */
   public gauntletDamageTakenMult = 1;
+  /** When true, skip alpha flash in takeDamage/applySelfDamage and keep alpha at 0 (Stealthy mutation). */
+  public forceInvisible = false;
+  /** 0–1 probability that outgoing attacks deal a critical hit (2× damage). */
+  public critChance = 0;
+  /** Damage multiplier applied on a critical hit. Default 2. */
+  public critMult = 2;
+  /** Additive bonus added to an attacker's critChance when this fighter is the target. */
+  public incomingCritBonus = 0;
+  /** Visual/physics size multiplier applied by Fate Slots. Default 1. */
+  public sizeMult = 1;
+  /** Walk speed multiplier applied by Fate Slots. Default 1. */
+  public walkSpeedMult = 1;
 
+  private incomingCritCtx: { chance: number; mult: number } | null = null;
   private cooldowns: Map<string, number> = new Map();
   private healthBar: HealthBar;
 
@@ -56,19 +67,46 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     this.setDepth(5);
   }
 
+  /** Called by the attacker (or damage source) just before takeDamage to supply crit context for this hit. */
+  setIncomingCritContext(chance: number, mult: number): void {
+    this.incomingCritCtx = { chance, mult };
+  }
+
+  /** Update visual scale and physics body to match sizeMult. Call after changing sizeMult. */
+  applySizeMult(): void {
+    this.setScale(this.sizeMult);
+    const baseRadius = 22;
+    const radius = Math.round(baseRadius * this.sizeMult);
+    const offset = (48 - radius * 2) / 2;
+    (this.body as Phaser.Physics.Arcade.Body).setCircle(radius, offset, offset);
+  }
+
   takeDamage(amount: number): void {
     if (this.isInvincible) return;
+
+    // Crit roll: use any incoming crit context set by the attacker
+    const critCtx = this.incomingCritCtx;
+    this.incomingCritCtx = null;
+    const effectiveCritChance = critCtx ? Math.min(1, critCtx.chance + this.incomingCritBonus) : 0;
+    const isCrit = effectiveCritChance > 0 && Math.random() < effectiveCritChance;
+    if (isCrit) {
+      amount = Math.round(amount * (critCtx?.mult ?? 2));
+    }
+
     amount = Math.round(amount * this.incomingDamageMultiplier * this.gauntletDamageTakenMult);
     this.lastIncomingDamage = amount;
+    if (isCrit) this.emit('damaged-crit', amount);
 
     if (this.damageAbsorber && this.damageAbsorber(amount)) return;
 
     if (this.shieldCharges > 0) {
       this.shieldCharges--;
-      this.setAlpha(0.7);
-      this.scene.time.delayedCall(200, () => {
-        if (this.active) this.setAlpha(1);
-      });
+      if (!this.forceInvisible) {
+        this.setAlpha(0.7);
+        this.scene.time.delayedCall(200, () => {
+          if (this.active) this.setAlpha(this.forceInvisible ? 0 : 1);
+        });
+      }
       this.emit('damaged', 0); // 0 = shield blocked
       return;
     }
@@ -79,8 +117,10 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       amount -= absorbed;
       if (amount === 0) {
         this.emit('damaged', 0);
-        this.setAlpha(0.7);
-        this.scene.time.delayedCall(200, () => { if (this.active) this.setAlpha(1); });
+        if (!this.forceInvisible) {
+          this.setAlpha(0.7);
+          this.scene.time.delayedCall(200, () => { if (this.active) this.setAlpha(this.forceInvisible ? 0 : 1); });
+        }
         return;
       }
     }
@@ -88,10 +128,12 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     this.hp = Math.max(0, this.hp - amount);
     this.emit('damaged', amount);
 
-    this.setAlpha(0.3);
-    this.scene.time.delayedCall(150, () => {
-      if (this.active) this.setAlpha(1);
-    });
+    if (!this.forceInvisible) {
+      this.setAlpha(0.3);
+      this.scene.time.delayedCall(150, () => {
+        if (this.active) this.setAlpha(this.forceInvisible ? 0 : 1);
+      });
+    }
 
     if (this.hp <= 0) {
       this.emit('defeated');
@@ -108,15 +150,21 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     this.healthBar.setMaxHp(newMax);
   }
 
+  setHealthBarVisible(visible: boolean): void {
+    this.healthBar.visible = visible;
+  }
+
   /** Like takeDamage but bypasses isInvincible — used for self-inflicted effects. */
   applySelfDamage(amount: number): void {
     this.hp = Math.max(0, this.hp - amount);
     this.emit('damaged', amount);
 
-    this.setAlpha(0.3);
-    this.scene.time.delayedCall(150, () => {
-      if (this.active) this.setAlpha(1);
-    });
+    if (!this.forceInvisible) {
+      this.setAlpha(0.3);
+      this.scene.time.delayedCall(150, () => {
+        if (this.active) this.setAlpha(this.forceInvisible ? 0 : 1);
+      });
+    }
 
     if (this.hp <= 0) {
       this.emit('defeated');

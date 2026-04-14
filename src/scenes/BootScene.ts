@@ -264,6 +264,94 @@ export class BootScene extends Phaser.Scene {
     gfx.fillRect(1, 3, 6, 4);
     gfx.generateTexture('proj-sand-shard', 8, 10);
 
+    // Electricity element texture (bright yellow circle with jagged stroke)
+    gfx.clear();
+    gfx.fillStyle(0xddcc00);
+    gfx.fillCircle(24, 24, 22);
+    gfx.lineStyle(3, 0xffff44);
+    gfx.strokeCircle(24, 24, 22);
+    gfx.generateTexture('elem-electricity', 48, 48);
+
+    // Electro ball projectile (small yellow-white circle)
+    gfx.clear();
+    gfx.fillStyle(0xffff44);
+    gfx.fillCircle(7, 7, 7);
+    gfx.lineStyle(2, 0xffffff, 0.7);
+    gfx.strokeCircle(7, 7, 5);
+    gfx.generateTexture('proj-electro', 14, 14);
+
+    // Slime element texture (green blob circle)
+    gfx.clear();
+    gfx.fillStyle(0x55bb33);
+    gfx.fillCircle(24, 24, 22);
+    gfx.lineStyle(3, 0x88ff44);
+    gfx.strokeCircle(24, 24, 22);
+    gfx.generateTexture('elem-slime', 48, 48);
+
+    // Slime projectile (small green circle)
+    gfx.clear();
+    gfx.fillStyle(0x66cc44);
+    gfx.fillCircle(8, 8, 8);
+    gfx.lineStyle(2, 0xaaffaa, 0.8);
+    gfx.strokeCircle(8, 8, 6);
+    gfx.generateTexture('proj-slime', 16, 16);
+
+    // Fate element texture (teal/mint circle with a card-suit pip)
+    gfx.clear();
+    gfx.fillStyle(0x55ddbb);
+    gfx.fillCircle(24, 24, 22);
+    gfx.lineStyle(3, 0xaaffee);
+    gfx.strokeCircle(24, 24, 20);
+    gfx.generateTexture('elem-fate', 48, 48);
+
+    // Fate card projectile (small white rectangle, card-like)
+    gfx.clear();
+    gfx.fillStyle(0xffffff);
+    gfx.fillRoundedRect(0, 0, 10, 14, 2);
+    gfx.lineStyle(1, 0xddbbff);
+    gfx.strokeRoundedRect(0, 0, 10, 14, 2);
+    gfx.generateTexture('proj-fate-card', 10, 14);
+
+    // Slot machine icon for placed entity (gold/pink rectangle)
+    gfx.clear();
+    gfx.fillStyle(0xffcc44);
+    gfx.fillRoundedRect(0, 0, 28, 28, 4);
+    gfx.lineStyle(2, 0xff88cc);
+    gfx.strokeRoundedRect(0, 0, 28, 28, 4);
+    gfx.generateTexture('slot-machine', 28, 28);
+
+    // Sound element texture (pink/magenta circle with wavy accent ring)
+    gfx.clear();
+    gfx.fillStyle(0xcc4499);
+    gfx.fillCircle(24, 24, 22);
+    gfx.lineStyle(3, 0xff88cc);
+    gfx.strokeCircle(24, 24, 20);
+    gfx.generateTexture('elem-sound', 48, 48);
+
+    // Light element texture (pale yellow circle with white stroke)
+    gfx.clear();
+    gfx.fillStyle(0xeedb88);
+    gfx.fillCircle(24, 24, 22);
+    gfx.lineStyle(3, 0xffffff);
+    gfx.strokeCircle(24, 24, 20);
+    gfx.generateTexture('elem-light', 48, 48);
+
+    // Holy blade projectile (slim bright white lance shape)
+    gfx.clear();
+    gfx.fillStyle(0xffffff);
+    gfx.fillRect(0, 3, 20, 4);
+    gfx.fillStyle(0xffee88);
+    gfx.fillTriangle(18, 0, 26, 5, 18, 10);
+    gfx.generateTexture('proj-holy-blade', 26, 10);
+
+    // Dummy element texture (grey circle with target crosshair stroke)
+    gfx.clear();
+    gfx.fillStyle(0x777777);
+    gfx.fillCircle(24, 24, 22);
+    gfx.lineStyle(3, 0xbbbbbb);
+    gfx.strokeCircle(24, 24, 22);
+    gfx.generateTexture('elem-dummy', 48, 48);
+
     gfx.destroy();
 
     this.scene.start('TitleScene');

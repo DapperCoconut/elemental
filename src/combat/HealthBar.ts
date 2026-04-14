@@ -7,6 +7,7 @@ export class HealthBar {
   private readonly barH = 7;
   private readonly offsetY = -38;
   private readonly chargeBarH = 4;
+  public visible = true;
 
   constructor(scene: Phaser.Scene, maxHp: number) {
     this.graphics = scene.add.graphics();
@@ -16,6 +17,8 @@ export class HealthBar {
 
   update(x: number, y: number, hp: number, shieldHp = 0, chargeRatio = 0): void {
     this.graphics.clear();
+    if (!this.visible) return;
+
     const bx = x - this.barW / 2;
     const by = y + this.offsetY;
 

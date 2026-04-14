@@ -8,6 +8,7 @@ interface SaveData {
   unlockedElements: string[];        // combined element IDs unlocked via Lab
   gauntletUnlocked: boolean;
   gauntletsCompleted: string[];      // base element IDs of completed gauntlets
+  dummyUnlocked: boolean;            // true once the WWSSADADBA code has been entered
 }
 
 function load(): SaveData {
@@ -23,12 +24,13 @@ function load(): SaveData {
         unlockedElements: parsed.unlockedElements ?? [],
         gauntletUnlocked: parsed.gauntletUnlocked ?? false,
         gauntletsCompleted: parsed.gauntletsCompleted ?? [],
+        dummyUnlocked: parsed.dummyUnlocked ?? false,
       };
     }
   } catch {
     // corrupted save — start fresh
   }
-  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [] };
+  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], dummyUnlocked: false };
 }
 
 function save(data: SaveData): void {
@@ -140,4 +142,16 @@ export function completeGauntlet(elementId: string): void {
     data.gauntletsCompleted = [...data.gauntletsCompleted, elementId];
   }
   save(data);
+}
+
+export function isDummyUnlocked(): boolean {
+  return load().dummyUnlocked;
+}
+
+export function unlockDummy(): void {
+  const data = load();
+  if (!data.dummyUnlocked) {
+    data.dummyUnlocked = true;
+    save(data);
+  }
 }
