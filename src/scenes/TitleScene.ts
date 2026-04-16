@@ -101,7 +101,7 @@ export class TitleScene extends Phaser.Scene {
     }).setOrigin(1, 0);
 
     // Footer hint
-    this.add.text(cx, height - 24, 'Defeat the enemy to win! Copyright 2026 - All Rights Reserved', {
+    this.add.text(cx, height - 24, 'Copyright © 2025 Isaac Butikofer. All rights reserved.', {
       fontSize: '13px',
       color: '#666666',
     }).setOrigin(0.5);
