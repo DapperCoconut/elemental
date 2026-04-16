@@ -16,6 +16,16 @@ export const RECIPES: Recipe[] = [
   { ingredients: ['earth', 'air'],  result: 'sand',    resultName: 'Time',    resultEmoji: '⏳' },
   { ingredients: ['earth', 'life'], result: 'gravity', resultName: 'Gravity', resultEmoji: '🌌' },
   { ingredients: ['earth', 'fire'], result: 'creation', resultName: 'Creation', resultEmoji: '⚒️' },
+  // Abstract combined elements (require Lab Level 1)
+  { ingredients: ['electricity', 'slime'], result: 'magnet', resultName: 'Magnet', resultEmoji: '🧲' },
+  { ingredients: ['electricity', 'fate'], result: 'metal', resultName: 'Metal', resultEmoji: '⚙️' },
+  { ingredients: ['electricity', 'light'], result: 'plasma', resultName: 'Plasma', resultEmoji: '🔮' },
+  { ingredients: ['fate', 'sound'], result: 'death', resultName: 'Death', resultEmoji: '💀' },
+  { ingredients: ['fate', 'light'], result: 'void', resultName: 'Void', resultEmoji: '🌑' },
+  { ingredients: ['electricity', 'sound'], result: 'adrenaline', resultName: 'Adrenaline', resultEmoji: '⚡️' },
+  { ingredients: ['slime', 'light'], result: 'magic', resultName: 'Magic', resultEmoji: '📖' },
+  { ingredients: ['sound', 'light'], result: 'technology', resultName: 'Technology', resultEmoji: '💻' },
+  { ingredients: ['slime', 'sound'], result: 'silence', resultName: 'Silence', resultEmoji: '🫥' },
 ];
 
 export function findRecipe(a: string, b: string): Recipe | undefined {

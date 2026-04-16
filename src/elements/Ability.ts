@@ -112,6 +112,89 @@ export interface CastContext {
   fateForceLucky: () => void;
   fateKarmaBegin: () => void;
   fateRandomUltimate: () => void;
+  // Magnet (abstract combined: electricity + slime)
+  magnetPulse: (x: number, y: number) => void;
+  magnetNailShoot: (tx: number, ty: number) => void;
+  magnetNailRecall: () => void;
+  magnetMagnetize: (tx: number, ty: number) => void;
+  magnetProtect: () => void;
+  magnetAtomSmasher: (x: number, y: number) => void;
+  // Metal (abstract combined: electricity + fate)
+  metalSlash: (tx: number, ty: number) => void;
+  metalFireAtWill: () => void;
+  metalOpenReinforcementMenu: () => void;
+  metalChainTether: (tx: number, ty: number) => void;
+  metalBloodClot: () => void;
+  // Plasma (abstract combined: electricity + light)
+  plasmaBurst: (tx: number, ty: number) => void;
+  plasmaUnstableArena: (tx: number, ty: number) => void;
+  plasmaCurrentLaunch: (tx: number, ty: number) => void;
+  plasmaChaosBlades: () => void;
+  plasmaChaosIncarnate: () => void;
+  // Death (abstract combined: fate + sound)
+  deathSweep: (tx: number, ty: number) => void;
+  deathSummonWisps: (count: number) => void;
+  deathWish: (tx: number, ty: number) => void;
+  deathWispDaemon: () => void;
+  deathExecute: (tx: number, ty: number) => void;
+  // Void (abstract combined: fate + light)
+  voidFloater: (tx: number, ty: number) => void;
+  voidReturnToVoid: (tx: number, ty: number) => void;
+  voidReLapse: (tx: number, ty: number) => void;
+  voidAsh: (tx: number, ty: number) => void;
+  voidOfHell: () => void;
+  // Adrenaline (abstract combined: electricity + sound)
+  adrenalineGoldenShot: (tx: number, ty: number) => void;
+  adrenalineDash: (tx: number, ty: number) => void;
+  adrenalineToggleSkate: () => void;
+  adrenalineSelfInject: () => void;
+  adrenalineStyledOn: (tx: number, ty: number) => void;
+  adrenalineOllie: () => void;
+  adrenalineRush: () => void;
+  adrenalineRamp: () => void;
+  adrenalineTrick: () => void;
+  adrenalineWallTeleport: (tx: number, ty: number) => void;
+  adrenalineAddStyle: (points: number, label: string, color?: string) => void;
+  adrenalineRegisterShotHit: () => void;
+  adrenalineRegisterShotMiss: () => void;
+  // Magic (abstract combined: slime + light)
+  magicMissiles: (tx: number, ty: number) => void;
+  magicOpenGrimoire: () => void;
+  magicAnchorToggle: (tx: number, ty: number) => void;
+  magicMeditateBegin: () => void;
+  magicOpenNecronomicon: () => void;
+  // Magic sub-abilities (Grimoire 1-6)
+  magicClusterBomb: (tx: number, ty: number) => void;
+  magicSlowZone: (tx: number, ty: number) => void;
+  magicTripleBeam: () => void;
+  magicBindChain: (tx: number, ty: number) => void;
+  magicBoomerang: (tx: number, ty: number) => void;
+  magicPillars: (tx: number, ty: number) => void;
+  // Magic sub-abilities (Necronomicon 1-4)
+  magicPillarStorm: (tx: number, ty: number) => void;
+  magicOrbitalBars: () => void;
+  magicBlink20: () => void;
+  magicRoot4Corner: (tx: number, ty: number) => void;
+  // Technology (abstract combined: sound + light)
+  techFlailEmpower: () => void;
+  techDevConsoleOpen: () => void;
+  techHackAttribute: () => void;
+  techPlayerGift: () => void;
+  techOpSelfBegin: () => void;
+  // Silence (abstract combined: slime + sound)
+  silenceStartFade: () => void;
+  silenceReleaseFade: () => void;
+  silenceCastDontLook: (angleRad: number) => void;
+  silenceFirePossess: (angleRad: number) => void;
+  silenceEnterSlasher: () => void;
+  silenceExitSlasher: (voluntary: boolean) => void;
+  silenceStartWatch: () => void;
+  silenceWatchTendril: (tx: number, ty: number) => void;
+  silenceMachete: (angleRad: number) => void;
+  silenceThrowHook: (angleRad: number) => void;
+  silenceYankHook: () => void;
+  silenceEnrage: () => void;
+  silenceSlashEmUp: () => void;
 }
 
 export interface Ability {

@@ -57,6 +57,26 @@ export interface NpcAiState {
   fateUnluckyQueued?: boolean;
   fateKarmaActive?: boolean;
   nearOwnSlotMachine?: boolean;
+  // Metal
+  npcMetalArsenal?: string[];
+  // Death
+  npcDeathExecuteBlackAuraActive?: boolean;
+  deathWispCd?: number;
+  // Adrenaline
+  adrenalineStyledChain?: number;
+  adrenalineHyperchargeReady?: boolean;
+  adrenalineInjectPhase?: 0|1|2|3;
+  // Magic
+  magicAnchorPlaced?: boolean;
+  magicMeditating?: boolean;
+  // Technology
+  technologyAbuse?: number;
+  technologyOpSelfUsed?: boolean;
+  technologyProtestorsSpawned?: boolean;
+  // Silence
+  npcSilenceSlasherActive?: boolean;
+  npcSilenceSlasherHp?: number;
+  npcSilenceHookConnected?: boolean;
 }
 
 export class NpcOpponent extends Fighter {
@@ -287,6 +307,33 @@ export class NpcOpponent extends Fighter {
     }
     if (this.element.id === 'light') {
       return this.doLightAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'magnet') {
+      return this.doMagnetAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'metal') {
+      return this.doMetalAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'plasma') {
+      return this.doPlasmaAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'death') {
+      return this.doDeathAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'void') {
+      return this.doVoidAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'adrenaline') {
+      return this.doAdrenalineAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'magic') {
+      return this.doMagicAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'technology') {
+      return this.doTechnologyAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'silence') {
+      return this.doSilenceAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
     return null;
   }
@@ -1188,6 +1235,456 @@ export class NpcOpponent extends Fighter {
 
     // Dagger spray fallback
     if (this.castAbility('dagger-spray', buildContext(aimX, aimY))) return 'dagger-spray';
+
+    return null;
+  }
+
+  private doMagnetAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    _time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    void target; void aiState;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+
+    if (!skipSpecials) {
+      // Protect when low on HP
+      if (hpRatio < 0.4) {
+        if (this.castAbility('protect', buildContext(aimX, aimY))) return 'protect';
+      }
+      // Magnetize enemy if close
+      if (dist < 180) {
+        if (this.castAbility('magnetize', buildContext(aimX, aimY))) return 'magnetize';
+      }
+      // Nail implant at medium range
+      if (dist < 250) {
+        if (this.castAbility('nail-implant', buildContext(aimX, aimY))) return 'nail-implant';
+      }
+      // Atom smasher when in attack range
+      if (dist < 220) {
+        if (this.castAbility('atom-smasher', buildContext(aimX, aimY))) return 'atom-smasher';
+      }
+    }
+
+    // Default: mag pulse as primary attack
+    if (this.aiState === 'attack' || this.aiState === 'chase') {
+      if (this.castAbility('mag-pulse', buildContext(aimX, aimY))) return 'mag-pulse';
+    }
+    return null;
+  }
+
+  private doPlasmaAbilities(
+    _target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    _time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    _aiState: NpcAiState,
+  ): string | null {
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+
+    if (!skipSpecials) {
+      // Q: Chaos Incarnate when low HP or to close gap
+      if (hpRatio < 0.35) {
+        if (this.castAbility('plasma-chaos-incarnate', buildContext(aimX, aimY))) return 'plasma-chaos-incarnate';
+      }
+      // F: Chaos Blades at medium range
+      if (dist < 250) {
+        if (this.castAbility('plasma-chaos-blades', buildContext(aimX, aimY))) return 'plasma-chaos-blades';
+      }
+      // R: Plasma Current — fire toward player
+      if (dist < 320 && (this.aiState === 'attack' || this.aiState === 'chase')) {
+        if (this.castAbility('plasma-current', buildContext(aimX, aimY))) return 'plasma-current';
+      }
+      // E: Unstable Arena near player
+      if (dist < 220) {
+        if (this.castAbility('plasma-arena', buildContext(aimX, aimY))) return 'plasma-arena';
+      }
+    }
+
+    // Click: Plasma Burst when close
+    if (dist <= 130) {
+      if (this.castAbility('plasma-burst', buildContext(aimX, aimY))) return 'plasma-burst';
+    }
+
+    return null;
+  }
+
+  private doDeathAbilities(
+    _target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    void hpRatio;
+
+    // Black aura active — try to execute enemy
+    if (aiState.npcDeathExecuteBlackAuraActive) {
+      if (this.castAbility('death-execute', buildContext(aimX, aimY))) return 'death-execute';
+    }
+
+    if (!skip) {
+      // Wisp spam (throttled to 1 cast/sec)
+      const now = time;
+      if (!aiState.deathWispCd || now >= aiState.deathWispCd) {
+        if (this.castAbility('death-wisps', buildContext(aimX, aimY))) {
+          aiState.deathWispCd = now + 1000;
+          return 'death-wisps';
+        }
+      }
+
+      // Daemon when at mid-HP
+      if (hpRatio > 0.25 && hpRatio < 0.75) {
+        if (this.castAbility('wisp-daemon', buildContext(aimX, aimY))) return 'wisp-daemon';
+      }
+
+      // Death Wish when close to enemy
+      if (dist < 280) {
+        if (this.castAbility('death-wish', buildContext(aimX, aimY))) return 'death-wish';
+      }
+
+      // Execute on own wisps (ArenaScene handles finding nearby wisp via coords)
+      if (this.castAbility('death-execute', buildContext(this.x, this.y))) return 'death-execute';
+    }
+
+    // Death Sweep at player
+    if (this.castAbility('death-sweep', buildContext(aimX, aimY))) return 'death-sweep';
+
+    return null;
+  }
+
+  private doVoidAbilities(
+    _target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    _time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    void aiState;
+    const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+
+    if (!skip) {
+      // Q: Void of Hell when HP dropping
+      if (hpRatio < 0.5) {
+        if (this.castAbility('void-of-hell', buildContext(aimX, aimY))) return 'void-of-hell';
+      }
+
+      // F: Void Ash at player position
+      if (this.castAbility('void-ash', buildContext(aimX, aimY))) return 'void-ash';
+
+      // R: Re-Lapse when close enough
+      if (dist < 280) {
+        if (this.castAbility('void-relapse', buildContext(aimX, aimY))) return 'void-relapse';
+      }
+
+      // E: Return to Void when close
+      if (dist < 200) {
+        if (this.castAbility('void-return', buildContext(aimX, aimY))) return 'void-return';
+      }
+    }
+
+    // Click: Void Floater spam (follows player automatically)
+    if (this.castAbility('void-floater', buildContext(aimX, aimY))) return 'void-floater';
+
+    return null;
+  }
+
+  private doMetalAbilities(
+    _target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    _time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const hasGuns = aiState.npcMetalArsenal && aiState.npcMetalArsenal.length > 0;
+    const arsenalFull = aiState.npcMetalArsenal && aiState.npcMetalArsenal.length >= 3;
+
+    if (!skipSpecials) {
+      // Blood Clot when low HP
+      if (hpRatio < 0.35) {
+        if (this.castAbility('metal-blood-clot', buildContext(aimX, aimY))) return 'metal-blood-clot';
+      }
+      // Chain Tether at medium range
+      if (dist < 230) {
+        if (this.castAbility('metal-chain-tether', buildContext(aimX, aimY))) return 'metal-chain-tether';
+      }
+      // Pick up weapon if arsenal not full
+      if (!arsenalFull) {
+        if (this.castAbility('metal-reinforce', buildContext(aimX, aimY))) return 'metal-reinforce';
+      }
+      // Fire at will when armed
+      if (hasGuns && dist < 280) {
+        if (this.castAbility('metal-fire-at-will', buildContext(aimX, aimY))) return 'metal-fire-at-will';
+      }
+    }
+
+    // Slash is melee primary
+    if (dist <= 95) {
+      if (this.castAbility('metal-slash', buildContext(aimX, aimY))) return 'metal-slash';
+    }
+
+    // Fallback fire at will if armed and approaching
+    if (!skipSpecials && hasGuns) {
+      if (this.castAbility('metal-fire-at-will', buildContext(aimX, aimY))) return 'metal-fire-at-will';
+    }
+
+    return null;
+  }
+
+  private doAdrenalineAbilities(
+    _target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    _time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+
+    if (!skip) {
+      // F: Self Inject when low HP (only if not already injecting)
+      if (hpRatio < 0.35 && (aiState.adrenalineInjectPhase ?? 0) === 0) {
+        if (this.castAbility('adrenaline-self-inject', buildContext(aimX, aimY))) {
+          aiState.adrenalineInjectPhase = 1;
+          return 'adrenaline-self-inject';
+        }
+      }
+
+      // Q: Styled On! — chain if window active
+      if ((aiState.adrenalineStyledChain ?? 0) > 0) {
+        if (this.castAbility('adrenaline-styled-on', buildContext(aimX, aimY))) {
+          aiState.adrenalineStyledChain = (aiState.adrenalineStyledChain ?? 0) + 1;
+          if ((aiState.adrenalineStyledChain ?? 0) >= 5) aiState.adrenalineStyledChain = 0;
+          return 'adrenaline-styled-on';
+        }
+      }
+
+      // Q: Styled On! at close range
+      if (dist < 130) {
+        if (this.castAbility('adrenaline-styled-on', buildContext(aimX, aimY))) {
+          aiState.adrenalineStyledChain = 1;
+          return 'adrenaline-styled-on';
+        }
+      }
+
+      // E: Dash toward player (and potentially trigger hypercharge)
+      if (dist < 200) {
+        if (this.castAbility('adrenaline-dash', buildContext(aimX, aimY))) return 'adrenaline-dash';
+      }
+
+      // Click with hypercharge if ready
+      if (aiState.adrenalineHyperchargeReady) {
+        if (this.castAbility('adrenaline-golden-shot', buildContext(aimX, aimY))) {
+          aiState.adrenalineHyperchargeReady = false;
+          return 'adrenaline-golden-shot';
+        }
+      }
+    }
+
+    // Default: Golden Shot spam
+    if (this.castAbility('adrenaline-golden-shot', buildContext(aimX, aimY))) return 'adrenaline-golden-shot';
+
+    return null;
+  }
+
+  private doMagicAbilities(
+    _target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    _time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+
+    if (!skip) {
+      // F: Meditate when low HP and safe distance
+      if (hpRatio < 0.30 && !aiState.magicMeditating && dist > 200) {
+        if (this.castAbility('magic-meditate', buildContext(aimX, aimY))) {
+          aiState.magicMeditating = true;
+          return 'magic-meditate';
+        }
+      }
+
+      // R: Place anchor when player closes in; recall if already placed
+      if (dist < 150) {
+        if (aiState.magicAnchorPlaced) {
+          if (this.castAbility('magic-anchor', buildContext(aimX, aimY))) {
+            aiState.magicAnchorPlaced = false;
+            return 'magic-anchor';
+          }
+        } else {
+          if (this.castAbility('magic-anchor', buildContext(aimX, aimY))) {
+            aiState.magicAnchorPlaced = true;
+            return 'magic-anchor';
+          }
+        }
+      }
+
+      // Q: Necronomicon at long range (NPC context picks a random sub-ability)
+      if (dist >= 300 && Math.random() < 0.30) {
+        if (this.castAbility('magic-necronomicon', buildContext(aimX, aimY))) return 'magic-necronomicon';
+      }
+
+      // E: Grimoire at mid range (NPC context picks a random sub-ability)
+      if (dist >= 150 && dist < 400 && Math.random() < 0.40) {
+        if (this.castAbility('magic-grimoire', buildContext(aimX, aimY))) return 'magic-grimoire';
+      }
+    }
+
+    // Default: Magic Missiles
+    if (this.castAbility('magic-missiles', buildContext(aimX, aimY))) return 'magic-missiles';
+
+    return null;
+  }
+
+  private doTechnologyAbilities(
+    _target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    _time: number,
+    _dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    if (aiState.technologyAbuse === undefined) aiState.technologyAbuse = 0;
+
+    const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+
+    if (!skip) {
+      // Q: OP.Self when healthy, not yet used this match
+      if (hpRatio >= 0.75 && !aiState.technologyOpSelfUsed && Math.random() < 0.15) {
+        if (this.castAbility('tech-opself', buildContext(aimX, aimY))) {
+          aiState.technologyOpSelfUsed = true;
+          aiState.technologyAbuse = Math.min(100, aiState.technologyAbuse + 100);
+          return 'tech-opself';
+        }
+      }
+
+      // E: Dev.Console randomly
+      if (Math.random() < 0.20) {
+        if (this.castAbility('tech-devconsole', buildContext(aimX, aimY))) return 'tech-devconsole';
+      }
+
+      // R: Hack.Attribute when abuse is low (free damage buffs)
+      if (aiState.technologyAbuse < 50 && Math.random() < 0.40) {
+        if (this.castAbility('tech-hack', buildContext(aimX, aimY))) {
+          aiState.technologyAbuse = Math.min(100, aiState.technologyAbuse + 10);
+          return 'tech-hack';
+        }
+      }
+
+      // F: Player.Gift to reduce abuse
+      if (aiState.technologyAbuse > 60 && Math.random() < 0.50) {
+        if (this.castAbility('tech-gift', buildContext(aimX, aimY))) {
+          aiState.technologyAbuse = Math.max(0, aiState.technologyAbuse - 20);
+          return 'tech-gift';
+        }
+      }
+    }
+
+    // Click: Flail empower
+    if (this.castAbility('tech-flail', buildContext(aimX, aimY))) return 'tech-flail';
+
+    return null;
+  }
+
+  private doSilenceAbilities(
+    _target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    _time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const inSlasher = aiState.npcSilenceSlasherActive ?? false;
+    const slasherHp = aiState.npcSilenceSlasherHp ?? 10;
+    const hookConnected = aiState.npcSilenceHookConnected ?? false;
+
+    if (!inSlasher) {
+      // ── Normal horror kit ─────────────────────────────────────
+      if (!skipSpecials) {
+        // Enter slasher mode when close (opportunistic)
+        if (dist < 200 && hpRatio > 0.35) {
+          if (this.castAbility('silence-thriller', buildContext(this.x, this.y))) return 'silence-thriller';
+        }
+
+        // Possess at long range
+        if (dist > 250) {
+          if (this.castAbility('silence-possess', buildContext(aimX, aimY))) return 'silence-possess';
+        }
+
+        // DON'T LOOK at medium range (angle aimed at player)
+        if (dist < 350 && dist > 80) {
+          if (this.castAbility('silence-dont-look', buildContext(aimX, aimY))) return 'silence-dont-look';
+        }
+
+        // They Watch when low HP (panic button)
+        if (hpRatio < 0.35) {
+          if (this.castAbility('silence-watch', buildContext(this.x, this.y))) return 'silence-watch';
+        }
+      }
+
+      // Default: short-range fade burst (treat as poke ability)
+      if (dist < 180) {
+        if (this.castAbility('silence-fade', buildContext(aimX, aimY))) return 'silence-fade';
+      }
+    } else {
+      // ── Slasher kit ──────────────────────────────────────────
+      if (!skipSpecials) {
+        // Open with Slash Em Up
+        if (this.castAbility('silence-slash-em-up', buildContext(aimX, aimY))) return 'silence-slash-em-up';
+
+        // Enrage when low on pips
+        if (slasherHp <= 6) {
+          if (this.castAbility('silence-enrage', buildContext(this.x, this.y))) return 'silence-enrage';
+        }
+
+        // Hook when mid-range; yank if hook connected
+        if (hookConnected) {
+          if (this.castAbility('silence-meat-hook', buildContext(aimX, aimY))) return 'silence-meat-hook-yank';
+        } else if (dist > 120 && dist < 400) {
+          if (this.castAbility('silence-meat-hook', buildContext(aimX, aimY))) return 'silence-meat-hook';
+        }
+
+        // Retire when near-death to minimise recoil
+        if (slasherHp <= 2) {
+          if (this.castAbility('silence-retire', buildContext(this.x, this.y))) return 'silence-retire';
+        }
+      }
+
+      // Default: machete at close range
+      if (dist < 120) {
+        if (this.castAbility('silence-machete', buildContext(aimX, aimY))) return 'silence-machete';
+      }
+    }
 
     return null;
   }

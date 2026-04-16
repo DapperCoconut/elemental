@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import * as PlayerData from '../data/PlayerData';
-import { ALL_UPGRADES, getElementUpgrades, getUpgradePrice, UpgradeDef } from '../data/Upgrades';
+import { ALL_UPGRADES, getElementUpgrades, UpgradeDef } from '../data/Upgrades';
 import { GAUNTLET_COST } from '../data/GauntletData';
 
 const ELEMENT_COLORS: Record<string, number> = {
@@ -40,6 +40,13 @@ const ELEMENT_EMOJIS: Record<string, string> = {
 };
 
 const BASE_ELEMENT_IDS = ['fire', 'water', 'life', 'air', 'earth'];
+const LAB_UPGRADE_COST = 500;
+
+const LAB_UPGRADES = [
+  { level: 1, name: 'Abstract Fusion', description: 'Fuse two Abstract Elements together in the Lab (costs 3 nuclei). Mismatched fusions waste 1 nucleus.' },
+  { level: 2, name: 'Resonant Core', description: 'Coming soon — further Lab enhancements.' },
+  { level: 3, name: 'Apex Synthesis', description: 'Coming soon — master-level Lab upgrades.' },
+];
 
 export class ShopScene extends Phaser.Scene {
   private shardText!: Phaser.GameObjects.Text;
@@ -111,7 +118,9 @@ export class ShopScene extends Phaser.Scene {
       .filter((id) => !BASE_ELEMENT_IDS.includes(id) && PlayerData.isElementUnlocked(id));
     const COMBINED_PER_PAGE = 5;
     const totalCombinedPages = combinedIds.length > 0 ? Math.ceil(combinedIds.length / COMBINED_PER_PAGE) : 0;
-    const totalPages = 1 + totalCombinedPages;
+    // Page 0 = base elements, pages 1..totalCombinedPages = combined, last page = specials
+    const SPECIALS_PAGE = 1 + totalCombinedPages;
+    const totalPages = SPECIALS_PAGE + 1;
     const hasNextPage = this.currentPage < totalPages - 1;
     const hasPrevPage = this.currentPage > 0;
 
@@ -137,6 +146,19 @@ export class ShopScene extends Phaser.Scene {
         .on('pointerover', () => rightBtn.setFillStyle(0x550099))
         .on('pointerout',  () => rightBtn.setFillStyle(0x330066))
         .on('pointerdown', () => this.scene.restart({ page: this.currentPage + 1 }));
+    }
+
+    // Page indicator for specials
+    if (this.currentPage === SPECIALS_PAGE) {
+      this.add.text(cx, 36, '⚙️ SPECIALS', {
+        fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc44',
+      }).setOrigin(0.5);
+    }
+
+    // ── Specials page ──────────────────────────────────────────────
+    if (this.currentPage === SPECIALS_PAGE) {
+      this.buildSpecialsPage(width, height, cx);
+      return;
     }
 
     // ── Element columns ──────────────────────────────────────────
@@ -254,62 +276,114 @@ export class ShopScene extends Phaser.Scene {
         }
       });
     });
+  }
 
-    // ── Bottom purchase row ───────────────────────────────────────
-    const bottomY = height - 22;
+  private buildSpecialsPage(width: number, height: number, cx: number): void {
+    const labLevel = PlayerData.getLabLevel();
     const gauntletUnlocked = PlayerData.isGauntletUnlocked();
 
-    if (gauntletUnlocked) {
-      // Nucleus button centered
-      const nucBtn = this.add
-        .rectangle(cx, bottomY, 270, 32, 0x220044, 1)
-        .setStrokeStyle(1, 0x9944ff)
-        .setInteractive({ useHandCursor: true })
-        .setDepth(5);
-      this.add.text(cx, bottomY, '⚛️ Elemental Nucleus  —  💎 100 shards', {
-        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
-      }).setOrigin(0.5).setDepth(6);
-      nucBtn
-        .on('pointerover', () => nucBtn.setFillStyle(0x440088))
-        .on('pointerout',  () => nucBtn.setFillStyle(0x220044))
-        .on('pointerdown', () => {
-          if (PlayerData.spendShards(100)) {
-            PlayerData.addNuclei(1);
-            this.nucleiText.setText(`⚛️ ×${PlayerData.getNuclei()}`);
-            this.refreshShardDisplay();
-          }
-        });
-    } else {
-      // Nucleus button on the right, Gauntlets unlock on the left
-      const nucX = cx + 160;
-      const nucBtn = this.add
-        .rectangle(nucX, bottomY, 270, 32, 0x220044, 1)
-        .setStrokeStyle(1, 0x9944ff)
-        .setInteractive({ useHandCursor: true })
-        .setDepth(5);
-      this.add.text(nucX, bottomY, '⚛️ Elemental Nucleus  —  💎 100 shards', {
-        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
-      }).setOrigin(0.5).setDepth(6);
-      nucBtn
-        .on('pointerover', () => nucBtn.setFillStyle(0x440088))
-        .on('pointerout',  () => nucBtn.setFillStyle(0x220044))
-        .on('pointerdown', () => {
-          if (PlayerData.spendShards(100)) {
-            PlayerData.addNuclei(1);
-            this.nucleiText.setText(`⚛️ ×${PlayerData.getNuclei()}`);
-            this.refreshShardDisplay();
-          }
-        });
+    let y = 90;
 
-      const gauntX = cx - 160;
-      const gauntBtn = this.add
-        .rectangle(gauntX, bottomY, 270, 32, 0x221100, 1)
-        .setStrokeStyle(1, 0xffaa00)
-        .setInteractive({ useHandCursor: true })
-        .setDepth(5);
-      this.add.text(gauntX, bottomY, `🏆 Unlock Gauntlets  —  💎 ${GAUNTLET_COST} shards`, {
-        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc66',
-      }).setOrigin(0.5).setDepth(6);
+    // ── Lab Upgrades section ──────────────────────────────────────
+    this.add.text(cx, y, '⚗️  LAB UPGRADES', {
+      fontSize: '20px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
+    }).setOrigin(0.5);
+    y += 32;
+
+    LAB_UPGRADES.forEach((upg) => {
+      const owned = labLevel >= upg.level;
+      const available = labLevel >= upg.level - 1;
+      const fillColor = owned ? 0x1a2b1a : (available ? 0x1a1a2b : 0x111111);
+      const borderColor = owned ? 0x33aa33 : (available ? 0x9944ff : 0x333333);
+      const labelColor = owned ? '#44ff44' : (available ? '#cc88ff' : '#444444');
+
+      const btnH = 64;
+      const btnW = Math.min(600, width - 80);
+      const btn = this.add.rectangle(cx, y + btnH / 2, btnW, btnH, fillColor)
+        .setStrokeStyle(2, borderColor);
+
+      this.add.text(cx - btnW / 2 + 16, y + 14, `⚗️ Lab Level ${upg.level}: ${upg.name}`, {
+        fontSize: '14px', fontFamily: '"Arial Black", sans-serif', color: labelColor,
+      }).setOrigin(0, 0.5);
+
+      this.add.text(cx - btnW / 2 + 16, y + 38, upg.description, {
+        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#777799',
+        wordWrap: { width: btnW - 140 },
+      }).setOrigin(0, 0.5);
+
+      const statusText = owned
+        ? 'OWNED'
+        : (available ? `💎 ${LAB_UPGRADE_COST} shards` : 'Requires previous level');
+      this.add.text(cx + btnW / 2 - 16, y + btnH / 2, statusText, {
+        fontSize: '12px', fontFamily: '"Arial Black", sans-serif',
+        color: owned ? '#33aa33' : (available ? '#ffcc44' : '#555555'),
+      }).setOrigin(1, 0.5);
+
+      if (available && !owned) {
+        btn.setInteractive({ useHandCursor: true });
+        btn
+          .on('pointerover', () => btn.setStrokeStyle(2, 0xffffff))
+          .on('pointerout',  () => btn.setStrokeStyle(2, borderColor))
+          .on('pointerdown', () => {
+            if (PlayerData.spendShards(LAB_UPGRADE_COST)) {
+              PlayerData.upgradelab();
+              this.scene.restart({ page: this.currentPage });
+            }
+          });
+      }
+
+      y += btnH + 10;
+    });
+
+    y += 20;
+
+    // ── Nucleus purchase ──────────────────────────────────────────
+    this.add.text(cx, y, '⚛️  ELEMENTAL NUCLEUS', {
+      fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
+    }).setOrigin(0.5);
+    y += 28;
+
+    const nucBtnH = 52;
+    const nucBtnW = 340;
+    const nucBtn = this.add.rectangle(cx, y + nucBtnH / 2, nucBtnW, nucBtnH, 0x220044)
+      .setStrokeStyle(2, 0x9944ff).setInteractive({ useHandCursor: true });
+    this.add.text(cx, y + nucBtnH / 2, '⚛️  Buy Elemental Nucleus  —  💎 100 shards', {
+      fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
+    }).setOrigin(0.5);
+    nucBtn
+      .on('pointerover', () => nucBtn.setFillStyle(0x440088))
+      .on('pointerout',  () => nucBtn.setFillStyle(0x220044))
+      .on('pointerdown', () => {
+        if (PlayerData.spendShards(100)) {
+          PlayerData.addNuclei(1);
+          this.nucleiText.setText(`⚛️ ×${PlayerData.getNuclei()}`);
+          this.refreshShardDisplay();
+        }
+      });
+
+    y += nucBtnH + 20;
+
+    // ── Gauntlet unlock ───────────────────────────────────────────
+    this.add.text(cx, y, '🏆  GAUNTLETS', {
+      fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc66',
+    }).setOrigin(0.5);
+    y += 28;
+
+    const gauntBtnH = 52;
+    const gauntBtnW = 340;
+    if (gauntletUnlocked) {
+      const gauntOwned = this.add.rectangle(cx, y + gauntBtnH / 2, gauntBtnW, gauntBtnH, 0x1a2b0d)
+        .setStrokeStyle(2, 0x33aa33);
+      void gauntOwned;
+      this.add.text(cx, y + gauntBtnH / 2, '✅  Gauntlets Unlocked', {
+        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#44ff44',
+      }).setOrigin(0.5);
+    } else {
+      const gauntBtn = this.add.rectangle(cx, y + gauntBtnH / 2, gauntBtnW, gauntBtnH, 0x221100)
+        .setStrokeStyle(2, 0xffaa00).setInteractive({ useHandCursor: true });
+      this.add.text(cx, y + gauntBtnH / 2, `🏆  Unlock Gauntlets  —  💎 ${GAUNTLET_COST} shards`, {
+        fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc66',
+      }).setOrigin(0.5);
       gauntBtn
         .on('pointerover', () => gauntBtn.setFillStyle(0x442200))
         .on('pointerout',  () => gauntBtn.setFillStyle(0x221100))

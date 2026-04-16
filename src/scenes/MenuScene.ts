@@ -25,6 +25,15 @@ import { slimeElement } from '../elements/slime';
 import { fateElement } from '../elements/fate';
 import { soundElement } from '../elements/sound';
 import { lightElement } from '../elements/light';
+import { magnetElement } from '../elements/magnet';
+import { metalElement } from '../elements/metal';
+import { plasmaElement } from '../elements/plasma';
+import { deathElement } from '../elements/death';
+import { voidElement } from '../elements/void';
+import { adrenalineElement } from '../elements/adrenaline';
+import { magicElement } from '../elements/magic';
+import { technologyElement } from '../elements/technology';
+import { silenceElement } from '../elements/silence';
 import { dummyElement } from '../elements/dummy';
 
 const ELEMENT_DATA_MAP: Record<string, Element> = {
@@ -37,6 +46,15 @@ const ELEMENT_DATA_MAP: Record<string, Element> = {
   fate: fateElement,
   sound: soundElement,
   light: lightElement,
+  magnet: magnetElement,
+  metal: metalElement,
+  plasma: plasmaElement,
+  death: deathElement,
+  void: voidElement,
+  adrenaline: adrenalineElement,
+  magic: magicElement,
+  technology: technologyElement,
+  silence: silenceElement,
   dummy: dummyElement,
 };
 
@@ -69,8 +87,8 @@ const COMBINED_ELEMENTS: ElementDef[] = [
   { id: 'creation', name: 'Creation', emoji: '⚒️', color: 0xcc6622, available: true },
 ];
 
-/** Alt-elements unlocked by beating a gauntlet. Each entry maps to the gauntlet ID needed. */
-const ALT_ELEMENT_UNLOCK_MAP: Record<string, string> = {
+/** Abstract elements unlocked by beating a gauntlet. Each entry maps to the gauntlet ID needed. */
+const ABSTRACT_ELEMENT_UNLOCK_MAP: Record<string, string> = {
   electricity: 'fire',
   slime: 'water',
   fate: 'life',
@@ -78,12 +96,25 @@ const ALT_ELEMENT_UNLOCK_MAP: Record<string, string> = {
   light: 'earth',
 };
 
-const ALT_ELEMENTS: ElementDef[] = [
+const ABSTRACT_ELEMENTS: ElementDef[] = [
   { id: 'electricity', name: 'Electricity', emoji: '⚡', color: 0xffee00, available: true },
   { id: 'slime', name: 'Slime', emoji: '🟢', color: 0x66cc44, available: true },
   { id: 'fate', name: 'Fate', emoji: '🃏', color: 0x88eecc, available: true },
   { id: 'sound', name: 'Sound', emoji: '🔊', color: 0xff66cc, available: true },
   { id: 'light', name: 'Light', emoji: '✨', color: 0xfff4a8, available: true },
+];
+
+/** Abstract combined elements — created by fusing two abstract elements in a Lvl 1+ Lab. */
+const ABSTRACT_COMBINED_ELEMENTS: ElementDef[] = [
+  { id: 'magnet', name: 'Magnet', emoji: '🧲', color: 0xcc2244, available: true },
+  { id: 'metal',  name: 'Metal',  emoji: '⚙️',  color: 0x8899aa, available: true },
+  { id: 'plasma', name: 'Plasma', emoji: '🔮',  color: 0xaa22ff, available: true },
+  { id: 'death',  name: 'Death',  emoji: '💀',  color: 0x440066, available: true },
+  { id: 'void',   name: 'Void',   emoji: '🌑',  color: 0x220033, available: true },
+  { id: 'adrenaline', name: 'Adrenaline', emoji: '⚡️', color: 0xffbb22, available: true },
+  { id: 'magic', name: 'Magic', emoji: '📖', color: 0x9944ff, available: true },
+  { id: 'technology', name: 'Technology', emoji: '💻', color: 0x44ccaa, available: true },
+  { id: 'silence', name: 'Silence', emoji: '🫥', color: 0x1a0022, available: true },
 ];
 
 const DIFF_COLORS = [0x22cc44, 0x88cc22, 0xddaa00, 0xee5500, 0xcc0022];
@@ -168,7 +199,8 @@ export class MenuScene extends Phaser.Scene {
     if (id === 'dummy') return { id: 'dummy', name: 'Dummy', emoji: '🎯', color: 0x888888, available: true };
     return ELEMENTS.find((e) => e.id === id)
       ?? COMBINED_ELEMENTS.find((e) => e.id === id)
-      ?? ALT_ELEMENTS.find((e) => e.id === id);
+      ?? ABSTRACT_ELEMENTS.find((e) => e.id === id)
+      ?? ABSTRACT_COMBINED_ELEMENTS.find((e) => e.id === id);
   }
 
   private renderPhase(width: number, height: number, cx: number): void {
@@ -212,12 +244,13 @@ export class MenuScene extends Phaser.Scene {
     // Determine which elements to show on this page
     const completedGauntlets = PlayerData.getCompletedGauntlets();
     const unlockedCombined = COMBINED_ELEMENTS.filter((e) => PlayerData.isElementUnlocked(e.id));
-    const unlockedAlt = ALT_ELEMENTS.filter((e) => {
-      const neededGauntlet = ALT_ELEMENT_UNLOCK_MAP[e.id];
+    const unlockedAbstract = ABSTRACT_ELEMENTS.filter((e) => {
+      const neededGauntlet = ABSTRACT_ELEMENT_UNLOCK_MAP[e.id];
       return neededGauntlet ? completedGauntlets.includes(neededGauntlet) : false;
     });
+    const unlockedAbstractCombined = ABSTRACT_COMBINED_ELEMENTS.filter((e) => PlayerData.isElementUnlocked(e.id));
     // Pool all non-base unlocked elements together for pagination
-    const unlockedExtra = [...unlockedCombined, ...unlockedAlt];
+    const unlockedExtra = [...unlockedCombined, ...unlockedAbstract, ...unlockedAbstractCombined];
     const PAGE_SIZE = 5;
     const extraPages = Math.max(1, Math.ceil(unlockedExtra.length / PAGE_SIZE));
     const maxPage = unlockedExtra.length > 0 ? extraPages : 0; // 0 = no extra pages
@@ -278,7 +311,7 @@ export class MenuScene extends Phaser.Scene {
     const startX = cx - totalW / 2;
 
     if (this.elemPage > 0 && currentElements.length === 0) {
-      const noElems = this.add.text(cx, height / 2 + 20, 'No extra elements discovered yet.\nVisit the LAB to unlock combined elements,\nor complete Gauntlets to unlock Alt-Elements.', {
+      const noElems = this.add.text(cx, height / 2 + 20, 'No extra elements discovered yet.\nVisit the LAB to unlock combined elements,\nor complete Gauntlets to unlock Abstract Elements.', {
         fontSize: '14px', fontFamily: 'Arial, sans-serif', color: '#555577', align: 'center',
       }).setOrigin(0.5);
       this.phaseObjects.push(noElems);
