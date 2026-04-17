@@ -97,6 +97,13 @@ export class ShopScene extends Phaser.Scene {
       color: '#cc88ff',
     }).setOrigin(1, 0);
 
+    // Corrupt shard counter
+    this.add.text(width - 16, 60, `🩸 ${PlayerData.getCorruptShards()}`, {
+      fontSize: '14px',
+      fontFamily: '"Arial Black", sans-serif',
+      color: '#cc44ff',
+    }).setOrigin(1, 0);
+
     // Back button
     const backBtn = this.add
       .rectangle(52, 36, 88, 36, 0x222233)

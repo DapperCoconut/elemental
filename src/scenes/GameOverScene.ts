@@ -7,21 +7,24 @@ export class GameOverScene extends Phaser.Scene {
     super({ key: 'GameOverScene' });
   }
 
-  create(data: { playerWon: boolean; difficulty: number; rewardMult?: number; isPvP?: boolean; isGauntlet?: boolean }): void {
+  create(data: { playerWon: boolean; difficulty: number; rewardMult?: number; isPvP?: boolean; isGauntlet?: boolean; mode?: string; wavesCompleted?: number; corruptShardsEarned?: number }): void {
     const { width, height } = this.scale;
     const cx = width / 2;
     const cy = height / 2;
 
     this.add.rectangle(cx, cy, width, height, 0x0d0d1a);
 
-    const baseShard = (!data.isPvP && data.playerWon) ? SHARD_REWARDS[data.difficulty - 1] : 0;
+    const isInvasion = data.mode === 'invasion';
+    const baseShard = (!data.isPvP && !isInvasion && data.playerWon) ? SHARD_REWARDS[data.difficulty - 1] : 0;
     const shardsEarned = Math.round(baseShard * (data.rewardMult ?? 1));
     if (shardsEarned > 0) {
       PlayerData.addShards(shardsEarned);
     }
 
     let title: string, subtitle: string, titleColor: string;
-    if (data.isGauntlet && !data.playerWon) {
+    if (isInvasion) {
+      [title, subtitle, titleColor] = ['YOU FELL', `Waves cleared: ${data.wavesCompleted ?? 0}`, '#cc44ff'];
+    } else if (data.isGauntlet && !data.playerWon) {
       [title, subtitle, titleColor] = ['GAUNTLET FAILED', 'Your run has ended...', '#ff4444'];
     } else if (data.isPvP) {
       [title, subtitle, titleColor] = data.playerWon
@@ -53,6 +56,14 @@ export class GameOverScene extends Phaser.Scene {
         fontSize: '22px',
         fontFamily: '"Arial Black", sans-serif',
         color: '#ffcc00',
+      }).setOrigin(0.5);
+    }
+
+    if (isInvasion && (data.corruptShardsEarned ?? 0) > 0) {
+      this.add.text(cx, cy + 18, `+${data.corruptShardsEarned} 🩸 Corrupt Shards`, {
+        fontSize: '22px',
+        fontFamily: '"Arial Black", sans-serif',
+        color: '#cc44ff',
       }).setOrigin(0.5);
     }
 

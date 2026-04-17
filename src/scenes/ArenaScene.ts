@@ -4,7 +4,15 @@ import { Fighter } from '../entities/Fighter';
 import { Player } from '../entities/Player';
 import { NpcOpponent, NpcAiState, DIFFICULTY_PRESETS, DifficultyConfig } from '../entities/NpcOpponent';
 import { BasicCorrupted } from '../entities/corrupted/BasicCorrupted';
-import { CorruptedBase } from '../entities/corrupted/CorruptedBase';
+import { OverchargedCorrupted } from '../entities/corrupted/OverchargedCorrupted';
+import { RusherCorrupted } from '../entities/corrupted/RusherCorrupted';
+import { ProtectedCorrupted } from '../entities/corrupted/ProtectedCorrupted';
+import { ArchitectCorrupted } from '../entities/corrupted/ArchitectCorrupted';
+import { TitanCorrupted } from '../entities/corrupted/TitanCorrupted';
+import { CorruptedBase, CorruptedType } from '../entities/corrupted/CorruptedBase';
+import { FesteringGrowth } from '../invasion/FesteringGrowth';
+import { WaveManager } from '../invasion/WaveManager';
+import type { SpawnEntry } from '../invasion/WaveManager';
 import { Projectile } from '../combat/Projectile';
 import { CastContext } from '../elements/Ability';
 import { Element } from '../elements/Element';
@@ -895,6 +903,14 @@ export class ArenaScene extends Phaser.Scene {
   private isInvasion = false;
   private corrupted: CorruptedBase[] = [];
   private corruptedGroup!: Phaser.Physics.Arcade.Group;
+  private festeringGrowths: FesteringGrowth[] = [];
+  private waveManager!: WaveManager;
+  private invasionShardsEarned = 0;
+  private invasionWavesCompleted = 0;
+  private invasionBetweenWavesUntil = 0;
+  private invasionWaveBanner: Phaser.GameObjects.Text | null = null;
+  private invasionCorruptShardLabel: Phaser.GameObjects.Text | null = null;
+  private invasionArchitectIdCounter = 0;
 
 
   // Dummy mode keys (arrow keys + P for dummy control)
@@ -3584,6 +3600,10 @@ export class ArenaScene extends Phaser.Scene {
     this.geysers = [];
     this.painRainShadows = [];
     this.corrupted = [];
+    this.festeringGrowths = [];
+    this.invasionShardsEarned = 0;
+    this.invasionWavesCompleted = 0;
+    this.invasionBetweenWavesUntil = 0;
 
     const screenW = this.scale.width;
     const screenH = this.scale.height;
@@ -4480,19 +4500,35 @@ export class ArenaScene extends Phaser.Scene {
       }
     }
 
+    // ── Invasion mode setup ────────────────────────────────────────
+    if (this.isInvasion) {
+      this.waveManager = new WaveManager();
+      this.invasionBetweenWavesUntil = this.time.now + 2000;
+      // Remove the initial BasicCorrupted placeholder — wave 1 will spawn proper enemies
+      if (this.npc.active) { this.npc.setActive(false).setVisible(false); }
+      // Show wave banner placeholder
+      this.invasionWaveBanner = this.add.text(screenW / 2, 60, '', {
+        fontSize: '28px', fontFamily: '"Arial Black", sans-serif',
+        color: '#cc44ff', stroke: '#330055', strokeThickness: 4,
+      }).setOrigin(0.5).setDepth(25).setScrollFactor(0);
+      this.invasionCorruptShardLabel = this.add.text(screenW - 16, 16, '🩸 0', {
+        fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#cc44ff',
+      }).setOrigin(1, 0).setDepth(25).setScrollFactor(0);
+    }
+
     // ── Arena labels ───────────────────────────────────────────────
     if (this.isPvP) {
       this.add.text(180, 20, `${this.playerElement.emoji} P1`, {
         fontSize: '14px', color: '#ffffff',
       }).setOrigin(0.5).setDepth(20);
-      this.add.text(W - 180, 20, `P2 ${this.npcElement.emoji}`, {
+      this.add.text(screenW - 180, 20, `P2 ${this.npcElement.emoji}`, {
         fontSize: '14px', color: '#aaddff',
       }).setOrigin(0.5).setDepth(20);
-    } else {
+    } else if (!this.isInvasion) {
       this.add.text(180, 20, `${this.playerElement.emoji} YOU`, {
         fontSize: '14px', color: '#ffffff',
       }).setOrigin(0.5).setDepth(20);
-      this.add.text(W - 180, 20, `ENEMY ${this.npcElement.emoji}`, {
+      this.add.text(screenW - 180, 20, `ENEMY ${this.npcElement.emoji}`, {
         fontSize: '14px', color: '#aaaaaa',
       }).setOrigin(0.5).setDepth(20);
     }
@@ -8223,6 +8259,15 @@ export class ArenaScene extends Phaser.Scene {
             isGauntlet: true,
           });
         }
+      } else if (this.isInvasion) {
+        PlayerData.addCorruptShards(this.invasionShardsEarned);
+        this.scene.start('GameOverScene', {
+          playerWon: false,
+          difficulty: 0,
+          mode: 'invasion',
+          wavesCompleted: this.invasionWavesCompleted,
+          corruptShardsEarned: this.invasionShardsEarned,
+        });
       } else {
         this.scene.start('GameOverScene', {
           playerWon,
@@ -13594,9 +13639,9 @@ export class ArenaScene extends Phaser.Scene {
     );
     this.npcCastId = npcCastId;
 
-    // Invasion: run AI for the primary corrupted
-    if (this.isInvasion && this.npc instanceof CorruptedBase && this.npc.active && this.npc.hp > 0) {
-      this.npc.aiTick(this.player, this.projectiles, [], time, delta);
+    // ── Invasion mode update ──────────────────────────────────────
+    if (this.isInvasion) {
+      this.updateInvasion(time, delta);
     }
 
     // Earth and Light kit updates (after npcCastId is known)
@@ -23025,6 +23070,267 @@ export class ArenaScene extends Phaser.Scene {
       vy: Math.sin(angle) * speed,
       owner,
     });
+  }
+
+  private updateInvasion(time: number, delta: number): void {
+    // Wave transition
+    if (this.waveManager.isWaveComplete() && this.invasionBetweenWavesUntil <= 0) {
+      // Wave just cleared — start inter-wave countdown
+      this.invasionWavesCompleted = this.waveManager.wave;
+      this.invasionShardsEarned += this.waveManager.wave * 5; // wave completion bonus
+      this.invasionBetweenWavesUntil = time + 3000;
+      this.showFloatingText(this.player.x, this.player.y - 50, `WAVE ${this.waveManager.wave} CLEARED!`, '#cc44ff');
+    }
+    if (!this.waveManager.waveActive && this.invasionBetweenWavesUntil > 0 && time >= this.invasionBetweenWavesUntil) {
+      this.invasionBetweenWavesUntil = 0; // reset sentinel
+      const def = this.waveManager.startNextWave(time);
+      this.showWaveBanner(def.waveNumber, def.isBossWave);
+    }
+
+    // Spawn due enemies
+    for (const entry of this.waveManager.collectDueSpawns(time)) {
+      this.spawnCorrupted(entry);
+    }
+
+    // Build allEnemies list (primary + secondary)
+    const allEnemies: CorruptedBase[] = [];
+    if (this.npc instanceof CorruptedBase && this.npc.active && this.npc.hp > 0) {
+      allEnemies.push(this.npc);
+    }
+    for (const c of this.corrupted) {
+      if (c.active && c.hp > 0) allEnemies.push(c);
+    }
+
+    // Run AI for all enemies
+    for (const c of allEnemies) {
+      c.aiTick(this.player, this.projectiles, allEnemies, time, delta);
+    }
+
+    // Tick festering growths
+    this.festeringGrowths = this.festeringGrowths.filter(g => g.active);
+    for (const g of this.festeringGrowths) {
+      g.tick(this.player, time);
+    }
+
+    // Tick Titan shield orbs & rockets against player projectiles
+    for (const c of allEnemies) {
+      if (c instanceof TitanCorrupted) {
+        this.updateTitanShieldVsProjectiles(c);
+      }
+    }
+
+    // Protected forcefield — absorbs damage for nearby allies
+    for (const c of allEnemies) {
+      if (c instanceof ProtectedCorrupted && c.forcefieldHp > 0) {
+        for (const ally of allEnemies) {
+          if (ally === c) continue;
+          const dist = Phaser.Math.Distance.Between(c.x, c.y, ally.x, ally.y);
+          if (dist <= c.forcefieldRadius) {
+            // Swap ally's damageAbsorber to route through forcefield
+            ally.damageAbsorber = (amount) => {
+              c.forcefieldHp = Math.max(0, c.forcefieldHp - amount);
+              this.spawnHitFlash(c.x, c.y, 0x44aaff);
+              return true;
+            };
+          } else {
+            ally.damageAbsorber = null;
+          }
+        }
+      }
+    }
+
+    // Update corrupt shard display
+    if (this.invasionCorruptShardLabel) {
+      this.invasionCorruptShardLabel.setText(`🩸 ${this.invasionShardsEarned}`);
+    }
+  }
+
+  private showWaveBanner(waveNum: number, isBossWave = false): void {
+    if (!this.invasionWaveBanner) return;
+    const label = isBossWave ? `⚠ WAVE ${waveNum} — BOSS!` : `WAVE ${waveNum}`;
+    const color = isBossWave ? '#ff4444' : '#cc44ff';
+    this.invasionWaveBanner.setText(label).setColor(color).setAlpha(1);
+    this.tweens.killTweensOf(this.invasionWaveBanner);
+    this.tweens.add({
+      targets: this.invasionWaveBanner,
+      alpha: 0,
+      delay: 2000,
+      duration: 600,
+    });
+  }
+
+  private updateTitanShieldVsProjectiles(titan: TitanCorrupted): void {
+    // Check each active player projectile against each active shield orb
+    const projs = this.projectiles.getChildren() as Projectile[];
+    for (const proj of projs) {
+      if (!proj.active || !proj.isFromPlayer) continue;
+      for (let i = 0; i < titan.shieldOrbs.length; i++) {
+        const orb = titan.shieldOrbs[i];
+        if (!orb.active) continue;
+        const dist = Phaser.Math.Distance.Between(proj.x, proj.y, orb.sprite.x, orb.sprite.y);
+        if (dist <= 22) {
+          titan.damageShield(i, proj.damage);
+          this.spawnHitFlash(proj.x, proj.y, 0x44ffff);
+          this.showFloatingText(orb.sprite.x, orb.sprite.y - 20, `${proj.damage}`, '#44ffff');
+          proj.setActive(false).setVisible(false);
+          (proj.body as Phaser.Physics.Arcade.Body).stop();
+          break;
+        }
+      }
+    }
+  }
+
+  private spawnCorrupted(entry: SpawnEntry): void {
+    const worldW = 1920;
+    const worldH = 1280;
+    const pos = CorruptedBase.spawnFromEdge(worldW, worldH);
+    let c: CorruptedBase;
+
+    switch (entry.type) {
+      case CorruptedType.Overcharged: {
+        const oc = new OverchargedCorrupted(this, pos.x, pos.y, entry.baseHp, entry.baseSpeed);
+        oc.onDeathExplosion = (x, y) => {
+          // Void puddle + AoE damage
+          this.spawnVoidPuddle(x, y);
+          this.dealAoeDamageFromOwner(x, y, 80, 30, 'npc');
+          const boom = this.add.circle(x, y, 80, 0xaa00cc, 0.35).setDepth(7);
+          this.tweens.add({ targets: boom, scaleX: 1.8, scaleY: 1.8, alpha: 0, duration: 500, onComplete: () => boom.destroy() });
+        };
+        c = oc;
+        break;
+      }
+      case CorruptedType.Rusher:
+        c = new RusherCorrupted(this, pos.x, pos.y, entry.baseHp, entry.baseSpeed);
+        break;
+      case CorruptedType.Protected:
+        c = new ProtectedCorrupted(this, pos.x, pos.y, entry.baseHp, entry.baseSpeed);
+        break;
+      case CorruptedType.Architect: {
+        const archId = ++this.invasionArchitectIdCounter;
+        const arch = new ArchitectCorrupted(this, pos.x, pos.y, entry.baseHp, entry.baseSpeed);
+        arch.onSpawnGrowth = (gx, gy) => {
+          const g = new FesteringGrowth(this, gx, gy, archId);
+          g.onShoot = (fx, fy, tx, ty) => {
+            this.spawnGrowthProjectile(fx, fy, tx, ty, 'npc');
+          };
+          g.onPoison = () => {
+            this.player.toxicUntil = this.time.now + 3000;
+            this.player.toxicDps = 3;
+            this.player.toxicTickAccum = 0;
+            this.showFloatingText(this.player.x, this.player.y - 24, '☠ POISONED', '#99ff44');
+          };
+          this.festeringGrowths.push(g);
+        };
+        arch.countMyGrowths = () => this.festeringGrowths.filter(g => g.architectId === archId && g.active).length;
+        c = arch;
+        break;
+      }
+      case CorruptedType.Titan: {
+        const titan = new TitanCorrupted(this, pos.x, pos.y, entry.baseHp, entry.baseSpeed);
+        titan.onFireProjectile = (fx, fy, tx, ty, dmg) => this.spawnTitanProjectile(fx, fy, tx, ty, dmg);
+        titan.onSlam = (sx, sy, r, d) => {
+          this.dealAoeDamageFromOwner(sx, sy, r, d, 'npc');
+          const ring = this.add.circle(sx, sy, r, 0xaa00cc, 0.3).setDepth(7);
+          this.tweens.add({ targets: ring, scaleX: 1.5, scaleY: 1.5, alpha: 0, duration: 500, onComplete: () => ring.destroy() });
+          this.showFloatingText(sx, sy, '⚡ SLAM', '#cc44ff');
+        };
+        titan.onSpawnRocket = (rx, ry) => this.spawnTitanRocket(titan, rx, ry);
+        c = titan;
+        break;
+      }
+      default: // Basic
+        c = new BasicCorrupted(this, pos.x, pos.y, entry.baseHp, entry.baseSpeed);
+        break;
+    }
+
+    // Assign as primary or secondary
+    const hasPrimary = this.npc instanceof CorruptedBase && this.npc.active && this.npc.hp > 0;
+    if (!hasPrimary) {
+      this.npc = c;
+      this.npc.once('defeated', () => {
+        if (this.npc.active) { this.npc.setActive(false).setVisible(false); }
+        this.waveManager.onEnemyDefeated();
+        this.invasionShardsEarned += Math.ceil(this.waveManager.wave * 0.5);
+        if (this.invasionWavesCompleted < this.waveManager.wave && this.waveManager.isWaveComplete()) {
+          this.invasionWavesCompleted = this.waveManager.wave;
+        }
+        this.promotePrimaryTarget();
+      });
+    } else {
+      this.corrupted.push(c);
+      this.corruptedGroup.add(c, true);
+      c.once('defeated', () => {
+        this.corrupted = this.corrupted.filter(x => x !== c);
+        this.corruptedGroup.remove(c, false, false);
+        if (c.active) { c.setActive(false).setVisible(false); }
+        this.waveManager.onEnemyDefeated();
+        this.invasionShardsEarned += Math.ceil(this.waveManager.wave * 0.5);
+        if (this.invasionWavesCompleted < this.waveManager.wave && this.waveManager.isWaveComplete()) {
+          this.invasionWavesCompleted = this.waveManager.wave;
+        }
+        this.showFloatingText(c.x, c.y - 30, `+${Math.ceil(this.waveManager.wave * 0.5)} 🩸`, '#cc44ff');
+      });
+    }
+  }
+
+  private spawnVoidPuddle(x: number, y: number): void {
+    const puddle = this.add.circle(x, y, 36, 0x330044, 0.7)
+      .setStrokeStyle(2, 0xaa00cc, 0.5).setDepth(2);
+    this.time.delayedCall(5000, () => {
+      this.tweens.add({ targets: puddle, alpha: 0, duration: 600, onComplete: () => puddle.destroy() });
+    });
+    // Damage player if in puddle (simple tick)
+    const tickInterval = this.time.addEvent({
+      delay: 600,
+      repeat: 8,
+      callback: () => {
+        if (!puddle.active) { tickInterval.remove(); return; }
+        if (Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) <= 36) {
+          this.player.takeDamage(5);
+          this.spawnHitFlash(this.player.x, this.player.y, 0xaa00cc);
+        }
+      },
+    });
+  }
+
+  private spawnGrowthProjectile(fromX: number, fromY: number, toX: number, toY: number, _owner: 'player' | 'npc'): void {
+    const proj = this.physics.add.sprite(fromX, fromY, 'proj-corrupted');
+    const dmg = 6;
+    const dx = toX - fromX;
+    const dy = toY - fromY;
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    (proj.body as Phaser.Physics.Arcade.Body).setVelocity((dx / len) * 220, (dy / len) * 220);
+    this.time.delayedCall(2500, () => { if (proj.active) proj.setActive(false).setVisible(false); });
+    this.physics.add.overlap(proj, this.player, () => {
+      if (!proj.active) return;
+      this.player.takeDamage(dmg);
+      this.spawnHitFlash(this.player.x, this.player.y, 0x44cc44);
+      proj.setActive(false).setVisible(false);
+    });
+  }
+
+  private spawnTitanProjectile(fromX: number, fromY: number, toX: number, toY: number, damage: number): void {
+    const proj = this.physics.add.sprite(fromX, fromY, 'proj-corrupted');
+    const dx = toX - fromX;
+    const dy = toY - fromY;
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    (proj.body as Phaser.Physics.Arcade.Body).setVelocity((dx / len) * 300, (dy / len) * 300);
+    this.time.delayedCall(2000, () => { if (proj.active) proj.setActive(false).setVisible(false); });
+    this.physics.add.overlap(proj, this.player, () => {
+      if (!proj.active) return;
+      this.player.takeDamage(damage);
+      this.spawnHitFlash(this.player.x, this.player.y, 0xcc44ff);
+      proj.setActive(false).setVisible(false);
+    });
+  }
+
+  private spawnTitanRocket(titan: TitanCorrupted, startX: number, startY: number): void {
+    const sprite = this.add.circle(startX, startY, 8, 0xff4400, 0.9)
+      .setStrokeStyle(2, 0xff8800, 1).setDepth(7) as unknown as Phaser.GameObjects.Arc;
+    const rocket = { sprite, x: startX, y: startY, vx: 0, vy: -200, active: true, hp: 15 };
+    titan.titanRockets.push(rocket);
+    // Allow player projectiles to shoot it down
+    // (handled in updateTitanShieldVsProjectiles by proximity to rocket.sprite)
   }
 
   private promotePrimaryTarget(): void {
