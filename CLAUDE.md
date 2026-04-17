@@ -26,7 +26,7 @@ BootScene → TitleScene → MenuScene → ArenaScene → GameOverScene → Titl
 
 - **BootScene**: Runs once. Generates *all* sprite textures dynamically via Phaser's graphics API — there are no image assets. Every element icon and projectile shape is drawn in code here.
 - **MenuScene**: Three-phase UI — pick player element, pick enemy element, pick difficulty. Also where mutations are selected.
-- **ArenaScene**: The entire combat loop (~6000+ lines). All game logic lives here: input handling, per-frame ability updates, projectile collision, NPC AI ticks, and HUD rendering.
+- **ArenaScene**: The combat loop orchestrator. Handles input dispatch, per-frame updates, projectile collision, NPC AI ticks, and HUD rendering. Per-element logic is progressively being moved into `src/elements/kits/[Element]Kit.ts` files — see ElementKit Pattern below.
 - **LabScene**: Drag two base elements into slots and spend a Nucleus to unlock a combined element.
 - **ShopScene**: Spend shards to buy element-specific upgrades (5 slots per base element).
 
@@ -44,11 +44,52 @@ The `CastContext` (defined in `src/elements/Ability.ts`) is a large object passe
 **Ability registration flow** — adding a new ability or element requires touching:
 1. `src/elements/[id].ts` — define the ability and add it to the element's array
 2. `src/elements/Ability.ts` — add any new context methods to `CastContext`
-3. `src/scenes/ArenaScene.ts` — implement the method in `buildPlayerContext()`, `buildNpcContext()`, and `buildCloneContext()` (clone must always have no-op stubs); add per-frame logic if needed; add ability bar color in the color map; add input handling in the `elementId === '[id]'` block; add private state fields and reset them in `create()`
-4. `src/scenes/BootScene.ts` — generate any new projectile/element textures
-5. `src/entities/NpcOpponent.ts` — implement `do[Element]Abilities()` and wire it in `doAI()`; add any new fields to `NpcAiState`
-6. `src/scenes/MenuScene.ts` — add to `ELEMENTS` or `COMBINED_ELEMENTS`
-7. `src/data/Recipes.ts` — if it's a combined element, add the recipe
+3. `src/elements/kits/[Element]Kit.ts` — implement the element kit (see ElementKit pattern below)
+4. `src/scenes/ArenaScene.ts` — wire the kit in (import, field, adapter, call sites); add ability bar color in the color map
+5. `src/scenes/BootScene.ts` — generate any new projectile/element textures
+6. `src/entities/NpcOpponent.ts` — implement `do[Element]Abilities()` and wire it in `doAI()`; add any new fields to `NpcAiState`
+7. `src/scenes/MenuScene.ts` — add to `ELEMENTS` or `COMBINED_ELEMENTS`
+8. `src/data/Recipes.ts` — if it's a combined element, add the recipe
+
+### ElementKit Pattern
+
+New elements must be implemented as a kit in `src/elements/kits/[Element]Kit.ts` rather than inline in ArenaScene. See `MagnetKit.ts`, `LightKit.ts`, `VoidKit.ts`, or `TechnologyKit.ts` for full examples.
+
+**Structure:**
+- `[Element]ArenaApi` interface — the narrow surface the kit needs from ArenaScene. Use property getters (`get player()`, `get npc()`, etc.) in the adapter object so references stay live across match restarts.
+- `[Element]Kit` class with:
+  - All element private state fields (player + NPC mirrors)
+  - `reset()` — reinitializes all state; called every match start
+  - `handleInput(dt)` — handles keyboard input for this element
+  - `update(dt)` — per-frame logic (auras, timers, projectile updates, HUD)
+  - Public accessors for any fields read by ArenaScene (speed bonuses, active flags, etc.)
+  - Public `do*()` methods called from `buildPlayerContext()` / `buildNpcContext()`
+
+**ArenaScene size discipline:** ArenaScene is already large and must not grow materially. Any new element logic, state, or helpers belong in the kit — not in ArenaScene. The only code that should land in ArenaScene for a new element is: the kit field declaration, the adapter + constructor call in `create()`, `handleInput`/`update` dispatch lines, `buildPlayerContext`/`buildNpcContext` call sites, speed mult accessor reads, and the ability bar color entry. Wiring a kit typically adds ~50 lines to ArenaScene. If you find yourself adding significantly more than that, move the excess logic into the kit instead.
+
+**Wiring in ArenaScene:**
+```typescript
+// Field
+private [element]Kit!: [Element]Kit;
+
+// In create() — construct once, reset on subsequent calls
+if (this.[element]Kit) {
+  this.[element]Kit.reset();
+} else {
+  const arena = this;
+  const api: [Element]ArenaApi = {
+    get player() { return arena.player; },
+    // ... other getters and method delegates
+  };
+  this.[element]Kit = new [Element]Kit(api);
+}
+
+// Input dispatch
+this.[element]Kit.handleInput(dt);
+
+// Update dispatch
+this.[element]Kit.update(dt);
+```
 
 ### NPC AI
 
