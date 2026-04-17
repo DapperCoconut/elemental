@@ -214,7 +214,10 @@ export class MenuScene extends Phaser.Scene {
     }
     this.phaseObjects = [];
 
-    if (this.selectionPhase === 'difficulty') {
+    if (this.selectionPhase === 'difficulty' && this.isInvasion) {
+      const playerEl = this.findElement(this.playerChoice ?? '');
+      this.renderInvasionStartPhase(width, height, cx, playerEl);
+    } else if (this.selectionPhase === 'difficulty') {
       this.renderDifficultyPhase(width, height, cx);
     } else {
       this.renderElementPhase(width, height, cx);

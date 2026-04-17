@@ -3591,9 +3591,25 @@ export class ArenaScene extends Phaser.Scene {
     this.add.rectangle(cx, cy, W - pad * 2, H - pad * 2, this.isInvasion ? 0x120018 : 0x181828);
 
     const grid = this.add.graphics();
-    grid.lineStyle(1, this.isInvasion ? 0x1a0025 : 0x202038, 1);
+    grid.lineStyle(1, this.isInvasion ? 0x3d0060 : 0x202038, 1);
     for (let x = pad; x < W - pad; x += 80) grid.lineBetween(x, pad, x, H - pad);
     for (let y = pad; y < H - pad; y += 80) grid.lineBetween(pad, y, W - pad, y);
+
+    if (this.isInvasion) {
+      // Scattered faint corruption nodes as spatial landmarks
+      const landmarks = this.add.graphics();
+      const rng = Phaser.Math.RND;
+      rng.sow(['invasion-landmarks']);
+      for (let i = 0; i < 40; i++) {
+        const lx = pad + rng.integerInRange(0, W - pad * 2);
+        const ly = pad + rng.integerInRange(0, H - pad * 2);
+        const r  = rng.integerInRange(6, 18);
+        landmarks.lineStyle(1, 0x6600aa, 0.35);
+        landmarks.strokeCircle(lx, ly, r);
+        landmarks.lineStyle(1, 0x6600aa, 0.15);
+        landmarks.strokeCircle(lx, ly, r + 6);
+      }
+    }
 
     const border = this.add.graphics();
     border.lineStyle(3, this.isInvasion ? 0x440066 : 0x3a3a5a, 1);
@@ -9495,6 +9511,7 @@ export class ArenaScene extends Phaser.Scene {
     if (this.gameEnded) return;
 
     const pointer = this.input.activePointer;
+    pointer.updateWorldPoint(this.cameras.main);
     const mouseX = pointer.worldX;
     const mouseY = pointer.worldY;
 
