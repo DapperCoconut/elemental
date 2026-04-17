@@ -181,6 +181,8 @@ export interface CastContext {
   techHackAttribute: () => void;
   techPlayerGift: () => void;
   techOpSelfBegin: () => void;
+  techGearGiveActivate: () => void;
+  techRandomEffect: () => void;
   // Silence (abstract combined: slime + sound)
   silenceStartFade: () => void;
   silenceReleaseFade: () => void;
@@ -190,11 +192,18 @@ export interface CastContext {
   silenceExitSlasher: (voluntary: boolean) => void;
   silenceStartWatch: () => void;
   silenceWatchTendril: (tx: number, ty: number) => void;
+  techStartDomain: () => void;
   silenceMachete: (angleRad: number) => void;
   silenceThrowHook: (angleRad: number) => void;
   silenceYankHook: () => void;
   silenceEnrage: () => void;
   silenceSlashEmUp: () => void;
+  // Magma (abstract combined: slime + fate)
+  magmaMaceEmpower: () => void;
+  magmaBoulder: (tx: number, ty: number) => void;
+  magmaVolcano: () => void;
+  magmaSplit: () => void;
+  magmaLavaLord: () => void;
 }
 
 export interface Ability {

@@ -1,31 +1,31 @@
 import { Element } from './Element';
-import { Ability } from './Ability';
+import { Ability, CastContext } from './Ability';
 
-const flail: Ability = {
-  id: 'tech-flail',
-  name: 'Flail',
-  description: 'Passive pendulum ball follows you and damages enemies on contact (10 dmg). Click to supersize it for 3s (15 dmg, larger).',
+const gearGive: Ability = {
+  id: 'tech-gear-give',
+  name: 'Gear.Give',
+  description: 'Spawn a cycling item box (cycles every 0.5s). Click again to grab the weapon shown. Active weapon replaces Click for 20s. Weapons: Sword Whip, Disc Dancer, Helix Shot, Code Cruncher.',
   displayKey: 'Click',
-  cooldown: 8000,
-  cast(ctx) { ctx.techFlailEmpower(); },
+  cooldown: 0,
+  cast(ctx) { ctx.techGearGiveActivate(); },
 };
 
 const devConsole: Ability = {
   id: 'tech-devconsole',
   name: 'Dev.Console',
-  description: 'Open a 3s key-spam window. Every printable key pressed adds a charge. On close: 1–9 chars = 1 shot, 10–19 = 2, 20+ = 3 (20 dmg each). Zero chars = 10 dmg screen-wide beam.',
+  description: '3s typing window. 1-9 keys: self-virus (tick dmg 5s). 10-20: Malware shot (20 dmg). 21-40: Ransomware (lock non-click 5s). 41-60: Trojan drop (trap).',
   displayKey: 'E',
   cooldown: 8000,
   cast(ctx) { ctx.techDevConsoleOpen(); },
 };
 
-const hackAttribute: Ability = {
-  id: 'tech-hack',
-  name: 'Hack.Attribute',
-  description: '+5% move speed, +5% damage. +10 Abuse. No cooldown — the bill comes due later.',
+const randomizeExe: Ability = {
+  id: 'tech-random-r',
+  name: 'Randomize.Exe',
+  description: 'Random power: Invincibility (3s), Invisibility+25% speed (5s), or Jail enemy (5s). +30 Abuse.',
   displayKey: 'R',
-  cooldown: 0,
-  cast(ctx) { ctx.techHackAttribute(); },
+  cooldown: 20000,
+  cast(ctx) { ctx.techRandomEffect(); },
 };
 
 const playerGift: Ability = {
@@ -37,13 +37,13 @@ const playerGift: Ability = {
   cast(ctx) { ctx.techPlayerGift(); },
 };
 
-const opSelf: Ability = {
-  id: 'tech-opself',
-  name: 'OP.Self',
-  description: 'Sequentially activate GodMode (5s invulnerable), Invis (5s untargetable), and Jail (5s enemy boxed). Sets Abuse to 100 after.',
+const domainExpansion: Ability = {
+  id: 'tech-domain',
+  name: 'Domain.Expansion',
+  description: 'Trap both fighters in a dark domain. 3 sliders control chaos — abuse ends it. 15s.',
   displayKey: 'Q',
-  cooldown: 30000,
-  cast(ctx) { ctx.techOpSelfBegin(); },
+  cooldown: 60000,
+  cast(ctx: CastContext) { ctx.techStartDomain(); },
 };
 
 export const technologyElement: Element = {
@@ -51,5 +51,5 @@ export const technologyElement: Element = {
   name: 'Technology',
   color: 0x44ccaa,
   emoji: '💻',
-  abilities: [flail, devConsole, hackAttribute, playerGift, opSelf],
+  abilities: [gearGive, devConsole, randomizeExe, playerGift, domainExpansion],
 };

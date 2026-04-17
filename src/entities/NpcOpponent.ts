@@ -77,6 +77,9 @@ export interface NpcAiState {
   npcSilenceSlasherActive?: boolean;
   npcSilenceSlasherHp?: number;
   npcSilenceHookConnected?: boolean;
+  // Magma
+  magmaVolcanoActive?: boolean;
+  magmaVolcanoLavaLevel?: number;
 }
 
 export class NpcOpponent extends Fighter {
@@ -334,6 +337,9 @@ export class NpcOpponent extends Fighter {
     }
     if (this.element.id === 'silence') {
       return this.doSilenceAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'magma') {
+      return this.doMagmaAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
     return null;
   }
@@ -1576,12 +1582,11 @@ export class NpcOpponent extends Fighter {
     const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skip) {
-      // Q: OP.Self when healthy, not yet used this match
-      if (hpRatio >= 0.75 && !aiState.technologyOpSelfUsed && Math.random() < 0.15) {
-        if (this.castAbility('tech-opself', buildContext(aimX, aimY))) {
+      // Q: Domain.Expansion when low HP
+      if (hpRatio < 0.5 && !aiState.technologyOpSelfUsed && Math.random() < 0.15) {
+        if (this.castAbility('tech-domain', buildContext(aimX, aimY))) {
           aiState.technologyOpSelfUsed = true;
-          aiState.technologyAbuse = Math.min(100, aiState.technologyAbuse + 100);
-          return 'tech-opself';
+          return 'tech-domain';
         }
       }
 
@@ -1590,11 +1595,11 @@ export class NpcOpponent extends Fighter {
         if (this.castAbility('tech-devconsole', buildContext(aimX, aimY))) return 'tech-devconsole';
       }
 
-      // R: Hack.Attribute when abuse is low (free damage buffs)
-      if (aiState.technologyAbuse < 50 && Math.random() < 0.40) {
-        if (this.castAbility('tech-hack', buildContext(aimX, aimY))) {
-          aiState.technologyAbuse = Math.min(100, aiState.technologyAbuse + 10);
-          return 'tech-hack';
+      // R: Randomize.Exe when abuse is low
+      if (aiState.technologyAbuse < 50 && Math.random() < 0.25) {
+        if (this.castAbility('tech-random-r', buildContext(aimX, aimY))) {
+          aiState.technologyAbuse = Math.min(100, aiState.technologyAbuse + 30);
+          return 'tech-random-r';
         }
       }
 
@@ -1607,8 +1612,8 @@ export class NpcOpponent extends Fighter {
       }
     }
 
-    // Click: Flail empower
-    if (this.castAbility('tech-flail', buildContext(aimX, aimY))) return 'tech-flail';
+    // Click: Gear.Give (NPC uses quick shot variant)
+    if (this.castAbility('tech-gear-give', buildContext(aimX, aimY))) return 'tech-gear-give';
 
     return null;
   }
@@ -1684,6 +1689,51 @@ export class NpcOpponent extends Fighter {
       if (dist < 120) {
         if (this.castAbility('silence-machete', buildContext(aimX, aimY))) return 'silence-machete';
       }
+    }
+
+    return null;
+  }
+
+  private doMagmaAbilities(
+    _target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    _time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+
+    if (!skip) {
+      // Q: Lava Lord when close and available
+      if (dist < 300 && Math.random() < 0.15) {
+        if (this.castAbility('magma-lava-lord', buildContext(aimX, aimY))) return 'magma-lava-lord';
+      }
+
+      // R: Volcano when available
+      if (!aiState.magmaVolcanoActive && Math.random() < 0.20) {
+        if (this.castAbility('magma-volcano', buildContext(aimX, aimY))) {
+          aiState.magmaVolcanoActive = true;
+          return 'magma-volcano';
+        }
+      }
+
+      // E: Boulder at player position
+      if (Math.random() < 0.30) {
+        if (this.castAbility('magma-boulder', buildContext(aimX, aimY))) return 'magma-boulder';
+      }
+
+      // F: Split when low HP
+      if (hpRatio < 0.40 && Math.random() < 0.25) {
+        if (this.castAbility('magma-split', buildContext(aimX, aimY))) return 'magma-split';
+      }
+    }
+
+    // Click: Empower mace when close
+    if (dist < 160 && Math.random() < 0.30) {
+      if (this.castAbility('magma-mace', buildContext(aimX, aimY))) return 'magma-mace';
     }
 
     return null;

@@ -36,6 +36,7 @@ import { adrenalineElement, adrenalineSkateAbilities } from '../elements/adrenal
 import { magicElement } from '../elements/magic';
 import { technologyElement } from '../elements/technology';
 import { silenceElement } from '../elements/silence';
+import { magmaElement } from '../elements/magma';
 import { dummyElement } from '../elements/dummy';
 import { P2InputState, emptyP2Input } from '../network/P2InputState';
 import * as PlayerData from '../data/PlayerData';
@@ -699,6 +700,60 @@ interface MagnetShieldOrb {
   hp: number;
 }
 
+// ── Magma (abstract combined: slime + fate) interfaces ────────────────────────
+interface MagmaBoulder {
+  sprite: Phaser.GameObjects.Arc;
+  hpText: Phaser.GameObjects.Text;
+  x: number;
+  y: number;
+  hp: number;
+  maxHp: number;
+  owner: 'player' | 'npc';
+  lastHitAt: number;
+}
+
+interface MagmaVolcano {
+  sprite: Phaser.GameObjects.Arc;
+  hpText: Phaser.GameObjects.Text;
+  x: number;
+  y: number;
+  lavaLevel: number; // 0-100
+  lavaBarBg: Phaser.GameObjects.Rectangle;
+  lavaBarFill: Phaser.GameObjects.Rectangle;
+  lavaLabel: Phaser.GameObjects.Text;
+  owner: 'player' | 'npc';
+  lastSpewAt: number;
+  lastSpewAt2: number; // tier2 spew tracker
+  erupted: boolean;
+}
+
+interface MagmaSplitVariant {
+  sprite: Phaser.GameObjects.Arc;
+  flailBallSprite: Phaser.GameObjects.Arc | null;
+  flailChain: Phaser.GameObjects.Rectangle[];
+  flailX: number;
+  flailY: number;
+  flailVX: number;
+  flailVY: number;
+  hp: number;
+  alive: boolean;
+  offsetX: number; // fixed offset from origin
+  offsetY: number;
+  lastContactAt: number;
+}
+
+interface MagmaSnakeSegment {
+  x: number;
+  y: number;
+  sprite: Phaser.GameObjects.Arc;
+}
+
+interface MagmaLavaCore {
+  sprite: Phaser.GameObjects.Sprite;
+  x: number;
+  y: number;
+}
+
 interface MagnetAtomSmasher {
   flashSprite: Phaser.GameObjects.Arc;
   x: number;
@@ -787,6 +842,7 @@ const ELEMENT_MAP: Record<string, Element> = {
   magic: magicElement,
   technology: technologyElement,
   silence: silenceElement,
+  magma: magmaElement,
   dummy: dummyElement,
 };
 
@@ -820,6 +876,7 @@ const ELEMENT_TEXTURES: Record<string, string> = {
   magic: 'elem-magic',
   technology: 'elem-technology',
   silence: 'elem-silence',
+  magma: 'elem-magma',
   dummy: 'elem-dummy',
 };
 
@@ -1552,6 +1609,8 @@ export class ArenaScene extends Phaser.Scene {
   private silenceSlasherActive = false;
   private silenceSlasherHp = 0;
   private silenceSlasherPips: Phaser.GameObjects.Arc[] = [];
+  private silenceMaskSprite: Phaser.GameObjects.Image | null = null;
+  private npcSilenceMaskSprite: Phaser.GameObjects.Image | null = null;
   private silenceFearCharging = false;
   private silenceFear = 0;
   private silenceFearReleaseQueued = false;
@@ -1572,6 +1631,8 @@ export class ArenaScene extends Phaser.Scene {
   private silenceHookConnected = false;
   private silenceHookWindowExpiry = 0;
   private silenceHookProj: Projectile | null = null;
+  private silenceNpcYankUntil = 0;
+  private silencePlayerYankUntil = 0;
   private silenceEnrageUntil = 0;
   private silenceSlashEmUpActive = false;
   private silenceSlashEmUpStep = 0;
@@ -2229,9 +2290,6 @@ export class ArenaScene extends Phaser.Scene {
   private magicRoot4Active: { ex: number; ey: number; chainsHp: [number, number, number, number]; gfx: Phaser.GameObjects.Graphics; owner: 'player' | 'npc'; expireAt: number } | null = null;
 
   // ── Technology state ─────────────────────────────────────────────
-  // Flail pendulum
-  private techFlailBall: { sprite: Phaser.GameObjects.Sprite; chainSprites: Phaser.GameObjects.Sprite[]; x: number; y: number; vx: number; vy: number; empowerEndAt: number; lastHitAt: number } | null = null;
-  private npcTechFlailBall: { sprite: Phaser.GameObjects.Sprite; chainSprites: Phaser.GameObjects.Sprite[]; x: number; y: number; vx: number; vy: number; empowerEndAt: number; lastHitAt: number } | null = null;
   // Dev.Console
   private techConsoleActive = false;
   private techConsoleEndAt = 0;
@@ -2269,15 +2327,147 @@ export class ArenaScene extends Phaser.Scene {
   // Jail boxes
   private techJailBoxNpc: { graphics: Phaser.GameObjects.Graphics | null; x: number; y: number; w: number; h: number; lastDmgAt: number } | null = null;
   private techJailBoxPlayer: { graphics: Phaser.GameObjects.Graphics | null; x: number; y: number; w: number; h: number; lastDmgAt: number } | null = null;
+  // Domain Expansion (Technology Q)
+  private techDomainActive = false;
+  private techDomainExpiry = 0;
+  private techDomainCenterX = 0;
+  private techDomainCenterY = 0;
+  private readonly techDomainBaseRadius = 220;
+  private techDomainInstability = 0;
+  private techDomainBias = 0;
+  private techDomainCollapse = 0;
+  private techDomainAbuse = 0;
+  private techDomainOverlay: Phaser.GameObjects.Rectangle | null = null;
+  private techDomainCircle: Phaser.GameObjects.Graphics | null = null;
+  private techDomainShards: Phaser.GameObjects.Image[] = [];
+  private techDomainShardAngleOffset = 0;
+  private techDomainSliderBgs: Phaser.GameObjects.Rectangle[] = [];
+  private techDomainSliderFills: Phaser.GameObjects.Rectangle[] = [];
+  private techDomainSliderKnobs: Phaser.GameObjects.Rectangle[] = [];
+  private techDomainSliderLabels: Phaser.GameObjects.Text[] = [];
+  private techDomainAbuseBarBg: Phaser.GameObjects.Rectangle | null = null;
+  private techDomainAbuseBarFill: Phaser.GameObjects.Rectangle | null = null;
+  private techDomainAbuseLabel: Phaser.GameObjects.Text | null = null;
+  private techDomainDraggingSlider = -1;
+  private techDomainExplosionAccum = 0;
+  private techDomainShardProjAccum = 0;
+  private techDomainBorderTickAccum = 0;
+  private techDomainSavedPlayerX = 0;
+  private techDomainSavedPlayerY = 0;
+  private techDomainSavedNpcX = 0;
+  private techDomainSavedNpcY = 0;
   // Angry Protestors
   private playerProtestorsSpawned = false;
   private npcProtestorsSpawned = false;
-  private protestors: Array<{ sprite: Phaser.GameObjects.Sprite; hp: number; maxHp: number; target: 'player' | 'npc'; nextHitAt: number }> = [];
+  private protestors: Array<{ sprite: Phaser.GameObjects.Sprite; hpBar: Phaser.GameObjects.Graphics; hp: number; maxHp: number; target: 'player' | 'npc'; nextHitAt: number }> = [];
   // Gift permanent buffs applied to fighters
   private npcTechGiftSpeedBonus = 0;
   private npcTechGiftDamageBonus = 0;
   private playerTechGiftSpeedBonus = 0;
   private playerTechGiftDamageBonus = 0;
+  // Gear.Give (Click) — item box & active weapon
+  private techClickArmed = false;
+  private techGearBoxActive = false;
+  private techGearBoxWeapon = 0; // 0=sword-whip 1=disc-dancer 2=helix-shot 3=code-cruncher
+  private techGearBoxCycleAccum = 0;
+  private techGearBoxGraphics: Phaser.GameObjects.Graphics | null = null;
+  private techGearBoxLabel: Phaser.GameObjects.Text | null = null;
+  private techActiveWeapon: -1 | 0 | 1 | 2 | 3 = -1;
+  private techActiveWeaponExpiry = 0;
+  private techWeaponLastFireAt = 0;
+  private techHelixToggle = false;
+  // Disc Dancer projectile pairs
+  private techDiscPairs: Array<{
+    s1: Phaser.GameObjects.Sprite; s2: Phaser.GameObjects.Sprite;
+    x1: number; y1: number; x2: number; y2: number;
+    vx: number; vy: number;
+    perpX: number; perpY: number;
+    offset: number; // current perpendicular spread (px)
+    phase: number; // 0=parallel 1=converge1 2=spread1 3=parallel2 4=converge2 5=done
+    phaseTimer: number;
+    owner: 'player' | 'npc';
+    lastHitAt: number;
+  }> = [];
+  // Code Cruncher sticky grenades
+  private techStickyGrenades: Array<{
+    sprite: Phaser.GameObjects.Sprite;
+    x: number; y: number;
+    vx: number; vy: number;
+    stuck: boolean;
+    stuckToNpc: boolean;
+    explodeAt: number;
+    owner: 'player' | 'npc';
+  }> = [];
+  // Dev.Console new effects
+  private techVirusEndAt = 0;
+  private techVirusNextTickAt = 0;
+  private npcTechVirusEndAt = 0;
+  private npcTechVirusNextTickAt = 0;
+  private techRansomwareTarget: 'player' | 'npc' | null = null;
+  private techRansomwareExpiry = 0;
+  private techTrojanDrops: Array<{
+    sprite: Phaser.GameObjects.Sprite | null;
+    shadow: Phaser.GameObjects.Ellipse | null;
+    x: number; y: number;
+    landed: boolean;
+    landAt: number;
+    hitbox: Phaser.GameObjects.Rectangle | null;
+    lastHitAt: number;
+    owner: 'player' | 'npc';
+  }> = [];
+
+  // ── Magma (abstract combined: slime + fate) state ─────────────────────
+  // Flail (always active)
+  private magmaFlailBallSprite: Phaser.GameObjects.Arc | null = null;
+  private magmaFlailChain: Phaser.GameObjects.Rectangle[] = [];
+  private magmaFlailX = 0;
+  private magmaFlailY = 0;
+  private magmaFlailVX = 0;
+  private magmaFlailVY = 0;
+  private npcMagmaFlailBallSprite: Phaser.GameObjects.Arc | null = null;
+  private npcMagmaFlailChain: Phaser.GameObjects.Rectangle[] = [];
+  private npcMagmaFlailX = 0;
+  private npcMagmaFlailY = 0;
+  private npcMagmaFlailVX = 0;
+  private npcMagmaFlailVY = 0;
+  private magmaFlailLastContactAt = 0;
+  private npcMagmaFlailLastContactAt = 0;
+  // Mace empower
+  private magmaMaceEmpowered = false;
+  private magmaMaceEmpowerExpiry = 0;
+  private magmaMaceShrinkExpiry = 0;
+  private npcMagmaMaceEmpowered = false;
+  private npcMagmaMaceEmpowerExpiry = 0;
+  private npcMagmaMaceShrinkExpiry = 0;
+  // Boulders
+  private magmaBoulders: MagmaBoulder[] = [];
+  // Volcano
+  private magmaVolcanoObj: MagmaVolcano | null = null;
+  // Split
+  private magmaSplitActive = false;
+  private magmaSplitRecombineAt = 0;
+  private magmaSplitVariants: MagmaSplitVariant[] = [];
+  private npcMagmaSplitActive = false;
+  private npcMagmaSplitRecombineAt = 0;
+  private npcMagmaSplitVariants: MagmaSplitVariant[] = [];
+  // Lava Lord (snake)
+  private magmaLavaLordActive = false;
+  private magmaLavaLordExpiry = 0;
+  private magmaLavaLordSegments: MagmaSnakeSegment[] = [];
+  private magmaLavaLordDir = 0; // 0=up,1=right,2=down,3=left
+  private magmaLavaLordSpeed = 200;
+  private magmaLavaLordMoveAccum = 0;
+  private magmaLavaLordTrailAccum = 0;
+  private magmaLavaLordCores: MagmaLavaCore[] = [];
+  private magmaLavaLordLastContactAt = 0;
+  private npcMagmaLavaLordActive = false;
+  private npcMagmaLavaLordExpiry = 0;
+  private npcMagmaLavaLordSegments: MagmaSnakeSegment[] = [];
+  private npcMagmaLavaLordDir = 0;
+  private npcMagmaLavaLordSpeed = 200;
+  private npcMagmaLavaLordMoveAccum = 0;
+  private npcMagmaLavaLordTrailAccum = 0;
+  private npcMagmaLavaLordLastContactAt = 0;
 
   // Shared world effects (owner-aware)
   private puddles: Puddle[] = [];
@@ -2745,6 +2935,8 @@ export class ArenaScene extends Phaser.Scene {
     this.silenceSlasherHp = 0;
     for (const p of this.silenceSlasherPips) p.destroy();
     this.silenceSlasherPips = [];
+    if (this.silenceMaskSprite) { this.silenceMaskSprite.destroy(); this.silenceMaskSprite = null; }
+    if (this.npcSilenceMaskSprite) { this.npcSilenceMaskSprite.destroy(); this.npcSilenceMaskSprite = null; }
     this.silenceFearCharging = false;
     this.silenceFear = 0;
     this.silenceFearReleaseQueued = false;
@@ -2762,6 +2954,8 @@ export class ArenaScene extends Phaser.Scene {
     this.silenceHookConnected = false;
     this.silenceHookWindowExpiry = 0;
     if (this.silenceHookProj) { this.silenceHookProj.destroy(); this.silenceHookProj = null; }
+    this.silenceNpcYankUntil = 0;
+    this.silencePlayerYankUntil = 0;
     this.silenceSlashEmUpActive = false;
     this.silenceSlashEmUpStep = 0;
     for (const t of this.silenceSlashEmUpTrees) t.destroy();
@@ -3340,16 +3534,6 @@ export class ArenaScene extends Phaser.Scene {
     this.npcMagicBlinkRemaining = 0; this.npcMagicBlinkNextAt = 0;
     if (this.magicRoot4Active) { this.magicRoot4Active.gfx.destroy(); this.magicRoot4Active = null; }
     // Technology resets
-    if (this.techFlailBall) {
-      this.techFlailBall.sprite.destroy();
-      for (const c of this.techFlailBall.chainSprites) c.destroy();
-      this.techFlailBall = null;
-    }
-    if (this.npcTechFlailBall) {
-      this.npcTechFlailBall.sprite.destroy();
-      for (const c of this.npcTechFlailBall.chainSprites) c.destroy();
-      this.npcTechFlailBall = null;
-    }
     if (this.techConsoleKeyListener) { window.removeEventListener('keydown', this.techConsoleKeyListener); this.techConsoleKeyListener = null; }
     if (this.techConsoleBox) { this.techConsoleBox.destroy(); this.techConsoleBox = null; }
     if (this.techConsoleText) { this.techConsoleText.destroy(); this.techConsoleText = null; }
@@ -3367,11 +3551,78 @@ export class ArenaScene extends Phaser.Scene {
     this.npcOpSelfPhase = 0; this.npcOpSelfPhaseEnd = 0; this.npcOpSelfInvisActive = false;
     if (this.techJailBoxNpc) { this.techJailBoxNpc.graphics?.destroy(); this.techJailBoxNpc = null; }
     if (this.techJailBoxPlayer) { this.techJailBoxPlayer.graphics?.destroy(); this.techJailBoxPlayer = null; }
+    if (this.techDomainActive) this.techEndDomain();
+    this.techDomainActive = false; this.techDomainExpiry = 0;
+    this.techDomainInstability = 0; this.techDomainBias = 0; this.techDomainCollapse = 0; this.techDomainAbuse = 0;
+    this.techDomainShardAngleOffset = 0; this.techDomainExplosionAccum = 0;
+    this.techDomainShardProjAccum = 0; this.techDomainBorderTickAccum = 0; this.techDomainDraggingSlider = -1;
     this.playerProtestorsSpawned = false; this.npcProtestorsSpawned = false;
-    for (const p of this.protestors) p.sprite.destroy();
+    for (const p of this.protestors) { p.sprite.destroy(); p.hpBar.destroy(); }
     this.protestors = [];
     this.npcTechGiftSpeedBonus = 0; this.npcTechGiftDamageBonus = 0;
     this.playerTechGiftSpeedBonus = 0; this.playerTechGiftDamageBonus = 0;
+    // Gear.Give reset
+    this.techClickArmed = false;
+    this.techGearBoxActive = false; this.techGearBoxWeapon = 0; this.techGearBoxCycleAccum = 0;
+    if (this.techGearBoxGraphics) { this.techGearBoxGraphics.destroy(); this.techGearBoxGraphics = null; }
+    if (this.techGearBoxLabel) { this.techGearBoxLabel.destroy(); this.techGearBoxLabel = null; }
+    this.techActiveWeapon = -1; this.techActiveWeaponExpiry = 0; this.techWeaponLastFireAt = 0; this.techHelixToggle = false;
+    for (const dp of this.techDiscPairs) { dp.s1.destroy(); dp.s2.destroy(); }
+    this.techDiscPairs = [];
+    for (const g of this.techStickyGrenades) g.sprite.destroy();
+    this.techStickyGrenades = [];
+    this.techVirusEndAt = 0; this.techVirusNextTickAt = 0;
+    this.npcTechVirusEndAt = 0; this.npcTechVirusNextTickAt = 0;
+    this.techRansomwareTarget = null; this.techRansomwareExpiry = 0;
+    for (const d of this.techTrojanDrops) {
+      d.sprite?.destroy(); d.shadow?.destroy(); d.hitbox?.destroy();
+    }
+    this.techTrojanDrops = [];
+    // Magma resets
+    if (this.magmaFlailBallSprite) { this.magmaFlailBallSprite.destroy(); this.magmaFlailBallSprite = null; }
+    for (const c of this.magmaFlailChain) c.destroy();
+    this.magmaFlailChain = [];
+    this.magmaFlailX = 0; this.magmaFlailY = 0; this.magmaFlailVX = 0; this.magmaFlailVY = 0;
+    if (this.npcMagmaFlailBallSprite) { this.npcMagmaFlailBallSprite.destroy(); this.npcMagmaFlailBallSprite = null; }
+    for (const c of this.npcMagmaFlailChain) c.destroy();
+    this.npcMagmaFlailChain = [];
+    this.npcMagmaFlailX = 0; this.npcMagmaFlailY = 0; this.npcMagmaFlailVX = 0; this.npcMagmaFlailVY = 0;
+    this.magmaFlailLastContactAt = 0; this.npcMagmaFlailLastContactAt = 0;
+    this.magmaMaceEmpowered = false; this.magmaMaceEmpowerExpiry = 0; this.magmaMaceShrinkExpiry = 0;
+    this.npcMagmaMaceEmpowered = false; this.npcMagmaMaceEmpowerExpiry = 0; this.npcMagmaMaceShrinkExpiry = 0;
+    for (const b of this.magmaBoulders) { b.sprite.destroy(); b.hpText.destroy(); }
+    this.magmaBoulders = [];
+    if (this.magmaVolcanoObj) {
+      this.magmaVolcanoObj.sprite.destroy(); this.magmaVolcanoObj.hpText.destroy();
+      this.magmaVolcanoObj.lavaBarBg.destroy(); this.magmaVolcanoObj.lavaBarFill.destroy();
+      this.magmaVolcanoObj.lavaLabel.destroy(); this.magmaVolcanoObj = null;
+    }
+    this.magmaSplitActive = false; this.magmaSplitRecombineAt = 0;
+    for (const v of this.magmaSplitVariants) {
+      v.sprite.destroy(); v.flailBallSprite?.destroy();
+      for (const c of v.flailChain) c.destroy();
+    }
+    this.magmaSplitVariants = [];
+    this.npcMagmaSplitActive = false; this.npcMagmaSplitRecombineAt = 0;
+    for (const v of this.npcMagmaSplitVariants) {
+      v.sprite.destroy(); v.flailBallSprite?.destroy();
+      for (const c of v.flailChain) c.destroy();
+    }
+    this.npcMagmaSplitVariants = [];
+    this.magmaLavaLordActive = false; this.magmaLavaLordExpiry = 0;
+    for (const s of this.magmaLavaLordSegments) s.sprite.destroy();
+    this.magmaLavaLordSegments = [];
+    this.magmaLavaLordDir = 0; this.magmaLavaLordSpeed = 200;
+    this.magmaLavaLordMoveAccum = 0; this.magmaLavaLordTrailAccum = 0;
+    for (const c of this.magmaLavaLordCores) c.sprite.destroy();
+    this.magmaLavaLordCores = [];
+    this.magmaLavaLordLastContactAt = 0;
+    this.npcMagmaLavaLordActive = false; this.npcMagmaLavaLordExpiry = 0;
+    for (const s of this.npcMagmaLavaLordSegments) s.sprite.destroy();
+    this.npcMagmaLavaLordSegments = [];
+    this.npcMagmaLavaLordDir = 0; this.npcMagmaLavaLordSpeed = 200;
+    this.npcMagmaLavaLordMoveAccum = 0; this.npcMagmaLavaLordTrailAccum = 0;
+    this.npcMagmaLavaLordLastContactAt = 0;
     this.puddles = [];
     this.geysers = [];
     this.painRainShadows = [];
@@ -3664,6 +3915,28 @@ export class ArenaScene extends Phaser.Scene {
           (proj.body as Phaser.Physics.Arcade.Body).stop();
           return;
         }
+        // Silence possess eye: apply possession, no damage
+        if (proj.texture.key === 'proj-silence-eye') {
+          this.silencePossessedUntil = this.time.now + 8000;
+          this.showFloatingText(this.npc.x, this.npc.y - 30, '👁 Possessed!', '#cc66ff');
+          const _eyeFlash = this.add.circle(this.npc.x, this.npc.y, 16, 0x660088, 0.8).setDepth(9);
+          this.tweens.add({ targets: _eyeFlash, scaleX: 3, scaleY: 3, alpha: 0, duration: 400, onComplete: () => _eyeFlash.destroy() });
+          proj.setActive(false).setVisible(false);
+          (proj.body as Phaser.Physics.Arcade.Body).stop();
+          return;
+        }
+        // Silence meat hook: register connection + initial damage
+        if (proj.texture.key === 'proj-silence-hook') {
+          this.silenceHookConnected = true;
+          this.silenceHookWindowExpiry = this.time.now + 5000;
+          this.silenceHookProj = null;
+          this.showFloatingText(this.npc.x, this.npc.y - 20, '🪝 Hooked!', '#cc9933');
+          this.npc.takeDamage(8);
+          this.spawnHitFlash(this.npc.x, this.npc.y, 0xaa7733);
+          proj.setActive(false).setVisible(false);
+          (proj.body as Phaser.Physics.Arcade.Body).stop();
+          return;
+        }
         // Apply attacker's crit context before damage
         this.npc.setIncomingCritContext(this.player.critChance, this.player.critMult);
         let _npcDmg = proj.damage;
@@ -3819,6 +4092,23 @@ export class ArenaScene extends Phaser.Scene {
             this.npcPlayerTeleportPuddleAccum = 0;
             this.spawnHitFlash(this.player.x, this.player.y, 0xffdd44);
           }
+          proj.setActive(false).setVisible(false);
+          (proj.body as Phaser.Physics.Arcade.Body).stop();
+          return;
+        }
+        // Silence possess eye (NPC cast): apply possession to player, no damage
+        if (proj.texture.key === 'proj-silence-eye') {
+          this.npcSilencePossessedUntil = this.time.now + 8000;
+          this.showFloatingText(this.player.x, this.player.y - 30, '👁 Possessed!', '#cc66ff');
+          proj.setActive(false).setVisible(false);
+          (proj.body as Phaser.Physics.Arcade.Body).stop();
+          return;
+        }
+        // Silence meat hook (NPC cast): register connection + initial damage
+        if (proj.texture.key === 'proj-silence-hook') {
+          this.npcSilenceHookConnected = true;
+          this.player.takeDamage(8);
+          this.spawnHitFlash(proj.x, proj.y, 0xaa7733);
           proj.setActive(false).setVisible(false);
           (proj.body as Phaser.Physics.Arcade.Body).stop();
           return;
@@ -4462,11 +4752,17 @@ export class ArenaScene extends Phaser.Scene {
       'magic-meditate':      0xaa66ee,
       'magic-necronomicon':  0x551188,
       // Technology
-      'tech-flail':          0x44ccaa,
+      'tech-gear-give':      0x44ccaa,
       'tech-devconsole':     0x33aa88,
-      'tech-hack':           0x66eecc,
+      'tech-random-r':       0x66eecc,
       'tech-gift':           0x88ffdd,
-      'tech-opself':         0xffcc44,
+      'tech-domain':         0x44ccaa,
+      // Magma (abstract combined: slime + fate)
+      'magma-mace':          0xff4500,
+      'magma-boulder':       0x8b4513,
+      'magma-volcano':       0xff6600,
+      'magma-split':         0xcc3300,
+      'magma-lava-lord':     0xffaa00,
       // Silence (normal + slasher)
       'silence-fade':        0x330044,
       'silence-dont-look':   0x110022,
@@ -5919,6 +6215,8 @@ export class ArenaScene extends Phaser.Scene {
           return true;
         };
         this.silenceToggleSlasherHud(true);
+        if (this.silenceMaskSprite) this.silenceMaskSprite.destroy();
+        this.silenceMaskSprite = this.add.image(this.player.x, this.player.y - 4, 'mask-silence').setDepth(12);
         const burst = this.add.circle(this.player.x, this.player.y, 20, 0x660044, 0.8).setDepth(8);
         this.tweens.add({ targets: burst, scaleX: 3, scaleY: 3, alpha: 0, duration: 380, onComplete: () => burst.destroy() });
         this.showFloatingText(this.player.x, this.player.y - 30, '🔪 Slasher Mode!', '#ffcc88');
@@ -5926,7 +6224,7 @@ export class ArenaScene extends Phaser.Scene {
       silenceExitSlasher: (voluntary: boolean) => {
         if (!this.silenceSlasherActive) return;
         const pipsLost = 10 - this.silenceSlasherHp;
-        const recoil = voluntary ? pipsLost * 5 : 50;
+        const recoil = voluntary ? pipsLost * 10 : 100;
         this.silenceSlasherActive = false;
         this.silenceSlasherHp = 0;
         this.player.clearTint();
@@ -5935,6 +6233,7 @@ export class ArenaScene extends Phaser.Scene {
         for (const p of this.silenceSlasherPips) p.destroy();
         this.silenceSlasherPips = [];
         this.silenceToggleSlasherHud(false);
+        if (this.silenceMaskSprite) { this.silenceMaskSprite.destroy(); this.silenceMaskSprite = null; }
         if (recoil > 0) {
           this.player.takeDamage(recoil);
           this.showFloatingText(this.player.x, this.player.y - 30, `-${recoil} recoil`, '#ff4422');
@@ -5988,7 +6287,6 @@ export class ArenaScene extends Phaser.Scene {
         const origin = candidates.sort((a, b) =>
           Phaser.Math.Distance.Between(a.x, a.y, tx, ty) - Phaser.Math.Distance.Between(b.x, b.y, tx, ty)
         )[0];
-        // Draw tendril — thick glowing purple line
         const gOuter = this.add.graphics().setDepth(12);
         gOuter.lineStyle(18, 0x660099, 0.35);
         gOuter.beginPath(); gOuter.moveTo(origin.x, origin.y); gOuter.lineTo(tx, ty); gOuter.strokePath();
@@ -5998,12 +6296,10 @@ export class ArenaScene extends Phaser.Scene {
         const gCore = this.add.graphics().setDepth(14);
         gCore.lineStyle(3, 0xeeccff, 1.0);
         gCore.beginPath(); gCore.moveTo(origin.x, origin.y); gCore.lineTo(tx, ty); gCore.strokePath();
-        // Impact flash at cursor
         const flash = this.add.circle(tx, ty, 22, 0xcc44ff, 0.85).setDepth(15);
         this.tweens.add({ targets: [gOuter, gMid, gCore, flash], alpha: 0, duration: 500, onComplete: () => {
           gOuter.destroy(); gMid.destroy(); gCore.destroy(); flash.destroy();
         }});
-        // Damage check (generous 70px radius)
         if (Phaser.Math.Distance.Between(tx, ty, this.npc.x, this.npc.y) <= 70) {
           this.npc.takeDamage(10);
           this.spawnHitFlash(this.npc.x, this.npc.y, 0x660088);
@@ -6050,13 +6346,8 @@ export class ArenaScene extends Phaser.Scene {
       silenceYankHook: () => {
         if (!this.silenceHookConnected) return;
         this.silenceHookConnected = false;
-        // Pull NPC toward player
-        const dx3 = this.player.x - this.npc.x, dy3 = this.player.y - this.npc.y;
-        const len3 = Math.sqrt(dx3 * dx3 + dy3 * dy3) || 1;
-        (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity((dx3 / len3) * 900, (dy3 / len3) * 900);
-        this.time.delayedCall(250, () => {
-          if (this.npc.active) (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-        });
+        // Per-frame code steers NPC all the way to the player; 2s safety cap
+        this.silenceNpcYankUntil = this.time.now + 2000;
         this.showFloatingText(this.player.x, this.player.y - 30, '🪝 Yanked!', '#cc9933');
       },
       silenceEnrage: () => {
@@ -6363,11 +6654,20 @@ export class ArenaScene extends Phaser.Scene {
       magicBlink20: () => { this.doMagicBlink20('player'); },
       magicRoot4Corner: (tx, ty) => { this.doMagicRoot4Corner(tx, ty, 'player'); },
       // Technology
-      techFlailEmpower: () => { this.doTechFlailEmpower('player'); },
+      techFlailEmpower: () => {},
       techDevConsoleOpen: () => { this.doTechDevConsoleOpen('player'); },
       techHackAttribute: () => { this.doTechHackAttribute('player'); },
       techPlayerGift: () => { this.doTechPlayerGift('player'); },
       techOpSelfBegin: () => { this.doTechOpSelfBegin('player'); },
+      techStartDomain: () => { this.doTechStartDomain('player'); },
+      techGearGiveActivate: () => { this.doTechGearGiveActivate('player'); },
+      techRandomEffect: () => { this.doTechRandomEffect('player'); },
+      // Magma
+      magmaMaceEmpower: () => { this.doMagmaMaceEmpower('player'); },
+      magmaBoulder: (tx, ty) => { this.doMagmaBoulder(tx, ty, 'player'); },
+      magmaVolcano: () => { this.doMagmaVolcano('player'); },
+      magmaSplit: () => { this.doMagmaSplit('player'); },
+      magmaLavaLord: () => { this.doMagmaLavaLord('player'); },
     };
   }
 
@@ -6951,18 +7251,21 @@ export class ArenaScene extends Phaser.Scene {
           }
           return true;
         };
+        if (this.npcSilenceMaskSprite) this.npcSilenceMaskSprite.destroy();
+        this.npcSilenceMaskSprite = this.add.image(this.npc.x, this.npc.y - 4, 'mask-silence').setDepth(12);
         const burst = this.add.circle(this.npc.x, this.npc.y, 20, 0x660044, 0.8).setDepth(8);
         this.tweens.add({ targets: burst, scaleX: 3, scaleY: 3, alpha: 0, duration: 380, onComplete: () => burst.destroy() });
       },
       silenceExitSlasher: (voluntary: boolean) => {
         if (!this.npcSilenceSlasherActive) return;
         const pipsLost = 10 - this.npcSilenceSlasherHp;
-        const recoil = voluntary ? pipsLost * 5 : 50;
+        const recoil = voluntary ? pipsLost * 10 : 100;
         this.npcSilenceSlasherActive = false;
         this.npcSilenceSlasherHp = 10;
         this.npc.clearTint();
         this.npc.setScale(1.0);
         this.npc.damageAbsorber = null;
+        if (this.npcSilenceMaskSprite) { this.npcSilenceMaskSprite.destroy(); this.npcSilenceMaskSprite = null; }
         if (recoil > 0) this.npc.takeDamage(recoil);
         this.npc.triggerCooldown('silence-thriller');
       },
@@ -7215,11 +7518,32 @@ export class ArenaScene extends Phaser.Scene {
       magicBlink20: () => { this.doMagicBlink20('npc'); },
       magicRoot4Corner: (tx, ty) => { this.doMagicRoot4Corner(tx, ty, 'npc'); },
       // Technology
-      techFlailEmpower: () => { this.doTechFlailEmpower('npc'); },
-      techDevConsoleOpen: () => { this.doTechDevConsoleOpen('npc'); },
+      techFlailEmpower: () => {},
+      techDevConsoleOpen: () => {
+        if (this.techRansomwareTarget === 'npc' && this.time.now < this.techRansomwareExpiry) return;
+        this.doTechDevConsoleOpen('npc');
+      },
       techHackAttribute: () => { this.doTechHackAttribute('npc'); },
-      techPlayerGift: () => { this.doTechPlayerGift('npc'); },
+      techPlayerGift: () => {
+        if (this.techRansomwareTarget === 'npc' && this.time.now < this.techRansomwareExpiry) return;
+        this.doTechPlayerGift('npc');
+      },
       techOpSelfBegin: () => { this.doTechOpSelfBegin('npc'); },
+      techStartDomain: () => {
+        if (this.techRansomwareTarget === 'npc' && this.time.now < this.techRansomwareExpiry) return;
+        this.doTechStartDomain('npc');
+      },
+      techGearGiveActivate: () => { this.doTechNpcGearGiveAttack(); },
+      techRandomEffect: () => {
+        if (this.techRansomwareTarget === 'npc' && this.time.now < this.techRansomwareExpiry) return;
+        this.doTechRandomEffect('npc');
+      },
+      // Magma
+      magmaMaceEmpower: () => { this.doMagmaMaceEmpower('npc'); },
+      magmaBoulder: (tx, ty) => { this.doMagmaBoulder(tx, ty, 'npc'); },
+      magmaVolcano: () => { this.doMagmaVolcano('npc'); },
+      magmaSplit: () => { this.doMagmaSplit('npc'); },
+      magmaLavaLord: () => { this.doMagmaLavaLord('npc'); },
     };
   }
 
@@ -7463,6 +7787,9 @@ export class ArenaScene extends Phaser.Scene {
       techHackAttribute: () => {},
       techPlayerGift: () => {},
       techOpSelfBegin: () => {},
+      techStartDomain: () => {},
+      techGearGiveActivate: () => {},
+      techRandomEffect: () => {},
       // Silence — no-ops for clone
       silenceStartFade: () => {},
       silenceReleaseFade: () => {},
@@ -7477,6 +7804,12 @@ export class ArenaScene extends Phaser.Scene {
       silenceYankHook: () => {},
       silenceEnrage: () => {},
       silenceSlashEmUp: () => {},
+      // Magma — no-ops for clone
+      magmaMaceEmpower: () => {},
+      magmaBoulder: () => {},
+      magmaVolcano: () => {},
+      magmaSplit: () => {},
+      magmaLavaLord: () => {},
     };
   }
 
@@ -7659,6 +7992,9 @@ export class ArenaScene extends Phaser.Scene {
       techHackAttribute: () => {},
       techPlayerGift: () => {},
       techOpSelfBegin: () => {},
+      techStartDomain: () => {},
+      techGearGiveActivate: () => {},
+      techRandomEffect: () => {},
       // Silence — no-ops for clone
       silenceStartFade: () => {},
       silenceReleaseFade: () => {},
@@ -7673,6 +8009,12 @@ export class ArenaScene extends Phaser.Scene {
       silenceYankHook: () => {},
       silenceEnrage: () => {},
       silenceSlashEmUp: () => {},
+      // Magma — no-ops for raid
+      magmaMaceEmpower: () => {},
+      magmaBoulder: () => {},
+      magmaVolcano: () => {},
+      magmaSplit: () => {},
+      magmaLavaLord: () => {},
     };
   }
 
@@ -9695,6 +10037,14 @@ export class ArenaScene extends Phaser.Scene {
       if (this.lightAngelActive) this.playerSpeedMult *= 1.25;
       // Skewer mode: +15% speed while active
       if (time < this.lightSkewerModeUntil) this.playerSpeedMult *= 1.15;
+    } else if (this.elementId === 'magma') {
+      this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
+      // Post-explosion 3s shrink reduces speed
+      if (time < this.magmaMaceShrinkExpiry) this.playerSpeedMult *= 0.8;
+      // Lava Lord: movement is overridden entirely in updateMagmaState
+      if (this.magmaLavaLordActive) this.playerSpeedMult = 0;
+      // Split active: hide main player
+      if (this.magmaSplitActive) this.playerSpeedMult = 0;
     } else {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
     }
@@ -9804,19 +10154,33 @@ export class ArenaScene extends Phaser.Scene {
       if (npcOnTrail) this.npcSpeedMult *= 1.5;
     }
 
-    // Technology Hack.Attribute stacking bonuses and abuse speed penalty
+    // Magma NPC speed adjustments
+    if (this.npcElement.id === 'magma') {
+      if (time < this.npcMagmaMaceShrinkExpiry) this.npcSpeedMult *= 0.8;
+      if (this.npcMagmaLavaLordActive) this.npcSpeedMult = 0;
+      if (this.npcMagmaSplitActive) this.npcSpeedMult = 0;
+    }
+
+    // Technology stacking bonuses and abuse speed penalty
     if (this.elementId === 'technology') {
       this.playerSpeedMult *= 1 + this.playerTechSpeedBonus;
+      // Randomize.Exe phase 2: invis + speed
+      if (this.playerOpSelfPhase === 2) this.playerSpeedMult *= 1.25;
       // Abuse speed penalty
       if (this.playerAbuse >= 100) this.playerSpeedMult *= 0.70;
       else if (this.playerAbuse >= 70) this.playerSpeedMult *= 0.85;
       else if (this.playerAbuse >= 40) this.playerSpeedMult *= 0.95;
+      // Domain Bias speed boost for player
+      if (this.techDomainActive && this.techDomainBias > 0) this.playerSpeedMult *= (1 + this.techDomainBias / 100 * 0.5);
     }
     if (this.npcElement.id === 'technology') {
       this.npcSpeedMult *= 1 + this.npcTechSpeedBonus;
+      if (this.npcOpSelfPhase === 2) this.npcSpeedMult *= 1.25;
       if (this.npcAbuse >= 100) this.npcSpeedMult *= 0.70;
       else if (this.npcAbuse >= 70) this.npcSpeedMult *= 0.85;
       else if (this.npcAbuse >= 40) this.npcSpeedMult *= 0.95;
+      // Domain Bias speed boost for NPC
+      if (this.techDomainActive && this.techDomainBias > 0) this.npcSpeedMult *= (1 + this.techDomainBias / 100 * 0.5);
     }
     // Technology Gift bonuses (received by each side)
     if (this.elementId !== 'technology' && this.playerTechGiftSpeedBonus > 0) {
@@ -9860,6 +10224,8 @@ export class ArenaScene extends Phaser.Scene {
     } else if (this.nukeChanneling && !this.armageddonActive && !this.airBeamWalking) {
       // Standard nuke: fully locked
       playerBody.setVelocity(0, 0);
+    } else if (time < this.silencePlayerYankUntil) {
+      // NPC silence yank in progress — keep yank velocity, block WASD override
     } else if (!this.isDodging) {
       let vx = 0;
       let vy = 0;
@@ -11073,6 +11439,8 @@ export class ArenaScene extends Phaser.Scene {
       this.handleMagicInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'technology') {
       this.handleTechnologyInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'magma') {
+      this.handleMagmaInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'earth') {
       this.handleEarthInput(time, delta, pointer, mouseX, mouseY);
     } else if (this.elementId === 'light') {
@@ -11487,13 +11855,11 @@ export class ArenaScene extends Phaser.Scene {
           this.silenceFearCharging = true;
           this.silenceFear = 0;
           this.player.setAlpha(0.08);
-          this.player.isInvincible = true;
         }
         if (!pointer.isDown && this.silenceFearCharging) {
           // Release: fire AOE
           this.silenceFearCharging = false;
           this.player.setAlpha(1);
-          this.player.isInvincible = false;
           if (this.player.getCooldownRatio('silence-fade') >= 1) {
             this.player.triggerCooldown('silence-fade');
             const baseDmg = 8;
@@ -13227,7 +13593,7 @@ export class ArenaScene extends Phaser.Scene {
     } else {
     // ── NPC AI ───────────────────────────────────────────────────
     const aiState: NpcAiState = {
-      isLocked: this.npcNukeChanneling || this.npcFrozenUntil > time || this.npcMetalTaseredUntil > time || (this.elementId === 'silence' && time < this.silencePossessedUntil) || this.magnetNailPullUntil > time || (this.npcMagicChainBound && time < this.npcMagicChainBoundEnd),
+      isLocked: this.npcNukeChanneling || this.npcFrozenUntil > time || this.npcMetalTaseredUntil > time || (this.elementId === 'silence' && time < this.silencePossessedUntil) || this.magnetNailPullUntil > time || (this.npcMagicChainBound && time < this.npcMagicChainBoundEnd) || time < this.silenceNpcYankUntil,
       hasActiveGeyser: this.geysers.some((g) => g.owner === 'npc'),
       flameBodyActive: this.npcFlameBodyActive,
       projectiles: this.projectiles,
@@ -13400,13 +13766,8 @@ export class ArenaScene extends Phaser.Scene {
     }
     if (npcCastId === 'silence-meat-hook-yank') {
       this.npcSilenceHookConnected = false;
-      // Yank player toward NPC
-      const yankvx = this.npc.x - this.player.x, yankvy = this.npc.y - this.player.y;
-      const yankLen = Math.sqrt(yankvx * yankvx + yankvy * yankvy) || 1;
-      (this.player.body as Phaser.Physics.Arcade.Body).setVelocity((yankvx / yankLen) * 900, (yankvy / yankLen) * 900);
-      this.time.delayedCall(200, () => {
-        if (this.player.active) (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-      });
+      // Per-frame code steers player all the way to NPC; 2s safety cap
+      this.silencePlayerYankUntil = this.time.now + 2000;
     }
     if (npcCastId === 'sound-grapple') {
       // NPC grapples toward player
@@ -14768,7 +15129,9 @@ export class ArenaScene extends Phaser.Scene {
         // Fear accumulation while holding click to fade
         if (this.silenceFearCharging) {
           const fadeDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
-          const chargeRate = Math.max(0, 1 - fadeDist / 400) * 120; // max ~120/s when adjacent
+          // Proximity bonus: 20/s baseline at any distance, up to 300/s when adjacent (quadratic falloff)
+          const fadeFactor = Math.max(0, 1 - fadeDist / 500);
+          const chargeRate = 20 + fadeFactor * fadeFactor * 280;
           this.silenceFear = Math.min(500, this.silenceFear + chargeRate * (delta / 1000));
           // Fear bar above player
           const BAR_W = 48; const BAR_H = 6; const BY = this.player.y - 46;
@@ -14792,48 +15155,57 @@ export class ArenaScene extends Phaser.Scene {
           nb.setVelocity(pb.velocity.x, pb.velocity.y);
         }
 
+        // Yank: steer NPC toward player each frame until they arrive or time expires
+        if (time < this.silenceNpcYankUntil) {
+          const ydx = this.player.x - this.npc.x, ydy = this.player.y - this.npc.y;
+          const ydist = Math.sqrt(ydx * ydx + ydy * ydy);
+          if (ydist <= 65) {
+            this.silenceNpcYankUntil = 0;
+            (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+          } else {
+            (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity((ydx / ydist) * 900, (ydy / ydist) * 900);
+          }
+        }
+
         // DON'T LOOK cone processing (player's cone affects NPC)
         if (this.silenceConeGraphic && this.silenceConeExpiry > 0) {
-          if (time >= this.silenceConeExpiry) {
+          // Rotate cone to follow player's current aim direction
+          const ptr = this.input.activePointer;
+          this.silenceConeAngle = Math.atan2(ptr.worldY - this.player.y, ptr.worldX - this.player.x);
+          // Redraw cone at player's current position and facing
+          this.drawSilenceCone(this.silenceConeGraphic, this.player.x, this.player.y, this.silenceConeAngle);
+          // Check if NPC is inside cone
+          const npcInCone = this.isInSilenceCone(this.npc.x, this.npc.y, this.player.x, this.player.y, this.silenceConeAngle);
+          if (npcInCone) {
+            this.silenceConeTickAccum += delta;
+            if (this.silenceConeTickAccum >= 250) {
+              this.silenceConeTickAccum -= 250;
+              this.npc.takeDamage(2);
+              this.spawnHitFlash(this.npc.x, this.npc.y, 0x220033);
+            }
+          } else {
+            this.silenceConeTickAccum = 0;
+            this.silenceConeContinuousStart = time; // reset continuous timer
+          }
+          // Full 5s unbroken → proper stun. Check BEFORE expiry so it fires when enemy
+          // stays in for the entire duration (continuous start == cast time → triggers at expiry).
+          if (npcInCone && time - this.silenceConeContinuousStart >= 5000) {
+            this.silenceConeExpiry = 0;
+            if (this.silenceConeGraphic) { this.silenceConeGraphic.destroy(); this.silenceConeGraphic = null; }
+            this.npcFrozenUntil = Math.max(this.npcFrozenUntil, time + 3000);
+            const stunCirc = this.add.circle(this.npc.x, this.npc.y, 20, 0x000022, 0.8).setDepth(9);
+            this.tweens.add({ targets: stunCirc, scaleX: 3, scaleY: 3, alpha: 0, duration: 400, onComplete: () => stunCirc.destroy() });
+            this.showFloatingText(this.npc.x, this.npc.y - 30, '⬛ Stunned!', '#8888ff');
+          } else if (time >= this.silenceConeExpiry) {
             this.silenceConeGraphic.destroy();
             this.silenceConeGraphic = null;
             this.silenceConeExpiry = 0;
-          } else {
-            // Rotate cone to follow player's current aim direction
-            const ptr = this.input.activePointer;
-            this.silenceConeAngle = Math.atan2(ptr.worldY - this.player.y, ptr.worldX - this.player.x);
-            // Redraw cone at player's current position and facing
-            this.drawSilenceCone(this.silenceConeGraphic, this.player.x, this.player.y, this.silenceConeAngle);
-            // Check if NPC is inside cone
-            const npcInCone = this.isInSilenceCone(this.npc.x, this.npc.y, this.player.x, this.player.y, this.silenceConeAngle);
-            if (npcInCone) {
-              this.silenceConeTickAccum += delta;
-              if (this.silenceConeTickAccum >= 250) {
-                this.silenceConeTickAccum -= 250;
-                this.npc.takeDamage(2);
-                this.spawnHitFlash(this.npc.x, this.npc.y, 0x220033);
-              }
-            } else {
-              this.silenceConeTickAccum = 0;
-              this.silenceConeContinuousStart = time; // reset continuous timer
-            }
-            // Full 5s unbroken → proper stun (freeze NPC body + AI lock)
-            if (npcInCone && time - this.silenceConeContinuousStart >= 5000) {
-              this.silenceConeExpiry = 0;
-              if (this.silenceConeGraphic) { this.silenceConeGraphic.destroy(); this.silenceConeGraphic = null; }
-              this.npcFrozenUntil = Math.max(this.npcFrozenUntil, time + 3000);
-              const stunCirc = this.add.circle(this.npc.x, this.npc.y, 20, 0x000022, 0.8).setDepth(9);
-              this.tweens.add({ targets: stunCirc, scaleX: 3, scaleY: 3, alpha: 0, duration: 400, onComplete: () => stunCirc.destroy() });
-              this.showFloatingText(this.npc.x, this.npc.y - 30, '⬛ Stunned!', '#8888ff');
-            }
           }
         }
 
         // They Watch per-frame
         if (this.silenceWatchChanneling) {
-          // Update player position on player sprite (watch lock handled in speed mult)
           (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-          // Tick damage to NPC if touching goop border
           const { width: W3, height: H3 } = this.scale;
           const GOOP3 = 48;
           const npcOnGoop = this.npc.x < GOOP3 + 20 || this.npc.x > W3 - GOOP3 - 20 ||
@@ -14856,105 +15228,55 @@ export class ArenaScene extends Phaser.Scene {
           }
         }
 
-        // Slasher pip overlay: follow player position
+        // Slasher pip overlay + mask: follow player position
+        if (this.silenceMaskSprite) {
+          this.silenceMaskSprite.setPosition(this.player.x, this.player.y - 4);
+        }
         if (this.silenceSlasherPips.length > 0) {
           const pipSpacing = 12;
           const totalW = (this.silenceSlasherPips.length - 1) * pipSpacing;
           for (let pi = 0; pi < this.silenceSlasherPips.length; pi++) {
             this.silenceSlasherPips[pi].setPosition(
               this.player.x - totalW / 2 + pi * pipSpacing,
-              this.player.y - 36,
+              this.player.y - 52,
             );
           }
         }
 
-        // Hook projectile: on hit register connection (generous 50px radius)
-        if (this.silenceHookProj && this.silenceHookProj.active) {
-          const hd = Phaser.Math.Distance.Between(this.silenceHookProj.x, this.silenceHookProj.y, this.npc.x, this.npc.y);
-          if (hd <= 50) {
-            this.silenceHookConnected = true;
-            this.silenceHookWindowExpiry = time + 5000;
-            this.silenceHookProj.setActive(false).setVisible(false);
-            (this.silenceHookProj.body as Phaser.Physics.Arcade.Body).stop();
-            this.silenceHookProj = null;
-            this.showFloatingText(this.npc.x, this.npc.y - 20, '🪝 Hooked!', '#cc9933');
-            // Initial damage on hook hit
-            this.npc.takeDamage(8);
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0xaa7733);
-          }
-        }
         // Hook window expiry
         if (this.silenceHookConnected && time > this.silenceHookWindowExpiry) {
           this.silenceHookConnected = false;
-        }
-
-        // Possess projectile: on hit set possession
-        for (const go of this.projectiles.getChildren()) {
-          const proj = go as Projectile;
-          if (!proj.active || !proj.isFromPlayer || proj.texture.key !== 'proj-silence-eye') continue;
-          if (Phaser.Math.Distance.Between(proj.x, proj.y, this.npc.x, this.npc.y) <= 28) {
-            this.silencePossessedUntil = time + 8000;
-            proj.setActive(false).setVisible(false);
-            (proj.body as Phaser.Physics.Arcade.Body).stop();
-            this.showFloatingText(this.npc.x, this.npc.y - 30, '👁 Possessed!', '#cc66ff');
-            const eyeFlash = this.add.circle(this.npc.x, this.npc.y, 16, 0x660088, 0.8).setDepth(9);
-            this.tweens.add({ targets: eyeFlash, scaleX: 3, scaleY: 3, alpha: 0, duration: 400, onComplete: () => eyeFlash.destroy() });
-          }
         }
 
       }
 
       // NPC Silence per-frame
       if (this.npcElement.id === 'silence') {
-        // NPC possess-eye hitting player
-        for (const go of this.projectiles.getChildren()) {
-          const proj = go as Projectile;
-          if (!proj.active || proj.isFromPlayer || proj.texture.key !== 'proj-silence-eye') continue;
-          if (Phaser.Math.Distance.Between(proj.x, proj.y, this.player.x, this.player.y) <= 28) {
-            this.npcSilencePossessedUntil = time + 8000;
-            proj.setActive(false).setVisible(false);
-            (proj.body as Phaser.Physics.Arcade.Body).stop();
-            this.showFloatingText(this.player.x, this.player.y - 30, '👁 Possessed!', '#cc66ff');
-          }
-        }
-
-        // NPC hook-eye hitting player
-        for (const go of this.projectiles.getChildren()) {
-          const proj = go as Projectile;
-          if (!proj.active || proj.isFromPlayer || proj.texture.key !== 'proj-silence-hook') continue;
-          if (Phaser.Math.Distance.Between(proj.x, proj.y, this.player.x, this.player.y) <= 28) {
-            this.npcSilenceHookConnected = true;
-            proj.setActive(false).setVisible(false);
-            (proj.body as Phaser.Physics.Arcade.Body).stop();
-          }
-        }
-
         // NPC DON'T LOOK cone (affects player)
         if (this.npcSilenceConeGraphic && this.npcSilenceConeExpiry > 0) {
-          if (time >= this.npcSilenceConeExpiry) {
+          this.drawSilenceCone(this.npcSilenceConeGraphic, this.npc.x, this.npc.y, this.npcSilenceConeAngle);
+          const playerInCone = this.isInSilenceCone(this.player.x, this.player.y, this.npc.x, this.npc.y, this.npcSilenceConeAngle);
+          if (playerInCone) {
+            this.npcSilenceConeTickAccum += delta;
+            if (this.npcSilenceConeTickAccum >= 250) {
+              this.npcSilenceConeTickAccum -= 250;
+              this.player.takeDamage(2);
+              this.spawnHitFlash(this.player.x, this.player.y, 0x220033);
+            }
+          } else {
+            this.npcSilenceConeTickAccum = 0;
+            this.npcSilenceConeContinuousStart = time;
+          }
+          // Check stun BEFORE expiry so it fires when player stays in for the full duration.
+          if (playerInCone && time - this.npcSilenceConeContinuousStart >= 5000) {
+            this.npcSilenceConeExpiry = 0;
+            if (this.npcSilenceConeGraphic) { this.npcSilenceConeGraphic.destroy(); this.npcSilenceConeGraphic = null; }
+            this.nukeChanneling = true;
+            this.nukeChannelEnd = time + 3000;
+          } else if (time >= this.npcSilenceConeExpiry) {
             this.npcSilenceConeGraphic.destroy();
             this.npcSilenceConeGraphic = null;
             this.npcSilenceConeExpiry = 0;
-          } else {
-            this.drawSilenceCone(this.npcSilenceConeGraphic, this.npc.x, this.npc.y, this.npcSilenceConeAngle);
-            const playerInCone = this.isInSilenceCone(this.player.x, this.player.y, this.npc.x, this.npc.y, this.npcSilenceConeAngle);
-            if (playerInCone) {
-              this.npcSilenceConeTickAccum += delta;
-              if (this.npcSilenceConeTickAccum >= 250) {
-                this.npcSilenceConeTickAccum -= 250;
-                this.player.takeDamage(2);
-                this.spawnHitFlash(this.player.x, this.player.y, 0x220033);
-              }
-            } else {
-              this.npcSilenceConeTickAccum = 0;
-              this.npcSilenceConeContinuousStart = time;
-            }
-            if (playerInCone && time - this.npcSilenceConeContinuousStart >= 5000) {
-              this.npcSilenceConeExpiry = 0;
-              if (this.npcSilenceConeGraphic) { this.npcSilenceConeGraphic.destroy(); this.npcSilenceConeGraphic = null; }
-              this.nukeChanneling = true;
-              this.nukeChannelEnd = time + 3000;
-            }
           }
         }
 
@@ -14963,6 +15285,23 @@ export class ArenaScene extends Phaser.Scene {
           const nb2 = this.npc.body as Phaser.Physics.Arcade.Body;
           const pb2 = this.player.body as Phaser.Physics.Arcade.Body;
           pb2.setVelocity(nb2.velocity.x, nb2.velocity.y);
+        }
+
+        // NPC yank: steer player toward NPC each frame until they arrive or time expires
+        if (time < this.silencePlayerYankUntil) {
+          const ydx2 = this.npc.x - this.player.x, ydy2 = this.npc.y - this.player.y;
+          const ydist2 = Math.sqrt(ydx2 * ydx2 + ydy2 * ydy2);
+          if (ydist2 <= 65) {
+            this.silencePlayerYankUntil = 0;
+            (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+          } else {
+            (this.player.body as Phaser.Physics.Arcade.Body).setVelocity((ydx2 / ydist2) * 900, (ydy2 / ydist2) * 900);
+          }
+        }
+
+        // NPC slasher mask: follow NPC
+        if (this.npcSilenceMaskSprite) {
+          this.npcSilenceMaskSprite.setPosition(this.npc.x, this.npc.y - 4);
         }
       }
     }
@@ -16249,6 +16588,11 @@ export class ArenaScene extends Phaser.Scene {
     // ── Technology per-frame ──────────────────────────────────────
     if (this.elementId === 'technology' || this.npcElement.id === 'technology') {
       this.updateTechnologyState(time, delta);
+    }
+
+    // ── Magma per-frame ───────────────────────────────────────────
+    if (this.elementId === 'magma' || this.npcElement.id === 'magma') {
+      this.updateMagmaState(time, delta);
     }
 
     // ── Wind Trap — player's trap constrains NPC ─────────────────
@@ -22863,10 +23207,33 @@ export class ArenaScene extends Phaser.Scene {
   private handleTechnologyInput(time: number, _pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
     if (this.nukeChanneling) return;
     const ctx = this.buildPlayerContext(mouseX, mouseY);
+    const ransomwared = this.techRansomwareTarget === 'player' && time < this.techRansomwareExpiry;
+    const ptr = this.input.activePointer;
+    const clickDown = ptr.leftButtonDown();
+    const clickJustDown = clickDown && !this.techClickArmed;
+    if (clickJustDown) this.techClickArmed = true;
+    if (!clickDown) this.techClickArmed = false;
 
-    // Click: Flail empower (also spawns ball if absent)
-    if (this.input.activePointer.leftButtonDown() && this.player.getCooldownRatio('tech-flail') >= 1) {
-      this.player.castAbility('tech-flail', ctx);
+    // Click: Gear.Give box open/select, or active weapon attack
+    let clickConsumedByBox = false;
+    if (clickJustDown) {
+      if (this.techGearBoxActive) {
+        // Select displayed weapon — consume this click
+        this.doTechGearGiveActivate('player');
+        clickConsumedByBox = true;
+      } else if (this.techActiveWeapon === -1) {
+        // Open item box
+        this.doTechGearGiveActivate('player');
+        clickConsumedByBox = true;
+      }
+    }
+    // Weapon attacks (some need just-down, helix-shot needs held)
+    if (!clickConsumedByBox && this.techActiveWeapon >= 0 && time < this.techActiveWeaponExpiry) {
+      const w = this.techActiveWeapon;
+      if (w === 0 && clickJustDown) this.doTechSwordWhip('player', mouseX, mouseY, time);
+      else if (w === 1 && clickJustDown) this.doTechDiscDancer('player', mouseX, mouseY);
+      else if (w === 2 && clickDown) this.doTechHelixShot('player', mouseX, mouseY, time);
+      else if (w === 3 && clickJustDown) this.doTechCodeCruncher('player', mouseX, mouseY);
     }
 
     // E: Dev.Console
@@ -22874,55 +23241,22 @@ export class ArenaScene extends Phaser.Scene {
       this.player.castAbility('tech-devconsole', ctx);
     }
 
-    // R: Hack.Attribute (no cd)
-    if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
-      this.player.castAbility('tech-hack', ctx);
+    // R: Randomize.Exe (blocked by ransomware)
+    if (Phaser.Input.Keyboard.JustDown(this.rKey) && !ransomwared) {
+      this.player.castAbility('tech-random-r', ctx);
     }
 
-    // F: Player.Gift (no cd)
-    if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
+    // F: Player.Gift (blocked by ransomware)
+    if (Phaser.Input.Keyboard.JustDown(this.fKey) && !ransomwared) {
       this.player.castAbility('tech-gift', ctx);
     }
 
-    // Q: OP.Self
-    if (Phaser.Input.Keyboard.JustDown(this.qKey) && this.playerOpSelfPhase === 0 && this.player.getCooldownRatio('tech-opself') >= 1) {
-      this.player.castAbility('tech-opself', ctx);
+    // Q: Domain.Expansion (blocked by ransomware)
+    if (Phaser.Input.Keyboard.JustDown(this.qKey) && !this.techDomainActive && this.techDomainDraggingSlider < 0 && !ransomwared) {
+      this.player.castAbility('tech-domain', ctx);
     }
 
     void time;
-  }
-
-  private ensureTechFlailBall(owner: 'player' | 'npc'): void {
-    const caster = owner === 'player' ? this.player : this.npc;
-    if (owner === 'player' && this.techFlailBall) return;
-    if (owner === 'npc' && this.npcTechFlailBall) return;
-
-    const ball: typeof this.techFlailBall = {
-      sprite: this.add.sprite(caster.x + 40, caster.y, 'proj-tech-flail-ball').setDepth(10),
-      chainSprites: [],
-      x: caster.x + 40,
-      y: caster.y,
-      vx: 0,
-      vy: 0,
-      empowerEndAt: 0,
-      lastHitAt: 0,
-    };
-    // Create 5 chain link sprites
-    for (let i = 0; i < 5; i++) {
-      ball.chainSprites.push(this.add.sprite(caster.x, caster.y, 'proj-tech-flail-chain').setDepth(9));
-    }
-    if (owner === 'player') this.techFlailBall = ball;
-    else this.npcTechFlailBall = ball;
-  }
-
-  private doTechFlailEmpower(owner: 'player' | 'npc'): void {
-    this.ensureTechFlailBall(owner);
-    const ball = owner === 'player' ? this.techFlailBall! : this.npcTechFlailBall!;
-    ball.empowerEndAt = this.time.now + 3000;
-    ball.sprite.setScale(2);
-    // Show floating text
-    const caster = owner === 'player' ? this.player : this.npc;
-    this.spawnFloatingText(caster.x, caster.y - 36, '⚡ EMPOWERED', '#44ffcc');
   }
 
   private doTechDevConsoleOpen(owner: 'player' | 'npc'): void {
@@ -22970,54 +23304,96 @@ export class ArenaScene extends Phaser.Scene {
   private closeTechDevConsole(owner: 'player' | 'npc'): void {
     const now = this.time.now;
     const caster = owner === 'player' ? this.player : this.npc;
+    const target = owner === 'player' ? this.npc : this.player;
     const keyCount = owner === 'player' ? this.techConsoleKeyCount : this.npcTechConsoleKeyCount;
     const damageMult = owner === 'player' ? (1 + this.playerTechDamageBonus) : (1 + this.npcTechDamageBonus);
-    const bulletDmg = Math.round(20 * damageMult);
+    const ptr = this.input.activePointer;
+    const tx = owner === 'player' ? ptr.worldX : this.player.x;
+    const ty = owner === 'player' ? ptr.worldY : this.player.y;
 
-    // Determine shots count
-    let shots = 0;
-    if (keyCount >= 20) shots = 3;
-    else if (keyCount >= 10) shots = 2;
-    else if (keyCount >= 1) shots = 1;
-
-    if (shots > 0) {
-      // Fire bullets toward cursor (cursor pos at 3s mark = current pointer position)
-      const ptr = this.input.activePointer;
-      const tx = owner === 'player' ? ptr.worldX : this.player.x;
-      const ty = owner === 'player' ? ptr.worldY : this.player.y;
-      const baseAngle = Math.atan2(ty - caster.y, tx - caster.x);
-      const spreadAngles = shots === 1 ? [0] : shots === 2 ? [-0.12, 0.12] : [-0.2, 0, 0.2];
-      for (const off of spreadAngles) {
-        const angle = baseAngle + off;
-        const bullet = this.projectiles.create(caster.x, caster.y, 'proj-tech-bullet') as Phaser.Physics.Arcade.Sprite;
-        bullet.setDepth(12);
-        (bullet as unknown as { isFromPlayer: boolean }).isFromPlayer = (owner === 'player');
-        (bullet as unknown as { damage: number }).damage = bulletDmg;
-        (bullet as unknown as { hitEnemy: boolean }).hitEnemy = false;
-        bullet.setRotation(angle);
-        (bullet.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(angle) * 275, Math.sin(angle) * 275);
-        this.time.delayedCall(2000, () => { if (bullet.active) bullet.destroy(); });
-      }
-    } else {
-      // Fire screen-wide beam (short-lived rectangle)
+    if (keyCount === 0) {
+      // 0 chars: screen-wide beam
       const W = this.scale.width;
       const beamDmg = Math.round(10 * damageMult);
       const beam = this.add.rectangle(W / 2, caster.y, W, 20, 0x44ccaa, 0.7).setDepth(18);
-      // Check overlap immediately
-      const target = owner === 'player' ? this.npc : this.player;
       if (Math.abs(target.y - caster.y) <= 24) {
         target.takeDamage(beamDmg);
         this.spawnDamageNumber(target.x, target.y - 28, beamDmg);
         this.spawnHitFlash(target.x, target.y, 0x44ccaa);
       }
       this.time.delayedCall(200, () => { beam.destroy(); });
+    } else if (keyCount <= 9) {
+      // 1-9 chars: VIRUS — self tick damage for 5s
+      if (owner === 'player') {
+        this.techVirusEndAt = now + 5000;
+        this.techVirusNextTickAt = now + 500;
+      } else {
+        this.npcTechVirusEndAt = now + 5000;
+        this.npcTechVirusNextTickAt = now + 500;
+      }
+    } else if (keyCount <= 20) {
+      // 10-20 chars: MALWARE — large blue square projectile (20 dmg)
+      const angle = Math.atan2(ty - caster.y, tx - caster.x);
+      const malware = this.projectiles.create(caster.x, caster.y, 'proj-tech-malware') as Phaser.Physics.Arcade.Sprite;
+      malware.setDepth(14).setScale(1.2);
+      (malware as unknown as { isFromPlayer: boolean }).isFromPlayer = (owner === 'player');
+      (malware as unknown as { damage: number }).damage = Math.round(20 * damageMult);
+      (malware as unknown as { hitEnemy: boolean }).hitEnemy = false;
+      malware.setRotation(angle);
+      (malware.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(angle) * 220, Math.sin(angle) * 220);
+      this.time.delayedCall(3000, () => { if (malware.active) malware.destroy(); });
+    } else if (keyCount <= 40) {
+      // 21-40 chars: RANSOMWARE — orange circle, locks enemy non-click abilities 5s
+      const angle = Math.atan2(ty - caster.y, tx - caster.x);
+      const ransom = this.add.sprite(caster.x, caster.y, 'proj-tech-ransomware').setDepth(15);
+      const speed = 200;
+      let vx = Math.cos(angle) * speed;
+      let vy = Math.sin(angle) * speed;
+      let rx = caster.x; let ry = caster.y;
+      const hitRadius = 20;
+      const ransomTarget = owner === 'player' ? this.npc : this.player;
+      // Move each frame via update listener
+      const moveId = setInterval(() => {
+        rx += vx * 0.016; ry += vy * 0.016;
+        ransom.setPosition(rx, ry);
+        const hit = Phaser.Math.Distance.Between(rx, ry, ransomTarget.x, ransomTarget.y) < hitRadius + 20;
+        const { width: W, height: H } = this.scale;
+        const outOfBounds = rx < 0 || rx > W || ry < 0 || ry > H;
+        if (hit || outOfBounds) {
+          clearInterval(moveId);
+          if (ransom.active) {
+            this.spawnHitFlash(rx, ry, 0xff6600);
+            if (hit) {
+              this.techRansomwareTarget = owner === 'player' ? 'npc' : 'player';
+              this.techRansomwareExpiry = this.time.now + 5000;
+              this.spawnFloatingText(ransomTarget.x, ransomTarget.y - 36, 'RANSOMWARE!', '#ff6600');
+            }
+            ransom.destroy();
+          }
+        }
+        void vx; void vy;
+      }, 16);
+      this.time.delayedCall(4000, () => { clearInterval(moveId); if (ransom.active) ransom.destroy(); });
+    } else {
+      // 41-60+ chars: TROJAN SUPPLY DROP
+      const { width: W, height: H } = this.scale;
+      const dropX = Phaser.Math.Clamp(target.x + (Math.random() - 0.5) * 80, 60, W - 60);
+      const dropY = Phaser.Math.Clamp(target.y + (Math.random() - 0.5) * 40, 60, H - 60);
+      const shadow = this.add.ellipse(dropX, dropY, 48, 16, 0x000000, 0.4).setDepth(8);
+      const trojanSprite = this.add.sprite(dropX, dropY - 200, 'proj-tech-trojan').setDepth(22);
+      const hitbox = this.add.rectangle(dropX, dropY, 28, 26, 0x000000, 0).setDepth(22);
+      const drop = { sprite: trojanSprite, shadow, x: dropX, y: dropY, landed: false, landAt: now + 1200, hitbox, lastHitAt: 0, owner };
+      this.techTrojanDrops.push(drop);
+      this.tweens.add({
+        targets: trojanSprite,
+        y: dropY,
+        duration: 1100,
+        ease: 'Quad.easeIn',
+        onComplete: () => { drop.landed = true; },
+      });
     }
 
-    // Show result
-    const resultText = shots > 0 ? `${shots} SHOT${shots > 1 ? 'S' : ''} FIRED` : 'BEAM BLAST';
-    this.spawnFloatingText(caster.x, caster.y - 36, resultText, '#44ffcc');
-
-    // Cleanup
+    // Cleanup console UI
     if (owner === 'player') {
       if (this.techConsoleKeyListener) { window.removeEventListener('keydown', this.techConsoleKeyListener); this.techConsoleKeyListener = null; }
       if (this.techConsoleBox) { this.techConsoleBox.destroy(); this.techConsoleBox = null; }
@@ -23071,6 +23447,91 @@ export class ArenaScene extends Phaser.Scene {
     }
   }
 
+  private doTechStartDomain(owner: 'player' | 'npc'): void {
+    if (this.techDomainActive) return;
+    const { width: W, height: H } = this.scale;
+    const cx = W / 2, cy = H / 2;
+    const isPlayer = owner === 'player';
+    this.techDomainSavedPlayerX = this.player.x; this.techDomainSavedPlayerY = this.player.y;
+    this.techDomainSavedNpcX = this.npc.x; this.techDomainSavedNpcY = this.npc.y;
+    this.player.setPosition(cx - 60, cy);
+    this.npc.setPosition(cx + 60, cy);
+    this.techDomainCenterX = cx; this.techDomainCenterY = cy;
+    this.techDomainOverlay = this.add.rectangle(cx, cy, W, H, 0x000000, 0.35).setDepth(50);
+    this.techDomainCircle = this.add.graphics().setDepth(51);
+    this.techDomainShards = [];
+    for (let si = 0; si < 24; si++) {
+      this.techDomainShards.push(this.add.image(0, 0, 'domain-shard').setDepth(52).setScale(1.4));
+    }
+    this.techDomainInstability = 0; this.techDomainBias = 0; this.techDomainCollapse = 0;
+    this.techDomainAbuse = 0; this.techDomainShardAngleOffset = 0;
+    this.techDomainExplosionAccum = 0; this.techDomainShardProjAccum = 0;
+    this.techDomainBorderTickAccum = 0; this.techDomainDraggingSlider = -1;
+    if (isPlayer) {
+      // Slider UI (top-left) — only for player caster
+      const SLIDER_X = 20, SLIDER_W = 140, SLIDER_H = 10, KNOB_W = 14, KNOB_H = 20, DEPTH_UI = 58;
+      const sliderColors = [0xff4400, 0xcc44ff, 0x0088ff];
+      const sliderNames = ['Instability', 'Bias', 'Collapse'];
+      this.techDomainSliderBgs = []; this.techDomainSliderFills = [];
+      this.techDomainSliderKnobs = []; this.techDomainSliderLabels = [];
+      for (let i = 0; i < 3; i++) {
+        const y = 45 + i * 38;
+        const lbl = this.add.text(SLIDER_X, y - 14, sliderNames[i], { fontSize: '12px', color: '#ccaaff', fontFamily: 'monospace' }).setDepth(DEPTH_UI).setScrollFactor(0);
+        const bg = this.add.rectangle(SLIDER_X + SLIDER_W / 2, y, SLIDER_W, SLIDER_H, 0x111111, 0.9).setDepth(DEPTH_UI).setScrollFactor(0);
+        const fill = this.add.rectangle(SLIDER_X, y, 0, SLIDER_H, sliderColors[i], 0.9).setDepth(DEPTH_UI + 1).setOrigin(0, 0.5).setScrollFactor(0);
+        const knob = this.add.rectangle(SLIDER_X, y, KNOB_W, KNOB_H, 0xeeeeff, 1).setDepth(DEPTH_UI + 2).setScrollFactor(0);
+        knob.setInteractive({ draggable: true, useHandCursor: true });
+        const idx = i;
+        this.input.setDraggable(knob);
+        knob.on('drag', (_ptr: Phaser.Input.Pointer, dragX: number) => {
+          const val = Math.round((Phaser.Math.Clamp(dragX, SLIDER_X, SLIDER_X + SLIDER_W) - SLIDER_X) / SLIDER_W * 100);
+          if (idx === 0) this.techDomainInstability = val;
+          else if (idx === 1) this.techDomainBias = val;
+          else this.techDomainCollapse = val;
+          this.techDomainDraggingSlider = idx;
+        });
+        knob.on('dragend', () => { this.techDomainDraggingSlider = -1; });
+        this.techDomainSliderBgs.push(bg); this.techDomainSliderFills.push(fill);
+        this.techDomainSliderKnobs.push(knob); this.techDomainSliderLabels.push(lbl);
+      }
+      const abuseY = 45 + 3 * 38;
+      this.techDomainAbuseLabel = this.add.text(SLIDER_X, abuseY - 14, 'Abuse', { fontSize: '12px', color: '#ff4422', fontFamily: 'monospace' }).setDepth(DEPTH_UI).setScrollFactor(0);
+      this.techDomainAbuseBarBg = this.add.rectangle(SLIDER_X + SLIDER_W / 2, abuseY, SLIDER_W, SLIDER_H, 0x330000, 0.9).setDepth(DEPTH_UI).setScrollFactor(0);
+      this.techDomainAbuseBarFill = this.add.rectangle(SLIDER_X, abuseY, 0, SLIDER_H, 0xff2222, 0.95).setDepth(DEPTH_UI + 1).setOrigin(0, 0.5).setScrollFactor(0);
+    }
+    this.techDomainActive = true;
+    this.techDomainExpiry = this.time.now + 15000;
+    this.showFloatingText(cx, cy - 60, '💻 Domain.Expansion', '#44ccaa');
+  }
+
+  private techEndDomain(): void {
+    if (!this.techDomainActive) return;
+    this.techDomainActive = false;
+    if (this.techDomainOverlay) { this.techDomainOverlay.destroy(); this.techDomainOverlay = null; }
+    if (this.techDomainCircle) { this.techDomainCircle.destroy(); this.techDomainCircle = null; }
+    for (const s of this.techDomainShards) s.destroy();
+    this.techDomainShards = [];
+    for (const o of this.techDomainSliderBgs) o.destroy(); this.techDomainSliderBgs = [];
+    for (const o of this.techDomainSliderFills) o.destroy(); this.techDomainSliderFills = [];
+    for (const o of this.techDomainSliderKnobs) { o.removeAllListeners(); o.destroy(); } this.techDomainSliderKnobs = [];
+    for (const o of this.techDomainSliderLabels) o.destroy(); this.techDomainSliderLabels = [];
+    if (this.techDomainAbuseBarBg) { this.techDomainAbuseBarBg.destroy(); this.techDomainAbuseBarBg = null; }
+    if (this.techDomainAbuseBarFill) { this.techDomainAbuseBarFill.destroy(); this.techDomainAbuseBarFill = null; }
+    if (this.techDomainAbuseLabel) { this.techDomainAbuseLabel.destroy(); this.techDomainAbuseLabel = null; }
+    const { width: W, height: H } = this.scale;
+    this.physics.world.setBounds(32, 32, W - 64, H - 64);
+    this.player.setPosition(this.techDomainSavedPlayerX, this.techDomainSavedPlayerY);
+    this.npc.setPosition(this.techDomainSavedNpcX, this.techDomainSavedNpcY);
+    this.techDomainInstability = 0; this.techDomainBias = 0; this.techDomainCollapse = 0;
+    this.techDomainExplosionAccum = 0;
+    this.techDomainShardProjAccum = 0; this.techDomainBorderTickAccum = 0; this.techDomainDraggingSlider = -1;
+    const flash = this.add.circle(W / 2, H / 2, this.techDomainBaseRadius, 0x004433, 0.7).setDepth(55);
+    this.tweens.add({ targets: flash, scaleX: 2, scaleY: 2, alpha: 0, duration: 500, onComplete: () => flash.destroy() });
+    this.showFloatingText(W / 2, H / 2 - 40, '💻 Domain Collapsed', '#44ffcc');
+    if (this.elementId === 'technology') this.player.triggerCooldown('tech-domain');
+    else this.npc.triggerCooldown('tech-domain');
+  }
+
   private doTechOpSelfBegin(owner: 'player' | 'npc'): void {
     const caster = owner === 'player' ? this.player : this.npc;
     const now = this.time.now;
@@ -23087,6 +23548,207 @@ export class ArenaScene extends Phaser.Scene {
       this.npc.damageAbsorber = () => false;
       caster.setTint(0xffdd44);
     }
+  }
+
+  // ── Randomize.Exe (new R ability) ────────────────────────────────
+  private doTechRandomEffect(owner: 'player' | 'npc'): void {
+    const caster = owner === 'player' ? this.player : this.npc;
+    const now = this.time.now;
+    const roll = Math.floor(Math.random() * 3) + 1 as 1 | 2 | 3; // 1=invinc, 2=invis+speed, 3=jail
+
+    if (owner === 'player') {
+      this.playerAbuse = Math.min(100, this.playerAbuse + 30);
+      this.playerOpSelfPhase = roll;
+      if (roll === 1) {
+        this.playerOpSelfPhaseEnd = now + 3000;
+        this.player.damageAbsorber = () => false;
+        caster.setTint(0xffdd44);
+        this.spawnFloatingText(caster.x, caster.y - 40, 'INVINCIBLE', '#ffdd44');
+      } else if (roll === 2) {
+        this.playerOpSelfPhaseEnd = now + 5000;
+        this.playerOpSelfInvisActive = true;
+        this.player.setAlpha(0.15);
+        this.spawnFloatingText(caster.x, caster.y - 40, 'INVISIBLE', '#aaffdd');
+      } else {
+        this.playerOpSelfPhaseEnd = now + 5000;
+        const jailW = 240; const jailH = 240;
+        const jailGfx = this.add.graphics().setDepth(16);
+        jailGfx.lineStyle(3, 0x44ccaa, 0.9);
+        jailGfx.strokeRect(this.npc.x - jailW / 2, this.npc.y - jailH / 2, jailW, jailH);
+        this.techJailBoxNpc = { graphics: jailGfx, x: this.npc.x, y: this.npc.y, w: jailW, h: jailH, lastDmgAt: 0 };
+        this.spawnFloatingText(this.npc.x, this.npc.y - 40, 'JAILED', '#44ccaa');
+      }
+    } else {
+      this.npcAbuse = Math.min(100, this.npcAbuse + 30);
+      this.npcOpSelfPhase = roll;
+      if (roll === 1) {
+        this.npcOpSelfPhaseEnd = now + 3000;
+        this.npc.damageAbsorber = () => false;
+        caster.setTint(0xffdd44);
+      } else if (roll === 2) {
+        this.npcOpSelfPhaseEnd = now + 5000;
+        this.npcOpSelfInvisActive = true;
+        this.npc.setAlpha(0.15);
+      } else {
+        this.npcOpSelfPhaseEnd = now + 5000;
+        const jailW = 240; const jailH = 240;
+        const jailGfx = this.add.graphics().setDepth(16);
+        jailGfx.lineStyle(3, 0x44ccaa, 0.9);
+        jailGfx.strokeRect(this.player.x - jailW / 2, this.player.y - jailH / 2, jailW, jailH);
+        this.techJailBoxPlayer = { graphics: jailGfx, x: this.player.x, y: this.player.y, w: jailW, h: jailH, lastDmgAt: 0 };
+      }
+    }
+  }
+
+  // ── Gear.Give (item box + weapon system) ────────────────────────
+  private doTechGearGiveActivate(owner: 'player' | 'npc'): void {
+    if (owner !== 'player') return;
+    const caster = this.player;
+    if (this.techGearBoxActive) {
+      // Select displayed weapon
+      this.techActiveWeapon = this.techGearBoxWeapon as 0 | 1 | 2 | 3;
+      this.techActiveWeaponExpiry = this.time.now + 20000;
+      this.techGearBoxActive = false;
+      if (this.techGearBoxGraphics) { this.techGearBoxGraphics.destroy(); this.techGearBoxGraphics = null; }
+      if (this.techGearBoxLabel) { this.techGearBoxLabel.destroy(); this.techGearBoxLabel = null; }
+      const weaponNames = ['Sword Whip', 'Disc Dancer', 'Helix Shot', 'Code Cruncher'];
+      this.spawnFloatingText(caster.x, caster.y - 36, weaponNames[this.techActiveWeapon], '#44ffcc');
+    } else if (this.techActiveWeapon === -1) {
+      // Open item box
+      this.techGearBoxActive = true;
+      this.techGearBoxWeapon = 0;
+      this.techGearBoxCycleAccum = 0;
+      this.techGearBoxGraphics = this.add.graphics().setDepth(28);
+      this.techGearBoxLabel = this.add.text(caster.x, caster.y - 56, '?', {
+        fontSize: '13px', color: '#ffffff', fontFamily: 'monospace', stroke: '#000033', strokeThickness: 2,
+      }).setOrigin(0.5).setDepth(29);
+    }
+  }
+
+  private doTechNpcGearGiveAttack(): void {
+    // NPC simplified: fire a single tech bullet toward the player
+    const angle = Math.atan2(this.player.y - this.npc.y, this.player.x - this.npc.x);
+    const aimOff = (this.npcDifficulty.aimOffsetDeg ?? 0) * (Math.PI / 180);
+    const finalAngle = angle + (Math.random() - 0.5) * 2 * aimOff;
+    const bullet = this.projectiles.create(this.npc.x, this.npc.y, 'proj-tech-bullet') as Phaser.Physics.Arcade.Sprite;
+    bullet.setDepth(12);
+    (bullet as unknown as { isFromPlayer: boolean }).isFromPlayer = false;
+    (bullet as unknown as { damage: number }).damage = Math.round(12 * (1 + this.npcTechDamageBonus));
+    (bullet as unknown as { hitEnemy: boolean }).hitEnemy = false;
+    bullet.setRotation(finalAngle);
+    (bullet.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(finalAngle) * 280, Math.sin(finalAngle) * 280);
+    this.time.delayedCall(2000, () => { if (bullet.active) bullet.destroy(); });
+  }
+
+  // ── Weapon attack dispatcher ─────────────────────────────────────
+  private doTechWeaponAttack(owner: 'player' | 'npc', weapon: number, tx: number, ty: number, time: number): void {
+    if (weapon === 0) this.doTechSwordWhip(owner, tx, ty, time);
+    else if (weapon === 1) this.doTechDiscDancer(owner, tx, ty);
+    else if (weapon === 2) this.doTechHelixShot(owner, tx, ty, time);
+    else if (weapon === 3) this.doTechCodeCruncher(owner, tx, ty);
+  }
+
+  private doTechSwordWhip(owner: 'player' | 'npc', tx: number, ty: number, time: number): void {
+    if (time - this.techWeaponLastFireAt < 500) return;
+    this.techWeaponLastFireAt = time;
+    const caster = owner === 'player' ? this.player : this.npc;
+    const target = owner === 'player' ? this.npc : this.player;
+    const angle = Math.atan2(ty - caster.y, tx - caster.x);
+    const RANGE = 110;
+    // Visual whip arc
+    const gfx = this.add.graphics().setDepth(18);
+    gfx.lineStyle(4, 0xffee44, 0.9);
+    gfx.beginPath();
+    gfx.moveTo(caster.x, caster.y);
+    const tipX = caster.x + Math.cos(angle) * RANGE;
+    const tipY = caster.y + Math.sin(angle) * RANGE;
+    gfx.lineTo(tipX, tipY);
+    gfx.strokePath();
+    // Mid bulge
+    gfx.lineStyle(2, 0xffffff, 0.6);
+    gfx.strokeCircle(
+      caster.x + Math.cos(angle) * RANGE * 0.6,
+      caster.y + Math.sin(angle) * RANGE * 0.6,
+      4,
+    );
+    this.tweens.add({ targets: gfx, alpha: 0, duration: 200, onComplete: () => gfx.destroy() });
+    // Damage check — hit if target is within range and within ±55° of swing direction
+    const dist = Phaser.Math.Distance.Between(caster.x, caster.y, target.x, target.y);
+    if (dist <= RANGE + 20) {
+      const targetAngle = Math.atan2(target.y - caster.y, target.x - caster.x);
+      const angDiff = Math.abs(Phaser.Math.Angle.ShortestBetween(
+        Phaser.Math.RadToDeg(angle), Phaser.Math.RadToDeg(targetAngle),
+      ));
+      if (angDiff <= 55) {
+        const dmg = Math.round(22 * (owner === 'player' ? (1 + this.playerTechDamageBonus) : (1 + this.npcTechDamageBonus)));
+        target.takeDamage(dmg);
+        this.spawnDamageNumber(target.x, target.y - 28, dmg);
+        this.spawnHitFlash(target.x, target.y, 0xffee44);
+      }
+    }
+  }
+
+  private doTechDiscDancer(owner: 'player' | 'npc', tx: number, ty: number): void {
+    const caster = owner === 'player' ? this.player : this.npc;
+    const angle = Math.atan2(ty - caster.y, tx - caster.x);
+    const perpAngle = angle + Math.PI / 2;
+    const perpX = Math.cos(perpAngle);
+    const perpY = Math.sin(perpAngle);
+    const OFFSET = 14;
+    const s1 = this.add.sprite(caster.x + perpX * OFFSET, caster.y + perpY * OFFSET, 'proj-tech-disc').setDepth(14);
+    const s2 = this.add.sprite(caster.x - perpX * OFFSET, caster.y - perpY * OFFSET, 'proj-tech-disc').setDepth(14);
+    const SPEED = 3.5;
+    this.techDiscPairs.push({
+      s1, s2,
+      x1: s1.x, y1: s1.y,
+      x2: s2.x, y2: s2.y,
+      vx: Math.cos(angle) * SPEED,
+      vy: Math.sin(angle) * SPEED,
+      perpX, perpY,
+      offset: OFFSET,
+      phase: 0,
+      phaseTimer: 0,
+      owner,
+      lastHitAt: 0,
+    });
+  }
+
+  private doTechHelixShot(owner: 'player' | 'npc', tx: number, ty: number, time: number): void {
+    if (time - this.techWeaponLastFireAt < 80) return;
+    this.techWeaponLastFireAt = time;
+    this.techHelixToggle = !this.techHelixToggle;
+    const caster = owner === 'player' ? this.player : this.npc;
+    const angle = Math.atan2(ty - caster.y, tx - caster.x);
+    const perpAngle = angle + Math.PI / 2;
+    const offsetSign = this.techHelixToggle ? 1 : -1;
+    const PERP_OFFSET = 12;
+    const ox = Math.cos(perpAngle) * PERP_OFFSET * offsetSign;
+    const oy = Math.sin(perpAngle) * PERP_OFFSET * offsetSign;
+    const bullet = this.projectiles.create(caster.x + ox, caster.y + oy, 'proj-tech-bullet') as Phaser.Physics.Arcade.Sprite;
+    bullet.setDepth(12);
+    (bullet as unknown as { isFromPlayer: boolean }).isFromPlayer = (owner === 'player');
+    (bullet as unknown as { damage: number }).damage = Math.round(5 * (owner === 'player' ? (1 + this.playerTechDamageBonus) : (1 + this.npcTechDamageBonus)));
+    (bullet as unknown as { hitEnemy: boolean }).hitEnemy = false;
+    const speed = 260;
+    bullet.setRotation(angle);
+    (bullet.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
+    this.time.delayedCall(1500, () => { if (bullet.active) bullet.destroy(); });
+  }
+
+  private doTechCodeCruncher(owner: 'player' | 'npc', tx: number, ty: number): void {
+    const caster = owner === 'player' ? this.player : this.npc;
+    const angle = Math.atan2(ty - caster.y, tx - caster.x);
+    const speed = 220;
+    const sprite = this.add.sprite(caster.x, caster.y, 'proj-tech-grenade').setDepth(14);
+    this.techStickyGrenades.push({
+      sprite,
+      x: caster.x, y: caster.y,
+      vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+      stuck: false,
+      stuckToNpc: false,
+      explodeAt: 0,
+      owner,
+    });
   }
 
   private createTechAbuseBar(owner: 'player' | 'npc'): void {
@@ -23118,21 +23780,755 @@ export class ArenaScene extends Phaser.Scene {
     ];
     for (const [ex, ey] of edges) {
       const sprite = this.add.sprite(ex, ey, 'proj-tech-protestor').setDepth(15);
-      this.protestors.push({ sprite, hp: 50, maxHp: 50, target, nextHitAt: 0 });
+      const hpBar = this.add.graphics().setDepth(16);
+      this.protestors.push({ sprite, hpBar, hp: 25, maxHp: 25, target, nextHitAt: 0 });
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // MAGMA ELEMENT
+  // ══════════════════════════════════════════════════════════════════════════
+
+  private handleMagmaInput(_time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
+    if (this.nukeChanneling) return;
+    const ctx = this.buildPlayerContext(mouseX, mouseY);
+    const clickJustDown = pointer.isDown && !this.pointerWasDown;
+
+    // ── Lava Lord (snake): only directional controls ─────────────
+    if (this.magmaLavaLordActive) {
+      const wDown = Phaser.Input.Keyboard.JustDown(this.wKey);
+      const sDown = Phaser.Input.Keyboard.JustDown(this.sKey);
+      const aDown = Phaser.Input.Keyboard.JustDown(this.aKey);
+      const dDown = Phaser.Input.Keyboard.JustDown(this.dKey);
+      if (wDown && this.magmaLavaLordDir !== 2) this.magmaLavaLordDir = 0;
+      else if (dDown && this.magmaLavaLordDir !== 3) this.magmaLavaLordDir = 1;
+      else if (sDown && this.magmaLavaLordDir !== 0) this.magmaLavaLordDir = 2;
+      else if (aDown && this.magmaLavaLordDir !== 1) this.magmaLavaLordDir = 3;
+      return;
+    }
+
+    // ── Split active: click to attack, space spreads ─────────────
+    if (this.magmaSplitActive) {
+      if (clickJustDown) {
+        // Empower each variant's flail briefly
+        for (const v of this.magmaSplitVariants) {
+          if (v.alive) {
+            const flashR = this.add.circle(v.sprite.x, v.sprite.y, 16, 0xff4500, 0.5).setDepth(12);
+            this.tweens.add({ targets: flashR, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 300, onComplete: () => flashR.destroy() });
+          }
+        }
+      }
+      if (Phaser.Input.Keyboard.JustDown(this.spaceKey)) {
+        // Spread variants outward instead of dodge
+        for (const v of this.magmaSplitVariants) {
+          if (!v.alive) continue;
+          const angle = Math.atan2(v.offsetY, v.offsetX || 0.1);
+          v.offsetX += Math.cos(angle) * 40;
+          v.offsetY += Math.sin(angle) * 40;
+        }
+      }
+      if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
+        this.player.castAbility('magma-split', ctx);
+      }
+      return;
+    }
+
+    // ── Normal controls ──────────────────────────────────────────
+    if (clickJustDown) {
+      // Check if clicking near volcano to sacrifice HP
+      if (this.magmaVolcanoObj) {
+        const vDist = Phaser.Math.Distance.Between(mouseX, mouseY, this.magmaVolcanoObj.x, this.magmaVolcanoObj.y);
+        if (vDist <= 50) {
+          if (this.player.hp > 6) {
+            this.player.applySelfDamage(5);
+            this.magmaVolcanoObj.lavaLevel = Math.min(100, this.magmaVolcanoObj.lavaLevel + 10);
+            this.showFloatingText(this.magmaVolcanoObj.x, this.magmaVolcanoObj.y - 30, '+10 Lava!', '#ff8c00');
+          }
+          return;
+        }
+      }
+      // Click to empower mace
+      this.player.castAbility('magma-mace', ctx);
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
+      this.player.castAbility('magma-boulder', this.buildPlayerContext(mouseX, mouseY));
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
+      this.player.castAbility('magma-volcano', ctx);
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
+      this.player.castAbility('magma-split', ctx);
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
+      this.player.castAbility('magma-lava-lord', ctx);
+    }
+  }
+
+  private doMagmaMaceEmpower(owner: 'player' | 'npc'): void {
+    const now = this.time.now;
+    if (owner === 'player') {
+      this.magmaMaceEmpowered = true;
+      this.magmaMaceEmpowerExpiry = now + 5000;
+      this.showFloatingText(this.player.x, this.player.y - 30, '🔥 Mace Empowered!', '#ff8c00');
+    } else {
+      this.npcMagmaMaceEmpowered = true;
+      this.npcMagmaMaceEmpowerExpiry = now + 5000;
+    }
+  }
+
+  private doMagmaBoulder(tx: number, ty: number, owner: 'player' | 'npc'): void {
+    // Cap at 2 boulders per owner — destroy the oldest if already at 2
+    const ownerBoulders = this.magmaBoulders.filter(b => b.owner === owner);
+    if (ownerBoulders.length >= 2) {
+      const oldest = ownerBoulders[0];
+      oldest.sprite.destroy(); oldest.hpText.destroy();
+      this.magmaBoulders.splice(this.magmaBoulders.indexOf(oldest), 1);
+    }
+
+    const caster = owner === 'player' ? this.player : this.npc;
+    const target = owner === 'player' ? this.npc : this.player;
+    // Limit range: place boulder at most 200px from caster
+    const dx = tx - caster.x; const dy = ty - caster.y;
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    const maxRange = 200;
+    const bx = len > maxRange ? caster.x + (dx / len) * maxRange : tx;
+    const by = len > maxRange ? caster.y + (dy / len) * maxRange : ty;
+    const sprite = this.add.circle(bx, by, 20, 0x3d2200, 0.95).setDepth(9)
+      .setStrokeStyle(3, 0xff4500, 0.8);
+    const hpText = this.add.text(bx, by - 28, '50', {
+      fontSize: '12px', color: '#ff8c00', fontFamily: 'Arial',
+      stroke: '#000', strokeThickness: 2,
+    }).setOrigin(0.5).setDepth(10);
+    const boulder: MagmaBoulder = {
+      sprite, hpText, x: bx, y: by, hp: 50, maxHp: 50,
+      owner, lastHitAt: 0,
+    };
+    this.magmaBoulders.push(boulder);
+
+    // Deal impact damage if placed on top of the enemy
+    const impactDist = Phaser.Math.Distance.Between(bx, by, target.x, target.y);
+    if (impactDist <= 28) {
+      target.takeDamage(15);
+      this.spawnHitFlash(target.x, target.y, 0xff4500);
+      this.showFloatingText(target.x, target.y - 20, '-15', '#ff4500');
+    }
+
+    // Spawn puff effect
+    const puff = this.add.circle(bx, by, 8, 0xff6600, 0.7).setDepth(10);
+    this.tweens.add({ targets: puff, scaleX: 4, scaleY: 4, alpha: 0, duration: 400, onComplete: () => puff.destroy() });
+  }
+
+  private doMagmaVolcano(owner: 'player' | 'npc'): void {
+    if (this.magmaVolcanoObj) return; // Only one volcano at a time
+    const W = this.scale.width; const H = this.scale.height;
+    const vx = W / 2; const vy = H / 2;
+    const sprite = this.add.circle(vx, vy, 28, 0x5c2800, 0.95).setDepth(9)
+      .setStrokeStyle(4, 0xff4500, 0.9);
+    const hpText = this.add.text(vx, vy, '🌋', { fontSize: '22px' }).setOrigin(0.5).setDepth(10);
+    const barW = 60; const barH = 8;
+    const lavaBarBg = this.add.rectangle(vx, vy + 38, barW, barH, 0x330000, 0.8).setDepth(10);
+    const lavaBarFill = this.add.rectangle(vx - barW / 2, vy + 38, 0, barH, 0xff4500, 0.95)
+      .setOrigin(0, 0.5).setDepth(11);
+    const lavaLabel = this.add.text(vx, vy + 52, '0% Lava', {
+      fontSize: '11px', color: '#ff8c00', fontFamily: 'Arial', stroke: '#000', strokeThickness: 1,
+    }).setOrigin(0.5).setDepth(11);
+    this.magmaVolcanoObj = {
+      sprite, hpText, x: vx, y: vy, lavaLevel: 0,
+      lavaBarBg, lavaBarFill, lavaLabel, owner,
+      lastSpewAt: 0, lastSpewAt2: 0, erupted: false,
+    };
+    this.showFloatingText(vx, vy - 40, '🌋 Volcano Rises!', '#ff6600');
+  }
+
+  private doMagmaSplit(owner: 'player' | 'npc'): void {
+    const caster = owner === 'player' ? this.player : this.npc;
+    const isPlayer = owner === 'player';
+    if (isPlayer) {
+      if (this.magmaSplitActive) {
+        // Manual recombine
+        this.magmaRecombine('player');
+        return;
+      }
+      this.magmaSplitActive = true;
+      this.magmaSplitRecombineAt = this.time.now + 8000;
+    } else {
+      if (this.npcMagmaSplitActive) return;
+      this.npcMagmaSplitActive = true;
+      this.npcMagmaSplitRecombineAt = this.time.now + 8000;
+    }
+    const offsets = [[-30, -30], [30, -30], [-30, 30], [30, 30]];
+    const variants: MagmaSplitVariant[] = offsets.map(([ox, oy]) => {
+      const vx = caster.x + ox; const vy = caster.y + oy;
+      const sprite = this.add.circle(vx, vy, 14, 0xff4500, 0.85).setDepth(11)
+        .setStrokeStyle(2, 0xff8c00, 0.8);
+      const ballSprite = this.add.circle(vx + ox * 0.5, vy + oy * 0.5, 10, 0xff6600, 0.9).setDepth(12);
+      const chain: Phaser.GameObjects.Rectangle[] = [];
+      for (let i = 0; i < 2; i++) {
+        chain.push(this.add.rectangle(vx, vy, 4, 4, 0x441100).setDepth(11));
+      }
+      return {
+        sprite, flailBallSprite: ballSprite, flailChain: chain,
+        flailX: vx + ox * 0.5, flailY: vy + oy * 0.5,
+        flailVX: 0, flailVY: 0, hp: 35, alive: true,
+        offsetX: ox, offsetY: oy, lastContactAt: 0,
+      };
+    });
+    if (isPlayer) {
+      this.magmaSplitVariants = variants;
+      // Hide main player sprite during split
+      this.player.setAlpha(0);
+      (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+    } else {
+      this.npcMagmaSplitVariants = variants;
+      this.npc.setAlpha(0);
+    }
+  }
+
+  private magmaRecombine(owner: 'player' | 'npc'): void {
+    const isPlayer = owner === 'player';
+    const variants = isPlayer ? this.magmaSplitVariants : this.npcMagmaSplitVariants;
+    const caster = isPlayer ? this.player : this.npc;
+    const target = isPlayer ? this.npc : this.player;
+
+    // Count dead variants; deal 20 dmg to enemy per dead variant
+    let deadCount = 0;
+    for (const v of variants) {
+      if (!v.alive) deadCount++;
+      v.sprite.destroy(); v.flailBallSprite?.destroy();
+      for (const c of v.flailChain) c.destroy();
+    }
+    if (deadCount > 0) {
+      const totalDmg = deadCount * 20;
+      target.takeDamage(totalDmg);
+      this.spawnHitFlash(target.x, target.y, 0xff4500);
+      this.spawnDamageNumber(target.x, target.y - 30, totalDmg);
+      this.showFloatingText(target.x, target.y - 50, `💀×${deadCount} Recombine!`, '#ff4500');
+    }
+    // Caster HP is unchanged — player keeps whatever HP they had going in
+    // Show caster
+    caster.setAlpha(1);
+    if (isPlayer) {
+      this.magmaSplitActive = false;
+      this.magmaSplitVariants = [];
+    } else {
+      this.npcMagmaSplitActive = false;
+      this.npcMagmaSplitVariants = [];
+    }
+  }
+
+  private doMagmaLavaLord(owner: 'player' | 'npc'): void {
+    const isPlayer = owner === 'player';
+    const caster = isPlayer ? this.player : this.npc;
+    const W = this.scale.width; const H = this.scale.height;
+    // Spawn lava cores in arena
+    if (isPlayer) {
+      this.magmaLavaLordActive = true;
+      this.magmaLavaLordExpiry = this.time.now + 12000;
+      this.magmaLavaLordSpeed = 200;
+      this.magmaLavaLordDir = 1; // start moving right
+      this.magmaLavaLordMoveAccum = 0;
+      this.magmaLavaLordTrailAccum = 0;
+      this.magmaLavaLordLastContactAt = 0;
+    } else {
+      this.npcMagmaLavaLordActive = true;
+      this.npcMagmaLavaLordExpiry = this.time.now + 12000;
+      this.npcMagmaLavaLordSpeed = 200;
+      this.npcMagmaLavaLordDir = 3; // start moving left
+      this.npcMagmaLavaLordMoveAccum = 0;
+      this.npcMagmaLavaLordTrailAccum = 0;
+      this.npcMagmaLavaLordLastContactAt = 0;
+    }
+    // Create head segment
+    const headSprite = this.add.circle(caster.x, caster.y, 16, 0xff4500, 0.95).setDepth(14)
+      .setStrokeStyle(3, 0xffaa00, 0.9);
+    const segments: MagmaSnakeSegment[] = [{ x: caster.x, y: caster.y, sprite: headSprite }];
+    if (isPlayer) {
+      this.magmaLavaLordSegments = segments;
+      caster.setAlpha(0);
+    } else {
+      this.npcMagmaLavaLordSegments = segments;
+      caster.setAlpha(0);
+    }
+    // Spawn 3 lava cores for player (shared)
+    if (this.magmaLavaLordCores.length === 0) {
+      const pad = 60;
+      for (let i = 0; i < 3; i++) {
+        const cx = pad + Math.random() * (W - 2 * pad);
+        const cy = pad + Math.random() * (H - 2 * pad);
+        const coreSprite = this.add.sprite(cx, cy, 'proj-magma-lava-core').setDepth(13);
+        this.tweens.add({ targets: coreSprite, scaleX: 1.3, scaleY: 1.3, yoyo: true, repeat: -1, duration: 600 });
+        this.magmaLavaLordCores.push({ sprite: coreSprite, x: cx, y: cy });
+      }
+    }
+    this.showFloatingText(caster.x, caster.y - 40, '🐍 Lava Lord!', '#ff6600');
+  }
+
+  private magmaEndLavaLord(owner: 'player' | 'npc'): void {
+    const isPlayer = owner === 'player';
+    const segments = isPlayer ? this.magmaLavaLordSegments : this.npcMagmaLavaLordSegments;
+    const caster = isPlayer ? this.player : this.npc;
+    if (segments.length > 0) {
+      const head = segments[0];
+      caster.setPosition(head.x, head.y);
+    }
+    for (const s of segments) s.sprite.destroy();
+    if (isPlayer) {
+      this.magmaLavaLordActive = false; this.magmaLavaLordSegments = [];
+    } else {
+      this.npcMagmaLavaLordActive = false; this.npcMagmaLavaLordSegments = [];
+    }
+    caster.setAlpha(1);
+    // Destroy remaining cores
+    for (const c of this.magmaLavaLordCores) c.sprite.destroy();
+    this.magmaLavaLordCores = [];
+  }
+
+  private spawnMagmaLavaBalls(x: number, y: number, count: number, owner: 'player' | 'npc'): void {
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2;
+      const speed = 260;
+      const proj = this.projectiles.create(x, y, 'proj-magma-lava-ball') as Phaser.Physics.Arcade.Sprite;
+      proj.setDepth(12);
+      (proj as unknown as { isFromPlayer: boolean }).isFromPlayer = (owner === 'player');
+      (proj as unknown as { damage: number }).damage = 8;
+      (proj.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
+      this.time.delayedCall(1800, () => { if (proj.active) proj.destroy(); });
+    }
+  }
+
+  private spawnMagmaLavaPuddle(x: number, y: number, owner: 'player' | 'npc'): void {
+    const spr = this.add.circle(x, y, 40, 0xff4500, 0.5).setDepth(3);
+    this.tweens.add({ targets: spr, scaleX: 1.2, scaleY: 1.2, alpha: 0.3, duration: 600 });
+    this.puddles.push({ sprite: spr, expiresAt: this.time.now + 6000, x, y, radius: 40, tickAccum: 0, owner });
+  }
+
+  private updateMagmaFlail(owner: 'player' | 'npc', _delta: number): void {
+    const ARM_LENGTH = 55;
+
+    const caster = owner === 'player' ? this.player : this.npc;
+    const isPlayer = owner === 'player';
+    let bx = isPlayer ? this.magmaFlailX : this.npcMagmaFlailX;
+    let by = isPlayer ? this.magmaFlailY : this.npcMagmaFlailY;
+    let vx = isPlayer ? this.magmaFlailVX : this.npcMagmaFlailVX;
+    let vy = isPlayer ? this.magmaFlailVY : this.npcMagmaFlailVY;
+
+    // Initialize flail hanging below caster
+    if (bx === 0 && by === 0) { bx = caster.x; by = caster.y + ARM_LENGTH; }
+
+    // Pull-only rope spring: apply restoring force only when stretched beyond arm length
+    const dx = bx - caster.x; const dy = by - caster.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
+    if (dist > ARM_LENGTH) {
+      const stretch = dist - ARM_LENGTH;
+      vx -= (dx / dist) * stretch * 0.06;
+      vy -= (dy / dist) * stretch * 0.06;
+    }
+
+    // Damping
+    vx *= 0.88; vy *= 0.88;
+
+    // Move ball
+    bx += vx; by += vy;
+
+    // Update ball sprite
+    const empowered = isPlayer ? this.magmaMaceEmpowered : this.npcMagmaMaceEmpowered;
+    const shrinking = isPlayer ? this.time.now < this.magmaMaceShrinkExpiry : this.time.now < this.npcMagmaMaceShrinkExpiry;
+    const ballRadius = shrinking ? 7 : (empowered ? 14 : 10);
+    let ballSprite = isPlayer ? this.magmaFlailBallSprite : this.npcMagmaFlailBallSprite;
+    if (!ballSprite) {
+      ballSprite = this.add.circle(bx, by, ballRadius, 0xff4500, 0.9).setDepth(12)
+        .setStrokeStyle(2, 0xff8c00, 0.8);
+      if (isPlayer) this.magmaFlailBallSprite = ballSprite;
+      else this.npcMagmaFlailBallSprite = ballSprite;
+    }
+    ballSprite.setPosition(bx, by);
+    // Update radius if empower/shrink state changed
+    ballSprite.setRadius(ballRadius);
+
+    // Update chain links
+    const chain = isPlayer ? this.magmaFlailChain : this.npcMagmaFlailChain;
+    const numLinks = 4;
+    if (chain.length < numLinks) {
+      while (chain.length < numLinks) {
+        chain.push(this.add.rectangle(bx, by, 5, 5, 0x441100).setDepth(11));
+      }
+    }
+    for (let i = 0; i < numLinks; i++) {
+      const t = (i + 1) / (numLinks + 1);
+      chain[i].setPosition(caster.x + (bx - caster.x) * t, caster.y + (by - caster.y) * t);
+    }
+
+    // Contact damage on opponent
+    const target = isPlayer ? this.npc : this.player;
+    const lastContact = isPlayer ? this.magmaFlailLastContactAt : this.npcMagmaFlailLastContactAt;
+    const hitRadius = ballRadius + 8;
+    const contactDist = Phaser.Math.Distance.Between(bx, by, target.x, target.y);
+    if (contactDist <= hitRadius && this.time.now - lastContact > 400) {
+      const dmg = empowered ? 10 : 8;
+      target.takeDamage(dmg);
+      this.spawnHitFlash(target.x, target.y, 0xff4500);
+      if (isPlayer) this.magmaFlailLastContactAt = this.time.now;
+      else this.npcMagmaFlailLastContactAt = this.time.now;
+    }
+
+    // Flail hits boulders
+    for (const b of this.magmaBoulders) {
+      if (b.owner !== owner) continue; // only own flail damages own boulders
+      const bDist = Phaser.Math.Distance.Between(bx, by, b.x, b.y);
+      if (bDist <= 22 + ballRadius && this.time.now - b.lastHitAt > 300) {
+        b.hp -= empowered ? 12 : 8;
+        b.lastHitAt = this.time.now;
+        this.spawnHitFlash(b.x, b.y, 0xff6600);
+      }
+    }
+
+    // Flail hits volcano (fills lava bar)
+    if (this.magmaVolcanoObj && !this.magmaVolcanoObj.erupted) {
+      const vDist = Phaser.Math.Distance.Between(bx, by, this.magmaVolcanoObj.x, this.magmaVolcanoObj.y);
+      if (vDist <= 30 + ballRadius) {
+        const lavaGain = empowered ? 12 : 7;
+        this.magmaVolcanoObj.lavaLevel = Math.min(100, this.magmaVolcanoObj.lavaLevel + lavaGain * 0.1);
+      }
+    }
+
+    // Store back
+    if (isPlayer) {
+      this.magmaFlailX = bx; this.magmaFlailY = by;
+      this.magmaFlailVX = vx; this.magmaFlailVY = vy;
+    } else {
+      this.npcMagmaFlailX = bx; this.npcMagmaFlailY = by;
+      this.npcMagmaFlailVX = vx; this.npcMagmaFlailVY = vy;
+    }
+  }
+
+  private updateMagmaState(time: number, delta: number): void {
+    const isPlayerMagma = this.elementId === 'magma';
+    const isNpcMagma = this.npcElement.id === 'magma';
+
+    // ── Flail physics ─────────────────────────────────────────────
+    if (isPlayerMagma && !this.magmaSplitActive && !this.magmaLavaLordActive) {
+      this.updateMagmaFlail('player', delta);
+    }
+    if (isNpcMagma && !this.npcMagmaSplitActive && !this.npcMagmaLavaLordActive) {
+      this.updateMagmaFlail('npc', delta);
+    }
+
+    // ── Mace empower expiry → explosion ───────────────────────────
+    if (isPlayerMagma && this.magmaMaceEmpowered && time > this.magmaMaceEmpowerExpiry) {
+      this.magmaMaceEmpowered = false;
+      this.magmaMaceShrinkExpiry = time + 3000;
+      // Explode: 8 lava balls + puddle at flail ball pos
+      this.spawnMagmaLavaBalls(this.magmaFlailX, this.magmaFlailY, 8, 'player');
+      this.spawnMagmaLavaPuddle(this.magmaFlailX, this.magmaFlailY, 'player');
+      this.showFloatingText(this.player.x, this.player.y - 30, '💥 Mace Exploded!', '#ff4500');
+      // Shrink player
+      const prevScale = this.player.scale;
+      this.player.setScale(prevScale * 0.8);
+      this.time.delayedCall(3000, () => { this.player.setScale(prevScale); });
+    }
+    if (isNpcMagma && this.npcMagmaMaceEmpowered && time > this.npcMagmaMaceEmpowerExpiry) {
+      this.npcMagmaMaceEmpowered = false;
+      this.npcMagmaMaceShrinkExpiry = time + 3000;
+      this.spawnMagmaLavaBalls(this.npcMagmaFlailX, this.npcMagmaFlailY, 8, 'npc');
+      this.spawnMagmaLavaPuddle(this.npcMagmaFlailX, this.npcMagmaFlailY, 'npc');
+      const prevScale2 = this.npc.scale;
+      this.npc.setScale(prevScale2 * 0.8);
+      this.time.delayedCall(3000, () => { this.npc.setScale(prevScale2); });
+    }
+
+    // ── Boulder update ────────────────────────────────────────────
+    for (let i = this.magmaBoulders.length - 1; i >= 0; i--) {
+      const b = this.magmaBoulders[i];
+      if (b.hp <= 0) {
+        if (b.hp <= 0) {
+          // Break: 12 molten projectiles radially
+          this.spawnMagmaLavaBalls(b.x, b.y, 12, b.owner);
+        }
+        b.sprite.destroy(); b.hpText.destroy();
+        this.magmaBoulders.splice(i, 1);
+        continue;
+      }
+      b.hpText.setText(String(b.hp));
+      void isPlayerMagma;
+    }
+
+    // ── Volcano update ────────────────────────────────────────────
+    if (this.magmaVolcanoObj && !this.magmaVolcanoObj.erupted) {
+      const v = this.magmaVolcanoObj;
+      const { width: barW } = v.lavaBarBg;
+      // Update lava bar fill
+      const fillW = (v.lavaLevel / 100) * barW;
+      v.lavaBarFill.setSize(Math.max(0, fillW), v.lavaBarBg.height);
+      v.lavaBarFill.setPosition(v.x - barW / 2, v.y + 38);
+      v.lavaLabel.setText(`${Math.floor(v.lavaLevel)}% Lava`);
+
+      // Tier 1 (33%): spew 4 lava balls every 2s
+      if (v.lavaLevel >= 33 && time - v.lastSpewAt > 2000) {
+        this.spawnMagmaLavaBalls(v.x, v.y, 4, v.owner);
+        v.lastSpewAt = time;
+      }
+      // Tier 2 (66%): spew 8 lava balls + puddle every 3s
+      if (v.lavaLevel >= 66 && time - v.lastSpewAt2 > 3000) {
+        this.spawnMagmaLavaBalls(v.x, v.y, 8, v.owner);
+        this.spawnMagmaLavaPuddle(v.x, v.y, v.owner);
+        v.lastSpewAt2 = time;
+      }
+      // Tier 3 (100%): massive eruption
+      if (v.lavaLevel >= 100) {
+        v.erupted = true;
+        this.dealAoeDamageFromOwner(v.x, v.y, 200, 40, v.owner);
+        this.spawnMagmaLavaBalls(v.x, v.y, 16, v.owner);
+        this.spawnMagmaLavaPuddle(v.x, v.y, v.owner);
+        const eruptFlash = this.add.circle(v.x, v.y, 20, 0xff8c00, 0.95).setDepth(14);
+        this.tweens.add({ targets: eruptFlash, scaleX: 12, scaleY: 12, alpha: 0, duration: 800, onComplete: () => eruptFlash.destroy() });
+        this.showFloatingText(v.x, v.y - 60, '🌋 ERUPTION!', '#ff4500');
+        // Destroy volcano after flash
+        this.time.delayedCall(500, () => {
+          v.sprite.destroy(); v.hpText.destroy();
+          v.lavaBarBg.destroy(); v.lavaBarFill.destroy(); v.lavaLabel.destroy();
+          this.magmaVolcanoObj = null;
+        });
+      }
+
+    }
+
+    // ── Split update ──────────────────────────────────────────────
+    if (isPlayerMagma && this.magmaSplitActive) {
+      // Auto-recombine
+      if (time > this.magmaSplitRecombineAt) {
+        this.magmaRecombine('player');
+      } else {
+        const aliveVariants = this.magmaSplitVariants.filter(v => v.alive);
+        if (aliveVariants.length === 0) {
+          // All dead: player dies
+          this.player.hp = 0;
+          this.magmaRecombine('player');
+        } else {
+          // Move variants with WASD (relative to player's origin)
+          const body = this.player.body as Phaser.Physics.Arcade.Body;
+          const spd = this.player.speed;
+          const wDown = this.wKey.isDown; const sDown = this.sKey.isDown;
+          const aDown = this.aKey.isDown; const dDown = this.dKey.isDown;
+          let mx = 0; let my = 0;
+          if (wDown) my -= 1; if (sDown) my += 1;
+          if (aDown) mx -= 1; if (dDown) mx += 1;
+          const mlen = Math.sqrt(mx * mx + my * my) || 1;
+          if (mx !== 0 || my !== 0) {
+            mx /= mlen; my /= mlen;
+            // Move origin position (player body hidden)
+            this.player.setPosition(
+              this.player.x + mx * spd * delta / 1000,
+              this.player.y + my * spd * delta / 1000,
+            );
+          }
+          body.setVelocity(0, 0);
+
+          // Update each variant
+          for (const v of this.magmaSplitVariants) {
+            if (!v.alive) { v.sprite.setAlpha(0.2); continue; }
+            const vx2 = this.player.x + v.offsetX;
+            const vy2 = this.player.y + v.offsetY;
+            v.sprite.setPosition(vx2, vy2);
+
+            // Mini rope spring physics (pull-only, frame-based)
+            const MINI_ARM = 30;
+            if (v.flailX === 0 && v.flailY === 0) { v.flailX = vx2; v.flailY = vy2 + MINI_ARM; }
+            const mfdx = v.flailX - vx2; const mfdy = v.flailY - vy2;
+            const mfdist = Math.sqrt(mfdx * mfdx + mfdy * mfdy) || 0.01;
+            if (mfdist > MINI_ARM) {
+              const mStretch = mfdist - MINI_ARM;
+              v.flailVX -= (mfdx / mfdist) * mStretch * 0.06;
+              v.flailVY -= (mfdy / mfdist) * mStretch * 0.06;
+            }
+            v.flailVX *= 0.88; v.flailVY *= 0.88;
+            v.flailX += v.flailVX; v.flailY += v.flailVY;
+            if (v.flailBallSprite) v.flailBallSprite.setPosition(v.flailX, v.flailY);
+            for (let ci = 0; ci < v.flailChain.length; ci++) {
+              const t2 = (ci + 1) / (v.flailChain.length + 1);
+              v.flailChain[ci].setPosition(vx2 + (v.flailX - vx2) * t2, vy2 + (v.flailY - vy2) * t2);
+            }
+
+            // Contact damage from each variant's flail
+            const distToNpc = Phaser.Math.Distance.Between(v.flailX, v.flailY, this.npc.x, this.npc.y);
+            if (distToNpc <= 14 && time - v.lastContactAt > 500) {
+              this.npc.takeDamage(12);
+              this.spawnHitFlash(this.npc.x, this.npc.y, 0xff4500);
+              v.lastContactAt = time;
+            }
+
+            // Take damage from NPC projectiles
+            const projs3 = this.projectiles.getChildren() as Phaser.Physics.Arcade.Sprite[];
+            for (const proj of projs3) {
+              if (!proj.active || (proj as unknown as { isFromPlayer: boolean }).isFromPlayer) continue;
+              const pDistV = Phaser.Math.Distance.Between(proj.x, proj.y, vx2, vy2);
+              if (pDistV <= 16) {
+                const dmgV = (proj as unknown as { damage: number }).damage || 5;
+                v.hp -= dmgV;
+                proj.setActive(false).setVisible(false);
+                if (v.hp <= 0) {
+                  v.alive = false;
+                  v.sprite.setAlpha(0.2);
+                }
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (isNpcMagma && this.npcMagmaSplitActive) {
+      if (time > this.npcMagmaSplitRecombineAt || !this.npcMagmaSplitVariants.some(v => v.alive)) {
+        this.magmaRecombine('npc');
+      } else {
+        // Move NPC variants toward player
+        for (const v of this.npcMagmaSplitVariants) {
+          if (!v.alive) { v.sprite.setAlpha(0.2); continue; }
+          const vx3 = this.npc.x + v.offsetX;
+          const vy3 = this.npc.y + v.offsetY;
+          v.sprite.setPosition(vx3, vy3);
+          // NPC mini rope spring physics (pull-only, frame-based)
+          const MINI_ARM2 = 30;
+          if (v.flailX === 0 && v.flailY === 0) { v.flailX = vx3; v.flailY = vy3 + MINI_ARM2; }
+          const mfdx2 = v.flailX - vx3; const mfdy2 = v.flailY - vy3;
+          const mfdist2 = Math.sqrt(mfdx2 * mfdx2 + mfdy2 * mfdy2) || 0.01;
+          if (mfdist2 > MINI_ARM2) {
+            const mStretch2 = mfdist2 - MINI_ARM2;
+            v.flailVX -= (mfdx2 / mfdist2) * mStretch2 * 0.06;
+            v.flailVY -= (mfdy2 / mfdist2) * mStretch2 * 0.06;
+          }
+          v.flailVX *= 0.88; v.flailVY *= 0.88;
+          v.flailX += v.flailVX; v.flailY += v.flailVY;
+          if (v.flailBallSprite) v.flailBallSprite.setPosition(v.flailX, v.flailY);
+          for (let ci = 0; ci < v.flailChain.length; ci++) {
+            const t3 = (ci + 1) / (v.flailChain.length + 1);
+            v.flailChain[ci].setPosition(vx3 + (v.flailX - vx3) * t3, vy3 + (v.flailY - vy3) * t3);
+          }
+          // Contact damage from NPC variant flails on player
+          const distToPlayer = Phaser.Math.Distance.Between(v.flailX, v.flailY, this.player.x, this.player.y);
+          if (distToPlayer <= 14 && time - v.lastContactAt > 500) {
+            this.player.takeDamage(12);
+            this.spawnHitFlash(this.player.x, this.player.y, 0xff4500);
+            v.lastContactAt = time;
+          }
+        }
+      }
+    }
+
+    // ── Lava Lord (snake) update ──────────────────────────────────
+    if (isPlayerMagma && this.magmaLavaLordActive) {
+      if (time > this.magmaLavaLordExpiry) {
+        this.magmaEndLavaLord('player');
+      } else if (this.magmaLavaLordSegments.length > 0) {
+        const STEP_SIZE = 16;
+        this.magmaLavaLordMoveAccum += this.magmaLavaLordSpeed * delta / 1000;
+        while (this.magmaLavaLordMoveAccum >= STEP_SIZE) {
+          this.magmaLavaLordMoveAccum -= STEP_SIZE;
+          const head = this.magmaLavaLordSegments[0];
+          let nx = head.x; let ny = head.y;
+          if (this.magmaLavaLordDir === 0) ny -= STEP_SIZE;
+          else if (this.magmaLavaLordDir === 1) nx += STEP_SIZE;
+          else if (this.magmaLavaLordDir === 2) ny += STEP_SIZE;
+          else nx -= STEP_SIZE;
+          // Wrap at arena bounds
+          const pad = 40;
+          nx = Math.max(pad, Math.min(this.scale.width - pad, nx));
+          ny = Math.max(pad, Math.min(this.scale.height - pad, ny));
+          // Shift all segments
+          for (let i = this.magmaLavaLordSegments.length - 1; i > 0; i--) {
+            this.magmaLavaLordSegments[i].x = this.magmaLavaLordSegments[i - 1].x;
+            this.magmaLavaLordSegments[i].y = this.magmaLavaLordSegments[i - 1].y;
+            this.magmaLavaLordSegments[i].sprite.setPosition(this.magmaLavaLordSegments[i].x, this.magmaLavaLordSegments[i].y);
+          }
+          head.x = nx; head.y = ny;
+          head.sprite.setPosition(nx, ny);
+
+          // Lava trail
+          this.magmaLavaLordTrailAccum += STEP_SIZE;
+          if (this.magmaLavaLordTrailAccum >= 60) {
+            this.magmaLavaLordTrailAccum -= 60;
+            this.spawnMagmaLavaPuddle(nx, ny, 'player');
+          }
+
+          // Contact damage with NPC
+          const contactD = Phaser.Math.Distance.Between(nx, ny, this.npc.x, this.npc.y);
+          if (contactD <= 20 && time - this.magmaLavaLordLastContactAt > 400) {
+            this.npc.takeDamage(15);
+            this.spawnHitFlash(this.npc.x, this.npc.y, 0xff4500);
+            this.magmaLavaLordLastContactAt = time;
+          }
+        }
+
+        // Core pickup
+        for (let ci = this.magmaLavaLordCores.length - 1; ci >= 0; ci--) {
+          const core = this.magmaLavaLordCores[ci];
+          const headPos = this.magmaLavaLordSegments[0];
+          const coreDist = Phaser.Math.Distance.Between(headPos.x, headPos.y, core.x, core.y);
+          if (coreDist <= 20) {
+            core.sprite.destroy();
+            this.magmaLavaLordCores.splice(ci, 1);
+            // Add body segment
+            const lastSeg = this.magmaLavaLordSegments[this.magmaLavaLordSegments.length - 1];
+            const segSprite = this.add.circle(lastSeg.x, lastSeg.y, 10, 0xff6600, 0.75).setDepth(12);
+            this.magmaLavaLordSegments.push({ x: lastSeg.x, y: lastSeg.y, sprite: segSprite });
+            this.magmaLavaLordSpeed += 20;
+            this.showFloatingText(headPos.x, headPos.y - 20, '+Speed!', '#ffaa00');
+          }
+        }
+      }
+    }
+
+    if (isNpcMagma && this.npcMagmaLavaLordActive) {
+      if (time > this.npcMagmaLavaLordExpiry) {
+        this.magmaEndLavaLord('npc');
+      } else if (this.npcMagmaLavaLordSegments.length > 0) {
+        const STEP_SIZE2 = 16;
+        this.npcMagmaLavaLordMoveAccum += this.npcMagmaLavaLordSpeed * delta / 1000;
+        while (this.npcMagmaLavaLordMoveAccum >= STEP_SIZE2) {
+          this.npcMagmaLavaLordMoveAccum -= STEP_SIZE2;
+          const head2 = this.npcMagmaLavaLordSegments[0];
+          let nx2 = head2.x; let ny2 = head2.y;
+          // NPC: steer toward player if within 150px, otherwise random turns
+          const angleTo = Math.atan2(this.player.y - head2.y, this.player.x - head2.x);
+          const angleDeg = angleTo * 180 / Math.PI;
+          if (Math.random() < 0.08) {
+            if (angleDeg >= -45 && angleDeg < 45 && this.npcMagmaLavaLordDir !== 3) this.npcMagmaLavaLordDir = 1;
+            else if (angleDeg >= 45 && angleDeg < 135 && this.npcMagmaLavaLordDir !== 0) this.npcMagmaLavaLordDir = 2;
+            else if (Math.abs(angleDeg) >= 135 && this.npcMagmaLavaLordDir !== 1) this.npcMagmaLavaLordDir = 3;
+            else if (this.npcMagmaLavaLordDir !== 2) this.npcMagmaLavaLordDir = 0;
+          }
+          if (this.npcMagmaLavaLordDir === 0) ny2 -= STEP_SIZE2;
+          else if (this.npcMagmaLavaLordDir === 1) nx2 += STEP_SIZE2;
+          else if (this.npcMagmaLavaLordDir === 2) ny2 += STEP_SIZE2;
+          else nx2 -= STEP_SIZE2;
+          const pad2 = 40;
+          nx2 = Math.max(pad2, Math.min(this.scale.width - pad2, nx2));
+          ny2 = Math.max(pad2, Math.min(this.scale.height - pad2, ny2));
+          for (let i = this.npcMagmaLavaLordSegments.length - 1; i > 0; i--) {
+            this.npcMagmaLavaLordSegments[i].x = this.npcMagmaLavaLordSegments[i - 1].x;
+            this.npcMagmaLavaLordSegments[i].y = this.npcMagmaLavaLordSegments[i - 1].y;
+            this.npcMagmaLavaLordSegments[i].sprite.setPosition(this.npcMagmaLavaLordSegments[i].x, this.npcMagmaLavaLordSegments[i].y);
+          }
+          head2.x = nx2; head2.y = ny2; head2.sprite.setPosition(nx2, ny2);
+          this.npcMagmaLavaLordTrailAccum += STEP_SIZE2;
+          if (this.npcMagmaLavaLordTrailAccum >= 60) {
+            this.npcMagmaLavaLordTrailAccum -= 60;
+            this.spawnMagmaLavaPuddle(nx2, ny2, 'npc');
+          }
+          const contactD2 = Phaser.Math.Distance.Between(nx2, ny2, this.player.x, this.player.y);
+          if (contactD2 <= 20 && time - this.npcMagmaLavaLordLastContactAt > 400) {
+            this.player.takeDamage(15);
+            this.spawnHitFlash(this.player.x, this.player.y, 0xff4500);
+            this.npcMagmaLavaLordLastContactAt = time;
+          }
+        }
+      }
     }
   }
 
   private updateTechnologyState(time: number, delta: number): void {
     const isPlayerTech = this.elementId === 'technology';
     const isNpcTech = this.npcElement.id === 'technology';
-
-    // ── Lazily spawn flail ball ──────────────────────────────────
-    if (isPlayerTech && !this.techFlailBall && !this.gameEnded) {
-      this.ensureTechFlailBall('player');
-    }
-    if (isNpcTech && !this.npcTechFlailBall && !this.gameEnded) {
-      this.ensureTechFlailBall('npc');
-    }
 
     // ── Lazily create abuse bars ─────────────────────────────────
     if (isPlayerTech && !this.playerAbuseBarBg) this.createTechAbuseBar('player');
@@ -23152,69 +24548,6 @@ export class ArenaScene extends Phaser.Scene {
       this.npcTechDamageBonus = activeHacksN * 0.05;
     }
 
-    // ── Flail pendulum physics ───────────────────────────────────
-    for (const [ball, caster, owner] of [
-      [this.techFlailBall, this.player, 'player' as const],
-      [this.npcTechFlailBall, this.npc, 'npc' as const],
-    ] as Array<[typeof this.techFlailBall, Fighter, 'player' | 'npc']>) {
-      if (!ball) continue;
-      const anchor = { x: caster.x, y: caster.y + 20 };
-      const empowered = time < ball.empowerEndAt;
-      const targetLen = empowered ? 70 : 40;
-      const dmg = empowered ? 15 : 10;
-
-      // Gravity
-      ball.vy += 0.5 * (delta / 16.67);
-      // Spring
-      const dx = ball.x - anchor.x;
-      const dy = ball.y - anchor.y;
-      const dist = Math.hypot(dx, dy) || 1;
-      if (dist > targetLen) {
-        const stretch = dist - targetLen;
-        const k = 0.18;
-        ball.vx -= (dx / dist) * stretch * k;
-        ball.vy -= (dy / dist) * stretch * k;
-      }
-      // Damping
-      ball.vx *= 0.97;
-      ball.vy *= 0.97;
-      // Integrate
-      ball.x += ball.vx;
-      ball.y += ball.vy;
-
-      // Sync sprite
-      ball.sprite.setPosition(ball.x, ball.y);
-      if (empowered) ball.sprite.setScale(2);
-      else ball.sprite.setScale(1);
-
-      // Render chain links
-      const CHAIN_SEGMENTS = ball.chainSprites.length;
-      for (let i = 0; i < CHAIN_SEGMENTS; i++) {
-        const t = (i + 0.5) / CHAIN_SEGMENTS;
-        const lx = anchor.x + (ball.x - anchor.x) * t;
-        const ly = anchor.y + (ball.y - anchor.y) * t;
-        const angle = Math.atan2(ball.y - anchor.y, ball.x - anchor.x);
-        ball.chainSprites[i].setPosition(lx, ly).setRotation(angle);
-      }
-
-      // Hit test vs enemy
-      if (time - ball.lastHitAt >= 250) {
-        const target = owner === 'player' ? this.npc : this.player;
-        const d = Math.hypot(ball.x - target.x, ball.y - target.y);
-        const hitRadius = empowered ? 26 : 14;
-        if (d <= hitRadius + 20) {
-          const dmgScaled = Math.round(dmg * (owner === 'player' ? (1 + this.playerTechDamageBonus) : (1 + this.npcTechDamageBonus)));
-          target.takeDamage(dmgScaled);
-          this.spawnDamageNumber(target.x, target.y - 28, dmgScaled);
-          this.spawnHitFlash(target.x, target.y, 0x44ccaa);
-          ball.lastHitAt = time;
-        }
-      }
-
-      // Expire empower
-      if (!empowered && ball.sprite.scaleX !== 1) ball.sprite.setScale(1);
-    }
-
     // ── Abuse drain ──────────────────────────────────────────────
     if (isPlayerTech) {
       const pa = this.playerAbuse; // snapshot before drain for condition checks
@@ -23227,23 +24560,19 @@ export class ArenaScene extends Phaser.Scene {
         this.playerAbuseBarFill.setSize(barW * (pa / 100), 6);
       }
       // ── Tiered penalties ─────────────────────────────────────────
-      // Tier 1 (40+): cooldowns 30% longer, -5% speed
-      // Tier 2 (70+): cooldowns 60% longer, -15% speed, +20% dmg taken
-      // Tier 3 (100): cooldowns 2× longer, -30% speed, +40% dmg taken + protestors
+      // Tier 1 (40+): +20% dmg taken
+      // Tier 2 (70+): +40% dmg taken
+      // Tier 3 (100): +65% dmg taken + protestors
       if (pa >= 100) {
-        this.player.cooldownMult = 2.0;
-        this.player.incomingDamageMultiplier = 1.4;
+        this.player.incomingDamageMultiplier = 1.65;
         this.player.setTint(0xff4422);
       } else if (pa >= 70) {
-        this.player.cooldownMult = 1.6;
-        this.player.incomingDamageMultiplier = 1.2;
+        this.player.incomingDamageMultiplier = 1.4;
         this.player.setTint(0xff8844);
       } else if (pa >= 40) {
-        this.player.cooldownMult = 1.3;
-        this.player.incomingDamageMultiplier = 1.0;
+        this.player.incomingDamageMultiplier = 1.2;
         this.player.setTint(0xffccaa);
       } else {
-        this.player.cooldownMult = 1.0;
         this.player.incomingDamageMultiplier = this.mutations.has('deadly') ? 1.5 : 1.0;
         if (this.playerOpSelfPhase === 0) this.player.clearTint();
       }
@@ -23265,16 +24594,12 @@ export class ArenaScene extends Phaser.Scene {
         this.npcAbuseBarFill.setSize(barW * (na / 100), 6);
       }
       if (na >= 100) {
-        this.npc.cooldownMult = 2.0;
-        this.npc.incomingDamageMultiplier = 1.4;
+        this.npc.incomingDamageMultiplier = 1.65;
       } else if (na >= 70) {
-        this.npc.cooldownMult = 1.6;
-        this.npc.incomingDamageMultiplier = 1.2;
+        this.npc.incomingDamageMultiplier = 1.4;
       } else if (na >= 40) {
-        this.npc.cooldownMult = 1.3;
-        this.npc.incomingDamageMultiplier = 1.0;
+        this.npc.incomingDamageMultiplier = 1.2;
       } else {
-        this.npc.cooldownMult = 1.0;
         this.npc.incomingDamageMultiplier = 1.0;
       }
       if (na >= 100 && !this.npcProtestorsSpawned) {
@@ -23310,71 +24635,259 @@ export class ArenaScene extends Phaser.Scene {
       this.closeTechDevConsole('npc');
     }
 
-    // ── OP.Self phase transitions ─────────────────────────────────
+    // ── Randomize.Exe (R) phase expiry ───────────────────────────────
     if (isPlayerTech && this.playerOpSelfPhase > 0 && time >= this.playerOpSelfPhaseEnd) {
+      // End whichever phase was active (single-phase — no cycling)
       if (this.playerOpSelfPhase === 1) {
-        // Transition to Invis
-        this.playerOpSelfPhase = 2;
-        this.playerOpSelfPhaseEnd = time + 5000;
-        this.playerOpSelfInvisActive = true;
-        this.player.setAlpha(0.15);
+        // End invincibility
+        this.player.damageAbsorber = null;
         this.player.clearTint();
-        this.spawnFloatingText(this.player.x, this.player.y - 40, 'INVIS', '#aaffdd');
       } else if (this.playerOpSelfPhase === 2) {
-        // Transition to Jail (NPC gets boxed)
-        this.playerOpSelfPhase = 3;
-        this.playerOpSelfPhaseEnd = time + 5000;
+        // End invis+speed
         this.playerOpSelfInvisActive = false;
         this.player.setAlpha(1);
-        this.player.damageAbsorber = null;
-        // Create jail box around NPC
-        const jailW = 240; const jailH = 240;
-        const jailGfx = this.add.graphics().setDepth(16);
-        jailGfx.lineStyle(3, 0x44ccaa, 0.9);
-        jailGfx.strokeRect(this.npc.x - jailW / 2, this.npc.y - jailH / 2, jailW, jailH);
-        this.techJailBoxNpc = { graphics: jailGfx, x: this.npc.x, y: this.npc.y, w: jailW, h: jailH, lastDmgAt: 0 };
-        this.spawnFloatingText(this.npc.x, this.npc.y - 40, 'JAILED', '#44ccaa');
       } else if (this.playerOpSelfPhase === 3) {
-        // Cycle complete
-        this.playerOpSelfPhase = 0;
-        this.player.damageAbsorber = null;
-        this.player.setAlpha(1);
-        this.player.clearTint();
+        // End jail
         if (this.techJailBoxNpc) { this.techJailBoxNpc.graphics?.destroy(); this.techJailBoxNpc = null; }
-        // Punishment: abuse goes to 100
-        this.playerAbuse = 100;
-        this.spawnFloatingText(this.player.x, this.player.y - 40, '100% ABUSE', '#ff3333');
       }
+      this.playerOpSelfPhase = 0;
     }
 
     if (isNpcTech && this.npcOpSelfPhase > 0 && time >= this.npcOpSelfPhaseEnd) {
       if (this.npcOpSelfPhase === 1) {
-        this.npcOpSelfPhase = 2;
-        this.npcOpSelfPhaseEnd = time + 5000;
-        this.npcOpSelfInvisActive = true;
-        this.npc.setAlpha(0.15);
+        this.npc.damageAbsorber = null;
         this.npc.clearTint();
       } else if (this.npcOpSelfPhase === 2) {
-        this.npcOpSelfPhase = 3;
-        this.npcOpSelfPhaseEnd = time + 5000;
         this.npcOpSelfInvisActive = false;
         this.npc.setAlpha(1);
-        this.npc.damageAbsorber = null;
-        // Jail player
-        const jailW = 240; const jailH = 240;
-        const jailGfx = this.add.graphics().setDepth(16);
-        jailGfx.lineStyle(3, 0x44ccaa, 0.9);
-        jailGfx.strokeRect(this.player.x - jailW / 2, this.player.y - jailH / 2, jailW, jailH);
-        this.techJailBoxPlayer = { graphics: jailGfx, x: this.player.x, y: this.player.y, w: jailW, h: jailH, lastDmgAt: 0 };
       } else if (this.npcOpSelfPhase === 3) {
-        this.npcOpSelfPhase = 0;
-        this.npc.damageAbsorber = null;
-        this.npc.setAlpha(1);
-        this.npc.clearTint();
         if (this.techJailBoxPlayer) { this.techJailBoxPlayer.graphics?.destroy(); this.techJailBoxPlayer = null; }
-        this.npcAbuse = 100;
+      }
+      this.npcOpSelfPhase = 0;
+    }
+
+    // ── Gear.Give item box cycling ────────────────────────────────
+    if (isPlayerTech && this.techGearBoxActive) {
+      this.techGearBoxCycleAccum += delta;
+      if (this.techGearBoxCycleAccum >= 500) {
+        this.techGearBoxCycleAccum -= 500;
+        this.techGearBoxWeapon = (this.techGearBoxWeapon + 1) % 4;
+      }
+      const weaponColors = [0xffee44, 0x2299ff, 0x44ff77, 0xff4433];
+      const weaponLabels = ['⚔ Sword', '⊕ Disc', '~ Helix', '💣 Crunch'];
+      const boxX = this.player.x;
+      const boxY = this.player.y - 56;
+      if (this.techGearBoxGraphics) {
+        this.techGearBoxGraphics.clear();
+        this.techGearBoxGraphics.fillStyle(weaponColors[this.techGearBoxWeapon], 0.85);
+        this.techGearBoxGraphics.fillRect(boxX - 26, boxY - 14, 52, 28);
+        this.techGearBoxGraphics.lineStyle(2, 0xffffff, 0.9);
+        this.techGearBoxGraphics.strokeRect(boxX - 26, boxY - 14, 52, 28);
+      }
+      if (this.techGearBoxLabel) {
+        this.techGearBoxLabel.setPosition(boxX, boxY).setText(weaponLabels[this.techGearBoxWeapon]);
       }
     }
+    // Weapon expiry
+    if (isPlayerTech && this.techActiveWeapon >= 0 && time >= this.techActiveWeaponExpiry) {
+      this.techActiveWeapon = -1;
+    }
+
+    // ── Disc Dancer pair updates ──────────────────────────────────
+    const DISC_CONVERGE_RATE = 0.8; // px per frame toward center
+    const DISC_SPREAD_RATE = 1.2;
+    this.techDiscPairs = this.techDiscPairs.filter(pair => {
+      if (pair.phase >= 5) { pair.s1.destroy(); pair.s2.destroy(); return false; }
+      const target = pair.owner === 'player' ? this.npc : this.player;
+      const dmgMult = pair.owner === 'player' ? (1 + this.playerTechDamageBonus) : (1 + this.npcTechDamageBonus);
+
+      // Advance position
+      pair.x1 += pair.vx; pair.y1 += pair.vy;
+      pair.x2 += pair.vx; pair.y2 += pair.vy;
+
+      pair.phaseTimer += delta;
+
+      if (pair.phase === 0) {
+        // Parallel travel: 400ms
+        if (pair.phaseTimer >= 400) { pair.phase = 1; pair.phaseTimer = 0; }
+      } else if (pair.phase === 1) {
+        // Converge
+        pair.offset = Math.max(0, pair.offset - DISC_CONVERGE_RATE * (delta / 16));
+        if (pair.offset <= 0) {
+          // Explosion at midpoint
+          const mx = (pair.x1 + pair.x2) / 2;
+          const my = (pair.y1 + pair.y2) / 2;
+          this.spawnHitFlash(mx, my, 0x2299ff);
+          this.dealAoeDamageFromOwner(mx, my, 50, Math.round(16 * dmgMult), pair.owner);
+          pair.phase = 2; pair.phaseTimer = 0;
+        }
+      } else if (pair.phase === 2) {
+        // Spread back: 200ms
+        pair.offset = Math.min(14, pair.offset + DISC_SPREAD_RATE * (delta / 16));
+        if (pair.phaseTimer >= 200) { pair.phase = 3; pair.phaseTimer = 0; }
+      } else if (pair.phase === 3) {
+        // 2nd parallel travel: 300ms
+        if (pair.phaseTimer >= 300) { pair.phase = 4; pair.phaseTimer = 0; }
+      } else if (pair.phase === 4) {
+        // 2nd converge
+        pair.offset = Math.max(0, pair.offset - DISC_CONVERGE_RATE * (delta / 16));
+        if (pair.offset <= 0) {
+          const mx = (pair.x1 + pair.x2) / 2;
+          const my = (pair.y1 + pair.y2) / 2;
+          this.spawnHitFlash(mx, my, 0x2299ff);
+          this.dealAoeDamageFromOwner(mx, my, 50, Math.round(16 * dmgMult), pair.owner);
+          pair.phase = 5;
+        }
+      }
+
+      // Update sprite positions with perpendicular offset
+      pair.s1.setPosition(pair.x1 + pair.perpX * pair.offset, pair.y1 + pair.perpY * pair.offset);
+      pair.s2.setPosition(pair.x2 - pair.perpX * pair.offset, pair.y2 - pair.perpY * pair.offset);
+      pair.s1.setRotation(pair.s1.rotation + 0.1);
+      pair.s2.setRotation(pair.s2.rotation - 0.1);
+
+      // Individual disc hit test
+      if (time - pair.lastHitAt >= 200) {
+        for (const pos of [[pair.s1.x, pair.s1.y], [pair.s2.x, pair.s2.y]]) {
+          if (Phaser.Math.Distance.Between(pos[0], pos[1], target.x, target.y) < 24) {
+            const dmg = Math.round(8 * dmgMult);
+            target.takeDamage(dmg);
+            this.spawnDamageNumber(target.x, target.y - 28, dmg);
+            pair.lastHitAt = time;
+            break;
+          }
+        }
+      }
+
+      // Out of bounds
+      const { width: W2, height: H2 } = this.scale;
+      if (pair.x1 < -50 || pair.x1 > W2 + 50 || pair.y1 < -50 || pair.y1 > H2 + 50) {
+        pair.s1.destroy(); pair.s2.destroy(); return false;
+      }
+      return true;
+    });
+
+    // ── Sticky grenade updates ────────────────────────────────────
+    this.techStickyGrenades = this.techStickyGrenades.filter(g => {
+      const target = g.owner === 'player' ? this.npc : this.player;
+      const dmgMult = g.owner === 'player' ? (1 + this.playerTechDamageBonus) : (1 + this.npcTechDamageBonus);
+      const FRAME_STEP = delta / 1000;
+
+      if (!g.stuck) {
+        // Move
+        g.x += g.vx * FRAME_STEP;
+        g.y += g.vy * FRAME_STEP;
+        g.vy += 180 * FRAME_STEP; // gravity
+        g.sprite.setPosition(g.x, g.y);
+        g.sprite.setRotation(g.sprite.rotation + 0.08);
+
+        // Check wall bounds
+        const { width: W2, height: H2 } = this.scale;
+        if (g.x <= 36 || g.x >= W2 - 36 || g.y >= H2 - 36) {
+          g.stuck = true; g.stuckToNpc = false;
+          g.explodeAt = time + 3000;
+          g.vx = 0; g.vy = 0;
+        }
+        // Check enemy hit
+        if (Phaser.Math.Distance.Between(g.x, g.y, target.x, target.y) < 24) {
+          g.stuck = true; g.stuckToNpc = true;
+          g.explodeAt = time + 3000;
+          g.vx = 0; g.vy = 0;
+        }
+        // Fell off screen
+        if (g.y > H2 + 40) { g.sprite.destroy(); return false; }
+      } else {
+        // If stuck to NPC, follow NPC
+        if (g.stuckToNpc) { g.x = target.x; g.y = target.y - 16; }
+        g.sprite.setPosition(g.x, g.y);
+        // Blink when close to exploding
+        if (g.explodeAt - time < 1000) g.sprite.setAlpha(Math.sin(time * 0.015) > 0 ? 1 : 0.3);
+        // Explode
+        if (time >= g.explodeAt) {
+          const eDmg = Math.round(35 * dmgMult);
+          this.dealAoeDamageFromOwner(g.x, g.y, 65, eDmg, g.owner);
+          this.spawnHitFlash(g.x, g.y, 0x558800);
+          g.sprite.destroy();
+          return false;
+        }
+      }
+      return true;
+    });
+
+    // ── Virus tick damage ─────────────────────────────────────────
+    if (isPlayerTech && this.techVirusEndAt > 0 && time < this.techVirusEndAt) {
+      if (time >= this.techVirusNextTickAt) {
+        this.techVirusNextTickAt = time + 500;
+        this.player.takeDamage(3);
+        this.spawnDamageNumber(this.player.x, this.player.y - 28, 3);
+      }
+    } else if (isPlayerTech && this.techVirusEndAt > 0 && time >= this.techVirusEndAt) {
+      this.techVirusEndAt = 0;
+    }
+    if (isNpcTech && this.npcTechVirusEndAt > 0 && time < this.npcTechVirusEndAt) {
+      if (time >= this.npcTechVirusNextTickAt) {
+        this.npcTechVirusNextTickAt = time + 500;
+        this.npc.takeDamage(3);
+        this.spawnDamageNumber(this.npc.x, this.npc.y - 28, 3);
+      }
+    } else if (isNpcTech && this.npcTechVirusEndAt > 0 && time >= this.npcTechVirusEndAt) {
+      this.npcTechVirusEndAt = 0;
+    }
+
+    // ── Trojan supply drop interaction ───────────────────────────
+    for (let di = this.techTrojanDrops.length - 1; di >= 0; di--) {
+      const drop = this.techTrojanDrops[di];
+      if (!drop.landed) continue;
+      const player = this.player;
+      const npc = this.npc;
+      const dropper = drop.owner;
+      // Expiry (8 seconds after landing)
+      if (drop.landAt > 0 && time > drop.landAt + 8000) {
+        drop.sprite?.destroy(); drop.shadow?.destroy(); drop.hitbox?.destroy();
+        this.techTrojanDrops.splice(di, 1);
+        continue;
+      }
+      // Enemy touches it = cluster bombs
+      const enemy = dropper === 'player' ? npc : player;
+      const ally = dropper === 'player' ? player : npc;
+      if (time - drop.lastHitAt > 500) {
+        if (Phaser.Math.Distance.Between(drop.x, drop.y, enemy.x, enemy.y) < 30) {
+          // Cluster explosion
+          drop.lastHitAt = time;
+          const dmgMult = dropper === 'player' ? (1 + this.playerTechDamageBonus) : (1 + this.npcTechDamageBonus);
+          const cDmg = Math.round(8 * dmgMult);
+          for (let ci = 0; ci < 8; ci++) {
+            const cAngle = (ci / 8) * Math.PI * 2;
+            const cbullet = this.projectiles.create(drop.x, drop.y, 'proj-tech-cluster') as Phaser.Physics.Arcade.Sprite;
+            cbullet.setDepth(14);
+            (cbullet as unknown as { isFromPlayer: boolean }).isFromPlayer = (dropper === 'player');
+            (cbullet as unknown as { damage: number }).damage = cDmg;
+            (cbullet as unknown as { hitEnemy: boolean }).hitEnemy = false;
+            (cbullet.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(cAngle) * 180, Math.sin(cAngle) * 180);
+            this.time.delayedCall(1200, () => { if (cbullet.active) cbullet.destroy(); });
+          }
+          this.spawnHitFlash(drop.x, drop.y, 0xff3300);
+          drop.sprite?.destroy(); drop.shadow?.destroy(); drop.hitbox?.destroy();
+          this.techTrojanDrops.splice(di, 1);
+          continue;
+        }
+        // Ally (tech player) touches it = -25 abuse
+        if (Phaser.Math.Distance.Between(drop.x, drop.y, ally.x, ally.y) < 30) {
+          drop.lastHitAt = time;
+          if (dropper === 'player') { this.playerAbuse = Math.max(0, this.playerAbuse - 25); }
+          else { this.npcAbuse = Math.max(0, this.npcAbuse - 25); }
+          drop.sprite?.destroy(); drop.shadow?.destroy(); drop.hitbox?.destroy();
+          this.techTrojanDrops.splice(di, 1);
+          continue;
+        }
+      }
+    }
+
+    // ── Ransomware expiry ─────────────────────────────────────────
+    if (this.techRansomwareTarget !== null && time >= this.techRansomwareExpiry) {
+      this.techRansomwareTarget = null;
+    }
+    // NPC ransomware check — block special abilities is enforced in NPC AI side by checking this.techRansomwareTarget
 
     // ── Jail box: clamp prisoner, deal wall damage ────────────────
     if (this.techJailBoxNpc) {
@@ -23423,11 +24936,130 @@ export class ArenaScene extends Phaser.Scene {
       box.graphics?.strokeRect(box.x - halfW, box.y - halfH, box.w, box.h);
     }
 
+    // ── Domain.Expansion per-frame ────────────────────────────────
+    if (this.techDomainActive) {
+      const dcx = this.techDomainCenterX, dcy = this.techDomainCenterY;
+      const currentRadius = this.techDomainBaseRadius * (1 - this.techDomainCollapse / 100 * 0.6);
+
+      // Rotating border shards
+      this.techDomainShardAngleOffset += delta * 0.001;
+      for (let si = 0; si < this.techDomainShards.length; si++) {
+        const ang = (si / this.techDomainShards.length) * Math.PI * 2 + this.techDomainShardAngleOffset;
+        this.techDomainShards[si].setPosition(dcx + Math.cos(ang) * currentRadius, dcy + Math.sin(ang) * currentRadius).setRotation(ang);
+      }
+
+      // Redraw circle
+      if (this.techDomainCircle) {
+        this.techDomainCircle.clear();
+        this.techDomainCircle.fillStyle(0x001a0e, 0.3);
+        this.techDomainCircle.fillCircle(dcx, dcy, currentRadius);
+        this.techDomainCircle.lineStyle(3, 0x00cc66, 1);
+        this.techDomainCircle.strokeCircle(dcx, dcy, currentRadius);
+      }
+
+      // Circular clamping
+      for (const fighter of [this.player, this.npc]) {
+        const fdx = fighter.x - dcx, fdy = fighter.y - dcy;
+        const fdist = Math.sqrt(fdx * fdx + fdy * fdy);
+        if (fdist > currentRadius - 22) {
+          const ang = Math.atan2(fdy, fdx);
+          fighter.setPosition(dcx + Math.cos(ang) * (currentRadius - 22), dcy + Math.sin(ang) * (currentRadius - 22));
+        }
+      }
+
+      // Border shard damage — NPC (or player if NPC owns domain) hits the edge
+      const domainOwner = isPlayerTech ? 'npc' : 'player';
+      const borderTarget = domainOwner === 'npc' ? this.npc : this.player;
+      const borderDist = Phaser.Math.Distance.Between(borderTarget.x, borderTarget.y, dcx, dcy);
+      if (borderDist > currentRadius - 30) {
+        this.techDomainBorderTickAccum += delta;
+        if (this.techDomainBorderTickAccum >= 200) {
+          this.techDomainBorderTickAccum -= 200;
+          borderTarget.takeDamage(4);
+          this.spawnHitFlash(borderTarget.x, borderTarget.y, 0x004422);
+          this.showFloatingText(borderTarget.x, borderTarget.y - 18, '-4 shard', '#00ff88');
+        }
+      } else { this.techDomainBorderTickAccum = 0; }
+
+      // Domain Bias — damage multiplier (speed handled in speed-mult section)
+      if (this.techDomainBias > 0) {
+        const biasBonus = 1 + this.techDomainBias / 100 * 0.5;
+        if (isPlayerTech) this.npc.incomingDamageMultiplier = Math.max(this.npc.incomingDamageMultiplier, biasBonus);
+        else this.player.incomingDamageMultiplier = Math.max(this.player.incomingDamageMultiplier, biasBonus);
+      }
+
+      // Domain Instability effects
+      if (this.techDomainInstability > 0) {
+        const explosionInterval = Math.max(500, 2000 - this.techDomainInstability * 15);
+        this.techDomainExplosionAccum += delta;
+        if (this.techDomainExplosionAccum >= explosionInterval) {
+          this.techDomainExplosionAccum -= explosionInterval;
+          const eAng = Math.random() * Math.PI * 2;
+          const ex = dcx + Math.cos(eAng) * Math.random() * currentRadius * 0.8;
+          const ey = dcy + Math.sin(eAng) * Math.random() * currentRadius * 0.8;
+          const expl = this.add.circle(ex, ey, 10, 0x003322, 0.9).setDepth(54);
+          this.tweens.add({ targets: expl, scaleX: 5, scaleY: 5, alpha: 0, duration: 350, onComplete: () => expl.destroy() });
+          if (Phaser.Math.Distance.Between(ex, ey, this.npc.x, this.npc.y) <= 40) {
+            this.npc.takeDamage(8); this.spawnHitFlash(this.npc.x, this.npc.y, 0x004433);
+            this.showFloatingText(this.npc.x, this.npc.y - 20, '-8 chaos', '#00ff88');
+          }
+          if (Phaser.Math.Distance.Between(ex, ey, this.player.x, this.player.y) <= 40) {
+            this.player.takeDamage(4);
+            this.showFloatingText(this.player.x, this.player.y - 20, '-4 chaos', '#44ffcc');
+          }
+        }
+        const shardInterval = Math.max(500, 1500 - this.techDomainInstability * 10);
+        this.techDomainShardProjAccum += delta;
+        if (this.techDomainShardProjAccum >= shardInterval) {
+          this.techDomainShardProjAccum -= shardInterval;
+          const sAng = Math.random() * Math.PI * 2;
+          const sx = dcx + Math.cos(sAng) * (currentRadius - 5);
+          const sy = dcy + Math.sin(sAng) * (currentRadius - 5);
+          const spd = 400 + Math.random() * 200;
+          const shardProj = this.projectiles.create(sx, sy, 'domain-shard') as Phaser.Physics.Arcade.Image;
+          shardProj.setDepth(53).setScale(1.6).setData('owner', isPlayerTech ? 'player' : 'npc').setData('damage', 6).setData('type', 'domain-shard');
+          (shardProj.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(sAng + Math.PI) * spd, Math.sin(sAng + Math.PI) * spd);
+        }
+      }
+
+      // Abuse accumulation — feeds directly into the persistent playerAbuse / npcAbuse
+      let abuseRate = 0;
+      for (const v of [this.techDomainInstability, this.techDomainBias, this.techDomainCollapse]) {
+        if (v > 0 && v <= 50) abuseRate += 3;
+        else if (v > 50) abuseRate += 10;
+      }
+      if (isPlayerTech) {
+        this.playerAbuse = Math.min(100, this.playerAbuse + abuseRate * (delta / 1000));
+        this.techDomainAbuse = this.playerAbuse;
+      } else {
+        this.npcAbuse = Math.min(100, this.npcAbuse + abuseRate * (delta / 1000));
+        this.techDomainAbuse = this.npcAbuse;
+      }
+
+      // Update slider UI
+      if (isPlayerTech) {
+        const SLIDER_X = 20, SLIDER_W = 140;
+        const sliderVals = [this.techDomainInstability, this.techDomainBias, this.techDomainCollapse];
+        for (let i = 0; i < 3; i++) {
+          const ratio = sliderVals[i] / 100;
+          if (this.techDomainSliderFills[i]) this.techDomainSliderFills[i].setSize(SLIDER_W * ratio, 10);
+          if (this.techDomainSliderKnobs[i]) this.techDomainSliderKnobs[i].setPosition(SLIDER_X + SLIDER_W * ratio, this.techDomainSliderBgs[i]?.y ?? 0);
+        }
+        if (this.techDomainAbuseBarFill) this.techDomainAbuseBarFill.setSize(SLIDER_W * (this.playerAbuse / 100), 10);
+      }
+
+      // End check — domain ends at 15s or 100% abuse
+      if (time >= this.techDomainExpiry || this.techDomainAbuse >= 100) {
+        this.techEndDomain();
+      }
+    }
+
     // ── Protestors update ─────────────────────────────────────────
     for (let i = this.protestors.length - 1; i >= 0; i--) {
       const p = this.protestors[i];
       if (p.hp <= 0) {
         p.sprite.destroy();
+        p.hpBar.destroy();
         this.protestors.splice(i, 1);
         continue;
       }
@@ -23439,6 +25071,16 @@ export class ArenaScene extends Phaser.Scene {
       const speed = 80;
       p.sprite.setPosition(p.sprite.x + (pdx / pd) * speed * delta / 1000,
                            p.sprite.y + (pdy / pd) * speed * delta / 1000);
+      // Health bar
+      const barW = 30;
+      const barH = 4;
+      const bx = p.sprite.x - barW / 2;
+      const by = p.sprite.y - 22;
+      p.hpBar.clear();
+      p.hpBar.fillStyle(0x333333, 0.8);
+      p.hpBar.fillRect(bx, by, barW, barH);
+      p.hpBar.fillStyle(0xff2222, 1);
+      p.hpBar.fillRect(bx, by, barW * (p.hp / p.maxHp), barH);
       // Melee
       if (pd <= 36 && time >= p.nextHitAt) {
         target.takeDamage(8);

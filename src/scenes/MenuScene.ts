@@ -34,6 +34,7 @@ import { adrenalineElement } from '../elements/adrenaline';
 import { magicElement } from '../elements/magic';
 import { technologyElement } from '../elements/technology';
 import { silenceElement } from '../elements/silence';
+import { magmaElement } from '../elements/magma';
 import { dummyElement } from '../elements/dummy';
 
 const ELEMENT_DATA_MAP: Record<string, Element> = {
@@ -55,6 +56,7 @@ const ELEMENT_DATA_MAP: Record<string, Element> = {
   magic: magicElement,
   technology: technologyElement,
   silence: silenceElement,
+  magma: magmaElement,
   dummy: dummyElement,
 };
 
@@ -115,6 +117,7 @@ const ABSTRACT_COMBINED_ELEMENTS: ElementDef[] = [
   { id: 'magic', name: 'Magic', emoji: '📖', color: 0x9944ff, available: true },
   { id: 'technology', name: 'Technology', emoji: '💻', color: 0x44ccaa, available: true },
   { id: 'silence', name: 'Silence', emoji: '🫥', color: 0x1a0022, available: true },
+  { id: 'magma', name: 'Magma', emoji: '🌋', color: 0xff4500, available: true },
 ];
 
 const DIFF_COLORS = [0x22cc44, 0x88cc22, 0xddaa00, 0xee5500, 0xcc0022];

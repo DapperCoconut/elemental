@@ -10,6 +10,7 @@ interface SaveData {
   gauntletsCompleted: string[];      // base element IDs of completed gauntlets
   dummyUnlocked: boolean;            // true once the WWSSADADBA code has been entered
   labLevel: number;                  // 0 = base, 1-3 = upgraded
+  corruptShards: number;             // currency earned in Invasion mode
 }
 
 function load(): SaveData {
@@ -27,12 +28,13 @@ function load(): SaveData {
         gauntletsCompleted: parsed.gauntletsCompleted ?? [],
         dummyUnlocked: parsed.dummyUnlocked ?? false,
         labLevel: parsed.labLevel ?? 0,
+        corruptShards: parsed.corruptShards ?? 0,
       };
     }
   } catch {
     // corrupted save — start fresh
   }
-  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], dummyUnlocked: false, labLevel: 0 };
+  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0 };
 }
 
 function save(data: SaveData): void {
@@ -166,6 +168,24 @@ export function upgradelab(): boolean {
   const data = load();
   if (data.labLevel >= 3) return false;
   data.labLevel += 1;
+  save(data);
+  return true;
+}
+
+export function getCorruptShards(): number {
+  return load().corruptShards;
+}
+
+export function addCorruptShards(amount: number): void {
+  const data = load();
+  data.corruptShards += amount;
+  save(data);
+}
+
+export function spendCorruptShards(amount: number): boolean {
+  const data = load();
+  if (data.corruptShards < amount) return false;
+  data.corruptShards -= amount;
   save(data);
   return true;
 }

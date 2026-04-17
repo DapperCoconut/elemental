@@ -656,20 +656,9 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('proj-tech-bullet', 12, 6);
     gfx.clear();
 
-    // proj-tech-protestor — 32×32 angry red humanoid silhouette
-    gfx.fillStyle(0xcc2222, 1);
-    // head
-    gfx.fillCircle(16, 7, 6);
-    // body
-    gfx.fillRect(10, 13, 12, 10);
-    // legs
-    gfx.fillRect(10, 23, 5, 9);
-    gfx.fillRect(17, 23, 5, 9);
-    // arms raised (sign-holder pose)
-    gfx.fillRect(3, 12, 7, 4);
-    gfx.fillRect(22, 12, 7, 4);
-    gfx.lineStyle(1, 0xff6666, 1);
-    gfx.strokeRect(2, 4, 12, 8);
+    // proj-tech-protestor — 32×32 red circle
+    gfx.fillStyle(0xff2222, 1);
+    gfx.fillCircle(16, 16, 14);
     gfx.generateTexture('proj-tech-protestor', 32, 32);
     gfx.clear();
 
@@ -679,6 +668,135 @@ export class BootScene extends Phaser.Scene {
     gfx.lineStyle(1, 0x88ffee, 1);
     gfx.strokeRect(0, 0, 4, 60);
     gfx.generateTexture('proj-tech-jail-bar', 4, 60);
+    gfx.clear();
+
+    // proj-tech-disc — 18×18 cyan spinning disc
+    gfx.fillStyle(0x2299ff, 1);
+    gfx.fillCircle(9, 9, 9);
+    gfx.lineStyle(2, 0x88ddff, 1);
+    gfx.strokeCircle(9, 9, 7);
+    gfx.fillStyle(0xaaeeff, 1);
+    gfx.fillCircle(9, 9, 3);
+    gfx.generateTexture('proj-tech-disc', 18, 18);
+    gfx.clear();
+
+    // proj-tech-grenade — 14×16 dark-green grenade
+    gfx.fillStyle(0x334422, 1);
+    gfx.fillCircle(7, 9, 7);
+    gfx.fillStyle(0x556633, 1);
+    gfx.fillRect(5, 2, 4, 5);
+    gfx.fillStyle(0x88aa44, 1);
+    gfx.fillRect(5, 0, 4, 3);
+    gfx.lineStyle(1, 0x88aa44, 1);
+    gfx.strokeCircle(7, 9, 6);
+    gfx.generateTexture('proj-tech-grenade', 14, 16);
+    gfx.clear();
+
+    // proj-tech-malware — 22×22 blue square with scan-lines
+    gfx.fillStyle(0x1133ee, 1);
+    gfx.fillRect(0, 0, 22, 22);
+    gfx.lineStyle(2, 0x5577ff, 1);
+    gfx.strokeRect(1, 1, 20, 20);
+    gfx.lineStyle(1, 0x3355cc, 0.7);
+    for (let row = 4; row < 22; row += 5) { gfx.beginPath(); gfx.moveTo(2, row); gfx.lineTo(20, row); gfx.strokePath(); }
+    gfx.generateTexture('proj-tech-malware', 22, 22);
+    gfx.clear();
+
+    // proj-tech-ransomware — 26×26 orange lock circle
+    gfx.fillStyle(0xff6600, 1);
+    gfx.fillCircle(13, 13, 13);
+    gfx.lineStyle(3, 0xffaa33, 1);
+    gfx.strokeCircle(13, 13, 11);
+    gfx.fillStyle(0xffcc66, 1);
+    gfx.fillRect(9, 8, 8, 6);
+    gfx.lineStyle(2, 0xffffff, 1);
+    gfx.strokeCircle(13, 10, 4);
+    gfx.generateTexture('proj-tech-ransomware', 26, 26);
+    gfx.clear();
+
+    // proj-tech-trojan — 28×26 wooden crate with circuit markings
+    gfx.fillStyle(0x885533, 1);
+    gfx.fillRect(1, 1, 26, 24);
+    gfx.lineStyle(2, 0xddaa66, 1);
+    gfx.strokeRect(1, 1, 26, 24);
+    gfx.lineStyle(2, 0x664422, 1);
+    gfx.beginPath(); gfx.moveTo(14, 1); gfx.lineTo(14, 25); gfx.strokePath();
+    gfx.beginPath(); gfx.moveTo(1, 13); gfx.lineTo(27, 13); gfx.strokePath();
+    gfx.lineStyle(1, 0x44ccaa, 0.8);
+    gfx.strokeRect(5, 5, 8, 8);
+    gfx.strokeRect(15, 15, 8, 6);
+    gfx.generateTexture('proj-tech-trojan', 28, 26);
+    gfx.clear();
+
+    // proj-tech-cluster — 8×8 small red cluster bomb
+    gfx.fillStyle(0xff3300, 1);
+    gfx.fillCircle(4, 4, 4);
+    gfx.lineStyle(1, 0xff7744, 1);
+    gfx.strokeCircle(4, 4, 3);
+    gfx.generateTexture('proj-tech-cluster', 8, 8);
+    gfx.clear();
+
+    // ── Magma element (abstract combined: slime + fate) ────────────────────────
+
+    // elem-magma — dark orange-red circle with lava glow ring
+    gfx.fillStyle(0x8b2200, 1);
+    gfx.fillCircle(24, 24, 22);
+    gfx.fillStyle(0xff4500, 1);
+    gfx.fillCircle(24, 24, 16);
+    gfx.fillStyle(0xff8c00, 0.7);
+    gfx.fillCircle(24, 24, 9);
+    gfx.lineStyle(3, 0xff6600, 1);
+    gfx.strokeCircle(24, 24, 22);
+    gfx.generateTexture('elem-magma', 48, 48);
+    gfx.clear();
+
+    // proj-magma-flail-ball — 20×20 molten lava ball
+    gfx.fillStyle(0x8b2200, 1);
+    gfx.fillCircle(10, 10, 10);
+    gfx.fillStyle(0xff4500, 1);
+    gfx.fillCircle(10, 10, 7);
+    gfx.fillStyle(0xff8c00, 0.7);
+    gfx.fillCircle(10, 10, 4);
+    gfx.lineStyle(2, 0xff6600, 0.8);
+    gfx.strokeCircle(10, 10, 9);
+    gfx.generateTexture('proj-magma-flail-ball', 20, 20);
+    gfx.clear();
+
+    // proj-magma-flail-chain — 6×6 dark chain link
+    gfx.fillStyle(0x441100, 1);
+    gfx.fillRect(0, 0, 6, 6);
+    gfx.lineStyle(1, 0x882200, 1);
+    gfx.strokeRect(0, 0, 6, 6);
+    gfx.generateTexture('proj-magma-flail-chain', 6, 6);
+    gfx.clear();
+
+    // proj-magma-lava-ball — 10×10 bright lava projectile
+    gfx.fillStyle(0xff4500, 1);
+    gfx.fillCircle(5, 5, 5);
+    gfx.fillStyle(0xffaa00, 0.8);
+    gfx.fillCircle(5, 5, 3);
+    gfx.generateTexture('proj-magma-lava-ball', 10, 10);
+    gfx.clear();
+
+    // proj-magma-boulder — 40×40 dark rocky boulder
+    gfx.fillStyle(0x3d2200, 1);
+    gfx.fillCircle(20, 20, 19);
+    gfx.fillStyle(0x5c3300, 1);
+    gfx.fillCircle(15, 15, 8);
+    gfx.fillCircle(26, 22, 7);
+    gfx.lineStyle(2, 0xff4500, 0.6);
+    gfx.strokeCircle(20, 20, 18);
+    gfx.generateTexture('proj-magma-boulder', 40, 40);
+    gfx.clear();
+
+    // proj-magma-lava-core — 12×12 glowing lava core pickup
+    gfx.fillStyle(0xff8c00, 1);
+    gfx.fillCircle(6, 6, 6);
+    gfx.fillStyle(0xffee00, 0.9);
+    gfx.fillCircle(6, 6, 3);
+    gfx.lineStyle(2, 0xff4500, 0.6);
+    gfx.strokeCircle(6, 6, 5);
+    gfx.generateTexture('proj-magma-lava-core', 12, 12);
     gfx.clear();
 
     // ── Silence element (abstract combined: slime + sound) ────────────────────
@@ -742,6 +860,157 @@ export class BootScene extends Phaser.Scene {
     gfx.fillStyle(0x000000, 1);
     gfx.fillCircle(6, 6, 1);
     gfx.generateTexture('eye-silence', 12, 12);
+    gfx.clear();
+
+    // mask-silence — 28×22 white hockey mask with dark eye holes and vertical bar lines
+    gfx.fillStyle(0xeeeeee, 1);
+    gfx.fillEllipse(14, 11, 26, 20); // face oval
+    gfx.fillStyle(0x000000, 0.85);
+    gfx.fillEllipse(8, 9, 6, 5);    // left eye hole
+    gfx.fillEllipse(20, 9, 6, 5);   // right eye hole
+    gfx.fillStyle(0x000000, 0.35);
+    // Vertical bar lines (hockey mask)
+    for (let bx2 = 5; bx2 <= 23; bx2 += 6) {
+      gfx.fillRect(bx2, 14, 2, 5);
+    }
+    // Horizontal chin bar
+    gfx.fillRect(5, 17, 18, 2);
+    gfx.generateTexture('mask-silence', 28, 22);
+    gfx.clear();
+
+    // domain-shard — 10×4 black-purple elongated diamond for Domain Expansion
+    gfx.fillStyle(0x0a0014, 1);
+    gfx.fillTriangle(5, 2, 0, 2, 5, 0);
+    gfx.fillTriangle(5, 2, 10, 2, 5, 4);
+    gfx.fillRect(0, 1, 10, 2);
+    gfx.lineStyle(1, 0x330066, 1);
+    gfx.strokeRect(0, 0, 10, 4);
+    gfx.generateTexture('domain-shard', 10, 4);
+    gfx.clear();
+
+    // ── Corrupted enemy textures ────────────────────────────────────
+
+    // corrupted-basic — 48×48 dark purple circle, magenta stroke
+    gfx.fillStyle(0x220022, 1);
+    gfx.fillCircle(24, 24, 20);
+    gfx.lineStyle(3, 0xdd00dd, 1);
+    gfx.strokeCircle(24, 24, 20);
+    gfx.fillStyle(0xff44ff, 1);
+    gfx.fillCircle(17, 20, 3);
+    gfx.fillCircle(31, 20, 3);
+    gfx.generateTexture('corrupted-basic', 48, 48);
+    gfx.clear();
+
+    // corrupted-overcharged — 48×48 yellow circle, red stroke
+    gfx.fillStyle(0x332200, 1);
+    gfx.fillCircle(24, 24, 20);
+    gfx.lineStyle(3, 0xff4400, 1);
+    gfx.strokeCircle(24, 24, 20);
+    gfx.fillStyle(0xffcc00, 1);
+    gfx.fillCircle(24, 24, 8);
+    gfx.lineStyle(2, 0xffaa00, 0.8);
+    gfx.strokeCircle(24, 24, 14);
+    gfx.generateTexture('corrupted-overcharged', 48, 48);
+    gfx.clear();
+
+    // corrupted-rusher — 48×48 red circle, white streak
+    gfx.fillStyle(0x330000, 1);
+    gfx.fillCircle(24, 24, 20);
+    gfx.lineStyle(3, 0xff2222, 1);
+    gfx.strokeCircle(24, 24, 20);
+    gfx.lineStyle(3, 0xffffff, 0.9);
+    gfx.lineBetween(8, 24, 40, 24);
+    gfx.lineBetween(14, 18, 24, 24);
+    gfx.lineBetween(14, 30, 24, 24);
+    gfx.generateTexture('corrupted-rusher', 48, 48);
+    gfx.clear();
+
+    // corrupted-protected — 48×48 blue circle, cyan stroke
+    gfx.fillStyle(0x001133, 1);
+    gfx.fillCircle(24, 24, 20);
+    gfx.lineStyle(3, 0x0088ff, 1);
+    gfx.strokeCircle(24, 24, 20);
+    gfx.lineStyle(2, 0x44ddff, 0.7);
+    gfx.strokeCircle(24, 24, 14);
+    gfx.fillStyle(0x44aaff, 1);
+    gfx.fillCircle(24, 24, 5);
+    gfx.generateTexture('corrupted-protected', 48, 48);
+    gfx.clear();
+
+    // corrupted-architect — 48×48 dark green circle, lime stroke
+    gfx.fillStyle(0x001100, 1);
+    gfx.fillCircle(24, 24, 20);
+    gfx.lineStyle(3, 0x22bb22, 1);
+    gfx.strokeCircle(24, 24, 20);
+    gfx.fillStyle(0x44ff44, 0.6);
+    gfx.fillTriangle(24, 12, 14, 30, 34, 30);
+    gfx.generateTexture('corrupted-architect', 48, 48);
+    gfx.clear();
+
+    // corrupted-titan — 72×72 large dark red circle, orange stroke
+    gfx.fillStyle(0x220000, 1);
+    gfx.fillCircle(36, 36, 32);
+    gfx.lineStyle(4, 0xff6600, 1);
+    gfx.strokeCircle(36, 36, 32);
+    gfx.lineStyle(2, 0xff3300, 0.7);
+    gfx.strokeCircle(36, 36, 22);
+    gfx.fillStyle(0xff4400, 1);
+    gfx.fillCircle(25, 28, 5);
+    gfx.fillCircle(47, 28, 5);
+    gfx.fillStyle(0xff8800, 0.8);
+    gfx.fillRect(26, 40, 20, 4);
+    gfx.generateTexture('corrupted-titan', 72, 72);
+    gfx.clear();
+
+    // proj-corrupted — 12×12 purple projectile
+    gfx.fillStyle(0xaa00cc, 1);
+    gfx.fillCircle(6, 6, 5);
+    gfx.lineStyle(1, 0xff44ff, 0.8);
+    gfx.strokeCircle(6, 6, 5);
+    gfx.generateTexture('proj-corrupted', 12, 12);
+    gfx.clear();
+
+    // proj-noxious — 12×12 green noxious projectile (festering growth shots)
+    gfx.fillStyle(0x004400, 1);
+    gfx.fillCircle(6, 6, 5);
+    gfx.lineStyle(1, 0x44ff44, 0.8);
+    gfx.strokeCircle(6, 6, 5);
+    gfx.fillStyle(0x88ff44, 0.6);
+    gfx.fillCircle(6, 6, 2);
+    gfx.generateTexture('proj-noxious', 12, 12);
+    gfx.clear();
+
+    // proj-titan-rocket — 16×16 red-orange rocket
+    gfx.fillStyle(0xff4400, 1);
+    gfx.fillTriangle(8, 0, 2, 16, 14, 16);
+    gfx.lineStyle(2, 0xff8800, 0.8);
+    gfx.strokeTriangle(8, 0, 2, 16, 14, 16);
+    gfx.generateTexture('proj-titan-rocket', 16, 16);
+    gfx.clear();
+
+    // corrupted-growth — 32×32 dark green festering growth
+    gfx.fillStyle(0x002200, 1);
+    gfx.fillCircle(16, 16, 14);
+    gfx.lineStyle(2, 0x44cc44, 0.8);
+    gfx.strokeCircle(16, 16, 14);
+    gfx.fillStyle(0x226622, 0.6);
+    gfx.fillCircle(16, 16, 7);
+    gfx.lineStyle(1, 0x88ff44, 0.5);
+    for (let ci = 0; ci < 6; ci++) {
+      const ca = (ci / 6) * Math.PI * 2;
+      gfx.lineBetween(16, 16, 16 + Math.cos(ca) * 12, 16 + Math.sin(ca) * 12);
+    }
+    gfx.generateTexture('corrupted-growth', 32, 32);
+    gfx.clear();
+
+    // titan-shield — 24×24 cyan orbiting shield
+    gfx.fillStyle(0x003344, 1);
+    gfx.fillCircle(12, 12, 10);
+    gfx.lineStyle(2, 0x44ffff, 1);
+    gfx.strokeCircle(12, 12, 10);
+    gfx.fillStyle(0x88ffff, 0.7);
+    gfx.fillCircle(12, 12, 4);
+    gfx.generateTexture('titan-shield', 24, 24);
     gfx.clear();
 
     gfx.destroy();
