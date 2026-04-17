@@ -2611,7 +2611,6 @@ export class ArenaScene extends Phaser.Scene {
     this.earthGolemFaultWallUntil = 0;
     this.earthGolemHpLabel = null;
     this.playerEarthCastId = null;
-    this.npc.earthStunnedUntil = 0;
     this.playerEarthStunnedUntil = 0;
     // Earth upgrade resets
     this.earthBackShieldHp = 0;
@@ -2626,8 +2625,6 @@ export class ArenaScene extends Phaser.Scene {
     this.earthLavaRockFirePools.forEach(p => p.sprite.destroy());
     this.earthLavaRockFirePools = [];
     this.earthQuakeMagmified = false;
-    this.npc.lavaRockBurnUntil = 0;
-    this.npc.lavaRockBurnAccum = 0;
     this.earthTsunamiWaves.forEach(w => w.sprite.destroy());
     this.earthTsunamiWaves = [];
     this.earthGolemFuseHolding = false;
@@ -2794,23 +2791,16 @@ export class ArenaScene extends Phaser.Scene {
     this.shadowDanceUpgradeCooldownUntil = 0;
     this.shadowBHPuddleAccum = 0;
 
-    this.npc.frostStacks = 0;
     this.playerFrostStacks = 0;
-    this.npc.frostVisual = null;
     this.playerFrostVisual = null;
     this.playerBlockUpActive = false;
     this.playerBlockUpAura = null;
     this.playerFrozenUntil = 0;
     this.npcBlockUpActive = false;
     this.npcBlockUpAura = null;
-    this.npc.frozenUntil = 0;
     this.icyTrails = [];
     this.playerBlackIceMorphActive = false;
     this.playerBlackIceAura = null;
-    this.npc.voidFrostStacks = 0;
-    this.npc.voidFrostVisual = null;
-    this.npc.voidFrostTickAccum = 0;
-    this.npc.voidFrostThawAccum = 0;
     this.npcVoidedUntil = 0;
     this.npcVoidedDps = 0;
     this.npcVoidedTickAccum = 0;
@@ -2819,8 +2809,6 @@ export class ArenaScene extends Phaser.Scene {
     this.playerNextIcePowered = false;
     this.playerIcePendingSet = new Set();
     this.playerIceSpeedBoostUntil = 0;
-    this.npc.frozenSolidAmpReady = false;
-
     for (const n of this.crystalNodes) n.sprite.destroy();
     for (const p of this.crystalPortals) { p.sprite.destroy(); p.label.destroy(); }
     for (const c of this.crystalClones) { c.sprite.destroy(); c.hpBar.destroy(); c.hpBg.destroy(); c.dirIndicator.destroy(); }
@@ -2878,8 +2866,7 @@ export class ArenaScene extends Phaser.Scene {
     if (this.huntBloodPactAura) { this.huntBloodPactAura.destroy(); this.huntBloodPactAura = null; }
     if (this.npcHuntBloodPactAura) { this.npcHuntBloodPactAura.destroy(); this.npcHuntBloodPactAura = null; }
     this.huntLeapActive = false; this.npcHuntLeapActive = false;
-    this.npc.bleeding = false; this.playerBleeding = false;
-    if (this.npc.bleedVisual) { this.npc.bleedVisual.destroy(); this.npc.bleedVisual = null; }
+    this.playerBleeding = false;
     if (this.playerBleedAura) { this.playerBleedAura.destroy(); this.playerBleedAura = null; }
     this.npcHuntSlowUntil = 0; this.playerHuntSlowUntil = 0;
     this.huntBloodMoonActive = false; this.npcHuntBloodMoonActive = false;
@@ -2939,7 +2926,6 @@ export class ArenaScene extends Phaser.Scene {
     // NPC Silence reset
     this.npcSilenceSlasherActive = false;
     this.npcSilenceSlasherHp = 10;
-    this.npc.silencePossessedUntil = 0;
     this.npcSilenceHookConnected = false;
     if (this.npcSilenceConeGraphic) { this.npcSilenceConeGraphic.destroy(); this.npcSilenceConeGraphic = null; }
     this.npcSilenceConeExpiry = 0;
@@ -3107,20 +3093,12 @@ export class ArenaScene extends Phaser.Scene {
     this.npcGrowthRegenRate = 0;
     this.npcGrowthRegenAccum = 0;
     this.npcGrowthScaleBonus = 0;
-    this.npc.growthBloatActive = false;
-    this.npc.growthBloatEnd = 0;
-    if (this.npc.growthBloatAura) { this.npc.growthBloatAura.destroy(); this.npc.growthBloatAura = null; }
     this.lastNpcInfectCast = -99999;
     this.lastNpcBloatCast = -99999;
-    this.npc.toxicUntil = 0; this.npc.toxicDps = 0; this.npc.toxicTickAccum = 0;
-    if (this.npc.toxicAura) { this.npc.toxicAura.destroy(); this.npc.toxicAura = null; }
     this.playerToxicUntil = 0; this.playerToxicDps = 0; this.playerToxicTickAccum = 0;
     if (this.playerToxicAura) { this.playerToxicAura.destroy(); this.playerToxicAura = null; }
 
     this.activeUpgrades = PlayerData.getActiveUpgrades(this.elementId);
-    this.npc.burningUntil = 0;
-    this.npc.burnTickAccum = 0;
-    this.npc.burnAura = null;
     this.playerBurningUntil = 0;
     this.playerBurnTickAccum = 0;
     this.playerBurnAura = null;
@@ -3219,10 +3197,6 @@ export class ArenaScene extends Phaser.Scene {
     this.npcSlimeBurningUntil = 0;
     this.npcSlimeBurnTickAccum = 0;
     this.npcSlimeBurnAura = null;
-    this.npc.slimeConfusedUntil = 0;
-    this.npc.slimeConfuseVx = 0;
-    this.npc.slimeConfuseVy = 0;
-    this.npc.slimeConfuseDirUntil = 0;
     this.playerSlimeConfusedUntil = 0;
     this.playerSlimeConfuseVx = 0;
     this.playerSlimeConfuseVy = 0;
@@ -3498,7 +3472,6 @@ export class ArenaScene extends Phaser.Scene {
     for (const c of this.magicChainProjs) c.sprite.destroy();
     this.magicChainProjs = [];
     this.magicChainBound = false; this.magicChainBoundEnd = 0;
-    this.npc.magicChainBound = false; this.npc.magicChainBoundEnd = 0;
     this.magicPillarQueue = [];
     for (const p of this.magicActivePillars) p.sprite.destroy();
     this.magicActivePillars = [];
