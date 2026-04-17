@@ -38,6 +38,8 @@ import { fateElement } from '../elements/fate';
 import { soundElement } from '../elements/sound';
 import { lightElement } from '../elements/light';
 import { magnetElement } from '../elements/magnet';
+import { MagnetKit, MagnetArenaApi, MagnetRod } from '../elements/kits/MagnetKit';
+import { LightKit, LightArenaApi } from '../elements/kits/LightKit';
 import { metalElement } from '../elements/metal';
 import { plasmaElement } from '../elements/plasma';
 import { deathElement } from '../elements/death';
@@ -678,37 +680,7 @@ const POKER_COLORS: Record<PokerRank, string> = {
   'high-card':       '#888888',
 };
 
-// ── Magnet (abstract combined) interfaces ─────────────────────────────────
-interface MagnetRod {
-  sprite: Phaser.GameObjects.Arc;
-  trail: Phaser.GameObjects.Arc[];
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  contactCooldownPlayer: number;
-  contactCooldownNpc: number;
-  bouncing: boolean;
-  bounceUntil: number;
-  owner: 'player' | 'npc';
-}
-
-interface MagnetNail {
-  sprite: Phaser.GameObjects.Arc;
-  vx: number;
-  vy: number;
-  x: number;
-  y: number;
-  inEnemy: boolean;
-  implantedUntil: number;
-  owner: 'player' | 'npc';
-}
-
-interface MagnetShieldOrb {
-  sprite: Phaser.GameObjects.Arc;
-  angle: number;
-  hp: number;
-}
+// MagnetRod, MagnetNail, MagnetShieldOrb, MagnetAtomSmasher imported from MagnetKit
 
 // ── Magma (abstract combined: slime + fate) interfaces ────────────────────────
 interface MagmaBoulder {
@@ -764,15 +736,7 @@ interface MagmaLavaCore {
   y: number;
 }
 
-interface MagnetAtomSmasher {
-  flashSprite: Phaser.GameObjects.Arc;
-  x: number;
-  y: number;
-  fireAt: number;
-  walls: Array<{ sprite: Phaser.GameObjects.Rectangle; vx: number; vy: number; active: boolean }>;
-  exploded: boolean;
-  owner: 'player' | 'npc';
-}
+// MagnetAtomSmasher imported from MagnetKit
 
 interface PlayingCard { rank: number; suit: number; } // rank 2-14 (14=Ace), suit 0-3
 
@@ -1773,53 +1737,7 @@ export class ArenaScene extends Phaser.Scene {
   private electricRegenAccum = 0;
   private electroShockTimers: Map<Projectile, { count: number; last: number }> = new Map();
 
-  // Light-specific state (player)
-  private lightSpeedText: Phaser.GameObjects.Text | null = null;
-  private lightMarkedExpiry = 0;
-  private lightSpearHolding = false;
-  private lightSpearPointerDownX = 0;
-  private lightSpearPointerDownY = 0;
-  private lightSpearClickArmed = false;
-  private lightSpearHoldStart = 0;
-  private lightSpearSprite: Phaser.GameObjects.Rectangle | null = null;
-  private lightSpearHitCooldown = 0;
-  private lightPhotoSlowUntil = 0;
-  private lightPhotoAccelStart = 0;
-  private lightPhotoAccelUntil = 0;
-  private lightPhotoStillSince = 0;
-  private lightPhotoRegenAccum = 0;
-  private lightPhotonOrbs: Array<{ sprite: Phaser.GameObjects.Arc; orbitAngle: number }> = [];
-  private lightPhotonCdStartedAt = -999999;
-  private lightPhotonSpeedBoostUntil = 0;
-  private lightOverstimUntil = 0;
-  private lightOverstimTickAccum = 0;
-  private lightSkewerModeUntil = 0;
-  private lightSkewerTargetHooked = false;
-  private lightSkewerInitialDealt = false;
-  private lightAngelActive = false;
-  private lightAngelUntil = 0;
-  private lightAngelSprite: Phaser.GameObjects.Arc | null = null;
-  private lightAngelOrbitAngle = 0;
-  private lightAngelBladeAccum = 0;
-  private lightAngelLink: Phaser.GameObjects.Graphics | null = null;
-  // Light-specific state (NPC)
-  private npcLightMarkedExpiry = 0;
-  private npcLightPhotonOrbs: Array<{ sprite: Phaser.GameObjects.Arc; orbitAngle: number }> = [];
-  private npcLightPhotonCdStartedAt = -999999;
-  private npcLightPhotonSpeedBoostUntil = 0;
-  private npcLightOverstimUntil = 0;
-  private npcLightOverstimTickAccum = 0;
-  private npcLightPhotoSlowUntil = 0;
-  private npcLightPhotoAccelStart = 0;
-  private npcLightPhotoAccelUntil = 0;
-  private npcLightSkewerModeUntil = 0;
-  private npcLightSkewerTargetHooked = false;
-  private npcLightAngelActive = false;
-  private npcLightAngelUntil = 0;
-  private npcLightAngelSprite: Phaser.GameObjects.Arc | null = null;
-  private npcLightAngelOrbitAngle = 0;
-  private npcLightAngelBladeAccum = 0;
-  private npcLightAngelLink: Phaser.GameObjects.Graphics | null = null;
+  private lightKit!: LightKit;
   // Shared NPC cast ID field — set each frame after doAI() returns
   private npcCastId: string | null = null;
 
@@ -1993,26 +1911,7 @@ export class ArenaScene extends Phaser.Scene {
   private creatMech: CreationMech | null = null;
 
   // ── Magnet (electricity + slime abstract combined) ───────────────────
-  private magnetRods: MagnetRod[] = [];
-  private magnetPlayerNail: MagnetNail | null = null;
-  private magnetNpcNail: MagnetNail | null = null;
-  private magnetPlayerShieldOrbs: MagnetShieldOrb[] = [];
-  private magnetNpcShieldOrbs: MagnetShieldOrb[] = [];
-  private magnetPlayerAtomSmasher: MagnetAtomSmasher | null = null;
-  private magnetNpcAtomSmasher: MagnetAtomSmasher | null = null;
-  private magnetPlayerMagnetized = false;
-  private magnetPlayerMagnetizedUntil = 0;
-  private magnetNpcMagnetized = false;
-  private magnetNpcMagnetizedUntil = 0;
-  private magnetNpcAura: Phaser.GameObjects.Arc | null = null;
-  private magnetPlayerAura: Phaser.GameObjects.Arc | null = null;
-  private magnetPlayerSpeedBuffUntil = 0;
-  private magnetNpcSpeedBuffUntil = 0;
-  private magnetOrbOrbitAngle = 0;
-  private magnetNpcOrbOrbitAngle = 0;
-  private magnetNailPullUntil = 0;
-  private magnetNailPullVX = 0;
-  private magnetNailPullVY = 0;
+  private magnetKit!: MagnetKit;
 
   // ── Metal (electricity + fate abstract combined) ─────────────────────
   private metalArsenal: string[] = [];
@@ -3130,55 +3029,29 @@ export class ArenaScene extends Phaser.Scene {
     this.electricRegenAccum = 0;
     this.electroShockTimers = new Map<Projectile, { count: number; last: number }>();
 
-    // Light new kit reset
-    this.lightSpeedText = null;
-    this.lightMarkedExpiry = 0;
-    this.lightSpearHolding = false;
-    this.lightSpearPointerDownX = 0;
-    this.lightSpearPointerDownY = 0;
-    this.lightSpearClickArmed = false;
-    this.lightSpearHoldStart = 0;
-    this.lightSpearSprite = null;
-    this.lightSpearHitCooldown = 0;
-    this.lightPhotoSlowUntil = 0;
-    this.lightPhotoAccelStart = 0;
-    this.lightPhotoAccelUntil = 0;
-    this.lightPhotoStillSince = 0;
-    this.lightPhotoRegenAccum = 0;
-    this.lightPhotonOrbs.forEach(o => o.sprite.destroy());
-    this.lightPhotonOrbs = [];
-    this.lightPhotonCdStartedAt = -999999;
-    this.lightPhotonSpeedBoostUntil = 0;
-    this.lightOverstimUntil = 0;
-    this.lightOverstimTickAccum = 0;
-    this.lightSkewerModeUntil = 0;
-    this.lightSkewerTargetHooked = false;
-    this.lightSkewerInitialDealt = false;
-    this.lightAngelActive = false;
-    this.lightAngelUntil = 0;
-    this.lightAngelSprite = null;
-    this.lightAngelOrbitAngle = 0;
-    this.lightAngelBladeAccum = 0;
-    this.lightAngelLink = null;
-    // NPC Light reset
-    this.npcLightMarkedExpiry = 0;
-    this.npcLightPhotonOrbs.forEach(o => o.sprite.destroy());
-    this.npcLightPhotonOrbs = [];
-    this.npcLightPhotonCdStartedAt = -999999;
-    this.npcLightPhotonSpeedBoostUntil = 0;
-    this.npcLightOverstimUntil = 0;
-    this.npcLightOverstimTickAccum = 0;
-    this.npcLightPhotoSlowUntil = 0;
-    this.npcLightPhotoAccelStart = 0;
-    this.npcLightPhotoAccelUntil = 0;
-    this.npcLightSkewerModeUntil = 0;
-    this.npcLightSkewerTargetHooked = false;
-    this.npcLightAngelActive = false;
-    this.npcLightAngelUntil = 0;
-    this.npcLightAngelSprite = null;
-    this.npcLightAngelOrbitAngle = 0;
-    this.npcLightAngelBladeAccum = 0;
-    this.npcLightAngelLink = null;
+    // LightKit adapter
+    if (this.lightKit) {
+      this.lightKit.reset();
+    } else {
+      const arena = this;
+      const lightApi: LightArenaApi = {
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get scene(): Phaser.Scene { return arena; },
+        get projectiles() { return arena.projectiles; },
+        get eKey() { return arena.eKey; },
+        get fKey() { return arena.fKey; },
+        get rKey() { return arena.rKey; },
+        get qKey() { return arena.qKey; },
+        get npcCastId() { return arena.npcCastId; },
+        applyNpcSpeedMult: (f) => { arena.npcSpeedMult *= f; },
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+      };
+      this.lightKit = new LightKit(lightApi);
+    }
 
     this.slimes = [];
     this.slimePuddles = [];
@@ -3285,35 +3158,30 @@ export class ArenaScene extends Phaser.Scene {
     this.nextTotemSpawnTime = 0;
     this.baseNpcMaxHpForTotem = 0;
 
-    // Magnet reset
-    for (const rod of this.magnetRods) {
-      rod.sprite.destroy();
-      for (const t of rod.trail) t.destroy();
+    // Magnet kit
+    if (this.magnetKit) {
+      this.magnetKit.reset();
+    } else {
+      const arena = this;
+      const magnetApi: MagnetArenaApi = {
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get scene(): Phaser.Scene { return arena; },
+        get projectiles() { return arena.projectiles; },
+        get eKey() { return arena.eKey; },
+        get fKey() { return arena.fKey; },
+        get rKey() { return arena.rKey; },
+        get qKey() { return arena.qKey; },
+        get pointerWasDown() { return arena.pointerWasDown; },
+        setIsDodging: (v) => { arena.isDodging = v; },
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
+      };
+      this.magnetKit = new MagnetKit(magnetApi);
     }
-    this.magnetRods = [];
-    if (this.magnetPlayerNail) { this.magnetPlayerNail.sprite.destroy(); this.magnetPlayerNail = null; }
-    if (this.magnetNpcNail) { this.magnetNpcNail.sprite.destroy(); this.magnetNpcNail = null; }
-    for (const orb of this.magnetPlayerShieldOrbs) orb.sprite.destroy();
-    this.magnetPlayerShieldOrbs = [];
-    for (const orb of this.magnetNpcShieldOrbs) orb.sprite.destroy();
-    this.magnetNpcShieldOrbs = [];
-    if (this.magnetPlayerAtomSmasher) {
-      this.magnetPlayerAtomSmasher.flashSprite.destroy();
-      for (const w of this.magnetPlayerAtomSmasher.walls) w.sprite.destroy();
-      this.magnetPlayerAtomSmasher = null;
-    }
-    if (this.magnetNpcAtomSmasher) {
-      this.magnetNpcAtomSmasher.flashSprite.destroy();
-      for (const w of this.magnetNpcAtomSmasher.walls) w.sprite.destroy();
-      this.magnetNpcAtomSmasher = null;
-    }
-    this.magnetPlayerMagnetized = false; this.magnetPlayerMagnetizedUntil = 0;
-    this.magnetNpcMagnetized = false; this.magnetNpcMagnetizedUntil = 0;
-    if (this.magnetNpcAura) { this.magnetNpcAura.destroy(); this.magnetNpcAura = null; }
-    if (this.magnetPlayerAura) { this.magnetPlayerAura.destroy(); this.magnetPlayerAura = null; }
-    this.magnetPlayerSpeedBuffUntil = 0; this.magnetNpcSpeedBuffUntil = 0;
-    this.magnetOrbOrbitAngle = 0; this.magnetNpcOrbOrbitAngle = 0;
-    this.magnetNailPullUntil = 0; this.magnetNailPullVX = 0; this.magnetNailPullVY = 0;
 
     // Metal resets
     this.metalArsenal = [];
@@ -4554,7 +4422,7 @@ export class ArenaScene extends Phaser.Scene {
       for (const c of corners) {
         const spr = this.add.circle(c.x, c.y, 12, 0x99aacc, 0.9)
           .setStrokeStyle(2, 0xddeeff).setDepth(4);
-        this.magnetRods.push({
+        this.magnetKit.pushRod({
           sprite: spr, trail: [],
           x: c.x, y: c.y, vx: 0, vy: 0,
           contactCooldownPlayer: 0, contactCooldownNpc: 0,
@@ -6592,12 +6460,12 @@ export class ArenaScene extends Phaser.Scene {
       fateKarmaBegin: () => { this.beginFateKarma('player'); },
       fateRandomUltimate: () => { this.fireRandomFateUltimate('player'); },
       // Magnet
-      magnetPulse: (x, y) => { this.doMagnetPulse(x, y, 'player'); },
-      magnetNailShoot: (tx, ty) => { this.doMagnetNailAction(tx, ty, 'player'); },
-      magnetNailRecall: () => { this.doMagnetNailAction(this.npc.x, this.npc.y, 'player'); },
-      magnetMagnetize: (tx, ty) => { this.doMagnetMagnetize(tx, ty, 'player'); },
-      magnetProtect: () => { this.doMagnetProtect('player'); },
-      magnetAtomSmasher: (x, y) => { this.doMagnetAtomSmasher(x, y, 'player'); },
+      magnetPulse: (x, y) => { this.magnetKit.doMagnetPulse(x, y, 'player'); },
+      magnetNailShoot: (tx, ty) => { this.magnetKit.doMagnetNailAction(tx, ty, 'player'); },
+      magnetNailRecall: () => { this.magnetKit.doMagnetNailAction(this.npc.x, this.npc.y, 'player'); },
+      magnetMagnetize: (tx, ty) => { this.magnetKit.doMagnetMagnetize(tx, ty, 'player'); },
+      magnetProtect: () => { this.magnetKit.doMagnetProtect('player'); },
+      magnetAtomSmasher: (x, y) => { this.magnetKit.doMagnetAtomSmasher(x, y, 'player'); },
       // Metal
       metalSlash: (tx, ty) => { this.doMetalSlash(tx, ty, 'player'); },
       metalFireAtWill: () => { this.doMetalFireAtWill('player'); },
@@ -7446,12 +7314,12 @@ export class ArenaScene extends Phaser.Scene {
       fateKarmaBegin: () => { this.beginFateKarma('npc'); },
       fateRandomUltimate: () => { this.fireRandomFateUltimate('npc'); },
       // Magnet
-      magnetPulse: (x, y) => { this.doMagnetPulse(x, y, 'npc'); },
-      magnetNailShoot: (tx, ty) => { this.doMagnetNailAction(tx, ty, 'npc'); },
-      magnetNailRecall: () => { this.doMagnetNailAction(this.player.x, this.player.y, 'npc'); },
-      magnetMagnetize: (tx, ty) => { this.doMagnetMagnetize(tx, ty, 'npc'); },
-      magnetProtect: () => { this.doMagnetProtect('npc'); },
-      magnetAtomSmasher: (x, y) => { this.doMagnetAtomSmasher(x, y, 'npc'); },
+      magnetPulse: (x, y) => { this.magnetKit.doMagnetPulse(x, y, 'npc'); },
+      magnetNailShoot: (tx, ty) => { this.magnetKit.doMagnetNailAction(tx, ty, 'npc'); },
+      magnetNailRecall: () => { this.magnetKit.doMagnetNailAction(this.player.x, this.player.y, 'npc'); },
+      magnetMagnetize: (tx, ty) => { this.magnetKit.doMagnetMagnetize(tx, ty, 'npc'); },
+      magnetProtect: () => { this.magnetKit.doMagnetProtect('npc'); },
+      magnetAtomSmasher: (x, y) => { this.magnetKit.doMagnetAtomSmasher(x, y, 'npc'); },
       // Metal
       metalSlash: (tx, ty) => { this.doMetalSlash(tx, ty, 'npc'); },
       metalFireAtWill: () => { this.doMetalFireAtWill('npc'); },
@@ -10016,18 +9884,14 @@ export class ArenaScene extends Phaser.Scene {
       if (this.playerKarmaCards.length > 0 && time < this.playerKarmaEndAt) this.playerSpeedMult *= 1.25;
     } else if (this.elementId === 'light') {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
-      // Photosynthespark accel ramp (no slow phase)
-      if (time < this.lightPhotoAccelUntil) {
-        const t = Math.min(1, (time - this.lightPhotoAccelStart) / 5000);
+      if (time < this.lightKit.getPhotoAccelUntil()) {
+        const t = Math.min(1, (time - this.lightKit.getPhotoAccelStart()) / 5000);
         const peakT = Math.min(t / 0.9, 1);
         this.playerSpeedMult *= 1.15 + (2.0 - 1.15) * peakT;
       }
-      // Photon orb consume: 200% speed boost (3× total)
-      if (time < this.lightPhotonSpeedBoostUntil) this.playerSpeedMult *= 3;
-      // Prayer angel: +25%
-      if (this.lightAngelActive) this.playerSpeedMult *= 1.25;
-      // Skewer mode: +15% speed while active
-      if (time < this.lightSkewerModeUntil) this.playerSpeedMult *= 1.15;
+      if (time < this.lightKit.getPhotonSpeedBoostUntil()) this.playerSpeedMult *= 3;
+      if (this.lightKit.isAngelActive()) this.playerSpeedMult *= 1.25;
+      if (time < this.lightKit.getSkewerModeUntil()) this.playerSpeedMult *= 1.15;
     } else if (this.elementId === 'magma') {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
       // Post-explosion 3s shrink reduces speed
@@ -11411,7 +11275,7 @@ export class ArenaScene extends Phaser.Scene {
 
       void H; // suppress unused in some TS strict builds
     } else if (this.elementId === 'magnet') {
-      this.handleMagnetInput(time, pointer, mouseX, mouseY);
+      this.magnetKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'metal') {
       this.handleMetalInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'plasma') {
@@ -11431,7 +11295,7 @@ export class ArenaScene extends Phaser.Scene {
     } else if (this.elementId === 'earth') {
       this.handleEarthInput(time, delta, pointer, mouseX, mouseY);
     } else if (this.elementId === 'light') {
-      this.handleLightInput(time, pointer, mouseX, mouseY);
+      this.lightKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'oil') {
       if (!this.nukeChanneling) {
         // Click: Drone Command (fire at cursor)
@@ -13578,7 +13442,7 @@ export class ArenaScene extends Phaser.Scene {
     } else {
     // ── NPC AI ───────────────────────────────────────────────────
     const aiState: NpcAiState = {
-      isLocked: this.npcNukeChanneling || this.npc.frozenUntil > time || this.npcMetalTaseredUntil > time || (this.elementId === 'silence' && time < this.silencePossessedUntil) || this.magnetNailPullUntil > time || (this.npc.magicChainBound && time < this.npc.magicChainBoundEnd) || time < this.silenceNpcYankUntil,
+      isLocked: this.npcNukeChanneling || this.npc.frozenUntil > time || this.npcMetalTaseredUntil > time || (this.elementId === 'silence' && time < this.silencePossessedUntil) || this.magnetKit.getNailPullUntil() > time || (this.npc.magicChainBound && time < this.npc.magicChainBoundEnd) || time < this.silenceNpcYankUntil,
       hasActiveGeyser: this.geysers.some((g) => g.owner === 'npc'),
       flameBodyActive: this.npcFlameBodyActive,
       projectiles: this.projectiles,
@@ -13639,7 +13503,7 @@ export class ArenaScene extends Phaser.Scene {
       this.updateEarthKit(time, delta);
     }
     if (this.elementId === 'light' || this.npcElement.id === 'light') {
-      this.updateLightKit(time, delta);
+      this.lightKit.update(time, delta, this.elementId === 'light', this.npcElement.id === 'light');
     }
 
     // React to NPC casts that need ArenaScene state
@@ -14011,8 +13875,8 @@ export class ArenaScene extends Phaser.Scene {
       (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
     }
     // ── Magnet nail pull override ─────────────────────────────────
-    if (this.magnetNailPullUntil > time) {
-      (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(this.magnetNailPullVX, this.magnetNailPullVY);
+    if (this.magnetKit.getNailPullUntil() > time) {
+      (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(this.magnetKit.getNailPullVX(), this.magnetKit.getNailPullVY());
     }
     // ── Magic chain bind ──────────────────────────────────────────
     if (this.npc.magicChainBound && time < this.npc.magicChainBoundEnd) {
@@ -16537,12 +16401,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Magnet per-frame ──────────────────────────────────────────
     if (this.elementId === 'magnet' || this.npcElement.id === 'magnet') {
-      this.updateMagnetRods(time, delta);
-      this.updateMagnetNails(time, delta);
-      this.updateMagnetShieldOrbs(time);
-      this.updateMagnetAtomSmashers(time, delta);
-      this.updateMagnetMagnetized(time);
-      this.updateMagnetSpeedBuff(time);
+      this.magnetKit.update(time, delta);
     }
 
     // ── Metal per-frame ───────────────────────────────────────────
@@ -18099,1088 +17958,6 @@ export class ArenaScene extends Phaser.Scene {
         this.showFloatingText(this.player.x, this.player.y - 30, 'NEED SHIELD', '#ff8844');
       }
     }
-  }
-
-  // ═══════════════════════════════════════════════════════════════════
-  // NEW LIGHT KIT
-  // ═══════════════════════════════════════════════════════════════════
-
-  private updateLightKit(time: number, delta: number): void {
-    const { width: W, height: H } = this.scale;
-    const playerBody = this.player.body as Phaser.Physics.Arcade.Body;
-    const npcBody = this.npc.body as Phaser.Physics.Arcade.Body;
-    const ptr = this.input.activePointer;
-
-    // ── Player Light ───────────────────────────────────────────────
-    if (this.elementId === 'light') {
-      const speedMag = Math.hypot(playerBody.velocity.x, playerBody.velocity.y);
-      const speedBonus = Math.round(speedMag / 15);
-
-      // HUD movespeed counter
-      if (this.lightSpeedText) this.lightSpeedText.setText(`🏃 ${Math.round(speedMag)} px/s`);
-
-      // Mark (npc takes 15% more dmg)
-      if (time < this.lightMarkedExpiry) {
-        this.npc.incomingDamageMultiplier = Math.max(this.npc.incomingDamageMultiplier, 1.15);
-      } else {
-        if (this.npc.incomingDamageMultiplier === 1.15) this.npc.incomingDamageMultiplier = 1;
-      }
-
-      // Photosynthespark stand-still regen (during accel window)
-      if (time < this.lightPhotoAccelUntil) {
-        if (speedMag > 8) {
-          this.lightPhotoStillSince = time;
-          this.lightPhotoRegenAccum = 0;
-        } else if (time - this.lightPhotoStillSince >= 500) {
-          this.lightPhotoRegenAccum += delta;
-          if (this.lightPhotoRegenAccum >= 1000) {
-            this.lightPhotoRegenAccum -= 1000;
-            this.player.hp = Math.min(this.player.maxHp, this.player.hp + 8);
-            this.showFloatingText(this.player.x, this.player.y - 20, '+8 🌞 REGEN', '#fff4a8');
-          }
-        }
-      }
-
-      // Angel DR buff (speed buff already applied in speed recompute block)
-      if (this.lightAngelActive) {
-        this.player.incomingDamageMultiplier = Math.min(this.player.incomingDamageMultiplier, 0.75);
-      }
-
-      // Held spear per-frame reposition + damage
-      if (this.lightSpearHolding && this.lightSpearSprite) {
-        const ang = Math.atan2(ptr.worldY - this.player.y, ptr.worldX - this.player.x);
-        const spearX = this.player.x + Math.cos(ang) * 36;
-        const spearY = this.player.y + Math.sin(ang) * 36;
-        this.lightSpearSprite.setPosition(spearX, spearY);
-        this.lightSpearSprite.setRotation(ang);
-
-        // Damage NPC on contact (throttled)
-        const d = Phaser.Math.Distance.Between(spearX, spearY, this.npc.x, this.npc.y);
-        if (d < 30 && time >= this.lightSpearHitCooldown) {
-          const dmg = 6 + speedBonus;
-          this.npc.takeDamage(dmg);
-          this.spawnHitFlash(this.npc.x, this.npc.y, 0xfff4a8);
-          this.lightSpearHitCooldown = time + 300;
-
-          // Skewer: hook target if skewer mode is active
-          if (time < this.lightSkewerModeUntil && !this.lightSkewerTargetHooked) {
-            this.lightSkewerTargetHooked = true;
-            this.lightSkewerInitialDealt = false;
-            this.showFloatingText(this.npc.x, this.npc.y - 20, '🗡 SKEWERED', '#fff4a8');
-          }
-        }
-      } else if (this.lightSkewerTargetHooked) {
-        // Spear released — drop hook
-        this.lightSkewerTargetHooked = false;
-      }
-
-      // Skewer: drag target (teleport enemy to tether point in front of player)
-      if (this.lightSkewerTargetHooked && time < this.lightSkewerModeUntil) {
-        const ang = Math.atan2(ptr.worldY - this.player.y, ptr.worldX - this.player.x);
-        const tethX = this.player.x + Math.cos(ang) * 60;
-        const tethY = this.player.y + Math.sin(ang) * 60;
-        this.npc.setPosition(tethX, tethY);
-        npcBody.reset(tethX, tethY);
-        // Wall slam: check if tether point is outside arena margins
-        const margin = 32;
-        const hitWall = tethX < margin || tethX > W - margin || tethY < margin || tethY > H - margin;
-        if (hitWall) {
-          const wallDmg = Math.min(150, 50 + Math.round(speedMag / 50));
-          this.npc.takeDamage(wallDmg);
-          this.spawnHitFlash(this.npc.x, this.npc.y, 0xfff4a8);
-          this.showFloatingText(this.npc.x, this.npc.y - 20, `💥 WALL SLAM ${wallDmg}`, '#fff4a8');
-          this.lightSkewerTargetHooked = false;
-          this.lightSkewerModeUntil = 0;
-        }
-      } else if (time >= this.lightSkewerModeUntil && this.lightSkewerTargetHooked) {
-        this.lightSkewerTargetHooked = false;
-      }
-
-      // Photon orbs orbit + overstim contact
-      const orbR = 44;
-      for (let i = this.lightPhotonOrbs.length - 1; i >= 0; i--) {
-        const orb = this.lightPhotonOrbs[i];
-        orb.orbitAngle += delta * 0.003;
-        const ang = orb.orbitAngle + i * Math.PI;
-        orb.sprite.setPosition(this.player.x + Math.cos(ang) * orbR, this.player.y + Math.sin(ang) * orbR);
-        const d = Phaser.Math.Distance.Between(orb.sprite.x, orb.sprite.y, this.npc.x, this.npc.y);
-        if (d < 22) {
-          orb.sprite.destroy();
-          this.lightPhotonOrbs.splice(i, 1);
-          this.lightOverstimUntil = time + 5000;
-          this.showFloatingText(this.npc.x, this.npc.y - 20, '✨ OVERSTIM', '#fff4a8');
-          if (this.lightPhotonOrbs.length === 0) this.lightPhotonCdStartedAt = time;
-        }
-      }
-
-      // Overstim tick damage
-      if (time < this.lightOverstimUntil) {
-        this.lightOverstimTickAccum += delta;
-        if (this.lightOverstimTickAccum >= 250) {
-          this.lightOverstimTickAccum -= 250;
-          const npcSpeed = Math.hypot(npcBody.velocity.x, npcBody.velocity.y);
-          let tickDmg = 0;
-          if (npcSpeed < 10) tickDmg = 0;
-          else if (npcSpeed < 150) tickDmg = 2;
-          else if (npcSpeed < 350) tickDmg = 4;
-          else tickDmg = 6;
-          if (tickDmg > 0) {
-            this.npc.takeDamage(tickDmg);
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0xfff4a8);
-          }
-        }
-      }
-
-      // Prayer angel orbit + auto-mark + holy blades
-      if (this.lightAngelActive) {
-        if (time >= this.lightAngelUntil) {
-          if (this.lightAngelSprite) { this.lightAngelSprite.destroy(); this.lightAngelSprite = null; }
-          if (this.lightAngelLink) { this.lightAngelLink.destroy(); this.lightAngelLink = null; }
-          this.lightAngelActive = false;
-          this.player.incomingDamageMultiplier = Math.max(1, this.player.incomingDamageMultiplier / 0.75);
-        } else {
-          this.lightAngelOrbitAngle += delta * 0.0015;
-          const angelX = this.player.x + Math.cos(this.lightAngelOrbitAngle) * 80;
-          const angelY = this.player.y + Math.sin(this.lightAngelOrbitAngle) * 80;
-          if (this.lightAngelSprite) this.lightAngelSprite.setPosition(angelX, angelY);
-          if (this.lightAngelLink) {
-            this.lightAngelLink.clear();
-            this.lightAngelLink.lineStyle(2, 0xfff4a8, 0.6);
-            this.lightAngelLink.lineBetween(this.player.x, this.player.y, angelX, angelY);
-          }
-          // Auto-mark NPC
-          if (time > this.lightMarkedExpiry - 1500) {
-            this.lightMarkedExpiry = time + 2500;
-          }
-          // Holy blades burst every 3s
-          this.lightAngelBladeAccum += delta;
-          if (this.lightAngelBladeAccum >= 3000) {
-            this.lightAngelBladeAccum -= 3000;
-            for (let i = 0; i < 8; i++) {
-              const bAng = i * Math.PI / 4;
-              const proj = new Projectile(this, angelX, angelY, 'proj-holy-blade', 12, true);
-              this.projectiles.add(proj);
-              proj.launch(Math.cos(bAng) * 350, Math.sin(bAng) * 350);
-            }
-            this.showFloatingText(angelX, angelY - 20, '😇 HOLY BLADES', '#fff4a8');
-          }
-        }
-      }
-    }
-
-    // ── NPC Light ──────────────────────────────────────────────────
-    if (this.npcElement.id === 'light') {
-      const npcSpeed = Math.hypot(npcBody.velocity.x, npcBody.velocity.y);
-
-      // NPC mark on player
-      if (time < this.npcLightMarkedExpiry) {
-        this.player.incomingDamageMultiplier = Math.max(this.player.incomingDamageMultiplier, 1.15);
-      } else {
-        if (this.player.incomingDamageMultiplier === 1.15) this.player.incomingDamageMultiplier = 1;
-      }
-
-      // NPC photospark phases
-      if (time < this.npcLightPhotoSlowUntil) {
-        this.npcSpeedMult *= 0.2;
-      } else if (time < this.npcLightPhotoAccelUntil) {
-        const t = Math.min(1, (time - this.npcLightPhotoAccelStart) / 5000);
-        const peakT = Math.min(t / 0.9, 1);
-        this.npcSpeedMult *= 1.15 + (2.0 - 1.15) * peakT;
-      }
-
-      // NPC photon orb speed boost
-      if (time < this.npcLightPhotonSpeedBoostUntil) this.npcSpeedMult *= 3;
-
-      // NPC angel buffs
-      if (this.npcLightAngelActive) {
-        this.npcSpeedMult *= 1.25;
-        this.npc.incomingDamageMultiplier = Math.min(this.npc.incomingDamageMultiplier, 0.75);
-      }
-
-      // NPC photon orbs orbit + overstim contact
-      for (let i = this.npcLightPhotonOrbs.length - 1; i >= 0; i--) {
-        const orb = this.npcLightPhotonOrbs[i];
-        orb.orbitAngle += delta * 0.003;
-        const ang = orb.orbitAngle + i * Math.PI;
-        orb.sprite.setPosition(this.npc.x + Math.cos(ang) * 44, this.npc.y + Math.sin(ang) * 44);
-        const d = Phaser.Math.Distance.Between(orb.sprite.x, orb.sprite.y, this.player.x, this.player.y);
-        if (d < 22) {
-          orb.sprite.destroy();
-          this.npcLightPhotonOrbs.splice(i, 1);
-          this.npcLightOverstimUntil = time + 5000;
-          this.showFloatingText(this.player.x, this.player.y - 20, '✨ OVERSTIM', '#fff4a8');
-          if (this.npcLightPhotonOrbs.length === 0) this.npcLightPhotonCdStartedAt = time;
-        }
-      }
-
-      // NPC overstim tick damage
-      if (time < this.npcLightOverstimUntil) {
-        this.npcLightOverstimTickAccum += delta;
-        if (this.npcLightOverstimTickAccum >= 250) {
-          this.npcLightOverstimTickAccum -= 250;
-          const pSpeed = Math.hypot(playerBody.velocity.x, playerBody.velocity.y);
-          let tickDmg = 0;
-          if (pSpeed < 10) tickDmg = 0;
-          else if (pSpeed < 150) tickDmg = 2;
-          else if (pSpeed < 350) tickDmg = 4;
-          else tickDmg = 6;
-          if (tickDmg > 0) {
-            this.player.takeDamage(tickDmg);
-            this.spawnHitFlash(this.player.x, this.player.y, 0xfff4a8);
-          }
-        }
-      }
-
-      // NPC angel orbit
-      if (this.npcLightAngelActive) {
-        if (time >= this.npcLightAngelUntil) {
-          if (this.npcLightAngelSprite) { this.npcLightAngelSprite.destroy(); this.npcLightAngelSprite = null; }
-          if (this.npcLightAngelLink) { this.npcLightAngelLink.destroy(); this.npcLightAngelLink = null; }
-          this.npcLightAngelActive = false;
-          this.npc.incomingDamageMultiplier = Math.max(1, this.npc.incomingDamageMultiplier / 0.75);
-        } else {
-          this.npcLightAngelOrbitAngle += delta * 0.0015;
-          const angelX = this.npc.x + Math.cos(this.npcLightAngelOrbitAngle) * 80;
-          const angelY = this.npc.y + Math.sin(this.npcLightAngelOrbitAngle) * 80;
-          if (this.npcLightAngelSprite) this.npcLightAngelSprite.setPosition(angelX, angelY);
-          if (this.npcLightAngelLink) {
-            this.npcLightAngelLink.clear();
-            this.npcLightAngelLink.lineStyle(2, 0xfff4a8, 0.6);
-            this.npcLightAngelLink.lineBetween(this.npc.x, this.npc.y, angelX, angelY);
-          }
-          if (time > this.npcLightMarkedExpiry - 1500) this.npcLightMarkedExpiry = time + 2500;
-          this.npcLightAngelBladeAccum += delta;
-          if (this.npcLightAngelBladeAccum >= 3000) {
-            this.npcLightAngelBladeAccum -= 3000;
-            for (let i = 0; i < 8; i++) {
-              const bAng = i * Math.PI / 4;
-              const proj = new Projectile(this, angelX, angelY, 'proj-holy-blade', 12, false);
-              this.projectiles.add(proj);
-              proj.launch(Math.cos(bAng) * 350, Math.sin(bAng) * 350);
-            }
-            this.showFloatingText(angelX, angelY - 20, '😇 HOLY BLADES', '#fff4a8');
-          }
-        }
-      }
-
-      // React to npcCastId for NPC Light abilities
-      if (this.npcCastId === 'light-stab') {
-        this.npcLightMarkedExpiry = time + 2000;
-        this.showFloatingText(this.player.x, this.player.y - 20, '✨ HIGHLIGHTED', '#fff4a8');
-      }
-      if (this.npcCastId === 'photo-spark') {
-        this.npcLightPhotoSlowUntil = time + 3000;
-        this.npcLightPhotoAccelStart = time + 3000;
-        this.npcLightPhotoAccelUntil = time + 8000;
-        this.showFloatingText(this.npc.x, this.npc.y - 30, '🌞 PHOTOSYNTHESPARK', '#fff4a8');
-      }
-      if (this.npcCastId === 'photon-orbs' && this.npcLightPhotonOrbs.length === 0 && (time - this.npcLightPhotonCdStartedAt >= 20000 || this.npcLightPhotonCdStartedAt < -1000)) {
-        for (let i = 0; i < 2; i++) {
-          const sprite = this.add.circle(this.npc.x, this.npc.y, 9, 0xfff4a8, 0.9).setDepth(8).setStrokeStyle(1, 0xffffff);
-          this.npcLightPhotonOrbs.push({ sprite, orbitAngle: i * Math.PI });
-        }
-        this.showFloatingText(this.npc.x, this.npc.y - 30, '✨ PHOTON ORBS', '#fff4a8');
-      } else if (this.npcCastId === 'photon-orbs' && this.npcLightPhotonOrbs.length > 0) {
-        // Consume one orb
-        const orb = this.npcLightPhotonOrbs.pop()!;
-        orb.sprite.destroy();
-        this.npcLightPhotonSpeedBoostUntil = time + 1500;
-        if (this.npcLightPhotonOrbs.length === 0) this.npcLightPhotonCdStartedAt = time;
-      }
-      if (this.npcCastId === 'prayer' && !this.npcLightAngelActive) {
-        const angelSprite = this.add.circle(this.npc.x, this.npc.y, 14, 0xfff4a8, 0.9).setDepth(8).setStrokeStyle(2, 0xffffff);
-        this.npcLightAngelSprite = angelSprite;
-        this.npcLightAngelLink = this.add.graphics().setDepth(5);
-        this.npcLightAngelActive = true;
-        this.npcLightAngelUntil = time + 8000;
-        this.npcLightAngelOrbitAngle = 0;
-        this.npcLightAngelBladeAccum = 0;
-        this.npc.incomingDamageMultiplier *= 0.75;
-        this.showFloatingText(this.npc.x, this.npc.y - 30, '😇 PRAYER', '#fff4a8');
-      }
-      void npcSpeed;
-      void W;
-    }
-  }
-
-  private handleLightInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
-    const playerCtx = this.buildPlayerContext(mouseX, mouseY);
-
-    // Click: tap-vs-hold detection
-    const clickDown = pointer.leftButtonDown();
-    const clickJustDown = clickDown && !this.lightSpearClickArmed && !this.lightSpearHolding;
-    if (clickJustDown) {
-      this.lightSpearClickArmed = true;
-      this.lightSpearPointerDownX = mouseX;
-      this.lightSpearPointerDownY = mouseY;
-      this.lightSpearHoldStart = time;
-    }
-
-    if (this.lightSpearClickArmed && clickDown) {
-      const heldMs = time - this.lightSpearHoldStart;
-      if (heldMs >= 150 && !this.lightSpearHolding) {
-        // Summon spear
-        this.lightSpearHolding = true;
-        if (this.lightSpearSprite) this.lightSpearSprite.destroy();
-        this.lightSpearSprite = this.add.rectangle(0, 0, 60, 10, 0xfff4a8).setDepth(10).setStrokeStyle(1, 0xffffff);
-      }
-    }
-
-    if (!clickDown && this.lightSpearClickArmed) {
-      const heldMs = time - this.lightSpearHoldStart;
-      if (heldMs < 150) {
-        // Tap: mark enemy if cursor near them
-        this.player.castAbility('light-stab', playerCtx);
-        const dist = Phaser.Math.Distance.Between(mouseX, mouseY, this.npc.x, this.npc.y);
-        if (dist < 50) {
-          this.lightMarkedExpiry = time + 2000;
-          this.showFloatingText(this.npc.x, this.npc.y - 20, '✨ HIGHLIGHTED', '#fff4a8');
-        }
-      }
-      // Release spear
-      this.lightSpearClickArmed = false;
-      this.lightSpearHolding = false;
-      this.lightSkewerTargetHooked = false;
-      if (this.lightSpearSprite) { this.lightSpearSprite.destroy(); this.lightSpearSprite = null; }
-    }
-
-    // E: Photosynthespark
-    if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
-      if (this.player.castAbility('photo-spark', playerCtx)) {
-        this.lightPhotoSlowUntil = 0; // no slow phase
-        this.lightPhotoAccelStart = time;
-        this.lightPhotoAccelUntil = time + 5000;
-        this.lightPhotoStillSince = time;
-        this.lightPhotoRegenAccum = 0;
-        this.showFloatingText(this.player.x, this.player.y - 30, '🌞 PHOTOSYNTHESPARK', '#fff4a8');
-      }
-    }
-
-    // R: Photon Orbs (spawn or consume)
-    if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
-      if (this.lightPhotonOrbs.length > 0) {
-        // Consume one orb for speed boost
-        const orb = this.lightPhotonOrbs.pop()!;
-        orb.sprite.destroy();
-        this.lightPhotonSpeedBoostUntil = time + 1500;
-        this.showFloatingText(this.player.x, this.player.y - 20, '✨ SPEED BURST', '#fff4a8');
-        if (this.lightPhotonOrbs.length === 0) this.lightPhotonCdStartedAt = time;
-      } else if (time - this.lightPhotonCdStartedAt >= 20000 || this.lightPhotonCdStartedAt < -1000) {
-        if (this.player.castAbility('photon-orbs', playerCtx)) {
-          for (let i = 0; i < 2; i++) {
-            const sprite = this.add.circle(this.player.x, this.player.y, 9, 0xfff4a8, 0.9).setDepth(8).setStrokeStyle(1, 0xffffff);
-            this.lightPhotonOrbs.push({ sprite, orbitAngle: i * Math.PI });
-          }
-          this.showFloatingText(this.player.x, this.player.y - 30, '✨ PHOTON ORBS', '#fff4a8');
-        }
-      }
-    }
-
-    // F: Skewer mode
-    if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
-      if (this.player.castAbility('skewer', playerCtx)) {
-        this.lightSkewerModeUntil = time + 5000;
-        this.lightSkewerTargetHooked = false;
-        this.lightSkewerInitialDealt = false;
-        this.showFloatingText(this.player.x, this.player.y - 30, '🗡 SKEWER MODE', '#fff4a8');
-      }
-    }
-
-    // Q: Prayer
-    if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
-      if (!this.lightAngelActive && this.player.castAbility('prayer', playerCtx)) {
-        const angelSprite = this.add.circle(this.player.x, this.player.y, 14, 0xfff4a8, 0.9).setDepth(8).setStrokeStyle(2, 0xffffff);
-        this.lightAngelSprite = angelSprite;
-        this.lightAngelLink = this.add.graphics().setDepth(5);
-        this.lightAngelActive = true;
-        this.lightAngelUntil = time + 8000;
-        this.lightAngelOrbitAngle = 0;
-        this.lightAngelBladeAccum = 0;
-        this.player.incomingDamageMultiplier *= 0.75;
-        this.showFloatingText(this.player.x, this.player.y - 30, '😇 PRAYER', '#fff4a8');
-      }
-    }
-  }
-
-  // ── Magnet ability input handler ──────────────────────────────
-  private handleMagnetInput(
-    time: number,
-    pointer: Phaser.Input.Pointer,
-    mouseX: number,
-    mouseY: number,
-  ): void {
-    const playerCtx = this.buildPlayerContext(mouseX, mouseY);
-
-    // Click: Mag Pulse
-    if (pointer.isDown && !this.pointerWasDown) {
-      this.player.castAbility('mag-pulse', playerCtx);
-    }
-
-    // E: Nail Implant / Recall
-    if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
-      if (this.magnetPlayerNail && this.magnetPlayerNail.inEnemy) {
-        // Recall the nail
-        const nail = this.magnetPlayerNail;
-        const dmg = 18;
-        this.npc.takeDamage(dmg);
-        this.spawnHitFlash(this.npc.x, this.npc.y, 0x888899);
-        this.spawnDamageNumber(this.npc.x, this.npc.y - 20, dmg);
-        this.showFloatingText(this.npc.x, this.npc.y - 36, '🔩 RECALLED', '#ccddee');
-        nail.sprite.destroy();
-        this.magnetPlayerNail = null;
-        // Reduce cooldown so re-shoot is available sooner
-        this.player.reduceCooldown('nail-implant', 2000);
-      } else if (!this.magnetPlayerNail) {
-        this.player.castAbility('nail-implant', playerCtx);
-      }
-    }
-
-    // F: Magnetize
-    if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
-      this.player.castAbility('magnetize', playerCtx);
-    }
-
-    // R: Protect
-    if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
-      this.player.castAbility('protect', playerCtx);
-    }
-
-    // Q: Atom Smasher
-    if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
-      this.player.castAbility('atom-smasher', playerCtx);
-    }
-  }
-
-  // ── Magnet ability implementations ────────────────────────────
-
-  private doMagnetPulse(x: number, y: number, owner: 'player' | 'npc'): void {
-    const caster = owner === 'player' ? this.player : this.npc;
-    const target = owner === 'player' ? this.npc : this.player;
-
-    // Visual pulse ring
-    const ring = this.add.circle(x, y, 8, 0xcc2244, 0.7).setDepth(6).setStrokeStyle(2, 0xff6688);
-    this.tweens.add({
-      targets: ring, scaleX: 10, scaleY: 10, alpha: 0,
-      duration: 350, onComplete: () => ring.destroy(),
-    });
-
-    // Pull rods toward pulse point
-    const pullRange = 380;
-    for (const rod of this.magnetRods) {
-      if (rod.owner !== owner) continue;
-      const dist = Phaser.Math.Distance.Between(rod.x, rod.y, x, y);
-      if (dist <= pullRange) {
-        const angle = Math.atan2(y - rod.y, x - rod.x);
-        rod.vx = Math.cos(angle) * 680;
-        rod.vy = Math.sin(angle) * 680;
-      }
-    }
-
-    // Pull nailed enemy toward cursor
-    const nail = owner === 'player' ? this.magnetPlayerNail : this.magnetNpcNail;
-    if (nail && nail.inEnemy) {
-      const pullAng = Math.atan2(y - target.y, x - target.x);
-      if (owner === 'player') {
-        // Store pull state — applied after the frozen-zero override so it wins
-        this.magnetNailPullVX = Math.cos(pullAng) * 220;
-        this.magnetNailPullVY = Math.sin(pullAng) * 220;
-        this.magnetNailPullUntil = Math.max(this.magnetNailPullUntil, this.time.now + 350);
-      } else {
-        // NPC pulls the player — player input overrides each frame, so just apply directly
-        (target.body as Phaser.Physics.Arcade.Body).setVelocity(
-          Math.cos(pullAng) * 220, Math.sin(pullAng) * 220,
-        );
-      }
-    }
-
-    // If player has protect shield AND within rod-pull range: dash toward cursor + speed buff
-    const shieldOrbs = owner === 'player' ? this.magnetPlayerShieldOrbs : this.magnetNpcShieldOrbs;
-    const distToCursor = Phaser.Math.Distance.Between(caster.x, caster.y, x, y);
-    if (shieldOrbs.length > 0 && distToCursor <= pullRange) {
-      const dx = x - caster.x;
-      const dy = y - caster.y;
-      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-      const dashSpeed = 1200;
-      // Duration exactly covers the distance so the player stops at the cursor
-      const dashMs = Phaser.Math.Clamp((dist / dashSpeed) * 1000, 40, 320);
-      const body = caster.body as Phaser.Physics.Arcade.Body;
-      body.setVelocity((dx / dist) * dashSpeed, (dy / dist) * dashSpeed);
-      if (owner === 'player') {
-        this.isDodging = true;
-        this.player.isInvincible = true;
-        this.time.delayedCall(dashMs, () => {
-          if (this.player.active) {
-            this.player.isInvincible = false;
-            this.isDodging = false;
-            (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-          }
-        });
-        this.magnetPlayerSpeedBuffUntil = this.time.now + 3000;
-      } else {
-        this.magnetNpcSpeedBuffUntil = this.time.now + 3000;
-      }
-      this.showFloatingText(caster.x, caster.y - 26, '🧲 MAGNET DASH', '#cc2244');
-    }
-  }
-
-  private doMagnetNailAction(tx: number, ty: number, owner: 'player' | 'npc'): void {
-    const caster = owner === 'player' ? this.player : this.npc;
-    const existing = owner === 'player' ? this.magnetPlayerNail : this.magnetNpcNail;
-    if (existing) return; // already a nail out
-
-    const dx = tx - caster.x;
-    const dy = ty - caster.y;
-    const len = Math.sqrt(dx * dx + dy * dy) || 1;
-    const speed = 520;
-    const spr = this.add.circle(caster.x, caster.y, 5, 0x888899, 0.95)
-      .setStrokeStyle(1, 0xccddee).setDepth(6);
-    const nail: MagnetNail = {
-      sprite: spr,
-      vx: (dx / len) * speed,
-      vy: (dy / len) * speed,
-      x: caster.x,
-      y: caster.y,
-      inEnemy: false,
-      implantedUntil: 0,
-      owner,
-    };
-    if (owner === 'player') this.magnetPlayerNail = nail;
-    else this.magnetNpcNail = nail;
-  }
-
-  private doMagnetMagnetize(tx: number, ty: number, owner: 'player' | 'npc'): void {
-    const target = owner === 'player' ? this.npc : this.player;
-    const dist = Phaser.Math.Distance.Between(tx, ty, target.x, target.y);
-    if (dist <= 80) {
-      const duration = 8000;
-      if (owner === 'player') {
-        this.magnetNpcMagnetized = true;
-        this.magnetNpcMagnetizedUntil = this.time.now + duration;
-      } else {
-        this.magnetPlayerMagnetized = true;
-        this.magnetPlayerMagnetizedUntil = this.time.now + duration;
-      }
-      this.showFloatingText(target.x, target.y - 28, '🧲 MAGNETIZED', '#ff4488');
-    }
-  }
-
-  private doMagnetProtect(owner: 'player' | 'npc'): void {
-    const caster = owner === 'player' ? this.player : this.npc;
-    const orbArray = owner === 'player' ? this.magnetPlayerShieldOrbs : this.magnetNpcShieldOrbs;
-    // Clear existing orbs
-    for (const orb of orbArray) orb.sprite.destroy();
-    orbArray.length = 0;
-
-    const count = 10;
-    for (let i = 0; i < count; i++) {
-      const angle = (i / count) * Math.PI * 2;
-      const r = 52;
-      const ox = caster.x + Math.cos(angle) * r;
-      const oy = caster.y + Math.sin(angle) * r;
-      const spr = this.add.circle(ox, oy, 7, 0x4488cc, 0.9)
-        .setStrokeStyle(1, 0x88ccff).setDepth(7);
-      orbArray.push({ sprite: spr, angle, hp: 5 });
-    }
-    this.showFloatingText(caster.x, caster.y - 36, '🛡 PROTECT', '#4488cc');
-  }
-
-  private doMagnetAtomSmasher(x: number, y: number, owner: 'player' | 'npc'): void {
-    // Cancel existing
-    const existing = owner === 'player' ? this.magnetPlayerAtomSmasher : this.magnetNpcAtomSmasher;
-    if (existing) {
-      existing.flashSprite.destroy();
-      for (const w of existing.walls) w.sprite.destroy();
-    }
-
-    const flash = this.add.circle(x, y, 30, 0xff2244, 0.35)
-      .setStrokeStyle(2, 0xff6644).setDepth(5);
-
-    const W = this.scale.width;
-    const wallH = 80;
-    const wallW = 20;
-    // Two walls: left and right walls heading toward center
-    const leftWall = this.add.rectangle(-20, y, wallW, wallH, 0x884433)
-      .setStrokeStyle(2, 0xff6644).setDepth(7);
-    const rightWall = this.add.rectangle(W + 20, y, wallW, wallH, 0x884433)
-      .setStrokeStyle(2, 0xff6644).setDepth(7);
-
-    const smasher: MagnetAtomSmasher = {
-      flashSprite: flash, x, y,
-      fireAt: this.time.now + 3000,
-      walls: [
-        { sprite: leftWall,  vx: 900,  vy: 0, active: false },
-        { sprite: rightWall, vx: -900, vy: 0, active: false },
-      ],
-      exploded: false,
-      owner,
-    };
-
-    if (owner === 'player') this.magnetPlayerAtomSmasher = smasher;
-    else this.magnetNpcAtomSmasher = smasher;
-
-    this.showFloatingText(x, y - 40, '☢ ATOM SMASHER', '#ff2244');
-  }
-
-  // ── Magnet per-frame update helpers ──────────────────────────
-
-  private updateMagnetRods(time: number, delta: number): void {
-    const dt = delta / 1000;
-    const W = this.scale.width;
-    const H = this.scale.height;
-    const pad = 20;
-    const friction = 0.88;
-    const movingThreshold = 30;
-
-    for (const rod of this.magnetRods) {
-      const wasMoving = Math.abs(rod.vx) > movingThreshold || Math.abs(rod.vy) > movingThreshold;
-
-      // Bouncing rod (from atom smasher)
-      if (rod.bouncing) {
-        if (time > rod.bounceUntil) {
-          rod.bouncing = false;
-          rod.sprite.setFillStyle(0x99aacc);
-          rod.vx *= 0.3; rod.vy *= 0.3;
-        }
-      }
-
-      // Move rod
-      rod.x += rod.vx * dt;
-      rod.y += rod.vy * dt;
-
-      // Bounce off walls
-      if (rod.x < pad) { rod.x = pad; rod.vx = Math.abs(rod.vx); }
-      if (rod.x > W - pad) { rod.x = W - pad; rod.vx = -Math.abs(rod.vx); }
-      if (rod.y < pad) { rod.y = pad; rod.vy = Math.abs(rod.vy); }
-      if (rod.y > H - pad) { rod.y = H - pad; rod.vy = -Math.abs(rod.vy); }
-
-      // Apply friction
-      rod.vx *= friction;
-      rod.vy *= friction;
-      if (Math.abs(rod.vx) < 2) rod.vx = 0;
-      if (Math.abs(rod.vy) < 2) rod.vy = 0;
-
-      rod.sprite.setPosition(rod.x, rod.y);
-      if (rod.bouncing) rod.sprite.setFillStyle(0xff4400);
-
-      const isMoving = Math.abs(rod.vx) > movingThreshold || Math.abs(rod.vy) > movingThreshold;
-
-      // Trail particles
-      if (isMoving) {
-        const trail = this.add.circle(rod.x, rod.y, 4, rod.bouncing ? 0xff6600 : 0x668899, 0.5).setDepth(3);
-        rod.trail.push(trail);
-        this.tweens.add({ targets: trail, alpha: 0, scaleX: 0.3, scaleY: 0.3, duration: 300, onComplete: () => {
-          trail.destroy();
-          const idx = rod.trail.indexOf(trail);
-          if (idx !== -1) rod.trail.splice(idx, 1);
-        }});
-      }
-
-      // Contact damage (only when moving, 1s cooldown)
-      if (isMoving || wasMoving) {
-        const dmg = rod.bouncing ? 16 : 8;
-        if (rod.owner === 'player') {
-          const npcDist = Phaser.Math.Distance.Between(rod.x, rod.y, this.npc.x, this.npc.y);
-          if (npcDist <= 28 && time > rod.contactCooldownNpc) {
-            this.npc.takeDamage(dmg);
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0x99aacc);
-            this.spawnDamageNumber(this.npc.x, this.npc.y - 20, dmg);
-            rod.contactCooldownNpc = time + 500;
-          }
-        } else {
-          const playerDist = Phaser.Math.Distance.Between(rod.x, rod.y, this.player.x, this.player.y);
-          if (playerDist <= 28 && time > rod.contactCooldownPlayer) {
-            this.player.takeDamage(dmg);
-            this.spawnHitFlash(this.player.x, this.player.y, 0x99aacc);
-            this.spawnDamageNumber(this.player.x, this.player.y - 20, dmg);
-            rod.contactCooldownPlayer = time + 500;
-          }
-        }
-      }
-
-      // Prevent rod clipping into other rods
-      for (const other of this.magnetRods) {
-        if (other === rod) continue;
-        const distBetween = Phaser.Math.Distance.Between(rod.x, rod.y, other.x, other.y);
-        const minDist = 26;
-        if (distBetween < minDist && distBetween > 0) {
-          const ang = Math.atan2(rod.y - other.y, rod.x - other.x);
-          rod.x = other.x + Math.cos(ang) * minDist;
-          rod.y = other.y + Math.sin(ang) * minDist;
-          // Elastic bounce
-          const tmpVx = rod.vx; const tmpVy = rod.vy;
-          rod.vx = other.vx * 0.8; rod.vy = other.vy * 0.8;
-          other.vx = tmpVx * 0.8; other.vy = tmpVy * 0.8;
-        }
-      }
-
-      // Magnetized: rods are strongly pulled toward the magnetized entity
-      const isMagnetized = rod.owner === 'player' ? this.magnetNpcMagnetized : this.magnetPlayerMagnetized;
-      if (isMagnetized) {
-        const magTarget = rod.owner === 'player' ? this.npc : this.player;
-        const magRange = 180;
-        const magDist = Phaser.Math.Distance.Between(rod.x, rod.y, magTarget.x, magTarget.y);
-        if (magDist <= magRange && magDist > 10) {
-          // Inverse-square scaling: closer rods accelerate harder
-          const falloff = Math.max(1, magDist);
-          const accel = Math.min(1600, (600 * 200) / falloff);
-          const magAng = Math.atan2(magTarget.y - rod.y, magTarget.x - rod.x);
-          rod.vx += Math.cos(magAng) * accel * dt;
-          rod.vy += Math.sin(magAng) * accel * dt;
-          // Cap rod speed under magnetize so they don't fly through the enemy
-          const spd = Math.sqrt(rod.vx * rod.vx + rod.vy * rod.vy);
-          if (spd > 900) { rod.vx = (rod.vx / spd) * 900; rod.vy = (rod.vy / spd) * 900; }
-        }
-      }
-    }
-  }
-
-  private updateMagnetNails(time: number, delta: number): void {
-    const dt = delta / 1000;
-    const W = this.scale.width; const H = this.scale.height;
-
-    for (const [nail, owner] of [[this.magnetPlayerNail, 'player'], [this.magnetNpcNail, 'npc']] as [MagnetNail | null, 'player' | 'npc'][]) {
-      if (!nail) continue;
-      const target = owner === 'player' ? this.npc : this.player;
-
-      if (nail.inEnemy) {
-        // Follow enemy
-        nail.x = target.x;
-        nail.y = target.y;
-        nail.sprite.setPosition(nail.x, nail.y);
-        // Auto-expiry
-        if (time > nail.implantedUntil) {
-          nail.sprite.destroy();
-          if (owner === 'player') this.magnetPlayerNail = null;
-          else this.magnetNpcNail = null;
-        }
-        // Continuous gentle tether — nail slowly pulls enemy toward caster
-        const casterForNail = owner === 'player' ? this.player : this.npc;
-        const tDist = Phaser.Math.Distance.Between(target.x, target.y, casterForNail.x, casterForNail.y);
-        if (tDist > 80) {
-          const tAng = Math.atan2(casterForNail.y - target.y, casterForNail.x - target.x);
-          const pull = 180 * dt;
-          const body = target.body as Phaser.Physics.Arcade.Body;
-          body.setVelocity(
-            body.velocity.x + Math.cos(tAng) * pull,
-            body.velocity.y + Math.sin(tAng) * pull,
-          );
-        }
-      } else {
-        // Flying
-        nail.x += nail.vx * dt;
-        nail.y += nail.vy * dt;
-        nail.sprite.setPosition(nail.x, nail.y);
-
-        // Out of bounds
-        if (nail.x < 0 || nail.x > W || nail.y < 0 || nail.y > H) {
-          nail.sprite.destroy();
-          if (owner === 'player') this.magnetPlayerNail = null;
-          else this.magnetNpcNail = null;
-          continue;
-        }
-
-        // Auto-aim if enemy is magnetized
-        const isMag = owner === 'player' ? this.magnetNpcMagnetized : this.magnetPlayerMagnetized;
-        if (isMag) {
-          const toTargetX = target.x - nail.x;
-          const toTargetY = target.y - nail.y;
-          const toLen = Math.sqrt(toTargetX * toTargetX + toTargetY * toTargetY) || 1;
-          const homingRange = 150;
-          if (Math.sqrt(toTargetX * toTargetX + toTargetY * toTargetY) < homingRange) {
-            nail.vx += (toTargetX / toLen) * 600 * dt;
-            nail.vy += (toTargetY / toLen) * 600 * dt;
-            // Cap speed
-            const spd = Math.sqrt(nail.vx * nail.vx + nail.vy * nail.vy);
-            if (spd > 700) { nail.vx = (nail.vx / spd) * 700; nail.vy = (nail.vy / spd) * 700; }
-          }
-        }
-
-        // Hit enemy
-        const hitDist = Phaser.Math.Distance.Between(nail.x, nail.y, target.x, target.y);
-        if (hitDist <= 24) {
-          const dmg = 18;
-          target.takeDamage(dmg);
-          this.spawnHitFlash(target.x, target.y, 0x888899);
-          this.spawnDamageNumber(target.x, target.y - 20, dmg);
-          this.showFloatingText(target.x, target.y - 36, '🔩 NAILED', '#ccddee');
-          nail.inEnemy = true;
-          nail.implantedUntil = time + 10000;
-          nail.x = target.x; nail.y = target.y;
-        }
-      }
-    }
-  }
-
-  private updateMagnetShieldOrbs(time: number): void {
-    // Update player orbs (reverse iteration so splice doesn't corrupt index)
-    if (this.magnetPlayerShieldOrbs.length > 0) {
-      this.magnetOrbOrbitAngle += 0.025;
-      const caster = this.player;
-      const r = 52;
-      const total = this.magnetPlayerShieldOrbs.length;
-      for (let i = total - 1; i >= 0; i--) {
-        const orb = this.magnetPlayerShieldOrbs[i];
-        orb.angle = this.magnetOrbOrbitAngle + (i / total) * Math.PI * 2;
-        const ox = caster.x + Math.cos(orb.angle) * r;
-        const oy = caster.y + Math.sin(orb.angle) * r;
-        orb.sprite.setPosition(ox, oy);
-
-        // Check if NPC projectiles hit this orb
-        if (this.projectiles) {
-          let orbDestroyed = false;
-          for (const go of this.projectiles.getChildren()) {
-            if (orbDestroyed) break;
-            const proj = go as import('../combat/Projectile').Projectile;
-            if (!proj.active || proj.isFromPlayer) continue;
-            const d = Phaser.Math.Distance.Between(proj.x, proj.y, ox, oy);
-            if (d <= 12) {
-              orb.hp -= proj.damage;
-              proj.setActive(false).setVisible(false);
-              this.spawnHitFlash(ox, oy, 0x4488cc);
-              if (orb.hp <= 0) {
-                orb.sprite.destroy();
-                this.magnetPlayerShieldOrbs.splice(i, 1);
-                orbDestroyed = true;
-              }
-            }
-          }
-        }
-      }
-    }
-
-    // Update NPC orbs (reverse iteration so splice doesn't corrupt index)
-    if (this.magnetNpcShieldOrbs.length > 0) {
-      this.magnetNpcOrbOrbitAngle += 0.025;
-      const caster = this.npc;
-      const r = 52;
-      const total = this.magnetNpcShieldOrbs.length;
-      for (let i = total - 1; i >= 0; i--) {
-        const orb = this.magnetNpcShieldOrbs[i];
-        orb.angle = this.magnetNpcOrbOrbitAngle + (i / total) * Math.PI * 2;
-        const ox = caster.x + Math.cos(orb.angle) * r;
-        const oy = caster.y + Math.sin(orb.angle) * r;
-        orb.sprite.setPosition(ox, oy);
-
-        // Check if player projectiles hit NPC's orbs
-        if (this.projectiles) {
-          let orbDestroyed = false;
-          for (const go of this.projectiles.getChildren()) {
-            if (orbDestroyed) break;
-            const proj = go as import('../combat/Projectile').Projectile;
-            if (!proj.active || !proj.isFromPlayer) continue;
-            const d = Phaser.Math.Distance.Between(proj.x, proj.y, ox, oy);
-            if (d <= 12) {
-              orb.hp -= proj.damage;
-              proj.setActive(false).setVisible(false);
-              this.spawnHitFlash(ox, oy, 0x4488cc);
-              if (orb.hp <= 0) {
-                orb.sprite.destroy();
-                this.magnetNpcShieldOrbs.splice(i, 1);
-                orbDestroyed = true;
-              }
-            }
-          }
-        }
-      }
-    }
-
-    // Metal orbs conduct magnetism: if shielded and the enemy is magnetized, drag the carrier toward them
-    const dt = (1000 / 60) / 1000; // approx dt; this runs once per frame
-    if (this.magnetPlayerShieldOrbs.length > 0 && this.magnetNpcMagnetized) {
-      const pullTarget = this.npc;
-      const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, pullTarget.x, pullTarget.y);
-      if (dist > 30) {
-        const ang = Math.atan2(pullTarget.y - this.player.y, pullTarget.x - this.player.x);
-        const strength = Math.min(1400, (900 * 180) / Math.max(1, dist));
-        const body = this.player.body as Phaser.Physics.Arcade.Body;
-        body.setVelocity(
-          body.velocity.x + Math.cos(ang) * strength * dt,
-          body.velocity.y + Math.sin(ang) * strength * dt,
-        );
-      }
-    }
-    if (this.magnetNpcShieldOrbs.length > 0 && this.magnetPlayerMagnetized) {
-      const pullTarget = this.player;
-      const dist = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, pullTarget.x, pullTarget.y);
-      if (dist > 30) {
-        const ang = Math.atan2(pullTarget.y - this.npc.y, pullTarget.x - this.npc.x);
-        const strength = Math.min(1400, (900 * 180) / Math.max(1, dist));
-        const body = this.npc.body as Phaser.Physics.Arcade.Body;
-        body.setVelocity(
-          body.velocity.x + Math.cos(ang) * strength * dt,
-          body.velocity.y + Math.sin(ang) * strength * dt,
-        );
-      }
-    }
-
-    void time;
-  }
-
-  private updateMagnetAtomSmashers(time: number, delta: number): void {
-    const dt = delta / 1000;
-    const W = this.scale.width;
-    const H = this.scale.height;
-
-    for (const [smasher, isPlayer] of [[this.magnetPlayerAtomSmasher, true], [this.magnetNpcAtomSmasher, false]] as [MagnetAtomSmasher | null, boolean][]) {
-      if (!smasher || smasher.exploded) continue;
-
-      const owner = smasher.owner;
-      const target = owner === 'player' ? this.npc : this.player;
-
-      // Pulse flash circle
-      const pulse = 0.3 + 0.15 * Math.sin(time * 0.01);
-      smasher.flashSprite.setAlpha(pulse);
-
-      if (time < smasher.fireAt) {
-        // Pre-explosion: drag magnetized enemies and rods
-        const isMag = owner === 'player' ? this.magnetNpcMagnetized : this.magnetPlayerMagnetized;
-        if (isMag) {
-          const dragAng = Math.atan2(smasher.y - target.y, smasher.x - target.x);
-          const dragDist = Phaser.Math.Distance.Between(smasher.x, smasher.y, target.x, target.y);
-          if (dragDist <= 300) {
-            (target.body as Phaser.Physics.Arcade.Body).velocity.x += Math.cos(dragAng) * 180 * dt;
-            (target.body as Phaser.Physics.Arcade.Body).velocity.y += Math.sin(dragAng) * 180 * dt;
-          }
-        }
-        // Drag rods
-        for (const rod of this.magnetRods) {
-          if (rod.owner !== owner) continue;
-          const dragAng = Math.atan2(smasher.y - rod.y, smasher.x - rod.x);
-          const dragDist = Phaser.Math.Distance.Between(smasher.x, smasher.y, rod.x, rod.y);
-          if (dragDist <= 300) {
-            rod.vx += Math.cos(dragAng) * 200 * dt;
-            rod.vy += Math.sin(dragAng) * 200 * dt;
-          }
-        }
-      } else if (!smasher.exploded) {
-        // Activate walls
-        for (const wall of smasher.walls) {
-          if (!wall.active) {
-            wall.active = true;
-            wall.sprite.setPosition(
-              wall.vx > 0 ? -20 : W + 20,
-              smasher.y,
-            );
-          }
-          wall.sprite.x += wall.vx * dt;
-
-          // Wall reached center — check collision
-          const reachedCenter = wall.vx > 0
-            ? wall.sprite.x >= smasher.x
-            : wall.sprite.x <= smasher.x;
-          if (reachedCenter) {
-            wall.sprite.destroy();
-            wall.active = false;
-          }
-        }
-
-        // Both walls reached center: explode
-        const allDone = smasher.walls.every((w) => !w.active);
-        if (allDone) {
-          smasher.exploded = true;
-          smasher.flashSprite.destroy();
-
-          // Explosion AoE
-          const aeoDmg = 60;
-          const aeoRadius = 120;
-          const aeoDist = Phaser.Math.Distance.Between(smasher.x, smasher.y, target.x, target.y);
-          if (aeoDist <= aeoRadius) {
-            target.takeDamage(aeoDmg);
-            this.spawnHitFlash(target.x, target.y, 0xff2244);
-            this.spawnDamageNumber(target.x, target.y - 20, aeoDmg);
-          }
-          // Big explosion flash
-          const boom = this.add.circle(smasher.x, smasher.y, 20, 0xff4400, 0.9).setDepth(8);
-          this.tweens.add({ targets: boom, scaleX: 8, scaleY: 8, alpha: 0, duration: 500, onComplete: () => boom.destroy() });
-          this.showFloatingText(smasher.x, smasher.y - 40, '💥 ATOM SMASH', '#ff2244');
-
-          // Make rods near explosion bounce
-          for (const rod of this.magnetRods) {
-            if (rod.owner !== owner) continue;
-            const rodDist = Phaser.Math.Distance.Between(smasher.x, smasher.y, rod.x, rod.y);
-            if (rodDist <= 150) {
-              rod.bouncing = true;
-              rod.bounceUntil = time + 3000;
-              const bounceAng = Math.atan2(rod.y - smasher.y, rod.x - smasher.x);
-              rod.vx = Math.cos(bounceAng) * 600;
-              rod.vy = Math.sin(bounceAng) * 600;
-            }
-          }
-
-          if (isPlayer) this.magnetPlayerAtomSmasher = null;
-          else this.magnetNpcAtomSmasher = null;
-        }
-      }
-
-      // Wall contact damage
-      for (const wall of smasher.walls) {
-        if (!wall.active) continue;
-        const wallDist = Phaser.Math.Distance.Between(wall.sprite.x, wall.sprite.y, target.x, target.y);
-        if (wallDist <= 50) {
-          target.takeDamage(15);
-          this.spawnHitFlash(target.x, target.y, 0x884433);
-        }
-      }
-    }
-
-    void W; void H;
-  }
-
-  private updateMagnetMagnetized(time: number): void {
-    // NPC magnetized
-    if (this.magnetNpcMagnetized) {
-      if (time > this.magnetNpcMagnetizedUntil) {
-        this.magnetNpcMagnetized = false;
-        if (this.magnetNpcAura) { this.magnetNpcAura.destroy(); this.magnetNpcAura = null; }
-      } else {
-        // Create aura on first frame
-        if (!this.magnetNpcAura) {
-          this.magnetNpcAura = this.add.circle(this.npc.x, this.npc.y, 180, 0xcc2244, 0)
-            .setStrokeStyle(2, 0xff4488, 0.6).setDepth(2);
-        }
-        // Track entity + pulse opacity
-        this.magnetNpcAura.setPosition(this.npc.x, this.npc.y);
-        const remaining = this.magnetNpcMagnetizedUntil - time;
-        const baseAlpha = remaining < 2000 ? (remaining / 2000) * 0.6 : 0.6;
-        const pulse = baseAlpha * (0.6 + 0.4 * Math.sin(time * 0.008));
-        this.magnetNpcAura.setStrokeStyle(2, 0xff4488, pulse);
-      }
-    } else if (this.magnetNpcAura) {
-      this.magnetNpcAura.destroy(); this.magnetNpcAura = null;
-    }
-
-    // Player magnetized
-    if (this.magnetPlayerMagnetized) {
-      if (time > this.magnetPlayerMagnetizedUntil) {
-        this.magnetPlayerMagnetized = false;
-        if (this.magnetPlayerAura) { this.magnetPlayerAura.destroy(); this.magnetPlayerAura = null; }
-      } else {
-        if (!this.magnetPlayerAura) {
-          this.magnetPlayerAura = this.add.circle(this.player.x, this.player.y, 180, 0xcc2244, 0)
-            .setStrokeStyle(2, 0xff4488, 0.6).setDepth(2);
-        }
-        this.magnetPlayerAura.setPosition(this.player.x, this.player.y);
-        const remaining = this.magnetPlayerMagnetizedUntil - time;
-        const baseAlpha = remaining < 2000 ? (remaining / 2000) * 0.6 : 0.6;
-        const pulse = baseAlpha * (0.6 + 0.4 * Math.sin(time * 0.008));
-        this.magnetPlayerAura.setStrokeStyle(2, 0xff4488, pulse);
-      }
-    } else if (this.magnetPlayerAura) {
-      this.magnetPlayerAura.destroy(); this.magnetPlayerAura = null;
-    }
-  }
-
-  private updateMagnetSpeedBuff(time: number): void {
-    // Speed buff from mag pulse + shield teleport
-    if (time < this.magnetPlayerSpeedBuffUntil) {
-      if (!this.playerSpeedMult || this.playerSpeedMult < 1.2) {
-        // Speed buff is applied by boosting current speed; handled passively
-      }
-    }
-    if (time < this.magnetNpcSpeedBuffUntil) {
-      // NPC speed boost handled in AI speed mult
-    }
-    void time;
   }
 
   // ══ Metal ability implementations ════════════════════════════════
@@ -21262,7 +20039,7 @@ export class ArenaScene extends Phaser.Scene {
       doublify(() => this.npcSlimeSlowUntil, v => { this.npcSlimeSlowUntil = v; });
       doublify(() => this.npc.earthStunnedUntil, v => { this.npc.earthStunnedUntil = v; });
       doublify(() => this.npcAggressiveBleedUntil, v => { this.npcAggressiveBleedUntil = v; });
-      doublify(() => this.npcLightPhotoSlowUntil, v => { this.npcLightPhotoSlowUntil = v; });
+      doublify(() => this.lightKit.getNpcPhotoSlowUntil(), v => { this.lightKit.setNpcPhotoSlowUntil(v); });
     } else {
       doublify(() => this.playerVoidDecayUntil, v => { this.playerVoidDecayUntil = v; });
       doublify(() => this.playerBleedingUntil, v => { this.playerBleedingUntil = v; });
@@ -21285,18 +20062,18 @@ export class ArenaScene extends Phaser.Scene {
       if (this.npcDeathSoulSplitUntil > time) { this.npcDeathSoulSplitUntil = 0; stripped++; }
       // Speed buffs above base — we reset npcSpeedMult; the per-frame recalc will reapply legit modifiers
       // Just clear known speed buff timestamps
-      if (this.magnetNpcSpeedBuffUntil > time) { this.magnetNpcSpeedBuffUntil = 0; stripped++; }
-      if (this.npcLightPhotonSpeedBoostUntil > time) { this.npcLightPhotonSpeedBoostUntil = 0; stripped++; }
-      if (this.npcLightPhotoAccelUntil > time) { this.npcLightPhotoAccelUntil = 0; stripped++; }
+      if (this.magnetKit.getNpcSpeedBuffUntil() > time) { this.magnetKit.setNpcSpeedBuffUntil(0); stripped++; }
+      if (this.lightKit.getNpcPhotonSpeedBoostUntil() > time) { this.lightKit.setNpcPhotonSpeedBoostUntil(0); stripped++; }
+      if (this.lightKit.getNpcPhotoAccelUntil() > time) { this.lightKit.setNpcPhotoAccelUntil(0); stripped++; }
     } else {
       if (this.player.shieldCharges > 0) { this.player.shieldCharges = 0; stripped++; }
       if (this.player.shieldHp > 0) { this.player.shieldHp = 0; stripped++; }
       if (this.huntBloodMoonActive) { this.huntBloodMoonActive = false; stripped++; }
       if (this.plasmaIncarnateActive) { this.plasmaIncarnateActive = false; stripped++; }
       if (this.deathSoulSplitUntil > time) { this.deathSoulSplitUntil = 0; stripped++; }
-      if (this.magnetPlayerSpeedBuffUntil > time) { this.magnetPlayerSpeedBuffUntil = 0; stripped++; }
-      if (this.lightPhotonSpeedBoostUntil > time) { this.lightPhotonSpeedBoostUntil = 0; stripped++; }
-      if (this.lightPhotoAccelUntil > time) { this.lightPhotoAccelUntil = 0; stripped++; }
+      if (this.magnetKit.getPlayerSpeedBuffUntil() > time) { this.magnetKit.setPlayerSpeedBuffUntil(0); stripped++; }
+      if (this.lightKit.getPhotonSpeedBoostUntil() > time) { this.lightKit.setPhotonSpeedBoostUntil(0); stripped++; }
+      if (this.lightKit.getPhotoAccelUntil() > time) { this.lightKit.setPhotoAccelUntil(0); stripped++; }
     }
     return stripped;
   }
