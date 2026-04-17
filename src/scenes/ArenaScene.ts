@@ -893,6 +893,8 @@ export class ArenaScene extends Phaser.Scene {
   private npcDifficulty!: DifficultyConfig;
   private isPvP = false;
   private isInvasion = false;
+  private corrupted: CorruptedBase[] = [];
+  private corruptedGroup!: Phaser.Physics.Arcade.Group;
 
 
   // Dummy mode keys (arrow keys + P for dummy control)
@@ -3581,40 +3583,50 @@ export class ArenaScene extends Phaser.Scene {
     this.puddles = [];
     this.geysers = [];
     this.painRainShadows = [];
+    this.corrupted = [];
 
-    const W = this.scale.width;
-    const H = this.scale.height;
+    const screenW = this.scale.width;
+    const screenH = this.scale.height;
+    const W = this.isInvasion ? 1920 : screenW;
+    const H = this.isInvasion ? 1280 : screenH;
     const cx = W / 2;
     const cy = H / 2;
     const pad = 32;
 
     // ── Background ────────────────────────────────────────────────
     this.add.rectangle(cx, cy, W, H, 0x0d0d1a);
-    this.add.rectangle(cx, cy, W - pad * 2, H - pad * 2, 0x181828);
+    this.add.rectangle(cx, cy, W - pad * 2, H - pad * 2, this.isInvasion ? 0x120018 : 0x181828);
 
     const grid = this.add.graphics();
-    grid.lineStyle(1, 0x202038, 1);
+    grid.lineStyle(1, this.isInvasion ? 0x1a0025 : 0x202038, 1);
     for (let x = pad; x < W - pad; x += 80) grid.lineBetween(x, pad, x, H - pad);
     for (let y = pad; y < H - pad; y += 80) grid.lineBetween(pad, y, W - pad, y);
 
     const border = this.add.graphics();
-    border.lineStyle(3, 0x3a3a5a, 1);
+    border.lineStyle(3, this.isInvasion ? 0x440066 : 0x3a3a5a, 1);
     border.strokeRect(pad, pad, W - pad * 2, H - pad * 2);
 
     // ── Physics ───────────────────────────────────────────────────
     this.physics.world.setBounds(pad, pad, W - pad * 2, H - pad * 2);
+
+    // ── Camera (invasion uses follow-cam on larger world) ─────────
+    if (this.isInvasion) {
+      this.cameras.main.setBounds(0, 0, W, H);
+      this.cameras.main.roundPixels = true;
+    }
     this.projectiles = this.physics.add.group();
 
     // ── Fighters — texture driven by element choice ────────────────
     const playerTexture = ELEMENT_TEXTURES[this.elementId] ?? 'elem-fire';
     const npcTexture    = ELEMENT_TEXTURES[enemyElementId]  ?? 'elem-water';
-    this.player = new Player(this, 180, cy, this.playerElement, playerTexture);
+    this.player = new Player(this, this.isInvasion ? cx : 180, cy, this.playerElement, playerTexture);
     this.player.incomingDamageMultiplier = 1;
     if (this.isPvP) {
       this.npc = new Player(this, W - 180, cy, this.npcElement, npcTexture);
       this.p2ActiveUpgrades = PlayerData.getActiveUpgrades(this.npcElementId);
     } else if (this.isInvasion) {
       this.npc = new BasicCorrupted(this, W - 180, cy);
+      this.cameras.main.startFollow(this.player, true, 0.12, 0.12);
     } else {
       this.npc = new NpcOpponent(this, W - 180, cy, this.npcElement, npcTexture, difficultyConfig);
     }
@@ -3767,6 +3779,23 @@ export class ArenaScene extends Phaser.Scene {
           undefined, this,
         );
       }
+    }
+
+    // ── Invasion: corrupted group + secondary projectile overlap ─────
+    if (this.isInvasion) {
+      this.corruptedGroup = this.physics.add.group();
+      this.corrupted = [];
+      this.physics.add.overlap(
+        this.projectiles,
+        this.corruptedGroup,
+        (a, b) => {
+          const proj = (a instanceof Projectile ? a : b) as Projectile;
+          const c = (a instanceof CorruptedBase ? a : b) as CorruptedBase;
+          if (!proj.active || !proj.isFromPlayer) return;
+          if (!c.active || c.hp <= 0) return;
+          this.applyProjectileToCorrupted(proj, c);
+        },
+      );
     }
 
     // ── Adrenaline SK8 body-contact overlap ──────────────────────────
@@ -4318,7 +4347,10 @@ export class ArenaScene extends Phaser.Scene {
           this.npcMainDefeated = true;
           if (this.npc.active) { this.npc.setActive(false).setVisible(false); }
           checkAllEnemiesDefeated();
-        } else if (!this.isInvasion) {
+        } else if (this.isInvasion) {
+          if (this.npc.active) { this.npc.setActive(false).setVisible(false); }
+          this.promotePrimaryTarget();
+        } else {
           this.endGame(true);
         }
       });
@@ -4436,8 +4468,17 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── HUD ────────────────────────────────────────────────────────
-    this.createHUD(W, H);
-    if (this.isPvP) this.createP2HUD(W, H);
+    // In invasion mode the world is larger than the screen; use screen dimensions for HUD positioning
+    const hudListStart = this.children.length;
+    this.createHUD(screenW, screenH);
+    if (this.isPvP) this.createP2HUD(screenW, screenH);
+    if (this.isInvasion) {
+      const all = this.children.getAll();
+      for (let i = hudListStart; i < all.length; i++) {
+        const obj = all[i] as { setScrollFactor?: (n: number) => void };
+        if (obj.setScrollFactor) obj.setScrollFactor(0);
+      }
+    }
 
     // ── Arena labels ───────────────────────────────────────────────
     if (this.isPvP) {
@@ -5077,10 +5118,13 @@ export class ArenaScene extends Phaser.Scene {
       isPlayerCaster: true,
       projectiles: this.projectiles,
       dealAoeDamage: (cx, cy, radius, damage) => {
-        if (Phaser.Math.Distance.Between(cx, cy, this.npc.x, this.npc.y) <= radius) {
-          this.npc.takeDamage(damage);
-          this.spawnHitFlash(this.npc.x, this.npc.y, 0xff6600);
-          if (this.huntBloodPactActive && this.time.now < this.huntBloodPactEnd) this.player.heal(Math.ceil(damage * 0.5));
+        const targets: Fighter[] = [this.npc, ...this.corrupted.filter(c => c.active && c.hp > 0)];
+        for (const t of targets) {
+          if (Phaser.Math.Distance.Between(cx, cy, t.x, t.y) <= radius) {
+            t.takeDamage(damage);
+            this.spawnHitFlash(t.x, t.y, 0xff6600);
+            if (this.huntBloodPactActive && this.time.now < this.huntBloodPactEnd) this.player.heal(Math.ceil(damage * 0.5));
+          }
         }
       },
       dashCaster: (vx, vy) => {
@@ -8291,6 +8335,16 @@ export class ArenaScene extends Phaser.Scene {
     if (stacks >= 4) return 1.30;
     if (stacks >= 3) return 1.20;
     return 1.0;
+  }
+
+  private addFrostStackTo(f: Fighter): void {
+    if (this.playerBlackIceMorphActive) {
+      f.voidFrostStacks = Math.min(5, f.voidFrostStacks + 1);
+      f.incomingDamageMultiplier = this.frostDamageMultiplier(f.voidFrostStacks);
+    } else {
+      f.frostStacks = Math.min(5, f.frostStacks + 1);
+      f.incomingDamageMultiplier = this.frostDamageMultiplier(f.frostStacks);
+    }
   }
 
   private addFrostStack(target: 'player' | 'npc'): void {
@@ -22973,12 +23027,94 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
+  private promotePrimaryTarget(): void {
+    if (!this.isInvasion) return;
+    // Remove dead npc from corrupted list and find closest living enemy
+    this.corrupted = this.corrupted.filter(c => c !== this.npc && c.active && c.hp > 0);
+    if (this.corrupted.length === 0) return; // wave complete, wave manager handles next
+    let best = this.corrupted[0];
+    let bestD = Infinity;
+    for (const c of this.corrupted) {
+      const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, c.x, c.y);
+      if (d < bestD) { bestD = d; best = c; }
+    }
+    this.corrupted = this.corrupted.filter(c => c !== best);
+    this.corruptedGroup.remove(best, false, false);
+    // Reset single-target scene state that was tracking the old primary
+    this.npcPosHistory.length = 0;
+    this.timeNpcTeleporting = false;
+    this.npc = best;
+    // Re-register defeat handler for the new primary
+    this.npc.once('defeated', () => {
+      if (this.npc.active) { this.npc.setActive(false).setVisible(false); }
+      this.promotePrimaryTarget();
+    });
+  }
+
+  private applyProjectileToCorrupted(proj: Projectile, c: CorruptedBase): void {
+    c.setIncomingCritContext(this.player.critChance, this.player.critMult);
+    let dmg = proj.damage;
+    // Shatter Strike on frozen enemy
+    if (c.frozenSolidAmpReady && c.frozenUntil > this.time.now) {
+      dmg = Math.round(dmg * 1.25);
+      c.frozenSolidAmpReady = false;
+    }
+    c.takeDamage(dmg);
+    this.spawnHitFlash(proj.x, proj.y, 0xff6600);
+    this.spawnDamageNumber(c.x, c.y - 28, dmg);
+
+    // Burn (fire projectile + Flameshredder upgrade)
+    if (proj.texture.key === 'proj-fire' && this.hasUpgrade('click')) {
+      c.burningUntil = Math.max(c.burningUntil, this.time.now + 3000);
+    }
+    // Frost stacks (ice projectile)
+    if (proj.texture.key === 'proj-ice') {
+      if (c.frozenUntil > this.time.now) {
+        c.frozenUntil = 0;
+        for (let fi = 0; fi < 3; fi++) this.addFrostStackTo(c);
+      } else {
+        this.addFrostStackTo(c);
+        if (proj.isPowered) this.addFrostStackTo(c);
+      }
+    }
+    // Toxic DOT (growth dagger)
+    if (proj.texture.key === 'proj-growth-dagger') {
+      c.toxicUntil = this.time.now + 5000 + this.growthLingerBonus;
+      c.toxicDps = 2 + this.growthViralBonus;
+      c.toxicTickAccum = 0;
+    }
+    // Bleed (hunt stake)
+    if (proj.texture.key === 'proj-hunt-stake') {
+      c.bleeding = true;
+      c.bleedingUntil = Math.max(c.bleedingUntil, this.time.now + 6000);
+    }
+    // Magic bind chain
+    if (proj.texture.key === 'proj-magic-chain' && !(proj as any).isMagicRoot4) {
+      c.magicChainBound = true;
+      c.magicChainBoundEnd = this.time.now + 2000;
+      this.showFloatingText(c.x, c.y - 28, '⛓ BOUND', '#cc88ff');
+    }
+    proj.setActive(false).setVisible(false);
+    (proj.body as Phaser.Physics.Arcade.Body).stop();
+  }
+
   private dealAoeDamageFromOwner(cx: number, cy: number, radius: number, damage: number, owner: 'player' | 'npc'): void {
     const target = owner === 'player' ? this.npc : this.player;
     if (Phaser.Math.Distance.Between(cx, cy, target.x, target.y) <= radius) {
       target.takeDamage(damage);
       this.spawnHitFlash(target.x, target.y, 0x9944ff);
       this.spawnDamageNumber(target.x, target.y - 28, damage);
+    }
+    // Fan out to secondary corrupted in invasion mode
+    if (this.isInvasion && owner === 'player') {
+      for (const c of this.corrupted) {
+        if (!c.active || c.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(cx, cy, c.x, c.y) <= radius) {
+          c.takeDamage(damage);
+          this.spawnHitFlash(c.x, c.y, 0x9944ff);
+          this.spawnDamageNumber(c.x, c.y - 28, damage);
+        }
+      }
     }
   }
 
