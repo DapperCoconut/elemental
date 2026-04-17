@@ -7,7 +7,7 @@ export class GameOverScene extends Phaser.Scene {
     super({ key: 'GameOverScene' });
   }
 
-  create(data: { playerWon: boolean; difficulty: number; rewardMult?: number; isPvP?: boolean; isNetworkPvP?: boolean; isGauntlet?: boolean }): void {
+  create(data: { playerWon: boolean; difficulty: number; rewardMult?: number; isPvP?: boolean; isGauntlet?: boolean }): void {
     const { width, height } = this.scale;
     const cx = width / 2;
     const cy = height / 2;
@@ -23,10 +23,6 @@ export class GameOverScene extends Phaser.Scene {
     let title: string, subtitle: string, titleColor: string;
     if (data.isGauntlet && !data.playerWon) {
       [title, subtitle, titleColor] = ['GAUNTLET FAILED', 'Your run has ended...', '#ff4444'];
-    } else if (data.isNetworkPvP) {
-      [title, subtitle, titleColor] = data.playerWon
-        ? ['YOU WIN!',  'Great match!', '#ff8800']
-        : ['YOU LOSE', 'Better luck next time!', '#44aaff'];
     } else if (data.isPvP) {
       [title, subtitle, titleColor] = data.playerWon
         ? ['PLAYER 1 WINS!', 'Great match!', '#ff8800']

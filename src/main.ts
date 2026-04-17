@@ -6,7 +6,6 @@ import { ShopScene } from './scenes/ShopScene';
 import { LabScene } from './scenes/LabScene';
 import { ArenaScene } from './scenes/ArenaScene';
 import { GameOverScene } from './scenes/GameOverScene';
-import { NetworkScene } from './scenes/NetworkScene';
 import { GauntletSelectScene } from './scenes/GauntletSelectScene';
 import { GauntletIntermediaryScene } from './scenes/GauntletIntermediaryScene';
 
@@ -22,14 +21,8 @@ const config: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
-  scene: [BootScene, TitleScene, MenuScene, ShopScene, LabScene, ArenaScene, GameOverScene, NetworkScene, GauntletSelectScene, GauntletIntermediaryScene],
+  scene: [BootScene, TitleScene, MenuScene, ShopScene, LabScene, ArenaScene, GameOverScene, GauntletSelectScene, GauntletIntermediaryScene],
 };
 
 const game = new Phaser.Game(config);
 
-// Keep the game loop running when the tab loses focus.
-// Required for networked PvP: both tabs must keep ticking to send/receive inputs
-// even when one is in the background.
-game.events.on(Phaser.Core.Events.HIDDEN, () => {
-  game.loop.wake();
-});
