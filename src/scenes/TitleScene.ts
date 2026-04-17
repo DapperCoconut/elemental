@@ -35,7 +35,7 @@ export class TitleScene extends Phaser.Scene {
     const buttons: Array<{ label: string; sub?: string; color: number; borderColor: number; action: (() => void) | null }> = [
       { label: 'PLAY',       color: 0x1a2a1a, borderColor: 0x44cc44, action: () => this.scene.start('MenuScene', { isPvP: false }) },
       { label: 'LOCAL PVP',  color: 0x2a1a1a, borderColor: 0xff4444, action: () => this.scene.start('MenuScene', { isPvP: true }) },
-      { label: 'ONLINE PVP', color: 0x1a1a1a, borderColor: 0xff8844, action: () => this.scene.start('NetworkScene') },
+      { label: 'INVASION',   color: 0x1a0022, borderColor: 0x8800cc, action: () => this.scene.start('MenuScene', { mode: 'invasion' }) },
       { label: 'SHOP',       color: 0x1a1a2a, borderColor: 0x4466ff, action: () => this.scene.start('ShopScene') },
       { label: 'LAB',        color: 0x1a1a2a, borderColor: 0x9944ff, action: () => this.scene.start('LabScene') },
       {

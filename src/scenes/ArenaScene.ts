@@ -3,6 +3,8 @@ import { processP2Abilities, P2Scene } from '../combat/P2AbilityHandler';
 import { Fighter } from '../entities/Fighter';
 import { Player } from '../entities/Player';
 import { NpcOpponent, NpcAiState, DIFFICULTY_PRESETS, DifficultyConfig } from '../entities/NpcOpponent';
+import { BasicCorrupted } from '../entities/corrupted/BasicCorrupted';
+import { CorruptedBase } from '../entities/corrupted/CorruptedBase';
 import { Projectile } from '../combat/Projectile';
 import { CastContext } from '../elements/Ability';
 import { Element } from '../elements/Element';
@@ -890,6 +892,7 @@ export class ArenaScene extends Phaser.Scene {
   private npcElementId = 'water';
   private npcDifficulty!: DifficultyConfig;
   private isPvP = false;
+  private isInvasion = false;
 
 
   // Dummy mode keys (arrow keys + P for dummy control)
@@ -2436,9 +2439,10 @@ export class ArenaScene extends Phaser.Scene {
     super({ key: 'ArenaScene' });
   }
 
-  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; isPvP?: boolean; gauntlet?: import('../data/GauntletData').GauntletState }): void {
+  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; isPvP?: boolean; mode?: string; gauntlet?: import('../data/GauntletData').GauntletState }): void {
     this.elementId = data.elementId ?? 'fire';
     this.isPvP = data.isPvP ?? false;
+    this.isInvasion = data.mode === 'invasion';
     const enemyElementId = data.enemyElementId ?? (this.elementId === 'fire' ? 'water' : 'fire');
     this.npcElementId = enemyElementId;
     const difficultyLevel = Math.max(1, Math.min(5, data.difficulty ?? 3));
@@ -3609,6 +3613,8 @@ export class ArenaScene extends Phaser.Scene {
     if (this.isPvP) {
       this.npc = new Player(this, W - 180, cy, this.npcElement, npcTexture);
       this.p2ActiveUpgrades = PlayerData.getActiveUpgrades(this.npcElementId);
+    } else if (this.isInvasion) {
+      this.npc = new BasicCorrupted(this, W - 180, cy);
     } else {
       this.npc = new NpcOpponent(this, W - 180, cy, this.npcElement, npcTexture, difficultyConfig);
     }
@@ -3649,23 +3655,25 @@ export class ArenaScene extends Phaser.Scene {
     if (this.mutations.has('deadly')) { this.player.incomingDamageMultiplier = 1.5; }
 
     // ── Boss mutation ─────────────────────────────────────────────────
-    if (this.mutations.has('boss')) {
-      this.npc.setPosition(cx, pad);
-      this.npc.setScale(4);
-      (this.npc.body as Phaser.Physics.Arcade.Body).setCollideWorldBounds(false);
-      // Phaser scales the body circle with the sprite, so the constructor's setCircle(22,2,2)
-      // becomes radius 88 in world space at scale 4 — no explicit resize needed.
-      this.npc.maxHp = 500;
-      this.npc.hp = 500;
-      this.npc.cooldownMult = 0.5; // 2× faster ability cooldowns
-      (this.npc as NpcOpponent).stationary = true;
-    } else if (this.npcElement.id === 'dummy') {
-      // Dummy mode: 5000 HP, stands still
-      this.npc.maxHp = 5000;
-      this.npc.hp = 5000;
-      (this.npc as NpcOpponent).stationary = true;
-    } else {
-      applyStatMutations(this.npc as NpcOpponent);
+    if (!this.isInvasion) {
+      if (this.mutations.has('boss')) {
+        this.npc.setPosition(cx, pad);
+        this.npc.setScale(4);
+        (this.npc.body as Phaser.Physics.Arcade.Body).setCollideWorldBounds(false);
+        // Phaser scales the body circle with the sprite, so the constructor's setCircle(22,2,2)
+        // becomes radius 88 in world space at scale 4 — no explicit resize needed.
+        this.npc.maxHp = 500;
+        this.npc.hp = 500;
+        this.npc.cooldownMult = 0.5; // 2× faster ability cooldowns
+        (this.npc as NpcOpponent).stationary = true;
+      } else if (this.npcElement.id === 'dummy') {
+        // Dummy mode: 5000 HP, stands still
+        this.npc.maxHp = 5000;
+        this.npc.hp = 5000;
+        (this.npc as NpcOpponent).stationary = true;
+      } else {
+        applyStatMutations(this.npc as NpcOpponent);
+      }
     }
 
     // ── Dummy mode back button ────────────────────────────────────────
@@ -4288,7 +4296,7 @@ export class ArenaScene extends Phaser.Scene {
 
     const registerNpcDefeat = () => {
       this.npc.once('defeated', () => {
-        if (!this.isPvP && this.mutations.has('reborn') && !this.npcRebirthUsed) {
+        if (!this.isPvP && !this.isInvasion && this.mutations.has('reborn') && !this.npcRebirthUsed) {
           this.npcRebirthUsed = true;
           this.npc.isInvincible = true;
           const flash = this.add.circle(this.npc.x, this.npc.y, 50, 0x00ffff, 0.8).setDepth(15);
@@ -4310,7 +4318,7 @@ export class ArenaScene extends Phaser.Scene {
           this.npcMainDefeated = true;
           if (this.npc.active) { this.npc.setActive(false).setVisible(false); }
           checkAllEnemiesDefeated();
-        } else {
+        } else if (!this.isInvasion) {
           this.endGame(true);
         }
       });
@@ -13524,13 +13532,18 @@ export class ArenaScene extends Phaser.Scene {
 
     const npcPreDashX = this.npc.x;
     const npcPreDashY = this.npc.y;
-    const npcCastId = (this.shadowConsumeActive || this.time.now < this.shadowNpcThrowUntil) ? null : (this.npc as NpcOpponent).doAI(
+    const npcCastId = (this.isInvasion || this.shadowConsumeActive || this.time.now < this.shadowNpcThrowUntil) ? null : (this.npc as NpcOpponent).doAI(
       this.player,
       (tx: number, ty: number) => this.buildNpcContext(tx, ty),
       time,
       aiState,
     );
     this.npcCastId = npcCastId;
+
+    // Invasion: run AI for the primary corrupted
+    if (this.isInvasion && this.npc instanceof CorruptedBase && this.npc.active && this.npc.hp > 0) {
+      this.npc.aiTick(this.player, this.projectiles, [], time, delta);
+    }
 
     // Earth and Light kit updates (after npcCastId is known)
     if (this.elementId === 'earth' || this.npcElement.id === 'earth') {

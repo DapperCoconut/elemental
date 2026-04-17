@@ -131,6 +131,7 @@ export class MenuScene extends Phaser.Scene {
   private enemyChoice: string | null = null;
   private elemPage = 0;
   private isPvP = false;
+  private isInvasion = false;
 
   private phaseObjects: Phaser.GameObjects.GameObject[] = [];
   private infoOverlayObjects: Phaser.GameObjects.GameObject[] = [];
@@ -140,8 +141,9 @@ export class MenuScene extends Phaser.Scene {
     super({ key: 'MenuScene' });
   }
 
-  create(data?: { isPvP?: boolean }): void {
+  create(data?: { isPvP?: boolean; mode?: string }): void {
     this.isPvP = data?.isPvP ?? false;
+    this.isInvasion = data?.mode === 'invasion';
     activeMutationIds.clear();
     this.selectionPhase = 'player';
     this.playerChoice = null;
@@ -168,7 +170,7 @@ export class MenuScene extends Phaser.Scene {
       strokeThickness: 5,
     }).setOrigin(0.5);
 
-    this.add.text(cx, height - 24, this.isPvP ? 'Two players, one keyboard!' : 'Defeat the enemy to win!', {
+    this.add.text(cx, height - 24, this.isInvasion ? 'Survive as long as you can!' : this.isPvP ? 'Two players, one keyboard!' : 'Defeat the enemy to win!', {
       fontSize: '13px',
       color: '#666666',
     }).setOrigin(0.5);
@@ -223,7 +225,7 @@ export class MenuScene extends Phaser.Scene {
     const isPlayerPhase = this.selectionPhase === 'player';
 
     const subtitle = isPlayerPhase
-      ? (this.isPvP ? 'Player 1: Choose your element' : 'Choose your element')
+      ? (this.isInvasion ? 'INVASION — pick your element' : this.isPvP ? 'Player 1: Choose your element' : 'Choose your element')
       : (this.isPvP ? 'Player 2: Choose your element' : 'Choose enemy element');
     const subtitleObj = this.add.text(cx, 158, subtitle, {
       fontSize: '20px',
@@ -393,6 +395,87 @@ export class MenuScene extends Phaser.Scene {
         .on('pointerdown', () => this.handleElementClick('dummy', width, height, cx));
       this.phaseObjects.push(dBtn, dLbl);
     }
+  }
+
+  private renderInvasionStartPhase(width: number, height: number, cx: number, playerEl: ElementDef | undefined): void {
+    const mutTitleY = 230;
+    const mutRow0Y  = 268;
+    const mutRow1Y  = 318;
+    const mutRow2Y  = 368;
+
+    const subtitle = this.add.text(cx, 155, 'INVASION', {
+      fontSize: '28px', fontFamily: '"Arial Black", sans-serif', color: '#cc44ff',
+      stroke: '#330055', strokeThickness: 4,
+    }).setOrigin(0.5);
+    this.phaseObjects.push(subtitle);
+
+    if (playerEl) {
+      const indicator = this.add.text(cx, 186, `${playerEl.emoji} ${playerEl.name}  —  Defend against the waves`, {
+        fontSize: '16px', fontFamily: 'Arial, sans-serif', color: '#ffcc44',
+      }).setOrigin(0.5);
+      this.phaseObjects.push(indicator);
+    }
+
+    const mutTitle = this.add.text(cx, mutTitleY, '— MUTATIONS —', {
+      fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#aaaaaa',
+    }).setOrigin(0.5);
+    this.phaseObjects.push(mutTitle);
+
+    const togW = 172; const togH = 40; const togGapX = 10; const mutCols = 4;
+    const totalTogW = mutCols * togW + (mutCols - 1) * togGapX;
+    const togStartX = cx - totalTogW / 2;
+    const rowY = [mutRow0Y, mutRow1Y, mutRow2Y];
+
+    MUTATIONS.forEach((mut, idx) => {
+      const col = idx % mutCols;
+      const row = Math.floor(idx / mutCols);
+      const tx = togStartX + col * (togW + togGapX) + togW / 2;
+      const ty = rowY[row];
+
+      const isOn = () => activeMutationIds.has(mut.id);
+      const getColor  = () => isOn() ? 0x1a3a1a : 0x252535;
+      const getBorder = () => isOn() ? 0x55ee55 : 0x9999bb;
+
+      const tog = this.add.rectangle(tx, ty, togW, togH, getColor(), 1)
+        .setStrokeStyle(2, getBorder()).setInteractive({ useHandCursor: true });
+      const togLabel = this.add.text(tx, ty - 7, `${mut.emoji} ${mut.name}`, {
+        fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: isOn() ? '#88ff88' : '#cccccc',
+      }).setOrigin(0.5);
+      const togDesc = this.add.text(tx, ty + 9, mut.description, {
+        fontSize: '9px', fontFamily: 'Arial, sans-serif', color: isOn() ? '#66dd66' : '#999999',
+      }).setOrigin(0.5);
+
+      const refresh = () => {
+        tog.setFillStyle(getColor(), 1);
+        tog.setStrokeStyle(2, getBorder());
+        togLabel.setColor(isOn() ? '#88ff88' : '#cccccc');
+        togDesc.setColor(isOn() ? '#66dd66' : '#999999');
+      };
+      tog
+        .on('pointerover', () => tog.setStrokeStyle(3, 0xffffff))
+        .on('pointerout',  () => tog.setStrokeStyle(2, getBorder()))
+        .on('pointerdown', () => { if (isOn()) activeMutationIds.delete(mut.id); else activeMutationIds.add(mut.id); refresh(); });
+      this.phaseObjects.push(tog, togLabel, togDesc);
+    });
+
+    // START button
+    const startY = height - 90;
+    const startBtn = this.add.rectangle(cx, startY, 280, 60, 0x330055)
+      .setStrokeStyle(3, 0x8800cc).setInteractive({ useHandCursor: true });
+    const startLbl = this.add.text(cx, startY, '⚔  START INVASION', {
+      fontSize: '22px', fontFamily: '"Arial Black", sans-serif', color: '#cc44ff',
+    }).setOrigin(0.5);
+    startBtn
+      .on('pointerover', () => { startBtn.setFillStyle(0x550088); startBtn.setStrokeStyle(3, 0xcc44ff); startLbl.setColor('#ffffff'); })
+      .on('pointerout',  () => { startBtn.setFillStyle(0x330055); startBtn.setStrokeStyle(3, 0x8800cc); startLbl.setColor('#cc44ff'); })
+      .on('pointerdown', () => {
+        this.scene.start('ArenaScene', {
+          elementId: this.playerChoice,
+          mutations: [...activeMutationIds],
+          mode: 'invasion',
+        });
+      });
+    this.phaseObjects.push(startBtn, startLbl);
   }
 
   private renderDifficultyPhase(width: number, height: number, cx: number): void {
@@ -654,8 +737,12 @@ export class MenuScene extends Phaser.Scene {
   private handleElementClick(elementId: string, width: number, height: number, cx: number): void {
     if (this.selectionPhase === 'player') {
       this.playerChoice = elementId;
-      this.selectionPhase = 'enemy';
-      this.elemPage = 0; // reset page for enemy selection
+      if (this.isInvasion) {
+        this.selectionPhase = 'difficulty'; // jump straight to mutations
+      } else {
+        this.selectionPhase = 'enemy';
+        this.elemPage = 0;
+      }
     } else if (this.selectionPhase === 'enemy') {
       this.enemyChoice = elementId;
       if (this.isPvP) {
