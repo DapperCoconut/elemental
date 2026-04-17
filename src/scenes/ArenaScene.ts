@@ -1181,7 +1181,6 @@ export class ArenaScene extends Phaser.Scene {
   private earthGolemFaultWallUntil = 0;
   private earthGolemHpLabel: Phaser.GameObjects.Text | null = null;
   private playerEarthCastId: string | null = null;
-  private npcEarthStunnedUntil = 0;
   private playerEarthStunnedUntil = 0;
 
   // Earth upgrade state (Click+: dual shield)
@@ -1198,8 +1197,6 @@ export class ArenaScene extends Phaser.Scene {
   // Earth upgrade state (R+: lava rocks)
   private earthLavaRockFirePools: Array<{ sprite: Phaser.GameObjects.Arc; expiresAt: number }> = [];
   private earthQuakeMagmified = false;
-  private npcLavaRockBurnUntil = 0;
-  private npcLavaRockBurnAccum = 0;
   // Earth upgrade state (F+: tsunami waves)
   private earthTsunamiWaves: Array<{ sprite: Phaser.GameObjects.Rectangle; vx: number; vy: number; expiresAt: number }> = [];
   // Earth upgrade state (Q+: golem fusion)
@@ -1379,9 +1376,7 @@ export class ArenaScene extends Phaser.Scene {
   private shadowBHPuddleAccum = 0;
 
   // Ice — frost stacks (both fighters)
-  private npcFrostStacks = 0;
   private playerFrostStacks = 0;
-  private npcFrostVisual: Phaser.GameObjects.Text | null = null;
   private playerFrostVisual: Phaser.GameObjects.Text | null = null;
   // Ice — player
   private playerBlockUpActive = false;
@@ -1390,16 +1385,11 @@ export class ArenaScene extends Phaser.Scene {
   // Ice — NPC
   private npcBlockUpActive = false;
   private npcBlockUpAura: Phaser.GameObjects.Arc | null = null;
-  private npcFrozenUntil = 0;
   // Ice — shared
   private icyTrails: IcyTrail[] = [];
   // Ice upgrades state
   private playerBlackIceMorphActive = false;
   private playerBlackIceAura: Phaser.GameObjects.Arc | null = null;
-  private npcVoidFrostStacks = 0;
-  private npcVoidFrostVisual: Phaser.GameObjects.Text | null = null;
-  private npcVoidFrostTickAccum = 0;
-  private npcVoidFrostThawAccum = 0;
   private npcVoidedUntil = 0;
   private npcVoidedDps = 0;
   private npcVoidedTickAccum = 0;
@@ -1408,7 +1398,6 @@ export class ArenaScene extends Phaser.Scene {
   private playerNextIcePowered = false;
   private playerIcePendingSet: Set<Projectile> = new Set();
   private playerIceSpeedBoostUntil = 0;
-  private npcFrozenSolidAmpReady = false;
 
   // Growth — player
   private growthMorphType: 'spores' | 'claws' | 'virus' | 'plague-bomb' | 'bacterium' = 'spores';
@@ -1452,16 +1441,9 @@ export class ArenaScene extends Phaser.Scene {
   private npcGrowthRegenRate = 0;
   private npcGrowthRegenAccum = 0;
   private npcGrowthScaleBonus = 0;
-  private npcGrowthBloatActive = false;
-  private npcGrowthBloatEnd = 0;
-  private npcGrowthBloatAura: Phaser.GameObjects.Arc | null = null;
   private lastNpcInfectCast = -99999;
   private lastNpcBloatCast = -99999;
   // Growth — toxic DOT
-  private npcToxicUntil = 0;
-  private npcToxicDps = 0;
-  private npcToxicTickAccum = 0;
-  private npcToxicAura: Phaser.GameObjects.Arc | null = null;
   private playerToxicUntil = 0;
   private playerToxicDps = 0;
   private playerToxicTickAccum = 0;
@@ -1562,9 +1544,6 @@ export class ArenaScene extends Phaser.Scene {
   private huntLeapEnd = 0;
   private huntLeapTargetX = 0;
   private huntLeapTargetY = 0;
-  private npcBleeding = false;
-  private npcBleedingUntil = 0;
-  private npcBleedAura: Phaser.GameObjects.Arc | null = null;
   private npcHuntSlowUntil = 0;
   private huntBloodMoonActive = false;
   private huntBloodMoonEnd = 0;
@@ -1635,7 +1614,6 @@ export class ArenaScene extends Phaser.Scene {
   // NPC mirror state
   private npcSilenceSlasherActive = false;
   private npcSilenceSlasherHp = 10;
-  private npcSilencePossessedUntil = 0;
   private npcSilenceHookConnected = false;
   private npcSilenceConeGraphic: Phaser.GameObjects.Graphics | null = null;
   private npcSilenceConeAngle = 0;
@@ -1737,10 +1715,6 @@ export class ArenaScene extends Phaser.Scene {
 
   // Player upgrade state
   private activeUpgrades: string[] = [];
-  // Flameshredder (Click upgrade) — NPC burns from player fireballs
-  private npcBurningUntil = 0;
-  private npcBurnTickAccum = 0;
-  private npcBurnAura: Phaser.GameObjects.Arc | null = null;
   // Mastered Flameshredder — player burns from NPC fireballs
   private playerBurningUntil = 0;
   private playerBurnTickAccum = 0;
@@ -1846,10 +1820,6 @@ export class ArenaScene extends Phaser.Scene {
   private npcSlimeBurningUntil = 0;
   private npcSlimeBurnTickAccum = 0;
   private npcSlimeBurnAura: Phaser.GameObjects.Arc | null = null;
-  private npcSlimeConfusedUntil = 0;
-  private npcSlimeConfuseVx = 0;
-  private npcSlimeConfuseVy = 0;
-  private npcSlimeConfuseDirUntil = 0;
   private playerSlimeConfusedUntil = 0;
   private playerSlimeConfuseVx = 0;
   private playerSlimeConfuseVy = 0;
@@ -2264,8 +2234,6 @@ export class ArenaScene extends Phaser.Scene {
   private magicChainProjs: Array<{ sprite: Phaser.Physics.Arcade.Sprite; owner: 'player' | 'npc' }> = [];
   private magicChainBound = false;
   private magicChainBoundEnd = 0;
-  private npcMagicChainBound = false;
-  private npcMagicChainBoundEnd = 0;
   // Pillars
   private magicPillarQueue: Array<{ x: number; y: number; fireAt: number; owner: 'player' | 'npc'; followCursor?: boolean; offsetX?: number; offsetY?: number }> = [];
   private magicActivePillars: Array<{ sprite: Phaser.GameObjects.Rectangle; expireAt: number; owner: 'player' | 'npc'; damaged: boolean }> = [];
@@ -2621,7 +2589,7 @@ export class ArenaScene extends Phaser.Scene {
     this.earthGolemFaultWallUntil = 0;
     this.earthGolemHpLabel = null;
     this.playerEarthCastId = null;
-    this.npcEarthStunnedUntil = 0;
+    this.npc.earthStunnedUntil = 0;
     this.playerEarthStunnedUntil = 0;
     // Earth upgrade resets
     this.earthBackShieldHp = 0;
@@ -2636,8 +2604,8 @@ export class ArenaScene extends Phaser.Scene {
     this.earthLavaRockFirePools.forEach(p => p.sprite.destroy());
     this.earthLavaRockFirePools = [];
     this.earthQuakeMagmified = false;
-    this.npcLavaRockBurnUntil = 0;
-    this.npcLavaRockBurnAccum = 0;
+    this.npc.lavaRockBurnUntil = 0;
+    this.npc.lavaRockBurnAccum = 0;
     this.earthTsunamiWaves.forEach(w => w.sprite.destroy());
     this.earthTsunamiWaves = [];
     this.earthGolemFuseHolding = false;
@@ -2804,23 +2772,23 @@ export class ArenaScene extends Phaser.Scene {
     this.shadowDanceUpgradeCooldownUntil = 0;
     this.shadowBHPuddleAccum = 0;
 
-    this.npcFrostStacks = 0;
+    this.npc.frostStacks = 0;
     this.playerFrostStacks = 0;
-    this.npcFrostVisual = null;
+    this.npc.frostVisual = null;
     this.playerFrostVisual = null;
     this.playerBlockUpActive = false;
     this.playerBlockUpAura = null;
     this.playerFrozenUntil = 0;
     this.npcBlockUpActive = false;
     this.npcBlockUpAura = null;
-    this.npcFrozenUntil = 0;
+    this.npc.frozenUntil = 0;
     this.icyTrails = [];
     this.playerBlackIceMorphActive = false;
     this.playerBlackIceAura = null;
-    this.npcVoidFrostStacks = 0;
-    this.npcVoidFrostVisual = null;
-    this.npcVoidFrostTickAccum = 0;
-    this.npcVoidFrostThawAccum = 0;
+    this.npc.voidFrostStacks = 0;
+    this.npc.voidFrostVisual = null;
+    this.npc.voidFrostTickAccum = 0;
+    this.npc.voidFrostThawAccum = 0;
     this.npcVoidedUntil = 0;
     this.npcVoidedDps = 0;
     this.npcVoidedTickAccum = 0;
@@ -2829,7 +2797,7 @@ export class ArenaScene extends Phaser.Scene {
     this.playerNextIcePowered = false;
     this.playerIcePendingSet = new Set();
     this.playerIceSpeedBoostUntil = 0;
-    this.npcFrozenSolidAmpReady = false;
+    this.npc.frozenSolidAmpReady = false;
 
     for (const n of this.crystalNodes) n.sprite.destroy();
     for (const p of this.crystalPortals) { p.sprite.destroy(); p.label.destroy(); }
@@ -2888,8 +2856,8 @@ export class ArenaScene extends Phaser.Scene {
     if (this.huntBloodPactAura) { this.huntBloodPactAura.destroy(); this.huntBloodPactAura = null; }
     if (this.npcHuntBloodPactAura) { this.npcHuntBloodPactAura.destroy(); this.npcHuntBloodPactAura = null; }
     this.huntLeapActive = false; this.npcHuntLeapActive = false;
-    this.npcBleeding = false; this.playerBleeding = false;
-    if (this.npcBleedAura) { this.npcBleedAura.destroy(); this.npcBleedAura = null; }
+    this.npc.bleeding = false; this.playerBleeding = false;
+    if (this.npc.bleedVisual) { this.npc.bleedVisual.destroy(); this.npc.bleedVisual = null; }
     if (this.playerBleedAura) { this.playerBleedAura.destroy(); this.playerBleedAura = null; }
     this.npcHuntSlowUntil = 0; this.playerHuntSlowUntil = 0;
     this.huntBloodMoonActive = false; this.npcHuntBloodMoonActive = false;
@@ -2949,7 +2917,7 @@ export class ArenaScene extends Phaser.Scene {
     // NPC Silence reset
     this.npcSilenceSlasherActive = false;
     this.npcSilenceSlasherHp = 10;
-    this.npcSilencePossessedUntil = 0;
+    this.npc.silencePossessedUntil = 0;
     this.npcSilenceHookConnected = false;
     if (this.npcSilenceConeGraphic) { this.npcSilenceConeGraphic.destroy(); this.npcSilenceConeGraphic = null; }
     this.npcSilenceConeExpiry = 0;
@@ -3117,20 +3085,20 @@ export class ArenaScene extends Phaser.Scene {
     this.npcGrowthRegenRate = 0;
     this.npcGrowthRegenAccum = 0;
     this.npcGrowthScaleBonus = 0;
-    this.npcGrowthBloatActive = false;
-    this.npcGrowthBloatEnd = 0;
-    if (this.npcGrowthBloatAura) { this.npcGrowthBloatAura.destroy(); this.npcGrowthBloatAura = null; }
+    this.npc.growthBloatActive = false;
+    this.npc.growthBloatEnd = 0;
+    if (this.npc.growthBloatAura) { this.npc.growthBloatAura.destroy(); this.npc.growthBloatAura = null; }
     this.lastNpcInfectCast = -99999;
     this.lastNpcBloatCast = -99999;
-    this.npcToxicUntil = 0; this.npcToxicDps = 0; this.npcToxicTickAccum = 0;
-    if (this.npcToxicAura) { this.npcToxicAura.destroy(); this.npcToxicAura = null; }
+    this.npc.toxicUntil = 0; this.npc.toxicDps = 0; this.npc.toxicTickAccum = 0;
+    if (this.npc.toxicAura) { this.npc.toxicAura.destroy(); this.npc.toxicAura = null; }
     this.playerToxicUntil = 0; this.playerToxicDps = 0; this.playerToxicTickAccum = 0;
     if (this.playerToxicAura) { this.playerToxicAura.destroy(); this.playerToxicAura = null; }
 
     this.activeUpgrades = PlayerData.getActiveUpgrades(this.elementId);
-    this.npcBurningUntil = 0;
-    this.npcBurnTickAccum = 0;
-    this.npcBurnAura = null;
+    this.npc.burningUntil = 0;
+    this.npc.burnTickAccum = 0;
+    this.npc.burnAura = null;
     this.playerBurningUntil = 0;
     this.playerBurnTickAccum = 0;
     this.playerBurnAura = null;
@@ -3229,10 +3197,10 @@ export class ArenaScene extends Phaser.Scene {
     this.npcSlimeBurningUntil = 0;
     this.npcSlimeBurnTickAccum = 0;
     this.npcSlimeBurnAura = null;
-    this.npcSlimeConfusedUntil = 0;
-    this.npcSlimeConfuseVx = 0;
-    this.npcSlimeConfuseVy = 0;
-    this.npcSlimeConfuseDirUntil = 0;
+    this.npc.slimeConfusedUntil = 0;
+    this.npc.slimeConfuseVx = 0;
+    this.npc.slimeConfuseVy = 0;
+    this.npc.slimeConfuseDirUntil = 0;
     this.playerSlimeConfusedUntil = 0;
     this.playerSlimeConfuseVx = 0;
     this.playerSlimeConfuseVy = 0;
@@ -3508,7 +3476,7 @@ export class ArenaScene extends Phaser.Scene {
     for (const c of this.magicChainProjs) c.sprite.destroy();
     this.magicChainProjs = [];
     this.magicChainBound = false; this.magicChainBoundEnd = 0;
-    this.npcMagicChainBound = false; this.npcMagicChainBoundEnd = 0;
+    this.npc.magicChainBound = false; this.npc.magicChainBoundEnd = 0;
     this.magicPillarQueue = [];
     for (const p of this.magicActivePillars) p.sprite.destroy();
     this.magicActivePillars = [];
@@ -3924,9 +3892,9 @@ export class ArenaScene extends Phaser.Scene {
         this.npc.setIncomingCritContext(this.player.critChance, this.player.critMult);
         let _npcDmg = proj.damage;
         // Q+: Shatter Strike — next hit on frozen enemy deals 25% more
-        if (this.npcFrozenSolidAmpReady && this.npcFrozenUntil > this.time.now) {
+        if (this.npc.frozenSolidAmpReady && this.npc.frozenUntil > this.time.now) {
           _npcDmg = Math.round(_npcDmg * 1.25);
-          this.npcFrozenSolidAmpReady = false;
+          this.npc.frozenSolidAmpReady = false;
           const st = this.add.text(this.npc.x, this.npc.y - 30, 'SHATTER!', { fontSize: '11px', color: '#88ccff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
           this.tweens.add({ targets: st, y: st.y - 20, alpha: 0, duration: 1200, onComplete: () => st.destroy() });
         }
@@ -3935,18 +3903,18 @@ export class ArenaScene extends Phaser.Scene {
         // Hunt Blood Pact: heal player for 50% of damage dealt
         if (this.huntBloodPactActive && this.time.now < this.huntBloodPactEnd) this.player.heal(Math.ceil(_npcDmg * 0.5));
         // Hunt Blood Moon F+: 50% lifesteal from all damage dealt to bleeding enemy
-        if (this.huntBloodMoonActive && this.hasUpgrade('f') && this.npcBleeding) this.player.heal(Math.ceil(_npcDmg * 0.5));
+        if (this.huntBloodMoonActive && this.hasUpgrade('f') && this.npc.bleeding) this.player.heal(Math.ceil(_npcDmg * 0.5));
         // Hunt Vampire Stake: proj-hunt-stake applies bleed
         if (proj.texture.key === 'proj-hunt-stake') {
-          const stakeBonus = this.hasUpgrade('click') && this.npcBleeding ? 1.25 : 1;
+          const stakeBonus = this.hasUpgrade('click') && this.npc.bleeding ? 1.25 : 1;
           if (stakeBonus > 1) { this.npc.takeDamage(Math.round(15 * 0.25)); } // +25% extra dmg
-          this.npcBleeding = true;
-          this.npcBleedingUntil = Math.max(this.npcBleedingUntil, this.time.now + 6000);
+          this.npc.bleeding = true;
+          this.npc.bleedingUntil = Math.max(this.npc.bleedingUntil, this.time.now + 6000);
           this.applyNpcBleedVisual();
         }
         // Flameshredder: fireball hit also applies burning DOT
         if (proj.texture.key === 'proj-fire' && this.hasUpgrade('click')) {
-          this.npcBurningUntil = Math.max(this.npcBurningUntil, this.time.now + 3000);
+          this.npc.burningUntil = Math.max(this.npc.burningUntil, this.time.now + 3000);
         }
         // Knockback: water-cut hit pushes NPC in projectile travel direction
         if (proj.texture.key === 'proj-water' && this.hasUpgrade('click')) {
@@ -3970,8 +3938,8 @@ export class ArenaScene extends Phaser.Scene {
               this.tweens.add({ targets: pt, y: pt.y - 20, alpha: 0, duration: 1200, onComplete: () => pt.destroy() });
             }
           }
-          if (this.npcFrozenUntil > this.time.now) {
-            this.npcFrozenUntil = 0;
+          if (this.npc.frozenUntil > this.time.now) {
+            this.npc.frozenUntil = 0;
             for (let fi = 0; fi < 3; fi++) this.addFrostStack('npc');
           } else {
             this.addFrostStack('npc');
@@ -3981,16 +3949,16 @@ export class ArenaScene extends Phaser.Scene {
         }
         // Growth infect dagger: apply toxic DOT to NPC, R+ bonus on already-infected
         if (proj.texture.key === 'proj-growth-dagger') {
-          if (this.hasUpgrade('r') && this.npcToxicUntil > this.time.now) {
+          if (this.hasUpgrade('r') && this.npc.toxicUntil > this.time.now) {
             const bonus = Math.round(proj.damage * 0.25);
             this.npc.takeDamage(bonus);
             this.spawnHitFlash(this.npc.x, this.npc.y, 0xccff44);
             const ft = this.add.text(this.npc.x, this.npc.y - 35, `+${bonus} EXPLOIT`, { fontSize: '10px', color: '#ccff44', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
             this.tweens.add({ targets: ft, y: ft.y - 20, alpha: 0, duration: 900, onComplete: () => ft.destroy() });
           }
-          this.npcToxicUntil = this.time.now + 5000 + this.growthLingerBonus;
-          this.npcToxicDps = 2 + this.growthViralBonus;
-          this.npcToxicTickAccum = 0;
+          this.npc.toxicUntil = this.time.now + 5000 + this.growthLingerBonus;
+          this.npc.toxicDps = 2 + this.growthViralBonus;
+          this.npc.toxicTickAccum = 0;
         }
         // Adrenaline: golden shot hit registers style event
         if (proj.texture.key === 'proj-adrenaline-shot' && this.adrenalineGoldPendingSet.has(proj as unknown as Phaser.Physics.Arcade.Sprite)) {
@@ -3999,10 +3967,10 @@ export class ArenaScene extends Phaser.Scene {
           this.adrenalineHyperWindowExpiry = this.time.now + 800;
         }
         // NPC bloat: NPC hit triggers AOE on player
-        if (this.npcGrowthBloatActive) {
-          this.npcGrowthBloatActive = false;
-          this.npcGrowthBloatEnd = 0;
-          if (this.npcGrowthBloatAura) { this.npcGrowthBloatAura.destroy(); this.npcGrowthBloatAura = null; }
+        if (this.npc.growthBloatActive) {
+          this.npc.growthBloatActive = false;
+          this.npc.growthBloatEnd = 0;
+          if (this.npc.growthBloatAura) { this.npc.growthBloatAura.destroy(); this.npc.growthBloatAura = null; }
           const bloatDmg = Math.round(20 * this.npcGrowthDamageMult);
           if (Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y) <= 120) {
             this.player.takeDamage(bloatDmg);
@@ -4032,15 +4000,15 @@ export class ArenaScene extends Phaser.Scene {
             }
           } else {
             // Grimoire 4: Bind Chain
-            this.npcMagicChainBound = true;
-            this.npcMagicChainBoundEnd = this.time.now + 2000;
+            this.npc.magicChainBound = true;
+            this.npc.magicChainBoundEnd = this.time.now + 2000;
             this.showFloatingText(this.npc.x, this.npc.y - 28, '⛓ BOUND', '#cc88ff');
             this.time.delayedCall(2000, () => {
-              if (this.npcMagicChainBound) {
+              if (this.npc.magicChainBound) {
                 this.npc.takeDamage(10);
                 this.spawnHitFlash(this.npc.x, this.npc.y, 0x9944ff);
                 this.spawnDamageNumber(this.npc.x, this.npc.y - 30, 10);
-                this.npcMagicChainBound = false;
+                this.npc.magicChainBound = false;
               }
             });
           }
@@ -4081,7 +4049,7 @@ export class ArenaScene extends Phaser.Scene {
         }
         // Silence possess eye (NPC cast): apply possession to player, no damage
         if (proj.texture.key === 'proj-silence-eye') {
-          this.npcSilencePossessedUntil = this.time.now + 8000;
+          this.npc.silencePossessedUntil = this.time.now + 8000;
           this.showFloatingText(this.player.x, this.player.y - 30, '👁 Possessed!', '#cc66ff');
           proj.setActive(false).setVisible(false);
           (proj.body as Phaser.Physics.Arcade.Body).stop();
@@ -5448,7 +5416,7 @@ export class ArenaScene extends Phaser.Scene {
       },
       fireFrostBlast: (tx, ty) => {
         const isBlackIce = this.playerBlackIceMorphActive;
-        const targetStacks = isBlackIce ? this.npcVoidFrostStacks : this.npcFrostStacks;
+        const targetStacks = isBlackIce ? this.npc.voidFrostStacks : this.npc.frostStacks;
         if (targetStacks === 0) return;
         const dx = tx - this.player.x;
         const dy = ty - this.player.y;
@@ -5467,20 +5435,20 @@ export class ArenaScene extends Phaser.Scene {
             this.npcVoidedUntil = this.time.now + 5000;
             this.npcVoidedDps = voidedDps;
             this.npcVoidedTickAccum = 0;
-            this.npcVoidFrostStacks = 0;
+            this.npc.voidFrostStacks = 0;
             this.npc.incomingDamageMultiplier = 1;
             const vt = this.add.text(this.npc.x, this.npc.y - 30, 'VOIDED', { fontSize: '11px', color: '#cc88ff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
             this.tweens.add({ targets: vt, y: vt.y - 20, alpha: 0, duration: 1200, onComplete: () => vt.destroy() });
           } else {
             // E+: keep residual frost stacks
             if (this.hasUpgrade('e')) {
-              const stacks = this.npcFrostStacks;
+              const stacks = this.npc.frostStacks;
               this.clearFrostStacks('npc');
               if (stacks >= 5) {
-                this.npcFrostStacks = 2;
+                this.npc.frostStacks = 2;
                 this.npc.incomingDamageMultiplier = this.frostDamageMultiplier(2);
               } else if (stacks >= 3) {
-                this.npcFrostStacks = 1;
+                this.npc.frostStacks = 1;
                 this.npc.incomingDamageMultiplier = this.frostDamageMultiplier(1);
               }
             } else {
@@ -5546,13 +5514,13 @@ export class ArenaScene extends Phaser.Scene {
         const npcAngle = Math.atan2(this.npc.y - this.player.y, this.npc.x - this.player.x);
         const diff = Math.abs(Phaser.Math.Angle.Wrap(npcAngle - angle));
         if (diff <= Math.PI / 8) {
-          if (this.npcFrozenUntil > this.time.now) {
-            this.npcFrozenUntil = 0;
+          if (this.npc.frozenUntil > this.time.now) {
+            this.npc.frozenUntil = 0;
             for (let fi = 0; fi < 3; fi++) this.addFrostStack('npc');
           } else {
-            this.npcFrozenUntil = this.time.now + 3000;
+            this.npc.frozenUntil = this.time.now + 3000;
             this.spawnHitFlash(this.npc.x, this.npc.y, 0x88ccff);
-            if (this.hasUpgrade('q')) this.npcFrozenSolidAmpReady = true;
+            if (this.hasUpgrade('q')) this.npc.frozenSolidAmpReady = true;
           }
         }
       },
@@ -5985,15 +5953,15 @@ export class ArenaScene extends Phaser.Scene {
           this.isDodging = false;
           const slashDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
           if (slashDist <= 85) {
-            const bleedBonus = this.hasUpgrade('click') && this.npcBleeding ? 1.5 : 1;
+            const bleedBonus = this.hasUpgrade('click') && this.npc.bleeding ? 1.5 : 1;
             const slashDmg = Math.round(20 * bleedBonus);
             this.npc.takeDamage(slashDmg);
             this.spawnHitFlash(this.npc.x, this.npc.y, 0xff2200);
             if (this.huntBloodMoonActive && this.hasUpgrade('f')) this.player.heal(Math.ceil(slashDmg * 0.5));
             if (this.huntBloodPactActive && this.time.now < this.huntBloodPactEnd) this.player.heal(10);
             // Apply bleeding
-            this.npcBleeding = true;
-            this.npcBleedingUntil = this.time.now + 8000;
+            this.npc.bleeding = true;
+            this.npc.bleedingUntil = this.time.now + 8000;
             this.applyNpcBleedVisual();
             const kb = this.npc.body as Phaser.Physics.Arcade.Body;
             const toNx = this.npc.x - this.player.x, toNy = this.npc.y - this.player.y;
@@ -6017,7 +5985,7 @@ export class ArenaScene extends Phaser.Scene {
         this.nukeChannelEnd = this.time.now + 2000;
       },
       huntBloodHunt: () => {
-        if (!this.npcBleeding) return;
+        if (!this.npc.bleeding) return;
         this.player.isInvincible = true;
         (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
         if (this.hasUpgrade('r')) {
@@ -6839,8 +6807,8 @@ export class ArenaScene extends Phaser.Scene {
       toggleBlockUp: () => {
         this.npcBlockUpActive = !this.npcBlockUpActive;
         this.npc.incomingDamageMultiplier = this.npcBlockUpActive
-          ? this.frostDamageMultiplier(this.npcFrostStacks) * 0.75
-          : this.frostDamageMultiplier(this.npcFrostStacks);
+          ? this.frostDamageMultiplier(this.npc.frostStacks) * 0.75
+          : this.frostDamageMultiplier(this.npc.frostStacks);
         if (this.npcBlockUpActive) {
           if (!this.npcBlockUpAura) {
             this.npcBlockUpAura = this.add.circle(this.npc.x, this.npc.y, 28, 0x88ccff, 0.25)
@@ -6931,12 +6899,12 @@ export class ArenaScene extends Phaser.Scene {
       activateBloat: () => {
         if (this.time.now - this.lastNpcBloatCast < this.npcGrowthBloatCdMs) return;
         this.lastNpcBloatCast = this.time.now;
-        this.npcGrowthBloatActive = true;
-        this.npcGrowthBloatEnd = this.time.now + 5000;
-        if (this.npcGrowthBloatAura) this.npcGrowthBloatAura.destroy();
-        this.npcGrowthBloatAura = this.add.circle(this.npc.x, this.npc.y, 30, 0xdddd00, 0.3)
+        this.npc.growthBloatActive = true;
+        this.npc.growthBloatEnd = this.time.now + 5000;
+        if (this.npc.growthBloatAura) this.npc.growthBloatAura.destroy();
+        this.npc.growthBloatAura = this.add.circle(this.npc.x, this.npc.y, 30, 0xdddd00, 0.3)
           .setStrokeStyle(2, 0xffff44, 0.8).setDepth(5);
-        this.tweens.add({ targets: this.npcGrowthBloatAura, alpha: 0.5, yoyo: true, repeat: -1, duration: 500 });
+        this.tweens.add({ targets: this.npc.growthBloatAura, alpha: 0.5, yoyo: true, repeat: -1, duration: 500 });
       },
       triggerMutantMorph: () => {
         const morphTypes: Array<'spores' | 'claws' | 'virus'> = ['spores', 'claws', 'virus'];
@@ -8321,11 +8289,11 @@ export class ArenaScene extends Phaser.Scene {
     if (target === 'npc') {
       if (this.playerBlackIceMorphActive) {
         // Black Ice Morph: add void frost instead of regular frost (no slow, but DOT)
-        this.npcVoidFrostStacks = Math.min(5, this.npcVoidFrostStacks + 1);
-        this.npc.incomingDamageMultiplier = this.frostDamageMultiplier(this.npcVoidFrostStacks);
+        this.npc.voidFrostStacks = Math.min(5, this.npc.voidFrostStacks + 1);
+        this.npc.incomingDamageMultiplier = this.frostDamageMultiplier(this.npc.voidFrostStacks);
       } else {
-        this.npcFrostStacks = Math.min(5, this.npcFrostStacks + 1);
-        this.npc.incomingDamageMultiplier = this.frostDamageMultiplier(this.npcFrostStacks);
+        this.npc.frostStacks = Math.min(5, this.npc.frostStacks + 1);
+        this.npc.incomingDamageMultiplier = this.frostDamageMultiplier(this.npc.frostStacks);
       }
     } else {
       this.playerFrostStacks = Math.min(5, this.playerFrostStacks + 1);
@@ -8336,7 +8304,7 @@ export class ArenaScene extends Phaser.Scene {
 
   private clearFrostStacks(target: 'player' | 'npc'): void {
     if (target === 'npc') {
-      this.npcFrostStacks = 0;
+      this.npc.frostStacks = 0;
       this.npc.incomingDamageMultiplier = 1;
     } else {
       this.playerFrostStacks = 0;
@@ -9407,10 +9375,10 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private applyNpcBleedVisual(): void {
-    if (!this.npcBleedAura) {
-      this.npcBleedAura = this.add.circle(this.npc.x, this.npc.y, 26, 0xcc0000, 0.3)
+    if (!this.npc.bleedVisual) {
+      this.npc.bleedVisual = this.add.circle(this.npc.x, this.npc.y, 26, 0xcc0000, 0.3)
         .setStrokeStyle(2, 0xff2222, 0.5).setDepth(3);
-      this.tweens.add({ targets: this.npcBleedAura, alpha: 0.1, yoyo: true, repeat: -1, duration: 600 });
+      this.tweens.add({ targets: this.npc.bleedVisual, alpha: 0.1, yoyo: true, repeat: -1, duration: 600 });
     }
     // Drip particles
     for (let i = 0; i < 3; i++) {
@@ -9738,10 +9706,10 @@ export class ArenaScene extends Phaser.Scene {
         // NPC contact — confuse NPC
         const nd = Phaser.Math.Distance.Between(spring.x, spring.y, this.npc.x, this.npc.y);
         if (nd <= spring.radius) {
-          if (time > this.npcSlimeConfusedUntil) {
+          if (time > this.npc.slimeConfusedUntil) {
             this.showFloatingText(this.npc.x, this.npc.y - 20, '😵 Confused!', '#eedd44');
           }
-          this.npcSlimeConfusedUntil = Math.max(this.npcSlimeConfusedUntil, time + 2000);
+          this.npc.slimeConfusedUntil = Math.max(this.npc.slimeConfusedUntil, time + 2000);
         }
         // Slime contact — assign variant
         for (const s of this.slimes) {
@@ -9843,20 +9811,20 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Burning DOT (Flameshredder upgrade) ───────────────────────
-    if (this.npcBurningUntil > time) {
-      if (!this.npcBurnAura) {
-        this.npcBurnAura = this.add.circle(this.npc.x, this.npc.y, 26, 0xff4400, 0.3).setDepth(7);
+    if (this.npc.burningUntil > time) {
+      if (!this.npc.burnAura) {
+        this.npc.burnAura = this.add.circle(this.npc.x, this.npc.y, 26, 0xff4400, 0.3).setDepth(7);
       }
-      this.npcBurnAura.setPosition(this.npc.x, this.npc.y);
-      this.npcBurnTickAccum += delta;
-      if (this.npcBurnTickAccum >= 500) {
-        this.npcBurnTickAccum -= 500;
+      this.npc.burnAura.setPosition(this.npc.x, this.npc.y);
+      this.npc.burnTickAccum += delta;
+      if (this.npc.burnTickAccum >= 500) {
+        this.npc.burnTickAccum -= 500;
         this.npc.takeDamage(1);
         this.spawnHitFlash(this.npc.x, this.npc.y, 0xff4400);
       }
     } else {
-      this.npcBurnTickAccum = 0;
-      if (this.npcBurnAura) { this.npcBurnAura.destroy(); this.npcBurnAura = null; }
+      this.npc.burnTickAccum = 0;
+      if (this.npc.burnAura) { this.npc.burnAura.destroy(); this.npc.burnAura = null; }
     }
 
     // ── Burning DOT on player (Mastered Flameshredder) ────────────
@@ -10018,7 +9986,7 @@ export class ArenaScene extends Phaser.Scene {
       this.playerSpeedMult *= 1.25;
     }
     // Ice frost slow on NPC
-    if (this.npcFrostStacks > 0) this.npcSpeedMult *= (1 - this.npcFrostStacks * 0.1);
+    if (this.npc.frostStacks > 0) this.npcSpeedMult *= (1 - this.npc.frostStacks * 0.1);
     if (this.npcBlockUpActive) this.npcSpeedMult *= 0.5;
     // Ice frost slow on player
     if (this.playerFrostStacks > 0) {
@@ -10220,7 +10188,7 @@ export class ArenaScene extends Phaser.Scene {
     // ── P2 movement (PvP) ─────────────────────────────────────────
     if (this.isPvP) {
       const npcBody = this.npc.body as Phaser.Physics.Arcade.Body;
-      if (!this.p2IsDodging && !(this.npcFrozenUntil > time) && !(this.npcNukeChanneling && !this.npcAirBeamWalking)) {
+      if (!this.p2IsDodging && !(this.npc.frozenUntil > time) && !(this.npcNukeChanneling && !this.npcAirBeamWalking)) {
         let nvx = 0, nvy = 0;
         if (this.p2Input.left)  nvx -= this.npc.speed;
         if (this.p2Input.right) nvx += this.npc.speed;
@@ -10228,7 +10196,7 @@ export class ArenaScene extends Phaser.Scene {
         if (this.p2Input.down)  nvy += this.npc.speed;
         if (nvx !== 0 && nvy !== 0) { nvx *= 0.7071; nvy *= 0.7071; }
         npcBody.setVelocity(nvx * this.npcSpeedMult, nvy * this.npcSpeedMult);
-      } else if (this.npcFrozenUntil > time && !this.p2IsDodging) {
+      } else if (this.npc.frozenUntil > time && !this.p2IsDodging) {
         (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
       }
     }
@@ -10261,7 +10229,7 @@ export class ArenaScene extends Phaser.Scene {
                   this.spawnHitFlash(this.npc.x, this.npc.y, 0xff5500);
                   // Flameshredder: apply burning DOT on flamethrower hit
                   if (this.hasUpgrade('click')) {
-                    this.npcBurningUntil = Math.max(this.npcBurningUntil, time + 3000);
+                    this.npc.burningUntil = Math.max(this.npc.burningUntil, time + 3000);
                   }
                 }
               }
@@ -10408,7 +10376,7 @@ export class ArenaScene extends Phaser.Scene {
             this.time.delayedCall(2000, () => {
               this.armageddonActive = false;
               this.nukeChanneling = false;
-              const isBurning = this.npcBurningUntil > this.time.now;
+              const isBurning = this.npc.burningUntil > this.time.now;
               const dmg = isBurning ? 120 : 80;
               const radius = 220;
               const distToNpc = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
@@ -11728,7 +11696,7 @@ export class ArenaScene extends Phaser.Scene {
         }
         // R: Blood Hunt (R+ = confuse 3s)
         if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
-          if (this.npcBleeding) this.player.castAbility('hunt-blood-hunt', playerCtx);
+          if (this.npc.bleeding) this.player.castAbility('hunt-blood-hunt', playerCtx);
         }
         // F: Blood Moon (F+ = 50% lifesteal)
         if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
@@ -13513,7 +13481,7 @@ export class ArenaScene extends Phaser.Scene {
     } else {
     // ── NPC AI ───────────────────────────────────────────────────
     const aiState: NpcAiState = {
-      isLocked: this.npcNukeChanneling || this.npcFrozenUntil > time || this.npcMetalTaseredUntil > time || (this.elementId === 'silence' && time < this.silencePossessedUntil) || this.magnetNailPullUntil > time || (this.npcMagicChainBound && time < this.npcMagicChainBoundEnd) || time < this.silenceNpcYankUntil,
+      isLocked: this.npcNukeChanneling || this.npc.frozenUntil > time || this.npcMetalTaseredUntil > time || (this.elementId === 'silence' && time < this.silencePossessedUntil) || this.magnetNailPullUntil > time || (this.npc.magicChainBound && time < this.npc.magicChainBoundEnd) || time < this.silenceNpcYankUntil,
       hasActiveGeyser: this.geysers.some((g) => g.owner === 'npc'),
       flameBodyActive: this.npcFlameBodyActive,
       projectiles: this.projectiles,
@@ -13530,7 +13498,7 @@ export class ArenaScene extends Phaser.Scene {
       shadowPlayerSnared: time < this.shadowPlayerSnaredUntil || time < this.shadowPlayerStunnedUntil,
       playerFrostStacks: this.playerFrostStacks,
       iceBlockActive: this.npcBlockUpActive,
-      npcGrowthBloatActive: this.npcGrowthBloatActive,
+      npcGrowthBloatActive: this.npc.growthBloatActive,
       crystalNodeCount: this.npcCrystalNodes.length,
       npcSoulGhosts: this.npcSoulGhosts,
       npcHuntBeastForm: this.npcHuntBeastForm,
@@ -13703,16 +13671,16 @@ export class ArenaScene extends Phaser.Scene {
       });
     }
     // Slime sulpher spring confusion: override NPC velocity after doAI
-    if (this.elementId === 'slime' && time < this.npcSlimeConfusedUntil) {
-      if (time > this.npcSlimeConfuseDirUntil) {
+    if (this.elementId === 'slime' && time < this.npc.slimeConfusedUntil) {
+      if (time > this.npc.slimeConfuseDirUntil) {
         const a = Math.random() * Math.PI * 2;
-        this.npcSlimeConfuseVx = Math.cos(a) * this.npc.speed;
-        this.npcSlimeConfuseVy = Math.sin(a) * this.npc.speed;
-        this.npcSlimeConfuseDirUntil = time + 450;
+        this.npc.slimeConfuseVx = Math.cos(a) * this.npc.speed;
+        this.npc.slimeConfuseVy = Math.sin(a) * this.npc.speed;
+        this.npc.slimeConfuseDirUntil = time + 450;
       }
       (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(
-        this.npcSlimeConfuseVx * this.npcSpeedMult,
-        this.npcSlimeConfuseVy * this.npcSpeedMult,
+        this.npc.slimeConfuseVx * this.npcSpeedMult,
+        this.npc.slimeConfuseVy * this.npcSpeedMult,
       );
     }
     } // end !isPvP else
@@ -13762,21 +13730,21 @@ export class ArenaScene extends Phaser.Scene {
       }
 
       // Void frost DOT + thaw (black ice morph)
-      if (this.npcVoidFrostStacks > 0) {
-        const vfDps = this.npcVoidFrostStacks >= 5 ? 4 : this.npcVoidFrostStacks >= 3 ? 2 : 1;
-        this.npcVoidFrostTickAccum += delta;
-        if (this.npcVoidFrostTickAccum >= 1000) {
-          this.npcVoidFrostTickAccum -= 1000;
+      if (this.npc.voidFrostStacks > 0) {
+        const vfDps = this.npc.voidFrostStacks >= 5 ? 4 : this.npc.voidFrostStacks >= 3 ? 2 : 1;
+        this.npc.voidFrostTickAccum += delta;
+        if (this.npc.voidFrostTickAccum >= 1000) {
+          this.npc.voidFrostTickAccum -= 1000;
           this.npc.takeDamage(vfDps);
           this.spawnHitFlash(this.npc.x, this.npc.y, 0x9900ff);
         }
         // Thaw: 1 stack every 3 seconds
-        this.npcVoidFrostThawAccum += delta;
-        if (this.npcVoidFrostThawAccum >= 3000) {
-          this.npcVoidFrostThawAccum -= 3000;
-          this.npcVoidFrostStacks = Math.max(0, this.npcVoidFrostStacks - 1);
-          this.npc.incomingDamageMultiplier = this.npcVoidFrostStacks > 0
-            ? this.frostDamageMultiplier(this.npcVoidFrostStacks) : 1;
+        this.npc.voidFrostThawAccum += delta;
+        if (this.npc.voidFrostThawAccum >= 3000) {
+          this.npc.voidFrostThawAccum -= 3000;
+          this.npc.voidFrostStacks = Math.max(0, this.npc.voidFrostStacks - 1);
+          this.npc.incomingDamageMultiplier = this.npc.voidFrostStacks > 0
+            ? this.frostDamageMultiplier(this.npc.voidFrostStacks) : 1;
         }
       }
 
@@ -13791,29 +13759,29 @@ export class ArenaScene extends Phaser.Scene {
       }
 
       // Frost visual indicators above fighters
-      const frostNpcLabel = this.npcFrostStacks > 0 ? `❄️×${this.npcFrostStacks}` : '';
+      const frostNpcLabel = this.npc.frostStacks > 0 ? `❄️×${this.npc.frostStacks}` : '';
       if (frostNpcLabel) {
-        if (!this.npcFrostVisual) {
-          this.npcFrostVisual = this.add.text(this.npc.x, this.npc.y - 42, frostNpcLabel,
+        if (!this.npc.frostVisual) {
+          this.npc.frostVisual = this.add.text(this.npc.x, this.npc.y - 42, frostNpcLabel,
             { fontSize: '12px', fontFamily: 'Arial', color: '#aaddff' }).setOrigin(0.5).setDepth(10);
         } else {
-          this.npcFrostVisual.setText(frostNpcLabel).setPosition(this.npc.x, this.npc.y - 42);
+          this.npc.frostVisual.setText(frostNpcLabel).setPosition(this.npc.x, this.npc.y - 42);
         }
-      } else if (this.npcFrostVisual) {
-        this.npcFrostVisual.destroy(); this.npcFrostVisual = null;
+      } else if (this.npc.frostVisual) {
+        this.npc.frostVisual.destroy(); this.npc.frostVisual = null;
       }
 
       // Void frost visual
-      const vfLabel = this.npcVoidFrostStacks > 0 ? `☠️×${this.npcVoidFrostStacks}` : '';
+      const vfLabel = this.npc.voidFrostStacks > 0 ? `☠️×${this.npc.voidFrostStacks}` : '';
       if (vfLabel) {
-        if (!this.npcVoidFrostVisual) {
-          this.npcVoidFrostVisual = this.add.text(this.npc.x, this.npc.y - 54, vfLabel,
+        if (!this.npc.voidFrostVisual) {
+          this.npc.voidFrostVisual = this.add.text(this.npc.x, this.npc.y - 54, vfLabel,
             { fontSize: '12px', fontFamily: 'Arial', color: '#cc88ff' }).setOrigin(0.5).setDepth(10);
         } else {
-          this.npcVoidFrostVisual.setText(vfLabel).setPosition(this.npc.x, this.npc.y - 54);
+          this.npc.voidFrostVisual.setText(vfLabel).setPosition(this.npc.x, this.npc.y - 54);
         }
-      } else if (this.npcVoidFrostVisual) {
-        this.npcVoidFrostVisual.destroy(); this.npcVoidFrostVisual = null;
+      } else if (this.npc.voidFrostVisual) {
+        this.npc.voidFrostVisual.destroy(); this.npc.voidFrostVisual = null;
       }
 
       // Voided status visual
@@ -13850,8 +13818,8 @@ export class ArenaScene extends Phaser.Scene {
       if (this.playerFrozenUntil > 0 && time >= this.playerFrozenUntil) {
         this.playerFrozenUntil = 0;
       }
-      if (this.npcFrozenUntil > 0 && time >= this.npcFrozenUntil) {
-        this.npcFrozenUntil = 0;
+      if (this.npc.frozenUntil > 0 && time >= this.npc.frozenUntil) {
+        this.npc.frozenUntil = 0;
       }
     }
 
@@ -13937,7 +13905,7 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Frozen NPC override (ice element) ────────────────────────
-    if (this.npcFrozenUntil > time) {
+    if (this.npc.frozenUntil > time) {
       (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
     }
     // ── Magnet nail pull override ─────────────────────────────────
@@ -13945,7 +13913,7 @@ export class ArenaScene extends Phaser.Scene {
       (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(this.magnetNailPullVX, this.magnetNailPullVY);
     }
     // ── Magic chain bind ──────────────────────────────────────────
-    if (this.npcMagicChainBound && time < this.npcMagicChainBoundEnd) {
+    if (this.npc.magicChainBound && time < this.npc.magicChainBoundEnd) {
       (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
     }
     // ── Root 4 corner (player cast) ───────────────────────────────
@@ -13953,7 +13921,7 @@ export class ArenaScene extends Phaser.Scene {
       (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
     }
     // ── Earth stun override ───────────────────────────────────────
-    if (this.npcEarthStunnedUntil > time) {
+    if (this.npc.earthStunnedUntil > time) {
       (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
     }
     // ── Adrenaline SK8 trick knockback override ───────────────────
@@ -13986,20 +13954,20 @@ export class ArenaScene extends Phaser.Scene {
     // ── Growth per-frame ─────────────────────────────────────────
     if (this.elementId === 'growth' || this.npcElement.id === 'growth') {
       // Toxic DOT — NPC
-      if (this.npcToxicUntil > time) {
-        if (!this.npcToxicAura) {
-          this.npcToxicAura = this.add.circle(this.npc.x, this.npc.y, 26, 0x88bb22, 0.3).setDepth(7);
+      if (this.npc.toxicUntil > time) {
+        if (!this.npc.toxicAura) {
+          this.npc.toxicAura = this.add.circle(this.npc.x, this.npc.y, 26, 0x88bb22, 0.3).setDepth(7);
         }
-        this.npcToxicAura.setPosition(this.npc.x, this.npc.y);
-        this.npcToxicTickAccum += delta;
-        if (this.npcToxicTickAccum >= 1000) {
-          this.npcToxicTickAccum -= 1000;
-          this.npc.takeDamage(this.npcToxicDps);
+        this.npc.toxicAura.setPosition(this.npc.x, this.npc.y);
+        this.npc.toxicTickAccum += delta;
+        if (this.npc.toxicTickAccum >= 1000) {
+          this.npc.toxicTickAccum -= 1000;
+          this.npc.takeDamage(this.npc.toxicDps);
           this.spawnHitFlash(this.npc.x, this.npc.y, 0x88bb22);
         }
       } else {
-        this.npcToxicTickAccum = 0;
-        if (this.npcToxicAura) { this.npcToxicAura.destroy(); this.npcToxicAura = null; }
+        this.npc.toxicTickAccum = 0;
+        if (this.npc.toxicAura) { this.npc.toxicAura.destroy(); this.npc.toxicAura = null; }
       }
 
       // Toxic DOT — player
@@ -14028,12 +13996,12 @@ export class ArenaScene extends Phaser.Scene {
           this.growthBloatAura.setPosition(this.player.x, this.player.y);
         }
       }
-      if (this.npcGrowthBloatActive) {
-        if (time >= this.npcGrowthBloatEnd) {
-          this.npcGrowthBloatActive = false;
-          if (this.npcGrowthBloatAura) { this.npcGrowthBloatAura.destroy(); this.npcGrowthBloatAura = null; }
-        } else if (this.npcGrowthBloatAura) {
-          this.npcGrowthBloatAura.setPosition(this.npc.x, this.npc.y);
+      if (this.npc.growthBloatActive) {
+        if (time >= this.npc.growthBloatEnd) {
+          this.npc.growthBloatActive = false;
+          if (this.npc.growthBloatAura) { this.npc.growthBloatAura.destroy(); this.npc.growthBloatAura = null; }
+        } else if (this.npc.growthBloatAura) {
+          this.npc.growthBloatAura.setPosition(this.npc.x, this.npc.y);
         }
       }
 
@@ -14842,12 +14810,12 @@ export class ArenaScene extends Phaser.Scene {
       }
 
       // Bleeding auras
-      if (this.npcBleeding) {
-        if (time > this.npcBleedingUntil) {
-          this.npcBleeding = false;
-          if (this.npcBleedAura) { this.npcBleedAura.destroy(); this.npcBleedAura = null; }
-        } else if (this.npcBleedAura) {
-          this.npcBleedAura.setPosition(this.npc.x, this.npc.y);
+      if (this.npc.bleeding) {
+        if (time > this.npc.bleedingUntil) {
+          this.npc.bleeding = false;
+          if (this.npc.bleedVisual) { this.npc.bleedVisual.destroy(); this.npc.bleedVisual = null; }
+        } else if (this.npc.bleedVisual) {
+          this.npc.bleedVisual.setPosition(this.npc.x, this.npc.y);
         }
       }
       if (this.playerBleeding) {
@@ -14864,7 +14832,7 @@ export class ArenaScene extends Phaser.Scene {
         if (time > this.huntBloodMoonEnd) {
           this.huntBloodMoonActive = false;
           if (this.huntBloodMoonFilter) { this.huntBloodMoonFilter.destroy(); this.huntBloodMoonFilter = null; }
-        } else if (this.npcBleeding) {
+        } else if (this.npc.bleeding) {
           this.huntBloodMoonTickAccum += delta;
           if (this.huntBloodMoonTickAccum >= 2000) {
             this.huntBloodMoonTickAccum -= 2000;
@@ -15028,7 +14996,7 @@ export class ArenaScene extends Phaser.Scene {
           const target = trap.owner === 'player' ? this.npc : this.player;
           const trapDist = Phaser.Math.Distance.Between(trap.x, trap.y, target.x, target.y);
           if (trapDist <= 80) {
-            const isBleed = trap.owner === 'player' ? this.npcBleeding : this.playerBleeding;
+            const isBleed = trap.owner === 'player' ? this.npc.bleeding : this.playerBleeding;
             const trapDmg = isBleed ? 16 : 8;
             target.takeDamage(trapDmg);
             this.spawnHitFlash(target.x, target.y, 0x88ff00);
@@ -15112,7 +15080,7 @@ export class ArenaScene extends Phaser.Scene {
           if (npcInCone && time - this.silenceConeContinuousStart >= 5000) {
             this.silenceConeExpiry = 0;
             if (this.silenceConeGraphic) { this.silenceConeGraphic.destroy(); this.silenceConeGraphic = null; }
-            this.npcFrozenUntil = Math.max(this.npcFrozenUntil, time + 3000);
+            this.npc.frozenUntil = Math.max(this.npc.frozenUntil, time + 3000);
             const stunCirc = this.add.circle(this.npc.x, this.npc.y, 20, 0x000022, 0.8).setDepth(9);
             this.tweens.add({ targets: stunCirc, scaleX: 3, scaleY: 3, alpha: 0, duration: 400, onComplete: () => stunCirc.destroy() });
             this.showFloatingText(this.npc.x, this.npc.y - 30, '⬛ Stunned!', '#8888ff');
@@ -15201,7 +15169,7 @@ export class ArenaScene extends Phaser.Scene {
         }
 
         // NPC possess: mirror NPC velocity to player
-        if (time < this.npcSilencePossessedUntil) {
+        if (time < this.npc.silencePossessedUntil) {
           const nb2 = this.npc.body as Phaser.Physics.Arcade.Body;
           const pb2 = this.player.body as Phaser.Physics.Arcade.Body;
           pb2.setVelocity(nb2.velocity.x, nb2.velocity.y);
@@ -17300,7 +17268,7 @@ export class ArenaScene extends Phaser.Scene {
             this.spawnHitFlash(this.npc.x, this.npc.y, lavaRocks ? 0xff4400 : 0x887755);
             this.showFloatingText(this.npc.x, this.npc.y - 20, '🪨 8', '#aa8844');
             if (lavaRocks) {
-              this.npcLavaRockBurnUntil = Math.max(this.npcLavaRockBurnUntil, time + 2000);
+              this.npc.lavaRockBurnUntil = Math.max(this.npc.lavaRockBurnUntil, time + 2000);
             }
             rock.hitCdUntil = time + 500;
           }
@@ -17318,9 +17286,9 @@ export class ArenaScene extends Phaser.Scene {
           this.npc.takeDamage(launchDmg);
           this.spawnHitFlash(this.npc.x, this.npc.y, lavaRocks ? 0xff4400 : 0x887755);
           this.showFloatingText(this.npc.x, this.npc.y - 20, lavaRocks ? `🔥 LAVA HIT ${launchDmg}` : `🪨 LAUNCH STUN ${launchDmg}`, '#ffcc44');
-          this.npcEarthStunnedUntil = Math.max(this.npcEarthStunnedUntil, time + 3000);
+          this.npc.earthStunnedUntil = Math.max(this.npc.earthStunnedUntil, time + 3000);
           if (lavaRocks) {
-            this.npcLavaRockBurnUntil = Math.max(this.npcLavaRockBurnUntil, time + 3000);
+            this.npc.lavaRockBurnUntil = Math.max(this.npc.lavaRockBurnUntil, time + 3000);
             // Spawn lava pool at hit location
             const poolSpr = this.add.circle(this.npc.x, this.npc.y, 32, 0xff4400, 0.4).setDepth(3);
             this.tweens.add({ targets: poolSpr, scaleX: 1.1, scaleY: 1.1, alpha: 0.1, duration: 2500, onComplete: () => poolSpr.destroy() });
@@ -17345,15 +17313,15 @@ export class ArenaScene extends Phaser.Scene {
         }
       }
       // Lava fire DOT on NPC from R+ rocks
-      if (this.npcLavaRockBurnUntil > time) {
-        this.npcLavaRockBurnAccum += delta;
-        if (this.npcLavaRockBurnAccum >= 500) {
-          this.npcLavaRockBurnAccum -= 500;
+      if (this.npc.lavaRockBurnUntil > time) {
+        this.npc.lavaRockBurnAccum += delta;
+        if (this.npc.lavaRockBurnAccum >= 500) {
+          this.npc.lavaRockBurnAccum -= 500;
           this.npc.takeDamage(2);
           this.spawnHitFlash(this.npc.x, this.npc.y, 0xff4400);
         }
       } else {
-        this.npcLavaRockBurnAccum = 0;
+        this.npc.lavaRockBurnAccum = 0;
       }
       // Lava fire pool cleanup
       for (let i = this.earthLavaRockFirePools.length - 1; i >= 0; i--) {
@@ -17376,10 +17344,10 @@ export class ArenaScene extends Phaser.Scene {
             this.npc.takeDamage(tripDmg);
             this.spawnHitFlash(this.npc.x, this.npc.y, this.earthQuakeMagmified ? 0xff4400 : 0x887755);
             this.showFloatingText(this.npc.x, this.npc.y - 20, this.earthQuakeMagmified ? `🌋 MAGMA ${tripDmg}` : `⚡ TRIP ${tripDmg}`, '#ccaa66');
-            this.npcEarthStunnedUntil = Math.max(this.npcEarthStunnedUntil, time + 500);
+            this.npc.earthStunnedUntil = Math.max(this.npc.earthStunnedUntil, time + 500);
             this.earthQuakeStunUntil = time + 500;
             if (this.earthQuakeMagmified) {
-              this.npcLavaRockBurnUntil = Math.max(this.npcLavaRockBurnUntil, time + 1500);
+              this.npc.lavaRockBurnUntil = Math.max(this.npc.lavaRockBurnUntil, time + 1500);
             }
           }
         }
@@ -17407,7 +17375,7 @@ export class ArenaScene extends Phaser.Scene {
           // Push NPC along wave direction
           const nb = this.npc.body as Phaser.Physics.Arcade.Body;
           nb.setVelocity(wave.vx * 0.8, wave.vy * 0.8);
-          this.npcEarthStunnedUntil = Math.max(this.npcEarthStunnedUntil, time + 500);
+          this.npc.earthStunnedUntil = Math.max(this.npc.earthStunnedUntil, time + 500);
           wave.sprite.destroy();
           this.earthTsunamiWaves.splice(ti, 1);
         }
@@ -17792,7 +17760,7 @@ export class ArenaScene extends Phaser.Scene {
             const ring = this.add.circle(this.player.x, this.player.y, 10, 0x665533, 0.8).setDepth(6);
             this.tweens.add({ targets: ring, scaleX: 12, scaleY: 12, alpha: 0, duration: 400, onComplete: () => ring.destroy() });
             this.showFloatingText(this.npc.x, this.npc.y - 20, '💥 GOLEM POUND 45', '#ccaa66');
-            this.npcEarthStunnedUntil = Math.max(this.npcEarthStunnedUntil, time + 600);
+            this.npc.earthStunnedUntil = Math.max(this.npc.earthStunnedUntil, time + 600);
             this.earthGolemFusedPoundCdUntil = time + 10000;
           } else {
             this.showFloatingText(this.player.x, this.player.y - 20, 'Too far!', '#888888');
@@ -21181,16 +21149,16 @@ export class ArenaScene extends Phaser.Scene {
 
     if (target === 'npc') {
       doublify(() => this.npcVoidDecayUntil, v => { this.npcVoidDecayUntil = v; });
-      doublify(() => this.npcBleedingUntil, v => { this.npcBleedingUntil = v; });
-      doublify(() => this.npcFrozenUntil, v => { this.npcFrozenUntil = v; });
-      doublify(() => this.npcBurningUntil, v => { this.npcBurningUntil = v; });
-      doublify(() => this.npcToxicUntil, v => { this.npcToxicUntil = v; });
+      doublify(() => this.npc.bleedingUntil, v => { this.npc.bleedingUntil = v; });
+      doublify(() => this.npc.frozenUntil, v => { this.npc.frozenUntil = v; });
+      doublify(() => this.npc.burningUntil, v => { this.npc.burningUntil = v; });
+      doublify(() => this.npc.toxicUntil, v => { this.npc.toxicUntil = v; });
       doublify(() => this.npcMetalChainTetherEnd, v => { this.npcMetalChainTetherEnd = v; });
       doublify(() => this.npcMetalArmorEnd, v => { this.npcMetalArmorEnd = v; });
       doublify(() => this.npcHuntSlowUntil, v => { this.npcHuntSlowUntil = v; });
       doublify(() => this.npcHuntConfusedUntil, v => { this.npcHuntConfusedUntil = v; });
       doublify(() => this.npcSlimeSlowUntil, v => { this.npcSlimeSlowUntil = v; });
-      doublify(() => this.npcEarthStunnedUntil, v => { this.npcEarthStunnedUntil = v; });
+      doublify(() => this.npc.earthStunnedUntil, v => { this.npc.earthStunnedUntil = v; });
       doublify(() => this.npcAggressiveBleedUntil, v => { this.npcAggressiveBleedUntil = v; });
       doublify(() => this.npcLightPhotoSlowUntil, v => { this.npcLightPhotoSlowUntil = v; });
     } else {
@@ -21483,10 +21451,10 @@ export class ArenaScene extends Phaser.Scene {
     if (npcInPlayerFlame) {
       // Freeze by re-extending timers by delta each frame (cancels natural countdown)
       if (this.npcVoidDecayUntil > time) this.npcVoidDecayUntil += delta;
-      if (this.npcBleedingUntil > time) this.npcBleedingUntil += delta;
-      if (this.npcFrozenUntil > time) this.npcFrozenUntil += delta;
-      if (this.npcBurningUntil > time) this.npcBurningUntil += delta;
-      if (this.npcToxicUntil > time) this.npcToxicUntil += delta;
+      if (this.npc.bleedingUntil > time) this.npc.bleedingUntil += delta;
+      if (this.npc.frozenUntil > time) this.npc.frozenUntil += delta;
+      if (this.npc.burningUntil > time) this.npc.burningUntil += delta;
+      if (this.npc.toxicUntil > time) this.npc.toxicUntil += delta;
       if (this.npcMetalChainTetherEnd > time) this.npcMetalChainTetherEnd += delta;
       if (this.npcHuntSlowUntil > time) this.npcHuntSlowUntil += delta;
       if (this.npcHuntConfusedUntil > time) this.npcHuntConfusedUntil += delta;
@@ -22954,8 +22922,8 @@ export class ArenaScene extends Phaser.Scene {
     if (this.magicChainBound && time >= this.magicChainBoundEnd) {
       this.magicChainBound = false;
     }
-    if (this.npcMagicChainBound && time >= this.npcMagicChainBoundEnd) {
-      this.npcMagicChainBound = false;
+    if (this.npc.magicChainBound && time >= this.npc.magicChainBoundEnd) {
+      this.npc.magicChainBound = false;
     }
 
     // ── Radial menu: reposition if player moved ───────────────────────

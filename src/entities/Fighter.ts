@@ -35,6 +35,49 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Walk speed multiplier applied by Fate Slots. Default 1. */
   public walkSpeedMult = 1;
 
+  // ── Per-fighter status effects (set by ArenaScene when hit) ─────
+  public burningUntil = 0;
+  public burnTickAccum = 0;
+  public burnAura: Phaser.GameObjects.Arc | null = null;
+
+  public frostStacks = 0;
+  public frostVisual: Phaser.GameObjects.Text | null = null;
+  public frozenUntil = 0;
+  public frozenSolidAmpReady = false;
+
+  public voidFrostStacks = 0;
+  public voidFrostVisual: Phaser.GameObjects.Text | null = null;
+  public voidFrostTickAccum = 0;
+  public voidFrostThawAccum = 0;
+
+  public toxicUntil = 0;
+  public toxicDps = 0;
+  public toxicTickAccum = 0;
+  public toxicAura: Phaser.GameObjects.Arc | null = null;
+
+  public bleeding = false;
+  public bleedingUntil = 0;
+  public bleedVisual: Phaser.GameObjects.Arc | null = null;
+
+  public magicChainBound = false;
+  public magicChainBoundEnd = 0;
+
+  public silencePossessedUntil = 0;
+
+  public slimeConfusedUntil = 0;
+  public slimeConfuseVx = 0;
+  public slimeConfuseVy = 0;
+  public slimeConfuseDirUntil = 0;
+
+  public earthStunnedUntil = 0;
+
+  public lavaRockBurnUntil = 0;
+  public lavaRockBurnAccum = 0;
+
+  public growthBloatActive = false;
+  public growthBloatEnd = 0;
+  public growthBloatAura: Phaser.GameObjects.Arc | null = null;
+
   private incomingCritCtx: { chance: number; mult: number } | null = null;
   private cooldowns: Map<string, number> = new Map();
   private healthBar: HealthBar;
