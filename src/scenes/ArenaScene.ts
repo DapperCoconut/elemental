@@ -40,6 +40,7 @@ import { lightElement } from '../elements/light';
 import { magnetElement } from '../elements/magnet';
 import { MagnetKit, MagnetArenaApi, MagnetRod } from '../elements/kits/MagnetKit';
 import { LightKit, LightArenaApi } from '../elements/kits/LightKit';
+import { VoidKit, VoidArenaApi } from '../elements/kits/VoidKit';
 import { metalElement } from '../elements/metal';
 import { plasmaElement } from '../elements/plasma';
 import { deathElement } from '../elements/death';
@@ -1738,6 +1739,7 @@ export class ArenaScene extends Phaser.Scene {
   private electroShockTimers: Map<Projectile, { count: number; last: number }> = new Map();
 
   private lightKit!: LightKit;
+  private voidKit!: VoidKit;
   // Shared NPC cast ID field — set each frame after doAI() returns
   private npcCastId: string | null = null;
 
@@ -2005,54 +2007,7 @@ export class ArenaScene extends Phaser.Scene {
   private deathExecuteBlackAuraFilter: Phaser.GameObjects.Rectangle | null = null;
   private npcDeathExecuteBlackAuraFilter: Phaser.GameObjects.Rectangle | null = null;
 
-  // ── Void (abstract combined: fate + light) ────────────────────────
-  private voidFloaters: Array<{ sprite: Phaser.GameObjects.Arc; damage: number; owner: 'player' | 'npc'; enhanced: boolean }> = [];
-  private voidFloaterText: Phaser.GameObjects.Text | null = null;
-  // Return to Void (E)
-  private voidReturnActive = false;
-  private voidReturnFireAt = 0;
-  private voidReturnConeGfx: Phaser.GameObjects.Graphics | null = null;
-  private voidReturnTargetX = 0;
-  private voidReturnTargetY = 0;
-  private npcVoidReturnActive = false;
-  private npcVoidReturnFireAt = 0;
-  // Re-Lapse pulse projectiles (R)
-  private voidPulseProjs: Array<{ sprite: Phaser.GameObjects.Arc; x: number; y: number; vx: number; vy: number; owner: 'player' | 'npc'; expiresAt: number }> = [];
-  // Void Ash (F)
-  private voidAshActive = false;
-  private voidAshX = 0;
-  private voidAshY = 0;
-  private voidAshEnd = 0;
-  private voidAshSprite: Phaser.GameObjects.Arc | null = null;
-  private voidAshTickAccum = 0;
-  private npcVoidAshActive = false;
-  private npcVoidAshX = 0;
-  private npcVoidAshY = 0;
-  private npcVoidAshEnd = 0;
-  private npcVoidAshSprite: Phaser.GameObjects.Arc | null = null;
-  private npcVoidAshTickAccum = 0;
-  // Void of Hell (Q)
-  private voidOfHellActive = false;
-  private voidOfHellEnd = 0;
-  private voidOfHellFlames: Array<{ sprite: Phaser.GameObjects.Arc; x: number; y: number; owner: 'player' | 'npc' }> = [];
-  private voidOfHellPlayerFlameTickAccum = 0;
-  private voidOfHellNpcFlameTickAccum = 0;
-  // Decay system (applied to each target)
-  private playerVoidDecayActive = false;
-  private playerVoidDecayUntil = 0;
-  private playerVoidDecayDmgAccum = 0;
-  private playerVoidDecayVulnStack = 0;
-  private playerVoidDecayText: Phaser.GameObjects.Text | null = null;
-  private npcVoidDecayActive = false;
-  private npcVoidDecayUntil = 0;
-  private npcVoidDecayDmgAccum = 0;
-  private npcVoidDecayVulnStack = 0;
-  private npcVoidDecayText: Phaser.GameObjects.Text | null = null;
-  // Nothing status (blocks new buffs — tracked, shown visually)
-  private playerVoidNothingUntil = 0;
-  private npcVoidNothingUntil = 0;
-  private playerVoidNothingText: Phaser.GameObjects.Text | null = null;
-  private npcVoidNothingText: Phaser.GameObjects.Text | null = null;
+  // ── Void — managed by VoidKit ─────────────────────────────────────
 
   // ── Adrenaline state ─────────────────────────────────────────────
   private adrenalineRank = 0;
@@ -3254,32 +3209,77 @@ export class ArenaScene extends Phaser.Scene {
     if (this.deathExecuteBlackAuraFilter) { this.deathExecuteBlackAuraFilter.destroy(); this.deathExecuteBlackAuraFilter = null; }
     if (this.npcDeathExecuteBlackAuraFilter) { this.npcDeathExecuteBlackAuraFilter.destroy(); this.npcDeathExecuteBlackAuraFilter = null; }
 
-    // Void resets
-    for (const f of this.voidFloaters) f.sprite.destroy();
-    this.voidFloaters = [];
-    if (this.voidFloaterText) { this.voidFloaterText.destroy(); this.voidFloaterText = null; }
-    this.voidReturnActive = false; this.voidReturnFireAt = 0;
-    if (this.voidReturnConeGfx) { this.voidReturnConeGfx.destroy(); this.voidReturnConeGfx = null; }
-    this.npcVoidReturnActive = false; this.npcVoidReturnFireAt = 0;
-    for (const p of this.voidPulseProjs) p.sprite.destroy();
-    this.voidPulseProjs = [];
-    this.voidAshActive = false;
-    if (this.voidAshSprite) { this.voidAshSprite.destroy(); this.voidAshSprite = null; }
-    this.voidAshTickAccum = 0;
-    this.npcVoidAshActive = false;
-    if (this.npcVoidAshSprite) { this.npcVoidAshSprite.destroy(); this.npcVoidAshSprite = null; }
-    this.npcVoidAshTickAccum = 0;
-    this.voidOfHellActive = false; this.voidOfHellEnd = 0;
-    for (const fl of this.voidOfHellFlames) fl.sprite.destroy();
-    this.voidOfHellFlames = [];
-    this.voidOfHellPlayerFlameTickAccum = 0; this.voidOfHellNpcFlameTickAccum = 0;
-    this.playerVoidDecayActive = false; this.playerVoidDecayUntil = 0; this.playerVoidDecayDmgAccum = 0; this.playerVoidDecayVulnStack = 0;
-    if (this.playerVoidDecayText) { this.playerVoidDecayText.destroy(); this.playerVoidDecayText = null; }
-    this.npcVoidDecayActive = false; this.npcVoidDecayUntil = 0; this.npcVoidDecayDmgAccum = 0; this.npcVoidDecayVulnStack = 0;
-    if (this.npcVoidDecayText) { this.npcVoidDecayText.destroy(); this.npcVoidDecayText = null; }
-    this.playerVoidNothingUntil = 0; this.npcVoidNothingUntil = 0;
-    if (this.playerVoidNothingText) { this.playerVoidNothingText.destroy(); this.playerVoidNothingText = null; }
-    if (this.npcVoidNothingText) { this.npcVoidNothingText.destroy(); this.npcVoidNothingText = null; }
+    // Void kit
+    if (this.voidKit) {
+      this.voidKit.reset();
+    } else {
+      const arena = this;
+      const voidApi: VoidArenaApi = {
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get scene(): Phaser.Scene { return arena; },
+        get eKey() { return arena.eKey; },
+        get fKey() { return arena.fKey; },
+        get rKey() { return arena.rKey; },
+        get qKey() { return arena.qKey; },
+        get nukeChanneling() { return arena.nukeChanneling; },
+        get pointerWasDown() { return arena.pointerWasDown; },
+        getNpcHuntBloodMoonActive: () => arena.npcHuntBloodMoonActive,
+        setNpcHuntBloodMoonActive: v => { arena.npcHuntBloodMoonActive = v; },
+        getNpcPlasmaIncarnateActive: () => arena.npcPlasmaIncarnateActive,
+        setNpcPlasmaIncarnateActive: v => { arena.npcPlasmaIncarnateActive = v; },
+        getNpcDeathSoulSplitUntil: () => arena.npcDeathSoulSplitUntil,
+        setNpcDeathSoulSplitUntil: v => { arena.npcDeathSoulSplitUntil = v; },
+        getHuntBloodMoonActive: () => arena.huntBloodMoonActive,
+        setHuntBloodMoonActive: v => { arena.huntBloodMoonActive = v; },
+        getPlasmaIncarnateActive: () => arena.plasmaIncarnateActive,
+        setPlasmaIncarnateActive: v => { arena.plasmaIncarnateActive = v; },
+        getDeathSoulSplitUntil: () => arena.deathSoulSplitUntil,
+        setDeathSoulSplitUntil: v => { arena.deathSoulSplitUntil = v; },
+        getMagnetNpcSpeedBuffUntil: () => arena.magnetKit.getNpcSpeedBuffUntil(),
+        setMagnetNpcSpeedBuffUntil: v => arena.magnetKit.setNpcSpeedBuffUntil(v),
+        getMagnetPlayerSpeedBuffUntil: () => arena.magnetKit.getPlayerSpeedBuffUntil(),
+        setMagnetPlayerSpeedBuffUntil: v => arena.magnetKit.setPlayerSpeedBuffUntil(v),
+        getLightNpcPhotonSpeedBoostUntil: () => arena.lightKit.getNpcPhotonSpeedBoostUntil(),
+        setLightNpcPhotonSpeedBoostUntil: v => arena.lightKit.setNpcPhotonSpeedBoostUntil(v),
+        getLightNpcPhotoAccelUntil: () => arena.lightKit.getNpcPhotoAccelUntil(),
+        setLightNpcPhotoAccelUntil: v => arena.lightKit.setNpcPhotoAccelUntil(v),
+        getLightNpcPhotoSlowUntil: () => arena.lightKit.getNpcPhotoSlowUntil(),
+        setLightNpcPhotoSlowUntil: v => arena.lightKit.setNpcPhotoSlowUntil(v),
+        getLightPhotonSpeedBoostUntil: () => arena.lightKit.getPhotonSpeedBoostUntil(),
+        setLightPhotonSpeedBoostUntil: v => arena.lightKit.setPhotonSpeedBoostUntil(v),
+        getLightPhotoAccelUntil: () => arena.lightKit.getPhotoAccelUntil(),
+        setLightPhotoAccelUntil: v => arena.lightKit.setPhotoAccelUntil(v),
+        getNpcMetalChainTetherEnd: () => arena.npcMetalChainTetherEnd,
+        setNpcMetalChainTetherEnd: v => { arena.npcMetalChainTetherEnd = v; },
+        getNpcMetalArmorEnd: () => arena.npcMetalArmorEnd,
+        setNpcMetalArmorEnd: v => { arena.npcMetalArmorEnd = v; },
+        getNpcHuntSlowUntil: () => arena.npcHuntSlowUntil,
+        setNpcHuntSlowUntil: v => { arena.npcHuntSlowUntil = v; },
+        getNpcHuntConfusedUntil: () => arena.npcHuntConfusedUntil,
+        setNpcHuntConfusedUntil: v => { arena.npcHuntConfusedUntil = v; },
+        getNpcSlimeSlowUntil: () => arena.npcSlimeSlowUntil,
+        setNpcSlimeSlowUntil: v => { arena.npcSlimeSlowUntil = v; },
+        getNpcAggressiveBleedUntil: () => arena.npcAggressiveBleedUntil,
+        setNpcAggressiveBleedUntil: v => { arena.npcAggressiveBleedUntil = v; },
+        getPlayerBleedingUntil: () => arena.playerBleedingUntil,
+        setPlayerBleedingUntil: v => { arena.playerBleedingUntil = v; },
+        getPlayerFrozenUntil: () => arena.playerFrozenUntil,
+        setPlayerFrozenUntil: v => { arena.playerFrozenUntil = v; },
+        getPlayerBurningUntil: () => arena.playerBurningUntil,
+        setPlayerBurningUntil: v => { arena.playerBurningUntil = v; },
+        getPlayerToxicUntil: () => arena.playerToxicUntil,
+        setPlayerToxicUntil: v => { arena.playerToxicUntil = v; },
+        getPlayerHuntSlowUntil: () => arena.playerHuntSlowUntil,
+        setPlayerHuntSlowUntil: v => { arena.playerHuntSlowUntil = v; },
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
+      };
+      this.voidKit = new VoidKit(voidApi);
+    }
     // Adrenaline resets
     this.adrenalineRank = 0; this.adrenalineProgress = 0;
     this.adrenalineLastStyleTime = 0; this.adrenalineLastHitTime = 0; this.adrenalineComboCount = 0;
@@ -4445,10 +4445,7 @@ export class ArenaScene extends Phaser.Scene {
       }).setOrigin(0.5).setDepth(20);
     }
     if (this.elementId === 'void') {
-      this.voidFloaterText = this.add.text(cx, 52, '🌑 0', {
-        fontSize: '18px', fontFamily: '"Arial Black", sans-serif',
-        color: '#cc88ff', stroke: '#110022', strokeThickness: 3,
-      }).setOrigin(0.5).setDepth(20);
+      this.voidKit.initHud(cx);
     }
     if (this.elementId === 'adrenaline') {
       // Style rank ladder display (top-center area)
@@ -6485,11 +6482,11 @@ export class ArenaScene extends Phaser.Scene {
       deathWispDaemon: () => { this.doDeathWispDaemon('player'); },
       deathExecute: (tx, ty) => { this.doDeathExecute(tx, ty, 'player'); },
       // Void
-      voidFloater: (_tx, _ty) => { this.doVoidFloater('player'); },
-      voidReturnToVoid: (tx, ty) => { this.doVoidReturnToVoid(tx, ty, 'player'); },
-      voidReLapse: (tx, ty) => { this.doVoidReLapse(tx, ty, 'player'); },
-      voidAsh: (tx, ty) => { this.doVoidAsh(tx, ty, 'player'); },
-      voidOfHell: () => { this.doVoidOfHell('player'); },
+      voidFloater: (_tx, _ty) => { this.voidKit.doVoidFloater('player'); },
+      voidReturnToVoid: (tx, ty) => { this.voidKit.doVoidReturnToVoid(tx, ty, 'player'); },
+      voidReLapse: (tx, ty) => { this.voidKit.doVoidReLapse(tx, ty, 'player'); },
+      voidAsh: (tx, ty) => { this.voidKit.doVoidAsh(tx, ty, 'player'); },
+      voidOfHell: () => { this.voidKit.doVoidOfHell('player'); },
       // Adrenaline
       adrenalineGoldenShot: (tx, ty) => { this.doAdrenalineGoldenShot(tx, ty, 'player'); },
       adrenalineDash: (tx, ty) => { this.doAdrenalineDash(tx, ty, 'player'); },
@@ -7339,11 +7336,11 @@ export class ArenaScene extends Phaser.Scene {
       deathWispDaemon: () => { this.doDeathWispDaemon('npc'); },
       deathExecute: (tx, ty) => { this.doDeathExecute(tx, ty, 'npc'); },
       // Void
-      voidFloater: (_tx, _ty) => { this.doVoidFloater('npc'); },
-      voidReturnToVoid: (tx, ty) => { this.doVoidReturnToVoid(tx, ty, 'npc'); },
-      voidReLapse: (tx, ty) => { this.doVoidReLapse(tx, ty, 'npc'); },
-      voidAsh: (tx, ty) => { this.doVoidAsh(tx, ty, 'npc'); },
-      voidOfHell: () => { this.doVoidOfHell('npc'); },
+      voidFloater: (_tx, _ty) => { this.voidKit.doVoidFloater('npc'); },
+      voidReturnToVoid: (tx, ty) => { this.voidKit.doVoidReturnToVoid(tx, ty, 'npc'); },
+      voidReLapse: (tx, ty) => { this.voidKit.doVoidReLapse(tx, ty, 'npc'); },
+      voidAsh: (tx, ty) => { this.voidKit.doVoidAsh(tx, ty, 'npc'); },
+      voidOfHell: () => { this.voidKit.doVoidOfHell('npc'); },
       // Adrenaline
       adrenalineGoldenShot: (tx, ty) => { this.doAdrenalineGoldenShot(tx, ty, 'npc'); },
       adrenalineDash: (tx, ty) => { this.doAdrenalineDash(tx, ty, 'npc'); },
@@ -11283,7 +11280,7 @@ export class ArenaScene extends Phaser.Scene {
     } else if (this.elementId === 'death') {
       this.handleDeathInput(time, delta, pointer, mouseX, mouseY);
     } else if (this.elementId === 'void') {
-      this.handleVoidInput(time, pointer, mouseX, mouseY);
+      this.voidKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'adrenaline') {
       this.handleAdrenalineInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'magic') {
@@ -16421,7 +16418,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Void per-frame ───────────────────────────────────────────
     if (this.elementId === 'void' || this.npcElement.id === 'void') {
-      this.updateVoidState(time, delta);
+      this.voidKit.update(time, delta);
     }
 
     // ── Adrenaline per-frame ─────────────────────────────────────
@@ -19810,638 +19807,6 @@ export class ArenaScene extends Phaser.Scene {
     void W; void H;
   }
 
-  // ── Void input handler ──────────────────────────────────────────
-  private handleVoidInput(
-    _time: number,
-    pointer: Phaser.Input.Pointer,
-    mouseX: number,
-    mouseY: number,
-  ): void {
-    if (this.nukeChanneling) return;
-    const playerCtx = this.buildPlayerContext(mouseX, mouseY);
-
-    // Click: Void Floater
-    if (pointer.isDown && !this.pointerWasDown) {
-      this.player.castAbility('void-floater', playerCtx);
-    }
-
-    // E: Return to Void
-    if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
-      this.player.castAbility('void-return', playerCtx);
-    }
-
-    // R: Re-Lapse
-    if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
-      this.player.castAbility('void-relapse', playerCtx);
-    }
-
-    // F: Void Ash
-    if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
-      this.player.castAbility('void-ash', playerCtx);
-    }
-
-    // Q: Void of Hell
-    if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
-      this.player.castAbility('void-of-hell', playerCtx);
-    }
-  }
-
-  // ── Void ability implementations ────────────────────────────────
-
-  private doVoidFloater(owner: 'player' | 'npc'): void {
-    const myFloaters = this.voidFloaters.filter(f => f.owner === owner);
-
-    // Enforce max 3 — destroy oldest
-    if (myFloaters.length >= 3) {
-      const oldest = myFloaters[0];
-      oldest.sprite.destroy();
-      this.voidFloaters.splice(this.voidFloaters.indexOf(oldest), 1);
-    }
-
-    // Floaters always spawn unenhanced — touching a hell flame enhances them
-    const caster = owner === 'player' ? this.player : this.npc;
-    const spr = this.add.circle(caster.x, caster.y, 10, 0x330044, 0.9)
-      .setStrokeStyle(2, 0xaa00ff, 1).setDepth(7) as Phaser.GameObjects.Arc;
-
-    this.voidFloaters.push({ sprite: spr, damage: 12, owner, enhanced: false });
-
-    if (owner === 'player' && this.voidFloaterText) {
-      const count = this.voidFloaters.filter(f => f.owner === 'player').length;
-      this.voidFloaterText.setText(`🌑 ${count}`);
-    }
-  }
-
-  private doVoidReturnToVoid(tx: number, ty: number, owner: 'player' | 'npc'): void {
-    const caster = owner === 'player' ? this.player : this.npc;
-    if (owner === 'player') {
-      this.voidReturnActive = true;
-      this.voidReturnFireAt = this.time.now + 2000;
-      this.voidReturnTargetX = tx;
-      this.voidReturnTargetY = ty;
-      if (this.voidReturnConeGfx) { this.voidReturnConeGfx.destroy(); this.voidReturnConeGfx = null; }
-      this.voidReturnConeGfx = this.add.graphics().setDepth(6);
-    } else {
-      this.npcVoidReturnActive = true;
-      this.npcVoidReturnFireAt = this.time.now + 2000;
-    }
-    this.showFloatingText(caster.x, caster.y - 30, '🌑 Return to Void…', '#cc44ff');
-  }
-
-  private doVoidReLapse(tx: number, ty: number, owner: 'player' | 'npc'): void {
-    const caster = owner === 'player' ? this.player : this.npc;
-    const dx = tx - caster.x;
-    const dy = ty - caster.y;
-    const len = Math.sqrt(dx * dx + dy * dy) || 1;
-    const speed = 350;
-
-    const spr = this.add.circle(caster.x, caster.y, 7, 0x220033, 1)
-      .setStrokeStyle(2, 0x8800cc, 1).setDepth(7) as Phaser.GameObjects.Arc;
-
-    this.voidPulseProjs.push({
-      sprite: spr,
-      x: caster.x, y: caster.y,
-      vx: (dx / len) * speed, vy: (dy / len) * speed,
-      owner,
-      expiresAt: this.time.now + 3000,
-    });
-  }
-
-  private doVoidAsh(tx: number, ty: number, owner: 'player' | 'npc'): void {
-    const myFloaters = this.voidFloaters.filter(f => f.owner === owner);
-    const floaterCount = myFloaters.length;
-    const duration = (2 + 2 * floaterCount) * 1000;
-
-    // Consume all floaters
-    for (const f of myFloaters) {
-      f.sprite.destroy();
-    }
-    this.voidFloaters = this.voidFloaters.filter(f => f.owner !== owner);
-
-    if (owner === 'player') {
-      if (this.voidFloaterText) this.voidFloaterText.setText('🌑 0');
-      this.voidAshActive = true;
-      this.voidAshX = tx;
-      this.voidAshY = ty;
-      this.voidAshEnd = this.time.now + duration;
-      this.voidAshTickAccum = 0;
-      if (this.voidAshSprite) this.voidAshSprite.destroy();
-      this.voidAshSprite = this.add.circle(tx, ty, 80, 0x110011, 0.65)
-        .setStrokeStyle(3, 0x440066, 0.9).setDepth(3) as Phaser.GameObjects.Arc;
-      this.showFloatingText(tx, ty - 90, '🌑 Void Ash!', '#cc44ff');
-    } else {
-      this.npcVoidAshActive = true;
-      this.npcVoidAshX = tx;
-      this.npcVoidAshY = ty;
-      this.npcVoidAshEnd = this.time.now + duration;
-      this.npcVoidAshTickAccum = 0;
-      if (this.npcVoidAshSprite) this.npcVoidAshSprite.destroy();
-      this.npcVoidAshSprite = this.add.circle(tx, ty, 80, 0x110011, 0.65)
-        .setStrokeStyle(3, 0x440066, 0.9).setDepth(3) as Phaser.GameObjects.Arc;
-      this.showFloatingText(tx, ty - 90, '🌑 Void Ash!', '#cc44ff');
-    }
-  }
-
-  private doVoidOfHell(owner: 'player' | 'npc'): void {
-    const W = this.scale.width;
-    const H = this.scale.height;
-    const pad = 32;
-
-    // Remove old flames if any
-    for (let i = this.voidOfHellFlames.length - 1; i >= 0; i--) {
-      if (this.voidOfHellFlames[i].owner === owner) {
-        this.voidOfHellFlames[i].sprite.destroy();
-        this.voidOfHellFlames.splice(i, 1);
-      }
-    }
-
-    // Distribute 12 flames around the perimeter
-    const flamePositions: { x: number; y: number }[] = [];
-    const count = 36;
-    for (let i = 0; i < count; i++) {
-      const t = i / count;
-      // Distribute along 4 sides
-      const perimeter = 2 * (W - 2 * pad) + 2 * (H - 2 * pad);
-      const pos = t * perimeter;
-      const topLen = W - 2 * pad;
-      const rightLen = H - 2 * pad;
-      const botLen = W - 2 * pad;
-      if (pos < topLen) {
-        flamePositions.push({ x: pad + pos, y: pad + 20 });
-      } else if (pos < topLen + rightLen) {
-        flamePositions.push({ x: W - pad - 20, y: pad + (pos - topLen) });
-      } else if (pos < topLen + rightLen + botLen) {
-        flamePositions.push({ x: W - pad - (pos - topLen - rightLen), y: H - pad - 20 });
-      } else {
-        flamePositions.push({ x: pad + 20, y: H - pad - (pos - topLen - rightLen - botLen) });
-      }
-    }
-
-    for (const fp of flamePositions) {
-      const spr = this.add.circle(fp.x, fp.y, 75, 0x6600aa, 0.45)
-        .setStrokeStyle(3, 0xcc44ff, 0.8).setDepth(3) as Phaser.GameObjects.Arc;
-      this.tweens.add({ targets: spr, alpha: 0.65, yoyo: true, repeat: -1, duration: 700 });
-      this.voidOfHellFlames.push({ sprite: spr, x: fp.x, y: fp.y, owner });
-    }
-
-    if (owner === 'player') {
-      this.voidOfHellActive = true;
-      this.voidOfHellEnd = this.time.now + 15000;
-    }
-    // For NPC, track via flames array with owner field
-    // Floaters are enhanced by touching a flame pillar (per-frame), not globally here
-
-    const caster = owner === 'player' ? this.player : this.npc;
-    this.showFloatingText(caster.x, caster.y - 40, '🔥 VOID OF HELL', '#cc44ff');
-  }
-
-  /** Apply Void Decay to a target. */
-  private applyVoidDecay(target: 'player' | 'npc', time: number): void {
-    if (target === 'npc') {
-      this.npcVoidDecayActive = true;
-      this.npcVoidDecayUntil = time + 5000;
-    } else {
-      this.playerVoidDecayActive = true;
-      this.playerVoidDecayUntil = time + 5000;
-    }
-  }
-
-  /** Check if any Void of Hell flame (owned by `by`) contains the point (px, py). */
-  private isInVoidFlame(px: number, py: number, by: 'player' | 'npc'): boolean {
-    for (const fl of this.voidOfHellFlames) {
-      if (fl.owner !== by) continue;
-      if (Phaser.Math.Distance.Between(px, py, fl.x, fl.y) <= 60) return true;
-    }
-    return false;
-  }
-
-  /** Double remaining duration of all negative effects on target. Returns true if any was doubled. */
-  private doVoidReLapseEffect(target: 'player' | 'npc', time: number): boolean {
-    let doubled = false;
-    const doublify = (get: () => number, set: (v: number) => void) => {
-      const val = get();
-      if (val > time) {
-        const remaining = val - time;
-        set(time + remaining * 2);
-        doubled = true;
-      }
-    };
-
-    if (target === 'npc') {
-      doublify(() => this.npcVoidDecayUntil, v => { this.npcVoidDecayUntil = v; });
-      doublify(() => this.npc.bleedingUntil, v => { this.npc.bleedingUntil = v; });
-      doublify(() => this.npc.frozenUntil, v => { this.npc.frozenUntil = v; });
-      doublify(() => this.npc.burningUntil, v => { this.npc.burningUntil = v; });
-      doublify(() => this.npc.toxicUntil, v => { this.npc.toxicUntil = v; });
-      doublify(() => this.npcMetalChainTetherEnd, v => { this.npcMetalChainTetherEnd = v; });
-      doublify(() => this.npcMetalArmorEnd, v => { this.npcMetalArmorEnd = v; });
-      doublify(() => this.npcHuntSlowUntil, v => { this.npcHuntSlowUntil = v; });
-      doublify(() => this.npcHuntConfusedUntil, v => { this.npcHuntConfusedUntil = v; });
-      doublify(() => this.npcSlimeSlowUntil, v => { this.npcSlimeSlowUntil = v; });
-      doublify(() => this.npc.earthStunnedUntil, v => { this.npc.earthStunnedUntil = v; });
-      doublify(() => this.npcAggressiveBleedUntil, v => { this.npcAggressiveBleedUntil = v; });
-      doublify(() => this.lightKit.getNpcPhotoSlowUntil(), v => { this.lightKit.setNpcPhotoSlowUntil(v); });
-    } else {
-      doublify(() => this.playerVoidDecayUntil, v => { this.playerVoidDecayUntil = v; });
-      doublify(() => this.playerBleedingUntil, v => { this.playerBleedingUntil = v; });
-      doublify(() => this.playerFrozenUntil, v => { this.playerFrozenUntil = v; });
-      doublify(() => this.playerBurningUntil, v => { this.playerBurningUntil = v; });
-      doublify(() => this.playerToxicUntil, v => { this.playerToxicUntil = v; });
-      doublify(() => this.playerHuntSlowUntil, v => { this.playerHuntSlowUntil = v; });
-    }
-    return doubled;
-  }
-
-  /** Strip buffs from target and add Nothing stacks. Returns count of buffs stripped. */
-  private doVoidReturnStripBuffs(target: 'player' | 'npc', time: number): number {
-    let stripped = 0;
-    if (target === 'npc') {
-      if (this.npc.shieldCharges > 0) { this.npc.shieldCharges = 0; stripped++; }
-      if (this.npc.shieldHp > 0) { this.npc.shieldHp = 0; stripped++; }
-      if (this.npcHuntBloodMoonActive) { this.npcHuntBloodMoonActive = false; stripped++; }
-      if (this.npcPlasmaIncarnateActive) { this.npcPlasmaIncarnateActive = false; stripped++; }
-      if (this.npcDeathSoulSplitUntil > time) { this.npcDeathSoulSplitUntil = 0; stripped++; }
-      // Speed buffs above base — we reset npcSpeedMult; the per-frame recalc will reapply legit modifiers
-      // Just clear known speed buff timestamps
-      if (this.magnetKit.getNpcSpeedBuffUntil() > time) { this.magnetKit.setNpcSpeedBuffUntil(0); stripped++; }
-      if (this.lightKit.getNpcPhotonSpeedBoostUntil() > time) { this.lightKit.setNpcPhotonSpeedBoostUntil(0); stripped++; }
-      if (this.lightKit.getNpcPhotoAccelUntil() > time) { this.lightKit.setNpcPhotoAccelUntil(0); stripped++; }
-    } else {
-      if (this.player.shieldCharges > 0) { this.player.shieldCharges = 0; stripped++; }
-      if (this.player.shieldHp > 0) { this.player.shieldHp = 0; stripped++; }
-      if (this.huntBloodMoonActive) { this.huntBloodMoonActive = false; stripped++; }
-      if (this.plasmaIncarnateActive) { this.plasmaIncarnateActive = false; stripped++; }
-      if (this.deathSoulSplitUntil > time) { this.deathSoulSplitUntil = 0; stripped++; }
-      if (this.magnetKit.getPlayerSpeedBuffUntil() > time) { this.magnetKit.setPlayerSpeedBuffUntil(0); stripped++; }
-      if (this.lightKit.getPhotonSpeedBoostUntil() > time) { this.lightKit.setPhotonSpeedBoostUntil(0); stripped++; }
-      if (this.lightKit.getPhotoAccelUntil() > time) { this.lightKit.setPhotoAccelUntil(0); stripped++; }
-    }
-    return stripped;
-  }
-
-  // ── Void per-frame update ────────────────────────────────────────
-  private updateVoidState(time: number, delta: number): void {
-    const pointer = this.input.activePointer;
-    const mouseX = pointer.worldX;
-    const mouseY = pointer.worldY;
-    const W = this.scale.width;
-    const H = this.scale.height;
-
-    // ── Floater movement ──────────────────────────────────────────
-    for (let i = this.voidFloaters.length - 1; i >= 0; i--) {
-      const f = this.voidFloaters[i];
-      const target = f.owner === 'player'
-        ? { x: mouseX, y: mouseY }
-        : { x: this.player.x, y: this.player.y };
-      const dx = target.x - f.sprite.x;
-      const dy = target.y - f.sprite.y;
-      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-      const speed = 250 * (delta / 1000);
-      const move = Math.min(speed, dist);
-      f.sprite.x += (dx / dist) * move;
-      f.sprite.y += (dy / dist) * move;
-
-      // Enhance floater on contact with a flame pillar (same owner)
-      if (!f.enhanced) {
-        for (const fl of this.voidOfHellFlames) {
-          if (fl.owner !== f.owner) continue;
-          if (Phaser.Math.Distance.Between(f.sprite.x, f.sprite.y, fl.x, fl.y) <= 75 + 10) {
-            f.enhanced = true;
-            f.damage = 25;
-            f.sprite.setFillStyle(0xcc44ff, 0.95);
-            f.sprite.setStrokeStyle(2, 0xffffff, 1);
-            f.sprite.setRadius(16);
-            break;
-          }
-        }
-      }
-
-      // Check collision with enemy
-      const enemy = f.owner === 'player' ? this.npc : this.player;
-      const hitDist = Phaser.Math.Distance.Between(f.sprite.x, f.sprite.y, enemy.x, enemy.y);
-      if (hitDist <= 22) {
-        enemy.takeDamage(f.damage);
-        this.spawnHitFlash(enemy.x, enemy.y, 0x8800cc);
-        this.showFloatingText(enemy.x, enemy.y - 32, '🌑 Floater', '#cc44ff');
-        f.sprite.destroy();
-        this.voidFloaters.splice(i, 1);
-        if (f.owner === 'player' && this.voidFloaterText) {
-          this.voidFloaterText.setText(`🌑 ${this.voidFloaters.filter(fl => fl.owner === 'player').length}`);
-        }
-      }
-    }
-
-    // ── Return to Void cone telegraph (player) ───────────────────
-    if (this.voidReturnActive) {
-      const caster = this.player;
-      const angle = Math.atan2(mouseY - caster.y, mouseX - caster.x);
-      const halfCone = 20 * (Math.PI / 180); // 40° total
-      const range = 200;
-
-      if (this.voidReturnConeGfx) {
-        this.voidReturnConeGfx.clear();
-        this.voidReturnConeGfx.fillStyle(0x440066, 0.35);
-        this.voidReturnConeGfx.beginPath();
-        this.voidReturnConeGfx.moveTo(caster.x, caster.y);
-        this.voidReturnConeGfx.arc(caster.x, caster.y, range, angle - halfCone, angle + halfCone, false);
-        this.voidReturnConeGfx.closePath();
-        this.voidReturnConeGfx.fillPath();
-        this.voidReturnConeGfx.lineStyle(2, 0xcc44ff, 0.7);
-        this.voidReturnConeGfx.strokePath();
-      }
-
-      if (time >= this.voidReturnFireAt) {
-        this.voidReturnActive = false;
-        if (this.voidReturnConeGfx) { this.voidReturnConeGfx.destroy(); this.voidReturnConeGfx = null; }
-
-        // Check if NPC is in cone
-        const nx = this.npc.x - caster.x;
-        const ny = this.npc.y - caster.y;
-        const nDist = Math.sqrt(nx * nx + ny * ny);
-        const nAngle = Math.atan2(ny, nx);
-        let angleDiff = nAngle - angle;
-        while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
-        while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
-        if (nDist <= range && Math.abs(angleDiff) <= halfCone) {
-          this.npc.takeDamage(15);
-          this.spawnHitFlash(this.npc.x, this.npc.y, 0x8800cc);
-          this.showFloatingText(this.npc.x, this.npc.y - 36, '🌑 Return to Void!', '#cc44ff');
-          // Strip buffs
-          const stripped = this.doVoidReturnStripBuffs('npc', time);
-          if (stripped > 0) {
-            this.npcVoidNothingUntil = Math.max(this.npcVoidNothingUntil, time + stripped * 5000);
-            this.showFloatingText(this.npc.x, this.npc.y - 50, `+Nothing ${stripped * 5}s`, '#aa44ff');
-          }
-        }
-      }
-    }
-
-    // ── NPC Return to Void (no cone, just fires at player after 2s) ──
-    if (this.npcVoidReturnActive && time >= this.npcVoidReturnFireAt) {
-      this.npcVoidReturnActive = false;
-      const caster = this.npc;
-      const dx = this.player.x - caster.x;
-      const dy = this.player.y - caster.y;
-      const angle = Math.atan2(dy, dx);
-      const halfCone = 20 * (Math.PI / 180);
-      const range = 200;
-      const pDist = Phaser.Math.Distance.Between(caster.x, caster.y, this.player.x, this.player.y);
-      const pAngle = Math.atan2(this.player.y - caster.y, this.player.x - caster.x);
-      let angleDiff = pAngle - angle;
-      while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
-      while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
-      if (pDist <= range && Math.abs(angleDiff) <= halfCone) {
-        this.player.takeDamage(15);
-        this.spawnHitFlash(this.player.x, this.player.y, 0x8800cc);
-        this.showFloatingText(this.player.x, this.player.y - 36, '🌑 Return to Void!', '#cc44ff');
-        const stripped = this.doVoidReturnStripBuffs('player', time);
-        if (stripped > 0) {
-          this.playerVoidNothingUntil = Math.max(this.playerVoidNothingUntil, time + stripped * 5000);
-          this.showFloatingText(this.player.x, this.player.y - 50, `+Nothing ${stripped * 5}s`, '#aa44ff');
-        }
-      }
-    }
-
-    // ── Re-Lapse pulse projectile movement ───────────────────────
-    for (let i = this.voidPulseProjs.length - 1; i >= 0; i--) {
-      const p = this.voidPulseProjs[i];
-      p.x += p.vx * (delta / 1000);
-      p.y += p.vy * (delta / 1000);
-      p.sprite.setPosition(p.x, p.y);
-
-      // Out of arena or expired
-      if (time >= p.expiresAt || p.x < 0 || p.x > W || p.y < 0 || p.y > H) {
-        p.sprite.destroy();
-        this.voidPulseProjs.splice(i, 1);
-        continue;
-      }
-
-      // Collision
-      const enemy = p.owner === 'player' ? this.npc : this.player;
-      const dist = Phaser.Math.Distance.Between(p.x, p.y, enemy.x, enemy.y);
-      if (dist <= 30) {
-        p.sprite.destroy();
-        this.voidPulseProjs.splice(i, 1);
-        enemy.takeDamage(12);
-        this.spawnHitFlash(enemy.x, enemy.y, 0x8800cc);
-        // Double negative effects
-        const doubled = this.doVoidReLapseEffect(p.owner === 'player' ? 'npc' : 'player', time);
-        if (doubled) {
-          this.showFloatingText(enemy.x, enemy.y - 44, 'RE-LAPSE ×2', '#cc44ff');
-        }
-      }
-    }
-
-    // ── Void Ash — smooth follow cursor (player) + tick damage ───
-    if (this.voidAshActive) {
-      if (time >= this.voidAshEnd) {
-        this.voidAshActive = false;
-        if (this.voidAshSprite) { this.voidAshSprite.destroy(); this.voidAshSprite = null; }
-      } else {
-        // Smooth follow cursor
-        this.voidAshX += (mouseX - this.voidAshX) * 0.12;
-        this.voidAshY += (mouseY - this.voidAshY) * 0.12;
-        if (this.voidAshSprite) this.voidAshSprite.setPosition(this.voidAshX, this.voidAshY);
-
-        // Check NPC in ash
-        const ashRadius = 80;
-        const npcDist = Phaser.Math.Distance.Between(this.voidAshX, this.voidAshY, this.npc.x, this.npc.y);
-        if (npcDist <= ashRadius) {
-          // Tick 10 damage every 2s
-          this.voidAshTickAccum += delta;
-          if (this.voidAshTickAccum >= 2000) {
-            this.voidAshTickAccum -= 2000;
-            this.npc.takeDamage(10);
-          }
-          // Apply Decay per-frame (refresh)
-          this.applyVoidDecay('npc', time);
-        }
-      }
-    }
-
-    // ── Void Ash — NPC version ───────────────────────────────────
-    if (this.npcVoidAshActive) {
-      if (time >= this.npcVoidAshEnd) {
-        this.npcVoidAshActive = false;
-        if (this.npcVoidAshSprite) { this.npcVoidAshSprite.destroy(); this.npcVoidAshSprite = null; }
-      } else {
-        // NPC ash follows player
-        this.npcVoidAshX += (this.player.x - this.npcVoidAshX) * 0.08;
-        this.npcVoidAshY += (this.player.y - this.npcVoidAshY) * 0.08;
-        if (this.npcVoidAshSprite) this.npcVoidAshSprite.setPosition(this.npcVoidAshX, this.npcVoidAshY);
-
-        const ashRadius = 80;
-        const pDist = Phaser.Math.Distance.Between(this.npcVoidAshX, this.npcVoidAshY, this.player.x, this.player.y);
-        if (pDist <= ashRadius) {
-          this.npcVoidAshTickAccum += delta;
-          if (this.npcVoidAshTickAccum >= 2000) {
-            this.npcVoidAshTickAccum -= 2000;
-            this.player.takeDamage(10);
-          }
-          this.applyVoidDecay('player', time);
-        }
-      }
-    }
-
-    // ── Void of Hell flames ──────────────────────────────────────
-    if (this.voidOfHellActive && time >= this.voidOfHellEnd) {
-      this.voidOfHellActive = false;
-      for (let i = this.voidOfHellFlames.length - 1; i >= 0; i--) {
-        if (this.voidOfHellFlames[i].owner === 'player') {
-          this.voidOfHellFlames[i].sprite.destroy();
-          this.voidOfHellFlames.splice(i, 1);
-        }
-      }
-    }
-
-    // Flame damage + decay every frame (1/s accum via tickAccum)
-    // Accumulate flame contact time per owner, tick 8 dmg per second per flame in range
-    let playerFlameHitsNpc = 0;
-    let npcFlameHitsPlayer = 0;
-    for (const fl of this.voidOfHellFlames) {
-      const target = fl.owner === 'player' ? this.npc : this.player;
-      const dist = Phaser.Math.Distance.Between(fl.x, fl.y, target.x, target.y);
-      if (dist <= 60) {
-        if (fl.owner === 'player') { playerFlameHitsNpc++; }
-        else { npcFlameHitsPlayer++; }
-        this.applyVoidDecay(fl.owner === 'player' ? 'npc' : 'player', time);
-      }
-    }
-    if (playerFlameHitsNpc > 0) {
-      this.voidOfHellPlayerFlameTickAccum += delta;
-      while (this.voidOfHellPlayerFlameTickAccum >= 1000) {
-        this.voidOfHellPlayerFlameTickAccum -= 1000;
-        this.npc.takeDamage(8 * playerFlameHitsNpc);
-      }
-    } else {
-      this.voidOfHellPlayerFlameTickAccum = 0;
-    }
-    if (npcFlameHitsPlayer > 0) {
-      this.voidOfHellNpcFlameTickAccum += delta;
-      while (this.voidOfHellNpcFlameTickAccum >= 1000) {
-        this.voidOfHellNpcFlameTickAccum -= 1000;
-        this.player.takeDamage(8 * npcFlameHitsPlayer);
-      }
-    } else {
-      this.voidOfHellNpcFlameTickAccum = 0;
-    }
-
-    // While enemy is in ANY player flame, freeze their negative effect timers
-    const npcInPlayerFlame = this.isInVoidFlame(this.npc.x, this.npc.y, 'player');
-    if (npcInPlayerFlame) {
-      // Freeze by re-extending timers by delta each frame (cancels natural countdown)
-      if (this.npcVoidDecayUntil > time) this.npcVoidDecayUntil += delta;
-      if (this.npc.bleedingUntil > time) this.npc.bleedingUntil += delta;
-      if (this.npc.frozenUntil > time) this.npc.frozenUntil += delta;
-      if (this.npc.burningUntil > time) this.npc.burningUntil += delta;
-      if (this.npc.toxicUntil > time) this.npc.toxicUntil += delta;
-      if (this.npcMetalChainTetherEnd > time) this.npcMetalChainTetherEnd += delta;
-      if (this.npcHuntSlowUntil > time) this.npcHuntSlowUntil += delta;
-      if (this.npcHuntConfusedUntil > time) this.npcHuntConfusedUntil += delta;
-    }
-
-    const playerInNpcFlame = this.isInVoidFlame(this.player.x, this.player.y, 'npc');
-    if (playerInNpcFlame) {
-      if (this.playerVoidDecayUntil > time) this.playerVoidDecayUntil += delta;
-      if (this.playerBleedingUntil > time) this.playerBleedingUntil += delta;
-      if (this.playerFrozenUntil > time) this.playerFrozenUntil += delta;
-      if (this.playerBurningUntil > time) this.playerBurningUntil += delta;
-      if (this.playerToxicUntil > time) this.playerToxicUntil += delta;
-      if (this.playerHuntSlowUntil > time) this.playerHuntSlowUntil += delta;
-    }
-
-    // ── Decay system ─────────────────────────────────────────────
-    // NPC decay
-    if (this.npcVoidDecayActive) {
-      if (time >= this.npcVoidDecayUntil) {
-        this.npcVoidDecayActive = false;
-        this.npcVoidDecayVulnStack = 0;
-        this.npc.incomingDamageMultiplier = 1;
-        if (this.npcVoidDecayText) { this.npcVoidDecayText.destroy(); this.npcVoidDecayText = null; }
-      } else {
-        // 3 dmg/s ticking
-        this.npcVoidDecayDmgAccum += delta;
-        if (this.npcVoidDecayDmgAccum >= 1000) {
-          this.npcVoidDecayDmgAccum -= 1000;
-          this.npc.takeDamage(3);
-          // +5% vuln per tick
-          this.npcVoidDecayVulnStack = Math.min(20, this.npcVoidDecayVulnStack + 1);
-          this.npc.incomingDamageMultiplier = 1 + this.npcVoidDecayVulnStack * 0.05;
-        }
-        // Decay text above enemy
-        const remaining = this.npcVoidDecayUntil - time;
-        if (!this.npcVoidDecayText) {
-          this.npcVoidDecayText = this.add.text(this.npc.x, this.npc.y - 50,
-            `🌑 ${Math.ceil(remaining / 1000)}s`, {
-              fontSize: '13px', color: '#cc44ff', stroke: '#110022', strokeThickness: 2,
-            }).setOrigin(0.5).setDepth(12);
-        } else {
-          this.npcVoidDecayText.setPosition(this.npc.x, this.npc.y - 50);
-          this.npcVoidDecayText.setText(`🌑 ${Math.ceil(remaining / 1000)}s`);
-        }
-      }
-    }
-
-    // Player decay
-    if (this.playerVoidDecayActive) {
-      if (time >= this.playerVoidDecayUntil) {
-        this.playerVoidDecayActive = false;
-        this.playerVoidDecayVulnStack = 0;
-        this.player.incomingDamageMultiplier = 1;
-        if (this.playerVoidDecayText) { this.playerVoidDecayText.destroy(); this.playerVoidDecayText = null; }
-      } else {
-        this.playerVoidDecayDmgAccum += delta;
-        if (this.playerVoidDecayDmgAccum >= 1000) {
-          this.playerVoidDecayDmgAccum -= 1000;
-          this.player.takeDamage(3);
-          this.playerVoidDecayVulnStack = Math.min(20, this.playerVoidDecayVulnStack + 1);
-          this.player.incomingDamageMultiplier = 1 + this.playerVoidDecayVulnStack * 0.05;
-        }
-        const remaining = this.playerVoidDecayUntil - time;
-        if (!this.playerVoidDecayText) {
-          this.playerVoidDecayText = this.add.text(this.player.x, this.player.y - 50,
-            `🌑 ${Math.ceil(remaining / 1000)}s`, {
-              fontSize: '13px', color: '#cc44ff', stroke: '#110022', strokeThickness: 2,
-            }).setOrigin(0.5).setDepth(12);
-        } else {
-          this.playerVoidDecayText.setPosition(this.player.x, this.player.y - 50);
-          this.playerVoidDecayText.setText(`🌑 ${Math.ceil(remaining / 1000)}s`);
-        }
-      }
-    }
-
-    // ── Nothing status indicator ─────────────────────────────────
-    if (this.npcVoidNothingUntil > time) {
-      const remaining = this.npcVoidNothingUntil - time;
-      if (!this.npcVoidNothingText) {
-        this.npcVoidNothingText = this.add.text(this.npc.x, this.npc.y - 65,
-          `🚫 NOTHING ${Math.ceil(remaining / 1000)}s`, {
-            fontSize: '11px', color: '#aa44ff', stroke: '#110022', strokeThickness: 2,
-          }).setOrigin(0.5).setDepth(12);
-      } else {
-        this.npcVoidNothingText.setPosition(this.npc.x, this.npc.y - 65);
-        this.npcVoidNothingText.setText(`🚫 NOTHING ${Math.ceil(remaining / 1000)}s`);
-      }
-    } else if (this.npcVoidNothingText) {
-      this.npcVoidNothingText.destroy(); this.npcVoidNothingText = null;
-    }
-
-    if (this.playerVoidNothingUntil > time) {
-      const remaining = this.playerVoidNothingUntil - time;
-      if (!this.playerVoidNothingText) {
-        this.playerVoidNothingText = this.add.text(this.player.x, this.player.y - 65,
-          `🚫 NOTHING ${Math.ceil(remaining / 1000)}s`, {
-            fontSize: '11px', color: '#aa44ff', stroke: '#110022', strokeThickness: 2,
-          }).setOrigin(0.5).setDepth(12);
-      } else {
-        this.playerVoidNothingText.setPosition(this.player.x, this.player.y - 65);
-        this.playerVoidNothingText.setText(`🚫 NOTHING ${Math.ceil(remaining / 1000)}s`);
-      }
-    } else if (this.playerVoidNothingText) {
-      this.playerVoidNothingText.destroy(); this.playerVoidNothingText = null;
-    }
-
-    void W; void H;
-  }
 
   // ── Adrenaline — constants ───────────────────────────────────────────────
   private readonly ADREN_RANK_LETTERS  = ['F','D','C','B','A','S'] as const;
