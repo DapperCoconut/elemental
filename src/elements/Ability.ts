@@ -77,10 +77,9 @@ export interface CastContext {
   huntBloodHunt: () => void;
   huntBloodMoon: () => void;
   huntUntransform: () => void;
-  huntVampireStake: (tx: number, ty: number) => void;
-  huntGarlicTrap: (tx: number, ty: number) => void;
-  huntBatForm: () => void;
-  huntVampireDrain: () => void;
+  huntHybridShotgun: (tx: number, ty: number) => void;
+  huntHybridInstinct: () => void;
+  huntHybridShriek: (tx: number, ty: number) => void;
   // Sand (legacy)
   sandFlintlock: (tx: number, ty: number) => void;
   sandBlindingSand: (tx: number, ty: number) => void;

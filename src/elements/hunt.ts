@@ -125,48 +125,48 @@ const huntUntransform: Ability = {
   cast(ctx: CastContext) { ctx.huntUntransform(); },
 };
 
-// ── Vampire form (Q+ upgrade) ────────────────────────────────────
+// ── Hybrid form (Q+ upgrade, double-tap Q after transform) ──────
 
-const huntVampireStake: Ability = {
-  id: 'hunt-vampire-stake',
-  name: 'Stake',
-  description: 'Fire a large stake (15 dmg, applies bleed 6s). Click+ = +25% dmg vs bleeding.',
+const huntHybridShotgun: Ability = {
+  id: 'hunt-hybrid-shotgun',
+  name: 'Monster Hunter',
+  description: '6 silver bullets in a wide cone — long range, 4 dmg each, applies bleed 8s. Click+ = +50% dmg to bleeding.',
   displayKey: 'Click',
-  cooldown: 1200,
-  cast(ctx: CastContext) { ctx.huntVampireStake(ctx.targetX, ctx.targetY); },
+  cooldown: 700,
+  cast(ctx: CastContext) { ctx.huntHybridShotgun(ctx.targetX, ctx.targetY); },
 };
 
-const huntGarlicTrap: Ability = {
-  id: 'hunt-garlic-trap',
-  name: 'Garlic Trap',
-  description: 'Place trap (pulses 8 dmg/2s, 8s). 2× dmg if enemy bleeding. E+ = 25% slow 3s.',
+const huntHybridGrenadeLeap: Ability = {
+  id: 'hunt-hybrid-grenade-leap',
+  name: 'Grenade Leap',
+  description: 'Hold E to arm, release to throw — teleport to the explosion. Full hold = self-dmg + speed boost. E+ = 1.5s fuse.',
   displayKey: 'E',
-  cooldown: 6000,
-  cast(ctx: CastContext) { ctx.huntGarlicTrap(ctx.targetX, ctx.targetY); },
+  cooldown: 5000,
+  cast(_ctx: CastContext) { /* input block handles hold/release */ },
 };
 
-const huntBatForm: Ability = {
-  id: 'hunt-bat-form',
-  name: 'Bat Form',
-  description: '75% smaller, +50% speed, 20% DR (3s). R+ = 6s, cancelable; dodge = 5dmg AOE + 3HP.',
+const huntHybridInstinct: Ability = {
+  id: 'hunt-hybrid-instinct',
+  name: 'Beast Instinct',
+  description: 'Drop a trail at the enemy. After standing on it for 2s, screech — slows enemy 50% for 3s. R+ = permanent trail.',
   displayKey: 'R',
   cooldown: 10000,
-  cast(ctx: CastContext) { ctx.huntBatForm(); },
+  cast(ctx: CastContext) { ctx.huntHybridInstinct(); },
 };
 
-const huntVampireDrain: Ability = {
-  id: 'hunt-vampire-drain',
-  name: 'Drain Aura',
-  description: 'Drain nearby enemy (6 dmg/s, heals you 4/s, 6s). F+ = +15% speed.',
+const huntHybridShriek: Ability = {
+  id: 'hunt-hybrid-shriek',
+  name: 'Shriek',
+  description: 'Forward rectangle shriek: refreshes enemy bleed to 8s, deals 3 dmg/s, heals you for all bleed damage. F+ = shriek on grenade spawns shrapnel (bleeds).',
   displayKey: 'F',
   cooldown: 8000,
-  cast(ctx: CastContext) { ctx.huntVampireDrain(); },
+  cast(ctx: CastContext) { ctx.huntHybridShriek(ctx.targetX, ctx.targetY); },
 };
 
-const huntVampireUntransform: Ability = {
-  id: 'hunt-vampire-untransform',
-  name: 'Revert',
-  description: 'Return to hunter form.',
+const huntHybridUntransform: Ability = {
+  id: 'hunt-hybrid-untransform',
+  name: 'Exhausted Return',
+  description: 'Exit hybrid form. 35s transform cooldown.',
   displayKey: 'Q',
   cooldown: 0,
   cast(ctx: CastContext) { ctx.huntUntransform(); },
@@ -180,6 +180,6 @@ export const huntElement: Element = {
   abilities: [
     huntShotgun, huntGrenade, huntHuntersTrail, huntBloodPact, huntTransform,
     huntSlash, huntLeap, huntBloodHunt, huntBloodMoon, huntUntransform,
-    huntVampireStake, huntGarlicTrap, huntBatForm, huntVampireDrain, huntVampireUntransform,
+    huntHybridShotgun, huntHybridGrenadeLeap, huntHybridInstinct, huntHybridShriek, huntHybridUntransform,
   ],
 };

@@ -168,13 +168,38 @@ export class BootScene extends Phaser.Scene {
     gfx.strokeCircle(24, 24, 22);
     gfx.generateTexture('elem-hunt', 48, 48);
 
+    // Hunt hybrid form texture (darker body, jagged silver stroke to look distinct)
+    gfx.clear();
+    gfx.fillStyle(0x661100);
+    gfx.fillCircle(24, 24, 22);
+    gfx.lineStyle(4, 0xdddddd);
+    gfx.strokeCircle(24, 24, 22);
+    // Inner ring glow
+    gfx.lineStyle(2, 0xff8844, 0.7);
+    gfx.strokeCircle(24, 24, 15);
+    gfx.generateTexture('elem-hunt-hybrid', 48, 48);
+
     // Hunt pellet projectile (tiny red dot)
     gfx.clear();
     gfx.fillStyle(0xff4400);
     gfx.fillCircle(4, 4, 4);
     gfx.generateTexture('proj-hunt-pellet', 8, 8);
 
-    // Hunt vampire stake (dark red elongated rectangle)
+    // Hunt silver bullet (slightly larger silver circle)
+    gfx.clear();
+    gfx.fillStyle(0xdddddd);
+    gfx.fillCircle(5, 5, 5);
+    gfx.lineStyle(1, 0xffffff);
+    gfx.strokeCircle(5, 5, 5);
+    gfx.generateTexture('proj-hunt-silver', 10, 10);
+
+    // Hunt shrapnel (thin silver sliver)
+    gfx.clear();
+    gfx.fillStyle(0xcccccc);
+    gfx.fillRect(0, 2, 10, 3);
+    gfx.generateTexture('proj-hunt-shrapnel', 10, 7);
+
+    // Hunt vampire stake (dark red elongated rectangle) — kept for any legacy refs
     gfx.clear();
     gfx.fillStyle(0x880033);
     gfx.fillRect(0, 4, 20, 6);
