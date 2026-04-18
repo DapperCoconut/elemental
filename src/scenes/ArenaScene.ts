@@ -825,6 +825,7 @@ export class ArenaScene extends Phaser.Scene {
   private enemies: Fighter[] = [];
   private corrupted: CorruptedBase[] = [];
   private corruptedGroup!: Phaser.Physics.Arcade.Group;
+  private enemyGroup!: Phaser.Physics.Arcade.Group;
   private festeringGrowths: FesteringGrowth[] = [];
   private waveManager!: WaveManager;
   private invasionShardsEarned = 0;
@@ -3460,21 +3461,14 @@ export class ArenaScene extends Phaser.Scene {
       }
     }
 
-    // ── Invasion: corrupted group + secondary projectile overlap ─────
+    // ── Unified enemy physics group ────────────────────────────────
+    this.enemyGroup = this.physics.add.group();
     if (this.isInvasion) {
-      this.corruptedGroup = this.physics.add.group();
+      // corruptedGroup is an alias for enemyGroup; spawnCorrupted still uses corruptedGroup until Phase 4
+      this.corruptedGroup = this.enemyGroup;
       this.corrupted = [];
-      this.physics.add.overlap(
-        this.projectiles,
-        this.corruptedGroup,
-        (a, b) => {
-          const proj = (a instanceof Projectile ? a : b) as Projectile;
-          const c = (a instanceof CorruptedBase ? a : b) as CorruptedBase;
-          if (!proj.active || !proj.isFromPlayer) return;
-          if (!c.active || c.hp <= 0) return;
-          this.applyProjectileToCorrupted(proj, c);
-        },
-      );
+    } else {
+      this.enemyGroup.add(this.npc, true);
     }
 
     // ── Adrenaline SK8 body-contact overlap ──────────────────────────
@@ -3534,210 +3528,20 @@ export class ArenaScene extends Phaser.Scene {
       }
     }
 
-    // ── Overlap callbacks ─────────────────────────────────────────
+    // ── Unified player-projectile vs enemy overlap ─────────────────
     this.physics.add.overlap(
       this.projectiles,
-      this.npc,
+      this.enemyGroup,
       (a, b) => {
         const proj = (a instanceof Projectile ? a : b) as Projectile;
+        const target = (a instanceof Projectile ? b : a) as Fighter;
         if (!proj.active || !proj.isFromPlayer) return;
-        // Time Warp orb: deal 20 damage + teleport NPC back 3 seconds (or save pos with E+)
-        if (proj.texture.key === 'proj-time-orb') {
-          // E+ Delayed Warp: save position, don't teleport yet
-          if (this.elementId === 'sand' && this.hasUpgrade('e')) {
-            this.npc.takeDamage(20);
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0xffdd44);
-            this.showFloatingText(this.npc.x, this.npc.y - 24, '20', '#ffdd44');
-            if (this.npcPosHistory.length > 0) {
-              const targetT = this.time.now - 3000;
-              let best = this.npcPosHistory[0];
-              for (const snap of this.npcPosHistory) {
-                if (Math.abs(snap.t - targetT) < Math.abs(best.t - targetT)) best = snap;
-              }
-              if (this.timeWarpSavedMarker) this.timeWarpSavedMarker.destroy();
-              this.timeWarpSavedPos = { x: best.x, y: best.y };
-              this.timeWarpSavedMarker = this.add.circle(best.x, best.y, 18, 0xffdd44, 0.4)
-                .setStrokeStyle(2, 0xffffff, 0.7).setDepth(6);
-              this.tweens.add({ targets: this.timeWarpSavedMarker, alpha: 0.15, yoyo: true, repeat: -1, duration: 600 });
-              this.showFloatingText(this.player.x, this.player.y - 32, '⏱ Saved!', '#ffdd44');
-            }
-          } else if (!this.timeNpcTeleporting && this.npcPosHistory.length > 0) {
-            this.npc.takeDamage(20);
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0xffdd44);
-            this.showFloatingText(this.npc.x, this.npc.y - 24, '20', '#ffdd44');
-            const targetT = this.time.now - 3000;
-            let best = this.npcPosHistory[0];
-            for (const snap of this.npcPosHistory) {
-              if (Math.abs(snap.t - targetT) < Math.abs(best.t - targetT)) best = snap;
-            }
-            this.timeNpcTeleporting = true;
-            this.timeNpcTeleportStart = this.time.now;
-            this.timeNpcTeleportFromX = this.npc.x;
-            this.timeNpcTeleportFromY = this.npc.y;
-            this.timeNpcTeleportToX = best.x;
-            this.timeNpcTeleportToY = best.y;
-            this.timeNpcTeleportPuddleAccum = 0;
-          }
-          proj.setActive(false).setVisible(false);
-          (proj.body as Phaser.Physics.Arcade.Body).stop();
-          return;
+        if (!target.active || target.hp <= 0) return;
+        if (target instanceof CorruptedBase) {
+          this.applyProjectileToCorrupted(proj, target);
+        } else {
+          this.applyProjectileToNpc(proj);
         }
-        // Silence possess eye: apply possession, no damage
-        if (proj.texture.key === 'proj-silence-eye') {
-          this.silencePossessedUntil = this.time.now + 8000;
-          this.showFloatingText(this.npc.x, this.npc.y - 30, '👁 Possessed!', '#cc66ff');
-          const _eyeFlash = this.add.circle(this.npc.x, this.npc.y, 16, 0x660088, 0.8).setDepth(9);
-          this.tweens.add({ targets: _eyeFlash, scaleX: 3, scaleY: 3, alpha: 0, duration: 400, onComplete: () => _eyeFlash.destroy() });
-          proj.setActive(false).setVisible(false);
-          (proj.body as Phaser.Physics.Arcade.Body).stop();
-          return;
-        }
-        // Silence meat hook: register connection + initial damage
-        if (proj.texture.key === 'proj-silence-hook') {
-          this.silenceHookConnected = true;
-          this.silenceHookWindowExpiry = this.time.now + 5000;
-          this.silenceHookProj = null;
-          this.showFloatingText(this.npc.x, this.npc.y - 20, '🪝 Hooked!', '#cc9933');
-          this.npc.takeDamage(8);
-          this.spawnHitFlash(this.npc.x, this.npc.y, 0xaa7733);
-          proj.setActive(false).setVisible(false);
-          (proj.body as Phaser.Physics.Arcade.Body).stop();
-          return;
-        }
-        // Apply attacker's crit context before damage
-        this.npc.setIncomingCritContext(this.player.critChance, this.player.critMult);
-        let _npcDmg = proj.damage;
-        // Q+: Shatter Strike — next hit on frozen enemy deals 25% more
-        if (this.npc.frozenSolidAmpReady && this.npc.frozenUntil > this.time.now) {
-          _npcDmg = Math.round(_npcDmg * 1.25);
-          this.npc.frozenSolidAmpReady = false;
-          const st = this.add.text(this.npc.x, this.npc.y - 30, 'SHATTER!', { fontSize: '11px', color: '#88ccff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
-          this.tweens.add({ targets: st, y: st.y - 20, alpha: 0, duration: 1200, onComplete: () => st.destroy() });
-        }
-        this.npc.takeDamage(_npcDmg);
-        this.spawnHitFlash(proj.x, proj.y, 0xff6600);
-        // Hunt Blood Pact: heal player for 50% of damage dealt
-        if (this.huntBloodPactActive && this.time.now < this.huntBloodPactEnd) this.player.heal(Math.ceil(_npcDmg * 0.5));
-        // Hunt Blood Moon F+: 50% lifesteal from all damage dealt to bleeding enemy
-        if (this.huntBloodMoonActive && this.hasUpgrade('f') && this.npc.bleeding) this.player.heal(Math.ceil(_npcDmg * 0.5));
-        // Hunt silver bullets (hybrid): apply bleed and Click+ bonus damage
-        if (proj.texture.key === 'proj-hunt-silver' || this.huntSilverPellets.has(proj)) {
-          if (this.hasUpgrade('click') && this.npc.bleeding) {
-            this.npc.takeDamage(Math.round(proj.damage * 0.5));
-          }
-          this.npc.bleeding = true;
-          this.npc.bleedingUntil = Math.max(this.npc.bleedingUntil, this.time.now + 8000);
-          this.applyNpcBleedVisual();
-        }
-        // Hunt shrapnel (hybrid F+ shriek): apply bleed
-        if (this.huntShrapnelSet.has(proj)) {
-          this.npc.bleeding = true;
-          this.npc.bleedingUntil = Math.max(this.npc.bleedingUntil, this.time.now + 8000);
-          this.applyNpcBleedVisual();
-        }
-        // Flameshredder: fireball hit also applies burning DOT
-        if (proj.texture.key === 'proj-fire' && this.hasUpgrade('click')) {
-          this.npc.burningUntil = Math.max(this.npc.burningUntil, this.time.now + 3000);
-        }
-        // Knockback: water-cut hit pushes NPC in projectile travel direction
-        if (proj.texture.key === 'proj-water' && this.hasUpgrade('click')) {
-          const projBody = proj.body as Phaser.Physics.Arcade.Body;
-          const vx = projBody.velocity.x;
-          const vy = projBody.velocity.y;
-          const len = Math.sqrt(vx * vx + vy * vy) || 1;
-          const nb = this.npc.body as Phaser.Physics.Arcade.Body;
-          nb.setVelocity(nb.velocity.x + (vx / len) * 180, nb.velocity.y + (vy / len) * 180);
-        }
-        // Ice spike: frost stacks + unfreeze bonus + Click+ tracking
-        if (proj.texture.key === 'proj-ice') {
-          // Click+: consecutive hit tracking
-          if (this.hasUpgrade('click') && this.playerIcePendingSet.has(proj)) {
-            this.playerIcePendingSet.delete(proj);
-            this.playerIceConsecHits++;
-            if (this.playerIceConsecHits >= 3) {
-              this.playerNextIcePowered = true;
-              this.playerIceConsecHits = 0;
-              const pt = this.add.text(this.player.x, this.player.y - 36, 'POWERED!', { fontSize: '11px', color: '#cceeff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
-              this.tweens.add({ targets: pt, y: pt.y - 20, alpha: 0, duration: 1200, onComplete: () => pt.destroy() });
-            }
-          }
-          if (this.npc.frozenUntil > this.time.now) {
-            this.npc.frozenUntil = 0;
-            for (let fi = 0; fi < 3; fi++) this.addFrostStack('npc');
-          } else {
-            this.addFrostStack('npc');
-            // Powered shot: apply extra frost stack
-            if (proj.isPowered) this.addFrostStack('npc');
-          }
-        }
-        // Growth infect dagger: apply toxic DOT to NPC, R+ bonus on already-infected
-        if (proj.texture.key === 'proj-growth-dagger') {
-          if (this.hasUpgrade('r') && this.npc.toxicUntil > this.time.now) {
-            const bonus = Math.round(proj.damage * 0.25);
-            this.npc.takeDamage(bonus);
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0xccff44);
-            const ft = this.add.text(this.npc.x, this.npc.y - 35, `+${bonus} EXPLOIT`, { fontSize: '10px', color: '#ccff44', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
-            this.tweens.add({ targets: ft, y: ft.y - 20, alpha: 0, duration: 900, onComplete: () => ft.destroy() });
-          }
-          this.npc.toxicUntil = this.time.now + 5000 + this.growthLingerBonus;
-          this.npc.toxicDps = 2 + this.growthViralBonus;
-          this.npc.toxicTickAccum = 0;
-        }
-        // Adrenaline: golden shot hit registers style event
-        if (proj.texture.key === 'proj-adrenaline-shot' && this.adrenalineGoldPendingSet.has(proj as unknown as Phaser.Physics.Arcade.Sprite)) {
-          this.adrenalineGoldPendingSet.delete(proj as unknown as Phaser.Physics.Arcade.Sprite);
-          this.adrenalineRegisterShotHit('player');
-          this.adrenalineHyperWindowExpiry = this.time.now + 800;
-        }
-        // NPC bloat: NPC hit triggers AOE on player
-        if (this.npc.growthBloatActive) {
-          this.npc.growthBloatActive = false;
-          this.npc.growthBloatEnd = 0;
-          if (this.npc.growthBloatAura) { this.npc.growthBloatAura.destroy(); this.npc.growthBloatAura = null; }
-          const bloatDmg = Math.round(20 * this.npcGrowthDamageMult);
-          if (Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y) <= 120) {
-            this.player.takeDamage(bloatDmg);
-            this.spawnHitFlash(this.player.x, this.player.y, 0xdddd00);
-          }
-          const bloatExp = this.add.circle(this.npc.x, this.npc.y, 120, 0xdddd00, 0.3).setDepth(8);
-          this.tweens.add({ targets: bloatExp, scaleX: 1.4, scaleY: 1.4, alpha: 0, duration: 350, onComplete: () => bloatExp.destroy() });
-        }
-        // Magic cluster bomb: spawn 6 shrapnel
-        if (proj.texture.key === 'proj-magic-cluster-core') {
-          this.spawnMagicClusterShrapnel(proj.x, proj.y, 'player');
-        }
-        // Magic bind chain / Root to Corners
-        if (proj.texture.key === 'proj-magic-chain') {
-          if ((proj as any).isMagicRoot4) {
-            // Necronomicon 4: Root to Corners
-            if (!this.magicRoot4Active) {
-              const gfx = this.add.graphics().setDepth(5);
-              const now = this.time.now;
-              this.magicRoot4Active = {
-                ex: this.npc.x, ey: this.npc.y,
-                chainsHp: [20, 20, 20, 20],
-                gfx, owner: 'player',
-                expireAt: now + 8000,
-              };
-              this.showFloatingText(this.npc.x, this.npc.y - 28, '⛓ ROOTED', '#cc88ff');
-            }
-          } else {
-            // Grimoire 4: Bind Chain
-            this.npc.magicChainBound = true;
-            this.npc.magicChainBoundEnd = this.time.now + 2000;
-            this.showFloatingText(this.npc.x, this.npc.y - 28, '⛓ BOUND', '#cc88ff');
-            this.time.delayedCall(2000, () => {
-              if (this.npc.magicChainBound) {
-                this.npc.takeDamage(10);
-                this.spawnHitFlash(this.npc.x, this.npc.y, 0x9944ff);
-                this.spawnDamageNumber(this.npc.x, this.npc.y - 30, 10);
-                this.npc.magicChainBound = false;
-              }
-            });
-          }
-        }
-        proj.setActive(false).setVisible(false);
-        (proj.body as Phaser.Physics.Arcade.Body).stop();
       },
       undefined,
       this,
@@ -20906,6 +20710,201 @@ export class ArenaScene extends Phaser.Scene {
       if (this.npc.active) { this.npc.setActive(false).setVisible(false); }
       this.promotePrimaryTarget();
     });
+  }
+
+  private applyProjectileToNpc(proj: Projectile): void {
+    // Time Warp orb: deal 20 damage + teleport NPC back 3 seconds (or save pos with E+)
+    if (proj.texture.key === 'proj-time-orb') {
+      if (this.elementId === 'sand' && this.hasUpgrade('e')) {
+        this.npc.takeDamage(20);
+        this.spawnHitFlash(this.npc.x, this.npc.y, 0xffdd44);
+        this.showFloatingText(this.npc.x, this.npc.y - 24, '20', '#ffdd44');
+        if (this.npcPosHistory.length > 0) {
+          const targetT = this.time.now - 3000;
+          let best = this.npcPosHistory[0];
+          for (const snap of this.npcPosHistory) {
+            if (Math.abs(snap.t - targetT) < Math.abs(best.t - targetT)) best = snap;
+          }
+          if (this.timeWarpSavedMarker) this.timeWarpSavedMarker.destroy();
+          this.timeWarpSavedPos = { x: best.x, y: best.y };
+          this.timeWarpSavedMarker = this.add.circle(best.x, best.y, 18, 0xffdd44, 0.4)
+            .setStrokeStyle(2, 0xffffff, 0.7).setDepth(6);
+          this.tweens.add({ targets: this.timeWarpSavedMarker, alpha: 0.15, yoyo: true, repeat: -1, duration: 600 });
+          this.showFloatingText(this.player.x, this.player.y - 32, '⏱ Saved!', '#ffdd44');
+        }
+      } else if (!this.timeNpcTeleporting && this.npcPosHistory.length > 0) {
+        this.npc.takeDamage(20);
+        this.spawnHitFlash(this.npc.x, this.npc.y, 0xffdd44);
+        this.showFloatingText(this.npc.x, this.npc.y - 24, '20', '#ffdd44');
+        const targetT = this.time.now - 3000;
+        let best = this.npcPosHistory[0];
+        for (const snap of this.npcPosHistory) {
+          if (Math.abs(snap.t - targetT) < Math.abs(best.t - targetT)) best = snap;
+        }
+        this.timeNpcTeleporting = true;
+        this.timeNpcTeleportStart = this.time.now;
+        this.timeNpcTeleportFromX = this.npc.x;
+        this.timeNpcTeleportFromY = this.npc.y;
+        this.timeNpcTeleportToX = best.x;
+        this.timeNpcTeleportToY = best.y;
+        this.timeNpcTeleportPuddleAccum = 0;
+      }
+      proj.setActive(false).setVisible(false);
+      (proj.body as Phaser.Physics.Arcade.Body).stop();
+      return;
+    }
+    // Silence possess eye: apply possession, no damage
+    if (proj.texture.key === 'proj-silence-eye') {
+      this.silencePossessedUntil = this.time.now + 8000;
+      this.showFloatingText(this.npc.x, this.npc.y - 30, '👁 Possessed!', '#cc66ff');
+      const _eyeFlash = this.add.circle(this.npc.x, this.npc.y, 16, 0x660088, 0.8).setDepth(9);
+      this.tweens.add({ targets: _eyeFlash, scaleX: 3, scaleY: 3, alpha: 0, duration: 400, onComplete: () => _eyeFlash.destroy() });
+      proj.setActive(false).setVisible(false);
+      (proj.body as Phaser.Physics.Arcade.Body).stop();
+      return;
+    }
+    // Silence meat hook: register connection + initial damage
+    if (proj.texture.key === 'proj-silence-hook') {
+      this.silenceHookConnected = true;
+      this.silenceHookWindowExpiry = this.time.now + 5000;
+      this.silenceHookProj = null;
+      this.showFloatingText(this.npc.x, this.npc.y - 20, '🪝 Hooked!', '#cc9933');
+      this.npc.takeDamage(8);
+      this.spawnHitFlash(this.npc.x, this.npc.y, 0xaa7733);
+      proj.setActive(false).setVisible(false);
+      (proj.body as Phaser.Physics.Arcade.Body).stop();
+      return;
+    }
+    // Apply attacker's crit context before damage
+    this.npc.setIncomingCritContext(this.player.critChance, this.player.critMult);
+    let _npcDmg = proj.damage;
+    // Q+: Shatter Strike — next hit on frozen enemy deals 25% more
+    if (this.npc.frozenSolidAmpReady && this.npc.frozenUntil > this.time.now) {
+      _npcDmg = Math.round(_npcDmg * 1.25);
+      this.npc.frozenSolidAmpReady = false;
+      const st = this.add.text(this.npc.x, this.npc.y - 30, 'SHATTER!', { fontSize: '11px', color: '#88ccff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
+      this.tweens.add({ targets: st, y: st.y - 20, alpha: 0, duration: 1200, onComplete: () => st.destroy() });
+    }
+    this.npc.takeDamage(_npcDmg);
+    this.spawnHitFlash(proj.x, proj.y, 0xff6600);
+    // Hunt Blood Pact: heal player for 50% of damage dealt
+    if (this.huntBloodPactActive && this.time.now < this.huntBloodPactEnd) this.player.heal(Math.ceil(_npcDmg * 0.5));
+    // Hunt Blood Moon F+: 50% lifesteal from all damage dealt to bleeding enemy
+    if (this.huntBloodMoonActive && this.hasUpgrade('f') && this.npc.bleeding) this.player.heal(Math.ceil(_npcDmg * 0.5));
+    // Hunt silver bullets (hybrid): apply bleed and Click+ bonus damage
+    if (proj.texture.key === 'proj-hunt-silver' || this.huntSilverPellets.has(proj)) {
+      if (this.hasUpgrade('click') && this.npc.bleeding) {
+        this.npc.takeDamage(Math.round(proj.damage * 0.5));
+      }
+      this.npc.bleeding = true;
+      this.npc.bleedingUntil = Math.max(this.npc.bleedingUntil, this.time.now + 8000);
+      this.applyNpcBleedVisual();
+    }
+    // Hunt shrapnel (hybrid F+ shriek): apply bleed
+    if (this.huntShrapnelSet.has(proj)) {
+      this.npc.bleeding = true;
+      this.npc.bleedingUntil = Math.max(this.npc.bleedingUntil, this.time.now + 8000);
+      this.applyNpcBleedVisual();
+    }
+    // Flameshredder: fireball hit also applies burning DOT
+    if (proj.texture.key === 'proj-fire' && this.hasUpgrade('click')) {
+      this.npc.burningUntil = Math.max(this.npc.burningUntil, this.time.now + 3000);
+    }
+    // Knockback: water-cut hit pushes NPC in projectile travel direction
+    if (proj.texture.key === 'proj-water' && this.hasUpgrade('click')) {
+      const projBody = proj.body as Phaser.Physics.Arcade.Body;
+      const vx = projBody.velocity.x;
+      const vy = projBody.velocity.y;
+      const len = Math.sqrt(vx * vx + vy * vy) || 1;
+      const nb = this.npc.body as Phaser.Physics.Arcade.Body;
+      nb.setVelocity(nb.velocity.x + (vx / len) * 180, nb.velocity.y + (vy / len) * 180);
+    }
+    // Ice spike: frost stacks + unfreeze bonus + Click+ tracking
+    if (proj.texture.key === 'proj-ice') {
+      if (this.hasUpgrade('click') && this.playerIcePendingSet.has(proj)) {
+        this.playerIcePendingSet.delete(proj);
+        this.playerIceConsecHits++;
+        if (this.playerIceConsecHits >= 3) {
+          this.playerNextIcePowered = true;
+          this.playerIceConsecHits = 0;
+          const pt = this.add.text(this.player.x, this.player.y - 36, 'POWERED!', { fontSize: '11px', color: '#cceeff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
+          this.tweens.add({ targets: pt, y: pt.y - 20, alpha: 0, duration: 1200, onComplete: () => pt.destroy() });
+        }
+      }
+      if (this.npc.frozenUntil > this.time.now) {
+        this.npc.frozenUntil = 0;
+        for (let fi = 0; fi < 3; fi++) this.addFrostStack('npc');
+      } else {
+        this.addFrostStack('npc');
+        if (proj.isPowered) this.addFrostStack('npc');
+      }
+    }
+    // Growth infect dagger: apply toxic DOT to NPC, R+ bonus on already-infected
+    if (proj.texture.key === 'proj-growth-dagger') {
+      if (this.hasUpgrade('r') && this.npc.toxicUntil > this.time.now) {
+        const bonus = Math.round(proj.damage * 0.25);
+        this.npc.takeDamage(bonus);
+        this.spawnHitFlash(this.npc.x, this.npc.y, 0xccff44);
+        const ft = this.add.text(this.npc.x, this.npc.y - 35, `+${bonus} EXPLOIT`, { fontSize: '10px', color: '#ccff44', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
+        this.tweens.add({ targets: ft, y: ft.y - 20, alpha: 0, duration: 900, onComplete: () => ft.destroy() });
+      }
+      this.npc.toxicUntil = this.time.now + 5000 + this.growthLingerBonus;
+      this.npc.toxicDps = 2 + this.growthViralBonus;
+      this.npc.toxicTickAccum = 0;
+    }
+    // Adrenaline: golden shot hit registers style event
+    if (proj.texture.key === 'proj-adrenaline-shot' && this.adrenalineGoldPendingSet.has(proj as unknown as Phaser.Physics.Arcade.Sprite)) {
+      this.adrenalineGoldPendingSet.delete(proj as unknown as Phaser.Physics.Arcade.Sprite);
+      this.adrenalineRegisterShotHit('player');
+      this.adrenalineHyperWindowExpiry = this.time.now + 800;
+    }
+    // NPC bloat: NPC hit triggers AOE on player
+    if (this.npc.growthBloatActive) {
+      this.npc.growthBloatActive = false;
+      this.npc.growthBloatEnd = 0;
+      if (this.npc.growthBloatAura) { this.npc.growthBloatAura.destroy(); this.npc.growthBloatAura = null; }
+      const bloatDmg = Math.round(20 * this.npcGrowthDamageMult);
+      if (Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y) <= 120) {
+        this.player.takeDamage(bloatDmg);
+        this.spawnHitFlash(this.player.x, this.player.y, 0xdddd00);
+      }
+      const bloatExp = this.add.circle(this.npc.x, this.npc.y, 120, 0xdddd00, 0.3).setDepth(8);
+      this.tweens.add({ targets: bloatExp, scaleX: 1.4, scaleY: 1.4, alpha: 0, duration: 350, onComplete: () => bloatExp.destroy() });
+    }
+    // Magic cluster bomb: spawn 6 shrapnel
+    if (proj.texture.key === 'proj-magic-cluster-core') {
+      this.spawnMagicClusterShrapnel(proj.x, proj.y, 'player');
+    }
+    // Magic bind chain / Root to Corners
+    if (proj.texture.key === 'proj-magic-chain') {
+      if ((proj as any).isMagicRoot4) {
+        if (!this.magicRoot4Active) {
+          const gfx = this.add.graphics().setDepth(5);
+          const now = this.time.now;
+          this.magicRoot4Active = {
+            ex: this.npc.x, ey: this.npc.y,
+            chainsHp: [20, 20, 20, 20],
+            gfx, owner: 'player',
+            expireAt: now + 8000,
+          };
+          this.showFloatingText(this.npc.x, this.npc.y - 28, '⛓ ROOTED', '#cc88ff');
+        }
+      } else {
+        this.npc.magicChainBound = true;
+        this.npc.magicChainBoundEnd = this.time.now + 2000;
+        this.showFloatingText(this.npc.x, this.npc.y - 28, '⛓ BOUND', '#cc88ff');
+        this.time.delayedCall(2000, () => {
+          if (this.npc.magicChainBound) {
+            this.npc.takeDamage(10);
+            this.spawnHitFlash(this.npc.x, this.npc.y, 0x9944ff);
+            this.spawnDamageNumber(this.npc.x, this.npc.y - 30, 10);
+            this.npc.magicChainBound = false;
+          }
+        });
+      }
+    }
+    proj.setActive(false).setVisible(false);
+    (proj.body as Phaser.Physics.Arcade.Body).stop();
   }
 
   private applyProjectileToCorrupted(proj: Projectile, c: CorruptedBase): void {
