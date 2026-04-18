@@ -13241,21 +13241,24 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Growth per-frame ─────────────────────────────────────────
     if (this.elementId === 'growth' || this.npcElement.id === 'growth') {
-      // Toxic DOT — NPC
-      if (this.npc.toxicUntil > time) {
-        if (!this.npc.toxicAura) {
-          this.npc.toxicAura = this.add.circle(this.npc.x, this.npc.y, 26, 0x88bb22, 0.3).setDepth(7);
+      // Toxic DOT — enemies
+      for (const t of this.enemies) {
+        if (!t.active) continue;
+        if (t.toxicUntil > time) {
+          if (!t.toxicAura) {
+            t.toxicAura = this.add.circle(t.x, t.y, 26, 0x88bb22, 0.3).setDepth(7);
+          }
+          t.toxicAura.setPosition(t.x, t.y);
+          t.toxicTickAccum += delta;
+          if (t.toxicTickAccum >= 1000) {
+            t.toxicTickAccum -= 1000;
+            t.takeDamage(t.toxicDps);
+            this.spawnHitFlash(t.x, t.y, 0x88bb22);
+          }
+        } else {
+          t.toxicTickAccum = 0;
+          if (t.toxicAura) { t.toxicAura.destroy(); t.toxicAura = null; }
         }
-        this.npc.toxicAura.setPosition(this.npc.x, this.npc.y);
-        this.npc.toxicTickAccum += delta;
-        if (this.npc.toxicTickAccum >= 1000) {
-          this.npc.toxicTickAccum -= 1000;
-          this.npc.takeDamage(this.npc.toxicDps);
-          this.spawnHitFlash(this.npc.x, this.npc.y, 0x88bb22);
-        }
-      } else {
-        this.npc.toxicTickAccum = 0;
-        if (this.npc.toxicAura) { this.npc.toxicAura.destroy(); this.npc.toxicAura = null; }
       }
 
       // Toxic DOT — player
