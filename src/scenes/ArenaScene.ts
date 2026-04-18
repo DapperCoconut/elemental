@@ -823,8 +823,6 @@ export class ArenaScene extends Phaser.Scene {
   private isPvP = false;
   private isInvasion = false;
   private enemies: Fighter[] = [];
-  private corrupted: CorruptedBase[] = [];
-  private corruptedGroup!: Phaser.Physics.Arcade.Group;
   private enemyGroup!: Phaser.Physics.Arcade.Group;
   private festeringGrowths: FesteringGrowth[] = [];
   private waveManager!: WaveManager;
@@ -3241,7 +3239,6 @@ export class ArenaScene extends Phaser.Scene {
     this.puddles = [];
     this.geysers = [];
     this.painRainShadows = [];
-    this.corrupted = [];
     this.festeringGrowths = [];
     this.invasionShardsEarned = 0;
     this.invasionWavesCompleted = 0;
@@ -3463,11 +3460,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Unified enemy physics group ────────────────────────────────
     this.enemyGroup = this.physics.add.group();
-    if (this.isInvasion) {
-      // corruptedGroup is an alias for enemyGroup; spawnCorrupted still uses corruptedGroup until Phase 4
-      this.corruptedGroup = this.enemyGroup;
-      this.corrupted = [];
-    } else {
+    if (!this.isInvasion) {
       this.enemyGroup.add(this.npc, true);
     }
 
@@ -3810,39 +3803,39 @@ export class ArenaScene extends Phaser.Scene {
       if (this.npcMainDefeated && cloneDead && raidAllDead) this.endGame(true);
     };
 
-    const registerNpcDefeat = () => {
-      this.npc.once('defeated', () => {
-        if (!this.isPvP && !this.isInvasion && this.mutations.has('reborn') && !this.npcRebirthUsed) {
-          this.npcRebirthUsed = true;
-          this.npc.isInvincible = true;
-          const flash = this.add.circle(this.npc.x, this.npc.y, 50, 0x00ffff, 0.8).setDepth(15);
-          this.tweens.add({ targets: flash, scaleX: 5, scaleY: 5, alpha: 0, duration: 500, onComplete: () => flash.destroy() });
-          this.time.delayedCall(400, () => {
-            if (!this.npc.active) return;
-            this.npc.hp = Math.round(this.npc.maxHp * 0.25);
-            this.npc.speed *= 1.25;
-            this.player.incomingDamageMultiplier *= 1.25;
-            this.npc.isInvincible = false;
-            if (this.npcRebirthGlow) this.npcRebirthGlow.destroy();
-            this.npcRebirthGlow = this.add.circle(this.npc.x, this.npc.y, 36, 0x00ffff, 0.15).setDepth(4);
-            this.npcRebirthGlow.setStrokeStyle(3, 0x00ffff, 0.9);
-            this.tweens.add({ targets: this.npcRebirthGlow, alpha: 0.45, yoyo: true, repeat: -1, duration: 400 });
-            this.showFloatingText(this.npc.x, this.npc.y - 30, 'REBORN!', '#00ffff');
-            registerNpcDefeat();
-          });
-        } else if (this.allEnemiesMustDie) {
-          this.npcMainDefeated = true;
-          if (this.npc.active) { this.npc.setActive(false).setVisible(false); }
-          checkAllEnemiesDefeated();
-        } else if (this.isInvasion) {
-          if (this.npc.active) { this.npc.setActive(false).setVisible(false); }
-          this.promotePrimaryTarget();
-        } else {
-          this.endGame(true);
-        }
-      });
-    };
-    registerNpcDefeat();
+    // Invasion enemies manage their own defeat handlers in spawnCorrupted(); skip here
+    if (!this.isInvasion) {
+      const registerNpcDefeat = () => {
+        this.npc.once('defeated', () => {
+          if (!this.isPvP && this.mutations.has('reborn') && !this.npcRebirthUsed) {
+            this.npcRebirthUsed = true;
+            this.npc.isInvincible = true;
+            const flash = this.add.circle(this.npc.x, this.npc.y, 50, 0x00ffff, 0.8).setDepth(15);
+            this.tweens.add({ targets: flash, scaleX: 5, scaleY: 5, alpha: 0, duration: 500, onComplete: () => flash.destroy() });
+            this.time.delayedCall(400, () => {
+              if (!this.npc.active) return;
+              this.npc.hp = Math.round(this.npc.maxHp * 0.25);
+              this.npc.speed *= 1.25;
+              this.player.incomingDamageMultiplier *= 1.25;
+              this.npc.isInvincible = false;
+              if (this.npcRebirthGlow) this.npcRebirthGlow.destroy();
+              this.npcRebirthGlow = this.add.circle(this.npc.x, this.npc.y, 36, 0x00ffff, 0.15).setDepth(4);
+              this.npcRebirthGlow.setStrokeStyle(3, 0x00ffff, 0.9);
+              this.tweens.add({ targets: this.npcRebirthGlow, alpha: 0.45, yoyo: true, repeat: -1, duration: 400 });
+              this.showFloatingText(this.npc.x, this.npc.y - 30, 'REBORN!', '#00ffff');
+              registerNpcDefeat();
+            });
+          } else if (this.allEnemiesMustDie) {
+            this.npcMainDefeated = true;
+            if (this.npc.active) { this.npc.setActive(false).setVisible(false); }
+            checkAllEnemiesDefeated();
+          } else {
+            this.endGame(true);
+          }
+        });
+      };
+      registerNpcDefeat();
+    }
 
     if (this.clone) {
       this.clone.once('defeated', () => {
@@ -12090,9 +12083,7 @@ export class ArenaScene extends Phaser.Scene {
       if (this.hasUpgrade('e')) {
         for (const drone of this.playerDrones) {
           if (time >= drone.meleeCooldownUntil) {
-            const hitSomething = this.isInvasion
-              ? [this.npc, ...this.corrupted.filter(c => c.active && c.hp > 0)].some(t => Phaser.Math.Distance.Between(drone.sprite.x, drone.sprite.y, t.x, t.y) <= 25)
-              : Phaser.Math.Distance.Between(drone.sprite.x, drone.sprite.y, this.npc.x, this.npc.y) <= 25;
+            const hitSomething = this.enemies.some(t => t.active && t.hp > 0 && Phaser.Math.Distance.Between(drone.sprite.x, drone.sprite.y, t.x, t.y) <= 25);
             if (hitSomething) {
               this.damagePlayerTargets(drone.sprite.x, drone.sprite.y, 25, 5, 0xffaa00);
               drone.meleeCooldownUntil = time + 1000;
@@ -20429,16 +20420,8 @@ export class ArenaScene extends Phaser.Scene {
       this.spawnCorrupted(entry);
     }
 
-    // Build allEnemies list (primary + secondary)
-    const allEnemies: CorruptedBase[] = [];
-    if (this.npc instanceof CorruptedBase && this.npc.active && this.npc.hp > 0) {
-      allEnemies.push(this.npc);
-    }
-    for (const c of this.corrupted) {
-      if (c.active && c.hp > 0) allEnemies.push(c);
-    }
-
-    // Run AI for all enemies
+    // Run AI for all active enemies
+    const allEnemies = this.enemies.filter(e => e.active && e.hp > 0) as CorruptedBase[];
     for (const c of allEnemies) {
       c.aiTick(this.player, this.projectiles, allEnemies, time, delta);
     }
@@ -20595,36 +20578,21 @@ export class ArenaScene extends Phaser.Scene {
         break;
     }
 
-    // Assign as primary or secondary
-    const hasPrimary = this.npc instanceof CorruptedBase && this.npc.active && this.npc.hp > 0;
-    if (!hasPrimary) {
-      this.npc = c;
-      this.corruptedGroup.add(c, true);
-      this.npc.once('defeated', () => {
-        this.corruptedGroup.remove(this.npc, false, false);
-        if (this.npc.active) { this.npc.setActive(false).setVisible(false); }
-        this.waveManager.onEnemyDefeated();
-        this.invasionShardsEarned += Math.ceil(this.waveManager.wave * 0.5);
-        if (this.invasionWavesCompleted < this.waveManager.wave && this.waveManager.isWaveComplete()) {
-          this.invasionWavesCompleted = this.waveManager.wave;
-        }
-        this.promotePrimaryTarget();
-      });
-    } else {
-      this.corrupted.push(c);
-      this.corruptedGroup.add(c, true);
-      c.once('defeated', () => {
-        this.corrupted = this.corrupted.filter(x => x !== c);
-        this.corruptedGroup.remove(c, false, false);
-        if (c.active) { c.setActive(false).setVisible(false); }
-        this.waveManager.onEnemyDefeated();
-        this.invasionShardsEarned += Math.ceil(this.waveManager.wave * 0.5);
-        if (this.invasionWavesCompleted < this.waveManager.wave && this.waveManager.isWaveComplete()) {
-          this.invasionWavesCompleted = this.waveManager.wave;
-        }
-        this.showFloatingText(c.x, c.y - 30, `+${Math.ceil(this.waveManager.wave * 0.5)} 🩸`, '#cc44ff');
-      });
-    }
+    // Add to unified enemies list and physics group
+    this.enemies.push(c);
+    this.enemyGroup.add(c, true);
+    c.once('defeated', () => {
+      this.enemies = this.enemies.filter(e => e !== c);
+      this.enemyGroup.remove(c, false, false);
+      if (c.active) { c.setActive(false).setVisible(false); }
+      this.waveManager.onEnemyDefeated();
+      const shards = Math.ceil(this.waveManager.wave * 0.5);
+      this.invasionShardsEarned += shards;
+      this.showFloatingText(c.x, c.y - 30, `+${shards} 🩸`, '#cc44ff');
+      if (this.invasionWavesCompleted < this.waveManager.wave && this.waveManager.isWaveComplete()) {
+        this.invasionWavesCompleted = this.waveManager.wave;
+      }
+    });
   }
 
   private spawnVoidPuddle(x: number, y: number): void {
@@ -20687,30 +20655,6 @@ export class ArenaScene extends Phaser.Scene {
     // (handled in updateTitanShieldVsProjectiles by proximity to rocket.sprite)
   }
 
-  private promotePrimaryTarget(): void {
-    if (!this.isInvasion) return;
-    // Remove dead npc from corrupted list and find closest living enemy
-    this.corrupted = this.corrupted.filter(c => c !== this.npc && c.active && c.hp > 0);
-    if (this.corrupted.length === 0) return; // wave complete, wave manager handles next
-    let best = this.corrupted[0];
-    let bestD = Infinity;
-    for (const c of this.corrupted) {
-      const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, c.x, c.y);
-      if (d < bestD) { bestD = d; best = c; }
-    }
-    this.corrupted = this.corrupted.filter(c => c !== best);
-    // Reset single-target scene state that was tracking the old primary
-    this.npcPosHistory.length = 0;
-    this.timeNpcTeleporting = false;
-    this.npc = best;
-    // best stays in corruptedGroup (was already there as a secondary)
-    // Re-register defeat handler for the new primary
-    this.npc.once('defeated', () => {
-      this.corruptedGroup.remove(this.npc, false, false);
-      if (this.npc.active) { this.npc.setActive(false).setVisible(false); }
-      this.promotePrimaryTarget();
-    });
-  }
 
   private applyProjectileToNpc(proj: Projectile): void {
     // Time Warp orb: deal 20 damage + teleport NPC back 3 seconds (or save pos with E+)
