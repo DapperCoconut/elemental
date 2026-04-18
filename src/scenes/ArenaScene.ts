@@ -1494,6 +1494,7 @@ export class ArenaScene extends Phaser.Scene {
   private huntBeastFills: AbilityBarEntry[] = [];
   // Hunt upgrade state — player
   private huntPermTrailActive = false;
+  private huntBloodHuntTarget: Fighter | null = null;
   private huntBloodHuntInvincUntil = 0;
   private huntBloodHuntCharging = false;
   private huntBloodHuntChargeEnd = 0;
@@ -2536,6 +2537,7 @@ export class ArenaScene extends Phaser.Scene {
     this.huntNormalHudCards = []; this.huntBeastHudCards = [];
     this.huntNormalFills = []; this.huntBeastFills = [];
     this.huntPermTrailActive = false;
+    this.huntBloodHuntTarget = null;
     this.huntBloodHuntInvincUntil = 0;
     this.huntBloodHuntCharging = false;
     this.huntBloodHuntChargeEnd = 0;
@@ -5432,7 +5434,9 @@ export class ArenaScene extends Phaser.Scene {
         this.nukeChannelEnd = this.time.now + 2000;
       },
       huntBloodHunt: () => {
-        if (!this.npc.bleeding) return;
+        const bhTarget = this.enemies.find(t => t.active && t.hp > 0 && t.bleeding) ?? null;
+        if (!bhTarget) return;
+        this.huntBloodHuntTarget = bhTarget;
         this.player.isInvincible = true;
         (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
         if (this.hasUpgrade('r')) {
@@ -5445,9 +5449,9 @@ export class ArenaScene extends Phaser.Scene {
           const chargeArc = this.add.circle(this.player.x, this.player.y, 12, 0xff4400, 0.6).setDepth(9);
           this.tweens.add({ targets: chargeArc, scaleX: 3, scaleY: 3, alpha: 0, duration: 900, onComplete: () => chargeArc.destroy() });
         } else {
-          // Base: instant teleport beside NPC, 1s stun + 1s invincibility
+          // Base: instant teleport beside target, 1s stun + 1s invincibility
           const angle = Math.random() * Math.PI * 2;
-          this.player.setPosition(this.npc.x + Math.cos(angle) * 60, this.npc.y + Math.sin(angle) * 60);
+          this.player.setPosition(bhTarget.x + Math.cos(angle) * 60, bhTarget.y + Math.sin(angle) * 60);
           this.nukeChanneling = true;
           this.nukeChannelEnd = this.time.now + 1000;
           this.huntBloodHuntInvincUntil = this.time.now + 1000;
@@ -5535,18 +5539,23 @@ export class ArenaScene extends Phaser.Scene {
         const shriekRect = this.add.rectangle(cx, cy, 120, 60, 0xffcc66, 0.55)
           .setStrokeStyle(2, 0xffffff, 0.8).setDepth(7).setRotation(angle - Math.PI / 2);
         this.tweens.add({ targets: shriekRect, alpha: 0, duration: 250, onComplete: () => shriekRect.destroy() });
-        // Local-space AABB check for NPC overlap
+        // Local-space AABB check for all enemies
         const fwCos = Math.cos(-angle);
         const fwSin = Math.sin(-(angle - Math.PI / 2));
-        const relX = this.npc.x - cx;
-        const relY = this.npc.y - cy;
-        const localX = fwCos * relX - fwSin * relY;
-        const localY = fwSin * relX + fwCos * relY;
-        const hit = Math.abs(localX) <= 60 && Math.abs(localY) <= 30;
-        if (hit) {
-          // Refresh bleed to full 8s duration
-          this.npc.bleeding = true;
-          this.npc.bleedingUntil = this.time.now + 8000;
+        let shriekHit = false;
+        for (const t of this.enemies) {
+          if (!t.active || t.hp <= 0) continue;
+          const relX = t.x - cx;
+          const relY = t.y - cy;
+          const localX = fwCos * relX - fwSin * relY;
+          const localY = fwSin * relX + fwCos * relY;
+          if (Math.abs(localX) <= 60 && Math.abs(localY) <= 30) {
+            t.bleeding = true;
+            t.bleedingUntil = this.time.now + 8000;
+            shriekHit = true;
+          }
+        }
+        if (shriekHit) {
           this.applyNpcBleedVisual();
           // Mark shriek DoT (3 dmg/s + heals caster)
           this.npcHuntShriekDotUntil = this.time.now + 8000;
@@ -9304,7 +9313,7 @@ export class ArenaScene extends Phaser.Scene {
     }
     // NPC hunt speed adjustments
     if (this.npc.element.id === 'hunt' && this.npcHuntBeastForm) this.npcSpeedMult = Math.max(this.npcSpeedMult, 1.5);
-    if (time < this.npcHuntSlowUntil) this.npcSpeedMult *= 0.5;
+    if (!this.isInvasion && time < this.npcHuntSlowUntil) this.npcSpeedMult *= 0.5;
     // Silence slasher dread aura: slow NPC proportional to proximity (PvP only; invasion handled in updateInvasion)
     if (!this.isInvasion && this.elementId === 'silence' && this.silenceSlasherActive) {
       const silDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
@@ -14079,8 +14088,9 @@ export class ArenaScene extends Phaser.Scene {
           this.huntTrailAccum += delta;
           if (this.huntTrailAccum >= 150) {
             this.huntTrailAccum -= 150;
-            const s = this.add.circle(this.npc.x, this.npc.y, 30, 0xff4400, 0.18).setDepth(2);
-            this.huntTrailCircles.push({ sprite: s, x: this.npc.x, y: this.npc.y, expiresAt: time + 3000 });
+            const trailTarget = this.getNearestEnemy(this.player.x, this.player.y);
+            const s = this.add.circle(trailTarget.x, trailTarget.y, 30, 0xff4400, 0.18).setDepth(2);
+            this.huntTrailCircles.push({ sprite: s, x: trailTarget.x, y: trailTarget.y, expiresAt: time + 3000 });
           }
         }
       }
@@ -14111,18 +14121,21 @@ export class ArenaScene extends Phaser.Scene {
         }
       }
 
-      // Shriek DoT (hybrid F): 3 dmg/s + heal caster
-      if (this.huntHybridForm && time < this.npcHuntShriekDotUntil && this.npc.bleeding) {
+      // Shriek DoT (hybrid F): 3 dmg/s + heal caster — tick all bleeding enemies
+      const shriekBleedTargets = this.enemies.filter(t => t.active && t.hp > 0 && t.bleeding);
+      if (this.huntHybridForm && time < this.npcHuntShriekDotUntil && shriekBleedTargets.length > 0) {
         this.npcHuntShriekDotTick += delta;
         if (this.npcHuntShriekDotTick >= 1000) {
           this.npcHuntShriekDotTick -= 1000;
-          this.npc.takeDamage(3);
+          for (const t of shriekBleedTargets) {
+            t.takeDamage(3);
+            this.spawnHitFlash(t.x, t.y, 0xffcc66);
+          }
           this.player.heal(3);
-          this.spawnHitFlash(this.npc.x, this.npc.y, 0xffcc66);
           this.showFloatingText(this.player.x, this.player.y - 16, '+3', '#ffcc66');
         }
-      } else if (!this.npc.bleeding) {
-        // Bleed cleared — stop DoT
+      } else if (shriekBleedTargets.length === 0) {
+        // No bleeding enemies — stop DoT
         this.npcHuntShriekDotUntil = 0;
       }
 
@@ -14164,12 +14177,15 @@ export class ArenaScene extends Phaser.Scene {
       }
 
       // Bleeding auras
-      if (this.npc.bleeding) {
-        if (time > this.npc.bleedingUntil) {
-          this.npc.bleeding = false;
-          if (this.npc.bleedVisual) { this.npc.bleedVisual.destroy(); this.npc.bleedVisual = null; }
-        } else if (this.npc.bleedVisual) {
-          this.npc.bleedVisual.setPosition(this.npc.x, this.npc.y);
+      for (const t of this.enemies) {
+        if (!t.active) continue;
+        if (t.bleeding) {
+          if (time > t.bleedingUntil) {
+            t.bleeding = false;
+            if (t.bleedVisual) { t.bleedVisual.destroy(); t.bleedVisual = null; }
+          } else if (t.bleedVisual) {
+            t.bleedVisual.setPosition(t.x, t.y);
+          }
         }
       }
       if (this.playerBleeding) {
@@ -14181,18 +14197,24 @@ export class ArenaScene extends Phaser.Scene {
         }
       }
 
-      // Blood Moon — player (NPC bleeding gets chip damage + attack penalty tracked via aiState)
+      // Blood Moon — player (bleeding enemies get chip damage)
       if (this.huntBloodMoonActive) {
         if (time > this.huntBloodMoonEnd) {
           this.huntBloodMoonActive = false;
           if (this.huntBloodMoonFilter) { this.huntBloodMoonFilter.destroy(); this.huntBloodMoonFilter = null; }
-        } else if (this.npc.bleeding) {
-          this.huntBloodMoonTickAccum += delta;
-          if (this.huntBloodMoonTickAccum >= 2000) {
-            this.huntBloodMoonTickAccum -= 2000;
-            this.npc.takeDamage(5);
-            if (this.hasUpgrade('f')) this.player.heal(3); // 50% lifesteal from blood moon ticks
-            if (this.huntBloodPactActive && time < this.huntBloodPactEnd) this.player.heal(3);
+        } else {
+          const bleedingTargets = this.enemies.filter(t => t.active && t.hp > 0 && t.bleeding);
+          if (bleedingTargets.length > 0) {
+            this.huntBloodMoonTickAccum += delta;
+            if (this.huntBloodMoonTickAccum >= 2000) {
+              this.huntBloodMoonTickAccum -= 2000;
+              for (const t of bleedingTargets) {
+                t.takeDamage(5);
+                this.spawnHitFlash(t.x, t.y, 0xcc2222);
+              }
+              if (this.hasUpgrade('f')) this.player.heal(3 * bleedingTargets.length);
+              if (this.huntBloodPactActive && time < this.huntBloodPactEnd) this.player.heal(3);
+            }
           }
         }
       }
@@ -14220,11 +14242,12 @@ export class ArenaScene extends Phaser.Scene {
       // Blood Hunt R+: delayed teleport at 1s charge mark
       if (this.huntBloodHuntCharging && time >= this.huntBloodHuntChargeEnd) {
         this.huntBloodHuntCharging = false;
+        const bhTgt = this.huntBloodHuntTarget ?? this.npc;
         const angle = Math.random() * Math.PI * 2;
-        this.player.setPosition(this.npc.x + Math.cos(angle) * 60, this.npc.y + Math.sin(angle) * 60);
+        this.player.setPosition(bhTgt.x + Math.cos(angle) * 60, bhTgt.y + Math.sin(angle) * 60);
         this.npcHuntSlowUntil = time + 3000;
         this.npcHuntConfusedUntil = time + 3000;
-        this.showFloatingText(this.npc.x, this.npc.y - 20, '😵 Confused!', '#ff8800');
+        this.showFloatingText(bhTgt.x, bhTgt.y - 20, '😵 Confused!', '#ff8800');
         const roar = this.add.circle(this.player.x, this.player.y, 18, 0xff0000, 0.8).setDepth(9);
         this.tweens.add({ targets: roar, scaleX: 4, scaleY: 4, alpha: 0, duration: 800, onComplete: () => roar.destroy() });
         const roar2 = this.add.circle(this.player.x, this.player.y, 10, 0xffffff, 1).setDepth(10);
@@ -14237,10 +14260,16 @@ export class ArenaScene extends Phaser.Scene {
           this.huntLeapTeleported = true;
           this.player.setPosition(this.huntLeapTargetX, this.huntLeapTargetY);
           // AoE explosion at 1s teleport mark
-          const td = Phaser.Math.Distance.Between(this.huntLeapTargetX, this.huntLeapTargetY, this.npc.x, this.npc.y);
-          if (td <= 120) {
-            this.npc.takeDamage(30);
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0xff4400);
+          let leapHitE = false;
+          for (const t of this.enemies) {
+            if (!t.active || t.hp <= 0) continue;
+            if (Phaser.Math.Distance.Between(this.huntLeapTargetX, this.huntLeapTargetY, t.x, t.y) <= 120) {
+              t.takeDamage(30);
+              this.spawnHitFlash(t.x, t.y, 0xff4400);
+              leapHitE = true;
+            }
+          }
+          if (leapHitE) {
             if (this.huntBloodMoonActive && this.hasUpgrade('f')) this.player.heal(15);
             if (this.huntBloodPactActive && time < this.huntBloodPactEnd) this.player.heal(15);
           }
@@ -14251,10 +14280,16 @@ export class ArenaScene extends Phaser.Scene {
           this.huntLeapActive = false;
           if (!this.huntLeapTeleported) {
             this.player.setPosition(this.huntLeapTargetX, this.huntLeapTargetY);
-            const landDist = Phaser.Math.Distance.Between(this.huntLeapTargetX, this.huntLeapTargetY, this.npc.x, this.npc.y);
-            if (landDist <= 120) {
-              this.npc.takeDamage(30);
-              this.spawnHitFlash(this.npc.x, this.npc.y, 0xff4400);
+            let leapHit = false;
+            for (const t of this.enemies) {
+              if (!t.active || t.hp <= 0) continue;
+              if (Phaser.Math.Distance.Between(this.huntLeapTargetX, this.huntLeapTargetY, t.x, t.y) <= 120) {
+                t.takeDamage(30);
+                this.spawnHitFlash(t.x, t.y, 0xff4400);
+                leapHit = true;
+              }
+            }
+            if (leapHit) {
               if (this.huntBloodMoonActive && this.hasUpgrade('f')) this.player.heal(15);
               if (this.huntBloodPactActive && time < this.huntBloodPactEnd) this.player.heal(15);
             }
@@ -14285,8 +14320,8 @@ export class ArenaScene extends Phaser.Scene {
         this.tweens.add({ targets: boom2, scaleX: 12, scaleY: 12, alpha: 0, duration: 400, onComplete: () => boom2.destroy() });
       }
 
-      // NPC confusion (R+ Blood Hunt)
-      if (time < this.npcHuntConfusedUntil) {
+      // NPC confusion (R+ Blood Hunt) — PvP only; invasion handled in updateInvasion
+      if (!this.isInvasion && time < this.npcHuntConfusedUntil) {
         if (time > this.npcHuntConfuseDirUntil) {
           const confAngle = Math.random() * Math.PI * 2;
           this.npcHuntConfuseVx = Math.cos(confAngle) * this.npc.speed;
@@ -20703,6 +20738,22 @@ export class ArenaScene extends Phaser.Scene {
           cb.velocity.y *= 1 - auraT * 0.65;
         }
       }
+      // Hunt: Blood Hunt slow
+      if (this.elementId === 'hunt' && time < this.npcHuntSlowUntil) {
+        const cb = c.body as Phaser.Physics.Arcade.Body;
+        cb.velocity.x *= 0.5;
+        cb.velocity.y *= 0.5;
+      }
+      // Hunt: Blood Hunt R+ confusion — applies only to the targeted enemy
+      if (this.elementId === 'hunt' && time < this.npcHuntConfusedUntil && c === (this.huntBloodHuntTarget as unknown as CorruptedBase)) {
+        if (time > this.npcHuntConfuseDirUntil) {
+          const confAngle = Math.random() * Math.PI * 2;
+          this.npcHuntConfuseVx = Math.cos(confAngle) * c.speed;
+          this.npcHuntConfuseVy = Math.sin(confAngle) * c.speed;
+          this.npcHuntConfuseDirUntil = time + 450;
+        }
+        (c.body as Phaser.Physics.Arcade.Body).setVelocity(this.npcHuntConfuseVx, this.npcHuntConfuseVy);
+      }
     }
 
     // Tick festering growths
@@ -21186,6 +21237,31 @@ export class ArenaScene extends Phaser.Scene {
     c.takeDamage(dmg);
     this.spawnHitFlash(proj.x, proj.y, 0xff6600);
 
+    // Hunt Blood Pact: heal player for 50% of damage dealt
+    if (this.huntBloodPactActive && this.time.now < this.huntBloodPactEnd) this.player.heal(Math.ceil(dmg * 0.5));
+    // Hunt Blood Moon F+: 50% lifesteal from damage dealt to bleeding enemy
+    if (this.huntBloodMoonActive && this.hasUpgrade('f') && c.bleeding) this.player.heal(Math.ceil(dmg * 0.5));
+    // Hunt silver bullets (hybrid): apply bleed + Click+ bonus
+    if (proj.texture.key === 'proj-hunt-silver' || this.huntSilverPellets.has(proj)) {
+      if (this.hasUpgrade('click') && c.bleeding) {
+        c.takeDamage(Math.round(proj.damage * 0.5));
+      }
+      c.bleeding = true;
+      c.bleedingUntil = Math.max(c.bleedingUntil, this.time.now + 8000);
+      if (!c.bleedVisual) {
+        c.bleedVisual = this.add.circle(c.x, c.y, 26, 0xcc0000, 0.3).setStrokeStyle(2, 0xff2222, 0.5).setDepth(3);
+        this.tweens.add({ targets: c.bleedVisual, alpha: 0.1, yoyo: true, repeat: -1, duration: 600 });
+      }
+    }
+    // Hunt shrapnel (hybrid F+ shriek): apply bleed
+    if (this.huntShrapnelSet.has(proj)) {
+      c.bleeding = true;
+      c.bleedingUntil = Math.max(c.bleedingUntil, this.time.now + 8000);
+      if (!c.bleedVisual) {
+        c.bleedVisual = this.add.circle(c.x, c.y, 26, 0xcc0000, 0.3).setStrokeStyle(2, 0xff2222, 0.5).setDepth(3);
+        this.tweens.add({ targets: c.bleedVisual, alpha: 0.1, yoyo: true, repeat: -1, duration: 600 });
+      }
+    }
     // Burn (fire projectile + Flameshredder upgrade)
     if (proj.texture.key === 'proj-fire' && this.hasUpgrade('click')) {
       c.burningUntil = Math.max(c.burningUntil, this.time.now + 3000);
