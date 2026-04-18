@@ -2828,6 +2828,7 @@ export class ArenaScene extends Phaser.Scene {
       const slimeApi: SlimeArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
         get scene(): Phaser.Scene { return arena; },
         get eKey() { return arena.eKey; },
         get fKey() { return arena.fKey; },
@@ -9357,7 +9358,7 @@ export class ArenaScene extends Phaser.Scene {
       }
     }
     // Slime level 3 slow (15%) on NPC
-    if (this.elementId === 'slime' && time < this.slimeKit.getNpcSlimeSlowUntil()) this.npcSpeedMult *= 0.85;
+    if (!this.isInvasion && this.elementId === 'slime' && time < this.slimeKit.getNpcSlimeSlowUntil()) this.npcSpeedMult *= 0.85;
     // Adrenaline SK8 trick slow on NPC
     if (this.elementId === 'adrenaline' && time < this.npcSkateSlowUntil) this.npcSpeedMult *= 0.75;
     // Growth Cough aura slow (PvP/AI only — invasion handled in updateInvasion)
@@ -20783,6 +20784,22 @@ export class ArenaScene extends Phaser.Scene {
           this.npcHuntConfuseDirUntil = time + 450;
         }
         (c.body as Phaser.Physics.Arcade.Body).setVelocity(this.npcHuntConfuseVx, this.npcHuntConfuseVy);
+      }
+      // Slime sulpher spring confusion
+      if (this.elementId === 'slime' && time < c.slimeConfusedUntil) {
+        if (time > c.slimeConfuseDirUntil) {
+          const ca = Math.random() * Math.PI * 2;
+          c.slimeConfuseVx = Math.cos(ca) * c.speed;
+          c.slimeConfuseVy = Math.sin(ca) * c.speed;
+          c.slimeConfuseDirUntil = time + 450;
+        }
+        (c.body as Phaser.Physics.Arcade.Body).setVelocity(c.slimeConfuseVx, c.slimeConfuseVy);
+      }
+      // Slime level-3 slow (15%)
+      if (this.elementId === 'slime' && this.slimeKit.isEnemySlowed(c, time)) {
+        const cb = c.body as Phaser.Physics.Arcade.Body;
+        cb.velocity.x *= 0.85;
+        cb.velocity.y *= 0.85;
       }
     }
 

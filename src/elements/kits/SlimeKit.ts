@@ -56,6 +56,7 @@ interface SlimeSlotUI {
 export interface SlimeArenaApi {
   readonly player: Fighter;
   readonly npc: Fighter;
+  readonly enemies: readonly Fighter[];
   readonly scene: Phaser.Scene;
   readonly eKey: Phaser.Input.Keyboard.Key;
   readonly fKey: Phaser.Input.Keyboard.Key;
@@ -90,10 +91,7 @@ export class SlimeKit {
   private playerSlimeConfuseDirUntil = 0;
 
   // ── NPC state ─────────────────────────────────────────────────────────
-  private npcSlimeSlowUntil = 0;
-  private npcSlimeBurningUntil = 0;
-  private npcSlimeBurnTickAccum = 0;
-  private npcSlimeBurnAura: Phaser.GameObjects.Arc | null = null;
+  private enemySlowUntil: Map<Fighter, number> = new Map();
 
   constructor(private arena: SlimeArenaApi) {}
 
@@ -101,8 +99,9 @@ export class SlimeKit {
 
   getSlimes(): readonly SlimeEntity[] { return this.slimes; }
   getSpeedBoostUntil(): number { return this.slimeSpeedBoostUntil; }
-  getNpcSlimeSlowUntil(): number { return this.npcSlimeSlowUntil; }
-  setNpcSlimeSlowUntil(v: number): void { this.npcSlimeSlowUntil = v; }
+  getNpcSlimeSlowUntil(): number { return this.enemySlowUntil.get(this.arena.npc) ?? 0; }
+  setNpcSlimeSlowUntil(v: number): void { this.enemySlowUntil.set(this.arena.npc, v); }
+  isEnemySlowed(enemy: Fighter, time: number): boolean { return (this.enemySlowUntil.get(enemy) ?? 0) > time; }
   getPlayerConfusedUntil(): number { return this.playerSlimeConfusedUntil; }
   getPlayerConfuseVx(): number { return this.playerSlimeConfuseVx; }
   getPlayerConfuseVy(): number { return this.playerSlimeConfuseVy; }
@@ -136,10 +135,7 @@ export class SlimeKit {
     this.playerSlimeConfuseVx = 0;
     this.playerSlimeConfuseVy = 0;
     this.playerSlimeConfuseDirUntil = 0;
-    this.npcSlimeSlowUntil = 0;
-    this.npcSlimeBurningUntil = 0;
-    this.npcSlimeBurnTickAccum = 0;
-    if (this.npcSlimeBurnAura) { this.npcSlimeBurnAura.destroy(); this.npcSlimeBurnAura = null; }
+    this.enemySlowUntil.clear();
   }
 
   startMatch(W: number, H: number, isPlayerSlime: boolean): void {
@@ -284,16 +280,18 @@ export class SlimeKit {
         s.y += s.vy * (delta / 1000);
         s.sprite.setPosition(s.x, s.y);
 
-        const npcDist = Phaser.Math.Distance.Between(s.x, s.y, npc.x, npc.y);
         const hitRadius = s.level === 3 ? 20 : s.level === 2 ? 17 : 14;
-        if (npcDist <= hitRadius + 20 && time >= s.collisionCdUntil) {
-          const dmg = s.level === 1 ? 8 : s.level === 2 ? 12 : 15;
-          npc.takeDamage(dmg);
-          this.arena.spawnHitFlash(npc.x, npc.y, this.getSlimeColor(s));
-          this.arena.showFloatingText(npc.x, npc.y - 20, String(dmg), '#66cc44');
-          if (s.level === 3) this.npcSlimeSlowUntil = Math.max(this.npcSlimeSlowUntil, time + 2000);
-          if (s.variant === 'firey') this.npcSlimeBurningUntil = Math.max(this.npcSlimeBurningUntil, time + 3000);
-          s.collisionCdUntil = time + 1000;
+        for (const t of this.arena.enemies) {
+          if (!t.active || t.hp <= 0) continue;
+          if (Phaser.Math.Distance.Between(s.x, s.y, t.x, t.y) <= hitRadius + 20 && time >= s.collisionCdUntil) {
+            const dmg = s.level === 1 ? 8 : s.level === 2 ? 12 : 15;
+            t.takeDamage(dmg);
+            this.arena.spawnHitFlash(t.x, t.y, this.getSlimeColor(s));
+            this.arena.showFloatingText(t.x, t.y - 20, String(dmg), '#66cc44');
+            if (s.level === 3) this.enemySlowUntil.set(t, Math.max(this.enemySlowUntil.get(t) ?? 0, time + 2000));
+            if (s.variant === 'firey') t.burningUntil = Math.max(t.burningUntil, time + 3000);
+            s.collisionCdUntil = time + 1000;
+          }
         }
 
         // XP from slime puddles on outgoing flight
@@ -399,12 +397,16 @@ export class SlimeKit {
           this.playerSlimeConfusedUntil = Math.max(this.playerSlimeConfusedUntil, time + 2000);
         }
       }
-      const nd = Phaser.Math.Distance.Between(spring.x, spring.y, npc.x, npc.y);
-      if (nd <= spring.radius) {
-        if (time > npc.slimeConfusedUntil) {
-          this.arena.showFloatingText(npc.x, npc.y - 20, '😵 Confused!', '#eedd44');
+      if (spring.owner === 'player') {
+        for (const t of this.arena.enemies) {
+          if (!t.active || t.hp <= 0) continue;
+          if (Phaser.Math.Distance.Between(spring.x, spring.y, t.x, t.y) <= spring.radius) {
+            if (time > t.slimeConfusedUntil) {
+              this.arena.showFloatingText(t.x, t.y - 20, '😵 Confused!', '#eedd44');
+            }
+            t.slimeConfusedUntil = Math.max(t.slimeConfusedUntil, time + 2000);
+          }
         }
-        npc.slimeConfusedUntil = Math.max(npc.slimeConfusedUntil, time + 2000);
       }
       // Slime contact — assign variant
       for (const s of this.slimes) {
@@ -436,23 +438,6 @@ export class SlimeKit {
       if (s.state === 'shield-cooldown' && time >= s.shieldCooldownUntil) s.state = 'held';
     }
 
-    // Firey slime burn DOT on NPC
-    if (this.npcSlimeBurningUntil > time) {
-      if (!this.npcSlimeBurnAura) {
-        this.npcSlimeBurnAura = scene.add.circle(npc.x, npc.y, 26, 0xff6622, 0.3).setDepth(7);
-      }
-      this.npcSlimeBurnAura.setPosition(npc.x, npc.y);
-      this.npcSlimeBurnTickAccum += delta;
-      if (this.npcSlimeBurnTickAccum >= 500) {
-        this.npcSlimeBurnTickAccum -= 500;
-        npc.takeDamage(1);
-        this.arena.spawnHitFlash(npc.x, npc.y, 0xff6622);
-      }
-    } else {
-      this.npcSlimeBurnTickAccum = 0;
-      if (this.npcSlimeBurnAura) { this.npcSlimeBurnAura.destroy(); this.npcSlimeBurnAura = null; }
-    }
-
     // Slime Rain phase transitions
     if (this.slimeyRainPhase === 'shadows' && time >= this.slimeyRainLandAt) {
       this.slimeyRainPhase = 'landed';
@@ -479,11 +464,13 @@ export class SlimeKit {
           rainSlime.x = capX; rainSlime.y = capY;
           const aoe = scene.add.circle(capX, capY, 8, 0x66cc44, 0.8).setDepth(4);
           scene.tweens.add({ targets: aoe, scaleX: 8, scaleY: 8, alpha: 0, duration: 500, onComplete: () => aoe.destroy() });
-          const d = Phaser.Math.Distance.Between(capX, capY, npc.x, npc.y);
-          if (d <= 50) {
-            npc.takeDamage(12);
-            this.arena.spawnHitFlash(npc.x, npc.y, 0x66cc44);
-            this.arena.showFloatingText(npc.x, npc.y - 20, '12', '#66cc44');
+          for (const t of this.arena.enemies) {
+            if (!t.active || t.hp <= 0) continue;
+            if (Phaser.Math.Distance.Between(capX, capY, t.x, t.y) <= 50) {
+              t.takeDamage(12);
+              this.arena.spawnHitFlash(t.x, t.y, 0x66cc44);
+              this.arena.showFloatingText(t.x, t.y - 20, '12', '#66cc44');
+            }
           }
         });
       }
@@ -528,10 +515,13 @@ export class SlimeKit {
           if (availableSlime.variant === 'volatile') {
             const aoe = scene.add.circle(player.x, player.y, 10, 0xaa44dd, 0.8).setDepth(4);
             scene.tweens.add({ targets: aoe, scaleX: 6, scaleY: 6, alpha: 0, duration: 400, onComplete: () => aoe.destroy() });
-            if (Phaser.Math.Distance.Between(player.x, player.y, npc.x, npc.y) <= 50) {
-              npc.takeDamage(12);
-              this.arena.spawnHitFlash(npc.x, npc.y, 0xaa44dd);
-              this.arena.showFloatingText(npc.x, npc.y - 20, '12', '#aa44dd');
+            for (const t of this.arena.enemies) {
+              if (!t.active || t.hp <= 0) continue;
+              if (Phaser.Math.Distance.Between(player.x, player.y, t.x, t.y) <= 50) {
+                t.takeDamage(12);
+                this.arena.spawnHitFlash(t.x, t.y, 0xaa44dd);
+                this.arena.showFloatingText(t.x, t.y - 20, '12', '#aa44dd');
+              }
             }
           }
         }
@@ -596,9 +586,16 @@ export class SlimeKit {
           if (activeShield.variant === 'firey') {
             const reflect = Math.round(amount * 0.33);
             if (reflect > 0) {
-              npc.takeDamage(reflect);
-              this.arena.spawnHitFlash(npc.x, npc.y, 0xff6622);
-              this.arena.showFloatingText(npc.x, npc.y - 20, `🔥 ${reflect}`, '#ff6622');
+              let reflectTarget: Fighter = npc;
+              let nearestDist = Infinity;
+              for (const e of this.arena.enemies) {
+                if (!e.active || e.hp <= 0) continue;
+                const d = Phaser.Math.Distance.Between(player.x, player.y, e.x, e.y);
+                if (d < nearestDist) { nearestDist = d; reflectTarget = e; }
+              }
+              reflectTarget.takeDamage(reflect);
+              this.arena.spawnHitFlash(reflectTarget.x, reflectTarget.y, 0xff6622);
+              this.arena.showFloatingText(reflectTarget.x, reflectTarget.y - 20, `🔥 ${reflect}`, '#ff6622');
             }
           }
           activeShield.shieldHp -= amount;
