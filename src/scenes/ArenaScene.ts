@@ -8447,8 +8447,9 @@ export class ArenaScene extends Phaser.Scene {
     // Save last craft key for E+ Electro Bolt
     if (!forceKey) this.creatLastCraftKey = key;
     const caster = owner === 'player' ? this.player : this.npc;
-    const enemy = owner === 'player' ? this.npc : this.player;
     const cx = this.crucibleX, cy = this.crucibleY;
+    const enemy = owner === 'player' ? this.getNearestEnemy(cx, cy) : this.player;
+    const _craftEnemies = owner === 'player' ? this.enemies : [this.player];
 
     // Clear bolt icons and craft state (skip when re-crafting via Electro Bolt)
     if (!forceKey) {
@@ -8492,9 +8493,12 @@ export class ArenaScene extends Phaser.Scene {
         const bh = Math.abs(Math.sin(ang)) > 0.5 ? beamLength : 6;
         const beam = this.add.rectangle(bx, by, bw, bh, 0xffdd22, 0.8).setDepth(8);
         this.tweens.add({ targets: beam, alpha: 0, duration: 400, onComplete: () => beam.destroy() });
-        if (Math.abs(enemy.x - bx) <= bw / 2 + 22 && Math.abs(enemy.y - by) <= bh / 2 + 22) {
-          enemy.takeDamage(35);
-          this.spawnHitFlash(enemy.x, enemy.y, 0xffdd22);
+        for (const en of _craftEnemies) {
+          if (!en.active || en.hp <= 0) continue;
+          if (Math.abs(en.x - bx) <= bw / 2 + 22 && Math.abs(en.y - by) <= bh / 2 + 22) {
+            en.takeDamage(35);
+            this.spawnHitFlash(en.x, en.y, 0xffdd22);
+          }
         }
       }
       this.creatPrevIncomingDamageMult = caster.incomingDamageMultiplier;
@@ -11790,13 +11794,16 @@ export class ArenaScene extends Phaser.Scene {
         this.puddles.splice(i, 1);
         continue;
       }
-      const target = p.owner === 'player' ? this.npc : this.player;
-      if (Phaser.Math.Distance.Between(p.x, p.y, target.x, target.y) <= p.radius) {
+      const _puddleTargets = (p.owner === 'player' ? this.enemies : [this.player])
+        .filter(t => t.active && t.hp > 0 && Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) <= p.radius);
+      if (_puddleTargets.length > 0) {
         p.tickAccum += delta;
         if (p.tickAccum >= 250) {
           p.tickAccum -= 250;
-          target.takeDamage(2);
-          this.spawnHitFlash(target.x, target.y, 0x0099ff);
+          for (const target of _puddleTargets) {
+            target.takeDamage(2);
+            this.spawnHitFlash(target.x, target.y, 0x0099ff);
+          }
         }
       }
       // NPC heals double when standing in its own puddles
@@ -12868,20 +12875,28 @@ export class ArenaScene extends Phaser.Scene {
           this.icyTrails.splice(ti, 1);
           continue;
         }
-        // Slow the enemy standing in the trail
-        const enemyTarget = trail.owner === 'player' ? this.npc : this.player;
-        const trailDist = Phaser.Math.Distance.Between(trail.x, trail.y, enemyTarget.x, enemyTarget.y);
-        if (trailDist <= trail.radius) {
-          if (trail.owner === 'player') {
-            // Void frost trails don't slow — regular frost trails do
-            if (!this.playerBlackIceMorphActive) this.npcSpeedMult *= 0.8;
-            // Frost/void-frost tick every 1200ms
-            trail.frostTickAccum += delta;
-            if (trail.frostTickAccum >= 1200) {
-              trail.frostTickAccum -= 1200;
-              this.addFrostStack('npc');
+        // Slow enemies standing in the trail
+        if (trail.owner === 'player') {
+          for (const enemyTarget of this.enemies) {
+            if (!enemyTarget.active || enemyTarget.hp <= 0) continue;
+            if (Phaser.Math.Distance.Between(trail.x, trail.y, enemyTarget.x, enemyTarget.y) <= trail.radius) {
+              // Slow via physics body (works for both PvP npc and invasion enemies)
+              if (!this.playerBlackIceMorphActive) {
+                const eb = enemyTarget.body as Phaser.Physics.Arcade.Body;
+                eb.velocity.x *= 0.8; eb.velocity.y *= 0.8;
+              }
+              // Also update npcSpeedMult for PvP NPC
+              if (!this.isInvasion && !this.playerBlackIceMorphActive) this.npcSpeedMult *= 0.8;
+              trail.frostTickAccum += delta;
+              if (trail.frostTickAccum >= 1200) {
+                trail.frostTickAccum -= 1200;
+                this.addFrostStackTo(enemyTarget);
+              }
+              break; // only accumulate once per frame
             }
-          } else {
+          }
+        } else {
+          if (Phaser.Math.Distance.Between(trail.x, trail.y, this.player.x, this.player.y) <= trail.radius) {
             // Player slow — movement already applied, directly scale current velocity
             const trailPlayerBody = this.player.body as Phaser.Physics.Arcade.Body;
             trailPlayerBody.velocity.x *= 0.8;
@@ -13440,12 +13455,15 @@ export class ArenaScene extends Phaser.Scene {
           mine.sprite.destroy();
           this.crystalBeamMines.splice(mi, 1);
         } else {
-          const tgt = mine.owner === 'player' ? this.npc : this.player;
-          if (Phaser.Math.Distance.Between(mine.x, mine.y, tgt.x, tgt.y) <= 28) {
-            tgt.takeDamage(4);
-            this.spawnHitFlash(tgt.x, tgt.y, 0x88eeff);
-            mine.sprite.destroy();
-            this.crystalBeamMines.splice(mi, 1);
+          for (const tgt of (mine.owner === 'player' ? this.enemies : [this.player])) {
+            if (!tgt.active || tgt.hp <= 0) continue;
+            if (Phaser.Math.Distance.Between(mine.x, mine.y, tgt.x, tgt.y) <= 28) {
+              tgt.takeDamage(4);
+              this.spawnHitFlash(tgt.x, tgt.y, 0x88eeff);
+              mine.sprite.destroy();
+              this.crystalBeamMines.splice(mi, 1);
+              break;
+            }
           }
         }
       }
@@ -14878,16 +14896,17 @@ export class ArenaScene extends Phaser.Scene {
         if (time >= sl.fireAt) {
           sl.line.destroy();
           this.gravSlashes.splice(i, 1);
-          const target = sl.owner === 'player' ? this.npc : this.player;
-          const d = this.pointToSegmentDist(target.x, target.y, sl.x1, sl.y1, sl.x2, sl.y2);
-          if (d <= 40) {
-            target.takeDamage(sl.damage);
-            this.spawnHitFlash(target.x, target.y, 0x8844cc);
-            // Knockback in drag direction
-            const kx = sl.x2 - sl.x1;
-            const ky = sl.y2 - sl.y1;
-            const klen = Math.hypot(kx, ky) || 1;
-            (target.body as Phaser.Physics.Arcade.Body).setVelocity((kx / klen) * sl.knockback, (ky / klen) * sl.knockback);
+          for (const target of (sl.owner === 'player' ? this.enemies : [this.player])) {
+            if (!target.active || target.hp <= 0) continue;
+            const d = this.pointToSegmentDist(target.x, target.y, sl.x1, sl.y1, sl.x2, sl.y2);
+            if (d <= 40) {
+              target.takeDamage(sl.damage);
+              this.spawnHitFlash(target.x, target.y, 0x8844cc);
+              const kx = sl.x2 - sl.x1;
+              const ky = sl.y2 - sl.y1;
+              const klen = Math.hypot(kx, ky) || 1;
+              (target.body as Phaser.Physics.Arcade.Body).setVelocity((kx / klen) * sl.knockback, (ky / klen) * sl.knockback);
+            }
           }
         }
       }
@@ -14907,12 +14926,14 @@ export class ArenaScene extends Phaser.Scene {
           // Small purple flash
           const gravFlash = this.add.circle(ms.x, ms.y, 8, 0x8844cc, 0.7).setDepth(7);
           this.tweens.add({ targets: gravFlash, scaleX: 10, scaleY: 10, alpha: 0, duration: 350, onComplete: () => gravFlash.destroy() });
-          const target = ms.owner === 'player' ? this.npc : this.player;
-          const dist = Phaser.Math.Distance.Between(ms.x, ms.y, target.x, target.y);
-          if (dist <= ms.radius) {
-            const dmg = dist <= ms.directHitRadius ? ms.damage + ms.directBonus : ms.damage;
-            target.takeDamage(dmg);
-            this.spawnHitFlash(target.x, target.y, 0xaa66ff);
+          for (const target of (ms.owner === 'player' ? this.enemies : [this.player])) {
+            if (!target.active || target.hp <= 0) continue;
+            const dist = Phaser.Math.Distance.Between(ms.x, ms.y, target.x, target.y);
+            if (dist <= ms.radius) {
+              const dmg = dist <= ms.directHitRadius ? ms.damage + ms.directBonus : ms.damage;
+              target.takeDamage(dmg);
+              this.spawnHitFlash(target.x, target.y, 0xaa66ff);
+            }
           }
           // E+: 15% chance to leave a fire pool on impact
           if (ms.owner === 'player' && this.hasUpgrade('e') && Math.random() < 0.15) {
@@ -14967,11 +14988,13 @@ export class ArenaScene extends Phaser.Scene {
         const gravPulse = this.add.circle(lsX, lsY, 12, 0x8844cc, 0.7).setDepth(8);
         this.tweens.add({ targets: gravPulse, scaleX: lsR / 6, scaleY: lsR / 6, alpha: 0, duration: 500, onComplete: () => gravPulse.destroy() });
 
-        // Deal damage to enemy inside the shadow circle
-        const target = this.gravLunarOwner === 'player' ? this.npc : this.player;
-        if (Phaser.Math.Distance.Between(lsX, lsY, target.x, target.y) <= lsR) {
-          target.takeDamage(60);
-          this.spawnHitFlash(target.x, target.y, 0xaa66ff);
+        // Deal damage to enemies inside the shadow circle
+        for (const target of (this.gravLunarOwner === 'player' ? this.enemies : [this.player])) {
+          if (!target.active || target.hp <= 0) continue;
+          if (Phaser.Math.Distance.Between(lsX, lsY, target.x, target.y) <= lsR) {
+            target.takeDamage(60);
+            this.spawnHitFlash(target.x, target.y, 0xaa66ff);
+          }
         }
 
         // Spawn 20 fire puddles randomly inside the shadow circle
@@ -15123,13 +15146,16 @@ export class ArenaScene extends Phaser.Scene {
           this.gravFirePuddles.splice(i, 1);
           continue;
         }
-        const fTarget = fp.owner === 'player' ? this.npc : this.player;
-        if (Phaser.Math.Distance.Between(fp.x, fp.y, fTarget.x, fTarget.y) <= fp.radius) {
+        const _fpTargets = (fp.owner === 'player' ? this.enemies : [this.player])
+          .filter(t => t.active && t.hp > 0 && Phaser.Math.Distance.Between(fp.x, fp.y, t.x, t.y) <= fp.radius);
+        if (_fpTargets.length > 0) {
           fp.tickAccum += delta;
           if (fp.tickAccum >= 300) {
             fp.tickAccum -= 300;
-            fTarget.takeDamage(4);
-            this.spawnHitFlash(fTarget.x, fTarget.y, 0xff6633);
+            for (const fTarget of _fpTargets) {
+              fTarget.takeDamage(4);
+              this.spawnHitFlash(fTarget.x, fTarget.y, 0xff6633);
+            }
           }
         }
       }
@@ -15156,13 +15182,15 @@ export class ArenaScene extends Phaser.Scene {
           this.creatDaggers.splice(i, 1);
           continue;
         }
-        const dTarget = d.owner === 'player' ? this.npc : this.player;
-        const targetId = d.owner === 'player' ? 'npc' : 'player';
-        if (!d.hitSet.has(targetId) && Phaser.Math.Distance.Between(d.sprite.x, d.sprite.y, dTarget.x, dTarget.y) <= 20) {
-          dTarget.takeDamage(d.damage);
-          this.spawnHitFlash(dTarget.x, dTarget.y, 0xeeeeff);
-          d.hitSet.add(targetId);
-          // Daggers pierce — don't destroy
+        for (const dTarget of (d.owner === 'player' ? this.enemies : [this.player])) {
+          if (!dTarget.active || dTarget.hp <= 0) continue;
+          const tId = dTarget === this.player ? 'player' : String(this.enemies.indexOf(dTarget as Fighter));
+          if (!d.hitSet.has(tId) && Phaser.Math.Distance.Between(d.sprite.x, d.sprite.y, dTarget.x, dTarget.y) <= 20) {
+            dTarget.takeDamage(d.damage);
+            this.spawnHitFlash(dTarget.x, dTarget.y, 0xeeeeff);
+            d.hitSet.add(tId);
+            // Daggers pierce — don't destroy
+          }
         }
       }
 
@@ -15181,10 +15209,12 @@ export class ArenaScene extends Phaser.Scene {
           if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, b.targetX, b.targetY) <= 20) {
             const rktRing = this.add.circle(b.sprite.x, b.sprite.y, 10, 0xee8800, 0.85).setDepth(8);
             this.tweens.add({ targets: rktRing, scaleX: 5, scaleY: 5, alpha: 0, duration: 300, onComplete: () => rktRing.destroy() });
-            const rktTarget = b.owner === 'player' ? this.npc : this.player;
-            if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, rktTarget.x, rktTarget.y) <= 50) {
-              rktTarget.takeDamage(b.damage);
-              this.spawnHitFlash(rktTarget.x, rktTarget.y, 0xee8800);
+            for (const rktTarget of (b.owner === 'player' ? this.enemies : [this.player])) {
+              if (!rktTarget.active || rktTarget.hp <= 0) continue;
+              if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, rktTarget.x, rktTarget.y) <= 50) {
+                rktTarget.takeDamage(b.damage);
+                this.spawnHitFlash(rktTarget.x, rktTarget.y, 0xee8800);
+              }
             }
             b.sprite.destroy();
             this.creatBolts.splice(i, 1);
@@ -15219,19 +15249,23 @@ export class ArenaScene extends Phaser.Scene {
           continue;
         }
         // Check enemy hit
-        const bTarget = b.owner === 'player' ? this.npc : this.player;
-        if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, bTarget.x, bTarget.y) <= 18) {
-          bTarget.takeDamage(b.damage);
-          this.spawnHitFlash(bTarget.x, bTarget.y, 0xffaa44);
-          b.sprite.destroy();
-          this.creatBolts.splice(i, 1);
+        let _boltHit = false;
+        for (const bTarget of (b.owner === 'player' ? this.enemies : [this.player])) {
+          if (!bTarget.active || bTarget.hp <= 0) continue;
+          if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, bTarget.x, bTarget.y) <= 18) {
+            bTarget.takeDamage(b.damage);
+            this.spawnHitFlash(bTarget.x, bTarget.y, 0xffaa44);
+            _boltHit = true;
+            break;
+          }
         }
+        if (_boltHit) { b.sprite.destroy(); this.creatBolts.splice(i, 1); }
       }
 
       // 5. Scythe steering + contact + absorption
       for (let i = this.creatScythes.length - 1; i >= 0; i--) {
         const sc = this.creatScythes[i];
-        const scTarget = sc.owner === 'player' ? this.npc : this.player;
+        const scTarget = sc.owner === 'player' ? this.getNearestEnemy(sc.sprite.x, sc.sprite.y) : this.player;
         const sdx = scTarget.x - sc.sprite.x;
         const sdy = scTarget.y - sc.sprite.y;
         const slen = Math.hypot(sdx, sdy) || 1;
@@ -15282,10 +15316,12 @@ export class ArenaScene extends Phaser.Scene {
             const healer = pu.owner === 'player' ? this.player : this.npc;
             healer.heal(pu.magnitude);
           } else {
-            const puTarget = pu.owner === 'player' ? this.npc : this.player;
-            if (Phaser.Math.Distance.Between(pu.x, pu.y, puTarget.x, puTarget.y) <= pu.range) {
-              puTarget.takeDamage(pu.magnitude);
-              this.spawnHitFlash(puTarget.x, puTarget.y, 0xff4422);
+            for (const puTarget of (pu.owner === 'player' ? this.enemies : [this.player])) {
+              if (!puTarget.active || puTarget.hp <= 0) continue;
+              if (Phaser.Math.Distance.Between(pu.x, pu.y, puTarget.x, puTarget.y) <= pu.range) {
+                puTarget.takeDamage(pu.magnitude);
+                this.spawnHitFlash(puTarget.x, puTarget.y, 0xff4422);
+              }
             }
           }
         }
@@ -15519,10 +15555,12 @@ export class ArenaScene extends Phaser.Scene {
           sb.tickAccum += delta;
           if (sb.tickAccum >= 300) {
             sb.tickAccum -= 300;
-            const sbTarget = sb.owner === 'player' ? this.npc : this.player;
-            if (Math.abs(sbTarget.x - sb.x) <= sb.w / 2 + 22 && Math.abs(sbTarget.y - sb.y) <= sb.h / 2 + 22) {
-              sbTarget.takeDamage(5);
-              this.spawnHitFlash(sbTarget.x, sbTarget.y, 0xcc2222);
+            for (const sbTarget of (sb.owner === 'player' ? this.enemies : [this.player])) {
+              if (!sbTarget.active || sbTarget.hp <= 0) continue;
+              if (Math.abs(sbTarget.x - sb.x) <= sb.w / 2 + 22 && Math.abs(sbTarget.y - sb.y) <= sb.h / 2 + 22) {
+                sbTarget.takeDamage(5);
+                this.spawnHitFlash(sbTarget.x, sbTarget.y, 0xcc2222);
+              }
             }
           }
         }
@@ -17196,7 +17234,7 @@ export class ArenaScene extends Phaser.Scene {
 
   private doMetalSlash(tx: number, ty: number, owner: 'player' | 'npc'): void {
     const caster = owner === 'player' ? this.player : this.npc;
-    const target = owner === 'player' ? this.npc : this.player;
+    const _metalSlashTargets = owner === 'player' ? this.enemies : [this.player];
 
     const dx = tx - caster.x, dy = ty - caster.y;
     const ang = Math.atan2(dy, dx);
@@ -17216,27 +17254,28 @@ export class ArenaScene extends Phaser.Scene {
     this.tweens.add({ targets: [gfx, tip], alpha: 0, duration: 260, onComplete: () => { gfx.destroy(); tip.destroy(); } });
 
     // Deal damage if close enough
-    const dist = Phaser.Math.Distance.Between(caster.x, caster.y, target.x, target.y);
-    if (dist <= 90) {
-      const dmg = 25;
-      target.takeDamage(dmg);
-      this.spawnHitFlash(target.x, target.y, 0xaabbcc);
-      this.spawnDamageNumber(target.x, target.y - 20, dmg);
-      this.applyMetalAggressiveBleeding(owner, 5000);
-      this.showFloatingText(caster.x, caster.y - 36, '🗡️ SLASH', '#aabbcc');
-      // Knockback
-      const kbDx = target.x - caster.x, kbDy = target.y - caster.y;
-      const kbLen = Math.sqrt(kbDx * kbDx + kbDy * kbDy) || 1;
-      (target.body as Phaser.Physics.Arcade.Body).setVelocity((kbDx / kbLen) * 350, (kbDy / kbLen) * 350);
-      this.time.delayedCall(200, () => {
-        if (target.active) (target.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-      });
+    for (const target of _metalSlashTargets) {
+      if (!target.active || target.hp <= 0) continue;
+      const dist = Phaser.Math.Distance.Between(caster.x, caster.y, target.x, target.y);
+      if (dist <= 90) {
+        const dmg = 25;
+        target.takeDamage(dmg);
+        this.spawnHitFlash(target.x, target.y, 0xaabbcc);
+        this.spawnDamageNumber(target.x, target.y - 20, dmg);
+        this.applyMetalAggressiveBleeding(owner, 5000);
+        this.showFloatingText(caster.x, caster.y - 36, '🗡️ SLASH', '#aabbcc');
+        const kbDx = target.x - caster.x, kbDy = target.y - caster.y;
+        const kbLen = Math.sqrt(kbDx * kbDx + kbDy * kbDy) || 1;
+        (target.body as Phaser.Physics.Arcade.Body).setVelocity((kbDx / kbLen) * 350, (kbDy / kbLen) * 350);
+        this.time.delayedCall(200, () => {
+          if (target.active) (target.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+        });
+      }
     }
   }
 
   private doMetalFireAtWill(owner: 'player' | 'npc'): void {
     const caster = owner === 'player' ? this.player : this.npc;
-    const target = owner === 'player' ? this.npc : this.player;
     const arsenal = owner === 'player' ? this.metalArsenal : this.npcMetalArsenal;
 
     if (arsenal.length === 0) return;
@@ -17245,7 +17284,9 @@ export class ArenaScene extends Phaser.Scene {
 
     arsenal.forEach((gunId, i) => {
       this.time.delayedCall(i * 130, () => {
-        if (!caster.active || !target.active) return;
+        if (!caster.active) return;
+        const target = owner === 'player' ? this.getNearestEnemy(caster.x, caster.y) : this.player;
+        if (!target.active) return;
         this.fireMetalGun(gunId, owner, target.x, target.y);
       });
     });
@@ -17253,7 +17294,7 @@ export class ArenaScene extends Phaser.Scene {
 
   private fireMetalGun(gunId: string, owner: 'player' | 'npc', targetX: number, targetY: number): void {
     const caster = owner === 'player' ? this.player : this.npc;
-    const target = owner === 'player' ? this.npc : this.player;
+    const target = owner === 'player' ? this.getNearestEnemy(caster.x, caster.y) : this.player;
     const dx = targetX - caster.x, dy = targetY - caster.y;
     const len = Math.sqrt(dx * dx + dy * dy) || 1;
     const ux = dx / len, uy = dy / len;
@@ -17396,20 +17437,20 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private doMetalExplosion(x: number, y: number, radius: number, damage: number, owner: 'player' | 'npc'): void {
-    const target = owner === 'player' ? this.npc : this.player;
-
     // Visual ring
     const ring = this.add.circle(x, y, 10, 0xff5500, 0.85).setDepth(9);
     this.tweens.add({ targets: ring, scaleX: radius / 10, scaleY: radius / 10, alpha: 0, duration: 400, onComplete: () => ring.destroy() });
     const inner = this.add.circle(x, y, 6, 0xffcc44, 1).setDepth(10);
     this.tweens.add({ targets: inner, scaleX: 3, scaleY: 3, alpha: 0, duration: 200, onComplete: () => inner.destroy() });
 
-    const dist = Phaser.Math.Distance.Between(x, y, target.x, target.y);
-    if (dist <= radius) {
-      target.takeDamage(damage);
-      this.spawnHitFlash(target.x, target.y, 0xff5500);
-      this.spawnDamageNumber(target.x, target.y - 20, damage);
-      this.showFloatingText(x, y - 30, '💥 BOOM', '#ff8844');
+    for (const target of (owner === 'player' ? this.enemies : [this.player])) {
+      if (!target.active || target.hp <= 0) continue;
+      if (Phaser.Math.Distance.Between(x, y, target.x, target.y) <= radius) {
+        target.takeDamage(damage);
+        this.spawnHitFlash(target.x, target.y, 0xff5500);
+        this.spawnDamageNumber(target.x, target.y - 20, damage);
+        this.showFloatingText(x, y - 30, '💥 BOOM', '#ff8844');
+      }
     }
   }
 
@@ -17777,20 +17818,23 @@ export class ArenaScene extends Phaser.Scene {
       cp.sprite.setPosition(cp.x, cp.y);
       if (cp.x < 0 || cp.x > W || cp.y < 0 || cp.y > H) { cp.active = false; continue; }
 
-      const hitTarget = cp.owner === 'player' ? this.npc : this.player;
-      const hitDist = Phaser.Math.Distance.Between(cp.x, cp.y, hitTarget.x, hitTarget.y);
-      if (hitDist <= 28) {
-        cp.active = false;
-        this.spawnHitFlash(hitTarget.x, hitTarget.y, 0x889aaa);
-        this.showFloatingText(hitTarget.x, hitTarget.y - 34, '⛓️ TETHERED!', '#aabbcc');
-        if (cp.owner === 'player') {
-          this.metalChainTethered = true;
-          this.metalChainTetherEnd = time + 5000;
-          this.applyMetalAggressiveBleeding('player', 3000);
-        } else {
-          this.npcMetalChainTethered = true;
-          this.npcMetalChainTetherEnd = time + 5000;
-          this.applyMetalAggressiveBleeding('npc', 3000);
+      for (const hitTarget of (cp.owner === 'player' ? this.enemies : [this.player])) {
+        if (!hitTarget.active || hitTarget.hp <= 0) continue;
+        const hitDist = Phaser.Math.Distance.Between(cp.x, cp.y, hitTarget.x, hitTarget.y);
+        if (hitDist <= 28) {
+          cp.active = false;
+          this.spawnHitFlash(hitTarget.x, hitTarget.y, 0x889aaa);
+          this.showFloatingText(hitTarget.x, hitTarget.y - 34, '⛓️ TETHERED!', '#aabbcc');
+          if (cp.owner === 'player') {
+            this.metalChainTethered = true;
+            this.metalChainTetherEnd = time + 5000;
+            this.applyMetalAggressiveBleeding('player', 3000);
+          } else {
+            this.npcMetalChainTethered = true;
+            this.npcMetalChainTetherEnd = time + 5000;
+            this.applyMetalAggressiveBleeding('npc', 3000);
+          }
+          break;
         }
       }
     }
@@ -17814,11 +17858,13 @@ export class ArenaScene extends Phaser.Scene {
         continue;
       }
 
-      const hitT = p.owner === 'player' ? this.npc : this.player;
-      const hd = Phaser.Math.Distance.Between(p.x, p.y, hitT.x, hitT.y);
-      const hitRadius = p.type === 'flame' ? 36 : 24;
-
-      if (hd <= hitRadius) {
+      const _gunRadius = p.type === 'flame' ? 36 : 24;
+      let hitT: Fighter | null = null;
+      for (const t of (p.owner === 'player' ? this.enemies : [this.player])) {
+        if (!t.active || t.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) <= _gunRadius) { hitT = t; break; }
+      }
+      if (hitT) {
         p.active = false;
         if (p.type === 'grenade') {
           this.doMetalExplosion(p.x, p.y, p.explodeRadius ?? 80, p.damage, p.owner);
@@ -17953,7 +17999,7 @@ export class ArenaScene extends Phaser.Scene {
 
   private doPlasmaBurst(tx: number, ty: number, owner: 'player' | 'npc'): void {
     const caster = owner === 'player' ? this.player : this.npc;
-    const target = owner === 'player' ? this.npc : this.player;
+    const _plasmaTargets = owner === 'player' ? this.enemies : [this.player];
     const range = 120;
 
     for (let i = 0; i < 3; i++) {
@@ -17980,14 +18026,17 @@ export class ArenaScene extends Phaser.Scene {
       this.tweens.add({ targets: gfx, alpha: 0, duration: 200, onComplete: () => gfx.destroy() });
 
       // Check hit
-      const dist = Phaser.Math.Distance.Between(caster.x, caster.y, target.x, target.y);
-      if (dist <= range) {
-        const targetAngle = Math.atan2(target.y - caster.y, target.x - caster.x);
-        const angleDiff = Math.abs(Phaser.Math.Angle.Wrap(targetAngle - ang));
-        if (angleDiff < Math.PI / 4) {
-          target.takeDamage(5);
-          this.spawnHitFlash(target.x, target.y, 0xcc44ff);
-          this.spawnDamageNumber(target.x, target.y - 20, 5);
+      for (const target of _plasmaTargets) {
+        if (!target.active || target.hp <= 0) continue;
+        const dist = Phaser.Math.Distance.Between(caster.x, caster.y, target.x, target.y);
+        if (dist <= range) {
+          const targetAngle = Math.atan2(target.y - caster.y, target.x - caster.x);
+          const angleDiff = Math.abs(Phaser.Math.Angle.Wrap(targetAngle - ang));
+          if (angleDiff < Math.PI / 4) {
+            target.takeDamage(5);
+            this.spawnHitFlash(target.x, target.y, 0xcc44ff);
+            this.spawnDamageNumber(target.x, target.y - 20, 5);
+          }
         }
       }
     }
@@ -18260,29 +18309,34 @@ export class ArenaScene extends Phaser.Scene {
       orb.chainGraphic.lineBetween(orb.ax, orb.ay, orb.bx, orb.by);
 
       // Check orb collision with enemy (direct orb hit = 10 dmg + explosion)
-      const hitTarget = orb.owner === 'player' ? this.npc : this.player;
-      const hitSelf = orb.owner === 'player' ? this.player : this.npc;
-      void hitSelf;
-      const dA = Phaser.Math.Distance.Between(orb.ax, orb.ay, hitTarget.x, hitTarget.y);
-      const dB = Phaser.Math.Distance.Between(orb.bx, orb.by, hitTarget.x, hitTarget.y);
-      if (dA <= 20 || dB <= 20) {
-        hitTarget.takeDamage(10);
-        this.spawnHitFlash(hitTarget.x, hitTarget.y, 0xcc44ff);
-        this.spawnDamageNumber(hitTarget.x, hitTarget.y - 20, 10);
-        this.showFloatingText(hitTarget.x, hitTarget.y - 36, '💥 Chain Collapse!', '#cc44ff');
-        this.doPlasmaCurrentExplode(orb);
-        continue;
+      const _chainTargets = orb.owner === 'player' ? this.enemies : [this.player];
+      let _chainCollapsed = false;
+      for (const hitTarget of _chainTargets) {
+        if (!hitTarget.active || hitTarget.hp <= 0) continue;
+        const dA = Phaser.Math.Distance.Between(orb.ax, orb.ay, hitTarget.x, hitTarget.y);
+        const dB = Phaser.Math.Distance.Between(orb.bx, orb.by, hitTarget.x, hitTarget.y);
+        if (dA <= 20 || dB <= 20) {
+          hitTarget.takeDamage(10);
+          this.spawnHitFlash(hitTarget.x, hitTarget.y, 0xcc44ff);
+          this.spawnDamageNumber(hitTarget.x, hitTarget.y - 20, 10);
+          this.showFloatingText(hitTarget.x, hitTarget.y - 36, '💥 Chain Collapse!', '#cc44ff');
+          this.doPlasmaCurrentExplode(orb);
+          _chainCollapsed = true;
+          break;
+        }
       }
+      if (_chainCollapsed) continue;
 
       // Chain damage tick to enemies touching the beam segment
       orb.tickAccum += delta;
       if (orb.tickAccum >= 100) {
         orb.tickAccum -= 100;
-        // Check if enemy intersects the chain segment
-        const chainHit = this.pointNearSegment(hitTarget.x, hitTarget.y, orb.ax, orb.ay, orb.bx, orb.by, 18);
-        if (chainHit) {
-          hitTarget.takeDamage(2);
-          this.spawnDamageNumber(hitTarget.x, hitTarget.y - 16, 2);
+        for (const hitTarget of _chainTargets) {
+          if (!hitTarget.active || hitTarget.hp <= 0) continue;
+          if (this.pointNearSegment(hitTarget.x, hitTarget.y, orb.ax, orb.ay, orb.bx, orb.by, 18)) {
+            hitTarget.takeDamage(2);
+            this.spawnDamageNumber(hitTarget.x, hitTarget.y - 16, 2);
+          }
         }
       }
     }
@@ -18668,7 +18722,7 @@ export class ArenaScene extends Phaser.Scene {
       this.showFloatingText(wispTarget.sprite.x, wispTarget.sprite.y - 40, '💀 DEATH WISH', '#cc44ff');
     } else {
       // Target enemy
-      const target = owner === 'player' ? this.npc : this.player;
+      const target = owner === 'player' ? this.getNearestEnemy(tx, ty) : this.player;
       const dist = Phaser.Math.Distance.Between(tx, ty, target.x, target.y);
       if (dist > 80) { this.showFloatingText(tx, ty, '⚠ No Target', '#ff4444'); return; }
       if (owner === 'player') {
@@ -18695,15 +18749,18 @@ export class ArenaScene extends Phaser.Scene {
 
     if (isBlackAura) {
       // Execute on enemy
-      const target = owner === 'player' ? this.npc : this.player;
+      const _execTargets = owner === 'player' ? this.enemies : [this.player];
       const mult = this.getDeathDamageMultiplier(owner);
       const dmg = Math.round(50 * mult);
-      target.takeDamage(dmg);
-      this.showFloatingText(target.x, target.y - 30, `💀 EXECUTE ${dmg}`, '#000000');
-      this.spawnHitFlash(target.x, target.y, 0x000000);
-      if (target.hp > 0 && target.hp / target.maxHp < 0.2) {
-        target.takeDamage(9999);
-        this.showFloatingText(target.x, target.y - 50, '☠ INSTAKILL', '#000000');
+      for (const target of _execTargets) {
+        if (!target.active || target.hp <= 0) continue;
+        target.takeDamage(dmg);
+        this.showFloatingText(target.x, target.y - 30, `💀 EXECUTE ${dmg}`, '#000000');
+        this.spawnHitFlash(target.x, target.y, 0x000000);
+        if (target.hp > 0 && target.hp / target.maxHp < 0.2) {
+          target.takeDamage(9999);
+          this.showFloatingText(target.x, target.y - 50, '☠ INSTAKILL', '#000000');
+        }
       }
       // End black aura
       if (owner === 'player') {
@@ -18914,13 +18971,15 @@ export class ArenaScene extends Phaser.Scene {
         sc.gfx.destroy();
         this.deathScythes.splice(i, 1);
         const dmg = sc.damage; // already has multiplier baked in at creation time
-        // Hit enemy fighter
-        const enemyFighter = sc.owner === 'player' ? this.npc : this.player;
-        const ex = enemyFighter.x - sc.x, ey = enemyFighter.y - sc.y;
-        if ((ex / sc.rx) ** 2 + (ey / sc.ry) ** 2 <= 1) {
-          enemyFighter.takeDamage(dmg);
-          this.showFloatingText(enemyFighter.x, enemyFighter.y - 24, `⚰️ ${dmg}`, '#cc44ff');
-          this.spawnHitFlash(enemyFighter.x, enemyFighter.y, 0xcc44ff);
+        // Hit enemy fighters
+        for (const enemyFighter of (sc.owner === 'player' ? this.enemies : [this.player])) {
+          if (!enemyFighter.active || enemyFighter.hp <= 0) continue;
+          const ex = enemyFighter.x - sc.x, ey = enemyFighter.y - sc.y;
+          if ((ex / sc.rx) ** 2 + (ey / sc.ry) ** 2 <= 1) {
+            enemyFighter.takeDamage(dmg);
+            this.showFloatingText(enemyFighter.x, enemyFighter.y - 24, `⚰️ ${dmg}`, '#cc44ff');
+            this.spawnHitFlash(enemyFighter.x, enemyFighter.y, 0xcc44ff);
+          }
         }
         // Hit owner's own wisps (by design)
         for (const w of this.deathWisps) {
@@ -19131,7 +19190,7 @@ export class ArenaScene extends Phaser.Scene {
 
   private doAdrenalineDash(tx: number, ty: number, owner: 'player' | 'npc'): void {
     const caster = owner === 'player' ? this.player : this.npc;
-    const target = owner === 'player' ? this.npc   : this.player;
+    const target = owner === 'player' ? this.getNearestEnemy(caster.x, caster.y) : this.player;
     const dx = tx - caster.x;
     const dy = ty - caster.y;
     const len = Math.hypot(dx, dy) || 1;
@@ -19227,7 +19286,7 @@ export class ArenaScene extends Phaser.Scene {
 
   private doAdrenalineStyledOn(tx: number, ty: number, owner: 'player' | 'npc'): void {
     const caster = owner === 'player' ? this.player : this.npc;
-    const target = owner === 'player' ? this.npc   : this.player;
+    const target = owner === 'player' ? this.getNearestEnemy(caster.x, caster.y) : this.player;
     // Dash toward cursor/target — damage only on contact
     const dx = tx - caster.x;
     const dy = ty - caster.y;
@@ -19850,11 +19909,13 @@ export class ArenaScene extends Phaser.Scene {
       else this.npcMagicAnchor = null;
       caster.setPosition(ax, ay);
       // Shockwave AOE
-      const target = owner === 'player' ? this.npc : this.player;
-      if (Phaser.Math.Distance.Between(ax, ay, target.x, target.y) <= 120) {
-        target.takeDamage(20);
-        this.spawnHitFlash(target.x, target.y, 0x9944ff);
-        this.spawnDamageNumber(target.x, target.y - 30, 20);
+      for (const target of (owner === 'player' ? this.enemies : [this.player])) {
+        if (!target.active || target.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(ax, ay, target.x, target.y) <= 120) {
+          target.takeDamage(20);
+          this.spawnHitFlash(target.x, target.y, 0x9944ff);
+          this.spawnDamageNumber(target.x, target.y - 30, 20);
+        }
       }
       const ring = this.add.circle(ax, ay, 30, 0x9944ff, 0.5).setDepth(8);
       this.tweens.add({ targets: ring, scaleX: 4, scaleY: 4, alpha: 0, duration: 400, onComplete: () => ring.destroy() });
@@ -19953,17 +20014,20 @@ export class ArenaScene extends Phaser.Scene {
 
   private doMagicTripleBeam(owner: 'player' | 'npc'): void {
     const caster = owner === 'player' ? this.player : this.npc;
-    const target = owner === 'player' ? this.npc : this.player;
+    const _beamTargets = owner === 'player' ? this.enemies : [this.player];
     const W = this.scale.width;
     const offsets = [-120, 0, 120];
     for (const dy of offsets) {
       const beamY = caster.y + dy;
-      // Instant hit check: does beam cross target?
+      // Instant hit check: does beam cross any target?
       const halfH = 30;
-      if (target.y >= beamY - halfH && target.y <= beamY + halfH) {
-        target.takeDamage(20);
-        this.spawnHitFlash(target.x, target.y, 0xbb88ff);
-        this.spawnDamageNumber(target.x, target.y - 28, 20);
+      for (const target of _beamTargets) {
+        if (!target.active || target.hp <= 0) continue;
+        if (target.y >= beamY - halfH && target.y <= beamY + halfH) {
+          target.takeDamage(20);
+          this.spawnHitFlash(target.x, target.y, 0xbb88ff);
+          this.spawnDamageNumber(target.x, target.y - 28, 20);
+        }
       }
       // Visual: spanning rect
       const beam = this.add.rectangle(W / 2, beamY, W - 64, halfH * 2, 0x9944ff, 0.5)
@@ -20011,15 +20075,17 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private spawnMagicPillar(x: number, y: number, owner: 'player' | 'npc'): void {
-    const target = owner === 'player' ? this.npc : this.player;
     const pillar = this.add.rectangle(x, y, 30, 80, 0x6611cc, 0.8)
       .setStrokeStyle(2, 0xcc88ff, 1).setDepth(8);
     this.magicActivePillars.push({ sprite: pillar, expireAt: this.time.now + 1200, owner, damaged: false });
     // AOE damage on spawn
-    if (Phaser.Math.Distance.Between(x, y, target.x, target.y) <= 60) {
-      target.takeDamage(15);
-      this.spawnHitFlash(target.x, target.y, 0x9944ff);
-      this.spawnDamageNumber(target.x, target.y - 28, 15);
+    for (const target of (owner === 'player' ? this.enemies : [this.player])) {
+      if (!target.active || target.hp <= 0) continue;
+      if (Phaser.Math.Distance.Between(x, y, target.x, target.y) <= 60) {
+        target.takeDamage(15);
+        this.spawnHitFlash(target.x, target.y, 0x9944ff);
+        this.spawnDamageNumber(target.x, target.y - 28, 15);
+      }
     }
     // VFX: rising flash
     const flash = this.add.rectangle(x, y, 30, 6, 0xddaaff, 0.9).setDepth(9);
@@ -20118,15 +20184,18 @@ export class ArenaScene extends Phaser.Scene {
         continue;
       }
       // Check enemy hit (orb damages)
-      const enemy = orb.owner === 'player' ? this.npc : this.player;
       const caster = orb.owner === 'player' ? this.player : this.npc;
-      if (Phaser.Math.Distance.Between(orb.x, orb.y, enemy.x, enemy.y) <= 28) {
-        enemy.takeDamage(8);
-        this.spawnHitFlash(enemy.x, enemy.y, 0xcc99ff);
-        orb.sprite.destroy();
-        this.magicHealOrbs.splice(i, 1);
-        continue;
+      let _orbHit = false;
+      for (const enemy of (orb.owner === 'player' ? this.enemies : [this.player])) {
+        if (!enemy.active || enemy.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(orb.x, orb.y, enemy.x, enemy.y) <= 28) {
+          enemy.takeDamage(8);
+          this.spawnHitFlash(enemy.x, enemy.y, 0xcc99ff);
+          _orbHit = true;
+          break;
+        }
       }
+      if (_orbHit) { orb.sprite.destroy(); this.magicHealOrbs.splice(i, 1); continue; }
       // Check caster hit (heal)
       if (Phaser.Math.Distance.Between(orb.x, orb.y, caster.x, caster.y) <= 24) {
         caster.heal(5);
@@ -20152,11 +20221,14 @@ export class ArenaScene extends Phaser.Scene {
         }
         // Hit check (forward phase — once only)
         if (!b.damaged) {
-          const target = b.owner === 'player' ? this.npc : this.player;
-          if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, target.x, target.y) <= 28) {
-            target.takeDamage(10);
-            this.spawnHitFlash(target.x, target.y, 0xaa66ee);
-            b.damaged = true;
+          for (const target of (b.owner === 'player' ? this.enemies : [this.player])) {
+            if (!target.active || target.hp <= 0) continue;
+            if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, target.x, target.y) <= 28) {
+              target.takeDamage(10);
+              this.spawnHitFlash(target.x, target.y, 0xaa66ee);
+              b.damaged = true;
+              break;
+            }
           }
         }
       } else {
@@ -20166,11 +20238,14 @@ export class ArenaScene extends Phaser.Scene {
         b.sprite.y += Math.sin(ang) * speed * (delta / 1000);
         // Hit check (return phase — once only)
         if (!b.damaged) {
-          const target = b.owner === 'player' ? this.npc : this.player;
-          if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, target.x, target.y) <= 28) {
-            target.takeDamage(10);
-            this.spawnHitFlash(target.x, target.y, 0xaa66ee);
-            b.damaged = true;
+          for (const target of (b.owner === 'player' ? this.enemies : [this.player])) {
+            if (!target.active || target.hp <= 0) continue;
+            if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, target.x, target.y) <= 28) {
+              target.takeDamage(10);
+              this.spawnHitFlash(target.x, target.y, 0xaa66ee);
+              b.damaged = true;
+              break;
+            }
           }
         }
         if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, caster.x, caster.y) <= 20) {
@@ -20194,9 +20269,9 @@ export class ArenaScene extends Phaser.Scene {
         this.magicSlowZones.splice(i, 1);
         continue;
       }
-      const target = sz.owner === 'player' ? this.npc : this.player;
-      if (Phaser.Math.Distance.Between(sz.x, sz.y, target.x, target.y) <= 80) {
-        // Apply slow
+      const _szTargets = (sz.owner === 'player' ? this.enemies : [this.player])
+        .filter(t => t.active && t.hp > 0 && Phaser.Math.Distance.Between(sz.x, sz.y, t.x, t.y) <= 80);
+      if (_szTargets.length > 0) {
         if (!sz.slowing) {
           sz.slowing = true;
           if (sz.owner === 'player') this.npcSpeedMult = Math.min(this.npcSpeedMult, 0.5);
@@ -20204,7 +20279,7 @@ export class ArenaScene extends Phaser.Scene {
         }
         sz.tickAccum += delta;
         while (sz.tickAccum >= 250) {
-          target.takeDamage(3);
+          for (const target of _szTargets) { target.takeDamage(3); }
           sz.tickAccum -= 250;
         }
       } else {
@@ -20254,8 +20329,7 @@ export class ArenaScene extends Phaser.Scene {
         oc.gfx.clear();
         const barLen = 140;
         const barHalf = 8;
-        const target = oc.owner === 'player' ? this.npc : this.player;
-        let hitThisFrame = false;
+        const _orbitalTargets = oc.owner === 'player' ? this.enemies : [this.player];
         for (let arm = 0; arm < 4; arm++) {
           const a = oc.rotAngle + arm * (Math.PI / 2);
           const ex = oc.x + Math.cos(a) * barLen;
@@ -20265,22 +20339,32 @@ export class ArenaScene extends Phaser.Scene {
           oc.gfx.moveTo(oc.x, oc.y);
           oc.gfx.lineTo(ex, ey);
           oc.gfx.strokePath();
-          // Simple hit check: is target near the bar line?
-          const dx = ex - oc.x; const dy = ey - oc.y;
-          const len = Math.sqrt(dx * dx + dy * dy);
-          const tx = target.x - oc.x; const ty2 = target.y - oc.y;
-          const dot = (tx * dx + ty2 * dy) / (len * len);
-          if (dot >= 0 && dot <= 1) {
-            const px = oc.x + dot * dx; const py = oc.y + dot * dy;
-            if (Phaser.Math.Distance.Between(px, py, target.x, target.y) <= barHalf + 20) {
-              hitThisFrame = true;
+        }
+        if (time - oc.lastDmgAt >= 250) {
+          for (const target of _orbitalTargets) {
+            if (!target.active || target.hp <= 0) continue;
+            let hitThisArm = false;
+            for (let arm = 0; arm < 4; arm++) {
+              const a = oc.rotAngle + arm * (Math.PI / 2);
+              const ex = oc.x + Math.cos(a) * barLen;
+              const ey = oc.y + Math.sin(a) * barLen;
+              const dx = ex - oc.x; const dy = ey - oc.y;
+              const len = Math.sqrt(dx * dx + dy * dy);
+              const tx = target.x - oc.x; const ty2 = target.y - oc.y;
+              const dot = (tx * dx + ty2 * dy) / (len * len);
+              if (dot >= 0 && dot <= 1) {
+                const px = oc.x + dot * dx; const py = oc.y + dot * dy;
+                if (Phaser.Math.Distance.Between(px, py, target.x, target.y) <= barHalf + 20) {
+                  hitThisArm = true; break;
+                }
+              }
+            }
+            if (hitThisArm) {
+              target.takeDamage(15);
+              this.spawnHitFlash(target.x, target.y, 0x9944ff);
             }
           }
-        }
-        if (hitThisFrame && time - oc.lastDmgAt >= 250) {
-          target.takeDamage(15);
-          this.spawnHitFlash(target.x, target.y, 0x9944ff);
-          oc.lastDmgAt = time;
+          if (_orbitalTargets.some(t => t.active)) oc.lastDmgAt = time;
         }
       }
     }
@@ -20317,7 +20401,7 @@ export class ArenaScene extends Phaser.Scene {
       const corners = [
         [pad, pad], [W - pad, pad], [pad, H - pad], [W - pad, H - pad],
       ];
-      const target = r4.owner === 'player' ? this.npc : this.player;
+      const target = r4.owner === 'player' ? this.getNearestEnemy(r4.ex, r4.ey) : this.player;
       // Lock target position
       target.setPosition(r4.ex, r4.ey);
       // Draw chains
@@ -20593,6 +20677,9 @@ export class ArenaScene extends Phaser.Scene {
       if (this.invasionWavesCompleted < this.waveManager.wave && this.waveManager.isWaveComplete()) {
         this.invasionWavesCompleted = this.waveManager.wave;
       }
+    });
+    c.on('damaged', (amount: number) => {
+      if (amount > 0 && c.active) this.spawnDamageNumber(c.x, c.y - 20, amount);
     });
   }
 
@@ -20900,6 +20987,18 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   /** Damages all player-side targets (enemies list + growths) within radius. */
+  /** Returns the nearest active enemy to (fromX, fromY), or `this.npc` as a positional fallback. */
+  private getNearestEnemy(fromX: number, fromY: number): Fighter {
+    let best: Fighter = this.npc;
+    let bestDist = Infinity;
+    for (const e of this.enemies) {
+      if (!e.active || e.hp <= 0) continue;
+      const d = Phaser.Math.Distance.Between(fromX, fromY, e.x, e.y);
+      if (d < bestDist) { bestDist = d; best = e; }
+    }
+    return best;
+  }
+
   private damagePlayerTargets(cx: number, cy: number, radius: number, damage: number, color: number): void {
     for (const t of this.enemies) {
       if (!t.active || t.hp <= 0) continue;
@@ -21057,7 +21156,6 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     const caster = owner === 'player' ? this.player : this.npc;
-    const target = owner === 'player' ? this.npc : this.player;
     // Limit range: place boulder at most 200px from caster
     const dx = tx - caster.x; const dy = ty - caster.y;
     const len = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -21076,12 +21174,14 @@ export class ArenaScene extends Phaser.Scene {
     };
     this.magmaBoulders.push(boulder);
 
-    // Deal impact damage if placed on top of the enemy
-    const impactDist = Phaser.Math.Distance.Between(bx, by, target.x, target.y);
-    if (impactDist <= 28) {
-      target.takeDamage(15);
-      this.spawnHitFlash(target.x, target.y, 0xff4500);
-      this.showFloatingText(target.x, target.y - 20, '-15', '#ff4500');
+    // Deal impact damage if placed on top of an enemy
+    for (const target of (owner === 'player' ? this.enemies : [this.player])) {
+      if (!target.active || target.hp <= 0) continue;
+      if (Phaser.Math.Distance.Between(bx, by, target.x, target.y) <= 28) {
+        target.takeDamage(15);
+        this.spawnHitFlash(target.x, target.y, 0xff4500);
+        this.showFloatingText(target.x, target.y - 20, '-15', '#ff4500');
+      }
     }
 
     // Spawn puff effect
