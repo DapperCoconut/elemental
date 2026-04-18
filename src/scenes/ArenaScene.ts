@@ -3964,7 +3964,8 @@ export class ArenaScene extends Phaser.Scene {
     if (this.isInvasion) {
       this.waveManager = new WaveManager();
       this.invasionBetweenWavesUntil = this.time.now + 2000;
-      // Remove the initial BasicCorrupted placeholder — wave 1 will spawn proper enemies
+      // Disable the BasicCorrupted placeholder — wave 1 will spawn proper enemies
+      this.npc.setHealthBarVisible(false);
       if (this.npc.active) { this.npc.setActive(false).setVisible(false); }
       // Show wave banner placeholder
       this.invasionWaveBanner = this.add.text(screenW / 2, 60, '', {
