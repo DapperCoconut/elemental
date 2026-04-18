@@ -8801,9 +8801,10 @@ export class ArenaScene extends Phaser.Scene {
 
   private fireRandomFateUltimate(owner: 'player' | 'npc'): void {
     const isPlayer = owner === 'player';
-    const ctx = isPlayer ? this.buildPlayerContext(this.npc.x, this.npc.y) : this.buildNpcContext(this.player.x, this.player.y);
+    const aimTarget = isPlayer ? this.getNearestEnemy(this.player.x, this.player.y) : this.player;
+    const ctx = isPlayer ? this.buildPlayerContext(aimTarget.x, aimTarget.y) : this.buildNpcContext(this.player.x, this.player.y);
     const caster = isPlayer ? this.player : this.npc;
-    const target = isPlayer ? this.npc : this.player;
+    const target = isPlayer ? aimTarget : this.player;
 
     type UltEntry = { name: string; fire: () => void };
     const pool: UltEntry[] = [
@@ -12076,12 +12077,16 @@ export class ArenaScene extends Phaser.Scene {
           const ang = card.orbitAngle + (i * Math.PI * 2 / count);
           card.sprite.setPosition(this.player.x + Math.cos(ang) * orbitR, this.player.y + Math.sin(ang) * orbitR);
           if (time >= card.meleeCooldownUntil) {
-            const d = Phaser.Math.Distance.Between(card.sprite.x, card.sprite.y, this.npc.x, this.npc.y);
-            if (d <= 20) {
-              this.npc.setIncomingCritContext(this.player.critChance, this.player.critMult);
-              this.npc.takeDamage(8);
-              this.spawnHitFlash(this.npc.x, this.npc.y, 0xaaffee);
-              card.meleeCooldownUntil = time + 500;
+            for (const t of this.enemies) {
+              if (!t.active || t.hp <= 0) continue;
+              const d = Phaser.Math.Distance.Between(card.sprite.x, card.sprite.y, t.x, t.y);
+              if (d <= 20) {
+                t.setIncomingCritContext(this.player.critChance, this.player.critMult);
+                t.takeDamage(8);
+                this.spawnHitFlash(t.x, t.y, 0xaaffee);
+                card.meleeCooldownUntil = time + 500;
+                break;
+              }
             }
           }
         }
