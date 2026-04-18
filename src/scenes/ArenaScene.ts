@@ -9465,20 +9465,22 @@ export class ArenaScene extends Phaser.Scene {
             this.flamethrowerTickAccum += delta;
             if (this.flamethrowerTickAccum >= 100) {
               this.flamethrowerTickAccum -= 100;
-              const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
-              if (dist <= 180) {
-                const dirX = mouseX - this.player.x;
-                const dirY = mouseY - this.player.y;
-                const dirLen = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
-                const dot = (dirX / dirLen) * ((this.npc.x - this.player.x) / dist)
-                          + (dirY / dirLen) * ((this.npc.y - this.player.y) / dist);
-                if (dot > 0.866) {
-                  const ftDmg = this.enhancedFlameBody ? 8 : 4;
-                  this.npc.takeDamage(ftDmg);
-                  this.spawnHitFlash(this.npc.x, this.npc.y, 0xff5500);
-                  // Flameshredder: apply burning DOT on flamethrower hit
-                  if (this.hasUpgrade('click')) {
-                    this.npc.burningUntil = Math.max(this.npc.burningUntil, time + 3000);
+              const dirX = mouseX - this.player.x;
+              const dirY = mouseY - this.player.y;
+              const dirLen = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
+              for (const t of this.enemies) {
+                if (!t.active || t.hp <= 0) continue;
+                const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, t.x, t.y);
+                if (dist <= 180) {
+                  const dot = (dirX / dirLen) * ((t.x - this.player.x) / dist)
+                            + (dirY / dirLen) * ((t.y - this.player.y) / dist);
+                  if (dot > 0.866) {
+                    const ftDmg = this.enhancedFlameBody ? 8 : 4;
+                    t.takeDamage(ftDmg);
+                    this.spawnHitFlash(t.x, t.y, 0xff5500);
+                    if (this.hasUpgrade('click')) {
+                      t.burningUntil = Math.max(t.burningUntil, time + 3000);
+                    }
                   }
                 }
               }
@@ -9502,10 +9504,12 @@ export class ArenaScene extends Phaser.Scene {
                 const t = i / 4;
                 const ex = dashStartX + (this.player.x - dashStartX) * t;
                 const ey = dashStartY + (this.player.y - dashStartY) * t;
-                const distToNpc = Phaser.Math.Distance.Between(ex, ey, this.npc.x, this.npc.y);
-                if (distToNpc <= 50) {
-                  this.npc.takeDamage(Phaser.Math.Between(5, 8));
-                  this.spawnHitFlash(this.npc.x, this.npc.y, 0xff6600);
+                for (const enemy of this.enemies) {
+                  if (!enemy.active || enemy.hp <= 0) continue;
+                  if (Phaser.Math.Distance.Between(ex, ey, enemy.x, enemy.y) <= 50) {
+                    enemy.takeDamage(Phaser.Math.Between(5, 8));
+                    this.spawnHitFlash(enemy.x, enemy.y, 0xff6600);
+                  }
                 }
                 const ring = this.add.circle(ex, ey, 8, 0xff6600, 0.8).setDepth(4);
                 this.tweens.add({ targets: ring, scaleX: 5, scaleY: 5, alpha: 0, duration: 280, onComplete: () => ring.destroy() });
@@ -9542,9 +9546,12 @@ export class ArenaScene extends Phaser.Scene {
                   if (this.pressureTremorAccum >= 1000) {
                     this.pressureTremorAccum -= 1000;
                     const tremorDmg = chargeLevel === 2 ? 10 : 5;
-                    if (Phaser.Math.Distance.Between(mouseX, mouseY, this.npc.x, this.npc.y) <= 60) {
-                      this.npc.takeDamage(tremorDmg);
-                      this.spawnHitFlash(this.npc.x, this.npc.y, 0xff6600);
+                    for (const t of this.enemies) {
+                      if (!t.active || t.hp <= 0) continue;
+                      if (Phaser.Math.Distance.Between(mouseX, mouseY, t.x, t.y) <= 60) {
+                        t.takeDamage(tremorDmg);
+                        this.spawnHitFlash(t.x, t.y, 0xff6600);
+                      }
                     }
                     const tremor = this.add.circle(mouseX, mouseY, 8, 0xff6600, 0.75).setDepth(4);
                     this.tweens.add({ targets: tremor, scaleX: 5, scaleY: 5, alpha: 0, duration: 350, onComplete: () => tremor.destroy() });
@@ -9565,9 +9572,12 @@ export class ArenaScene extends Phaser.Scene {
               const finalDmg = Math.round(32 * dmgMult);
               const mx = this.pressureLastMouseX;
               const my = this.pressureLastMouseY;
-              if (Phaser.Math.Distance.Between(mx, my, this.npc.x, this.npc.y) <= 100) {
-                this.npc.takeDamage(finalDmg);
-                this.spawnHitFlash(this.npc.x, this.npc.y, 0xff8800);
+              for (const t of this.enemies) {
+                if (!t.active || t.hp <= 0) continue;
+                if (Phaser.Math.Distance.Between(mx, my, t.x, t.y) <= 100) {
+                  t.takeDamage(finalDmg);
+                  this.spawnHitFlash(t.x, t.y, 0xff8800);
+                }
               }
               // Explosion visual
               const ring = this.add.circle(mx, my, 10, 0xff8800, 0.9).setDepth(4);
