@@ -4990,17 +4990,19 @@ export class ArenaScene extends Phaser.Scene {
         if (this.growthMorphType === 'spores') {
           fireSpores(this.player.x, this.player.y);
         } else if (this.growthMorphType === 'claws') {
-          const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
-          if (dist <= 120) {
-            const ptr = this.input.activePointer;
-            const dx = ptr.worldX - this.player.x; const dy = ptr.worldY - this.player.y;
-            const len = Math.sqrt(dx * dx + dy * dy) || 1;
-            const toNx = this.npc.x - this.player.x; const toNy = this.npc.y - this.player.y;
-            const dot = (dx / len) * (toNx / dist) + (dy / len) * (toNy / dist);
+          const ptr = this.input.activePointer;
+          const dx = ptr.worldX - this.player.x; const dy = ptr.worldY - this.player.y;
+          const len = Math.sqrt(dx * dx + dy * dy) || 1;
+          const clawDmg = Math.round((15 + this.growthSpreadStacks * 5) * this.growthDamageMult);
+          for (const t of this.enemies) {
+            if (!t.active || t.hp <= 0) continue;
+            const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, t.x, t.y);
+            if (dist > 120) continue;
+            const toTx = t.x - this.player.x; const toTy = t.y - this.player.y;
+            const dot = (dx / len) * (toTx / dist) + (dy / len) * (toTy / dist);
             if (dot > 0.4) {
-              const clawDmg = Math.round((15 + this.growthSpreadStacks * 5) * this.growthDamageMult);
-              this.npc.takeDamage(clawDmg);
-              this.spawnHitFlash(this.npc.x, this.npc.y, 0x88bb22);
+              t.takeDamage(clawDmg);
+              this.spawnHitFlash(t.x, t.y, 0x88bb22);
             }
           }
           const slashAngle = Math.atan2(ty - this.player.y, tx - this.player.x);
@@ -5030,11 +5032,14 @@ export class ArenaScene extends Phaser.Scene {
               this.tweens.add({ targets: boom, scaleX: bombRadius / 8, scaleY: bombRadius / 8, alpha: 0, duration: 380, onComplete: () => boom.destroy() });
               bomb.destroy();
               const dmg = Math.round(15 * this.growthDamageMult);
-              if (Phaser.Math.Distance.Between(tx, ty, this.npc.x, this.npc.y) <= bombRadius) {
-                this.npc.takeDamage(dmg);
-                this.spawnHitFlash(this.npc.x, this.npc.y, 0x88bb22);
-                const ft = this.add.text(this.npc.x, this.npc.y - 30, `💥 ${dmg}`, { fontSize: '11px', color: '#aadd44', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
-                this.tweens.add({ targets: ft, y: ft.y - 25, alpha: 0, duration: 900, onComplete: () => ft.destroy() });
+              for (const t of this.enemies) {
+                if (!t.active || t.hp <= 0) continue;
+                if (Phaser.Math.Distance.Between(tx, ty, t.x, t.y) <= bombRadius) {
+                  t.takeDamage(dmg);
+                  this.spawnHitFlash(t.x, t.y, 0x88bb22);
+                  const ft = this.add.text(t.x, t.y - 30, `💥 ${dmg}`, { fontSize: '11px', color: '#aadd44', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
+                  this.tweens.add({ targets: ft, y: ft.y - 25, alpha: 0, duration: 900, onComplete: () => ft.destroy() });
+                }
               }
             },
           });
@@ -13287,7 +13292,7 @@ export class ArenaScene extends Phaser.Scene {
           }
         }
 
-        // Sneeze aura — tick damage to nearby NPC
+        // Sneeze aura — tick damage to nearby enemies
         if (this.growthSneezeStacks > 0) {
           if (!this.growthSneezeAura) {
             this.growthSneezeAura = this.add.circle(this.player.x, this.player.y, 120, 0x44cc22, 0.12)
@@ -13298,11 +13303,14 @@ export class ArenaScene extends Phaser.Scene {
           if (this.growthSneezeAccum >= 1000) {
             this.growthSneezeAccum -= 1000;
             const sneezeDmg = this.growthSneezeStacks;
-            if (Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y) <= 120) {
-              this.npc.takeDamage(sneezeDmg);
-              this.spawnHitFlash(this.npc.x, this.npc.y, 0x88ff44);
-              const ft = this.add.text(this.npc.x, this.npc.y - 20, `🤧 ${sneezeDmg}`, { fontSize: '10px', color: '#88ff44' }).setOrigin(0.5).setDepth(12);
-              this.tweens.add({ targets: ft, y: ft.y - 15, alpha: 0, duration: 700, onComplete: () => ft.destroy() });
+            for (const t of this.enemies) {
+              if (!t.active || t.hp <= 0) continue;
+              if (Phaser.Math.Distance.Between(this.player.x, this.player.y, t.x, t.y) <= 120) {
+                t.takeDamage(sneezeDmg);
+                this.spawnHitFlash(t.x, t.y, 0x88ff44);
+                const ft = this.add.text(t.x, t.y - 20, `🤧 ${sneezeDmg}`, { fontSize: '10px', color: '#88ff44' }).setOrigin(0.5).setDepth(12);
+                this.tweens.add({ targets: ft, y: ft.y - 15, alpha: 0, duration: 700, onComplete: () => ft.destroy() });
+              }
             }
           }
         } else if (this.growthSneezeAura) {
