@@ -53,6 +53,11 @@ export class HealthBar {
     this.maxHp = newMax;
   }
 
+  hide(): void {
+    this.graphics.clear();
+    this.visible = false;
+  }
+
   destroy(): void {
     this.graphics.destroy();
   }

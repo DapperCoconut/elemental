@@ -198,7 +198,15 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   }
 
   setHealthBarVisible(visible: boolean): void {
-    this.healthBar.visible = visible;
+    if (visible) {
+      this.healthBar.visible = true;
+    } else {
+      this.healthBar.hide();
+    }
+  }
+
+  hideHealthBar(): void {
+    this.healthBar.hide();
   }
 
   /** Like takeDamage but bypasses isInvincible — used for self-inflicted effects. */
@@ -256,6 +264,12 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
   destroy(fromScene?: boolean): void {
     this.healthBar.destroy();
+    if (this.burnAura) { this.burnAura.destroy(); this.burnAura = null; }
+    if (this.frostVisual) { this.frostVisual.destroy(); this.frostVisual = null; }
+    if (this.voidFrostVisual) { this.voidFrostVisual.destroy(); this.voidFrostVisual = null; }
+    if (this.toxicAura) { this.toxicAura.destroy(); this.toxicAura = null; }
+    if (this.bleedVisual) { this.bleedVisual.destroy(); this.bleedVisual = null; }
+    if (this.growthBloatAura) { this.growthBloatAura.destroy(); this.growthBloatAura = null; }
     super.destroy(fromScene);
   }
 }

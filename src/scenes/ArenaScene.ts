@@ -20917,7 +20917,6 @@ export class ArenaScene extends Phaser.Scene {
     c.once('defeated', () => {
       this.enemies = this.enemies.filter(e => e !== c);
       this.enemyGroup.remove(c, false, false);
-      if (c.active) { c.setActive(false).setVisible(false); }
       this.waveManager.onEnemyDefeated();
       const shards = Math.ceil(this.waveManager.wave * 0.5);
       this.invasionShardsEarned += shards;
@@ -20925,6 +20924,17 @@ export class ArenaScene extends Phaser.Scene {
       if (this.invasionWavesCompleted < this.waveManager.wave && this.waveManager.isWaveComplete()) {
         this.invasionWavesCompleted = this.waveManager.wave;
       }
+      c.hideHealthBar();
+      c.setTint(0xff4444);
+      this.tweens.add({
+        targets: c,
+        scaleX: 1.5,
+        scaleY: 1.5,
+        alpha: 0,
+        duration: 400,
+        ease: 'Power2',
+        onComplete: () => { if (c.scene) c.destroy(); }
+      });
     });
     c.on('damaged', (amount: number) => {
       if (amount > 0 && c.active) this.spawnDamageNumber(c.x, c.y - 20, amount);
