@@ -9108,21 +9108,23 @@ export class ArenaScene extends Phaser.Scene {
         for (const go of this.projectiles.getChildren()) {
           const proj = go as Projectile;
           if (!proj.active || proj.texture.key !== 'proj-electro' || !proj.isFromPlayer) continue;
-          const dist = Phaser.Math.Distance.Between(proj.x, proj.y, this.npc.x, this.npc.y);
-          if (dist <= shockRadius) {
-            const shockData = this.electroShockTimers.get(proj) ?? { count: 0, last: 0 };
-            if (shockData.count < maxShocks && (shockData.count === 0 || time - shockData.last >= 300)) {
-              shockData.count++;
-              shockData.last = time;
-              this.electroShockTimers.set(proj, shockData);
-              this.npc.takeDamage(4);
-              this.spawnHitFlash(this.npc.x, this.npc.y, 0xffee00);
-              this.showFloatingText(this.npc.x, this.npc.y - 20, '4', '#ffee00');
-              // Lightning arc visual
-              const arc = this.add.graphics().setDepth(8);
-              arc.lineStyle(2, 0xffff88, 0.9);
-              arc.lineBetween(proj.x, proj.y, this.npc.x, this.npc.y);
-              this.time.delayedCall(80, () => arc.destroy());
+          for (const t of this.enemies) {
+            if (!t.active || t.hp <= 0) continue;
+            const dist = Phaser.Math.Distance.Between(proj.x, proj.y, t.x, t.y);
+            if (dist <= shockRadius) {
+              const shockData = this.electroShockTimers.get(proj) ?? { count: 0, last: 0 };
+              if (shockData.count < maxShocks && (shockData.count === 0 || time - shockData.last >= 300)) {
+                shockData.count++;
+                shockData.last = time;
+                this.electroShockTimers.set(proj, shockData);
+                t.takeDamage(4);
+                this.spawnHitFlash(t.x, t.y, 0xffee00);
+                this.showFloatingText(t.x, t.y - 20, '4', '#ffee00');
+                const arc = this.add.graphics().setDepth(8);
+                arc.lineStyle(2, 0xffff88, 0.9);
+                arc.lineBetween(proj.x, proj.y, t.x, t.y);
+                this.time.delayedCall(80, () => arc.destroy());
+              }
             }
           }
         }
@@ -9775,19 +9777,22 @@ export class ArenaScene extends Phaser.Scene {
           const clampedX = Phaser.Math.Clamp(endX, 30, W - 30);
           const clampedY = Phaser.Math.Clamp(endY, 30, H - 30);
           (this.player.body as Phaser.Physics.Arcade.Body).reset(clampedX, clampedY);
-          // Check if NPC is along the teleport path (within 45px of line segment)
+          // Check if any enemy is along the teleport path (within 45px of line segment)
           const segDX = clampedX - startX;
           const segDY = clampedY - startY;
           const segLen = Math.sqrt(segDX * segDX + segDY * segDY) || 1;
-          const t = Phaser.Math.Clamp(
-            ((this.npc.x - startX) * segDX + (this.npc.y - startY) * segDY) / (segLen * segLen), 0, 1,
-          );
-          const closestX = startX + t * segDX;
-          const closestY = startY + t * segDY;
-          if (Phaser.Math.Distance.Between(closestX, closestY, this.npc.x, this.npc.y) <= 45) {
-            this.npc.takeDamage(15);
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0xffee00);
-            this.showFloatingText(this.npc.x, this.npc.y - 20, '15', '#ffee00');
+          for (const et of this.enemies) {
+            if (!et.active || et.hp <= 0) continue;
+            const tParam = Phaser.Math.Clamp(
+              ((et.x - startX) * segDX + (et.y - startY) * segDY) / (segLen * segLen), 0, 1,
+            );
+            const closestX = startX + tParam * segDX;
+            const closestY = startY + tParam * segDY;
+            if (Phaser.Math.Distance.Between(closestX, closestY, et.x, et.y) <= 45) {
+              et.takeDamage(15);
+              this.spawnHitFlash(et.x, et.y, 0xffee00);
+              this.showFloatingText(et.x, et.y - 20, '15', '#ffee00');
+            }
           }
           // Teleport visual
           const flash = this.add.circle(clampedX, clampedY, 8, 0xffee00, 0.6).setDepth(8);
@@ -9804,11 +9809,13 @@ export class ArenaScene extends Phaser.Scene {
           const dmg = Math.floor(this.kineticPower * 0.75);
           this.kineticPower = Math.max(0, this.kineticPower - 10);
           if (this.kineticPowerText) this.kineticPowerText.setText(`⚡ ${this.kineticPower}`);
-          const dist = Phaser.Math.Distance.Between(mouseX, mouseY, this.npc.x, this.npc.y);
-          if (dist <= 100) {
-            this.npc.takeDamage(dmg);
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0xffee00);
-            if (dmg > 0) this.showFloatingText(this.npc.x, this.npc.y - 20, `${dmg}`, '#ffee00');
+          for (const t of this.enemies) {
+            if (!t.active || t.hp <= 0) continue;
+            if (Phaser.Math.Distance.Between(mouseX, mouseY, t.x, t.y) <= 100) {
+              t.takeDamage(dmg);
+              this.spawnHitFlash(t.x, t.y, 0xffee00);
+              if (dmg > 0) this.showFloatingText(t.x, t.y - 20, `${dmg}`, '#ffee00');
+            }
           }
           const ring = this.add.circle(mouseX, mouseY, 10, 0xffee00, 0.9).setDepth(4);
           this.tweens.add({ targets: ring, scaleX: 10, scaleY: 10, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
@@ -9843,11 +9850,13 @@ export class ArenaScene extends Phaser.Scene {
         if (this.painBatteryVisual) { this.painBatteryVisual.destroy(); this.painBatteryVisual = null; }
         const blastDmg = Math.floor(this.painBatterySelfDmgDealt * 0.75);
         if (blastDmg > 0) {
-          const blastDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
-          if (blastDist <= 120) {
-            this.npc.takeDamage(blastDmg);
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0xffaa00);
-            this.showFloatingText(this.npc.x, this.npc.y - 20, `${blastDmg}`, '#ffaa00');
+          for (const t of this.enemies) {
+            if (!t.active || t.hp <= 0) continue;
+            if (Phaser.Math.Distance.Between(this.player.x, this.player.y, t.x, t.y) <= 120) {
+              t.takeDamage(blastDmg);
+              this.spawnHitFlash(t.x, t.y, 0xffaa00);
+              this.showFloatingText(t.x, t.y - 20, `${blastDmg}`, '#ffaa00');
+            }
           }
           const ring = this.add.circle(this.player.x, this.player.y, 10, 0xffaa00, 0.85).setDepth(4);
           this.tweens.add({ targets: ring, scaleX: 12, scaleY: 12, alpha: 0, duration: 450, onComplete: () => ring.destroy() });
