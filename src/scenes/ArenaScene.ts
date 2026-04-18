@@ -5391,22 +5391,24 @@ export class ArenaScene extends Phaser.Scene {
           if (!this.player.active) return;
           pb.setVelocity(0, 0);
           this.isDodging = false;
-          const slashDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
-          if (slashDist <= 85) {
-            const bleedBonus = this.hasUpgrade('click') && this.npc.bleeding ? 1.5 : 1;
-            const slashDmg = Math.round(20 * bleedBonus);
-            this.npc.takeDamage(slashDmg);
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0xff2200);
-            if (this.huntBloodMoonActive && this.hasUpgrade('f')) this.player.heal(Math.ceil(slashDmg * 0.5));
-            if (this.huntBloodPactActive && this.time.now < this.huntBloodPactEnd) this.player.heal(10);
-            // Apply bleeding
-            this.npc.bleeding = true;
-            this.npc.bleedingUntil = this.time.now + 8000;
-            this.applyNpcBleedVisual();
-            const kb = this.npc.body as Phaser.Physics.Arcade.Body;
-            const toNx = this.npc.x - this.player.x, toNy = this.npc.y - this.player.y;
-            const nd2 = Math.sqrt(toNx * toNx + toNy * toNy) || 1;
-            kb.setVelocity((toNx / nd2) * 500, (toNy / nd2) * 500);
+          for (const t of this.enemies) {
+            if (!t.active || t.hp <= 0) continue;
+            const slashDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, t.x, t.y);
+            if (slashDist <= 85) {
+              const bleedBonus = this.hasUpgrade('click') && t.bleeding ? 1.5 : 1;
+              const slashDmg = Math.round(20 * bleedBonus);
+              t.takeDamage(slashDmg);
+              this.spawnHitFlash(t.x, t.y, 0xff2200);
+              if (this.huntBloodMoonActive && this.hasUpgrade('f')) this.player.heal(Math.ceil(slashDmg * 0.5));
+              if (this.huntBloodPactActive && this.time.now < this.huntBloodPactEnd) this.player.heal(10);
+              // Apply bleeding
+              t.bleeding = true;
+              t.bleedingUntil = this.time.now + 8000;
+              const kb = t.body as Phaser.Physics.Arcade.Body;
+              const toTx = t.x - this.player.x, toTy = t.y - this.player.y;
+              const td2 = Math.sqrt(toTx * toTx + toTy * toTy) || 1;
+              kb.setVelocity((toTx / td2) * 500, (toTy / td2) * 500);
+            }
           }
           const arc = this.add.circle(this.player.x + (dx / dist) * 45, this.player.y + (dy / dist) * 45, 18, 0xff3300, 0.7).setDepth(8);
           this.tweens.add({ targets: arc, scaleX: 3.5, scaleY: 0.8, alpha: 0, duration: 200, onComplete: () => arc.destroy() });
@@ -8883,12 +8885,14 @@ export class ArenaScene extends Phaser.Scene {
       return;
     }
     if (owner === 'player') {
-      const nd = Phaser.Math.Distance.Between(x, y, this.npc.x, this.npc.y);
-      if (nd <= radius) {
-        this.npc.takeDamage(dmg);
-        this.spawnHitFlash(this.npc.x, this.npc.y, 0xff6600);
-        if (this.huntBloodMoonActive && this.hasUpgrade('f')) this.player.heal(Math.ceil(dmg * 0.5));
-        if (this.huntBloodPactActive && this.time.now < this.huntBloodPactEnd) this.player.heal(Math.ceil(dmg * 0.5));
+      for (const t of this.enemies) {
+        if (!t.active || t.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(x, y, t.x, t.y) <= radius) {
+          t.takeDamage(dmg);
+          this.spawnHitFlash(t.x, t.y, 0xff6600);
+          if (this.huntBloodMoonActive && this.hasUpgrade('f')) this.player.heal(Math.ceil(dmg * 0.5));
+          if (this.huntBloodPactActive && this.time.now < this.huntBloodPactEnd) this.player.heal(Math.ceil(dmg * 0.5));
+        }
       }
       if (selfDamage && Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) <= radius) {
         this.player.applySelfDamage(20);
