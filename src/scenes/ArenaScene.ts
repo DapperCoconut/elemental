@@ -20951,7 +20951,6 @@ export class ArenaScene extends Phaser.Scene {
     }
     c.takeDamage(dmg);
     this.spawnHitFlash(proj.x, proj.y, 0xff6600);
-    this.spawnDamageNumber(c.x, c.y - 28, dmg);
 
     // Burn (fire projectile + Flameshredder upgrade)
     if (proj.texture.key === 'proj-fire' && this.hasUpgrade('click')) {
