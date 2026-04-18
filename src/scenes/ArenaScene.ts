@@ -1540,6 +1540,7 @@ export class ArenaScene extends Phaser.Scene {
   private silenceHookConnected = false;
   private silenceHookWindowExpiry = 0;
   private silenceHookProj: Projectile | null = null;
+  private silenceHookTarget: Fighter | null = null;
   private silenceNpcYankUntil = 0;
   private silencePlayerYankUntil = 0;
   private silenceEnrageUntil = 0;
@@ -2576,6 +2577,7 @@ export class ArenaScene extends Phaser.Scene {
     this.silenceHookConnected = false;
     this.silenceHookWindowExpiry = 0;
     if (this.silenceHookProj) { this.silenceHookProj.destroy(); this.silenceHookProj = null; }
+    this.silenceHookTarget = null;
     this.silenceNpcYankUntil = 0;
     this.silencePlayerYankUntil = 0;
     this.silenceSlashEmUpActive = false;
@@ -4955,16 +4957,19 @@ export class ArenaScene extends Phaser.Scene {
       fireFrozenSolid: (tx, ty) => {
         const angle = Math.atan2(ty - this.player.y, tx - this.player.x);
         this.spawnFrozenSolidVisual(this.player.x, this.player.y, angle);
-        const npcAngle = Math.atan2(this.npc.y - this.player.y, this.npc.x - this.player.x);
-        const diff = Math.abs(Phaser.Math.Angle.Wrap(npcAngle - angle));
-        if (diff <= Math.PI / 8) {
-          if (this.npc.frozenUntil > this.time.now) {
-            this.npc.frozenUntil = 0;
-            for (let fi = 0; fi < 3; fi++) this.addFrostStack('npc');
-          } else {
-            this.npc.frozenUntil = this.time.now + 3000;
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0x88ccff);
-            if (this.hasUpgrade('q')) this.npc.frozenSolidAmpReady = true;
+        for (const t of this.enemies) {
+          if (!t.active || t.hp <= 0) continue;
+          const tAngle = Math.atan2(t.y - this.player.y, t.x - this.player.x);
+          const diff = Math.abs(Phaser.Math.Angle.Wrap(tAngle - angle));
+          if (diff <= Math.PI / 8) {
+            if (t.frozenUntil > this.time.now) {
+              t.frozenUntil = 0;
+              for (let fi = 0; fi < 3; fi++) this.addFrostStackTo(t);
+            } else {
+              t.frozenUntil = this.time.now + 3000;
+              this.spawnHitFlash(t.x, t.y, 0x88ccff);
+              if (this.hasUpgrade('q')) t.frozenSolidAmpReady = true;
+            }
           }
         }
       },
@@ -5710,15 +5715,18 @@ export class ArenaScene extends Phaser.Scene {
       silenceMachete: (angleRad: number) => {
         // AOE sweep in 90° arc toward cursor
         const RANGE = 80;
-        const dist2npc = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
-        if (dist2npc <= RANGE) {
-          const angleDiff = Math.abs(Phaser.Math.Angle.ShortestBetween(
-            Phaser.Math.RadToDeg(angleRad),
-            Phaser.Math.RadToDeg(Math.atan2(this.npc.y - this.player.y, this.npc.x - this.player.x)),
-          ));
-          if (angleDiff <= 45) {
-            this.npc.takeDamage(14);
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0xffcc88);
+        for (const t of this.enemies) {
+          if (!t.active || t.hp <= 0) continue;
+          const dist2t = Phaser.Math.Distance.Between(this.player.x, this.player.y, t.x, t.y);
+          if (dist2t <= RANGE) {
+            const angleDiff = Math.abs(Phaser.Math.Angle.ShortestBetween(
+              Phaser.Math.RadToDeg(angleRad),
+              Phaser.Math.RadToDeg(Math.atan2(t.y - this.player.y, t.x - this.player.x)),
+            ));
+            if (angleDiff <= 45) {
+              t.takeDamage(14);
+              this.spawnHitFlash(t.x, t.y, 0xffcc88);
+            }
           }
         }
         // Visual arc
@@ -9294,8 +9302,8 @@ export class ArenaScene extends Phaser.Scene {
     // NPC hunt speed adjustments
     if (this.npc.element.id === 'hunt' && this.npcHuntBeastForm) this.npcSpeedMult = Math.max(this.npcSpeedMult, 1.5);
     if (time < this.npcHuntSlowUntil) this.npcSpeedMult *= 0.5;
-    // Silence slasher dread aura: slow NPC proportional to proximity
-    if (this.elementId === 'silence' && this.silenceSlasherActive) {
+    // Silence slasher dread aura: slow NPC proportional to proximity (PvP only; invasion handled in updateInvasion)
+    if (!this.isInvasion && this.elementId === 'silence' && this.silenceSlasherActive) {
       const silDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
       const AURA_RADIUS = 260;
       if (silDist <= AURA_RADIUS) {
@@ -9320,8 +9328,8 @@ export class ArenaScene extends Phaser.Scene {
     if (this.elementId === 'slime' && time < this.slimeKit.getNpcSlimeSlowUntil()) this.npcSpeedMult *= 0.85;
     // Adrenaline SK8 trick slow on NPC
     if (this.elementId === 'adrenaline' && time < this.npcSkateSlowUntil) this.npcSpeedMult *= 0.75;
-    // Growth Cough aura slow
-    if (this.elementId === 'growth' && this.growthCoughStacks > 0) {
+    // Growth Cough aura slow (PvP/AI only — invasion handled in updateInvasion)
+    if (!this.isInvasion && this.elementId === 'growth' && this.growthCoughStacks > 0) {
       if (Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y) <= 120) {
         this.npcSpeedMult *= Math.max(0.1, 1 - this.growthCoughStacks * 0.05);
       }
@@ -10976,12 +10984,16 @@ export class ArenaScene extends Phaser.Scene {
             const baseDmg = 8;
             const bonusDmg = Math.round(this.silenceFear * 0.04);
             const totalDmg = baseDmg + bonusDmg;
-            const dist2npc = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
-            if (dist2npc <= 90) {
-              this.npc.takeDamage(totalDmg);
-              this.spawnHitFlash(this.npc.x, this.npc.y, 0x440066);
-              this.showFloatingText(this.player.x, this.player.y - 30, `👁 ${totalDmg} fear!`, '#cc88ff');
+            let hit = false;
+            for (const t of this.enemies) {
+              if (!t.active || t.hp <= 0) continue;
+              if (Phaser.Math.Distance.Between(this.player.x, this.player.y, t.x, t.y) <= 90) {
+                t.takeDamage(totalDmg);
+                this.spawnHitFlash(t.x, t.y, 0x440066);
+                hit = true;
+              }
             }
+            if (hit) this.showFloatingText(this.player.x, this.player.y - 30, `👁 ${totalDmg} fear!`, '#cc88ff');
             const burst = this.add.circle(this.player.x, this.player.y, 10, 0x440066, 0.8).setDepth(8);
             this.tweens.add({ targets: burst, scaleX: 9, scaleY: 9, alpha: 0, duration: 350, onComplete: () => burst.destroy() });
           }
@@ -12941,6 +12953,7 @@ export class ArenaScene extends Phaser.Scene {
         }
         // Slow enemies standing in the trail
         if (trail.owner === 'player') {
+          const enemiesInTrail: Fighter[] = [];
           for (const enemyTarget of this.enemies) {
             if (!enemyTarget.active || enemyTarget.hp <= 0) continue;
             if (Phaser.Math.Distance.Between(trail.x, trail.y, enemyTarget.x, enemyTarget.y) <= trail.radius) {
@@ -12951,12 +12964,15 @@ export class ArenaScene extends Phaser.Scene {
               }
               // Also update npcSpeedMult for PvP NPC
               if (!this.isInvasion && !this.playerBlackIceMorphActive) this.npcSpeedMult *= 0.8;
-              trail.frostTickAccum += delta;
-              if (trail.frostTickAccum >= 1200) {
-                trail.frostTickAccum -= 1200;
-                this.addFrostStackTo(enemyTarget);
-              }
-              break; // only accumulate once per frame
+              enemiesInTrail.push(enemyTarget);
+            }
+          }
+          // Tick frost accumulator once per trail, then apply stacks to all enemies in it
+          if (enemiesInTrail.length > 0) {
+            trail.frostTickAccum += delta;
+            if (trail.frostTickAccum >= 1200) {
+              trail.frostTickAccum -= 1200;
+              for (const enemyTarget of enemiesInTrail) this.addFrostStackTo(enemyTarget);
             }
           }
         } else {
@@ -13012,17 +13028,20 @@ export class ArenaScene extends Phaser.Scene {
         }
       }
 
-      // Frost visual indicators above fighters
-      const frostNpcLabel = this.npc.frostStacks > 0 ? `❄️×${this.npc.frostStacks}` : '';
-      if (frostNpcLabel) {
-        if (!this.npc.frostVisual) {
-          this.npc.frostVisual = this.add.text(this.npc.x, this.npc.y - 42, frostNpcLabel,
-            { fontSize: '12px', fontFamily: 'Arial', color: '#aaddff' }).setOrigin(0.5).setDepth(10);
-        } else {
-          this.npc.frostVisual.setText(frostNpcLabel).setPosition(this.npc.x, this.npc.y - 42);
+      // Frost visual indicators above enemies
+      for (const t of this.enemies) {
+        if (!t.active) continue;
+        const frostLabel = t.frostStacks > 0 ? `❄️×${t.frostStacks}` : '';
+        if (frostLabel) {
+          if (!t.frostVisual) {
+            t.frostVisual = this.add.text(t.x, t.y - 42, frostLabel,
+              { fontSize: '12px', fontFamily: 'Arial', color: '#aaddff' }).setOrigin(0.5).setDepth(10);
+          } else {
+            t.frostVisual.setText(frostLabel).setPosition(t.x, t.y - 42);
+          }
+        } else if (t.frostVisual) {
+          t.frostVisual.destroy(); t.frostVisual = null;
         }
-      } else if (this.npc.frostVisual) {
-        this.npc.frostVisual.destroy(); this.npc.frostVisual = null;
       }
 
       // Void frost visual
@@ -13359,16 +13378,17 @@ export class ArenaScene extends Phaser.Scene {
             this.growthBacteriaList.splice(bi, 1);
             continue;
           }
-          const bdist = Phaser.Math.Distance.Between(bac.sprite.x, bac.sprite.y, this.npc.x, this.npc.y);
+          const nearestEnemy = this.getNearestEnemy(bac.sprite.x, bac.sprite.y);
+          const bdist = Phaser.Math.Distance.Between(bac.sprite.x, bac.sprite.y, nearestEnemy.x, nearestEnemy.y);
           if (bdist > 18) {
             const speed = 150 * (delta / 1000);
-            bac.sprite.x += ((this.npc.x - bac.sprite.x) / bdist) * speed;
-            bac.sprite.y += ((this.npc.y - bac.sprite.y) / bdist) * speed;
+            bac.sprite.x += ((nearestEnemy.x - bac.sprite.x) / bdist) * speed;
+            bac.sprite.y += ((nearestEnemy.y - bac.sprite.y) / bdist) * speed;
           } else if (time - bac.lastContactTime >= 1000) {
             bac.lastContactTime = time;
-            this.npc.takeDamage(5);
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0x55cc22);
-            const ft = this.add.text(this.npc.x, this.npc.y - 20, '🦠 5', { fontSize: '10px', color: '#88ff44', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
+            nearestEnemy.takeDamage(5);
+            this.spawnHitFlash(nearestEnemy.x, nearestEnemy.y, 0x55cc22);
+            const ft = this.add.text(nearestEnemy.x, nearestEnemy.y - 20, '🦠 5', { fontSize: '10px', color: '#88ff44', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
             this.tweens.add({ targets: ft, y: ft.y - 20, alpha: 0, duration: 700, onComplete: () => ft.destroy() });
           }
           // NPC projectile hits bacteria
@@ -14284,7 +14304,8 @@ export class ArenaScene extends Phaser.Scene {
       if (this.elementId === 'silence') {
         // Fear accumulation while holding click to fade
         if (this.silenceFearCharging) {
-          const fadeDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
+          const nearestEnemy = this.getNearestEnemy(this.player.x, this.player.y);
+          const fadeDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, nearestEnemy.x, nearestEnemy.y);
           // Proximity bonus: 20/s baseline at any distance, up to 300/s when adjacent (quadratic falloff)
           const fadeFactor = Math.max(0, 1 - fadeDist / 500);
           const chargeRate = 20 + fadeFactor * fadeFactor * 280;
@@ -14304,54 +14325,69 @@ export class ArenaScene extends Phaser.Scene {
           this.silenceFearBarFill!.destroy(); this.silenceFearBarFill = null;
         }
 
-        // Possess: mirror player's current velocity to NPC
+        // Possess: mirror player's current velocity to all enemies
         if (time < this.silencePossessedUntil) {
           const pb = this.player.body as Phaser.Physics.Arcade.Body;
-          const nb = this.npc.body as Phaser.Physics.Arcade.Body;
-          nb.setVelocity(pb.velocity.x, pb.velocity.y);
-        }
-
-        // Yank: steer NPC toward player each frame until they arrive or time expires
-        if (time < this.silenceNpcYankUntil) {
-          const ydx = this.player.x - this.npc.x, ydy = this.player.y - this.npc.y;
-          const ydist = Math.sqrt(ydx * ydx + ydy * ydy);
-          if (ydist <= 65) {
-            this.silenceNpcYankUntil = 0;
-            (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-          } else {
-            (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity((ydx / ydist) * 900, (ydy / ydist) * 900);
+          for (const t of this.enemies) {
+            if (!t.active || t.hp <= 0) continue;
+            (t.body as Phaser.Physics.Arcade.Body).setVelocity(pb.velocity.x, pb.velocity.y);
           }
         }
 
-        // DON'T LOOK cone processing (player's cone affects NPC)
+        // Yank: steer hooked target toward player each frame until they arrive or time expires
+        if (time < this.silenceNpcYankUntil && this.silenceHookTarget) {
+          const ht = this.silenceHookTarget;
+          if (!ht.active || ht.hp <= 0) {
+            this.silenceNpcYankUntil = 0;
+            this.silenceHookTarget = null;
+          } else {
+            const ydx = this.player.x - ht.x, ydy = this.player.y - ht.y;
+            const ydist = Math.sqrt(ydx * ydx + ydy * ydy);
+            if (ydist <= 65) {
+              this.silenceNpcYankUntil = 0;
+              this.silenceHookTarget = null;
+              (ht.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+            } else {
+              (ht.body as Phaser.Physics.Arcade.Body).setVelocity((ydx / ydist) * 900, (ydy / ydist) * 900);
+            }
+          }
+        }
+
+        // DON'T LOOK cone processing (player's cone affects all enemies)
         if (this.silenceConeGraphic && this.silenceConeExpiry > 0) {
           // Rotate cone to follow player's current aim direction
           const ptr = this.input.activePointer;
           this.silenceConeAngle = Math.atan2(ptr.worldY - this.player.y, ptr.worldX - this.player.x);
           // Redraw cone at player's current position and facing
           this.drawSilenceCone(this.silenceConeGraphic, this.player.x, this.player.y, this.silenceConeAngle);
-          // Check if NPC is inside cone
-          const npcInCone = this.isInSilenceCone(this.npc.x, this.npc.y, this.player.x, this.player.y, this.silenceConeAngle);
-          if (npcInCone) {
+          // Check all enemies inside cone
+          const enemiesInCone = this.enemies.filter(t =>
+            t.active && t.hp > 0 &&
+            this.isInSilenceCone(t.x, t.y, this.player.x, this.player.y, this.silenceConeAngle),
+          );
+          if (enemiesInCone.length > 0) {
             this.silenceConeTickAccum += delta;
             if (this.silenceConeTickAccum >= 250) {
               this.silenceConeTickAccum -= 250;
-              this.npc.takeDamage(2);
-              this.spawnHitFlash(this.npc.x, this.npc.y, 0x220033);
+              for (const t of enemiesInCone) {
+                t.takeDamage(2);
+                this.spawnHitFlash(t.x, t.y, 0x220033);
+              }
             }
           } else {
             this.silenceConeTickAccum = 0;
             this.silenceConeContinuousStart = time; // reset continuous timer
           }
-          // Full 5s unbroken → proper stun. Check BEFORE expiry so it fires when enemy
-          // stays in for the entire duration (continuous start == cast time → triggers at expiry).
-          if (npcInCone && time - this.silenceConeContinuousStart >= 5000) {
+          // Full 5s unbroken → stun all enemies currently in cone
+          if (enemiesInCone.length > 0 && time - this.silenceConeContinuousStart >= 5000) {
             this.silenceConeExpiry = 0;
             if (this.silenceConeGraphic) { this.silenceConeGraphic.destroy(); this.silenceConeGraphic = null; }
-            this.npc.frozenUntil = Math.max(this.npc.frozenUntil, time + 3000);
-            const stunCirc = this.add.circle(this.npc.x, this.npc.y, 20, 0x000022, 0.8).setDepth(9);
-            this.tweens.add({ targets: stunCirc, scaleX: 3, scaleY: 3, alpha: 0, duration: 400, onComplete: () => stunCirc.destroy() });
-            this.showFloatingText(this.npc.x, this.npc.y - 30, '⬛ Stunned!', '#8888ff');
+            for (const t of enemiesInCone) {
+              t.frozenUntil = Math.max(t.frozenUntil, time + 3000);
+              const stunCirc = this.add.circle(t.x, t.y, 20, 0x000022, 0.8).setDepth(9);
+              this.tweens.add({ targets: stunCirc, scaleX: 3, scaleY: 3, alpha: 0, duration: 400, onComplete: () => stunCirc.destroy() });
+              this.showFloatingText(t.x, t.y - 30, '⬛ Stunned!', '#8888ff');
+            }
           } else if (time >= this.silenceConeExpiry) {
             this.silenceConeGraphic.destroy();
             this.silenceConeGraphic = null;
@@ -20635,6 +20671,35 @@ export class ArenaScene extends Phaser.Scene {
     const allEnemies = this.enemies.filter(e => e.active && e.hp > 0) as CorruptedBase[];
     for (const c of allEnemies) {
       c.aiTick(this.player, this.projectiles, allEnemies, time, delta);
+      // Ice: frozen enemies stop; frost-stacked enemies slow
+      if (c.frozenUntil > time) {
+        (c.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+      } else if (c.frostStacks > 0) {
+        const cb = c.body as Phaser.Physics.Arcade.Body;
+        const slowMult = 1 - c.frostStacks * 0.1;
+        cb.velocity.x *= slowMult;
+        cb.velocity.y *= slowMult;
+      }
+      // Growth Cough aura slow
+      if (this.elementId === 'growth' && this.growthCoughStacks > 0) {
+        if (Phaser.Math.Distance.Between(this.player.x, this.player.y, c.x, c.y) <= 120) {
+          const cb = c.body as Phaser.Physics.Arcade.Body;
+          const coughMult = Math.max(0.1, 1 - this.growthCoughStacks * 0.05);
+          cb.velocity.x *= coughMult;
+          cb.velocity.y *= coughMult;
+        }
+      }
+      // Silence dread aura: slow enemies near the slasher
+      if (this.elementId === 'silence' && this.silenceSlasherActive) {
+        const AURA_RADIUS = 260;
+        const silDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, c.x, c.y);
+        if (silDist <= AURA_RADIUS) {
+          const auraT = 1 - silDist / AURA_RADIUS;
+          const cb = c.body as Phaser.Physics.Arcade.Body;
+          cb.velocity.x *= 1 - auraT * 0.65;
+          cb.velocity.y *= 1 - auraT * 0.65;
+        }
+      }
     }
 
     // Tick festering growths
@@ -20942,6 +21007,7 @@ export class ArenaScene extends Phaser.Scene {
     // Silence meat hook: register connection + initial damage
     if (proj.texture.key === 'proj-silence-hook') {
       this.silenceHookConnected = true;
+      this.silenceHookTarget = this.npc;
       this.silenceHookWindowExpiry = this.time.now + 5000;
       this.silenceHookProj = null;
       this.showFloatingText(this.npc.x, this.npc.y - 20, '🪝 Hooked!', '#cc9933');
@@ -21084,6 +21150,29 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private applyProjectileToCorrupted(proj: Projectile, c: CorruptedBase): void {
+    // Silence possess eye: apply possession, no damage
+    if (proj.texture.key === 'proj-silence-eye') {
+      this.silencePossessedUntil = this.time.now + 8000;
+      this.showFloatingText(c.x, c.y - 30, '👁 Possessed!', '#cc66ff');
+      const eyeFlash = this.add.circle(c.x, c.y, 16, 0x660088, 0.8).setDepth(9);
+      this.tweens.add({ targets: eyeFlash, scaleX: 3, scaleY: 3, alpha: 0, duration: 400, onComplete: () => eyeFlash.destroy() });
+      proj.setActive(false).setVisible(false);
+      (proj.body as Phaser.Physics.Arcade.Body).stop();
+      return;
+    }
+    // Silence meat hook: register connection + initial damage
+    if (proj.texture.key === 'proj-silence-hook') {
+      this.silenceHookConnected = true;
+      this.silenceHookTarget = c;
+      this.silenceHookWindowExpiry = this.time.now + 5000;
+      this.silenceHookProj = null;
+      this.showFloatingText(c.x, c.y - 20, '🪝 Hooked!', '#cc9933');
+      c.takeDamage(8);
+      this.spawnHitFlash(c.x, c.y, 0xaa7733);
+      proj.setActive(false).setVisible(false);
+      (proj.body as Phaser.Physics.Arcade.Body).stop();
+      return;
+    }
     c.setIncomingCritContext(this.player.critChance, this.player.critMult);
     let dmg = proj.damage;
     // Shatter Strike on frozen enemy
@@ -21108,8 +21197,15 @@ export class ArenaScene extends Phaser.Scene {
         if (proj.isPowered) this.addFrostStackTo(c);
       }
     }
-    // Toxic DOT (growth dagger)
+    // Toxic DOT (growth dagger) + R+ exploit bonus on already-infected
     if (proj.texture.key === 'proj-growth-dagger') {
+      if (this.hasUpgrade('r') && c.toxicUntil > this.time.now) {
+        const bonus = Math.round(proj.damage * 0.25);
+        c.takeDamage(bonus);
+        this.spawnHitFlash(c.x, c.y, 0xccff44);
+        const ft = this.add.text(c.x, c.y - 35, `+${bonus} EXPLOIT`, { fontSize: '10px', color: '#ccff44', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
+        this.tweens.add({ targets: ft, y: ft.y - 20, alpha: 0, duration: 900, onComplete: () => ft.destroy() });
+      }
       c.toxicUntil = this.time.now + 5000 + this.growthLingerBonus;
       c.toxicDps = 2 + this.growthViralBonus;
       c.toxicTickAccum = 0;
