@@ -243,6 +243,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     this.cooldowns.set(abilityId, Date.now());
   }
 
+  /** Shift all stored cooldown timestamps forward by deltaMs (used to compensate for real-time elapsed during a game pause). */
+  shiftCooldowns(deltaMs: number): void {
+    for (const [k, v] of this.cooldowns) this.cooldowns.set(k, v + deltaMs);
+  }
+
   /** Reduce remaining cooldown of an ability by byMs milliseconds (cannot make it readier than fully ready). */
   reduceCooldown(abilityId: string, byMs: number): void {
     const stored = this.cooldowns.get(abilityId) ?? 0;

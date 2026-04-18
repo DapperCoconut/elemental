@@ -98,6 +98,7 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
       .on('pointerover', () => { btn.setAlpha(1); btn.setStrokeStyle(3, 0xffffff); btnLabel.setColor('#ffcc00'); })
       .on('pointerout', () => { btn.setAlpha(0.9); btn.setStrokeStyle(2, 0x44cc44); btnLabel.setColor('#ffffff'); })
       .on('pointerdown', () => this.scene.start('GauntletSelectScene'));
+    this.input.keyboard!.on('keydown-ESC', () => this.scene.start('GauntletSelectScene'));
   }
 
   private showBoostSelection(gs: GauntletState, cx: number, cy: number, width: number, _height: number): void {

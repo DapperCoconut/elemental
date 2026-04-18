@@ -118,6 +118,7 @@ export class ShopScene extends Phaser.Scene {
       .on('pointerover', () => { backBtn.setFillStyle(0x333355); backLabel.setColor('#ffffff'); })
       .on('pointerout', () => { backBtn.setFillStyle(0x222233); backLabel.setColor('#aaaaaa'); })
       .on('pointerdown', () => this.scene.start('TitleScene'));
+    this.input.keyboard!.on('keydown-ESC', () => this.scene.start('TitleScene'));
 
     // ── Page navigation ──────────────────────────────────────────
     const combinedIds = ALL_UPGRADES

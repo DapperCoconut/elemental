@@ -128,6 +128,7 @@ export class GauntletSelectScene extends Phaser.Scene {
       .on('pointerover', () => { backBtn.setStrokeStyle(2, 0xffffff); })
       .on('pointerout',  () => { backBtn.setStrokeStyle(1, 0x664422); })
       .on('pointerdown', () => this.scene.start('TitleScene'));
+    this.input.keyboard!.on('keydown-ESC', () => this.scene.start('TitleScene'));
 
     this.add.text(width - 16, 16, `💎 ${PlayerData.getShards()}`, {
       fontSize: '16px', fontFamily: 'Arial, sans-serif', color: '#ffcc44',

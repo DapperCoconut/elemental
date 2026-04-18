@@ -97,5 +97,6 @@ export class GameOverScene extends Phaser.Scene {
       .on('pointerdown', () => {
         this.scene.start('TitleScene');
       });
+    this.input.keyboard!.on('keydown-ESC', () => this.scene.start('TitleScene'));
   }
 }

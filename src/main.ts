@@ -8,6 +8,7 @@ import { ArenaScene } from './scenes/ArenaScene';
 import { GameOverScene } from './scenes/GameOverScene';
 import { GauntletSelectScene } from './scenes/GauntletSelectScene';
 import { GauntletIntermediaryScene } from './scenes/GauntletIntermediaryScene';
+import { PauseMenuScene } from './scenes/PauseMenuScene';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -21,7 +22,7 @@ const config: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
-  scene: [BootScene, TitleScene, MenuScene, ShopScene, LabScene, ArenaScene, GameOverScene, GauntletSelectScene, GauntletIntermediaryScene],
+  scene: [BootScene, TitleScene, MenuScene, ShopScene, LabScene, ArenaScene, GameOverScene, GauntletSelectScene, GauntletIntermediaryScene, PauseMenuScene],
 };
 
 const game = new Phaser.Game(config);

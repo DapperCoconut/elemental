@@ -184,6 +184,22 @@ export class MenuScene extends Phaser.Scene {
       color: '#555555',
     }).setOrigin(0.5);
 
+    // Back button
+    const backBtn = this.add.rectangle(52, 36, 88, 36, 0x222233).setStrokeStyle(1, 0x555577).setInteractive({ useHandCursor: true });
+    const backLabel = this.add.text(52, 36, '← BACK', { fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#aaaaaa' }).setOrigin(0.5);
+    backBtn.on('pointerover', () => { backBtn.setFillStyle(0x333355); backLabel.setColor('#ffffff'); });
+    backBtn.on('pointerout',  () => { backBtn.setFillStyle(0x222233); backLabel.setColor('#aaaaaa'); });
+    backBtn.on('pointerdown', () => this.goBack());
+
+    // Esc: close info overlay if open, else go back one phase
+    this.input.keyboard!.on('keydown-ESC', () => {
+      if (this.infoOverlayObjects.length > 0) {
+        this.closeElementInfo();
+      } else {
+        this.goBack();
+      }
+    });
+
     // Konami sequence listener (WWSSADADBA → unlock Dummy enemy)
     this.konamiBuffer = [];
     this.input.keyboard!.on('keydown', (evt: KeyboardEvent) => {
@@ -735,6 +751,30 @@ export class MenuScene extends Phaser.Scene {
       .on('pointerout',  () => backBtn.setFillStyle(0x221133, 0.9))
       .on('pointerdown', () => this.closeElementInfo());
     this.infoOverlayObjects.push(backBtn, backLbl);
+  }
+
+  private goBack(): void {
+    const { width, height } = this.scale;
+    const cx = width / 2;
+    if (this.selectionPhase === 'player') {
+      this.scene.start('TitleScene');
+    } else if (this.selectionPhase === 'enemy') {
+      this.playerChoice = null;
+      this.selectionPhase = 'player';
+      this.elemPage = 0;
+      this.renderPhase(width, height, cx);
+    } else if (this.selectionPhase === 'difficulty') {
+      if (this.isInvasion) {
+        // invasion skips enemy phase, so go back to player selection
+        this.playerChoice = null;
+        this.selectionPhase = 'player';
+      } else {
+        this.enemyChoice = null;
+        this.selectionPhase = 'enemy';
+      }
+      this.elemPage = 0;
+      this.renderPhase(width, height, cx);
+    }
   }
 
   private handleElementClick(elementId: string, width: number, height: number, cx: number): void {

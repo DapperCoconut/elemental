@@ -961,6 +961,7 @@ export class ArenaScene extends Phaser.Scene {
   private rKey!: Phaser.Input.Keyboard.Key;
   private fKey!: Phaser.Input.Keyboard.Key;
   private spaceKey!: Phaser.Input.Keyboard.Key;
+  private pausedAt = 0;
 
   // Shared state — reset in create()
   private abilityBars: AbilityBarEntry[] = [];
@@ -3934,6 +3935,15 @@ export class ArenaScene extends Phaser.Scene {
         .setStrokeStyle(2, this.npcElement.color, 0.8)
         .setDepth(30);
     }
+
+    // Pause menu: Esc opens PauseMenuScene overlay
+    kb.on('keydown-ESC', () => this.openPauseMenu());
+    this.events.on(Phaser.Scenes.Events.RESUME, () => {
+      // Shift Date.now()-based cooldowns forward by pause duration so HUD bars stay accurate
+      const shift = Date.now() - this.pausedAt;
+      this.player.shiftCooldowns(shift);
+      this.npc.shiftCooldowns(shift);
+    });
 
     // ── Creation: spawn crucible ───────────────────────────────────
     if (this.elementId === 'creation' || this.npcElementId === 'creation') {
@@ -7728,6 +7738,14 @@ export class ArenaScene extends Phaser.Scene {
       duration: 200,
       onComplete: () => flash.destroy(),
     });
+  }
+
+  private openPauseMenu(): void {
+    if (this.gameEnded) return;
+    if (this.scene.isPaused()) return;
+    this.pausedAt = Date.now();
+    this.scene.launch('PauseMenuScene', { parentSceneKey: this.scene.key });
+    this.scene.pause();
   }
 
   private showFloatingText(x: number, y: number, text: string, color: string): void {

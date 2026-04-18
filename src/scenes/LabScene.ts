@@ -74,6 +74,7 @@ export class LabScene extends Phaser.Scene {
     backBtn.on('pointerover', () => { backBtn.setFillStyle(0x333355); backLabel.setColor('#ffffff'); });
     backBtn.on('pointerout',  () => { backBtn.setFillStyle(0x222233); backLabel.setColor('#aaaaaa'); });
     backBtn.on('pointerdown', () => this.scene.start('TitleScene'));
+    this.input.keyboard!.on('keydown-ESC', () => this.scene.start('TitleScene'));
 
     // Nucleus counter (top right)
     this.nucleiText = this.add.text(width - 16, 12, '', {
