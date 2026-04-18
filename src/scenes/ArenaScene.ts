@@ -20874,9 +20874,17 @@ export class ArenaScene extends Phaser.Scene {
     // Time Warp orb: deal 20 damage + teleport NPC back 3 seconds (or save pos with E+)
     if (proj.texture.key === 'proj-time-orb') {
       if (this.elementId === 'sand' && this.hasUpgrade('e')) {
-        this.npc.takeDamage(20);
-        this.spawnHitFlash(this.npc.x, this.npc.y, 0xffdd44);
-        this.showFloatingText(this.npc.x, this.npc.y - 24, '20', '#ffdd44');
+        let hitTarget: Fighter | null = null;
+        for (const t of this.enemies) {
+          if (!t.active || t.hp <= 0) continue;
+          if (Phaser.Math.Distance.Between(proj.x, proj.y, t.x, t.y) <= 20) {
+            hitTarget = t;
+            t.takeDamage(20);
+            this.spawnHitFlash(t.x, t.y, 0xffdd44);
+            this.showFloatingText(t.x, t.y - 24, '20', '#ffdd44');
+            break;
+          }
+        }
         if (this.npcPosHistory.length > 0) {
           const targetT = this.time.now - 3000;
           let best = this.npcPosHistory[0];
@@ -20891,21 +20899,31 @@ export class ArenaScene extends Phaser.Scene {
           this.showFloatingText(this.player.x, this.player.y - 32, '⏱ Saved!', '#ffdd44');
         }
       } else if (!this.timeNpcTeleporting && this.npcPosHistory.length > 0) {
-        this.npc.takeDamage(20);
-        this.spawnHitFlash(this.npc.x, this.npc.y, 0xffdd44);
-        this.showFloatingText(this.npc.x, this.npc.y - 24, '20', '#ffdd44');
-        const targetT = this.time.now - 3000;
-        let best = this.npcPosHistory[0];
-        for (const snap of this.npcPosHistory) {
-          if (Math.abs(snap.t - targetT) < Math.abs(best.t - targetT)) best = snap;
+        let hitTarget: Fighter | null = null;
+        for (const t of this.enemies) {
+          if (!t.active || t.hp <= 0) continue;
+          if (Phaser.Math.Distance.Between(proj.x, proj.y, t.x, t.y) <= 20) {
+            hitTarget = t;
+            t.takeDamage(20);
+            this.spawnHitFlash(t.x, t.y, 0xffdd44);
+            this.showFloatingText(t.x, t.y - 24, '20', '#ffdd44');
+            break;
+          }
         }
-        this.timeNpcTeleporting = true;
-        this.timeNpcTeleportStart = this.time.now;
-        this.timeNpcTeleportFromX = this.npc.x;
-        this.timeNpcTeleportFromY = this.npc.y;
-        this.timeNpcTeleportToX = best.x;
-        this.timeNpcTeleportToY = best.y;
-        this.timeNpcTeleportPuddleAccum = 0;
+        if (hitTarget) {
+          const targetT = this.time.now - 3000;
+          let best = this.npcPosHistory[0];
+          for (const snap of this.npcPosHistory) {
+            if (Math.abs(snap.t - targetT) < Math.abs(best.t - targetT)) best = snap;
+          }
+          this.timeNpcTeleporting = true;
+          this.timeNpcTeleportStart = this.time.now;
+          this.timeNpcTeleportFromX = hitTarget.x;
+          this.timeNpcTeleportFromY = hitTarget.y;
+          this.timeNpcTeleportToX = best.x;
+          this.timeNpcTeleportToY = best.y;
+          this.timeNpcTeleportPuddleAccum = 0;
+        }
       }
       proj.setActive(false).setVisible(false);
       (proj.body as Phaser.Physics.Arcade.Body).stop();
