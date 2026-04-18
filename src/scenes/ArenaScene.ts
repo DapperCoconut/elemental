@@ -9625,13 +9625,15 @@ export class ArenaScene extends Phaser.Scene {
             this.time.delayedCall(2000, () => {
               this.armageddonActive = false;
               this.nukeChanneling = false;
-              const isBurning = this.npc.burningUntil > this.time.now;
-              const dmg = isBurning ? 120 : 80;
               const radius = 220;
-              const distToNpc = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
-              if (distToNpc <= radius) {
-                this.npc.takeDamage(dmg);
-                this.spawnHitFlash(this.npc.x, this.npc.y, 0xff4400);
+              for (const t of this.enemies) {
+                if (!t.active || t.hp <= 0) continue;
+                if (Phaser.Math.Distance.Between(this.player.x, this.player.y, t.x, t.y) <= radius) {
+                  const isBurning = t.burningUntil > this.time.now;
+                  const dmg = isBurning ? 120 : 80;
+                  t.takeDamage(dmg);
+                  this.spawnHitFlash(t.x, t.y, 0xff4400);
+                }
               }
               const boom = this.add.circle(this.player.x, this.player.y, 12, 0xff4400, 0.9).setDepth(5);
               this.tweens.add({ targets: boom, scaleX: 22, scaleY: 22, alpha: 0, duration: 700, onComplete: () => boom.destroy() });
