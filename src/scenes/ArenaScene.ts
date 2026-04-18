@@ -4699,8 +4699,8 @@ export class ArenaScene extends Phaser.Scene {
       isPlayerCaster: true,
       projectiles: this.projectiles,
       dealAoeDamage: (cx, cy, radius, damage) => {
-        const targets: Fighter[] = [this.npc, ...this.corrupted.filter(c => c.active && c.hp > 0)];
-        for (const t of targets) {
+        for (const t of this.enemies) {
+          if (!t.active || t.hp <= 0) continue;
           if (Phaser.Math.Distance.Between(cx, cy, t.x, t.y) <= radius) {
             t.takeDamage(damage);
             this.spawnHitFlash(t.x, t.y, 0xff6600);
@@ -4816,38 +4816,31 @@ export class ArenaScene extends Phaser.Scene {
       setShieldHp: (amount) => { this.player.shieldHp = Math.max(0, amount); },
       slamCaster: () => { /* earth kit reworked — no longer used via context */ },
       dealMeleeDamage: (range, damage, knockback = 0) => {
-        const distNpc = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
-        if (distNpc <= range) {
-          const pointer = this.input.activePointer;
-          const dirX = pointer.worldX - this.player.x;
-          const dirY = pointer.worldY - this.player.y;
-          const dirLen = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
-          const toNpcX = this.npc.x - this.player.x;
-          const toNpcY = this.npc.y - this.player.y;
-          const dot = (dirX / dirLen) * (toNpcX / distNpc) + (dirY / dirLen) * (toNpcY / distNpc);
+        const pointer = this.input.activePointer;
+        const dirX = pointer.worldX - this.player.x;
+        const dirY = pointer.worldY - this.player.y;
+        const dirLen = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
+        for (const t of this.enemies) {
+          if (!t.active || t.hp <= 0) continue;
+          const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, t.x, t.y);
+          if (dist > range) continue;
+          const toX = t.x - this.player.x;
+          const toY = t.y - this.player.y;
+          const dot = (dirX / dirLen) * (toX / dist) + (dirY / dirLen) * (toY / dist);
           if (dot > 0.4) {
-            this.npc.takeDamage(damage);
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0xaa8844);
+            t.takeDamage(damage);
+            this.spawnHitFlash(t.x, t.y, 0xaa8844);
             if (knockback > 0) {
-              const nb = this.npc.body as Phaser.Physics.Arcade.Body;
-              nb.setVelocity((toNpcX / distNpc) * knockback, (toNpcY / distNpc) * knockback);
+              const nb = t.body as Phaser.Physics.Arcade.Body;
+              nb.setVelocity((toX / dist) * knockback, (toY / dist) * knockback);
             }
           }
         }
-        if (this.isInvasion) {
-          for (const c of this.corrupted) {
-            if (!c.active || c.hp <= 0) continue;
-            if (Phaser.Math.Distance.Between(this.player.x, this.player.y, c.x, c.y) <= range) {
-              c.takeDamage(damage);
-              this.spawnHitFlash(c.x, c.y, 0xaa8844);
-            }
-          }
-          for (const g of this.festeringGrowths) {
-            if (!g.active) continue;
-            if (Phaser.Math.Distance.Between(this.player.x, this.player.y, g.x, g.y) <= range) {
-              g.takeDamage(damage);
-              this.spawnHitFlash(g.x, g.y, 0xaa8844);
-            }
+        for (const g of this.festeringGrowths) {
+          if (!g.active) continue;
+          if (Phaser.Math.Distance.Between(this.player.x, this.player.y, g.x, g.y) <= range) {
+            g.takeDamage(damage);
+            this.spawnHitFlash(g.x, g.y, 0xaa8844);
           }
         }
       },
@@ -20962,45 +20955,32 @@ export class ArenaScene extends Phaser.Scene {
     (proj.body as Phaser.Physics.Arcade.Body).stop();
   }
 
-  /** Damages all player-side targets (npc + corrupted secondaries + growths) within radius. */
+  /** Damages all player-side targets (enemies list + growths) within radius. */
   private damagePlayerTargets(cx: number, cy: number, radius: number, damage: number, color: number): void {
-    if (Phaser.Math.Distance.Between(cx, cy, this.npc.x, this.npc.y) <= radius) {
-      this.npc.takeDamage(damage);
-      this.spawnHitFlash(this.npc.x, this.npc.y, color);
-    }
-    if (this.isInvasion) {
-      for (const c of this.corrupted) {
-        if (!c.active || c.hp <= 0) continue;
-        if (Phaser.Math.Distance.Between(cx, cy, c.x, c.y) <= radius) {
-          c.takeDamage(damage);
-          this.spawnHitFlash(c.x, c.y, color);
-        }
+    for (const t of this.enemies) {
+      if (!t.active || t.hp <= 0) continue;
+      if (Phaser.Math.Distance.Between(cx, cy, t.x, t.y) <= radius) {
+        t.takeDamage(damage);
+        this.spawnHitFlash(t.x, t.y, color);
       }
-      for (const g of this.festeringGrowths) {
-        if (!g.active) continue;
-        if (Phaser.Math.Distance.Between(cx, cy, g.x, g.y) <= radius) {
-          g.takeDamage(damage);
-          this.spawnHitFlash(g.x, g.y, color);
-        }
+    }
+    for (const g of this.festeringGrowths) {
+      if (!g.active) continue;
+      if (Phaser.Math.Distance.Between(cx, cy, g.x, g.y) <= radius) {
+        g.takeDamage(damage);
+        this.spawnHitFlash(g.x, g.y, color);
       }
     }
   }
 
   private dealAoeDamageFromOwner(cx: number, cy: number, radius: number, damage: number, owner: 'player' | 'npc'): void {
-    const target = owner === 'player' ? this.npc : this.player;
-    if (Phaser.Math.Distance.Between(cx, cy, target.x, target.y) <= radius) {
-      target.takeDamage(damage);
-      this.spawnHitFlash(target.x, target.y, 0x9944ff);
-      this.spawnDamageNumber(target.x, target.y - 28, damage);
-    }
-    // Fan out to secondary corrupted in invasion mode
-    if (this.isInvasion && owner === 'player') {
-      for (const c of this.corrupted) {
-        if (!c.active || c.hp <= 0) continue;
-        if (Phaser.Math.Distance.Between(cx, cy, c.x, c.y) <= radius) {
-          c.takeDamage(damage);
-          this.spawnHitFlash(c.x, c.y, 0x9944ff);
-          this.spawnDamageNumber(c.x, c.y - 28, damage);
+    if (owner === 'player') {
+      for (const t of this.enemies) {
+        if (!t.active || t.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(cx, cy, t.x, t.y) <= radius) {
+          t.takeDamage(damage);
+          this.spawnHitFlash(t.x, t.y, 0x9944ff);
+          this.spawnDamageNumber(t.x, t.y - 28, damage);
         }
       }
       for (const g of this.festeringGrowths) {
@@ -21010,6 +20990,12 @@ export class ArenaScene extends Phaser.Scene {
           this.spawnHitFlash(g.x, g.y, 0x9944ff);
           this.spawnDamageNumber(g.x, g.y - 28, damage);
         }
+      }
+    } else {
+      if (Phaser.Math.Distance.Between(cx, cy, this.player.x, this.player.y) <= radius) {
+        this.player.takeDamage(damage);
+        this.spawnHitFlash(this.player.x, this.player.y, 0x9944ff);
+        this.spawnDamageNumber(this.player.x, this.player.y - 28, damage);
       }
     }
   }
