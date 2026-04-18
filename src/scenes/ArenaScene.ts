@@ -4762,9 +4762,12 @@ export class ArenaScene extends Phaser.Scene {
             const boom = this.add.circle(x, y, 8, 0x8800cc, 0.8).setDepth(8);
             this.tweens.add({ targets: boom, scaleX: 7, scaleY: 7, alpha: 0, duration: 350, onComplete: () => boom.destroy() });
             bomb.destroy();
-            if (Phaser.Math.Distance.Between(x, y, this.npc.x, this.npc.y) <= 50) {
-              this.npc.takeDamage(10);
-              this.spawnHitFlash(this.npc.x, this.npc.y, 0x8800cc);
+            for (const t of this.enemies) {
+              if (!t.active || t.hp <= 0) continue;
+              if (Phaser.Math.Distance.Between(x, y, t.x, t.y) <= 50) {
+                t.takeDamage(10);
+                this.spawnHitFlash(t.x, t.y, 0x8800cc);
+              }
             }
             this.spawnShadowDarkCloud(x, y, 'player');
           },
@@ -4789,9 +4792,12 @@ export class ArenaScene extends Phaser.Scene {
         if (!this.shadowTentacleSprite) {
           this.shadowTentacleSprite = this.add.graphics().setDepth(6);
         }
-        if (this.shadowTentacleHooked) {
-          this.npc.takeDamage(10);
-          this.spawnHitFlash(this.npc.x, this.npc.y, 0x8800cc);
+        for (const t of this.enemies) {
+          if (!t.active || t.hp <= 0) continue;
+          if (Phaser.Math.Distance.Between(this.player.x, this.player.y, t.x, t.y) <= 110) {
+            t.takeDamage(10);
+            this.spawnHitFlash(t.x, t.y, 0x8800cc);
+          }
         }
       },
       placeSnapTrap: () => {
@@ -12335,9 +12341,12 @@ export class ArenaScene extends Phaser.Scene {
                 this.shadowDanceCharge = Math.min(35, this.shadowDanceCharge + healed);
               }
             }
-            if (Phaser.Math.Distance.Between(cloud.x, cloud.y, this.npc.x, this.npc.y) <= cloud.radius + 14) {
-              this.npc.takeDamage(1);
-              this.spawnHitFlash(this.npc.x, this.npc.y, 0x660088);
+            for (const t of this.enemies) {
+              if (!t.active || t.hp <= 0) continue;
+              if (Phaser.Math.Distance.Between(cloud.x, cloud.y, t.x, t.y) <= cloud.radius + 14) {
+                t.takeDamage(1);
+                this.spawnHitFlash(t.x, t.y, 0x660088);
+              }
             }
           } else {
             // NPC cloud: heal NPC, damage player
@@ -12365,11 +12374,15 @@ export class ArenaScene extends Phaser.Scene {
           continue;
         }
         if (trap.owner === 'player') {
-          if (Phaser.Math.Distance.Between(trap.x, trap.y, this.npc.x, this.npc.y) <= trap.radius + 10) {
-            trap.triggered = true;
-            this.npc.takeDamage(20);
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0xcc44ff);
-            this.shadowNpcStunnedUntil = time + 2000;
+          for (const t of this.enemies) {
+            if (!t.active || t.hp <= 0) continue;
+            if (Phaser.Math.Distance.Between(trap.x, trap.y, t.x, t.y) <= trap.radius + 10) {
+              trap.triggered = true;
+              t.takeDamage(20);
+              this.spawnHitFlash(t.x, t.y, 0xcc44ff);
+              this.shadowNpcStunnedUntil = time + 2000;
+              break;
+            }
           }
         } else {
           if (Phaser.Math.Distance.Between(trap.x, trap.y, this.player.x, this.player.y) <= trap.radius + 10) {
@@ -13090,8 +13103,11 @@ export class ArenaScene extends Phaser.Scene {
           this.shadowConsumeTickAccum += delta;
           if (this.shadowConsumeTickAccum >= 1000) {
             this.shadowConsumeTickAccum -= 1000;
-            this.npc.takeDamage(2);
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0x8800cc);
+            for (const t of this.enemies) {
+              if (!t.active || t.hp <= 0) continue;
+              t.takeDamage(2);
+              this.spawnHitFlash(t.x, t.y, 0x8800cc);
+            }
           }
         }
       }
