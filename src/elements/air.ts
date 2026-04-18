@@ -18,6 +18,7 @@ function pointToSegmentDist(
 type SceneWithFighters = Phaser.Scene & {
   npc?: { x: number; y: number; takeDamage?: (n: number) => void };
   player?: { x: number; y: number; takeDamage?: (n: number) => void };
+  enemies?: Array<{ active: boolean; hp: number; x: number; y: number; takeDamage?: (n: number) => void }>;
 };
 
 export function fireHitscan(ctx: CastContext, damage: number, lineColor: number, reportResult: boolean): void {
@@ -44,9 +45,20 @@ export function fireHitscan(ctx: CastContext, damage: number, lineColor: number,
   ctx.scene.tweens.add({ targets: [gfx, core], alpha: 0, duration: 200, onComplete: () => { gfx.destroy(); core.destroy(); } });
 
   const scene = ctx.scene as SceneWithFighters;
-  const opp = ctx.isPlayerCaster ? scene.npc : scene.player;
-  const hit = !!opp && pointToSegmentDist(opp.x, opp.y, ctx.casterX, ctx.casterY, endX, endY) <= 30;
-  if (hit) opp!.takeDamage?.(damage);
+  let hit = false;
+  if (ctx.isPlayerCaster && scene.enemies && scene.enemies.length > 0) {
+    for (const t of scene.enemies) {
+      if (!t.active || t.hp <= 0) continue;
+      if (pointToSegmentDist(t.x, t.y, ctx.casterX, ctx.casterY, endX, endY) <= 30) {
+        t.takeDamage?.(damage);
+        hit = true;
+      }
+    }
+  } else {
+    const opp = ctx.isPlayerCaster ? scene.npc : scene.player;
+    hit = !!opp && pointToSegmentDist(opp.x, opp.y, ctx.casterX, ctx.casterY, endX, endY) <= 30;
+    if (hit) opp!.takeDamage?.(damage);
+  }
   if (reportResult) ctx.reportAirSnipeResult(hit);
 }
 

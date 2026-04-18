@@ -10426,11 +10426,13 @@ export class ArenaScene extends Phaser.Scene {
                 this.tweens.add({ targets: ring, scaleX: 10, scaleY: 10, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
                 const core = this.add.circle(ex, ey, 6, 0xffffff, 0.95).setDepth(5);
                 this.tweens.add({ targets: core, scaleX: 4, scaleY: 4, alpha: 0, duration: 180, onComplete: () => core.destroy() });
-                const bd = Phaser.Math.Distance.Between(ex, ey, this.npc.x, this.npc.y);
-                if (bd <= 100) {
-                  this.npc.takeDamage(20);
-                  this.spawnHitFlash(this.npc.x, this.npc.y, 0xff66cc);
-                  this.spawnDamageNumber(this.npc.x, this.npc.y - 20, 20);
+                for (const t of this.enemies) {
+                  if (!t.active || t.hp <= 0) continue;
+                  if (Phaser.Math.Distance.Between(ex, ey, t.x, t.y) <= 100) {
+                    t.takeDamage(20);
+                    this.spawnHitFlash(t.x, t.y, 0xff66cc);
+                    this.spawnDamageNumber(t.x, t.y - 20, 20);
+                  }
                 }
               }
               void captureGx; void captureGy;
@@ -10470,18 +10472,24 @@ export class ArenaScene extends Phaser.Scene {
         }
       }
 
-      // Screech barrier: player's barrier damages NPC
+      // Screech barrier: player's barrier damages enemies
       if (time < this.soundScreechExpiry) {
         const barrierDmg = this.soundScreechRed ? 25 : 15;
-        const sd = Phaser.Math.Distance.Between(this.soundScreechX, this.soundScreechY, this.npc.x, this.npc.y);
-        // Only damage when touching the barrier wall edge (within 18px of circumference)
-        if (sd >= 62 && sd <= 88) {
+        const screechHits: Fighter[] = [];
+        for (const t of this.enemies) {
+          if (!t.active || t.hp <= 0) continue;
+          const sd = Phaser.Math.Distance.Between(this.soundScreechX, this.soundScreechY, t.x, t.y);
+          if (sd >= 62 && sd <= 88) screechHits.push(t);
+        }
+        if (screechHits.length > 0) {
           this.soundScreechTickAccum += delta;
           if (this.soundScreechTickAccum >= 500) {
             this.soundScreechTickAccum -= 500;
-            this.npc.takeDamage(barrierDmg);
-            this.spawnHitFlash(this.npc.x, this.npc.y, this.soundScreechRed ? 0xff3333 : 0xff66cc);
-            this.spawnDamageNumber(this.npc.x, this.npc.y - 20, barrierDmg);
+            for (const t of screechHits) {
+              t.takeDamage(barrierDmg);
+              this.spawnHitFlash(t.x, t.y, this.soundScreechRed ? 0xff3333 : 0xff66cc);
+              this.spawnDamageNumber(t.x, t.y - 20, barrierDmg);
+            }
           }
         } else {
           this.soundScreechTickAccum = 0;
