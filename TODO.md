@@ -13,6 +13,20 @@ Silence
 - Possession (causes them to follow your movement)
 - Don't Look (beam that can freeze them after prolonged exposure)
 
+
+Growth
+- Unique attack that once he takes damage, he explodes, and this is not
+hurting enemies in Invasion mode
+- The mutate command brings up a HUD that is messed up in Invasion because the
+screen is bigger and it doesn't follow the avatar
+
+Water
+- Pain rain should affect entire screen in Invasion
+
+Slime
+- Also has a permanent HUD that is on the bottom of the screen. A problem for
+Invasion--it should follow a bit below the player avatar.
+
 QoL TODOs:
 
 - Add back buttons in nav

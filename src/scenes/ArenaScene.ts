@@ -7903,8 +7903,23 @@ export class ArenaScene extends Phaser.Scene {
         }
       }
 
-      const tEnemy = this.rayCircleIntersect(ox, oy, dx, dy, target.x, target.y, ENEMY_R);
-      if (tEnemy !== null && tEnemy > 2 && tEnemy < minT) { minT = tEnemy; hitType = 'enemy'; hitCrystal = null; hitPortal = null; }
+      // Find closest enemy hit by the laser
+      let closestEnemyDist = Infinity;
+      let closestEnemy: Fighter | null = null;
+      if (isFromPlayer) {
+        for (const e of this.enemies) {
+          if (!e.active || e.hp <= 0) continue;
+          const tEnemy = this.rayCircleIntersect(ox, oy, dx, dy, e.x, e.y, ENEMY_R);
+          if (tEnemy !== null && tEnemy > 2 && tEnemy < closestEnemyDist) {
+            closestEnemyDist = tEnemy;
+            closestEnemy = e;
+          }
+        }
+      } else {
+        closestEnemyDist = this.rayCircleIntersect(ox, oy, dx, dy, target.x, target.y, ENEMY_R) ?? Infinity;
+        if (closestEnemyDist > 2) closestEnemy = target; else closestEnemyDist = Infinity;
+      }
+      if (closestEnemyDist !== Infinity && closestEnemyDist < minT) { minT = closestEnemyDist; hitType = 'enemy'; hitCrystal = null; hitPortal = null; }
 
       // Clamp to nearest wall if nothing hit
       if (hitType === 'none') {
@@ -7927,9 +7942,12 @@ export class ArenaScene extends Phaser.Scene {
           const mx = ox + (endX - ox) * t;
           const my = oy + (endY - oy) * t;
           const AOE_R = 70;
-          if (Phaser.Math.Distance.Between(mx, my, target.x, target.y) <= AOE_R) {
-            target.takeDamage(8);
-            this.spawnHitFlash(target.x, target.y, 0xffcc44);
+          for (const t of this.enemies) {
+            if (!t.active || t.hp <= 0) continue;
+            if (Phaser.Math.Distance.Between(mx, my, t.x, t.y) <= AOE_R) {
+              t.takeDamage(8);
+              this.spawnHitFlash(t.x, t.y, 0xffcc44);
+            }
           }
           const exp = this.add.circle(mx, my, AOE_R * 0.15, 0xffcc44, 0.7).setDepth(9);
           this.tweens.add({ targets: exp, scaleX: AOE_R / (AOE_R * 0.15), scaleY: AOE_R / (AOE_R * 0.15), alpha: 0, duration: 280, onComplete: () => exp.destroy() });
@@ -7938,8 +7956,9 @@ export class ArenaScene extends Phaser.Scene {
       }
 
       if (hitType === 'enemy') {
-        target.takeDamage(dmg);
-        this.spawnHitFlash(target.x, target.y, 0x88eeff);
+        const enemy = closestEnemy ?? target;
+        enemy.takeDamage(dmg);
+        this.spawnHitFlash(enemy.x, enemy.y, 0x88eeff);
         break;
       } else if (hitType === 'crystal' && hitCrystal) {
         dmg *= 2;
