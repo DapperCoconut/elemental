@@ -822,6 +822,7 @@ export class ArenaScene extends Phaser.Scene {
   private npcDifficulty!: DifficultyConfig;
   private isPvP = false;
   private isInvasion = false;
+  private enemies: Fighter[] = [];
   private corrupted: CorruptedBase[] = [];
   private corruptedGroup!: Phaser.Physics.Arcade.Group;
   private festeringGrowths: FesteringGrowth[] = [];
@@ -3306,6 +3307,8 @@ export class ArenaScene extends Phaser.Scene {
     } else {
       this.npc = new NpcOpponent(this, W - 180, cy, this.npcElement, npcTexture, difficultyConfig);
     }
+    // In PvP/1v1 the single opponent is tracked in enemies; invasion starts empty and fills via spawnCorrupted
+    this.enemies = this.isInvasion ? [] : [this.npc];
 
     // ── Apply mutations ──────────────────────────────────────────────
     this.mutations = new Set(this.isPvP ? [] : (data.mutations ?? []));
