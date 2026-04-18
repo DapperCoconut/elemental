@@ -2812,11 +2812,13 @@ export class ArenaScene extends Phaser.Scene {
         get rKey() { return arena.rKey; },
         get qKey() { return arena.qKey; },
         get npcCastId() { return arena.npcCastId; },
+        get enemies() { return arena.enemies; },
         applyNpcSpeedMult: (f) => { arena.npcSpeedMult *= f; },
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
       };
       this.lightKit = new LightKit(lightApi);
     }

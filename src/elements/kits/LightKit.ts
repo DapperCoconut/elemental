@@ -8,6 +8,7 @@ import { Projectile } from '../../combat/Projectile';
 export interface LightArenaApi {
   readonly player: Fighter;
   readonly npc: Fighter;
+  readonly enemies: Fighter[];
   readonly scene: Phaser.Scene;
   readonly projectiles: Phaser.Physics.Arcade.Group;
   readonly eKey: Phaser.Input.Keyboard.Key;
@@ -20,6 +21,7 @@ export interface LightArenaApi {
   spawnDamageNumber(x: number, y: number, amount: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
+  getNearestEnemy(x: number, y: number): Fighter;
 }
 
 // ── LightKit ──────────────────────────────────────────────────────────────
@@ -28,6 +30,7 @@ export class LightKit {
   // ── Player state ─────────────────────────────────────────────────────
   private lightSpeedText: Phaser.GameObjects.Text | null = null;
   private lightMarkedExpiry = 0;
+  private lightMarkedTarget: Fighter | null = null;
   private lightSpearHolding = false;
   private lightSpearPointerDownX = 0;
   private lightSpearPointerDownY = 0;
@@ -45,8 +48,10 @@ export class LightKit {
   private lightPhotonSpeedBoostUntil = 0;
   private lightOverstimUntil = 0;
   private lightOverstimTickAccum = 0;
+  private lightEnemyOverstim = new Map<Fighter, { until: number; tickAccum: number }>();
   private lightSkewerModeUntil = 0;
   private lightSkewerTargetHooked = false;
+  private lightSkewerTarget: Fighter | null = null;
   private lightSkewerInitialDealt = false;
   private lightAngelActive = false;
   private lightAngelUntil = 0;
@@ -96,6 +101,7 @@ export class LightKit {
   reset(): void {
     if (this.lightSpeedText) { this.lightSpeedText.destroy(); this.lightSpeedText = null; }
     this.lightMarkedExpiry = 0;
+    this.lightMarkedTarget = null;
     this.lightSpearHolding = false;
     this.lightSpearPointerDownX = 0;
     this.lightSpearPointerDownY = 0;
@@ -114,8 +120,10 @@ export class LightKit {
     this.lightPhotonSpeedBoostUntil = 0;
     this.lightOverstimUntil = 0;
     this.lightOverstimTickAccum = 0;
+    this.lightEnemyOverstim.clear();
     this.lightSkewerModeUntil = 0;
     this.lightSkewerTargetHooked = false;
+    this.lightSkewerTarget = null;
     this.lightSkewerInitialDealt = false;
     this.lightAngelActive = false;
     this.lightAngelUntil = 0;
@@ -158,11 +166,18 @@ export class LightKit {
 
       if (this.lightSpeedText) this.lightSpeedText.setText(`🏃 ${Math.round(speedMag)} px/s`);
 
-      // Mark: NPC takes 15% more damage
-      if (time < this.lightMarkedExpiry) {
-        npc.incomingDamageMultiplier = Math.max(npc.incomingDamageMultiplier, 1.15);
-      } else {
-        if (npc.incomingDamageMultiplier === 1.15) npc.incomingDamageMultiplier = 1;
+      // Mark: target takes 15% more damage
+      if (time < this.lightMarkedExpiry && this.lightMarkedTarget) {
+        const mt = this.lightMarkedTarget;
+        if (mt.active && mt.hp > 0) {
+          mt.incomingDamageMultiplier = Math.max(mt.incomingDamageMultiplier, 1.15);
+        } else {
+          this.lightMarkedTarget = null;
+          this.lightMarkedExpiry = 0;
+        }
+      } else if (this.lightMarkedTarget) {
+        if (this.lightMarkedTarget.incomingDamageMultiplier === 1.15) this.lightMarkedTarget.incomingDamageMultiplier = 1;
+        this.lightMarkedTarget = null;
       }
 
       // Photosynthespark stand-still regen
@@ -185,7 +200,7 @@ export class LightKit {
         player.incomingDamageMultiplier = Math.min(player.incomingDamageMultiplier, 0.75);
       }
 
-      // Held spear: reposition + contact damage
+      // Held spear: reposition + contact damage on all enemies
       if (this.lightSpearHolding && this.lightSpearSprite) {
         const ang = Math.atan2(ptr.worldY - player.y, ptr.worldX - player.x);
         const spearX = player.x + Math.cos(ang) * 36;
@@ -193,42 +208,55 @@ export class LightKit {
         this.lightSpearSprite.setPosition(spearX, spearY);
         this.lightSpearSprite.setRotation(ang);
 
-        const d = Phaser.Math.Distance.Between(spearX, spearY, npc.x, npc.y);
-        if (d < 30 && time >= this.lightSpearHitCooldown) {
-          const dmg = 6 + speedBonus;
-          npc.takeDamage(dmg);
-          this.arena.spawnHitFlash(npc.x, npc.y, 0xfff4a8);
-          this.lightSpearHitCooldown = time + 300;
-
-          if (time < this.lightSkewerModeUntil && !this.lightSkewerTargetHooked) {
-            this.lightSkewerTargetHooked = true;
-            this.lightSkewerInitialDealt = false;
-            this.arena.showFloatingText(npc.x, npc.y - 20, '🗡 SKEWERED', '#fff4a8');
+        for (const t of this.arena.enemies) {
+          if (!t.active || t.hp <= 0) continue;
+          const d = Phaser.Math.Distance.Between(spearX, spearY, t.x, t.y);
+          if (d < 30 && time >= this.lightSpearHitCooldown) {
+            const dmg = 6 + speedBonus;
+            t.takeDamage(dmg);
+            this.arena.spawnHitFlash(t.x, t.y, 0xfff4a8);
+            this.lightSpearHitCooldown = time + 300;
+            if (time < this.lightSkewerModeUntil && !this.lightSkewerTargetHooked) {
+              this.lightSkewerTargetHooked = true;
+              this.lightSkewerTarget = t;
+              this.lightSkewerInitialDealt = false;
+              this.arena.showFloatingText(t.x, t.y - 20, '🗡 SKEWERED', '#fff4a8');
+            }
+            break;
           }
         }
       } else if (this.lightSkewerTargetHooked) {
         this.lightSkewerTargetHooked = false;
+        this.lightSkewerTarget = null;
       }
 
       // Skewer: drag target + wall slam
-      if (this.lightSkewerTargetHooked && time < this.lightSkewerModeUntil) {
-        const ang = Math.atan2(ptr.worldY - player.y, ptr.worldX - player.x);
-        const tethX = player.x + Math.cos(ang) * 60;
-        const tethY = player.y + Math.sin(ang) * 60;
-        npc.setPosition(tethX, tethY);
-        npcBody.reset(tethX, tethY);
-        const margin = 32;
-        const hitWall = tethX < margin || tethX > W - margin || tethY < margin || tethY > H - margin;
-        if (hitWall) {
-          const wallDmg = Math.min(150, 50 + Math.round(speedMag / 50));
-          npc.takeDamage(wallDmg);
-          this.arena.spawnHitFlash(npc.x, npc.y, 0xfff4a8);
-          this.arena.showFloatingText(npc.x, npc.y - 20, `💥 WALL SLAM ${wallDmg}`, '#fff4a8');
+      if (this.lightSkewerTargetHooked && this.lightSkewerTarget && time < this.lightSkewerModeUntil) {
+        const skewerTarget = this.lightSkewerTarget;
+        if (!skewerTarget.active || skewerTarget.hp <= 0) {
           this.lightSkewerTargetHooked = false;
-          this.lightSkewerModeUntil = 0;
+          this.lightSkewerTarget = null;
+        } else {
+          const ang = Math.atan2(ptr.worldY - player.y, ptr.worldX - player.x);
+          const tethX = player.x + Math.cos(ang) * 60;
+          const tethY = player.y + Math.sin(ang) * 60;
+          skewerTarget.setPosition(tethX, tethY);
+          (skewerTarget.body as Phaser.Physics.Arcade.Body).reset(tethX, tethY);
+          const margin = 32;
+          const hitWall = tethX < margin || tethX > W - margin || tethY < margin || tethY > H - margin;
+          if (hitWall) {
+            const wallDmg = Math.min(150, 50 + Math.round(speedMag / 50));
+            skewerTarget.takeDamage(wallDmg);
+            this.arena.spawnHitFlash(skewerTarget.x, skewerTarget.y, 0xfff4a8);
+            this.arena.showFloatingText(skewerTarget.x, skewerTarget.y - 20, `💥 WALL SLAM ${wallDmg}`, '#fff4a8');
+            this.lightSkewerTargetHooked = false;
+            this.lightSkewerTarget = null;
+            this.lightSkewerModeUntil = 0;
+          }
         }
       } else if (time >= this.lightSkewerModeUntil && this.lightSkewerTargetHooked) {
         this.lightSkewerTargetHooked = false;
+        this.lightSkewerTarget = null;
       }
 
       // Photon orbs orbit + overstim contact
@@ -238,31 +266,45 @@ export class LightKit {
         orb.orbitAngle += delta * 0.003;
         const ang = orb.orbitAngle + i * Math.PI;
         orb.sprite.setPosition(player.x + Math.cos(ang) * orbR, player.y + Math.sin(ang) * orbR);
-        const d = Phaser.Math.Distance.Between(orb.sprite.x, orb.sprite.y, npc.x, npc.y);
-        if (d < 22) {
-          orb.sprite.destroy();
-          this.lightPhotonOrbs.splice(i, 1);
-          this.lightOverstimUntil = time + 5000;
-          this.arena.showFloatingText(npc.x, npc.y - 20, '✨ OVERSTIM', '#fff4a8');
-          if (this.lightPhotonOrbs.length === 0) this.lightPhotonCdStartedAt = time;
+        let orbConsumed = false;
+        for (const t of this.arena.enemies) {
+          if (!t.active || t.hp <= 0) continue;
+          const d = Phaser.Math.Distance.Between(orb.sprite.x, orb.sprite.y, t.x, t.y);
+          if (d < 22) {
+            orb.sprite.destroy();
+            this.lightPhotonOrbs.splice(i, 1);
+            const existing = this.lightEnemyOverstim.get(t);
+            this.lightEnemyOverstim.set(t, { until: time + 5000, tickAccum: existing?.tickAccum ?? 0 });
+            this.arena.showFloatingText(t.x, t.y - 20, '✨ OVERSTIM', '#fff4a8');
+            if (this.lightPhotonOrbs.length === 0) this.lightPhotonCdStartedAt = time;
+            orbConsumed = true;
+            break;
+          }
         }
+        if (orbConsumed) continue;
       }
 
-      // Overstim tick damage
-      if (time < this.lightOverstimUntil) {
-        this.lightOverstimTickAccum += delta;
-        if (this.lightOverstimTickAccum >= 250) {
-          this.lightOverstimTickAccum -= 250;
-          const npcSpeed = Math.hypot(npcBody.velocity.x, npcBody.velocity.y);
-          let tickDmg = 0;
-          if (npcSpeed < 10) tickDmg = 0;
-          else if (npcSpeed < 150) tickDmg = 2;
-          else if (npcSpeed < 350) tickDmg = 4;
-          else tickDmg = 6;
-          if (tickDmg > 0) {
-            npc.takeDamage(tickDmg);
-            this.arena.spawnHitFlash(npc.x, npc.y, 0xfff4a8);
+      // Overstim tick damage (per enemy)
+      for (const [t, overstim] of this.lightEnemyOverstim) {
+        if (!t.active || t.hp <= 0) { this.lightEnemyOverstim.delete(t); continue; }
+        if (time < overstim.until) {
+          overstim.tickAccum += delta;
+          if (overstim.tickAccum >= 250) {
+            overstim.tickAccum -= 250;
+            const tBody = t.body as Phaser.Physics.Arcade.Body;
+            const tSpeed = Math.hypot(tBody.velocity.x, tBody.velocity.y);
+            let tickDmg = 0;
+            if (tSpeed < 10) tickDmg = 0;
+            else if (tSpeed < 150) tickDmg = 2;
+            else if (tSpeed < 350) tickDmg = 4;
+            else tickDmg = 6;
+            if (tickDmg > 0) {
+              t.takeDamage(tickDmg);
+              this.arena.spawnHitFlash(t.x, t.y, 0xfff4a8);
+            }
           }
+        } else {
+          this.lightEnemyOverstim.delete(t);
         }
       }
 
@@ -284,6 +326,9 @@ export class LightKit {
             this.lightAngelLink.lineBetween(player.x, player.y, angelX, angelY);
           }
           if (time > this.lightMarkedExpiry - 1500) {
+            if (!this.lightMarkedTarget || !this.lightMarkedTarget.active || this.lightMarkedTarget.hp <= 0) {
+              this.lightMarkedTarget = this.arena.getNearestEnemy(player.x, player.y);
+            }
             this.lightMarkedExpiry = time + 2500;
           }
           this.lightAngelBladeAccum += delta;
@@ -438,7 +483,7 @@ export class LightKit {
   }
 
   handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
-    const { player, npc, scene } = this.arena;
+    const { player, scene } = this.arena;
     const { eKey, fKey, rKey, qKey } = this.arena;
     const playerCtx = this.arena.buildPlayerContext(mouseX, mouseY);
 
@@ -465,15 +510,21 @@ export class LightKit {
       const heldMs = time - this.lightSpearHoldStart;
       if (heldMs < 150) {
         player.castAbility('light-stab', playerCtx);
-        const dist = Phaser.Math.Distance.Between(mouseX, mouseY, npc.x, npc.y);
-        if (dist < 50) {
-          this.lightMarkedExpiry = time + 2000;
-          this.arena.showFloatingText(npc.x, npc.y - 20, '✨ HIGHLIGHTED', '#fff4a8');
+        for (const t of this.arena.enemies) {
+          if (!t.active || t.hp <= 0) continue;
+          const dist = Phaser.Math.Distance.Between(mouseX, mouseY, t.x, t.y);
+          if (dist < 50) {
+            this.lightMarkedTarget = t;
+            this.lightMarkedExpiry = time + 2000;
+            this.arena.showFloatingText(t.x, t.y - 20, '✨ HIGHLIGHTED', '#fff4a8');
+            break;
+          }
         }
       }
       this.lightSpearClickArmed = false;
       this.lightSpearHolding = false;
       this.lightSkewerTargetHooked = false;
+      this.lightSkewerTarget = null;
       if (this.lightSpearSprite) { this.lightSpearSprite.destroy(); this.lightSpearSprite = null; }
     }
 
@@ -513,6 +564,7 @@ export class LightKit {
       if (player.castAbility('skewer', playerCtx)) {
         this.lightSkewerModeUntil = time + 5000;
         this.lightSkewerTargetHooked = false;
+        this.lightSkewerTarget = null;
         this.lightSkewerInitialDealt = false;
         this.arena.showFloatingText(player.x, player.y - 30, '🗡 SKEWER MODE', '#fff4a8');
       }
