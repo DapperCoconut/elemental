@@ -7673,9 +7673,12 @@ export class ArenaScene extends Phaser.Scene {
         const boom = this.add.circle(tx, ty, 7, 0xff6600, 0.9).setDepth(8);
         this.tweens.add({ targets: boom, scaleX: 6, scaleY: 6, alpha: 0, duration: 350, onComplete: () => boom.destroy() });
         bomb.destroy();
-        if (Phaser.Math.Distance.Between(tx, ty, this.npc.x, this.npc.y) <= 50) {
-          this.npc.takeDamage(10);
-          this.spawnHitFlash(this.npc.x, this.npc.y, 0xff6600);
+        for (const t of this.enemies) {
+          if (!t.active || t.hp <= 0) continue;
+          if (Phaser.Math.Distance.Between(tx, ty, t.x, t.y) <= 50) {
+            t.takeDamage(10);
+            this.spawnHitFlash(t.x, t.y, 0xff6600);
+          }
         }
       },
     });
@@ -12164,9 +12167,12 @@ export class ArenaScene extends Phaser.Scene {
             p.igniteTickAccum += delta;
             if (p.igniteTickAccum >= 300) {
               p.igniteTickAccum -= 300;
-              if (Phaser.Math.Distance.Between(this.npc.x, this.npc.y, p.x, p.y) <= p.radius) {
-                this.npc.takeDamage(2);
-                this.spawnHitFlash(this.npc.x, this.npc.y, 0xff4400);
+              for (const t of this.enemies) {
+                if (!t.active || t.hp <= 0) continue;
+                if (Phaser.Math.Distance.Between(t.x, t.y, p.x, p.y) <= p.radius) {
+                  t.takeDamage(2);
+                  this.spawnHitFlash(t.x, t.y, 0xff4400);
+                }
               }
             }
           }
@@ -12212,10 +12218,13 @@ export class ArenaScene extends Phaser.Scene {
           this.playerOverdriveTickAccum += delta;
           if (this.playerOverdriveTickAccum >= 100) {
             this.playerOverdriveTickAccum -= 100;
-            const d = this.pointToSegmentDist(this.npc.x, this.npc.y, this.player.x, this.player.y, beamEndX, beamEndY);
-            if (d <= 30) {
-              this.npc.takeDamage(15);
-              this.spawnHitFlash(this.npc.x, this.npc.y, 0xff6600);
+            for (const t of this.enemies) {
+              if (!t.active || t.hp <= 0) continue;
+              const d = this.pointToSegmentDist(t.x, t.y, this.player.x, this.player.y, beamEndX, beamEndY);
+              if (d <= 30) {
+                t.takeDamage(15);
+                this.spawnHitFlash(t.x, t.y, 0xff6600);
+              }
             }
           }
         }
