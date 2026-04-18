@@ -50,6 +50,10 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public voidFrostTickAccum = 0;
   public voidFrostThawAccum = 0;
 
+  public voidedUntil = 0;
+  public voidedDps = 0;
+  public voidedTickAccum = 0;
+
   public toxicUntil = 0;
   public toxicDps = 0;
   public toxicTickAccum = 0;

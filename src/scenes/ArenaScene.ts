@@ -1332,9 +1332,6 @@ export class ArenaScene extends Phaser.Scene {
   // Ice upgrades state
   private playerBlackIceMorphActive = false;
   private playerBlackIceAura: Phaser.GameObjects.Arc | null = null;
-  private npcVoidedUntil = 0;
-  private npcVoidedDps = 0;
-  private npcVoidedTickAccum = 0;
   private npcVoidedVisual: Phaser.GameObjects.Text | null = null;
   private playerIceConsecHits = 0;
   private playerNextIcePowered = false;
@@ -2467,9 +2464,6 @@ export class ArenaScene extends Phaser.Scene {
     this.icyTrails = [];
     this.playerBlackIceMorphActive = false;
     this.playerBlackIceAura = null;
-    this.npcVoidedUntil = 0;
-    this.npcVoidedDps = 0;
-    this.npcVoidedTickAccum = 0;
     this.npcVoidedVisual = null;
     this.playerIceConsecHits = 0;
     this.playerNextIcePowered = false;
@@ -4858,8 +4852,10 @@ export class ArenaScene extends Phaser.Scene {
       },
       fireFrostBlast: (tx, ty) => {
         const isBlackIce = this.playerBlackIceMorphActive;
-        const targetStacks = isBlackIce ? this.npc.voidFrostStacks : this.npc.frostStacks;
-        if (targetStacks === 0) return;
+        const hasTarget = this.enemies.some(t =>
+          t.active && t.hp > 0 && (isBlackIce ? t.voidFrostStacks : t.frostStacks) > 0,
+        );
+        if (!hasTarget) return;
         const dx = tx - this.player.x;
         const dy = ty - this.player.y;
         const len = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -4867,34 +4863,40 @@ export class ArenaScene extends Phaser.Scene {
         const endX = this.player.x + Math.cos(angle) * 1200;
         const endY = this.player.y + Math.sin(angle) * 1200;
         this.spawnFrostBeamVisual(this.player.x, this.player.y, endX, endY);
-        const d = this.pointToSegmentDist(this.npc.x, this.npc.y, this.player.x, this.player.y, endX, endY);
-        if (d <= 32) {
-          this.npc.takeDamage(Math.round(targetStacks * 7.5));
-          this.spawnHitFlash(this.npc.x, this.npc.y, isBlackIce ? 0x9900ff : 0x88ccff);
-          if (isBlackIce) {
-            // Apply voided debuff
-            const voidedDps = targetStacks >= 5 ? 3 : targetStacks >= 3 ? 2 : 1;
-            this.npcVoidedUntil = this.time.now + 5000;
-            this.npcVoidedDps = voidedDps;
-            this.npcVoidedTickAccum = 0;
-            this.npc.voidFrostStacks = 0;
-            this.npc.incomingDamageMultiplier = 1;
-            const vt = this.add.text(this.npc.x, this.npc.y - 30, 'VOIDED', { fontSize: '11px', color: '#cc88ff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
-            this.tweens.add({ targets: vt, y: vt.y - 20, alpha: 0, duration: 1200, onComplete: () => vt.destroy() });
-          } else {
-            // E+: keep residual frost stacks
-            if (this.hasUpgrade('e')) {
-              const stacks = this.npc.frostStacks;
-              this.clearFrostStacks('npc');
-              if (stacks >= 5) {
-                this.npc.frostStacks = 2;
-                this.npc.incomingDamageMultiplier = this.frostDamageMultiplier(2);
-              } else if (stacks >= 3) {
-                this.npc.frostStacks = 1;
-                this.npc.incomingDamageMultiplier = this.frostDamageMultiplier(1);
-              }
+        for (const t of this.enemies) {
+          if (!t.active || t.hp <= 0) continue;
+          const targetStacks = isBlackIce ? t.voidFrostStacks : t.frostStacks;
+          if (targetStacks === 0) continue;
+          const d = this.pointToSegmentDist(t.x, t.y, this.player.x, this.player.y, endX, endY);
+          if (d <= 32) {
+            t.takeDamage(Math.round(targetStacks * 7.5));
+            this.spawnHitFlash(t.x, t.y, isBlackIce ? 0x9900ff : 0x88ccff);
+            if (isBlackIce) {
+              const voidedDps = targetStacks >= 5 ? 3 : targetStacks >= 3 ? 2 : 1;
+              t.voidedUntil = this.time.now + 5000;
+              t.voidedDps = voidedDps;
+              t.voidedTickAccum = 0;
+              t.voidFrostStacks = 0;
+              t.incomingDamageMultiplier = 1;
+              const vt = this.add.text(t.x, t.y - 30, 'VOIDED', { fontSize: '11px', color: '#cc88ff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
+              this.tweens.add({ targets: vt, y: vt.y - 20, alpha: 0, duration: 1200, onComplete: () => vt.destroy() });
             } else {
-              this.clearFrostStacks('npc');
+              // E+: keep residual frost stacks
+              if (this.hasUpgrade('e')) {
+                const stacks = t.frostStacks;
+                t.frostStacks = 0;
+                t.incomingDamageMultiplier = 1;
+                if (stacks >= 5) {
+                  t.frostStacks = 2;
+                  t.incomingDamageMultiplier = this.frostDamageMultiplier(2);
+                } else if (stacks >= 3) {
+                  t.frostStacks = 1;
+                  t.incomingDamageMultiplier = this.frostDamageMultiplier(1);
+                }
+              } else {
+                t.frostStacks = 0;
+                t.incomingDamageMultiplier = 1;
+              }
             }
           }
         }
@@ -12951,32 +12953,34 @@ export class ArenaScene extends Phaser.Scene {
         }
       }
 
-      // Void frost DOT + thaw (black ice morph)
-      if (this.npc.voidFrostStacks > 0) {
-        const vfDps = this.npc.voidFrostStacks >= 5 ? 4 : this.npc.voidFrostStacks >= 3 ? 2 : 1;
-        this.npc.voidFrostTickAccum += delta;
-        if (this.npc.voidFrostTickAccum >= 1000) {
-          this.npc.voidFrostTickAccum -= 1000;
-          this.npc.takeDamage(vfDps);
-          this.spawnHitFlash(this.npc.x, this.npc.y, 0x9900ff);
+      // Void frost DOT + thaw (black ice morph) — per enemy
+      for (const t of this.enemies) {
+        if (!t.active || t.hp <= 0 || t.voidFrostStacks === 0) continue;
+        const vfDps = t.voidFrostStacks >= 5 ? 4 : t.voidFrostStacks >= 3 ? 2 : 1;
+        t.voidFrostTickAccum += delta;
+        if (t.voidFrostTickAccum >= 1000) {
+          t.voidFrostTickAccum -= 1000;
+          t.takeDamage(vfDps);
+          this.spawnHitFlash(t.x, t.y, 0x9900ff);
         }
         // Thaw: 1 stack every 3 seconds
-        this.npc.voidFrostThawAccum += delta;
-        if (this.npc.voidFrostThawAccum >= 3000) {
-          this.npc.voidFrostThawAccum -= 3000;
-          this.npc.voidFrostStacks = Math.max(0, this.npc.voidFrostStacks - 1);
-          this.npc.incomingDamageMultiplier = this.npc.voidFrostStacks > 0
-            ? this.frostDamageMultiplier(this.npc.voidFrostStacks) : 1;
+        t.voidFrostThawAccum += delta;
+        if (t.voidFrostThawAccum >= 3000) {
+          t.voidFrostThawAccum -= 3000;
+          t.voidFrostStacks = Math.max(0, t.voidFrostStacks - 1);
+          t.incomingDamageMultiplier = t.voidFrostStacks > 0
+            ? this.frostDamageMultiplier(t.voidFrostStacks) : 1;
         }
       }
 
-      // Voided debuff DOT
-      if (this.npcVoidedUntil > time) {
-        this.npcVoidedTickAccum += delta;
-        if (this.npcVoidedTickAccum >= 1000) {
-          this.npcVoidedTickAccum -= 1000;
-          this.npc.takeDamage(this.npcVoidedDps);
-          this.spawnHitFlash(this.npc.x, this.npc.y, 0x6600cc);
+      // Voided debuff DOT — per enemy
+      for (const t of this.enemies) {
+        if (!t.active || t.hp <= 0 || t.voidedUntil <= time) continue;
+        t.voidedTickAccum += delta;
+        if (t.voidedTickAccum >= 1000) {
+          t.voidedTickAccum -= 1000;
+          t.takeDamage(t.voidedDps);
+          this.spawnHitFlash(t.x, t.y, 0x6600cc);
         }
       }
 
@@ -13007,7 +13011,7 @@ export class ArenaScene extends Phaser.Scene {
       }
 
       // Voided status visual
-      const voidedLabel = this.npcVoidedUntil > time ? '🔮 VOIDED' : '';
+      const voidedLabel = this.npc.voidedUntil > time ? '🔮 VOIDED' : '';
       if (voidedLabel) {
         if (!this.npcVoidedVisual) {
           this.npcVoidedVisual = this.add.text(this.npc.x, this.npc.y - 66, voidedLabel,
