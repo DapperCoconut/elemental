@@ -13853,12 +13853,16 @@ export class ArenaScene extends Phaser.Scene {
         orb.y += orb.vy * delta / 1000;
         orb.sprite.setPosition(orb.x, orb.y);
         if (time - orb.lastContactTick >= 1000) {
-          if (Phaser.Math.Distance.Between(orb.x, orb.y, this.npc.x, this.npc.y) <= 34) {
-            this.npc.takeDamage(10);
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0xccaaff);
-            this.soulGhosts++;
-            orb.lastContactTick = time;
-            this.showFloatingText(this.player.x, this.player.y - 30, '+1 👻', '#ccaaff');
+          for (const t of this.enemies) {
+            if (!t.active || t.hp <= 0) continue;
+            if (Phaser.Math.Distance.Between(orb.x, orb.y, t.x, t.y) <= 34) {
+              t.takeDamage(10);
+              this.spawnHitFlash(t.x, t.y, 0xccaaff);
+              this.soulGhosts++;
+              orb.lastContactTick = time;
+              this.showFloatingText(this.player.x, this.player.y - 30, '+1 👻', '#ccaaff');
+              break;
+            }
           }
         }
       }
@@ -13888,7 +13892,18 @@ export class ArenaScene extends Phaser.Scene {
       for (let i = this.playerSoulSummons.length - 1; i >= 0; i--) {
         const gs = this.playerSoulSummons[i];
         if (gs.hp <= 0) { gs.sprite.destroy(); this.playerSoulSummons.splice(i, 1); continue; }
-        this.updateSoulSummon(gs, this.npc, time, delta, true);
+        // Find closest enemy to target
+        let closestEnemy: Fighter | null = null;
+        let closestDist = Infinity;
+        for (const e of this.enemies) {
+          if (!e.active || e.hp <= 0) continue;
+          const dist = Phaser.Math.Distance.Between(gs.sprite.x, gs.sprite.y, e.x, e.y);
+          if (dist < closestDist) {
+            closestDist = dist;
+            closestEnemy = e;
+          }
+        }
+        if (closestEnemy) this.updateSoulSummon(gs, closestEnemy, time, delta, true);
       }
 
       // ── Q+ knight collision check ──────────────────────────────
@@ -13903,9 +13918,12 @@ export class ArenaScene extends Phaser.Scene {
               const ey = (ka.sprite.y + kb.sprite.y) / 2;
               const boom = this.add.circle(ex, ey, 10, 0xffaacc, 0.8).setDepth(9);
               this.tweens.add({ targets: boom, scaleX: 8, scaleY: 8, alpha: 0, duration: 400, onComplete: () => boom.destroy() });
-              if (Phaser.Math.Distance.Between(ex, ey, this.npc.x, this.npc.y) <= 80) {
-                this.npc.takeDamage(20);
-                this.spawnHitFlash(this.npc.x, this.npc.y, 0xffaacc);
+              for (const t of this.enemies) {
+                if (!t.active || t.hp <= 0) continue;
+                if (Phaser.Math.Distance.Between(ex, ey, t.x, t.y) <= 80) {
+                  t.takeDamage(20);
+                  this.spawnHitFlash(t.x, t.y, 0xffaacc);
+                }
               }
               // Each knight gains +25% speed (stacking)
               ka.speedMult += 0.25;
