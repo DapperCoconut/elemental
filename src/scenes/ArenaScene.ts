@@ -16462,19 +16462,22 @@ export class ArenaScene extends Phaser.Scene {
           this.isDodging = false;
           playerBody.setVelocity(0, 0);
         } else {
-          // Check hit against NPC
+          // Check hit against enemies
           if (!this.earthBashHitDealt) {
-            const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
-            if (dist < 70) {
-              this.earthBashHitDealt = true;
-              if (this.earthShieldHp > 0) {
-                this.npc.takeDamage(30);
-                this.spawnHitFlash(this.npc.x, this.npc.y, 0x887755);
-                this.showFloatingText(this.npc.x, this.npc.y - 20, '🛡 BASH 30', '#ccaa66');
-              } else {
-                this.npc.takeDamage(15);
-                this.spawnHitFlash(this.npc.x, this.npc.y, 0x887755);
-                this.showFloatingText(this.npc.x, this.npc.y - 20, '🗡 STAB 15', '#aa8844');
+            for (const t of this.enemies) {
+              if (!t.active || t.hp <= 0) continue;
+              const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, t.x, t.y);
+              if (dist < 70) {
+                this.earthBashHitDealt = true;
+                if (this.earthShieldHp > 0) {
+                  t.takeDamage(30);
+                  this.spawnHitFlash(t.x, t.y, 0x887755);
+                  this.showFloatingText(t.x, t.y - 20, '🛡 BASH 30', '#ccaa66');
+                } else {
+                  t.takeDamage(15);
+                  this.spawnHitFlash(t.x, t.y, 0x887755);
+                  this.showFloatingText(t.x, t.y - 20, '🗡 STAB 15', '#aa8844');
+                }
               }
             }
           }
@@ -16492,15 +16495,19 @@ export class ArenaScene extends Phaser.Scene {
         const ang = this.earthRockOrbitAngle + ri * (Math.PI * 2 / rockCount);
         rock.sprite.setPosition(this.player.x + Math.cos(ang) * orbitR, this.player.y + Math.sin(ang) * orbitR);
         if (time >= rock.hitCdUntil) {
-          const d = Phaser.Math.Distance.Between(rock.sprite.x, rock.sprite.y, this.npc.x, this.npc.y);
-          if (d < 22) {
-            this.npc.takeDamage(8);
-            this.spawnHitFlash(this.npc.x, this.npc.y, lavaRocks ? 0xff4400 : 0x887755);
-            this.showFloatingText(this.npc.x, this.npc.y - 20, '🪨 8', '#aa8844');
-            if (lavaRocks) {
-              this.npc.lavaRockBurnUntil = Math.max(this.npc.lavaRockBurnUntil, time + 2000);
+          for (const t of this.enemies) {
+            if (!t.active || t.hp <= 0) continue;
+            const d = Phaser.Math.Distance.Between(rock.sprite.x, rock.sprite.y, t.x, t.y);
+            if (d < 22) {
+              t.takeDamage(8);
+              this.spawnHitFlash(t.x, t.y, lavaRocks ? 0xff4400 : 0x887755);
+              this.showFloatingText(t.x, t.y - 20, '🪨 8', '#aa8844');
+              if (lavaRocks) {
+                t.lavaRockBurnUntil = Math.max(t.lavaRockBurnUntil, time + 2000);
+              }
+              rock.hitCdUntil = time + 500;
+              break;
             }
-            rock.hitCdUntil = time + 500;
           }
         }
       }
@@ -16508,50 +16515,60 @@ export class ArenaScene extends Phaser.Scene {
         const lr = this.earthLaunchedRocks[i];
         lr.sprite.x += lr.vx * (delta / 1000);
         lr.sprite.y += lr.vy * (delta / 1000);
-        const d = Phaser.Math.Distance.Between(lr.sprite.x, lr.sprite.y, this.npc.x, this.npc.y);
         const hitWall = lr.sprite.x < 20 || lr.sprite.x > W - 20 || lr.sprite.y < 20 || lr.sprite.y > H - 20;
         const expired = time - lr.spawnedAt > 1200;
-        if (d < 28) {
-          const launchDmg = lavaRocks ? 60 : 40;
-          this.npc.takeDamage(launchDmg);
-          this.spawnHitFlash(this.npc.x, this.npc.y, lavaRocks ? 0xff4400 : 0x887755);
-          this.showFloatingText(this.npc.x, this.npc.y - 20, lavaRocks ? `🔥 LAVA HIT ${launchDmg}` : `🪨 LAUNCH STUN ${launchDmg}`, '#ffcc44');
-          this.npc.earthStunnedUntil = Math.max(this.npc.earthStunnedUntil, time + 3000);
-          if (lavaRocks) {
-            this.npc.lavaRockBurnUntil = Math.max(this.npc.lavaRockBurnUntil, time + 3000);
-            // Spawn lava pool at hit location
-            const poolSpr = this.add.circle(this.npc.x, this.npc.y, 32, 0xff4400, 0.4).setDepth(3);
-            this.tweens.add({ targets: poolSpr, scaleX: 1.1, scaleY: 1.1, alpha: 0.1, duration: 2500, onComplete: () => poolSpr.destroy() });
-            this.earthLavaRockFirePools.push({ sprite: poolSpr, expiresAt: time + 2500 });
-            // Magmify quake if NPC is inside quake zone
-            if (this.earthQuakeSprite && this.earthQuakeExpiry > time) {
-              const qZoneR = this.hasUpgrade('f') ? 100 : 80;
-              const qd = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.earthQuakeX, this.earthQuakeY);
-              if (qd < qZoneR) {
-                this.earthQuakeMagmified = true;
-                this.earthQuakeSprite.setFillStyle(0xff0000, 0.3);
-                this.earthQuakeSprite.setStrokeStyle(2, 0xff2200, 0.9);
-                this.showFloatingText(this.earthQuakeX, this.earthQuakeY - 20, '🌋 MAGMA QUAKE', '#ff2200');
+        let rockHit = false;
+        for (const t of this.enemies) {
+          if (!t.active || t.hp <= 0) continue;
+          const d = Phaser.Math.Distance.Between(lr.sprite.x, lr.sprite.y, t.x, t.y);
+          if (d < 28) {
+            const launchDmg = lavaRocks ? 60 : 40;
+            t.takeDamage(launchDmg);
+            this.spawnHitFlash(t.x, t.y, lavaRocks ? 0xff4400 : 0x887755);
+            this.showFloatingText(t.x, t.y - 20, lavaRocks ? `🔥 LAVA HIT ${launchDmg}` : `🪨 LAUNCH STUN ${launchDmg}`, '#ffcc44');
+            t.earthStunnedUntil = Math.max(t.earthStunnedUntil, time + 3000);
+            if (lavaRocks) {
+              t.lavaRockBurnUntil = Math.max(t.lavaRockBurnUntil, time + 3000);
+              const poolSpr = this.add.circle(t.x, t.y, 32, 0xff4400, 0.4).setDepth(3);
+              this.tweens.add({ targets: poolSpr, scaleX: 1.1, scaleY: 1.1, alpha: 0.1, duration: 2500, onComplete: () => poolSpr.destroy() });
+              this.earthLavaRockFirePools.push({ sprite: poolSpr, expiresAt: time + 2500 });
+              // Magmify quake if enemy is inside quake zone
+              if (this.earthQuakeSprite && this.earthQuakeExpiry > time) {
+                const qZoneR = this.hasUpgrade('f') ? 100 : 80;
+                const qd = Phaser.Math.Distance.Between(t.x, t.y, this.earthQuakeX, this.earthQuakeY);
+                if (qd < qZoneR) {
+                  this.earthQuakeMagmified = true;
+                  this.earthQuakeSprite.setFillStyle(0xff0000, 0.3);
+                  this.earthQuakeSprite.setStrokeStyle(2, 0xff2200, 0.9);
+                  this.showFloatingText(this.earthQuakeX, this.earthQuakeY - 20, '🌋 MAGMA QUAKE', '#ff2200');
+                }
               }
             }
+            lr.sprite.destroy();
+            this.earthLaunchedRocks.splice(i, 1);
+            rockHit = true;
+            break;
           }
-          lr.sprite.destroy();
-          this.earthLaunchedRocks.splice(i, 1);
-        } else if (hitWall || expired) {
+        }
+        if (rockHit) continue;
+        if (hitWall || expired) {
           lr.sprite.destroy();
           this.earthLaunchedRocks.splice(i, 1);
         }
       }
-      // Lava fire DOT on NPC from R+ rocks
-      if (this.npc.lavaRockBurnUntil > time) {
-        this.npc.lavaRockBurnAccum += delta;
-        if (this.npc.lavaRockBurnAccum >= 500) {
-          this.npc.lavaRockBurnAccum -= 500;
-          this.npc.takeDamage(2);
-          this.spawnHitFlash(this.npc.x, this.npc.y, 0xff4400);
+      // Lava fire DOT from R+ rocks
+      for (const t of this.enemies) {
+        if (!t.active || t.hp <= 0) continue;
+        if (t.lavaRockBurnUntil > time) {
+          t.lavaRockBurnAccum += delta;
+          if (t.lavaRockBurnAccum >= 500) {
+            t.lavaRockBurnAccum -= 500;
+            t.takeDamage(2);
+            this.spawnHitFlash(t.x, t.y, 0xff4400);
+          }
+        } else {
+          t.lavaRockBurnAccum = 0;
         }
-      } else {
-        this.npc.lavaRockBurnAccum = 0;
       }
       // Lava fire pool cleanup
       for (let i = this.earthLavaRockFirePools.length - 1; i >= 0; i--) {
@@ -16569,15 +16586,18 @@ export class ArenaScene extends Phaser.Scene {
         const tripDmg = this.earthQuakeMagmified ? 10 : 5;
         if (this.earthQuakeTickAccum >= tripInterval) {
           this.earthQuakeTickAccum -= tripInterval;
-          const d = Phaser.Math.Distance.Between(this.earthQuakeX, this.earthQuakeY, this.npc.x, this.npc.y);
-          if (d < quakeRadius && time > (this.earthQuakeStunUntil ?? 0) && Math.random() < 0.35) {
-            this.npc.takeDamage(tripDmg);
-            this.spawnHitFlash(this.npc.x, this.npc.y, this.earthQuakeMagmified ? 0xff4400 : 0x887755);
-            this.showFloatingText(this.npc.x, this.npc.y - 20, this.earthQuakeMagmified ? `🌋 MAGMA ${tripDmg}` : `⚡ TRIP ${tripDmg}`, '#ccaa66');
-            this.npc.earthStunnedUntil = Math.max(this.npc.earthStunnedUntil, time + 500);
-            this.earthQuakeStunUntil = time + 500;
-            if (this.earthQuakeMagmified) {
-              this.npc.lavaRockBurnUntil = Math.max(this.npc.lavaRockBurnUntil, time + 1500);
+          for (const t of this.enemies) {
+            if (!t.active || t.hp <= 0) continue;
+            const d = Phaser.Math.Distance.Between(this.earthQuakeX, this.earthQuakeY, t.x, t.y);
+            if (d < quakeRadius && time > (this.earthQuakeStunUntil ?? 0) && Math.random() < 0.35) {
+              t.takeDamage(tripDmg);
+              this.spawnHitFlash(t.x, t.y, this.earthQuakeMagmified ? 0xff4400 : 0x887755);
+              this.showFloatingText(t.x, t.y - 20, this.earthQuakeMagmified ? `🌋 MAGMA ${tripDmg}` : `⚡ TRIP ${tripDmg}`, '#ccaa66');
+              t.earthStunnedUntil = Math.max(t.earthStunnedUntil, time + 500);
+              this.earthQuakeStunUntil = time + 500;
+              if (this.earthQuakeMagmified) {
+                t.lavaRockBurnUntil = Math.max(t.lavaRockBurnUntil, time + 1500);
+              }
             }
           }
         }
@@ -16596,18 +16616,21 @@ export class ArenaScene extends Phaser.Scene {
           this.earthTsunamiWaves.splice(ti, 1);
           continue;
         }
-        // Damage NPC on contact
-        const wd = Phaser.Math.Distance.Between(wave.sprite.x, wave.sprite.y, this.npc.x, this.npc.y);
-        if (wd < 55) {
-          this.npc.takeDamage(35);
-          this.spawnHitFlash(this.npc.x, this.npc.y, 0x88ddff);
-          this.showFloatingText(this.npc.x, this.npc.y - 20, '🌊 TSUNAMI 35', '#88ddff');
-          // Push NPC along wave direction
-          const nb = this.npc.body as Phaser.Physics.Arcade.Body;
-          nb.setVelocity(wave.vx * 0.8, wave.vy * 0.8);
-          this.npc.earthStunnedUntil = Math.max(this.npc.earthStunnedUntil, time + 500);
-          wave.sprite.destroy();
-          this.earthTsunamiWaves.splice(ti, 1);
+        // Damage enemies on contact
+        for (const t of this.enemies) {
+          if (!t.active || t.hp <= 0) continue;
+          const wd = Phaser.Math.Distance.Between(wave.sprite.x, wave.sprite.y, t.x, t.y);
+          if (wd < 55) {
+            t.takeDamage(35);
+            this.spawnHitFlash(t.x, t.y, 0x88ddff);
+            this.showFloatingText(t.x, t.y - 20, '🌊 TSUNAMI 35', '#88ddff');
+            const tb = t.body as Phaser.Physics.Arcade.Body;
+            tb.setVelocity(wave.vx * 0.8, wave.vy * 0.8);
+            t.earthStunnedUntil = Math.max(t.earthStunnedUntil, time + 500);
+            wave.sprite.destroy();
+            this.earthTsunamiWaves.splice(ti, 1);
+            break;
+          }
         }
       }
 
@@ -16983,14 +17006,21 @@ export class ArenaScene extends Phaser.Scene {
       // R: Pound (AoE, 10s cd)
       if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
         if (time >= this.earthGolemFusedPoundCdUntil) {
-          const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
-          if (dist < 100) {
-            this.npc.takeDamage(45);
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0x665533);
+          let poundHit = false;
+          for (const t of this.enemies) {
+            if (!t.active || t.hp <= 0) continue;
+            const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, t.x, t.y);
+            if (dist < 100) {
+              t.takeDamage(45);
+              this.spawnHitFlash(t.x, t.y, 0x665533);
+              this.showFloatingText(t.x, t.y - 20, '💥 GOLEM POUND 45', '#ccaa66');
+              t.earthStunnedUntil = Math.max(t.earthStunnedUntil, time + 600);
+              poundHit = true;
+            }
+          }
+          if (poundHit) {
             const ring = this.add.circle(this.player.x, this.player.y, 10, 0x665533, 0.8).setDepth(6);
             this.tweens.add({ targets: ring, scaleX: 12, scaleY: 12, alpha: 0, duration: 400, onComplete: () => ring.destroy() });
-            this.showFloatingText(this.npc.x, this.npc.y - 20, '💥 GOLEM POUND 45', '#ccaa66');
-            this.npc.earthStunnedUntil = Math.max(this.npc.earthStunnedUntil, time + 600);
             this.earthGolemFusedPoundCdUntil = time + 10000;
           } else {
             this.showFloatingText(this.player.x, this.player.y - 20, 'Too far!', '#888888');
@@ -17005,19 +17035,25 @@ export class ArenaScene extends Phaser.Scene {
           if (this.earthGolemFusedFaultWallSprite) this.earthGolemFusedFaultWallSprite.destroy();
           this.earthGolemFusedFaultWallSprite = this.add.rectangle(midX, midY, 140, 18, 0x665533).setDepth(7).setStrokeStyle(2, 0xbbaa77);
           this.earthGolemFusedFaultWallUntil = time + 1500;
-          this.npc.takeDamage(25);
-          this.spawnHitFlash(this.npc.x, this.npc.y, 0x665533);
+          for (const t of this.enemies) {
+            if (!t.active || t.hp <= 0) continue;
+            t.takeDamage(25);
+            this.spawnHitFlash(t.x, t.y, 0x665533);
+          }
           this.showFloatingText(midX, midY - 20, '⛰ FAULT LINE 25', '#ccaa66');
           this.earthGolemFusedFaultCdUntil = time + 5000;
         }
       }
       // Q: Break (exit + 25 AoE)
       if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
-        const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
-        if (dist < 120) {
-          this.npc.takeDamage(25);
-          this.spawnHitFlash(this.npc.x, this.npc.y, 0x665533);
-          this.showFloatingText(this.npc.x, this.npc.y - 20, '💥 BREAK 25', '#ccaa66');
+        for (const t of this.enemies) {
+          if (!t.active || t.hp <= 0) continue;
+          const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, t.x, t.y);
+          if (dist < 120) {
+            t.takeDamage(25);
+            this.spawnHitFlash(t.x, t.y, 0x665533);
+            this.showFloatingText(t.x, t.y - 20, '💥 BREAK 25', '#ccaa66');
+          }
         }
         this.exitGolemFusion(time);
       }
