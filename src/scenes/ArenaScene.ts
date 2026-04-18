@@ -3665,29 +3665,7 @@ export class ArenaScene extends Phaser.Scene {
           this.adrenalineRegisterShotHit('npc');
           this.npcAdrenalineHyperWindowExpiry = this.time.now + 800;
         }
-        // Player bloat: player hit triggers AOE on NPC (F+ hold prevents trigger)
-        if (this.growthBloatActive) {
-          const fLocked = this.hasUpgrade('f') && this.fKey.isDown;
-          if (!fLocked) {
-            this.growthBloatActive = false;
-            this.growthBloatEnd = 0;
-            if (this.growthBloatAura) { this.growthBloatAura.destroy(); this.growthBloatAura = null; }
-            const bloatDmg = Math.round(20 * this.growthDamageMult);
-            const aoeR = this.growthBloatAoeRadius;
-            this.damagePlayerTargets(this.player.x, this.player.y, aoeR, bloatDmg, 0xdddd00);
-            const ft = this.add.text(this.player.x, this.player.y - 30, `💥 ${bloatDmg}`, { fontSize: '11px', color: '#ffff44', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
-            this.tweens.add({ targets: ft, y: ft.y - 25, alpha: 0, duration: 900, onComplete: () => ft.destroy() });
-            const bloatExp = this.add.circle(this.player.x, this.player.y, aoeR, 0xdddd00, 0.3).setDepth(8);
-            this.tweens.add({ targets: bloatExp, scaleX: 1.4, scaleY: 1.4, alpha: 0, duration: 350, onComplete: () => bloatExp.destroy() });
-            // Fungal Flourish: heal on bloat trigger
-            if (this.growthFungalStacks > 0) {
-              const healAmt = this.growthFungalStacks * 10;
-              this.player.heal(healAmt);
-              const hft = this.add.text(this.player.x, this.player.y - 40, `🍄 +${healAmt}`, { fontSize: '11px', color: '#88ff44', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
-              this.tweens.add({ targets: hft, y: hft.y - 25, alpha: 0, duration: 900, onComplete: () => hft.destroy() });
-            }
-          }
-        }
+        // Growth bloat: now handled in player 'damaged' listener (fires for melee + projectile hits)
         // Magic (NPC) cluster bomb: spawn shrapnel toward player
         if (proj.texture.key === 'proj-magic-cluster-core') {
           this.spawnMagicClusterShrapnel(proj.x, proj.y, 'npc');
@@ -3873,6 +3851,28 @@ export class ArenaScene extends Phaser.Scene {
       this.spawnDamageNumber(this.player.x, this.player.y - 34, n);
       if (this.npcDeathWishActiveOnPlayer && this.time.now < this.npcDeathWishPlayerEnd && n > 0) {
         this.npcDeathWishPlayerAccumDmg += n;
+      }
+    });
+    // Growth bloat: trigger AOE on any hit (projectile or melee contact)
+    this.player.on('damaged', (amount: number) => {
+      if (amount <= 0 || !this.growthBloatActive) return;
+      const fLocked = this.hasUpgrade('f') && this.fKey.isDown;
+      if (fLocked) return;
+      this.growthBloatActive = false;
+      this.growthBloatEnd = 0;
+      if (this.growthBloatAura) { this.growthBloatAura.destroy(); this.growthBloatAura = null; }
+      const bloatDmg = Math.round(20 * this.growthDamageMult);
+      const aoeR = this.growthBloatAoeRadius;
+      this.damagePlayerTargets(this.player.x, this.player.y, aoeR, bloatDmg, 0xdddd00);
+      const ft = this.add.text(this.player.x, this.player.y - 30, `💥 ${bloatDmg}`, { fontSize: '11px', color: '#ffff44', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
+      this.tweens.add({ targets: ft, y: ft.y - 25, alpha: 0, duration: 900, onComplete: () => ft.destroy() });
+      const bloatExp = this.add.circle(this.player.x, this.player.y, aoeR, 0xdddd00, 0.3).setDepth(8);
+      this.tweens.add({ targets: bloatExp, scaleX: 1.4, scaleY: 1.4, alpha: 0, duration: 350, onComplete: () => bloatExp.destroy() });
+      if (this.growthFungalStacks > 0) {
+        const healAmt = this.growthFungalStacks * 10;
+        this.player.heal(healAmt);
+        const hft = this.add.text(this.player.x, this.player.y - 40, `🍄 +${healAmt}`, { fontSize: '11px', color: '#88ff44', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
+        this.tweens.add({ targets: hft, y: hft.y - 25, alpha: 0, duration: 900, onComplete: () => hft.destroy() });
       }
     });
     this.npc.on('damaged', (n: number) => {
@@ -9112,20 +9112,23 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Burning DOT (Flameshredder upgrade) ───────────────────────
-    if (this.npc.burningUntil > time) {
-      if (!this.npc.burnAura) {
-        this.npc.burnAura = this.add.circle(this.npc.x, this.npc.y, 26, 0xff4400, 0.3).setDepth(7);
+    for (const t of this.enemies) {
+      if (!t.active) continue;
+      if (t.burningUntil > time) {
+        if (!t.burnAura) {
+          t.burnAura = this.add.circle(t.x, t.y, 26, 0xff4400, 0.3).setDepth(7);
+        }
+        t.burnAura.setPosition(t.x, t.y);
+        t.burnTickAccum += delta;
+        if (t.burnTickAccum >= 500) {
+          t.burnTickAccum -= 500;
+          t.takeDamage(1);
+          this.spawnHitFlash(t.x, t.y, 0xff4400);
+        }
+      } else {
+        t.burnTickAccum = 0;
+        if (t.burnAura) { t.burnAura.destroy(); t.burnAura = null; }
       }
-      this.npc.burnAura.setPosition(this.npc.x, this.npc.y);
-      this.npc.burnTickAccum += delta;
-      if (this.npc.burnTickAccum >= 500) {
-        this.npc.burnTickAccum -= 500;
-        this.npc.takeDamage(1);
-        this.spawnHitFlash(this.npc.x, this.npc.y, 0xff4400);
-      }
-    } else {
-      this.npc.burnTickAccum = 0;
-      if (this.npc.burnAura) { this.npc.burnAura.destroy(); this.npc.burnAura = null; }
     }
 
     // ── Burning DOT on player (Mastered Flameshredder) ────────────
