@@ -58,6 +58,7 @@ export interface SlimeArenaApi {
   readonly npc: Fighter;
   readonly enemies: readonly Fighter[];
   readonly scene: Phaser.Scene;
+  readonly isInvasion: boolean;
   readonly eKey: Phaser.Input.Keyboard.Key;
   readonly fKey: Phaser.Input.Keyboard.Key;
   readonly rKey: Phaser.Input.Keyboard.Key;
@@ -85,6 +86,7 @@ export class SlimeKit {
   private slimeSpeedBoostUntil = 0;
   private slimeShieldVisual: Phaser.GameObjects.Arc | null = null;
   private slimeSlotUI: SlimeSlotUI[] = [];
+  private slimeHUDBg: Phaser.GameObjects.Rectangle | null = null;
   private playerSlimeConfusedUntil = 0;
   private playerSlimeConfuseVx = 0;
   private playerSlimeConfuseVy = 0;
@@ -131,6 +133,7 @@ export class SlimeKit {
     this.slimeSpeedBoostUntil = 0;
     if (this.slimeShieldVisual) { this.slimeShieldVisual.destroy(); this.slimeShieldVisual = null; }
     this.slimeSlotUI = [];
+    this.slimeHUDBg = null;
     this.playerSlimeConfusedUntil = 0;
     this.playerSlimeConfuseVx = 0;
     this.playerSlimeConfuseVy = 0;
@@ -180,7 +183,7 @@ export class SlimeKit {
     const totalW = 3 * slotW + 2 * gap;
     const startX = W / 2 - totalW / 2 + slotW / 2;
 
-    scene.add.rectangle(W / 2, barY, totalW + 16, slotH + 10, 0x0a0a18, 0.92)
+    this.slimeHUDBg = scene.add.rectangle(W / 2, barY, totalW + 16, slotH + 10, 0x0a0a18, 0.92)
       .setStrokeStyle(1, 0x223322, 1).setDepth(20);
 
     this.slimeSlotUI = [];
@@ -481,7 +484,33 @@ export class SlimeKit {
       for (const s of this.slimeyRainSlimes) s.state = 'flying-back';
     }
 
+    if (this.arena.isInvasion && this.slimeSlotUI.length > 0) {
+      this.repositionHUDToPlayer();
+    }
+
     this.refreshSlimeHUD();
+  }
+
+  private repositionHUDToPlayer(): void {
+    const { player } = this.arena;
+    const slotW = 62;
+    const gap = 6;
+    const totalW = 3 * slotW + 2 * gap;
+    const centerX = player.x;
+    const centerY = player.y + 100;
+    const startX = centerX - totalW / 2 + slotW / 2;
+
+    if (this.slimeHUDBg) this.slimeHUDBg.setPosition(centerX, centerY);
+
+    for (let i = 0; i < this.slimeSlotUI.length; i++) {
+      const x = startX + i * (slotW + gap);
+      const slot = this.slimeSlotUI[i];
+      slot.bg.setPosition(x, centerY);
+      slot.lvlText.setPosition(x - 4, centerY + 2);
+      slot.emojiText.setPosition(x + 16, centerY - 12);
+      slot.xpBarBg.setPosition(x, centerY + 17);
+      slot.xpBarFill.setPosition(x - (slotW - 8) / 2, centerY + 17);
+    }
   }
 
   // ── handleInput ───────────────────────────────────────────────────────

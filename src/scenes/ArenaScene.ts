@@ -2832,6 +2832,7 @@ export class ArenaScene extends Phaser.Scene {
         get npc() { return arena.npc; },
         get enemies() { return arena.enemies; },
         get scene(): Phaser.Scene { return arena; },
+        get isInvasion() { return arena.isInvasion; },
         get eKey() { return arena.eKey; },
         get fKey() { return arena.fKey; },
         get rKey() { return arena.rKey; },
