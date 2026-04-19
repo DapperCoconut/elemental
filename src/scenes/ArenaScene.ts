@@ -7482,12 +7482,11 @@ export class ArenaScene extends Phaser.Scene {
     shadowRadius = 14,
     hitRadius = 55,
   ): void {
-    const W = this.scale.width;
-    const H = this.scale.height;
-    const pad = 50;
-    for (let i = 0; i < count; i++) {
-      const sx = Phaser.Math.Between(pad, W - pad);
-      const sy = Phaser.Math.Between(pad, H - pad);
+    const wb = this.physics.world.bounds;
+    const scaledCount = this.isInvasion ? count * 4 : count;
+    for (let i = 0; i < scaledCount; i++) {
+      const sx = Phaser.Math.Between(wb.x, wb.right);
+      const sy = Phaser.Math.Between(wb.y, wb.bottom);
       const fireAt = this.time.now + Phaser.Math.Between(minDelay, maxDelay);
       const shadow = this.add.circle(sx, sy, shadowRadius, color, 0.6).setDepth(7);
       this.painRainShadows.push({ sprite: shadow, fireAt, x: sx, y: sy, fired: false, owner, damage, hitRadius, color });
