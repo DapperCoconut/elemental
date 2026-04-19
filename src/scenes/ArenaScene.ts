@@ -15897,20 +15897,21 @@ export class ArenaScene extends Phaser.Scene {
         if (this.playerWindTrapSprite) this.playerWindTrapSprite.setPosition(ptr.worldX, ptr.worldY);
       }
       const trapR = 80;
-      const d = Phaser.Math.Distance.Between(this.playerWindTrapX, this.playerWindTrapY, this.npc.x, this.npc.y);
-      if (d > trapR) {
-        const ang = Phaser.Math.Angle.Between(this.playerWindTrapX, this.playerWindTrapY, this.npc.x, this.npc.y);
-        this.npc.setPosition(
-          this.playerWindTrapX + Math.cos(ang) * trapR,
-          this.playerWindTrapY + Math.sin(ang) * trapR,
-        );
-        // Don't zero velocity — let the AI keep moving so it slides along the boundary
-        const nb = this.npc.body as Phaser.Physics.Arcade.Body;
-        // Reflect the outward component of velocity so NPC bounces along the edge
-        const vDotN = nb.velocity.x * Math.cos(ang) + nb.velocity.y * Math.sin(ang);
-        if (vDotN > 0) {
-          nb.velocity.x -= vDotN * Math.cos(ang);
-          nb.velocity.y -= vDotN * Math.sin(ang);
+      for (const t of this.enemies) {
+        if (!t.active || t.hp <= 0) continue;
+        const d = Phaser.Math.Distance.Between(this.playerWindTrapX, this.playerWindTrapY, t.x, t.y);
+        if (d > trapR) {
+          const ang = Phaser.Math.Angle.Between(this.playerWindTrapX, this.playerWindTrapY, t.x, t.y);
+          t.setPosition(
+            this.playerWindTrapX + Math.cos(ang) * trapR,
+            this.playerWindTrapY + Math.sin(ang) * trapR,
+          );
+          const nb = t.body as Phaser.Physics.Arcade.Body;
+          const vDotN = nb.velocity.x * Math.cos(ang) + nb.velocity.y * Math.sin(ang);
+          if (vDotN > 0) {
+            nb.velocity.x -= vDotN * Math.cos(ang);
+            nb.velocity.y -= vDotN * Math.sin(ang);
+          }
         }
       }
     } else if (this.playerWindTrapSprite) {

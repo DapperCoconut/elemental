@@ -82,8 +82,6 @@ export function fireBounceHitscan(
   core.lineStyle(2, 0xffffff, 1);
 
   const scene = ctx.scene as SceneWithFighters;
-  const opp   = ctx.isPlayerCaster ? scene.npc : scene.player;
-  let hit = false;
   let remaining = 900;
 
   for (let bounce = 0; bounce <= maxBounces && remaining > 0; bounce++) {
@@ -101,9 +99,18 @@ export function fireBounceHitscan(
     gfx.beginPath();  gfx.moveTo(sx, sy);  gfx.lineTo(ex, ey);  gfx.strokePath();
     core.beginPath(); core.moveTo(sx, sy); core.lineTo(ex, ey); core.strokePath();
 
-    if (!hit && opp && pointToSegmentDist(opp.x, opp.y, sx, sy, ex, ey) <= 30) {
-      opp.takeDamage?.(damage);
-      hit = true;
+    if (ctx.isPlayerCaster && scene.enemies && scene.enemies.length > 0) {
+      for (const t of scene.enemies) {
+        if (!t.active || t.hp <= 0) continue;
+        if (pointToSegmentDist(t.x, t.y, sx, sy, ex, ey) <= 30) {
+          t.takeDamage?.(damage);
+        }
+      }
+    } else {
+      const opp = ctx.isPlayerCaster ? scene.npc : scene.player;
+      if (opp && pointToSegmentDist(opp.x, opp.y, sx, sy, ex, ey) <= 30) {
+        opp.takeDamage?.(damage);
+      }
     }
 
     remaining -= tMin;
