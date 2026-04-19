@@ -5122,14 +5122,16 @@ export class ArenaScene extends Phaser.Scene {
         const W = this.scale.width;
         const H = this.scale.height;
         const btnW = 220; const btnH = 58; const gap = 10;
-        const startY = H / 2 - ((btnH + gap) * (picks.length - 1)) / 2;
+        const menuCX = this.isInvasion ? this.player.x : W / 2;
+        const menuCY = this.isInvasion ? this.player.y + 100 : H / 2;
+        const startY = menuCY - ((btnH + gap) * (picks.length - 1)) / 2;
         for (let p = 0; p < picks.length; p++) {
           const mut = picks[p];
           const by = startY + p * (btnH + gap);
-          const bg = this.add.rectangle(W / 2, by, btnW, btnH, 0x223322, 1)
+          const bg = this.add.rectangle(menuCX, by, btnW, btnH, 0x223322, 1)
             .setStrokeStyle(2, 0x88bb22).setDepth(30).setInteractive({ useHandCursor: true });
-          const lbl = this.add.text(W / 2, by - 10, `${mut.emoji} ${mut.name}`, { fontSize: '14px', fontFamily: '"Arial Black"', color: '#aadd44' }).setOrigin(0.5).setDepth(31);
-          const desc = this.add.text(W / 2, by + 12, mut.description, { fontSize: '10px', color: '#888888' }).setOrigin(0.5).setDepth(31);
+          const lbl = this.add.text(menuCX, by - 10, `${mut.emoji} ${mut.name}`, { fontSize: '14px', fontFamily: '"Arial Black"', color: '#aadd44' }).setOrigin(0.5).setDepth(31);
+          const desc = this.add.text(menuCX, by + 12, mut.description, { fontSize: '10px', color: '#888888' }).setOrigin(0.5).setDepth(31);
           bg.on('pointerover', () => bg.setFillStyle(0x334433));
           bg.on('pointerout', () => bg.setFillStyle(0x223322));
           bg.on('pointerdown', () => {
