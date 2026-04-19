@@ -21377,6 +21377,15 @@ export class ArenaScene extends Phaser.Scene {
       c.magicChainBoundEnd = this.time.now + 2000;
       this.showFloatingText(c.x, c.y - 28, '⛓ BOUND', '#cc88ff');
     }
+    // Water knockback (click upgrade)
+    if (proj.texture.key === 'proj-water' && this.hasUpgrade('click')) {
+      const projBody = proj.body as Phaser.Physics.Arcade.Body;
+      const vx = projBody.velocity.x;
+      const vy = projBody.velocity.y;
+      const len = Math.sqrt(vx * vx + vy * vy) || 1;
+      const cb = c.body as Phaser.Physics.Arcade.Body;
+      cb.setVelocity(cb.velocity.x + (vx / len) * 180, cb.velocity.y + (vy / len) * 180);
+    }
     proj.setActive(false).setVisible(false);
     (proj.body as Phaser.Physics.Arcade.Body).stop();
   }
