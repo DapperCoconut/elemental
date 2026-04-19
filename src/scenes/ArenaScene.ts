@@ -11972,13 +11972,14 @@ export class ArenaScene extends Phaser.Scene {
         }
       }
 
-      // Thorn plant: fire petal at enemy every 1 second
+      // Thorn plant: fire petal at nearest enemy every 1 second
       if (p.type === 'thorn') {
         p.accum += delta;
         if (p.accum >= 1000) {
           p.accum -= 1000;
-          const dx = this.npc.x - p.x;
-          const dy = this.npc.y - p.y;
+          const thornTarget = this.getNearestEnemy(p.x, p.y);
+          const dx = thornTarget.x - p.x;
+          const dy = thornTarget.y - p.y;
           const dist2 = Math.sqrt(dx * dx + dy * dy) || 1;
           const thornProj = new Projectile(this, p.x, p.y, 'proj-life', 8, true);
           this.projectiles.add(thornProj);
@@ -15939,19 +15940,23 @@ export class ArenaScene extends Phaser.Scene {
       this.npcWindTrapSprite = null;
     }
 
-    // ── Thorn Drag (player drags NPC) ────────────────────────────
+    // ── Thorn Drag (player drags enemies) ────────────────────────────
     if (time < this.thornDragActiveUntil) {
-      const tdx = mouseX - this.npc.x;
-      const tdy = mouseY - this.npc.y;
-      const tdLen = Math.sqrt(tdx * tdx + tdy * tdy) || 1;
-      const npcDragBody = this.npc.body as Phaser.Physics.Arcade.Body;
-      npcDragBody.setVelocity((tdx / tdLen) * 220, (tdy / tdLen) * 220);
-
+      for (const t of this.enemies) {
+        if (!t.active || t.hp <= 0) continue;
+        const tdx = mouseX - t.x;
+        const tdy = mouseY - t.y;
+        const tdLen = Math.sqrt(tdx * tdx + tdy * tdy) || 1;
+        (t.body as Phaser.Physics.Arcade.Body).setVelocity((tdx / tdLen) * 220, (tdy / tdLen) * 220);
+      }
       this.thornDragTickAccum += delta;
       if (this.thornDragTickAccum >= 250) {
         this.thornDragTickAccum -= 250;
-        this.npc.takeDamage(3);
-        this.spawnHitFlash(this.npc.x, this.npc.y, 0x44cc44);
+        for (const t of this.enemies) {
+          if (!t.active || t.hp <= 0) continue;
+          t.takeDamage(3);
+          this.spawnHitFlash(t.x, t.y, 0x44cc44);
+        }
       }
       if (this.thornDragAura) this.thornDragAura.setPosition(this.player.x, this.player.y);
     } else if (this.thornDragAura) {
