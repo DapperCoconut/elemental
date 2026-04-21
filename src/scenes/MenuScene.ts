@@ -34,7 +34,8 @@ import { adrenalineElement } from '../elements/adrenaline';
 import { magicElement } from '../elements/magic';
 import { technologyElement } from '../elements/technology';
 import { silenceElement } from '../elements/silence';
-import { magmaElement } from '../elements/magma';
+import { echoElement } from '../elements/quantum';
+import { quantumElement } from '../elements/quantum-element';
 import { dummyElement } from '../elements/dummy';
 
 const ELEMENT_DATA_MAP: Record<string, Element> = {
@@ -56,7 +57,8 @@ const ELEMENT_DATA_MAP: Record<string, Element> = {
   magic: magicElement,
   technology: technologyElement,
   silence: silenceElement,
-  magma: magmaElement,
+  echo: echoElement,
+  quantum: quantumElement,
   dummy: dummyElement,
 };
 
@@ -112,12 +114,12 @@ const ABSTRACT_COMBINED_ELEMENTS: ElementDef[] = [
   { id: 'metal',  name: 'Metal',  emoji: '⚙️',  color: 0x8899aa, available: true },
   { id: 'plasma', name: 'Plasma', emoji: '🔮',  color: 0xaa22ff, available: true },
   { id: 'death',  name: 'Death',  emoji: '💀',  color: 0x440066, available: true },
-  { id: 'void',   name: 'Void',   emoji: '🌑',  color: 0x220033, available: true },
+  { id: 'echo',   name: 'Echo',   emoji: '🦇',  color: 0xccccff, available: true },
   { id: 'adrenaline', name: 'Adrenaline', emoji: '⚡️', color: 0xffbb22, available: true },
   { id: 'magic', name: 'Magic', emoji: '📖', color: 0x9944ff, available: true },
   { id: 'technology', name: 'Technology', emoji: '💻', color: 0x44ccaa, available: true },
   { id: 'silence', name: 'Silence', emoji: '🫥', color: 0x1a0022, available: true },
-  { id: 'magma', name: 'Magma', emoji: '🌋', color: 0xff4500, available: true },
+  { id: 'quantum', name: 'Quantum', emoji: '⚛️', color: 0xaa44ff, available: true },
 ];
 
 const DIFF_COLORS = [0x22cc44, 0x88cc22, 0xddaa00, 0xee5500, 0xcc0022];
@@ -707,9 +709,10 @@ export class MenuScene extends Phaser.Scene {
       this.infoOverlayObjects.push(abilityName);
 
       // Ability description
+      const halfW = Math.floor(width / 2) - 100;
       const abilityDesc = this.add.text(180, rowY + rowH * 0.55, ab.description, {
         fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#888899',
-        wordWrap: { width: width - 260 },
+        wordWrap: { width: halfW },
       }).setOrigin(0, 0.5).setDepth(52);
       this.infoOverlayObjects.push(abilityDesc);
 
@@ -721,9 +724,9 @@ export class MenuScene extends Phaser.Scene {
         }).setOrigin(1, 0.5).setDepth(52);
         this.infoOverlayObjects.push(upgradeLabel);
 
-        const upgradeDesc = this.add.text(width - 60, rowY + rowH * 0.62, upgrade.description, {
+        const upgradeDesc = this.add.text(width - 60, rowY + rowH * 0.70, upgrade.description, {
           fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#aa8833',
-          wordWrap: { width: 320 }, align: 'right',
+          wordWrap: { width: halfW }, align: 'right',
         }).setOrigin(1, 0.5).setDepth(52);
         this.infoOverlayObjects.push(upgradeDesc);
       } else {

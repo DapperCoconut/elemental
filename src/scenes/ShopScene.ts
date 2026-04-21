@@ -2,41 +2,52 @@ import Phaser from 'phaser';
 import * as PlayerData from '../data/PlayerData';
 import { ALL_UPGRADES, getElementUpgrades, UpgradeDef } from '../data/Upgrades';
 import { GAUNTLET_COST } from '../data/GauntletData';
+import { ABSTRACT_ELEMENT_IDS, ABSTRACT_ELEMENT_UNLOCK_MAP } from '../data/AbstractElements';
 
 const ELEMENT_COLORS: Record<string, number> = {
-  fire:     0xff4400,
-  water:    0x0088ff,
-  life:     0x44cc44,
-  air:      0xaaddff,
-  earth:    0x887755,
-  oil:      0x664400,
-  shadow:   0x330044,
-  ice:      0x88ccff,
-  growth:   0x88bb22,
-  crystal:  0x88ccff,
-  soul:     0xccaaff,
-  hunt:     0xcc4400,
-  sand:     0xffdd44,
-  gravity:  0x8844cc,
-  creation: 0xcc6622,
+  fire:        0xff4400,
+  water:       0x0088ff,
+  life:        0x44cc44,
+  air:         0xaaddff,
+  earth:       0x887755,
+  oil:         0x664400,
+  shadow:      0x330044,
+  ice:         0x88ccff,
+  growth:      0x88bb22,
+  crystal:     0x88ccff,
+  soul:        0xccaaff,
+  hunt:        0xcc4400,
+  sand:        0xffdd44,
+  gravity:     0x8844cc,
+  creation:    0xcc6622,
+  electricity: 0xffee00,
+  slime:       0x66cc44,
+  fate:        0x88eecc,
+  sound:       0x44bbff,
+  light:       0xffffff,
 };
 
 const ELEMENT_EMOJIS: Record<string, string> = {
-  fire:     '🔥',
-  water:    '💧',
-  life:     '🌿',
-  air:      '💨',
-  earth:    '🪨',
-  oil:      '🛢️',
-  shadow:   '🌑',
-  ice:      '🧊',
-  growth:   '🦠',
-  crystal:  '💎',
-  soul:     '👻',
-  hunt:     '🐺',
-  sand:     '⏳',
-  gravity:  '🌌',
-  creation: '⚒️',
+  fire:        '🔥',
+  water:       '💧',
+  life:        '🌿',
+  air:         '💨',
+  earth:       '🪨',
+  oil:         '🛢️',
+  shadow:      '🌑',
+  ice:         '🧊',
+  growth:      '🦠',
+  crystal:     '💎',
+  soul:        '👻',
+  hunt:        '🐺',
+  sand:        '⏳',
+  gravity:     '🌌',
+  creation:    '⚒️',
+  electricity: '⚡',
+  slime:       '🟢',
+  fate:        '🃏',
+  sound:       '🔊',
+  light:       '✨',
 };
 
 const BASE_ELEMENT_IDS = ['fire', 'water', 'life', 'air', 'earth'];
@@ -50,6 +61,7 @@ const LAB_UPGRADES = [
 
 export class ShopScene extends Phaser.Scene {
   private shardText!: Phaser.GameObjects.Text;
+  private corruptShardText!: Phaser.GameObjects.Text;
   private nucleiText!: Phaser.GameObjects.Text;
   private currentPage = 0;
 
@@ -98,11 +110,12 @@ export class ShopScene extends Phaser.Scene {
     }).setOrigin(1, 0);
 
     // Corrupt shard counter
-    this.add.text(width - 16, 60, `🩸 ${PlayerData.getCorruptShards()}`, {
+    this.corruptShardText = this.add.text(width - 16, 60, '', {
       fontSize: '14px',
       fontFamily: '"Arial Black", sans-serif',
       color: '#cc44ff',
     }).setOrigin(1, 0);
+    this.refreshCorruptShardDisplay();
 
     // Back button
     const backBtn = this.add
@@ -123,11 +136,16 @@ export class ShopScene extends Phaser.Scene {
     // ── Page navigation ──────────────────────────────────────────
     const combinedIds = ALL_UPGRADES
       .map((e) => e.elementId)
-      .filter((id) => !BASE_ELEMENT_IDS.includes(id) && PlayerData.isElementUnlocked(id));
+      .filter((id) => !BASE_ELEMENT_IDS.includes(id) && !ABSTRACT_ELEMENT_IDS.includes(id) && PlayerData.isElementUnlocked(id));
     const COMBINED_PER_PAGE = 5;
     const totalCombinedPages = combinedIds.length > 0 ? Math.ceil(combinedIds.length / COMBINED_PER_PAGE) : 0;
-    // Page 0 = base elements, pages 1..totalCombinedPages = combined, last page = specials
-    const SPECIALS_PAGE = 1 + totalCombinedPages;
+    const abstractIds = ABSTRACT_ELEMENT_IDS.filter(
+      (id) => PlayerData.getCompletedGauntlets().includes(ABSTRACT_ELEMENT_UNLOCK_MAP[id]) &&
+               ALL_UPGRADES.some((e) => e.elementId === id),
+    );
+    // Page 0 = base, 1..totalCombined = combined, ABSTRACT_PAGE = abstract, SPECIALS_PAGE = specials
+    const ABSTRACT_PAGE = 1 + totalCombinedPages;
+    const SPECIALS_PAGE = ABSTRACT_PAGE + 1;
     const totalPages = SPECIALS_PAGE + 1;
     const hasNextPage = this.currentPage < totalPages - 1;
     const hasPrevPage = this.currentPage > 0;
@@ -156,11 +174,22 @@ export class ShopScene extends Phaser.Scene {
         .on('pointerdown', () => this.scene.restart({ page: this.currentPage + 1 }));
     }
 
-    // Page indicator for specials
+    // Page indicator for abstract / specials
+    if (this.currentPage === ABSTRACT_PAGE) {
+      this.add.text(cx, 36, '🩸 ABSTRACT', {
+        fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#cc44ff',
+      }).setOrigin(0.5);
+    }
     if (this.currentPage === SPECIALS_PAGE) {
       this.add.text(cx, 36, '⚙️ SPECIALS', {
         fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc44',
       }).setOrigin(0.5);
+    }
+
+    // ── Abstract page ──────────────────────────────────────────────
+    if (this.currentPage === ABSTRACT_PAGE) {
+      this.buildAbstractPage(width, height, cx, abstractIds);
+      return;
     }
 
     // ── Specials page ──────────────────────────────────────────────
@@ -406,5 +435,115 @@ export class ShopScene extends Phaser.Scene {
 
   private refreshShardDisplay(): void {
     this.shardText.setText(`💎 ${PlayerData.getShards()}`);
+  }
+
+  private refreshCorruptShardDisplay(): void {
+    this.corruptShardText.setText(`🩸 ${PlayerData.getCorruptShards()}`);
+  }
+
+  private buildAbstractPage(width: number, height: number, cx: number, abstractIds: string[]): void {
+    if (abstractIds.length === 0) {
+      this.add.text(cx, height / 2, 'Complete a gauntlet to unlock abstract elements.\nAbstract upgrades are purchased with 🩸 corrupt shards.', {
+        fontSize: '16px', fontFamily: 'Arial, sans-serif', color: '#555577', align: 'center',
+      }).setOrigin(0.5);
+      return;
+    }
+
+    const elements = ALL_UPGRADES.filter((e) => abstractIds.includes(e.elementId));
+    const colW = elements.length > 0 ? Math.floor(width / elements.length) : width;
+    const colStartY = 80;
+
+    elements.forEach((elemUpgrades, colIdx) => {
+      const elementId = elemUpgrades.elementId;
+      const colCX = colIdx * colW + colW / 2;
+      const color = ELEMENT_COLORS[elementId] ?? 0x880044;
+      const emoji = ELEMENT_EMOJIS[elementId] ?? '?';
+      const upgrades = getElementUpgrades(elementId);
+
+      this.add.rectangle(colCX, colStartY + 28, colW - 8, 50, color, 0.2)
+        .setStrokeStyle(1, color);
+      this.add.text(colCX, colStartY + 18, `${emoji} ${elementId.toUpperCase()}`, {
+        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#ffffff',
+      }).setOrigin(0.5);
+
+      const SLOT_KEYS    = ['click', 'e', 'r', 'f', 'q'];
+      const SLOT_DISPLAY = ['Click', 'E', 'R', 'F', 'Q'];
+      const CORRUPT_PRICES = [100, 200, 350, 500, 750];
+
+      const btnW = colW - 16;
+      const btnH = 82;
+      const btnGap = 6;
+      const firstBtnY = colStartY + 60;
+
+      SLOT_KEYS.forEach((slot, slotIdx) => {
+        const bx = colCX;
+        const by = firstBtnY + slotIdx * (btnH + btnGap) + btnH / 2;
+        const upgDef: UpgradeDef | undefined = upgrades.find((u) => u.slot === slot);
+        const price = upgDef?.price ?? CORRUPT_PRICES[slotIdx];
+
+        const owned   = PlayerData.isUpgradeOwned(elementId, slot);
+        const active  = PlayerData.isUpgradeActive(elementId, slot);
+        const hasDef  = upgDef !== undefined;
+
+        let fillColor   = 0x1a1a1a;
+        let borderColor = 0x333333;
+        let labelColor  = '#555555';
+
+        if (owned && active) {
+          fillColor = 0x0d2b0d; borderColor = 0x33aa33; labelColor = '#44ff44';
+        } else if (owned && !active) {
+          fillColor = 0x2b0d0d; borderColor = 0xaa3333; labelColor = '#ff4444';
+        } else if (hasDef) {
+          fillColor = 0x1a0a2b; borderColor = 0x660088; labelColor = '#cc88ff';
+        }
+
+        const btn = this.add
+          .rectangle(bx, by, btnW, btnH, fillColor)
+          .setStrokeStyle(1, borderColor);
+
+        this.add.text(bx, by - 26, `[${SLOT_DISPLAY[slotIdx]}]`, {
+          fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#666666',
+        }).setOrigin(0.5);
+
+        if (hasDef && upgDef) {
+          this.add.text(bx, by - 12, upgDef.name, {
+            fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: labelColor,
+          }).setOrigin(0.5);
+
+          this.add.text(bx, by + 6, upgDef.description, {
+            fontSize: '9px', fontFamily: 'Arial, sans-serif', color: '#777777',
+            wordWrap: { width: btnW - 8 }, align: 'center',
+          }).setOrigin(0.5);
+
+          const statusStr = owned
+            ? (active ? 'ACTIVE — click to disable' : 'OWNED — click to enable')
+            : `🩸 ${price} corrupt shards`;
+          this.add.text(bx, by + 32, statusStr, {
+            fontSize: '9px', fontFamily: 'Arial, sans-serif',
+            color: owned ? (active ? '#33aa33' : '#aa3333') : '#cc44ff',
+          }).setOrigin(0.5);
+
+          btn.setInteractive({ useHandCursor: true });
+          btn
+            .on('pointerover', () => btn.setStrokeStyle(2, 0xffffff))
+            .on('pointerout',  () => btn.setStrokeStyle(1, borderColor))
+            .on('pointerdown', () => {
+              if (!PlayerData.isUpgradeOwned(elementId, slot)) {
+                if (PlayerData.spendCorruptShards(price)) {
+                  PlayerData.purchaseUpgrade(elementId, slot);
+                  this.scene.restart({ page: this.currentPage });
+                }
+              } else {
+                PlayerData.toggleUpgrade(elementId, slot);
+                this.scene.restart({ page: this.currentPage });
+              }
+            });
+        } else {
+          this.add.text(bx, by, 'Coming Soon', {
+            fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#333333',
+          }).setOrigin(0.5);
+        }
+      });
+    });
   }
 }

@@ -5,7 +5,7 @@ import { CastContext } from '../elements/Ability';
 import { Projectile } from '../combat/Projectile';
 import { slimeElement } from '../elements/slime';
 
-type AiState = 'chase' | 'attack' | 'retreat';
+type AiState = 'chase' | 'attack';
 
 export interface DifficultyConfig {
   level: number;
@@ -53,10 +53,8 @@ export interface NpcAiState {
   npcTimeTimelessReady?: boolean;
   // Fate (alt-life)
   fateSlotMachineCount?: number;
-  fateLuckyQueued?: boolean;
-  fateUnluckyQueued?: boolean;
-  fateKarmaActive?: boolean;
-  nearOwnSlotMachine?: boolean;
+  fateCoinCount?: number;
+  fateNpcLucky?: boolean;
   // Metal
   npcMetalArsenal?: string[];
   // Death
@@ -77,15 +75,17 @@ export interface NpcAiState {
   npcSilenceSlasherActive?: boolean;
   npcSilenceSlasherHp?: number;
   npcSilenceHookConnected?: boolean;
-  // Magma
-  magmaVolcanoActive?: boolean;
-  magmaVolcanoLavaLevel?: number;
+  // Echo — no persistent ai state needed
+  echoAttachActive?: boolean;
+  // Quantum
+  quantumVibrationActive?: boolean;
+  quantumMechanicActive?: boolean;
+  quantumNhilegoActive?: boolean;
 }
 
 export class NpcOpponent extends Fighter {
   private aiState: AiState = 'chase';
   private readonly attackRange = 280;
-  private readonly retreatHpRatio = 0.28;
   private strafeDir = 1;
   private nextStrafeDirChange = 0;
   private lastFlameBodyToggle = -10000;
@@ -132,9 +132,7 @@ export class NpcOpponent extends Fighter {
     const hpRatio = this.hp / this.maxHp;
 
     // State transitions
-    if (hpRatio < this.retreatHpRatio) {
-      this.aiState = 'retreat';
-    } else if (dist <= this.attackRange) {
+    if (dist <= this.attackRange) {
       this.aiState = 'attack';
     } else {
       this.aiState = 'chase';
@@ -234,16 +232,6 @@ export class NpcOpponent extends Fighter {
           }
           break;
         }
-        case 'retreat': {
-          const awayAngle = Phaser.Math.Angle.Between(target.x, target.y, this.x, this.y);
-          // Offset by 60° so NPC retreats diagonally instead of straight back into corners
-          const strafeAngle = awayAngle + this.strafeDir * (Math.PI / 3);
-          body.setVelocity(
-            Math.cos(strafeAngle) * this.speed,
-            Math.sin(strafeAngle) * this.speed,
-          );
-          break;
-        }
       }
     }
 
@@ -338,8 +326,11 @@ export class NpcOpponent extends Fighter {
     if (this.element.id === 'silence') {
       return this.doSilenceAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
-    if (this.element.id === 'magma') {
-      return this.doMagmaAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    if (this.element.id === 'echo') {
+      return this.doEchoAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'quantum') {
+      return this.doQuantumAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
     return null;
   }
@@ -387,56 +378,45 @@ export class NpcOpponent extends Fighter {
   private doFateAbilities(
     target: Fighter,
     buildContext: (tX: number, tY: number) => CastContext,
-    time: number,
+    _time: number,
     dist: number,
     hpRatio: number,
     aimX: number,
     aimY: number,
     aiState: NpcAiState,
   ): string | null {
-    void time; void target;
-    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    void target;
+    const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const coins = aiState.fateCoinCount ?? 5;
     const slotCount = aiState.fateSlotMachineCount ?? 0;
 
-    if (!skipSpecials) {
-      // 1. Maintain slot machines (place up to 2 near self for passive pressure)
+    if (!skip) {
+      // 1. Place slot machines near self
       if (slotCount < 2) {
         const px = this.x + Phaser.Math.Between(-50, 50);
         const py = this.y + Phaser.Math.Between(-50, 50);
         if (this.castAbility('fate-slots', buildContext(px, py))) return 'fate-slots';
       }
 
-      // 2. Reel the slot machine if standing near one (simulated by using chargeUntil)
-      if (aiState.nearOwnSlotMachine && slotCount > 0 && this.chargeUntil <= 0) {
-        this.chargeUntil = time + 2000;
-        this.chargingAbility = 'fate-slots-reel';
-        return null;
-      }
-      if (this.chargingAbility === 'fate-slots-reel' && this.chargeUntil > 0 && time >= this.chargeUntil) {
-        // Reel resolved — let ArenaScene handle the spin via aiState flag; clear charge
-        this.chargeUntil = 0;
-        this.chargingAbility = '';
+      // 2. Use Luck for lucky-slots if not already lucky
+      if (!aiState.fateNpcLucky) {
+        if (this.castAbility('fate-luck', buildContext(this.x, this.y))) return 'fate-luck';
       }
 
-      // 3. Force lucky if not already lucky and cooldown is ready
-      if (!aiState.fateLuckyQueued) {
-        if (this.castAbility('fate-force', buildContext(this.x, this.y))) return 'fate-force';
+      // 3. Dice of Doom when 3+ coins and in range
+      if (coins >= 3 && dist < 350) {
+        if (this.castAbility('fate-dice', buildContext(aimX, aimY))) return 'fate-dice';
       }
 
-      // 4. Karma when low HP or close range
-      if ((hpRatio < 0.60 || dist < 200) && !aiState.fateKarmaActive) {
-        if (this.castAbility('fate-karma', buildContext(this.x, this.y))) return 'fate-karma';
-      }
-
-      // 5. Roll of Fate when desperate
-      if (hpRatio < 0.40) {
-        if (this.castAbility('fate-roll', buildContext(aimX, aimY))) return 'fate-roll';
+      // 4. All In when flush or desperate
+      if ((coins >= 12 || (hpRatio < 0.30 && coins >= 5)) && dist < 300) {
+        if (this.castAbility('fate-all-in', buildContext(this.x, this.y))) return 'fate-all-in';
       }
     }
 
-    // 6. Draw (card barrage) as default attack
-    if (this.aiState === 'attack' || this.aiState === 'chase') {
-      if (this.castAbility('fate-draw', buildContext(aimX, aimY))) return 'fate-draw';
+    // 5. Coin Toss as primary attack
+    if (coins >= 2 && (this.aiState === 'attack' || this.aiState === 'chase')) {
+      if (this.castAbility('fate-coin-toss', buildContext(aimX, aimY))) return 'fate-coin-toss';
     }
 
     return null;
@@ -807,7 +787,7 @@ export class NpcOpponent extends Fighter {
     if (!skipSpecials) {
       // 1. Summon drones (up to 4)
       if (droneCount < 4) {
-        if (this.castAbility('drone-summon', buildContext(this.x, this.y))) return 'drone-summon';
+        if (this.castAbility('barrel-roll', buildContext(this.x, this.y))) return 'barrel-roll';
       }
 
       // 2. Command drones at player — sharp aim
@@ -1694,7 +1674,46 @@ export class NpcOpponent extends Fighter {
     return null;
   }
 
-  private doMagmaAbilities(
+  private doEchoAbilities(
+    _target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    _time: number,
+    dist: number,
+    _hpRatio: number,
+    aimX: number,
+    aimY: number,
+    _aiState: NpcAiState,
+  ): string | null {
+    const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+
+    if (!skip) {
+      // F: Bat attach when very close
+      if (dist < 100) {
+        if (this.castAbility('echo-bat', buildContext(aimX, aimY))) return 'echo-bat';
+      }
+      // E: Guess when in range
+      if (dist < 250 && Math.random() < 0.7) {
+        if (this.castAbility('echo-guess', buildContext(aimX, aimY))) return 'echo-guess';
+      }
+      // R: Lantern occasionally
+      if (Math.random() < 0.15) {
+        if (this.castAbility('echo-lantern', buildContext(aimX, aimY))) return 'echo-lantern';
+      }
+      // Q: Eclipse occasionally
+      if (Math.random() < 0.05) {
+        if (this.castAbility('echo-eclipse', buildContext(aimX, aimY))) return 'echo-eclipse';
+      }
+    }
+
+    // Click: Echolocation as primary attack
+    if (dist < 500 && (this.aiState === 'attack' || this.aiState === 'chase')) {
+      if (this.castAbility('echo-shot', buildContext(aimX, aimY))) return 'echo-shot';
+    }
+
+    return null;
+  }
+
+  private doQuantumAbilities(
     _target: Fighter,
     buildContext: (tX: number, tY: number) => CastContext,
     _time: number,
@@ -1706,34 +1725,33 @@ export class NpcOpponent extends Fighter {
   ): string | null {
     const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
+    // Detonate vibration — absolute priority if vibration is ticking on target
+    if (aiState.quantumVibrationActive) {
+      if (this.castAbility('atom-vibration', buildContext(aimX, aimY))) return 'atom-vibration';
+    }
+
     if (!skip) {
-      // Q: Lava Lord when close and available
-      if (dist < 300 && Math.random() < 0.15) {
-        if (this.castAbility('magma-lava-lord', buildContext(aimX, aimY))) return 'magma-lava-lord';
+      // Q: Atom-Nhilego occasionally at moderate HP
+      if (!aiState.quantumNhilegoActive && hpRatio < 0.75 && Math.random() < 0.05) {
+        if (this.castAbility('atom-nhilego', buildContext(aimX, aimY))) return 'atom-nhilego';
       }
-
-      // R: Volcano when available
-      if (!aiState.magmaVolcanoActive && Math.random() < 0.20) {
-        if (this.castAbility('magma-volcano', buildContext(aimX, aimY))) {
-          aiState.magmaVolcanoActive = true;
-          return 'magma-volcano';
-        }
+      // F: Quantum Mechanic — panic at low HP, in range
+      if (!aiState.quantumMechanicActive && hpRatio < 0.5 && dist < 260) {
+        if (this.castAbility('quantum-mechanic', buildContext(aimX, aimY))) return 'quantum-mechanic';
       }
-
-      // E: Boulder at player position
-      if (Math.random() < 0.30) {
-        if (this.castAbility('magma-boulder', buildContext(aimX, aimY))) return 'magma-boulder';
+      // R: Atom Vibration — close-range lunge
+      if (!aiState.quantumVibrationActive && dist < 220) {
+        if (this.castAbility('atom-vibration', buildContext(aimX, aimY))) return 'atom-vibration';
       }
-
-      // F: Split when low HP
-      if (hpRatio < 0.40 && Math.random() < 0.25) {
-        if (this.castAbility('magma-split', buildContext(aimX, aimY))) return 'magma-split';
+      // E: Chaos Control — mid-range AoE
+      if (dist < 300) {
+        if (this.castAbility('chaos-control', buildContext(aimX, aimY))) return 'chaos-control';
       }
     }
 
-    // Click: Empower mace when close
-    if (dist < 160 && Math.random() < 0.30) {
-      if (this.castAbility('magma-mace', buildContext(aimX, aimY))) return 'magma-mace';
+    // Click: Wave Reducer spam at range
+    if (dist < 500 && (this.aiState === 'attack' || this.aiState === 'chase')) {
+      if (this.castAbility('quantum-wave', buildContext(aimX, aimY))) return 'quantum-wave';
     }
 
     return null;

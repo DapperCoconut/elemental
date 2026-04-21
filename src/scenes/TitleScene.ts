@@ -119,12 +119,13 @@ export class TitleScene extends Phaser.Scene {
         if (konamiIdx === KONAMI.length) {
           konamiIdx = 0;
           PlayerData.addShards(9999);
+          PlayerData.addCorruptShards(9999);
           PlayerData.unlockGauntlet();
           for (const id of ['fire', 'water', 'life', 'air', 'earth']) {
             PlayerData.completeGauntlet(id);
           }
           if (notificationText) notificationText.destroy();
-          notificationText = this.add.text(cx, height - 60, '🏆 All Gauntlets Complete! ✨ +9999 Shards!', {
+          notificationText = this.add.text(cx, height - 60, '🏆 All Gauntlets Complete! +9999 💎  +9999 🩸', {
             fontSize: '20px',
             fontFamily: '"Arial Black", sans-serif',
             color: '#ffee00',

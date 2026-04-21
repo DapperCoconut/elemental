@@ -89,13 +89,14 @@ export class GauntletSelectScene extends Phaser.Scene {
         fontSize: '18px',
         fontFamily: '"Arial Black", sans-serif',
         color: '#ffffff',
+        wordWrap: { width: cardW - 8 },
       }).setOrigin(0.5);
 
       const pool = GAUNTLET_GROUPS[el.id];
       this.add.text(bx, by + 34, pool.map((e) => {
         const found = GAUNTLET_ELEMENTS.find((ge) => ge.id === e);
         return found?.emoji ?? e;
-      }).join(' '), { fontSize: '16px' }).setOrigin(0.5);
+      }).join(' '), { fontSize: '16px', wordWrap: { width: cardW - 8 } }).setOrigin(0.5);
 
       if (isCompleted) {
         const badge = this.add.text(bx, by - 80, '★ CLEARED', {
@@ -190,6 +191,7 @@ export class GauntletSelectScene extends Phaser.Scene {
       this.add.text(bx, by - 12, el.emoji, { fontSize: '26px' }).setOrigin(0.5).setDepth(53);
       this.add.text(bx, by + 18, el.name, {
         fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#cccccc',
+        wordWrap: { width: btnW - 8 },
       }).setOrigin(0.5).setDepth(53);
 
       btn

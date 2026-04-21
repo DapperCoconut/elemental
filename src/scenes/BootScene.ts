@@ -305,6 +305,34 @@ export class BootScene extends Phaser.Scene {
     gfx.strokeCircle(7, 7, 5);
     gfx.generateTexture('proj-electro', 14, 14);
 
+    // Ball lightning projectile (larger, purple-white crackling orb)
+    gfx.clear();
+    gfx.fillStyle(0xcc88ff);
+    gfx.fillCircle(14, 14, 14);
+    gfx.lineStyle(3, 0xffffff, 0.8);
+    gfx.strokeCircle(14, 14, 12);
+    gfx.lineStyle(2, 0xffee00, 0.6);
+    gfx.strokeCircle(14, 14, 8);
+    gfx.generateTexture('proj-ball-lightning', 28, 28);
+
+    // Storm cloud texture (dark circle with lighter ring)
+    gfx.clear();
+    gfx.fillStyle(0x223344, 0.85);
+    gfx.fillCircle(40, 40, 40);
+    gfx.lineStyle(3, 0x4488cc, 0.7);
+    gfx.strokeCircle(40, 40, 38);
+    gfx.lineStyle(2, 0x88ccff, 0.4);
+    gfx.strokeCircle(40, 40, 28);
+    gfx.generateTexture('fx-storm-cloud', 80, 80);
+
+    // Sun projectile texture (photon slime)
+    gfx.clear();
+    gfx.fillStyle(0xffee44, 1);
+    gfx.fillCircle(10, 10, 10);
+    gfx.lineStyle(2, 0xffffff, 0.9);
+    gfx.strokeCircle(10, 10, 8);
+    gfx.generateTexture('proj-sun', 20, 20);
+
     // Slime element texture (green blob circle)
     gfx.clear();
     gfx.fillStyle(0x55bb33);
@@ -761,67 +789,75 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('proj-tech-cluster', 8, 8);
     gfx.clear();
 
-    // ── Magma element (abstract combined: slime + fate) ────────────────────────
+    // ── Echo element (abstract combined: fate + light) ───────────────────────
 
-    // elem-magma — dark orange-red circle with lava glow ring
-    gfx.fillStyle(0x8b2200, 1);
+    // elem-echo — white-purple circle with bat wing arcs
+    gfx.fillStyle(0x221133, 1);
     gfx.fillCircle(24, 24, 22);
-    gfx.fillStyle(0xff4500, 1);
-    gfx.fillCircle(24, 24, 16);
-    gfx.fillStyle(0xff8c00, 0.7);
-    gfx.fillCircle(24, 24, 9);
-    gfx.lineStyle(3, 0xff6600, 1);
+    gfx.lineStyle(3, 0xccccff, 1);
     gfx.strokeCircle(24, 24, 22);
-    gfx.generateTexture('elem-magma', 48, 48);
+    // bat wing arcs
+    gfx.lineStyle(2, 0xaaaadd, 0.8);
+    gfx.beginPath();
+    gfx.arc(16, 24, 8, Math.PI * 1.2, Math.PI * 1.8, false);
+    gfx.strokePath();
+    gfx.beginPath();
+    gfx.arc(32, 24, 8, Math.PI * 1.2, Math.PI * 1.8, false);
+    gfx.strokePath();
+    gfx.generateTexture('elem-echo', 48, 48);
     gfx.clear();
 
-    // proj-magma-flail-ball — 20×20 molten lava ball
-    gfx.fillStyle(0x8b2200, 1);
-    gfx.fillCircle(10, 10, 10);
-    gfx.fillStyle(0xff4500, 1);
-    gfx.fillCircle(10, 10, 7);
-    gfx.fillStyle(0xff8c00, 0.7);
-    gfx.fillCircle(10, 10, 4);
-    gfx.lineStyle(2, 0xff6600, 0.8);
-    gfx.strokeCircle(10, 10, 9);
-    gfx.generateTexture('proj-magma-flail-ball', 20, 20);
+    // ── Quantum element (abstract combined: slime + fate) ────────────────────
+
+    // elem-quantum — deep purple circle with orbital arcs
+    gfx.fillStyle(0x330066, 1);
+    gfx.fillCircle(24, 24, 22);
+    gfx.lineStyle(3, 0xaa44ff, 1);
+    gfx.strokeCircle(24, 24, 22);
+    // horizontal orbital ellipse
+    gfx.lineStyle(2, 0xcc88ff, 0.9);
+    gfx.beginPath();
+    gfx.arc(24, 24, 14, Math.PI * 0.15, Math.PI * 0.85, false);
+    gfx.strokePath();
+    gfx.beginPath();
+    gfx.arc(24, 24, 14, Math.PI * 1.15, Math.PI * 1.85, false);
+    gfx.strokePath();
+    // nucleus dot
+    gfx.fillStyle(0xee99ff, 1);
+    gfx.fillCircle(24, 24, 4);
+    gfx.generateTexture('elem-quantum', 48, 48);
     gfx.clear();
 
-    // proj-magma-flail-chain — 6×6 dark chain link
-    gfx.fillStyle(0x441100, 1);
-    gfx.fillRect(0, 0, 6, 6);
-    gfx.lineStyle(1, 0x882200, 1);
-    gfx.strokeRect(0, 0, 6, 6);
-    gfx.generateTexture('proj-magma-flail-chain', 6, 6);
-    gfx.clear();
-
-    // proj-magma-lava-ball — 10×10 bright lava projectile
-    gfx.fillStyle(0xff4500, 1);
+    // proj-quantum — small purple orb
+    gfx.fillStyle(0xaa44ff, 1);
     gfx.fillCircle(5, 5, 5);
-    gfx.fillStyle(0xffaa00, 0.8);
-    gfx.fillCircle(5, 5, 3);
-    gfx.generateTexture('proj-magma-lava-ball', 10, 10);
+    gfx.lineStyle(1, 0xee99ff, 1);
+    gfx.strokeCircle(5, 5, 4);
+    gfx.generateTexture('proj-quantum', 10, 10);
     gfx.clear();
 
-    // proj-magma-boulder — 40×40 dark rocky boulder
-    gfx.fillStyle(0x3d2200, 1);
-    gfx.fillCircle(20, 20, 19);
-    gfx.fillStyle(0x5c3300, 1);
-    gfx.fillCircle(15, 15, 8);
-    gfx.fillCircle(26, 22, 7);
-    gfx.lineStyle(2, 0xff4500, 0.6);
-    gfx.strokeCircle(20, 20, 18);
-    gfx.generateTexture('proj-magma-boulder', 40, 40);
+    // proj-fate-coin — 12×12 gold circle (coin toss projectile)
+    gfx.fillStyle(0xffcc00, 1);
+    gfx.fillCircle(6, 6, 5);
+    gfx.lineStyle(2, 0xffaa00, 1);
+    gfx.strokeCircle(6, 6, 4);
+    gfx.generateTexture('proj-fate-coin', 12, 12);
     gfx.clear();
 
-    // proj-magma-lava-core — 12×12 glowing lava core pickup
-    gfx.fillStyle(0xff8c00, 1);
-    gfx.fillCircle(6, 6, 6);
-    gfx.fillStyle(0xffee00, 0.9);
-    gfx.fillCircle(6, 6, 3);
-    gfx.lineStyle(2, 0xff4500, 0.6);
-    gfx.strokeCircle(6, 6, 5);
-    gfx.generateTexture('proj-magma-lava-core', 12, 12);
+    // proj-fate-dice — 24×24 white square with dots (dice projectile)
+    gfx.fillStyle(0xffffff, 1);
+    gfx.fillRoundedRect(0, 0, 24, 24, 4);
+    gfx.lineStyle(1, 0xcccccc, 1);
+    gfx.strokeRoundedRect(0, 0, 24, 24, 4);
+    gfx.fillStyle(0x333333, 1);
+    // center dot
+    gfx.fillCircle(12, 12, 2);
+    // corner dots
+    gfx.fillCircle(6, 6, 2);
+    gfx.fillCircle(18, 6, 2);
+    gfx.fillCircle(6, 18, 2);
+    gfx.fillCircle(18, 18, 2);
+    gfx.generateTexture('proj-fate-dice', 24, 24);
     gfx.clear();
 
     // ── Silence element (abstract combined: slime + sound) ────────────────────

@@ -142,10 +142,12 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
         .filter((bo) => boostCounts[bo.type] > 0)
         .map((bo) => `${bo.emoji} ${bo.label}${boostCounts[bo.type] > 1 ? ` ×${boostCounts[bo.type]}` : ''}`);
 
-      this.add.text(cx, 192, boostParts.join('   '), {
+      this.add.text(cx, 192, boostParts.join(' '), {
         fontSize: '14px',
         fontFamily: '"Arial Black", sans-serif',
         color: '#ffcc44',
+        wordWrap: { width: width - 80 },
+        align: 'center',
       }).setOrigin(0.5);
     }
 
@@ -216,6 +218,8 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
         fontSize: '13px',
         fontFamily: 'Arial, sans-serif',
         color: '#aaaaaa',
+        wordWrap: { width: cardW - 16 },
+        align: 'center',
       }).setOrigin(0.5);
 
       card
@@ -256,6 +260,8 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
       fontSize: '13px',
       fontFamily: 'Arial, sans-serif',
       color: isBossFight ? '#ff6666' : '#666666',
+      wordWrap: { width: width - 80 },
+      align: 'center',
     }).setOrigin(0.5);
   }
 

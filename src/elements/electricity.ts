@@ -39,7 +39,7 @@ const electroDash: Ability = {
 const kineticDischarge: Ability = {
   id: 'kinetic-discharge',
   name: 'Kinetic Discharge',
-  description: 'Explosion at cursor for 3/4 kinetic power in damage. Costs 10 kinetic power.',
+  description: 'Explosion at cursor for ½ kinetic power in damage. Costs 20 kinetic power (min 20 to cast).',
   displayKey: 'R',
   cooldown: 4000,
   cast(ctx) { void ctx; }, // Handled in ArenaScene
@@ -57,7 +57,7 @@ const painBattery: Ability = {
 const restart: Ability = {
   id: 'restart',
   name: 'Restart',
-  description: 'Become overcharged 5s. If you die while overcharged: revive at 25% HP with 3 HP/s regen for kinetic-power seconds.',
+  description: 'Become overcharged for 5s. If you die while overcharged: revive at HP equal to kinetic power, consuming all kinetic.',
   displayKey: 'Q',
   cooldown: 60000,
   cast(ctx) { void ctx; }, // Handled in ArenaScene

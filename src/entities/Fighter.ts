@@ -12,6 +12,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public shieldCharges = 0;
   public shieldHp = 0;
   public incomingDamageMultiplier = 1;
+  /** Quantum element blue-form damage reduction (0.85 in blue form, 1 otherwise). Multiplied in takeDamage. */
+  public quantumIncomingMult = 1;
   public chargeRatio = 0;   // 0–1, drives the yellow charge bar in HealthBar
   public lastIncomingDamage = 0; // set in takeDamage() before shield check — used by reflect upgrades
   /** Multiply all ability cooldowns by this factor (< 1 = faster, e.g. Reborn post-revival). */
@@ -75,6 +77,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
   public earthStunnedUntil = 0;
 
+  // Oil E+ Oily status
+  public oilyUntil = 0;
+  public oilyBurnUntil = 0;
+  public oilyBurnAccum = 0;
+
   public lavaRockBurnUntil = 0;
   public lavaRockBurnAccum = 0;
 
@@ -128,6 +135,12 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     (this.body as Phaser.Physics.Arcade.Body).setCircle(radius, offset, offset);
   }
 
+  reduceMaxHp(amount: number): void {
+    this.maxHp = Math.max(1, this.maxHp - amount);
+    this.hp = Math.min(this.hp, this.maxHp);
+    this.healthBar.setMaxHp(this.maxHp);
+  }
+
   takeDamage(amount: number): void {
     if (this.isInvincible) return;
 
@@ -140,7 +153,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       amount = Math.round(amount * (critCtx?.mult ?? 2));
     }
 
-    amount = Math.round(amount * this.incomingDamageMultiplier * this.gauntletDamageTakenMult);
+    amount = Math.round(amount * this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.quantumIncomingMult);
     this.lastIncomingDamage = amount;
     if (isCrit) this.emit('damaged-crit', amount);
 
@@ -246,6 +259,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Shift all stored cooldown timestamps forward by deltaMs (used to compensate for real-time elapsed during a game pause). */
   shiftCooldowns(deltaMs: number): void {
     for (const [k, v] of this.cooldowns) this.cooldowns.set(k, v + deltaMs);
+  }
+
+  /** Force an ability's cooldown to start right now (used by kits that manage their own CD timing). */
+  startCooldown(abilityId: string): void {
+    this.cooldowns.set(abilityId, Date.now());
   }
 
   /** Reduce remaining cooldown of an ability by byMs milliseconds (cannot make it readier than fully ready). */

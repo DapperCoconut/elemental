@@ -15,7 +15,7 @@ const slimeySplash: Ability = {
   name: 'Slimey Splash',
   description: '3s: slimes drip puddles beneath them every 1s. Flying through puddles grants slimes 10 XP.',
   displayKey: 'E',
-  cooldown: 8000,
+  cooldown: 12000,
   cast(_ctx) { /* ArenaScene sets slimeSplashActiveUntil */ },
 };
 
@@ -33,7 +33,7 @@ const slimeShield: Ability = {
   name: 'Slime Shield',
   description: 'A random slime engulfs you, absorbing damage (25/50/75 HP by level) until destroyed.',
   displayKey: 'F',
-  cooldown: 0,
+  cooldown: 5000,
   cast(_ctx) { /* damageAbsorber installed by ArenaScene */ },
 };
 

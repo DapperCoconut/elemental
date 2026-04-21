@@ -40,6 +40,7 @@ import { lightElement } from '../elements/light';
 import { magnetElement } from '../elements/magnet';
 import { MagnetKit, MagnetArenaApi, MagnetRod } from '../elements/kits/MagnetKit';
 import { LightKit, LightArenaApi } from '../elements/kits/LightKit';
+import { ElectricityKit, ElectricityArenaApi } from '../elements/kits/ElectricityKit';
 import { VoidKit, VoidArenaApi } from '../elements/kits/VoidKit';
 import { TechnologyKit, TechArenaApi } from '../elements/kits/TechnologyKit';
 import { SlimeKit, SlimeArenaApi } from '../elements/kits/SlimeKit';
@@ -51,7 +52,12 @@ import { adrenalineElement, adrenalineSkateAbilities } from '../elements/adrenal
 import { magicElement } from '../elements/magic';
 import { technologyElement } from '../elements/technology';
 import { silenceElement } from '../elements/silence';
-import { magmaElement } from '../elements/magma';
+import { echoElement } from '../elements/quantum';
+import { EchoKit, EchoArenaApi } from '../elements/kits/QuantumKit';
+import { quantumElement } from '../elements/quantum-element';
+import { QuantumElementKit, QuantumElementArenaApi } from '../elements/kits/QuantumElementKit';
+import { OilKit, OilArenaApi } from '../elements/kits/OilKit';
+import { FateKit, FateArenaApi } from '../elements/kits/FateKit';
 import { dummyElement } from '../elements/dummy';
 import { P2InputState, emptyP2Input } from '../network/P2InputState';
 import * as PlayerData from '../data/PlayerData';
@@ -209,27 +215,6 @@ interface Plant {
   owner: 'player' | 'npc';
   type: 'normal' | 'life' | 'thorn';
   accum: number; // timer accumulator for life/thorn plant special effects
-}
-
-interface Drone {
-  sprite: Phaser.GameObjects.Arc;
-  shotsLeft: number;        // 3 = full, 1 = critical, 0 = spent (destroyed)
-  orbitAngle: number;
-  shielded: boolean;
-  healedByFirewall: boolean; // F upgrade: can only be healed once per drone
-  meleeCooldownUntil: number; // E upgrade: per-drone melee cooldown timestamp
-  owner: 'player' | 'npc';
-}
-
-interface OilPuddle {
-  sprite: Phaser.GameObjects.Arc;
-  x: number;
-  y: number;
-  expiresAt: number;
-  ignited: boolean;
-  igniteTickAccum: number;
-  radius: number;
-  owner: 'player' | 'npc';
 }
 
 interface DarkCloud {
@@ -556,192 +541,9 @@ interface GravMeteorRushShadow {
   edge: 'top' | 'bottom' | 'left' | 'right';
 }
 
-// ── Fate (alt-life) interfaces ────────────────────────────────────────
-
-interface SlotMachine {
-  sprite: Phaser.GameObjects.Arc;
-  label: Phaser.GameObjects.Text;
-  healthBar: HealthBar;
-  x: number;
-  y: number;
-  hp: number;
-  maxHp: number;
-  owner: 'player' | 'npc';
-  accum: number;
-  isReeling: boolean;
-  reelStart: number;
-  reelText: Phaser.GameObjects.Text | null;
-}
-
-interface KarmaCard {
-  sprite: Phaser.GameObjects.Arc;
-  orbitAngle: number;
-  meleeCooldownUntil: number;
-}
-
-type FateSlotsBuffKey = 'speed+' | 'speed-' | 'hp+' | 'hp-' | 'dr+' | 'dr-' | 'cd-' | 'cd+' | 'size-' | 'size+' | 'crit+' | 'critRx+';
-interface FateSlotsBuff { key: FateSlotsBuffKey; }
-
-const FATE_SLOTS_GOOD_KEYS: FateSlotsBuffKey[] = ['speed+', 'hp+', 'dr+', 'cd-', 'size-', 'crit+'];
-const FATE_SLOTS_BAD_KEYS: FateSlotsBuffKey[] = ['speed-', 'hp-', 'dr-', 'cd+', 'size+', 'critRx+'];
-const FATE_SLOTS_ALL_KEYS: FateSlotsBuffKey[] = [...FATE_SLOTS_GOOD_KEYS, ...FATE_SLOTS_BAD_KEYS];
-
-const FATE_SLOTS_BUFF_LABELS: Record<FateSlotsBuffKey, string> = {
-  'speed+':  '+15% Walk Speed',
-  'speed-':  '-10% Walk Speed',
-  'hp+':     '+15 Max HP',
-  'hp-':     '-10 Max HP',
-  'dr+':     '10% Damage Reduction',
-  'dr-':     'Take 10% More Damage',
-  'cd-':     '10% Shorter Cooldowns',
-  'cd+':     '10% Longer Cooldowns',
-  'size-':   '-15% Size',
-  'size+':   '+15% Size',
-  'crit+':   '+15% Crit Chance',
-  'critRx+': '+15% Crit Received',
-};
-
-function fateSlotsRollKey(lucky: boolean, unlucky: boolean): FateSlotsBuffKey {
-  if (lucky) return FATE_SLOTS_GOOD_KEYS[Math.floor(Math.random() * FATE_SLOTS_GOOD_KEYS.length)];
-  if (unlucky) return FATE_SLOTS_BAD_KEYS[Math.floor(Math.random() * FATE_SLOTS_BAD_KEYS.length)];
-  return FATE_SLOTS_ALL_KEYS[Math.floor(Math.random() * FATE_SLOTS_ALL_KEYS.length)];
-}
-
-// ── Poker hand helpers ────────────────────────────────────────────────
-
-type PokerRank = 'royal-flush' | 'straight-flush' | 'four-of-a-kind' | 'full-house' | 'flush' | 'straight' | 'three-of-a-kind' | 'two-pair' | 'one-pair' | 'high-card';
-
-const POKER_DAMAGE: Record<PokerRank, number> = {
-  'royal-flush':     125,
-  'straight-flush':   63,
-  'four-of-a-kind':   35,
-  'full-house':       25,
-  'flush':            18,
-  'straight':         14,
-  'three-of-a-kind':  10,
-  'two-pair':          7,
-  'one-pair':          4,
-  'high-card':         2,
-};
-
-const POKER_COLORS: Record<PokerRank, string> = {
-  'royal-flush':     '#ffcc00',
-  'straight-flush':  '#ff88ee',
-  'four-of-a-kind':  '#ff6666',
-  'full-house':      '#ff8844',
-  'flush':           '#88aaff',
-  'straight':        '#aaffaa',
-  'three-of-a-kind': '#ffff88',
-  'two-pair':        '#dddddd',
-  'one-pair':        '#aaaaaa',
-  'high-card':       '#888888',
-};
-
 // MagnetRod, MagnetNail, MagnetShieldOrb, MagnetAtomSmasher imported from MagnetKit
 
-// ── Magma (abstract combined: slime + fate) interfaces ────────────────────────
-interface MagmaBoulder {
-  sprite: Phaser.GameObjects.Arc;
-  hpText: Phaser.GameObjects.Text;
-  x: number;
-  y: number;
-  hp: number;
-  maxHp: number;
-  owner: 'player' | 'npc';
-  lastHitAt: number;
-}
-
-interface MagmaVolcano {
-  sprite: Phaser.GameObjects.Arc;
-  hpText: Phaser.GameObjects.Text;
-  x: number;
-  y: number;
-  lavaLevel: number; // 0-100
-  lavaBarBg: Phaser.GameObjects.Rectangle;
-  lavaBarFill: Phaser.GameObjects.Rectangle;
-  lavaLabel: Phaser.GameObjects.Text;
-  owner: 'player' | 'npc';
-  lastSpewAt: number;
-  lastSpewAt2: number; // tier2 spew tracker
-  erupted: boolean;
-}
-
-interface MagmaSplitVariant {
-  sprite: Phaser.GameObjects.Arc;
-  flailBallSprite: Phaser.GameObjects.Arc | null;
-  flailChain: Phaser.GameObjects.Rectangle[];
-  flailX: number;
-  flailY: number;
-  flailVX: number;
-  flailVY: number;
-  hp: number;
-  alive: boolean;
-  offsetX: number; // fixed offset from origin
-  offsetY: number;
-  lastContactAt: number;
-}
-
-interface MagmaSnakeSegment {
-  x: number;
-  y: number;
-  sprite: Phaser.GameObjects.Arc;
-}
-
-interface MagmaLavaCore {
-  sprite: Phaser.GameObjects.Sprite;
-  x: number;
-  y: number;
-}
-
-// MagnetAtomSmasher imported from MagnetKit
-
-interface PlayingCard { rank: number; suit: number; } // rank 2-14 (14=Ace), suit 0-3
-
-function drawPlayingCards(count: number, lucky: boolean, unlucky: boolean): PlayingCard[] {
-  // Build a full deck
-  const deck: PlayingCard[] = [];
-  for (let s = 0; s < 4; s++) for (let r = 2; r <= 14; r++) deck.push({ rank: r, suit: s });
-  // Shuffle
-  for (let i = deck.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [deck[i], deck[j]] = [deck[j], deck[i]];
-  }
-  let hand = deck.slice(0, count);
-  if (lucky) {
-    // Replace the 2 lowest-rank cards with high cards (J+)
-    hand.sort((a, b) => a.rank - b.rank);
-    for (let i = 0; i < 2; i++) {
-      hand[i] = { rank: 11 + Math.floor(Math.random() * 4), suit: Math.floor(Math.random() * 4) };
-    }
-    hand.sort(() => Math.random() - 0.5);
-  }
-  if (unlucky) {
-    // Cap all ranks to 7 and force mixed suits
-    hand = hand.map((c, idx) => ({ rank: Math.min(c.rank, 7), suit: idx % 4 }));
-  }
-  return hand;
-}
-
-function evaluatePokerHand(hand: PlayingCard[]): PokerRank {
-  const ranks = hand.map(c => c.rank).sort((a, b) => a - b);
-  const suits = hand.map(c => c.suit);
-  const isFlush = suits.every(s => s === suits[0]);
-  const isStraight = ranks[4] - ranks[0] === 4 && new Set(ranks).size === 5;
-  const isRoyalStraight = isFlush && ranks[0] === 10;
-  if (isFlush && isRoyalStraight) return 'royal-flush';
-  if (isFlush && isStraight) return 'straight-flush';
-  const counts: Record<number, number> = {};
-  for (const r of ranks) counts[r] = (counts[r] ?? 0) + 1;
-  const vals = Object.values(counts).sort((a, b) => b - a);
-  if (vals[0] === 4) return 'four-of-a-kind';
-  if (vals[0] === 3 && vals[1] === 2) return 'full-house';
-  if (isFlush) return 'flush';
-  if (isStraight) return 'straight';
-  if (vals[0] === 3) return 'three-of-a-kind';
-  if (vals[0] === 2 && vals[1] === 2) return 'two-pair';
-  if (vals[0] === 2) return 'one-pair';
-  return 'high-card';
-}
+// Quantum and Fate interfaces are defined in their respective kit files
 
 const ELEMENT_MAP: Record<string, Element> = {
   fire:   fireElement,
@@ -773,7 +575,8 @@ const ELEMENT_MAP: Record<string, Element> = {
   magic: magicElement,
   technology: technologyElement,
   silence: silenceElement,
-  magma: magmaElement,
+  echo: echoElement,
+  quantum: quantumElement,
   dummy: dummyElement,
 };
 
@@ -807,7 +610,8 @@ const ELEMENT_TEXTURES: Record<string, string> = {
   magic: 'elem-magic',
   technology: 'elem-technology',
   silence: 'elem-silence',
-  magma: 'elem-magma',
+  echo: 'elem-echo',
+  quantum: 'elem-quantum',
   dummy: 'elem-dummy',
 };
 
@@ -939,17 +743,6 @@ export class ArenaScene extends Phaser.Scene {
 
   // P2 sand-specific state
   private p2TimeBarrageActive = false;
-
-  // NPC oil state — needed when P2 picks oil (firewall + overdrive are no-ops in buildNpcContext)
-  private npcFirewallSprite: Phaser.GameObjects.Rectangle | null = null;
-  private npcFirewallHp = 0;
-  private npcFirewallX = 0;
-  private npcFirewallY = 0;
-  private npcOverdriveActive = false;
-  private npcOverdriveEnd = 0;
-  private npcOverdriveAngle = 0;
-  private npcOverdriveTickAccum = 0;
-  private npcOverdriveGraphics: Phaser.GameObjects.Graphics | null = null;
 
   // Input keys
   private wKey!: Phaser.Input.Keyboard.Key;
@@ -1251,24 +1044,6 @@ export class ArenaScene extends Phaser.Scene {
   private npcEarthGolemFaultWallUntil = 0;
   private npcEarthGolemHpLabel: Phaser.GameObjects.Text | null = null;
 
-  // Player oil state
-  private playerDrones: Drone[] = [];
-  private playerFirewallSprite: Phaser.GameObjects.Rectangle | null = null;
-  private playerFirewallHp = 0;
-  private playerFirewallX = 0;
-  private playerFirewallY = 0;
-  private playerFirewallAngle = 0;
-  private playerOverdriveActive = false;
-  private playerOverdriveEnd = 0;
-  private playerOverdriveAngle = 0;
-  private playerOverdriveTickAccum = 0;
-  private playerOverdriveGraphics: Phaser.GameObjects.Graphics | null = null;
-  private playerOverdriveDroneCount = 0;
-  private playerOilPuddles: OilPuddle[] = [];
-  // NPC oil state
-  private npcDrones: Drone[] = [];
-  private npcFirewallAngle = 0;
-  private npcOilPuddles: OilPuddle[] = [];
 
   // Shadow state (shared cloud/trap arrays)
   private shadowDarkClouds: DarkCloud[] = [];
@@ -1677,23 +1452,8 @@ export class ArenaScene extends Phaser.Scene {
   private armageddonActive = false;
   private armageddonChargeVisual: Phaser.GameObjects.Arc | null = null;
 
-  // Electricity-specific state
-  private kineticPower = 0;
-  private kineticPowerText: Phaser.GameObjects.Text | null = null;
-  private electroDashCanRecast = false;
-  private electroDashRecastExpiry = 0;
-  private painBatteryHolding = false;
-  private painBatteryHoldStart = 0;
-  private painBatterySelfDmgDealt = 0;
-  private painBatteryTickAccum = 0;
-  private painBatteryVisual: Phaser.GameObjects.Arc | null = null;
-  private overchargeActive = false;
-  private overchargeUntil = 0;
-  private overchargeVisual: Phaser.GameObjects.Arc | null = null;
-  private electricRegenActive = false;
-  private electricRegenSecondsLeft = 0;
-  private electricRegenAccum = 0;
-  private electroShockTimers: Map<Projectile, { count: number; last: number }> = new Map();
+  // Electricity kit
+  private electricityKit!: ElectricityKit;
 
   private lightKit!: LightKit;
   private voidKit!: VoidKit;
@@ -1704,33 +1464,7 @@ export class ArenaScene extends Phaser.Scene {
   // Slime kit
   private slimeKit!: SlimeKit;
 
-  // Player Fate-specific state
-  private playerSlotMachines: SlotMachine[] = [];
-  private playerKarmaCards: KarmaCard[] = [];
-  private playerKarmaEndAt = 0;
-  private playerFateLuckyCharged = false;
-  private playerFateUnluckyCharged = false;
-  private playerFateSlotsBuffs: FateSlotsBuff[] = [];
-  private playerSlotsHolding = false;
-  private playerSlotsHoldStart = 0;
-  private playerSlotsHoldTarget: SlotMachine | null = null;
-  private playerSlotsReelText: Phaser.GameObjects.Text | null = null;
-  private playerFateLuckyVisual: Phaser.GameObjects.Text | null = null;
-  private playerFateUnluckyVisual: Phaser.GameObjects.Text | null = null;
-  private playerFateBaseSpeedMult = 1;   // base before Slots stacking
-  private playerFateBaseCooldownMult = 1;
-  private playerFateBaseIncomingDmgMult = 1;
-  private fateSpaceWasDown = false;
-
-  // NPC Fate-specific state
-  private npcSlotMachines: SlotMachine[] = [];
-  private npcKarmaCards: KarmaCard[] = [];
-  private npcKarmaEndAt = 0;
-  private npcFateLuckyCharged = false;
-  private npcFateUnluckyCharged = false;
-  private npcFateSlotsBuffs: FateSlotsBuff[] = [];
-  private npcSlotsReelStart = 0;
-  private npcSlotsReelTarget: SlotMachine | null = null;
+  // (Fate state is now managed by FateKit)
 
   // Gravity-specific state
   private gravPointerDownX = 0;
@@ -2061,58 +1795,21 @@ export class ArenaScene extends Phaser.Scene {
   private magicRoot4Active: { ex: number; ey: number; chainsHp: [number, number, number, number]; gfx: Phaser.GameObjects.Graphics; owner: 'player' | 'npc'; expireAt: number } | null = null;
 
 
-  // ── Magma (abstract combined: slime + fate) state ─────────────────────
-  // Flail (always active)
-  private magmaFlailBallSprite: Phaser.GameObjects.Arc | null = null;
-  private magmaFlailChain: Phaser.GameObjects.Rectangle[] = [];
-  private magmaFlailX = 0;
-  private magmaFlailY = 0;
-  private magmaFlailVX = 0;
-  private magmaFlailVY = 0;
-  private npcMagmaFlailBallSprite: Phaser.GameObjects.Arc | null = null;
-  private npcMagmaFlailChain: Phaser.GameObjects.Rectangle[] = [];
-  private npcMagmaFlailX = 0;
-  private npcMagmaFlailY = 0;
-  private npcMagmaFlailVX = 0;
-  private npcMagmaFlailVY = 0;
-  private magmaFlailLastContactAt = 0;
-  private npcMagmaFlailLastContactAt = 0;
-  // Mace empower
-  private magmaMaceEmpowered = false;
-  private magmaMaceEmpowerExpiry = 0;
-  private magmaMaceShrinkExpiry = 0;
-  private npcMagmaMaceEmpowered = false;
-  private npcMagmaMaceEmpowerExpiry = 0;
-  private npcMagmaMaceShrinkExpiry = 0;
-  // Boulders
-  private magmaBoulders: MagmaBoulder[] = [];
-  // Volcano
-  private magmaVolcanoObj: MagmaVolcano | null = null;
-  // Split
-  private magmaSplitActive = false;
-  private magmaSplitRecombineAt = 0;
-  private magmaSplitVariants: MagmaSplitVariant[] = [];
-  private npcMagmaSplitActive = false;
-  private npcMagmaSplitRecombineAt = 0;
-  private npcMagmaSplitVariants: MagmaSplitVariant[] = [];
-  // Lava Lord (snake)
-  private magmaLavaLordActive = false;
-  private magmaLavaLordExpiry = 0;
-  private magmaLavaLordSegments: MagmaSnakeSegment[] = [];
-  private magmaLavaLordDir = 0; // 0=up,1=right,2=down,3=left
-  private magmaLavaLordSpeed = 200;
-  private magmaLavaLordMoveAccum = 0;
-  private magmaLavaLordTrailAccum = 0;
-  private magmaLavaLordCores: MagmaLavaCore[] = [];
-  private magmaLavaLordLastContactAt = 0;
-  private npcMagmaLavaLordActive = false;
-  private npcMagmaLavaLordExpiry = 0;
-  private npcMagmaLavaLordSegments: MagmaSnakeSegment[] = [];
-  private npcMagmaLavaLordDir = 0;
-  private npcMagmaLavaLordSpeed = 200;
-  private npcMagmaLavaLordMoveAccum = 0;
-  private npcMagmaLavaLordTrailAccum = 0;
-  private npcMagmaLavaLordLastContactAt = 0;
+  // ── Echo (abstract combined: fate + light) kit ───────────────────────
+  private echoKit!: EchoKit;
+  private fogOverlayRT: Phaser.GameObjects.RenderTexture | null = null;
+
+  // ── Quantum (abstract combined: slime + fate) kit ─────────────────────
+  private quantumElementKit!: QuantumElementKit;
+
+  // ── Oil kit ───────────────────────────────────────────────────────────
+  private oilKit!: OilKit;
+
+  // ── Fate kit ──────────────────────────────────────────────────────────
+  private fateKit!: FateKit;
+  private playerFateBaseSpeedMult = 1;
+  private playerFateBaseCooldownMult = 1;
+  private playerFateBaseIncomingDmgMult = 1;
 
   // Shared world effects (owner-aware)
   private puddles: Puddle[] = [];
@@ -2353,31 +2050,6 @@ export class ArenaScene extends Phaser.Scene {
     this.npcEarthGolemFaultWallUntil = 0;
     this.npcEarthGolemHpLabel = null;
 
-    this.playerDrones = [];
-    this.playerFirewallSprite = null;
-    this.playerFirewallHp = 0;
-    this.playerFirewallX = 0;
-    this.playerFirewallY = 0;
-    this.playerFirewallAngle = 0;
-    this.playerOverdriveActive = false;
-    this.playerOverdriveEnd = 0;
-    this.playerOverdriveAngle = 0;
-    this.playerOverdriveTickAccum = 0;
-    this.playerOverdriveGraphics = null;
-    this.playerOverdriveDroneCount = 0;
-    this.playerOilPuddles = [];
-    this.npcDrones = [];
-    this.npcFirewallSprite = null;
-    this.npcFirewallHp = 0;
-    this.npcFirewallX = 0;
-    this.npcFirewallY = 0;
-    this.npcFirewallAngle = 0;
-    this.npcOverdriveActive = false;
-    this.npcOverdriveEnd = 0;
-    this.npcOverdriveAngle = 0;
-    this.npcOverdriveTickAccum = 0;
-    this.npcOverdriveGraphics = null;
-    this.npcOilPuddles = [];
     this.p2LastAimX = 0;
     this.p2LastAimY = 0;
     this.p2PainRainHolding = false;
@@ -2780,22 +2452,27 @@ export class ArenaScene extends Phaser.Scene {
     this.fKeyWasDown = false;
     this.armageddonActive = false;
     this.armageddonChargeVisual = null;
-    this.kineticPower = 0;
-    this.kineticPowerText = null;
-    this.electroDashCanRecast = false;
-    this.electroDashRecastExpiry = 0;
-    this.painBatteryHolding = false;
-    this.painBatteryHoldStart = 0;
-    this.painBatterySelfDmgDealt = 0;
-    this.painBatteryTickAccum = 0;
-    this.painBatteryVisual = null;
-    this.overchargeActive = false;
-    this.overchargeUntil = 0;
-    this.overchargeVisual = null;
-    this.electricRegenActive = false;
-    this.electricRegenSecondsLeft = 0;
-    this.electricRegenAccum = 0;
-    this.electroShockTimers = new Map<Projectile, { count: number; last: number }>();
+    // ElectricityKit adapter
+    if (!this.electricityKit) {
+      const arena = this;
+      const electricityApi: ElectricityArenaApi = {
+        get player() { return arena.player; },
+        get enemies() { return arena.enemies; },
+        get scene(): Phaser.Scene { return arena; },
+        get projectiles() { return arena.projectiles; },
+        get eKey() { return arena.eKey; },
+        get fKey() { return arena.fKey; },
+        get rKey() { return arena.rKey; },
+        get qKey() { return arena.qKey; },
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+      };
+      this.electricityKit = new ElectricityKit(electricityApi);
+    }
+    this.electricityKit.reset(this.elementId === 'electricity');
 
     // LightKit adapter
     if (this.lightKit) {
@@ -2837,39 +2514,22 @@ export class ArenaScene extends Phaser.Scene {
         get fKey() { return arena.fKey; },
         get rKey() { return arena.rKey; },
         get qKey() { return arena.qKey; },
+        get spaceKey() { return arena.spaceKey; },
         get pointerWasDown() { return arena.pointerWasDown; },
+        get projectiles() { return arena.projectiles; },
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
       };
       this.slimeKit = new SlimeKit(slimeApi);
     }
 
     // Fate resets
-    this.playerSlotMachines = [];
-    this.playerKarmaCards = [];
-    this.playerKarmaEndAt = 0;
-    this.playerFateLuckyCharged = false;
-    this.playerFateUnluckyCharged = false;
-    this.playerFateSlotsBuffs = [];
-    this.playerSlotsHolding = false;
-    this.playerSlotsHoldStart = 0;
-    this.playerSlotsHoldTarget = null;
-    this.playerSlotsReelText = null;
-    this.playerFateLuckyVisual = null;
-    this.playerFateUnluckyVisual = null;
     this.playerFateBaseSpeedMult = 1;
     this.playerFateBaseCooldownMult = 1;
     this.playerFateBaseIncomingDmgMult = 1;
-    this.fateSpaceWasDown = false;
-    this.npcSlotMachines = [];
-    this.npcKarmaCards = [];
-    this.npcKarmaEndAt = 0;
-    this.npcFateLuckyCharged = false;
-    this.npcFateUnluckyCharged = false;
-    this.npcFateSlotsBuffs = [];
-    this.npcSlotsReelStart = 0;
-    this.npcSlotsReelTarget = null;
 
     // Sound resets
     for (const n of this.soundNotes) n.sprite.destroy();
@@ -3194,51 +2854,172 @@ export class ArenaScene extends Phaser.Scene {
       };
       this.techKit = new TechnologyKit(techApi);
     }
-    // Magma resets
-    if (this.magmaFlailBallSprite) { this.magmaFlailBallSprite.destroy(); this.magmaFlailBallSprite = null; }
-    for (const c of this.magmaFlailChain) c.destroy();
-    this.magmaFlailChain = [];
-    this.magmaFlailX = 0; this.magmaFlailY = 0; this.magmaFlailVX = 0; this.magmaFlailVY = 0;
-    if (this.npcMagmaFlailBallSprite) { this.npcMagmaFlailBallSprite.destroy(); this.npcMagmaFlailBallSprite = null; }
-    for (const c of this.npcMagmaFlailChain) c.destroy();
-    this.npcMagmaFlailChain = [];
-    this.npcMagmaFlailX = 0; this.npcMagmaFlailY = 0; this.npcMagmaFlailVX = 0; this.npcMagmaFlailVY = 0;
-    this.magmaFlailLastContactAt = 0; this.npcMagmaFlailLastContactAt = 0;
-    this.magmaMaceEmpowered = false; this.magmaMaceEmpowerExpiry = 0; this.magmaMaceShrinkExpiry = 0;
-    this.npcMagmaMaceEmpowered = false; this.npcMagmaMaceEmpowerExpiry = 0; this.npcMagmaMaceShrinkExpiry = 0;
-    for (const b of this.magmaBoulders) { b.sprite.destroy(); b.hpText.destroy(); }
-    this.magmaBoulders = [];
-    if (this.magmaVolcanoObj) {
-      this.magmaVolcanoObj.sprite.destroy(); this.magmaVolcanoObj.hpText.destroy();
-      this.magmaVolcanoObj.lavaBarBg.destroy(); this.magmaVolcanoObj.lavaBarFill.destroy();
-      this.magmaVolcanoObj.lavaLabel.destroy(); this.magmaVolcanoObj = null;
+    // Echo kit
+    if (!this.echoKit) {
+      const arena = this;
+      const echoApi: EchoArenaApi = {
+        get player() { return arena.player as Fighter; },
+        get npc() { return arena.npc; },
+        get scene(): Phaser.Scene { return arena; },
+        get pointer() { return arena.input.activePointer; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get projectiles() { return arena.projectiles; },
+        get nukeChanneling() { return arena.nukeChanneling; },
+        get isInvasion() { return arena.isInvasion; },
+        get npcElementId() { return arena.npcElement?.id ?? ''; },
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        dealAoeDamageToNpc: (cx, cy, r, d) => arena.dealAoeDamageFromOwner(cx, cy, r, d, 'player'),
+        dealAoeDamageToPlayer: (cx, cy, r, d) => arena.dealAoeDamageFromOwner(cx, cy, r, d, 'npc'),
+        lockCaster: (owner, ms) => {
+          if (owner === 'player') {
+            arena.nukeChanneling = true;
+            arena.nukeChannelEnd = arena.time.now + ms;
+          } else {
+            arena.npcNukeChanneling = true;
+            arena.npcNukeChannelEnd = arena.time.now + ms;
+          }
+        },
+        healCaster: (owner, amt) => {
+          if (owner === 'player') arena.player.heal(amt);
+          else arena.npc.heal(amt);
+        },
+        startCooldown: (owner, abilityId) => {
+          if (owner === 'player') arena.player.startCooldown(abilityId);
+          else arena.npc.startCooldown(abilityId);
+        },
+        getSceneWidth: () => arena.scale.width,
+        getSceneHeight: () => arena.scale.height,
+        fogOverlay: () => arena.fogOverlayRT,
+        isEclipseRevealActive: () => arena.echoKit?.isEclipseRevealActive() ?? false,
+      };
+      this.echoKit = new EchoKit(echoApi);
     }
-    this.magmaSplitActive = false; this.magmaSplitRecombineAt = 0;
-    for (const v of this.magmaSplitVariants) {
-      v.sprite.destroy(); v.flailBallSprite?.destroy();
-      for (const c of v.flailChain) c.destroy();
+    this.echoKit.reset();
+    // Create/recreate fog RT for echo element
+    if (this.elementId === 'echo' || this.npcElement?.id === 'echo') {
+      if (!this.fogOverlayRT || !this.fogOverlayRT.active) {
+        const { width: W, height: H } = this.scale;
+        this.fogOverlayRT = this.add.renderTexture(0, 0, W, H)
+          .setDepth(16)
+          .setScrollFactor(0)
+          .setOrigin(0, 0);
+      }
+    } else if (this.fogOverlayRT) {
+      this.fogOverlayRT.destroy();
+      this.fogOverlayRT = null;
     }
-    this.magmaSplitVariants = [];
-    this.npcMagmaSplitActive = false; this.npcMagmaSplitRecombineAt = 0;
-    for (const v of this.npcMagmaSplitVariants) {
-      v.sprite.destroy(); v.flailBallSprite?.destroy();
-      for (const c of v.flailChain) c.destroy();
+
+    // Quantum element kit
+    if (this.quantumElementKit) {
+      this.quantumElementKit.reset();
+    } else {
+      const arena = this;
+      const quantumApi: QuantumElementArenaApi = {
+        get player() { return arena.player as Fighter; },
+        get npc() { return arena.npc; },
+        get scene(): Phaser.Scene { return arena; },
+        get pointer() { return arena.input.activePointer; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get projectiles() { return arena.projectiles; },
+        get nukeChanneling() { return arena.nukeChanneling; },
+        get spaceKey() { return arena.spaceKey; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get sceneWidth() { return arena.scale.width; },
+        get sceneHeight() { return arena.scale.height; },
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        dealAoeDamage: (owner, cx, cy, r, d) => arena.dealAoeDamageFromOwner(cx, cy, r, d, owner),
+        startCooldown: (owner, abilityId) => {
+          if (owner === 'player') arena.player.startCooldown(abilityId);
+          else arena.npc.startCooldown(abilityId);
+        },
+        setSpeedMult: (owner, mult) => {
+          if (owner === 'player') arena.playerSpeedMult = Math.max(0, mult);
+          else arena.npcSpeedMult = Math.max(0, mult);
+        },
+        lockPlayer: (durationMs) => {
+          arena.nukeChanneling = true;
+          arena.nukeChannelEnd = arena.time.now + durationMs;
+          (arena.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+        },
+      };
+      this.quantumElementKit = new QuantumElementKit(quantumApi);
     }
-    this.npcMagmaSplitVariants = [];
-    this.magmaLavaLordActive = false; this.magmaLavaLordExpiry = 0;
-    for (const s of this.magmaLavaLordSegments) s.sprite.destroy();
-    this.magmaLavaLordSegments = [];
-    this.magmaLavaLordDir = 0; this.magmaLavaLordSpeed = 200;
-    this.magmaLavaLordMoveAccum = 0; this.magmaLavaLordTrailAccum = 0;
-    for (const c of this.magmaLavaLordCores) c.sprite.destroy();
-    this.magmaLavaLordCores = [];
-    this.magmaLavaLordLastContactAt = 0;
-    this.npcMagmaLavaLordActive = false; this.npcMagmaLavaLordExpiry = 0;
-    for (const s of this.npcMagmaLavaLordSegments) s.sprite.destroy();
-    this.npcMagmaLavaLordSegments = [];
-    this.npcMagmaLavaLordDir = 0; this.npcMagmaLavaLordSpeed = 200;
-    this.npcMagmaLavaLordMoveAccum = 0; this.npcMagmaLavaLordTrailAccum = 0;
-    this.npcMagmaLavaLordLastContactAt = 0;
+
+    // Oil kit
+    if (this.oilKit) {
+      this.oilKit.reset();
+    } else {
+      const arena = this;
+      const oilApi: OilArenaApi = {
+        get player() { return arena.player as Fighter; },
+        get npc() { return arena.npc; },
+        get scene(): Phaser.Scene { return arena; },
+        get pointer() { return arena.input.activePointer; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get wKey() { return arena.wKey; },
+        get aKey() { return arena.aKey; },
+        get sKey() { return arena.sKey; },
+        get dKey() { return arena.dKey; },
+        get projectiles() { return arena.projectiles; },
+        get nukeChanneling() { return arena.nukeChanneling; },
+        set nukeChanneling(v: boolean) { arena.nukeChanneling = v; },
+        get nukeChannelEnd() { return arena.nukeChannelEnd; },
+        set nukeChannelEnd(v: number) { arena.nukeChannelEnd = v; },
+        get npcNukeChanneling() { return arena.npcNukeChanneling; },
+        set npcNukeChanneling(v: boolean) { arena.npcNukeChanneling = v; },
+        get npcNukeChannelEnd() { return arena.npcNukeChannelEnd; },
+        set npcNukeChannelEnd(v: number) { arena.npcNukeChannelEnd = v; },
+        get p2LastAimX() { return arena.p2LastAimX; },
+        get p2LastAimY() { return arena.p2LastAimY; },
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        damagePlayerTargets: (cx, cy, r, d, color) => arena.damagePlayerTargets(cx, cy, r, d, color),
+        damageNpcTarget: (cx, cy, r, d) => arena.dealAoeDamageFromOwner(cx, cy, r, d, 'npc'),
+        pointToSegmentDist: (px, py, ax, ay, bx, by) => arena.pointToSegmentDist(px, py, ax, ay, bx, by),
+        getSceneWidth: () => arena.scale.width,
+        getSceneHeight: () => arena.scale.height,
+      };
+      this.oilKit = new OilKit(oilApi);
+    }
+
+    // Fate kit
+    if (this.fateKit) {
+      this.fateKit.reset();
+    } else {
+      const arena = this;
+      const fApi: FateArenaApi = {
+        get player() { return arena.player as Fighter; },
+        get npc() { return arena.npc; },
+        get scene(): Phaser.Scene { return arena; },
+        get projectiles() { return arena.projectiles; },
+        get spaceKey() { return arena.spaceKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get nukeChanneling() { return arena.nukeChanneling; },
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        dealAoeDamageToNpc: (cx, cy, r, d) => arena.dealAoeDamageFromOwner(cx, cy, r, d, 'player'),
+        dealAoeDamageToPlayer: (cx, cy, r, d) => arena.dealAoeDamageFromOwner(cx, cy, r, d, 'npc'),
+        setPlayerFateSpeedMult: (v) => { arena.playerFateBaseSpeedMult = v; },
+        getPlayerFateSpeedMult: () => arena.playerFateBaseSpeedMult,
+        getNpcBaseHp: () => arena.npcDifficulty.hp,
+      };
+      this.fateKit = new FateKit(fApi);
+    }
     this.puddles = [];
     this.geysers = [];
     this.painRainShadows = [];
@@ -3641,6 +3422,13 @@ export class ArenaScene extends Phaser.Scene {
           (proj.body as Phaser.Physics.Arcade.Body).stop();
           return;
         }
+        // Fate dice (NPC): all damage handled in onDiceHitEnemy — skip generic damage path
+        if (proj.texture.key === 'proj-fate-dice' && (proj as any).fateDiceOwner === 'npc') {
+          this.fateKit.onDiceHitEnemy(proj, proj.x, proj.y, 'npc');
+          proj.setActive(false).setVisible(false);
+          (proj.body as Phaser.Physics.Arcade.Body).stop();
+          return;
+        }
         // Apply attacker's crit context before damage
         this.player.setIncomingCritContext(this.npc.critChance, this.npc.critMult);
         let _playerDmg = proj.damage;
@@ -3753,28 +3541,10 @@ export class ArenaScene extends Phaser.Scene {
       this.endGame(false);
     });
 
-    // Electricity: gain kinetic power on any damage; overcharge prevents death
+    // Electricity: gain kinetic power on any damage; overcharge/auto-restart prevents death
     this.player.on('damaged', (amount: number) => {
       if (this.elementId !== 'electricity' || amount <= 0) return;
-      this.kineticPower = Math.min(50, this.kineticPower + amount);
-      if (this.kineticPowerText) this.kineticPowerText.setText(`⚡ ${this.kineticPower}`);
-      // Overcharge: prevent death (set hp back before 'defeated' fires)
-      if (this.overchargeActive && this.player.hp <= 0) {
-        this.overchargeActive = false;
-        if (this.overchargeVisual) { this.overchargeVisual.destroy(); this.overchargeVisual = null; }
-        this.player.hp = Math.max(1, Math.round(this.player.maxHp * 0.25));
-        this.electricRegenActive = true;
-        this.electricRegenSecondsLeft = this.kineticPower;
-        this.electricRegenAccum = 0;
-        this.showFloatingText(this.player.x, this.player.y - 30, 'RESTARTED!', '#ffee00');
-        const flash = this.add.circle(this.player.x, this.player.y, 12, 0xffee00, 0.8).setDepth(10);
-        this.tweens.add({ targets: flash, scaleX: 6, scaleY: 6, alpha: 0, duration: 500, onComplete: () => flash.destroy() });
-      }
-      // Cancel regen if hit while regenerating
-      if (this.electricRegenActive) {
-        this.electricRegenActive = false;
-        this.showFloatingText(this.player.x, this.player.y - 20, 'Regen cancelled', '#ffee00');
-      }
+      this.electricityKit.onDamageReceived(amount, this.time.now);
     });
 
     const checkAllEnemiesDefeated = () => {
@@ -4012,12 +3782,7 @@ export class ArenaScene extends Phaser.Scene {
         stroke: '#220044', strokeThickness: 3,
       }).setOrigin(0.5).setDepth(20);
     }
-    if (this.elementId === 'electricity') {
-      this.kineticPowerText = this.add.text(cx, 52, '⚡ 0', {
-        fontSize: '18px', fontFamily: '"Arial Black", sans-serif', color: '#ffee00',
-        stroke: '#664400', strokeThickness: 3,
-      }).setOrigin(0.5).setDepth(20);
-    }
+    // ElectricityKit creates its own HUD in reset() when isPlayerElement=true
     if (this.elementId === 'slime') {
       this.slimeKit.startMatch(W, H, true);
     }
@@ -4120,10 +3885,10 @@ export class ArenaScene extends Phaser.Scene {
       'shield-break':   0xcc8833,
       'bull-rush':      0xcc4400,
       'drone-command':  0xffaa00,
-      'drone-summon':   0xcc7700,
+      'barrel-roll':    0xcc7700,
       'drone-destroy':  0xff6600,
-      'firewall':       0xff8800,
-      'overdrive':      0xff4400,
+      'shield-gen':     0xff8800,
+      'train-morph':    0xff4400,
       'dark-drain':     0x660088,
       'tentacle':       0x440066,
       'snap-trap':      0x550077,
@@ -4174,11 +3939,11 @@ export class ArenaScene extends Phaser.Scene {
       'sulpher-spring':     0xeedd44,
       'slime-shield':       0x44aa33,
       'slime-rain':         0x55bb55,
-      'fate-draw':          0xaaffee,
-      'fate-slots':         0xffcc44,
-      'fate-force':         0x44ffcc,
-      'fate-karma':         0x88ccff,
-      'fate-roll':          0xeeaaff,
+      'fate-coin-toss':    0xddaa00,
+      'fate-slots':        0x44aa44,
+      'fate-luck':         0x88eecc,
+      'fate-dice':         0xffffff,
+      'fate-all-in':       0xff4400,
       'rhythm-shot':        0xff66cc,
       'flow-mode':          0x9944cc,
       'screech-barrier':    0xff3388,
@@ -4237,12 +4002,18 @@ export class ArenaScene extends Phaser.Scene {
       'tech-random-r':       0x66eecc,
       'tech-gift':           0x88ffdd,
       'tech-domain':         0x44ccaa,
-      // Magma (abstract combined: slime + fate)
-      'magma-mace':          0xff4500,
-      'magma-boulder':       0x8b4513,
-      'magma-volcano':       0xff6600,
-      'magma-split':         0xcc3300,
-      'magma-lava-lord':     0xffaa00,
+      // Echo (abstract combined: fate + light)
+      'echo-shot':     0xccccff,
+      'echo-guess':    0xaaaadd,
+      'echo-lantern':  0xffffaa,
+      'echo-bat':      0x8888cc,
+      'echo-eclipse':  0xffffff,
+      // Quantum (abstract combined: slime + fate)
+      'quantum-wave':      0xaa44ff,
+      'chaos-control':     0x8833cc,
+      'atom-vibration':    0x66ccff,
+      'quantum-mechanic':  0xdd88ff,
+      'atom-nhilego':      0x5511bb,
       // Silence (normal + slasher)
       'silence-fade':        0x330044,
       'silence-dont-look':   0x110022,
@@ -4655,116 +4426,11 @@ export class ArenaScene extends Phaser.Scene {
         }
       },
       startBullRush: () => { /* earth kit reworked — no longer used via context */ },
-      spawnDrone: () => {
-        if (this.playerDrones.length >= 6) return;
-        const count = this.playerDrones.length;
-        const spawnAngle = (count / 6) * Math.PI * 2;
-        const sprite = this.add.circle(
-          this.player.x + Math.cos(spawnAngle) * 60,
-          this.player.y + Math.sin(spawnAngle) * 60,
-          8, 0xffaa00, 0.9,
-        ).setDepth(8);
-        this.playerDrones.push({
-          sprite, shotsLeft: 3, orbitAngle: spawnAngle,
-          shielded: false, healedByFirewall: false, meleeCooldownUntil: 0, owner: 'player',
-        });
-      },
-      commandDrones: (x, y) => {
-        // All drones fire, each expending one shot
-        for (const drone of this.playerDrones) {
-          const laser = this.add.graphics().setDepth(8);
-          laser.lineStyle(2, 0xffaa00, 0.8);
-          laser.lineBetween(drone.sprite.x, drone.sprite.y, x, y);
-          this.tweens.add({ targets: laser, alpha: 0, duration: 220, onComplete: () => laser.destroy() });
-          this.damagePlayerTargets(x, y, 40, 3, 0xffaa00);
-          drone.shotsLeft -= 1;
-          // Destroy enemy projectiles along this laser's path
-          for (const go of this.projectiles.getChildren()) {
-            const proj = go as Projectile;
-            if (!proj.active || proj.isFromPlayer) continue;
-            if (this.pointToSegmentDist(proj.x, proj.y, drone.sprite.x, drone.sprite.y, x, y) <= 14) {
-              proj.setActive(false).setVisible(false);
-              (proj.body as Phaser.Physics.Arcade.Body).stop();
-            }
-          }
-        }
-        // R upgrade: ignite oil puddles near cursor
-        if (this.hasUpgrade('r')) {
-          for (const p of this.playerOilPuddles) {
-            if (!p.ignited && Phaser.Math.Distance.Between(x, y, p.x, p.y) <= p.radius + 20) {
-              p.ignited = true;
-              const remaining = p.expiresAt - this.time.now;
-              p.expiresAt = this.time.now + remaining * 0.5;
-              p.sprite.setFillStyle(0xff4400, 0.65);
-            }
-          }
-        }
-        // Destroy drones with 0 shots; Click+ launches them as bombs instead of disappearing
-        for (let di = this.playerDrones.length - 1; di >= 0; di--) {
-          if (this.playerDrones[di].shotsLeft <= 0) {
-            const dead = this.playerDrones[di];
-            const spawnX = dead.sprite.x, spawnY = dead.sprite.y;
-            dead.sprite.destroy();
-            this.playerDrones.splice(di, 1);
-            if (this.hasUpgrade('click')) {
-              const bx = x, by = y;
-              // Spawn a fresh projectile circle so the original sprite's lifecycle doesn't matter
-              const bomb = this.add.circle(spawnX, spawnY, 7, 0xff6600, 0.9).setDepth(9);
-              this.tweens.add({
-                targets: bomb, x: bx, y: by, duration: 400, ease: 'Power2',
-                onComplete: () => {
-                  const boom = this.add.circle(bx, by, 8, 0xff6600, 0.9).setDepth(8);
-                  this.tweens.add({ targets: boom, scaleX: 8, scaleY: 8, alpha: 0, duration: 400, onComplete: () => boom.destroy() });
-                  bomb.destroy();
-                  this.damagePlayerTargets(bx, by, 60, 5, 0xff6600);
-                },
-              });
-            }
-          }
-        }
-      },
-      launchDrone: (x, y) => {
-        if (this.playerDrones.length === 0) return;
-        const drone = this.playerDrones.pop()!;
-        const dmg = Math.max(5, drone.shotsLeft * 5);
-        this.tweens.add({
-          targets: drone.sprite, x, y, duration: 500, ease: 'Power2',
-          onComplete: () => {
-            const boom = this.add.circle(x, y, 8, 0xff6600, 0.9).setDepth(8);
-            this.tweens.add({ targets: boom, scaleX: 8, scaleY: 8, alpha: 0, duration: 400, onComplete: () => boom.destroy() });
-            drone.sprite.destroy();
-            this.damagePlayerTargets(x, y, 60, dmg, 0xff6600);
-            if (this.hasUpgrade('r')) this.spawnOilPuddle(x, y, 'player');
-          },
-        });
-      },
-      placeFirewall: (x, y) => {
-        if (this.playerFirewallSprite) this.playerFirewallSprite.destroy();
-        // Rotate so the long side (120px) faces the player
-        const angle = Math.atan2(this.player.y - y, this.player.x - x) - Math.PI / 2;
-        this.playerFirewallAngle = angle;
-        const fwHp = this.hasUpgrade('f') ? 200 : 100;
-        this.playerFirewallSprite = this.add.rectangle(x, y, 120, 60, 0xff6600, 0.45)
-          .setStrokeStyle(2, 0xff8800).setDepth(3).setRotation(angle);
-        this.playerFirewallHp = fwHp;
-        this.playerFirewallX = x;
-        this.playerFirewallY = y;
-      },
-      startOverdrive: (x, y) => {
-        if (this.playerDrones.length === 0) return;
-        const angle = Math.atan2(y - this.player.y, x - this.player.x);
-        const duration = 500 * this.playerDrones.length;
-        this.playerOverdriveDroneCount = this.playerDrones.length;
-        this.playerOverdriveActive = true;
-        this.playerOverdriveEnd = this.time.now + duration;
-        this.playerOverdriveAngle = angle;
-        this.playerOverdriveTickAccum = 0;
-        this.nukeChanneling = true;
-        this.nukeChannelEnd = this.playerOverdriveEnd;
-        if (!this.playerOverdriveGraphics) {
-          this.playerOverdriveGraphics = this.add.graphics().setDepth(7);
-        }
-      },
+      spawnDrone: () => { /* oil kit handles via handleInput */ },
+      commandDrones: (_x, _y) => { /* oil kit handles via handleInput */ },
+      launchDrone: (_x, _y) => { /* oil kit handles via handleInput */ },
+      placeFirewall: (_x, _y) => { /* oil kit handles via handleInput */ },
+      startOverdrive: (_x, _y) => { /* oil kit handles via handleInput */ },
       launchDarkBomb: (x, y) => {
         const bomb = this.add.circle(this.player.x, this.player.y, 10, 0x660088, 0.95)
           .setStrokeStyle(2, 0xcc44ff).setDepth(8);
@@ -6021,11 +5687,11 @@ export class ArenaScene extends Phaser.Scene {
       creationBlock: (x, y, w, h) => { this.spawnCreationBlocker(x, y, w, h, 'player'); },
       creationMaze: () => { this.spawnCreationMaze('player'); },
       // Fate
-      fateSpawnSlotMachine: (x, y) => { this.createSlotMachine(x, y, 'player'); },
-      fateDrawCards: (tx, ty) => { this.spawnFateCardBarrage(this.player.x, this.player.y, tx, ty, 'player'); },
-      fateForceLucky: () => { this.playerFateLuckyCharged = true; this.playerFateUnluckyCharged = false; this.showFloatingText(this.player.x, this.player.y - 36, '🍀 Lucky!', '#44ffcc'); },
-      fateKarmaBegin: () => { this.beginFateKarma('player'); },
-      fateRandomUltimate: () => { this.fireRandomFateUltimate('player'); },
+      fateCoinToss: (tx, ty) => this.fateKit.doCoinToss(tx, ty, 'player'),
+      fateSpawnSlotMachine: (x, y) => this.fateKit.doSpawnSlotMachine(x, y, 'player'),
+      fateLuck: () => this.fateKit.doLuck('player'),
+      fateDice: (tx, ty) => this.fateKit.doDice(tx, ty, 'player'),
+      fateAllIn: () => this.fateKit.doAllIn('player'),
       // Magnet
       magnetPulse: (x, y) => { this.magnetKit.doMagnetPulse(x, y, 'player'); },
       magnetNailShoot: (tx, ty) => { this.magnetKit.doMagnetNailAction(tx, ty, 'player'); },
@@ -6096,12 +5762,18 @@ export class ArenaScene extends Phaser.Scene {
       techStartDomain: () => { this.techKit.doTechStartDomain('player'); },
       techGearGiveActivate: () => { this.techKit.doTechGearGiveActivate('player'); },
       techRandomEffect: () => { this.techKit.doTechRandomEffect('player'); },
-      // Magma
-      magmaMaceEmpower: () => { this.doMagmaMaceEmpower('player'); },
-      magmaBoulder: (tx, ty) => { this.doMagmaBoulder(tx, ty, 'player'); },
-      magmaVolcano: () => { this.doMagmaVolcano('player'); },
-      magmaSplit: () => { this.doMagmaSplit('player'); },
-      magmaLavaLord: () => { this.doMagmaLavaLord('player'); },
+      // Echo (player input handled entirely in echoKit.handleInput; these are stubs for ability cast registration)
+      echoEcholocation: () => { /* handled in handleInput */ },
+      echoGuess: () => { /* handled in handleInput */ },
+      echoLantern: () => { /* handled in handleInput */ },
+      echoBatForm: () => { /* handled in handleInput */ },
+      echoEclipse: () => { /* handled in handleInput */ },
+      // Quantum (dispatched from kit via handleInput)
+      quantumWave: (tx, ty) => { this.quantumElementKit.doPlayerQuantumWave(tx, ty); },
+      quantumChaosControl: (tx, ty) => { this.quantumElementKit.doPlayerChaosControl(tx, ty); },
+      quantumAtomVibration: (tx, ty) => { this.quantumElementKit.doPlayerAtomVibration(tx, ty); },
+      quantumMechanic: (tx, ty) => { this.quantumElementKit.doPlayerMechanic(tx, ty); },
+      quantumAtomNhilego: (tx, ty) => { this.quantumElementKit.doPlayerAtomNhilego(tx, ty); },
     };
   }
 
@@ -6197,50 +5869,9 @@ export class ArenaScene extends Phaser.Scene {
         }
       },
       startBullRush: () => { /* earth kit reworked — no longer used via context */ },
-      spawnDrone: () => {
-        if (this.npcDrones.length >= 4) return;
-        const count = this.npcDrones.length;
-        const angle = (count / 4) * Math.PI * 2;
-        const sprite = this.add.circle(
-          this.npc.x + Math.cos(angle) * 60,
-          this.npc.y + Math.sin(angle) * 60,
-          8, 0xffaa00, 0.7,
-        ).setDepth(8);
-        this.npcDrones.push({
-          sprite, shotsLeft: 3, orbitAngle: angle,
-          shielded: false, healedByFirewall: false, meleeCooldownUntil: 0, owner: 'npc',
-        });
-      },
-      commandDrones: (x, y) => {
-        for (const drone of this.npcDrones) {
-          const laser = this.add.graphics().setDepth(8);
-          laser.lineStyle(2, 0xffaa00, 0.65);
-          laser.lineBetween(drone.sprite.x, drone.sprite.y, x, y);
-          this.tweens.add({ targets: laser, alpha: 0, duration: 220, onComplete: () => laser.destroy() });
-          if (Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) <= 40) {
-            this.player.takeDamage(3);
-            this.spawnHitFlash(this.player.x, this.player.y, 0xffaa00);
-          }
-          drone.shotsLeft -= 1;
-        }
-      },
-      launchDrone: (x, y) => {
-        if (this.npcDrones.length === 0) return;
-        const drone = this.npcDrones.pop()!;
-        const dmg = Math.max(5, drone.shotsLeft * 5);
-        this.tweens.add({
-          targets: drone.sprite, x, y, duration: 500, ease: 'Power2',
-          onComplete: () => {
-            const boom = this.add.circle(x, y, 8, 0xff6600, 0.8).setDepth(8);
-            this.tweens.add({ targets: boom, scaleX: 8, scaleY: 8, alpha: 0, duration: 400, onComplete: () => boom.destroy() });
-            drone.sprite.destroy();
-            if (Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) <= 60) {
-              this.player.takeDamage(dmg);
-              this.spawnHitFlash(this.player.x, this.player.y, 0xff6600);
-            }
-          },
-        });
-      },
+      spawnDrone: () => this.oilKit.doNpcSpawnDrone(),
+      commandDrones: (x, y) => this.oilKit.doNpcCommandDrones(x, y),
+      launchDrone: (x, y) => this.oilKit.doNpcLaunchDrone(x, y),
       placeFirewall: () => { /* NPC does not use firewall */ },
       startOverdrive: () => { /* NPC does not use overdrive */ },
       launchDarkBomb: (x, y) => {
@@ -6874,11 +6505,11 @@ export class ArenaScene extends Phaser.Scene {
       creationBlock: (x, y, w, h) => { this.spawnCreationBlocker(x, y, w, h, 'npc'); },
       creationMaze: () => { this.spawnCreationMaze('npc'); },
       // Fate
-      fateSpawnSlotMachine: (x, y) => { this.createSlotMachine(x, y, 'npc'); },
-      fateDrawCards: (tx, ty) => { this.spawnFateCardBarrage(this.npc.x, this.npc.y, tx, ty, 'npc'); },
-      fateForceLucky: () => { this.npcFateLuckyCharged = true; this.npcFateUnluckyCharged = false; },
-      fateKarmaBegin: () => { this.beginFateKarma('npc'); },
-      fateRandomUltimate: () => { this.fireRandomFateUltimate('npc'); },
+      fateCoinToss: (tx, ty) => this.fateKit.doCoinToss(tx, ty, 'npc'),
+      fateSpawnSlotMachine: (x, y) => this.fateKit.doSpawnSlotMachine(x, y, 'npc'),
+      fateLuck: () => this.fateKit.doLuck('npc'),
+      fateDice: (tx, ty) => this.fateKit.doDice(tx, ty, 'npc'),
+      fateAllIn: () => this.fateKit.doAllIn('npc'),
       // Magnet
       magnetPulse: (x, y) => { this.magnetKit.doMagnetPulse(x, y, 'npc'); },
       magnetNailShoot: (tx, ty) => { this.magnetKit.doMagnetNailAction(tx, ty, 'npc'); },
@@ -6971,12 +6602,18 @@ export class ArenaScene extends Phaser.Scene {
         if (this.techKit.getTechRansomwareTarget() === 'npc' && this.time.now < this.techKit.getTechRansomwareExpiry()) return;
         this.techKit.doTechRandomEffect('npc');
       },
-      // Magma
-      magmaMaceEmpower: () => { this.doMagmaMaceEmpower('npc'); },
-      magmaBoulder: (tx, ty) => { this.doMagmaBoulder(tx, ty, 'npc'); },
-      magmaVolcano: () => { this.doMagmaVolcano('npc'); },
-      magmaSplit: () => { this.doMagmaSplit('npc'); },
-      magmaLavaLord: () => { this.doMagmaLavaLord('npc'); },
+      // Echo
+      echoEcholocation: (tx, ty) => this.echoKit.doNpcEcholocation(tx, ty),
+      echoGuess: (tx, ty) => this.echoKit.doNpcGuess(tx, ty),
+      echoLantern: (tx, ty) => this.echoKit.doNpcLantern(tx, ty),
+      echoBatForm: (tx, ty) => this.echoKit.doNpcBatForm(tx, ty),
+      echoEclipse: (tx, ty) => this.echoKit.doNpcEclipse(tx, ty),
+      // Quantum
+      quantumWave: (tx, ty) => this.quantumElementKit.doNpcQuantumWave(tx, ty),
+      quantumChaosControl: (tx, ty) => this.quantumElementKit.doNpcChaosControl(tx, ty),
+      quantumAtomVibration: (tx, ty) => this.quantumElementKit.doNpcAtomVibration(tx, ty),
+      quantumMechanic: (tx, ty) => this.quantumElementKit.doNpcMechanic(tx, ty),
+      quantumAtomNhilego: (tx, ty) => this.quantumElementKit.doNpcAtomNhilego(tx, ty),
     };
   }
 
@@ -7148,11 +6785,17 @@ export class ArenaScene extends Phaser.Scene {
       creationBlock: () => {},
       creationMaze: () => {},
       // Fate (clone stubs)
+      fateCoinToss: () => {},
       fateSpawnSlotMachine: () => {},
-      fateDrawCards: () => {},
-      fateForceLucky: () => {},
-      fateKarmaBegin: () => {},
-      fateRandomUltimate: () => {},
+      fateLuck: () => {},
+      fateDice: () => {},
+      fateAllIn: () => {},
+      // Echo (clone stubs)
+      echoEcholocation: () => {},
+      echoGuess: () => {},
+      echoLantern: () => {},
+      echoBatForm: () => {},
+      echoEclipse: () => {},
       // Magnet stubs
       magnetPulse: () => {},
       magnetNailShoot: () => {},
@@ -7236,12 +6879,11 @@ export class ArenaScene extends Phaser.Scene {
       silenceYankHook: () => {},
       silenceEnrage: () => {},
       silenceSlashEmUp: () => {},
-      // Magma — no-ops for clone
-      magmaMaceEmpower: () => {},
-      magmaBoulder: () => {},
-      magmaVolcano: () => {},
-      magmaSplit: () => {},
-      magmaLavaLord: () => {},
+      quantumWave: () => {},
+      quantumChaosControl: () => {},
+      quantumAtomVibration: () => {},
+      quantumMechanic: () => {},
+      quantumAtomNhilego: () => {},
     };
   }
 
@@ -7352,11 +6994,17 @@ export class ArenaScene extends Phaser.Scene {
       creationBlock: () => {},
       creationMaze: () => {},
       // Fate (raid stubs)
+      fateCoinToss: () => {},
       fateSpawnSlotMachine: () => {},
-      fateDrawCards: () => {},
-      fateForceLucky: () => {},
-      fateKarmaBegin: () => {},
-      fateRandomUltimate: () => {},
+      fateLuck: () => {},
+      fateDice: () => {},
+      fateAllIn: () => {},
+      // Echo (raid stubs)
+      echoEcholocation: () => {},
+      echoGuess: () => {},
+      echoLantern: () => {},
+      echoBatForm: () => {},
+      echoEclipse: () => {},
       // Magnet stubs (no-ops for clone/raid)
       magnetPulse: () => {},
       magnetNailShoot: () => {},
@@ -7440,12 +7088,11 @@ export class ArenaScene extends Phaser.Scene {
       silenceYankHook: () => {},
       silenceEnrage: () => {},
       silenceSlashEmUp: () => {},
-      // Magma — no-ops for raid
-      magmaMaceEmpower: () => {},
-      magmaBoulder: () => {},
-      magmaVolcano: () => {},
-      magmaSplit: () => {},
-      magmaLavaLord: () => {},
+      quantumWave: () => {},
+      quantumChaosControl: () => {},
+      quantumAtomVibration: () => {},
+      quantumMechanic: () => {},
+      quantumAtomNhilego: () => {},
     };
   }
 
@@ -7696,38 +7343,6 @@ export class ArenaScene extends Phaser.Scene {
           isPvP: this.isPvP,
         });
       }
-    });
-  }
-
-  // ── Oil helpers ──────────────────────────────────────────────────
-
-  private spawnOilPuddle(x: number, y: number, owner: 'player' | 'npc'): void {
-    const sprite = this.add.circle(x, y, 30, 0x332200, 0.55).setDepth(2);
-    const puddle: OilPuddle = {
-      sprite, x, y, expiresAt: this.time.now + 12000,
-      ignited: false, igniteTickAccum: 0, radius: 30, owner,
-    };
-    if (owner === 'player') this.playerOilPuddles.push(puddle);
-    else this.npcOilPuddles.push(puddle);
-  }
-
-  private fireOverdriveSalvoBomb(tx: number, ty: number): void {
-    const ox = this.player.x, oy = this.player.y;
-    const bomb = this.add.circle(ox, oy, 7, 0xffaa00, 0.9).setDepth(8);
-    this.tweens.add({
-      targets: bomb, x: tx, y: ty, duration: 450, ease: 'Power2',
-      onComplete: () => {
-        const boom = this.add.circle(tx, ty, 7, 0xff6600, 0.9).setDepth(8);
-        this.tweens.add({ targets: boom, scaleX: 6, scaleY: 6, alpha: 0, duration: 350, onComplete: () => boom.destroy() });
-        bomb.destroy();
-        for (const t of this.enemies) {
-          if (!t.active || t.hp <= 0) continue;
-          if (Phaser.Math.Distance.Between(tx, ty, t.x, t.y) <= 50) {
-            t.takeDamage(10);
-            this.spawnHitFlash(t.x, t.y, 0xff6600);
-          }
-        }
-      },
     });
   }
 
@@ -8638,201 +8253,6 @@ export class ArenaScene extends Phaser.Scene {
     return Phaser.Math.Distance.Between(px, py, ax + t * dx, ay + t * dy);
   }
 
-  // ── Fate helpers ─────────────────────────────────────────────────
-
-  private createSlotMachine(x: number, y: number, owner: 'player' | 'npc'): void {
-    const list = owner === 'player' ? this.playerSlotMachines : this.npcSlotMachines;
-    // Cap at 2 slot machines per owner
-    if (list.length >= 2) {
-      const oldest = list.shift()!;
-      oldest.sprite.destroy(); oldest.label.destroy(); oldest.healthBar.destroy();
-      if (oldest.reelText) oldest.reelText.destroy();
-    }
-    const maxHp = 50;
-    const sprite = this.add.circle(x, y, 24, 0xffcc44, 0.7).setStrokeStyle(2, 0xff88cc, 0.9).setDepth(2);
-    const label = this.add.text(x, y, '🎰', { fontSize: '20px' }).setOrigin(0.5).setDepth(3);
-    const healthBar = new HealthBar(this, maxHp);
-    this.tweens.add({ targets: sprite, scaleX: 1.06, scaleY: 1.06, alpha: 0.5, yoyo: true, repeat: -1, duration: 900 });
-    list.push({ sprite, label, healthBar, x, y, hp: maxHp, maxHp, owner, accum: 0, isReeling: false, reelStart: 0, reelText: null });
-    this.showFloatingText(x, y - 30, '🎰 Placed!', '#ffcc44');
-  }
-
-  private spawnFateCardBarrage(fromX: number, fromY: number, tx: number, ty: number, owner: 'player' | 'npc'): void {
-    const isPlayer = owner === 'player';
-    const lucky = isPlayer ? this.playerFateLuckyCharged : this.npcFateLuckyCharged;
-    const unlucky = isPlayer ? this.playerFateUnluckyCharged : this.npcFateUnluckyCharged;
-    // Consume charge
-    if (isPlayer) { this.playerFateLuckyCharged = false; this.playerFateUnluckyCharged = false; }
-    else { this.npcFateLuckyCharged = false; this.npcFateUnluckyCharged = false; }
-
-    const cards = drawPlayingCards(5, lucky, unlucky);
-    const rank = evaluatePokerHand(cards);
-    const perCardDamage = POKER_DAMAGE[rank];
-    const color = POKER_COLORS[rank];
-
-    const dx = tx - fromX, dy = ty - fromY;
-    const len = Math.hypot(dx, dy) || 1;
-    const perp = { x: -dy / len, y: dx / len };
-    const speed = 520;
-    const angle = Math.atan2(dy, dx);
-
-    for (let i = 0; i < 5; i++) {
-      const offset = (i - 2) * 12;
-      const ox = fromX + perp.x * offset;
-      const oy = fromY + perp.y * offset;
-      const proj = new Projectile(this, ox, oy, 'proj-fate-card', perCardDamage, isPlayer);
-      this.projectiles.add(proj);
-      proj.setRotation(angle);
-      proj.launch((dx / len) * speed, (dy / len) * speed);
-    }
-
-    // Show hand rank as floating text
-    const handLabel = rank.replace(/-/g, ' ').toUpperCase();
-    this.showFloatingText(fromX, fromY - 36, handLabel, color);
-  }
-
-  private spinSlotMachine(machine: SlotMachine, owner: 'player' | 'npc'): void {
-    const isPlayer = owner === 'player';
-    const lucky = isPlayer ? this.playerFateLuckyCharged : this.npcFateLuckyCharged;
-    const unlucky = isPlayer ? this.playerFateUnluckyCharged : this.npcFateUnluckyCharged;
-    // Consume charge
-    if (isPlayer) { this.playerFateLuckyCharged = false; this.playerFateUnluckyCharged = false; }
-    else { this.npcFateLuckyCharged = false; this.npcFateUnluckyCharged = false; }
-
-    const key = fateSlotsRollKey(lucky, unlucky);
-    const buffs = isPlayer ? this.playerFateSlotsBuffs : this.npcFateSlotsBuffs;
-    buffs.push({ key });
-    this.recomputeFateSlotsBuffs(owner);
-
-    const label = FATE_SLOTS_BUFF_LABELS[key];
-    const goodKeys: FateSlotsBuffKey[] = FATE_SLOTS_GOOD_KEYS;
-    const isGood = goodKeys.includes(key);
-    const textColor = isGood ? '#aaffcc' : '#ffaaaa';
-    this.showFloatingText(machine.x, machine.y - 36, (isGood ? '✅ ' : '❌ ') + label, textColor);
-
-    // Visual flash on slot machine
-    this.tweens.add({ targets: machine.sprite, fillColor: isGood ? 0x44ffaa : 0xff4444, alpha: 0.9, yoyo: true, duration: 200, repeat: 2, onComplete: () => machine.sprite.setFillStyle(0xffcc44, 0.7) });
-    machine.isReeling = false;
-    if (machine.reelText) { machine.reelText.destroy(); machine.reelText = null; }
-  }
-
-  private recomputeFateSlotsBuffs(owner: 'player' | 'npc'): void {
-    const isPlayer = owner === 'player';
-    const fighter = isPlayer ? this.player : this.npc;
-    const buffs = isPlayer ? this.playerFateSlotsBuffs : this.npcFateSlotsBuffs;
-
-    let speedMult = isPlayer ? this.playerFateBaseSpeedMult : 1;
-    let cdMult = isPlayer ? this.playerFateBaseCooldownMult : 1;
-    let dmgTakenMult = isPlayer ? this.playerFateBaseIncomingDmgMult : 1;
-    let sizeMult = 1;
-    let critChance = 0;
-    let critRxBonus = 0;
-    let hpMod = 0;
-
-    for (const b of buffs) {
-      switch (b.key) {
-        case 'speed+': speedMult *= 1.15; break;
-        case 'speed-': speedMult *= 0.90; break;
-        case 'hp+': hpMod += 15; break;
-        case 'hp-': hpMod -= 10; break;
-        case 'dr+': dmgTakenMult *= 0.90; break;
-        case 'dr-': dmgTakenMult *= 1.10; break;
-        case 'cd-': cdMult *= 0.90; break;
-        case 'cd+': cdMult *= 1.10; break;
-        case 'size-': sizeMult *= 0.85; break;
-        case 'size+': sizeMult *= 1.15; break;
-        case 'crit+': critChance += 0.15; break;
-        case 'critRx+': critRxBonus += 0.15; break;
-      }
-    }
-
-    // Apply HP change (preserve current HP ratio)
-    const baseMaxHp = isPlayer ? 100 : this.npcDifficulty.hp;
-    const newMaxHp = Math.max(10, Math.round(baseMaxHp + hpMod));
-    const hpRatio = fighter.hp / fighter.maxHp;
-    fighter.maxHp = newMaxHp;
-    fighter.hp = Math.max(1, Math.round(newMaxHp * hpRatio));
-
-    fighter.cooldownMult = cdMult;
-    fighter.incomingDamageMultiplier = dmgTakenMult;
-    fighter.critChance = Math.min(0.95, critChance);
-    fighter.incomingCritBonus = critRxBonus;
-
-    // Size
-    fighter.sizeMult = sizeMult;
-    fighter.applySizeMult();
-
-    // Speed: stored so the movement code can pick it up
-    if (isPlayer) {
-      this.playerFateBaseSpeedMult = speedMult;
-    } else {
-      this.npcSpeedMult = speedMult;
-    }
-  }
-
-  private beginFateKarma(owner: 'player' | 'npc'): void {
-    const isPlayer = owner === 'player';
-    const caster = isPlayer ? this.player : this.npc;
-    const karmaCards = isPlayer ? this.playerKarmaCards : this.npcKarmaCards;
-
-    // Clear any existing karma cards
-    for (const c of karmaCards) c.sprite.destroy();
-    karmaCards.length = 0;
-
-    // Spawn 4 orbiting cards — all start at angle 0; loop index provides even spacing
-    for (let i = 0; i < 4; i++) {
-      const sprite = this.add.circle(caster.x, caster.y, 8, 0xaaffee, 0.9)
-        .setStrokeStyle(2, 0xffffff, 0.6).setDepth(6);
-      karmaCards.push({ sprite, orbitAngle: 0, meleeCooldownUntil: 0 });
-    }
-
-    const endAt = this.time.now + 6000;
-    if (isPlayer) {
-      this.playerKarmaEndAt = endAt;
-      this.playerSpeedMult *= 1.25;
-      this.showFloatingText(caster.x, caster.y - 36, '✨ Karma Active!', '#88ccff');
-    } else {
-      this.npcKarmaEndAt = endAt;
-      this.npcSpeedMult *= 1.25;
-    }
-
-    // After Karma expires, queue unlucky charge
-    this.time.delayedCall(6000, () => {
-      if (isPlayer) { this.playerFateUnluckyCharged = true; this.playerFateLuckyCharged = false; }
-      else { this.npcFateUnluckyCharged = true; this.npcFateLuckyCharged = false; }
-    });
-  }
-
-  private fireRandomFateUltimate(owner: 'player' | 'npc'): void {
-    const isPlayer = owner === 'player';
-    const aimTarget = isPlayer ? this.getNearestEnemy(this.player.x, this.player.y) : this.player;
-    const ctx = isPlayer ? this.buildPlayerContext(aimTarget.x, aimTarget.y) : this.buildNpcContext(this.player.x, this.player.y);
-    const caster = isPlayer ? this.player : this.npc;
-    const target = isPlayer ? aimTarget : this.player;
-
-    type UltEntry = { name: string; fire: () => void };
-    const pool: UltEntry[] = [
-      { name: 'Pain Rain',     fire: () => ctx.spawnPainRain() },
-      { name: 'Thorn Drag',    fire: () => { ctx.startThornDrag(); if (isPlayer) { this.thornDragActiveUntil = this.time.now + 2000; this.thornDragTickAccum = 0; } else { this.npcThornDragActiveUntil = this.time.now + 2000; this.npcThornDragTickAccum = 0; } } },
-      { name: 'Bull Rush',     fire: () => ctx.startBullRush() },
-      { name: 'Black Hole',    fire: () => ctx.startBlackHole() },
-      { name: 'Frozen Solid',  fire: () => ctx.fireFrozenSolid(target.x, target.y) },
-      { name: 'Mutant Morph',  fire: () => ctx.triggerMutantMorph() },
-      { name: 'Crystal Trick', fire: () => ctx.activateCrystalTrick() },
-      { name: 'Timeless',      fire: () => ctx.timeTimeless() },
-      { name: 'Lunar Landing', fire: () => ctx.gravityLunarLanding() },
-      { name: 'Maze of Doom',  fire: () => ctx.creationMaze() },
-    ];
-    // Try oil overdrive only if we have the Fate player (overdrive needs firewall pos)
-    if (!isPlayer || this.elementId === 'fate') {
-      pool.push({ name: 'Overdrive', fire: () => ctx.startOverdrive(caster.x + (Math.random() - 0.5) * 200, caster.y + (Math.random() - 0.5) * 200) });
-    }
-
-    const chosen = pool[Math.floor(Math.random() * pool.length)];
-    this.showFloatingText(caster.x, caster.y - 44, `🎲 ${chosen.name}!`, '#eeaaff');
-    try { chosen.fire(); } catch { /* ignore if ultimate depends on missing state */ }
-  }
-
   // ── Hunt helpers ─────────────────────────────────────────────────
 
   private huntToggleBeastHud(toBeast: boolean): void {
@@ -9072,73 +8492,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Electricity per-frame ─────────────────────────────────────
     if (this.elementId === 'electricity') {
-      // Kinetic power text update
-      if (this.kineticPowerText) this.kineticPowerText.setText(`⚡ ${this.kineticPower}`);
-
-      // Overcharge visual + expiry
-      if (this.overchargeActive) {
-        if (this.overchargeVisual) this.overchargeVisual.setPosition(this.player.x, this.player.y);
-        if (time >= this.overchargeUntil) {
-          this.overchargeActive = false;
-          if (this.overchargeVisual) { this.overchargeVisual.destroy(); this.overchargeVisual = null; }
-        }
-      }
-
-      // Regen ticks (3 HP/sec, cancelled by damage)
-      if (this.electricRegenActive && this.electricRegenSecondsLeft > 0) {
-        this.electricRegenAccum += delta;
-        const tickMs = 333; // ~3 HP/s
-        while (this.electricRegenAccum >= tickMs) {
-          this.electricRegenAccum -= tickMs;
-          this.player.heal(1);
-          this.electricRegenSecondsLeft = Math.max(0, this.electricRegenSecondsLeft - (tickMs / 1000));
-          if (this.electricRegenSecondsLeft <= 0) { this.electricRegenActive = false; break; }
-        }
-      }
-
-      // Pain battery visual follow
-      if (this.painBatteryHolding && this.painBatteryVisual) {
-        this.painBatteryVisual.setPosition(this.player.x, this.player.y);
-      }
-
-      // Electro dash recast window expiry
-      if (this.electroDashCanRecast && time >= this.electroDashRecastExpiry) {
-        this.electroDashCanRecast = false;
-      }
-
-      // Shock logic: electro balls passing near the enemy
-      // 20+ kinetic power: shocks once; 50 kinetic power: shocks twice (300ms apart)
-      const shockRadius = this.kineticPower >= 50 ? 120 : 80;
-      const maxShocks = this.kineticPower >= 50 ? 2 : 1;
-      if (this.kineticPower >= 20) {
-        for (const go of this.projectiles.getChildren()) {
-          const proj = go as Projectile;
-          if (!proj.active || proj.texture.key !== 'proj-electro' || !proj.isFromPlayer) continue;
-          for (const t of this.enemies) {
-            if (!t.active || t.hp <= 0) continue;
-            const dist = Phaser.Math.Distance.Between(proj.x, proj.y, t.x, t.y);
-            if (dist <= shockRadius) {
-              const shockData = this.electroShockTimers.get(proj) ?? { count: 0, last: 0 };
-              if (shockData.count < maxShocks && (shockData.count === 0 || time - shockData.last >= 300)) {
-                shockData.count++;
-                shockData.last = time;
-                this.electroShockTimers.set(proj, shockData);
-                t.takeDamage(4);
-                this.spawnHitFlash(t.x, t.y, 0xffee00);
-                this.showFloatingText(t.x, t.y - 20, '4', '#ffee00');
-                const arc = this.add.graphics().setDepth(8);
-                arc.lineStyle(2, 0xffff88, 0.9);
-                arc.lineBetween(proj.x, proj.y, t.x, t.y);
-                this.time.delayedCall(80, () => arc.destroy());
-              }
-            }
-          }
-        }
-      }
-      // Clean up shock timer map for destroyed projectiles
-      for (const [proj] of this.electroShockTimers) {
-        if (!proj.active) this.electroShockTimers.delete(proj);
-      }
+      this.electricityKit.update(time, delta);
     }
 
     // ── Slime per-frame ───────────────────────────────────────────
@@ -9157,8 +8511,7 @@ export class ArenaScene extends Phaser.Scene {
         t.burnTickAccum += delta;
         if (t.burnTickAccum >= 500) {
           t.burnTickAccum -= 500;
-          t.takeDamage(1);
-          this.spawnHitFlash(t.x, t.y, 0xff4400);
+          t.takeDamage(1); this.spawnHitFlash(t.x, t.y, 0xff4400);
         }
       } else {
         t.burnTickAccum = 0;
@@ -9175,8 +8528,7 @@ export class ArenaScene extends Phaser.Scene {
       this.playerBurnTickAccum += delta;
       if (this.playerBurnTickAccum >= 500) {
         this.playerBurnTickAccum -= 500;
-        this.player.applySelfDamage(1);
-        this.spawnHitFlash(this.player.x, this.player.y, 0xff4400);
+        this.player.applySelfDamage(1); this.spawnHitFlash(this.player.x, this.player.y, 0xff4400);
       }
     } else {
       this.playerBurnTickAccum = 0;
@@ -9252,7 +8604,6 @@ export class ArenaScene extends Phaser.Scene {
       if (time < this.slimeKit.getSpeedBoostUntil()) this.playerSpeedMult *= 1.5;
     } else if (this.elementId === 'fate') {
       this.playerSpeedMult = this.playerFateBaseSpeedMult;
-      if (this.playerKarmaCards.length > 0 && time < this.playerKarmaEndAt) this.playerSpeedMult *= 1.25;
     } else if (this.elementId === 'light') {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
       if (time < this.lightKit.getPhotoAccelUntil()) {
@@ -9263,14 +8614,12 @@ export class ArenaScene extends Phaser.Scene {
       if (time < this.lightKit.getPhotonSpeedBoostUntil()) this.playerSpeedMult *= 3;
       if (this.lightKit.isAngelActive()) this.playerSpeedMult *= 1.25;
       if (time < this.lightKit.getSkewerModeUntil()) this.playerSpeedMult *= 1.15;
-    } else if (this.elementId === 'magma') {
+    } else if (this.elementId === 'echo') {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
-      // Post-explosion 3s shrink reduces speed
-      if (time < this.magmaMaceShrinkExpiry) this.playerSpeedMult *= 0.8;
-      // Lava Lord: movement is overridden entirely in updateMagmaState
-      if (this.magmaLavaLordActive) this.playerSpeedMult = 0;
-      // Split active: hide main player
-      if (this.magmaSplitActive) this.playerSpeedMult = 0;
+      this.playerSpeedMult *= this.echoKit.getPlayerSpeedMult();
+    } else if (this.elementId === 'oil') {
+      this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
+      this.playerSpeedMult *= this.oilKit.getPlayerSpeedMult();
     } else {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
     }
@@ -9280,12 +8629,13 @@ export class ArenaScene extends Phaser.Scene {
     else if (time < this.npcGeyserBuffUntil) this.npcSpeedMult = 1.5;
     // (Time element NPC has no speed buff of its own)
 
-    // Oil puddle slows (20%) — player's puddles slow NPC
-    if (this.elementId === 'oil' && this.playerOilPuddles.length > 0) {
-      const npcOnOilPuddle = this.playerOilPuddles.some(
-        (p) => Phaser.Math.Distance.Between(p.x, p.y, this.npc.x, this.npc.y) <= p.radius,
-      );
-      if (npcOnOilPuddle) this.npcSpeedMult *= 0.8;
+    // Oil puddle slows — managed by OilKit
+    if (this.elementId === 'oil' || this.npcElement.id === 'oil') {
+      this.npcSpeedMult *= this.oilKit.getNpcSpeedMult();
+    }
+    // Echo NPC speed (bat form, attach)
+    if (this.npcElement.id === 'echo') {
+      this.npcSpeedMult *= this.echoKit.getNpcSpeedMult();
     }
     // Time puddle slows (25%)
     if (this.timePuddles.length > 0) {
@@ -9378,13 +8728,6 @@ export class ArenaScene extends Phaser.Scene {
         (c) => Phaser.Math.Distance.Between(this.npc.x, this.npc.y, c.x, c.y) <= 30,
       );
       if (npcOnTrail) this.npcSpeedMult *= 1.5;
-    }
-
-    // Magma NPC speed adjustments
-    if (this.npcElement.id === 'magma') {
-      if (time < this.npcMagmaMaceShrinkExpiry) this.npcSpeedMult *= 0.8;
-      if (this.npcMagmaLavaLordActive) this.npcSpeedMult = 0;
-      if (this.npcMagmaSplitActive) this.npcSpeedMult = 0;
     }
 
     // Technology stacking bonuses and abuse speed penalty
@@ -9742,148 +9085,7 @@ export class ArenaScene extends Phaser.Scene {
       }
 
     } else if (this.elementId === 'electricity') {
-      // ── Click: Electro Ball ───────────────────────────────────────
-      if (pointer.isDown) {
-        if (this.player.castAbility('electro-ball', playerCtx)) {
-          // If kinetic >= 50, enlarge the last-added projectile
-          if (this.kineticPower >= 50) {
-            const children = this.projectiles.getChildren();
-            const last = children[children.length - 1] as Projectile | undefined;
-            if (last && last.texture.key === 'proj-electro') last.setScale(1.25);
-          }
-        }
-      }
-
-      // ── E: Electro Dash ──────────────────────────────────────────
-      if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
-        const canRecast = this.electroDashCanRecast && time < this.electroDashRecastExpiry && this.kineticPower >= 15;
-        const onCooldown = this.player.getCooldownRatio('electro-dash') < 1;
-        if (canRecast || !onCooldown) {
-          if (canRecast) {
-            // Recast: costs 15 kinetic power, no cooldown reset
-            this.kineticPower = Math.max(0, this.kineticPower - 15);
-            if (this.kineticPowerText) this.kineticPowerText.setText(`⚡ ${this.kineticPower}`);
-            this.electroDashCanRecast = false;
-          } else {
-            this.player.triggerCooldown('electro-dash');
-            this.electroDashCanRecast = true;
-            this.electroDashRecastExpiry = time + 1500;
-          }
-          // Teleport 215 units toward cursor
-          const dx = mouseX - this.player.x;
-          const dy = mouseY - this.player.y;
-          const len = Math.sqrt(dx * dx + dy * dy) || 1;
-          const startX = this.player.x;
-          const startY = this.player.y;
-          const endX = startX + (dx / len) * 215;
-          const endY = startY + (dy / len) * 215;
-          // Clamp to arena bounds
-          const W = this.scale.width;
-          const H = this.scale.height;
-          const clampedX = Phaser.Math.Clamp(endX, 30, W - 30);
-          const clampedY = Phaser.Math.Clamp(endY, 30, H - 30);
-          (this.player.body as Phaser.Physics.Arcade.Body).reset(clampedX, clampedY);
-          // Check if any enemy is along the teleport path (within 45px of line segment)
-          const segDX = clampedX - startX;
-          const segDY = clampedY - startY;
-          const segLen = Math.sqrt(segDX * segDX + segDY * segDY) || 1;
-          for (const et of this.enemies) {
-            if (!et.active || et.hp <= 0) continue;
-            const tParam = Phaser.Math.Clamp(
-              ((et.x - startX) * segDX + (et.y - startY) * segDY) / (segLen * segLen), 0, 1,
-            );
-            const closestX = startX + tParam * segDX;
-            const closestY = startY + tParam * segDY;
-            if (Phaser.Math.Distance.Between(closestX, closestY, et.x, et.y) <= 45) {
-              et.takeDamage(15);
-              this.spawnHitFlash(et.x, et.y, 0xffee00);
-              this.showFloatingText(et.x, et.y - 20, '15', '#ffee00');
-            }
-          }
-          // Teleport visual
-          const flash = this.add.circle(clampedX, clampedY, 8, 0xffee00, 0.6).setDepth(8);
-          this.tweens.add({ targets: flash, scaleX: 4, scaleY: 4, alpha: 0, duration: 250, onComplete: () => flash.destroy() });
-          const trail = this.add.circle(startX, startY, 8, 0xffcc00, 0.4).setDepth(7);
-          this.tweens.add({ targets: trail, scaleX: 3, scaleY: 3, alpha: 0, duration: 200, onComplete: () => trail.destroy() });
-        }
-      }
-
-      // ── R: Kinetic Discharge ─────────────────────────────────────
-      if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
-        if (this.player.getCooldownRatio('kinetic-discharge') >= 1 && this.kineticPower > 0) {
-          this.player.triggerCooldown('kinetic-discharge');
-          const dmg = Math.floor(this.kineticPower * 0.75);
-          this.kineticPower = Math.max(0, this.kineticPower - 10);
-          if (this.kineticPowerText) this.kineticPowerText.setText(`⚡ ${this.kineticPower}`);
-          for (const t of this.enemies) {
-            if (!t.active || t.hp <= 0) continue;
-            if (Phaser.Math.Distance.Between(mouseX, mouseY, t.x, t.y) <= 100) {
-              t.takeDamage(dmg);
-              this.spawnHitFlash(t.x, t.y, 0xffee00);
-              if (dmg > 0) this.showFloatingText(t.x, t.y - 20, `${dmg}`, '#ffee00');
-            }
-          }
-          const ring = this.add.circle(mouseX, mouseY, 10, 0xffee00, 0.9).setDepth(4);
-          this.tweens.add({ targets: ring, scaleX: 10, scaleY: 10, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
-          const core = this.add.circle(mouseX, mouseY, 6, 0xffffff, 0.95).setDepth(5);
-          this.tweens.add({ targets: core, scaleX: 4, scaleY: 4, alpha: 0, duration: 180, onComplete: () => core.destroy() });
-        }
-      }
-
-      // ── F: Pain Battery ──────────────────────────────────────────
-      if (this.fKey.isDown) {
-        if (!this.painBatteryHolding) {
-          this.painBatteryHolding = true;
-          this.painBatteryHoldStart = time;
-          this.painBatterySelfDmgDealt = 0;
-          this.painBatteryTickAccum = 0;
-          if (this.painBatteryVisual) this.painBatteryVisual.destroy();
-          this.painBatteryVisual = this.add.circle(this.player.x, this.player.y, 30, 0xdd8800, 0.35).setDepth(3);
-          this.tweens.add({ targets: this.painBatteryVisual, alpha: 0.6, yoyo: true, repeat: -1, duration: 200 });
-        }
-        if (this.painBatteryHolding) {
-          this.painBatteryTickAccum += delta;
-          if (this.painBatteryTickAccum >= 250) {
-            this.painBatteryTickAccum -= 250;
-            const selfDmg = 5;
-            this.painBatterySelfDmgDealt += selfDmg;
-            this.player.applySelfDamage(selfDmg);
-          }
-        }
-      } else if (this.painBatteryHolding) {
-        // Released — fire AoE blast
-        this.painBatteryHolding = false;
-        if (this.painBatteryVisual) { this.painBatteryVisual.destroy(); this.painBatteryVisual = null; }
-        const blastDmg = Math.floor(this.painBatterySelfDmgDealt * 0.75);
-        if (blastDmg > 0) {
-          for (const t of this.enemies) {
-            if (!t.active || t.hp <= 0) continue;
-            if (Phaser.Math.Distance.Between(this.player.x, this.player.y, t.x, t.y) <= 120) {
-              t.takeDamage(blastDmg);
-              this.spawnHitFlash(t.x, t.y, 0xffaa00);
-              this.showFloatingText(t.x, t.y - 20, `${blastDmg}`, '#ffaa00');
-            }
-          }
-          const ring = this.add.circle(this.player.x, this.player.y, 10, 0xffaa00, 0.85).setDepth(4);
-          this.tweens.add({ targets: ring, scaleX: 12, scaleY: 12, alpha: 0, duration: 450, onComplete: () => ring.destroy() });
-        }
-        this.painBatterySelfDmgDealt = 0;
-        this.painBatteryTickAccum = 0;
-      }
-
-      // ── Q: Restart ───────────────────────────────────────────────
-      if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
-        if (this.player.getCooldownRatio('restart') >= 1) {
-          this.player.triggerCooldown('restart');
-          this.overchargeActive = true;
-          this.overchargeUntil = time + 5000;
-          if (this.overchargeVisual) this.overchargeVisual.destroy();
-          this.overchargeVisual = this.add.circle(this.player.x, this.player.y, 36, 0xffee00, 0.2)
-            .setStrokeStyle(3, 0xffee00, 0.9).setDepth(3);
-          this.tweens.add({ targets: this.overchargeVisual, alpha: 0.45, yoyo: true, repeat: -1, duration: 300 });
-          this.showFloatingText(this.player.x, this.player.y - 30, 'OVERCHARGED!', '#ffee00');
-        }
-      }
+      this.electricityKit.handleInput(time, delta, mouseX, mouseY, pointer);
 
     } else if (this.elementId === 'slime') {
       this.slimeKit.handleInput(time, pointer, mouseX, mouseY);
@@ -10067,72 +9269,9 @@ export class ArenaScene extends Phaser.Scene {
       }
 
     } else if (this.elementId === 'fate') {
-      // ── Click: Draw (5-card barrage) ──────────────────────────
-      if (pointer.isDown && !this.pointerWasDown) {
-        this.player.castAbility('fate-draw', playerCtx);
-      }
-
-      // ── E: Place Slot Machine ──────────────────────────────────
-      if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
-        this.player.castAbility('fate-slots', playerCtx);
-      }
-
-      // ── Space: Reel slot machine (hold 2s near machine) ────────
-      const spaceDown = this.spaceKey.isDown;
-      // Find closest player slot machine within 80px
-      let nearestSlot: SlotMachine | null = null;
-      let nearestSlotDist = 80;
-      for (const sm of this.playerSlotMachines) {
-        const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, sm.x, sm.y);
-        if (d < nearestSlotDist && !sm.isReeling) { nearestSlotDist = d; nearestSlot = sm; }
-      }
-      if (spaceDown && !this.fateSpaceWasDown && nearestSlot) {
-        this.playerSlotsHolding = true;
-        this.playerSlotsHoldStart = time;
-        this.playerSlotsHoldTarget = nearestSlot;
-        nearestSlot.isReeling = true;
-        nearestSlot.reelStart = time;
-        nearestSlot.reelText = this.add.text(nearestSlot.x, nearestSlot.y - 40, '0%', { fontSize: '12px', color: '#ffeeaa', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(10);
-        if (this.playerSlotsReelText) { this.playerSlotsReelText.destroy(); }
-        this.playerSlotsReelText = nearestSlot.reelText;
-      }
-      if (spaceDown && this.playerSlotsHolding && this.playerSlotsHoldTarget) {
-        const heldMs = time - this.playerSlotsHoldStart;
-        this.player.chargeRatio = Math.min(1, heldMs / 2000);
-        if (heldMs >= 2000) {
-          const target = this.playerSlotsHoldTarget;
-          this.playerSlotsHolding = false;
-          this.playerSlotsHoldTarget = null;
-          this.player.chargeRatio = 0;
-          this.spinSlotMachine(target, 'player');
-        }
-      }
-      if (!spaceDown && this.fateSpaceWasDown && this.playerSlotsHolding) {
-        // Released early
-        this.playerSlotsHolding = false;
-        if (this.playerSlotsHoldTarget) {
-          this.playerSlotsHoldTarget.isReeling = false;
-          if (this.playerSlotsHoldTarget.reelText) { this.playerSlotsHoldTarget.reelText.destroy(); this.playerSlotsHoldTarget.reelText = null; }
-          this.playerSlotsHoldTarget = null;
-        }
-        this.player.chargeRatio = 0;
-      }
-      this.fateSpaceWasDown = spaceDown;
-
-      // ── R: Force the Hand of Fate ──────────────────────────────
-      if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
-        this.player.castAbility('fate-force', playerCtx);
-      }
-
-      // ── F: Karma ───────────────────────────────────────────────
-      if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
-        this.player.castAbility('fate-karma', playerCtx);
-      }
-
-      // ── Q: Roll of Fate ────────────────────────────────────────
-      if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
-        this.player.castAbility('fate-roll', playerCtx);
-      }
+      this.fateKit.handleInput(time, pointer, mouseX, mouseY);
+      if (Phaser.Input.Keyboard.JustDown(this.eKey)) this.fateKit.onEKey(mouseX, mouseY);
+      if (Phaser.Input.Keyboard.JustDown(this.rKey)) this.fateKit.onRKey();
 
     } else if (this.elementId === 'air') {
       if (!this.nukeChanneling) {
@@ -10556,35 +9695,16 @@ export class ArenaScene extends Phaser.Scene {
       this.handleMagicInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'technology') {
       this.techKit.handleInput(time, pointer, mouseX, mouseY);
-    } else if (this.elementId === 'magma') {
-      this.handleMagmaInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'echo') {
+      this.echoKit.handleInput(time, delta, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'quantum') {
+      this.quantumElementKit.handleInput(time, delta, pointer);
     } else if (this.elementId === 'earth') {
       this.handleEarthInput(time, delta, pointer, mouseX, mouseY);
     } else if (this.elementId === 'light') {
       this.lightKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'oil') {
-      if (!this.nukeChanneling) {
-        // Click: Drone Command (fire at cursor)
-        if (pointer.isDown) {
-          this.player.castAbility('drone-command', playerCtx);
-        }
-        // E: Drone Summon
-        if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
-          this.player.castAbility('drone-summon', playerCtx);
-        }
-        // R: Drone Destroy (launch drone bomb at cursor)
-        if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
-          this.player.castAbility('drone-destroy', this.buildPlayerContext(mouseX, mouseY));
-        }
-        // F: Firewall at cursor
-        if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
-          this.player.castAbility('firewall', this.buildPlayerContext(mouseX, mouseY));
-        }
-        // Q: Overdrive
-        if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
-          this.player.castAbility('overdrive', this.buildPlayerContext(mouseX, mouseY));
-        }
-      }
+      this.oilKit.handleInput(time, delta, pointer, mouseX, mouseY);
     } else if (this.elementId === 'shadow') {
       if (!this.nukeChanneling) {
         if (pointer.isDown) {
@@ -11917,8 +11037,7 @@ export class ArenaScene extends Phaser.Scene {
         if (p.tickAccum >= 250) {
           p.tickAccum -= 250;
           for (const target of _puddleTargets) {
-            target.takeDamage(2);
-            this.spawnHitFlash(target.x, target.y, 0x0099ff);
+            target.takeDamage(2); this.spawnHitFlash(target.x, target.y, 0x0099ff);
           }
         }
       }
@@ -12020,144 +11139,6 @@ export class ArenaScene extends Phaser.Scene {
       }
     }
 
-    // ── Fate slot machines ────────────────────────────────────────
-    for (const [slotList, projFilter, owner] of [
-      [this.playerSlotMachines, (p: Projectile) => !p.isFromPlayer, 'player'],
-      [this.npcSlotMachines,   (p: Projectile) => p.isFromPlayer,  'npc'],
-    ] as [SlotMachine[], (p: Projectile) => boolean, 'player' | 'npc'][]) {
-      for (let i = slotList.length - 1; i >= 0; i--) {
-        const sm = slotList[i];
-        if (sm.hp <= 0) {
-          sm.sprite.destroy(); sm.label.destroy(); sm.healthBar.destroy();
-          if (sm.reelText) sm.reelText.destroy();
-          slotList.splice(i, 1);
-          continue;
-        }
-        sm.healthBar.update(sm.x, sm.y, sm.hp);
-        sm.label.setPosition(sm.x, sm.y);
-        sm.sprite.setPosition(sm.x, sm.y);
-        // Reel animation label
-        if (sm.isReeling && sm.reelText) {
-          const pct = Math.min(1, (time - sm.reelStart) / 2000);
-          sm.reelText.setText(`${Math.round(pct * 100)}%`).setPosition(sm.x, sm.y - 40);
-        }
-        // Enemy projectiles damage slot machines
-        for (const go of allActiveProj) {
-          const proj = go as Projectile;
-          if (!proj.active || !projFilter(proj)) continue;
-          if (Phaser.Math.Distance.Between(proj.x, proj.y, sm.x, sm.y) <= 28) {
-            sm.hp -= proj.damage;
-            (proj.body as Phaser.Physics.Arcade.Body).stop();
-            proj.setActive(false).setVisible(false);
-          }
-        }
-        void owner;
-      }
-    }
-
-    // ── NPC Fate slot reel logic ──────────────────────────────────
-    if (this.npcElementId === 'fate') {
-      const nearSm = this.npcSlotMachines.find(sm => Phaser.Math.Distance.Between(this.npc.x, this.npc.y, sm.x, sm.y) <= 80 && !sm.isReeling);
-      if (nearSm && this.npcSlotsReelTarget === null) {
-        // Start reel
-        this.npcSlotsReelStart = time;
-        this.npcSlotsReelTarget = nearSm;
-        nearSm.isReeling = true;
-        nearSm.reelStart = time;
-      }
-      if (this.npcSlotsReelTarget) {
-        if (time - this.npcSlotsReelStart >= 2000) {
-          const target = this.npcSlotsReelTarget;
-          this.npcSlotsReelTarget = null;
-          this.spinSlotMachine(target, 'npc');
-        }
-      }
-    }
-
-    // ── Fate karma orbit ──────────────────────────────────────────
-    // Player karma
-    if (this.playerKarmaCards.length > 0) {
-      if (time > this.playerKarmaEndAt) {
-        for (const c of this.playerKarmaCards) c.sprite.destroy();
-        this.playerKarmaCards = [];
-        this.playerSpeedMult = Math.max(1, this.playerSpeedMult / 1.25);
-      } else {
-        const orbitR = 52;
-        const count = this.playerKarmaCards.length;
-        for (let i = 0; i < count; i++) {
-          const card = this.playerKarmaCards[i];
-          card.orbitAngle += delta * 0.003;
-          const ang = card.orbitAngle + (i * Math.PI * 2 / count);
-          card.sprite.setPosition(this.player.x + Math.cos(ang) * orbitR, this.player.y + Math.sin(ang) * orbitR);
-          if (time >= card.meleeCooldownUntil) {
-            for (const t of this.enemies) {
-              if (!t.active || t.hp <= 0) continue;
-              const d = Phaser.Math.Distance.Between(card.sprite.x, card.sprite.y, t.x, t.y);
-              if (d <= 20) {
-                t.setIncomingCritContext(this.player.critChance, this.player.critMult);
-                t.takeDamage(8);
-                this.spawnHitFlash(t.x, t.y, 0xaaffee);
-                card.meleeCooldownUntil = time + 500;
-                break;
-              }
-            }
-          }
-        }
-      }
-    }
-    // NPC karma
-    if (this.npcKarmaCards.length > 0) {
-      if (time > this.npcKarmaEndAt) {
-        for (const c of this.npcKarmaCards) c.sprite.destroy();
-        this.npcKarmaCards = [];
-        this.npcSpeedMult = Math.max(1, this.npcSpeedMult / 1.25);
-      } else {
-        const orbitR = 52;
-        const count = this.npcKarmaCards.length;
-        for (let i = 0; i < count; i++) {
-          const card = this.npcKarmaCards[i];
-          card.orbitAngle += delta * 0.003;
-          const ang = card.orbitAngle + (i * Math.PI * 2 / count);
-          card.sprite.setPosition(this.npc.x + Math.cos(ang) * orbitR, this.npc.y + Math.sin(ang) * orbitR);
-          if (time >= card.meleeCooldownUntil) {
-            const d = Phaser.Math.Distance.Between(card.sprite.x, card.sprite.y, this.player.x, this.player.y);
-            if (d <= 20) {
-              this.player.setIncomingCritContext(this.npc.critChance, this.npc.critMult);
-              this.player.takeDamage(8);
-              this.spawnHitFlash(this.player.x, this.player.y, 0xaaffee);
-              card.meleeCooldownUntil = time + 500;
-            }
-          }
-        }
-      }
-    }
-
-    // ── Fate lucky/unlucky visual icons ───────────────────────────
-    if (this.elementId === 'fate') {
-      // Lucky 🍀
-      const showLucky = this.playerFateLuckyCharged;
-      if (showLucky) {
-        if (!this.playerFateLuckyVisual) {
-          this.playerFateLuckyVisual = this.add.text(this.player.x, this.player.y - 42, '🍀', { fontSize: '14px' }).setOrigin(0.5).setDepth(10);
-        } else {
-          this.playerFateLuckyVisual.setPosition(this.player.x, this.player.y - 42);
-        }
-      } else if (this.playerFateLuckyVisual) {
-        this.playerFateLuckyVisual.destroy(); this.playerFateLuckyVisual = null;
-      }
-      // Unlucky 🔥
-      const showUnlucky = this.playerFateUnluckyCharged;
-      if (showUnlucky) {
-        if (!this.playerFateUnluckyVisual) {
-          this.playerFateUnluckyVisual = this.add.text(this.player.x, this.player.y - 58, '🔥', { fontSize: '14px' }).setOrigin(0.5).setDepth(10);
-        } else {
-          this.playerFateUnluckyVisual.setPosition(this.player.x, this.player.y - 58);
-        }
-      } else if (this.playerFateUnluckyVisual) {
-        this.playerFateUnluckyVisual.destroy(); this.playerFateUnluckyVisual = null;
-      }
-    }
-
     // ── Pain Rain drops ───────────────────────────────────────────
     for (let i = this.painRainShadows.length - 1; i >= 0; i--) {
       const s = this.painRainShadows[i];
@@ -12182,241 +11163,6 @@ export class ArenaScene extends Phaser.Scene {
       if (s.fired) this.painRainShadows.splice(i, 1);
     }
 
-    // ── Oil per-frame (player) ────────────────────────────────────
-    if (this.elementId === 'oil') {
-      // Orbit drones evenly around player, spaced to avoid overlap
-      const pCount = this.playerDrones.length;
-      const orbitR = Math.max(60, 40 + pCount * 8);
-      for (let di = 0; di < pCount; di++) {
-        const drone = this.playerDrones[di];
-        drone.orbitAngle += delta * 0.0025;
-        const angle = drone.orbitAngle + (di * Math.PI * 2 / Math.max(1, pCount));
-        drone.sprite.setPosition(
-          this.player.x + Math.cos(angle) * orbitR,
-          this.player.y + Math.sin(angle) * orbitR,
-        );
-        // Visual indicator: color + radius reflect remaining shots
-        const col = drone.shotsLeft >= 3 ? 0xffaa00 : drone.shotsLeft === 2 ? 0xff6600 : 0xff2200;
-        const rad = drone.shotsLeft >= 3 ? 8 : drone.shotsLeft === 2 ? 7 : 5;
-        drone.sprite.setFillStyle(col, 0.9);
-        drone.sprite.setRadius(rad);
-      }
-      // Destroy drones whose shots are exhausted (no puddle — only Drone Destroy and Overdrive spawn puddles)
-      for (let di = this.playerDrones.length - 1; di >= 0; di--) {
-        if (this.playerDrones[di].shotsLeft <= 0) {
-          this.playerDrones[di].sprite.destroy();
-          this.playerDrones.splice(di, 1);
-        }
-      }
-      // E upgrade: drone melee attack
-      if (this.hasUpgrade('e')) {
-        for (const drone of this.playerDrones) {
-          if (time >= drone.meleeCooldownUntil) {
-            const hitSomething = this.enemies.some(t => t.active && t.hp > 0 && Phaser.Math.Distance.Between(drone.sprite.x, drone.sprite.y, t.x, t.y) <= 25);
-            if (hitSomething) {
-              this.damagePlayerTargets(drone.sprite.x, drone.sprite.y, 25, 5, 0xffaa00);
-              drone.meleeCooldownUntil = time + 1000;
-            }
-          }
-        }
-      }
-      // F upgrade: drone heals 1 shot when passing through firewall (once per drone)
-      if (this.hasUpgrade('f') && this.playerFirewallSprite && this.playerFirewallHp > 0) {
-        const fwCos = Math.cos(-this.playerFirewallAngle);
-        const fwSin = Math.sin(-this.playerFirewallAngle);
-        for (const drone of this.playerDrones) {
-          if (!drone.healedByFirewall) {
-            const relX = drone.sprite.x - this.playerFirewallX;
-            const relY = drone.sprite.y - this.playerFirewallY;
-            const localX = fwCos * relX - fwSin * relY;
-            const localY = fwSin * relX + fwCos * relY;
-            if (Math.abs(localX) <= 60 && Math.abs(localY) <= 30) {
-              drone.shotsLeft = Math.min(3, drone.shotsLeft + 1);
-              drone.healedByFirewall = true;
-            }
-          }
-        }
-      }
-      // Firewall absorbs NPC projectiles (rotated bounds check)
-      if (this.playerFirewallSprite && this.playerFirewallHp > 0) {
-        const fwCos = Math.cos(-this.playerFirewallAngle);
-        const fwSin = Math.sin(-this.playerFirewallAngle);
-        for (const go of allActiveProj) {
-          const proj = go as Projectile;
-          if (!proj.active || proj.isFromPlayer) continue;
-          const relX = proj.x - this.playerFirewallX;
-          const relY = proj.y - this.playerFirewallY;
-          const localX = fwCos * relX - fwSin * relY;
-          const localY = fwSin * relX + fwCos * relY;
-          if (Math.abs(localX) <= 60 && Math.abs(localY) <= 30) {
-            this.playerFirewallHp -= proj.damage;
-            proj.setActive(false).setVisible(false);
-            (proj.body as Phaser.Physics.Arcade.Body).stop();
-            if (this.playerFirewallHp <= 0) {
-              this.playerFirewallSprite.destroy();
-              this.playerFirewallSprite = null;
-              break;
-            }
-          }
-        }
-      }
-      // R upgrade: oil puddle ticks and expiry
-      if (this.hasUpgrade('r')) {
-        for (let pi = this.playerOilPuddles.length - 1; pi >= 0; pi--) {
-          const p = this.playerOilPuddles[pi];
-          if (time >= p.expiresAt) {
-            p.sprite.destroy();
-            this.playerOilPuddles.splice(pi, 1);
-            continue;
-          }
-          if (p.ignited) {
-            p.igniteTickAccum += delta;
-            if (p.igniteTickAccum >= 300) {
-              p.igniteTickAccum -= 300;
-              for (const t of this.enemies) {
-                if (!t.active || t.hp <= 0) continue;
-                if (Phaser.Math.Distance.Between(t.x, t.y, p.x, p.y) <= p.radius) {
-                  t.takeDamage(2);
-                  this.spawnHitFlash(t.x, t.y, 0xff4400);
-                }
-              }
-            }
-          }
-        }
-      }
-      // Overdrive beam
-      if (this.playerOverdriveActive) {
-        if (time >= this.playerOverdriveEnd) {
-          this.playerOverdriveActive = false;
-          this.nukeChanneling = false;
-          // Destroy all remaining drones when overdrive ends
-          for (const drone of this.playerDrones) {
-            if (this.hasUpgrade('r')) this.spawnOilPuddle(drone.sprite.x, drone.sprite.y, 'player');
-            drone.sprite.destroy();
-          }
-          // Q upgrade: fire salvo bombs toward cursor, one per original drone
-          if (this.hasUpgrade('q')) {
-            const salvoCX = mouseX, salvoCY = mouseY;
-            for (let i = 0; i < this.playerOverdriveDroneCount; i++) {
-              this.time.delayedCall(i * 500, () => {
-                this.fireOverdriveSalvoBomb(salvoCX, salvoCY);
-              });
-            }
-          }
-          this.playerDrones = [];
-          if (this.playerOverdriveGraphics) {
-            this.playerOverdriveGraphics.destroy();
-            this.playerOverdriveGraphics = null;
-          }
-        } else {
-          // Slowly rotate toward cursor
-          const tgtAng = Math.atan2(mouseY - this.player.y, mouseX - this.player.x);
-          const diff = Phaser.Math.Angle.Wrap(tgtAng - this.playerOverdriveAngle);
-          const rotSpeed = (18 * Math.PI / 180) * delta / 1000;
-          this.playerOverdriveAngle += Math.sign(diff) * Math.min(Math.abs(diff), rotSpeed);
-          const beamEndX = this.player.x + Math.cos(this.playerOverdriveAngle) * 1000;
-          const beamEndY = this.player.y + Math.sin(this.playerOverdriveAngle) * 1000;
-          if (this.playerOverdriveGraphics) {
-            this.playerOverdriveGraphics.clear();
-            this.playerOverdriveGraphics.lineStyle(22, 0xff6600, 0.6);
-            this.playerOverdriveGraphics.lineBetween(this.player.x, this.player.y, beamEndX, beamEndY);
-          }
-          this.playerOverdriveTickAccum += delta;
-          if (this.playerOverdriveTickAccum >= 100) {
-            this.playerOverdriveTickAccum -= 100;
-            for (const t of this.enemies) {
-              if (!t.active || t.hp <= 0) continue;
-              const d = this.pointToSegmentDist(t.x, t.y, this.player.x, this.player.y, beamEndX, beamEndY);
-              if (d <= 30) {
-                t.takeDamage(15);
-                this.spawnHitFlash(t.x, t.y, 0xff6600);
-              }
-            }
-          }
-        }
-      }
-    }
-
-    // ── Oil per-frame (NPC) ───────────────────────────────────────
-    if (this.npcElement.id === 'oil') {
-      const nCount = this.npcDrones.length;
-      const nOrbitR = Math.max(60, 40 + nCount * 8);
-      for (let di = 0; di < nCount; di++) {
-        const drone = this.npcDrones[di];
-        drone.orbitAngle += delta * 0.0025;
-        const angle = drone.orbitAngle + (di * Math.PI * 2 / Math.max(1, nCount));
-        drone.sprite.setPosition(
-          this.npc.x + Math.cos(angle) * nOrbitR,
-          this.npc.y + Math.sin(angle) * nOrbitR,
-        );
-        // Visual indicator
-        const col = drone.shotsLeft >= 3 ? 0xffaa00 : drone.shotsLeft === 2 ? 0xff6600 : 0xff2200;
-        const rad = drone.shotsLeft >= 3 ? 8 : drone.shotsLeft === 2 ? 7 : 5;
-        drone.sprite.setFillStyle(col, 0.7);
-        drone.sprite.setRadius(rad);
-      }
-      // Remove 0-shot NPC drones
-      for (let di = this.npcDrones.length - 1; di >= 0; di--) {
-        if (this.npcDrones[di].shotsLeft <= 0) {
-          this.npcDrones[di].sprite.destroy();
-          this.npcDrones.splice(di, 1);
-        }
-      }
-      // NPC firewall absorbs player projectiles (P2 oil F ability, rotated bounds)
-      if (this.npcFirewallSprite && this.npcFirewallHp > 0) {
-        const fwCos = Math.cos(-this.npcFirewallAngle);
-        const fwSin = Math.sin(-this.npcFirewallAngle);
-        for (const go of allActiveProj) {
-          const proj = go as Projectile;
-          if (!proj.active || !proj.isFromPlayer) continue;
-          const relX = proj.x - this.npcFirewallX;
-          const relY = proj.y - this.npcFirewallY;
-          const localX = fwCos * relX - fwSin * relY;
-          const localY = fwSin * relX + fwCos * relY;
-          if (Math.abs(localX) <= 60 && Math.abs(localY) <= 30) {
-            this.npcFirewallHp -= proj.damage;
-            proj.setActive(false).setVisible(false);
-            (proj.body as Phaser.Physics.Arcade.Body).stop();
-            if (this.npcFirewallHp <= 0) {
-              this.npcFirewallSprite.destroy();
-              this.npcFirewallSprite = null;
-              break;
-            }
-          }
-        }
-      }
-      // NPC overdrive beam (P2 oil Q ability) — rotates toward P2 aim
-      if (this.npcOverdriveActive) {
-        if (time >= this.npcOverdriveEnd) {
-          this.npcOverdriveActive = false;
-          this.npcNukeChanneling = false;
-          for (const drone of this.npcDrones) drone.sprite.destroy();
-          this.npcDrones = [];
-          if (this.npcOverdriveGraphics) { this.npcOverdriveGraphics.destroy(); this.npcOverdriveGraphics = null; }
-        } else {
-          const tgtAng = Math.atan2(this.p2LastAimY - this.npc.y, this.p2LastAimX - this.npc.x);
-          const diff = Phaser.Math.Angle.Wrap(tgtAng - this.npcOverdriveAngle);
-          const rotSpeed = (18 * Math.PI / 180) * delta / 1000;
-          this.npcOverdriveAngle += Math.sign(diff) * Math.min(Math.abs(diff), rotSpeed);
-          const beamEndX = this.npc.x + Math.cos(this.npcOverdriveAngle) * 1000;
-          const beamEndY = this.npc.y + Math.sin(this.npcOverdriveAngle) * 1000;
-          if (this.npcOverdriveGraphics) {
-            this.npcOverdriveGraphics.clear();
-            this.npcOverdriveGraphics.lineStyle(22, 0xff6600, 0.6);
-            this.npcOverdriveGraphics.lineBetween(this.npc.x, this.npc.y, beamEndX, beamEndY);
-          }
-          this.npcOverdriveTickAccum += delta;
-          if (this.npcOverdriveTickAccum >= 100) {
-            this.npcOverdriveTickAccum -= 100;
-            const d = this.pointToSegmentDist(this.player.x, this.player.y, this.npc.x, this.npc.y, beamEndX, beamEndY);
-            if (d <= 30) {
-              this.player.takeDamage(15);
-              this.spawnHitFlash(this.player.x, this.player.y, 0xff6600);
-            }
-          }
-        }
-      }
-    }
 
     // ── Shadow per-frame ─────────────────────────────────────────
     if (this.elementId === 'shadow' || this.npcElement.id === 'shadow') {
@@ -12702,7 +11448,7 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Dodge (Space) ────────────────────────────────────────────
-    if (Phaser.Input.Keyboard.JustDown(this.spaceKey) && !this.dodgeOnCooldown && !this.isDodging && !this.nukeChanneling && time >= this.soulHauntStunUntil && !this.playerSlotsHolding) {
+    if (Phaser.Input.Keyboard.JustDown(this.spaceKey) && !this.dodgeOnCooldown && !this.isDodging && !this.nukeChanneling && time >= this.soulHauntStunUntil && this.elementId !== 'quantum' && !(this.elementId === 'slime' && this.slimeKit.shouldSuppressDodge())) {
       this.dodgeOnCooldown = true;
       this.isDodging = true;
       this.player.isInvincible = true;
@@ -12803,7 +11549,7 @@ export class ArenaScene extends Phaser.Scene {
       chargedBeamReady: this.npcAirConsecutiveHits >= 3,
       earthShieldHp: this.npcEarthShieldHp,
       npcEarthRocksActive: this.npcEarthRocks.length > 0,
-      oilDroneCount: this.npcDrones.length,
+      oilDroneCount: this.oilKit.getNpcDroneCount(),
       shadowPlayerSnared: time < this.shadowPlayerSnaredUntil || time < this.shadowPlayerStunnedUntil,
       playerFrostStacks: this.playerFrostStacks,
       iceBlockActive: this.npcBlockUpActive,
@@ -12818,17 +11564,18 @@ export class ArenaScene extends Phaser.Scene {
       npcTimeHaltActive: this.npcTimeHaltActive,
       npcTimeTimelessReady: this.npcTimeTimelessCharge >= 10000,
       // Fate
-      fateSlotMachineCount: this.npcSlotMachines.length,
-      fateLuckyQueued: this.npcFateLuckyCharged,
-      fateUnluckyQueued: this.npcFateUnluckyCharged,
-      fateKarmaActive: this.npcKarmaCards.length > 0,
-      nearOwnSlotMachine: this.npcSlotMachines.some(sm => Phaser.Math.Distance.Between(this.npc.x, this.npc.y, sm.x, sm.y) <= 80 && !sm.isReeling),
+      fateSlotMachineCount: this.npcElement.id === 'fate' ? this.fateKit.getNpcSlotMachines().length : 0,
+      fateCoinCount: this.npcElement.id === 'fate' ? this.fateKit.getNpcCoins() : 0,
+      fateNpcLucky: this.npcElement.id === 'fate' ? this.fateKit.isNpcLucky() : false,
       npcMetalArsenal: this.npcMetalArsenal,
       npcDeathExecuteBlackAuraActive: this.npcDeathExecuteBlackAuraActive,
       deathWispCd: undefined,
       npcSilenceSlasherActive: this.npcSilenceSlasherActive,
       npcSilenceSlasherHp: this.npcSilenceSlasherHp,
       npcSilenceHookConnected: this.npcSilenceHookConnected,
+      echoAttachActive: this.npcElement.id === 'echo' ? this.echoKit.isNpcBatAttaching() : false,
+      quantumMechanicActive: this.npcElement.id === 'quantum' ? this.quantumElementKit.isNpcMechanicActive() : false,
+      quantumNhilegoActive: this.npcElement.id === 'quantum' ? this.quantumElementKit.isNpcNhilegoActive() : false,
     };
 
     const npcPreDashX = this.npc.x;
@@ -12872,11 +11619,6 @@ export class ArenaScene extends Phaser.Scene {
       this.npcThornDragActiveUntil = time + 2000;
       this.npcThornDragTickAccum = 0;
       this.npcThornDragAura = this.add.circle(this.npc.x, this.npc.y, 30, 0x44ff44, 0.3).setDepth(3);
-    }
-    // Fate NPC: resolve slot reel when charge completes
-    if (npcCastId === 'fate-slots-reel-charged') {
-      const nearSm = this.npcSlotMachines.find(sm => Phaser.Math.Distance.Between(this.npc.x, this.npc.y, sm.x, sm.y) <= 80);
-      if (nearSm) this.spinSlotMachine(nearSm, 'npc');
     }
     if (npcCastId === 'quick-shot') {
       this.npcQuickShotCharged = true;
@@ -13081,8 +11823,7 @@ export class ArenaScene extends Phaser.Scene {
         t.voidedTickAccum += delta;
         if (t.voidedTickAccum >= 1000) {
           t.voidedTickAccum -= 1000;
-          t.takeDamage(t.voidedDps);
-          this.spawnHitFlash(t.x, t.y, 0x6600cc);
+          t.takeDamage(t.voidedDps); this.spawnHitFlash(t.x, t.y, 0x6600cc);
         }
       }
 
@@ -13298,8 +12039,7 @@ export class ArenaScene extends Phaser.Scene {
           t.toxicTickAccum += delta;
           if (t.toxicTickAccum >= 1000) {
             t.toxicTickAccum -= 1000;
-            t.takeDamage(t.toxicDps);
-            this.spawnHitFlash(t.x, t.y, 0x88bb22);
+            t.takeDamage(t.toxicDps); this.spawnHitFlash(t.x, t.y, 0x88bb22);
           }
         } else {
           t.toxicTickAccum = 0;
@@ -13316,8 +12056,7 @@ export class ArenaScene extends Phaser.Scene {
         this.playerToxicTickAccum += delta;
         if (this.playerToxicTickAccum >= 1000) {
           this.playerToxicTickAccum -= 1000;
-          this.player.applySelfDamage(this.playerToxicDps);
-          this.spawnHitFlash(this.player.x, this.player.y, 0x88bb22);
+          this.player.applySelfDamage(this.playerToxicDps); this.spawnHitFlash(this.player.x, this.player.y, 0x88bb22);
         }
       } else {
         this.playerToxicTickAccum = 0;
@@ -15884,9 +14623,31 @@ export class ArenaScene extends Phaser.Scene {
       this.techKit.update(time, delta);
     }
 
-    // ── Magma per-frame ───────────────────────────────────────────
-    if (this.elementId === 'magma' || this.npcElement.id === 'magma') {
-      this.updateMagmaState(time, delta);
+    // ── Echo per-frame ────────────────────────────────────────────
+    if (this.elementId === 'echo' || this.npcElement.id === 'echo') {
+      this.echoKit.update(time, delta,
+        this.elementId === 'echo',
+        this.npcElement.id === 'echo');
+    }
+
+    // ── Quantum per-frame ─────────────────────────────────────────
+    if (this.elementId === 'quantum' || this.npcElement.id === 'quantum') {
+      this.quantumElementKit.update(time, delta);
+    }
+
+    // ── Oil per-frame ─────────────────────────────────────────────
+    if (this.elementId === 'oil' || this.npcElement.id === 'oil') {
+      this.oilKit.update(time, delta,
+        this.elementId === 'oil',
+        this.npcElement.id === 'oil',
+        mouseX, mouseY);
+    }
+
+    // ── Fate per-frame ───────────────────────────────────────────
+    if (this.elementId === 'fate' || this.npcElement.id === 'fate') {
+      this.fateKit.update(time, delta,
+        this.elementId === 'fate',
+        this.npcElement.id === 'fate');
     }
 
     // ── Wind Trap — player's trap constrains NPC ─────────────────
@@ -16049,6 +14810,26 @@ export class ArenaScene extends Phaser.Scene {
       }
     }
 
+
+    // ── Clamp all enemies to arena bounds ────────────────────────
+    {
+      const wb = this.physics.world.bounds;
+      const allEnemies: Fighter[] = [this.npc];
+      if (this.clone && this.clone.active) allEnemies.push(this.clone);
+      for (const re of this.raidEnemies) if (re.active) allEnemies.push(re);
+      for (const e of allEnemies) {
+        if (!e.active) continue;
+        let clamped = false;
+        if (e.x < wb.x) { e.x = wb.x; clamped = true; }
+        else if (e.x > wb.right) { e.x = wb.right; clamped = true; }
+        if (e.y < wb.y) { e.y = wb.y; clamped = true; }
+        else if (e.y > wb.bottom) { e.y = wb.bottom; clamped = true; }
+        if (clamped) {
+          const b = e.body as Phaser.Physics.Arcade.Body;
+          b.reset(e.x, e.y);
+        }
+      }
+    }
 
     // ── Update HUD cooldown bars ─────────────────────────────────
     for (const entry of this.abilityBars) {
@@ -16744,8 +15525,7 @@ export class ArenaScene extends Phaser.Scene {
           t.lavaRockBurnAccum += delta;
           if (t.lavaRockBurnAccum >= 500) {
             t.lavaRockBurnAccum -= 500;
-            t.takeDamage(2);
-            this.spawnHitFlash(t.x, t.y, 0xff4400);
+            t.takeDamage(2); this.spawnHitFlash(t.x, t.y, 0xff4400);
           }
         } else {
           t.lavaRockBurnAccum = 0;
@@ -21151,6 +19931,13 @@ export class ArenaScene extends Phaser.Scene {
       (proj.body as Phaser.Physics.Arcade.Body).stop();
       return;
     }
+    // Fate dice: all damage handled in onDiceHitEnemy — skip generic damage path
+    if (proj.texture.key === 'proj-fate-dice' && (proj as any).fateDiceOwner === 'player') {
+      this.fateKit.onDiceHitEnemy(proj, proj.x, proj.y, 'player');
+      proj.setActive(false).setVisible(false);
+      (proj.body as Phaser.Physics.Arcade.Body).stop();
+      return;
+    }
     // Apply attacker's crit context before damage
     this.npc.setIncomingCritContext(this.player.critChance, this.player.critMult);
     let _npcDmg = proj.damage;
@@ -21246,6 +20033,10 @@ export class ArenaScene extends Phaser.Scene {
       }
       const bloatExp = this.add.circle(this.npc.x, this.npc.y, 120, 0xdddd00, 0.3).setDepth(8);
       this.tweens.add({ targets: bloatExp, scaleX: 1.4, scaleY: 1.4, alpha: 0, duration: 350, onComplete: () => bloatExp.destroy() });
+    }
+    // Fate coin toss: give player +1 coin on hit
+    if (proj.texture.key === 'proj-fate-coin' && (proj as any).fateCoinOwner === 'player') {
+      this.fateKit.onCoinHitEnemy('player');
     }
     // Magic cluster bomb: spawn 6 shrapnel
     if (proj.texture.key === 'proj-magic-cluster-core') {
@@ -21460,748 +20251,19 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
-
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // MAGMA ELEMENT
-  // ══════════════════════════════════════════════════════════════════════════
-
-  private handleMagmaInput(_time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
-    if (this.nukeChanneling) return;
-    const ctx = this.buildPlayerContext(mouseX, mouseY);
-    const clickJustDown = pointer.isDown && !this.pointerWasDown;
-
-    // ── Lava Lord (snake): only directional controls ─────────────
-    if (this.magmaLavaLordActive) {
-      const wDown = Phaser.Input.Keyboard.JustDown(this.wKey);
-      const sDown = Phaser.Input.Keyboard.JustDown(this.sKey);
-      const aDown = Phaser.Input.Keyboard.JustDown(this.aKey);
-      const dDown = Phaser.Input.Keyboard.JustDown(this.dKey);
-      if (wDown && this.magmaLavaLordDir !== 2) this.magmaLavaLordDir = 0;
-      else if (dDown && this.magmaLavaLordDir !== 3) this.magmaLavaLordDir = 1;
-      else if (sDown && this.magmaLavaLordDir !== 0) this.magmaLavaLordDir = 2;
-      else if (aDown && this.magmaLavaLordDir !== 1) this.magmaLavaLordDir = 3;
-      return;
-    }
-
-    // ── Split active: click to attack, space spreads ─────────────
-    if (this.magmaSplitActive) {
-      if (clickJustDown) {
-        // Empower each variant's flail briefly
-        for (const v of this.magmaSplitVariants) {
-          if (v.alive) {
-            const flashR = this.add.circle(v.sprite.x, v.sprite.y, 16, 0xff4500, 0.5).setDepth(12);
-            this.tweens.add({ targets: flashR, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 300, onComplete: () => flashR.destroy() });
-          }
-        }
-      }
-      if (Phaser.Input.Keyboard.JustDown(this.spaceKey)) {
-        // Spread variants outward instead of dodge
-        for (const v of this.magmaSplitVariants) {
-          if (!v.alive) continue;
-          const angle = Math.atan2(v.offsetY, v.offsetX || 0.1);
-          v.offsetX += Math.cos(angle) * 40;
-          v.offsetY += Math.sin(angle) * 40;
-        }
-      }
-      if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
-        this.player.castAbility('magma-split', ctx);
-      }
-      return;
-    }
-
-    // ── Normal controls ──────────────────────────────────────────
-    if (clickJustDown) {
-      // Check if clicking near volcano to sacrifice HP
-      if (this.magmaVolcanoObj) {
-        const vDist = Phaser.Math.Distance.Between(mouseX, mouseY, this.magmaVolcanoObj.x, this.magmaVolcanoObj.y);
-        if (vDist <= 50) {
-          if (this.player.hp > 6) {
-            this.player.applySelfDamage(5);
-            this.magmaVolcanoObj.lavaLevel = Math.min(100, this.magmaVolcanoObj.lavaLevel + 10);
-            this.showFloatingText(this.magmaVolcanoObj.x, this.magmaVolcanoObj.y - 30, '+10 Lava!', '#ff8c00');
-          }
-          return;
-        }
-      }
-      // Click to empower mace
-      this.player.castAbility('magma-mace', ctx);
-    }
-    if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
-      this.player.castAbility('magma-boulder', this.buildPlayerContext(mouseX, mouseY));
-    }
-    if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
-      this.player.castAbility('magma-volcano', ctx);
-    }
-    if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
-      this.player.castAbility('magma-split', ctx);
-    }
-    if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
-      this.player.castAbility('magma-lava-lord', ctx);
-    }
+  public spawnPoisonPuddle(x: number, y: number, owner: 'player' | 'npc', dmgMult = 1): void {
+    const radius = Math.round(38 * dmgMult);
+    const spr = this.add.circle(x, y, radius, 0x44cc44, 0.5).setDepth(3);
+    this.tweens.add({ targets: spr, scaleX: 1.15, scaleY: 1.15, alpha: 0.3, duration: 600 });
+    this.puddles.push({ sprite: spr, expiresAt: this.time.now + 5000, x, y, radius, tickAccum: 0, owner });
   }
 
-  private doMagmaMaceEmpower(owner: 'player' | 'npc'): void {
-    const now = this.time.now;
-    if (owner === 'player') {
-      this.magmaMaceEmpowered = true;
-      this.magmaMaceEmpowerExpiry = now + 5000;
-      this.showFloatingText(this.player.x, this.player.y - 30, '🔥 Mace Empowered!', '#ff8c00');
-    } else {
-      this.npcMagmaMaceEmpowered = true;
-      this.npcMagmaMaceEmpowerExpiry = now + 5000;
-    }
+  public spawnSlowPuddle(x: number, y: number, owner: 'player' | 'npc'): void {
+    const radius = 36;
+    const spr = this.add.circle(x, y, radius, 0x8833cc, 0.45).setDepth(2);
+    this.tweens.add({ targets: spr, scaleX: 1.2, scaleY: 1.2, alpha: 0.2, duration: 700 });
+    this.puddles.push({ sprite: spr, expiresAt: this.time.now + 6000, x, y, radius, tickAccum: 0, owner });
   }
 
-  private doMagmaBoulder(tx: number, ty: number, owner: 'player' | 'npc'): void {
-    // Cap at 2 boulders per owner — destroy the oldest if already at 2
-    const ownerBoulders = this.magmaBoulders.filter(b => b.owner === owner);
-    if (ownerBoulders.length >= 2) {
-      const oldest = ownerBoulders[0];
-      oldest.sprite.destroy(); oldest.hpText.destroy();
-      this.magmaBoulders.splice(this.magmaBoulders.indexOf(oldest), 1);
-    }
-
-    const caster = owner === 'player' ? this.player : this.npc;
-    // Limit range: place boulder at most 200px from caster
-    const dx = tx - caster.x; const dy = ty - caster.y;
-    const len = Math.sqrt(dx * dx + dy * dy) || 1;
-    const maxRange = 200;
-    const bx = len > maxRange ? caster.x + (dx / len) * maxRange : tx;
-    const by = len > maxRange ? caster.y + (dy / len) * maxRange : ty;
-    const sprite = this.add.circle(bx, by, 20, 0x3d2200, 0.95).setDepth(9)
-      .setStrokeStyle(3, 0xff4500, 0.8);
-    const hpText = this.add.text(bx, by - 28, '50', {
-      fontSize: '12px', color: '#ff8c00', fontFamily: 'Arial',
-      stroke: '#000', strokeThickness: 2,
-    }).setOrigin(0.5).setDepth(10);
-    const boulder: MagmaBoulder = {
-      sprite, hpText, x: bx, y: by, hp: 50, maxHp: 50,
-      owner, lastHitAt: 0,
-    };
-    this.magmaBoulders.push(boulder);
-
-    // Deal impact damage if placed on top of an enemy
-    for (const target of (owner === 'player' ? this.enemies : [this.player])) {
-      if (!target.active || target.hp <= 0) continue;
-      if (Phaser.Math.Distance.Between(bx, by, target.x, target.y) <= 28) {
-        target.takeDamage(15);
-        this.spawnHitFlash(target.x, target.y, 0xff4500);
-        this.showFloatingText(target.x, target.y - 20, '-15', '#ff4500');
-      }
-    }
-
-    // Spawn puff effect
-    const puff = this.add.circle(bx, by, 8, 0xff6600, 0.7).setDepth(10);
-    this.tweens.add({ targets: puff, scaleX: 4, scaleY: 4, alpha: 0, duration: 400, onComplete: () => puff.destroy() });
-  }
-
-  private doMagmaVolcano(owner: 'player' | 'npc'): void {
-    if (this.magmaVolcanoObj) return; // Only one volcano at a time
-    const W = this.scale.width; const H = this.scale.height;
-    const vx = W / 2; const vy = H / 2;
-    const sprite = this.add.circle(vx, vy, 28, 0x5c2800, 0.95).setDepth(9)
-      .setStrokeStyle(4, 0xff4500, 0.9);
-    const hpText = this.add.text(vx, vy, '🌋', { fontSize: '22px' }).setOrigin(0.5).setDepth(10);
-    const barW = 60; const barH = 8;
-    const lavaBarBg = this.add.rectangle(vx, vy + 38, barW, barH, 0x330000, 0.8).setDepth(10);
-    const lavaBarFill = this.add.rectangle(vx - barW / 2, vy + 38, 0, barH, 0xff4500, 0.95)
-      .setOrigin(0, 0.5).setDepth(11);
-    const lavaLabel = this.add.text(vx, vy + 52, '0% Lava', {
-      fontSize: '11px', color: '#ff8c00', fontFamily: 'Arial', stroke: '#000', strokeThickness: 1,
-    }).setOrigin(0.5).setDepth(11);
-    this.magmaVolcanoObj = {
-      sprite, hpText, x: vx, y: vy, lavaLevel: 0,
-      lavaBarBg, lavaBarFill, lavaLabel, owner,
-      lastSpewAt: 0, lastSpewAt2: 0, erupted: false,
-    };
-    this.showFloatingText(vx, vy - 40, '🌋 Volcano Rises!', '#ff6600');
-  }
-
-  private doMagmaSplit(owner: 'player' | 'npc'): void {
-    const caster = owner === 'player' ? this.player : this.npc;
-    const isPlayer = owner === 'player';
-    if (isPlayer) {
-      if (this.magmaSplitActive) {
-        // Manual recombine
-        this.magmaRecombine('player');
-        return;
-      }
-      this.magmaSplitActive = true;
-      this.magmaSplitRecombineAt = this.time.now + 8000;
-    } else {
-      if (this.npcMagmaSplitActive) return;
-      this.npcMagmaSplitActive = true;
-      this.npcMagmaSplitRecombineAt = this.time.now + 8000;
-    }
-    const offsets = [[-30, -30], [30, -30], [-30, 30], [30, 30]];
-    const variants: MagmaSplitVariant[] = offsets.map(([ox, oy]) => {
-      const vx = caster.x + ox; const vy = caster.y + oy;
-      const sprite = this.add.circle(vx, vy, 14, 0xff4500, 0.85).setDepth(11)
-        .setStrokeStyle(2, 0xff8c00, 0.8);
-      const ballSprite = this.add.circle(vx + ox * 0.5, vy + oy * 0.5, 10, 0xff6600, 0.9).setDepth(12);
-      const chain: Phaser.GameObjects.Rectangle[] = [];
-      for (let i = 0; i < 2; i++) {
-        chain.push(this.add.rectangle(vx, vy, 4, 4, 0x441100).setDepth(11));
-      }
-      return {
-        sprite, flailBallSprite: ballSprite, flailChain: chain,
-        flailX: vx + ox * 0.5, flailY: vy + oy * 0.5,
-        flailVX: 0, flailVY: 0, hp: 35, alive: true,
-        offsetX: ox, offsetY: oy, lastContactAt: 0,
-      };
-    });
-    if (isPlayer) {
-      this.magmaSplitVariants = variants;
-      // Hide main player sprite during split
-      this.player.setAlpha(0);
-      (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-    } else {
-      this.npcMagmaSplitVariants = variants;
-      this.npc.setAlpha(0);
-    }
-  }
-
-  private magmaRecombine(owner: 'player' | 'npc'): void {
-    const isPlayer = owner === 'player';
-    const variants = isPlayer ? this.magmaSplitVariants : this.npcMagmaSplitVariants;
-    const caster = isPlayer ? this.player : this.npc;
-    const target = isPlayer ? this.npc : this.player;
-
-    // Count dead variants; deal 20 dmg to enemy per dead variant
-    let deadCount = 0;
-    for (const v of variants) {
-      if (!v.alive) deadCount++;
-      v.sprite.destroy(); v.flailBallSprite?.destroy();
-      for (const c of v.flailChain) c.destroy();
-    }
-    if (deadCount > 0) {
-      const totalDmg = deadCount * 20;
-      target.takeDamage(totalDmg);
-      this.spawnHitFlash(target.x, target.y, 0xff4500);
-      this.spawnDamageNumber(target.x, target.y - 30, totalDmg);
-      this.showFloatingText(target.x, target.y - 50, `💀×${deadCount} Recombine!`, '#ff4500');
-    }
-    // Caster HP is unchanged — player keeps whatever HP they had going in
-    // Show caster
-    caster.setAlpha(1);
-    if (isPlayer) {
-      this.magmaSplitActive = false;
-      this.magmaSplitVariants = [];
-    } else {
-      this.npcMagmaSplitActive = false;
-      this.npcMagmaSplitVariants = [];
-    }
-  }
-
-  private doMagmaLavaLord(owner: 'player' | 'npc'): void {
-    const isPlayer = owner === 'player';
-    const caster = isPlayer ? this.player : this.npc;
-    const W = this.scale.width; const H = this.scale.height;
-    // Spawn lava cores in arena
-    if (isPlayer) {
-      this.magmaLavaLordActive = true;
-      this.magmaLavaLordExpiry = this.time.now + 12000;
-      this.magmaLavaLordSpeed = 200;
-      this.magmaLavaLordDir = 1; // start moving right
-      this.magmaLavaLordMoveAccum = 0;
-      this.magmaLavaLordTrailAccum = 0;
-      this.magmaLavaLordLastContactAt = 0;
-    } else {
-      this.npcMagmaLavaLordActive = true;
-      this.npcMagmaLavaLordExpiry = this.time.now + 12000;
-      this.npcMagmaLavaLordSpeed = 200;
-      this.npcMagmaLavaLordDir = 3; // start moving left
-      this.npcMagmaLavaLordMoveAccum = 0;
-      this.npcMagmaLavaLordTrailAccum = 0;
-      this.npcMagmaLavaLordLastContactAt = 0;
-    }
-    // Create head segment
-    const headSprite = this.add.circle(caster.x, caster.y, 16, 0xff4500, 0.95).setDepth(14)
-      .setStrokeStyle(3, 0xffaa00, 0.9);
-    const segments: MagmaSnakeSegment[] = [{ x: caster.x, y: caster.y, sprite: headSprite }];
-    if (isPlayer) {
-      this.magmaLavaLordSegments = segments;
-      caster.setAlpha(0);
-    } else {
-      this.npcMagmaLavaLordSegments = segments;
-      caster.setAlpha(0);
-    }
-    // Spawn 3 lava cores for player (shared)
-    if (this.magmaLavaLordCores.length === 0) {
-      const pad = 60;
-      for (let i = 0; i < 3; i++) {
-        const cx = pad + Math.random() * (W - 2 * pad);
-        const cy = pad + Math.random() * (H - 2 * pad);
-        const coreSprite = this.add.sprite(cx, cy, 'proj-magma-lava-core').setDepth(13);
-        this.tweens.add({ targets: coreSprite, scaleX: 1.3, scaleY: 1.3, yoyo: true, repeat: -1, duration: 600 });
-        this.magmaLavaLordCores.push({ sprite: coreSprite, x: cx, y: cy });
-      }
-    }
-    this.showFloatingText(caster.x, caster.y - 40, '🐍 Lava Lord!', '#ff6600');
-  }
-
-  private magmaEndLavaLord(owner: 'player' | 'npc'): void {
-    const isPlayer = owner === 'player';
-    const segments = isPlayer ? this.magmaLavaLordSegments : this.npcMagmaLavaLordSegments;
-    const caster = isPlayer ? this.player : this.npc;
-    if (segments.length > 0) {
-      const head = segments[0];
-      caster.setPosition(head.x, head.y);
-    }
-    for (const s of segments) s.sprite.destroy();
-    if (isPlayer) {
-      this.magmaLavaLordActive = false; this.magmaLavaLordSegments = [];
-    } else {
-      this.npcMagmaLavaLordActive = false; this.npcMagmaLavaLordSegments = [];
-    }
-    caster.setAlpha(1);
-    // Destroy remaining cores
-    for (const c of this.magmaLavaLordCores) c.sprite.destroy();
-    this.magmaLavaLordCores = [];
-  }
-
-  private spawnMagmaLavaBalls(x: number, y: number, count: number, owner: 'player' | 'npc'): void {
-    for (let i = 0; i < count; i++) {
-      const angle = (i / count) * Math.PI * 2;
-      const speed = 260;
-      const proj = this.projectiles.create(x, y, 'proj-magma-lava-ball') as Phaser.Physics.Arcade.Sprite;
-      proj.setDepth(12);
-      (proj as unknown as { isFromPlayer: boolean }).isFromPlayer = (owner === 'player');
-      (proj as unknown as { damage: number }).damage = 8;
-      (proj.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
-      this.time.delayedCall(1800, () => { if (proj.active) proj.destroy(); });
-    }
-  }
-
-  private spawnMagmaLavaPuddle(x: number, y: number, owner: 'player' | 'npc'): void {
-    const spr = this.add.circle(x, y, 40, 0xff4500, 0.5).setDepth(3);
-    this.tweens.add({ targets: spr, scaleX: 1.2, scaleY: 1.2, alpha: 0.3, duration: 600 });
-    this.puddles.push({ sprite: spr, expiresAt: this.time.now + 6000, x, y, radius: 40, tickAccum: 0, owner });
-  }
-
-  private updateMagmaFlail(owner: 'player' | 'npc', _delta: number): void {
-    const ARM_LENGTH = 55;
-
-    const caster = owner === 'player' ? this.player : this.npc;
-    const isPlayer = owner === 'player';
-    let bx = isPlayer ? this.magmaFlailX : this.npcMagmaFlailX;
-    let by = isPlayer ? this.magmaFlailY : this.npcMagmaFlailY;
-    let vx = isPlayer ? this.magmaFlailVX : this.npcMagmaFlailVX;
-    let vy = isPlayer ? this.magmaFlailVY : this.npcMagmaFlailVY;
-
-    // Initialize flail hanging below caster
-    if (bx === 0 && by === 0) { bx = caster.x; by = caster.y + ARM_LENGTH; }
-
-    // Pull-only rope spring: apply restoring force only when stretched beyond arm length
-    const dx = bx - caster.x; const dy = by - caster.y;
-    const dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
-    if (dist > ARM_LENGTH) {
-      const stretch = dist - ARM_LENGTH;
-      vx -= (dx / dist) * stretch * 0.06;
-      vy -= (dy / dist) * stretch * 0.06;
-    }
-
-    // Damping
-    vx *= 0.88; vy *= 0.88;
-
-    // Move ball
-    bx += vx; by += vy;
-
-    // Update ball sprite
-    const empowered = isPlayer ? this.magmaMaceEmpowered : this.npcMagmaMaceEmpowered;
-    const shrinking = isPlayer ? this.time.now < this.magmaMaceShrinkExpiry : this.time.now < this.npcMagmaMaceShrinkExpiry;
-    const ballRadius = shrinking ? 7 : (empowered ? 14 : 10);
-    let ballSprite = isPlayer ? this.magmaFlailBallSprite : this.npcMagmaFlailBallSprite;
-    if (!ballSprite) {
-      ballSprite = this.add.circle(bx, by, ballRadius, 0xff4500, 0.9).setDepth(12)
-        .setStrokeStyle(2, 0xff8c00, 0.8);
-      if (isPlayer) this.magmaFlailBallSprite = ballSprite;
-      else this.npcMagmaFlailBallSprite = ballSprite;
-    }
-    ballSprite.setPosition(bx, by);
-    // Update radius if empower/shrink state changed
-    ballSprite.setRadius(ballRadius);
-
-    // Update chain links
-    const chain = isPlayer ? this.magmaFlailChain : this.npcMagmaFlailChain;
-    const numLinks = 4;
-    if (chain.length < numLinks) {
-      while (chain.length < numLinks) {
-        chain.push(this.add.rectangle(bx, by, 5, 5, 0x441100).setDepth(11));
-      }
-    }
-    for (let i = 0; i < numLinks; i++) {
-      const t = (i + 1) / (numLinks + 1);
-      chain[i].setPosition(caster.x + (bx - caster.x) * t, caster.y + (by - caster.y) * t);
-    }
-
-    // Contact damage on opponent
-    const target = isPlayer ? this.npc : this.player;
-    const lastContact = isPlayer ? this.magmaFlailLastContactAt : this.npcMagmaFlailLastContactAt;
-    const hitRadius = ballRadius + 8;
-    const contactDist = Phaser.Math.Distance.Between(bx, by, target.x, target.y);
-    if (contactDist <= hitRadius && this.time.now - lastContact > 400) {
-      const dmg = empowered ? 10 : 8;
-      target.takeDamage(dmg);
-      this.spawnHitFlash(target.x, target.y, 0xff4500);
-      if (isPlayer) this.magmaFlailLastContactAt = this.time.now;
-      else this.npcMagmaFlailLastContactAt = this.time.now;
-    }
-
-    // Flail hits boulders
-    for (const b of this.magmaBoulders) {
-      if (b.owner !== owner) continue; // only own flail damages own boulders
-      const bDist = Phaser.Math.Distance.Between(bx, by, b.x, b.y);
-      if (bDist <= 22 + ballRadius && this.time.now - b.lastHitAt > 300) {
-        b.hp -= empowered ? 12 : 8;
-        b.lastHitAt = this.time.now;
-        this.spawnHitFlash(b.x, b.y, 0xff6600);
-      }
-    }
-
-    // Flail hits volcano (fills lava bar)
-    if (this.magmaVolcanoObj && !this.magmaVolcanoObj.erupted) {
-      const vDist = Phaser.Math.Distance.Between(bx, by, this.magmaVolcanoObj.x, this.magmaVolcanoObj.y);
-      if (vDist <= 30 + ballRadius) {
-        const lavaGain = empowered ? 12 : 7;
-        this.magmaVolcanoObj.lavaLevel = Math.min(100, this.magmaVolcanoObj.lavaLevel + lavaGain * 0.1);
-      }
-    }
-
-    // Store back
-    if (isPlayer) {
-      this.magmaFlailX = bx; this.magmaFlailY = by;
-      this.magmaFlailVX = vx; this.magmaFlailVY = vy;
-    } else {
-      this.npcMagmaFlailX = bx; this.npcMagmaFlailY = by;
-      this.npcMagmaFlailVX = vx; this.npcMagmaFlailVY = vy;
-    }
-  }
-
-  private updateMagmaState(time: number, delta: number): void {
-    const isPlayerMagma = this.elementId === 'magma';
-    const isNpcMagma = this.npcElement.id === 'magma';
-
-    // ── Flail physics ─────────────────────────────────────────────
-    if (isPlayerMagma && !this.magmaSplitActive && !this.magmaLavaLordActive) {
-      this.updateMagmaFlail('player', delta);
-    }
-    if (isNpcMagma && !this.npcMagmaSplitActive && !this.npcMagmaLavaLordActive) {
-      this.updateMagmaFlail('npc', delta);
-    }
-
-    // ── Mace empower expiry → explosion ───────────────────────────
-    if (isPlayerMagma && this.magmaMaceEmpowered && time > this.magmaMaceEmpowerExpiry) {
-      this.magmaMaceEmpowered = false;
-      this.magmaMaceShrinkExpiry = time + 3000;
-      // Explode: 8 lava balls + puddle at flail ball pos
-      this.spawnMagmaLavaBalls(this.magmaFlailX, this.magmaFlailY, 8, 'player');
-      this.spawnMagmaLavaPuddle(this.magmaFlailX, this.magmaFlailY, 'player');
-      this.showFloatingText(this.player.x, this.player.y - 30, '💥 Mace Exploded!', '#ff4500');
-      // Shrink player
-      const prevScale = this.player.scale;
-      this.player.setScale(prevScale * 0.8);
-      this.time.delayedCall(3000, () => { this.player.setScale(prevScale); });
-    }
-    if (isNpcMagma && this.npcMagmaMaceEmpowered && time > this.npcMagmaMaceEmpowerExpiry) {
-      this.npcMagmaMaceEmpowered = false;
-      this.npcMagmaMaceShrinkExpiry = time + 3000;
-      this.spawnMagmaLavaBalls(this.npcMagmaFlailX, this.npcMagmaFlailY, 8, 'npc');
-      this.spawnMagmaLavaPuddle(this.npcMagmaFlailX, this.npcMagmaFlailY, 'npc');
-      const prevScale2 = this.npc.scale;
-      this.npc.setScale(prevScale2 * 0.8);
-      this.time.delayedCall(3000, () => { this.npc.setScale(prevScale2); });
-    }
-
-    // ── Boulder update ────────────────────────────────────────────
-    for (let i = this.magmaBoulders.length - 1; i >= 0; i--) {
-      const b = this.magmaBoulders[i];
-      if (b.hp <= 0) {
-        if (b.hp <= 0) {
-          // Break: 12 molten projectiles radially
-          this.spawnMagmaLavaBalls(b.x, b.y, 12, b.owner);
-        }
-        b.sprite.destroy(); b.hpText.destroy();
-        this.magmaBoulders.splice(i, 1);
-        continue;
-      }
-      b.hpText.setText(String(b.hp));
-      void isPlayerMagma;
-    }
-
-    // ── Volcano update ────────────────────────────────────────────
-    if (this.magmaVolcanoObj && !this.magmaVolcanoObj.erupted) {
-      const v = this.magmaVolcanoObj;
-      const { width: barW } = v.lavaBarBg;
-      // Update lava bar fill
-      const fillW = (v.lavaLevel / 100) * barW;
-      v.lavaBarFill.setSize(Math.max(0, fillW), v.lavaBarBg.height);
-      v.lavaBarFill.setPosition(v.x - barW / 2, v.y + 38);
-      v.lavaLabel.setText(`${Math.floor(v.lavaLevel)}% Lava`);
-
-      // Tier 1 (33%): spew 4 lava balls every 2s
-      if (v.lavaLevel >= 33 && time - v.lastSpewAt > 2000) {
-        this.spawnMagmaLavaBalls(v.x, v.y, 4, v.owner);
-        v.lastSpewAt = time;
-      }
-      // Tier 2 (66%): spew 8 lava balls + puddle every 3s
-      if (v.lavaLevel >= 66 && time - v.lastSpewAt2 > 3000) {
-        this.spawnMagmaLavaBalls(v.x, v.y, 8, v.owner);
-        this.spawnMagmaLavaPuddle(v.x, v.y, v.owner);
-        v.lastSpewAt2 = time;
-      }
-      // Tier 3 (100%): massive eruption
-      if (v.lavaLevel >= 100) {
-        v.erupted = true;
-        this.dealAoeDamageFromOwner(v.x, v.y, 200, 40, v.owner);
-        this.spawnMagmaLavaBalls(v.x, v.y, 16, v.owner);
-        this.spawnMagmaLavaPuddle(v.x, v.y, v.owner);
-        const eruptFlash = this.add.circle(v.x, v.y, 20, 0xff8c00, 0.95).setDepth(14);
-        this.tweens.add({ targets: eruptFlash, scaleX: 12, scaleY: 12, alpha: 0, duration: 800, onComplete: () => eruptFlash.destroy() });
-        this.showFloatingText(v.x, v.y - 60, '🌋 ERUPTION!', '#ff4500');
-        // Destroy volcano after flash
-        this.time.delayedCall(500, () => {
-          v.sprite.destroy(); v.hpText.destroy();
-          v.lavaBarBg.destroy(); v.lavaBarFill.destroy(); v.lavaLabel.destroy();
-          this.magmaVolcanoObj = null;
-        });
-      }
-
-    }
-
-    // ── Split update ──────────────────────────────────────────────
-    if (isPlayerMagma && this.magmaSplitActive) {
-      // Auto-recombine
-      if (time > this.magmaSplitRecombineAt) {
-        this.magmaRecombine('player');
-      } else {
-        const aliveVariants = this.magmaSplitVariants.filter(v => v.alive);
-        if (aliveVariants.length === 0) {
-          // All dead: player dies
-          this.player.hp = 0;
-          this.magmaRecombine('player');
-        } else {
-          // Move variants with WASD (relative to player's origin)
-          const body = this.player.body as Phaser.Physics.Arcade.Body;
-          const spd = this.player.speed;
-          const wDown = this.wKey.isDown; const sDown = this.sKey.isDown;
-          const aDown = this.aKey.isDown; const dDown = this.dKey.isDown;
-          let mx = 0; let my = 0;
-          if (wDown) my -= 1; if (sDown) my += 1;
-          if (aDown) mx -= 1; if (dDown) mx += 1;
-          const mlen = Math.sqrt(mx * mx + my * my) || 1;
-          if (mx !== 0 || my !== 0) {
-            mx /= mlen; my /= mlen;
-            // Move origin position (player body hidden)
-            this.player.setPosition(
-              this.player.x + mx * spd * delta / 1000,
-              this.player.y + my * spd * delta / 1000,
-            );
-          }
-          body.setVelocity(0, 0);
-
-          // Update each variant
-          for (const v of this.magmaSplitVariants) {
-            if (!v.alive) { v.sprite.setAlpha(0.2); continue; }
-            const vx2 = this.player.x + v.offsetX;
-            const vy2 = this.player.y + v.offsetY;
-            v.sprite.setPosition(vx2, vy2);
-
-            // Mini rope spring physics (pull-only, frame-based)
-            const MINI_ARM = 30;
-            if (v.flailX === 0 && v.flailY === 0) { v.flailX = vx2; v.flailY = vy2 + MINI_ARM; }
-            const mfdx = v.flailX - vx2; const mfdy = v.flailY - vy2;
-            const mfdist = Math.sqrt(mfdx * mfdx + mfdy * mfdy) || 0.01;
-            if (mfdist > MINI_ARM) {
-              const mStretch = mfdist - MINI_ARM;
-              v.flailVX -= (mfdx / mfdist) * mStretch * 0.06;
-              v.flailVY -= (mfdy / mfdist) * mStretch * 0.06;
-            }
-            v.flailVX *= 0.88; v.flailVY *= 0.88;
-            v.flailX += v.flailVX; v.flailY += v.flailVY;
-            if (v.flailBallSprite) v.flailBallSprite.setPosition(v.flailX, v.flailY);
-            for (let ci = 0; ci < v.flailChain.length; ci++) {
-              const t2 = (ci + 1) / (v.flailChain.length + 1);
-              v.flailChain[ci].setPosition(vx2 + (v.flailX - vx2) * t2, vy2 + (v.flailY - vy2) * t2);
-            }
-
-            // Contact damage from each variant's flail
-            const distToNpc = Phaser.Math.Distance.Between(v.flailX, v.flailY, this.npc.x, this.npc.y);
-            if (distToNpc <= 14 && time - v.lastContactAt > 500) {
-              this.npc.takeDamage(12);
-              this.spawnHitFlash(this.npc.x, this.npc.y, 0xff4500);
-              v.lastContactAt = time;
-            }
-
-            // Take damage from NPC projectiles
-            const projs3 = this.projectiles.getChildren() as Phaser.Physics.Arcade.Sprite[];
-            for (const proj of projs3) {
-              if (!proj.active || (proj as unknown as { isFromPlayer: boolean }).isFromPlayer) continue;
-              const pDistV = Phaser.Math.Distance.Between(proj.x, proj.y, vx2, vy2);
-              if (pDistV <= 16) {
-                const dmgV = (proj as unknown as { damage: number }).damage || 5;
-                v.hp -= dmgV;
-                proj.setActive(false).setVisible(false);
-                if (v.hp <= 0) {
-                  v.alive = false;
-                  v.sprite.setAlpha(0.2);
-                }
-                break;
-              }
-            }
-          }
-        }
-      }
-    }
-
-    if (isNpcMagma && this.npcMagmaSplitActive) {
-      if (time > this.npcMagmaSplitRecombineAt || !this.npcMagmaSplitVariants.some(v => v.alive)) {
-        this.magmaRecombine('npc');
-      } else {
-        // Move NPC variants toward player
-        for (const v of this.npcMagmaSplitVariants) {
-          if (!v.alive) { v.sprite.setAlpha(0.2); continue; }
-          const vx3 = this.npc.x + v.offsetX;
-          const vy3 = this.npc.y + v.offsetY;
-          v.sprite.setPosition(vx3, vy3);
-          // NPC mini rope spring physics (pull-only, frame-based)
-          const MINI_ARM2 = 30;
-          if (v.flailX === 0 && v.flailY === 0) { v.flailX = vx3; v.flailY = vy3 + MINI_ARM2; }
-          const mfdx2 = v.flailX - vx3; const mfdy2 = v.flailY - vy3;
-          const mfdist2 = Math.sqrt(mfdx2 * mfdx2 + mfdy2 * mfdy2) || 0.01;
-          if (mfdist2 > MINI_ARM2) {
-            const mStretch2 = mfdist2 - MINI_ARM2;
-            v.flailVX -= (mfdx2 / mfdist2) * mStretch2 * 0.06;
-            v.flailVY -= (mfdy2 / mfdist2) * mStretch2 * 0.06;
-          }
-          v.flailVX *= 0.88; v.flailVY *= 0.88;
-          v.flailX += v.flailVX; v.flailY += v.flailVY;
-          if (v.flailBallSprite) v.flailBallSprite.setPosition(v.flailX, v.flailY);
-          for (let ci = 0; ci < v.flailChain.length; ci++) {
-            const t3 = (ci + 1) / (v.flailChain.length + 1);
-            v.flailChain[ci].setPosition(vx3 + (v.flailX - vx3) * t3, vy3 + (v.flailY - vy3) * t3);
-          }
-          // Contact damage from NPC variant flails on player
-          const distToPlayer = Phaser.Math.Distance.Between(v.flailX, v.flailY, this.player.x, this.player.y);
-          if (distToPlayer <= 14 && time - v.lastContactAt > 500) {
-            this.player.takeDamage(12);
-            this.spawnHitFlash(this.player.x, this.player.y, 0xff4500);
-            v.lastContactAt = time;
-          }
-        }
-      }
-    }
-
-    // ── Lava Lord (snake) update ──────────────────────────────────
-    if (isPlayerMagma && this.magmaLavaLordActive) {
-      if (time > this.magmaLavaLordExpiry) {
-        this.magmaEndLavaLord('player');
-      } else if (this.magmaLavaLordSegments.length > 0) {
-        const STEP_SIZE = 16;
-        this.magmaLavaLordMoveAccum += this.magmaLavaLordSpeed * delta / 1000;
-        while (this.magmaLavaLordMoveAccum >= STEP_SIZE) {
-          this.magmaLavaLordMoveAccum -= STEP_SIZE;
-          const head = this.magmaLavaLordSegments[0];
-          let nx = head.x; let ny = head.y;
-          if (this.magmaLavaLordDir === 0) ny -= STEP_SIZE;
-          else if (this.magmaLavaLordDir === 1) nx += STEP_SIZE;
-          else if (this.magmaLavaLordDir === 2) ny += STEP_SIZE;
-          else nx -= STEP_SIZE;
-          // Wrap at arena bounds
-          const pad = 40;
-          nx = Math.max(pad, Math.min(this.scale.width - pad, nx));
-          ny = Math.max(pad, Math.min(this.scale.height - pad, ny));
-          // Shift all segments
-          for (let i = this.magmaLavaLordSegments.length - 1; i > 0; i--) {
-            this.magmaLavaLordSegments[i].x = this.magmaLavaLordSegments[i - 1].x;
-            this.magmaLavaLordSegments[i].y = this.magmaLavaLordSegments[i - 1].y;
-            this.magmaLavaLordSegments[i].sprite.setPosition(this.magmaLavaLordSegments[i].x, this.magmaLavaLordSegments[i].y);
-          }
-          head.x = nx; head.y = ny;
-          head.sprite.setPosition(nx, ny);
-
-          // Lava trail
-          this.magmaLavaLordTrailAccum += STEP_SIZE;
-          if (this.magmaLavaLordTrailAccum >= 60) {
-            this.magmaLavaLordTrailAccum -= 60;
-            this.spawnMagmaLavaPuddle(nx, ny, 'player');
-          }
-
-          // Contact damage with NPC
-          const contactD = Phaser.Math.Distance.Between(nx, ny, this.npc.x, this.npc.y);
-          if (contactD <= 20 && time - this.magmaLavaLordLastContactAt > 400) {
-            this.npc.takeDamage(15);
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0xff4500);
-            this.magmaLavaLordLastContactAt = time;
-          }
-        }
-
-        // Core pickup
-        for (let ci = this.magmaLavaLordCores.length - 1; ci >= 0; ci--) {
-          const core = this.magmaLavaLordCores[ci];
-          const headPos = this.magmaLavaLordSegments[0];
-          const coreDist = Phaser.Math.Distance.Between(headPos.x, headPos.y, core.x, core.y);
-          if (coreDist <= 20) {
-            core.sprite.destroy();
-            this.magmaLavaLordCores.splice(ci, 1);
-            // Add body segment
-            const lastSeg = this.magmaLavaLordSegments[this.magmaLavaLordSegments.length - 1];
-            const segSprite = this.add.circle(lastSeg.x, lastSeg.y, 10, 0xff6600, 0.75).setDepth(12);
-            this.magmaLavaLordSegments.push({ x: lastSeg.x, y: lastSeg.y, sprite: segSprite });
-            this.magmaLavaLordSpeed += 20;
-            this.showFloatingText(headPos.x, headPos.y - 20, '+Speed!', '#ffaa00');
-          }
-        }
-      }
-    }
-
-    if (isNpcMagma && this.npcMagmaLavaLordActive) {
-      if (time > this.npcMagmaLavaLordExpiry) {
-        this.magmaEndLavaLord('npc');
-      } else if (this.npcMagmaLavaLordSegments.length > 0) {
-        const STEP_SIZE2 = 16;
-        this.npcMagmaLavaLordMoveAccum += this.npcMagmaLavaLordSpeed * delta / 1000;
-        while (this.npcMagmaLavaLordMoveAccum >= STEP_SIZE2) {
-          this.npcMagmaLavaLordMoveAccum -= STEP_SIZE2;
-          const head2 = this.npcMagmaLavaLordSegments[0];
-          let nx2 = head2.x; let ny2 = head2.y;
-          // NPC: steer toward player if within 150px, otherwise random turns
-          const angleTo = Math.atan2(this.player.y - head2.y, this.player.x - head2.x);
-          const angleDeg = angleTo * 180 / Math.PI;
-          if (Math.random() < 0.08) {
-            if (angleDeg >= -45 && angleDeg < 45 && this.npcMagmaLavaLordDir !== 3) this.npcMagmaLavaLordDir = 1;
-            else if (angleDeg >= 45 && angleDeg < 135 && this.npcMagmaLavaLordDir !== 0) this.npcMagmaLavaLordDir = 2;
-            else if (Math.abs(angleDeg) >= 135 && this.npcMagmaLavaLordDir !== 1) this.npcMagmaLavaLordDir = 3;
-            else if (this.npcMagmaLavaLordDir !== 2) this.npcMagmaLavaLordDir = 0;
-          }
-          if (this.npcMagmaLavaLordDir === 0) ny2 -= STEP_SIZE2;
-          else if (this.npcMagmaLavaLordDir === 1) nx2 += STEP_SIZE2;
-          else if (this.npcMagmaLavaLordDir === 2) ny2 += STEP_SIZE2;
-          else nx2 -= STEP_SIZE2;
-          const pad2 = 40;
-          nx2 = Math.max(pad2, Math.min(this.scale.width - pad2, nx2));
-          ny2 = Math.max(pad2, Math.min(this.scale.height - pad2, ny2));
-          for (let i = this.npcMagmaLavaLordSegments.length - 1; i > 0; i--) {
-            this.npcMagmaLavaLordSegments[i].x = this.npcMagmaLavaLordSegments[i - 1].x;
-            this.npcMagmaLavaLordSegments[i].y = this.npcMagmaLavaLordSegments[i - 1].y;
-            this.npcMagmaLavaLordSegments[i].sprite.setPosition(this.npcMagmaLavaLordSegments[i].x, this.npcMagmaLavaLordSegments[i].y);
-          }
-          head2.x = nx2; head2.y = ny2; head2.sprite.setPosition(nx2, ny2);
-          this.npcMagmaLavaLordTrailAccum += STEP_SIZE2;
-          if (this.npcMagmaLavaLordTrailAccum >= 60) {
-            this.npcMagmaLavaLordTrailAccum -= 60;
-            this.spawnMagmaLavaPuddle(nx2, ny2, 'npc');
-          }
-          const contactD2 = Phaser.Math.Distance.Between(nx2, ny2, this.player.x, this.player.y);
-          if (contactD2 <= 20 && time - this.npcMagmaLavaLordLastContactAt > 400) {
-            this.player.takeDamage(15);
-            this.spawnHitFlash(this.player.x, this.player.y, 0xff4500);
-            this.npcMagmaLavaLordLastContactAt = time;
-          }
-        }
-      }
-    }
-  }
 
 }

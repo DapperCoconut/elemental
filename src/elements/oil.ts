@@ -4,7 +4,7 @@ import { Ability, CastContext } from './Ability';
 const droneCommand: Ability = {
   id: 'drone-command',
   name: 'Drone Command',
-  description: 'All drones fire a laser at cursor (3 dmg each). Each shot uses 1 of a drone\'s 3 charges — drone destroyed at 0.',
+  description: 'Hold to spawn drones (first at 0.5s, then 1/s, max 6). Tap to command all to fire lasers (3 dmg each). Click while a barrel is rolling → barrel explodes immediately + ignites puddles.',
   displayKey: 'Click',
   cooldown: 1500,
   cast(ctx: CastContext) {
@@ -12,10 +12,10 @@ const droneCommand: Ability = {
   },
 };
 
-const droneSummon: Ability = {
-  id: 'drone-summon',
-  name: 'Drone Summon',
-  description: 'Summon an attack drone (3 shots, max 6). Drones orbit you and do not block projectiles.',
+const barrelRoll: Ability = {
+  id: 'barrel-roll',
+  name: 'On a Roll',
+  description: 'Launch a barrel that rolls and drops oil puddles every 80px. Explodes on enemy contact or when shot by an enemy projectile (20 dmg, 2 extra puddles). Explodes on wall contact.',
   displayKey: 'E',
   cooldown: 3000,
   cast(ctx: CastContext) {
@@ -26,7 +26,7 @@ const droneSummon: Ability = {
 const droneDestroy: Ability = {
   id: 'drone-destroy',
   name: 'Drone Destroy',
-  description: 'Launch a drone to cursor — explodes on arrival (5 dmg per shot remaining, max 15)',
+  description: 'Launch a drone to cursor — explodes on arrival (5 dmg per shot remaining, max 15).',
   displayKey: 'R',
   cooldown: 3000,
   cast(ctx: CastContext) {
@@ -34,10 +34,10 @@ const droneDestroy: Ability = {
   },
 };
 
-const firewallAbility: Ability = {
-  id: 'firewall',
-  name: 'Firewall',
-  description: 'Place a wall (100 HP) — blocks enemy shots. Long side always faces you.',
+const shieldGen: Ability = {
+  id: 'shield-gen',
+  name: 'Shield Generator',
+  description: 'Place a hexagonal generator at cursor. While charged (5s): destroys nearby enemy projectiles with a laser (8 dmg AoE at impact). Recharge by commanding drones near it.',
   displayKey: 'F',
   cooldown: 15000,
   cast(ctx: CastContext) {
@@ -45,10 +45,10 @@ const firewallAbility: Ability = {
   },
 };
 
-const overdrive: Ability = {
-  id: 'overdrive',
-  name: 'Overdrive',
-  description: 'Giant rotating beam (0.5s per drone). Tracks cursor slowly. Destroys all drones when it ends.',
+const trainMorph: Ability = {
+  id: 'train-morph',
+  name: 'Train Morph',
+  description: 'Become a snake train (1.5s × drone count). WASD locks to 4 directions. Head: 8 dmg (0.5s cd). Every segment: 3 dmg (each with own 0.5s cd). Drops oil puddles every 2s. Collect coal for +5% speed and +dmg per piece. Cooldown begins when train ends.',
   displayKey: 'Q',
   cooldown: 30000,
   cast(ctx: CastContext) {
@@ -61,5 +61,5 @@ export const oilElement: Element = {
   name: 'Oil',
   color: 0x664400,
   emoji: '🛢️',
-  abilities: [droneCommand, droneSummon, droneDestroy, firewallAbility, overdrive],
+  abilities: [droneCommand, barrelRoll, droneDestroy, shieldGen, trainMorph],
 };

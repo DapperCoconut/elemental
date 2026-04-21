@@ -106,11 +106,11 @@ export interface CastContext {
   creationBlock: (x: number, y: number, w: number, h: number) => void;
   creationMaze: () => void;
   // Fate (alt-life)
+  fateCoinToss: (tx: number, ty: number) => void;
   fateSpawnSlotMachine: (x: number, y: number) => void;
-  fateDrawCards: (targetX: number, targetY: number) => void;
-  fateForceLucky: () => void;
-  fateKarmaBegin: () => void;
-  fateRandomUltimate: () => void;
+  fateLuck: () => void;
+  fateDice: (tx: number, ty: number) => void;
+  fateAllIn: () => void;
   // Magnet (abstract combined: electricity + slime)
   magnetPulse: (x: number, y: number) => void;
   magnetNailShoot: (tx: number, ty: number) => void;
@@ -197,12 +197,18 @@ export interface CastContext {
   silenceYankHook: () => void;
   silenceEnrage: () => void;
   silenceSlashEmUp: () => void;
-  // Magma (abstract combined: slime + fate)
-  magmaMaceEmpower: () => void;
-  magmaBoulder: (tx: number, ty: number) => void;
-  magmaVolcano: () => void;
-  magmaSplit: () => void;
-  magmaLavaLord: () => void;
+  // Echo (abstract combined: fate + light)
+  echoEcholocation: (tx: number, ty: number) => void;
+  echoGuess: (tx: number, ty: number) => void;
+  echoLantern: (tx: number, ty: number) => void;
+  echoBatForm: (tx: number, ty: number) => void;
+  echoEclipse: (tx: number, ty: number) => void;
+  // Quantum (abstract combined: slime + fate)
+  quantumWave: (tx: number, ty: number) => void;
+  quantumChaosControl: (tx: number, ty: number) => void;
+  quantumAtomVibration: (tx: number, ty: number) => void;
+  quantumMechanic: (tx: number, ty: number) => void;
+  quantumAtomNhilego: (tx: number, ty: number) => void;
 }
 
 export interface Ability {

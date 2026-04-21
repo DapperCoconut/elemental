@@ -1,59 +1,49 @@
 import { Element } from './Element';
 import { Ability } from './Ability';
 
-const draw: Ability = {
-  id: 'fate-draw',
-  name: 'Draw',
-  description: 'Launch 5 cards at the enemy — damage scales with your poker hand ranking',
+const coinToss: Ability = {
+  id: 'fate-coin-toss',
+  name: 'Coin Toss',
+  description: 'Costs 2 coins. Launch 3 coins toward your cursor with 0.3s delay each. Every coin that hits an enemy gives 1 coin back.',
   displayKey: 'Click',
-  cooldown: 500,
-  cast(ctx) {
-    ctx.fateDrawCards(ctx.targetX, ctx.targetY);
-  },
+  cooldown: 800,
+  cast(ctx) { ctx.fateCoinToss(ctx.targetX, ctx.targetY); },
 };
 
 const slots: Ability = {
   id: 'fate-slots',
   name: 'Slots',
-  description: 'Place a slot machine (2× plant HP). Hold Space near it for 2s to spin for a permanent buff or debuff',
+  description: 'Place a slot machine. Press Space near it (costs 1 coin) to spin for 3s — grants a permanent buff or debuff.',
   displayKey: 'E',
   cooldown: 8000,
-  cast(ctx) {
-    ctx.fateSpawnSlotMachine(ctx.targetX, ctx.targetY);
-  },
+  cast(ctx) { ctx.fateSpawnSlotMachine(ctx.targetX, ctx.targetY); },
 };
 
-const force: Ability = {
-  id: 'fate-force',
-  name: 'Force the Hand',
-  description: 'Your next Draw or Slots spin will be lucky — better cards, only good outcomes (🍀)',
+const luck: Ability = {
+  id: 'fate-luck',
+  name: 'Lady Luck',
+  description: 'Choose one ability to be Lucky: Click = coins auto-aim, E = +3× positive slots, F = always rolls 6, Q = always 150% return.',
   displayKey: 'R',
-  cooldown: 25000,
-  cast(ctx) {
-    ctx.fateForceLucky();
-  },
+  cooldown: 20000,
+  cast(ctx) { ctx.fateLuck(); },
 };
 
-const karma: Ability = {
-  id: 'fate-karma',
-  name: 'Karma',
-  description: '6s: 4 orbiting cards deal 8 damage on contact + 25% speed. Afterwards, your next Draw or Slots is unlucky (🔥)',
+const diceOfDoom: Ability = {
+  id: 'fate-dice',
+  name: 'Dice of Doom',
+  description: 'Costs 3 coins. Launch a large dice projectile — hitting an enemy gives 1–6 coins. Rolling 6 deals double damage and explodes.',
   displayKey: 'F',
-  cooldown: 18000,
-  cast(ctx) {
-    ctx.fateKarmaBegin();
-  },
+  cooldown: 5000,
+  cast(ctx) { ctx.fateDice(ctx.targetX, ctx.targetY); },
 };
 
-const roll: Ability = {
-  id: 'fate-roll',
-  name: 'Roll of Fate',
-  description: 'Fire a random Ultimate ability from another element',
+const allIn: Ability = {
+  id: 'fate-all-in',
+  name: 'All In!',
+  description: 'Spend ALL coins. After 3s, deal damage equal to 5× your coins. 50% chance: 50% returned. 50% chance: 150% returned.',
   displayKey: 'Q',
-  cooldown: 45000,
-  cast(ctx) {
-    ctx.fateRandomUltimate();
-  },
+  cooldown: 30000,
+  cast(ctx) { ctx.fateAllIn(); },
 };
 
 export const fateElement: Element = {
@@ -61,5 +51,5 @@ export const fateElement: Element = {
   name: 'Fate',
   color: 0x88eecc,
   emoji: '🃏',
-  abilities: [draw, slots, force, karma, roll],
+  abilities: [coinToss, slots, luck, diceOfDoom, allIn],
 };
