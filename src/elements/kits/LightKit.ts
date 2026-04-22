@@ -16,10 +16,14 @@ export interface LightArenaApi {
   readonly rKey: Phaser.Input.Keyboard.Key;
   readonly qKey: Phaser.Input.Keyboard.Key;
   readonly npcCastId: string | null;
+  readonly width: number;
+  readonly height: number;
+  hasUpgrade(slot: string): boolean;
   applyNpcSpeedMult(factor: number): void;
   spawnHitFlash(x: number, y: number, color: number): void;
   spawnDamageNumber(x: number, y: number, amount: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
+  spawnFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
   getNearestEnemy(x: number, y: number): Fighter;
 }
@@ -29,6 +33,7 @@ export interface LightArenaApi {
 export class LightKit {
   // ── Player state ─────────────────────────────────────────────────────
   private lightSpeedText: Phaser.GameObjects.Text | null = null;
+  private lightDodgeText: Phaser.GameObjects.Text | null = null;
   private lightMarkedExpiry = 0;
   private lightMarkedTarget: Fighter | null = null;
   private lightSpearHolding = false;
@@ -54,11 +59,22 @@ export class LightKit {
   private lightSkewerTarget: Fighter | null = null;
   private lightSkewerInitialDealt = false;
   private lightAngelActive = false;
+  private lightAngelIsFallen = false;
   private lightAngelUntil = 0;
   private lightAngelSprite: Phaser.GameObjects.Arc | null = null;
   private lightAngelOrbitAngle = 0;
   private lightAngelBladeAccum = 0;
   private lightAngelLink: Phaser.GameObjects.Graphics | null = null;
+  private lightDisarmClickCooldown = 0;
+  private lightBackstabDashing = false;
+  private lightBackstabUntil = 0;
+  private lightBackstabVx = 0;
+  private lightBackstabVy = 0;
+  private lightShadowTrail: Array<{ sprite: Phaser.GameObjects.Arc; until: number }> = [];
+  private lightShadowTrailAccum = 0;
+  private lightDisarmIndicators: Map<Fighter, Phaser.GameObjects.Text> = new Map();
+  private lightFallenAngelDaggerAccum = 0;
+  private lightAllUpgradesTextureSwapped = false;
 
   // ── NPC state ─────────────────────────────────────────────────────────
   private npcLightMarkedExpiry = 0;
@@ -81,7 +97,7 @@ export class LightKit {
 
   constructor(private arena: LightArenaApi) {}
 
-  // ── Public accessors for cross-cutting arena references ──────────────
+  // ── Public accessors ──────────────────────────────────────────────────
 
   getPhotoAccelUntil(): number { return this.lightPhotoAccelUntil; }
   getPhotoAccelStart(): number { return this.lightPhotoAccelStart; }
@@ -90,6 +106,10 @@ export class LightKit {
   setPhotoAccelUntil(v: number): void { this.lightPhotoAccelUntil = v; }
   isAngelActive(): boolean { return this.lightAngelActive; }
   getSkewerModeUntil(): number { return this.lightSkewerModeUntil; }
+  getAngelSpeedMult(): number {
+    if (!this.lightAngelActive) return 1;
+    return this.lightAngelIsFallen ? 1.15 : 1.25;
+  }
 
   getNpcPhotoAccelUntil(): number { return this.npcLightPhotoAccelUntil; }
   setNpcPhotoAccelUntil(v: number): void { this.npcLightPhotoAccelUntil = v; }
@@ -100,6 +120,7 @@ export class LightKit {
 
   reset(): void {
     if (this.lightSpeedText) { this.lightSpeedText.destroy(); this.lightSpeedText = null; }
+    if (this.lightDodgeText) { this.lightDodgeText.destroy(); this.lightDodgeText = null; }
     this.lightMarkedExpiry = 0;
     this.lightMarkedTarget = null;
     this.lightSpearHolding = false;
@@ -126,11 +147,24 @@ export class LightKit {
     this.lightSkewerTarget = null;
     this.lightSkewerInitialDealt = false;
     this.lightAngelActive = false;
+    this.lightAngelIsFallen = false;
     this.lightAngelUntil = 0;
     if (this.lightAngelSprite) { this.lightAngelSprite.destroy(); this.lightAngelSprite = null; }
     this.lightAngelOrbitAngle = 0;
     this.lightAngelBladeAccum = 0;
     if (this.lightAngelLink) { this.lightAngelLink.destroy(); this.lightAngelLink = null; }
+    this.lightDisarmClickCooldown = 0;
+    this.lightBackstabDashing = false;
+    this.lightBackstabUntil = 0;
+    this.lightBackstabVx = 0;
+    this.lightBackstabVy = 0;
+    this.lightShadowTrail.forEach((t) => t.sprite.destroy());
+    this.lightShadowTrail = [];
+    this.lightShadowTrailAccum = 0;
+    this.lightDisarmIndicators.forEach((t) => t.destroy());
+    this.lightDisarmIndicators.clear();
+    this.lightFallenAngelDaggerAccum = 0;
+    this.lightAllUpgradesTextureSwapped = false;
 
     this.npcLightMarkedExpiry = 0;
     this.npcLightPhotonOrbs.forEach((o) => o.sprite.destroy());
@@ -162,9 +196,80 @@ export class LightKit {
     // ── Player Light ─────────────────────────────────────────────────
     if (isPlayerLight) {
       const speedMag = Math.hypot(playerBody.velocity.x, playerBody.velocity.y);
-      const speedBonus = Math.round(speedMag / 15);
+      const hasClickUp = this.arena.hasUpgrade('click');
+      const hasEUp = this.arena.hasUpgrade('e');
+      const hasRUp = this.arena.hasUpgrade('r');
+      const hasFUp = this.arena.hasUpgrade('f');
+      const hasQUp = this.arena.hasUpgrade('q');
+      const allUpgrades = hasClickUp && hasEUp && hasRUp && hasFUp && hasQUp;
 
       if (this.lightSpeedText) this.lightSpeedText.setText(`🏃 ${Math.round(speedMag)} px/s`);
+
+      // All 5 upgrades owned → swap player texture to blue
+      if (allUpgrades && !this.lightAllUpgradesTextureSwapped) {
+        player.setTexture('elem-light-blue');
+        this.lightAllUpgradesTextureSwapped = true;
+      } else if (!allUpgrades && this.lightAllUpgradesTextureSwapped) {
+        player.setTexture('elem-light');
+        this.lightAllUpgradesTextureSwapped = false;
+      }
+
+      // Dodge chance display above player
+      if (player.dodgeChance > 0) {
+        if (!this.lightDodgeText) {
+          this.lightDodgeText = scene.add.text(0, 0, '', { fontSize: '10px', color: '#88ddff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
+        }
+        this.lightDodgeText.setText(`${Math.round(player.dodgeChance * 100)}% DODGE`);
+        this.lightDodgeText.setPosition(player.x, player.y - 52);
+      } else if (this.lightDodgeText) {
+        this.lightDodgeText.destroy();
+        this.lightDodgeText = null;
+      }
+
+      // Shadow trail cosmetic (all 5 upgrades)
+      if (allUpgrades) {
+        this.lightShadowTrailAccum += delta;
+        if (this.lightShadowTrailAccum >= 80) {
+          this.lightShadowTrailAccum = 0;
+          const dot = scene.add.circle(player.x, player.y, 8, 0x000000, 0.4).setDepth(3);
+          this.lightShadowTrail.push({ sprite: dot, until: time + 500 });
+        }
+      }
+      for (let i = this.lightShadowTrail.length - 1; i >= 0; i--) {
+        const t = this.lightShadowTrail[i];
+        if (time >= t.until) {
+          t.sprite.destroy();
+          this.lightShadowTrail.splice(i, 1);
+        } else {
+          const alpha = 0.4 * (1 - (time - (t.until - 500)) / 500);
+          t.sprite.setAlpha(Math.max(0, alpha));
+        }
+      }
+
+      // Disarm indicators above enemies
+      for (const enemy of this.arena.enemies) {
+        const disarmed = enemy.active && enemy.disarmedUntil > time;
+        const existing = this.lightDisarmIndicators.get(enemy);
+        if (disarmed) {
+          if (!existing) {
+            const txt = scene.add.text(enemy.x, enemy.y - 38, '🚫', { fontSize: '14px' }).setOrigin(0.5).setDepth(12);
+            this.lightDisarmIndicators.set(enemy, txt);
+          } else {
+            existing.setPosition(enemy.x, enemy.y - 38);
+          }
+        } else if (existing) {
+          existing.destroy();
+          this.lightDisarmIndicators.delete(enemy);
+        }
+      }
+
+      // Backstab dash movement
+      if (this.lightBackstabDashing && time < this.lightBackstabUntil) {
+        playerBody.setVelocity(this.lightBackstabVx, this.lightBackstabVy);
+      } else if (this.lightBackstabDashing) {
+        this.lightBackstabDashing = false;
+        playerBody.setVelocity(0, 0);
+      }
 
       // Mark: target takes 15% more damage
       if (time < this.lightMarkedExpiry && this.lightMarkedTarget) {
@@ -180,8 +285,8 @@ export class LightKit {
         this.lightMarkedTarget = null;
       }
 
-      // Photosynthespark stand-still regen
-      if (time < this.lightPhotoAccelUntil) {
+      // Photosynthespark stand-still regen (only when not using E+ dodge)
+      if (!hasEUp && time < this.lightPhotoAccelUntil) {
         if (speedMag > 8) {
           this.lightPhotoStillSince = time;
           this.lightPhotoRegenAccum = 0;
@@ -195,8 +300,8 @@ export class LightKit {
         }
       }
 
-      // Angel DR buff
-      if (this.lightAngelActive) {
+      // Angel DR buff (base angel only, not fallen angel)
+      if (this.lightAngelActive && !this.lightAngelIsFallen) {
         player.incomingDamageMultiplier = Math.min(player.incomingDamageMultiplier, 0.75);
       }
 
@@ -212,11 +317,19 @@ export class LightKit {
           if (!t.active || t.hp <= 0) continue;
           const d = Phaser.Math.Distance.Between(spearX, spearY, t.x, t.y);
           if (d < 30 && time >= this.lightSpearHitCooldown) {
-            const dmg = 6 + speedBonus;
+            const dmg = hasClickUp
+              ? 6 + Math.round(100 * player.dodgeChance)
+              : 6 + Math.round(Math.hypot(playerBody.velocity.x, playerBody.velocity.y) / 15);
             t.takeDamage(dmg);
             this.arena.spawnHitFlash(t.x, t.y, 0xfff4a8);
             this.lightSpearHitCooldown = time + 300;
-            if (time < this.lightSkewerModeUntil && !this.lightSkewerTargetHooked) {
+            // Click+ Disarm
+            if (hasClickUp && time >= this.lightDisarmClickCooldown) {
+              t.applyDisarm(1000);
+              this.lightDisarmClickCooldown = time + 5000;
+              this.arena.showFloatingText(t.x, t.y - 28, '🚫 DISARMED', '#88ddff');
+            }
+            if (!hasFUp && time < this.lightSkewerModeUntil && !this.lightSkewerTargetHooked) {
               this.lightSkewerTargetHooked = true;
               this.lightSkewerTarget = t;
               this.lightSkewerInitialDealt = false;
@@ -230,8 +343,8 @@ export class LightKit {
         this.lightSkewerTarget = null;
       }
 
-      // Skewer: drag target + wall slam
-      if (this.lightSkewerTargetHooked && this.lightSkewerTarget && time < this.lightSkewerModeUntil) {
+      // Skewer: drag target + wall slam (only when F+ not owned)
+      if (!hasFUp && this.lightSkewerTargetHooked && this.lightSkewerTarget && time < this.lightSkewerModeUntil) {
         const skewerTarget = this.lightSkewerTarget;
         if (!skewerTarget.active || skewerTarget.hp <= 0) {
           this.lightSkewerTargetHooked = false;
@@ -254,12 +367,12 @@ export class LightKit {
             this.lightSkewerModeUntil = 0;
           }
         }
-      } else if (time >= this.lightSkewerModeUntil && this.lightSkewerTargetHooked) {
+      } else if (!hasFUp && time >= this.lightSkewerModeUntil && this.lightSkewerTargetHooked) {
         this.lightSkewerTargetHooked = false;
         this.lightSkewerTarget = null;
       }
 
-      // Photon orbs orbit + overstim contact
+      // Photon orbs orbit + contact
       const orbR = 44;
       for (let i = this.lightPhotonOrbs.length - 1; i >= 0; i--) {
         const orb = this.lightPhotonOrbs[i];
@@ -273,9 +386,16 @@ export class LightKit {
           if (d < 22) {
             orb.sprite.destroy();
             this.lightPhotonOrbs.splice(i, 1);
-            const existing = this.lightEnemyOverstim.get(t);
-            this.lightEnemyOverstim.set(t, { until: time + 5000, tickAccum: existing?.tickAccum ?? 0 });
-            this.arena.showFloatingText(t.x, t.y - 20, '✨ OVERSTIM', '#fff4a8');
+            if (hasRUp) {
+              // R+ contact: stun + disarm
+              t.frozenUntil = Math.max(t.frozenUntil, time + 1500);
+              t.applyDisarm(1500);
+              this.arena.showFloatingText(t.x, t.y - 20, '🧊 STUN 1.5s', '#88ddff');
+            } else {
+              const existing = this.lightEnemyOverstim.get(t);
+              this.lightEnemyOverstim.set(t, { until: time + 5000, tickAccum: existing?.tickAccum ?? 0 });
+              this.arena.showFloatingText(t.x, t.y - 20, '✨ OVERSTIM', '#fff4a8');
+            }
             if (this.lightPhotonOrbs.length === 0) this.lightPhotonCdStartedAt = time;
             orbConsumed = true;
             break;
@@ -284,37 +404,44 @@ export class LightKit {
         if (orbConsumed) continue;
       }
 
-      // Overstim tick damage (per enemy)
-      for (const [t, overstim] of this.lightEnemyOverstim) {
-        if (!t.active || t.hp <= 0) { this.lightEnemyOverstim.delete(t); continue; }
-        if (time < overstim.until) {
-          overstim.tickAccum += delta;
-          if (overstim.tickAccum >= 250) {
-            overstim.tickAccum -= 250;
-            const tBody = t.body as Phaser.Physics.Arcade.Body;
-            const tSpeed = Math.hypot(tBody.velocity.x, tBody.velocity.y);
-            let tickDmg = 0;
-            if (tSpeed < 10) tickDmg = 0;
-            else if (tSpeed < 150) tickDmg = 2;
-            else if (tSpeed < 350) tickDmg = 4;
-            else tickDmg = 6;
-            if (tickDmg > 0) {
-              t.takeDamage(tickDmg);
-              this.arena.spawnHitFlash(t.x, t.y, 0xfff4a8);
+      // Overstim tick damage (per enemy, base R behavior)
+      if (!hasRUp) {
+        for (const [t, overstim] of this.lightEnemyOverstim) {
+          if (!t.active || t.hp <= 0) { this.lightEnemyOverstim.delete(t); continue; }
+          if (time < overstim.until) {
+            overstim.tickAccum += delta;
+            if (overstim.tickAccum >= 250) {
+              overstim.tickAccum -= 250;
+              const tBody = t.body as Phaser.Physics.Arcade.Body;
+              const tSpeed = Math.hypot(tBody.velocity.x, tBody.velocity.y);
+              let tickDmg = 0;
+              if (tSpeed < 10) tickDmg = 0;
+              else if (tSpeed < 150) tickDmg = 2;
+              else if (tSpeed < 350) tickDmg = 4;
+              else tickDmg = 6;
+              if (tickDmg > 0) {
+                t.takeDamage(tickDmg);
+                this.arena.spawnHitFlash(t.x, t.y, 0xfff4a8);
+              }
             }
+          } else {
+            this.lightEnemyOverstim.delete(t);
           }
-        } else {
-          this.lightEnemyOverstim.delete(t);
         }
       }
 
-      // Prayer angel orbit + auto-mark + holy blades
+      // Prayer / Fallen Angel orbit + blades
       if (this.lightAngelActive) {
         if (time >= this.lightAngelUntil) {
           if (this.lightAngelSprite) { this.lightAngelSprite.destroy(); this.lightAngelSprite = null; }
           if (this.lightAngelLink) { this.lightAngelLink.destroy(); this.lightAngelLink = null; }
           this.lightAngelActive = false;
-          player.incomingDamageMultiplier = Math.max(1, player.incomingDamageMultiplier / 0.75);
+          if (!this.lightAngelIsFallen) {
+            player.incomingDamageMultiplier = Math.max(1, player.incomingDamageMultiplier / 0.75);
+          } else {
+            player.dodgeChance = Math.max(0, player.dodgeChance - 1.0);
+          }
+          this.lightAngelIsFallen = false;
         } else {
           this.lightAngelOrbitAngle += delta * 0.0015;
           const angelX = player.x + Math.cos(this.lightAngelOrbitAngle) * 80;
@@ -322,7 +449,7 @@ export class LightKit {
           if (this.lightAngelSprite) this.lightAngelSprite.setPosition(angelX, angelY);
           if (this.lightAngelLink) {
             this.lightAngelLink.clear();
-            this.lightAngelLink.lineStyle(2, 0xfff4a8, 0.6);
+            this.lightAngelLink.lineStyle(2, this.lightAngelIsFallen ? 0x9966cc : 0xfff4a8, 0.6);
             this.lightAngelLink.lineBetween(player.x, player.y, angelX, angelY);
           }
           if (time > this.lightMarkedExpiry - 1500) {
@@ -332,20 +459,41 @@ export class LightKit {
             this.lightMarkedExpiry = time + 2500;
           }
           this.lightAngelBladeAccum += delta;
-          if (this.lightAngelBladeAccum >= 3000) {
-            this.lightAngelBladeAccum -= 3000;
-            for (let i = 0; i < 8; i++) {
-              const bAng = i * Math.PI / 4;
-              const proj = new Projectile(scene, angelX, angelY, 'proj-holy-blade', 12, true);
-              this.arena.projectiles.add(proj);
-              proj.launch(Math.cos(bAng) * 350, Math.sin(bAng) * 350);
+          if (this.lightAngelIsFallen) {
+            // Fallen Angel: 3 daggers every 2s, disarm on hit
+            if (this.lightFallenAngelDaggerAccum >= 2000) {
+              this.lightFallenAngelDaggerAccum -= 2000;
+              const nearest = this.arena.getNearestEnemy(angelX, angelY);
+              if (nearest && nearest.active && nearest.hp > 0) {
+                const baseAng = Math.atan2(nearest.y - angelY, nearest.x - angelX);
+                for (let di = -1; di <= 1; di++) {
+                  const dAng = baseAng + di * (Math.PI / 8);
+                  const proj = new Projectile(scene, angelX, angelY, 'proj-holy-blade', 12, true);
+                  this.arena.projectiles.add(proj);
+                  proj.launch(Math.cos(dAng) * 400, Math.sin(dAng) * 400);
+                  (proj as any).isFallenAngelDagger = true;
+                }
+              }
+              this.arena.showFloatingText(angelX, angelY - 20, '🗡 DAGGERS', '#9966cc');
             }
-            this.arena.showFloatingText(angelX, angelY - 20, '😇 HOLY BLADES', '#fff4a8');
+            this.lightFallenAngelDaggerAccum += delta;
+          } else {
+            // Base angel: 8 blades every 3s
+            if (this.lightAngelBladeAccum >= 3000) {
+              this.lightAngelBladeAccum -= 3000;
+              for (let i = 0; i < 8; i++) {
+                const bAng = i * Math.PI / 4;
+                const proj = new Projectile(scene, angelX, angelY, 'proj-holy-blade', 12, true);
+                this.arena.projectiles.add(proj);
+                proj.launch(Math.cos(bAng) * 350, Math.sin(bAng) * 350);
+              }
+              this.arena.showFloatingText(angelX, angelY - 20, '😇 HOLY BLADES', '#fff4a8');
+            }
           }
         }
       }
 
-      void speedBonus;
+      void speedMag;
     }
 
     // ── NPC Light ─────────────────────────────────────────────────────
@@ -396,7 +544,8 @@ export class LightKit {
         this.npcLightOverstimTickAccum += delta;
         if (this.npcLightOverstimTickAccum >= 250) {
           this.npcLightOverstimTickAccum -= 250;
-          const pSpeed = Math.hypot(playerBody.velocity.x, playerBody.velocity.y);
+          const playerBody2 = player.body as Phaser.Physics.Arcade.Body;
+          const pSpeed = Math.hypot(playerBody2.velocity.x, playerBody2.velocity.y);
           let tickDmg = 0;
           if (pSpeed < 10) tickDmg = 0;
           else if (pSpeed < 150) tickDmg = 2;
@@ -477,15 +626,39 @@ export class LightKit {
         this.arena.showFloatingText(npc.x, npc.y - 30, '😇 PRAYER', '#fff4a8');
       }
 
+      // Fallen angel dagger hit: apply disarm to player
+      if (isNpcLight) {
+        // (NPC doesn't use Fallen Angel — no upgrade branch for NPC)
+      }
+
       void npcSpeed;
-      void W;
+      void W; void H;
     }
+
+    // Handle fallen angel dagger hits on enemies
+    if (isPlayerLight) {
+      // Dagger disarm: proj with isFallenAngelDagger flag — handled in ArenaScene's normal proj hit pipeline,
+      // but we need to apply disarm when they hit. We tag the projectile; ArenaScene applyProjectileToNpc
+      // will deal damage. The disarm is applied via the onFallenAngelDaggerHit helper below.
+    }
+  }
+
+  /** Called by ArenaScene when a fallen angel dagger projectile hits an enemy — applies disarm. */
+  onFallenAngelDaggerHit(enemy: Fighter, time: number): void {
+    enemy.applyDisarm(1000);
+    this.arena.showFloatingText(enemy.x, enemy.y - 20, '🚫 DISARMED', '#9966cc');
   }
 
   handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
     const { player, scene } = this.arena;
     const { eKey, fKey, rKey, qKey } = this.arena;
     const playerCtx = this.arena.buildPlayerContext(mouseX, mouseY);
+    const playerBody = player.body as Phaser.Physics.Arcade.Body;
+    const hasClickUp = this.arena.hasUpgrade('click');
+    const hasEUp = this.arena.hasUpgrade('e');
+    const hasRUp = this.arena.hasUpgrade('r');
+    const hasFUp = this.arena.hasUpgrade('f');
+    const hasQUp = this.arena.hasUpgrade('q');
 
     // Click: tap-vs-hold detection
     const clickDown = pointer.leftButtonDown();
@@ -502,7 +675,9 @@ export class LightKit {
       if (heldMs >= 150 && !this.lightSpearHolding) {
         this.lightSpearHolding = true;
         if (this.lightSpearSprite) this.lightSpearSprite.destroy();
-        this.lightSpearSprite = scene.add.rectangle(0, 0, 60, 10, 0xfff4a8).setDepth(10).setStrokeStyle(1, 0xffffff);
+        const spearLen = hasClickUp ? 80 : 60;
+        const spearColor = hasClickUp ? 0x66aaff : 0xfff4a8;
+        this.lightSpearSprite = scene.add.rectangle(0, 0, spearLen, 10, spearColor).setDepth(10).setStrokeStyle(1, 0xffffff);
       }
     }
 
@@ -528,60 +703,133 @@ export class LightKit {
       if (this.lightSpearSprite) { this.lightSpearSprite.destroy(); this.lightSpearSprite = null; }
     }
 
-    // E: Photosynthespark
+    // E: Photosynthespark (or E+ Retinal Flash)
     if (Phaser.Input.Keyboard.JustDown(eKey)) {
-      if (player.castAbility('photo-spark', playerCtx)) {
-        this.lightPhotoSlowUntil = 0;
-        this.lightPhotoAccelStart = time;
-        this.lightPhotoAccelUntil = time + 5000;
-        this.lightPhotoStillSince = time;
-        this.lightPhotoRegenAccum = 0;
-        this.arena.showFloatingText(player.x, player.y - 30, '🌞 PHOTOSYNTHESPARK', '#fff4a8');
-      }
-    }
-
-    // R: Photon Orbs
-    if (Phaser.Input.Keyboard.JustDown(rKey)) {
-      if (this.lightPhotonOrbs.length > 0) {
-        const orb = this.lightPhotonOrbs.pop()!;
-        orb.sprite.destroy();
-        this.lightPhotonSpeedBoostUntil = time + 1500;
-        this.arena.showFloatingText(player.x, player.y - 20, '✨ SPEED BURST', '#fff4a8');
-        if (this.lightPhotonOrbs.length === 0) this.lightPhotonCdStartedAt = time;
-      } else if (time - this.lightPhotonCdStartedAt >= 20000 || this.lightPhotonCdStartedAt < -1000) {
-        if (player.castAbility('photon-orbs', playerCtx)) {
-          for (let i = 0; i < 2; i++) {
-            const sprite = scene.add.circle(player.x, player.y, 9, 0xfff4a8, 0.9).setDepth(8).setStrokeStyle(1, 0xffffff);
-            this.lightPhotonOrbs.push({ sprite, orbitAngle: i * Math.PI });
-          }
-          this.arena.showFloatingText(player.x, player.y - 30, '✨ PHOTON ORBS', '#fff4a8');
+      if (hasEUp) {
+        // E+: instant +75% dodge chance
+        if (player.castAbility('photo-spark', playerCtx)) {
+          player.dodgeChance += 0.75;
+          this.arena.showFloatingText(player.x, player.y - 30, '👁 +75% DODGE', '#88ddff');
+        }
+      } else {
+        if (player.castAbility('photo-spark', playerCtx)) {
+          this.lightPhotoSlowUntil = 0;
+          this.lightPhotoAccelStart = time;
+          this.lightPhotoAccelUntil = time + 5000;
+          this.lightPhotoStillSince = time;
+          this.lightPhotoRegenAccum = 0;
+          this.arena.showFloatingText(player.x, player.y - 30, '🌞 PHOTOSYNTHESPARK', '#fff4a8');
         }
       }
     }
 
-    // F: Skewer mode
-    if (Phaser.Input.Keyboard.JustDown(fKey)) {
-      if (player.castAbility('skewer', playerCtx)) {
-        this.lightSkewerModeUntil = time + 5000;
-        this.lightSkewerTargetHooked = false;
-        this.lightSkewerTarget = null;
-        this.lightSkewerInitialDealt = false;
-        this.arena.showFloatingText(player.x, player.y - 30, '🗡 SKEWER MODE', '#fff4a8');
+    // R: Photon Orbs (or R+ Infrared Photons)
+    if (Phaser.Input.Keyboard.JustDown(rKey)) {
+      const orbColor = hasRUp ? 0x3388ff : 0xfff4a8;
+      const orbStroke = hasRUp ? 0x88ccff : 0xffffff;
+      if (this.lightPhotonOrbs.length > 0) {
+        const orb = this.lightPhotonOrbs.pop()!;
+        orb.sprite.destroy();
+        if (hasRUp) {
+          // R+: consume = +50% dodge
+          player.dodgeChance += 0.5;
+          this.arena.showFloatingText(player.x, player.y - 20, '⚡ +50% DODGE', '#88ddff');
+        } else {
+          this.lightPhotonSpeedBoostUntil = time + 1500;
+          this.arena.showFloatingText(player.x, player.y - 20, '✨ SPEED BURST', '#fff4a8');
+        }
+        if (this.lightPhotonOrbs.length === 0) this.lightPhotonCdStartedAt = time;
+      } else if (time - this.lightPhotonCdStartedAt >= 20000 || this.lightPhotonCdStartedAt < -1000) {
+        if (player.castAbility('photon-orbs', playerCtx)) {
+          for (let i = 0; i < 2; i++) {
+            const sprite = scene.add.circle(player.x, player.y, 9, orbColor, 0.9).setDepth(8).setStrokeStyle(1, orbStroke);
+            this.lightPhotonOrbs.push({ sprite, orbitAngle: i * Math.PI });
+          }
+          const label = hasRUp ? '⚡ INFRARED PHOTONS' : '✨ PHOTON ORBS';
+          this.arena.showFloatingText(player.x, player.y - 30, label, hasRUp ? '#88ddff' : '#fff4a8');
+        }
       }
     }
 
-    // Q: Prayer
+    // F: Skewer mode (or F+ Backstab)
+    if (Phaser.Input.Keyboard.JustDown(fKey)) {
+      if (hasFUp) {
+        // F+: Backstab or Dash
+        if (player.castAbility('skewer', playerCtx)) {
+          if (this.lightSpearHolding) {
+            // Backstab: teleport behind nearest enemy
+            const nearest = this.arena.getNearestEnemy(player.x, player.y);
+            if (nearest && nearest.active && nearest.hp > 0) {
+              const dx = nearest.x - player.x;
+              const dy = nearest.y - player.y;
+              const dist = Math.hypot(dx, dy) || 1;
+              const behindX = nearest.x + (dx / dist) * 40;
+              const behindY = nearest.y + (dy / dist) * 40;
+              player.setPosition(behindX, behindY);
+              playerBody.reset(behindX, behindY);
+              nearest.frozenUntil = Math.max(nearest.frozenUntil, time + 150);
+              const baseDmg = 6 + Math.round(100 * player.dodgeChance);
+              const backstabDmg = baseDmg * 2;
+              nearest.takeDamage(backstabDmg);
+              this.arena.spawnHitFlash(nearest.x, nearest.y, 0xff88aa);
+              player.dodgeChance = Math.max(0, player.dodgeChance - 0.2);
+              this.arena.showFloatingText(nearest.x, nearest.y - 36, '🗡 BACKSTAB', '#ff4466');
+            }
+          } else {
+            // Dash forward toward cursor
+            const ang = Math.atan2(mouseY - player.y, mouseX - player.x);
+            this.lightBackstabDashing = true;
+            this.lightBackstabUntil = time + 150;
+            this.lightBackstabVx = Math.cos(ang) * 1000;
+            this.lightBackstabVy = Math.sin(ang) * 1000;
+            this.arena.showFloatingText(player.x, player.y - 30, '⚡ DASH', '#88ddff');
+          }
+        }
+      } else {
+        // Base: Skewer mode
+        if (player.castAbility('skewer', playerCtx)) {
+          this.lightSkewerModeUntil = time + 5000;
+          this.lightSkewerTargetHooked = false;
+          this.lightSkewerTarget = null;
+          this.lightSkewerInitialDealt = false;
+          this.arena.showFloatingText(player.x, player.y - 30, '🗡 SKEWER MODE', '#fff4a8');
+        }
+      }
+    }
+
+    // Q: Prayer (or Q+ Fallen Angel)
     if (Phaser.Input.Keyboard.JustDown(qKey)) {
-      if (!this.lightAngelActive && player.castAbility('prayer', playerCtx)) {
-        const angelSprite = scene.add.circle(player.x, player.y, 14, 0xfff4a8, 0.9).setDepth(8).setStrokeStyle(2, 0xffffff);
-        this.lightAngelSprite = angelSprite;
-        this.lightAngelLink = scene.add.graphics().setDepth(5);
-        this.lightAngelActive = true;
-        this.lightAngelUntil = time + 8000;
-        this.lightAngelOrbitAngle = 0;
-        this.lightAngelBladeAccum = 0;
-        player.incomingDamageMultiplier *= 0.75;
-        this.arena.showFloatingText(player.x, player.y - 30, '😇 PRAYER', '#fff4a8');
+      if (!this.lightAngelActive) {
+        if (hasQUp) {
+          // Q+: Fallen Angel
+          if (player.castAbility('prayer', playerCtx)) {
+            const angelSprite = scene.add.circle(player.x, player.y, 28, 0x6644aa, 0.9).setDepth(8).setStrokeStyle(2, 0x4422aa);
+            this.lightAngelSprite = angelSprite;
+            this.lightAngelLink = scene.add.graphics().setDepth(5);
+            this.lightAngelActive = true;
+            this.lightAngelIsFallen = true;
+            this.lightAngelUntil = time + 8000;
+            this.lightAngelOrbitAngle = 0;
+            this.lightAngelBladeAccum = 0;
+            this.lightFallenAngelDaggerAccum = 0;
+            player.dodgeChance += 1.0;
+            this.arena.showFloatingText(player.x, player.y - 30, '👼 FALLEN ANGEL', '#9966cc');
+          }
+        } else {
+          // Base: Prayer
+          if (player.castAbility('prayer', playerCtx)) {
+            const angelSprite = scene.add.circle(player.x, player.y, 14, 0xfff4a8, 0.9).setDepth(8).setStrokeStyle(2, 0xffffff);
+            this.lightAngelSprite = angelSprite;
+            this.lightAngelLink = scene.add.graphics().setDepth(5);
+            this.lightAngelActive = true;
+            this.lightAngelIsFallen = false;
+            this.lightAngelUntil = time + 8000;
+            this.lightAngelOrbitAngle = 0;
+            this.lightAngelBladeAccum = 0;
+            player.incomingDamageMultiplier *= 0.75;
+            this.arena.showFloatingText(player.x, player.y - 30, '😇 PRAYER', '#fff4a8');
+          }
+        }
       }
     }
 

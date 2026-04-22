@@ -17,6 +17,8 @@ export interface MagnetRod {
   bouncing: boolean;
   bounceUntil: number;
   owner: 'player' | 'npc';
+  destroyOnHit?: boolean;
+  permDamageBonus: number;
 }
 
 export interface MagnetNail {
@@ -41,8 +43,9 @@ export interface MagnetAtomSmasher {
   x: number;
   y: number;
   fireAt: number;
-  walls: Array<{ sprite: Phaser.GameObjects.Rectangle; vx: number; vy: number; active: boolean }>;
+  walls: Array<{ sprite: Phaser.GameObjects.Rectangle; vx: number; vy: number; active: boolean; hitCooldown: number }>;
   exploded: boolean;
+  crossed: boolean;
   owner: 'player' | 'npc';
 }
 
@@ -58,6 +61,8 @@ export interface MagnetArenaApi {
   readonly rKey: Phaser.Input.Keyboard.Key;
   readonly qKey: Phaser.Input.Keyboard.Key;
   readonly pointerWasDown: boolean;
+  readonly rightPointerWasDown: boolean;
+  hasUpgrade(slot: string): boolean;
   setIsDodging(v: boolean): void;
   spawnHitFlash(x: number, y: number, color: number): void;
   spawnDamageNumber(x: number, y: number, amount: number): void;
@@ -89,6 +94,19 @@ export class MagnetKit {
   private magnetNailPullUntil = 0;
   private magnetNailPullVX = 0;
   private magnetNailPullVY = 0;
+  // Upgrade state
+  private magnetPlayerNails: MagnetNail[] = [];
+  private magnetNpcNails: MagnetNail[] = [];
+  private magnetPlayerPullStacks = 0;
+  private magnetNpcPullStacks = 0;
+  private magnetCopperSpawnAccumPlayer = 0;
+  private magnetCopperSpawnAccumNpc = 0;
+  private magnetReflectUntilPlayer = 0;
+  private magnetReflectCenterPlayerX = 0;
+  private magnetReflectCenterPlayerY = 0;
+  private magnetReflectUntilNpc = 0;
+  private magnetReflectCenterNpcX = 0;
+  private magnetReflectCenterNpcY = 0;
 
   constructor(private arena: MagnetArenaApi) {}
 
@@ -136,6 +154,13 @@ export class MagnetKit {
     this.magnetPlayerSpeedBuffUntil = 0; this.magnetNpcSpeedBuffUntil = 0;
     this.magnetOrbOrbitAngle = 0; this.magnetNpcOrbOrbitAngle = 0;
     this.magnetNailPullUntil = 0; this.magnetNailPullVX = 0; this.magnetNailPullVY = 0;
+    for (const n of this.magnetPlayerNails) n.sprite.destroy();
+    this.magnetPlayerNails = [];
+    for (const n of this.magnetNpcNails) n.sprite.destroy();
+    this.magnetNpcNails = [];
+    this.magnetPlayerPullStacks = 0; this.magnetNpcPullStacks = 0;
+    this.magnetCopperSpawnAccumPlayer = 0; this.magnetCopperSpawnAccumNpc = 0;
+    this.magnetReflectUntilPlayer = 0; this.magnetReflectUntilNpc = 0;
     void scene;
   }
 
@@ -145,27 +170,50 @@ export class MagnetKit {
     mouseX: number,
     mouseY: number,
   ): void {
-    const { player, eKey, fKey, rKey, qKey, pointerWasDown } = this.arena;
+    const { player, eKey, fKey, rKey, qKey, pointerWasDown, rightPointerWasDown } = this.arena;
     const playerCtx = this.arena.buildPlayerContext(mouseX, mouseY);
 
     if (pointer.isDown && !pointerWasDown) {
       player.castAbility('mag-pulse', playerCtx);
     }
 
+    // Click+: right-click Repulse
+    if (pointer.rightButtonDown() && !rightPointerWasDown && this.arena.hasUpgrade('click')) {
+      this.doMagnetRepulse(mouseX, mouseY, 'player');
+    }
+
     if (Phaser.Input.Keyboard.JustDown(eKey)) {
-      if (this.magnetPlayerNail && this.magnetPlayerNail.inEnemy) {
-        const nail = this.magnetPlayerNail;
-        const dmg = 18;
-        const { npc } = this.arena;
-        npc.takeDamage(dmg);
-        this.arena.spawnHitFlash(npc.x, npc.y, 0x888899);
-        this.arena.spawnDamageNumber(npc.x, npc.y - 20, dmg);
-        this.arena.showFloatingText(npc.x, npc.y - 36, '🔩 RECALLED', '#ccddee');
-        nail.sprite.destroy();
-        this.magnetPlayerNail = null;
-        player.reduceCooldown('nail-implant', 2000);
-      } else if (!this.magnetPlayerNail) {
-        player.castAbility('nail-implant', playerCtx);
+      if (this.arena.hasUpgrade('e')) {
+        // E+ barrage: recall any implanted nails, or fire barrage
+        const implanted = this.magnetPlayerNails.filter(n => n.inEnemy);
+        if (implanted.length > 0) {
+          const { npc } = this.arena;
+          for (const nail of implanted) {
+            const dmg = 18;
+            npc.takeDamage(dmg);
+            this.arena.spawnHitFlash(npc.x, npc.y, 0x888899);
+            nail.sprite.destroy();
+          }
+          this.magnetPlayerNails = this.magnetPlayerNails.filter(n => !n.inEnemy);
+          this.arena.showFloatingText(this.arena.npc.x, this.arena.npc.y - 36, '🔩 RECALLED', '#ccddee');
+          player.reduceCooldown('nail-implant', 2000);
+        } else if (this.magnetPlayerNails.length < 3) {
+          player.castAbility('nail-implant', playerCtx);
+        }
+      } else {
+        if (this.magnetPlayerNail && this.magnetPlayerNail.inEnemy) {
+          const nail = this.magnetPlayerNail;
+          const dmg = 18;
+          const { npc } = this.arena;
+          npc.takeDamage(dmg);
+          this.arena.spawnHitFlash(npc.x, npc.y, 0x888899);
+          this.arena.showFloatingText(npc.x, npc.y - 36, '🔩 RECALLED', '#ccddee');
+          nail.sprite.destroy();
+          this.magnetPlayerNail = null;
+          player.reduceCooldown('nail-implant', 2000);
+        } else if (!this.magnetPlayerNail) {
+          player.castAbility('nail-implant', playerCtx);
+        }
       }
     }
 
@@ -174,7 +222,12 @@ export class MagnetKit {
     }
 
     if (Phaser.Input.Keyboard.JustDown(rKey)) {
-      player.castAbility('protect', playerCtx);
+      // R+: Reflect Burst — consume 3 orbs instead of normal protect cast
+      if (this.arena.hasUpgrade('r') && this.magnetPlayerShieldOrbs.length >= 3) {
+        this.doMagnetReflectBurst('player');
+      } else {
+        player.castAbility('protect', playerCtx);
+      }
     }
 
     if (Phaser.Input.Keyboard.JustDown(qKey)) {
@@ -189,7 +242,8 @@ export class MagnetKit {
     this.updateMagnetNails(time, delta);
     this.updateMagnetShieldOrbs(time);
     this.updateMagnetAtomSmashers(time, delta);
-    this.updateMagnetMagnetized(time);
+    this.updateMagnetMagnetized(time, delta);
+    this.updateMagnetReflectBurst(time);
     this.updateMagnetSpeedBuff(time);
   }
 
@@ -262,27 +316,48 @@ export class MagnetKit {
   doMagnetNailAction(tx: number, ty: number, owner: 'player' | 'npc'): void {
     const { player, npc, scene } = this.arena;
     const caster = owner === 'player' ? player : npc;
-    const existing = owner === 'player' ? this.magnetPlayerNail : this.magnetNpcNail;
-    if (existing) return;
-
-    const dx = tx - caster.x;
-    const dy = ty - caster.y;
-    const len = Math.sqrt(dx * dx + dy * dy) || 1;
     const speed = 520;
-    const spr = scene.add.circle(caster.x, caster.y, 5, 0x888899, 0.95)
-      .setStrokeStyle(1, 0xccddee).setDepth(6);
-    const nail: MagnetNail = {
-      sprite: spr,
-      vx: (dx / len) * speed,
-      vy: (dy / len) * speed,
-      x: caster.x,
-      y: caster.y,
-      inEnemy: false,
-      implantedUntil: 0,
-      owner,
-    };
-    if (owner === 'player') this.magnetPlayerNail = nail;
-    else this.magnetNpcNail = nail;
+
+    if (this.arena.hasUpgrade('e') && owner === 'player') {
+      // E+: fire 3 golden nails in a 12° spread
+      const baseAngle = Math.atan2(ty - caster.y, tx - caster.x);
+      const spreadAngles = [-6, 0, 6].map(d => baseAngle + d * (Math.PI / 180));
+      for (const ang of spreadAngles) {
+        const spr = scene.add.circle(caster.x, caster.y, 5, 0xffd060, 0.95)
+          .setStrokeStyle(1, 0xffee88).setDepth(6);
+        const nail: MagnetNail = {
+          sprite: spr,
+          vx: Math.cos(ang) * speed,
+          vy: Math.sin(ang) * speed,
+          x: caster.x,
+          y: caster.y,
+          inEnemy: false,
+          implantedUntil: 0,
+          owner,
+        };
+        this.magnetPlayerNails.push(nail);
+      }
+    } else {
+      const existing = owner === 'player' ? this.magnetPlayerNail : this.magnetNpcNail;
+      if (existing) return;
+      const dx = tx - caster.x;
+      const dy = ty - caster.y;
+      const len = Math.sqrt(dx * dx + dy * dy) || 1;
+      const spr = scene.add.circle(caster.x, caster.y, 5, 0x888899, 0.95)
+        .setStrokeStyle(1, 0xccddee).setDepth(6);
+      const nail: MagnetNail = {
+        sprite: spr,
+        vx: (dx / len) * speed,
+        vy: (dy / len) * speed,
+        x: caster.x,
+        y: caster.y,
+        inEnemy: false,
+        implantedUntil: 0,
+        owner,
+      };
+      if (owner === 'player') this.magnetPlayerNail = nail;
+      else this.magnetNpcNail = nail;
+    }
   }
 
   doMagnetMagnetize(tx: number, ty: number, owner: 'player' | 'npc'): void {
@@ -334,7 +409,7 @@ export class MagnetKit {
       .setStrokeStyle(2, 0xff6644).setDepth(5);
 
     const W = scene.scale.width;
-    const wallH = 80;
+    const wallH = 160;
     const wallW = 20;
     const leftWall = scene.add.rectangle(-20, y, wallW, wallH, 0x884433)
       .setStrokeStyle(2, 0xff6644).setDepth(7);
@@ -345,10 +420,11 @@ export class MagnetKit {
       flashSprite: flash, x, y,
       fireAt: scene.time.now + 3000,
       walls: [
-        { sprite: leftWall,  vx: 900,  vy: 0, active: false },
-        { sprite: rightWall, vx: -900, vy: 0, active: false },
+        { sprite: leftWall,  vx: 900,  vy: 0, active: false, hitCooldown: 0 },
+        { sprite: rightWall, vx: -900, vy: 0, active: false, hitCooldown: 0 },
       ],
       exploded: false,
+      crossed: false,
       owner,
     };
 
@@ -375,7 +451,7 @@ export class MagnetKit {
       if (rod.bouncing) {
         if (time > rod.bounceUntil) {
           rod.bouncing = false;
-          rod.sprite.setFillStyle(0x99aacc);
+          rod.sprite.setFillStyle(rod.permDamageBonus > 0 ? 0xff9933 : 0x99aacc);
           rod.vx *= 0.3; rod.vy *= 0.3;
         }
       }
@@ -394,7 +470,10 @@ export class MagnetKit {
       if (Math.abs(rod.vy) < 2) rod.vy = 0;
 
       rod.sprite.setPosition(rod.x, rod.y);
-      if (rod.bouncing) rod.sprite.setFillStyle(0xff4400);
+      // Q+: blue tint during bounce window; orange perm bonus; default grey
+      if (rod.bouncing && rod.permDamageBonus > 0) rod.sprite.setFillStyle(0x3399ff);
+      else if (rod.bouncing) rod.sprite.setFillStyle(0xff4400);
+      else if (rod.permDamageBonus > 0) rod.sprite.setFillStyle(0xff9933);
 
       const isMoving = Math.abs(rod.vx) > movingThreshold || Math.abs(rod.vy) > movingThreshold;
 
@@ -409,22 +488,32 @@ export class MagnetKit {
       }
 
       if (isMoving || wasMoving) {
-        const dmg = rod.bouncing ? 16 : 8;
+        const baseDmg = rod.bouncing ? 16 : 8;
+        const tempBonus = rod.bouncing ? 8 : 0; // Q+ bonus during bounce
+        const dmg = baseDmg + rod.permDamageBonus + (this.arena.hasUpgrade('q') ? tempBonus : 0);
         if (rod.owner === 'player') {
           const npcDist = Phaser.Math.Distance.Between(rod.x, rod.y, npc.x, npc.y);
           if (npcDist <= 28 && time > rod.contactCooldownNpc) {
             npc.takeDamage(dmg);
             this.arena.spawnHitFlash(npc.x, npc.y, 0x99aacc);
-            this.arena.spawnDamageNumber(npc.x, npc.y - 20, dmg);
             rod.contactCooldownNpc = time + 500;
+            if (rod.destroyOnHit) {
+              rod.sprite.destroy();
+              for (const t of rod.trail) t.destroy();
+              this.magnetRods.splice(this.magnetRods.indexOf(rod), 1);
+            }
           }
         } else {
           const playerDist = Phaser.Math.Distance.Between(rod.x, rod.y, player.x, player.y);
           if (playerDist <= 28 && time > rod.contactCooldownPlayer) {
             player.takeDamage(dmg);
             this.arena.spawnHitFlash(player.x, player.y, 0x99aacc);
-            this.arena.spawnDamageNumber(player.x, player.y - 20, dmg);
             rod.contactCooldownPlayer = time + 500;
+            if (rod.destroyOnHit) {
+              rod.sprite.destroy();
+              for (const t of rod.trail) t.destroy();
+              this.magnetRods.splice(this.magnetRods.indexOf(rod), 1);
+            }
           }
         }
       }
@@ -466,6 +555,56 @@ export class MagnetKit {
     const dt = delta / 1000;
     const W = this.arena.scene.scale.width;
     const H = this.arena.scene.scale.height;
+
+    // E+ multi-nail array (player only)
+    for (let i = this.magnetPlayerNails.length - 1; i >= 0; i--) {
+      const nail = this.magnetPlayerNails[i];
+      const target = npc;
+      if (nail.inEnemy) {
+        nail.x = target.x; nail.y = target.y;
+        nail.sprite.setPosition(nail.x, nail.y);
+        if (time > nail.implantedUntil) {
+          nail.sprite.destroy();
+          this.magnetPlayerNails.splice(i, 1);
+        }
+        const tDist = Phaser.Math.Distance.Between(target.x, target.y, player.x, player.y);
+        if (tDist > 80) {
+          const tAng = Math.atan2(player.y - target.y, player.x - target.x);
+          // Pull stacks scale the pull strength
+          const stackMult = 1 + 0.5 * this.magnetPlayerPullStacks;
+          const pull = 180 * stackMult * dt;
+          const body = target.body as Phaser.Physics.Arcade.Body;
+          body.setVelocity(body.velocity.x + Math.cos(tAng) * pull, body.velocity.y + Math.sin(tAng) * pull);
+        }
+      } else {
+        nail.x += nail.vx * dt; nail.y += nail.vy * dt;
+        nail.sprite.setPosition(nail.x, nail.y);
+        if (nail.x < 0 || nail.x > W || nail.y < 0 || nail.y > H) {
+          nail.sprite.destroy(); this.magnetPlayerNails.splice(i, 1); continue;
+        }
+        const isMag = this.magnetNpcMagnetized;
+        if (isMag) {
+          const toTargetX = target.x - nail.x, toTargetY = target.y - nail.y;
+          const toLen = Math.sqrt(toTargetX * toTargetX + toTargetY * toTargetY) || 1;
+          if (toLen < 150) {
+            nail.vx += (toTargetX / toLen) * 600 * dt;
+            nail.vy += (toTargetY / toLen) * 600 * dt;
+            const spd = Math.sqrt(nail.vx * nail.vx + nail.vy * nail.vy);
+            if (spd > 700) { nail.vx = (nail.vx / spd) * 700; nail.vy = (nail.vy / spd) * 700; }
+          }
+        }
+        const hitDist = Phaser.Math.Distance.Between(nail.x, nail.y, target.x, target.y);
+        if (hitDist <= 24) {
+          target.takeDamage(18);
+          this.arena.spawnHitFlash(target.x, target.y, 0xffd060);
+          this.arena.showFloatingText(target.x, target.y - 36, '🔩 NAILED', '#ffd060');
+          nail.inEnemy = true;
+          nail.implantedUntil = time + 10000;
+          nail.x = target.x; nail.y = target.y;
+          this.magnetPlayerPullStacks = Math.min(3, this.magnetPlayerPullStacks + 1);
+        }
+      }
+    }
 
     for (const [nail, owner] of [[this.magnetPlayerNail, 'player'], [this.magnetNpcNail, 'npc']] as [MagnetNail | null, 'player' | 'npc'][]) {
       if (!nail) continue;
@@ -522,7 +661,6 @@ export class MagnetKit {
           const dmg = 18;
           target.takeDamage(dmg);
           this.arena.spawnHitFlash(target.x, target.y, 0x888899);
-          this.arena.spawnDamageNumber(target.x, target.y - 20, dmg);
           this.arena.showFloatingText(target.x, target.y - 36, '🔩 NAILED', '#ccddee');
           nail.inEnemy = true;
           nail.implantedUntil = time + 10000;
@@ -636,18 +774,18 @@ export class MagnetKit {
     const { player, npc, scene } = this.arena;
     const dt = delta / 1000;
     const W = scene.scale.width;
-    const H = scene.scale.height;
 
     for (const [smasher, isPlayer] of [[this.magnetPlayerAtomSmasher, true], [this.magnetNpcAtomSmasher, false]] as [MagnetAtomSmasher | null, boolean][]) {
-      if (!smasher || smasher.exploded) continue;
+      if (!smasher) continue;
 
       const owner = smasher.owner;
       const target = owner === 'player' ? npc : player;
 
-      const pulse = 0.3 + 0.15 * Math.sin(time * 0.01);
-      smasher.flashSprite.setAlpha(pulse);
-
+      // ── Charging phase ──────────────────────────────────────────────
       if (time < smasher.fireAt) {
+        const pulse = 0.3 + 0.15 * Math.sin(time * 0.01);
+        if (smasher.flashSprite.active) smasher.flashSprite.setAlpha(pulse);
+
         const isMag = owner === 'player' ? this.magnetNpcMagnetized : this.magnetPlayerMagnetized;
         if (isMag) {
           const dragAng = Math.atan2(smasher.y - target.y, smasher.x - target.x);
@@ -666,30 +804,53 @@ export class MagnetKit {
             rod.vy += Math.sin(dragAng) * 200 * dt;
           }
         }
-      } else if (!smasher.exploded) {
-        for (const wall of smasher.walls) {
-          if (!wall.active) {
-            wall.active = true;
-            wall.sprite.setPosition(
-              wall.vx > 0 ? -20 : W + 20,
-              smasher.y,
-            );
-          }
-          wall.sprite.x += wall.vx * dt;
+        continue;
+      }
 
-          const reachedCenter = wall.vx > 0
-            ? wall.sprite.x >= smasher.x
-            : wall.sprite.x <= smasher.x;
-          if (reachedCenter) {
+      // ── Wall phase ──────────────────────────────────────────────────
+      // Activate walls on the first frame after fireAt
+      for (const wall of smasher.walls) {
+        if (!wall.active && !smasher.crossed) {
+          wall.active = true;
+          wall.sprite.setPosition(wall.vx > 0 ? -20 : W + 20, smasher.y);
+        }
+      }
+
+      // Move active walls; remove them if they exit the arena
+      let anyActive = false;
+      for (const wall of smasher.walls) {
+        if (!wall.active) continue;
+        wall.sprite.x += wall.vx * dt;
+        if (wall.sprite.x < -80 || wall.sprite.x > W + 80) {
+          wall.sprite.destroy();
+          wall.active = false;
+          continue;
+        }
+        anyActive = true;
+      }
+
+      // Contact damage with per-wall 500ms cooldown; after crossing, walls despawn on hit
+      for (const wall of smasher.walls) {
+        if (!wall.active) continue;
+        const wallDist = Phaser.Math.Distance.Between(wall.sprite.x, wall.sprite.y, target.x, target.y);
+        if (wallDist <= 50 && time > wall.hitCooldown) {
+          target.takeDamage(15);
+          this.arena.spawnHitFlash(target.x, target.y, 0x884433);
+          wall.hitCooldown = time + 500;
+          if (smasher.crossed) {
             wall.sprite.destroy();
             wall.active = false;
           }
         }
+      }
 
-        const allDone = smasher.walls.every((w) => !w.active);
-        if (allDone) {
-          smasher.exploded = true;
-          smasher.flashSprite.destroy();
+      // One-shot AoE + rod bounce when walls first cross the center
+      if (!smasher.crossed) {
+        const lw = smasher.walls[0];
+        const rw = smasher.walls[1];
+        if ((lw.active && lw.sprite.x >= smasher.x) || (rw.active && rw.sprite.x <= smasher.x)) {
+          smasher.crossed = true;
+          if (smasher.flashSprite.active) smasher.flashSprite.destroy();
 
           const aeoDmg = 60;
           const aeoRadius = 120;
@@ -697,7 +858,6 @@ export class MagnetKit {
           if (aeoDist <= aeoRadius) {
             target.takeDamage(aeoDmg);
             this.arena.spawnHitFlash(target.x, target.y, 0xff2244);
-            this.arena.spawnDamageNumber(target.x, target.y - 20, aeoDmg);
           }
           const boom = scene.add.circle(smasher.x, smasher.y, 20, 0xff4400, 0.9).setDepth(8);
           scene.tweens.add({ targets: boom, scaleX: 8, scaleY: 8, alpha: 0, duration: 500, onComplete: () => boom.destroy() });
@@ -712,28 +872,26 @@ export class MagnetKit {
               const bounceAng = Math.atan2(rod.y - smasher.y, rod.x - smasher.x);
               rod.vx = Math.cos(bounceAng) * 600;
               rod.vy = Math.sin(bounceAng) * 600;
+              // Q+: Forged Rods — permanent damage bonus on bounce
+              if (this.arena.hasUpgrade('q')) {
+                rod.permDamageBonus += 2;
+                rod.sprite.setFillStyle(0xff9933);
+              }
             }
           }
-
-          if (isPlayer) this.magnetPlayerAtomSmasher = null;
-          else this.magnetNpcAtomSmasher = null;
         }
       }
 
-      for (const wall of smasher.walls) {
-        if (!wall.active) continue;
-        const wallDist = Phaser.Math.Distance.Between(wall.sprite.x, wall.sprite.y, target.x, target.y);
-        if (wallDist <= 50) {
-          target.takeDamage(15);
-          this.arena.spawnHitFlash(target.x, target.y, 0x884433);
-        }
+      // Clean up smasher once all walls are gone
+      if (!anyActive) {
+        if (smasher.flashSprite.active) smasher.flashSprite.destroy();
+        if (isPlayer) this.magnetPlayerAtomSmasher = null;
+        else this.magnetNpcAtomSmasher = null;
       }
     }
-
-    void W; void H;
   }
 
-  private updateMagnetMagnetized(time: number): void {
+  private updateMagnetMagnetized(time: number, delta: number): void {
     const { player, npc, scene } = this.arena;
 
     if (this.magnetNpcMagnetized) {
@@ -773,6 +931,35 @@ export class MagnetKit {
     } else if (this.magnetPlayerAura) {
       this.magnetPlayerAura.destroy(); this.magnetPlayerAura = null;
     }
+
+    // F+: Copper Barrage — spawn a copper rod from magnetized enemy toward caster
+    if (this.arena.hasUpgrade('f')) {
+      if (this.magnetNpcMagnetized) {
+        this.magnetCopperSpawnAccumPlayer += delta;
+        if (this.magnetCopperSpawnAccumPlayer >= 1200) {
+          this.magnetCopperSpawnAccumPlayer = 0;
+          const ang = Math.atan2(player.y - npc.y, player.x - npc.x) + (Math.random() - 0.5) * 0.6;
+          const speed = 250;
+          const spr = scene.add.circle(npc.x, npc.y, 6, 0xcc7744, 0.9)
+            .setStrokeStyle(1, 0xffaa66).setDepth(5);
+          const copper: MagnetRod = {
+            sprite: spr, trail: [],
+            x: npc.x, y: npc.y,
+            vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed,
+            contactCooldownPlayer: 0, contactCooldownNpc: 0,
+            bouncing: false, bounceUntil: 0,
+            owner: 'player',
+            destroyOnHit: true,
+            permDamageBonus: 0,
+          };
+          this.magnetRods.push(copper);
+        }
+      } else {
+        this.magnetCopperSpawnAccumPlayer = 0;
+      }
+    }
+
+    void delta;
   }
 
   private updateMagnetSpeedBuff(time: number): void {
@@ -783,5 +970,111 @@ export class MagnetKit {
       // NPC speed boost handled in AI speed mult
     }
     void time;
+  }
+
+  // ── Upgrade ability implementations ──────────────────────────────
+
+  private doMagnetRepulse(mx: number, my: number, owner: 'player' | 'npc'): void {
+    const { player, npc, scene } = this.arena;
+    const caster = owner === 'player' ? player : npc;
+    const target = owner === 'player' ? npc : player;
+    const repulseRange = 320;
+
+    // VFX
+    const ring = scene.add.circle(caster.x, caster.y, 8, 0xcc2244, 0.5)
+      .setStrokeStyle(2, 0xff88aa).setDepth(6);
+    scene.tweens.add({ targets: ring, scaleX: 12, scaleY: 12, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
+    this.arena.showFloatingText(caster.x, caster.y - 30, '💢 REPULSE', '#ff4466');
+
+    void mx; void my;
+
+    // Knock rods outward from caster
+    for (const rod of this.magnetRods) {
+      if (rod.owner !== owner) continue;
+      const dist = Phaser.Math.Distance.Between(rod.x, rod.y, caster.x, caster.y);
+      if (dist <= repulseRange) {
+        const ang = Math.atan2(rod.y - caster.y, rod.x - caster.x);
+        rod.vx = Math.cos(ang) * 680;
+        rod.vy = Math.sin(ang) * 680;
+      }
+    }
+
+    // Knock back nailed enemy
+    const nail = owner === 'player' ? this.magnetPlayerNail : this.magnetNpcNail;
+    const nails = owner === 'player' ? this.magnetPlayerNails : this.magnetNpcNails;
+    const hasNailed = (nail && nail.inEnemy) || nails.some(n => n.inEnemy);
+    if (hasNailed) {
+      const ang = Math.atan2(target.y - caster.y, target.x - caster.x);
+      const body = target.body as Phaser.Physics.Arcade.Body;
+      body.setVelocity(Math.cos(ang) * 500, Math.sin(ang) * 500);
+    }
+
+    // Shove opponent if inside caster's orb ring
+    const orbArray = owner === 'player' ? this.magnetPlayerShieldOrbs : this.magnetNpcShieldOrbs;
+    const orbitRadius = 52 + 28; // orb radius + target radius
+    const distToTarget = Phaser.Math.Distance.Between(caster.x, caster.y, target.x, target.y);
+    if (orbArray.length > 0 && distToTarget <= orbitRadius) {
+      const ang = Math.atan2(target.y - caster.y, target.x - caster.x);
+      const body = target.body as Phaser.Physics.Arcade.Body;
+      body.setVelocity(Math.cos(ang) * 600, Math.sin(ang) * 600);
+    }
+  }
+
+  private doMagnetReflectBurst(owner: 'player' | 'npc'): void {
+    const { player, npc, scene } = this.arena;
+    const caster = owner === 'player' ? player : npc;
+    const orbArray = owner === 'player' ? this.magnetPlayerShieldOrbs : this.magnetNpcShieldOrbs;
+
+    // Consume 3 orbs
+    for (let i = 0; i < 3; i++) {
+      const orb = orbArray.pop();
+      if (orb) orb.sprite.destroy();
+    }
+
+    // Set reflect state
+    if (owner === 'player') {
+      this.magnetReflectUntilPlayer = scene.time.now + 1500;
+      this.magnetReflectCenterPlayerX = caster.x;
+      this.magnetReflectCenterPlayerY = caster.y;
+    } else {
+      this.magnetReflectUntilNpc = scene.time.now + 1500;
+      this.magnetReflectCenterNpcX = caster.x;
+      this.magnetReflectCenterNpcY = caster.y;
+    }
+
+    const radius = 180;
+    const burst = scene.add.circle(caster.x, caster.y, radius, 0x4488cc, 0.2)
+      .setStrokeStyle(3, 0x88ccff, 0.8).setDepth(6);
+    scene.tweens.add({ targets: burst, alpha: 0, duration: 1500, onComplete: () => burst.destroy() });
+    this.arena.showFloatingText(caster.x, caster.y - 40, '🔵 REFLECT FIELD', '#4488cc');
+  }
+
+  private updateMagnetReflectBurst(time: number): void {
+    const { projectiles } = this.arena;
+    if (!projectiles) return;
+
+    for (const [untilTime, cx, cy, isPlayer] of [
+      [this.magnetReflectUntilPlayer, this.magnetReflectCenterPlayerX, this.magnetReflectCenterPlayerY, true],
+      [this.magnetReflectUntilNpc, this.magnetReflectCenterNpcX, this.magnetReflectCenterNpcY, false],
+    ] as [number, number, number, boolean][]) {
+      if (time > untilTime) continue;
+      const reflectRadius = 180;
+      const projOwner = isPlayer ? 'npc' : 'player'; // reflect enemy projectiles
+
+      for (const go of projectiles.getChildren()) {
+        const proj = go as unknown as Projectile;
+        if (!proj.active) continue;
+        const isEnemyProj = isPlayer ? !proj.isFromPlayer : proj.isFromPlayer;
+        if (!isEnemyProj) continue;
+        const d = Phaser.Math.Distance.Between(proj.x, proj.y, cx, cy);
+        if (d <= reflectRadius) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (proj as any).isFromPlayer = isPlayer;
+          void projOwner;
+          const body = proj.body as Phaser.Physics.Arcade.Body | null;
+          if (body) body.setVelocity(-body.velocity.x, -body.velocity.y);
+        }
+      }
+    }
   }
 }

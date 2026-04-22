@@ -350,7 +350,6 @@ export class TechnologyKit {
       const beam = this.arena.scene.add.rectangle(W / 2, caster.y, W, 20, 0x44ccaa, 0.7).setDepth(18);
       if (Math.abs(target.y - caster.y) <= 24) {
         target.takeDamage(beamDmg);
-        this.arena.spawnDamageNumber(target.x, target.y - 28, beamDmg);
         this.arena.spawnHitFlash(target.x, target.y, 0x44ccaa);
       }
       this.arena.scene.time.delayedCall(200, () => { beam.destroy(); });
@@ -713,7 +712,6 @@ export class TechnologyKit {
       if (angDiff <= 55) {
         const dmg = Math.round(22 * (owner === 'player' ? (1 + this.playerTechDamageBonus) : (1 + this.npcTechDamageBonus)));
         target.takeDamage(dmg);
-        this.arena.spawnDamageNumber(target.x, target.y - 28, dmg);
         this.arena.spawnHitFlash(target.x, target.y, 0xffee44);
       }
     }
@@ -1044,7 +1042,6 @@ export class TechnologyKit {
           if (Phaser.Math.Distance.Between(pos[0], pos[1], target.x, target.y) < 24) {
             const dmg = Math.round(8 * dmgMult);
             target.takeDamage(dmg);
-            this.arena.spawnDamageNumber(target.x, target.y - 28, dmg);
             pair.lastHitAt = time;
             break;
           }
@@ -1111,7 +1108,6 @@ export class TechnologyKit {
       if (time >= this.techVirusNextTickAt) {
         this.techVirusNextTickAt = time + 500;
         this.arena.player.takeDamage(3);
-        this.arena.spawnDamageNumber(this.arena.player.x, this.arena.player.y - 28, 3);
       }
     } else if (isPlayerTech && this.techVirusEndAt > 0 && time >= this.techVirusEndAt) {
       this.techVirusEndAt = 0;
@@ -1120,7 +1116,6 @@ export class TechnologyKit {
       if (time >= this.npcTechVirusNextTickAt) {
         this.npcTechVirusNextTickAt = time + 500;
         this.arena.npc.takeDamage(3);
-        this.arena.spawnDamageNumber(this.arena.npc.x, this.arena.npc.y - 28, 3);
       }
     } else if (isNpcTech && this.npcTechVirusEndAt > 0 && time >= this.npcTechVirusEndAt) {
       this.npcTechVirusEndAt = 0;
@@ -1196,7 +1191,6 @@ export class TechnologyKit {
         );
         if (time - box.lastDmgAt >= 500) {
           this.arena.npc.takeDamage(5);
-          this.arena.spawnDamageNumber(this.arena.npc.x, this.arena.npc.y - 28, 5);
           box.lastDmgAt = time;
         }
       }
@@ -1219,7 +1213,6 @@ export class TechnologyKit {
         );
         if (time - box.lastDmgAt >= 500) {
           this.arena.player.takeDamage(5);
-          this.arena.spawnDamageNumber(this.arena.player.x, this.arena.player.y - 28, 5);
           box.lastDmgAt = time;
         }
       }
@@ -1376,7 +1369,6 @@ export class TechnologyKit {
       // Melee
       if (pd <= 36 && time >= p.nextHitAt) {
         target.takeDamage(8);
-        this.arena.spawnDamageNumber(target.x, target.y - 28, 8);
         p.nextHitAt = time + 500;
       }
       // Check overlap with player projectiles to damage protestors
