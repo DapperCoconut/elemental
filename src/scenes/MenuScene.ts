@@ -3,6 +3,7 @@ import { DIFFICULTY_PRESETS } from '../entities/NpcOpponent';
 import { SHARD_REWARDS, getElementUpgrades } from '../data/Upgrades';
 import { MUTATIONS, activeMutationIds } from '../data/Mutations';
 import * as PlayerData from '../data/PlayerData';
+import { getPerksForElement, getPerkById, ALL_PERKS } from '../data/Perks';
 
 import { Element } from '../elements/Element';
 import { fireElement } from '../elements/fire';
@@ -134,6 +135,8 @@ export class MenuScene extends Phaser.Scene {
   private elemPage = 0;
   private isPvP = false;
   private isInvasion = false;
+  // Tracks displayed perk strip index per element (-1 = none). Persists across re-renders.
+  private perkIndices: Record<string, number> = {};
 
   private phaseObjects: Phaser.GameObjects.GameObject[] = [];
   private infoOverlayObjects: Phaser.GameObjects.GameObject[] = [];
@@ -290,8 +293,8 @@ export class MenuScene extends Phaser.Scene {
       currentElements = unlockedExtra.slice(start, start + PAGE_SIZE);
     }
 
-    // Page indicator
-    const pageLabel = this.add.text(cx, height / 2 + 110, `${this.elemPage + 1} / ${totalPages}`, {
+    // Page indicator (pushed down to make room for perk strips)
+    const pageLabel = this.add.text(cx, height / 2 + 155, `${this.elemPage + 1} / ${totalPages}`, {
       fontSize: '12px', fontFamily: 'Arial, sans-serif', color: '#555566',
     }).setOrigin(0.5);
     this.phaseObjects.push(pageLabel);
@@ -400,7 +403,127 @@ export class MenuScene extends Phaser.Scene {
         });
 
       this.phaseObjects.push(card, emojiText, nameText, statusText, iCircle, iLabel);
+
+      // ── Perk strip (player phase only) ─────────────────────────
+      if (isPlayerPhase) {
+        const perks = getPerksForElement(el.id);
+        const stripY = by + cardH / 2 + 22;
+
+        if (perks.length === 0) {
+          const noPerksLbl = this.add.text(bx, stripY + 6, 'no perks', {
+            fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#333344',
+          }).setOrigin(0.5);
+          this.phaseObjects.push(noPerksLbl);
+        } else {
+          // Sync perkIndices with saved equipped perk on first encounter
+          if (!(el.id in this.perkIndices)) {
+            const equippedId = PlayerData.getEquippedPerk(el.id);
+            this.perkIndices[el.id] = equippedId ? perks.findIndex((p) => p.id === equippedId) : -1;
+          }
+          const currentIdx = this.perkIndices[el.id] ?? -1;
+          const totalSlots = perks.length + 1; // +1 for "none" at index -1
+
+          // Strip background
+          const stripBg = this.add.rectangle(bx, stripY + 6, cardW, 30, 0x0d0d1a, 0.85)
+            .setStrokeStyle(1, 0x333355);
+
+          // Left arrow
+          const canLeft = totalSlots > 1;
+          const leftArrow = this.add.text(bx - cardW / 2 + 10, stripY + 6, '◀', {
+            fontSize: '12px', fontFamily: '"Arial Black", sans-serif',
+            color: canLeft ? '#7766aa' : '#222233',
+          }).setOrigin(0.5).setDepth(2);
+          if (canLeft) {
+            leftArrow.setInteractive({ useHandCursor: true });
+            leftArrow.on('pointerover', () => leftArrow.setColor('#cc88ff'));
+            leftArrow.on('pointerout',  () => leftArrow.setColor('#7766aa'));
+            leftArrow.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+              ptr.event.stopPropagation();
+              let nextIdx = currentIdx - 1;
+              if (nextIdx < -1) nextIdx = perks.length - 1;
+              this.perkIndices[el.id] = nextIdx;
+              if (nextIdx === -1) {
+                PlayerData.equipPerk(el.id, null);
+              } else {
+                const p = perks[nextIdx];
+                if (PlayerData.isPerkUnlocked(el.id, p.id)) PlayerData.equipPerk(el.id, p.id);
+                else PlayerData.equipPerk(el.id, null);
+              }
+              this.renderPhase(width, height, cx);
+            });
+          }
+
+          // Right arrow
+          const rightArrow = this.add.text(bx + cardW / 2 - 10, stripY + 6, '▶', {
+            fontSize: '12px', fontFamily: '"Arial Black", sans-serif',
+            color: canLeft ? '#7766aa' : '#222233',
+          }).setOrigin(0.5).setDepth(2);
+          if (canLeft) {
+            rightArrow.setInteractive({ useHandCursor: true });
+            rightArrow.on('pointerover', () => rightArrow.setColor('#cc88ff'));
+            rightArrow.on('pointerout',  () => rightArrow.setColor('#7766aa'));
+            rightArrow.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+              ptr.event.stopPropagation();
+              let nextIdx = currentIdx + 1;
+              if (nextIdx >= perks.length) nextIdx = -1;
+              this.perkIndices[el.id] = nextIdx;
+              if (nextIdx === -1) {
+                PlayerData.equipPerk(el.id, null);
+              } else {
+                const p = perks[nextIdx];
+                if (PlayerData.isPerkUnlocked(el.id, p.id)) PlayerData.equipPerk(el.id, p.id);
+                else PlayerData.equipPerk(el.id, null);
+              }
+              this.renderPhase(width, height, cx);
+            });
+          }
+
+          // Center label
+          let centerText: string;
+          let centerColor: string;
+          if (currentIdx === -1) {
+            centerText = '— none —';
+            centerColor = '#444455';
+          } else {
+            const perk = perks[currentIdx];
+            const unlocked = PlayerData.isPerkUnlocked(el.id, perk.id);
+            const isEquipped = PlayerData.getEquippedPerk(el.id) === perk.id;
+            if (unlocked) {
+              centerText = isEquipped ? `${perk.emoji} ${perk.name} ✓` : `${perk.emoji} ${perk.name}`;
+              centerColor = isEquipped ? '#88ff88' : '#ccaaff';
+            } else {
+              const recipe = getPerkById(perk.id)?.ingredients.map((r) => {
+                const em: Record<string, string> = { fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🪨' };
+                return em[r] ?? r;
+              }).join('+') ?? '';
+              centerText = `🔒 ${perk.name}  ${recipe}`;
+              centerColor = '#443344';
+            }
+          }
+          const centerLbl = this.add.text(bx, stripY + 6, centerText, {
+            fontSize: '9px', fontFamily: 'Arial, sans-serif', color: centerColor,
+          }).setOrigin(0.5).setDepth(2);
+
+          this.phaseObjects.push(stripBg, leftArrow, rightArrow, centerLbl);
+        }
+      }
     });
+
+    // ── Perk Dictionary button (player phase only, top-right) ─────
+    if (isPlayerPhase) {
+      const { width: w } = this.scale;
+      const dictCircle = this.add.circle(w - 40, 36, 18, 0x221133, 0.9)
+        .setStrokeStyle(2, 0x9944ff, 0.9).setDepth(5).setInteractive({ useHandCursor: true });
+      const dictLbl = this.add.text(w - 40, 36, '📖', { fontSize: '16px' }).setOrigin(0.5).setDepth(6);
+      dictCircle
+        .on('pointerover', () => dictCircle.setFillStyle(0x440077, 0.95))
+        .on('pointerout',  () => dictCircle.setFillStyle(0x221133, 0.9))
+        .on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+          ptr.event.stopPropagation();
+          this.showPerkDictionary(w, this.scale.height, w / 2);
+        });
+      this.phaseObjects.push(dictCircle, dictLbl);
+    }
 
     // Dummy enemy — shown only on enemy phase when unlocked via konami code
     if (!isPlayerPhase && PlayerData.isDummyUnlocked()) {
@@ -423,6 +546,7 @@ export class MenuScene extends Phaser.Scene {
     const mutRow0Y  = 268;
     const mutRow1Y  = 318;
     const mutRow2Y  = 368;
+    const mutRow3Y  = 418;
 
     const subtitle = this.add.text(cx, 155, 'INVASION', {
       fontSize: '28px', fontFamily: '"Arial Black", sans-serif', color: '#cc44ff',
@@ -445,7 +569,7 @@ export class MenuScene extends Phaser.Scene {
     const togW = 172; const togH = 40; const togGapX = 10; const mutCols = 4;
     const totalTogW = mutCols * togW + (mutCols - 1) * togGapX;
     const togStartX = cx - totalTogW / 2;
-    const rowY = [mutRow0Y, mutRow1Y, mutRow2Y];
+    const rowY = [mutRow0Y, mutRow1Y, mutRow2Y, mutRow3Y];
 
     MUTATIONS.forEach((mut, idx) => {
       const col = idx % mutCols;
@@ -494,6 +618,7 @@ export class MenuScene extends Phaser.Scene {
           elementId: this.playerChoice,
           mutations: [...activeMutationIds],
           mode: 'invasion',
+          playerPerk: PlayerData.getEquippedPerk(this.playerChoice ?? ''),
         });
       });
     this.phaseObjects.push(startBtn, startLbl);
@@ -509,6 +634,7 @@ export class MenuScene extends Phaser.Scene {
     const mutRow0Y  = 364;
     const mutRow1Y  = 415;
     const mutRow2Y  = 466;
+    const mutRow3Y  = 517;
 
     const subtitle = this.add.text(cx, 155, 'Choose difficulty', {
       fontSize: '20px',
@@ -572,11 +698,21 @@ export class MenuScene extends Phaser.Scene {
         .on('pointerover', () => { btn.setAlpha(1); btn.setStrokeStyle(3, 0xffffff); descText.setText(DIFF_DESCRIPTIONS[i]); })
         .on('pointerout',  () => { btn.setAlpha(0.75); btn.setStrokeStyle(2, color); descText.setText(''); })
         .on('pointerdown', () => {
+          const npcPool = getPerksForElement(this.enemyChoice ?? '');
+          let npcPerk: string | null = (diff.level >= 4 && npcPool.length > 0)
+            ? npcPool[Math.floor(Math.random() * npcPool.length)].id
+            : null;
+          if (activeMutationIds.has('perkaholic')) {
+            const quadPool = npcPool.filter((p) => p.tier === 'quad');
+            if (quadPool.length > 0) npcPerk = quadPool[Math.floor(Math.random() * quadPool.length)].id;
+          }
           this.scene.start('ArenaScene', {
             elementId: this.playerChoice,
             enemyElementId: this.enemyChoice,
             difficulty: diff.level,
             mutations: [...activeMutationIds],
+            playerPerk: PlayerData.getEquippedPerk(this.playerChoice ?? ''),
+            npcPerk,
           });
         });
 
@@ -597,7 +733,7 @@ export class MenuScene extends Phaser.Scene {
     const mutCols = 4;
     const totalTogW = mutCols * togW + (mutCols - 1) * togGapX;
     const togStartX = cx - totalTogW / 2;
-    const rowY = [mutRow0Y, mutRow1Y, mutRow2Y];
+    const rowY = [mutRow0Y, mutRow1Y, mutRow2Y, mutRow3Y];
 
     MUTATIONS.forEach((mut, idx) => {
       const col = idx % mutCols;
@@ -756,6 +892,124 @@ export class MenuScene extends Phaser.Scene {
     this.infoOverlayObjects.push(backBtn, backLbl);
   }
 
+  private showPerkDictionary(width: number, height: number, cx: number): void {
+    this.closeElementInfo(); // reuse the same overlay list
+
+    const ELEM_EMOJI: Record<string, string> = {
+      fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🪨',
+    };
+
+    const bg = this.add.rectangle(cx, height / 2, width, height, 0x05050f, 0.97)
+      .setDepth(50).setInteractive();
+    this.infoOverlayObjects.push(bg);
+
+    const header = this.add.text(cx, 44, '📖  PERK DICTIONARY', {
+      fontSize: '28px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
+      stroke: '#440088', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(51);
+    this.infoOverlayObjects.push(header);
+
+    const subHdr = this.add.text(cx, 78, '— craft perks in the Lab to equip them on your element —', {
+      fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#555577',
+    }).setOrigin(0.5).setDepth(51);
+    this.infoOverlayObjects.push(subHdr);
+
+    const divider = this.add.graphics().setDepth(51);
+    divider.lineStyle(1, 0x223355, 0.5);
+    divider.lineBetween(60, 96, width - 60, 96);
+    this.infoOverlayObjects.push(divider);
+
+    let curY = 112;
+    const rowH = 46;
+    const colW = width / 2 - 20;
+
+    const tiers: Array<'triple' | 'quad' | 'penta'> = ['triple', 'quad', 'penta'];
+    for (const tier of tiers) {
+      // Tier header
+      const tierLabel = tier === 'triple'
+        ? '— TRIPLE PERKS  (Lab Level 2 · 2 ⚛️) —'
+        : tier === 'quad'
+          ? '— QUAD PERKS  (Lab Level 3 · 5 ⚛️)  ·  Perkaholic Mutation —'
+          : '— PENTA PERKS  (Penta Synthesis · 10 ⚛️) —';
+      const tierHdr = this.add.text(cx, curY, tierLabel, {
+        fontSize: '10px', fontFamily: '"Arial Black", sans-serif',
+        color: tier === 'penta' ? '#cc88ff' : (tier === 'quad' ? '#ffaa44' : '#44aaff'),
+      }).setOrigin(0.5).setDepth(51);
+      this.infoOverlayObjects.push(tierHdr);
+      curY += 18;
+
+      const allTierPerks = ALL_PERKS.flatMap((ep) => ep.perks.filter((p) => p.tier === tier));
+      allTierPerks.forEach((perk, idx) => {
+        const col = idx % 2;
+        const row = Math.floor(idx / 2);
+        const px = col === 0 ? 60 : cx + 10;
+        const py = curY + row * rowH;
+
+        const unlocked = PlayerData.isPerkUnlocked(perk.elementId, perk.id);
+        const equipped  = PlayerData.getEquippedPerk(perk.elementId) === perk.id;
+        const nameAlpha = unlocked ? 1.0 : 0.35;
+
+        const rowBgFill = unlocked ? (tier === 'penta' ? 0x1a0022 : (tier === 'quad' ? 0x1a0d00 : 0x0d0d1a)) : 0x080808;
+        const rowBgStroke = unlocked ? (tier === 'penta' ? 0x441155 : (tier === 'quad' ? 0x443322 : 0x222244)) : 0x111111;
+        const rowBg = this.add.rectangle(px + colW / 2, py + rowH / 2 - 4, colW, rowH - 6,
+          rowBgFill, unlocked ? 0.8 : 0.5)
+          .setStrokeStyle(1, rowBgStroke, 0.8)
+          .setDepth(51);
+        this.infoOverlayObjects.push(rowBg);
+
+        // Emoji + name
+        const nameText = this.add.text(px + 10, py + 10, `${perk.emoji} ${perk.name}`, {
+          fontSize: '13px', fontFamily: '"Arial Black", sans-serif',
+          color: unlocked ? '#ffffff' : '#555566',
+        }).setDepth(52).setAlpha(nameAlpha);
+        this.infoOverlayObjects.push(nameText);
+
+        // Equipped indicator
+        if (equipped) {
+          const eqLbl = this.add.text(px + 10 + nameText.width + 6, py + 11, '✓', {
+            fontSize: '11px', fontFamily: 'Arial', color: '#88ff88',
+          }).setDepth(52);
+          this.infoOverlayObjects.push(eqLbl);
+        } else if (!unlocked) {
+          const lockLbl = this.add.text(px + 10 + nameText.width + 6, py + 11, '🔒', {
+            fontSize: '10px',
+          }).setDepth(52);
+          this.infoOverlayObjects.push(lockLbl);
+        }
+
+        // Ingredient chain
+        const recipeStr = perk.ingredients.map((r) => ELEM_EMOJI[r] ?? r).join(' + ');
+        const recipeEl = this.add.text(px + colW - 8, py + 10, recipeStr, {
+          fontSize: '11px', color: unlocked ? '#886633' : '#332222',
+        }).setOrigin(1, 0).setDepth(52).setAlpha(nameAlpha);
+        this.infoOverlayObjects.push(recipeEl);
+
+        // Description
+        const descEl = this.add.text(px + 10, py + 27, perk.description, {
+          fontSize: '9px', fontFamily: 'Arial, sans-serif',
+          color: unlocked ? '#888899' : '#444455',
+          wordWrap: { width: colW - 20 },
+        }).setDepth(52).setAlpha(nameAlpha);
+        this.infoOverlayObjects.push(descEl);
+      });
+
+      const rows = Math.ceil(allTierPerks.length / 2);
+      curY += rows * rowH + 14;
+    }
+
+    // Back button
+    const backBtn = this.add.rectangle(60, 30, 90, 32, 0x221133, 0.9)
+      .setStrokeStyle(2, 0x9944ff, 0.8).setDepth(55).setInteractive({ useHandCursor: true });
+    const backLbl = this.add.text(60, 30, '◀  BACK', {
+      fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
+    }).setOrigin(0.5).setDepth(56);
+    backBtn
+      .on('pointerover', () => backBtn.setFillStyle(0x440077, 0.95))
+      .on('pointerout',  () => backBtn.setFillStyle(0x221133, 0.9))
+      .on('pointerdown', () => this.closeElementInfo());
+    this.infoOverlayObjects.push(backBtn, backLbl);
+  }
+
   private goBack(): void {
     const { width, height } = this.scale;
     const cx = width / 2;
@@ -796,6 +1050,8 @@ export class MenuScene extends Phaser.Scene {
           elementId: this.playerChoice,
           enemyElementId: this.enemyChoice,
           isPvP: true,
+          playerPerk: PlayerData.getEquippedPerk(this.playerChoice ?? ''),
+          npcPerk: PlayerData.getEquippedPerk(this.enemyChoice ?? ''),
         });
         return;
       }

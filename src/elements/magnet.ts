@@ -36,7 +36,7 @@ const protect: Ability = {
   name: 'Protect',
   description: 'Surround yourself with 20 orbiting metal orbs (5 HP each). Using Mag Pulse while shielded teleports you to cursor and grants 20% speed for 3s.',
   displayKey: 'R',
-  cooldown: 12000,
+  cooldown: 15000,
   cast(ctx) { ctx.magnetProtect(); },
 };
 

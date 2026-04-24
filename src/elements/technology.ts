@@ -28,13 +28,13 @@ const randomizeExe: Ability = {
   cast(ctx) { ctx.techRandomEffect(); },
 };
 
-const playerGift: Ability = {
-  id: 'tech-gift',
-  name: 'Player.Gift',
-  description: 'Give enemy a random buff (+5% speed, +5% damage, or +5 max HP). -20 Abuse. No cooldown.',
+const deleteArea: Ability = {
+  id: 'tech-delete',
+  name: 'Delete.Area',
+  description: 'Drag to mark a zone. After 2s it fades white→red then becomes a void for 12s. Enemies fall through and teleport, taking 20 damage. Standing on it: +25% speed and +5 Abuse/s. Casting: +20 Abuse. Max 2 zones.',
   displayKey: 'F',
-  cooldown: 0,
-  cast(ctx) { ctx.techPlayerGift(); },
+  cooldown: 6000,
+  cast(ctx) { ctx.techDeleteArea(ctx.targetX, ctx.targetY, 120, 120); },
 };
 
 const domainExpansion: Ability = {
@@ -51,5 +51,5 @@ export const technologyElement: Element = {
   name: 'Technology',
   color: 0x44ccaa,
   emoji: '💻',
-  abilities: [gearGive, devConsole, randomizeExe, playerGift, domainExpansion],
+  abilities: [gearGive, devConsole, randomizeExe, deleteArea, domainExpansion],
 };

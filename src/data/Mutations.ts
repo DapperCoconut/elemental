@@ -18,7 +18,8 @@ export const MUTATIONS: MutationDef[] = [
   { id: 'stealthy', name: 'Stealthy', emoji: '👁️', description: 'Enemy invisible, projectiles visible',  rewardMult: 2.25 },
   { id: 'raid',     name: 'Raid',     emoji: '⚔️',  description: '4 enemies, 80% less HP, 50% smaller',  rewardMult: 2.25 },
   { id: 'clone',    name: 'Clone',    emoji: '👥', description: 'A second enemy — both must die',        rewardMult: 2.5  },
-  { id: 'boss',     name: 'Boss',     emoji: '👹', description: 'Stationary top-screen boss, 500 HP',   rewardMult: 2.5  },
+  { id: 'boss',       name: 'Boss',       emoji: '👹', description: 'Stationary top-screen boss, 500 HP',              rewardMult: 2.5  },
+  { id: 'perkaholic', name: 'Perkaholic', emoji: '🎁', description: 'Enemy is guaranteed one of their quad perks.',        rewardMult: 2.0  },
 ];
 
 /** Session-level active mutations — cleared each time MenuScene is created. */

@@ -662,6 +662,47 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('proj-magic-heal-orb', 12, 12);
     gfx.clear();
 
+    // proj-sparkle-star — 14px 5-pointed star, white center + magenta tips
+    {
+      const cx = 7, cy = 7, outerR = 6, innerR = 2.5, points = 5;
+      gfx.fillStyle(0xff88ff, 1);
+      gfx.beginPath();
+      for (let i = 0; i < points * 2; i++) {
+        const r = i % 2 === 0 ? outerR : innerR;
+        const angle = (i * Math.PI) / points - Math.PI / 2;
+        if (i === 0) gfx.moveTo(cx + r * Math.cos(angle), cy + r * Math.sin(angle));
+        else gfx.lineTo(cx + r * Math.cos(angle), cy + r * Math.sin(angle));
+      }
+      gfx.closePath();
+      gfx.fillPath();
+      gfx.fillStyle(0xffffff, 1);
+      gfx.fillCircle(cx, cy, 2);
+    }
+    gfx.generateTexture('proj-sparkle-star', 14, 14);
+    gfx.clear();
+
+    // proj-thorn-vine — 16×8 green vine segment (Virulent Thorns)
+    gfx.fillStyle(0x22aa44, 1);
+    gfx.fillRect(0, 1, 14, 5);
+    gfx.lineStyle(1, 0x66ff88, 1);
+    gfx.strokeRect(0, 1, 14, 5);
+    gfx.lineStyle(1, 0x44cc66, 0.8);
+    gfx.strokeRect(1, 2, 4, 3);
+    gfx.strokeRect(9, 2, 4, 3);
+    gfx.generateTexture('proj-thorn-vine', 16, 8);
+    gfx.clear();
+
+    // proj-thorn-vine-dark — 16×8 darker forest green (Thorn Prison)
+    gfx.fillStyle(0x115522, 1);
+    gfx.fillRect(0, 1, 14, 5);
+    gfx.lineStyle(1, 0x33aa55, 1);
+    gfx.strokeRect(0, 1, 14, 5);
+    gfx.lineStyle(1, 0x22883a, 0.8);
+    gfx.strokeRect(1, 2, 4, 3);
+    gfx.strokeRect(9, 2, 4, 3);
+    gfx.generateTexture('proj-thorn-vine-dark', 16, 8);
+    gfx.clear();
+
     // ── Technology element (abstract combined: sound + light) ─────────────────
 
     // elem-technology — cyan circle with white { } brace glyph
@@ -939,6 +980,50 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('mask-silence', 28, 22);
     gfx.clear();
 
+    // proj-adrenaline-parry — 14×14 red-gold radial gradient disc (E+ parry)
+    const parryColors = [0xffcc00, 0xff8800, 0xff4400, 0xff2222, 0xff2222];
+    for (let ri = 0; ri < parryColors.length; ri++) {
+      gfx.fillStyle(parryColors[ri], 1);
+      gfx.fillCircle(7, 7, 7 - ri);
+    }
+    gfx.generateTexture('proj-adrenaline-parry', 14, 14);
+    gfx.clear();
+
+    // doll-silence — 20×24 mini voodoo straw figure with hockey mask (R+ possession)
+    gfx.fillStyle(0x997755, 1);
+    gfx.fillRect(8, 10, 4, 10); // torso
+    gfx.fillRect(4, 12, 5, 2);  // left arm
+    gfx.fillRect(11, 12, 5, 2); // right arm
+    gfx.fillRect(7, 20, 3, 4);  // left leg
+    gfx.fillRect(10, 20, 3, 4); // right leg
+    gfx.fillStyle(0xeeeeee, 1);
+    gfx.fillEllipse(10, 7, 8, 7); // mask face
+    gfx.fillStyle(0x000000, 0.8);
+    gfx.fillEllipse(7, 6, 2, 2);  // left eye hole
+    gfx.fillEllipse(13, 6, 2, 2); // right eye hole
+    gfx.generateTexture('doll-silence', 20, 24);
+    gfx.clear();
+
+    // goop-silence-form — 80×80 irregular black blob with yellow eyes (Q+ goop transform)
+    gfx.fillStyle(0x0a0a0a, 1);
+    gfx.fillCircle(40, 40, 36);
+    gfx.fillCircle(20, 28, 16);
+    gfx.fillCircle(58, 22, 14);
+    gfx.fillCircle(62, 52, 18);
+    gfx.fillCircle(24, 56, 15);
+    gfx.fillStyle(0xffff00, 1);
+    gfx.fillEllipse(28, 32, 8, 5);
+    gfx.fillEllipse(52, 28, 8, 5);
+    gfx.fillEllipse(22, 50, 6, 4);
+    gfx.fillEllipse(58, 50, 6, 4);
+    gfx.fillStyle(0x000000, 1);
+    gfx.fillCircle(30, 32, 2);
+    gfx.fillCircle(54, 28, 2);
+    gfx.fillCircle(23, 50, 1);
+    gfx.fillCircle(59, 50, 1);
+    gfx.generateTexture('goop-silence-form', 80, 80);
+    gfx.clear();
+
     // domain-shard — 10×4 black-purple elongated diamond for Domain Expansion
     gfx.fillStyle(0x0a0014, 1);
     gfx.fillTriangle(5, 2, 0, 2, 5, 0);
@@ -1072,6 +1157,97 @@ export class BootScene extends Phaser.Scene {
     gfx.fillStyle(0x88ffff, 0.7);
     gfx.fillCircle(12, 12, 4);
     gfx.generateTexture('titan-shield', 24, 24);
+    gfx.clear();
+
+    // proj-note-blue — blue rhythm note
+    gfx.fillStyle(0x3388ff, 1);
+    gfx.fillCircle(6, 6, 6);
+    gfx.lineStyle(2, 0x88ccff, 1);
+    gfx.strokeCircle(6, 6, 6);
+    gfx.generateTexture('proj-note-blue', 12, 12);
+    gfx.clear();
+
+    // proj-note-purple — purple rhythm note
+    gfx.fillStyle(0x9955cc, 1);
+    gfx.fillCircle(6, 6, 6);
+    gfx.lineStyle(2, 0xcc99ee, 1);
+    gfx.strokeCircle(6, 6, 6);
+    gfx.generateTexture('proj-note-purple', 12, 12);
+    gfx.clear();
+
+    // proj-note-hold-green — green hold note pill
+    gfx.fillStyle(0x44ee88, 1);
+    gfx.fillRoundedRect(0, 0, 30, 12, 4);
+    gfx.lineStyle(2, 0x88ffcc, 1);
+    gfx.strokeRoundedRect(0, 0, 30, 12, 4);
+    gfx.generateTexture('proj-note-hold-green', 30, 12);
+    gfx.clear();
+
+    // elem-fallen-angel — 32×32 dark purple circle with radiating lines
+    gfx.fillStyle(0x6644aa, 1);
+    gfx.fillCircle(16, 16, 14);
+    gfx.lineStyle(2, 0x9966cc, 1);
+    gfx.strokeCircle(16, 16, 14);
+    gfx.lineStyle(1, 0xcc88ff, 0.7);
+    for (let ri = 0; ri < 8; ri++) {
+      const ra = (ri / 8) * Math.PI * 2;
+      gfx.lineBetween(16, 16, 16 + Math.cos(ra) * 14, 16 + Math.sin(ra) * 14);
+    }
+    gfx.generateTexture('elem-fallen-angel', 32, 32);
+    gfx.clear();
+
+    // elem-light-blue — 48×48 blue player sprite (same shape as elem-light but blue)
+    gfx.fillStyle(0x4488ff, 1);
+    gfx.fillCircle(24, 24, 22);
+    gfx.lineStyle(2, 0x88bbff, 1);
+    gfx.strokeCircle(24, 24, 22);
+    gfx.fillStyle(0xffffff, 0.7);
+    gfx.fillCircle(18, 18, 5);
+    gfx.generateTexture('elem-light-blue', 48, 48);
+    gfx.clear();
+
+    // perk-golem — 32×32 wax-orange golem body (for Candle quad perk)
+    gfx.fillStyle(0xcc8844, 1);
+    gfx.fillRect(6, 12, 20, 16);  // body
+    gfx.fillStyle(0xddaa66, 1);
+    gfx.fillRect(9, 5, 14, 9);    // head
+    gfx.lineStyle(2, 0xff6600, 1);
+    gfx.strokeRect(6, 12, 20, 16);
+    gfx.strokeRect(9, 5, 14, 9);
+    gfx.fillStyle(0xff8800, 1);
+    gfx.fillTriangle(14, 0, 18, 0, 16, 5);  // flame on head
+    gfx.generateTexture('perk-golem', 32, 32);
+    gfx.clear();
+
+    // perk-golem-ignited — same but orange-red ignited version
+    gfx.fillStyle(0xff5500, 1);
+    gfx.fillRect(6, 12, 20, 16);
+    gfx.fillStyle(0xff8844, 1);
+    gfx.fillRect(9, 5, 14, 9);
+    gfx.lineStyle(2, 0xff2200, 1);
+    gfx.strokeRect(6, 12, 20, 16);
+    gfx.strokeRect(9, 5, 14, 9);
+    gfx.fillStyle(0xffdd00, 1);
+    gfx.fillTriangle(12, 0, 20, 0, 16, 5);
+    gfx.generateTexture('perk-golem-ignited', 32, 32);
+    gfx.clear();
+
+    // perk-stalagmite — 20×32 cyan spike (for Stalagmite quad perk)
+    gfx.fillStyle(0x4488cc, 1);
+    gfx.fillTriangle(10, 0, 20, 32, 0, 32);  // spike shape
+    gfx.lineStyle(2, 0x88ccff, 1);
+    gfx.strokeTriangle(10, 0, 20, 32, 0, 32);
+    gfx.generateTexture('perk-stalagmite', 20, 32);
+    gfx.clear();
+
+    // perk-stalagmite-lava — same but lava-colored for upgraded final stalagmite
+    gfx.fillStyle(0xcc4400, 1);
+    gfx.fillTriangle(10, 0, 20, 32, 0, 32);
+    gfx.lineStyle(2, 0xff8833, 1);
+    gfx.strokeTriangle(10, 0, 20, 32, 0, 32);
+    gfx.fillStyle(0xffcc00, 0.6);
+    gfx.fillTriangle(10, 6, 17, 30, 3, 30);  // inner glow
+    gfx.generateTexture('perk-stalagmite-lava', 20, 32);
     gfx.clear();
 
     gfx.destroy();

@@ -302,6 +302,7 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
         difficulty: 5,
         mutations: ['boss'],
         gauntlet: gs,
+        playerPerk: PlayerData.getEquippedPerk(gs.playerElement),
       });
     } else {
       // Regular fight: use pre-generated order/mutation (currentFight is now 2-5, index = currentFight - 1)
@@ -312,6 +313,7 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
         difficulty: GAUNTLET_DIFFICULTY[idx],
         mutations: [gs.fightMutations[idx]],
         gauntlet: gs,
+        playerPerk: PlayerData.getEquippedPerk(gs.playerElement),
       });
     }
   }

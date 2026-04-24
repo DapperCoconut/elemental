@@ -106,11 +106,23 @@ export class TechnologyKit {
   private npcProtestorsSpawned = false;
   private protestors: Array<{ sprite: Phaser.GameObjects.Sprite; hpBar: Phaser.GameObjects.Graphics; hp: number; maxHp: number; target: 'player' | 'npc'; nextHitAt: number }> = [];
 
-  // ── Gift permanent buffs ───────────────────────────────────────────────
-  private npcTechGiftSpeedBonus = 0;
-  private npcTechGiftDamageBonus = 0;
-  private playerTechGiftSpeedBonus = 0;
-  private playerTechGiftDamageBonus = 0;
+  // ── Delete.Area ────────────────────────────────────────────────────────
+  private techDeletedAreas: Array<{
+    sprite: Phaser.GameObjects.Rectangle;
+    x: number; y: number; w: number; h: number;
+    owner: 'player' | 'npc';
+    state: 'warmup' | 'active';
+    stateEndsAt: number;
+    colorTween: Phaser.Tweens.Tween | undefined;
+  }> = [];
+  private techDeleteDragging = false;
+  private techDeleteDragStartX = 0;
+  private techDeleteDragStartY = 0;
+  private techDeletePreview: Phaser.GameObjects.Rectangle | null = null;
+  private techPlayerOnOwnDelete = false;
+  private techNpcOnOwnDelete = false;
+  private techPlayerFallingThrough = false;
+  private techNpcFallingThrough = false;
 
   // ── Gear.Give (item box & active weapon) ──────────────────────────────
   private techClickArmed = false;
@@ -176,8 +188,8 @@ export class TechnologyKit {
   getNpcOpSelfPhase(): 0 | 1 | 2 | 3 { return this.npcOpSelfPhase; }
   getPlayerTechSpeedBonus(): number { return this.playerTechSpeedBonus; }
   getNpcTechSpeedBonus(): number { return this.npcTechSpeedBonus; }
-  getPlayerTechGiftSpeedBonus(): number { return this.playerTechGiftSpeedBonus; }
-  getNpcTechGiftSpeedBonus(): number { return this.npcTechGiftSpeedBonus; }
+  getPlayerOnOwnDeleteArea(): boolean { return this.techPlayerOnOwnDelete; }
+  getNpcOnOwnDeleteArea(): boolean { return this.techNpcOnOwnDelete; }
   isTechDomainActive(): boolean { return this.techDomainActive; }
   getTechDomainBias(): number { return this.techDomainBias; }
   getTechRansomwareTarget(): 'player' | 'npc' | null { return this.techRansomwareTarget; }
@@ -212,8 +224,12 @@ export class TechnologyKit {
     this.playerProtestorsSpawned = false; this.npcProtestorsSpawned = false;
     for (const p of this.protestors) { p.sprite.destroy(); p.hpBar.destroy(); }
     this.protestors = [];
-    this.npcTechGiftSpeedBonus = 0; this.npcTechGiftDamageBonus = 0;
-    this.playerTechGiftSpeedBonus = 0; this.playerTechGiftDamageBonus = 0;
+    for (const a of this.techDeletedAreas) { a.colorTween?.remove(); a.sprite.destroy(); }
+    this.techDeletedAreas = [];
+    if (this.techDeletePreview) { this.techDeletePreview.destroy(); this.techDeletePreview = null; }
+    this.techDeleteDragging = false;
+    this.techPlayerOnOwnDelete = false; this.techNpcOnOwnDelete = false;
+    this.techPlayerFallingThrough = false; this.techNpcFallingThrough = false;
     this.techClickArmed = false;
     this.techGearBoxActive = false; this.techGearBoxWeapon = 0; this.techGearBoxCycleAccum = 0;
     if (this.techGearBoxGraphics) { this.techGearBoxGraphics.destroy(); this.techGearBoxGraphics = null; }
@@ -276,9 +292,37 @@ export class TechnologyKit {
       this.arena.player.castAbility('tech-random-r', ctx);
     }
 
-    // F: Player.Gift (blocked by ransomware)
-    if (Phaser.Input.Keyboard.JustDown(this.arena.fKey) && !ransomwared) {
-      this.arena.player.castAbility('tech-gift', ctx);
+    // F: Delete.Area drag (blocked by ransomware)
+    if (!ransomwared) {
+      if (this.arena.fKey.isDown && !this.techDeleteDragging) {
+        if (this.techDeletedAreas.length < 2 && this.arena.player.getCooldownRatio('tech-delete') >= 1) {
+          this.techDeleteDragging = true;
+          this.techDeleteDragStartX = mouseX;
+          this.techDeleteDragStartY = mouseY;
+          if (this.techDeletePreview) this.techDeletePreview.destroy();
+          this.techDeletePreview = this.arena.scene.add.rectangle(mouseX, mouseY, 0, 0, 0xffffff, 0.3)
+            .setStrokeStyle(2, 0xffffff, 0.7).setDepth(5);
+        }
+      }
+      if (this.techDeleteDragging && this.techDeletePreview) {
+        const rw = Math.min(200, Math.abs(mouseX - this.techDeleteDragStartX));
+        const rh = Math.min(200, Math.abs(mouseY - this.techDeleteDragStartY));
+        const rx = this.techDeleteDragStartX + (mouseX > this.techDeleteDragStartX ? 1 : -1) * rw / 2;
+        const ry = this.techDeleteDragStartY + (mouseY > this.techDeleteDragStartY ? 1 : -1) * rh / 2;
+        this.techDeletePreview.setPosition(rx, ry).setSize(rw, rh);
+      }
+      if (!this.arena.fKey.isDown && this.techDeleteDragging) {
+        this.techDeleteDragging = false;
+        const rw = Math.min(200, Math.abs(mouseX - this.techDeleteDragStartX));
+        const rh = Math.min(200, Math.abs(mouseY - this.techDeleteDragStartY));
+        if (this.techDeletePreview) { this.techDeletePreview.destroy(); this.techDeletePreview = null; }
+        if (rw >= 12 && rh >= 12) {
+          const rx = this.techDeleteDragStartX + (mouseX > this.techDeleteDragStartX ? 1 : -1) * rw / 2;
+          const ry = this.techDeleteDragStartY + (mouseY > this.techDeleteDragStartY ? 1 : -1) * rh / 2;
+          this.doTechDeleteArea('player', rx, ry, rw, rh);
+          this.arena.player.triggerCooldown('tech-delete');
+        }
+      }
     }
 
     // Q: Domain.Expansion (blocked by ransomware)
@@ -451,30 +495,99 @@ export class TechnologyKit {
     }
   }
 
-  doTechPlayerGift(owner: 'player' | 'npc'): void {
-    // Gift goes to the opponent
-    const target = owner === 'player' ? this.arena.npc : this.arena.player;
-    const roll = Math.floor(Math.random() * 3);
-    let giftText = '';
-    if (roll === 0) {
-      if (owner === 'player') { this.npcTechGiftSpeedBonus += 0.05; giftText = 'Speed+5%'; }
-      else { this.playerTechGiftSpeedBonus += 0.05; giftText = 'Speed+5%'; }
-    } else if (roll === 1) {
-      if (owner === 'player') { this.npcTechGiftDamageBonus += 0.05; giftText = 'DMG+5%'; }
-      else { this.playerTechGiftDamageBonus += 0.05; giftText = 'DMG+5%'; }
-    } else {
-      target.heal(5);
-      target.maxHp = target.maxHp + 5;
-      giftText = 'MaxHP+5';
+  doTechDeleteArea(owner: 'player' | 'npc', rx: number, ry: number, rw: number, rh: number): void {
+    while (this.techDeletedAreas.length >= 2) {
+      const dead = this.techDeletedAreas.shift();
+      if (dead) { dead.colorTween?.remove(); dead.sprite.destroy(); }
     }
+    const spr = this.arena.scene.add.rectangle(rx, ry, rw, rh, 0xffffff, 0.55)
+      .setStrokeStyle(2, 0xffffff, 0.9).setDepth(3);
+    const area: {
+      sprite: Phaser.GameObjects.Rectangle;
+      x: number; y: number; w: number; h: number;
+      owner: 'player' | 'npc';
+      state: 'warmup' | 'active';
+      stateEndsAt: number;
+      colorTween: Phaser.Tweens.Tween | undefined;
+    } = {
+      sprite: spr, x: rx, y: ry, w: rw, h: rh, owner,
+      state: 'warmup',
+      stateEndsAt: this.arena.scene.time.now + 2000,
+      colorTween: undefined,
+    };
+    area.colorTween = this.arena.scene.tweens.addCounter({
+      from: 0, to: 1, duration: 2000,
+      onUpdate: (tween) => {
+        const v = tween.getValue() ?? 0;
+        const g = Math.round(255 - v * (255 - 34));
+        const b = Math.round(255 - v * (255 - 34));
+        spr.setFillStyle(Phaser.Display.Color.GetColor(255, g, b), 0.55);
+      },
+    });
+    this.techDeletedAreas.push(area);
+    if (owner === 'player') this.playerAbuse = Math.min(100, this.playerAbuse + 20);
+    else this.npcAbuse = Math.min(100, this.npcAbuse + 20);
+    this.arena.spawnFloatingText(rx, ry - 14, 'DELETE', '#ffffff');
+  }
 
-    if (owner === 'player') {
-      this.playerAbuse = Math.max(0, this.playerAbuse - 20);
-      this.arena.spawnFloatingText(this.arena.npc.x, this.arena.npc.y - 36, `GIFT: ${giftText}`, '#ffdd44');
-      this.arena.spawnFloatingText(this.arena.player.x, this.arena.player.y - 36, '-20 Abuse', '#44ffcc');
-    } else {
-      this.npcAbuse = Math.max(0, this.npcAbuse - 20);
-      this.arena.spawnFloatingText(this.arena.player.x, this.arena.player.y - 36, `GIFT: ${giftText}`, '#ffdd44');
+  private triggerFallThrough(fighter: Fighter, casterOwner: 'player' | 'npc'): void {
+    const isNpcFalling = casterOwner === 'player'; // player's area catches the npc
+    if (isNpcFalling) this.techNpcFallingThrough = true;
+    else this.techPlayerFallingThrough = true;
+    const origScaleX = fighter.scaleX;
+    const origScaleY = fighter.scaleY;
+    this.arena.scene.tweens.add({
+      targets: fighter,
+      scaleX: 0.1, scaleY: 0.1, alpha: 0.3,
+      duration: 300, ease: 'Quad.easeIn',
+      onComplete: () => {
+        const { width, height } = this.arena.scene.scale;
+        const pad = 60;
+        let tx = 0, ty = 0;
+        for (let attempt = 0; attempt < 10; attempt++) {
+          tx = Phaser.Math.Between(pad, width - pad);
+          ty = Phaser.Math.Between(pad, height - pad);
+          const onDeleted = this.techDeletedAreas.some(a =>
+            a.state === 'active'
+            && tx >= a.x - a.w / 2 && tx <= a.x + a.w / 2
+            && ty >= a.y - a.h / 2 && ty <= a.y + a.h / 2,
+          );
+          if (!onDeleted) break;
+        }
+        fighter.setPosition(tx, ty);
+        fighter.takeDamage(20);
+        this.arena.spawnFloatingText(tx, ty - 24, '-20 DELETED', '#ff4422');
+        this.arena.scene.tweens.add({
+          targets: fighter,
+          scaleX: origScaleX, scaleY: origScaleY, alpha: 1,
+          duration: 250, ease: 'Back.easeOut',
+          onComplete: () => {
+            if (isNpcFalling) this.techNpcFallingThrough = false;
+            else this.techPlayerFallingThrough = false;
+          },
+        });
+      },
+    });
+  }
+
+  private rectContainsFighter(a: { x: number; y: number; w: number; h: number }, f: { x: number; y: number }): boolean {
+    return f.x >= a.x - a.w / 2 && f.x <= a.x + a.w / 2
+        && f.y >= a.y - a.h / 2 && f.y <= a.y + a.h / 2;
+  }
+
+  private damageProtestorsInCircle(cx: number, cy: number, radius: number, damage: number, owner: 'player' | 'npc'): void {
+    for (const p of this.protestors) {
+      if (p.target !== owner) continue;
+      const dx = p.sprite.x - cx;
+      const dy = p.sprite.y - cy;
+      if (dx * dx + dy * dy <= radius * radius) p.hp -= damage;
+    }
+  }
+
+  private damageProtestorsInRect(a: { x: number; y: number; w: number; h: number; owner: 'player' | 'npc' }, dmg: number): void {
+    for (const p of this.protestors) {
+      if (p.target !== a.owner) continue;
+      if (this.rectContainsFighter(a, p.sprite)) p.hp -= dmg;
     }
   }
 
@@ -713,6 +826,7 @@ export class TechnologyKit {
         const dmg = Math.round(22 * (owner === 'player' ? (1 + this.playerTechDamageBonus) : (1 + this.npcTechDamageBonus)));
         target.takeDamage(dmg);
         this.arena.spawnHitFlash(target.x, target.y, 0xffee44);
+        this.damageProtestorsInCircle(tipX, tipY, RANGE, dmg, owner);
       }
     }
   }
@@ -841,7 +955,7 @@ export class TechnologyKit {
     // ── Abuse drain ──────────────────────────────────────────────
     if (isPlayerTech) {
       const pa = this.playerAbuse; // snapshot before drain for condition checks
-      this.playerAbuse = Math.max(0, this.playerAbuse - 3 * delta / 1000);
+      this.playerAbuse = Math.max(0, this.playerAbuse - 1 * delta / 1000);
       // Update bar
       if (this.playerAbuseBarBg && this.playerAbuseBarFill) {
         const barW = 50;
@@ -875,7 +989,7 @@ export class TechnologyKit {
       if (pa < 50) this.playerProtestorsSpawned = false;
     }
     if (isNpcTech) {
-      this.npcAbuse = Math.max(0, this.npcAbuse - 3 * delta / 1000);
+      this.npcAbuse = Math.max(0, this.npcAbuse - 1 * delta / 1000);
       const na = this.npcAbuse;
       if (this.npcAbuseBarBg && this.npcAbuseBarFill) {
         const barW = 50;
@@ -1009,6 +1123,7 @@ export class TechnologyKit {
           const my = (pair.y1 + pair.y2) / 2;
           this.arena.spawnHitFlash(mx, my, 0x2299ff);
           this.arena.dealAoeDamageFromOwner(mx, my, 50, Math.round(16 * dmgMult), pair.owner);
+          this.damageProtestorsInCircle(mx, my, 50, Math.round(16 * dmgMult), pair.owner);
           pair.phase = 2; pair.phaseTimer = 0;
         }
       } else if (pair.phase === 2) {
@@ -1026,6 +1141,7 @@ export class TechnologyKit {
           const my = (pair.y1 + pair.y2) / 2;
           this.arena.spawnHitFlash(mx, my, 0x2299ff);
           this.arena.dealAoeDamageFromOwner(mx, my, 50, Math.round(16 * dmgMult), pair.owner);
+          this.damageProtestorsInCircle(mx, my, 50, Math.round(16 * dmgMult), pair.owner);
           pair.phase = 5;
         }
       }
@@ -1045,6 +1161,11 @@ export class TechnologyKit {
             pair.lastHitAt = time;
             break;
           }
+        }
+        // Also damage protestors near each disc
+        const discDmg = Math.round(8 * dmgMult);
+        for (const pos of [[pair.s1.x, pair.s1.y], [pair.s2.x, pair.s2.y]]) {
+          this.damageProtestorsInCircle(pos[0], pos[1], 22, discDmg, pair.owner);
         }
       }
 
@@ -1095,6 +1216,7 @@ export class TechnologyKit {
         if (time >= g.explodeAt) {
           const eDmg = Math.round(35 * dmgMult);
           this.arena.dealAoeDamageFromOwner(g.x, g.y, 65, eDmg, g.owner);
+          this.damageProtestorsInCircle(g.x, g.y, 65, eDmg, g.owner);
           this.arena.spawnHitFlash(g.x, g.y, 0x558800);
           g.sprite.destroy();
           return false;
@@ -1384,6 +1506,50 @@ export class TechnologyKit {
           }
         }
       });
+    }
+
+    // ── Delete.Area lifecycle and interactions ────────────────────
+    this.techPlayerOnOwnDelete = false;
+    this.techNpcOnOwnDelete = false;
+    for (let i = this.techDeletedAreas.length - 1; i >= 0; i--) {
+      const a = this.techDeletedAreas[i];
+      // Warmup → active transition
+      if (a.state === 'warmup' && time >= a.stateEndsAt) {
+        a.state = 'active';
+        a.stateEndsAt = time + 12000;
+        a.colorTween?.remove();
+        a.colorTween = undefined;
+        a.sprite.setFillStyle(0xffffff, 0.45).setStrokeStyle(2, 0xdddddd, 0.6);
+        this.damageProtestorsInRect(a, 25);
+      }
+      // Active → expire
+      if (a.state === 'active' && time >= a.stateEndsAt) {
+        a.colorTween?.remove();
+        a.sprite.destroy();
+        this.techDeletedAreas.splice(i, 1);
+        continue;
+      }
+      if (a.state !== 'active') continue;
+
+      const casterFighter = a.owner === 'player' ? this.arena.player : this.arena.npc;
+      if (this.rectContainsFighter(a, casterFighter)) {
+        if (a.owner === 'player') {
+          this.techPlayerOnOwnDelete = true;
+          this.playerAbuse = Math.min(100, this.playerAbuse + 5 * delta / 1000);
+        } else {
+          this.techNpcOnOwnDelete = true;
+          this.npcAbuse = Math.min(100, this.npcAbuse + 5 * delta / 1000);
+        }
+      }
+
+      const enemyFighter = a.owner === 'player' ? this.arena.npc : this.arena.player;
+      const enemyFalling = a.owner === 'player' ? this.techNpcFallingThrough : this.techPlayerFallingThrough;
+      if (!enemyFalling && this.rectContainsFighter(a, enemyFighter)) {
+        this.triggerFallThrough(enemyFighter, a.owner);
+      }
+
+      // Protestors in active area drain health rapidly
+      this.damageProtestorsInRect(a, 40 * delta / 1000);
     }
 
     // ── Invis: NPC aim scatter ────────────────────────────────────

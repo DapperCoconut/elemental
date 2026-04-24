@@ -37,18 +37,21 @@ const flameDash: Ability = {
     const dx = ctx.targetX - ctx.casterX;
     const dy = ctx.targetY - ctx.casterY;
     const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    const dashOriginX = ctx.casterX;
+    const dashOriginY = ctx.casterY;
     ctx.dashCaster((dx / len) * 640, (dy / len) * 640);
-    ctx.dealAoeDamage(ctx.casterX, ctx.casterY, 90, 18);
-
-    const ring = ctx.scene.add.circle(ctx.casterX, ctx.casterY, 10, 0xff4400, 0.65);
-    ctx.scene.tweens.add({
-      targets: ring,
-      scaleX: 9,
-      scaleY: 9,
-      alpha: 0,
-      duration: 400,
-      onComplete: () => ring.destroy(),
-    });
+    if (!ctx.hasPerk('candle')) {
+      ctx.dealAoeDamage(dashOriginX, dashOriginY, 90, 18);
+      const ring = ctx.scene.add.circle(dashOriginX, dashOriginY, 10, 0xff4400, 0.65);
+      ctx.scene.tweens.add({
+        targets: ring,
+        scaleX: 9,
+        scaleY: 9,
+        alpha: 0,
+        duration: 400,
+        onComplete: () => ring.destroy(),
+      });
+    }
   },
 };
 

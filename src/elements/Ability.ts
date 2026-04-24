@@ -131,11 +131,12 @@ export interface CastContext {
   plasmaChaosBlades: () => void;
   plasmaChaosIncarnate: () => void;
   // Death (abstract combined: fate + sound)
-  deathSweep: (tx: number, ty: number) => void;
+  death1000Blades: (tx: number, ty: number) => void;
   deathSummonWisps: (count: number) => void;
-  deathWish: (tx: number, ty: number) => void;
+  deathLoomingDread: () => void;
   deathWispDaemon: () => void;
-  deathExecute: (tx: number, ty: number) => void;
+  deathTrailDash: (tx: number, ty: number) => void;
+  deathJudgement: () => void;
   // Void (abstract combined: fate + light)
   voidFloater: (tx: number, ty: number) => void;
   voidReturnToVoid: (tx: number, ty: number) => void;
@@ -157,28 +158,16 @@ export interface CastContext {
   adrenalineRegisterShotHit: () => void;
   adrenalineRegisterShotMiss: () => void;
   // Magic (abstract combined: slime + light)
-  magicMissiles: (tx: number, ty: number) => void;
+  magicSparkleShot: (tx: number, ty: number) => void;
   magicOpenGrimoire: () => void;
   magicAnchorToggle: (tx: number, ty: number) => void;
   magicMeditateBegin: () => void;
   magicOpenNecronomicon: () => void;
-  // Magic sub-abilities (Grimoire 1-6)
-  magicClusterBomb: (tx: number, ty: number) => void;
-  magicSlowZone: (tx: number, ty: number) => void;
-  magicTripleBeam: () => void;
-  magicBindChain: (tx: number, ty: number) => void;
-  magicBoomerang: (tx: number, ty: number) => void;
-  magicPillars: (tx: number, ty: number) => void;
-  // Magic sub-abilities (Necronomicon 1-4)
-  magicPillarStorm: (tx: number, ty: number) => void;
-  magicOrbitalBars: () => void;
-  magicBlink20: () => void;
-  magicRoot4Corner: (tx: number, ty: number) => void;
   // Technology (abstract combined: sound + light)
   techFlailEmpower: () => void;
   techDevConsoleOpen: () => void;
   techHackAttribute: () => void;
-  techPlayerGift: () => void;
+  techDeleteArea: (x: number, y: number, w: number, h: number) => void;
   techOpSelfBegin: () => void;
   techGearGiveActivate: () => void;
   techRandomEffect: () => void;
@@ -195,7 +184,7 @@ export interface CastContext {
   silenceMachete: (angleRad: number) => void;
   silenceThrowHook: (angleRad: number) => void;
   silenceYankHook: () => void;
-  silenceEnrage: () => void;
+  silenceMortalWound: (angleRad: number) => void;
   silenceSlashEmUp: () => void;
   // Echo (abstract combined: fate + light)
   echoEcholocation: (tx: number, ty: number) => void;
@@ -209,6 +198,7 @@ export interface CastContext {
   quantumAtomVibration: (tx: number, ty: number) => void;
   quantumMechanic: (tx: number, ty: number) => void;
   quantumAtomNhilego: (tx: number, ty: number) => void;
+  hasPerk: (perkId: string) => boolean;
 }
 
 export interface Ability {

@@ -58,8 +58,8 @@ export interface NpcAiState {
   // Metal
   npcMetalArsenal?: string[];
   // Death
-  npcDeathExecuteBlackAuraActive?: boolean;
   deathWispCd?: number;
+  deathHolePlaced?: boolean;
   // Adrenaline
   adrenalineStyledChain?: number;
   adrenalineHyperchargeReady?: boolean;
@@ -154,7 +154,7 @@ export class NpcOpponent extends Fighter {
         const abilityId = this.chargingAbility;
         this.chargeUntil = 0;
         this.chargingAbility = '';
-        const aimOffsetRad2 = (Math.random() * 2 - 1) * this.difficulty.aimOffsetDeg * (Math.PI / 180);
+        const aimOffsetRad2 = (Math.random() * 2 - 1) * (this.difficulty.aimOffsetDeg + (time < this.aimOffsetBonusUntil ? this.aimOffsetBonusDeg : 0)) * (Math.PI / 180);
         const aimAngle2 = angleToTarget + aimOffsetRad2;
         const aimX2 = this.x + Math.cos(aimAngle2) * dist;
         const aimY2 = this.y + Math.sin(aimAngle2) * dist;
@@ -166,7 +166,7 @@ export class NpcOpponent extends Fighter {
     }
 
     // ── Compute aimed target position (with difficulty offset) ────
-    const aimOffsetRad = (Math.random() * 2 - 1) * this.difficulty.aimOffsetDeg * (Math.PI / 180);
+    const aimOffsetRad = (Math.random() * 2 - 1) * (this.difficulty.aimOffsetDeg + (time < this.aimOffsetBonusUntil ? this.aimOffsetBonusDeg : 0)) * (Math.PI / 180);
     const aimAngle = angleToTarget + aimOffsetRad;
     const aimX = this.x + Math.cos(aimAngle) * dist;
     const aimY = this.y + Math.sin(aimAngle) * dist;
@@ -779,7 +779,7 @@ export class NpcOpponent extends Fighter {
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     // Tight aim for drone-command (10% of normal offset)
-    const sharpOffsetRad = (Math.random() * 2 - 1) * this.difficulty.aimOffsetDeg * 0.1 * (Math.PI / 180);
+    const sharpOffsetRad = (Math.random() * 2 - 1) * (this.difficulty.aimOffsetDeg + (time < this.aimOffsetBonusUntil ? this.aimOffsetBonusDeg : 0)) * 0.1 * (Math.PI / 180);
     const sharpAngle = angleToTarget + sharpOffsetRad;
     const sharpX = this.x + Math.cos(sharpAngle) * dist;
     const sharpY = this.y + Math.sin(sharpAngle) * dist;
@@ -823,7 +823,7 @@ export class NpcOpponent extends Fighter {
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     // Tight aim for dark-drain (10% of normal offset)
-    const sharpOffsetRad = (Math.random() * 2 - 1) * this.difficulty.aimOffsetDeg * 0.1 * (Math.PI / 180);
+    const sharpOffsetRad = (Math.random() * 2 - 1) * (this.difficulty.aimOffsetDeg + (time < this.aimOffsetBonusUntil ? this.aimOffsetBonusDeg : 0)) * 0.1 * (Math.PI / 180);
     const sharpAngle = angleToTarget + sharpOffsetRad;
     const sharpX = this.x + Math.cos(sharpAngle) * dist;
     const sharpY = this.y + Math.sin(sharpAngle) * dist;
@@ -867,7 +867,7 @@ export class NpcOpponent extends Fighter {
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     // Sharp aim for ice spike (15% of normal offset)
-    const sharpOffsetRad = (Math.random() * 2 - 1) * this.difficulty.aimOffsetDeg * 0.15 * (Math.PI / 180);
+    const sharpOffsetRad = (Math.random() * 2 - 1) * (this.difficulty.aimOffsetDeg + (time < this.aimOffsetBonusUntil ? this.aimOffsetBonusDeg : 0)) * 0.15 * (Math.PI / 180);
     const sharpAngle = angleToTarget + sharpOffsetRad;
     const sharpX = this.x + Math.cos(sharpAngle) * dist;
     const sharpY = this.y + Math.sin(sharpAngle) * dist;
@@ -918,7 +918,7 @@ export class NpcOpponent extends Fighter {
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     // Sharp aim (15% offset) for click attacks
-    const sharpOffsetRad = (Math.random() * 2 - 1) * this.difficulty.aimOffsetDeg * 0.15 * (Math.PI / 180);
+    const sharpOffsetRad = (Math.random() * 2 - 1) * (this.difficulty.aimOffsetDeg + (time < this.aimOffsetBonusUntil ? this.aimOffsetBonusDeg : 0)) * 0.15 * (Math.PI / 180);
     const sharpAngle = angleToTarget + sharpOffsetRad;
     const sharpX = this.x + Math.cos(sharpAngle) * dist;
     const sharpY = this.y + Math.sin(sharpAngle) * dist;
@@ -962,7 +962,7 @@ export class NpcOpponent extends Fighter {
     const ghosts = aiState.npcSoulGhosts ?? 0;
 
     // Sharp aim (10% offset) for orb placement
-    const sharpOffsetRad = (Math.random() * 2 - 1) * this.difficulty.aimOffsetDeg * 0.10 * (Math.PI / 180);
+    const sharpOffsetRad = (Math.random() * 2 - 1) * (this.difficulty.aimOffsetDeg + (time < this.aimOffsetBonusUntil ? this.aimOffsetBonusDeg : 0)) * 0.10 * (Math.PI / 180);
     const sharpAngle = angleToTarget + sharpOffsetRad;
     const sharpX = this.x + Math.cos(sharpAngle) * dist;
     const sharpY = this.y + Math.sin(sharpAngle) * dist;
@@ -1009,7 +1009,7 @@ export class NpcOpponent extends Fighter {
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     // Sharp aim (10% offset) for laser
-    const sharpOffsetRad = (Math.random() * 2 - 1) * this.difficulty.aimOffsetDeg * 0.10 * (Math.PI / 180);
+    const sharpOffsetRad = (Math.random() * 2 - 1) * (this.difficulty.aimOffsetDeg + (time < this.aimOffsetBonusUntil ? this.aimOffsetBonusDeg : 0)) * 0.10 * (Math.PI / 180);
     const sharpAngle = angleToTarget + sharpOffsetRad;
     const sharpX = this.x + Math.cos(sharpAngle) * dist;
     const sharpY = this.y + Math.sin(sharpAngle) * dist;
@@ -1314,39 +1314,36 @@ export class NpcOpponent extends Fighter {
     aiState: NpcAiState,
   ): string | null {
     const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    void hpRatio;
-
-    // Black aura active — try to execute enemy
-    if (aiState.npcDeathExecuteBlackAuraActive) {
-      if (this.castAbility('death-execute', buildContext(aimX, aimY))) return 'death-execute';
-    }
+    void dist;
 
     if (!skip) {
-      // Wisp spam (throttled to 1 cast/sec)
-      const now = time;
-      if (!aiState.deathWispCd || now >= aiState.deathWispCd) {
-        if (this.castAbility('death-wisps', buildContext(aimX, aimY))) {
-          aiState.deathWispCd = now + 1000;
-          return 'death-wisps';
+      // Wisp spam (throttled to 1 cast/sec via state)
+      if (!aiState.deathWispCd || time >= aiState.deathWispCd) {
+        if (this.castAbility('death-summon-wisps', buildContext(aimX, aimY))) {
+          aiState.deathWispCd = time + 1000;
+          return 'death-summon-wisps';
         }
       }
 
-      // Daemon when at mid-HP
+      // Daemon at mid-HP
       if (hpRatio > 0.25 && hpRatio < 0.75) {
-        if (this.castAbility('wisp-daemon', buildContext(aimX, aimY))) return 'wisp-daemon';
+        if (this.castAbility('death-wisp-daemon', buildContext(aimX, aimY))) return 'death-wisp-daemon';
       }
 
-      // Death Wish when close to enemy
-      if (dist < 280) {
-        if (this.castAbility('death-wish', buildContext(aimX, aimY))) return 'death-wish';
-      }
+      // Looming Dread on enemy
+      if (this.castAbility('death-looming-dread', buildContext(aimX, aimY))) return 'death-looming-dread';
 
-      // Execute on own wisps (ArenaScene handles finding nearby wisp via coords)
-      if (this.castAbility('death-execute', buildContext(this.x, this.y))) return 'death-execute';
+      // Judgement Day at own position (once per cooldown, no hole placed yet)
+      if (!aiState.deathHolePlaced) {
+        if (this.castAbility('death-judgement', buildContext(this.x, this.y))) {
+          aiState.deathHolePlaced = true;
+          return 'death-judgement';
+        }
+      }
     }
 
-    // Death Sweep at player
-    if (this.castAbility('death-sweep', buildContext(aimX, aimY))) return 'death-sweep';
+    // 1000 Blades — click at enemy
+    if (this.castAbility('death-1000-blades', buildContext(aimX, aimY))) return 'death-1000-blades';
 
     return null;
   }
@@ -1541,8 +1538,8 @@ export class NpcOpponent extends Fighter {
       }
     }
 
-    // Default: Magic Missiles
-    if (this.castAbility('magic-missiles', buildContext(aimX, aimY))) return 'magic-missiles';
+    // Default: Sparkle Shot
+    if (this.castAbility('magic-sparkle-shot', buildContext(aimX, aimY))) return 'magic-sparkle-shot';
 
     return null;
   }
@@ -1583,11 +1580,11 @@ export class NpcOpponent extends Fighter {
         }
       }
 
-      // F: Player.Gift to reduce abuse
-      if (aiState.technologyAbuse > 60 && Math.random() < 0.50) {
-        if (this.castAbility('tech-gift', buildContext(aimX, aimY))) {
-          aiState.technologyAbuse = Math.max(0, aiState.technologyAbuse - 20);
-          return 'tech-gift';
+      // F: Delete.Area — drop a zone near the enemy
+      if (Math.random() < 0.30) {
+        if (this.castAbility('tech-delete', buildContext(aimX, aimY))) {
+          aiState.technologyAbuse = Math.min(100, (aiState.technologyAbuse ?? 0) + 20);
+          return 'tech-delete';
         }
       }
     }
@@ -1647,9 +1644,9 @@ export class NpcOpponent extends Fighter {
         // Open with Slash Em Up
         if (this.castAbility('silence-slash-em-up', buildContext(aimX, aimY))) return 'silence-slash-em-up';
 
-        // Enrage when low on pips
-        if (slasherHp <= 6) {
-          if (this.castAbility('silence-enrage', buildContext(this.x, this.y))) return 'silence-enrage';
+        // Mortal Wound: use aggressively at close range
+        if (dist < 140) {
+          if (this.castAbility('silence-mortal-wound', buildContext(aimX, aimY))) return 'silence-mortal-wound';
         }
 
         // Hook when mid-range; yank if hook connected

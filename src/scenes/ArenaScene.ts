@@ -61,6 +61,9 @@ import { FateKit, FateArenaApi } from '../elements/kits/FateKit';
 import { SoundKit, SoundArenaApi } from '../elements/kits/SoundKit';
 import { AdrenalineKit, AdrenalineArenaApi, AdrenalineBarEntry } from '../elements/kits/AdrenalineKit';
 import { SilenceKit, SilenceArenaApi, SilenceBarEntry } from '../elements/kits/SilenceKit';
+import { FireKit, FireArenaApi } from '../elements/kits/FireKit';
+import { DeathKit, DeathArenaApi } from '../elements/kits/DeathKit';
+import { MagicKit, MagicArenaApi } from '../elements/kits/MagicKit';
 import { dummyElement } from '../elements/dummy';
 import { P2InputState, emptyP2Input } from '../network/P2InputState';
 import * as PlayerData from '../data/PlayerData';
@@ -338,32 +341,6 @@ interface SoulSummon {
   slamAccum: number;        // enhanced banshee: slam accumulator
 }
 
-interface DeathWisp {
-  sprite: Phaser.GameObjects.Arc;
-  hp: number;
-  maxHp: number;
-  owner: 'player' | 'npc';
-  isDaemon: boolean;
-  lastContactTick: number;
-  daemonBarrageAccum: number;
-  deathWishActive: boolean;
-  deathWishExpiresAt: number;
-  deathWishAccumDmg: number;
-  deathWishSkull: Phaser.GameObjects.Text | null;
-  hpBarBg: Phaser.GameObjects.Rectangle | null;
-  hpBarFill: Phaser.GameObjects.Rectangle | null;
-}
-
-interface DeathScythe {
-  gfx: Phaser.GameObjects.Graphics;
-  x: number;
-  y: number;
-  rx: number;
-  ry: number;
-  fireAt: number;
-  owner: 'player' | 'npc';
-  damage: number;
-}
 
 interface IcyTrail {
   sprite: Phaser.GameObjects.Arc;
@@ -796,12 +773,7 @@ export class ArenaScene extends Phaser.Scene {
   private gauntletState: import('../data/GauntletData').GauntletState | null = null;
   private gauntletSpeedMult = 1;
 
-  // Player fire-specific state
-  private flameBodyActive = false;
-  private flameBodyTickAccum = 0;
-  private flameBodyAura: Phaser.GameObjects.Arc | null = null;
-  private flamethrowerHoldMs = 0;
-  private flamethrowerTickAccum = 0;
+  // (Player fire state moved to FireKit)
   private pointerWasDown = false;
   private rightPointerWasDown = false;
   private nukeChanneling = false;
@@ -865,12 +837,9 @@ export class ArenaScene extends Phaser.Scene {
 
   // NPC mirror state
   private npcSpeedMult = 1;
-  private npcFlameBodyActive = false;
-  private npcFlameBodyTickAccum = 0;
-  private npcFlameBodyAura: Phaser.GameObjects.Arc | null = null;
+  // (NPC fire state moved to FireKit)
   private npcNukeChanneling = false;
   private npcNukeChannelEnd = 0;
-  private npcEnhancedFlameBody = false;
   private npcSplashActiveUntil = 0;
   private npcSplashDropAccum = 0;
   private npcGeyserBuffUntil = 0;
@@ -1410,23 +1379,9 @@ export class ArenaScene extends Phaser.Scene {
   private playerBurningUntil = 0;
   private playerBurnTickAccum = 0;
   private playerBurnAura: Phaser.GameObjects.Arc | null = null;
-  // Pressure Charge (R upgrade)
-  private pressureCharging = false;
-  private pressureChargeStart = 0;
-  private pressureChargeVisual: Phaser.GameObjects.Arc | null = null;
-  private pressureTremorAccum = 0;
-  private pressureLastMouseX = 0;
-  private pressureLastMouseY = 0;
-  // Flame Affinity (F upgrade)
-  private enhancedFlameBody = false;
+  // (Pressure Charge / Flame Body / Flame Charge state moved to FireKit)
   private fKeyHeldSince = 0;
   private fKeyWasDown = false;
-  // Flame Charge (Q upgrade — replaces Armageddon)
-  private flameChargeWaiting = false;     // player pressed Q while flame body active; waiting for standstill
-  private flameChargeWaitingSince = 0;    // when standstill started (resets on movement)
-  private flameChargeWaitVisual: Phaser.GameObjects.Arc | null = null;
-  private flameChargePending: { x: number; y: number; fireAt: number; visual: Phaser.GameObjects.Arc } | null = null;
-  private playerLastMovedAt = 0;          // timestamp of last frame with non-zero velocity
 
   // Electricity kit
   private electricityKit!: ElectricityKit;
@@ -1626,38 +1581,11 @@ export class ArenaScene extends Phaser.Scene {
   private npcPlasmaIncarnateAura: Phaser.GameObjects.Arc | null = null;
   private plasmaVoltPoints: { sprite: Phaser.GameObjects.Arc; x: number; y: number; owner: 'player' | 'npc'; charges: number; expiresAt: number; paired?: { x: number; y: number } }[] = [];
 
-  // ── Death (fate + sound abstract combined) ────────────────────────
-  private deathWisps: DeathWisp[] = [];
-  private deathScythes: DeathScythe[] = [];
-  private deathKills = 0;
-  private npcDeathKills = 0;
-  private deathKillsText: Phaser.GameObjects.Text | null = null;
-  private deathEHeld = false;
-  private deathEHoldAccum = 0;
-  private deathWishActiveOnNpc = false;
-  private deathWishNpcEnd = 0;
-  private deathWishNpcAccumDmg = 0;
-  private deathWishNpcSkull: Phaser.GameObjects.Text | null = null;
-  private npcDeathWishActiveOnPlayer = false;
-  private npcDeathWishPlayerEnd = 0;
-  private npcDeathWishPlayerAccumDmg = 0;
-  private npcDeathWishPlayerSkull: Phaser.GameObjects.Text | null = null;
-  private deathDaemonAlive = false;
-  private npcDeathDaemonAlive = false;
+  // ── Death — managed by DeathKit ──────────────────────────────────
+  private deathKit!: DeathKit;
+  // Kept for VoidKit API compatibility (always 0 in new design)
   private deathSoulSplitUntil = 0;
   private npcDeathSoulSplitUntil = 0;
-  private deathExecuteThreshold = 0.5;
-  private npcDeathExecuteThreshold = 0.5;
-  private deathExecuteCharged = false;
-  private npcDeathExecuteCharged = false;
-  private deathExecuteChargedAura: Phaser.GameObjects.Arc | null = null;
-  private npcDeathExecuteChargedAura: Phaser.GameObjects.Arc | null = null;
-  private deathExecuteBlackAuraActive = false;
-  private npcDeathExecuteBlackAuraActive = false;
-  private deathExecuteBlackAuraEnd = 0;
-  private npcDeathExecuteBlackAuraEnd = 0;
-  private deathExecuteBlackAuraFilter: Phaser.GameObjects.Rectangle | null = null;
-  private npcDeathExecuteBlackAuraFilter: Phaser.GameObjects.Rectangle | null = null;
 
   // ── Void — managed by VoidKit ─────────────────────────────────────
 
@@ -1665,58 +1593,8 @@ export class ArenaScene extends Phaser.Scene {
   private adrenalineKit!: AdrenalineKit;
   private adrenalineSkateOverlap: Phaser.Physics.Arcade.Collider | null = null;
 
-  // ── Magic (abstract combined: slime + light) ─────────────────────
-  // Radial menus
-  private magicGrimoireMenuOpen = false;
-  private magicGrimoireMenuGfx: Phaser.GameObjects.Graphics | null = null;
-  private magicGrimoireMenuLabels: Phaser.GameObjects.Text[] = [];
-  private magicGrimoireHoverIndex = 0;
-  private magicGrimoireHoldStart = 0;
-  private magicGrimoireMouseMoved = false;
-  private magicLastGrimoirePick = 1;
-  private magicNecronomiconMenuOpen = false;
-  private magicNecronomiconMenuGfx: Phaser.GameObjects.Graphics | null = null;
-  private magicNecronomiconMenuLabels: Phaser.GameObjects.Text[] = [];
-  private magicNecronomiconHoverIndex = 0;
-  private magicNecronomiconHoldStart = 0;
-  private magicNecronomiconMouseMoved = false;
-  private magicLastNecroPick = 1;
-  private magicAimCountdownLabel: Phaser.GameObjects.Text | null = null;
-  private magicAimCountdownEnd = 0;
-  // Anchor
-  private magicAnchor: { x: number; y: number; sprite: Phaser.GameObjects.Arc | null } | null = null;
-  private npcMagicAnchor: { x: number; y: number; sprite: Phaser.GameObjects.Arc | null } | null = null;
-  // Meditate
-  private magicMeditating = false;
-  private magicMeditateEndAt = 0;
-  private magicMeditateNextSpawn = 0;
-  private npcMagicMeditating = false;
-  private npcMagicMeditateEndAt = 0;
-  private npcMagicMeditateNextSpawn = 0;
-  // Heal orbs (meditate)
-  private magicHealOrbs: Array<{ sprite: Phaser.GameObjects.Arc; x: number; y: number; vx: number; vy: number; owner: 'player' | 'npc' }> = [];
-  // Cluster bombs
-  private magicClusterCores: Array<{ sprite: Phaser.Physics.Arcade.Sprite; owner: 'player' | 'npc' }> = [];
-  // Boomerangs
-  private magicBoomerangs: Array<{ sprite: Phaser.GameObjects.Sprite; phase: 'out' | 'back'; tx: number; ty: number; startX: number; startY: number; launchAt: number; owner: 'player' | 'npc'; damaged: boolean }> = [];
-  // Slow zones
-  private magicSlowZones: Array<{ sprite: Phaser.GameObjects.Arc; x: number; y: number; vx: number; vy: number; expireAt: number; tickAccum: number; slowing: boolean; owner: 'player' | 'npc' }> = [];
-  // Chains (bind chain projectiles)
-  private magicChainProjs: Array<{ sprite: Phaser.Physics.Arcade.Sprite; owner: 'player' | 'npc' }> = [];
-  private magicChainBound = false;
-  private magicChainBoundEnd = 0;
-  // Pillars
-  private magicPillarQueue: Array<{ x: number; y: number; fireAt: number; owner: 'player' | 'npc'; followCursor?: boolean; offsetX?: number; offsetY?: number }> = [];
-  private magicActivePillars: Array<{ sprite: Phaser.GameObjects.Rectangle; expireAt: number; owner: 'player' | 'npc'; damaged: boolean }> = [];
-  // Orbital bars (Necronomicon 2)
-  private magicOrbitalCenter: { x: number; y: number; startAt: number; expireAt: number; owner: 'player' | 'npc'; gfx: Phaser.GameObjects.Graphics; rotAngle: number; lastDmgAt: number } | null = null;
-  // Blink 20 (Necronomicon 3)
-  private magicBlinkRemaining = 0;
-  private magicBlinkNextAt = 0;
-  private npcMagicBlinkRemaining = 0;
-  private npcMagicBlinkNextAt = 0;
-  // Root 4 corner (Necronomicon 4)
-  private magicRoot4Active: { ex: number; ey: number; chainsHp: [number, number, number, number]; gfx: Phaser.GameObjects.Graphics; owner: 'player' | 'npc'; expireAt: number } | null = null;
+  // ── Magic (abstract combined: slime + light) — managed by MagicKit ──
+  private magicKit!: MagicKit;
 
 
   // ── Echo (abstract combined: fate + light) kit ───────────────────────
@@ -1728,6 +1606,9 @@ export class ArenaScene extends Phaser.Scene {
 
   // ── Oil kit ───────────────────────────────────────────────────────────
   private oilKit!: OilKit;
+
+  // ── Fire kit ──────────────────────────────────────────────────────────
+  private fireKit!: FireKit;
 
   // ── Fate kit ──────────────────────────────────────────────────────────
   private fateKit!: FateKit;
@@ -1771,18 +1652,7 @@ export class ArenaScene extends Phaser.Scene {
     ownerAura: Phaser.GameObjects.Arc | null;
     summonAuras: Array<{ arc: Phaser.GameObjects.Arc; summon: SoulSummon }>;
   }> = [];
-  // Candle perk (Fire): golem minions
-  private candleGolems: Array<{
-    sprite: Phaser.GameObjects.Image;
-    hp: number;
-    x: number; y: number;
-    vx: number; vy: number;
-    meltAt: number;
-    owner: 'player' | 'npc';
-    ignited: 'none' | 'click' | 'q';
-    aoeAccum: number;
-    ignitedAura: Phaser.GameObjects.Arc | null;
-  }> = [];
+  // (Candle perk golem state moved to FireKit)
   // Rage perk (Hunt): rage meter
   private playerHuntRage = 0;
   private npcHuntRage    = 0;
@@ -1830,8 +1700,7 @@ export class ArenaScene extends Phaser.Scene {
       w.summonAuras.forEach((sa) => sa.arc.destroy());
     });
     this.soulWardHexes = [];
-    this.candleGolems.forEach((g) => { g.sprite.destroy(); g.ignitedAura?.destroy(); });
-    this.candleGolems = [];
+    // (candleGolems reset handled by fireKit.reset())
     this.playerHuntRage = 0; this.npcHuntRage = 0;
     this.playerHuntRageBar?.destroy(); this.playerHuntRageBar = null;
     this.npcHuntRageBar?.destroy();    this.npcHuntRageBar = null;
@@ -1858,11 +1727,6 @@ export class ArenaScene extends Phaser.Scene {
     this.p2PressureLastTargetY = 0;
     this.p2FKeyHeldSince = 0;
 
-    this.flameBodyActive = false;
-    this.flameBodyTickAccum = 0;
-    this.flameBodyAura = null;
-    this.flamethrowerHoldMs = 0;
-    this.flamethrowerTickAccum = 0;
     this.pointerWasDown = false;
     this.rightPointerWasDown = false;
     this.nukeChanneling = false;
@@ -1875,12 +1739,8 @@ export class ArenaScene extends Phaser.Scene {
     this.shieldAura = null;
 
     this.npcSpeedMult = 1;
-    this.npcFlameBodyActive = false;
-    this.npcFlameBodyTickAccum = 0;
-    this.npcFlameBodyAura = null;
     this.npcNukeChanneling = false;
     this.npcNukeChannelEnd = 0;
-    this.npcEnhancedFlameBody = false;
     this.npcSplashActiveUntil = 0;
     this.npcSplashDropAccum = 0;
     this.npcGeyserBuffUntil = 0;
@@ -2453,20 +2313,35 @@ export class ArenaScene extends Phaser.Scene {
     this.playerBurningUntil = 0;
     this.playerBurnTickAccum = 0;
     this.playerBurnAura = null;
-    this.pressureCharging = false;
-    this.pressureChargeStart = 0;
-    this.pressureChargeVisual = null;
-    this.pressureTremorAccum = 0;
-    this.pressureLastMouseX = 0;
-    this.pressureLastMouseY = 0;
-    this.enhancedFlameBody = false;
     this.fKeyHeldSince = 0;
     this.fKeyWasDown = false;
-    this.flameChargeWaiting = false;
-    this.flameChargeWaitingSince = 0;
-    if (this.flameChargeWaitVisual) { this.flameChargeWaitVisual.destroy(); this.flameChargeWaitVisual = null; }
-    this.flameChargePending = null;
-    this.playerLastMovedAt = 0;
+    // FireKit adapter
+    if (this.fireKit) {
+      this.fireKit.reset();
+    } else {
+      const arena = this;
+      const fireApi: FireArenaApi = {
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get scene(): Phaser.Scene { return arena; },
+        get eKey() { return arena.eKey; },
+        get fKey() { return arena.fKey; },
+        get rKey() { return arena.rKey; },
+        get qKey() { return arena.qKey; },
+        get nukeChanneling() { return arena.nukeChanneling; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        spawnFlamethrowerCone: (px, py, tx, ty) => arena.spawnFlamethrowerCone(px, py, tx, ty),
+        damagePlayerTargets: (cx, cy, r, d, col) => arena.damagePlayerTargets(cx, cy, r, d, col),
+      };
+      this.fireKit = new FireKit(fireApi);
+    }
     // ElectricityKit adapter
     if (!this.electricityKit) {
       const arena = this;
@@ -2699,28 +2574,38 @@ export class ArenaScene extends Phaser.Scene {
     for (const vp of this.plasmaVoltPoints) vp.sprite.destroy();
     this.plasmaVoltPoints = [];
 
-    // ── Death reset ───────────────────────────────────────
-    for (const w of this.deathWisps) { w.sprite.destroy(); w.deathWishSkull?.destroy(); }
-    this.deathWisps = [];
-    for (const s of this.deathScythes) s.gfx.destroy();
-    this.deathScythes = [];
-    this.deathKills = 0; this.npcDeathKills = 0;
-    if (this.deathKillsText) { this.deathKillsText.destroy(); this.deathKillsText = null; }
-    this.deathEHeld = false; this.deathEHoldAccum = 0;
-    this.deathWishActiveOnNpc = false; this.deathWishNpcAccumDmg = 0;
-    if (this.deathWishNpcSkull) { this.deathWishNpcSkull.destroy(); this.deathWishNpcSkull = null; }
-    this.npcDeathWishActiveOnPlayer = false; this.npcDeathWishPlayerAccumDmg = 0;
-    if (this.npcDeathWishPlayerSkull) { this.npcDeathWishPlayerSkull.destroy(); this.npcDeathWishPlayerSkull = null; }
-    this.deathDaemonAlive = false; this.npcDeathDaemonAlive = false;
+    // ── Death kit ─────────────────────────────────────────
     this.deathSoulSplitUntil = 0; this.npcDeathSoulSplitUntil = 0;
-    this.deathExecuteThreshold = 0.5; this.npcDeathExecuteThreshold = 0.5;
-    this.deathExecuteCharged = false; this.npcDeathExecuteCharged = false;
-    if (this.deathExecuteChargedAura) { this.deathExecuteChargedAura.destroy(); this.deathExecuteChargedAura = null; }
-    if (this.npcDeathExecuteChargedAura) { this.npcDeathExecuteChargedAura.destroy(); this.npcDeathExecuteChargedAura = null; }
-    this.deathExecuteBlackAuraActive = false; this.npcDeathExecuteBlackAuraActive = false;
-    this.deathExecuteBlackAuraEnd = 0; this.npcDeathExecuteBlackAuraEnd = 0;
-    if (this.deathExecuteBlackAuraFilter) { this.deathExecuteBlackAuraFilter.destroy(); this.deathExecuteBlackAuraFilter = null; }
-    if (this.npcDeathExecuteBlackAuraFilter) { this.npcDeathExecuteBlackAuraFilter.destroy(); this.npcDeathExecuteBlackAuraFilter = null; }
+    if (this.deathKit) {
+      this.deathKit.reset();
+    } else {
+      const arena = this;
+      const deathApi: DeathArenaApi = {
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get scene(): Phaser.Scene { return arena; },
+        get projectiles() { return arena.projectiles; },
+        get eKey() { return arena.eKey; },
+        get fKey() { return arena.fKey; },
+        get rKey() { return arena.rKey; },
+        get qKey() { return arena.qKey; },
+        get nukeChanneling() { return arena.nukeChanneling; },
+        get pointerWasDown() { return arena.pointerWasDown; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        applyNpcSpeedMult: (f) => { arena.npcSpeedMult *= f; },
+        applyPlayerSpeedMult: (f) => { arena.playerSpeedMult *= f; },
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        spawnFloatingText: (x, y, t, c) => arena.spawnFloatingText(x, y, t, c),
+        dealAoeDamageFromOwner: (x, y, r, d, o) => arena.dealAoeDamageFromOwner(x, y, r, d, o),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
+      };
+      this.deathKit = new DeathKit(deathApi);
+    }
 
     // Void kit
     if (this.voidKit) {
@@ -2828,41 +2713,44 @@ export class ArenaScene extends Phaser.Scene {
       };
       this.adrenalineKit = new AdrenalineKit(adrenalineApi);
     }
-    // Magic resets
-    this.magicGrimoireMenuOpen = false;
-    if (this.magicGrimoireMenuGfx) { this.magicGrimoireMenuGfx.destroy(); this.magicGrimoireMenuGfx = null; }
-    for (const lbl of this.magicGrimoireMenuLabels) lbl.destroy();
-    this.magicGrimoireMenuLabels = [];
-    this.magicGrimoireHoverIndex = 0; this.magicGrimoireHoldStart = 0; this.magicGrimoireMouseMoved = false; this.magicLastGrimoirePick = 1;
-    this.magicNecronomiconMenuOpen = false;
-    if (this.magicNecronomiconMenuGfx) { this.magicNecronomiconMenuGfx.destroy(); this.magicNecronomiconMenuGfx = null; }
-    for (const lbl of this.magicNecronomiconMenuLabels) lbl.destroy();
-    this.magicNecronomiconMenuLabels = [];
-    this.magicNecronomiconHoverIndex = 0; this.magicNecronomiconHoldStart = 0; this.magicNecronomiconMouseMoved = false; this.magicLastNecroPick = 1;
-    if (this.magicAimCountdownLabel) { this.magicAimCountdownLabel.destroy(); this.magicAimCountdownLabel = null; }
-    this.magicAimCountdownEnd = 0;
-    if (this.magicAnchor) { this.magicAnchor.sprite?.destroy(); this.magicAnchor = null; }
-    if (this.npcMagicAnchor) { this.npcMagicAnchor.sprite?.destroy(); this.npcMagicAnchor = null; }
-    this.magicMeditating = false; this.magicMeditateEndAt = 0; this.magicMeditateNextSpawn = 0;
-    this.npcMagicMeditating = false; this.npcMagicMeditateEndAt = 0; this.npcMagicMeditateNextSpawn = 0;
-    for (const o of this.magicHealOrbs) o.sprite.destroy();
-    this.magicHealOrbs = [];
-    for (const c of this.magicClusterCores) c.sprite.destroy();
-    this.magicClusterCores = [];
-    for (const b of this.magicBoomerangs) b.sprite.destroy();
-    this.magicBoomerangs = [];
-    for (const s of this.magicSlowZones) s.sprite.destroy();
-    this.magicSlowZones = [];
-    for (const c of this.magicChainProjs) c.sprite.destroy();
-    this.magicChainProjs = [];
-    this.magicChainBound = false; this.magicChainBoundEnd = 0;
-    this.magicPillarQueue = [];
-    for (const p of this.magicActivePillars) p.sprite.destroy();
-    this.magicActivePillars = [];
-    if (this.magicOrbitalCenter) { this.magicOrbitalCenter.gfx.destroy(); this.magicOrbitalCenter = null; }
-    this.magicBlinkRemaining = 0; this.magicBlinkNextAt = 0;
-    this.npcMagicBlinkRemaining = 0; this.npcMagicBlinkNextAt = 0;
-    if (this.magicRoot4Active) { this.magicRoot4Active.gfx.destroy(); this.magicRoot4Active = null; }
+    // Magic kit
+    if (this.magicKit) {
+      this.magicKit.reset();
+    } else {
+      const arena = this;
+      const magicApi: MagicArenaApi = {
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get scene(): Phaser.Scene { return arena; },
+        get projectiles() { return arena.projectiles; },
+        get eKey() { return arena.eKey; },
+        get qKey() { return arena.qKey; },
+        get fKey() { return arena.fKey; },
+        get rKey() { return arena.rKey; },
+        get leftKey() { return arena.dummyLeftKey; },
+        get rightKey() { return arena.dummyRightKey; },
+        get nukeChanneling() { return arena.nukeChanneling; },
+        set nukeChanneling(v: boolean) { arena.nukeChanneling = v; },
+        get nukeChannelEnd() { return arena.nukeChannelEnd; },
+        set nukeChannelEnd(v: number) { arena.nukeChannelEnd = v; },
+        get npcNukeChanneling() { return arena.npcNukeChanneling; },
+        set npcNukeChanneling(v: boolean) { arena.npcNukeChanneling = v; },
+        get npcNukeChannelEnd() { return arena.npcNukeChannelEnd; },
+        set npcNukeChannelEnd(v: number) { arena.npcNukeChannelEnd = v; },
+        get playerSpeedMult() { return arena.playerSpeedMult; },
+        set playerSpeedMult(v: number) { arena.playerSpeedMult = v; },
+        get npcSpeedMult() { return arena.npcSpeedMult; },
+        set npcSpeedMult(v: number) { arena.npcSpeedMult = v; },
+        getSceneWidth: () => arena.scale.width,
+        getSceneHeight: () => arena.scale.height,
+        dealAoeDamageFromOwner: (x, y, r, d, o) => arena.dealAoeDamageFromOwner(x, y, r, d, o),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
+      };
+      this.magicKit = new MagicKit(magicApi);
+    }
     // Technology kit
     if (this.techKit) {
       this.techKit.reset();
@@ -3464,7 +3352,7 @@ export class ArenaScene extends Phaser.Scene {
         }
         // Apply attacker's crit context before damage
         this.player.setIncomingCritContext(this.npc.critChance, this.npc.critMult);
-        let _playerDmg = proj.damage;
+        let _playerDmg = Math.round(proj.damage * this.npc.outgoingDamageMult);
         // Glass Mode: 100x damage = instant death (unless Remain is absorbing)
         if (this.elementId === 'sand' && this.timeGlassMode && !this.timeRemainActive) {
           _playerDmg = _playerDmg * 100;
@@ -3491,38 +3379,13 @@ export class ArenaScene extends Phaser.Scene {
         // Adrenaline NPC: golden shot hit registers NPC combo
         this.adrenalineKit.onNpcShotHitPlayer(proj.texture.key);
         // Growth bloat: now handled in player 'damaged' listener (fires for melee + projectile hits)
-        // Magic (NPC) cluster bomb: spawn shrapnel toward player
-        if (proj.texture.key === 'proj-magic-cluster-core') {
-          this.spawnMagicClusterShrapnel(proj.x, proj.y, 'npc');
+        // Magic (NPC) thorn vine hit
+        if ((proj as any).isMagicThornVine && (proj as any).thornVineOwner === 'npc') {
+          this.magicKit.onThornVineHit(this.player, 'npc');
         }
-        // Magic (NPC) bind chain / Root to Corners
-        if (proj.texture.key === 'proj-magic-chain') {
-          if ((proj as any).isMagicRoot4) {
-            // Necronomicon 4: Root to Corners (NPC cast)
-            if (!this.magicRoot4Active) {
-              const gfx = this.add.graphics().setDepth(5);
-              const now = this.time.now;
-              this.magicRoot4Active = {
-                ex: this.player.x, ey: this.player.y,
-                chainsHp: [20, 20, 20, 20],
-                gfx, owner: 'npc',
-                expireAt: now + 8000,
-              };
-              this.showFloatingText(this.player.x, this.player.y - 28, '⛓ ROOTED', '#cc88ff');
-            }
-          } else {
-            // Grimoire 4: Bind Chain (NPC cast)
-            this.magicChainBound = true;
-            this.magicChainBoundEnd = this.time.now + 2000;
-            this.showFloatingText(this.player.x, this.player.y - 28, '⛓ BOUND', '#cc88ff');
-            this.time.delayedCall(2000, () => {
-              if (this.magicChainBound) {
-                this.player.takeDamage(10);
-                this.spawnHitFlash(this.player.x, this.player.y, 0x9944ff);
-                this.magicChainBound = false;
-              }
-            });
-          }
+        // Magic (NPC) thorn prison hit
+        if ((proj as any).isMagicThornPrison && (proj as any).thornPrisonOwner === 'npc') {
+          this.magicKit.onThornPrisonHit(this.player.x, this.player.y, 'npc');
         }
         proj.setActive(false).setVisible(false);
         (proj.body as Phaser.Physics.Arcade.Body).stop();
@@ -3656,9 +3519,6 @@ export class ArenaScene extends Phaser.Scene {
         }
       }
       this.spawnDamageNumber(this.player.x, this.player.y - 34, n);
-      if (this.npcDeathWishActiveOnPlayer && this.time.now < this.npcDeathWishPlayerEnd && n > 0) {
-        this.npcDeathWishPlayerAccumDmg += n;
-      }
     });
     // Growth bloat: trigger AOE on any hit (projectile or melee contact)
     this.player.on('damaged', (amount: number) => {
@@ -3684,9 +3544,6 @@ export class ArenaScene extends Phaser.Scene {
     });
     this.npc.on('damaged', (n: number) => {
       this.spawnDamageNumber(this.npc.x, this.npc.y - 34, n);
-      if (this.deathWishActiveOnNpc && this.time.now < this.deathWishNpcEnd && n > 0) {
-        this.deathWishNpcAccumDmg += n;
-      }
     });
 
     // ── Crit event listeners ───────────────────────────────────────
@@ -3846,10 +3703,7 @@ export class ArenaScene extends Phaser.Scene {
       }).setOrigin(0.5).setDepth(20);
     }
     if (this.elementId === 'death') {
-      this.deathKillsText = this.add.text(cx, 52, '💀 ', {
-        fontSize: '18px', fontFamily: '"Arial Black", sans-serif',
-        color: '#cc88ff', stroke: '#220044', strokeThickness: 3,
-      }).setOrigin(0.5).setDepth(20);
+      this.deathKit.initKillsHud(cx);
     }
     if (this.elementId === 'void') {
       this.voidKit.initHud(cx);
@@ -3865,8 +3719,8 @@ export class ArenaScene extends Phaser.Scene {
     const hudY = H - 30;
     const cardW = 130;
     const cardH = 48;
-    // Hunt, Adrenaline, and Silence have extra abilities beyond the first 5; only show 5 at a time
-    const abilities = (this.elementId === 'hunt' || this.elementId === 'adrenaline' || this.elementId === 'silence')
+    // Hunt, Adrenaline, Silence, and Death have extra abilities beyond the first 5; only show 5 at a time
+    const abilities = (this.elementId === 'hunt' || this.elementId === 'adrenaline' || this.elementId === 'silence' || this.elementId === 'death')
       ? this.playerElement.abilities.slice(0, 5)
       : this.playerElement.abilities;
 
@@ -3985,11 +3839,12 @@ export class ArenaScene extends Phaser.Scene {
       'plasma-chaos-blades':    0xdd44ff,
       'plasma-chaos-incarnate': 0xff88ff,
       // Death
-      'death-sweep':    0xaa44ff,
-      'death-wisps':    0x880066,
-      'death-wish':     0xcc44ff,
-      'wisp-daemon':    0xff3366,
-      'death-execute':  0x330033,
+      'death-1000-blades':  0x8b4513,
+      'death-summon-wisps': 0x880066,
+      'death-looming-dread':0xcc44ff,
+      'death-wisp-daemon':  0xff3366,
+      'death-judgement':    0x330033,
+      'death-trail-dash':   0xaa4400,
       // Void
       'void-floater':   0x330044,
       'void-return':    0x550066,
@@ -4008,7 +3863,7 @@ export class ArenaScene extends Phaser.Scene {
       'adrenaline-trick':        0xffaa22,
       'adrenaline-wall-teleport':0xffbb44,
       // Magic
-      'magic-missiles':      0x9944ff,
+      'magic-sparkle-shot':  0xff99ff,
       'magic-grimoire':      0x7a2edd,
       'magic-anchor':        0xbb88ff,
       'magic-meditate':      0xaa66ee,
@@ -4017,7 +3872,7 @@ export class ArenaScene extends Phaser.Scene {
       'tech-gear-give':      0x44ccaa,
       'tech-devconsole':     0x33aa88,
       'tech-random-r':       0x66eecc,
-      'tech-gift':           0x88ffdd,
+      'tech-delete':         0xffffff,
       'tech-domain':         0x44ccaa,
       // Echo (abstract combined: fate + light)
       'echo-shot':     0xccccff,
@@ -5478,11 +5333,12 @@ export class ArenaScene extends Phaser.Scene {
       plasmaChaosBlades: () => { this.doPlasmaChaosBlades('player'); },
       plasmaChaosIncarnate: () => { this.doPlasmaChaosIncarnate('player'); },
       // Death
-      deathSweep: (tx, ty) => { this.doDeathSweep(tx, ty, 'player'); },
-      deathSummonWisps: (count) => { this.doDeathSummonWisp(count, 'player'); },
-      deathWish: (tx, ty) => { this.doDeathWish(tx, ty, 'player'); },
-      deathWispDaemon: () => { this.doDeathWispDaemon('player'); },
-      deathExecute: (tx, ty) => { this.doDeathExecute(tx, ty, 'player'); },
+      death1000Blades: (tx, ty) => { this.deathKit.doDeath1000Blades(tx, ty, 'player'); },
+      deathSummonWisps: (count) => { this.deathKit.doDeathSummonWisps(count, 'player'); },
+      deathLoomingDread: () => { this.deathKit.doDeathLoomingDread('player'); },
+      deathWispDaemon: () => { this.deathKit.doDeathWispDaemon('player'); },
+      deathTrailDash: (tx, ty) => { this.deathKit.doDeathTrailDash(tx, ty, 'player'); },
+      deathJudgement: () => { this.deathKit.doDeathJudgement('player'); },
       // Void
       voidFloater: (_tx, _ty) => { this.voidKit.doVoidFloater('player'); },
       voidReturnToVoid: (tx, ty) => { this.voidKit.doVoidReturnToVoid(tx, ty, 'player'); },
@@ -5504,26 +5360,16 @@ export class ArenaScene extends Phaser.Scene {
       adrenalineRegisterShotHit: () => { this.adrenalineKit.registerShotHit('player'); },
       adrenalineRegisterShotMiss: () => { this.adrenalineKit.registerShotMiss('player'); },
       // Magic
-      magicMissiles: (tx, ty) => { this.doMagicMissiles(tx, ty, 'player'); },
-      magicOpenGrimoire: () => { /* menu opened via input block; cast deferred */ },
-      magicAnchorToggle: (_tx, _ty) => { this.doMagicAnchorToggle('player'); },
-      magicMeditateBegin: () => { this.doMagicMeditateBegin('player'); },
-      magicOpenNecronomicon: () => { /* menu opened via input block; cast deferred */ },
-      magicClusterBomb: (tx, ty) => { this.doMagicClusterBomb(tx, ty, 'player'); },
-      magicSlowZone: (tx, ty) => { this.doMagicSlowZone(tx, ty, 'player'); },
-      magicTripleBeam: () => { this.doMagicTripleBeam('player'); },
-      magicBindChain: (tx, ty) => { this.doMagicBindChain(tx, ty, 'player'); },
-      magicBoomerang: (tx, ty) => { this.doMagicBoomerang(tx, ty, 'player'); },
-      magicPillars: (tx, ty) => { this.doMagicPillars(tx, ty, 'player'); },
-      magicPillarStorm: (tx, ty) => { this.doMagicPillarStorm(tx, ty, 'player'); },
-      magicOrbitalBars: () => { this.doMagicOrbitalBars('player'); },
-      magicBlink20: () => { this.doMagicBlink20('player'); },
-      magicRoot4Corner: (tx, ty) => { this.doMagicRoot4Corner(tx, ty, 'player'); },
+      magicSparkleShot: (tx, ty) => { this.magicKit.doSparkleShot(tx, ty, 'player'); },
+      magicOpenGrimoire: () => { /* handled in magicKit.handleInput */ },
+      magicAnchorToggle: (_tx, _ty) => { this.magicKit.doAnchorToggle('player'); },
+      magicMeditateBegin: () => { this.magicKit.doMeditateBegin('player'); },
+      magicOpenNecronomicon: () => { /* handled in magicKit.handleInput */ },
       // Technology
       techFlailEmpower: () => {},
       techDevConsoleOpen: () => { this.techKit.doTechDevConsoleOpen('player'); },
       techHackAttribute: () => { this.techKit.doTechHackAttribute('player'); },
-      techPlayerGift: () => { this.techKit.doTechPlayerGift('player'); },
+      techDeleteArea: (x, y, w, h) => { this.techKit.doTechDeleteArea('player', x, y, w, h); },
       techOpSelfBegin: () => { this.techKit.doTechOpSelfBegin('player'); },
       techStartDomain: () => { this.techKit.doTechStartDomain('player'); },
       techGearGiveActivate: () => { this.techKit.doTechGearGiveActivate('player'); },
@@ -6220,11 +6066,12 @@ export class ArenaScene extends Phaser.Scene {
       plasmaChaosBlades: () => { this.doPlasmaChaosBlades('npc'); },
       plasmaChaosIncarnate: () => { this.doPlasmaChaosIncarnate('npc'); },
       // Death
-      deathSweep: (tx, ty) => { this.doDeathSweep(tx, ty, 'npc'); },
-      deathSummonWisps: (count) => { this.doDeathSummonWisp(count, 'npc'); },
-      deathWish: (tx, ty) => { this.doDeathWish(tx, ty, 'npc'); },
-      deathWispDaemon: () => { this.doDeathWispDaemon('npc'); },
-      deathExecute: (tx, ty) => { this.doDeathExecute(tx, ty, 'npc'); },
+      death1000Blades: (tx, ty) => { this.deathKit.doDeath1000Blades(tx, ty, 'npc'); },
+      deathSummonWisps: (count) => { this.deathKit.doDeathSummonWisps(count, 'npc'); },
+      deathLoomingDread: () => { this.deathKit.doDeathLoomingDread('npc'); },
+      deathWispDaemon: () => { this.deathKit.doDeathWispDaemon('npc'); },
+      deathTrailDash: (tx, ty) => { this.deathKit.doDeathTrailDash(tx, ty, 'npc'); },
+      deathJudgement: () => { this.deathKit.doDeathJudgement('npc'); },
       // Void
       voidFloater: (_tx, _ty) => { this.voidKit.doVoidFloater('npc'); },
       voidReturnToVoid: (tx, ty) => { this.voidKit.doVoidReturnToVoid(tx, ty, 'npc'); },
@@ -6246,31 +6093,11 @@ export class ArenaScene extends Phaser.Scene {
       adrenalineRegisterShotHit: () => { this.adrenalineKit.registerShotHit('npc'); },
       adrenalineRegisterShotMiss: () => { this.adrenalineKit.registerShotMiss('npc'); },
       // Magic (NPC mirrors)
-      magicMissiles: (tx, ty) => { this.doMagicMissiles(tx, ty, 'npc'); },
-      magicOpenGrimoire: () => {
-        // NPC auto-picks a random grimoire wedge (1-6)
-        const pick = Math.floor(Math.random() * 6) + 1;
-        const ctx = this.buildNpcContext(this.player.x, this.player.y);
-        this.castMagicGrimoireWedge(pick, ctx, 'npc');
-      },
-      magicAnchorToggle: (_tx, _ty) => { this.doMagicAnchorToggle('npc'); },
-      magicMeditateBegin: () => { this.doMagicMeditateBegin('npc'); },
-      magicOpenNecronomicon: () => {
-        // NPC auto-picks a random necronomicon wedge (1-4)
-        const pick = Math.floor(Math.random() * 4) + 1;
-        const ctx = this.buildNpcContext(this.player.x, this.player.y);
-        this.castMagicNecronomiconWedge(pick, ctx, 'npc');
-      },
-      magicClusterBomb: (tx, ty) => { this.doMagicClusterBomb(tx, ty, 'npc'); },
-      magicSlowZone: (tx, ty) => { this.doMagicSlowZone(tx, ty, 'npc'); },
-      magicTripleBeam: () => { this.doMagicTripleBeam('npc'); },
-      magicBindChain: (tx, ty) => { this.doMagicBindChain(tx, ty, 'npc'); },
-      magicBoomerang: (tx, ty) => { this.doMagicBoomerang(tx, ty, 'npc'); },
-      magicPillars: (tx, ty) => { this.doMagicPillars(tx, ty, 'npc'); },
-      magicPillarStorm: (tx, ty) => { this.doMagicPillarStorm(tx, ty, 'npc'); },
-      magicOrbitalBars: () => { this.doMagicOrbitalBars('npc'); },
-      magicBlink20: () => { this.doMagicBlink20('npc'); },
-      magicRoot4Corner: (tx, ty) => { this.doMagicRoot4Corner(tx, ty, 'npc'); },
+      magicSparkleShot: (tx, ty) => { this.magicKit.doSparkleShot(tx, ty, 'npc'); },
+      magicOpenGrimoire: () => { this.magicKit.npcCastGrimoireWedge(this.player.x, this.player.y); },
+      magicAnchorToggle: (_tx, _ty) => { this.magicKit.doAnchorToggle('npc'); },
+      magicMeditateBegin: () => { this.magicKit.doMeditateBegin('npc'); },
+      magicOpenNecronomicon: () => { this.magicKit.npcCastNecronomiconWedge(this.player.x, this.player.y); },
       // Technology
       techFlailEmpower: () => {},
       techDevConsoleOpen: () => {
@@ -6278,9 +6105,9 @@ export class ArenaScene extends Phaser.Scene {
         this.techKit.doTechDevConsoleOpen('npc');
       },
       techHackAttribute: () => { this.techKit.doTechHackAttribute('npc'); },
-      techPlayerGift: () => {
+      techDeleteArea: (x, y, w, h) => {
         if (this.techKit.getTechRansomwareTarget() === 'npc' && this.time.now < this.techKit.getTechRansomwareExpiry()) return;
-        this.techKit.doTechPlayerGift('npc');
+        this.techKit.doTechDeleteArea('npc', x, y, w, h);
       },
       techOpSelfBegin: () => { this.techKit.doTechOpSelfBegin('npc'); },
       techStartDomain: () => {
@@ -6507,11 +6334,12 @@ export class ArenaScene extends Phaser.Scene {
       plasmaChaosBlades: () => {},
       plasmaChaosIncarnate: () => {},
       // Death stubs
-      deathSweep: () => {},
+      death1000Blades: () => {},
       deathSummonWisps: () => {},
-      deathWish: () => {},
+      deathLoomingDread: () => {},
       deathWispDaemon: () => {},
-      deathExecute: () => {},
+      deathTrailDash: () => {},
+      deathJudgement: () => {},
       // Void stubs
       voidFloater: () => {},
       voidReturnToVoid: () => {},
@@ -6533,25 +6361,15 @@ export class ArenaScene extends Phaser.Scene {
       adrenalineRegisterShotHit: () => {},
       adrenalineRegisterShotMiss: () => {},
       // Magic — no-op stubs for clone
-      magicMissiles: () => {},
+      magicSparkleShot: () => {},
       magicOpenGrimoire: () => {},
       magicAnchorToggle: () => {},
       magicMeditateBegin: () => {},
       magicOpenNecronomicon: () => {},
-      magicClusterBomb: () => {},
-      magicSlowZone: () => {},
-      magicTripleBeam: () => {},
-      magicBindChain: () => {},
-      magicBoomerang: () => {},
-      magicPillars: () => {},
-      magicPillarStorm: () => {},
-      magicOrbitalBars: () => {},
-      magicBlink20: () => {},
-      magicRoot4Corner: () => {},
       techFlailEmpower: () => {},
       techDevConsoleOpen: () => {},
       techHackAttribute: () => {},
-      techPlayerGift: () => {},
+      techDeleteArea: () => {},
       techOpSelfBegin: () => {},
       techStartDomain: () => {},
       techGearGiveActivate: () => {},
@@ -6717,11 +6535,12 @@ export class ArenaScene extends Phaser.Scene {
       plasmaChaosBlades: () => {},
       plasmaChaosIncarnate: () => {},
       // Death stubs (no-ops for clone/raid)
-      deathSweep: () => {},
+      death1000Blades: () => {},
       deathSummonWisps: () => {},
-      deathWish: () => {},
+      deathLoomingDread: () => {},
       deathWispDaemon: () => {},
-      deathExecute: () => {},
+      deathTrailDash: () => {},
+      deathJudgement: () => {},
       // Void stubs (no-ops for clone/raid)
       voidFloater: () => {},
       voidReturnToVoid: () => {},
@@ -6743,25 +6562,15 @@ export class ArenaScene extends Phaser.Scene {
       adrenalineRegisterShotHit: () => {},
       adrenalineRegisterShotMiss: () => {},
       // Magic — no-op stubs for raid
-      magicMissiles: () => {},
+      magicSparkleShot: () => {},
       magicOpenGrimoire: () => {},
       magicAnchorToggle: () => {},
       magicMeditateBegin: () => {},
       magicOpenNecronomicon: () => {},
-      magicClusterBomb: () => {},
-      magicSlowZone: () => {},
-      magicTripleBeam: () => {},
-      magicBindChain: () => {},
-      magicBoomerang: () => {},
-      magicPillars: () => {},
-      magicPillarStorm: () => {},
-      magicOrbitalBars: () => {},
-      magicBlink20: () => {},
-      magicRoot4Corner: () => {},
       techFlailEmpower: () => {},
       techDevConsoleOpen: () => {},
       techHackAttribute: () => {},
-      techPlayerGift: () => {},
+      techDeleteArea: () => {},
       techOpSelfBegin: () => {},
       techStartDomain: () => {},
       techGearGiveActivate: () => {},
@@ -8555,60 +8364,9 @@ export class ArenaScene extends Phaser.Scene {
       this.player.chargeRatio = 1;
     }
 
-    // ── Flame Body ticks (player) ────────────────────────────────
-    if (this.elementId === 'fire' && this.flameBodyActive) {
-      this.flameBodyTickAccum += delta;
-      if (this.flameBodyTickAccum >= 250) {
-        this.flameBodyTickAccum -= 250;
-        const fbDmg = this.enhancedFlameBody ? 4 : 2;
-        this.player.applySelfDamage(fbDmg);
-      }
-      if (this.flameBodyAura) this.flameBodyAura.setPosition(this.player.x, this.player.y);
-    }
-
-    // ── Flame Charge: track player movement + fuse + detonation ───
-    if (this.elementId === 'fire') {
-      const playerVel = this.player.body as Phaser.Physics.Arcade.Body;
-      if (Math.abs(playerVel.velocity.x) > 1 || Math.abs(playerVel.velocity.y) > 1) {
-        this.playerLastMovedAt = time;
-      }
-
-      // Waiting for standstill to commit charge
-      if (this.flameChargeWaiting) {
-        if (this.flameChargeWaitVisual) this.flameChargeWaitVisual.setPosition(this.player.x, this.player.y);
-        const stillFor = time - this.playerLastMovedAt;
-        if (stillFor >= 500) {
-          // Commit the charge
-          this.flameChargeWaiting = false;
-          if (this.flameChargeWaitVisual) { this.flameChargeWaitVisual.destroy(); this.flameChargeWaitVisual = null; }
-          const cx = this.player.x, cy = this.player.y;
-          const fuseVis = this.add.circle(cx, cy, 14, 0xff4400, 0.8).setDepth(7);
-          this.tweens.add({ targets: fuseVis, alpha: 0.2, yoyo: true, repeat: -1, duration: 250 });
-          this.flameChargePending = { x: cx, y: cy, fireAt: time + 3000, visual: fuseVis };
-        }
-      }
-
-      // Fuse detonation
-      if (this.flameChargePending && time >= this.flameChargePending.fireAt) {
-        const { x: fx, y: fy, visual } = this.flameChargePending;
-        this.flameChargePending = null;
-        visual.destroy();
-        const radius = 220;
-        this.damagePlayerTargets(fx, fy, radius, 80, 0xff4400);
-        // Self-damage if player is within blast radius
-        if (Phaser.Math.Distance.Between(fx, fy, this.player.x, this.player.y) <= radius) {
-          this.player.applySelfDamage(80);
-          this.showFloatingText(this.player.x, this.player.y - 28, '🔥 Self-Dmg!', '#ff4400');
-        }
-        const boom = this.add.circle(fx, fy, 12, 0xff4400, 0.9).setDepth(5);
-        this.tweens.add({ targets: boom, scaleX: 22, scaleY: 22, alpha: 0, duration: 700, onComplete: () => boom.destroy() });
-        const boomCore = this.add.circle(fx, fy, 8, 0xffffff, 1).setDepth(6);
-        this.tweens.add({ targets: boomCore, scaleX: 9, scaleY: 9, alpha: 0, duration: 320, onComplete: () => boomCore.destroy() });
-        this.showFloatingText(fx, fy - 28, '💥 Flame Charge!', '#ff6600');
-      }
-    }
-    if (!this.pressureCharging) {
-      this.player.chargeRatio = this.enhancedFlameBody ? 1 : 0;
+    // ── Fire per-frame ────────────────────────────────────────────
+    if (this.elementId === 'fire' || this.npcElement.id === 'fire') {
+      this.fireKit.update(time, delta, this.elementId === 'fire', this.npcElement.id === 'fire');
     }
 
     // ── Electricity per-frame ─────────────────────────────────────
@@ -8656,14 +8414,6 @@ export class ArenaScene extends Phaser.Scene {
       if (this.playerBurnAura) { this.playerBurnAura.destroy(); this.playerBurnAura = null; }
     }
 
-    // ── NPC Flame Body tick ───────────────────────────────────────
-    if (this.npcFlameBodyActive) {
-      // No self-damage for the NPC (only cosmetic / speed effect)
-      this.npcFlameBodyTickAccum += delta;
-      if (this.npcFlameBodyTickAccum >= 250) this.npcFlameBodyTickAccum -= 250;
-      if (this.npcFlameBodyAura) this.npcFlameBodyAura.setPosition(this.npc.x, this.npc.y);
-    }
-
     // ── Geyser buff checks ────────────────────────────────────────
     for (const g of this.geysers) {
       if (g.owner === 'player') {
@@ -8679,7 +8429,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Speed multipliers ─────────────────────────────────────────
     if (this.elementId === 'fire') {
-      this.playerSpeedMult = this.flameBodyActive ? 2 : 1;
+      this.playerSpeedMult = this.fireKit.isFlameBodyActive() ? 2 : 1;
     } else if (this.elementId === 'hunt') {
       if (this.huntBeastForm) this.playerSpeedMult = 1.5;
       else if (this.huntHybridForm) {
@@ -8749,7 +8499,7 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     this.npcSpeedMult = 1;
-    if (this.npcFlameBodyActive) this.npcSpeedMult = 2;
+    if (this.fireKit.isNpcFlameBodyActive()) this.npcSpeedMult = 2;
     else if (time < this.npcGeyserBuffUntil) this.npcSpeedMult = 1.5;
     // (Time element NPC has no speed buff of its own)
 
@@ -8845,6 +8595,11 @@ export class ArenaScene extends Phaser.Scene {
     if (!this.isInvasion && this.elementId === 'slime' && time < this.slimeKit.getNpcSlimeSlowUntil()) this.npcSpeedMult *= 0.85;
     // Adrenaline SK8 trick slow on NPC
     if (this.elementId === 'adrenaline' && time < this.adrenalineKit.getNpcSkateSlowUntil()) this.npcSpeedMult *= 0.75;
+    // Magic storm cloud slow
+    if (this.elementId === 'magic' || this.npcElement.id === 'magic') {
+      this.playerSpeedMult *= this.magicKit.getPlayerSlowMult();
+      this.npcSpeedMult *= this.magicKit.getNpcSlowMult();
+    }
     // Growth Cough aura slow (PvP/AI only — invasion handled in updateInvasion)
     if (!this.isInvasion && this.elementId === 'growth' && this.growthCoughStacks > 0) {
       if (Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y) <= 120) {
@@ -8870,6 +8625,8 @@ export class ArenaScene extends Phaser.Scene {
       this.playerSpeedMult *= 1 + this.techKit.getPlayerTechSpeedBonus();
       // Randomize.Exe phase 2: invis + speed
       if (this.techKit.getPlayerOpSelfPhase() === 2) this.playerSpeedMult *= 1.25;
+      // Delete.Area standing bonus
+      if (this.techKit.getPlayerOnOwnDeleteArea()) this.playerSpeedMult *= 1.25;
       // Abuse speed penalty
       const pa = this.techKit.getPlayerAbuse();
       if (pa >= 100) this.playerSpeedMult *= 0.70;
@@ -8881,19 +8638,13 @@ export class ArenaScene extends Phaser.Scene {
     if (this.npcElement.id === 'technology') {
       this.npcSpeedMult *= 1 + this.techKit.getNpcTechSpeedBonus();
       if (this.techKit.getNpcOpSelfPhase() === 2) this.npcSpeedMult *= 1.25;
+      if (this.techKit.getNpcOnOwnDeleteArea()) this.npcSpeedMult *= 1.25;
       const na = this.techKit.getNpcAbuse();
       if (na >= 100) this.npcSpeedMult *= 0.70;
       else if (na >= 70) this.npcSpeedMult *= 0.85;
       else if (na >= 40) this.npcSpeedMult *= 0.95;
       // Domain Bias speed boost for NPC
       if (this.techKit.isTechDomainActive() && this.techKit.getTechDomainBias() > 0) this.npcSpeedMult *= (1 + this.techKit.getTechDomainBias() / 100 * 0.5);
-    }
-    // Technology Gift bonuses (received by each side)
-    if (this.elementId !== 'technology' && this.techKit.getPlayerTechGiftSpeedBonus() > 0) {
-      this.playerSpeedMult *= 1 + this.techKit.getPlayerTechGiftSpeedBonus();
-    }
-    if (this.npcElement.id !== 'technology' && this.techKit.getNpcTechGiftSpeedBonus() > 0) {
-      this.npcSpeedMult *= 1 + this.techKit.getNpcTechGiftSpeedBonus();
     }
 
     // ── Player movement ─────────────────────────────────────────
@@ -8917,7 +8668,7 @@ export class ArenaScene extends Phaser.Scene {
       if (vx !== 0 && vy !== 0) { vx *= 0.7071; vy *= 0.7071; }
 
       let moveMult = this.playerSpeedMult * this.gauntletSpeedMult;
-      if (this.pressureCharging) moveMult *= 0.75;    // Pressure Charge: 75% speed
+      if (this.fireKit.isPressureCharging()) moveMult *= 0.75;    // Pressure Charge: 75% speed
 
       playerBody.setVelocity(vx * moveMult, vy * moveMult);
     }
@@ -8939,12 +8690,8 @@ export class ArenaScene extends Phaser.Scene {
       playerBody.setVelocity(0, 0);
     }
 
-    // ── Magic chain bind ──────────────────────────────────────────
-    if (this.magicChainBound && time < this.magicChainBoundEnd && !this.isDodging) {
-      playerBody.setVelocity(0, 0);
-    }
-    // ── Root 4 corner (NPC cast) ──────────────────────────────────
-    if (this.magicRoot4Active?.owner === 'npc' && !this.isDodging) {
+    // ── Magic thorn bind / prison (NPC cast) ─────────────────────
+    if ((this.elementId === 'magic' || this.npcElement.id === 'magic') && this.magicKit.isPlayerBound(time) && !this.isDodging) {
       playerBody.setVelocity(0, 0);
     }
 
@@ -8992,233 +8739,7 @@ export class ArenaScene extends Phaser.Scene {
     const playerCtx = this.buildPlayerContext(mouseX, mouseY);
 
     if (this.elementId === 'fire') {
-      if (!this.nukeChanneling) {
-        // ── Click: Fireball / Flamethrower ────────────────────────
-        if (pointer.isDown) {
-          const justPressed = !this.pointerWasDown;
-          this.flamethrowerHoldMs += delta;
-          if (justPressed) {
-            this.player.castAbility('fireball', playerCtx);
-          } else if (this.flamethrowerHoldMs > 120) {
-            this.flamethrowerTickAccum += delta;
-            if (this.flamethrowerTickAccum >= 100) {
-              this.flamethrowerTickAccum -= 100;
-              const dirX = mouseX - this.player.x;
-              const dirY = mouseY - this.player.y;
-              const dirLen = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
-              for (const t of this.enemies) {
-                if (!t.active || t.hp <= 0) continue;
-                const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, t.x, t.y);
-                if (dist <= 180) {
-                  const dot = (dirX / dirLen) * ((t.x - this.player.x) / dist)
-                            + (dirY / dirLen) * ((t.y - this.player.y) / dist);
-                  if (dot > 0.866) {
-                    const ftDmg = this.enhancedFlameBody ? 8 : 4;
-                    t.takeDamage(ftDmg);
-                    this.spawnHitFlash(t.x, t.y, 0xff5500);
-                    if (this.hasUpgrade('click')) {
-                      t.burningUntil = Math.max(t.burningUntil, time + 3000);
-                    }
-                  }
-                }
-              }
-              this.spawnFlamethrowerCone(this.player.x, this.player.y, mouseX, mouseY);
-            }
-          }
-        } else {
-          this.flamethrowerHoldMs = 0;
-          this.flamethrowerTickAccum = 0;
-        }
-
-        // ── E: Flame Dash (+ Propulsion upgrade / Candle perk) ────
-        if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
-          const dashStartX = this.player.x;
-          const dashStartY = this.player.y;
-          if (this.hasPerk('player', 'candle')) {
-            if (this.player.getCooldownRatio('flame-dash') >= 1) {
-              this.player.castAbility('flame-dash', playerCtx);
-              const golemCount = this.hasUpgrade('e') ? 2 : 1;
-              const ownedGolems = this.candleGolems.filter((g) => g.owner === 'player');
-              for (let gi = 0; gi < golemCount; gi++) {
-                while (ownedGolems.length >= golemCount) {
-                  const oldest = ownedGolems.shift()!;
-                  oldest.sprite.destroy();
-                  if (oldest.ignitedAura) oldest.ignitedAura.destroy();
-                  const idx = this.candleGolems.indexOf(oldest);
-                  if (idx >= 0) this.candleGolems.splice(idx, 1);
-                }
-                const jx = dashStartX + Phaser.Math.Between(-20, 20);
-                const jy = dashStartY + Phaser.Math.Between(-20, 20);
-                const gspr = this.add.image(jx, jy, 'perk-golem').setDepth(6).setScale(1.2);
-                this.candleGolems.push({ sprite: gspr, hp: 25, x: jx, y: jy, vx: 0, vy: 0, meltAt: this.time.now + 8000, owner: 'player', ignited: 'none', aoeAccum: 0, ignitedAura: null });
-                this.showFloatingText(jx, jy - 20, '🕯️ GOLEM', '#ffaa55');
-                ownedGolems.push(this.candleGolems[this.candleGolems.length - 1]);
-              }
-            }
-          } else if (this.player.castAbility('flame-dash', playerCtx) && this.hasUpgrade('e')) {
-            // Spawn 4 explosions sampled during the 280ms dash
-            for (let i = 1; i <= 4; i++) {
-              this.time.delayedCall(i * 70, () => {
-                if (!this.player.active) return;
-                const t = i / 4;
-                const ex = dashStartX + (this.player.x - dashStartX) * t;
-                const ey = dashStartY + (this.player.y - dashStartY) * t;
-                for (const enemy of this.enemies) {
-                  if (!enemy.active || enemy.hp <= 0) continue;
-                  if (Phaser.Math.Distance.Between(ex, ey, enemy.x, enemy.y) <= 50) {
-                    enemy.takeDamage(Phaser.Math.Between(5, 8));
-                    this.spawnHitFlash(enemy.x, enemy.y, 0xff6600);
-                  }
-                }
-                const ring = this.add.circle(ex, ey, 8, 0xff6600, 0.8).setDepth(4);
-                this.tweens.add({ targets: ring, scaleX: 5, scaleY: 5, alpha: 0, duration: 280, onComplete: () => ring.destroy() });
-              });
-            }
-          } // end else if Propulsion
-        }
-
-        // ── R: Pressure Bomb / Pressure Charge upgrade ────────────
-        if (this.hasUpgrade('r')) {
-          if (this.rKey.isDown) {
-              if (!this.pressureCharging && this.player.getCooldownRatio('pressure-bomb') >= 1) {
-                // Start charging
-                this.pressureCharging = true;
-                this.pressureChargeStart = time;
-                this.pressureTremorAccum = 0;
-                this.player.incomingDamageMultiplier = 1.5; // vulnerable while charging
-                const cv = this.add.circle(this.player.x, this.player.y, 12, 0xff8800, 0.6).setDepth(4);
-                this.tweens.add({ targets: cv, scaleX: 0.5, scaleY: 0.5, yoyo: true, repeat: -1, duration: 300 });
-                this.pressureChargeVisual = cv;
-              }
-              if (this.pressureCharging) {
-                if (this.pressureChargeVisual) this.pressureChargeVisual.setPosition(this.player.x, this.player.y);
-                this.pressureLastMouseX = mouseX;
-                this.pressureLastMouseY = mouseY;
-                const heldMs = time - this.pressureChargeStart;
-                const chargeLevel = heldMs >= 6000 ? 2 : heldMs >= 3000 ? 1 : 0;
-                // Update charge bar ratio (max 6s = full bar)
-                this.player.chargeRatio = Math.min(1, heldMs / 6000);
-                // Tremors during charge (every 1s, after 3s threshold): single explosion at cursor
-                if (chargeLevel >= 1) {
-                  this.pressureTremorAccum += delta;
-                  if (this.pressureTremorAccum >= 1000) {
-                    this.pressureTremorAccum -= 1000;
-                    const tremorDmg = chargeLevel === 2 ? 10 : 5;
-                    for (const t of this.enemies) {
-                      if (!t.active || t.hp <= 0) continue;
-                      if (Phaser.Math.Distance.Between(mouseX, mouseY, t.x, t.y) <= 60) {
-                        t.takeDamage(tremorDmg);
-                        this.spawnHitFlash(t.x, t.y, 0xff6600);
-                      }
-                    }
-                    const tremor = this.add.circle(mouseX, mouseY, 8, 0xff6600, 0.75).setDepth(4);
-                    this.tweens.add({ targets: tremor, scaleX: 5, scaleY: 5, alpha: 0, duration: 350, onComplete: () => tremor.destroy() });
-                  }
-                } else {
-                  this.pressureTremorAccum = 0;
-                }
-              }
-            } else if (this.pressureCharging) {
-              // Released — fire the charged bomb
-              this.pressureCharging = false;
-              this.player.chargeRatio = 0;
-              this.player.incomingDamageMultiplier = 1;
-              if (this.pressureChargeVisual) { this.pressureChargeVisual.destroy(); this.pressureChargeVisual = null; }
-              const heldMs = time - this.pressureChargeStart;
-              const chargeLevel = heldMs >= 6000 ? 2 : heldMs >= 3000 ? 1 : 0;
-              const dmgMult = chargeLevel === 2 ? 2 : chargeLevel === 1 ? 1.5 : 1;
-              const finalDmg = Math.round(32 * dmgMult);
-              const mx = this.pressureLastMouseX;
-              const my = this.pressureLastMouseY;
-              for (const t of this.enemies) {
-                if (!t.active || t.hp <= 0) continue;
-                if (Phaser.Math.Distance.Between(mx, my, t.x, t.y) <= 100) {
-                  t.takeDamage(finalDmg);
-                  this.spawnHitFlash(t.x, t.y, 0xff8800);
-                }
-              }
-              // Candle perk: Q-ignite golems in blast radius
-              if (this.hasPerk('player', 'candle')) {
-                for (const golem of this.candleGolems) {
-                  if (golem.owner !== 'player' || golem.ignited !== 'none') continue;
-                  if (Phaser.Math.Distance.Between(mx, my, golem.x, golem.y) <= 120) {
-                    golem.ignited = 'q';
-                    golem.sprite.setTint(0xff2200);
-                    this.showFloatingText(golem.x, golem.y - 20, '💥 IGNITED!', '#ff2200');
-                    if (golem.ignitedAura) golem.ignitedAura.destroy();
-                    golem.ignitedAura = this.add.circle(golem.x, golem.y, 30, 0xff2200, 0.35).setDepth(5);
-                    this.tweens.add({ targets: golem.ignitedAura, alpha: 0.1, yoyo: true, repeat: -1, duration: 300 });
-                  }
-                }
-              }
-              // Explosion visual
-              const ring = this.add.circle(mx, my, 10, 0xff8800, 0.9).setDepth(4);
-              this.tweens.add({ targets: ring, scaleX: 10, scaleY: 10, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
-              const core = this.add.circle(mx, my, 6, 0xffffff, 0.95).setDepth(5);
-              this.tweens.add({ targets: core, scaleX: 4, scaleY: 4, alpha: 0, duration: 180, onComplete: () => core.destroy() });
-              this.player.triggerCooldown('pressure-bomb');
-            }
-          } else {
-            if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
-              if (this.player.castAbility('pressure-bomb', playerCtx) && this.hasPerk('player', 'candle')) {
-                for (const golem of this.candleGolems) {
-                  if (golem.owner !== 'player' || golem.ignited !== 'none') continue;
-                  if (Phaser.Math.Distance.Between(mouseX, mouseY, golem.x, golem.y) <= 120) {
-                    golem.ignited = 'q';
-                    golem.sprite.setTint(0xff2200);
-                    this.showFloatingText(golem.x, golem.y - 20, '💥 IGNITED!', '#ff2200');
-                    if (golem.ignitedAura) golem.ignitedAura.destroy();
-                    golem.ignitedAura = this.add.circle(golem.x, golem.y, 30, 0xff2200, 0.35).setDepth(5);
-                    this.tweens.add({ targets: golem.ignitedAura, alpha: 0.1, yoyo: true, repeat: -1, duration: 300 });
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        // ── F: Flame Body / Flame Affinity upgrade ────────────────
-        if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
-          if (this.hasUpgrade('f')) {
-            // Flame Affinity: simple toggle with enhanced effects (no hold needed)
-            this.flameBodyActive = !this.flameBodyActive;
-            this.enhancedFlameBody = this.flameBodyActive; // enhanced whenever active
-            this.flameBodyTickAccum = 0;
-            if (this.flameBodyAura) { this.flameBodyAura.destroy(); this.flameBodyAura = null; }
-            if (this.flameBodyActive) {
-              this.flameBodyAura = this.add.circle(this.player.x, this.player.y, 40, 0xff2200, 0.4).setDepth(3);
-            }
-          } else {
-            // No upgrade: original toggle
-            this.flameBodyActive = !this.flameBodyActive;
-            this.enhancedFlameBody = false;
-            this.flameBodyTickAccum = 0;
-            if (this.flameBodyActive) {
-              this.flameBodyAura = this.add.circle(this.player.x, this.player.y, 30, 0xff6600, 0.25).setDepth(3);
-            } else {
-              if (this.flameBodyAura) { this.flameBodyAura.destroy(); this.flameBodyAura = null; }
-            }
-          }
-        }
-
-        // ── Q: Flame Nuke / Flame Charge upgrade ─────────────────
-        if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
-          if (this.hasUpgrade('q') && (this.flameBodyActive || this.enhancedFlameBody) && this.player.getCooldownRatio('flame-nuke') >= 1) {
-            // Flame Charge: start waiting for standstill (0.5s) then drop a 3s fuse
-            if (!this.flameChargeWaiting && !this.flameChargePending) {
-              this.flameChargeWaiting = true;
-              this.playerLastMovedAt = time; // treat as "just moved" so timer starts fresh
-              this.player.triggerCooldown('flame-nuke');
-              if (this.flameChargeWaitVisual) this.flameChargeWaitVisual.destroy();
-              this.flameChargeWaitVisual = this.add.circle(this.player.x, this.player.y, 20, 0xff8800, 0.5).setDepth(6);
-              this.tweens.add({ targets: this.flameChargeWaitVisual, alpha: 0.1, yoyo: true, repeat: -1, duration: 200 });
-              this.showFloatingText(this.player.x, this.player.y - 28, '🔥 Stand still...', '#ff8800');
-            }
-          } else if (!this.hasUpgrade('q') || !(this.flameBodyActive || this.enhancedFlameBody)) {
-            // Fallback: base Flame Nuke (2s stationary channel, 80 AoE)
-            this.player.castAbility('flame-nuke', this.buildPlayerContext(this.player.x, this.player.y));
-          }
-        }
+      this.fireKit.handleInput(time, delta, pointer, mouseX, mouseY);
 
     } else if (this.elementId === 'electricity') {
       this.electricityKit.handleInput(time, delta, mouseX, mouseY, pointer);
@@ -9530,13 +9051,13 @@ export class ArenaScene extends Phaser.Scene {
     } else if (this.elementId === 'plasma') {
       this.handlePlasmaInput(time, delta, pointer, mouseX, mouseY);
     } else if (this.elementId === 'death') {
-      this.handleDeathInput(time, delta, pointer, mouseX, mouseY);
+      this.deathKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'void') {
       this.voidKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'adrenaline') {
       this.adrenalineKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'magic') {
-      this.handleMagicInput(time, pointer, mouseX, mouseY);
+      this.magicKit.handleInput(time, delta, pointer, mouseX, mouseY);
     } else if (this.elementId === 'technology') {
       this.techKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'echo') {
@@ -11489,21 +11010,13 @@ export class ArenaScene extends Phaser.Scene {
     if (this.isPvP) {
       const p2Ctx = this.buildNpcContext(p2TargetX, p2TargetY);
       const p2CastId = this.processP2Abilities(time, delta, p2Ctx, p2TargetX, p2TargetY);
-      if (p2CastId === 'flame-body') {
-        this.npcFlameBodyActive = !this.npcFlameBodyActive;
-        this.npcFlameBodyTickAccum = 0;
-        if (this.npcFlameBodyActive) {
-          this.npcFlameBodyAura = this.add.circle(this.npc.x, this.npc.y, 30, 0xff6600, 0.25).setDepth(3);
-        } else {
-          if (this.npcFlameBodyAura) { this.npcFlameBodyAura.destroy(); this.npcFlameBodyAura = null; }
-        }
-      }
+      this.fireKit.handleNpcCastId(p2CastId, time);
     } else {
     // ── NPC AI ───────────────────────────────────────────────────
     const aiState: NpcAiState = {
       isLocked: this.npcNukeChanneling || this.npc.frozenUntil > time || this.npcMetalTaseredUntil > time || (this.elementId === 'silence' && time < this.npc.silencePossessedUntil) || this.magnetKit.getNailPullUntil() > time || (this.npc.magicChainBound && time < this.npc.magicChainBoundEnd) || time < this.silenceKit.getNpcYankUntil() || time < this.npcHawkDragUntil,
       hasActiveGeyser: this.geysers.some((g) => g.owner === 'npc'),
-      flameBodyActive: this.npcFlameBodyActive,
+      flameBodyActive: this.fireKit.isNpcFlameBodyActive(),
       projectiles: this.projectiles,
       plantCount: this.npcPlants.length,
       thornDragActive: time < this.npcThornDragActiveUntil,
@@ -11533,7 +11046,6 @@ export class ArenaScene extends Phaser.Scene {
       fateCoinCount: this.npcElement.id === 'fate' ? this.fateKit.getNpcCoins() : 0,
       fateNpcLucky: this.npcElement.id === 'fate' ? this.fateKit.isNpcLucky() : false,
       npcMetalArsenal: this.npcMetalArsenal,
-      npcDeathExecuteBlackAuraActive: this.npcDeathExecuteBlackAuraActive,
       deathWispCd: undefined,
       npcSilenceSlasherActive: this.silenceKit.isNpcSlasherActive(),
       npcSilenceSlasherHp: this.silenceKit.getNpcSlasherHp(),
@@ -11571,29 +11083,7 @@ export class ArenaScene extends Phaser.Scene {
       this.npcSplashActiveUntil = time + 2000;
       this.npcSplashDropAccum = 0;
     }
-    if (npcCastId === 'flame-dash' && this.hasPerk('npc', 'candle')) {
-      const npcGolems = this.candleGolems.filter((g) => g.owner === 'npc');
-      const maxGolems = 1;
-      while (npcGolems.length >= maxGolems) {
-        const oldest = npcGolems.shift()!;
-        oldest.sprite.destroy();
-        if (oldest.ignitedAura) oldest.ignitedAura.destroy();
-        const idx = this.candleGolems.indexOf(oldest);
-        if (idx >= 0) this.candleGolems.splice(idx, 1);
-      }
-      const gspr = this.add.image(this.npc.x, this.npc.y, 'perk-golem').setDepth(6).setScale(1.2);
-      this.candleGolems.push({ sprite: gspr, hp: 25, x: this.npc.x, y: this.npc.y, vx: 0, vy: 0, meltAt: time + 8000, owner: 'npc', ignited: 'none', aoeAccum: 0, ignitedAura: null });
-      this.showFloatingText(this.npc.x, this.npc.y - 20, '🕯️ GOLEM', '#ffaa55');
-    }
-    if (npcCastId === 'flame-body') {
-      this.npcFlameBodyActive = !this.npcFlameBodyActive;
-      this.npcFlameBodyTickAccum = 0;
-      if (this.npcFlameBodyActive) {
-        this.npcFlameBodyAura = this.add.circle(this.npc.x, this.npc.y, 30, 0xff6600, 0.25).setDepth(3);
-      } else {
-        if (this.npcFlameBodyAura) { this.npcFlameBodyAura.destroy(); this.npcFlameBodyAura = null; }
-      }
-    }
+    this.fireKit.handleNpcCastId(npcCastId, time);
     if (npcCastId === 'thorn-drag') {
       if (this.hasUpgrade('q')) {
         this.beginTreeOfLife('npc');
@@ -11706,12 +11196,13 @@ export class ArenaScene extends Phaser.Scene {
       }
 
       // Candle perk golem update
-      for (let gi = this.candleGolems.length - 1; gi >= 0; gi--) {
-        const golem = this.candleGolems[gi];
+      const candleGolems = this.fireKit.getCandleGolems();
+      for (let gi = candleGolems.length - 1; gi >= 0; gi--) {
+        const golem = candleGolems[gi];
         if (time >= golem.meltAt || golem.hp <= 0) {
           golem.sprite.destroy();
           if (golem.ignitedAura) golem.ignitedAura.destroy();
-          this.candleGolems.splice(gi, 1);
+          candleGolems.splice(gi, 1);
           continue;
         }
         // Walk toward nearest enemy
@@ -11993,12 +11484,8 @@ export class ArenaScene extends Phaser.Scene {
     if (this.magnetKit.getNailPullUntil() > time) {
       (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(this.magnetKit.getNailPullVX(), this.magnetKit.getNailPullVY());
     }
-    // ── Magic chain bind ──────────────────────────────────────────
+    // ── Magic thorn bind / prison (player cast) ──────────────────
     if (this.npc.magicChainBound && time < this.npc.magicChainBoundEnd) {
-      (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-    }
-    // ── Root 4 corner (player cast) ───────────────────────────────
-    if (this.magicRoot4Active?.owner === 'player') {
       (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
     }
     // ── Earth stun override ───────────────────────────────────────
@@ -14426,7 +13913,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Death per-frame ──────────────────────────────────────────
     if (this.elementId === 'death' || this.npcElement.id === 'death') {
-      this.updateDeathState(time, delta);
+      this.deathKit.update(time, delta);
     }
 
     // ── Void per-frame ───────────────────────────────────────────
@@ -14441,7 +13928,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Magic per-frame ───────────────────────────────────────────
     if (this.elementId === 'magic' || this.npcElement.id === 'magic') {
-      this.updateMagicState(time, delta);
+      this.magicKit.update(time, delta);
     }
 
     // ── Technology per-frame ──────────────────────────────────────
@@ -14658,7 +14145,7 @@ export class ArenaScene extends Phaser.Scene {
     // ── Update HUD cooldown bars ─────────────────────────────────
     for (const entry of this.abilityBars) {
       if (entry.abilityId === 'flame-body') {
-        entry.fill.setSize(this.flameBodyActive ? entry.maxWidth : 0, entry.fill.height);
+        entry.fill.setSize(this.fireKit.isFlameBodyActive() ? entry.maxWidth : 0, entry.fill.height);
       } else if (entry.abilityId === 'water-shield') {
         entry.fill.setSize(this.player.shieldCharges > 0 ? entry.maxWidth : 0, entry.fill.height);
       } else if (entry.abilityId === 'splash') {
@@ -14719,7 +14206,7 @@ export class ArenaScene extends Phaser.Scene {
     if (this.isPvP) {
       for (const entry of this.p2AbilityBars) {
         if (entry.abilityId === 'flame-body') {
-          entry.fill.setSize(this.npcFlameBodyActive ? entry.maxWidth : 0, entry.fill.height);
+          entry.fill.setSize(this.fireKit.isNpcFlameBodyActive() ? entry.maxWidth : 0, entry.fill.height);
         } else {
           entry.fill.setSize(entry.maxWidth * this.npc.getCooldownRatio(entry.abilityId), entry.fill.height);
         }
@@ -17666,1384 +17153,6 @@ export class ArenaScene extends Phaser.Scene {
     return Phaser.Math.Distance.Between(px, py, cx, cy) <= threshold;
   }
 
-  // ══════════════════════════════════════════════════════════════════
-  // ── Death Implementation (fate + sound abstract combined) ─────────
-  // ══════════════════════════════════════════════════════════════════
-
-  private handleDeathInput(
-    time: number,
-    delta: number,
-    pointer: Phaser.Input.Pointer,
-    mouseX: number,
-    mouseY: number,
-  ): void {
-    void delta;
-    if (this.nukeChanneling) return;
-
-    const buildCtx = () => this.buildPlayerContext(mouseX, mouseY);
-
-    // Click: Death Sweep
-    if (pointer.isDown && !this.pointerWasDown) {
-      this.player.castAbility('death-sweep', buildCtx());
-    }
-
-    // E: Summon Wisps (tap = 3; hold = 1/sec)
-    if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
-      this.doDeathSummonWisp(3, 'player');
-      this.deathEHeld = true;
-      this.deathEHoldAccum = 0;
-    }
-    if (!this.eKey.isDown && this.deathEHeld) {
-      this.deathEHeld = false;
-    }
-
-    // R: Death Wish — target wisp first, then enemy
-    if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
-      // Find own wisp within 80px of cursor
-      let wispTarget: DeathWisp | null = null;
-      for (const w of this.deathWisps) {
-        if (w.owner !== 'player') continue;
-        if (Phaser.Math.Distance.Between(mouseX, mouseY, w.sprite.x, w.sprite.y) <= 80) {
-          wispTarget = w; break;
-        }
-      }
-      if (wispTarget) {
-        this.player.castAbility('death-wish', this.buildPlayerContext(wispTarget.sprite.x, wispTarget.sprite.y));
-      } else {
-        const dist = Phaser.Math.Distance.Between(mouseX, mouseY, this.npc.x, this.npc.y);
-        if (dist <= 80) {
-          this.player.castAbility('death-wish', this.buildPlayerContext(this.npc.x, this.npc.y));
-        } else {
-          this.showFloatingText(mouseX, mouseY, '⚠ No Target', '#ff4444');
-        }
-      }
-    }
-
-    // F: Wisp Daemon
-    if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
-      if (this.deathDaemonAlive) {
-        this.showFloatingText(this.player.x, this.player.y - 30, '⚠ Daemon Active', '#ff6644');
-      } else {
-        this.player.castAbility('wisp-daemon', buildCtx());
-      }
-    }
-
-    // Q: Execute
-    if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
-      if (this.deathExecuteBlackAuraActive) {
-        // Black aura mode: execute enemy
-        const dist = Phaser.Math.Distance.Between(mouseX, mouseY, this.npc.x, this.npc.y);
-        if (dist <= 80) {
-          this.player.castAbility('death-execute', this.buildPlayerContext(this.npc.x, this.npc.y));
-        } else {
-          this.showFloatingText(this.player.x, this.player.y - 30, '☠ Aim at enemy', '#880000');
-        }
-      } else {
-        // Find own wisp within 50px of cursor
-        let wispTarget: DeathWisp | null = null;
-        let bestDist = 50;
-        for (const w of this.deathWisps) {
-          if (w.owner !== 'player') continue;
-          const d = Phaser.Math.Distance.Between(mouseX, mouseY, w.sprite.x, w.sprite.y);
-          if (d < bestDist) { bestDist = d; wispTarget = w; }
-        }
-        if (wispTarget) {
-          this.player.castAbility('death-execute', this.buildPlayerContext(wispTarget.sprite.x, wispTarget.sprite.y));
-        } else {
-          this.showFloatingText(this.player.x, this.player.y - 30, '⚠ No Wisp', '#888888');
-        }
-      }
-    }
-  }
-
-  private toRoman(n: number): string {
-    if (n <= 0) return '0';
-    const vals = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1];
-    const syms = ['M', 'CM', 'D', 'CD', 'C', 'XC', 'L', 'XL', 'X', 'IX', 'V', 'IV', 'I'];
-    let result = '';
-    for (let i = 0; i < vals.length; i++) {
-      while (n >= vals[i]) { result += syms[i]; n -= vals[i]; }
-    }
-    return result;
-  }
-
-  private getDeathDamageMultiplier(owner: 'player' | 'npc'): number {
-    const kills = owner === 'player' ? this.deathKills : this.npcDeathKills;
-    return 1 + Math.min(50, kills) * 0.02;
-  }
-
-  private findHoveredWisp(mx: number, my: number, owner: 'player' | 'npc'): DeathWisp | null {
-    let best: DeathWisp | null = null;
-    let bestDist = 50;
-    for (const w of this.deathWisps) {
-      if (w.owner !== owner) continue;
-      const d = Phaser.Math.Distance.Between(mx, my, w.sprite.x, w.sprite.y);
-      if (d < bestDist) { bestDist = d; best = w; }
-    }
-    return best;
-  }
-
-  private doDeathSweep(tx: number, ty: number, owner: 'player' | 'npc'): void {
-    const rx = 70, ry = 35;
-    const gfx = this.add.graphics();
-    gfx.lineStyle(3, 0xcc44ff, 0.8);
-    gfx.strokeEllipse(tx, ty, rx * 2, ry * 2);
-    gfx.setDepth(5);
-    this.tweens.add({ targets: gfx, alpha: 0, yoyo: true, repeat: -1, duration: 300 });
-    const damage = Math.round(20 * this.getDeathDamageMultiplier(owner));
-    this.deathScythes.push({ gfx, x: tx, y: ty, rx, ry, fireAt: this.time.now + 1000, owner, damage });
-    this.showFloatingText(tx, ty - 40, '⚰️ SWEEP', '#cc44ff');
-  }
-
-  private doDeathSummonWisp(count: number, owner: 'player' | 'npc', isDaemon = false): void {
-    const { width: W, height: H } = this.scale;
-    const pad = 40;
-    for (let i = 0; i < count; i++) {
-      // Spawn from a random border edge
-      let ox: number, oy: number;
-      const edge = Math.floor(Math.random() * 4);
-      if (edge === 0) { ox = pad + Math.random() * (W - 2 * pad); oy = pad; }
-      else if (edge === 1) { ox = W - pad; oy = pad + Math.random() * (H - 2 * pad); }
-      else if (edge === 2) { ox = pad + Math.random() * (W - 2 * pad); oy = H - pad; }
-      else { ox = pad; oy = pad + Math.random() * (H - 2 * pad); }
-      const hp = isDaemon ? 80 : 30;
-      const radius = isDaemon ? 27 : 18;
-      const color = isDaemon ? 0xff3366 : 0xaa55cc;
-      const sprite = this.add.circle(ox, oy, radius, color, 0.85).setDepth(5) as Phaser.GameObjects.Arc;
-      this.tweens.add({ targets: sprite, alpha: 0.5, yoyo: true, repeat: -1, duration: isDaemon ? 400 : 600 });
-      this.deathWisps.push({
-        sprite, hp, maxHp: hp, owner, isDaemon,
-        lastContactTick: 0, daemonBarrageAccum: 0,
-        deathWishActive: false, deathWishExpiresAt: 0, deathWishAccumDmg: 0, deathWishSkull: null,
-        hpBarBg: null, hpBarFill: null,
-      });
-    }
-  }
-
-  private doDeathWispDaemon(owner: 'player' | 'npc'): void {
-    if (owner === 'player') { this.deathDaemonAlive = true; } else { this.npcDeathDaemonAlive = true; }
-    this.doDeathSummonWisp(1, owner, true);
-    const caster = owner === 'player' ? this.player : this.npc;
-    this.showFloatingText(caster.x, caster.y - 40, '👹 DAEMON SUMMONED', '#ff3366');
-  }
-
-  private doDeathWish(tx: number, ty: number, owner: 'player' | 'npc'): void {
-    const expiresAt = this.time.now + 7000;
-    // Try own wisp within 80px first
-    let wispTarget: DeathWisp | null = null;
-    for (const w of this.deathWisps) {
-      if (w.owner !== owner) continue;
-      if (Phaser.Math.Distance.Between(tx, ty, w.sprite.x, w.sprite.y) <= 80) {
-        wispTarget = w; break;
-      }
-    }
-    if (wispTarget) {
-      wispTarget.deathWishActive = true;
-      wispTarget.deathWishExpiresAt = expiresAt;
-      wispTarget.deathWishAccumDmg = 0;
-      if (wispTarget.deathWishSkull) wispTarget.deathWishSkull.destroy();
-      wispTarget.deathWishSkull = this.add.text(wispTarget.sprite.x, wispTarget.sprite.y - 28, '💀', { fontSize: '16px' }).setOrigin(0.5).setDepth(11);
-      this.showFloatingText(wispTarget.sprite.x, wispTarget.sprite.y - 40, '💀 DEATH WISH', '#cc44ff');
-    } else {
-      // Target enemy
-      const target = owner === 'player' ? this.getNearestEnemy(tx, ty) : this.player;
-      const dist = Phaser.Math.Distance.Between(tx, ty, target.x, target.y);
-      if (dist > 80) { this.showFloatingText(tx, ty, '⚠ No Target', '#ff4444'); return; }
-      if (owner === 'player') {
-        this.deathWishActiveOnNpc = true;
-        this.deathWishNpcEnd = expiresAt;
-        this.deathWishNpcAccumDmg = 0;
-        if (this.deathWishNpcSkull) this.deathWishNpcSkull.destroy();
-        this.deathWishNpcSkull = this.add.text(target.x, target.y - 40, '💀', { fontSize: '20px' }).setOrigin(0.5).setDepth(11);
-      } else {
-        this.npcDeathWishActiveOnPlayer = true;
-        this.npcDeathWishPlayerEnd = expiresAt;
-        this.npcDeathWishPlayerAccumDmg = 0;
-        if (this.npcDeathWishPlayerSkull) this.npcDeathWishPlayerSkull.destroy();
-        this.npcDeathWishPlayerSkull = this.add.text(target.x, target.y - 40, '💀', { fontSize: '20px' }).setOrigin(0.5).setDepth(11);
-      }
-      this.showFloatingText(target.x, target.y - 50, '💀 DEATH WISH', '#cc44ff');
-    }
-  }
-
-  private doDeathExecute(tx: number, ty: number, owner: 'player' | 'npc'): void {
-    const caster = owner === 'player' ? this.player : this.npc;
-    const isBlackAura = owner === 'player' ? this.deathExecuteBlackAuraActive : this.npcDeathExecuteBlackAuraActive;
-    const W = this.scale.width, H = this.scale.height;
-
-    if (isBlackAura) {
-      // Execute on enemy
-      const _execTargets = owner === 'player' ? this.enemies : [this.player];
-      const mult = this.getDeathDamageMultiplier(owner);
-      const dmg = Math.round(50 * mult);
-      for (const target of _execTargets) {
-        if (!target.active || target.hp <= 0) continue;
-        target.takeDamage(dmg);
-        this.showFloatingText(target.x, target.y - 30, `💀 EXECUTE ${dmg}`, '#000000');
-        this.spawnHitFlash(target.x, target.y, 0x000000);
-        if (target.hp > 0 && target.hp / target.maxHp < 0.2) {
-          target.takeDamage(9999);
-          this.showFloatingText(target.x, target.y - 50, '☠ INSTAKILL', '#000000');
-        }
-      }
-      // End black aura
-      if (owner === 'player') {
-        this.deathExecuteBlackAuraActive = false;
-        this.deathExecuteBlackAuraEnd = 0;
-        if (this.deathExecuteBlackAuraFilter) { this.deathExecuteBlackAuraFilter.destroy(); this.deathExecuteBlackAuraFilter = null; }
-        if (this.deathExecuteChargedAura) { this.deathExecuteChargedAura.destroy(); this.deathExecuteChargedAura = null; }
-        this.deathExecuteCharged = false;
-        this.deathExecuteThreshold = 0.5;
-        if (this.deathKillsText) {
-          this.deathKillsText.setText(`💀 ${this.toRoman(this.deathKills)} +${Math.min(100, this.deathKills * 2)}% Q:${Math.round(this.deathExecuteThreshold * 100)}%`);
-        }
-      } else {
-        this.npcDeathExecuteBlackAuraActive = false;
-        this.npcDeathExecuteBlackAuraEnd = 0;
-        if (this.npcDeathExecuteBlackAuraFilter) { this.npcDeathExecuteBlackAuraFilter.destroy(); this.npcDeathExecuteBlackAuraFilter = null; }
-        if (this.npcDeathExecuteChargedAura) { this.npcDeathExecuteChargedAura.destroy(); this.npcDeathExecuteChargedAura = null; }
-        this.npcDeathExecuteCharged = false;
-        this.npcDeathExecuteThreshold = 0.5;
-      }
-      return;
-    }
-
-    // Wisp execute mode: find wisp near (tx, ty)
-    let target: DeathWisp | null = null;
-    for (const w of this.deathWisps) {
-      if (w.owner !== owner) continue;
-      if (Phaser.Math.Distance.Between(tx, ty, w.sprite.x, w.sprite.y) <= 30) { target = w; break; }
-    }
-    if (!target) {
-      this.showFloatingText(caster.x, caster.y - 30, '⚠ No Wisp', '#888888');
-      return;
-    }
-
-    const threshold = owner === 'player' ? this.deathExecuteThreshold : this.npcDeathExecuteThreshold;
-    if (target.hp / target.maxHp >= threshold) {
-      this.showFloatingText(target.sprite.x, target.sprite.y - 20, '⚠ Too Healthy', '#ff6644');
-      return;
-    }
-
-    // Teleport caster near wisp
-    const pad = 40;
-    const snapX = Phaser.Math.Clamp(target.sprite.x + (Math.random() - 0.5) * 40, pad, W - pad);
-    const snapY = Phaser.Math.Clamp(target.sprite.y + (Math.random() - 0.5) * 40, pad, H - pad);
-    caster.setPosition(snapX, snapY);
-    (caster.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-    const flash = this.add.circle(snapX, snapY, 20, 0xcc44ff, 0.8).setDepth(9);
-    this.tweens.add({ targets: flash, scaleX: 3, scaleY: 3, alpha: 0, duration: 400, onComplete: () => flash.destroy() });
-
-    // Instakill wisp
-    target.hp = 0;
-
-    // Increment threshold and possibly activate black aura
-    const newThreshold = threshold + 0.1;
-    if (owner === 'player') {
-      this.deathExecuteThreshold = Math.min(newThreshold, 1.0);
-      // Refresh Q cooldown
-      (this.player as any).cooldowns?.set('death-execute', 0);
-      if (newThreshold >= 1.0 && !this.deathExecuteCharged) {
-        this.deathExecuteCharged = true;
-        if (this.deathExecuteChargedAura) this.deathExecuteChargedAura.destroy();
-        this.deathExecuteChargedAura = this.add.circle(caster.x, caster.y, 26, 0x440066, 0.7).setDepth(8) as Phaser.GameObjects.Arc;
-        this.tweens.add({ targets: this.deathExecuteChargedAura, alpha: 0.2, yoyo: true, repeat: -1, duration: 280 });
-        this.deathExecuteBlackAuraActive = true;
-        this.deathExecuteBlackAuraEnd = this.time.now + 3000;
-        if (this.deathExecuteBlackAuraFilter) this.deathExecuteBlackAuraFilter.destroy();
-        this.deathExecuteBlackAuraFilter = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.4).setDepth(50);
-        this.showFloatingText(caster.x, caster.y - 50, '⚫ BLACK AURA', '#cc88ff');
-      }
-      if (this.deathKillsText) {
-        this.deathKillsText.setText(`💀 ${this.toRoman(this.deathKills)} +${Math.min(100, this.deathKills * 2)}% Q:${Math.round(this.deathExecuteThreshold * 100)}%`);
-      }
-    } else {
-      this.npcDeathExecuteThreshold = Math.min(newThreshold, 1.0);
-      (this.npc as any).cooldowns?.set('death-execute', 0);
-      if (newThreshold >= 1.0 && !this.npcDeathExecuteCharged) {
-        this.npcDeathExecuteCharged = true;
-        if (this.npcDeathExecuteChargedAura) this.npcDeathExecuteChargedAura.destroy();
-        this.npcDeathExecuteChargedAura = this.add.circle(caster.x, caster.y, 26, 0x440066, 0.7).setDepth(8) as Phaser.GameObjects.Arc;
-        this.tweens.add({ targets: this.npcDeathExecuteChargedAura, alpha: 0.2, yoyo: true, repeat: -1, duration: 280 });
-        this.npcDeathExecuteBlackAuraActive = true;
-        this.npcDeathExecuteBlackAuraEnd = this.time.now + 3000;
-        if (this.npcDeathExecuteBlackAuraFilter) this.npcDeathExecuteBlackAuraFilter.destroy();
-        this.npcDeathExecuteBlackAuraFilter = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.35).setDepth(49);
-      }
-    }
-    this.showFloatingText(target.sprite.x, target.sprite.y - 30, '☠ EXECUTE!', '#cc44ff');
-  }
-
-  private doDeathAwardKill(owner: 'player' | 'npc', isDaemon: boolean): void {
-    const soulSplitActive = owner === 'player' ? this.time.now < this.deathSoulSplitUntil : this.time.now < this.npcDeathSoulSplitUntil;
-    const killValue = isDaemon ? 10 : (soulSplitActive ? 2 : 1);
-    if (owner === 'player') {
-      this.deathKills = Math.min(100, this.deathKills + killValue);
-      if (this.deathKillsText) {
-        this.deathKillsText.setText(`💀 ${this.toRoman(this.deathKills)} +${Math.min(100, this.deathKills * 2)}% Q:${Math.round(this.deathExecuteThreshold * 100)}%`);
-      }
-      if (isDaemon) {
-        this.deathDaemonAlive = false;
-        this.deathSoulSplitUntil = this.time.now + 30000;
-        this.showFloatingText(this.player.x, this.player.y - 50, '✨ SOUL SPLIT 30s', '#ff3366');
-      } else {
-        this.showFloatingText(this.player.x, this.player.y - 30, `+${killValue} 💀 ×${this.getDeathDamageMultiplier('player').toFixed(2)}`, '#cc88ff');
-      }
-    } else {
-      this.npcDeathKills = Math.min(100, this.npcDeathKills + killValue);
-      if (isDaemon) {
-        this.npcDeathDaemonAlive = false;
-        this.npcDeathSoulSplitUntil = this.time.now + 30000;
-      }
-    }
-  }
-
-  private updateDeathWisp(w: DeathWisp, time: number, delta: number): void {
-    const target = w.owner === 'player' ? this.player : this.npc;
-    const speed = w.isDaemon ? 60 : 70;
-    const dx = target.x - w.sprite.x;
-    const dy = target.y - w.sprite.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist > 5) {
-      const nx = dx / dist, ny = dy / dist;
-      w.sprite.x += nx * speed * delta / 1000;
-      w.sprite.y += ny * speed * delta / 1000;
-    }
-    const pad = 34, W = this.scale.width, H = this.scale.height;
-    w.sprite.x = Phaser.Math.Clamp(w.sprite.x, pad, W - pad);
-    w.sprite.y = Phaser.Math.Clamp(w.sprite.y, pad, H - pad);
-
-    // Contact damage to summoner
-    const contactRange = w.isDaemon ? 55 : 43;
-    const contactDmg = w.isDaemon ? 25 : 15;
-    if (time - w.lastContactTick >= 1000) {
-      const d2 = Phaser.Math.Distance.Between(w.sprite.x, w.sprite.y, target.x, target.y);
-      if (d2 <= contactRange) {
-        target.takeDamage(contactDmg);
-        this.spawnHitFlash(target.x, target.y, 0xaa55cc);
-        this.spawnDamageNumber(target.x, target.y - 20, contactDmg);
-        w.lastContactTick = time;
-      }
-    }
-
-    // Daemon barrage — 3 bolts toward summoner every 4s
-    if (w.isDaemon) {
-      w.daemonBarrageAccum += delta;
-      if (w.daemonBarrageAccum >= 4000) {
-        w.daemonBarrageAccum = 0;
-        const baseAngle = Math.atan2(target.y - w.sprite.y, target.x - w.sprite.x);
-        for (let i = -1; i <= 1; i++) {
-          const angle = baseAngle + i * 0.25;
-          const bolt = this.projectiles.get(w.sprite.x, w.sprite.y, 'proj-death-bolt') as any;
-          if (bolt) {
-            bolt.setActive(true).setVisible(true).setDepth(6);
-            bolt.isFromPlayer = (w.owner === 'player');
-            bolt.isDeathSource = true;
-            bolt.damage = Math.round(12 * this.getDeathDamageMultiplier(w.owner));
-            (bolt.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(angle) * 320, Math.sin(angle) * 320);
-          }
-        }
-      }
-    }
-
-    // Death Wish skull follows wisp
-    if (w.deathWishSkull) {
-      w.deathWishSkull.setPosition(w.sprite.x, w.sprite.y - 28);
-    }
-
-    // Death Wish expiry
-    if (w.deathWishActive && time >= w.deathWishExpiresAt) {
-      const finalDmg = Math.round((25 + 0.25 * w.deathWishAccumDmg) * this.getDeathDamageMultiplier(w.owner));
-      target.takeDamage(finalDmg);
-      this.showFloatingText(w.sprite.x, w.sprite.y - 30, `💀 ${finalDmg} WISH`, '#cc44ff');
-      this.spawnHitFlash(w.sprite.x, w.sprite.y, 0xcc44ff);
-      if (w.deathWishSkull) { w.deathWishSkull.destroy(); w.deathWishSkull = null; }
-      w.deathWishActive = false;
-    }
-
-    // HP bar (rendered above wisp)
-    const BAR_W = w.isDaemon ? 40 : 28;
-    const BAR_H = 4;
-    const barColor = w.isDaemon ? 0xff3366 : 0xaa55cc;
-    const bx = w.sprite.x;
-    const by = w.sprite.y - (w.isDaemon ? 35 : 26);
-    if (!w.hpBarBg) {
-      w.hpBarBg = this.add.rectangle(bx, by, BAR_W, BAR_H, 0x220022, 0.85).setDepth(6).setOrigin(0.5, 0.5);
-      w.hpBarFill = this.add.rectangle(bx - BAR_W / 2, by, 0, BAR_H, barColor, 1.0).setDepth(7).setOrigin(0, 0.5);
-    }
-    const ratio = Math.max(0, w.hp / w.maxHp);
-    w.hpBarBg!.setPosition(bx, by);
-    w.hpBarFill!.setPosition(bx - BAR_W / 2, by).setSize(BAR_W * ratio, BAR_H);
-  }
-
-  private updateDeathState(time: number, delta: number): void {
-    const W = this.scale.width, H = this.scale.height;
-
-    // E hold-summon tick (player only)
-    if (this.deathEHeld && this.elementId === 'death') {
-      this.deathEHoldAccum += delta;
-      if (this.deathEHoldAccum >= 1000) {
-        this.deathEHoldAccum -= 1000;
-        this.doDeathSummonWisp(1, 'player');
-      }
-    }
-
-    // Scythe resolve
-    for (let i = this.deathScythes.length - 1; i >= 0; i--) {
-      const sc = this.deathScythes[i];
-      if (time >= sc.fireAt) {
-        sc.gfx.destroy();
-        this.deathScythes.splice(i, 1);
-        const dmg = sc.damage; // already has multiplier baked in at creation time
-        // Hit enemy fighters
-        for (const enemyFighter of (sc.owner === 'player' ? this.enemies : [this.player])) {
-          if (!enemyFighter.active || enemyFighter.hp <= 0) continue;
-          const ex = enemyFighter.x - sc.x, ey = enemyFighter.y - sc.y;
-          if ((ex / sc.rx) ** 2 + (ey / sc.ry) ** 2 <= 1) {
-            enemyFighter.takeDamage(dmg);
-            this.showFloatingText(enemyFighter.x, enemyFighter.y - 24, `⚰️ ${dmg}`, '#cc44ff');
-            this.spawnHitFlash(enemyFighter.x, enemyFighter.y, 0xcc44ff);
-          }
-        }
-        // Hit owner's own wisps (by design)
-        for (const w of this.deathWisps) {
-          if (w.owner !== sc.owner) continue;
-          const wx = w.sprite.x - sc.x, wy = w.sprite.y - sc.y;
-          if ((wx / sc.rx) ** 2 + (wy / sc.ry) ** 2 <= 1) {
-            w.hp -= dmg;
-            this.spawnHitFlash(w.sprite.x, w.sprite.y, 0xffaaff);
-            if (w.deathWishActive) w.deathWishAccumDmg += dmg;
-          }
-        }
-      }
-    }
-
-    // Update wisps
-    for (let i = this.deathWisps.length - 1; i >= 0; i--) {
-      const w = this.deathWisps[i];
-      if (w.hp <= 0) {
-        this.doDeathAwardKill(w.owner, w.isDaemon);
-        w.sprite.destroy();
-        if (w.deathWishSkull) w.deathWishSkull.destroy();
-        if (w.hpBarBg) w.hpBarBg.destroy();
-        if (w.hpBarFill) w.hpBarFill.destroy();
-        this.deathWisps.splice(i, 1);
-        continue;
-      }
-      this.updateDeathWisp(w, time, delta);
-    }
-
-    // Death Wish on enemy (player cast)
-    if (this.deathWishActiveOnNpc) {
-      if (this.deathWishNpcSkull) this.deathWishNpcSkull.setPosition(this.npc.x, this.npc.y - 40);
-      if (time >= this.deathWishNpcEnd) {
-        this.deathWishActiveOnNpc = false;
-        const finalDmg = Math.round((25 + 0.25 * this.deathWishNpcAccumDmg) * this.getDeathDamageMultiplier('player'));
-        this.npc.takeDamage(finalDmg);
-        this.showFloatingText(this.npc.x, this.npc.y - 40, `💀 ${finalDmg} WISH!`, '#cc44ff');
-        this.spawnHitFlash(this.npc.x, this.npc.y, 0x880066);
-        if (this.deathWishNpcSkull) { this.deathWishNpcSkull.destroy(); this.deathWishNpcSkull = null; }
-      }
-    }
-
-    // Death Wish on player (NPC cast)
-    if (this.npcDeathWishActiveOnPlayer) {
-      if (this.npcDeathWishPlayerSkull) this.npcDeathWishPlayerSkull.setPosition(this.player.x, this.player.y - 40);
-      if (time >= this.npcDeathWishPlayerEnd) {
-        this.npcDeathWishActiveOnPlayer = false;
-        const finalDmg = Math.round((50 + 0.5 * this.npcDeathWishPlayerAccumDmg) * this.getDeathDamageMultiplier('npc'));
-        this.player.takeDamage(finalDmg);
-        this.showFloatingText(this.player.x, this.player.y - 40, `💀 ${finalDmg} WISH!`, '#cc44ff');
-        this.spawnHitFlash(this.player.x, this.player.y, 0x880066);
-        if (this.npcDeathWishPlayerSkull) { this.npcDeathWishPlayerSkull.destroy(); this.npcDeathWishPlayerSkull = null; }
-      }
-    }
-
-    // Execute charged aura repositions with caster
-    if (this.deathExecuteChargedAura) this.deathExecuteChargedAura.setPosition(this.player.x, this.player.y);
-    if (this.npcDeathExecuteChargedAura) this.npcDeathExecuteChargedAura.setPosition(this.npc.x, this.npc.y);
-
-    // Black aura expiry (player)
-    if (this.deathExecuteBlackAuraActive && time >= this.deathExecuteBlackAuraEnd) {
-      this.deathExecuteBlackAuraActive = false;
-      if (this.deathExecuteBlackAuraFilter) { this.deathExecuteBlackAuraFilter.destroy(); this.deathExecuteBlackAuraFilter = null; }
-      if (this.deathExecuteChargedAura) { this.deathExecuteChargedAura.destroy(); this.deathExecuteChargedAura = null; }
-      this.deathExecuteCharged = false;
-      this.deathExecuteThreshold = 0.5; // reset on expired window
-      if (this.deathKillsText) {
-        this.deathKillsText.setText(`💀 ${this.toRoman(this.deathKills)} +${Math.min(100, this.deathKills * 2)}% Q:${Math.round(this.deathExecuteThreshold * 100)}%`);
-      }
-    }
-
-    // Black aura expiry (NPC)
-    if (this.npcDeathExecuteBlackAuraActive && time >= this.npcDeathExecuteBlackAuraEnd) {
-      this.npcDeathExecuteBlackAuraActive = false;
-      if (this.npcDeathExecuteBlackAuraFilter) { this.npcDeathExecuteBlackAuraFilter.destroy(); this.npcDeathExecuteBlackAuraFilter = null; }
-      if (this.npcDeathExecuteChargedAura) { this.npcDeathExecuteChargedAura.destroy(); this.npcDeathExecuteChargedAura = null; }
-      this.npcDeathExecuteCharged = false;
-      this.npcDeathExecuteThreshold = 0.5;
-    }
-
-    void W; void H;
-  }
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // ── Magic — input handler ─────────────────────────────────────────────────
-  // ──────────────────────────────────────────────────────────────────────────
-
-  private handleMagicInput(
-    time: number,
-    pointer: Phaser.Input.Pointer,
-    mouseX: number,
-    mouseY: number,
-  ): void {
-    if (this.magicGrimoireMenuOpen || this.magicNecronomiconMenuOpen) {
-      // While a menu is open: track hover, mouse-move flag, and key-release to confirm selection
-      this.updateMagicRadialHover(pointer);
-      if (this.magicGrimoireMenuOpen && (pointer.movementX !== 0 || pointer.movementY !== 0)) {
-        this.magicGrimoireMouseMoved = true;
-      }
-      if (this.magicNecronomiconMenuOpen && (pointer.movementX !== 0 || pointer.movementY !== 0)) {
-        this.magicNecronomiconMouseMoved = true;
-      }
-      if (Phaser.Input.Keyboard.JustUp(this.eKey) && this.magicGrimoireMenuOpen) {
-        const heldMs = time - this.magicGrimoireHoldStart;
-        const pick = (heldMs < 150 && !this.magicGrimoireMouseMoved)
-          ? this.magicLastGrimoirePick
-          : this.magicGrimoireHoverIndex;
-        this.magicLastGrimoirePick = pick;
-        this.closeMagicRadialMenu('grimoire');
-        // 2-second aim window before firing
-        this.spawnMagicAimCountdown(() => {
-          const ptr = this.input.activePointer;
-          this.castMagicGrimoireWedge(pick, this.buildPlayerContext(ptr.worldX, ptr.worldY), 'player');
-          this.player.triggerCooldown('magic-grimoire');
-        });
-      }
-      if (Phaser.Input.Keyboard.JustUp(this.qKey) && this.magicNecronomiconMenuOpen) {
-        const heldMs = time - this.magicNecronomiconHoldStart;
-        const pick = (heldMs < 150 && !this.magicNecronomiconMouseMoved)
-          ? this.magicLastNecroPick
-          : this.magicNecronomiconHoverIndex;
-        this.magicLastNecroPick = pick;
-        this.closeMagicRadialMenu('necronomicon');
-        // 2-second aim window before firing
-        this.spawnMagicAimCountdown(() => {
-          const ptr = this.input.activePointer;
-          this.castMagicNecronomiconWedge(pick, this.buildPlayerContext(ptr.worldX, ptr.worldY), 'player');
-          this.player.triggerCooldown('magic-necronomicon');
-        });
-      }
-      return;
-    }
-
-    const playerCtx = this.buildPlayerContext(mouseX, mouseY);
-
-    // Click — Magic Missiles
-    if (pointer.leftButtonDown()) {
-      this.player.castAbility('magic-missiles', playerCtx);
-    }
-
-    // E — Grimoire: hold to open menu
-    if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
-      if (this.player.getCooldownRatio('magic-grimoire') >= 1) {
-        this.magicGrimoireHoldStart = time;
-        this.magicGrimoireMouseMoved = false;
-        this.openMagicRadialMenu('grimoire', mouseX, mouseY);
-      }
-    }
-
-    // R — Magic Anchor
-    if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
-      this.player.castAbility('magic-anchor', playerCtx);
-    }
-
-    // F — Meditate (hold channel; endured release ends it)
-    if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
-      this.player.castAbility('magic-meditate', playerCtx);
-    }
-    if (this.magicMeditating && !this.fKey.isDown) {
-      this.endMagicMeditate('player', false);
-    }
-
-    // Q — Necronomicon: hold to open menu
-    if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
-      if (this.player.getCooldownRatio('magic-necronomicon') >= 1) {
-        this.magicNecronomiconHoldStart = time;
-        this.magicNecronomiconMouseMoved = false;
-        this.openMagicRadialMenu('necronomicon', mouseX, mouseY);
-      }
-    }
-  }
-
-  // ── Magic radial menu ─────────────────────────────────────────────────────
-
-  /** Show a 2-second countdown above the player, then fire the callback at the cursor position. */
-  private spawnMagicAimCountdown(onFire: () => void): void {
-    const DELAY = 2000;
-    if (this.magicAimCountdownLabel) { this.magicAimCountdownLabel.destroy(); }
-    this.magicAimCountdownLabel = this.add.text(this.player.x, this.player.y - 54, '✨ 2.0', {
-      fontSize: '18px', fontFamily: 'Arial, sans-serif', color: '#cc99ff',
-      stroke: '#220044', strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(30);
-    this.magicAimCountdownEnd = this.time.now + DELAY;
-
-    this.time.delayedCall(DELAY, () => {
-      if (this.magicAimCountdownLabel) { this.magicAimCountdownLabel.destroy(); this.magicAimCountdownLabel = null; }
-      onFire();
-    });
-  }
-
-  private openMagicRadialMenu(slot: 'grimoire' | 'necronomicon', _mx: number, _my: number): void {
-    const wedgeCount = slot === 'grimoire' ? 6 : 4;
-    const labels = slot === 'grimoire'
-      ? ['💣 Cluster', '🌀 Slow Zone', '⚡ Beams', '⛓ Chain', '🪃 Boomerang', '🗼 Pillars']
-      : ['🗼 Pillar Storm', '🌀 Orbital Bars', '🌀 Blink x20', '⛓ Root4'];
-    const colors = slot === 'grimoire'
-      ? [0x884400, 0x224488, 0x884488, 0x448844, 0xaa6600, 0x884422]
-      : [0x662200, 0x224466, 0x440088, 0x226644];
-
-    const gfx = this.add.graphics().setDepth(31);
-    const cx = this.player.x;
-    const cy = this.player.y;
-    const R = 130;
-    const angleStep = (Math.PI * 2) / wedgeCount;
-    // Draw initial unlit wedges
-    for (let i = 0; i < wedgeCount; i++) {
-      const startA = i * angleStep - Math.PI / 2 - angleStep / 2;
-      const endA = startA + angleStep;
-      gfx.fillStyle(colors[i], 0.6);
-      gfx.beginPath();
-      gfx.moveTo(cx, cy);
-      gfx.arc(cx, cy, R, startA, endA, false);
-      gfx.closePath();
-      gfx.fillPath();
-      gfx.lineStyle(2, 0xffffff, 0.4);
-      gfx.beginPath();
-      gfx.moveTo(cx, cy);
-      gfx.arc(cx, cy, R, startA, endA, false);
-      gfx.closePath();
-      gfx.strokePath();
-    }
-    const lblObjs: Phaser.GameObjects.Text[] = [];
-    for (let i = 0; i < wedgeCount; i++) {
-      const midA = i * angleStep - Math.PI / 2;
-      const lx = cx + Math.cos(midA) * (R * 0.65);
-      const ly = cy + Math.sin(midA) * (R * 0.65);
-      const t = this.add.text(lx, ly, labels[i], { fontSize: '10px', color: '#ffffff', fontFamily: 'Arial', align: 'center', wordWrap: { width: 70 } })
-        .setOrigin(0.5, 0.5).setDepth(32);
-      lblObjs.push(t);
-    }
-    if (slot === 'grimoire') {
-      this.magicGrimoireMenuGfx = gfx;
-      this.magicGrimoireMenuLabels = lblObjs;
-      this.magicGrimoireMenuOpen = true;
-      this.magicGrimoireHoverIndex = this.magicLastGrimoirePick;
-    } else {
-      this.magicNecronomiconMenuGfx = gfx;
-      this.magicNecronomiconMenuLabels = lblObjs;
-      this.magicNecronomiconMenuOpen = true;
-      this.magicNecronomiconHoverIndex = this.magicLastNecroPick;
-    }
-  }
-
-  private closeMagicRadialMenu(slot: 'grimoire' | 'necronomicon'): void {
-    if (slot === 'grimoire') {
-      if (this.magicGrimoireMenuGfx) { this.magicGrimoireMenuGfx.destroy(); this.magicGrimoireMenuGfx = null; }
-      for (const lbl of this.magicGrimoireMenuLabels) lbl.destroy();
-      this.magicGrimoireMenuLabels = [];
-      this.magicGrimoireMenuOpen = false;
-    } else {
-      if (this.magicNecronomiconMenuGfx) { this.magicNecronomiconMenuGfx.destroy(); this.magicNecronomiconMenuGfx = null; }
-      for (const lbl of this.magicNecronomiconMenuLabels) lbl.destroy();
-      this.magicNecronomiconMenuLabels = [];
-      this.magicNecronomiconMenuOpen = false;
-    }
-  }
-
-  private updateMagicRadialHover(pointer: Phaser.Input.Pointer): void {
-    const slots: Array<'grimoire' | 'necronomicon'> = [];
-    if (this.magicGrimoireMenuOpen) slots.push('grimoire');
-    if (this.magicNecronomiconMenuOpen) slots.push('necronomicon');
-    for (const slot of slots) {
-      const wedgeCount = slot === 'grimoire' ? 6 : 4;
-      const cx = this.player.x;
-      const cy = this.player.y;
-      const angle = Math.atan2(pointer.worldY - cy, pointer.worldX - cx);
-      const normalized = ((angle + Math.PI / 2) + Math.PI * 2) % (Math.PI * 2);
-      const rawIdx = Math.floor((normalized / (Math.PI * 2)) * wedgeCount);
-      const idx = (rawIdx % wedgeCount) + 1; // 1-indexed
-      if (slot === 'grimoire') this.magicGrimoireHoverIndex = idx;
-      else this.magicNecronomiconHoverIndex = idx;
-      // Re-render with highlight
-      const gfx = slot === 'grimoire' ? this.magicGrimoireMenuGfx : this.magicNecronomiconMenuGfx;
-      if (!gfx) continue;
-      const colors = slot === 'grimoire'
-        ? [0x884400, 0x224488, 0x884488, 0x448844, 0xaa6600, 0x884422]
-        : [0x662200, 0x224466, 0x440088, 0x226644];
-      const R = 130;
-      const angleStep = (Math.PI * 2) / wedgeCount;
-      const lbls = slot === 'grimoire' ? this.magicGrimoireMenuLabels : this.magicNecronomiconMenuLabels;
-      gfx.clear();
-      for (let i = 0; i < wedgeCount; i++) {
-        const startA = i * angleStep - Math.PI / 2 - angleStep / 2;
-        const endA = startA + angleStep;
-        const isHover = (i + 1) === idx;
-        gfx.fillStyle(colors[i], isHover ? 0.9 : 0.5);
-        gfx.beginPath();
-        gfx.moveTo(cx, cy);
-        gfx.arc(cx, cy, isHover ? R + 10 : R, startA, endA, false);
-        gfx.closePath();
-        gfx.fillPath();
-        gfx.lineStyle(isHover ? 3 : 1, isHover ? 0xffffff : 0xaaaaaa, isHover ? 0.9 : 0.4);
-        gfx.beginPath();
-        gfx.moveTo(cx, cy);
-        gfx.arc(cx, cy, isHover ? R + 10 : R, startA, endA, false);
-        gfx.closePath();
-        gfx.strokePath();
-        // Keep label centered on each wedge at player's current position
-        if (lbls[i]) {
-          const midA = i * angleStep - Math.PI / 2;
-          const rr = isHover ? R + 10 : R;
-          lbls[i].setPosition(cx + Math.cos(midA) * (rr * 0.65), cy + Math.sin(midA) * (rr * 0.65));
-        }
-      }
-    }
-  }
-
-  private castMagicGrimoireWedge(pick: number, ctx: CastContext, _owner: 'player' | 'npc'): void {
-    switch (pick) {
-      case 1: ctx.magicClusterBomb(ctx.targetX, ctx.targetY); break;
-      case 2: ctx.magicSlowZone(ctx.targetX, ctx.targetY); break;
-      case 3: ctx.magicTripleBeam(); break;
-      case 4: ctx.magicBindChain(ctx.targetX, ctx.targetY); break;
-      case 5: ctx.magicBoomerang(ctx.targetX, ctx.targetY); break;
-      case 6: ctx.magicPillars(ctx.targetX, ctx.targetY); break;
-    }
-  }
-
-  private castMagicNecronomiconWedge(pick: number, ctx: CastContext, _owner: 'player' | 'npc'): void {
-    switch (pick) {
-      case 1: ctx.magicPillarStorm(ctx.targetX, ctx.targetY); break;
-      case 2: ctx.magicOrbitalBars(); break;
-      case 3: ctx.magicBlink20(); break;
-      case 4: ctx.magicRoot4Corner(ctx.targetX, ctx.targetY); break;
-    }
-  }
-
-  // ── Magic ability implementations ─────────────────────────────────────────
-
-  private doMagicMissiles(tx: number, ty: number, owner: 'player' | 'npc'): void {
-    const caster = owner === 'player' ? this.player : this.npc;
-    const baseAngle = Math.atan2(ty - caster.y, tx - caster.x);
-    const offsets = [-15, -7.5, 0, 7.5, 15];
-    for (const deg of offsets) {
-      const angle = baseAngle + Phaser.Math.DegToRad(deg);
-      const proj = this.projectiles.get(caster.x, caster.y, 'proj-magic-missile') as any;
-      if (proj) {
-        proj.setActive(true).setVisible(true).setDepth(6);
-        proj.isFromPlayer = (owner === 'player');
-        proj.damage = 8;
-        (proj.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(angle) * 500, Math.sin(angle) * 500);
-      }
-    }
-  }
-
-  private doMagicAnchorToggle(owner: 'player' | 'npc'): void {
-    const caster = owner === 'player' ? this.player : this.npc;
-    const anchorRef = owner === 'player' ? this.magicAnchor : this.npcMagicAnchor;
-    if (anchorRef === null) {
-      // Place anchor
-      const sprite = this.add.circle(caster.x, caster.y, 16, 0x9944ff, 0.4)
-        .setStrokeStyle(2, 0xcc88ff, 0.7).setDepth(5);
-      this.tweens.add({ targets: sprite, alpha: 0.1, yoyo: true, repeat: -1, duration: 700 });
-      if (owner === 'player') this.magicAnchor = { x: caster.x, y: caster.y, sprite };
-      else this.npcMagicAnchor = { x: caster.x, y: caster.y, sprite };
-    } else {
-      // Recall to anchor
-      const ax = anchorRef.x;
-      const ay = anchorRef.y;
-      anchorRef.sprite?.destroy();
-      if (owner === 'player') this.magicAnchor = null;
-      else this.npcMagicAnchor = null;
-      caster.setPosition(ax, ay);
-      // Shockwave AOE
-      for (const target of (owner === 'player' ? this.enemies : [this.player])) {
-        if (!target.active || target.hp <= 0) continue;
-        if (Phaser.Math.Distance.Between(ax, ay, target.x, target.y) <= 120) {
-          target.takeDamage(20);
-          this.spawnHitFlash(target.x, target.y, 0x9944ff);
-          this.spawnDamageNumber(target.x, target.y - 30, 20);
-        }
-      }
-      const ring = this.add.circle(ax, ay, 30, 0x9944ff, 0.5).setDepth(8);
-      this.tweens.add({ targets: ring, scaleX: 4, scaleY: 4, alpha: 0, duration: 400, onComplete: () => ring.destroy() });
-      this.showFloatingText(ax, ay - 30, '⚓ RECALL', '#bb88ff');
-      // Start cooldown properly if player cast
-      if (owner === 'player') this.player.triggerCooldown('magic-anchor');
-    }
-  }
-
-  private doMagicMeditateBegin(owner: 'player' | 'npc'): void {
-    const now = this.time.now;
-    if (owner === 'player') {
-      if (this.magicMeditating) return;
-      this.magicMeditating = true;
-      this.magicMeditateEndAt = Infinity; // hold F to keep spawning; release or damage ends it
-      this.magicMeditateNextSpawn = now + 200;
-      this.nukeChanneling = true;
-      this.nukeChannelEnd = Infinity; // cleared by endMagicMeditate
-      (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-      // Install damage absorber: cancel on any damage
-      this.player.damageAbsorber = (_amt: number) => {
-        if (this.magicMeditating) {
-          this.endMagicMeditate('player', true);
-        }
-        return false; // let damage through
-      };
-      this.showFloatingText(this.player.x, this.player.y - 34, '🧘 Meditate', '#cc99ff');
-    } else {
-      if (this.npcMagicMeditating) return;
-      this.npcMagicMeditating = true;
-      this.npcMagicMeditateEndAt = now + 3000;
-      this.npcMagicMeditateNextSpawn = now + 200;
-      this.npcNukeChanneling = true;
-      this.npcNukeChannelEnd = now + 3000;
-    }
-  }
-
-  private endMagicMeditate(owner: 'player' | 'npc', interrupted: boolean): void {
-    if (owner === 'player') {
-      if (!this.magicMeditating) return;
-      this.magicMeditating = false;
-      this.nukeChanneling = false;
-      this.player.damageAbsorber = null;
-      if (interrupted) {
-        this.player.takeDamage(20);
-        this.spawnHitFlash(this.player.x, this.player.y, 0xff4444);
-        this.showFloatingText(this.player.x, this.player.y - 30, '⛔ Interrupted! -20', '#ff4444');
-      }
-      this.player.triggerCooldown('magic-meditate');
-    } else {
-      this.npcMagicMeditating = false;
-      this.npcNukeChanneling = false;
-    }
-  }
-
-  private doMagicClusterBomb(tx: number, ty: number, owner: 'player' | 'npc'): void {
-    const caster = owner === 'player' ? this.player : this.npc;
-    const angle = Math.atan2(ty - caster.y, tx - caster.x);
-    const proj = this.projectiles.get(caster.x, caster.y, 'proj-magic-cluster-core') as any;
-    if (proj) {
-      proj.setActive(true).setVisible(true).setDepth(6);
-      proj.isFromPlayer = (owner === 'player');
-      proj.damage = 15;
-      (proj.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(angle) * 600, Math.sin(angle) * 600);
-    }
-  }
-
-  private spawnMagicClusterShrapnel(x: number, y: number, owner: 'player' | 'npc'): void {
-    for (let i = 0; i < 6; i++) {
-      const angle = (i / 6) * Math.PI * 2;
-      const shard = this.projectiles.get(x, y, 'proj-magic-cluster-shard') as any;
-      if (shard) {
-        shard.setActive(true).setVisible(true).setDepth(6);
-        shard.isFromPlayer = (owner === 'player');
-        shard.damage = 8;
-        (shard.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(angle) * 280, Math.sin(angle) * 280);
-      }
-    }
-    const flash = this.add.circle(x, y, 20, 0xcc88ff, 0.6).setDepth(9);
-    this.tweens.add({ targets: flash, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 300, onComplete: () => flash.destroy() });
-  }
-
-  private doMagicSlowZone(tx: number, ty: number, owner: 'player' | 'npc'): void {
-    const caster = owner === 'player' ? this.player : this.npc;
-    const angle = Math.atan2(ty - caster.y, tx - caster.x);
-    const speed = 240;
-    const sprite = this.add.circle(caster.x, caster.y, 60, 0x4422aa, 0.35)
-      .setStrokeStyle(3, 0xaa88ff, 0.7).setDepth(5);
-    this.magicSlowZones.push({
-      sprite, x: caster.x, y: caster.y,
-      vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
-      expireAt: this.time.now + 6000,
-      tickAccum: 0, slowing: false, owner,
-    });
-  }
-
-  private doMagicTripleBeam(owner: 'player' | 'npc'): void {
-    const caster = owner === 'player' ? this.player : this.npc;
-    const _beamTargets = owner === 'player' ? this.enemies : [this.player];
-    const W = this.scale.width;
-    const offsets = [-120, 0, 120];
-    for (const dy of offsets) {
-      const beamY = caster.y + dy;
-      // Instant hit check: does beam cross any target?
-      const halfH = 30;
-      for (const target of _beamTargets) {
-        if (!target.active || target.hp <= 0) continue;
-        if (target.y >= beamY - halfH && target.y <= beamY + halfH) {
-          target.takeDamage(20);
-          this.spawnHitFlash(target.x, target.y, 0xbb88ff);
-          this.spawnDamageNumber(target.x, target.y - 28, 20);
-        }
-      }
-      // Visual: spanning rect
-      const beam = this.add.rectangle(W / 2, beamY, W - 64, halfH * 2, 0x9944ff, 0.5)
-        .setStrokeStyle(2, 0xddbbff, 0.9).setDepth(8);
-      this.tweens.add({ targets: beam, alpha: 0, duration: 600, onComplete: () => beam.destroy() });
-    }
-  }
-
-  private doMagicBindChain(tx: number, ty: number, owner: 'player' | 'npc'): void {
-    const caster = owner === 'player' ? this.player : this.npc;
-    const angle = Math.atan2(ty - caster.y, tx - caster.x);
-    const proj = this.projectiles.get(caster.x, caster.y, 'proj-magic-chain') as any;
-    if (proj) {
-      proj.setActive(true).setVisible(true).setDepth(6);
-      proj.isFromPlayer = (owner === 'player');
-      proj.damage = 0; // damage comes from snap after 2s
-      (proj.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(angle) * 420, Math.sin(angle) * 420);
-    }
-  }
-
-  private doMagicBoomerang(tx: number, ty: number, owner: 'player' | 'npc'): void {
-    const caster = owner === 'player' ? this.player : this.npc;
-    const sprite = this.add.sprite(caster.x, caster.y, 'proj-magic-boomerang').setDepth(6);
-    this.magicBoomerangs.push({
-      sprite, phase: 'out',
-      tx, ty,
-      startX: caster.x, startY: caster.y,
-      launchAt: this.time.now,
-      owner, damaged: false,
-    });
-  }
-
-  private doMagicPillars(tx: number, ty: number, owner: 'player' | 'npc'): void {
-    const now = this.time.now;
-    for (let i = 0; i < 3; i++) {
-      this.magicPillarQueue.push({ x: tx, y: ty, fireAt: now + i * 1500, owner });
-    }
-  }
-
-  private doMagicPillarStorm(tx: number, ty: number, owner: 'player' | 'npc'): void {
-    const now = this.time.now;
-    for (let i = 0; i < 10; i++) {
-      this.magicPillarQueue.push({ x: tx, y: ty, fireAt: now + i * 500, owner, followCursor: owner === 'player', offsetX: 0, offsetY: 0 });
-    }
-  }
-
-  private spawnMagicPillar(x: number, y: number, owner: 'player' | 'npc'): void {
-    const pillar = this.add.rectangle(x, y, 30, 80, 0x6611cc, 0.8)
-      .setStrokeStyle(2, 0xcc88ff, 1).setDepth(8);
-    this.magicActivePillars.push({ sprite: pillar, expireAt: this.time.now + 1200, owner, damaged: false });
-    // AOE damage on spawn
-    for (const target of (owner === 'player' ? this.enemies : [this.player])) {
-      if (!target.active || target.hp <= 0) continue;
-      if (Phaser.Math.Distance.Between(x, y, target.x, target.y) <= 60) {
-        target.takeDamage(15);
-        this.spawnHitFlash(target.x, target.y, 0x9944ff);
-        this.spawnDamageNumber(target.x, target.y - 28, 15);
-      }
-    }
-    // VFX: rising flash
-    const flash = this.add.rectangle(x, y, 30, 6, 0xddaaff, 0.9).setDepth(9);
-    this.tweens.add({ targets: flash, y: y - 50, alpha: 0, scaleY: 10, duration: 500, onComplete: () => flash.destroy() });
-  }
-
-  private doMagicOrbitalBars(owner: 'player' | 'npc'): void {
-    if (this.magicOrbitalCenter) {
-      this.magicOrbitalCenter.gfx.destroy();
-      this.magicOrbitalCenter = null;
-    }
-    const caster = owner === 'player' ? this.player : this.npc;
-    const gfx = this.add.graphics().setDepth(7);
-    this.magicOrbitalCenter = {
-      x: caster.x, y: caster.y,
-      startAt: this.time.now,
-      expireAt: this.time.now + 8000,
-      owner, gfx,
-      rotAngle: 0,
-      lastDmgAt: 0,
-    };
-  }
-
-  private doMagicBlink20(owner: 'player' | 'npc'): void {
-    const now = this.time.now;
-    if (owner === 'player') {
-      if (this.magicBlinkRemaining > 0) return;
-      this.magicBlinkRemaining = 20;
-      this.magicBlinkNextAt = now;
-      // Invulnerable during blinks
-      this.player.damageAbsorber = (_amt: number) => false;
-    } else {
-      if (this.npcMagicBlinkRemaining > 0) return;
-      this.npcMagicBlinkRemaining = 20;
-      this.npcMagicBlinkNextAt = now;
-    }
-  }
-
-  private doMagicRoot4Corner(tx: number, ty: number, owner: 'player' | 'npc'): void {
-    const caster = owner === 'player' ? this.player : this.npc;
-    const angle = Math.atan2(ty - caster.y, tx - caster.x);
-    const proj = this.projectiles.get(caster.x, caster.y, 'proj-magic-chain') as any;
-    if (proj) {
-      proj.setActive(true).setVisible(true).setDepth(6);
-      proj.isFromPlayer = (owner === 'player');
-      proj.damage = 0;
-      proj.isMagicRoot4 = true; // tag for special handling
-      (proj.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(angle) * 380, Math.sin(angle) * 380);
-    }
-  }
-
-  // ── Magic — per-frame update ───────────────────────────────────────────────
-
-  private updateMagicState(time: number, delta: number): void {
-    const W = this.scale.width;
-    const H = this.scale.height;
-    const pad = 32;
-
-    // ── Aim countdown label — smooth per-frame update ─────────────────
-    if (this.magicAimCountdownLabel?.active) {
-      const remaining = Math.max(0, (this.magicAimCountdownEnd - time) / 1000);
-      this.magicAimCountdownLabel.setText(`✨ ${remaining.toFixed(1)}`);
-      this.magicAimCountdownLabel.setPosition(this.player.x, this.player.y - 54);
-    }
-
-    // ── Anchor — update sprite position (handled by tween) ────────────
-
-    // ── Meditate — spawn heal orbs ────────────────────────────────────
-    for (const owner of ['player', 'npc'] as const) {
-      const meditating = owner === 'player' ? this.magicMeditating : this.npcMagicMeditating;
-      const endAt = owner === 'player' ? this.magicMeditateEndAt : this.npcMagicMeditateEndAt;
-      if (meditating) {
-        if (time >= endAt) {
-          this.endMagicMeditate(owner, false);
-          continue;
-        }
-        const nextSpawn = owner === 'player' ? this.magicMeditateNextSpawn : this.npcMagicMeditateNextSpawn;
-        if (time >= nextSpawn) {
-          this.spawnMagicHealOrb(owner);
-          if (owner === 'player') this.magicMeditateNextSpawn = time + 500;
-          else this.npcMagicMeditateNextSpawn = time + 500;
-        }
-      }
-    }
-
-    // ── Heal orbs ─────────────────────────────────────────────────────
-    for (let i = this.magicHealOrbs.length - 1; i >= 0; i--) {
-      const orb = this.magicHealOrbs[i];
-      orb.x += orb.vx * (delta / 1000);
-      orb.y += orb.vy * (delta / 1000);
-      orb.sprite.setPosition(orb.x, orb.y);
-      // Destroy if offscreen
-      if (orb.x < 0 || orb.x > W || orb.y < 0 || orb.y > H) {
-        orb.sprite.destroy();
-        this.magicHealOrbs.splice(i, 1);
-        continue;
-      }
-      // Check enemy hit (orb damages)
-      const caster = orb.owner === 'player' ? this.player : this.npc;
-      let _orbHit = false;
-      for (const enemy of (orb.owner === 'player' ? this.enemies : [this.player])) {
-        if (!enemy.active || enemy.hp <= 0) continue;
-        if (Phaser.Math.Distance.Between(orb.x, orb.y, enemy.x, enemy.y) <= 28) {
-          enemy.takeDamage(8);
-          this.spawnHitFlash(enemy.x, enemy.y, 0xcc99ff);
-          _orbHit = true;
-          break;
-        }
-      }
-      if (_orbHit) { orb.sprite.destroy(); this.magicHealOrbs.splice(i, 1); continue; }
-      // Check caster hit (heal)
-      if (Phaser.Math.Distance.Between(orb.x, orb.y, caster.x, caster.y) <= 24) {
-        caster.heal(5);
-        if (orb.owner === 'player') this.showFloatingText(caster.x, caster.y - 28, '+5 ✨', '#cc99ff');
-        orb.sprite.destroy();
-        this.magicHealOrbs.splice(i, 1);
-      }
-    }
-
-    // ── Boomerangs ────────────────────────────────────────────────────
-    for (let i = this.magicBoomerangs.length - 1; i >= 0; i--) {
-      const b = this.magicBoomerangs[i];
-      const caster = b.owner === 'player' ? this.player : this.npc;
-      const elapsed = time - b.launchAt;
-      const speed = 350;
-      if (b.phase === 'out') {
-        const ang = Math.atan2(b.ty - b.startY, b.tx - b.startX);
-        b.sprite.x += Math.cos(ang) * speed * (delta / 1000);
-        b.sprite.y += Math.sin(ang) * speed * (delta / 1000);
-        if (elapsed >= 600) {
-          b.phase = 'back';
-          b.damaged = false; // reset so return trip can hit once
-        }
-        // Hit check (forward phase — once only)
-        if (!b.damaged) {
-          for (const target of (b.owner === 'player' ? this.enemies : [this.player])) {
-            if (!target.active || target.hp <= 0) continue;
-            if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, target.x, target.y) <= 28) {
-              target.takeDamage(10);
-              this.spawnHitFlash(target.x, target.y, 0xaa66ee);
-              b.damaged = true;
-              break;
-            }
-          }
-        }
-      } else {
-        // Return to caster
-        const ang = Math.atan2(caster.y - b.sprite.y, caster.x - b.sprite.x);
-        b.sprite.x += Math.cos(ang) * speed * (delta / 1000);
-        b.sprite.y += Math.sin(ang) * speed * (delta / 1000);
-        // Hit check (return phase — once only)
-        if (!b.damaged) {
-          for (const target of (b.owner === 'player' ? this.enemies : [this.player])) {
-            if (!target.active || target.hp <= 0) continue;
-            if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, target.x, target.y) <= 28) {
-              target.takeDamage(10);
-              this.spawnHitFlash(target.x, target.y, 0xaa66ee);
-              b.damaged = true;
-              break;
-            }
-          }
-        }
-        if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, caster.x, caster.y) <= 20) {
-          b.sprite.destroy();
-          this.magicBoomerangs.splice(i, 1);
-        }
-      }
-    }
-
-    // ── Slow zones ────────────────────────────────────────────────────
-    for (let i = this.magicSlowZones.length - 1; i >= 0; i--) {
-      const sz = this.magicSlowZones[i];
-      // Decelerate zone itself
-      sz.vx *= 0.96;
-      sz.vy *= 0.96;
-      sz.x += sz.vx * (delta / 1000);
-      sz.y += sz.vy * (delta / 1000);
-      sz.sprite.setPosition(sz.x, sz.y);
-      if (time >= sz.expireAt) {
-        sz.sprite.destroy();
-        this.magicSlowZones.splice(i, 1);
-        continue;
-      }
-      const _szTargets = (sz.owner === 'player' ? this.enemies : [this.player])
-        .filter(t => t.active && t.hp > 0 && Phaser.Math.Distance.Between(sz.x, sz.y, t.x, t.y) <= 80);
-      if (_szTargets.length > 0) {
-        if (!sz.slowing) {
-          sz.slowing = true;
-          if (sz.owner === 'player') this.npcSpeedMult = Math.min(this.npcSpeedMult, 0.5);
-          else this.playerSpeedMult = Math.min(this.playerSpeedMult, 0.5);
-        }
-        sz.tickAccum += delta;
-        while (sz.tickAccum >= 250) {
-          for (const target of _szTargets) { target.takeDamage(3); }
-          sz.tickAccum -= 250;
-        }
-      } else {
-        if (sz.slowing) {
-          sz.slowing = false;
-          if (sz.owner === 'player') this.npcSpeedMult = Math.min(this.npcSpeedMult, 1);
-          else this.playerSpeedMult = Math.min(this.playerSpeedMult, 1);
-        }
-      }
-    }
-
-    // ── Pillar queue ──────────────────────────────────────────────────
-    for (let i = this.magicPillarQueue.length - 1; i >= 0; i--) {
-      const pq = this.magicPillarQueue[i];
-      if (time >= pq.fireAt) {
-        let spawnX = pq.x;
-        let spawnY = pq.y;
-        if (pq.followCursor) {
-          spawnX = this.input.activePointer.worldX + (pq.offsetX ?? 0);
-          spawnY = this.input.activePointer.worldY + (pq.offsetY ?? 0);
-        } else if (pq.offsetX !== undefined) {
-          spawnX += pq.offsetX;
-          spawnY += (pq.offsetY ?? 0);
-        }
-        this.spawnMagicPillar(spawnX, spawnY, pq.owner);
-        this.magicPillarQueue.splice(i, 1);
-      }
-    }
-
-    // ── Active pillars (expire) ───────────────────────────────────────
-    for (let i = this.magicActivePillars.length - 1; i >= 0; i--) {
-      const p = this.magicActivePillars[i];
-      if (time >= p.expireAt) {
-        p.sprite.destroy();
-        this.magicActivePillars.splice(i, 1);
-      }
-    }
-
-    // ── Orbital bars ──────────────────────────────────────────────────
-    if (this.magicOrbitalCenter) {
-      const oc = this.magicOrbitalCenter;
-      if (time >= oc.expireAt) {
-        oc.gfx.destroy();
-        this.magicOrbitalCenter = null;
-      } else {
-        oc.rotAngle += (delta / 1000) * Math.PI; // one full rotation per 2s
-        oc.gfx.clear();
-        const barLen = 140;
-        const barHalf = 8;
-        const _orbitalTargets = oc.owner === 'player' ? this.enemies : [this.player];
-        for (let arm = 0; arm < 4; arm++) {
-          const a = oc.rotAngle + arm * (Math.PI / 2);
-          const ex = oc.x + Math.cos(a) * barLen;
-          const ey = oc.y + Math.sin(a) * barLen;
-          oc.gfx.lineStyle(barHalf * 2, 0x9944ff, 0.75);
-          oc.gfx.beginPath();
-          oc.gfx.moveTo(oc.x, oc.y);
-          oc.gfx.lineTo(ex, ey);
-          oc.gfx.strokePath();
-        }
-        if (time - oc.lastDmgAt >= 250) {
-          for (const target of _orbitalTargets) {
-            if (!target.active || target.hp <= 0) continue;
-            let hitThisArm = false;
-            for (let arm = 0; arm < 4; arm++) {
-              const a = oc.rotAngle + arm * (Math.PI / 2);
-              const ex = oc.x + Math.cos(a) * barLen;
-              const ey = oc.y + Math.sin(a) * barLen;
-              const dx = ex - oc.x; const dy = ey - oc.y;
-              const len = Math.sqrt(dx * dx + dy * dy);
-              const tx = target.x - oc.x; const ty2 = target.y - oc.y;
-              const dot = (tx * dx + ty2 * dy) / (len * len);
-              if (dot >= 0 && dot <= 1) {
-                const px = oc.x + dot * dx; const py = oc.y + dot * dy;
-                if (Phaser.Math.Distance.Between(px, py, target.x, target.y) <= barHalf + 20) {
-                  hitThisArm = true; break;
-                }
-              }
-            }
-            if (hitThisArm) {
-              target.takeDamage(15);
-              this.spawnHitFlash(target.x, target.y, 0x9944ff);
-            }
-          }
-          if (_orbitalTargets.some(t => t.active)) oc.lastDmgAt = time;
-        }
-      }
-    }
-
-    // ── Blink 20 (player) ─────────────────────────────────────────────
-    if (this.magicBlinkRemaining > 0 && time >= this.magicBlinkNextAt) {
-      const bx = pad + Math.random() * (W - pad * 2);
-      const by = pad + Math.random() * (H - pad * 2);
-      this.player.setPosition(bx, by);
-      this.dealAoeDamageFromOwner(bx, by, 80, 20, 'player');
-      const ring = this.add.circle(bx, by, 20, 0x9944ff, 0.6).setDepth(9);
-      this.tweens.add({ targets: ring, scaleX: 4, scaleY: 4, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
-      this.magicBlinkRemaining--;
-      this.magicBlinkNextAt = time + 250;
-      if (this.magicBlinkRemaining === 0) {
-        this.player.damageAbsorber = null;
-      }
-    }
-    // Blink 20 (NPC)
-    if (this.npcMagicBlinkRemaining > 0 && time >= this.npcMagicBlinkNextAt) {
-      const bx = pad + Math.random() * (W - pad * 2);
-      const by = pad + Math.random() * (H - pad * 2);
-      this.npc.setPosition(bx, by);
-      this.dealAoeDamageFromOwner(bx, by, 80, 20, 'npc');
-      const ring = this.add.circle(bx, by, 20, 0x9944ff, 0.4).setDepth(9);
-      this.tweens.add({ targets: ring, scaleX: 4, scaleY: 4, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
-      this.npcMagicBlinkRemaining--;
-      this.npcMagicBlinkNextAt = time + 250;
-    }
-
-    // ── Root 4 corner ─────────────────────────────────────────────────
-    if (this.magicRoot4Active) {
-      const r4 = this.magicRoot4Active;
-      const corners = [
-        [pad, pad], [W - pad, pad], [pad, H - pad], [W - pad, H - pad],
-      ];
-      const target = r4.owner === 'player' ? this.getNearestEnemy(r4.ex, r4.ey) : this.player;
-      // Lock target position
-      target.setPosition(r4.ex, r4.ey);
-      // Draw chains
-      r4.gfx.clear();
-      let allBroken = true;
-      for (let c = 0; c < 4; c++) {
-        if (r4.chainsHp[c] > 0) {
-          allBroken = false;
-          const alpha = r4.chainsHp[c] / 20;
-          r4.gfx.lineStyle(3, 0xcc88ff, Math.max(0.2, alpha));
-          r4.gfx.beginPath();
-          r4.gfx.moveTo(r4.ex, r4.ey);
-          r4.gfx.lineTo(corners[c][0], corners[c][1]);
-          r4.gfx.strokePath();
-        }
-      }
-      // Target's projectiles can destroy chains to break free
-      const projArray = this.projectiles.getMatching('active', true) as Phaser.Physics.Arcade.Sprite[];
-      for (const p of projArray) {
-        if ((p as any).isFromPlayer !== (r4.owner === 'player')) {
-          // Target's projectiles hit chains
-          for (let c = 0; c < 4; c++) {
-            if (r4.chainsHp[c] <= 0) continue;
-            if (Phaser.Math.Distance.Between(p.x, p.y, corners[c][0], corners[c][1]) <= 40 ||
-                Phaser.Math.Distance.Between(p.x, p.y, r4.ex, r4.ey) <= 30) {
-              r4.chainsHp[c] -= (p as any).damage ?? 0;
-              p.setActive(false).setVisible(false);
-              (p.body as Phaser.Physics.Arcade.Body).stop();
-            }
-          }
-        }
-      }
-      // End condition
-      const elapsed4 = time - (r4.expireAt - 8000);
-      if (allBroken || elapsed4 >= 8000) {
-        r4.gfx.destroy();
-        this.magicRoot4Active = null;
-        this.showFloatingText(r4.ex, r4.ey - 28, allBroken ? '⛓ FREED!' : '⛓ ESCAPED', '#ffcc88');
-      }
-    }
-
-    // ── Chain bound expiry ────────────────────────────────────────────
-    if (this.magicChainBound && time >= this.magicChainBoundEnd) {
-      this.magicChainBound = false;
-    }
-    if (this.npc.magicChainBound && time >= this.npc.magicChainBoundEnd) {
-      this.npc.magicChainBound = false;
-    }
-
-    // ── Radial menu: reposition if player moved ───────────────────────
-    if (this.magicGrimoireMenuOpen) {
-      const ptr = this.input.activePointer;
-      this.updateMagicRadialHover(ptr);
-    }
-    if (this.magicNecronomiconMenuOpen) {
-      const ptr = this.input.activePointer;
-      this.updateMagicRadialHover(ptr);
-    }
-  }
-
-  private spawnMagicHealOrb(owner: 'player' | 'npc'): void {
-    const caster = owner === 'player' ? this.player : this.npc;
-    const W = this.scale.width;
-    const H = this.scale.height;
-    // Pick random edge
-    const edge = Math.floor(Math.random() * 4);
-    let ox: number; let oy: number;
-    if (edge === 0) { ox = Math.random() * W; oy = 0; }
-    else if (edge === 1) { ox = Math.random() * W; oy = H; }
-    else if (edge === 2) { ox = 0; oy = Math.random() * H; }
-    else { ox = W; oy = Math.random() * H; }
-    const angle = Math.atan2(caster.y - oy, caster.x - ox);
-    const speed = 200;
-    const sprite = this.add.circle(ox, oy, 8, 0xcc99ff, 0.9)
-      .setStrokeStyle(2, 0xffeeff, 0.6).setDepth(7);
-    this.magicHealOrbs.push({
-      sprite, x: ox, y: oy,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed,
-      owner,
-    });
-  }
-
   private updateInvasion(time: number, delta: number): void {
     // Wave transition
     if (this.waveManager.isWaveComplete() && this.invasionBetweenWavesUntil <= 0) {
@@ -19555,37 +17664,13 @@ export class ArenaScene extends Phaser.Scene {
     if ((proj as any).isFallenAngelDagger && this.elementId === 'light') {
       this.lightKit.onFallenAngelDaggerHit(this.npc, this.time.now);
     }
-    // Magic cluster bomb: spawn 6 shrapnel
-    if (proj.texture.key === 'proj-magic-cluster-core') {
-      this.spawnMagicClusterShrapnel(proj.x, proj.y, 'player');
+    // Magic (player) thorn vine hit
+    if ((proj as any).isMagicThornVine && (proj as any).thornVineOwner === 'player') {
+      this.magicKit.onThornVineHit(this.npc, 'player');
     }
-    // Magic bind chain / Root to Corners
-    if (proj.texture.key === 'proj-magic-chain') {
-      if ((proj as any).isMagicRoot4) {
-        if (!this.magicRoot4Active) {
-          const gfx = this.add.graphics().setDepth(5);
-          const now = this.time.now;
-          this.magicRoot4Active = {
-            ex: this.npc.x, ey: this.npc.y,
-            chainsHp: [20, 20, 20, 20],
-            gfx, owner: 'player',
-            expireAt: now + 8000,
-          };
-          this.showFloatingText(this.npc.x, this.npc.y - 28, '⛓ ROOTED', '#cc88ff');
-        }
-      } else {
-        this.npc.magicChainBound = true;
-        this.npc.magicChainBoundEnd = this.time.now + 2000;
-        this.showFloatingText(this.npc.x, this.npc.y - 28, '⛓ BOUND', '#cc88ff');
-        this.time.delayedCall(2000, () => {
-          if (this.npc.magicChainBound) {
-            this.npc.takeDamage(10);
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0x9944ff);
-            this.spawnDamageNumber(this.npc.x, this.npc.y - 30, 10);
-            this.npc.magicChainBound = false;
-          }
-        });
-      }
+    // Magic (player) thorn prison hit
+    if ((proj as any).isMagicThornPrison && (proj as any).thornPrisonOwner === 'player') {
+      this.magicKit.onThornPrisonHit(this.npc.x, this.npc.y, 'player');
     }
     proj.setActive(false).setVisible(false);
     (proj.body as Phaser.Physics.Arcade.Body).stop();
@@ -19667,11 +17752,11 @@ export class ArenaScene extends Phaser.Scene {
       c.bleeding = true;
       c.bleedingUntil = Math.max(c.bleedingUntil, this.time.now + 6000);
     }
-    // Magic bind chain
-    if (proj.texture.key === 'proj-magic-chain' && !(proj as any).isMagicRoot4) {
+    // Magic thorn vine: bind corrupted
+    if ((proj as any).isMagicThornVine) {
       c.magicChainBound = true;
       c.magicChainBoundEnd = this.time.now + 2000;
-      this.showFloatingText(c.x, c.y - 28, '⛓ BOUND', '#cc88ff');
+      this.showFloatingText(c.x, c.y - 28, '🌿 BOUND', '#33ff66');
     }
     // Water knockback (click upgrade)
     if (proj.texture.key === 'proj-water' && this.hasUpgrade('click')) {

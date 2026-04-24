@@ -82,13 +82,17 @@ const silenceMeatHook: Ability = {
   },
 };
 
-const silenceEnrage: Ability = {
-  id: 'silence-enrage',
-  name: 'Enrage',
-  description: 'Restore 2 slasher hit points (max 10) and gain +25% speed for 5s.',
+const silenceMortalWound: Ability = {
+  id: 'silence-mortal-wound',
+  name: 'Mortal Wound',
+  description: '1.5s windup: aim a devastating slash. Hit = 5x teleport-slashes (8 dmg each). Miss = -25% speed for 2s.',
   displayKey: 'R',
   cooldown: 12000,
-  cast(ctx: CastContext) { ctx.silenceEnrage(); },
+  cast(ctx: CastContext) {
+    const dx = ctx.targetX - ctx.casterX;
+    const dy = ctx.targetY - ctx.casterY;
+    ctx.silenceMortalWound(Math.atan2(dy, dx));
+  },
 };
 
 const silenceRetire: Ability = {
@@ -123,7 +127,7 @@ export const silenceElement: Element = {
     // Slasher mode
     silenceMachete,
     silenceMeatHook,
-    silenceEnrage,
+    silenceMortalWound,
     silenceRetire,
     silenceSlashEmUp,
   ],

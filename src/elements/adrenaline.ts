@@ -91,7 +91,7 @@ const wallTeleport: Ability = {
   name: 'Wall Teleport',
   description: '5 teleports (1.5 s apart) toward cursor wall. Enemies in path take 15 dmg each.',
   displayKey: 'Q',
-  cooldown: 12000,
+  cooldown: 36000,
   cast(ctx) { ctx.adrenalineWallTeleport(ctx.targetX, ctx.targetY); },
 };
 

@@ -269,6 +269,7 @@ export class GauntletSelectScene extends Phaser.Scene {
       difficulty: GAUNTLET_DIFFICULTY[0],
       mutations: [fightMutations[0]],
       gauntlet,
+      playerPerk: PlayerData.getEquippedPerk(playerElement),
     });
   }
 }

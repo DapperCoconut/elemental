@@ -29,6 +29,7 @@ export interface OilArenaApi {
   get p2LastAimX(): number;
   get p2LastAimY(): number;
   hasUpgrade(slot: string): boolean;
+  hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   damagePlayerTargets(cx: number, cy: number, radius: number, damage: number, color: number): void;
@@ -142,6 +143,7 @@ export class OilKit {
   private pointerDownAt = 0;
   private holdDroneAccum = 0;
   private holdModeActive = false;
+  private playerCommandCooldownUntil = 0;
 
   // Drone orbit shared angles
   private playerDroneBaseAngle = 0;
@@ -211,6 +213,7 @@ export class OilKit {
     this.pointerWasDown = false;
     this.holdDroneAccum = 0;
     this.holdModeActive = false;
+    this.playerCommandCooldownUntil = 0;
     this.playerDroneBaseAngle = 0;
     this.npcDroneBaseAngle = 0;
     this.npcOilyBurnAccum = 0;
@@ -293,8 +296,9 @@ export class OilKit {
         if (this.playerBarrel?.active) {
           this.explodeBarrel(this.playerBarrel, 'player', true);
           this.playerBarrel = null;
-        } else {
+        } else if (time >= this.playerCommandCooldownUntil) {
           this.doCommandDrones(mx, my, 'player');
+          if (this.playerDrones.length > 0) this.playerCommandCooldownUntil = time + 1000;
         }
       }
     }
@@ -396,8 +400,10 @@ export class OilKit {
         caster.x + Math.cos(angle) * orbitR,
         caster.y + Math.sin(angle) * orbitR,
       );
-      const col = drone.shotsLeft >= 3 ? 0xffaa00 : drone.shotsLeft === 2 ? 0xff6600 : 0xff2200;
-      const rad = drone.shotsLeft >= 3 ? 8 : drone.shotsLeft === 2 ? 7 : 5;
+      const hasBioFuel = this.arena.hasPerk(drone.owner, 'bio-fuel');
+      const fullThresh = hasBioFuel ? 4 : 3;
+      const col = drone.shotsLeft >= fullThresh ? 0xffaa00 : drone.shotsLeft >= 2 ? 0xff6600 : 0xff2200;
+      const rad = drone.shotsLeft >= fullThresh ? 8 : drone.shotsLeft >= 2 ? 7 : 5;
       drone.sprite.setFillStyle(col, owner === 'player' ? 0.9 : 0.7);
       drone.sprite.setRadius(rad);
     }
@@ -438,7 +444,8 @@ export class OilKit {
       caster.y + Math.sin(spawnAngle) * 60,
       8, 0xffaa00, 0.9,
     ).setDepth(8);
-    drones.push({ sprite, shotsLeft: 3, orbitAngle: spawnAngle, shielded: false, healedByFirewall: false, meleeCooldownUntil: 0, owner });
+    const shotsLeft = this.arena.hasPerk(owner, 'bio-fuel') ? 5 : 3;
+    drones.push({ sprite, shotsLeft, orbitAngle: spawnAngle, shielded: false, healedByFirewall: false, meleeCooldownUntil: 0, owner });
   }
 
   doCommandDrones(tx: number, ty: number, owner: 'player' | 'npc'): void {

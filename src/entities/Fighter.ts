@@ -26,6 +26,10 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public gauntletDamageTakenMult = 1;
   /** When true, skip alpha flash in takeDamage/applySelfDamage and keep alpha at 0 (Stealthy mutation). */
   public forceInvisible = false;
+  /** 0–1+ probability that an incoming hit is dodged (can exceed 1.0, stacks). Each dodge subtracts 0.2. */
+  public dodgeChance = 0;
+  /** Timestamp after which the fighter can cast abilities again (Disarm effect). */
+  public disarmedUntil = 0;
   /** 0–1 probability that outgoing attacks deal a critical hit (2× damage). */
   public critChance = 0;
   /** Damage multiplier applied on a critical hit. Default 2. */
@@ -77,6 +81,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
   public earthStunnedUntil = 0;
 
+  // Silence upgrade status effects
+  public statueUntil = 0;
+  public healStopUntil = 0;
+  public forceRetreatUntil = 0;
+
   // Oil E+ Oily status
   public oilyUntil = 0;
   public oilyBurnUntil = 0;
@@ -88,6 +97,13 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public growthBloatActive = false;
   public growthBloatEnd = 0;
   public growthBloatAura: Phaser.GameObjects.Arc | null = null;
+
+  /** Multiplier applied to all outgoing damage this fighter deals. Default 1 (Lust payload). */
+  public outgoingDamageMult = 1;
+  /** Additional aim inaccuracy in degrees (added on top of difficulty preset). Default 0 (Anger payload). */
+  public aimOffsetBonusDeg = 0;
+  /** Timestamp until which aimOffsetBonusDeg is active. */
+  public aimOffsetBonusUntil = 0;
 
   private incomingCritCtx: { chance: number; mult: number } | null = null;
   private cooldowns: Map<string, number> = new Map();
@@ -143,6 +159,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
   takeDamage(amount: number): void {
     if (this.isInvincible) return;
+    if (this.statueUntil > 0) this.statueUntil = 0;
 
     // Crit roll: use any incoming crit context set by the attacker
     const critCtx = this.incomingCritCtx;
@@ -201,6 +218,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   }
 
   heal(amount: number): void {
+    if (this.healStopUntil > 0 && Date.now() < this.healStopUntil) return;
     this.hp = Math.min(this.maxHp, this.hp + amount);
   }
 
@@ -239,11 +257,27 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     }
   }
 
+  /** Roll a dodge. Returns true if the hit is dodged; subtracts 0.2 from dodgeChance on success. */
+  rollDodge(): boolean {
+    if (this.dodgeChance <= 0) return false;
+    if (Math.random() < Math.min(1, this.dodgeChance)) {
+      this.dodgeChance = Math.max(0, this.dodgeChance - 0.2);
+      return true;
+    }
+    return false;
+  }
+
+  /** Apply a Disarm effect lasting `ms` milliseconds (prevents ability casts). */
+  applyDisarm(ms: number): void {
+    this.disarmedUntil = Math.max(this.disarmedUntil, Date.now() + ms);
+  }
+
   castAbility(abilityId: string, ctx: CastContext): boolean {
     const ability = this.element.abilities.find((a) => a.id === abilityId);
     if (!ability) return false;
 
     const now = Date.now();
+    if (now < this.disarmedUntil) return false;
     if (now - (this.cooldowns.get(abilityId) ?? 0) < ability.cooldown * this.cooldownMult) return false;
 
     this.cooldowns.set(abilityId, now);
@@ -270,6 +304,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   reduceCooldown(abilityId: string, byMs: number): void {
     const stored = this.cooldowns.get(abilityId) ?? 0;
     this.cooldowns.set(abilityId, stored - byMs);
+  }
+
+  /** Make an ability immediately ready (clears its cooldown). */
+  resetCooldown(abilityId: string): void {
+    this.cooldowns.set(abilityId, 0);
   }
 
   /** Returns 0 = on cooldown, 1 = ready */

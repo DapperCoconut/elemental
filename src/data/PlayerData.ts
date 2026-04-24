@@ -11,6 +11,8 @@ interface SaveData {
   dummyUnlocked: boolean;            // true once the WWSSADADBA code has been entered
   labLevel: number;                  // 0 = base, 1-3 = upgraded
   corruptShards: number;             // currency earned in Invasion mode
+  unlockedPerks: Record<string, string[]>;   // elementId → owned perk ids
+  equippedPerks: Record<string, string>;     // elementId → single equipped perk id
 }
 
 function load(): SaveData {
@@ -18,7 +20,7 @@ function load(): SaveData {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<SaveData>;
-      return {
+      const d: SaveData = {
         shards: parsed.shards ?? 0,
         owned: parsed.owned ?? {},
         active: parsed.active ?? {},
@@ -29,12 +31,21 @@ function load(): SaveData {
         dummyUnlocked: parsed.dummyUnlocked ?? false,
         labLevel: parsed.labLevel ?? 0,
         corruptShards: parsed.corruptShards ?? 0,
+        unlockedPerks: parsed.unlockedPerks ?? {},
+        equippedPerks: parsed.equippedPerks ?? {},
       };
+      // Sanity: clear equipped perk if no longer unlocked
+      for (const el of Object.keys(d.equippedPerks)) {
+        if (!(d.unlockedPerks[el] ?? []).includes(d.equippedPerks[el])) {
+          delete d.equippedPerks[el];
+        }
+      }
+      return d;
     }
   } catch {
     // corrupted save — start fresh
   }
-  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0 };
+  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0, unlockedPerks: {}, equippedPerks: {} };
 }
 
 function save(data: SaveData): void {
@@ -114,6 +125,44 @@ export function spendNucleus(): boolean {
   return true;
 }
 
+export function spendNuclei(n: number): boolean {
+  const data = load();
+  if (data.nuclei < n) return false;
+  data.nuclei -= n;
+  save(data);
+  return true;
+}
+
+export function isPerkUnlocked(elementId: string, perkId: string): boolean {
+  return (load().unlockedPerks[elementId] ?? []).includes(perkId);
+}
+
+export function unlockPerk(elementId: string, perkId: string): void {
+  const data = load();
+  if (!(data.unlockedPerks[elementId] ?? []).includes(perkId)) {
+    data.unlockedPerks[elementId] = [...(data.unlockedPerks[elementId] ?? []), perkId];
+  }
+  save(data);
+}
+
+export function getUnlockedPerks(elementId: string): string[] {
+  return load().unlockedPerks[elementId] ?? [];
+}
+
+export function getEquippedPerk(elementId: string): string | null {
+  return load().equippedPerks[elementId] ?? null;
+}
+
+export function equipPerk(elementId: string, perkId: string | null): void {
+  const data = load();
+  if (perkId === null) {
+    delete data.equippedPerks[elementId];
+  } else {
+    data.equippedPerks[elementId] = perkId;
+  }
+  save(data);
+}
+
 export function isElementUnlocked(id: string): boolean {
   return load().unlockedElements.includes(id);
 }
@@ -166,7 +215,7 @@ export function getLabLevel(): number {
 
 export function upgradelab(): boolean {
   const data = load();
-  if (data.labLevel >= 3) return false;
+  if (data.labLevel >= 4) return false;
   data.labLevel += 1;
   save(data);
   return true;

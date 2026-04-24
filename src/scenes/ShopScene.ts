@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import * as PlayerData from '../data/PlayerData';
 import { ALL_UPGRADES, getElementUpgrades, UpgradeDef } from '../data/Upgrades';
 import { GAUNTLET_COST } from '../data/GauntletData';
-import { ABSTRACT_ELEMENT_IDS, ABSTRACT_ELEMENT_UNLOCK_MAP } from '../data/AbstractElements';
+import { ABSTRACT_ELEMENT_IDS, ABSTRACT_ELEMENT_UNLOCK_MAP, ABSTRACT_MIX_ELEMENT_IDS } from '../data/AbstractElements';
 
 const ELEMENT_COLORS: Record<string, number> = {
   fire:        0xff4400,
@@ -25,6 +25,9 @@ const ELEMENT_COLORS: Record<string, number> = {
   fate:        0x88eecc,
   sound:       0x44bbff,
   light:       0xffffff,
+  magnet:      0xcc2244,
+  metal:       0xaabbcc,
+  plasma:      0xdd66ff,
 };
 
 const ELEMENT_EMOJIS: Record<string, string> = {
@@ -48,15 +51,19 @@ const ELEMENT_EMOJIS: Record<string, string> = {
   fate:        '🃏',
   sound:       '🔊',
   light:       '✨',
+  magnet:      '🧲',
+  metal:       '⚙️',
+  plasma:      '🔮',
 };
 
 const BASE_ELEMENT_IDS = ['fire', 'water', 'life', 'air', 'earth'];
 const LAB_UPGRADE_COST = 500;
 
-const LAB_UPGRADES = [
+const LAB_UPGRADES: { level: number; name: string; description: string; cost?: number; corruptCost?: number }[] = [
   { level: 1, name: 'Abstract Fusion', description: 'Fuse two Abstract Elements together in the Lab (costs 3 nuclei). Mismatched fusions waste 1 nucleus.' },
-  { level: 2, name: 'Resonant Core', description: 'Coming soon — further Lab enhancements.' },
-  { level: 3, name: 'Apex Synthesis', description: 'Coming soon — master-level Lab upgrades.' },
+  { level: 2, name: 'Resonant Core', description: 'Forge Perks — toggle the Lab to Perk Mode and combine 3 base elements into a per-element Perk (2 ⚛️ each). One Perk can be equipped per element on the select screen.' },
+  { level: 3, name: 'Apex Synthesis', description: 'Unlocks the Quad Perk Forge in the Lab — combine all 4 other base elements into a powerful quad perk (5 ⚛️ each).' },
+  { level: 4, name: 'Penta Synthesis', description: 'Unlocks the Penta Perk Forge — combine all 5 base elements into a legendary perk (10 ⚛️ each).', cost: 2500, corruptCost: 10000 },
 ];
 
 export class ShopScene extends Phaser.Scene {
@@ -136,16 +143,18 @@ export class ShopScene extends Phaser.Scene {
     // ── Page navigation ──────────────────────────────────────────
     const combinedIds = ALL_UPGRADES
       .map((e) => e.elementId)
-      .filter((id) => !BASE_ELEMENT_IDS.includes(id) && !ABSTRACT_ELEMENT_IDS.includes(id) && PlayerData.isElementUnlocked(id));
+      .filter((id) => !BASE_ELEMENT_IDS.includes(id) && !ABSTRACT_ELEMENT_IDS.includes(id) && !ABSTRACT_MIX_ELEMENT_IDS.includes(id) && PlayerData.isElementUnlocked(id));
     const COMBINED_PER_PAGE = 5;
     const totalCombinedPages = combinedIds.length > 0 ? Math.ceil(combinedIds.length / COMBINED_PER_PAGE) : 0;
     const abstractIds = ABSTRACT_ELEMENT_IDS.filter(
       (id) => PlayerData.getCompletedGauntlets().includes(ABSTRACT_ELEMENT_UNLOCK_MAP[id]) &&
                ALL_UPGRADES.some((e) => e.elementId === id),
     );
-    // Page 0 = base, 1..totalCombined = combined, ABSTRACT_PAGE = abstract, SPECIALS_PAGE = specials
+    const mixIds = ABSTRACT_MIX_ELEMENT_IDS.filter((id) => PlayerData.isElementUnlocked(id) && ALL_UPGRADES.some((e) => e.elementId === id));
+    // Page 0 = base, 1..totalCombined = combined, ABSTRACT_PAGE = abstract, MIX_PAGE = abstract-mix, SPECIALS_PAGE = specials
     const ABSTRACT_PAGE = 1 + totalCombinedPages;
-    const SPECIALS_PAGE = ABSTRACT_PAGE + 1;
+    const MIX_PAGE = ABSTRACT_PAGE + 1;
+    const SPECIALS_PAGE = MIX_PAGE + 1;
     const totalPages = SPECIALS_PAGE + 1;
     const hasNextPage = this.currentPage < totalPages - 1;
     const hasPrevPage = this.currentPage > 0;
@@ -174,9 +183,14 @@ export class ShopScene extends Phaser.Scene {
         .on('pointerdown', () => this.scene.restart({ page: this.currentPage + 1 }));
     }
 
-    // Page indicator for abstract / specials
+    // Page indicator for abstract / mix / specials
     if (this.currentPage === ABSTRACT_PAGE) {
       this.add.text(cx, 36, '🩸 ABSTRACT', {
+        fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#cc44ff',
+      }).setOrigin(0.5);
+    }
+    if (this.currentPage === MIX_PAGE) {
+      this.add.text(cx, 36, '🩸 ABSTRACT MIX', {
         fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#cc44ff',
       }).setOrigin(0.5);
     }
@@ -189,6 +203,12 @@ export class ShopScene extends Phaser.Scene {
     // ── Abstract page ──────────────────────────────────────────────
     if (this.currentPage === ABSTRACT_PAGE) {
       this.buildAbstractPage(width, height, cx, abstractIds);
+      return;
+    }
+
+    // ── Abstract mix page ──────────────────────────────────────────
+    if (this.currentPage === MIX_PAGE) {
+      this.buildAbstractPage(width, height, cx, mixIds, 'Fuse two abstract elements in the LAB to unlock abstract-mix elements.\nUpgrades are purchased with 🩸 corrupt shards.');
       return;
     }
 
@@ -348,9 +368,18 @@ export class ShopScene extends Phaser.Scene {
         wordWrap: { width: btnW - 140 },
       }).setOrigin(0, 0.5);
 
-      const statusText = owned
-        ? 'OWNED'
-        : (available ? `💎 ${LAB_UPGRADE_COST} shards` : 'Requires previous level');
+      const cost = upg.cost ?? LAB_UPGRADE_COST;
+      const corruptCost = upg.corruptCost ?? 0;
+      let statusText: string;
+      if (owned) {
+        statusText = 'OWNED';
+      } else if (available) {
+        statusText = corruptCost > 0
+          ? `💎 ${cost} + 🌀 ${corruptCost}`
+          : `💎 ${cost} shards`;
+      } else {
+        statusText = 'Requires previous level';
+      }
       this.add.text(cx + btnW / 2 - 16, y + btnH / 2, statusText, {
         fontSize: '12px', fontFamily: '"Arial Black", sans-serif',
         color: owned ? '#33aa33' : (available ? '#ffcc44' : '#555555'),
@@ -362,7 +391,14 @@ export class ShopScene extends Phaser.Scene {
           .on('pointerover', () => btn.setStrokeStyle(2, 0xffffff))
           .on('pointerout',  () => btn.setStrokeStyle(2, borderColor))
           .on('pointerdown', () => {
-            if (PlayerData.spendShards(LAB_UPGRADE_COST)) {
+            if (corruptCost > 0) {
+              if (PlayerData.getShards() >= cost && PlayerData.getCorruptShards() >= corruptCost) {
+                PlayerData.spendShards(cost);
+                PlayerData.spendCorruptShards(corruptCost);
+                PlayerData.upgradelab();
+                this.scene.restart({ page: this.currentPage });
+              }
+            } else if (PlayerData.spendShards(cost)) {
               PlayerData.upgradelab();
               this.scene.restart({ page: this.currentPage });
             }
@@ -441,9 +477,9 @@ export class ShopScene extends Phaser.Scene {
     this.corruptShardText.setText(`🩸 ${PlayerData.getCorruptShards()}`);
   }
 
-  private buildAbstractPage(width: number, height: number, cx: number, abstractIds: string[]): void {
+  private buildAbstractPage(width: number, height: number, cx: number, abstractIds: string[], emptyMsg?: string): void {
     if (abstractIds.length === 0) {
-      this.add.text(cx, height / 2, 'Complete a gauntlet to unlock abstract elements.\nAbstract upgrades are purchased with 🩸 corrupt shards.', {
+      this.add.text(cx, height / 2, emptyMsg ?? 'Complete a gauntlet to unlock abstract elements.\nAbstract upgrades are purchased with 🩸 corrupt shards.', {
         fontSize: '16px', fontFamily: 'Arial, sans-serif', color: '#555577', align: 'center',
       }).setOrigin(0.5);
       return;

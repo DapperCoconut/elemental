@@ -1,19 +1,19 @@
 import { Element } from './Element';
 import { Ability } from './Ability';
 
-const magicMissiles: Ability = {
-  id: 'magic-missiles',
-  name: 'Magic Missiles',
-  description: 'Launch a barrage of 5 projectiles in a 30° cone. Each missile deals 8 damage.',
+const sparkleShot: Ability = {
+  id: 'magic-sparkle-shot',
+  name: 'Sparkle Shot',
+  description: 'Launch a star-shaped projectile toward your cursor that stops after ~180px. After 1s stationary it bursts in a small AoE (14 dmg). Direct hit deals 6 dmg.',
   displayKey: 'Click',
   cooldown: 3000,
-  cast(ctx) { ctx.magicMissiles(ctx.targetX, ctx.targetY); },
+  cast(ctx) { ctx.magicSparkleShot(ctx.targetX, ctx.targetY); },
 };
 
 const grimoire: Ability = {
   id: 'magic-grimoire',
   name: 'Grimoire',
-  description: 'Hold to open a 6-ability wheel. Aim with the mouse, release to cast. Tap to re-cast last selection. (1: Cluster Bomb, 2: Slow Zone, 3: Triple Beam, 4: Bind Chain, 5: Boomerang, 6: Pillars)',
+  description: 'Hold to open a 5-ability wheel. ← / → to select, release to cast. (1: Flame Burst, 2: Storm Cloud, 3: Virulent Thorns, 4: Compression Blast, 5: Gaia\'s Guidance)',
   displayKey: 'E',
   cooldown: 5000,
   cast(ctx) { ctx.magicOpenGrimoire(); },
@@ -40,7 +40,7 @@ const meditate: Ability = {
 const necronomicon: Ability = {
   id: 'magic-necronomicon',
   name: 'Necronomicon',
-  description: 'Hold to open a powerful 4-ability wheel. Aim with the mouse, release to cast. (1: Pillar Storm, 2: Orbital Bars, 3: Blink x20, 4: Root to Corners)',
+  description: 'Hold to open a powerful 5-ability wheel. ← / → to select, release to cast. (1: Flame Barrage, 2: Final Drench, 3: Thorn Prison, 4: Tornado Blast, 5: Gaia\'s Rage)',
   displayKey: 'Q',
   cooldown: 30000,
   cast(ctx) { ctx.magicOpenNecronomicon(); },
@@ -51,5 +51,5 @@ export const magicElement: Element = {
   name: 'Magic',
   color: 0x9944ff,
   emoji: '📖',
-  abilities: [magicMissiles, grimoire, magicAnchor, meditate, necronomicon],
+  abilities: [sparkleShot, grimoire, magicAnchor, meditate, necronomicon],
 };
