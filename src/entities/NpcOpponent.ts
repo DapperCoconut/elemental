@@ -60,10 +60,10 @@ export interface NpcAiState {
   // Death
   deathWispCd?: number;
   deathHolePlaced?: boolean;
-  // Adrenaline
-  adrenalineStyledChain?: number;
-  adrenalineHyperchargeReady?: boolean;
-  adrenalineInjectPhase?: 0|1|2|3;
+  // Rubber
+  npcRubberBounceFormActive?: boolean;
+  npcRubberBounceBackActive?: boolean;
+  npcRubberSpringPhaseEnd?: number;
   // Magic
   magicAnchorPlaced?: boolean;
   magicMeditating?: boolean;
@@ -314,8 +314,8 @@ export class NpcOpponent extends Fighter {
     if (this.element.id === 'void') {
       return this.doVoidAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
-    if (this.element.id === 'adrenaline') {
-      return this.doAdrenalineAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    if (this.element.id === 'rubber') {
+      return this.doRubberAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
     if (this.element.id === 'magic') {
       return this.doMagicAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
@@ -1433,10 +1433,10 @@ export class NpcOpponent extends Fighter {
     return null;
   }
 
-  private doAdrenalineAbilities(
+  private doRubberAbilities(
     _target: Fighter,
     buildContext: (tX: number, tY: number) => CastContext,
-    _time: number,
+    time: number,
     dist: number,
     hpRatio: number,
     aimX: number,
@@ -1446,47 +1446,38 @@ export class NpcOpponent extends Fighter {
     const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skip) {
-      // F: Self Inject when low HP (only if not already injecting)
-      if (hpRatio < 0.35 && (aiState.adrenalineInjectPhase ?? 0) === 0) {
-        if (this.castAbility('adrenaline-self-inject', buildContext(aimX, aimY))) {
-          aiState.adrenalineInjectPhase = 1;
-          return 'adrenaline-self-inject';
+      // Q: Bounce Back when low HP
+      if (hpRatio < 0.3 && !aiState.npcRubberBounceBackActive) {
+        if (this.castAbility('rubber-bounce-back', buildContext(aimX, aimY))) {
+          aiState.npcRubberBounceBackActive = true;
+          return 'rubber-bounce-back';
         }
       }
 
-      // Q: Styled On! — chain if window active
-      if ((aiState.adrenalineStyledChain ?? 0) > 0) {
-        if (this.castAbility('adrenaline-styled-on', buildContext(aimX, aimY))) {
-          aiState.adrenalineStyledChain = (aiState.adrenalineStyledChain ?? 0) + 1;
-          if ((aiState.adrenalineStyledChain ?? 0) >= 5) aiState.adrenalineStyledChain = 0;
-          return 'adrenaline-styled-on';
+      // R: Bounce Form when at medium range (reflect projectiles)
+      if (dist > 150 && dist < 350 && !aiState.npcRubberBounceFormActive) {
+        if (this.castAbility('rubber-bounce-form', buildContext(aimX, aimY))) {
+          aiState.npcRubberBounceFormActive = true;
+          return 'rubber-bounce-form';
         }
       }
 
-      // Q: Styled On! at close range
-      if (dist < 130) {
-        if (this.castAbility('adrenaline-styled-on', buildContext(aimX, aimY))) {
-          aiState.adrenalineStyledChain = 1;
-          return 'adrenaline-styled-on';
+      // F: Spring Slam at close range
+      if (dist < 180 && !(aiState.npcRubberSpringPhaseEnd && time < aiState.npcRubberSpringPhaseEnd)) {
+        if (this.castAbility('rubber-spring-slam', buildContext(aimX, aimY))) {
+          aiState.npcRubberSpringPhaseEnd = time + 1700;
+          return 'rubber-spring-slam';
         }
       }
 
-      // E: Dash toward player (and potentially trigger hypercharge)
-      if (dist < 200) {
-        if (this.castAbility('adrenaline-dash', buildContext(aimX, aimY))) return 'adrenaline-dash';
-      }
-
-      // Click with hypercharge if ready
-      if (aiState.adrenalineHyperchargeReady) {
-        if (this.castAbility('adrenaline-golden-shot', buildContext(aimX, aimY))) {
-          aiState.adrenalineHyperchargeReady = false;
-          return 'adrenaline-golden-shot';
-        }
+      // E: Sling Shot at long range
+      if (dist > 300) {
+        if (this.castAbility('rubber-sling', buildContext(aimX, aimY))) return 'rubber-sling';
       }
     }
 
-    // Default: Golden Shot spam
-    if (this.castAbility('adrenaline-golden-shot', buildContext(aimX, aimY))) return 'adrenaline-golden-shot';
+    // Default: Rubber Punch (NPC uses a moderate pull ratio)
+    if (this.castAbility('rubber-punch', buildContext(aimX, aimY))) return 'rubber-punch';
 
     return null;
   }

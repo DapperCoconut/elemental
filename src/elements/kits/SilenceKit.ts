@@ -74,6 +74,11 @@ export class SilenceKit {
   private silenceHookProj: Projectile | null = null;
   private silenceHookTarget: Fighter | null = null;
   private silenceNpcYankUntil = 0;
+  // Torture perk state
+  private tortureLodgedUntil = 0;
+  private tortureLodgedTarget: Fighter | null = null;
+  private tortureLodgedSprite: Phaser.GameObjects.Text | null = null;
+  private tortureTickAccum = 0;
   private silenceMortalWindupUntil = 0;
   private silenceMortalTelegraph: Phaser.GameObjects.Rectangle | null = null;
   private silenceMortalSelfSlowUntil = 0;
@@ -213,6 +218,10 @@ export class SilenceKit {
     if (this.silenceHookProj) { this.silenceHookProj.destroy(); this.silenceHookProj = null; }
     this.silenceHookTarget = null;
     this.silenceNpcYankUntil = 0;
+    this.tortureLodgedUntil = 0;
+    this.tortureLodgedTarget = null;
+    if (this.tortureLodgedSprite) { this.tortureLodgedSprite.destroy(); this.tortureLodgedSprite = null; }
+    this.tortureTickAccum = 0;
     this.silenceMortalWindupUntil = 0;
     if (this.silenceMortalTelegraph) { this.silenceMortalTelegraph.destroy(); this.silenceMortalTelegraph = null; }
     this.silenceMortalSelfSlowUntil = 0;
@@ -562,7 +571,28 @@ export class SilenceKit {
   /** Player: Yank hooked target to player */
   doYankHook(owner: 'player' | 'npc'): void {
     if (owner === 'player') {
-      if (!this.silenceHookConnected) return;
+      const hasTortureLodge = this.tortureLodgedUntil > this.arena.scene.time.now && !!this.tortureLodgedTarget;
+      if (!this.silenceHookConnected && !hasTortureLodge) return;
+      // Torture perk: electric shock instead of yank
+      if (this.arena.hasPerk('player', 'torture') && hasTortureLodge && this.tortureLodgedTarget) {
+        const target = this.tortureLodgedTarget;
+        target.takeDamage(12);
+        target.earthStunnedUntil = Math.max(target.earthStunnedUntil, this.arena.scene.time.now + 2000);
+        this.arena.spawnHitFlash(target.x, target.y, 0xffee00);
+        this.arena.showFloatingText(target.x, target.y - 30, '⚡ STUN', '#ffee44');
+        // Yellow lightning crackle visual
+        const scene = this.arena.scene;
+        const flash = scene.add.graphics().setDepth(12);
+        flash.lineStyle(2, 0xffee00, 1);
+        flash.lineBetween(this.arena.player.x, this.arena.player.y, target.x, target.y);
+        scene.tweens.add({ targets: flash, alpha: 0, duration: 300, onComplete: () => flash.destroy() });
+        // Clear lodge
+        this.tortureLodgedUntil = 0;
+        this.tortureLodgedTarget = null;
+        if (this.tortureLodgedSprite) { this.tortureLodgedSprite.destroy(); this.tortureLodgedSprite = null; }
+        this.silenceHookConnected = false;
+        return;
+      }
       this.silenceHookConnected = false;
       // Per-frame update steers NPC all the way to player; 2s safety cap
       this.silenceNpcYankUntil = this.arena.scene.time.now + 2000;
@@ -840,9 +870,22 @@ export class SilenceKit {
       this.silenceHookTarget = this.arena.npc;
       this.silenceHookWindowExpiry = this.arena.scene.time.now + 5000;
       this.silenceHookProj = null;
-      this.arena.showFloatingText(this.arena.npc.x, this.arena.npc.y - 20, '🪝 Hooked!', '#cc9933');
       this.arena.npc.takeDamage(8);
       this.arena.spawnHitFlash(this.arena.npc.x, this.arena.npc.y, 0xaa7733);
+      // Torture perk: lodge hook for tick damage
+      if (this.arena.hasPerk('player', 'torture')) {
+        const duration = this.arena.hasUpgrade('e') ? 6000 : 4000;
+        this.tortureLodgedUntil = this.arena.scene.time.now + duration;
+        this.tortureLodgedTarget = this.arena.npc;
+        this.tortureTickAccum = 0;
+        if (this.tortureLodgedSprite) this.tortureLodgedSprite.destroy();
+        this.tortureLodgedSprite = this.arena.scene.add.text(
+          this.arena.npc.x, this.arena.npc.y - 30, '🪝', { fontSize: '16px' },
+        ).setOrigin(0.5).setDepth(12);
+        this.arena.showFloatingText(this.arena.npc.x, this.arena.npc.y - 20, '🪝 LODGED', '#cc9933');
+      } else {
+        this.arena.showFloatingText(this.arena.npc.x, this.arena.npc.y - 20, '🪝 Hooked!', '#cc9933');
+      }
     } else {
       this.npcSilenceHookConnected = true;
       this.arena.player.takeDamage(8);
@@ -1182,6 +1225,30 @@ export class SilenceKit {
             (ht.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
           } else {
             (ht.body as Phaser.Physics.Arcade.Body).setVelocity((ydx / ydist) * 900, (ydy / ydist) * 900);
+          }
+        }
+      }
+
+      // Torture perk: tick damage while hook is lodged
+      if (this.tortureLodgedUntil > 0) {
+        if (time > this.tortureLodgedUntil || !this.tortureLodgedTarget?.active || (this.tortureLodgedTarget?.hp ?? 0) <= 0) {
+          this.tortureLodgedUntil = 0;
+          this.tortureLodgedTarget = null;
+          if (this.tortureLodgedSprite) { this.tortureLodgedSprite.destroy(); this.tortureLodgedSprite = null; }
+        } else {
+          // Reposition hook emoji over target
+          if (this.tortureLodgedSprite && this.tortureLodgedTarget) {
+            this.tortureLodgedSprite.setPosition(this.tortureLodgedTarget.x, this.tortureLodgedTarget.y - 30);
+          }
+          // Tick 3 dmg every second
+          this.tortureTickAccum += delta;
+          if (this.tortureTickAccum >= 1000) {
+            this.tortureTickAccum -= 1000;
+            if (this.tortureLodgedTarget) {
+              this.tortureLodgedTarget.takeDamage(3);
+              this.arena.spawnHitFlash(this.tortureLodgedTarget.x, this.tortureLodgedTarget.y, 0xaa7733);
+              this.arena.showFloatingText(this.tortureLodgedTarget.x, this.tortureLodgedTarget.y - 20, '🪝 -3', '#cc9933');
+            }
           }
         }
       }

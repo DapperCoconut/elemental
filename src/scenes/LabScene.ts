@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import * as PlayerData from '../data/PlayerData';
 import { findRecipe } from '../data/Recipes';
 import { ABSTRACT_ELEMENT_IDS, ABSTRACT_ELEMENT_UNLOCK_MAP } from '../data/AbstractElements';
-import { findPerkRecipe, findQuadPerkRecipe, findPentaPerkRecipe, PerkDef, ALL_PERKS } from '../data/Perks';
+import { findPerkRecipe, findQuadPerkRecipe, findPentaPerkRecipe, findAbstractTriplePerkRecipe, PerkDef, ALL_PERKS } from '../data/Perks';
 
 const BASE_ELEMENTS = [
   { id: 'fire',  name: 'Fire',  emoji: '🔥', color: 0xff4400 },
@@ -24,7 +24,7 @@ const SLOT_W = 100;
 const SLOT_H = 100;
 
 export class LabScene extends Phaser.Scene {
-  private labMode: 'elements' | 'perks' | 'quad-perks' | 'penta-perks' = 'elements';
+  private labMode: 'elements' | 'perks' | 'abstract-perks' | 'quad-perks' | 'penta-perks' = 'elements';
 
   private slot1Id: string | null = null;
   private slot2Id: string | null = null;
@@ -57,7 +57,7 @@ export class LabScene extends Phaser.Scene {
     super({ key: 'LabScene' });
   }
 
-  init(data: { labMode?: 'elements' | 'perks' | 'quad-perks' | 'penta-perks' }): void {
+  init(data: { labMode?: 'elements' | 'perks' | 'abstract-perks' | 'quad-perks' | 'penta-perks' }): void {
     this.labMode = data?.labMode ?? 'elements';
   }
 
@@ -111,44 +111,61 @@ export class LabScene extends Phaser.Scene {
     bookCircle.on('pointerout',  () => bookCircle.setFillStyle(0x221133));
     bookCircle.on('pointerdown', () => this.showPerkBook());
 
-    // ── Mode toggle (ELEMENTS | PERKS | QUAD | PENTA) ─────────────────
+    // ── Mode toggle (ELEMENTS | PERKS | ABSTRACT | QUAD | PENTA) ──────────
     const canPerks = labLevel >= 2;
+    const canAbstractPerks = labLevel >= 2;
     const canQuad  = labLevel >= 3;
     const canPenta = labLevel >= 4;
     const tabY = 88;
-    const tabW = 90;
+    const tabW = 82;
     const tabH = 28;
     const tabGap = 4;
 
-    const tabCx = [cx - tabW * 1.5 - tabGap * 1.5, cx - tabW * 0.5 - tabGap * 0.5, cx + tabW * 0.5 + tabGap * 0.5, cx + tabW * 1.5 + tabGap * 1.5];
-    const tabLabels = ['ELEMENTS', canPerks ? 'PERKS' : 'PERKS 🔒', canQuad ? 'QUAD' : 'QUAD 🔒', canPenta ? 'PENTA' : 'PENTA 🔒'];
-    const tabModes: Array<'elements' | 'perks' | 'quad-perks' | 'penta-perks'> = ['elements', 'perks', 'quad-perks', 'penta-perks'];
+    const tabCx = [
+      cx - tabW * 2 - tabGap * 2,
+      cx - tabW * 1 - tabGap * 1,
+      cx,
+      cx + tabW * 1 + tabGap * 1,
+      cx + tabW * 2 + tabGap * 2,
+    ];
+    const tabLabels = [
+      'ELEMENTS',
+      canPerks ? 'PERKS' : 'PERKS 🔒',
+      canAbstractPerks ? 'ABSTRACT' : 'ABSTRACT 🔒',
+      canQuad ? 'QUAD' : 'QUAD 🔒',
+      canPenta ? 'PENTA' : 'PENTA 🔒',
+    ];
+    const tabModes: Array<'elements' | 'perks' | 'abstract-perks' | 'quad-perks' | 'penta-perks'> = [
+      'elements', 'perks', 'abstract-perks', 'quad-perks', 'penta-perks',
+    ];
 
     tabCx.forEach((tx, idx) => {
       const active = this.labMode === tabModes[idx];
-      const unlocked = idx === 0 || (idx === 1 && canPerks) || (idx === 2 && canQuad) || (idx === 3 && canPenta);
+      const unlocked = idx === 0 || (idx === 1 && canPerks) || (idx === 2 && canAbstractPerks) || (idx === 3 && canQuad) || (idx === 4 && canPenta);
       const bg = this.add.rectangle(tx, tabY, tabW, tabH, active ? 0x330066 : 0x111122)
         .setStrokeStyle(1, unlocked ? 0x9944ff : 0x333344)
         .setInteractive({ useHandCursor: true });
       this.add.text(tx, tabY, tabLabels[idx], {
-        fontSize: '10px', fontFamily: '"Arial Black", sans-serif',
+        fontSize: '9px', fontFamily: '"Arial Black", sans-serif',
         color: active ? '#cc88ff' : (unlocked ? '#666688' : '#333355'),
       }).setOrigin(0.5);
 
       bg.on('pointerdown', () => {
-        if (idx === 1 && !canPerks)  { this.showMessage('Requires Lab Level 2 (upgrade in Shop).', '#ff8888'); return; }
-        if (idx === 2 && !canQuad)   { this.showMessage('Requires Lab Level 3 (upgrade in Shop).', '#ff8888'); return; }
-        if (idx === 3 && !canPenta)  { this.showMessage('Requires Penta Synthesis (upgrade in Shop).', '#ff8888'); return; }
+        if (idx === 1 && !canPerks)          { this.showMessage('Requires Lab Level 2 (upgrade in Shop).', '#ff8888'); return; }
+        if (idx === 2 && !canAbstractPerks)  { this.showMessage('Requires Lab Level 2 (upgrade in Shop).', '#ff8888'); return; }
+        if (idx === 3 && !canQuad)           { this.showMessage('Requires Lab Level 3 (upgrade in Shop).', '#ff8888'); return; }
+        if (idx === 4 && !canPenta)          { this.showMessage('Requires Penta Synthesis (upgrade in Shop).', '#ff8888'); return; }
         if (this.labMode !== tabModes[idx]) this.scene.restart({ labMode: tabModes[idx] });
       });
     });
 
     // Instructions
     const instructionText =
-      this.labMode === 'perks'       ? 'Drag 3 base elements into the perk slots, then FORGE PERK (2 ⚛️)'  :
-      this.labMode === 'quad-perks'  ? 'Drag all 4 other base elements into the slots, then FORGE QUAD PERK (5 ⚛️)' :
-      this.labMode === 'penta-perks' ? 'Drag all 5 base elements into the slots, then FORGE PENTA PERK (10 ⚛️)' :
-                                       'Drag elements into the merge slots, then press MERGE';
+      this.labMode === 'perks'          ? 'Drag 3 base elements into the perk slots, then FORGE PERK (2 ⚛️)'  :
+      this.labMode === 'abstract-perks' ? 'Drag 3 abstract elements into the slots, then FORGE ABSTRACT PERK (4 ⚛️)' :
+      this.labMode === 'quad-perks'     ? 'Drag all 4 other base elements into the slots, then FORGE QUAD PERK (5 ⚛️)' :
+      this.labMode === 'penta-perks'    ? 'Drag all 5 base elements into the slots, then FORGE PENTA PERK (10 ⚛️)' :
+                                         'Drag elements into the merge slots, then press MERGE';
     this.add.text(cx, tabY + 20, instructionText, {
       fontSize: '12px',
       fontFamily: 'Arial, sans-serif',
@@ -245,6 +262,34 @@ export class LabScene extends Phaser.Scene {
         fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#336688',
       }).setOrigin(0.5);
 
+    } else if (this.labMode === 'abstract-perks') {
+      // Abstract perk mode: three slots, abstract elements only
+      slotY = 360;
+      this.slot1X = cx - 160;
+      this.slot1Y = slotY;
+      this.slot2X = cx;
+      this.slot2Y = slotY;
+      this.slot3X = cx + 160;
+      this.slot3Y = slotY;
+
+      for (let i = 0; i < 3; i++) {
+        const sx = [this.slot1X, this.slot2X, this.slot3X][i];
+        this.add.rectangle(sx, slotY, SLOT_W, SLOT_H, 0x0a001a, 1).setStrokeStyle(2, 0xcc44ff);
+        this.add.text(sx, slotY, `Slot ${i + 1}`, {
+          fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#884488',
+        }).setOrigin(0.5).setDepth(1);
+      }
+      this.add.text(cx - 80, slotY, '+', {
+        fontSize: '28px', fontFamily: '"Arial Black", sans-serif', color: '#cc44ff',
+      }).setOrigin(0.5);
+      this.add.text(cx + 80, slotY, '+', {
+        fontSize: '28px', fontFamily: '"Arial Black", sans-serif', color: '#cc44ff',
+      }).setOrigin(0.5);
+
+      this.add.text(cx, slotY + 68, 'Abstract elements only', {
+        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#884488',
+      }).setOrigin(0.5);
+
     } else if (this.labMode === 'quad-perks') {
       // Quad-perk mode: four slots
       slotY = 360;
@@ -308,22 +353,26 @@ export class LabScene extends Phaser.Scene {
     // ── MERGE / FORGE button ──────────────────────────────────────
     const mergeY = slotY + (this.labMode === 'elements' ? 80 : 100);
     const btnLabel =
-      this.labMode === 'penta-perks' ? '⚡ FORGE PENTA PERK  (10 ⚛️)' :
-      this.labMode === 'quad-perks'  ? '⚡ FORGE QUAD PERK  (5 ⚛️)' :
-      this.labMode === 'perks'       ? '⚡ FORGE PERK  (2 ⚛️)' :
-                                       '⚛️  MERGE  (1 Nucleus)';
+      this.labMode === 'penta-perks'    ? '⚡ FORGE PENTA PERK  (10 ⚛️)' :
+      this.labMode === 'quad-perks'     ? '⚡ FORGE QUAD PERK  (5 ⚛️)' :
+      this.labMode === 'abstract-perks' ? '⚡ FORGE ABSTRACT PERK  (4 ⚛️)' :
+      this.labMode === 'perks'          ? '⚡ FORGE PERK  (2 ⚛️)' :
+                                         '⚛️  MERGE  (1 Nucleus)';
     const btnColor =
-      this.labMode === 'penta-perks' ? 0x220033 :
-      this.labMode === 'quad-perks'  ? 0x332200 :
-      this.labMode === 'perks'       ? 0x003366 : 0x330066;
+      this.labMode === 'penta-perks'    ? 0x220033 :
+      this.labMode === 'quad-perks'     ? 0x332200 :
+      this.labMode === 'abstract-perks' ? 0x1a0033 :
+      this.labMode === 'perks'          ? 0x003366 : 0x330066;
     const btnStroke =
-      this.labMode === 'penta-perks' ? 0xaa44ff :
-      this.labMode === 'quad-perks'  ? 0xffaa44 :
-      this.labMode === 'perks'       ? 0x44aaff : 0x9944ff;
+      this.labMode === 'penta-perks'    ? 0xaa44ff :
+      this.labMode === 'quad-perks'     ? 0xffaa44 :
+      this.labMode === 'abstract-perks' ? 0xcc44ff :
+      this.labMode === 'perks'          ? 0x44aaff : 0x9944ff;
     const btnTextColor =
-      this.labMode === 'penta-perks' ? '#cc88ff' :
-      this.labMode === 'quad-perks'  ? '#ffaa44' :
-      this.labMode === 'perks'       ? '#44ccff' : '#cc88ff';
+      this.labMode === 'penta-perks'    ? '#cc88ff' :
+      this.labMode === 'quad-perks'     ? '#ffaa44' :
+      this.labMode === 'abstract-perks' ? '#cc66ff' :
+      this.labMode === 'perks'          ? '#44ccff' : '#cc88ff';
 
     const mergeBtn = this.add.rectangle(cx, mergeY, 280, 48, btnColor, 1)
       .setStrokeStyle(2, btnStroke)
@@ -339,6 +388,7 @@ export class LabScene extends Phaser.Scene {
     mergeBtn.on('pointerdown', () => {
       if (this.labMode === 'penta-perks') this.attemptPentaPerkForge();
       else if (this.labMode === 'quad-perks') this.attemptQuadPerkForge();
+      else if (this.labMode === 'abstract-perks') this.attemptAbstractPerkForge();
       else if (this.labMode === 'perks') this.attemptPerkForge();
       else this.attemptMerge();
     });
@@ -404,7 +454,7 @@ export class LabScene extends Phaser.Scene {
 
       const inSlot1 = Math.abs(cx - this.slot1X) <= SLOT_W / 2 && Math.abs(cy - this.slot1Y) <= SLOT_H / 2;
       const inSlot2 = Math.abs(cx - this.slot2X) <= SLOT_W / 2 && Math.abs(cy - this.slot2Y) <= SLOT_H / 2;
-      const inSlot3 = (this.labMode === 'perks' || this.labMode === 'quad-perks' || this.labMode === 'penta-perks') &&
+      const inSlot3 = (this.labMode === 'perks' || this.labMode === 'abstract-perks' || this.labMode === 'quad-perks' || this.labMode === 'penta-perks') &&
         Math.abs(cx - this.slot3X) <= SLOT_W / 2 && Math.abs(cy - this.slot3Y) <= SLOT_H / 2;
       const inSlot4 = (this.labMode === 'quad-perks' || this.labMode === 'penta-perks') &&
         Math.abs(cx - this.slot4X) <= SLOT_W / 2 && Math.abs(cy - this.slot4Y) <= SLOT_H / 2;
@@ -429,9 +479,14 @@ export class LabScene extends Phaser.Scene {
   }
 
   private setSlot(slot: 1 | 2 | 3 | 4 | 5, elementId: string): void {
-    // Perk/quad/penta mode only allows base elements
+    // Base-perk modes only allow base elements
     if ((this.labMode === 'perks' || this.labMode === 'quad-perks' || this.labMode === 'penta-perks') && ABSTRACT_ELEMENT_IDS.includes(elementId)) {
       this.showMessage('Perks use base elements only.', '#ff8888');
+      return;
+    }
+    // Abstract-perk mode only allows abstract elements
+    if (this.labMode === 'abstract-perks' && !ABSTRACT_ELEMENT_IDS.includes(elementId)) {
+      this.showMessage('Abstract perks use abstract elements only.', '#ff8888');
       return;
     }
 
@@ -492,6 +547,10 @@ export class LabScene extends Phaser.Scene {
     }
     if (this.labMode === 'quad-perks') {
       this.mergeBtnLabel.setText('⚡ FORGE QUAD PERK  (5 ⚛️)');
+      return;
+    }
+    if (this.labMode === 'abstract-perks') {
+      this.mergeBtnLabel.setText('⚡ FORGE ABSTRACT PERK  (4 ⚛️)');
       return;
     }
     if (this.labMode === 'perks') {
@@ -612,6 +671,35 @@ export class LabScene extends Phaser.Scene {
     this.showPerkDiscoveryPopup(recipe);
   }
 
+  private attemptAbstractPerkForge(): void {
+    this.messageText.setText('');
+
+    if (!this.slot1Id || !this.slot2Id || !this.slot3Id) {
+      this.showMessage('Place abstract elements in all 3 slots first.', '#ff8888');
+      return;
+    }
+
+    const recipe = findAbstractTriplePerkRecipe(this.slot1Id, this.slot2Id, this.slot3Id);
+    if (!recipe) {
+      this.showMessage('No abstract perk matches these elements.', '#ff8888');
+      return;
+    }
+
+    if (PlayerData.isPerkUnlocked(recipe.elementId, recipe.id)) {
+      this.showMessage(`${recipe.emoji} ${recipe.name} already forged!`, '#ffcc44');
+      return;
+    }
+
+    if (!PlayerData.spendNuclei(4)) {
+      this.showMessage('Need 4 Elemental Nuclei to forge an abstract perk.', '#ff8888');
+      return;
+    }
+
+    PlayerData.unlockPerk(recipe.elementId, recipe.id);
+    this.refreshNuclei();
+    this.showPerkDiscoveryPopup(recipe);
+  }
+
   private attemptQuadPerkForge(): void {
     this.messageText.setText('');
 
@@ -717,14 +805,15 @@ export class LabScene extends Phaser.Scene {
 
     const isPenta = perk.tier === 'penta';
     const isQuad = perk.tier === 'quad';
-    const cardColor = isPenta ? 0x220033 : (isQuad ? 0x221100 : 0x001133);
-    const strokeColor = isPenta ? 0xcc44ff : (isQuad ? 0xffaa44 : 0x44aaff);
-    const titleColor = isPenta ? '#cc88ff' : (isQuad ? '#ffaa44' : '#44ccff');
+    const isAbstract = perk.tier === 'abstract-triple';
+    const cardColor = isPenta ? 0x220033 : (isQuad ? 0x221100 : (isAbstract ? 0x1a0033 : 0x001133));
+    const strokeColor = isPenta ? 0xcc44ff : (isQuad ? 0xffaa44 : (isAbstract ? 0xcc44ff : 0x44aaff));
+    const titleColor = isPenta ? '#cc88ff' : (isQuad ? '#ffaa44' : (isAbstract ? '#cc66ff' : '#44ccff'));
 
     const overlay = this.add.rectangle(cx, cy, width, height, 0x000000, 0.75).setDepth(50).setInteractive();
     const card = this.add.rectangle(cx, cy, 380, 240, cardColor, 1).setStrokeStyle(3, strokeColor).setDepth(51);
-    const sparkle = this.add.text(cx, cy - 80, isPenta ? '🍄' : (isQuad ? '✦' : '⚡'), { fontSize: '36px' }).setOrigin(0.5).setDepth(52);
-    const title = this.add.text(cx, cy - 38, isPenta ? 'PENTA PERK FORGED!' : (isQuad ? 'QUAD PERK FORGED!' : 'NEW PERK FORGED!'), {
+    const sparkle = this.add.text(cx, cy - 80, isPenta ? '🍄' : (isQuad ? '✦' : (isAbstract ? '✨' : '⚡')), { fontSize: '36px' }).setOrigin(0.5).setDepth(52);
+    const title = this.add.text(cx, cy - 38, isPenta ? 'PENTA PERK FORGED!' : (isQuad ? 'QUAD PERK FORGED!' : (isAbstract ? 'ABSTRACT PERK FORGED!' : 'NEW PERK FORGED!')), {
       fontSize: '18px', fontFamily: '"Arial Black", sans-serif', color: titleColor,
     }).setOrigin(0.5).setDepth(52);
     const emojiText = this.add.text(cx, cy + 8, `${perk.emoji}  ${perk.name.toUpperCase()}`, {
@@ -738,7 +827,7 @@ export class LabScene extends Phaser.Scene {
       fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#556688',
     }).setOrigin(0.5).setDepth(52);
 
-    const continueBtn = this.add.rectangle(cx, cy + 104, 140, 36, isPenta ? 0x220033 : (isQuad ? 0x332200 : 0x003366), 1)
+    const continueBtn = this.add.rectangle(cx, cy + 104, 140, 36, isPenta ? 0x220033 : (isQuad ? 0x332200 : (isAbstract ? 0x1a0033 : 0x003366)), 1)
       .setStrokeStyle(2, strokeColor).setDepth(52).setInteractive({ useHandCursor: true });
     const continueLbl = this.add.text(cx, cy + 104, 'CONTINUE', {
       fontSize: '14px', fontFamily: '"Arial Black", sans-serif', color: titleColor,
@@ -764,6 +853,7 @@ export class LabScene extends Phaser.Scene {
 
     const ELEM_EMOJI: Record<string, string> = {
       fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🪨',
+      electricity: '⚡', slime: '🟢', fate: '🃏', sound: '🔊', light: '✨',
     };
 
     const bg = this.add.rectangle(cx, height / 2, width, height, 0x05050f, 0.97).setDepth(50).setInteractive();
@@ -789,16 +879,18 @@ export class LabScene extends Phaser.Scene {
     const rowH = 46;
     const colW = width / 2 - 20;
 
-    const tiers: Array<'triple' | 'quad' | 'penta'> = ['triple', 'quad', 'penta'];
+    const tiers: Array<'triple' | 'abstract-triple' | 'quad' | 'penta'> = ['triple', 'abstract-triple', 'quad', 'penta'];
     for (const tier of tiers) {
       const tierLabel = tier === 'triple'
         ? '— TRIPLE PERKS  (Lab Level 2 · 2 ⚛️) —'
-        : tier === 'quad'
-          ? '— QUAD PERKS  (Lab Level 3 · 5 ⚛️)  ·  Perkaholic Mutation —'
-          : '— PENTA PERKS  (Penta Synthesis · 10 ⚛️) —';
+        : tier === 'abstract-triple'
+          ? '— ABSTRACT PERKS  (Lab Level 2 · 4 ⚛️) —'
+          : tier === 'quad'
+            ? '— QUAD PERKS  (Lab Level 3 · 5 ⚛️)  ·  Perkaholic Mutation —'
+            : '— PENTA PERKS  (Penta Synthesis · 10 ⚛️) —';
       const tierHdr = this.add.text(cx, curY, tierLabel, {
         fontSize: '10px', fontFamily: '"Arial Black", sans-serif',
-        color: tier === 'penta' ? '#cc88ff' : (tier === 'quad' ? '#ffaa44' : '#44aaff'),
+        color: tier === 'penta' ? '#cc88ff' : (tier === 'quad' ? '#ffaa44' : (tier === 'abstract-triple' ? '#cc66ff' : '#44aaff')),
       }).setOrigin(0.5).setDepth(51);
       this.perkBookObjects.push(tierHdr);
       curY += 18;
@@ -814,8 +906,8 @@ export class LabScene extends Phaser.Scene {
         const equipped  = PlayerData.getEquippedPerk(perk.elementId) === perk.id;
         const nameAlpha = unlocked ? 1.0 : 0.35;
 
-        const rowBgFill   = unlocked ? (tier === 'penta' ? 0x1a0022 : (tier === 'quad' ? 0x1a0d00 : 0x0d0d1a)) : 0x080808;
-        const rowBgStroke = unlocked ? (tier === 'penta' ? 0x441155 : (tier === 'quad' ? 0x443322 : 0x222244)) : 0x111111;
+        const rowBgFill   = unlocked ? (tier === 'penta' ? 0x1a0022 : (tier === 'quad' ? 0x1a0d00 : (tier === 'abstract-triple' ? 0x150022 : 0x0d0d1a))) : 0x080808;
+        const rowBgStroke = unlocked ? (tier === 'penta' ? 0x441155 : (tier === 'quad' ? 0x443322 : (tier === 'abstract-triple' ? 0x441144 : 0x222244))) : 0x111111;
         const rowBg = this.add.rectangle(px + colW / 2, py + rowH / 2 - 4, colW, rowH - 6,
           rowBgFill, unlocked ? 0.8 : 0.5)
           .setStrokeStyle(1, rowBgStroke, 0.8)

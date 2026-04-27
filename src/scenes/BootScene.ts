@@ -541,33 +541,17 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('proj-void-pulse', 14, 14);
     gfx.clear();
 
-    // Adrenaline element texture — amber-gold circle with lightning bolt
+    // Rubber element texture — pink circle with rubber-band loop
     gfx.clear();
-    gfx.fillStyle(0xffbb22, 1);
+    gfx.fillStyle(0xff5577, 1);
     gfx.fillCircle(24, 24, 22);
-    gfx.lineStyle(3, 0xffeeaa, 1);
+    gfx.lineStyle(3, 0xffaacc, 1);
     gfx.strokeCircle(24, 24, 22);
-    gfx.lineStyle(3, 0xcc7700, 1);
-    gfx.beginPath();
-    gfx.moveTo(28, 10); gfx.lineTo(20, 24); gfx.lineTo(26, 24); gfx.lineTo(18, 38);
-    gfx.strokePath();
-    gfx.generateTexture('elem-adrenaline', 48, 48);
-    gfx.clear();
-
-    // proj-adrenaline-shot — small yellow spark (8px)
-    gfx.fillStyle(0xffee44, 1);
-    gfx.fillCircle(6, 6, 6);
-    gfx.lineStyle(2, 0xffbb22, 1);
-    gfx.strokeCircle(6, 6, 5);
-    gfx.generateTexture('proj-adrenaline-shot', 12, 12);
-    gfx.clear();
-
-    // tex-adrenaline-ramp — small amber wedge rectangle (30×12)
-    gfx.fillStyle(0xcc8800, 1);
-    gfx.fillRect(0, 6, 30, 6);
-    gfx.fillStyle(0xffcc44, 1);
-    gfx.fillTriangle(0, 12, 30, 0, 30, 12);
-    gfx.generateTexture('tex-adrenaline-ramp', 30, 12);
+    gfx.lineStyle(4, 0xffffff, 0.9);
+    gfx.strokeEllipse(24, 24, 26, 14);
+    gfx.lineStyle(4, 0xffffff, 0.9);
+    gfx.strokeEllipse(24, 24, 14, 26);
+    gfx.generateTexture('elem-rubber', 48, 48);
     gfx.clear();
 
     // ── Magic element (abstract combined: slime + light) ─────────────────────
@@ -701,6 +685,72 @@ export class BootScene extends Phaser.Scene {
     gfx.strokeRect(1, 2, 4, 3);
     gfx.strokeRect(9, 2, 4, 3);
     gfx.generateTexture('proj-thorn-vine-dark', 16, 8);
+    gfx.clear();
+
+    // ── Magic upgrade textures ────────────────────────────────────────────────
+
+    // fx-dark-fire-cloud — 70px orange-purple radial blob (Corrupt Flames)
+    gfx.fillStyle(0xff4400, 0.55);
+    gfx.fillCircle(35, 35, 30);
+    gfx.fillStyle(0x881166, 0.45);
+    gfx.fillCircle(35, 35, 20);
+    gfx.lineStyle(2, 0xcc3300, 0.6);
+    gfx.strokeCircle(35, 35, 28);
+    gfx.generateTexture('fx-dark-fire-cloud', 70, 70);
+    gfx.clear();
+
+    // fx-acid-cloud — 90px blue-green pulsing cloud (Acid Cloud Summon)
+    gfx.fillStyle(0x224488, 0.55);
+    gfx.fillCircle(45, 45, 38);
+    gfx.fillStyle(0x33cc66, 0.3);
+    gfx.fillCircle(45, 45, 25);
+    gfx.lineStyle(3, 0x44aaff, 0.7);
+    gfx.strokeCircle(45, 45, 36);
+    gfx.generateTexture('fx-acid-cloud', 90, 90);
+    gfx.clear();
+
+    // fx-purple-trail — 14px soft purple orb (F+ meditate trail)
+    gfx.fillStyle(0xaa44ff, 0.8);
+    gfx.fillCircle(7, 7, 6);
+    gfx.fillStyle(0xdd99ff, 0.5);
+    gfx.fillCircle(7, 7, 3);
+    gfx.generateTexture('fx-purple-trail', 14, 14);
+    gfx.clear();
+
+    // fx-anchor-aura-pink — 50px pink ring (R+ normal recall speed aura)
+    gfx.lineStyle(4, 0xff88cc, 0.85);
+    gfx.strokeCircle(25, 25, 22);
+    gfx.lineStyle(2, 0xffccee, 0.5);
+    gfx.strokeCircle(25, 25, 18);
+    gfx.generateTexture('fx-anchor-aura-pink', 50, 50);
+    gfx.clear();
+
+    // fx-anchor-aura-black — 50px dark aura (R+ dark wild teleport aura)
+    gfx.lineStyle(4, 0x220044, 0.9);
+    gfx.strokeCircle(25, 25, 22);
+    gfx.lineStyle(3, 0x9900cc, 0.7);
+    gfx.strokeCircle(25, 25, 18);
+    gfx.generateTexture('fx-anchor-aura-black', 50, 50);
+    gfx.clear();
+
+    // fx-temple-small — 28px gray circle (Gaia's Temple base)
+    gfx.fillStyle(0x888888, 0.8);
+    gfx.fillCircle(14, 14, 13);
+    gfx.lineStyle(2, 0xcccccc, 0.9);
+    gfx.strokeCircle(14, 14, 12);
+    gfx.lineStyle(1, 0xaaaaaa, 0.6);
+    gfx.strokeCircle(14, 14, 8);
+    gfx.generateTexture('fx-temple-small', 28, 28);
+    gfx.clear();
+
+    // fx-temple-large — 40px darker gray circle (Gaia's Monument base)
+    gfx.fillStyle(0x555555, 0.85);
+    gfx.fillCircle(20, 20, 18);
+    gfx.lineStyle(3, 0x999999, 0.9);
+    gfx.strokeCircle(20, 20, 17);
+    gfx.lineStyle(1, 0x777777, 0.6);
+    gfx.strokeCircle(20, 20, 11);
+    gfx.generateTexture('fx-temple-large', 40, 40);
     gfx.clear();
 
     // ── Technology element (abstract combined: sound + light) ─────────────────
@@ -980,15 +1030,6 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('mask-silence', 28, 22);
     gfx.clear();
 
-    // proj-adrenaline-parry — 14×14 red-gold radial gradient disc (E+ parry)
-    const parryColors = [0xffcc00, 0xff8800, 0xff4400, 0xff2222, 0xff2222];
-    for (let ri = 0; ri < parryColors.length; ri++) {
-      gfx.fillStyle(parryColors[ri], 1);
-      gfx.fillCircle(7, 7, 7 - ri);
-    }
-    gfx.generateTexture('proj-adrenaline-parry', 14, 14);
-    gfx.clear();
-
     // doll-silence — 20×24 mini voodoo straw figure with hockey mask (R+ possession)
     gfx.fillStyle(0x997755, 1);
     gfx.fillRect(8, 10, 4, 10); // torso
@@ -1032,6 +1073,51 @@ export class BootScene extends Phaser.Scene {
     gfx.lineStyle(1, 0x330066, 1);
     gfx.strokeRect(0, 0, 10, 4);
     gfx.generateTexture('domain-shard', 10, 4);
+    gfx.clear();
+
+    // tech-backrooms-tile — 64×64 yellow mottled wallpaper tile
+    gfx.fillStyle(0xbbaa44, 1);
+    gfx.fillRect(0, 0, 64, 64);
+    for (let ty = 0; ty < 4; ty++) {
+      for (let tx = 0; tx < 4; tx++) {
+        const bx = tx * 16, by = ty * 16;
+        gfx.fillStyle(0xccbb55, 0.5);
+        gfx.fillRect(bx + 1, by + 1, 14, 14);
+        gfx.lineStyle(1, 0x998822, 0.8);
+        gfx.strokeRect(bx, by, 16, 16);
+      }
+    }
+    // subtle noise dots
+    gfx.fillStyle(0x887733, 0.4);
+    for (let ni = 0; ni < 30; ni++) {
+      gfx.fillCircle(2 + (ni * 7 + ni * ni * 3) % 60, 2 + (ni * 11 + ni * 3) % 60, 1);
+    }
+    gfx.generateTexture('tech-backrooms-tile', 64, 64);
+    gfx.clear();
+
+    // tech-backrooms-eye — 12×12 simple bloodshot eye
+    gfx.fillStyle(0xffeedd, 1);
+    gfx.fillEllipse(6, 6, 12, 8);
+    gfx.fillStyle(0x882222, 1);
+    gfx.fillCircle(6, 6, 3);
+    gfx.fillStyle(0x000000, 1);
+    gfx.fillCircle(6, 6, 1.5);
+    gfx.lineStyle(1, 0xcc4422, 0.7);
+    gfx.lineBetween(1, 5, 3, 6);
+    gfx.lineBetween(9, 5, 11, 6);
+    gfx.generateTexture('tech-backrooms-eye', 12, 12);
+    gfx.clear();
+
+    // echo-psychic-eye — 18×18 white outer circle, light-blue iris, black pupil
+    gfx.fillStyle(0xffffff, 1);
+    gfx.fillCircle(9, 9, 9);
+    gfx.fillStyle(0x88ccff, 1);
+    gfx.fillCircle(9, 9, 5.5);
+    gfx.fillStyle(0x000000, 1);
+    gfx.fillCircle(9, 9, 2.5);
+    gfx.fillStyle(0xffffff, 0.8);
+    gfx.fillCircle(11, 7, 1.5); // specular
+    gfx.generateTexture('echo-psychic-eye', 18, 18);
     gfx.clear();
 
     // ── Corrupted enemy textures ────────────────────────────────────

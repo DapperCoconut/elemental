@@ -5,7 +5,7 @@ export interface PerkDef {
   color: number;
   description: string;
   ingredients: readonly string[];
-  tier: 'triple' | 'quad' | 'penta';
+  tier: 'triple' | 'quad' | 'penta' | 'abstract-triple';
   elementId: string;
 }
 
@@ -177,6 +177,113 @@ export const ALL_PERKS: ElementPerks[] = [
     ],
   },
 
+  // ── Abstract triple perks (Lab Level 2 abstract tab, 4 nuclei) ──────────
+  {
+    elementId: 'slime',
+    perks: [
+      {
+        id: 'blood',
+        name: 'Blood',
+        emoji: '🩸',
+        color: 0xaa1133,
+        description: 'Sulpher Spring can grant blood slimes. Blood slimes slash nearby enemies every 1.5s, healing you for 50% of the damage. In shield form the slime strikes enemies within range every 1s. F+ pet grows (scale & damage) as you heal. Q+ slimes heal on return-contact damage.',
+        ingredients: ['electricity', 'slime', 'fate'],
+        tier: 'abstract-triple',
+        elementId: 'slime',
+      },
+    ],
+  },
+  {
+    elementId: 'silence',
+    perks: [
+      {
+        id: 'torture',
+        name: 'Torture',
+        emoji: '🪝',
+        color: 0x886688,
+        description: 'Meat hook lodges inside the enemy for 4s (6s with E+), dealing 3 damage/s. Recast delivers an electric shock — 12 damage and 2s stun — instead of pulling.',
+        ingredients: ['electricity', 'slime', 'sound'],
+        tier: 'abstract-triple',
+        elementId: 'silence',
+      },
+    ],
+  },
+  {
+    elementId: 'magic',
+    perks: [
+      {
+        id: 'thunder',
+        name: 'Thunder',
+        emoji: '⚡',
+        color: 0xffe066,
+        description: 'E and Q gain a 2-tap charge cycle. First press casts Lightning Call / Apocalypse Call (arming only). Second press fires the charged grimoire spell with bonus effects. Apocalypse Call also halves the next Q cooldown.',
+        ingredients: ['electricity', 'slime', 'light'],
+        tier: 'abstract-triple',
+        elementId: 'magic',
+      },
+    ],
+  },
+  {
+    elementId: 'electricity',
+    perks: [
+      {
+        id: 'phoenix',
+        name: 'Phoenix',
+        emoji: '🔥',
+        color: 0xff6644,
+        description: 'Dying while overcharged (or via auto-revive) triggers 5s phoenix mode: invincible, +100% speed, drops a healing flame every second. After phoenix ends, stepping on flames heals 5 HP/s for 3s each.',
+        ingredients: ['electricity', 'fate', 'sound'],
+        tier: 'abstract-triple',
+        elementId: 'electricity',
+      },
+    ],
+  },
+  {
+    elementId: 'echo',
+    perks: [
+      {
+        id: 'beacon',
+        name: 'Beacon',
+        emoji: '🔦',
+        color: 0xffdd55,
+        description: 'Vision becomes a forward flashlight cone instead of a circle. 3 batteries (8s recharge each): lantern on empty space costs 1 battery and widens the cone 20% for 2s; lantern on an enemy costs 2 batteries and summons an echo as normal.',
+        ingredients: ['electricity', 'fate', 'light'],
+        tier: 'abstract-triple',
+        elementId: 'echo',
+      },
+    ],
+  },
+  {
+    elementId: 'technology',
+    perks: [
+      {
+        id: 'adrenaline',
+        name: 'Adrenaline',
+        emoji: '💉',
+        color: 0xff3355,
+        description: 'No abuse meter — events that would add abuse instead deal half that amount as self-damage. Domain Expansion ends after a fixed 8s timer rather than from abuse.',
+        ingredients: ['electricity', 'sound', 'light'],
+        tier: 'abstract-triple',
+        elementId: 'technology',
+      },
+    ],
+  },
+  {
+    elementId: 'death',
+    perks: [
+      {
+        id: 'corruption',
+        name: 'Corruption',
+        emoji: '🦠',
+        color: 0x556677,
+        description: 'While in River Styx, corruption blobs spawn on you every 0.5s (max 8). Each blob blocks one incoming projectile. Click a blob to arm your next click attack — it releases a 5-damage AoE burst on hit.',
+        ingredients: ['slime', 'fate', 'sound'],
+        tier: 'abstract-triple',
+        elementId: 'death',
+      },
+    ],
+  },
+
   // ── Penta perks (Lab Level 4, 10 nuclei) ─────────────────────────────────
   {
     elementId: 'life',
@@ -312,4 +419,20 @@ export function findPentaPerkRecipe(
 
 export function getPentaPerksForElement(elementId: string): PerkDef[] {
   return getPerksForElement(elementId).filter((p) => p.tier === 'penta');
+}
+
+export function findAbstractTriplePerkRecipe(a: string, b: string, c: string): PerkDef | undefined {
+  const sorted = [a, b, c].sort().join(',');
+  for (const entry of ALL_PERKS) {
+    for (const perk of entry.perks) {
+      if (perk.tier === 'abstract-triple' && [...perk.ingredients].sort().join(',') === sorted) return perk;
+    }
+  }
+  return undefined;
+}
+
+export function getAbstractTriplePerksForElement(elementId: string): PerkDef[] {
+  const found = ALL_PERKS.find((e) => e.elementId === elementId);
+  if (!found) return [];
+  return found.perks.filter((p) => p.tier === 'abstract-triple');
 }

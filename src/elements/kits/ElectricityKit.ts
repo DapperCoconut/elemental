@@ -32,6 +32,9 @@ export interface ElectricityArenaApi {
   readonly rKey: Phaser.Input.Keyboard.Key;
   readonly qKey: Phaser.Input.Keyboard.Key;
   hasUpgrade(slot: string): boolean;
+  hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
+  get playerSpeedMult(): number;
+  set playerSpeedMult(v: number);
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   getNearestEnemy(x: number, y: number): Fighter;
@@ -80,6 +83,13 @@ export class ElectricityKit {
   // E+ storm clouds
   private stormClouds: StormCloud[] = [];
 
+  // Phoenix perk
+  private playerPhoenixUntil = 0;
+  private playerPhoenixSpeedBaseline = 1;
+  private playerPhoenixFlames: { sprite: Phaser.GameObjects.Arc; x: number; y: number; expiresAt: number; healSecondsLeft: number; healTickAccum: number }[] = [];
+  private playerPhoenixFlameAccum = 0;
+  private playerPhoenixAura: Phaser.GameObjects.Arc | null = null;
+
   constructor(private arena: ElectricityArenaApi) {}
 
   // ── Public accessors ──────────────────────────────────────────────────
@@ -116,6 +126,13 @@ export class ElectricityKit {
     this.ballLightnings = [];
     for (const sc of this.stormClouds) sc.sprite.destroy();
     this.stormClouds = [];
+
+    this.playerPhoenixUntil = 0;
+    this.playerPhoenixSpeedBaseline = 1;
+    for (const f of this.playerPhoenixFlames) f.sprite.destroy();
+    this.playerPhoenixFlames = [];
+    this.playerPhoenixFlameAccum = 0;
+    if (this.playerPhoenixAura) { this.playerPhoenixAura.destroy(); this.playerPhoenixAura = null; }
 
     if (isPlayerElement) {
       const scene = this.arena.scene;
@@ -154,6 +171,7 @@ export class ElectricityKit {
       this.arena.showFloatingText(player.x, player.y - 30, 'RESTARTED!', '#ffee00');
       const flash = this.arena.scene.add.circle(player.x, player.y, 12, 0xffee00, 0.8).setDepth(10);
       this.arena.scene.tweens.add({ targets: flash, scaleX: 6, scaleY: 6, alpha: 0, duration: 500, onComplete: () => flash.destroy() });
+      if (this.arena.hasPerk('player', 'phoenix')) this._activatePhoenix(time);
       return;
     }
 
@@ -167,6 +185,7 @@ export class ElectricityKit {
         this.arena.showFloatingText(player.x, player.y - 30, 'AUTO-RESTARTED!', '#ffee00');
         const flash = this.arena.scene.add.circle(player.x, player.y, 12, 0xffee00, 0.8).setDepth(10);
         this.arena.scene.tweens.add({ targets: flash, scaleX: 6, scaleY: 6, alpha: 0, duration: 500, onComplete: () => flash.destroy() });
+        if (this.arena.hasPerk('player', 'phoenix')) this._activatePhoenix(time);
       }
     }
   }
@@ -314,6 +333,57 @@ export class ElectricityKit {
         // Visual flash at cloud center
         const bolt = this.arena.scene.add.circle(sc.x, sc.y, 8, 0xaaddff, 0.9).setDepth(5);
         this.arena.scene.tweens.add({ targets: bolt, scaleX: 8, scaleY: 8, alpha: 0, duration: 300, onComplete: () => bolt.destroy() });
+      }
+    }
+
+    // Phoenix perk: active mode tracking + flame spawning
+    if (this.playerPhoenixUntil > 0) {
+      if (this.playerPhoenixAura) this.playerPhoenixAura.setPosition(player.x, player.y);
+      if (time >= this.playerPhoenixUntil) {
+        // Phoenix mode expired
+        this.playerPhoenixUntil = 0;
+        player.damageAbsorber = null;
+        this.arena.playerSpeedMult = this.playerPhoenixSpeedBaseline;
+        if (this.playerPhoenixAura) { this.playerPhoenixAura.destroy(); this.playerPhoenixAura = null; }
+        this.arena.showFloatingText(player.x, player.y - 30, 'PHOENIX END', '#ff9900');
+      } else {
+        this.playerPhoenixFlameAccum += delta;
+        while (this.playerPhoenixFlameAccum >= 1000) {
+          this.playerPhoenixFlameAccum -= 1000;
+          const sprite = this.arena.scene.add.circle(player.x, player.y, 7, 0xff6600, 0.85)
+            .setStrokeStyle(1, 0xffcc00, 0.7).setDepth(3) as Phaser.GameObjects.Arc;
+          this.playerPhoenixFlames.push({ sprite, x: player.x, y: player.y, expiresAt: time + 30000, healSecondsLeft: 0, healTickAccum: 0 });
+        }
+      }
+    }
+
+    // Phoenix flames: consume (step on) or expire
+    for (let i = this.playerPhoenixFlames.length - 1; i >= 0; i--) {
+      const f = this.playerPhoenixFlames[i];
+      f.sprite.setPosition(f.x, f.y);
+      if (time >= f.expiresAt) {
+        f.sprite.destroy();
+        this.playerPhoenixFlames.splice(i, 1);
+        continue;
+      }
+      if (f.healSecondsLeft <= 0 && this.playerPhoenixUntil <= 0) {
+        // Check if player touches flame
+        if (Phaser.Math.Distance.Between(player.x, player.y, f.x, f.y) <= 28) {
+          f.healSecondsLeft = 3;
+          f.sprite.destroy();
+          this.playerPhoenixFlames.splice(i, 1);
+          // Separate heal aura tracking via delayedCall ticks
+          let remaining = 3;
+          const tick = () => {
+            if (remaining <= 0 || !player.active) return;
+            player.heal(5);
+            this.arena.showFloatingText(player.x, player.y - 24, '🔥 +5', '#ff6600');
+            remaining--;
+            if (remaining > 0) this.arena.scene.time.delayedCall(1000, tick);
+          };
+          this.arena.scene.time.delayedCall(0, tick);
+          continue;
+        }
       }
     }
   }
@@ -554,6 +624,20 @@ export class ElectricityKit {
   }
 
   // ── Private helpers ───────────────────────────────────────────────────
+
+  private _activatePhoenix(now: number): void {
+    const player = this.arena.player;
+    this.playerPhoenixUntil = now + 5000;
+    this.playerPhoenixSpeedBaseline = this.arena.playerSpeedMult;
+    this.arena.playerSpeedMult = this.playerPhoenixSpeedBaseline * 2;
+    player.damageAbsorber = () => true;
+    this.playerPhoenixFlameAccum = 0;
+    if (this.playerPhoenixAura) this.playerPhoenixAura.destroy();
+    this.playerPhoenixAura = this.arena.scene.add.circle(player.x, player.y, 34, 0xff6600, 0.22)
+      .setStrokeStyle(2, 0xffcc00, 0.8).setDepth(3) as Phaser.GameObjects.Arc;
+    this.arena.scene.tweens.add({ targets: this.playerPhoenixAura, alpha: 0.45, yoyo: true, repeat: -1, duration: 250 });
+    this.arena.showFloatingText(player.x, player.y - 44, '🔥 PHOENIX MODE', '#ff6600');
+  }
 
   private updateHud(cap: number): void {
     if (this.kineticPowerText) {

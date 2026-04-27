@@ -112,6 +112,7 @@ export interface DeathArenaApi {
   readonly elementId: string;
   readonly npcElementId: string;
   hasUpgrade(slot: string): boolean;
+  hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
   applyNpcSpeedMult(factor: number): void;
   applyPlayerSpeedMult(factor: number): void;
   spawnHitFlash(x: number, y: number, color: number): void;
@@ -147,6 +148,14 @@ export class DeathKit {
   private riverTickAccum = 0;
   private playerOnRiver = false;
   private npcOnRiver = false;
+
+  // ── Corruption perk (abstract-triple) ────────────────────────────────────
+  private playerCorruptionBlobs: { sprite: Phaser.GameObjects.Arc; angle: number }[] = [];
+  private npcCorruptionBlobs: { sprite: Phaser.GameObjects.Arc; angle: number }[] = [];
+  private playerCorruptionAccum = 0;
+  private npcCorruptionAccum = 0;
+  private playerCorruptionAOEArmed = false;
+  private npcCorruptionAOEArmed = false;
 
   // ── Looming Dread ────────────────────────────────────────────────────────
   private playerScythe: LoomingScythe | null = null;
@@ -255,6 +264,16 @@ export class DeathKit {
     this.playerOnRiver = false;
     this.npcOnRiver = false;
 
+    // Corruption perk cleanup
+    for (const b of this.playerCorruptionBlobs) b.sprite.destroy();
+    this.playerCorruptionBlobs = [];
+    for (const b of this.npcCorruptionBlobs) b.sprite.destroy();
+    this.npcCorruptionBlobs = [];
+    this.playerCorruptionAccum = 0;
+    this.npcCorruptionAccum = 0;
+    this.playerCorruptionAOEArmed = false;
+    this.npcCorruptionAOEArmed = false;
+
     // Looming Dread
     if (this.playerScythe) { this.playerScythe.gfx.destroy(); this.playerScythe = null; }
     if (this.npcScythe) { this.npcScythe.gfx.destroy(); this.npcScythe = null; }
@@ -311,8 +330,10 @@ export class DeathKit {
     this.closeQMenu();
 
     void scene;
-    this.spawnRiver();
-    if (this.arena.hasUpgrade('e')) this.spawnFerryman();
+    if (this.arena.elementId === 'death' || this.arena.npcElementId === 'death') {
+      this.spawnRiver();
+      if (this.arena.hasUpgrade('e')) this.spawnFerryman();
+    }
   }
 
   // ── Input ─────────────────────────────────────────────────────────────────
@@ -413,6 +434,7 @@ export class DeathKit {
     this.updatePayloadEffects(time, delta);
     this.updateBeast(time, delta);
     this.updateFerrymanRing(time);
+    this.updateCorruptionBlobs(delta);
   }
 
   // ── Public do* methods (called from ArenaScene CastContext wiring) ─────────
@@ -474,6 +496,21 @@ export class DeathKit {
       const wisp = target as DeathWisp;
       wisp.hp -= dmg;
       this.arena.spawnHitFlash(wisp.sprite.x, wisp.sprite.y, 0x8b4513);
+    }
+
+    // Corruption perk: armed AoE burst on hit
+    if (owner === 'player' && this.playerCorruptionAOEArmed) {
+      this.playerCorruptionAOEArmed = false;
+      this.arena.dealAoeDamageFromOwner(hitX, hitY, 50, 5, 'player');
+      const ring = this.arena.scene.add.circle(hitX, hitY, 10, 0x556677, 0.6).setStrokeStyle(2, 0x8899aa, 0.8).setDepth(8);
+      this.arena.scene.tweens.add({ targets: ring, scaleX: 5, scaleY: 5, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
+      this.arena.showFloatingText(hitX, hitY - 24, '💥 PURGE', '#8899aa');
+    }
+    if (owner === 'npc' && this.npcCorruptionAOEArmed) {
+      this.npcCorruptionAOEArmed = false;
+      this.arena.dealAoeDamageFromOwner(hitX, hitY, 50, 5, 'npc');
+      const ring = this.arena.scene.add.circle(hitX, hitY, 10, 0x556677, 0.6).setStrokeStyle(2, 0x8899aa, 0.8).setDepth(8);
+      this.arena.scene.tweens.add({ targets: ring, scaleX: 5, scaleY: 5, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
     }
 
     // Click+: Splash within 55px of the hit point
@@ -1879,6 +1916,104 @@ export class DeathKit {
       head.neckGfx.destroy();
       head.hpBarBg.destroy();
       head.hpBarFill.destroy();
+    }
+  }
+
+  private updateCorruptionBlobs(delta: number): void {
+    const { scene, player, npc, projectiles } = this.arena;
+
+    // ── Player blobs ──────────────────────────────────────────────────────────
+    if (this.arena.hasPerk('player', 'corruption')) {
+      const inRiver = player.y <= 80;
+      if (inRiver && this.playerCorruptionBlobs.length < 8) {
+        this.playerCorruptionAccum += delta;
+        if (this.playerCorruptionAccum >= 500) {
+          this.playerCorruptionAccum = 0;
+          const angle = Math.random() * Math.PI * 2;
+          const blob = scene.add.circle(
+            player.x + Math.cos(angle) * 22,
+            player.y + Math.sin(angle) * 22,
+            6, 0x556677, 0.85,
+          ).setStrokeStyle(1.5, 0x334455, 1).setDepth(11) as Phaser.GameObjects.Arc;
+          blob.setInteractive({ useHandCursor: true });
+          blob.on('pointerdown', () => {
+            const idx = this.playerCorruptionBlobs.findIndex(b => b.sprite === blob);
+            if (idx === -1) return;
+            blob.destroy();
+            this.playerCorruptionBlobs.splice(idx, 1);
+            this.playerCorruptionAOEArmed = true;
+            this.arena.showFloatingText(player.x, player.y - 38, '💥 ARMED', '#8899aa');
+          });
+          this.playerCorruptionBlobs.push({ sprite: blob, angle });
+        }
+      }
+
+      // Reposition all player blobs each frame
+      for (const b of this.playerCorruptionBlobs) {
+        b.sprite.setPosition(
+          player.x + Math.cos(b.angle) * 22,
+          player.y + Math.sin(b.angle) * 22,
+        );
+      }
+
+      // Projectile blocking (block NPC projectiles)
+      const pBlobs = this.playerCorruptionBlobs;
+      for (let bi = pBlobs.length - 1; bi >= 0; bi--) {
+        const blob = pBlobs[bi];
+        for (const go of projectiles.getChildren()) {
+          const proj = go as Phaser.Physics.Arcade.Sprite & { isFromPlayer?: boolean };
+          if (!proj.active || proj.isFromPlayer !== false) continue;
+          if (Phaser.Math.Distance.Between(proj.x, proj.y, blob.sprite.x, blob.sprite.y) <= 12) {
+            proj.setActive(false).setVisible(false);
+            blob.sprite.destroy();
+            pBlobs.splice(bi, 1);
+            this.arena.showFloatingText(blob.sprite.x, blob.sprite.y - 18, '🛡️ BLOCKED', '#8899aa');
+            break;
+          }
+        }
+      }
+    }
+
+    // ── NPC blobs ─────────────────────────────────────────────────────────────
+    if (this.arena.hasPerk('npc', 'corruption')) {
+      const inRiver = npc.y <= 80;
+      if (inRiver && this.npcCorruptionBlobs.length < 8) {
+        this.npcCorruptionAccum += delta;
+        if (this.npcCorruptionAccum >= 500) {
+          this.npcCorruptionAccum = 0;
+          const angle = Math.random() * Math.PI * 2;
+          const blob = scene.add.circle(
+            npc.x + Math.cos(angle) * 22,
+            npc.y + Math.sin(angle) * 22,
+            6, 0x556677, 0.85,
+          ).setStrokeStyle(1.5, 0x334455, 1).setDepth(11) as Phaser.GameObjects.Arc;
+          this.npcCorruptionBlobs.push({ sprite: blob, angle });
+        }
+      }
+
+      for (const b of this.npcCorruptionBlobs) {
+        b.sprite.setPosition(
+          npc.x + Math.cos(b.angle) * 22,
+          npc.y + Math.sin(b.angle) * 22,
+        );
+      }
+
+      // Projectile blocking (block player projectiles)
+      const nBlobs = this.npcCorruptionBlobs;
+      for (let bi = nBlobs.length - 1; bi >= 0; bi--) {
+        const blob = nBlobs[bi];
+        for (const go of projectiles.getChildren()) {
+          const proj = go as Phaser.Physics.Arcade.Sprite & { isFromPlayer?: boolean };
+          if (!proj.active || proj.isFromPlayer !== true) continue;
+          if (Phaser.Math.Distance.Between(proj.x, proj.y, blob.sprite.x, blob.sprite.y) <= 12) {
+            proj.setActive(false).setVisible(false);
+            blob.sprite.destroy();
+            nBlobs.splice(bi, 1);
+            this.arena.showFloatingText(blob.sprite.x, blob.sprite.y - 18, '🛡️ BLOCKED', '#8899aa');
+            break;
+          }
+        }
+      }
     }
   }
 }

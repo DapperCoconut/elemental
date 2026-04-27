@@ -48,7 +48,7 @@ import { metalElement } from '../elements/metal';
 import { plasmaElement } from '../elements/plasma';
 import { deathElement } from '../elements/death';
 import { voidElement } from '../elements/void';
-import { adrenalineElement, adrenalineSkateAbilities } from '../elements/adrenaline';
+import { rubberElement } from '../elements/rubber';
 import { magicElement } from '../elements/magic';
 import { technologyElement } from '../elements/technology';
 import { silenceElement } from '../elements/silence';
@@ -59,7 +59,7 @@ import { QuantumElementKit, QuantumElementArenaApi } from '../elements/kits/Quan
 import { OilKit, OilArenaApi } from '../elements/kits/OilKit';
 import { FateKit, FateArenaApi } from '../elements/kits/FateKit';
 import { SoundKit, SoundArenaApi } from '../elements/kits/SoundKit';
-import { AdrenalineKit, AdrenalineArenaApi, AdrenalineBarEntry } from '../elements/kits/AdrenalineKit';
+import { RubberKit, RubberArenaApi } from '../elements/kits/RubberKit';
 import { SilenceKit, SilenceArenaApi, SilenceBarEntry } from '../elements/kits/SilenceKit';
 import { FireKit, FireArenaApi } from '../elements/kits/FireKit';
 import { DeathKit, DeathArenaApi } from '../elements/kits/DeathKit';
@@ -579,7 +579,7 @@ const ELEMENT_MAP: Record<string, Element> = {
   plasma: plasmaElement,
   death: deathElement,
   void: voidElement,
-  adrenaline: adrenalineElement,
+  rubber: rubberElement,
   magic: magicElement,
   technology: technologyElement,
   silence: silenceElement,
@@ -614,7 +614,7 @@ const ELEMENT_TEXTURES: Record<string, string> = {
   plasma: 'elem-plasma',
   death: 'elem-death',
   void: 'elem-void',
-  adrenaline: 'elem-adrenaline',
+  rubber: 'elem-rubber',
   magic: 'elem-magic',
   technology: 'elem-technology',
   silence: 'elem-silence',
@@ -1589,9 +1589,8 @@ export class ArenaScene extends Phaser.Scene {
 
   // ── Void — managed by VoidKit ─────────────────────────────────────
 
-  // ── Adrenaline — managed by AdrenalineKit ────────────────────────
-  private adrenalineKit!: AdrenalineKit;
-  private adrenalineSkateOverlap: Phaser.Physics.Arcade.Collider | null = null;
+  // ── Rubber — managed by RubberKit ────────────────────────────────
+  private rubberKit!: RubberKit;
 
   // ── Magic (abstract combined: slime + light) — managed by MagicKit ──
   private magicKit!: MagicKit;
@@ -2355,6 +2354,9 @@ export class ArenaScene extends Phaser.Scene {
         get rKey() { return arena.rKey; },
         get qKey() { return arena.qKey; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
+        get playerSpeedMult() { return arena.playerSpeedMult; },
+        set playerSpeedMult(v: number) { arena.playerSpeedMult = v; },
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
@@ -2443,6 +2445,7 @@ export class ArenaScene extends Phaser.Scene {
         get pointerWasDown() { return arena.pointerWasDown; },
         get projectiles() { return arena.projectiles; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
@@ -2594,6 +2597,7 @@ export class ArenaScene extends Phaser.Scene {
         get elementId() { return arena.elementId; },
         get npcElementId() { return arena.npcElement.id; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         applyNpcSpeedMult: (f) => { arena.npcSpeedMult *= f; },
         applyPlayerSpeedMult: (f) => { arena.playerSpeedMult *= f; },
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
@@ -2678,40 +2682,36 @@ export class ArenaScene extends Phaser.Scene {
       };
       this.voidKit = new VoidKit(voidApi);
     }
-    // Adrenaline kit construction / reset
-    if (this.adrenalineSkateOverlap) { this.adrenalineSkateOverlap.destroy(); this.adrenalineSkateOverlap = null; }
-    if (this.adrenalineKit) {
-      this.adrenalineKit.reset();
+    // Rubber kit construction / reset
+    if (this.rubberKit) {
+      this.rubberKit.reset();
     } else {
       const arena = this;
-      const adrenalineApi: AdrenalineArenaApi = {
+      const rubberApi: RubberArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
         get scene() { return arena as Phaser.Scene; },
         get projectiles() { return arena.projectiles; },
-        get eKey() { return arena.eKey; },
-        get fKey() { return arena.fKey; },
-        get rKey() { return arena.rKey; },
-        get qKey() { return arena.qKey; },
-        get pointerWasDown() { return arena.pointerWasDown; },
-        get isDodging() { return arena.isDodging; },
-        get gauntletSpeedMult() { return arena.gauntletSpeedMult; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
+        get pointerWasDown() { return arena.pointerWasDown; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
         setIsDodging: (v) => { arena.isDodging = v; },
-        setPlayerSpeedMult: (v) => { arena.playerSpeedMult = v; },
         applyPlayerSpeedMult: (f) => { arena.playerSpeedMult *= f; },
         applyNpcSpeedMult: (f) => { arena.npcSpeedMult *= f; },
-        setAbilityBars: (fills) => { arena.abilityBars = fills as AbilityBarEntry[]; },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
-        getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        get abilityBars() { return arena.abilityBars; },
       };
-      this.adrenalineKit = new AdrenalineKit(adrenalineApi);
+      this.rubberKit = new RubberKit(rubberApi);
     }
     // Magic kit
     if (this.magicKit) {
@@ -2748,6 +2748,8 @@ export class ArenaScene extends Phaser.Scene {
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
       };
       this.magicKit = new MagicKit(magicApi);
     }
@@ -2769,6 +2771,12 @@ export class ArenaScene extends Phaser.Scene {
         get qKey() { return arena.qKey; },
         get nukeChanneling() { return arena.nukeChanneling; },
         get mutations() { return arena.mutations; },
+        get upKey() { return arena.dummyUpKey; },
+        get downKey() { return arena.dummyDownKey; },
+        get leftKey() { return arena.dummyLeftKey; },
+        get rightKey() { return arena.dummyRightKey; },
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
@@ -2824,6 +2832,8 @@ export class ArenaScene extends Phaser.Scene {
         getSceneHeight: () => arena.scale.height,
         fogOverlay: () => arena.fogOverlayRT,
         isEclipseRevealActive: () => arena.echoKit?.isEclipseRevealActive() ?? false,
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
       };
       this.echoKit = new EchoKit(echoApi);
     }
@@ -2863,6 +2873,8 @@ export class ArenaScene extends Phaser.Scene {
         get npcElementId() { return arena.npcElement.id; },
         get sceneWidth() { return arena.scale.width; },
         get sceneHeight() { return arena.scale.height; },
+        get isPvP() { return arena.isPvP; },
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         dealAoeDamage: (owner, cx, cy, r, d) => arena.dealAoeDamageFromOwner(cx, cy, r, d, owner),
@@ -3178,17 +3190,6 @@ export class ArenaScene extends Phaser.Scene {
       this.enemyGroup.add(this.npc, true);
     }
 
-    // ── Adrenaline SK8 body-contact overlap ──────────────────────────
-    if (this.elementId === 'adrenaline' && !this.isPvP) {
-      this.adrenalineSkateOverlap = this.physics.add.overlap(
-        this.player,
-        this.npc,
-        () => this.adrenalineKit.handleSkateContact(),
-        () => this.adrenalineKit.isSkateActive(),
-        this,
-      );
-    }
-
     // ── Shielded mutation ─────────────────────────────────────────────
     if (this.mutations.has('shielded')) {
       this.baseNpcMaxHpForTotem = this.npc.maxHp;
@@ -3376,8 +3377,6 @@ export class ArenaScene extends Phaser.Scene {
           this.playerToxicDps = 2 + this.npcGrowthViralBonus;
           this.playerToxicTickAccum = 0;
         }
-        // Adrenaline NPC: golden shot hit registers NPC combo
-        this.adrenalineKit.onNpcShotHitPlayer(proj.texture.key);
         // Growth bloat: now handled in player 'damaged' listener (fires for melee + projectile hits)
         // Magic (NPC) thorn vine hit
         if ((proj as any).isMagicThornVine && (proj as any).thornVineOwner === 'npc') {
@@ -3708,9 +3707,6 @@ export class ArenaScene extends Phaser.Scene {
     if (this.elementId === 'void') {
       this.voidKit.initHud(cx);
     }
-    if (this.elementId === 'adrenaline') {
-      this.adrenalineKit.initStyleBar(cx);
-    }
   }
 
   // ── HUD ─────────────────────────────────────────────────────────
@@ -3719,8 +3715,8 @@ export class ArenaScene extends Phaser.Scene {
     const hudY = H - 30;
     const cardW = 130;
     const cardH = 48;
-    // Hunt, Adrenaline, Silence, and Death have extra abilities beyond the first 5; only show 5 at a time
-    const abilities = (this.elementId === 'hunt' || this.elementId === 'adrenaline' || this.elementId === 'silence' || this.elementId === 'death')
+    // Hunt, Silence, and Death have extra abilities beyond the first 5; only show 5 at a time
+    const abilities = (this.elementId === 'hunt' || this.elementId === 'silence' || this.elementId === 'death')
       ? this.playerElement.abilities.slice(0, 5)
       : this.playerElement.abilities;
 
@@ -3852,16 +3848,11 @@ export class ArenaScene extends Phaser.Scene {
       'void-ash':       0x220033,
       'void-of-hell':   0x660088,
       // Adrenaline
-      'adrenaline-golden-shot':  0xffbb22,
-      'adrenaline-dash':         0xffaa00,
-      'adrenaline-skate-toggle': 0xff8800,
-      'adrenaline-self-inject':  0xff6600,
-      'adrenaline-styled-on':    0xff4400,
-      'adrenaline-rush':         0xffee44,
-      'adrenaline-ollie':        0xffcc44,
-      'adrenaline-ramp':         0xffdd66,
-      'adrenaline-trick':        0xffaa22,
-      'adrenaline-wall-teleport':0xffbb44,
+      'rubber-punch':       0xff5577,
+      'rubber-sling':       0xff77aa,
+      'rubber-bounce-form': 0xffaacc,
+      'rubber-spring-slam': 0xff3366,
+      'rubber-bounce-back': 0xff2244,
       // Magic
       'magic-sparkle-shot':  0xff99ff,
       'magic-grimoire':      0x7a2edd,
@@ -3899,8 +3890,6 @@ export class ArenaScene extends Phaser.Scene {
       'silence-slash-em-up': 0x221122,
     };
 
-    const adrenalineNormalCards: Phaser.GameObjects.GameObject[] = [];
-    const adrenalineNormalFills: AdrenalineBarEntry[] = [];
     const silenceNormalCards: Phaser.GameObjects.GameObject[] = [];
     const silenceNormalFills: SilenceBarEntry[] = [];
 
@@ -3936,21 +3925,11 @@ export class ArenaScene extends Phaser.Scene {
       if (this.elementId === 'hunt') {
         this.huntNormalHudCards.push(bg, fill, lbl, desc);
       }
-      if (this.elementId === 'adrenaline') {
-        adrenalineNormalCards.push(bg, fill, lbl, desc);
-        adrenalineNormalFills.push({ fill, abilityId: ab.id, maxWidth: cardW - 4, lbl, baseFillColor: fillColors[ab.id] ?? 0x4466aa });
-      }
       if (this.elementId === 'silence') {
         silenceNormalCards.push(bg, fill, lbl, desc);
         silenceNormalFills.push({ fill, abilityId: ab.id, maxWidth: cardW - 4, lbl, baseFillColor: fillColors[ab.id] ?? 0x4466aa });
       }
     });
-
-    // Adrenaline SK8 HUD (hidden until skate mode)
-    if (this.elementId === 'adrenaline') {
-      this.adrenalineKit.setNormalCards(adrenalineNormalCards, adrenalineNormalFills);
-      this.adrenalineKit.createSkateHud(startX, hudY, cardW);
-    }
 
     // Hunt beast-form HUD (hidden until transform)
     if (this.elementId === 'hunt') {
@@ -5345,20 +5324,13 @@ export class ArenaScene extends Phaser.Scene {
       voidReLapse: (tx, ty) => { this.voidKit.doVoidReLapse(tx, ty, 'player'); },
       voidAsh: (tx, ty) => { this.voidKit.doVoidAsh(tx, ty, 'player'); },
       voidOfHell: () => { this.voidKit.doVoidOfHell('player'); },
-      // Adrenaline
-      adrenalineGoldenShot: (tx, ty) => { this.adrenalineKit.doGoldenShot(tx, ty, 'player'); },
-      adrenalineDash: (tx, ty) => { this.adrenalineKit.doDash(tx, ty, 'player'); },
-      adrenalineToggleSkate: () => { this.adrenalineKit.doToggleSkate('player'); },
-      adrenalineSelfInject: () => { this.adrenalineKit.doSelfInject('player'); },
-      adrenalineStyledOn: (tx, ty) => { this.adrenalineKit.doStyledOn(tx, ty, 'player'); },
-      adrenalineOllie: () => { this.adrenalineKit.doOllie('player'); },
-      adrenalineRush: () => { this.adrenalineKit.doRush(); },
-      adrenalineRamp: () => { this.adrenalineKit.doRamp('player'); },
-      adrenalineTrick: () => { this.adrenalineKit.doTrick('player'); },
-      adrenalineWallTeleport: (tx, ty) => { this.adrenalineKit.doWallTeleport(tx, ty, 'player'); },
-      adrenalineAddStyle: (pts, lbl, col) => { this.adrenalineKit.addStyle(pts, lbl, col); },
-      adrenalineRegisterShotHit: () => { this.adrenalineKit.registerShotHit('player'); },
-      adrenalineRegisterShotMiss: () => { this.adrenalineKit.registerShotMiss('player'); },
+      // Rubber
+      rubberPunch: (tx, ty, r) => { this.rubberKit.doRubberPunch(tx, ty, r, 'player'); },
+      rubberSlingShotStart: (angle) => { this.rubberKit.doRubberSlingShotStart(angle, 'player'); },
+      rubberSlingShotRelease: (vx, vy) => { this.rubberKit.doRubberSlingShotRelease(vx, vy, 'player'); },
+      rubberBounceForm: () => { this.rubberKit.doRubberBounceForm('player'); },
+      rubberSpringSlam: (angle) => { this.rubberKit.doRubberSpringSlam(angle, 'player'); },
+      rubberBounceBack: () => { this.rubberKit.doRubberBounceBack('player'); },
       // Magic
       magicSparkleShot: (tx, ty) => { this.magicKit.doSparkleShot(tx, ty, 'player'); },
       magicOpenGrimoire: () => { /* handled in magicKit.handleInput */ },
@@ -6078,20 +6050,13 @@ export class ArenaScene extends Phaser.Scene {
       voidReLapse: (tx, ty) => { this.voidKit.doVoidReLapse(tx, ty, 'npc'); },
       voidAsh: (tx, ty) => { this.voidKit.doVoidAsh(tx, ty, 'npc'); },
       voidOfHell: () => { this.voidKit.doVoidOfHell('npc'); },
-      // Adrenaline
-      adrenalineGoldenShot: (tx, ty) => { this.adrenalineKit.doGoldenShot(tx, ty, 'npc'); },
-      adrenalineDash: (tx, ty) => { this.adrenalineKit.doDash(tx, ty, 'npc'); },
-      adrenalineToggleSkate: () => { /* NPC never skates */ },
-      adrenalineSelfInject: () => { this.adrenalineKit.doSelfInject('npc'); },
-      adrenalineStyledOn: (tx, ty) => { this.adrenalineKit.doStyledOn(tx, ty, 'npc'); },
-      adrenalineOllie: () => {},
-      adrenalineRush: () => {},
-      adrenalineRamp: () => {},
-      adrenalineTrick: () => {},
-      adrenalineWallTeleport: () => {},
-      adrenalineAddStyle: (pts, lbl, col) => { this.adrenalineKit.npcAddStyle(pts, lbl, col); },
-      adrenalineRegisterShotHit: () => { this.adrenalineKit.registerShotHit('npc'); },
-      adrenalineRegisterShotMiss: () => { this.adrenalineKit.registerShotMiss('npc'); },
+      // Rubber
+      rubberPunch: (tx, ty, r) => { this.rubberKit.doRubberPunch(tx, ty, r, 'npc'); },
+      rubberSlingShotStart: (angle) => { this.rubberKit.doRubberSlingShotStart(angle, 'npc'); },
+      rubberSlingShotRelease: (vx, vy) => { this.rubberKit.doRubberSlingShotRelease(vx, vy, 'npc'); },
+      rubberBounceForm: () => { this.rubberKit.doRubberBounceForm('npc'); },
+      rubberSpringSlam: (angle) => { this.rubberKit.doRubberSpringSlam(angle, 'npc'); },
+      rubberBounceBack: () => { this.rubberKit.doRubberBounceBack('npc'); },
       // Magic (NPC mirrors)
       magicSparkleShot: (tx, ty) => { this.magicKit.doSparkleShot(tx, ty, 'npc'); },
       magicOpenGrimoire: () => { this.magicKit.npcCastGrimoireWedge(this.player.x, this.player.y); },
@@ -6346,20 +6311,9 @@ export class ArenaScene extends Phaser.Scene {
       voidReLapse: () => {},
       voidAsh: () => {},
       voidOfHell: () => {},
-      // Adrenaline stubs
-      adrenalineGoldenShot: () => {},
-      adrenalineDash: () => {},
-      adrenalineToggleSkate: () => {},
-      adrenalineSelfInject: () => {},
-      adrenalineStyledOn: () => {},
-      adrenalineOllie: () => {},
-      adrenalineRush: () => {},
-      adrenalineRamp: () => {},
-      adrenalineTrick: () => {},
-      adrenalineWallTeleport: () => {},
-      adrenalineAddStyle: () => {},
-      adrenalineRegisterShotHit: () => {},
-      adrenalineRegisterShotMiss: () => {},
+      // Rubber stubs
+      rubberPunch: () => {}, rubberSlingShotStart: () => {}, rubberSlingShotRelease: () => {},
+      rubberBounceForm: () => {}, rubberSpringSlam: () => {}, rubberBounceBack: () => {},
       // Magic — no-op stubs for clone
       magicSparkleShot: () => {},
       magicOpenGrimoire: () => {},
@@ -6547,20 +6501,9 @@ export class ArenaScene extends Phaser.Scene {
       voidReLapse: () => {},
       voidAsh: () => {},
       voidOfHell: () => {},
-      // Adrenaline stubs
-      adrenalineGoldenShot: () => {},
-      adrenalineDash: () => {},
-      adrenalineToggleSkate: () => {},
-      adrenalineSelfInject: () => {},
-      adrenalineStyledOn: () => {},
-      adrenalineOllie: () => {},
-      adrenalineRush: () => {},
-      adrenalineRamp: () => {},
-      adrenalineTrick: () => {},
-      adrenalineWallTeleport: () => {},
-      adrenalineAddStyle: () => {},
-      adrenalineRegisterShotHit: () => {},
-      adrenalineRegisterShotMiss: () => {},
+      // Rubber stubs
+      rubberPunch: () => {}, rubberSlingShotStart: () => {}, rubberSlingShotRelease: () => {},
+      rubberBounceForm: () => {}, rubberSpringSlam: () => {}, rubberBounceBack: () => {},
       // Magic — no-op stubs for raid
       magicSparkleShot: () => {},
       magicOpenGrimoire: () => {},
@@ -8494,6 +8437,9 @@ export class ArenaScene extends Phaser.Scene {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
       if (time < this.soundKit.getCrescendoSpeedUntil()) this.playerSpeedMult *= (1 + this.soundKit.getCrescendoSpeedBonus());
       if (time < this.soundKit.getComposeSpeedUntil()) this.playerSpeedMult *= (1 + this.soundKit.getComposeSpeedBonus());
+    } else if (this.elementId === 'quantum') {
+      this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
+      this.playerSpeedMult *= this.quantumElementKit.getPlayerSpeedMult();
     } else {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
     }
@@ -8593,12 +8539,15 @@ export class ArenaScene extends Phaser.Scene {
     // Silence slasher dread aura: kit applies via applyNpcSpeedMult / applyPlayerSpeedMult in update()
     // Slime level 3 slow (15%) on NPC
     if (!this.isInvasion && this.elementId === 'slime' && time < this.slimeKit.getNpcSlimeSlowUntil()) this.npcSpeedMult *= 0.85;
-    // Adrenaline SK8 trick slow on NPC
-    if (this.elementId === 'adrenaline' && time < this.adrenalineKit.getNpcSkateSlowUntil()) this.npcSpeedMult *= 0.75;
-    // Magic storm cloud slow
+    // Magic storm cloud slow + upgrade speed effects
     if (this.elementId === 'magic' || this.npcElement.id === 'magic') {
       this.playerSpeedMult *= this.magicKit.getPlayerSlowMult();
       this.npcSpeedMult *= this.magicKit.getNpcSlowMult();
+      if (this.elementId === 'magic') {
+        this.playerSpeedMult *= this.magicKit.getPlayerSpeedBoostMult();
+        this.playerSpeedMult *= this.magicKit.getPlayerMeditateSlowMult();
+        this.npcSpeedMult *= this.magicKit.getNpcDark80SlowMult();
+      }
     }
     // Growth Cough aura slow (PvP/AI only — invasion handled in updateInvasion)
     if (!this.isInvasion && this.elementId === 'growth' && this.growthCoughStacks > 0) {
@@ -8650,8 +8599,8 @@ export class ArenaScene extends Phaser.Scene {
     // ── Player movement ─────────────────────────────────────────
     const playerBody = this.player.body as Phaser.Physics.Arcade.Body;
 
-    if (this.adrenalineKit.isSkateActive() && !this.isDodging) {
-      this.adrenalineKit.applySkateMovement(delta, this.playerSpeedMult, this.gauntletSpeedMult);
+    if (this.elementId === 'rubber' && this.rubberKit.isSlingActive() && !this.isDodging) {
+      this.rubberKit.applySlingMovement(mouseX, mouseY);
     } else if (this.nukeChanneling && !this.airBeamWalking) {
       // Standard nuke: fully locked
       playerBody.setVelocity(0, 0);
@@ -9054,8 +9003,8 @@ export class ArenaScene extends Phaser.Scene {
       this.deathKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'void') {
       this.voidKit.handleInput(time, pointer, mouseX, mouseY);
-    } else if (this.elementId === 'adrenaline') {
-      this.adrenalineKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'rubber') {
+      this.rubberKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'magic') {
       this.magicKit.handleInput(time, delta, pointer, mouseX, mouseY);
     } else if (this.elementId === 'technology') {
@@ -10933,8 +10882,15 @@ export class ArenaScene extends Phaser.Scene {
 
     }
 
+    // ── Q+ Risky.Expansion: Space = teleport to cursor during domain ─────
+    if (this.elementId === 'technology' && this.techKit.isTechDomainActive() && this.hasUpgrade('q') && Phaser.Input.Keyboard.JustDown(this.spaceKey) && !this.dodgeOnCooldown) {
+      this.techKit.teleportPlayerToCursor(mouseX, mouseY);
+      this.dodgeOnCooldown = true;
+      this.time.delayedCall(1000, () => { this.dodgeOnCooldown = false; });
+    }
+
     // ── Dodge (Space) ────────────────────────────────────────────
-    if (Phaser.Input.Keyboard.JustDown(this.spaceKey) && !this.dodgeOnCooldown && !this.isDodging && !this.nukeChanneling && time >= this.soulHauntStunUntil && this.elementId !== 'quantum' && !(this.elementId === 'slime' && this.slimeKit.shouldSuppressDodge())) {
+    if (Phaser.Input.Keyboard.JustDown(this.spaceKey) && !this.dodgeOnCooldown && !this.isDodging && !this.nukeChanneling && time >= this.soulHauntStunUntil && !(this.elementId === 'slime' && this.slimeKit.shouldSuppressDodge())) {
       this.dodgeOnCooldown = true;
       this.isDodging = true;
       this.player.isInvincible = true;
@@ -10952,6 +10908,16 @@ export class ArenaScene extends Phaser.Scene {
       }
 
       playerBody.setVelocity(dx * 520, dy * 520);
+
+      // Quantum form-swap on dodge
+      if (this.elementId === 'quantum') {
+        this.quantumElementKit.toggleFormForDodge(time);
+      }
+
+      // Echo E+/Q+ light trail on dodge
+      if (this.elementId === 'echo' && this.echoKit) {
+        this.echoKit.tryConsumeEyeForDodge(this.player.x, this.player.y, dx, dy);
+      }
 
       // Soul haunt dodge: ghostly explosion + scare NPC
       if (this.elementId === 'soul' && this.soulHauntActive && this.hasUpgrade('click')) {
@@ -11014,7 +10980,7 @@ export class ArenaScene extends Phaser.Scene {
     } else {
     // ── NPC AI ───────────────────────────────────────────────────
     const aiState: NpcAiState = {
-      isLocked: this.npcNukeChanneling || this.npc.frozenUntil > time || this.npcMetalTaseredUntil > time || (this.elementId === 'silence' && time < this.npc.silencePossessedUntil) || this.magnetKit.getNailPullUntil() > time || (this.npc.magicChainBound && time < this.npc.magicChainBoundEnd) || time < this.silenceKit.getNpcYankUntil() || time < this.npcHawkDragUntil,
+      isLocked: this.npcNukeChanneling || this.npc.frozenUntil > time || this.npcMetalTaseredUntil > time || (this.elementId === 'silence' && time < this.npc.silencePossessedUntil) || this.magnetKit.getNailPullUntil() > time || (this.npc.magicChainBound && time < this.npc.magicChainBoundEnd) || time < this.silenceKit.getNpcYankUntil() || time < this.npcHawkDragUntil || (this.npcElement.id === 'rubber' && (this.rubberKit.isBounceFormActive('npc') || this.rubberKit.isBounceBackActive('npc') || this.rubberKit.isSpringActive('npc'))),
       hasActiveGeyser: this.geysers.some((g) => g.owner === 'npc'),
       flameBodyActive: this.fireKit.isNpcFlameBodyActive(),
       projectiles: this.projectiles,
@@ -11492,8 +11458,6 @@ export class ArenaScene extends Phaser.Scene {
     if (this.npc.earthStunnedUntil > time) {
       (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
     }
-    // ── Adrenaline SK8 trick knockback override ───────────────────
-    this.adrenalineKit.applyNpcKnockbackIfActive(time);
     if (this.playerEarthStunnedUntil > time) {
       (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
     }
@@ -13921,9 +13885,9 @@ export class ArenaScene extends Phaser.Scene {
       this.voidKit.update(time, delta);
     }
 
-    // ── Adrenaline per-frame ─────────────────────────────────────
-    if (this.elementId === 'adrenaline' || this.npcElement.id === 'adrenaline') {
-      this.adrenalineKit.update(time, delta, this.elementId === 'adrenaline', this.npcElement.id === 'adrenaline');
+    // ── Rubber per-frame ─────────────────────────────────────────
+    if (this.elementId === 'rubber' || this.npcElement.id === 'rubber') {
+      this.rubberKit.update(time, delta);
     }
 
     // ── Magic per-frame ───────────────────────────────────────────
@@ -14092,8 +14056,6 @@ export class ArenaScene extends Phaser.Scene {
           this.playerIcePendingSet.delete(p);
           this.playerIceConsecHits = 0; // inactive without hit means it was destroyed by something else
         }
-        // Adrenaline: deactivated without hit = miss
-        this.adrenalineKit.checkProjectileMiss(p as unknown as Phaser.Physics.Arcade.Sprite);
         p.destroy(); continue;
       }
       if (p.x < wb.left - 60 || p.x > wb.right + 60 || p.y < wb.top - 60 || p.y > wb.bottom + 60) {
@@ -14102,8 +14064,6 @@ export class ArenaScene extends Phaser.Scene {
           this.playerIcePendingSet.delete(p);
           this.playerIceConsecHits = 0;
         }
-        // Adrenaline: golden shot off-screen = miss
-        this.adrenalineKit.checkProjectileMiss(p as unknown as Phaser.Physics.Arcade.Sprite);
         p.destroy();
       }
     }
@@ -14197,7 +14157,16 @@ export class ArenaScene extends Phaser.Scene {
         const bloatCd = Math.max(1000, this.growthBloatCdMs);
         const bloatRatio = Math.min(1, (this.time.now - this.lastPlayerBloatCast) / bloatCd);
         entry.fill.setSize(entry.maxWidth * bloatRatio, entry.fill.height);
+      } else if (entry.abilityId === 'magic-grimoire' && this.elementId === 'magic' && this.magicKit.isThunderCharged('e')) {
+        entry.fill.setFillStyle(0xffee00, 0.55);
+        entry.fill.setSize(entry.maxWidth, entry.fill.height);
+      } else if (entry.abilityId === 'magic-necronomicon' && this.elementId === 'magic' && this.magicKit.isThunderCharged('q')) {
+        entry.fill.setFillStyle(0xcc44ff, 0.55);
+        entry.fill.setSize(entry.maxWidth, entry.fill.height);
       } else {
+        if (entry.abilityId === 'magic-grimoire' || entry.abilityId === 'magic-necronomicon') {
+          entry.fill.setFillStyle(entry.baseFillColor ?? 0x4466aa, 0.45);
+        }
         entry.fill.setSize(entry.maxWidth * this.player.getCooldownRatio(entry.abilityId), entry.fill.height);
       }
     }
@@ -17641,8 +17610,6 @@ export class ArenaScene extends Phaser.Scene {
       this.npc.toxicDps = 2 + this.growthViralBonus;
       this.npc.toxicTickAccum = 0;
     }
-    // Adrenaline: golden shot hit registers style event
-    this.adrenalineKit.onPlayerShotHitNpc(proj as unknown as Phaser.Physics.Arcade.Sprite);
     // NPC bloat: NPC hit triggers AOE on player
     if (this.npc.growthBloatActive) {
       this.npc.growthBloatActive = false;
@@ -17671,6 +17638,11 @@ export class ArenaScene extends Phaser.Scene {
     // Magic (player) thorn prison hit
     if ((proj as any).isMagicThornPrison && (proj as any).thornPrisonOwner === 'player') {
       this.magicKit.onThornPrisonHit(this.npc.x, this.npc.y, 'player');
+    }
+    // R+ Powerful Parry: fire DOT on NPC from rubber-reflected projectile
+    const rubberParryFireDot = (proj as any).rubberParryFireDot as number | undefined;
+    if (rubberParryFireDot && this.elementId === 'rubber') {
+      this.rubberKit.applyNpcFireDot(rubberParryFireDot);
     }
     proj.setActive(false).setVisible(false);
     (proj.body as Phaser.Physics.Arcade.Body).stop();

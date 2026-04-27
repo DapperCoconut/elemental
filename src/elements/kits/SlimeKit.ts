@@ -30,7 +30,7 @@ export interface SlimeEntity {
   state: 'held' | 'flying-out' | 'deployed' | 'flying-back' | 'shield-active' | 'shield-cooldown';
   level: 1 | 2 | 3;
   xp: number;
-  variant: null | 'firey' | 'coral' | 'volatile' | 'photon' | 'prickly';
+  variant: null | 'firey' | 'coral' | 'volatile' | 'photon' | 'prickly' | 'blood';
   x: number;
   y: number;
   vx: number;
@@ -117,6 +117,7 @@ export interface SlimeArenaApi {
   readonly spaceKey: Phaser.Input.Keyboard.Key;
   readonly pointerWasDown: boolean;
   hasUpgrade(slot: string): boolean;
+  hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   getNearestEnemy(x: number, y: number): Fighter;
@@ -150,6 +151,11 @@ export class SlimeKit {
   private miniSlimes: MiniSlime[] = [];
   private petSlime: PetSlime | null = null;
   private pricklyShieldCooldowns: Map<Fighter, number> = new Map();
+
+  // ── Blood perk state ──────────────────────────────────────────────────
+  private bloodSlashCooldowns: Map<SlimeEntity, number> = new Map();
+  private bloodShieldSlashAccum = 0;
+  private bloodPetGrowthHp = 0;
 
   // ── NPC state ─────────────────────────────────────────────────────────
   private enemySlowUntil: Map<Fighter, number> = new Map();
@@ -216,6 +222,9 @@ export class SlimeKit {
     this.miniSlimes = [];
     if (this.petSlime) { this.petSlime.sprite.destroy(); this.petSlime = null; }
     this.pricklyShieldCooldowns.clear();
+    this.bloodSlashCooldowns.clear();
+    this.bloodShieldSlashAccum = 0;
+    this.bloodPetGrowthHp = 0;
   }
 
   startMatch(W: number, H: number, isPlayerSlime: boolean): void {
@@ -287,13 +296,13 @@ export class SlimeKit {
 
   private refreshSlimeHUD(): void {
     const variantEmojis: Record<string, string> = {
-      firey: '🔥', coral: '🪸', volatile: '💥', photon: '☀️', prickly: '🌵',
+      firey: '🔥', coral: '🪸', volatile: '💥', photon: '☀️', prickly: '🌵', blood: '🩸',
     };
     const variantColors: Record<string, number> = {
-      firey: 0x3a1a10, coral: 0x3a1520, volatile: 0x251530, photon: 0x2a2a10, prickly: 0x1a1030,
+      firey: 0x3a1a10, coral: 0x3a1520, volatile: 0x251530, photon: 0x2a2a10, prickly: 0x1a1030, blood: 0x3a0a10,
     };
     const variantTextColors: Record<string, string> = {
-      firey: '#ff8844', coral: '#ff88aa', volatile: '#aa88dd', photon: '#ffee88', prickly: '#bb88ff',
+      firey: '#ff8844', coral: '#ff88aa', volatile: '#aa88dd', photon: '#ffee88', prickly: '#bb88ff', blood: '#ff3355',
     };
 
     for (let i = 0; i < this.slimeSlotUI.length && i < this.slimes.length; i++) {
@@ -327,8 +336,18 @@ export class SlimeKit {
         : slime.variant === 'volatile' ? 0xaa88dd
         : slime.variant === 'photon' ? 0xffee88
         : slime.variant === 'prickly' ? 0xbb88ff
+        : slime.variant === 'blood' ? 0xff3355
         : 0x66cc44;
       slot.xpBarFill.setFillStyle(xpColor, isShielding ? 0.2 : 0.9);
+    }
+  }
+
+  private bloodHealGrowth(amount: number): void {
+    if (!this.arena.hasPerk('player', 'blood') || !this.arena.hasUpgrade('f')) return;
+    this.bloodPetGrowthHp = Math.min(this.bloodPetGrowthHp + amount, 100);
+    if (this.petSlime) {
+      const scale = 1 + (this.bloodPetGrowthHp / 100) * 1.5;
+      this.petSlime.sprite.setRadius(Math.round(10 * scale));
     }
   }
 
@@ -338,6 +357,7 @@ export class SlimeKit {
     if (slime.variant === 'volatile') return 0xaa44dd;
     if (slime.variant === 'photon') return 0xfff2a0;
     if (slime.variant === 'prickly') return 0x9c6aff;
+    if (slime.variant === 'blood') return 0xcc1133;
     return 0x66cc44;
   }
 
@@ -442,6 +462,13 @@ export class SlimeKit {
             this.arena.showFloatingText(t.x, t.y - 20, String(dmg), '#66cc44');
             if (s.level === 3) this.enemySlowUntil.set(t, Math.max(this.enemySlowUntil.get(t) ?? 0, time + 2000));
             if (s.variant === 'firey') t.burningUntil = Math.max(t.burningUntil, time + 3000);
+            // Blood Q+: heal on return-contact damage
+            if (s.variant === 'blood' && s.state === 'flying-back' && this.arena.hasPerk('player', 'blood') && this.arena.hasUpgrade('q')) {
+              const healAmt = Math.floor(dmg * 0.5);
+              player.heal(healAmt);
+              this.bloodHealGrowth(healAmt);
+              this.arena.showFloatingText(player.x, player.y - 30, `🩸 +${healAmt}`, '#ff3355');
+            }
             if (s.variant === 'prickly' && !s.stickyTo) {
               s.stickyTo = t;
               s.stickyUntil = time + 2000;
@@ -483,6 +510,7 @@ export class SlimeKit {
               s.puddlesHitThisLaunch = new Set();
               if (s.variant === 'coral') {
                 player.heal(5);
+                this.bloodHealGrowth(5);
                 this.arena.showFloatingText(player.x, player.y - 30, '+5 HP 🪸', '#ff88aa');
               }
             }
@@ -505,12 +533,43 @@ export class SlimeKit {
         }
       }
 
+      // Blood: deployed blood slime slashes nearby enemies every 1.5s, healing owner
+      if (s.state === 'deployed' && s.variant === 'blood' && this.arena.hasPerk('player', 'blood')) {
+        const nextSlash = this.bloodSlashCooldowns.get(s) ?? 0;
+        if (time >= nextSlash) {
+          let slashed = false;
+          for (const t of this.arena.enemies) {
+            if (!t.active || t.hp <= 0) continue;
+            if (Phaser.Math.Distance.Between(s.x, s.y, t.x, t.y) <= 80) {
+              this.bloodSlashCooldowns.set(s, time + 1500);
+              const dmg = s.level === 1 ? 6 : s.level === 2 ? 9 : 12;
+              t.takeDamage(dmg);
+              this.arena.spawnHitFlash(t.x, t.y, 0xcc1133);
+              this.arena.showFloatingText(s.x, s.y - 20, '🩸 SLASH', '#ff3355');
+              const healAmt = Math.floor(dmg * 0.5);
+              player.heal(healAmt);
+              this.bloodHealGrowth(healAmt);
+              this.arena.showFloatingText(player.x, player.y - 30, `❤️ +${healAmt}`, '#ff3355');
+              // Draw a brief slash arc
+              const slash = scene.add.graphics().setDepth(8);
+              slash.lineStyle(2, 0xcc1133, 0.9);
+              slash.strokeCircle(s.x, s.y, 12);
+              scene.tweens.add({ targets: slash, alpha: 0, scaleX: 2, scaleY: 2, duration: 200, onComplete: () => slash.destroy() });
+              slashed = true;
+              break;
+            }
+          }
+          if (!slashed) this.bloodSlashCooldowns.set(s, time + 1500);
+        }
+      }
+
       // Coral: player touching deployed coral slime heals
       if (s.state === 'deployed' && s.variant === 'coral' && !this.slimeyRainSlimes.includes(s)) {
         const dist = Phaser.Math.Distance.Between(player.x, player.y, s.x, s.y);
         if (dist <= 28 && time > s.coralTouchCooldownUntil) {
           s.coralTouchCooldownUntil = time + 3000;
           player.heal(10);
+          this.bloodHealGrowth(10);
           this.arena.showFloatingText(player.x, player.y - 30, '+10 HP 🪸', '#ff88aa');
         }
       }
@@ -627,9 +686,10 @@ export class SlimeKit {
         const sd = Phaser.Math.Distance.Between(s.x, s.y, spring.x, spring.y);
         if (sd <= spring.radius) {
           const baseVariants: Array<SlimeEntity['variant']> = ['firey', 'coral', 'volatile'];
-          const variants = this.arena.hasUpgrade('r')
-            ? [...baseVariants, 'photon', 'prickly'] as Array<SlimeEntity['variant']>
+          let variants: Array<SlimeEntity['variant']> = this.arena.hasUpgrade('r')
+            ? [...baseVariants, 'photon', 'prickly']
             : baseVariants;
+          if (this.arena.hasPerk('player', 'blood')) variants = [...variants, 'blood'];
           s.variant = variants[Math.floor(Math.random() * variants.length)];
           s.sprite.setFillStyle(this.getSlimeColor(s));
           const emojis: Record<string, string> = {
@@ -651,7 +711,28 @@ export class SlimeKit {
     const shieldingSlime = this.slimes.find(s => s.state === 'shield-active');
     if (shieldingSlime) {
       if (this.slimeShieldVisual) this.slimeShieldVisual.setPosition(player.x, player.y);
-      if (shieldingSlime.variant === 'coral') player.heal(3 * delta / 1000);
+      if (shieldingSlime.variant === 'coral') { player.heal(3 * delta / 1000); this.bloodHealGrowth(3 * delta / 1000); }
+
+      // Blood shield: strike nearby enemies every 1s, healing owner
+      if (shieldingSlime.variant === 'blood' && this.arena.hasPerk('player', 'blood')) {
+        this.bloodShieldSlashAccum += delta;
+        if (this.bloodShieldSlashAccum >= 1000) {
+          this.bloodShieldSlashAccum -= 1000;
+          for (const t of this.arena.enemies) {
+            if (!t.active || t.hp <= 0) continue;
+            if (Phaser.Math.Distance.Between(player.x, player.y, t.x, t.y) <= 60) {
+              const dmg = 6;
+              t.takeDamage(dmg);
+              this.arena.spawnHitFlash(t.x, t.y, 0xcc1133);
+              this.arena.showFloatingText(t.x, t.y - 20, '🩸 STRIKE', '#ff3355');
+              const healAmt = Math.floor(dmg * 0.5);
+              player.heal(healAmt);
+              this.bloodHealGrowth(healAmt);
+              this.arena.showFloatingText(player.x, player.y - 30, `❤️ +${healAmt}`, '#ff3355');
+            }
+          }
+        }
+      }
 
       // Prickly shield: damage enemies in range
       if (shieldingSlime.variant === 'prickly' && this.arena.hasUpgrade('r')) {
@@ -713,10 +794,17 @@ export class SlimeKit {
           pet.contactCooldowns.set(t, time + 1000);
           let dmg = 5;
           if (pet.variant === 'firey') dmg = Math.round(dmg * 1.25);
+          if (pet.variant === 'blood') dmg = Math.round(dmg * (1 + (this.bloodPetGrowthHp / 100) * 1.5));
           t.takeDamage(dmg);
           this.arena.spawnHitFlash(t.x, t.y, this.getSlimeColor({ variant: pet.variant } as SlimeEntity));
           this.arena.showFloatingText(t.x, t.y - 20, String(dmg), '#66cc44');
           if (pet.variant === 'firey') t.burningUntil = Math.max(t.burningUntil, time + 3000);
+          if (pet.variant === 'blood') {
+            const healAmt = Math.floor(dmg * 0.5);
+            player.heal(healAmt);
+            this.bloodHealGrowth(healAmt);
+            this.arena.showFloatingText(player.x, player.y - 30, `🩸 +${healAmt}`, '#ff3355');
+          }
         }
       }
 
@@ -726,6 +814,7 @@ export class SlimeKit {
         if (pet.coralHealAccum >= 2000) {
           pet.coralHealAccum -= 2000;
           player.heal(1);
+          this.bloodHealGrowth(1);
         }
       }
       if (pet.variant === 'volatile') {
@@ -1066,7 +1155,10 @@ export class SlimeKit {
         if (this.arena.hasUpgrade('f')) {
           if (this.petSlime) this.petSlime.sprite.destroy();
           const petColor = this.getSlimeColor(shieldCandidate);
-          const petSpr = scene.add.circle(player.x, player.y, 9, petColor, 0.9)
+          const petRadius = shieldCandidate.variant === 'blood'
+            ? Math.round(9 * (1 + (this.bloodPetGrowthHp / 100) * 1.5))
+            : 9;
+          const petSpr = scene.add.circle(player.x, player.y, petRadius, petColor, 0.9)
             .setStrokeStyle(1, 0x44aa22).setDepth(5);
           this.petSlime = {
             sprite: petSpr,

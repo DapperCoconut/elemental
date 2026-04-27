@@ -86,6 +86,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public healStopUntil = 0;
   public forceRetreatUntil = 0;
 
+  // Dark magic status effects (Magic element upgrades)
+  public darkVulnStacks = 0;         // +25% incoming dmg per stack (acid cloud)
+  public darkLinkedUntil = 0;        // Torture Trap link expiry (Date.now() based)
+  public darkLinkSource: Fighter | null = null; // healed when this fighter takes damage
+
   // Oil E+ Oily status
   public oilyUntil = 0;
   public oilyBurnUntil = 0;
@@ -171,6 +176,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     }
 
     amount = Math.round(amount * this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.quantumIncomingMult);
+    if (this.darkVulnStacks > 0) amount = Math.round(amount * (1 + 0.25 * this.darkVulnStacks));
     this.lastIncomingDamage = amount;
     if (isCrit) this.emit('damaged-crit', amount);
 
@@ -204,6 +210,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
     this.hp = Math.max(0, this.hp - amount);
     this.emit('damaged', amount);
+
+    // Torture Trap lifesteal: heal the link source for actual damage taken
+    if (amount > 0 && this.darkLinkSource && this.darkLinkSource.active && Date.now() < this.darkLinkedUntil) {
+      this.darkLinkSource.heal(amount);
+    }
 
     if (!this.forceInvisible) {
       this.setAlpha(0.3);
@@ -316,7 +327,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     const ability = this.element.abilities.find((a) => a.id === abilityId);
     if (!ability) return 1;
     const elapsed = Date.now() - (this.cooldowns.get(abilityId) ?? 0);
-    return Math.min(1, elapsed / ability.cooldown);
+    const effectiveCd = ability.cooldown * (this.cooldownMult || 1);
+    return Math.min(1, elapsed / effectiveCd);
   }
 
   preUpdate(time: number, delta: number): void {

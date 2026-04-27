@@ -31,7 +31,7 @@ import { metalElement } from '../elements/metal';
 import { plasmaElement } from '../elements/plasma';
 import { deathElement } from '../elements/death';
 import { voidElement } from '../elements/void';
-import { adrenalineElement } from '../elements/adrenaline';
+import { rubberElement } from '../elements/rubber';
 import { magicElement } from '../elements/magic';
 import { technologyElement } from '../elements/technology';
 import { silenceElement } from '../elements/silence';
@@ -54,7 +54,7 @@ const ELEMENT_DATA_MAP: Record<string, Element> = {
   plasma: plasmaElement,
   death: deathElement,
   void: voidElement,
-  adrenaline: adrenalineElement,
+  rubber: rubberElement,
   magic: magicElement,
   technology: technologyElement,
   silence: silenceElement,
@@ -116,7 +116,7 @@ const ABSTRACT_COMBINED_ELEMENTS: ElementDef[] = [
   { id: 'plasma', name: 'Plasma', emoji: '🔮',  color: 0xaa22ff, available: true },
   { id: 'death',  name: 'Death',  emoji: '💀',  color: 0x440066, available: true },
   { id: 'echo',   name: 'Echo',   emoji: '🦇',  color: 0xccccff, available: true },
-  { id: 'adrenaline', name: 'Adrenaline', emoji: '⚡️', color: 0xffbb22, available: true },
+  { id: 'rubber', name: 'Rubber', emoji: '🪀', color: 0xff5577, available: true },
   { id: 'magic', name: 'Magic', emoji: '📖', color: 0x9944ff, available: true },
   { id: 'technology', name: 'Technology', emoji: '💻', color: 0x44ccaa, available: true },
   { id: 'silence', name: 'Silence', emoji: '🫥', color: 0x1a0022, available: true },
@@ -879,6 +879,43 @@ export class MenuScene extends Phaser.Scene {
       }
     });
 
+    // Rubber-specific vulcanization description block
+    if (elementId === 'rubber') {
+      const ctrlY = height - 58;
+      const vulcHdr = this.add.text(cx, ctrlY, '— VULCANIZATION —', {
+        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#ff5577',
+      }).setOrigin(0.5).setDepth(52);
+      this.infoOverlayObjects.push(vulcHdr);
+      const vulcReq = this.add.text(cx, ctrlY + 16, 'Requires owning any rubber upgrade', {
+        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#ffaaaa',
+      }).setOrigin(0.5).setDepth(52);
+      this.infoOverlayObjects.push(vulcReq);
+      const vulcDesc = this.add.text(cx, ctrlY + 32, 'Hold RIGHT-CLICK to vulcanize (5%/s, max 100%). Locks attacks while charging. Slows cooldowns up to 100% and darkens your player.', {
+        fontSize: '9px', fontFamily: 'Arial, sans-serif', color: '#ffcccc', align: 'center',
+        wordWrap: { width: width - 80 },
+      }).setOrigin(0.5).setDepth(52);
+      this.infoOverlayObjects.push(vulcDesc);
+    }
+
+    // Echo-specific psychic eye controls block (shown when E+ or Q+ is owned)
+    if (elementId === 'echo' && (PlayerData.isUpgradeOwned('echo', 'e') || PlayerData.isUpgradeOwned('echo', 'q'))) {
+      const ctrlY = height - 54;
+      const ctrlHdr = this.add.text(cx, ctrlY, '👁  PSYCHIC EYE CONTROLS', {
+        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#aaddff',
+      }).setOrigin(0.5).setDepth(52);
+      this.infoOverlayObjects.push(ctrlHdr);
+
+      const ctrl1 = this.add.text(cx, ctrlY + 18, 'Space — Light Trail (consume 1 eye, 3s damage trail)', {
+        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#88bbff',
+      }).setOrigin(0.5).setDepth(52);
+      this.infoOverlayObjects.push(ctrl1);
+
+      const ctrl2 = this.add.text(cx, ctrlY + 32, 'Right click — Power-up next attack as direct (consume 1 eye)', {
+        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#88bbff',
+      }).setOrigin(0.5).setDepth(52);
+      this.infoOverlayObjects.push(ctrl2);
+    }
+
     // Back button
     const backBtn = this.add.rectangle(60, 30, 90, 32, 0x221133, 0.9)
       .setStrokeStyle(2, 0x9944ff, 0.8).setDepth(55).setInteractive({ useHandCursor: true });
@@ -897,6 +934,7 @@ export class MenuScene extends Phaser.Scene {
 
     const ELEM_EMOJI: Record<string, string> = {
       fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🪨',
+      electricity: '⚡', slime: '🟢', fate: '🃏', sound: '🔊', light: '✨',
     };
 
     const bg = this.add.rectangle(cx, height / 2, width, height, 0x05050f, 0.97)
@@ -923,17 +961,19 @@ export class MenuScene extends Phaser.Scene {
     const rowH = 46;
     const colW = width / 2 - 20;
 
-    const tiers: Array<'triple' | 'quad' | 'penta'> = ['triple', 'quad', 'penta'];
+    const tiers: Array<'triple' | 'abstract-triple' | 'quad' | 'penta'> = ['triple', 'abstract-triple', 'quad', 'penta'];
     for (const tier of tiers) {
       // Tier header
       const tierLabel = tier === 'triple'
         ? '— TRIPLE PERKS  (Lab Level 2 · 2 ⚛️) —'
-        : tier === 'quad'
-          ? '— QUAD PERKS  (Lab Level 3 · 5 ⚛️)  ·  Perkaholic Mutation —'
-          : '— PENTA PERKS  (Penta Synthesis · 10 ⚛️) —';
+        : tier === 'abstract-triple'
+          ? '— ABSTRACT PERKS  (Lab Level 2 · 4 ⚛️) —'
+          : tier === 'quad'
+            ? '— QUAD PERKS  (Lab Level 3 · 5 ⚛️)  ·  Perkaholic Mutation —'
+            : '— PENTA PERKS  (Penta Synthesis · 10 ⚛️) —';
       const tierHdr = this.add.text(cx, curY, tierLabel, {
         fontSize: '10px', fontFamily: '"Arial Black", sans-serif',
-        color: tier === 'penta' ? '#cc88ff' : (tier === 'quad' ? '#ffaa44' : '#44aaff'),
+        color: tier === 'penta' ? '#cc88ff' : (tier === 'quad' ? '#ffaa44' : (tier === 'abstract-triple' ? '#cc66ff' : '#44aaff')),
       }).setOrigin(0.5).setDepth(51);
       this.infoOverlayObjects.push(tierHdr);
       curY += 18;
@@ -949,8 +989,8 @@ export class MenuScene extends Phaser.Scene {
         const equipped  = PlayerData.getEquippedPerk(perk.elementId) === perk.id;
         const nameAlpha = unlocked ? 1.0 : 0.35;
 
-        const rowBgFill = unlocked ? (tier === 'penta' ? 0x1a0022 : (tier === 'quad' ? 0x1a0d00 : 0x0d0d1a)) : 0x080808;
-        const rowBgStroke = unlocked ? (tier === 'penta' ? 0x441155 : (tier === 'quad' ? 0x443322 : 0x222244)) : 0x111111;
+        const rowBgFill = unlocked ? (tier === 'penta' ? 0x1a0022 : (tier === 'quad' ? 0x1a0d00 : (tier === 'abstract-triple' ? 0x150022 : 0x0d0d1a))) : 0x080808;
+        const rowBgStroke = unlocked ? (tier === 'penta' ? 0x441155 : (tier === 'quad' ? 0x443322 : (tier === 'abstract-triple' ? 0x441144 : 0x222244))) : 0x111111;
         const rowBg = this.add.rectangle(px + colW / 2, py + rowH / 2 - 4, colW, rowH - 6,
           rowBgFill, unlocked ? 0.8 : 0.5)
           .setStrokeStyle(1, rowBgStroke, 0.8)

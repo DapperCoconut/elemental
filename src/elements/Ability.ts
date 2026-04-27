@@ -143,20 +143,13 @@ export interface CastContext {
   voidReLapse: (tx: number, ty: number) => void;
   voidAsh: (tx: number, ty: number) => void;
   voidOfHell: () => void;
-  // Adrenaline (abstract combined: electricity + sound)
-  adrenalineGoldenShot: (tx: number, ty: number) => void;
-  adrenalineDash: (tx: number, ty: number) => void;
-  adrenalineToggleSkate: () => void;
-  adrenalineSelfInject: () => void;
-  adrenalineStyledOn: (tx: number, ty: number) => void;
-  adrenalineOllie: () => void;
-  adrenalineRush: () => void;
-  adrenalineRamp: () => void;
-  adrenalineTrick: () => void;
-  adrenalineWallTeleport: (tx: number, ty: number) => void;
-  adrenalineAddStyle: (points: number, label: string, color?: string) => void;
-  adrenalineRegisterShotHit: () => void;
-  adrenalineRegisterShotMiss: () => void;
+  // Rubber (abstract combined: slime + fate)
+  rubberPunch: (tx: number, ty: number, pullRatio: number) => void;
+  rubberSlingShotStart: (cursorAngle: number) => void;
+  rubberSlingShotRelease: (vx: number, vy: number) => void;
+  rubberBounceForm: () => void;
+  rubberSpringSlam: (cursorAngle: number) => void;
+  rubberBounceBack: () => void;
   // Magic (abstract combined: slime + light)
   magicSparkleShot: (tx: number, ty: number) => void;
   magicOpenGrimoire: () => void;

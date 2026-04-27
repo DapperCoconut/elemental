@@ -22,11 +22,11 @@ export const RECIPES: Recipe[] = [
   { ingredients: ['electricity', 'light'], result: 'plasma', resultName: 'Plasma', resultEmoji: '🔮' },
   { ingredients: ['fate', 'sound'], result: 'death', resultName: 'Death', resultEmoji: '💀' },
   { ingredients: ['fate', 'light'], result: 'echo', resultName: 'Echo', resultEmoji: '🦇' },
-  { ingredients: ['electricity', 'sound'], result: 'adrenaline', resultName: 'Adrenaline', resultEmoji: '⚡️' },
+  { ingredients: ['slime', 'fate'], result: 'rubber', resultName: 'Rubber', resultEmoji: '🪀' },
   { ingredients: ['slime', 'light'], result: 'magic', resultName: 'Magic', resultEmoji: '📖' },
   { ingredients: ['sound', 'light'], result: 'technology', resultName: 'Technology', resultEmoji: '💻' },
   { ingredients: ['slime', 'sound'], result: 'silence', resultName: 'Silence', resultEmoji: '🫥' },
-  { ingredients: ['slime', 'fate'], result: 'quantum', resultName: 'Quantum', resultEmoji: '⚛️' },
+  { ingredients: ['electricity', 'sound'], result: 'quantum', resultName: 'Quantum', resultEmoji: '⚛️' },
 ];
 
 export function findRecipe(a: string, b: string): Recipe | undefined {

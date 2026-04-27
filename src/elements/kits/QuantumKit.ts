@@ -28,6 +28,8 @@ export interface EchoArenaApi {
   getSceneHeight(): number;
   fogOverlay(): Phaser.GameObjects.RenderTexture | null;
   isEclipseRevealActive(): boolean;
+  hasUpgrade(slot: string): boolean;
+  hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
 }
 
 // Keep old export name so ArenaScene import still compiles during migration
@@ -63,6 +65,7 @@ interface EchoSummon {
   owner: 'player' | 'npc';
   expiresAt: number;
   shootAccum: number;
+  lightGfx: Phaser.GameObjects.Graphics | null;
 }
 
 interface EclipseLine {
@@ -80,6 +83,24 @@ interface BatAttach {
   drainAccum: number;
   endsAt: number;
   owner: 'player' | 'npc';
+}
+
+interface PsychicEye {
+  sprite: Phaser.GameObjects.Image;
+  angleOffset: number;
+}
+
+interface LightTrail {
+  gfx: Phaser.GameObjects.Graphics;
+  pts: { x: number; y: number }[];
+  expiresAt: number;
+  lastTickAt: number;
+}
+
+interface BatTracker {
+  targetRef: Fighter;
+  expiresAt: number;
+  lastPingAt: number;
 }
 
 // ── EchoKit ──────────────────────────────────────────────────────────────────
@@ -130,6 +151,26 @@ export class EchoKit {
   private npcBatAt = 0;
   private npcEclipseAt = 0;
 
+  // Psychic eyes (E+/Q+)
+  private playerEyes: PsychicEye[] = [];
+  private playerEyePowerUpArmed = false;
+  private playerLightTrails: LightTrail[] = [];
+  private _prevRightDown = false;
+
+  // Lantern heal (R+)
+  private playerLanternHealAccum = 0;
+  private playerLanternHealTextAccum = 0;
+
+  // Bat tracker (F+)
+  private playerBatTracker: BatTracker | null = null;
+
+  // Beacon perk (abstract-triple)
+  private playerBeaconBatteries = 3;
+  private playerBeaconRechargeAt: number[] = [0, 0, 0];
+  private playerBeaconBatteryIcons: Phaser.GameObjects.Text[] = [];
+  private playerBeaconConeBoostUntil = 0;
+  private playerBeaconIconsCreated = false;
+
   constructor(arena: EchoArenaApi) {
     this.arena = arena;
   }
@@ -158,6 +199,24 @@ export class EchoKit {
     this.npcBatAttach = null;
     this._eclipseRevealActive = false;
     this.eclipseRevealUntil = 0;
+
+    // Psychic eyes / light trails
+    for (const eye of this.playerEyes) eye.sprite.destroy();
+    this.playerEyes = [];
+    this.playerEyePowerUpArmed = false;
+    for (const trail of this.playerLightTrails) trail.gfx.destroy();
+    this.playerLightTrails = [];
+    this.playerLanternHealAccum = 0;
+    this.playerLanternHealTextAccum = 0;
+    this.playerBatTracker = null;
+
+    // Beacon perk reset
+    this.playerBeaconBatteries = 3;
+    this.playerBeaconRechargeAt = [0, 0, 0];
+    for (const icon of this.playerBeaconBatteryIcons) icon.destroy();
+    this.playerBeaconBatteryIcons = [];
+    this.playerBeaconConeBoostUntil = 0;
+    this.playerBeaconIconsCreated = false;
 
     // Initialize fog eraser — recreate if destroyed (scene shutdown destroys game objects)
     if (!this.fogEraser || !this.fogEraser.active) {
@@ -200,7 +259,9 @@ export class EchoKit {
   // ── Player input ─────────────────────────────────────────────────────────
 
   handleInput(time: number, _delta: number, pointer: Phaser.Input.Pointer, mx: number, my: number): void {
+    void time;
     const player = this.arena.player;
+    const enemy = this.arena.npc;
     // Block input during bat attach
     if (this.playerBatAttach) return;
     // Block non-shot input during bat form
@@ -218,39 +279,78 @@ export class EchoKit {
     }
     this._prevPointerDown = pointer.isDown;
 
+    // Right-click — Psychic Energy power-up (E+/Q+)
+    const rightDown = pointer.rightButtonDown();
+    if (rightDown && !this._prevRightDown && this.playerEyes.length > 0 && !this.playerEyePowerUpArmed) {
+      if (this.arena.hasUpgrade('e') || this.arena.hasUpgrade('q')) {
+        const consumedEye = this.playerEyes.shift()!;
+        consumedEye.sprite.destroy();
+        this.playerEyePowerUpArmed = true;
+        this.arena.showFloatingText(player.x, player.y - 36, '👁 Power!', '#ff5566');
+      }
+    }
+    this._prevRightDown = rightDown;
+
     if (!batBlocked) {
       // E — Guess
       if (Phaser.Input.Keyboard.JustDown(this.arena.eKey)) {
         if (player.getCooldownRatio('echo-guess') >= 1) {
-          this.doGuess(mx, my, 'player');
+          let etx = mx, ety = my;
+          if (this.playerEyePowerUpArmed) { etx = enemy.x; ety = enemy.y; this.playerEyePowerUpArmed = false; }
+          this.doGuess(etx, ety, 'player');
           player.startCooldown('echo-guess');
         }
       }
 
-      // R — Lantern
+      // R — Lantern (Beacon perk: battery-gated)
       if (Phaser.Input.Keyboard.JustDown(this.arena.rKey)) {
         if (player.getCooldownRatio('echo-lantern') >= 1) {
-          this.doLantern(mx, my, 'player');
-          player.startCooldown('echo-lantern');
+          let rtx = mx, rty = my;
+          if (this.playerEyePowerUpArmed) { rtx = enemy.x; rty = enemy.y; this.playerEyePowerUpArmed = false; }
+          if (this.arena.hasPerk('player', 'beacon')) {
+            const nearEnemy = Phaser.Math.Distance.Between(rtx, rty, enemy.x, enemy.y) <= 35 && enemy.hp > 0;
+            const need = nearEnemy ? 2 : 1;
+            if (this.playerBeaconBatteries >= need) {
+              const now = this.arena.scene.sys.game.loop.now;
+              this._spendBeaconBatteries(need, now);
+              if (!nearEnemy) this.playerBeaconConeBoostUntil = now + 2000;
+              this.doLantern(rtx, rty, 'player');
+              player.startCooldown('echo-lantern');
+              this._updateBeaconIcons();
+            } else {
+              this.arena.showFloatingText(player.x, player.y - 36, '🔋 EMPTY', '#ff9900');
+            }
+          } else {
+            this.doLantern(rtx, rty, 'player');
+            player.startCooldown('echo-lantern');
+          }
         }
       }
 
       // Q — Eclipse
       if (Phaser.Input.Keyboard.JustDown(this.arena.qKey)) {
         if (player.getCooldownRatio('echo-eclipse') >= 1) {
-          this.doEclipse(mx, my, 'player');
+          let qtx = mx, qty = my;
+          if (this.playerEyePowerUpArmed) { qtx = enemy.x; qty = enemy.y; this.playerEyePowerUpArmed = false; }
+          this.doEclipse(qtx, qty, 'player');
           player.startCooldown('echo-eclipse');
         }
       }
     }
 
-    // F — Bat Form (allowed even in bat form to exit early? No — only usable when not in bat form)
-    if (!batBlocked) {
-      if (Phaser.Input.Keyboard.JustDown(this.arena.fKey)) {
-        if (player.getCooldownRatio('echo-bat') >= 1) {
-          this.doBatForm(mx, my, 'player');
-          player.startCooldown('echo-bat');
-        }
+    // F — Bat Form (F+ allows recast to cancel; otherwise only usable outside bat form)
+    if (Phaser.Input.Keyboard.JustDown(this.arena.fKey)) {
+      if (this.playerBatFormActive && !this.playerBatAttach && this.arena.hasUpgrade('f')) {
+        // Alpha Bat cancel — free, no cooldown spent
+        this.playerBatFormActive = false;
+        this.playerBatFormEndsAt = 0;
+        player.setScale(1.0);
+        player.clearTint();
+      } else if (!batBlocked && player.getCooldownRatio('echo-bat') >= 1) {
+        let ftx = mx, fty = my;
+        if (this.playerEyePowerUpArmed) { ftx = enemy.x; fty = enemy.y; this.playerEyePowerUpArmed = false; }
+        this.doBatForm(ftx, fty, 'player');
+        player.startCooldown('echo-bat');
       }
     }
   }
@@ -270,6 +370,60 @@ export class EchoKit {
     this.checkLanternShatter(time, isPlayer, isNpc);
     if (isNpc) this.updateNpcEclipseRandom(time);
     if (isPlayer) this.updateLanternIndicator();
+    if (isPlayer) {
+      this.updateEyes(time);
+      this.updateLightTrails(time);
+      this.updateLanternHeal(delta);
+      this.updateBatTracker(time);
+      this.updateBeaconBatteries(time);
+    }
+  }
+
+  private updateBeaconBatteries(time: number): void {
+    if (!this.arena.hasPerk('player', 'beacon')) return;
+    const player = this.arena.player;
+    // Lazy-create battery icons
+    if (!this.playerBeaconIconsCreated) {
+      this.playerBeaconIconsCreated = true;
+      for (let i = 0; i < 3; i++) {
+        const icon = this.arena.scene.add.text(0, 0, '🔋', { fontSize: '14px' }).setOrigin(0.5).setDepth(20);
+        this.playerBeaconBatteryIcons.push(icon);
+      }
+    }
+    // Recharge spent batteries
+    for (let i = 0; i < 3; i++) {
+      if (this.playerBeaconRechargeAt[i] > 0 && time >= this.playerBeaconRechargeAt[i]) {
+        this.playerBeaconRechargeAt[i] = 0;
+        this.playerBeaconBatteries = Math.min(3, this.playerBeaconBatteries + 1);
+        this.arena.showFloatingText(player.x, player.y - 50, '🔋 +1', '#ffee44');
+        this._updateBeaconIcons();
+      }
+    }
+    // Reposition icons above player
+    for (let i = 0; i < this.playerBeaconBatteryIcons.length; i++) {
+      const icon = this.playerBeaconBatteryIcons[i];
+      icon.setPosition(player.x + (i - 1) * 16, player.y - 48);
+      icon.setAlpha(i < this.playerBeaconBatteries ? 1 : 0.3);
+    }
+  }
+
+  private _spendBeaconBatteries(count: number, now: number): void {
+    for (let spent = 0; spent < count; spent++) {
+      this.playerBeaconBatteries = Math.max(0, this.playerBeaconBatteries - 1);
+      // Fill lowest empty recharge slot
+      for (let j = 0; j < 3; j++) {
+        if (this.playerBeaconRechargeAt[j] === 0) {
+          this.playerBeaconRechargeAt[j] = now + 8000;
+          break;
+        }
+      }
+    }
+  }
+
+  private _updateBeaconIcons(): void {
+    for (let i = 0; i < this.playerBeaconBatteryIcons.length; i++) {
+      this.playerBeaconBatteryIcons[i].setAlpha(i < this.playerBeaconBatteries ? 1 : 0.3);
+    }
   }
 
   private updateLanternIndicator(): void {
@@ -313,8 +467,20 @@ export class EchoKit {
       }
 
       // Player reveal
-      const playerRadius = this.playerBatFormActive ? 45 : this.playerLanternActive ? 128 : 90;
-      this.fogEraser.fillCircle(player.x, player.y, playerRadius);
+      if (this.arena.hasPerk('player', 'beacon')) {
+        const ptr = this.arena.pointer;
+        const aimAngle = Math.atan2(ptr.worldY - player.y, ptr.worldX - player.x);
+        const range = this.playerBatFormActive ? 60 : this.playerBeaconConeBoostUntil > time ? 156 : 130;
+        const halfAngle = Phaser.Math.DegToRad(35);
+        this.fogEraser.beginPath();
+        this.fogEraser.moveTo(player.x, player.y);
+        this.fogEraser.arc(player.x, player.y, range, aimAngle - halfAngle, aimAngle + halfAngle, false);
+        this.fogEraser.closePath();
+        this.fogEraser.fillPath();
+      } else {
+        const playerRadius = this.playerBatFormActive ? 45 : this.playerLanternActive ? 128 : 90;
+        this.fogEraser.fillCircle(player.x, player.y, playerRadius);
+      }
 
       // Guess reveals (temporary)
       for (const r of this.guessReveals) {
@@ -376,6 +542,17 @@ export class EchoKit {
           p.bounceCount++;
           p.lastBounceAt = time;
           if (p.bounceCount > 5) { p.active = false; continue; }
+          // Click+ Re-location: bend toward cursor (player) or player position (NPC)
+          if (this.arena.hasUpgrade('click')) {
+            const homeX = p.owner === 'player' ? this.arena.pointer.worldX : this.arena.player.x;
+            const homeY = p.owner === 'player' ? this.arena.pointer.worldY : this.arena.player.y;
+            const desiredAngle = Math.atan2(homeY - p.y, homeX - p.x);
+            const currentAngle = Math.atan2(p.vy, p.vx);
+            const spd = Math.hypot(p.vx, p.vy);
+            const blended = Phaser.Math.Angle.RotateTo(currentAngle, desiredAngle, 0.6);
+            p.vx = Math.cos(blended) * spd;
+            p.vy = Math.sin(blended) * spd;
+          }
         }
       }
 
@@ -427,6 +604,10 @@ export class EchoKit {
       this.arena.spawnHitFlash(enemy.x, enemy.y, 0xaaaaff);
       this.arena.showFloatingText(caster.x, caster.y - 40, 'Vision', '#ffdd44');
       this.guessReveals.push({ x: enemy.x, y: enemy.y, expiresAt: time + 500 });
+      // E+ spawn psychic eye
+      if (owner === 'player' && this.arena.hasUpgrade('e')) {
+        this.spawnPsychicEye();
+      }
     } else {
       // AoE check
       const aoeDist = Phaser.Math.Distance.Between(tx, ty, enemy.x, enemy.y);
@@ -467,6 +648,8 @@ export class EchoKit {
       // Toggle lantern
       if (this.playerLanternActive) {
         this.playerLanternActive = false;
+        this.playerLanternHealAccum = 0;
+        this.playerLanternHealTextAccum = 0;
         this.arena.showFloatingText(caster.x, caster.y - 36, 'Lantern Off', '#aaaaff');
       } else {
         this.playerLanternActive = true;
@@ -485,9 +668,10 @@ export class EchoKit {
       .setStrokeStyle(2, 0xddddff);
     const hpBar = new HealthBar(this.arena.scene, 25);
     hpBar['graphics'].setDepth(17); // bump above fog
+    const lightGfx = this.arena.hasUpgrade('r') ? this.arena.scene.add.graphics().setDepth(15) : null;
     this.echoSummons.push({
       sprite, hpBar, hp: 25, maxHp: 25, x, y, owner,
-      expiresAt: time + 10000, shootAccum: 0,
+      expiresAt: time + 10000, shootAccum: 0, lightGfx,
     });
   }
 
@@ -503,6 +687,7 @@ export class EchoKit {
       if (s.hp <= 0 || time > s.expiresAt) {
         s.sprite.destroy();
         s.hpBar.destroy();
+        if (s.lightGfx) s.lightGfx.destroy();
         this.echoSummons.splice(i, 1);
         continue;
       }
@@ -521,6 +706,13 @@ export class EchoKit {
 
       s.sprite.setPosition(s.x, s.y);
       s.hpBar.update(s.x, s.y, s.hp);
+      if (s.lightGfx) {
+        s.lightGfx.clear();
+        s.lightGfx.fillStyle(0xfff7cc, 0.18);
+        s.lightGfx.fillCircle(s.x, s.y, 28);
+        s.lightGfx.fillStyle(0xfff7cc, 0.35);
+        s.lightGfx.fillCircle(s.x, s.y, 14);
+      }
 
       // Take incoming hits (simple proximity damage check from projectiles)
       // Note: ArenaScene projectiles are Phaser physics objects; we check overlap manually
@@ -583,11 +775,14 @@ export class EchoKit {
   }
 
   private checkLanternShatter(time: number, isPlayer: boolean, _isNpc: boolean): void {
+    void time;
     if (!isPlayer || !this.playerLanternActive) return;
     const player = this.arena.player;
     if (player.hp < this.playerLanternHp) {
       // Took damage — shatter
       this.playerLanternActive = false;
+      this.playerLanternHealAccum = 0;
+      this.playerLanternHealTextAccum = 0;
       this.arena.showFloatingText(player.x, player.y - 40, 'Lantern Shattered!', '#ff8844');
       this.arena.spawnHitFlash(player.x, player.y, 0xffffaa);
     }
@@ -608,9 +803,21 @@ export class EchoKit {
       if (owner === 'player') {
         this.playerBatAttach = { targetRef: enemy, drainAccum: 0, endsAt: time + 3000, owner: 'player' };
         caster.isInvincible = true;
+        // Bug 1 fix: also show bat form visually during attach
+        this.playerBatFormActive = true;
+        this.playerBatFormEndsAt = time + 3000;
+        caster.setScale(0.5);
+        if (this.arena.hasUpgrade('f')) {
+          caster.setTint(0x888888);
+          this.playerBatTracker = { targetRef: enemy, expiresAt: time + 8000, lastPingAt: time };
+        }
       } else {
         this.npcBatAttach = { targetRef: enemy, drainAccum: 0, endsAt: time + 3000, owner: 'npc' };
         caster.isInvincible = true;
+        // Bug 1 fix (NPC mirror)
+        this.npcBatFormActive = true;
+        this.npcBatFormEndsAt = time + 3000;
+        caster.setScale(0.5);
       }
     } else {
       // Bat form mode
@@ -619,6 +826,7 @@ export class EchoKit {
         this.playerBatFormEndsAt = time + 5000;
         caster.setScale(0.5);
         this.arena.showFloatingText(caster.x, caster.y - 40, 'Bat Form!', '#ccccff');
+        if (this.arena.hasUpgrade('f')) caster.setTint(0x888888);
       } else {
         this.npcBatFormActive = true;
         this.npcBatFormEndsAt = time + 5000;
@@ -638,9 +846,15 @@ export class EchoKit {
       if (target.hp <= 0 || time > attach.endsAt) {
         // Detach
         caster.isInvincible = false;
-        if (owner === 'player') this.playerBatAttach = null;
-        else this.npcBatAttach = null;
+        if (owner === 'player') {
+          this.playerBatAttach = null;
+          this.playerBatFormActive = false; // Bug 1 fix
+        } else {
+          this.npcBatAttach = null;
+          this.npcBatFormActive = false; // Bug 1 fix
+        }
         caster.setScale(1.0);
+        caster.clearTint();
         return;
       }
 
@@ -672,6 +886,7 @@ export class EchoKit {
     const batActive = owner === 'player' ? this.playerBatFormActive : this.npcBatFormActive;
     if (batActive && time > (owner === 'player' ? this.playerBatFormEndsAt : this.npcBatFormEndsAt)) {
       caster.setScale(1.0);
+      caster.clearTint();
       if (owner === 'player') {
         this.playerBatFormActive = false;
         this.arena.showFloatingText(caster.x, caster.y - 36, 'Returned', '#aaaaff');
@@ -722,6 +937,14 @@ export class EchoKit {
       this.eclipseRevealUntil = time + 4000;
       this.eclipseRevealNpcChangeDirAt = 0; // force immediate direction change
       this.arena.showFloatingText(caster.x, caster.y - 36, 'Total Eclipse!', '#ffffaa');
+      // Bug 2 fix: actually scramble enemy aim via the standard offset channel
+      enemy.aimOffsetBonusDeg = 90;
+      enemy.aimOffsetBonusUntil = time + 4000;
+      // Q+ grant 3 psychic eyes
+      if (owner === 'player' && this.arena.hasUpgrade('q')) {
+        for (let i = 0; i < 3; i++) this.spawnPsychicEye();
+        this.arena.showFloatingText(caster.x, caster.y - 54, '👁 ×3', '#aaddff');
+      }
     }
   }
 
@@ -753,7 +976,11 @@ export class EchoKit {
           l.cx - Math.cos(l.angle) * l.len / 2, l.cy - Math.sin(l.angle) * l.len / 2,
           l.cx + Math.cos(l.angle) * l.len / 2, l.cy + Math.sin(l.angle) * l.len / 2,
         );
-        this.arena.scene.tweens.add({ targets: flash, alpha: 0, duration: 300, onComplete: () => flash.destroy() });
+        if (this.arena.hasUpgrade('q') && l.owner === 'player') {
+          this.arena.scene.tweens.add({ targets: flash, alpha: 0, duration: 300, delay: 2000, onComplete: () => flash.destroy() });
+        } else {
+          this.arena.scene.tweens.add({ targets: flash, alpha: 0, duration: 300, onComplete: () => flash.destroy() });
+        }
         l.gfx.destroy();
         this.eclipseLines.splice(i, 1);
         continue;
@@ -791,6 +1018,133 @@ export class EchoKit {
       x: npc.x + Math.cos(this.eclipseRevealNpcRandomDir) * dist,
       y: npc.y + Math.sin(this.eclipseRevealNpcRandomDir) * dist,
     };
+  }
+
+  // ── Psychic Eyes (E+/Q+) ─────────────────────────────────────────────────
+
+  private spawnPsychicEye(): void {
+    if (this.playerEyes.length >= 5) {
+      this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 36, '(max)', '#888888');
+      return;
+    }
+    const player = this.arena.player;
+    const sprite = this.arena.scene.add.image(player.x, player.y - 24, 'echo-psychic-eye')
+      .setDepth(20).setScale(0.9);
+    this.playerEyes.push({ sprite, angleOffset: Math.random() * Math.PI * 2 });
+  }
+
+  private updateEyes(time: number): void {
+    if (this.playerEyes.length === 0) return;
+    const player = this.arena.player;
+    for (const eye of this.playerEyes) {
+      const ex = player.x + Math.cos(time / 600 + eye.angleOffset) * 26;
+      const ey = player.y + Math.sin(time / 600 + eye.angleOffset) * 26;
+      eye.sprite.setPosition(ex, ey);
+      eye.sprite.setTint(this.playerEyePowerUpArmed ? 0xff5566 : 0xffffff);
+    }
+  }
+
+  // Public: called from ArenaScene dodge handler
+  tryConsumeEyeForDodge(x: number, y: number, dx: number, dy: number): void {
+    if (this.playerEyes.length === 0) return;
+    if (!this.arena.hasUpgrade('e') && !this.arena.hasUpgrade('q')) return;
+    const eye = this.playerEyes.shift()!;
+    eye.sprite.destroy();
+    const time = this.arena.scene.time.now;
+    const totalDist = 520 * 0.28;
+    const pts: { x: number; y: number }[] = [];
+    for (let i = 0; i <= 6; i++) {
+      pts.push({ x: x + dx * totalDist * (i / 6), y: y + dy * totalDist * (i / 6) });
+    }
+    const gfx = this.arena.scene.add.graphics().setDepth(18);
+    this.playerLightTrails.push({ gfx, pts, expiresAt: time + 3000, lastTickAt: 0 });
+  }
+
+  private updateLightTrails(time: number): void {
+    const npc = this.arena.npc;
+    for (let i = this.playerLightTrails.length - 1; i >= 0; i--) {
+      const trail = this.playerLightTrails[i];
+      if (time > trail.expiresAt) {
+        trail.gfx.destroy();
+        this.playerLightTrails.splice(i, 1);
+        continue;
+      }
+
+      // Damage tick every 800 ms
+      if (time - trail.lastTickAt >= 800) {
+        trail.lastTickAt = time;
+        if (npc.hp > 0) {
+          let hit = false;
+          for (let j = 0; j < trail.pts.length - 1 && !hit; j++) {
+            const ax = trail.pts[j].x, ay = trail.pts[j].y;
+            const bx = trail.pts[j + 1].x, by = trail.pts[j + 1].y;
+            const ddx = bx - ax, ddy = by - ay;
+            const lenSq = ddx * ddx + ddy * ddy;
+            const t = lenSq > 0 ? Math.max(0, Math.min(1, ((npc.x - ax) * ddx + (npc.y - ay) * ddy) / lenSq)) : 0;
+            const closestDist = Phaser.Math.Distance.Between(npc.x, npc.y, ax + t * ddx, ay + t * ddy);
+            if (closestDist <= 14) {
+              npc.takeDamage(8);
+              this.arena.spawnHitFlash(npc.x, npc.y, 0xffffaa);
+              this.arena.showFloatingText(npc.x, npc.y - 24, 'Light', '#ffffaa');
+              hit = true;
+            }
+          }
+        }
+      }
+
+      // Render fading polyline
+      const elapsed = time - (trail.expiresAt - 3000);
+      const alpha = Math.max(0, 0.9 * (1 - elapsed / 3000));
+      trail.gfx.clear();
+      trail.gfx.lineStyle(8, 0xffffff, alpha);
+      trail.gfx.beginPath();
+      trail.gfx.moveTo(trail.pts[0].x, trail.pts[0].y);
+      for (let j = 1; j < trail.pts.length; j++) {
+        trail.gfx.lineTo(trail.pts[j].x, trail.pts[j].y);
+      }
+      trail.gfx.strokePath();
+    }
+  }
+
+  // ── Lantern Heal (R+) ────────────────────────────────────────────────────
+
+  private updateLanternHeal(delta: number): void {
+    if (!this.playerLanternActive || !this.arena.hasUpgrade('r')) return;
+    this.playerLanternHealAccum += delta;
+    if (this.playerLanternHealAccum >= 200) {
+      this.playerLanternHealAccum -= 200;
+      this.arena.healCaster('player', 1);
+      this.playerLanternHealTextAccum += 200;
+      if (this.playerLanternHealTextAccum >= 1000) {
+        this.playerLanternHealTextAccum -= 1000;
+        const player = this.arena.player;
+        this.arena.showFloatingText(player.x, player.y - 42, '+1 ❤', '#88ff88');
+      }
+    }
+  }
+
+  // ── Bat Tracker (F+) ────────────────────────────────────────────────────
+
+  private updateBatTracker(time: number): void {
+    if (!this.playerBatTracker) return;
+    const t = this.playerBatTracker;
+    if (time > t.expiresAt || t.targetRef.hp <= 0) {
+      this.playerBatTracker = null;
+      return;
+    }
+    if (time - t.lastPingAt >= 3000) {
+      t.lastPingAt = time;
+      const scene = this.arena.scene;
+      const ping = scene.add.graphics().setDepth(22);
+      ping.fillStyle(0x44ff66, 0.6);
+      ping.fillCircle(t.targetRef.x, t.targetRef.y, 10);
+      scene.tweens.add({
+        targets: ping,
+        scaleX: 1.8, scaleY: 1.8, alpha: 0, duration: 600,
+        onComplete: () => ping.destroy(),
+      });
+      this.arena.showFloatingText(t.targetRef.x, t.targetRef.y - 28, 'ping', '#44ff66');
+    }
   }
 
   // ── NPC dispatchers ───────────────────────────────────────────────────────
