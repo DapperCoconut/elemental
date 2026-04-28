@@ -19,6 +19,7 @@ export interface LightArenaApi {
   readonly width: number;
   readonly height: number;
   hasUpgrade(slot: string): boolean;
+  hasPerk(perkId: string): boolean;
   applyNpcSpeedMult(factor: number): void;
   spawnHitFlash(x: number, y: number, color: number): void;
   spawnDamageNumber(x: number, y: number, amount: number): void;
@@ -75,6 +76,18 @@ export class LightKit {
   private lightDisarmIndicators: Map<Fighter, Phaser.GameObjects.Text> = new Map();
   private lightFallenAngelDaggerAccum = 0;
   private lightAllUpgradesTextureSwapped = false;
+
+  // ── Flicker perk state ────────────────────────────────────────────────
+  private flickerSpearActive = false;
+  private flickerSpearX = 0;
+  private flickerSpearY = 0;
+  private flickerSpearVx = 0;
+  private flickerSpearVy = 0;
+  private flickerSpearAngle = 0;
+  private flickerSpearStuck = false;
+  private flickerSpearStuckAt = 0;
+  private flickerSpearHitEnemies: Set<Fighter> = new Set();
+  private flickerSpearPullDealt = false;
 
   // ── NPC state ─────────────────────────────────────────────────────────
   private npcLightMarkedExpiry = 0;
@@ -165,6 +178,18 @@ export class LightKit {
     this.lightDisarmIndicators.clear();
     this.lightFallenAngelDaggerAccum = 0;
     this.lightAllUpgradesTextureSwapped = false;
+
+    // Flicker perk
+    this.flickerSpearActive = false;
+    this.flickerSpearX = 0;
+    this.flickerSpearY = 0;
+    this.flickerSpearVx = 0;
+    this.flickerSpearVy = 0;
+    this.flickerSpearAngle = 0;
+    this.flickerSpearStuck = false;
+    this.flickerSpearStuckAt = 0;
+    this.flickerSpearHitEnemies = new Set();
+    this.flickerSpearPullDealt = false;
 
     this.npcLightMarkedExpiry = 0;
     this.npcLightPhotonOrbs.forEach((o) => o.sprite.destroy());
@@ -493,6 +518,92 @@ export class LightKit {
         }
       }
 
+      // ── Flicker spear flight / pull ──────────────────────────────────
+      if (this.flickerSpearActive) {
+        const dt = delta / 1000;
+        const worldW = scene.scale.width;
+        const worldH = scene.scale.height;
+
+        if (!this.flickerSpearStuck) {
+          // Move spear
+          this.flickerSpearX += this.flickerSpearVx * dt;
+          this.flickerSpearY += this.flickerSpearVy * dt;
+          // Update sprite
+          if (this.lightSpearSprite) {
+            this.lightSpearSprite.x = this.flickerSpearX;
+            this.lightSpearSprite.y = this.flickerSpearY;
+            this.lightSpearSprite.rotation = this.flickerSpearAngle;
+          }
+          // Pierce enemies
+          for (const enemy of this.arena.enemies) {
+            if (!enemy.active || enemy.hp <= 0) continue;
+            if (this.flickerSpearHitEnemies.has(enemy)) continue;
+            const dist = Phaser.Math.Distance.Between(this.flickerSpearX, this.flickerSpearY, enemy.x, enemy.y);
+            if (dist < 20) {
+              this.flickerSpearHitEnemies.add(enemy);
+              enemy.takeDamage(10);
+              // Mark the enemy (same as tap-click: 2s, +15% incoming damage)
+              this.lightMarkedTarget = enemy;
+              this.lightMarkedExpiry = Math.max(this.lightMarkedExpiry, time + 2000);
+              this.arena.showFloatingText(enemy.x, enemy.y - 28, '✨ HIGHLIGHTED', '#fff4a8');
+              this.arena.spawnHitFlash(enemy.x, enemy.y, 0xfff4a8);
+            }
+          }
+          // Wall check
+          if (this.flickerSpearX < 0 || this.flickerSpearX > worldW ||
+              this.flickerSpearY < 0 || this.flickerSpearY > worldH) {
+            this.flickerSpearX = Math.max(8, Math.min(worldW - 8, this.flickerSpearX));
+            this.flickerSpearY = Math.max(8, Math.min(worldH - 8, this.flickerSpearY));
+            this.flickerSpearStuck = true;
+            this.flickerSpearStuckAt = time;
+            this.flickerSpearVx = 0;
+            this.flickerSpearVy = 0;
+            if (this.lightSpearSprite) {
+              this.lightSpearSprite.x = this.flickerSpearX;
+              this.lightSpearSprite.y = this.flickerSpearY;
+            }
+          }
+        } else {
+          // Stuck — wait 1 second then pull player
+          if (!this.flickerSpearPullDealt && time >= this.flickerSpearStuckAt + 1000) {
+            this.flickerSpearPullDealt = true;
+            const dx = this.flickerSpearX - player.x;
+            const dy = this.flickerSpearY - player.y;
+            const len = Math.sqrt(dx * dx + dy * dy);
+            if (len > 0) {
+              const speed = 540;
+              playerBody.setVelocity((dx / len) * speed, (dy / len) * speed);
+              const travelMs = Math.min(700, (len / speed) * 1000);
+              const stuckX = this.flickerSpearX;
+              const stuckY = this.flickerSpearY;
+              scene.time.delayedCall(travelMs, () => {
+                if (player.active) playerBody.setVelocity(0, 0);
+                const hasClickUp = this.arena.hasUpgrade('click');
+                for (const enemy of this.arena.enemies) {
+                  if (!enemy.active || enemy.hp <= 0) continue;
+                  if (Phaser.Math.Distance.Between(player.x, player.y, enemy.x, enemy.y) < 40) {
+                    const dmg = hasClickUp
+                      ? 6 + Math.round(100 * player.dodgeChance)
+                      : 6 + Math.round(Math.hypot(playerBody.velocity.x, playerBody.velocity.y) / 15);
+                    enemy.takeDamage(Math.max(6, dmg));
+                    this.arena.spawnHitFlash(enemy.x, enemy.y, 0xfff4a8);
+                    this.arena.showFloatingText(enemy.x, enemy.y - 20, `💥 ${Math.max(6, dmg)}`, '#fff4a8');
+                  }
+                }
+                void stuckX; void stuckY;
+              });
+            }
+            // Destroy spear after pull completes
+            scene.time.delayedCall(800, () => {
+              this.lightSpearSprite?.destroy();
+              this.lightSpearSprite = null;
+              this.flickerSpearActive = false;
+              this.flickerSpearStuck = false;
+            });
+          }
+        }
+      }
+
       void speedMag;
     }
 
@@ -696,11 +807,27 @@ export class LightKit {
           }
         }
       }
+      // Release of held spear: Flicker perk launches it, otherwise despawn
+      if (heldMs >= 150 && this.arena.hasPerk('flicker')) {
+        const ang = Math.atan2(mouseY - player.y, mouseX - player.x);
+        this.flickerSpearActive = true;
+        this.flickerSpearX = this.lightSpearSprite?.x ?? player.x + Math.cos(ang) * 36;
+        this.flickerSpearY = this.lightSpearSprite?.y ?? player.y + Math.sin(ang) * 36;
+        this.flickerSpearVx = Math.cos(ang) * 700;
+        this.flickerSpearVy = Math.sin(ang) * 700;
+        this.flickerSpearAngle = ang;
+        this.flickerSpearStuck = false;
+        this.flickerSpearStuckAt = 0;
+        this.flickerSpearHitEnemies = new Set();
+        this.flickerSpearPullDealt = false;
+        // Keep sprite alive — update() will drive it
+      } else {
+        if (this.lightSpearSprite) { this.lightSpearSprite.destroy(); this.lightSpearSprite = null; }
+      }
       this.lightSpearClickArmed = false;
       this.lightSpearHolding = false;
       this.lightSkewerTargetHooked = false;
       this.lightSkewerTarget = null;
-      if (this.lightSpearSprite) { this.lightSpearSprite.destroy(); this.lightSpearSprite = null; }
     }
 
     // E: Photosynthespark (or E+ Retinal Flash)

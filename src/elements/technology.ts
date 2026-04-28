@@ -4,7 +4,7 @@ import { Ability, CastContext } from './Ability';
 const gearGive: Ability = {
   id: 'tech-gear-give',
   name: 'Gear.Give',
-  description: 'Spawn a cycling item box (cycles every 0.5s). Click again to grab the weapon shown. Active weapon replaces Click for 20s. Weapons: Sword Whip, Disc Dancer, Helix Shot, Code Cruncher.',
+  description: 'Spawn a cycling item box (cycles every 0.5s). Click again to grab the weapon shown. Active weapon replaces Click for 20s. Weapons: Sword Whip, Disc Dancer, Helix Shot, Code Cruncher. Click+: adds Dragger, String Cutter. Q+: adds Rifle (3 shots; press Q when empty to reload).',
   displayKey: 'Click',
   cooldown: 0,
   cast(ctx) { ctx.techGearGiveActivate(); },

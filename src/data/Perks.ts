@@ -109,7 +109,7 @@ export const ALL_PERKS: ElementPerks[] = [
         name: 'Purge',
         emoji: '⏳',
         color: 0xff3300,
-        description: 'While Remain is active, all cooldowns tick down twice as fast. Ability bars pulse red.',
+        description: 'Recast Remain while active to extend it 3s and turn the aura red. After it ends you take no damage. One-shot — locks Remain for the rest of the match.',
         ingredients: ['fire', 'earth', 'air'],
         tier: 'triple',
         elementId: 'sand',
@@ -281,6 +281,16 @@ export const ALL_PERKS: ElementPerks[] = [
         tier: 'abstract-triple',
         elementId: 'death',
       },
+      {
+        id: 'demon',
+        name: 'Demon',
+        emoji: '😈',
+        color: 0x881133,
+        description: 'Replace 1000 Blades with dagger projectiles. Daggers start at 2 damage and deal +2 per 5 kills (instead of +1). With Click+, daggers pierce through 2 enemies (3 total hits max).',
+        ingredients: ['fate', 'sound', 'light'],
+        tier: 'abstract-triple',
+        elementId: 'death',
+      },
     ],
   },
 
@@ -302,16 +312,48 @@ export const ALL_PERKS: ElementPerks[] = [
     ],
   },
 
+  // ── New abstract-triple perks ─────────────────────────────────────────────
+  {
+    elementId: 'sound',
+    perks: [
+      {
+        id: 'harmony',
+        name: 'Harmony',
+        emoji: '🎶',
+        color: 0xff99ff,
+        description: 'Replaces Sonic Grapple with a Sonic Grenade: flies to cursor, lingers 2s, then explodes. Note-timed grenades auto-explode on arrival. On hit: star aura + +15% song speed & move speed for 20s (stackable). With F upgrade: perfect-timed grenades also refresh the cooldown (max 3/cycle, same as Grace Note).',
+        ingredients: ['slime', 'sound', 'light'],
+        tier: 'abstract-triple',
+        elementId: 'sound',
+      },
+    ],
+  },
+  {
+    elementId: 'light',
+    perks: [
+      {
+        id: 'flicker',
+        name: 'Flicker',
+        emoji: '🪝',
+        color: 0xfff4a8,
+        description: 'Releasing a held Light spear launches it as a grapple — it pierces enemies (moderate damage + mark), sticks to the nearest wall, then 1s later pulls you to it. Pull damage scales with movement speed (or dodge chance with Click+).',
+        ingredients: ['slime', 'fate', 'light'],
+        tier: 'abstract-triple',
+        elementId: 'light',
+      },
+    ],
+  },
+
   // ── Quad perks (Lab Level 3, 5 nuclei) ───────────────────────────────────
   {
     elementId: 'fire',
     perks: [
       {
-        id: 'candle',
-        name: 'Candle',
-        emoji: '🕯️',
-        color: 0xffaa55,
-        description: "Flame Dash no longer explodes; instead summons a Candle Golem (25 HP) at your start position. It walks toward the enemy and blocks projectiles. Click to ignite (AOE every 1.2s). Q-bomb ignites it stronger (redder, AOE every 0.8s). Max 1 golem (2 with Propulsion upgrade). Melts after 8s.",
+        id: 'alcohol',
+        name: 'Alcohol',
+        emoji: '🍺',
+        color: 0xc97a3a,
+        description: "Flame Dash → Drink Up! Tap E (no flask): get a flask. Tap E (with flask): drink — 25% less damage for 6s, then 50% slow for 2s (extra drinks stack slow penalty). Hold E ≥250ms (with flask): throw an alcohol puddle. Enemies in puddle 2s+ get confused; fire hits ignite it into a flame DOT. Flame Body + intoxicated: heat aura damages nearby enemies.",
         ingredients: ['fire', 'water', 'life', 'air'],
         tier: 'quad',
         elementId: 'fire',
@@ -360,6 +402,96 @@ export const ALL_PERKS: ElementPerks[] = [
         ingredients: ['water', 'life', 'air', 'earth'],
         tier: 'quad',
         elementId: 'water',
+      },
+    ],
+  },
+  {
+    elementId: 'plasma',
+    perks: [
+      {
+        id: 'solar',
+        name: 'Solar',
+        emoji: '☀️',
+        color: 0xff9900,
+        description: "Plasma's R can be recast while a current is alive to instantly stop its movement. Stopped currents last 20s then explode at each endpoint (15 dmg AoE). When two plasma currents' beams overlap, spawn a plasma puddle near the intersection every 0.5s (puddles last 1s, deal rapid tick damage).",
+        ingredients: ['slime', 'fate', 'sound', 'light'],
+        tier: 'quad',
+        elementId: 'plasma',
+      },
+    ],
+  },
+  {
+    elementId: 'magnet',
+    perks: [
+      {
+        id: 'blade',
+        name: 'Blade',
+        emoji: '⚔️',
+        color: 0x6688cc,
+        description: 'Iron rods become iron swords (16 base damage, double rod damage). Magnetic forces affect swords 2× as strongly — Mag Pulse and magnetized pull frequently overshoot the target.',
+        ingredients: ['electricity', 'slime', 'fate', 'light'],
+        tier: 'quad',
+        elementId: 'magnet',
+      },
+    ],
+  },
+  {
+    elementId: 'metal',
+    perks: [
+      {
+        id: 'gunpowder',
+        name: 'Gunpowder',
+        emoji: '💥',
+        color: 0xccaa44,
+        description: 'Click now fires all weapons (Fire at Will) with 1/3 the normal E cooldown. E becomes Discharge: launch a magazine clip to cursor → AoE explosion + 20 equidistant hitscan beams. Discharge deletes your oldest weapon. New weapons fill empty slots before replacing occupied ones.',
+        ingredients: ['electricity', 'fate', 'sound', 'light'],
+        tier: 'quad',
+        elementId: 'metal',
+      },
+    ],
+  },
+  {
+    elementId: 'fate',
+    perks: [
+      {
+        id: 'paper',
+        name: 'Paper',
+        emoji: '🃏',
+        color: 0xeeddbb,
+        description: 'Right-click costs 1 coin and fires 5 random cards in a shotgun spread (2s cooldown). Damage per card scales with the best poker hand formed: high card=1, pair=2, two pair=4, three of a kind=6, straight=8, flush=10, full house=14, four of a kind=20, straight flush=30, royal flush=40.',
+        ingredients: ['electricity', 'slime', 'fate', 'sound'],
+        tier: 'quad',
+        elementId: 'fate',
+      },
+    ],
+  },
+  {
+    elementId: 'quantum',
+    perks: [
+      {
+        id: 'sonic-boom',
+        name: 'Sonic Boom',
+        emoji: '💨',
+        color: 0x44ffcc,
+        description: "Replace Quantum's wave click with a Terraria-style whip using the same charge-zone bar. Red = short range/low damage; yellow = medium; green = max range/damage; gold = max range + AoE at tip. Any hit deals damage; hitting at maximum range deals 2× damage + 0.5s stun.",
+        ingredients: ['electricity', 'slime', 'sound', 'light'],
+        tier: 'quad',
+        elementId: 'quantum',
+      },
+    ],
+  },
+  {
+    elementId: 'rubber',
+    perks: [
+      {
+        id: 'uber-gear',
+        name: 'Uber-Gear',
+        emoji: '☁️',
+        color: 0xffffff,
+        description: "Q activates a 10s (15s with Q+) Uber-Gear form. When it ends, your HP is forced to 0 (or 80 damage with Q+). While active: +100% speed, enhanced Click/E/R/F/Barrage, and dodge becomes a stretchy caterpillar lunge. With Vulcanization, gain all bonuses without cooldown penalties.",
+        ingredients: ['electricity', 'slime', 'fate', 'sound', 'light'],
+        tier: 'penta',
+        elementId: 'rubber',
       },
     ],
   },

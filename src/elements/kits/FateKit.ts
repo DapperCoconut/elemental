@@ -38,7 +38,9 @@ export interface FateArenaApi {
   get fKey(): Phaser.Input.Keyboard.Key;
   get qKey(): Phaser.Input.Keyboard.Key;
   get nukeChanneling(): boolean;
+  get rightPointerWasDown(): boolean;
   hasUpgrade(slot: string): boolean;
+  hasPerk(perkId: string): boolean;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   dealAoeDamageToNpc(cx: number, cy: number, radius: number, damage: number): void;
@@ -119,6 +121,9 @@ export class FateKit {
   private lastMouseX = 0;
   private lastMouseY = 0;
 
+  // ── Paper perk state ──────────────────────────────────────────────
+  private paperCooldownUntil = 0;
+
   // ── Upgrade state ─────────────────────────────────────────────────
   private debtCoins = 0;
   // Oozing Luck (R+)
@@ -184,6 +189,7 @@ export class FateKit {
     if (this.playerAllIn) { if (this.playerAllIn.sprite.active) this.playerAllIn.sprite.destroy(); this.playerAllIn = null; }
     if (this.npcAllIn) { if (this.npcAllIn.sprite.active) this.npcAllIn.sprite.destroy(); this.npcAllIn = null; }
 
+    this.paperCooldownUntil = 0;
     this.debtCoins = 0;
     this.oozingLuckUntil = 0;
     this.oozingLuckCooldownUntil = 0;
@@ -223,6 +229,14 @@ export class FateKit {
       return;
     }
     const player = this.arena.player;
+
+    // ── Right-click: Paper perk card throw ─────────────────────────
+    const rightJustDown = pointer.rightButtonDown() && !this.arena.rightPointerWasDown;
+    if (rightJustDown && this.arena.hasPerk('paper')) {
+      if (time >= this.paperCooldownUntil) {
+        this.doPaperCardThrow(mouseX, mouseY, time);
+      }
+    }
 
     // ── Click: Coin Toss ────────────────────────────────────────────
     if (pointer.isDown) {
@@ -873,6 +887,72 @@ export class FateKit {
       if (d < bestDist) { bestDist = d; best = sm; }
     }
     return best;
+  }
+
+  private evaluatePokerHand(cards: { rank: number; suit: number }[]): { name: string; dmg: number } {
+    const ranks = cards.map(c => c.rank).sort((a, b) => a - b);
+    const suits = cards.map(c => c.suit);
+
+    const rankCounts: Record<number, number> = {};
+    for (const r of ranks) rankCounts[r] = (rankCounts[r] ?? 0) + 1;
+    const counts = Object.values(rankCounts).sort((a, b) => b - a);
+
+    const isFlush = suits.every(s => s === suits[0]);
+    const isStrRanks = ranks[4] - ranks[0] === 4 && counts[0] === 1;
+    // Special case: A-2-3-4-5 (wheel straight) — ace can be low
+    const isWheelStraight = JSON.stringify(ranks) === JSON.stringify([2, 3, 4, 5, 14]);
+    const isStraight = isStrRanks || isWheelStraight;
+    const isRoyal = isFlush && JSON.stringify(ranks) === JSON.stringify([10, 11, 12, 13, 14]);
+
+    if (isRoyal)                            return { name: 'ROYAL FLUSH!',    dmg: 40 };
+    if (isFlush && isStraight)              return { name: 'STRAIGHT FLUSH!', dmg: 30 };
+    if (counts[0] === 4)                    return { name: 'FOUR OF A KIND!', dmg: 20 };
+    if (counts[0] === 3 && counts[1] === 2) return { name: 'FULL HOUSE!',     dmg: 14 };
+    if (isFlush)                            return { name: 'FLUSH!',          dmg: 10 };
+    if (isStraight)                         return { name: 'STRAIGHT!',       dmg: 8  };
+    if (counts[0] === 3)                    return { name: 'THREE OF A KIND!', dmg: 6 };
+    if (counts[0] === 2 && counts[1] === 2) return { name: 'TWO PAIR!',       dmg: 4  };
+    if (counts[0] === 2)                    return { name: 'PAIR!',            dmg: 2  };
+    return                                         { name: 'HIGH CARD',        dmg: 1  };
+  }
+
+  private doPaperCardThrow(tx: number, ty: number, time: number): void {
+    const scene = this.arena.scene;
+    const player = this.arena.player;
+
+    // Cost: 1 coin
+    if (this.playerCoins < 1) {
+      this.arena.showFloatingText(player.x, player.y - 28, '💸 Need 1 coin!', '#ff8888');
+      return;
+    }
+    this.playerCoins -= 1;
+
+    // Generate 5 random cards from a standard 52-card deck
+    const RANKS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
+    const cards: { rank: number; suit: number }[] = [];
+    for (let i = 0; i < 5; i++) {
+      cards.push({
+        rank: RANKS[Math.floor(Math.random() * RANKS.length)],
+        suit: Math.floor(Math.random() * 4),
+      });
+    }
+
+    const { name, dmg } = this.evaluatePokerHand(cards);
+
+    // Fire 5 projectiles in a shotgun spread: -24° to +24° in 12° steps
+    const baseAngle = Math.atan2(ty - player.y, tx - player.x);
+    const spreadAngles = [-24, -12, 0, 12, 24].map(d => baseAngle + d * (Math.PI / 180));
+
+    for (const angle of spreadAngles) {
+      const proj = new Projectile(scene, player.x, player.y, 'proj-fate-card', dmg, true);
+      this.arena.projectiles.add(proj);
+      proj.launch(Math.cos(angle) * 500, Math.sin(angle) * 500);
+      proj.setRotation(angle);
+    }
+
+    // Show hand result floating text
+    this.arena.showFloatingText(player.x, player.y - 48, `🃏 ${name} ×${dmg}`, '#eeddbb');
+    this.paperCooldownUntil = time + 2000;
   }
 
   private grantCoins(n: number): void {

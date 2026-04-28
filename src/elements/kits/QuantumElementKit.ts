@@ -21,12 +21,15 @@ export interface QuantumElementArenaApi {
   get sceneHeight(): number;
   get isPvP(): boolean;
   hasUpgrade(slot: string): boolean;
+  hasPerk(perkId: string): boolean;
   spawnHitFlash(x: number, y: number, color: number): void;
+  spawnDamageNumber(x: number, y: number, amount: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   dealAoeDamage(owner: 'player' | 'npc', cx: number, cy: number, radius: number, damage: number): void;
   startCooldown(owner: 'player' | 'npc', abilityId: string): void;
   setSpeedMult(owner: 'player' | 'npc', mult: number): void;
   lockPlayer(durationMs: number): void;
+  stunNpc(durationMs: number): void;
 }
 
 // ── Internal types ───────────────────────────────────────────────────────────
@@ -179,6 +182,17 @@ export class QuantumElementKit {
   private styleFeatTween: Phaser.Tweens.Tween | null = null;
   private styleFreshChip: Phaser.GameObjects.Text | null = null;
 
+  // ── Sonic Boom (perk: whip attack) ───────────────────────────────────────
+  private sonicBoomWhipActive = false;
+  private sonicBoomWhipStartTime = 0;
+  private sonicBoomWhipAngle = 0;
+  private sonicBoomWhipMaxRange = 200;
+  private sonicBoomWhipDamage = 6;
+  private sonicBoomWhipZone: 'red' | 'yellow' | 'green' | 'gold' = 'red';
+  private sonicBoomWhipHit = false;
+  private sonicBoomWhipGfx: Phaser.GameObjects.Graphics | null = null;
+  private sonicBoomWhipGoldBonus = false;
+
   // ── NPC state ────────────────────────────────────────────────────────────
   private npcMechanicEnd = 0;
   private npcNhilegoActive = false;
@@ -274,6 +288,12 @@ export class QuantumElementKit {
     this.stylePoints = 0;
     this.styleDrainAccum = 0;
     this._teardownStyleHud();
+
+    this.sonicBoomWhipGfx?.destroy();
+    this.sonicBoomWhipGfx = null;
+    this.sonicBoomWhipActive = false;
+    this.sonicBoomWhipHit = false;
+    this.sonicBoomWhipGoldBonus = false;
 
     this.npcMechanicEnd = 0;
     this.npcNhilegoActive = false;
@@ -372,7 +392,11 @@ export class QuantumElementKit {
       this.chargeBarIndicatorGfx = null;
       this.chargeHoldStart = 0;
       if (time >= this.playerWaveSetEndsAt) {
-        this.doPlayerQuantumWave(pointer.worldX, pointer.worldY, zone, time);
+        if (this.api.hasPerk('sonic-boom')) {
+          this.doSonicBoomWhip(pointer.worldX, pointer.worldY, zone, time);
+        } else {
+          this.doPlayerQuantumWave(pointer.worldX, pointer.worldY, zone, time);
+        }
       }
     }
 
@@ -409,6 +433,7 @@ export class QuantumElementKit {
 
     if (api.elementId === 'quantum') {
       this._tickVibration(time);
+      this._tickSonicBoomWhip(time);
     }
 
     if (this.playerNhilegoActive) this._tickNhilego(time, 'player');
@@ -1306,6 +1331,124 @@ export class QuantumElementKit {
       this.playerWaveTimers.push(ev);
     }
     this.playerWaveSetEndsAt = t + (bulletCount - 1) * interval + bulletDuration;
+  }
+
+  private doSonicBoomWhip(tx: number, ty: number, zone: 'red' | 'yellow' | 'green' | 'gold', time: number): void {
+    const player = this.api.player;
+    const angle = Math.atan2(ty - player.y, tx - player.x);
+
+    const stats: Record<string, { maxRange: number; damage: number }> = {
+      red:    { maxRange: 200, damage: 6  },
+      yellow: { maxRange: 350, damage: 10 },
+      green:  { maxRange: 500, damage: 16 },
+      gold:   { maxRange: 500, damage: 16 },
+    };
+
+    this.sonicBoomWhipActive = true;
+    this.sonicBoomWhipStartTime = time;
+    this.sonicBoomWhipAngle = angle;
+    this.sonicBoomWhipMaxRange = stats[zone].maxRange;
+    this.sonicBoomWhipDamage = stats[zone].damage;
+    this.sonicBoomWhipZone = zone;
+    this.sonicBoomWhipHit = false;
+    this.sonicBoomWhipGoldBonus = zone === 'gold';
+
+    if (this.sonicBoomWhipGfx) { this.sonicBoomWhipGfx.destroy(); }
+    this.sonicBoomWhipGfx = this.api.scene.add.graphics().setDepth(11);
+
+    const colors: Record<string, number> = {
+      red: 0xff4444, yellow: 0xffcc00, green: 0x44ff88, gold: 0xffdd00,
+    };
+    (this.sonicBoomWhipGfx as any)._whipColor = colors[zone];
+  }
+
+  private _tickSonicBoomWhip(time: number): void {
+    if (!this.sonicBoomWhipActive) return;
+
+    const WHIP_DURATION_MS = 300;
+    const elapsed = time - this.sonicBoomWhipStartTime;
+    const t = Math.min(elapsed / WHIP_DURATION_MS, 1);
+
+    const player = this.api.player;
+    const gfx = this.sonicBoomWhipGfx;
+
+    if (gfx && gfx.active) {
+      gfx.clear();
+      const color: number = (gfx as any)._whipColor ?? 0xffffff;
+      gfx.lineStyle(4, color, 1);
+      gfx.beginPath();
+
+      const SEGMENTS = 10;
+      const angle = this.sonicBoomWhipAngle;
+      const dx = Math.cos(angle);
+      const dy = Math.sin(angle);
+      const px = -Math.sin(angle); // perpendicular
+      const py = Math.cos(angle);
+
+      for (let i = 0; i <= SEGMENTS; i++) {
+        const frac = (i / SEGMENTS) * t;
+        const dist = frac * this.sonicBoomWhipMaxRange;
+        const perpOffset = Math.sin(frac * Math.PI) * 20;
+        const wx = player.x + dx * dist + px * perpOffset;
+        const wy = player.y + dy * dist + py * perpOffset;
+        if (i === 0) gfx.moveTo(wx, wy);
+        else gfx.lineTo(wx, wy);
+      }
+      gfx.strokePath();
+
+      // Hit detection
+      if (!this.sonicBoomWhipHit) {
+        const npc = this.api.npc;
+        if (npc.active) {
+          for (let i = 1; i <= SEGMENTS; i++) {
+            const frac = (i / SEGMENTS) * t;
+            const dist = frac * this.sonicBoomWhipMaxRange;
+            const perpOffset = Math.sin(frac * Math.PI) * 20;
+            const wx = player.x + dx * dist + px * perpOffset;
+            const wy = player.y + dy * dist + py * perpOffset;
+
+            const distToEnemy = Phaser.Math.Distance.Between(wx, wy, npc.x, npc.y);
+            if (distToEnemy < 16) {
+              this.sonicBoomWhipHit = true;
+              const isMaxRange = frac >= 0.85;
+              const dmg = isMaxRange ? this.sonicBoomWhipDamage * 2 : this.sonicBoomWhipDamage;
+              npc.takeDamage(dmg);
+              this.api.spawnHitFlash(npc.x, npc.y, color);
+              this.api.spawnDamageNumber(npc.x, npc.y, dmg);
+              if (isMaxRange) {
+                this.api.stunNpc(500);
+                this.api.showFloatingText(npc.x, npc.y - 36, 'MAX RANGE!', '#44ffcc');
+              }
+              break;
+            }
+          }
+        }
+      }
+
+      // Gold zone bonus: AoE flash at tip when fully extended
+      if (t >= 1 && this.sonicBoomWhipGoldBonus) {
+        this.sonicBoomWhipGoldBonus = false;
+        const tipX = player.x + dx * this.sonicBoomWhipMaxRange;
+        const tipY = player.y + dy * this.sonicBoomWhipMaxRange;
+        const flash = this.api.scene.add.circle(tipX, tipY, 40, 0xffdd00, 0.6).setDepth(10);
+        this.api.scene.tweens.add({
+          targets: flash, alpha: 0, scaleX: 1.4, scaleY: 1.4, duration: 300,
+          onComplete: () => { if (flash?.active) flash.destroy(); },
+        });
+        const npc = this.api.npc;
+        if (npc.active && Phaser.Math.Distance.Between(tipX, tipY, npc.x, npc.y) < 40) {
+          npc.takeDamage(8);
+          this.api.spawnHitFlash(npc.x, npc.y, 0xffdd00);
+          this.api.spawnDamageNumber(npc.x, npc.y, 8);
+        }
+      }
+    }
+
+    if (t >= 1) {
+      this.sonicBoomWhipGfx?.destroy();
+      this.sonicBoomWhipGfx = null;
+      this.sonicBoomWhipActive = false;
+    }
   }
 
   doNpcQuantumWave(tx: number, ty: number): void {

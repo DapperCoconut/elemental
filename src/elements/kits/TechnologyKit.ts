@@ -135,11 +135,11 @@ export class TechnologyKit {
   // ── Gear.Give (item box & active weapon) ──────────────────────────────
   private techClickArmed = false;
   private techGearBoxActive = false;
-  private techGearBoxWeapon = 0; // 0=sword-whip 1=disc-dancer 2=helix-shot 3=code-cruncher 4=dragger 5=string-cutter
+  private techGearBoxWeapon = 0; // list index into getWeaponList()
   private techGearBoxCycleAccum = 0;
   private techGearBoxGraphics: Phaser.GameObjects.Graphics | null = null;
   private techGearBoxLabel: Phaser.GameObjects.Text | null = null;
-  private techActiveWeapon: -1 | 0 | 1 | 2 | 3 | 4 | 5 = -1;
+  private techActiveWeapon: -1 | 0 | 1 | 2 | 3 | 4 | 5 | 6 = -1;
   private techActiveWeaponExpiry = 0;
   private techWeaponLastFireAt = 0;
   private techHelixToggle = false;
@@ -189,8 +189,16 @@ export class TechnologyKit {
   }> = [];
   private playerPortalCooldownEndAt = 0;
 
-  // ── Risky.Expansion (Q+): duration slider ─────────────────────────────
-  private techDomainDuration = 0;
+  // ── Rifle weapon (Q+: Rifle.Reload) ──────────────────────────────────
+  private techRifleAmmo = 3;
+  private techRifleReloading = false;
+  private techRifleReloadStart = 0;
+  private readonly techRifleReloadDuration = 1000;
+  private techRifleReloadBarsHit: [boolean, boolean, boolean] = [false, false, false];
+  private techRifleReloadBarBg: Phaser.GameObjects.Rectangle | null = null;
+  private techRifleReloadBarFill: Phaser.GameObjects.Rectangle | null = null;
+  private techRifleReloadZones: Phaser.GameObjects.Rectangle[] = [];
+  private techRifleReloadIndicator: Phaser.GameObjects.Rectangle | null = null;
 
   // ── Disc Dancer projectile pairs ──────────────────────────────────────
   private techDiscPairs: Array<{
@@ -290,7 +298,7 @@ export class TechnologyKit {
     if (this.techJailBoxNpc) { this.techJailBoxNpc.graphics?.destroy(); this.techJailBoxNpc = null; }
     if (this.techJailBoxPlayer) { this.techJailBoxPlayer.graphics?.destroy(); this.techJailBoxPlayer = null; }
     this.techDomainActive = false; this.techDomainExpiry = 0;
-    this.techDomainInstability = 0; this.techDomainBias = 0; this.techDomainCollapse = 0; this.techDomainAbuse = 0; this.techDomainDuration = 0; this.techDomainAdrenalineExpiresAt = 0;
+    this.techDomainInstability = 0; this.techDomainBias = 0; this.techDomainCollapse = 0; this.techDomainAbuse = 0; this.techDomainAdrenalineExpiresAt = 0;
     this.techDomainShardAngleOffset = 0; this.techDomainExplosionAccum = 0;
     this.techDomainShardProjAccum = 0; this.techDomainBorderTickAccum = 0; this.techDomainDraggingSlider = -1;
     this.playerProtestorsSpawned = false; this.npcProtestorsSpawned = false;
@@ -331,8 +339,10 @@ export class TechnologyKit {
     if (this.techBackroomsActive) this.exitBackrooms(false);
     this.techBackroomsActive = false;
     this.playerPortalCooldownEndAt = 0;
-    // Duration slider state
-    this.techDomainDuration = 0;
+    // Rifle state
+    this.techRifleAmmo = 3; this.techRifleReloading = false; this.techRifleReloadStart = 0;
+    this.techRifleReloadBarsHit = [false, false, false];
+    this.destroyRifleReloadBar();
   }
 
   // ── handleInput (formerly handleTechnologyInput) ──────────────────────
@@ -360,6 +370,11 @@ export class TechnologyKit {
         clickConsumedByBox = true;
       }
     }
+    // Rifle reload minigame click check (takes priority over weapon fire since rifle is empty)
+    if (!clickConsumedByBox && this.techRifleReloading && clickJustDown) {
+      this.checkRifleReloadHit(time);
+      clickConsumedByBox = true;
+    }
     // Weapon attacks (some need just-down, helix-shot needs held)
     if (!clickConsumedByBox && this.techActiveWeapon >= 0 && time < this.techActiveWeaponExpiry) {
       const w = this.techActiveWeapon;
@@ -369,6 +384,7 @@ export class TechnologyKit {
       else if (w === 3 && clickJustDown) this.doTechCodeCruncher('player', mouseX, mouseY, time);
       else if (w === 4 && clickDown) this.updateDragger('player', mouseX, mouseY, time);
       else if (w === 5 && clickJustDown) this.fireStringCutter('player', time);
+      else if (w === 6 && clickJustDown) this.doTechRifleShot(mouseX, mouseY, time);
     }
 
     // E: Dev.Console
@@ -427,9 +443,13 @@ export class TechnologyKit {
       }
     }
 
-    // Q: Domain.Expansion (blocked by ransomware; blocked in backrooms)
-    if (Phaser.Input.Keyboard.JustDown(this.arena.qKey) && !this.techDomainActive && this.techDomainDraggingSlider < 0 && !ransomwared && !this.techBackroomsActive) {
-      this.arena.player.castAbility('tech-domain', ctx);
+    // Q: Rifle reload (Q+ upgrade, rifle active and empty) OR Domain.Expansion
+    if (Phaser.Input.Keyboard.JustDown(this.arena.qKey) && !ransomwared) {
+      if (this.arena.hasUpgrade('q') && this.techActiveWeapon === 6 && this.techRifleAmmo === 0 && !this.techRifleReloading && time < this.techActiveWeaponExpiry) {
+        this.startRifleReload(time);
+      } else if (!this.techDomainActive && this.techDomainDraggingSlider < 0 && !this.techBackroomsActive) {
+        this.arena.player.castAbility('tech-domain', ctx);
+      }
     }
 
     void time;
@@ -857,13 +877,134 @@ export class TechnologyKit {
     }
   }
 
-  // ── Q+ public method: teleport player to cursor during domain ──────────
-  teleportPlayerToCursor(mouseX: number, mouseY: number): void {
-    const { width: W, height: H } = this.arena.scene.scale;
-    const tx = Phaser.Math.Clamp(mouseX, 32, W - 32);
-    const ty = Phaser.Math.Clamp(mouseY, 32, H - 32);
-    this.arena.player.setPosition(tx, ty);
-    this.arena.spawnHitFlash(tx, ty, 0x44ccaa);
+  // ── Q+: Rifle weapon helpers ───────────────────────────────────────────
+
+  private getWeaponList(): number[] {
+    const list = [0, 1, 2, 3];
+    if (this.arena.hasUpgrade('click')) list.push(4, 5);
+    if (this.arena.hasUpgrade('q')) list.push(6);
+    return list;
+  }
+
+  private doTechRifleShot(mouseX: number, mouseY: number, time: number): void {
+    if (this.techRifleAmmo <= 0 || this.techRifleReloading) return;
+    if (time - this.techWeaponLastFireAt < 200) return;
+    this.techWeaponLastFireAt = time;
+    this.techRifleAmmo--;
+
+    const { player, npc, scene } = this.arena;
+    const dx = mouseX - player.x, dy = mouseY - player.y;
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    const ux = dx / len, uy = dy / len;
+    const angle = Math.atan2(uy, ux);
+    const { width: W } = scene.scale;
+
+    const gfx = scene.add.graphics().setDepth(18);
+    gfx.lineStyle(2, 0xaabb99, 0.9);
+    gfx.lineBetween(player.x, player.y, player.x + ux * W, player.y + uy * W);
+    scene.tweens.add({ targets: gfx, alpha: 0, duration: 150, onComplete: () => gfx.destroy() });
+
+    if (this.beamHitsTarget(player.x, player.y, angle, npc, 28)) {
+      npc.takeDamage(8);
+      this.arena.spawnHitFlash(npc.x, npc.y, 0xaabb99);
+      this.arena.spawnDamageNumber(npc.x, npc.y - 20, 8);
+    }
+
+    if (this.techRifleAmmo === 0) {
+      this.arena.showFloatingText(player.x, player.y - 36, 'EMPTY! Press Q', '#ffaa00');
+    }
+  }
+
+  private startRifleReload(time: number): void {
+    this.techRifleReloading = true;
+    this.techRifleReloadStart = time;
+    this.techRifleReloadBarsHit = [false, false, false];
+    this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 36, 'Reloading…', '#88ffaa');
+  }
+
+  private checkRifleReloadHit(time: number): void {
+    if (!this.techRifleReloading) return;
+    const progress = (time - this.techRifleReloadStart) / this.techRifleReloadDuration;
+    const zones = [
+      { start: 0.10, end: 0.25 },
+      { start: 0.42, end: 0.57 },
+      { start: 0.72, end: 0.87 },
+    ];
+    for (let i = 0; i < 3; i++) {
+      if (!this.techRifleReloadBarsHit[i] && progress >= zones[i].start && progress <= zones[i].end) {
+        this.techRifleReloadBarsHit[i] = true;
+        this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 42, `✓ ${i + 1}/3`, '#44ff44');
+        return;
+      }
+    }
+  }
+
+  private updateRifleReload(time: number): void {
+    if (!this.techRifleReloading) return;
+    this.drawRifleReloadBar(time, this.arena.player.x, this.arena.player.y);
+    if (time - this.techRifleReloadStart >= this.techRifleReloadDuration) {
+      const allHit = this.techRifleReloadBarsHit[0] && this.techRifleReloadBarsHit[1] && this.techRifleReloadBarsHit[2];
+      this.completeRifleReload(allHit);
+    }
+  }
+
+  private drawRifleReloadBar(time: number, px: number, py: number): void {
+    const barW = 66, barH = 8, barX = px - barW / 2, barY = py - 55;
+    const progress = Math.min(1, (time - this.techRifleReloadStart) / this.techRifleReloadDuration);
+    const { scene } = this.arena;
+    const zoneData = [
+      { start: 0.10, end: 0.25 },
+      { start: 0.42, end: 0.57 },
+      { start: 0.72, end: 0.87 },
+    ];
+
+    if (!this.techRifleReloadBarBg) {
+      this.techRifleReloadBarBg = scene.add.rectangle(px, barY, barW, barH, 0x335544, 0.85).setDepth(14);
+    }
+    this.techRifleReloadBarBg.setPosition(px, barY);
+
+    if (!this.techRifleReloadBarFill) {
+      this.techRifleReloadBarFill = scene.add.rectangle(barX, barY, 0, barH, 0x88ffaa, 0.5).setDepth(15).setOrigin(0, 0.5);
+    }
+    this.techRifleReloadBarFill.setPosition(barX, barY).setSize(progress * barW, barH);
+
+    while (this.techRifleReloadZones.length < 3) {
+      this.techRifleReloadZones.push(scene.add.rectangle(0, barY, 0, barH, 0xffff00, 0.9).setDepth(16));
+    }
+    for (let i = 0; i < 3; i++) {
+      const z = this.techRifleReloadZones[i];
+      const zd = zoneData[i];
+      const zX = barX + barW * zd.start;
+      const zW = barW * (zd.end - zd.start);
+      let color = 0xffff00;
+      if (this.techRifleReloadBarsHit[i]) color = 0x44ff44;
+      else if (progress > zd.end) color = 0xff3333;
+      z.setFillStyle(color, 0.9).setPosition(zX + zW / 2, barY).setSize(zW, barH);
+    }
+
+    if (!this.techRifleReloadIndicator) {
+      this.techRifleReloadIndicator = scene.add.rectangle(0, barY, 3, barH + 2, 0xff2222, 1).setDepth(17);
+    }
+    this.techRifleReloadIndicator.setPosition(barX + progress * barW, barY);
+  }
+
+  private destroyRifleReloadBar(): void {
+    this.techRifleReloadBarBg?.destroy(); this.techRifleReloadBarBg = null;
+    this.techRifleReloadBarFill?.destroy(); this.techRifleReloadBarFill = null;
+    for (const z of this.techRifleReloadZones) z.destroy();
+    this.techRifleReloadZones = [];
+    this.techRifleReloadIndicator?.destroy(); this.techRifleReloadIndicator = null;
+  }
+
+  private completeRifleReload(success: boolean): void {
+    this.techRifleReloading = false;
+    this.destroyRifleReloadBar();
+    if (success) {
+      this.techRifleAmmo = 3;
+      this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 36, 'RELOADED! ×3', '#44ffcc');
+    } else {
+      this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 36, 'RELOAD FAILED', '#ff4444');
+    }
   }
 
   // ── F+ Backrooms helpers ───────────────────────────────────────────────
@@ -1095,11 +1236,10 @@ export class TechnologyKit {
     if (isPlayer) {
       // Slider UI (top-left) — only for player caster
       const SLIDER_X = 20, SLIDER_W = 140, SLIDER_H = 10, KNOB_W = 14, KNOB_H = 20, DEPTH_UI = 58;
-      const hasRiskyExpansion = this.arena.hasUpgrade('q');
-      const sliderCount = hasRiskyExpansion ? 4 : 3;
-      const sliderColors = [0xff4400, 0xcc44ff, 0x0088ff, 0xff2222];
-      const sliderNames = ['Instability', 'Bias', 'Collapse', 'Duration (Risky!)'];
-      const sliderTextColors = ['#ccaaff', '#ccaaff', '#ccaaff', '#ff8888'];
+      const sliderCount = 3;
+      const sliderColors = [0xff4400, 0xcc44ff, 0x0088ff];
+      const sliderNames = ['Instability', 'Bias', 'Collapse'];
+      const sliderTextColors = ['#ccaaff', '#ccaaff', '#ccaaff'];
       this.techDomainSliderBgs = []; this.techDomainSliderFills = [];
       this.techDomainSliderKnobs = []; this.techDomainSliderLabels = [];
       for (let i = 0; i < sliderCount; i++) {
@@ -1116,7 +1256,6 @@ export class TechnologyKit {
           if (idx === 0) this.techDomainInstability = val;
           else if (idx === 1) this.techDomainBias = val;
           else if (idx === 2) this.techDomainCollapse = val;
-          else if (idx === 3) this.techDomainDuration = val;
           this.techDomainDraggingSlider = idx;
         });
         knob.on('dragend', () => { this.techDomainDraggingSlider = -1; });
@@ -1129,8 +1268,7 @@ export class TechnologyKit {
       this.techDomainAbuseBarFill = this.arena.scene.add.rectangle(SLIDER_X, abuseY, 0, SLIDER_H, 0xff2222, 0.95).setDepth(DEPTH_UI + 1).setOrigin(0, 0.5).setScrollFactor(0);
     }
     this.techDomainActive = true;
-    const durationMult = 1 + this.techDomainDuration / 100 * 0.5;
-    this.techDomainExpiry = this.arena.scene.time.now + 15000 * durationMult;
+    this.techDomainExpiry = this.arena.scene.time.now + 15000;
     if (this.arena.hasPerk(isPlayer ? 'player' : 'npc', 'adrenaline')) {
       this.techDomainAdrenalineExpiresAt = this.arena.scene.time.now + 8000;
     } else {
@@ -1193,28 +1331,32 @@ export class TechnologyKit {
   doTechGearGiveActivate(owner: 'player' | 'npc'): void {
     if (owner !== 'player') return;
     const caster = this.arena.player;
-    const weaponCount = this.arena.hasUpgrade('click') ? 6 : 4;
+    const weaponList = this.getWeaponList();
     if (this.techGearBoxActive) {
       // Select displayed weapon
-      this.techActiveWeapon = this.techGearBoxWeapon as 0 | 1 | 2 | 3 | 4 | 5;
+      const wid = weaponList[this.techGearBoxWeapon] as 0 | 1 | 2 | 3 | 4 | 5 | 6;
+      this.techActiveWeapon = wid;
       this.techActiveWeaponExpiry = this.arena.scene.time.now + 20000;
       this.techGearBoxActive = false;
       if (this.techGearBoxGraphics) { this.techGearBoxGraphics.destroy(); this.techGearBoxGraphics = null; }
       if (this.techGearBoxLabel) { this.techGearBoxLabel.destroy(); this.techGearBoxLabel = null; }
-      const weaponNames = ['Sword Whip', 'Disc Dancer', 'Helix Shot', 'Code Cruncher', 'Dragger', 'String Cutter'];
-      this.arena.spawnFloatingText(caster.x, caster.y - 36, weaponNames[this.techActiveWeapon], '#44ffcc');
+      const weaponNames = ['Sword Whip', 'Disc Dancer', 'Helix Shot', 'Code Cruncher', 'Dragger', 'String Cutter', 'Rifle'];
+      this.arena.spawnFloatingText(caster.x, caster.y - 36, weaponNames[wid], '#44ffcc');
       // Init weapon state
-      if (this.techActiveWeapon === 4) {
+      if (wid === 4) {
         this.playerDragger = { active: false, startedAt: 0, lastTickAt: 0, lastWallHitAt: 0, beamGfx: this.arena.scene.add.graphics().setDepth(18) };
-      } else if (this.techActiveWeapon === 5) {
+      } else if (wid === 5) {
         this.playerStringCutter = { angle: 0, lastFireAt: 0, lineGfx: this.arena.scene.add.graphics().setDepth(18) };
+      } else if (wid === 6) {
+        this.techRifleAmmo = 3;
+        this.techRifleReloading = false;
+        this.destroyRifleReloadBar();
       }
     } else if (this.techActiveWeapon === -1) {
       // Open item box
       this.techGearBoxActive = true;
       this.techGearBoxWeapon = 0;
       this.techGearBoxCycleAccum = 0;
-      void weaponCount;
       this.techGearBoxGraphics = this.arena.scene.add.graphics().setDepth(28);
       this.techGearBoxLabel = this.arena.scene.add.text(caster.x, caster.y - 56, '?', {
         fontSize: '13px', color: '#ffffff', fontFamily: 'monospace', stroke: '#000033', strokeThickness: 2,
@@ -1526,33 +1668,37 @@ export class TechnologyKit {
 
     // ── Gear.Give item box cycling ────────────────────────────────
     if (isPlayerTech && this.techGearBoxActive) {
-      const weaponCount = this.arena.hasUpgrade('click') ? 6 : 4;
+      const weaponList = this.getWeaponList();
       this.techGearBoxCycleAccum += delta;
       if (this.techGearBoxCycleAccum >= 500) {
         this.techGearBoxCycleAccum -= 500;
-        this.techGearBoxWeapon = (this.techGearBoxWeapon + 1) % weaponCount;
+        this.techGearBoxWeapon = (this.techGearBoxWeapon + 1) % weaponList.length;
       }
-      const weaponColors = [0xffee44, 0x2299ff, 0x44ff77, 0xff4433, 0x44ff44, 0xffffff];
-      const weaponLabels = ['⚔ Sword', '⊕ Disc', '~ Helix', '💣 Crunch', '🪝 Drag', '✂ String'];
+      const weaponColors = [0xffee44, 0x2299ff, 0x44ff77, 0xff4433, 0x44ff44, 0xffffff, 0xaabb99];
+      const weaponLabels = ['⚔ Sword', '⊕ Disc', '~ Helix', '💣 Crunch', '🪝 Drag', '✂ String', '🎯 Rifle'];
+      const wid = weaponList[this.techGearBoxWeapon];
       const boxX = this.arena.player.x;
       const boxY = this.arena.player.y - 56;
       if (this.techGearBoxGraphics) {
         this.techGearBoxGraphics.clear();
-        this.techGearBoxGraphics.fillStyle(weaponColors[this.techGearBoxWeapon], 0.85);
+        this.techGearBoxGraphics.fillStyle(weaponColors[wid], 0.85);
         this.techGearBoxGraphics.fillRect(boxX - 26, boxY - 14, 52, 28);
         this.techGearBoxGraphics.lineStyle(2, 0xffffff, 0.9);
         this.techGearBoxGraphics.strokeRect(boxX - 26, boxY - 14, 52, 28);
       }
       if (this.techGearBoxLabel) {
-        this.techGearBoxLabel.setPosition(boxX, boxY).setText(weaponLabels[this.techGearBoxWeapon]);
+        this.techGearBoxLabel.setPosition(boxX, boxY).setText(weaponLabels[wid]);
       }
     }
     // Weapon expiry
     if (isPlayerTech && this.techActiveWeapon >= 0 && time >= this.techActiveWeaponExpiry) {
       if (this.techActiveWeapon === 4 && this.playerDragger?.beamGfx) { this.playerDragger.beamGfx.clear(); }
       if (this.techActiveWeapon === 5 && this.playerStringCutter?.lineGfx) { this.playerStringCutter.lineGfx.clear(); this.playerStringCutter = null; }
+      if (this.techActiveWeapon === 6) { this.techRifleReloading = false; this.destroyRifleReloadBar(); }
       this.techActiveWeapon = -1;
     }
+    // Rifle reload update
+    if (isPlayerTech && this.techActiveWeapon === 6) this.updateRifleReload(time);
     // ── String Cutter rotating line ──────────────────────────────
     if (isPlayerTech && this.techActiveWeapon === 5 && this.playerStringCutter) {
       this.playerStringCutter.angle += 3 * delta / 1000;
@@ -1855,20 +2001,13 @@ export class TechnologyKit {
         this.techDomainCircle.strokeCircle(dcx, dcy, currentRadius);
       }
 
-      // Circular clamping (Q+ Risky.Expansion: player caster can walk outside)
-      const riskyExpansion = isPlayerTech && this.arena.hasUpgrade('q');
+      // Circular clamping — both fighters stay within domain radius
       for (const fighter of [this.arena.player, this.arena.npc]) {
-        const isPlayerFighter = fighter === this.arena.player;
         const fdx = fighter.x - dcx, fdy = fighter.y - dcy;
         const fdist = Math.sqrt(fdx * fdx + fdy * fdy);
         if (fdist > currentRadius - 22) {
-          if (riskyExpansion && isPlayerFighter && isPlayerTech) {
-            // Player can walk through — add abuse instead
-            this.playerAbuse = Math.min(100, this.playerAbuse + 5 * delta / 1000);
-          } else {
-            const ang = Math.atan2(fdy, fdx);
-            fighter.setPosition(dcx + Math.cos(ang) * (currentRadius - 22), dcy + Math.sin(ang) * (currentRadius - 22));
-          }
+          const ang = Math.atan2(fdy, fdx);
+          fighter.setPosition(dcx + Math.cos(ang) * (currentRadius - 22), dcy + Math.sin(ang) * (currentRadius - 22));
         }
       }
 
@@ -1933,11 +2072,6 @@ export class TechnologyKit {
         if (v > 0 && v <= 50) abuseRate += 3;
         else if (v > 50) abuseRate += 10;
       }
-      // Q+ Duration slider contributes 2× the normal rate
-      if (isPlayerTech && this.arena.hasUpgrade('q') && this.techDomainDuration > 0) {
-        if (this.techDomainDuration <= 50) abuseRate += 6;
-        else abuseRate += 20;
-      }
       const dOwner: 'player' | 'npc' = isPlayerTech ? 'player' : 'npc';
       if (!this.arena.hasPerk(dOwner, 'adrenaline')) {
         if (isPlayerTech) {
@@ -1960,7 +2094,7 @@ export class TechnologyKit {
       // Update slider UI
       if (isPlayerTech) {
         const SLIDER_X = 20, SLIDER_W = 140;
-        const sliderVals = [this.techDomainInstability, this.techDomainBias, this.techDomainCollapse, this.techDomainDuration];
+        const sliderVals = [this.techDomainInstability, this.techDomainBias, this.techDomainCollapse];
         const sliderCount = this.techDomainSliderFills.length;
         for (let i = 0; i < sliderCount; i++) {
           const ratio = sliderVals[i] / 100;

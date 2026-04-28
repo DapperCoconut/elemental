@@ -50,6 +50,8 @@ export interface NpcAiState {
   huntBloodMoonActive?: boolean;
   npcTimeRemainActive?: boolean;
   npcTimeHaltActive?: boolean;
+  npcTimeBountyAuraActive?: boolean;
+  npcTimeBounty?: number;
   npcTimeTimelessReady?: boolean;
   // Fate (alt-life)
   fateSlotMachineCount?: number;
@@ -1061,28 +1063,29 @@ export class NpcOpponent extends Fighter {
     if (aiState.npcTimeRemainActive) return null;
 
     if (!skipSpecials) {
-      // Timeless — when charged and low-moderate HP
+      // Always Noon — when charged
       if (aiState.npcTimeTimelessReady) {
         if (this.castAbility('time-timeless', buildContext(this.x, this.y))) return 'time-timeless';
       }
 
-      // Remain — activate when HP is low (12s CD handled by castAbility)
+      // Remain — activate when HP is low
       if (hpRatio < 0.40) {
         if (this.castAbility('time-remain', buildContext(this.x, this.y))) return 'time-remain';
       }
 
-      // Halt — when player is close or barrage is ramped up
-      if (dist < 220 && !aiState.npcTimeHaltActive) {
+      // Bounty — when bounty >= 2 and no aura active
+      const npcBounty = aiState.npcTimeBounty ?? 0;
+      if (npcBounty >= 2 && !aiState.npcTimeBountyAuraActive) {
         if (this.castAbility('time-halt', buildContext(this.x, this.y))) return 'time-halt';
       }
 
-      // Time Warp — shoot orb toward player
-      if (dist < 320) {
+      // Lasso — when at medium range
+      if (dist > 80 && dist < 400) {
         if (this.castAbility('time-warp', buildContext(aimX, aimY))) return 'time-warp';
       }
     }
 
-    // Barrage is handled per-frame in ArenaScene; nothing else to cast
+    // Revolver auto-fire handled in TimeKit.update
     return null;
   }
 

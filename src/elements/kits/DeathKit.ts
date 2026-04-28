@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
+import { Projectile } from '../../combat/Projectile';
 
 // ── Type definitions ──────────────────────────────────────────────────────────
 
@@ -189,6 +190,9 @@ export class DeathKit {
   // ── Click+ ────────────────────────────────────────────────────────────────
   private clickCounter = 0;
 
+  // ── Demon perk ────────────────────────────────────────────────────────────
+  private demonDaggerCooldownUntil = 0;
+
   // ── R+ execute ────────────────────────────────────────────────────────────
   private playerExecuteThreshold = 0.12;
   private static readonly EXECUTE_CAP = 0.30;
@@ -318,6 +322,9 @@ export class DeathKit {
     // Click+
     this.clickCounter = 0;
 
+    // Demon perk
+    this.demonDaggerCooldownUntil = 0;
+
     // R+
     this.playerExecuteThreshold = 0.12;
 
@@ -440,6 +447,37 @@ export class DeathKit {
   // ── Public do* methods (called from ArenaScene CastContext wiring) ─────────
 
   doDeath1000Blades(tx: number, ty: number, owner: 'player' | 'npc'): void {
+    // ── Demon perk: replace melee slash with a dagger projectile ─────────────
+    if (owner === 'player' && this.arena.hasPerk('player', 'demon')) {
+      const now = this.arena.scene.time.now;
+      if (now < this.demonDaggerCooldownUntil) return;
+      this.demonDaggerCooldownUntil = now + 200;
+
+      const player = this.arena.player;
+      const kills = this.kills;
+      const damage = 2 + Math.floor(kills / 5) * 2;
+
+      const dx = tx - player.x;
+      const dy = ty - player.y;
+      const len = Math.sqrt(dx * dx + dy * dy) || 1;
+
+      const proj = new Projectile(
+        this.arena.scene,
+        player.x,
+        player.y,
+        'proj-death-dagger',
+        damage,
+        true,
+      );
+      if (this.arena.hasUpgrade('click')) {
+        (proj as any).demonPierceLeft = 2;
+      }
+      this.arena.projectiles.add(proj);
+      proj.launch((dx / len) * 520, (dy / len) * 520);
+      proj.setRotation(Math.atan2(dy, dx));
+      return;
+    }
+
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const target = this.findClickTarget(tx, ty, owner);
     if (!target) return;

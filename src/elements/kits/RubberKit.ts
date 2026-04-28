@@ -65,6 +65,7 @@ export interface RubberArenaApi {
   readonly qKey: Phaser.Input.Keyboard.Key;
   readonly abilityBars: { fill: Phaser.GameObjects.Rectangle; maxWidth: number }[];
   hasUpgrade(slot: string): boolean;
+  hasPerk(perkId: string): boolean;
   setIsDodging(v: boolean): void;
   applyPlayerSpeedMult(f: number): void;
   applyNpcSpeedMult(f: number): void;
@@ -191,6 +192,36 @@ export class RubberKit {
   private npcFireDotTickAccum = 0;
   private npcFireDotAura: Phaser.GameObjects.Arc | null = null;
 
+  // ── Uber-Gear (perk) ──────────────────────────────────────────────────────
+  private uberGearActive = false;
+  private uberGearEnd = 0;
+  private uberGearSteamAccum = 0;
+
+  // Uber-Gear: Jump Rope (E replacement)
+  private uberGearJumpRopeActive = false;
+  private uberGearJumpRopeCharges = 0;
+  private uberGearJumpRopeEndsAt = 0;
+  private uberGearJumpRopeGfx: Phaser.GameObjects.Graphics | null = null;
+  private uberGearJumpRopeAy = 0; // y level of the rope (x spans full width)
+  // Speed/damage boost from jump rope charges (stacking duration)
+  private uberGearJumpRopeBoostUntil = 0;
+
+  // Uber-Gear: Squish (Barrage hit effect)
+  private uberGearSquishActive = false;
+  private uberGearSquishEndsAt = 0;
+  private uberGearSquishSlowPct = 0;
+
+  // Uber-Gear: Dodge stretch
+  private uberGearStretchActive = false;
+  private uberGearStretchGfx: Phaser.GameObjects.Graphics | null = null;
+  private uberGearStretchTarget = { x: 0, y: 0 };
+  private uberGearStretchAt = 0;
+  private uberGearSizeShrinkUntil = 0;
+
+  // Uber-Gear: Wall-push stars (F double-hit)
+  private uberGearStarSprites: Phaser.GameObjects.Arc[] = [];
+  private uberGearStarAngle = 0;
+
   constructor(arena: RubberArenaApi) {
     this.arena = arena;
   }
@@ -278,6 +309,29 @@ export class RubberKit {
     this.npcFireDotTickAccum = 0;
     this.npcFireDotAura?.destroy();
     this.npcFireDotAura = null;
+
+    // Uber-Gear
+    if (this.uberGearActive) {
+      player.clearTint();
+      player.sizeMult = 1; player.applySizeMult();
+    }
+    this.uberGearActive = false;
+    this.uberGearEnd = 0;
+    this.uberGearSteamAccum = 0;
+    this.uberGearJumpRopeGfx?.destroy(); this.uberGearJumpRopeGfx = null;
+    this.uberGearJumpRopeActive = false;
+    this.uberGearJumpRopeCharges = 0;
+    this.uberGearJumpRopeEndsAt = 0;
+    this.uberGearJumpRopeBoostUntil = 0;
+    this.uberGearSquishActive = false;
+    this.uberGearSquishEndsAt = 0;
+    this.uberGearSquishSlowPct = 0;
+    if (this.uberGearSquishActive) { npc.setScale(1); }
+    this.uberGearStretchGfx?.destroy(); this.uberGearStretchGfx = null;
+    this.uberGearStretchActive = false;
+    this.uberGearSizeShrinkUntil = 0;
+    for (const s of this.uberGearStarSprites) s.destroy();
+    this.uberGearStarSprites = [];
   }
 
   private ownsAnyRubberUpgrade(): boolean {
@@ -299,9 +353,9 @@ export class RubberKit {
     const justPressed = pointer.isDown && !this.arena.pointerWasDown;
     const justReleased = !pointer.isDown && this.arena.pointerWasDown;
 
-    // Right-click vulcanization
+    // Right-click vulcanization (disabled while Uber-Gear active)
     const rightDown = pointer.rightButtonDown();
-    if (this.vulcUnlocked && !this.bounceFormActive && !this.bounceBackActive && !this.rubberGearActive && !this.barrageActive && this.vulcCharge < 1) {
+    if (this.vulcUnlocked && !this.bounceFormActive && !this.bounceBackActive && !this.rubberGearActive && !this.barrageActive && !this.uberGearActive && this.vulcCharge < 1) {
       this.vulcCharging = rightDown;
     } else {
       this.vulcCharging = false;
@@ -310,7 +364,10 @@ export class RubberKit {
     const blocked = this.bounceFormActive || this.bounceBackActive || this.vulcCharging || this.barrageActive;
 
     // ── Punch: hold click to charge, release to fire ─────────────────────────
-    if (this.slingState === 'idle' && !blocked) {
+    // While Uber-Gear + Jump Rope active: left-click releases rope instead
+    if (this.uberGearActive && this.uberGearJumpRopeActive && justPressed) {
+      this.releaseUberGearJumpRope(mouseX, mouseY, time);
+    } else if (this.slingState === 'idle' && !blocked) {
       if (justPressed && time >= player.disarmedUntil) {
         this.punchHolding = true;
         this.punchHoldStart = time;
@@ -324,7 +381,9 @@ export class RubberKit {
         if (time >= player.disarmedUntil) {
           const holdMs = time - this.punchHoldStart;
           const resistance = this.arena.hasUpgrade('click') ? (1 + this.vulcCharge) : 1;
-          const pullRatio = Math.min(1, (holdMs / resistance) / PUNCH_MAX_HOLD_MS);
+          // Uber-Gear: punch charges twice as fast (halve effective hold time)
+          const uberHoldMs = this.uberGearActive ? holdMs * 2 : holdMs;
+          const pullRatio = Math.min(1, (uberHoldMs / resistance) / PUNCH_MAX_HOLD_MS);
           const ctx = this.arena.buildPlayerContext(mouseX, mouseY);
           player.castAbility('rubber-punch', ctx);
           this.startStretchPunch('player', mouseX, mouseY, pullRatio);
@@ -349,15 +408,22 @@ export class RubberKit {
     // ── E / R / F / Q abilities ───────────────────────────────────────────────
     const { eKey, rKey, fKey, qKey } = this.arena;
 
+    // Uber-Gear E: Jump Rope instead of Slingshot
     if (Phaser.Input.Keyboard.JustDown(eKey) && !blocked && time >= player.disarmedUntil) {
-      player.castAbility('rubber-sling', this.arena.buildPlayerContext(mouseX, mouseY));
+      if (this.uberGearActive) {
+        if (!this.uberGearJumpRopeActive) {
+          this.doUberGearJumpRope(time);
+        }
+      } else {
+        player.castAbility('rubber-sling', this.arena.buildPlayerContext(mouseX, mouseY));
+      }
     }
 
     if (Phaser.Input.Keyboard.JustDown(rKey) && !blocked && time >= player.disarmedUntil) {
       player.castAbility('rubber-bounce-form', this.arena.buildPlayerContext(mouseX, mouseY));
     }
 
-    // F: tap = Spring Slam; hold 200ms+ = Barrage (F+ required for barrage)
+    // F: tap = Spring Slam; hold 1s+ = Barrage (F+ required for barrage)
     if (fKey.isDown && !this.fKeyWasDown) {
       if (!blocked && this.springPhase === 'idle' && time >= player.disarmedUntil) {
         this.fHoldStart = time;
@@ -378,9 +444,33 @@ export class RubberKit {
     }
     this.fKeyWasDown = fKey.isDown;
 
-    if (Phaser.Input.Keyboard.JustDown(qKey) && !blocked && time >= player.disarmedUntil && !this.rubberGearActive) {
-      player.castAbility('rubber-bounce-back', this.arena.buildPlayerContext(mouseX, mouseY));
+    // Q: Uber-Gear perk overrides Bounce Back
+    if (Phaser.Input.Keyboard.JustDown(qKey) && !blocked && time >= player.disarmedUntil && !this.rubberGearActive && !this.uberGearActive) {
+      if (this.arena.hasPerk('uber-gear')) {
+        this.doUberGear(time);
+      } else {
+        player.castAbility('rubber-bounce-back', this.arena.buildPlayerContext(mouseX, mouseY));
+      }
     }
+  }
+
+  // ── Uber-Gear dodge suppress (checked in ArenaScene before normal dodge) ──
+  shouldSuppressUberGearDodge(mouseX: number, mouseY: number, time: number): boolean {
+    if (!this.uberGearActive) return false;
+    // If near jump rope, grant a charge instead of dodging
+    if (this.uberGearJumpRopeActive) {
+      const distToRope = Math.abs(this.arena.player.y - this.uberGearJumpRopeAy);
+      if (distToRope < 30) {
+        this.uberGearJumpRopeCharges++;
+        this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 36, '+1 ⚡', '#ffcc00');
+        return true;
+      }
+    }
+    // Otherwise: stretch-teleport dodge
+    if (!this.uberGearStretchActive) {
+      this.doUberGearStretch(mouseX, mouseY, time);
+    }
+    return true;
   }
 
   // ── applySlingMovement: called from ArenaScene when sling is pulling ───────
@@ -493,8 +583,15 @@ export class RubberKit {
       }
       const gearSpeedFactor = this.rubberGearActive ? 0.5 : 0;
       const netFactor = Math.max(0.5, 1 + this.vulcCharge - gearSpeedFactor);
-      player.cooldownMult = this.vulcPlayerCdMultBase * netFactor;
-      if (this.rubberGearActive) {
+      // Uber-Gear + Vulc: no cooldown penalties
+      if (this.uberGearActive) {
+        player.cooldownMult = this.vulcPlayerCdMultBase;
+      } else {
+        player.cooldownMult = this.vulcPlayerCdMultBase * netFactor;
+      }
+      if (this.uberGearActive) {
+        player.setTint(0xffffff);
+      } else if (this.rubberGearActive) {
         player.setTint(0xffaadd);
       } else if (this.vulcCharge > 0) {
         const v = Math.round(255 * (1 - 0.7 * this.vulcCharge));
@@ -514,7 +611,8 @@ export class RubberKit {
         }
       }
       if (this.vulcSlowTexts.length > 0) {
-        const netPct = Math.round((netFactor - 1) * 100);
+        const displayFactor = this.uberGearActive ? 1 : netFactor;
+        const netPct = Math.round((displayFactor - 1) * 100);
         for (const t of this.vulcSlowTexts) {
           if (netPct > 0) { t.setText(`${netPct}% slower`); t.setColor('#ff4444'); t.setVisible(true); }
           else if (netPct < 0) { t.setText(`${Math.abs(netPct)}% faster`); t.setColor('#44ff88'); t.setVisible(true); }
@@ -541,9 +639,115 @@ export class RubberKit {
       if (time > this.rubberGearEnd) this.expireRubberGear();
     }
 
-    // Barrage: lock movement + fire fists + expiry
+    // Uber-Gear form: speed boost + steam + expiry + all sub-systems
+    if (this.uberGearActive) {
+      this.arena.applyPlayerSpeedMult(2.0); // +100% speed
+      // Steam clouds (same as Rubber Gear)
+      this.uberGearSteamAccum += delta;
+      if (this.uberGearSteamAccum >= 80) {
+        this.uberGearSteamAccum -= 80;
+        const sc = this.arena.scene;
+        const arc = sc.add.circle(
+          player.x + (Math.random() - 0.5) * 20,
+          player.y - 16 + (Math.random() - 0.5) * 8,
+          4 + Math.random() * 4,
+          0xddddff, 0.7,
+        ).setDepth(6);
+        sc.tweens.add({ targets: arc, y: arc.y - 25, alpha: 0, duration: 400 + Math.random() * 200, onComplete: () => arc.destroy() });
+      }
+      // Check expiry
+      if (time > this.uberGearEnd) {
+        this.expireUberGear(time);
+      } else {
+        // Jump Rope update
+        if (this.uberGearJumpRopeActive) {
+          if (time >= this.uberGearJumpRopeEndsAt) {
+            this.uberGearJumpRopeGfx?.destroy();
+            this.uberGearJumpRopeGfx = null;
+            this.uberGearJumpRopeActive = false;
+          } else {
+            const gfx = this.uberGearJumpRopeGfx;
+            if (gfx) {
+              gfx.clear();
+              gfx.lineStyle(3, 0xffaaaa, 0.9);
+              gfx.beginPath();
+              gfx.moveTo(0, this.uberGearJumpRopeAy);
+              gfx.lineTo(this.arena.width, this.uberGearJumpRopeAy);
+              gfx.strokePath();
+            }
+          }
+        }
+        // Squish update (Barrage hit effect on NPC)
+        if (this.uberGearSquishActive) {
+          if (time >= this.uberGearSquishEndsAt || !npc.active) {
+            npc.setScale(1);
+            this.uberGearSquishActive = false;
+            this.uberGearSquishSlowPct = 0;
+          } else {
+            const slowFactor = Math.min(this.uberGearSquishSlowPct / 100, 0.8);
+            const scaleX = 1.2 + slowFactor * 0.3;
+            const scaleY = Math.max(0.2, 0.6 - slowFactor * 0.3);
+            npc.setScale(scaleX, scaleY);
+            // Apply slow: reduce npc speed each frame via applyNpcSpeedMult
+            this.arena.applyNpcSpeedMult(1 - slowFactor);
+          }
+        }
+        // Star sprites orbit NPC head
+        if (this.uberGearStarSprites.length > 0) {
+          this.uberGearStarAngle += delta * 0.005;
+          for (let i = 0; i < this.uberGearStarSprites.length; i++) {
+            const a = this.uberGearStarAngle + (i * Math.PI * 2 / this.uberGearStarSprites.length);
+            this.uberGearStarSprites[i].setPosition(npc.x + Math.cos(a) * 24, npc.y - 28 + Math.sin(a) * 8);
+          }
+        }
+        // Stretch teleport update
+        if (this.uberGearStretchActive && this.uberGearStretchGfx) {
+          this.uberGearStretchGfx.clear();
+          this.uberGearStretchGfx.lineStyle(6, 0xffaaaa, 0.7);
+          this.uberGearStretchGfx.beginPath();
+          this.uberGearStretchGfx.moveTo(player.x, player.y);
+          this.uberGearStretchGfx.lineTo(this.uberGearStretchTarget.x, this.uberGearStretchTarget.y);
+          this.uberGearStretchGfx.strokePath();
+          if (time >= this.uberGearStretchAt + 500) {
+            // Teleport
+            player.setPosition(this.uberGearStretchTarget.x, this.uberGearStretchTarget.y);
+            this.uberGearStretchGfx.destroy();
+            this.uberGearStretchGfx = null;
+            this.uberGearStretchActive = false;
+            // Size shrink for 3s
+            this.uberGearSizeShrinkUntil = time + 3000;
+            if (player.sizeMult > 0.75) {
+              player.sizeMult = 0.75;
+              player.applySizeMult();
+            }
+          }
+        }
+        // Restore size after shrink
+        if (!this.uberGearStretchActive && this.uberGearSizeShrinkUntil > 0 && time >= this.uberGearSizeShrinkUntil) {
+          this.uberGearSizeShrinkUntil = 0;
+          player.sizeMult = 1;
+          player.applySizeMult();
+        }
+      }
+    } else {
+      // Restore squish/stars/stretch if uber-gear ended abruptly
+      if (this.uberGearSquishActive) {
+        npc.setScale(1);
+        this.uberGearSquishActive = false;
+        this.uberGearSquishSlowPct = 0;
+      }
+    }
+
+    // Uber-Gear Jump Rope boost: +50% speed while boost is active
+    if (this.uberGearJumpRopeBoostUntil > 0 && time < this.uberGearJumpRopeBoostUntil) {
+      this.arena.applyPlayerSpeedMult(1.5);
+    } else if (this.uberGearJumpRopeBoostUntil > 0 && time >= this.uberGearJumpRopeBoostUntil) {
+      this.uberGearJumpRopeBoostUntil = 0;
+    }
+
+    // Barrage: lock movement (unless Uber-Gear active) + fire fists + expiry
     if (this.barrageActive) {
-      this.arena.applyPlayerSpeedMult(0);
+      if (!this.uberGearActive) this.arena.applyPlayerSpeedMult(0);
       if (time > this.barrageEnd) {
         this.barrageActive = false;
       } else if (time >= this.barrageNext) {
@@ -645,6 +849,11 @@ export class RubberKit {
       this.bounceFormEnd = time + BOUNCE_FORM_MS;
       this.bounceFormVisual = vis;
       this.arena.showFloatingText(caster.x, caster.y - 40, '🔲 BOUNCE FORM', '#ff5577');
+      // Uber-Gear: R cooldown ÷ 5 (reduce by 80% of normal 8000ms = 6400ms)
+      if (this.uberGearActive) {
+        const BOUNCE_FORM_CD = 8000;
+        player.reduceCooldown('rubber-bounce-form', BOUNCE_FORM_CD * 0.8);
+      }
     } else {
       this.npcBounceFormVisual?.destroy();
       this.npcBounceFormActive = true;
@@ -757,6 +966,102 @@ export class RubberKit {
     this.rubberGearPrevAbsorber = null;
   }
 
+  // ── Uber-Gear helpers ──────────────────────────────────────────────────────
+
+  private doUberGear(time: number): void {
+    const { player } = this.arena;
+    this.uberGearActive = true;
+    const duration = this.arena.hasUpgrade('q') ? 15000 : 10000;
+    this.uberGearEnd = time + duration;
+    this.uberGearSteamAccum = 0;
+    player.setTint(0xffffff);
+    this.arena.showFloatingText(player.x, player.y - 48, '☁️ UBER-GEAR!', '#ffffff');
+  }
+
+  private expireUberGear(time: number): void {
+    const { player, npc, scene } = this.arena;
+    this.uberGearActive = false;
+    player.clearTint();
+    // Kill or heavily damage player at end
+    if (this.arena.hasUpgrade('q')) {
+      player.takeDamage(80);
+      this.arena.showFloatingText(player.x, player.y - 40, '💥 -80', '#ff5577');
+    } else {
+      player.hp = 0;
+      player.emit('defeated');
+    }
+    // Cleanup jump rope
+    this.uberGearJumpRopeGfx?.destroy();
+    this.uberGearJumpRopeGfx = null;
+    this.uberGearJumpRopeActive = false;
+    this.uberGearJumpRopeCharges = 0;
+    // Cleanup squish
+    if (this.uberGearSquishActive) { npc.setScale(1); }
+    this.uberGearSquishActive = false;
+    this.uberGearSquishSlowPct = 0;
+    // Cleanup stars
+    for (const s of this.uberGearStarSprites) s.destroy();
+    this.uberGearStarSprites = [];
+    // Cleanup stretch
+    this.uberGearStretchGfx?.destroy();
+    this.uberGearStretchGfx = null;
+    this.uberGearStretchActive = false;
+    // Restore size if shrunken
+    if (this.uberGearSizeShrinkUntil > 0) {
+      this.uberGearSizeShrinkUntil = 0;
+      player.sizeMult = 1;
+      player.applySizeMult();
+    }
+    void scene;
+    void time;
+  }
+
+  private doUberGearJumpRope(time: number): void {
+    const { scene, player, width } = this.arena;
+    this.uberGearJumpRopeAy = player.y;
+    this.uberGearJumpRopeActive = true;
+    this.uberGearJumpRopeCharges = 0;
+    this.uberGearJumpRopeEndsAt = time + 8000;
+    this.uberGearJumpRopeGfx?.destroy();
+    this.uberGearJumpRopeGfx = scene.add.graphics().setDepth(6);
+    this.arena.showFloatingText(player.x, player.y - 40, '🪢 JUMP ROPE', '#ffaaaa');
+    void width;
+  }
+
+  private releaseUberGearJumpRope(mouseX: number, mouseY: number, time: number): void {
+    const { player, scene } = this.arena;
+    const charges = this.uberGearJumpRopeCharges;
+    // Destroy rope
+    this.uberGearJumpRopeGfx?.destroy();
+    this.uberGearJumpRopeGfx = null;
+    this.uberGearJumpRopeActive = false;
+    // Launch toward cursor like a slingshot
+    const dx = mouseX - player.x;
+    const dy = mouseY - player.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    const speed = SLING_MIN_SPEED + (SLING_MAX_SPEED - SLING_MIN_SPEED) * 0.7;
+    const ctx = this.arena.buildPlayerContext(mouseX, mouseY);
+    ctx.dashCaster((dx / dist) * speed, (dy / dist) * speed);
+    this.arena.setIsDodging(true);
+    this.slingState = 'flying';
+    this.slingFlyEnd = time + SLING_FLY_MS;
+    this.slingHitThisFlight.clear();
+    // Convert each charge into 3s of speed + damage boost (stacking duration)
+    if (charges > 0) {
+      this.uberGearJumpRopeBoostUntil = Math.max(this.uberGearJumpRopeBoostUntil, time) + charges * 3000;
+      this.arena.showFloatingText(player.x, player.y - 48, `⚡ x${charges} BOOST!`, '#ffcc00');
+    }
+    void scene;
+  }
+
+  private doUberGearStretch(mouseX: number, mouseY: number, time: number): void {
+    if (this.uberGearStretchActive) return;
+    this.uberGearStretchActive = true;
+    this.uberGearStretchTarget = { x: mouseX, y: mouseY };
+    this.uberGearStretchAt = time;
+    this.uberGearStretchGfx = this.arena.scene.add.graphics().setDepth(12);
+  }
+
   private startBarrage(time: number, mouseX: number, mouseY: number): void {
     const { player } = this.arena;
     player.startCooldown('rubber-spring-slam');
@@ -783,6 +1088,11 @@ export class RubberKit {
     // Perpendicular axis for lateral scatter
     const perpX = -baseDirY; const perpY = baseDirX;
 
+    // Uber-Gear: fists spawn from screen edges aimed at target
+    const uberGear = this.uberGearActive;
+    const worldW = this.arena.width;
+    const worldH = this.arena.height;
+
     // 3 fists per burst, staggered 25ms apart — each at a random lateral position
     for (let i = 0; i < 3; i++) {
       scene.time.delayedCall(i * 25, () => {
@@ -792,10 +1102,20 @@ export class RubberKit {
         const fistX = tgtX + perpX * lateral + baseDirX * depth;
         const fistY = tgtY + perpY * lateral + baseDirY * depth;
 
-        // Arm starts from a matching lateral offset on the player side
-        const originLateral = lateral * 0.15;
-        const originX = player.x + perpX * originLateral;
-        const originY = player.y + perpY * originLateral;
+        let originX: number;
+        let originY: number;
+        if (uberGear) {
+          // Spawn from a random screen edge
+          const edge = Math.floor(Math.random() * 4);
+          if (edge === 0) { originX = 0; originY = tgtY + lateral; }
+          else if (edge === 1) { originX = worldW; originY = tgtY + lateral; }
+          else if (edge === 2) { originX = tgtX + lateral; originY = 0; }
+          else { originX = tgtX + lateral; originY = worldH; }
+        } else {
+          const originLateral = lateral * 0.15;
+          originX = player.x + perpX * originLateral;
+          originY = player.y + perpY * originLateral;
+        }
 
         const armColor = this.vulcArmColor();
         const gfx = scene.add.graphics().setDepth(8);
@@ -810,6 +1130,19 @@ export class RubberKit {
             tgt.takeDamage(BARRAGE_DMG);
             this.arena.spawnHitFlash(fistX, fistY, 0xff5577);
             this.arena.spawnDamageNumber(tgt.x, tgt.y - 20, BARRAGE_DMG);
+            // Uber-Gear: track squish slow accumulation
+            if (uberGear && this.uberGearSquishActive) {
+              this.uberGearSquishSlowPct = Math.min(80, this.uberGearSquishSlowPct + BARRAGE_DMG);
+            }
+            // Uber-Gear: start squish on first hit
+            if (uberGear && !this.uberGearSquishActive) {
+              const nowMs = scene.time.now;
+              this.uberGearSquishActive = true;
+              this.uberGearSquishEndsAt = nowMs + 5000;
+              this.uberGearSquishSlowPct = BARRAGE_DMG;
+              tgt.setScale(1.2, 0.6);
+              this.arena.showFloatingText(tgt.x, tgt.y - 36, '💥 SQUISH!', '#ffaaaa');
+            }
             break;
           }
         }
@@ -833,8 +1166,24 @@ export class RubberKit {
     const caster = owner === 'player' ? player : npc;
     const isUpgraded = owner === 'player' && this.arena.hasUpgrade('click');
     const vulcMult = isUpgraded ? (1 + this.vulcCharge) : 1;
-    const damage = Math.round((PUNCH_MIN_DMG + (PUNCH_MAX_DMG - PUNCH_MIN_DMG) * pullRatio) * vulcMult);
-    const maxReach = PUNCH_REACH * (isUpgraded ? (1 + 0.5 * this.vulcCharge) : 1);
+    let damage = Math.round((PUNCH_MIN_DMG + (PUNCH_MAX_DMG - PUNCH_MIN_DMG) * pullRatio) * vulcMult);
+    let maxReach = PUNCH_REACH * (isUpgraded ? (1 + 0.5 * this.vulcCharge) : 1);
+
+    // Uber-Gear: extended pull to 120px with diminishing returns above 90px
+    if (owner === 'player' && this.uberGearActive) {
+      const UBER_MAX_PULL = 120;
+      const UBER_DR_START = 90;
+      const effectivePull = pullRatio * UBER_MAX_PULL;
+      let dmgPull: number;
+      if (effectivePull <= UBER_DR_START) {
+        dmgPull = effectivePull;
+      } else {
+        dmgPull = UBER_DR_START + (effectivePull - UBER_DR_START) * 0.5;
+      }
+      const uberPullRatio = Math.min(1, dmgPull / PUNCH_MAX_PULL);
+      damage = Math.round((PUNCH_MIN_DMG + (PUNCH_MAX_DMG - PUNCH_MIN_DMG) * uberPullRatio) * vulcMult);
+      maxReach = PUNCH_REACH * (isUpgraded ? (1 + 0.5 * this.vulcCharge) : 1);
+    }
 
     const dx = targetX - caster.x;
     const dy = targetY - caster.y;
@@ -1092,11 +1441,29 @@ export class RubberKit {
       const body = proj.body as Phaser.Physics.Arcade.Body | null;
       if (!body) continue;
       const spd = Math.sqrt(body.velocity.x ** 2 + body.velocity.y ** 2) || 1;
-      const newSpd = spd * BOUNCE_REFLECT_SPEED;
+      // Uber-Gear: 3× damage, 2× speed, 2× visual size; end form after this deflect
+      const uberReflect = isPlayer && this.uberGearActive;
+      const reflectSpeedMult = uberReflect ? BOUNCE_REFLECT_SPEED * 2 : BOUNCE_REFLECT_SPEED;
+      const newSpd = spd * reflectSpeedMult;
       // Flip direction
       body.setVelocity((-body.velocity.x / spd) * newSpd, (-body.velocity.y / spd) * newSpd);
       (proj as unknown as Record<string, unknown>)['isFromPlayer'] = isPlayer;
       (proj as unknown as Record<string, unknown>)['rubberHomingTarget'] = isPlayer ? npc : player;
+
+      if (uberReflect) {
+        (proj as unknown as Record<string, unknown>)['damage'] = Math.round(proj.damage * 3);
+        (proj as unknown as Record<string, unknown>)['uberReflected'] = true;
+        // Scale up projectile visually 2×
+        if ((proj as unknown as Phaser.GameObjects.Sprite).setScale) {
+          (proj as unknown as Phaser.GameObjects.Sprite).setScale(2);
+        }
+        // End bounce form immediately (single deflect)
+        caster.setVisible(true);
+        caster.incomingDamageMultiplier = 1;
+        vis?.destroy();
+        if (isPlayer) { this.bounceFormActive = false; this.bounceFormVisual = null; }
+        return; // stop reflecting more projectiles this frame
+      }
 
       // R+ Powerful Parry: boost damage and tag fire DOT when vulcanized
       if (isPlayer && this.arena.hasUpgrade('r') && this.vulcCharge > 0) {
@@ -1213,6 +1580,40 @@ export class RubberKit {
               tgt.applySizeMult();
             }
           });
+          // Uber-Gear: push enemy to nearest wall, deal 25 damage on contact, stun 5s, orbit stars
+          if (isPlayer && this.uberGearActive) {
+            const wW = this.arena.width; const wH = this.arena.height;
+            const toLeft = tgt.x; const toRight = wW - tgt.x;
+            const toTop = tgt.y; const toBottom = wH - tgt.y;
+            const minDist = Math.min(toLeft, toRight, toTop, toBottom);
+            let wallVx = 0; let wallVy = 0;
+            if (minDist === toLeft) wallVx = -800;
+            else if (minDist === toRight) wallVx = 800;
+            else if (minDist === toTop) wallVy = -800;
+            else wallVy = 800;
+            (tgt.body as Phaser.Physics.Arcade.Body).setVelocity(wallVx, wallVy);
+            this.arena.showFloatingText(tgt.x, tgt.y - 60, '🧱 WALL PUSH!', '#ffaaaa');
+            sceneRef.time.delayedCall(200, () => {
+              if (!tgt.active) return;
+              (tgt.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+              tgt.takeDamage(25);
+              this.arena.spawnHitFlash(tgt.x, tgt.y, 0xff8888);
+              this.arena.spawnDamageNumber(tgt.x, tgt.y - 20, 25);
+              this.arena.showFloatingText(tgt.x, tgt.y - 36, '💥 WALL SLAM!', '#ff8888');
+              // Extend stun to 5s
+              tgt.earthStunnedUntil = Math.max(tgt.earthStunnedUntil, sceneRef.time.now + 5000);
+              // Spawn 3 orbiting star sprites
+              for (const s of this.uberGearStarSprites) s.destroy();
+              this.uberGearStarSprites = [];
+              for (let si = 0; si < 3; si++) {
+                this.uberGearStarSprites.push(sceneRef.add.circle(tgt.x, tgt.y - 28, 5, 0xffff44, 1).setDepth(15));
+              }
+              sceneRef.time.delayedCall(5000, () => {
+                for (const s of this.uberGearStarSprites) s.destroy();
+                this.uberGearStarSprites = [];
+              });
+            });
+          }
         }
       }
 

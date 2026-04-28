@@ -18,6 +18,7 @@ export interface SoundArenaApi {
   readonly width: number;
   readonly height: number;
   hasUpgrade(slot: string): boolean;
+  hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
   setIsDodging(v: boolean): void;
   applyNpcSpeedMult(factor: number): void;
   spawnHitFlash(x: number, y: number, color: number): void;
@@ -97,6 +98,7 @@ export class SoundKit {
   private soundFGrappleExplodes = false;
   private soundGrappleActive = false;
   private soundGrappleRefreshes = 0;
+  private soundGrappleCdWasReady = true;
 
   // ── E+ hold note ──────────────────────────────────────────────────────
   private soundHoldBeamGraphic: Phaser.GameObjects.Graphics | null = null;
@@ -129,6 +131,19 @@ export class SoundKit {
   private soundComposeSpeedBonus = 0;
   private soundNpcSlowUntil = 0;
 
+  // ── Harmony perk: sonic grenade + star buffs ──────────────────────────
+  private harmonyGrenadeSprite: Phaser.GameObjects.Arc | null = null;
+  private harmonyGrenadeX = 0;
+  private harmonyGrenadeY = 0;
+  private harmonyGrenadeExplodeAt = 0;
+  private harmonyGrenadeAutoExplode = false;
+  private harmonySongSpeedBonus = 0;
+  private harmonySongSpeedUntil = 0;
+  private harmonyMoveSpeedBonus = 0;
+  private harmonyMoveSpeedUntil = 0;
+  private harmonyStarAuraUntil = 0;
+  private harmonyStarSprites: Array<{ sprite: Phaser.GameObjects.Arc; angle: number }> = [];
+
   constructor(private arena: SoundArenaApi) {}
 
   // ── Public accessors ──────────────────────────────────────────────────
@@ -143,6 +158,8 @@ export class SoundKit {
   getComposeSpeedBonus(): number { return this.soundComposeSpeedBonus; }
   getComposeSpeedUntil(): number { return this.soundComposeSpeedUntil; }
   isComposingActive(): boolean { return this.soundComposingActive; }
+  getHarmonyMoveSpeedBonus(): number { return this.harmonyMoveSpeedBonus; }
+  getHarmonyMoveSpeedUntil(): number { return this.harmonyMoveSpeedUntil; }
 
   // ── Reset ────────────────────────────────────────────────────────────
 
@@ -174,6 +191,7 @@ export class SoundKit {
     this.soundFGrappleExplodes = false;
     this.soundGrappleActive = false;
     this.soundGrappleRefreshes = 0;
+    this.soundGrappleCdWasReady = true;
 
     if (this.soundHoldBeamGraphic) { this.soundHoldBeamGraphic.destroy(); this.soundHoldBeamGraphic = null; }
     this.soundHoldBeamAccum = 0;
@@ -197,6 +215,16 @@ export class SoundKit {
     this.soundComposeSpeedUntil = 0;
     this.soundComposeSpeedBonus = 0;
     this.soundNpcSlowUntil = 0;
+
+    if (this.harmonyGrenadeSprite) { this.harmonyGrenadeSprite.destroy(); this.harmonyGrenadeSprite = null; }
+    this.harmonyGrenadeExplodeAt = 0;
+    this.harmonySongSpeedBonus = 0;
+    this.harmonySongSpeedUntil = 0;
+    this.harmonyMoveSpeedBonus = 0;
+    this.harmonyMoveSpeedUntil = 0;
+    this.harmonyStarAuraUntil = 0;
+    for (const s of this.harmonyStarSprites) s.sprite.destroy();
+    this.harmonyStarSprites = [];
 
     if (this.soundHitRing) { this.soundHitRing.destroy(); this.soundHitRing = null; }
     if (this.soundStreakText) { this.soundStreakText.destroy(); this.soundStreakText = null; }
@@ -267,7 +295,7 @@ export class SoundKit {
       const clickDown = pointer.isDown;
       const clickJustDown = clickDown && !this.soundPointerWasDown;
 
-      if (clickJustDown && !this.soundComposingActive) {
+      if (clickJustDown) {
         this.soundComposeHoldStart = time;
       }
       // Check if hold completed (release after 2s)
@@ -278,6 +306,9 @@ export class SoundKit {
             this.enterComposingMode(scene, time);
           } else {
             this.exitComposingMode(scene, time);
+            if (this.soundComposedPattern.length > 0) {
+              this.arena.showFloatingText(player.x, player.y - 40, '🎵 Pattern saved', '#ffaadd');
+            }
           }
         }
         this.soundComposeHoldStart = 0;
@@ -412,7 +443,7 @@ export class SoundKit {
       }
     }
 
-    // ── F: Sonic Grapple ─────────────────────────────────────────────
+    // ── F: Sonic Grapple or Sonic Grenade (Harmony perk) ──────────────
     if (Phaser.Input.Keyboard.JustDown(fKey)) {
       if (player.castAbility('sound-grapple', this.arena.buildPlayerContext(mouseX, mouseY))) {
         // Grant accidental
@@ -421,67 +452,104 @@ export class SoundKit {
           this.arena.showFloatingText(player.x, player.y - 40, '♪ +1 ACCIDENTAL', '#ffaadd');
         }
 
-        const gx = mouseX, gy = mouseY;
-        const gdx = gx - player.x;
-        const gdy = gy - player.y;
-        const glen = Math.sqrt(gdx * gdx + gdy * gdy) || 1;
-        const gspeed = 1200;
-        const gTravelTime = Math.min(350, (glen / gspeed) * 1000);
-        const gbody = player.body as Phaser.Physics.Arcade.Body;
-        gbody.setVelocity((gdx / glen) * gspeed, (gdy / glen) * gspeed);
-        this.arena.setIsDodging(true);
-        this.soundGrappleActive = true;
-
-        // Check for perfect note timing
+        // Check for perfect note timing (shared by both modes)
         const matchedNote = this.soundNotes.find(n => Math.abs(n.x - soundHitLineX) <= soundTolerance * 1.5);
-        const explodes = matchedNote != null;
-        if (explodes && matchedNote) {
-          this.soundFGrappleExplodes = true;
+        const captureExplodes = matchedNote != null;
+        if (captureExplodes && matchedNote) {
           this.soundNoteStreak++;
           matchedNote.sprite.destroy();
           const mi = this.soundNotes.indexOf(matchedNote);
           if (mi !== -1) this.soundNotes.splice(mi, 1);
-          this.arena.showFloatingText(player.x, player.y - 30, '🎵 SONIC GRAPPLE!', '#ff88cc');
-        } else {
-          this.soundFGrappleExplodes = false;
         }
 
-        const captureExplodes = explodes;
+        if (this.arena.hasPerk('player', 'harmony')) {
+          // ── Harmony: sonic grenade ──────────────────────────────
+          const gx = mouseX, gy = mouseY;
+          const gdx = gx - player.x;
+          const gdy = gy - player.y;
+          const glen = Math.sqrt(gdx * gdx + gdy * gdy) || 1;
+          const travelMs = Math.max(100, Math.min(400, (glen / 1200) * 1000));
 
-        const gtrail = scene.add.circle(player.x, player.y, 8, 0xff66cc, 0.5).setDepth(4);
-        scene.tweens.add({ targets: gtrail, alpha: 0, duration: 300, onComplete: () => gtrail.destroy() });
+          // Destroy any existing grenade
+          if (this.harmonyGrenadeSprite) { this.harmonyGrenadeSprite.destroy(); this.harmonyGrenadeSprite = null; }
+          const grenSprite = scene.add.circle(player.x, player.y, 8, 0xff99ff, 0.9).setDepth(6);
+          grenSprite.setStrokeStyle(2, 0xffffff, 0.7);
+          this.harmonyGrenadeSprite = grenSprite;
 
-        scene.time.delayedCall(gTravelTime, () => {
-          if (!player.active) return;
-          this.arena.setIsDodging(false);
-          this.soundGrappleActive = false;
-          gbody.setVelocity(0, 0);
-          this.soundFGrappleExplodes = false;
+          this.arena.showFloatingText(player.x, player.y - 30, captureExplodes ? '🎶 SONIC GRENADE!!' : '🎶 SONIC GRENADE', '#ff99ff');
+
+          scene.tweens.add({
+            targets: grenSprite,
+            x: gx, y: gy,
+            duration: travelMs,
+            ease: 'Linear',
+            onComplete: () => {
+              if (!player.active) return;
+              this.harmonyGrenadeX = gx;
+              this.harmonyGrenadeY = gy;
+              // Note-timed: auto-explode immediately; otherwise wait 2s
+              const delay = captureExplodes ? 0 : 2000;
+              this.harmonyGrenadeExplodeAt = scene.time.now + delay;
+              if (delay > 0) {
+                // Pulse while waiting
+                if (grenSprite.active) {
+                  scene.tweens.add({ targets: grenSprite, alpha: 0.3, yoyo: true, repeat: -1, duration: 300 });
+                }
+              }
+            },
+          });
+        } else {
+          // ── Standard grapple ────────────────────────────────────
+          const gx = mouseX, gy = mouseY;
+          const gdx = gx - player.x;
+          const gdy = gy - player.y;
+          const glen = Math.sqrt(gdx * gdx + gdy * gdy) || 1;
+          const gspeed = 1200;
+          const gTravelTime = Math.min(350, (glen / gspeed) * 1000);
+          const gbody = player.body as Phaser.Physics.Arcade.Body;
+          gbody.setVelocity((gdx / glen) * gspeed, (gdy / glen) * gspeed);
+          this.arena.setIsDodging(true);
+          this.soundGrappleActive = true;
 
           if (captureExplodes) {
-            const ex = player.x, ey = player.y;
-            const ring = scene.add.circle(ex, ey, 10, 0xff66cc, 0.9).setDepth(4);
-            scene.tweens.add({ targets: ring, scaleX: 10, scaleY: 10, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
-            const core = scene.add.circle(ex, ey, 6, 0xffffff, 0.95).setDepth(5);
-            scene.tweens.add({ targets: core, scaleX: 4, scaleY: 4, alpha: 0, duration: 180, onComplete: () => core.destroy() });
-            for (const t of this.arena.enemies) {
-              if (!t.active || t.hp <= 0) continue;
-              if (Phaser.Math.Distance.Between(ex, ey, t.x, t.y) <= 100) {
-                t.takeDamage(20);
-                this.arena.spawnHitFlash(t.x, t.y, 0xff66cc);
+            this.soundFGrappleExplodes = true;
+            this.arena.showFloatingText(player.x, player.y - 30, '🎵 SONIC GRAPPLE!', '#ff88cc');
+          } else {
+            this.soundFGrappleExplodes = false;
+          }
+
+          const gtrail = scene.add.circle(player.x, player.y, 8, 0xff66cc, 0.5).setDepth(4);
+          scene.tweens.add({ targets: gtrail, alpha: 0, duration: 300, onComplete: () => gtrail.destroy() });
+
+          scene.time.delayedCall(gTravelTime, () => {
+            if (!player.active) return;
+            this.arena.setIsDodging(false);
+            this.soundGrappleActive = false;
+            gbody.setVelocity(0, 0);
+            this.soundFGrappleExplodes = false;
+
+            if (captureExplodes) {
+              const ex = player.x, ey = player.y;
+              const ring = scene.add.circle(ex, ey, 10, 0xff66cc, 0.9).setDepth(4);
+              scene.tweens.add({ targets: ring, scaleX: 10, scaleY: 10, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
+              const core = scene.add.circle(ex, ey, 6, 0xffffff, 0.95).setDepth(5);
+              scene.tweens.add({ targets: core, scaleX: 4, scaleY: 4, alpha: 0, duration: 180, onComplete: () => core.destroy() });
+              for (const t of this.arena.enemies) {
+                if (!t.active || t.hp <= 0) continue;
+                if (Phaser.Math.Distance.Between(ex, ey, t.x, t.y) <= 100) {
+                  t.takeDamage(20);
+                  this.arena.spawnHitFlash(t.x, t.y, 0xff66cc);
+                }
+              }
+              // F+: grace note — refresh cooldown (max 3 times)
+              if (this.arena.hasUpgrade('f') && this.soundGrappleRefreshes < 3) {
+                this.soundGrappleRefreshes++;
+                player.resetCooldown('sound-grapple');
+                this.arena.showFloatingText(ex, ey - 40, `✨ GRACE NOTE ${this.soundGrappleRefreshes}/3`, '#ffeecc');
               }
             }
-            // F+: grace note — refresh cooldown (max 3 times)
-            if (this.arena.hasUpgrade('f') && this.soundGrappleRefreshes < 3) {
-              this.soundGrappleRefreshes++;
-              player.resetCooldown('sound-grapple');
-              this.arena.showFloatingText(ex, ey - 40, `✨ GRACE NOTE ${this.soundGrappleRefreshes}/3`, '#ffeecc');
-            }
-          } else {
-            // Non-perfect cast resets grace note counter
-            if (this.arena.hasUpgrade('f')) this.soundGrappleRefreshes = 0;
-          }
-        });
+          });
+        }
       }
     }
 
@@ -523,7 +591,15 @@ export class SoundKit {
     const soundHitLineX = W / 2;
     const soundTolerance = 30;
     const soundAccelActive = time < this.soundAccelerandoUntil;
-    const soundBaseSpeed = soundAccelActive ? 480 : (this.soundFlowActive ? 360 : 240);
+
+    // Reset grace-note refresh counter each time the grapple cooldown becomes ready
+    const grappleCdReady = player.getCooldownRatio('sound-grapple') >= 1;
+    if (grappleCdReady && !this.soundGrappleCdWasReady) {
+      this.soundGrappleRefreshes = 0;
+    }
+    this.soundGrappleCdWasReady = grappleCdReady;
+    const harmonyBoost = time < this.harmonySongSpeedUntil ? (1 + this.harmonySongSpeedBonus) : 1;
+    const soundBaseSpeed = (soundAccelActive ? 480 : (this.soundFlowActive ? 360 : 240)) * harmonyBoost;
     const soundSpawnInterval = soundAccelActive ? 275 : (this.soundFlowActive ? 550 : 1100);
     const tY = this.getTrackY();
 
@@ -698,7 +774,7 @@ export class SoundKit {
       for (const t of this.arena.enemies) {
         if (!t.active || t.hp <= 0) continue;
         const sd = Phaser.Math.Distance.Between(this.soundScreechX, this.soundScreechY, t.x, t.y);
-        if (sd <= 88) screechHits.push(t);
+        if (Math.abs(sd - 88) <= 12) screechHits.push(t);
       }
       if (screechHits.length > 0) {
         this.soundScreechTickAccum += delta;
@@ -723,6 +799,73 @@ export class SoundKit {
       this.arena.applyNpcSpeedMult(0.7);
     }
 
+    // ── Harmony: grenade detonation ───────────────────────────────────
+    if (this.harmonyGrenadeExplodeAt > 0 && time >= this.harmonyGrenadeExplodeAt) {
+      this.harmonyGrenadeExplodeAt = 0;
+      const ex = this.harmonyGrenadeX, ey = this.harmonyGrenadeY;
+      if (this.harmonyGrenadeSprite) { this.harmonyGrenadeSprite.destroy(); this.harmonyGrenadeSprite = null; }
+      const ring = scene.add.circle(ex, ey, 10, 0xff99ff, 0.9).setDepth(4);
+      scene.tweens.add({ targets: ring, scaleX: 10, scaleY: 10, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
+      const core = scene.add.circle(ex, ey, 6, 0xffffff, 0.95).setDepth(5);
+      scene.tweens.add({ targets: core, scaleX: 4, scaleY: 4, alpha: 0, duration: 180, onComplete: () => core.destroy() });
+
+      let hitAny = false;
+      for (const t of this.arena.enemies) {
+        if (!t.active || t.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(ex, ey, t.x, t.y) <= 100) {
+          t.takeDamage(20);
+          this.arena.spawnHitFlash(t.x, t.y, 0xff99ff);
+          hitAny = true;
+        }
+      }
+
+      if (hitAny) {
+        // Stack speed bonuses
+        this.harmonySongSpeedBonus += 0.15;
+        this.harmonySongSpeedUntil = time + 20000;
+        this.harmonyMoveSpeedBonus += 0.15;
+        this.harmonyMoveSpeedUntil = time + 20000;
+        this.harmonyStarAuraUntil = time + 20000;
+
+        // Spawn 5 orbiting star sprites
+        for (const s of this.harmonyStarSprites) s.sprite.destroy();
+        this.harmonyStarSprites = [];
+        for (let i = 0; i < 5; i++) {
+          const sprite = scene.add.circle(player.x, player.y, 5, 0xffee88, 0.9).setDepth(5);
+          sprite.setStrokeStyle(1, 0xffffff, 0.5);
+          this.harmonyStarSprites.push({ sprite, angle: (i / 5) * Math.PI * 2 });
+        }
+        this.arena.showFloatingText(ex, ey - 30, `🌟 HARMONY x${(this.harmonySongSpeedBonus / 0.15).toFixed(0)}`, '#ffeecc');
+        // F+ grace note refresh
+        if (this.arena.hasUpgrade('f') && this.soundGrappleRefreshes < 3) {
+          this.soundGrappleRefreshes++;
+          player.resetCooldown('sound-grapple');
+          this.arena.showFloatingText(ex, ey - 50, `✨ GRACE NOTE ${this.soundGrappleRefreshes}/3`, '#ffeecc');
+        }
+      }
+    }
+
+    // ── Harmony: star aura orbit + buff expiry ─────────────────────────
+    if (this.harmonyStarAuraUntil > 0) {
+      if (time >= this.harmonyStarAuraUntil) {
+        this.harmonyStarAuraUntil = 0;
+        this.harmonySongSpeedBonus = 0;
+        this.harmonySongSpeedUntil = 0;
+        this.harmonyMoveSpeedBonus = 0;
+        this.harmonyMoveSpeedUntil = 0;
+        for (const s of this.harmonyStarSprites) s.sprite.destroy();
+        this.harmonyStarSprites = [];
+      } else {
+        for (const s of this.harmonyStarSprites) {
+          s.angle += delta * 0.003;
+          s.sprite.setPosition(
+            player.x + Math.cos(s.angle) * 30,
+            player.y + Math.sin(s.angle) * 30,
+          );
+        }
+      }
+    }
+
     // ── HUD update ────────────────────────────────────────────────────
     if (this.soundStreakText) {
       if (soundAccelActive) {
@@ -740,7 +883,7 @@ export class SoundKit {
     if (time < this.npcSoundScreechExpiry) {
       const npcBDmg = this.npcSoundScreechRed ? 25 : 15;
       const nd = Phaser.Math.Distance.Between(this.npcSoundScreechX, this.npcSoundScreechY, player.x, player.y);
-      if (nd <= 88) {
+      if (Math.abs(nd - 88) <= 12) {
         this.npcSoundScreechTickAccum += delta;
         if (this.npcSoundScreechTickAccum >= 500) {
           this.npcSoundScreechTickAccum -= 500;
@@ -802,6 +945,11 @@ export class SoundKit {
     this.soundComposingActive = false;
     this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 40, '🎼 EXIT COMPOSE', '#aaddff');
     this.teardownComposePalette();
+    // Destroy preview dots placed on the track during composing
+    for (const o of this.soundComposedNoteSprites) {
+      if (o.sprite.active) o.sprite.destroy();
+    }
+    this.soundComposedNoteSprites = [];
     // Reset looper so composed pattern starts fresh
     this.soundComposingLooperIdx = 0;
     this.soundComposingLastSpawn = time;

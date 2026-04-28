@@ -40,7 +40,7 @@ const flameDash: Ability = {
     const dashOriginX = ctx.casterX;
     const dashOriginY = ctx.casterY;
     ctx.dashCaster((dx / len) * 640, (dy / len) * 640);
-    if (!ctx.hasPerk('candle')) {
+    if (!ctx.hasPerk('alcohol')) {
       ctx.dealAoeDamage(dashOriginX, dashOriginY, 90, 18);
       const ring = ctx.scene.add.circle(dashOriginX, dashOriginY, 10, 0xff4400, 0.65);
       ctx.scene.tweens.add({

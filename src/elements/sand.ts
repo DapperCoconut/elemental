@@ -3,8 +3,8 @@ import { Ability, CastContext } from './Ability';
 
 const timeBarrage: Ability = {
   id: 'time-barrage',
-  name: 'Barrage',
-  description: 'Hold click: fire accelerating projectiles that ramp up in speed over 3s.',
+  name: 'Quick Shot',
+  description: 'Fire a revolver-style shot at the cursor (250ms cadence). 6-bullet magazine; auto-reloads in 3s. Bullets shift yellow→red as they age, dealing 5→12 damage the longer they fly.',
   displayKey: 'Click',
   cooldown: 0,
   cast(ctx: CastContext) { ctx.timeBarrage(ctx.targetX, ctx.targetY); },
@@ -12,8 +12,8 @@ const timeBarrage: Ability = {
 
 const timeWarp: Ability = {
   id: 'time-warp',
-  name: 'Time Warp',
-  description: 'Fire a fast large orb. Hits deal 20 damage and teleport the enemy back 3s, leaving puddles that slow by 25% and charge Q. 3s CD.',
+  name: 'Lasso',
+  description: 'Throw a lasso. On hit, yank the enemy back to where they were 3s ago, dropping puddles along the rope. Puddles slow 25% and charge Q. 3s CD.',
   displayKey: 'E',
   cooldown: 3000,
   cast(ctx: CastContext) { ctx.timeWarp(ctx.targetX, ctx.targetY); },
@@ -30,17 +30,17 @@ const timeRemain: Ability = {
 
 const timeHalt: Ability = {
   id: 'time-halt',
-  name: 'Halt',
-  description: '6s: area slows projectiles & enemy 50%. Click/E projectiles move at 2x speed while active. 12s CD.',
+  name: 'Bounty',
+  description: 'Spend accumulated bounty (+1 per 5 dmg taken): drop a slowing aura on the enemy lasting (bounty) seconds. Slows 50%, doubles cooldowns, slows projectiles 15%. 10s CD.',
   displayKey: 'F',
-  cooldown: 12000,
+  cooldown: 10000,
   cast(ctx: CastContext) { ctx.timeHalt(); },
 };
 
 const timeTimeless: Ability = {
   id: 'time-timeless',
-  name: 'Timeless',
-  description: 'Pause all projectile movement and enemy AI for 8s. You can still move freely. Charges by standing in time puddles (10s total).',
+  name: 'Always Noon',
+  description: 'Convert bounty to Time Energy (1 bounty = 1000ms toward 10s). If energy was already full before pressing, freeze the world for 5s; revolver becomes a 3-shot 25-dmg rifle whose beams resolve when time resumes.',
   displayKey: 'Q',
   cooldown: 0,
   cast(ctx: CastContext) { ctx.timeTimeless(); },

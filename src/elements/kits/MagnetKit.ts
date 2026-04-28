@@ -6,7 +6,7 @@ import { Projectile } from '../../combat/Projectile';
 // ── Magnet type definitions ────────────────────────────────────────────────
 
 export interface MagnetRod {
-  sprite: Phaser.GameObjects.Arc;
+  sprite: Phaser.GameObjects.Arc | Phaser.GameObjects.Rectangle;
   trail: Phaser.GameObjects.Arc[];
   x: number;
   y: number;
@@ -19,6 +19,7 @@ export interface MagnetRod {
   owner: 'player' | 'npc';
   destroyOnHit?: boolean;
   permDamageBonus: number;
+  isSword?: boolean;
 }
 
 export interface MagnetNail {
@@ -63,6 +64,7 @@ export interface MagnetArenaApi {
   readonly pointerWasDown: boolean;
   readonly rightPointerWasDown: boolean;
   hasUpgrade(slot: string): boolean;
+  hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
   setIsDodging(v: boolean): void;
   spawnHitFlash(x: number, y: number, color: number): void;
   spawnDamageNumber(x: number, y: number, amount: number): void;
@@ -266,8 +268,9 @@ export class MagnetKit {
       const dist = Phaser.Math.Distance.Between(rod.x, rod.y, x, y);
       if (dist <= pullRange) {
         const angle = Math.atan2(y - rod.y, x - rod.x);
-        rod.vx = Math.cos(angle) * 680;
-        rod.vy = Math.sin(angle) * 680;
+        const pulseSpeed = rod.isSword ? 1360 : 680;
+        rod.vx = Math.cos(angle) * pulseSpeed;
+        rod.vy = Math.sin(angle) * pulseSpeed;
       }
     }
 
@@ -471,9 +474,15 @@ export class MagnetKit {
 
       rod.sprite.setPosition(rod.x, rod.y);
       // Q+: blue tint during bounce window; orange perm bonus; default grey
-      if (rod.bouncing && rod.permDamageBonus > 0) rod.sprite.setFillStyle(0x3399ff);
-      else if (rod.bouncing) rod.sprite.setFillStyle(0xff4400);
-      else if (rod.permDamageBonus > 0) rod.sprite.setFillStyle(0xff9933);
+      if (!rod.isSword) {
+        if (rod.bouncing && rod.permDamageBonus > 0) rod.sprite.setFillStyle(0x3399ff);
+        else if (rod.bouncing) rod.sprite.setFillStyle(0xff4400);
+        else if (rod.permDamageBonus > 0) rod.sprite.setFillStyle(0xff9933);
+      }
+      // Blade perk: rotate sword to face direction of travel
+      if (rod.isSword && rod.sprite instanceof Phaser.GameObjects.Rectangle) {
+        rod.sprite.rotation = Math.atan2(rod.vy, rod.vx);
+      }
 
       const isMoving = Math.abs(rod.vx) > movingThreshold || Math.abs(rod.vy) > movingThreshold;
 
@@ -488,8 +497,9 @@ export class MagnetKit {
       }
 
       if (isMoving || wasMoving) {
-        const baseDmg = rod.bouncing ? 16 : 8;
-        const tempBonus = rod.bouncing ? 8 : 0; // Q+ bonus during bounce
+        const baseHit = rod.isSword ? 16 : 8;
+        const baseDmg = rod.bouncing ? baseHit * 2 : baseHit;
+        const tempBonus = rod.bouncing ? baseHit : 0; // Q+ bonus during bounce
         const dmg = baseDmg + rod.permDamageBonus + (this.arena.hasUpgrade('q') ? tempBonus : 0);
         if (rod.owner === 'player') {
           const npcDist = Phaser.Math.Distance.Between(rod.x, rod.y, npc.x, npc.y);
@@ -539,12 +549,26 @@ export class MagnetKit {
         const magDist = Phaser.Math.Distance.Between(rod.x, rod.y, magTarget.x, magTarget.y);
         if (magDist <= magRange && magDist > 10) {
           const falloff = Math.max(1, magDist);
-          const accel = Math.min(1600, (600 * 200) / falloff);
+          const magnetMult = rod.isSword ? 2 : 1;
+          const accel = Math.min(1600 * magnetMult, (600 * 200 * magnetMult) / falloff);
           const magAng = Math.atan2(magTarget.y - rod.y, magTarget.x - rod.x);
           rod.vx += Math.cos(magAng) * accel * dt;
           rod.vy += Math.sin(magAng) * accel * dt;
           const spd = Math.sqrt(rod.vx * rod.vx + rod.vy * rod.vy);
-          if (spd > 900) { rod.vx = (rod.vx / spd) * 900; rod.vy = (rod.vy / spd) * 900; }
+          const speedCap = rod.isSword ? 1400 : 900;
+          if (spd > speedCap) { rod.vx = (rod.vx / spd) * speedCap; rod.vy = (rod.vy / spd) * speedCap; }
+
+          // Blade perk: overshoot — extra impulse when passing close to target at speed
+          if (rod.isSword) {
+            const spd2 = Math.sqrt(rod.vx ** 2 + rod.vy ** 2);
+            if (spd2 > 600) {
+              const distToTarget = Phaser.Math.Distance.Between(rod.x, rod.y, magTarget.x, magTarget.y);
+              if (distToTarget < 30) {
+                rod.vx *= 1.3;
+                rod.vy *= 1.3;
+              }
+            }
+          }
         }
       }
     }
@@ -951,6 +975,7 @@ export class MagnetKit {
             owner: 'player',
             destroyOnHit: true,
             permDamageBonus: 0,
+            isSword: false,
           };
           this.magnetRods.push(copper);
         }

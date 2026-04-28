@@ -279,6 +279,28 @@ export class BootScene extends Phaser.Scene {
     gfx.strokeRect(1, 3, 6, 4);
     gfx.generateTexture('proj-time-shard', 8, 10);
 
+    // Time revolver bullet (10×10 yellow circle, tinted at runtime)
+    gfx.clear();
+    gfx.fillStyle(0xffee44);
+    gfx.fillCircle(5, 5, 5);
+    gfx.lineStyle(1, 0xffffff, 0.7);
+    gfx.strokeCircle(5, 5, 4);
+    gfx.generateTexture('proj-time-bullet', 10, 10);
+
+    // Time lasso orb (16×16 transparent — rope drawn via Graphics)
+    gfx.clear();
+    gfx.fillStyle(0xffdd44, 0);
+    gfx.fillCircle(8, 8, 8);
+    gfx.generateTexture('proj-time-lasso-orb', 16, 16);
+
+    // Time chamber explosive (20×20 red circle with concentric ring)
+    gfx.clear();
+    gfx.fillStyle(0xff3300);
+    gfx.fillCircle(10, 10, 10);
+    gfx.lineStyle(2, 0xff8800, 0.9);
+    gfx.strokeCircle(10, 10, 7);
+    gfx.generateTexture('proj-time-chamber', 20, 20);
+
     // Keep sand-ball/sand-shard as aliases for legacy references
     gfx.clear();
     gfx.fillStyle(0xffdd44);
@@ -359,10 +381,10 @@ export class BootScene extends Phaser.Scene {
 
     // Fate card projectile (small white rectangle, card-like)
     gfx.clear();
-    gfx.fillStyle(0xffffff);
-    gfx.fillRoundedRect(0, 0, 10, 14, 2);
-    gfx.lineStyle(1, 0xddbbff);
-    gfx.strokeRoundedRect(0, 0, 10, 14, 2);
+    gfx.fillStyle(0xffffff, 1);
+    gfx.fillRect(0, 0, 10, 14);
+    gfx.lineStyle(1, 0xccaa44, 1);
+    gfx.strokeRect(0, 0, 10, 14);
     gfx.generateTexture('proj-fate-card', 10, 14);
 
     // Slot machine icon for placed entity (gold/pink rectangle)
@@ -480,6 +502,12 @@ export class BootScene extends Phaser.Scene {
     gfx.fillStyle(0xcc44ff, 1);
     gfx.fillCircle(6, 6, 5);
     gfx.generateTexture('proj-death-bolt', 12, 12);
+    gfx.clear();
+
+    // proj-death-dagger — 14×4 dark purple pointed projectile (Demon perk)
+    gfx.fillStyle(0x660044, 1);
+    gfx.fillRect(0, 0, 14, 4);
+    gfx.generateTexture('proj-death-dagger', 14, 4);
     gfx.clear();
 
     // Metal chain link projectile — small steel rect
@@ -1290,32 +1318,6 @@ export class BootScene extends Phaser.Scene {
     gfx.fillStyle(0xffffff, 0.7);
     gfx.fillCircle(18, 18, 5);
     gfx.generateTexture('elem-light-blue', 48, 48);
-    gfx.clear();
-
-    // perk-golem — 32×32 wax-orange golem body (for Candle quad perk)
-    gfx.fillStyle(0xcc8844, 1);
-    gfx.fillRect(6, 12, 20, 16);  // body
-    gfx.fillStyle(0xddaa66, 1);
-    gfx.fillRect(9, 5, 14, 9);    // head
-    gfx.lineStyle(2, 0xff6600, 1);
-    gfx.strokeRect(6, 12, 20, 16);
-    gfx.strokeRect(9, 5, 14, 9);
-    gfx.fillStyle(0xff8800, 1);
-    gfx.fillTriangle(14, 0, 18, 0, 16, 5);  // flame on head
-    gfx.generateTexture('perk-golem', 32, 32);
-    gfx.clear();
-
-    // perk-golem-ignited — same but orange-red ignited version
-    gfx.fillStyle(0xff5500, 1);
-    gfx.fillRect(6, 12, 20, 16);
-    gfx.fillStyle(0xff8844, 1);
-    gfx.fillRect(9, 5, 14, 9);
-    gfx.lineStyle(2, 0xff2200, 1);
-    gfx.strokeRect(6, 12, 20, 16);
-    gfx.strokeRect(9, 5, 14, 9);
-    gfx.fillStyle(0xffdd00, 1);
-    gfx.fillTriangle(12, 0, 20, 0, 16, 5);
-    gfx.generateTexture('perk-golem-ignited', 32, 32);
     gfx.clear();
 
     // perk-stalagmite — 20×32 cyan spike (for Stalagmite quad perk)

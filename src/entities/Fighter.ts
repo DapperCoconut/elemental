@@ -99,6 +99,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public lavaRockBurnUntil = 0;
   public lavaRockBurnAccum = 0;
 
+  // Alcohol perk intoxication
+  public intoxicatedUntil = 0;
+  public intoxicationSlowUntil = 0;
+  public intoxicationPendingSlowExtra = 0;
+
   public growthBloatActive = false;
   public growthBloatEnd = 0;
   public growthBloatAura: Phaser.GameObjects.Arc | null = null;
