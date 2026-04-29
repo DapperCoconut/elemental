@@ -9,6 +9,14 @@ import { GameOverScene } from './scenes/GameOverScene';
 import { GauntletSelectScene } from './scenes/GauntletSelectScene';
 import { GauntletIntermediaryScene } from './scenes/GauntletIntermediaryScene';
 import { PauseMenuScene } from './scenes/PauseMenuScene';
+import { CampaignSlotSelectScene } from './scenes/CampaignSlotSelectScene';
+import { CampaignWorldMapScene } from './scenes/CampaignWorldMapScene';
+import { CampaignWorldScene } from './scenes/CampaignWorldScene';
+import { CampaignFightMenuScene } from './scenes/CampaignFightMenuScene';
+import { CampaignShopScene } from './scenes/CampaignShopScene';
+import { CampaignPortalScene } from './scenes/CampaignPortalScene';
+import { CampaignElementSelectScene } from './scenes/CampaignElementSelectScene';
+import { GauntletElementSelectScene } from './scenes/GauntletElementSelectScene';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -22,7 +30,7 @@ const config: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
-  scene: [BootScene, TitleScene, MenuScene, ShopScene, LabScene, ArenaScene, GameOverScene, GauntletSelectScene, GauntletIntermediaryScene, PauseMenuScene],
+  scene: [BootScene, TitleScene, MenuScene, ShopScene, LabScene, ArenaScene, GameOverScene, GauntletSelectScene, GauntletIntermediaryScene, PauseMenuScene, CampaignSlotSelectScene, CampaignWorldMapScene, CampaignWorldScene, CampaignFightMenuScene, CampaignShopScene, CampaignPortalScene, CampaignElementSelectScene, GauntletElementSelectScene],
 };
 
 const game = new Phaser.Game(config);

@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import * as PlayerData from '../data/PlayerData';
+import * as CP from '../data/CampaignProgress';
 import { GAUNTLET_COST } from '../data/GauntletData';
 
 export class TitleScene extends Phaser.Scene {
@@ -33,8 +34,8 @@ export class TitleScene extends Phaser.Scene {
     // Buttons — 3×2 grid
     const gauntletUnlocked = PlayerData.isGauntletUnlocked();
     const buttons: Array<{ label: string; sub?: string; color: number; borderColor: number; action: (() => void) | null }> = [
-      { label: 'PLAY',       color: 0x1a2a1a, borderColor: 0x44cc44, action: () => this.scene.start('MenuScene', { isPvP: false }) },
-      { label: 'LOCAL PVP',  color: 0x2a1a1a, borderColor: 0xff4444, action: () => this.scene.start('MenuScene', { isPvP: true }) },
+      { label: 'PLAY',       color: 0x1a2a1a, borderColor: 0x44cc44, action: () => this.scene.start('MenuScene') },
+      { label: 'CAMPAIGN',   color: 0x2a1500, borderColor: 0xffaa44, action: () => this.scene.start('CampaignSlotSelectScene') },
       { label: 'INVASION',   color: 0x1a0022, borderColor: 0x8800cc, action: () => this.scene.start('MenuScene', { mode: 'invasion' }) },
       { label: 'SHOP',       color: 0x1a1a2a, borderColor: 0x4466ff, action: () => this.scene.start('ShopScene') },
       { label: 'LAB',        color: 0x1a1a2a, borderColor: 0x9944ff, action: () => this.scene.start('LabScene') },
@@ -124,13 +125,23 @@ export class TitleScene extends Phaser.Scene {
           for (const id of ['fire', 'water', 'life', 'air', 'earth']) {
             PlayerData.completeGauntlet(id);
           }
+          const slotExists = CP.getSlot(0) !== null;
+          if (slotExists) {
+            CP.addKeys(0, 9999);
+            CP.addSparks(0, 9999);
+            CP.markCheated(0);
+          }
           if (notificationText) notificationText.destroy();
-          notificationText = this.add.text(cx, height - 60, '🏆 All Gauntlets Complete! +9999 💎  +9999 🩸', {
-            fontSize: '20px',
+          const toastLines = slotExists
+            ? '🏆 All Gauntlets Complete!\n+9999 💎  +9999 🩸  +9999 🗝️  +9999 ✨ (Slot 1)\n🌀 Slot 1 cheat-flagged'
+            : '🏆 All Gauntlets Complete!\n+9999 💎  +9999 🩸';
+          notificationText = this.add.text(cx, height - 70, toastLines, {
+            fontSize: '18px',
             fontFamily: '"Arial Black", sans-serif',
             color: '#ffee00',
             stroke: '#664400',
             strokeThickness: 3,
+            align: 'center',
           }).setOrigin(0.5).setDepth(100);
           this.tweens.add({
             targets: notificationText, alpha: 0, y: height - 100,

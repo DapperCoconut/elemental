@@ -19,7 +19,6 @@ export interface QuantumElementArenaApi {
   get npcElementId(): string;
   get sceneWidth(): number;
   get sceneHeight(): number;
-  get isPvP(): boolean;
   hasUpgrade(slot: string): boolean;
   hasPerk(perkId: string): boolean;
   spawnHitFlash(x: number, y: number, color: number): void;
@@ -1212,7 +1211,7 @@ export class QuantumElementKit {
   private _initStyleHud(): void {
     const { scene } = this.api;
     const W = scene.scale.width;
-    const hudY = this.api.isPvP ? 64 : 8;
+    const hudY = 8;
     const cx = W / 2;
 
     this.styleTierText = scene.add.text(cx - 120, hudY + 10, 'F', {

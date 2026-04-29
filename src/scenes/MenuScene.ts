@@ -133,21 +133,20 @@ export class MenuScene extends Phaser.Scene {
   private playerChoice: string | null = null;
   private enemyChoice: string | null = null;
   private elemPage = 0;
-  private isPvP = false;
   private isInvasion = false;
   // Tracks displayed perk strip index per element (-1 = none). Persists across re-renders.
   private perkIndices: Record<string, number> = {};
 
   private phaseObjects: Phaser.GameObjects.GameObject[] = [];
   private infoOverlayObjects: Phaser.GameObjects.GameObject[] = [];
+  private perkDictScrollHandler: (...args: unknown[]) => void = () => {};
   private konamiBuffer: string[] = [];
 
   constructor() {
     super({ key: 'MenuScene' });
   }
 
-  create(data?: { isPvP?: boolean; mode?: string }): void {
-    this.isPvP = data?.isPvP ?? false;
+  create(data?: { mode?: string }): void {
     this.isInvasion = data?.mode === 'invasion';
     activeMutationIds.clear();
     this.selectionPhase = 'player';
@@ -175,14 +174,12 @@ export class MenuScene extends Phaser.Scene {
       strokeThickness: 5,
     }).setOrigin(0.5);
 
-    this.add.text(cx, height - 24, this.isInvasion ? 'Survive as long as you can!' : this.isPvP ? 'Two players, one keyboard!' : 'Defeat the enemy to win!', {
+    this.add.text(cx, height - 24, this.isInvasion ? 'Survive as long as you can!' : 'Defeat the enemy to win!', {
       fontSize: '13px',
       color: '#666666',
     }).setOrigin(0.5);
 
-    const controlsHint = this.isPvP
-      ? 'P1: WASD+Mouse  •  P2: Arrows+IJKL(aim)+U/O/P/;/\'(abilities)+/(dodge)'
-      : 'WASD — move   •   Click / E / R / F / Q — abilities   •   SPACE — Dodge';
+    const controlsHint = 'WASD — move   •   Click / E / R / F / Q — abilities   •   SPACE — Dodge';
     this.add.text(cx, height - 48, controlsHint, {
       fontSize: '11px',
       fontFamily: 'Arial, sans-serif',
@@ -249,8 +246,8 @@ export class MenuScene extends Phaser.Scene {
     const isPlayerPhase = this.selectionPhase === 'player';
 
     const subtitle = isPlayerPhase
-      ? (this.isInvasion ? 'INVASION — pick your element' : this.isPvP ? 'Player 1: Choose your element' : 'Choose your element')
-      : (this.isPvP ? 'Player 2: Choose your element' : 'Choose enemy element');
+      ? (this.isInvasion ? 'INVASION — pick your element' : 'Choose your element')
+      : 'Choose enemy element';
     const subtitleObj = this.add.text(cx, 158, subtitle, {
       fontSize: '20px',
       fontFamily: 'Arial, sans-serif',
@@ -783,6 +780,7 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private closeElementInfo(): void {
+    this.input.off('wheel', this.perkDictScrollHandler);
     for (const obj of this.infoOverlayObjects) {
       if (obj.active) (obj as Phaser.GameObjects.GameObject & { destroy(): void }).destroy();
     }
@@ -937,33 +935,53 @@ export class MenuScene extends Phaser.Scene {
       electricity: '⚡', slime: '🟢', fate: '🃏', sound: '🔊', light: '✨',
     };
 
+    const SCROLL_TOP = 104;
+    const SCROLL_BOT = height - 52;
+    const SCROLL_H = SCROLL_BOT - SCROLL_TOP;
+
     const bg = this.add.rectangle(cx, height / 2, width, height, 0x05050f, 0.97)
       .setDepth(50).setInteractive();
     this.infoOverlayObjects.push(bg);
 
-    const header = this.add.text(cx, 44, '📖  PERK DICTIONARY', {
+    const header = this.add.text(cx, 36, '📖  PERK DICTIONARY', {
       fontSize: '28px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
       stroke: '#440088', strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(51);
+    }).setOrigin(0.5).setDepth(55);
     this.infoOverlayObjects.push(header);
 
-    const subHdr = this.add.text(cx, 78, '— craft perks in the Lab to equip them on your element —', {
+    const subHdr = this.add.text(cx, 70, '— craft perks in the Lab to equip them on your element —', {
       fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#555577',
-    }).setOrigin(0.5).setDepth(51);
+    }).setOrigin(0.5).setDepth(55);
     this.infoOverlayObjects.push(subHdr);
 
-    const divider = this.add.graphics().setDepth(51);
+    const divider = this.add.graphics().setDepth(55);
     divider.lineStyle(1, 0x223355, 0.5);
-    divider.lineBetween(60, 96, width - 60, 96);
+    divider.lineBetween(40, 90, width - 40, 90);
     this.infoOverlayObjects.push(divider);
 
-    let curY = 112;
-    const rowH = 46;
-    const colW = width / 2 - 20;
+    // ── Scrollable container ──
+    const scrollContainer = this.add.container(0, SCROLL_TOP).setDepth(51);
+    this.infoOverlayObjects.push(scrollContainer);
+
+    const maskGfx = this.add.graphics();
+    maskGfx.fillStyle(0xffffff, 1);
+    maskGfx.fillRect(0, SCROLL_TOP, width, SCROLL_H);
+    const mask = maskGfx.createGeometryMask();
+    scrollContainer.setMask(mask);
+    this.infoOverlayObjects.push(maskGfx);
+
+    const COL_X = 40;
+    const COL_W = width - 80;
+    const NAME_Y  = 10;
+    const DESC_Y  = 28;
+    const ROW_PAD = 10;
+    let innerY = 8;
 
     const tiers: Array<'triple' | 'abstract-triple' | 'quad' | 'penta'> = ['triple', 'abstract-triple', 'quad', 'penta'];
     for (const tier of tiers) {
-      // Tier header
+      const allTierPerks = ALL_PERKS.flatMap((ep) => ep.perks.filter((p) => p.tier === tier));
+      if (allTierPerks.length === 0) continue;
+
       const tierLabel = tier === 'triple'
         ? '— TRIPLE PERKS  (Lab Level 2 · 2 ⚛️) —'
         : tier === 'abstract-triple'
@@ -971,70 +989,84 @@ export class MenuScene extends Phaser.Scene {
           : tier === 'quad'
             ? '— QUAD PERKS  (Lab Level 3 · 5 ⚛️)  ·  Perkaholic Mutation —'
             : '— PENTA PERKS  (Penta Synthesis · 10 ⚛️) —';
-      const tierHdr = this.add.text(cx, curY, tierLabel, {
-        fontSize: '10px', fontFamily: '"Arial Black", sans-serif',
-        color: tier === 'penta' ? '#cc88ff' : (tier === 'quad' ? '#ffaa44' : (tier === 'abstract-triple' ? '#cc66ff' : '#44aaff')),
-      }).setOrigin(0.5).setDepth(51);
-      this.infoOverlayObjects.push(tierHdr);
-      curY += 18;
+      const tierColor = tier === 'penta' ? '#cc88ff' : (tier === 'quad' ? '#ffaa44' : (tier === 'abstract-triple' ? '#cc66ff' : '#44aaff'));
 
-      const allTierPerks = ALL_PERKS.flatMap((ep) => ep.perks.filter((p) => p.tier === tier));
-      allTierPerks.forEach((perk, idx) => {
-        const col = idx % 2;
-        const row = Math.floor(idx / 2);
-        const px = col === 0 ? 60 : cx + 10;
-        const py = curY + row * rowH;
+      const tierHdr = this.add.text(cx, innerY, tierLabel, {
+        fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: tierColor,
+      }).setOrigin(0.5);
+      scrollContainer.add(tierHdr);
+      innerY += 20;
 
+      for (const perk of allTierPerks) {
         const unlocked = PlayerData.isPerkUnlocked(perk.elementId, perk.id);
         const equipped  = PlayerData.getEquippedPerk(perk.elementId) === perk.id;
-        const nameAlpha = unlocked ? 1.0 : 0.35;
+        const alpha = unlocked ? 1.0 : 0.35;
 
-        const rowBgFill = unlocked ? (tier === 'penta' ? 0x1a0022 : (tier === 'quad' ? 0x1a0d00 : (tier === 'abstract-triple' ? 0x150022 : 0x0d0d1a))) : 0x080808;
+        const rowBgFill   = unlocked ? (tier === 'penta' ? 0x1a0022 : (tier === 'quad' ? 0x1a0d00 : (tier === 'abstract-triple' ? 0x150022 : 0x0d0d1a))) : 0x080808;
         const rowBgStroke = unlocked ? (tier === 'penta' ? 0x441155 : (tier === 'quad' ? 0x443322 : (tier === 'abstract-triple' ? 0x441144 : 0x222244))) : 0x111111;
-        const rowBg = this.add.rectangle(px + colW / 2, py + rowH / 2 - 4, colW, rowH - 6,
-          rowBgFill, unlocked ? 0.8 : 0.5)
-          .setStrokeStyle(1, rowBgStroke, 0.8)
-          .setDepth(51);
-        this.infoOverlayObjects.push(rowBg);
 
-        // Emoji + name
-        const nameText = this.add.text(px + 10, py + 10, `${perk.emoji} ${perk.name}`, {
-          fontSize: '13px', fontFamily: '"Arial Black", sans-serif',
-          color: unlocked ? '#ffffff' : '#555566',
-        }).setDepth(52).setAlpha(nameAlpha);
-        this.infoOverlayObjects.push(nameText);
-
-        // Equipped indicator
-        if (equipped) {
-          const eqLbl = this.add.text(px + 10 + nameText.width + 6, py + 11, '✓', {
-            fontSize: '11px', fontFamily: 'Arial', color: '#88ff88',
-          }).setDepth(52);
-          this.infoOverlayObjects.push(eqLbl);
-        } else if (!unlocked) {
-          const lockLbl = this.add.text(px + 10 + nameText.width + 6, py + 11, '🔒', {
-            fontSize: '10px',
-          }).setDepth(52);
-          this.infoOverlayObjects.push(lockLbl);
-        }
-
-        // Ingredient chain
-        const recipeStr = perk.ingredients.map((r) => ELEM_EMOJI[r] ?? r).join(' + ');
-        const recipeEl = this.add.text(px + colW - 8, py + 10, recipeStr, {
-          fontSize: '11px', color: unlocked ? '#886633' : '#332222',
-        }).setOrigin(1, 0).setDepth(52).setAlpha(nameAlpha);
-        this.infoOverlayObjects.push(recipeEl);
-
-        // Description
-        const descEl = this.add.text(px + 10, py + 27, perk.description, {
+        const descText = this.add.text(COL_X + 10, innerY + DESC_Y, perk.description, {
           fontSize: '9px', fontFamily: 'Arial, sans-serif',
           color: unlocked ? '#888899' : '#444455',
-          wordWrap: { width: colW - 20 },
-        }).setDepth(52).setAlpha(nameAlpha);
-        this.infoOverlayObjects.push(descEl);
-      });
+          wordWrap: { width: COL_W - 20 },
+        }).setAlpha(alpha);
 
-      const rows = Math.ceil(allTierPerks.length / 2);
-      curY += rows * rowH + 14;
+        const rowH = DESC_Y + descText.height + ROW_PAD;
+
+        const rowBg = this.add.rectangle(cx, innerY + rowH / 2, COL_W, rowH - 2,
+          rowBgFill, unlocked ? 0.8 : 0.5)
+          .setStrokeStyle(1, rowBgStroke, 0.8);
+
+        const nameText = this.add.text(COL_X + 10, innerY + NAME_Y, `${perk.emoji} ${perk.name}`, {
+          fontSize: '13px', fontFamily: '"Arial Black", sans-serif',
+          color: unlocked ? '#ffffff' : '#555566',
+        }).setAlpha(alpha);
+
+        const recipeStr = perk.ingredients.map((r) => ELEM_EMOJI[r] ?? r).join(' + ');
+        const recipeText = this.add.text(COL_X + COL_W - 8, innerY + NAME_Y, recipeStr, {
+          fontSize: '11px', color: unlocked ? '#886633' : '#332222',
+        }).setOrigin(1, 0).setAlpha(alpha);
+
+        scrollContainer.add([rowBg, nameText, recipeText, descText]);
+
+        if (equipped) {
+          const eqLbl = this.add.text(COL_X + 10 + nameText.width + 6, innerY + NAME_Y + 1, '✓', {
+            fontSize: '11px', fontFamily: 'Arial', color: '#88ff88',
+          });
+          scrollContainer.add(eqLbl);
+        } else if (!unlocked) {
+          const lockLbl = this.add.text(COL_X + 10 + nameText.width + 6, innerY + NAME_Y + 1, '🔒', {
+            fontSize: '10px',
+          });
+          scrollContainer.add(lockLbl);
+        }
+
+        innerY += rowH + 3;
+      }
+
+      innerY += 14;
+    }
+
+    // ── Scroll logic ──
+    const totalContentH = innerY;
+    let scrollY = 0;
+    const maxScroll = Math.max(0, totalContentH - SCROLL_H);
+
+    const doScroll = (delta: number) => {
+      scrollY = Phaser.Math.Clamp(scrollY + delta, 0, maxScroll);
+      scrollContainer.setY(SCROLL_TOP - scrollY);
+    };
+
+    this.perkDictScrollHandler = (_ptr: unknown, _over: unknown, _dx: unknown, deltaY: unknown) => {
+      doScroll((deltaY as number) * 0.5);
+    };
+    this.input.on('wheel', this.perkDictScrollHandler);
+
+    if (maxScroll > 0) {
+      const hint = this.add.text(width - 12, SCROLL_BOT - 4, '▼ scroll', {
+        fontSize: '9px', fontFamily: 'Arial, sans-serif', color: '#444466',
+      }).setOrigin(1, 1).setDepth(55);
+      this.infoOverlayObjects.push(hint);
     }
 
     // Back button
@@ -1085,16 +1117,6 @@ export class MenuScene extends Phaser.Scene {
       }
     } else if (this.selectionPhase === 'enemy') {
       this.enemyChoice = elementId;
-      if (this.isPvP) {
-        this.scene.start('ArenaScene', {
-          elementId: this.playerChoice,
-          enemyElementId: this.enemyChoice,
-          isPvP: true,
-          playerPerk: PlayerData.getEquippedPerk(this.playerChoice ?? ''),
-          npcPerk: PlayerData.getEquippedPerk(this.enemyChoice ?? ''),
-        });
-        return;
-      }
       this.selectionPhase = 'difficulty';
     }
     this.renderPhase(width, height, cx);

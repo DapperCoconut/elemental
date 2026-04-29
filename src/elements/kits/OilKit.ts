@@ -26,8 +26,6 @@ export interface OilArenaApi {
   set npcNukeChanneling(v: boolean);
   get npcNukeChannelEnd(): number;
   set npcNukeChannelEnd(v: number);
-  get p2LastAimX(): number;
-  get p2LastAimY(): number;
   hasUpgrade(slot: string): boolean;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
   spawnHitFlash(x: number, y: number, color: number): void;
@@ -991,7 +989,7 @@ export class OilKit {
       this.npcDrones = [];
       if (this.npcOverdriveGfx) { this.npcOverdriveGfx.destroy(); this.npcOverdriveGfx = null; }
     } else {
-      const aimX = this.arena.p2LastAimX, aimY = this.arena.p2LastAimY;
+      const aimX = this.arena.player.x, aimY = this.arena.player.y;
       const tgtAng = Math.atan2(aimY - npc.y, aimX - npc.x);
       const diff = Phaser.Math.Angle.Wrap(tgtAng - this.npcOverdriveAngle);
       const rotSpeed = (18 * Math.PI / 180) * delta / 1000;
