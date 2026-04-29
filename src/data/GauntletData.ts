@@ -46,20 +46,32 @@ export interface GauntletState {
   gauntletElement: string;
   /** Element the player chose to fight with (any unlocked element) */
   playerElement: string;
-  /** 1–5 = normal fights, 6 = boss */
+  /** 1–(fightCount-1) = normal fights, last = boss */
   currentFight: number;
   /** Accumulated boost types picked between fights */
   boosts: BoostType[];
-  /** Pre-generated enemy element IDs for fights 1–5 (unique, shuffled from pool) */
+  /** Pre-generated enemy element IDs for regular fights */
   fightOrder: string[];
-  /** Pre-generated mutation IDs for fights 1–5 */
-  fightMutations: string[];
+  /** Pre-generated mutation IDs per fight (array of arrays) */
+  fightMutations: string[][];
+  /** True when running the harder variant */
+  hardMode: boolean;
 }
 
 export const GAUNTLET_COST = 2500;
 export const GAUNTLET_REWARD = 1000;
 
+export const GAUNTLET_HARD_COST = 1500;
+export const GAUNTLET_HARD_REWARD = 3000;
+export const GAUNTLET_HARD_BOSS_HP = 1500;
+
 /** Difficulty level for each fight: 1=Easy … 5=Nightmare. Boss is also level 5. */
 export const GAUNTLET_DIFFICULTY: number[] = [1, 2, 3, 4, 5, 5];
+
+/** Hard-mode difficulty for 7 regular fights + 1 boss (all capped at 5=Nightmare). */
+export const GAUNTLET_HARD_DIFFICULTY: number[] = [2, 3, 4, 5, 5, 5, 5, 5];
+
+/** Mutation count per regular fight in hard mode (7 entries, one per regular fight). */
+export const GAUNTLET_HARD_MUTATION_COUNTS: number[] = [2, 2, 2, 2, 2, 3, 4];
 
 export const DIFFICULTY_LABELS = ['Easy', 'Normal', 'Hard', 'Expert', 'Nightmare'];

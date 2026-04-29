@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import * as PlayerData from '../data/PlayerData';
 import { ALL_UPGRADES, getElementUpgrades, UpgradeDef } from '../data/Upgrades';
-import { GAUNTLET_COST } from '../data/GauntletData';
+import { GAUNTLET_COST, GAUNTLET_HARD_COST } from '../data/GauntletData';
 import { ABSTRACT_ELEMENT_IDS, ABSTRACT_ELEMENT_UNLOCK_MAP, ABSTRACT_MIX_ELEMENT_IDS } from '../data/AbstractElements';
 
 const ELEMENT_COLORS: Record<string, number> = {
@@ -444,14 +444,10 @@ export class ShopScene extends Phaser.Scene {
 
     const gauntBtnH = 52;
     const gauntBtnW = 340;
-    if (gauntletUnlocked) {
-      const gauntOwned = this.add.rectangle(cx, y + gauntBtnH / 2, gauntBtnW, gauntBtnH, 0x1a2b0d)
-        .setStrokeStyle(2, 0x33aa33);
-      void gauntOwned;
-      this.add.text(cx, y + gauntBtnH / 2, '✅  Gauntlets Unlocked', {
-        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#44ff44',
-      }).setOrigin(0.5);
-    } else {
+    const hardUnlocked = PlayerData.isGauntletHardUnlocked();
+
+    if (!gauntletUnlocked) {
+      // Step 1: buy normal gauntlets
       const gauntBtn = this.add.rectangle(cx, y + gauntBtnH / 2, gauntBtnW, gauntBtnH, 0x221100)
         .setStrokeStyle(2, 0xffaa00).setInteractive({ useHandCursor: true });
       this.add.text(cx, y + gauntBtnH / 2, `🏆  Unlock Gauntlets  —  💎 ${GAUNTLET_COST} shards`, {
@@ -466,6 +462,30 @@ export class ShopScene extends Phaser.Scene {
             this.scene.restart({ page: this.currentPage });
           }
         });
+    } else if (!hardUnlocked) {
+      // Step 2: buy hard mode (gauntlets already owned)
+      const hardBtn = this.add.rectangle(cx, y + gauntBtnH / 2, gauntBtnW, gauntBtnH, 0x1a0011)
+        .setStrokeStyle(2, 0xcc44ff).setInteractive({ useHandCursor: true });
+      this.add.text(cx, y + gauntBtnH / 2, `🔥  Unlock Hard Mode  —  💎 ${GAUNTLET_HARD_COST} shards`, {
+        fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#dd88ff',
+      }).setOrigin(0.5);
+      hardBtn
+        .on('pointerover', () => hardBtn.setFillStyle(0x330022))
+        .on('pointerout',  () => hardBtn.setFillStyle(0x1a0011))
+        .on('pointerdown', () => {
+          if (PlayerData.spendShards(GAUNTLET_HARD_COST)) {
+            PlayerData.unlockGauntletHard();
+            this.scene.restart({ page: this.currentPage });
+          }
+        });
+    } else {
+      // Both unlocked
+      const allOwned = this.add.rectangle(cx, y + gauntBtnH / 2, gauntBtnW, gauntBtnH, 0x1a0d1a)
+        .setStrokeStyle(2, 0xcc44cc);
+      void allOwned;
+      this.add.text(cx, y + gauntBtnH / 2, '✅  Gauntlets + 🔥 Hard Mode Unlocked', {
+        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#ff88ff',
+      }).setOrigin(0.5);
     }
   }
 

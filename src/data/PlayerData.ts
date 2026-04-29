@@ -8,6 +8,8 @@ interface SaveData {
   unlockedElements: string[];        // combined element IDs unlocked via Lab
   gauntletUnlocked: boolean;
   gauntletsCompleted: string[];      // base element IDs of completed gauntlets
+  gauntletHardUnlocked: boolean;
+  gauntletsCompletedHard: string[]; // base element IDs of hard-mode completed gauntlets
   dummyUnlocked: boolean;            // true once the WWSSADADBA code has been entered
   labLevel: number;                  // 0 = base, 1-3 = upgraded
   corruptShards: number;             // currency earned in Invasion mode
@@ -28,6 +30,8 @@ function load(): SaveData {
         unlockedElements: parsed.unlockedElements ?? [],
         gauntletUnlocked: parsed.gauntletUnlocked ?? false,
         gauntletsCompleted: parsed.gauntletsCompleted ?? [],
+        gauntletHardUnlocked: parsed.gauntletHardUnlocked ?? false,
+        gauntletsCompletedHard: parsed.gauntletsCompletedHard ?? [],
         dummyUnlocked: parsed.dummyUnlocked ?? false,
         labLevel: parsed.labLevel ?? 0,
         corruptShards: parsed.corruptShards ?? 0,
@@ -45,7 +49,7 @@ function load(): SaveData {
   } catch {
     // corrupted save — start fresh
   }
-  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0, unlockedPerks: {}, equippedPerks: {} };
+  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0, unlockedPerks: {}, equippedPerks: {} };
 }
 
 function save(data: SaveData): void {
@@ -193,6 +197,28 @@ export function completeGauntlet(elementId: string): void {
   const data = load();
   if (!data.gauntletsCompleted.includes(elementId)) {
     data.gauntletsCompleted = [...data.gauntletsCompleted, elementId];
+  }
+  save(data);
+}
+
+export function isGauntletHardUnlocked(): boolean {
+  return load().gauntletHardUnlocked;
+}
+
+export function unlockGauntletHard(): void {
+  const data = load();
+  data.gauntletHardUnlocked = true;
+  save(data);
+}
+
+export function getCompletedGauntletsHard(): string[] {
+  return load().gauntletsCompletedHard;
+}
+
+export function completeGauntletHard(elementId: string): void {
+  const data = load();
+  if (!data.gauntletsCompletedHard.includes(elementId)) {
+    data.gauntletsCompletedHard = [...data.gauntletsCompletedHard, elementId];
   }
   save(data);
 }

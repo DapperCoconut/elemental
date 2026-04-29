@@ -1,41 +1,18 @@
 import Phaser from 'phaser';
 import * as PlayerData from '../data/PlayerData';
-import {
-  GAUNTLET_GROUPS,
-  GAUNTLET_ELEMENTS,
-  GauntletState,
-  GAUNTLET_DIFFICULTY,
-} from '../data/GauntletData';
-import { MUTATIONS } from '../data/Mutations';
-
-// Mutations excluded from gauntlet regular fights
-const GAUNTLET_EXCLUDED_MUTATIONS = new Set(['boss', 'raid']);
-
-interface ElementDef { id: string; name: string; emoji: string; color: number }
-
-const ALL_ELEMENTS: ElementDef[] = [
-  { id: 'fire',     name: 'Fire',     emoji: '🔥',  color: 0xff4400 },
-  { id: 'water',    name: 'Water',    emoji: '💧',  color: 0x0088ff },
-  { id: 'life',     name: 'Life',     emoji: '🌿',  color: 0x44cc44 },
-  { id: 'air',      name: 'Air',      emoji: '💨',  color: 0xaaddff },
-  { id: 'earth',    name: 'Earth',    emoji: '🪨',  color: 0x887755 },
-  { id: 'oil',      name: 'Oil',      emoji: '🛢️', color: 0x664400 },
-  { id: 'shadow',   name: 'Shadow',   emoji: '🌑',  color: 0x550077 },
-  { id: 'ice',      name: 'Ice',      emoji: '🧊',  color: 0x88ccff },
-  { id: 'growth',   name: 'Growth',   emoji: '🦠',  color: 0x88bb22 },
-  { id: 'crystal',  name: 'Crystal',  emoji: '💎',  color: 0x44eeff },
-  { id: 'soul',     name: 'Soul',     emoji: '👻',  color: 0xccaaff },
-  { id: 'hunt',     name: 'Hunt',     emoji: '🐺',  color: 0xcc4400 },
-  { id: 'sand',     name: 'Time',     emoji: '⏳',  color: 0xffdd44 },
-  { id: 'gravity',  name: 'Gravity',  emoji: '🌌',  color: 0x8844cc },
-  { id: 'creation', name: 'Creation', emoji: '⚒️', color: 0xcc6622 },
-];
-
-const BASE_IDS = new Set(['fire', 'water', 'life', 'air', 'earth']);
+import { GAUNTLET_GROUPS, GAUNTLET_ELEMENTS } from '../data/GauntletData';
 
 export class GauntletSelectScene extends Phaser.Scene {
+  private hardMode = false;
+
   constructor() {
     super({ key: 'GauntletSelectScene' });
+  }
+
+  init(data?: { hardMode?: boolean }): void {
+    if (data?.hardMode !== undefined) {
+      this.hardMode = data.hardMode;
+    }
   }
 
   create(): void {
@@ -66,6 +43,8 @@ export class GauntletSelectScene extends Phaser.Scene {
     }).setOrigin(0.5);
 
     const completedGauntlets = PlayerData.getCompletedGauntlets();
+    const completedGauntletsHard = PlayerData.getCompletedGauntletsHard();
+    const hardUnlocked = PlayerData.isGauntletHardUnlocked();
 
     // Gauntlet cards (5 base elements)
     const cardW = 148;
@@ -78,6 +57,7 @@ export class GauntletSelectScene extends Phaser.Scene {
       const bx = startX + i * (cardW + cardGap);
       const by = cy + 20;
       const isCompleted = completedGauntlets.includes(el.id);
+      const isHardCompleted = completedGauntletsHard.includes(el.id);
 
       const card = this.add
         .rectangle(bx, by, cardW, cardH, 0x111122, 0.9)
@@ -99,11 +79,14 @@ export class GauntletSelectScene extends Phaser.Scene {
       }).join(' '), { fontSize: '16px', wordWrap: { width: cardW - 8 } }).setOrigin(0.5);
 
       if (isCompleted) {
-        const badge = this.add.text(bx, by - 80, '★ CLEARED', {
+        const badgeColor = isHardCompleted ? '#cc66ff' : '#ffcc00';
+        const strokeColor = isHardCompleted ? '#440066' : '#664400';
+        const badgeText = isHardCompleted ? '★ CLEARED  🔥' : '★ CLEARED';
+        const badge = this.add.text(bx, by - 80, badgeText, {
           fontSize: '13px',
           fontFamily: '"Arial Black", sans-serif',
-          color: '#ffcc00',
-          stroke: '#664400',
+          color: badgeColor,
+          stroke: strokeColor,
           strokeThickness: 3,
         }).setOrigin(0.5);
         this.tweens.add({ targets: badge, alpha: 0.6, duration: 900, yoyo: true, repeat: -1 });
@@ -112,8 +95,49 @@ export class GauntletSelectScene extends Phaser.Scene {
       card
         .on('pointerover', () => { card.setStrokeStyle(3, 0xffffff); card.setAlpha(1); })
         .on('pointerout',  () => { card.setStrokeStyle(2, el.color);  card.setAlpha(0.9); })
-        .on('pointerdown', () => this.showElementPicker(el.id));
+        .on('pointerdown', () => this.scene.start('GauntletElementSelectScene', { gauntletId: el.id, hardMode: this.hardMode }));
     });
+
+    // Hard-mode toggle (below the cards)
+    const toggleY = cy + 148;
+
+    if (!hardUnlocked) {
+      this.add.text(cx, toggleY, '🔥 HARD MODE  —  purchase in Shop for 1500 💎', {
+        fontSize: '13px', fontFamily: 'Arial, sans-serif', color: '#444455',
+      }).setOrigin(0.5);
+    } else {
+      this.add.text(cx - 120, toggleY, '🔥 HARD MODE', {
+        fontSize: '15px', fontFamily: '"Arial Black", sans-serif', color: '#dd88ff',
+      }).setOrigin(0.5);
+
+      const trackW = 52;
+      const trackH = 24;
+      const knobR = 10;
+      const trackX = cx + 50;
+
+      const track = this.add.rectangle(trackX, toggleY, trackW, trackH, this.hardMode ? 0x882299 : 0x333344, 1)
+        .setStrokeStyle(1, this.hardMode ? 0xdd44ff : 0x666677)
+        .setInteractive({ useHandCursor: true });
+
+      const knobOffX = trackX - trackW / 2 + knobR + 2;
+      const knobOnX  = trackX + trackW / 2 - knobR - 2;
+      const knob = this.add.circle(this.hardMode ? knobOnX : knobOffX, toggleY, knobR, this.hardMode ? 0xff88ff : 0x888899);
+
+      track.on('pointerdown', () => {
+        this.hardMode = !this.hardMode;
+        this.scene.restart({ hardMode: this.hardMode });
+      });
+      knob.setInteractive({ useHandCursor: true }).on('pointerdown', () => {
+        this.hardMode = !this.hardMode;
+        this.scene.restart({ hardMode: this.hardMode });
+      });
+
+      const modeLabel = this.add.text(cx + 90, toggleY, this.hardMode ? 'ON' : 'OFF', {
+        fontSize: '13px', fontFamily: '"Arial Black", sans-serif',
+        color: this.hardMode ? '#ff88ff' : '#555566',
+      }).setOrigin(0, 0.5);
+      void modeLabel;
+    }
 
     // Back button
     const backBtn = this.add
@@ -136,140 +160,4 @@ export class GauntletSelectScene extends Phaser.Scene {
     }).setOrigin(1, 0);
   }
 
-  private showElementPicker(gauntletId: string): void {
-    const { width, height } = this.scale;
-    const cx = width / 2;
-    const cy = height / 2;
-
-    // Darken overlay
-    const overlay = this.add.rectangle(cx, cy, width, height, 0x000000, 0.75).setDepth(50).setInteractive();
-
-    const panelW = 700;
-    const panelH = 380;
-    const panel = this.add.rectangle(cx, cy, panelW, panelH, 0x0d0d1a, 0.98)
-      .setStrokeStyle(2, 0x4444aa)
-      .setDepth(51);
-
-    const gauntletEl = GAUNTLET_ELEMENTS.find((e) => e.id === gauntletId)!;
-    this.add.text(cx, cy - panelH / 2 + 28, `${gauntletEl.emoji} ${gauntletEl.name.toUpperCase()} GAUNTLET`, {
-      fontSize: '20px', fontFamily: '"Arial Black", sans-serif', color: '#ffaa00',
-    }).setOrigin(0.5).setDepth(52);
-
-    this.add.text(cx, cy - panelH / 2 + 56, 'Choose your element:', {
-      fontSize: '14px', fontFamily: 'Arial, sans-serif', color: '#aaaaaa',
-    }).setOrigin(0.5).setDepth(52);
-
-    // Available elements: all 5 base + any unlocked combined
-    const available = ALL_ELEMENTS.filter(
-      (e) => BASE_IDS.has(e.id) || PlayerData.isElementUnlocked(e.id),
-    );
-
-    const btnW = 90;
-    const btnH = 72;
-    const btnGap = 10;
-    const cols = Math.min(available.length, 8);
-    const rows = Math.ceil(available.length / cols);
-    const totalBtnW = cols * btnW + (cols - 1) * btnGap;
-    const startX = cx - totalBtnW / 2 + btnW / 2;
-    const startY = cy - (rows * (btnH + btnGap)) / 2 + btnH / 2 + 20;
-
-    let selectedElementId: string | null = null;
-    const btnRects: Phaser.GameObjects.Rectangle[] = [];
-
-    available.forEach((el, i) => {
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      const bx = startX + col * (btnW + btnGap);
-      const by = startY + row * (btnH + btnGap);
-
-      const btn = this.add.rectangle(bx, by, btnW, btnH, 0x111133, 0.9)
-        .setStrokeStyle(2, el.color)
-        .setDepth(52)
-        .setInteractive({ useHandCursor: true });
-      btnRects.push(btn);
-
-      this.add.text(bx, by - 12, el.emoji, { fontSize: '26px' }).setOrigin(0.5).setDepth(53);
-      this.add.text(bx, by + 18, el.name, {
-        fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#cccccc',
-        wordWrap: { width: btnW - 8 },
-      }).setOrigin(0.5).setDepth(53);
-
-      btn
-        .on('pointerover', () => { if (selectedElementId !== el.id) btn.setStrokeStyle(3, 0xffffff); })
-        .on('pointerout',  () => { if (selectedElementId !== el.id) btn.setStrokeStyle(2, el.color); })
-        .on('pointerdown', () => {
-          selectedElementId = el.id;
-          btnRects.forEach((b, bi) => {
-            b.setStrokeStyle(2, available[bi].color);
-            b.setFillStyle(0x111133, 0.9);
-          });
-          btn.setStrokeStyle(3, 0xffcc00);
-          btn.setFillStyle(0x1a1a00, 1);
-          startBtn.setFillStyle(0x1a3a1a, 0.9);
-          startBtn.setStrokeStyle(2, 0x44cc44);
-          startBtn.setInteractive({ useHandCursor: true });
-          startLabel.setColor('#ffffff');
-        });
-    });
-
-    // Start button (inactive until element chosen)
-    const startBtn = this.add.rectangle(cx, cy + panelH / 2 - 36, 220, 48, 0x111111, 0.5)
-      .setStrokeStyle(0)
-      .setDepth(52);
-    const startLabel = this.add.text(cx, cy + panelH / 2 - 36, 'SELECT AN ELEMENT', {
-      fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#555555',
-    }).setOrigin(0.5).setDepth(53);
-
-    startBtn
-      .on('pointerover', () => { if (selectedElementId) startBtn.setStrokeStyle(3, 0xffffff); })
-      .on('pointerout',  () => { if (selectedElementId) startBtn.setStrokeStyle(2, 0x44cc44); })
-      .on('pointerdown', () => {
-        if (!selectedElementId) return;
-        this.startGauntlet(gauntletId, selectedElementId);
-      });
-
-    // Cancel (click overlay or X)
-    const closeBtn = this.add.text(cx + panelW / 2 - 16, cy - panelH / 2 + 16, '✕', {
-      fontSize: '18px', fontFamily: 'Arial, sans-serif', color: '#888888',
-    }).setOrigin(0.5).setDepth(53).setInteractive({ useHandCursor: true });
-
-    const closeOverlay = () => {
-      [overlay, panel, closeBtn].forEach((o) => o.destroy());
-      // destroy all depth-52/53 objects we added by just restarting the scene would be cleanest,
-      // but simpler to just restart so we don't have to track every object
-      this.scene.restart();
-    };
-    overlay.on('pointerdown', closeOverlay);
-    closeBtn.on('pointerdown', closeOverlay);
-  }
-
-  private startGauntlet(gauntletElement: string, playerElement: string): void {
-    const pool = GAUNTLET_GROUPS[gauntletElement] ?? [];
-    const allowedMutations = MUTATIONS
-      .filter((m) => !GAUNTLET_EXCLUDED_MUTATIONS.has(m.id))
-      .map((m) => m.id);
-
-    const fightOrder = [...pool].sort(() => Math.random() - 0.5);
-    const fightMutations = Array.from({ length: 5 }, () =>
-      allowedMutations[Math.floor(Math.random() * allowedMutations.length)],
-    );
-
-    const gauntlet: GauntletState = {
-      gauntletElement,
-      playerElement,
-      currentFight: 1,
-      boosts: [],
-      fightOrder,
-      fightMutations,
-    };
-
-    this.scene.start('ArenaScene', {
-      elementId: playerElement,
-      enemyElementId: fightOrder[0],
-      difficulty: GAUNTLET_DIFFICULTY[0],
-      mutations: [fightMutations[0]],
-      gauntlet,
-      playerPerk: PlayerData.getEquippedPerk(playerElement),
-    });
-  }
 }

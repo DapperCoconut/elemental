@@ -6,9 +6,13 @@ import {
   BoostType,
   GAUNTLET_ELEMENTS,
   GAUNTLET_DIFFICULTY,
+  GAUNTLET_HARD_DIFFICULTY,
   GAUNTLET_REWARD,
+  GAUNTLET_HARD_REWARD,
+  GAUNTLET_HARD_BOSS_HP,
   DIFFICULTY_LABELS,
 } from '../data/GauntletData';
+import { MUTATIONS } from '../data/Mutations';
 
 export class GauntletIntermediaryScene extends Phaser.Scene {
   constructor() {
@@ -28,7 +32,8 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
     for (let x = 0; x < width; x += 60) grid.lineBetween(x, 0, x, height);
     for (let y = 0; y < height; y += 60) grid.lineBetween(0, y, width, y);
 
-    const isBossComplete = gs.currentFight === 6;
+    const totalFights = gs.hardMode ? 8 : 6;
+    const isBossComplete = gs.currentFight === totalFights;
 
     if (isBossComplete) {
       this.showCompletion(gs, cx, cy, width, height);
@@ -39,10 +44,18 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
 
   private showCompletion(gs: GauntletState, cx: number, cy: number, width: number, height: number): void {
     // Award shards and mark completion
-    PlayerData.addShards(GAUNTLET_REWARD);
-    PlayerData.completeGauntlet(gs.gauntletElement);
+    const reward = gs.hardMode ? GAUNTLET_HARD_REWARD : GAUNTLET_REWARD;
+    PlayerData.addShards(reward);
+    if (gs.hardMode) {
+      PlayerData.completeGauntletHard(gs.gauntletElement);
+    } else {
+      PlayerData.completeGauntlet(gs.gauntletElement);
+    }
 
     const elDef = GAUNTLET_ELEMENTS.find((e) => e.id === gs.gauntletElement)!;
+    const titleText = gs.hardMode ? '🔥 HARD GAUNTLET COMPLETE!' : 'GAUNTLET COMPLETE!';
+    const titleColor = gs.hardMode ? '#ff88ff' : '#ffcc00';
+    const battleCount = gs.hardMode ? '7' : '5';
 
     // Gauntlet name + star
     this.add.text(cx, cy - 160, `${elDef.emoji} ${elDef.name.toUpperCase()} GAUNTLET`, {
@@ -53,10 +66,10 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
       strokeThickness: 3,
     }).setOrigin(0.5);
 
-    const title = this.add.text(cx, cy - 110, 'GAUNTLET COMPLETE!', {
-      fontSize: '64px',
+    const title = this.add.text(cx, cy - 110, titleText, {
+      fontSize: gs.hardMode ? '48px' : '64px',
       fontFamily: '"Arial Black", sans-serif',
-      color: '#ffcc00',
+      color: titleColor,
       stroke: '#000000',
       strokeThickness: 6,
     }).setOrigin(0.5);
@@ -70,16 +83,16 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
       repeat: -1,
     });
 
-    this.add.text(cx, cy - 20, `★ You survived all 5 battles and defeated the boss! ★`, {
+    this.add.text(cx, cy - 20, `★ You survived all ${battleCount} battles and defeated the boss! ★`, {
       fontSize: '18px',
       fontFamily: 'Arial, sans-serif',
       color: '#aaaaaa',
     }).setOrigin(0.5);
 
-    this.add.text(cx, cy + 20, `+${GAUNTLET_REWARD} 💎`, {
+    this.add.text(cx, cy + 20, `+${reward} 💎`, {
       fontSize: '32px',
       fontFamily: '"Arial Black", sans-serif',
-      color: '#ffcc00',
+      color: titleColor,
     }).setOrigin(0.5);
 
     // Back button
@@ -104,8 +117,10 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
   private showBoostSelection(gs: GauntletState, cx: number, cy: number, width: number, _height: number): void {
     const elDef = GAUNTLET_ELEMENTS.find((e) => e.id === gs.gauntletElement)!;
     const nextFight = gs.currentFight + 1;
-    const isBossFight = nextFight === 6;
-    const nextDiffLabel = isBossFight ? 'BOSS' : DIFFICULTY_LABELS[GAUNTLET_DIFFICULTY[nextFight - 1] - 1];
+    const totalFights = gs.hardMode ? 8 : 6;
+    const isBossFight = nextFight === totalFights;
+    const diffArray = gs.hardMode ? GAUNTLET_HARD_DIFFICULTY : GAUNTLET_DIFFICULTY;
+    const nextDiffLabel = isBossFight ? 'BOSS' : DIFFICULTY_LABELS[diffArray[nextFight - 1] - 1];
 
     // Header
     this.add.text(cx, 52, `${elDef.emoji} ${elDef.name.toUpperCase()} GAUNTLET`, {
@@ -125,7 +140,7 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
     }).setOrigin(0.5);
 
     // Progress bar
-    this.drawProgress(cx, 130, gs.currentFight);
+    this.drawProgress(cx, 130, gs.currentFight, totalFights);
 
     // Accumulated boosts
     if (gs.boosts.length > 0) {
@@ -179,7 +194,7 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
       .rectangle(cx, nextBtnY, nextBtnW, nextBtnH, 0x1a2a1a, 0)
       .setStrokeStyle(0)
       .setInteractive({ useHandCursor: false });
-    const nextLabel = this.add.text(cx, nextBtnY, isBossFight ? '⚔️ FIGHT THE BOSS' : `NEXT FIGHT →  [${nextDiffLabel}]`, {
+    const nextLabel = this.add.text(cx, nextBtnY, isBossFight ? '⚔️ FIGHT THE BOSS' : `NEXT FIGHT →  [${nextDiffLabel}]  (Fight ${nextFight}/${totalFights - 1})`, {
       fontSize: '20px',
       fontFamily: '"Arial Black", sans-serif',
       color: '#444444',
@@ -253,9 +268,19 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
     });
 
     // Next fight info
-    const nextFightLabel = isBossFight
-      ? `⚠️ BOSS FIGHT — ${elDef.name.toUpperCase()} 👹 (stationary, 500 HP)`
-      : `Next: Fight ${nextFight} / 6  •  ${nextDiffLabel}`;
+    let nextFightLabel: string;
+    if (isBossFight) {
+      const bossHp = gs.hardMode ? GAUNTLET_HARD_BOSS_HP : 500;
+      const bossIdx = gs.hardMode ? 7 : 5;
+      const bossExtras = (gs.fightMutations[bossIdx] ?? []);
+      const bossExtraNames = bossExtras.map((id) => MUTATIONS.find((m) => m.id === id)?.name ?? id).join(', ');
+      const hardExtra = gs.hardMode && bossExtras.length > 0 ? `  +  ${bossExtraNames}` : '';
+      nextFightLabel = `⚠️ BOSS FIGHT — ${elDef.name.toUpperCase()} 👹 (stationary, ${bossHp} HP${hardExtra})`;
+    } else {
+      const nextMuts = gs.fightMutations[nextFight - 1] ?? [];
+      const mutLabels = nextMuts.map((id) => MUTATIONS.find((m) => m.id === id)?.name ?? id).join(' + ');
+      nextFightLabel = `Next: Fight ${nextFight} / ${totalFights - 1}  •  ${nextDiffLabel}  •  ${mutLabels}`;
+    }
     this.add.text(cx, nextBtnY + 50, nextFightLabel, {
       fontSize: '13px',
       fontFamily: 'Arial, sans-serif',
@@ -265,17 +290,16 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
     }).setOrigin(0.5);
   }
 
-  private drawProgress(cx: number, y: number, completedFights: number): void {
-    const totalFights = 6;
-    const dotR = 10;
-    const dotGap = 28;
+  private drawProgress(cx: number, y: number, completedFights: number, totalFights: number): void {
+    const dotR = totalFights > 6 ? 8 : 10;
+    const dotGap = totalFights > 6 ? 20 : 28;
     const totalW = totalFights * dotR * 2 + (totalFights - 1) * dotGap;
     const startX = cx - totalW / 2 + dotR;
 
     const g = this.add.graphics();
     for (let i = 0; i < totalFights; i++) {
       const dx = startX + i * (dotR * 2 + dotGap);
-      const isBoss = i === 5;
+      const isBoss = i === totalFights - 1;
       const done = i < completedFights;
       const color = done ? 0x44cc44 : isBoss ? 0xff4422 : 0x333366;
       g.fillStyle(color, done ? 1 : 0.5);
@@ -292,26 +316,28 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
   }
 
   private launchNextFight(gs: GauntletState): void {
-    const isBoss = gs.currentFight === 6;
+    const totalFights = gs.hardMode ? 8 : 6;
+    const isBoss = gs.currentFight === totalFights;
 
     if (isBoss) {
-      // Boss fight: same element as gauntlet, Boss mutation, Nightmare difficulty
+      // Boss fight: same element as gauntlet, Boss mutation (+ hard extras), Nightmare difficulty
+      const bossExtras = gs.hardMode ? (gs.fightMutations[7] ?? []) : [];
       this.scene.start('ArenaScene', {
         elementId: gs.playerElement,
         enemyElementId: gs.gauntletElement,
         difficulty: 5,
-        mutations: ['boss'],
+        mutations: ['boss', ...bossExtras],
         gauntlet: gs,
         playerPerk: PlayerData.getEquippedPerk(gs.playerElement),
       });
     } else {
-      // Regular fight: use pre-generated order/mutation (currentFight is now 2-5, index = currentFight - 1)
       const idx = gs.currentFight - 1;
+      const diffArray = gs.hardMode ? GAUNTLET_HARD_DIFFICULTY : GAUNTLET_DIFFICULTY;
       this.scene.start('ArenaScene', {
         elementId: gs.playerElement,
         enemyElementId: gs.fightOrder[idx],
-        difficulty: GAUNTLET_DIFFICULTY[idx],
-        mutations: [gs.fightMutations[idx]],
+        difficulty: diffArray[idx],
+        mutations: gs.fightMutations[idx],
         gauntlet: gs,
         playerPerk: PlayerData.getEquippedPerk(gs.playerElement),
       });
