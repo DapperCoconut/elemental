@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { DIFFICULTY_PRESETS } from '../entities/NpcOpponent';
 import { SHARD_REWARDS, getElementUpgrades } from '../data/Upgrades';
-import { MUTATIONS, activeMutationIds } from '../data/Mutations';
+import { MUTATIONS, activeMutationIds, starredMutationIds, clearMutationSelection, getTotalRewardMult, STARRED_REWARD_MULT, getMutationDef } from '../data/Mutations';
 import * as PlayerData from '../data/PlayerData';
 import { getPerksForElement, getPerkById, ALL_PERKS } from '../data/Perks';
 
@@ -139,7 +139,10 @@ export class MenuScene extends Phaser.Scene {
 
   private phaseObjects: Phaser.GameObjects.GameObject[] = [];
   private infoOverlayObjects: Phaser.GameObjects.GameObject[] = [];
+  private mutationOverlayObjects: Phaser.GameObjects.GameObject[] = [];
   private perkDictScrollHandler: (...args: unknown[]) => void = () => {};
+  private mutationScrollHandler: (...args: unknown[]) => void = () => {};
+  private hoveredDifficulty = 1;
   private konamiBuffer: string[] = [];
 
   constructor() {
@@ -148,7 +151,7 @@ export class MenuScene extends Phaser.Scene {
 
   create(data?: { mode?: string }): void {
     this.isInvasion = data?.mode === 'invasion';
-    activeMutationIds.clear();
+    clearMutationSelection();
     this.selectionPhase = 'player';
     this.playerChoice = null;
     this.enemyChoice = null;
@@ -193,9 +196,11 @@ export class MenuScene extends Phaser.Scene {
     backBtn.on('pointerout',  () => { backBtn.setFillStyle(0x222233); backLabel.setColor('#aaaaaa'); });
     backBtn.on('pointerdown', () => this.goBack());
 
-    // Esc: close info overlay if open, else go back one phase
+    // Esc: close mutation info overlay, then element info overlay, then go back
     this.input.keyboard!.on('keydown-ESC', () => {
-      if (this.infoOverlayObjects.length > 0) {
+      if (this.mutationOverlayObjects.length > 0) {
+        this.closeMutationInfo();
+      } else if (this.infoOverlayObjects.length > 0) {
         this.closeElementInfo();
       } else {
         this.goBack();
@@ -227,6 +232,11 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private renderPhase(width: number, height: number, cx: number): void {
+    this.input.off('wheel', this.mutationScrollHandler);
+    for (const obj of this.rewardsPanelDynObjects) {
+      if (obj.active) (obj as Phaser.GameObjects.GameObject & { destroy(): void }).destroy();
+    }
+    this.rewardsPanelDynObjects = [];
     for (const obj of this.phaseObjects) {
       if (obj.active) (obj as Phaser.GameObjects.GameObject & { destroy(): void }).destroy();
     }
@@ -539,11 +549,7 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private renderInvasionStartPhase(width: number, height: number, cx: number, playerEl: ElementDef | undefined): void {
-    const mutTitleY = 230;
-    const mutRow0Y  = 268;
-    const mutRow1Y  = 318;
-    const mutRow2Y  = 368;
-    const mutRow3Y  = 418;
+    const mutTitleY = 215;
 
     const subtitle = this.add.text(cx, 155, 'INVASION', {
       fontSize: '28px', fontFamily: '"Arial Black", sans-serif', color: '#cc44ff',
@@ -558,54 +564,14 @@ export class MenuScene extends Phaser.Scene {
       this.phaseObjects.push(indicator);
     }
 
-    const mutTitle = this.add.text(cx, mutTitleY, '— MUTATIONS —', {
-      fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#aaaaaa',
-    }).setOrigin(0.5);
-    this.phaseObjects.push(mutTitle);
-
-    const togW = 172; const togH = 40; const togGapX = 10; const mutCols = 4;
-    const totalTogW = mutCols * togW + (mutCols - 1) * togGapX;
-    const togStartX = cx - totalTogW / 2;
-    const rowY = [mutRow0Y, mutRow1Y, mutRow2Y, mutRow3Y];
-
-    MUTATIONS.forEach((mut, idx) => {
-      const col = idx % mutCols;
-      const row = Math.floor(idx / mutCols);
-      const tx = togStartX + col * (togW + togGapX) + togW / 2;
-      const ty = rowY[row];
-
-      const isOn = () => activeMutationIds.has(mut.id);
-      const getColor  = () => isOn() ? 0x1a3a1a : 0x252535;
-      const getBorder = () => isOn() ? 0x55ee55 : 0x9999bb;
-
-      const tog = this.add.rectangle(tx, ty, togW, togH, getColor(), 1)
-        .setStrokeStyle(2, getBorder()).setInteractive({ useHandCursor: true });
-      const togLabel = this.add.text(tx, ty - 7, `${mut.emoji} ${mut.name}`, {
-        fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: isOn() ? '#88ff88' : '#cccccc',
-      }).setOrigin(0.5);
-      const togDesc = this.add.text(tx, ty + 9, mut.description, {
-        fontSize: '9px', fontFamily: 'Arial, sans-serif', color: isOn() ? '#66dd66' : '#999999',
-      }).setOrigin(0.5);
-
-      const refresh = () => {
-        tog.setFillStyle(getColor(), 1);
-        tog.setStrokeStyle(2, getBorder());
-        togLabel.setColor(isOn() ? '#88ff88' : '#cccccc');
-        togDesc.setColor(isOn() ? '#66dd66' : '#999999');
-      };
-      tog
-        .on('pointerover', () => tog.setStrokeStyle(3, 0xffffff))
-        .on('pointerout',  () => tog.setStrokeStyle(2, getBorder()))
-        .on('pointerdown', () => { if (isOn()) activeMutationIds.delete(mut.id); else activeMutationIds.add(mut.id); refresh(); });
-      this.phaseObjects.push(tog, togLabel, togDesc);
-    });
+    this.renderMutationPanel(width, height, cx, mutTitleY);
 
     // START button
-    const startY = height - 90;
-    const startBtn = this.add.rectangle(cx, startY, 280, 60, 0x330055)
+    const startY = height - 55;
+    const startBtn = this.add.rectangle(cx, startY, 280, 50, 0x330055)
       .setStrokeStyle(3, 0x8800cc).setInteractive({ useHandCursor: true });
     const startLbl = this.add.text(cx, startY, '⚔  START INVASION', {
-      fontSize: '22px', fontFamily: '"Arial Black", sans-serif', color: '#cc44ff',
+      fontSize: '20px', fontFamily: '"Arial Black", sans-serif', color: '#cc44ff',
     }).setOrigin(0.5);
     startBtn
       .on('pointerover', () => { startBtn.setFillStyle(0x550088); startBtn.setStrokeStyle(3, 0xcc44ff); startLbl.setColor('#ffffff'); })
@@ -614,6 +580,7 @@ export class MenuScene extends Phaser.Scene {
         this.scene.start('ArenaScene', {
           elementId: this.playerChoice,
           mutations: [...activeMutationIds],
+          starredMutations: [...starredMutationIds],
           mode: 'invasion',
           playerPerk: PlayerData.getEquippedPerk(this.playerChoice ?? ''),
         });
@@ -628,10 +595,6 @@ export class MenuScene extends Phaser.Scene {
     const diffBtnY  = 228;
     const descY     = 292;
     const mutTitleY = 327;
-    const mutRow0Y  = 364;
-    const mutRow1Y  = 415;
-    const mutRow2Y  = 466;
-    const mutRow3Y  = 517;
 
     const subtitle = this.add.text(cx, 155, 'Choose difficulty', {
       fontSize: '20px',
@@ -692,22 +655,23 @@ export class MenuScene extends Phaser.Scene {
       }).setOrigin(0.5);
 
       btn
-        .on('pointerover', () => { btn.setAlpha(1); btn.setStrokeStyle(3, 0xffffff); descText.setText(DIFF_DESCRIPTIONS[i]); })
+        .on('pointerover', () => {
+          btn.setAlpha(1); btn.setStrokeStyle(3, 0xffffff); descText.setText(DIFF_DESCRIPTIONS[i]);
+          this.hoveredDifficulty = diff.level;
+          this.refreshRewardsPanel(width);
+        })
         .on('pointerout',  () => { btn.setAlpha(0.75); btn.setStrokeStyle(2, color); descText.setText(''); })
         .on('pointerdown', () => {
           const npcPool = getPerksForElement(this.enemyChoice ?? '');
-          let npcPerk: string | null = (diff.level >= 4 && npcPool.length > 0)
+          const npcPerk: string | null = (diff.level >= 4 && npcPool.length > 0)
             ? npcPool[Math.floor(Math.random() * npcPool.length)].id
             : null;
-          if (activeMutationIds.has('perkaholic')) {
-            const quadPool = npcPool.filter((p) => p.tier === 'quad');
-            if (quadPool.length > 0) npcPerk = quadPool[Math.floor(Math.random() * quadPool.length)].id;
-          }
           this.scene.start('ArenaScene', {
             elementId: this.playerChoice,
             enemyElementId: this.enemyChoice,
             difficulty: diff.level,
             mutations: [...activeMutationIds],
+            starredMutations: [...starredMutationIds],
             playerPerk: PlayerData.getEquippedPerk(this.playerChoice ?? ''),
             npcPerk,
           });
@@ -716,67 +680,322 @@ export class MenuScene extends Phaser.Scene {
       this.phaseObjects.push(btn, labelText, hpText);
     });
 
-    // ── Mutation toggles (3 rows × 4 cols) ──────────────────────────
-    const mutTitle = this.add.text(cx, mutTitleY, '— MUTATIONS —', {
-      fontSize: '11px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#aaaaaa',
+    // ── New mutation panel (scrollable list + rewards sidebar) ────────
+    this.renderMutationPanel(width, height, cx, mutTitleY);
+  }
+
+  // ── Mutation panel (scrollable list + rewards sidebar) ──────────────
+
+  /** Persistent objects for the mutation list and rewards panel within phaseObjects. */
+  private mutationListObjects: Phaser.GameObjects.GameObject[] = [];
+  private rewardsPanelDynObjects: Phaser.GameObjects.GameObject[] = [];
+
+  private renderMutationPanel(width: number, height: number, cx: number, titleY: number): void {
+    // Detach any previous scroll handler
+    this.input.off('wheel', this.mutationScrollHandler);
+
+    const PANEL_TOP = titleY + 28;
+    const PANEL_BOT = height - 70;
+    const PANEL_H   = PANEL_BOT - PANEL_TOP;
+
+    const LIST_X    = 32;
+    const LIST_W    = 560;
+    const RWD_X     = LIST_X + LIST_W + 16;
+    const RWD_W     = width - RWD_X - 16;
+    const RWD_CX    = RWD_X + RWD_W / 2;
+
+    const mutTitle = this.add.text(cx, titleY, '— MUTATIONS —', {
+      fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#aaaaaa',
     }).setOrigin(0.5);
     this.phaseObjects.push(mutTitle);
 
-    const togW = 172;
-    const togH = 40;
-    const togGapX = 10;
-    const mutCols = 4;
-    const totalTogW = mutCols * togW + (mutCols - 1) * togGapX;
-    const togStartX = cx - totalTogW / 2;
-    const rowY = [mutRow0Y, mutRow1Y, mutRow2Y, mutRow3Y];
+    // ── Rewards panel (static background) ──
+    const rPanelBg = this.add.rectangle(RWD_CX, PANEL_TOP + PANEL_H / 2, RWD_W, PANEL_H, 0x10101a, 0.7)
+      .setStrokeStyle(1, 0x3a3a55, 1);
+    const rPanelTitle = this.add.text(RWD_CX, PANEL_TOP + 12, 'REWARDS PREVIEW', {
+      fontSize: '9px', fontFamily: '"Arial Black", sans-serif', color: '#777799',
+    }).setOrigin(0.5);
+    this.phaseObjects.push(rPanelBg, rPanelTitle);
 
-    MUTATIONS.forEach((mut, idx) => {
-      const col = idx % mutCols;
-      const row = Math.floor(idx / mutCols);
-      const tx = togStartX + col * (togW + togGapX) + togW / 2;
-      const ty = rowY[row];
+    // ── Mutation list mask + container ──
+    const maskGfx = this.add.graphics();
+    maskGfx.fillStyle(0xffffff, 1);
+    maskGfx.fillRect(LIST_X, PANEL_TOP, LIST_W, PANEL_H);
+    const mask = maskGfx.createGeometryMask();
 
-      const isOn = () => activeMutationIds.has(mut.id);
-      const getColor  = () => isOn() ? 0x1a3a1a : 0x252535;
-      const getBorder = () => isOn() ? 0x55ee55 : 0x9999bb;
+    const scrollContainer = this.add.container(LIST_X, PANEL_TOP).setDepth(5);
+    scrollContainer.setMask(mask);
+    this.phaseObjects.push(maskGfx, scrollContainer);
 
-      const tog = this.add
-        .rectangle(tx, ty, togW, togH, getColor(), 1)
-        .setStrokeStyle(2, getBorder())
-        .setInteractive({ useHandCursor: true });
+    const ROW_H = 58;
+    const ROW_W = LIST_W - 4;
 
-      const togLabel = this.add.text(tx, ty - 7, `${mut.emoji} ${mut.name}`, {
-        fontSize: '12px',
-        fontFamily: '"Arial Black", sans-serif',
-        color: isOn() ? '#88ff88' : '#cccccc',
-      }).setOrigin(0.5);
-
-      const togDesc = this.add.text(tx, ty + 9, mut.description, {
-        fontSize: '9px',
-        fontFamily: 'Arial, sans-serif',
-        color: isOn() ? '#66dd66' : '#999999',
-      }).setOrigin(0.5);
-
-      const refresh = () => {
-        tog.setFillStyle(getColor(), 1);
-        tog.setStrokeStyle(2, getBorder());
-        togLabel.setColor(isOn() ? '#88ff88' : '#cccccc');
-        togDesc.setColor(isOn() ? '#66dd66' : '#999999');
-      };
-
-      tog
-        .on('pointerover', () => tog.setStrokeStyle(3, 0xffffff))
-        .on('pointerout',  () => tog.setStrokeStyle(2, getBorder()))
-        .on('pointerdown', () => {
-          if (isOn()) activeMutationIds.delete(mut.id);
-          else activeMutationIds.add(mut.id);
-          refresh();
-        });
-
-      this.phaseObjects.push(tog, togLabel, togDesc);
+    // Sort: unlocked first, locked last
+    const sorted = [...MUTATIONS].sort((a, b) => {
+      const uA = PlayerData.isMutationUnlocked(a.id) ? 0 : 1;
+      const uB = PlayerData.isMutationUnlocked(b.id) ? 0 : 1;
+      return uA - uB;
     });
+
+    const buildRows = () => {
+      // Destroy old row objects
+      for (const obj of this.mutationListObjects) {
+        if (obj.active) (obj as Phaser.GameObjects.GameObject & { destroy(): void }).destroy();
+      }
+      this.mutationListObjects = [];
+
+      let innerY = 4;
+      for (const mut of sorted) {
+        const unlocked = PlayerData.isMutationUnlocked(mut.id);
+        const equipped = activeMutationIds.has(mut.id);
+        const starred  = starredMutationIds.has(mut.id);
+
+        const fillColor   = equipped ? 0x1a3a1a : (unlocked ? 0x252535 : 0x141420);
+        const borderColor = equipped ? 0x55ee55 : (unlocked ? 0x6677aa : 0x333344);
+        const alpha       = unlocked ? 1 : 0.45;
+
+        const rowBg = this.add.rectangle(ROW_W / 2, innerY + ROW_H / 2, ROW_W, ROW_H - 4, fillColor, 1)
+          .setStrokeStyle(1, borderColor, 1).setAlpha(alpha);
+        scrollContainer.add(rowBg);
+        this.mutationListObjects.push(rowBg);
+
+        if (unlocked) {
+          rowBg.setInteractive({ useHandCursor: true })
+            .on('pointerover', () => rowBg.setStrokeStyle(2, 0xffffff, 1))
+            .on('pointerout',  () => rowBg.setStrokeStyle(1, borderColor, 1))
+            .on('pointerdown', () => {
+              if (equipped) {
+                activeMutationIds.delete(mut.id);
+                starredMutationIds.delete(mut.id);
+              } else {
+                activeMutationIds.add(mut.id);
+              }
+              buildRows();
+              this.buildRewardsPanel(RWD_CX, PANEL_TOP, PANEL_H, RWD_W);
+            });
+        }
+
+        // Emoji + name
+        const nameColor = unlocked ? '#ffffff' : '#555566';
+        const prefix    = unlocked ? '' : '🔒 ';
+        const nameText = this.add.text(10, innerY + 12, `${prefix}${mut.emoji} ${mut.name}`, {
+          fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: nameColor,
+        }).setAlpha(alpha);
+        scrollContainer.add(nameText);
+        this.mutationListObjects.push(nameText);
+
+        // Short desc
+        const descColor = unlocked ? '#999999' : '#444455';
+        const descText = this.add.text(10, innerY + 32, mut.shortDesc, {
+          fontSize: '9px', fontFamily: 'Arial, sans-serif', color: descColor,
+          wordWrap: { width: ROW_W - 60 },
+        }).setAlpha(alpha);
+        scrollContainer.add(descText);
+        this.mutationListObjects.push(descText);
+
+        // Star button (unlocked only)
+        if (unlocked) {
+          const starX = ROW_W - 52;
+          const starCircle = this.add.circle(starX, innerY + ROW_H / 2 - 2, 14, starred ? 0x886600 : 0x333344, 1)
+            .setStrokeStyle(1, starred ? 0xffcc44 : 0x555566, 1)
+            .setDepth(6).setInteractive({ useHandCursor: true });
+          const starLabel = this.add.text(starX, innerY + ROW_H / 2 - 2, '★', {
+            fontSize: '14px', color: starred ? '#ffeebb' : '#7a7a8a',
+          }).setOrigin(0.5).setDepth(7);
+          starCircle
+            .on('pointerover', () => starCircle.setFillStyle(starred ? 0xaa8800 : 0x555566, 1))
+            .on('pointerout',  () => starCircle.setFillStyle(starred ? 0x886600 : 0x333344, 1))
+            .on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+              ptr.event.stopPropagation();
+              if (starred) {
+                starredMutationIds.delete(mut.id);
+              } else {
+                starredMutationIds.add(mut.id);
+                activeMutationIds.add(mut.id); // auto-equip when starring
+              }
+              buildRows();
+              this.buildRewardsPanel(RWD_CX, PANEL_TOP, PANEL_H, RWD_W);
+            });
+          scrollContainer.add([starCircle, starLabel]);
+          this.mutationListObjects.push(starCircle, starLabel);
+        }
+
+        // Info "i" button
+        const iX = ROW_W - 22;
+        const iCircle = this.add.circle(iX, innerY + ROW_H / 2 - 2, 11, 0x222244, 0.9)
+          .setStrokeStyle(1, 0x8888cc, 0.9).setDepth(6).setInteractive({ useHandCursor: true });
+        const iLabel = this.add.text(iX, innerY + ROW_H / 2 - 2, 'i', {
+          fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#aaaaff',
+        }).setOrigin(0.5).setDepth(7);
+        iCircle
+          .on('pointerover', () => iCircle.setFillStyle(0x4444aa, 0.95))
+          .on('pointerout',  () => iCircle.setFillStyle(0x222244, 0.9))
+          .on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+            ptr.event.stopPropagation();
+            this.showMutationInfo(mut.id, width, height, cx);
+          });
+        scrollContainer.add([iCircle, iLabel]);
+        this.mutationListObjects.push(iCircle, iLabel);
+
+        innerY += ROW_H;
+      }
+
+      return innerY;
+    };
+
+    const totalH = buildRows();
+    let scrollY = 0;
+    const maxScroll = Math.max(0, totalH - PANEL_H);
+
+    this.mutationScrollHandler = (_ptr: unknown, _over: unknown, _dx: unknown, deltaY: unknown) => {
+      scrollY = Phaser.Math.Clamp(scrollY + (deltaY as number) * 0.5, 0, maxScroll);
+      scrollContainer.setY(PANEL_TOP - scrollY);
+    };
+    this.input.on('wheel', this.mutationScrollHandler);
+
+    if (maxScroll > 0) {
+      const hint = this.add.text(LIST_X + LIST_W - 4, PANEL_BOT - 2, '▼ scroll', {
+        fontSize: '9px', fontFamily: 'Arial, sans-serif', color: '#444466',
+      }).setOrigin(1, 1).setDepth(6);
+      this.phaseObjects.push(hint);
+    }
+
+    this.buildRewardsPanel(RWD_CX, PANEL_TOP, PANEL_H, RWD_W);
+  }
+
+  private buildRewardsPanel(rwdCx: number, panelTop: number, panelH: number, panelW: number): void {
+    for (const obj of this.rewardsPanelDynObjects) {
+      if (obj.active) (obj as Phaser.GameObjects.GameObject & { destroy(): void }).destroy();
+    }
+    this.rewardsPanelDynObjects = [];
+
+    const equipped = [...activeMutationIds];
+    const innerX = rwdCx;
+    let innerY = panelTop + 30;
+
+    if (equipped.length === 0) {
+      const empty = this.add.text(innerX, panelTop + panelH / 2, 'No mutations\nequipped', {
+        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#666677', align: 'center',
+      }).setOrigin(0.5).setDepth(6);
+      this.rewardsPanelDynObjects.push(empty);
+    } else {
+      for (const id of equipped) {
+        const def = getMutationDef(id);
+        if (!def) continue;
+        const isStarred = starredMutationIds.has(id);
+        const mult = isStarred ? def.rewardMult * STARRED_REWARD_MULT : def.rewardMult;
+        const label = `${def.emoji}${isStarred ? '★' : ''} ${def.name}`;
+        const multStr = `×${mult.toFixed(2)}`;
+        const rowColor = isStarred ? '#ffeebb' : '#ddddee';
+        const lText = this.add.text(innerX, innerY, label, {
+          fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: rowColor,
+        }).setOrigin(0.5).setDepth(6);
+        const mText = this.add.text(innerX, innerY + 14, multStr, {
+          fontSize: '9px', fontFamily: 'Arial, sans-serif', color: rowColor,
+        }).setOrigin(0.5).setDepth(6);
+        this.rewardsPanelDynObjects.push(lText, mText);
+        innerY += 32;
+      }
+
+      // Divider
+      const divGfx = this.add.graphics().setDepth(6);
+      divGfx.lineStyle(1, 0x555577, 0.7);
+      divGfx.lineBetween(rwdCx - panelW / 2 + 8, innerY + 4, rwdCx + panelW / 2 - 8, innerY + 4);
+      this.rewardsPanelDynObjects.push(divGfx);
+      innerY += 14;
+
+      const totalMult = getTotalRewardMult();
+      const totalText = this.add.text(innerX, innerY, `Total  ×${totalMult.toFixed(2)}`, {
+        fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc44',
+      }).setOrigin(0.5).setDepth(6);
+      this.rewardsPanelDynObjects.push(totalText);
+      innerY += 22;
+
+      const baseShard = SHARD_REWARDS[Math.max(0, this.hoveredDifficulty - 1)] ?? 0;
+      if (baseShard > 0) {
+        const shardsText = this.add.text(innerX, innerY, `💎 +${Math.round(baseShard * totalMult)} shards`, {
+          fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#88ccff',
+        }).setOrigin(0.5).setDepth(6);
+        this.rewardsPanelDynObjects.push(shardsText);
+      }
+    }
+  }
+
+  private refreshRewardsPanel(width: number): void {
+    const LIST_X = 32;
+    const LIST_W = 560;
+    const RWD_X  = LIST_X + LIST_W + 16;
+    const RWD_W  = width - RWD_X - 16;
+    const RWD_CX = RWD_X + RWD_W / 2;
+    const height = this.scale.height;
+    // Approximate panel bounds (may differ slightly for invasion vs difficulty, acceptable)
+    const titleY = this.isInvasion ? 215 : 327;
+    const panelTop = titleY + 28;
+    const panelH   = (height - 70) - panelTop;
+    this.buildRewardsPanel(RWD_CX, panelTop, panelH, RWD_W);
+  }
+
+  private closeMutationInfo(): void {
+    for (const obj of this.mutationOverlayObjects) {
+      if (obj.active) (obj as Phaser.GameObjects.GameObject & { destroy(): void }).destroy();
+    }
+    this.mutationOverlayObjects = [];
+  }
+
+  private showMutationInfo(id: string, width: number, height: number, cx: number): void {
+    this.closeMutationInfo();
+    const def = getMutationDef(id);
+    if (!def) return;
+    const unlocked = PlayerData.isMutationUnlocked(id);
+
+    const bg = this.add.rectangle(cx, height / 2, width, height, 0x05050f, 0.97).setDepth(60);
+    bg.setInteractive();
+    this.mutationOverlayObjects.push(bg);
+
+    const header = this.add.text(cx, 48, `${def.emoji}  ${def.name.toUpperCase()}`, {
+      fontSize: '32px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc44',
+      stroke: '#000000', strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(61);
+    this.mutationOverlayObjects.push(header);
+
+    const statusLabel = this.add.text(cx, 84, unlocked ? '✓ UNLOCKED' : '🔒 LOCKED', {
+      fontSize: '12px', fontFamily: '"Arial Black", sans-serif',
+      color: unlocked ? '#44ff88' : '#ff4444',
+    }).setOrigin(0.5).setDepth(61);
+    this.mutationOverlayObjects.push(statusLabel);
+
+    const divLine = this.add.graphics().setDepth(61);
+    divLine.lineStyle(1, 0x223355, 0.6);
+    divLine.lineBetween(40, 102, width - 40, 102);
+    this.mutationOverlayObjects.push(divLine);
+
+    const sections: Array<{ label: string; text: string; color: string; y: number }> = [
+      { label: 'Effects', text: def.fullDesc,    color: '#ddddee', y: 125 },
+      { label: 'Starred Effects ★', text: def.starredDesc, color: '#ffeebb', y: 260 },
+      { label: 'Rewards', text: `×${def.rewardMult.toFixed(2)} base  (×${(def.rewardMult * STARRED_REWARD_MULT).toFixed(2)} starred)`, color: '#aaffaa', y: 400 },
+    ];
+
+    for (const s of sections) {
+      const hdr = this.add.text(60, s.y, s.label, {
+        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#8888cc',
+      }).setDepth(61);
+      const body = this.add.text(60, s.y + 22, s.text, {
+        fontSize: '12px', fontFamily: 'Arial, sans-serif', color: s.color,
+        wordWrap: { width: width - 120 },
+      }).setDepth(61);
+      this.mutationOverlayObjects.push(hdr, body);
+    }
+
+    const backBtn = this.add.rectangle(60, 30, 90, 32, 0x221133, 0.9)
+      .setStrokeStyle(2, 0x9944ff, 0.8).setDepth(65).setInteractive({ useHandCursor: true });
+    const backLbl = this.add.text(60, 30, '◀  BACK', {
+      fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
+    }).setOrigin(0.5).setDepth(66);
+    backBtn
+      .on('pointerover', () => backBtn.setFillStyle(0x440077, 0.95))
+      .on('pointerout',  () => backBtn.setFillStyle(0x221133, 0.9))
+      .on('pointerdown', () => this.closeMutationInfo());
+    this.mutationOverlayObjects.push(backBtn, backLbl);
   }
 
   private closeElementInfo(): void {
@@ -1083,6 +1302,7 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private goBack(): void {
+    this.input.off('wheel', this.mutationScrollHandler);
     const { width, height } = this.scale;
     const cx = width / 2;
     if (this.selectionPhase === 'player') {

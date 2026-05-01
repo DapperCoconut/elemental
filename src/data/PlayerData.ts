@@ -15,6 +15,7 @@ interface SaveData {
   corruptShards: number;             // currency earned in Invasion mode
   unlockedPerks: Record<string, string[]>;   // elementId → owned perk ids
   equippedPerks: Record<string, string>;     // elementId → single equipped perk id
+  unlockedMutations: string[];       // mutation IDs explicitly unlocked (excludes unlockedByDefault ones)
 }
 
 function load(): SaveData {
@@ -37,6 +38,7 @@ function load(): SaveData {
         corruptShards: parsed.corruptShards ?? 0,
         unlockedPerks: parsed.unlockedPerks ?? {},
         equippedPerks: parsed.equippedPerks ?? {},
+        unlockedMutations: parsed.unlockedMutations ?? [],
       };
       // Sanity: clear equipped perk if no longer unlocked
       for (const el of Object.keys(d.equippedPerks)) {
@@ -49,7 +51,7 @@ function load(): SaveData {
   } catch {
     // corrupted save — start fresh
   }
-  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0, unlockedPerks: {}, equippedPerks: {} };
+  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [] };
 }
 
 function save(data: SaveData): void {
@@ -263,4 +265,24 @@ export function spendCorruptShards(amount: number): boolean {
   data.corruptShards -= amount;
   save(data);
   return true;
+}
+
+import { MUTATIONS } from './Mutations';
+
+export function isMutationUnlocked(id: string): boolean {
+  const def = MUTATIONS.find((m) => m.id === id);
+  if (def?.unlockedByDefault) return true;
+  return load().unlockedMutations.includes(id);
+}
+
+export function unlockMutation(id: string): void {
+  const data = load();
+  if (!data.unlockedMutations.includes(id)) {
+    data.unlockedMutations = [...data.unlockedMutations, id];
+    save(data);
+  }
+}
+
+export function getUnlockedMutationIds(): string[] {
+  return load().unlockedMutations;
 }

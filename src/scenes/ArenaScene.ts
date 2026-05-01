@@ -88,7 +88,7 @@ interface Puddle {
   radius: number;
   tickAccum: number;
   owner: 'player' | 'npc';
-  kind?: 'puddle' | 'stalagmite' | 'poison';
+  kind?: 'puddle' | 'stalagmite' | 'poison' | 'lava' | 'abyss';
   lavaFinal?: boolean;
 }
 
@@ -774,52 +774,27 @@ export class ArenaScene extends Phaser.Scene {
 
   // Mutations
   private mutations: Set<string> = new Set();
-  // Rebirth
-  private npcRebirthUsed = false;
-  private npcRebirthGlow: Phaser.GameObjects.Arc | null = null;
-  // Clone
-  private clone: NpcOpponent | null = null;
-  private cloneProjectiles: Phaser.Physics.Arcade.Group | null = null;
-  private cloneDefeated = false;
-  private cloneSpeedMult = 1;
-  private cloneNukeChanneling = false;
-  private cloneNukeChannelEnd = 0;
-  private cloneFlameBodyActive = false;
-  private cloneFlameBodyTickAccum = 0;
-  private cloneFlameBodyAura: Phaser.GameObjects.Arc | null = null;
-  private cloneSplashActiveUntil = 0;
-  private cloneSplashDropAccum = 0;
-  private cloneGeyserBuffUntil = 0;
-  private cloneThornDragActiveUntil = 0;
-  private cloneThornDragTickAccum = 0;
-  private cloneThornDragAura: Phaser.GameObjects.Arc | null = null;
-  private cloneQuickShotCharged = false;
-  private cloneAirConsecutiveHits = 0;
-  private cloneWindTrapX = 0;
-  private cloneWindTrapY = 0;
-  private cloneWindTrapExpiry = 0;
-  private cloneWindTrapSprite: Phaser.GameObjects.Arc | null = null;
-  // Clone earth state (legacy fields — new kit uses stubs; kept so clone AI doesn't error)
-  private cloneEarthSlamActive = false;
-  private cloneEarthSlamEnd = 0;
-  private cloneEarthSlamHitDealt = false;
-  // Win condition tracking for Clone/Raid (allEnemiesMustDie = true)
-  private allEnemiesMustDie = false;
-  private npcMainDefeated = false;
-  // Raid mutation
-  private raidEnemies: NpcOpponent[] = [];
-  private raidProjectiles: Phaser.Physics.Arcade.Group[] = [];
-  private raidDefeated: boolean[] = [];
-  // Shielded mutation — totem system
-  private shieldTotems: Array<{
-    sprite: Phaser.GameObjects.Arc;
-    hpBarFill: Phaser.GameObjects.Arc;
-    label: Phaser.GameObjects.Text;
-    hp: number;
-    maxHp: number;
-  }> = [];
-  private nextTotemSpawnTime = 0;
-  private baseNpcMaxHpForTotem = 0;
+  private starredMutations: Set<string> = new Set();
+  // Molten mutation state
+  private moltenSpawnAccum = 0;
+  private moltenLastNpcX = 0;
+  private moltenLastNpcY = 0;
+  // Blustery mutation state
+  private blusteryProximityAccum = 0;
+  private blusteryBonusSpeedMult = 1;
+  private blusteryDodgeChanceTarget = 0;
+  // Titanic mutation state
+  private titanicShields: Array<{ sprite: Phaser.GameObjects.Arc }> = [];
+  private titanicOrbitAngle = 0;
+  // Parasitic mutation state
+  private parasiticRegenAccum = 0;
+  private parasiticLastPlayerHp = 0;
+  // Chaos mutation state
+  private chaosExplodeAccum = 0;
+  // Abyss mutation state
+  private abyssInvincibleUntil = 0;
+  private abyssNextActivateAt = 0;
+  private abyssTrailSpawnAccum = 0;
 
   // NPC earth-specific state (new kit)
   private npcEarthShieldHp = 0;
@@ -1372,7 +1347,7 @@ export class ArenaScene extends Phaser.Scene {
     super({ key: 'ArenaScene' });
   }
 
-  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; mode?: string; gauntlet?: import('../data/GauntletData').GauntletState; playerPerk?: string | null; npcPerk?: string | null; campaign?: { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean } }): void {
+  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; starredMutations?: string[]; mode?: string; gauntlet?: import('../data/GauntletData').GauntletState; playerPerk?: string | null; npcPerk?: string | null; campaign?: { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean } }): void {
     this.elementId = data.elementId ?? 'fire';
     this.isInvasion = data.mode === 'invasion';
     this.campaign = data.campaign ?? null;
@@ -2097,40 +2072,22 @@ export class ArenaScene extends Phaser.Scene {
     this.grappleDodgeUntil = 0;
 
     this.mutations = new Set();
-    this.npcRebirthUsed = false;
-    this.npcRebirthGlow = null;
-    this.clone = null;
-    this.cloneProjectiles = null;
-    this.cloneDefeated = false;
-    this.cloneSpeedMult = 1;
-    this.cloneNukeChanneling = false;
-    this.cloneNukeChannelEnd = 0;
-    this.cloneFlameBodyActive = false;
-    this.cloneFlameBodyTickAccum = 0;
-    this.cloneFlameBodyAura = null;
-    this.cloneSplashActiveUntil = 0;
-    this.cloneSplashDropAccum = 0;
-    this.cloneGeyserBuffUntil = 0;
-    this.cloneThornDragActiveUntil = 0;
-    this.cloneThornDragTickAccum = 0;
-    this.cloneThornDragAura = null;
-    this.cloneQuickShotCharged = false;
-    this.cloneAirConsecutiveHits = 0;
-    this.cloneWindTrapX = 0;
-    this.cloneWindTrapY = 0;
-    this.cloneWindTrapExpiry = 0;
-    this.cloneWindTrapSprite = null;
-    this.cloneEarthSlamActive = false;
-    this.cloneEarthSlamEnd = 0;
-    this.cloneEarthSlamHitDealt = false;
-    this.allEnemiesMustDie = false;
-    this.npcMainDefeated = false;
-    this.raidEnemies = [];
-    this.raidProjectiles = [];
-    this.raidDefeated = [];
-    this.shieldTotems = [];
-    this.nextTotemSpawnTime = 0;
-    this.baseNpcMaxHpForTotem = 0;
+    this.starredMutations = new Set();
+    this.moltenSpawnAccum = 0;
+    this.moltenLastNpcX = 0;
+    this.moltenLastNpcY = 0;
+    this.blusteryProximityAccum = 0;
+    this.blusteryBonusSpeedMult = 1;
+    this.blusteryDodgeChanceTarget = 0;
+    for (const sh of this.titanicShields) sh.sprite.destroy();
+    this.titanicShields = [];
+    this.titanicOrbitAngle = 0;
+    this.parasiticRegenAccum = 0;
+    this.parasiticLastPlayerHp = 0;
+    this.chaosExplodeAccum = 0;
+    this.abyssInvincibleUntil = 0;
+    this.abyssNextActivateAt = 0;
+    this.abyssTrailSpawnAccum = 0;
 
     // Magnet kit
     if (this.magnetKit) {
@@ -2708,59 +2665,15 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Apply mutations ──────────────────────────────────────────────
     this.mutations = new Set(data.mutations ?? []);
+    this.starredMutations = new Set(data.starredMutations ?? []);
 
-    const applyStatMutations = (target: NpcOpponent) => {
-      if (this.mutations.has('healthy')) {
-        const newMax = Math.round(target.maxHp * 1.5);
-        target.maxHp = newMax;
-        target.hp = newMax;
-        // HealthBar internal maxHp is updated via setMaxHp on the next setMaxHp call;
-        // since we're directly writing maxHp, the bar ratio still computes correctly.
-      }
-      if (this.mutations.has('swift')) { target.speed *= 2; }
-      if (this.mutations.has('mini')) {
-        target.setScale(0.5);
-        (target.body as Phaser.Physics.Arcade.Body).setCircle(11, 13, 13);
-        target.speed *= 2;
-        target.maxHp = Math.round(target.maxHp * 0.75);
-        target.hp = target.maxHp;
-      }
-      if (this.mutations.has('giant')) {
-        target.setScale(1.5);
-        (target.body as Phaser.Physics.Arcade.Body).setCircle(33, -9, -9);
-        target.speed = Math.round(target.speed * 0.7);
-        target.maxHp += Math.round(target.maxHp * 0.5);
-        target.hp = target.maxHp;
-      }
-      if (this.mutations.has('stealthy')) {
-        target.setAlpha(0);
-        target.forceInvisible = true;
-        target.setHealthBarVisible(false);
-      }
-    };
-
-    if (this.mutations.has('deadly')) { this.player.incomingDamageMultiplier = 1.5; }
-
-    // ── Boss mutation ─────────────────────────────────────────────────
     if (!this.isInvasion) {
-      if (this.mutations.has('boss')) {
-        this.npc.setPosition(cx, pad);
-        this.npc.setScale(4);
-        (this.npc.body as Phaser.Physics.Arcade.Body).setCollideWorldBounds(false);
-        // Phaser scales the body circle with the sprite, so the constructor's setCircle(22,2,2)
-        // becomes radius 88 in world space at scale 4 — no explicit resize needed.
-        const bossHp = this.gauntletState?.hardMode ? 1500 : 500;
-        this.npc.maxHp = bossHp;
-        this.npc.hp = bossHp;
-        this.npc.cooldownMult = 0.5; // 2× faster ability cooldowns
-        (this.npc as NpcOpponent).stationary = true;
-      } else if (this.npcElement.id === 'dummy') {
-        // Dummy mode: 5000 HP, stands still
+      if (this.npcElement.id === 'dummy') {
         this.npc.maxHp = 5000;
         this.npc.hp = 5000;
         (this.npc as NpcOpponent).stationary = true;
       } else {
-        applyStatMutations(this.npc as NpcOpponent);
+        this.applyMutationsToNpc();
       }
     }
 
@@ -2781,99 +2694,20 @@ export class ArenaScene extends Phaser.Scene {
       this.dummyBackBtn = null;
     }
 
-    // ── Clone mutation ────────────────────────────────────────────────
-    if (this.mutations.has('clone')) {
-      this.cloneProjectiles = this.physics.add.group();
-      this.clone = new NpcOpponent(this, cx, cy / 2, this.npcElement, npcTexture, difficultyConfig);
-      applyStatMutations(this.clone);
-      this.allEnemiesMustDie = true;
-      this.add.text(cx, cy / 2 - 38, `CLONE ${this.npcElement.emoji}`, {
-        fontSize: '12px', color: '#888888',
-      }).setOrigin(0.5).setDepth(20);
-    }
-
-    // ── Raid mutation ─────────────────────────────────────────────────
-    if (this.mutations.has('raid')) {
-      const baseMaxHp = this.npc.maxHp;
-      // Rescale main NPC to raid size
-      this.npc.maxHp = Math.round(baseMaxHp * 0.2);
-      this.npc.hp = this.npc.maxHp;
-      this.npc.setScale(0.5);
-      (this.npc.body as Phaser.Physics.Arcade.Body).setCircle(11, 13, 13);
-      // Spawn 3 more raid enemies
-      const raidPositions = [
-        { x: W - 180, y: cy - 120 },
-        { x: W - 180, y: cy + 120 },
-        { x: W - 280, y: cy },
-      ];
-      for (let ri = 0; ri < 3; ri++) {
-        const rp = raidPositions[ri];
-        const raidNpc = new NpcOpponent(this, rp.x, rp.y, this.npcElement, npcTexture, difficultyConfig);
-        raidNpc.maxHp = Math.round(baseMaxHp * 0.2);
-        raidNpc.hp = raidNpc.maxHp;
-        raidNpc.setScale(0.5);
-        (raidNpc.body as Phaser.Physics.Arcade.Body).setCircle(11, 13, 13);
-        if (this.mutations.has('stealthy')) { raidNpc.setAlpha(0); raidNpc.forceInvisible = true; raidNpc.setHealthBarVisible(false); }
-        const raidProjGroup = this.physics.add.group();
-        this.raidEnemies.push(raidNpc);
-        this.raidProjectiles.push(raidProjGroup);
-        this.raidDefeated.push(false);
-        this.add.text(rp.x, rp.y - 38, `${this.npcElement.emoji}`, {
-          fontSize: '10px', color: '#888888',
-        }).setOrigin(0.5).setDepth(20);
-      }
-      this.allEnemiesMustDie = true;
-      // Set up raid projectile collision with player
-      for (let ri = 0; ri < this.raidEnemies.length; ri++) {
-        const raidProjGroup = this.raidProjectiles[ri];
-        this.physics.add.overlap(
-          raidProjGroup,
-          this.player,
-          (a, b) => {
-            const proj = (a instanceof Projectile ? a : b) as Projectile;
-            if (!proj.active) return;
-            this.player.takeDamage(proj.damage);
-            this.spawnHitFlash(proj.x, proj.y, 0x00aaff);
-            proj.setActive(false).setVisible(false);
-            (proj.body as Phaser.Physics.Arcade.Body).stop();
-          },
-          undefined, this,
-        );
-        const raidNpc = this.raidEnemies[ri];
-        this.physics.add.overlap(
-          this.projectiles,
-          raidNpc,
-          (a, b) => {
-            const proj = (a instanceof Projectile ? a : b) as Projectile;
-            if (!proj.active || !proj.isFromPlayer) return;
-            raidNpc.takeDamage(proj.damage);
-            this.spawnHitFlash(raidNpc.x, raidNpc.y, 0xff6600);
-            this.spawnDamageNumber(raidNpc.x, raidNpc.y - 30, proj.damage);
-            proj.setActive(false).setVisible(false);
-            (proj.body as Phaser.Physics.Arcade.Body).stop();
-          },
-          undefined, this,
-        );
-      }
-    }
-
     // ── Unified enemy physics group ────────────────────────────────
     this.enemyGroup = this.physics.add.group();
     if (!this.isInvasion) {
       this.enemyGroup.add(this.npc, true);
     }
 
-    // ── Shielded mutation ─────────────────────────────────────────────
-    if (this.mutations.has('shielded')) {
-      this.baseNpcMaxHpForTotem = this.npc.maxHp;
-      this.nextTotemSpawnTime = this.time.now + 10000;
-    }
-
     // ── Display mutation label at top of battlefield ──────────────────
     if (this.mutations.size > 0) {
       const active = MUTATIONS.filter((m) => this.mutations.has(m.id));
       if (active.length > 0) {
-        const label = active.map((m) => `${m.emoji} ${m.name.toUpperCase()}`).join('  +  ');
+        const label = active.map((m) => {
+          const star = this.starredMutations.has(m.id) ? '★' : '';
+          return `${m.emoji}${star} ${m.name.toUpperCase()}`;
+        }).join('  +  ');
         const fontSize = active.length > 2 ? '12px' : '15px';
         this.add.text(cx, pad + 14, label, {
           fontSize,
@@ -2906,8 +2740,6 @@ export class ArenaScene extends Phaser.Scene {
       const strengthBoosts = gs.boosts.filter((b) => b === 'strength').length;
       if (strengthBoosts > 0) {
         this.npc.gauntletDamageTakenMult = Math.pow(1.2, strengthBoosts);
-        if (this.clone) this.clone.gauntletDamageTakenMult = Math.pow(1.2, strengthBoosts);
-        for (const re of this.raidEnemies) re.gauntletDamageTakenMult = Math.pow(1.2, strengthBoosts);
       }
     }
 
@@ -3015,6 +2847,10 @@ export class ArenaScene extends Phaser.Scene {
         let _playerDmg = Math.round(proj.damage * this.npc.outgoingDamageMult);
         this.player.takeDamage(_playerDmg);
         this.spawnHitFlash(proj.x, proj.y, 0x00aaff);
+        // Molten★: 20% chance to apply Fire DOT on hit
+        if (this.mutations.has('molten') && this.starredMutations.has('molten') && Math.random() < 0.20) {
+          this.playerBurningUntil = Math.max(this.playerBurningUntil, this.time.now + 3000);
+        }
         // NPC Hunt Blood Pact: heal NPC for 50% of damage dealt
         if (this.npcHuntBloodPactActive && this.time.now < this.npcHuntBloodPactEnd) this.npc.heal(Math.ceil(_playerDmg * 0.5));
         // Ice spike: frost stacks + unfreeze bonus
@@ -3048,41 +2884,6 @@ export class ArenaScene extends Phaser.Scene {
       this,
     );
 
-    // ── Clone overlaps ────────────────────────────────────────────
-    if (this.clone && this.cloneProjectiles) {
-      // Clone projectiles hit player
-      this.physics.add.overlap(
-        this.cloneProjectiles,
-        this.player,
-        (a, b) => {
-          const proj = (a instanceof Projectile ? a : b) as Projectile;
-          if (!proj.active) return;
-          this.player.takeDamage(proj.damage);
-          this.spawnHitFlash(proj.x, proj.y, 0x00aaff);
-          proj.setActive(false).setVisible(false);
-          (proj.body as Phaser.Physics.Arcade.Body).stop();
-        },
-        undefined, this,
-      );
-      // Player projectiles hit clone (NPC projectiles excluded via isFromPlayer check)
-      this.physics.add.overlap(
-        this.projectiles,
-        this.clone,
-        (a, b) => {
-          const proj = (a instanceof Projectile ? a : b) as Projectile;
-          if (!proj.active || !proj.isFromPlayer || !this.clone || this.cloneDefeated) return;
-          const cloneRef = this.clone;
-          cloneRef.takeDamage(proj.damage);
-          this.spawnHitFlash(proj.x, proj.y, 0xff6600);
-          this.spawnDamageNumber(cloneRef.x, cloneRef.y - 30, proj.damage);
-          proj.setActive(false).setVisible(false);
-          (proj.body as Phaser.Physics.Arcade.Body).stop();
-        },
-        undefined, this,
-      );
-    }
-
-
     // ── Defeat + damage events ────────────────────────────────────
     this.player.once('defeated', () => {
       this.endGame(false);
@@ -3104,72 +2905,10 @@ export class ArenaScene extends Phaser.Scene {
       this.timeKit.onDamageReceived('npc', amount);
     });
 
-    const checkAllEnemiesDefeated = () => {
-      if (!this.allEnemiesMustDie) return;
-      const cloneDead = !this.clone || this.cloneDefeated;
-      const raidAllDead = this.raidDefeated.every((d) => d);
-      if (this.npcMainDefeated && cloneDead && raidAllDead) this.endGame(true);
-    };
-
     // Invasion enemies manage their own defeat handlers in spawnCorrupted(); skip here
     if (!this.isInvasion) {
-      const registerNpcDefeat = () => {
-        this.npc.once('defeated', () => {
-          if (this.mutations.has('reborn') && !this.npcRebirthUsed) {
-            this.npcRebirthUsed = true;
-            this.npc.isInvincible = true;
-            const flash = this.add.circle(this.npc.x, this.npc.y, 50, 0x00ffff, 0.8).setDepth(15);
-            this.tweens.add({ targets: flash, scaleX: 5, scaleY: 5, alpha: 0, duration: 500, onComplete: () => flash.destroy() });
-            this.time.delayedCall(400, () => {
-              if (!this.npc.active) return;
-              this.npc.hp = Math.round(this.npc.maxHp * 0.25);
-              this.npc.speed *= 1.25;
-              this.player.incomingDamageMultiplier *= 1.25;
-              this.npc.isInvincible = false;
-              if (this.npcRebirthGlow) this.npcRebirthGlow.destroy();
-              this.npcRebirthGlow = this.add.circle(this.npc.x, this.npc.y, 36, 0x00ffff, 0.15).setDepth(4);
-              this.npcRebirthGlow.setStrokeStyle(3, 0x00ffff, 0.9);
-              this.tweens.add({ targets: this.npcRebirthGlow, alpha: 0.45, yoyo: true, repeat: -1, duration: 400 });
-              this.showFloatingText(this.npc.x, this.npc.y - 30, 'REBORN!', '#00ffff');
-              registerNpcDefeat();
-            });
-          } else if (this.allEnemiesMustDie) {
-            this.npcMainDefeated = true;
-            if (this.npc.active) { this.npc.setActive(false).setVisible(false); }
-            checkAllEnemiesDefeated();
-          } else {
-            this.endGame(true);
-          }
-        });
-      };
-      registerNpcDefeat();
-    }
-
-    if (this.clone) {
-      this.clone.once('defeated', () => {
-        this.cloneDefeated = true;
-        const lbl = this.add.text(cx, cy - 40, 'CLONE DEFEATED', {
-          fontSize: '26px', fontFamily: '"Arial Black", sans-serif',
-          color: '#ffaa00', stroke: '#000000', strokeThickness: 4,
-        }).setOrigin(0.5).setDepth(30);
-        this.tweens.add({ targets: lbl, alpha: 0, y: cy - 80, delay: 500, duration: 1000, onComplete: () => lbl.destroy() });
-        if (this.clone) {
-          (this.clone.body as Phaser.Physics.Arcade.Body).enable = false;
-          this.clone.setActive(false).setVisible(false);
-        }
-        this.clone = null;
-        checkAllEnemiesDefeated();
-      });
-    }
-
-    // Raid enemy defeat handlers (registered after raidEnemies is populated in mutation setup)
-    for (let ri = 0; ri < this.raidEnemies.length; ri++) {
-      const raidIdx = ri;
-      this.raidEnemies[raidIdx].once('defeated', () => {
-        this.raidDefeated[raidIdx] = true;
-        this.showFloatingText(cx, cy - 40, `ENEMY ${raidIdx + 2} DEFEATED`, '#ffaa00');
-        if (this.raidEnemies[raidIdx].active) this.raidEnemies[raidIdx].setActive(false).setVisible(false);
-        checkAllEnemiesDefeated();
+      this.npc.once('defeated', () => {
+        this.endGame(true);
       });
     }
 
@@ -5501,257 +5240,6 @@ export class ArenaScene extends Phaser.Scene {
     };
   }
 
-  // ── Clone context ────────────────────────────────────────────────
-
-  private buildCloneContext(targetX: number, targetY: number): CastContext {
-    const clone = this.clone!;
-    return {
-      scene: this,
-      casterX: clone.x,
-      casterY: clone.y,
-      targetX,
-      targetY,
-      isPlayerCaster: false,
-      projectiles: this.cloneProjectiles!,
-      dealAoeDamage: (cx, cy, radius, damage) => {
-        if (Phaser.Math.Distance.Between(cx, cy, this.player.x, this.player.y) <= radius) {
-          this.player.takeDamage(damage);
-        }
-      },
-      dashCaster: (vx, vy) => { (clone.body as Phaser.Physics.Arcade.Body).setVelocity(vx, vy); },
-      healCaster: (amount) => clone.heal(amount),
-      damageCaster: (amount) => clone.applySelfDamage(amount),
-      setCasterSpeedMultiplier: (mult) => { this.cloneSpeedMult = mult; },
-      lockCaster: (durationMs) => {
-        this.cloneNukeChanneling = true;
-        this.cloneNukeChannelEnd = this.time.now + durationMs;
-        (clone.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-      },
-      addShieldCharge: () => { clone.shieldCharges += 1; },
-      spawnPuddle: () => { /* managed via cloneSplashActiveUntil */ },
-      spawnGeyser: (x, y) => this.createGeyser(x, y, 'npc'),
-      spawnPainRain: () => this.createPainRain('npc', 200),
-      spawnPlant: (x, y) => this.createPlant(x, y, 'npc'),
-      growPlants: () => {
-        for (const p of this.npcPlants) {
-          const ring = this.add.circle(p.x, p.y, 10, 0x44ff44, 0.6).setDepth(4);
-          this.tweens.add({ targets: ring, scaleX: 12, scaleY: 12, alpha: 0, duration: 500, onComplete: () => ring.destroy() });
-        }
-      },
-      thornPlants: () => {
-        for (const p of this.npcPlants) {
-          const ring = this.add.circle(p.x, p.y, 10, 0xcc2222, 0.75).setDepth(4);
-          this.tweens.add({ targets: ring, scaleX: 12, scaleY: 12, alpha: 0, duration: 380, onComplete: () => ring.destroy() });
-          if (Phaser.Math.Distance.Between(p.x, p.y, this.player.x, this.player.y) <= p.radius) {
-            this.player.takeDamage(20);
-            this.spawnHitFlash(this.player.x, this.player.y, 0xcc2222);
-          }
-        }
-      },
-      startThornDrag: () => { /* managed via clone reaction */ },
-      activateQuickShot: () => { this.cloneQuickShotCharged = true; },
-      placeWindTrap: (x, y) => {
-        this.cloneWindTrapX = x; this.cloneWindTrapY = y;
-        this.cloneWindTrapExpiry = this.time.now + 5000;
-        if (this.cloneWindTrapSprite) this.cloneWindTrapSprite.destroy();
-        this.cloneWindTrapSprite = this.add.circle(x, y, 80, 0xaaddff, 0).setDepth(3);
-        this.cloneWindTrapSprite.setStrokeStyle(3, 0xaaddff, 0.9);
-        this.tweens.add({ targets: this.cloneWindTrapSprite, alpha: 0.15, yoyo: true, repeat: -1, duration: 600 });
-      },
-      grappleTo: (x, y) => {
-        const dx = x - clone.x;
-        const dy = y - clone.y;
-        const len = Math.sqrt(dx * dx + dy * dy) || 1;
-        const speed = 1200;
-        const travelTime = Math.min(350, (len / speed) * 1000);
-        const body = clone.body as Phaser.Physics.Arcade.Body;
-        body.setVelocity((dx / len) * speed, (dy / len) * speed);
-        this.time.delayedCall(travelTime, () => { if (clone.active) body.setVelocity(0, 0); });
-      },
-      reportAirSnipeResult: (hit) => {
-        if (hit) { this.cloneAirConsecutiveHits = Math.min(this.cloneAirConsecutiveHits + 1, 3); }
-        else { this.cloneAirConsecutiveHits = 0; }
-      },
-      quickShotActive: this.cloneQuickShotCharged,
-      addShieldHp: (amount) => { clone.shieldHp = Math.min(100, clone.shieldHp + amount); },
-      getShieldHp: () => clone.shieldHp,
-      setShieldHp: (amount) => { clone.shieldHp = Math.max(0, amount); },
-      slamCaster: () => {
-        const dx = this.player.x - clone.x;
-        const dy = this.player.y - clone.y;
-        const len = Math.sqrt(dx * dx + dy * dy) || 1;
-        (clone.body as Phaser.Physics.Arcade.Body).setVelocity((dx / len) * 600, (dy / len) * 600);
-        this.cloneEarthSlamActive = true;
-        this.cloneEarthSlamEnd = this.time.now + 400;
-        this.cloneEarthSlamHitDealt = false;
-      },
-      dealMeleeDamage: (range, damage, knockback = 0) => {
-        const dist = Phaser.Math.Distance.Between(clone.x, clone.y, this.player.x, this.player.y);
-        if (dist > range) return;
-        this.player.takeDamage(damage);
-        this.spawnHitFlash(this.player.x, this.player.y, 0xaa8844);
-        if (knockback > 0) {
-          const toPlayerX = this.player.x - clone.x;
-          const toPlayerY = this.player.y - clone.y;
-          const pb = this.player.body as Phaser.Physics.Arcade.Body;
-          pb.setVelocity((toPlayerX / dist) * knockback, (toPlayerY / dist) * knockback);
-        }
-      },
-      startBullRush: () => { /* clone does not use bull rush */ },
-      spawnDrone: () => {},
-      commandDrones: () => {},
-      launchDrone: () => {},
-      placeFirewall: () => {},
-      startOverdrive: () => {},
-      launchDarkBomb: () => {},
-      activateTentacle: () => {},
-      placeSnapTrap: () => {},
-      activateShadowDance: () => {},
-      startBlackHole: () => {},
-      // Ice — no-ops for clone
-      fireIceSpike: () => {},
-      fireFrostBlast: () => {},
-      toggleBlockUp: () => {},
-      startSkate: () => {},
-      fireFrozenSolid: () => {},
-      // Growth — no-ops for clone
-      fireGrowthClick: () => {},
-      openMutateMenu: () => {},
-      fireInfect: () => {},
-      activateBloat: () => {},
-      triggerMutantMorph: () => {},
-      // Crystal — no-ops for clone
-      fireCrystalLaser: () => {},
-      placeCrystalNode: () => {},
-      startCrystalBarrage: () => {},
-      placeCrystalPortal: () => {},
-      activateCrystalTrick: () => {},
-      // Soul — no-ops for clone
-      fireSoulOrb: () => {},
-      summonGhost: () => {},
-      soulSacrifice: () => {},
-      soulConsume: () => {},
-      // Hunt — no-ops for clone
-      huntThrowGrenade: () => {},
-      huntHuntersTrail: () => {},
-      huntBloodPact: () => {},
-      huntTransform: () => {},
-      huntSlash: () => {},
-      huntLeap: () => {},
-      huntBloodHunt: () => {},
-      huntBloodMoon: () => {},
-      huntUntransform: () => {},
-      huntHybridShotgun: () => {},
-      huntHybridInstinct: () => {},
-      huntHybridShriek: () => {},
-      // Time — no-ops for clone
-      timeBarrage: () => {},
-      timeWarp: () => {},
-      timeRemain: () => {},
-      timeHalt: () => {},
-      timeTimeless: () => {},
-      sandFlintlock: () => {},
-      sandBlindingSand: () => {},
-      sandToggleTornado: () => {},
-      sandMirage: () => {},
-      sandActivateGlass: () => {},
-      // Gravity — no-ops for clone
-      gravitySlash: () => {},
-      gravityMeteorShadow: () => {},
-      gravityMeteorRainNpcBurst: () => {},
-      gravitySpaceSlam: () => {},
-      gravityGravBombSnap: () => {},
-      gravityLunarLanding: () => {},
-      // Creation (clone stubs)
-      creationDaggerSpray: () => {},
-      creationBolt: () => {},
-      creationScytheLaunch: () => {},
-      creationBlock: () => {},
-      creationMaze: () => {},
-      // Fate (clone stubs)
-      fateCoinToss: () => {},
-      fateSpawnSlotMachine: () => {},
-      fateLuck: () => {},
-      fateDice: () => {},
-      fateAllIn: () => {},
-      // Echo (clone stubs)
-      echoEcholocation: () => {},
-      echoGuess: () => {},
-      echoLantern: () => {},
-      echoBatForm: () => {},
-      echoEclipse: () => {},
-      // Magnet stubs
-      magnetPulse: () => {},
-      magnetNailShoot: () => {},
-      magnetNailRecall: () => {},
-      magnetMagnetize: () => {},
-      magnetProtect: () => {},
-      magnetAtomSmasher: () => {},
-      // Metal stubs
-      metalSlash: () => {},
-      metalFireAtWill: () => {},
-      metalOpenReinforcementMenu: () => {},
-      metalChainTether: () => {},
-      metalBloodClot: () => {},
-      // Plasma stubs
-      plasmaBurst: () => {},
-      plasmaUnstableArena: () => {},
-      plasmaCurrentLaunch: () => {},
-      plasmaChaosBlades: () => {},
-      plasmaChaosIncarnate: () => {},
-      // Death stubs
-      death1000Blades: () => {},
-      deathSummonWisps: () => {},
-      deathLoomingDread: () => {},
-      deathWispDaemon: () => {},
-      deathTrailDash: () => {},
-      deathJudgement: () => {},
-      // Void stubs
-      voidFloater: () => {},
-      voidReturnToVoid: () => {},
-      voidReLapse: () => {},
-      voidAsh: () => {},
-      voidOfHell: () => {},
-      // Rubber stubs
-      rubberPunch: () => {}, rubberSlingShotStart: () => {}, rubberSlingShotRelease: () => {},
-      rubberBounceForm: () => {}, rubberSpringSlam: () => {}, rubberBounceBack: () => {},
-      // Magic — no-op stubs for clone
-      magicSparkleShot: () => {},
-      magicOpenGrimoire: () => {},
-      magicAnchorToggle: () => {},
-      magicMeditateBegin: () => {},
-      magicOpenNecronomicon: () => {},
-      techFlailEmpower: () => {},
-      techDevConsoleOpen: () => {},
-      techHackAttribute: () => {},
-      techDeleteArea: () => {},
-      techOpSelfBegin: () => {},
-      techStartDomain: () => {},
-      techGearGiveActivate: () => {},
-      techRandomEffect: () => {},
-      // Silence — no-ops for clone
-      silenceStartFade: () => {},
-      silenceReleaseFade: () => {},
-      silenceCastDontLook: () => {},
-      silenceFirePossess: () => {},
-      silenceEnterSlasher: () => {},
-      silenceExitSlasher: () => {},
-      silenceStartWatch: () => {},
-      silenceWatchTendril: () => {},
-      silenceMachete: () => {},
-      silenceThrowHook: () => {},
-      silenceYankHook: () => {},
-      silenceMortalWound: (_angleRad: number) => {},
-      silenceSlashEmUp: () => {},
-      quantumWave: () => {},
-      quantumChaosControl: () => {},
-      quantumAtomVibration: () => {},
-      quantumMechanic: () => {},
-      quantumAtomNhilego: () => {},
-      hasPerk: () => false,
-    };
-  }
-
   private buildRaidContext(raidNpc: NpcOpponent, projGroup: Phaser.Physics.Arcade.Group, targetX: number, targetY: number): CastContext {
     return {
       scene: this,
@@ -6519,6 +6007,289 @@ export class ArenaScene extends Phaser.Scene {
 
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean {
     return (owner === 'player' ? this.playerPerkId : this.npcPerkId) === perkId;
+  }
+
+  private applyMutationsToNpc(): void {
+    if (this.mutations.has('molten')) {
+      const starred = this.starredMutations.has('molten');
+      this.npc.setTint(starred ? 0xff5511 : 0xff8844);
+      this.player.incomingDamageMultiplier *= starred ? 2 : 1.5;
+      this.moltenLastNpcX = this.npc.x;
+      this.moltenLastNpcY = this.npc.y;
+    }
+    if (this.mutations.has('blustery')) {
+      const starred = this.starredMutations.has('blustery');
+      this.npc.setTint(starred ? 0xeeffff : 0xddddff);
+      this.npc.speed *= starred ? 1.5 : 1.25;
+      this.blusteryDodgeChanceTarget = starred ? 0.35 : 0.20;
+      this.npc.dodgeChance = this.blusteryDodgeChanceTarget;
+    }
+    if (this.mutations.has('titanic')) {
+      const starred = this.starredMutations.has('titanic');
+      this.npc.setTint(starred ? 0x884422 : 0xaa6644);
+      const scale = starred ? 1.75 : 1.5;
+      this.npc.setScale(scale);
+      if (starred) {
+        (this.npc.body as Phaser.Physics.Arcade.Body).setCircle(38, -14, -14);
+      } else {
+        (this.npc.body as Phaser.Physics.Arcade.Body).setCircle(33, -9, -9);
+      }
+      const hpMult = starred ? 3 : 2;
+      this.npc.maxHp = Math.round(this.npc.maxHp * hpMult);
+      this.npc.hp = this.npc.maxHp;
+      this.npc.speed = Math.round(this.npc.speed * (starred ? 0.25 : 0.5));
+      const count = starred ? 2 : 1;
+      for (let i = 0; i < count; i++) {
+        const spr = this.add.circle(this.npc.x, this.npc.y, 18, 0x88aaff, 0.85)
+          .setDepth(6).setStrokeStyle(2, 0xffffff, 0.5);
+        this.titanicShields.push({ sprite: spr });
+      }
+    }
+    if (this.mutations.has('parasitic')) {
+      const starred = this.starredMutations.has('parasitic');
+      this.npc.setTint(starred ? 0xaa44aa : 0x884488);
+      this.parasiticLastPlayerHp = this.player.hp;
+      if (starred) {
+        this.player.healStopUntil = Number.MAX_SAFE_INTEGER;
+      }
+    }
+    if (this.mutations.has('chaos')) {
+      const starred = this.starredMutations.has('chaos');
+      this.npc.setTint(starred ? 0xff66cc : 0xff3399);
+      const scale = starred ? 0.3 : 0.5;
+      this.npc.setScale(scale);
+      if (starred) {
+        (this.npc.body as Phaser.Physics.Arcade.Body).setCircle(7, 17, 17);
+      } else {
+        (this.npc.body as Phaser.Physics.Arcade.Body).setCircle(11, 13, 13);
+      }
+      if (starred) this.npc.speed = Math.round(this.npc.speed * 1.3);
+    }
+    if (this.mutations.has('order')) {
+      const starred = this.starredMutations.has('order');
+      this.npc.setTint(starred ? 0x66aaff : 0x4488ff);
+      (this.npc as any).difficulty.aimOffsetDeg = starred ? 0 : 2;
+    }
+    if (this.mutations.has('abyss')) {
+      const starred = this.starredMutations.has('abyss');
+      this.npc.setTint(starred ? 0x110033 : 0x222244);
+      if (starred) {
+        this.abyssInvincibleUntil = Number.MAX_SAFE_INTEGER;
+        this.npc.setAlpha(0);
+      } else {
+        this.abyssNextActivateAt = this.time.now + 10000;
+      }
+    }
+  }
+
+  private updateMutationEffects(time: number, delta: number): void {
+    if (this.gameEnded) return;
+
+    // Recompute player incoming damage multiplier when Order adds a distance component
+    if (this.mutations.has('order') && this.npc.active && this.player.active) {
+      let _damageMult = 1;
+      if (this.mutations.has('molten')) _damageMult *= this.starredMutations.has('molten') ? 2 : 1.5;
+      const dist = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y);
+      const t = Math.min(dist / 600, 1);
+      const cap = this.starredMutations.has('order') ? 2.0 : 1.5;
+      _damageMult *= 1 + (cap - 1) * t;
+      this.player.incomingDamageMultiplier = _damageMult;
+    }
+
+    if (this.mutations.has('molten') && this.npc.active) {
+      const starred = this.starredMutations.has('molten');
+      this.npc.setTint(starred ? 0xff5511 : 0xff8844);
+
+      this.moltenSpawnAccum += delta;
+      if (this.moltenSpawnAccum >= 1500) {
+        this.moltenSpawnAccum -= 1500;
+        if (Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.moltenLastNpcX, this.moltenLastNpcY) > 4) {
+          this.spawnLavaPuddle(this.npc.x, this.npc.y, starred);
+        }
+        this.moltenLastNpcX = this.npc.x;
+        this.moltenLastNpcY = this.npc.y;
+      }
+    }
+
+    if (this.mutations.has('blustery') && this.npc.active) {
+      const starred = this.starredMutations.has('blustery');
+      this.npc.setTint(starred ? 0xeeffff : 0xddddff);
+      this.npc.dodgeChance = this.blusteryDodgeChanceTarget;
+
+      if (starred && this.blusteryBonusSpeedMult > 1) {
+        this.npcSpeedMult *= this.blusteryBonusSpeedMult;
+      }
+
+      const distToPlayer = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
+      if (distToPlayer < 130) {
+        this.blusteryProximityAccum += delta;
+        if (this.blusteryProximityAccum >= 2000) {
+          this.blusteryProximityAccum = 0;
+          this.doBlusteryTeleport(starred);
+        }
+      } else {
+        this.blusteryProximityAccum = Math.max(0, this.blusteryProximityAccum - delta * 0.5);
+      }
+    }
+
+    if (this.mutations.has('titanic') && this.npc.active) {
+      const starred = this.starredMutations.has('titanic');
+      this.npc.setTint(starred ? 0x884422 : 0xaa6644);
+      const count = starred ? 2 : 1;
+      const orbitR = starred ? 75 : 60;
+      this.titanicOrbitAngle += delta * 0.0025;
+      for (let i = 0; i < this.titanicShields.length && i < count; i++) {
+        const ang = this.titanicOrbitAngle + i * (Math.PI * 2 / count);
+        this.titanicShields[i].sprite.setPosition(
+          this.npc.x + Math.cos(ang) * orbitR,
+          this.npc.y + Math.sin(ang) * orbitR,
+        );
+      }
+    }
+
+    if (this.mutations.has('parasitic') && this.npc.active) {
+      const starred = this.starredMutations.has('parasitic');
+      this.npc.setTint(starred ? 0xaa44aa : 0x884488);
+      this.parasiticRegenAccum += delta;
+      while (this.parasiticRegenAccum >= 1000) {
+        this.parasiticRegenAccum -= 1000;
+        this.npc.heal(starred ? 5 : 2);
+      }
+      if (this.player.active) {
+        const dmg = this.parasiticLastPlayerHp - this.player.hp;
+        if (dmg > 0) this.npc.heal(Math.round(dmg * (starred ? 0.25 : 0.10)));
+        this.parasiticLastPlayerHp = this.player.hp;
+      }
+    }
+
+    if (this.mutations.has('chaos') && this.npc.active) {
+      const starred = this.starredMutations.has('chaos');
+      this.npc.setTint(starred ? 0xff66cc : 0xff3399);
+      if (this.player.active) {
+        const dx = this.player.x - this.npc.x;
+        const dy = this.player.y - this.npc.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const spd = this.npc.speed * this.npcSpeedMult;
+        (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity((dx / len) * spd, (dy / len) * spd);
+      }
+      this.chaosExplodeAccum += delta;
+      if (this.chaosExplodeAccum >= 3000) {
+        this.chaosExplodeAccum -= 3000;
+        const radius = starred ? 200 : 140;
+        const ring = this.add.circle(this.npc.x, this.npc.y, radius, 0xff3399, 0.45).setDepth(8);
+        this.tweens.add({ targets: ring, scaleX: 1.5, scaleY: 1.5, alpha: 0, duration: 500, onComplete: () => ring.destroy() });
+        this.npc.takeDamage(starred ? 10 : 20);
+        this.showFloatingText(this.npc.x, this.npc.y - 30, '💥 CHAOS', '#ff3399');
+        if (this.player.active && Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y) <= radius) {
+          this.player.takeDamage(starred ? 30 : 20);
+          this.spawnHitFlash(this.player.x, this.player.y, 0xff3399);
+        }
+      }
+    }
+
+    if (this.mutations.has('order') && this.npc.active && this.player.active) {
+      const starred = this.starredMutations.has('order');
+      this.npc.setTint(starred ? 0x66aaff : 0x4488ff);
+      const dist = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y);
+      if (dist < 380) {
+        const dx = this.npc.x - this.player.x;
+        const dy = this.npc.y - this.player.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const spd = this.npc.speed * this.npcSpeedMult;
+        (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity((dx / len) * spd, (dy / len) * spd);
+      } else {
+        const body = this.npc.body as Phaser.Physics.Arcade.Body;
+        body.setVelocity(body.velocity.x * 0.1, body.velocity.y * 0.1);
+      }
+      if (starred) {
+        for (const go of this.projectiles.getChildren() as Projectile[]) {
+          if (!go.active || go.isFromPlayer || (go as any)._orderSpeedApplied) continue;
+          (go as any)._orderSpeedApplied = true;
+          const pb = go.body as Phaser.Physics.Arcade.Body;
+          pb.setVelocity(pb.velocity.x * 3, pb.velocity.y * 3);
+        }
+      }
+    }
+
+    if (this.mutations.has('abyss') && this.npc.active) {
+      const starred = this.starredMutations.has('abyss');
+      this.npc.setTint(starred ? 0x110033 : 0x222244);
+      if (starred) {
+        this.npc.setAlpha(0);
+      } else {
+        if (time >= this.abyssNextActivateAt && this.abyssInvincibleUntil <= time) {
+          this.abyssInvincibleUntil = time + 7000;
+          this.abyssNextActivateAt = time + 17000;
+          this.showFloatingText(this.npc.x, this.npc.y - 30, '🌑 ABYSS', '#8866ff');
+        }
+        this.npc.setAlpha(time < this.abyssInvincibleUntil ? 0.4 : 1.0);
+      }
+      if (time < this.abyssInvincibleUntil) {
+        this.abyssTrailSpawnAccum += delta;
+        if (this.abyssTrailSpawnAccum >= 120) {
+          this.abyssTrailSpawnAccum -= 120;
+          this.spawnAbyssTrail(this.npc.x, this.npc.y);
+        }
+      }
+    }
+  }
+
+  private spawnLavaPuddle(x: number, y: number, starred: boolean): void {
+    const radius  = starred ? 52 : 35;
+    const lifetime = starred ? 4500 : 3000;
+    const spr = this.add.circle(x, y, radius, 0xff4422, 0.55).setDepth(2)
+      .setStrokeStyle(1, 0xff8844, 0.6);
+    this.tweens.add({ targets: spr, alpha: 0.3, yoyo: true, repeat: -1, duration: 800 });
+    this.puddles.push({ sprite: spr, expiresAt: this.time.now + lifetime, x, y, radius, tickAccum: 0, owner: 'npc', kind: 'lava' });
+  }
+
+  private doBlusteryTeleport(starred: boolean): void {
+    const dx  = this.npc.x - this.player.x;
+    const dy  = this.npc.y - this.player.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const W = this.scale.width;
+    const H = this.scale.height;
+    const targetX = Phaser.Math.Clamp(this.player.x + (dx / len) * 260, 30, W - 30);
+    const targetY = Phaser.Math.Clamp(this.player.y + (dy / len) * 260, 30, H - 30);
+    const fromX = this.npc.x;
+    const fromY = this.npc.y;
+
+    for (const [vx, vy] of [[fromX, fromY], [targetX, targetY]] as [number, number][]) {
+      const ring = this.add.circle(vx, vy, 24, 0xaaddff, 0.7).setDepth(9);
+      this.tweens.add({ targets: ring, scaleX: 3, scaleY: 3, alpha: 0, duration: 600, onComplete: () => ring.destroy() });
+    }
+    this.showFloatingText(fromX, fromY - 30, '💨 BLUSTERY', '#aaddff');
+    (this.npc.body as Phaser.Physics.Arcade.Body).reset(targetX, targetY);
+
+    if (starred) {
+      const aoeR = 110;
+      const aoeRing = this.add.circle(fromX, fromY, aoeR, 0xccffff, 0.35).setDepth(8);
+      this.tweens.add({ targets: aoeRing, scaleX: 1.4, scaleY: 1.4, alpha: 0, duration: 500, onComplete: () => aoeRing.destroy() });
+      if (Phaser.Math.Distance.Between(fromX, fromY, this.player.x, this.player.y) <= aoeR) {
+        this.player.takeDamage(12);
+        const kdx = this.player.x - fromX;
+        const kdy = this.player.y - fromY;
+        const kl  = Math.hypot(kdx, kdy) || 1;
+        const pb  = this.player.body as Phaser.Physics.Arcade.Body;
+        pb.setVelocity((kdx / kl) * 480, (kdy / kl) * 480);
+        this.showFloatingText(this.player.x, this.player.y - 28, '💨 WIND BURST', '#aaddff');
+      }
+    }
+  }
+
+  private spawnAbyssTrail(x: number, y: number): void {
+    const spr = this.add.circle(x, y, 28, 0x4422aa, 0.45).setDepth(2)
+      .setStrokeStyle(1, 0x8866ff, 0.5);
+    this.tweens.add({ targets: spr, alpha: 0.1, duration: 2800, onComplete: () => spr.destroy() });
+    this.puddles.push({ sprite: spr, expiresAt: this.time.now + 3000, x, y, radius: 28, tickAccum: 0, owner: 'npc', kind: 'abyss' });
+  }
+
+  private playerOnAbyssTrail(): boolean {
+    for (const p of this.puddles) {
+      if (p.kind !== 'abyss') continue;
+      if (Phaser.Math.Distance.Between(p.x, p.y, this.player.x, this.player.y) <= p.radius) return true;
+    }
+    return false;
   }
 
   private endGame(playerWon: boolean): void {
@@ -9487,6 +9258,7 @@ export class ArenaScene extends Phaser.Scene {
         this.puddles.splice(i, 1);
         continue;
       }
+      if (p.kind === 'abyss') continue; // Abyss trail: visual/zone only, no damage
       if (p.kind === 'stalagmite') {
         // Stalagmite: check for own water click projectile passing through
         for (const go of (this.projectiles.getChildren() as Projectile[])) {
@@ -9518,15 +9290,18 @@ export class ArenaScene extends Phaser.Scene {
         p.tickAccum += delta;
         if (p.tickAccum >= 250) {
           p.tickAccum -= 250;
-          const dmg = p.kind === 'poison' ? 4 : 2;
-          const flashColor = p.kind === 'poison' ? 0x66cc22 : 0x0099ff;
+          const dmg = p.kind === 'poison' ? 4 : p.kind === 'lava' ? 3 : 2;
+          const flashColor = p.kind === 'poison' ? 0x66cc22 : p.kind === 'lava' ? 0xff5522 : 0x0099ff;
           for (const target of _puddleTargets) {
             target.takeDamage(dmg); this.spawnHitFlash(target.x, target.y, flashColor);
+            if (p.kind === 'lava' && target === this.player) {
+              this.playerBurningUntil = Math.max(this.playerBurningUntil, time + 1500);
+            }
           }
         }
       }
-      // NPC heals double when standing in its own puddles
-      if (p.owner === 'npc' && Phaser.Math.Distance.Between(p.x, p.y, this.npc.x, this.npc.y) <= p.radius) {
+      // NPC heals double when standing in its own puddles (skip for lava — owned by npc, don't self-heal)
+      if (p.owner === 'npc' && p.kind !== 'lava' && Phaser.Math.Distance.Between(p.x, p.y, this.npc.x, this.npc.y) <= p.radius) {
         this.npc.heal(4 * delta / 250);
       }
     }
@@ -11689,236 +11464,12 @@ export class ArenaScene extends Phaser.Scene {
       this.silenceKit.update(time, delta, this.elementId === 'silence', this.npcElement.id === 'silence');
     }
 
+    // ── Mutation effects per-frame ───────────────────────────────
+    this.updateMutationEffects(time, delta);
+
     // ── Time per-frame ───────────────────────────────────────────
     if (this.elementId === 'sand' || this.npcElement.id === 'sand') {
       this.timeKit.update(time, delta);
-    }
-
-    // ── Rebirth glow follows NPC ─────────────────────────────────
-    if (this.npcRebirthGlow && this.npc.active) {
-      this.npcRebirthGlow.setPosition(this.npc.x, this.npc.y);
-    }
-
-    // ── Vigorous mutation: heal NPC 5 HP/sec ─────────────────────
-    if (this.mutations.has('vigorous') && !this.gameEnded) {
-      if (this.npc.active) this.npc.heal(5 * delta / 1000);
-      if (this.clone && this.clone.active) this.clone.heal(5 * delta / 1000);
-      for (const re of this.raidEnemies) if (re.active) re.heal(5 * delta / 1000);
-    }
-
-    // ── Shielded mutation: totem spawning & hit detection ────────
-    if (this.mutations.has('shielded') && !this.gameEnded && this.npc.active && !this.npcMainDefeated) {
-      const W2 = this.scale.width;
-      const H2 = this.scale.height;
-      const arPad = 32;
-      if (time >= this.nextTotemSpawnTime) {
-        this.nextTotemSpawnTime = time + 10000;
-        const tx = Phaser.Math.Between(arPad + 40, W2 - arPad - 40);
-        const ty = Phaser.Math.Between(arPad + 40, H2 - arPad - 40);
-        const totemMaxHp = Math.round(25 * (this.npc.maxHp / Math.max(1, this.baseNpcMaxHpForTotem)));
-        const totemSprite = this.add.circle(tx, ty, 18, 0xccaa00, 0.9).setDepth(6);
-        totemSprite.setStrokeStyle(3, 0xffee44, 1);
-        const totemFill = this.add.circle(tx, ty - 26, 18, 0x33cc33, 1).setDepth(7);
-        const totemLabel = this.add.text(tx, ty, '🛡️', { fontSize: '16px' }).setOrigin(0.5).setDepth(8);
-        this.shieldTotems.push({ sprite: totemSprite, hpBarFill: totemFill, label: totemLabel, hp: totemMaxHp, maxHp: totemMaxHp });
-        this.npc.isInvincible = true;
-        this.showFloatingText(tx, ty - 40, 'TOTEM!', '#ffee44');
-      }
-      // Update totem HP bars and check for player projectile hits
-      for (let ti = this.shieldTotems.length - 1; ti >= 0; ti--) {
-        const tot = this.shieldTotems[ti];
-        if (!tot.sprite.active) continue;
-        tot.sprite.setPosition(tot.sprite.x, tot.sprite.y);
-        // HP bar width as fraction
-        const hpFrac = Math.max(0, tot.hp / tot.maxHp);
-        tot.hpBarFill.setScale(hpFrac, 0.4);
-        tot.hpBarFill.setPosition(tot.sprite.x, tot.sprite.y - 26);
-        // Check player projectile hits
-        const projs2 = this.projectiles.getChildren();
-        for (const go of projs2) {
-          if (!(go instanceof Projectile)) continue;
-          const p2 = go as Projectile;
-          if (!p2.active || !p2.isFromPlayer) continue;
-          if (Phaser.Math.Distance.Between(p2.x, p2.y, tot.sprite.x, tot.sprite.y) <= 22) {
-            tot.hp -= p2.damage;
-            p2.setActive(false).setVisible(false);
-            (p2.body as Phaser.Physics.Arcade.Body).stop();
-            this.spawnHitFlash(tot.sprite.x, tot.sprite.y, 0xffee44);
-            if (tot.hp <= 0) {
-              tot.sprite.destroy();
-              tot.hpBarFill.destroy();
-              tot.label.destroy();
-              this.shieldTotems.splice(ti, 1);
-              if (this.shieldTotems.length === 0) this.npc.isInvincible = false;
-              this.showFloatingText(tot.sprite.x, tot.sprite.y - 20, 'TOTEM DESTROYED!', '#ff6600');
-              break;
-            }
-          }
-        }
-      }
-    }
-
-    // ── Raid AI ───────────────────────────────────────────────────
-    for (let ri = 0; ri < this.raidEnemies.length; ri++) {
-      const re = this.raidEnemies[ri];
-      if (!re.active || this.raidDefeated[ri]) continue;
-      const reAiState: NpcAiState = {
-        isLocked: false,
-        hasActiveGeyser: false,
-        flameBodyActive: false,
-        projectiles: this.projectiles,
-        plantCount: 0,
-        thornDragActive: false,
-        enemyNearPlant: false,
-        windTrapActive: false,
-        chargedBeamReady: false,
-        earthShieldHp: 0,
-      };
-      const raidCastId = re.doAI(
-        this.player,
-        (tx, ty) => this.buildRaidContext(re, this.raidProjectiles[ri], tx, ty),
-        time,
-        reAiState,
-      );
-      void raidCastId; // raid enemies don't need cast-id post-processing
-    }
-
-    // ── Clone AI ─────────────────────────────────────────────────
-    if (this.clone && this.clone.active && !this.cloneDefeated) {
-      // Speed mult for clone
-      this.cloneSpeedMult = 1;
-      if (this.cloneFlameBodyActive) this.cloneSpeedMult = 2;
-      else if (time < this.cloneGeyserBuffUntil) this.cloneSpeedMult = 1.5;
-
-      const cloneAiState: NpcAiState = {
-        isLocked: this.cloneNukeChanneling || this.cloneEarthSlamActive,
-        hasActiveGeyser: this.geysers.some((g) => g.owner === 'npc'),
-        flameBodyActive: this.cloneFlameBodyActive,
-        projectiles: this.projectiles,
-        plantCount: this.npcPlants.length,
-        thornDragActive: time < this.cloneThornDragActiveUntil,
-        enemyNearPlant: this.npcPlants.some(
-          (p) => Phaser.Math.Distance.Between(p.x, p.y, this.player.x, this.player.y) <= p.radius,
-        ),
-        windTrapActive: time < this.cloneWindTrapExpiry,
-        chargedBeamReady: this.cloneAirConsecutiveHits >= 3,
-        earthShieldHp: this.clone.shieldHp,
-      };
-
-      const cloneCastId = this.clone.doAI(
-        this.player,
-        (tx, ty) => this.buildCloneContext(tx, ty),
-        time,
-        cloneAiState,
-      );
-
-      if (cloneCastId === 'splash') { this.cloneSplashActiveUntil = time + 2000; this.cloneSplashDropAccum = 0; }
-      if (cloneCastId === 'flame-body') {
-        this.cloneFlameBodyActive = !this.cloneFlameBodyActive;
-        this.cloneFlameBodyTickAccum = 0;
-        if (this.cloneFlameBodyActive) {
-          this.cloneFlameBodyAura = this.add.circle(this.clone.x, this.clone.y, 30, 0xff6600, 0.25).setDepth(3);
-        } else if (this.cloneFlameBodyAura) {
-          this.cloneFlameBodyAura.destroy(); this.cloneFlameBodyAura = null;
-        }
-      }
-      if (cloneCastId === 'thorn-drag') {
-        this.cloneThornDragActiveUntil = time + 2000;
-        this.cloneThornDragTickAccum = 0;
-        this.cloneThornDragAura = this.add.circle(this.clone.x, this.clone.y, 30, 0x44ff44, 0.3).setDepth(3);
-      }
-      if (cloneCastId === 'quick-shot') { this.cloneQuickShotCharged = true; }
-      if (cloneCastId === 'charged-beam') { this.cloneAirConsecutiveHits = 0; }
-
-      // Post-AI clone velocity
-      if (this.cloneNukeChanneling) {
-        if (time >= this.cloneNukeChannelEnd) this.cloneNukeChanneling = false;
-        else (this.clone.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-      } else if (this.cloneSpeedMult !== 1) {
-        const cb = this.clone.body as Phaser.Physics.Arcade.Body;
-        cb.velocity.x *= this.cloneSpeedMult;
-        cb.velocity.y *= this.cloneSpeedMult;
-      }
-
-      // Clone flame body aura position
-      if (this.cloneFlameBodyActive && this.cloneFlameBodyAura) {
-        this.cloneFlameBodyAura.setPosition(this.clone.x, this.clone.y);
-      }
-
-      // Clone geyser buff check
-      for (const g of this.geysers) {
-        if (g.owner === 'npc' && Phaser.Math.Distance.Between(g.x, g.y, this.clone.x, this.clone.y) <= g.radius) {
-          this.cloneGeyserBuffUntil = time + 2000;
-        }
-      }
-
-      // Clone earth slam
-      if (this.cloneEarthSlamActive) {
-        if (time >= this.cloneEarthSlamEnd) {
-          this.cloneEarthSlamActive = false;
-        } else if (!this.cloneEarthSlamHitDealt) {
-          const dist = Phaser.Math.Distance.Between(this.clone.x, this.clone.y, this.player.x, this.player.y);
-          if (dist <= 60) {
-            this.cloneEarthSlamHitDealt = true;
-            const slamDmg = Math.max(10, Math.round(this.clone.shieldHp * 0.4));
-            this.player.takeDamage(slamDmg);
-            this.spawnHitFlash(this.player.x, this.player.y, 0xaa8844);
-            this.clone.shieldHp = Math.max(0, this.clone.shieldHp - slamDmg);
-          }
-        }
-      }
-
-      // Clone thorn drag on player
-      if (time < this.cloneThornDragActiveUntil && !this.isDodging) {
-        const tdx = this.clone.x - this.player.x;
-        const tdy = this.clone.y - this.player.y;
-        const tdLen = Math.sqrt(tdx * tdx + tdy * tdy) || 1;
-        const pb2 = this.player.body as Phaser.Physics.Arcade.Body;
-        pb2.setVelocity((tdx / tdLen) * 220, (tdy / tdLen) * 220);
-        this.cloneThornDragTickAccum += delta;
-        if (this.cloneThornDragTickAccum >= 250) {
-          this.cloneThornDragTickAccum -= 250;
-          this.player.takeDamage(3);
-          this.spawnHitFlash(this.player.x, this.player.y, 0x44cc44);
-        }
-        if (this.cloneThornDragAura) this.cloneThornDragAura.setPosition(this.clone.x, this.clone.y);
-      } else if (this.cloneThornDragAura && time >= this.cloneThornDragActiveUntil) {
-        this.cloneThornDragAura.destroy(); this.cloneThornDragAura = null;
-      }
-
-      // Clone wind trap on player
-      if (time < this.cloneWindTrapExpiry && !this.isDodging) {
-        const trapR = 80;
-        const d = Phaser.Math.Distance.Between(this.cloneWindTrapX, this.cloneWindTrapY, this.player.x, this.player.y);
-        if (d > trapR) {
-          const ang = Phaser.Math.Angle.Between(this.cloneWindTrapX, this.cloneWindTrapY, this.player.x, this.player.y);
-          this.player.setPosition(
-            this.cloneWindTrapX + Math.cos(ang) * trapR,
-            this.cloneWindTrapY + Math.sin(ang) * trapR,
-          );
-          const playerBodyWind = this.player.body as Phaser.Physics.Arcade.Body;
-          const vDotN = playerBodyWind.velocity.x * Math.cos(ang) + playerBodyWind.velocity.y * Math.sin(ang);
-          if (vDotN > 0) {
-            playerBodyWind.velocity.x -= vDotN * Math.cos(ang);
-            playerBodyWind.velocity.y -= vDotN * Math.sin(ang);
-          }
-        }
-      } else if (this.cloneWindTrapSprite && time >= this.cloneWindTrapExpiry) {
-        this.cloneWindTrapSprite.destroy(); this.cloneWindTrapSprite = null;
-      }
-
-      // Clone water splash drops near player
-      if (this.npcElement.id === 'water' && time < this.cloneSplashActiveUntil) {
-        this.cloneSplashDropAccum += delta;
-        if (this.cloneSplashDropAccum >= 150) {
-          this.cloneSplashDropAccum -= 150;
-          const missRange = this.npcDifficulty.aimOffsetDeg * 2.2;
-          const sx = this.player.x + Phaser.Math.Between(-missRange, missRange);
-          const sy = this.player.y + Phaser.Math.Between(-missRange, missRange);
-          const spr = this.add.circle(sx, sy, 36, 0x0066bb, 0.5).setDepth(2);
-          this.puddles.push({ sprite: spr, expiresAt: time + 1000, x: sx, y: sy, radius: 36, tickAccum: 0, owner: 'npc' });
-        }
-      }
     }
 
     // ── Gravity per-frame ────────────────────────────────────────
@@ -12862,23 +12413,11 @@ export class ArenaScene extends Phaser.Scene {
         p.destroy();
       }
     }
-    if (this.cloneProjectiles) {
-      const cloneProjs = this.cloneProjectiles.getChildren().slice() as Projectile[];
-      for (const p of cloneProjs) {
-        if (!p.active) { p.destroy(); continue; }
-        if (p.x < wb.left - 60 || p.x > wb.right + 60 || p.y < wb.top - 60 || p.y > wb.bottom + 60) {
-          p.destroy();
-        }
-      }
-    }
-
 
     // ── Clamp all enemies to arena bounds ────────────────────────
     {
       const wb = this.physics.world.bounds;
       const allEnemies: Fighter[] = [this.npc];
-      if (this.clone && this.clone.active) allEnemies.push(this.clone);
-      for (const re of this.raidEnemies) if (re.active) allEnemies.push(re);
       for (const e of allEnemies) {
         if (!e.active) continue;
         let clamped = false;
@@ -14682,6 +14221,26 @@ export class ArenaScene extends Phaser.Scene {
 
 
   private applyProjectileToNpc(proj: Projectile): void {
+    // Abyss: enemy invincible unless player is standing on an abyss trail
+    if (this.mutations.has('abyss') && this.time.now < this.abyssInvincibleUntil && !this.playerOnAbyssTrail()) {
+      proj.setActive(false).setVisible(false);
+      (proj.body as Phaser.Physics.Arcade.Body).stop();
+      this.spawnHitFlash(proj.x, proj.y, 0x4422aa);
+      this.showFloatingText(this.npc.x, this.npc.y - 30, '🌑 IMMUNE', '#8866ff');
+      return;
+    }
+    // Titanic: orbiting shield(s) physically block player projectiles
+    if (this.mutations.has('titanic')) {
+      for (const sh of this.titanicShields) {
+        if (Phaser.Math.Distance.Between(proj.x, proj.y, sh.sprite.x, sh.sprite.y) < 24) {
+          proj.setActive(false).setVisible(false);
+          (proj.body as Phaser.Physics.Arcade.Body).stop();
+          this.spawnHitFlash(sh.sprite.x, sh.sprite.y, 0x88aaff);
+          this.showFloatingText(sh.sprite.x, sh.sprite.y - 16, '🛡️ BLOCKED', '#88aaff');
+          return;
+        }
+      }
+    }
     // Time lasso orb (player fires): route to TimeKit
     if (proj.texture.key === 'proj-time-lasso-orb') {
       this.timeKit.onLassoHitNpc(proj);
@@ -14702,9 +14261,16 @@ export class ArenaScene extends Phaser.Scene {
       (proj.body as Phaser.Physics.Arcade.Body).stop();
       return;
     }
-    // Fighter.dodgeChance roll (NPC side — e.g. Fate R+ Oozing Luck)
+    // Fighter.dodgeChance roll (NPC side — e.g. Fate R+ Oozing Luck, Blustery mutation)
     if (this.npc.rollDodge()) {
       this.spawnDamageNumber(this.npc.x, this.npc.y - 34, -1); // DODGED
+      // Blustery★: each dodge grants permanent +5% speed bonus
+      if (this.mutations.has('blustery') && this.starredMutations.has('blustery')) {
+        this.blusteryBonusSpeedMult += 0.05;
+        this.showFloatingText(this.npc.x, this.npc.y - 28, '💨 +5% SPD', '#aaddff');
+      }
+      // Restore dodgeChance so the Blustery target chance isn't permanently consumed
+      this.npc.dodgeChance = this.blusteryDodgeChanceTarget;
       proj.setActive(false).setVisible(false);
       (proj.body as Phaser.Physics.Arcade.Body).stop();
       return;
@@ -14718,6 +14284,13 @@ export class ArenaScene extends Phaser.Scene {
       this.npc.frozenSolidAmpReady = false;
       const st = this.add.text(this.npc.x, this.npc.y - 30, 'SHATTER!', { fontSize: '11px', color: '#88ccff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
       this.tweens.add({ targets: st, y: st.y - 20, alpha: 0, duration: 1200, onComplete: () => st.destroy() });
+    }
+    // Chaos: damage reduced the closer the player is to the enemy
+    if (this.mutations.has('chaos')) {
+      const dist = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y);
+      const t = Math.min(dist / 280, 1);
+      const minMult = this.starredMutations.has('chaos') ? 0.15 : 0.25;
+      _npcDmg = Math.max(1, Math.round(_npcDmg * (minMult + (1 - minMult) * t)));
     }
     this.npc.takeDamage(_npcDmg);
     this.spawnHitFlash(proj.x, proj.y, 0xff6600);

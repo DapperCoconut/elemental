@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import * as PlayerData from '../data/PlayerData';
 import * as CP from '../data/CampaignProgress';
 import { SHARD_REWARDS } from '../data/Upgrades';
+import { MUTATIONS } from '../data/Mutations';
 
 type CampaignPayload = { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean };
 
@@ -23,6 +24,16 @@ export class GameOverScene extends Phaser.Scene {
     const shardsEarned = Math.round(baseShard * (data.rewardMult ?? 1));
     if (shardsEarned > 0) {
       PlayerData.addShards(shardsEarned);
+    }
+
+    // 10% chance to unlock a random locked mutation on victory
+    let unlockedMutation: (typeof MUTATIONS)[number] | null = null;
+    if (data.playerWon && !isInvasion && !isCampaign) {
+      const locked = MUTATIONS.filter((m) => !PlayerData.isMutationUnlocked(m.id));
+      if (locked.length > 0 && Math.random() < 0.10) {
+        unlockedMutation = locked[Math.floor(Math.random() * locked.length)];
+        PlayerData.unlockMutation(unlockedMutation.id);
+      }
     }
 
     // Mark campaign progress on win and award currencies
@@ -65,12 +76,24 @@ export class GameOverScene extends Phaser.Scene {
       color: '#aaaaaa',
     }).setOrigin(0.5);
 
+    let rewardLineY = cy + 18;
     if (shardsEarned > 0) {
       const multLabel = (data.rewardMult ?? 1) > 1 ? ` ×${data.rewardMult!.toFixed(2)}` : '';
-      this.add.text(cx, cy + 18, `+${shardsEarned} 💎${multLabel}`, {
+      this.add.text(cx, rewardLineY, `+${shardsEarned} 💎${multLabel}`, {
         fontSize: '22px',
         fontFamily: '"Arial Black", sans-serif',
         color: '#ffcc00',
+      }).setOrigin(0.5);
+      rewardLineY += 32;
+    }
+
+    if (unlockedMutation) {
+      this.add.text(cx, rewardLineY, `🎉 New mutation discovered: ${unlockedMutation.emoji} ${unlockedMutation.name}`, {
+        fontSize: '15px',
+        fontFamily: '"Arial Black", sans-serif',
+        color: '#ffcc66',
+        stroke: '#000000',
+        strokeThickness: 3,
       }).setOrigin(0.5);
     }
 
