@@ -50,6 +50,7 @@ const trainMorph: Ability = {
   name: 'Train Morph',
   description: 'Become a snake train (1.5s × drone count). WASD locks to 4 directions. Head: 8 dmg (0.5s cd). Every segment: 3 dmg (each with own 0.5s cd). Drops oil puddles every 2s. Collect coal for +5% speed and +dmg per piece. Cooldown begins when train ends.',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 30000,
   cast(ctx: CastContext) {
     ctx.startOverdrive(ctx.targetX, ctx.targetY);

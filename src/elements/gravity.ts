@@ -52,6 +52,7 @@ const lunarLanding: Ability = {
   name: 'Lunar Landing',
   description: 'Giant shadow covers the stage. After 3s a colossal meteor falls, dealing huge damage and leaving 20 fire puddles. 50s CD.',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 50000,
   cast(ctx: CastContext) { ctx.gravityLunarLanding(); },
 };

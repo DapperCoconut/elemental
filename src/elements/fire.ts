@@ -107,6 +107,7 @@ const flameNuke: Ability = {
   name: 'Flame Nuke',
   description: 'Channel 2s, then massive explosion',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 30000,
   cast(ctx) {
     ctx.lockCaster(2000);

@@ -42,6 +42,7 @@ const deathJudgementAbility: Ability = {
   name: 'Judgement Day',
   description: 'Summon a hole. Arms after 15s (click to speed up). When armed, sucks enemy in for 3s. Effect depends on wisp kill count (9 tiers).',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 30000,
   cast(ctx) { ctx.deathJudgement(); },
 };

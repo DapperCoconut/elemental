@@ -50,6 +50,7 @@ const frozenSolid: Ability = {
   name: 'Frozen Solid',
   description: '45° cone to borders. Enemy caught is frozen 3s. Hitting a frozen enemy: unfreeze + 3 frost stacks.',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 12000,
   cast(ctx: CastContext) {
     ctx.fireFrozenSolid(ctx.targetX, ctx.targetY);

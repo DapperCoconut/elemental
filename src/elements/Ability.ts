@@ -200,5 +200,7 @@ export interface Ability {
   description: string;
   displayKey: string;
   cooldown: number; // ms
+  /** True for Q (ultimate) abilities. Used by Finality card to halve cooldown. */
+  isUltimate?: boolean;
   cast(ctx: CastContext): void;
 }

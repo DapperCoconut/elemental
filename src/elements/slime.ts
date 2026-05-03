@@ -42,6 +42,7 @@ const slimeRain: Ability = {
   name: 'Slime Rain',
   description: '10 slimes rain down across the arena, dealing AoE damage on landing then recalling back.',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 25000,
   cast(_ctx) { /* ArenaScene handles rain phase */ },
 };

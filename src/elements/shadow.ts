@@ -50,6 +50,7 @@ const blackHole: Ability = {
   name: 'Black Hole',
   description: '3s charge → 10s gravitational pull that drags enemy toward you.',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 35000,
   cast(ctx: CastContext) {
     ctx.startBlackHole();

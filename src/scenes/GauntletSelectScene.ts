@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import * as PlayerData from '../data/PlayerData';
-import { GAUNTLET_GROUPS, GAUNTLET_ELEMENTS } from '../data/GauntletData';
+import { GAUNTLET_GROUPS, GAUNTLET_ELEMENTS, INFINITY_GAUNTLET_ID } from '../data/GauntletData';
 
 export class GauntletSelectScene extends Phaser.Scene {
   private hardMode = false;
@@ -98,8 +98,46 @@ export class GauntletSelectScene extends Phaser.Scene {
         .on('pointerdown', () => this.scene.start('GauntletElementSelectScene', { gauntletId: el.id, hardMode: this.hardMode }));
     });
 
+    // ── Infinity tile ────────────────────────────────────────────────
+    const infinityUnlocked = completedGauntlets.length >= GAUNTLET_ELEMENTS.length;
+    const infinityBest = PlayerData.getInfinityBestFight(this.hardMode);
+    {
+      const infX = cx;
+      const infY = cy + 148;
+      const infW = 340;
+      const infH = 56;
+      const infColor = infinityUnlocked ? 0x330055 : 0x111122;
+      const infBorder = infinityUnlocked ? 0xcc88ff : 0x333355;
+
+      const infCard = this.add.rectangle(infX, infY, infW, infH, infColor, 0.9)
+        .setStrokeStyle(2, infBorder);
+      if (infinityUnlocked) infCard.setInteractive({ useHandCursor: true });
+
+      this.add.text(infX - 100, infY, '♾️', { fontSize: '28px' }).setOrigin(0.5);
+      this.add.text(infX - 40, infY - 10, 'INFINITY GAUNTLET', {
+        fontSize: '16px', fontFamily: '"Arial Black", sans-serif',
+        color: infinityUnlocked ? '#cc88ff' : '#444455',
+      }).setOrigin(0, 0.5);
+
+      if (infinityUnlocked) {
+        const bestLabel = infinityBest > 0 ? `Best: Fight ${infinityBest}` : 'Endless mode';
+        this.add.text(infX - 40, infY + 10, bestLabel, {
+          fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#886699',
+        }).setOrigin(0, 0.5);
+        infCard
+          .on('pointerover', () => { infCard.setStrokeStyle(3, 0xffffff); infCard.setAlpha(1); })
+          .on('pointerout',  () => { infCard.setStrokeStyle(2, infBorder); infCard.setAlpha(0.9); })
+          .on('pointerdown', () => this.scene.start('GauntletElementSelectScene', { gauntletId: INFINITY_GAUNTLET_ID, hardMode: this.hardMode }));
+      } else {
+        const cleared = completedGauntlets.length;
+        this.add.text(infX - 40, infY + 10, `Clear all 5 base gauntlets to unlock (${cleared}/5)`, {
+          fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#333355',
+        }).setOrigin(0, 0.5);
+      }
+    }
+
     // Hard-mode toggle (below the cards)
-    const toggleY = cy + 148;
+    const toggleY = cy + 216;
 
     if (!hardUnlocked) {
       this.add.text(cx, toggleY, '🔥 HARD MODE  —  purchase in Shop for 1500 💎', {

@@ -74,6 +74,7 @@ const huntTransform: Ability = {
   name: 'Transform',
   description: 'Become the beast: +20% size, +50% speed. 25s CD after reverting.',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 25000,
   cast(ctx: CastContext) { ctx.huntTransform(); },
 };
@@ -121,6 +122,7 @@ const huntUntransform: Ability = {
   name: 'Revert',
   description: 'Return to normal form. Starts 25s transform CD.',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 0,
   cast(ctx: CastContext) { ctx.huntUntransform(); },
 };
@@ -168,6 +170,7 @@ const huntHybridUntransform: Ability = {
   name: 'Exhausted Return',
   description: 'Exit hybrid form. 35s transform cooldown.',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 0,
   cast(ctx: CastContext) { ctx.huntUntransform(); },
 };

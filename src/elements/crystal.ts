@@ -42,6 +42,7 @@ const crystalTrick: Ability = {
   name: 'Trick of the Light',
   description: 'Summon 2 clones (50 HP, 12s) that duplicate your Laser and Barrage attacks.',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 50000,
   cast(ctx: CastContext) { ctx.activateCrystalTrick(); },
 };

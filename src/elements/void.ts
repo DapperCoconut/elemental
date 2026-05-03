@@ -42,6 +42,7 @@ const voidOfHell: Ability = {
   name: 'Void of Hell',
   description: 'Summon 12 purple flame pillars around arena edges for 15s. Each deals 8 dmg/s and applies Decay. While enemy is inside a flame, all negative effect timers are frozen. Enhances all Void Floaters.',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 25000,
   cast(ctx) { ctx.voidOfHell(); },
 };

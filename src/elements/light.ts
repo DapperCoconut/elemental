@@ -42,6 +42,7 @@ const prayer: Ability = {
   name: 'Prayer',
   description: 'Summon guardian angel 8s: 25% speed, 25% DR, auto-highlight enemy, 8 holy blades every 3s',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 45000,
   cast(ctx) { void ctx; }, // Handled in ArenaScene
 };

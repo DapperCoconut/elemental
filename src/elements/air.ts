@@ -186,6 +186,7 @@ const chargedBeam: Ability = {
   name: 'Charged Beam',
   description: '3 hit combo → 1.5s, 100 dmg laser',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 5000,
   cast(ctx) {
     ctx.lockCaster(1500);

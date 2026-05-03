@@ -3,6 +3,7 @@ import { WORLDS, World } from '../data/Worlds';
 import { ABSTRACT_WORLDS } from '../data/AbstractWorlds';
 import * as CP from '../data/CampaignProgress';
 import { drawWorldMapBackground, drawAbstractWorldMapBackground } from './CampaignBackground';
+import { addInventoryButton } from './InventoryScene';
 
 export class CampaignWorldMapScene extends Phaser.Scene {
   private slotIdx: 0 | 1 | 2 = 0;
@@ -100,6 +101,9 @@ export class CampaignWorldMapScene extends Phaser.Scene {
     for (const world of worlds) {
       this.drawWorldNode(world, slot);
     }
+
+    // Inventory button (bottom-right)
+    addInventoryButton(this, this.slotIdx);
 
     // Portal button (normal map only)
     if (!isAbstract) {

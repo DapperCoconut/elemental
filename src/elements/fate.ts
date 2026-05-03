@@ -42,6 +42,7 @@ const allIn: Ability = {
   name: 'All In!',
   description: 'Spend ALL coins. After 3s, deal damage equal to 5× your coins. 50% chance: 50% returned. 50% chance: 150% returned.',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 30000,
   cast(ctx) { ctx.fateAllIn(); },
 };

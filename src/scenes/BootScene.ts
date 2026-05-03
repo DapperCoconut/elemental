@@ -60,6 +60,14 @@ export class BootScene extends Phaser.Scene {
     gfx.strokeRect(0, 3, 22, 8);
     gfx.generateTexture('proj-water', 22, 14);
 
+    // Pressure dagger projectile (deep-blue triangle pointing right)
+    gfx.clear();
+    gfx.fillStyle(0x0044bb);
+    gfx.fillTriangle(0, 0, 0, 14, 18, 7);
+    gfx.lineStyle(1, 0x4488ff);
+    gfx.strokeTriangle(0, 0, 0, 14, 18, 7);
+    gfx.generateTexture('proj-pressure-dagger', 18, 14);
+
     // Earth element texture (brown circle)
     gfx.clear();
     gfx.fillStyle(0x887755);
@@ -1336,6 +1344,46 @@ export class BootScene extends Phaser.Scene {
     gfx.fillStyle(0xffcc00, 0.6);
     gfx.fillTriangle(10, 6, 17, 30, 3, 30);  // inner glow
     gfx.generateTexture('perk-stalagmite-lava', 20, 32);
+    gfx.clear();
+
+    // proj-tinker-bullet — small grey square bullet
+    gfx.fillStyle(0xcccccc, 1);
+    gfx.fillRect(0, 0, 8, 8);
+    gfx.lineStyle(1, 0xffffff, 0.8);
+    gfx.strokeRect(0, 0, 8, 8);
+    gfx.generateTexture('proj-tinker-bullet', 8, 8);
+    gfx.clear();
+
+    // proj-tinker-rocket — orange elongated oval rocket
+    gfx.fillStyle(0xff6600, 1);
+    gfx.fillEllipse(6, 10, 12, 20);
+    gfx.fillStyle(0xffcc00, 1);
+    gfx.fillCircle(6, 4, 4);
+    gfx.lineStyle(1, 0xff9933, 1);
+    gfx.strokeEllipse(6, 10, 12, 20);
+    gfx.generateTexture('proj-tinker-rocket', 12, 20);
+    gfx.clear();
+
+    // Golf ball — white sphere with grey dimples
+    gfx.fillStyle(0xffffff);
+    gfx.fillCircle(20, 20, 20);
+    gfx.lineStyle(1, 0xcccccc);
+    gfx.strokeCircle(20, 20, 20);
+    gfx.fillStyle(0xaaaaaa);
+    gfx.fillCircle(12, 14, 2); gfx.fillCircle(20, 10, 2); gfx.fillCircle(28, 14, 2);
+    gfx.fillCircle(14, 24, 2); gfx.fillCircle(26, 24, 2); gfx.fillCircle(20, 30, 2);
+    gfx.generateTexture('proj-golf-ball', 40, 40);
+
+    // Golf ball starred — black, 25% smaller
+    gfx.clear();
+    gfx.fillStyle(0x111111);
+    gfx.fillCircle(15, 15, 15);
+    gfx.lineStyle(1, 0x444444);
+    gfx.strokeCircle(15, 15, 15);
+    gfx.fillStyle(0x444444);
+    gfx.fillCircle(9, 11, 1.5); gfx.fillCircle(15, 7, 1.5); gfx.fillCircle(21, 11, 1.5);
+    gfx.fillCircle(11, 19, 1.5); gfx.fillCircle(19, 19, 1.5); gfx.fillCircle(15, 23, 1.5);
+    gfx.generateTexture('proj-golf-ball-starred', 30, 30);
     gfx.clear();
 
     gfx.destroy();

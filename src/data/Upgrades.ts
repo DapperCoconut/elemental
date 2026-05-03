@@ -62,8 +62,8 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
       {
         slot: 'click',
         displayKey: 'Click',
-        name: 'Knockback',
-        description: 'Water Cut hits push enemies away',
+        name: 'Dehydration',
+        description: 'White shots apply 2% dehydration; every 10% gives +5% damage (max +50%)',
         price: 10,
       },
       {
@@ -76,15 +76,15 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
       {
         slot: 'r',
         displayKey: 'R',
-        name: 'Permanent Geysers',
-        description: 'Geysers last forever; max 2 placed',
+        name: 'Boiling Point',
+        description: 'Standing in a geyser 3s triggers boiling: +25% dmg & speed; Pain Rain evaporates into steam',
         price: 35,
       },
       {
         slot: 'f',
         displayKey: 'F',
-        name: 'Reflect Shield',
-        description: 'Shield reflects blocked damage back to attacker',
+        name: 'Laminar Laceration',
+        description: 'A fully charged dagger (2s) splits the enemy into two 1.5× hitboxes for 2s',
         price: 50,
       },
       {

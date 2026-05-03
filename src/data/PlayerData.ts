@@ -16,6 +16,8 @@ interface SaveData {
   unlockedPerks: Record<string, string[]>;   // elementId → owned perk ids
   equippedPerks: Record<string, string>;     // elementId → single equipped perk id
   unlockedMutations: string[];       // mutation IDs explicitly unlocked (excludes unlockedByDefault ones)
+  infinityBestFightNormal: number;   // furthest fight reached in Infinity (normal)
+  infinityBestFightHard: number;     // furthest fight reached in Infinity (hard)
 }
 
 function load(): SaveData {
@@ -39,6 +41,8 @@ function load(): SaveData {
         unlockedPerks: parsed.unlockedPerks ?? {},
         equippedPerks: parsed.equippedPerks ?? {},
         unlockedMutations: parsed.unlockedMutations ?? [],
+        infinityBestFightNormal: parsed.infinityBestFightNormal ?? 0,
+        infinityBestFightHard: parsed.infinityBestFightHard ?? 0,
       };
       // Sanity: clear equipped perk if no longer unlocked
       for (const el of Object.keys(d.equippedPerks)) {
@@ -51,7 +55,7 @@ function load(): SaveData {
   } catch {
     // corrupted save — start fresh
   }
-  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [] };
+  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0 };
 }
 
 function save(data: SaveData): void {
@@ -285,4 +289,24 @@ export function unlockMutation(id: string): void {
 
 export function getUnlockedMutationIds(): string[] {
   return load().unlockedMutations;
+}
+
+export function getInfinityBestFight(hardMode: boolean): number {
+  const d = load();
+  return hardMode ? d.infinityBestFightHard : d.infinityBestFightNormal;
+}
+
+export function setInfinityBestFight(fightNum: number, hardMode: boolean): void {
+  const data = load();
+  if (hardMode) {
+    if (fightNum > data.infinityBestFightHard) {
+      data.infinityBestFightHard = fightNum;
+      save(data);
+    }
+  } else {
+    if (fightNum > data.infinityBestFightNormal) {
+      data.infinityBestFightNormal = fightNum;
+      save(data);
+    }
+  }
 }

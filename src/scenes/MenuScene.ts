@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { DIFFICULTY_PRESETS } from '../entities/NpcOpponent';
 import { SHARD_REWARDS, getElementUpgrades } from '../data/Upgrades';
 import { MUTATIONS, activeMutationIds, starredMutationIds, clearMutationSelection, getTotalRewardMult, STARRED_REWARD_MULT, getMutationDef } from '../data/Mutations';
+import { clearConsumedItems } from '../data/Items';
 import * as PlayerData from '../data/PlayerData';
 import { getPerksForElement, getPerkById, ALL_PERKS } from '../data/Perks';
 
@@ -152,6 +153,7 @@ export class MenuScene extends Phaser.Scene {
   create(data?: { mode?: string }): void {
     this.isInvasion = data?.mode === 'invasion';
     clearMutationSelection();
+    clearConsumedItems();
     this.selectionPhase = 'player';
     this.playerChoice = null;
     this.enemyChoice = null;
@@ -213,10 +215,18 @@ export class MenuScene extends Phaser.Scene {
       this.konamiBuffer.push(evt.key.toUpperCase());
       if (this.konamiBuffer.length > DUMMY_SEQUENCE.length) this.konamiBuffer.shift();
       if (this.konamiBuffer.join('') === DUMMY_SEQUENCE.join('')) {
+        let changed = false;
         if (!PlayerData.isDummyUnlocked()) {
           PlayerData.unlockDummy();
-          this.renderPhase(width, height, cx);
+          changed = true;
         }
+        for (const m of MUTATIONS) {
+          if (!PlayerData.isMutationUnlocked(m.id)) {
+            PlayerData.unlockMutation(m.id);
+            changed = true;
+          }
+        }
+        if (changed) this.renderPhase(width, height, cx);
       }
     });
 
@@ -717,6 +727,11 @@ export class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this.phaseObjects.push(rPanelBg, rPanelTitle);
 
+    // ── Mutation list panel background ──
+    const listPanelBg = this.add.rectangle(LIST_X + LIST_W / 2, PANEL_TOP + PANEL_H / 2, LIST_W, PANEL_H, 0x1a0f2a, 0.7)
+      .setStrokeStyle(1, 0x553388, 1).setDepth(4);
+    this.phaseObjects.push(listPanelBg);
+
     // ── Mutation list mask + container ──
     const maskGfx = this.add.graphics();
     maskGfx.fillStyle(0xffffff, 1);
@@ -737,12 +752,31 @@ export class MenuScene extends Phaser.Scene {
       return uA - uB;
     });
 
+    type InteractiveShape = Phaser.GameObjects.Rectangle | Phaser.GameObjects.Arc;
+    const rowInteractives: Array<{ localCenterY: number; shapes: InteractiveShape[] }> = [];
+    let scrollY = 0;
+
+    const updateInteractivity = () => {
+      for (const row of rowInteractives) {
+        const worldCenterY = (PANEL_TOP - scrollY) + row.localCenterY;
+        const inView = worldCenterY + ROW_H / 2 > PANEL_TOP && worldCenterY - ROW_H / 2 < PANEL_BOT;
+        for (const shape of row.shapes) {
+          if (inView) {
+            shape.setInteractive({ useHandCursor: true });
+          } else {
+            shape.disableInteractive();
+          }
+        }
+      }
+    };
+
     const buildRows = () => {
       // Destroy old row objects
       for (const obj of this.mutationListObjects) {
         if (obj.active) (obj as Phaser.GameObjects.GameObject & { destroy(): void }).destroy();
       }
       this.mutationListObjects = [];
+      rowInteractives.length = 0;
 
       let innerY = 4;
       for (const mut of sorted) {
@@ -759,6 +793,8 @@ export class MenuScene extends Phaser.Scene {
         scrollContainer.add(rowBg);
         this.mutationListObjects.push(rowBg);
 
+        const rowShapes: InteractiveShape[] = [];
+
         if (unlocked) {
           rowBg.setInteractive({ useHandCursor: true })
             .on('pointerover', () => rowBg.setStrokeStyle(2, 0xffffff, 1))
@@ -773,6 +809,7 @@ export class MenuScene extends Phaser.Scene {
               buildRows();
               this.buildRewardsPanel(RWD_CX, PANEL_TOP, PANEL_H, RWD_W);
             });
+          rowShapes.push(rowBg);
         }
 
         // Emoji + name
@@ -793,8 +830,8 @@ export class MenuScene extends Phaser.Scene {
         scrollContainer.add(descText);
         this.mutationListObjects.push(descText);
 
-        // Star button (unlocked only)
-        if (unlocked) {
+        // Star button (unlocked, non-boss-only mutations only)
+        if (unlocked && !mut.bossOnly) {
           const starX = ROW_W - 52;
           const starCircle = this.add.circle(starX, innerY + ROW_H / 2 - 2, 14, starred ? 0x886600 : 0x333344, 1)
             .setStrokeStyle(1, starred ? 0xffcc44 : 0x555566, 1)
@@ -818,6 +855,7 @@ export class MenuScene extends Phaser.Scene {
             });
           scrollContainer.add([starCircle, starLabel]);
           this.mutationListObjects.push(starCircle, starLabel);
+          rowShapes.push(starCircle);
         }
 
         // Info "i" button
@@ -836,20 +874,23 @@ export class MenuScene extends Phaser.Scene {
           });
         scrollContainer.add([iCircle, iLabel]);
         this.mutationListObjects.push(iCircle, iLabel);
+        rowShapes.push(iCircle);
 
+        rowInteractives.push({ localCenterY: innerY + ROW_H / 2, shapes: rowShapes });
         innerY += ROW_H;
       }
 
+      updateInteractivity();
       return innerY;
     };
 
     const totalH = buildRows();
-    let scrollY = 0;
     const maxScroll = Math.max(0, totalH - PANEL_H);
 
     this.mutationScrollHandler = (_ptr: unknown, _over: unknown, _dx: unknown, deltaY: unknown) => {
       scrollY = Phaser.Math.Clamp(scrollY + (deltaY as number) * 0.5, 0, maxScroll);
       scrollContainer.setY(PANEL_TOP - scrollY);
+      updateInteractivity();
     };
     this.input.on('wheel', this.mutationScrollHandler);
 
@@ -970,9 +1011,16 @@ export class MenuScene extends Phaser.Scene {
     this.mutationOverlayObjects.push(divLine);
 
     const sections: Array<{ label: string; text: string; color: string; y: number }> = [
-      { label: 'Effects', text: def.fullDesc,    color: '#ddddee', y: 125 },
-      { label: 'Starred Effects ★', text: def.starredDesc, color: '#ffeebb', y: 260 },
-      { label: 'Rewards', text: `×${def.rewardMult.toFixed(2)} base  (×${(def.rewardMult * STARRED_REWARD_MULT).toFixed(2)} starred)`, color: '#aaffaa', y: 400 },
+      { label: 'Effects', text: def.fullDesc, color: '#ddddee', y: 125 },
+      ...(def.bossOnly ? [
+        { label: 'BOSS ONLY — Unlocked by defeating a gauntlet boss', text: 'No starred version.', color: '#ffbb44', y: 260 },
+      ] : [
+        { label: 'Starred Effects ★', text: def.starredDesc, color: '#ffeebb', y: 260 },
+      ]),
+      { label: 'Rewards', text: def.bossOnly
+        ? `×${def.rewardMult.toFixed(2)} base`
+        : `×${def.rewardMult.toFixed(2)} base  (×${(def.rewardMult * STARRED_REWARD_MULT).toFixed(2)} starred)`,
+        color: '#aaffaa', y: 400 },
     ];
 
     for (const s of sections) {

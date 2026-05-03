@@ -3,6 +3,7 @@ import { WorldNode, getFightNodes } from '../data/Worlds';
 import { getAbstractWorld, getAnyWorld } from '../data/AbstractWorlds';
 import * as CP from '../data/CampaignProgress';
 import { drawCampaignBackground } from './CampaignBackground';
+import { addInventoryButton } from './InventoryScene';
 
 export class CampaignWorldScene extends Phaser.Scene {
   private worldId = 'fire';
@@ -78,6 +79,9 @@ export class CampaignWorldScene extends Phaser.Scene {
     for (const node of world.nodes) {
       this.drawNode(node, world.color);
     }
+
+    // Inventory button (bottom-right)
+    addInventoryButton(this, this.slotIdx);
   }
 
   private drawNode(node: WorldNode, worldColor: number): void {
@@ -185,19 +189,26 @@ export class CampaignWorldScene extends Phaser.Scene {
         .on('pointerdown', () => this.openFightMenu(node.id, false, node.kind));
 
     } else if (node.kind === 'gauntlet') {
+      const cleared = CP.isGauntletCompleted(slot, worldId);
       const r = 28;
       const circle = this.add.circle(node.x, node.y, r, 0x050520, 0.85)
-        .setStrokeStyle(2, 0x4488ff)
+        .setStrokeStyle(2, cleared ? 0xffdd44 : 0x4488ff)
         .setInteractive({ useHandCursor: true });
 
       this.add.text(node.x, node.y - 8, '🏆', { fontSize: '18px' }).setOrigin(0.5);
       this.add.text(node.x, node.y + 13, 'GAUNTLET', {
-        fontSize: '7px', fontFamily: '"Arial Black", sans-serif', color: '#4488ff',
+        fontSize: '7px', fontFamily: '"Arial Black", sans-serif', color: cleared ? '#ffdd44' : '#4488ff',
       }).setOrigin(0.5);
+
+      if (cleared) {
+        this.add.text(node.x + r - 4, node.y - r + 4, '✓', {
+          fontSize: '12px', color: '#ffdd44',
+        }).setOrigin(0.5);
+      }
 
       circle
         .on('pointerover', () => circle.setStrokeStyle(3, 0x88bbff))
-        .on('pointerout', () => circle.setStrokeStyle(2, 0x4488ff))
+        .on('pointerout', () => circle.setStrokeStyle(2, cleared ? 0xffdd44 : 0x4488ff))
         .on('pointerdown', () => this.openFightMenu(node.id, false, node.kind));
     }
   }

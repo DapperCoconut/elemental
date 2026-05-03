@@ -43,6 +43,7 @@ export const echoElement: Element = {
       name: 'Total Eclipse',
       description: 'Reveal the entire arena for 4s, enemies fire randomly. Or aim at enemy for 8 detonating lines.',
       displayKey: 'Q',
+      isUltimate: true,
       cooldown: 40000,
       cast(ctx) { ctx.echoEclipse(ctx.targetX, ctx.targetY); },
     },

@@ -55,6 +55,7 @@ const mazeOfDoom: Ability = {
   name: 'Maze of Doom',
   description: 'Fill the arena with randomized walls for 10s. Walls block enemy movement and projectiles — your movement and projectiles pass through freely. 45s CD.',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 45000,
   cast(ctx: CastContext) {
     ctx.creationMaze();

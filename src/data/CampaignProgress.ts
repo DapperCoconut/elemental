@@ -8,10 +8,12 @@ export interface CampaignSlot {
   createdAt: number;
   fightsCompleted: Record<string, string[]>; // worldId → fightId[]
   challengesCompleted: string[];             // worldId[]
+  gauntletsCompleted?: string[];             // worldId[]
   keys?: number;           // earned from challenge wins
   sparks?: number;         // earned from any campaign win
   cheated?: boolean;       // set when WWSSADADBA grants keys to this slot
   portalUnlocked?: boolean; // set when player spends 10 keys on the portal
+  inventory?: Record<string, number>; // itemId → count
 }
 
 interface CampaignData {
@@ -71,7 +73,7 @@ export function setActiveSlot(idx: 0 | 1 | 2): void {
 
 export function createSlot(idx: 0 | 1 | 2, name: string): void {
   const data = load();
-  data.slots[idx] = { name, createdAt: Date.now(), fightsCompleted: {}, challengesCompleted: [], keys: 0, sparks: 0, cheated: false, portalUnlocked: false };
+  data.slots[idx] = { name, createdAt: Date.now(), fightsCompleted: {}, challengesCompleted: [], gauntletsCompleted: [], keys: 0, sparks: 0, cheated: false, portalUnlocked: false, inventory: {} };
   save(data);
 }
 
@@ -126,6 +128,20 @@ export function markChallengeCompleted(idx: 0 | 1 | 2, worldId: string): void {
   }
 }
 
+export function isGauntletCompleted(idx: 0 | 1 | 2, worldId: string): boolean {
+  return load().slots[idx]?.gauntletsCompleted?.includes(worldId) ?? false;
+}
+
+export function markGauntletCompleted(idx: 0 | 1 | 2, worldId: string): void {
+  const data = load();
+  const slot = data.slots[idx];
+  if (!slot) return;
+  if (!(slot.gauntletsCompleted ?? []).includes(worldId)) {
+    slot.gauntletsCompleted = [...(slot.gauntletsCompleted ?? []), worldId];
+    save(data);
+  }
+}
+
 export function getKeys(idx: 0 | 1 | 2): number {
   return load().slots[idx]?.keys ?? 0;
 }
@@ -155,6 +171,43 @@ export function spendKeys(idx: 0 | 1 | 2, amount: number): boolean {
   const slot = data.slots[idx];
   if (!slot || (slot.keys ?? 0) < amount) return false;
   slot.keys = (slot.keys ?? 0) - amount;
+  save(data);
+  return true;
+}
+
+export function spendSparks(idx: 0 | 1 | 2, amount: number): boolean {
+  const data = load();
+  const slot = data.slots[idx];
+  if (!slot || (slot.sparks ?? 0) < amount) return false;
+  slot.sparks = (slot.sparks ?? 0) - amount;
+  save(data);
+  return true;
+}
+
+export function getInventory(idx: 0 | 1 | 2): Record<string, number> {
+  return load().slots[idx]?.inventory ?? {};
+}
+
+export function addItem(idx: 0 | 1 | 2, itemId: string, count = 1): void {
+  const data = load();
+  const slot = data.slots[idx];
+  if (!slot) return;
+  if (!slot.inventory) slot.inventory = {};
+  slot.inventory[itemId] = (slot.inventory[itemId] ?? 0) + count;
+  save(data);
+}
+
+export function consumeItem(idx: 0 | 1 | 2, itemId: string): boolean {
+  const data = load();
+  const slot = data.slots[idx];
+  if (!slot || !slot.inventory) return false;
+  const count = slot.inventory[itemId] ?? 0;
+  if (count <= 0) return false;
+  if (count === 1) {
+    delete slot.inventory[itemId];
+  } else {
+    slot.inventory[itemId] = count - 1;
+  }
   save(data);
   return true;
 }

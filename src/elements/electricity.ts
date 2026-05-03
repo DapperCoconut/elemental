@@ -59,6 +59,7 @@ const restart: Ability = {
   name: 'Restart',
   description: 'Become overcharged for 5s. If you die while overcharged: revive at HP equal to kinetic power, consuming all kinetic.',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 60000,
   cast(ctx) { void ctx; }, // Handled in ArenaScene
 };

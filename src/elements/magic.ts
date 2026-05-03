@@ -42,6 +42,7 @@ const necronomicon: Ability = {
   name: 'Necronomicon',
   description: 'Hold to open a powerful 5-ability wheel. ← / → to select, release to cast. (1: Flame Barrage, 2: Final Drench, 3: Thorn Prison, 4: Tornado Blast, 5: Gaia\'s Rage)',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 30000,
   cast(ctx) { ctx.magicOpenNecronomicon(); },
 };

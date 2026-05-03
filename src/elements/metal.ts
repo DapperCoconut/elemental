@@ -42,6 +42,7 @@ const bloodClot: Ability = {
   name: 'Blood Clot',
   description: 'Consume all blood puddles. Gain armor with 50 HP (+20/puddle) that absorbs damage and reflects 50% back. Lasts 8s (+2s/puddle).',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 40000,
   cast(ctx) { ctx.metalBloodClot(); },
 };

@@ -42,6 +42,7 @@ const timeTimeless: Ability = {
   name: 'Always Noon',
   description: 'Convert bounty to Time Energy (1 bounty = 1000ms toward 10s). If energy was already full before pressing, freeze the world for 5s; revolver becomes a 3-shot 25-dmg rifle whose beams resolve when time resumes.',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 0,
   cast(ctx: CastContext) { ctx.timeTimeless(); },
 };

@@ -556,14 +556,14 @@ export class NpcOpponent extends Fighter {
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skipSpecials) {
-      // 1. Water Shield — low HP, no active charge
-      if (hpRatio < 0.60 && this.shieldCharges === 0) {
-        if (this.castAbility('water-shield', buildContext(this.x, this.y))) return 'water-shield';
-      }
-
-      // 2. Pain Rain — medium range, decent HP
+      // 1. Pain Rain — medium range, decent HP
       if (dist < 380 && hpRatio > 0.25) {
         if (this.castAbility('pain-rain', buildContext(aimX, aimY))) return 'pain-rain';
+      }
+
+      // 2. Pressure Dagger — medium range (fires uncharged, level 0)
+      if (dist < 320) {
+        if (this.castAbility('pressure-dagger', buildContext(aimX, aimY))) return 'pressure-dagger';
       }
 
       // 3. Splash — close range
@@ -575,10 +575,9 @@ export class NpcOpponent extends Fighter {
       if (!aiState.hasActiveGeyser) {
         if (this.castAbility('geyser', buildContext(this.x, this.y))) return 'geyser';
       }
-
     }
 
-    // 6. Water Cut default (uses offset aim)
+    // Default: Water Cut
     if (this.castAbility('water-cut', buildContext(aimX, aimY))) return 'water-cut';
 
     return null;

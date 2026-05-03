@@ -50,6 +50,7 @@ const silenceTheyWatch: Ability = {
   name: 'They Watch',
   description: 'Goop + eyes coat the border. You are locked but immune. Click fires shadow tendrils (2s CD). 10s.',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 60000,
   cast(ctx: CastContext) { ctx.silenceStartWatch(); },
 };
@@ -109,6 +110,7 @@ const silenceSlashEmUp: Ability = {
   name: 'Slash Em Up',
   description: 'Leafy trees spawn at border. Teleport to each + slash enemy 5 times for 10 dmg. Invincible throughout.',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 50000,
   cast(ctx: CastContext) { ctx.silenceSlashEmUp(); },
 };

@@ -42,6 +42,7 @@ const bounceBack: Ability = {
   name: 'Bounce Back',
   description: 'For 5 s: 80% slower, 20% bigger. All damage you take is nullified and reflected to the enemy. Cannot use other abilities. (30 s cooldown)',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 30000,
   cast(ctx) { ctx.rubberBounceBack(); },
 };

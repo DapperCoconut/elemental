@@ -225,7 +225,7 @@ export class FireKit {
                   t.takeDamage(ftDmg);
                   this.arena.spawnHitFlash(t.x, t.y, 0xff5500);
                   if (this.arena.hasUpgrade('click')) {
-                    t.burningUntil = Math.max(t.burningUntil, time + 3000);
+                    t.burningUntil = Math.max(t.burningUntil, time + Math.round(3000 * t.statusDurMult));
                   }
                 }
               }
@@ -363,6 +363,24 @@ export class FireKit {
           const core = scene.add.circle(mx, my, 6, 0xffffff, 0.95).setDepth(5);
           scene.tweens.add({ targets: core, scaleX: 4, scaleY: 4, alpha: 0, duration: 180, onComplete: () => core.destroy() });
           player.triggerCooldown('pressure-bomb');
+          // Chaos Cluster (R+): 5 scattered explosions around the blast site
+          if (this.arena.hasUpgrade('r')) {
+            for (let i = 0; i < 5; i++) {
+              scene.time.delayedCall(i * 500, () => {
+                if (!player.active) return;
+                const ang = Math.random() * Math.PI * 2;
+                const dist = Math.random() * 150;
+                const cx = mx + Math.cos(ang) * dist;
+                const cy = my + Math.sin(ang) * dist;
+                this.arena.damagePlayerTargets(cx, cy, 40, 5, 0xff8800);
+                const ring = scene.add.circle(cx, cy, 8, 0xff8800, 0.85).setDepth(4);
+                scene.tweens.add({ targets: ring, scaleX: 5, scaleY: 5, alpha: 0, duration: 320, onComplete: () => ring.destroy() });
+                const core = scene.add.circle(cx, cy, 4, 0xffffff, 1).setDepth(5);
+                scene.tweens.add({ targets: core, scaleX: 3, scaleY: 3, alpha: 0, duration: 200, onComplete: () => core.destroy() });
+                this.arena.showFloatingText(cx, cy - 16, '💥', '#ff8800');
+              });
+            }
+          }
         }
       } else {
         if (Phaser.Input.Keyboard.JustDown(rKey)) {

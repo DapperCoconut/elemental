@@ -45,6 +45,7 @@ const atomSmasher: Ability = {
   name: 'Atom Smasher',
   description: 'Mark a point — it pulses red for 3s, dragging in magnetized enemies and metal rods. Then two walls slam together for massive damage. Rods caught in the blast bounce wildly for 3s.',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 20000,
   cast(ctx) { ctx.magnetAtomSmasher(ctx.targetX, ctx.targetY); },
 };

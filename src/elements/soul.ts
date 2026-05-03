@@ -42,6 +42,7 @@ const undeadCharge: Ability = {
   name: 'Undead Charge',
   description: 'Spend 5 👻: summon a bouncing knight (15 dmg). Q+: summon 2 knights; collisions = AOE + speed boost.',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 500,
   cast(ctx: CastContext) { ctx.summonGhost('knight'); },
 };

@@ -42,6 +42,7 @@ const domainExpansion: Ability = {
   name: 'Domain.Expansion',
   description: 'Trap both fighters in a dark domain. 3 sliders control chaos — abuse ends it. 15s.',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 60000,
   cast(ctx: CastContext) { ctx.techStartDomain(); },
 };

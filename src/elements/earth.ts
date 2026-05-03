@@ -42,6 +42,7 @@ const golemRitual: Ability = {
   name: 'Golem Ritual',
   description: 'Sacrifice shield to summon a Golem (150 HP, 15s). 50% of your damage redirected to it',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 45000,
   cast(ctx) { void ctx; }, // Handled in ArenaScene
 };

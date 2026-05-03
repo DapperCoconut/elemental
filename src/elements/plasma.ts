@@ -42,6 +42,7 @@ const chaosIncarnate: Ability = {
   name: 'Chaos Incarnate',
   description: 'Become invincible for 5s as a plasma ball (15% speed). Touching enemy deals 50 damage. Auto-chains lightning to nearby enemies every 0.5s.',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 30000,
   cast(ctx) { ctx.plasmaChaosIncarnate(); },
 };

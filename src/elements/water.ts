@@ -50,14 +50,31 @@ const geyser: Ability = {
   },
 };
 
-const waterShield: Ability = {
-  id: 'water-shield',
-  name: 'Water Shield',
-  description: 'Absorb the next incoming hit',
+const pressureDagger: Ability = {
+  id: 'pressure-dagger',
+  name: 'Pressure Dagger',
+  description: 'Hold to charge a piercing dagger (1s=1.5×, 2s=2×)',
   displayKey: 'F',
-  cooldown: 5000,
+  cooldown: 4000,
   cast(ctx) {
-    ctx.addShieldCharge();
+    if (ctx.isPlayerCaster) return; // Player charges via WaterKit.handleInput
+    // NPC: fire immediately at base damage (level 0, 16 dmg)
+    const dx = ctx.targetX - ctx.casterX;
+    const dy = ctx.targetY - ctx.casterY;
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    const speed = 700;
+    const spawnDist = 32;
+    const proj = new Projectile(
+      ctx.scene,
+      ctx.casterX + (dx / len) * spawnDist,
+      ctx.casterY + (dy / len) * spawnDist,
+      'proj-pressure-dagger',
+      16,
+      false,
+    );
+    ctx.projectiles.add(proj);
+    proj.launch((dx / len) * speed, (dy / len) * speed);
+    proj.setRotation(Math.atan2(dy, dx));
   },
 };
 
@@ -66,6 +83,7 @@ const painRain: Ability = {
   name: 'Pain Rain',
   description: '200 raindrops fall across the arena',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 50000,
   cast(ctx) {
     ctx.spawnPainRain();
@@ -77,5 +95,5 @@ export const waterElement: Element = {
   name: 'Water',
   color: 0x0088ff,
   emoji: '💧',
-  abilities: [waterCut, splash, geyser, waterShield, painRain],
+  abilities: [waterCut, splash, geyser, pressureDagger, painRain],
 };

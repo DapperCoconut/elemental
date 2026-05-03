@@ -72,6 +72,7 @@ const thornDrag: Ability = {
   name: 'Thorn Drag',
   description: 'Drag the enemy for 2s — they follow your cursor and take damage',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 30000,
   cast(ctx) {
     ctx.startThornDrag();

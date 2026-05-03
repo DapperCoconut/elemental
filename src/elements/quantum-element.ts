@@ -43,6 +43,7 @@ export const quantumElement: Element = {
       name: 'Atom-Nhilego',
       description: 'Spawn a large shadow. Stand under it when the ball falls to grow it +10%, launch 3 rocks, and repeat. Miss once — the cycle ends, healing 10 HP per success.',
       displayKey: 'Q',
+      isUltimate: true,
       cooldown: 40000,
       cast(ctx) { ctx.quantumAtomNhilego(ctx.targetX, ctx.targetY); },
     },

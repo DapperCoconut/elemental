@@ -50,6 +50,7 @@ const mutantMorph: Ability = {
   name: 'Mutant Morph',
   description: 'Randomly change Click to Spores, Claws, or Virus. Q+ upgrade adds Plague Bomb and Bacterium.',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 30000,
   cast(ctx: CastContext) {
     ctx.triggerMutantMorph();

@@ -115,6 +115,26 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Timestamp until which aimOffsetBonusDeg is active. */
   public aimOffsetBonusUntil = 0;
 
+  // ── Gauntlet card stat fields ────────────────────────────────────────
+  /** Card: reduces all incoming damage. Default 1 (Protected card). */
+  public cardDamageTakenMult = 1;
+  /** Card: multiplies all outgoing damage from this fighter. Default 1 (Deadly card on player). */
+  public cardOutgoingDamageMult = 1;
+  /** Card: HP regeneration per second (Regenerative card). Processed by ArenaScene update. */
+  public regenPerSecond = 0;
+  /** Accumulator (ms) for regen ticks. Managed by ArenaScene. */
+  public regenAccumMs = 0;
+  /** Card: multiplies duration of status effects applied TO this fighter by the player (Painful card, set on NPC). */
+  public statusDurMult = 1;
+  /** Card: multiplies damage of status effects applied TO this fighter by the player (Painful card, set on NPC). */
+  public statusDmgMult = 1;
+  /** Card: reduces Q-ability cooldowns. Default 1 (Finality card on player). */
+  public ultimateCooldownMult = 1;
+  /** Card: fraction of incoming damage reflected back to the attacker (Thorns card). */
+  public reflectFraction = 0;
+  /** Card: burn damage multiplier for DOT ticks applied to this fighter (Painful card, set on NPC). */
+  public burnDpsMult = 1;
+
   private incomingCritCtx: { chance: number; mult: number } | null = null;
   private cooldowns: Map<string, number> = new Map();
   private healthBar: HealthBar;
@@ -167,8 +187,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     this.healthBar.setMaxHp(this.maxHp);
   }
 
-  takeDamage(amount: number): void {
-    if (this.isInvincible) return;
+  takeDamage(amount: number, opts?: { pierce?: boolean }): void {
+    if (!opts?.pierce && this.isInvincible) return;
     if (this.statueUntil > 0) this.statueUntil = 0;
 
     // Crit roll: use any incoming crit context set by the attacker
@@ -180,14 +200,14 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       amount = Math.round(amount * (critCtx?.mult ?? 2));
     }
 
-    amount = Math.round(amount * this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.quantumIncomingMult);
+    amount = Math.round(amount * this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.quantumIncomingMult * this.cardDamageTakenMult);
     if (this.darkVulnStacks > 0) amount = Math.round(amount * (1 + 0.25 * this.darkVulnStacks));
     this.lastIncomingDamage = amount;
     if (isCrit) this.emit('damaged-crit', amount);
 
-    if (this.damageAbsorber && this.damageAbsorber(amount)) return;
+    if (!opts?.pierce && this.damageAbsorber && this.damageAbsorber(amount)) return;
 
-    if (this.shieldCharges > 0) {
+    if (!opts?.pierce && this.shieldCharges > 0) {
       this.shieldCharges--;
       if (!this.forceInvisible) {
         this.setAlpha(0.7);
@@ -199,7 +219,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       return;
     }
 
-    if (this.shieldHp > 0) {
+    if (!opts?.pierce && this.shieldHp > 0) {
       const absorbed = Math.min(this.shieldHp, amount);
       this.shieldHp -= absorbed;
       amount -= absorbed;
@@ -294,7 +314,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
     const now = Date.now();
     if (now < this.disarmedUntil) return false;
-    if (now - (this.cooldowns.get(abilityId) ?? 0) < ability.cooldown * this.cooldownMult) return false;
+    const ultimateExtra = (ability as { isUltimate?: boolean }).isUltimate ? this.ultimateCooldownMult : 1;
+    if (now - (this.cooldowns.get(abilityId) ?? 0) < ability.cooldown * this.cooldownMult * ultimateExtra) return false;
 
     this.cooldowns.set(abilityId, now);
     ability.cast(ctx);
@@ -332,7 +353,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     const ability = this.element.abilities.find((a) => a.id === abilityId);
     if (!ability) return 1;
     const elapsed = Date.now() - (this.cooldowns.get(abilityId) ?? 0);
-    const effectiveCd = ability.cooldown * (this.cooldownMult || 1);
+    const ultimateCdExtra = (ability as { isUltimate?: boolean }).isUltimate ? this.ultimateCooldownMult : 1;
+    const effectiveCd = ability.cooldown * (this.cooldownMult || 1) * ultimateCdExtra;
     return Math.min(1, elapsed / effectiveCd);
   }
 

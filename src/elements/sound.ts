@@ -42,6 +42,7 @@ const accelerando: Ability = {
   name: 'Accelerando',
   description: 'Requires 10 consecutive hits. For 5s: 2× rhythm speed + auto-play every note.',
   displayKey: 'Q',
+  isUltimate: true,
   cooldown: 25000,
   cast(ctx) { void ctx; }, // Handled in ArenaScene
 };
