@@ -304,7 +304,7 @@ export class FireKit {
             this.pressureCharging = true;
             this.pressureChargeStart = time;
             this.pressureTremorAccum = 0;
-            player.incomingDamageMultiplier = 1.5;
+            player.incomingDamageMultiplier = this.enhancedFlameBody ? 2 : 1.5;
             const cv = scene.add.circle(player.x, player.y, 12, 0xff8800, 0.6).setDepth(4);
             scene.tweens.add({ targets: cv, scaleX: 0.5, scaleY: 0.5, yoyo: true, repeat: -1, duration: 300 });
             this.pressureChargeVisual = cv;
@@ -339,7 +339,7 @@ export class FireKit {
           // Released — fire the charged bomb
           this.pressureCharging = false;
           player.chargeRatio = 0;
-          player.incomingDamageMultiplier = 1;
+          player.incomingDamageMultiplier = this.enhancedFlameBody ? 2 : 1;
           if (this.pressureChargeVisual) { this.pressureChargeVisual.destroy(); this.pressureChargeVisual = null; }
           const heldMs = time - this.pressureChargeStart;
           const chargeLevel = heldMs >= 6000 ? 2 : heldMs >= 3000 ? 1 : 0;
@@ -372,12 +372,11 @@ export class FireKit {
                 const dist = Math.random() * 150;
                 const cx = mx + Math.cos(ang) * dist;
                 const cy = my + Math.sin(ang) * dist;
-                this.arena.damagePlayerTargets(cx, cy, 40, 5, 0xff8800);
-                const ring = scene.add.circle(cx, cy, 8, 0xff8800, 0.85).setDepth(4);
+                this.arena.damagePlayerTargets(cx, cy, 60, 5, 0xff8800);
+                const ring = scene.add.circle(cx, cy, 12, 0xff8800, 0.85).setDepth(4);
                 scene.tweens.add({ targets: ring, scaleX: 5, scaleY: 5, alpha: 0, duration: 320, onComplete: () => ring.destroy() });
-                const core = scene.add.circle(cx, cy, 4, 0xffffff, 1).setDepth(5);
+                const core = scene.add.circle(cx, cy, 6, 0xffffff, 1).setDepth(5);
                 scene.tweens.add({ targets: core, scaleX: 3, scaleY: 3, alpha: 0, duration: 200, onComplete: () => core.destroy() });
-                this.arena.showFloatingText(cx, cy - 16, '💥', '#ff8800');
               });
             }
           }
@@ -397,6 +396,7 @@ export class FireKit {
           this.flameBodyActive = !this.flameBodyActive;
           this.enhancedFlameBody = this.flameBodyActive;
           this.flameBodyTickAccum = 0;
+          player.incomingDamageMultiplier = this.flameBodyActive ? 2 : 1;
           if (this.flameBodyAura) { this.flameBodyAura.destroy(); this.flameBodyAura = null; }
           if (this.flameBodyActive) {
             this.flameBodyAura = scene.add.circle(player.x, player.y, 40, 0xff2200, 0.4).setDepth(3);
@@ -549,8 +549,8 @@ export class FireKit {
       this.alcoholHeatAura.setPosition(player.x, player.y);
       // Tick damage to enemies in heat aura
       this.alcoholHeatAuraTickAccum += delta;
-      if (this.alcoholHeatAuraTickAccum >= 1000) {
-        this.alcoholHeatAuraTickAccum -= 1000;
+      if (this.alcoholHeatAuraTickAccum >= 333) {
+        this.alcoholHeatAuraTickAccum -= 333;
         for (const t of this.arena.enemies) {
           if (!t.active || t.hp <= 0) continue;
           if (Phaser.Math.Distance.Between(player.x, player.y, t.x, t.y) <= 50) {

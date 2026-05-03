@@ -253,9 +253,15 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     }
   }
 
+  /** Optional callback invoked with the actual HP gained (> 0) whenever healing occurs. */
+  public onHeal?: (actualAmount: number) => void;
+
   heal(amount: number): void {
     if (this.healStopUntil > 0 && Date.now() < this.healStopUntil) return;
+    const before = this.hp;
     this.hp = Math.min(this.maxHp, this.hp + amount);
+    const actual = this.hp - before;
+    if (actual > 0 && this.onHeal) this.onHeal(actual);
   }
 
   setMaxHp(newMax: number): void {

@@ -51,11 +51,10 @@ export class WaterKit {
   private playerWasInGeyser = false;
   private npcWasInGeyser = false;
 
-  // -- Boiling (player only) --
-  private boilStandSince = 0;
-  private boilingUntil = 0;
-  private boilDmgAccum = 0;
-  private boilSteamAccum = 0;
+  // -- Ol Faithful (R+ upgrade) --
+  private olFaithfulAccum = 0;
+  private olFaithfulBoostUntil = 0;
+  private olFaithfulSteamAccum = 0;
 
   // -- Pressure Dagger --
   private daggerCharging = false;
@@ -84,11 +83,9 @@ export class WaterKit {
     this.dehydration.clear();
     this.dehydrationBars.clear();
 
-    if (this.boilingUntil > 0 && this.arena.player.active) this.arena.player.clearTint();
-    this.boilStandSince = 0;
-    this.boilingUntil = 0;
-    this.boilDmgAccum = 0;
-    this.boilSteamAccum = 0;
+    this.olFaithfulAccum = 0;
+    this.olFaithfulBoostUntil = 0;
+    this.olFaithfulSteamAccum = 0;
 
     this.daggerCharging = false;
     if (this.daggerVisual) { this.daggerVisual.destroy(); this.daggerVisual = null; }
@@ -140,38 +137,36 @@ export class WaterKit {
           const stillExists = geysers.includes(currentGeyser!);
           if (!stillExists) {
             this.playerWasInGeyser = false;
-            this.boilStandSince = 0;
             return;
           }
         }
 
-        // Boiling countdown (R+ upgrade)
-        if (this.arena.hasUpgrade('r') && this.boilingUntil <= time) {
-          if (!this.boilStandSince) this.boilStandSince = time;
-          if (time - this.boilStandSince >= 3000) {
-            this.triggerBoiling(currentGeyser!, time, player);
-          }
-        }
-      } else {
-        this.boilStandSince = 0;
       }
       this.playerWasInGeyser = inGeyser;
 
-      // -- Boiling tick (steam particles, expiry) --
-      if (this.boilingUntil > 0 && time < this.boilingUntil) {
-        this.boilSteamAccum += delta;
-        if (this.boilSteamAccum >= 120) {
-          this.boilSteamAccum = 0;
+      // -- Ol Faithful (R+ upgrade): erupts every 8s --
+      if (this.arena.hasUpgrade('r')) {
+        this.olFaithfulAccum += delta;
+        if (this.olFaithfulAccum >= 8000) {
+          this.olFaithfulAccum -= 8000;
+          this.triggerOlFaithful(time, player);
+        }
+      }
+
+      // -- Ol Faithful boost: steam particles & expiry --
+      if (this.olFaithfulBoostUntil > 0 && time < this.olFaithfulBoostUntil) {
+        this.olFaithfulSteamAccum += delta;
+        if (this.olFaithfulSteamAccum >= 80) {
+          this.olFaithfulSteamAccum = 0;
           const ox = (Math.random() - 0.5) * 16;
           this.arena.spawnHitFlash(player.x + ox, player.y - 8, 0xffffff);
         }
       }
 
-      if (this.boilingUntil > 0 && time >= this.boilingUntil) {
+      if (this.olFaithfulBoostUntil > 0 && time >= this.olFaithfulBoostUntil) {
         player.clearTint();
-        this.arena.showFloatingText(player.x, player.y - 36, '♨️ Cooled', '#aaccff');
-        this.boilingUntil = 0;
-        this.boilDmgAccum = 0;
+        this.olFaithfulBoostUntil = 0;
+        this.olFaithfulSteamAccum = 0;
       }
     }
 
@@ -242,7 +237,7 @@ export class WaterKit {
       player.chargeRatio = 0;
     }
 
-    if (fKeyDown && !this.fKeyWasDown && !this.arena.nukeChanneling) {
+    if (fKeyDown && !this.fKeyWasDown && !this.arena.nukeChanneling && this.arena.player.getCooldownRatio('pressure-dagger') >= 1) {
       // Begin charging
       this.daggerCharging = true;
       this.daggerChargeStart = time;
@@ -355,26 +350,8 @@ export class WaterKit {
   }
 
   // Called from pain rain impact tick — returns true if boiling consumed the drop
-  onPainRainDropImpact(x: number, y: number): boolean {
-    if (this.boilingUntil <= 0 || this.lastTime >= this.boilingUntil) return false;
-
-    // Steam blast instead of normal rain damage
-    this.arena.damagePlayerTargets(x, y, 36, 5, 0xffffff);
-
-    // White ring visual
-    const ring = this.arena.scene.add.circle(x, y, 8, 0xffffff, 0.8).setDepth(9);
-    this.arena.scene.tweens.add({ targets: ring, scaleX: 4, scaleY: 4, alpha: 0, duration: 300, onComplete: () => ring.destroy() });
-    this.arena.showFloatingText(x, y - 12, '♨️', '#ffffff');
-
-    // Apply +3% dehydration to enemies in radius
-    for (const enemy of this.arena.enemies) {
-      if (!enemy.active || enemy.hp <= 0) continue;
-      if (Phaser.Math.Distance.Between(x, y, enemy.x, enemy.y) <= 36) {
-        this.applyDehydration(enemy, 3);
-      }
-    }
-
-    return true;
+  onPainRainDropImpact(_x: number, _y: number): boolean {
+    return false;
   }
 
   onFighterDefeated(f: Fighter): void {
@@ -393,27 +370,44 @@ export class WaterKit {
   }
 
   // Called from water damage paths to track boiling extension
-  noteDamageDealtByPlayer(amount: number): void {
-    if (this.boilingUntil <= 0 || this.lastTime >= this.boilingUntil) return;
-    this.boilDmgAccum += amount;
-    while (this.boilDmgAccum >= 50) {
-      this.boilingUntil += 2000;
-      this.boilDmgAccum -= 50;
-      this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 42, '♨️ +2s', '#aaffff');
-    }
+  noteDamageDealtByPlayer(_amount: number): void {
+    // no-op: boiling system removed
   }
 
   // Called from applyProjectileToNpc for water-cut damage with multiplier
   computeOutgoingMultiplier(target: Fighter, attacker: 'player' | 'npc'): number {
     if (attacker !== 'player') return 1;
     const dehyd = this.dehydration.get(target) ?? 0;
-    const dehydMult = Math.min(1.5, 1 + 0.05 * Math.floor(dehyd / 10));
-    const boilMult = this.isPlayerBoiling(this.lastTime) ? 1.25 : 1;
-    return dehydMult * boilMult;
+    return Math.min(1.5, 1 + 0.05 * Math.floor(dehyd / 10));
   }
 
-  isPlayerBoiling(time: number): boolean {
-    return this.boilingUntil > 0 && time < this.boilingUntil;
+  isOlFaithfulActive(time: number): boolean {
+    return this.olFaithfulBoostUntil > 0 && time < this.olFaithfulBoostUntil;
+  }
+
+  isDaggerCharging(): boolean {
+    return this.daggerCharging;
+  }
+
+  replenishGeyserCharges(time: number): void {
+    for (const g of this.arena.geysers) {
+      if (g.owner !== 'player') continue;
+      const charges = (this.geyserCharges.get(g) as number) ?? 2;
+      if (charges >= 2) continue;
+      const newCharges = charges + 1;
+      this.geyserCharges.set(g, newCharges);
+      if (newCharges === 2) {
+        this.arena.scene.tweens.killTweensOf(g.sprite);
+        g.sprite.setScale(1);
+        this.arena.scene.tweens.add({
+          targets: g.sprite, scaleX: 1.1, scaleY: 1.1,
+          yoyo: true, repeat: -1, duration: 800,
+        });
+        g.radius = Math.round(g.radius / 0.65);
+      }
+      this.arena.showFloatingText(g.x, g.y - 20, '+1 CHARGE', '#aaffff');
+    }
+    void time;
   }
 
   isNpcSplit(): boolean {
@@ -451,23 +445,34 @@ export class WaterKit {
     this.geyserCharges.set(g, charges);
 
     if (charges === 1) {
+      this.arena.scene.tweens.killTweensOf(g.sprite);
       g.sprite.setScale(0.65);
+      this.arena.scene.tweens.add({
+        targets: g.sprite, scaleX: 0.72, scaleY: 0.72,
+        yoyo: true, repeat: -1, duration: 600,
+      });
       g.radius = Math.round(g.radius * 0.65);
-      this.arena.showFloatingText(g.x, g.y - 20, '🌊 WEAK', '#55ccaa');
+      this.arena.showFloatingText(g.x, g.y - 20, 'WEAK', '#55ccaa');
     } else if (charges <= 0) {
       this.arena.removeGeyser(g);
-      this.arena.showFloatingText(g.x, g.y - 20, '💧 DEPLETED', '#55aaaa');
+      this.arena.showFloatingText(g.x, g.y - 20, 'DEPLETED', '#55aaaa');
     }
     void time;
   }
 
-  private triggerBoiling(g: Geyser, time: number, player: Fighter): void {
-    this.boilingUntil = time + 5000;
-    this.boilStandSince = 0;
-    this.boilDmgAccum = 0;
-    this.arena.removeGeyser(g);
+  private triggerOlFaithful(time: number, player: Fighter): void {
+    for (const g of this.arena.geysers) {
+      if (g.owner !== 'player') continue;
+      for (let i = 0; i < 6; i++) {
+        const ox = (Math.random() - 0.5) * g.radius * 1.5;
+        const oy = (Math.random() - 0.5) * g.radius * 1.5;
+        this.arena.spawnHitFlash(g.x + ox, g.y + oy, 0xffffff);
+      }
+    }
+    this.olFaithfulBoostUntil = time + 3000;
+    this.olFaithfulSteamAccum = 0;
     player.setTint(0xffffff);
-    this.arena.showFloatingText(player.x, player.y - 36, '♨️ BOILING!', '#ffffff');
+    this.arena.showFloatingText(player.x, player.y - 36, "♨️ OL' FAITHFUL!", '#ffffff');
   }
 
   private startSplit(npc: Fighter, time: number): void {

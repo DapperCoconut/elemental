@@ -649,6 +649,7 @@ export class ArenaScene extends Phaser.Scene {
   private rightPointerWasDown = false;
   private nukeChanneling = false;
   private nukeChannelEnd = 0;
+  private nukeLockStartTime = 0;
 
   // WaterKit
   private waterKit!: WaterKit;
@@ -731,6 +732,7 @@ export class ArenaScene extends Phaser.Scene {
   private soundKit!: SoundKit;
   // Air F upgrade extended dodge
   private grappleDodgeUntil = 0;
+  private tornadoGrappleSlowUntil = 0;
 
   // Player earth-specific state (new kit)
   private earthShieldHp = 0;
@@ -2227,6 +2229,7 @@ export class ArenaScene extends Phaser.Scene {
 
     this.soundKit.reset(isSoundMatch);
     this.grappleDodgeUntil = 0;
+    this.tornadoGrappleSlowUntil = 0;
 
     this.mutations = new Set();
     this.starredMutations = new Set();
@@ -2894,6 +2897,7 @@ export class ArenaScene extends Phaser.Scene {
     const npcTexture    = ELEMENT_TEXTURES[enemyElementId]  ?? 'elem-water';
     this.player = new Player(this, this.isInvasion ? cx : 180, cy, this.playerElement, playerTexture);
     this.player.incomingDamageMultiplier = 1;
+    this.player.onHeal = (amt) => this.showFloatingText(this.player.x, this.player.y - 30, `+${Math.round(amt)}`, '#44ff44');
     if (this.isInvasion) {
       this.npc = new BasicCorrupted(this, W - 180, cy);
       this.cameras.main.startFollow(this.player, true, 0.12, 0.12);
@@ -3063,8 +3067,8 @@ export class ArenaScene extends Phaser.Scene {
           (proj.body as Phaser.Physics.Arcade.Body).stop();
           return;
         }
-        // Grapple dodge (player only) — 50% per charge, up to 2 charges
-        const grappleDodge = this.grappleDodgeCharges > 0 && Math.random() < 0.50;
+        // Grapple dodge (player only) — 100% on 1 charge
+        const grappleDodge = this.grappleDodgeCharges > 0;
         if (grappleDodge) {
           this.grappleDodgeCharges--;
           if (this.grappleDodgeCharges === 0 && this.grappleDodgeAura) {
@@ -3686,11 +3690,12 @@ export class ArenaScene extends Phaser.Scene {
           }
         });
       },
-      healCaster: (amount) => this.player.heal(amount),
+      healCaster: (amount) => { this.player.heal(amount); },
       damageCaster: (amount) => this.player.applySelfDamage(amount),
       setCasterSpeedMultiplier: (mult) => { this.playerSpeedMult = mult; },
       lockCaster: (durationMs) => {
         this.nukeChanneling = true;
+        this.nukeLockStartTime = this.time.now;
         this.nukeChannelEnd = this.time.now + durationMs;
         (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
       },
@@ -3741,13 +3746,22 @@ export class ArenaScene extends Phaser.Scene {
         if (this.hasUpgrade('f')) {
           this.isGrappling = true;
           this.player.setAlpha(0.5);
+          // F+: Tornado grapple — slow enemy if path passes through them
+          if (this.npc.active && this.npc.hp > 0) {
+            const t = Math.max(0, Math.min(1, ((this.npc.x - this.player.x) * dx + (this.npc.y - this.player.y) * dy) / (len * len)));
+            const distToPath = Math.hypot(this.npc.x - (this.player.x + t * dx), this.npc.y - (this.player.y + t * dy));
+            if (distToPath <= 40) {
+              this.tornadoGrappleSlowUntil = this.time.now + 2000;
+              this.showFloatingText(this.npc.x, this.npc.y - 30, 'SLOWED', '#aaddff');
+            }
+          }
         }
         this.time.delayedCall(travelTime, () => {
           if (this.player.active) {
             this.isDodging = false;
             this.isGrappling = false;
             body.setVelocity(0, 0);
-            this.grappleDodgeCharges = 2;
+            this.grappleDodgeCharges = 1;
             if (this.grappleDodgeAura) this.grappleDodgeAura.destroy();
             this.grappleDodgeAura = this.add.circle(this.player.x, this.player.y, 26, 0x6699cc, 0.35).setDepth(6);
             this.tweens.add({ targets: this.grappleDodgeAura, alpha: 0.6, yoyo: true, repeat: -1, duration: 400 });
@@ -6043,7 +6057,6 @@ export class ArenaScene extends Phaser.Scene {
           // Fresh: can be picked up by friendly
           if (Phaser.Math.Distance.Between(a.x, a.y, caster.x, caster.y) <= 30) {
             caster.heal(15);
-            this.showFloatingText(a.x, a.y - 18, '+15 ❤️', '#44ff44');
             a.sprite.destroy(); apples.splice(i, 1);
             if (owner === 'player') {
               this.playerAppleCollected++;
@@ -6077,18 +6090,18 @@ export class ArenaScene extends Phaser.Scene {
         }
       }
 
-      // Poison fountain: drop puddles at cursor every 150ms for 3s
+      // Poison fountain: drop puddles at cursor every 450ms for 3s
       if (owner === 'player' && time < this.playerPoisonFountainUntil) {
         this.playerPoisonDropAccum += delta;
-        if (this.playerPoisonDropAccum >= 150) {
-          this.playerPoisonDropAccum -= 150;
+        if (this.playerPoisonDropAccum >= 450) {
+          this.playerPoisonDropAccum -= 450;
           const spr = this.add.circle(mouseX, mouseY, 36, 0x66cc22, 0.5).setDepth(2);
           this.puddles.push({ sprite: spr, expiresAt: time + 1000, x: mouseX, y: mouseY, radius: 36, tickAccum: 0, owner: 'player', kind: 'poison' });
         }
       } else if (owner === 'npc' && time < this.npcPoisonFountainUntil) {
         this.npcPoisonDropAccum += delta;
-        if (this.npcPoisonDropAccum >= 150) {
-          this.npcPoisonDropAccum -= 150;
+        if (this.npcPoisonDropAccum >= 450) {
+          this.npcPoisonDropAccum -= 450;
           const dropX = this.npc.x + Phaser.Math.Between(-30, 30);
           const dropY = this.npc.y + Phaser.Math.Between(-30, 30);
           const spr = this.add.circle(dropX, dropY, 36, 0x66cc22, 0.5).setDepth(2);
@@ -9234,8 +9247,8 @@ export class ArenaScene extends Phaser.Scene {
 
     // Standard nuke charge bar (non-air-beam-walk)
     if (this.nukeChanneling && !this.airBeamWalking) {
-      const elapsed = time - (this.nukeChannelEnd - 2000);
-      this.player.chargeRatio = Math.min(1, elapsed / 2000);
+      const lockDur = this.nukeChannelEnd - this.nukeLockStartTime;
+      this.player.chargeRatio = lockDur > 0 ? Math.min(1, (time - this.nukeLockStartTime) / lockDur) : 1;
     }
     // Air Q upgrade charge bar while walking
     if (this.airBeamWalking) {
@@ -9411,8 +9424,13 @@ export class ArenaScene extends Phaser.Scene {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
       this.playerSpeedMult *= this.quantumElementKit.getPlayerSpeedMult();
     } else if (this.elementId === 'water') {
-      this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
-      if (this.waterKit.isPlayerBoiling(time)) this.playerSpeedMult *= 1.25;
+      if (time < this.playerGeyserBuffUntil && !this.waterKit.isOlFaithfulActive(time)) {
+        this.playerSpeedMult = 1.5;
+      } else if (this.waterKit.isOlFaithfulActive(time)) {
+        this.playerSpeedMult = 2.0;
+      } else {
+        this.playerSpeedMult = 1;
+      }
     } else {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
     }
@@ -9434,6 +9452,8 @@ export class ArenaScene extends Phaser.Scene {
     if (this.npcElement.id === 'echo') {
       this.npcSpeedMult *= this.echoKit.getNpcSpeedMult();
     }
+    // Tornado grapple slow on NPC
+    if (time < this.tornadoGrappleSlowUntil) this.npcSpeedMult *= 0.5;
     // Ice frost slow on NPC
     if (this.npc.frostStacks > 0) this.npcSpeedMult *= (1 - this.npc.frostStacks * 0.1);
     if (this.npcBlockUpActive) this.npcSpeedMult *= 0.5;
@@ -9550,7 +9570,9 @@ export class ArenaScene extends Phaser.Scene {
 
     if (this.elementId === 'rubber' && this.rubberKit.isSlingActive() && !this.isDodging) {
       this.rubberKit.applySlingMovement(mouseX, mouseY);
-    } else if (this.nukeChanneling && !this.airBeamWalking) {
+    } else if (this.nukeChanneling && !this.airBeamWalking &&
+               !(this.elementId === 'water' && this.waterKit.isDaggerCharging()) &&
+               !(this.elementId === 'air' && this.hasUpgrade('click'))) {
       // Standard nuke: fully locked
       playerBody.setVelocity(0, 0);
     } else if (time < this.silencePlayerYankUntil) {
@@ -9655,7 +9677,9 @@ export class ArenaScene extends Phaser.Scene {
           this.player.castAbility('geyser', playerCtx);
         }
         if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
-          this.player.castAbility('pain-rain', playerCtx);
+          if (this.player.castAbility('pain-rain', playerCtx)) {
+            this.waterKit.replenishGeyserCharges(time);
+          }
         }
       }
       this.waterKit.handleInput(time, delta, mouseX, mouseY);
@@ -9680,6 +9704,8 @@ export class ArenaScene extends Phaser.Scene {
                 this.player.y + Math.sin(angle) * spawnDist,
                 'proj-life', 5, true,
               );
+              proj.setTint(0xff88aa);
+              (proj as any).isSakura = true;
               this.projectiles.add(proj);
               proj.launch(Math.cos(angle) * speed, Math.sin(angle) * speed);
             }
@@ -9718,7 +9744,10 @@ export class ArenaScene extends Phaser.Scene {
           if (this.lifeRChargeVisual) { this.lifeRChargeVisual.destroy(); this.lifeRChargeVisual = null; }
           this.player.chargeRatio = 0;
           if (this.hasPerk('player', 'mycology')) {
-            this.fireMycologyProjectiles('player', 'heal');
+            if (this.player.getCooldownRatio('grow') >= 1) {
+              this.fireMycologyProjectiles('player', 'heal');
+              this.player.triggerCooldown('grow');
+            }
           } else {
             this.player.castAbility('grow', playerCtx);
           }
@@ -9727,7 +9756,10 @@ export class ArenaScene extends Phaser.Scene {
       } else {
         if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
           if (this.hasPerk('player', 'mycology')) {
-            this.fireMycologyProjectiles('player', 'heal');
+            if (this.player.getCooldownRatio('grow') >= 1) {
+              this.fireMycologyProjectiles('player', 'heal');
+              this.player.triggerCooldown('grow');
+            }
           } else {
             this.player.castAbility('grow', playerCtx);
           }
@@ -9758,7 +9790,10 @@ export class ArenaScene extends Phaser.Scene {
           if (this.lifeFChargeVisual) { this.lifeFChargeVisual.destroy(); this.lifeFChargeVisual = null; }
           this.player.chargeRatio = 0;
           if (this.hasPerk('player', 'mycology')) {
-            this.fireMycologyProjectiles('player', 'damage');
+            if (this.player.getCooldownRatio('thorns') >= 1) {
+              this.fireMycologyProjectiles('player', 'damage');
+              this.player.triggerCooldown('thorns');
+            }
           } else {
             this.player.castAbility('thorns', playerCtx);
           }
@@ -9767,7 +9802,10 @@ export class ArenaScene extends Phaser.Scene {
       } else {
         if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
           if (this.hasPerk('player', 'mycology')) {
-            this.fireMycologyProjectiles('player', 'damage');
+            if (this.player.getCooldownRatio('thorns') >= 1) {
+              this.fireMycologyProjectiles('player', 'damage');
+              this.player.triggerCooldown('thorns');
+            }
           } else {
             this.player.castAbility('thorns', playerCtx);
           }
@@ -9847,9 +9885,13 @@ export class ArenaScene extends Phaser.Scene {
             };
             fireHitscan(electroCtx, 45, 0xffee44, true);
           } else {
-            // Normal snipe — Click upgrade removes the 0.5s movement lock
+            // Normal snipe — Click upgrade removes movement lock but keeps charge bar
             const noLockCtx = this.hasUpgrade('click')
-              ? { ...snipeBase, lockCaster: (_d: number) => {} }
+              ? { ...snipeBase, lockCaster: (ms: number) => {
+                  this.nukeChanneling = true;
+                  this.nukeLockStartTime = this.time.now;
+                  this.nukeChannelEnd = this.time.now + ms;
+                }}
               : snipeBase;
             if (this.player.castAbility('air-snipe', noLockCtx)) {
               if (this.quickShotCharged) this.quickShotCharged = false;
@@ -9860,13 +9902,16 @@ export class ArenaScene extends Phaser.Scene {
         // ── E: Quick Shot / Electro Charge (upgrade: instant charge on press) ───
         if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
           if (this.hasUpgrade('e')) {
-            // Upgrade: pressing E immediately readies the powerful electro shot
-            this.airElectroCharged = true;
-            if (this.airElectroChargeVisual) this.airElectroChargeVisual.destroy();
-            this.airElectroChargeVisual = this.add.circle(this.player.x, this.player.y, 18, 0xffee44, 0.75).setDepth(8);
-            this.tweens.add({ targets: this.airElectroChargeVisual, alpha: 0.2, yoyo: true, repeat: -1, duration: 280 });
-            const pulse = this.add.circle(this.player.x, this.player.y, 14, 0xffee44, 0.6).setDepth(8);
-            this.tweens.add({ targets: pulse, scaleX: 2.2, scaleY: 2.2, alpha: 0, duration: 300, onComplete: () => pulse.destroy() });
+            if (this.player.getCooldownRatio('quick-shot') >= 1) {
+              // Upgrade: pressing E immediately readies the powerful electro shot
+              this.player.triggerCooldown('quick-shot');
+              this.airElectroCharged = true;
+              if (this.airElectroChargeVisual) this.airElectroChargeVisual.destroy();
+              this.airElectroChargeVisual = this.add.circle(this.player.x, this.player.y, 18, 0xffee44, 0.75).setDepth(8);
+              this.tweens.add({ targets: this.airElectroChargeVisual, alpha: 0.2, yoyo: true, repeat: -1, duration: 280 });
+              const pulse = this.add.circle(this.player.x, this.player.y, 14, 0xffee44, 0.6).setDepth(8);
+              this.tweens.add({ targets: pulse, scaleX: 2.2, scaleY: 2.2, alpha: 0, duration: 300, onComplete: () => pulse.destroy() });
+            }
           } else {
             this.player.castAbility('quick-shot', playerCtx);
           }
@@ -11016,7 +11061,7 @@ export class ArenaScene extends Phaser.Scene {
             const stalDur = isLava ? 8000 : 3000;
             this.puddles.push({ sprite: gfxStal as unknown as Phaser.GameObjects.Arc, expiresAt: time + stalDur, x: mouseX, y: mouseY, radius: spRadius, tickAccum: 0, owner: 'player', kind: 'stalagmite', lavaFinal: isLava });
             // One-time AOE hit on spawn
-            const stalImpactDmg = isLava ? 14 : 8;
+            const stalImpactDmg = isLava ? 7 : 4;
             for (const enemy of this.enemies) {
               if (!enemy.active || enemy.hp <= 0) continue;
               if (Phaser.Math.Distance.Between(mouseX, mouseY, enemy.x, enemy.y) <= spRadius * 0.8) {
@@ -11088,7 +11133,7 @@ export class ArenaScene extends Phaser.Scene {
             const vlen = Math.hypot(vx2, vy2) || 1;
             go.setActive(false).setVisible(false);
             pb2.stop();
-            const launchDmg = p.lavaFinal ? 22 : 14;
+            const launchDmg = p.lavaFinal ? 11 : 7;
             const projTex = p.lavaFinal ? 'perk-stalagmite-lava' : 'perk-stalagmite';
             const lProj = new Projectile(this, p.x, p.y, projTex, launchDmg, p.owner === 'player');
             this.projectiles.add(lProj);
@@ -11179,6 +11224,7 @@ export class ArenaScene extends Phaser.Scene {
           const dy = thornTarget.y - p.y;
           const dist2 = Math.sqrt(dx * dx + dy * dy) || 1;
           const thornProj = new Projectile(this, p.x, p.y, 'proj-life', 8, true);
+          thornProj.setTint(0xcc2222);
           this.projectiles.add(thornProj);
           thornProj.launch((dx / dist2) * 480, (dy / dist2) * 480);
         }
@@ -11245,6 +11291,20 @@ export class ArenaScene extends Phaser.Scene {
         if (!proj.active || proj.isFromPlayer || proj.isHeal) continue;
         if (Phaser.Math.Distance.Between(proj.x, proj.y, p.x, p.y) <= 30) {
           p.hp -= proj.damage;
+          (proj.body as Phaser.Physics.Arcade.Body).stop();
+          proj.setActive(false).setVisible(false);
+        }
+      }
+      // Sakura Shots (click+): pink projectiles heal player plants 5 HP on contact
+      for (const go of allActiveProj) {
+        const proj = go as Projectile;
+        if (!proj.active || !proj.isFromPlayer || !(proj as any).isSakura) continue;
+        if (Phaser.Math.Distance.Between(proj.x, proj.y, p.x, p.y) <= 30) {
+          const healed = Math.min(5, p.maxHp - p.hp);
+          if (healed > 0) {
+            p.hp += healed;
+            this.showFloatingText(p.x, p.y - 20, `+${healed}`, '#ff88aa');
+          }
           (proj.body as Phaser.Physics.Arcade.Body).stop();
           proj.setActive(false).setVisible(false);
         }
@@ -16136,6 +16196,7 @@ export class ArenaScene extends Phaser.Scene {
 
 
   private applyProjectileToNpc(proj: Projectile): void {
+    if (proj.isHeal) return; // heal projectiles don't damage the enemy
     // Amber: route damage to dinosaur mount first
     if (this.mutations.has('amber') && this.amberDino && this.amberDino.hp > 0) {
       const dmg = proj.damage;
