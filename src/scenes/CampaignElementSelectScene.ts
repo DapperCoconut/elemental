@@ -1,7 +1,18 @@
 import Phaser from 'phaser';
-import { getAnyWorld } from '../data/AbstractWorlds';
+import { getAnyWorld, ABSTRACT_WORLDS } from '../data/AbstractWorlds';
+import { WORLDS } from '../data/Worlds';
 import * as PlayerData from '../data/PlayerData';
 import { getPerksForElement, getPerkById } from '../data/Perks';
+import {
+  GauntletState,
+  CampaignGauntletContext,
+  GAUNTLET_DIFFICULTY,
+  GAUNTLET_HARD_DIFFICULTY,
+  emptyRunBoosts,
+} from '../data/GauntletData';
+import { MUTATIONS, getBossMutationIds } from '../data/Mutations';
+
+const GAUNTLET_EXCLUDED_MUTATIONS = new Set(['boss', 'raid']);
 
 interface ElementDef {
   id: string;
@@ -65,6 +76,8 @@ export class CampaignElementSelectScene extends Phaser.Scene {
   private hardMode = false;
   private enemyElementId = 'fire';
   private difficulty = 1;
+  private campaignMutations: string[] = [];
+  private campaignStarredMutations: string[] = [];
 
   private elemPage = 0;
   private perkIndices: Record<string, number> = {};
@@ -77,6 +90,7 @@ export class CampaignElementSelectScene extends Phaser.Scene {
   init(data: {
     worldId: string; nodeId: string; isChallenge: boolean; kind: string;
     slotIdx: 0 | 1 | 2; hardMode: boolean; enemyElementId: string; difficulty: number;
+    mutations?: string[]; starredMutations?: string[];
   }): void {
     this.worldId = data.worldId;
     this.nodeId = data.nodeId;
@@ -86,6 +100,8 @@ export class CampaignElementSelectScene extends Phaser.Scene {
     this.hardMode = data.hardMode;
     this.enemyElementId = data.enemyElementId;
     this.difficulty = data.difficulty;
+    this.campaignMutations = data.mutations ?? [];
+    this.campaignStarredMutations = data.starredMutations ?? [];
     this.elemPage = 0;
     this.perkIndices = {};
     this.phaseObjects = [];
@@ -326,10 +342,18 @@ export class CampaignElementSelectScene extends Phaser.Scene {
 
   private selectElement(elementId: string): void {
     this.scene.stop('CampaignWorldScene');
+
+    if (this.kind === 'gauntlet') {
+      this.launchCampaignGauntlet(elementId);
+      return;
+    }
+
     this.scene.start('ArenaScene', {
       elementId,
       enemyElementId: this.enemyElementId,
       difficulty: this.difficulty,
+      mutations: this.campaignMutations,
+      starredMutations: this.campaignStarredMutations,
       playerPerk: PlayerData.getEquippedPerk(elementId),
       campaign: {
         slot: this.slotIdx,
@@ -337,6 +361,59 @@ export class CampaignElementSelectScene extends Phaser.Scene {
         fightId: this.nodeId,
         isChallenge: this.isChallenge,
       },
+    });
+  }
+
+  private launchCampaignGauntlet(elementId: string): void {
+    const allElementIds = [...WORLDS, ...ABSTRACT_WORLDS].map((w) => w.id);
+    const regularPool = allElementIds.filter((id) => id !== this.worldId);
+
+    const allowedMutations = MUTATIONS
+      .filter((m) => !GAUNTLET_EXCLUDED_MUTATIONS.has(m.id) && !m.bossOnly)
+      .map((m) => m.id);
+
+    const pickN = (n: number): string[] => {
+      const bag = [...allowedMutations].sort(() => Math.random() - 0.5);
+      return bag.slice(0, Math.min(n, bag.length));
+    };
+
+    const bossIds = getBossMutationIds();
+    const bossId = bossIds[Math.floor(Math.random() * bossIds.length)];
+    const fightCount = this.hardMode ? 7 : 5;
+
+    const fightOrder = Array.from({ length: fightCount }, () =>
+      regularPool[Math.floor(Math.random() * regularPool.length)],
+    );
+    const regularMutations = Array.from({ length: fightCount }, () => pickN(1));
+    const bossSlot = [bossId, ...pickN(1)];
+    const fightMutations = [...regularMutations, bossSlot];
+
+    const difficulty0 = this.hardMode ? GAUNTLET_HARD_DIFFICULTY[0] : GAUNTLET_DIFFICULTY[0];
+    const mutations0 = fightMutations[0];
+
+    const campaignContext: CampaignGauntletContext = { slot: this.slotIdx, worldId: this.worldId };
+
+    const gauntlet: GauntletState = {
+      gauntletElement: this.worldId,
+      playerElement: elementId,
+      currentFight: 1,
+      boosts: emptyRunBoosts(),
+      fightOrder,
+      fightMutations,
+      hardMode: this.hardMode,
+      infinityShards: 0,
+      campaignContext,
+    };
+
+    this.scene.start('ArenaScene', {
+      elementId,
+      enemyElementId: fightOrder[0],
+      difficulty: difficulty0,
+      mutations: mutations0,
+      starredMutations: this.hardMode ? mutations0 : [],
+      gauntlet,
+      playerPerk: PlayerData.getEquippedPerk(elementId),
+      campaign: { slot: this.slotIdx, worldId: this.worldId, fightId: this.nodeId, isChallenge: false },
     });
   }
 

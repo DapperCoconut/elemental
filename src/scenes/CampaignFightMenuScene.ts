@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 import { getAnyWorld } from '../data/AbstractWorlds';
+import { getCampaignFightDef, DIFFICULTY_LABEL, ELEMENT_DISPLAY } from '../data/CampaignFights';
+import { MUTATIONS } from '../data/Mutations';
 
 export class CampaignFightMenuScene extends Phaser.Scene {
   private worldId = 'fire';
@@ -74,11 +76,29 @@ export class CampaignFightMenuScene extends Phaser.Scene {
       color: '#888888',
     }).setOrigin(0.5).setDepth(2);
 
-    // Placeholder body
-    const detailsText = this.add.text(cx, cy - 20, '[ Fight details coming soon ]', {
-      fontSize: '16px',
+    // Fight details
+    const def = getCampaignFightDef(this.nodeId);
+    const buildDetailsLine = (): string => {
+      if (!def) return '';
+      const mutNames = MUTATIONS
+        .filter((m) => def.mutations?.includes(m.id))
+        .map((m) => {
+          const starred = def.starredMutations?.includes(m.id);
+          return (starred ? '★ ' : '') + m.name;
+        });
+      const elem = ELEMENT_DISPLAY[def.enemyElementId];
+      const enemyStr = elem ? `${elem.emoji} ${elem.name}` : def.enemyElementId;
+      const diffStr = DIFFICULTY_LABEL[def.difficulty] ?? String(def.difficulty);
+      return mutNames.length > 0
+        ? `${enemyStr}  •  ${diffStr}  •  ${mutNames.join(', ')}`
+        : `${enemyStr}  •  ${diffStr}`;
+    };
+    const detailsText = this.add.text(cx, cy - 20, buildDetailsLine(), {
+      fontSize: '14px',
       fontFamily: 'Arial, sans-serif',
-      color: '#444466',
+      color: '#aaaacc',
+      wordWrap: { width: 460 },
+      align: 'center',
     }).setOrigin(0.5).setDepth(2);
 
     // Hard mode toggle
@@ -106,11 +126,9 @@ export class CampaignFightMenuScene extends Phaser.Scene {
       if (this.hardMode) {
         track.setFillStyle(0x661111).setStrokeStyle(1, 0xcc3333);
         knob.setFillStyle(0xff4444).setX(toggleTrackX + 10);
-        detailsText.setText('[ Hard mode details coming soon ]').setColor('#663333');
       } else {
         track.setFillStyle(0x222233).setStrokeStyle(1, 0x555566);
         knob.setFillStyle(0x888888).setX(toggleTrackX - 10);
-        detailsText.setText('[ Fight details coming soon ]').setColor('#444466');
       }
     };
 
@@ -154,8 +172,11 @@ export class CampaignFightMenuScene extends Phaser.Scene {
 
   private startFight(): void {
     const world = getAnyWorld(this.worldId);
-    const enemyElementId = world?.parentId ?? world?.id ?? 'fire';
-    const difficulty = this.kind === 'fight' ? 1 : 2;
+    const def = getCampaignFightDef(this.nodeId);
+    const enemyElementId = def?.enemyElementId ?? world?.parentId ?? world?.id ?? 'fire';
+    const difficulty = def?.difficulty ?? (this.kind === 'fight' ? 1 : 2);
+    const mutations = def?.mutations ?? [];
+    const starredMutations = def?.starredMutations ?? [];
 
     this.scene.start('CampaignElementSelectScene', {
       worldId: this.worldId,
@@ -166,6 +187,8 @@ export class CampaignFightMenuScene extends Phaser.Scene {
       hardMode: this.hardMode,
       enemyElementId,
       difficulty,
+      mutations,
+      starredMutations,
     });
   }
 
