@@ -2,6 +2,25 @@ import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
 
+// ── Heatwave (Fire Mastery) constants ───────────────────────────────────
+const HEATWAVE_COOLDOWN_MS = 6000;
+const HEATWAVE_RANGE = 420;
+const HEATWAVE_SPEED = 520;        // px/s
+const HEATWAVE_HALF_WIDTH = 45;    // perpendicular half-extent of the rectangle
+const HEATWAVE_HALF_THICKNESS = 13;
+const HEATWAVE_HIT_PAD = 18;       // target body radius, forgives the sweep band
+const EXPOSED_DURATION_MS = 5000;
+const MOLTEN_DAMAGE_PER_SEC = 5;
+
+/** A travelling Heatwave rectangle. Pierces — `hit` tracks who it has already exposed. */
+interface Heatwave {
+  rect: Phaser.GameObjects.Rectangle;
+  x: number; y: number;
+  cos: number; sin: number;
+  travelled: number;
+  hit: Set<Fighter>;
+}
+
 interface AlcoholPuddle {
   sprite: Phaser.GameObjects.Arc;
   x: number; y: number;
@@ -28,6 +47,9 @@ export interface FireArenaApi {
   readonly nukeChanneling: boolean;
   readonly width: number;
   readonly height: number;
+  readonly masteryActive: boolean;
+  /** Mastery enhancement id bound over the given ability slot, or null if that slot is unchanged. */
+  masteryBindFor(slot: string): string | null;
   lockCaster(durationMs: number): void;
   hasUpgrade(slot: string): boolean;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
@@ -36,6 +58,10 @@ export interface FireArenaApi {
   buildPlayerContext(x: number, y: number): CastContext;
   spawnFlamethrowerCone(px: number, py: number, tx: number, ty: number): void;
   damagePlayerTargets(cx: number, cy: number, radius: number, damage: number, color: number): void;
+  dealFlameNukeDamage(cx: number, cy: number, radius: number, damage: number): void;
+  recordMasteryStat(key: string, amount: number): void;
+  /** Fire Mastery — Burning Body: instantly clears all DOT effects currently on the player. */
+  clearPlayerDots(): void;
 }
 
 // ── FireKit ───────────────────────────────────────────────────────────────
@@ -76,6 +102,12 @@ export class FireKit {
   private alcoholHeatAura: Phaser.GameObjects.Arc | null = null;
   private alcoholHeatAuraTickAccum = 0;
   private alcoholFlyingFlask: { sprite: Phaser.GameObjects.Arc; targetX: number; targetY: number; arriveAt: number } | null = null;
+
+  // ── Fire Mastery state ──────────────────────────────────────────────────
+  private burningBodyAura: Phaser.GameObjects.Arc | null = null;
+  private burningBodyTickAccum = 0;
+  private heatwaveLastCastAt = 0;
+  private heatwaves: Heatwave[] = [];
 
   constructor(private arena: FireArenaApi) {}
 
@@ -124,6 +156,13 @@ export class FireKit {
     if (this.alcoholHeatAura) { this.alcoholHeatAura.destroy(); this.alcoholHeatAura = null; }
     this.alcoholHeatAuraTickAccum = 0;
     if (this.alcoholFlyingFlask) { this.alcoholFlyingFlask.sprite.destroy(); this.alcoholFlyingFlask = null; }
+
+    // Fire Mastery
+    if (this.burningBodyAura) { this.burningBodyAura.destroy(); this.burningBodyAura = null; }
+    this.burningBodyTickAccum = 0;
+    this.heatwaveLastCastAt = 0;
+    for (const w of this.heatwaves) w.rect.destroy();
+    this.heatwaves = [];
   }
 
   update(time: number, delta: number, isPlayerFire: boolean, _isNpcFire: boolean): void {
@@ -162,7 +201,7 @@ export class FireKit {
         this.flameChargePending = null;
         visual.destroy();
         const radius = 220;
-        this.arena.damagePlayerTargets(fx, fy, radius, 80, 0xff4400);
+        this.arena.dealFlameNukeDamage(fx, fy, radius, 80);
         if (Phaser.Math.Distance.Between(fx, fy, player.x, player.y) <= radius) {
           player.applySelfDamage(80);
           this.arena.showFloatingText(player.x, player.y - 28, '🔥 Self-Dmg!', '#ff4400');
@@ -174,15 +213,43 @@ export class FireKit {
         this.arena.showFloatingText(fx, fy - 28, '💥 Flame Charge!', '#ff6600');
       }
 
-      // Charge ratio (shows enhanced flame body status when not pressure-charging)
+      // Charge ratio: only meaningful during pressure-charging
       if (!this.pressureCharging) {
-        player.chargeRatio = this.enhancedFlameBody ? 1 : 0;
+        player.chargeRatio = 0;
       }
 
       // Alcohol perk updates
       if (this.arena.hasPerk('player', 'alcohol')) {
         this.updateAlcohol(time, delta, player, scene);
       }
+
+      // Fire Mastery — Burning Body: always-on passive while mastery is enabled
+      if (this.arena.masteryActive) {
+        if (!this.burningBodyAura) {
+          this.burningBodyAura = scene.add.circle(player.x, player.y, 34, 0x991100, 0.35).setDepth(3);
+        }
+        this.burningBodyAura.setPosition(player.x, player.y);
+        this.burningBodyTickAccum += delta;
+        if (this.burningBodyTickAccum >= 500) {
+          this.burningBodyTickAccum -= 500;
+          for (const t of this.arena.enemies) {
+            if (!t.active || t.hp <= 0) continue;
+            if (Phaser.Math.Distance.Between(player.x, player.y, t.x, t.y) <= 50) {
+              t.takeDamage(3, { fireDot: true });
+              this.arena.spawnHitFlash(t.x, t.y, 0x991100);
+            }
+          }
+        }
+        this.arena.clearPlayerDots();
+      } else if (this.burningBodyAura) {
+        this.burningBodyAura.destroy();
+        this.burningBodyAura = null;
+        this.burningBodyTickAccum = 0;
+      }
+
+      // Fire Mastery — Heatwave projectiles and the Exposed / molten fire chain
+      this.updateHeatwaves(time, delta);
+      this.updateExposedAndMolten(time, delta);
     }
 
     // NPC flame body tick (runs whenever NPC is fire regardless of player element)
@@ -196,6 +263,8 @@ export class FireKit {
   handleInput(time: number, delta: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
     const { player, scene, eKey, fKey, rKey, qKey, nukeChanneling } = this.arena;
     const playerCtx = this.arena.buildPlayerContext(mouseX, mouseY);
+    // Whichever slot the player bound Heatwave onto replaces that slot's normal ability.
+    const hwSlot = this.arena.masteryActive ? this.heatwaveSlot() : null;
 
     if (!nukeChanneling) {
       // ── Click: Fireball / Flamethrower ────────────────────────────
@@ -225,7 +294,9 @@ export class FireKit {
                   t.takeDamage(ftDmg);
                   this.arena.spawnHitFlash(t.x, t.y, 0xff5500);
                   if (this.arena.hasUpgrade('click')) {
+                    const wasBurning = t.burningUntil > time;
                     t.burningUntil = Math.max(t.burningUntil, time + Math.round(3000 * t.statusDurMult));
+                    if (!wasBurning) this.arena.recordMasteryStat('clickIgnites', 1);
                   }
                 }
               }
@@ -245,7 +316,9 @@ export class FireKit {
       const eJustDown = Phaser.Input.Keyboard.JustDown(eKey);
       const eJustUp = this.alcoholEWasDown && !eKey.isDown;
 
-      if (this.arena.hasPerk('player', 'alcohol')) {
+      if (hwSlot === 'e') {
+        if (eJustDown) this.tryCastHeatwave(time, mouseX, mouseY);
+      } else if (this.arena.hasPerk('player', 'alcohol')) {
         if (eJustDown) this.alcoholEHoldStart = time;
         if (eJustUp && this.alcoholEHoldStart > 0) {
           const heldMs = time - this.alcoholEHoldStart;
@@ -298,7 +371,9 @@ export class FireKit {
       this.alcoholEWasDown = eKey.isDown;
 
       // ── R: Pressure Bomb / Pressure Charge upgrade ────────────────
-      if (this.arena.hasUpgrade('r')) {
+      if (hwSlot === 'r') {
+        if (Phaser.Input.Keyboard.JustDown(rKey)) this.tryCastHeatwave(time, mouseX, mouseY);
+      } else if (this.arena.hasUpgrade('r')) {
         if (rKey.isDown) {
           if (!this.pressureCharging && player.getCooldownRatio('pressure-bomb') >= 1) {
             this.pressureCharging = true;
@@ -391,12 +466,15 @@ export class FireKit {
 
       // ── F: Flame Body / Flame Affinity upgrade ────────────────────
       if (Phaser.Input.Keyboard.JustDown(fKey)) {
-        if (this.arena.hasUpgrade('f')) {
+        if (hwSlot === 'f') {
+          this.tryCastHeatwave(time, mouseX, mouseY);
+        } else if (this.arena.hasUpgrade('f')) {
           // Flame Affinity: toggle with enhanced effects
           this.flameBodyActive = !this.flameBodyActive;
           this.enhancedFlameBody = this.flameBodyActive;
           this.flameBodyTickAccum = 0;
           player.incomingDamageMultiplier = this.flameBodyActive ? 2 : 1;
+          if (this.flameBodyActive) { player.cardOutgoingDamageMult *= 2; } else { player.cardOutgoingDamageMult /= 2; }
           if (this.flameBodyAura) { this.flameBodyAura.destroy(); this.flameBodyAura = null; }
           if (this.flameBodyActive) {
             this.flameBodyAura = scene.add.circle(player.x, player.y, 40, 0xff2200, 0.4).setDepth(3);
@@ -416,7 +494,9 @@ export class FireKit {
 
       // ── Q: Flame Nuke / Flame Charge upgrade ──────────────────────
       if (Phaser.Input.Keyboard.JustDown(qKey)) {
-        if (this.arena.hasUpgrade('q') && (this.flameBodyActive || this.enhancedFlameBody) && player.getCooldownRatio('flame-nuke') >= 1) {
+        if (hwSlot === 'q') {
+          this.tryCastHeatwave(time, mouseX, mouseY);
+        } else if (this.arena.hasUpgrade('q') && (this.flameBodyActive || this.enhancedFlameBody) && player.getCooldownRatio('flame-nuke') >= 1) {
           if (!this.flameChargeWaiting && !this.flameChargePending) {
             this.flameChargeWaiting = true;
             this.flameChargeWaitingSince = time;
@@ -431,9 +511,143 @@ export class FireKit {
           player.castAbility('flame-nuke', this.arena.buildPlayerContext(player.x, player.y));
         }
       }
+
     }
 
     this.firePointerWasDown = pointer.isDown;
+  }
+
+  /** The ability slot Heatwave is bound over this match, or null if it isn't bound anywhere. */
+  private heatwaveSlot(): string | null {
+    for (const slot of ['e', 'r', 'f', 'q']) {
+      if (this.arena.masteryBindFor(slot) === 'heatwave') return slot;
+    }
+    return null;
+  }
+
+  private tryCastHeatwave(time: number, mouseX: number, mouseY: number): void {
+    if (time - this.heatwaveLastCastAt < HEATWAVE_COOLDOWN_MS) return;
+    this.heatwaveLastCastAt = time;
+    this.castHeatwave(mouseX, mouseY);
+  }
+
+  /** 0–1 cooldown fill for the Heatwave HUD card. */
+  getHeatwaveCooldownRatio(time: number): number {
+    return Math.min(1, (time - this.heatwaveLastCastAt) / HEATWAVE_COOLDOWN_MS);
+  }
+
+  /** Fire Mastery — Heatwave: a piercing yellow rectangle that deals no damage but Exposes everything it passes through. */
+  private castHeatwave(mouseX: number, mouseY: number): void {
+    const { player, scene } = this.arena;
+    const angle = Math.atan2(mouseY - player.y, mouseX - player.x);
+    const rect = scene.add.rectangle(
+      player.x, player.y,
+      HEATWAVE_HALF_THICKNESS * 2, HEATWAVE_HALF_WIDTH * 2,
+      0xffdd33, 0.55,
+    ).setDepth(6);
+    rect.setStrokeStyle(2, 0xffff99, 0.9);
+    rect.setRotation(angle);
+
+    this.heatwaves.push({
+      rect,
+      x: player.x, y: player.y,
+      cos: Math.cos(angle), sin: Math.sin(angle),
+      travelled: 0,
+      hit: new Set(),
+    });
+
+    this.arena.showFloatingText(player.x, player.y - 28, '☀️ Heatwave!', '#ffdd33');
+  }
+
+  /** Advances every live Heatwave and Exposes any enemy inside its rectangle. Pierces — no despawn on hit. */
+  private updateHeatwaves(time: number, delta: number): void {
+    const step = HEATWAVE_SPEED * (delta / 1000);
+
+    for (let i = this.heatwaves.length - 1; i >= 0; i--) {
+      const w = this.heatwaves[i];
+      w.x += w.cos * step;
+      w.y += w.sin * step;
+      w.travelled += step;
+      w.rect.setPosition(w.x, w.y);
+
+      for (const t of this.arena.enemies) {
+        if (!t.active || t.hp <= 0 || w.hit.has(t)) continue;
+        const dx = t.x - w.x;
+        const dy = t.y - w.y;
+        // Project into the wave's local frame: `along` is travel axis, `perp` is its width.
+        const along = dx * w.cos + dy * w.sin;
+        const perp = -dx * w.sin + dy * w.cos;
+        if (Math.abs(along) > HEATWAVE_HALF_THICKNESS + HEATWAVE_HIT_PAD) continue;
+        if (Math.abs(perp) > HEATWAVE_HALF_WIDTH + HEATWAVE_HIT_PAD) continue;
+
+        w.hit.add(t);
+        this.applyExposed(t, time);
+      }
+
+      if (w.travelled >= HEATWAVE_RANGE) {
+        w.rect.destroy();
+        this.heatwaves.splice(i, 1);
+      }
+    }
+  }
+
+  private applyExposed(t: Fighter, time: number): void {
+    t.exposedUntil = Math.max(t.exposedUntil, time + Math.round(EXPOSED_DURATION_MS * t.statusDurMult));
+    this.arena.showFloatingText(t.x, t.y - 34, '☀️ Exposed!', '#ffdd33');
+  }
+
+  /**
+   * Per-frame upkeep for the Heatwave debuff chain: the sun icon over exposed targets,
+   * the burn → molten upgrade, and the molten DOT tick.
+   */
+  private updateExposedAndMolten(time: number, delta: number): void {
+    const { scene } = this.arena;
+
+    for (const t of this.arena.enemies) {
+      if (!t.active) continue;
+
+      // Exposed icon
+      if (t.exposedUntil > time) {
+        if (!t.exposedIcon) {
+          t.exposedIcon = scene.add.text(t.x, t.y - 40, '☀️', { fontSize: '16px' }).setOrigin(0.5).setDepth(9);
+        }
+        t.exposedIcon.setPosition(t.x, t.y - 40);
+      } else if (t.exposedIcon) {
+        t.exposedIcon.destroy();
+        t.exposedIcon = null;
+      }
+
+      // Igniting an exposed target burns molten instead of normal. The grace window catches
+      // the common case where the same hit both consumed exposed and applied the burn.
+      const justConsumed = t.exposedConsumedAt > 0 && time - t.exposedConsumedAt <= 200;
+      if (t.burningUntil > time && (t.exposedUntil > time || justConsumed)) {
+        t.moltenUntil = Math.max(t.moltenUntil, t.burningUntil);
+        t.burningUntil = 0;
+        t.burnTickAccum = 0;
+        if (t.burnAura) { t.burnAura.destroy(); t.burnAura = null; }
+        t.exposedUntil = 0;
+        t.exposedConsumedAt = 0;
+        if (t.exposedIcon) { t.exposedIcon.destroy(); t.exposedIcon = null; }
+        this.arena.showFloatingText(t.x, t.y - 34, '🌋 Molten!', '#ff9900');
+      }
+
+      // Molten DOT
+      if (t.moltenUntil > time) {
+        if (!t.moltenAura) {
+          t.moltenAura = scene.add.circle(t.x, t.y, 28, 0xff9900, 0.38).setDepth(7);
+        }
+        t.moltenAura.setPosition(t.x, t.y);
+        t.moltenTickAccum += delta;
+        if (t.moltenTickAccum >= 1000) {
+          t.moltenTickAccum -= 1000;
+          t.takeDamage(Math.round(MOLTEN_DAMAGE_PER_SEC * t.statusDmgMult), { fireDot: true });
+          this.arena.spawnHitFlash(t.x, t.y, 0xff9900);
+        }
+      } else {
+        t.moltenTickAccum = 0;
+        if (t.moltenAura) { t.moltenAura.destroy(); t.moltenAura = null; }
+      }
+    }
   }
 
   handleNpcCastId(npcCastId: string | null, time: number): void {

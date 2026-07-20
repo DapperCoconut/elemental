@@ -616,6 +616,7 @@ export class FateKit {
     hitX: number,
     hitY: number,
     owner: 'player' | 'npc',
+    targetOverride?: Fighter,
   ): void {
     const forceSix = (proj as any).fateDiceForceSix === true;
     const roll = forceSix ? 6 : Math.ceil(Math.random() * 6);
@@ -623,7 +624,8 @@ export class FateKit {
     else this.npcCoins += roll;
 
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
-    const target = owner === 'player' ? this.arena.npc : this.arena.player;
+    // targetOverride: invasion husks — 1v1 keeps the player/npc pairing.
+    const target = targetOverride ?? (owner === 'player' ? this.arena.npc : this.arena.player);
 
     if (roll === 6) {
       target.takeDamage(30);

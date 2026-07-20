@@ -13,6 +13,24 @@ export interface Geyser {
   owner: 'player' | 'npc';
 }
 
+// ── Water Mastery constants ───────────────────────────────────────────────────
+
+const SIPHON_COOLDOWN_MS = 5000;
+const SIPHON_DURATION_MS = 3000;
+const SIPHON_RANGE = 190;
+const SIPHON_HALF_ANGLE = Math.PI / 5;     // 36° either side of the aim line
+const SIPHON_DEHYDRATION_PER_SEC = 10;
+const SLIPSTREAM_SPEED_MULT = 1.25;
+
+/** The subset of an ArenaScene puddle the kit needs to test "am I standing in my own water?". */
+export interface WaterPuddleLike {
+  x: number;
+  y: number;
+  radius: number;
+  owner: 'player' | 'npc';
+  kind?: string;
+}
+
 // ── Arena API interface ────────────────────────────────────────────────────────
 
 export interface WaterArenaApi {
@@ -21,9 +39,18 @@ export interface WaterArenaApi {
   readonly enemies: Fighter[];
   readonly scene: Phaser.Scene;
   readonly projectiles: Phaser.Physics.Arcade.Group;
+  readonly eKey: Phaser.Input.Keyboard.Key;
+  readonly rKey: Phaser.Input.Keyboard.Key;
   readonly fKey: Phaser.Input.Keyboard.Key;
+  readonly qKey: Phaser.Input.Keyboard.Key;
   readonly geysers: Geyser[];
+  readonly puddles: WaterPuddleLike[];
   readonly nukeChanneling: boolean;
+  /** True only when the player is water AND Water Mastery is switched on. */
+  readonly masteryActive: boolean;
+  /** Mastery enhancement id bound over the given ability slot, or null if that slot is unchanged. */
+  masteryBindFor(slot: string): string | null;
+  recordMasteryStat(key: string, amount: number): void;
   isPlayerWater(): boolean;
   hasUpgrade(slot: string): boolean;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
@@ -51,10 +78,9 @@ export class WaterKit {
   private playerWasInGeyser = false;
   private npcWasInGeyser = false;
 
-  // -- Ol Faithful (R+ upgrade) --
-  private olFaithfulAccum = 0;
-  private olFaithfulBoostUntil = 0;
-  private olFaithfulSteamAccum = 0;
+  // -- Boiling Geyser (R+ upgrade): per-enemy scald cooldown --
+  private boilLastHitAt = new Map<Fighter, number>();
+  private boilSteamAccum = 0;
 
   // -- Pressure Dagger --
   private daggerCharging = false;
@@ -73,8 +99,18 @@ export class WaterKit {
     lastHitAt: Map<Projectile, number>;
   } | null = null;
 
+  // -- Water Mastery --
+  private siphonLastCastAt = -Infinity;
+  private siphonActiveUntil = 0;
+  private siphonGfx: Phaser.GameObjects.Graphics | null = null;
+  private siphonSeen = new Set<Fighter>();
+  private slipstreamActive = false;
+
   // track time for methods called outside update()
   private lastTime = 0;
+  // last known aim, captured in handleInput so update() can steer the siphon cone
+  private lastMouseX = 0;
+  private lastMouseY = 0;
 
   constructor(private readonly arena: WaterArenaApi) {}
 
@@ -83,9 +119,8 @@ export class WaterKit {
     this.dehydration.clear();
     this.dehydrationBars.clear();
 
-    this.olFaithfulAccum = 0;
-    this.olFaithfulBoostUntil = 0;
-    this.olFaithfulSteamAccum = 0;
+    this.boilLastHitAt.clear();
+    this.boilSteamAccum = 0;
 
     this.daggerCharging = false;
     if (this.daggerVisual) { this.daggerVisual.destroy(); this.daggerVisual = null; }
@@ -100,6 +135,12 @@ export class WaterKit {
     this.lastGeyserUseAt = -Infinity;
     this.playerWasInGeyser = false;
     this.npcWasInGeyser = false;
+
+    this.siphonLastCastAt = -Infinity;
+    this.siphonActiveUntil = 0;
+    if (this.siphonGfx) { this.siphonGfx.destroy(); this.siphonGfx = null; }
+    this.siphonSeen.clear();
+    this.slipstreamActive = false;
   }
 
   update(time: number, delta: number): void {
@@ -129,6 +170,9 @@ export class WaterKit {
       if (inGeyser) {
         this.arena.setPlayerGeyserBuffUntil(time + 2000);
 
+        // Water Mastery — Pressure Rider counts each fresh step into your own geyser.
+        if (!this.playerWasInGeyser) this.arena.recordMasteryStat('geyserBoosts', 1);
+
         // Entry event: player just stepped in AND global CD expired
         if (!this.playerWasInGeyser && time - this.lastGeyserUseAt >= 2000) {
           this.lastGeyserUseAt = time;
@@ -144,29 +188,15 @@ export class WaterKit {
       }
       this.playerWasInGeyser = inGeyser;
 
-      // -- Ol Faithful (R+ upgrade): erupts every 8s --
+      // -- Boiling Geyser (R+ upgrade): scald enemies standing in your geysers --
       if (this.arena.hasUpgrade('r')) {
-        this.olFaithfulAccum += delta;
-        if (this.olFaithfulAccum >= 8000) {
-          this.olFaithfulAccum -= 8000;
-          this.triggerOlFaithful(time, player);
-        }
+        this.tickBoilingGeysers(time, delta, geysers, enemies);
       }
 
-      // -- Ol Faithful boost: steam particles & expiry --
-      if (this.olFaithfulBoostUntil > 0 && time < this.olFaithfulBoostUntil) {
-        this.olFaithfulSteamAccum += delta;
-        if (this.olFaithfulSteamAccum >= 80) {
-          this.olFaithfulSteamAccum = 0;
-          const ox = (Math.random() - 0.5) * 16;
-          this.arena.spawnHitFlash(player.x + ox, player.y - 8, 0xffffff);
-        }
-      }
-
-      if (this.olFaithfulBoostUntil > 0 && time >= this.olFaithfulBoostUntil) {
-        player.clearTint();
-        this.olFaithfulBoostUntil = 0;
-        this.olFaithfulSteamAccum = 0;
+      // -- Water Mastery enhancements --
+      if (this.arena.masteryActive) {
+        this.tickSlipstream();
+        this.tickSiphon(time, delta);
       }
     }
 
@@ -229,6 +259,27 @@ export class WaterKit {
     if (!this.arena.isPlayerWater()) return;
     const { fKey, player, scene, projectiles } = this.arena;
     const fKeyDown = fKey.isDown;
+
+    this.lastMouseX = mouseX;
+    this.lastMouseY = mouseY;
+
+    // Water Mastery — Siphon takes over whichever slot the player bound it onto.
+    const siphonSlot = this.arena.masteryActive ? this.siphonSlot() : null;
+    if (siphonSlot) {
+      const siphonKey = siphonSlot === 'e' ? this.arena.eKey
+        : siphonSlot === 'r' ? this.arena.rKey
+        : siphonSlot === 'q' ? this.arena.qKey
+        : fKey;
+      if (Phaser.Input.Keyboard.JustDown(siphonKey) && !this.arena.nukeChanneling) {
+        this.tryCastSiphon(time);
+      }
+    }
+
+    // Bound over F, Siphon displaces Pressure Dagger's charge-and-release entirely.
+    if (siphonSlot === 'f') {
+      this.fKeyWasDown = fKeyDown;
+      return;
+    }
 
     // If nukeChanneling was cleared externally while charging, abort
     if (this.daggerCharging && !this.arena.nukeChanneling) {
@@ -329,20 +380,6 @@ export class WaterKit {
     // Projectile is NOT deactivated — kit's update() handles out-of-bounds cleanup
   }
 
-  // Called from applyProjectileToCorrupted for player-fired dagger
-  onDaggerHitCorrupted(proj: Projectile, target: Fighter): void {
-    const hitSet = this.daggerHitSets.get(proj);
-    if (!hitSet || hitSet.has(target)) return;
-    hitSet.add(target);
-
-    const baseDmg = ((proj as any).baseDmg as number) ?? proj.damage;
-    const totalDmg = Math.round(baseDmg * this.computeOutgoingMultiplier(target, 'player'));
-    target.takeDamage(totalDmg, { pierce: true });
-    this.arena.spawnHitFlash(target.x, target.y, 0x002266);
-    this.noteDamageDealtByPlayer(totalDmg);
-    // projectile keeps going
-  }
-
   // Called from water-cut hit path in applyProjectileToNpc
   onWaterCutHit(target: Fighter, _attacker: 'player' | 'npc'): void {
     if (!this.arena.hasUpgrade('click')) return;
@@ -358,6 +395,7 @@ export class WaterKit {
     const bar = this.dehydrationBars.get(f);
     if (bar) { bar.destroy(); this.dehydrationBars.delete(f); }
     this.dehydration.delete(f);
+    this.boilLastHitAt.delete(f);
 
     if (this.splitState && f === this.arena.npc) {
       this.clearSplit(false);
@@ -379,10 +417,6 @@ export class WaterKit {
     if (attacker !== 'player') return 1;
     const dehyd = this.dehydration.get(target) ?? 0;
     return Math.min(1.5, 1 + 0.05 * Math.floor(dehyd / 10));
-  }
-
-  isOlFaithfulActive(time: number): boolean {
-    return this.olFaithfulBoostUntil > 0 && time < this.olFaithfulBoostUntil;
   }
 
   isDaggerCharging(): boolean {
@@ -412,6 +446,88 @@ export class WaterKit {
 
   isNpcSplit(): boolean {
     return this.splitState !== null;
+  }
+
+  // ── Water Mastery ─────────────────────────────────────────────────────────
+
+  /** Slipstream: 25% faster while standing in your own water. 1 when the passive isn't earning. */
+  getPlayerSpeedMult(): number {
+    return this.slipstreamActive ? SLIPSTREAM_SPEED_MULT : 1;
+  }
+
+  /** 0–1 cooldown fill for the Siphon HUD card. */
+  getSiphonCooldownRatio(time: number): number {
+    return Math.min(1, (time - this.siphonLastCastAt) / SIPHON_COOLDOWN_MS);
+  }
+
+  /** The ability slot Siphon is bound over this match, or null if it isn't bound anywhere. */
+  private siphonSlot(): string | null {
+    for (const slot of ['e', 'r', 'f', 'q']) {
+      if (this.arena.masteryBindFor(slot) === 'siphon') return slot;
+    }
+    return null;
+  }
+
+  private tryCastSiphon(time: number): void {
+    if (time - this.siphonLastCastAt < SIPHON_COOLDOWN_MS) return;
+    this.siphonLastCastAt = time;
+    this.siphonActiveUntil = time + SIPHON_DURATION_MS;
+    this.siphonSeen.clear();
+    this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 28, '🌊 Siphon!', '#66ddff');
+  }
+
+  /**
+   * Siphon: a cone anchored to the player that follows their aim for 3s. It deals no damage —
+   * everything inside just dries out, feeding the dehydration damage bonus on the rest of the kit.
+   */
+  private tickSiphon(time: number, delta: number): void {
+    const { player, scene } = this.arena;
+
+    if (time >= this.siphonActiveUntil) {
+      if (this.siphonGfx) { this.siphonGfx.destroy(); this.siphonGfx = null; }
+      return;
+    }
+
+    const angle = Math.atan2(this.lastMouseY - player.y, this.lastMouseX - player.x);
+
+    if (!this.siphonGfx) this.siphonGfx = scene.add.graphics().setDepth(4);
+    this.siphonGfx.clear();
+    this.siphonGfx.fillStyle(0x1188cc, 0.28);
+    this.siphonGfx.slice(player.x, player.y, SIPHON_RANGE, angle - SIPHON_HALF_ANGLE, angle + SIPHON_HALF_ANGLE, false);
+    this.siphonGfx.fillPath();
+    this.siphonGfx.lineStyle(2, 0x66ddff, 0.7);
+    this.siphonGfx.beginPath();
+    this.siphonGfx.arc(player.x, player.y, SIPHON_RANGE, angle - SIPHON_HALF_ANGLE, angle + SIPHON_HALF_ANGLE, false);
+    this.siphonGfx.strokePath();
+
+    const gain = SIPHON_DEHYDRATION_PER_SEC * (delta / 1000);
+    for (const t of this.arena.enemies) {
+      if (!t.active || t.hp <= 0) continue;
+      if (Phaser.Math.Distance.Between(player.x, player.y, t.x, t.y) > SIPHON_RANGE) continue;
+      // Shortest signed angle between the cone's axis and the target keeps the wrap at ±π honest.
+      const toTarget = Math.atan2(t.y - player.y, t.x - player.x);
+      if (Math.abs(Phaser.Math.Angle.Wrap(toTarget - angle)) > SIPHON_HALF_ANGLE) continue;
+
+      this.applyDehydration(t, gain);
+      if (!this.siphonSeen.has(t)) {
+        this.siphonSeen.add(t);
+        this.arena.showFloatingText(t.x, t.y - 38, '🌊 SIPHONED!', '#66ddff');
+      }
+    }
+  }
+
+  /** Slipstream: recomputed each frame so the buff drops the instant the player leaves the water. */
+  private tickSlipstream(): void {
+    const { player } = this.arena;
+    // Only plain water counts — perk stalagmites and foreign puddles (lava, toxic, abyss) don't.
+    const wet = this.arena.puddles.some(
+      (p) => p.owner === 'player' && (p.kind === undefined || p.kind === 'puddle')
+        && Phaser.Math.Distance.Between(p.x, p.y, player.x, player.y) <= p.radius,
+    );
+    if (wet && !this.slipstreamActive) {
+      this.arena.showFloatingText(player.x, player.y - 30, '🌊 Slipstream', '#66ddff');
+    }
+    this.slipstreamActive = wet;
   }
 
   // ── Private helpers ───────────────────────────────────────────────────────
@@ -460,19 +576,36 @@ export class WaterKit {
     void time;
   }
 
-  private triggerOlFaithful(time: number, player: Fighter): void {
-    for (const g of this.arena.geysers) {
-      if (g.owner !== 'player') continue;
-      for (let i = 0; i < 6; i++) {
+  private tickBoilingGeysers(time: number, delta: number, geysers: Geyser[], enemies: Fighter[]): void {
+    const playerGeysers = geysers.filter((g) => g.owner === 'player');
+    if (playerGeysers.length === 0) return;
+
+    // Steam wisps so a boiling geyser reads as hazardous
+    this.boilSteamAccum += delta;
+    const steam = this.boilSteamAccum >= 120;
+    if (steam) this.boilSteamAccum = 0;
+
+    for (const g of playerGeysers) {
+      if (steam) {
         const ox = (Math.random() - 0.5) * g.radius * 1.5;
         const oy = (Math.random() - 0.5) * g.radius * 1.5;
         this.arena.spawnHitFlash(g.x + ox, g.y + oy, 0xffffff);
       }
+
+      for (const t of enemies) {
+        if (!t.active || t.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(g.x, g.y, t.x, t.y) > g.radius) continue;
+        if (time - (this.boilLastHitAt.get(t) ?? -Infinity) < 1000) continue;
+
+        this.boilLastHitAt.set(t, time);
+        // The damage number is spawned by the target's own 'damaged' listener —
+        // adding one here rendered a second number and read as a double tick.
+        t.takeDamage(10);
+        this.arena.spawnHitFlash(t.x, t.y, 0xffffff);
+        this.arena.showFloatingText(t.x, t.y - 44, '♨️ SCALDED!', '#ffddaa');
+        this.noteDamageDealtByPlayer(10);
+      }
     }
-    this.olFaithfulBoostUntil = time + 3000;
-    this.olFaithfulSteamAccum = 0;
-    player.setTint(0xffffff);
-    this.arena.showFloatingText(player.x, player.y - 36, "♨️ OL' FAITHFUL!", '#ffffff');
   }
 
   private startSplit(npc: Fighter, time: number): void {
@@ -489,6 +622,7 @@ export class WaterKit {
 
     this.splitState = { ball1, ball2, until: time + 2000, lastHitAt: new Map() };
     this.arena.showFloatingText(npc.x, npc.y - 36, '💧 SPLIT!', '#88ccff');
+    this.arena.recordMasteryStat('daggerSplits', 1);
   }
 
   private clearSplit(restoreNpc: boolean): void {

@@ -1,7 +1,12 @@
 import { WORLDS, getChildWorlds, getFightNodes } from './Worlds';
 import { ABSTRACT_WORLDS, getAbstractChildWorlds } from './AbstractWorlds';
 
-const CAMPAIGN_KEY = 'elemental_campaign';
+import { saveKey } from './Cheats';
+
+const CAMPAIGN_BASE = 'elemental_campaign';
+
+// Resolved per call, not cached — the key changes when cheat mode is toggled.
+const campaignKey = () => saveKey(CAMPAIGN_BASE);
 
 export interface CampaignSlot {
   name: string;
@@ -24,7 +29,7 @@ interface CampaignData {
 
 function load(): CampaignData {
   try {
-    const raw = localStorage.getItem(CAMPAIGN_KEY);
+    const raw = localStorage.getItem(campaignKey());
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<CampaignData>;
       return {
@@ -45,7 +50,7 @@ function load(): CampaignData {
 
 function save(data: CampaignData): void {
   try {
-    localStorage.setItem(CAMPAIGN_KEY, JSON.stringify(data));
+    localStorage.setItem(campaignKey(), JSON.stringify(data));
   } catch {
     // storage unavailable
   }

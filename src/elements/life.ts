@@ -36,7 +36,7 @@ const petalShotgun: Ability = {
 const plant: Ability = {
   id: 'plant',
   name: 'Plant',
-  description: 'Place a plant at cursor position (lasts 10s)',
+  description: 'Place your selected seed at the cursor (max 5). Pick seeds from the bar up top.',
   displayKey: 'E',
   cooldown: 5000,
   cast(ctx) {
@@ -46,22 +46,21 @@ const plant: Ability = {
 
 const grow: Ability = {
   id: 'grow',
-  name: 'Grow',
-  description: 'Heal 15 HP — healing aura erupts from all your plants',
+  name: 'Fertilize',
+  description: 'Yellow AOE — plants hit heal 50% and gain a 5s power boost',
   displayKey: 'R',
   cooldown: 8000,
   cast(ctx) {
     ctx.growPlants();
-    ctx.healCaster(15);
   },
 };
 
 const thorns: Ability = {
   id: 'thorns',
-  name: 'Thorns',
-  description: 'All plants erupt with thorns, dealing 20 damage to nearby enemies',
+  name: 'Root Shield',
+  description: 'The cursored plant takes no damage for 3s, then heals to full',
   displayKey: 'F',
-  cooldown: 3000,
+  cooldown: 8000,
   cast(ctx) {
     ctx.thornPlants();
   },
@@ -69,8 +68,8 @@ const thorns: Ability = {
 
 const thornDrag: Ability = {
   id: 'thorn-drag',
-  name: 'Thorn Drag',
-  description: 'Drag the enemy for 2s — they follow your cursor and take damage',
+  name: 'Thrive!',
+  description: 'For 5s your incoming damage is split evenly across your plants instead',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 30000,

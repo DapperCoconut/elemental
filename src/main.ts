@@ -18,6 +18,7 @@ import { CampaignPortalScene } from './scenes/CampaignPortalScene';
 import { CampaignElementSelectScene } from './scenes/CampaignElementSelectScene';
 import { GauntletElementSelectScene } from './scenes/GauntletElementSelectScene';
 import { InventoryScene } from './scenes/InventoryScene';
+import { OnlineLobbyScene } from './scenes/OnlineLobbyScene';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -31,10 +32,15 @@ const config: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
-  scene: [BootScene, TitleScene, MenuScene, ShopScene, LabScene, ArenaScene, GameOverScene, GauntletSelectScene, GauntletIntermediaryScene, PauseMenuScene, CampaignSlotSelectScene, CampaignWorldMapScene, CampaignWorldScene, CampaignFightMenuScene, CampaignShopScene, CampaignPortalScene, CampaignElementSelectScene, GauntletElementSelectScene, InventoryScene],
+  scene: [BootScene, TitleScene, MenuScene, ShopScene, LabScene, ArenaScene, GameOverScene, GauntletSelectScene, GauntletIntermediaryScene, PauseMenuScene, CampaignSlotSelectScene, CampaignWorldMapScene, CampaignWorldScene, CampaignFightMenuScene, CampaignShopScene, CampaignPortalScene, CampaignElementSelectScene, GauntletElementSelectScene, InventoryScene, OnlineLobbyScene],
 };
 
 const game = new Phaser.Game(config);
+
+// Debug handles for the browser console (and automated smoke tests)
+import { Net } from './network/NetworkManager';
+(window as unknown as { game: Phaser.Game; net: typeof Net }).game = game;
+(window as unknown as { game: Phaser.Game; net: typeof Net }).net = Net;
 
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 

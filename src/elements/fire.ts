@@ -125,7 +125,7 @@ const flameNuke: Ability = {
 
     // After channel: massive explosion
     ctx.scene.time.delayedCall(2000, () => {
-      ctx.dealAoeDamage(ctx.casterX, ctx.casterY, 220, 80);
+      ctx.dealFlameNukeDamage(ctx.casterX, ctx.casterY, 220, 80);
 
       const boom = ctx.scene.add.circle(ctx.casterX, ctx.casterY, 12, 0xff4400, 0.9);
       ctx.scene.tweens.add({

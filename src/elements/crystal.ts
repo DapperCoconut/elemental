@@ -3,8 +3,8 @@ import { Ability, CastContext } from './Ability';
 
 const crystalLaser: Ability = {
   id: 'crystal-laser',
-  name: 'Laser Beam',
-  description: 'Hitscan laser. Reflects off placed crystals, doubling damage per bounce.',
+  name: 'Diamond Shard',
+  description: 'Launch a kite-shaped shard (15 dmg) that flies until it hits something. Bounces off placed crystals with a 30° auto-aim snap, ×1.5 damage per bounce (no limit). Passes through portals with auto-aim. Bouncing off a moving crystal sets off large AOE blasts along its flight path.',
   displayKey: 'Click',
   cooldown: 500,
   cast(ctx: CastContext) { ctx.fireCrystalLaser(ctx.targetX, ctx.targetY); },
@@ -13,16 +13,16 @@ const crystalLaser: Ability = {
 const placeCrystal: Ability = {
   id: 'crystal-place',
   name: 'Place Crystal',
-  description: 'Place a crystal at cursor (max 3). Reflects your laser beam.',
+  description: 'Place a crystal at cursor (max 6). Reflects your laser beam and deflects enemy projectiles.',
   displayKey: 'E',
-  cooldown: 5000,
+  cooldown: 2500,
   cast(ctx: CastContext) { ctx.placeCrystalNode(ctx.targetX, ctx.targetY); },
 };
 
 const crystalBarrage: Ability = {
   id: 'crystal-barrage',
   name: 'Barrage',
-  description: 'Launch 30 crystal shards at cursor over 3s (4 dmg each, inaccurate). Shards hitting a crystal cause a 10 dmg AOE explosion.',
+  description: 'Launch 15 crystal shards at cursor (4 dmg each). Shards hitting a mirror cause a 2 dmg AOE explosion (larger radius). Shards TP through portals (+50% dmg).',
   displayKey: 'R',
   cooldown: 8000,
   cast(ctx: CastContext) { ctx.startCrystalBarrage(ctx.targetX, ctx.targetY); },
@@ -31,7 +31,7 @@ const crystalBarrage: Ability = {
 const crystalPortal: Ability = {
   id: 'crystal-portal',
   name: 'Crystal Portal',
-  description: 'Place a portal gate (max 2). Touch either to teleport to the other. Laser through a portal auto-targets the enemy.',
+  description: 'Place a portal gate (max 2). Touch either to teleport. Enemy entering a portal collapses it and is stunned 2s. Enemy projectiles redirect through portals back at them (+50% dmg).',
   displayKey: 'F',
   cooldown: 5000,
   cast(ctx: CastContext) { ctx.placeCrystalPortal(ctx.targetX, ctx.targetY); },

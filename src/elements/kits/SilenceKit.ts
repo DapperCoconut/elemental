@@ -97,9 +97,18 @@ export class SilenceKit {
 
   // ── R+: Voodoo doll ───────────────────────────────────────────────
   private silenceVoodooDoll: Phaser.GameObjects.Image | null = null;
-  private silenceVoodooX = 0;
-  private silenceVoodooY = 0;
   private silenceVoodooActive = false;
+  /** Redirects damage the player would take to the possessed enemy while the doll is held. */
+  private readonly silenceVoodooAbsorber = (amount: number): boolean => {
+    if (!this.silenceVoodooActive || this.arena.scene.time.now >= this.silencePossessedUntil) return false;
+    const npc = this.arena.npc;
+    if (!npc.active || npc.hp <= 0) return false;
+    npc.takeDamage(amount);
+    this.arena.spawnHitFlash(npc.x, npc.y, 0xcc44ff);
+    this.arena.showFloatingText(npc.x, npc.y - 30, `🪆 -${Math.round(amount)}`, '#cc44ff');
+    this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 20, '🪆 Redirected!', '#cc44ff');
+    return true;
+  };
   private silenceRedBonusPip: Phaser.GameObjects.Arc | null = null;
   private silenceRedBonusHp = false;
 
@@ -839,21 +848,23 @@ export class SilenceKit {
 
   // ── Projectile hit callbacks ───────────────────────────────────────
 
-  /** Called when proj-silence-eye hits an enemy (NPC or CorruptedBase). */
+  /** Called when proj-silence-eye hits an enemy. */
   onSilenceEyeHitEnemy(proj: Projectile, owner: 'player' | 'npc'): void {
     if (owner === 'player') {
       this.silencePossessedUntil = this.arena.scene.time.now + 8000;
       this.arena.showFloatingText(this.arena.npc.x, this.arena.npc.y - 30, '👁 Possessed!', '#cc66ff');
       const eyeFlash = this.arena.scene.add.circle(this.arena.npc.x, this.arena.npc.y, 16, 0x660088, 0.8).setDepth(9);
       this.arena.scene.tweens.add({ targets: eyeFlash, scaleX: 3, scaleY: 3, alpha: 0, duration: 400, onComplete: () => eyeFlash.destroy() });
-      // R+: spawn voodoo doll at hit location
+      // R+: hold a mini voodoo doll of the possessed enemy — while held, any damage the
+      // player would take is redirected to the possessed enemy instead.
       if (this.arena.hasUpgrade('r')) {
+        const { player, npc, scene } = this.arena;
         if (this.silenceVoodooDoll) this.silenceVoodooDoll.destroy();
-        this.silenceVoodooDoll = this.arena.scene.add.image(this.arena.npc.x, this.arena.npc.y, 'doll-silence').setDepth(11);
-        this.silenceVoodooX = this.arena.npc.x;
-        this.silenceVoodooY = this.arena.npc.y;
+        this.silenceVoodooDoll = scene.add.image(player.x - 24, player.y - 26, npc.texture.key)
+          .setDepth(16).setScale(0.42);
         this.silenceVoodooActive = true;
-        this.arena.showFloatingText(this.arena.npc.x, this.arena.npc.y - 50, '🪆 Voodoo Doll!', '#cc44ff');
+        if (!this.silenceSlasherActive) player.damageAbsorber = this.silenceVoodooAbsorber;
+        this.arena.showFloatingText(player.x, player.y - 50, '🪆 Voodoo Doll!', '#cc44ff');
       }
     } else {
       this.arena.npc.silencePossessedUntil = this.arena.scene.time.now + 8000;
@@ -891,28 +902,6 @@ export class SilenceKit {
       this.arena.player.takeDamage(8);
       this.arena.spawnHitFlash(proj.x, proj.y, 0xaa7733);
     }
-    proj.setActive(false).setVisible(false);
-    (proj.body as Phaser.Physics.Arcade.Body).stop();
-  }
-
-  /** Called when proj-silence-eye hits a CorruptedBase (invasion). */
-  onSilenceEyeHitCorrupted(proj: Projectile, cx: number, cy: number): void {
-    this.silencePossessedUntil = this.arena.scene.time.now + 8000;
-    this.arena.showFloatingText(cx, cy - 30, '👁 Possessed!', '#cc66ff');
-    const eyeFlash = this.arena.scene.add.circle(cx, cy, 16, 0x660088, 0.8).setDepth(9);
-    this.arena.scene.tweens.add({ targets: eyeFlash, scaleX: 3, scaleY: 3, alpha: 0, duration: 400, onComplete: () => eyeFlash.destroy() });
-    proj.setActive(false).setVisible(false);
-    (proj.body as Phaser.Physics.Arcade.Body).stop();
-  }
-
-  /** Called when proj-silence-hook hits a CorruptedBase (invasion). */
-  onSilenceHookHitCorrupted(proj: Projectile, target: Fighter, cx: number, cy: number): void {
-    this.silenceHookConnected = true;
-    this.silenceHookTarget = target;
-    this.silenceHookWindowExpiry = this.arena.scene.time.now + 5000;
-    this.silenceHookProj = null;
-    this.arena.showFloatingText(cx, cy - 20, '🪝 Hooked!', '#cc9933');
-    this.arena.spawnHitFlash(cx, cy, 0xaa7733);
     proj.setActive(false).setVisible(false);
     (proj.body as Phaser.Physics.Arcade.Body).stop();
   }
@@ -1061,6 +1050,15 @@ export class SilenceKit {
           const extraDmg = Math.min(chargeMs / 1000, 2) * 14;
           const totalDmg = Math.round(14 + extraDmg);
           const npc = this.arena.npc;
+          // Same swing-arc feedback as the un-upgraded machete, so the attack always reads
+          // as a slash even when charging misses.
+          const angleRad = Math.atan2(mouseY - player.y, mouseX - player.x);
+          const swing = scene.add.graphics().setDepth(9);
+          swing.lineStyle(4, 0xccaa88, 0.85);
+          swing.beginPath();
+          swing.arc(player.x, player.y, 55, angleRad - Math.PI / 4, angleRad + Math.PI / 4);
+          swing.strokePath();
+          scene.tweens.add({ targets: swing, alpha: 0, duration: 180, onComplete: () => swing.destroy() });
           const dist = Phaser.Math.Distance.Between(player.x, player.y, npc.x, npc.y);
           if (dist <= 80) {
             npc.takeDamage(totalDmg);
@@ -1210,6 +1208,21 @@ export class SilenceKit {
         }
       }
 
+      // R+: Voodoo doll — follows the player while held, redirects damage until possession ends
+      if (this.silenceVoodooActive) {
+        if (time >= this.silencePossessedUntil) {
+          if (this.silenceVoodooDoll) { this.silenceVoodooDoll.destroy(); this.silenceVoodooDoll = null; }
+          this.silenceVoodooActive = false;
+          if (player.damageAbsorber === this.silenceVoodooAbsorber) player.damageAbsorber = null;
+        } else {
+          if (this.silenceVoodooDoll) this.silenceVoodooDoll.setPosition(player.x - 24, player.y - 26);
+          // Re-assert the redirect each frame in case Slasher mode's pip absorber took over and released it.
+          if (!this.silenceSlasherActive && player.damageAbsorber !== this.silenceVoodooAbsorber) {
+            player.damageAbsorber = this.silenceVoodooAbsorber;
+          }
+        }
+      }
+
       // Yank: steer hooked target toward player each frame
       if (time < this.silenceNpcYankUntil && this.silenceHookTarget) {
         const ht = this.silenceHookTarget;
@@ -1321,23 +1334,6 @@ export class SilenceKit {
         const dist = Math.sqrt(dx * dx + dy * dy) || 1;
         const spd = npc.speed;
         (npc.body as Phaser.Physics.Arcade.Body).setVelocity((dx / dist) * spd, (dy / dist) * spd);
-      }
-
-      // R+: Voodoo doll — per-frame projectile collision check
-      if (this.silenceVoodooActive && this.silenceVoodooDoll && this.arena.hasUpgrade('r')) {
-        const dollX = this.silenceVoodooX, dollY = this.silenceVoodooY;
-        this.arena.projectiles.getChildren().forEach((go) => {
-          const proj = go as unknown as { isFromPlayer?: boolean; active?: boolean; x: number; y: number; damage?: number; deactivate?: () => void };
-          if (!proj.isFromPlayer || !proj.active) return;
-          if (Phaser.Math.Distance.Between(proj.x, proj.y, dollX, dollY) < 20) {
-            const dmg = Math.round((proj.damage ?? 10) * 1.2);
-            npc.takeDamage(dmg);
-            this.arena.showFloatingText(npc.x, npc.y - 40, '🪆 Voodoo!', '#cc44ff');
-            if (this.silenceVoodooDoll) { this.silenceVoodooDoll.destroy(); this.silenceVoodooDoll = null; }
-            this.silenceVoodooActive = false;
-            if (typeof proj.deactivate === 'function') proj.deactivate();
-          }
-        });
       }
 
       // R+: Red bonus pip — follow player, speed bonus
@@ -1475,6 +1471,14 @@ export class SilenceKit {
       // Slasher pip overlay + mask: follow player position
       if (this.silenceMaskSprite) {
         this.silenceMaskSprite.setPosition(player.x, player.y - 4);
+        // Click+: faceplate reddens as the charged machete winds up
+        if (this.silenceMacheteCharging) {
+          const chargeT = Math.min((time - this.silenceMacheteChargeStart) / 2000, 1);
+          const gb = Math.round(255 * (1 - chargeT));
+          this.silenceMaskSprite.setTint((0xff << 16) | (gb << 8) | gb);
+        } else {
+          this.silenceMaskSprite.clearTint();
+        }
       }
       if (this.silenceSlasherPips.length > 0) {
         const pipSpacing = 12;

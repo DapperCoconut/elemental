@@ -281,7 +281,7 @@ export class MagnetKit {
         this.magnetNailPullVX = Math.cos(pullAng) * 220;
         this.magnetNailPullVY = Math.sin(pullAng) * 220;
         this.magnetNailPullUntil = Math.max(this.magnetNailPullUntil, scene.time.now + 350);
-      } else {
+      } else if (!target.knockbackImmune) {
         (target.body as Phaser.Physics.Arcade.Body).setVelocity(
           Math.cos(pullAng) * 220, Math.sin(pullAng) * 220,
         );
@@ -592,7 +592,7 @@ export class MagnetKit {
           this.magnetPlayerNails.splice(i, 1);
         }
         const tDist = Phaser.Math.Distance.Between(target.x, target.y, player.x, player.y);
-        if (tDist > 80) {
+        if (tDist > 80 && !target.knockbackImmune) {
           const tAng = Math.atan2(player.y - target.y, player.x - target.x);
           // Pull stacks scale the pull strength
           const stackMult = 1 + 0.5 * this.magnetPlayerPullStacks;
@@ -645,7 +645,7 @@ export class MagnetKit {
         }
         const casterForNail = owner === 'player' ? player : npc;
         const tDist = Phaser.Math.Distance.Between(target.x, target.y, casterForNail.x, casterForNail.y);
-        if (tDist > 80) {
+        if (tDist > 80 && !target.knockbackImmune) {
           const tAng = Math.atan2(casterForNail.y - target.y, casterForNail.x - target.x);
           const pull = 180 * dt;
           const body = target.body as Phaser.Physics.Arcade.Body;
@@ -1028,7 +1028,7 @@ export class MagnetKit {
     const nail = owner === 'player' ? this.magnetPlayerNail : this.magnetNpcNail;
     const nails = owner === 'player' ? this.magnetPlayerNails : this.magnetNpcNails;
     const hasNailed = (nail && nail.inEnemy) || nails.some(n => n.inEnemy);
-    if (hasNailed) {
+    if (hasNailed && !target.knockbackImmune) {
       const ang = Math.atan2(target.y - caster.y, target.x - caster.x);
       const body = target.body as Phaser.Physics.Arcade.Body;
       body.setVelocity(Math.cos(ang) * 500, Math.sin(ang) * 500);
@@ -1038,7 +1038,7 @@ export class MagnetKit {
     const orbArray = owner === 'player' ? this.magnetPlayerShieldOrbs : this.magnetNpcShieldOrbs;
     const orbitRadius = 52 + 28; // orb radius + target radius
     const distToTarget = Phaser.Math.Distance.Between(caster.x, caster.y, target.x, target.y);
-    if (orbArray.length > 0 && distToTarget <= orbitRadius) {
+    if (orbArray.length > 0 && distToTarget <= orbitRadius && !target.knockbackImmune) {
       const ang = Math.atan2(target.y - caster.y, target.x - caster.x);
       const body = target.body as Phaser.Physics.Arcade.Body;
       body.setVelocity(Math.cos(ang) * 600, Math.sin(ang) * 600);

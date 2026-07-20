@@ -54,6 +54,12 @@ const NOTE_COLORS: Record<NoteType, number> = {
   blue: 0x3388ff,
   purple: 0x9955cc,
 };
+const NOTE_TOOLTIPS: Record<NoteType, string> = {
+  normal: 'Normal — 20 dmg on hit.',
+  red: 'Red — 30 dmg on hit (crit).',
+  blue: 'Blue — 20 dmg + slows the enemy 30% for 2s.',
+  purple: 'Purple — 20 dmg + grants you +25% speed for 3s.',
+};
 const HOLD_COLOR = 0x44ee88;
 
 // ── SoundKit ──────────────────────────────────────────────────────────────
@@ -108,8 +114,7 @@ export class SoundKit {
 
   // ── Click+ composing ──────────────────────────────────────────────────
   private soundComposingActive = false;
-  private soundComposeHoldStart = 0;
-  private soundComposeHoldVisual: Phaser.GameObjects.Arc | null = null;
+  private soundRightPointerWasDown = false;
   private soundComposurePoints = 20;
   private soundComposedPattern: ComposedNote[] = [];
   private soundComposingLooperIdx = 0;
@@ -199,8 +204,7 @@ export class SoundKit {
     this.soundHoldMissHandled = false;
 
     this.soundComposingActive = false;
-    this.soundComposeHoldStart = 0;
-    if (this.soundComposeHoldVisual) { this.soundComposeHoldVisual.destroy(); this.soundComposeHoldVisual = null; }
+    this.soundRightPointerWasDown = false;
     this.soundComposurePoints = 20;
     this.soundComposedPattern = [];
     this.soundComposingLooperIdx = 0;
@@ -290,47 +294,24 @@ export class SoundKit {
     const soundAccelActive = time < this.soundAccelerandoUntil;
     const tY = this.getTrackY();
 
-    // ── Click+: Composing mode hold ───────────────────────────────────
+    // ── Click+: Composing mode (right-click to toggle) ─────────────────
     if (this.arena.hasUpgrade('click')) {
-      const clickDown = pointer.isDown;
-      const clickJustDown = clickDown && !this.soundPointerWasDown;
-
-      if (clickJustDown) {
-        this.soundComposeHoldStart = time;
-      }
-      // Check if hold completed (release after 2s)
-      if (!clickDown && this.soundComposeHoldStart > 0) {
-        const held = time - this.soundComposeHoldStart;
-        if (held >= 2000) {
-          if (!this.soundComposingActive) {
-            this.enterComposingMode(scene, time);
-          } else {
-            this.exitComposingMode(scene, time);
-            if (this.soundComposedPattern.length > 0) {
-              this.arena.showFloatingText(player.x, player.y - 40, '🎵 Pattern saved', '#ffaadd');
-            }
+      const rightJustDown = pointer.rightButtonDown() && !this.soundRightPointerWasDown;
+      if (rightJustDown) {
+        if (!this.soundComposingActive) {
+          this.enterComposingMode(scene, time);
+        } else {
+          this.exitComposingMode(scene, time);
+          if (this.soundComposedPattern.length > 0) {
+            this.arena.showFloatingText(player.x, player.y - 40, '🎵 Pattern saved', '#ffaadd');
           }
         }
-        this.soundComposeHoldStart = 0;
-        if (this.soundComposeHoldVisual) {
-          this.soundComposeHoldVisual.destroy();
-          this.soundComposeHoldVisual = null;
-        }
-      }
-
-      // Hold arc visual
-      if (clickDown && this.soundComposeHoldStart > 0) {
-        const ratio = Math.min(1, (time - this.soundComposeHoldStart) / 2000);
-        if (!this.soundComposeHoldVisual || !this.soundComposeHoldVisual.active) {
-          this.soundComposeHoldVisual = scene.add.arc(player.x, player.y, 22, 270, 270, false, 0xffaadd, 0.6).setDepth(15);
-        }
-        this.soundComposeHoldVisual.setPosition(player.x, player.y);
-        this.soundComposeHoldVisual.setEndAngle(270 + ratio * 360);
       }
 
       // While composing, skip other input
       if (this.soundComposingActive) {
         this.soundPointerWasDown = pointer.isDown;
+        this.soundRightPointerWasDown = pointer.rightButtonDown();
         return;
       }
     }
@@ -384,6 +365,7 @@ export class SoundKit {
       }
     }
     this.soundPointerWasDown = pointer.isDown;
+    this.soundRightPointerWasDown = pointer.rightButtonDown();
 
     // ── E: Toggle Flow Mode (3s cancel delay) ─────────────────────────
     if (Phaser.Input.Keyboard.JustDown(eKey)) {
@@ -964,6 +946,12 @@ export class SoundKit {
       .setStrokeStyle(2, 0xff66cc, 0.8).setDepth(50);
     this.soundComposePalette.push(panel);
 
+    const tooltip = scene.add.text(W / 2, cy + 34, '', {
+      fontSize: '9px', color: '#ffddee', fontFamily: 'Arial', align: 'center',
+      wordWrap: { width: 280 },
+    }).setOrigin(0.5, 0).setDepth(53).setVisible(false).setName('composeTooltip');
+    this.soundComposePalette.push(tooltip);
+
     const types: NoteType[] = ['normal', 'red', 'blue', 'purple'];
     const costs = [1, 3, 2, 3] as const;
     const labels = ['N', 'R', 'B', 'P'] as const;
@@ -978,6 +966,9 @@ export class SoundKit {
       const circle = scene.add.circle(nx, cy - 6, 10, color, 0.9).setDepth(52);
       circle.setInteractive({ useHandCursor: true });
       scene.input.setDraggable(circle);
+
+      circle.on('pointerover', () => tooltip.setText(NOTE_TOOLTIPS[noteType]).setVisible(true));
+      circle.on('pointerout', () => tooltip.setVisible(false));
 
       const originX = nx, originY = cy - 6;
       const tY = this.getTrackY();
@@ -1001,9 +992,12 @@ export class SoundKit {
             const entry = { sprite: placed, type: noteType, xFrac, patternIdx: patIdx };
             this.soundComposedNoteSprites.push(entry);
 
-            // Right-click to remove placed note
+            placed.on('pointerover', () => tooltip.setText(NOTE_TOOLTIPS[entry.type]).setVisible(true));
+            placed.on('pointerout', () => tooltip.setVisible(false));
+
+            // Left-click to remove placed note (right-click exits Composing Mode)
             placed.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
-              if (ptr.rightButtonDown()) {
+              if (ptr.leftButtonDown()) {
                 this.soundComposedPattern.splice(entry.patternIdx, 1);
                 this.soundComposedNoteSprites = this.soundComposedNoteSprites.filter(e => e !== entry);
                 this.soundComposurePoints += COMPOSE_COSTS[entry.type];
@@ -1011,6 +1005,7 @@ export class SoundKit {
                   this.soundComposedNoteSprites[j].patternIdx = j;
                 }
                 placed.destroy();
+                tooltip.setVisible(false);
                 this.refreshComposeLabel();
               }
             });

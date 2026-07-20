@@ -2,6 +2,27 @@ import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { Projectile } from '../../combat/Projectile';
 
+// ── Oil Mastery constants ────────────────────────────────────────────────────
+
+/** Drone Array: damage resistance each orbiting drone is worth. */
+const DRONE_ARRAY_RESIST_PER_DRONE = 0.1;
+
+const TURRET_COOLDOWN_MS = 20000;
+const TURRET_DURATION_MS = 10000;
+const TURRET_MAX_HP = 150;
+/** Drones sacrificed to bolt the turret down. */
+const TURRET_DRONE_COST = 3;
+/** Body radius — still larger than the player's 22 so it screens them while mounted. */
+const TURRET_RADIUS = 24;
+/** How close the player must stand to mount — measured from the turret's edge, not its centre. */
+const TURRET_MOUNT_RANGE = TURRET_RADIUS + 40;
+/** Enemy projectiles touching the turret body hit it instead of flying on. */
+const TURRET_BLOCK_RADIUS = TURRET_RADIUS + 4;
+const TURRET_FIRE_INTERVAL_MS = 100;
+const TURRET_LASER_DAMAGE = 2;
+const TURRET_LASER_RADIUS = 20;
+const TURRET_COLOR = 0x66ddff;
+
 // ── Arena API ────────────────────────────────────────────────────────────────
 
 export interface OilArenaApi {
@@ -31,10 +52,19 @@ export interface OilArenaApi {
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   damagePlayerTargets(cx: number, cy: number, radius: number, damage: number, color: number): void;
+  /** Same AoE as damagePlayerTargets, but reports what it hit and what it killed. */
+  damagePlayerTargetsCounted(
+    cx: number, cy: number, radius: number, damage: number, color: number,
+  ): { hits: number; kills: number };
   damageNpcTarget(cx: number, cy: number, radius: number, damage: number): void;
   pointToSegmentDist(px: number, py: number, ax: number, ay: number, bx: number, by: number): number;
   getSceneWidth(): number;
   getSceneHeight(): number;
+  /** True only when the player is oil AND Oil Mastery is switched on. */
+  get masteryActive(): boolean;
+  /** Mastery enhancement id bound over the given ability slot, or null if that slot is unchanged. */
+  masteryBindFor(slot: string): string | null;
+  recordMasteryStat(key: string, amount: number): void;
 }
 
 // ── Internal types ───────────────────────────────────────────────────────────
@@ -46,6 +76,7 @@ interface Drone {
   shielded: boolean;
   healedByFirewall: boolean;
   meleeCooldownUntil: number;
+  healCdUntil: number;
   owner: 'player' | 'npc';
 }
 
@@ -91,6 +122,8 @@ interface ShieldGenerator {
   y: number;
   charged: boolean;
   chargedUntil: number;
+  scrap: number;
+  blockCount: number;
   owner: 'player' | 'npc';
 }
 
@@ -158,6 +191,20 @@ export class OilKit {
   // Shield Generator (F revamp)
   private playerShieldGen: ShieldGenerator | null = null;
 
+  // Turret (Oil Mastery)
+  private turretLastCastAt = -Infinity;
+  private turret: {
+    gfx: Phaser.GameObjects.Graphics;
+    laserGfx: Phaser.GameObjects.Graphics;
+    x: number;
+    y: number;
+    hp: number;
+    expiresAt: number;
+    mounted: boolean;
+    /** Milliseconds banked toward the next laser pulse while click is held. */
+    fireAccum: number;
+  } | null = null;
+
   // Train Morph (Q revamp)
   private playerTrainActive = false;
   private playerTrainEndsAt = 0;
@@ -206,6 +253,11 @@ export class OilKit {
     if (this.npcBarrel) { this.npcBarrel.gfx.destroy(); this.npcBarrel = null; }
 
     if (this.playerShieldGen) { this.playerShieldGen.gfx.destroy(); this.playerShieldGen.laserGfx.destroy(); this.playerShieldGen = null; }
+
+    this.clearTurret();
+    this.turretLastCastAt = -Infinity;
+    // droneArmorMult is rewritten every frame by updateDroneArray, and a freshly
+    // built Player already defaults to 1 — reset() runs before this match's Player exists.
 
     this.clearTrain();
     this.pointerWasDown = false;
@@ -259,6 +311,15 @@ export class OilKit {
   // ── Player input ──────────────────────────────────────────────────────────
 
   handleInput(time: number, delta: number, pointer: Phaser.Input.Pointer, mx: number, my: number): void {
+    if (this.arena.masteryActive) {
+      this.handleTurretInput(time, delta, pointer, mx, my);
+      // Mounted: the turret owns both the movement keys and the mouse button.
+      if (this.turret?.mounted) {
+        this.pointerWasDown = pointer.isDown;
+        return;
+      }
+    }
+
     if (this.arena.nukeChanneling && !this.playerOverdriveActive) return;
     if (this.playerTrainActive) {
       this.handleTrainInput();
@@ -302,8 +363,11 @@ export class OilKit {
     }
     this.pointerWasDown = pointer.isDown;
 
+    // A slot the Turret is bound over no longer fires its base ability.
+    const turretSlot = this.arena.masteryActive ? this.turretSlot() : null;
+
     // E: On a Roll (barrel)
-    if (Phaser.Input.Keyboard.JustDown(this.arena.eKey)) {
+    if (turretSlot !== 'e' && Phaser.Input.Keyboard.JustDown(this.arena.eKey)) {
       if (player.getCooldownRatio('barrel-roll') >= 1) {
         if (this.playerBarrel?.active) {
           this.explodeBarrel(this.playerBarrel, 'player', false);
@@ -315,7 +379,7 @@ export class OilKit {
     }
 
     // R: Drone Destroy (unchanged)
-    if (Phaser.Input.Keyboard.JustDown(this.arena.rKey)) {
+    if (turretSlot !== 'r' && Phaser.Input.Keyboard.JustDown(this.arena.rKey)) {
       if (player.getCooldownRatio('drone-destroy') >= 1 && this.playerDrones.length > 0) {
         this.doLaunchDrone(mx, my, 'player');
         player.startCooldown('drone-destroy');
@@ -323,7 +387,7 @@ export class OilKit {
     }
 
     // F: Shield Generator
-    if (Phaser.Input.Keyboard.JustDown(this.arena.fKey)) {
+    if (turretSlot !== 'f' && Phaser.Input.Keyboard.JustDown(this.arena.fKey)) {
       if (player.getCooldownRatio('shield-gen') >= 1) {
         this.doPlaceShieldGen(mx, my, 'player');
         player.startCooldown('shield-gen');
@@ -331,7 +395,7 @@ export class OilKit {
     }
 
     // Q: Train Morph
-    if (Phaser.Input.Keyboard.JustDown(this.arena.qKey)) {
+    if (turretSlot !== 'q' && Phaser.Input.Keyboard.JustDown(this.arena.qKey)) {
       if (player.getCooldownRatio('train-morph') >= 1 && !this.playerTrainActive) {
         this.doStartTrainMorph('player');
       }
@@ -361,6 +425,8 @@ export class OilKit {
       this.updateBarrel(this.playerBarrel, time, dt, 'player');
       this.updateShieldGen(time);
       this.updateTrain(time, delta);
+      this.updateDroneArray();
+      this.updateTurret(time, mouseX, mouseY);
     }
     if (isNpc) {
       this.updateDroneOrbits(this.npcDrones, this.arena.npc, 'npc', time, delta);
@@ -398,6 +464,19 @@ export class OilKit {
         caster.x + Math.cos(angle) * orbitR,
         caster.y + Math.sin(angle) * orbitR,
       );
+      if (owner === 'player' && this.playerShieldGen) {
+        const sg = this.playerShieldGen;
+        if (time >= drone.healCdUntil) {
+          const dsg = Phaser.Math.Distance.Between(drone.sprite.x, drone.sprite.y, sg.x, sg.y);
+          if (dsg < 22) {
+            if (sg.scrap > 0) { sg.scrap--; this.drawShieldGenGfx(sg); }
+            if (!sg.charged) { sg.charged = true; sg.chargedUntil = time + 5000; }
+            else { sg.chargedUntil = Math.max(sg.chargedUntil, time + 5000); }
+            drone.healCdUntil = time + 1500;
+            this.flashDroneHealRing(drone);
+          }
+        }
+      }
       const hasBioFuel = this.arena.hasPerk(drone.owner, 'bio-fuel');
       const fullThresh = hasBioFuel ? 4 : 3;
       const col = drone.shotsLeft >= fullThresh ? 0xffaa00 : drone.shotsLeft >= 2 ? 0xff6600 : 0xff2200;
@@ -443,7 +522,14 @@ export class OilKit {
       8, 0xffaa00, 0.9,
     ).setDepth(8);
     const shotsLeft = this.arena.hasPerk(owner, 'bio-fuel') ? 5 : 3;
-    drones.push({ sprite, shotsLeft, orbitAngle: spawnAngle, shielded: false, healedByFirewall: false, meleeCooldownUntil: 0, owner });
+    drones.push({ sprite, shotsLeft, orbitAngle: spawnAngle, shielded: false, healedByFirewall: false, meleeCooldownUntil: 0, healCdUntil: 0, owner });
+
+    if (owner === 'player' && this.arena.masteryActive) {
+      this.arena.showFloatingText(
+        caster.x, caster.y - 36,
+        `🛡️ Array ${Math.round(this.droneArrayResist() * 100)}%`, '#66ddff',
+      );
+    }
   }
 
   doCommandDrones(tx: number, ty: number, owner: 'player' | 'npc'): void {
@@ -509,10 +595,9 @@ export class OilKit {
       if (rUpgrade && owner === 'player') {
         for (const p of this.playerOilPuddles) {
           if (!p.ignited && Phaser.Math.Distance.Between(tx, ty, p.x, p.y) <= p.radius + 20) {
-            p.ignited = true;
+            this.ignitePuddle(p);
             const remaining = p.expiresAt - scene.time.now;
             p.expiresAt = scene.time.now + remaining * 0.5;
-            p.sprite.setFillStyle(0xff4400, 0.65);
           }
         }
       }
@@ -545,7 +630,7 @@ export class OilKit {
     const drones = owner === 'player' ? this.playerDrones : this.npcDrones;
     if (drones.length === 0) return;
     const drone = drones.pop()!;
-    const dmg = Math.max(5, drone.shotsLeft * 5);
+    const dmg = 20;
     const scene = this.arena.scene;
     scene.tweens.add({
       targets: drone.sprite, x: tx, y: ty, duration: 500, ease: 'Power2',
@@ -668,10 +753,7 @@ export class OilKit {
       const py = y + Phaser.Math.Between(-25, 25);
       const puddle = this.spawnOilPuddle(px, py, owner);
       // Click-explode: ignite these puddles
-      if (clickExplode && puddle) {
-        puddle.ignited = true;
-        puddle.sprite.setFillStyle(this.getPuddleColor(true), 0.65);
-      }
+      if (clickExplode && puddle) this.ignitePuddle(puddle);
     }
   }
 
@@ -689,6 +771,17 @@ export class OilKit {
     if (owner === 'player') this.playerOilPuddles.push(puddle);
     else this.npcOilPuddles.push(puddle);
     return puddle;
+  }
+
+  /**
+   * Single entry point for lighting a puddle, so Oil Mastery's ignite counter can't
+   * drift away from the puddles that actually caught fire.
+   */
+  private ignitePuddle(puddle: OilPuddle): void {
+    if (puddle.ignited) return;
+    puddle.ignited = true;
+    puddle.sprite.setFillStyle(this.getPuddleColor(true), 0.65);
+    if (puddle.owner === 'player') this.arena.recordMasteryStat('puddleIgnites', 1);
   }
 
   private getPuddleColor(ignited: boolean): number {
@@ -807,6 +900,8 @@ export class OilKit {
       gfx, laserGfx, x: tx, y: ty,
       charged: true,
       chargedUntil: this.arena.scene.time.now + 5000,
+      scrap: 0,
+      blockCount: 0,
       owner,
     };
     this.playerShieldGen = gen;
@@ -814,9 +909,28 @@ export class OilKit {
     this.arena.showFloatingText(tx, ty - 24, 'Shield Gen', '#44aacc');
   }
 
+  private lerpHex(c1: number, c2: number, t: number): number {
+    const r = Math.round(((c1 >> 16) & 0xff) * (1 - t) + ((c2 >> 16) & 0xff) * t);
+    const g = Math.round(((c1 >> 8) & 0xff) * (1 - t) + ((c2 >> 8) & 0xff) * t);
+    const b = Math.round((c1 & 0xff) * (1 - t) + (c2 & 0xff) * t);
+    return (r << 16) | (g << 8) | b;
+  }
+
+  private flashDroneHealRing(drone: Drone): void {
+    const ring = this.arena.scene.add.circle(drone.sprite.x, drone.sprite.y, 9, 0x44ff66, 0)
+      .setStrokeStyle(2, 0x44ff66, 0.95).setDepth((drone.sprite.depth ?? 7) + 1);
+    this.arena.scene.tweens.add({
+      targets: ring, alpha: 0, scaleX: 1.1, scaleY: 1.1, duration: 500,
+      onUpdate: () => { if (ring.active) ring.setPosition(drone.sprite.x, drone.sprite.y); },
+      onComplete: () => ring.destroy(),
+    });
+  }
+
   private drawShieldGenGfx(gen: ShieldGenerator): void {
     gen.gfx.clear();
-    const color = gen.charged ? 0x44aacc : 0x446666;
+    const darkness = Math.min(1, gen.scrap / 10);
+    const baseColor = gen.charged ? 0x44aacc : 0x446666;
+    const color = this.lerpHex(baseColor, 0x000000, darkness);
     const alpha = gen.charged ? 0.9 : 0.5;
     gen.gfx.lineStyle(3, color, alpha);
     const sides = 6;
@@ -831,6 +945,12 @@ export class OilKit {
     }
     gen.gfx.fillStyle(color, 0.2);
     gen.gfx.fillCircle(gen.x, gen.y, 14);
+    if (gen.charged) {
+      gen.gfx.fillStyle(0x44aacc, 0.06);
+      gen.gfx.fillCircle(gen.x, gen.y, 150);
+      gen.gfx.lineStyle(1, 0x44aacc, 0.25);
+      gen.gfx.strokeCircle(gen.x, gen.y, 150);
+    }
   }
 
   private updateShieldGen(time: number): void {
@@ -856,6 +976,14 @@ export class OilKit {
         // Destroy projectile
         proj.setActive(false).setVisible(false);
         (proj.body as Phaser.Physics.Arcade.Body).stop();
+        this.arena.recordMasteryStat('shieldBlocks', 1);
+        if (this.arena.hasUpgrade('f')) {
+          gen.blockCount++;
+          if (gen.blockCount % 2 === 0) {
+            gen.scrap++;
+            this.drawShieldGenGfx(gen);
+          }
+        }
         // Laser flash
         gen.laserGfx.lineStyle(3, 0x44aacc, 0.9);
         gen.laserGfx.lineBetween(gen.x, gen.y, proj.x, proj.y);
@@ -1114,33 +1242,27 @@ export class OilKit {
     if (this.playerTrainPuddleAccum >= puddleInterval) {
       this.playerTrainPuddleAccum -= puddleInterval;
       const puddle = this.spawnOilPuddle(player.x, player.y, 'player');
-      if (this.trainQPlusActive && puddle) {
-        puddle.ignited = true;
-        puddle.sprite.setFillStyle(0xff4400, 0.65);
-      }
+      if (this.trainQPlusActive && puddle) this.ignitePuddle(puddle);
     }
 
-    // Contact damage on NPC
-    const npc = this.arena.npc;
-    if (npc.hp > 0) {
-      // Head: shared 500ms cooldown
-      this.playerTrainHitAccum += delta;
-      if (this.playerTrainHitAccum >= 500) {
-        this.playerTrainHitAccum = 0;
-        const headDist = Phaser.Math.Distance.Between(player.x, player.y, npc.x, npc.y);
-        if (headDist <= 28) {
-          npc.takeDamage(Math.round(8 * this.trainDamageMult));
-          this.arena.spawnHitFlash(npc.x, npc.y, 0xff8800);
-          this.arena.showFloatingText(npc.x, npc.y - 30, `${Math.round(8 * this.trainDamageMult)}`, '#ff8800');
-        }
-      }
-      // Each segment has its own 500ms cooldown
-      for (const seg of this.playerTrainSegments) {
-        if (time - seg.lastHitAt >= 500 && Phaser.Math.Distance.Between(seg.x, seg.y, npc.x, npc.y) <= 20) {
-          seg.lastHitAt = time;
-          npc.takeDamage(Math.round(3 * this.trainDamageMult));
-          this.arena.spawnHitFlash(npc.x, npc.y, 0xff8800);
-        }
+    // Contact damage on everything the train runs through
+    // Head: shared 500ms cooldown
+    this.playerTrainHitAccum += delta;
+    if (this.playerTrainHitAccum >= 500) {
+      this.playerTrainHitAccum = 0;
+      const headDmg = Math.round(8 * this.trainDamageMult);
+      const res = this.arena.damagePlayerTargetsCounted(player.x, player.y, 28, headDmg, 0xff8800);
+      if (res.hits > 0) this.arena.showFloatingText(player.x, player.y - 30, `${headDmg}`, '#ff8800');
+      if (res.kills > 0) this.arena.recordMasteryStat('trainKills', res.kills);
+    }
+    // Each segment has its own 500ms cooldown
+    const segDmg = Math.round(3 * this.trainDamageMult);
+    for (const seg of this.playerTrainSegments) {
+      if (time - seg.lastHitAt < 500) continue;
+      const res = this.arena.damagePlayerTargetsCounted(seg.x, seg.y, 20, segDmg, 0xff8800);
+      if (res.hits > 0) {
+        seg.lastHitAt = time;
+        if (res.kills > 0) this.arena.recordMasteryStat('trainKills', res.kills);
       }
     }
 
@@ -1160,6 +1282,7 @@ export class OilKit {
           this.trainQPlusActive = true;
           this.playerTrainEndsAt += 5000;
           this.trainDamageMult *= 2;
+          this.arena.recordMasteryStat('coalOverloads', 1);
           this.arena.showFloatingText(player.x, player.y - 50, 'Train Overload!', '#ff4400');
         }
       }
@@ -1199,6 +1322,246 @@ export class OilKit {
     for (const c of this.coalPickups) c.gfx.destroy();
     this.coalPickups = [];
     this.playerTrainCollectedCoal = 0;
+  }
+
+  // ── Oil Mastery: Drone Array ──────────────────────────────────────────────
+
+  /**
+   * Drone Array: 10% damage resistance per orbiting drone, refreshed every frame so
+   * the bonus falls off the moment a drone is spent, launched, or eaten by the train.
+   */
+  private updateDroneArray(): void {
+    this.arena.player.droneArmorMult = this.arena.masteryActive
+      ? Math.max(0, 1 - DRONE_ARRAY_RESIST_PER_DRONE * this.playerDrones.length)
+      : 1;
+  }
+
+  /** Resistance the array is currently granting, as a 0–1 fraction (for HUD text). */
+  private droneArrayResist(): number {
+    return Math.min(1, DRONE_ARRAY_RESIST_PER_DRONE * this.playerDrones.length);
+  }
+
+  // ── Oil Mastery: Turret ───────────────────────────────────────────────────
+
+  /** The slot the Turret is bound over this match, or null when it is unbound. */
+  private turretSlot(): 'e' | 'r' | 'f' | 'q' | null {
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      if (this.arena.masteryBindFor(s) === 'turret') return s;
+    }
+    return null;
+  }
+
+  private turretKey(slot: 'e' | 'r' | 'f' | 'q'): Phaser.Input.Keyboard.Key {
+    return slot === 'e' ? this.arena.eKey
+      : slot === 'r' ? this.arena.rKey
+      : slot === 'f' ? this.arena.fKey
+      : this.arena.qKey;
+  }
+
+  /** 0 = just cast, 1 = ready. Drives the HUD bar for the bound slot. */
+  getTurretCooldownRatio(time: number): number {
+    return Math.min(1, (time - this.turretLastCastAt) / TURRET_COOLDOWN_MS);
+  }
+
+  isTurretMounted(): boolean {
+    return this.turret?.mounted ?? false;
+  }
+
+  private handleTurretInput(
+    time: number, delta: number, pointer: Phaser.Input.Pointer, mx: number, my: number,
+  ): void {
+    const slot = this.turretSlot();
+    if (!slot) return;
+
+    // Recast is a three-way switch: summon → mount → dismount.
+    if (Phaser.Input.Keyboard.JustDown(this.turretKey(slot)) && !this.playerTrainActive) {
+      if (this.turret) this.toggleTurretMount();
+      else this.trySummonTurret(time, mx, my);
+    }
+
+    if (!this.turret) return;
+    if (this.turret.mounted && pointer.isDown) {
+      this.turret.fireAccum += delta;
+      while (this.turret.fireAccum >= TURRET_FIRE_INTERVAL_MS) {
+        this.turret.fireAccum -= TURRET_FIRE_INTERVAL_MS;
+        this.fireTurretLaser(mx, my);
+      }
+    } else {
+      // Bank a full interval so the first shot of a hold lands instantly.
+      this.turret.fireAccum = TURRET_FIRE_INTERVAL_MS;
+    }
+  }
+
+  private trySummonTurret(time: number, tx: number, ty: number): void {
+    const player = this.arena.player;
+    if (time - this.turretLastCastAt < TURRET_COOLDOWN_MS) return;
+    if (this.playerDrones.length < TURRET_DRONE_COST) {
+      this.arena.showFloatingText(player.x, player.y - 40, `Need ${TURRET_DRONE_COST} Drones`, '#888888');
+      return;
+    }
+
+    for (let i = 0; i < TURRET_DRONE_COST; i++) {
+      const drone = this.playerDrones.pop();
+      if (drone) drone.sprite.destroy();
+    }
+    this.turretLastCastAt = time;
+
+    this.turret = {
+      // Depth 4 sits under the fighters (depth 5) so walking over the turret never hides you.
+      gfx: this.arena.scene.add.graphics().setDepth(4),
+      laserGfx: this.arena.scene.add.graphics().setDepth(9),
+      x: tx, y: ty,
+      hp: TURRET_MAX_HP,
+      expiresAt: time + TURRET_DURATION_MS,
+      mounted: false,
+      fireAccum: TURRET_FIRE_INTERVAL_MS,
+    };
+    this.arena.showFloatingText(tx, ty - 52, '🔫 Turret!', '#66ddff');
+  }
+
+  private toggleTurretMount(): void {
+    const t = this.turret;
+    if (!t) return;
+    const player = this.arena.player;
+
+    if (t.mounted) {
+      t.mounted = false;
+      this.setMountAbsorber(false);
+      this.arena.showFloatingText(player.x, player.y - 40, 'Dismount', '#66ddff');
+      return;
+    }
+
+    if (Phaser.Math.Distance.Between(player.x, player.y, t.x, t.y) > TURRET_MOUNT_RANGE) {
+      this.arena.showFloatingText(player.x, player.y - 40, 'Too Far', '#888888');
+      return;
+    }
+    t.mounted = true;
+    t.fireAccum = TURRET_FIRE_INTERVAL_MS;
+    this.setMountAbsorber(true);
+    this.arena.showFloatingText(t.x, t.y - 52, 'Mounted!', '#66ddff');
+  }
+
+  /**
+   * While mounted the turret eats every hit aimed at the player and pays for it out of
+   * its own HP. This runs through Fighter.damageAbsorber rather than the per-frame
+   * projectile scan below: the scan only catches shots on the frames it happens to run,
+   * and the physics overlap that damages the player can resolve first. The absorber is
+   * the only interception point that can't be raced, and it covers melee and AoE too.
+   */
+  private setMountAbsorber(on: boolean): void {
+    const player = this.arena.player;
+    if (!on) {
+      player.damageAbsorber = null;
+      return;
+    }
+    player.damageAbsorber = (amount: number) => {
+      const t = this.turret;
+      if (!t || !t.mounted) return false;
+      t.hp -= amount;
+      this.arena.spawnHitFlash(t.x, t.y, TURRET_COLOR);
+      this.arena.showFloatingText(t.x, t.y - 52, `-${amount}`, '#ff6666');
+      if (t.hp <= 0) this.destroyTurret('Turret Destroyed!', '#ff6666');
+      return true;
+    };
+  }
+
+  private fireTurretLaser(mx: number, my: number): void {
+    const t = this.turret;
+    if (!t) return;
+    t.laserGfx.setAlpha(1);
+    t.laserGfx.lineStyle(2, TURRET_COLOR, 0.85);
+    t.laserGfx.lineBetween(t.x, t.y, mx, my);
+    this.arena.damagePlayerTargets(mx, my, TURRET_LASER_RADIUS, TURRET_LASER_DAMAGE, TURRET_COLOR);
+  }
+
+  private updateTurret(time: number, mouseX: number, mouseY: number): void {
+    const t = this.turret;
+    if (!t) return;
+
+    if (time > t.expiresAt) {
+      this.destroyTurret('Turret Expired', '#888888');
+      return;
+    }
+
+    // Enemy fire that reaches the turret stops there — that is what the 75 HP is for.
+    for (const go of this.arena.projectiles.getChildren()) {
+      const proj = go as Projectile;
+      if (!proj.active || proj.isFromPlayer) continue;
+      if (Phaser.Math.Distance.Between(proj.x, proj.y, t.x, t.y) > TURRET_BLOCK_RADIUS) continue;
+      proj.setActive(false).setVisible(false);
+      (proj.body as Phaser.Physics.Arcade.Body).stop();
+      t.hp -= proj.damage;
+      this.arena.spawnHitFlash(t.x, t.y, TURRET_COLOR);
+      this.arena.showFloatingText(t.x, t.y - 52, `-${proj.damage}`, '#ff6666');
+      if (t.hp <= 0) {
+        this.destroyTurret('Turret Destroyed!', '#ff6666');
+        return;
+      }
+    }
+
+    // Mounted: pinned to the turret, aiming with the mouse.
+    if (t.mounted) {
+      const player = this.arena.player;
+      (player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+      player.setPosition(t.x, t.y);
+    }
+
+    this.drawTurret(t, mouseX, mouseY);
+    // Laser strokes are drawn as they fire, then wiped the frame after.
+    this.arena.scene.tweens.add({
+      targets: t.laserGfx, alpha: 0, duration: 60,
+      onComplete: () => { if (this.turret === t) { t.laserGfx.setAlpha(1); t.laserGfx.clear(); } },
+    });
+  }
+
+  private drawTurret(t: NonNullable<OilKit['turret']>, mouseX: number, mouseY: number): void {
+    t.gfx.clear();
+    const bodyColor = t.mounted ? TURRET_COLOR : 0x336677;
+
+    // Base plate
+    t.gfx.fillStyle(0x1a1a1a, 0.95);
+    t.gfx.fillCircle(t.x, t.y, TURRET_RADIUS);
+    t.gfx.lineStyle(3, bodyColor, 0.95);
+    t.gfx.strokeCircle(t.x, t.y, TURRET_RADIUS);
+
+    // Barrel, tracking the cursor
+    const angle = Math.atan2(mouseY - t.y, mouseX - t.x);
+    t.gfx.lineStyle(7, bodyColor, 0.95);
+    t.gfx.lineBetween(
+      t.x, t.y,
+      t.x + Math.cos(angle) * (TURRET_RADIUS + 16),
+      t.y + Math.sin(angle) * (TURRET_RADIUS + 16),
+    );
+
+    // Health bar
+    const barW = TURRET_RADIUS * 2;
+    const barY = t.y - TURRET_RADIUS - 10;
+    const ratio = Math.max(0, t.hp / TURRET_MAX_HP);
+    t.gfx.fillStyle(0x000000, 0.7);
+    t.gfx.fillRect(t.x - barW / 2, barY, barW, 5);
+    t.gfx.fillStyle(ratio > 0.35 ? 0x44dd66 : 0xdd4444, 0.95);
+    t.gfx.fillRect(t.x - barW / 2, barY, barW * ratio, 5);
+  }
+
+  private destroyTurret(label: string, color: string): void {
+    const t = this.turret;
+    if (!t) return;
+    this.arena.showFloatingText(t.x, t.y - 52, label, color);
+    const boom = this.arena.scene.add.circle(t.x, t.y, 10, TURRET_COLOR, 0.7).setDepth(9);
+    this.arena.scene.tweens.add({
+      targets: boom, scaleX: 4, scaleY: 4, alpha: 0, duration: 320,
+      onComplete: () => boom.destroy(),
+    });
+    this.clearTurret();
+  }
+
+  /** Single teardown path — every way the turret can end funnels through here. */
+  private clearTurret(): void {
+    if (!this.turret) return;
+    if (this.turret.mounted) this.setMountAbsorber(false);
+    this.turret.gfx.destroy();
+    this.turret.laserGfx.destroy();
+    this.turret = null;
   }
 
   // ── NPC dispatchers (called from buildNpcContext) ─────────────────────────

@@ -1,4 +1,9 @@
-const STORAGE_KEY = 'elemental_save';
+import { saveKey } from './Cheats';
+
+const STORAGE_BASE = 'elemental_save';
+
+// Resolved per call, not cached — the key changes when cheat mode is toggled.
+const storageKey = () => saveKey(STORAGE_BASE);
 
 interface SaveData {
   shards: number;
@@ -18,11 +23,14 @@ interface SaveData {
   unlockedMutations: string[];       // mutation IDs explicitly unlocked (excludes unlockedByDefault ones)
   infinityBestFightNormal: number;   // furthest fight reached in Infinity (normal)
   infinityBestFightHard: number;     // furthest fight reached in Infinity (hard)
+  masteryProgress: Record<string, Record<string, number>>; // elementId -> statKey -> count
+  masteryEnabled: Record<string, boolean>;                 // elementId -> enabled
+  masteryBinds: Record<string, Record<string, string>>;    // elementId -> slot -> enhancement id
 }
 
 function load(): SaveData {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey());
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<SaveData>;
       const d: SaveData = {
@@ -43,6 +51,9 @@ function load(): SaveData {
         unlockedMutations: parsed.unlockedMutations ?? [],
         infinityBestFightNormal: parsed.infinityBestFightNormal ?? 0,
         infinityBestFightHard: parsed.infinityBestFightHard ?? 0,
+        masteryProgress: parsed.masteryProgress ?? {},
+        masteryEnabled: parsed.masteryEnabled ?? {},
+        masteryBinds: parsed.masteryBinds ?? {},
       };
       // Sanity: clear equipped perk if no longer unlocked
       for (const el of Object.keys(d.equippedPerks)) {
@@ -55,12 +66,12 @@ function load(): SaveData {
   } catch {
     // corrupted save — start fresh
   }
-  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0 };
+  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {} };
 }
 
 function save(data: SaveData): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    localStorage.setItem(storageKey(), JSON.stringify(data));
   } catch {
     // storage unavailable — silently ignore
   }
@@ -309,4 +320,62 @@ export function setInfinityBestFight(fightNum: number, hardMode: boolean): void 
       save(data);
     }
   }
+}
+
+export function getMasteryStat(elementId: string, key: string): number {
+  return load().masteryProgress[elementId]?.[key] ?? 0;
+}
+
+export function addMasteryStat(elementId: string, key: string, amount: number): void {
+  const data = load();
+  const el = { ...(data.masteryProgress[elementId] ?? {}) };
+  el[key] = (el[key] ?? 0) + amount;
+  data.masteryProgress = { ...data.masteryProgress, [elementId]: el };
+  save(data);
+}
+
+export function recordMasteryBest(elementId: string, key: string, value: number): void {
+  const data = load();
+  const el = { ...(data.masteryProgress[elementId] ?? {}) };
+  if (value > (el[key] ?? 0)) {
+    el[key] = value;
+    data.masteryProgress = { ...data.masteryProgress, [elementId]: el };
+    save(data);
+  }
+}
+
+export function isMasteryEnabled(elementId: string): boolean {
+  return load().masteryEnabled[elementId] ?? false;
+}
+
+export function setMasteryEnabled(elementId: string, on: boolean): void {
+  const data = load();
+  data.masteryEnabled = { ...data.masteryEnabled, [elementId]: on };
+  save(data);
+}
+
+/** slot ('e'/'r'/'f'/'q') -> mastery enhancement id, for one element. */
+export function getMasteryBinds(elementId: string): Record<string, string> {
+  return load().masteryBinds[elementId] ?? {};
+}
+
+/** Binds a mastery ability onto a slot, replacing whatever ability that slot held. */
+export function setMasteryBind(elementId: string, slot: string, enhId: string): void {
+  const data = load();
+  const binds: Record<string, string> = { ...(data.masteryBinds[elementId] ?? {}) };
+  // An enhancement lives in at most one slot — clear its previous home first.
+  for (const s of Object.keys(binds)) {
+    if (binds[s] === enhId) delete binds[s];
+  }
+  binds[slot] = enhId;
+  data.masteryBinds = { ...data.masteryBinds, [elementId]: binds };
+  save(data);
+}
+
+export function clearMasteryBind(elementId: string, slot: string): void {
+  const data = load();
+  const binds: Record<string, string> = { ...(data.masteryBinds[elementId] ?? {}) };
+  delete binds[slot];
+  data.masteryBinds = { ...data.masteryBinds, [elementId]: binds };
+  save(data);
 }

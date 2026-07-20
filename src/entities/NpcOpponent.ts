@@ -4,6 +4,7 @@ import { Element } from '../elements/Element';
 import { CastContext } from '../elements/Ability';
 import { Projectile } from '../combat/Projectile';
 import { slimeElement } from '../elements/slime';
+import { HP_SCALE } from '../data/Balance';
 
 type AiState = 'chase' | 'attack';
 
@@ -18,11 +19,11 @@ export interface DifficultyConfig {
 }
 
 export const DIFFICULTY_PRESETS: DifficultyConfig[] = [
-  { level: 1, label: 'Easy',      hp:  80, speed: 100, aimOffsetDeg: 50, dodgeRange:   0, castSkipChance: 0.70 },
-  { level: 2, label: 'Normal',    hp: 140, speed: 130, aimOffsetDeg: 30, dodgeRange:   0, castSkipChance: 0.45 },
-  { level: 3, label: 'Hard',      hp: 200, speed: 148, aimOffsetDeg: 14, dodgeRange:   0, castSkipChance: 0.20 },
-  { level: 4, label: 'Expert',    hp: 280, speed: 162, aimOffsetDeg:  5, dodgeRange: 100, castSkipChance: 0.05 },
-  { level: 5, label: 'Nightmare', hp: 360, speed: 175, aimOffsetDeg:  1, dodgeRange: 160, castSkipChance: 0    },
+  { level: 1, label: 'Easy',      hp:  80 * HP_SCALE, speed: 100, aimOffsetDeg: 50, dodgeRange:   0, castSkipChance: 0.70 },
+  { level: 2, label: 'Normal',    hp: 140 * HP_SCALE, speed: 130, aimOffsetDeg: 30, dodgeRange:   0, castSkipChance: 0.45 },
+  { level: 3, label: 'Hard',      hp: 200 * HP_SCALE, speed: 148, aimOffsetDeg: 14, dodgeRange:   0, castSkipChance: 0.20 },
+  { level: 4, label: 'Expert',    hp: 280 * HP_SCALE, speed: 162, aimOffsetDeg:  5, dodgeRange: 100, castSkipChance: 0.05 },
+  { level: 5, label: 'Nightmare', hp: 360 * HP_SCALE, speed: 175, aimOffsetDeg:  1, dodgeRange: 160, castSkipChance: 0    },
 ];
 
 export interface NpcAiState {

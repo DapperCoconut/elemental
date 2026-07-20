@@ -26,6 +26,8 @@ export class GameOverScene extends Phaser.Scene {
     curseShardMult?: number;
     gauntletElement?: string;
     hardMode?: boolean;
+    online?: boolean;
+    onlineReason?: string;
   }): void {
     const { width, height } = this.scale;
     const cx = width / 2;
@@ -36,6 +38,7 @@ export class GameOverScene extends Phaser.Scene {
     const isInvasion = data.mode === 'invasion';
     const isCampaign = !!data.campaign;
     const isInfinityRun = !!data.isInfinityRun;
+    const isOnline = !!data.online;
 
     // Infinity run: award shards on loss and update best-fight record
     if (isInfinityRun && (data.infinityShards ?? 0) > 0) {
@@ -45,7 +48,7 @@ export class GameOverScene extends Phaser.Scene {
       PlayerData.setInfinityBestFight(data.infinityFightsCleared!, data.hardMode ?? false);
     }
 
-    const baseShard = (!isInvasion && !isCampaign && !isInfinityRun && data.playerWon) ? SHARD_REWARDS[data.difficulty - 1] : 0;
+    const baseShard = (!isInvasion && !isCampaign && !isInfinityRun && !isOnline && data.playerWon) ? SHARD_REWARDS[data.difficulty - 1] : 0;
     const shardsEarned = Math.round(baseShard * (data.rewardMult ?? 1));
     if (shardsEarned > 0) {
       PlayerData.addShards(shardsEarned);
@@ -54,7 +57,7 @@ export class GameOverScene extends Phaser.Scene {
     // Chance to unlock a random locked mutation on victory.
     // Mutations with unlockChance < 0.10 are "rare" and rolled independently first.
     let unlockedMutation: (typeof MUTATIONS)[number] | null = null;
-    if (data.playerWon && !isInvasion && !isCampaign) {
+    if (data.playerWon && !isInvasion && !isCampaign && !isOnline) {
       const lockedAll = MUTATIONS.filter((m) => !PlayerData.isMutationUnlocked(m.id));
       const rare = lockedAll.filter((m) => (m.unlockChance ?? 0.10) < 0.10);
       const normal = lockedAll.filter((m) => (m.unlockChance ?? 0.10) >= 0.10);
@@ -87,7 +90,13 @@ export class GameOverScene extends Phaser.Scene {
     }
 
     let title: string, subtitle: string, titleColor: string;
-    if (isInfinityRun) {
+    if (isOnline && isInvasion) {
+      [title, subtitle, titleColor] = ['TEAM DOWN', `Waves cleared together: ${data.wavesCompleted ?? 0}`, '#cc44ff'];
+    } else if (isOnline) {
+      [title, subtitle, titleColor] = data.playerWon
+        ? ['VICTORY!', data.onlineReason ?? 'You bested your rival! ⚔️', '#ff8800']
+        : ['DEFEATED', data.onlineReason ?? 'Your rival takes this round…', '#44aaff'];
+    } else if (isInfinityRun) {
       const fightsCleared = data.infinityFightsCleared ?? 0;
       const bestFight = PlayerData.getInfinityBestFight(data.hardMode ?? false);
       const isNewBest = fightsCleared >= bestFight;
@@ -179,7 +188,7 @@ export class GameOverScene extends Phaser.Scene {
       .setStrokeStyle(2, 0x666688)
       .setInteractive({ useHandCursor: true });
 
-    const btnText = data.campaign ? 'BACK TO WORLD' : 'PLAY AGAIN';
+    const btnText = isOnline ? 'BACK TO LOBBY' : data.campaign ? 'BACK TO WORLD' : 'PLAY AGAIN';
     const btnLabel = this.add.text(cx, btnY, btnText, {
       fontSize: '24px',
       fontFamily: '"Arial Black", sans-serif',
@@ -187,7 +196,9 @@ export class GameOverScene extends Phaser.Scene {
     }).setOrigin(0.5);
 
     const goBack = () => {
-      if (data.campaign) {
+      if (isOnline) {
+        this.scene.start('OnlineLobbyScene');
+      } else if (data.campaign) {
         this.scene.start('CampaignWorldScene', {
           worldId: data.campaign!.worldId,
           slotIdx: data.campaign!.slot,

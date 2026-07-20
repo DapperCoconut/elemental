@@ -4,10 +4,10 @@ import { Ability } from './Ability';
 const bash: Ability = {
   id: 'bash',
   name: 'Bash',
-  description: 'Dash forward: shield hit = 30 dmg, rock launch, or stab (15 dmg) if shieldless',
+  description: 'Hold to charge, release to dash: shield hit = 30-60 dmg (stab 15-30 if shieldless), rock launch if aimed at a rock. Full charge stuns on hit',
   displayKey: 'Click',
   cooldown: 1400,
-  cast(ctx) { void ctx; }, // Handled in ArenaScene
+  cast(ctx) { void ctx; }, // Handled in EarthKit
 };
 
 const repair: Ability = {
@@ -16,7 +16,7 @@ const repair: Ability = {
   description: 'Slow 20% for 3s, then: respawn/heal/enhance shield, or heal Golem 50 HP',
   displayKey: 'E',
   cooldown: 20000,
-  cast(ctx) { void ctx; }, // Handled in ArenaScene
+  cast(ctx) { void ctx; }, // Handled in EarthKit
 };
 
 const rockDance: Ability = {
@@ -25,7 +25,7 @@ const rockDance: Ability = {
   description: '4 orbiting rocks (8 dmg each, 0.5s cd). Bash a rock to launch it (40 dmg + 3s stun)',
   displayKey: 'R',
   cooldown: 12000,
-  cast(ctx) { void ctx; }, // Handled in ArenaScene
+  cast(ctx) { void ctx; }, // Handled in EarthKit
 };
 
 const quake: Ability = {
@@ -34,7 +34,7 @@ const quake: Ability = {
   description: 'Fractured zone 5s: occasionally trips enemies (5 dmg + 0.5s stun)',
   displayKey: 'F',
   cooldown: 10000,
-  cast(ctx) { void ctx; }, // Handled in ArenaScene
+  cast(ctx) { void ctx; }, // Handled in EarthKit
 };
 
 const golemRitual: Ability = {
@@ -44,7 +44,7 @@ const golemRitual: Ability = {
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 45000,
-  cast(ctx) { void ctx; }, // Handled in ArenaScene
+  cast(ctx) { void ctx; }, // Handled in EarthKit
 };
 
 export const earthElement: Element = {

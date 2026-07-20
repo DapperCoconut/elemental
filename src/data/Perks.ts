@@ -304,7 +304,7 @@ export const ALL_PERKS: ElementPerks[] = [
         emoji: '🍄',
         color: 0xaa66dd,
         description:
-          'Your plants become mushrooms (50 HP) that spawn mini-mushrooms every 2s. Grow fires heal projectiles from every mushroom; Thorns fires damage projectiles. Upgraded Grow/Thorns convert the nearest mushroom into a healing/poisonous mushroom that AOE heals or damages every 2s.',
+          'E has no cooldown, but planting costs you 15 HP. Your plants become mushrooms that start at 50% HP — cluster them and every mushroom nearby grows stronger, up to 150% at five.',
         ingredients: ['water', 'fire', 'life', 'earth', 'air'],
         tier: 'penta',
         elementId: 'life',

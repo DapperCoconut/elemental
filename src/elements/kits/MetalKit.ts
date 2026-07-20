@@ -63,18 +63,18 @@ export interface MetalArenaApi {
 
 // ── MetalKit ───────────────────────────────────────────────────────────────
 
-const BASE_GUNS = ['flintlock', 'rifle', 'grenade-launcher', 'flamethrower', 'shotgun', 'rpg', 'taser', 'minigun'];
-const GUN_NAMES: Record<string, string> = {
+export const BASE_GUNS = ['flintlock', 'rifle', 'grenade-launcher', 'flamethrower', 'shotgun', 'rpg', 'taser', 'minigun'];
+export const GUN_NAMES: Record<string, string> = {
   'flintlock': 'Flintlock', 'rifle': 'Rifle', 'grenade-launcher': 'Grenade Launcher',
   'flamethrower': 'Flamethrower', 'shotgun': 'Shotgun', 'rpg': 'RPG',
   'taser': 'Taser', 'minigun': 'Minigun', 'sniper': 'Sniper',
 };
-const GUN_EMOJIS: Record<string, string> = {
+export const GUN_EMOJIS: Record<string, string> = {
   'flintlock': '🔫', 'rifle': '🎯', 'grenade-launcher': '💣',
   'flamethrower': '🔥', 'shotgun': '🔱', 'rpg': '🚀',
   'taser': '⚡', 'minigun': '🌀', 'sniper': '🎖️',
 };
-const GUN_DESCS: Record<string, string> = {
+export const GUN_DESCS: Record<string, string> = {
   'flintlock':        'Hitscan — spawns blood puddle on hit (20 dmg)',
   'rifle':            '3 quick hitscan shots (8 dmg each)',
   'grenade-launcher': 'Arcing grenade — 35 dmg + AoE',
@@ -318,12 +318,14 @@ export class MetalKit {
         this.arena.spawnHitFlash(target.x, target.y, 0xaabbcc);
         this.applyMetalAggressiveBleeding(owner, 5000);
         this.arena.showFloatingText(caster.x, caster.y - 36, '🗡️ SLASH', '#aabbcc');
-        const kbDx = target.x - caster.x, kbDy = target.y - caster.y;
-        const kbLen = Math.sqrt(kbDx * kbDx + kbDy * kbDy) || 1;
-        (target.body as Phaser.Physics.Arcade.Body).setVelocity((kbDx / kbLen) * 350, (kbDy / kbLen) * 350);
-        (scene as Phaser.Scene & { time: Phaser.Time.Clock }).time.delayedCall(200, () => {
-          if (target.active) (target.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-        });
+        if (!target.knockbackImmune) {
+          const kbDx = target.x - caster.x, kbDy = target.y - caster.y;
+          const kbLen = Math.sqrt(kbDx * kbDx + kbDy * kbDy) || 1;
+          (target.body as Phaser.Physics.Arcade.Body).setVelocity((kbDx / kbLen) * 350, (kbDy / kbLen) * 350);
+          (scene as Phaser.Scene & { time: Phaser.Time.Clock }).time.delayedCall(200, () => {
+            if (target.active) (target.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+          });
+        }
       }
     }
   }

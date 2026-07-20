@@ -91,10 +91,9 @@ interface FerrymanState {
   ringX: number;
   ringY: number;
   ringRadius: number;
-  ringVisible: boolean;
-  ringActiveUntil: number;
-  ringReappearAt: number;
   playerInsideRing: boolean;
+  invincibleUntil: number;
+  invincibleCooldownUntil: number;
 }
 
 // ── Arena API ─────────────────────────────────────────────────────────────────
@@ -1593,7 +1592,7 @@ export class DeathKit {
 
   private spawnFerryman(): void {
     const { scene } = this.arena;
-    const ringX = 165, ringY = 52, ringRadius = 28;
+    const ringX = 97, ringY = 100, ringRadius = 28;
 
     const boatGfx = scene.add.graphics().setDepth(3);
     // Boat hull
@@ -1610,10 +1609,9 @@ export class DeathKit {
     this.ferryman = {
       boatGfx, ringGfx,
       ringX, ringY, ringRadius,
-      ringVisible: true,
-      ringActiveUntil: 0,
-      ringReappearAt: 0,
       playerInsideRing: false,
+      invincibleUntil: 0,
+      invincibleCooldownUntil: 0,
     };
   }
 
@@ -1630,45 +1628,44 @@ export class DeathKit {
     const f = this.ferryman;
     const { player } = this.arena;
 
-    // Ring reappear check
-    if (!f.ringVisible && f.ringReappearAt > 0 && time >= f.ringReappearAt) {
-      f.ringVisible = true;
-      f.playerInsideRing = false;
-      f.ringActiveUntil = 0;
-      f.ringReappearAt = 0;
-      this.drawFerrymanRing(f.ringGfx, f.ringX, f.ringY, f.ringRadius, 0x44ff88, 0.7);
-    }
-
-    // Ring active timer expiry
-    if (f.ringActiveUntil > 0 && time >= f.ringActiveUntil) {
-      f.ringVisible = false;
-      f.ringGfx.clear();
-      f.ringReappearAt = time + 8000;
-      f.playerInsideRing = false;
-      this.ferrymanInRingActive = false;
-      player.isInvincible = false; // river will re-set it next frame if still in river
-      this.closeFerrymanShop();
-      return;
-    }
-
-    if (!f.ringVisible) return;
-
-    // Player proximity check
+    // Player proximity check — the ring is permanent and never disappears
     const d = Phaser.Math.Distance.Between(player.x, player.y, f.ringX, f.ringY);
-    if (d <= f.ringRadius) {
-      if (!f.playerInsideRing) {
-        f.playerInsideRing = true;
-        f.ringActiveUntil = time + 3000;
-        this.ferrymanInRingActive = true;
-        this.drawFerrymanRing(f.ringGfx, f.ringX, f.ringY, f.ringRadius, 0x44ff88, 1.0);
+    const inside = d <= f.ringRadius;
+
+    if (inside && !f.playerInsideRing) {
+      f.playerInsideRing = true;
+      this.ferrymanInRingActive = true;
+      this.drawFerrymanRing(f.ringGfx, f.ringX, f.ringY, f.ringRadius, 0x44ff88, 1.0);
+      if (f.invincibleUntil === 0 && time >= f.invincibleCooldownUntil) {
+        f.invincibleUntil = time + 5000;
+        this.arena.showFloatingText(player.x, player.y - 35, '🛡 Invincible!', '#44ff88');
+      } else if (f.invincibleUntil === 0) {
         this.arena.showFloatingText(player.x, player.y - 35, '⛵ Press E for shop', '#44ff88');
       }
-      player.isInvincible = true;
-    } else {
-      if (f.playerInsideRing && f.ringActiveUntil === 0) {
-        // Stepped out before timer expired — should not happen since timer set on entry
+    } else if (!inside && f.playerInsideRing) {
+      f.playerInsideRing = false;
+      this.ferrymanInRingActive = false;
+      this.drawFerrymanRing(f.ringGfx, f.ringX, f.ringY, f.ringRadius, 0x44ff88, 0.7);
+      this.closeFerrymanShop();
+      if (f.invincibleUntil > 0) {
+        f.invincibleUntil = 0;
+        f.invincibleCooldownUntil = time + 30000;
+        player.isInvincible = false;
+        player.clearTint();
       }
-      if (!f.playerInsideRing) this.ferrymanInRingActive = false;
+    }
+
+    // Invincibility window — capped at 5s even if the player stays in the ring
+    if (f.invincibleUntil > 0) {
+      if (time >= f.invincibleUntil) {
+        f.invincibleUntil = 0;
+        f.invincibleCooldownUntil = time + 30000;
+        player.isInvincible = false;
+        player.clearTint();
+      } else {
+        player.isInvincible = true;
+        player.setTint(0x44ff88);
+      }
     }
   }
 

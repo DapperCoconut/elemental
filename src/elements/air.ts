@@ -21,7 +21,13 @@ type SceneWithFighters = Phaser.Scene & {
   enemies?: Array<{ active: boolean; hp: number; x: number; y: number; takeDamage?: (n: number) => void }>;
 };
 
-export function fireHitscan(ctx: CastContext, damage: number, lineColor: number, reportResult: boolean): void {
+/** Returns the position of every target the beam ran through, so callers can score multi-hits. */
+export function fireHitscan(
+  ctx: CastContext,
+  damage: number,
+  lineColor: number,
+  reportResult: boolean,
+): Array<{ x: number; y: number }> {
   const dx = ctx.targetX - ctx.casterX;
   const dy = ctx.targetY - ctx.casterY;
   const len = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -45,21 +51,25 @@ export function fireHitscan(ctx: CastContext, damage: number, lineColor: number,
   ctx.scene.tweens.add({ targets: [gfx, core], alpha: 0, duration: 200, onComplete: () => { gfx.destroy(); core.destroy(); } });
 
   const scene = ctx.scene as SceneWithFighters;
-  let hit = false;
+  const hitTargets: Array<{ x: number; y: number }> = [];
   if (ctx.isPlayerCaster && scene.enemies && scene.enemies.length > 0) {
     for (const t of scene.enemies) {
       if (!t.active || t.hp <= 0) continue;
       if (pointToSegmentDist(t.x, t.y, ctx.casterX, ctx.casterY, endX, endY) <= 30) {
+        // Capture the position before takeDamage — a lethal hit can move or deactivate the target.
+        hitTargets.push({ x: t.x, y: t.y });
         t.takeDamage?.(damage);
-        hit = true;
       }
     }
   } else {
     const opp = ctx.isPlayerCaster ? scene.npc : scene.player;
-    hit = !!opp && pointToSegmentDist(opp.x, opp.y, ctx.casterX, ctx.casterY, endX, endY) <= 30;
-    if (hit) opp!.takeDamage?.(damage);
+    if (opp && pointToSegmentDist(opp.x, opp.y, ctx.casterX, ctx.casterY, endX, endY) <= 30) {
+      hitTargets.push({ x: opp.x, y: opp.y });
+      opp.takeDamage?.(damage);
+    }
   }
-  if (reportResult) ctx.reportAirSnipeResult(hit);
+  if (reportResult) ctx.reportAirSnipeResult(hitTargets.length > 0, hitTargets);
+  return hitTargets;
 }
 
 /** Q upgrade: hitscan that bounces off walls up to `maxBounces` times. */
@@ -173,7 +183,7 @@ const windTrap: Ability = {
 const grapple: Ability = {
   id: 'grapple',
   name: 'Grapple',
-  description: 'Hook to cursor. Next hit: 20% dodge',
+  description: 'Hook to cursor. On landing, fully dodge the next hit',
   displayKey: 'F',
   cooldown: 12000,
   cast(ctx) {
@@ -192,7 +202,9 @@ const chargedBeam: Ability = {
     ctx.lockCaster(1500);
     const charge = ctx.scene.add.circle(ctx.casterX, ctx.casterY, 14, 0x88ccff, 0.8).setDepth(8);
     ctx.scene.tweens.add({ targets: charge, scaleX: 5, scaleY: 5, alpha: 0.1, duration: 1500, onComplete: () => charge.destroy() });
-    ctx.scene.time.delayedCall(1500, () => fireHitscan(ctx, 100, 0x88ccff, false));
+    ctx.scene.time.delayedCall(1500, () => {
+      ctx.reportAirBeamHits(fireHitscan(ctx, 100, 0x88ccff, false).length);
+    });
   },
 };
 

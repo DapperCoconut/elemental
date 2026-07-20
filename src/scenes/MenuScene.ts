@@ -4,7 +4,14 @@ import { SHARD_REWARDS, getElementUpgrades } from '../data/Upgrades';
 import { MUTATIONS, activeMutationIds, starredMutationIds, clearMutationSelection, getTotalRewardMult, STARRED_REWARD_MULT, getMutationDef } from '../data/Mutations';
 import { clearConsumedItems } from '../data/Items';
 import * as PlayerData from '../data/PlayerData';
+import { applyKonamiCheat } from '../data/CheatSave';
 import { getPerksForElement, getPerkById, ALL_PERKS } from '../data/Perks';
+import { getAbilityVariants } from '../data/AbilityVariants';
+import {
+  getMasteryDef, isMasteryComplete, MasteryRequirement,
+  getBindableEnhancements, getEnhancement, MASTERY_SLOTS, MasterySlot, MasteryEnhancement,
+} from '../data/Mastery';
+import { INVASION_DIFFICULTIES, InvasionDifficultyId } from '../invasion/InvasionKit';
 
 import { Element } from '../elements/Element';
 import { fireElement } from '../elements/fire';
@@ -64,7 +71,7 @@ const ELEMENT_DATA_MAP: Record<string, Element> = {
   dummy: dummyElement,
 };
 
-interface ElementDef {
+export interface ElementDef {
   id: string;
   name: string;
   emoji: string;
@@ -72,7 +79,7 @@ interface ElementDef {
   available: boolean;
 }
 
-const ELEMENTS: ElementDef[] = [
+export const ELEMENTS: ElementDef[] = [
   { id: 'fire',  name: 'Fire',  emoji: '🔥', color: 0xff4400, available: true  },
   { id: 'water', name: 'Water', emoji: '💧', color: 0x0088ff, available: true  },
   { id: 'life',  name: 'Life',  emoji: '🌿', color: 0x44cc44, available: true  },
@@ -80,7 +87,7 @@ const ELEMENTS: ElementDef[] = [
   { id: 'earth', name: 'Earth', emoji: '🪨', color: 0x887755, available: true  },
 ];
 
-const COMBINED_ELEMENTS: ElementDef[] = [
+export const COMBINED_ELEMENTS: ElementDef[] = [
   { id: 'oil',    name: 'Oil',    emoji: '🛢️', color: 0x664400, available: true },
   { id: 'shadow', name: 'Shadow', emoji: '🌑', color: 0x330044, available: true },
   { id: 'ice',    name: 'Ice',    emoji: '🧊', color: 0x88ccff, available: true },
@@ -94,7 +101,7 @@ const COMBINED_ELEMENTS: ElementDef[] = [
 ];
 
 /** Abstract elements unlocked by beating a gauntlet. Each entry maps to the gauntlet ID needed. */
-const ABSTRACT_ELEMENT_UNLOCK_MAP: Record<string, string> = {
+export const ABSTRACT_ELEMENT_UNLOCK_MAP: Record<string, string> = {
   electricity: 'fire',
   slime: 'water',
   fate: 'life',
@@ -102,7 +109,7 @@ const ABSTRACT_ELEMENT_UNLOCK_MAP: Record<string, string> = {
   light: 'earth',
 };
 
-const ABSTRACT_ELEMENTS: ElementDef[] = [
+export const ABSTRACT_ELEMENTS: ElementDef[] = [
   { id: 'electricity', name: 'Electricity', emoji: '⚡', color: 0xffee00, available: true },
   { id: 'slime', name: 'Slime', emoji: '🟢', color: 0x66cc44, available: true },
   { id: 'fate', name: 'Fate', emoji: '🃏', color: 0x88eecc, available: true },
@@ -111,7 +118,7 @@ const ABSTRACT_ELEMENTS: ElementDef[] = [
 ];
 
 /** Abstract combined elements — created by fusing two abstract elements in a Lvl 1+ Lab. */
-const ABSTRACT_COMBINED_ELEMENTS: ElementDef[] = [
+export const ABSTRACT_COMBINED_ELEMENTS: ElementDef[] = [
   { id: 'magnet', name: 'Magnet', emoji: '🧲', color: 0xcc2244, available: true },
   { id: 'metal',  name: 'Metal',  emoji: '⚙️',  color: 0x8899aa, available: true },
   { id: 'plasma', name: 'Plasma', emoji: '🔮',  color: 0xaa22ff, available: true },
@@ -135,14 +142,21 @@ export class MenuScene extends Phaser.Scene {
   private enemyChoice: string | null = null;
   private elemPage = 0;
   private isInvasion = false;
+  private invasionDifficultyId: InvasionDifficultyId = 'normal';
   // Tracks displayed perk strip index per element (-1 = none). Persists across re-renders.
   private perkIndices: Record<string, number> = {};
 
   private phaseObjects: Phaser.GameObjects.GameObject[] = [];
   private infoOverlayObjects: Phaser.GameObjects.GameObject[] = [];
   private mutationOverlayObjects: Phaser.GameObjects.GameObject[] = [];
-  private perkDictScrollHandler: (...args: unknown[]) => void = () => {};
+  private infoScrollHandler: (...args: unknown[]) => void = () => {};
+  // In-flight mastery-ability drag (manual, so it survives the scroll container transform).
+  private masteryDragMove: ((...args: unknown[]) => void) | null = null;
+  private masteryDragUp: ((...args: unknown[]) => void) | null = null;
+  private masteryDragGhost: Phaser.GameObjects.GameObject[] | null = null;
   private mutationScrollHandler: (...args: unknown[]) => void = () => {};
+  private elementInfoMode: 'base' | 'upgraded' = 'base';
+  private expandedVariants: Set<string> = new Set();
   private hoveredDifficulty = 1;
   private konamiBuffer: string[] = [];
 
@@ -152,6 +166,7 @@ export class MenuScene extends Phaser.Scene {
 
   create(data?: { mode?: string }): void {
     this.isInvasion = data?.mode === 'invasion';
+    this.invasionDifficultyId = 'normal';
     clearMutationSelection();
     clearConsumedItems();
     this.selectionPhase = 'player';
@@ -215,18 +230,9 @@ export class MenuScene extends Phaser.Scene {
       this.konamiBuffer.push(evt.key.toUpperCase());
       if (this.konamiBuffer.length > DUMMY_SEQUENCE.length) this.konamiBuffer.shift();
       if (this.konamiBuffer.join('') === DUMMY_SEQUENCE.join('')) {
-        let changed = false;
-        if (!PlayerData.isDummyUnlocked()) {
-          PlayerData.unlockDummy();
-          changed = true;
-        }
-        for (const m of MUTATIONS) {
-          if (!PlayerData.isMutationUnlocked(m.id)) {
-            PlayerData.unlockMutation(m.id);
-            changed = true;
-          }
-        }
-        if (changed) this.renderPhase(width, height, cx);
+        // Shared with TitleScene so both entry points grant the same thing.
+        applyKonamiCheat();
+        this.renderPhase(width, height, cx);
       }
     });
 
@@ -370,13 +376,17 @@ export class MenuScene extends Phaser.Scene {
 
       const clickable = el.available;
       const fillAlpha = clickable ? 0.8 : 0.3;
-      const borderColor = clickable ? el.color : 0x444444;
+      const masteryDef = getMasteryDef(el.id);
+      const masteryOn = clickable && PlayerData.isMasteryEnabled(el.id);
+      const displayEmoji = masteryOn && masteryDef ? masteryDef.enhancedEmoji : el.emoji;
+      const displayColor = masteryOn && masteryDef ? masteryDef.enhancedColor : el.color;
+      const borderColor = clickable ? displayColor : 0x444444;
 
       const card = this.add
-        .rectangle(bx, by, cardW, cardH, clickable ? el.color : 0x222233, fillAlpha)
+        .rectangle(bx, by, cardW, cardH, clickable ? displayColor : 0x222233, fillAlpha)
         .setStrokeStyle(2, borderColor);
 
-      const emojiText = this.add.text(bx, by - 32, el.emoji, { fontSize: '44px' }).setOrigin(0.5);
+      const emojiText = this.add.text(bx, by - 32, displayEmoji, { fontSize: '44px' }).setOrigin(0.5);
 
       const nameText = this.add.text(bx, by + 26, el.name.toUpperCase(), {
         fontSize: '15px',
@@ -419,7 +429,23 @@ export class MenuScene extends Phaser.Scene {
           this.showElementInfo(el.id, width, height, cx);
         });
 
-      this.phaseObjects.push(card, emojiText, nameText, statusText, iCircle, iLabel);
+      // "M" mastery button — top-left corner of card
+      const mBtnX = bx - cardW / 2 + 14;
+      const mBtnY = by - cardH / 2 + 14;
+      const mCircle = this.add.circle(mBtnX, mBtnY, 11, 0x332200, 0.9)
+        .setStrokeStyle(1, 0xffcc00, 0.9).setDepth(3).setInteractive({ useHandCursor: true });
+      const mLabel = this.add.text(mBtnX, mBtnY, 'M', {
+        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc00',
+      }).setOrigin(0.5).setDepth(4);
+      mCircle
+        .on('pointerover', () => mCircle.setFillStyle(0x664400, 0.95))
+        .on('pointerout',  () => mCircle.setFillStyle(0x332200, 0.9))
+        .on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+          ptr.event.stopPropagation();
+          this.showMasteryScreen(el.id, width, height, cx);
+        });
+
+      this.phaseObjects.push(card, emojiText, nameText, statusText, iCircle, iLabel, mCircle, mLabel);
 
       // ── Perk strip (player phase only) ─────────────────────────
       if (isPlayerPhase) {
@@ -559,8 +585,6 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private renderInvasionStartPhase(width: number, height: number, cx: number, playerEl: ElementDef | undefined): void {
-    const mutTitleY = 215;
-
     const subtitle = this.add.text(cx, 155, 'INVASION', {
       fontSize: '28px', fontFamily: '"Arial Black", sans-serif', color: '#cc44ff',
       stroke: '#330055', strokeThickness: 4,
@@ -568,13 +592,57 @@ export class MenuScene extends Phaser.Scene {
     this.phaseObjects.push(subtitle);
 
     if (playerEl) {
-      const indicator = this.add.text(cx, 186, `${playerEl.emoji} ${playerEl.name}  —  Defend against the waves`, {
-        fontSize: '16px', fontFamily: 'Arial, sans-serif', color: '#ffcc44',
+      const indicator = this.add.text(cx, 220, `${playerEl.emoji} ${playerEl.name}  —  Defend against the waves`, {
+        fontSize: '18px', fontFamily: 'Arial, sans-serif', color: '#ffcc44',
       }).setOrigin(0.5);
       this.phaseObjects.push(indicator);
     }
 
-    this.renderMutationPanel(width, height, cx, mutTitleY);
+    // Mutations don't apply in Invasion mode — no selector shown here.
+
+    // ── Difficulty selector ──────────────────────────────────────────
+    const diffHeaderY = 260;
+    const diffBtnY = 296;
+    const diffDescY = 336;
+
+    const diffHeader = this.add.text(cx, diffHeaderY, 'DIFFICULTY', {
+      fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#777777',
+    }).setOrigin(0.5);
+    this.phaseObjects.push(diffHeader);
+
+    const descText = this.add.text(cx, diffDescY, '', {
+      fontSize: '12px', fontFamily: 'Arial, sans-serif', color: '#aaaaaa',
+      wordWrap: { width: 420 }, align: 'center',
+    }).setOrigin(0.5);
+    this.phaseObjects.push(descText);
+
+    const btnW = 150, btnH = 40, gap = 12;
+    const totalW = INVASION_DIFFICULTIES.length * btnW + (INVASION_DIFFICULTIES.length - 1) * gap;
+    const startX = cx - totalW / 2 + btnW / 2;
+
+    const entries: Array<{ id: InvasionDifficultyId; color: number; bg: Phaser.GameObjects.Rectangle; lbl: Phaser.GameObjects.Text }> = [];
+    const updateSelection = () => {
+      for (const e of entries) {
+        const selected = e.id === this.invasionDifficultyId;
+        e.bg.setFillStyle(selected ? e.color : 0x222233, selected ? 0.3 : 1);
+        e.bg.setStrokeStyle(selected ? 3 : 1, e.color, selected ? 1 : 0.5);
+        e.lbl.setColor(selected ? '#ffffff' : '#999999');
+      }
+      descText.setText(INVASION_DIFFICULTIES.find((d) => d.id === this.invasionDifficultyId)!.description);
+    };
+
+    INVASION_DIFFICULTIES.forEach((def, i) => {
+      const bx = startX + i * (btnW + gap);
+      const bg = this.add.rectangle(bx, diffBtnY, btnW, btnH, 0x222233)
+        .setStrokeStyle(1, def.color, 0.5).setInteractive({ useHandCursor: true });
+      const lbl = this.add.text(bx, diffBtnY, def.label, {
+        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#999999',
+      }).setOrigin(0.5);
+      bg.on('pointerdown', () => { this.invasionDifficultyId = def.id; updateSelection(); });
+      entries.push({ id: def.id, color: def.color, bg, lbl });
+      this.phaseObjects.push(bg, lbl);
+    });
+    updateSelection();
 
     // START button
     const startY = height - 55;
@@ -589,9 +657,8 @@ export class MenuScene extends Phaser.Scene {
       .on('pointerdown', () => {
         this.scene.start('ArenaScene', {
           elementId: this.playerChoice,
-          mutations: [...activeMutationIds],
-          starredMutations: [...starredMutationIds],
           mode: 'invasion',
+          invasionDifficulty: this.invasionDifficultyId,
           playerPerk: PlayerData.getEquippedPerk(this.playerChoice ?? ''),
         });
       });
@@ -969,9 +1036,8 @@ export class MenuScene extends Phaser.Scene {
     const RWD_W  = width - RWD_X - 16;
     const RWD_CX = RWD_X + RWD_W / 2;
     const height = this.scale.height;
-    // Approximate panel bounds (may differ slightly for invasion vs difficulty, acceptable)
-    const titleY = this.isInvasion ? 215 : 327;
-    const panelTop = titleY + 28;
+    // Only ever called from the difficulty phase's hover handler — invasion mode has no mutation panel to size.
+    const panelTop = 327 + 28;
     const panelH   = (height - 70) - panelTop;
     this.buildRewardsPanel(RWD_CX, panelTop, panelH, RWD_W);
   }
@@ -1047,7 +1113,8 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private closeElementInfo(): void {
-    this.input.off('wheel', this.perkDictScrollHandler);
+    this.endMasteryDrag();
+    this.input.off('wheel', this.infoScrollHandler);
     for (const obj of this.infoOverlayObjects) {
       if (obj.active) (obj as Phaser.GameObjects.GameObject & { destroy(): void }).destroy();
     }
@@ -1060,6 +1127,13 @@ export class MenuScene extends Phaser.Scene {
     const element = ELEMENT_DATA_MAP[elementId];
     if (!element) return;
     const upgrades = getElementUpgrades(elementId);
+    const perks = getPerksForElement(elementId);
+    const showUpgraded = this.elementInfoMode === 'upgraded';
+
+    const SCROLL_TOP = 128;
+    const SCROLL_BOT = height - 44;
+    const SCROLL_H = SCROLL_BOT - SCROLL_TOP;
+    const elemColor = '#' + element.color.toString(16).padStart(6, '0');
 
     // Full-screen dark backdrop
     const bg = this.add.rectangle(cx, height / 2, width, height, 0x05050f, 0.97).setDepth(50);
@@ -1067,118 +1141,322 @@ export class MenuScene extends Phaser.Scene {
     this.infoOverlayObjects.push(bg);
 
     // Header
-    const header = this.add.text(cx, 45, `${element.emoji}  ${element.name.toUpperCase()}`, {
-      fontSize: '32px', fontFamily: '"Arial Black", sans-serif', color: '#' + element.color.toString(16).padStart(6, '0'),
+    const header = this.add.text(cx, 34, `${element.emoji}  ${element.name.toUpperCase()}`, {
+      fontSize: '28px', fontFamily: '"Arial Black", sans-serif', color: elemColor,
       stroke: '#000000', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(51);
     this.infoOverlayObjects.push(header);
 
-    const subHdr = this.add.text(cx, 80, '— ABILITIES & UPGRADES —', {
-      fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#555577',
-    }).setOrigin(0.5).setDepth(51);
-    this.infoOverlayObjects.push(subHdr);
+    // ── Base / Upgraded toggle ──
+    const toggleY = 66;
+    const toggleW = 150, toggleH = 26;
+    const baseBtn = this.add.rectangle(cx - toggleW / 2 - 2, toggleY, toggleW, toggleH,
+      showUpgraded ? 0x0d0d22 : 0x224433, showUpgraded ? 0.7 : 0.95)
+      .setStrokeStyle(1, showUpgraded ? 0x333355 : 0x66ff99, showUpgraded ? 0.6 : 0.9)
+      .setDepth(55).setInteractive({ useHandCursor: true });
+    const baseLbl = this.add.text(cx - toggleW / 2 - 2, toggleY, '⚔ BASE ABILITIES', {
+      fontSize: '11px', fontFamily: '"Arial Black", sans-serif',
+      color: showUpgraded ? '#556655' : '#aaffcc',
+    }).setOrigin(0.5).setDepth(56);
+
+    const upgBtn = this.add.rectangle(cx + toggleW / 2 + 2, toggleY, toggleW, toggleH,
+      showUpgraded ? 0x332200 : 0x0d0d22, showUpgraded ? 0.95 : 0.7)
+      .setStrokeStyle(1, showUpgraded ? 0xffcc44 : 0x333355, showUpgraded ? 0.9 : 0.6)
+      .setDepth(55).setInteractive({ useHandCursor: true });
+    const upgLbl = this.add.text(cx + toggleW / 2 + 2, toggleY, '▲ UPGRADED EFFECTS', {
+      fontSize: '11px', fontFamily: '"Arial Black", sans-serif',
+      color: showUpgraded ? '#ffdd88' : '#665533',
+    }).setOrigin(0.5).setDepth(56);
+
+    baseBtn.on('pointerdown', () => {
+      if (this.elementInfoMode !== 'base') { this.elementInfoMode = 'base'; this.showElementInfo(elementId, width, height, cx); }
+    });
+    upgBtn.on('pointerdown', () => {
+      if (this.elementInfoMode !== 'upgraded') { this.elementInfoMode = 'upgraded'; this.showElementInfo(elementId, width, height, cx); }
+    });
+    this.infoOverlayObjects.push(baseBtn, baseLbl, upgBtn, upgLbl);
 
     // Divider
-    const divLine = this.add.line(cx, 97, -width / 2 + 40, 0, width / 2 - 40, 0, 0x223355, 0.5).setDepth(51).setLineWidth(1);
+    const divLine = this.add.line(cx, SCROLL_TOP - 12, -width / 2 + 40, 0, width / 2 - 40, 0, 0x223355, 0.5).setDepth(51).setLineWidth(1);
     this.infoOverlayObjects.push(divLine);
 
-    // List each ability + its upgrade
-    const startY = 115;
-    const rowH = (height - startY - 60) / element.abilities.length;
+    // ── Scrollable content ──
+    const scrollContainer = this.add.container(0, SCROLL_TOP).setDepth(51);
+    this.infoOverlayObjects.push(scrollContainer);
+
+    const maskGfx = this.add.graphics();
+    maskGfx.fillStyle(0xffffff, 1);
+    maskGfx.fillRect(0, SCROLL_TOP, width, SCROLL_H);
+    const mask = maskGfx.createGeometryMask();
+    scrollContainer.setMask(mask);
+    this.infoOverlayObjects.push(maskGfx);
+
+    const COL_X = 40;
+    const COL_W = width - 80;
+    let innerY = 4;
+
+    const sectionHdr = (text: string, color: string) => {
+      const t = this.add.text(cx, innerY, text, {
+        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color,
+      }).setOrigin(0.5);
+      scrollContainer.add(t);
+      innerY += 20;
+    };
+
+    sectionHdr('— ABILITIES —', '#7788cc');
+
     element.abilities.forEach((ab, idx) => {
-      const rowY = startY + idx * rowH;
       const upgrade = upgrades.find((u) => u.slot === ab.displayKey.toLowerCase());
+      const owned = upgrade ? PlayerData.isUpgradeOwned(elementId, upgrade.slot) : false;
+      const variantSet = getAbilityVariants(elementId, ab.displayKey);
+      const variantKey = `${elementId}:${ab.displayKey.toLowerCase()}`;
+      const variantsExpanded = this.expandedVariants.has(variantKey);
 
-      // Ability row background
-      const rowBg = this.add.rectangle(cx, rowY + rowH / 2 - 4, width - 80, rowH - 8, 0x0d0d22, 0.7)
-        .setStrokeStyle(1, 0x222244, 0.5).setDepth(51);
-      this.infoOverlayObjects.push(rowBg);
-
-      // Key badge
-      const keyColor = '#' + element.color.toString(16).padStart(6, '0');
-      const keyBadge = this.add.text(120, rowY + rowH * 0.28, `[${ab.displayKey}]`, {
-        fontSize: '15px', fontFamily: '"Arial Black", sans-serif', color: keyColor,
-        stroke: '#000000', strokeThickness: 2,
-      }).setOrigin(0.5).setDepth(52);
-      this.infoOverlayObjects.push(keyBadge);
-
-      // Ability name
-      const cdSec = ab.cooldown >= 1000 ? `  ${ab.cooldown / 1000}s CD` : '';
-      const abilityName = this.add.text(180, rowY + rowH * 0.28, `${ab.name}${cdSec}`, {
-        fontSize: '14px', fontFamily: '"Arial Black", sans-serif', color: '#ddddee',
-      }).setOrigin(0, 0.5).setDepth(52);
-      this.infoOverlayObjects.push(abilityName);
-
-      // Ability description
-      const halfW = Math.floor(width / 2) - 100;
-      const abilityDesc = this.add.text(180, rowY + rowH * 0.55, ab.description, {
-        fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#888899',
-        wordWrap: { width: halfW },
-      }).setOrigin(0, 0.5).setDepth(52);
-      this.infoOverlayObjects.push(abilityDesc);
-
-      // Upgrade info
-      if (upgrade) {
-        const upgradeLabel = this.add.text(width - 60, rowY + rowH * 0.28, `${upgrade.displayKey}+  ${upgrade.name}`, {
-          fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc44',
-          stroke: '#553300', strokeThickness: 2,
-        }).setOrigin(1, 0.5).setDepth(52);
-        this.infoOverlayObjects.push(upgradeLabel);
-
-        const upgradeDesc = this.add.text(width - 60, rowY + rowH * 0.70, upgrade.description, {
-          fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#aa8833',
-          wordWrap: { width: halfW }, align: 'right',
-        }).setOrigin(1, 0.5).setDepth(52);
-        this.infoOverlayObjects.push(upgradeDesc);
+      let bodyText: string;
+      if (!showUpgraded) {
+        bodyText = ab.description;
+      } else if (upgrade) {
+        bodyText = `${ab.description}\n\n▲ ${upgrade.name}${owned ? ' (owned)' : ' (not yet purchased)'}: ${upgrade.description}`;
       } else {
-        const noUpgrade = this.add.text(width - 60, rowY + rowH * 0.45, 'No upgrade yet', {
-          fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#444455',
-        }).setOrigin(1, 0.5).setDepth(52);
-        this.infoOverlayObjects.push(noUpgrade);
+        bodyText = `${ab.description}\n\n(This ability has no upgrade.)`;
       }
 
-      // Row divider
-      if (idx < element.abilities.length - 1) {
-        const rl = this.add.line(cx, rowY + rowH - 4, -width / 2 + 40, 0, width / 2 - 40, 0, 0x1a1a33, 0.4).setDepth(51).setLineWidth(1);
-        this.infoOverlayObjects.push(rl);
+      const cdSec = ab.cooldown >= 1000 ? `   ${ab.cooldown / 1000}s CD` : '';
+
+      const descText = this.add.text(COL_X + 14, innerY + 26, bodyText, {
+        fontSize: '11px', fontFamily: 'Arial, sans-serif',
+        color: showUpgraded && upgrade ? '#ccbb88' : '#999aad',
+        wordWrap: { width: COL_W - 28 }, lineSpacing: 4,
+      });
+
+      let rowH = 26 + descText.height + 14;
+      const rowObjs: Phaser.GameObjects.GameObject[] = [descText];
+
+      // ── "See all possibilities" dropdown toggle ──
+      if (variantSet) {
+        const toggleY = innerY + rowH - 4;
+        const toggleText = this.add.text(COL_X + 14, toggleY, variantsExpanded
+          ? `▲ Hide ${variantSet.variants.length} possibilities`
+          : `▼ See all ${variantSet.variants.length} possibilities`, {
+          fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#66ccff',
+        }).setInteractive({ useHandCursor: true });
+        toggleText.on('pointerover', () => toggleText.setColor('#aaeeff'));
+        toggleText.on('pointerout', () => toggleText.setColor('#66ccff'));
+        toggleText.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+          ptr.event.stopPropagation();
+          if (variantsExpanded) this.expandedVariants.delete(variantKey);
+          else this.expandedVariants.add(variantKey);
+          this.showElementInfo(elementId, width, height, cx);
+        });
+        rowObjs.push(toggleText);
+        rowH += 18;
+
+        if (variantsExpanded) {
+          rowH += 6;
+          const listX = COL_X + 24;
+          const listW = COL_W - 52;
+          variantSet.variants.forEach((v) => {
+            const locked = (!!v.requiresUpgrade && !PlayerData.isUpgradeOwned(elementId, v.requiresUpgrade))
+              || (!!v.requiresPerk && !PlayerData.isPerkUnlocked(elementId, v.requiresPerk));
+            const vDesc = this.add.text(listX, innerY + rowH + 21, v.description, {
+              fontSize: '9px', fontFamily: 'Arial, sans-serif',
+              color: locked ? '#555566' : '#8899aa',
+              wordWrap: { width: listW - 10 }, lineSpacing: 2,
+            }).setAlpha(locked ? 0.6 : 1);
+            const vRowH = 21 + vDesc.height + 8;
+
+            const vBg = this.add.rectangle(cx, innerY + rowH + vRowH / 2, listW, vRowH - 2,
+              locked ? 0x0a0a12 : 0x10101f, 0.7).setStrokeStyle(1, locked ? 0x222233 : 0x2a2a44, 0.6);
+            const vName = this.add.text(listX, innerY + rowH + 6, `${v.emoji ? v.emoji + ' ' : ''}${v.name}`, {
+              fontSize: '10px', fontFamily: '"Arial Black", sans-serif',
+              color: locked ? '#666677' : '#cceeff',
+            }).setAlpha(locked ? 0.6 : 1);
+            rowObjs.push(vBg, vName, vDesc);
+
+            if (locked) {
+              const lockLabel = v.requiresUpgrade
+                ? `${v.requiresUpgrade.toUpperCase()}+`
+                : `${getPerkById(v.requiresPerk!)?.name ?? v.requiresPerk} perk`;
+              const vLock = this.add.text(COL_X + COL_W - 24, innerY + rowH + 6, `🔒 ${lockLabel}`, {
+                fontSize: '9px', fontFamily: '"Arial Black", sans-serif', color: '#665533',
+              }).setOrigin(1, 0);
+              rowObjs.push(vLock);
+            }
+
+            rowH += vRowH + 4;
+          });
+          rowH += 4;
+        }
       }
+
+      const rowBg = this.add.rectangle(cx, innerY + rowH / 2, COL_W, rowH - 6,
+        showUpgraded && upgrade ? 0x1a1508 : 0x0d0d22, 0.75)
+        .setStrokeStyle(1, showUpgraded && upgrade ? 0x554422 : 0x222244, 0.6);
+
+      const keyBadge = this.add.text(COL_X + 24, innerY + 13, `[${ab.displayKey}]`, {
+        fontSize: '14px', fontFamily: '"Arial Black", sans-serif', color: elemColor,
+        stroke: '#000000', strokeThickness: 2,
+      }).setOrigin(0.5);
+
+      const abilityName = this.add.text(COL_X + 52, innerY + 13, `${ab.name}${cdSec}`, {
+        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#ddddee',
+      }).setOrigin(0, 0.5);
+
+      scrollContainer.add([rowBg, keyBadge, abilityName, ...rowObjs]);
+
+      if (showUpgraded && upgrade) {
+        const badge = this.add.text(COL_X + COL_W - 14, innerY + 13, owned ? '✓ OWNED' : '🔒 LOCKED', {
+          fontSize: '10px', fontFamily: '"Arial Black", sans-serif',
+          color: owned ? '#88ff88' : '#665533',
+        }).setOrigin(1, 0.5);
+        scrollContainer.add(badge);
+      }
+
+      innerY += rowH + (idx < element.abilities.length - 1 ? 6 : 0);
     });
 
-    // Rubber-specific vulcanization description block
+    innerY += 16;
+
+    // Rubber-specific vulcanization mechanic
     if (elementId === 'rubber') {
-      const ctrlY = height - 58;
-      const vulcHdr = this.add.text(cx, ctrlY, '— VULCANIZATION —', {
-        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#ff5577',
-      }).setOrigin(0.5).setDepth(52);
-      this.infoOverlayObjects.push(vulcHdr);
-      const vulcReq = this.add.text(cx, ctrlY + 16, 'Requires owning any rubber upgrade', {
+      sectionHdr('— VULCANIZATION —', '#ff5577');
+      const desc = this.add.text(COL_X + 14, innerY, 'Requires owning any rubber upgrade. Hold RIGHT-CLICK to vulcanize (5%/s, max 100%). Locks attacks while charging. Slows cooldowns up to 100% and darkens your player.', {
         fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#ffaaaa',
-      }).setOrigin(0.5).setDepth(52);
-      this.infoOverlayObjects.push(vulcReq);
-      const vulcDesc = this.add.text(cx, ctrlY + 32, 'Hold RIGHT-CLICK to vulcanize (5%/s, max 100%). Locks attacks while charging. Slows cooldowns up to 100% and darkens your player.', {
-        fontSize: '9px', fontFamily: 'Arial, sans-serif', color: '#ffcccc', align: 'center',
-        wordWrap: { width: width - 80 },
-      }).setOrigin(0.5).setDepth(52);
-      this.infoOverlayObjects.push(vulcDesc);
+        wordWrap: { width: COL_W - 28 }, lineSpacing: 3,
+      });
+      scrollContainer.add(desc);
+      innerY += desc.height + 20;
     }
 
-    // Echo-specific psychic eye controls block (shown when E+ or Q+ is owned)
+    // Echo-specific psychic eye controls (shown once E+ or Q+ is owned)
     if (elementId === 'echo' && (PlayerData.isUpgradeOwned('echo', 'e') || PlayerData.isUpgradeOwned('echo', 'q'))) {
-      const ctrlY = height - 54;
-      const ctrlHdr = this.add.text(cx, ctrlY, '👁  PSYCHIC EYE CONTROLS', {
-        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#aaddff',
-      }).setOrigin(0.5).setDepth(52);
-      this.infoOverlayObjects.push(ctrlHdr);
+      sectionHdr('👁  PSYCHIC EYE CONTROLS', '#aaddff');
+      const desc = this.add.text(COL_X + 14, innerY, 'Space — Light Trail (consume 1 eye, 3s damage trail)\nRight click — Power-up next attack as direct (consume 1 eye)', {
+        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#88bbff', lineSpacing: 4,
+      });
+      scrollContainer.add(desc);
+      innerY += desc.height + 20;
+    }
 
-      const ctrl1 = this.add.text(cx, ctrlY + 18, 'Space — Light Trail (consume 1 eye, 3s damage trail)', {
-        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#88bbff',
-      }).setOrigin(0.5).setDepth(52);
-      this.infoOverlayObjects.push(ctrl1);
+    // ── Perks section ──
+    sectionHdr('— PERKS —', '#cc88ff');
+    if (perks.length === 0) {
+      const noPerks = this.add.text(cx, innerY + 6, 'No perks are craftable for this element yet.', {
+        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#444455',
+      }).setOrigin(0.5);
+      scrollContainer.add(noPerks);
+      innerY += 26;
+    } else {
+      const equippedId = PlayerData.getEquippedPerk(elementId);
+      const ELEM_EMOJI: Record<string, string> = {
+        fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🪨',
+        electricity: '⚡', slime: '🟢', fate: '🃏', sound: '🔊', light: '✨',
+      };
+      perks.forEach((perk) => {
+        const unlocked = PlayerData.isPerkUnlocked(elementId, perk.id);
+        const equipped = equippedId === perk.id;
+        const alpha = unlocked ? 1.0 : 0.4;
 
-      const ctrl2 = this.add.text(cx, ctrlY + 32, 'Right click — Power-up next attack as direct (consume 1 eye)', {
-        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#88bbff',
-      }).setOrigin(0.5).setDepth(52);
-      this.infoOverlayObjects.push(ctrl2);
+        const descText = this.add.text(COL_X + 14, innerY + 24, perk.description, {
+          fontSize: '10px', fontFamily: 'Arial, sans-serif',
+          color: unlocked ? '#bbaadd' : '#555566',
+          wordWrap: { width: COL_W - 28 }, lineSpacing: 3,
+        }).setAlpha(alpha);
+
+        const rowH = 24 + descText.height + 12;
+
+        const rowBg = this.add.rectangle(cx, innerY + rowH / 2, COL_W, rowH - 6,
+          unlocked ? 0x150022 : 0x0a0a10, unlocked ? 0.8 : 0.5)
+          .setStrokeStyle(1, unlocked ? 0x441155 : 0x222233, 0.7);
+
+        const nameText = this.add.text(COL_X + 14, innerY + 12, `${perk.emoji} ${perk.name}`, {
+          fontSize: '12px', fontFamily: '"Arial Black", sans-serif',
+          color: unlocked ? '#eecfff' : '#555566',
+        }).setOrigin(0, 0.5).setAlpha(alpha);
+
+        const recipeStr = perk.ingredients.map((r) => ELEM_EMOJI[r] ?? r).join(' + ');
+        const recipeText = this.add.text(COL_X + COL_W - 14, innerY + 12, recipeStr, {
+          fontSize: '11px', color: unlocked ? '#886633' : '#332222',
+        }).setOrigin(1, 0.5).setAlpha(alpha);
+
+        scrollContainer.add([rowBg, nameText, recipeText, descText]);
+
+        if (equipped) {
+          const eqLbl = this.add.text(COL_X + 14 + nameText.width + 8, innerY + 12, '✓ EQUIPPED', {
+            fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#88ff88',
+          }).setOrigin(0, 0.5);
+          scrollContainer.add(eqLbl);
+        } else if (!unlocked) {
+          const lockLbl = this.add.text(COL_X + 14 + nameText.width + 8, innerY + 12, '🔒', {
+            fontSize: '10px',
+          }).setOrigin(0, 0.5);
+          scrollContainer.add(lockLbl);
+        }
+
+        innerY += rowH + 6;
+      });
+    }
+
+    // ── Mastery Enhancements section ──
+    const masteryDef = getMasteryDef(elementId);
+    if (masteryDef) {
+      innerY += 16;
+      sectionHdr('— MASTERY ENHANCEMENTS —', '#ffcc00');
+      const masteryOn = PlayerData.isMasteryEnabled(elementId);
+      masteryDef.enhancements.forEach((enh) => {
+        const descText = this.add.text(COL_X + 14, innerY + 24, enh.description, {
+          fontSize: '10px', fontFamily: 'Arial, sans-serif',
+          color: masteryOn ? '#ffddaa' : '#555566',
+          wordWrap: { width: COL_W - 28 }, lineSpacing: 3,
+        }).setAlpha(masteryOn ? 1 : 0.6);
+
+        const rowH = 24 + descText.height + 12;
+        const rowBg = this.add.rectangle(cx, innerY + rowH / 2, COL_W, rowH - 6,
+          masteryOn ? 0x221100 : 0x0a0a10, masteryOn ? 0.8 : 0.5)
+          .setStrokeStyle(1, masteryOn ? 0x996600 : 0x222233, 0.7);
+
+        const infoBinds = PlayerData.getMasteryBinds(elementId);
+        const infoSlot = enh.bindable
+          ? Object.keys(infoBinds).find((s) => infoBinds[s] === enh.id)
+          : undefined;
+        const title = enh.bindable
+          ? `${enh.name}  [${infoSlot ? infoSlot.toUpperCase() : 'unbound'}]`
+          : `${enh.name}  [Passive]`;
+        const nameText = this.add.text(COL_X + 14, innerY + 12, title, {
+          fontSize: '12px', fontFamily: '"Arial Black", sans-serif',
+          color: masteryOn ? '#ffcc00' : '#555566',
+        }).setOrigin(0, 0.5);
+
+        const badge = this.add.text(COL_X + COL_W - 14, innerY + 12, masteryOn ? '✓ ACTIVE' : '🔒 LOCKED', {
+          fontSize: '10px', fontFamily: '"Arial Black", sans-serif',
+          color: masteryOn ? '#88ff88' : '#665533',
+        }).setOrigin(1, 0.5);
+
+        scrollContainer.add([rowBg, nameText, badge, descText]);
+        innerY += rowH + 6;
+      });
+    }
+
+    // ── Scroll logic ──
+    const totalContentH = innerY;
+    let scrollY = 0;
+    const maxScroll = Math.max(0, totalContentH - SCROLL_H);
+
+    const doScroll = (delta: number) => {
+      scrollY = Phaser.Math.Clamp(scrollY + delta, 0, maxScroll);
+      scrollContainer.setY(SCROLL_TOP - scrollY);
+    };
+
+    this.infoScrollHandler = (_ptr: unknown, _over: unknown, _dx: unknown, deltaY: unknown) => {
+      doScroll((deltaY as number) * 0.5);
+    };
+    this.input.on('wheel', this.infoScrollHandler);
+
+    if (maxScroll > 0) {
+      const hint = this.add.text(width - 12, SCROLL_BOT + 6, '▼ scroll for more', {
+        fontSize: '9px', fontFamily: 'Arial, sans-serif', color: '#444466',
+      }).setOrigin(1, 0).setDepth(55);
+      this.infoOverlayObjects.push(hint);
     }
 
     // Back button
@@ -1192,6 +1470,439 @@ export class MenuScene extends Phaser.Scene {
       .on('pointerout',  () => backBtn.setFillStyle(0x221133, 0.9))
       .on('pointerdown', () => this.closeElementInfo());
     this.infoOverlayObjects.push(backBtn, backLbl);
+  }
+
+  private showMasteryScreen(elementId: string, width: number, height: number, cx: number): void {
+    this.closeElementInfo();
+
+    const element = ELEMENT_DATA_MAP[elementId];
+    if (!element) return;
+    const def = getMasteryDef(elementId);
+    const elemColor = '#' + element.color.toString(16).padStart(6, '0');
+
+    const SCROLL_TOP = 128;
+    const SCROLL_BOT = height - 78;
+    const SCROLL_H = SCROLL_BOT - SCROLL_TOP;
+
+    const bg = this.add.rectangle(cx, height / 2, width, height, 0x05050f, 0.97).setDepth(50);
+    bg.setInteractive();
+    this.infoOverlayObjects.push(bg);
+
+    const header = this.add.text(cx, 34, `${element.emoji}  ${element.name.toUpperCase()} MASTERY`, {
+      fontSize: '26px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc00',
+      stroke: '#000000', strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(51);
+    this.infoOverlayObjects.push(header);
+
+    const divLine = this.add.line(cx, SCROLL_TOP - 12, -width / 2 + 40, 0, width / 2 - 40, 0, 0x223355, 0.5).setDepth(51).setLineWidth(1);
+    this.infoOverlayObjects.push(divLine);
+
+    // Back button (declared early so early-return paths can still use it)
+    const backBtn = this.add.rectangle(60, 30, 90, 32, 0x221133, 0.9)
+      .setStrokeStyle(2, 0x9944ff, 0.8).setDepth(55).setInteractive({ useHandCursor: true });
+    const backLbl = this.add.text(60, 30, '◀  BACK', {
+      fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
+    }).setOrigin(0.5).setDepth(56);
+    backBtn
+      .on('pointerover', () => backBtn.setFillStyle(0x440077, 0.95))
+      .on('pointerout',  () => backBtn.setFillStyle(0x221133, 0.9))
+      .on('pointerdown', () => this.closeElementInfo());
+    this.infoOverlayObjects.push(backBtn, backLbl);
+
+    if (!def) {
+      const soon = this.add.text(cx, height / 2, 'Mastery for this element is coming soon.', {
+        fontSize: '14px', fontFamily: 'Arial, sans-serif', color: '#555577',
+      }).setOrigin(0.5).setDepth(51);
+      this.infoOverlayObjects.push(soon);
+      return;
+    }
+
+    const scrollContainer = this.add.container(0, SCROLL_TOP).setDepth(51);
+    this.infoOverlayObjects.push(scrollContainer);
+
+    const maskGfx = this.add.graphics();
+    maskGfx.fillStyle(0xffffff, 1);
+    maskGfx.fillRect(0, SCROLL_TOP, width, SCROLL_H);
+    const mask = maskGfx.createGeometryMask();
+    scrollContainer.setMask(mask);
+    this.infoOverlayObjects.push(maskGfx);
+
+    const COL_X = 40;
+    const COL_W = width - 80;
+    let innerY = 4;
+
+    const sectionHdr = (text: string, color: string) => {
+      const t = this.add.text(cx, innerY, text, {
+        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color,
+      }).setOrigin(0.5);
+      scrollContainer.add(t);
+      innerY += 20;
+    };
+
+    const complete = isMasteryComplete(elementId);
+
+    sectionHdr('— CHALLENGES —', '#ffcc00');
+    def.requirements.forEach((req: MasteryRequirement) => {
+      const current = Math.min(req.target, PlayerData.getMasteryStat(elementId, req.key));
+      const done = current >= req.target;
+
+      const howToText = this.add.text(COL_X + 14, innerY + 24, req.howTo, {
+        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#aaaacc',
+        wordWrap: { width: COL_W - 28 }, lineSpacing: 3,
+      });
+
+      const barY = innerY + 24 + howToText.height + 14;
+      const barW = COL_W - 28;
+      const barBg = this.add.rectangle(COL_X + 14 + barW / 2, barY, barW, 10, 0x1a1a2a, 0.9).setStrokeStyle(1, 0x333355);
+      const fillW = Math.max(2, (current / req.target) * barW);
+      const barFill = this.add.rectangle(COL_X + 14, barY, fillW, 8, done ? 0x44ff88 : 0xffcc00, 0.9).setOrigin(0, 0.5);
+
+      const rowH = 24 + howToText.height + 14 + 14;
+      const rowBg = this.add.rectangle(cx, innerY + rowH / 2, COL_W, rowH - 6,
+        done ? 0x102010 : 0x0d0d22, 0.75).setStrokeStyle(1, done ? 0x226644 : 0x222244, 0.6);
+
+      const nameText = this.add.text(COL_X + 14, innerY + 13, req.label, {
+        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#ddddee',
+      }).setOrigin(0, 0.5);
+
+      const countLabel = req.isBest
+        ? `best ${current}/${req.target} in one${done ? '  ✓' : ''}`
+        : `${current}/${req.target}${done ? '  ✓' : ''}`;
+      const countText = this.add.text(COL_X + COL_W - 14, innerY + 13, countLabel, {
+        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: done ? '#88ff88' : '#ccaa44',
+      }).setOrigin(1, 0.5);
+
+      scrollContainer.add([rowBg, nameText, countText, howToText, barBg, barFill]);
+      innerY += rowH + 6;
+    });
+
+    innerY += 16;
+    sectionHdr('— ENHANCEMENTS —', '#ff8844');
+    def.enhancements.forEach((enh) => {
+      const descText = this.add.text(COL_X + 14, innerY + 24, enh.description, {
+        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#ffccaa',
+        wordWrap: { width: COL_W - 28 }, lineSpacing: 3,
+      });
+      const rowH = 24 + descText.height + 12;
+      const rowBg = this.add.rectangle(cx, innerY + rowH / 2, COL_W, rowH - 6, 0x1a1508, 0.75)
+        .setStrokeStyle(1, 0x554422, 0.6);
+      const boundSlot = enh.bindable
+        ? Object.keys(PlayerData.getMasteryBinds(elementId)).find((s) => PlayerData.getMasteryBinds(elementId)[s] === enh.id)
+        : undefined;
+      const title = enh.bindable
+        ? `${enh.name}  [${boundSlot ? boundSlot.toUpperCase() : 'unbound'}]`
+        : `${enh.name}  [Passive]`;
+      const nameText = this.add.text(COL_X + 14, innerY + 13, title, {
+        fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#ffaa66',
+      }).setOrigin(0, 0.5);
+      scrollContainer.add([rowBg, nameText, descText]);
+      innerY += rowH + 6;
+    });
+
+    innerY += 16;
+    sectionHdr('— UNLOCKED APPEARANCE —', '#ffcc00');
+    const previewY = innerY + 40;
+    const previewCard = this.add.rectangle(cx, previewY, 100, 108, def.enhancedColor, 0.8).setStrokeStyle(2, def.enhancedColor);
+    const previewEmoji = this.add.text(cx, previewY - 20, def.enhancedEmoji, { fontSize: '34px' }).setOrigin(0.5);
+    const previewLbl = this.add.text(cx, previewY + 34, `${element.name.toUpperCase()} MASTERED`, {
+      fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#ffffff',
+    }).setOrigin(0.5);
+    scrollContainer.add([previewCard, previewEmoji, previewLbl]);
+    innerY = previewY + 70;
+
+    // ── Loadout (last section, scrolls with the rest) ──
+    innerY = this.buildMasteryLoadout({
+      elementId, element, container: scrollContainer, cx, innerY,
+      width, height, scrollTop: SCROLL_TOP, scrollBot: SCROLL_BOT,
+      masteryOn: PlayerData.isMasteryEnabled(elementId),
+    });
+
+    // ── Scroll logic ──
+    const totalContentH = innerY;
+    let scrollY = 0;
+    const maxScroll = Math.max(0, totalContentH - SCROLL_H);
+    const doScroll = (delta: number) => {
+      scrollY = Phaser.Math.Clamp(scrollY + delta, 0, maxScroll);
+      scrollContainer.setY(SCROLL_TOP - scrollY);
+    };
+    this.infoScrollHandler = (_ptr: unknown, _over: unknown, _dx: unknown, deltaY: unknown) => {
+      doScroll((deltaY as number) * 0.5);
+    };
+    this.input.on('wheel', this.infoScrollHandler);
+    if (maxScroll > 0) {
+      const hint = this.add.text(width - 12, SCROLL_BOT + 6, '▼ scroll for more', {
+        fontSize: '9px', fontFamily: 'Arial, sans-serif', color: '#444466',
+      }).setOrigin(1, 0).setDepth(55);
+      this.infoOverlayObjects.push(hint);
+    }
+
+    // ── Enable / Disable button ──
+    const enabled = PlayerData.isMasteryEnabled(elementId);
+    const btnY = height - 40;
+    const btnW = 320, btnH = 44;
+    let btnLabel: string;
+    let btnColor: number;
+    let btnTextColor: string;
+    if (!complete) {
+      btnLabel = '🔒  Complete all challenges to unlock';
+      btnColor = 0x1a1a22;
+      btnTextColor = '#555566';
+    } else if (enabled) {
+      btnLabel = `✓  ${def.name.toUpperCase()} ENABLED — click to disable`;
+      btnColor = 0x225533;
+      btnTextColor = '#88ff88';
+    } else {
+      btnLabel = `🌋  ENABLE ${def.name.toUpperCase()}`;
+      btnColor = 0x552200;
+      btnTextColor = '#ffcc00';
+    }
+    const enableBtn = this.add.rectangle(cx, btnY, btnW, btnH, btnColor, 0.9)
+      .setStrokeStyle(2, complete ? (enabled ? 0x44cc66 : 0xffaa00) : 0x333344, 0.9).setDepth(55);
+    const enableLbl = this.add.text(cx, btnY, btnLabel, {
+      fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: btnTextColor,
+    }).setOrigin(0.5).setDepth(56);
+    if (complete) {
+      enableBtn.setInteractive({ useHandCursor: true })
+        .on('pointerover', () => enableBtn.setAlpha(0.85))
+        .on('pointerout',  () => enableBtn.setAlpha(1))
+        .on('pointerdown', () => {
+          PlayerData.setMasteryEnabled(elementId, !enabled);
+          this.renderPhase(width, height, cx);
+          this.showMasteryScreen(elementId, width, height, cx);
+        });
+    }
+    this.infoOverlayObjects.push(enableBtn, enableLbl);
+  }
+
+  /**
+   * Final section of the mastery scroll: drag a mastery ability chip onto one of the
+   * element's E/R/F/Q slots to replace that ability with it. Click is not a valid target.
+   *
+   * Everything lives inside the scroll container, so drags are driven manually off scene
+   * pointer events with a floating ghost rather than Phaser's `draggable` — container-local
+   * drag coordinates would have to be unwound against the live scroll offset otherwise.
+   * Returns the updated innerY so the caller can keep laying out below.
+   */
+  private buildMasteryLoadout(opts: {
+    elementId: string; element: Element; container: Phaser.GameObjects.Container;
+    cx: number; innerY: number; width: number; height: number;
+    scrollTop: number; scrollBot: number; masteryOn: boolean;
+  }): number {
+    const { elementId, element, container, cx, width, height, scrollTop, scrollBot, masteryOn } = opts;
+    let innerY = opts.innerY;
+
+    const bindables = getBindableEnhancements(elementId);
+    if (bindables.length === 0) return innerY;
+
+    const unlocked = isMasteryComplete(elementId);
+    const COL_X = 40;
+    const COL_W = width - 80;
+
+    innerY += 16;
+    const hdr = this.add.text(cx, innerY, '— LOADOUT —', {
+      fontSize: '11px', fontFamily: '"Arial Black", sans-serif',
+      color: unlocked ? '#ffcc00' : '#555566',
+    }).setOrigin(0.5);
+    container.add(hdr);
+    innerY += 20;
+
+    const sub = this.add.text(cx, innerY, unlocked
+      ? 'Drag a mastery ability onto a slot to replace that ability. Click cannot be replaced.'
+      : 'Complete the challenges above to bind mastery abilities.', {
+      fontSize: '10px', fontFamily: 'Arial, sans-serif',
+      color: unlocked ? '#aaaacc' : '#555566',
+    }).setOrigin(0.5);
+    container.add(sub);
+    innerY += 24;
+
+    const panel = this.add.rectangle(cx, innerY + 54, COL_W, 116, 0x0b0b18, 0.85)
+      .setStrokeStyle(1, unlocked ? 0x775522 : 0x222233, 0.7);
+    container.add(panel);
+
+    // ── Draggable mastery ability chips ──
+    const chipY = innerY + 20;
+    const chipW = 170, chipH = 24;
+    const chipTotal = bindables.length * chipW + (bindables.length - 1) * 10;
+    const chipFirstX = cx - chipTotal / 2 + chipW / 2;
+
+    // ── Ability slots (drop targets) ──
+    const binds = PlayerData.getMasteryBinds(elementId);
+    const slotW = 150, slotGap = 8, slotH = 44;
+    const slotY = innerY + 72;
+    const baseAbilities = element.abilities.slice(0, 5);
+    const totalW = baseAbilities.length * slotW + (baseAbilities.length - 1) * slotGap;
+    const firstX = cx - totalW / 2 + slotW / 2;
+
+    const dropTargets: { x: number; slot: MasterySlot }[] = [];
+
+    baseAbilities.forEach((ab, i) => {
+      const x = firstX + i * (slotW + slotGap);
+      const key = ab.displayKey.toLowerCase();
+      const slot = (MASTERY_SLOTS as string[]).includes(key) ? (key as MasterySlot) : null;
+      const boundEnh = slot ? getEnhancement(elementId, binds[slot] ?? '') : undefined;
+
+      const box = this.add.rectangle(x, slotY, slotW, slotH,
+        boundEnh ? 0x2a1a00 : slot ? 0x14142a : 0x0d0d16, 0.95)
+        .setStrokeStyle(2, boundEnh ? 0xffaa00 : slot ? 0x334466 : 0x22222e, 0.9);
+
+      const keyLbl = this.add.text(x - slotW / 2 + 8, slotY - 12, `[${ab.displayKey}]`, {
+        fontSize: '10px', fontFamily: '"Arial Black", sans-serif',
+        color: slot ? '#8899cc' : '#444455',
+      }).setOrigin(0, 0.5);
+
+      const nameLbl = this.add.text(x, slotY + 8, boundEnh ? boundEnh.name : ab.name, {
+        fontSize: '11px', fontFamily: '"Arial Black", sans-serif',
+        color: boundEnh ? '#ffcc00' : slot ? '#ccccdd' : '#555566',
+      }).setOrigin(0.5);
+
+      container.add([box, keyLbl, nameLbl]);
+
+      if (!slot) {
+        const lock = this.add.text(x + slotW / 2 - 8, slotY - 12, '🔒', { fontSize: '10px' })
+          .setOrigin(1, 0.5);
+        container.add(lock);
+        return;
+      }
+
+      dropTargets.push({ x, slot });
+
+      if (boundEnh) {
+        // ✕ unbinds, restoring the element's own ability to this slot.
+        const clear = this.add.text(x + slotW / 2 - 8, slotY - 12, '✕', {
+          fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#ff8866',
+        }).setOrigin(1, 0.5).setInteractive({ useHandCursor: true });
+        clear.on('pointerdown', () => {
+          // Ignore clicks on rows scrolled out of the visible window.
+          if (!this.isInScrollWindow(container, slotY, scrollTop, scrollBot)) return;
+          PlayerData.clearMasteryBind(elementId, slot);
+          this.showMasteryScreen(elementId, width, height, cx);
+        });
+        container.add(clear);
+      }
+    });
+
+    bindables.forEach((enh, i) => {
+      const homeX = chipFirstX + i * (chipW + 10);
+      const chip = this.add.rectangle(homeX, chipY, chipW, chipH, 0x552200, 0.95)
+        .setStrokeStyle(2, 0xffaa00, 0.9);
+      const chipLbl = this.add.text(homeX, chipY, `🌋 ${enh.name}`, {
+        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc00',
+      }).setOrigin(0.5);
+      container.add([chip, chipLbl]);
+
+      if (!unlocked) {
+        chip.setAlpha(0.4);
+        chipLbl.setAlpha(0.4);
+        return;
+      }
+
+      chip.setInteractive({ useHandCursor: true });
+      chip.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+        if (!this.isInScrollWindow(container, chipY, scrollTop, scrollBot)) return;
+        this.beginMasteryDrag({
+          enh, elementId, pointer, chip, chipLbl,
+          dropTargets, slotY, slotW, slotH, container,
+          width, height, cx,
+        });
+      });
+    });
+
+    innerY += 116;
+
+    if (unlocked && !masteryOn) {
+      const note = this.add.text(cx, innerY + 4, 'Mastery is disabled — bindings apply once enabled.', {
+        fontSize: '9px', fontFamily: 'Arial, sans-serif', color: '#775544',
+      }).setOrigin(0.5);
+      container.add(note);
+      innerY += 18;
+    }
+
+    return innerY + 10;
+  }
+
+  /** True when a scroll-container row at local y is inside the visible (unmasked) window. */
+  private isInScrollWindow(
+    container: Phaser.GameObjects.Container, localY: number, top: number, bottom: number,
+  ): boolean {
+    const worldY = container.y + localY;
+    return worldY >= top && worldY <= bottom;
+  }
+
+  /**
+   * Manual drag: the chip stays put and a top-level ghost follows the pointer, so the drag
+   * is unaffected by the scroll container's transform and mask.
+   */
+  private beginMasteryDrag(args: {
+    enh: MasteryEnhancement; elementId: string; pointer: Phaser.Input.Pointer;
+    chip: Phaser.GameObjects.Rectangle; chipLbl: Phaser.GameObjects.Text;
+    dropTargets: { x: number; slot: MasterySlot }[];
+    slotY: number; slotW: number; slotH: number;
+    container: Phaser.GameObjects.Container;
+    width: number; height: number; cx: number;
+  }): void {
+    const {
+      enh, elementId, pointer, chip, chipLbl, dropTargets,
+      slotY, slotW, slotH, container, width, height, cx,
+    } = args;
+
+    this.endMasteryDrag(); // never allow two drags at once
+
+    chip.setAlpha(0.35);
+    chipLbl.setAlpha(0.35);
+
+    const ghost = this.add.rectangle(pointer.x, pointer.y, chip.width, chip.height, 0x552200, 0.95)
+      .setStrokeStyle(2, 0xffcc44, 1).setDepth(70);
+    const ghostLbl = this.add.text(pointer.x, pointer.y, `🌋 ${enh.name}`, {
+      fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#ffdd66',
+    }).setOrigin(0.5).setDepth(71);
+    this.masteryDragGhost = [ghost, ghostLbl];
+
+    // Highlight whichever slot the pointer is currently over.
+    const hitTest = (p: Phaser.Input.Pointer) => {
+      const worldSlotY = container.y + slotY;
+      return dropTargets.find((t) =>
+        Math.abs(p.x - t.x) <= slotW / 2 && Math.abs(p.y - worldSlotY) <= slotH / 2) ?? null;
+    };
+
+    this.masteryDragMove = (...a: unknown[]) => {
+      const p = a[0] as Phaser.Input.Pointer;
+      ghost.setPosition(p.x, p.y);
+      ghostLbl.setPosition(p.x, p.y);
+      const over = hitTest(p);
+      ghost.setStrokeStyle(2, over ? 0x66ff88 : 0xffcc44, 1);
+    };
+
+    this.masteryDragUp = (...a: unknown[]) => {
+      const p = a[0] as Phaser.Input.Pointer;
+      const hit = hitTest(p);
+      this.endMasteryDrag();
+      if (hit) {
+        PlayerData.setMasteryBind(elementId, hit.slot, enh.id);
+        this.showMasteryScreen(elementId, width, height, cx);
+      } else {
+        chip.setAlpha(1);
+        chipLbl.setAlpha(1);
+      }
+    };
+
+    this.input.on('pointermove', this.masteryDragMove);
+    this.input.on('pointerup', this.masteryDragUp);
+  }
+
+  /** Tears down any in-flight mastery drag: removes handlers and destroys the ghost. */
+  private endMasteryDrag(): void {
+    if (this.masteryDragMove) {
+      this.input.off('pointermove', this.masteryDragMove);
+      this.masteryDragMove = null;
+    }
+    if (this.masteryDragUp) {
+      this.input.off('pointerup', this.masteryDragUp);
+      this.masteryDragUp = null;
+    }
+    if (this.masteryDragGhost) {
+      for (const o of this.masteryDragGhost) o.destroy();
+      this.masteryDragGhost = null;
+    }
   }
 
   private showPerkDictionary(width: number, height: number, cx: number): void {
@@ -1324,10 +2035,10 @@ export class MenuScene extends Phaser.Scene {
       scrollContainer.setY(SCROLL_TOP - scrollY);
     };
 
-    this.perkDictScrollHandler = (_ptr: unknown, _over: unknown, _dx: unknown, deltaY: unknown) => {
+    this.infoScrollHandler = (_ptr: unknown, _over: unknown, _dx: unknown, deltaY: unknown) => {
       doScroll((deltaY as number) * 0.5);
     };
-    this.input.on('wheel', this.perkDictScrollHandler);
+    this.input.on('wheel', this.infoScrollHandler);
 
     if (maxScroll > 0) {
       const hint = this.add.text(width - 12, SCROLL_BOT - 4, '▼ scroll', {

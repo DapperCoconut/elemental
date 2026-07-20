@@ -1,11 +1,12 @@
 import Phaser from 'phaser';
 
 export class Projectile extends Phaser.Physics.Arcade.Image {
-  public readonly damage: number;
+  public damage: number;
   public readonly isFromPlayer: boolean;
   public isPowered = false;
   public perkBoost = 1;
   public isHeal = false;
+  public portalUsed = false;
 
   constructor(
     scene: Phaser.Scene,

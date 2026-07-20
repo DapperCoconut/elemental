@@ -109,7 +109,6 @@ export interface SlimeArenaApi {
   readonly enemies: readonly Fighter[];
   readonly scene: Phaser.Scene;
   readonly projectiles: Phaser.Physics.Arcade.Group;
-  readonly isInvasion: boolean;
   readonly eKey: Phaser.Input.Keyboard.Key;
   readonly fKey: Phaser.Input.Keyboard.Key;
   readonly rKey: Phaser.Input.Keyboard.Key;
@@ -1003,10 +1002,6 @@ export class SlimeKit {
       }
     }
 
-    if (this.arena.isInvasion && this.slimeSlotUI.length > 0) {
-      this.repositionHUDToPlayer();
-    }
-
     this.refreshSlimeHUD();
   }
 
@@ -1019,29 +1014,6 @@ export class SlimeKit {
       expiresAt: time + 3000,
       contactCdUntil: 0,
     });
-  }
-
-  private repositionHUDToPlayer(): void {
-    const { player } = this.arena;
-    const count = this.slimeSlotUI.length;
-    const slotW = 62;
-    const gap = 6;
-    const totalW = count * slotW + (count - 1) * gap;
-    const centerX = player.x;
-    const centerY = player.y + 100;
-    const startX = centerX - totalW / 2 + slotW / 2;
-
-    if (this.slimeHUDBg) this.slimeHUDBg.setPosition(centerX, centerY);
-
-    for (let i = 0; i < this.slimeSlotUI.length; i++) {
-      const x = startX + i * (slotW + gap);
-      const slot = this.slimeSlotUI[i];
-      slot.bg.setPosition(x, centerY);
-      slot.lvlText.setPosition(x - 4, centerY + 2);
-      slot.emojiText.setPosition(x + 16, centerY - 12);
-      slot.xpBarBg.setPosition(x, centerY + 17);
-      slot.xpBarFill.setPosition(x - (slotW - 8) / 2, centerY + 17);
-    }
   }
 
   // ── handleInput ───────────────────────────────────────────────────────

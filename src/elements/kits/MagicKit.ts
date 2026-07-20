@@ -449,6 +449,19 @@ export class MagicKit {
         this.darkCenterPressed = false;
       }
 
+      // Mouse hover — select the wedge under the pointer
+      if (centerDist > 28) {
+        const rawAngle = Math.atan2(ptr2.worldY - this.api.player.y, ptr2.worldX - this.api.player.x);
+        const angleStep = (Math.PI * 2) / count;
+        const normalized = (((rawAngle + Math.PI / 2) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+        const hoverIdx = Math.round(normalized / angleStep) % count;
+        if (hoverIdx !== idx) {
+          if (isGrimoire) { this.grimoireSelectedIndex = hoverIdx; this.grimoireKeyNavUsed = true; }
+          else { this.necronomiconSelectedIndex = hoverIdx; this.necronomiconKeyNavUsed = true; }
+          this._drawMenu(isGrimoire ? 'grimoire' : 'necronomicon', hoverIdx);
+        }
+      }
+
       if (Phaser.Input.Keyboard.JustDown(leftKey)) {
         const newIdx = (idx + count - 1) % count;
         if (isGrimoire) this.grimoireSelectedIndex = newIdx;
@@ -1791,9 +1804,11 @@ export class MagicKit {
     const targets = (owner === 'player' ? this.api.enemies : [this.api.player])
       .filter(t => t.active && t.hp > 0 && Phaser.Math.Distance.Between(bx, by, t.x, t.y) <= 90);
     for (const t of targets) {
-      const dx = t.x - bx; const dy = t.y - by;
-      const len = Math.sqrt(dx * dx + dy * dy) || 1;
-      (t.body as Phaser.Physics.Arcade.Body).setVelocity((dx / len) * 650, (dy / len) * 650);
+      if (!t.knockbackImmune) {
+        const dx = t.x - bx; const dy = t.y - by;
+        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        (t.body as Phaser.Physics.Arcade.Body).setVelocity((dx / len) * 650, (dy / len) * 650);
+      }
       t.takeDamage(8);
       this.api.spawnHitFlash(t.x, t.y, 0xaaaaaa);
       this.api.spawnDamageNumber(t.x, t.y - 28, 8);
@@ -1923,9 +1938,11 @@ export class MagicKit {
     const targets = (owner === 'player' ? this.api.enemies : [this.api.player])
       .filter(t => t.active && t.hp > 0 && Phaser.Math.Distance.Between(bx, by, t.x, t.y) <= 90);
     for (const t of targets) {
-      const dx = t.x - bx; const dy = t.y - by;
-      const len = Math.sqrt(dx * dx + dy * dy) || 1;
-      (t.body as Phaser.Physics.Arcade.Body).setVelocity((dx / len) * 700, (dy / len) * 700);
+      if (!t.knockbackImmune) {
+        const dx = t.x - bx; const dy = t.y - by;
+        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        (t.body as Phaser.Physics.Arcade.Body).setVelocity((dx / len) * 700, (dy / len) * 700);
+      }
       t.takeDamage(10);
       this.api.spawnHitFlash(t.x, t.y, 0x666666);
       this.api.spawnDamageNumber(t.x, t.y - 28, 10);

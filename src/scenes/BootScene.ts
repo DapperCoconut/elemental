@@ -1,4 +1,22 @@
 import Phaser from 'phaser';
+import { HUSK_VARIANTS, huskTextureKey } from '../invasion/HuskVariants';
+
+/** Scale a colour's channels toward black by `factor` (0–1). */
+function darken(color: number, factor: number): number {
+  const c = Phaser.Display.Color.IntegerToColor(color);
+  const ch = (v: number) => Math.max(0, Math.min(255, Math.round(v * factor)));
+  return Phaser.Display.Color.GetColor(ch(c.red), ch(c.green), ch(c.blue));
+}
+
+/**
+ * Blend a colour `t` of the way toward white. Multiplying can't lighten a
+ * near-black body, so dark husks lift their outline this way instead.
+ */
+function lighten(color: number, t: number): number {
+  const c = Phaser.Display.Color.IntegerToColor(color);
+  const ch = (v: number) => Math.round(v + (255 - v) * t);
+  return Phaser.Display.Color.GetColor(ch(c.red), ch(c.green), ch(c.blue));
+}
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -46,11 +64,25 @@ export class BootScene extends Phaser.Scene {
     gfx.fillCircle(6, 6, 6);
     gfx.generateTexture('proj-life', 12, 12);
 
+    // Sakura projectile (white circle — tinted pink at spawn)
+    gfx.clear();
+    gfx.fillStyle(0xffffff);
+    gfx.fillCircle(6, 6, 6);
+    gfx.generateTexture('proj-sakura', 12, 12);
+
     // Fireball projectile (small orange circle)
     gfx.clear();
     gfx.fillStyle(0xff8800);
     gfx.fillCircle(7, 7, 7);
     gfx.generateTexture('proj-fire', 14, 14);
+
+    // Cremation ember projectile (small deep-red circle, Fire Mastery)
+    gfx.clear();
+    gfx.fillStyle(0xcc1100);
+    gfx.fillCircle(5, 5, 5);
+    gfx.lineStyle(1, 0xff5500);
+    gfx.strokeCircle(5, 5, 5);
+    gfx.generateTexture('proj-ember', 10, 10);
 
     // Water cut projectile (cyan-blue rectangle — slash shape)
     gfx.clear();
@@ -151,6 +183,21 @@ export class BootScene extends Phaser.Scene {
     gfx.lineStyle(1, 0xffffff);
     gfx.strokeRect(0, 2, 8, 4);
     gfx.generateTexture('proj-crystal-shard', 8, 8);
+
+    // Crystal kite shard projectile (kite/deltoid shape — NOT a symmetric diamond: asymmetric top/bottom, symmetric left/right)
+    // Tripled in size from the original 14×16 texture.
+    gfx.clear();
+    gfx.fillStyle(0x88eeff);
+    gfx.beginPath();
+    gfx.moveTo(21, 0);   // top point
+    gfx.lineTo(36, 18);  // right point
+    gfx.lineTo(21, 48);  // bottom point (longer tail — kite shape)
+    gfx.lineTo(6, 18);   // left point
+    gfx.closePath();
+    gfx.fillPath();
+    gfx.lineStyle(3, 0xffffff);
+    gfx.strokePath();
+    gfx.generateTexture('proj-crystal-kite', 42, 48);
 
     // Soul element texture (pale purple circle)
     gfx.clear();
@@ -1066,21 +1113,6 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('mask-silence', 28, 22);
     gfx.clear();
 
-    // doll-silence — 20×24 mini voodoo straw figure with hockey mask (R+ possession)
-    gfx.fillStyle(0x997755, 1);
-    gfx.fillRect(8, 10, 4, 10); // torso
-    gfx.fillRect(4, 12, 5, 2);  // left arm
-    gfx.fillRect(11, 12, 5, 2); // right arm
-    gfx.fillRect(7, 20, 3, 4);  // left leg
-    gfx.fillRect(10, 20, 3, 4); // right leg
-    gfx.fillStyle(0xeeeeee, 1);
-    gfx.fillEllipse(10, 7, 8, 7); // mask face
-    gfx.fillStyle(0x000000, 0.8);
-    gfx.fillEllipse(7, 6, 2, 2);  // left eye hole
-    gfx.fillEllipse(13, 6, 2, 2); // right eye hole
-    gfx.generateTexture('doll-silence', 20, 24);
-    gfx.clear();
-
     // goop-silence-form — 80×80 irregular black blob with yellow eyes (Q+ goop transform)
     gfx.fillStyle(0x0a0a0a, 1);
     gfx.fillCircle(40, 40, 36);
@@ -1156,130 +1188,51 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('echo-psychic-eye', 18, 18);
     gfx.clear();
 
-    // ── Corrupted enemy textures ────────────────────────────────────
+    // ── Invasion husk texture ───────────────────────────────────────
 
-    // corrupted-basic — 48×48 dark purple circle, magenta stroke
-    gfx.fillStyle(0x220022, 1);
+    // husk — 48×48 rotten-green zombie circle, vacant eyes, crooked mouth
+    gfx.fillStyle(0x3e5a22, 1);
     gfx.fillCircle(24, 24, 20);
-    gfx.lineStyle(3, 0xdd00dd, 1);
+    gfx.lineStyle(3, 0x1d2e0f, 1);
     gfx.strokeCircle(24, 24, 20);
-    gfx.fillStyle(0xff44ff, 1);
-    gfx.fillCircle(17, 20, 3);
-    gfx.fillCircle(31, 20, 3);
-    gfx.generateTexture('corrupted-basic', 48, 48);
+    gfx.fillStyle(0x5a7a35, 0.6);
+    gfx.fillCircle(19, 18, 8); // decayed blotch
+    gfx.fillStyle(0x0e1607, 1);
+    gfx.fillCircle(17, 19, 4);
+    gfx.fillCircle(31, 19, 4);
+    gfx.lineStyle(2, 0x0e1607, 1);
+    gfx.lineBetween(16, 31, 22, 33);
+    gfx.lineBetween(22, 33, 27, 30);
+    gfx.lineBetween(27, 30, 33, 32);
+    gfx.generateTexture('husk', 48, 48);
     gfx.clear();
 
-    // corrupted-overcharged — 48×48 yellow circle, red stroke
-    gfx.fillStyle(0x332200, 1);
-    gfx.fillCircle(24, 24, 20);
-    gfx.lineStyle(3, 0xff4400, 1);
-    gfx.strokeCircle(24, 24, 20);
-    gfx.fillStyle(0xffcc00, 1);
-    gfx.fillCircle(24, 24, 8);
-    gfx.lineStyle(2, 0xffaa00, 0.8);
-    gfx.strokeCircle(24, 24, 14);
-    gfx.generateTexture('corrupted-overcharged', 48, 48);
-    gfx.clear();
+    // One husk body per invasion variant, drawn from the variant's own colour.
+    // Dark bodies get a lighter outline (and vice versa) so the silhouette
+    // stays legible against the arena floor at either extreme.
+    for (const variant of HUSK_VARIANTS) {
+      const base = Phaser.Display.Color.IntegerToColor(variant.color);
+      const dark = base.red * 0.299 + base.green * 0.587 + base.blue * 0.114 < 90;
+      const outline = dark ? lighten(variant.color, 0.45) : darken(variant.color, 0.42);
+      const blotch  = lighten(variant.color, dark ? 0.60 : 0.25);
+      const feature = dark ? lighten(variant.color, 0.70) : darken(variant.color, 0.22);
 
-    // corrupted-rusher — 48×48 red circle, white streak
-    gfx.fillStyle(0x330000, 1);
-    gfx.fillCircle(24, 24, 20);
-    gfx.lineStyle(3, 0xff2222, 1);
-    gfx.strokeCircle(24, 24, 20);
-    gfx.lineStyle(3, 0xffffff, 0.9);
-    gfx.lineBetween(8, 24, 40, 24);
-    gfx.lineBetween(14, 18, 24, 24);
-    gfx.lineBetween(14, 30, 24, 24);
-    gfx.generateTexture('corrupted-rusher', 48, 48);
-    gfx.clear();
-
-    // corrupted-protected — 48×48 blue circle, cyan stroke
-    gfx.fillStyle(0x001133, 1);
-    gfx.fillCircle(24, 24, 20);
-    gfx.lineStyle(3, 0x0088ff, 1);
-    gfx.strokeCircle(24, 24, 20);
-    gfx.lineStyle(2, 0x44ddff, 0.7);
-    gfx.strokeCircle(24, 24, 14);
-    gfx.fillStyle(0x44aaff, 1);
-    gfx.fillCircle(24, 24, 5);
-    gfx.generateTexture('corrupted-protected', 48, 48);
-    gfx.clear();
-
-    // corrupted-architect — 48×48 dark green circle, lime stroke
-    gfx.fillStyle(0x001100, 1);
-    gfx.fillCircle(24, 24, 20);
-    gfx.lineStyle(3, 0x22bb22, 1);
-    gfx.strokeCircle(24, 24, 20);
-    gfx.fillStyle(0x44ff44, 0.6);
-    gfx.fillTriangle(24, 12, 14, 30, 34, 30);
-    gfx.generateTexture('corrupted-architect', 48, 48);
-    gfx.clear();
-
-    // corrupted-titan — 72×72 large dark red circle, orange stroke
-    gfx.fillStyle(0x220000, 1);
-    gfx.fillCircle(36, 36, 32);
-    gfx.lineStyle(4, 0xff6600, 1);
-    gfx.strokeCircle(36, 36, 32);
-    gfx.lineStyle(2, 0xff3300, 0.7);
-    gfx.strokeCircle(36, 36, 22);
-    gfx.fillStyle(0xff4400, 1);
-    gfx.fillCircle(25, 28, 5);
-    gfx.fillCircle(47, 28, 5);
-    gfx.fillStyle(0xff8800, 0.8);
-    gfx.fillRect(26, 40, 20, 4);
-    gfx.generateTexture('corrupted-titan', 72, 72);
-    gfx.clear();
-
-    // proj-corrupted — 12×12 purple projectile
-    gfx.fillStyle(0xaa00cc, 1);
-    gfx.fillCircle(6, 6, 5);
-    gfx.lineStyle(1, 0xff44ff, 0.8);
-    gfx.strokeCircle(6, 6, 5);
-    gfx.generateTexture('proj-corrupted', 12, 12);
-    gfx.clear();
-
-    // proj-noxious — 12×12 green noxious projectile (festering growth shots)
-    gfx.fillStyle(0x004400, 1);
-    gfx.fillCircle(6, 6, 5);
-    gfx.lineStyle(1, 0x44ff44, 0.8);
-    gfx.strokeCircle(6, 6, 5);
-    gfx.fillStyle(0x88ff44, 0.6);
-    gfx.fillCircle(6, 6, 2);
-    gfx.generateTexture('proj-noxious', 12, 12);
-    gfx.clear();
-
-    // proj-titan-rocket — 16×16 red-orange rocket
-    gfx.fillStyle(0xff4400, 1);
-    gfx.fillTriangle(8, 0, 2, 16, 14, 16);
-    gfx.lineStyle(2, 0xff8800, 0.8);
-    gfx.strokeTriangle(8, 0, 2, 16, 14, 16);
-    gfx.generateTexture('proj-titan-rocket', 16, 16);
-    gfx.clear();
-
-    // corrupted-growth — 32×32 dark green festering growth
-    gfx.fillStyle(0x002200, 1);
-    gfx.fillCircle(16, 16, 14);
-    gfx.lineStyle(2, 0x44cc44, 0.8);
-    gfx.strokeCircle(16, 16, 14);
-    gfx.fillStyle(0x226622, 0.6);
-    gfx.fillCircle(16, 16, 7);
-    gfx.lineStyle(1, 0x88ff44, 0.5);
-    for (let ci = 0; ci < 6; ci++) {
-      const ca = (ci / 6) * Math.PI * 2;
-      gfx.lineBetween(16, 16, 16 + Math.cos(ca) * 12, 16 + Math.sin(ca) * 12);
+      gfx.fillStyle(variant.color, 1);
+      gfx.fillCircle(24, 24, 20);
+      gfx.lineStyle(3, outline, 1);
+      gfx.strokeCircle(24, 24, 20);
+      gfx.fillStyle(blotch, 0.6);
+      gfx.fillCircle(19, 18, 8); // decayed blotch
+      gfx.fillStyle(feature, 1);
+      gfx.fillCircle(17, 19, 4);
+      gfx.fillCircle(31, 19, 4);
+      gfx.lineStyle(2, feature, 1);
+      gfx.lineBetween(16, 31, 22, 33);
+      gfx.lineBetween(22, 33, 27, 30);
+      gfx.lineBetween(27, 30, 33, 32);
+      gfx.generateTexture(huskTextureKey(variant), 48, 48);
+      gfx.clear();
     }
-    gfx.generateTexture('corrupted-growth', 32, 32);
-    gfx.clear();
-
-    // titan-shield — 24×24 cyan orbiting shield
-    gfx.fillStyle(0x003344, 1);
-    gfx.fillCircle(12, 12, 10);
-    gfx.lineStyle(2, 0x44ffff, 1);
-    gfx.strokeCircle(12, 12, 10);
-    gfx.fillStyle(0x88ffff, 0.7);
-    gfx.fillCircle(12, 12, 4);
-    gfx.generateTexture('titan-shield', 24, 24);
-    gfx.clear();
 
     // proj-note-blue — blue rhythm note
     gfx.fillStyle(0x3388ff, 1);

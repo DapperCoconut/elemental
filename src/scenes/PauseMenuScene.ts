@@ -67,7 +67,10 @@ export class PauseMenuScene extends Phaser.Scene {
     const exitToMenu = () => {
       this.scene.stop(this.parentSceneKey);
       this.scene.stop();
-      this.scene.start('MenuScene');
+      // Phaser only overwrites scene.settings.data when a truthy object is passed —
+      // an empty object here (not omitted) clears any stale { mode: 'invasion' }
+      // left over from a previous MenuScene launch.
+      this.scene.start('MenuScene', {});
     };
 
     resumeBtn

@@ -15,7 +15,6 @@ export interface EchoArenaApi {
   get qKey(): Phaser.Input.Keyboard.Key;
   get projectiles(): Phaser.Physics.Arcade.Group;
   get nukeChanneling(): boolean;
-  get isInvasion(): boolean;
   get npcElementId(): string;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;

@@ -30,6 +30,18 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public dodgeChance = 0;
   /** Timestamp after which the fighter can cast abilities again (Disarm effect). */
   public disarmedUntil = 0;
+  /**
+   * Online play: when true this fighter is a remote-player replica whose HP is
+   * network-authoritative. Local damage/heals only play hit feedback and never
+   * change vitals — the real numbers arrive via netSyncVitals().
+   */
+  public netGhost = false;
+  /** Invoked with the final computed damage when a netGhost fighter is hit — used to report damage to the authoritative peer (invasion co-op husk replicas). */
+  public onGhostDamage: ((amount: number) => void) | null = null;
+  /** Invasion co-op: true while this fighter is downed and awaiting revive. Enemies should ignore downed targets. */
+  public downed = false;
+  /** Online play: invoked whenever a cast is stamped (castAbility success, triggerCooldown, startCooldown). */
+  public onCastStamp: ((abilityId: string) => void) | null = null;
   /** 0–1 probability that outgoing attacks deal a critical hit (2× damage). */
   public critChance = 0;
   /** Damage multiplier applied on a critical hit. Default 2. */
@@ -45,6 +57,18 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public burningUntil = 0;
   public burnTickAccum = 0;
   public burnAura: Phaser.GameObjects.Arc | null = null;
+  /** Fire Mastery — Cremation stoke bonus: added to burn tick damage; persists through re-ignition, cleared only when burningUntil expires. */
+  public fireStokeBonus = 0;
+
+  /** Fire Mastery — Heatwave: while exposed, the next damage taken is amplified 1.5x. */
+  public exposedUntil = 0;
+  public exposedIcon: Phaser.GameObjects.Text | null = null;
+  /** Timestamp exposed was consumed by a hit — short grace window so an ignition from that same hit upgrades to molten fire. */
+  public exposedConsumedAt = 0;
+  /** Fire Mastery — molten fire: replaces normal burn when an exposed target is ignited. */
+  public moltenUntil = 0;
+  public moltenTickAccum = 0;
+  public moltenAura: Phaser.GameObjects.Arc | null = null;
 
   public frostStacks = 0;
   public frostVisual: Phaser.GameObjects.Text | null = null;
@@ -59,6 +83,13 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public voidedUntil = 0;
   public voidedDps = 0;
   public voidedTickAccum = 0;
+
+  public permafrostStacks = 0;
+  public permafrostVisual: Phaser.GameObjects.Text | null = null;
+  public permavoidStacks = 0;
+  public permavoidVisual: Phaser.GameObjects.Text | null = null;
+  public frostImmuneUntil = 0;
+  public voidImmuneUntil = 0;
 
   public toxicUntil = 0;
   public toxicDps = 0;
@@ -80,6 +111,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public slimeConfuseDirUntil = 0;
 
   public earthStunnedUntil = 0;
+  /** Earth Mastery — Dust Screen: while active, Husk AI wanders/misfires instead of pathfinding normally. */
+  public confusedWanderUntil = 0;
 
   // Silence upgrade status effects
   public statueUntil = 0;
@@ -114,6 +147,14 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public aimOffsetBonusDeg = 0;
   /** Timestamp until which aimOffsetBonusDeg is active. */
   public aimOffsetBonusUntil = 0;
+
+  /** Oil Mastery — Drone Array: 0.9^drones incoming damage while drones orbit. Default 1. */
+  public droneArmorMult = 1;
+
+  /** Earth Mastery — Unbreakable: forced-velocity effects from other abilities skip this fighter. Default false. */
+  public knockbackImmune = false;
+  /** Earth Mastery — Unbreakable: caps any single hit's damage to this value. 0 = no cap. */
+  public hardDamageCap = 0;
 
   // ── Gauntlet card stat fields ────────────────────────────────────────
   /** Card: reduces all incoming damage. Default 1 (Protected card). */
@@ -187,7 +228,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     this.healthBar.setMaxHp(this.maxHp);
   }
 
-  takeDamage(amount: number, opts?: { pierce?: boolean }): void {
+  takeDamage(amount: number, opts?: { pierce?: boolean; fireDot?: boolean }): void {
     if (!opts?.pierce && this.isInvincible) return;
     if (this.statueUntil > 0) this.statueUntil = 0;
 
@@ -200,10 +241,33 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       amount = Math.round(amount * (critCtx?.mult ?? 2));
     }
 
-    amount = Math.round(amount * this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.quantumIncomingMult * this.cardDamageTakenMult);
+    amount = Math.round(amount * this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.quantumIncomingMult * this.cardDamageTakenMult * this.droneArmorMult);
     if (this.darkVulnStacks > 0) amount = Math.round(amount * (1 + 0.25 * this.darkVulnStacks));
+    // Fire Mastery — Heatwave: exposed amplifies the next hit, then is consumed.
+    // Fire damage-over-time is exempt on both counts: burn/molten ticks are neither
+    // amplified nor allowed to eat the buff, so a tick can't rob the next real hit.
+    if (!opts?.fireDot && this.exposedUntil > this.scene.time.now) {
+      amount = Math.round(amount * 1.5);
+      this.exposedUntil = 0;
+      this.exposedConsumedAt = this.scene.time.now;
+    }
+    // Earth Mastery — Unbreakable: applied last so nothing upstream can push a hit back above the cap.
+    if (this.hardDamageCap > 0) amount = Math.min(amount, this.hardDamageCap);
     this.lastIncomingDamage = amount;
     if (isCrit) this.emit('damaged-crit', amount);
+
+    if (this.netGhost) {
+      // Hit feedback only — vitals come from the network. Report the computed
+      // amount so the local owner can forward it to the authoritative peer.
+      this.onGhostDamage?.(amount);
+      if (!this.forceInvisible) {
+        this.setAlpha(0.5);
+        this.scene.time.delayedCall(120, () => {
+          if (this.active) this.setAlpha(this.forceInvisible ? 0 : 1);
+        });
+      }
+      return;
+    }
 
     if (!opts?.pierce && this.damageAbsorber && this.damageAbsorber(amount)) return;
 
@@ -257,11 +321,23 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public onHeal?: (actualAmount: number) => void;
 
   heal(amount: number): void {
+    if (this.netGhost) return;
     if (this.healStopUntil > 0 && Date.now() < this.healStopUntil) return;
     const before = this.hp;
     this.hp = Math.min(this.maxHp, this.hp + amount);
     const actual = this.hp - before;
     if (actual > 0 && this.onHeal) this.onHeal(actual);
+  }
+
+  /** Online play: apply network-authoritative vitals to a replica fighter. */
+  netSyncVitals(hp: number, maxHp: number, shieldHp: number, shieldCharges: number): void {
+    if (maxHp !== this.maxHp) {
+      this.maxHp = maxHp;
+      this.healthBar.setMaxHp(maxHp);
+    }
+    this.hp = hp;
+    this.shieldHp = shieldHp;
+    this.shieldCharges = shieldCharges;
   }
 
   setMaxHp(newMax: number): void {
@@ -284,6 +360,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
   /** Like takeDamage but bypasses isInvincible — used for self-inflicted effects. */
   applySelfDamage(amount: number): void {
+    if (this.netGhost) return;
     this.hp = Math.max(0, this.hp - amount);
     this.emit('damaged', amount);
 
@@ -324,6 +401,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     if (now - (this.cooldowns.get(abilityId) ?? 0) < ability.cooldown * this.cooldownMult * ultimateExtra) return false;
 
     this.cooldowns.set(abilityId, now);
+    this.onCastStamp?.(abilityId);
     ability.cast(ctx);
     return true;
   }
@@ -331,6 +409,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Starts the cooldown for an ability without calling cast() — for charge-and-release abilities. */
   triggerCooldown(abilityId: string): void {
     this.cooldowns.set(abilityId, Date.now());
+    this.onCastStamp?.(abilityId);
   }
 
   /** Shift all stored cooldown timestamps forward by deltaMs (used to compensate for real-time elapsed during a game pause). */
@@ -341,6 +420,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Force an ability's cooldown to start right now (used by kits that manage their own CD timing). */
   startCooldown(abilityId: string): void {
     this.cooldowns.set(abilityId, Date.now());
+    this.onCastStamp?.(abilityId);
   }
 
   /** Reduce remaining cooldown of an ability by byMs milliseconds (cannot make it readier than fully ready). */
@@ -377,6 +457,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     if (this.toxicAura) { this.toxicAura.destroy(); this.toxicAura = null; }
     if (this.bleedVisual) { this.bleedVisual.destroy(); this.bleedVisual = null; }
     if (this.growthBloatAura) { this.growthBloatAura.destroy(); this.growthBloatAura = null; }
+    if (this.permafrostVisual) { this.permafrostVisual.destroy(); this.permafrostVisual = null; }
+    if (this.permavoidVisual) { this.permavoidVisual.destroy(); this.permavoidVisual = null; }
     super.destroy(fromScene);
   }
 }

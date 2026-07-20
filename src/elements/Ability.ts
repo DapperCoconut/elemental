@@ -9,6 +9,8 @@ export interface CastContext {
   isPlayerCaster: boolean;
   projectiles: Phaser.Physics.Arcade.Group;
   dealAoeDamage: (cx: number, cy: number, radius: number, damage: number) => void;
+  /** Fire Mastery: same as dealAoeDamage but tracks zombie kills for the Nuclear Cleansing challenge (player-only). */
+  dealFlameNukeDamage: (cx: number, cy: number, radius: number, damage: number) => void;
   dashCaster: (vx: number, vy: number) => void;
   healCaster: (amount: number) => void;
   damageCaster: (amount: number) => void;
@@ -25,7 +27,10 @@ export interface CastContext {
   activateQuickShot: () => void;
   placeWindTrap: (x: number, y: number) => void;
   grappleTo: (x: number, y: number) => void;
-  reportAirSnipeResult: (hit: boolean) => void;
+  /** `hitTargets` carries where each connecting shot landed, so Air Mastery can score wind-trap hits. */
+  reportAirSnipeResult: (hit: boolean, hitTargets?: Array<{ x: number; y: number }>) => void;
+  /** How many enemies a single Charged Beam ran through — feeds the Air Mastery multi-hit requirement. */
+  reportAirBeamHits: (count: number) => void;
   quickShotActive: boolean;
   addShieldHp: (amount: number) => void;
   getShieldHp: () => number;

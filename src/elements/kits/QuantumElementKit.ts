@@ -934,11 +934,13 @@ export class QuantumElementKit {
   private _grabAndVibrate(time: number): void {
     const { player, npc } = this.api;
 
+    // Player is the caster stopping itself to grab — self-directed, not gated.
     const pb = player.body as Phaser.Physics.Arcade.Body;
     if (pb?.enable) pb.setVelocity(0, 0);
 
+    // npc is the grabbed opponent — Unbreakable prevents the forced hold in place.
     const nb = npc.body as Phaser.Physics.Arcade.Body;
-    if (nb?.enable) nb.setVelocity(0, 0);
+    if (nb?.enable && !npc.knockbackImmune) nb.setVelocity(0, 0);
 
     this.playerVibrationDashEnd = 0;
     this.playerVibrationSpinning = true;
