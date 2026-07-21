@@ -54,17 +54,17 @@ export interface CastContext {
   activateTentacle: (x: number, y: number) => void;
   placeSnapTrap: () => void;
   activateShadowDance: () => void;
-  startBlackHole: () => void;
+  startBlackHole: (x: number, y: number) => void;
   // Growth
   fireGrowthClick: (tx: number, ty: number) => void;
-  openMutateMenu: () => void;
-  fireInfect: (tx: number, ty: number) => void;
-  activateBloat: () => void;
-  triggerMutantMorph: () => void;
+  growthToggleEvolve: () => void;
+  growthSporeSpread: (tx: number, ty: number) => void;
+  growthCancer: () => void;
+  growthAuxiliaryGrowth: () => void;
   // Crystal
   fireCrystalLaser: (tx: number, ty: number) => void;
   placeCrystalNode: (tx: number, ty: number) => void;
-  startCrystalBarrage: (tx: number, ty: number) => void;
+  activateCrystalAtune: () => void;
   placeCrystalPortal: (tx: number, ty: number) => void;
   activateCrystalTrick: () => void;
   // Soul
@@ -111,10 +111,10 @@ export interface CastContext {
   creationBlock: (x: number, y: number, w: number, h: number) => void;
   creationMaze: () => void;
   // Fate (alt-life)
-  fateCoinToss: (tx: number, ty: number) => void;
-  fateSpawnSlotMachine: (x: number, y: number) => void;
-  fateLuck: () => void;
-  fateDice: (tx: number, ty: number) => void;
+  fateThrowCard: (tx: number, ty: number) => void;
+  fateReroll: () => void;
+  fatePreserve: () => void;
+  fateEnchant: () => void;
   fateAllIn: () => void;
   // Magnet (abstract combined: electricity + slime)
   magnetPulse: (x: number, y: number) => void;

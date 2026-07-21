@@ -111,7 +111,7 @@ export const ABSTRACT_ELEMENT_UNLOCK_MAP: Record<string, string> = {
 
 export const ABSTRACT_ELEMENTS: ElementDef[] = [
   { id: 'electricity', name: 'Electricity', emoji: '⚡', color: 0xffee00, available: true },
-  { id: 'slime', name: 'Slime', emoji: '🟢', color: 0x66cc44, available: true },
+  { id: 'slime', name: 'Acid', emoji: '🟢', color: 0x66cc44, available: true },
   { id: 'fate', name: 'Fate', emoji: '🃏', color: 0x88eecc, available: true },
   { id: 'sound', name: 'Sound', emoji: '🔊', color: 0xff66cc, available: true },
   { id: 'light', name: 'Light', emoji: '✨', color: 0xfff4a8, available: true },
@@ -154,6 +154,8 @@ export class MenuScene extends Phaser.Scene {
   private masteryDragMove: ((...args: unknown[]) => void) | null = null;
   private masteryDragUp: ((...args: unknown[]) => void) | null = null;
   private masteryDragGhost: Phaser.GameObjects.GameObject[] | null = null;
+  // Preserves scroll position across showMasteryScreen rebuilds triggered by bind/clear actions.
+  private masteryScrollY = 0;
   private mutationScrollHandler: (...args: unknown[]) => void = () => {};
   private elementInfoMode: 'base' | 'upgraded' = 'base';
   private expandedVariants: Set<string> = new Set();
@@ -442,6 +444,7 @@ export class MenuScene extends Phaser.Scene {
         .on('pointerout',  () => mCircle.setFillStyle(0x332200, 0.9))
         .on('pointerdown', (ptr: Phaser.Input.Pointer) => {
           ptr.event.stopPropagation();
+          this.masteryScrollY = 0;
           this.showMasteryScreen(el.id, width, height, cx);
         });
 
@@ -1614,15 +1617,19 @@ export class MenuScene extends Phaser.Scene {
     innerY = this.buildMasteryLoadout({
       elementId, element, container: scrollContainer, cx, innerY,
       width, height, scrollTop: SCROLL_TOP, scrollBot: SCROLL_BOT,
-      masteryOn: PlayerData.isMasteryEnabled(elementId),
+      masteryOn: PlayerData.isMasteryEnabled(elementId), emoji: def.enhancedEmoji,
     });
 
     // ── Scroll logic ──
+    // Restores the scroll offset from before this rebuild (e.g. binding/clearing a mastery
+    // ability) so those actions don't jerk the view back to the top.
     const totalContentH = innerY;
-    let scrollY = 0;
     const maxScroll = Math.max(0, totalContentH - SCROLL_H);
+    let scrollY = Phaser.Math.Clamp(this.masteryScrollY, 0, maxScroll);
+    scrollContainer.setY(SCROLL_TOP - scrollY);
     const doScroll = (delta: number) => {
       scrollY = Phaser.Math.Clamp(scrollY + delta, 0, maxScroll);
+      this.masteryScrollY = scrollY;
       scrollContainer.setY(SCROLL_TOP - scrollY);
     };
     this.infoScrollHandler = (_ptr: unknown, _over: unknown, _dx: unknown, deltaY: unknown) => {
@@ -1652,7 +1659,7 @@ export class MenuScene extends Phaser.Scene {
       btnColor = 0x225533;
       btnTextColor = '#88ff88';
     } else {
-      btnLabel = `🌋  ENABLE ${def.name.toUpperCase()}`;
+      btnLabel = `${def.enhancedEmoji}  ENABLE ${def.name.toUpperCase()}`;
       btnColor = 0x552200;
       btnTextColor = '#ffcc00';
     }
@@ -1686,9 +1693,9 @@ export class MenuScene extends Phaser.Scene {
   private buildMasteryLoadout(opts: {
     elementId: string; element: Element; container: Phaser.GameObjects.Container;
     cx: number; innerY: number; width: number; height: number;
-    scrollTop: number; scrollBot: number; masteryOn: boolean;
+    scrollTop: number; scrollBot: number; masteryOn: boolean; emoji: string;
   }): number {
-    const { elementId, element, container, cx, width, height, scrollTop, scrollBot, masteryOn } = opts;
+    const { elementId, element, container, cx, width, height, scrollTop, scrollBot, masteryOn, emoji } = opts;
     let innerY = opts.innerY;
 
     const bindables = getBindableEnhancements(elementId);
@@ -1785,7 +1792,7 @@ export class MenuScene extends Phaser.Scene {
       const homeX = chipFirstX + i * (chipW + 10);
       const chip = this.add.rectangle(homeX, chipY, chipW, chipH, 0x552200, 0.95)
         .setStrokeStyle(2, 0xffaa00, 0.9);
-      const chipLbl = this.add.text(homeX, chipY, `🌋 ${enh.name}`, {
+      const chipLbl = this.add.text(homeX, chipY, `${emoji} ${enh.name}`, {
         fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc00',
       }).setOrigin(0.5);
       container.add([chip, chipLbl]);
@@ -1800,7 +1807,7 @@ export class MenuScene extends Phaser.Scene {
       chip.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
         if (!this.isInScrollWindow(container, chipY, scrollTop, scrollBot)) return;
         this.beginMasteryDrag({
-          enh, elementId, pointer, chip, chipLbl,
+          enh, elementId, pointer, chip, chipLbl, emoji,
           dropTargets, slotY, slotW, slotH, container,
           width, height, cx,
         });
@@ -1834,14 +1841,14 @@ export class MenuScene extends Phaser.Scene {
    */
   private beginMasteryDrag(args: {
     enh: MasteryEnhancement; elementId: string; pointer: Phaser.Input.Pointer;
-    chip: Phaser.GameObjects.Rectangle; chipLbl: Phaser.GameObjects.Text;
+    chip: Phaser.GameObjects.Rectangle; chipLbl: Phaser.GameObjects.Text; emoji: string;
     dropTargets: { x: number; slot: MasterySlot }[];
     slotY: number; slotW: number; slotH: number;
     container: Phaser.GameObjects.Container;
     width: number; height: number; cx: number;
   }): void {
     const {
-      enh, elementId, pointer, chip, chipLbl, dropTargets,
+      enh, elementId, pointer, chip, chipLbl, emoji, dropTargets,
       slotY, slotW, slotH, container, width, height, cx,
     } = args;
 
@@ -1852,7 +1859,7 @@ export class MenuScene extends Phaser.Scene {
 
     const ghost = this.add.rectangle(pointer.x, pointer.y, chip.width, chip.height, 0x552200, 0.95)
       .setStrokeStyle(2, 0xffcc44, 1).setDepth(70);
-    const ghostLbl = this.add.text(pointer.x, pointer.y, `🌋 ${enh.name}`, {
+    const ghostLbl = this.add.text(pointer.x, pointer.y, `${emoji} ${enh.name}`, {
       fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#ffdd66',
     }).setOrigin(0.5).setDepth(71);
     this.masteryDragGhost = [ghost, ghostLbl];

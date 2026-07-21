@@ -14,7 +14,7 @@ const BASE_ELEMENTS = [
 
 const ALL_ABSTRACT_ELEMENTS = [
   { id: 'electricity', name: 'Electricity', emoji: '⚡', color: 0xffee00 },
-  { id: 'slime',       name: 'Slime',       emoji: '🟢', color: 0x66cc44 },
+  { id: 'slime',       name: 'Acid',        emoji: '🟢', color: 0x66cc44 },
   { id: 'fate',        name: 'Fate',        emoji: '🃏', color: 0x88eecc },
   { id: 'sound',       name: 'Sound',       emoji: '🔊', color: 0xff66cc },
   { id: 'light',       name: 'Light',       emoji: '✨', color: 0xfff4a8 },

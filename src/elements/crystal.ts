@@ -19,13 +19,13 @@ const placeCrystal: Ability = {
   cast(ctx: CastContext) { ctx.placeCrystalNode(ctx.targetX, ctx.targetY); },
 };
 
-const crystalBarrage: Ability = {
-  id: 'crystal-barrage',
-  name: 'Barrage',
-  description: 'Launch 15 crystal shards at cursor (4 dmg each). Shards hitting a mirror cause a 2 dmg AOE explosion (larger radius). Shards TP through portals (+50% dmg).',
+const crystalAtune: Ability = {
+  id: 'crystal-atune',
+  name: 'Atune',
+  description: 'Stop every Diamond Shard on screen — while stopped they point toward your cursor, showing where they\'ll fly. After 2s they launch at your cursor. Also refreshes each shard\'s spent wall bounce (does not stack).',
   displayKey: 'R',
-  cooldown: 8000,
-  cast(ctx: CastContext) { ctx.startCrystalBarrage(ctx.targetX, ctx.targetY); },
+  cooldown: 7000,
+  cast(ctx: CastContext) { ctx.activateCrystalAtune(); },
 };
 
 const crystalPortal: Ability = {
@@ -52,5 +52,5 @@ export const crystalElement: Element = {
   name: 'Crystal',
   color: 0x88ccff,
   emoji: '💎',
-  abilities: [crystalLaser, placeCrystal, crystalBarrage, crystalPortal, crystalTrick],
+  abilities: [crystalLaser, placeCrystal, crystalAtune, crystalPortal, crystalTrick],
 };

@@ -1,5 +1,4 @@
 import { BASE_GUNS, GUN_NAMES, GUN_EMOJIS, GUN_DESCS } from '../elements/kits/MetalKit';
-import { BASE_GROWTH_MUTATIONS, ADVANCED_GROWTH_MUTATIONS } from './GrowthMutations';
 
 export interface AbilityVariant {
   emoji?: string;
@@ -30,25 +29,6 @@ const ABILITY_VARIANTS: Record<string, Partial<Record<string, AbilityVariantSet>
           description: GUN_DESCS[id],
         })),
         { emoji: GUN_EMOJIS['sniper'], name: GUN_NAMES['sniper'], description: GUN_DESCS['sniper'], requiresUpgrade: 'r' },
-      ],
-    },
-  },
-  growth: {
-    click: {
-      label: 'Morph forms (Q cycles Click between these)',
-      variants: [
-        { emoji: '🌱', name: 'Spores', description: 'Fires 5 spores in a spread cone (5 dmg each).' },
-        { emoji: '🩸', name: 'Claws', description: 'Melee slash within 120px (15 dmg). Click+: chance to attach a lingering Cancerous Growth.' },
-        { emoji: '🦠', name: 'Virus', description: 'Fires 3 fast projectiles in a tight spread (8 dmg each).' },
-        { emoji: '💣', name: 'Plague Bomb', description: 'Lobs a bomb that detonates in an ~80px AoE (15 dmg).', requiresUpgrade: 'q' },
-        { emoji: '🧫', name: 'Bacterium', description: 'Spawns a stationary blob that damages enemies on contact.', requiresUpgrade: 'q' },
-      ],
-    },
-    e: {
-      label: 'Mutation pool (pick 1 of 3 — 4 with the Greed mutation)',
-      variants: [
-        ...BASE_GROWTH_MUTATIONS.map((m) => ({ emoji: m.emoji, name: m.name, description: m.description })),
-        ...ADVANCED_GROWTH_MUTATIONS.map((m) => ({ emoji: m.emoji, name: m.name, description: m.description, requiresUpgrade: 'e' })),
       ],
     },
   },
@@ -138,19 +118,6 @@ const ABILITY_VARIANTS: Record<string, Partial<Record<string, AbilityVariantSet>
         { emoji: '🔴', name: 'Red Note', description: '30 dmg on hit (crit). Costs 3 pts.', requiresUpgrade: 'click' },
         { emoji: '🔵', name: 'Blue Note', description: '20 dmg + slows the enemy 30% for 2s. Costs 2 pts.', requiresUpgrade: 'click' },
         { emoji: '🟣', name: 'Purple Note', description: '20 dmg + grants you +25% speed for 3s. Costs 3 pts.', requiresUpgrade: 'click' },
-      ],
-    },
-  },
-  slime: {
-    r: {
-      label: 'Slime variants (Sulpher Spring grants one at random on contact)',
-      variants: [
-        { emoji: '🔥', name: 'Firey', description: 'Hits apply a 3s burn. As an F pet: +25% contact damage and ignites on hit.' },
-        { emoji: '🪸', name: 'Coral', description: 'Heals you 5 HP on catching it, and 10 HP every 3s while you stand near it deployed. As an F pet: heals 1 HP every 2s.' },
-        { emoji: '💥', name: 'Volatile', description: 'Explodes for 12 dmg (50px) when launched fresh; recalling one grants a 3s speed boost. As an F pet: pulses a 20 dmg / 80px AoE every 3s.' },
-        { emoji: '☀️', name: 'Photon', description: 'While deployed or as an F pet, auto-fires a photon bolt at the nearest enemy every 1.5–2s.', requiresUpgrade: 'r' },
-        { emoji: '🌵', name: 'Prickly', description: 'Pins to the first enemy it hits, ticking 2 dmg every 0.25s for up to 2s; force-recalling a stuck one bursts for 25 dmg.', requiresUpgrade: 'r' },
-        { emoji: '🩸', name: 'Blood', description: 'Deployed or shielding: slashes nearby enemies every 1.5s, healing you 50% of the damage dealt. F+ pet grows with your healing; Q+ slimes heal on return-contact hits.', requiresPerk: 'blood' },
       ],
     },
   },

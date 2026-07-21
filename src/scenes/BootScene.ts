@@ -154,20 +154,6 @@ export class BootScene extends Phaser.Scene {
     gfx.strokeCircle(24, 24, 22);
     gfx.generateTexture('elem-growth', 48, 48);
 
-    // Growth spore projectile (small lime circle)
-    gfx.clear();
-    gfx.fillStyle(0xaadd44);
-    gfx.fillCircle(4, 4, 4);
-    gfx.generateTexture('proj-growth', 8, 8);
-
-    // Growth infect dagger projectile (dark green rect)
-    gfx.clear();
-    gfx.fillStyle(0x447700);
-    gfx.fillRect(0, 2, 12, 4);
-    gfx.lineStyle(1, 0x88cc00);
-    gfx.strokeRect(0, 2, 12, 4);
-    gfx.generateTexture('proj-growth-dagger', 12, 8);
-
     // Crystal element texture (cyan-white circle)
     gfx.clear();
     gfx.fillStyle(0x66bbdd);
@@ -175,14 +161,6 @@ export class BootScene extends Phaser.Scene {
     gfx.lineStyle(3, 0xaaeeff);
     gfx.strokeCircle(24, 24, 22);
     gfx.generateTexture('elem-crystal', 48, 48);
-
-    // Crystal shard projectile (small bright-cyan rect)
-    gfx.clear();
-    gfx.fillStyle(0x88eeff);
-    gfx.fillRect(0, 2, 8, 4);
-    gfx.lineStyle(1, 0xffffff);
-    gfx.strokeRect(0, 2, 8, 4);
-    gfx.generateTexture('proj-crystal-shard', 8, 8);
 
     // Crystal kite shard projectile (kite/deltoid shape — NOT a symmetric diamond: asymmetric top/bottom, symmetric left/right)
     // Tripled in size from the original 14×16 texture.
@@ -418,13 +396,21 @@ export class BootScene extends Phaser.Scene {
     gfx.strokeCircle(24, 24, 22);
     gfx.generateTexture('elem-slime', 48, 48);
 
-    // Slime projectile (small green circle)
+    // Acid Whip projectile (short green lash rectangle)
     gfx.clear();
-    gfx.fillStyle(0x66cc44);
-    gfx.fillCircle(8, 8, 8);
-    gfx.lineStyle(2, 0xaaffaa, 0.8);
-    gfx.strokeCircle(8, 8, 6);
-    gfx.generateTexture('proj-slime', 16, 16);
+    gfx.fillStyle(0x77dd33);
+    gfx.fillRect(0, 3, 16, 6);
+    gfx.lineStyle(1, 0xccff88);
+    gfx.strokeRect(0, 3, 16, 6);
+    gfx.generateTexture('proj-acid-whip', 16, 12);
+
+    // Purge ball projectile (dark acid orb with a neon drip ring)
+    gfx.clear();
+    gfx.fillStyle(0x225511);
+    gfx.fillCircle(9, 9, 9);
+    gfx.lineStyle(2, 0x66ff33, 0.9);
+    gfx.strokeCircle(9, 9, 7);
+    gfx.generateTexture('proj-purge', 18, 18);
 
     // Fate element texture (teal/mint circle with a card-suit pip)
     gfx.clear();
@@ -1018,20 +1004,28 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('proj-fate-coin', 12, 12);
     gfx.clear();
 
-    // proj-fate-dice — 24×24 white square with dots (dice projectile)
-    gfx.fillStyle(0xffffff, 1);
-    gfx.fillRoundedRect(0, 0, 24, 24, 4);
-    gfx.lineStyle(1, 0xcccccc, 1);
-    gfx.strokeRoundedRect(0, 0, 24, 24, 4);
-    gfx.fillStyle(0x333333, 1);
-    // center dot
-    gfx.fillCircle(12, 12, 2);
-    // corner dots
-    gfx.fillCircle(6, 6, 2);
-    gfx.fillCircle(18, 6, 2);
-    gfx.fillCircle(6, 18, 2);
-    gfx.fillCircle(18, 18, 2);
-    gfx.generateTexture('proj-fate-dice', 24, 24);
+    // proj-fate-burst — small orange circle (Burst card pellet)
+    gfx.fillStyle(0xff8800, 1);
+    gfx.fillCircle(5, 5, 5);
+    gfx.lineStyle(1, 0xffcc66, 1);
+    gfx.strokeCircle(5, 5, 4);
+    gfx.generateTexture('proj-fate-burst', 10, 10);
+    gfx.clear();
+
+    // proj-fate-barrier — small blue circle (Barrier card ring bullet)
+    gfx.fillStyle(0x4488ff, 1);
+    gfx.fillCircle(4, 4, 4);
+    gfx.lineStyle(1, 0x99ccff, 1);
+    gfx.strokeCircle(4, 4, 3);
+    gfx.generateTexture('proj-fate-barrier', 8, 8);
+    gfx.clear();
+
+    // proj-fate-infect — small green spike (Infect card pellet)
+    gfx.fillStyle(0x55cc55, 1);
+    gfx.fillCircle(5, 5, 5);
+    gfx.lineStyle(1, 0x99ff99, 1);
+    gfx.strokeCircle(5, 5, 4);
+    gfx.generateTexture('proj-fate-infect', 10, 10);
     gfx.clear();
 
     // ── Silence element (abstract combined: slime + sound) ────────────────────

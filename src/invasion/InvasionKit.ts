@@ -30,8 +30,6 @@ export interface InvasionArenaApi {
   plantTargets(): Fighter[];
   /** Player upgrade check, for on-hit status gates (e.g. fire's Flameshredder). */
   hasUpgrade(slot: string): boolean;
-  get growthLingerBonus(): number;
-  get growthViralBonus(): number;
   /**
    * Apply one frost stack to an arbitrary fighter. ArenaScene's own
    * addFrostStack() only speaks 'player' | 'npc', and a husk is neither.
@@ -485,6 +483,7 @@ export class InvasionKit implements HuskWorld {
 
     for (const other of this.livingHusks()) {
       if (other === source || other.hp >= other.maxHp) continue;
+      if (this.arena.scene.time.now < other.purgedUntil) continue;
       if (Phaser.Math.Distance.Between(source.x, source.y, other.x, other.y) > radius) continue;
       other.heal(Math.max(1, Math.round(other.maxHp * frac)));
       this.arena.showFloatingText(other.x, other.y - 26, '+', '#66ff88');
@@ -612,12 +611,6 @@ export class InvasionKit implements HuskWorld {
           : null;
       case 'proj-hunt-silver':
         return { k: 'bleed', ms: Math.round(8000 * husk.statusDurMult) };
-      case 'proj-growth-dagger':
-        return {
-          k: 'toxic',
-          ms: 10000 + this.arena.growthLingerBonus,
-          dps: 2 + this.arena.growthViralBonus,
-        };
       case 'proj-ice':
         return {
           k: 'frost',

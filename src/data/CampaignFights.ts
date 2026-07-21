@@ -43,6 +43,6 @@ export const ELEMENT_DISPLAY: Record<string, { name: string; emoji: string }> = 
   air:         { name: 'Air',         emoji: '💨' },
   ice:         { name: 'Ice',         emoji: '🧊' },
   crystal:     { name: 'Crystal',     emoji: '💎' },
-  slime:       { name: 'Slime',       emoji: '🟢' },
+  slime:       { name: 'Acid',        emoji: '🟢' },
   growth:      { name: 'Growth',      emoji: '🦠' },
 };

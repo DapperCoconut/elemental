@@ -53,7 +53,7 @@ const INFINITY_COMBINED_ELEMENTS: ElementDef[] = [
 
 const INFINITY_ABSTRACT_ELEMENTS: ElementDef[] = [
   { id: 'electricity', name: 'Electricity', emoji: '⚡' },
-  { id: 'slime',       name: 'Slime',       emoji: '🟢' },
+  { id: 'slime',       name: 'Acid',        emoji: '🟢' },
   { id: 'fate',        name: 'Fate',        emoji: '🃏' },
   { id: 'sound',       name: 'Sound',       emoji: '🔊' },
   { id: 'light',       name: 'Light',       emoji: '✨' },

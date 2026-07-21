@@ -118,18 +118,9 @@ export const ALL_PERKS: ElementPerks[] = [
   },
   {
     elementId: 'growth',
-    perks: [
-      {
-        id: 'virus',
-        name: 'Virus',
-        emoji: '🦠',
-        color: 0x66cc66,
-        description: "Mutate (E) will only offer upgrades that enhance the Infect ability while this perk is equipped.",
-        ingredients: ['water', 'life', 'air'],
-        tier: 'triple',
-        elementId: 'growth',
-      },
-    ],
+    // Growth was reworked (Leech Brood / Evolve / Spore Spread / Cancer / Auxiliary Growth) —
+    // the old "Virus" perk enhanced the removed Infect ability. Left blank until redesigned.
+    perks: [],
   },
   {
     elementId: 'gravity',
@@ -178,21 +169,6 @@ export const ALL_PERKS: ElementPerks[] = [
   },
 
   // ── Abstract triple perks (Lab Level 2 abstract tab, 4 nuclei) ──────────
-  {
-    elementId: 'slime',
-    perks: [
-      {
-        id: 'blood',
-        name: 'Blood',
-        emoji: '🩸',
-        color: 0xaa1133,
-        description: 'Sulpher Spring can grant blood slimes. Blood slimes slash nearby enemies every 1.5s, healing you for 50% of the damage. In shield form the slime strikes enemies within range every 1s. F+ pet grows (scale & damage) as you heal. Q+ slimes heal on return-contact damage.',
-        ingredients: ['electricity', 'slime', 'fate'],
-        tier: 'abstract-triple',
-        elementId: 'slime',
-      },
-    ],
-  },
   {
     elementId: 'silence',
     perks: [
@@ -458,7 +434,7 @@ export const ALL_PERKS: ElementPerks[] = [
         name: 'Paper',
         emoji: '🃏',
         color: 0xeeddbb,
-        description: 'Right-click costs 1 coin and fires 5 random cards in a shotgun spread (2s cooldown). Damage per card scales with the best poker hand formed: high card=1, pair=2, two pair=4, three of a kind=6, straight=8, flush=10, full house=14, four of a kind=20, straight flush=30, royal flush=40.',
+        description: 'Right-click fires 5 random cards in a shotgun spread (2s cooldown). Damage per card scales with the best poker hand formed: high card=1, pair=2, two pair=4, three of a kind=6, straight=8, flush=10, full house=14, four of a kind=20, straight flush=30, royal flush=40.',
         ingredients: ['electricity', 'slime', 'fate', 'sound'],
         tier: 'quad',
         elementId: 'fate',

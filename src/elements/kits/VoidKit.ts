@@ -52,8 +52,6 @@ export interface VoidArenaApi {
   setNpcHuntSlowUntil(v: number): void;
   getNpcHuntConfusedUntil(): number;
   setNpcHuntConfusedUntil(v: number): void;
-  getNpcSlimeSlowUntil(): number;
-  setNpcSlimeSlowUntil(v: number): void;
   getNpcAggressiveBleedUntil(): number;
   setNpcAggressiveBleedUntil(v: number): void;
   getPlayerBleedingUntil(): number;
@@ -737,7 +735,6 @@ export class VoidKit {
       doublify(() => this.arena.getNpcMetalArmorEnd(), v => { this.arena.setNpcMetalArmorEnd(v); });
       doublify(() => this.arena.getNpcHuntSlowUntil(), v => { this.arena.setNpcHuntSlowUntil(v); });
       doublify(() => this.arena.getNpcHuntConfusedUntil(), v => { this.arena.setNpcHuntConfusedUntil(v); });
-      doublify(() => this.arena.getNpcSlimeSlowUntil(), v => { this.arena.setNpcSlimeSlowUntil(v); });
       doublify(() => this.arena.npc.earthStunnedUntil, v => { this.arena.npc.earthStunnedUntil = v; });
       doublify(() => this.arena.getNpcAggressiveBleedUntil(), v => { this.arena.setNpcAggressiveBleedUntil(v); });
       doublify(() => this.arena.getLightNpcPhotoSlowUntil(), v => { this.arena.setLightNpcPhotoSlowUntil(v); });

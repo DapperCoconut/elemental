@@ -71,18 +71,17 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public moltenAura: Phaser.GameObjects.Arc | null = null;
 
   public frostStacks = 0;
+  /** Expiry timestamps (Date.now()-based) for each individual frost stack — oldest first. */
+  public frostStackTimers: number[] = [];
   public frostVisual: Phaser.GameObjects.Text | null = null;
   public frozenUntil = 0;
   public frozenSolidAmpReady = false;
 
   public voidFrostStacks = 0;
+  /** Expiry timestamps (Date.now()-based) for each individual void frost stack — oldest first. */
+  public voidFrostStackTimers: number[] = [];
   public voidFrostVisual: Phaser.GameObjects.Text | null = null;
   public voidFrostTickAccum = 0;
-  public voidFrostThawAccum = 0;
-
-  public voidedUntil = 0;
-  public voidedDps = 0;
-  public voidedTickAccum = 0;
 
   public permafrostStacks = 0;
   public permafrostVisual: Phaser.GameObjects.Text | null = null;
@@ -109,6 +108,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public slimeConfuseVx = 0;
   public slimeConfuseVy = 0;
   public slimeConfuseDirUntil = 0;
+
+  /** Acid Purge (Slime F): timestamp until which positive stat boosts (speed) are suppressed. */
+  public purgedUntil = 0;
+  /** Acid Purge: multiplier applied on top of a fighter's own speed calc — used to cancel a baked-in variant speed bonus (invasion husks). Default 1. */
+  public purgeSpeedMult = 1;
 
   public earthStunnedUntil = 0;
   /** Earth Mastery — Dust Screen: while active, Husk AI wanders/misfires instead of pathfinding normally. */
@@ -137,10 +141,6 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public intoxicationSlowUntil = 0;
   public intoxicationPendingSlowExtra = 0;
 
-  public growthBloatActive = false;
-  public growthBloatEnd = 0;
-  public growthBloatAura: Phaser.GameObjects.Arc | null = null;
-
   /** Multiplier applied to all outgoing damage this fighter deals. Default 1 (Lust payload). */
   public outgoingDamageMult = 1;
   /** Additional aim inaccuracy in degrees (added on top of difficulty preset). Default 0 (Anger payload). */
@@ -150,6 +150,9 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
   /** Oil Mastery — Drone Array: 0.9^drones incoming damage while drones orbit. Default 1. */
   public droneArmorMult = 1;
+
+  /** Electricity Mastery — Kinetic Shield: incoming damage resistance scaling with kinetic power. Default 1. */
+  public kineticShieldMult = 1;
 
   /** Earth Mastery — Unbreakable: forced-velocity effects from other abilities skip this fighter. Default false. */
   public knockbackImmune = false;
@@ -228,6 +231,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     this.healthBar.setMaxHp(this.maxHp);
   }
 
+  increaseMaxHp(amount: number): void {
+    this.maxHp += amount;
+    this.healthBar.setMaxHp(this.maxHp);
+  }
+
   takeDamage(amount: number, opts?: { pierce?: boolean; fireDot?: boolean }): void {
     if (!opts?.pierce && this.isInvincible) return;
     if (this.statueUntil > 0) this.statueUntil = 0;
@@ -241,7 +249,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       amount = Math.round(amount * (critCtx?.mult ?? 2));
     }
 
-    amount = Math.round(amount * this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.quantumIncomingMult * this.cardDamageTakenMult * this.droneArmorMult);
+    amount = Math.round(amount * this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.quantumIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult);
     if (this.darkVulnStacks > 0) amount = Math.round(amount * (1 + 0.25 * this.darkVulnStacks));
     // Fire Mastery — Heatwave: exposed amplifies the next hit, then is consumed.
     // Fire damage-over-time is exempt on both counts: burn/molten ticks are neither
@@ -299,6 +307,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
     this.hp = Math.max(0, this.hp - amount);
     this.emit('damaged', amount);
+    if (amount > 0 && this.onDamaged) this.onDamaged(amount);
 
     // Torture Trap lifesteal: heal the link source for actual damage taken
     if (amount > 0 && this.darkLinkSource && this.darkLinkSource.active && Date.now() < this.darkLinkedUntil) {
@@ -319,6 +328,9 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
   /** Optional callback invoked with the actual HP gained (> 0) whenever healing occurs. */
   public onHeal?: (actualAmount: number) => void;
+
+  /** Optional callback invoked with the final post-mitigation damage (> 0) whenever a real hit lands. */
+  public onDamaged?: (amount: number) => void;
 
   heal(amount: number): void {
     if (this.netGhost) return;
@@ -456,7 +468,6 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     if (this.voidFrostVisual) { this.voidFrostVisual.destroy(); this.voidFrostVisual = null; }
     if (this.toxicAura) { this.toxicAura.destroy(); this.toxicAura = null; }
     if (this.bleedVisual) { this.bleedVisual.destroy(); this.bleedVisual = null; }
-    if (this.growthBloatAura) { this.growthBloatAura.destroy(); this.growthBloatAura = null; }
     if (this.permafrostVisual) { this.permafrostVisual.destroy(); this.permafrostVisual = null; }
     if (this.permavoidVisual) { this.permavoidVisual.destroy(); this.permavoidVisual = null; }
     super.destroy(fromScene);

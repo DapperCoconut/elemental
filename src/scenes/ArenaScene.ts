@@ -34,14 +34,17 @@ import { lightElement } from '../elements/light';
 import { magnetElement } from '../elements/magnet';
 import { MagnetKit, MagnetArenaApi, MagnetRod } from '../elements/kits/MagnetKit';
 import { LightKit, LightArenaApi } from '../elements/kits/LightKit';
+import { IceKit, IceArenaApi } from '../elements/kits/IceKit';
 import { CrystalKit, CrystalArenaApi } from '../elements/kits/CrystalKit';
 import { EarthKit, EarthArenaApi } from '../elements/kits/EarthKit';
+import { ShadowKit, ShadowArenaApi } from '../elements/kits/ShadowKit';
 import { ElectricityKit, ElectricityArenaApi } from '../elements/kits/ElectricityKit';
 import { VoidKit, VoidArenaApi } from '../elements/kits/VoidKit';
 import { TechnologyKit, TechArenaApi } from '../elements/kits/TechnologyKit';
 import { SlimeKit, SlimeArenaApi } from '../elements/kits/SlimeKit';
 import { WaterKit, WaterArenaApi, Geyser } from '../elements/kits/WaterKit';
 import { LifeKit, LifeArenaApi } from '../elements/kits/LifeKit';
+import { GrowthKit, GrowthArenaApi } from '../elements/kits/GrowthKit';
 import { metalElement } from '../elements/metal';
 import { plasmaElement } from '../elements/plasma';
 import { deathElement } from '../elements/death';
@@ -76,7 +79,6 @@ import { ItemsKit } from '../elements/kits/ItemsKit';
 import { computeCurseShardMult } from '../data/GauntletBoosts';
 import { INFINITY_GAUNTLET_ID, infinityHpMult, infinityDmgMult, infinityFightShards, infinityDifficulty, GauntletState, getEffectiveStacks } from '../data/GauntletData';
 import { drawCampaignBackground } from './CampaignBackground';
-import { BASE_GROWTH_MUTATIONS, ADVANCED_GROWTH_MUTATIONS, INFECT_GROWTH_MUTATION_IDS } from '../data/GrowthMutations';
 
 /** Air's Tracking Vortex (R upgrade): how fast the Wind Trap chases the cursor, px/sec. */
 const TRACKING_VORTEX_SPEED = 120;
@@ -125,28 +127,6 @@ interface PainRainShadow {
   color: number;
 }
 
-interface DarkCloud {
-  sprite: Phaser.GameObjects.Arc;
-  expiresAt: number;
-  x: number;
-  y: number;
-  radius: number;
-  tickAccum: number;
-  owner: 'player' | 'npc';
-}
-
-interface SnapTrap {
-  sprite: Phaser.GameObjects.Arc;
-  label: Phaser.GameObjects.Text;
-  expiresAt: number;
-  x: number;
-  y: number;
-  triggered: boolean;
-  radius: number;
-  owner: 'player' | 'npc';
-  isPlume?: boolean;
-}
-
 interface SoulOrb {
   sprite: Phaser.GameObjects.Arc;
   expiresAt: number;
@@ -175,18 +155,6 @@ interface SoulSummon {
   slamAccum: number;        // enhanced banshee: slam accumulator
 }
 
-
-interface IcyTrail {
-  sprite: Phaser.GameObjects.Arc;
-  expiresAt: number;
-  x: number;
-  y: number;
-  radius: number;
-  frostTickAccum: number;
-  owner: 'player' | 'npc';
-  rink?: boolean;
-  skater?: boolean;
-}
 
 interface HuntGrenade {
   sprite: Phaser.GameObjects.Arc;
@@ -532,17 +500,6 @@ export class ArenaScene extends Phaser.Scene {
   private npcAirElectroCharged = false;
   private npcAirBeamWalking = false;
 
-  // NPC shadow dance charge
-  private npcShadowDanceCharge = 0;
-
-  // NPC shadow black hole state
-  private npcShadowBlackHoleCharging = false;
-  private npcShadowBlackHoleChargeStart = 0;
-  private npcShadowBlackHoleChargeVisual: Phaser.GameObjects.Arc | null = null;
-  private npcShadowBlackHoleActive = false;
-  private npcShadowBlackHoleEnd = 0;
-  private npcShadowBlackHoleSprite: Phaser.GameObjects.Graphics | null = null;
-
   // Input keys
   private wKey!: Phaser.Input.Keyboard.Key;
   private aKey!: Phaser.Input.Keyboard.Key;
@@ -563,6 +520,7 @@ export class ArenaScene extends Phaser.Scene {
   private hpBarFill?: Phaser.GameObjects.Rectangle;
   private hpBarShield?: Phaser.GameObjects.Rectangle;
   private hpBarText?: Phaser.GameObjects.Text;
+  private readonly hpBarY = 18;
   private readonly hpBarW = 420;
   private readonly hpBarH = 24;
   private dodgeOnCooldown = false;
@@ -640,6 +598,9 @@ export class ArenaScene extends Phaser.Scene {
 
   // Earth kit
   private earthKit!: EarthKit;
+
+  // Shadow kit
+  private shadowKit!: ShadowKit;
 
   // Mutations
   private mutations: Set<string> = new Set();
@@ -742,131 +703,9 @@ export class ArenaScene extends Phaser.Scene {
   private golfBall: { sprite: Phaser.Physics.Arcade.Image; vx: number; vy: number; lastEnemyHitAt: number; radius: number } | null = null;
   private golfBallSpeedLabel: Phaser.GameObjects.Text | null = null;
 
-  // Shadow state (shared cloud/trap arrays)
-  private shadowDarkClouds: DarkCloud[] = [];
-  private shadowSnapTraps: SnapTrap[] = [];
-  // Player shadow
-  private shadowDrainHoldAccum = 0;
-  private shadowDrainCloudAccum = 0;
-  private shadowTentacleActive = false;
-  private shadowTentacleEnd = 0;
-  private shadowTentacleX = 0;
-  private shadowTentacleY = 0;
-  private shadowTentacleHooked = false; // true when NPC is hooked and being dragged
-  private shadowTentacleSprite: Phaser.GameObjects.Graphics | null = null;
-  private shadowNpcSnaredUntil = 0;
-  private shadowNpcStunnedUntil = 0;
-  private shadowNpcThrowUntil = 0;
-  private shadowDanceCharge = 0;
-  private shadowDanceChargeBar: Phaser.GameObjects.Rectangle | null = null;
-  private shadowBlackHoleCharging = false;
-  private shadowBlackHoleChargeStart = 0;
-  private shadowBlackHoleChargeVisual: Phaser.GameObjects.Arc | null = null;
-  private shadowBlackHoleActive = false;
-  private shadowBlackHoleEnd = 0;
-  private shadowBlackHoleSprite: Phaser.GameObjects.Graphics | null = null;
-  // NPC shadow
-  private npcShadowTentacleActive = false;
-  private npcShadowTentacleHooked = false;
-  private npcShadowTentacleEnd = 0;
-  private npcShadowTentacleX = 0;
-  private npcShadowTentacleY = 0;
-  private npcShadowTentacleSprite: Phaser.GameObjects.Graphics | null = null;
-  private npcShadowDragTargetX = 0;
-  private npcShadowDragTargetY = 0;
-  private npcShadowDragNextChangeAt = 0;
-  private shadowPlayerSnaredUntil = 0;
-  private shadowPlayerStunnedUntil = 0;
-  // Shadow — upgrade state
-  private shadowConsumeActive = false;
-  private shadowConsumeEnd = 0;
-  private shadowConsumeTickAccum = 0;
-  private shadowConsumeAura: Phaser.GameObjects.Arc | null = null;
-  private shadowConfusionUntil = 0;
-  private shadowConfusionAngle = 0;
-  private shadowConfusionNextChange = 0;
-  private shadowCloudExposureAccum = 0;
-  private shadowDanceUpgradeDodgeUntil = 0;
-  private shadowDanceUpgradeCooldownUntil = 0;
-  private shadowBHPuddleAccum = 0;
-
-  // Ice — frost stacks (both fighters)
-  private playerFrostStacks = 0;
-  private playerFrostVisual: Phaser.GameObjects.Text | null = null;
-  private playerPermafrostVisual: Phaser.GameObjects.Text | null = null;
-  private playerPermavoidVisual: Phaser.GameObjects.Text | null = null;
-  // Ice — player
-  private playerBlockUpActive = false;
-  private playerBlockUpAura: Phaser.GameObjects.Arc | null = null;
-  private playerFrozenUntil = 0;
-  // Ice — NPC
-  private npcBlockUpActive = false;
-  private npcBlockUpAura: Phaser.GameObjects.Arc | null = null;
-  // Ice — shared
-  private icyTrails: IcyTrail[] = [];
-  // Ice upgrades state
-  private playerBlackIceMorphActive = false;
-  private playerBlackIceAura: Phaser.GameObjects.Arc | null = null;
-  private npcVoidedVisual: Phaser.GameObjects.Text | null = null;
-  private playerIceConsecHits = 0;
-  private playerNextIcePowered = false;
-  private playerIcePendingSet: Set<Projectile> = new Set();
-  private playerIceSpeedBoostUntil = 0;
-
-  // Growth — player
-  private growthMorphType: 'spores' | 'claws' | 'virus' | 'plague-bomb' | 'bacterium' = 'spores';
-  private growthDamageMult = 1.0;
-  private growthLingerBonus = 0;
-  private growthViralBonus = 0;
-  private growthBloatCdMs = 10000;
-  private growthInfectExtraProj = 0;
-  private growthInfectCdMs = 8000;
-  private growthRegenRate = 0;
-  private growthRegenAccum = 0;
-  private growthScaleBonus = 0;
-  private growthBloatActive = false;
-  private growthBloatEnd = 0;
-  private growthBloatAura: Phaser.GameObjects.Arc | null = null;
-  private growthMutateMenuOpen = false;
-  private growthMutateButtons: Phaser.GameObjects.GameObject[] = [];
-  private lastPlayerInfectCast = -99999;
-  private lastPlayerBloatCast = -99999;
-  // Growth — upgrade/mutation extra state
-  private growthBloatAoeRadius = 120;
-  private growthInfectBounces = 0;
-  private growthInfectHitboxMult = 1.0;
-  private growthFungalStacks = 0;
-  private growthGreedBonus = 0;
-  private growthSneezeStacks = 0;
-  private growthCoughStacks = 0;
-  private growthSneezeAura: Phaser.GameObjects.Arc | null = null;
-  private growthCoughAura: Phaser.GameObjects.Arc | null = null;
-  private growthSneezeAccum = 0;
-  private growthSpreadStacks = 0;
-  private growthBacteriaList: Array<{ sprite: Phaser.GameObjects.Arc; hp: number; lastContactTime: number }> = [];
-  private growthInfectBouncers: Array<{ proj: Projectile; bouncesDone: number }> = [];
-  private growthMorphMenuOpen = false;
-  private growthMorphMenuButtons: Phaser.GameObjects.GameObject[] = [];
-  private growthSlowMorphLastCast = -99999;
-  private growthDefSpores: Array<{ sprite: Phaser.GameObjects.Arc; vel: { x: number; y: number }; destroyAt: number }> = [];
-  private growthDamageReductionUntil = 0;
-  private growthDamageReductionActive = false;
-  private growthCancerousGrowths: Array<{ img: Phaser.GameObjects.Arc; target: Fighter; offsetX: number; offsetY: number }> = [];
-  private npcCancerousSlowUntil = 0;
-  private growthRBonusInProgress = false;
-  // Growth — NPC
-  private npcGrowthMorphType: 'spores' | 'claws' | 'virus' = 'spores';
-  private npcGrowthDamageMult = 1.0;
-  private npcGrowthLingerBonus = 0;
-  private npcGrowthViralBonus = 0;
-  private npcGrowthBloatCdMs = 10000;
-  private npcGrowthInfectExtraProj = 0;
-  private npcGrowthRegenRate = 0;
-  private npcGrowthRegenAccum = 0;
-  private npcGrowthScaleBonus = 0;
-  private lastNpcInfectCast = -99999;
-  private lastNpcBloatCast = -99999;
-  // Growth — toxic DOT
+  // Growth — managed by GrowthKit
+  private growthKit!: GrowthKit;
+  // Generic toxic DOT status applied to the player (used by Death/Life/Void kits)
   private playerToxicUntil = 0;
   private playerToxicDps = 0;
   private playerToxicTickAccum = 0;
@@ -1007,6 +846,7 @@ export class ArenaScene extends Phaser.Scene {
   private electricityKit!: ElectricityKit;
 
   private lightKit!: LightKit;
+  private iceKit!: IceKit;
   private crystalKit!: CrystalKit;
   private voidKit!: VoidKit;
   private techKit!: TechnologyKit;
@@ -1194,6 +1034,17 @@ export class ArenaScene extends Phaser.Scene {
   /** Screen-blur guard for Dust Screen hitting the local human — only the latest call may clear it. */
   private screenBlurUntil = 0;
 
+  // ── Shadow mastery ─────────────────────────────────────────────────────
+  private shadowMasteryOn = false;
+  private iceMasteryOn = false;
+  private shadowMasteryTrackedEnemies = new WeakSet<Fighter>();
+
+  // ── Crystal mastery ──────────────────────────────────────────────────
+  private crystalMasteryOn = false;
+
+  // ── Electricity mastery ────────────────────────────────────────────────
+  private electricityMasteryOn = false;
+
   // ── Life mastery ──────────────────────────────────────────────────────
   private lifeMasteryOn = false;
 
@@ -1202,9 +1053,6 @@ export class ArenaScene extends Phaser.Scene {
 
   // ── Fate kit ──────────────────────────────────────────────────────────
   private fateKit!: FateKit;
-  private playerFateBaseSpeedMult = 1;
-  private playerFateBaseCooldownMult = 1;
-  private playerFateBaseIncomingDmgMult = 1;
 
   // Shared world effects (owner-aware)
   private puddles: Puddle[] = [];
@@ -1230,23 +1078,6 @@ export class ArenaScene extends Phaser.Scene {
     expireAt: number;
     meleeCooldownUntil: number;
     owner: 'player' | 'npc';
-  }> = [];
-  // Rink perk (Ice): timestamp until which the skate speed bonus applies
-  private playerSkateRecentUntil = 0;
-  private npcSkateRecentUntil    = 0;
-  // Skater mode (Ice F revamp)
-  private playerSkaterActive = false;
-  private playerSkaterCancelableAt = 0;
-  private playerSkaterHeading = 0;
-  private playerSkaterTrailAccum = 0;
-  private readonly playerSkaterSpeed = 220;
-  private readonly playerSkaterTurnRate = 3.0;
-  // Ice arenas (Ice F+ Skate-in-BlockUp / Skate-in-BlackIce)
-  private iceArenas: Array<{
-    sprite: Phaser.GameObjects.Arc;
-    x: number; y: number; radius: number;
-    expiresAt: number; tickAccum: number;
-    isVoid: boolean; owner: 'player' | 'npc';
   }> = [];
   // Ward perk (Soul): warding hexes from Consume
   private soulWardHexes: Array<{
@@ -1309,14 +1140,6 @@ export class ArenaScene extends Phaser.Scene {
     this.npcHawkDragY = 0;
     this.automatons.forEach((a) => a.sprite.destroy());
     this.automatons = [];
-    this.playerSkateRecentUntil = 0;
-    this.npcSkateRecentUntil = 0;
-    this.playerSkaterActive = false;
-    this.playerSkaterCancelableAt = 0;
-    this.playerSkaterHeading = 0;
-    this.playerSkaterTrailAccum = 0;
-    this.iceArenas.forEach(a => a.sprite.destroy());
-    this.iceArenas = [];
     this.soulWardHexes.forEach((w) => {
       w.gfx.destroy(); w.ownerAura?.destroy();
       w.summonAuras.forEach((sa) => sa.arc.destroy());
@@ -1382,74 +1205,7 @@ export class ArenaScene extends Phaser.Scene {
 
     this.npcAirElectroCharged = false;
     this.npcAirBeamWalking = false;
-    this.npcShadowDanceCharge = 0;
-    this.npcShadowBlackHoleCharging = false;
-    this.npcShadowBlackHoleChargeStart = 0;
-    this.npcShadowBlackHoleChargeVisual = null;
-    this.npcShadowBlackHoleActive = false;
-    this.npcShadowBlackHoleEnd = 0;
-    this.npcShadowBlackHoleSprite = null;
-    this.shadowDarkClouds = [];
-    this.shadowSnapTraps = [];
-    this.shadowDrainHoldAccum = 0;
-    this.shadowDrainCloudAccum = 0;
-    this.shadowTentacleActive = false;
-    this.shadowTentacleHooked = false;
-    this.shadowTentacleEnd = 0;
-    this.shadowTentacleX = 0;
-    this.shadowTentacleY = 0;
-    this.shadowTentacleSprite = null;
-    this.shadowNpcSnaredUntil = 0;
-    this.shadowNpcStunnedUntil = 0;
-    this.shadowNpcThrowUntil = 0;
-    this.shadowDanceCharge = 0;
-    this.shadowDanceChargeBar = null;
-    this.shadowBlackHoleCharging = false;
-    this.shadowBlackHoleChargeStart = 0;
-    this.shadowBlackHoleChargeVisual = null;
-    this.shadowBlackHoleActive = false;
-    this.shadowBlackHoleEnd = 0;
-    this.shadowBlackHoleSprite = null;
-    this.npcShadowTentacleActive = false;
-    this.npcShadowTentacleHooked = false;
-    this.npcShadowTentacleEnd = 0;
-    this.npcShadowTentacleX = 0;
-    this.npcShadowTentacleY = 0;
-    this.npcShadowTentacleSprite = null;
-    this.npcShadowDragTargetX = 0;
-    this.npcShadowDragTargetY = 0;
-    this.npcShadowDragNextChangeAt = 0;
-    this.shadowPlayerSnaredUntil = 0;
-    this.shadowPlayerStunnedUntil = 0;
-    this.shadowConsumeActive = false;
-    this.shadowConsumeEnd = 0;
-    this.shadowConsumeTickAccum = 0;
-    if (this.shadowConsumeAura) { this.shadowConsumeAura.destroy(); this.shadowConsumeAura = null; }
-    this.shadowConfusionUntil = 0;
-    this.shadowConfusionAngle = 0;
-    this.shadowConfusionNextChange = 0;
-    this.shadowCloudExposureAccum = 0;
-    this.shadowDanceUpgradeDodgeUntil = 0;
-    this.shadowDanceUpgradeCooldownUntil = 0;
-    this.shadowBHPuddleAccum = 0;
 
-    this.playerFrostStacks = 0;
-    this.playerFrostVisual = null;
-    this.playerPermafrostVisual = null;
-    this.playerPermavoidVisual = null;
-    this.playerBlockUpActive = false;
-    this.playerBlockUpAura = null;
-    this.playerFrozenUntil = 0;
-    this.npcBlockUpActive = false;
-    this.npcBlockUpAura = null;
-    this.icyTrails = [];
-    this.playerBlackIceMorphActive = false;
-    this.playerBlackIceAura = null;
-    this.npcVoidedVisual = null;
-    this.playerIceConsecHits = 0;
-    this.playerNextIcePowered = false;
-    this.playerIcePendingSet = new Set();
-    this.playerIceSpeedBoostUntil = 0;
     for (const o of this.playerSoulOrbs) o.sprite.destroy();
     for (const s of this.playerSoulSummons) s.sprite.destroy();
     for (const o of this.npcSoulOrbs) o.sprite.destroy();
@@ -1640,61 +1396,38 @@ export class ArenaScene extends Phaser.Scene {
     if (this.gravMoonChargeText) { this.gravMoonChargeText.destroy(); this.gravMoonChargeText = null; }
 
     // Growth reset
-    this.growthMorphType = 'spores';
-    this.growthDamageMult = 1.0;
-    this.growthLingerBonus = 0;
-    this.growthViralBonus = 0;
-    this.growthBloatCdMs = 10000;
-    this.growthInfectExtraProj = 0;
-    this.growthInfectCdMs = 8000;
-    this.growthRegenRate = 0;
-    this.growthRegenAccum = 0;
-    this.growthScaleBonus = 0;
-    this.growthBloatActive = false;
-    this.growthBloatEnd = 0;
-    if (this.growthBloatAura) { this.growthBloatAura.destroy(); this.growthBloatAura = null; }
-    for (const btn of this.growthMutateButtons) (btn as unknown as { destroy(): void }).destroy();
-    this.growthMutateButtons = [];
-    this.growthMutateMenuOpen = false;
-    this.lastPlayerInfectCast = -99999;
-    this.lastPlayerBloatCast = -99999;
-    this.growthBloatAoeRadius = 120;
-    this.growthInfectBounces = 0;
-    this.growthInfectHitboxMult = 1.0;
-    this.growthFungalStacks = 0;
-    this.growthGreedBonus = 0;
-    this.growthSneezeStacks = 0;
-    this.growthCoughStacks = 0;
-    if (this.growthSneezeAura) { this.growthSneezeAura.destroy(); this.growthSneezeAura = null; }
-    if (this.growthCoughAura) { this.growthCoughAura.destroy(); this.growthCoughAura = null; }
-    this.growthSneezeAccum = 0;
-    this.growthSpreadStacks = 0;
-    for (const b of this.growthBacteriaList) b.sprite.destroy();
-    this.growthBacteriaList = [];
-    this.growthInfectBouncers = [];
-    for (const btn of this.growthMorphMenuButtons) (btn as unknown as { destroy(): void }).destroy();
-    this.growthMorphMenuButtons = [];
-    this.growthMorphMenuOpen = false;
-    this.growthSlowMorphLastCast = -99999;
-    for (const ds of this.growthDefSpores) ds.sprite.destroy();
-    this.growthDefSpores = [];
-    this.growthDamageReductionUntil = 0;
-    if (this.growthDamageReductionActive) { this.player.incomingDamageMultiplier = 1; this.growthDamageReductionActive = false; }
-    for (const cg of this.growthCancerousGrowths) cg.img.destroy();
-    this.growthCancerousGrowths = [];
-    this.npcCancerousSlowUntil = 0;
-    this.growthRBonusInProgress = false;
-    this.npcGrowthMorphType = 'spores';
-    this.npcGrowthDamageMult = 1.0;
-    this.npcGrowthLingerBonus = 0;
-    this.npcGrowthViralBonus = 0;
-    this.npcGrowthBloatCdMs = 10000;
-    this.npcGrowthInfectExtraProj = 0;
-    this.npcGrowthRegenRate = 0;
-    this.npcGrowthRegenAccum = 0;
-    this.npcGrowthScaleBonus = 0;
-    this.lastNpcInfectCast = -99999;
-    this.lastNpcBloatCast = -99999;
+    if (this.growthKit) {
+      this.growthKit.reset();
+    } else {
+      const arena = this;
+      const growthApi: GrowthArenaApi = {
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get scene(): Phaser.Scene { return arena; },
+        get enemies() { return arena.enemies; },
+        get projectiles() { return arena.projectiles; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get width() { return arena.scale.width; },
+        get hpBarY() { return arena.hpBarY; },
+        get hpBarW() { return arena.hpBarW; },
+        get hpBarH() { return arena.hpBarH; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get pointerWasDown() { return arena.pointerWasDown; },
+        get nukeChanneling() { return arena.nukeChanneling; },
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
+      };
+      this.growthKit = new GrowthKit(growthApi);
+    }
     this.playerToxicUntil = 0; this.playerToxicDps = 0; this.playerToxicTickAccum = 0;
     if (this.playerToxicAura) { this.playerToxicAura.destroy(); this.playerToxicAura = null; }
 
@@ -1717,8 +1450,13 @@ export class ArenaScene extends Phaser.Scene {
     this.oilMasteryOn = PlayerData.isMasteryEnabled('oil');
     this.lifeMasteryOn = PlayerData.isMasteryEnabled('life');
     this.earthMasteryOn = PlayerData.isMasteryEnabled('earth');
+    this.shadowMasteryOn = PlayerData.isMasteryEnabled('shadow');
+    this.iceMasteryOn = PlayerData.isMasteryEnabled('ice');
+    this.crystalMasteryOn = PlayerData.isMasteryEnabled('crystal');
+    this.electricityMasteryOn = PlayerData.isMasteryEnabled('electricity');
     this.waterKillWindow = [];
     this.waterMasteryTrackedEnemies = new WeakSet<Fighter>();
+    this.shadowMasteryTrackedEnemies = new WeakSet<Fighter>();
     // FireKit adapter
     if (this.fireKit) {
       this.fireKit.reset();
@@ -1879,6 +1617,11 @@ export class ArenaScene extends Phaser.Scene {
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        get masteryActive() { return arena.electricityMasteryOn && arena.elementId === 'electricity'; },
+        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        recordMasteryStat: (key, amount) => {
+          if (arena.elementId === 'electricity') PlayerData.addMasteryStat('electricity', key, amount);
+        },
       };
       this.electricityKit = new ElectricityKit(electricityApi);
     }
@@ -1947,6 +1690,40 @@ export class ArenaScene extends Phaser.Scene {
       this.lightKit = new LightKit(lightApi);
     }
 
+    // IceKit adapter
+    if (this.iceKit) {
+      this.iceKit.reset();
+    } else {
+      const arena = this;
+      const iceApi: IceArenaApi = {
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get scene(): Phaser.Scene { return arena; },
+        get projectiles() { return arena.projectiles; },
+        get eKey() { return arena.eKey; },
+        get fKey() { return arena.fKey; },
+        get rKey() { return arena.rKey; },
+        get qKey() { return arena.qKey; },
+        get pointerWasDown() { return arena.pointerWasDown; },
+        get nukeChanneling() { return arena.nukeChanneling; },
+        get isInvasion() { return arena.isInvasion; },
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
+        applyNpcSpeedMult: (f) => { arena.npcSpeedMult *= f; },
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        pointToSegmentDist: (px, py, ax, ay, bx, by) => arena.pointToSegmentDist(px, py, ax, ay, bx, by),
+        get masteryActive() { return arena.iceMasteryOn && arena.elementId === 'ice'; },
+        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        recordMasteryStat: (key, amount) => {
+          if (arena.elementId === 'ice') PlayerData.addMasteryStat('ice', key, amount);
+        },
+      };
+      this.iceKit = new IceKit(iceApi);
+    }
+
     // CrystalKit adapter
     if (this.crystalKit) {
       this.crystalKit.reset();
@@ -1970,6 +1747,11 @@ export class ArenaScene extends Phaser.Scene {
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        get masteryActive() { return arena.crystalMasteryOn && arena.elementId === 'crystal'; },
+        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        recordMasteryStat: (key, amount) => {
+          if (arena.elementId === 'crystal') PlayerData.addMasteryStat('crystal', key, amount);
+        },
       };
       this.crystalKit = new CrystalKit(crystalApi);
     }
@@ -2011,13 +1793,15 @@ export class ArenaScene extends Phaser.Scene {
         applyScreenBlur: (ms) => arena.applyScreenBlur(ms),
       };
       this.earthKit = new EarthKit(earthApi);
+      this.earthKit.reset();
     }
 
-    if (this.slimeKit) {
-      this.slimeKit.reset();
+    // ShadowKit adapter
+    if (this.shadowKit) {
+      this.shadowKit.reset();
     } else {
       const arena = this;
-      const slimeApi: SlimeArenaApi = {
+      const shadowApi: ShadowArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
         get enemies() { return arena.enemies; },
@@ -2026,23 +1810,52 @@ export class ArenaScene extends Phaser.Scene {
         get fKey() { return arena.fKey; },
         get rKey() { return arena.rKey; },
         get qKey() { return arena.qKey; },
-        get spaceKey() { return arena.spaceKey; },
+        get nukeChanneling() { return arena.nukeChanneling; },
         get pointerWasDown() { return arena.pointerWasDown; },
-        get projectiles() { return arena.projectiles; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        get npcSpeedMult() { return arena.npcSpeedMult; },
+        get npcNukeChanneling() { return arena.npcNukeChanneling; },
+        set npcNukeChanneling(v: boolean) { arena.npcNukeChanneling = v; },
+        get hpBarY() { return arena.hpBarY; },
+        get hpBarW() { return arena.hpBarW; },
+        get hpBarH() { return arena.hpBarH; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
-        getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        get masteryActive() { return arena.shadowMasteryOn && arena.elementId === 'shadow'; },
+        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        recordMasteryStat: (key, amount) => {
+          if (arena.elementId === 'shadow') PlayerData.addMasteryStat('shadow', key, amount);
+        },
+      };
+      this.shadowKit = new ShadowKit(shadowApi);
+    }
+
+    if (this.slimeKit) {
+      this.slimeKit.reset();
+    } else {
+      const arena = this;
+      const slimeApi: SlimeArenaApi = {
+        get player() { return arena.player; },
+        get enemies() { return arena.enemies; },
+        get scene(): Phaser.Scene { return arena; },
+        get eKey() { return arena.eKey; },
+        get fKey() { return arena.fKey; },
+        get rKey() { return arena.rKey; },
+        get qKey() { return arena.qKey; },
+        get pointerWasDown() { return arena.pointerWasDown; },
+        get projectiles() { return arena.projectiles; },
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
       };
       this.slimeKit = new SlimeKit(slimeApi);
     }
-
-    // Fate resets
-    this.playerFateBaseSpeedMult = 1;
-    this.playerFateBaseCooldownMult = 1;
-    this.playerFateBaseIncomingDmgMult = 1;
 
     this.soundKit.reset(isSoundMatch);
     this.grappleDodgeUntil = 0;
@@ -2321,14 +2134,12 @@ export class ArenaScene extends Phaser.Scene {
         setNpcHuntSlowUntil: v => { arena.npcHuntSlowUntil = v; },
         getNpcHuntConfusedUntil: () => arena.npcHuntConfusedUntil,
         setNpcHuntConfusedUntil: v => { arena.npcHuntConfusedUntil = v; },
-        getNpcSlimeSlowUntil: () => arena.slimeKit.getNpcSlimeSlowUntil(),
-        setNpcSlimeSlowUntil: v => { arena.slimeKit.setNpcSlimeSlowUntil(v); },
         getNpcAggressiveBleedUntil: () => arena.metalKit.getNpcAggressiveBleedUntil(),
         setNpcAggressiveBleedUntil: v => { arena.metalKit.setNpcAggressiveBleedUntil(v); },
         getPlayerBleedingUntil: () => arena.playerBleedingUntil,
         setPlayerBleedingUntil: v => { arena.playerBleedingUntil = v; },
-        getPlayerFrozenUntil: () => arena.playerFrozenUntil,
-        setPlayerFrozenUntil: v => { arena.playerFrozenUntil = v; },
+        getPlayerFrozenUntil: () => arena.iceKit.getPlayerFrozenUntil(),
+        setPlayerFrozenUntil: v => { arena.iceKit.setPlayerFrozenUntil(v); },
         getPlayerBurningUntil: () => arena.playerBurningUntil,
         setPlayerBurningUntil: v => { arena.playerBurningUntil = v; },
         getPlayerToxicUntil: () => arena.playerToxicUntil,
@@ -2638,22 +2449,21 @@ export class ArenaScene extends Phaser.Scene {
       const fApi: FateArenaApi = {
         get player() { return arena.player as Fighter; },
         get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
         get scene(): Phaser.Scene { return arena; },
         get projectiles() { return arena.projectiles; },
-        get spaceKey() { return arena.spaceKey; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
         get fKey() { return arena.fKey; },
         get qKey() { return arena.qKey; },
         get nukeChanneling() { return arena.nukeChanneling; },
         get rightPointerWasDown() { return arena.rightPointerWasDown; },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (perkId) => arena.hasPerk('player', perkId),
+        applyPlayerSpeedMult: (f) => { arena.playerSpeedMult *= f; },
+        applyNpcSpeedMult: (f) => { arena.npcSpeedMult *= f; },
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
-        dealAoeDamageToNpc: (cx, cy, r, d) => arena.dealAoeDamageFromOwner(cx, cy, r, d, 'player'),
-        dealAoeDamageToPlayer: (cx, cy, r, d) => arena.dealAoeDamageFromOwner(cx, cy, r, d, 'npc'),
-        setPlayerFateSpeedMult: (v) => { arena.playerFateBaseSpeedMult = v; },
-        getPlayerFateSpeedMult: () => arena.playerFateBaseSpeedMult,
-        getNpcBaseHp: () => arena.npcDifficulty.hp,
+        spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
       };
       this.fateKit = new FateKit(fApi);
     }
@@ -2699,6 +2509,14 @@ export class ArenaScene extends Phaser.Scene {
     this.player.onHeal = (amt) => {
       this.showFloatingText(this.player.x, this.player.y - 30, `+${Math.round(amt)}`, '#44ff44');
       if (this.elementId === 'life') PlayerData.addMasteryStat('life', 'selfHealed', Math.round(amt));
+      if (this.elementId === 'shadow') PlayerData.addMasteryStat('shadow', 'healedHp', Math.round(amt));
+    };
+    this.player.onDamaged = (amt) => {
+      // Block Up reduces incoming damage by 25% (a 0.75 multiplier folded into incomingDamageMultiplier);
+      // the damage that 25% cut avoided is derived from the final post-mitigation amount: amt/0.75*0.25 = amt/3.
+      if (this.elementId === 'ice' && this.iceKit.isPlayerBlockUpActive()) {
+        PlayerData.addMasteryStat('ice', 'blockUpDamageAvoided', Math.round(amt / 3));
+      }
     };
     this.npc = new NpcOpponent(this, W - 180, cy, this.npcElement, npcTexture, difficultyConfig);
     // In 1v1 the single opponent is tracked in enemies; invasion starts empty and fills via the InvasionKit
@@ -2830,6 +2648,7 @@ export class ArenaScene extends Phaser.Scene {
             (proj.body as Phaser.Physics.Arcade.Body).stop();
           }
         } else {
+          if (this.growthKit.tryBlockCancer('npc', proj)) return;
           // Note: deliberately this.npc, not `target` — preserves the original
           // routing where any non-husk, non-clot overlap applied to the npc.
           this.applyProjectileToEnemy(proj, this.npc);
@@ -2850,6 +2669,7 @@ export class ArenaScene extends Phaser.Scene {
         // always receives (this.player, projectileMember) — `b` is the projectile here.
         const proj = b as Projectile;
         if (!proj.active || proj.isFromPlayer) return;
+        if (this.growthKit.tryBlockCancer('player', proj)) return;
         // Time lasso orb (NPC fires): route to TimeKit
         if (proj.texture.key === 'proj-time-lasso-orb') {
           this.timeKit.onLassoHitPlayer(proj);
@@ -2869,20 +2689,13 @@ export class ArenaScene extends Phaser.Scene {
           return; // proj NOT deactivated — keeps flying through
         }
         // E+ shadow consume: immune to damage while consuming
-        if (this.elementId === 'shadow' && this.shadowConsumeActive) {
+        if (this.elementId === 'shadow' && this.shadowKit.isConsumeActive()) {
           proj.setActive(false).setVisible(false);
           (proj.body as Phaser.Physics.Arcade.Body).stop();
           return;
         }
         // F+ shadow dance: 25% dodge for 8s after full-bar use
-        if (this.elementId === 'shadow' && this.time.now < this.shadowDanceUpgradeDodgeUntil && Math.random() < 0.25) {
-          this.spawnDamageNumber(this.player.x, this.player.y - 34, -1);
-          proj.setActive(false).setVisible(false);
-          (proj.body as Phaser.Physics.Arcade.Body).stop();
-          return;
-        }
-        // Q+ shadow black hole: 25% dodge while charging
-        if (this.elementId === 'shadow' && this.shadowBlackHoleCharging && this.hasUpgrade('q') && Math.random() < 0.25) {
+        if (this.elementId === 'shadow' && this.time.now < this.shadowKit.getDanceUpgradeDodgeUntil() && Math.random() < 0.25) {
           this.spawnDamageNumber(this.player.x, this.player.y - 34, -1);
           proj.setActive(false).setVisible(false);
           (proj.body as Phaser.Physics.Arcade.Body).stop();
@@ -2931,13 +2744,6 @@ export class ArenaScene extends Phaser.Scene {
           (proj.body as Phaser.Physics.Arcade.Body).stop();
           return;
         }
-        // Fate dice (NPC): all damage handled in onDiceHitEnemy — skip generic damage path
-        if (proj.texture.key === 'proj-fate-dice' && (proj as any).fateDiceOwner === 'npc') {
-          this.fateKit.onDiceHitEnemy(proj, proj.x, proj.y, 'npc');
-          proj.setActive(false).setVisible(false);
-          (proj.body as Phaser.Physics.Arcade.Body).stop();
-          return;
-        }
         // Apply attacker's crit context before damage
         this.player.setIncomingCritContext(this.npc.critChance, this.npc.critMult);
         let _playerDmg = Math.round(proj.damage * this.npc.outgoingDamageMult);
@@ -2957,6 +2763,10 @@ export class ArenaScene extends Phaser.Scene {
         }
         this.player.takeDamage(_playerDmg);
         this.spawnHitFlash(proj.x, proj.y, 0x00aaff);
+        // Fate Infect: applies the poison DOT on top of the direct hit above
+        if ((proj as any).fateInfectDps) {
+          this.fateKit.applyPoison(this.player, (proj as any).fateInfectDps, this.time.now);
+        }
         // Honor parry: if this was a parried player projectile, force-tally
         this.applyHonorParriedHit(proj);
         // Molten★: 20% chance to apply Fire DOT on hit
@@ -2967,20 +2777,8 @@ export class ArenaScene extends Phaser.Scene {
         if (this.npcHuntBloodPactActive && this.time.now < this.npcHuntBloodPactEnd) this.npc.heal(Math.ceil(_playerDmg * 0.5));
         // Ice spike: frost stacks + unfreeze bonus
         if (proj.texture.key === 'proj-ice') {
-          if (this.playerFrozenUntil > this.time.now) {
-            this.playerFrozenUntil = 0;
-            for (let fi = 0; fi < 3; fi++) this.addFrostStack('player');
-          } else {
-            this.addFrostStack('player');
-          }
+          this.iceKit.onIceSpikeHitPlayer(this.time.now);
         }
-        // Growth infect dagger (NPC): apply toxic DOT to player
-        if (proj.texture.key === 'proj-growth-dagger') {
-          this.playerToxicUntil = this.time.now + 10000 + this.npcGrowthLingerBonus;
-          this.playerToxicDps = 2 + this.npcGrowthViralBonus;
-          this.playerToxicTickAccum = 0;
-        }
-        // Growth bloat: now handled in player 'damaged' listener (fires for melee + projectile hits)
         // Magic (NPC) thorn vine hit
         if ((proj as any).isMagicThornVine && (proj as any).thornVineOwner === 'npc') {
           this.magicKit.onThornVineHit(this.player, 'npc');
@@ -2988,6 +2786,10 @@ export class ArenaScene extends Phaser.Scene {
         // Magic (NPC) thorn prison hit
         if ((proj as any).isMagicThornPrison && (proj as any).thornPrisonOwner === 'npc') {
           this.magicKit.onThornPrisonHit(this.player.x, this.player.y, 'npc');
+        }
+        // Acid Purge ball: apply the stat-strip status on top of the generic damage above
+        if (proj.texture.key === 'proj-purge') {
+          this.slimeKit.onPurgeHit(this.player, proj, this.time.now);
         }
         proj.setActive(false).setVisible(false);
         (proj.body as Phaser.Physics.Arcade.Body).stop();
@@ -3102,66 +2904,17 @@ export class ArenaScene extends Phaser.Scene {
     this.player.on('damaged', (n: number) => {
       this.spawnDamageNumber(this.player.x, this.player.y - 34, n);
     });
-    // Growth bloat: trigger AOE on any hit (projectile or melee contact)
+    // Growth: Auxiliary Growth clone — inhabit it instead of dying
     this.player.on('damaged', (amount: number) => {
-      if (amount <= 0 || !this.growthBloatActive) return;
-      const fLocked = this.hasUpgrade('f') && this.fKey.isDown;
-      if (fLocked) {
-        // Spawn 12 red defensive spores that burst outward
-        for (let si = 0; si < 12; si++) {
-          const a = (si / 12) * Math.PI * 2;
-          const vel = { x: Math.cos(a) * 300, y: Math.sin(a) * 300 };
-          const spr = this.add.circle(this.player.x, this.player.y, 5, 0xff3322, 0.9)
-            .setStrokeStyle(1, 0xff8866).setDepth(6);
-          this.tweens.add({ targets: vel, x: 0, y: 0, duration: 700, ease: 'Power2' });
-          this.growthDefSpores.push({ sprite: spr, vel, destroyAt: this.time.now + 2000 });
-        }
-        // 20% damage reduction for 3s (cannot stack)
-        if (!this.growthDamageReductionActive) {
-          this.growthDamageReductionUntil = this.time.now + 3000;
-          this.player.incomingDamageMultiplier *= 0.8;
-          this.growthDamageReductionActive = true;
-          this.showFloatingText(this.player.x, this.player.y - 50, '🔴 -20% DMG TAKEN', '#ff4444');
-        }
-        return;
-      }
-      this.growthBloatActive = false;
-      this.growthBloatEnd = 0;
-      if (this.growthBloatAura) { this.growthBloatAura.destroy(); this.growthBloatAura = null; }
-      const bloatDmg = Math.round(20 * this.growthDamageMult);
-      const aoeR = this.growthBloatAoeRadius;
-      this.damagePlayerTargets(this.player.x, this.player.y, aoeR, bloatDmg, 0xdddd00);
-      // Trigger cancerous growths within bloat AOE
-      for (let ci = this.growthCancerousGrowths.length - 1; ci >= 0; ci--) {
-        const cg = this.growthCancerousGrowths[ci];
-        if (Phaser.Math.Distance.Between(this.player.x, this.player.y, cg.img.x, cg.img.y) <= aoeR) {
-          this.triggerCancerousGrowthAt(ci);
-        }
-      }
-      const ft = this.add.text(this.player.x, this.player.y - 30, `💥 ${bloatDmg}`, { fontSize: '11px', color: '#ffff44', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
-      this.tweens.add({ targets: ft, y: ft.y - 25, alpha: 0, duration: 900, onComplete: () => ft.destroy() });
-      const bloatExp = this.add.circle(this.player.x, this.player.y, aoeR, 0xdddd00, 0.3).setDepth(8);
-      this.tweens.add({ targets: bloatExp, scaleX: 1.4, scaleY: 1.4, alpha: 0, duration: 350, onComplete: () => bloatExp.destroy() });
-      if (this.growthFungalStacks > 0) {
-        const healAmt = this.growthFungalStacks * 10;
-        this.player.heal(healAmt);
-        const hft = this.add.text(this.player.x, this.player.y - 40, `🍄 +${healAmt}`, { fontSize: '11px', color: '#88ff44', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
-        this.tweens.add({ targets: hft, y: hft.y - 25, alpha: 0, duration: 900, onComplete: () => hft.destroy() });
-      }
+      if (this.elementId !== 'growth' || amount <= 0) return;
+      this.growthKit.onPlayerDamaged();
     });
     this.npc.on('damaged', (n: number) => {
       this.spawnDamageNumber(this.npc.x, this.npc.y - 34, n);
     });
-    // Growth R+: 15% bonus damage to infected enemies from ALL attacks
     this.npc.on('damaged', (amount: number) => {
-      if (amount <= 0 || !this.hasUpgrade('r') || this.elementId !== 'growth' || this.growthRBonusInProgress) return;
-      if (this.npc.toxicUntil <= this.time.now) return;
-      const bonus = Math.round(amount * 0.15);
-      if (bonus > 0) {
-        this.growthRBonusInProgress = true;
-        this.npc.takeDamage(bonus);
-        this.growthRBonusInProgress = false;
-      }
+      if (this.npcElement.id !== 'growth' || amount <= 0) return;
+      this.growthKit.onNpcDamaged();
     });
 
     // ── Crit event listeners ───────────────────────────────────────
@@ -3251,9 +3004,7 @@ export class ArenaScene extends Phaser.Scene {
           endRun: () => { if (arena.isOnline) arena.invasionCoopKit?.leaveRun(); else arena.endGame(false); },
           plantTargets: () => arena.lifeKit.getPlantTargets('player'),
           hasUpgrade: (slot) => arena.hasUpgrade(slot),
-          get growthLingerBonus() { return arena.growthLingerBonus; },
-          get growthViralBonus() { return arena.growthViralBonus; },
-          addFrostStackTo: (t) => arena.addFrostStackTo(t),
+          addFrostStackTo: (t) => arena.iceKit.addFrostStackTo(t),
           applyBleedVisual: (t) => arena.applyBleedVisualTo(t),
         };
         this.invasionKit = new InvasionKit(invasionApi);
@@ -3456,15 +3207,15 @@ export class ArenaScene extends Phaser.Scene {
       'kinetic-discharge':  0xffaa00,
       'pain-battery':       0xdd8800,
       'restart':            0xffffff,
-      'slime-shot':         0x66cc44,
-      'slimey-splash':      0x88dd66,
-      'sulpher-spring':     0xeedd44,
-      'slime-shield':       0x44aa33,
-      'slime-rain':         0x55bb55,
-      'fate-coin-toss':    0xddaa00,
-      'fate-slots':        0x44aa44,
-      'fate-luck':         0x88eecc,
-      'fate-dice':         0xffffff,
+      'poison-whip':        0x66cc44,
+      'vile-spray':         0x33ff33,
+      'snake-burrow':       0x448822,
+      'purge':              0x66ff33,
+      'acid-apocalypse':    0x225511,
+      'fate-card-throw':   0x88eecc,
+      'fate-reroll':       0x44aacc,
+      'fate-preserve':     0xffee44,
+      'fate-enchant':      0xaa44ff,
       'fate-all-in':       0xff4400,
       'rhythm-shot':        0xff66cc,
       'flow-mode':          0x9944cc,
@@ -3647,7 +3398,7 @@ export class ArenaScene extends Phaser.Scene {
 
   /** Large player health bar pinned to the top-centre of the screen, with a numeric HP readout. */
   private createPlayerHpBar(W: number): void {
-    const barY = 18;
+    const barY = this.hpBarY;
     const left = W / 2 - this.hpBarW / 2;
 
     this.add.rectangle(W / 2, barY, this.hpBarW + 6, this.hpBarH + 6, 0x0a0a18, 0.9)
@@ -3884,472 +3635,27 @@ export class ArenaScene extends Phaser.Scene {
       launchDrone: (_x, _y) => { /* oil kit handles via handleInput */ },
       placeFirewall: (_x, _y) => { /* oil kit handles via handleInput */ },
       startOverdrive: (_x, _y) => { /* oil kit handles via handleInput */ },
-      launchDarkBomb: (x, y) => {
-        const bomb = this.add.circle(this.player.x, this.player.y, 10, 0x660088, 0.95)
-          .setStrokeStyle(2, 0xcc44ff).setDepth(8);
-        this.tweens.add({
-          targets: bomb, x, y, duration: 380, ease: 'Power2',
-          onComplete: () => {
-            const boom = this.add.circle(x, y, 8, 0x8800cc, 0.8).setDepth(8);
-            this.tweens.add({ targets: boom, scaleX: 7, scaleY: 7, alpha: 0, duration: 350, onComplete: () => boom.destroy() });
-            bomb.destroy();
-            for (const t of this.enemies) {
-              if (!t.active || t.hp <= 0) continue;
-              if (Phaser.Math.Distance.Between(x, y, t.x, t.y) <= 50) {
-                t.takeDamage(10);
-                this.spawnHitFlash(t.x, t.y, 0x8800cc);
-              }
-            }
-            this.spawnShadowDarkCloud(x, y, 'player');
-          },
-        });
-      },
-      activateTentacle: (x, y) => {
-        // Close-range hook: only hooks if NPC is within 110px
-        const hookDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
-        this.shadowTentacleActive = true;
-        this.shadowTentacleHooked = hookDist <= 110;
-        // R+: check if a trap is near cursor — extend duration for drag
-        const hasTrapNearby = this.hasUpgrade('r') && this.shadowSnapTraps.some(
-          t => t.owner === 'player' && !t.triggered &&
-               Phaser.Math.Distance.Between(t.x, t.y, x, y) <= 55,
-        );
-        this.shadowTentacleEnd = this.time.now + (this.shadowTentacleHooked ? 3000 : hasTrapNearby ? 3000 : 600);
-        // Tentacle endpoint: toward cursor but clamped to 100px range
-        const angle = Math.atan2(y - this.player.y, x - this.player.x);
-        const reach = Math.min(100, Phaser.Math.Distance.Between(this.player.x, this.player.y, x, y));
-        this.shadowTentacleX = this.player.x + Math.cos(angle) * reach;
-        this.shadowTentacleY = this.player.y + Math.sin(angle) * reach;
-        if (!this.shadowTentacleSprite) {
-          this.shadowTentacleSprite = this.add.graphics().setDepth(6);
-        }
-        for (const t of this.enemies) {
-          if (!t.active || t.hp <= 0) continue;
-          if (Phaser.Math.Distance.Between(this.player.x, this.player.y, t.x, t.y) <= 110) {
-            t.takeDamage(10);
-            this.spawnHitFlash(t.x, t.y, 0x8800cc);
-          }
-        }
-      },
-      placeSnapTrap: () => {
-        const isPlume = this.hasPerk('player', 'plume');
-        const baseR = this.hasUpgrade('r') ? 27 : 18;
-        const trapRadius = isPlume ? (this.hasUpgrade('r') ? 36 : 25) : baseR;
-        const trapColor = isPlume ? 0x6633aa : 0x440066;
-        const strokeColor = isPlume ? 0xcc88ff : 0xcc44ff;
-        const trapLabel = isPlume ? '☁️' : '⚡';
-        const spr = this.add.circle(this.player.x, this.player.y, trapRadius, trapColor, 0.85)
-          .setStrokeStyle(2, strokeColor).setDepth(3);
-        const lbl = this.add.text(this.player.x, this.player.y, trapLabel, { fontSize: '10px' }).setOrigin(0.5).setDepth(4);
-        this.shadowSnapTraps.push({
-          sprite: spr, label: lbl,
-          expiresAt: this.time.now + 12000,
-          x: this.player.x, y: this.player.y,
-          triggered: false, radius: trapRadius, owner: 'player',
-          isPlume,
-        });
-      },
-      activateShadowDance: () => {
-        if (this.hasUpgrade('f')) {
-          if (this.shadowDanceCharge <= 0 || this.time.now < this.shadowDanceUpgradeCooldownUntil) return;
-          this.shadowDanceUpgradeCooldownUntil = this.time.now + 2000;
-          const ratio = Math.min(1, this.shadowDanceCharge / 35);
-          const wasFull = this.shadowDanceCharge >= 35;
-          this.shadowDanceCharge = 0;
-          const healAmt = wasFull ? 38 : Math.round((5 + ratio * 15) * 1.5);
-          this.player.heal(healAmt);
-          if (wasFull) {
-            this.shadowDanceUpgradeDodgeUntil = this.time.now + 8000;
-            const dTxt = this.add.text(this.player.x, this.player.y - 44, '👻 PHANTOM STEP', { fontSize: '10px', color: '#cc44ff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
-            this.tweens.add({ targets: dTxt, y: dTxt.y - 18, alpha: 0, duration: 1400, onComplete: () => dTxt.destroy() });
-          }
-        } else {
-          if (this.shadowDanceCharge < 35) return;
-          this.shadowDanceCharge = 0;
-          this.player.heal(38);
-        }
-        const flash = this.add.circle(this.player.x, this.player.y, 40, 0x8800cc, 0.5).setDepth(8);
-        this.tweens.add({ targets: flash, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 500, onComplete: () => flash.destroy() });
-      },
-      startBlackHole: () => {
-        this.shadowBlackHoleCharging = true;
-        this.shadowBlackHoleChargeStart = this.time.now;
-        if (this.shadowBlackHoleChargeVisual) this.shadowBlackHoleChargeVisual.destroy();
-        this.shadowBlackHoleChargeVisual = this.add.circle(this.player.x, this.player.y, 24, 0xffcc00, 0.6).setDepth(9);
-        this.tweens.add({ targets: this.shadowBlackHoleChargeVisual, scaleX: 1.3, scaleY: 1.3, alpha: 0.3, yoyo: true, repeat: -1, duration: 300 });
-        this.nukeChanneling = true;
-        this.nukeChannelEnd = this.time.now + 3100;
-      },
+      launchDarkBomb: (x, y) => this.shadowKit.doLaunchDarkBomb(x, y, true),
+      activateTentacle: (x, y) => this.shadowKit.doActivateTentacle(x, y, true),
+      placeSnapTrap: () => this.shadowKit.doPlaceSnapTrap(true),
+      activateShadowDance: () => this.shadowKit.doActivateShadowDance(),
+      startBlackHole: (x, y) => this.shadowKit.doStartBlackHole(x, y),
       // Ice
-      fireIceSpike: (tx, ty) => {
-        const dx = tx - this.player.x;
-        const dy = ty - this.player.y;
-        const len = Math.sqrt(dx * dx + dy * dy) || 1;
-        const isPowered = this.playerNextIcePowered;
-        if (isPowered) this.playerNextIcePowered = false;
-        const proj = new Projectile(this, this.player.x, this.player.y, 'proj-ice', 8, true);
-        if (isPowered) { proj.setScale(1.2); proj.isPowered = true; }
-        this.projectiles.add(proj);
-        proj.launch((dx / len) * 520, (dy / len) * 520);
-        if (this.hasUpgrade('click')) this.playerIcePendingSet.add(proj);
-      },
-      fireFrostBlast: (tx, ty) => {
-        const isBlackIce = this.playerBlackIceMorphActive;
-        const hasTarget = this.enemies.some(t =>
-          t.active && t.hp > 0 && (isBlackIce ? t.voidFrostStacks : t.frostStacks) > 0,
-        );
-        if (!hasTarget) return;
-        const dx = tx - this.player.x;
-        const dy = ty - this.player.y;
-        const len = Math.sqrt(dx * dx + dy * dy) || 1;
-        const angle = Math.atan2(dy / len, dx / len);
-        const endX = this.player.x + Math.cos(angle) * 1200;
-        const endY = this.player.y + Math.sin(angle) * 1200;
-        this.spawnFrostBeamVisual(this.player.x, this.player.y, endX, endY);
-        for (const t of this.enemies) {
-          if (!t.active || t.hp <= 0) continue;
-          const targetStacks = isBlackIce ? t.voidFrostStacks : t.frostStacks;
-          if (targetStacks === 0) continue;
-          const d = this.pointToSegmentDist(t.x, t.y, this.player.x, this.player.y, endX, endY);
-          if (d <= 32) {
-            t.takeDamage(Math.round(targetStacks * 7.5));
-            this.spawnHitFlash(t.x, t.y, isBlackIce ? 0x9900ff : 0x88ccff);
-            // 3s immunity to new frost/void stacks (permafrost/permavoid/voided unaffected)
-            t.frostImmuneUntil = Math.max(t.frostImmuneUntil, this.time.now + 3000);
-            t.voidImmuneUntil  = Math.max(t.voidImmuneUntil,  this.time.now + 3000);
-            if (isBlackIce) {
-              const voidedDps = targetStacks >= 5 ? 3 : targetStacks >= 3 ? 2 : 1;
-              t.voidedUntil = this.time.now + 5000;
-              t.voidedDps = voidedDps;
-              t.voidedTickAccum = 0;
-              t.voidFrostStacks = 0;
-              t.incomingDamageMultiplier = 1;
-              const vt = this.add.text(t.x, t.y - 30, 'VOIDED', { fontSize: '11px', color: '#cc88ff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
-              this.tweens.add({ targets: vt, y: vt.y - 20, alpha: 0, duration: 1200, onComplete: () => vt.destroy() });
-            } else {
-              // E+: keep residual frost stacks
-              if (this.hasUpgrade('e')) {
-                const stacks = t.frostStacks;
-                t.frostStacks = 0;
-                t.incomingDamageMultiplier = 1;
-                if (stacks >= 5) {
-                  t.frostStacks = 2;
-                  t.incomingDamageMultiplier = this.frostDamageMultiplier(2);
-                } else if (stacks >= 3) {
-                  t.frostStacks = 1;
-                  t.incomingDamageMultiplier = this.frostDamageMultiplier(1);
-                }
-              } else {
-                t.frostStacks = 0;
-                t.incomingDamageMultiplier = 1;
-              }
-            }
-          }
-        }
-      },
-      toggleBlockUp: () => {
-        if (this.hasUpgrade('r')) {
-          // R+: Black Ice Morph replaces Block Up
-          this.playerBlackIceMorphActive = !this.playerBlackIceMorphActive;
-          if (this.playerBlackIceMorphActive) {
-            this.player.incomingDamageMultiplier = this.frostDamageMultiplier(this.playerFrostStacks) * 1.20;
-            this.player.setTint(0x9900ff);
-            if (!this.playerBlackIceAura) {
-              this.playerBlackIceAura = this.add.circle(this.player.x, this.player.y, 30, 0x220044, 0.4)
-                .setStrokeStyle(2, 0x9900ff, 0.9).setDepth(3);
-            }
-            const mt = this.add.text(this.player.x, this.player.y - 36, 'BLACK ICE', { fontSize: '11px', color: '#cc88ff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
-            this.tweens.add({ targets: mt, y: mt.y - 20, alpha: 0, duration: 1200, onComplete: () => mt.destroy() });
-          } else {
-            this.player.incomingDamageMultiplier = this.frostDamageMultiplier(this.playerFrostStacks);
-            this.player.clearTint();
-            if (this.playerBlackIceAura) { this.playerBlackIceAura.destroy(); this.playerBlackIceAura = null; }
-            this.player.applySelfDamage(15);
-            this.player.sizeMult = Math.max(0.3, this.player.sizeMult * 0.85);
-            this.player.applySizeMult();
-            this.showFloatingText(this.player.x, this.player.y - 30, '💢 SHATTERED', '#cc88ff');
-          }
-        } else {
-          this.playerBlockUpActive = !this.playerBlockUpActive;
-          this.player.incomingDamageMultiplier = this.playerBlockUpActive
-            ? this.frostDamageMultiplier(this.playerFrostStacks) * 0.75
-            : this.frostDamageMultiplier(this.playerFrostStacks);
-          if (this.playerBlockUpActive) {
-            if (!this.playerBlockUpAura) {
-              this.playerBlockUpAura = this.add.circle(this.player.x, this.player.y, 28, 0x88ccff, 0.25)
-                .setStrokeStyle(2, 0xcceeff, 0.8).setDepth(3);
-            }
-          } else {
-            if (this.playerBlockUpAura) { this.playerBlockUpAura.destroy(); this.playerBlockUpAura = null; }
-          }
-        }
-      },
-      startSkate: () => {
-        if (this.playerSkaterActive) {
-          // Recast cancels skater mode and starts cooldown
-          if (this.time.now >= this.playerSkaterCancelableAt) {
-            this.playerSkaterActive = false;
-            this.player.startCooldown('skate');
-          }
-          return;
-        }
-        // Determine initial heading toward cursor
-        const ptr = this.input.activePointer;
-        this.playerSkaterHeading = Math.atan2(ptr.worldY - this.player.y, ptr.worldX - this.player.x);
-        this.playerSkaterTrailAccum = 0;
-        this.playerSkaterActive = true;
-        this.playerSkaterCancelableAt = this.time.now + 300;
-        // F+ synergies: spawn ice arena based on current state
-        if (this.hasUpgrade('f')) {
-          if (this.playerBlackIceMorphActive) {
-            this.spawnIceArena('player', true);
-          } else if (this.playerBlockUpActive) {
-            this.spawnIceArena('player', false);
-          }
-        }
-        // Rink perk: record recent skate timestamp for bonus speed
-        if (this.hasPerk('player', 'rink')) this.playerSkateRecentUntil = this.time.now + 2000;
-      },
-      fireFrozenSolid: (tx, ty) => {
-        const angle = Math.atan2(ty - this.player.y, tx - this.player.x);
-        this.spawnFrozenSolidVisual(this.player.x, this.player.y, angle);
-        for (const t of this.enemies) {
-          if (!t.active || t.hp <= 0) continue;
-          const tAngle = Math.atan2(t.y - this.player.y, t.x - this.player.x);
-          const diff = Math.abs(Phaser.Math.Angle.Wrap(tAngle - angle));
-          if (diff <= Math.PI / 8) {
-            if (t.frozenUntil > this.time.now) {
-              t.frozenUntil = 0;
-              for (let fi = 0; fi < 3; fi++) this.addFrostStackTo(t);
-            } else {
-              t.frozenUntil = this.time.now + 3000;
-              this.spawnHitFlash(t.x, t.y, 0x88ccff);
-              if (this.hasUpgrade('q')) t.frozenSolidAmpReady = true;
-            }
-          }
-        }
-        // Rink perk: tile the cone with icy trails lasting 8s
-        if (this.hasPerk('player', 'rink')) this.spawnRinkConeTiles(this.player.x, this.player.y, angle, 'player');
-      },
+      fireIceSpike: (tx, ty) => this.iceKit.doFireIceSpike(tx, ty),
+      fireFrostBlast: (tx, ty) => this.iceKit.doFireFrostBlast(tx, ty),
+      toggleBlockUp: () => this.iceKit.doToggleBlockUp(),
+      startSkate: () => this.iceKit.doStartSkate(),
+      fireFrozenSolid: (tx, ty) => this.iceKit.doFireFrozenSolid(tx, ty),
       // Growth
-      fireGrowthClick: (tx, ty) => {
-        const angle = Math.atan2(ty - this.player.y, tx - this.player.x);
-        // Plague-bomb and bacterium attack at half speed (1000ms effective CD)
-        if (this.growthMorphType === 'plague-bomb' || this.growthMorphType === 'bacterium') {
-          if (this.time.now - this.growthSlowMorphLastCast < 1000) return;
-          this.growthSlowMorphLastCast = this.time.now;
-        }
-        const tryCancerous = this.hasUpgrade('click') && Math.random() < 0.10;
-        const fireSpores = (ox: number, oy: number) => {
-          const sporeSpeed = 400 * (1 + this.growthSpreadStacks * 0.2);
-          const sporeAngles = [-12, -6, 0, 6, 12];
-          for (const deg of sporeAngles) {
-            const a = angle + deg * (Math.PI / 180);
-            const proj = new Projectile(this, ox, oy, 'proj-growth', Math.round(5 * this.growthDamageMult), true);
-            this.projectiles.add(proj);
-            const vx = Math.cos(a) * sporeSpeed;
-            const vy = Math.sin(a) * sporeSpeed;
-            proj.launch(vx, vy);
-            const pb = proj.body as Phaser.Physics.Arcade.Body;
-            this.tweens.add({ targets: pb.velocity, x: 0, y: 0, duration: 600,
-              onComplete: () => { this.time.delayedCall(200, () => { if (proj.active) { proj.setActive(false).setVisible(false); } }); } });
-          }
-        };
-        if (this.growthMorphType === 'spores') {
-          fireSpores(this.player.x, this.player.y);
-        } else if (this.growthMorphType === 'claws') {
-          const ptr = this.input.activePointer;
-          const dx = ptr.worldX - this.player.x; const dy = ptr.worldY - this.player.y;
-          const len = Math.sqrt(dx * dx + dy * dy) || 1;
-          const clawDmg = Math.round((15 + this.growthSpreadStacks * 5) * this.growthDamageMult);
-          for (const t of this.enemies) {
-            if (!t.active || t.hp <= 0) continue;
-            const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, t.x, t.y);
-            if (dist > 120) continue;
-            const toTx = t.x - this.player.x; const toTy = t.y - this.player.y;
-            const dot = (dx / len) * (toTx / dist) + (dy / len) * (toTy / dist);
-            if (dot > 0.4) {
-              t.takeDamage(clawDmg);
-              this.spawnHitFlash(t.x, t.y, 0x88bb22);
-              if (this.growthCancerousGrowths.length > 0) this.tryTriggerCancerousGrowthOn(t);
-            }
-          }
-          const slashAngle = Math.atan2(ty - this.player.y, tx - this.player.x);
-          const slash = this.add.rectangle(
-            this.player.x + Math.cos(slashAngle) * 50, this.player.y + Math.sin(slashAngle) * 50,
-            50, 10, 0x88bb22, 0.8,
-          ).setRotation(slashAngle).setDepth(6);
-          this.tweens.add({ targets: slash, scaleX: 0.3, alpha: 0, duration: 140, onComplete: () => slash.destroy() });
-        } else if (this.growthMorphType === 'virus') {
-          const virusCount = 3 + this.growthSpreadStacks;
-          const spreadStep = virusCount > 1 ? 30 / (virusCount - 1) : 0;
-          for (let vi = 0; vi < virusCount; vi++) {
-            const degOffset = virusCount > 1 ? -15 + vi * spreadStep : 0;
-            const a = angle + degOffset * (Math.PI / 180);
-            const proj = new Projectile(this, this.player.x, this.player.y, 'proj-growth', Math.round(8 * this.growthDamageMult), true);
-            this.projectiles.add(proj);
-            proj.launch(Math.cos(a) * 480, Math.sin(a) * 480);
-          }
-        } else if (this.growthMorphType === 'plague-bomb') {
-          const bombRadius = Math.round(80 * (1 + this.growthSpreadStacks * 0.2));
-          const bomb = this.add.circle(this.player.x, this.player.y, 10, 0x88bb22, 0.9)
-            .setStrokeStyle(2, 0xccff44).setDepth(8);
-          this.tweens.add({
-            targets: bomb, x: tx, y: ty, duration: 420, ease: 'Power2',
-            onComplete: () => {
-              const boom = this.add.circle(tx, ty, 8, 0x88bb22, 0.8).setDepth(8);
-              this.tweens.add({ targets: boom, scaleX: bombRadius / 8, scaleY: bombRadius / 8, alpha: 0, duration: 380, onComplete: () => boom.destroy() });
-              bomb.destroy();
-              const dmg = Math.round(15 * this.growthDamageMult);
-              for (const t of this.enemies) {
-                if (!t.active || t.hp <= 0) continue;
-                if (Phaser.Math.Distance.Between(tx, ty, t.x, t.y) <= bombRadius) {
-                  t.takeDamage(dmg);
-                  this.spawnHitFlash(t.x, t.y, 0x88bb22);
-                  const ft = this.add.text(t.x, t.y - 30, `💥 ${dmg}`, { fontSize: '11px', color: '#aadd44', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
-                  this.tweens.add({ targets: ft, y: ft.y - 25, alpha: 0, duration: 900, onComplete: () => ft.destroy() });
-                  if (this.growthCancerousGrowths.length > 0) this.tryTriggerCancerousGrowthOn(t);
-                }
-              }
-            },
-          });
-        } else if (this.growthMorphType === 'bacterium') {
-          const bacteriumHp = 10 + this.growthSpreadStacks * 5;
-          const bSprite = this.add.circle(this.player.x, this.player.y, 8, 0x55cc22, 0.9)
-            .setStrokeStyle(2, 0xaaff44).setDepth(4);
-          this.growthBacteriaList.push({ sprite: bSprite, hp: bacteriumHp, lastContactTime: -99999 });
-        }
-        // Click+: 10% chance to attach a cancerous growth to the nearest enemy
-        if (tryCancerous) {
-          const nearestEnemy = this.enemies.find(t => t.active && t.hp > 0);
-          if (nearestEnemy) {
-            const gAngle = Math.random() * Math.PI * 2;
-            const gDist = 28 + Math.random() * 6;
-            const offsetX = Math.cos(gAngle) * gDist;
-            const offsetY = Math.sin(gAngle) * gDist;
-            const gImg = this.add.circle(nearestEnemy.x + offsetX, nearestEnemy.y + offsetY, 6, 0xaa44ff, 0.9)
-              .setStrokeStyle(1, 0xdd88ff, 0.8).setDepth(6);
-            this.growthCancerousGrowths.push({ img: gImg, target: nearestEnemy, offsetX, offsetY });
-          }
-        }
-      },
-      openMutateMenu: () => {
-        if (this.growthMutateMenuOpen) return;
-        this.growthMutateMenuOpen = true;
-        let pool = this.hasUpgrade('e') ? [...BASE_GROWTH_MUTATIONS, ...ADVANCED_GROWTH_MUTATIONS] : [...BASE_GROWTH_MUTATIONS];
-        if (this.hasPerk('player', 'virus')) pool = pool.filter((m) => INFECT_GROWTH_MUTATION_IDS.includes(m.id));
-        const picks: typeof pool = [];
-        const numPicks = 3 + this.growthGreedBonus;
-        const poolCopy = [...pool];
-        for (let p = 0; p < numPicks && poolCopy.length > 0; p++) {
-          const idx = Math.floor(Math.random() * poolCopy.length);
-          picks.push(poolCopy.splice(idx, 1)[0]);
-        }
-        const W = this.scale.width;
-        const H = this.scale.height;
-        const btnW = 220; const btnH = 58; const gap = 10;
-        const menuCX = W / 2;
-        const menuCY = H / 2;
-        const startY = menuCY - ((btnH + gap) * (picks.length - 1)) / 2;
-        for (let p = 0; p < picks.length; p++) {
-          const mut = picks[p];
-          const by = startY + p * (btnH + gap);
-          const bg = this.add.rectangle(menuCX, by, btnW, btnH, 0x223322, 1)
-            .setStrokeStyle(2, 0x88bb22).setDepth(30).setInteractive({ useHandCursor: true });
-          const lbl = this.add.text(menuCX, by - 10, `${mut.emoji} ${mut.name}`, { fontSize: '14px', fontFamily: '"Arial Black"', color: '#aadd44' }).setOrigin(0.5).setDepth(31);
-          const desc = this.add.text(menuCX, by + 12, mut.description, { fontSize: '10px', color: '#888888' }).setOrigin(0.5).setDepth(31);
-          bg.on('pointerover', () => bg.setFillStyle(0x334433));
-          bg.on('pointerout', () => bg.setFillStyle(0x223322));
-          bg.on('pointerdown', () => {
-            this.applyGrowthMutation(mut.id, 'player');
-            for (const obj of this.growthMutateButtons) {
-              if ((obj as Phaser.GameObjects.GameObject).active) (obj as unknown as { destroy(): void }).destroy();
-            }
-            this.growthMutateButtons = [];
-            this.growthMutateMenuOpen = false;
-          });
-          this.growthMutateButtons.push(bg, lbl, desc);
-        }
-      },
-      fireInfect: (tx, ty) => {
-        const effectiveCd = Math.max(1000, this.growthInfectCdMs);
-        if (this.time.now - this.lastPlayerInfectCast < effectiveCd) return;
-        this.lastPlayerInfectCast = this.time.now;
-        const baseAngle = Math.atan2(ty - this.player.y, tx - this.player.x);
-        const count = 1 + this.growthInfectExtraProj;
-        for (let i = 0; i < count; i++) {
-          const spread = count > 1 ? (i - (count - 1) / 2) * 8 * (Math.PI / 180) : 0;
-          const a = baseAngle + spread;
-          const proj = new Projectile(this, this.player.x, this.player.y, 'proj-growth-dagger', Math.round(15 * this.growthDamageMult), true);
-          this.projectiles.add(proj);
-          proj.launch(Math.cos(a) * 520, Math.sin(a) * 520);
-          proj.setRotation(a);
-          // Uber-infect: scale hitbox
-          if (this.growthInfectHitboxMult > 1) {
-            const body = proj.body as Phaser.Physics.Arcade.Body;
-            body.setSize(Math.round(12 * this.growthInfectHitboxMult), Math.round(8 * this.growthInfectHitboxMult));
-          }
-          // Relapse: enable wall bounce tracking
-          if (this.growthInfectBounces > 0) {
-            this.growthInfectBouncers.push({ proj, bouncesDone: 0 });
-          }
-        }
-      },
-      activateBloat: () => {
-        const effectiveBloatCd = Math.max(1000, this.growthBloatCdMs);
-        if (this.time.now - this.lastPlayerBloatCast < effectiveBloatCd) return;
-        this.lastPlayerBloatCast = this.time.now;
-        this.growthBloatActive = true;
-        this.growthBloatEnd = this.time.now + 5000;
-        if (this.growthBloatAura) this.growthBloatAura.destroy();
-        this.growthBloatAura = this.add.circle(this.player.x, this.player.y, 30, 0xdddd00, 0.3)
-          .setStrokeStyle(2, 0xffff44, 0.8).setDepth(5);
-        this.tweens.add({ targets: this.growthBloatAura, alpha: 0.5, yoyo: true, repeat: -1, duration: 500 });
-      },
-      triggerMutantMorph: () => {
-        const morphNames: Record<string, string> = { spores: 'SPORES', claws: 'CLAWS', virus: 'VIRUS', 'plague-bomb': 'PLAGUE BOMB', bacterium: 'BACTERIUM' };
-        if (this.hasUpgrade('q')) {
-          // Q+: show weapon selection menu
-          const morphPool: Array<'spores' | 'claws' | 'virus' | 'plague-bomb' | 'bacterium'> = ['spores', 'claws', 'virus', 'plague-bomb', 'bacterium'];
-          this.growthMorphMenuOpen = true;
-          const W = this.scale.width; const H = this.scale.height;
-          const btnW = 180; const btnH = 50; const gap = 8;
-          const menuCX = W / 2;
-          const menuCY = H / 2;
-          const startY = menuCY - ((btnH + gap) * (morphPool.length - 1)) / 2;
-          for (let mi = 0; mi < morphPool.length; mi++) {
-            const morph = morphPool[mi];
-            const by = startY + mi * (btnH + gap);
-            const bg = this.add.rectangle(menuCX, by, btnW, btnH, 0x223322, 1)
-              .setStrokeStyle(2, 0x88bb22).setDepth(30).setInteractive({ useHandCursor: true });
-            const lbl = this.add.text(menuCX, by, `🦠 ${morphNames[morph]}`, { fontSize: '13px', fontFamily: '"Arial Black"', color: '#aadd44' }).setOrigin(0.5).setDepth(31);
-            this.growthMorphMenuButtons.push(bg, lbl);
-            bg.on('pointerover', () => bg.setFillStyle(0x334433));
-            bg.on('pointerout', () => bg.setFillStyle(0x223322));
-            bg.on('pointerdown', () => {
-              this.growthMorphType = morph;
-              for (const obj of this.growthMorphMenuButtons) {
-                if ((obj as Phaser.GameObjects.GameObject).active) (obj as unknown as { destroy(): void }).destroy();
-              }
-              this.growthMorphMenuButtons = [];
-              this.growthMorphMenuOpen = false;
-              const txt = this.add.text(this.player.x, this.player.y - 50, morphNames[morph],
-                { fontSize: '14px', fontFamily: '"Arial Black"', color: '#88bb22', stroke: '#003300', strokeThickness: 3 }).setOrigin(0.5).setDepth(15);
-              this.tweens.add({ targets: txt, y: txt.y - 30, alpha: 0, duration: 900, onComplete: () => txt.destroy() });
-            });
-          }
-        } else {
-          const morphPool: Array<'spores' | 'claws' | 'virus'> = ['spores', 'claws', 'virus'];
-          this.growthMorphType = morphPool[Math.floor(Math.random() * morphPool.length)];
-          const txt = this.add.text(this.player.x, this.player.y - 50, morphNames[this.growthMorphType],
-            { fontSize: '14px', fontFamily: '"Arial Black"', color: '#88bb22', stroke: '#003300', strokeThickness: 3 }).setOrigin(0.5).setDepth(15);
-          this.tweens.add({ targets: txt, y: txt.y - 30, alpha: 0, duration: 900, onComplete: () => txt.destroy() });
-        }
-      },
+      fireGrowthClick: (tx, ty) => { this.growthKit.doLeechBrood(tx, ty, 'player'); },
+      growthToggleEvolve: () => { this.growthKit.doToggleEvolve('player'); },
+      growthSporeSpread: (tx, ty) => { this.growthKit.doSporeSpread(tx, ty, 'player'); },
+      growthCancer: () => { this.growthKit.doCancer('player'); },
+      growthAuxiliaryGrowth: () => { this.growthKit.doAuxiliaryGrowth('player'); },
       // Crystal
       fireCrystalLaser: (tx, ty) => this.crystalKit.fireCrystalLaser(true, tx, ty),
       placeCrystalNode: (tx, ty) => this.crystalKit.placeCrystalNode(true, tx, ty),
-      startCrystalBarrage: (tx, ty) => this.crystalKit.startCrystalBarrage(true, tx, ty),
+      activateCrystalAtune: () => this.crystalKit.activateCrystalAtune(true),
       placeCrystalPortal: (tx, ty) => this.crystalKit.placeCrystalPortal(true, tx, ty),
       activateCrystalTrick: () => this.crystalKit.activateCrystalTrick(true),
       // Soul
@@ -4794,10 +4100,10 @@ export class ArenaScene extends Phaser.Scene {
       creationBlock: (x, y, w, h) => { this.spawnCreationBlocker(x, y, w, h, 'player'); },
       creationMaze: () => { this.spawnCreationMaze('player'); },
       // Fate
-      fateCoinToss: (tx, ty) => this.fateKit.doCoinToss(tx, ty, 'player'),
-      fateSpawnSlotMachine: (x, y) => this.fateKit.doSpawnSlotMachine(x, y, 'player'),
-      fateLuck: () => this.fateKit.doLuck('player'),
-      fateDice: (tx, ty) => this.fateKit.doDice(tx, ty, 'player'),
+      fateThrowCard: (tx, ty) => this.fateKit.doThrowCard(tx, ty, 'player'),
+      fateReroll: () => this.fateKit.doReroll('player'),
+      fatePreserve: () => this.fateKit.doPreserve('player'),
+      fateEnchant: () => this.fateKit.doEnchant('player'),
       fateAllIn: () => this.fateKit.doAllIn('player'),
       // Magnet
       magnetPulse: (x, y) => { this.magnetKit.doMagnetPulse(x, y, 'player'); },
@@ -4959,199 +4265,27 @@ export class ArenaScene extends Phaser.Scene {
       launchDrone: (x, y) => this.oilKit.doNpcLaunchDrone(x, y),
       placeFirewall: () => { /* NPC does not use firewall */ },
       startOverdrive: () => { /* NPC does not use overdrive */ },
-      launchDarkBomb: (x, y) => {
-        const bomb = this.add.circle(this.npc.x, this.npc.y, 10, 0x440066, 0.85)
-          .setStrokeStyle(2, 0x8800cc).setDepth(8);
-        this.tweens.add({
-          targets: bomb, x, y, duration: 380, ease: 'Power2',
-          onComplete: () => {
-            const boom = this.add.circle(x, y, 8, 0x440066, 0.7).setDepth(8);
-            this.tweens.add({ targets: boom, scaleX: 7, scaleY: 7, alpha: 0, duration: 350, onComplete: () => boom.destroy() });
-            bomb.destroy();
-            if (Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) <= 50) {
-              this.player.takeDamage(10);
-              this.spawnHitFlash(this.player.x, this.player.y, 0x8800cc);
-            }
-            this.spawnShadowDarkCloud(x, y, 'npc');
-          },
-        });
-      },
-      activateTentacle: (_x, _y) => {
-        const hookDist = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y);
-        this.npcShadowTentacleActive = true;
-        this.npcShadowTentacleHooked = hookDist <= 110;
-        this.npcShadowTentacleEnd = this.time.now + (this.npcShadowTentacleHooked ? 3000 : 600);
-        if (!this.npcShadowTentacleSprite) {
-          this.npcShadowTentacleSprite = this.add.graphics().setDepth(6);
-        }
-        if (this.npcShadowTentacleHooked) {
-          this.player.takeDamage(10);
-          this.spawnHitFlash(this.player.x, this.player.y, 0x440066);
-          // Pick initial random drag target
-          const { width, height } = this.scale;
-          this.npcShadowDragTargetX = Phaser.Math.Between(80, width - 80);
-          this.npcShadowDragTargetY = Phaser.Math.Between(80, height - 80);
-          this.npcShadowDragNextChangeAt = this.time.now + 700;
-        }
-      },
-      placeSnapTrap: () => {
-        const isNpcPlume = this.hasPerk('npc', 'plume');
-        const npcTrapR = isNpcPlume ? 25 : 18;
-        const npcTrapColor = isNpcPlume ? 0x6633aa : 0x220033;
-        const npcTrapLabel = isNpcPlume ? '☁️' : '⚡';
-        const spr = this.add.circle(this.npc.x, this.npc.y, npcTrapR, npcTrapColor, 0.75)
-          .setStrokeStyle(2, isNpcPlume ? 0xcc88ff : 0x8800cc).setDepth(3);
-        const lbl = this.add.text(this.npc.x, this.npc.y, npcTrapLabel, { fontSize: '10px' }).setOrigin(0.5).setDepth(4);
-        this.shadowSnapTraps.push({
-          sprite: spr, label: lbl,
-          expiresAt: this.time.now + 12000,
-          x: this.npc.x, y: this.npc.y,
-          triggered: false, radius: npcTrapR, owner: 'npc', isPlume: isNpcPlume,
-        });
-      },
+      launchDarkBomb: (x, y) => this.shadowKit.doLaunchDarkBomb(x, y, false),
+      activateTentacle: (x, y) => this.shadowKit.doActivateTentacle(x, y, false),
+      placeSnapTrap: () => this.shadowKit.doPlaceSnapTrap(false),
       activateShadowDance: () => { /* NPC does not track shadow dance charge */ },
-      startBlackHole: () => { /* NPC does not use black hole */ },
+      startBlackHole: (_x, _y) => { /* NPC does not use black hole */ },
       // Ice
-      fireIceSpike: (tx, ty) => {
-        const dx = tx - this.npc.x;
-        const dy = ty - this.npc.y;
-        const len = Math.sqrt(dx * dx + dy * dy) || 1;
-        const proj = new Projectile(this, this.npc.x, this.npc.y, 'proj-ice', 8, false);
-        this.projectiles.add(proj);
-        proj.launch((dx / len) * 480, (dy / len) * 480);
-      },
-      fireFrostBlast: (tx, ty) => {
-        if (this.playerFrostStacks === 0) return;
-        const dx = tx - this.npc.x;
-        const dy = ty - this.npc.y;
-        const len = Math.sqrt(dx * dx + dy * dy) || 1;
-        const angle = Math.atan2(dy / len, dx / len);
-        const endX = this.npc.x + Math.cos(angle) * 1200;
-        const endY = this.npc.y + Math.sin(angle) * 1200;
-        this.spawnFrostBeamVisual(this.npc.x, this.npc.y, endX, endY);
-        const d = this.pointToSegmentDist(this.player.x, this.player.y, this.npc.x, this.npc.y, endX, endY);
-        if (d <= 32) {
-          this.player.takeDamage(Math.round(this.playerFrostStacks * 7.5));
-          this.spawnHitFlash(this.player.x, this.player.y, 0x88ccff);
-          this.clearFrostStacks('player');
-        }
-      },
-      toggleBlockUp: () => {
-        this.npcBlockUpActive = !this.npcBlockUpActive;
-        this.npc.incomingDamageMultiplier = this.npcBlockUpActive
-          ? this.frostDamageMultiplier(this.npc.frostStacks) * 0.75
-          : this.frostDamageMultiplier(this.npc.frostStacks);
-        if (this.npcBlockUpActive) {
-          if (!this.npcBlockUpAura) {
-            this.npcBlockUpAura = this.add.circle(this.npc.x, this.npc.y, 28, 0x88ccff, 0.25)
-              .setStrokeStyle(2, 0xcceeff, 0.8).setDepth(3);
-          }
-        } else {
-          if (this.npcBlockUpAura) { this.npcBlockUpAura.destroy(); this.npcBlockUpAura = null; }
-        }
-      },
-      startSkate: () => {
-        // NPC skate: dash away from player + leave trail
-        const dx = this.npc.x - this.player.x;
-        const dy = this.npc.y - this.player.y;
-        const len = Math.sqrt(dx * dx + dy * dy) || 1;
-        const nBody = this.npc.body as Phaser.Physics.Arcade.Body;
-        nBody.setVelocity((dx / len) * 620, (dy / len) * 620);
-        this.npc.isInvincible = true;
-        for (let i = 0; i < 4; i++) {
-          this.time.delayedCall(i * 55, () => {
-            if (this.npc.active) this.spawnIcyTrail(this.npc.x, this.npc.y, 'npc');
-          });
-        }
-        this.time.delayedCall(220, () => { if (this.npc.active) this.npc.isInvincible = false; });
-        // Rink perk: record recent skate timestamp for bonus speed
-        if (this.hasPerk('npc', 'rink')) this.npcSkateRecentUntil = this.time.now + 2000;
-      },
-      fireFrozenSolid: (tx, ty) => {
-        const angle = Math.atan2(ty - this.npc.y, tx - this.npc.x);
-        this.spawnFrozenSolidVisual(this.npc.x, this.npc.y, angle);
-        const playerAngle = Math.atan2(this.player.y - this.npc.y, this.player.x - this.npc.x);
-        const diff = Math.abs(Phaser.Math.Angle.Wrap(playerAngle - angle));
-        if (diff <= Math.PI / 8) {
-          if (this.playerFrozenUntil > this.time.now) {
-            this.playerFrozenUntil = 0;
-            for (let fi = 0; fi < 3; fi++) this.addFrostStack('player');
-          } else {
-            this.playerFrozenUntil = this.time.now + 3000;
-            this.spawnHitFlash(this.player.x, this.player.y, 0x88ccff);
-          }
-        }
-        // Rink perk: tile the cone with icy trails lasting 8s
-        if (this.hasPerk('npc', 'rink')) this.spawnRinkConeTiles(this.npc.x, this.npc.y, angle, 'npc');
-      },
+      fireIceSpike: (tx, ty) => this.iceKit.doNpcFireIceSpike(tx, ty),
+      fireFrostBlast: (tx, ty) => this.iceKit.doNpcFireFrostBlast(tx, ty),
+      toggleBlockUp: () => this.iceKit.doNpcToggleBlockUp(),
+      startSkate: () => this.iceKit.doNpcStartSkate(),
+      fireFrozenSolid: (tx, ty) => this.iceKit.doNpcFireFrozenSolid(tx, ty),
       // Growth
-      fireGrowthClick: (tx, ty) => {
-        const angle = Math.atan2(ty - this.npc.y, tx - this.npc.x);
-        if (this.npcGrowthMorphType === 'spores') {
-          const angles = [-12, -6, 0, 6, 12];
-          for (const deg of angles) {
-            const a = angle + deg * (Math.PI / 180);
-            const proj = new Projectile(this, this.npc.x, this.npc.y, 'proj-growth', Math.round(5 * this.npcGrowthDamageMult), false);
-            this.projectiles.add(proj);
-            proj.launch(Math.cos(a) * 380, Math.sin(a) * 380);
-            const pb = proj.body as Phaser.Physics.Arcade.Body;
-            this.tweens.add({ targets: pb.velocity, x: 0, y: 0, duration: 600,
-              onComplete: () => { this.time.delayedCall(200, () => { if (proj.active) { proj.setActive(false).setVisible(false); } }); } });
-          }
-        } else if (this.npcGrowthMorphType === 'claws') {
-          const dist = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y);
-          if (dist <= 120) {
-            this.player.takeDamage(Math.round(15 * this.npcGrowthDamageMult));
-            this.spawnHitFlash(this.player.x, this.player.y, 0x88bb22);
-          }
-        } else {
-          const spreadAngles = [-15, 0, 15];
-          for (const deg of spreadAngles) {
-            const a = angle + deg * (Math.PI / 180);
-            const proj = new Projectile(this, this.npc.x, this.npc.y, 'proj-growth', Math.round(8 * this.npcGrowthDamageMult), false);
-            this.projectiles.add(proj);
-            proj.launch(Math.cos(a) * 460, Math.sin(a) * 460);
-          }
-        }
-      },
-      openMutateMenu: () => {
-        // NPC auto-picks one random mutation
-        const allMuts = BASE_GROWTH_MUTATIONS.map((m) => m.id);
-        const mutations = this.hasPerk('npc', 'virus') ? allMuts.filter((m) => INFECT_GROWTH_MUTATION_IDS.includes(m)) : allMuts;
-        this.applyGrowthMutation(mutations[Math.floor(Math.random() * mutations.length)], 'npc');
-      },
-      fireInfect: (tx, ty) => {
-        if (this.time.now - this.lastNpcInfectCast < 8000) return;
-        this.lastNpcInfectCast = this.time.now;
-        const baseAngle = Math.atan2(ty - this.npc.y, tx - this.npc.x);
-        const count = 1 + this.npcGrowthInfectExtraProj;
-        for (let i = 0; i < count; i++) {
-          const spread = count > 1 ? (i - (count - 1) / 2) * 8 * (Math.PI / 180) : 0;
-          const a = baseAngle + spread;
-          const proj = new Projectile(this, this.npc.x, this.npc.y, 'proj-growth-dagger', Math.round(5 * this.npcGrowthDamageMult), false);
-          this.projectiles.add(proj);
-          proj.launch(Math.cos(a) * 490, Math.sin(a) * 490);
-          proj.setRotation(a);
-        }
-      },
-      activateBloat: () => {
-        if (this.time.now - this.lastNpcBloatCast < this.npcGrowthBloatCdMs) return;
-        this.lastNpcBloatCast = this.time.now;
-        this.npc.growthBloatActive = true;
-        this.npc.growthBloatEnd = this.time.now + 5000;
-        if (this.npc.growthBloatAura) this.npc.growthBloatAura.destroy();
-        this.npc.growthBloatAura = this.add.circle(this.npc.x, this.npc.y, 30, 0xdddd00, 0.3)
-          .setStrokeStyle(2, 0xffff44, 0.8).setDepth(5);
-        this.tweens.add({ targets: this.npc.growthBloatAura, alpha: 0.5, yoyo: true, repeat: -1, duration: 500 });
-      },
-      triggerMutantMorph: () => {
-        const morphTypes: Array<'spores' | 'claws' | 'virus'> = ['spores', 'claws', 'virus'];
-        this.npcGrowthMorphType = morphTypes[Math.floor(Math.random() * morphTypes.length)];
-      },
+      fireGrowthClick: (tx, ty) => { this.growthKit.doLeechBrood(tx, ty, 'npc'); },
+      growthToggleEvolve: () => { this.growthKit.doToggleEvolve('npc'); },
+      growthSporeSpread: (tx, ty) => { this.growthKit.doSporeSpread(tx, ty, 'npc'); },
+      growthCancer: () => { this.growthKit.doCancer('npc'); },
+      growthAuxiliaryGrowth: () => { this.growthKit.doAuxiliaryGrowth('npc'); },
       // Crystal
       fireCrystalLaser: (tx, ty) => this.crystalKit.fireCrystalLaser(false, tx, ty),
       placeCrystalNode: (tx, ty) => this.crystalKit.placeCrystalNode(false, tx, ty),
-      startCrystalBarrage: (tx, ty) => this.crystalKit.startCrystalBarrage(false, tx, ty),
+      activateCrystalAtune: () => this.crystalKit.activateCrystalAtune(false),
       placeCrystalPortal: (tx, ty) => this.crystalKit.placeCrystalPortal(false, tx, ty),
       activateCrystalTrick: () => this.crystalKit.activateCrystalTrick(false),
       // Soul
@@ -5416,10 +4550,10 @@ export class ArenaScene extends Phaser.Scene {
       creationBlock: (x, y, w, h) => { this.spawnCreationBlocker(x, y, w, h, 'npc'); },
       creationMaze: () => { this.spawnCreationMaze('npc'); },
       // Fate
-      fateCoinToss: (tx, ty) => this.fateKit.doCoinToss(tx, ty, 'npc'),
-      fateSpawnSlotMachine: (x, y) => this.fateKit.doSpawnSlotMachine(x, y, 'npc'),
-      fateLuck: () => this.fateKit.doLuck('npc'),
-      fateDice: (tx, ty) => this.fateKit.doDice(tx, ty, 'npc'),
+      fateThrowCard: (tx, ty) => this.fateKit.doThrowCard(tx, ty, 'npc'),
+      fateReroll: () => this.fateKit.doReroll('npc'),
+      fatePreserve: () => this.fateKit.doPreserve('npc'),
+      fateEnchant: () => this.fateKit.doEnchant('npc'),
       fateAllIn: () => this.fateKit.doAllIn('npc'),
       // Magnet
       magnetPulse: (x, y) => { this.magnetKit.doMagnetPulse(x, y, 'npc'); },
@@ -5569,13 +4703,13 @@ export class ArenaScene extends Phaser.Scene {
       startSkate: () => {},
       fireFrozenSolid: () => {},
       fireGrowthClick: () => {},
-      openMutateMenu: () => {},
-      fireInfect: () => {},
-      activateBloat: () => {},
-      triggerMutantMorph: () => {},
+      growthToggleEvolve: () => {},
+      growthSporeSpread: () => {},
+      growthCancer: () => {},
+      growthAuxiliaryGrowth: () => {},
       fireCrystalLaser: () => {},
       placeCrystalNode: () => {},
-      startCrystalBarrage: () => {},
+      activateCrystalAtune: () => {},
       placeCrystalPortal: () => {},
       activateCrystalTrick: () => {},
       fireSoulOrb: () => {},
@@ -5616,10 +4750,10 @@ export class ArenaScene extends Phaser.Scene {
       creationBlock: () => {},
       creationMaze: () => {},
       // Fate (raid stubs)
-      fateCoinToss: () => {},
-      fateSpawnSlotMachine: () => {},
-      fateLuck: () => {},
-      fateDice: () => {},
+      fateThrowCard: () => {},
+      fateReroll: () => {},
+      fatePreserve: () => {},
+      fateEnchant: () => {},
       fateAllIn: () => {},
       // Echo (raid stubs)
       echoEcholocation: () => {},
@@ -7930,216 +7064,6 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
-  private frostDamageMultiplier(stacks: number): number {
-    if (stacks >= 5) return 1.45;
-    if (stacks >= 4) return 1.30;
-    if (stacks >= 3) return 1.20;
-    return 1.0;
-  }
-
-  private addFrostStackTo(f: Fighter): void {
-    if (this.playerBlackIceMorphActive) {
-      if (Date.now() < f.voidImmuneUntil) return;
-      f.voidFrostStacks = Math.min(5, f.voidFrostStacks + 1);
-      f.incomingDamageMultiplier = this.frostDamageMultiplier(f.voidFrostStacks);
-    } else {
-      if (Date.now() < f.frostImmuneUntil) return;
-      f.frostStacks = Math.min(5, f.frostStacks + 1);
-      f.incomingDamageMultiplier = this.frostDamageMultiplier(f.frostStacks);
-    }
-  }
-
-  private addFrostStack(target: 'player' | 'npc'): void {
-    if (target === 'npc') {
-      this.addFrostStackTo(this.npc);
-    } else {
-      if (Date.now() < this.player.frostImmuneUntil) return;
-      this.playerFrostStacks = Math.min(5, this.playerFrostStacks + 1);
-      const baseMult = this.frostDamageMultiplier(this.playerFrostStacks);
-      this.player.incomingDamageMultiplier = this.playerBlackIceMorphActive ? baseMult * 1.20 : baseMult;
-    }
-  }
-
-  private clearFrostStacks(target: 'player' | 'npc'): void {
-    if (target === 'npc') {
-      this.npc.frostStacks = 0;
-      this.npc.incomingDamageMultiplier = 1;
-    } else {
-      this.playerFrostStacks = 0;
-      this.player.incomingDamageMultiplier = this.playerBlackIceMorphActive ? 1.20 : 1;
-    }
-  }
-
-  private spawnIcyTrail(x: number, y: number, owner: 'player' | 'npc', opts?: { skater?: boolean }): void {
-    const isVoid = owner === 'player' && this.playerBlackIceMorphActive;
-    const fillColor = isVoid ? 0x440066 : 0x88ccff;
-    const strokeColor = isVoid ? 0x9900ff : 0xcceeff;
-    const spr = this.add.circle(x, y, 32, fillColor, 0.35).setDepth(2)
-      .setStrokeStyle(1, strokeColor, 0.5);
-    this.tweens.add({ targets: spr, alpha: 0.15, duration: 4800, yoyo: true, repeat: 0 });
-    this.icyTrails.push({ sprite: spr, expiresAt: this.time.now + 5000, x, y, radius: 32, frostTickAccum: 0, owner, skater: opts?.skater });
-  }
-
-  private spawnRinkConeTiles(ox: number, oy: number, angle: number, owner: 'player' | 'npc'): void {
-    const half = Math.PI / 8;
-    const steps = [0.15, 0.3, 0.45, 0.6, 0.72, 0.84, 0.92, 1.0];
-    const offsets = [-0.6, -0.25, 0.25, 0.6];
-    for (const t of steps) {
-      const r = t * 1200;
-      for (const ao of offsets) {
-        const a = angle + ao * half;
-        const tx = ox + Math.cos(a) * r;
-        const ty = oy + Math.sin(a) * r;
-        const spr = this.add.circle(tx, ty, 28, 0x55ddff, 0.4).setDepth(2)
-          .setStrokeStyle(1, 0xaaffff, 0.7);
-        this.tweens.add({ targets: spr, alpha: 0.1, duration: 7000, yoyo: false, repeat: 0 });
-        this.icyTrails.push({ sprite: spr, expiresAt: this.time.now + 8000, x: tx, y: ty, radius: 28, frostTickAccum: 0, owner, rink: true });
-      }
-    }
-  }
-
-  private spawnFrozenSolidVisual(x: number, y: number, angle: number): void {
-    const gfx = this.add.graphics().setDepth(7);
-    const half = Math.PI / 8; // 22.5° half-angle
-    const len = 1200;
-    gfx.fillStyle(0x88ccff, 0.25);
-    gfx.lineStyle(2, 0xcceeff, 0.8);
-    gfx.beginPath();
-    gfx.moveTo(x, y);
-    gfx.lineTo(x + Math.cos(angle - half) * len, y + Math.sin(angle - half) * len);
-    gfx.lineTo(x + Math.cos(angle + half) * len, y + Math.sin(angle + half) * len);
-    gfx.closePath();
-    gfx.fillPath();
-    gfx.strokePath();
-    this.tweens.add({ targets: gfx, alpha: 0, duration: 450, onComplete: () => gfx.destroy() });
-  }
-
-  private spawnIceArena(owner: 'player' | 'npc', isVoid: boolean): void {
-    const fighter = owner === 'player' ? this.player : this.npc;
-    const radius = isVoid ? 60 : 120;
-    const fill = isVoid ? 0x440066 : 0x88ccff;
-    const stroke = isVoid ? 0x9900ff : 0xcceeff;
-    const sprite = this.add.circle(fighter.x, fighter.y, radius, fill, 0.20)
-      .setStrokeStyle(2, stroke, 0.8).setDepth(2);
-    this.iceArenas.push({
-      sprite, x: fighter.x, y: fighter.y, radius,
-      expiresAt: this.time.now + 5000, tickAccum: 0, isVoid, owner,
-    });
-    // Initial creation: permafrost or permavoid on any enemy inside the radius
-    const targets = owner === 'player' ? (this.enemies as Fighter[]) : [this.player as Fighter];
-    for (const t of targets) {
-      if (!t.active || t.hp <= 0) continue;
-      const d = Phaser.Math.Distance.Between(fighter.x, fighter.y, t.x, t.y);
-      if (d > radius) continue;
-      if (isVoid) {
-        t.permavoidStacks = Math.min(3, t.permavoidStacks + 1);
-        this.showFloatingText(t.x, t.y - 30, '🟣 PERMAVOID', '#cc88ff');
-      } else {
-        t.permafrostStacks = Math.min(3, t.permafrostStacks + 1);
-        this.showFloatingText(t.x, t.y - 30, '❄️ PERMAFROST', '#aaddff');
-      }
-    }
-    this.showFloatingText(fighter.x, fighter.y - 30, isVoid ? '🖤 DARK ICE ARENA' : '❄️ ICE ARENA', isVoid ? '#9900ff' : '#88ccff');
-  }
-
-  private spawnFrostBeamVisual(x1: number, y1: number, x2: number, y2: number): void {
-    const gfx = this.add.graphics().setDepth(8);
-    gfx.lineStyle(10, 0x88ccff, 0.7);
-    gfx.lineBetween(x1, y1, x2, y2);
-    gfx.lineStyle(3, 0xffffff, 0.9);
-    gfx.lineBetween(x1, y1, x2, y2);
-    this.tweens.add({ targets: gfx, alpha: 0, duration: 280, onComplete: () => gfx.destroy() });
-  }
-
-  private applyGrowthMutation(id: string, target: 'player' | 'npc'): void {
-    const fighter = target === 'player' ? this.player : this.npc;
-    const isPlayer = target === 'player';
-    switch (id) {
-      case 'healthier':
-        fighter.maxHp += 10;
-        fighter.heal(10);
-        break;
-      case 'deadly':
-        if (isPlayer) this.growthDamageMult += 0.15;
-        else this.npcGrowthDamageMult += 0.15;
-        break;
-      case 'linger':
-        if (isPlayer) this.growthLingerBonus += 3000;
-        else this.npcGrowthLingerBonus += 3000;
-        break;
-      case 'viral':
-        if (isPlayer) this.growthViralBonus += 2;
-        else this.npcGrowthViralBonus += 2;
-        break;
-      case 'grow': {
-        fighter.maxHp += 20;
-        fighter.heal(20);
-        const newScaleG = 1 + Math.max(-0.6, (isPlayer ? this.growthScaleBonus : this.npcGrowthScaleBonus) + 0.2);
-        if (isPlayer) { this.growthScaleBonus += 0.2; } else { this.npcGrowthScaleBonus += 0.2; }
-        fighter.setScale(newScaleG);
-        break;
-      }
-      case 'shrink': {
-        fighter.maxHp = Math.max(20, fighter.maxHp - 20);
-        if (fighter.hp > fighter.maxHp) fighter.hp = fighter.maxHp;
-        const newScaleS = Math.max(0.4, 1 + (isPlayer ? this.growthScaleBonus : this.npcGrowthScaleBonus) - 0.2);
-        if (isPlayer) { this.growthScaleBonus -= 0.2; } else { this.npcGrowthScaleBonus -= 0.2; }
-        fighter.setScale(newScaleS);
-        break;
-      }
-      case 'buffer':
-        if (isPlayer) this.growthBloatCdMs = Math.max(1000, this.growthBloatCdMs - 500);
-        else this.npcGrowthBloatCdMs = Math.max(1000, this.npcGrowthBloatCdMs - 500);
-        break;
-      case 'spray':
-        if (isPlayer) this.growthInfectExtraProj += 1;
-        else this.npcGrowthInfectExtraProj += 1;
-        break;
-      case 'quick':
-        if (isPlayer) this.growthInfectCdMs = Math.max(1000, this.growthInfectCdMs - 500);
-        break;
-      case 'regenerative':
-        if (isPlayer) this.growthRegenRate += 1;
-        else this.npcGrowthRegenRate += 1;
-        break;
-      // E+ advanced mutations (player only)
-      case 'chunk':
-        if (isPlayer) this.growthBloatAoeRadius = Math.round(this.growthBloatAoeRadius * 1.1);
-        break;
-      case 'relapse':
-        if (isPlayer) this.growthInfectBounces += 1;
-        break;
-      case 'gene-enhance':
-        if (isPlayer) {
-          this.player.reduceCooldown('mutant-morph', 20000);
-          const ft = this.add.text(fighter.x, fighter.y - 40, '🧪 Q -20s!', { fontSize: '12px', color: '#aadd44', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(15);
-          this.tweens.add({ targets: ft, y: ft.y - 30, alpha: 0, duration: 1200, onComplete: () => ft.destroy() });
-        }
-        break;
-      case 'spread':
-        if (isPlayer) this.growthSpreadStacks += 1;
-        break;
-      case 'uber-infect':
-        if (isPlayer) this.growthInfectHitboxMult += 0.2;
-        break;
-      case 'fungal-flourish':
-        if (isPlayer) this.growthFungalStacks += 1;
-        break;
-      case 'greed':
-        if (isPlayer) this.growthGreedBonus += 1;
-        break;
-      case 'sneeze':
-        if (isPlayer) this.growthSneezeStacks += 1;
-        break;
-      case 'cough':
-        if (isPlayer) this.growthCoughStacks += 1;
-        break;
-    }
-    // Flash to confirm
-    const flash = this.add.circle(fighter.x, fighter.y, 22, 0x88bb22, 0.7).setDepth(12);
-    this.tweens.add({ targets: flash, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 350, onComplete: () => flash.destroy() });
-  }
-
   private spawnGravMeteorShadow(x: number, y: number, owner: 'player' | 'npc', frozen: boolean): void {
     // Cap frozen player shadows (FIFO — remove oldest frozen player shadow)
     if (frozen && owner === 'player') {
@@ -8158,16 +7082,6 @@ export class ArenaScene extends Phaser.Scene {
       this.tweens.add({ targets: spr, alpha: 0.4, yoyo: true, repeat: -1, duration: 500 });
     }
     this.gravMeteorShadows.push({ sprite: spr, fireAt: frozen ? Infinity : this.time.now + 1500, x, y, owner, damage: 14, radius: 70, directHitRadius: 28, directBonus: 16, frozen });
-  }
-
-  private spawnShadowDarkCloud(x: number, y: number, owner: 'player' | 'npc'): void {
-    const voidOn = this.hasPerk(owner, 'void-shade');
-    const radius = voidOn ? 43 : 36;
-    const duration = voidOn ? 9000 : 6000;
-    const spr = this.add.circle(x, y, radius, 0x330044, 0.55).setDepth(3);
-    spr.setStrokeStyle(1, 0x8800cc, 0.5);
-    this.tweens.add({ targets: spr, scaleX: 1.2, scaleY: 1.2, alpha: 0.35, yoyo: true, repeat: -1, duration: 700 });
-    this.shadowDarkClouds.push({ sprite: spr, expiresAt: this.time.now + duration, x, y, radius, tickAccum: 0, owner });
   }
 
   private spawnSoulGhost(type: 'basic' | 'ghoul' | 'banshee' | 'knight' | 'corpse' | 'necromancer', x: number, y: number, owner: 'player' | 'npc', enhanced = false): void {
@@ -8787,6 +7701,19 @@ export class ArenaScene extends Phaser.Scene {
       }
     }
 
+    // ── Shadow Mastery progress tracking (accrues even before unlock) ──
+    if (this.elementId === 'shadow') {
+      for (const t of this.enemies) {
+        if (!t.active || this.shadowMasteryTrackedEnemies.has(t)) continue;
+        this.shadowMasteryTrackedEnemies.add(t);
+        t.once('defeated', () => {
+          if (this.shadowKit.isBlackHoleActive()) {
+            PlayerData.addMasteryStat('shadow', 'blackHoleKills', 1);
+          }
+        });
+      }
+    }
+
     // ── Electricity per-frame ─────────────────────────────────────
     if (this.elementId === 'electricity') {
       this.electricityKit.update(time, delta);
@@ -8904,6 +7831,8 @@ export class ArenaScene extends Phaser.Scene {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
       // F+: 20% speed boost for 3s after portal teleport
       if (time < this.crystalKit.getPortalSpeedBuffUntil()) this.playerSpeedMult *= 1.2;
+      // Mastery — Resonance: 3x speed for 0.2s after getting hit by your own Diamond Shard
+      if (time < this.crystalKit.getResonanceSpeedUntil()) this.playerSpeedMult *= 3;
     } else if (this.elementId === 'soul') {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
       // F+ Knight speed buff: +45%
@@ -8916,18 +7845,10 @@ export class ArenaScene extends Phaser.Scene {
       // Mech stage 3 speed bonus
       if (this.creatMech && this.creatMech.stage === 3) this.playerSpeedMult = Math.max(this.playerSpeedMult, 1.4);
     } else if (this.elementId === 'slime') {
-      this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
-      const slimes = this.slimeKit.getSlimes();
-      const boostCount = slimes.filter(
-        s => s.state !== 'deployed' && s.state !== 'flying-out' && s.state !== 'flying-back',
-      ).length;
-      this.playerSpeedMult *= 1 + 0.1 * boostCount;
-      if (slimes.some(s => s.state === 'shield-active' && s.variant === 'volatile')) {
-        this.playerSpeedMult *= 1.25;
-      }
-      if (time < this.slimeKit.getSpeedBoostUntil()) this.playerSpeedMult *= 1.5;
+      this.playerSpeedMult = this.slimeKit.getBurrowSpeedMult();
     } else if (this.elementId === 'fate') {
-      this.playerSpeedMult = this.playerFateBaseSpeedMult;
+      this.playerSpeedMult = 1;
+      // Kit applies Buff/Slots speed mods via applyPlayerSpeedMult
     } else if (this.elementId === 'light') {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
       if (time < this.lightKit.getPhotoAccelUntil()) {
@@ -8983,25 +7904,10 @@ export class ArenaScene extends Phaser.Scene {
     }
     // Tornado grapple slow on NPC
     if (time < this.tornadoGrappleSlowUntil) this.npcSpeedMult *= 0.5;
-    // Ice frost slow on NPC
-    if (this.npc.frostStacks > 0) this.npcSpeedMult *= (1 - this.npc.frostStacks * 0.1);
-    if (this.npc.permafrostStacks > 0) this.npcSpeedMult *= (1 - this.npc.permafrostStacks * 0.10);
-    if (this.npcBlockUpActive) this.npcSpeedMult *= 0.5;
-    // Growth cancerous growth slow (25% for 2s on explosion)
-    if (time < this.npcCancerousSlowUntil) this.npcSpeedMult *= 0.75;
-    // Ice frost slow on player
-    if (this.playerFrostStacks > 0) {
-      this.playerSpeedMult *= (1 - this.playerFrostStacks * 0.1);
-    }
-    if (this.player.permafrostStacks > 0) this.playerSpeedMult *= (1 - this.player.permafrostStacks * 0.10);
-    if (this.playerBlockUpActive) this.playerSpeedMult *= 0.5;
-    // Ice F+: speed boost from stepping on own skate trail
-    if (this.elementId === 'ice' && this.playerIceSpeedBoostUntil > time) this.playerSpeedMult *= 1.2;
-    // Rink perk: +25% on own trail, extra +25% after Skate
-    if (this.hasPerk('player', 'rink') && this.icyTrails.some((t) => t.owner === 'player' && Phaser.Math.Distance.Between(this.player.x, this.player.y, t.x, t.y) <= t.radius)) {
-      this.playerSpeedMult *= 1.25;
-      if (this.playerSkateRecentUntil > time) this.playerSpeedMult *= 1.25;
-    }
+    // Ice: frost/permafrost slow, block-up slow, own-trail boost, Rink perk (NPC)
+    this.npcSpeedMult *= this.iceKit.getNpcSpeedMultContribution(time);
+    // Ice: frost/permafrost slow, block-up slow, skate-trail boost, Rink perk (player)
+    this.playerSpeedMult *= this.iceKit.getPlayerSpeedMultContribution(time, this.elementId === 'ice');
 
     // Hunt trail boost on player
     if (this.elementId === 'hunt') {
@@ -9039,8 +7945,6 @@ export class ArenaScene extends Phaser.Scene {
     // Silence slasher dread aura: kit applies via applyNpcSpeedMult / applyPlayerSpeedMult in update()
     // Card — Cripple: 15% slow on NPC for 2s after any player hit
     if (this.cardCrippleActive && time < this.cardCrippleSlowUntil) this.npcSpeedMult *= 0.85;
-    // Slime level 3 slow (15%) on NPC
-    if (!this.isInvasion && this.elementId === 'slime' && time < this.slimeKit.getNpcSlimeSlowUntil()) this.npcSpeedMult *= 0.85;
     // Magic storm cloud slow + upgrade speed effects
     if (this.elementId === 'magic' || this.npcElement.id === 'magic') {
       this.playerSpeedMult *= this.magicKit.getPlayerSlowMult();
@@ -9051,18 +7955,6 @@ export class ArenaScene extends Phaser.Scene {
         this.npcSpeedMult *= this.magicKit.getNpcDark80SlowMult();
       }
     }
-    // Growth Cough aura slow (PvP/AI only — invasion handled in updateInvasion)
-    if (!this.isInvasion && this.elementId === 'growth' && this.growthCoughStacks > 0) {
-      if (Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y) <= 120) {
-        this.npcSpeedMult *= Math.max(0.1, 1 - this.growthCoughStacks * 0.05);
-      }
-    }
-    // Rink perk: NPC +25% on own trail, extra +25% after Skate
-    if (this.hasPerk('npc', 'rink') && this.icyTrails.some((t) => t.owner === 'npc' && Phaser.Math.Distance.Between(this.npc.x, this.npc.y, t.x, t.y) <= t.radius)) {
-      this.npcSpeedMult *= 1.25;
-      if (this.npcSkateRecentUntil > time) this.npcSpeedMult *= 1.25;
-    }
-
     // NPC trail boost
     if (this.npc.element.id === 'hunt') {
       const npcOnTrail = this.npcHuntTrailCircles.some(
@@ -9098,6 +7990,10 @@ export class ArenaScene extends Phaser.Scene {
       if (this.techKit.isTechDomainActive() && this.techKit.getTechDomainBias() > 0) this.npcSpeedMult *= (1 + this.techKit.getTechDomainBias() / 100 * 0.5);
     }
 
+    // ── Acid Purge: suppress positive speed multipliers while purged ──
+    if (time < this.player.purgedUntil) this.playerSpeedMult = Math.min(this.playerSpeedMult, 1);
+    if (time < this.npc.purgedUntil) this.npcSpeedMult = Math.min(this.npcSpeedMult, 1);
+
     // ── Player movement ─────────────────────────────────────────
     const playerBody = this.player.body as Phaser.Physics.Arcade.Body;
 
@@ -9110,12 +8006,12 @@ export class ArenaScene extends Phaser.Scene {
       playerBody.setVelocity(0, 0);
     } else if (time < this.silencePlayerYankUntil) {
       // NPC silence yank in progress — keep yank velocity, block WASD override
-    } else if (this.elementId === 'ice' && this.playerSkaterActive && !this.isDodging) {
+    } else if (this.elementId === 'ice' && this.iceKit.isPlayerSkaterActive() && !this.isDodging) {
       // Skater mode: cursor-following movement overrides WASD
       const moveMult = this.playerSpeedMult * this.gauntletSpeedMult;
       playerBody.setVelocity(
-        Math.cos(this.playerSkaterHeading) * this.playerSkaterSpeed * moveMult,
-        Math.sin(this.playerSkaterHeading) * this.playerSkaterSpeed * moveMult,
+        Math.cos(this.iceKit.getPlayerSkaterHeading()) * this.iceKit.getPlayerSkaterSpeed() * moveMult,
+        Math.sin(this.iceKit.getPlayerSkaterHeading()) * this.iceKit.getPlayerSkaterSpeed() * moveMult,
       );
     } else if (!this.isDodging) {
       let vx = 0;
@@ -9134,10 +8030,10 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── NPC tentacle drag on player ───────────────────────────────
-    if (this.npcShadowTentacleHooked && this.npcShadowTentacleActive && !this.isDodging) {
+    if (this.shadowKit.isNpcTentacleDragging() && !this.isDodging) {
       // In PvP, drag toward P2's aim position; in AI mode, drag toward random AI target
-      const dragTargetX = this.npcShadowDragTargetX;
-      const dragTargetY = this.npcShadowDragTargetY;
+      const dragTargetX = this.shadowKit.getNpcDragTargetX();
+      const dragTargetY = this.shadowKit.getNpcDragTargetY();
       const dragDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, dragTargetX, dragTargetY);
       if (dragDist > 20) {
         const dragAngle = Math.atan2(dragTargetY - this.player.y, dragTargetX - this.player.x);
@@ -9146,7 +8042,7 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Frozen player ─────────────────────────────────────────────
-    if (this.playerFrozenUntil > time && !this.isDodging) {
+    if (this.iceKit.getPlayerFrozenUntil() > time && !this.isDodging) {
       playerBody.setVelocity(0, 0);
     }
 
@@ -9169,21 +8065,6 @@ export class ArenaScene extends Phaser.Scene {
     if (this.elementId === 'soul' && time < this.soulHauntStunUntil && !this.isDodging) {
       playerBody.setVelocity(0, 0);
     }
-
-    // ── Slime sulpher spring confusion (player) ───────────────────
-    if (this.elementId === 'slime' && time < this.slimeKit.getPlayerConfusedUntil() && !this.isDodging) {
-      if (time > this.slimeKit.getPlayerConfuseDirUntil()) {
-        const a = Math.random() * Math.PI * 2;
-        this.slimeKit.setPlayerConfuseVx(Math.cos(a) * this.player.speed);
-        this.slimeKit.setPlayerConfuseVy(Math.sin(a) * this.player.speed);
-        this.slimeKit.setPlayerConfuseDirUntil(time + 450);
-      }
-      playerBody.setVelocity(
-        this.slimeKit.getPlayerConfuseVx() * this.playerSpeedMult * this.gauntletSpeedMult,
-        this.slimeKit.getPlayerConfuseVy() * this.playerSpeedMult * this.gauntletSpeedMult,
-      );
-    }
-
 
     // ── Player abilities ─────────────────────────────────────────
     const playerCtx = this.buildPlayerContext(mouseX, mouseY);
@@ -9301,7 +8182,7 @@ export class ArenaScene extends Phaser.Scene {
 
     } else if (this.elementId === 'fate') {
       this.fateKit.handleInput(time, pointer, mouseX, mouseY);
-      if (Phaser.Input.Keyboard.JustDown(this.eKey)) this.fateKit.onEKey(mouseX, mouseY);
+      if (Phaser.Input.Keyboard.JustDown(this.eKey)) this.fateKit.onEKey();
       if (Phaser.Input.Keyboard.JustDown(this.rKey)) this.fateKit.onRKey();
 
     } else if (this.elementId === 'air') {
@@ -9455,97 +8336,13 @@ export class ArenaScene extends Phaser.Scene {
     } else if (this.elementId === 'oil') {
       this.oilKit.handleInput(time, delta, pointer, mouseX, mouseY);
     } else if (this.elementId === 'shadow') {
-      if (!this.nukeChanneling) {
-        if (pointer.isDown) {
-          this.shadowDrainHoldAccum += delta;
-          if (this.shadowDrainHoldAccum >= 300) {
-            // Cloud mode: spawn dark cloud every 600ms
-            this.shadowDrainCloudAccum += delta;
-            if (this.shadowDrainCloudAccum >= 600) {
-              this.shadowDrainCloudAccum -= 600;
-              this.spawnShadowDarkCloud(mouseX, mouseY, 'player');
-            }
-          }
-        } else {
-          if (this.pointerWasDown && this.shadowDrainHoldAccum < 300) {
-            // Tap: launch dark bomb
-            this.player.castAbility('dark-drain', this.buildPlayerContext(mouseX, mouseY));
-          }
-          this.shadowDrainHoldAccum = 0;
-          this.shadowDrainCloudAccum = 0;
-        }
-        if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
-          if (this.shadowConsumeActive && this.hasUpgrade('e')) {
-            // Throw NPC toward cursor — stun briefly so AI doesn't cancel velocity
-            this.shadowConsumeActive = false;
-            if (this.shadowConsumeAura) { this.shadowConsumeAura.destroy(); this.shadowConsumeAura = null; }
-            const throwAngle = Math.atan2(mouseY - this.player.y, mouseX - this.player.x);
-            (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(
-              Math.cos(throwAngle) * 800, Math.sin(throwAngle) * 800,
-            );
-            this.shadowNpcThrowUntil = Math.max(this.shadowNpcThrowUntil, this.time.now + 600);
-          } else {
-            this.player.castAbility('tentacle', this.buildPlayerContext(mouseX, mouseY));
-          }
-        }
-        if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
-          this.player.castAbility('snap-trap', playerCtx);
-        }
-        if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
-          if (this.hasUpgrade('f')) {
-            if (this.shadowDanceCharge > 0 && this.time.now >= this.shadowDanceUpgradeCooldownUntil) {
-              this.player.castAbility('shadow-dance', playerCtx);
-            }
-          } else if (this.shadowDanceCharge >= 35) {
-            this.player.castAbility('shadow-dance', playerCtx);
-          }
-        }
-        if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
-          this.player.castAbility('black-hole', playerCtx);
-        }
-      }
+      this.shadowKit.handleInput(time, delta, pointer, mouseX, mouseY);
     } else if (this.elementId === 'ice') {
-      if (!this.nukeChanneling) {
-        if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
-          this.player.castAbility('skate', playerCtx);
-        }
-        if (!this.playerSkaterActive) {
-          if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
-            this.player.castAbility('frost-blast', playerCtx);
-          }
-          if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
-            this.player.castAbility('block-up', playerCtx);
-          }
-          if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
-            this.player.castAbility('frozen-solid', playerCtx);
-          }
-          if (pointer.isDown) {
-            this.player.castAbility('ice-spike', playerCtx);
-          }
-        }
-      }
+      this.iceKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'crystal') {
       this.crystalKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'growth') {
-      if (!this.nukeChanneling && !this.growthMutateMenuOpen && !this.growthMorphMenuOpen) {
-        if (pointer.isDown) {
-          this.player.castAbility('growth-click', playerCtx);
-        }
-        // E: Mutate — click opens menu; with E+, holding >300ms closes menu and auto-picks
-        if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
-          this.player.castAbility('mutate', playerCtx);
-        }
-        if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
-          playerCtx.fireInfect(mouseX, mouseY);
-        }
-        // F: Bloat activate on press (F+ hold-to-release-spores handled in damaged listener)
-        if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
-          playerCtx.activateBloat();
-        }
-        if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
-          this.player.castAbility('mutant-morph', playerCtx);
-        }
-      }
+      this.growthKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'soul') {
       if (time < this.soulHauntStunUntil) {
         // Stunned after exiting haunt — no input
@@ -10699,320 +9496,11 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Shadow per-frame ─────────────────────────────────────────
     if (this.elementId === 'shadow' || this.npcElement.id === 'shadow') {
-      // Dark cloud ticks (both owners)
-      for (let ci = this.shadowDarkClouds.length - 1; ci >= 0; ci--) {
-        const cloud = this.shadowDarkClouds[ci];
-        if (time >= cloud.expiresAt) {
-          cloud.sprite.destroy();
-          this.shadowDarkClouds.splice(ci, 1);
-          continue;
-        }
-        cloud.tickAccum += delta;
-        if (cloud.tickAccum >= 400) {
-          cloud.tickAccum -= 400;
-          if (cloud.owner === 'player') {
-            // Heal player, damage NPC
-            if (Phaser.Math.Distance.Between(cloud.x, cloud.y, this.player.x, this.player.y) <= cloud.radius + 14) {
-              const prevHp = this.player.hp;
-              this.player.heal(1.5);
-              const healed = this.player.hp - prevHp;
-              if (healed > 0) {
-                this.shadowDanceCharge = Math.min(35, this.shadowDanceCharge + healed);
-              }
-            }
-            for (const t of this.enemies) {
-              if (!t.active || t.hp <= 0) continue;
-              if (Phaser.Math.Distance.Between(cloud.x, cloud.y, t.x, t.y) <= cloud.radius + 14) {
-                t.takeDamage(2);
-                this.spawnHitFlash(t.x, t.y, 0x660088);
-              }
-            }
-          } else {
-            // NPC cloud: heal NPC, damage player
-            if (Phaser.Math.Distance.Between(cloud.x, cloud.y, this.npc.x, this.npc.y) <= cloud.radius + 14) {
-              const prevNpcHp = this.npc.hp;
-              this.npc.heal(1.5);
-              const npcHealed = this.npc.hp - prevNpcHp;
-              if (npcHealed > 0) {
-                this.npcShadowDanceCharge = Math.min(35, this.npcShadowDanceCharge + npcHealed);
-              }
-            }
-            if (Phaser.Math.Distance.Between(cloud.x, cloud.y, this.player.x, this.player.y) <= cloud.radius + 14) {
-              this.player.takeDamage(2);
-            }
-          }
-        }
-      }
-
-      // Snap trap checks
-      for (let ti = this.shadowSnapTraps.length - 1; ti >= 0; ti--) {
-        const trap = this.shadowSnapTraps[ti];
-        if (time >= trap.expiresAt || trap.triggered) {
-          trap.sprite.destroy(); trap.label.destroy();
-          this.shadowSnapTraps.splice(ti, 1);
-          continue;
-        }
-        if (trap.owner === 'player') {
-          for (const t of this.enemies) {
-            if (!t.active || t.hp <= 0) continue;
-            if (Phaser.Math.Distance.Between(trap.x, trap.y, t.x, t.y) <= trap.radius + 10) {
-              trap.triggered = true;
-              const dmg = trap.isPlume ? 28 : 20;
-              t.takeDamage(dmg);
-              this.spawnHitFlash(t.x, t.y, trap.isPlume ? 0x9933cc : 0xcc44ff);
-              if (trap.isPlume) {
-                for (let ci = 0; ci < 5; ci++) {
-                  const jx = trap.x + Phaser.Math.Between(-60, 60);
-                  const jy = trap.y + Phaser.Math.Between(-60, 60);
-                  const cloud = this.add.circle(jx, jy, 28, 0x6633aa, 0.55).setDepth(5);
-                  this.tweens.add({ targets: cloud, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 1200, onComplete: () => cloud.destroy() });
-                  if (Phaser.Math.Distance.Between(jx, jy, t.x, t.y) <= 50) {
-                    t.takeDamage(5);
-                    this.spawnHitFlash(t.x, t.y, 0x9933cc);
-                  }
-                }
-                this.showFloatingText(trap.x, trap.y - 20, '💨 PLUME', '#cc88ff');
-              } else {
-                this.shadowNpcStunnedUntil = time + 2000;
-              }
-              break;
-            }
-          }
-        } else {
-          if (Phaser.Math.Distance.Between(trap.x, trap.y, this.player.x, this.player.y) <= trap.radius + 10) {
-            trap.triggered = true;
-            const dmg = trap.isPlume ? 28 : 20;
-            this.player.takeDamage(dmg);
-            this.spawnHitFlash(this.player.x, this.player.y, trap.isPlume ? 0x9933cc : 0xcc44ff);
-            if (trap.isPlume) {
-              for (let ci = 0; ci < 5; ci++) {
-                const jx = trap.x + Phaser.Math.Between(-60, 60);
-                const jy = trap.y + Phaser.Math.Between(-60, 60);
-                const cloud = this.add.circle(jx, jy, 28, 0x6633aa, 0.55).setDepth(5);
-                this.tweens.add({ targets: cloud, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 1200, onComplete: () => cloud.destroy() });
-                if (Phaser.Math.Distance.Between(jx, jy, this.player.x, this.player.y) <= 50) {
-                  this.player.takeDamage(5);
-                  this.spawnHitFlash(this.player.x, this.player.y, 0x9933cc);
-                }
-              }
-              this.showFloatingText(trap.x, trap.y - 20, '💨 PLUME', '#cc88ff');
-            } else {
-              this.shadowPlayerStunnedUntil = time + 2000;
-            }
-          }
-        }
-      }
-
-      // Player shadow per-frame
-      if (this.elementId === 'shadow') {
-        // Tentacle draw + drag
-        if (this.shadowTentacleActive) {
-          if (time >= this.shadowTentacleEnd) {
-            this.shadowTentacleActive = false;
-            this.shadowTentacleHooked = false;
-            if (this.shadowTentacleSprite) { this.shadowTentacleSprite.destroy(); this.shadowTentacleSprite = null; }
-          } else {
-            const tSpr = this.shadowTentacleSprite;
-            if (tSpr) {
-              tSpr.clear();
-              if (this.shadowTentacleHooked) {
-                // Hooked: draw from player to NPC, show drag chain
-                tSpr.lineStyle(6, 0x8800cc, 0.85);
-                tSpr.lineBetween(this.player.x, this.player.y, this.npc.x, this.npc.y);
-                tSpr.lineStyle(2, 0xcc44ff, 0.5);
-                tSpr.lineBetween(this.player.x, this.player.y, this.npc.x, this.npc.y);
-              } else {
-                // Miss/drag: track cursor for trap drag (R+)
-                if (this.hasUpgrade('r')) {
-                  const ptr = this.input.activePointer;
-                  this.shadowTentacleX = ptr.worldX;
-                  this.shadowTentacleY = ptr.worldY;
-                }
-                tSpr.lineStyle(4, 0x8800cc, 0.6);
-                tSpr.lineBetween(this.player.x, this.player.y, this.shadowTentacleX, this.shadowTentacleY);
-              }
-            }
-          }
-        }
-
-        // (NPC drag + stun handled after doAI in "Shadow NPC overrides" section)
-
-        // Shadow dance charge bar (small bar above player)
-        if (!this.shadowDanceChargeBar) {
-          this.shadowDanceChargeBar = this.add.rectangle(
-            this.player.x, this.player.y - 40, 0, 5, 0x8800cc, 0.8,
-          ).setDepth(12).setOrigin(0, 0.5);
-        }
-        const barMaxW = 40;
-        const barX = this.player.x - barMaxW / 2;
-        this.shadowDanceChargeBar.setPosition(barX, this.player.y - 40);
-        this.shadowDanceChargeBar.setSize(Math.min(barMaxW, (this.shadowDanceCharge / 35) * barMaxW), 5);
-        this.shadowDanceChargeBar.setFillStyle(this.shadowDanceCharge >= 35 ? 0x888888 : 0x8800cc, 0.8);
-
-        // Black hole chargeup → activation
-        if (this.shadowBlackHoleCharging) {
-          if (this.shadowBlackHoleChargeVisual) {
-            this.shadowBlackHoleChargeVisual.setPosition(this.player.x, this.player.y - 40);
-          }
-          if (time >= this.shadowBlackHoleChargeStart + 3000) {
-            this.shadowBlackHoleCharging = false;
-            this.nukeChanneling = false;
-            if (this.shadowBlackHoleChargeVisual) { this.shadowBlackHoleChargeVisual.destroy(); this.shadowBlackHoleChargeVisual = null; }
-            // Activate black hole at player position
-            this.shadowBlackHoleActive = true;
-            this.shadowBlackHoleEnd = time + 10000;
-            this.shadowBlackHoleSprite = this.add.graphics().setDepth(5);
-          }
-        }
-
-        // Black hole active: draw + pull NPC
-        if (this.shadowBlackHoleActive) {
-          if (time >= this.shadowBlackHoleEnd) {
-            this.shadowBlackHoleActive = false;
-            if (this.shadowBlackHoleSprite) { this.shadowBlackHoleSprite.destroy(); this.shadowBlackHoleSprite = null; }
-          } else {
-            if (this.shadowBlackHoleSprite) {
-              const pulse = 18 + Math.sin(time * 0.006) * 4;
-              this.shadowBlackHoleSprite.clear();
-              this.shadowBlackHoleSprite.fillStyle(0x000000, 0.6);
-              this.shadowBlackHoleSprite.fillCircle(this.player.x, this.player.y, pulse);
-              this.shadowBlackHoleSprite.lineStyle(3, 0x8800cc, 0.85);
-              this.shadowBlackHoleSprite.strokeCircle(this.player.x, this.player.y, pulse + 8);
-            }
-            // NPC velocity override handled after doAI (see "Black hole pull" section)
-            // Q+ puddle rain every 1.5s while active
-            if (this.hasUpgrade('q')) {
-              this.shadowBHPuddleAccum += delta;
-              if (this.shadowBHPuddleAccum >= 1500) {
-                this.shadowBHPuddleAccum -= 1500;
-                this.spawnShadowDarkCloud(this.player.x, this.player.y, 'player');
-              }
-            }
-          }
-        }
-
-        // Click+ confusion: track NPC exposure to player clouds
-        if (this.hasUpgrade('click')) {
-          const npcInCloud = this.shadowDarkClouds.some(
-            c => c.owner === 'player' && Phaser.Math.Distance.Between(c.x, c.y, this.npc.x, this.npc.y) <= c.radius + 14,
-          );
-          if (npcInCloud) {
-            this.shadowCloudExposureAccum += delta;
-            if (this.shadowCloudExposureAccum >= 3000 && time > this.shadowConfusionUntil) {
-              this.shadowConfusionUntil = time + 6000;
-              this.shadowCloudExposureAccum = 0;
-              this.spawnHitFlash(this.npc.x, this.npc.y, 0x8800cc);
-              const confTxt = this.add.text(this.npc.x, this.npc.y - 30, '😵 CONFUSED', { fontSize: '11px', color: '#cc44ff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
-              this.tweens.add({ targets: confTxt, y: confTxt.y - 20, alpha: 0, duration: 1200, onComplete: () => confTxt.destroy() });
-            }
-          } else {
-            this.shadowCloudExposureAccum = Math.max(0, this.shadowCloudExposureAccum - delta * 0.5);
-          }
-        }
-
-        // R+ snap trap drag: traps near tentacle endpoint follow it
-        if (this.hasUpgrade('r') && this.shadowTentacleActive) {
-          const tipX = this.shadowTentacleHooked ? this.npc.x : this.shadowTentacleX;
-          const tipY = this.shadowTentacleHooked ? this.npc.y : this.shadowTentacleY;
-          for (const trap of this.shadowSnapTraps) {
-            if (trap.owner !== 'player' || trap.triggered) continue;
-            if (Phaser.Math.Distance.Between(trap.x, trap.y, tipX, tipY) <= 55) {
-              trap.x = tipX;
-              trap.y = tipY;
-              trap.sprite.setPosition(tipX, tipY);
-              trap.label.setPosition(tipX, tipY);
-            }
-          }
-        }
-      }
-
-      // NPC shadow per-frame
-      if (this.npcElement.id === 'shadow') {
-        // NPC tentacle
-        if (this.npcShadowTentacleActive) {
-          if (time >= this.npcShadowTentacleEnd) {
-            this.npcShadowTentacleActive = false;
-            this.npcShadowTentacleHooked = false;
-            if (this.npcShadowTentacleSprite) { this.npcShadowTentacleSprite.destroy(); this.npcShadowTentacleSprite = null; }
-          } else {
-            if (this.npcShadowTentacleSprite) {
-              this.npcShadowTentacleSprite.clear();
-              if (this.npcShadowTentacleHooked) {
-                // Draw tentacle from NPC to player
-                this.npcShadowTentacleSprite.lineStyle(6, 0x440066, 0.9);
-                this.npcShadowTentacleSprite.lineBetween(this.npc.x, this.npc.y, this.player.x, this.player.y);
-                this.npcShadowTentacleSprite.lineStyle(2, 0x8800cc, 0.5);
-                this.npcShadowTentacleSprite.lineBetween(this.npc.x, this.npc.y, this.player.x, this.player.y);
-              } else {
-                // Miss whip
-                const angle = Math.atan2(this.player.y - this.npc.y, this.player.x - this.npc.x);
-                this.npcShadowTentacleSprite.lineStyle(4, 0x440066, 0.6);
-                this.npcShadowTentacleSprite.lineBetween(
-                  this.npc.x, this.npc.y,
-                  this.npc.x + Math.cos(angle) * 100,
-                  this.npc.y + Math.sin(angle) * 100,
-                );
-              }
-            }
-
-            // Periodically pick a new random drag target
-            if (this.npcShadowTentacleHooked && time >= this.npcShadowDragNextChangeAt) {
-              const { width, height } = this.scale;
-              this.npcShadowDragTargetX = Phaser.Math.Between(80, width - 80);
-              this.npcShadowDragTargetY = Phaser.Math.Between(80, height - 80);
-              this.npcShadowDragNextChangeAt = time + 700;
-            }
-          }
-        }
-
-        // Player stun from NPC snap trap
-        if (time < this.shadowPlayerStunnedUntil) {
-          (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-        }
-
-        // NPC black hole (P2 shadow Q ability): chargeup → activation
-        if (this.npcShadowBlackHoleCharging) {
-          if (this.npcShadowBlackHoleChargeVisual) {
-            this.npcShadowBlackHoleChargeVisual.setPosition(this.npc.x, this.npc.y);
-          }
-          if (time >= this.npcShadowBlackHoleChargeStart + 3000) {
-            this.npcShadowBlackHoleCharging = false;
-            this.npcNukeChanneling = false;
-            if (this.npcShadowBlackHoleChargeVisual) { this.npcShadowBlackHoleChargeVisual.destroy(); this.npcShadowBlackHoleChargeVisual = null; }
-            this.npcShadowBlackHoleActive = true;
-            this.npcShadowBlackHoleEnd = time + 10000;
-            this.npcShadowBlackHoleSprite = this.add.graphics().setDepth(5);
-          }
-        }
-
-        // NPC black hole active: draw + pull player toward NPC
-        if (this.npcShadowBlackHoleActive) {
-          if (time >= this.npcShadowBlackHoleEnd) {
-            this.npcShadowBlackHoleActive = false;
-            if (this.npcShadowBlackHoleSprite) { this.npcShadowBlackHoleSprite.destroy(); this.npcShadowBlackHoleSprite = null; }
-          } else {
-            if (this.npcShadowBlackHoleSprite) {
-              const pulse = 18 + Math.sin(time * 0.006) * 4;
-              this.npcShadowBlackHoleSprite.clear();
-              this.npcShadowBlackHoleSprite.fillStyle(0x000000, 0.6);
-              this.npcShadowBlackHoleSprite.fillCircle(this.npc.x, this.npc.y, pulse);
-              this.npcShadowBlackHoleSprite.lineStyle(3, 0x8800cc, 0.85);
-              this.npcShadowBlackHoleSprite.strokeCircle(this.npc.x, this.npc.y, pulse + 8);
-            }
-            // Pull player toward NPC
-            const bDist = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y);
-            if (bDist > 12) {
-              const bAngle = Math.atan2(this.npc.y - this.player.y, this.npc.x - this.player.x);
-              (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(bAngle) * 67, Math.sin(bAngle) * 67);
-            }
-          }
-        }
-      }
-
+      this.shadowKit.update(time, delta, this.elementId === 'shadow', this.npcElement.id === 'shadow');
     }
 
     // ── Dodge (Space) ────────────────────────────────────────────
-    if (Phaser.Input.Keyboard.JustDown(this.spaceKey) && !this.dodgeOnCooldown && !this.isDodging && !this.nukeChanneling && time >= this.soulHauntStunUntil && !this.cardSluggishDisableDodge && !(this.elementId === 'slime' && this.slimeKit.shouldSuppressDodge()) && !(this.elementId === 'rubber' && this.rubberKit.shouldSuppressUberGearDodge(mouseX, mouseY, time))) {
+    if (Phaser.Input.Keyboard.JustDown(this.spaceKey) && !this.dodgeOnCooldown && !this.isDodging && !this.nukeChanneling && time >= this.soulHauntStunUntil && !this.cardSluggishDisableDodge && !(this.elementId === 'rubber' && this.rubberKit.shouldSuppressUberGearDodge(mouseX, mouseY, time))) {
       this.dodgeOnCooldown = true;
       this.isDodging = true;
       this.player.isInvincible = true;
@@ -11097,10 +9585,12 @@ export class ArenaScene extends Phaser.Scene {
       earthShieldHp: this.earthKit.getNpcShieldHp(),
       npcEarthRocksActive: this.earthKit.getNpcRocksActive(),
       oilDroneCount: this.oilKit.getNpcDroneCount(),
-      shadowPlayerSnared: time < this.shadowPlayerSnaredUntil || time < this.shadowPlayerStunnedUntil,
-      playerFrostStacks: this.playerFrostStacks,
-      iceBlockActive: this.npcBlockUpActive,
-      npcGrowthBloatActive: this.npc.growthBloatActive,
+      shadowPlayerSnared: this.shadowKit.isPlayerSnared(time),
+      playerFrostStacks: this.iceKit.getPlayerFrostStacks(),
+      iceBlockActive: this.iceKit.isNpcBlockUpActive(),
+      npcGrowthDna: this.growthKit.getDna('npc'),
+      npcGrowthHasNestOrClone: this.growthKit.hasNest('npc') || this.growthKit.hasClone('npc'),
+      npcGrowthCancerActive: this.growthKit.isCancerActive('npc'),
       crystalNodeCount: this.crystalKit.getNpcCrystalNodeCount(),
       npcSoulGhosts: this.npcSoulGhosts,
       npcHuntBeastForm: this.npcHuntBeastForm,
@@ -11113,9 +9603,7 @@ export class ArenaScene extends Phaser.Scene {
       npcTimeBounty: this.timeKit.getNpcBounty(),
       npcTimeTimelessReady: this.timeKit.getNpcTimelessCharge() >= 10000,
       // Fate
-      fateSlotMachineCount: this.npcElement.id === 'fate' ? this.fateKit.getNpcSlotMachines().length : 0,
-      fateCoinCount: this.npcElement.id === 'fate' ? this.fateKit.getNpcCoins() : 0,
-      fateNpcLucky: this.npcElement.id === 'fate' ? this.fateKit.isNpcLucky() : false,
+      fateNpcHandTypes: this.npcElement.id === 'fate' ? this.fateKit.getNpcHandTypes() : undefined,
       npcMetalArsenal: this.metalKit.getNpcMetalArsenal(),
       deathWispCd: undefined,
       npcSilenceSlasherActive: this.silenceKit.isNpcSlasherActive(),
@@ -11130,7 +9618,7 @@ export class ArenaScene extends Phaser.Scene {
     const npcPreDashY = this.npc.y;
     const npcCastId = this.isOnline
       ? (this.isInvasion ? (this.invasionCoopKit?.consumeNpcCast() ?? null) : (this.onlineKit?.consumeNpcCast() ?? null))
-      : (this.isInvasion || this.shadowConsumeActive || this.time.now < this.shadowNpcThrowUntil) ? null : (this.npc as NpcOpponent).doAI(
+      : (this.isInvasion || this.shadowKit.isConsumeActive() || this.time.now < this.shadowKit.getNpcThrowUntil()) ? null : (this.npc as NpcOpponent).doAI(
         this.player,
         (tx: number, ty: number) => this.buildNpcContext(tx, ty),
         time,
@@ -11150,6 +9638,10 @@ export class ArenaScene extends Phaser.Scene {
     }
     if (this.elementId === 'light' || this.npcElement.id === 'light') {
       this.lightKit.update(time, delta, this.elementId === 'light', this.npcElement.id === 'light');
+    }
+    // Shadow post-AI overrides (must run after doAI so drag velocities win)
+    if (this.elementId === 'shadow') {
+      this.shadowKit.updateAfterAI(time, delta);
     }
 
     // React to NPC casts that need ArenaScene state
@@ -11171,91 +9663,10 @@ export class ArenaScene extends Phaser.Scene {
     }
     // Silence NPC reactions — delegate to kit
     this.silenceKit.handleNpcCastId(npcCastId, time);
-    // Slime sulpher spring confusion: override NPC velocity after doAI
-    if (this.elementId === 'slime' && time < this.npc.slimeConfusedUntil) {
-      if (time > this.npc.slimeConfuseDirUntil) {
-        const a = Math.random() * Math.PI * 2;
-        this.npc.slimeConfuseVx = Math.cos(a) * this.npc.speed;
-        this.npc.slimeConfuseVy = Math.sin(a) * this.npc.speed;
-        this.npc.slimeConfuseDirUntil = time + 450;
-      }
-      (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(
-        this.npc.slimeConfuseVx * this.npcSpeedMult,
-        this.npc.slimeConfuseVy * this.npcSpeedMult,
-      );
-    }
-
     // ── Ice per-frame ─────────────────────────────────────────────
     if (this.elementId === 'ice' || this.npcElement.id === 'ice') {
-      // Icy trail ticks: slow enemy + inflict frost/void-frost stacks + F+ owner speed boost
-      for (let ti = this.icyTrails.length - 1; ti >= 0; ti--) {
-        const trail = this.icyTrails[ti];
-        if (time >= trail.expiresAt) {
-          trail.sprite.destroy();
-          this.icyTrails.splice(ti, 1);
-          continue;
-        }
-        // Slow enemies standing in the trail
-        if (trail.owner === 'player') {
-          const enemiesInTrail: Fighter[] = [];
-          for (const enemyTarget of this.enemies) {
-            if (!enemyTarget.active || enemyTarget.hp <= 0) continue;
-            if (Phaser.Math.Distance.Between(trail.x, trail.y, enemyTarget.x, enemyTarget.y) <= trail.radius) {
-              // Slow via physics body (works for both PvP npc and invasion enemies)
-              if (!this.playerBlackIceMorphActive) {
-                const eb = enemyTarget.body as Phaser.Physics.Arcade.Body;
-                eb.velocity.x *= 0.8; eb.velocity.y *= 0.8;
-              }
-              // Also update npcSpeedMult for PvP NPC
-              if (!this.isInvasion && !this.playerBlackIceMorphActive) this.npcSpeedMult *= 0.8;
-              enemiesInTrail.push(enemyTarget);
-            }
-          }
-          // Tick frost accumulator once per trail, then apply stacks to all enemies in it
-          const trailInterval = trail.skater ? 2000 : 1200;
-          if (enemiesInTrail.length > 0) {
-            trail.frostTickAccum += delta;
-            if (trail.frostTickAccum >= trailInterval) {
-              trail.frostTickAccum -= trailInterval;
-              for (const enemyTarget of enemiesInTrail) this.addFrostStackTo(enemyTarget);
-            }
-          }
-        } else {
-          if (Phaser.Math.Distance.Between(trail.x, trail.y, this.player.x, this.player.y) <= trail.radius) {
-            // Player slow — movement already applied, directly scale current velocity
-            const trailPlayerBody = this.player.body as Phaser.Physics.Arcade.Body;
-            trailPlayerBody.velocity.x *= 0.8;
-            trailPlayerBody.velocity.y *= 0.8;
-            trail.frostTickAccum += delta;
-            if (trail.frostTickAccum >= 1200) {
-              trail.frostTickAccum -= 1200;
-              this.addFrostStack('player');
-            }
-          }
-        }
-        // F+: stepping on own trail grants speed boost
-        if (this.hasUpgrade('f') && trail.owner === 'player') {
-          const ownerDist = Phaser.Math.Distance.Between(trail.x, trail.y, this.player.x, this.player.y);
-          if (ownerDist <= trail.radius) {
-            this.playerIceSpeedBoostUntil = Math.max(this.playerIceSpeedBoostUntil, time + 3000);
-          }
-        }
-        // Rink perk: slippery physics — both fighters slide (low friction) on rink tiles
-        if (trail.rink) {
-          const playerOnRink = Phaser.Math.Distance.Between(trail.x, trail.y, this.player.x, this.player.y) <= trail.radius;
-          const npcOnRink    = Phaser.Math.Distance.Between(trail.x, trail.y, this.npc.x, this.npc.y) <= trail.radius;
-          if (playerOnRink) {
-            const pb = this.player.body as Phaser.Physics.Arcade.Body;
-            pb.velocity.x *= 0.985; pb.velocity.y *= 0.985;
-          }
-          if (npcOnRink) {
-            const nb = this.npc.body as Phaser.Physics.Arcade.Body;
-            nb.velocity.x *= 0.985; nb.velocity.y *= 0.985;
-          }
-        }
-      }
-
-      // Ward hex update (Ward triple perk for Soul)
+      // Ward hex update (Ward triple perk for Soul) — unrelated to Ice, but historically
+      // nested inside this gate; preserved as-is so behavior doesn't shift during extraction.
       for (let wi = this.soulWardHexes.length - 1; wi >= 0; wi--) {
         const wh = this.soulWardHexes[wi];
         if (time >= wh.expiresAt) {
@@ -11284,279 +9695,7 @@ export class ArenaScene extends Phaser.Scene {
         }
       }
 
-      // Skater per-frame heading update (Ice F revamp)
-      if (this.elementId === 'ice' && this.playerSkaterActive) {
-        const ptr = this.input.activePointer;
-        const desired = Math.atan2(ptr.worldY - this.player.y, ptr.worldX - this.player.x);
-        const diff = Phaser.Math.Angle.Wrap(desired - this.playerSkaterHeading);
-        const maxTurn = this.playerSkaterTurnRate * (delta / 1000);
-        this.playerSkaterHeading += Phaser.Math.Clamp(diff, -maxTurn, maxTurn);
-        this.playerSkaterTrailAccum += delta;
-        if (this.playerSkaterTrailAccum >= 80) {
-          this.playerSkaterTrailAccum -= 80;
-          this.spawnIcyTrail(this.player.x, this.player.y, 'player', { skater: true });
-        }
-      }
-
-      // Ice arena ticks (Skate-in-BlockUp / Skate-in-BlackIce)
-      for (let ai = this.iceArenas.length - 1; ai >= 0; ai--) {
-        const arena = this.iceArenas[ai];
-        arena.sprite.setPosition(arena.x, arena.y);
-        if (time >= arena.expiresAt) {
-          arena.sprite.destroy();
-          this.iceArenas.splice(ai, 1);
-          continue;
-        }
-        arena.tickAccum += delta;
-        if (arena.tickAccum >= 2000) {
-          arena.tickAccum -= 2000;
-          const arenaTargets = arena.owner === 'player' ? (this.enemies as Fighter[]) : [this.player as Fighter];
-          for (const t of arenaTargets) {
-            if (!t.active || t.hp <= 0) continue;
-            if (Phaser.Math.Distance.Between(arena.x, arena.y, t.x, t.y) > arena.radius) continue;
-            if (arena.isVoid) {
-              if (Date.now() >= t.voidImmuneUntil) {
-                t.voidFrostStacks = Math.min(5, t.voidFrostStacks + 1);
-                t.incomingDamageMultiplier = this.frostDamageMultiplier(t.voidFrostStacks);
-              }
-            } else {
-              if (Date.now() >= t.frostImmuneUntil) {
-                t.frostStacks = Math.min(5, t.frostStacks + 1);
-                t.incomingDamageMultiplier = this.frostDamageMultiplier(t.frostStacks);
-              }
-            }
-          }
-        }
-      }
-
-      // Void frost DOT + thaw (black ice morph) — per enemy
-      for (const t of this.enemies) {
-        if (!t.active || t.hp <= 0 || t.voidFrostStacks === 0) continue;
-        const vfDps = t.voidFrostStacks >= 5 ? 4 : t.voidFrostStacks >= 3 ? 2 : 1;
-        t.voidFrostTickAccum += delta;
-        if (t.voidFrostTickAccum >= 1000) {
-          t.voidFrostTickAccum -= 1000;
-          t.takeDamage(vfDps);
-          this.spawnHitFlash(t.x, t.y, 0x9900ff);
-        }
-        // Thaw: 1 stack every 3 seconds
-        t.voidFrostThawAccum += delta;
-        if (t.voidFrostThawAccum >= 3000) {
-          t.voidFrostThawAccum -= 3000;
-          t.voidFrostStacks = Math.max(0, t.voidFrostStacks - 1);
-          t.incomingDamageMultiplier = t.voidFrostStacks > 0
-            ? this.frostDamageMultiplier(t.voidFrostStacks) : 1;
-        }
-      }
-
-      // Voided debuff DOT — per enemy
-      for (const t of this.enemies) {
-        if (!t.active || t.hp <= 0 || t.voidedUntil <= time) continue;
-        t.voidedTickAccum += delta;
-        if (t.voidedTickAccum >= 1000) {
-          t.voidedTickAccum -= 1000;
-          t.takeDamage(t.voidedDps + t.permavoidStacks); this.spawnHitFlash(t.x, t.y, 0x6600cc);
-        }
-      }
-
-      // Frost visual indicators above enemies
-      for (const t of this.enemies) {
-        if (!t.active) continue;
-        const frostLabel = t.frostStacks > 0 ? `❄️×${t.frostStacks}` : '';
-        if (frostLabel) {
-          if (!t.frostVisual) {
-            t.frostVisual = this.add.text(t.x, t.y - 42, frostLabel,
-              { fontSize: '12px', fontFamily: 'Arial', color: '#aaddff' }).setOrigin(0.5).setDepth(10);
-          } else {
-            t.frostVisual.setText(frostLabel).setPosition(t.x, t.y - 42);
-          }
-        } else if (t.frostVisual) {
-          t.frostVisual.destroy(); t.frostVisual = null;
-        }
-
-        const pfLabel = t.permafrostStacks > 0 ? `🧊×${t.permafrostStacks}` : '';
-        if (pfLabel) {
-          if (!t.permafrostVisual) {
-            t.permafrostVisual = this.add.text(t.x, t.y - 78, pfLabel,
-              { fontSize: '11px', fontFamily: 'Arial', color: '#88eeff' }).setOrigin(0.5).setDepth(10);
-          } else {
-            t.permafrostVisual.setText(pfLabel).setPosition(t.x, t.y - 78);
-          }
-        } else if (t.permafrostVisual) {
-          t.permafrostVisual.destroy(); t.permafrostVisual = null;
-        }
-
-        const pvLabel = t.permavoidStacks > 0 ? `💜×${t.permavoidStacks}` : '';
-        if (pvLabel) {
-          if (!t.permavoidVisual) {
-            t.permavoidVisual = this.add.text(t.x, t.y - 90, pvLabel,
-              { fontSize: '11px', fontFamily: 'Arial', color: '#cc44ff' }).setOrigin(0.5).setDepth(10);
-          } else {
-            t.permavoidVisual.setText(pvLabel).setPosition(t.x, t.y - 90);
-          }
-        } else if (t.permavoidVisual) {
-          t.permavoidVisual.destroy(); t.permavoidVisual = null;
-        }
-      }
-
-      // Void frost visual
-      const vfLabel = this.npc.voidFrostStacks > 0 ? `☠️×${this.npc.voidFrostStacks}` : '';
-      if (vfLabel) {
-        if (!this.npc.voidFrostVisual) {
-          this.npc.voidFrostVisual = this.add.text(this.npc.x, this.npc.y - 54, vfLabel,
-            { fontSize: '12px', fontFamily: 'Arial', color: '#cc88ff' }).setOrigin(0.5).setDepth(10);
-        } else {
-          this.npc.voidFrostVisual.setText(vfLabel).setPosition(this.npc.x, this.npc.y - 54);
-        }
-      } else if (this.npc.voidFrostVisual) {
-        this.npc.voidFrostVisual.destroy(); this.npc.voidFrostVisual = null;
-      }
-
-      // Voided status visual
-      const voidedLabel = this.npc.voidedUntil > time ? '🔮 VOIDED' : '';
-      if (voidedLabel) {
-        if (!this.npcVoidedVisual) {
-          this.npcVoidedVisual = this.add.text(this.npc.x, this.npc.y - 66, voidedLabel,
-            { fontSize: '10px', fontFamily: 'Arial', color: '#cc66ff' }).setOrigin(0.5).setDepth(10);
-        } else {
-          this.npcVoidedVisual.setPosition(this.npc.x, this.npc.y - 66);
-        }
-      } else if (this.npcVoidedVisual) {
-        this.npcVoidedVisual.destroy(); this.npcVoidedVisual = null;
-      }
-
-      const frostPlayerLabel = this.playerFrostStacks > 0 ? `❄️×${this.playerFrostStacks}` : '';
-      if (frostPlayerLabel) {
-        if (!this.playerFrostVisual) {
-          this.playerFrostVisual = this.add.text(this.player.x, this.player.y - 42, frostPlayerLabel,
-            { fontSize: '12px', fontFamily: 'Arial', color: '#aaddff' }).setOrigin(0.5).setDepth(10);
-        } else {
-          this.playerFrostVisual.setText(frostPlayerLabel).setPosition(this.player.x, this.player.y - 42);
-        }
-      } else if (this.playerFrostVisual) {
-        this.playerFrostVisual.destroy(); this.playerFrostVisual = null;
-      }
-
-      const playerPfLabel = this.player.permafrostStacks > 0 ? `🧊×${this.player.permafrostStacks}` : '';
-      if (playerPfLabel) {
-        if (!this.playerPermafrostVisual) {
-          this.playerPermafrostVisual = this.add.text(this.player.x, this.player.y - 54, playerPfLabel,
-            { fontSize: '11px', fontFamily: 'Arial', color: '#88eeff' }).setOrigin(0.5).setDepth(10);
-        } else {
-          this.playerPermafrostVisual.setText(playerPfLabel).setPosition(this.player.x, this.player.y - 54);
-        }
-      } else if (this.playerPermafrostVisual) {
-        this.playerPermafrostVisual.destroy(); this.playerPermafrostVisual = null;
-      }
-
-      const playerPvLabel = this.player.permavoidStacks > 0 ? `💜×${this.player.permavoidStacks}` : '';
-      if (playerPvLabel) {
-        if (!this.playerPermavoidVisual) {
-          this.playerPermavoidVisual = this.add.text(this.player.x, this.player.y - 66, playerPvLabel,
-            { fontSize: '11px', fontFamily: 'Arial', color: '#cc44ff' }).setOrigin(0.5).setDepth(10);
-        } else {
-          this.playerPermavoidVisual.setText(playerPvLabel).setPosition(this.player.x, this.player.y - 66);
-        }
-      } else if (this.playerPermavoidVisual) {
-        this.playerPermavoidVisual.destroy(); this.playerPermavoidVisual = null;
-      }
-
-      // Block up aura positions
-      if (this.playerBlockUpAura) this.playerBlockUpAura.setPosition(this.player.x, this.player.y);
-      if (this.npcBlockUpAura) this.npcBlockUpAura.setPosition(this.npc.x, this.npc.y);
-      if (this.playerBlackIceAura) this.playerBlackIceAura.setPosition(this.player.x, this.player.y);
-
-      // Frozen overlays (blue tint flash)
-      if (this.playerFrozenUntil > 0 && time >= this.playerFrozenUntil) {
-        this.playerFrozenUntil = 0;
-      }
-      if (this.npc.frozenUntil > 0 && time >= this.npc.frozenUntil) {
-        this.npc.frozenUntil = 0;
-      }
-    }
-
-    // ── Shadow NPC overrides (after doAI so they take effect) ──────
-    if (this.elementId === 'shadow') {
-      const nBody = this.npc.body as Phaser.Physics.Arcade.Body;
-
-      // Black hole: pull NPC toward player
-      if (this.shadowBlackHoleActive && time < this.shadowBlackHoleEnd) {
-        const bDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
-        if (bDist > 12) {
-          const bAngle = Math.atan2(this.player.y - this.npc.y, this.player.x - this.npc.x);
-          nBody.setVelocity(Math.cos(bAngle) * 67, Math.sin(bAngle) * 67);
-        } else {
-          nBody.setVelocity(0, 0);
-        }
-      }
-
-      // Tentacle: drag NPC toward cursor
-      if (this.shadowTentacleHooked && this.shadowTentacleActive) {
-        // E+ consume trigger: NPC dragged to player
-        if (this.hasUpgrade('e') && !this.shadowConsumeActive) {
-          const cDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
-          if (cDist <= 22) {
-            this.shadowConsumeActive = true;
-            this.shadowConsumeEnd = time + 3000;
-            this.shadowConsumeTickAccum = 0;
-            this.shadowTentacleActive = false;
-            this.shadowTentacleHooked = false;
-            if (this.shadowTentacleSprite) { this.shadowTentacleSprite.destroy(); this.shadowTentacleSprite = null; }
-            if (this.shadowConsumeAura) this.shadowConsumeAura.destroy();
-            this.shadowConsumeAura = this.add.circle(this.player.x, this.player.y, 30, 0x8800cc, 0.4).setDepth(7);
-            this.tweens.add({ targets: this.shadowConsumeAura, alpha: 0.85, yoyo: true, repeat: -1, duration: 180 });
-          }
-        }
-        if (!this.shadowConsumeActive) {
-          const tMx = this.input.activePointer.worldX;
-          const tMy = this.input.activePointer.worldY;
-          const dragDist = Phaser.Math.Distance.Between(this.npc.x, this.npc.y, tMx, tMy);
-          if (dragDist > 20) {
-            const dragAngle = Math.atan2(tMy - this.npc.y, tMx - this.npc.x);
-            nBody.setVelocity(Math.cos(dragAngle) * 200, Math.sin(dragAngle) * 200);
-          } else {
-            nBody.setVelocity(0, 0);
-          }
-        }
-      }
-
-      // E+ consume: NPC held at player position, taking damage
-      if (this.shadowConsumeActive) {
-        const cBody = this.npc.body as Phaser.Physics.Arcade.Body;
-        if (time >= this.shadowConsumeEnd) {
-          this.shadowConsumeActive = false;
-          if (this.shadowConsumeAura) { this.shadowConsumeAura.destroy(); this.shadowConsumeAura = null; }
-        } else {
-          cBody.reset(this.player.x, this.player.y);
-          cBody.setVelocity(0, 0);
-          if (this.shadowConsumeAura) this.shadowConsumeAura.setPosition(this.player.x, this.player.y);
-          this.shadowConsumeTickAccum += delta;
-          if (this.shadowConsumeTickAccum >= 1000) {
-            this.shadowConsumeTickAccum -= 1000;
-            for (const t of this.enemies) {
-              if (!t.active || t.hp <= 0) continue;
-              t.takeDamage(2);
-              this.spawnHitFlash(t.x, t.y, 0x8800cc);
-            }
-          }
-        }
-      }
-
-      // Stun from snap trap
-      if (time < this.shadowNpcStunnedUntil) nBody.setVelocity(0, 0);
-
-      // Click+ confusion: random movement
-      if (this.hasUpgrade('click') && time < this.shadowConfusionUntil) {
-        if (time >= this.shadowConfusionNextChange) {
-          this.shadowConfusionAngle = Math.random() * Math.PI * 2;
-          this.shadowConfusionNextChange = time + Phaser.Math.Between(400, 800);
-        }
-        const confBody = this.npc.body as Phaser.Physics.Arcade.Body;
-        confBody.setVelocity(
-          Math.cos(this.shadowConfusionAngle) * 130 * this.npcSpeedMult,
-          Math.sin(this.shadowConfusionAngle) * 130 * this.npcSpeedMult,
-        );
-      }
+      this.iceKit.update(time, delta, this.elementId === 'ice');
     }
 
     // ── Frozen NPC override (ice element) ────────────────────────
@@ -11598,290 +9737,37 @@ export class ArenaScene extends Phaser.Scene {
       }
     }
 
-    // ── Growth per-frame ─────────────────────────────────────────
-    if (this.elementId === 'growth' || this.npcElement.id === 'growth') {
-      // Toxic DOT — enemies
-      for (const t of this.enemies) {
-        if (!t.active) continue;
-        if (t.toxicUntil > time) {
-          if (!t.toxicAura) {
-            t.toxicAura = this.add.circle(t.x, t.y, 26, 0x88bb22, 0.3).setDepth(7);
-          }
-          t.toxicAura.setPosition(t.x, t.y);
-          t.toxicTickAccum += delta;
-          if (t.toxicTickAccum >= 1000) {
-            t.toxicTickAccum -= 1000;
-            t.takeDamage(Math.round(t.toxicDps * t.statusDmgMult)); this.spawnHitFlash(t.x, t.y, 0x88bb22);
-          }
-        } else {
-          t.toxicTickAccum = 0;
-          if (t.toxicAura) { t.toxicAura.destroy(); t.toxicAura = null; }
+    // ── Generic toxic DOT (Death / Life / Void kits) ──────────────
+    for (const t of this.enemies) {
+      if (!t.active) continue;
+      if (t.toxicUntil > time) {
+        if (!t.toxicAura) {
+          t.toxicAura = this.add.circle(t.x, t.y, 26, 0x88bb22, 0.3).setDepth(7);
         }
-      }
-
-      // Toxic DOT — player
-      if (this.playerToxicUntil > time) {
-        if (!this.playerToxicAura) {
-          this.playerToxicAura = this.add.circle(this.player.x, this.player.y, 26, 0x88bb22, 0.3).setDepth(7);
-        }
-        this.playerToxicAura.setPosition(this.player.x, this.player.y);
-        this.playerToxicTickAccum += delta;
-        if (this.playerToxicTickAccum >= 1000) {
-          this.playerToxicTickAccum -= 1000;
-          this.player.applySelfDamage(this.playerToxicDps); this.spawnHitFlash(this.player.x, this.player.y, 0x88bb22);
+        t.toxicAura.setPosition(t.x, t.y);
+        t.toxicTickAccum += delta;
+        if (t.toxicTickAccum >= 1000) {
+          t.toxicTickAccum -= 1000;
+          t.takeDamage(Math.round(t.toxicDps * t.statusDmgMult)); this.spawnHitFlash(t.x, t.y, 0x88bb22);
         }
       } else {
-        this.playerToxicTickAccum = 0;
-        if (this.playerToxicAura) { this.playerToxicAura.destroy(); this.playerToxicAura = null; }
+        t.toxicTickAccum = 0;
+        if (t.toxicAura) { t.toxicAura.destroy(); t.toxicAura = null; }
       }
-
-      // Bloat aura positions + expiry (F+ hold extends timer indefinitely)
-      if (this.growthBloatActive) {
-        if (this.hasUpgrade('f') && this.fKey.isDown) {
-          this.growthBloatEnd = Math.max(this.growthBloatEnd, time + 5000);
-        }
-        if (time >= this.growthBloatEnd) {
-          this.growthBloatActive = false;
-          if (this.growthBloatAura) { this.growthBloatAura.destroy(); this.growthBloatAura = null; }
-        } else if (this.growthBloatAura) {
-          this.growthBloatAura.setPosition(this.player.x, this.player.y);
-        }
+    }
+    if (this.playerToxicUntil > time) {
+      if (!this.playerToxicAura) {
+        this.playerToxicAura = this.add.circle(this.player.x, this.player.y, 26, 0x88bb22, 0.3).setDepth(7);
       }
-      if (this.npc.growthBloatActive) {
-        if (time >= this.npc.growthBloatEnd) {
-          this.npc.growthBloatActive = false;
-          if (this.npc.growthBloatAura) { this.npc.growthBloatAura.destroy(); this.npc.growthBloatAura = null; }
-        } else if (this.npc.growthBloatAura) {
-          this.npc.growthBloatAura.setPosition(this.npc.x, this.npc.y);
-        }
+      this.playerToxicAura.setPosition(this.player.x, this.player.y);
+      this.playerToxicTickAccum += delta;
+      if (this.playerToxicTickAccum >= 1000) {
+        this.playerToxicTickAccum -= 1000;
+        this.player.applySelfDamage(this.playerToxicDps); this.spawnHitFlash(this.player.x, this.player.y, 0x88bb22);
       }
-
-      // Regeneration — player
-      if (this.growthRegenRate > 0) {
-        this.growthRegenAccum += delta;
-        const regenInterval = 1000 / this.growthRegenRate;
-        while (this.growthRegenAccum >= regenInterval) {
-          this.growthRegenAccum -= regenInterval;
-          this.player.heal(1);
-        }
-      }
-      // Regeneration — NPC
-      if (this.npcGrowthRegenRate > 0) {
-        this.npcGrowthRegenAccum += delta;
-        const npcRegenInterval = 1000 / this.npcGrowthRegenRate;
-        while (this.npcGrowthRegenAccum >= npcRegenInterval) {
-          this.npcGrowthRegenAccum -= npcRegenInterval;
-          this.npc.heal(1);
-        }
-      }
-
-      // Player-only growth upgrade effects
-      if (this.elementId === 'growth') {
-        // E+ hold-to-close: if menu open and E held >300ms, close and let auto-pick fire
-        if (this.hasUpgrade('e') && this.growthMutateMenuOpen && this.eKey.isDown && time - this.eKey.timeDown > 300) {
-          for (const obj of this.growthMutateButtons) {
-            if ((obj as Phaser.GameObjects.GameObject).active) (obj as unknown as { destroy(): void }).destroy();
-          }
-          this.growthMutateButtons = [];
-          this.growthMutateMenuOpen = false;
-        }
-        // E+ auto-pick: hold E to auto-select mutation when off cooldown
-        if (this.hasUpgrade('e') && this.eKey.isDown && !this.growthMutateMenuOpen) {
-          if (this.player.getCooldownRatio('mutate') >= 1) {
-            const autoPool = [
-              { id: 'healthier', name: 'Healthier', emoji: '💚' },
-              { id: 'deadly', name: 'Deadly', emoji: '💀' },
-              { id: 'linger', name: 'Linger', emoji: '⏳' },
-              { id: 'viral', name: 'Viral', emoji: '🧬' },
-              { id: 'grow', name: 'Grow', emoji: '📈' },
-              { id: 'shrink', name: 'Shrink', emoji: '📉' },
-              { id: 'buffer', name: 'Buffer', emoji: '🛡️' },
-              { id: 'spray', name: 'Spray', emoji: '🗡️' },
-              { id: 'quick', name: 'Quick', emoji: '⚡' },
-              { id: 'regenerative', name: 'Regenerative', emoji: '♻️' },
-              { id: 'chunk', name: 'Chunk', emoji: '💥' },
-              { id: 'relapse', name: 'Relapse', emoji: '↩️' },
-              { id: 'gene-enhance', name: 'Gene Enhance', emoji: '🧪' },
-              { id: 'spread', name: 'Spread', emoji: '🌿' },
-              { id: 'uber-infect', name: 'Uber-Infect', emoji: '🔬' },
-              { id: 'fungal-flourish', name: 'Fungal Flourish', emoji: '🍄' },
-              { id: 'greed', name: 'Greed', emoji: '🤑' },
-              { id: 'sneeze', name: 'Sneeze', emoji: '🤧' },
-              { id: 'cough', name: 'Cough', emoji: '😷' },
-            ];
-            const picked = autoPool[Math.floor(Math.random() * autoPool.length)];
-            this.applyGrowthMutation(picked.id, 'player');
-            this.player.triggerCooldown('mutate');
-            const ft = this.add.text(this.player.x, this.player.y - 45, `${picked.emoji} ${picked.name}!`, { fontSize: '12px', color: '#aadd44', fontFamily: 'Arial Black', stroke: '#003300', strokeThickness: 2 }).setOrigin(0.5).setDepth(15);
-            this.tweens.add({ targets: ft, y: ft.y - 30, alpha: 0, duration: 1200, onComplete: () => ft.destroy() });
-          }
-        }
-
-        // Sneeze aura — tick damage to nearby enemies
-        if (this.growthSneezeStacks > 0) {
-          if (!this.growthSneezeAura) {
-            this.growthSneezeAura = this.add.circle(this.player.x, this.player.y, 120, 0x44cc22, 0.12)
-              .setStrokeStyle(1, 0x88ff44, 0.4).setDepth(3);
-          }
-          this.growthSneezeAura.setPosition(this.player.x, this.player.y);
-          this.growthSneezeAccum += delta;
-          if (this.growthSneezeAccum >= 1000) {
-            this.growthSneezeAccum -= 1000;
-            const sneezeDmg = this.growthSneezeStacks;
-            for (const t of this.enemies) {
-              if (!t.active || t.hp <= 0) continue;
-              if (Phaser.Math.Distance.Between(this.player.x, this.player.y, t.x, t.y) <= 120) {
-                t.takeDamage(sneezeDmg);
-                this.spawnHitFlash(t.x, t.y, 0x88ff44);
-                const ft = this.add.text(t.x, t.y - 20, `🤧 ${sneezeDmg}`, { fontSize: '10px', color: '#88ff44' }).setOrigin(0.5).setDepth(12);
-                this.tweens.add({ targets: ft, y: ft.y - 15, alpha: 0, duration: 700, onComplete: () => ft.destroy() });
-                if (this.growthCancerousGrowths.length > 0) this.tryTriggerCancerousGrowthOn(t);
-              }
-            }
-          }
-        } else if (this.growthSneezeAura) {
-          this.growthSneezeAura.destroy(); this.growthSneezeAura = null;
-        }
-
-        // Cough aura — position update
-        if (this.growthCoughStacks > 0) {
-          if (!this.growthCoughAura) {
-            this.growthCoughAura = this.add.circle(this.player.x, this.player.y, 120, 0xdddd00, 0.12)
-              .setStrokeStyle(1, 0xffff44, 0.4).setDepth(3);
-          }
-          this.growthCoughAura.setPosition(this.player.x, this.player.y);
-        } else if (this.growthCoughAura) {
-          this.growthCoughAura.destroy(); this.growthCoughAura = null;
-        }
-
-        // Bacteria — move toward NPC, contact damage, take damage from NPC projectiles
-        for (let bi = this.growthBacteriaList.length - 1; bi >= 0; bi--) {
-          const bac = this.growthBacteriaList[bi];
-          if (!bac.sprite.active || bac.hp <= 0) {
-            if (bac.sprite.active) bac.sprite.destroy();
-            this.growthBacteriaList.splice(bi, 1);
-            continue;
-          }
-          const nearestEnemy = this.getNearestEnemy(bac.sprite.x, bac.sprite.y);
-          const bdist = Phaser.Math.Distance.Between(bac.sprite.x, bac.sprite.y, nearestEnemy.x, nearestEnemy.y);
-          if (bdist > 18) {
-            const speed = 150 * (delta / 1000);
-            bac.sprite.x += ((nearestEnemy.x - bac.sprite.x) / bdist) * speed;
-            bac.sprite.y += ((nearestEnemy.y - bac.sprite.y) / bdist) * speed;
-          } else if (time - bac.lastContactTime >= 1000) {
-            bac.lastContactTime = time;
-            nearestEnemy.takeDamage(5);
-            this.spawnHitFlash(nearestEnemy.x, nearestEnemy.y, 0x55cc22);
-            const ft = this.add.text(nearestEnemy.x, nearestEnemy.y - 20, '🦠 5', { fontSize: '10px', color: '#88ff44', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
-            this.tweens.add({ targets: ft, y: ft.y - 20, alpha: 0, duration: 700, onComplete: () => ft.destroy() });
-            if (this.growthCancerousGrowths.length > 0) this.tryTriggerCancerousGrowthOn(nearestEnemy);
-          }
-          // NPC projectile hits bacteria
-          for (const child of this.projectiles.getChildren()) {
-            const p = child as Projectile;
-            if (!p.active || p.isFromPlayer) continue;
-            if (Phaser.Math.Distance.Between(p.x, p.y, bac.sprite.x, bac.sprite.y) <= 12) {
-              bac.hp -= p.damage;
-              p.setActive(false).setVisible(false);
-              (p.body as Phaser.Physics.Arcade.Body).stop();
-              this.spawnHitFlash(bac.sprite.x, bac.sprite.y, 0xff4444);
-              if (bac.hp <= 0) {
-                bac.sprite.destroy();
-                this.growthBacteriaList.splice(bi, 1);
-              }
-              break;
-            }
-          }
-        }
-
-        // Defensive spores: move, damage enemies, block NPC projectiles
-        for (let dsi = this.growthDefSpores.length - 1; dsi >= 0; dsi--) {
-          const ds = this.growthDefSpores[dsi];
-          if (!ds.sprite.active || time > ds.destroyAt) {
-            if (ds.sprite.active) ds.sprite.destroy();
-            this.growthDefSpores.splice(dsi, 1);
-            continue;
-          }
-          ds.sprite.x += ds.vel.x * (delta / 1000);
-          ds.sprite.y += ds.vel.y * (delta / 1000);
-          // Damage enemies on contact
-          let sporeDead = false;
-          for (const t of this.enemies) {
-            if (!t.active || t.hp <= 0) continue;
-            if (Phaser.Math.Distance.Between(ds.sprite.x, ds.sprite.y, t.x, t.y) <= 20) {
-              t.takeDamage(1);
-              this.spawnHitFlash(t.x, t.y, 0xff3322);
-              ds.sprite.destroy();
-              this.growthDefSpores.splice(dsi, 1);
-              sporeDead = true;
-              break;
-            }
-          }
-          if (sporeDead) continue;
-          // Block NPC projectiles on contact
-          for (const child of this.projectiles.getChildren()) {
-            const p = child as Projectile;
-            if (!p.active || p.isFromPlayer) continue;
-            if (Phaser.Math.Distance.Between(p.x, p.y, ds.sprite.x, ds.sprite.y) <= 12) {
-              p.setActive(false).setVisible(false);
-              (p.body as Phaser.Physics.Arcade.Body).stop();
-              ds.sprite.destroy();
-              this.growthDefSpores.splice(dsi, 1);
-              break;
-            }
-          }
-        }
-        // Damage reduction timer expiry
-        if (this.growthDamageReductionActive && time > this.growthDamageReductionUntil) {
-          this.player.incomingDamageMultiplier /= 0.8;
-          this.growthDamageReductionActive = false;
-        }
-
-        // Cancerous growths: follow enemy + check player projectile proximity (before physics step)
-        for (let ci = this.growthCancerousGrowths.length - 1; ci >= 0; ci--) {
-          const cg = this.growthCancerousGrowths[ci];
-          if (!cg.target.active || cg.target.hp <= 0) {
-            cg.img.destroy();
-            this.growthCancerousGrowths.splice(ci, 1);
-            continue;
-          }
-          cg.img.setPosition(cg.target.x + cg.offsetX, cg.target.y + cg.offsetY);
-          // Check player projectiles — runs before physics step so this intercepts them first
-          for (const child of this.projectiles.getChildren()) {
-            const p = child as Projectile;
-            if (!p.active || !p.isFromPlayer) continue;
-            if (Phaser.Math.Distance.Between(p.x, p.y, cg.img.x, cg.img.y) <= 12) {
-              this.triggerCancerousGrowthAt(ci);
-              p.setActive(false).setVisible(false);
-              (p.body as Phaser.Physics.Arcade.Body).stop();
-              break;
-            }
-          }
-        }
-
-        // Infect wall bounce (Relapse)
-        if (this.growthInfectBouncers.length > 0) {
-          const W = this.scale.width;
-          const H = this.scale.height;
-          for (let ri = this.growthInfectBouncers.length - 1; ri >= 0; ri--) {
-            const entry = this.growthInfectBouncers[ri];
-            if (!entry.proj.active) { this.growthInfectBouncers.splice(ri, 1); continue; }
-            const body = entry.proj.body as Phaser.Physics.Arcade.Body;
-            const atLeft  = entry.proj.x <= 12 && body.velocity.x < 0;
-            const atRight = entry.proj.x >= W - 12 && body.velocity.x > 0;
-            const atTop   = entry.proj.y <= 12 && body.velocity.y < 0;
-            const atBot   = entry.proj.y >= H - 12 && body.velocity.y > 0;
-            if (atLeft || atRight || atTop || atBot) {
-              if (atLeft || atRight) body.velocity.x *= -1;
-              if (atTop || atBot) body.velocity.y *= -1;
-              entry.bouncesDone++;
-              if (entry.bouncesDone >= this.growthInfectBounces) {
-                this.growthInfectBouncers.splice(ri, 1);
-              }
-            }
-          }
-        }
-      }
+    } else {
+      this.playerToxicTickAccum = 0;
+      if (this.playerToxicAura) { this.playerToxicAura.destroy(); this.playerToxicAura = null; }
     }
 
     // ── Crystal per-frame ─────────────────────────────────────────
@@ -13235,6 +11121,11 @@ export class ArenaScene extends Phaser.Scene {
       this.deathKit.update(time, delta);
     }
 
+    // ── Growth per-frame ──────────────────────────────────────────
+    if (this.elementId === 'growth' || this.npcElement.id === 'growth') {
+      this.growthKit.update(time, delta);
+    }
+
     // ── Void per-frame ───────────────────────────────────────────
     if (this.elementId === 'void' || this.npcElement.id === 'void') {
       this.voidKit.update(time, delta);
@@ -13378,19 +11269,9 @@ export class ArenaScene extends Phaser.Scene {
     const allProj = this.projectiles.getChildren().slice() as Projectile[];
     for (const p of allProj) {
       if (!p.active) {
-        // Click+: if a tracked ice spike is deactivated without being in pending set, it hit already — no action
-        if (this.playerIcePendingSet.has(p)) {
-          this.playerIcePendingSet.delete(p);
-          this.playerIceConsecHits = 0; // inactive without hit means it was destroyed by something else
-        }
         p.destroy(); continue;
       }
       if (p.x < wb.left - 60 || p.x > wb.right + 60 || p.y < wb.top - 60 || p.y > wb.bottom + 60) {
-        // Click+: ice spike went off-screen = miss
-        if (this.playerIcePendingSet.has(p)) {
-          this.playerIcePendingSet.delete(p);
-          this.playerIceConsecHits = 0;
-        }
         p.destroy();
       }
     }
@@ -13434,6 +11315,14 @@ export class ArenaScene extends Phaser.Scene {
         entry.fill.setSize(entry.maxWidth * this.lifeKit.getReapCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'dust-screen') {
         entry.fill.setSize(entry.maxWidth * this.earthKit.getDustScreenCooldownRatio(time), entry.fill.height);
+      } else if (entry.abilityId === 'final-eclipse') {
+        entry.fill.setSize(entry.maxWidth * this.shadowKit.getFinalEclipseChargeRatio(time), entry.fill.height);
+      } else if (entry.abilityId === 'icicle-impale') {
+        entry.fill.setSize(entry.maxWidth * this.iceKit.getIcicleImpaleCooldownRatio(time), entry.fill.height);
+      } else if (entry.abilityId === 'kinetic-bomb') {
+        entry.fill.setSize(entry.maxWidth * this.electricityKit.getKineticBombCooldownRatio(time), entry.fill.height);
+      } else if (entry.abilityId === 'crystal-shredder') {
+        entry.fill.setSize(entry.maxWidth * this.crystalKit.getShredderCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'flame-body') {
         entry.fill.setSize(this.fireKit.isFlameBodyActive() ? entry.maxWidth : 0, entry.fill.height);
       } else if (entry.abilityId === 'splash') {
@@ -13481,14 +11370,6 @@ export class ArenaScene extends Phaser.Scene {
         entry.lockedIcon.setPosition(entry.fill.x, entry.fill.y);
       } else if (entry.abilityId === 'flow-mode') {
         entry.fill.setSize(this.soundKit.isFlowActive() ? entry.maxWidth : 0, entry.fill.height);
-      } else if (entry.abilityId === 'infect') {
-        const infectCd = Math.max(1000, this.growthInfectCdMs);
-        const infectRatio = Math.min(1, (this.time.now - this.lastPlayerInfectCast) / infectCd);
-        entry.fill.setSize(entry.maxWidth * infectRatio, entry.fill.height);
-      } else if (entry.abilityId === 'bloat') {
-        const bloatCd = Math.max(1000, this.growthBloatCdMs);
-        const bloatRatio = Math.min(1, (this.time.now - this.lastPlayerBloatCast) / bloatCd);
-        entry.fill.setSize(entry.maxWidth * bloatRatio, entry.fill.height);
       } else if (entry.abilityId === 'magic-grimoire' && this.elementId === 'magic' && this.magicKit.isThunderCharged('e')) {
         entry.fill.setFillStyle(0xffee00, 0.55);
         entry.fill.setSize(entry.maxWidth, entry.fill.height);
@@ -13533,26 +11414,6 @@ export class ArenaScene extends Phaser.Scene {
     this.tweens.add({ targets: ownerAura, alpha: 0.1, yoyo: true, repeat: -1, duration: 500 });
     this.soulWardHexes.push({ gfx, expiresAt: this.time.now + duration, x: cx, y: cy, radius, owner, ownerAura, summonAuras });
     this.showFloatingText(cx, cy - 30, `🔶 WARD x${consumedCount}`, '#ccbb55');
-  }
-
-  private triggerCancerousGrowthAt(ci: number): void {
-    const cg = this.growthCancerousGrowths[ci];
-    if (!cg) return;
-    const bx = cg.img.x; const by = cg.img.y;
-    const boom = this.add.circle(bx, by, 6, 0xcc44ff, 0.8).setDepth(10);
-    this.tweens.add({ targets: boom, scaleX: 3.5, scaleY: 3.5, alpha: 0, duration: 350, onComplete: () => boom.destroy() });
-    cg.target.takeDamage(10);
-    this.spawnHitFlash(cg.target.x, cg.target.y, 0xcc44ff);
-    if (cg.target === this.npc) this.npcCancerousSlowUntil = this.time.now + 2000;
-    const ft = this.add.text(bx, by - 20, '💜 10', { fontSize: '10px', color: '#dd88ff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
-    this.tweens.add({ targets: ft, y: ft.y - 20, alpha: 0, duration: 900, onComplete: () => ft.destroy() });
-    cg.img.destroy();
-    this.growthCancerousGrowths.splice(ci, 1);
-  }
-
-  private tryTriggerCancerousGrowthOn(target: Fighter): void {
-    const ci = this.growthCancerousGrowths.findIndex(cg => cg.target === target);
-    if (ci >= 0) this.triggerCancerousGrowthAt(ci);
   }
 
   /**
@@ -13645,13 +11506,6 @@ export class ArenaScene extends Phaser.Scene {
       (proj.body as Phaser.Physics.Arcade.Body).stop();
       return;
     }
-    // Fate dice: all damage handled in onDiceHitEnemy — skip generic damage path
-    if (proj.texture.key === 'proj-fate-dice' && (proj as any).fateDiceOwner === 'player') {
-      this.fateKit.onDiceHitEnemy(proj, proj.x, proj.y, 'player', target);
-      proj.setActive(false).setVisible(false);
-      (proj.body as Phaser.Physics.Arcade.Body).stop();
-      return;
-    }
     // Pressure Dagger: pierce through all defenses and enemies; kit owns lifetime
     if (proj.texture.key === 'proj-pressure-dagger' && proj.isFromPlayer) {
       this.waterKit.onDaggerHitNpc(proj, target);
@@ -13661,6 +11515,10 @@ export class ArenaScene extends Phaser.Scene {
     if (proj.texture.key === 'proj-crystal-kite' && (proj as any).kitePierce) {
       this.crystalKit.onKiteHitEnemy(proj, target);
       return; // proj NOT deactivated — keeps flying through
+    }
+    // Crystal Mastery: a normal (non-pierced) shard landing while bounced 2+ times
+    if (proj.texture.key === 'proj-crystal-kite' && proj.isFromPlayer) {
+      this.crystalKit.recordDoubleBounceHit(proj);
     }
     // Fighter.dodgeChance roll (NPC side — e.g. Fate R+ Oozing Luck, Blustery mutation)
     if (target.rollDodge()) {
@@ -13700,7 +11558,8 @@ export class ArenaScene extends Phaser.Scene {
     target.takeDamage(_npcDmg);
     if (this.elementId === 'water') this.waterKit.noteDamageDealtByPlayer(_npcDmg);
     if (this.elementId === 'life') this.lifeKit.onPlayerProjectileHit(proj, target, _npcDmg);
-    this.spawnHitFlash(proj.x, proj.y, 0xff6600);
+    const isVoidIceHit = proj.texture.key === 'proj-ice' && this.iceKit.isPlayerBlackIceMorphActive();
+    this.spawnHitFlash(proj.x, proj.y, isVoidIceHit ? 0x9900ff : 0xff6600);
     // Hunt Blood Pact: heal player for 50% of damage dealt
     if (this.huntBloodPactActive && this.time.now < this.huntBloodPactEnd) this.player.heal(Math.ceil(_npcDmg * 0.5));
     // Hunt Blood Moon F+: 50% lifesteal from all damage dealt to bleeding enemy
@@ -13728,48 +11587,13 @@ export class ArenaScene extends Phaser.Scene {
     if (proj.texture.key === 'proj-water' && proj.isFromPlayer && this.elementId === 'water') {
       this.waterKit.onWaterCutHit(target, 'player');
     }
-    // Ice spike: frost stacks + unfreeze bonus + Click+ tracking
+    // Ice spike: frost stacks + unfreeze bonus
     if (proj.texture.key === 'proj-ice') {
-      if (this.hasUpgrade('click') && this.playerIcePendingSet.has(proj)) {
-        this.playerIcePendingSet.delete(proj);
-        this.playerIceConsecHits++;
-        if (this.playerIceConsecHits >= 3) {
-          this.playerNextIcePowered = true;
-          this.playerIceConsecHits = 0;
-          const pt = this.add.text(this.player.x, this.player.y - 36, 'POWERED!', { fontSize: '11px', color: '#cceeff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
-          this.tweens.add({ targets: pt, y: pt.y - 20, alpha: 0, duration: 1200, onComplete: () => pt.destroy() });
-        }
-      }
-      if (target.frozenUntil > this.time.now) {
-        target.frozenUntil = 0;
-        for (let fi = 0; fi < 3; fi++) this.addFrostStackTo(target);
-      } else {
-        this.addFrostStackTo(target);
-        if (proj.isPowered) this.addFrostStackTo(target);
-      }
+      this.iceKit.onIceSpikeHitEnemy(target, this.time.now);
     }
-    // Growth infect dagger: apply toxic DOT (R+ 15% bonus to all attacks handled via 'damaged' listener)
-    if (proj.texture.key === 'proj-growth-dagger') {
-      target.toxicUntil = this.time.now + 10000 + this.growthLingerBonus;
-      target.toxicDps = 2 + this.growthViralBonus;
-      target.toxicTickAccum = 0;
-    }
-    // NPC bloat: NPC hit triggers AOE on player (only the 1v1 npc ever bloats)
-    if (target.growthBloatActive) {
-      target.growthBloatActive = false;
-      target.growthBloatEnd = 0;
-      if (target.growthBloatAura) { target.growthBloatAura.destroy(); target.growthBloatAura = null; }
-      const bloatDmg = Math.round(20 * this.npcGrowthDamageMult);
-      if (Phaser.Math.Distance.Between(target.x, target.y, this.player.x, this.player.y) <= 120) {
-        this.player.takeDamage(bloatDmg);
-        this.spawnHitFlash(this.player.x, this.player.y, 0xdddd00);
-      }
-      const bloatExp = this.add.circle(target.x, target.y, 120, 0xdddd00, 0.3).setDepth(8);
-      this.tweens.add({ targets: bloatExp, scaleX: 1.4, scaleY: 1.4, alpha: 0, duration: 350, onComplete: () => bloatExp.destroy() });
-    }
-    // Fate coin toss: give player +1 coin on hit
-    if (proj.texture.key === 'proj-fate-coin' && (proj as any).fateCoinOwner === 'player') {
-      this.fateKit.onCoinHitEnemy('player');
+    // Fate Infect: applies the poison DOT on top of the direct hit above
+    if ((proj as any).fateInfectDps) {
+      this.fateKit.applyPoison(target, (proj as any).fateInfectDps, this.time.now);
     }
     // Light Fallen Angel dagger: apply disarm on hit
     if ((proj as any).isFallenAngelDagger && this.elementId === 'light') {
@@ -13793,6 +11617,10 @@ export class ArenaScene extends Phaser.Scene {
     if (typeof (proj as any).demonPierceLeft === 'number' && (proj as any).demonPierceLeft > 0) {
       (proj as any).demonPierceLeft--;
       return;
+    }
+    // Acid Purge ball: apply the stat-strip status on top of the generic damage above
+    if (proj.texture.key === 'proj-purge') {
+      this.slimeKit.onPurgeHit(target, proj, this.time.now);
     }
     proj.setActive(false).setVisible(false);
     (proj.body as Phaser.Physics.Arcade.Body).stop();

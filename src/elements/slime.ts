@@ -1,56 +1,56 @@
 import { Element } from './Element';
 import { Ability } from './Ability';
 
-const slimeShot: Ability = {
-  id: 'slime-shot',
-  name: 'Slime Shot',
-  description: 'Launch a slime at cursor (8/12/15 dmg by level). No held slimes: recall all deployed ones.',
+const poisonWhip: Ability = {
+  id: 'poison-whip',
+  name: 'Poison Whip',
+  description: 'Launch a barrage of 15 acid lashes toward the cursor, 1 dmg each. Standing in acid: 20 lashes.',
   displayKey: 'Click',
   cooldown: 400,
-  cast(_ctx) { /* entity lifecycle handled in ArenaScene */ },
+  cast(_ctx) { /* ArenaScene fires the barrage via SlimeKit */ },
 };
 
-const slimeySplash: Ability = {
-  id: 'slimey-splash',
-  name: 'Slimey Splash',
-  description: '3s: slimes drip puddles beneath them every 1s. Flying through puddles grants slimes 10 XP.',
+const vileSpray: Ability = {
+  id: 'vile-spray',
+  name: 'Vile Spray',
+  description: '3 permanent acid pools in front of you. Neon (fresh): 5 dmg on first touch, then cools and ticks 2 dmg/2s forever. Enhances other abilities.',
   displayKey: 'E',
-  cooldown: 12000,
-  cast(_ctx) { /* ArenaScene sets slimeSplashActiveUntil */ },
+  cooldown: 6000,
+  cast(_ctx) { /* ArenaScene spawns the pools via SlimeKit */ },
 };
 
-const sulpherSpring: Ability = {
-  id: 'sulpher-spring',
-  name: 'Sulpher Spring',
-  description: 'Spawn a spring at cursor (5s). Enemy or you touching it: confused 2s. Slimes gain a variant.',
+const snakeBurrow: Ability = {
+  id: 'snake-burrow',
+  name: 'Snake Burrow',
+  description: 'Only usable while standing in acid. Burrow underground: invincible, +25% speed. Press again (or leave the acid) to surface.',
   displayKey: 'R',
-  cooldown: 10000,
-  cast(_ctx) { /* ArenaScene spawns spring */ },
+  cooldown: 2000,
+  cast(_ctx) { /* ArenaScene toggles burrow state via SlimeKit */ },
 };
 
-const slimeShield: Ability = {
-  id: 'slime-shield',
-  name: 'Slime Shield',
-  description: 'A random slime engulfs you, absorbing damage (25/50/75 HP by level) until destroyed.',
+const purge: Ability = {
+  id: 'purge',
+  name: 'Purge',
+  description: 'Launch a slow acid ball that strips the target of positive stat boosts. Scales with arena acid coverage: 15/30/45 dmg, 3/8/15s purge, up to 50% bigger and faster.',
   displayKey: 'F',
-  cooldown: 5000,
-  cast(_ctx) { /* damageAbsorber installed by ArenaScene */ },
+  cooldown: 6000,
+  cast(_ctx) { /* ArenaScene fires the ball via SlimeKit */ },
 };
 
-const slimeRain: Ability = {
-  id: 'slime-rain',
-  name: 'Slime Rain',
-  description: '10 slimes rain down across the arena, dealing AoE damage on landing then recalling back.',
+const acidApocalypse: Ability = {
+  id: 'acid-apocalypse',
+  name: 'Acid Apocalypse',
+  description: 'Acid rain pours over every acid pool for 8s, dealing constant damage to enemies standing in one.',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 25000,
-  cast(_ctx) { /* ArenaScene handles rain phase */ },
+  cast(_ctx) { /* ArenaScene runs the rain phase via SlimeKit */ },
 };
 
 export const slimeElement: Element = {
   id: 'slime',
-  name: 'Slime',
+  name: 'Acid',
   color: 0x66cc44,
   emoji: '🟢',
-  abilities: [slimeShot, slimeySplash, sulpherSpring, slimeShield, slimeRain],
+  abilities: [poisonWhip, vileSpray, snakeBurrow, purge, acidApocalypse],
 };

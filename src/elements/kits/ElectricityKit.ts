@@ -20,6 +20,27 @@ interface BallLightning {
   lastHitByEnemy: Map<Fighter, number>;
 }
 
+/** Electricity Mastery — Kinetic Bomb: travels until it latches onto an enemy, then tracks damage taken toward its explosion. */
+interface KineticBomb {
+  sprite: Phaser.GameObjects.Arc;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  attached: boolean;
+  target: Fighter | null;
+  detonateAt: number;
+  lastHp: number;
+  damageTaken: number;
+}
+
+const KINETIC_BOMB_COOLDOWN_MS = 14000;
+const KINETIC_BOMB_SPEED = 460;
+const KINETIC_BOMB_HIT_RADIUS = 26;
+const KINETIC_BOMB_ATTACH_MS = 10000;
+const KINETIC_BOMB_BASE_DAMAGE = 10;
+const KINETIC_BOMB_EXPLOSION_RADIUS = 150;
+
 // ── ElectricityArenaApi ───────────────────────────────────────────────────
 
 export interface ElectricityArenaApi {
@@ -39,6 +60,11 @@ export interface ElectricityArenaApi {
   showFloatingText(x: number, y: number, text: string, color: string): void;
   getNearestEnemy(x: number, y: number): Fighter;
   buildPlayerContext(x: number, y: number): CastContext;
+  /** True only when the player is electricity AND Electricity Mastery is switched on. */
+  get masteryActive(): boolean;
+  /** Mastery enhancement id bound over the given ability slot, or null if that slot is unchanged. */
+  masteryBindFor(slot: string): string | null;
+  recordMasteryStat(key: string, amount: number): void;
 }
 
 // ── ElectricityKit ────────────────────────────────────────────────────────
@@ -83,6 +109,10 @@ export class ElectricityKit {
   // E+ storm clouds
   private stormClouds: StormCloud[] = [];
 
+  // Electricity Mastery — Kinetic Bomb
+  private kineticBombs: KineticBomb[] = [];
+  private kineticBombLastCastAt = -999999;
+
   // Phoenix perk
   private playerPhoenixUntil = 0;
   private playerPhoenixSpeedBaseline = 1;
@@ -126,6 +156,9 @@ export class ElectricityKit {
     this.ballLightnings = [];
     for (const sc of this.stormClouds) sc.sprite.destroy();
     this.stormClouds = [];
+    for (const kb of this.kineticBombs) kb.sprite.destroy();
+    this.kineticBombs = [];
+    this.kineticBombLastCastAt = -999999;
 
     this.playerPhoenixUntil = 0;
     this.playerPhoenixSpeedBaseline = 1;
@@ -168,6 +201,7 @@ export class ElectricityKit {
       player.hp = Math.max(1, Math.min(player.maxHp, this.kineticPower));
       this.kineticPower = 0;
       this.updateHud(cap);
+      this.arena.recordMasteryStat('revives', 1);
       this.arena.showFloatingText(player.x, player.y - 30, 'RESTARTED!', '#ffee00');
       const flash = this.arena.scene.add.circle(player.x, player.y, 12, 0xffee00, 0.8).setDepth(10);
       this.arena.scene.tweens.add({ targets: flash, scaleX: 6, scaleY: 6, alpha: 0, duration: 500, onComplete: () => flash.destroy() });
@@ -182,6 +216,7 @@ export class ElectricityKit {
         player.hp = Math.max(1, Math.min(player.maxHp, Math.floor(this.kineticPower / 2)));
         this.kineticPower = 0;
         this.updateHud(cap);
+        this.arena.recordMasteryStat('revives', 1);
         this.arena.showFloatingText(player.x, player.y - 30, 'AUTO-RESTARTED!', '#ffee00');
         const flash = this.arena.scene.add.circle(player.x, player.y, 12, 0xffee00, 0.8).setDepth(10);
         this.arena.scene.tweens.add({ targets: flash, scaleX: 6, scaleY: 6, alpha: 0, duration: 500, onComplete: () => flash.destroy() });
@@ -196,6 +231,17 @@ export class ElectricityKit {
     const { player, enemies, projectiles } = this.arena;
     const cap = this.arena.hasUpgrade('r') ? 100 : 50;
     this.updateHud(cap);
+
+    // Electricity Mastery — Kinetic Shield: +1% damage resistance per 3% kinetic power, capped at 33%.
+    if (this.arena.masteryActive) {
+      const kineticPercent = (this.kineticPower / cap) * 100;
+      const resistPercent = Math.min(33, Math.floor(kineticPercent / 3));
+      player.kineticShieldMult = Math.max(0, 1 - resistPercent / 100);
+    } else {
+      player.kineticShieldMult = 1;
+    }
+
+    this.updateKineticBombs(time, delta);
 
     // Overcharge visual follow + expiry
     if (this.overchargeActive) {
@@ -400,6 +446,8 @@ export class ElectricityKit {
     const { player, enemies } = this.arena;
     const scene = this.arena.scene;
     const playerCtx = this.arena.buildPlayerContext(mouseX, mouseY);
+    // Electricity Mastery — Kinetic Bomb may be bound over any of E/R/F/Q, suppressing that slot's base ability.
+    const bombSlot = this.arena.masteryActive ? this.kineticBombSlot() : null;
 
     // ── Click: Electro Ball / Ball Lightning (Click+) ────────────────
     if (this.arena.hasUpgrade('click')) {
@@ -464,7 +512,9 @@ export class ElectricityKit {
     }
 
     // ── E: Electro Dash ───────────────────────────────────────────────
-    if (Phaser.Input.Keyboard.JustDown(this.arena.eKey)) {
+    if (bombSlot === 'e') {
+      if (Phaser.Input.Keyboard.JustDown(this.arena.eKey)) this.tryCastKineticBomb(time, mouseX, mouseY);
+    } else if (Phaser.Input.Keyboard.JustDown(this.arena.eKey)) {
       const canRecast = this.electroDashCanRecast && time < this.electroDashRecastExpiry && this.kineticPower >= 15;
       const onCooldown = player.getCooldownRatio('electro-dash') < 1;
       if (canRecast || !onCooldown) {
@@ -506,6 +556,7 @@ export class ElectricityKit {
             et.takeDamage(15);
             this.arena.spawnHitFlash(et.x, et.y, 0xffee00);
             this.arena.showFloatingText(et.x, et.y - 20, '15', '#ffee00');
+            this.arena.recordMasteryStat('dashHits', 1);
           }
         }
         // Visuals
@@ -527,10 +578,13 @@ export class ElectricityKit {
     }
 
     // ── R: Kinetic Discharge ──────────────────────────────────────────
-    if (Phaser.Input.Keyboard.JustDown(this.arena.rKey)) {
+    if (bombSlot === 'r') {
+      if (Phaser.Input.Keyboard.JustDown(this.arena.rKey)) this.tryCastKineticBomb(time, mouseX, mouseY);
+    } else if (Phaser.Input.Keyboard.JustDown(this.arena.rKey)) {
       if (player.getCooldownRatio('kinetic-discharge') >= 1 && this.kineticPower >= 20) {
         player.triggerCooldown('kinetic-discharge');
         const cap = this.arena.hasUpgrade('r') ? 100 : 50;
+        if (this.kineticPower >= 100) this.arena.recordMasteryStat('dischargesAt100', 1);
         // Damage: ½ kinetic power; with R+ and kinetic > 50, scales stronger
         let dmg = Math.floor(this.kineticPower * 0.5);
         if (this.arena.hasUpgrade('r') && this.kineticPower > 50) {
@@ -554,7 +608,9 @@ export class ElectricityKit {
     }
 
     // ── F: Pain Battery (hold) / Jumpstart (tap, F+ only) ────────────
-    if (this.arena.fKey.isDown) {
+    if (bombSlot === 'f') {
+      if (Phaser.Input.Keyboard.JustDown(this.arena.fKey)) this.tryCastKineticBomb(time, mouseX, mouseY);
+    } else if (this.arena.fKey.isDown) {
       if (!this.painBatteryHolding) {
         this.painBatteryHolding = true;
         this.painBatteryHoldStart = time;
@@ -569,6 +625,7 @@ export class ElectricityKit {
         this.painBatteryTickAccum -= 250;
         this.painBatterySelfDmgDealt += 5;
         player.applySelfDamage(5);
+        this.arena.recordMasteryStat('selfDamageDealt', 5);
       }
     } else if (this.painBatteryHolding) {
       this.painBatteryHolding = false;
@@ -609,7 +666,9 @@ export class ElectricityKit {
     }
 
     // ── Q: Restart ────────────────────────────────────────────────────
-    if (Phaser.Input.Keyboard.JustDown(this.arena.qKey)) {
+    if (bombSlot === 'q') {
+      if (Phaser.Input.Keyboard.JustDown(this.arena.qKey)) this.tryCastKineticBomb(time, mouseX, mouseY);
+    } else if (Phaser.Input.Keyboard.JustDown(this.arena.qKey)) {
       if (player.getCooldownRatio('restart') >= 1) {
         player.triggerCooldown('restart');
         this.overchargeActive = true;
@@ -673,5 +732,113 @@ export class ElectricityKit {
       lastHitByEnemy: new Map(),
     };
     this.ballLightnings.push(bl);
+  }
+
+  // ── Electricity Mastery: Kinetic Bomb ─────────────────────────────────
+
+  /** The slot Kinetic Bomb is bound over this match, or null when it isn't bound anywhere. */
+  private kineticBombSlot(): 'e' | 'r' | 'f' | 'q' | null {
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      if (this.arena.masteryBindFor(s) === 'kinetic-bomb') return s;
+    }
+    return null;
+  }
+
+  private tryCastKineticBomb(time: number, mouseX: number, mouseY: number): void {
+    if (time - this.kineticBombLastCastAt < KINETIC_BOMB_COOLDOWN_MS) return;
+    this.kineticBombLastCastAt = time;
+    const { player, scene } = this.arena;
+    player.triggerCooldown('kinetic-bomb');
+    const dx = mouseX - player.x;
+    const dy = mouseY - player.y;
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    const sprite = scene.add.circle(player.x, player.y, 10, 0xffaa00, 0.9)
+      .setStrokeStyle(2, 0xffee00, 0.9).setDepth(6);
+    this.kineticBombs.push({
+      sprite, x: player.x, y: player.y,
+      vx: (dx / len) * KINETIC_BOMB_SPEED, vy: (dy / len) * KINETIC_BOMB_SPEED,
+      attached: false, target: null, detonateAt: 0, lastHp: 0, damageTaken: 0,
+    });
+    this.arena.showFloatingText(player.x, player.y - 30, '⚡ KINETIC BOMB', '#ffaa00');
+  }
+
+  /** 0 = just cast, 1 = ready. Drives the HUD bar when Kinetic Bomb is bound to a slot. */
+  getKineticBombCooldownRatio(time: number): number {
+    return Math.min(1, (time - this.kineticBombLastCastAt) / KINETIC_BOMB_COOLDOWN_MS);
+  }
+
+  private updateKineticBombs(time: number, delta: number): void {
+    const { enemies, scene } = this.arena;
+    const W = scene.scale.width;
+    const H = scene.scale.height;
+    for (let i = this.kineticBombs.length - 1; i >= 0; i--) {
+      const kb = this.kineticBombs[i];
+
+      if (!kb.attached) {
+        kb.x += kb.vx * (delta / 1000);
+        kb.y += kb.vy * (delta / 1000);
+        kb.sprite.setPosition(kb.x, kb.y);
+        if (kb.x < -20 || kb.x > W + 20 || kb.y < -20 || kb.y > H + 20) {
+          kb.sprite.destroy();
+          this.kineticBombs.splice(i, 1);
+          continue;
+        }
+        let hitTarget: Fighter | null = null;
+        for (const t of enemies) {
+          if (!t.active || t.hp <= 0) continue;
+          if (Phaser.Math.Distance.Between(kb.x, kb.y, t.x, t.y) <= KINETIC_BOMB_HIT_RADIUS) {
+            hitTarget = t;
+            break;
+          }
+        }
+        if (hitTarget) {
+          kb.attached = true;
+          kb.target = hitTarget;
+          kb.detonateAt = time + KINETIC_BOMB_ATTACH_MS;
+          kb.lastHp = hitTarget.hp;
+          kb.damageTaken = 0;
+          kb.sprite.setFillStyle(0xffee00, 0.95).setStrokeStyle(2, 0xffffff, 0.9);
+          this.arena.spawnHitFlash(hitTarget.x, hitTarget.y, 0xffee00);
+          this.arena.showFloatingText(hitTarget.x, hitTarget.y - 30, '⚡ LATCHED', '#ffee00');
+        }
+        continue;
+      }
+
+      // Attached: follow the target, track damage it takes, detonate on expiry or its death.
+      const target = kb.target!;
+      if (!target.active || target.hp <= 0) {
+        this.detonateKineticBomb(kb);
+        this.kineticBombs.splice(i, 1);
+        continue;
+      }
+      kb.sprite.setPosition(target.x, target.y - 24);
+      const dmgSinceLast = Math.max(0, kb.lastHp - target.hp);
+      kb.lastHp = target.hp;
+      if (dmgSinceLast > 0) kb.damageTaken += dmgSinceLast;
+      if (time >= kb.detonateAt) {
+        this.detonateKineticBomb(kb);
+        this.kineticBombs.splice(i, 1);
+      }
+    }
+  }
+
+  private detonateKineticBomb(kb: KineticBomb): void {
+    const scene = this.arena.scene;
+    const x = kb.target ? kb.target.x : kb.x;
+    const y = kb.target ? kb.target.y : kb.y;
+    const dmg = KINETIC_BOMB_BASE_DAMAGE + Math.floor(kb.damageTaken / 3);
+    for (const t of this.arena.enemies) {
+      if (!t.active || t.hp <= 0) continue;
+      if (Phaser.Math.Distance.Between(x, y, t.x, t.y) <= KINETIC_BOMB_EXPLOSION_RADIUS) {
+        t.takeDamage(dmg);
+        this.arena.spawnHitFlash(t.x, t.y, 0xffee00);
+        this.arena.showFloatingText(t.x, t.y - 20, `${dmg}`, '#ffee00');
+      }
+    }
+    const ring = scene.add.circle(x, y, 14, 0xffee00, 0.85).setDepth(6);
+    scene.tweens.add({ targets: ring, scaleX: 10, scaleY: 10, alpha: 0, duration: 450, onComplete: () => ring.destroy() });
+    const core = scene.add.circle(x, y, 8, 0xffffff, 0.95).setDepth(7);
+    scene.tweens.add({ targets: core, scaleX: 6, scaleY: 6, alpha: 0, duration: 250, onComplete: () => core.destroy() });
+    kb.sprite.destroy();
   }
 }

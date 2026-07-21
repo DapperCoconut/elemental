@@ -15,7 +15,7 @@ const iceSpike: Ability = {
 const frostBlast: Ability = {
   id: 'frost-blast',
   name: 'Frost Blast',
-  description: 'Hitscan ice beam. Only damages if enemy has frost stacks: 10 dmg per stack, removes all.',
+  description: 'Hitscan ice beam. Only damages if enemy has frost stacks: 7.5 dmg per stack, removes all. Against void frost, instantly detonates all remaining DOT damage instead.',
   displayKey: 'E',
   cooldown: 8000,
   cast(ctx: CastContext) {

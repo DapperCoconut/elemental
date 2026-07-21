@@ -311,6 +311,190 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       },
     ],
   },
+  shadow: {
+    elementId: 'shadow',
+    name: 'Shadow Mastery',
+    enhancedEmoji: '👤',
+    enhancedColor: 0x000000,
+    requirements: [
+      {
+        key: 'healedHp',
+        label: 'Umbral Vitality',
+        howTo: 'Heal HP — Shadow Dance bursts and dark cloud healing both count',
+        target: 500,
+      },
+      {
+        key: 'consumed',
+        label: 'Devourer',
+        howTo: 'Drag an enemy in with the E+ Tentacle upgrade to trigger Consume',
+        target: 35,
+      },
+      {
+        key: 'trapped',
+        label: 'Ensnared',
+        howTo: 'Catch enemies in your Snap Trap (R)',
+        target: 50,
+      },
+      {
+        key: 'blackHoleKills',
+        label: 'Event Horizon',
+        howTo: 'Kill enemies while they are trapped inside your Black Hole (Q)',
+        target: 25,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'dark-resonance',
+        name: 'Dark Resonance',
+        description: 'Passive: slowly generate darkness on your own — the same charge Shadow Dance spends to heal — even without standing in a dark cloud.',
+      },
+      {
+        id: 'final-eclipse',
+        name: 'Final Eclipse',
+        bindable: true,
+        hudDescription: 'Thick beam that burns darkness for constant damage',
+        description: 'Unleash a thick beam that deals 2 damage every 0.1s and slowly rotates to track your cursor. Channeling burns 20% of your darkness bar every second, and the beam cuts out the instant darkness hits zero — a minimum-charge cast lasts about 1 second. Needs at least 20% darkness to start. 0 second cooldown: recast the instant you have darkness again.',
+      },
+    ],
+  },
+  ice: {
+    elementId: 'ice',
+    name: 'Ice Mastery',
+    enhancedEmoji: '❄️',
+    enhancedColor: 0x0c2f4d,
+    requirements: [
+      {
+        key: 'frostBlast5StackHits',
+        label: 'Absolute Zero',
+        howTo: 'Hit enemies with Frost Blast (E) while they have 5 or more frost stacks',
+        target: 100,
+      },
+      {
+        key: 'blockUpDamageAvoided',
+        label: 'Iron Chill',
+        howTo: 'Avoid damage using Block Up (R) — the 25% reduction while active counts',
+        target: 250,
+      },
+      {
+        key: 'voidFrostDamage',
+        label: 'Void Harvest',
+        howTo: 'Deal damage with Void Frost — DOT ticks and Frost Blast detonations both count',
+        target: 200,
+      },
+      {
+        key: 'bigHits',
+        label: 'Shatterpoint',
+        howTo: 'Deal over 50 damage in a single hit',
+        target: 5,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'viral-frost',
+        name: 'Viral Frost',
+        description: 'Passive: when an enemy carrying frost or void frost stacks touches another enemy, that enemy catches 1 matching stack. Each enemy can only catch a spread stack once per second.',
+      },
+      {
+        id: 'icicle-impale',
+        name: 'Icicle Impale',
+        bindable: true,
+        hudDescription: 'Dash and impale — shatters into bonus frost after 50 damage',
+        description: 'Dash forward a short distance. The first enemy you hit is impaled with a visible icicle. Once they take 50 more damage, the icicle shatters, slamming 2 bonus frost (or void frost) stacks onto them — this can push them past the normal 5-stack cap, up to a hard max of 7. More stacks means more slow and bonus damage taken for frost, more DOT damage for void. While impaled, every frost/void stack applied to them lasts 10 seconds instead of 8.',
+      },
+    ],
+  },
+  crystal: {
+    elementId: 'crystal',
+    name: 'Crystal Mastery',
+    enhancedEmoji: '🔮',
+    enhancedColor: 0x8833cc,
+    requirements: [
+      {
+        key: 'doubleBounceHits',
+        label: 'Ricochet Marksman',
+        howTo: 'Hit enemies with a Diamond Shard that has already bounced off walls or crystals (any mix) at least twice',
+        target: 50,
+      },
+      {
+        key: 'portalTraversals',
+        label: 'Frequent Flyer',
+        howTo: 'Step through your own Crystal Portal (F) to teleport',
+        target: 100,
+      },
+      {
+        key: 'shardOverload',
+        label: 'Overload',
+        howTo: 'Have 25 of your own Diamond Shards active on screen at once',
+        target: 10,
+      },
+      {
+        key: 'movingMirrorBounces',
+        label: 'Kinetic Deflection',
+        howTo: 'Bounce a Diamond Shard off a moving crystal (E+ Moving Crystals)',
+        target: 250,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'resonance',
+        name: 'Resonance',
+        description: 'Passive: getting hit by one of your own Diamond Shards grants you a 3x speed boost for 0.2 seconds.',
+      },
+      {
+        id: 'crystal-shredder',
+        name: 'Crystal Shredder',
+        bindable: true,
+        hudDescription: 'Spinning chakram with 12 shards that shred anything it touches',
+        description: 'Launch a spinning chakram at your cursor with 12 shards poking out of it. Each shard that touches an enemy disappears and deals 2 damage. The chakram stops once it reaches your cursor. Recasting Atune (R) launches an idle chakram back out toward your current cursor. With Trick of the Light active, each clone also throws a mini chakram carrying 4 shards. 14 second cooldown.',
+      },
+    ],
+  },
+  electricity: {
+    elementId: 'electricity',
+    name: 'Electricity Mastery',
+    enhancedEmoji: '🌩️',
+    enhancedColor: 0x2244cc,
+    requirements: [
+      {
+        key: 'dischargesAt100',
+        label: 'Overload',
+        howTo: 'Unleash Kinetic Discharge (R) while sitting at 100 kinetic power',
+        target: 5,
+      },
+      {
+        key: 'revives',
+        label: 'Second Wind',
+        howTo: 'Revive yourself with Restart (Q) — the Q+ auto-restart counts too',
+        target: 10,
+      },
+      {
+        key: 'selfDamageDealt',
+        label: 'Self Destructive',
+        howTo: 'Damage yourself by holding Pain Battery (F)',
+        target: 500,
+      },
+      {
+        key: 'dashHits',
+        label: 'Human Bullet',
+        howTo: 'Dash through enemies with Electro Dash (E)',
+        target: 250,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'kinetic-shield',
+        name: 'Kinetic Shield',
+        description: 'Passive: gain damage resistance as your kinetic power rises. For every 3% of your kinetic power bar, gain +1% damage resistance, up to a max of 33% at a full charge.',
+      },
+      {
+        id: 'kinetic-bomb',
+        name: 'Kinetic Bomb',
+        bindable: true,
+        hudDescription: 'Sticky bomb that grows with damage dealt to its target',
+        description: 'Launch a kinetic bomb forward. If it hits an enemy, it latches onto them for 10 seconds before detonating for 10 damage in a large area — for every 3 damage dealt to them while it was attached, the explosion gains +1 damage. 14 second cooldown.',
+      },
+    ],
+  },
 };
 
 export function getMasteryDef(elementId: string): MasteryDef | undefined {

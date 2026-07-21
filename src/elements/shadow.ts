@@ -48,12 +48,12 @@ const shadowDance: Ability = {
 const blackHole: Ability = {
   id: 'black-hole',
   name: 'Black Hole',
-  description: '3s charge → 10s gravitational pull that drags enemy toward you.',
+  description: 'Summons a black hole at your cursor, violently dragging your foe into it for 3s while dealing 5 dmg/s.',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 35000,
   cast(ctx: CastContext) {
-    ctx.startBlackHole();
+    ctx.startBlackHole(ctx.targetX, ctx.targetY);
   },
 };
 

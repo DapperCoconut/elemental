@@ -1,49 +1,49 @@
 import { Element } from './Element';
 import { Ability } from './Ability';
 
-const coinToss: Ability = {
-  id: 'fate-coin-toss',
-  name: 'Coin Toss',
-  description: 'Costs 2 coins. Launch 3 coins toward your cursor with 0.3s delay each. Every coin that hits an enemy gives 1 coin back.',
+const cardThrow: Ability = {
+  id: 'fate-card-throw',
+  name: 'Card Throw',
+  description: 'Throw your highlighted card. You hold up to 6 cards, drawn randomly — click one (or press 1-6) to highlight it.',
   displayKey: 'Click',
-  cooldown: 800,
-  cast(ctx) { ctx.fateCoinToss(ctx.targetX, ctx.targetY); },
+  cooldown: 350,
+  cast(ctx) { ctx.fateThrowCard(ctx.targetX, ctx.targetY); },
 };
 
-const slots: Ability = {
-  id: 'fate-slots',
-  name: 'Slots',
-  description: 'Place a slot machine. Press Space near it (costs 1 coin) to spin for 3s — grants a permanent buff or debuff.',
+const reroll: Ability = {
+  id: 'fate-reroll',
+  name: 'Reroll',
+  description: 'Discard your hand and draw 6 fresh cards.',
   displayKey: 'E',
-  cooldown: 8000,
-  cast(ctx) { ctx.fateSpawnSlotMachine(ctx.targetX, ctx.targetY); },
+  cooldown: 6000,
+  cast(ctx) { ctx.fateReroll(); },
 };
 
-const luck: Ability = {
-  id: 'fate-luck',
-  name: 'Lady Luck',
-  description: 'Choose one ability to be Lucky: Click = coins auto-aim, E = +3× positive slots, F = always rolls 6, Q = always 150% return.',
+const preserve: Ability = {
+  id: 'fate-preserve',
+  name: 'Preserve',
+  description: 'Your highlighted card turns yellow. The next time you throw it, it stays in your hand instead of being used up.',
   displayKey: 'R',
-  cooldown: 20000,
-  cast(ctx) { ctx.fateLuck(); },
+  cooldown: 3000,
+  cast(ctx) { ctx.fatePreserve(); },
 };
 
-const diceOfDoom: Ability = {
-  id: 'fate-dice',
-  name: 'Dice of Doom',
-  description: 'Costs 3 coins. Launch a large dice projectile — hitting an enemy gives 1–6 coins. Rolling 6 deals double damage and explodes.',
+const enchant: Ability = {
+  id: 'fate-enchant',
+  name: 'Enchant',
+  description: 'Your highlighted card turns purple. Its next use deals double effect — combos with Preserve.',
   displayKey: 'F',
-  cooldown: 5000,
-  cast(ctx) { ctx.fateDice(ctx.targetX, ctx.targetY); },
+  cooldown: 4000,
+  cast(ctx) { ctx.fateEnchant(); },
 };
 
 const allIn: Ability = {
   id: 'fate-all-in',
   name: 'All In!',
-  description: 'Spend ALL coins. After 3s, deal damage equal to 5× your coins. 50% chance: 50% returned. 50% chance: 150% returned.',
+  description: 'Wager 50 HP on a slow orbiting strike. Land it: deal 50 damage and heal 75 HP. Miss: take 50 damage.',
   displayKey: 'Q',
   isUltimate: true,
-  cooldown: 30000,
+  cooldown: 25000,
   cast(ctx) { ctx.fateAllIn(); },
 };
 
@@ -52,5 +52,5 @@ export const fateElement: Element = {
   name: 'Fate',
   color: 0x88eecc,
   emoji: '🃏',
-  abilities: [coinToss, slots, luck, diceOfDoom, allIn],
+  abilities: [cardThrow, reroll, preserve, enchant, allIn],
 };

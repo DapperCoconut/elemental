@@ -188,7 +188,7 @@ export class Husk extends Fighter {
   // ── Movement helpers ─────────────────────────────────────────────
 
   private get moveSpeed(): number {
-    let spd = this.speed * this.walkSpeedMult;
+    let spd = this.speed * this.walkSpeedMult * this.purgeSpeedMult;
     if (this.frostStacks > 0) spd *= Math.max(0.2, 1 - this.frostStacks * 0.1);
     return spd;
   }

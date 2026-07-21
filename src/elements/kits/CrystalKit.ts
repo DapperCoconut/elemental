@@ -17,6 +17,18 @@ export interface CrystalNode {
   targetY: number;
   lastPortalTime: number; // prevents re-entry on same portal frame
   isGateway?: boolean;    // Gateway quad perk: passthrough + beam-widen instead of bounce
+  // R+ Lattice Lace state
+  attuned?: boolean;          // purple/longer/slower; can no longer be halted by E
+  attuneSpeed?: number;       // fixed post-attune travel speed (set once, reused on re-redirects)
+  attuneFrozenUntil?: number; // paused & pointing at attuneOwner's aim until this timestamp, then redirects
+  attuneOwner?: 'player' | 'npc'; // whose aim point to redirect toward
+  circling?: boolean;         // orbiting an enemy it collided with
+  circlingUntil?: number;
+  circlingAngle?: number;
+  circlingRadius?: number;
+  resumeVx?: number;          // velocity to resume once the orbit ends
+  resumeVy?: number;
+  hasOrbited?: boolean;       // already locked onto an enemy once — can't attach again
 }
 
 export interface CrystalPortalGate {
@@ -60,6 +72,27 @@ export interface CrystalArenaApi {
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
+  /** True only when the player is crystal AND Crystal Mastery is switched on. */
+  get masteryActive(): boolean;
+  /** Mastery enhancement id bound over the given ability slot, or null if that slot is unchanged. */
+  masteryBindFor(slot: string): string | null;
+  recordMasteryStat(key: string, amount: number): void;
+}
+
+interface CrystalShredder {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  targetX: number;
+  targetY: number;
+  moving: boolean;
+  angle: number;
+  radius: number;
+  shardCount: number;
+  shardsAlive: boolean[];
+  core: Phaser.GameObjects.Arc;
+  shardSprites: Phaser.GameObjects.Rectangle[];
 }
 
 // ── CrystalKit ────────────────────────────────────────────────────────────
@@ -70,24 +103,12 @@ export class CrystalKit {
   private crystalPortals: CrystalPortalGate[] = [];
   private crystalClones: CrystalClone[] = [];
   private crystalTrickEnd = 0;
-  private crystalBarrageActive = false;
-  private crystalBarrageEnd = 0;
-  private crystalBarrageAccum = 0;
-  private crystalBarrageShots = 0;
-  private crystalBarrageTX = 0;
-  private crystalBarrageTY = 0;
   private crystalPortalCooldown = 0;
   // Crystal — NPC
   private npcCrystalNodes: CrystalNode[] = [];
   private npcCrystalPortals: CrystalPortalGate[] = [];
   private npcCrystalClones: CrystalClone[] = [];
   private npcCrystalTrickEnd = 0;
-  private npcCrystalBarrageActive = false;
-  private npcCrystalBarrageEnd = 0;
-  private npcCrystalBarrageAccum = 0;
-  private npcCrystalBarrageShots = 0;
-  private npcCrystalBarrageTX = 0;
-  private npcCrystalBarrageTY = 0;
   private npcCrystalPortalCooldown = 0;
   // Crystal — upgrade state
   private crystalRealmActive = false;              // Click+: Crystal Realm mode (walls act as mirrors)
@@ -97,9 +118,24 @@ export class CrystalKit {
   private crystalPortalSpeedBuffUntil = -99999;    // F+: speed boost after teleport
 
   // Diamond Shard (kite projectile) per-projectile bounce state
-  private kiteState = new Map<Projectile, { lastBounceObj: CrystalNode | CrystalPortalGate | null; trailing: boolean; trailAccum: number }>();
+  private kiteState = new Map<Projectile, {
+    lastBounceObj: CrystalNode | CrystalPortalGate | null;
+    trailing: boolean;
+    trailAccum: number;
+    hadWallBounce?: boolean;     // spawned with a wall-bounce charge (Shredder upgrade) — lets Atune know it's eligible for a refresh
+    frozenUntil?: number;        // Atune: stopped in place until this timestamp, then launches at attuneOwner's cursor/target
+    attuneOwner?: 'player' | 'npc';
+    bounceCount?: number;        // Mastery: how many times this shard has bounced off a wall or crystal
+  }>();
   // Targets already pierced by a given kite, so a single pass can't multi-tick the same enemy
   private kitePierceHitSets = new Map<Projectile, Set<Fighter>>();
+
+  // ── Crystal Mastery state ───────────────────────────────────────────────
+  private shardOverloadArmed = false;               // Overload requirement: edge-triggered latch on 25+ shards
+  private resonanceSpeedUntil = -99999;              // Resonance passive: 3x speed window
+  private shredders: CrystalShredder[] = [];         // Crystal Shredder bindable (player + Trick of the Light minis)
+  private shredderLastCastAt = -Infinity;
+  private shredderRelaunchRequested = false;         // Atune (R) requests an idle shredder be relaunched at the cursor
 
   constructor(private arena: CrystalArenaApi) {
     // Wall bounce (Crystal Realm / Shredder upgrade): a player-fired kite may bounce off
@@ -112,6 +148,9 @@ export class CrystalKit {
       if (go instanceof Projectile && go.active && go.texture.key === 'proj-crystal-kite' && go.isFromPlayer) {
         go.damage = Math.round(go.damage * 1.5);
         this.arena.spawnHitFlash(go.x, go.y, 0x88eeff);
+        this.arena.showFloatingText(go.x, go.y - 16, '💎 ×1.5', '#88eeff');
+        const st = this.kiteState.get(go);
+        if (st) st.bounceCount = (st.bounceCount ?? 0) + 1;
         // One wall bounce only — disable further wall collision so the next time it
         // reaches the bounds it exits the arena for good (mirror bounces stay unlimited).
         body.setCollideWorldBounds(false);
@@ -129,7 +168,7 @@ export class CrystalKit {
     for (const p of this.crystalPortals) { p.sprite.destroy(); p.label.destroy(); }
     for (const c of this.crystalClones) { c.sprite.destroy(); c.hpBar.destroy(); c.hpBg.destroy(); c.dirIndicator.destroy(); }
     this.crystalNodes = []; this.crystalPortals = []; this.crystalClones = [];
-    this.crystalTrickEnd = 0; this.crystalBarrageActive = false;
+    this.crystalTrickEnd = 0;
     this.crystalPortalCooldown = 0;
     this.crystalRealmActive = false;
     if (this.crystalRealmGfx) { this.crystalRealmGfx.destroy(); this.crystalRealmGfx = null; }
@@ -139,11 +178,18 @@ export class CrystalKit {
     for (const p of this.npcCrystalPortals) { p.sprite.destroy(); p.label.destroy(); }
     for (const c of this.npcCrystalClones) { c.sprite.destroy(); c.hpBar.destroy(); c.hpBg.destroy(); c.dirIndicator.destroy(); }
     this.npcCrystalNodes = []; this.npcCrystalPortals = []; this.npcCrystalClones = [];
-    this.npcCrystalTrickEnd = 0; this.npcCrystalBarrageActive = false;
+    this.npcCrystalTrickEnd = 0;
     this.npcCrystalPortalCooldown = 0; this.npcCrystalPortalLaserCooldown = -99999;
 
     this.kiteState.clear();
     this.kitePierceHitSets.clear();
+
+    this.shardOverloadArmed = false;
+    this.resonanceSpeedUntil = -99999;
+    for (const s of this.shredders) { s.core.destroy(); for (const sp of s.shardSprites) sp.destroy(); }
+    this.shredders = [];
+    this.shredderLastCastAt = -Infinity;
+    this.shredderRelaunchRequested = false;
   }
 
   handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
@@ -158,18 +204,31 @@ export class CrystalKit {
     if (pointer.isDown) {
       player.castAbility('crystal-laser', playerCtx);
     }
-    if (Phaser.Input.Keyboard.JustDown(eKey)) {
-      // E+: if any moving crystals exist, halt them; otherwise place new crystal
-      if (this.arena.hasUpgrade('e') && this.crystalNodes.some((n) => n.moving)) {
-        for (const n of this.crystalNodes) { n.vx = 0; n.vy = 0; n.moving = false; }
+
+    // ── Crystal Mastery — Crystal Shredder takes over whichever slot it's bound to ──
+    const shredderSlot = this.arena.masteryActive ? this.shredderSlot() : null;
+    if (shredderSlot) {
+      const sKey = shredderSlot === 'e' ? eKey : shredderSlot === 'r' ? rKey : shredderSlot === 'f' ? fKey : qKey;
+      if (Phaser.Input.Keyboard.JustDown(sKey)) {
+        this.tryCastShredder(time, mouseX, mouseY);
+      }
+    }
+
+    if (shredderSlot !== 'e' && Phaser.Input.Keyboard.JustDown(eKey)) {
+      // E+: if any halt-able (non-attuned) moving crystals exist, halt them; otherwise place a new one.
+      // R+ Lattice Lace: an attuned crystal can no longer be halted by E — recasting just adds another.
+      if (this.arena.hasUpgrade('e') && this.crystalNodes.some((n) => n.moving && !n.attuned)) {
+        for (const n of this.crystalNodes) {
+          if (n.moving && !n.attuned) { n.vx = 0; n.vy = 0; n.moving = false; }
+        }
       } else {
         player.castAbility('crystal-place', playerCtx);
       }
     }
-    if (Phaser.Input.Keyboard.JustDown(rKey)) {
-      player.castAbility('crystal-barrage', playerCtx);
+    if (shredderSlot !== 'r' && Phaser.Input.Keyboard.JustDown(rKey)) {
+      player.castAbility('crystal-atune', playerCtx);
     }
-    if (Phaser.Input.Keyboard.JustDown(fKey)) {
+    if (shredderSlot !== 'f' && Phaser.Input.Keyboard.JustDown(fKey)) {
       // F+: with 2 portals active → teleport to nearest portal instead of placing a new one
       const playerPortals = this.crystalPortals.filter((p) => p.owner === 'player');
       if (this.arena.hasUpgrade('f') && playerPortals.length >= 2 && time - this.crystalPortalCooldown > 1000) {
@@ -190,7 +249,7 @@ export class CrystalKit {
         player.castAbility('crystal-portal', playerCtx);
       }
     }
-    if (Phaser.Input.Keyboard.JustDown(qKey)) {
+    if (shredderSlot !== 'q' && Phaser.Input.Keyboard.JustDown(qKey)) {
       player.castAbility('crystal-trick', playerCtx);
     }
   }
@@ -199,12 +258,46 @@ export class CrystalKit {
     if (this.arena.elementId !== 'crystal' && this.arena.npcElementId !== 'crystal') return;
 
     const { player, npc, scene } = this.arena;
-    const BARRAGE_INTERVAL = 100; // 15 shots over 1.5s
     const allCrystals = [...this.crystalNodes, ...this.npcCrystalNodes];
     const allActiveProj = this.arena.projectiles.getChildren();
 
     // Move crystal nodes (all nodes travel from spawn, stop at target unless E+)
+    const ATTUNE_ORBIT_RADIUS = 70, ATTUNE_ORBIT_MS = 8000, ATTUNE_ORBIT_SPEED = 2.4; // rad/s
+    const ATTUNE_HIT_R = 24;
     for (const node of [...this.crystalNodes, ...this.npcCrystalNodes]) {
+      // R+ Lattice Lace: orbiting an enemy it collided with — position is driven by the
+      // orbit, not vx/vy, until the 8s window ends and it resumes its prior heading.
+      if (node.circling) {
+        const target = node.owner === 'player' ? npc : player;
+        if (time < node.circlingUntil!) {
+          node.circlingAngle = (node.circlingAngle ?? 0) + ATTUNE_ORBIT_SPEED * (delta / 1000);
+          node.x = target.x + Math.cos(node.circlingAngle) * node.circlingRadius!;
+          node.y = target.y + Math.sin(node.circlingAngle) * node.circlingRadius!;
+          node.sprite.setPosition(node.x, node.y).setAngle(node.circlingAngle * 180 / Math.PI);
+          continue;
+        }
+        node.circling = false;
+        node.circlingUntil = undefined; node.circlingRadius = undefined; node.circlingAngle = undefined;
+        node.vx = node.resumeVx ?? 0; node.vy = node.resumeVy ?? 0;
+        node.resumeVx = undefined; node.resumeVy = undefined;
+        node.moving = true;
+      }
+
+      // R+ Lattice Lace: paused, pointing at the owner's aim, until it redirects and launches
+      if (node.attuneFrozenUntil !== undefined) {
+        const aimX = node.attuneOwner === 'player' ? mouseX : player.x;
+        const aimY = node.attuneOwner === 'player' ? mouseY : player.y;
+        node.sprite.setAngle(Math.atan2(aimY - node.y, aimX - node.x) * 180 / Math.PI);
+        if (time < node.attuneFrozenUntil) continue;
+        const adx = aimX - node.x, ady = aimY - node.y;
+        const alen = Math.hypot(adx, ady) || 1;
+        const speed = node.attuneSpeed ?? 100.5;
+        node.vx = (adx / alen) * speed; node.vy = (ady / alen) * speed;
+        node.attuneFrozenUntil = undefined;
+        node.attuneOwner = undefined;
+        node.moving = true;
+      }
+
       if (node.moving) {
         node.x += node.vx * (delta / 1000);
         node.y += node.vy * (delta / 1000);
@@ -226,6 +319,21 @@ export class CrystalKit {
           node.y = Phaser.Math.Clamp(node.y, 10, H - 10);
           node.sprite.setPosition(node.x, node.y);
           node.vx = 0; node.vy = 0; node.moving = false;
+        }
+        // R+ Lattice Lace: an attuned crystal that reaches an enemy orbits them a while —
+        // but only the first time; once it's orbited once it just flies through afterward.
+        if (node.attuned && node.moving && !node.hasOrbited) {
+          const target = node.owner === 'player' ? npc : player;
+          if (target.active && target.hp > 0 && Phaser.Math.Distance.Between(node.x, node.y, target.x, target.y) <= ATTUNE_HIT_R) {
+            node.circling = true;
+            node.hasOrbited = true;
+            node.circlingUntil = time + ATTUNE_ORBIT_MS;
+            node.circlingRadius = ATTUNE_ORBIT_RADIUS;
+            node.circlingAngle = Math.atan2(node.y - target.y, node.x - target.x);
+            node.resumeVx = node.vx; node.resumeVy = node.vy;
+            node.vx = 0; node.vy = 0;
+            this.arena.showFloatingText(node.x, node.y - 16, '💎 LOCKED ON', '#cc88ff');
+          }
         }
       }
     }
@@ -290,124 +398,11 @@ export class CrystalKit {
       }
     }
 
-    // Player barrage ticks
-    if (this.crystalBarrageActive) {
-      if (time >= this.crystalBarrageEnd || this.crystalBarrageShots >= 15) {
-        this.crystalBarrageActive = false;
-      } else {
-        this.crystalBarrageAccum += delta;
-        while (this.crystalBarrageAccum >= BARRAGE_INTERVAL && this.crystalBarrageShots < 15) {
-          this.crystalBarrageAccum -= BARRAGE_INTERVAL;
-          this.crystalBarrageShots++;
-          // Q+: also shoot from 4th source (far right)
-          const sources: { x: number; y: number }[] = [{ x: player.x, y: player.y }];
-          for (const cl of this.crystalClones) sources.push({ x: player.x + cl.offsetX, y: player.y + cl.offsetY });
-          if (this.arena.hasUpgrade('q') && this.crystalClones.length > 0) {
-            sources.push({ x: player.x + 80, y: player.y });
-          }
-          for (const src of sources) {
-            const baseAngle = Math.atan2(this.crystalBarrageTY - src.y, this.crystalBarrageTX - src.x);
-            const angle = baseAngle + (Math.random() - 0.5) * 0.85;
-            const proj = new Projectile(scene, src.x, src.y, 'proj-crystal-shard', 4, true);
-            this.arena.projectiles.add(proj);
-            proj.launch(Math.cos(angle) * 430, Math.sin(angle) * 430);
-            // R+: 1s after shard fires, explode in fireworks at its current position
-            if (this.arena.hasUpgrade('r')) {
-              const trackedProj = proj;
-              scene.time.delayedCall(1000, () => {
-                if (!scene.scene.isActive() || !trackedProj.active) return;
-                const fx = trackedProj.x, fy = trackedProj.y;
-                trackedProj.setActive(false).setVisible(false);
-                for (let fwi = 0; fwi < 4; fwi++) {
-                  const fwa = (fwi / 4) * Math.PI * 2;
-                  const fwp = new Projectile(scene, fx, fy, 'proj-crystal-shard', 1, true);
-                  this.arena.projectiles.add(fwp);
-                  fwp.launch(Math.cos(fwa) * 200, Math.sin(fwa) * 200);
-                }
-                const fwExp = scene.add.circle(fx, fy, 8, 0xffee88, 0.8).setDepth(10);
-                scene.tweens.add({ targets: fwExp, scaleX: 3, scaleY: 3, alpha: 0, duration: 300, onComplete: () => fwExp.destroy() });
-              });
-            }
-          }
-        }
-      }
-    }
-
-    // NPC barrage ticks
-    if (this.npcCrystalBarrageActive) {
-      if (time >= this.npcCrystalBarrageEnd || this.npcCrystalBarrageShots >= 15) {
-        this.npcCrystalBarrageActive = false;
-      } else {
-        this.npcCrystalBarrageAccum += delta;
-        while (this.npcCrystalBarrageAccum >= BARRAGE_INTERVAL && this.npcCrystalBarrageShots < 15) {
-          this.npcCrystalBarrageAccum -= BARRAGE_INTERVAL;
-          this.npcCrystalBarrageShots++;
-          const baseAngle = Math.atan2(this.npcCrystalBarrageTY - npc.y, this.npcCrystalBarrageTX - npc.x);
-          const angle = baseAngle + (Math.random() - 0.5) * 0.85;
-          const proj = new Projectile(scene, npc.x, npc.y, 'proj-crystal-shard', 4, false);
-          this.arena.projectiles.add(proj);
-          proj.launch(Math.cos(angle) * 430, Math.sin(angle) * 430);
-          for (const cl of this.npcCrystalClones) {
-            const cx = npc.x + cl.offsetX, cy = npc.y + cl.offsetY;
-            const ca = Math.atan2(this.npcCrystalBarrageTY - cy, this.npcCrystalBarrageTX - cx) + (Math.random() - 0.5) * 0.85;
-            const cp = new Projectile(scene, cx, cy, 'proj-crystal-shard', 4, false);
-            this.arena.projectiles.add(cp);
-            cp.launch(Math.cos(ca) * 430, Math.sin(ca) * 430);
-          }
-        }
-      }
-    }
-
-    // Crystal shard hits crystal node → explosion (or gateway passthrough)
-    for (const go of allActiveProj) {
-      const proj = go as Projectile;
-      if (!proj.active || proj.texture.key !== 'proj-crystal-shard') continue;
-      for (const node of allCrystals) {
-        if (Phaser.Math.Distance.Between(proj.x, proj.y, node.x, node.y) <= 18) {
-          if (node.isGateway && node.owner === (proj.isFromPlayer ? 'player' : 'npc')) {
-            // Gateway: shard passes through — boost speed and damage once per node
-            const pb = proj.body as Phaser.Physics.Arcade.Body;
-            pb.setVelocity(pb.velocity.x * 1.2, pb.velocity.y * 1.2);
-            proj.perkBoost = Math.min(proj.perkBoost * 1.3, 5);
-            scene.tweens.add({ targets: node.sprite, alpha: 1, scaleX: 1.5, scaleY: 1.5, duration: 90, yoyo: true });
-            this.arena.showFloatingText(node.x, node.y - 14, '+BOOST', '#aaeeff');
-          } else {
-            const tgt = proj.isFromPlayer ? npc : player;
-            const isRUpgrade = proj.isFromPlayer && this.arena.hasUpgrade('r');
-            const aoeRange = isRUpgrade ? 180 : 90;
-            const aoeDmg = Math.round(2 * proj.perkBoost);
-            if (Phaser.Math.Distance.Between(node.x, node.y, tgt.x, tgt.y) <= aoeRange) {
-              tgt.takeDamage(aoeDmg);
-              this.arena.spawnHitFlash(tgt.x, tgt.y, 0x88eeff);
-            }
-            const expScale = isRUpgrade ? 18 : 9;
-            const exp = scene.add.circle(node.x, node.y, 10, 0x88eeff, 0.5).setDepth(8);
-            scene.tweens.add({ targets: exp, scaleX: expScale, scaleY: expScale, alpha: 0, duration: 260, onComplete: () => exp.destroy() });
-            scene.tweens.add({ targets: node.sprite, alpha: 1, scaleX: 1.3, scaleY: 1.3, duration: 90, yoyo: true });
-            // R+: also release fireworks at mirror on hit
-            if (isRUpgrade) {
-              const fx = node.x, fy = node.y;
-              for (let fwi = 0; fwi < 4; fwi++) {
-                const fwa = (fwi / 4) * Math.PI * 2;
-                const fwp = new Projectile(scene, fx, fy, 'proj-crystal-shard', 1, true);
-                this.arena.projectiles.add(fwp);
-                fwp.launch(Math.cos(fwa) * 200, Math.sin(fwa) * 200);
-              }
-              const fwExp = scene.add.circle(fx, fy, 8, 0xffee88, 0.8).setDepth(10);
-              scene.tweens.add({ targets: fwExp, scaleX: 3, scaleY: 3, alpha: 0, duration: 300, onComplete: () => fwExp.destroy() });
-            }
-            proj.setActive(false).setVisible(false);
-          }
-          break;
-        }
-      }
-    }
-
     // Player mirrors deflect enemy projectiles
     if (this.arena.elementId === 'crystal' && this.crystalNodes.length > 0) {
       for (const go of allActiveProj) {
         const proj = go as Projectile;
-        if (!proj.active || proj.isFromPlayer || proj.texture.key === 'proj-crystal-shard') continue;
+        if (!proj.active || proj.isFromPlayer) continue;
         for (const node of this.crystalNodes) {
           if (Phaser.Math.Distance.Between(proj.x, proj.y, node.x, node.y) <= 18) {
             const pb = proj.body as Phaser.Physics.Arcade.Body;
@@ -425,27 +420,6 @@ export class CrystalKit {
             reflected.launch(rdx * speed, rdy * speed);
             scene.tweens.add({ targets: node.sprite, alpha: 1, scaleX: 1.3, scaleY: 1.3, duration: 80, yoyo: true });
             this.arena.showFloatingText(node.x, node.y - 14, 'DEFLECT!', '#aaeeff');
-            break;
-          }
-        }
-      }
-    }
-
-    // Barrage shards TP through player portals (+50% dmg)
-    if (this.arena.elementId === 'crystal' && this.crystalPortals.length === 2) {
-      for (const go of allActiveProj) {
-        const proj = go as Projectile;
-        if (!proj.active || !proj.isFromPlayer || proj.texture.key !== 'proj-crystal-shard' || proj.portalUsed) continue;
-        for (let pi = 0; pi < 2; pi++) {
-          const gate = this.crystalPortals[pi];
-          if (Phaser.Math.Distance.Between(proj.x, proj.y, gate.x, gate.y) <= 22) {
-            const other = this.crystalPortals[1 - pi];
-            proj.setPosition(other.x, other.y);
-            proj.portalUsed = true;
-            proj.damage = Math.round(proj.damage * 1.5);
-            proj.perkBoost = Math.min(proj.perkBoost * 1.5, 10);
-            const flash = scene.add.circle(other.x, other.y, 14, 0xcc88ff, 0.6).setDepth(9);
-            scene.tweens.add({ targets: flash, scaleX: 2, scaleY: 2, alpha: 0, duration: 200, onComplete: () => flash.destroy() });
             break;
           }
         }
@@ -510,6 +484,7 @@ export class CrystalKit {
           playerBody.setVelocity(0, 0);
           this.crystalPortalCooldown = time;
           this.crystalPortalSpeedBuffUntil = time + 3000; // always give speed boost on teleport
+          this.arena.recordMasteryStat('portalTraversals', 1);
           const flash = scene.add.circle(other.x, other.y, 22, 0xcc88ff, 0.7).setDepth(15);
           scene.tweens.add({ targets: flash, scaleX: 2.5, alpha: 0, duration: 320, onComplete: () => flash.destroy() });
           break;
@@ -597,7 +572,6 @@ export class CrystalKit {
         for (const go of allActiveProj) {
           const proj = go as Projectile;
           if (!proj.active || !proj.isFromPlayer) continue;
-          if (proj.texture.key === 'proj-crystal-shard') continue; // handled in shard-vs-node check
           if (Phaser.Math.Distance.Between(proj.x, proj.y, cx, cy) <= 20) {
             cl.hp -= proj.damage;
             proj.setActive(false).setVisible(false);
@@ -612,7 +586,46 @@ export class CrystalKit {
     }
 
     // Diamond Shard (kite) bounce / portal / mine-trail logic
-    this.updateKiteProjectiles(time, delta);
+    this.updateKiteProjectiles(time, delta, mouseX, mouseY);
+
+    // ── Crystal Mastery ──────────────────────────────────────────────────
+    if (this.arena.elementId === 'crystal') {
+      // Overload requirement: 25+ of the player's own shards on screen at once (edge-triggered)
+      let playerShardCount = 0;
+      for (const go of allActiveProj) {
+        const proj = go as Projectile;
+        if (proj.active && proj.isFromPlayer && proj.texture.key === 'proj-crystal-kite') playerShardCount++;
+      }
+      if (playerShardCount >= 25) {
+        if (!this.shardOverloadArmed) {
+          this.shardOverloadArmed = true;
+          this.arena.recordMasteryStat('shardOverload', 1);
+          this.arena.showFloatingText(player.x, player.y - 40, '💎 OVERLOAD', '#88eeff');
+        }
+      } else {
+        this.shardOverloadArmed = false;
+      }
+
+      // Resonance passive: getting hit by one of your own (already-bounced) shards → 3x speed for 0.2s
+      if (this.arena.masteryActive) {
+        const RESONANCE_R = 20;
+        for (const go of allActiveProj) {
+          const proj = go as Projectile;
+          if (!proj.active || !proj.isFromPlayer || proj.texture.key !== 'proj-crystal-kite') continue;
+          const st = this.kiteState.get(proj);
+          if (!st || (st.bounceCount ?? 0) < 1) continue;
+          if (Phaser.Math.Distance.Between(proj.x, proj.y, player.x, player.y) <= RESONANCE_R) {
+            proj.setActive(false).setVisible(false);
+            (proj.body as Phaser.Physics.Arcade.Body).stop();
+            this.resonanceSpeedUntil = time + 200;
+            this.arena.spawnHitFlash(player.x, player.y, 0xff88ff);
+            this.arena.showFloatingText(player.x, player.y - 20, '✨ RESONANCE', '#ff88ff');
+          }
+        }
+      }
+
+      this.updateShredders(time, delta, mouseX, mouseY);
+    }
   }
 
   // ── Public do* methods — called from ArenaScene context builders ───────
@@ -679,22 +692,47 @@ export class CrystalKit {
     }
   }
 
-  startCrystalBarrage(isPlayer: boolean, tx: number, ty: number): void {
-    const { scene } = this.arena;
-    if (isPlayer) {
-      this.crystalBarrageActive = true;
-      this.crystalBarrageEnd = scene.time.now + 1500; // half as long
-      this.crystalBarrageAccum = 0;
-      this.crystalBarrageShots = 0;
-      this.crystalBarrageTX = tx;
-      this.crystalBarrageTY = ty;
-    } else {
-      this.npcCrystalBarrageActive = true;
-      this.npcCrystalBarrageEnd = scene.time.now + 1500;
-      this.npcCrystalBarrageAccum = 0;
-      this.npcCrystalBarrageShots = 0;
-      this.npcCrystalBarrageTX = tx;
-      this.npcCrystalBarrageTY = ty;
+  /** R: stop every Diamond Shard on screen; after 2s they launch at the caster's aim point.
+   * Also refreshes each shard's spent wall-bounce charge (idempotent — can't stack). */
+  activateCrystalAtune(isPlayer: boolean): void {
+    const { scene, player, npc } = this.arena;
+    const owner: 'player' | 'npc' = isPlayer ? 'player' : 'npc';
+    const now = scene.time.now;
+    const rUpgrade = isPlayer && this.arena.hasUpgrade('r');
+    const allProj = this.arena.projectiles.getChildren() as Projectile[];
+    for (const go of allProj) {
+      const proj = go as Projectile;
+      if (!proj.active || proj.texture.key !== 'proj-crystal-kite') continue;
+      const body = proj.body as Phaser.Physics.Arcade.Body;
+      body.setVelocity(0, 0);
+      let st = this.kiteState.get(proj);
+      if (!st) { st = { lastBounceObj: null, trailing: false, trailAccum: 0 }; this.kiteState.set(proj, st); }
+      if (st.hadWallBounce) body.setCollideWorldBounds(true); // refresh only if this shard ever had a wall-bounce charge
+      st.frozenUntil = now + 2000;
+      st.attuneOwner = owner;
+    }
+    // R+ Lattice Lace: also pause & redirect any currently-moving (E+) crystal nodes
+    if (rUpgrade) {
+      for (const node of this.crystalNodes) {
+        if (!node.moving || node.circling) continue;
+        if (!node.attuned) {
+          node.attuned = true;
+          node.attuneSpeed = (Math.hypot(node.vx, node.vy) || 134) * 0.75;
+          node.sprite.setFillStyle(0xaa44ff, 0.9).setStrokeStyle(2, 0xeeccff, 1);
+          node.sprite.setSize(node.sprite.width, node.sprite.height * 1.25);
+        }
+        node.attuneFrozenUntil = now + 2000;
+        node.attuneOwner = 'player';
+        node.vx = 0; node.vy = 0;
+      }
+    }
+    const src = isPlayer ? player : npc;
+    this.arena.spawnHitFlash(src.x, src.y, 0x88eeff);
+    this.arena.showFloatingText(src.x, src.y - 30, '💎 ATUNE', '#88eeff');
+
+    // Mastery — Crystal Shredder: Atune also launches any idle shredder back at the cursor
+    if (isPlayer && this.arena.masteryActive && this.shredders.length > 0) {
+      this.shredderRelaunchRequested = true;
     }
   }
 
@@ -786,6 +824,7 @@ export class CrystalKit {
       body.setCollideWorldBounds(true);
       body.setBounce(1, 1);
       body.onWorldBounds = true;
+      this.kiteState.set(proj, { lastBounceObj: null, trailing: false, trailAccum: 0, hadWallBounce: true });
     }
   }
 
@@ -818,8 +857,19 @@ export class CrystalKit {
     target.takeDamage(proj.damage);
     this.arena.spawnHitFlash(target.x, target.y, 0xff2222);
     this.arena.showFloatingText(target.x, target.y - 24, 'PIERCE!', '#ff2222');
+    if (proj.isFromPlayer) this.recordDoubleBounceHit(proj);
     // proj intentionally left active — updateKiteProjectiles/generic OOB cleanup own its lifetime
   }
+
+  /** Mastery — Ricochet Marksman: a shard that hit an enemy after bouncing off walls/crystals 2+ times. */
+  recordDoubleBounceHit(proj: Projectile): void {
+    const st = this.kiteState.get(proj);
+    if (st && (st.bounceCount ?? 0) >= 2) {
+      this.arena.recordMasteryStat('doubleBounceHits', 1);
+    }
+  }
+
+  getResonanceSpeedUntil(): number { return this.resonanceSpeedUntil; }
 
   // Crystal mirrors are long thin rectangles (up to 84px), not points — a fixed-radius
   // circle around their center point misses hits anywhere near their length, letting the
@@ -836,10 +886,10 @@ export class CrystalKit {
     return { x: ax + abx * t, y: ay + aby * t };
   }
 
-  private updateKiteProjectiles(time: number, delta: number): void {
+  private updateKiteProjectiles(time: number, delta: number, mouseX: number, mouseY: number): void {
     // KITE_HIT_R = mirror half-width + the (tripled) kite's own half-extent, so contact
     // registers when the shard's edge actually reaches the mirror's surface, not its center.
-    const KITE_HIT_R = 26, PORTAL_R = 20, EXIT_MARGIN = 6;
+    const KITE_HIT_R = 26, PORTAL_R = 20, EXIT_MARGIN = 6, KITE_SPEED = 520;
     const { player, npc, scene } = this.arena;
     const allProj = this.arena.projectiles.getChildren() as Projectile[];
     for (const go of allProj) {
@@ -849,6 +899,23 @@ export class CrystalKit {
       if (!st) { st = { lastBounceObj: null, trailing: false, trailAccum: 0 }; this.kiteState.set(proj, st); }
 
       const body = proj.body as Phaser.Physics.Arcade.Body;
+
+      // Atune: frozen in place, pointing at the caster's aim point, until it launches at it
+      if (st.frozenUntil !== undefined) {
+        const aimX = st.attuneOwner === 'player' ? mouseX : player.x;
+        const aimY = st.attuneOwner === 'player' ? mouseY : player.y;
+        if (time < st.frozenUntil) {
+          proj.setRotation(Math.atan2(aimY - proj.y, aimX - proj.x) + Math.PI / 2);
+          continue;
+        }
+        const adx = aimX - proj.x, ady = aimY - proj.y;
+        const alen = Math.hypot(adx, ady) || 1;
+        body.setVelocity((adx / alen) * KITE_SPEED, (ady / alen) * KITE_SPEED);
+        st.frozenUntil = undefined;
+        st.attuneOwner = undefined;
+        st.lastBounceObj = null;
+      }
+
       proj.setRotation(Math.atan2(body.velocity.y, body.velocity.x) + Math.PI / 2); // texture drawn pointing "up"
 
       const isFromPlayer = proj.isFromPlayer;
@@ -880,7 +947,10 @@ export class CrystalKit {
         const cp = this.closestPointOnMirror(node, proj.x, proj.y);
         const dist = Phaser.Math.Distance.Between(proj.x, proj.y, cp.x, cp.y);
         if (dist <= KITE_HIT_R) {
-          st.trailing = false; // any new bounce/passthrough stops a prior mine trail
+          // A fresh bounce/passthrough normally stops a prior mine trail — but once a kite has
+          // been enhanced by a moving mirror (kitePierce), that explosive trail is permanent and
+          // survives reflecting off an ordinary stagnant crystal afterward.
+          if (!(proj as any).kitePierce) st.trailing = false;
           proj.damage = Math.round(proj.damage * 1.5); // every crystal hit (bounce or gateway) scales damage, matching prior laser convention
           this.arena.spawnHitFlash(cp.x, cp.y, 0x88eeff);
           scene.tweens.add({ targets: node.sprite, alpha: 1, scaleX: 1.3, scaleY: 1.3, duration: 80, yoyo: true });
@@ -888,6 +958,8 @@ export class CrystalKit {
             // Gateway: pass straight through, no direction change
             this.arena.showFloatingText(node.x, node.y - 18, '+BOOST', '#aaeeff');
           } else {
+            // Mastery: track how many times this shard has bounced off a wall or crystal
+            st.bounceCount = (st.bounceCount ?? 0) + 1;
             // Reflect velocity off the mirror's actual surface normal at the contact point
             // (perpendicular to its rotated long axis, not radial from its center) — this is
             // what makes bounces along the mirror's length look correct instead of "weird".
@@ -922,6 +994,9 @@ export class CrystalKit {
               // Permanently transforms this kite: pierces through enemies from now on, tinted red to show it.
               (proj as any).kitePierce = true;
               proj.setTint(0xff2222);
+              // Enhanced kites fly 50% faster — stacks with repeat moving-mirror bounces, same as the ×1.5 dmg bonus.
+              body.setVelocity(bestX * speed * 1.5, bestY * speed * 1.5);
+              if (isFromPlayer) this.arena.recordMasteryStat('movingMirrorBounces', 1);
             }
           }
           st.lastBounceObj = node;
@@ -953,6 +1028,124 @@ export class CrystalKit {
             break;
           }
         }
+      }
+    }
+  }
+
+  // ── Crystal Mastery: Crystal Shredder ───────────────────────────────────
+
+  private static readonly SHREDDER_SPEED = 260;
+  private static readonly SHREDDER_COOLDOWN_MS = 14000;
+  private static readonly SHREDDER_MAIN_SHARDS = 12;
+  private static readonly SHREDDER_MINI_SHARDS = 4;
+  private static readonly SHREDDER_SHARD_HIT_R = 15;
+  private static readonly SHREDDER_ROTATE_SPEED = 3.2; // rad/s
+
+  /** The slot Crystal Shredder is bound over this match, or null when it isn't bound anywhere. */
+  private shredderSlot(): 'e' | 'r' | 'f' | 'q' | null {
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      if (this.arena.masteryBindFor(s) === 'crystal-shredder') return s;
+    }
+    return null;
+  }
+
+  /** 0 = just cast, 1 = ready. Drives the HUD bar for the bound slot. */
+  getShredderCooldownRatio(time: number): number {
+    return Math.min(1, (time - this.shredderLastCastAt) / CrystalKit.SHREDDER_COOLDOWN_MS);
+  }
+
+  private tryCastShredder(time: number, mouseX: number, mouseY: number): void {
+    if (time - this.shredderLastCastAt < CrystalKit.SHREDDER_COOLDOWN_MS) return;
+    this.shredderLastCastAt = time;
+    const { player } = this.arena;
+    player.triggerCooldown('crystal-shredder');
+
+    for (const s of this.shredders) { s.core.destroy(); for (const sp of s.shardSprites) sp.destroy(); }
+    this.shredders = [];
+
+    this.spawnShredder(player.x, player.y, mouseX, mouseY, CrystalKit.SHREDDER_MAIN_SHARDS);
+    // Trick of the Light: each active clone also throws a mini shredder
+    for (const cl of this.crystalClones) {
+      this.spawnShredder(player.x + cl.offsetX, player.y + cl.offsetY, mouseX, mouseY, CrystalKit.SHREDDER_MINI_SHARDS);
+    }
+    this.arena.showFloatingText(player.x, player.y - 30, '🔷 CRYSTAL SHREDDER', '#88eeff');
+  }
+
+  private spawnShredder(x: number, y: number, tx: number, ty: number, shardCount: number): void {
+    const { scene } = this.arena;
+    const dx = tx - x, dy = ty - y;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    const vx = (dx / dist) * CrystalKit.SHREDDER_SPEED, vy = (dy / dist) * CrystalKit.SHREDDER_SPEED;
+    const core = scene.add.circle(x, y, 10, 0xaa44ff, 0.85).setStrokeStyle(2, 0xeeccff, 1).setDepth(9);
+    const shardSprites: Phaser.GameObjects.Rectangle[] = [];
+    for (let i = 0; i < shardCount; i++) {
+      shardSprites.push(scene.add.rectangle(x, y, 10, 4, 0x88eeff, 0.95).setStrokeStyle(1, 0xffffff, 0.8).setDepth(10));
+    }
+    this.shredders.push({
+      x, y, vx, vy, targetX: tx, targetY: ty, moving: true, angle: 0,
+      radius: shardCount > CrystalKit.SHREDDER_MINI_SHARDS ? 26 : 18,
+      shardCount, shardsAlive: new Array(shardCount).fill(true), core, shardSprites,
+    });
+  }
+
+  private updateShredders(time: number, delta: number, mouseX: number, mouseY: number): void {
+    if (this.shredders.length === 0) { this.shredderRelaunchRequested = false; return; }
+
+    if (this.shredderRelaunchRequested) {
+      for (const s of this.shredders) {
+        if (s.moving) continue;
+        const rdx = mouseX - s.x, rdy = mouseY - s.y;
+        const rlen = Math.hypot(rdx, rdy) || 1;
+        s.vx = (rdx / rlen) * CrystalKit.SHREDDER_SPEED;
+        s.vy = (rdy / rlen) * CrystalKit.SHREDDER_SPEED;
+        s.targetX = mouseX; s.targetY = mouseY;
+        s.moving = true;
+      }
+      this.shredderRelaunchRequested = false;
+    }
+
+    for (let si = this.shredders.length - 1; si >= 0; si--) {
+      const s = this.shredders[si];
+      s.angle += CrystalKit.SHREDDER_ROTATE_SPEED * (delta / 1000);
+
+      if (s.moving) {
+        s.x += s.vx * (delta / 1000);
+        s.y += s.vy * (delta / 1000);
+        const toX = s.targetX - s.x, toY = s.targetY - s.y;
+        if ((toX * s.vx + toY * s.vy) <= 0) {
+          s.x = s.targetX; s.y = s.targetY;
+          s.vx = 0; s.vy = 0;
+          s.moving = false;
+        }
+      }
+      s.core.setPosition(s.x, s.y);
+
+      for (let i = 0; i < s.shardCount; i++) {
+        if (!s.shardsAlive[i]) { s.shardSprites[i].setVisible(false); continue; }
+        const ang = s.angle + (i / s.shardCount) * Math.PI * 2;
+        const sx = s.x + Math.cos(ang) * s.radius, sy = s.y + Math.sin(ang) * s.radius;
+        let hit = false;
+        for (const t of this.arena.enemies) {
+          if (!t.active || t.hp <= 0) continue;
+          if (Phaser.Math.Distance.Between(sx, sy, t.x, t.y) <= CrystalKit.SHREDDER_SHARD_HIT_R) {
+            t.takeDamage(2);
+            this.arena.spawnHitFlash(t.x, t.y, 0x88eeff);
+            hit = true;
+            break;
+          }
+        }
+        if (hit) {
+          s.shardsAlive[i] = false;
+          s.shardSprites[i].setVisible(false);
+        } else {
+          s.shardSprites[i].setPosition(sx, sy).setAngle(ang * 180 / Math.PI);
+        }
+      }
+
+      if (!s.shardsAlive.some(Boolean)) {
+        s.core.destroy();
+        for (const sp of s.shardSprites) sp.destroy();
+        this.shredders.splice(si, 1);
       }
     }
   }

@@ -3,57 +3,57 @@ import { Ability, CastContext } from './Ability';
 
 const growthClick: Ability = {
   id: 'growth-click',
-  name: 'Spore Spray',
-  description: 'Fire spores in a cone. Morph (Q) can change this to Claws or Virus.',
+  name: 'Leech Brood',
+  description: 'Launch a leech that sticks to an enemy, dealing 3 dmg every 0.5s for 3s. Max 5 leeches per enemy.',
   displayKey: 'Click',
-  cooldown: 500,
+  cooldown: 750,
   cast(ctx: CastContext) {
     ctx.fireGrowthClick(ctx.targetX, ctx.targetY);
   },
 };
 
-const mutate: Ability = {
-  id: 'mutate',
-  name: 'Mutate',
-  description: 'Choose 1 of 3 random permanent mutations. E+ upgrade: hold E to auto-pick when off cooldown.',
+const growthEvolve: Ability = {
+  id: 'growth-evolve',
+  name: 'Evolve',
+  description: 'Open the DNA upgrade tree: 3 paths of 4 upgrades, each purchasable up to 3 times with DNA earned in combat. Opening it also turns you gray and invincible for up to 5s, on a 20s cooldown.',
   displayKey: 'E',
-  cooldown: 3000,
+  cooldown: 200,
   cast(ctx: CastContext) {
-    ctx.openMutateMenu();
+    ctx.growthToggleEvolve();
   },
 };
 
-const infect: Ability = {
-  id: 'infect',
-  name: 'Infect',
-  description: 'Launch a dagger that inflicts toxic: 2 dmg/s for 5s.',
+const sporeSpread: Ability = {
+  id: 'spore-spread',
+  name: 'Spore Spread',
+  description: 'Launch 3 spores near the cursor. They grow over 5s, then each bursts into 3 secondary spores. Touching a spore deals damage scaled to its size.',
   displayKey: 'R',
-  cooldown: 8000,
+  cooldown: 6000,
   cast(ctx: CastContext) {
-    ctx.fireInfect(ctx.targetX, ctx.targetY);
+    ctx.growthSporeSpread(ctx.targetX, ctx.targetY);
   },
 };
 
-const bloat: Ability = {
-  id: 'bloat',
-  name: 'Bloat',
-  description: 'Yellow aura 5s. First hit while bloated: release 20 dmg AOE.',
+const cancer: Ability = {
+  id: 'growth-cancer',
+  name: 'Cancer',
+  description: 'Summon 3 growths that orbit you, each blocking one enemy projectile so you take no damage. Lasts 8s.',
   displayKey: 'F',
-  cooldown: 10000,
+  cooldown: 20000,
   cast(ctx: CastContext) {
-    ctx.activateBloat();
+    ctx.growthCancer();
   },
 };
 
-const mutantMorph: Ability = {
-  id: 'mutant-morph',
-  name: 'Mutant Morph',
-  description: 'Randomly change Click to Spores, Claws, or Virus. Q+ upgrade adds Plague Bomb and Bacterium.',
+const auxiliaryGrowth: Ability = {
+  id: 'auxiliary-growth',
+  name: 'Auxiliary Growth',
+  description: 'Costs 8 DNA. Plant a nest that heals to full HP, then hatches into a 200 HP clone that fights alongside you, casting Cancer, Spore Spread, and Leech Brood on its own. Die with a clone alive and you inhabit it instead.',
   displayKey: 'Q',
   isUltimate: true,
-  cooldown: 30000,
+  cooldown: 1000,
   cast(ctx: CastContext) {
-    ctx.triggerMutantMorph();
+    ctx.growthAuxiliaryGrowth();
   },
 };
 
@@ -62,5 +62,5 @@ export const growthElement: Element = {
   name: 'Growth',
   color: 0x88bb22,
   emoji: '🦠',
-  abilities: [growthClick, mutate, infect, bloat, mutantMorph],
+  abilities: [growthClick, growthEvolve, sporeSpread, cancer, auxiliaryGrowth],
 };

@@ -42,7 +42,9 @@ export interface NpcAiState {
   shadowPlayerSnared?: boolean;
   playerFrostStacks?: number;
   iceBlockActive?: boolean;
-  npcGrowthBloatActive?: boolean;
+  npcGrowthDna?: number;
+  npcGrowthHasNestOrClone?: boolean;
+  npcGrowthCancerActive?: boolean;
   crystalNodeCount?: number;
   npcSoulGhosts?: number;
   npcHuntBeastForm?: boolean;
@@ -55,9 +57,7 @@ export interface NpcAiState {
   npcTimeBounty?: number;
   npcTimeTimelessReady?: boolean;
   // Fate (alt-life)
-  fateSlotMachineCount?: number;
-  fateCoinCount?: number;
-  fateNpcLucky?: boolean;
+  fateNpcHandTypes?: string[];
   // Metal
   npcMetalArsenal?: string[];
   // Death
@@ -350,29 +350,44 @@ export class NpcOpponent extends Fighter {
   ): string | null {
     void target; void aiState;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    void skipSpecials;
 
-    // Default: launch a slime projectile toward the player
-    if (this.aiState === 'attack' || this.aiState === 'chase') {
-      if (this.castAbility('slime-shot', buildContext(aimX, aimY))) {
+    // Purge: a slow debuff ball, thrown occasionally at mid-range
+    if (!skipSpecials && dist < 420 && (this.aiState === 'attack' || this.aiState === 'chase')) {
+      if (this.castAbility('purge', buildContext(aimX, aimY))) {
         const ctx = buildContext(aimX, aimY);
         const dx = aimX - this.x;
         const dy = aimY - this.y;
         const len = Math.sqrt(dx * dx + dy * dy) || 1;
-        const speed = 480;
-        const proj = new Projectile(ctx.scene, this.x + (dx / len) * 32, this.y + (dy / len) * 32, 'proj-slime', 10, false);
+        const speed = 220;
+        const proj = new Projectile(ctx.scene, this.x + (dx / len) * 32, this.y + (dy / len) * 32, 'proj-purge', 15, false);
+        (proj as unknown as { purgeDurationMs: number }).purgeDurationMs = 3000;
         ctx.projectiles.add(proj);
         proj.launch((dx / len) * speed, (dy / len) * speed);
-        // Close range: fire a few more slimes spread
-        if (dist < 200) {
-          for (const offset of [-18, 18]) {
-            const ang = Math.atan2(dy, dx) + offset * (Math.PI / 180);
-            const sp2 = new Projectile(ctx.scene, this.x + Math.cos(ang) * 32, this.y + Math.sin(ang) * 32, 'proj-slime', 8, false);
-            ctx.projectiles.add(sp2);
-            sp2.launch(Math.cos(ang) * speed, Math.sin(ang) * speed);
-          }
+        return 'purge';
+      }
+    }
+
+    // Default: a short barrage of acid whip lashes toward the player
+    if (this.aiState === 'attack' || this.aiState === 'chase') {
+      if (this.castAbility('poison-whip', buildContext(aimX, aimY))) {
+        const ctx = buildContext(aimX, aimY);
+        const dx = aimX - this.x;
+        const dy = aimY - this.y;
+        const baseAngle = Math.atan2(dy, dx);
+        const speed = 550;
+        const count = dist < 200 ? 8 : 5;
+        for (let i = 0; i < count; i++) {
+          ctx.scene.time.delayedCall(i * 25, () => {
+            if (!this.active || this.hp <= 0) return;
+            const jitter = Phaser.Math.DegToRad(Phaser.Math.FloatBetween(-6, 6));
+            const ang = baseAngle + jitter;
+            const proj = new Projectile(ctx.scene, this.x + Math.cos(ang) * 32, this.y + Math.sin(ang) * 32, 'proj-acid-whip', 1, false);
+            ctx.projectiles.add(proj);
+            proj.launch(Math.cos(ang) * speed, Math.sin(ang) * speed);
+            proj.setRotation(ang);
+          });
         }
-        return 'slime-shot';
+        return 'poison-whip';
       }
     }
     return null;
@@ -390,36 +405,29 @@ export class NpcOpponent extends Fighter {
   ): string | null {
     void target;
     const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    const coins = aiState.fateCoinCount ?? 5;
-    const slotCount = aiState.fateSlotMachineCount ?? 0;
+    const hand = aiState.fateNpcHandTypes ?? [];
+    const attackTypes = ['laser', 'burst', 'barrier', 'explosion', 'infect', 'lightning'];
 
     if (!skip) {
-      // 1. Place slot machines near self
-      if (slotCount < 2) {
-        const px = this.x + Phaser.Math.Between(-50, 50);
-        const py = this.y + Phaser.Math.Between(-50, 50);
-        if (this.castAbility('fate-slots', buildContext(px, py))) return 'fate-slots';
+      // 1. Enchant a strong attack card occasionally
+      if (hand.some((t) => ['explosion', 'lightning', 'barrier'].includes(t)) && Math.random() < 0.15) {
+        if (this.castAbility('fate-enchant', buildContext(this.x, this.y))) return 'fate-enchant';
       }
 
-      // 2. Use Luck for lucky-slots if not already lucky
-      if (!aiState.fateNpcLucky) {
-        if (this.castAbility('fate-luck', buildContext(this.x, this.y))) return 'fate-luck';
+      // 2. All In when desperate or opportunistic and in range
+      if ((hpRatio < 0.30 || Math.random() < 0.08) && dist < 300) {
+        if (this.castAbility('fate-all-in', buildContext(aimX, aimY))) return 'fate-all-in';
       }
 
-      // 3. Dice of Doom when 3+ coins and in range
-      if (coins >= 3 && dist < 350) {
-        if (this.castAbility('fate-dice', buildContext(aimX, aimY))) return 'fate-dice';
-      }
-
-      // 4. All In when flush or desperate
-      if ((coins >= 12 || (hpRatio < 0.30 && coins >= 5)) && dist < 300) {
-        if (this.castAbility('fate-all-in', buildContext(this.x, this.y))) return 'fate-all-in';
+      // 3. Reroll a hand with no attack cards
+      if (hand.length > 0 && !hand.some((t) => attackTypes.includes(t))) {
+        if (this.castAbility('fate-reroll', buildContext(this.x, this.y))) return 'fate-reroll';
       }
     }
 
-    // 5. Coin Toss as primary attack
-    if (coins >= 2 && (this.aiState === 'attack' || this.aiState === 'chase')) {
-      if (this.castAbility('fate-coin-toss', buildContext(aimX, aimY))) return 'fate-coin-toss';
+    // 4. Throw a card as the primary attack
+    if (hand.length > 0 && (this.aiState === 'attack' || this.aiState === 'chase')) {
+      if (this.castAbility('fate-card-throw', buildContext(aimX, aimY))) return 'fate-card-throw';
     }
 
     return null;
@@ -926,24 +934,23 @@ export class NpcOpponent extends Fighter {
     const sharpY = this.y + Math.sin(sharpAngle) * dist;
 
     if (!skipSpecials) {
-      // 1. Mutate — use whenever off cooldown (always beneficial)
-      if (this.castAbility('mutate', buildContext(this.x, this.y))) return 'mutate';
-
-      // 2. Bloat — when low HP
-      if (hpRatio < 0.60 && !aiState.npcGrowthBloatActive) {
-        if (this.castAbility('bloat', buildContext(this.x, this.y))) return 'bloat';
+      // 1. Cancer — defensive shield when low HP and not already up
+      if (hpRatio < 0.5 && !aiState.npcGrowthCancerActive) {
+        if (this.castAbility('growth-cancer', buildContext(this.x, this.y))) return 'growth-cancer';
       }
 
-      // 3. Infect — when in range
-      if (dist < 400) {
-        if (this.castAbility('infect', buildContext(sharpX, sharpY))) return 'infect';
+      // 2. Auxiliary Growth — once enough DNA is banked and no clone/nest yet
+      if ((aiState.npcGrowthDna ?? 0) >= 8 && !aiState.npcGrowthHasNestOrClone) {
+        if (this.castAbility('auxiliary-growth', buildContext(this.x, this.y))) return 'auxiliary-growth';
       }
 
-      // 4. Mutant Morph — every ~30s
-      if (this.castAbility('mutant-morph', buildContext(this.x, this.y))) return 'mutant-morph';
+      // 3. Spore Spread — when in range
+      if (dist < 450) {
+        if (this.castAbility('spore-spread', buildContext(sharpX, sharpY))) return 'spore-spread';
+      }
     }
 
-    // Default: growth-click
+    // Default: Leech Brood
     if (this.castAbility('growth-click', buildContext(sharpX, sharpY))) return 'growth-click';
 
     return null;
@@ -1022,9 +1029,9 @@ export class NpcOpponent extends Fighter {
         if (this.castAbility('crystal-trick', buildContext(this.x, this.y))) return 'crystal-trick';
       }
 
-      // 2. Barrage — when in range
+      // 2. Atune — when in range, stop/redirect shards in flight
       if (dist < 380) {
-        if (this.castAbility('crystal-barrage', buildContext(target.x, target.y))) return 'crystal-barrage';
+        if (this.castAbility('crystal-atune', buildContext(target.x, target.y))) return 'crystal-atune';
       }
 
       // 3. Place Crystal — build up to 3 nodes around NPC position
