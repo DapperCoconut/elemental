@@ -69,6 +69,7 @@ import { MagicKit, MagicArenaApi } from '../elements/kits/MagicKit';
 import { TimeKit, TimeArenaApi } from '../elements/kits/TimeKit';
 import { PlasmaKit, PlasmaArenaApi } from '../elements/kits/PlasmaKit';
 import { MetalKit, MetalArenaApi } from '../elements/kits/MetalKit';
+import { GravityKit, GravityArenaApi } from '../elements/kits/GravityKit';
 import { dummyElement } from '../elements/dummy';
 import * as PlayerData from '../data/PlayerData';
 import { getEnhancement } from '../data/Mastery';
@@ -192,35 +193,7 @@ interface TimePuddle {
   owner: 'player' | 'npc';
 }
 
-interface GravSlash {
-  line: Phaser.GameObjects.Line;
-  x1: number; y1: number; x2: number; y2: number;
-  fireAt: number;
-  owner: 'player' | 'npc';
-  damage: number;
-  knockback: number;
-}
-
-interface GravMeteorShadow {
-  sprite: Phaser.GameObjects.Arc;
-  fireAt: number;
-  x: number; y: number;
-  owner: 'player' | 'npc';
-  damage: number;
-  radius: number;
-  directHitRadius: number;
-  directBonus: number;
-  frozen: boolean;
-}
-
-interface GravFirePuddle {
-  sprite: Phaser.GameObjects.Arc;
-  expiresAt: number;
-  x: number; y: number;
-  radius: number;
-  tickAccum: number;
-  owner: 'player' | 'npc';
-}
+// GravSlash, GravMeteorShadow, GravFirePuddle, GravMeteorRushShadow moved into GravityKit
 
 interface PosSnapshot {
   x: number;
@@ -377,14 +350,6 @@ interface CreationMech {
   hpBg: Phaser.GameObjects.Rectangle;
   rocketAccum: number;
   dodgeCdUntil: number;
-}
-
-interface GravMeteorRushShadow {
-  rect: Phaser.GameObjects.Rectangle;
-  fireAt: number;
-  clickX: number;
-  clickY: number;
-  edge: 'top' | 'bottom' | 'left' | 'right';
 }
 
 // MagnetRod, MagnetNail, MagnetShieldOrb, MagnetAtomSmasher imported from MagnetKit
@@ -858,47 +823,8 @@ export class ArenaScene extends Phaser.Scene {
 
   // (Fate state is now managed by FateKit)
 
-  // Gravity-specific state
-  private gravPointerDownX = 0;
-  private gravPointerDownY = 0;
-  private gravClickArmed = false;
-  private gravEKeyWasDown = false;
-  private gravEKeyHeldSince = 0;
-  private gravMeteorRainHolding = false;
-  private gravMeteorRainAura: Phaser.GameObjects.Arc | null = null;
-  private gravMeteorRainRecorded: { x: number; y: number }[] = [];
-  private gravMeteorRainLiveCount = 0;
-  private gravBombHolding = false;
-  private gravBombHoldStart = 0;
-  private gravBombVisual: Phaser.GameObjects.Arc | null = null;
-  private gravBombLastX = 0;
-  private gravBombLastY = 0;
-  private gravSpaceSlamLockUntil = 0;
-  private gravLunarShadow: Phaser.GameObjects.Arc | null = null;
-  private gravLunarRadius = 0;
-  private gravLunarFireAt = 0;
-  private gravLunarOwner: 'player' | 'npc' = 'player';
-  private gravSlashes: GravSlash[] = [];
-  private gravMeteorShadows: GravMeteorShadow[] = [];
-  private gravFirePuddles: GravFirePuddle[] = [];
-  // NPC gravity state
-  private npcGravSpaceSlamLockUntil = 0;
-
-  // Gravity upgrades
-  private gravMeteorStormAccum = 0;
-  private gravAnchor: { x: number; y: number; sprite: Phaser.GameObjects.Arc; line: Phaser.GameObjects.Line; expireAt: number } | null = null;
-  private gravMeteorRushShadows: GravMeteorRushShadow[] = [];
-  private gravMoonActive = false;
-  private gravMoonHolding = false;
-  private gravMoonHoldStart = 0;
-  private gravMoonHp = 0;
-  private gravMoonSprite: Phaser.GameObjects.Arc | null = null;
-  private gravMoonHpBar: Phaser.GameObjects.Rectangle | null = null;
-  private gravMoonHpBg: Phaser.GameObjects.Rectangle | null = null;
-  private gravMoonRamCooldown = 0;
-  private gravQWasDown = false;
-  private gravMoonChargeCircle: Phaser.GameObjects.Arc | null = null;
-  private gravMoonChargeText: Phaser.GameObjects.Text | null = null;
+  // Gravity kit
+  private gravityKit!: GravityKit;
 
   // Creation-specific state
   // Crucible (shared world object, one per match)
@@ -1044,6 +970,9 @@ export class ArenaScene extends Phaser.Scene {
 
   // ── Electricity mastery ────────────────────────────────────────────────
   private electricityMasteryOn = false;
+
+  // ── Gravity mastery ─────────────────────────────────────────────────────
+  private gravityMasteryOn = false;
 
   // ── Life mastery ──────────────────────────────────────────────────────
   private lifeMasteryOn = false;
@@ -1364,36 +1293,41 @@ export class ArenaScene extends Phaser.Scene {
     if (this.creatMech) { this.creatMech.sprite.destroy(); this.creatMech.hpBar.destroy(); this.creatMech.hpBg.destroy(); this.creatMech = null; }
 
     // Gravity reset
-    this.gravPointerDownX = 0; this.gravPointerDownY = 0; this.gravClickArmed = false;
-    this.gravEKeyWasDown = false; this.gravEKeyHeldSince = 0;
-    this.gravMeteorRainHolding = false;
-    if (this.gravMeteorRainAura) { this.gravMeteorRainAura.destroy(); this.gravMeteorRainAura = null; }
-    this.gravMeteorRainRecorded = []; this.gravMeteorRainLiveCount = 0;
-    this.gravBombHolding = false; this.gravBombHoldStart = 0;
-    if (this.gravBombVisual) { this.gravBombVisual.destroy(); this.gravBombVisual = null; }
-    this.gravBombLastX = 0; this.gravBombLastY = 0;
-    this.gravSpaceSlamLockUntil = 0; this.npcGravSpaceSlamLockUntil = 0;
-    if (this.gravLunarShadow) { this.gravLunarShadow.destroy(); this.gravLunarShadow = null; }
-    this.gravLunarFireAt = 0; this.gravLunarRadius = 0;
-    for (const s of this.gravSlashes) { s.line.destroy(); }
-    this.gravSlashes = [];
-    for (const s of this.gravMeteorShadows) { s.sprite.destroy(); }
-    this.gravMeteorShadows = [];
-    for (const p of this.gravFirePuddles) { p.sprite.destroy(); }
-    this.gravFirePuddles = [];
-
-    // Gravity upgrade reset
-    this.gravMeteorStormAccum = 0;
-    if (this.gravAnchor) { this.gravAnchor.sprite.destroy(); this.gravAnchor.line.destroy(); this.gravAnchor = null; }
-    for (const rs of this.gravMeteorRushShadows) rs.rect.destroy();
-    this.gravMeteorRushShadows = [];
-    this.gravMoonActive = false; this.gravMoonHolding = false; this.gravMoonHoldStart = 0; this.gravMoonHp = 0;
-    if (this.gravMoonSprite) { this.gravMoonSprite.destroy(); this.gravMoonSprite = null; }
-    if (this.gravMoonHpBar) { this.gravMoonHpBar.destroy(); this.gravMoonHpBar = null; }
-    if (this.gravMoonHpBg) { this.gravMoonHpBg.destroy(); this.gravMoonHpBg = null; }
-    this.gravMoonRamCooldown = 0; this.gravQWasDown = false;
-    if (this.gravMoonChargeCircle) { this.gravMoonChargeCircle.destroy(); this.gravMoonChargeCircle = null; }
-    if (this.gravMoonChargeText) { this.gravMoonChargeText.destroy(); this.gravMoonChargeText = null; }
+    if (this.gravityKit) {
+      this.gravityKit.reset();
+    } else {
+      const arena = this;
+      const gravityApi: GravityArenaApi = {
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get scene(): Phaser.Scene { return arena; },
+        get projectiles() { return arena.projectiles; },
+        get eKey() { return arena.eKey; },
+        get fKey() { return arena.fKey; },
+        get rKey() { return arena.rKey; },
+        get qKey() { return arena.qKey; },
+        get wKey() { return arena.wKey; },
+        get elementId() { return arena.elementId; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
+        get playerSpeedMult() { return arena.playerSpeedMult; },
+        set playerSpeedMult(v: number) { arena.playerSpeedMult = v; },
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        spawnQuakeWave: (owner, x, y) => arena.earthKit.spawnQuakeWave(owner, x, y),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
+        get masteryActive() { return arena.gravityMasteryOn && arena.elementId === 'gravity'; },
+        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        recordMasteryStat: (key, amount) => {
+          if (arena.elementId === 'gravity') PlayerData.addMasteryStat('gravity', key, amount);
+        },
+      };
+      this.gravityKit = new GravityKit(gravityApi);
+    }
 
     // Growth reset
     if (this.growthKit) {
@@ -1454,6 +1388,7 @@ export class ArenaScene extends Phaser.Scene {
     this.iceMasteryOn = PlayerData.isMasteryEnabled('ice');
     this.crystalMasteryOn = PlayerData.isMasteryEnabled('crystal');
     this.electricityMasteryOn = PlayerData.isMasteryEnabled('electricity');
+    this.gravityMasteryOn = PlayerData.isMasteryEnabled('gravity');
     this.waterKillWindow = [];
     this.waterMasteryTrackedEnemies = new WeakSet<Fighter>();
     this.shadowMasteryTrackedEnemies = new WeakSet<Fighter>();
@@ -2735,6 +2670,10 @@ export class ArenaScene extends Phaser.Scene {
           this.spawnDamageNumber(this.player.x, this.player.y - 34, -1); // DODGED
           proj.setActive(false).setVisible(false);
           (proj.body as Phaser.Physics.Arcade.Body).stop();
+          return;
+        }
+        // Gravity Mastery — Gravity Aura: 20% chance to catch the projectile instead of taking the hit.
+        if (this.elementId === 'gravity' && this.gravityKit.tryCatchProjectile(proj)) {
           return;
         }
         // Fighter.dodgeChance roll (stacks from Light upgrades and other sources)
@@ -4022,65 +3961,12 @@ export class ArenaScene extends Phaser.Scene {
       timeHalt: () => this.timeKit.doTimeBounty('player'),
       timeTimeless: () => this.timeKit.doTimeAlwaysNoon('player'),
       // Gravity
-      gravitySlash: (x1, y1, x2, y2) => {
-        const line = this.add.line(0, 0, x1, y1, x2, y2, 0xaa44ff, 0.85).setLineWidth(4).setDepth(6).setOrigin(0, 0);
-        this.tweens.add({ targets: line, alpha: 0, duration: 500, onComplete: () => line.destroy() });
-        this.gravSlashes.push({ line, x1, y1, x2, y2, fireAt: this.time.now + 500, owner: 'player', damage: 18, knockback: 400 });
-      },
-      gravityMeteorShadow: (x, y) => {
-        this.spawnGravMeteorShadow(x, y, 'player', false);
-      },
-      gravityMeteorRainNpcBurst: () => { /* player no-op */ },
-      gravitySpaceSlam: () => {
-        const H = this.scale.height;
-        const targetY = H - 40;
-        this.npc.takeDamage(25);
-        this.spawnHitFlash(this.npc.x, this.npc.y, 0x8844cc);
-        // Slam line visual
-        const slamLine = this.add.line(0, 0, this.npc.x, this.npc.y, this.npc.x, targetY, 0xaa44ff, 0.7).setLineWidth(6).setDepth(7).setOrigin(0, 0);
-        this.tweens.add({ targets: slamLine, alpha: 0, duration: 300, onComplete: () => slamLine.destroy() });
-        // Impact ring
-        const ring = this.add.circle(this.npc.x, targetY, 10, 0x8844cc, 0.8).setDepth(7);
-        this.tweens.add({ targets: ring, scaleX: 8, scaleY: 8, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
-        // Force enemy to floor
-        const slamX = this.npc.x;
-        this.npc.y = targetY;
-        const nb = this.npc.body as Phaser.Physics.Arcade.Body;
-        nb.setVelocity(0, 0);
-        this.gravSpaceSlamLockUntil = this.time.now + 300;
-        // R+: Gravity Anchor
-        if (this.hasUpgrade('r')) {
-          if (this.gravAnchor) { this.gravAnchor.sprite.destroy(); this.gravAnchor.line.destroy(); }
-          const anchorSpr = this.add.circle(slamX, targetY, 10, 0x5511aa, 0.9)
-            .setStrokeStyle(3, 0xaa44ff, 0.9).setDepth(8);
-          this.tweens.add({ targets: anchorSpr, scaleX: 1.4, scaleY: 1.4, yoyo: true, repeat: -1, duration: 400 });
-          const anchorLine = this.add.line(0, 0, slamX, targetY, this.npc.x, this.npc.y, 0x8844cc, 0.5)
-            .setLineWidth(2).setDepth(7).setOrigin(0, 0);
-          this.gravAnchor = { x: slamX, y: targetY, sprite: anchorSpr, line: anchorLine, expireAt: this.time.now + 3000 };
-          this.showFloatingText(slamX, targetY - 24, '⚓ Anchored!', '#aa44ff');
-        }
-      },
-      gravityGravBombSnap: (x, y) => {
-        if (Phaser.Math.Distance.Between(x, y, this.npc.x, this.npc.y) <= 120) {
-          this.npc.x = x; this.npc.y = y;
-          (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-          const ring = this.add.circle(x, y, 10, 0x8844cc, 0.85).setDepth(6);
-          this.tweens.add({ targets: ring, scaleX: 13, scaleY: 13, alpha: 0, duration: 320, onComplete: () => ring.destroy() });
-          const core = this.add.circle(x, y, 6, 0xffffff, 0.9).setDepth(7);
-          this.tweens.add({ targets: core, scaleX: 3, scaleY: 3, alpha: 0, duration: 180, onComplete: () => core.destroy() });
-        }
-      },
-      gravityLunarLanding: () => {
-        if (this.gravLunarShadow) { this.gravLunarShadow.destroy(); this.gravLunarShadow = null; }
-        const W = this.scale.width; const H = this.scale.height;
-        const lRadius = Math.min(W, H) * 0.44;
-        this.gravLunarRadius = lRadius;
-        this.gravLunarShadow = this.add.circle(W / 2, H / 2, lRadius, 0x221144, 0.55).setDepth(3);
-        this.gravLunarFireAt = this.time.now + 3000;
-        this.gravLunarOwner = 'player';
-        // Pulsing tween on the shadow
-        this.tweens.add({ targets: this.gravLunarShadow, alpha: 0.75, yoyo: true, repeat: -1, duration: 600 });
-      },
+      gravitySlash: (x1, y1, x2, y2) => this.gravityKit.doGravitySlash(x1, y1, x2, y2, 'player'),
+      gravityMeteorShadow: (x, y) => this.gravityKit.doMeteorShadow(x, y, 'player', false),
+      gravityMeteorRainNpcBurst: (tx, ty) => this.gravityKit.doMeteorRainNpcBurst(tx, ty, 'player'),
+      gravitySpaceSlam: () => this.gravityKit.doSpaceSlam('player'),
+      gravityGravBombSnap: (x, y) => this.gravityKit.doGravBombSnap(x, y, 'player'),
+      gravityLunarLanding: () => this.gravityKit.doLunarLanding('player'),
       // Legacy sand no-ops (keep for compiler compatibility)
       sandFlintlock: () => {},
       sandBlindingSand: () => {},
@@ -4483,54 +4369,12 @@ export class ArenaScene extends Phaser.Scene {
       timeHalt: () => this.timeKit.doTimeBounty('npc'),
       timeTimeless: () => this.timeKit.doTimeAlwaysNoon('npc'),
       // Gravity (NPC)
-      gravitySlash: (x1, y1, x2, y2) => {
-        const line = this.add.line(0, 0, x1, y1, x2, y2, 0xaa44ff, 0.85).setLineWidth(4).setDepth(6).setOrigin(0, 0);
-        this.tweens.add({ targets: line, alpha: 0, duration: 500, onComplete: () => line.destroy() });
-        this.gravSlashes.push({ line, x1, y1, x2, y2, fireAt: this.time.now + 500, owner: 'npc', damage: 18, knockback: 400 });
-      },
-      gravityMeteorShadow: (x, y) => {
-        this.spawnGravMeteorShadow(x, y, 'npc', false);
-      },
-      gravityMeteorRainNpcBurst: (tx, ty) => {
-        for (let i = 0; i < 4; i++) {
-          const ox = (Math.random() - 0.5) * 160;
-          const oy = (Math.random() - 0.5) * 160;
-          this.spawnGravMeteorShadow(tx + ox, ty + oy, 'npc', false);
-        }
-      },
-      gravitySpaceSlam: () => {
-        const H = this.scale.height;
-        const targetY = H - 40;
-        this.player.takeDamage(25);
-        this.spawnHitFlash(this.player.x, this.player.y, 0x8844cc);
-        const slamLine = this.add.line(0, 0, this.player.x, this.player.y, this.player.x, targetY, 0xaa44ff, 0.7).setLineWidth(6).setDepth(7).setOrigin(0, 0);
-        this.tweens.add({ targets: slamLine, alpha: 0, duration: 300, onComplete: () => slamLine.destroy() });
-        const ring = this.add.circle(this.player.x, targetY, 10, 0x8844cc, 0.8).setDepth(7);
-        this.tweens.add({ targets: ring, scaleX: 8, scaleY: 8, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
-        this.player.y = targetY;
-        (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-        this.npcGravSpaceSlamLockUntil = this.time.now + 300;
-      },
-      gravityGravBombSnap: (x, y) => {
-        if (Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) <= 120) {
-          this.player.x = x; this.player.y = y;
-          (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-          const ring = this.add.circle(x, y, 10, 0x8844cc, 0.85).setDepth(6);
-          this.tweens.add({ targets: ring, scaleX: 13, scaleY: 13, alpha: 0, duration: 320, onComplete: () => ring.destroy() });
-          const core = this.add.circle(x, y, 6, 0xffffff, 0.9).setDepth(7);
-          this.tweens.add({ targets: core, scaleX: 3, scaleY: 3, alpha: 0, duration: 180, onComplete: () => core.destroy() });
-        }
-      },
-      gravityLunarLanding: () => {
-        if (this.gravLunarShadow) { this.gravLunarShadow.destroy(); this.gravLunarShadow = null; }
-        const W = this.scale.width; const H = this.scale.height;
-        const lRadius = Math.min(W, H) * 0.44;
-        this.gravLunarRadius = lRadius;
-        this.gravLunarShadow = this.add.circle(W / 2, H / 2, lRadius, 0x221144, 0.55).setDepth(3);
-        this.gravLunarFireAt = this.time.now + 3000;
-        this.gravLunarOwner = 'npc';
-        this.tweens.add({ targets: this.gravLunarShadow, alpha: 0.75, yoyo: true, repeat: -1, duration: 600 });
-      },
+      gravitySlash: (x1, y1, x2, y2) => this.gravityKit.doGravitySlash(x1, y1, x2, y2, 'npc'),
+      gravityMeteorShadow: (x, y) => this.gravityKit.doMeteorShadow(x, y, 'npc', false),
+      gravityMeteorRainNpcBurst: (tx, ty) => this.gravityKit.doMeteorRainNpcBurst(tx, ty, 'npc'),
+      gravitySpaceSlam: () => this.gravityKit.doSpaceSlam('npc'),
+      gravityGravBombSnap: (x, y) => this.gravityKit.doGravBombSnap(x, y, 'npc'),
+      gravityLunarLanding: () => this.gravityKit.doLunarLanding('npc'),
       // Legacy sand no-ops
       sandFlintlock: () => {},
       sandBlindingSand: () => {},
@@ -7064,26 +6908,6 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
-  private spawnGravMeteorShadow(x: number, y: number, owner: 'player' | 'npc', frozen: boolean): void {
-    // Cap frozen player shadows (FIFO — remove oldest frozen player shadow)
-    if (frozen && owner === 'player') {
-      const frozenPlayerShadows = this.gravMeteorShadows.filter(s => s.frozen && s.owner === 'player');
-      const maxFrozen = this.hasUpgrade('e') ? 10 : 5;
-      if (frozenPlayerShadows.length >= maxFrozen) {
-        const oldest = frozenPlayerShadows[0];
-        oldest.sprite.destroy();
-        this.gravMeteorShadows.splice(this.gravMeteorShadows.indexOf(oldest), 1);
-      }
-    }
-    const spr = this.add.circle(x, y, 22, 0x221144, 0.7).setDepth(5)
-      .setStrokeStyle(2, 0x8844cc, 0.8);
-    if (frozen) {
-      // Pulsing while waiting for record-release
-      this.tweens.add({ targets: spr, alpha: 0.4, yoyo: true, repeat: -1, duration: 500 });
-    }
-    this.gravMeteorShadows.push({ sprite: spr, fireAt: frozen ? Infinity : this.time.now + 1500, x, y, owner, damage: 14, radius: 70, directHitRadius: 28, directBonus: 16, frozen });
-  }
-
   private spawnSoulGhost(type: 'basic' | 'ghoul' | 'banshee' | 'knight' | 'corpse' | 'necromancer', x: number, y: number, owner: 'player' | 'npc', enhanced = false): void {
     let baseHp: number;
     if (type === 'basic')      baseHp = enhanced ? 40 : 25;
@@ -7431,9 +7255,7 @@ export class ArenaScene extends Phaser.Scene {
           px = pad + Math.random() * (W - pad * 2);
           py = pad + Math.random() * (H - pad * 2);
         }
-        const puddleSpr = this.add.circle(px, py, 35, 0xff4422, 0.55).setDepth(2).setStrokeStyle(1, 0xff8844, 0.5);
-        this.tweens.add({ targets: puddleSpr, alpha: 0.3, yoyo: true, repeat: -1, duration: 800 });
-        this.gravFirePuddles.push({ sprite: puddleSpr, expiresAt: time + 8000, x: px, y: py, radius: 35, tickAccum: 0, owner });
+        this.gravityKit.addFirePuddle(px, py, owner, time);
       }
     } else if (key === 'ggs') {
       // 2 gold + 1 silver: 30% speed boost 15s
@@ -8649,222 +8471,7 @@ export class ArenaScene extends Phaser.Scene {
     } else if (this.elementId === 'sand') {
       this.timeKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'gravity') {
-      // ── GRAVITY INPUT ─────────────────────────────────────────────
-
-      // Click: tap = single meteor shadow; drag = space slash
-      // Track pointer down/up (separate from global pointerWasDown so we don't interfere)
-      if (pointer.isDown && !this.gravClickArmed) {
-        this.gravPointerDownX = mouseX;
-        this.gravPointerDownY = mouseY;
-        this.gravClickArmed = true;
-      }
-      if (!pointer.isDown && this.gravClickArmed) {
-        this.gravClickArmed = false;
-        const dx = mouseX - this.gravPointerDownX;
-        const dy = mouseY - this.gravPointerDownY;
-        const dragDist = Math.hypot(dx, dy);
-        const DRAG_THRESHOLD = 24;
-
-        if (this.gravMeteorRainHolding) {
-          // In record mode: place a frozen meteor shadow
-          const maxShadows = this.hasUpgrade('e') ? 10 : 5;
-          const frozenCount = this.gravMeteorShadows.filter(s => s.frozen && s.owner === 'player').length;
-          if (frozenCount < maxShadows) {
-            this.spawnGravMeteorShadow(mouseX, mouseY, 'player', true);
-            this.gravMeteorRainLiveCount++;
-          }
-        } else if (this.gravBombHolding && this.hasUpgrade('f')) {
-          // F+ Meteor Rush: click inside grav bomb radius spawns a rush shadow
-          const distToBomb = Math.hypot(mouseX - this.gravBombLastX, mouseY - this.gravBombLastY);
-          if (distToBomb <= 120 && dragDist < DRAG_THRESHOLD) {
-            const W = this.scale.width, H = this.scale.height;
-            const edges: Array<'top' | 'bottom' | 'left' | 'right'> = ['top', 'bottom', 'left', 'right'];
-            const edge = edges[Math.floor(Math.random() * 4)];
-            // Bar orientation matches meteor travel direction:
-            // top/bottom → meteor travels vertically → vertical bar strip at x=clickX
-            // left/right → meteor travels horizontally → horizontal bar strip at y=clickY
-            let rw = 0, rh = 0, shadowCx = 0, shadowCy = 0;
-            if (edge === 'top') { rw = 24; rh = mouseY; shadowCx = mouseX; shadowCy = mouseY / 2; }
-            else if (edge === 'bottom') { rw = 24; rh = H - mouseY; shadowCx = mouseX; shadowCy = mouseY + (H - mouseY) / 2; }
-            else if (edge === 'left') { rw = mouseX; rh = 24; shadowCx = mouseX / 2; shadowCy = mouseY; }
-            else { rw = W - mouseX; rh = 24; shadowCx = mouseX + (W - mouseX) / 2; shadowCy = mouseY; }
-            const rushRect = this.add.rectangle(shadowCx, shadowCy, rw, rh, 0x221144, 0.55)
-              .setStrokeStyle(2, 0x8844cc, 0.7).setDepth(5);
-            this.tweens.add({ targets: rushRect, alpha: 0.2, yoyo: true, repeat: 2, duration: 250 });
-            this.gravMeteorRushShadows.push({ rect: rushRect, fireAt: time + 1500, clickX: mouseX, clickY: mouseY, edge });
-          } else if (this.player.getCooldownRatio('space-slash') >= 1 && dragDist >= DRAG_THRESHOLD) {
-            playerCtx.gravitySlash(this.gravPointerDownX, this.gravPointerDownY, mouseX, mouseY);
-            this.player.triggerCooldown('space-slash');
-          }
-        } else if (this.player.getCooldownRatio('space-slash') >= 1) {
-          if (dragDist >= DRAG_THRESHOLD) {
-            // Space Slash
-            playerCtx.gravitySlash(this.gravPointerDownX, this.gravPointerDownY, mouseX, mouseY);
-            this.player.triggerCooldown('space-slash');
-          } else {
-            // Single tap meteor
-            playerCtx.gravityMeteorShadow(mouseX, mouseY);
-            this.player.triggerCooldown('space-slash');
-          }
-        }
-      }
-
-      // Meteor Storm (Click+): auto-spawn shadows near cursor while holding
-      if (pointer.isDown && this.hasUpgrade('click')) {
-        this.gravMeteorStormAccum += delta;
-        while (this.gravMeteorStormAccum >= 1000) {
-          this.gravMeteorStormAccum -= 1000;
-          const ox = (Math.random() - 0.5) * 100;
-          const oy = (Math.random() - 0.5) * 100;
-          this.spawnGravMeteorShadow(mouseX + ox, mouseY + oy, 'player', false);
-        }
-      } else {
-        this.gravMeteorStormAccum = 0;
-      }
-
-      // E: Meteor Rain — hold to record, tap to replay
-      if (this.eKey.isDown && !this.gravEKeyWasDown) {
-        // Rising edge: start recording session (E+ allows up to 10 shadows)
-        this.gravEKeyHeldSince = time;
-        this.gravMeteorRainHolding = true;
-        this.gravMeteorRainLiveCount = 0;
-        if (this.gravMeteorRainAura) this.gravMeteorRainAura.destroy();
-        this.gravMeteorRainAura = this.add.circle(this.player.x, this.player.y, 30, 0x8844cc, 0.35).setDepth(4);
-        this.tweens.add({ targets: this.gravMeteorRainAura, alpha: 0.6, yoyo: true, repeat: -1, duration: 400 });
-      }
-      if (this.gravMeteorRainHolding && this.gravMeteorRainAura) {
-        this.gravMeteorRainAura.setPosition(this.player.x, this.player.y);
-      }
-      if (!this.eKey.isDown && this.gravEKeyWasDown) {
-        // Falling edge
-        const heldMs = time - this.gravEKeyHeldSince;
-        if (this.gravMeteorRainAura) { this.gravMeteorRainAura.destroy(); this.gravMeteorRainAura = null; }
-
-        if (this.gravMeteorRainLiveCount > 0) {
-          // Recording session with shadows placed: save pattern + convert frozen to live
-          this.gravMeteorRainRecorded = this.gravMeteorShadows
-            .filter(s => s.frozen && s.owner === 'player')
-            .map(s => ({ x: s.x, y: s.y }));
-          for (const s of this.gravMeteorShadows) {
-            if (s.frozen && s.owner === 'player') {
-              s.frozen = false;
-              s.fireAt = time + 1500;
-            }
-          }
-        } else if (heldMs < 150) {
-          // Quick tap with no shadows placed: replay saved pattern
-          if (this.player.getCooldownRatio('meteor-rain') >= 1 && this.gravMeteorRainRecorded.length > 0) {
-            for (const pos of this.gravMeteorRainRecorded) {
-              this.spawnGravMeteorShadow(pos.x, pos.y, 'player', false);
-            }
-            this.player.triggerCooldown('meteor-rain');
-          }
-        }
-        this.gravMeteorRainHolding = false;
-        this.gravMeteorRainLiveCount = 0;
-      }
-      this.gravEKeyWasDown = this.eKey.isDown;
-
-      // R: Space Slam
-      if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
-        this.player.castAbility('space-slam', playerCtx);
-      }
-
-      // F: Grav Bomb — tap / short-hold = snap; hold ≥2s + release = explosion
-      if (this.fKey.isDown) {
-        if (!this.gravBombHolding && this.player.getCooldownRatio('grav-bomb') >= 1) {
-          this.gravBombHolding = true;
-          this.gravBombHoldStart = time;
-          this.gravBombLastX = mouseX;
-          this.gravBombLastY = mouseY;
-          if (this.gravBombVisual) this.gravBombVisual.destroy();
-          this.gravBombVisual = this.add.circle(mouseX, mouseY, 120, 0x8844cc, 0.18)
-            .setStrokeStyle(2, 0xaa66ff, 0.6).setDepth(4);
-        }
-        if (this.gravBombHolding) {
-          this.gravBombLastX = mouseX;
-          this.gravBombLastY = mouseY;
-          if (this.gravBombVisual) this.gravBombVisual.setPosition(mouseX, mouseY);
-          this.player.chargeRatio = Math.min(1, (time - this.gravBombHoldStart) / 2000);
-        }
-      } else if (this.gravBombHolding) {
-        // Released
-        const heldMs = time - this.gravBombHoldStart;
-        this.gravBombHolding = false;
-        this.player.chargeRatio = 0;
-        if (this.gravBombVisual) { this.gravBombVisual.destroy(); this.gravBombVisual = null; }
-        const mx = this.gravBombLastX;
-        const my = this.gravBombLastY;
-        if (heldMs >= 2000) {
-          // Charged explosion
-          if (Phaser.Math.Distance.Between(mx, my, this.npc.x, this.npc.y) <= 100) {
-            this.npc.takeDamage(40);
-            this.spawnHitFlash(this.npc.x, this.npc.y, 0x8844cc);
-          }
-          const exRing = this.add.circle(mx, my, 10, 0x8844cc, 0.9).setDepth(6);
-          this.tweens.add({ targets: exRing, scaleX: 10, scaleY: 10, alpha: 0, duration: 350, onComplete: () => exRing.destroy() });
-          const exCore = this.add.circle(mx, my, 6, 0xffffff, 0.95).setDepth(7);
-          this.tweens.add({ targets: exCore, scaleX: 4, scaleY: 4, alpha: 0, duration: 180, onComplete: () => exCore.destroy() });
-        } else {
-          // Tap snap
-          playerCtx.gravityGravBombSnap(mx, my);
-        }
-        this.player.triggerCooldown('grav-bomb');
-      }
-
-      // Q: Lunar Landing (or Moon Rider with Q+)
-      if (this.hasUpgrade('q')) {
-        if (this.qKey.isDown && !this.gravQWasDown && !this.gravMoonActive) {
-          this.gravMoonHolding = true;
-          this.gravMoonHoldStart = time;
-          if (!this.gravMoonChargeCircle) {
-            this.gravMoonChargeCircle = this.add.circle(this.player.x, this.player.y + 32, 28, 0xccbbee, 0.18)
-              .setStrokeStyle(2, 0xccbbee, 0.6).setDepth(12);
-            this.tweens.add({ targets: this.gravMoonChargeCircle, scaleX: 1.3, scaleY: 1.3, alpha: 0.4, yoyo: true, repeat: -1, duration: 250 });
-          }
-          if (!this.gravMoonChargeText) {
-            this.gravMoonChargeText = this.add.text(this.player.x, this.player.y - 50, 'Mounting 0%', { fontSize: '11px', color: '#ccbbee' }).setOrigin(0.5).setDepth(13);
-          }
-        }
-        if (this.gravMoonHolding && this.gravMoonChargeCircle && this.gravMoonChargeText) {
-          const mountPct = Math.min(100, Math.round((time - this.gravMoonHoldStart) / 3000 * 100));
-          this.gravMoonChargeText.setText(`Mounting ${mountPct}%`).setPosition(this.player.x, this.player.y - 50);
-          this.gravMoonChargeCircle.setPosition(this.player.x, this.player.y + 32);
-        }
-        if (!this.qKey.isDown && this.gravQWasDown) {
-          if (this.gravMoonChargeCircle) { this.gravMoonChargeCircle.destroy(); this.gravMoonChargeCircle = null; }
-          if (this.gravMoonChargeText) { this.gravMoonChargeText.destroy(); this.gravMoonChargeText = null; }
-          if (this.gravMoonHolding) {
-            this.gravMoonHolding = false;
-            const heldMs = time - this.gravMoonHoldStart;
-            if (heldMs >= 3000 && this.player.getCooldownRatio('lunar-landing') >= 1 && !this.gravMoonActive) {
-              // Mount the moon
-              this.gravMoonActive = true;
-              this.gravMoonHp = 100;
-              const moonR = 24; // 50% bigger than player (~16px)
-              if (this.gravMoonHpBg) this.gravMoonHpBg.destroy();
-              if (this.gravMoonHpBar) this.gravMoonHpBar.destroy();
-              if (this.gravMoonSprite) this.gravMoonSprite.destroy();
-              this.gravMoonSprite = this.add.circle(this.player.x, this.player.y + moonR + 8, moonR, 0xccbbee, 0.85)
-                .setStrokeStyle(3, 0xffffff, 0.5).setDepth(3);
-              this.gravMoonHpBg = this.add.rectangle(this.player.x, this.player.y + moonR * 2 + 16, 40, 4, 0x333333).setDepth(9);
-              this.gravMoonHpBar = this.add.rectangle(this.player.x - 20, this.player.y + moonR * 2 + 16, 40, 4, 0xccbbee).setDepth(10).setOrigin(0, 0.5);
-              this.player.triggerCooldown('lunar-landing');
-              this.showFloatingText(this.player.x, this.player.y - 30, '🌕 Moon Rider!', '#ccbbee');
-            } else {
-              // Short press: regular lunar landing
-              if (this.player.getCooldownRatio('lunar-landing') >= 1) {
-                this.player.castAbility('lunar-landing', playerCtx);
-              }
-            }
-          }
-        }
-        this.gravQWasDown = this.qKey.isDown;
-      } else {
-        if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
-          this.player.castAbility('lunar-landing', playerCtx);
-        }
-      }
+      this.gravityKit.handleInput(time, pointer, mouseX, mouseY, delta);
     } else if (this.elementId === 'creation') {
       // ── CREATION INPUT ────────────────────────────────────────────
 
@@ -10369,281 +9976,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Gravity per-frame ────────────────────────────────────────
     if (this.elementId === 'gravity' || this.npcElement.id === 'gravity') {
-      // Space Slash telegraphs: resolve damage + knockback after 500ms delay
-      for (let i = this.gravSlashes.length - 1; i >= 0; i--) {
-        const sl = this.gravSlashes[i];
-        if (time >= sl.fireAt) {
-          sl.line.destroy();
-          this.gravSlashes.splice(i, 1);
-          for (const target of (sl.owner === 'player' ? this.enemies : [this.player])) {
-            if (!target.active || target.hp <= 0) continue;
-            const d = this.pointToSegmentDist(target.x, target.y, sl.x1, sl.y1, sl.x2, sl.y2);
-            if (d <= 40) {
-              target.takeDamage(sl.damage);
-              this.spawnHitFlash(target.x, target.y, 0x8844cc);
-              const kx = sl.x2 - sl.x1;
-              const ky = sl.y2 - sl.y1;
-              const klen = Math.hypot(kx, ky) || 1;
-              (target.body as Phaser.Physics.Arcade.Body).setVelocity((kx / klen) * sl.knockback, (ky / klen) * sl.knockback);
-            }
-          }
-        }
-      }
-
-      // Meteor shadows: resolve when fireAt reached (skip frozen ones)
-      for (let i = this.gravMeteorShadows.length - 1; i >= 0; i--) {
-        const ms = this.gravMeteorShadows[i];
-        if (ms.frozen) continue;
-        if (time >= ms.fireAt) {
-          ms.sprite.destroy();
-          this.gravMeteorShadows.splice(i, 1);
-          // Falling meteor visual
-          const impactRing = this.add.circle(ms.x, ms.y, 10, 0xff8822, 0.9).setDepth(8);
-          this.tweens.add({ targets: impactRing, scaleX: 8, scaleY: 8, alpha: 0, duration: 400, onComplete: () => impactRing.destroy() });
-          const impactCore = this.add.circle(ms.x, ms.y, 7, 0xffffff, 0.95).setDepth(9);
-          this.tweens.add({ targets: impactCore, scaleX: 3, scaleY: 3, alpha: 0, duration: 200, onComplete: () => impactCore.destroy() });
-          // Small purple flash
-          const gravFlash = this.add.circle(ms.x, ms.y, 8, 0x8844cc, 0.7).setDepth(7);
-          this.tweens.add({ targets: gravFlash, scaleX: 10, scaleY: 10, alpha: 0, duration: 350, onComplete: () => gravFlash.destroy() });
-          for (const target of (ms.owner === 'player' ? this.enemies : [this.player])) {
-            if (!target.active || target.hp <= 0) continue;
-            const dist = Phaser.Math.Distance.Between(ms.x, ms.y, target.x, target.y);
-            if (dist <= ms.radius) {
-              const dmg = dist <= ms.directHitRadius ? ms.damage + ms.directBonus : ms.damage;
-              target.takeDamage(dmg);
-              this.spawnHitFlash(target.x, target.y, 0xaa66ff);
-            }
-          }
-          // E+: 15% chance to leave a fire pool on impact
-          if (ms.owner === 'player' && this.hasUpgrade('e') && Math.random() < 0.15) {
-            const puddleSpr = this.add.circle(ms.x, ms.y, 35, 0xff4422, 0.55).setDepth(2)
-              .setStrokeStyle(1, 0xff8844, 0.5);
-            this.tweens.add({ targets: puddleSpr, alpha: 0.3, yoyo: true, repeat: -1, duration: 800 });
-            this.gravFirePuddles.push({ sprite: puddleSpr, expiresAt: time + 8000, x: ms.x, y: ms.y, radius: 35, tickAccum: 0, owner: 'player' });
-          }
-          // Quake perk: spawn a mini tsunami wave on impact
-          if (this.hasPerk(ms.owner, 'quake')) this.earthKit.spawnQuakeWave(ms.owner, ms.x, ms.y);
-        }
-      }
-
-      // Grav Bomb hold drag: pull enemy toward cursor only if inside the vortex circle (runs after doAI)
-      if (this.gravBombHolding) {
-        const distToVortex = Phaser.Math.Distance.Between(this.gravBombLastX, this.gravBombLastY, this.npc.x, this.npc.y);
-        if (distToVortex <= 120) {
-          const gdx = this.gravBombLastX - this.npc.x;
-          const gdy = this.gravBombLastY - this.npc.y;
-          const gd = Math.hypot(gdx, gdy) || 1;
-          const nb2 = this.npc.body as Phaser.Physics.Arcade.Body;
-          nb2.velocity.x += (gdx / gd) * 55;
-          nb2.velocity.y += (gdy / gd) * 55;
-        }
-      }
-
-      // Space Slam: keep target locked at floor for a brief window
-      if (time < this.gravSpaceSlamLockUntil) {
-        const H = this.scale.height;
-        this.npc.y = H - 40;
-        const nb3 = this.npc.body as Phaser.Physics.Arcade.Body;
-        nb3.velocity.y = Math.min(nb3.velocity.y, 0);
-      }
-      if (time < this.npcGravSpaceSlamLockUntil) {
-        const H = this.scale.height;
-        this.player.y = H - 40;
-        const pb3 = this.player.body as Phaser.Physics.Arcade.Body;
-        pb3.velocity.y = Math.min(pb3.velocity.y, 0);
-      }
-
-      // Lunar Landing: detonate when fireAt reached
-      if (this.gravLunarShadow && time >= this.gravLunarFireAt) {
-        const lsX = this.gravLunarShadow.x;
-        const lsY = this.gravLunarShadow.y;
-        const lsR = this.gravLunarRadius;
-        this.gravLunarShadow.destroy();
-        this.gravLunarShadow = null;
-
-        // Massive impact visuals
-        const bigRing = this.add.circle(lsX, lsY, 10, 0xff8822, 0.9).setDepth(9);
-        this.tweens.add({ targets: bigRing, scaleX: lsR / 5, scaleY: lsR / 5, alpha: 0, duration: 600, onComplete: () => bigRing.destroy() });
-        const bigCore = this.add.circle(lsX, lsY, 10, 0xffffff, 0.95).setDepth(10);
-        this.tweens.add({ targets: bigCore, scaleX: 12, scaleY: 12, alpha: 0, duration: 300, onComplete: () => bigCore.destroy() });
-        const gravPulse = this.add.circle(lsX, lsY, 12, 0x8844cc, 0.7).setDepth(8);
-        this.tweens.add({ targets: gravPulse, scaleX: lsR / 6, scaleY: lsR / 6, alpha: 0, duration: 500, onComplete: () => gravPulse.destroy() });
-
-        // Deal damage to enemies inside the shadow circle
-        for (const target of (this.gravLunarOwner === 'player' ? this.enemies : [this.player])) {
-          if (!target.active || target.hp <= 0) continue;
-          if (Phaser.Math.Distance.Between(lsX, lsY, target.x, target.y) <= lsR) {
-            target.takeDamage(60);
-            this.spawnHitFlash(target.x, target.y, 0xaa66ff);
-          }
-        }
-
-        // Spawn 20 fire puddles randomly inside the shadow circle
-        for (let pi = 0; pi < 20; pi++) {
-          // Uniform random point in circle: use sqrt of uniform random for radius
-          const r = lsR * 0.9 * Math.sqrt(Math.random());
-          const angle = Math.random() * Math.PI * 2;
-          const px = lsX + Math.cos(angle) * r;
-          const py = lsY + Math.sin(angle) * r;
-          const puddleSpr = this.add.circle(px, py, 35, 0xff4422, 0.55).setDepth(2)
-            .setStrokeStyle(1, 0xff8844, 0.5);
-          this.tweens.add({ targets: puddleSpr, alpha: 0.3, yoyo: true, repeat: -1, duration: 800 });
-          this.gravFirePuddles.push({ sprite: puddleSpr, expiresAt: time + 8000, x: px, y: py, radius: 35, tickAccum: 0, owner: this.gravLunarOwner });
-        }
-        // Quake perk: spawn a mini tsunami wave at lunar landing impact
-        if (this.hasPerk(this.gravLunarOwner, 'quake')) this.earthKit.spawnQuakeWave(this.gravLunarOwner, lsX, lsY);
-      }
-
-      // Gravity Anchor (R+): tether enemy near anchor point
-      if (this.gravAnchor) {
-        const anc = this.gravAnchor;
-        if (time >= anc.expireAt) {
-          anc.sprite.destroy(); anc.line.destroy(); this.gravAnchor = null;
-        } else {
-          anc.line.setTo(anc.x, anc.y, this.npc.x, this.npc.y);
-          const distToAnc = Phaser.Math.Distance.Between(anc.x, anc.y, this.npc.x, this.npc.y);
-          const maxDist = 150;
-          if (distToAnc > maxDist) {
-            const pullDx = anc.x - this.npc.x;
-            const pullDy = anc.y - this.npc.y;
-            const pullLen = Math.hypot(pullDx, pullDy) || 1;
-            const nb = this.npc.body as Phaser.Physics.Arcade.Body;
-            const pullStr = (distToAnc - maxDist) * 5;
-            nb.velocity.x += (pullDx / pullLen) * pullStr;
-            nb.velocity.y += (pullDy / pullLen) * pullStr;
-          }
-        }
-      }
-
-      // Meteor Rush shadows (F+): resolve when fireAt reached
-      for (let i = this.gravMeteorRushShadows.length - 1; i >= 0; i--) {
-        const rs = this.gravMeteorRushShadows[i];
-        if (time >= rs.fireAt) {
-          rs.rect.destroy();
-          this.gravMeteorRushShadows.splice(i, 1);
-          const W = this.scale.width, H = this.scale.height;
-          // Determine start position and velocity based on edge
-          let startX = rs.clickX, startY = rs.clickY;
-          let vx = 0, vy = 0;
-          const rushSpeed = 900;
-          if (rs.edge === 'top') { startX = rs.clickX; startY = -30; vy = rushSpeed; }
-          else if (rs.edge === 'bottom') { startX = rs.clickX; startY = H + 30; vy = -rushSpeed; }
-          else if (rs.edge === 'left') { startX = -30; startY = rs.clickY; vx = rushSpeed; }
-          else { startX = W + 30; startY = rs.clickY; vx = -rushSpeed; }
-          // Spawn as a fast-moving meteor projectile (manual movement)
-          const rushSpr = this.add.circle(startX, startY, 23, 0xff8822, 0.9).setDepth(8)
-            .setStrokeStyle(2, 0xffffff, 0.5);
-          this.tweens.add({ targets: rushSpr, alpha: 0.7, yoyo: true, repeat: -1, duration: 100 });
-          // Add to gravMeteorShadows as a fake live meteor that immediately impacts from its position
-          // We'll track it manually with a special marker: use existing shadow with offset
-          const fakeMs = { sprite: rushSpr as unknown as Phaser.GameObjects.Arc, fireAt: time + (rs.edge === 'top' || rs.edge === 'bottom' ? H / rushSpeed * 1000 : W / rushSpeed * 1000), x: startX, y: startY, owner: 'player' as const, damage: 14, radius: 70, directHitRadius: 28, directBonus: 16, frozen: false, vx, vy };
-          // Move it manually each frame until it hits or leaves screen
-          // Use a timer to move and check
-          const rushInterval = this.time.addEvent({
-            delay: 16,
-            loop: true,
-            callback: () => {
-              if (!rushSpr.active) { rushInterval.remove(); return; }
-              rushSpr.x += vx * 0.016;
-              rushSpr.y += vy * 0.016;
-              if (rushSpr.x < -60 || rushSpr.x > W + 60 || rushSpr.y < -60 || rushSpr.y > H + 60) {
-                rushSpr.destroy(); rushInterval.remove(); return;
-              }
-              const rushDist = Phaser.Math.Distance.Between(rushSpr.x, rushSpr.y, this.npc.x, this.npc.y);
-              if (rushDist <= fakeMs.radius) {
-                const dmg = rushDist <= fakeMs.directHitRadius ? fakeMs.damage + fakeMs.directBonus : fakeMs.damage;
-                this.npc.takeDamage(dmg);
-                this.spawnHitFlash(this.npc.x, this.npc.y, 0xaa66ff);
-                // Impact visual
-                const impRing = this.add.circle(rushSpr.x, rushSpr.y, 12, 0xff8822, 0.9).setDepth(8);
-                this.tweens.add({ targets: impRing, scaleX: 6, scaleY: 6, alpha: 0, duration: 300, onComplete: () => impRing.destroy() });
-                // Quake perk: spawn mini wave at rush impact
-                if (this.hasPerk('player', 'quake')) this.earthKit.spawnQuakeWave('player', rushSpr.x, rushSpr.y);
-                rushSpr.destroy(); rushInterval.remove();
-              }
-            },
-          });
-          void fakeMs;
-        }
-      }
-
-      // Moon Rider (Q+): update moon position, handle ramming and damage absorption
-      if (this.gravMoonActive && this.gravMoonSprite) {
-        const moonR = 24;
-        this.gravMoonSprite.setPosition(this.player.x, this.player.y + moonR + 8);
-        if (this.gravMoonHpBg) this.gravMoonHpBg.setPosition(this.player.x, this.player.y + moonR * 2 + 18);
-        if (this.gravMoonHpBar) {
-          this.gravMoonHpBar.setPosition(this.player.x - 20, this.player.y + moonR * 2 + 18);
-          this.gravMoonHpBar.setSize(40 * Math.max(0, this.gravMoonHp / 100), 4);
-        }
-        // Speed boost
-        this.playerSpeedMult *= 1.25;
-        // Ram: if moon overlaps enemy, launch them
-        const moonDist = Phaser.Math.Distance.Between(this.gravMoonSprite.x, this.gravMoonSprite.y, this.npc.x, this.npc.y);
-        if (moonDist <= moonR + 18 && time > this.gravMoonRamCooldown) {
-          this.gravMoonRamCooldown = time + 800;
-          this.npc.takeDamage(15);
-          this.spawnHitFlash(this.npc.x, this.npc.y, 0xccbbee);
-          this.showFloatingText(this.npc.x, this.npc.y - 24, '15', '#ccbbee');
-          // Launch enemy toward nearest wall but cap
-          const W2 = this.scale.width, H2 = this.scale.height;
-          const launchDx = this.npc.x - this.player.x;
-          const launchDy = this.npc.y - this.player.y;
-          const launchLen = Math.hypot(launchDx, launchDy) || 1;
-          const targetWallX = launchDx > 0 ? W2 - 60 : 60;
-          const targetWallY = launchDy > 0 ? H2 - 60 : 60;
-          const capX = Math.abs(launchDx) > Math.abs(launchDy) ? targetWallX : this.npc.x + (launchDx / launchLen) * 200;
-          const capY = Math.abs(launchDy) > Math.abs(launchDx) ? targetWallY : this.npc.y + (launchDy / launchLen) * 200;
-          const nb = this.npc.body as Phaser.Physics.Arcade.Body;
-          nb.setVelocity((capX - this.npc.x) * 4, (capY - this.npc.y) * 4);
-        }
-        // Moon absorbs incoming hits (damage absorber on player)
-        if (!this.player.damageAbsorber) {
-          this.player.damageAbsorber = (amount: number) => {
-            if (!this.gravMoonActive || !this.gravMoonSprite) return false;
-            this.gravMoonHp -= amount;
-            if (this.gravMoonHpBar) this.gravMoonHpBar.setSize(40 * Math.max(0, this.gravMoonHp / 100), 4);
-            this.spawnHitFlash(this.gravMoonSprite.x, this.gravMoonSprite.y, 0xccbbee);
-            if (this.gravMoonHp <= 0) {
-              // Moon destroyed
-              this.gravMoonActive = false;
-              if (this.gravMoonSprite) { this.gravMoonSprite.destroy(); this.gravMoonSprite = null; }
-              if (this.gravMoonHpBar) { this.gravMoonHpBar.destroy(); this.gravMoonHpBar = null; }
-              if (this.gravMoonHpBg) { this.gravMoonHpBg.destroy(); this.gravMoonHpBg = null; }
-              this.player.damageAbsorber = null;
-              this.showFloatingText(this.player.x, this.player.y - 30, 'Moon Destroyed!', '#ff8888');
-              const moonBurst = this.add.circle(this.player.x, this.player.y, 14, 0xccbbee, 0.8).setDepth(9);
-              this.tweens.add({ targets: moonBurst, scaleX: 5, scaleY: 5, alpha: 0, duration: 400, onComplete: () => moonBurst.destroy() });
-            }
-            return true;
-          };
-        }
-      } else if (!this.gravMoonActive && this.player.damageAbsorber && this.elementId === 'gravity') {
-        // Clear moon absorber if moon died
-        this.player.damageAbsorber = null;
-      }
-
-      // Gravity fire puddle tick + expiry
-      for (let i = this.gravFirePuddles.length - 1; i >= 0; i--) {
-        const fp = this.gravFirePuddles[i];
-        if (time > fp.expiresAt) {
-          fp.sprite.destroy();
-          this.gravFirePuddles.splice(i, 1);
-          continue;
-        }
-        const _fpTargets = (fp.owner === 'player' ? this.enemies : [this.player])
-          .filter(t => t.active && t.hp > 0 && Phaser.Math.Distance.Between(fp.x, fp.y, t.x, t.y) <= fp.radius);
-        if (_fpTargets.length > 0) {
-          fp.tickAccum += delta;
-          if (fp.tickAccum >= 300) {
-            fp.tickAccum -= 300;
-            for (const fTarget of _fpTargets) {
-              fTarget.takeDamage(4);
-              this.spawnHitFlash(fTarget.x, fTarget.y, 0xff6633);
-            }
-          }
-        }
-      }
+      this.gravityKit.update(time, delta);
     }
 
     // ── Creation per-frame ────────────────────────────────────────
@@ -11321,6 +10654,8 @@ export class ArenaScene extends Phaser.Scene {
         entry.fill.setSize(entry.maxWidth * this.iceKit.getIcicleImpaleCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'kinetic-bomb') {
         entry.fill.setSize(entry.maxWidth * this.electricityKit.getKineticBombCooldownRatio(time), entry.fill.height);
+      } else if (entry.abilityId === 'starfall') {
+        entry.fill.setSize(entry.maxWidth * this.gravityKit.getStarfallCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'crystal-shredder') {
         entry.fill.setSize(entry.maxWidth * this.crystalKit.getShredderCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'flame-body') {
@@ -11346,7 +10681,7 @@ export class ArenaScene extends Phaser.Scene {
           entry.fill.setSize(entry.maxWidth * (this.airConsecutiveHits / 3), entry.fill.height);
         }
       } else if (entry.abilityId === 'grav-bomb') {
-        if (this.gravBombHolding) {
+        if (this.gravityKit.isGravBombHolding()) {
           entry.fill.setSize(entry.maxWidth * this.player.chargeRatio, entry.fill.height);
         } else {
           entry.fill.setSize(entry.maxWidth * this.player.getCooldownRatio('grav-bomb'), entry.fill.height);

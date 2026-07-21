@@ -495,6 +495,52 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       },
     ],
   },
+  gravity: {
+    elementId: 'gravity',
+    name: 'Gravity Mastery',
+    enhancedEmoji: '🌙',
+    enhancedColor: 0x3d1a66,
+    requirements: [
+      {
+        key: 'meteorHits',
+        label: 'Meteor Storm',
+        howTo: 'Hit enemies with falling meteors — Meteor Shadow, Meteor Rain, and the F+ Meteor Rush all count',
+        target: 500,
+      },
+      {
+        key: 'tetherDamage',
+        label: 'Anchored Prey',
+        howTo: 'Damage enemies while they are tethered by your Gravity Anchor (R+ Space Slam)',
+        target: 200,
+      },
+      {
+        key: 'moonHits',
+        label: 'Lunar Impact',
+        howTo: 'Hit enemies with the colossal meteor from Lunar Landing (Q)',
+        target: 20,
+      },
+      {
+        key: 'moonRams',
+        label: 'Moon Rider',
+        howTo: 'Ram enemies while mounted on the moon (Q+ Moon Rider)',
+        target: 5,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'gravity-aura',
+        name: 'Gravity Aura',
+        description: 'Passive: incoming projectiles have a 20% chance to be caught in an aura around you instead of hitting you. Caught projectiles orbit you for 10 seconds — any other projectile that strikes an orbiting one destroys both. After 10 seconds an unspent orbiter fires back out at your cursor.',
+      },
+      {
+        id: 'starfall',
+        name: 'Starfall',
+        bindable: true,
+        hudDescription: 'Meteor shower that grounds everyone it hits',
+        description: '20 small gravity orbs rain down from the top of the arena, falling fast toward the bottom. Each deals 10 damage on the way down and 15 on impact. Anyone hit is Grounded for 10 seconds — pinned to the arena floor, able to only walk left and right, occasionally hopping a little before gravity pulls them back down. 18 second cooldown.',
+      },
+    ],
+  },
 };
 
 export function getMasteryDef(elementId: string): MasteryDef | undefined {
