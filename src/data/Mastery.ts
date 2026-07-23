@@ -541,6 +541,52 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       },
     ],
   },
+  soul: {
+    elementId: 'soul',
+    name: 'Soul Mastery',
+    enhancedEmoji: '💀',
+    enhancedColor: 0x7744aa,
+    requirements: [
+      {
+        key: 'amalgamsSummoned',
+        label: 'Necromancer',
+        howTo: 'Raise amalgams with Arise (E)',
+        target: 200,
+      },
+      {
+        key: 'amalgamHealed',
+        label: 'Shepherd',
+        howTo: 'Heal your amalgams by recalling them with Death Whistle (F)',
+        target: 200,
+      },
+      {
+        key: 'amalgamDamage',
+        label: 'Swarm Lord',
+        howTo: 'Deal damage with your amalgams',
+        target: 1000,
+      },
+      {
+        key: 'tormentBurns',
+        label: 'Tormentor',
+        howTo: 'Set amalgams ablaze with Hell\'s Torment (Q)',
+        target: 25,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'strength-in-numbers',
+        name: 'Strength in Numbers',
+        description: 'Passive: your amalgams are linked by faint grey threads. Every other amalgam on the field grants each of them 5% damage resistance, up to a 75% cap — a big enough horde is nearly unkillable.',
+      },
+      {
+        id: 'grave-mistake',
+        name: 'Grave Mistake',
+        bindable: true,
+        hudDescription: 'Awaken a hostile Alpha; slay it to claim Soul Screech',
+        description: 'Destroy your nearest grave to awaken the Alpha Amalgam — a huge 200 HP horror that turns on you, biting for 20 and blasting cones of green bullets that anti-heal you for 5s (no ally healing while it lasts). Your zombies and shots can bring it down; kill it and it rises to fight for you, and this ability transforms into Soul Screech: a 25-damage scream that heals nearby allies for half the HP you\'re missing this round, spilling the excess into weak HP. 12 second cooldown.',
+      },
+    ],
+  },
   sand: {
     elementId: 'sand',
     name: 'Time Mastery',

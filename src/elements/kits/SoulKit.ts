@@ -31,7 +31,27 @@ export interface SoulArenaApi {
   dealAoeDamageFromOwner(x: number, y: number, radius: number, damage: number, owner: Owner): void;
   buildPlayerContext(x: number, y: number): CastContext;
   buildNpcContext(x: number, y: number): CastContext;
+  /** True only when the player is soul AND Soul Mastery is switched on. */
+  get masteryActive(): boolean;
+  /** True only when the online opponent is soul AND has Soul Mastery on. */
+  get npcMasteryActive(): boolean;
+  masteryBindFor(slot: string): string | null;
+  recordMasteryStat(key: string, amount: number): void;
 }
+
+// ── Mastery: Strength in Numbers passive + Grave Mistake bindable ─────────────
+const AMALGAM_RESIST_PER = 0.05;
+const AMALGAM_RESIST_CAP = 0.75;
+const ALPHA_HP = 200;
+const ALPHA_BITE_DMG = 20;
+const ALPHA_SPEED = 85;
+const ALPHA_CONE_INTERVAL_MS = 3000;
+const ALPHA_CONE_BULLETS = 5;
+const ALPHA_CONE_DAMAGE = 5;
+const ALPHA_ANTIHEAL_MS = 5000;
+const SOUL_SCREECH_RADIUS = 165;
+const SOUL_SCREECH_DAMAGE = 25;
+const SOUL_SCREECH_COOLDOWN_MS = 12000;
 
 // ── World-object types ───────────────────────────────────────────────────────
 
@@ -93,6 +113,9 @@ interface Amalgam {
   inflamed: boolean;
   /** Inflamed: cumulative damage taken since the last 20-dmg ember release. */
   damageAccum: number;
+  /** Grave Mistake: the friendly alpha fires a periodic cone. */
+  isAlpha?: boolean;
+  alphaNextConeAt?: number;
 }
 
 interface Ember {
@@ -118,6 +141,8 @@ interface SoulShot {
   /** True for a hostile grave zombie's shot (hits the caster); false for a friendly amalgam's (hits foes). */
   hitsCaster: boolean;
   expiresAt: number;
+  /** Grave Mistake alpha cone: applies anti-heal to the player on hit. */
+  antiHeal?: boolean;
 }
 
 // ── Tuning ────────────────────────────────────────────────────────────────────
@@ -221,6 +246,15 @@ export class SoulKit {
   private amalgams: Amalgam[] = [];
   private embers: Ember[] = [];
   private soulShots: SoulShot[] = [];
+
+  // ── Mastery: Strength in Numbers + Grave Mistake ──────────────────────
+  private soulGreyLines: Phaser.GameObjects.Graphics | null = null;
+  private alphaState: 'none' | 'hostile' | 'defeated' = 'none';
+  private alphaHusk: Husk | null = null;
+  private alphaDecor: Phaser.GameObjects.Graphics | null = null;
+  private alphaNextConeAt = 0;
+  private soulAntiHealUntil = 0;
+  private soulScreechLastCastAt = -SOUL_SCREECH_COOLDOWN_MS;
   private corpseQueue: Record<Owner, Corpse[]> = { player: [], npc: [] };
   private hudIcons: Phaser.GameObjects.Image[] = [];
 
@@ -258,6 +292,16 @@ export class SoulKit {
     this.embers = [];
     for (const s of this.soulShots) s.gfx.destroy();
     this.soulShots = [];
+
+    // Mastery — Strength in Numbers + Grave Mistake
+    this.soulGreyLines?.destroy(); this.soulGreyLines = null;
+    if (this.alphaHusk?.scene) this.alphaHusk.destroy();
+    this.alphaHusk = null;
+    this.alphaDecor?.destroy(); this.alphaDecor = null;
+    this.alphaState = 'none';
+    this.alphaNextConeAt = 0;
+    this.soulAntiHealUntil = 0;
+    this.soulScreechLastCastAt = -SOUL_SCREECH_COOLDOWN_MS;
     this.corpseQueue = { player: [], npc: [] };
     for (const t of this.hudIcons) t.destroy();
     this.hudIcons = [];
@@ -288,13 +332,20 @@ export class SoulKit {
     if (!player.active || player.hp <= 0) return;
     const ctx = () => this.arena.buildPlayerContext(mouseX, mouseY);
 
+    // ── Mastery — Grave Mistake takes over its bound slot ────────────────
+    const graveSlot = this.arena.masteryActive ? this.graveMistakeSlot() : null;
+    if (graveSlot) {
+      const gk = graveSlot === 'e' ? eKey : graveSlot === 'r' ? rKey : graveSlot === 'f' ? fKey : qKey;
+      if (Phaser.Input.Keyboard.JustDown(gk)) this.tryCastGraveMistake(time, mouseX, mouseY);
+    }
+
     // Click: Lantern Light — held down, rate-limited by the ability's own short cooldown.
     if (pointer.isDown) player.castAbility('soul-lantern-light', ctx());
 
-    if (Phaser.Input.Keyboard.JustDown(eKey)) player.castAbility('soul-arise', ctx());
-    if (Phaser.Input.Keyboard.JustDown(rKey)) player.castAbility('soul-grave', ctx());
-    if (Phaser.Input.Keyboard.JustDown(fKey)) player.castAbility('soul-death-whistle', ctx());
-    if (Phaser.Input.Keyboard.JustDown(qKey)) player.castAbility('soul-hells-torment', ctx());
+    if (graveSlot !== 'e' && Phaser.Input.Keyboard.JustDown(eKey)) player.castAbility('soul-arise', ctx());
+    if (graveSlot !== 'r' && Phaser.Input.Keyboard.JustDown(rKey)) player.castAbility('soul-grave', ctx());
+    if (graveSlot !== 'f' && Phaser.Input.Keyboard.JustDown(fKey)) player.castAbility('soul-death-whistle', ctx());
+    if (graveSlot !== 'q' && Phaser.Input.Keyboard.JustDown(qKey)) player.castAbility('soul-hells-torment', ctx());
   }
 
   // ── Per-frame update ────────────────────────────────────────────────
@@ -306,6 +357,9 @@ export class SoulKit {
     this.updateAmalgams(time, delta);
     this.updateEmbers(time, delta);
     this.updateSoulShots(time, delta);
+    this.updateStrengthInNumbers();
+    this.updateAlpha(time, delta);
+    this.updateAlphaAllies(time);
     this.updateWardPerk();
     this.updateHud();
   }
@@ -373,6 +427,7 @@ export class SoulKit {
     const now = this.arena.scene.time.now;
     for (const rec of this.amalgams) {
       if (rec.owner === owner && rec.husk.active && rec.husk.hp > 0) {
+        if (!rec.burning && owner === 'player') this.arena.recordMasteryStat('tormentBurns', 1);
         rec.burning = true;
         rec.nextEmberAt = now;
         rec.husk.setTint(this.baseTint(rec));
@@ -432,7 +487,11 @@ export class SoulKit {
 
     const husk = new Husk(scene, ox, oy, maxHp, Math.round(speed), biteDmg, AMALGAM_BITE_CD_MS, variant);
     husk.world = this.huskWorld;
-    husk.onBite = (dmg, target) => target.takeDamage(dmg);
+    husk.onBite = (dmg, target) => {
+      target.takeDamage(dmg);
+      if (owner === 'player') this.arena.recordMasteryStat('amalgamDamage', dmg);
+    };
+    if (owner === 'player') this.arena.recordMasteryStat('amalgamsSummoned', 1);
 
     const stitches = scene.add.graphics().setDepth(6);
     const auraGfx = angered || inflamed ? scene.add.graphics().setDepth(6) : null;
@@ -485,7 +544,12 @@ export class SoulKit {
       return this.arena.enemies.filter((e) => e.active && e.hp > 0 && e.element.id === 'husk');
     }
     const opposing = owner === 'player' ? this.arena.npc : this.arena.player;
-    return opposing.active && opposing.hp > 0 ? [opposing] : [];
+    const out: Fighter[] = opposing.active && opposing.hp > 0 ? [opposing] : [];
+    // Your zombies also swarm a loose hostile alpha (Grave Mistake).
+    if (owner === 'player' && this.alphaState === 'hostile' && this.alphaHusk?.active && this.alphaHusk.hp > 0) {
+      out.push(this.alphaHusk);
+    }
+    return out;
   }
 
   private nearestOf(list: Fighter[], x: number, y: number): Fighter | null {
@@ -538,8 +602,15 @@ export class SoulKit {
         const dist = Math.hypot(dx, dy) || 1;
         if (dist <= WHISTLE_ARRIVE_RADIUS) {
           body.setVelocity(0, 0);
-          husk.heal(Math.round(husk.maxHp * WHISTLE_HEAL_FRAC));
-          this.arena.showFloatingText(husk.x, husk.y - 30, '💜 HEALED', '#cc99ff');
+          // Mastery — Grave Mistake anti-heal blocks ally healing from the whistle.
+          if (!(rec.owner === 'player' && time < this.soulAntiHealUntil)) {
+            const healAmt = Math.round(husk.maxHp * WHISTLE_HEAL_FRAC);
+            husk.heal(healAmt);
+            if (rec.owner === 'player') this.arena.recordMasteryStat('amalgamHealed', healAmt);
+            this.arena.showFloatingText(husk.x, husk.y - 30, '💜 HEALED', '#cc99ff');
+          } else {
+            this.arena.showFloatingText(husk.x, husk.y - 30, '🚫 ANTI-HEAL', '#ff5555');
+          }
           if (rec.owner === 'player' && this.arena.hasUpgrade('f')) {
             rec.carrionUntil = time + CARRION_BUFF_MS;
             husk.walkSpeedMult = CARRION_SPEED_MULT;
@@ -678,6 +749,210 @@ export class SoulKit {
     this.applyDotToFoesInRadius(rec.owner, husk.x, husk.y, TORMENT_AOE_RADIUS);
   }
 
+  // ── Mastery — Strength in Numbers passive ─────────────────────────────
+
+  private updateStrengthInNumbers(): void {
+    if (!this.arena.masteryActive) {
+      if (this.soulGreyLines) { this.soulGreyLines.clear(); }
+      return;
+    }
+    const mine = this.amalgams.filter((a) => a.owner === 'player' && a.husk.active && a.husk.hp > 0);
+    const resist = Math.min(AMALGAM_RESIST_CAP, AMALGAM_RESIST_PER * Math.max(0, mine.length - 1));
+    const mult = 1 - resist;
+    for (const a of mine) a.husk.incomingDamageMultiplier = mult;
+    if (!this.soulGreyLines) this.soulGreyLines = this.arena.scene.add.graphics().setDepth(2);
+    const g = this.soulGreyLines;
+    g.clear();
+    g.lineStyle(1, 0x888888, 0.3);
+    for (let i = 0; i < mine.length; i++) {
+      for (let j = i + 1; j < mine.length; j++) {
+        g.lineBetween(mine[i].husk.x, mine[i].husk.y, mine[j].husk.x, mine[j].husk.y);
+      }
+    }
+  }
+
+  // ── Mastery — Grave Mistake ───────────────────────────────────────────
+
+  private graveMistakeSlot(): 'e' | 'r' | 'f' | 'q' | null {
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      if (this.arena.masteryBindFor(s) === 'grave-mistake') return s;
+    }
+    return null;
+  }
+
+  /** Once the alpha is defeated the slot becomes Soul Screech (real cooldown); before that it's always ready. */
+  getGraveMistakeCooldownRatio(time: number): number {
+    if (this.alphaState !== 'defeated') return 1;
+    return Math.min(1, (time - this.soulScreechLastCastAt) / SOUL_SCREECH_COOLDOWN_MS);
+  }
+
+  private tryCastGraveMistake(time: number, mouseX: number, mouseY: number): void {
+    void mouseX; void mouseY;
+    if (this.alphaState === 'defeated') { this.doSoulScreech(time); return; }
+    if (this.alphaState === 'hostile') {
+      this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 40, 'THE ALPHA IS LOOSE', '#ff5555');
+      return;
+    }
+    this.spawnHostileAlpha();
+  }
+
+  private spawnHostileAlpha(): void {
+    const scene = this.arena.scene;
+    const player = this.arena.player;
+    // Destroy the nearest player grave to awaken the alpha there.
+    let gi = -1, gd = Infinity;
+    this.graves.forEach((gr, idx) => {
+      if (gr.owner !== 'player') return;
+      const d = Phaser.Math.Distance.Between(player.x, player.y, gr.x, gr.y);
+      if (d < gd) { gd = d; gi = idx; }
+    });
+    let sx = player.x + 130, sy = player.y;
+    if (gi >= 0) { const gr = this.graves[gi]; sx = gr.x; sy = gr.y; gr.sprite.destroy(); this.graves.splice(gi, 1); }
+
+    const husk = new Husk(scene, sx, sy, ALPHA_HP, ALPHA_SPEED, ALPHA_BITE_DMG, 1000, BASIC_HUSK);
+    husk.sizeMult = 2.1; husk.applySizeMult();
+    husk.world = this.huskWorld;
+    husk.onBite = (dmg, target) => target.takeDamage(dmg); // hostile → bites the player
+    husk.setTint(0x552266);
+    husk.once('defeated', () => this.onAlphaDefeated());
+    this.alphaHusk = husk;
+    this.alphaState = 'hostile';
+    this.alphaNextConeAt = scene.time.now + ALPHA_CONE_INTERVAL_MS;
+    this.alphaDecor = scene.add.graphics().setDepth(6);
+    this.arena.showFloatingText(sx, sy - 46, '☠️ ALPHA AMALGAM AWAKENED', '#aa44cc');
+  }
+
+  private updateAlpha(time: number, delta: number): void {
+    const husk = this.alphaHusk;
+    if (this.alphaState !== 'hostile' || !husk) return;
+    if (!husk.active || husk.hp <= 0) return; // defeat handled by the event
+    const player = this.arena.player;
+    // Chase & bite the player.
+    husk.update([player], time, delta);
+
+    // Grotesque "collection of amalgams" decor: small circles clustered on the boss.
+    if (this.alphaDecor) {
+      const g = this.alphaDecor; g.clear();
+      g.fillStyle(0x442255, 0.9);
+      for (let k = 0; k < 6; k++) {
+        const a = (k / 6) * Math.PI * 2 + time * 0.001;
+        g.fillCircle(husk.x + Math.cos(a) * 16, husk.y + Math.sin(a) * 16, 5);
+      }
+    }
+
+    // Player projectiles can damage the loose alpha (kit-side overlap; it isn't in ArenaScene's groups).
+    for (const go of this.arena.projectiles.getChildren()) {
+      const p = go as Projectile;
+      if (!p.active || !p.isFromPlayer) continue;
+      if (Phaser.Math.Distance.Between(p.x, p.y, husk.x, husk.y) <= 22 * husk.sizeMult) {
+        husk.takeDamage((p as unknown as { damage: number }).damage);
+        p.setActive(false).setVisible(false);
+        (p.body as Phaser.Physics.Arcade.Body).stop();
+      }
+    }
+
+    // Periodic green cone at the player → anti-heal on hit.
+    if (time >= this.alphaNextConeAt) {
+      this.alphaNextConeAt = time + ALPHA_CONE_INTERVAL_MS;
+      this.fireAlphaCone(husk, player, true, true);
+    }
+  }
+
+  private onAlphaDefeated(): void {
+    this.alphaDecor?.destroy(); this.alphaDecor = null;
+    this.alphaHusk = null;
+    this.alphaState = 'defeated';
+    this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 50, '💀 ALPHA SLAIN — SOUL SCREECH UNLOCKED', '#cc88ff');
+    this.spawnFriendlyAlpha();
+  }
+
+  private spawnFriendlyAlpha(): void {
+    const scene = this.arena.scene;
+    const caster = this.arena.player;
+    const ox = caster.x + (Math.random() - 0.5) * 50, oy = caster.y + (Math.random() - 0.5) * 50;
+    const husk = new Husk(scene, ox, oy, ALPHA_HP, ALPHA_SPEED, ALPHA_BITE_DMG, 1000, BASIC_HUSK);
+    husk.sizeMult = 2.1; husk.applySizeMult();
+    husk.world = this.huskWorld;
+    husk.onBite = (dmg, target) => {
+      target.takeDamage(dmg);
+      this.arena.recordMasteryStat('amalgamDamage', dmg);
+    };
+    husk.setTint(0x8844bb);
+    const now = scene.time.now;
+    const rec: Amalgam = {
+      husk, owner: 'player', waypoint: null, burning: false,
+      baseBiteDamage: ALPHA_BITE_DMG, dashBiteDamage: ALPHA_BITE_DMG,
+      nextDashAt: now + 99999, dashUntil: 0, nextEmberAt: 0,
+      stitches: scene.add.graphics().setDepth(6), auraGfx: null,
+      burnTickAccum: 0, meleeTickAccum: 0, carrionUntil: 0, nextTrailAt: 0,
+      variant: BASIC_HUSK, angered: false, inflamed: false, damageAccum: 0,
+      isAlpha: true, alphaNextConeAt: now + ALPHA_CONE_INTERVAL_MS,
+    };
+    husk.once('defeated', () => this.onAmalgamDefeated(rec));
+    this.amalgams.push(rec);
+    this.arena.recordMasteryStat('amalgamsSummoned', 1);
+    this.arena.showFloatingText(ox, oy - 46, '🧟 ALPHA JOINS YOU', '#cc88ff');
+  }
+
+  private fireAlphaCone(from: Husk, target: Fighter, hitsCaster: boolean, antiHeal: boolean): void {
+    const scene = this.arena.scene;
+    const base = Math.atan2(target.y - from.y, target.x - from.x);
+    const spread = Phaser.Math.DegToRad(42);
+    for (let i = 0; i < ALPHA_CONE_BULLETS; i++) {
+      const t = i / (ALPHA_CONE_BULLETS - 1);
+      const ang = base - spread + t * spread * 2;
+      const gfx = scene.add.circle(from.x, from.y, 6, 0x33cc44, 1).setDepth(7).setStrokeStyle(2, 0x114411, 0.8);
+      this.soulShots.push({
+        gfx, x: from.x, y: from.y,
+        vx: Math.cos(ang) * SOUL_SHOT_SPEED, vy: Math.sin(ang) * SOUL_SHOT_SPEED,
+        damage: ALPHA_CONE_DAMAGE, owner: 'player', hitsCaster, antiHeal,
+        expiresAt: scene.time.now + SOUL_SHOT_LIFETIME_MS,
+      });
+    }
+  }
+
+  private doSoulScreech(time: number): void {
+    if (time - this.soulScreechLastCastAt < SOUL_SCREECH_COOLDOWN_MS) return;
+    this.soulScreechLastCastAt = time;
+    const scene = this.arena.scene;
+    const player = this.arena.player;
+    // 25 AoE damage to enemies around you.
+    this.arena.dealAoeDamageFromOwner(player.x, player.y, SOUL_SCREECH_RADIUS, SOUL_SCREECH_DAMAGE, 'player');
+    const ring = scene.add.circle(player.x, player.y, 20, 0xcc66ff, 0.5).setDepth(9);
+    scene.tweens.add({ targets: ring, scaleX: SOUL_SCREECH_RADIUS / 20, scaleY: SOUL_SCREECH_RADIUS / 20, alpha: 0, duration: 450, onComplete: () => ring.destroy() });
+    // Heal nearby allies for 50% of the HP you're missing this round; overheal becomes weak HP.
+    const missing = Math.max(0, player.maxHp - player.hp);
+    const healAmt = Math.round(missing * 0.5);
+    if (healAmt > 0) {
+      this.healAllyWithOverheal(player, healAmt);
+      for (const a of this.amalgams) {
+        if (a.owner !== 'player' || !a.husk.active || a.husk.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(player.x, player.y, a.husk.x, a.husk.y) <= SOUL_SCREECH_RADIUS) {
+          this.healAllyWithOverheal(a.husk, healAmt);
+        }
+      }
+    }
+    this.arena.showFloatingText(player.x, player.y - 46, '👻 SOUL SCREECH', '#cc88ff');
+  }
+
+  /** The friendly alpha keeps its powerful cone blast, aimed at the opposing fighter. */
+  private updateAlphaAllies(time: number): void {
+    for (const rec of this.amalgams) {
+      if (!rec.isAlpha || rec.owner !== 'player' || !rec.husk.active || rec.husk.hp <= 0) continue;
+      if (time < (rec.alphaNextConeAt ?? 0)) continue;
+      rec.alphaNextConeAt = time + ALPHA_CONE_INTERVAL_MS;
+      const foe = this.arena.npc;
+      if (foe.active && foe.hp > 0) this.fireAlphaCone(rec.husk, foe, false, false);
+    }
+  }
+
+  private healAllyWithOverheal(f: Fighter, amount: number): void {
+    const before = f.hp;
+    f.heal(amount);
+    const overflow = amount - (f.hp - before);
+    if (overflow > 0) f.weakHp = Math.min(f.maxHp, f.weakHp + overflow); // Quantum-style weak HP
+  }
+
   /** Blaster variant: friendly amalgams hit foes, hostile grave zombies hit the given targets directly. */
   private emitBlast(x: number, y: number, dmg: number, targets: Fighter[]): void {
     const scene = this.arena.scene;
@@ -807,6 +1082,10 @@ export class SoulKit {
         if (t.active && t.hp > 0 && Phaser.Math.Distance.Between(s.x, s.y, t.x, t.y) <= SOUL_SHOT_RADIUS + 16) {
           t.takeDamage(s.damage);
           this.arena.spawnHitFlash(t.x, t.y, 0x9944cc);
+          if (s.antiHeal) {
+            this.soulAntiHealUntil = time + ALPHA_ANTIHEAL_MS;
+            this.arena.showFloatingText(t.x, t.y - 34, '🚫 ANTI-HEAL (5s)', '#ff5555');
+          }
           hit = true;
           break;
         }

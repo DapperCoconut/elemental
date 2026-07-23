@@ -996,6 +996,8 @@ export class ArenaScene extends Phaser.Scene {
   private magnetMasteryOn = false;
   // ── Time (sand) mastery ───────────────────────────────────────────────
   private timeMasteryOn = false;
+  // ── Soul mastery ──────────────────────────────────────────────────────
+  private soulMasteryOn = false;
   /** Screen-blur guard for Dust Screen hitting the local human — only the latest call may clear it. */
   private screenBlurUntil = 0;
 
@@ -1207,6 +1209,12 @@ export class ArenaScene extends Phaser.Scene {
         dealAoeDamageFromOwner: (x, y, r, d, owner) => arena.dealAoeDamageFromOwner(x, y, r, d, owner),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
+        get masteryActive() { return arena.soulMasteryOn && arena.elementId === 'soul'; },
+        get npcMasteryActive() { return arena.isOnline && arena.npcMasteryOn && arena.npcElement.id === 'soul'; },
+        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        recordMasteryStat: (key, amount) => {
+          if (arena.elementId === 'soul') PlayerData.addMasteryStat('soul', key, amount);
+        },
       };
       this.soulKit = new SoulKit(soulApi);
     }
@@ -1479,6 +1487,7 @@ export class ArenaScene extends Phaser.Scene {
     this.growthMasteryOn = PlayerData.isMasteryEnabled('growth');
     this.magnetMasteryOn = PlayerData.isMasteryEnabled('magnet');
     this.timeMasteryOn = PlayerData.isMasteryEnabled('sand');
+    this.soulMasteryOn = PlayerData.isMasteryEnabled('soul');
     this.shadowMasteryOn = PlayerData.isMasteryEnabled('shadow');
     this.iceMasteryOn = PlayerData.isMasteryEnabled('ice');
     this.crystalMasteryOn = PlayerData.isMasteryEnabled('crystal');
@@ -10640,6 +10649,8 @@ export class ArenaScene extends Phaser.Scene {
         entry.fill.setSize(entry.maxWidth * this.magnetKit.getMagLevCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'fan-the-hammer') {
         entry.fill.setSize(entry.maxWidth * this.timeKit.getFanCooldownRatio(time), entry.fill.height);
+      } else if (entry.abilityId === 'grave-mistake') {
+        entry.fill.setSize(entry.maxWidth * this.soulKit.getGraveMistakeCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'flame-body') {
         entry.fill.setSize(this.fireKit.isFlameBodyActive() ? entry.maxWidth : 0, entry.fill.height);
       } else if (entry.abilityId === 'splash') {
