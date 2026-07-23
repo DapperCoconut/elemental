@@ -541,6 +541,53 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       },
     ],
   },
+  slime: {
+    elementId: 'slime',
+    name: 'Acid Mastery',
+    enhancedEmoji: '☣️',
+    enhancedColor: 0x1b3d10,
+    requirements: [
+      {
+        key: 'acidCoverageTotal',
+        label: 'Acid Flood',
+        howTo: 'Cover the screen in acid — every pool adds up across all your matches (500% total)',
+        target: 5,
+      },
+      {
+        key: 'acidCoverageBestPct',
+        label: 'Total Saturation',
+        howTo: 'Cover 80% of the screen in acid at once in a single match',
+        target: 80,
+        isBest: true,
+      },
+      {
+        key: 'melts',
+        label: 'Meltdown',
+        howTo: 'Finish enemies off with acid — pools, rain, and footprints all count',
+        target: 20,
+      },
+      {
+        key: 'burrowAttacks',
+        label: 'Ambush Predator',
+        howTo: 'Hit enemies by surfacing next to them with Snake Burrow (needs the R+ Rattling Strike upgrade)',
+        target: 50,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'acid-walker',
+        name: 'Acid Walker',
+        description: 'Passive: after stepping through acid, you leave burning acid footprints for 5 seconds as you walk onto clean ground. Each print lasts ~3s and eats anyone standing on it like an acid puddle. Footprints laid within 3s of surfacing from Snake Burrow are larger, darker, and hurt more.',
+      },
+      {
+        id: 'breakdown',
+        name: 'Breakdown',
+        bindable: true,
+        hudDescription: 'Root yourself and spray 200 acid lashes in every direction',
+        description: 'Only castable while the screen is at least half covered in acid. You root in place for 3 seconds and spray 200 acid lashes out in every direction, leaking acid particles that pool up beneath you the whole time. 12 second cooldown.',
+      },
+    ],
+  },
   metal: {
     elementId: 'metal',
     name: 'Metal Mastery',

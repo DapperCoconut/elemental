@@ -68,10 +68,22 @@ interface MeltPuddle {
   buffs: BuffSnapshotEntry[];
 }
 
+/** Acid Mastery — Acid Walker: a short-lived acid puddle left in the player's tracks. */
+interface AcidFootprint {
+  sprite: Phaser.GameObjects.Arc;
+  x: number;
+  y: number;
+  radius: number;
+  damage: number;
+  expiresAt: number;
+  nextTickAt: number;
+}
+
 // ── SlimeArenaApi ─────────────────────────────────────────────────────────
 
 export interface SlimeArenaApi {
   readonly player: Fighter;
+  readonly npc: Fighter;
   readonly enemies: readonly Fighter[];
   readonly scene: Phaser.Scene;
   readonly projectiles: Phaser.Physics.Arcade.Group;
@@ -84,6 +96,13 @@ export interface SlimeArenaApi {
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
+  /** True only when the player is acid (slime) AND Acid Mastery is switched on. */
+  get masteryActive(): boolean;
+  /** True only when the online opponent is acid AND has Acid Mastery on. Drives npc-side Breakdown. */
+  get npcMasteryActive(): boolean;
+  masteryBindFor(slot: string): string | null;
+  recordMasteryStat(key: string, amount: number): void;
+  recordMasteryBest(key: string, value: number): void;
 }
 
 // ── Tunables ──────────────────────────────────────────────────────────────
@@ -150,6 +169,23 @@ const MELT_BUFF_GRANT_MS = 8000;
 const FLOOD_GROWTH_PER_SEC = 6;
 const FLOOD_MAX_RADIUS_MULT = 2.2;
 
+// ── Mastery: Acid Walker passive + Breakdown bindable ─────────────────────────
+const FOOTPRINT_TRAIL_MS = 5000;      // window after leaving acid during which footprints drop
+const FOOTPRINT_LIFETIME_MS = 3000;   // each footprint lasts ~3s
+const FOOTPRINT_TICK_MS = 500;
+const FOOTPRINT_SPACING = 34;         // min distance walked before dropping the next print
+const FOOTPRINT_RADIUS = 15;
+const FOOTPRINT_DAMAGE = 2;
+const FOOTPRINT_BOOST_MS = 3000;      // footprints boosted if dropped within this of an un-burrow
+const FOOTPRINT_BOOST_RADIUS = 26;
+const FOOTPRINT_BOOST_DAMAGE = 4;
+const BREAKDOWN_DURATION_MS = 3000;
+const BREAKDOWN_COOLDOWN_MS = 12000;
+const BREAKDOWN_LASH_COUNT = 200;
+const BREAKDOWN_LEAK_COUNT = 12;
+const BREAKDOWN_LEAK_RADIUS = 20;
+const BREAKDOWN_MIN_COVERAGE = 0.5;   // needs the screen at least half covered in acid
+
 // ── SlimeKit ──────────────────────────────────────────────────────────────
 
 export class SlimeKit {
@@ -170,11 +206,30 @@ export class SlimeKit {
   private activeMeltBuffs: { key: BuffFieldDef['key']; revertValue: number }[] = [];
   private meltBuffExpireAt = 0;
 
+  // ── Mastery: Acid Walker passive ──────────────────────────────────────
+  private acidFootprints: AcidFootprint[] = [];
+  private wasInAcid = false;
+  private footprintTrailUntil = 0;
+  private lastFootprintX = 0;
+  private lastFootprintY = 0;
+  private lastUnburrowAt = -FOOTPRINT_BOOST_MS;
+  private coverageAccum = 0;          // batches acidCoverageTotal writes
+  private sessionBestCoverage = 0;    // gate for the best-coverage stat write
+  private meltKillCounted: WeakSet<Fighter> = new WeakSet();
+
+  // ── Mastery: Breakdown bindable ───────────────────────────────────────
+  private breakdownUntil = 0;
+  private breakdownLastCastAt = -BREAKDOWN_COOLDOWN_MS;
+
   constructor(private arena: SlimeArenaApi) {}
 
   // ── Public accessors ────────────────────────────────────────────────
 
-  getBurrowSpeedMult(): number { return this.burrowed ? BURROW_SPEED_MULT : 1; }
+  getBurrowSpeedMult(): number {
+    // Breakdown roots the acid user in place for its duration.
+    if (this.arena.scene.time.now < this.breakdownUntil) return 0;
+    return this.burrowed ? BURROW_SPEED_MULT : 1;
+  }
   isBurrowed(): boolean { return this.burrowed; }
 
   // ── reset ────────────────────────────────────────────────────────────
@@ -197,6 +252,17 @@ export class SlimeKit {
     this.meltPuddles = [];
     this.activeMeltBuffs = [];
     this.meltBuffExpireAt = 0;
+    // Mastery — Acid Walker + Breakdown
+    for (const fp of this.acidFootprints) fp.sprite.destroy();
+    this.acidFootprints = [];
+    this.wasInAcid = false;
+    this.footprintTrailUntil = 0;
+    this.lastUnburrowAt = -FOOTPRINT_BOOST_MS;
+    this.coverageAccum = 0;
+    this.sessionBestCoverage = 0;
+    this.meltKillCounted = new WeakSet();
+    this.breakdownUntil = 0;
+    this.breakdownLastCastAt = -BREAKDOWN_COOLDOWN_MS;
   }
 
   startMatch(_W: number, _H: number, _isPlayerSlime: boolean): void { /* no per-match setup needed */ }
@@ -251,7 +317,22 @@ export class SlimeKit {
       nextSpreadCheckAt: time + SPREAD_CHECK_MS,
     };
     this.acidPools.push(pool);
+    // Mastery — track cumulative acid laid down (batched to keep localStorage writes rare).
+    const { width: W, height: H } = this.arena.scene.scale;
+    this.coverageAccum += (Math.PI * radius * radius) / Math.max(1, W * H);
+    if (this.coverageAccum >= 0.25) {
+      this.arena.recordMasteryStat('acidCoverageTotal', this.coverageAccum);
+      this.coverageAccum = 0;
+    }
     return pool;
+  }
+
+  /** Mastery — count an enemy killed by acid ("melt"), once per target. */
+  private noteAcidHit(t: Fighter): void {
+    if (t.hp <= 0 && !this.meltKillCounted.has(t)) {
+      this.meltKillCounted.add(t);
+      this.arena.recordMasteryStat('melts', 1);
+    }
   }
 
   private unburrow(reason: string): void {
@@ -260,6 +341,8 @@ export class SlimeKit {
     player.isInvincible = false;
     player.setAlpha(1);
     this.arena.showFloatingText(player.x, player.y - 30, reason, '#99ff66');
+    // Mastery — Acid Walker: footprints dropped shortly after surfacing are boosted.
+    this.lastUnburrowAt = this.arena.scene.time.now;
 
     // Rattling Strike (R+): un-burrowing detonates a red AOE and marks hit enemies as dripping.
     if (this.arena.hasUpgrade('r')) {
@@ -274,6 +357,9 @@ export class SlimeKit {
           t.takeDamage(RATTLING_DAMAGE);
           this.arena.spawnHitFlash(t.x, t.y, 0xff3333);
           this.drippingEnemies.set(t, { until: time + RATTLING_DRIP_MS, nextDripAt: time });
+          // Mastery — "attack enemies by un-burrowing next to them".
+          this.arena.recordMasteryStat('burrowAttacks', 1);
+          this.noteAcidHit(t);
           hitAny = true;
         }
       }
@@ -457,6 +543,7 @@ export class SlimeKit {
             t.takeDamage(POOL_HOT_DAMAGE, { source: pool, sourceX: pool.x, sourceY: pool.y });
             this.arena.spawnHitFlash(t.x, t.y, POOL_HOT_COLOR);
             this.arena.showFloatingText(t.x, t.y - 20, String(POOL_HOT_DAMAGE), '#66ff33');
+            this.noteAcidHit(t);
             pool.state = 'cool';
             pool.nextTickAt = time + POOL_COOL_TICK_MS;
             pool.sprite.setFillStyle(POOL_COOL_COLOR, 0.55).setStrokeStyle(2, POOL_COOL_STROKE, 0.9);
@@ -470,6 +557,7 @@ export class SlimeKit {
           if (Phaser.Math.Distance.Between(t.x, t.y, pool.x, pool.y) <= pool.radius) {
             t.takeDamage(POOL_COOL_TICK_DAMAGE, { source: pool, sourceX: pool.x, sourceY: pool.y });
             this.arena.spawnHitFlash(t.x, t.y, POOL_COOL_COLOR);
+            this.noteAcidHit(t);
           }
         }
       }
@@ -508,6 +596,7 @@ export class SlimeKit {
             if (Phaser.Math.Distance.Between(t.x, t.y, pool.x, pool.y) <= pool.radius) {
               t.takeDamage(RAIN_TICK_DAMAGE, { source: pool, sourceX: pool.x, sourceY: pool.y });
               this.arena.spawnHitFlash(t.x, t.y, 0x66ff33);
+              this.noteAcidHit(t);
             }
           }
         }
@@ -542,6 +631,62 @@ export class SlimeKit {
     // Meltdown (F+): melt ticks, drip puddles, and player pickup
     if (this.meltStatuses.size > 0) this.updateMeltStatuses(time);
     if (this.meltPuddles.length > 0 || this.activeMeltBuffs.length > 0) this.updateMeltPuddlePickup(time);
+
+    // ── Mastery — best-coverage stat (only written on a fresh session high) ──
+    const covPct = this.computeAcidCoveragePct() * 100;
+    if (covPct > this.sessionBestCoverage) {
+      this.sessionBestCoverage = covPct;
+      this.arena.recordMasteryBest('acidCoverageBestPct', covPct);
+    }
+
+    // ── Mastery — Acid Walker: leave footprints for 5s after leaving acid ──
+    if (this.arena.masteryActive) {
+      const inAcid = this.isPointInAcid(player.x, player.y);
+      if (this.wasInAcid && !inAcid) {
+        this.footprintTrailUntil = time + FOOTPRINT_TRAIL_MS;
+        this.lastFootprintX = player.x;
+        this.lastFootprintY = player.y;
+      }
+      this.wasInAcid = inAcid;
+      if (!inAcid && time < this.footprintTrailUntil) {
+        if (Phaser.Math.Distance.Between(player.x, player.y, this.lastFootprintX, this.lastFootprintY) >= FOOTPRINT_SPACING) {
+          this.lastFootprintX = player.x;
+          this.lastFootprintY = player.y;
+          this.spawnFootprint(player.x, player.y, time, time - this.lastUnburrowAt <= FOOTPRINT_BOOST_MS);
+        }
+      }
+    }
+    if (this.acidFootprints.length > 0) this.updateFootprints(time);
+  }
+
+  private spawnFootprint(x: number, y: number, time: number, boosted: boolean): void {
+    const radius = boosted ? FOOTPRINT_BOOST_RADIUS : FOOTPRINT_RADIUS;
+    const color = boosted ? 0x143d0a : 0x2a6b1a;
+    const sprite = this.arena.scene.add.circle(x, y, radius, color, 0.6)
+      .setStrokeStyle(2, boosted ? 0x2a5511 : 0x448822, 0.9).setDepth(3);
+    this.acidFootprints.push({
+      sprite, x, y, radius,
+      damage: boosted ? FOOTPRINT_BOOST_DAMAGE : FOOTPRINT_DAMAGE,
+      expiresAt: time + FOOTPRINT_LIFETIME_MS,
+      nextTickAt: time + FOOTPRINT_TICK_MS,
+    });
+  }
+
+  private updateFootprints(time: number): void {
+    for (let i = this.acidFootprints.length - 1; i >= 0; i--) {
+      const fp = this.acidFootprints[i];
+      if (time >= fp.expiresAt) { fp.sprite.destroy(); this.acidFootprints.splice(i, 1); continue; }
+      if (time < fp.nextTickAt) continue;
+      fp.nextTickAt = time + FOOTPRINT_TICK_MS;
+      for (const t of this.arena.enemies) {
+        if (!t.active || t.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(t.x, t.y, fp.x, fp.y) <= fp.radius) {
+          t.takeDamage(fp.damage, { source: fp, sourceX: fp.x, sourceY: fp.y });
+          this.arena.spawnHitFlash(t.x, t.y, 0x66ff33);
+          this.noteAcidHit(t);
+        }
+      }
+    }
   }
 
   // ── handleInput ───────────────────────────────────────────────────────
@@ -549,6 +694,13 @@ export class SlimeKit {
   handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
     const { player, eKey, fKey, rKey, qKey, pointerWasDown } = this.arena;
     const playerCtx = this.arena.buildPlayerContext(mouseX, mouseY);
+
+    // ── Mastery — Breakdown takes over whichever slot it's bound to ──────
+    const breakdownSlot = this.arena.masteryActive ? this.breakdownSlot() : null;
+    if (breakdownSlot) {
+      const bdKey = breakdownSlot === 'e' ? eKey : breakdownSlot === 'r' ? rKey : breakdownSlot === 'f' ? fKey : qKey;
+      if (Phaser.Input.Keyboard.JustDown(bdKey)) this.tryCastBreakdown(time);
+    }
 
     // Click: Poison Whip
     if (pointer.isDown && !pointerWasDown) {
@@ -559,12 +711,12 @@ export class SlimeKit {
     }
 
     // E: Vile Spray
-    if (Phaser.Input.Keyboard.JustDown(eKey)) {
+    if (breakdownSlot !== 'e' && Phaser.Input.Keyboard.JustDown(eKey)) {
       if (player.castAbility('vile-spray', playerCtx)) this.spawnAcidPools(time);
     }
 
     // R: Snake Burrow — toggle, only enterable while standing in acid
-    if (Phaser.Input.Keyboard.JustDown(rKey)) {
+    if (breakdownSlot !== 'r' && Phaser.Input.Keyboard.JustDown(rKey)) {
       if (this.burrowed) {
         this.unburrow('🐍 Surfaced!');
       } else if (!this.isPointInAcid(player.x, player.y)) {
@@ -578,18 +730,93 @@ export class SlimeKit {
     }
 
     // F: Purge
-    if (Phaser.Input.Keyboard.JustDown(fKey)) {
+    if (breakdownSlot !== 'f' && Phaser.Input.Keyboard.JustDown(fKey)) {
       if (player.castAbility('purge', playerCtx)) this.fireBurst();
     }
 
     // Q: Acid Apocalypse
-    if (Phaser.Input.Keyboard.JustDown(qKey)) {
+    if (breakdownSlot !== 'q' && Phaser.Input.Keyboard.JustDown(qKey)) {
       if (player.castAbility('acid-apocalypse', playerCtx)) {
         this.acidRainActiveUntil = time + RAIN_DURATION_MS;
         this.acidRainTickAccum = 0;
         this.acidRainDropAccum = 0;
         const { width: W, height: H } = this.arena.scene.scale;
         this.arena.showFloatingText(W / 2, H / 2 - 60, '☠️ Acid Apocalypse!', '#66ff33');
+      }
+    }
+  }
+
+  // ── Mastery — Breakdown ────────────────────────────────────────────────
+
+  /** The slot Breakdown is bound over this match, or null. */
+  private breakdownSlot(): 'e' | 'r' | 'f' | 'q' | null {
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      if (this.arena.masteryBindFor(s) === 'breakdown') return s;
+    }
+    return null;
+  }
+
+  /** 0 = just cast, 1 = ready. Drives the HUD bar for the bound slot. */
+  getBreakdownCooldownRatio(time: number): number {
+    return Math.min(1, (time - this.breakdownLastCastAt) / BREAKDOWN_COOLDOWN_MS);
+  }
+
+  private tryCastBreakdown(time: number): void {
+    if (time - this.breakdownLastCastAt < BREAKDOWN_COOLDOWN_MS) return;
+    const player = this.arena.player;
+    if (this.computeAcidCoveragePct() < BREAKDOWN_MIN_COVERAGE) {
+      this.arena.showFloatingText(player.x, player.y - 30, 'NEED 50% ACID', '#ff6666');
+      return;
+    }
+    this.breakdownLastCastAt = time;
+    // triggerCooldown broadcasts the cast online; the peer replays via doNpcBreakdown.
+    player.triggerCooldown('breakdown');
+    this.startBreakdown('player', time);
+  }
+
+  /** Online replay: the remote acid player cast Breakdown — spray lashes at the local player. */
+  doNpcBreakdown(_tx: number, _ty: number): void {
+    this.startBreakdown('npc', this.arena.scene.time.now);
+  }
+
+  private startBreakdown(owner: 'player' | 'npc', time: number): void {
+    const { scene } = this.arena;
+    const origin = owner === 'player' ? this.arena.player : this.arena.npc;
+    const fromPlayer = owner === 'player';
+    if (owner === 'player') this.breakdownUntil = time + BREAKDOWN_DURATION_MS;
+    this.arena.showFloatingText(origin.x, origin.y - 40, '☣️ BREAKDOWN!', '#33ff33');
+
+    // 200 acid lashes sprayed in random directions across the full 360° over 3 seconds.
+    for (let i = 0; i < BREAKDOWN_LASH_COUNT; i++) {
+      scene.time.delayedCall(Math.floor(i * BREAKDOWN_DURATION_MS / BREAKDOWN_LASH_COUNT), () => {
+        const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+        if (!caster.active || caster.hp <= 0) return;
+        const ang = Math.random() * Math.PI * 2;
+        const proj = new Projectile(
+          scene,
+          caster.x + Math.cos(ang) * 24,
+          caster.y + Math.sin(ang) * 24,
+          'proj-acid-whip',
+          WHIP_DAMAGE,
+          fromPlayer,
+        );
+        this.arena.projectiles.add(proj);
+        proj.launch(Math.cos(ang) * WHIP_SPEED, Math.sin(ang) * WHIP_SPEED);
+        proj.setRotation(ang);
+      });
+    }
+
+    // Leaking acid particles occasionally pool up (player sim only — pools damage enemies).
+    if (owner === 'player') {
+      for (let i = 0; i < BREAKDOWN_LEAK_COUNT; i++) {
+        scene.time.delayedCall(Math.floor(i * BREAKDOWN_DURATION_MS / BREAKDOWN_LEAK_COUNT), () => {
+          const p = this.arena.player;
+          if (!p.active || p.hp <= 0) return;
+          const ox = Phaser.Math.Between(-16, 16), oy = Phaser.Math.Between(-16, 16);
+          if (this.acidPools.length < MAX_ACID_POOLS) this.createAcidPool(p.x + ox, p.y + oy, BREAKDOWN_LEAK_RADIUS, scene.time.now);
+          const drip = scene.add.circle(p.x + ox, p.y, 3, 0x66ff33, 0.9).setDepth(6);
+          scene.tweens.add({ targets: drip, y: p.y + 14, alpha: 0.1, duration: 300, onComplete: () => drip.destroy() });
+        });
       }
     }
   }

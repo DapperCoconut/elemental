@@ -988,6 +988,8 @@ export class ArenaScene extends Phaser.Scene {
   private earthMasteryOn = false;
   // ── Metal mastery ─────────────────────────────────────────────────────
   private metalMasteryOn = false;
+  // ── Acid (slime) mastery ──────────────────────────────────────────────
+  private slimeMasteryOn = false;
   /** Screen-blur guard for Dust Screen hitting the local human — only the latest call may clear it. */
   private screenBlurUntil = 0;
 
@@ -1457,6 +1459,7 @@ export class ArenaScene extends Phaser.Scene {
     this.lifeMasteryOn = PlayerData.isMasteryEnabled('life');
     this.earthMasteryOn = PlayerData.isMasteryEnabled('earth');
     this.metalMasteryOn = PlayerData.isMasteryEnabled('metal');
+    this.slimeMasteryOn = PlayerData.isMasteryEnabled('slime');
     this.shadowMasteryOn = PlayerData.isMasteryEnabled('shadow');
     this.iceMasteryOn = PlayerData.isMasteryEnabled('ice');
     this.crystalMasteryOn = PlayerData.isMasteryEnabled('crystal');
@@ -1877,6 +1880,7 @@ export class ArenaScene extends Phaser.Scene {
       const arena = this;
       const slimeApi: SlimeArenaApi = {
         get player() { return arena.player; },
+        get npc() { return arena.npc; },
         get enemies() { return arena.enemies; },
         get scene(): Phaser.Scene { return arena; },
         get eKey() { return arena.eKey; },
@@ -1889,6 +1893,15 @@ export class ArenaScene extends Phaser.Scene {
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        get masteryActive() { return arena.slimeMasteryOn && arena.elementId === 'slime'; },
+        get npcMasteryActive() { return arena.isOnline && arena.npcMasteryOn && arena.npcElement.id === 'slime'; },
+        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        recordMasteryStat: (key, amount) => {
+          if (arena.elementId === 'slime') PlayerData.addMasteryStat('slime', key, amount);
+        },
+        recordMasteryBest: (key, value) => {
+          if (arena.elementId === 'slime') PlayerData.recordMasteryBest('slime', key, value);
+        },
       };
       this.slimeKit = new SlimeKit(slimeApi);
     }
@@ -3191,6 +3204,9 @@ export class ArenaScene extends Phaser.Scene {
         break;
       case 'steel-shield':
         if (this.npcElement.id === 'metal') this.metalKit.doNpcSteelShield(tx, ty);
+        break;
+      case 'breakdown':
+        if (this.npcElement.id === 'slime') this.slimeKit.doNpcBreakdown(tx, ty);
         break;
       default:
         break;
@@ -10575,6 +10591,8 @@ export class ArenaScene extends Phaser.Scene {
         entry.fill.setSize(entry.maxWidth * this.magicKit.getTransmogrifyCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'steel-shield') {
         entry.fill.setSize(entry.maxWidth * this.metalKit.getSteelShieldCooldownRatio(time), entry.fill.height);
+      } else if (entry.abilityId === 'breakdown') {
+        entry.fill.setSize(entry.maxWidth * this.slimeKit.getBreakdownCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'flame-body') {
         entry.fill.setSize(this.fireKit.isFlameBodyActive() ? entry.maxWidth : 0, entry.fill.height);
       } else if (entry.abilityId === 'splash') {
