@@ -15,7 +15,7 @@ export class HealthBar {
     this.graphics.setDepth(10);
   }
 
-  update(x: number, y: number, hp: number, shieldHp = 0, chargeRatio = 0): void {
+  update(x: number, y: number, hp: number, shieldHp = 0, chargeRatio = 0, clottedHp = 0, weakHp = 0): void {
     this.graphics.clear();
     if (!this.visible) return;
 
@@ -41,11 +41,30 @@ export class HealthBar {
     this.graphics.fillStyle(color, 1);
     this.graphics.fillRect(bx, by, this.barW * ratio, this.barH);
 
-    // Shield fill (blue, extends rightward from HP fill)
+    let fillEnd = ratio;
+
+    // Clotted HP (dark red — Metal R+ Blood Clottage). Part of your health, not
+    // a bonus: drawn right after normal HP, turning that slice of the bar dark red.
+    if (clottedHp > 0) {
+      const clottedRatio = Math.min(clottedHp / this.maxHp, 1 - fillEnd);
+      this.graphics.fillStyle(0x770011, 1);
+      this.graphics.fillRect(bx + this.barW * fillEnd, by, this.barW * clottedRatio, this.barH);
+      fillEnd += clottedRatio;
+    }
+
+    // Shield fill (blue) — bonus HP beyond your health total.
     if (shieldHp > 0) {
-      const shieldRatio = Math.min(shieldHp / this.maxHp, 1 - ratio);
+      const shieldRatio = Math.min(shieldHp / this.maxHp, 1 - fillEnd);
       this.graphics.fillStyle(0x4488ff, 0.85);
-      this.graphics.fillRect(bx + this.barW * ratio, by, this.barW * shieldRatio, this.barH);
+      this.graphics.fillRect(bx + this.barW * fillEnd, by, this.barW * shieldRatio, this.barH);
+      fillEnd += shieldRatio;
+    }
+
+    // Weak HP fill (gray) — bonus HP like shield, but decays over time (Quantum blue E).
+    if (weakHp > 0) {
+      const weakRatio = Math.min(weakHp / this.maxHp, 1 - fillEnd);
+      this.graphics.fillStyle(0x999999, 0.85);
+      this.graphics.fillRect(bx + this.barW * fillEnd, by, this.barW * weakRatio, this.barH);
     }
   }
 

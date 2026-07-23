@@ -53,7 +53,7 @@ The `CastContext` (defined in `src/elements/Ability.ts`) is a large object passe
 
 ### ElementKit Pattern
 
-New elements must be implemented as a kit in `src/elements/kits/[Element]Kit.ts` rather than inline in ArenaScene. See `MagnetKit.ts`, `LightKit.ts`, `VoidKit.ts`, or `TechnologyKit.ts` for full examples.
+New elements must be implemented as a kit in `src/elements/kits/[Element]Kit.ts` rather than inline in ArenaScene. See `MagnetKit.ts`, `LightKit.ts`, `GunpowderKit.ts`, or `TechnologyKit.ts` for full examples.
 
 **Structure:**
 - `[Element]ArenaApi` interface — the narrow surface the kit needs from ArenaScene. Use property getters (`get player()`, `get npc()`, etc.) in the adapter object so references stay live across match restarts.

@@ -1082,7 +1082,7 @@ export class EchoKit {
             const t = lenSq > 0 ? Math.max(0, Math.min(1, ((npc.x - ax) * ddx + (npc.y - ay) * ddy) / lenSq)) : 0;
             const closestDist = Phaser.Math.Distance.Between(npc.x, npc.y, ax + t * ddx, ay + t * ddy);
             if (closestDist <= 14) {
-              npc.takeDamage(8);
+              npc.takeDamage(8, { source: trail, sourceX: ax + t * ddx, sourceY: ay + t * ddy });
               this.arena.spawnHitFlash(npc.x, npc.y, 0xffffaa);
               this.arena.showFloatingText(npc.x, npc.y - 24, 'Light', '#ffffaa');
               hit = true;

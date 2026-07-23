@@ -18,948 +18,838 @@ export interface LightArenaApi {
   readonly npcCastId: string | null;
   readonly width: number;
   readonly height: number;
-  hasUpgrade(slot: string): boolean;
-  hasPerk(perkId: string): boolean;
-  applyNpcSpeedMult(factor: number): void;
+  readonly hpBarY: number;
+  readonly hpBarW: number;
+  readonly hpBarH: number;
   spawnHitFlash(x: number, y: number, color: number): void;
   spawnDamageNumber(x: number, y: number, amount: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   spawnFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
   getNearestEnemy(x: number, y: number): Fighter;
+  hasUpgrade(slot: string): boolean;
+}
+
+// ── Tuning ──────────────────────────────────────────────────────────────
+
+const CAR_MAX_SPEED = 620;
+const CAR_MIN_COAST = 160;
+const CAR_ACCEL_RATE = 175; // px/s^2 gained while roughly aimed straight (quartered from the original 700)
+const CAR_TURN_BRAKE_RATE = 3600; // px/s^2 lost while cutting a hard turn (quadrupled from the original 900)
+const CAR_BASE_TURN_RATE = Math.PI * 2.6; // rad/s turn cap while slow
+const CAR_FAST_TURN_RATE = Math.PI * 1.1; // rad/s turn cap at max speed (drift, but still responsive)
+const STRAIGHT_THRESHOLD = 0.4; // rad (~23°) — below this counts as a straightaway
+
+const BLINK_MAX_CHARGES = 2;
+const BLINK_RECHARGE_MS = 5000;
+const BLINK_BOOST_MS = 600;
+
+const MAX_RAMPS = 5;
+const RAMP_TRIGGER_RADIUS = 34;
+const RAMP_OFFSET = 56;
+const RAMP_BOOST_MS = 1500;
+const RAMP_LANCE_SPEED = 520;
+const RAMP_LANCE_SPREAD_DEG = 22;
+
+const TRICK_RADIUS = 50;
+const TRICK_DAMAGE = 5;
+const TRICK_BOOST_MS = 1200;
+
+const STREAK_DAMAGE = 15;
+const STREAK_HIT_RADIUS = 40;
+const STREAK_THICKNESS = 18;
+const STREAK_LIFETIME_MS = 900;
+const SPEED_O_LIGHT_BOUNCES = 125;
+const SPEED_O_LIGHT_BOUNCE_MS = 60;
+
+const BOOST_TARGET_SPEED = CAR_MAX_SPEED / 3; // Prism Ramp / Light Trick boosts now only push you to 1/3 top speed
+
+const LANCE_COLOR_SLOW = 0xfff4a8;
+const LANCE_COLOR_FAST = 0xff2200;
+
+const LANCE_HIT_RADIUS = 30;
+const LANCE_BASE_DAMAGE = 6;
+const LANCE_MAX_BONUS_DAMAGE = 100; // scales with accel ratio^2, so a max-speed lance hits for 106 vs. ~6 at a crawl
+const LANCE_HIT_COOLDOWN_MS = 250;
+
+// ── Click+ Redline ──────────────────────────────────────────────────────
+const CLICK_PLUS_MAX_SPEED_MULT = 2;
+const CLICK_PLUS_DANGER_RATIO = 0.75;
+const CLICK_PLUS_WALL_DAMAGE = 50;
+
+// ── E+ Steam Charge ─────────────────────────────────────────────────────
+const E_PLUS_MAX_HOLD_MS = 2000;
+const E_PLUS_BOOST_MIN_MS = 400;
+const E_PLUS_BOOST_MAX_MS = 1600;
+const E_PLUS_STEAM_INTERVAL_MS = 130;
+
+// ── R+ Prism Drill ──────────────────────────────────────────────────────
+const DRILL_SPEED = 900;
+const DRILL_SLOW_MULT = 0.1;
+const DRILL_HIT_RADIUS = 26;
+const DRILL_STUN_MS = 500;
+const DRILL_STUN_TICK_MS = 500;
+const DRILL_MIN_DAMAGE = 2;
+const DRILL_MAX_DAMAGE = 5;
+const DRILL_LIFETIME_MS = 4000;
+
+// ── F+ Javelin Burst ────────────────────────────────────────────────────
+const F_PLUS_JAVELIN_COUNT = 12;
+const F_PLUS_JAVELIN_SPEED = 480;
+
+// ── Q+ Flare-Stream ─────────────────────────────────────────────────────
+const FLARE_TELEPORT_INTERVAL = 10;
+const FLARE_BEAM_LIFETIME_MS = 35000;
+const FLARE_ACCEL_MULT = 3;
+
+interface LightRamp {
+  x: number;
+  y: number;
+  angle: number;
+  owner: 'player' | 'npc';
+  sprite: Phaser.GameObjects.Rectangle;
+  overlapping: Set<Fighter>;
+}
+
+interface LightStreak {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  owner: 'player' | 'npc';
+  sprite: Phaser.GameObjects.Rectangle;
+  until: number;
+  hitSet: Set<Fighter>;
+}
+
+interface LightDrill {
+  x: number;
+  y: number;
+  angle: number;
+  speed: number;
+  dmg: number;
+  sprite: Phaser.GameObjects.Triangle;
+  hitTarget: Fighter | null;
+  nextStunAt: number;
+  until: number;
+}
+
+interface LightFlareBeam {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  sprite: Phaser.GameObjects.Rectangle;
+  until: number;
+}
+
+function lerpColor(colorA: number, colorB: number, t: number): number {
+  const ratio = Phaser.Math.Clamp(t, 0, 1);
+  const a = Phaser.Display.Color.IntegerToColor(colorA);
+  const b = Phaser.Display.Color.IntegerToColor(colorB);
+  const out = Phaser.Display.Color.Interpolate.ColorWithColor(a, b, 100, Math.round(ratio * 100));
+  return Phaser.Display.Color.GetColor(out.r, out.g, out.b);
+}
+
+function distToSegment(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Phaser.Math.Distance.Between(px, py, x1, y1);
+  const t = Phaser.Math.Clamp(((px - x1) * dx + (py - y1) * dy) / lenSq, 0, 1);
+  return Phaser.Math.Distance.Between(px, py, x1 + t * dx, y1 + t * dy);
 }
 
 // ── LightKit ──────────────────────────────────────────────────────────────
 
 export class LightKit {
-  // ── Player state ─────────────────────────────────────────────────────
-  private lightSpeedText: Phaser.GameObjects.Text | null = null;
-  private lightDodgeText: Phaser.GameObjects.Text | null = null;
-  private lightMarkedExpiry = 0;
-  private lightMarkedTarget: Fighter | null = null;
-  private lightSpearHolding = false;
-  private lightSpearPointerDownX = 0;
-  private lightSpearPointerDownY = 0;
-  private lightSpearClickArmed = false;
-  private lightSpearHoldStart = 0;
-  private lightSpearSprite: Phaser.GameObjects.Rectangle | null = null;
-  private lightSpearHitCooldown = 0;
-  private lightPhotoSlowUntil = 0;
-  private lightPhotoAccelStart = 0;
-  private lightPhotoAccelUntil = 0;
-  private lightPhotoStillSince = 0;
-  private lightPhotoRegenAccum = 0;
-  private lightPhotonOrbs: Array<{ sprite: Phaser.GameObjects.Arc; orbitAngle: number }> = [];
-  private lightPhotonCdStartedAt = -999999;
-  private lightPhotonSpeedBoostUntil = 0;
-  private lightOverstimUntil = 0;
-  private lightOverstimTickAccum = 0;
-  private lightEnemyOverstim = new Map<Fighter, { until: number; tickAccum: number }>();
-  private lightSkewerModeUntil = 0;
-  private lightSkewerTargetHooked = false;
-  private lightSkewerTarget: Fighter | null = null;
-  private lightSkewerInitialDealt = false;
-  private lightAngelActive = false;
-  private lightAngelIsFallen = false;
-  private lightAngelUntil = 0;
-  private lightAngelSprite: Phaser.GameObjects.Arc | null = null;
-  private lightAngelOrbitAngle = 0;
-  private lightAngelBladeAccum = 0;
-  private lightAngelLink: Phaser.GameObjects.Graphics | null = null;
-  private lightDisarmClickCooldown = 0;
-  private lightBackstabDashing = false;
-  private lightBackstabUntil = 0;
-  private lightBackstabVx = 0;
-  private lightBackstabVy = 0;
-  private lightShadowTrail: Array<{ sprite: Phaser.GameObjects.Arc; until: number }> = [];
-  private lightShadowTrailAccum = 0;
-  private lightDisarmIndicators: Map<Fighter, Phaser.GameObjects.Text> = new Map();
-  private lightFallenAngelDaggerAccum = 0;
-  private lightAllUpgradesTextureSwapped = false;
+  // ── Player car state ───────────────────────────────────────────────────
+  private lanceHeld = false;
+  private lanceSprite: Phaser.GameObjects.Triangle | null = null;
+  private carAngle = 0;
+  private carSpeed = 0;
+  private carBoostUntil = 0;
 
-  // ── Flicker perk state ────────────────────────────────────────────────
-  private flickerSpearActive = false;
-  private flickerSpearX = 0;
-  private flickerSpearY = 0;
-  private flickerSpearVx = 0;
-  private flickerSpearVy = 0;
-  private flickerSpearAngle = 0;
-  private flickerSpearStuck = false;
-  private flickerSpearStuckAt = 0;
-  private flickerSpearHitEnemies: Set<Fighter> = new Set();
-  private flickerSpearPullDealt = false;
+  private blinkCharges = BLINK_MAX_CHARGES;
+  private blinkRechargeQueue: number[] = [];
 
-  // ── NPC state ─────────────────────────────────────────────────────────
-  private npcLightMarkedExpiry = 0;
-  private npcLightPhotonOrbs: Array<{ sprite: Phaser.GameObjects.Arc; orbitAngle: number }> = [];
-  private npcLightPhotonCdStartedAt = -999999;
-  private npcLightPhotonSpeedBoostUntil = 0;
-  private npcLightOverstimUntil = 0;
-  private npcLightOverstimTickAccum = 0;
-  private npcLightPhotoSlowUntil = 0;
-  private npcLightPhotoAccelStart = 0;
-  private npcLightPhotoAccelUntil = 0;
-  private npcLightSkewerModeUntil = 0;
-  private npcLightSkewerTargetHooked = false;
-  private npcLightAngelActive = false;
-  private npcLightAngelUntil = 0;
-  private npcLightAngelSprite: Phaser.GameObjects.Arc | null = null;
-  private npcLightAngelOrbitAngle = 0;
-  private npcLightAngelBladeAccum = 0;
-  private npcLightAngelLink: Phaser.GameObjects.Graphics | null = null;
+  private ramps: LightRamp[] = [];
+  private streaks: LightStreak[] = [];
+  private lanceHitCooldowns: Map<Fighter, number> = new Map();
+
+  private speedOLightActive = false;
+  private speedOLightBouncesLeft = 0;
+  private speedOLightNextBounceAt = 0;
+
+  private accelBarBg: Phaser.GameObjects.Rectangle | null = null;
+  private accelBarFill: Phaser.GameObjects.Rectangle | null = null;
+
+  // ── Click+ Redline ───────────────────────────────────────────────────────
+  private dangerVignette: Phaser.GameObjects.Rectangle[] | null = null;
+
+  // ── E+ Steam Charge ──────────────────────────────────────────────────────
+  private ePlusHolding = false;
+  private ePlusHoldStart = 0;
+  private nextSteamAt = 0;
+
+  // ── R+ Prism Drill ───────────────────────────────────────────────────────
+  private drills: LightDrill[] = [];
+  private playerStunUntil = 0;
+  private npcStunUntil = 0;
+
+  // ── Q+ Flare-Stream ──────────────────────────────────────────────────────
+  private playerTeleportCount = 0;
+  private flareBeams: LightFlareBeam[] = [];
+
+  // ── NPC mirror state ────────────────────────────────────────────────────
+  private npcLanceSprite: Phaser.GameObjects.Triangle | null = null;
+  private npcCarAngle = 0;
+  private npcCarSpeed = 0;
+  private npcCarBoostUntil = 0;
+  private npcRamps: LightRamp[] = [];
+  private npcLanceHitCooldowns: Map<Fighter, number> = new Map();
+
+  private npcSpeedOLightActive = false;
+  private npcSpeedOLightBouncesLeft = 0;
+  private npcSpeedOLightNextBounceAt = 0;
 
   constructor(private arena: LightArenaApi) {}
 
-  // ── Public accessors ──────────────────────────────────────────────────
-
-  getPhotoAccelUntil(): number { return this.lightPhotoAccelUntil; }
-  getPhotoAccelStart(): number { return this.lightPhotoAccelStart; }
-  getPhotonSpeedBoostUntil(): number { return this.lightPhotonSpeedBoostUntil; }
-  setPhotonSpeedBoostUntil(v: number): void { this.lightPhotonSpeedBoostUntil = v; }
-  setPhotoAccelUntil(v: number): void { this.lightPhotoAccelUntil = v; }
-  isAngelActive(): boolean { return this.lightAngelActive; }
-  getSkewerModeUntil(): number { return this.lightSkewerModeUntil; }
-  getAngelSpeedMult(): number {
-    if (!this.lightAngelActive) return 1;
-    return this.lightAngelIsFallen ? 1.15 : 1.25;
-  }
-
-  getNpcPhotoAccelUntil(): number { return this.npcLightPhotoAccelUntil; }
-  setNpcPhotoAccelUntil(v: number): void { this.npcLightPhotoAccelUntil = v; }
-  getNpcPhotonSpeedBoostUntil(): number { return this.npcLightPhotonSpeedBoostUntil; }
-  setNpcPhotonSpeedBoostUntil(v: number): void { this.npcLightPhotonSpeedBoostUntil = v; }
-  getNpcPhotoSlowUntil(): number { return this.npcLightPhotoSlowUntil; }
-  setNpcPhotoSlowUntil(v: number): void { this.npcLightPhotoSlowUntil = v; }
-
   reset(): void {
-    if (this.lightSpeedText) { this.lightSpeedText.destroy(); this.lightSpeedText = null; }
-    if (this.lightDodgeText) { this.lightDodgeText.destroy(); this.lightDodgeText = null; }
-    this.lightMarkedExpiry = 0;
-    this.lightMarkedTarget = null;
-    this.lightSpearHolding = false;
-    this.lightSpearPointerDownX = 0;
-    this.lightSpearPointerDownY = 0;
-    this.lightSpearClickArmed = false;
-    this.lightSpearHoldStart = 0;
-    if (this.lightSpearSprite) { this.lightSpearSprite.destroy(); this.lightSpearSprite = null; }
-    this.lightSpearHitCooldown = 0;
-    this.lightPhotoSlowUntil = 0;
-    this.lightPhotoAccelStart = 0;
-    this.lightPhotoAccelUntil = 0;
-    this.lightPhotoStillSince = 0;
-    this.lightPhotoRegenAccum = 0;
-    this.lightPhotonOrbs.forEach((o) => o.sprite.destroy());
-    this.lightPhotonOrbs = [];
-    this.lightPhotonCdStartedAt = -999999;
-    this.lightPhotonSpeedBoostUntil = 0;
-    this.lightOverstimUntil = 0;
-    this.lightOverstimTickAccum = 0;
-    this.lightEnemyOverstim.clear();
-    this.lightSkewerModeUntil = 0;
-    this.lightSkewerTargetHooked = false;
-    this.lightSkewerTarget = null;
-    this.lightSkewerInitialDealt = false;
-    this.lightAngelActive = false;
-    this.lightAngelIsFallen = false;
-    this.lightAngelUntil = 0;
-    if (this.lightAngelSprite) { this.lightAngelSprite.destroy(); this.lightAngelSprite = null; }
-    this.lightAngelOrbitAngle = 0;
-    this.lightAngelBladeAccum = 0;
-    if (this.lightAngelLink) { this.lightAngelLink.destroy(); this.lightAngelLink = null; }
-    this.lightDisarmClickCooldown = 0;
-    this.lightBackstabDashing = false;
-    this.lightBackstabUntil = 0;
-    this.lightBackstabVx = 0;
-    this.lightBackstabVy = 0;
-    this.lightShadowTrail.forEach((t) => t.sprite.destroy());
-    this.lightShadowTrail = [];
-    this.lightShadowTrailAccum = 0;
-    this.lightDisarmIndicators.forEach((t) => t.destroy());
-    this.lightDisarmIndicators.clear();
-    this.lightFallenAngelDaggerAccum = 0;
-    this.lightAllUpgradesTextureSwapped = false;
+    this.lanceHeld = false;
+    if (this.lanceSprite) { this.lanceSprite.destroy(); this.lanceSprite = null; }
+    this.carAngle = 0;
+    this.carSpeed = 0;
+    this.carBoostUntil = 0;
 
-    // Flicker perk
-    this.flickerSpearActive = false;
-    this.flickerSpearX = 0;
-    this.flickerSpearY = 0;
-    this.flickerSpearVx = 0;
-    this.flickerSpearVy = 0;
-    this.flickerSpearAngle = 0;
-    this.flickerSpearStuck = false;
-    this.flickerSpearStuckAt = 0;
-    this.flickerSpearHitEnemies = new Set();
-    this.flickerSpearPullDealt = false;
+    this.blinkCharges = BLINK_MAX_CHARGES;
+    this.blinkRechargeQueue = [];
 
-    this.npcLightMarkedExpiry = 0;
-    this.npcLightPhotonOrbs.forEach((o) => o.sprite.destroy());
-    this.npcLightPhotonOrbs = [];
-    this.npcLightPhotonCdStartedAt = -999999;
-    this.npcLightPhotonSpeedBoostUntil = 0;
-    this.npcLightOverstimUntil = 0;
-    this.npcLightOverstimTickAccum = 0;
-    this.npcLightPhotoSlowUntil = 0;
-    this.npcLightPhotoAccelStart = 0;
-    this.npcLightPhotoAccelUntil = 0;
-    this.npcLightSkewerModeUntil = 0;
-    this.npcLightSkewerTargetHooked = false;
-    this.npcLightAngelActive = false;
-    this.npcLightAngelUntil = 0;
-    if (this.npcLightAngelSprite) { this.npcLightAngelSprite.destroy(); this.npcLightAngelSprite = null; }
-    this.npcLightAngelOrbitAngle = 0;
-    this.npcLightAngelBladeAccum = 0;
-    if (this.npcLightAngelLink) { this.npcLightAngelLink.destroy(); this.npcLightAngelLink = null; }
+    this.ramps.forEach((r) => r.sprite.destroy());
+    this.ramps = [];
+    this.streaks.forEach((s) => s.sprite.destroy());
+    this.streaks = [];
+    this.lanceHitCooldowns.clear();
+
+    this.speedOLightActive = false;
+    this.speedOLightBouncesLeft = 0;
+    this.speedOLightNextBounceAt = 0;
+
+    this.destroyAccelBar();
+
+    this.dangerVignette?.forEach((r) => r.destroy());
+    this.dangerVignette = null;
+
+    this.ePlusHolding = false;
+    this.ePlusHoldStart = 0;
+    this.nextSteamAt = 0;
+
+    this.drills.forEach((d) => d.sprite.destroy());
+    this.drills = [];
+    this.playerStunUntil = 0;
+    this.npcStunUntil = 0;
+
+    this.playerTeleportCount = 0;
+    this.flareBeams.forEach((b) => b.sprite.destroy());
+    this.flareBeams = [];
+
+    if (this.npcLanceSprite) { this.npcLanceSprite.destroy(); this.npcLanceSprite = null; }
+    this.npcCarAngle = 0;
+    this.npcCarSpeed = 0;
+    this.npcCarBoostUntil = 0;
+    this.npcRamps.forEach((r) => r.sprite.destroy());
+    this.npcRamps = [];
+    this.npcLanceHitCooldowns.clear();
+
+    this.npcSpeedOLightActive = false;
+    this.npcSpeedOLightBouncesLeft = 0;
+    this.npcSpeedOLightNextBounceAt = 0;
   }
+
+  // ── Per-frame update ─────────────────────────────────────────────────────
 
   update(time: number, delta: number, isPlayerLight: boolean, isNpcLight: boolean): void {
     const { player, npc, scene } = this.arena;
     const playerBody = player.body as Phaser.Physics.Arcade.Body;
     const npcBody = npc.body as Phaser.Physics.Arcade.Body;
-    const { width: W, height: H } = scene.scale;
-    const ptr = scene.input.activePointer;
 
-    // ── Player Light ─────────────────────────────────────────────────
     if (isPlayerLight) {
-      const speedMag = Math.hypot(playerBody.velocity.x, playerBody.velocity.y);
-      const hasClickUp = this.arena.hasUpgrade('click');
-      const hasEUp = this.arena.hasUpgrade('e');
-      const hasRUp = this.arena.hasUpgrade('r');
-      const hasFUp = this.arena.hasUpgrade('f');
-      const hasQUp = this.arena.hasUpgrade('q');
-      const allUpgrades = hasClickUp && hasEUp && hasRUp && hasFUp && hasQUp;
-
-      if (this.lightSpeedText) this.lightSpeedText.setText(`🏃 ${Math.round(speedMag)} px/s`);
-
-      // All 5 upgrades owned → swap player texture to blue
-      if (allUpgrades && !this.lightAllUpgradesTextureSwapped) {
-        player.setTexture('elem-light-blue');
-        this.lightAllUpgradesTextureSwapped = true;
-      } else if (!allUpgrades && this.lightAllUpgradesTextureSwapped) {
-        player.setTexture('elem-light');
-        this.lightAllUpgradesTextureSwapped = false;
+      while (this.blinkRechargeQueue.length > 0 && time >= this.blinkRechargeQueue[0]) {
+        this.blinkRechargeQueue.shift();
+        this.blinkCharges = Math.min(BLINK_MAX_CHARGES, this.blinkCharges + 1);
       }
 
-      // Dodge chance display above player
-      if (player.dodgeChance > 0) {
-        if (!this.lightDodgeText) {
-          this.lightDodgeText = scene.add.text(0, 0, '', { fontSize: '10px', color: '#88ddff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
-        }
-        this.lightDodgeText.setText(`${Math.round(player.dodgeChance * 100)}% DODGE`);
-        this.lightDodgeText.setPosition(player.x, player.y - 52);
-      } else if (this.lightDodgeText) {
-        this.lightDodgeText.destroy();
-        this.lightDodgeText = null;
-      }
-
-      // Shadow trail cosmetic (all 5 upgrades)
-      if (allUpgrades) {
-        this.lightShadowTrailAccum += delta;
-        if (this.lightShadowTrailAccum >= 80) {
-          this.lightShadowTrailAccum = 0;
-          const dot = scene.add.circle(player.x, player.y, 8, 0x000000, 0.4).setDepth(3);
-          this.lightShadowTrail.push({ sprite: dot, until: time + 500 });
-        }
-      }
-      for (let i = this.lightShadowTrail.length - 1; i >= 0; i--) {
-        const t = this.lightShadowTrail[i];
-        if (time >= t.until) {
-          t.sprite.destroy();
-          this.lightShadowTrail.splice(i, 1);
-        } else {
-          const alpha = 0.4 * (1 - (time - (t.until - 500)) / 500);
-          t.sprite.setAlpha(Math.max(0, alpha));
-        }
-      }
-
-      // Disarm indicators above enemies
-      for (const enemy of this.arena.enemies) {
-        const disarmed = enemy.active && enemy.disarmedUntil > time;
-        const existing = this.lightDisarmIndicators.get(enemy);
-        if (disarmed) {
-          if (!existing) {
-            const txt = scene.add.text(enemy.x, enemy.y - 38, '🚫', { fontSize: '14px' }).setOrigin(0.5).setDepth(12);
-            this.lightDisarmIndicators.set(enemy, txt);
-          } else {
-            existing.setPosition(enemy.x, enemy.y - 38);
-          }
-        } else if (existing) {
-          existing.destroy();
-          this.lightDisarmIndicators.delete(enemy);
-        }
-      }
-
-      // Backstab dash movement
-      if (this.lightBackstabDashing && time < this.lightBackstabUntil) {
-        playerBody.setVelocity(this.lightBackstabVx, this.lightBackstabVy);
-      } else if (this.lightBackstabDashing) {
-        this.lightBackstabDashing = false;
+      if (this.speedOLightActive) {
+        this.stepSpeedOLight('player', time);
         playerBody.setVelocity(0, 0);
-      }
-
-      // Mark: target takes 15% more damage
-      if (time < this.lightMarkedExpiry && this.lightMarkedTarget) {
-        const mt = this.lightMarkedTarget;
-        if (mt.active && mt.hp > 0) {
-          mt.incomingDamageMultiplier = Math.max(mt.incomingDamageMultiplier, 1.15);
-        } else {
-          this.lightMarkedTarget = null;
-          this.lightMarkedExpiry = 0;
+        if (this.lanceSprite) this.lanceSprite.setVisible(false);
+        this.destroyDangerVignette();
+      } else if (this.ePlusHolding) {
+        // E+ Steam Charge: rooted in place, aiming at the cursor, acceleration frozen (not lost)
+        playerBody.setVelocity(0, 0);
+        const ptr = scene.input.activePointer;
+        this.carAngle = Math.atan2(ptr.worldY - player.y, ptr.worldX - player.x);
+        if (this.lanceSprite) {
+          this.lanceSprite.setVisible(true);
+          this.updateLanceVisual(this.lanceSprite, player, this.carAngle, this.carSpeed / CAR_MAX_SPEED);
         }
-      } else if (this.lightMarkedTarget) {
-        if (this.lightMarkedTarget.incomingDamageMultiplier === 1.15) this.lightMarkedTarget.incomingDamageMultiplier = 1;
-        this.lightMarkedTarget = null;
-      }
-
-      // Photosynthespark stand-still regen (only when not using E+ dodge)
-      if (!hasEUp && time < this.lightPhotoAccelUntil) {
-        if (speedMag > 8) {
-          this.lightPhotoStillSince = time;
-          this.lightPhotoRegenAccum = 0;
-        } else if (time - this.lightPhotoStillSince >= 500) {
-          this.lightPhotoRegenAccum += delta;
-          if (this.lightPhotoRegenAccum >= 1000) {
-            this.lightPhotoRegenAccum -= 1000;
-            player.hp = Math.min(player.maxHp, player.hp + 8);
-            this.arena.showFloatingText(player.x, player.y - 20, '+8 🌞 REGEN', '#fff4a8');
-          }
+        if (time >= this.nextSteamAt) {
+          this.nextSteamAt = time + E_PLUS_STEAM_INTERVAL_MS;
+          this.spawnSteamParticle(time);
         }
-      }
-
-      // Angel DR buff (base angel only, not fallen angel)
-      if (this.lightAngelActive && !this.lightAngelIsFallen) {
-        player.incomingDamageMultiplier = Math.min(player.incomingDamageMultiplier, 0.75);
-      }
-
-      // Held spear: reposition + contact damage on all enemies
-      if (this.lightSpearHolding && this.lightSpearSprite) {
-        const ang = Math.atan2(ptr.worldY - player.y, ptr.worldX - player.x);
-        const spearX = player.x + Math.cos(ang) * 36;
-        const spearY = player.y + Math.sin(ang) * 36;
-        this.lightSpearSprite.setPosition(spearX, spearY);
-        this.lightSpearSprite.setRotation(ang);
-
-        for (const t of this.arena.enemies) {
-          if (!t.active || t.hp <= 0) continue;
-          const d = Phaser.Math.Distance.Between(spearX, spearY, t.x, t.y);
-          if (d < 30 && time >= this.lightSpearHitCooldown) {
-            const dmg = hasClickUp
-              ? 6 + Math.round(100 * player.dodgeChance)
-              : 6 + Math.round(Math.hypot(playerBody.velocity.x, playerBody.velocity.y) / 15);
-            t.takeDamage(dmg);
-            this.arena.spawnHitFlash(t.x, t.y, 0xfff4a8);
-            this.lightSpearHitCooldown = time + 300;
-            // Click+ Disarm
-            if (hasClickUp && time >= this.lightDisarmClickCooldown) {
-              t.applyDisarm(1000);
-              this.lightDisarmClickCooldown = time + 5000;
-              this.arena.showFloatingText(t.x, t.y - 28, '🚫 DISARMED', '#88ddff');
-            }
-            if (!hasFUp && time < this.lightSkewerModeUntil && !this.lightSkewerTargetHooked) {
-              this.lightSkewerTargetHooked = true;
-              this.lightSkewerTarget = t;
-              this.lightSkewerInitialDealt = false;
-              this.arena.showFloatingText(t.x, t.y - 20, '🗡 SKEWERED', '#fff4a8');
-            }
-            break;
-          }
+        this.destroyDangerVignette();
+      } else if (this.lanceHeld) {
+        if (this.lanceSprite) this.lanceSprite.setVisible(true);
+        const ptr = scene.input.activePointer;
+        const desired = Math.atan2(ptr.worldY - player.y, ptr.worldX - player.x);
+        const ratio = this.stepCar(playerBody, time, delta, desired, true);
+        if (this.lanceSprite) {
+          this.updateLanceVisual(this.lanceSprite, player, this.carAngle, ratio);
+          this.checkLanceContact(time, this.lanceSprite.x, this.lanceSprite.y, ratio, this.arena.enemies, this.lanceHitCooldowns);
         }
-      } else if (this.lightSkewerTargetHooked) {
-        this.lightSkewerTargetHooked = false;
-        this.lightSkewerTarget = null;
-      }
+        this.updateAccelBar(ratio);
 
-      // Skewer: drag target + wall slam (only when F+ not owned)
-      if (!hasFUp && this.lightSkewerTargetHooked && this.lightSkewerTarget && time < this.lightSkewerModeUntil) {
-        const skewerTarget = this.lightSkewerTarget;
-        if (!skewerTarget.active || skewerTarget.hp <= 0) {
-          this.lightSkewerTargetHooked = false;
-          this.lightSkewerTarget = null;
-        } else {
-          const ang = Math.atan2(ptr.worldY - player.y, ptr.worldX - player.x);
-          const tethX = player.x + Math.cos(ang) * 60;
-          const tethY = player.y + Math.sin(ang) * 60;
-          skewerTarget.setPosition(tethX, tethY);
-          (skewerTarget.body as Phaser.Physics.Arcade.Body).reset(tethX, tethY);
-          const margin = 32;
-          const hitWall = tethX < margin || tethX > W - margin || tethY < margin || tethY > H - margin;
-          if (hitWall) {
-            const wallDmg = Math.min(150, 50 + Math.round(speedMag / 50));
-            skewerTarget.takeDamage(wallDmg);
-            this.arena.spawnHitFlash(skewerTarget.x, skewerTarget.y, 0xfff4a8);
-            this.arena.showFloatingText(skewerTarget.x, skewerTarget.y - 20, `💥 WALL SLAM ${wallDmg}`, '#fff4a8');
-            this.lightSkewerTargetHooked = false;
-            this.lightSkewerTarget = null;
-            this.lightSkewerModeUntil = 0;
-          }
-        }
-      } else if (!hasFUp && time >= this.lightSkewerModeUntil && this.lightSkewerTargetHooked) {
-        this.lightSkewerTargetHooked = false;
-        this.lightSkewerTarget = null;
-      }
-
-      // Photon orbs orbit + contact
-      const orbR = 44;
-      for (let i = this.lightPhotonOrbs.length - 1; i >= 0; i--) {
-        const orb = this.lightPhotonOrbs[i];
-        orb.orbitAngle += delta * 0.003;
-        const ang = orb.orbitAngle + i * Math.PI;
-        orb.sprite.setPosition(player.x + Math.cos(ang) * orbR, player.y + Math.sin(ang) * orbR);
-        let orbConsumed = false;
-        for (const t of this.arena.enemies) {
-          if (!t.active || t.hp <= 0) continue;
-          const d = Phaser.Math.Distance.Between(orb.sprite.x, orb.sprite.y, t.x, t.y);
-          if (d < 22) {
-            orb.sprite.destroy();
-            this.lightPhotonOrbs.splice(i, 1);
-            if (hasRUp) {
-              // R+ contact: stun + disarm
-              t.frozenUntil = Math.max(t.frozenUntil, time + 1500);
-              t.applyDisarm(1500);
-              this.arena.showFloatingText(t.x, t.y - 20, '🧊 STUN 1.5s', '#88ddff');
-            } else {
-              const existing = this.lightEnemyOverstim.get(t);
-              this.lightEnemyOverstim.set(t, { until: time + 5000, tickAccum: existing?.tickAccum ?? 0 });
-              this.arena.showFloatingText(t.x, t.y - 20, '✨ OVERSTIM', '#fff4a8');
-            }
-            if (this.lightPhotonOrbs.length === 0) this.lightPhotonCdStartedAt = time;
-            orbConsumed = true;
-            break;
-          }
-        }
-        if (orbConsumed) continue;
-      }
-
-      // Overstim tick damage (per enemy, base R behavior)
-      if (!hasRUp) {
-        for (const [t, overstim] of this.lightEnemyOverstim) {
-          if (!t.active || t.hp <= 0) { this.lightEnemyOverstim.delete(t); continue; }
-          if (time < overstim.until) {
-            overstim.tickAccum += delta;
-            if (overstim.tickAccum >= 250) {
-              overstim.tickAccum -= 250;
-              const tBody = t.body as Phaser.Physics.Arcade.Body;
-              const tSpeed = Math.hypot(tBody.velocity.x, tBody.velocity.y);
-              let tickDmg = 0;
-              if (tSpeed < 10) tickDmg = 0;
-              else if (tSpeed < 150) tickDmg = 2;
-              else if (tSpeed < 350) tickDmg = 4;
-              else tickDmg = 6;
-              if (tickDmg > 0) {
-                t.takeDamage(tickDmg);
-                this.arena.spawnHitFlash(t.x, t.y, 0xfff4a8);
-              }
-            }
-          } else {
-            this.lightEnemyOverstim.delete(t);
-          }
-        }
-      }
-
-      // Prayer / Fallen Angel orbit + blades
-      if (this.lightAngelActive) {
-        if (time >= this.lightAngelUntil) {
-          if (this.lightAngelSprite) { this.lightAngelSprite.destroy(); this.lightAngelSprite = null; }
-          if (this.lightAngelLink) { this.lightAngelLink.destroy(); this.lightAngelLink = null; }
-          this.lightAngelActive = false;
-          if (!this.lightAngelIsFallen) {
-            player.incomingDamageMultiplier = Math.max(1, player.incomingDamageMultiplier / 0.75);
-          } else {
-            player.dodgeChance = Math.max(0, player.dodgeChance - 1.0);
-          }
-          this.lightAngelIsFallen = false;
-        } else {
-          this.lightAngelOrbitAngle += delta * 0.0015;
-          const angelX = player.x + Math.cos(this.lightAngelOrbitAngle) * 80;
-          const angelY = player.y + Math.sin(this.lightAngelOrbitAngle) * 80;
-          if (this.lightAngelSprite) this.lightAngelSprite.setPosition(angelX, angelY);
-          if (this.lightAngelLink) {
-            this.lightAngelLink.clear();
-            this.lightAngelLink.lineStyle(2, this.lightAngelIsFallen ? 0x9966cc : 0xfff4a8, 0.6);
-            this.lightAngelLink.lineBetween(player.x, player.y, angelX, angelY);
-          }
-          if (time > this.lightMarkedExpiry - 1500) {
-            if (!this.lightMarkedTarget || !this.lightMarkedTarget.active || this.lightMarkedTarget.hp <= 0) {
-              this.lightMarkedTarget = this.arena.getNearestEnemy(player.x, player.y);
-            }
-            this.lightMarkedExpiry = time + 2500;
-          }
-          this.lightAngelBladeAccum += delta;
-          if (this.lightAngelIsFallen) {
-            // Fallen Angel: 3 daggers every 2s, disarm on hit
-            if (this.lightFallenAngelDaggerAccum >= 2000) {
-              this.lightFallenAngelDaggerAccum -= 2000;
-              const nearest = this.arena.getNearestEnemy(angelX, angelY);
-              if (nearest && nearest.active && nearest.hp > 0) {
-                const baseAng = Math.atan2(nearest.y - angelY, nearest.x - angelX);
-                for (let di = -1; di <= 1; di++) {
-                  const dAng = baseAng + di * (Math.PI / 8);
-                  const proj = new Projectile(scene, angelX, angelY, 'proj-holy-blade', 12, true);
-                  this.arena.projectiles.add(proj);
-                  proj.launch(Math.cos(dAng) * 400, Math.sin(dAng) * 400);
-                  (proj as any).isFallenAngelDagger = true;
-                }
-              }
-              this.arena.showFloatingText(angelX, angelY - 20, '🗡 DAGGERS', '#9966cc');
-            }
-            this.lightFallenAngelDaggerAccum += delta;
-          } else {
-            // Base angel: 8 blades every 3s
-            if (this.lightAngelBladeAccum >= 3000) {
-              this.lightAngelBladeAccum -= 3000;
-              for (let i = 0; i < 8; i++) {
-                const bAng = i * Math.PI / 4;
-                const proj = new Projectile(scene, angelX, angelY, 'proj-holy-blade', 12, true);
-                this.arena.projectiles.add(proj);
-                proj.launch(Math.cos(bAng) * 350, Math.sin(bAng) * 350);
-              }
-              this.arena.showFloatingText(angelX, angelY - 20, '😇 HOLY BLADES', '#fff4a8');
-            }
-          }
-        }
-      }
-
-      // ── Flicker spear flight / pull ──────────────────────────────────
-      if (this.flickerSpearActive) {
-        const dt = delta / 1000;
-        const worldW = scene.scale.width;
-        const worldH = scene.scale.height;
-
-        if (!this.flickerSpearStuck) {
-          // Move spear
-          this.flickerSpearX += this.flickerSpearVx * dt;
-          this.flickerSpearY += this.flickerSpearVy * dt;
-          // Update sprite
-          if (this.lightSpearSprite) {
-            this.lightSpearSprite.x = this.flickerSpearX;
-            this.lightSpearSprite.y = this.flickerSpearY;
-            this.lightSpearSprite.rotation = this.flickerSpearAngle;
-          }
-          // Pierce enemies
-          for (const enemy of this.arena.enemies) {
-            if (!enemy.active || enemy.hp <= 0) continue;
-            if (this.flickerSpearHitEnemies.has(enemy)) continue;
-            const dist = Phaser.Math.Distance.Between(this.flickerSpearX, this.flickerSpearY, enemy.x, enemy.y);
-            if (dist < 20) {
-              this.flickerSpearHitEnemies.add(enemy);
-              enemy.takeDamage(10);
-              // Mark the enemy (same as tap-click: 2s, +15% incoming damage)
-              this.lightMarkedTarget = enemy;
-              this.lightMarkedExpiry = Math.max(this.lightMarkedExpiry, time + 2000);
-              this.arena.showFloatingText(enemy.x, enemy.y - 28, '✨ HIGHLIGHTED', '#fff4a8');
-              this.arena.spawnHitFlash(enemy.x, enemy.y, 0xfff4a8);
-            }
-          }
-          // Wall check
-          if (this.flickerSpearX < 0 || this.flickerSpearX > worldW ||
-              this.flickerSpearY < 0 || this.flickerSpearY > worldH) {
-            this.flickerSpearX = Math.max(8, Math.min(worldW - 8, this.flickerSpearX));
-            this.flickerSpearY = Math.max(8, Math.min(worldH - 8, this.flickerSpearY));
-            this.flickerSpearStuck = true;
-            this.flickerSpearStuckAt = time;
-            this.flickerSpearVx = 0;
-            this.flickerSpearVy = 0;
-            if (this.lightSpearSprite) {
-              this.lightSpearSprite.x = this.flickerSpearX;
-              this.lightSpearSprite.y = this.flickerSpearY;
-            }
+        // Click+ Redline: doubled meter (already folded into `ratio` by stepCar), danger zone above 3/4
+        if (this.arena.hasUpgrade('click')) {
+          const dangerAlpha = ratio > CLICK_PLUS_DANGER_RATIO
+            ? Phaser.Math.Clamp((ratio - CLICK_PLUS_DANGER_RATIO) / (1 - CLICK_PLUS_DANGER_RATIO), 0, 1) * 0.4
+            : 0;
+          this.updateDangerVignette(dangerAlpha);
+          if (dangerAlpha > 0 && (playerBody.blocked.up || playerBody.blocked.down || playerBody.blocked.left || playerBody.blocked.right)) {
+            player.takeDamage(CLICK_PLUS_WALL_DAMAGE);
+            this.arena.spawnHitFlash(player.x, player.y, 0xff3333);
+            this.arena.showFloatingText(player.x, player.y - 34, `💥 WALL CRASH -${CLICK_PLUS_WALL_DAMAGE}`, '#ff3333');
+            this.carSpeed = 0;
+            this.updateDangerVignette(0);
           }
         } else {
-          // Stuck — wait 1 second then pull player
-          if (!this.flickerSpearPullDealt && time >= this.flickerSpearStuckAt + 1000) {
-            this.flickerSpearPullDealt = true;
-            const dx = this.flickerSpearX - player.x;
-            const dy = this.flickerSpearY - player.y;
-            const len = Math.sqrt(dx * dx + dy * dy);
-            if (len > 0) {
-              const speed = 540;
-              playerBody.setVelocity((dx / len) * speed, (dy / len) * speed);
-              const travelMs = Math.min(700, (len / speed) * 1000);
-              const stuckX = this.flickerSpearX;
-              const stuckY = this.flickerSpearY;
-              scene.time.delayedCall(travelMs, () => {
-                if (player.active) playerBody.setVelocity(0, 0);
-                const hasClickUp = this.arena.hasUpgrade('click');
-                for (const enemy of this.arena.enemies) {
-                  if (!enemy.active || enemy.hp <= 0) continue;
-                  if (Phaser.Math.Distance.Between(player.x, player.y, enemy.x, enemy.y) < 40) {
-                    const dmg = hasClickUp
-                      ? 6 + Math.round(100 * player.dodgeChance)
-                      : 6 + Math.round(Math.hypot(playerBody.velocity.x, playerBody.velocity.y) / 15);
-                    enemy.takeDamage(Math.max(6, dmg));
-                    this.arena.spawnHitFlash(enemy.x, enemy.y, 0xfff4a8);
-                    this.arena.showFloatingText(enemy.x, enemy.y - 20, `💥 ${Math.max(6, dmg)}`, '#fff4a8');
-                  }
-                }
-                void stuckX; void stuckY;
-              });
-            }
-            // Destroy spear after pull completes
-            scene.time.delayedCall(800, () => {
-              this.lightSpearSprite?.destroy();
-              this.lightSpearSprite = null;
-              this.flickerSpearActive = false;
-              this.flickerSpearStuck = false;
-            });
-          }
+          this.destroyDangerVignette();
         }
-      }
-
-      void speedMag;
-    }
-
-    // ── NPC Light ─────────────────────────────────────────────────────
-    if (isNpcLight) {
-      const npcSpeed = Math.hypot(npcBody.velocity.x, npcBody.velocity.y);
-
-      // NPC mark on player
-      if (time < this.npcLightMarkedExpiry) {
-        player.incomingDamageMultiplier = Math.max(player.incomingDamageMultiplier, 1.15);
       } else {
-        if (player.incomingDamageMultiplier === 1.15) player.incomingDamageMultiplier = 1;
+        this.destroyAccelBar();
+        this.destroyDangerVignette();
       }
+    }
 
-      // NPC photospark phases (speed applied via arena api)
-      if (time < this.npcLightPhotoSlowUntil) {
-        this.arena.applyNpcSpeedMult(0.2);
-      } else if (time < this.npcLightPhotoAccelUntil) {
-        const t = Math.min(1, (time - this.npcLightPhotoAccelStart) / 5000);
-        const peakT = Math.min(t / 0.9, 1);
-        this.arena.applyNpcSpeedMult(1.15 + (2.0 - 1.15) * peakT);
-      }
-
-      if (time < this.npcLightPhotonSpeedBoostUntil) this.arena.applyNpcSpeedMult(3);
-
-      if (this.npcLightAngelActive) {
-        this.arena.applyNpcSpeedMult(1.25);
-        npc.incomingDamageMultiplier = Math.min(npc.incomingDamageMultiplier, 0.75);
-      }
-
-      // NPC photon orbs orbit + overstim contact
-      for (let i = this.npcLightPhotonOrbs.length - 1; i >= 0; i--) {
-        const orb = this.npcLightPhotonOrbs[i];
-        orb.orbitAngle += delta * 0.003;
-        const ang = orb.orbitAngle + i * Math.PI;
-        orb.sprite.setPosition(npc.x + Math.cos(ang) * 44, npc.y + Math.sin(ang) * 44);
-        const d = Phaser.Math.Distance.Between(orb.sprite.x, orb.sprite.y, player.x, player.y);
-        if (d < 22) {
-          orb.sprite.destroy();
-          this.npcLightPhotonOrbs.splice(i, 1);
-          this.npcLightOverstimUntil = time + 5000;
-          this.arena.showFloatingText(player.x, player.y - 20, '✨ OVERSTIM', '#fff4a8');
-          if (this.npcLightPhotonOrbs.length === 0) this.npcLightPhotonCdStartedAt = time;
+    if (isNpcLight) {
+      if (this.npcSpeedOLightActive) {
+        this.stepSpeedOLight('npc', time);
+        npcBody.setVelocity(0, 0);
+        if (this.npcLanceSprite) this.npcLanceSprite.setVisible(false);
+      } else {
+        if (!this.npcLanceSprite) {
+          this.npcLanceSprite = scene.add.triangle(0, 0, -10, 12, -10, -12, 22, 0, LANCE_COLOR_SLOW)
+            .setDepth(10).setStrokeStyle(1, 0xffffff);
         }
+        this.npcLanceSprite.setVisible(true);
+        const desired = Math.atan2(player.y - npc.y, player.x - npc.x);
+        const ratio = this.stepCar(npcBody, time, delta, desired, false);
+        this.updateLanceVisual(this.npcLanceSprite, npc, this.npcCarAngle, ratio);
+        this.checkLanceContact(time, this.npcLanceSprite.x, this.npcLanceSprite.y, ratio, [player], this.npcLanceHitCooldowns);
       }
 
-      // NPC overstim tick damage
-      if (time < this.npcLightOverstimUntil) {
-        this.npcLightOverstimTickAccum += delta;
-        if (this.npcLightOverstimTickAccum >= 250) {
-          this.npcLightOverstimTickAccum -= 250;
-          const playerBody2 = player.body as Phaser.Physics.Arcade.Body;
-          const pSpeed = Math.hypot(playerBody2.velocity.x, playerBody2.velocity.y);
-          let tickDmg = 0;
-          if (pSpeed < 10) tickDmg = 0;
-          else if (pSpeed < 150) tickDmg = 2;
-          else if (pSpeed < 350) tickDmg = 4;
-          else tickDmg = 6;
-          if (tickDmg > 0) {
-            player.takeDamage(tickDmg);
-            this.arena.spawnHitFlash(player.x, player.y, 0xfff4a8);
-          }
-        }
-      }
-
-      // NPC angel orbit
-      if (this.npcLightAngelActive) {
-        if (time >= this.npcLightAngelUntil) {
-          if (this.npcLightAngelSprite) { this.npcLightAngelSprite.destroy(); this.npcLightAngelSprite = null; }
-          if (this.npcLightAngelLink) { this.npcLightAngelLink.destroy(); this.npcLightAngelLink = null; }
-          this.npcLightAngelActive = false;
-          npc.incomingDamageMultiplier = Math.max(1, npc.incomingDamageMultiplier / 0.75);
-        } else {
-          this.npcLightAngelOrbitAngle += delta * 0.0015;
-          const angelX = npc.x + Math.cos(this.npcLightAngelOrbitAngle) * 80;
-          const angelY = npc.y + Math.sin(this.npcLightAngelOrbitAngle) * 80;
-          if (this.npcLightAngelSprite) this.npcLightAngelSprite.setPosition(angelX, angelY);
-          if (this.npcLightAngelLink) {
-            this.npcLightAngelLink.clear();
-            this.npcLightAngelLink.lineStyle(2, 0xfff4a8, 0.6);
-            this.npcLightAngelLink.lineBetween(npc.x, npc.y, angelX, angelY);
-          }
-          if (time > this.npcLightMarkedExpiry - 1500) this.npcLightMarkedExpiry = time + 2500;
-          this.npcLightAngelBladeAccum += delta;
-          if (this.npcLightAngelBladeAccum >= 3000) {
-            this.npcLightAngelBladeAccum -= 3000;
-            for (let i = 0; i < 8; i++) {
-              const bAng = i * Math.PI / 4;
-              const proj = new Projectile(scene, angelX, angelY, 'proj-holy-blade', 12, false);
-              this.arena.projectiles.add(proj);
-              proj.launch(Math.cos(bAng) * 350, Math.sin(bAng) * 350);
-            }
-            this.arena.showFloatingText(angelX, angelY - 20, '😇 HOLY BLADES', '#fff4a8');
-          }
-        }
-      }
-
-      // React to npcCastId for NPC Light abilities
       const npcCastId = this.arena.npcCastId;
-      if (npcCastId === 'light-stab') {
-        this.npcLightMarkedExpiry = time + 2000;
-        this.arena.showFloatingText(player.x, player.y - 20, '✨ HIGHLIGHTED', '#fff4a8');
+      if (npcCastId === 'blink') {
+        this.npcCarAngle = Math.atan2(player.y - npc.y, player.x - npc.x);
+        this.npcCarBoostUntil = time + BLINK_BOOST_MS;
+        this.arena.showFloatingText(npc.x, npc.y - 30, '⚡ BLINK', '#88ddff');
       }
-      if (npcCastId === 'photo-spark') {
-        this.npcLightPhotoSlowUntil = time + 3000;
-        this.npcLightPhotoAccelStart = time + 3000;
-        this.npcLightPhotoAccelUntil = time + 8000;
-        this.arena.showFloatingText(npc.x, npc.y - 30, '🌞 PHOTOSYNTHESPARK', '#fff4a8');
+      if (npcCastId === 'prism-ramp') {
+        this.placeRamp('npc', npc.x, npc.y, this.npcCarAngle);
+        this.arena.showFloatingText(npc.x, npc.y - 30, '🔺 PRISM RAMP', '#88ddff');
       }
-      if (npcCastId === 'photon-orbs' && this.npcLightPhotonOrbs.length === 0 && (time - this.npcLightPhotonCdStartedAt >= 20000 || this.npcLightPhotonCdStartedAt < -1000)) {
-        for (let i = 0; i < 2; i++) {
-          const sprite = scene.add.circle(npc.x, npc.y, 9, 0xfff4a8, 0.9).setDepth(8).setStrokeStyle(1, 0xffffff);
-          this.npcLightPhotonOrbs.push({ sprite, orbitAngle: i * Math.PI });
+      if (npcCastId === 'light-trick') {
+        this.triggerLightTrick('npc', time, npc, [player]);
+      }
+      if (npcCastId === 'speed-o-light' && !this.npcSpeedOLightActive) {
+        this.startSpeedOLight('npc', time);
+      }
+    }
+
+    // Ramp overlap checks run unconditionally — each array is naturally empty
+    // on whichever side isn't playing Light this match.
+    this.updateRampArray(time, this.ramps, player, this.arena.enemies);
+    this.updateRampArray(time, this.npcRamps, npc, [player]);
+
+    this.updateStreaks(time);
+    this.updateDrills(time, delta);
+    this.updateFlareBeams(time);
+
+    // R+ Prism Drill stun — same "zero velocity while stunned" approach used elsewhere in this codebase
+    if (time < this.playerStunUntil) playerBody.setVelocity(0, 0);
+    if (time < this.npcStunUntil) npcBody.setVelocity(0, 0);
+  }
+
+  private stepCar(body: Phaser.Physics.Arcade.Body, time: number, delta: number, desiredAngle: number, isPlayer: boolean): number {
+    const dtS = delta / 1000;
+    let angle = isPlayer ? this.carAngle : this.npcCarAngle;
+    let speed = isPlayer ? this.carSpeed : this.npcCarSpeed;
+    const boostUntil = isPlayer ? this.carBoostUntil : this.npcCarBoostUntil;
+
+    // Click+ Redline: doubles the top end of the meter (and the risk that comes with it)
+    const maxSpeed = isPlayer && this.arena.hasUpgrade('click') ? CAR_MAX_SPEED * CLICK_PLUS_MAX_SPEED_MULT : CAR_MAX_SPEED;
+
+    const diff = Phaser.Math.Angle.Wrap(desiredAngle - angle);
+    const absDiff = Math.abs(diff);
+    const speedRatio = speed / maxSpeed;
+    const turnRate = CAR_BASE_TURN_RATE - (CAR_BASE_TURN_RATE - CAR_FAST_TURN_RATE) * speedRatio;
+    const maxTurnStep = turnRate * dtS;
+    angle += Phaser.Math.Clamp(diff, -maxTurnStep, maxTurnStep);
+
+    // Q+ Flare-Stream: standing on your own flare beam triples the accel rate
+    let accelRate = CAR_ACCEL_RATE;
+    if (isPlayer && this.flareBeams.length > 0 && this.arena.hasUpgrade('q') && this.isOnFlareBeam(body.center.x, body.center.y)) {
+      accelRate *= FLARE_ACCEL_MULT;
+    }
+
+    if (absDiff < STRAIGHT_THRESHOLD) {
+      speed = Math.min(maxSpeed, speed + accelRate * dtS);
+    } else {
+      speed = Math.max(CAR_MIN_COAST, speed - CAR_TURN_BRAKE_RATE * dtS * (absDiff / Math.PI));
+    }
+
+    if (time < boostUntil) speed = Math.max(speed, BOOST_TARGET_SPEED);
+    speed = Phaser.Math.Clamp(speed, 0, maxSpeed);
+
+    body.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
+
+    if (isPlayer) { this.carAngle = angle; this.carSpeed = speed; } else { this.npcCarAngle = angle; this.npcCarSpeed = speed; }
+    return speed / maxSpeed;
+  }
+
+  private updateLanceVisual(sprite: Phaser.GameObjects.Triangle, caster: Fighter, angle: number, ratio: number): void {
+    const dist = 34;
+    sprite.setPosition(caster.x + Math.cos(angle) * dist, caster.y + Math.sin(angle) * dist);
+    sprite.setRotation(angle);
+    sprite.setFillStyle(lerpColor(LANCE_COLOR_SLOW, LANCE_COLOR_FAST, ratio));
+  }
+
+  /** Contact damage for the held/driven lance tip — scales with the current acceleration ratio. */
+  private checkLanceContact(time: number, lanceX: number, lanceY: number, ratio: number, targets: Fighter[], hitCooldowns: Map<Fighter, number>): void {
+    for (const t of targets) {
+      if (!t.active || t.hp <= 0) continue;
+      if (time < (hitCooldowns.get(t) ?? 0)) continue;
+      if (Phaser.Math.Distance.Between(lanceX, lanceY, t.x, t.y) <= LANCE_HIT_RADIUS) {
+        const dmg = LANCE_BASE_DAMAGE + Math.round(LANCE_MAX_BONUS_DAMAGE * ratio * ratio);
+        t.takeDamage(dmg);
+        this.arena.spawnHitFlash(t.x, t.y, LANCE_COLOR_SLOW);
+        hitCooldowns.set(t, time + LANCE_HIT_COOLDOWN_MS);
+      }
+    }
+  }
+
+  private ensureAccelBar(): void {
+    if (this.accelBarBg) return;
+    const { scene, width: W, hpBarY, hpBarH } = this.arena;
+    const barW = 220;
+    const barH = 8;
+    const barY = hpBarY + hpBarH / 2 + 3 + barH / 2;
+    this.accelBarBg = scene.add.rectangle(W / 2, barY, barW + 4, barH + 4, 0x0a0a18, 0.9)
+      .setStrokeStyle(2, 0x445577).setDepth(20);
+    this.accelBarFill = scene.add.rectangle(W / 2 - barW / 2, barY, 0, barH, LANCE_COLOR_SLOW, 1)
+      .setOrigin(0, 0.5).setDepth(21);
+  }
+
+  private updateAccelBar(ratio: number): void {
+    this.ensureAccelBar();
+    const barW = 220;
+    if (this.accelBarFill) {
+      this.accelBarFill.setSize(barW * Phaser.Math.Clamp(ratio, 0, 1), 8);
+      this.accelBarFill.setFillStyle(lerpColor(LANCE_COLOR_SLOW, LANCE_COLOR_FAST, ratio), 1);
+    }
+  }
+
+  private destroyAccelBar(): void {
+    if (this.accelBarBg) { this.accelBarBg.destroy(); this.accelBarBg = null; }
+    if (this.accelBarFill) { this.accelBarFill.destroy(); this.accelBarFill = null; }
+  }
+
+  // ── Click+ Redline danger vignette ─────────────────────────────────────────
+
+  private ensureDangerVignette(): void {
+    if (this.dangerVignette) return;
+    const { scene, width: W, height: H } = this.arena;
+    const t = 36;
+    const mk = (x: number, y: number, w: number, h: number) =>
+      scene.add.rectangle(x, y, w, h, 0xff0000, 0).setOrigin(0, 0).setScrollFactor(0).setDepth(999);
+    this.dangerVignette = [mk(0, 0, W, t), mk(0, H - t, W, t), mk(0, 0, t, H), mk(W - t, 0, t, H)];
+  }
+
+  private updateDangerVignette(alpha: number): void {
+    if (alpha <= 0) { this.destroyDangerVignette(); return; }
+    this.ensureDangerVignette();
+    this.dangerVignette?.forEach((r) => r.setFillStyle(0xff0000, alpha));
+  }
+
+  private destroyDangerVignette(): void {
+    if (!this.dangerVignette) return;
+    this.dangerVignette.forEach((r) => r.destroy());
+    this.dangerVignette = null;
+  }
+
+  // ── E+ Steam Charge ──────────────────────────────────────────────────────
+
+  private spawnSteamParticle(time: number): void {
+    const { scene, player } = this.arena;
+    const holdRatio = Phaser.Math.Clamp((time - this.ePlusHoldStart) / E_PLUS_MAX_HOLD_MS, 0, 1);
+    const color = lerpColor(0xcccccc, 0xff2200, holdRatio);
+    const ox = Phaser.Math.Between(-6, 6);
+    const c = scene.add.circle(player.x + ox, player.y - 16, 4 + holdRatio * 3, color, 0.7).setDepth(11);
+    scene.tweens.add({ targets: c, y: c.y - 26, alpha: 0, duration: 500, onComplete: () => c.destroy() });
+  }
+
+  // ── Prism Ramp ───────────────────────────────────────────────────────────
+
+  private placeRamp(owner: 'player' | 'npc', originX: number, originY: number, angle: number): void {
+    const arr = owner === 'player' ? this.ramps : this.npcRamps;
+    if (arr.length >= MAX_RAMPS) {
+      const oldest = arr.shift();
+      oldest?.sprite.destroy();
+    }
+    const x = originX + Math.cos(angle) * RAMP_OFFSET;
+    const y = originY + Math.sin(angle) * RAMP_OFFSET;
+    const sprite = this.arena.scene.add.rectangle(x, y, 46, 26, 0x66ddff, 0.85)
+      .setStrokeStyle(2, 0xffffff).setDepth(4).setRotation(angle);
+    arr.push({ x, y, angle, owner, sprite, overlapping: new Set() });
+  }
+
+  private updateRampArray(time: number, arr: LightRamp[], ownerFighter: Fighter, otherFighters: Fighter[]): void {
+    if (arr.length === 0) return;
+    const candidates = [ownerFighter, ...otherFighters];
+    const shattered: LightRamp[] = [];
+    for (const ramp of arr) {
+      for (const f of candidates) {
+        if (!f.active || f.hp <= 0) continue;
+        const within = Phaser.Math.Distance.Between(ramp.x, ramp.y, f.x, f.y) <= RAMP_TRIGGER_RADIUS;
+        const was = ramp.overlapping.has(f);
+        if (within && !was) {
+          ramp.overlapping.add(f);
+          // R+ Prism Drill: driving your held lance onto your own ramp while holding R fires the drill instead
+          const drillReady = f === ownerFighter && f === this.arena.player && this.lanceHeld &&
+            this.arena.hasUpgrade('r') && this.arena.rKey.isDown;
+          if (drillReady) {
+            this.launchPrismDrill(ramp, time);
+            shattered.push(ramp);
+          } else {
+            this.launchRampLances(ramp);
+            this.arena.spawnHitFlash(ramp.x, ramp.y, 0x66ddff);
+            if (f === ownerFighter) {
+              if (ramp.owner === 'player') this.carBoostUntil = time + RAMP_BOOST_MS;
+              else this.npcCarBoostUntil = time + RAMP_BOOST_MS;
+              this.arena.showFloatingText(f.x, f.y - 30, '⚡ RAMP BOOST', '#66ddff');
+            }
+          }
+        } else if (!within && was) {
+          ramp.overlapping.delete(f);
         }
-        this.arena.showFloatingText(npc.x, npc.y - 30, '✨ PHOTON ORBS', '#fff4a8');
-      } else if (npcCastId === 'photon-orbs' && this.npcLightPhotonOrbs.length > 0) {
-        const orb = this.npcLightPhotonOrbs.pop()!;
-        orb.sprite.destroy();
-        this.npcLightPhotonSpeedBoostUntil = time + 1500;
-        if (this.npcLightPhotonOrbs.length === 0) this.npcLightPhotonCdStartedAt = time;
       }
-      if (npcCastId === 'prayer' && !this.npcLightAngelActive) {
-        const angelSprite = scene.add.circle(npc.x, npc.y, 14, 0xfff4a8, 0.9).setDepth(8).setStrokeStyle(2, 0xffffff);
-        this.npcLightAngelSprite = angelSprite;
-        this.npcLightAngelLink = scene.add.graphics().setDepth(5);
-        this.npcLightAngelActive = true;
-        this.npcLightAngelUntil = time + 8000;
-        this.npcLightAngelOrbitAngle = 0;
-        this.npcLightAngelBladeAccum = 0;
-        npc.incomingDamageMultiplier *= 0.75;
-        this.arena.showFloatingText(npc.x, npc.y - 30, '😇 PRAYER', '#fff4a8');
-      }
-
-      // Fallen angel dagger hit: apply disarm to player
-      if (isNpcLight) {
-        // (NPC doesn't use Fallen Angel — no upgrade branch for NPC)
-      }
-
-      void npcSpeed;
-      void W; void H;
     }
-
-    // Handle fallen angel dagger hits on enemies
-    if (isPlayerLight) {
-      // Dagger disarm: proj with isFallenAngelDagger flag — handled in ArenaScene's normal proj hit pipeline,
-      // but we need to apply disarm when they hit. We tag the projectile; ArenaScene applyProjectileToNpc
-      // will deal damage. The disarm is applied via the onFallenAngelDaggerHit helper below.
+    for (const r of shattered) {
+      r.sprite.destroy();
+      const idx = arr.indexOf(r);
+      if (idx >= 0) arr.splice(idx, 1);
     }
   }
 
-  /** Called by ArenaScene when a fallen angel dagger projectile hits an enemy — applies disarm. */
-  onFallenAngelDaggerHit(enemy: Fighter, time: number): void {
-    enemy.applyDisarm(1000);
-    this.arena.showFloatingText(enemy.x, enemy.y - 20, '🚫 DISARMED', '#9966cc');
+  private launchPrismDrill(ramp: LightRamp, time: number): void {
+    const { scene, player } = this.arena;
+    const ratio = this.carSpeed / CAR_MAX_SPEED;
+    this.carSpeed = 0;
+    this.lanceHeld = false;
+    player.setScale(1);
+    if (this.lanceSprite) { this.lanceSprite.destroy(); this.lanceSprite = null; }
+    this.destroyAccelBar();
+    this.updateDangerVignette(0);
+
+    const dmg = DRILL_MIN_DAMAGE + Math.round((DRILL_MAX_DAMAGE - DRILL_MIN_DAMAGE) * ratio);
+    const sprite = scene.add.triangle(ramp.x, ramp.y, -10, 12, -10, -12, 22, 0, LANCE_COLOR_FAST)
+      .setDepth(10).setStrokeStyle(1, 0xffffff).setRotation(ramp.angle);
+    this.drills.push({
+      x: ramp.x, y: ramp.y, angle: ramp.angle, speed: DRILL_SPEED, dmg,
+      sprite, hitTarget: null, nextStunAt: 0, until: time + DRILL_LIFETIME_MS,
+    });
+    this.arena.showFloatingText(player.x, player.y - 30, '🔻 PRISM DRILL', '#ff4422');
   }
+
+  private updateDrills(time: number, delta: number): void {
+    if (this.drills.length === 0) return;
+    const dtS = delta / 1000;
+    const { width: W, height: H } = this.arena;
+    for (let i = this.drills.length - 1; i >= 0; i--) {
+      const d = this.drills[i];
+      if (time >= d.until) { d.sprite.destroy(); this.drills.splice(i, 1); continue; }
+
+      d.x += Math.cos(d.angle) * d.speed * dtS;
+      d.y += Math.sin(d.angle) * d.speed * dtS;
+      d.sprite.setPosition(d.x, d.y);
+
+      if (d.x < -20 || d.x > W + 20 || d.y < -20 || d.y > H + 20) {
+        d.sprite.destroy();
+        this.drills.splice(i, 1);
+        continue;
+      }
+
+      for (const t of this.arena.enemies) {
+        if (!t.active || t.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(d.x, d.y, t.x, t.y) > DRILL_HIT_RADIUS) continue;
+        if (d.hitTarget !== t) {
+          d.hitTarget = t;
+          d.speed *= DRILL_SLOW_MULT;
+          t.takeDamage(d.dmg);
+          this.arena.spawnHitFlash(t.x, t.y, LANCE_COLOR_FAST);
+          d.nextStunAt = time;
+        }
+        if (time >= d.nextStunAt) {
+          d.nextStunAt = time + DRILL_STUN_TICK_MS;
+          if (t === this.arena.player) this.playerStunUntil = Math.max(this.playerStunUntil, time + DRILL_STUN_MS);
+          else this.npcStunUntil = Math.max(this.npcStunUntil, time + DRILL_STUN_MS);
+        }
+        break;
+      }
+    }
+  }
+
+  private launchRampLances(ramp: LightRamp): void {
+    const { scene, projectiles } = this.arena;
+    const colors = [0xff3333, 0x33ff66, 0x3399ff];
+    const isPlayerOwned = ramp.owner === 'player';
+    const ratio = (ramp.owner === 'player' ? this.carSpeed : this.npcCarSpeed) / CAR_MAX_SPEED;
+    const dmg = LANCE_BASE_DAMAGE + Math.round(LANCE_MAX_BONUS_DAMAGE * ratio * ratio);
+    for (let i = -1; i <= 1; i++) {
+      const a = ramp.angle + i * Phaser.Math.DegToRad(RAMP_LANCE_SPREAD_DEG);
+      const proj = new Projectile(scene, ramp.x, ramp.y, 'proj-light-triangle', dmg, isPlayerOwned);
+      proj.setTint(colors[i + 1]);
+      projectiles.add(proj);
+      proj.launch(Math.cos(a) * RAMP_LANCE_SPEED, Math.sin(a) * RAMP_LANCE_SPEED);
+    }
+  }
+
+  // ── Light Trick ──────────────────────────────────────────────────────────
+
+  private triggerLightTrick(owner: 'player' | 'npc', time: number, caster: Fighter, targets: Fighter[]): void {
+    const scene = this.arena.scene;
+    const flash = scene.add.circle(caster.x, caster.y, TRICK_RADIUS, LANCE_COLOR_SLOW, 0.5).setDepth(9);
+    scene.time.delayedCall(150, () => flash.destroy());
+
+    let hit = false;
+    for (const t of targets) {
+      if (!t.active || t.hp <= 0) continue;
+      if (Phaser.Math.Distance.Between(caster.x, caster.y, t.x, t.y) <= TRICK_RADIUS) {
+        t.takeDamage(TRICK_DAMAGE);
+        this.arena.spawnHitFlash(t.x, t.y, LANCE_COLOR_SLOW);
+        hit = true;
+      }
+    }
+
+    // F+ Javelin Burst: if the trick's AOE also catches a prism ramp, that ramp fires 12 javelins
+    // and grants both the trick boost and the ramp boost at once.
+    let rampHit: LightRamp | null = null;
+    if (owner === 'player' && this.arena.hasUpgrade('f')) {
+      const allRamps: LightRamp[] = [...this.ramps, ...this.npcRamps];
+      rampHit = allRamps.find((r) => Phaser.Math.Distance.Between(caster.x, caster.y, r.x, r.y) <= TRICK_RADIUS) ?? null;
+    }
+
+    if (rampHit) {
+      this.launchJavelinBurst(rampHit);
+      this.arena.spawnHitFlash(rampHit.x, rampHit.y, 0x66ddff);
+      const boostUntil = time + Math.max(TRICK_BOOST_MS, RAMP_BOOST_MS);
+      if (owner === 'player') this.carBoostUntil = boostUntil; else this.npcCarBoostUntil = boostUntil;
+      this.arena.showFloatingText(caster.x, caster.y - 30, '🌟 JAVELIN BURST', '#66ddff');
+    } else if (hit) {
+      if (owner === 'player') this.carBoostUntil = time + TRICK_BOOST_MS;
+      else this.npcCarBoostUntil = time + TRICK_BOOST_MS;
+      this.arena.showFloatingText(caster.x, caster.y - 30, '✨ LIGHT TRICK', '#fff4a8');
+    }
+  }
+
+  private launchJavelinBurst(ramp: LightRamp): void {
+    const { scene, projectiles } = this.arena;
+    const isPlayerOwned = ramp.owner === 'player';
+    for (let i = 0; i < F_PLUS_JAVELIN_COUNT; i++) {
+      const a = (i / F_PLUS_JAVELIN_COUNT) * Math.PI * 2;
+      const proj = new Projectile(scene, ramp.x, ramp.y, 'proj-light-triangle', TRICK_DAMAGE, isPlayerOwned);
+      proj.setTint(0x66ddff);
+      projectiles.add(proj);
+      proj.launch(Math.cos(a) * F_PLUS_JAVELIN_SPEED, Math.sin(a) * F_PLUS_JAVELIN_SPEED);
+    }
+  }
+
+  // ── Speed 'O' Light ──────────────────────────────────────────────────────
+
+  private startSpeedOLight(owner: 'player' | 'npc', time: number): void {
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    caster.dodgeChance += 1.0;
+    if (owner === 'player') {
+      this.speedOLightActive = true;
+      this.speedOLightBouncesLeft = SPEED_O_LIGHT_BOUNCES;
+      this.speedOLightNextBounceAt = time;
+    } else {
+      this.npcSpeedOLightActive = true;
+      this.npcSpeedOLightBouncesLeft = SPEED_O_LIGHT_BOUNCES;
+      this.npcSpeedOLightNextBounceAt = time;
+    }
+    this.arena.showFloatingText(caster.x, caster.y - 30, "💫 SPEED 'O' LIGHT", '#fff4a8');
+  }
+
+  private stepSpeedOLight(owner: 'player' | 'npc', time: number): void {
+    const isPlayer = owner === 'player';
+    const nextAt = isPlayer ? this.speedOLightNextBounceAt : this.npcSpeedOLightNextBounceAt;
+    if (time < nextAt) return;
+
+    const caster = isPlayer ? this.arena.player : this.arena.npc;
+    const body = caster.body as Phaser.Physics.Arcade.Body;
+    const { width: W, height: H, scene } = this.arena;
+    const margin = 24;
+    const wall = Math.floor(Math.random() * 4);
+    let nx = caster.x;
+    let ny = caster.y;
+    if (wall === 0) { nx = margin + Math.random() * (W - margin * 2); ny = margin; }
+    else if (wall === 1) { nx = margin + Math.random() * (W - margin * 2); ny = H - margin; }
+    else if (wall === 2) { nx = margin; ny = margin + Math.random() * (H - margin * 2); }
+    else { nx = W - margin; ny = margin + Math.random() * (H - margin * 2); }
+
+    const midX = (caster.x + nx) / 2;
+    const midY = (caster.y + ny) / 2;
+    const length = Math.max(4, Phaser.Math.Distance.Between(caster.x, caster.y, nx, ny));
+    const angle = Math.atan2(ny - caster.y, nx - caster.x);
+    const sprite = scene.add.rectangle(midX, midY, length, STREAK_THICKNESS, LANCE_COLOR_SLOW, 0.85).setRotation(angle).setDepth(9);
+    this.streaks.push({ x1: caster.x, y1: caster.y, x2: nx, y2: ny, owner, sprite, until: time + STREAK_LIFETIME_MS, hitSet: new Set() });
+
+    // Q+ Flare-Stream: every 10th teleport leaves a lasting orange beam
+    if (owner === 'player' && this.arena.hasUpgrade('q')) {
+      this.playerTeleportCount++;
+      if (this.playerTeleportCount % FLARE_TELEPORT_INTERVAL === 0) {
+        const flareSprite = scene.add.rectangle(midX, midY, length, STREAK_THICKNESS, 0xff8800, 0.85).setRotation(angle).setDepth(8);
+        this.flareBeams.push({ x1: caster.x, y1: caster.y, x2: nx, y2: ny, sprite: flareSprite, until: time + FLARE_BEAM_LIFETIME_MS });
+      }
+    }
+
+    caster.setPosition(nx, ny);
+    body.reset(nx, ny);
+
+    const bouncesLeft = (isPlayer ? this.speedOLightBouncesLeft : this.npcSpeedOLightBouncesLeft) - 1;
+    if (isPlayer) {
+      this.speedOLightBouncesLeft = bouncesLeft;
+      this.speedOLightNextBounceAt = time + SPEED_O_LIGHT_BOUNCE_MS;
+    } else {
+      this.npcSpeedOLightBouncesLeft = bouncesLeft;
+      this.npcSpeedOLightNextBounceAt = time + SPEED_O_LIGHT_BOUNCE_MS;
+    }
+
+    if (bouncesLeft <= 0) {
+      caster.dodgeChance = Math.max(0, caster.dodgeChance - 1.0);
+      if (isPlayer) this.speedOLightActive = false; else this.npcSpeedOLightActive = false;
+    }
+  }
+
+  private updateStreaks(time: number): void {
+    for (let i = this.streaks.length - 1; i >= 0; i--) {
+      const s = this.streaks[i];
+      if (time >= s.until) { s.sprite.destroy(); this.streaks.splice(i, 1); continue; }
+      const targets = s.owner === 'player' ? this.arena.enemies : [this.arena.player];
+      for (const t of targets) {
+        if (!t.active || t.hp <= 0 || s.hitSet.has(t)) continue;
+        if (distToSegment(t.x, t.y, s.x1, s.y1, s.x2, s.y2) <= STREAK_HIT_RADIUS) {
+          s.hitSet.add(t);
+          t.takeDamage(STREAK_DAMAGE);
+          this.arena.spawnHitFlash(t.x, t.y, LANCE_COLOR_SLOW);
+        }
+      }
+      s.sprite.setAlpha(Math.max(0, 0.85 * (s.until - time) / STREAK_LIFETIME_MS));
+    }
+  }
+
+  private updateFlareBeams(time: number): void {
+    for (let i = this.flareBeams.length - 1; i >= 0; i--) {
+      const b = this.flareBeams[i];
+      if (time >= b.until) { b.sprite.destroy(); this.flareBeams.splice(i, 1); continue; }
+      b.sprite.setAlpha(Math.max(0.15, 0.85 * (b.until - time) / FLARE_BEAM_LIFETIME_MS));
+    }
+  }
+
+  private isOnFlareBeam(x: number, y: number): boolean {
+    for (const b of this.flareBeams) {
+      if (distToSegment(x, y, b.x1, b.y1, b.x2, b.y2) <= STREAK_HIT_RADIUS) return true;
+    }
+    return false;
+  }
+
+  // ── Input ────────────────────────────────────────────────────────────────
 
   handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
-    const { player, scene } = this.arena;
-    const { eKey, fKey, rKey, qKey } = this.arena;
+    const { player, scene, eKey, rKey, fKey, qKey } = this.arena;
     const playerCtx = this.arena.buildPlayerContext(mouseX, mouseY);
-    const playerBody = player.body as Phaser.Physics.Arcade.Body;
-    const hasClickUp = this.arena.hasUpgrade('click');
-    const hasEUp = this.arena.hasUpgrade('e');
-    const hasRUp = this.arena.hasUpgrade('r');
-    const hasFUp = this.arena.hasUpgrade('f');
-    const hasQUp = this.arena.hasUpgrade('q');
 
-    // Click: tap-vs-hold detection
-    const clickDown = pointer.leftButtonDown();
-    const clickJustDown = clickDown && !this.lightSpearClickArmed && !this.lightSpearHolding;
-    if (clickJustDown) {
-      this.lightSpearClickArmed = true;
-      this.lightSpearPointerDownX = mouseX;
-      this.lightSpearPointerDownY = mouseY;
-      this.lightSpearHoldStart = time;
-    }
-
-    if (this.lightSpearClickArmed && clickDown) {
-      const heldMs = time - this.lightSpearHoldStart;
-      if (heldMs >= 150 && !this.lightSpearHolding) {
-        this.lightSpearHolding = true;
-        if (this.lightSpearSprite) this.lightSpearSprite.destroy();
-        const spearLen = hasClickUp ? 80 : 60;
-        const spearColor = hasClickUp ? 0x66aaff : 0xfff4a8;
-        this.lightSpearSprite = scene.add.rectangle(0, 0, spearLen, 10, spearColor).setDepth(10).setStrokeStyle(1, 0xffffff);
+    // Click (hold): Light Lance / car-mode
+    const down = pointer.leftButtonDown();
+    if (down && !this.lanceHeld) {
+      this.lanceHeld = true;
+      player.setScale(0.5);
+      if (!this.lanceSprite) {
+        this.lanceSprite = scene.add.triangle(0, 0, -10, 12, -10, -12, 22, 0, LANCE_COLOR_SLOW)
+          .setDepth(10).setStrokeStyle(1, 0xffffff);
       }
+      if (this.carSpeed < 40) {
+        this.carAngle = Math.atan2(mouseY - player.y, mouseX - player.x);
+      }
+    } else if (!down && this.lanceHeld) {
+      this.lanceHeld = false;
+      player.setScale(1);
+      if (this.lanceSprite) { this.lanceSprite.destroy(); this.lanceSprite = null; }
     }
 
-    if (!clickDown && this.lightSpearClickArmed) {
-      const heldMs = time - this.lightSpearHoldStart;
-      if (heldMs < 150) {
-        player.castAbility('light-stab', playerCtx);
-        for (const t of this.arena.enemies) {
-          if (!t.active || t.hp <= 0) continue;
-          const dist = Phaser.Math.Distance.Between(mouseX, mouseY, t.x, t.y);
-          if (dist < 50) {
-            this.lightMarkedTarget = t;
-            this.lightMarkedExpiry = time + 2000;
-            this.arena.showFloatingText(t.x, t.y - 20, '✨ HIGHLIGHTED', '#fff4a8');
-            break;
-          }
+    // E: Blink — instantly snap heading to cursor, preserving speed
+    // E+ Steam Charge: hold instead of tap — root in place aiming at the cursor, then release for a
+    // stronger boost the longer you held.
+    if (this.arena.hasUpgrade('e')) {
+      if (Phaser.Input.Keyboard.JustDown(eKey)) {
+        if (!this.ePlusHolding && this.blinkCharges > 0 && !this.speedOLightActive) {
+          this.ePlusHolding = true;
+          this.ePlusHoldStart = time;
+          this.blinkCharges--;
+          this.blinkRechargeQueue.push(time + BLINK_RECHARGE_MS);
+          this.arena.showFloatingText(player.x, player.y - 30, '👁️ FOCUSING', '#88ddff');
         }
       }
-      // Release of held spear: Flicker perk launches it, otherwise despawn
-      if (heldMs >= 150 && this.arena.hasPerk('flicker')) {
-        const ang = Math.atan2(mouseY - player.y, mouseX - player.x);
-        this.flickerSpearActive = true;
-        this.flickerSpearX = this.lightSpearSprite?.x ?? player.x + Math.cos(ang) * 36;
-        this.flickerSpearY = this.lightSpearSprite?.y ?? player.y + Math.sin(ang) * 36;
-        this.flickerSpearVx = Math.cos(ang) * 700;
-        this.flickerSpearVy = Math.sin(ang) * 700;
-        this.flickerSpearAngle = ang;
-        this.flickerSpearStuck = false;
-        this.flickerSpearStuckAt = 0;
-        this.flickerSpearHitEnemies = new Set();
-        this.flickerSpearPullDealt = false;
-        // Keep sprite alive — update() will drive it
-      } else {
-        if (this.lightSpearSprite) { this.lightSpearSprite.destroy(); this.lightSpearSprite = null; }
+      if (Phaser.Input.Keyboard.JustUp(eKey) && this.ePlusHolding) {
+        const heldMs = Phaser.Math.Clamp(time - this.ePlusHoldStart, 0, E_PLUS_MAX_HOLD_MS);
+        const holdRatio = heldMs / E_PLUS_MAX_HOLD_MS;
+        this.ePlusHolding = false;
+        this.carAngle = Math.atan2(mouseY - player.y, mouseX - player.x);
+        this.carBoostUntil = time + Phaser.Math.Linear(E_PLUS_BOOST_MIN_MS, E_PLUS_BOOST_MAX_MS, holdRatio);
+        this.arena.showFloatingText(player.x, player.y - 30, '🔥 STEAM RELEASE', '#ff6622');
       }
-      this.lightSpearClickArmed = false;
-      this.lightSpearHolding = false;
-      this.lightSkewerTargetHooked = false;
-      this.lightSkewerTarget = null;
-    }
-
-    // E: Photosynthespark (or E+ Retinal Flash)
-    if (Phaser.Input.Keyboard.JustDown(eKey)) {
-      if (hasEUp) {
-        // E+: instant +75% dodge chance
-        if (player.castAbility('photo-spark', playerCtx)) {
-          player.dodgeChance += 0.75;
-          this.arena.showFloatingText(player.x, player.y - 30, '👁 +75% DODGE', '#88ddff');
-        }
-      } else {
-        if (player.castAbility('photo-spark', playerCtx)) {
-          this.lightPhotoSlowUntil = 0;
-          this.lightPhotoAccelStart = time;
-          this.lightPhotoAccelUntil = time + 5000;
-          this.lightPhotoStillSince = time;
-          this.lightPhotoRegenAccum = 0;
-          this.arena.showFloatingText(player.x, player.y - 30, '🌞 PHOTOSYNTHESPARK', '#fff4a8');
-        }
+    } else if (Phaser.Input.Keyboard.JustDown(eKey)) {
+      if (this.blinkCharges > 0 && !this.speedOLightActive) {
+        this.blinkCharges--;
+        this.blinkRechargeQueue.push(time + BLINK_RECHARGE_MS);
+        this.carAngle = Math.atan2(mouseY - player.y, mouseX - player.x);
+        this.carBoostUntil = time + BLINK_BOOST_MS;
+        this.arena.showFloatingText(player.x, player.y - 30, '⚡ BLINK', '#88ddff');
       }
     }
 
-    // R: Photon Orbs (or R+ Infrared Photons)
+    // R: Prism Ramp
     if (Phaser.Input.Keyboard.JustDown(rKey)) {
-      const orbColor = hasRUp ? 0x3388ff : 0xfff4a8;
-      const orbStroke = hasRUp ? 0x88ccff : 0xffffff;
-      if (this.lightPhotonOrbs.length > 0) {
-        const orb = this.lightPhotonOrbs.pop()!;
-        orb.sprite.destroy();
-        if (hasRUp) {
-          // R+: consume = +50% dodge
-          player.dodgeChance += 0.5;
-          this.arena.showFloatingText(player.x, player.y - 20, '⚡ +50% DODGE', '#88ddff');
-        } else {
-          this.lightPhotonSpeedBoostUntil = time + 1500;
-          this.arena.showFloatingText(player.x, player.y - 20, '✨ SPEED BURST', '#fff4a8');
-        }
-        if (this.lightPhotonOrbs.length === 0) this.lightPhotonCdStartedAt = time;
-      } else if (time - this.lightPhotonCdStartedAt >= 20000 || this.lightPhotonCdStartedAt < -1000) {
-        if (player.castAbility('photon-orbs', playerCtx)) {
-          for (let i = 0; i < 2; i++) {
-            const sprite = scene.add.circle(player.x, player.y, 9, orbColor, 0.9).setDepth(8).setStrokeStyle(1, orbStroke);
-            this.lightPhotonOrbs.push({ sprite, orbitAngle: i * Math.PI });
-          }
-          const label = hasRUp ? '⚡ INFRARED PHOTONS' : '✨ PHOTON ORBS';
-          this.arena.showFloatingText(player.x, player.y - 30, label, hasRUp ? '#88ddff' : '#fff4a8');
-        }
+      if (player.castAbility('prism-ramp', playerCtx)) {
+        const angle = this.lanceHeld ? this.carAngle : Math.atan2(mouseY - player.y, mouseX - player.x);
+        this.placeRamp('player', player.x, player.y, angle);
+        this.arena.showFloatingText(player.x, player.y - 30, '🔺 PRISM RAMP', '#88ddff');
       }
     }
 
-    // F: Skewer mode (or F+ Backstab)
+    // F: Light Trick
     if (Phaser.Input.Keyboard.JustDown(fKey)) {
-      if (hasFUp) {
-        // F+: Backstab or Dash
-        if (player.castAbility('skewer', playerCtx)) {
-          if (this.lightSpearHolding) {
-            // Backstab: teleport behind nearest enemy
-            const nearest = this.arena.getNearestEnemy(player.x, player.y);
-            if (nearest && nearest.active && nearest.hp > 0) {
-              const dx = nearest.x - player.x;
-              const dy = nearest.y - player.y;
-              const dist = Math.hypot(dx, dy) || 1;
-              const behindX = nearest.x + (dx / dist) * 40;
-              const behindY = nearest.y + (dy / dist) * 40;
-              player.setPosition(behindX, behindY);
-              playerBody.reset(behindX, behindY);
-              nearest.frozenUntil = Math.max(nearest.frozenUntil, time + 150);
-              const baseDmg = 6 + Math.round(100 * player.dodgeChance);
-              const backstabDmg = baseDmg * 2;
-              nearest.takeDamage(backstabDmg);
-              this.arena.spawnHitFlash(nearest.x, nearest.y, 0xff88aa);
-              player.dodgeChance = Math.max(0, player.dodgeChance - 0.2);
-              this.arena.showFloatingText(nearest.x, nearest.y - 36, '🗡 BACKSTAB', '#ff4466');
-            }
-          } else {
-            // Dash forward toward cursor
-            const ang = Math.atan2(mouseY - player.y, mouseX - player.x);
-            this.lightBackstabDashing = true;
-            this.lightBackstabUntil = time + 150;
-            this.lightBackstabVx = Math.cos(ang) * 1000;
-            this.lightBackstabVy = Math.sin(ang) * 1000;
-            this.arena.showFloatingText(player.x, player.y - 30, '⚡ DASH', '#88ddff');
-          }
-        }
-      } else {
-        // Base: Skewer mode
-        if (player.castAbility('skewer', playerCtx)) {
-          this.lightSkewerModeUntil = time + 5000;
-          this.lightSkewerTargetHooked = false;
-          this.lightSkewerTarget = null;
-          this.lightSkewerInitialDealt = false;
-          this.arena.showFloatingText(player.x, player.y - 30, '🗡 SKEWER MODE', '#fff4a8');
-        }
+      if (player.castAbility('light-trick', playerCtx)) {
+        this.triggerLightTrick('player', time, player, this.arena.enemies);
       }
     }
 
-    // Q: Prayer (or Q+ Fallen Angel)
+    // Q: Speed 'O' Light
     if (Phaser.Input.Keyboard.JustDown(qKey)) {
-      if (!this.lightAngelActive) {
-        if (hasQUp) {
-          // Q+: Fallen Angel
-          if (player.castAbility('prayer', playerCtx)) {
-            const angelSprite = scene.add.circle(player.x, player.y, 28, 0x6644aa, 0.9).setDepth(8).setStrokeStyle(2, 0x4422aa);
-            this.lightAngelSprite = angelSprite;
-            this.lightAngelLink = scene.add.graphics().setDepth(5);
-            this.lightAngelActive = true;
-            this.lightAngelIsFallen = true;
-            this.lightAngelUntil = time + 8000;
-            this.lightAngelOrbitAngle = 0;
-            this.lightAngelBladeAccum = 0;
-            this.lightFallenAngelDaggerAccum = 0;
-            player.dodgeChance += 1.0;
-            this.arena.showFloatingText(player.x, player.y - 30, '👼 FALLEN ANGEL', '#9966cc');
-          }
-        } else {
-          // Base: Prayer
-          if (player.castAbility('prayer', playerCtx)) {
-            const angelSprite = scene.add.circle(player.x, player.y, 14, 0xfff4a8, 0.9).setDepth(8).setStrokeStyle(2, 0xffffff);
-            this.lightAngelSprite = angelSprite;
-            this.lightAngelLink = scene.add.graphics().setDepth(5);
-            this.lightAngelActive = true;
-            this.lightAngelIsFallen = false;
-            this.lightAngelUntil = time + 8000;
-            this.lightAngelOrbitAngle = 0;
-            this.lightAngelBladeAccum = 0;
-            player.incomingDamageMultiplier *= 0.75;
-            this.arena.showFloatingText(player.x, player.y - 30, '😇 PRAYER', '#fff4a8');
-          }
-        }
+      if (!this.speedOLightActive && player.castAbility('speed-o-light', playerCtx)) {
+        this.startSpeedOLight('player', time);
       }
     }
-
-    void mouseX; void mouseY;
   }
 }

@@ -1,5 +1,3 @@
-import { BASE_GUNS, GUN_NAMES, GUN_EMOJIS, GUN_DESCS } from '../elements/kits/MetalKit';
-
 export interface AbilityVariant {
   emoji?: string;
   name: string;
@@ -19,19 +17,6 @@ export interface AbilityVariantSet {
 // ability can produce. Ability descriptions only have room to say "random" or "one of" —
 // this is the place to spell out every possibility so the info panel can list them all.
 const ABILITY_VARIANTS: Record<string, Partial<Record<string, AbilityVariantSet>>> = {
-  metal: {
-    r: {
-      label: 'Possible weapons (1 of 3 added to your arsenal per cast)',
-      variants: [
-        ...BASE_GUNS.map((id) => ({
-          emoji: GUN_EMOJIS[id],
-          name: GUN_NAMES[id],
-          description: GUN_DESCS[id],
-        })),
-        { emoji: GUN_EMOJIS['sniper'], name: GUN_NAMES['sniper'], description: GUN_DESCS['sniper'], requiresUpgrade: 'r' },
-      ],
-    },
-  },
   creation: {
     e: {
       label: 'Crucible crafts (load 3 bolts of any tiers to trigger)',
@@ -45,20 +30,6 @@ const ABILITY_VARIANTS: Record<string, Partial<Record<string, AbilityVariantSet>
         { emoji: '🟡', name: 'Copper + Gold + Gold', description: '3 damage pulses from the Crucible (15 dmg each, 110px range).' },
         { emoji: '🟡', name: 'Gold + Silver + Silver', description: '5 fire DOT pools scattered across the arena.' },
         { emoji: '🟡', name: 'Gold + Gold + Silver', description: '+30% speed boost for 15s.' },
-      ],
-    },
-  },
-  technology: {
-    click: {
-      label: 'Arsenal weapons (grab the one shown in the cycling box)',
-      variants: [
-        { emoji: '🗡️', name: 'Sword Whip', description: 'Melee arc swing — 110px range, 55° cone, 22 dmg.' },
-        { emoji: '💿', name: 'Disc Dancer', description: 'Twin discs fly forward in parallel, then converge to explode at their midpoint (16 dmg, 50px AoE) — twice.' },
-        { emoji: '🌀', name: 'Helix Shot', description: 'Hold to fire a weaving twin-stream of bullets that alternate sides (5 dmg each).' },
-        { emoji: '💣', name: 'Code Cruncher', description: 'Lobs an arcing grenade that sticks to a wall or the enemy, exploding after 3s (35 dmg, 65px AoE).' },
-        { emoji: '🧲', name: 'Dragger', description: 'Hold to drag the enemy toward your cursor for up to 5s (1 dmg tick every 0.5s); slamming them into a wall deals 10 dmg (every 2s).', requiresUpgrade: 'click' },
-        { emoji: '✂️', name: 'String Cutter', description: "Fires an infinite laser wire through both directions along a fixed line — 18 dmg per hit, 0.6s between shots.", requiresUpgrade: 'click' },
-        { emoji: '🔫', name: 'Rifle', description: '3-round hitscan rifle (8 dmg/shot). Press Q when empty to reload via a 3-zone timing minigame.', requiresUpgrade: 'q' },
       ],
     },
   },
@@ -94,19 +65,23 @@ const ABILITY_VARIANTS: Record<string, Partial<Record<string, AbilityVariantSet>
       ],
     },
   },
-  death: {
-    e: {
-      label: "Ferryman's Soul Shop (E+, spend 💀 souls earned from wisp/enemy kills)",
+  gunpowder: {
+    f: {
+      label: 'Arsenal weapons (choose 1 of 3 offered; max 3 in your arsenal, 6 with R+; F+ unlocks 7 more weapon types)',
       variants: [
-        { emoji: '🛡️', name: 'Wisp Armor', description: 'Wisps: HP ×1.5, give ×2 kills. Cost: 10 💀', requiresUpgrade: 'e' },
-        { emoji: '🗡️', name: 'Wisp Screamers', description: 'Wisps fire bolts at their target, give ×2 kills. Cost: 10 💀', requiresUpgrade: 'e' },
-        { emoji: '⚡', name: 'Swift Scythe', description: 'Looming Dread fuses in 3s instead of 5s. Cost: 5 💀', requiresUpgrade: 'e' },
-        { emoji: '🎯', name: 'Critical Success', description: 'Every 10th 1000 Blades click deals ×2 damage. Cost: 15 💀', requiresUpgrade: 'e' },
-        { emoji: '💀', name: 'Wisp Bane', description: '1000 Blades clicks vs wisps and the Three-Headed Beast deal ×2. Cost: 20 💀', requiresUpgrade: 'e' },
-        { emoji: '👑', name: 'Daemon King', description: 'Wisp Daemon HP ×2; unlocked Trail Dash lasts ×2 as long. Cost: 5 💀', requiresUpgrade: 'e' },
-        { emoji: '🔪', name: 'Blade Apex', description: 'Trail Dash slash trails last 10s instead of 5s. Cost: 10 💀', requiresUpgrade: 'e' },
-        { emoji: '🕳️', name: 'Edge of Finality', description: 'Judgement Day\'s hole arms in 5s (down from 15s) with a bigger suck range. Cost: 25 💀', requiresUpgrade: 'e' },
-        { emoji: '💨', name: 'Splice', description: 'Repeatable — instantly grants Trail Dash for 10s. Cost: 5 💀 each time.', requiresUpgrade: 'e' },
+        { emoji: '🔫', name: 'Pistol', description: 'Hitscan, 10 dmg. Each copy in your arsenal: -10% Fire at Will cooldown (stacks).' },
+        { emoji: '💥', name: 'AR', description: '3 hitscan shots in quick succession, 6 dmg each.' },
+        { emoji: '💨', name: 'Shotgun', description: 'Cone of 10 pellets at short range, 2 dmg each.' },
+        { emoji: '🎯', name: 'Rifle', description: 'Large long-range hitscan, 15 dmg. Each copy in your arsenal: +25% Musket Shot damage (stacks).' },
+        { emoji: '💣', name: 'Grenade Launcher', description: 'Lobs a grenade that explodes after a short fuse (25 dmg AoE).' },
+        { emoji: '🔥', name: 'Machine Gun', description: '20 hitscan shots, 2 dmg each, up to 10° inaccurate.' },
+        { emoji: '🧯', name: 'Flamethrower', description: 'Launches 10 flame clouds ahead, 3 dmg each — fade after 3s or on contact. Each copy in your arsenal: muskets cool 20% slower (stacks).', requiresUpgrade: 'f' },
+        { emoji: '🚀', name: 'RPG', description: 'Explosive rocket, 20 dmg in a large AoE. Each copy in your arsenal: +20% Fire at Will cooldown (stacks).', requiresUpgrade: 'f' },
+        { emoji: '🌪️', name: 'Minigun', description: '30 hitscan shots, 2 dmg each — slows you 50% while firing. Each copy in your arsenal: muskets cool 35% slower (stacks).', requiresUpgrade: 'f' },
+        { emoji: '🔭', name: 'Sniper', description: 'Hitscan, 20 dmg. Only fires every other Fire at Will — its arsenal slot turns red when it\'s about to be skipped.', requiresUpgrade: 'f' },
+        { emoji: '🟢', name: 'Ray-Gun', description: 'Bouncy green bullet that pierces the enemy and bounces off walls, 5 dmg + knockback per hit, up to 3 hits total.', requiresUpgrade: 'f' },
+        { emoji: '❄️', name: 'Freeze-Ray', description: 'Hitscan, 3 dmg + 1s stun. Each copy in your arsenal: muskets cool 20% faster (stacks).', requiresUpgrade: 'f' },
+        { emoji: '⚔️', name: 'Gunblade', description: 'Long-range shot (10 dmg), or a point-blank slash (15 dmg) if the enemy is close. Grants 20% damage reduction for 2s after any Fire at Will.', requiresUpgrade: 'f' },
       ],
     },
   },

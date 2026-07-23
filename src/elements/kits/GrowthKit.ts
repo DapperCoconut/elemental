@@ -919,7 +919,7 @@ export class GrowthKit {
           if (!t.active || t.hp <= 0) continue;
           const d = Phaser.Math.Distance.Between(s.x, s.y, t.x, t.y);
           if (d <= s.radius + 16) {
-            t.takeDamage(dmg);
+            t.takeDamage(dmg, { source: s, sourceX: s.x, sourceY: s.y });
             this.arena.spawnHitFlash(t.x, t.y, 0x66cc44);
             this.registerDamage(s.owner, t, dmg);
             hit = true;

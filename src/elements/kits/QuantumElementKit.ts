@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
+import { Projectile } from '../../combat/Projectile';
 
 // ── Arena API ────────────────────────────────────────────────────────────────
 
@@ -33,24 +34,6 @@ export interface QuantumElementArenaApi {
 
 // ── Internal types ───────────────────────────────────────────────────────────
 
-interface QuantumBullet {
-  sprite: Phaser.GameObjects.Arc;
-  baseX: number;
-  baseY: number;
-  dirX: number;
-  dirY: number;
-  perpX: number;
-  perpY: number;
-  elapsed: number;
-  freq: number;
-  amplitude: number;
-  endsAt: number;
-  owner: 'player' | 'npc';
-  damage: number;
-  zone: 'red' | 'yellow' | 'green' | 'gold';
-  waveSetId: number;
-}
-
 interface ChaosTelegraph {
   owner: 'player' | 'npc';
   form: 'red' | 'blue';
@@ -74,30 +57,73 @@ interface NhilegoShadow {
   owner: 'player' | 'npc';
 }
 
+// ── Molecular Cutter daggers (Click) ──────────────────────────────────────────
+interface QuantumDagger {
+  sprite: Phaser.GameObjects.Rectangle;
+  owner: 'player' | 'npc';
+  color: 'red' | 'blue';
+  x: number;
+  y: number;
+  destX: number;
+  destY: number;
+  dirX: number;
+  dirY: number;
+  state: 'flying' | 'planted' | 'returning';
+  hitSet: Set<Fighter>;
+}
+
+// ── Blade Dance orbit daggers (Click+, on mechanic end) ───────────────────────
+interface QuantumOrbitDagger {
+  sprite: Phaser.GameObjects.Rectangle;
+  angle: number;
+  lastHitAt: number;
+}
+
+// ── Persistent blue E cone ────────────────────────────────────────────────────
+interface QuantumBlueCone {
+  owner: 'player' | 'npc';
+  gfx: Phaser.GameObjects.Graphics;
+  dirX: number;
+  dirY: number;
+  endsAt: number;
+  dmgAccum: number;
+  insideAccumMs: number;
+  slowed: boolean;
+  cycled: boolean;
+}
+
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const BAR_X = 30;
-const BAR_Y = 120;
-const BAR_W = 16;
-const GOLD_H = 24;
-const GREEN_H = 80;
-const YELLOW_H = 160;
-const RED_H = 160;
-const BASE_BAR_H = GREEN_H + YELLOW_H + RED_H;
-const INDICATOR_H = 8;
-const BASE_BOUNCE_PERIOD_MS = 1500;
-const FAST_BOUNCE_PERIOD_MS = 900;
+const DAGGER_SPEED = 900;              // px/s
+const DAGGER_THROW_DMG = 8;
+const DAGGER_RETURN_DMG = 12;
+const DAGGER_MAX_BASE = 3;
+const DAGGER_MAX_BLADEDANCE = 6;       // Click+ Blade Dance in mechanic form
+const DAGGER_ARRIVE_R = 12;            // proximity that counts as "reached" dest/caster
+const ORBIT_DAGGER_DMG = 10;
+const ORBIT_DAGGER_MS = 6000;
+const ORBIT_DAGGER_RADIUS = 58;
+const ORBIT_DAGGER_HIT_CD = 500;
+const CONE_RANGE = 200;
+const CONE_HALF_ANGLE = Math.PI / 9;
+const CONE_MS = 3000;
+const CONE_DPS = 8;
+const CONE_SLOW_MULT = 0.2;            // 80% slow
+const CONE_CYCLE_MS = 2000;            // E+: enemy in cone 2s → re-ready passive
+const RED_E_ENLARGE_MS = 3000;
+const RED_E_VULN_MULT = 1.2;           // +20% damage taken
+const DAGGER_FILL: Record<'red' | 'blue', number> = { red: 0xff3344, blue: 0x3399ff };
 
 // ── Style tier table ─────────────────────────────────────────────────────────
 
 const STYLE_TIERS = [
-  { letter: 'F', color: '#888888', fillColor: 0x555555, speedBonus: 0,    cdReduction: 0,    waveBullets: 20 },
-  { letter: 'E', color: '#88ff88', fillColor: 0x44aa44, speedBonus: 0.05, cdReduction: 0.05, waveBullets: 22 },
-  { letter: 'D', color: '#44ffff', fillColor: 0x44aaaa, speedBonus: 0.10, cdReduction: 0.10, waveBullets: 24 },
-  { letter: 'C', color: '#ffff44', fillColor: 0xaaaa44, speedBonus: 0.15, cdReduction: 0.15, waveBullets: 26 },
-  { letter: 'B', color: '#ff8844', fillColor: 0xaa5522, speedBonus: 0.20, cdReduction: 0.20, waveBullets: 28 },
-  { letter: 'A', color: '#ff4444', fillColor: 0xaa2222, speedBonus: 0.25, cdReduction: 0.23, waveBullets: 30 },
-  { letter: 'S', color: '#ff44ff', fillColor: 0xaa22aa, speedBonus: 0.30, cdReduction: 0.25, waveBullets: 32 },
+  { letter: 'F', color: '#888888', fillColor: 0x555555, speedBonus: 0,    cdReduction: 0    },
+  { letter: 'E', color: '#88ff88', fillColor: 0x44aa44, speedBonus: 0.05, cdReduction: 0.05 },
+  { letter: 'D', color: '#44ffff', fillColor: 0x44aaaa, speedBonus: 0.10, cdReduction: 0.10 },
+  { letter: 'C', color: '#ffff44', fillColor: 0xaaaa44, speedBonus: 0.15, cdReduction: 0.15 },
+  { letter: 'B', color: '#ff8844', fillColor: 0xaa5522, speedBonus: 0.20, cdReduction: 0.20 },
+  { letter: 'A', color: '#ff4444', fillColor: 0xaa2222, speedBonus: 0.25, cdReduction: 0.23 },
+  { letter: 'S', color: '#ff44ff', fillColor: 0xaa22aa, speedBonus: 0.30, cdReduction: 0.25 },
 ] as const;
 
 // ── Kit ──────────────────────────────────────────────────────────────────────
@@ -127,23 +153,21 @@ export class QuantumElementKit {
   private playerMechanicPrevForm: 'red' | 'blue' = 'red';
   private playerMechanicDamageDealt = 0;
 
-  // ── Wave charge bar ──────────────────────────────────────────────────────
-  private chargeBarGfx: Phaser.GameObjects.Graphics | null = null;
-  private chargeBarIndicatorGfx: Phaser.GameObjects.Graphics | null = null;
-  private chargeHoldStart = 0;
+  // ── Click edge tracking ──────────────────────────────────────────────────
   private pointerWasDown = false;
 
-  // ── Wave projectiles ─────────────────────────────────────────────────────
-  private playerBullets: QuantumBullet[] = [];
-  private npcBullets: QuantumBullet[] = [];
-  private playerWaveSetEndsAt = 0;
-  private npcWaveSetEndsAt = 0;
-  private playerWaveTimers: Phaser.Time.TimerEvent[] = [];
-  private npcWaveTimers: Phaser.Time.TimerEvent[] = [];
-  private playerWaveStyleFeatFiredIds = new Set<number>();
-
-  // ── Chaos telegraphs ─────────────────────────────────────────────────────
+  // ── Chaos telegraphs (red E) ─────────────────────────────────────────────
   private chaosTelegraphs: ChaosTelegraph[] = [];
+
+  // ── Molecular Cutter daggers (Click) ─────────────────────────────────────
+  private playerDaggers: QuantumDagger[] = [];
+  private npcDaggers: QuantumDagger[] = [];
+  private npcDaggerNextThrowAt = 0;   // NPC throw cadence
+  private playerOrbitDaggers: QuantumOrbitDagger[] = [];
+  private playerOrbitEndsAt = 0;
+
+  // ── Blue E cones ──────────────────────────────────────────────────────────
+  private blueCones: QuantumBlueCone[] = [];
 
   // ── Vibration (R) ────────────────────────────────────────────────────────
   private playerVibrationActive = false;
@@ -180,17 +204,6 @@ export class QuantumElementKit {
   private styleFeatText: Phaser.GameObjects.Text | null = null;
   private styleFeatTween: Phaser.Tweens.Tween | null = null;
   private styleFreshChip: Phaser.GameObjects.Text | null = null;
-
-  // ── Sonic Boom (perk: whip attack) ───────────────────────────────────────
-  private sonicBoomWhipActive = false;
-  private sonicBoomWhipStartTime = 0;
-  private sonicBoomWhipAngle = 0;
-  private sonicBoomWhipMaxRange = 200;
-  private sonicBoomWhipDamage = 6;
-  private sonicBoomWhipZone: 'red' | 'yellow' | 'green' | 'gold' = 'red';
-  private sonicBoomWhipHit = false;
-  private sonicBoomWhipGfx: Phaser.GameObjects.Graphics | null = null;
-  private sonicBoomWhipGoldBonus = false;
 
   // ── NPC state ────────────────────────────────────────────────────────────
   private npcMechanicEnd = 0;
@@ -236,27 +249,29 @@ export class QuantumElementKit {
     this.playerMechanicEnd = 0;
     this.playerMechanicDamageDealt = 0;
 
-    this.chargeBarGfx?.destroy();
-    this.chargeBarGfx = null;
-    this.chargeBarIndicatorGfx?.destroy();
-    this.chargeBarIndicatorGfx = null;
-    this.chargeHoldStart = 0;
     this.pointerWasDown = false;
-
-    for (const ev of this.playerWaveTimers) ev.remove(false);
-    this.playerWaveTimers = [];
-    for (const ev of this.npcWaveTimers) ev.remove(false);
-    this.npcWaveTimers = [];
-    for (const b of this.playerBullets) { if (b.sprite?.active) b.sprite.destroy(); }
-    this.playerBullets = [];
-    for (const b of this.npcBullets) { if (b.sprite?.active) b.sprite.destroy(); }
-    this.npcBullets = [];
-    this.playerWaveSetEndsAt = 0;
-    this.npcWaveSetEndsAt = 0;
-    this.playerWaveStyleFeatFiredIds.clear();
 
     for (const t of this.chaosTelegraphs) { if (t.gfx?.active) t.gfx.destroy(); }
     this.chaosTelegraphs = [];
+
+    for (const d of this.playerDaggers) { if (d.sprite?.active) d.sprite.destroy(); }
+    this.playerDaggers = [];
+    for (const d of this.npcDaggers) { if (d.sprite?.active) d.sprite.destroy(); }
+    this.npcDaggers = [];
+    this.npcDaggerNextThrowAt = 0;
+    for (const o of this.playerOrbitDaggers) { if (o.sprite?.active) o.sprite.destroy(); }
+    this.playerOrbitDaggers = [];
+    this.playerOrbitEndsAt = 0;
+
+    for (const c of this.blueCones) { if (c.gfx?.active) c.gfx.destroy(); }
+    this.blueCones = [];
+    this.api.player.weakHp = 0;
+    this.api.npc.weakHp = 0;
+    // Clear any lingering cone slow / red-E enlarge.
+    this.api.setSpeedMult('player', 1);
+    this.api.setSpeedMult('npc', 1);
+    this.api.player.setScale(1);
+    this.api.npc.setScale(1);
 
     this.playerVibrationActive = false;
     this.playerVibrationTargetUntil = 0;
@@ -287,12 +302,6 @@ export class QuantumElementKit {
     this.stylePoints = 0;
     this.styleDrainAccum = 0;
     this._teardownStyleHud();
-
-    this.sonicBoomWhipGfx?.destroy();
-    this.sonicBoomWhipGfx = null;
-    this.sonicBoomWhipActive = false;
-    this.sonicBoomWhipHit = false;
-    this.sonicBoomWhipGoldBonus = false;
 
     this.npcMechanicEnd = 0;
     this.npcNhilegoActive = false;
@@ -343,60 +352,10 @@ export class QuantumElementKit {
       }
     }
 
-    // ── Click: Wave Reducer charge bar ───────────────────────────────────
-    const hasGold = api.hasUpgrade('click');
-    const goldH = hasGold ? GOLD_H : 0;
-    const totalBarH = goldH + BASE_BAR_H;
-    const bouncePeriod = hasGold ? FAST_BOUNCE_PERIOD_MS : BASE_BOUNCE_PERIOD_MS;
+    // ── Click: Molecular Cutter — throw a dagger, or recall on the click after the max are out.
     const isDown = pointer.isDown;
-
     if (isDown && !this.pointerWasDown) {
-      this.chargeHoldStart = time;
-      this.chargeBarGfx = api.scene.add.graphics().setDepth(100).setScrollFactor(0);
-      const g = this.chargeBarGfx;
-      if (hasGold) {
-        g.fillStyle(0xffdd44, 0.85); g.fillRect(BAR_X, BAR_Y, BAR_W, goldH);
-      }
-      g.fillStyle(0x44cc44, 0.7); g.fillRect(BAR_X, BAR_Y + goldH, BAR_W, GREEN_H);
-      g.fillStyle(0xcccc44, 0.7); g.fillRect(BAR_X, BAR_Y + goldH + GREEN_H, BAR_W, YELLOW_H);
-      g.fillStyle(0xcc4444, 0.7); g.fillRect(BAR_X, BAR_Y + goldH + GREEN_H + YELLOW_H, BAR_W, RED_H);
-      g.lineStyle(2, 0xffffff, 0.8); g.strokeRect(BAR_X, BAR_Y, BAR_W, totalBarH);
-      this.chargeBarIndicatorGfx = api.scene.add.graphics().setDepth(101).setScrollFactor(0);
-    } else if (isDown && this.chargeBarIndicatorGfx) {
-      const elapsed = (time - this.chargeHoldStart + bouncePeriod) % (bouncePeriod * 2);
-      const t = elapsed / (bouncePeriod * 2);
-      const frac = t < 0.5 ? t * 2 : (1 - t) * 2;
-      const y = BAR_Y + frac * (totalBarH - INDICATOR_H);
-      this.chargeBarIndicatorGfx.clear();
-      this.chargeBarIndicatorGfx.fillStyle(0xff2222, 1);
-      this.chargeBarIndicatorGfx.fillRect(BAR_X - 4, y, BAR_W + 8, INDICATOR_H);
-    } else if (!isDown && this.pointerWasDown) {
-      const holdMs = time - this.chargeHoldStart;
-      let zone: 'red' | 'yellow' | 'green' | 'gold';
-      if (holdMs < 120) {
-        zone = 'red';
-      } else {
-        const elapsed = (holdMs + bouncePeriod) % (bouncePeriod * 2);
-        const t = elapsed / (bouncePeriod * 2);
-        const frac = t < 0.5 ? t * 2 : (1 - t) * 2;
-        const indicatorY = BAR_Y + frac * (totalBarH - INDICATOR_H);
-        if (hasGold && indicatorY < BAR_Y + goldH) zone = 'gold';
-        else if (indicatorY < BAR_Y + goldH + GREEN_H) zone = 'green';
-        else if (indicatorY < BAR_Y + goldH + GREEN_H + YELLOW_H) zone = 'yellow';
-        else zone = 'red';
-      }
-      this.chargeBarGfx?.destroy();
-      this.chargeBarGfx = null;
-      this.chargeBarIndicatorGfx?.destroy();
-      this.chargeBarIndicatorGfx = null;
-      this.chargeHoldStart = 0;
-      if (time >= this.playerWaveSetEndsAt) {
-        if (this.api.hasPerk('sonic-boom')) {
-          this.doSonicBoomWhip(pointer.worldX, pointer.worldY, zone, time);
-        } else {
-          this.doPlayerQuantumWave(pointer.worldX, pointer.worldY, zone, time);
-        }
-      }
+      this._playerClickDaggers(pointer.worldX, pointer.worldY, time);
     }
 
     void isInMechanic;
@@ -426,13 +385,14 @@ export class QuantumElementKit {
       }
     }
 
-    this._updateBullets(this.playerBullets, time, dt, 'player');
-    this._updateBullets(this.npcBullets, time, dt, 'npc');
+    this._updateDaggers(this.playerDaggers, 'player', dt);
+    this._updateDaggers(this.npcDaggers, 'npc', dt);
+    this._updateOrbitDaggers(time, dt);
+    this._updateBlueCones(time, delta);
     this._updateChaos(time);
 
     if (api.elementId === 'quantum') {
       this._tickVibration(time);
-      this._tickSonicBoomWhip(time);
     }
 
     if (this.playerNhilegoActive) this._tickNhilego(time, 'player');
@@ -567,6 +527,11 @@ export class QuantumElementKit {
       else this._destroyRedAura();
       this.api.showFloatingText(player.x, player.y - 35, 'Mechanic End', '#dd88ff');
       this.api.startCooldown('player', 'quantum-mechanic');
+
+      // Click+ Blade Dance: leave 3 orbiting daggers behind for 6s.
+      if (this.api.hasUpgrade('click')) {
+        this._spawnOrbitDaggers(time);
+      }
     }
 
     if (this.npcMechanicEnd > 0 && time >= this.npcMechanicEnd) {
@@ -647,45 +612,6 @@ export class QuantumElementKit {
 
   // ── Bullet update ────────────────────────────────────────────────────────
 
-  private _updateBullets(bullets: QuantumBullet[], time: number, dt: number, owner: 'player' | 'npc'): void {
-    const W = this.api.sceneWidth;
-    const H = this.api.sceneHeight;
-    const target = owner === 'player' ? this.api.npc : this.api.player;
-
-    for (let i = bullets.length - 1; i >= 0; i--) {
-      const b = bullets[i];
-      if (!b.sprite?.active) { bullets.splice(i, 1); continue; }
-      if (time >= b.endsAt) { b.sprite.destroy(); bullets.splice(i, 1); continue; }
-
-      b.elapsed += dt;
-      const progress = 320 * b.elapsed;
-      const offset = b.amplitude * Math.sin(2 * Math.PI * b.freq * b.elapsed);
-      const nx = b.baseX + b.dirX * progress + b.perpX * offset;
-      const ny = b.baseY + b.dirY * progress + b.perpY * offset;
-      b.sprite.setPosition(nx, ny);
-
-      if (nx < 0 || nx > W || ny < 0 || ny > H) {
-        b.sprite.destroy();
-        bullets.splice(i, 1);
-        continue;
-      }
-
-      if (target.hp > 0 && Math.hypot(target.x - nx, target.y - ny) < 22) {
-        target.takeDamage(b.damage);
-        this.api.spawnHitFlash(target.x, target.y, 0xaa44ff);
-        // Award style feat on first hit of this wave set (player only)
-        if (owner === 'player' && this.api.hasUpgrade('f') && !this.playerWaveStyleFeatFiredIds.has(b.waveSetId)) {
-          this.playerWaveStyleFeatFiredIds.add(b.waveSetId);
-          if (b.zone === 'gold') this.addStyle('clickGold', 3);
-          else if (b.zone === 'green') this.addStyle('clickGreen', 2);
-          else if (b.zone === 'yellow') this.addStyle('clickYellow', 1);
-        }
-        b.sprite.destroy();
-        bullets.splice(i, 1);
-      }
-    }
-  }
-
   // ── Chaos telegraph update ───────────────────────────────────────────────
 
   private _updateChaos(time: number): void {
@@ -748,93 +674,25 @@ export class QuantumElementKit {
   }
 
   private _resolveChaos(t: ChaosTelegraph, time: number): void {
-    const { scene } = this.api;
+    // Only red telegraphs reach here now — blue E is a persistent live cone.
     const isInMechanic = t.owner === 'player' ? time < this.playerMechanicEnd : false;
+    const ex = t.cx + t.dirX * 90;
+    const ey = t.cy + t.dirY * 90;
+    this._applyDamage(t.owner, ex, ey, 30, 80, time);
 
-    if (t.form === 'red') {
-      const ex = t.cx + t.dirX * 90;
-      const ey = t.cy + t.dirY * 90;
-      this._applyDamage(t.owner, ex, ey, 30, 80, time);
+    // Red E now enlarges the enemy and makes it take +20% damage for 3s.
+    const enemy = t.owner === 'player' ? this.api.npc : this.api.player;
+    const hit = enemy.active && enemy.hp > 0 && Phaser.Math.Distance.Between(ex, ey, enemy.x, enemy.y) <= 80;
+    if (hit) this._applyRedEnlarge(enemy);
 
-      if (t.owner === 'player' && this.api.hasUpgrade('f')) {
-        const featId = isInMechanic ? 'chaosMechanic' : 'chaosControl';
-        const pts = isInMechanic ? 3 : 2;
-        this.addStyle(featId, pts);
-      }
-
-      if (t.owner === 'player' && this.api.hasUpgrade('e')) {
-        const capDirX = t.dirX, capDirY = t.dirY, capOwner = t.owner;
-        scene.time.delayedCall(450, () => {
-          this._castRelapse(capOwner, capDirX, capDirY, 'red', scene.time.now);
-        });
-      }
-    } else {
-      const target = t.owner === 'player' ? this.api.npc : this.api.player;
-      const targetAngle = Math.atan2(target.y - t.cy, target.x - t.cx);
-      const baseAngle = Math.atan2(t.dirY, t.dirX);
-      const angleDiff = Math.abs(Phaser.Math.Angle.Wrap(targetAngle - baseAngle));
-      const nDist = Math.hypot(target.x - t.cx, target.y - t.cy);
-      if (nDist <= 200 && angleDiff <= Math.PI / 9) {
-        this._applyDamage(t.owner, target.x, target.y, 30, 1, time);
-        const slowTarget = t.owner === 'player' ? 'npc' : 'player';
-        this.api.setSpeedMult(slowTarget, 0.85);
-        this.api.scene.time.delayedCall(3000, () => this.api.setSpeedMult(slowTarget, 1));
-        this.api.showFloatingText(target.x, target.y - 25, 'Slowed', '#66aaff');
-
-        if (t.owner === 'player' && this.api.hasUpgrade('f')) {
-          const featId = isInMechanic ? 'chaosMechanic' : 'chaosControl';
-          const pts = isInMechanic ? 3 : 2;
-          this.addStyle(featId, pts);
-        }
-      }
-
-      if (t.owner === 'player' && this.api.hasUpgrade('e')) {
-        const capDirX = t.dirX, capDirY = t.dirY, capOwner = t.owner;
-        scene.time.delayedCall(450, () => {
-          this._castRelapse(capOwner, capDirX, capDirY, 'blue', scene.time.now);
-        });
-      }
+    if (t.owner === 'player' && this.api.hasUpgrade('f')) {
+      const featId = isInMechanic ? 'chaosMechanic' : 'chaosControl';
+      this.addStyle(featId, isInMechanic ? 3 : 2);
     }
-  }
 
-  private _castRelapse(owner: 'player' | 'npc', dirX: number, dirY: number, form: 'red' | 'blue', time: number): void {
-    const { scene } = this.api;
-    const caster = owner === 'player' ? this.api.player : this.api.npc;
-    const isInMechanic = owner === 'player' ? time < this.playerMechanicEnd : false;
-
-    if (form === 'red') {
-      const ex = caster.x + dirX * 90;
-      const ey = caster.y + dirY * 90;
-      const flash = scene.add.circle(ex, ey, 40, 0xcc44ff, 0.5).setDepth(12) as Phaser.GameObjects.Arc;
-      flash.setStrokeStyle(2, 0xee88ff, 0.8);
-      scene.time.delayedCall(250, () => { if (flash?.active) flash.destroy(); });
-      this._applyDamage(owner, ex, ey, 15, 40, time);
-      this.api.showFloatingText(ex, ey - 25, 'Relapse!', '#cc66ff');
-
-      if (owner === 'player' && this.api.hasUpgrade('f')) {
-        const featId = isInMechanic ? 'chaosRelapseMechanic' : 'chaosRelapse';
-        const pts = isInMechanic ? 4 : 3;
-        this.addStyle(featId, pts);
-      }
-    } else {
-      const target = owner === 'player' ? this.api.npc : this.api.player;
-      const targetAngle = Math.atan2(target.y - caster.y, target.x - caster.x);
-      const baseAngle = Math.atan2(dirY, dirX);
-      const angleDiff = Math.abs(Phaser.Math.Angle.Wrap(targetAngle - baseAngle));
-      const nDist = Math.hypot(target.x - caster.x, target.y - caster.y);
-      if (nDist <= 100 && angleDiff <= Math.PI / 9) {
-        this._applyDamage(owner, target.x, target.y, 15, 1, time);
-        const slowTarget: 'player' | 'npc' = owner === 'player' ? 'npc' : 'player';
-        this.api.setSpeedMult(slowTarget, 0.85);
-        scene.time.delayedCall(1500, () => this.api.setSpeedMult(slowTarget, 1));
-        this.api.showFloatingText(target.x, target.y - 25, 'Relapse!', '#cc66ff');
-
-        if (owner === 'player' && this.api.hasUpgrade('f')) {
-          const featId = isInMechanic ? 'chaosRelapseMechanic' : 'chaosRelapse';
-          const pts = isInMechanic ? 4 : 3;
-          this.addStyle(featId, pts);
-        }
-      }
+    // E+ Quantum Cycling — a landed red E instantly re-readies Stiff Strike.
+    if (hit && t.owner === 'player' && this.api.hasUpgrade('e')) {
+      this._cyclePassive('red');
     }
   }
 
@@ -1106,6 +964,257 @@ export class QuantumElementKit {
     if (owner === 'player' && isInMechanic) this.playerMechanicDamageDealt += scaledDamage;
   }
 
+  // ── Molecular Cutter daggers (Click) ─────────────────────────────────────
+
+  /** How many form-colours are balanced across an owner's live (non-returning) daggers. */
+  private _pickBalancedColor(owner: 'player' | 'npc'): 'red' | 'blue' {
+    const list = owner === 'player' ? this.playerDaggers : this.npcDaggers;
+    let r = 0, b = 0;
+    for (const d of list) { if (d.state === 'returning') continue; if (d.color === 'red') r++; else b++; }
+    return r <= b ? 'red' : 'blue';
+  }
+
+  /** Launch one dagger from the caster; it flies to (tx,ty) and plants there. */
+  private _throwDagger(owner: 'player' | 'npc', tx: number, ty: number, color: 'red' | 'blue'): void {
+    const { scene } = this.api;
+    const caster = owner === 'player' ? this.api.player : this.api.npc;
+    const dx = tx - caster.x, dy = ty - caster.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const sprite = scene.add.rectangle(caster.x, caster.y, 16, 4, DAGGER_FILL[color])
+      .setDepth(10).setRotation(Math.atan2(dy, dx)) as Phaser.GameObjects.Rectangle;
+    sprite.setStrokeStyle(1, 0xffffff, 0.6);
+    const list = owner === 'player' ? this.playerDaggers : this.npcDaggers;
+    list.push({
+      sprite, owner, color,
+      x: caster.x, y: caster.y,
+      destX: tx, destY: ty, dirX: dx / d, dirY: dy / d,
+      state: 'flying', hitSet: new Set<Fighter>(),
+    });
+  }
+
+  /** Send every out dagger of this owner racing back to the caster (return hits deal more). */
+  private _recallDaggers(owner: 'player' | 'npc'): void {
+    const list = owner === 'player' ? this.playerDaggers : this.npcDaggers;
+    let any = false;
+    for (const d of list) { if (d.state !== 'returning') { d.state = 'returning'; d.hitSet.clear(); any = true; } }
+    if (any) {
+      const caster = owner === 'player' ? this.api.player : this.api.npc;
+      this.api.showFloatingText(caster.x, caster.y - 34, 'Recall!', '#aad4ff');
+    }
+  }
+
+  /** Player Click: throw (or Blade-Dance two), or recall once the max are out. */
+  private _playerClickDaggers(tx: number, ty: number, time: number): void {
+    const inMechanic = time < this.playerMechanicEnd;
+    const bladeDance = this.api.hasUpgrade('click') && inMechanic;
+    const max = bladeDance ? DAGGER_MAX_BLADEDANCE : DAGGER_MAX_BASE;
+    const out = this.playerDaggers.filter(d => d.state !== 'returning').length;
+    if (out >= max) { this._recallDaggers('player'); return; }
+    const room = max - out;
+    const count = bladeDance ? Math.min(2, room) : 1;
+    for (let i = 0; i < count; i++) {
+      const color = bladeDance ? this._pickBalancedColor('player') : this.playerForm;
+      this._throwDagger('player', tx, ty, color);
+    }
+  }
+
+  private _updateDaggers(list: QuantumDagger[], owner: 'player' | 'npc', dt: number): void {
+    const caster = owner === 'player' ? this.api.player : this.api.npc;
+    const enemies: Fighter[] = owner === 'player' ? [this.api.npc] : [this.api.player];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const d = list[i];
+      if (!d.sprite?.active) { list.splice(i, 1); continue; }
+      if (d.state === 'flying') {
+        d.x += d.dirX * DAGGER_SPEED * dt;
+        d.y += d.dirY * DAGGER_SPEED * dt;
+        const remaining = (d.destX - d.x) * d.dirX + (d.destY - d.y) * d.dirY;
+        if (remaining <= 0 || Phaser.Math.Distance.Between(d.x, d.y, d.destX, d.destY) <= DAGGER_ARRIVE_R) {
+          d.x = d.destX; d.y = d.destY; d.state = 'planted';
+        }
+        this._daggerHit(d, enemies, DAGGER_THROW_DMG);
+      } else if (d.state === 'returning') {
+        const dx = caster.x - d.x, dy = caster.y - d.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        d.dirX = dx / dist; d.dirY = dy / dist;
+        d.x += d.dirX * DAGGER_SPEED * dt;
+        d.y += d.dirY * DAGGER_SPEED * dt;
+        d.sprite.setRotation(Math.atan2(dy, dx));
+        this._daggerHit(d, enemies, DAGGER_RETURN_DMG);
+        if (dist <= DAGGER_ARRIVE_R + 6) { d.sprite.destroy(); list.splice(i, 1); continue; }
+      }
+      d.sprite.setPosition(d.x, d.y);
+    }
+  }
+
+  private _daggerHit(d: QuantumDagger, enemies: Fighter[], dmg: number): void {
+    for (const t of enemies) {
+      if (!t.active || t.hp <= 0 || d.hitSet.has(t)) continue;
+      if (Phaser.Math.Distance.Between(d.x, d.y, t.x, t.y) <= 20) {
+        d.hitSet.add(t);
+        t.takeDamage(dmg);
+        this.api.spawnHitFlash(t.x, t.y, DAGGER_FILL[d.color]);
+      }
+    }
+  }
+
+  // ── Blade Dance orbit daggers (spawned when the mechanic ends) ────────────
+
+  private _spawnOrbitDaggers(time: number): void {
+    const { scene, player } = { scene: this.api.scene, player: this.api.player };
+    for (const o of this.playerOrbitDaggers) { if (o.sprite?.active) o.sprite.destroy(); }
+    this.playerOrbitDaggers = [];
+    for (let i = 0; i < 3; i++) {
+      const color: 'red' | 'blue' = Math.random() < 0.5 ? 'red' : 'blue';
+      const sprite = scene.add.rectangle(player.x, player.y, 16, 4, DAGGER_FILL[color])
+        .setDepth(9).setStrokeStyle(1, 0xffffff, 0.6) as Phaser.GameObjects.Rectangle;
+      this.playerOrbitDaggers.push({ sprite, angle: (i / 3) * Math.PI * 2, lastHitAt: 0 });
+    }
+    this.playerOrbitEndsAt = time + ORBIT_DAGGER_MS;
+    this.api.showFloatingText(player.x, player.y - 40, 'Blade Dance!', '#cc88ff');
+  }
+
+  private _updateOrbitDaggers(time: number, dt: number): void {
+    if (this.playerOrbitDaggers.length === 0) return;
+    if (time >= this.playerOrbitEndsAt) {
+      for (const o of this.playerOrbitDaggers) { if (o.sprite?.active) o.sprite.destroy(); }
+      this.playerOrbitDaggers = [];
+      return;
+    }
+    const p = this.api.player;
+    const npc = this.api.npc;
+    for (const o of this.playerOrbitDaggers) {
+      o.angle += 3 * dt;
+      const x = p.x + Math.cos(o.angle) * ORBIT_DAGGER_RADIUS;
+      const y = p.y + Math.sin(o.angle) * ORBIT_DAGGER_RADIUS;
+      o.sprite.setPosition(x, y).setRotation(o.angle + Math.PI / 2);
+      if (npc.active && npc.hp > 0 && time - o.lastHitAt >= ORBIT_DAGGER_HIT_CD
+          && Phaser.Math.Distance.Between(x, y, npc.x, npc.y) <= 20) {
+        o.lastHitAt = time;
+        npc.takeDamage(ORBIT_DAGGER_DMG);
+        this.api.spawnHitFlash(npc.x, npc.y, 0xcc88ff);
+      }
+    }
+  }
+
+  // ── Blue E cone (persistent 3s) ──────────────────────────────────────────
+
+  private _spawnBlueCone(owner: 'player' | 'npc', tx: number, ty: number, time: number): void {
+    const caster = owner === 'player' ? this.api.player : this.api.npc;
+    const dx = tx - caster.x, dy = ty - caster.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const gfx = this.api.scene.add.graphics().setDepth(9);
+    this.blueCones.push({
+      owner, gfx, dirX: dx / d, dirY: dy / d,
+      endsAt: time + CONE_MS, dmgAccum: 0, insideAccumMs: 0, slowed: false, cycled: false,
+    });
+  }
+
+  private _inCone(cx: number, cy: number, dirX: number, dirY: number, px: number, py: number): boolean {
+    const dx = px - cx, dy = py - cy;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 1) return true;
+    if (dist > CONE_RANGE) return false;
+    const dot = (dx / dist) * dirX + (dy / dist) * dirY;
+    return dot >= Math.cos(CONE_HALF_ANGLE);
+  }
+
+  private _updateBlueCones(time: number, delta: number): void {
+    const dt = delta / 1000;
+    for (let i = this.blueCones.length - 1; i >= 0; i--) {
+      const c = this.blueCones[i];
+      const caster = c.owner === 'player' ? this.api.player : this.api.npc;
+      const enemy = c.owner === 'player' ? this.api.npc : this.api.player;
+      const slowTarget: 'player' | 'npc' = c.owner === 'player' ? 'npc' : 'player';
+      if (time >= c.endsAt) {
+        if (c.slowed) this.api.setSpeedMult(slowTarget, 1);
+        c.gfx.destroy();
+        this.blueCones.splice(i, 1);
+        continue;
+      }
+      const cx = caster.x, cy = caster.y;
+      const angle = Math.atan2(c.dirY, c.dirX);
+      c.gfx.clear();
+      c.gfx.fillStyle(0x3399ff, 0.22);
+      c.gfx.lineStyle(2, 0x66ccff, 0.7);
+      c.gfx.beginPath();
+      c.gfx.moveTo(cx, cy);
+      c.gfx.arc(cx, cy, CONE_RANGE, angle - CONE_HALF_ANGLE, angle + CONE_HALF_ANGLE);
+      c.gfx.closePath();
+      c.gfx.fillPath();
+      c.gfx.strokePath();
+
+      const inside = enemy.active && enemy.hp > 0 && this._inCone(cx, cy, c.dirX, c.dirY, enemy.x, enemy.y);
+      if (inside) {
+        this.api.setSpeedMult(slowTarget, CONE_SLOW_MULT);
+        c.slowed = true;
+        c.dmgAccum += CONE_DPS * dt;
+        if (c.dmgAccum >= 1) {
+          const whole = Math.floor(c.dmgAccum);
+          c.dmgAccum -= whole;
+          enemy.takeDamage(whole);
+          this.api.spawnHitFlash(enemy.x, enemy.y, 0x66ccff);
+        }
+        if (c.owner === 'player' && this.api.hasUpgrade('e') && !c.cycled) {
+          c.insideAccumMs += delta;
+          if (c.insideAccumMs >= CONE_CYCLE_MS) { c.cycled = true; this._cyclePassive('blue'); }
+        }
+      } else if (c.slowed) {
+        this.api.setSpeedMult(slowTarget, 1);
+        c.slowed = false;
+      }
+
+      this._convertConeProjectiles(c, cx, cy, caster);
+    }
+  }
+
+  /** Enemy projectiles inside a blue cone become inert blue husks and grant the caster weak HP. */
+  private _convertConeProjectiles(c: QuantumBlueCone, cx: number, cy: number, caster: Fighter): void {
+    const ownerIsPlayer = c.owner === 'player';
+    for (const go of [...this.api.projectiles.getChildren()]) {
+      const p = go as Projectile;
+      if (!p.active) continue;
+      if (p.isFromPlayer === ownerIsPlayer) continue; // only the enemy's shots
+      if (!this._inCone(cx, cy, c.dirX, c.dirY, p.x, p.y)) continue;
+      const dmg = Math.max(0, p.damage ?? 0);
+      caster.weakHp = Math.min(caster.maxHp, caster.weakHp + dmg);
+      const husk = this.api.scene.add.circle(p.x, p.y, 6, 0x3399ff, 0.8)
+        .setStrokeStyle(1, 0xaadfff, 0.8).setDepth(8);
+      this.api.scene.tweens.add({ targets: husk, alpha: 0, duration: 1200, onComplete: () => { if (husk.active) husk.destroy(); } });
+      if (dmg > 0) this.api.showFloatingText(p.x, p.y - 16, `+${Math.round(dmg)} weak`, '#aad4ff');
+      p.destroy();
+    }
+  }
+
+  // ── E+ Quantum Cycling: instantly re-ready the current form's passive ─────
+
+  private _cyclePassive(mode: 'red' | 'blue'): void {
+    const { player } = this.api;
+    if (mode === 'red') {
+      this.playerStiffStrikeReady = true;
+      this.playerStiffStrikeReadyAt = 0;
+      if (!this.playerRedAura) this._spawnRedAura();
+      this.api.showFloatingText(player.x, player.y - 45, 'Quantum Cycling!', '#ffcc66');
+    } else {
+      this.playerAutoDodgeReady = true;
+      this.playerAutoDodgeReadyAt = 0;
+      if (!this.playerBlueAura) this._spawnBlueAura();
+      this.api.showFloatingText(player.x, player.y - 45, 'Quantum Cycling!', '#66ccff');
+    }
+  }
+
+  /** Red E: grow the enemy and make it take +20% damage for 3s. */
+  private _applyRedEnlarge(enemy: Fighter): void {
+    if (!enemy.active) return;
+    enemy.setScale(1.4);
+    enemy.incomingDamageMultiplier *= RED_E_VULN_MULT;
+    this.api.showFloatingText(enemy.x, enemy.y - 30, 'Enlarged! +20% dmg', '#ff88aa');
+    this.api.scene.time.delayedCall(RED_E_ENLARGE_MS, () => {
+      if (!enemy.active) return;
+      enemy.setScale(1);
+      enemy.incomingDamageMultiplier /= RED_E_VULN_MULT;
+    });
+  }
+
   // ── Threatened-by-projectile helper ──────────────────────────────────────
 
   private _isThreatenedByProjectile(px: number, py: number): boolean {
@@ -1270,9 +1379,8 @@ export class QuantumElementKit {
 
     const speedPct = Math.round(tier.speedBonus * 100);
     const cdPct = Math.round(tier.cdReduction * 100);
-    const bullets = tier.waveBullets;
     const benefitsStr = speedPct > 0
-      ? `Speed +${speedPct}% • CD -${cdPct}% • Wave ×${(bullets / 20).toFixed(1)}`
+      ? `Speed +${speedPct}% • CD -${cdPct}%`
       : 'Earn style to gain benefits';
     (this.styleBenefitsText as Phaser.GameObjects.Text).setText(benefitsStr);
 
@@ -1291,198 +1399,24 @@ export class QuantumElementKit {
 
   // ── Player ability dispatchers ────────────────────────────────────────────
 
-  doPlayerQuantumWave(tx: number, ty: number, zone: 'red' | 'yellow' | 'green' | 'gold' = 'red', time?: number): void {
+  /** Player CastContext entry (rarely used — the click is input-driven). Throws one dagger. */
+  doPlayerQuantumWave(tx: number, ty: number): void {
     if (this.api.elementId !== 'quantum') return;
-
-    const t = time ?? this.api.scene.time.now;
-    const { player, scene } = this.api;
-
-    let freq: number, amplitude: number, perBulletDamage: number;
-    if (zone === 'gold') { freq = 6; amplitude = 28; perBulletDamage = 2; }
-    else if (zone === 'green') { freq = 6; amplitude = 28; perBulletDamage = 1; }
-    else if (zone === 'yellow') { freq = 4; amplitude = 20; perBulletDamage = 1; }
-    else { freq = 2; amplitude = 12; perBulletDamage = 1; }
-
-    const angle = Math.atan2(ty - player.y, tx - player.x);
-    const dirX = Math.cos(angle);
-    const dirY = Math.sin(angle);
-    const bulletDuration = 1500;
-    const interval = 70;
-    const bulletCount = this.api.hasUpgrade('f') ? STYLE_TIERS[this.styleTier].waveBullets : 20;
-    const waveSetId = t;
-
-    for (const ev of this.playerWaveTimers) ev.remove(false);
-    this.playerWaveTimers = [];
-
-    for (let i = 0; i < bulletCount; i++) {
-      const ev = scene.time.delayedCall(i * interval, () => {
-        if (!player.active) return;
-        const sprite = scene.add.circle(player.x, player.y, 4, 0xaa44ff).setDepth(10) as Phaser.GameObjects.Arc;
-        this.playerBullets.push({
-          sprite, baseX: player.x, baseY: player.y,
-          dirX, dirY, perpX: -dirY, perpY: dirX,
-          elapsed: 0, freq, amplitude,
-          endsAt: scene.time.now + bulletDuration,
-          owner: 'player',
-          damage: perBulletDamage,
-          zone,
-          waveSetId,
-        });
-      });
-      this.playerWaveTimers.push(ev);
-    }
-    this.playerWaveSetEndsAt = t + (bulletCount - 1) * interval + bulletDuration;
+    this._playerClickDaggers(tx, ty, this.api.scene.time.now);
   }
 
-  private doSonicBoomWhip(tx: number, ty: number, zone: 'red' | 'yellow' | 'green' | 'gold', time: number): void {
-    const player = this.api.player;
-    const angle = Math.atan2(ty - player.y, tx - player.x);
-
-    const stats: Record<string, { maxRange: number; damage: number }> = {
-      red:    { maxRange: 200, damage: 6  },
-      yellow: { maxRange: 350, damage: 10 },
-      green:  { maxRange: 500, damage: 16 },
-      gold:   { maxRange: 500, damage: 16 },
-    };
-
-    this.sonicBoomWhipActive = true;
-    this.sonicBoomWhipStartTime = time;
-    this.sonicBoomWhipAngle = angle;
-    this.sonicBoomWhipMaxRange = stats[zone].maxRange;
-    this.sonicBoomWhipDamage = stats[zone].damage;
-    this.sonicBoomWhipZone = zone;
-    this.sonicBoomWhipHit = false;
-    this.sonicBoomWhipGoldBonus = zone === 'gold';
-
-    if (this.sonicBoomWhipGfx) { this.sonicBoomWhipGfx.destroy(); }
-    this.sonicBoomWhipGfx = this.api.scene.add.graphics().setDepth(11);
-
-    const colors: Record<string, number> = {
-      red: 0xff4444, yellow: 0xffcc00, green: 0x44ff88, gold: 0xffdd00,
-    };
-    (this.sonicBoomWhipGfx as any)._whipColor = colors[zone];
-  }
-
-  private _tickSonicBoomWhip(time: number): void {
-    if (!this.sonicBoomWhipActive) return;
-
-    const WHIP_DURATION_MS = 300;
-    const elapsed = time - this.sonicBoomWhipStartTime;
-    const t = Math.min(elapsed / WHIP_DURATION_MS, 1);
-
-    const player = this.api.player;
-    const gfx = this.sonicBoomWhipGfx;
-
-    if (gfx && gfx.active) {
-      gfx.clear();
-      const color: number = (gfx as any)._whipColor ?? 0xffffff;
-      gfx.lineStyle(4, color, 1);
-      gfx.beginPath();
-
-      const SEGMENTS = 10;
-      const angle = this.sonicBoomWhipAngle;
-      const dx = Math.cos(angle);
-      const dy = Math.sin(angle);
-      const px = -Math.sin(angle); // perpendicular
-      const py = Math.cos(angle);
-
-      for (let i = 0; i <= SEGMENTS; i++) {
-        const frac = (i / SEGMENTS) * t;
-        const dist = frac * this.sonicBoomWhipMaxRange;
-        const perpOffset = Math.sin(frac * Math.PI) * 20;
-        const wx = player.x + dx * dist + px * perpOffset;
-        const wy = player.y + dy * dist + py * perpOffset;
-        if (i === 0) gfx.moveTo(wx, wy);
-        else gfx.lineTo(wx, wy);
-      }
-      gfx.strokePath();
-
-      // Hit detection
-      if (!this.sonicBoomWhipHit) {
-        const npc = this.api.npc;
-        if (npc.active) {
-          for (let i = 1; i <= SEGMENTS; i++) {
-            const frac = (i / SEGMENTS) * t;
-            const dist = frac * this.sonicBoomWhipMaxRange;
-            const perpOffset = Math.sin(frac * Math.PI) * 20;
-            const wx = player.x + dx * dist + px * perpOffset;
-            const wy = player.y + dy * dist + py * perpOffset;
-
-            const distToEnemy = Phaser.Math.Distance.Between(wx, wy, npc.x, npc.y);
-            if (distToEnemy < 16) {
-              this.sonicBoomWhipHit = true;
-              const isMaxRange = frac >= 0.85;
-              const dmg = isMaxRange ? this.sonicBoomWhipDamage * 2 : this.sonicBoomWhipDamage;
-              npc.takeDamage(dmg);
-              this.api.spawnHitFlash(npc.x, npc.y, color);
-              this.api.spawnDamageNumber(npc.x, npc.y, dmg);
-              if (isMaxRange) {
-                this.api.stunNpc(500);
-                this.api.showFloatingText(npc.x, npc.y - 36, 'MAX RANGE!', '#44ffcc');
-              }
-              break;
-            }
-          }
-        }
-      }
-
-      // Gold zone bonus: AoE flash at tip when fully extended
-      if (t >= 1 && this.sonicBoomWhipGoldBonus) {
-        this.sonicBoomWhipGoldBonus = false;
-        const tipX = player.x + dx * this.sonicBoomWhipMaxRange;
-        const tipY = player.y + dy * this.sonicBoomWhipMaxRange;
-        const flash = this.api.scene.add.circle(tipX, tipY, 40, 0xffdd00, 0.6).setDepth(10);
-        this.api.scene.tweens.add({
-          targets: flash, alpha: 0, scaleX: 1.4, scaleY: 1.4, duration: 300,
-          onComplete: () => { if (flash?.active) flash.destroy(); },
-        });
-        const npc = this.api.npc;
-        if (npc.active && Phaser.Math.Distance.Between(tipX, tipY, npc.x, npc.y) < 40) {
-          npc.takeDamage(8);
-          this.api.spawnHitFlash(npc.x, npc.y, 0xffdd00);
-          this.api.spawnDamageNumber(npc.x, npc.y, 8);
-        }
-      }
-    }
-
-    if (t >= 1) {
-      this.sonicBoomWhipGfx?.destroy();
-      this.sonicBoomWhipGfx = null;
-      this.sonicBoomWhipActive = false;
-    }
-  }
-
+  /** NPC Molecular Cutter — throws daggers on a cadence, recalling once the max are out. */
   doNpcQuantumWave(tx: number, ty: number): void {
-    const t = this.api.scene.time.now;
-    if (t < this.npcWaveSetEndsAt) return;
-    const { npc, scene } = this.api;
-    const angle = Math.atan2(ty - npc.y, tx - npc.x);
-    const dirX = Math.cos(angle);
-    const dirY = Math.sin(angle);
-    const bulletDuration = 1500;
-    const interval = 70;
-
-    for (const ev of this.npcWaveTimers) ev.remove(false);
-    this.npcWaveTimers = [];
-
-    for (let i = 0; i < 20; i++) {
-      const ev = scene.time.delayedCall(i * interval, () => {
-        if (!npc.active) return;
-        const sprite = scene.add.circle(npc.x, npc.y, 4, 0xaa44ff).setDepth(10) as Phaser.GameObjects.Arc;
-        this.npcBullets.push({
-          sprite, baseX: npc.x, baseY: npc.y,
-          dirX, dirY, perpX: -dirY, perpY: dirX,
-          elapsed: 0, freq: 2, amplitude: 12,
-          endsAt: scene.time.now + bulletDuration,
-          owner: 'npc',
-          damage: 1,
-          zone: 'red',
-          waveSetId: t,
-        });
-      });
-      this.npcWaveTimers.push(ev);
+    const time = this.api.scene.time.now;
+    if (time < this.npcDaggerNextThrowAt) return;
+    const out = this.npcDaggers.filter(d => d.state !== 'returning').length;
+    if (out >= DAGGER_MAX_BASE) {
+      if (this.npcDaggers.some(d => d.state === 'planted')) this._recallDaggers('npc');
+      this.npcDaggerNextThrowAt = time + 400;
+      return;
     }
-    this.npcWaveSetEndsAt = t + 19 * interval + bulletDuration;
+    this._throwDagger('npc', tx, ty, 'red');
+    this.npcDaggerNextThrowAt = time + 350;
   }
 
   doPlayerChaosControl(tx: number, ty: number, time?: number): void {
@@ -1505,46 +1439,33 @@ export class QuantumElementKit {
   }
 
   private _chaosCast(owner: 'player' | 'npc', tx: number, ty: number, form: 'red' | 'blue', time: number): void {
+    // Blue E is a persistent cone (spawned immediately), not a telegraph.
+    if (form === 'blue') { this._spawnBlueCone(owner, tx, ty, time); return; }
+
     const { scene } = this.api;
     const caster = owner === 'player' ? this.api.player : this.api.npc;
     const cx = caster.x;
     const cy = caster.y;
-
+    const dx = tx - cx;
+    const dy = ty - cy;
+    const dist = Math.hypot(dx, dy) || 1;
+    const dirX = dx / dist;
+    const dirY = dy / dist;
+    const ex = cx + dirX * 90;
+    const ey = cy + dirY * 90;
     const gfx = scene.add.graphics().setDepth(9);
+    gfx.fillStyle(0x882222, 0.35);
+    gfx.lineStyle(2, 0xff4488, 0.8);
+    gfx.fillCircle(ex, ey, 80);
+    gfx.strokeCircle(ex, ey, 80);
 
-    if (form === 'red') {
-      const dx = tx - cx;
-      const dy = ty - cy;
-      const dist = Math.hypot(dx, dy) || 1;
-      const dirX = dx / dist;
-      const dirY = dy / dist;
-      const ex = cx + dirX * 90;
-      const ey = cy + dirY * 90;
-      gfx.fillStyle(0x882222, 0.35);
-      gfx.lineStyle(2, 0xff4488, 0.8);
-      gfx.fillCircle(ex, ey, 80);
-      gfx.strokeCircle(ex, ey, 80);
-
-      this.chaosTelegraphs.push({
-        owner, form: 'red',
-        cx, cy, tx, ty, dirX, dirY,
-        gfx,
-        endsAt: time + 2000,
-        resolved: false,
-      });
-    } else {
-      const dx = tx - cx;
-      const dy = ty - cy;
-      const dist = Math.hypot(dx, dy) || 1;
-      this._drawCone(gfx, cx, cy, tx, ty);
-      this.chaosTelegraphs.push({
-        owner, form: 'blue',
-        cx, cy, tx, ty, dirX: dx / dist, dirY: dy / dist,
-        gfx,
-        endsAt: time + 2000,
-        resolved: false,
-      });
-    }
+    this.chaosTelegraphs.push({
+      owner, form: 'red',
+      cx, cy, tx, ty, dirX, dirY,
+      gfx,
+      endsAt: time + 2000,
+      resolved: false,
+    });
   }
 
   doPlayerAtomVibration(tx: number, ty: number, time?: number): void {

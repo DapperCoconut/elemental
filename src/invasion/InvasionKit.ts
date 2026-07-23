@@ -37,6 +37,14 @@ export interface InvasionArenaApi {
   addFrostStackTo(target: Fighter): void;
   /** Bleed aura + drips on a fighter (ArenaScene owns the visual lifecycle). */
   applyBleedVisual(target: Fighter): void;
+  /** Silence: player is invisible / away in the hallway — husks can't target them. */
+  isSilencePlayerHidden(): boolean;
+  /** Silence: an invisible player has stalkers out — husks fire blind to hunt them. */
+  silenceStalkerHunt(): boolean;
+  /** Silence: a husk shot landed here — kills a player stalker in radius. Returns true if it did. */
+  tryHitSilenceStalker(x: number, y: number, radius: number): boolean;
+  /** Soul: a real husk died — feeds the player's corpse queue if they're playing Soul. */
+  notifyHuskDefeated?(husk: Husk): void;
 }
 
 const INTERMISSION_MS = 3000;
@@ -132,7 +140,13 @@ export type HuskStatus =
   | { k: 'burn'; ms: number }
   | { k: 'toxic'; ms: number; dps: number }
   | { k: 'frost'; stacks: number; shatter: boolean }
-  | { k: 'bleed'; ms: number };
+  | { k: 'bleed'; ms: number }
+  // Silence remaster: click-only lockout, 20% attack whiffs, permanent grabber slow.
+  | { k: 'silence'; ms: number }
+  | { k: 'halluc'; ms: number }
+  | { k: 'atkslow'; mult: number }
+  // Silence E+ seeker cone: stabs on a panicked target drain only 50 stealth.
+  | { k: 'panic'; ms: number };
 
 export type InvasionFx =
   | { k: 'boom'; x: number; y: number; r: number }
@@ -295,7 +309,11 @@ export class InvasionKit implements HuskWorld {
 
     // Life's plants pull aggro: while any are standing, husks ignore the players.
     const targets = this.currentTargets();
-    for (const husk of alive) husk.update(targets, time, delta);
+    const stalkerHunt = this.arena.silenceStalkerHunt();
+    for (const husk of alive) {
+      husk.huntInvisibleTargets = stalkerHunt;
+      husk.update(targets, time, delta);
+    }
 
     this.updateShots(time, delta, targets);
 
@@ -313,7 +331,8 @@ export class InvasionKit implements HuskWorld {
     const plants = this.arena.plantTargets();
     if (plants.length > 0) return plants;
     const player = this.arena.player;
-    return this.coopHooks ? [player, ...this.coopHooks.extraTargets()] : [player];
+    const locals = this.arena.isSilencePlayerHidden() ? [] : [player];
+    return this.coopHooks ? [...locals, ...this.coopHooks.extraTargets()] : locals;
   }
 
   /** Route husk-sourced damage to whichever fighter ate it (ally hits go over the wire). */
@@ -408,6 +427,7 @@ export class InvasionKit implements HuskWorld {
     this.shards += reward;
     this.arena.showFloatingText(husk.x, husk.y - 30, `+${reward} 🩸`, '#cc44ff');
     this.coopHooks?.onHuskDefeated(husk, reward);
+    this.arena.notifyHuskDefeated?.(husk);
     husk.hideHealthBar();
     husk.setTint(0x334411);
     this.arena.scene.tweens.add({
@@ -556,6 +576,9 @@ export class InvasionKit implements HuskWorld {
       let done = time >= s.expiresAt
         || s.gfx.x < wb.x || s.gfx.x > wb.right || s.gfx.y < wb.y || s.gfx.y > wb.bottom;
 
+      // Blind-fire shots can clip a silence stalker — one hit kills it.
+      if (!done && this.arena.tryHitSilenceStalker(s.gfx.x, s.gfx.y, SHOT_HIT_RADIUS)) done = true;
+
       if (!done) {
         for (const t of targets) {
           if (!t.active || t.hp <= 0 || t.downed) continue;
@@ -643,6 +666,20 @@ export class InvasionKit implements HuskWorld {
         husk.bleeding = true;
         husk.bleedingUntil = Math.max(husk.bleedingUntil, now + s.ms);
         this.arena.applyBleedVisual(husk);
+        break;
+      // Silence statuses are Date.now()-based (checked against Date.now() in Husk).
+      case 'silence':
+        husk.silencedUntil = Math.max(husk.silencedUntil, Date.now() + s.ms);
+        break;
+      case 'halluc':
+        husk.hallucinatingUntil = Math.max(husk.hallucinatingUntil, Date.now() + s.ms);
+        break;
+      case 'atkslow':
+        husk.attackIntervalMult *= s.mult;
+        husk.cooldownMult *= s.mult;
+        break;
+      case 'panic':
+        husk.panickedUntil = Math.max(husk.panickedUntil, Date.now() + s.ms);
         break;
     }
   }

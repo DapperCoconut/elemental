@@ -2,14 +2,41 @@ import Peer, { DataConnection } from 'peerjs';
 import type { InvasionFx, HuskStatus } from '../invasion/InvasionKit';
 
 /** Bump when the wire protocol or gameplay sync changes incompatibly. */
-export const NET_PROTOCOL_VERSION = 3;
+export const NET_PROTOCOL_VERSION = 7;
 
 /** Lobby selection payload exchanged while both players pick loadouts. */
 export interface NetSelection {
   elementId: string | null;
   perkId: string | null;
+  /** Owned upgrade slots for the selected element (replayed by the peer's sim). */
+  upgrades: string[];
+  /** Mastery ability bound per slot (e.g. { e: 'starfall' }); replayed by the peer's sim. */
+  masteryBinds: Record<string, string>;
+  /** Whether Element Mastery is enabled for the selected element (drives passives too). */
+  masteryOn: boolean;
   ready: boolean;
 }
+
+/** Technology element events that the cast relay can't carry. */
+export type NetTechMsg =
+  | { t: 'tech'; k: 'malware'; kind: 'goose' | 'clippy' | 'pong' }
+  | { t: 'tech'; k: 'steer'; d: 'up' | 'down' | 'left' | 'right' }
+  | { t: 'tech'; k: 'door'; coins: number }
+  | { t: 'tech'; k: 'quiz'; pass: boolean }
+  | { t: 'tech'; k: 'mouse'; stacks: number }
+  | { t: 'tech'; k: 'buff'; ms: number }
+  | { t: 'tech'; k: 'jackpot' };
+
+/** Silence upgrade events that the cast relay / state stream can't carry. */
+export type NetSilenceMsg =
+  // Victim → caster: the victim's sim caught its local fighter in a seeker cone.
+  | { t: 'sil'; k: 'panic'; ms: number }
+  // Caster → victim: striker transform toggled (terror is caster-local state).
+  | { t: 'sil'; k: 'striker'; on: boolean }
+  // Caster → victim: maze layout seed so both sims build identical walls.
+  | { t: 'sil'; k: 'maze'; seed: number }
+  // Victim → caster: vulture dropped the victim here — replay the blood FX.
+  | { t: 'sil'; k: 'vulture-drop'; x: number; y: number };
 
 /** A single husk's networked state, as broadcast by the invasion co-op host. */
 export interface NetHuskState {
@@ -28,16 +55,17 @@ export type NetMatchMode = 'pvp' | 'invasion';
 
 export type NetMsg =
   | { t: 'hello'; version: number }
-  | { t: 'sel'; elementId: string | null; perkId: string | null; ready: boolean }
+  | { t: 'sel'; elementId: string | null; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; ready: boolean }
   | { t: 'mode'; mode: NetMatchMode; invasionDifficulty: string }
   | {
       t: 'start';
       mode: NetMatchMode;
       invasionDifficulty?: string;
-      hostSel: { elementId: string; perkId: string | null };
-      guestSel: { elementId: string; perkId: string | null };
+      hostSel: { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean };
+      guestSel: { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean };
     }
-  | { t: 'state'; x: number; y: number; vx: number; vy: number; hp: number; maxHp: number; shieldHp: number; shieldCharges: number; downed?: boolean }
+  // inv/fa/st: Silence remaster — invisibility flag, facing angle (radians), stealth meter.
+  | { t: 'state'; x: number; y: number; vx: number; vy: number; hp: number; maxHp: number; shieldHp: number; shieldCharges: number; downed?: boolean; inv?: boolean; fa?: number; st?: number }
   | { t: 'cast'; id: string; tx: number; ty: number }
   | { t: 'hit'; amount: number }
   | { t: 'death' }
@@ -56,7 +84,9 @@ export type NetMsg =
   | { t: 'huskFx'; fx: InvasionFx }
   | { t: 'boss'; name: string; color: string }
   | { t: 'revived' } // either → either
-  | { t: 'runEnd'; wavesCompleted: number; shardsEarned: number };
+  | { t: 'runEnd'; wavesCompleted: number; shardsEarned: number }
+  | NetTechMsg
+  | NetSilenceMsg;
 
 export type NetStatus = 'idle' | 'starting' | 'hosting' | 'joining' | 'connected' | 'error';
 

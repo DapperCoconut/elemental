@@ -120,12 +120,6 @@ export class MagnetKit {
   getNailPullVX(): number { return this.magnetNailPullVX; }
   getNailPullVY(): number { return this.magnetNailPullVY; }
 
-  getNpcSpeedBuffUntil(): number { return this.magnetNpcSpeedBuffUntil; }
-  setNpcSpeedBuffUntil(v: number): void { this.magnetNpcSpeedBuffUntil = v; }
-
-  getPlayerSpeedBuffUntil(): number { return this.magnetPlayerSpeedBuffUntil; }
-  setPlayerSpeedBuffUntil(v: number): void { this.magnetPlayerSpeedBuffUntil = v; }
-
   reset(): void {
     const scene = this.arena.scene;
     for (const rod of this.magnetRods) {

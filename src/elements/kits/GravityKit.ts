@@ -73,6 +73,8 @@ export interface GravityArenaApi {
   get masteryActive(): boolean;
   /** Mastery enhancement id bound over the given ability slot, or null if that slot is unchanged. */
   masteryBindFor(slot: string): string | null;
+  /** Online: broadcast a bindable mastery cast so the peer's sim replays it. */
+  broadcastMasteryCast(enhId: string): void;
   recordMasteryStat(key: string, amount: number): void;
 }
 
@@ -96,6 +98,8 @@ interface AuraOrb {
 interface StarfallOrb {
   sprite: Phaser.GameObjects.Arc;
   hitSet: Set<Fighter>;
+  /** Who owns this orb — 'player' orbs hit enemies, 'npc' orbs (online replay) hit the local player. */
+  owner: 'player' | 'npc';
 }
 
 interface GroundedState {
@@ -398,15 +402,25 @@ export class GravityKit {
   private tryCastStarfall(time: number): void {
     if (time - this.starfallLastCastAt < STARFALL_COOLDOWN_MS) return;
     this.starfallLastCastAt = time;
+    this.spawnStarfall('player');
+    this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 30, '🌙 STARFALL', '#ccbbee');
+    // Online: the opponent's sim owns their HP, so replay Starfall there to damage them.
+    this.arena.broadcastMasteryCast('starfall');
+  }
+
+  /** Online replay: the remote gravity player cast Starfall — rain orbs that damage the local player. */
+  doNpcStarfall(_tx: number, _ty: number): void {
+    this.spawnStarfall('npc');
+  }
+
+  private spawnStarfall(owner: 'player' | 'npc'): void {
     const scene = this.arena.scene;
-    const player = this.arena.player;
     const W = this.arena.width;
     for (let i = 0; i < 20; i++) {
       const x = 20 + Math.random() * (W - 40);
       const sprite = scene.add.circle(x, -20, 7, 0x8844cc, 0.9).setStrokeStyle(2, 0xccbbee, 0.9).setDepth(8);
-      this.starfallOrbs.push({ sprite, hitSet: new Set() });
+      this.starfallOrbs.push({ sprite, hitSet: new Set(), owner });
     }
-    this.arena.showFloatingText(player.x, player.y - 30, '🌙 STARFALL', '#ccbbee');
   }
 
   /** Grounds a target for 10s: pinned to the arena floor, only able to move left/right, hopping occasionally. */
@@ -433,8 +447,11 @@ export class GravityKit {
     const H = this.arena.height;
     for (let i = this.starfallOrbs.length - 1; i >= 0; i--) {
       const orb = this.starfallOrbs[i];
+      // 'npc' orbs are the opponent's Starfall replayed on this victim sim — they
+      // target the local player; 'player' orbs target the local enemy list.
+      const targets = orb.owner === 'npc' ? [this.arena.player] : this.arena.enemies;
       orb.sprite.y += STARFALL_FALL_SPEED * (delta / 1000);
-      for (const target of this.arena.enemies) {
+      for (const target of targets) {
         if (!target.active || target.hp <= 0 || orb.hitSet.has(target)) continue;
         if (Phaser.Math.Distance.Between(orb.sprite.x, orb.sprite.y, target.x, target.y) <= 20) {
           target.takeDamage(10);
@@ -450,7 +467,7 @@ export class GravityKit {
         this.starfallOrbs.splice(i, 1);
         const ring = scene.add.circle(ix, iy, 8, 0x8844cc, 0.85).setDepth(8);
         scene.tweens.add({ targets: ring, scaleX: 6, scaleY: 6, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
-        for (const target of this.arena.enemies) {
+        for (const target of targets) {
           if (!target.active || target.hp <= 0) continue;
           if (Phaser.Math.Distance.Between(ix, iy, target.x, target.y) <= 45) {
             target.takeDamage(15);
@@ -1018,7 +1035,7 @@ export class GravityKit {
         if (fp.tickAccum >= 300) {
           fp.tickAccum -= 300;
           for (const fTarget of fpTargets) {
-            fTarget.takeDamage(4);
+            fTarget.takeDamage(4, { source: fp, sourceX: fp.x, sourceY: fp.y });
             if (fp.owner === 'player') this.noteTetherDamage(fTarget, 4);
             this.arena.spawnHitFlash(fTarget.x, fTarget.y, 0xff6633);
           }

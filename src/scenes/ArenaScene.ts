@@ -39,16 +39,15 @@ import { CrystalKit, CrystalArenaApi } from '../elements/kits/CrystalKit';
 import { EarthKit, EarthArenaApi } from '../elements/kits/EarthKit';
 import { ShadowKit, ShadowArenaApi } from '../elements/kits/ShadowKit';
 import { ElectricityKit, ElectricityArenaApi } from '../elements/kits/ElectricityKit';
-import { VoidKit, VoidArenaApi } from '../elements/kits/VoidKit';
 import { TechnologyKit, TechArenaApi } from '../elements/kits/TechnologyKit';
+import { ProjectileRegistry } from '../combat/ProjectileRegistry';
 import { SlimeKit, SlimeArenaApi } from '../elements/kits/SlimeKit';
 import { WaterKit, WaterArenaApi, Geyser } from '../elements/kits/WaterKit';
 import { LifeKit, LifeArenaApi } from '../elements/kits/LifeKit';
 import { GrowthKit, GrowthArenaApi } from '../elements/kits/GrowthKit';
 import { metalElement } from '../elements/metal';
 import { plasmaElement } from '../elements/plasma';
-import { deathElement } from '../elements/death';
-import { voidElement } from '../elements/void';
+import { gunpowderElement } from '../elements/gunpowder';
 import { rubberElement } from '../elements/rubber';
 import { magicElement } from '../elements/magic';
 import { technologyElement } from '../elements/technology';
@@ -61,15 +60,16 @@ import { OilKit, OilArenaApi } from '../elements/kits/OilKit';
 import { FateKit, FateArenaApi } from '../elements/kits/FateKit';
 import { SoundKit, SoundArenaApi } from '../elements/kits/SoundKit';
 import { RubberKit, RubberArenaApi } from '../elements/kits/RubberKit';
-import { SilenceKit, SilenceArenaApi, SilenceBarEntry } from '../elements/kits/SilenceKit';
+import { SilenceKit, SilenceArenaApi } from '../elements/kits/SilenceKit';
 import { FireKit, FireArenaApi } from '../elements/kits/FireKit';
 import { AirKit, AirArenaApi } from '../elements/kits/AirKit';
-import { DeathKit, DeathArenaApi } from '../elements/kits/DeathKit';
+import { GunpowderKit, GunpowderArenaApi } from '../elements/kits/GunpowderKit';
 import { MagicKit, MagicArenaApi } from '../elements/kits/MagicKit';
 import { TimeKit, TimeArenaApi } from '../elements/kits/TimeKit';
 import { PlasmaKit, PlasmaArenaApi } from '../elements/kits/PlasmaKit';
 import { MetalKit, MetalArenaApi } from '../elements/kits/MetalKit';
 import { GravityKit, GravityArenaApi } from '../elements/kits/GravityKit';
+import { SoulKit, SoulArenaApi } from '../elements/kits/SoulKit';
 import { dummyElement } from '../elements/dummy';
 import * as PlayerData from '../data/PlayerData';
 import { getEnhancement } from '../data/Mastery';
@@ -127,35 +127,6 @@ interface PainRainShadow {
   hitRadius: number;
   color: number;
 }
-
-interface SoulOrb {
-  sprite: Phaser.GameObjects.Arc;
-  expiresAt: number;
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  owner: 'player' | 'npc';
-  lastContactTick: number;
-}
-
-interface SoulSummon {
-  sprite: Phaser.GameObjects.Arc;
-  hp: number;
-  maxHp: number;
-  type: 'basic' | 'ghoul' | 'banshee' | 'knight' | 'corpse' | 'necromancer';
-  owner: 'player' | 'npc';
-  lastContactTick: number;
-  ghoulShootAccum: number;
-  dx: number;
-  dy: number;
-  healAccum: number;        // corpse: self-heal tick accumulator
-  necroSummonAccum: number; // necromancer: summon timer
-  enhanced: boolean;        // F+ necro enhancement: gold tint + boosted stats
-  speedMult: number;        // knight: speed multiplier (Q+ collision stacking)
-  slamAccum: number;        // enhanced banshee: slam accumulator
-}
-
 
 interface HuntGrenade {
   sprite: Phaser.GameObjects.Arc;
@@ -380,8 +351,7 @@ const ELEMENT_MAP: Record<string, Element> = {
   magnet: magnetElement,
   metal: metalElement,
   plasma: plasmaElement,
-  death: deathElement,
-  void: voidElement,
+  gunpowder: gunpowderElement,
   rubber: rubberElement,
   magic: magicElement,
   technology: technologyElement,
@@ -415,8 +385,7 @@ const ELEMENT_TEXTURES: Record<string, string> = {
   magnet: 'elem-magnet',
   metal: 'elem-metal',
   plasma: 'elem-plasma',
-  death: 'elem-death',
-  void: 'elem-void',
+  gunpowder: 'elem-gunpowder',
   rubber: 'elem-rubber',
   magic: 'elem-magic',
   technology: 'elem-technology',
@@ -433,6 +402,8 @@ export class ArenaScene extends Phaser.Scene {
   private player!: Player;
   private npc!: Fighter;
   private projectiles!: Phaser.Physics.Arcade.Group;
+  /** Kit-local projectiles shared for cross-cutting effects (goose bullet theft). */
+  private techProjReg = new ProjectileRegistry();
   private playerElement!: Element;
   private npcElement!: Element;
   private elementId = 'fire';
@@ -484,6 +455,7 @@ export class ArenaScene extends Phaser.Scene {
   // Top-of-screen player health bar
   private hpBarFill?: Phaser.GameObjects.Rectangle;
   private hpBarShield?: Phaser.GameObjects.Rectangle;
+  private hpBarClotted?: Phaser.GameObjects.Rectangle;
   private hpBarText?: Phaser.GameObjects.Text;
   private readonly hpBarY = 18;
   private readonly hpBarW = 420;
@@ -670,53 +642,11 @@ export class ArenaScene extends Phaser.Scene {
 
   // Growth — managed by GrowthKit
   private growthKit!: GrowthKit;
-  // Generic toxic DOT status applied to the player (used by Death/Life/Void kits)
+  // Generic toxic DOT status applied to the player (used by Death/Life kits)
   private playerToxicUntil = 0;
   private playerToxicDps = 0;
   private playerToxicTickAccum = 0;
   private playerToxicAura: Phaser.GameObjects.Arc | null = null;
-
-  // Soul — player
-  private soulGhosts = 0;
-  private soulGhostText: Phaser.GameObjects.Text | null = null;
-  private playerSoulOrbs: SoulOrb[] = [];
-  private playerSoulSummons: SoulSummon[] = [];
-  private soulEHolding = false;
-  private soulEHoldStart = 0;
-  private soulEHoldVisual: Phaser.GameObjects.Arc | null = null;
-  private lastPlayerSoulOrbCast = -99999;
-  private lastPlayerSummon = -99999;
-  private lastPlayerSacrifice = -99999;
-  private lastPlayerConsume = -99999;
-  // Soul — haunt mode (Click+ upgrade)
-  private soulHauntActive = false;
-  private soulHauntDrainAccum = 0;
-  private soulHauntVisual: Phaser.GameObjects.Arc | null = null;
-  private soulHauntStunUntil = -99999;
-  private soulClickHoldStart = -99999;
-  // Soul — drain hold (R+ upgrade)
-  private soulDrainHolding = false;
-  private soulDrainHoldStart = 0;
-  private soulDrainLastTick = -99999;
-  private soulDrainExplosionDmg = 0;
-  private soulDrainVisual: Phaser.GameObjects.Arc | null = null;
-  // Soul — F+ buff timers
-  private soulGhoulSpeedBuffUntil = -99999;
-  private soulBansheeResistUntil = -99999;
-  private soulCorpseArmorActive = false;
-  private soulCorpseArmorVisual: Phaser.GameObjects.Arc | null = null;
-  private soulNecroEnhancedUntil = -99999;
-  private soulKnightSpeedBuffUntil = -99999;
-  // Soul — NPC scared status
-  private npcScaredUntil = -99999;
-  // Soul — NPC
-  private npcSoulGhosts = 0;
-  private npcSoulOrbs: SoulOrb[] = [];
-  private npcSoulSummons: SoulSummon[] = [];
-  private lastNpcSoulOrbCast = -99999;
-  private lastNpcSummon = -99999;
-  private lastNpcSacrifice = -99999;
-  private lastNpcConsume = -99999;
 
   // Hunt — player
   private huntBeastForm = false;
@@ -798,6 +728,12 @@ export class ArenaScene extends Phaser.Scene {
 
   // Player upgrade state
   private activeUpgrades: string[] = [];
+  /** Online: the remote player's owned upgrade slots (from the lobby handshake). */
+  private npcUpgrades: string[] = [];
+  /** Online: the remote player's mastery slot binds (from the lobby handshake). */
+  private npcMasteryBinds: Record<string, string> = {};
+  /** Online: whether the remote player has Element Mastery enabled. */
+  private npcMasteryOn = false;
   // Mastered Flameshredder — player burns from NPC fireballs
   private playerBurningUntil = 0;
   private playerBurnTickAccum = 0;
@@ -813,7 +749,6 @@ export class ArenaScene extends Phaser.Scene {
   private lightKit!: LightKit;
   private iceKit!: IceKit;
   private crystalKit!: CrystalKit;
-  private voidKit!: VoidKit;
   private techKit!: TechnologyKit;
   // Shared NPC cast ID field — set each frame after doAI() returns
   private npcCastId: string | null = null;
@@ -908,16 +843,14 @@ export class ArenaScene extends Phaser.Scene {
   // ── Metal (electricity + fate abstract combined) — managed by MetalKit ─
   private metalKit!: MetalKit;
 
+  // ── Soul — managed by SoulKit ─────────────────────────────────────────
+  private soulKit!: SoulKit;
+
   // ── Plasma (electricity + light abstract combined) — managed by PlasmaKit ─
   private plasmaKit!: PlasmaKit;
 
-  // ── Death — managed by DeathKit ──────────────────────────────────
-  private deathKit!: DeathKit;
-  // Kept for VoidKit API compatibility (always 0 in new design)
-  private deathSoulSplitUntil = 0;
-  private npcDeathSoulSplitUntil = 0;
-
-  // ── Void — managed by VoidKit ─────────────────────────────────────
+  // ── Gunpowder — managed by GunpowderKit ──────────────────────────
+  private gunpowderKit!: GunpowderKit;
 
   // ── Rubber — managed by RubberKit ────────────────────────────────
   private rubberKit!: RubberKit;
@@ -974,6 +907,9 @@ export class ArenaScene extends Phaser.Scene {
   // ── Gravity mastery ─────────────────────────────────────────────────────
   private gravityMasteryOn = false;
 
+  // ── Magic mastery ────────────────────────────────────────────────────────
+  private magicMasteryOn = false;
+
   // ── Life mastery ──────────────────────────────────────────────────────
   private lifeMasteryOn = false;
 
@@ -1008,16 +944,6 @@ export class ArenaScene extends Phaser.Scene {
     meleeCooldownUntil: number;
     owner: 'player' | 'npc';
   }> = [];
-  // Ward perk (Soul): warding hexes from Consume
-  private soulWardHexes: Array<{
-    gfx: Phaser.GameObjects.Graphics;
-    expiresAt: number;
-    x: number; y: number;
-    radius: number;
-    owner: 'player' | 'npc';
-    ownerAura: Phaser.GameObjects.Arc | null;
-    summonAuras: Array<{ arc: Phaser.GameObjects.Arc; summon: SoulSummon }>;
-  }> = [];
   // Rage perk (Hunt): rage meter
   private playerHuntRage = 0;
   private npcHuntRage    = 0;
@@ -1030,10 +956,13 @@ export class ArenaScene extends Phaser.Scene {
     super({ key: 'ArenaScene' });
   }
 
-  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; starredMutations?: string[]; mode?: string; invasionDifficulty?: string; gauntlet?: import('../data/GauntletData').GauntletState; playerPerk?: string | null; npcPerk?: string | null; campaign?: { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean }; hpMult?: number; npcOutgoingDamageMult?: number; online?: { isHost: boolean } }): void {
+  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; starredMutations?: string[]; mode?: string; invasionDifficulty?: string; gauntlet?: import('../data/GauntletData').GauntletState; playerPerk?: string | null; npcPerk?: string | null; campaign?: { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean }; hpMult?: number; npcOutgoingDamageMult?: number; online?: { isHost: boolean; npcUpgrades?: string[]; npcMasteryBinds?: Record<string, string>; npcMasteryOn?: boolean } }): void {
     this.elementId = data.elementId ?? 'fire';
     this.isInvasion = data.mode === 'invasion';
     this.isOnline = !!data.online;
+    this.npcUpgrades = data.online?.npcUpgrades ?? [];
+    this.npcMasteryBinds = data.online?.npcMasteryBinds ?? {};
+    this.npcMasteryOn = data.online?.npcMasteryOn ?? false;
     this.onlineEndReason = null;
     this.onlineForfeitArmedUntil = 0;
     this.campaign = data.campaign ?? null;
@@ -1052,12 +981,14 @@ export class ArenaScene extends Phaser.Scene {
     this.npcElement    = ELEMENT_MAP[enemyElementId] ?? waterElement;
 
     // Reset all mutable state
+    this.techProjReg.clear();
     this.gameEnded = false;
     this.dodgeOnCooldown = false;
     this.isDodging = false;
     this.abilityBars = [];
     this.hpBarFill = undefined;
     this.hpBarShield = undefined;
+    this.hpBarClotted = undefined;
     this.hpBarText = undefined;
     // Reset perk-specific state
     this.purgePriorCooldownMult = 1;
@@ -1069,11 +1000,6 @@ export class ArenaScene extends Phaser.Scene {
     this.npcHawkDragY = 0;
     this.automatons.forEach((a) => a.sprite.destroy());
     this.automatons = [];
-    this.soulWardHexes.forEach((w) => {
-      w.gfx.destroy(); w.ownerAura?.destroy();
-      w.summonAuras.forEach((sa) => sa.arc.destroy());
-    });
-    this.soulWardHexes = [];
 
     this.playerHuntRage = 0; this.npcHuntRage = 0;
     this.playerHuntRageBar?.destroy(); this.playerHuntRageBar = null;
@@ -1090,8 +1016,12 @@ export class ArenaScene extends Phaser.Scene {
     this.cardDodgeCdMult = 1;
     this.cardPsychoActive = false;
     this.cardBomberStacks = 0;
-    this.pointerWasDown = false;
-    this.rightPointerWasDown = false;
+    // Seed from the real pointer state rather than hardcoding false: the mouse button used to
+    // click the difficulty/start button in MenuScene can still be physically down on the very
+    // first Arena frame, and a hardcoded false reads that as a fresh click — instantly firing a
+    // click-bound ability (e.g. Musket Shot) the moment the match starts.
+    this.pointerWasDown = this.input.activePointer.isDown;
+    this.rightPointerWasDown = this.input.activePointer.rightButtonDown();
     this.nukeChanneling = false;
     this.nukeChannelEnd = 0;
 
@@ -1135,29 +1065,36 @@ export class ArenaScene extends Phaser.Scene {
     this.npcAirElectroCharged = false;
     this.npcAirBeamWalking = false;
 
-    for (const o of this.playerSoulOrbs) o.sprite.destroy();
-    for (const s of this.playerSoulSummons) s.sprite.destroy();
-    for (const o of this.npcSoulOrbs) o.sprite.destroy();
-    for (const s of this.npcSoulSummons) s.sprite.destroy();
-    this.playerSoulOrbs = []; this.playerSoulSummons = [];
-    this.npcSoulOrbs = []; this.npcSoulSummons = [];
-    this.soulGhosts = 0; this.npcSoulGhosts = 0;
-    this.soulGhostText = null;
-    this.soulEHolding = false; this.soulEHoldStart = 0;
-    if (this.soulEHoldVisual) { this.soulEHoldVisual.destroy(); this.soulEHoldVisual = null; }
-    this.lastPlayerSoulOrbCast = -99999; this.lastPlayerSummon = -99999;
-    this.lastPlayerSacrifice = -99999; this.lastPlayerConsume = -99999;
-    this.lastNpcSoulOrbCast = -99999; this.lastNpcSummon = -99999;
-    this.soulHauntActive = false; this.soulHauntDrainAccum = 0; this.soulHauntStunUntil = -99999; this.soulClickHoldStart = -99999;
-    if (this.soulHauntVisual) { this.soulHauntVisual.destroy(); this.soulHauntVisual = null; }
-    this.soulDrainHolding = false; this.soulDrainHoldStart = 0; this.soulDrainLastTick = -99999; this.soulDrainExplosionDmg = 0;
-    if (this.soulDrainVisual) { this.soulDrainVisual.destroy(); this.soulDrainVisual = null; }
-    this.soulGhoulSpeedBuffUntil = -99999; this.soulBansheeResistUntil = -99999;
-    this.soulNecroEnhancedUntil = -99999; this.soulKnightSpeedBuffUntil = -99999;
-    this.soulCorpseArmorActive = false;
-    if (this.soulCorpseArmorVisual) { this.soulCorpseArmorVisual.destroy(); this.soulCorpseArmorVisual = null; }
-    this.npcScaredUntil = -99999;
-    this.lastNpcSacrifice = -99999; this.lastNpcConsume = -99999;
+    // Soul kit construction / reset
+    if (this.soulKit) {
+      this.soulKit.reset();
+    } else {
+      const arena = this;
+      const soulApi: SoulArenaApi = {
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get scene() { return arena as Phaser.Scene; },
+        get projectiles() { return arena.projectiles; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get elementId() { return arena.elementId; },
+        get isInvasion() { return arena.isInvasion; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        dealAoeDamageFromOwner: (x, y, r, d, owner) => arena.dealAoeDamageFromOwner(x, y, r, d, owner),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
+      };
+      this.soulKit = new SoulKit(soulApi);
+    }
 
     for (const g of this.huntGrenades) g.sprite.destroy();
     for (const c of this.huntTrailCircles) c.sprite.destroy();
@@ -1211,28 +1148,27 @@ export class ArenaScene extends Phaser.Scene {
         get npc() { return arena.npc; },
         get scene() { return arena as Phaser.Scene; },
         get projectiles() { return arena.projectiles; },
+        get spaceKey() { return arena.spaceKey; },
         get eKey() { return arena.eKey; },
-        get fKey() { return arena.fKey; },
         get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
         get qKey() { return arena.qKey; },
-        get pointerWasDown() { return arena.pointerWasDown; },
         get enemies() { return arena.enemies; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
-        setIsDodging: (v) => { arena.isDodging = v; },
+        get isOnline() { return arena.isOnline; },
+        get isInvasion() { return arena.isInvasion; },
         applyPlayerSpeedMult: (f) => { arena.playerSpeedMult *= f; },
         applyNpcSpeedMult: (f) => { arena.npcSpeedMult *= f; },
-        setAbilityBars: (fills) => { arena.abilityBars = fills as AbilityBarEntry[]; },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
-        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
+        setPlayerYankUntil: (t) => { arena.silencePlayerYankUntil = t; },
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
-        spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
-        getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
-        setNukeChanneling: (v, endAt) => { arena.nukeChanneling = v; arena.nukeChannelEnd = endAt; },
-        setPlayerYankUntil: (t) => { arena.silencePlayerYankUntil = t; },
+        hasUpgrade: (owner, slot) => owner === 'player'
+          ? arena.elementId === 'silence' && arena.hasUpgrade(slot)
+          : arena.isOnline && arena.npcElement.id === 'silence' && arena.npcUpgrades.includes(slot),
+        sendSilenceMsg: (msg) => { if (arena.isOnline) Net.send(msg); },
       };
       this.silenceKit = new SilenceKit(silenceApi);
     }
@@ -1322,6 +1258,7 @@ export class ArenaScene extends Phaser.Scene {
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
         get masteryActive() { return arena.gravityMasteryOn && arena.elementId === 'gravity'; },
         masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         recordMasteryStat: (key, amount) => {
           if (arena.elementId === 'gravity') PlayerData.addMasteryStat('gravity', key, amount);
         },
@@ -1365,8 +1302,10 @@ export class ArenaScene extends Phaser.Scene {
     this.playerToxicUntil = 0; this.playerToxicDps = 0; this.playerToxicTickAccum = 0;
     if (this.playerToxicAura) { this.playerToxicAura.destroy(); this.playerToxicAura = null; }
 
-    // Online: shop upgrades are disabled so both simulations stay symmetric.
-    this.activeUpgrades = this.isOnline ? [] : PlayerData.getActiveUpgrades(this.elementId);
+    // Each player always uses their own equipped upgrades — online too. The peer's
+    // sim reproduces the opponent's upgraded abilities via the lobby handshake
+    // (npcUpgrades → hasNpcUpgrade, honored in each kit's NPC replay path).
+    this.activeUpgrades = PlayerData.getActiveUpgrades(this.elementId);
     this.playerBurningUntil = 0;
     this.playerBurnTickAccum = 0;
     this.playerBurnAura = null;
@@ -1389,6 +1328,7 @@ export class ArenaScene extends Phaser.Scene {
     this.crystalMasteryOn = PlayerData.isMasteryEnabled('crystal');
     this.electricityMasteryOn = PlayerData.isMasteryEnabled('electricity');
     this.gravityMasteryOn = PlayerData.isMasteryEnabled('gravity');
+    this.magicMasteryOn = PlayerData.isMasteryEnabled('magic');
     this.waterKillWindow = [];
     this.waterMasteryTrackedEnemies = new WeakSet<Fighter>();
     this.shadowMasteryTrackedEnemies = new WeakSet<Fighter>();
@@ -1411,6 +1351,7 @@ export class ArenaScene extends Phaser.Scene {
         get height() { return arena.scale.height; },
         get masteryActive() { return arena.fireMasteryOn && arena.elementId === 'fire'; },
         masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         lockCaster: (ms) => { arena.nukeChanneling = true; arena.nukeChannelEnd = arena.time.now + ms; (arena.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0); },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
@@ -1451,6 +1392,7 @@ export class ArenaScene extends Phaser.Scene {
         get puddles() { return arena.puddles; },
         get nukeChanneling() { return arena.nukeChanneling; },
         get masteryActive() { return arena.waterMasteryOn && arena.elementId === 'water'; },
+        broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         masteryBindFor: (slot) => arena.masteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
           if (arena.elementId === 'water') PlayerData.addMasteryStat('water', key, amount);
@@ -1480,6 +1422,7 @@ export class ArenaScene extends Phaser.Scene {
       const arena = this;
       const airApi: AirArenaApi = {
         get player() { return arena.player; },
+        get npc() { return arena.npc; },
         get enemies() { return arena.enemies; },
         get scene(): Phaser.Scene { return arena; },
         get eKey() { return arena.eKey; },
@@ -1496,6 +1439,7 @@ export class ArenaScene extends Phaser.Scene {
             : null;
         },
         masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         recordMasteryStat: (key, amount) => {
           if (arena.elementId === 'air') PlayerData.addMasteryStat('air', key, amount);
         },
@@ -1537,6 +1481,7 @@ export class ArenaScene extends Phaser.Scene {
       const arena = this;
       const electricityApi: ElectricityArenaApi = {
         get player() { return arena.player; },
+        get npc() { return arena.npc; },
         get enemies() { return arena.enemies; },
         get scene(): Phaser.Scene { return arena; },
         get projectiles() { return arena.projectiles; },
@@ -1612,15 +1557,16 @@ export class ArenaScene extends Phaser.Scene {
         get enemies() { return arena.enemies; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
-        applyNpcSpeedMult: (f) => { arena.npcSpeedMult *= f; },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
-        hasPerk: (perkId) => arena.hasPerk('player', perkId),
+        get hpBarY() { return arena.hpBarY; },
+        get hpBarW() { return arena.hpBarW; },
+        get hpBarH() { return arena.hpBarH; },
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         spawnFloatingText: (x, y, t, c) => arena.spawnFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
       };
       this.lightKit = new LightKit(lightApi);
     }
@@ -1764,6 +1710,7 @@ export class ArenaScene extends Phaser.Scene {
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         get masteryActive() { return arena.shadowMasteryOn && arena.elementId === 'shadow'; },
         masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         recordMasteryStat: (key, amount) => {
           if (arena.elementId === 'shadow') PlayerData.addMasteryStat('shadow', key, amount);
         },
@@ -1785,6 +1732,7 @@ export class ArenaScene extends Phaser.Scene {
         get qKey() { return arena.qKey; },
         get pointerWasDown() { return arena.pointerWasDown; },
         get projectiles() { return arena.projectiles; },
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
@@ -1948,8 +1896,6 @@ export class ArenaScene extends Phaser.Scene {
         spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
-        getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
-        dealAoeDamage: (cx, cy, radius, damage, owner) => arena.dealAoeDamageFromOwner(cx, cy, radius, damage, owner),
       };
       this.metalKit = new MetalKit(metalApi);
     }
@@ -1986,13 +1932,12 @@ export class ArenaScene extends Phaser.Scene {
       this.plasmaKit = new PlasmaKit(plasmaApi);
     }
 
-    // ── Death kit ─────────────────────────────────────────
-    this.deathSoulSplitUntil = 0; this.npcDeathSoulSplitUntil = 0;
-    if (this.deathKit) {
-      this.deathKit.reset();
+    // ── Gunpowder kit ─────────────────────────────────────────
+    if (this.gunpowderKit) {
+      this.gunpowderKit.reset();
     } else {
       const arena = this;
-      const deathApi: DeathArenaApi = {
+      const gunpowderApi: GunpowderArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
         get scene(): Phaser.Scene { return arena; },
@@ -2005,6 +1950,8 @@ export class ArenaScene extends Phaser.Scene {
         get pointerWasDown() { return arena.pointerWasDown; },
         get elementId() { return arena.elementId; },
         get npcElementId() { return arena.npcElement.id; },
+        get isDodging() { return arena.isDodging; },
+        set isDodging(v: boolean) { arena.isDodging = v; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         applyNpcSpeedMult: (f) => { arena.npcSpeedMult *= f; },
@@ -2017,78 +1964,9 @@ export class ArenaScene extends Phaser.Scene {
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
       };
-      this.deathKit = new DeathKit(deathApi);
+      this.gunpowderKit = new GunpowderKit(gunpowderApi);
     }
 
-    // Void kit
-    if (this.voidKit) {
-      this.voidKit.reset();
-    } else {
-      const arena = this;
-      const voidApi: VoidArenaApi = {
-        get player() { return arena.player; },
-        get npc() { return arena.npc; },
-        get scene(): Phaser.Scene { return arena; },
-        get eKey() { return arena.eKey; },
-        get fKey() { return arena.fKey; },
-        get rKey() { return arena.rKey; },
-        get qKey() { return arena.qKey; },
-        get nukeChanneling() { return arena.nukeChanneling; },
-        get pointerWasDown() { return arena.pointerWasDown; },
-        getNpcHuntBloodMoonActive: () => arena.npcHuntBloodMoonActive,
-        setNpcHuntBloodMoonActive: v => { arena.npcHuntBloodMoonActive = v; },
-        getNpcPlasmaIncarnateActive: () => arena.plasmaKit.getNpcIncarnateActive(),
-        setNpcPlasmaIncarnateActive: v => { arena.plasmaKit.setNpcIncarnateActive(v); },
-        getNpcDeathSoulSplitUntil: () => arena.npcDeathSoulSplitUntil,
-        setNpcDeathSoulSplitUntil: v => { arena.npcDeathSoulSplitUntil = v; },
-        getHuntBloodMoonActive: () => arena.huntBloodMoonActive,
-        setHuntBloodMoonActive: v => { arena.huntBloodMoonActive = v; },
-        getPlasmaIncarnateActive: () => arena.plasmaKit.getIncarnateActive(),
-        setPlasmaIncarnateActive: v => { arena.plasmaKit.setIncarnateActive(v); },
-        getDeathSoulSplitUntil: () => arena.deathSoulSplitUntil,
-        setDeathSoulSplitUntil: v => { arena.deathSoulSplitUntil = v; },
-        getMagnetNpcSpeedBuffUntil: () => arena.magnetKit.getNpcSpeedBuffUntil(),
-        setMagnetNpcSpeedBuffUntil: v => arena.magnetKit.setNpcSpeedBuffUntil(v),
-        getMagnetPlayerSpeedBuffUntil: () => arena.magnetKit.getPlayerSpeedBuffUntil(),
-        setMagnetPlayerSpeedBuffUntil: v => arena.magnetKit.setPlayerSpeedBuffUntil(v),
-        getLightNpcPhotonSpeedBoostUntil: () => arena.lightKit.getNpcPhotonSpeedBoostUntil(),
-        setLightNpcPhotonSpeedBoostUntil: v => arena.lightKit.setNpcPhotonSpeedBoostUntil(v),
-        getLightNpcPhotoAccelUntil: () => arena.lightKit.getNpcPhotoAccelUntil(),
-        setLightNpcPhotoAccelUntil: v => arena.lightKit.setNpcPhotoAccelUntil(v),
-        getLightNpcPhotoSlowUntil: () => arena.lightKit.getNpcPhotoSlowUntil(),
-        setLightNpcPhotoSlowUntil: v => arena.lightKit.setNpcPhotoSlowUntil(v),
-        getLightPhotonSpeedBoostUntil: () => arena.lightKit.getPhotonSpeedBoostUntil(),
-        setLightPhotonSpeedBoostUntil: v => arena.lightKit.setPhotonSpeedBoostUntil(v),
-        getLightPhotoAccelUntil: () => arena.lightKit.getPhotoAccelUntil(),
-        setLightPhotoAccelUntil: v => arena.lightKit.setPhotoAccelUntil(v),
-        getNpcMetalChainTetherEnd: () => arena.metalKit.getNpcMetalChainTetherEnd(),
-        setNpcMetalChainTetherEnd: v => { arena.metalKit.setNpcMetalChainTetherEnd(v); },
-        getNpcMetalArmorEnd: () => arena.metalKit.getNpcMetalArmorEnd(),
-        setNpcMetalArmorEnd: v => { arena.metalKit.setNpcMetalArmorEnd(v); },
-        getNpcHuntSlowUntil: () => arena.npcHuntSlowUntil,
-        setNpcHuntSlowUntil: v => { arena.npcHuntSlowUntil = v; },
-        getNpcHuntConfusedUntil: () => arena.npcHuntConfusedUntil,
-        setNpcHuntConfusedUntil: v => { arena.npcHuntConfusedUntil = v; },
-        getNpcAggressiveBleedUntil: () => arena.metalKit.getNpcAggressiveBleedUntil(),
-        setNpcAggressiveBleedUntil: v => { arena.metalKit.setNpcAggressiveBleedUntil(v); },
-        getPlayerBleedingUntil: () => arena.playerBleedingUntil,
-        setPlayerBleedingUntil: v => { arena.playerBleedingUntil = v; },
-        getPlayerFrozenUntil: () => arena.iceKit.getPlayerFrozenUntil(),
-        setPlayerFrozenUntil: v => { arena.iceKit.setPlayerFrozenUntil(v); },
-        getPlayerBurningUntil: () => arena.playerBurningUntil,
-        setPlayerBurningUntil: v => { arena.playerBurningUntil = v; },
-        getPlayerToxicUntil: () => arena.playerToxicUntil,
-        setPlayerToxicUntil: v => { arena.playerToxicUntil = v; },
-        getPlayerHuntSlowUntil: () => arena.playerHuntSlowUntil,
-        setPlayerHuntSlowUntil: v => { arena.playerHuntSlowUntil = v; },
-        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
-        spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
-        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
-        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
-        buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
-      };
-      this.voidKit = new VoidKit(voidApi);
-    }
     // Rubber kit construction / reset
     if (this.rubberKit) {
       this.rubberKit.reset();
@@ -2158,6 +2036,16 @@ export class ArenaScene extends Phaser.Scene {
         spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
+        get masteryActive() { return arena.magicMasteryOn && arena.elementId === 'magic'; },
+        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
+        recordMasteryStat: (key, amount) => {
+          if (arena.elementId === 'magic') PlayerData.addMasteryStat('magic', key, amount);
+        },
+        getMasteryStat: (key) => PlayerData.getMasteryStat('magic', key),
+        recordMasteryBestStat: (key, value) => {
+          if (arena.elementId === 'magic') PlayerData.recordMasteryBest('magic', key, value);
+        },
       };
       this.magicKit = new MagicKit(magicApi);
     }
@@ -2169,33 +2057,28 @@ export class ArenaScene extends Phaser.Scene {
       const techApi: TechArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
         get scene(): Phaser.Scene { return arena; },
-        get projectiles() { return arena.projectiles; },
         get elementId() { return arena.elementId; },
         get npcElementId() { return arena.npcElement.id; },
+        get isInvasion() { return arena.isInvasion; },
+        get isOnline() { return arena.isOnline; },
         get eKey() { return arena.eKey; },
         get rKey() { return arena.rKey; },
         get fKey() { return arena.fKey; },
         get qKey() { return arena.qKey; },
         get nukeChanneling() { return arena.nukeChanneling; },
-        get mutations() { return arena.mutations; },
-        get upKey() { return arena.dummyUpKey; },
-        get downKey() { return arena.dummyDownKey; },
-        get leftKey() { return arena.dummyLeftKey; },
-        get rightKey() { return arena.dummyRightKey; },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
-        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
+        get projGroup() { return arena.projectiles; },
+        get projReg() { return arena.techProjReg; },
+        hasUpgrade: (owner, slot) => owner === 'player'
+          ? arena.hasUpgrade(slot)
+          : arena.isOnline && arena.npcUpgrades.includes(slot),
+        sendTechMsg: (msg) => { if (arena.isOnline) Net.send(msg); },
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         spawnFloatingText: (x, y, t, c) => arena.spawnFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
-        buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
-        dealAoeDamageFromOwner: (x, y, r, d, o) => arena.dealAoeDamageFromOwner(x, y, r, d, o),
-        resetPhysicsBounds: () => {
-          const { width: W, height: H } = arena.scale;
-          arena.physics.world.setBounds(32, 32, W - 64, H - 64);
-        },
       };
       this.techKit = new TechnologyKit(techApi);
     }
@@ -2369,6 +2252,7 @@ export class ArenaScene extends Phaser.Scene {
         getSceneHeight: () => arena.scale.height,
         get masteryActive() { return arena.oilMasteryOn && arena.elementId === 'oil'; },
         masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         recordMasteryStat: (key, amount) => {
           if (arena.elementId === 'oil') PlayerData.addMasteryStat('oil', key, amount);
         },
@@ -2393,6 +2277,7 @@ export class ArenaScene extends Phaser.Scene {
         get qKey() { return arena.qKey; },
         get nukeChanneling() { return arena.nukeChanneling; },
         get rightPointerWasDown() { return arena.rightPointerWasDown; },
+        get isPlayerFate() { return arena.elementId === 'fate'; },
         hasPerk: (perkId) => arena.hasPerk('player', perkId),
         applyPlayerSpeedMult: (f) => { arena.playerSpeedMult *= f; },
         applyNpcSpeedMult: (f) => { arena.npcSpeedMult *= f; },
@@ -2441,8 +2326,10 @@ export class ArenaScene extends Phaser.Scene {
     const npcTexture    = ELEMENT_TEXTURES[enemyElementId]  ?? 'elem-water';
     this.player = new Player(this, 180, cy, this.playerElement, playerTexture);
     this.player.incomingDamageMultiplier = 1;
+    this.playerHealNumAccum = 0; this.npcHealNumAccum = 0;
+    this.playerHealNumTimer = 0; this.npcHealNumTimer = 0;
     this.player.onHeal = (amt) => {
-      this.showFloatingText(this.player.x, this.player.y - 30, `+${Math.round(amt)}`, '#44ff44');
+      this.playerHealNumAccum += amt;
       if (this.elementId === 'life') PlayerData.addMasteryStat('life', 'selfHealed', Math.round(amt));
       if (this.elementId === 'shadow') PlayerData.addMasteryStat('shadow', 'healedHp', Math.round(amt));
     };
@@ -2454,6 +2341,7 @@ export class ArenaScene extends Phaser.Scene {
       }
     };
     this.npc = new NpcOpponent(this, W - 180, cy, this.npcElement, npcTexture, difficultyConfig);
+    this.npc.onHeal = (amt) => { this.npcHealNumAccum += amt; };
     // In 1v1 the single opponent is tracked in enemies; invasion starts empty and fills via the InvasionKit
     this.enemies = this.isInvasion ? [] : [this.npc];
 
@@ -2610,14 +2498,6 @@ export class ArenaScene extends Phaser.Scene {
           this.timeKit.onLassoHitPlayer(proj);
           return;
         }
-        // Silence possess eye / hook (NPC cast): delegate to kit
-        if (proj.texture.key === 'proj-silence-eye' || proj.texture.key === 'proj-silence-hook') {
-          if (proj.texture.key === 'proj-silence-eye') this.silenceKit.onSilenceEyeHitEnemy(proj, 'npc');
-          else this.silenceKit.onSilenceHookHitEnemy(proj, 'npc');
-          proj.setActive(false).setVisible(false);
-          (proj.body as Phaser.Physics.Arcade.Body).stop();
-          return;
-        }
         // Diamond Shard (crystal kite) that rebounded off a moving mirror: pierces enemies
         if (proj.texture.key === 'proj-crystal-kite' && (proj as any).kitePierce) {
           this.crystalKit.onKiteHitEnemy(proj, this.player);
@@ -2699,6 +2579,10 @@ export class ArenaScene extends Phaser.Scene {
             _playerDmg = Math.round(_playerDmg * mult);
             this.showFloatingText(this.player.x, this.player.y - 38, `👻 BACK HIT ×${mult}`, '#ccccff');
           }
+        }
+        // Water: the opponent's dehydration (Siphon / Dehydration upgrade) amplifies the hit online.
+        if (this.npcElement.id === 'water') {
+          _playerDmg = Math.round(_playerDmg * this.waterKit.computeOutgoingMultiplier(this.player, 'npc'));
         }
         this.player.takeDamage(_playerDmg);
         this.spawnHitFlash(proj.x, proj.y, 0x00aaff);
@@ -2795,6 +2679,16 @@ export class ArenaScene extends Phaser.Scene {
       this.cardCrippleSlowUntil = this.time.now + 2000;
     });
 
+    // Metal: passive blood puddle every 50 damage dealt
+    this.npc.on('damaged', (amount: number) => {
+      if (this.elementId !== 'metal' || amount <= 0) return;
+      this.metalKit.onDamageDealt('player', amount);
+    });
+    this.player.on('damaged', (amount: number) => {
+      if (this.npcElement.id !== 'metal' || amount <= 0) return;
+      this.metalKit.onDamageDealt('npc', amount);
+    });
+
     // Invasion husks manage their own defeat handlers in the InvasionKit; skip here
     if (!this.isInvasion) {
       this.npc.once('defeated', () => {
@@ -2821,6 +2715,13 @@ export class ArenaScene extends Phaser.Scene {
           spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
           showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
           endOnlineMatch: (won, reason) => arena.endOnlineMatch(won, reason),
+          isPlayerInvisible: () => (arena.elementId === 'silence' && arena.silenceKit.isInvisible('player'))
+            || (arena.elementId === 'technology' && (arena.techKit.isPlayerSheltered() || arena.techKit.isPlayerAdminInvisible())),
+          playerStealth: () => arena.elementId === 'silence' ? arena.silenceKit.getStealth('player') : 0,
+          setRemoteStealth: (v) => arena.silenceKit.setNetStealth(v),
+          onTechMsg: (msg) => arena.techKit.handleNetMsg(msg),
+          onSilenceMsg: (msg) => arena.silenceKit.handleNetMsg(msg),
+          replayNpcMastery: (enhId, tx, ty) => arena.replayNpcMastery(enhId, tx, ty),
         };
         this.onlineKit = new OnlineKit(api);
       }
@@ -2945,6 +2846,12 @@ export class ArenaScene extends Phaser.Scene {
           hasUpgrade: (slot) => arena.hasUpgrade(slot),
           addFrostStackTo: (t) => arena.iceKit.addFrostStackTo(t),
           applyBleedVisual: (t) => arena.applyBleedVisualTo(t),
+          isSilencePlayerHidden: () => arena.elementId === 'silence'
+            && (arena.silenceKit.isInvisible('player') || arena.silenceKit.isRunChaseActive()),
+          silenceStalkerHunt: () => arena.elementId === 'silence'
+            && arena.silenceKit.isInvisible('player') && arena.silenceKit.stalkersAlive('player') > 0,
+          tryHitSilenceStalker: (x, y, r) => arena.silenceKit.tryHitStalker(x, y, r, 'husk'),
+          notifyHuskDefeated: (h) => { if (arena.elementId === 'soul') arena.soulKit.onRealHuskKilled(h); },
         };
         this.invasionKit = new InvasionKit(invasionApi);
       }
@@ -3002,12 +2909,7 @@ export class ArenaScene extends Phaser.Scene {
       }).setOrigin(0.5).setDepth(20);
     }
 
-    if (this.elementId === 'soul') {
-      this.soulGhostText = this.add.text(cx, 52, '👻 0', {
-        fontSize: '18px', fontFamily: '"Arial Black", sans-serif', color: '#ccaaff',
-        stroke: '#220044', strokeThickness: 3,
-      }).setOrigin(0.5).setDepth(20);
-    }
+    // Soul: corpse-queue HUD is built lazily by SoulKit itself.
     // ElectricityKit creates its own HUD in reset() when isPlayerElement=true
     if (this.elementId === 'slime') {
       this.slimeKit.startMatch(W, H, true);
@@ -3041,11 +2943,8 @@ export class ArenaScene extends Phaser.Scene {
     if (this.elementId === 'metal') {
       this.metalKit.initHud();
     }
-    if (this.elementId === 'death') {
-      this.deathKit.initKillsHud(cx);
-    }
-    if (this.elementId === 'void') {
-      this.voidKit.initHud(cx);
+    if (this.elementId === 'gunpowder') {
+      this.gunpowderKit.initArsenalHud(cx);
     }
   }
 
@@ -3054,14 +2953,80 @@ export class ArenaScene extends Phaser.Scene {
     return this.masterySlotBinds[slot] ?? null;
   }
 
+  /** Online: the mastery enhancement the opponent bound over the given slot, or null. */
+  npcMasteryBindFor(slot: string): string | null {
+    if (!this.isOnline || !this.npcMasteryOn) return null;
+    return this.npcMasteryBinds[slot] ?? null;
+  }
+
+  /** Online: whether the opponent has Element Mastery enabled (drives their passives). */
+  get npcMasteryActive(): boolean {
+    return this.isOnline && this.npcMasteryOn;
+  }
+
+  /**
+   * Broadcast a bindable mastery ability the local player just cast, so the peer's
+   * sim can replay it (see {@link replayNpcMastery}). Kits call this on cast.
+   */
+  broadcastMasteryCast(enhId: string): void {
+    if (this.isOnline) this.onlineKit?.sendMasteryCast(enhId);
+  }
+
+  /**
+   * Online: replay a bindable mastery ability the opponent just cast. Their cast is
+   * broadcast as a normal `{t:'cast', id}` with the enhancement id; OnlineKit routes
+   * ids it can't find in `element.abilities` here, and we dispatch to the owning kit's
+   * NPC-side handler so the effect resolves on this (victim) sim. Unimplemented
+   * masteries are a harmless no-op.
+   */
+  replayNpcMastery(enhId: string, tx: number, ty: number): void {
+    switch (enhId) {
+      case 'starfall':
+        if (this.npcElement.id === 'gravity') this.gravityKit.doNpcStarfall(tx, ty);
+        break;
+      case 'heatwave':
+        if (this.npcElement.id === 'fire') this.fireKit.doNpcHeatwave(tx, ty);
+        break;
+      case 'kinetic-bomb':
+        if (this.npcElement.id === 'electricity') this.electricityKit.doNpcKineticBomb(tx, ty);
+        break;
+      case 'siphon':
+        if (this.npcElement.id === 'water') this.waterKit.doNpcSiphon(tx, ty);
+        break;
+      case 'sweeping-tornado':
+        if (this.npcElement.id === 'air') this.airKit.doNpcTornado(tx, ty);
+        break;
+      case 'transmogrify':
+        if (this.npcElement.id === 'magic') this.magicKit.doNpcTransmogrify(tx, ty);
+        break;
+      case 'final-eclipse':
+        if (this.npcElement.id === 'shadow') this.shadowKit.doNpcFinalEclipse();
+        break;
+      case 'icicle-impale':
+        if (this.npcElement.id === 'ice') this.iceKit.doNpcIcicleImpale();
+        break;
+      case 'crystal-shredder':
+        if (this.npcElement.id === 'crystal') this.crystalKit.doNpcShredder(tx, ty);
+        break;
+      case 'dust-screen':
+        if (this.npcElement.id === 'earth') this.earthKit.doNpcDustScreen(tx, ty);
+        break;
+      case 'turret':
+        if (this.npcElement.id === 'oil') this.oilKit.doNpcTurret(tx, ty);
+        break;
+      default:
+        break;
+    }
+  }
+
   // ── HUD ─────────────────────────────────────────────────────────
 
   private createHUD(W: number, H: number): void {
     const hudY = H - 30;
     const cardW = 130;
     const cardH = 48;
-    // Hunt, Silence, and Death have extra abilities beyond the first 5; only show 5 at a time
-    const abilities = (this.elementId === 'hunt' || this.elementId === 'silence' || this.elementId === 'death')
+    // Hunt, Silence, and Gunpowder have extra abilities beyond the first 5; only show 5 at a time
+    const abilities = (this.elementId === 'hunt' || this.elementId === 'silence' || this.elementId === 'gunpowder')
       ? this.playerElement.abilities.slice(0, 5)
       : this.playerElement.abilities;
 
@@ -3106,11 +3071,11 @@ export class ArenaScene extends Phaser.Scene {
       'snap-trap':      0x550077,
       'shadow-dance':   0x220044,
       'black-hole':     0x110033,
-      'soul-orb':         0xccaaff,
-      'soul-summon':      0x9966cc,
-      'soul-sacrifice':   0x7722aa,
-      'soul-consume':     0x553388,
-      'undead-charge':    0x440066,
+      'soul-lantern-light':   0xccaaff,
+      'soul-arise':           0x9966cc,
+      'soul-grave':           0x7722aa,
+      'soul-death-whistle':   0x553388,
+      'soul-hells-torment':   0xff4411,
       'hunt-shotgun':     0xff4400,
       'hunt-grenade':     0xff6600,
       'hunt-trail':       0xcc3300,
@@ -3179,25 +3144,24 @@ export class ArenaScene extends Phaser.Scene {
       'plasma-current':         0xbb33ff,
       'plasma-chaos-blades':    0xdd44ff,
       'plasma-chaos-incarnate': 0xff88ff,
-      // Death
-      'death-1000-blades':  0x8b4513,
-      'death-summon-wisps': 0x880066,
-      'death-looming-dread':0xcc44ff,
-      'death-wisp-daemon':  0xff3366,
-      'death-judgement':    0x330033,
-      'death-trail-dash':   0xaa4400,
-      // Void
-      'void-floater':   0x330044,
-      'void-return':    0x550066,
-      'void-relapse':   0x440055,
-      'void-ash':       0x220033,
-      'void-of-hell':   0x660088,
+      // Light
+      'light-lance':    0xfff4a8,
+      'blink':          0x88ddff,
+      'prism-ramp':     0x66ddff,
+      'light-trick':    0xffdd66,
+      'speed-o-light':  0xff2200,
+      // Death (Gunpowder)
+      'gunpowder-musket-shot':    0x3a2a1a,
+      'gunpowder-explosive-retreat': 0xffaa33,
+      'gunpowder-fire-at-will':   0xdd8833,
+      'gunpowder-arsenal-expansion': 0xddaa44,
+      'gunpowder-final-ordinance': 0xff5522,
       // Adrenaline
       'rubber-punch':       0xff5577,
       'rubber-sling':       0xff77aa,
       'rubber-bounce-form': 0xffaacc,
-      'rubber-spring-slam': 0xff3366,
-      'rubber-bounce-back': 0xff2244,
+      'rubber-band':        0x222222,
+      'rubberage':          0xff2244,
       // Magic
       'magic-sparkle-shot':  0xff99ff,
       'magic-grimoire':      0x7a2edd,
@@ -3205,11 +3169,11 @@ export class ArenaScene extends Phaser.Scene {
       'magic-meditate':      0xaa66ee,
       'magic-necronomicon':  0x551188,
       // Technology
-      'tech-gear-give':      0x44ccaa,
-      'tech-devconsole':     0x33aa88,
-      'tech-random-r':       0x66eecc,
-      'tech-delete':         0xffffff,
-      'tech-domain':         0x44ccaa,
+      'tech-cruncher': 0x33ff88,
+      'tech-ads':      0x44ccaa,
+      'tech-upload':   0xff3355,
+      'tech-webdrag':  0x66eecc,
+      'tech-admin':    0xff4444,
       // Echo (abstract combined: fate + light)
       'echo-shot':     0xccccff,
       'echo-guess':    0xaaaadd,
@@ -3222,21 +3186,13 @@ export class ArenaScene extends Phaser.Scene {
       'atom-vibration':    0x66ccff,
       'quantum-mechanic':  0xdd88ff,
       'atom-nhilego':      0x5511bb,
-      // Silence (normal + slasher)
-      'silence-fade':        0x330044,
-      'silence-dont-look':   0x110022,
-      'silence-possess':     0x660088,
-      'silence-thriller':    0x440055,
-      'silence-watch':       0x220033,
-      'silence-machete':     0x884422,
-      'silence-meat-hook':   0x997733,
-      'silence-mortal-wound': 0x553311,
-      'silence-retire':      0x331100,
-      'silence-slash-em-up': 0x221122,
+      // Silence (horror stealth remaster)
+      'silence-stab':   0x442255,
+      'silence-watch':  0x220033,
+      'silence-ritual': 0x881122,
+      'silence-feast':  0x445544,
+      'silence-run':    0x110016,
     };
-
-    const silenceNormalCards: Phaser.GameObjects.GameObject[] = [];
-    const silenceNormalFills: SilenceBarEntry[] = [];
 
     abilities.forEach((ab, i) => {
       const x = startX + i * cardW;
@@ -3274,10 +3230,6 @@ export class ArenaScene extends Phaser.Scene {
 
       if (this.elementId === 'hunt') {
         this.huntNormalHudCards.push(bg, fill, lbl, desc);
-      }
-      if (this.elementId === 'silence') {
-        silenceNormalCards.push(bg, fill, lbl, desc);
-        silenceNormalFills.push({ fill, abilityId: ab.id, maxWidth: cardW - 4, lbl, baseFillColor: fillColors[ab.id] ?? 0x4466aa });
       }
     });
 
@@ -3319,13 +3271,6 @@ export class ArenaScene extends Phaser.Scene {
       });
     }
 
-    // Silence slasher HUD (hidden until entering slasher mode)
-    if (this.elementId === 'silence') {
-      this.silenceKit.setNormalCards(silenceNormalCards, silenceNormalFills);
-      const slasherAbilities = this.playerElement.abilities.slice(5, 10);
-      this.silenceKit.createSlasherHud(startX, hudY, cardW, slasherAbilities, fillColors);
-    }
-
     this.add.text(W - 50, hudY, '[SPC]\nDodge', {
       fontSize: '11px',
       color: '#888888',
@@ -3354,6 +3299,12 @@ export class ArenaScene extends Phaser.Scene {
       .setOrigin(0, 0.5)
       .setDepth(21);
 
+    // Clotted HP (Metal R+): dark-red layer riding past the shield.
+    this.hpBarClotted = this.add
+      .rectangle(left + this.hpBarW, barY, 0, this.hpBarH, 0x770011, 0.95)
+      .setOrigin(0, 0.5)
+      .setDepth(21);
+
     this.hpBarText = this.add
       .text(W / 2, barY, '', {
         fontSize: '15px',
@@ -3370,7 +3321,7 @@ export class ArenaScene extends Phaser.Scene {
 
   /** Refresh the top health bar's width, colour, shield overlay and numeric readout. */
   private updatePlayerHpBar(): void {
-    if (!this.hpBarFill || !this.hpBarShield || !this.hpBarText) return;
+    if (!this.hpBarFill || !this.hpBarShield || !this.hpBarClotted || !this.hpBarText) return;
 
     const maxHp = Math.max(1, this.player.maxHp);
     const hp = Math.max(0, this.player.hp);
@@ -3379,15 +3330,23 @@ export class ArenaScene extends Phaser.Scene {
     this.hpBarFill.setSize(this.hpBarW * ratio, this.hpBarH);
     this.hpBarFill.setFillStyle(ratio > 0.5 ? 0x22dd55 : ratio > 0.25 ? 0xffcc00 : 0xff3300, 1);
 
-    // Shield rides just past the end of the HP fill, capped at the bar's remaining space.
+    // Clotted HP (Metal R+) turns the right slice of the health fill dark red —
+    // it's part of your health total, so it sits right after the green fill.
+    const clottedHp = this.player.clottedHp;
+    const clottedRatio = clottedHp > 0 ? Math.min(clottedHp / maxHp, 1 - ratio) : 0;
+    this.hpBarClotted!.x = this.hpBarFill.x + this.hpBarW * ratio;
+    this.hpBarClotted!.setSize(this.hpBarW * clottedRatio, this.hpBarH);
+
+    // Shield rides just past the health total (green + clotted), bonus HP.
     const shieldHp = this.player.shieldHp;
-    const shieldRatio = shieldHp > 0 ? Math.min(shieldHp / maxHp, 1 - ratio) : 0;
-    this.hpBarShield.x = this.hpBarFill.x + this.hpBarW * ratio;
+    const shieldRatio = shieldHp > 0 ? Math.min(shieldHp / maxHp, 1 - ratio - clottedRatio) : 0;
+    this.hpBarShield.x = this.hpBarFill.x + this.hpBarW * (ratio + clottedRatio);
     this.hpBarShield.setSize(this.hpBarW * shieldRatio, this.hpBarH);
 
     const shieldLabel = shieldHp > 0 ? `  +${Math.ceil(shieldHp)} 🛡` : '';
+    const clottedLabel = clottedHp > 0 ? `  🩸${Math.ceil(clottedHp)}` : '';
     const chargeLabel = this.player.shieldCharges > 0 ? `  ✦${this.player.shieldCharges}` : '';
-    this.hpBarText.setText(`${Math.ceil(hp)} / ${Math.ceil(maxHp)}${shieldLabel}${chargeLabel}`);
+    this.hpBarText.setText(`${Math.ceil(hp)} / ${Math.ceil(maxHp)}${shieldLabel}${clottedLabel}${chargeLabel}`);
   }
 
   // ── Context builders ────────────────────────────────────────────
@@ -3598,106 +3557,11 @@ export class ArenaScene extends Phaser.Scene {
       placeCrystalPortal: (tx, ty) => this.crystalKit.placeCrystalPortal(true, tx, ty),
       activateCrystalTrick: () => this.crystalKit.activateCrystalTrick(true),
       // Soul
-      fireSoulOrb: (tx, ty) => {
-        if (this.time.now - this.lastPlayerSoulOrbCast < 800) return;
-        this.lastPlayerSoulOrbCast = this.time.now;
-        const dx = tx - this.player.x, dy = ty - this.player.y;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const speedMult = this.hasUpgrade('f') && this.time.now < this.soulGhoulSpeedBuffUntil ? 1.5 : 1;
-        const speed = 104 * speedMult;
-        const ox = this.player.x + (dx / dist) * 32;
-        const oy = this.player.y + (dy / dist) * 32;
-        const spr = this.add.circle(ox, oy, 12, 0xccaaff, 0.7)
-          .setStrokeStyle(2, 0xeeddff, 0.9).setDepth(7);
-        this.tweens.add({ targets: spr, alpha: 0.4, yoyo: true, repeat: -1, duration: 400 });
-        this.playerSoulOrbs.push({ sprite: spr, expiresAt: this.time.now + 3000, x: ox, y: oy, vx: (dx / dist) * speed, vy: (dy / dist) * speed, owner: 'player', lastContactTick: -99999 });
-      },
-      summonGhost: (ghostType) => {
-        const cost = ghostType === 'basic' ? 1 : ghostType === 'ghoul' ? 2 : ghostType === 'banshee' ? 3 : ghostType === 'corpse' ? 4 : ghostType === 'necromancer' ? 5 : 5;
-        if (this.soulGhosts < cost) return;
-        if (this.time.now - this.lastPlayerSummon < 2000) return;
-        this.lastPlayerSummon = this.time.now;
-        this.soulGhosts -= cost;
-        if (this.soulGhostText) this.soulGhostText.setText(`👻 ${this.soulGhosts}`);
-        const enhanced = this.time.now < this.soulNecroEnhancedUntil;
-        if (ghostType === 'corpse') {
-          // Summon 6 corpses
-          for (let i = 0; i < 6; i++) {
-            const ox = this.player.x + (Math.random() - 0.5) * 60;
-            const oy = this.player.y + (Math.random() - 0.5) * 60;
-            this.spawnSoulGhost('corpse', ox, oy, 'player', enhanced);
-          }
-        } else {
-          this.spawnSoulGhost(ghostType, this.player.x, this.player.y, 'player', enhanced);
-        }
-      },
-      soulSacrifice: () => {
-        if (this.time.now - this.lastPlayerSacrifice < 3000) return;
-        this.lastPlayerSacrifice = this.time.now;
-        this.player.applySelfDamage(10);
-        this.soulGhosts++;
-        if (this.soulGhostText) this.soulGhostText.setText(`👻 ${this.soulGhosts}`);
-        const flash = this.add.circle(this.player.x, this.player.y, 20, 0x9944ff, 0.6).setDepth(8);
-        this.tweens.add({ targets: flash, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 300, onComplete: () => flash.destroy() });
-      },
-      soulConsume: () => {
-        if (this.time.now - this.lastPlayerConsume < 3000) return;
-        this.lastPlayerConsume = this.time.now;
-        const consumeR = 150;
-        const hasFUpgrade = this.hasUpgrade('f');
-        let consumedCount = 0;
-        for (let i = this.playerSoulSummons.length - 1; i >= 0; i--) {
-          const gs = this.playerSoulSummons[i];
-          if (Phaser.Math.Distance.Between(gs.sprite.x, gs.sprite.y, this.player.x, this.player.y) <= consumeR) {
-            consumedCount++;
-            if (!hasFUpgrade) {
-              this.player.heal(Math.floor(gs.hp / 2));
-            } else {
-              switch (gs.type) {
-                case 'basic':
-                  this.player.heal(Math.floor(gs.hp / 2));
-                  break;
-                case 'ghoul':
-                  this.player.heal(Math.floor(gs.hp / 2));
-                  this.soulGhoulSpeedBuffUntil = this.time.now + 5000;
-                  this.showFloatingText(this.player.x, this.player.y - 20, '+Speed', '#88aaff');
-                  break;
-                case 'banshee':
-                  this.player.heal(gs.hp); // increased healing
-                  this.soulBansheeResistUntil = this.time.now + 5000;
-                  this.showFloatingText(this.player.x, this.player.y - 20, 'Resist', '#ddaaff');
-                  break;
-                case 'corpse': {
-                  const shieldAmt = gs.enhanced ? 20 : 10;
-                  this.player.shieldHp += shieldAmt;
-                  this.soulCorpseArmorActive = true;
-                  if (this.soulCorpseArmorVisual) this.soulCorpseArmorVisual.destroy();
-                  this.soulCorpseArmorVisual = this.add.circle(this.player.x, this.player.y, 28, 0x88aa66, 0.35).setDepth(4);
-                  this.tweens.add({ targets: this.soulCorpseArmorVisual, alpha: 0.15, yoyo: true, repeat: -1, duration: 500 });
-                  this.showFloatingText(this.player.x, this.player.y - 20, `+${shieldAmt} Armor`, '#88aa66');
-                  break;
-                }
-                case 'necromancer':
-                  this.soulNecroEnhancedUntil = this.time.now + 5000;
-                  this.showFloatingText(this.player.x, this.player.y - 20, 'Enhanced!', '#ffcc44');
-                  break;
-                case 'knight':
-                  this.player.heal(Math.floor(gs.hp / 2));
-                  this.soulKnightSpeedBuffUntil = this.time.now + 5000;
-                  this.showFloatingText(this.player.x, this.player.y - 20, '+Speed', '#ffaacc');
-                  break;
-              }
-            }
-            gs.sprite.destroy();
-            this.playerSoulSummons.splice(i, 1);
-          }
-        }
-        if (this.hasPerk('player', 'ward') && consumedCount > 0) {
-          this.spawnWardHex(this.player.x, this.player.y, consumedCount, 'player');
-        }
-        const ring = this.add.circle(this.player.x, this.player.y, 10, 0xccaaff, 0.5).setDepth(8);
-        this.tweens.add({ targets: ring, scaleX: 15, scaleY: 15, alpha: 0, duration: 400, onComplete: () => ring.destroy() });
-      },
+      soulLanternTick: (tx, ty) => this.soulKit.doLanternTick(tx, ty, 'player'),
+      soulArise: () => this.soulKit.doArise('player'),
+      soulGrave: (tx, ty) => this.soulKit.doGrave(tx, ty, 'player'),
+      soulDeathWhistle: (tx, ty) => this.soulKit.doDeathWhistle(tx, ty, 'player'),
+      soulHellsTorment: () => this.soulKit.doHellsTorment('player'),
       // Hunt
       huntThrowGrenade: (tx, ty, holdMs) => {
         const dx = tx - this.player.x, dy = ty - this.player.y;
@@ -3941,19 +3805,11 @@ export class ArenaScene extends Phaser.Scene {
         this.tweens.add({ targets: shriekVfx, scaleX: 2, scaleY: 2, alpha: 0, duration: 200, onComplete: () => shriekVfx.destroy() });
       },
       // Silence
-      silenceStartFade: () => { /* handled in input block */ },
-      silenceReleaseFade: () => { /* handled in input block */ },
-      silenceCastDontLook: (angleRad: number) => { this.silenceKit.doCastDontLook(angleRad, 'player'); },
-      silenceFirePossess: (angleRad: number) => { this.silenceKit.doFirePossess(angleRad, 'player'); },
-      silenceEnterSlasher: () => { this.silenceKit.doEnterSlasher('player'); },
-      silenceExitSlasher: (voluntary: boolean) => { this.silenceKit.doExitSlasher(voluntary, 'player'); },
-      silenceStartWatch: () => { this.silenceKit.doStartWatch('player'); },
-      silenceWatchTendril: (tx: number, ty: number) => { this.silenceKit.doWatchTendril(tx, ty, 'player'); },
-      silenceMachete: (angleRad: number) => { this.silenceKit.doMachete(angleRad, 'player'); },
-      silenceThrowHook: (angleRad: number) => { this.silenceKit.doThrowHook(angleRad, 'player'); },
-      silenceYankHook: () => { this.silenceKit.doYankHook('player'); },
-      silenceMortalWound: (angleRad) => { this.silenceKit.doMortalWound(angleRad, 'player'); },
-      silenceSlashEmUp: () => { this.silenceKit.doSlashEmUp('player'); },
+      silenceStab: (tx, ty) => { this.silenceKit.doStab(tx, ty, 'player'); },
+      silenceSummonStalker: (tx, ty) => { this.silenceKit.doSummonStalker(tx, ty, 'player'); },
+      silenceRitual: (tx, ty) => { this.silenceKit.doRitual(tx, ty, 'player'); },
+      silenceFeast: (tx, ty) => { this.silenceKit.doFeast(tx, ty, 'player'); },
+      silenceRun: (tx, ty) => { this.silenceKit.doRun(tx, ty, 'player'); },
       // Time
       timeBarrage: () => { /* firing handled in TimeKit.handleInput */ },
       timeWarp: (tx, ty) => this.timeKit.doTimeLasso(tx, ty, 'player'),
@@ -4000,36 +3856,30 @@ export class ArenaScene extends Phaser.Scene {
       magnetAtomSmasher: (x, y) => { this.magnetKit.doMagnetAtomSmasher(x, y, 'player'); },
       // Metal
       metalSlash: (tx, ty) => { this.metalKit.doMetalSlash(tx, ty, 'player'); },
-      metalFireAtWill: () => { this.metalKit.doMetalFireAtWill('player'); },
-      metalOpenReinforcementMenu: () => { this.metalKit.doMetalOpenReinforcementMenu(); },
+      metalFlailCraft: () => { this.metalKit.doMetalFlailCraft('player'); },
+      metalTriggerFlailSwing: () => { this.metalKit.triggerFlailSwing('player'); },
+      metalBloodTransfusionTick: () => { this.metalKit.doMetalBloodTransfusionTick('player'); },
       metalChainTether: (tx, ty) => { this.metalKit.doMetalChainTether(tx, ty, 'player'); },
-      metalBloodClot: () => { this.metalKit.doMetalBloodClot('player'); },
+      metalClotArmor: () => { this.metalKit.doMetalClotArmor('player'); },
       // Plasma
       plasmaBurst: (tx, ty) => { this.plasmaKit.doPlasmaBurst(tx, ty, 'player'); },
       plasmaUnstableArena: (tx, ty) => { this.plasmaKit.doPlasmaUnstableArena(tx, ty, 'player'); },
       plasmaCurrentLaunch: (tx, ty) => { this.plasmaKit.doPlasmaCurrentLaunch(tx, ty, 'player'); },
       plasmaChaosBlades: () => { this.plasmaKit.doPlasmaChaosBlades('player'); },
       plasmaChaosIncarnate: () => { this.plasmaKit.doPlasmaChaosIncarnate('player'); },
-      // Death
-      death1000Blades: (tx, ty) => { this.deathKit.doDeath1000Blades(tx, ty, 'player'); },
-      deathSummonWisps: (count) => { this.deathKit.doDeathSummonWisps(count, 'player'); },
-      deathLoomingDread: () => { this.deathKit.doDeathLoomingDread('player'); },
-      deathWispDaemon: () => { this.deathKit.doDeathWispDaemon('player'); },
-      deathTrailDash: (tx, ty) => { this.deathKit.doDeathTrailDash(tx, ty, 'player'); },
-      deathJudgement: () => { this.deathKit.doDeathJudgement('player'); },
-      // Void
-      voidFloater: (_tx, _ty) => { this.voidKit.doVoidFloater('player'); },
-      voidReturnToVoid: (tx, ty) => { this.voidKit.doVoidReturnToVoid(tx, ty, 'player'); },
-      voidReLapse: (tx, ty) => { this.voidKit.doVoidReLapse(tx, ty, 'player'); },
-      voidAsh: (tx, ty) => { this.voidKit.doVoidAsh(tx, ty, 'player'); },
-      voidOfHell: () => { this.voidKit.doVoidOfHell('player'); },
+      // Gunpowder
+      gunpowderMusketShot: (tx, ty) => { this.gunpowderKit.doGunpowderMusketShot(tx, ty, 'player'); },
+      gunpowderExplosiveRetreat: (tx, ty) => { this.gunpowderKit.doGunpowderExplosiveRetreat(tx, ty, 'player'); },
+      gunpowderFireAtWill: (tx, ty) => { this.gunpowderKit.doGunpowderFireAtWill(tx, ty, 'player'); },
+      gunpowderArsenalExpansion: () => { this.gunpowderKit.doGunpowderArsenalExpansion('player'); },
+      gunpowderFinalOrdinance: (tx, ty) => { this.gunpowderKit.doGunpowderFinalOrdinance(tx, ty, 'player'); },
       // Rubber
       rubberPunch: (tx, ty, r) => { this.rubberKit.doRubberPunch(tx, ty, r, 'player'); },
       rubberSlingShotStart: (angle) => { this.rubberKit.doRubberSlingShotStart(angle, 'player'); },
       rubberSlingShotRelease: (vx, vy) => { this.rubberKit.doRubberSlingShotRelease(vx, vy, 'player'); },
       rubberBounceForm: () => { this.rubberKit.doRubberBounceForm('player'); },
-      rubberSpringSlam: (angle) => { this.rubberKit.doRubberSpringSlam(angle, 'player'); },
-      rubberBounceBack: () => { this.rubberKit.doRubberBounceBack('player'); },
+      rubberBandStart: () => { this.rubberKit.doRubberBandStart('player'); },
+      rubberage: () => { this.rubberKit.doRubberage('player'); },
       // Magic
       magicSparkleShot: (tx, ty) => { this.magicKit.doSparkleShot(tx, ty, 'player'); },
       magicOpenGrimoire: () => { /* handled in magicKit.handleInput */ },
@@ -4037,14 +3887,11 @@ export class ArenaScene extends Phaser.Scene {
       magicMeditateBegin: () => { this.magicKit.doMeditateBegin('player'); },
       magicOpenNecronomicon: () => { /* handled in magicKit.handleInput */ },
       // Technology
-      techFlailEmpower: () => {},
-      techDevConsoleOpen: () => { this.techKit.doTechDevConsoleOpen('player'); },
-      techHackAttribute: () => { this.techKit.doTechHackAttribute('player'); },
-      techDeleteArea: (x, y, w, h) => { this.techKit.doTechDeleteArea('player', x, y, w, h); },
-      techOpSelfBegin: () => { this.techKit.doTechOpSelfBegin('player'); },
-      techStartDomain: () => { this.techKit.doTechStartDomain('player'); },
-      techGearGiveActivate: () => { this.techKit.doTechGearGiveActivate('player'); },
-      techRandomEffect: () => { this.techKit.doTechRandomEffect('player'); },
+      techCruncherFire: (tx, ty) => { this.techKit.doTechCruncherFire('player', tx, ty); },
+      techAdsCast: () => { this.techKit.doTechAdsCast('player'); },
+      techUploadCast: (tx, ty) => { this.techKit.doTechUploadCast('player', tx, ty); },
+      techWebDragCast: () => { this.techKit.doTechWebDragCast('player'); },
+      techAdminCast: () => { this.techKit.doTechAdminCast('player'); },
       // Echo (player input handled entirely in echoKit.handleInput; these are stubs for ability cast registration)
       echoEcholocation: () => { /* handled in handleInput */ },
       echoGuess: () => { /* handled in handleInput */ },
@@ -4175,61 +4022,11 @@ export class ArenaScene extends Phaser.Scene {
       placeCrystalPortal: (tx, ty) => this.crystalKit.placeCrystalPortal(false, tx, ty),
       activateCrystalTrick: () => this.crystalKit.activateCrystalTrick(false),
       // Soul
-      fireSoulOrb: (tx, ty) => {
-        if (this.time.now - this.lastNpcSoulOrbCast < 800) return;
-        this.lastNpcSoulOrbCast = this.time.now;
-        const dx = tx - this.npc.x, dy = ty - this.npc.y;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const speed = 104;
-        const ox = this.npc.x + (dx / dist) * 32;
-        const oy = this.npc.y + (dy / dist) * 32;
-        const spr = this.add.circle(ox, oy, 12, 0x9966cc, 0.6)
-          .setStrokeStyle(2, 0xbb88ee, 0.8).setDepth(7);
-        this.tweens.add({ targets: spr, alpha: 0.3, yoyo: true, repeat: -1, duration: 400 });
-        this.npcSoulOrbs.push({ sprite: spr, expiresAt: this.time.now + 3000, x: ox, y: oy, vx: (dx / dist) * speed, vy: (dy / dist) * speed, owner: 'npc', lastContactTick: -99999 });
-      },
-      summonGhost: (ghostType) => {
-        // NPC auto-upgrades to best affordable ghost type (NPCs only use base 4 types)
-        let actualType: 'basic' | 'ghoul' | 'banshee' | 'knight' = 'basic';
-        if (ghostType === 'knight') {
-          actualType = 'knight';
-        } else {
-          if (this.npcSoulGhosts >= 3) actualType = 'banshee';
-          else if (this.npcSoulGhosts >= 2) actualType = 'ghoul';
-          else if (this.npcSoulGhosts >= 1) actualType = 'basic';
-          else return;
-        }
-        const cost = actualType === 'basic' ? 1 : actualType === 'ghoul' ? 2 : actualType === 'banshee' ? 3 : 5;
-        if (this.npcSoulGhosts < cost) return;
-        if (this.time.now - this.lastNpcSummon < 2000) return;
-        this.lastNpcSummon = this.time.now;
-        this.npcSoulGhosts -= cost;
-        this.spawnSoulGhost(actualType, this.npc.x, this.npc.y, 'npc');
-      },
-      soulSacrifice: () => {
-        if (this.time.now - this.lastNpcSacrifice < 3000) return;
-        this.lastNpcSacrifice = this.time.now;
-        this.npc.applySelfDamage(10);
-        this.npcSoulGhosts++;
-      },
-      soulConsume: () => {
-        if (this.time.now - this.lastNpcConsume < 3000) return;
-        this.lastNpcConsume = this.time.now;
-        const consumeR = 150;
-        let consumedCount = 0;
-        for (let i = this.npcSoulSummons.length - 1; i >= 0; i--) {
-          const gs = this.npcSoulSummons[i];
-          if (Phaser.Math.Distance.Between(gs.sprite.x, gs.sprite.y, this.npc.x, this.npc.y) <= consumeR) {
-            consumedCount++;
-            this.npc.heal(Math.floor(gs.hp / 2));
-            gs.sprite.destroy();
-            this.npcSoulSummons.splice(i, 1);
-          }
-        }
-        if (this.hasPerk('npc', 'ward') && consumedCount > 0) {
-          this.spawnWardHex(this.npc.x, this.npc.y, consumedCount, 'npc');
-        }
-      },
+      soulLanternTick: (tx, ty) => this.soulKit.doLanternTick(tx, ty, 'npc'),
+      soulArise: () => this.soulKit.doArise('npc'),
+      soulGrave: (tx, ty) => this.soulKit.doGrave(tx, ty, 'npc'),
+      soulDeathWhistle: (tx, ty) => this.soulKit.doDeathWhistle(tx, ty, 'npc'),
+      soulHellsTorment: () => this.soulKit.doHellsTorment('npc'),
       // Hunt
       huntThrowGrenade: (tx, ty, holdMs) => {
         const dx = tx - this.npc.x, dy = ty - this.npc.y;
@@ -4333,35 +4130,11 @@ export class ArenaScene extends Phaser.Scene {
       huntHybridInstinct: () => {},
       huntHybridShriek: () => {},
       // Silence (NPC)
-      silenceStartFade: () => {
-        // NPC fade: brief invincibility + random firing
-        this.npc.isInvincible = true;
-        this.npc.setAlpha(0.12);
-        this.time.delayedCall(500, () => {
-          if (!this.npc.active) return;
-          this.npc.isInvincible = false;
-          this.npc.setAlpha(1);
-          // Release AOE
-          if (Phaser.Math.Distance.Between(this.npc.x, this.npc.y, this.player.x, this.player.y) <= 100) {
-            this.player.takeDamage(12);
-            this.spawnHitFlash(this.player.x, this.player.y, 0x440066);
-          }
-          const burst = this.add.circle(this.npc.x, this.npc.y, 10, 0x440066, 0.8).setDepth(8);
-          this.tweens.add({ targets: burst, scaleX: 9, scaleY: 9, alpha: 0, duration: 350, onComplete: () => burst.destroy() });
-        });
-      },
-      silenceReleaseFade: () => {},
-      silenceCastDontLook: (angleRad: number) => { this.silenceKit.doCastDontLook(angleRad, 'npc'); },
-      silenceFirePossess: (angleRad: number) => { this.silenceKit.doFirePossess(angleRad, 'npc'); },
-      silenceEnterSlasher: () => { this.silenceKit.doEnterSlasher('npc'); },
-      silenceExitSlasher: (voluntary: boolean) => { this.silenceKit.doExitSlasher(voluntary, 'npc'); },
-      silenceStartWatch: () => {},
-      silenceWatchTendril: () => {},
-      silenceMachete: (angleRad: number) => { this.silenceKit.doMachete(angleRad, 'npc'); },
-      silenceThrowHook: (angleRad: number) => { this.silenceKit.doThrowHook(angleRad, 'npc'); },
-      silenceYankHook: () => { this.silenceKit.doYankHook('npc'); },
-      silenceMortalWound: (angleRad: number) => { this.silenceKit.doMortalWound(angleRad, 'npc'); },
-      silenceSlashEmUp: () => { /* NPC version handled via npcCastId block */ },
+      silenceStab: (tx, ty) => { this.silenceKit.doStab(tx, ty, 'npc'); },
+      silenceSummonStalker: (tx, ty) => { this.silenceKit.doSummonStalker(tx, ty, 'npc'); },
+      silenceRitual: (tx, ty) => { this.silenceKit.doRitual(tx, ty, 'npc'); },
+      silenceFeast: (tx, ty) => { this.silenceKit.doFeast(tx, ty, 'npc'); },
+      silenceRun: (tx, ty) => { this.silenceKit.doRun(tx, ty, 'npc'); },
       // Time (NPC)
       timeBarrage: () => { /* NPC revolver handled in TimeKit.update */ },
       timeWarp: (tx, ty) => this.timeKit.doTimeLasso(tx, ty, 'npc'),
@@ -4408,36 +4181,30 @@ export class ArenaScene extends Phaser.Scene {
       magnetAtomSmasher: (x, y) => { this.magnetKit.doMagnetAtomSmasher(x, y, 'npc'); },
       // Metal
       metalSlash: (tx, ty) => { this.metalKit.doMetalSlash(tx, ty, 'npc'); },
-      metalFireAtWill: () => { this.metalKit.doMetalFireAtWill('npc'); },
-      metalOpenReinforcementMenu: () => { this.metalKit.doMetalNpcPickGun(); },
+      metalFlailCraft: () => { this.metalKit.doMetalFlailCraft('npc'); },
+      metalTriggerFlailSwing: () => { this.metalKit.triggerFlailSwing('npc'); },
+      metalBloodTransfusionTick: () => { this.metalKit.doMetalBloodTransfusionTick('npc'); },
       metalChainTether: (tx, ty) => { this.metalKit.doMetalChainTether(tx, ty, 'npc'); },
-      metalBloodClot: () => { this.metalKit.doMetalBloodClot('npc'); },
+      metalClotArmor: () => { this.metalKit.doMetalClotArmor('npc'); },
       // Plasma
       plasmaBurst: (tx, ty) => { this.plasmaKit.doPlasmaBurst(tx, ty, 'npc'); },
       plasmaUnstableArena: (tx, ty) => { this.plasmaKit.doPlasmaUnstableArena(tx, ty, 'npc'); },
       plasmaCurrentLaunch: (tx, ty) => { this.plasmaKit.doPlasmaCurrentLaunch(tx, ty, 'npc'); },
       plasmaChaosBlades: () => { this.plasmaKit.doPlasmaChaosBlades('npc'); },
       plasmaChaosIncarnate: () => { this.plasmaKit.doPlasmaChaosIncarnate('npc'); },
-      // Death
-      death1000Blades: (tx, ty) => { this.deathKit.doDeath1000Blades(tx, ty, 'npc'); },
-      deathSummonWisps: (count) => { this.deathKit.doDeathSummonWisps(count, 'npc'); },
-      deathLoomingDread: () => { this.deathKit.doDeathLoomingDread('npc'); },
-      deathWispDaemon: () => { this.deathKit.doDeathWispDaemon('npc'); },
-      deathTrailDash: (tx, ty) => { this.deathKit.doDeathTrailDash(tx, ty, 'npc'); },
-      deathJudgement: () => { this.deathKit.doDeathJudgement('npc'); },
-      // Void
-      voidFloater: (_tx, _ty) => { this.voidKit.doVoidFloater('npc'); },
-      voidReturnToVoid: (tx, ty) => { this.voidKit.doVoidReturnToVoid(tx, ty, 'npc'); },
-      voidReLapse: (tx, ty) => { this.voidKit.doVoidReLapse(tx, ty, 'npc'); },
-      voidAsh: (tx, ty) => { this.voidKit.doVoidAsh(tx, ty, 'npc'); },
-      voidOfHell: () => { this.voidKit.doVoidOfHell('npc'); },
+      // Gunpowder
+      gunpowderMusketShot: (tx, ty) => { this.gunpowderKit.doGunpowderMusketShot(tx, ty, 'npc'); },
+      gunpowderExplosiveRetreat: (tx, ty) => { this.gunpowderKit.doGunpowderExplosiveRetreat(tx, ty, 'npc'); },
+      gunpowderFireAtWill: (tx, ty) => { this.gunpowderKit.doGunpowderFireAtWill(tx, ty, 'npc'); },
+      gunpowderArsenalExpansion: () => { this.gunpowderKit.doGunpowderArsenalExpansion('npc'); },
+      gunpowderFinalOrdinance: (tx, ty) => { this.gunpowderKit.doGunpowderFinalOrdinance(tx, ty, 'npc'); },
       // Rubber
       rubberPunch: (tx, ty, r) => { this.rubberKit.doRubberPunch(tx, ty, r, 'npc'); },
       rubberSlingShotStart: (angle) => { this.rubberKit.doRubberSlingShotStart(angle, 'npc'); },
       rubberSlingShotRelease: (vx, vy) => { this.rubberKit.doRubberSlingShotRelease(vx, vy, 'npc'); },
       rubberBounceForm: () => { this.rubberKit.doRubberBounceForm('npc'); },
-      rubberSpringSlam: (angle) => { this.rubberKit.doRubberSpringSlam(angle, 'npc'); },
-      rubberBounceBack: () => { this.rubberKit.doRubberBounceBack('npc'); },
+      rubberBandStart: () => { this.rubberKit.doRubberBandStart('npc'); },
+      rubberage: () => { this.rubberKit.doRubberage('npc'); },
       // Magic (NPC mirrors)
       magicSparkleShot: (tx, ty) => { this.magicKit.doSparkleShot(tx, ty, 'npc'); },
       magicOpenGrimoire: () => { this.magicKit.npcCastGrimoireWedge(this.player.x, this.player.y); },
@@ -4445,26 +4212,11 @@ export class ArenaScene extends Phaser.Scene {
       magicMeditateBegin: () => { this.magicKit.doMeditateBegin('npc'); },
       magicOpenNecronomicon: () => { this.magicKit.npcCastNecronomiconWedge(this.player.x, this.player.y); },
       // Technology
-      techFlailEmpower: () => {},
-      techDevConsoleOpen: () => {
-        if (this.techKit.getTechRansomwareTarget() === 'npc' && this.time.now < this.techKit.getTechRansomwareExpiry()) return;
-        this.techKit.doTechDevConsoleOpen('npc');
-      },
-      techHackAttribute: () => { this.techKit.doTechHackAttribute('npc'); },
-      techDeleteArea: (x, y, w, h) => {
-        if (this.techKit.getTechRansomwareTarget() === 'npc' && this.time.now < this.techKit.getTechRansomwareExpiry()) return;
-        this.techKit.doTechDeleteArea('npc', x, y, w, h);
-      },
-      techOpSelfBegin: () => { this.techKit.doTechOpSelfBegin('npc'); },
-      techStartDomain: () => {
-        if (this.techKit.getTechRansomwareTarget() === 'npc' && this.time.now < this.techKit.getTechRansomwareExpiry()) return;
-        this.techKit.doTechStartDomain('npc');
-      },
-      techGearGiveActivate: () => { this.techKit.doTechNpcGearGiveAttack(); },
-      techRandomEffect: () => {
-        if (this.techKit.getTechRansomwareTarget() === 'npc' && this.time.now < this.techKit.getTechRansomwareExpiry()) return;
-        this.techKit.doTechRandomEffect('npc');
-      },
+      techCruncherFire: (tx, ty) => { this.techKit.doTechCruncherFire('npc', tx, ty); },
+      techAdsCast: () => { this.techKit.doTechAdsCast('npc'); },
+      techUploadCast: (tx, ty) => { this.techKit.doTechUploadCast('npc', tx, ty); },
+      techWebDragCast: () => { this.techKit.doTechWebDragCast('npc'); },
+      techAdminCast: () => { this.techKit.doTechAdminCast('npc'); },
       // Echo
       echoEcholocation: (tx, ty) => this.echoKit.doNpcEcholocation(tx, ty),
       echoGuess: (tx, ty) => this.echoKit.doNpcGuess(tx, ty),
@@ -4556,10 +4308,11 @@ export class ArenaScene extends Phaser.Scene {
       activateCrystalAtune: () => {},
       placeCrystalPortal: () => {},
       activateCrystalTrick: () => {},
-      fireSoulOrb: () => {},
-      summonGhost: () => {},
-      soulSacrifice: () => {},
-      soulConsume: () => {},
+      soulLanternTick: () => {},
+      soulArise: () => {},
+      soulGrave: () => {},
+      soulDeathWhistle: () => {},
+      soulHellsTorment: () => {},
       huntThrowGrenade: () => {},
       huntHuntersTrail: () => {},
       huntBloodPact: () => {},
@@ -4614,60 +4367,43 @@ export class ArenaScene extends Phaser.Scene {
       magnetAtomSmasher: () => {},
       // Metal stubs (no-ops for clone/raid)
       metalSlash: () => {},
-      metalFireAtWill: () => {},
-      metalOpenReinforcementMenu: () => {},
+      metalFlailCraft: () => {},
+      metalTriggerFlailSwing: () => {},
+      metalBloodTransfusionTick: () => {},
       metalChainTether: () => {},
-      metalBloodClot: () => {},
+      metalClotArmor: () => {},
       // Plasma stubs (no-ops for clone/raid)
       plasmaBurst: () => {},
       plasmaUnstableArena: () => {},
       plasmaCurrentLaunch: () => {},
       plasmaChaosBlades: () => {},
       plasmaChaosIncarnate: () => {},
-      // Death stubs (no-ops for clone/raid)
-      death1000Blades: () => {},
-      deathSummonWisps: () => {},
-      deathLoomingDread: () => {},
-      deathWispDaemon: () => {},
-      deathTrailDash: () => {},
-      deathJudgement: () => {},
-      // Void stubs (no-ops for clone/raid)
-      voidFloater: () => {},
-      voidReturnToVoid: () => {},
-      voidReLapse: () => {},
-      voidAsh: () => {},
-      voidOfHell: () => {},
+      // Gunpowder stubs (no-ops for clone/raid)
+      gunpowderMusketShot: () => {},
+      gunpowderExplosiveRetreat: () => {},
+      gunpowderFireAtWill: () => {},
+      gunpowderArsenalExpansion: () => {},
+      gunpowderFinalOrdinance: () => {},
       // Rubber stubs
       rubberPunch: () => {}, rubberSlingShotStart: () => {}, rubberSlingShotRelease: () => {},
-      rubberBounceForm: () => {}, rubberSpringSlam: () => {}, rubberBounceBack: () => {},
+      rubberBounceForm: () => {}, rubberBandStart: () => {}, rubberage: () => {},
       // Magic — no-op stubs for raid
       magicSparkleShot: () => {},
       magicOpenGrimoire: () => {},
       magicAnchorToggle: () => {},
       magicMeditateBegin: () => {},
       magicOpenNecronomicon: () => {},
-      techFlailEmpower: () => {},
-      techDevConsoleOpen: () => {},
-      techHackAttribute: () => {},
-      techDeleteArea: () => {},
-      techOpSelfBegin: () => {},
-      techStartDomain: () => {},
-      techGearGiveActivate: () => {},
-      techRandomEffect: () => {},
+      techCruncherFire: () => {},
+      techAdsCast: () => {},
+      techUploadCast: () => {},
+      techWebDragCast: () => {},
+      techAdminCast: () => {},
       // Silence — no-ops for clone
-      silenceStartFade: () => {},
-      silenceReleaseFade: () => {},
-      silenceCastDontLook: () => {},
-      silenceFirePossess: () => {},
-      silenceEnterSlasher: () => {},
-      silenceExitSlasher: () => {},
-      silenceStartWatch: () => {},
-      silenceWatchTendril: () => {},
-      silenceMachete: () => {},
-      silenceThrowHook: () => {},
-      silenceYankHook: () => {},
-      silenceMortalWound: (_angleRad: number) => {},
-      silenceSlashEmUp: () => {},
+      silenceStab: () => {},
+      silenceSummonStalker: () => {},
+      silenceRitual: () => {},
+      silenceFeast: () => {},
+      silenceRun: () => {},
       quantumWave: () => {},
       quantumChaosControl: () => {},
       quantumAtomVibration: () => {},
@@ -4912,6 +4648,15 @@ export class ArenaScene extends Phaser.Scene {
 
   private hasUpgrade(slot: string): boolean {
     return this.activeUpgrades.includes(slot);
+  }
+
+  /**
+   * True when the online opponent has the given upgrade slot equipped. Kits call
+   * this from their NPC replay paths (do*Abilities / npcCastId handlers) so the
+   * remote player's upgraded abilities reproduce correctly on this victim-side sim.
+   */
+  hasNpcUpgrade(slot: string): boolean {
+    return this.isOnline && this.npcUpgrades.includes(slot);
   }
 
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean {
@@ -6854,6 +6599,59 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   /** amount=0 → BLOCKED, amount=-1 → DODGED, amount>0 → damage */
+  // Heal numbers are batched per fighter so smooth (per-frame) healing shows
+  // as a few readouts rather than a flood of tiny "+0"s.
+  private playerHealNumAccum = 0;
+  private npcHealNumAccum = 0;
+  private playerHealNumTimer = 0;
+  private npcHealNumTimer = 0;
+
+  /** Green heal number, styled like spawnDamageNumber but floating straight up. */
+  private spawnHealNumber(x: number, y: number, amount: number): void {
+    const angle = Math.random() * Math.PI * 2;
+    const spawnRadius = 14 + Math.random() * 14;
+    const sx = x + Math.cos(angle) * spawnRadius;
+    const sy = y + Math.sin(angle) * spawnRadius;
+
+    const txt = this.add.text(sx, sy, `+${amount}`, {
+      fontSize: `${Math.min(20, 12 + Math.floor(amount / 10))}px`,
+      fontFamily: '"Arial Black", sans-serif',
+      color: '#55ff66',
+      stroke: '#0a3a12',
+      strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(30);
+
+    this.tweens.add({
+      targets: txt,
+      x: sx + Math.cos(angle) * 16,
+      y: sy - 42,
+      alpha: 0,
+      duration: 750,
+      ease: 'Power1',
+      onComplete: () => txt.destroy(),
+    });
+  }
+
+  /** Flush batched healing into green heal numbers (~3 per second per fighter). */
+  private updateHealNumbers(delta: number): void {
+    this.playerHealNumTimer += delta;
+    if (this.playerHealNumTimer >= 300) {
+      this.playerHealNumTimer = 0;
+      if (this.playerHealNumAccum >= 1) {
+        this.spawnHealNumber(this.player.x, this.player.y - 20, Math.round(this.playerHealNumAccum));
+        this.playerHealNumAccum = 0;
+      }
+    }
+    this.npcHealNumTimer += delta;
+    if (this.npcHealNumTimer >= 300) {
+      this.npcHealNumTimer = 0;
+      if (this.npcHealNumAccum >= 1) {
+        this.spawnHealNumber(this.npc.x, this.npc.y - 20, Math.round(this.npcHealNumAccum));
+        this.npcHealNumAccum = 0;
+      }
+    }
+  }
+
   private spawnDamageNumber(x: number, y: number, amount: number): void {
     const isBlocked = amount === 0;
     const isDodged = amount === -1;
@@ -6906,167 +6704,6 @@ export class ArenaScene extends Phaser.Scene {
       duration: 120,
       onComplete: () => cone.destroy(),
     });
-  }
-
-  private spawnSoulGhost(type: 'basic' | 'ghoul' | 'banshee' | 'knight' | 'corpse' | 'necromancer', x: number, y: number, owner: 'player' | 'npc', enhanced = false): void {
-    let baseHp: number;
-    if (type === 'basic')      baseHp = enhanced ? 40 : 25;
-    else if (type === 'ghoul') baseHp = 20;
-    else if (type === 'banshee') baseHp = enhanced ? 150 : 100;
-    else if (type === 'knight') baseHp = 125;
-    else if (type === 'corpse') baseHp = enhanced ? 30 : 15;
-    else /* necromancer */      baseHp = 50;
-
-    const r = type === 'banshee' ? 31 : type === 'knight' ? 30 : type === 'necromancer' ? 24 : 21;
-    const baseColors: Record<string, number> = { basic: 0xaaaaff, ghoul: 0x8844aa, banshee: 0xddaaff, knight: 0xffaacc, corpse: 0x88aa66, necromancer: 0x6622aa };
-    const color = enhanced ? 0xffcc44 : baseColors[type];
-    const spr = this.add.circle(x, y, r, color, 0.75)
-      .setStrokeStyle(2, enhanced ? 0xffee88 : 0xeeeeff, 0.6).setDepth(8);
-    this.tweens.add({ targets: spr, scaleX: 0.88, scaleY: 0.88, yoyo: true, repeat: -1, duration: 600 });
-
-    const angle = Math.random() * Math.PI * 2;
-    const dx = type === 'knight' ? Math.cos(angle) : 0;
-    const dy = type === 'knight' ? Math.sin(angle) : 0;
-
-    const summon: SoulSummon = { sprite: spr, hp: baseHp, maxHp: baseHp, type, owner, lastContactTick: -99999, ghoulShootAccum: 0, dx, dy, healAccum: 0, necroSummonAccum: 0, enhanced, speedMult: 1, slamAccum: 0 };
-    if (owner === 'player') this.playerSoulSummons.push(summon);
-    else this.npcSoulSummons.push(summon);
-  }
-
-  private updateSoulSummon(
-    gs: SoulSummon,
-    enemy: { x: number; y: number; takeDamage(n: number): void },
-    time: number,
-    delta: number,
-    isPlayerOwned: boolean,
-  ): void {
-    const pad = 34;
-    const W = this.scale.width, H = this.scale.height;
-    const baseSpeed = gs.type === 'basic' ? 90 : gs.type === 'banshee' ? 75 : gs.type === 'knight' ? 750 : gs.type === 'corpse' ? 55 : gs.type === 'necromancer' ? 50 : 60;
-    const speed = gs.type === 'knight' ? baseSpeed * gs.speedMult : baseSpeed;
-    const sx = gs.sprite.x, sy = gs.sprite.y;
-
-    if (gs.type === 'basic' || gs.type === 'banshee' || gs.type === 'corpse') {
-      const dx = enemy.x - sx, dy = enemy.y - sy;
-      const len = Math.sqrt(dx * dx + dy * dy) || 1;
-      gs.sprite.setPosition(sx + (dx / len) * speed * (delta / 1000), sy + (dy / len) * speed * (delta / 1000));
-
-      // Enhanced banshee: periodic slam AOE
-      if (gs.type === 'banshee' && gs.enhanced) {
-        gs.slamAccum += delta;
-        if (gs.slamAccum >= 3000) {
-          gs.slamAccum = 0;
-          const slamDmg = 15;
-          if (Phaser.Math.Distance.Between(sx, sy, enemy.x, enemy.y) <= 100) {
-            enemy.takeDamage(slamDmg);
-            this.spawnHitFlash(enemy.x, enemy.y, 0xffcc44);
-          }
-          const ring = this.add.circle(sx, sy, 10, 0xffcc44, 0.5).setDepth(8);
-          this.tweens.add({ targets: ring, scaleX: 10, scaleY: 10, alpha: 0, duration: 400, onComplete: () => ring.destroy() });
-        }
-      }
-    } else if (gs.type === 'ghoul') {
-      const dx = enemy.x - sx, dy = enemy.y - sy;
-      const len = Math.sqrt(dx * dx + dy * dy) || 1;
-      const targetDist = 250;
-      if (len > targetDist + 40) {
-        gs.sprite.setPosition(sx + (dx / len) * speed * (delta / 1000), sy + (dy / len) * speed * (delta / 1000));
-      } else if (len < targetDist - 40) {
-        gs.sprite.setPosition(sx - (dx / len) * speed * (delta / 1000), sy - (dy / len) * speed * (delta / 1000));
-      }
-      gs.ghoulShootAccum += delta;
-      if (gs.ghoulShootAccum >= 2000) {
-        gs.ghoulShootAccum = 0;
-        const blen = len || 1;
-        if (gs.enhanced) {
-          // Enhanced ghoul: 3 bolts in a cone
-          const baseAngle = Math.atan2(dy, dx);
-          for (const spread of [-0.25, 0, 0.25]) {
-            const bolt = new Projectile(this, gs.sprite.x, gs.sprite.y, 'proj-soul-bolt', 10, isPlayerOwned);
-            this.projectiles.add(bolt);
-            bolt.launch(Math.cos(baseAngle + spread) * 380, Math.sin(baseAngle + spread) * 380);
-          }
-        } else {
-          const bolt = new Projectile(this, gs.sprite.x, gs.sprite.y, 'proj-soul-bolt', 10, isPlayerOwned);
-          this.projectiles.add(bolt);
-          bolt.launch((dx / blen) * 380, (dy / blen) * 380);
-        }
-      }
-    } else if (gs.type === 'necromancer') {
-      // Necromancer: stay back from enemy
-      const dx = enemy.x - sx, dy = enemy.y - sy;
-      const len = Math.sqrt(dx * dx + dy * dy) || 1;
-      const targetDist = 300;
-      if (len < targetDist - 30) {
-        gs.sprite.setPosition(sx - (dx / len) * speed * (delta / 1000), sy - (dy / len) * speed * (delta / 1000));
-      } else if (len > targetDist + 30) {
-        gs.sprite.setPosition(sx + (dx / len) * speed * (delta / 1000), sy + (dy / len) * speed * (delta / 1000));
-      }
-      // Summon a corpse every 3s
-      gs.necroSummonAccum += delta;
-      const summonInterval = 3000;
-      if (gs.necroSummonAccum >= summonInterval) {
-        gs.necroSummonAccum = 0;
-        const count = gs.enhanced ? 2 : 1;
-        for (let i = 0; i < count; i++) {
-          const ox = gs.sprite.x + (Math.random() - 0.5) * 40;
-          const oy = gs.sprite.y + (Math.random() - 0.5) * 40;
-          this.spawnSoulGhost('corpse', ox, oy, gs.owner);
-        }
-      }
-    } else {
-      // knight: bounce off walls
-      let nx = sx + gs.dx * speed * (delta / 1000);
-      let ny = sy + gs.dy * speed * (delta / 1000);
-      if (nx < pad || nx > W - pad) { gs.dx *= -1; nx = Math.max(pad, Math.min(W - pad, nx)); }
-      if (ny < pad || ny > H - pad) { gs.dy *= -1; ny = Math.max(pad, Math.min(H - pad, ny)); }
-      gs.sprite.setPosition(nx, ny);
-    }
-
-    // Corpse self-heal
-    if (gs.type === 'corpse') {
-      gs.healAccum += delta;
-      const healInterval = gs.enhanced ? 1000 : 2000;
-      const healAmt = gs.enhanced ? 2 : 1;
-      if (gs.healAccum >= healInterval) {
-        gs.healAccum -= healInterval;
-        gs.hp = Math.min(gs.maxHp, gs.hp + healAmt);
-      }
-    }
-
-    // Clamp to arena
-    gs.sprite.setPosition(
-      Math.max(pad, Math.min(W - pad, gs.sprite.x)),
-      Math.max(pad, Math.min(H - pad, gs.sprite.y)),
-    );
-
-    // Contact damage (ghoul/necromancer: no contact, uses bolts/summons)
-    if (gs.type !== 'ghoul' && gs.type !== 'necromancer' && time - gs.lastContactTick >= 1000) {
-      const contactRange = gs.type === 'banshee' ? 60 : gs.type === 'knight' ? 60 : 43;
-      const contactDmg = gs.type === 'basic' ? (gs.enhanced ? 8 : 5) : gs.type === 'banshee' ? 12 : gs.type === 'corpse' ? 3 : 15;
-      if (Phaser.Math.Distance.Between(gs.sprite.x, gs.sprite.y, enemy.x, enemy.y) <= contactRange) {
-        enemy.takeDamage(contactDmg);
-        this.spawnHitFlash(enemy.x, enemy.y, gs.enhanced ? 0xffcc44 : 0xccaaff);
-        gs.lastContactTick = time;
-      }
-    }
-
-    // Check if hit by enemy projectiles
-    for (const go of this.projectiles.getChildren()) {
-      const proj = go as Projectile;
-      if (!proj.active) continue;
-      const isEnemyProj = isPlayerOwned ? !proj.isFromPlayer : proj.isFromPlayer;
-      if (!isEnemyProj) continue;
-      if (Phaser.Math.Distance.Between(proj.x, proj.y, gs.sprite.x, gs.sprite.y) <= 20) {
-        const summonOwner = isPlayerOwned ? 'player' : 'npc';
-        const wardHex = this.soulWardHexes.find((w) => w.owner === summonOwner &&
-          Phaser.Math.Distance.Between(w.x, w.y, gs.sprite.x, gs.sprite.y) <= w.radius);
-        gs.hp -= wardHex ? Math.ceil(proj.damage * 0.5) : proj.damage;
-        proj.setActive(false).setVisible(false);
-        (proj.body as Phaser.Physics.Arcade.Body).stop();
-        break;
-      }
-    }
   }
 
   // ── Creation helpers ─────────────────────────────────────────────
@@ -7237,8 +6874,8 @@ export class ArenaScene extends Phaser.Scene {
       caster.incomingDamageMultiplier *= 0.75;
       this.creatDamageReductionEnd = time + 15000;
     } else if (key === 'ccg') {
-      // 2 copper + 1 gold: robot (ghoul)
-      this.spawnSoulGhost('ghoul', cx, cy, owner);
+      // 2 copper + 1 gold: dagger spray at the nearest enemy
+      this.spawnCreationDaggers(cx, cy, enemy.x, enemy.y, 6, owner);
     } else if (key === 'cgg') {
       // 1 copper + 2 gold: damage pulses (3x, 15 dmg, range 110)
       this.creatPulses.push({ x: cx, y: cy, remaining: 3, lastPulseAt: time - 1666, intervalMs: 1666, range: 110, kind: 'damage', magnitude: 15, owner });
@@ -7457,6 +7094,8 @@ export class ArenaScene extends Phaser.Scene {
     // Online: broadcast our state and interpolate the remote replica
     if (this.isOnline) this.onlineKit?.update();
 
+    this.updateHealNumbers(delta);
+
     // ── Channel expiry ────────────────────────────────────────────
     if (this.nukeChanneling && time >= this.nukeChannelEnd) { this.nukeChanneling = false; this.player.chargeRatio = 0; }
     if (this.npcNukeChanneling && time >= this.npcNukeChannelEnd) this.npcNukeChanneling = false;
@@ -7539,6 +7178,9 @@ export class ArenaScene extends Phaser.Scene {
     // ── Electricity per-frame ─────────────────────────────────────
     if (this.elementId === 'electricity') {
       this.electricityKit.update(time, delta);
+    } else if (this.npcElement.id === 'electricity') {
+      // Online: opponent is electricity — advance only npc-owned effects (kinetic bombs).
+      this.electricityKit.updateNpc(time, delta);
     }
 
     // ── Slime per-frame ───────────────────────────────────────────
@@ -7655,11 +7297,6 @@ export class ArenaScene extends Phaser.Scene {
       if (time < this.crystalKit.getPortalSpeedBuffUntil()) this.playerSpeedMult *= 1.2;
       // Mastery — Resonance: 3x speed for 0.2s after getting hit by your own Diamond Shard
       if (time < this.crystalKit.getResonanceSpeedUntil()) this.playerSpeedMult *= 3;
-    } else if (this.elementId === 'soul') {
-      this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
-      // F+ Knight speed buff: +45%
-      if (time < this.soulKnightSpeedBuffUntil) this.playerSpeedMult *= 1.45;
-      // F+ Ghoul buff: +50% soul orb projectile speed (not movement — handled in fireSoulOrb)
     } else if (this.elementId === 'creation') {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
       // Speed pad boost (F+ Build Mode)
@@ -7672,15 +7309,9 @@ export class ArenaScene extends Phaser.Scene {
       this.playerSpeedMult = 1;
       // Kit applies Buff/Slots speed mods via applyPlayerSpeedMult
     } else if (this.elementId === 'light') {
+      // Light Lance drives the player body directly (car-mode physics) while held —
+      // see LightKit.update(). This mult only matters for the moments it isn't.
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
-      if (time < this.lightKit.getPhotoAccelUntil()) {
-        const t = Math.min(1, (time - this.lightKit.getPhotoAccelStart()) / 5000);
-        const peakT = Math.min(t / 0.9, 1);
-        this.playerSpeedMult *= 1.15 + (2.0 - 1.15) * peakT;
-      }
-      if (time < this.lightKit.getPhotonSpeedBoostUntil()) this.playerSpeedMult *= 3;
-      if (this.lightKit.isAngelActive()) this.playerSpeedMult *= this.lightKit.getAngelSpeedMult();
-      if (time < this.lightKit.getSkewerModeUntil()) this.playerSpeedMult *= 1.15;
     } else if (this.elementId === 'echo') {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
       this.playerSpeedMult *= this.echoKit.getPlayerSpeedMult();
@@ -7703,6 +7334,10 @@ export class ArenaScene extends Phaser.Scene {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
       // Air Mastery — Swift as the Wind: up to +50% from an unbroken snipe streak.
       this.playerSpeedMult *= this.airKit.getPlayerSpeedMult();
+    } else if (this.elementId === 'technology') {
+      this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
+      // F+ Wheel of Fortune speed buff
+      this.playerSpeedMult *= this.techKit.getPlayerSpeedMult();
     } else {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
     }
@@ -7785,33 +7420,6 @@ export class ArenaScene extends Phaser.Scene {
       if (npcOnTrail) this.npcSpeedMult *= 1.5;
     }
 
-    // Technology stacking bonuses and abuse speed penalty
-    if (this.elementId === 'technology') {
-      this.playerSpeedMult *= 1 + this.techKit.getPlayerTechSpeedBonus();
-      // Randomize.Exe phase 2: invis + speed
-      if (this.techKit.getPlayerOpSelfPhase() === 2) this.playerSpeedMult *= 1.25;
-      // Delete.Area standing bonus
-      if (this.techKit.getPlayerOnOwnDeleteArea()) this.playerSpeedMult *= 1.25;
-      // Abuse speed penalty
-      const pa = this.techKit.getPlayerAbuse();
-      if (pa >= 100) this.playerSpeedMult *= 0.70;
-      else if (pa >= 70) this.playerSpeedMult *= 0.85;
-      else if (pa >= 40) this.playerSpeedMult *= 0.95;
-      // Domain Bias speed boost for player
-      if (this.techKit.isTechDomainActive() && this.techKit.getTechDomainBias() > 0) this.playerSpeedMult *= (1 + this.techKit.getTechDomainBias() / 100 * 0.5);
-    }
-    if (this.npcElement.id === 'technology') {
-      this.npcSpeedMult *= 1 + this.techKit.getNpcTechSpeedBonus();
-      if (this.techKit.getNpcOpSelfPhase() === 2) this.npcSpeedMult *= 1.25;
-      if (this.techKit.getNpcOnOwnDeleteArea()) this.npcSpeedMult *= 1.25;
-      const na = this.techKit.getNpcAbuse();
-      if (na >= 100) this.npcSpeedMult *= 0.70;
-      else if (na >= 70) this.npcSpeedMult *= 0.85;
-      else if (na >= 40) this.npcSpeedMult *= 0.95;
-      // Domain Bias speed boost for NPC
-      if (this.techKit.isTechDomainActive() && this.techKit.getTechDomainBias() > 0) this.npcSpeedMult *= (1 + this.techKit.getTechDomainBias() / 100 * 0.5);
-    }
-
     // ── Acid Purge: suppress positive speed multipliers while purged ──
     if (time < this.player.purgedUntil) this.playerSpeedMult = Math.min(this.playerSpeedMult, 1);
     if (time < this.npc.purgedUntil) this.npcSpeedMult = Math.min(this.npcSpeedMult, 1);
@@ -7875,16 +7483,6 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Magic thorn bind / prison (NPC cast) ─────────────────────
     if ((this.elementId === 'magic' || this.npcElement.id === 'magic') && this.magicKit.isPlayerBound(time) && !this.isDodging) {
-      playerBody.setVelocity(0, 0);
-    }
-
-    // ── Metal taser stun ─────────────────────────────────────────
-    if (this.metalKit.getPlayerMetalTaseredUntil() > time && !this.isDodging) {
-      playerBody.setVelocity(0, 0);
-    }
-
-    // ── Soul haunt stun ────────────────────────────────────────────
-    if (this.elementId === 'soul' && time < this.soulHauntStunUntil && !this.isDodging) {
       playerBody.setVelocity(0, 0);
     }
 
@@ -8137,10 +7735,8 @@ export class ArenaScene extends Phaser.Scene {
       this.metalKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'plasma') {
       this.plasmaKit.handleInput(time, delta, pointer, mouseX, mouseY);
-    } else if (this.elementId === 'death') {
-      this.deathKit.handleInput(time, pointer, mouseX, mouseY);
-    } else if (this.elementId === 'void') {
-      this.voidKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'gunpowder') {
+      this.gunpowderKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'rubber') {
       this.rubberKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'magic') {
@@ -8166,136 +7762,7 @@ export class ArenaScene extends Phaser.Scene {
     } else if (this.elementId === 'growth') {
       this.growthKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'soul') {
-      if (time < this.soulHauntStunUntil) {
-        // Stunned after exiting haunt — no input
-      } else if (this.soulHauntActive) {
-        // In haunt mode: release to exit (stun 1.5s)
-        if (!pointer.isDown) {
-          this.soulHauntActive = false;
-          this.player.isInvincible = false;
-          this.player.setAlpha(1);
-          if (this.soulHauntVisual) { this.soulHauntVisual.destroy(); this.soulHauntVisual = null; }
-          this.soulHauntStunUntil = time + 1500;
-          (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-          this.showFloatingText(this.player.x, this.player.y - 20, 'Stunned!', '#ccaaff');
-        }
-        // Dodge during haunt: ghostly explosion + scared
-        // (handled in dodge section via soulHauntActive flag)
-      } else {
-        // Click: hold for Haunt (Click+), tap for Spirit Propel
-        if (this.hasUpgrade('click')) {
-          if (pointer.isDown && !this.pointerWasDown) {
-            this.soulClickHoldStart = time;
-          }
-          if (pointer.isDown && this.soulClickHoldStart > 0 && time - this.soulClickHoldStart >= 350 && this.soulGhosts > 0) {
-            // Enter haunt mode
-            this.soulHauntActive = true;
-            this.soulHauntDrainAccum = 0;
-            this.soulClickHoldStart = -99999;
-            this.player.isInvincible = true;
-            this.player.setAlpha(0.15);
-            if (this.soulHauntVisual) this.soulHauntVisual.destroy();
-            this.soulHauntVisual = this.add.circle(this.player.x, this.player.y, 30, 0xccaaff, 0.25).setDepth(4);
-            this.tweens.add({ targets: this.soulHauntVisual, alpha: 0.1, yoyo: true, repeat: -1, duration: 500 });
-          } else if (!pointer.isDown && this.pointerWasDown && this.soulClickHoldStart > 0 && time - this.soulClickHoldStart < 350) {
-            // Quick tap → Spirit Propel
-            playerCtx.fireSoulOrb(mouseX, mouseY);
-            this.soulClickHoldStart = -99999;
-          } else if (!pointer.isDown) {
-            this.soulClickHoldStart = -99999;
-          }
-        } else {
-          // No upgrade: click always fires orb
-          if (pointer.isDown && !this.pointerWasDown) {
-            playerCtx.fireSoulOrb(mouseX, mouseY);
-          }
-        }
-
-        // R: tap = Sacrifice; hold (R+ upgrade) = Drain Life
-        if (this.hasUpgrade('r')) {
-          if (this.rKey.isDown && !this.soulDrainHolding) {
-            // R just pressed — start hold timer
-            this.soulDrainHolding = true;
-            this.soulDrainHoldStart = time;
-            this.soulDrainLastTick = time;
-            this.soulDrainExplosionDmg = 0;
-          } else if (!this.rKey.isDown && this.soulDrainHolding) {
-            this.soulDrainHolding = false;
-            const holdMs = time - this.soulDrainHoldStart;
-            if (this.soulDrainVisual) { this.soulDrainVisual.destroy(); this.soulDrainVisual = null; }
-            if (holdMs < 200) {
-              // Quick tap → Sacrifice (base behavior)
-              playerCtx.soulSacrifice();
-              this.soulDrainExplosionDmg = 0;
-            } else if (this.soulDrainExplosionDmg > 0) {
-              // Release explosion (charged past 5s)
-              this.npc.takeDamage(this.soulDrainExplosionDmg);
-              this.spawnHitFlash(this.npc.x, this.npc.y, 0x9944ff);
-              const boom = this.add.circle(this.player.x, this.player.y, 10, 0x9944ff, 0.7).setDepth(9);
-              this.tweens.add({ targets: boom, scaleX: 14, scaleY: 14, alpha: 0, duration: 500, onComplete: () => boom.destroy() });
-              this.showFloatingText(this.player.x, this.player.y - 20, `Soul Burst! ${this.soulDrainExplosionDmg}`, '#cc66ff');
-              this.soulDrainExplosionDmg = 0;
-            }
-          }
-          // Spawn visual once we're past the tap threshold
-          if (this.soulDrainHolding && !this.soulDrainVisual && time - this.soulDrainHoldStart >= 200) {
-            this.soulDrainVisual = this.add.circle(this.player.x, this.player.y, 14, 0x9944ff, 0.5).setDepth(8);
-            this.tweens.add({ targets: this.soulDrainVisual, scaleX: 1.4, scaleY: 1.4, alpha: 0.2, yoyo: true, repeat: -1, duration: 400 });
-          }
-        } else {
-          if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
-            playerCtx.soulSacrifice();
-          }
-        }
-
-        // F: Consume
-        if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
-          playerCtx.soulConsume();
-        }
-
-        // Q: Undead Charge (costs 5 ghosts; Q+ always summons 2 knights for same cost)
-        if (Phaser.Input.Keyboard.JustDown(this.qKey)) {
-          if (this.hasUpgrade('q') && this.soulGhosts >= 5) {
-            this.soulGhosts -= 5;
-            if (this.soulGhostText) this.soulGhostText.setText(`👻 ${this.soulGhosts}`);
-            this.lastPlayerSummon = time;
-            this.spawnSoulGhost('knight', this.player.x - 20, this.player.y, 'player');
-            this.spawnSoulGhost('knight', this.player.x + 20, this.player.y, 'player');
-          } else if (this.soulGhosts >= 5) {
-            playerCtx.summonGhost('knight');
-          }
-        }
-
-        // E: Summon — hold mechanic (E+ adds corpse/necromancer tiers)
-        const eDown = this.eKey.isDown;
-        if (eDown && !this.soulEHolding) {
-          this.soulEHolding = true;
-          this.soulEHoldStart = time;
-          if (this.soulEHoldVisual) this.soulEHoldVisual.destroy();
-          this.soulEHoldVisual = this.add.circle(this.player.x, this.player.y - 36, 8, 0xccaaff, 0.6).setDepth(15);
-          this.tweens.add({ targets: this.soulEHoldVisual, scaleX: 1.5, scaleY: 1.5, alpha: 0.3, yoyo: true, repeat: -1, duration: 300 });
-        } else if (!eDown && this.soulEHolding) {
-          this.soulEHolding = false;
-          if (this.soulEHoldVisual) { this.soulEHoldVisual.destroy(); this.soulEHoldVisual = null; }
-          const holdMs = time - this.soulEHoldStart;
-          const hasEUpgrade = this.hasUpgrade('e');
-          // Determine tier by hold duration
-          if (holdMs < 200) {
-            // Quick tap: basic ghost, costs 1 ghost
-            playerCtx.summonGhost('basic');
-          } else if (hasEUpgrade && holdMs >= 5000 && this.soulGhosts >= 5) {
-            playerCtx.summonGhost('necromancer');
-          } else if (hasEUpgrade && holdMs >= 4000 && this.soulGhosts >= 4) {
-            playerCtx.summonGhost('corpse');
-          } else if (holdMs >= 2000 && this.soulGhosts >= 3) {
-            playerCtx.summonGhost('banshee');
-          } else if (holdMs >= 1000 && this.soulGhosts >= 2) {
-            playerCtx.summonGhost('ghoul');
-          } else {
-            playerCtx.summonGhost('basic');
-          }
-        }
-      }
+      this.soulKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'hunt') {
       if (!this.huntBeastForm && !this.huntHybridForm) {
         // ── Normal form ──────────────────────────────────────────
@@ -8907,6 +8374,8 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── NPC world effects (water) ─────────────────────────────────
     if (this.npcElement.id === 'water') {
+      // Online: advance the opponent's Siphon cone + our dehydration bar.
+      if (this.isOnline) this.waterKit.updateNpc(time, delta);
       if (time < this.npcSplashActiveUntil) {
         this.npcSplashDropAccum += delta;
         if (this.npcSplashDropAccum >= 150) {
@@ -8965,7 +8434,7 @@ export class ArenaScene extends Phaser.Scene {
           const dmg = p.kind === 'poison' ? 4 : p.kind === 'lava' ? 3 : p.kind === 'toxic' ? 4 : 2;
           const flashColor = p.kind === 'poison' ? 0x66cc22 : p.kind === 'lava' ? 0xff5522 : p.kind === 'toxic' ? 0x33cc22 : 0x0099ff;
           for (const target of _puddleTargets) {
-            target.takeDamage(dmg); this.spawnHitFlash(target.x, target.y, flashColor);
+            target.takeDamage(dmg, { source: p, sourceX: p.x, sourceY: p.y }); this.spawnHitFlash(target.x, target.y, flashColor);
             if (p.kind === 'lava' && target === this.player) {
               this.playerBurningUntil = Math.max(this.playerBurningUntil, time + 1500);
             }
@@ -9107,7 +8576,7 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Dodge (Space) ────────────────────────────────────────────
-    if (Phaser.Input.Keyboard.JustDown(this.spaceKey) && !this.dodgeOnCooldown && !this.isDodging && !this.nukeChanneling && time >= this.soulHauntStunUntil && !this.cardSluggishDisableDodge && !(this.elementId === 'rubber' && this.rubberKit.shouldSuppressUberGearDodge(mouseX, mouseY, time))) {
+    if (Phaser.Input.Keyboard.JustDown(this.spaceKey) && !this.dodgeOnCooldown && !this.isDodging && !this.nukeChanneling && !this.cardSluggishDisableDodge && !this.silenceKit.isPlayerGrabbed()) {
       this.dodgeOnCooldown = true;
       this.isDodging = true;
       this.player.isInvincible = true;
@@ -9144,18 +8613,6 @@ export class ArenaScene extends Phaser.Scene {
         this.echoKit.tryConsumeEyeForDodge(this.player.x, this.player.y, dx, dy);
       }
 
-      // Soul haunt dodge: ghostly explosion + scare NPC
-      if (this.elementId === 'soul' && this.soulHauntActive && this.hasUpgrade('click')) {
-        const boom = this.add.circle(this.player.x, this.player.y, 10, 0xccaaff, 0.7).setDepth(9);
-        this.tweens.add({ targets: boom, scaleX: 8, scaleY: 8, alpha: 0, duration: 400, onComplete: () => boom.destroy() });
-        if (Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y) <= 120) {
-          this.npc.takeDamage(5);
-          this.spawnHitFlash(this.npc.x, this.npc.y, 0xccaaff);
-        }
-        this.npcScaredUntil = time + 3000;
-        this.showFloatingText(this.npc.x, this.npc.y - 24, 'Scared!', '#ccaaff');
-      }
-
       // Card — Bomber: AoE explosion at dodge origin
       if (this.cardBomberStacks > 0) {
         const bx = this.player.x;
@@ -9171,7 +8628,7 @@ export class ArenaScene extends Phaser.Scene {
 
       this.time.delayedCall(280, () => {
         if (this.player.active) {
-          if (!this.soulHauntActive) this.player.isInvincible = false;
+          this.player.isInvincible = false;
           this.isDodging = false;
         }
       });
@@ -9180,7 +8637,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── NPC AI ───────────────────────────────────────────────────
     const aiState: NpcAiState = {
-      isLocked: this.npcNukeChanneling || this.npc.frozenUntil > time || this.metalKit.getNpcMetalTaseredUntil() > time || (this.elementId === 'silence' && time < this.npc.silencePossessedUntil) || this.magnetKit.getNailPullUntil() > time || (this.npc.magicChainBound && time < this.npc.magicChainBoundEnd) || time < this.silenceKit.getNpcYankUntil() || time < this.npcHawkDragUntil || (this.npcElement.id === 'rubber' && (this.rubberKit.isBounceFormActive('npc') || this.rubberKit.isBounceBackActive('npc') || this.rubberKit.isSpringActive('npc'))) || this.waterKit.isNpcSplit(),
+      isLocked: this.npcNukeChanneling || this.npc.frozenUntil > time || this.magnetKit.getNailPullUntil() > time || (this.npc.magicChainBound && time < this.npc.magicChainBoundEnd) || time < this.silenceKit.getNpcYankUntil() || time < this.npcHawkDragUntil || (this.npcElement.id === 'rubber' && this.rubberKit.isBounceFormActive('npc')) || this.waterKit.isNpcSplit() || this.npc.chickenUntil > Date.now() || this.techKit.isNpcDragged(),
       hasActiveGeyser: this.geysers.some((g) => g.owner === 'npc'),
       flameBodyActive: this.fireKit.isNpcFlameBodyActive(),
       projectiles: this.projectiles,
@@ -9199,7 +8656,9 @@ export class ArenaScene extends Phaser.Scene {
       npcGrowthHasNestOrClone: this.growthKit.hasNest('npc') || this.growthKit.hasClone('npc'),
       npcGrowthCancerActive: this.growthKit.isCancerActive('npc'),
       crystalNodeCount: this.crystalKit.getNpcCrystalNodeCount(),
-      npcSoulGhosts: this.npcSoulGhosts,
+      npcSoulCorpseCount: this.soulKit.corpseCount('npc'),
+      npcSoulAmalgamCount: this.soulKit.amalgamCount('npc'),
+      npcSoulGraveCount: this.soulKit.graveCount('npc'),
       npcHuntBeastForm: this.npcHuntBeastForm,
       npcHuntTrailActive: this.npcHuntTrailActive,
       playerBleeding: this.playerBleeding,
@@ -9211,11 +8670,17 @@ export class ArenaScene extends Phaser.Scene {
       npcTimeTimelessReady: this.timeKit.getNpcTimelessCharge() >= 10000,
       // Fate
       fateNpcHandTypes: this.npcElement.id === 'fate' ? this.fateKit.getNpcHandTypes() : undefined,
-      npcMetalArsenal: this.metalKit.getNpcMetalArsenal(),
-      deathWispCd: undefined,
-      npcSilenceSlasherActive: this.silenceKit.isNpcSlasherActive(),
-      npcSilenceSlasherHp: this.silenceKit.getNpcSlasherHp(),
-      npcSilenceHookConnected: this.silenceKit.isNpcHookConnected(),
+      npcMetalHasFlail: this.metalKit.hasFlail('npc'),
+      npcMetalFlailSwinging: this.metalKit.isFlailSwinging('npc'),
+      npcMetalBlood: this.metalKit.getBlood('npc'),
+      npcGunpowderArsenalSize: this.gunpowderKit.getArsenalSize('npc'),
+      targetInvisible: (this.elementId === 'silence' && this.silenceKit.isInvisible('player'))
+        || (this.elementId === 'technology' && (this.techKit.isPlayerSheltered() || this.techKit.isPlayerAdminInvisible())),
+      silenceStalkersPresent: this.elementId === 'silence' && this.silenceKit.stalkersAlive('player') > 0,
+      npcSilenceStealth: this.silenceKit.getStealth('npc'),
+      npcSilenceStalkers: this.silenceKit.stalkersAlive('npc'),
+      npcSilenceMatureStalker: this.silenceKit.getMatureStalkerPos('npc'),
+      npcSilenceInvisible: this.npcElement.id === 'silence' && this.silenceKit.isInvisible('npc'),
       echoAttachActive: this.npcElement.id === 'echo' ? this.echoKit.isNpcBatAttaching() : false,
       quantumMechanicActive: this.npcElement.id === 'quantum' ? this.quantumElementKit.isNpcMechanicActive() : false,
       quantumNhilegoActive: this.npcElement.id === 'quantum' ? this.quantumElementKit.isNpcNhilegoActive() : false,
@@ -9250,6 +8715,11 @@ export class ArenaScene extends Phaser.Scene {
     if (this.elementId === 'shadow') {
       this.shadowKit.updateAfterAI(time, delta);
     }
+    // Magic Mastery — Transmogrify chicken wander (must run after doAI so it wins).
+    // Runs for either side so an opponent's chicken bolt wanders our local player online.
+    if (this.elementId === 'magic' || this.npcElement.id === 'magic') {
+      this.magicKit.updateAfterAI(time, delta);
+    }
 
     // React to NPC casts that need ArenaScene state
     if (npcCastId === 'splash') {
@@ -9268,41 +8738,11 @@ export class ArenaScene extends Phaser.Scene {
     if (this.npcElement.id === 'sound') {
       this.soundKit.handleNpcCast(npcCastId, time);
     }
-    // Silence NPC reactions — delegate to kit
-    this.silenceKit.handleNpcCastId(npcCastId, time);
     // ── Ice per-frame ─────────────────────────────────────────────
     if (this.elementId === 'ice' || this.npcElement.id === 'ice') {
-      // Ward hex update (Ward triple perk for Soul) — unrelated to Ice, but historically
-      // nested inside this gate; preserved as-is so behavior doesn't shift during extraction.
-      for (let wi = this.soulWardHexes.length - 1; wi >= 0; wi--) {
-        const wh = this.soulWardHexes[wi];
-        if (time >= wh.expiresAt) {
-          wh.gfx.destroy();
-          if (wh.ownerAura) wh.ownerAura.destroy();
-          wh.summonAuras.forEach((sa) => sa.arc.destroy());
-          this.soulWardHexes.splice(wi, 1);
-          continue;
-        }
-        const fighter = wh.owner === 'player' ? this.player : this.npc;
-        const ownerInHex = Phaser.Math.Distance.Between(wh.x, wh.y, fighter.x, fighter.y) <= wh.radius;
-        if (ownerInHex && fighter.incomingDamageMultiplier > 0.5) {
-          fighter.incomingDamageMultiplier = 0.5;
-        } else if (!ownerInHex && fighter.incomingDamageMultiplier === 0.5) {
-          fighter.incomingDamageMultiplier = 1;
-        }
-        if (wh.ownerAura) {
-          wh.ownerAura.setPosition(fighter.x, fighter.y);
-          wh.ownerAura.setVisible(ownerInHex);
-        }
-        wh.summonAuras = wh.summonAuras.filter((sa) => sa.summon.sprite.active);
-        for (const sa of wh.summonAuras) {
-          sa.arc.setPosition(sa.summon.sprite.x, sa.summon.sprite.y);
-          const summonInHex = Phaser.Math.Distance.Between(wh.x, wh.y, sa.summon.sprite.x, sa.summon.sprite.y) <= wh.radius;
-          sa.arc.setVisible(summonInHex);
-        }
-      }
-
       this.iceKit.update(time, delta, this.elementId === 'ice');
+      // Online: opponent is ice — replay their Icicle Impale dash + track its icicle on us.
+      if (this.elementId !== 'ice' && this.npcElement.id === 'ice') this.iceKit.updateNpc(time);
     }
 
     // ── Frozen NPC override (ice element) ────────────────────────
@@ -9344,7 +8784,7 @@ export class ArenaScene extends Phaser.Scene {
       }
     }
 
-    // ── Generic toxic DOT (Death / Life / Void kits) ──────────────
+    // ── Generic toxic DOT (Death / Life kits) ──────────────
     for (const t of this.enemies) {
       if (!t.active) continue;
       if (t.toxicUntil > time) {
@@ -9382,208 +8822,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Soul per-frame ─────────────────────────────────────────────
     if (this.elementId === 'soul' || this.npcElement.id === 'soul') {
-      // Update ghost counter UI
-      if (this.soulGhostText) this.soulGhostText.setText(`👻 ${this.soulGhosts}`);
-
-      // ── Haunt mode (Click+ upgrade) ───────────────────────────
-      if (this.elementId === 'soul' && this.soulHauntActive) {
-        // Update haunt visual position
-        if (this.soulHauntVisual) this.soulHauntVisual.setPosition(this.player.x, this.player.y);
-        // Drain 1 ghost every 2 seconds
-        this.soulHauntDrainAccum += delta;
-        if (this.soulHauntDrainAccum >= 2000) {
-          this.soulHauntDrainAccum -= 2000;
-          this.soulGhosts--;
-          if (this.soulGhostText) this.soulGhostText.setText(`👻 ${this.soulGhosts}`);
-          if (this.soulGhosts <= 0) {
-            // Auto-exit haunt, no stun (ran out of souls)
-            this.soulHauntActive = false;
-            this.player.isInvincible = false;
-            this.player.setAlpha(1);
-            if (this.soulHauntVisual) { this.soulHauntVisual.destroy(); this.soulHauntVisual = null; }
-            this.showFloatingText(this.player.x, this.player.y - 20, 'No Souls!', '#ccaaff');
-          }
-        }
-      }
-
-      // ── R+ drain hold logic ────────────────────────────────────
-      if (this.elementId === 'soul' && this.soulDrainHolding) {
-        if (this.soulDrainVisual) this.soulDrainVisual.setPosition(this.player.x, this.player.y);
-        const holdMs = time - this.soulDrainHoldStart;
-        // Drain 15 HP over 1.5s (10 HP/s), gain 1 ghost every 1.5s
-        const tickInterval = 1500;
-        if (time - this.soulDrainLastTick >= tickInterval) {
-          this.soulDrainLastTick = time;
-          const drain = 15;
-          this.player.applySelfDamage(drain);
-          this.soulGhosts++;
-          if (this.soulGhostText) this.soulGhostText.setText(`👻 ${this.soulGhosts}`);
-          this.showFloatingText(this.player.x, this.player.y - 20, '+1 👻', '#9944ff');
-          // After 5s, start accumulating explosion damage from each drain tick
-          if (holdMs >= 5000) {
-            this.soulDrainExplosionDmg += drain;
-          }
-        }
-        // Show explosion charge indicator after 5s
-        if (holdMs >= 5000 && this.soulDrainVisual) {
-          const chargeFrac = Math.min(1, (holdMs - 5000) / 4000);
-          this.soulDrainVisual.setRadius(14 + chargeFrac * 20);
-        }
-      }
-
-      // ── F+ corpse armor — remove when shield gone ──────────────
-      if (this.elementId === 'soul' && this.soulCorpseArmorActive) {
-        if (this.player.shieldHp <= 0) {
-          this.soulCorpseArmorActive = false;
-          if (this.soulCorpseArmorVisual) { this.soulCorpseArmorVisual.destroy(); this.soulCorpseArmorVisual = null; }
-        } else if (this.soulCorpseArmorVisual) {
-          this.soulCorpseArmorVisual.setPosition(this.player.x, this.player.y);
-        }
-      }
-
-      // ── F+ banshee damage resistance (25% DR) ────────────────
-      if (this.elementId === 'soul') {
-        if (time < this.soulBansheeResistUntil) {
-          // Only set if not already reduced by this buff
-          if (this.player.incomingDamageMultiplier > 0.75) {
-            this.player.incomingDamageMultiplier = 0.75;
-          }
-        } else if (this.soulBansheeResistUntil > 0 && this.player.incomingDamageMultiplier === 0.75) {
-          // Restore when buff expires (only if we set it)
-          this.player.incomingDamageMultiplier = 1;
-        }
-      }
-
-      // ── NPC scared (fleeing) behavior ─────────────────────────
-      if (this.elementId === 'soul' && time < this.npcScaredUntil) {
-        const dx = this.npc.x - this.player.x;
-        const dy = this.npc.y - this.player.y;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const nBody = this.npc.body as Phaser.Physics.Arcade.Body;
-        nBody.setVelocity((dx / dist) * this.npc.speed * this.npcSpeedMult * 1.1, (dy / dist) * this.npc.speed * this.npcSpeedMult * 1.1);
-      }
-
-      // ── E hold visual position + color by tier ─────────────────
-      if (this.soulEHolding && this.soulEHoldVisual) {
-        const holdMs = time - this.soulEHoldStart;
-        const hasEUpgrade = this.hasUpgrade('e');
-        const maxTierMs = hasEUpgrade ? 5000 : 2000;
-        const holdFrac = Math.min(1, holdMs / maxTierMs);
-        this.soulEHoldVisual.setPosition(this.player.x, this.player.y - 36);
-        this.soulEHoldVisual.setRadius(8 + holdFrac * 14);
-        let tierColor = 0xccaaff;
-        if (hasEUpgrade && holdMs >= 5000)      tierColor = 0xffdd00; // necromancer: gold
-        else if (hasEUpgrade && holdMs >= 4000)  tierColor = 0x88aa66; // corpse: green
-        else if (holdMs >= 2000)                 tierColor = 0xffffff; // banshee
-        else if (holdMs >= 1000)                 tierColor = 0x440077; // ghoul
-        this.soulEHoldVisual.setFillStyle(tierColor, 0.6);
-      }
-
-      // ── Spirit Propel orbs — player ────────────��───────────────
-      for (let i = this.playerSoulOrbs.length - 1; i >= 0; i--) {
-        const orb = this.playerSoulOrbs[i];
-        if (time >= orb.expiresAt) {
-          orb.sprite.destroy();
-          this.playerSoulOrbs.splice(i, 1);
-          continue;
-        }
-        orb.x += orb.vx * delta / 1000;
-        orb.y += orb.vy * delta / 1000;
-        orb.sprite.setPosition(orb.x, orb.y);
-        if (time - orb.lastContactTick >= 1000) {
-          for (const t of this.enemies) {
-            if (!t.active || t.hp <= 0) continue;
-            if (Phaser.Math.Distance.Between(orb.x, orb.y, t.x, t.y) <= 34) {
-              t.takeDamage(10);
-              this.spawnHitFlash(t.x, t.y, 0xccaaff);
-              this.soulGhosts++;
-              orb.lastContactTick = time;
-              this.showFloatingText(this.player.x, this.player.y - 30, '+1 👻', '#ccaaff');
-              break;
-            }
-          }
-        }
-      }
-
-      // ── Spirit Propel orbs — NPC ───────────────────────────────
-      for (let i = this.npcSoulOrbs.length - 1; i >= 0; i--) {
-        const orb = this.npcSoulOrbs[i];
-        if (time >= orb.expiresAt) {
-          orb.sprite.destroy();
-          this.npcSoulOrbs.splice(i, 1);
-          continue;
-        }
-        orb.x += orb.vx * delta / 1000;
-        orb.y += orb.vy * delta / 1000;
-        orb.sprite.setPosition(orb.x, orb.y);
-        if (time - orb.lastContactTick >= 1000) {
-          if (Phaser.Math.Distance.Between(orb.x, orb.y, this.player.x, this.player.y) <= 34) {
-            this.player.takeDamage(10);
-            this.spawnHitFlash(this.player.x, this.player.y, 0x9966cc);
-            this.npcSoulGhosts++;
-            orb.lastContactTick = time;
-          }
-        }
-      }
-
-      // ── Soul summons — player ──────────────────────────────────
-      for (let i = this.playerSoulSummons.length - 1; i >= 0; i--) {
-        const gs = this.playerSoulSummons[i];
-        if (gs.hp <= 0) { gs.sprite.destroy(); this.playerSoulSummons.splice(i, 1); continue; }
-        // Find closest enemy to target
-        let closestEnemy: Fighter | null = null;
-        let closestDist = Infinity;
-        for (const e of this.enemies) {
-          if (!e.active || e.hp <= 0) continue;
-          const dist = Phaser.Math.Distance.Between(gs.sprite.x, gs.sprite.y, e.x, e.y);
-          if (dist < closestDist) {
-            closestDist = dist;
-            closestEnemy = e;
-          }
-        }
-        if (closestEnemy) this.updateSoulSummon(gs, closestEnemy, time, delta, true);
-      }
-
-      // ── Q+ knight collision check ──────────────────────────────
-      if (this.elementId === 'soul' && this.hasUpgrade('q')) {
-        const knights = this.playerSoulSummons.filter((s) => s.type === 'knight');
-        for (let a = 0; a < knights.length; a++) {
-          for (let b = a + 1; b < knights.length; b++) {
-            const ka = knights[a], kb = knights[b];
-            if (Phaser.Math.Distance.Between(ka.sprite.x, ka.sprite.y, kb.sprite.x, kb.sprite.y) <= 60) {
-              // Explosion AOE
-              const ex = (ka.sprite.x + kb.sprite.x) / 2;
-              const ey = (ka.sprite.y + kb.sprite.y) / 2;
-              const boom = this.add.circle(ex, ey, 10, 0xffaacc, 0.8).setDepth(9);
-              this.tweens.add({ targets: boom, scaleX: 8, scaleY: 8, alpha: 0, duration: 400, onComplete: () => boom.destroy() });
-              for (const t of this.enemies) {
-                if (!t.active || t.hp <= 0) continue;
-                if (Phaser.Math.Distance.Between(ex, ey, t.x, t.y) <= 80) {
-                  t.takeDamage(20);
-                  this.spawnHitFlash(t.x, t.y, 0xffaacc);
-                }
-              }
-              // Each knight gains +25% speed (stacking)
-              ka.speedMult += 0.25;
-              kb.speedMult += 0.25;
-              this.showFloatingText(ex, ey - 20, 'Collision!', '#ffaacc');
-              // Bounce away from each other to prevent repeated triggers
-              const ang = Math.atan2(kb.sprite.y - ka.sprite.y, kb.sprite.x - ka.sprite.x);
-              ka.dx = -Math.cos(ang);
-              ka.dy = -Math.sin(ang);
-              kb.dx = Math.cos(ang);
-              kb.dy = Math.sin(ang);
-            }
-          }
-        }
-      }
-
-      // ── Soul summons — NPC ─────────────────────────────────────
-      for (let i = this.npcSoulSummons.length - 1; i >= 0; i--) {
-        const gs = this.npcSoulSummons[i];
-        if (gs.hp <= 0) { gs.sprite.destroy(); this.npcSoulSummons.splice(i, 1); continue; }
-        this.updateSoulSummon(gs, this.player, time, delta, false);
-      }
+      this.soulKit.update(time, delta);
     }
 
     // ── Hunt per-frame ───────────────────────────────────────────
@@ -10449,19 +9688,14 @@ export class ArenaScene extends Phaser.Scene {
       this.plasmaKit.update(time, delta);
     }
 
-    // ── Death per-frame ──────────────────────────────────────────
-    if (this.elementId === 'death' || this.npcElement.id === 'death') {
-      this.deathKit.update(time, delta);
+    // ── Gunpowder per-frame ──────────────────────────────────────
+    if (this.elementId === 'gunpowder' || this.npcElement.id === 'gunpowder') {
+      this.gunpowderKit.update(time, delta);
     }
 
     // ── Growth per-frame ──────────────────────────────────────────
     if (this.elementId === 'growth' || this.npcElement.id === 'growth') {
       this.growthKit.update(time, delta);
-    }
-
-    // ── Void per-frame ───────────────────────────────────────────
-    if (this.elementId === 'void' || this.npcElement.id === 'void') {
-      this.voidKit.update(time, delta);
     }
 
     // ── Rubber per-frame ─────────────────────────────────────────
@@ -10497,6 +9731,8 @@ export class ArenaScene extends Phaser.Scene {
         this.elementId === 'oil',
         this.npcElement.id === 'oil',
         mouseX, mouseY);
+      // Online: opponent is oil — run their replayed Turret against our local player.
+      if (this.npcElement.id === 'oil') this.oilKit.updateNpcTurret(time, delta);
     }
 
     // ── Fate per-frame ───────────────────────────────────────────
@@ -10509,6 +9745,7 @@ export class ArenaScene extends Phaser.Scene {
     // Air Mastery tornado holds captured enemies by position, so it has to run after
     // NPC AI and husk movement have written their velocities for this frame.
     if (this.elementId === 'air') this.airKit.update(time, delta);
+    else if (this.npcElement.id === 'air') this.airKit.updateNpc(time, delta);
 
     // ── Wind Trap — player's trap constrains NPC ─────────────────
     if (time < this.playerWindTrapExpiry) {
@@ -10578,7 +9815,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Puddle slow (post-AI) ─────────────────────────────────────
     if (this.puddles.length > 0) {
-      const playerInPuddle = this.puddles.some(
+      const playerInPuddle = !this.player.levitating && this.puddles.some(
         (p) => p.kind !== 'stalagmite' && p.owner === 'npc' && Phaser.Math.Distance.Between(p.x, p.y, this.player.x, this.player.y) <= p.radius,
       );
       if (playerInPuddle) {
@@ -10587,7 +9824,7 @@ export class ArenaScene extends Phaser.Scene {
         pb.velocity.y *= 0.5;
       }
 
-      const npcInPuddle = this.puddles.some(
+      const npcInPuddle = !this.npc.levitating && this.puddles.some(
         (p) => p.kind !== 'stalagmite' && p.owner === 'player' && Phaser.Math.Distance.Between(p.x, p.y, this.npc.x, this.npc.y) <= p.radius,
       );
       if (npcInPuddle) {
@@ -10614,7 +9851,7 @@ export class ArenaScene extends Phaser.Scene {
       const wb = this.physics.world.bounds;
       const allEnemies: Fighter[] = [this.npc];
       for (const e of allEnemies) {
-        if (!e.active) continue;
+        if (!e.active || this.silenceKit.isCarriedByVulture(e)) continue;
         let clamped = false;
         if (e.x < wb.x) { e.x = wb.x; clamped = true; }
         else if (e.x > wb.right) { e.x = wb.right; clamped = true; }
@@ -10658,6 +9895,8 @@ export class ArenaScene extends Phaser.Scene {
         entry.fill.setSize(entry.maxWidth * this.gravityKit.getStarfallCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'crystal-shredder') {
         entry.fill.setSize(entry.maxWidth * this.crystalKit.getShredderCooldownRatio(time), entry.fill.height);
+      } else if (entry.abilityId === 'transmogrify') {
+        entry.fill.setSize(entry.maxWidth * this.magicKit.getTransmogrifyCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'flame-body') {
         entry.fill.setSize(this.fireKit.isFlameBodyActive() ? entry.maxWidth : 0, entry.fill.height);
       } else if (entry.abilityId === 'splash') {
@@ -10719,36 +9958,6 @@ export class ArenaScene extends Phaser.Scene {
       }
     }
 
-  }
-
-  private spawnWardHex(cx: number, cy: number, consumedCount: number, owner: 'player' | 'npc'): void {
-    const radius = 150;
-    const duration = 2000 * consumedCount;
-    const gfx = this.add.graphics().setDepth(5);
-    const points: Phaser.Geom.Point[] = [];
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * Math.PI * 2 - Math.PI / 6;
-      points.push(new Phaser.Geom.Point(cx + Math.cos(a) * radius, cy + Math.sin(a) * radius));
-    }
-    gfx.lineStyle(3, 0xccbb55, 0.9);
-    gfx.fillStyle(0xccbb55, 0.08);
-    gfx.beginPath();
-    gfx.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < 6; i++) gfx.lineTo(points[i].x, points[i].y);
-    gfx.closePath();
-    gfx.strokePath();
-    gfx.fillPath();
-    this.tweens.add({ targets: gfx, alpha: 0.3, yoyo: true, repeat: -1, duration: 600 });
-    const ownerSummons = owner === 'player' ? this.playerSoulSummons : this.npcSoulSummons;
-    const summonAuras = ownerSummons.map((s) => {
-      const arc = this.add.circle(s.sprite.x, s.sprite.y, 14, 0xccbb55, 0.35).setDepth(4);
-      this.tweens.add({ targets: arc, alpha: 0.1, yoyo: true, repeat: -1, duration: 500 });
-      return { arc, summon: s };
-    });
-    const ownerAura = this.add.circle(cx, cy, 18, 0xccbb55, 0.35).setDepth(4);
-    this.tweens.add({ targets: ownerAura, alpha: 0.1, yoyo: true, repeat: -1, duration: 500 });
-    this.soulWardHexes.push({ gfx, expiresAt: this.time.now + duration, x: cx, y: cy, radius, owner, ownerAura, summonAuras });
-    this.showFloatingText(cx, cy - 30, `🔶 WARD x${consumedCount}`, '#ccbb55');
   }
 
   /**
@@ -10830,15 +10039,6 @@ export class ArenaScene extends Phaser.Scene {
     // the generic damage path instead.
     if (isNpc && proj.texture.key === 'proj-time-lasso-orb') {
       this.timeKit.onLassoHitNpc(proj);
-      return;
-    }
-    // Silence possess eye / hook: delegate to kit (possession targets the npc;
-    // against a husk these fall through to plain damage)
-    if (isNpc && (proj.texture.key === 'proj-silence-eye' || proj.texture.key === 'proj-silence-hook')) {
-      if (proj.texture.key === 'proj-silence-eye') this.silenceKit.onSilenceEyeHitEnemy(proj, 'player');
-      else this.silenceKit.onSilenceHookHitEnemy(proj, 'player');
-      proj.setActive(false).setVisible(false);
-      (proj.body as Phaser.Physics.Arcade.Body).stop();
       return;
     }
     // Pressure Dagger: pierce through all defenses and enemies; kit owns lifetime
@@ -10930,10 +10130,6 @@ export class ArenaScene extends Phaser.Scene {
     if ((proj as any).fateInfectDps) {
       this.fateKit.applyPoison(target, (proj as any).fateInfectDps, this.time.now);
     }
-    // Light Fallen Angel dagger: apply disarm on hit
-    if ((proj as any).isFallenAngelDagger && this.elementId === 'light') {
-      this.lightKit.onFallenAngelDaggerHit(target, this.time.now);
-    }
     // Magic (player) thorn vine hit
     if ((proj as any).isMagicThornVine && (proj as any).thornVineOwner === 'player') {
       this.magicKit.onThornVineHit(target, 'player');
@@ -10956,6 +10152,10 @@ export class ArenaScene extends Phaser.Scene {
     // Acid Purge ball: apply the stat-strip status on top of the generic damage above
     if (proj.texture.key === 'proj-purge') {
       this.slimeKit.onPurgeHit(target, proj, this.time.now);
+    }
+    // Corrosive Bite: Poison Whip hits also strip max HP equal to the damage dealt
+    if (proj.texture.key === 'proj-acid-whip' && this.hasUpgrade('click')) {
+      target.reduceMaxHp(_npcDmg);
     }
     proj.setActive(false).setVisible(false);
     (proj.body as Phaser.Physics.Arcade.Body).stop();
@@ -11001,6 +10201,8 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private dealAoeDamageFromOwner(cx: number, cy: number, radius: number, damage: number, owner: 'player' | 'npc'): void {
+    // Any AoE can wipe silence stalkers caught in the blast.
+    this.silenceKit.notifyAoeDamage(cx, cy, radius, owner);
     if (owner === 'player') {
       for (const t of this.enemies) {
         if (!t.active || t.hp <= 0) continue;

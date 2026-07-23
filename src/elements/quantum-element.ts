@@ -8,8 +8,8 @@ export const quantumElement: Element = {
   abilities: [
     {
       id: 'quantum-wave',
-      name: 'Wave Reducer',
-      description: 'Click: baseline sine wave for 2s. Hold to charge — release in yellow/green zone for higher frequency and amplitude.',
+      name: 'Molecular Cutter',
+      description: 'Click: hurl a dagger that plants where you aim (8 dmg). Up to 3 can be out; the next click recalls them all — a dagger that hits on the way back deals 12. Daggers take your current form\'s colour.',
       displayKey: 'Click',
       cooldown: 0,
       cast(ctx) { ctx.quantumWave(ctx.targetX, ctx.targetY); },
@@ -17,7 +17,7 @@ export const quantumElement: Element = {
     {
       id: 'chaos-control',
       name: 'Chaos Control',
-      description: 'Entropy: circle telegraph, then AoE + 3 rock projectiles. Order: cone telegraph, then damage + slow 15% for 3s.',
+      description: 'Entropy (red): a circle blast that enlarges the enemy and makes it take +20% damage for 3s. Order (blue): a 3s cone that slows enemies 80% and deals 8/s — enemy projectiles inside it stop and convert into Weak HP for you. Mechanic form fires both.',
       displayKey: 'E',
       cooldown: 5000,
       cast(ctx) { ctx.quantumChaosControl(ctx.targetX, ctx.targetY); },

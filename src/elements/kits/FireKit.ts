@@ -19,6 +19,8 @@ interface Heatwave {
   cos: number; sin: number;
   travelled: number;
   hit: Set<Fighter>;
+  /** 'player' waves expose enemies; 'npc' waves (online replay) expose the local player. */
+  owner: 'player' | 'npc';
 }
 
 interface AlcoholPuddle {
@@ -50,6 +52,8 @@ export interface FireArenaApi {
   readonly masteryActive: boolean;
   /** Mastery enhancement id bound over the given ability slot, or null if that slot is unchanged. */
   masteryBindFor(slot: string): string | null;
+  /** Online: broadcast a bindable mastery cast so the peer's sim replays it. */
+  broadcastMasteryCast(enhId: string): void;
   lockCaster(durationMs: number): void;
   hasUpgrade(slot: string): boolean;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
@@ -165,7 +169,7 @@ export class FireKit {
     this.heatwaves = [];
   }
 
-  update(time: number, delta: number, isPlayerFire: boolean, _isNpcFire: boolean): void {
+  update(time: number, delta: number, isPlayerFire: boolean, isNpcFire: boolean): void {
     const { player, npc, scene } = this.arena;
 
     if (isPlayerFire) {
@@ -248,6 +252,11 @@ export class FireKit {
       }
 
       // Fire Mastery — Heatwave projectiles and the Exposed / molten fire chain
+      this.updateHeatwaves(time, delta);
+      this.updateExposedAndMolten(time, delta);
+    } else if (isNpcFire) {
+      // Online: opponent is fire. Advance their replayed Heatwaves and keep the
+      // Exposed/molten upkeep running so their debuff lands on our local fighter.
       this.updateHeatwaves(time, delta);
       this.updateExposedAndMolten(time, delta);
     }
@@ -528,7 +537,14 @@ export class FireKit {
   private tryCastHeatwave(time: number, mouseX: number, mouseY: number): void {
     if (time - this.heatwaveLastCastAt < HEATWAVE_COOLDOWN_MS) return;
     this.heatwaveLastCastAt = time;
-    this.castHeatwave(mouseX, mouseY);
+    this.castHeatwave(mouseX, mouseY, 'player');
+    // Online: replay on the opponent's sim so their (locally-owned) fighter is Exposed.
+    this.arena.broadcastMasteryCast('heatwave');
+  }
+
+  /** Online replay: the remote fire player cast Heatwave — send a wave from the npc replica. */
+  doNpcHeatwave(tx: number, ty: number): void {
+    this.castHeatwave(tx, ty, 'npc');
   }
 
   /** 0–1 cooldown fill for the Heatwave HUD card. */
@@ -537,11 +553,12 @@ export class FireKit {
   }
 
   /** Fire Mastery — Heatwave: a piercing yellow rectangle that deals no damage but Exposes everything it passes through. */
-  private castHeatwave(mouseX: number, mouseY: number): void {
-    const { player, scene } = this.arena;
-    const angle = Math.atan2(mouseY - player.y, mouseX - player.x);
+  private castHeatwave(aimX: number, aimY: number, owner: 'player' | 'npc'): void {
+    const { player, npc, scene } = this.arena;
+    const origin = owner === 'player' ? player : npc;
+    const angle = Math.atan2(aimY - origin.y, aimX - origin.x);
     const rect = scene.add.rectangle(
-      player.x, player.y,
+      origin.x, origin.y,
       HEATWAVE_HALF_THICKNESS * 2, HEATWAVE_HALF_WIDTH * 2,
       0xffdd33, 0.55,
     ).setDepth(6);
@@ -550,13 +567,14 @@ export class FireKit {
 
     this.heatwaves.push({
       rect,
-      x: player.x, y: player.y,
+      x: origin.x, y: origin.y,
       cos: Math.cos(angle), sin: Math.sin(angle),
       travelled: 0,
       hit: new Set(),
+      owner,
     });
 
-    this.arena.showFloatingText(player.x, player.y - 28, '☀️ Heatwave!', '#ffdd33');
+    this.arena.showFloatingText(origin.x, origin.y - 28, '☀️ Heatwave!', '#ffdd33');
   }
 
   /** Advances every live Heatwave and Exposes any enemy inside its rectangle. Pierces — no despawn on hit. */
@@ -570,7 +588,8 @@ export class FireKit {
       w.travelled += step;
       w.rect.setPosition(w.x, w.y);
 
-      for (const t of this.arena.enemies) {
+      const targets = w.owner === 'npc' ? [this.arena.player] : this.arena.enemies;
+      for (const t of targets) {
         if (!t.active || t.hp <= 0 || w.hit.has(t)) continue;
         const dx = t.x - w.x;
         const dy = t.y - w.y;
@@ -603,7 +622,8 @@ export class FireKit {
   private updateExposedAndMolten(time: number, delta: number): void {
     const { scene } = this.arena;
 
-    for (const t of this.arena.enemies) {
+    // Player is included because an online opponent's Heatwave Exposes our own fighter.
+    for (const t of [this.arena.player, ...this.arena.enemies]) {
       if (!t.active) continue;
 
       // Exposed icon
@@ -798,7 +818,7 @@ export class FireKit {
             if (!t.active || t.hp <= 0) continue;
             if (Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) <= p.radius) {
               t.oilyBurnUntil = Math.max(t.oilyBurnUntil, time + 5000);
-              t.takeDamage(3);
+              t.takeDamage(3, { source: p, sourceX: p.x, sourceY: p.y });
               this.arena.spawnHitFlash(t.x, t.y, 0xff4400);
             }
           }

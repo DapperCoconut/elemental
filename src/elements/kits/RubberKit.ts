@@ -16,37 +16,55 @@ const PUNCH_SNAP_MS = 100;     // retract time
 const PUNCH_FIST_RADIUS = 40;  // hit detection radius from fist tip
 
 const SLING_MAX_PULL = 130;
+const SLING_MIN_PULL_TO_FIRE = 20; // below this, releasing just lets the band go slack instead of launching
 const SLING_MIN_SPEED = 400;
 const SLING_MAX_SPEED = 860;
 const SLING_CONTACT_DMG = 28;
-const SLING_FLY_MS = 650;
+const SLING_FLY_MS = 650; // NPC's simplified dash-attack contact window — unrelated to the player's wall launch below
+const SLING_LAUNCH_MAX_MS = 3000; // Player launch: hard cap; flight normally ends earlier once the player physically stops at the wall
 const SLING_ARM_ANGLE = Math.PI / 4; // 45° each side of cursor
 
 const BOUNCE_FORM_MS = 3000;
 const BOUNCE_REFLECT_RADIUS = 50;
 const BOUNCE_REFLECT_SPEED = 1.6;
 
-const SPRING_REACH = 115;
-const SPRING_EXTEND_MS = 1000;
-const SPRING_SWEEP_MS = 180;
-const SPRING_LINGER_MS = 500;
-const SPRING_HIT_RADIUS = 30;
-const SPRING_DMG = 25;
-const SPRING_STUN_MS = 1000;
-const SPRING_SIZE_MULT = 1.25;
-const SPRING_SIZE_MS = 5000;
-
-const BOUNCE_BACK_MS = 5000;
-const BOUNCE_BACK_SPEED = 0.2;
-const BOUNCE_BACK_SIZE = 1.2;
-
-const BARRAGE_INTERVAL_MS = 120;
-const BARRAGE_BASE_MS = 2000;
-const BARRAGE_REACH = 110;
-const BARRAGE_DMG = 5;
-const GEAR_MS = 15000;
 const FIREBALL_DOT_BASE_MS = 2000;
 const FIREBALL_DOT_BONUS_MS = 1500;
+
+// Rubber Banding (F)
+const BAND_LIFETIME_MS = 12000;
+const BAND_LIFETIME_PLUS_MS = 18000; // F+
+const BAND_COMFORT_RADIUS = 170;
+const BAND_MAX_STRETCH = 420;
+const BAND_MIN_SPEED_MULT = 0.3;
+const BAND_HOLD_THRESHOLD_MS = 180;
+const BAND_RECALL_DURATION_MS = 220;
+const BAND_RECALL_CONTACT_DMG = 15; // F+
+const BAND_RECALL_HIT_RADIUS = 34;
+const BAND_ANCHOR_MIN_SPEED = 500;
+const BAND_ANCHOR_MAX_SPEED = 1500;
+const BAND_ANCHOR_MAX_OVERSHOOT = 260;
+const BAND_ANCHOR_RADIUS = 14;
+const BAND_ANCHOR_MIN_FLY_DMG = 5;
+const BAND_ANCHOR_MAX_FLY_DMG = 30; // at max tension
+const BAND_ANCHOR_HIT_RADIUS = BAND_ANCHOR_RADIUS + 22;
+const BAND_SMASH_RADIUS = BAND_ANCHOR_RADIUS + PUNCH_FIST_RADIUS;
+const NPC_BAND_AUTO_RECALL_CHECK_MS = 900;
+
+// Rubberage (Q)
+const RUBBERAGE_COUNT = 15;
+const RUBBERAGE_COUNT_PLUS = 25; // Q+
+const RUBBERAGE_DURATION_MS = 10000;
+const RUBBERAGE_DURATION_PLUS_MS = 14000; // Q+
+const RUBBERAGE_DMG = 5;
+const RUBBERAGE_DMG_PLUS = 8; // Q+
+const RUBBERAGE_RADIUS = 7;
+const RUBBERAGE_FIGHTER_RADIUS = 20;
+const RUBBERAGE_BASE_SPEED = 240;
+const RUBBERAGE_MAX_SPEED = 820;
+const RUBBERAGE_SPEED_GROWTH_PER_MS = 0.00045;
+const RUBBERAGE_HIT_COOLDOWN_MS = 350;
+const RUBBERAGE_KNOCKBACK = 620;
 
 // ── Arena API ─────────────────────────────────────────────────────────────────
 
@@ -74,6 +92,15 @@ export interface RubberArenaApi {
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
   buildNpcContext(x: number, y: number): CastContext;
+}
+
+interface RubberageBall {
+  gfx: Phaser.GameObjects.Arc;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  lastHitAt: number;
 }
 
 // ── RubberKit ─────────────────────────────────────────────────────────────────
@@ -112,7 +139,8 @@ export class RubberKit {
   private slingState: 'idle' | 'pulling' | 'flying' = 'idle';
   private slingAnchorLX = 0; private slingAnchorLY = 0;
   private slingAnchorRX = 0; private slingAnchorRY = 0;
-  private slingCursorAngle = 0;
+  /** Rest position (where E was pressed) — the reference point the player is pulled away from and launches back through. */
+  private slingRestX = 0; private slingRestY = 0;
   private slingGfx: Phaser.GameObjects.Graphics | null = null;
   private slingFlyEnd = 0;
   private slingHitThisFlight: Set<Fighter> = new Set();
@@ -131,36 +159,6 @@ export class RubberKit {
   private npcBounceFormEnd = 0;
   private npcBounceFormVisual: Phaser.GameObjects.Rectangle | null = null;
 
-  // Spring Slam (player)
-  private springPhase: 'idle' | 'extend' | 'sweep' | 'linger' = 'idle';
-  private springPhaseEnd = 0;
-  private springSweepStart = 0;
-  private springCursorAngle = 0;
-  private springGfx: Phaser.GameObjects.Graphics | null = null;
-  private springLeftHit: Set<Fighter> = new Set();
-  private springRightHit: Set<Fighter> = new Set();
-  private springBothApplied: Set<Fighter> = new Set();
-
-  // Spring Slam (NPC)
-  private npcSpringPhase: 'idle' | 'extend' | 'sweep' | 'linger' = 'idle';
-  private npcSpringPhaseEnd = 0;
-  private npcSpringSweepStart = 0;
-  private npcSpringCursorAngle = 0;
-  private npcSpringGfx: Phaser.GameObjects.Graphics | null = null;
-  private npcSpringLeftHit: Set<Fighter> = new Set();
-  private npcSpringRightHit: Set<Fighter> = new Set();
-  private npcSpringBothApplied: Set<Fighter> = new Set();
-
-  // Bounce Back (player)
-  private bounceBackActive = false;
-  private bounceBackEnd = 0;
-  private bounceBackPrevAbsorber: ((amount: number) => boolean) | null = null;
-
-  // Bounce Back (NPC)
-  private npcBounceBackActive = false;
-  private npcBounceBackEnd = 0;
-  private npcBounceBackPrevAbsorber: ((amount: number) => boolean) | null = null;
-
   // Vulcanization
   private vulcUnlocked = false;
   private vulcCharging = false;
@@ -168,19 +166,6 @@ export class RubberKit {
   private vulcPlayerCdMultBase = 1;
   private vulcCdMultCaptured = false;
   private vulcSlowTexts: Phaser.GameObjects.Text[] = [];
-
-  // Rubber Gear (Q+)
-  private rubberGearActive = false;
-  private rubberGearEnd = 0;
-  private rubberGearPrevAbsorber: ((amount: number) => boolean) | null = null;
-  private rubberGearSteamAccum = 0;
-
-  // Barrage (F+)
-  private barrageActive = false;
-  private barrageEnd = 0;
-  private barrageNext = 0;
-  private fKeyWasDown = false;
-  private fHoldStart = 0;
 
   // Fireball Sling (E+)
   private fireballFlight = false;
@@ -192,35 +177,47 @@ export class RubberKit {
   private npcFireDotTickAccum = 0;
   private npcFireDotAura: Phaser.GameObjects.Arc | null = null;
 
-  // ── Uber-Gear (perk) ──────────────────────────────────────────────────────
-  private uberGearActive = false;
-  private uberGearEnd = 0;
-  private uberGearSteamAccum = 0;
+  // ── Rubber Banding (player) ──────────────────────────────────────────────
+  private bandActive = false;
+  private bandAnchorX = 0; private bandAnchorY = 0;
+  private bandCreatedAt = 0;
+  private bandLifetimeMs = BAND_LIFETIME_MS;
+  private bandReinforced = false;
+  private bandGfx: Phaser.GameObjects.Graphics | null = null;
+  private bandFKeyWasDown = false;
+  private bandFHoldStart = 0;
+  private bandPullTriggeredThisPress = false;
+  private bandAnchorFlying = false;
+  private bandAnchorFlyDirX = 0; private bandAnchorFlyDirY = 0;
+  private bandAnchorFlySpeed = 0;
+  private bandAnchorFlyEnd = 0;
+  private bandAnchorFlyTension = 0;
+  private bandAnchorFlyHitSet: Set<Fighter> = new Set();
+  private bandRecalling = false;
+  private bandRecallFromX = 0; private bandRecallFromY = 0;
+  private bandRecallToX = 0; private bandRecallToY = 0;
+  private bandRecallStart = 0;
 
-  // Uber-Gear: Jump Rope (E replacement)
-  private uberGearJumpRopeActive = false;
-  private uberGearJumpRopeCharges = 0;
-  private uberGearJumpRopeEndsAt = 0;
-  private uberGearJumpRopeGfx: Phaser.GameObjects.Graphics | null = null;
-  private uberGearJumpRopeAy = 0; // y level of the rope (x spans full width)
-  // Speed/damage boost from jump rope charges (stacking duration)
-  private uberGearJumpRopeBoostUntil = 0;
+  // Rubber Banding (NPC — simplified: auto snap-back when overstretched)
+  private npcBandActive = false;
+  private npcBandAnchorX = 0; private npcBandAnchorY = 0;
+  private npcBandCreatedAt = 0;
+  private npcBandLifetimeMs = BAND_LIFETIME_MS;
+  private npcBandGfx: Phaser.GameObjects.Graphics | null = null;
+  private npcBandNextAutoCheck = 0;
+  private npcBandRecalling = false;
+  private npcBandRecallFromX = 0; private npcBandRecallFromY = 0;
+  private npcBandRecallToX = 0; private npcBandRecallToY = 0;
+  private npcBandRecallStart = 0;
 
-  // Uber-Gear: Squish (Barrage hit effect)
-  private uberGearSquishActive = false;
-  private uberGearSquishEndsAt = 0;
-  private uberGearSquishSlowPct = 0;
+  // ── Rubberage (player / NPC) ─────────────────────────────────────────────
+  private rubberageBalls: RubberageBall[] = [];
+  private rubberageEnd = 0;
+  private rubberageDmg = RUBBERAGE_DMG;
 
-  // Uber-Gear: Dodge stretch
-  private uberGearStretchActive = false;
-  private uberGearStretchGfx: Phaser.GameObjects.Graphics | null = null;
-  private uberGearStretchTarget = { x: 0, y: 0 };
-  private uberGearStretchAt = 0;
-  private uberGearSizeShrinkUntil = 0;
-
-  // Uber-Gear: Wall-push stars (F double-hit)
-  private uberGearStarSprites: Phaser.GameObjects.Arc[] = [];
-  private uberGearStarAngle = 0;
+  private npcRubberageBalls: RubberageBall[] = [];
+  private npcRubberageEnd = 0;
+  private npcRubberageDmg = RUBBERAGE_DMG;
 
   constructor(arena: RubberArenaApi) {
     this.arena = arena;
@@ -254,27 +251,6 @@ export class RubberKit {
     this.npcBounceFormActive = false;
     this.npcBounceFormVisual?.destroy(); this.npcBounceFormVisual = null;
 
-    this.springPhase = 'idle';
-    this.springGfx?.destroy(); this.springGfx = null;
-    this.springLeftHit.clear(); this.springRightHit.clear(); this.springBothApplied.clear();
-    this.npcSpringPhase = 'idle';
-    this.npcSpringGfx?.destroy(); this.npcSpringGfx = null;
-    this.npcSpringLeftHit.clear(); this.npcSpringRightHit.clear(); this.npcSpringBothApplied.clear();
-
-    if (this.bounceBackActive) {
-      player.damageAbsorber = this.bounceBackPrevAbsorber;
-      player.sizeMult = 1; player.applySizeMult();
-    }
-    this.bounceBackActive = false;
-    this.bounceBackPrevAbsorber = null;
-
-    if (this.npcBounceBackActive) {
-      npc.damageAbsorber = this.npcBounceBackPrevAbsorber;
-      npc.sizeMult = 1; npc.applySizeMult();
-    }
-    this.npcBounceBackActive = false;
-    this.npcBounceBackPrevAbsorber = null;
-
     // Vulcanization
     if (this.vulcCdMultCaptured) player.cooldownMult = this.vulcPlayerCdMultBase;
     player.clearTint();
@@ -285,18 +261,6 @@ export class RubberKit {
     this.vulcCharge = 0;
     this.vulcCdMultCaptured = false;
     this.vulcPlayerCdMultBase = 1;
-
-    // Rubber Gear
-    if (this.rubberGearActive) player.damageAbsorber = this.rubberGearPrevAbsorber;
-    this.rubberGearActive = false;
-    this.rubberGearEnd = 0;
-    this.rubberGearPrevAbsorber = null;
-    this.rubberGearSteamAccum = 0;
-
-    // Barrage
-    this.barrageActive = false;
-    this.fKeyWasDown = false;
-    this.fHoldStart = 0;
 
     // Fireball Sling
     if (this.fireballFlight) { player.sizeMult = 1; player.applySizeMult(); }
@@ -310,28 +274,27 @@ export class RubberKit {
     this.npcFireDotAura?.destroy();
     this.npcFireDotAura = null;
 
-    // Uber-Gear
-    if (this.uberGearActive) {
-      player.clearTint();
-      player.sizeMult = 1; player.applySizeMult();
-    }
-    this.uberGearActive = false;
-    this.uberGearEnd = 0;
-    this.uberGearSteamAccum = 0;
-    this.uberGearJumpRopeGfx?.destroy(); this.uberGearJumpRopeGfx = null;
-    this.uberGearJumpRopeActive = false;
-    this.uberGearJumpRopeCharges = 0;
-    this.uberGearJumpRopeEndsAt = 0;
-    this.uberGearJumpRopeBoostUntil = 0;
-    this.uberGearSquishActive = false;
-    this.uberGearSquishEndsAt = 0;
-    this.uberGearSquishSlowPct = 0;
-    if (this.uberGearSquishActive) { npc.setScale(1); }
-    this.uberGearStretchGfx?.destroy(); this.uberGearStretchGfx = null;
-    this.uberGearStretchActive = false;
-    this.uberGearSizeShrinkUntil = 0;
-    for (const s of this.uberGearStarSprites) s.destroy();
-    this.uberGearStarSprites = [];
+    // Rubber Banding
+    this.bandGfx?.destroy(); this.bandGfx = null;
+    this.bandActive = false;
+    this.bandAnchorFlying = false;
+    this.bandAnchorFlyHitSet.clear();
+    if (this.bandRecalling) player.isInvincible = false;
+    this.bandRecalling = false;
+    this.bandFHoldStart = 0;
+    this.bandFKeyWasDown = false;
+    this.bandPullTriggeredThisPress = false;
+    this.bandReinforced = false;
+    this.bandLifetimeMs = BAND_LIFETIME_MS;
+
+    this.npcBandGfx?.destroy(); this.npcBandGfx = null;
+    this.npcBandActive = false;
+    this.npcBandRecalling = false;
+    this.npcBandLifetimeMs = BAND_LIFETIME_MS;
+
+    // Rubberage
+    this.clearRubberageBalls('player');
+    this.clearRubberageBalls('npc');
   }
 
   private ownsAnyRubberUpgrade(): boolean {
@@ -353,21 +316,18 @@ export class RubberKit {
     const justPressed = pointer.isDown && !this.arena.pointerWasDown;
     const justReleased = !pointer.isDown && this.arena.pointerWasDown;
 
-    // Right-click vulcanization (disabled while Uber-Gear active)
+    // Right-click vulcanization
     const rightDown = pointer.rightButtonDown();
-    if (this.vulcUnlocked && !this.bounceFormActive && !this.bounceBackActive && !this.rubberGearActive && !this.barrageActive && !this.uberGearActive && this.vulcCharge < 1) {
+    if (this.vulcUnlocked && !this.bounceFormActive && this.vulcCharge < 1) {
       this.vulcCharging = rightDown;
     } else {
       this.vulcCharging = false;
     }
 
-    const blocked = this.bounceFormActive || this.bounceBackActive || this.vulcCharging || this.barrageActive;
+    const blocked = this.bounceFormActive || this.vulcCharging;
 
     // ── Punch: hold click to charge, release to fire ─────────────────────────
-    // While Uber-Gear + Jump Rope active: left-click releases rope instead
-    if (this.uberGearActive && this.uberGearJumpRopeActive && justPressed) {
-      this.releaseUberGearJumpRope(mouseX, mouseY, time);
-    } else if (this.slingState === 'idle' && !blocked) {
+    if (this.slingState === 'idle' && !blocked) {
       if (justPressed && time >= player.disarmedUntil) {
         this.punchHolding = true;
         this.punchHoldStart = time;
@@ -381,9 +341,7 @@ export class RubberKit {
         if (time >= player.disarmedUntil) {
           const holdMs = time - this.punchHoldStart;
           const resistance = this.arena.hasUpgrade('click') ? (1 + this.vulcCharge) : 1;
-          // Uber-Gear: punch charges twice as fast (halve effective hold time)
-          const uberHoldMs = this.uberGearActive ? holdMs * 2 : holdMs;
-          const pullRatio = Math.min(1, (uberHoldMs / resistance) / PUNCH_MAX_HOLD_MS);
+          const pullRatio = Math.min(1, (holdMs / resistance) / PUNCH_MAX_HOLD_MS);
           const ctx = this.arena.buildPlayerContext(mouseX, mouseY);
           player.castAbility('rubber-punch', ctx);
           this.startStretchPunch('player', mouseX, mouseY, pullRatio);
@@ -408,69 +366,44 @@ export class RubberKit {
     // ── E / R / F / Q abilities ───────────────────────────────────────────────
     const { eKey, rKey, fKey, qKey } = this.arena;
 
-    // Uber-Gear E: Jump Rope instead of Slingshot
     if (Phaser.Input.Keyboard.JustDown(eKey) && !blocked && time >= player.disarmedUntil) {
-      if (this.uberGearActive) {
-        if (!this.uberGearJumpRopeActive) {
-          this.doUberGearJumpRope(time);
-        }
-      } else {
-        player.castAbility('rubber-sling', this.arena.buildPlayerContext(mouseX, mouseY));
-      }
+      player.castAbility('rubber-sling', this.arena.buildPlayerContext(mouseX, mouseY));
     }
 
     if (Phaser.Input.Keyboard.JustDown(rKey) && !blocked && time >= player.disarmedUntil) {
       player.castAbility('rubber-bounce-form', this.arena.buildPlayerContext(mouseX, mouseY));
     }
 
-    // F: tap = Spring Slam; hold 1s+ = Barrage (F+ required for barrage)
-    if (fKey.isDown && !this.fKeyWasDown) {
-      if (!blocked && this.springPhase === 'idle' && time >= player.disarmedUntil) {
-        this.fHoldStart = time;
+    // F: Rubber Banding — tap with no anchor plants one; tap while tethered snaps you
+    // back to it; hold while tethered reels the anchor toward you instead.
+    if (Phaser.Input.Keyboard.JustDown(fKey) && !blocked && time >= player.disarmedUntil) {
+      if (!this.bandActive) {
+        player.castAbility('rubber-band', this.arena.buildPlayerContext(mouseX, mouseY));
       } else {
-        this.fHoldStart = 0;
+        this.bandFHoldStart = time;
+        this.bandPullTriggeredThisPress = false;
       }
     }
-    if (!fKey.isDown && this.fKeyWasDown && this.fHoldStart > 0) {
-      const heldMs = time - this.fHoldStart;
-      if (!blocked && this.springPhase === 'idle') {
-        if (this.arena.hasUpgrade('f') && heldMs >= 1000) {
-          this.startBarrage(time, mouseX, mouseY);
-        } else {
-          player.castAbility('rubber-spring-slam', this.arena.buildPlayerContext(mouseX, mouseY));
-        }
+    if (fKey.isDown && this.bandActive && this.bandFHoldStart > 0 && !this.bandPullTriggeredThisPress) {
+      if (time - this.bandFHoldStart >= BAND_HOLD_THRESHOLD_MS) {
+        this.startBandPull(time);
+        this.bandPullTriggeredThisPress = true;
       }
-      this.fHoldStart = 0;
     }
-    this.fKeyWasDown = fKey.isDown;
+    if (!fKey.isDown && this.bandFKeyWasDown && this.bandFHoldStart > 0) {
+      const heldMs = time - this.bandFHoldStart;
+      if (heldMs < BAND_HOLD_THRESHOLD_MS && this.bandActive) {
+        this.startBandRecall('player');
+      }
+      this.bandFHoldStart = 0;
+      this.bandPullTriggeredThisPress = false;
+    }
+    this.bandFKeyWasDown = fKey.isDown;
 
-    // Q: Uber-Gear perk overrides Bounce Back
-    if (Phaser.Input.Keyboard.JustDown(qKey) && !blocked && time >= player.disarmedUntil && !this.rubberGearActive && !this.uberGearActive) {
-      if (this.arena.hasPerk('uber-gear')) {
-        this.doUberGear(time);
-      } else {
-        player.castAbility('rubber-bounce-back', this.arena.buildPlayerContext(mouseX, mouseY));
-      }
+    // Q: Rubberage
+    if (Phaser.Input.Keyboard.JustDown(qKey) && !blocked && time >= player.disarmedUntil) {
+      player.castAbility('rubberage', this.arena.buildPlayerContext(mouseX, mouseY));
     }
-  }
-
-  // ── Uber-Gear dodge suppress (checked in ArenaScene before normal dodge) ──
-  shouldSuppressUberGearDodge(mouseX: number, mouseY: number, time: number): boolean {
-    if (!this.uberGearActive) return false;
-    // If near jump rope, grant a charge instead of dodging
-    if (this.uberGearJumpRopeActive) {
-      const distToRope = Math.abs(this.arena.player.y - this.uberGearJumpRopeAy);
-      if (distToRope < 30) {
-        this.uberGearJumpRopeCharges++;
-        this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 36, '+1 ⚡', '#ffcc00');
-        return true;
-      }
-    }
-    // Otherwise: stretch-teleport dodge
-    if (!this.uberGearStretchActive) {
-      this.doUberGearStretch(mouseX, mouseY, time);
-    }
-    return true;
   }
 
   // ── applySlingMovement: called from ArenaScene when sling is pulling ───────
@@ -479,19 +412,19 @@ export class RubberKit {
     if (this.slingState !== 'pulling') return;
     const { player } = this.arena;
 
-    // Midpoint of the two wall anchors (the "handle" of the slingshot)
-    const midX = (this.slingAnchorLX + this.slingAnchorRX) / 2;
-    const midY = (this.slingAnchorLY + this.slingAnchorRY) / 2;
-
-    // Clamped pull target: mouse position, capped at SLING_MAX_PULL from mid
+    // Clamped pull target: mouse position, capped at SLING_MAX_PULL from the rest
+    // position (where the ability was cast) — a real slingshot pulls back from where
+    // you're standing, not toward some far-off point out by the fork's wall anchors.
+    const restX = this.slingRestX;
+    const restY = this.slingRestY;
     let targetX = mouseX;
     let targetY = mouseY;
-    const dx = targetX - midX;
-    const dy = targetY - midY;
+    const dx = targetX - restX;
+    const dy = targetY - restY;
     const d = Math.sqrt(dx * dx + dy * dy) || 1;
     if (d > SLING_MAX_PULL) {
-      targetX = midX + (dx / d) * SLING_MAX_PULL;
-      targetY = midY + (dy / d) * SLING_MAX_PULL;
+      targetX = restX + (dx / d) * SLING_MAX_PULL;
+      targetY = restY + (dy / d) * SLING_MAX_PULL;
     }
 
     // Move player toward target at high speed
@@ -543,7 +476,14 @@ export class RubberKit {
 
     // Sling flight contact damage
     if (this.slingState === 'flying') {
-      if (time > this.slingFlyEnd) {
+      const body = player.body as Phaser.Physics.Arcade.Body;
+      // The player's body collides with the world bounds, so a launch naturally rides all
+      // the way to the wall and stops there — end the flight the moment that happens (rather
+      // than waiting out a fixed timer that could cut the trip short mid-arena). Checking
+      // `blocked` instead of raw velocity matters for a diagonal launch: only the axis that
+      // actually hit a wall zeroes out, so the other axis can retain a small residual velocity
+      // forever and never trip a "speed near zero" check.
+      if (time > this.slingFlyEnd || body.blocked.up || body.blocked.down || body.blocked.left || body.blocked.right) {
         this.endSlingFlight();
       } else {
         this.checkSlingContact('player', time);
@@ -558,19 +498,13 @@ export class RubberKit {
     this.updateBounceForm(time, 'npc');
     this.steerHomingProjectiles();
 
-    // Spring Slam
-    this.updateSpringSlam(time, 'player');
-    this.updateSpringSlam(time, 'npc');
+    // Rubber Banding
+    this.updateBand(time, delta, 'player');
+    this.updateBand(time, delta, 'npc');
 
-    // Bounce Back: apply speed mult every frame while active
-    if (this.bounceBackActive) {
-      this.arena.applyPlayerSpeedMult(BOUNCE_BACK_SPEED);
-      if (time > this.bounceBackEnd) this.expireBounceBack('player');
-    }
-    if (this.npcBounceBackActive) {
-      this.arena.applyNpcSpeedMult(BOUNCE_BACK_SPEED);
-      if (time > this.npcBounceBackEnd) this.expireBounceBack('npc');
-    }
+    // Rubberage
+    this.updateRubberageBalls(time, delta, 'player');
+    this.updateRubberageBalls(time, delta, 'npc');
 
     // Vulcanization: charge accumulation + cooldown mult + tint + slow HUD
     if (this.vulcCharging) {
@@ -581,19 +515,9 @@ export class RubberKit {
         this.vulcPlayerCdMultBase = player.cooldownMult;
         this.vulcCdMultCaptured = true;
       }
-      const gearSpeedFactor = this.rubberGearActive ? 0.5 : 0;
-      const netFactor = Math.max(0.5, 1 + this.vulcCharge - gearSpeedFactor);
-      // Uber-Gear + Vulc: no cooldown penalties
-      if (this.uberGearActive) {
-        player.cooldownMult = this.vulcPlayerCdMultBase;
-      } else {
-        player.cooldownMult = this.vulcPlayerCdMultBase * netFactor;
-      }
-      if (this.uberGearActive) {
-        player.setTint(0xffffff);
-      } else if (this.rubberGearActive) {
-        player.setTint(0xffaadd);
-      } else if (this.vulcCharge > 0) {
+      const netFactor = Math.max(0.5, 1 + this.vulcCharge);
+      player.cooldownMult = this.vulcPlayerCdMultBase * netFactor;
+      if (this.vulcCharge > 0) {
         const v = Math.round(255 * (1 - 0.7 * this.vulcCharge));
         player.setTint(Phaser.Display.Color.GetColor(v, v, v));
       } else {
@@ -611,148 +535,12 @@ export class RubberKit {
         }
       }
       if (this.vulcSlowTexts.length > 0) {
-        const displayFactor = this.uberGearActive ? 1 : netFactor;
-        const netPct = Math.round((displayFactor - 1) * 100);
+        const netPct = Math.round((netFactor - 1) * 100);
         for (const t of this.vulcSlowTexts) {
           if (netPct > 0) { t.setText(`${netPct}% slower`); t.setColor('#ff4444'); t.setVisible(true); }
           else if (netPct < 0) { t.setText(`${Math.abs(netPct)}% faster`); t.setColor('#44ff88'); t.setVisible(true); }
           else { t.setVisible(false); }
         }
-      }
-    }
-
-    // Rubber Gear: speed buff + steam particles + expiry
-    if (this.rubberGearActive) {
-      this.arena.applyPlayerSpeedMult(1.5);
-      this.rubberGearSteamAccum += delta;
-      if (this.rubberGearSteamAccum >= 80) {
-        this.rubberGearSteamAccum -= 80;
-        const sc = this.arena.scene;
-        const arc = sc.add.circle(
-          player.x + (Math.random() - 0.5) * 20,
-          player.y - 16 + (Math.random() - 0.5) * 8,
-          4 + Math.random() * 4,
-          0xffddee, 0.7,
-        ).setDepth(6);
-        sc.tweens.add({ targets: arc, y: arc.y - 25, alpha: 0, duration: 400 + Math.random() * 200, onComplete: () => arc.destroy() });
-      }
-      if (time > this.rubberGearEnd) this.expireRubberGear();
-    }
-
-    // Uber-Gear form: speed boost + steam + expiry + all sub-systems
-    if (this.uberGearActive) {
-      this.arena.applyPlayerSpeedMult(2.0); // +100% speed
-      // Steam clouds (same as Rubber Gear)
-      this.uberGearSteamAccum += delta;
-      if (this.uberGearSteamAccum >= 80) {
-        this.uberGearSteamAccum -= 80;
-        const sc = this.arena.scene;
-        const arc = sc.add.circle(
-          player.x + (Math.random() - 0.5) * 20,
-          player.y - 16 + (Math.random() - 0.5) * 8,
-          4 + Math.random() * 4,
-          0xddddff, 0.7,
-        ).setDepth(6);
-        sc.tweens.add({ targets: arc, y: arc.y - 25, alpha: 0, duration: 400 + Math.random() * 200, onComplete: () => arc.destroy() });
-      }
-      // Check expiry
-      if (time > this.uberGearEnd) {
-        this.expireUberGear(time);
-      } else {
-        // Jump Rope update
-        if (this.uberGearJumpRopeActive) {
-          if (time >= this.uberGearJumpRopeEndsAt) {
-            this.uberGearJumpRopeGfx?.destroy();
-            this.uberGearJumpRopeGfx = null;
-            this.uberGearJumpRopeActive = false;
-          } else {
-            const gfx = this.uberGearJumpRopeGfx;
-            if (gfx) {
-              gfx.clear();
-              gfx.lineStyle(3, 0xffaaaa, 0.9);
-              gfx.beginPath();
-              gfx.moveTo(0, this.uberGearJumpRopeAy);
-              gfx.lineTo(this.arena.width, this.uberGearJumpRopeAy);
-              gfx.strokePath();
-            }
-          }
-        }
-        // Squish update (Barrage hit effect on NPC)
-        if (this.uberGearSquishActive) {
-          if (time >= this.uberGearSquishEndsAt || !npc.active) {
-            npc.setScale(1);
-            this.uberGearSquishActive = false;
-            this.uberGearSquishSlowPct = 0;
-          } else {
-            const slowFactor = Math.min(this.uberGearSquishSlowPct / 100, 0.8);
-            const scaleX = 1.2 + slowFactor * 0.3;
-            const scaleY = Math.max(0.2, 0.6 - slowFactor * 0.3);
-            npc.setScale(scaleX, scaleY);
-            // Apply slow: reduce npc speed each frame via applyNpcSpeedMult
-            this.arena.applyNpcSpeedMult(1 - slowFactor);
-          }
-        }
-        // Star sprites orbit NPC head
-        if (this.uberGearStarSprites.length > 0) {
-          this.uberGearStarAngle += delta * 0.005;
-          for (let i = 0; i < this.uberGearStarSprites.length; i++) {
-            const a = this.uberGearStarAngle + (i * Math.PI * 2 / this.uberGearStarSprites.length);
-            this.uberGearStarSprites[i].setPosition(npc.x + Math.cos(a) * 24, npc.y - 28 + Math.sin(a) * 8);
-          }
-        }
-        // Stretch teleport update
-        if (this.uberGearStretchActive && this.uberGearStretchGfx) {
-          this.uberGearStretchGfx.clear();
-          this.uberGearStretchGfx.lineStyle(6, 0xffaaaa, 0.7);
-          this.uberGearStretchGfx.beginPath();
-          this.uberGearStretchGfx.moveTo(player.x, player.y);
-          this.uberGearStretchGfx.lineTo(this.uberGearStretchTarget.x, this.uberGearStretchTarget.y);
-          this.uberGearStretchGfx.strokePath();
-          if (time >= this.uberGearStretchAt + 500) {
-            // Teleport
-            player.setPosition(this.uberGearStretchTarget.x, this.uberGearStretchTarget.y);
-            this.uberGearStretchGfx.destroy();
-            this.uberGearStretchGfx = null;
-            this.uberGearStretchActive = false;
-            // Size shrink for 3s
-            this.uberGearSizeShrinkUntil = time + 3000;
-            if (player.sizeMult > 0.75) {
-              player.sizeMult = 0.75;
-              player.applySizeMult();
-            }
-          }
-        }
-        // Restore size after shrink
-        if (!this.uberGearStretchActive && this.uberGearSizeShrinkUntil > 0 && time >= this.uberGearSizeShrinkUntil) {
-          this.uberGearSizeShrinkUntil = 0;
-          player.sizeMult = 1;
-          player.applySizeMult();
-        }
-      }
-    } else {
-      // Restore squish/stars/stretch if uber-gear ended abruptly
-      if (this.uberGearSquishActive) {
-        npc.setScale(1);
-        this.uberGearSquishActive = false;
-        this.uberGearSquishSlowPct = 0;
-      }
-    }
-
-    // Uber-Gear Jump Rope boost: +50% speed while boost is active
-    if (this.uberGearJumpRopeBoostUntil > 0 && time < this.uberGearJumpRopeBoostUntil) {
-      this.arena.applyPlayerSpeedMult(1.5);
-    } else if (this.uberGearJumpRopeBoostUntil > 0 && time >= this.uberGearJumpRopeBoostUntil) {
-      this.uberGearJumpRopeBoostUntil = 0;
-    }
-
-    // Barrage: lock movement (unless Uber-Gear active) + fire fists + expiry
-    if (this.barrageActive) {
-      if (!this.uberGearActive) this.arena.applyPlayerSpeedMult(0);
-      if (time > this.barrageEnd) {
-        this.barrageActive = false;
-      } else if (time >= this.barrageNext) {
-        this.barrageNext = time + BARRAGE_INTERVAL_MS;
-        this.fireBarrageFist();
       }
     }
 
@@ -779,7 +567,6 @@ export class RubberKit {
         this.npcFireDotTickAccum -= 500;
         npc.takeDamage(2);
         this.arena.spawnHitFlash(npc.x, npc.y, 0xff4400);
-        this.arena.spawnDamageNumber(npc.x, npc.y - 20, 2);
       }
     } else {
       this.npcFireDotTickAccum = 0;
@@ -818,7 +605,7 @@ export class RubberKit {
     const { ax, ay, bx, by } = this.computeSlingAnchors(player.x, player.y, cursorAngle);
     this.slingAnchorLX = ax; this.slingAnchorLY = ay;
     this.slingAnchorRX = bx; this.slingAnchorRY = by;
-    this.slingCursorAngle = cursorAngle;
+    this.slingRestX = player.x; this.slingRestY = player.y;
     this.slingState = 'pulling';
     this.slingGfx?.destroy();
     this.slingGfx = this.arena.scene.add.graphics().setDepth(7);
@@ -849,11 +636,6 @@ export class RubberKit {
       this.bounceFormEnd = time + BOUNCE_FORM_MS;
       this.bounceFormVisual = vis;
       this.arena.showFloatingText(caster.x, caster.y - 40, '🔲 BOUNCE FORM', '#ff5577');
-      // Uber-Gear: R cooldown ÷ 5 (reduce by 80% of normal 8000ms = 6400ms)
-      if (this.uberGearActive) {
-        const BOUNCE_FORM_CD = 8000;
-        player.reduceCooldown('rubber-bounce-form', BOUNCE_FORM_CD * 0.8);
-      }
     } else {
       this.npcBounceFormVisual?.destroy();
       this.npcBounceFormActive = true;
@@ -862,66 +644,70 @@ export class RubberKit {
     }
   }
 
-  doRubberSpringSlam(cursorAngle: number, owner: 'player' | 'npc'): void {
+  doRubberBandStart(owner: 'player' | 'npc'): void {
     const { player, npc, scene } = this.arena;
     const time = scene.time.now;
     const caster = owner === 'player' ? player : npc;
-
-    const gfx = scene.add.graphics().setDepth(8);
+    const gfx = scene.add.graphics().setDepth(7);
 
     if (owner === 'player') {
-      this.springGfx?.destroy();
-      this.springPhase = 'extend';
-      this.springPhaseEnd = time + SPRING_EXTEND_MS;
-      this.springCursorAngle = cursorAngle;
-      this.springGfx = gfx;
-      this.springLeftHit.clear(); this.springRightHit.clear(); this.springBothApplied.clear();
-      this.arena.showFloatingText(caster.x, caster.y - 40, '💥 SPRING SLAM', '#ff5577');
+      this.bandGfx?.destroy();
+      this.bandActive = true;
+      this.bandAnchorX = caster.x; this.bandAnchorY = caster.y;
+      this.bandCreatedAt = time;
+      this.bandReinforced = this.arena.hasUpgrade('f');
+      this.bandLifetimeMs = this.bandReinforced ? BAND_LIFETIME_PLUS_MS : BAND_LIFETIME_MS;
+      this.bandGfx = gfx;
+      this.bandFHoldStart = 0;
+      this.bandPullTriggeredThisPress = false;
+      this.bandAnchorFlying = false;
+      this.arena.showFloatingText(caster.x, caster.y - 40, '⚫ ANCHOR SET', '#ff5577');
     } else {
-      this.npcSpringGfx?.destroy();
-      this.npcSpringPhase = 'extend';
-      this.npcSpringPhaseEnd = time + SPRING_EXTEND_MS;
-      this.npcSpringCursorAngle = cursorAngle;
-      this.npcSpringGfx = gfx;
-      this.npcSpringLeftHit.clear(); this.npcSpringRightHit.clear(); this.npcSpringBothApplied.clear();
+      this.npcBandGfx?.destroy();
+      this.npcBandActive = true;
+      this.npcBandAnchorX = caster.x; this.npcBandAnchorY = caster.y;
+      this.npcBandCreatedAt = time;
+      this.npcBandLifetimeMs = BAND_LIFETIME_MS;
+      this.npcBandGfx = gfx;
+      this.npcBandNextAutoCheck = time + NPC_BAND_AUTO_RECALL_CHECK_MS;
     }
   }
 
-  doRubberBounceBack(owner: 'player' | 'npc'): void {
-    if (owner === 'player' && this.arena.hasUpgrade('q') && !this.rubberGearActive) {
-      this.doRubberGear(this.arena.scene.time.now);
-      return;
-    }
-
+  doRubberage(owner: 'player' | 'npc'): void {
     const { player, npc, scene } = this.arena;
-    const time = scene.time.now;
     const caster = owner === 'player' ? player : npc;
-    const target = owner === 'player' ? npc : player;
+    const time = scene.time.now;
+    const isPlus = owner === 'player' && this.arena.hasUpgrade('q');
+    const count = isPlus ? RUBBERAGE_COUNT_PLUS : RUBBERAGE_COUNT;
+    const dmg = isPlus ? RUBBERAGE_DMG_PLUS : RUBBERAGE_DMG;
+    const duration = isPlus ? RUBBERAGE_DURATION_PLUS_MS : RUBBERAGE_DURATION_MS;
 
-    const prevAbsorber = caster.damageAbsorber;
-    const arena = this.arena;
-
-    caster.damageAbsorber = (amount: number) => {
-      target.takeDamage(amount);
-      if (owner === 'player') {
-        arena.showFloatingText(caster.x, caster.y - 30, `↩ ${amount}`, '#ff5577');
-      }
-      return true;
-    };
-    caster.sizeMult = BOUNCE_BACK_SIZE; caster.applySizeMult();
+    const balls: RubberageBall[] = [];
+    for (let i = 0; i < count; i++) {
+      const angle = (Math.PI * 2 * i) / count + Math.random() * 0.3;
+      const speed = RUBBERAGE_BASE_SPEED * (0.8 + Math.random() * 0.4);
+      const gfx = scene.add.circle(caster.x, caster.y, RUBBERAGE_RADIUS, 0xff5577, 1)
+        .setStrokeStyle(2, 0xffaacc).setDepth(7);
+      balls.push({
+        gfx,
+        x: caster.x, y: caster.y,
+        vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+        lastHitAt: 0,
+      });
+    }
 
     if (owner === 'player') {
-      this.bounceBackActive = true;
-      this.bounceBackEnd = time + BOUNCE_BACK_MS;
-      this.bounceBackPrevAbsorber = prevAbsorber;
-      this.arena.showFloatingText(caster.x, caster.y - 55, '🛡 BOUNCE BACK', '#ff5577');
+      this.clearRubberageBalls('player');
+      this.rubberageBalls = balls;
+      this.rubberageEnd = time + duration;
+      this.rubberageDmg = dmg;
+      this.arena.showFloatingText(caster.x, caster.y - 40, '🔴 RUBBERAGE!', '#ff5577');
     } else {
-      this.npcBounceBackActive = true;
-      this.npcBounceBackEnd = time + BOUNCE_BACK_MS;
-      this.npcBounceBackPrevAbsorber = prevAbsorber;
+      this.clearRubberageBalls('npc');
+      this.npcRubberageBalls = balls;
+      this.npcRubberageEnd = time + duration;
+      this.npcRubberageDmg = dmg;
     }
-
-    void scene;
   }
 
   // ── Public accessors for ArenaScene ───────────────────────────────────────
@@ -929,12 +715,6 @@ export class RubberKit {
   isSlingActive(): boolean { return this.slingState !== 'idle'; }
   isBounceFormActive(owner: 'player' | 'npc'): boolean {
     return owner === 'player' ? this.bounceFormActive : this.npcBounceFormActive;
-  }
-  isBounceBackActive(owner: 'player' | 'npc'): boolean {
-    return owner === 'player' ? this.bounceBackActive : this.npcBounceBackActive;
-  }
-  isSpringActive(owner: 'player' | 'npc'): boolean {
-    return owner === 'player' ? this.springPhase !== 'idle' : this.npcSpringPhase !== 'idle';
   }
 
   // ── Public: NPC fire DOT extension (called from ArenaScene.applyProjectileToNpc) ──
@@ -945,245 +725,13 @@ export class RubberKit {
 
   // ── Private helpers ───────────────────────────────────────────────────────
 
-  private doRubberGear(time: number): void {
-    const { player, npc } = this.arena;
-    this.rubberGearPrevAbsorber = player.damageAbsorber;
-    this.rubberGearActive = true;
-    this.rubberGearEnd = time + GEAR_MS;
-    player.damageAbsorber = (amount: number) => {
-      const reflected = Math.ceil(amount * 0.25);
-      npc.takeDamage(reflected);
-      this.arena.spawnDamageNumber(npc.x, npc.y - 24, -2);
-      this.arena.showFloatingText(player.x, player.y - 30, `↩ ${reflected}`, '#ffccdd');
-      return false;
-    };
-    this.arena.showFloatingText(player.x, player.y - 55, '⚙ RUBBER GEAR', '#ffccdd');
-  }
-
-  private expireRubberGear(): void {
-    this.arena.player.damageAbsorber = this.rubberGearPrevAbsorber;
-    this.rubberGearActive = false;
-    this.rubberGearPrevAbsorber = null;
-  }
-
-  // ── Uber-Gear helpers ──────────────────────────────────────────────────────
-
-  private doUberGear(time: number): void {
-    const { player } = this.arena;
-    this.uberGearActive = true;
-    const duration = this.arena.hasUpgrade('q') ? 15000 : 10000;
-    this.uberGearEnd = time + duration;
-    this.uberGearSteamAccum = 0;
-    player.setTint(0xffffff);
-    this.arena.showFloatingText(player.x, player.y - 48, '☁️ UBER-GEAR!', '#ffffff');
-  }
-
-  private expireUberGear(time: number): void {
-    const { player, npc, scene } = this.arena;
-    this.uberGearActive = false;
-    player.clearTint();
-    // Kill or heavily damage player at end
-    if (this.arena.hasUpgrade('q')) {
-      player.takeDamage(80);
-      this.arena.showFloatingText(player.x, player.y - 40, '💥 -80', '#ff5577');
-    } else {
-      player.hp = 0;
-      player.emit('defeated');
-    }
-    // Cleanup jump rope
-    this.uberGearJumpRopeGfx?.destroy();
-    this.uberGearJumpRopeGfx = null;
-    this.uberGearJumpRopeActive = false;
-    this.uberGearJumpRopeCharges = 0;
-    // Cleanup squish
-    if (this.uberGearSquishActive) { npc.setScale(1); }
-    this.uberGearSquishActive = false;
-    this.uberGearSquishSlowPct = 0;
-    // Cleanup stars
-    for (const s of this.uberGearStarSprites) s.destroy();
-    this.uberGearStarSprites = [];
-    // Cleanup stretch
-    this.uberGearStretchGfx?.destroy();
-    this.uberGearStretchGfx = null;
-    this.uberGearStretchActive = false;
-    // Restore size if shrunken
-    if (this.uberGearSizeShrinkUntil > 0) {
-      this.uberGearSizeShrinkUntil = 0;
-      player.sizeMult = 1;
-      player.applySizeMult();
-    }
-    void scene;
-    void time;
-  }
-
-  private doUberGearJumpRope(time: number): void {
-    const { scene, player, width } = this.arena;
-    this.uberGearJumpRopeAy = player.y;
-    this.uberGearJumpRopeActive = true;
-    this.uberGearJumpRopeCharges = 0;
-    this.uberGearJumpRopeEndsAt = time + 8000;
-    this.uberGearJumpRopeGfx?.destroy();
-    this.uberGearJumpRopeGfx = scene.add.graphics().setDepth(6);
-    this.arena.showFloatingText(player.x, player.y - 40, '🪢 JUMP ROPE', '#ffaaaa');
-    void width;
-  }
-
-  private releaseUberGearJumpRope(mouseX: number, mouseY: number, time: number): void {
-    const { player, scene } = this.arena;
-    const charges = this.uberGearJumpRopeCharges;
-    // Destroy rope
-    this.uberGearJumpRopeGfx?.destroy();
-    this.uberGearJumpRopeGfx = null;
-    this.uberGearJumpRopeActive = false;
-    // Launch toward cursor like a slingshot
-    const dx = mouseX - player.x;
-    const dy = mouseY - player.y;
-    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-    const speed = SLING_MIN_SPEED + (SLING_MAX_SPEED - SLING_MIN_SPEED) * 0.7;
-    const ctx = this.arena.buildPlayerContext(mouseX, mouseY);
-    ctx.dashCaster((dx / dist) * speed, (dy / dist) * speed);
-    this.arena.setIsDodging(true);
-    this.slingState = 'flying';
-    this.slingFlyEnd = time + SLING_FLY_MS;
-    this.slingHitThisFlight.clear();
-    // Convert each charge into 3s of speed + damage boost (stacking duration)
-    if (charges > 0) {
-      this.uberGearJumpRopeBoostUntil = Math.max(this.uberGearJumpRopeBoostUntil, time) + charges * 3000;
-      this.arena.showFloatingText(player.x, player.y - 48, `⚡ x${charges} BOOST!`, '#ffcc00');
-    }
-    void scene;
-  }
-
-  private doUberGearStretch(mouseX: number, mouseY: number, time: number): void {
-    if (this.uberGearStretchActive) return;
-    this.uberGearStretchActive = true;
-    this.uberGearStretchTarget = { x: mouseX, y: mouseY };
-    this.uberGearStretchAt = time;
-    this.uberGearStretchGfx = this.arena.scene.add.graphics().setDepth(12);
-  }
-
-  private startBarrage(time: number, mouseX: number, mouseY: number): void {
-    const { player } = this.arena;
-    player.startCooldown('rubber-spring-slam');
-    this.barrageActive = true;
-    this.barrageEnd = time + BARRAGE_BASE_MS * (1 + this.vulcCharge);
-    this.barrageNext = time;
-    this.arena.showFloatingText(player.x, player.y - 36, '👊 BARRAGE', '#ff5577');
-  }
-
-  private fireBarrageFist(): void {
-    const { player, scene } = this.arena;
-    const targets = this.arena.enemies.length > 0 ? this.arena.enemies : [this.arena.npc];
-
-    // Aim toward nearest target
-    let baseDirX = player.flipX ? -1 : 1; let baseDirY = 0;
-    let tgtX = player.x + baseDirX * BARRAGE_REACH; let tgtY = player.y;
-    let minDist = Infinity;
-    for (const t of targets) {
-      if (!t.active) continue;
-      const dx = t.x - player.x; const dy = t.y - player.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < minDist) { minDist = dist; baseDirX = dx / dist; baseDirY = dy / dist; tgtX = t.x; tgtY = t.y; }
-    }
-    // Perpendicular axis for lateral scatter
-    const perpX = -baseDirY; const perpY = baseDirX;
-
-    // Uber-Gear: fists spawn from screen edges aimed at target
-    const uberGear = this.uberGearActive;
-    const worldW = this.arena.width;
-    const worldH = this.arena.height;
-
-    // 3 fists per burst, staggered 25ms apart — each at a random lateral position
-    for (let i = 0; i < 3; i++) {
-      scene.time.delayedCall(i * 25, () => {
-        if (!this.barrageActive && i > 0) return; // stop if barrage ended mid-burst
-        const lateral = (Math.random() - 0.5) * 90;   // ±45px sideways around target
-        const depth   = (Math.random() - 0.5) * 30;   // ±15px forward/back
-        const fistX = tgtX + perpX * lateral + baseDirX * depth;
-        const fistY = tgtY + perpY * lateral + baseDirY * depth;
-
-        let originX: number;
-        let originY: number;
-        if (uberGear) {
-          // Spawn from a random screen edge
-          const edge = Math.floor(Math.random() * 4);
-          if (edge === 0) { originX = 0; originY = tgtY + lateral; }
-          else if (edge === 1) { originX = worldW; originY = tgtY + lateral; }
-          else if (edge === 2) { originX = tgtX + lateral; originY = 0; }
-          else { originX = tgtX + lateral; originY = worldH; }
-        } else {
-          const originLateral = lateral * 0.15;
-          originX = player.x + perpX * originLateral;
-          originY = player.y + perpY * originLateral;
-        }
-
-        const armColor = this.vulcArmColor();
-        const gfx = scene.add.graphics().setDepth(8);
-        gfx.lineStyle(5, armColor, 0.9);
-        gfx.beginPath(); gfx.moveTo(originX, originY); gfx.lineTo(fistX, fistY); gfx.strokePath();
-        gfx.fillStyle(0xffaacc, 1);
-        gfx.fillCircle(fistX, fistY, 10);
-
-        for (const tgt of targets) {
-          if (!tgt.active) continue;
-          if (Phaser.Math.Distance.Between(fistX, fistY, tgt.x, tgt.y) < PUNCH_FIST_RADIUS + 10) {
-            tgt.takeDamage(BARRAGE_DMG);
-            this.arena.spawnHitFlash(fistX, fistY, 0xff5577);
-            this.arena.spawnDamageNumber(tgt.x, tgt.y - 20, BARRAGE_DMG);
-            // Uber-Gear: track squish slow accumulation
-            if (uberGear && this.uberGearSquishActive) {
-              this.uberGearSquishSlowPct = Math.min(80, this.uberGearSquishSlowPct + BARRAGE_DMG);
-            }
-            // Uber-Gear: start squish on first hit
-            if (uberGear && !this.uberGearSquishActive) {
-              const nowMs = scene.time.now;
-              this.uberGearSquishActive = true;
-              this.uberGearSquishEndsAt = nowMs + 5000;
-              this.uberGearSquishSlowPct = BARRAGE_DMG;
-              tgt.setScale(1.2, 0.6);
-              this.arena.showFloatingText(tgt.x, tgt.y - 36, '💥 SQUISH!', '#ffaaaa');
-            }
-            break;
-          }
-        }
-
-        scene.time.delayedCall(80 + Math.random() * 60, () => { gfx.destroy(); });
-      });
-    }
-  }
-
-  private vulcArmColor(): number {
-    if (this.vulcCharge <= 0) return 0xff5577;
-    const v = 1 - 0.7 * this.vulcCharge;
-    const r = Math.round(0xff * v);
-    const g = Math.round(0x55 * v);
-    const b = Math.round(0x77 * v);
-    return (r << 16) | (g << 8) | b;
-  }
-
   private startStretchPunch(owner: 'player' | 'npc', targetX: number, targetY: number, pullRatio: number): void {
     const { player, npc, scene } = this.arena;
     const caster = owner === 'player' ? player : npc;
     const isUpgraded = owner === 'player' && this.arena.hasUpgrade('click');
     const vulcMult = isUpgraded ? (1 + this.vulcCharge) : 1;
-    let damage = Math.round((PUNCH_MIN_DMG + (PUNCH_MAX_DMG - PUNCH_MIN_DMG) * pullRatio) * vulcMult);
-    let maxReach = PUNCH_REACH * (isUpgraded ? (1 + 0.5 * this.vulcCharge) : 1);
-
-    // Uber-Gear: extended pull to 120px with diminishing returns above 90px
-    if (owner === 'player' && this.uberGearActive) {
-      const UBER_MAX_PULL = 120;
-      const UBER_DR_START = 90;
-      const effectivePull = pullRatio * UBER_MAX_PULL;
-      let dmgPull: number;
-      if (effectivePull <= UBER_DR_START) {
-        dmgPull = effectivePull;
-      } else {
-        dmgPull = UBER_DR_START + (effectivePull - UBER_DR_START) * 0.5;
-      }
-      const uberPullRatio = Math.min(1, dmgPull / PUNCH_MAX_PULL);
-      damage = Math.round((PUNCH_MIN_DMG + (PUNCH_MAX_DMG - PUNCH_MIN_DMG) * uberPullRatio) * vulcMult);
-      maxReach = PUNCH_REACH * (isUpgraded ? (1 + 0.5 * this.vulcCharge) : 1);
-    }
+    const damage = Math.round((PUNCH_MIN_DMG + (PUNCH_MAX_DMG - PUNCH_MIN_DMG) * pullRatio) * vulcMult);
+    const maxReach = PUNCH_REACH * (isUpgraded ? (1 + 0.5 * this.vulcCharge) : 1);
 
     const dx = targetX - caster.x;
     const dy = targetY - caster.y;
@@ -1260,6 +808,14 @@ export class RubberKit {
       gfx.fillCircle(fistX, fistY, 12);
     }
 
+    // Rubber Banding: smack your own anchor with a stretched punch to shatter it
+    if (isPlayer && this.bandActive) {
+      const bandDist = Phaser.Math.Distance.Between(fistX, fistY, this.bandAnchorX, this.bandAnchorY);
+      if (bandDist < BAND_SMASH_RADIUS) {
+        this.shatterBand('player');
+      }
+    }
+
     // Melee hit check during stretch-out and hold only
     if (!hit && elapsed < PUNCH_STRETCH_MS + PUNCH_HOLD_ANIM_MS) {
       const targets = this.arena.enemies.length > 0 ? this.arena.enemies : [target];
@@ -1269,8 +825,6 @@ export class RubberKit {
         if (d < PUNCH_FIST_RADIUS) {
           tgt.takeDamage(damage);
           this.arena.spawnHitFlash(tgt.x, tgt.y, 0xff5577);
-          this.arena.spawnDamageNumber(tgt.x, tgt.y - 20, damage);
-          this.arena.showFloatingText(tgt.x, tgt.y - 40, `👊 ${damage}`, '#ff5577');
           if (isPlayer) this.punchStretchHit = true;
           else this.npcPunchStretchHit = true;
           break;
@@ -1311,17 +865,22 @@ export class RubberKit {
 
   private releaseSling(mouseX: number, mouseY: number, time: number): void {
     const { player } = this.arena;
-    const midX = (this.slingAnchorLX + this.slingAnchorRX) / 2;
-    const midY = (this.slingAnchorLY + this.slingAnchorRY) / 2;
-
-    const pdx = player.x - midX;
-    const pdy = player.y - midY;
+    const pdx = player.x - this.slingRestX;
+    const pdy = player.y - this.slingRestY;
     const pullDist = Math.sqrt(pdx * pdx + pdy * pdy);
-    const pullRatio = Math.min(1, pullDist / SLING_MAX_PULL);
 
+    if (pullDist < SLING_MIN_PULL_TO_FIRE) {
+      // Not pulled back far enough — the band just goes slack instead of launching.
+      this.slingState = 'idle';
+      this.slingGfx?.destroy(); this.slingGfx = null;
+      return;
+    }
+
+    const pullRatio = Math.min(1, pullDist / SLING_MAX_PULL);
     const speed = SLING_MIN_SPEED + (SLING_MAX_SPEED - SLING_MIN_SPEED) * pullRatio;
-    const vx = Math.cos(this.slingCursorAngle) * speed;
-    const vy = Math.sin(this.slingCursorAngle) * speed;
+    // Real slingshot: launch back through the rest position, opposite the pull direction.
+    const vx = -(pdx / pullDist) * speed;
+    const vy = -(pdy / pullDist) * speed;
 
     // E+ Fireball Sling: launch as fireball when vulcanized
     if (this.arena.hasUpgrade('e') && this.vulcCharge > 0) {
@@ -1338,7 +897,7 @@ export class RubberKit {
     this.arena.setIsDodging(true);
 
     this.slingState = 'flying';
-    this.slingFlyEnd = time + SLING_FLY_MS;
+    this.slingFlyEnd = time + SLING_LAUNCH_MAX_MS;
     this.slingHitThisFlight.clear();
   }
 
@@ -1388,8 +947,6 @@ export class RubberKit {
         t.takeDamage(SLING_CONTACT_DMG);
         hitSet.add(t);
         this.arena.spawnHitFlash(t.x, t.y, 0xff5577);
-        this.arena.spawnDamageNumber(t.x, t.y - 20, SLING_CONTACT_DMG);
-        this.arena.showFloatingText(t.x, t.y - 40, `💥 ${SLING_CONTACT_DMG}`, '#ff5577');
         // E+ Fireball Sling: apply fire DOT on contact
         if (owner === 'player' && this.fireballFlight) {
           const dotMs = FIREBALL_DOT_BASE_MS + FIREBALL_DOT_BONUS_MS * this.vulcCharge;
@@ -1441,29 +998,11 @@ export class RubberKit {
       const body = proj.body as Phaser.Physics.Arcade.Body | null;
       if (!body) continue;
       const spd = Math.sqrt(body.velocity.x ** 2 + body.velocity.y ** 2) || 1;
-      // Uber-Gear: 3× damage, 2× speed, 2× visual size; end form after this deflect
-      const uberReflect = isPlayer && this.uberGearActive;
-      const reflectSpeedMult = uberReflect ? BOUNCE_REFLECT_SPEED * 2 : BOUNCE_REFLECT_SPEED;
-      const newSpd = spd * reflectSpeedMult;
+      const newSpd = spd * BOUNCE_REFLECT_SPEED;
       // Flip direction
       body.setVelocity((-body.velocity.x / spd) * newSpd, (-body.velocity.y / spd) * newSpd);
       (proj as unknown as Record<string, unknown>)['isFromPlayer'] = isPlayer;
       (proj as unknown as Record<string, unknown>)['rubberHomingTarget'] = isPlayer ? npc : player;
-
-      if (uberReflect) {
-        (proj as unknown as Record<string, unknown>)['damage'] = Math.round(proj.damage * 3);
-        (proj as unknown as Record<string, unknown>)['uberReflected'] = true;
-        // Scale up projectile visually 2×
-        if ((proj as unknown as Phaser.GameObjects.Sprite).setScale) {
-          (proj as unknown as Phaser.GameObjects.Sprite).setScale(2);
-        }
-        // End bounce form immediately (single deflect)
-        caster.setVisible(true);
-        caster.incomingDamageMultiplier = 1;
-        vis?.destroy();
-        if (isPlayer) { this.bounceFormActive = false; this.bounceFormVisual = null; }
-        return; // stop reflecting more projectiles this frame
-      }
 
       // R+ Powerful Parry: boost damage and tag fire DOT when vulcanized
       if (isPlayer && this.arena.hasUpgrade('r') && this.vulcCharge > 0) {
@@ -1500,167 +1039,304 @@ export class RubberKit {
     }
   }
 
-  private updateSpringSlam(time: number, owner: 'player' | 'npc'): void {
-    const isPlayer = owner === 'player';
-    const phase = isPlayer ? this.springPhase : this.npcSpringPhase;
-    if (phase === 'idle') return;
+  // ── Rubber Banding helpers ─────────────────────────────────────────────────
 
+  private distPointToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+    const dx = bx - ax; const dy = by - ay;
+    const lenSq = dx * dx + dy * dy;
+    let t = lenSq > 0 ? ((px - ax) * dx + (py - ay) * dy) / lenSq : 0;
+    t = Math.max(0, Math.min(1, t));
+    const cx = ax + t * dx; const cy = ay + t * dy;
+    return Math.sqrt((px - cx) ** 2 + (py - cy) ** 2);
+  }
+
+  private startBandRecall(owner: 'player' | 'npc'): void {
     const { player, npc } = this.arena;
-    const caster = isPlayer ? player : npc;
-    const target = isPlayer ? npc : player;
+    const caster = owner === 'player' ? player : npc;
+    const anchorX = owner === 'player' ? this.bandAnchorX : this.npcBandAnchorX;
+    const anchorY = owner === 'player' ? this.bandAnchorY : this.npcBandAnchorY;
+    const startX = caster.x; const startY = caster.y;
+    const dx = anchorX - startX; const dy = anchorY - startY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < 4) return;
 
-    // During extend, arms track the current cursor / enemy direction
-    if (phase === 'extend') {
-      if (isPlayer) {
-        this.springCursorAngle = Math.atan2(this.punchMouseY - caster.y, this.punchMouseX - caster.x);
-      } else {
-        this.npcSpringCursorAngle = Math.atan2(target.y - caster.y, target.x - caster.x);
-      }
-    }
+    const time = this.arena.scene.time.now;
+    (caster.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
 
-    const phaseEnd = isPlayer ? this.springPhaseEnd : this.npcSpringPhaseEnd;
-    const cursorAngle = isPlayer ? this.springCursorAngle : this.npcSpringCursorAngle;
-    const gfx = isPlayer ? this.springGfx : this.npcSpringGfx;
-    const sweepStart = isPlayer ? this.springSweepStart : this.npcSpringSweepStart;
-    const lHit = isPlayer ? this.springLeftHit : this.npcSpringLeftHit;
-    const rHit = isPlayer ? this.springRightHit : this.npcSpringRightHit;
-    const bothApplied = isPlayer ? this.springBothApplied : this.npcSpringBothApplied;
+    if (owner === 'player') {
+      this.bandRecalling = true;
+      this.bandRecallFromX = startX; this.bandRecallFromY = startY;
+      this.bandRecallToX = anchorX; this.bandRecallToY = anchorY;
+      this.bandRecallStart = time;
+      this.arena.setIsDodging(true);
+      player.isInvincible = true;
+      this.arena.showFloatingText(caster.x, caster.y - 40, '↩ SNAP!', '#ff5577');
 
-    const perpL = cursorAngle + Math.PI / 2;
-    const perpR = cursorAngle - Math.PI / 2;
-
-    let leftAngle = perpL;
-    let rightAngle = perpR;
-
-    if (phase === 'extend') {
-      if (time > phaseEnd) {
-        if (isPlayer) { this.springPhase = 'sweep'; this.springSweepStart = time; this.springPhaseEnd = time + SPRING_SWEEP_MS; }
-        else { this.npcSpringPhase = 'sweep'; this.npcSpringSweepStart = time; this.npcSpringPhaseEnd = time + SPRING_SWEEP_MS; }
-      }
-    } else if (phase === 'sweep') {
-      const t = Math.min(1, (time - sweepStart) / SPRING_SWEEP_MS);
-      leftAngle = perpL + (cursorAngle - perpL) * t;
-      rightAngle = perpR + (cursorAngle - perpR) * t;
-
-      // Check hits against target (and invasion enemies)
-      const lx = caster.x + Math.cos(leftAngle) * SPRING_REACH;
-      const ly = caster.y + Math.sin(leftAngle) * SPRING_REACH;
-      const rx = caster.x + Math.cos(rightAngle) * SPRING_REACH;
-      const ry = caster.y + Math.sin(rightAngle) * SPRING_REACH;
-
-      const targets = this.arena.enemies.length > 0 ? this.arena.enemies : [target];
-      for (const tgt of targets) {
-        if (!tgt.active) continue;
-        const dL = Phaser.Math.Distance.Between(tgt.x, tgt.y, lx, ly);
-        const dR = Phaser.Math.Distance.Between(tgt.x, tgt.y, rx, ry);
-
-        if (dL < SPRING_HIT_RADIUS && !lHit.has(tgt)) {
-          lHit.add(tgt);
-          tgt.takeDamage(SPRING_DMG);
-          this.arena.spawnDamageNumber(tgt.x, tgt.y - 20, SPRING_DMG);
-          this.arena.spawnHitFlash(tgt.x, tgt.y, 0xff5577);
-        }
-        if (dR < SPRING_HIT_RADIUS && !rHit.has(tgt)) {
-          rHit.add(tgt);
-          tgt.takeDamage(SPRING_DMG);
-          this.arena.spawnDamageNumber(tgt.x, tgt.y - 20, SPRING_DMG);
-          this.arena.spawnHitFlash(tgt.x, tgt.y, 0xff5577);
-        }
-        // Both arms hit → size up + stun (only once per target per slam)
-        if (lHit.has(tgt) && rHit.has(tgt) && !bothApplied.has(tgt)) {
-          bothApplied.add(tgt);
-          tgt.earthStunnedUntil = Math.max(tgt.earthStunnedUntil, time + SPRING_STUN_MS);
-          tgt.sizeMult *= SPRING_SIZE_MULT; tgt.applySizeMult();
-          this.arena.showFloatingText(tgt.x, tgt.y - 52, '💥 DOUBLE ARM!', '#ff5577');
-          const sceneRef = this.arena.scene;
-          const sizeSnapshot = tgt.sizeMult;
-          sceneRef.time.delayedCall(SPRING_SIZE_MS, () => {
-            if (tgt.active && tgt.sizeMult >= SPRING_SIZE_MULT) {
-              tgt.sizeMult = sizeSnapshot / SPRING_SIZE_MULT;
-              tgt.applySizeMult();
-            }
-          });
-          // Uber-Gear: push enemy to nearest wall, deal 25 damage on contact, stun 5s, orbit stars
-          if (isPlayer && this.uberGearActive) {
-            const wW = this.arena.width; const wH = this.arena.height;
-            const toLeft = tgt.x; const toRight = wW - tgt.x;
-            const toTop = tgt.y; const toBottom = wH - tgt.y;
-            const minDist = Math.min(toLeft, toRight, toTop, toBottom);
-            let wallVx = 0; let wallVy = 0;
-            if (minDist === toLeft) wallVx = -800;
-            else if (minDist === toRight) wallVx = 800;
-            else if (minDist === toTop) wallVy = -800;
-            else wallVy = 800;
-            (tgt.body as Phaser.Physics.Arcade.Body).setVelocity(wallVx, wallVy);
-            this.arena.showFloatingText(tgt.x, tgt.y - 60, '🧱 WALL PUSH!', '#ffaaaa');
-            sceneRef.time.delayedCall(200, () => {
-              if (!tgt.active) return;
-              (tgt.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-              tgt.takeDamage(25);
-              this.arena.spawnHitFlash(tgt.x, tgt.y, 0xff8888);
-              this.arena.spawnDamageNumber(tgt.x, tgt.y - 20, 25);
-              this.arena.showFloatingText(tgt.x, tgt.y - 36, '💥 WALL SLAM!', '#ff8888');
-              // Extend stun to 5s
-              tgt.earthStunnedUntil = Math.max(tgt.earthStunnedUntil, sceneRef.time.now + 5000);
-              // Spawn 3 orbiting star sprites
-              for (const s of this.uberGearStarSprites) s.destroy();
-              this.uberGearStarSprites = [];
-              for (let si = 0; si < 3; si++) {
-                this.uberGearStarSprites.push(sceneRef.add.circle(tgt.x, tgt.y - 28, 5, 0xffff44, 1).setDepth(15));
-              }
-              sceneRef.time.delayedCall(5000, () => {
-                for (const s of this.uberGearStarSprites) s.destroy();
-                this.uberGearStarSprites = [];
-              });
-            });
+      // F+ Reinforced Band: contact damage to anything along the snap path
+      if (this.bandReinforced) {
+        const targets = this.arena.enemies.length > 0 ? this.arena.enemies : [npc];
+        for (const t of targets) {
+          if (!t.active) continue;
+          if (this.distPointToSegment(t.x, t.y, startX, startY, anchorX, anchorY) < BAND_RECALL_HIT_RADIUS) {
+            t.takeDamage(BAND_RECALL_CONTACT_DMG);
+            this.arena.spawnHitFlash(t.x, t.y, 0xff5577);
           }
         }
       }
-
-      if (time > phaseEnd) {
-        leftAngle = cursorAngle; rightAngle = cursorAngle;
-        if (isPlayer) { this.springPhase = 'linger'; this.springPhaseEnd = time + SPRING_LINGER_MS; }
-        else { this.npcSpringPhase = 'linger'; this.npcSpringPhaseEnd = time + SPRING_LINGER_MS; }
-      }
-    } else if (phase === 'linger') {
-      leftAngle = cursorAngle; rightAngle = cursorAngle;
-      if (time > phaseEnd) {
-        gfx?.destroy();
-        if (isPlayer) { this.springPhase = 'idle'; this.springGfx = null; }
-        else { this.npcSpringPhase = 'idle'; this.npcSpringGfx = null; }
-        return;
-      }
-    }
-
-    // Draw arms
-    if (gfx) {
-      const lx = caster.x + Math.cos(leftAngle) * SPRING_REACH;
-      const ly = caster.y + Math.sin(leftAngle) * SPRING_REACH;
-      const rx = caster.x + Math.cos(rightAngle) * SPRING_REACH;
-      const ry = caster.y + Math.sin(rightAngle) * SPRING_REACH;
-      gfx.clear();
-      gfx.lineStyle(8, 0xff5577, 0.9);
-      gfx.beginPath(); gfx.moveTo(caster.x, caster.y); gfx.lineTo(lx, ly); gfx.strokePath();
-      gfx.beginPath(); gfx.moveTo(caster.x, caster.y); gfx.lineTo(rx, ry); gfx.strokePath();
-      gfx.fillStyle(0xffaacc, 1);
-      gfx.fillCircle(lx, ly, 9); gfx.fillCircle(rx, ry, 9);
+    } else {
+      this.npcBandRecalling = true;
+      this.npcBandRecallFromX = startX; this.npcBandRecallFromY = startY;
+      this.npcBandRecallToX = anchorX; this.npcBandRecallToY = anchorY;
+      this.npcBandRecallStart = time;
     }
   }
 
-  private expireBounceBack(owner: 'player' | 'npc'): void {
-    const { player, npc } = this.arena;
-    const caster = owner === 'player' ? player : npc;
+  private startBandPull(time: number): void {
+    const { player } = this.arena;
+    const anchorX = this.bandAnchorX; const anchorY = this.bandAnchorY;
+    const dx = player.x - anchorX; const dy = player.y - anchorY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < 8) return;
 
-    if (owner === 'player') {
-      caster.damageAbsorber = this.bounceBackPrevAbsorber;
-      caster.sizeMult = 1; caster.applySizeMult();
-      this.bounceBackActive = false;
-      this.bounceBackPrevAbsorber = null;
-    } else {
-      caster.damageAbsorber = this.npcBounceBackPrevAbsorber;
-      caster.sizeMult = 1; caster.applySizeMult();
-      this.npcBounceBackActive = false;
-      this.npcBounceBackPrevAbsorber = null;
+    const tension = Math.min(1, dist / BAND_MAX_STRETCH);
+    const speed = BAND_ANCHOR_MIN_SPEED + (BAND_ANCHOR_MAX_SPEED - BAND_ANCHOR_MIN_SPEED) * tension;
+    const overshoot = BAND_ANCHOR_MAX_OVERSHOOT * tension;
+    const totalDist = dist + overshoot;
+
+    this.bandAnchorFlying = true;
+    this.bandAnchorFlyDirX = dx / dist; this.bandAnchorFlyDirY = dy / dist;
+    this.bandAnchorFlySpeed = speed;
+    this.bandAnchorFlyEnd = time + (totalDist / speed) * 1000;
+    this.bandAnchorFlyTension = tension;
+    this.bandAnchorFlyHitSet.clear();
+    this.arena.showFloatingText(player.x, player.y - 40, '⬅ REEL IN!', '#ff77aa');
+  }
+
+  private updateBand(time: number, delta: number, owner: 'player' | 'npc'): void {
+    const isPlayer = owner === 'player';
+    const active = isPlayer ? this.bandActive : this.npcBandActive;
+    if (!active) return;
+
+    const { player, npc, enemies, width, height } = this.arena;
+    const caster = isPlayer ? player : npc;
+    const createdAt = isPlayer ? this.bandCreatedAt : this.npcBandCreatedAt;
+    const lifetimeMs = isPlayer ? this.bandLifetimeMs : this.npcBandLifetimeMs;
+    const gfx = isPlayer ? this.bandGfx : this.npcBandGfx;
+
+    if (time > createdAt + lifetimeMs) {
+      this.expireBand(owner);
+      return;
     }
+
+    let anchorX = isPlayer ? this.bandAnchorX : this.npcBandAnchorX;
+    let anchorY = isPlayer ? this.bandAnchorY : this.npcBandAnchorY;
+
+    // Anchor-flying (player pulling the anchor toward themselves)
+    if (isPlayer && this.bandAnchorFlying) {
+      if (time >= this.bandAnchorFlyEnd) {
+        this.bandAnchorFlying = false;
+        this.bandAnchorFlyHitSet.clear();
+      } else {
+        const dtS = delta / 1000;
+        anchorX += this.bandAnchorFlyDirX * this.bandAnchorFlySpeed * dtS;
+        anchorY += this.bandAnchorFlyDirY * this.bandAnchorFlySpeed * dtS;
+        const wallL = 25 + BAND_ANCHOR_RADIUS; const wallR = width - 25 - BAND_ANCHOR_RADIUS;
+        const wallT = 85 + BAND_ANCHOR_RADIUS; const wallB = height - 25 - BAND_ANCHOR_RADIUS;
+        anchorX = Math.max(wallL, Math.min(wallR, anchorX));
+        anchorY = Math.max(wallT, Math.min(wallB, anchorY));
+        this.bandAnchorX = anchorX; this.bandAnchorY = anchorY;
+
+        // The flying anchor damages anything it passes through, harder the more tension it was reeled in under.
+        const flyTargets = enemies.length > 0 ? enemies : [npc];
+        const flyDmg = Math.round(BAND_ANCHOR_MIN_FLY_DMG + (BAND_ANCHOR_MAX_FLY_DMG - BAND_ANCHOR_MIN_FLY_DMG) * this.bandAnchorFlyTension);
+        for (const t of flyTargets) {
+          if (!t.active || t.hp <= 0 || this.bandAnchorFlyHitSet.has(t)) continue;
+          if (Phaser.Math.Distance.Between(anchorX, anchorY, t.x, t.y) <= BAND_ANCHOR_HIT_RADIUS) {
+            this.bandAnchorFlyHitSet.add(t);
+            t.takeDamage(flyDmg);
+            this.arena.spawnHitFlash(t.x, t.y, 0xff5577);
+          }
+        }
+      }
+    }
+
+    // Snap-back recall: lerp position directly rather than relying on physics velocity
+    // (the caster's Arcade body damps burst velocity within a couple of frames, which
+    // made a dashCaster-based recall undershoot the anchor badly — verified via the
+    // /verify browser harness).
+    const recalling = isPlayer ? this.bandRecalling : this.npcBandRecalling;
+    if (recalling) {
+      const recallStart = isPlayer ? this.bandRecallStart : this.npcBandRecallStart;
+      const fromX = isPlayer ? this.bandRecallFromX : this.npcBandRecallFromX;
+      const fromY = isPlayer ? this.bandRecallFromY : this.npcBandRecallFromY;
+      const toX = isPlayer ? this.bandRecallToX : this.npcBandRecallToX;
+      const toY = isPlayer ? this.bandRecallToY : this.npcBandRecallToY;
+      const t = Math.min(1, (time - recallStart) / BAND_RECALL_DURATION_MS);
+      const eased = 1 - Math.pow(1 - t, 3);
+      caster.setPosition(fromX + (toX - fromX) * eased, fromY + (toY - fromY) * eased);
+      (caster.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+      if (t >= 1) {
+        if (isPlayer) {
+          this.bandRecalling = false;
+          this.arena.setIsDodging(false);
+          player.isInvincible = false;
+        } else {
+          this.npcBandRecalling = false;
+        }
+      }
+    }
+
+    // NPC auto-recall when overstretched (simplified AI usage)
+    if (!isPlayer && !this.npcBandRecalling) {
+      const ndx = caster.x - anchorX; const ndy = caster.y - anchorY;
+      const ndist = Math.sqrt(ndx * ndx + ndy * ndy);
+      if (ndist > BAND_COMFORT_RADIUS * 1.3 && time >= this.npcBandNextAutoCheck) {
+        this.npcBandNextAutoCheck = time + NPC_BAND_AUTO_RECALL_CHECK_MS;
+        this.startBandRecall('npc');
+      }
+    }
+
+    // Slow when stretched beyond the comfort radius — the penalty is squared so it's
+    // barely noticeable near the comfort radius but bites hard as tension nears max stretch.
+    const dx = caster.x - anchorX; const dy = caster.y - anchorY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > BAND_COMFORT_RADIUS) {
+      const over = Math.min(1, (dist - BAND_COMFORT_RADIUS) / (BAND_MAX_STRETCH - BAND_COMFORT_RADIUS));
+      const mult = 1 - (over * over) * (1 - BAND_MIN_SPEED_MULT);
+      if (isPlayer) this.arena.applyPlayerSpeedMult(mult);
+      else this.arena.applyNpcSpeedMult(mult);
+    }
+
+    // Draw anchor + band
+    if (gfx) {
+      gfx.clear();
+      gfx.lineStyle(3, 0xff77aa, 0.85);
+      gfx.beginPath(); gfx.moveTo(anchorX, anchorY); gfx.lineTo(caster.x, caster.y); gfx.strokePath();
+      gfx.fillStyle(0x111111, 1);
+      gfx.fillCircle(anchorX, anchorY, BAND_ANCHOR_RADIUS);
+      gfx.lineStyle(2, 0xff5577, 1);
+      gfx.strokeCircle(anchorX, anchorY, BAND_ANCHOR_RADIUS);
+    }
+  }
+
+  private expireBand(owner: 'player' | 'npc'): void {
+    if (owner === 'player') {
+      this.bandGfx?.destroy(); this.bandGfx = null;
+      this.bandActive = false;
+      this.bandAnchorFlying = false;
+    } else {
+      this.npcBandGfx?.destroy(); this.npcBandGfx = null;
+      this.npcBandActive = false;
+    }
+  }
+
+  private shatterBand(owner: 'player' | 'npc'): void {
+    const { scene } = this.arena;
+    const anchorX = owner === 'player' ? this.bandAnchorX : this.npcBandAnchorX;
+    const anchorY = owner === 'player' ? this.bandAnchorY : this.npcBandAnchorY;
+    this.expireBand(owner);
+    if (owner === 'player') this.arena.showFloatingText(anchorX, anchorY - 20, '💥 SHATTERED', '#ffaacc');
+    for (let i = 0; i < 6; i++) {
+      const angle = (Math.PI * 2 * i) / 6;
+      const shard = scene.add.circle(anchorX, anchorY, 4, 0x111111, 1).setDepth(8);
+      scene.tweens.add({
+        targets: shard,
+        x: anchorX + Math.cos(angle) * 40, y: anchorY + Math.sin(angle) * 40,
+        alpha: 0, duration: 300, onComplete: () => shard.destroy(),
+      });
+    }
+  }
+
+  // ── Rubberage helpers ───────────────────────────────────────────────────────
+
+  private clearRubberageBalls(owner: 'player' | 'npc'): void {
+    if (owner === 'player') {
+      for (const b of this.rubberageBalls) b.gfx.destroy();
+      this.rubberageBalls = [];
+      this.rubberageEnd = 0;
+    } else {
+      for (const b of this.npcRubberageBalls) b.gfx.destroy();
+      this.npcRubberageBalls = [];
+      this.npcRubberageEnd = 0;
+    }
+  }
+
+  private updateRubberageBalls(time: number, delta: number, owner: 'player' | 'npc'): void {
+    const isPlayer = owner === 'player';
+    const balls = isPlayer ? this.rubberageBalls : this.npcRubberageBalls;
+    if (balls.length === 0) return;
+    const end = isPlayer ? this.rubberageEnd : this.npcRubberageEnd;
+    const dmg = isPlayer ? this.rubberageDmg : this.npcRubberageDmg;
+
+    if (time > end) {
+      this.clearRubberageBalls(owner);
+      return;
+    }
+
+    const { width, height } = this.arena;
+    const wallL = 25 + RUBBERAGE_RADIUS; const wallR = width - 25 - RUBBERAGE_RADIUS;
+    const wallT = 85 + RUBBERAGE_RADIUS; const wallB = height - 25 - RUBBERAGE_RADIUS;
+    const dt = delta / 1000;
+    const growth = 1 + delta * RUBBERAGE_SPEED_GROWTH_PER_MS;
+
+    for (const ball of balls) {
+      const spd = Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy) || 1;
+      if (spd < RUBBERAGE_MAX_SPEED) {
+        const newSpd = Math.min(RUBBERAGE_MAX_SPEED, spd * growth);
+        ball.vx = (ball.vx / spd) * newSpd;
+        ball.vy = (ball.vy / spd) * newSpd;
+      }
+
+      ball.x += ball.vx * dt;
+      ball.y += ball.vy * dt;
+
+      if (ball.x < wallL) { ball.x = wallL; ball.vx = Math.abs(ball.vx); }
+      else if (ball.x > wallR) { ball.x = wallR; ball.vx = -Math.abs(ball.vx); }
+      if (ball.y < wallT) { ball.y = wallT; ball.vy = Math.abs(ball.vy); }
+      else if (ball.y > wallB) { ball.y = wallB; ball.vy = -Math.abs(ball.vy); }
+    }
+
+    // Ball-ball collisions (equal-mass elastic reflection along the collision normal)
+    for (let i = 0; i < balls.length; i++) {
+      for (let j = i + 1; j < balls.length; j++) {
+        const a = balls[i]; const b = balls[j];
+        const dx = b.x - a.x; const dy = b.y - a.y;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        const minD = RUBBERAGE_RADIUS * 2;
+        if (d > 0 && d < minD) {
+          const nx = dx / d; const ny = dy / d;
+          const overlap = (minD - d) / 2;
+          a.x -= nx * overlap; a.y -= ny * overlap;
+          b.x += nx * overlap; b.y += ny * overlap;
+          const avn = a.vx * nx + a.vy * ny;
+          const bvn = b.vx * nx + b.vy * ny;
+          a.vx += (bvn - avn) * nx; a.vy += (bvn - avn) * ny;
+          b.vx += (avn - bvn) * nx; b.vy += (avn - bvn) * ny;
+        }
+      }
+    }
+
+    // Fighter collisions: damage + heavy knockback, ball bounces off the target
+    const targets = this.arena.enemies.length > 0 ? this.arena.enemies : [owner === 'player' ? this.arena.npc : this.arena.player];
+    for (const ball of balls) {
+      for (const tgt of targets) {
+        if (!tgt.active) continue;
+        const dx = tgt.x - ball.x; const dy = tgt.y - ball.y;
+        const d = Math.sqrt(dx * dx + dy * dy) || 1;
+        if (d < RUBBERAGE_RADIUS + RUBBERAGE_FIGHTER_RADIUS && time - ball.lastHitAt > RUBBERAGE_HIT_COOLDOWN_MS) {
+          ball.lastHitAt = time;
+          tgt.takeDamage(dmg);
+          this.arena.spawnHitFlash(tgt.x, tgt.y, 0xff5577);
+          const body = tgt.body as Phaser.Physics.Arcade.Body | null;
+          if (body) body.setVelocity((dx / d) * RUBBERAGE_KNOCKBACK, (dy / d) * RUBBERAGE_KNOCKBACK);
+          const ballSpd = Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy) || 1;
+          ball.vx = -(dx / d) * ballSpd;
+          ball.vy = -(dy / d) * ballSpd;
+          break;
+        }
+      }
+    }
+
+    for (const ball of balls) ball.gfx.setPosition(ball.x, ball.y);
   }
 }

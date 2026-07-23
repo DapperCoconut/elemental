@@ -137,13 +137,6 @@ export class PlasmaKit {
 
   constructor(private arena: PlasmaArenaApi) {}
 
-  // ── Public accessors for VoidKit ──────────────────────────────────
-
-  getIncarnateActive(): boolean { return this.plasmaIncarnateActive; }
-  setIncarnateActive(v: boolean): void { this.plasmaIncarnateActive = v; }
-  getNpcIncarnateActive(): boolean { return this.npcPlasmaIncarnateActive; }
-  setNpcIncarnateActive(v: boolean): void { this.npcPlasmaIncarnateActive = v; }
-
   // ── reset ─────────────────────────────────────────────────────────
 
   reset(): void {
@@ -385,7 +378,6 @@ export class PlasmaKit {
         if (dA <= 20 || dB <= 20) {
           hitTarget.takeDamage(10);
           this.arena.spawnHitFlash(hitTarget.x, hitTarget.y, 0xcc44ff);
-          this.arena.spawnDamageNumber(hitTarget.x, hitTarget.y - 20, 10);
           this.arena.showFloatingText(hitTarget.x, hitTarget.y - 36, '💥 Chain Collapse!', '#cc44ff');
           this.doPlasmaCurrentExplode(orb);
           chainCollapsed = true;
@@ -401,7 +393,6 @@ export class PlasmaKit {
           if (!hitTarget.active || hitTarget.hp <= 0) continue;
           if (this.pointNearSegment(hitTarget.x, hitTarget.y, orb.ax, orb.ay, orb.bx, orb.by, 18)) {
             hitTarget.takeDamage(2);
-            this.arena.spawnDamageNumber(hitTarget.x, hitTarget.y - 16, 2);
           }
         }
       }
@@ -438,7 +429,6 @@ export class PlasmaKit {
         if (d <= 20) {
           f.takeDamage(8);
           this.arena.spawnHitFlash(f.x, f.y, 0xff44ff);
-          this.arena.spawnDamageNumber(f.x, f.y - 20, 8);
           this.doPlasmaApplyChaos(side);
           if (this.arena.hasUpgrade('r')) this.doPlasmaVoltRelay(blade.x, blade.y, blade.owner);
           blade.vx += (Math.random() - 0.5) * 60;
@@ -491,7 +481,6 @@ export class PlasmaKit {
         if (Phaser.Math.Distance.Between(orb.x, orb.y, f.x, f.y) <= 20) {
           f.takeDamage(10);
           this.arena.spawnHitFlash(f.x, f.y, 0xffaaff);
-          this.arena.spawnDamageNumber(f.x, f.y - 20, 10);
           this.arena.showFloatingText(f.x, f.y - 36, '🌀 Chaos Orb!', '#ffaaff');
           orb.active = false;
           break;
@@ -524,7 +513,6 @@ export class PlasmaKit {
           this.plasmaIncarnateLastTouch = time;
           npc.takeDamage(50);
           this.arena.spawnHitFlash(npc.x, npc.y, 0xcc44ff);
-          this.arena.spawnDamageNumber(npc.x, npc.y - 20, 50);
           this.arena.showFloatingText(npc.x, npc.y - 36, '🔮 Plasma Touch!', '#ff88ff');
         }
 
@@ -534,7 +522,6 @@ export class PlasmaKit {
             this.plasmaIncarnateLastChain = time;
             this.doPlasmaChainLightning(player.x, player.y, npc.x, npc.y);
             npc.takeDamage(5);
-            this.arena.spawnDamageNumber(npc.x, npc.y - 20, 5);
           }
         }
       }
@@ -555,7 +542,6 @@ export class PlasmaKit {
           this.npcPlasmaIncarnateLastTouch = time;
           player.takeDamage(50);
           this.arena.spawnHitFlash(player.x, player.y, 0xcc44ff);
-          this.arena.spawnDamageNumber(player.x, player.y - 20, 50);
           this.arena.showFloatingText(player.x, player.y - 36, '🔮 Plasma Touch!', '#ff88ff');
         }
 
@@ -565,7 +551,6 @@ export class PlasmaKit {
             this.npcPlasmaIncarnateLastChain = time;
             this.doPlasmaChainLightning(npc.x, npc.y, player.x, player.y);
             player.takeDamage(5);
-            this.arena.spawnDamageNumber(player.x, player.y - 20, 5);
           }
         }
       }
@@ -617,8 +602,7 @@ export class PlasmaKit {
         p.tickAccum -= 100;
         const target = p.owner === 'player' ? this.arena.npc : this.arena.player;
         if (target.active && Phaser.Math.Distance.Between(p.sprite.x, p.sprite.y, target.x, target.y) < 14) {
-          target.takeDamage(2);
-          this.arena.spawnDamageNumber(target.x, target.y - 16, 2);
+          target.takeDamage(2, { source: p.sprite, sourceX: p.sprite.x, sourceY: p.sprite.y });
         }
       }
     }
@@ -666,7 +650,6 @@ export class PlasmaKit {
           if (angleDiff < Math.PI / 4) {
             target.takeDamage(5);
             this.arena.spawnHitFlash(target.x, target.y, 0xcc44ff);
-            this.arena.spawnDamageNumber(target.x, target.y - 20, 5);
             hitLanded = true;
           }
         }
@@ -808,7 +791,6 @@ export class PlasmaKit {
           this.doPlasmaChainLightning(npc.x, npc.y, player.x, player.y);
           npc.takeDamage(10);
           this.arena.spawnHitFlash(npc.x, npc.y, 0xff2244);
-          this.arena.spawnDamageNumber(npc.x, npc.y - 20, 10);
           this.arena.showFloatingText(npc.x, npc.y - 36, '⚡ RETALIATION', '#ff4444');
           return true;
         };
@@ -930,13 +912,11 @@ export class PlasmaKit {
     if (playerDist <= radius) {
       player.takeDamage(10);
       this.arena.spawnHitFlash(player.x, player.y, 0xcc44ff);
-      this.arena.spawnDamageNumber(player.x, player.y - 20, 10);
     }
     const npcDist = Phaser.Math.Distance.Between(cx, cy, npc.x, npc.y);
     if (npcDist <= radius) {
       npc.takeDamage(10);
       this.arena.spawnHitFlash(npc.x, npc.y, 0xcc44ff);
-      this.arena.spawnDamageNumber(npc.x, npc.y - 20, 10);
     }
 
     orb.active = false;
@@ -959,7 +939,6 @@ export class PlasmaKit {
         if (relayDist <= 100) {
           target.takeDamage(8);
           this.arena.spawnHitFlash(target.x, target.y, 0xdd66ff);
-          this.arena.spawnDamageNumber(target.x, target.y - 20, 8);
           this.arena.showFloatingText(target.x, target.y - 36, '⚡ VOLT RELAY', '#dd66ff');
         }
         if (pairedVp) pairedVp.charges--;
@@ -981,13 +960,11 @@ export class PlasmaKit {
     if (pDist <= radius) {
       player.takeDamage(80);
       this.arena.spawnHitFlash(player.x, player.y, 0xaa22ff);
-      this.arena.spawnDamageNumber(player.x, player.y - 20, 80);
     }
     const nDist = Phaser.Math.Distance.Between(arena.x, arena.y, npc.x, npc.y);
     if (nDist <= radius) {
       npc.takeDamage(80);
       this.arena.spawnHitFlash(npc.x, npc.y, 0xaa22ff);
-      this.arena.spawnDamageNumber(npc.x, npc.y - 20, 80);
     }
     this.arena.showFloatingText(arena.x, arena.y - 30, '💥 ARENA EXPLOSION!', '#ff44ff');
   }

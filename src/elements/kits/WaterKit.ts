@@ -50,6 +50,8 @@ export interface WaterArenaApi {
   readonly masteryActive: boolean;
   /** Mastery enhancement id bound over the given ability slot, or null if that slot is unchanged. */
   masteryBindFor(slot: string): string | null;
+  /** Online: broadcast a bindable mastery cast so the peer's sim replays it. */
+  broadcastMasteryCast(enhId: string): void;
   recordMasteryStat(key: string, amount: number): void;
   isPlayerWater(): boolean;
   hasUpgrade(slot: string): boolean;
@@ -104,6 +106,10 @@ export class WaterKit {
   private siphonActiveUntil = 0;
   private siphonGfx: Phaser.GameObjects.Graphics | null = null;
   private siphonSeen = new Set<Fighter>();
+  // Online mirror: the opponent's Siphon replayed on this victim sim (dehydrates the local player).
+  private npcSiphonActiveUntil = 0;
+  private npcSiphonGfx: Phaser.GameObjects.Graphics | null = null;
+  private npcSiphonSeen = new Set<Fighter>();
   private slipstreamActive = false;
 
   // track time for methods called outside update()
@@ -140,6 +146,9 @@ export class WaterKit {
     this.siphonActiveUntil = 0;
     if (this.siphonGfx) { this.siphonGfx.destroy(); this.siphonGfx = null; }
     this.siphonSeen.clear();
+    this.npcSiphonActiveUntil = 0;
+    if (this.npcSiphonGfx) { this.npcSiphonGfx.destroy(); this.npcSiphonGfx = null; }
+    this.npcSiphonSeen.clear();
     this.slipstreamActive = false;
   }
 
@@ -196,7 +205,7 @@ export class WaterKit {
       // -- Water Mastery enhancements --
       if (this.arena.masteryActive) {
         this.tickSlipstream();
-        this.tickSiphon(time, delta);
+        this.tickSiphon(time, delta, 'player');
       }
     }
 
@@ -412,9 +421,9 @@ export class WaterKit {
     // no-op: boiling system removed
   }
 
-  // Called from applyProjectileToNpc for water-cut damage with multiplier
-  computeOutgoingMultiplier(target: Fighter, attacker: 'player' | 'npc'): number {
-    if (attacker !== 'player') return 1;
+  // Dehydration damage bonus. Applies to whichever fighter is dehydrated — the player's
+  // Siphon/Dehydration dries out the npc; online, the npc's does the same to us.
+  computeOutgoingMultiplier(target: Fighter, _attacker: 'player' | 'npc'): number {
     const dehyd = this.dehydration.get(target) ?? 0;
     return Math.min(1.5, 1 + 0.05 * Math.floor(dehyd / 10));
   }
@@ -474,43 +483,79 @@ export class WaterKit {
     this.siphonActiveUntil = time + SIPHON_DURATION_MS;
     this.siphonSeen.clear();
     this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 28, '🌊 Siphon!', '#66ddff');
+    this.arena.broadcastMasteryCast('siphon');
   }
 
   /**
    * Siphon: a cone anchored to the player that follows their aim for 3s. It deals no damage —
    * everything inside just dries out, feeding the dehydration damage bonus on the rest of the kit.
    */
-  private tickSiphon(time: number, delta: number): void {
-    const { player, scene } = this.arena;
+  /** Online replay: the remote water player cast Siphon — open an npc cone that dehydrates us. */
+  doNpcSiphon(_tx: number, _ty: number): void {
+    this.npcSiphonActiveUntil = this.arena.scene.time.now + SIPHON_DURATION_MS;
+    this.npcSiphonSeen.clear();
+  }
 
-    if (time >= this.siphonActiveUntil) {
-      if (this.siphonGfx) { this.siphonGfx.destroy(); this.siphonGfx = null; }
+  /** Online: opponent is water — advance their Siphon cone and keep our dehydration bar live. */
+  updateNpc(time: number, delta: number): void {
+    this.updateDehydrationBarPositions();
+    this.tickSiphon(time, delta, 'npc');
+  }
+
+  private updateDehydrationBarPositions(): void {
+    for (const [fighter, bar] of this.dehydrationBars) {
+      if (!fighter.active) { bar.destroy(); this.dehydrationBars.delete(fighter); continue; }
+      const pct = (this.dehydration.get(fighter) ?? 0) / 100;
+      const barW = Math.max(0, pct * 44);
+      bar.setPosition(fighter.x - 22 + barW / 2, fighter.y - 50);
+      bar.setSize(barW, 4);
+    }
+  }
+
+  private tickSiphon(time: number, delta: number, owner: 'player' | 'npc'): void {
+    const { player, npc, scene } = this.arena;
+    const origin = owner === 'player' ? player : npc;
+    const activeUntil = owner === 'player' ? this.siphonActiveUntil : this.npcSiphonActiveUntil;
+    const seen = owner === 'player' ? this.siphonSeen : this.npcSiphonSeen;
+    // 'npc' cones dehydrate the local player; 'player' cones dehydrate our enemies.
+    const targets = owner === 'player' ? this.arena.enemies : [player];
+
+    if (time >= activeUntil) {
+      if (owner === 'player') { if (this.siphonGfx) { this.siphonGfx.destroy(); this.siphonGfx = null; } }
+      else { if (this.npcSiphonGfx) { this.npcSiphonGfx.destroy(); this.npcSiphonGfx = null; } }
       return;
     }
 
-    const angle = Math.atan2(this.lastMouseY - player.y, this.lastMouseX - player.x);
+    // Player cone follows the live cursor; npc cone auto-tracks its victim (the local player).
+    const aimX = owner === 'player' ? this.lastMouseX : player.x;
+    const aimY = owner === 'player' ? this.lastMouseY : player.y;
+    const angle = Math.atan2(aimY - origin.y, aimX - origin.x);
 
-    if (!this.siphonGfx) this.siphonGfx = scene.add.graphics().setDepth(4);
-    this.siphonGfx.clear();
-    this.siphonGfx.fillStyle(0x1188cc, 0.28);
-    this.siphonGfx.slice(player.x, player.y, SIPHON_RANGE, angle - SIPHON_HALF_ANGLE, angle + SIPHON_HALF_ANGLE, false);
-    this.siphonGfx.fillPath();
-    this.siphonGfx.lineStyle(2, 0x66ddff, 0.7);
-    this.siphonGfx.beginPath();
-    this.siphonGfx.arc(player.x, player.y, SIPHON_RANGE, angle - SIPHON_HALF_ANGLE, angle + SIPHON_HALF_ANGLE, false);
-    this.siphonGfx.strokePath();
+    let gfx = owner === 'player' ? this.siphonGfx : this.npcSiphonGfx;
+    if (!gfx) {
+      gfx = scene.add.graphics().setDepth(4);
+      if (owner === 'player') this.siphonGfx = gfx; else this.npcSiphonGfx = gfx;
+    }
+    gfx.clear();
+    gfx.fillStyle(0x1188cc, 0.28);
+    gfx.slice(origin.x, origin.y, SIPHON_RANGE, angle - SIPHON_HALF_ANGLE, angle + SIPHON_HALF_ANGLE, false);
+    gfx.fillPath();
+    gfx.lineStyle(2, 0x66ddff, 0.7);
+    gfx.beginPath();
+    gfx.arc(origin.x, origin.y, SIPHON_RANGE, angle - SIPHON_HALF_ANGLE, angle + SIPHON_HALF_ANGLE, false);
+    gfx.strokePath();
 
     const gain = SIPHON_DEHYDRATION_PER_SEC * (delta / 1000);
-    for (const t of this.arena.enemies) {
+    for (const t of targets) {
       if (!t.active || t.hp <= 0) continue;
-      if (Phaser.Math.Distance.Between(player.x, player.y, t.x, t.y) > SIPHON_RANGE) continue;
+      if (Phaser.Math.Distance.Between(origin.x, origin.y, t.x, t.y) > SIPHON_RANGE) continue;
       // Shortest signed angle between the cone's axis and the target keeps the wrap at ±π honest.
-      const toTarget = Math.atan2(t.y - player.y, t.x - player.x);
+      const toTarget = Math.atan2(t.y - origin.y, t.x - origin.x);
       if (Math.abs(Phaser.Math.Angle.Wrap(toTarget - angle)) > SIPHON_HALF_ANGLE) continue;
 
       this.applyDehydration(t, gain);
-      if (!this.siphonSeen.has(t)) {
-        this.siphonSeen.add(t);
+      if (!seen.has(t)) {
+        seen.add(t);
         this.arena.showFloatingText(t.x, t.y - 38, '🌊 SIPHONED!', '#66ddff');
       }
     }
@@ -600,7 +645,7 @@ export class WaterKit {
         this.boilLastHitAt.set(t, time);
         // The damage number is spawned by the target's own 'damaged' listener —
         // adding one here rendered a second number and read as a double tick.
-        t.takeDamage(10);
+        t.takeDamage(10, { source: g, sourceX: g.x, sourceY: g.y });
         this.arena.spawnHitFlash(t.x, t.y, 0xffffff);
         this.arena.showFloatingText(t.x, t.y - 44, '♨️ SCALDED!', '#ffddaa');
         this.noteDamageDealtByPlayer(10);

@@ -1,46 +1,46 @@
 import { Element } from './Element';
 import { Ability } from './Ability';
 
-const lightStab: Ability = {
-  id: 'light-stab',
-  name: 'Light Stab',
-  description: 'Tap: highlight enemy (15% more damage, 2s). Hold: summon light spear — damage scales with speed',
+const lightLance: Ability = {
+  id: 'light-lance',
+  name: 'Light Lance',
+  description: 'Hold to channel a lance and shrink into car-mode: steer with your cursor, accelerating on straightaways and drifting (losing speed) through hard turns. No cooldown',
   displayKey: 'Click',
-  cooldown: 500,
+  cooldown: 0,
   cast(ctx) { void ctx; }, // Handled in ArenaScene
 };
 
-const photoSpark: Ability = {
-  id: 'photo-spark',
-  name: 'Photosynthespark',
-  description: 'Slow 20% for 3s, then accelerate (15%→200% speed) for 5s. Stand still during accel to regen 8 HP/s',
+const blink: Ability = {
+  id: 'blink',
+  name: 'Blink',
+  description: 'Instantly snap your heading to the cursor without losing speed. Stores up to 2 charges (5s recharge each)',
   displayKey: 'E',
-  cooldown: 10000,
+  cooldown: 5000,
   cast(ctx) { void ctx; }, // Handled in ArenaScene
 };
 
-const photonOrbs: Ability = {
-  id: 'photon-orbs',
-  name: 'Photon Orbs',
-  description: 'Summon 2 orbiting photon orbs. Enemy hit = OverStim (tick damage by speed). Recast to consume orb: 200% speed 1.5s. 20s cd after last orb used',
+const prismRamp: Ability = {
+  id: 'prism-ramp',
+  name: 'Prism Ramp',
+  description: 'Drop a ramp in front of you (max 5, they never fade). Driving over one grants a huge acceleration boost and launches 3 colored lances in a cone',
   displayKey: 'R',
-  cooldown: 20000,
+  cooldown: 8000,
   cast(ctx) { void ctx; }, // Handled in ArenaScene
 };
 
-const skewer: Ability = {
-  id: 'skewer',
-  name: 'Skewer',
-  description: 'Activate 5s skewer mode. Hitting enemy with held spear drags them — run into wall for heavy speed-scaled damage',
+const lightTrick: Ability = {
+  id: 'light-trick',
+  name: 'Light Trick',
+  description: 'A small burst of light around you. Hits deal 5 damage and grant you a big acceleration boost',
   displayKey: 'F',
-  cooldown: 18000,
+  cooldown: 1000,
   cast(ctx) { void ctx; }, // Handled in ArenaScene
 };
 
-const prayer: Ability = {
-  id: 'prayer',
-  name: 'Prayer',
-  description: 'Summon guardian angel 8s: 25% speed, 25% DR, auto-highlight enemy, 8 holy blades every 3s',
+const speedOLight: Ability = {
+  id: 'speed-o-light',
+  name: "Speed 'O' Light",
+  description: 'Bounce between the arena walls 25 times in an instant, leaving behind damaging light streaks (10 dmg each)',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 45000,
@@ -52,5 +52,5 @@ export const lightElement: Element = {
   name: 'Light',
   color: 0xfff4a8,
   emoji: '✨',
-  abilities: [lightStab, photoSpark, photonOrbs, skewer, prayer],
+  abilities: [lightLance, blink, prismRamp, lightTrick, speedOLight],
 };

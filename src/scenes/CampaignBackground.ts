@@ -586,9 +586,9 @@ const THEMES: Record<string, ThemeFn> = {
     scene.tweens.add({ targets: g, y: { from: -10, to: 10 }, duration: 1600, yoyo: true, repeat: -1, ease: 'Bounce.easeOut' });
   },
 
-  death: (scene, ctr, w, h) => {
+  gunpowder: (scene, ctr, w, h) => {
     base(scene, ctr, w, h, 0x030008, 0x440066);
-    const rnd = new Phaser.Math.RandomDataGenerator(['death-bg']);
+    const rnd = new Phaser.Math.RandomDataGenerator(['gunpowder-bg']);
     const g = scene.add.graphics();
     // Skull-like cross shapes
     for (let i = 0; i < 8; i++) {

@@ -31,6 +31,7 @@ export interface WindTrapLike {
 
 export interface AirArenaApi {
   readonly player: Fighter;
+  readonly npc: Fighter;
   readonly enemies: Fighter[];
   readonly scene: Phaser.Scene;
   readonly eKey: Phaser.Input.Keyboard.Key;
@@ -46,11 +47,27 @@ export interface AirArenaApi {
   readonly windTrap: WindTrapLike | null;
   /** Mastery enhancement id bound over the given ability slot, or null if that slot is unchanged. */
   masteryBindFor(slot: string): string | null;
+  /** Online: broadcast a bindable mastery cast so the peer's sim replays it. */
+  broadcastMasteryCast(enhId: string): void;
   recordMasteryStat(key: string, amount: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
 }
 
 // ── AirKit ────────────────────────────────────────────────────────────────────
+
+interface Tornado {
+  gfx: Phaser.GameObjects.Arc;
+  eye: Phaser.GameObjects.Text;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  spin: number;
+  /** Each captive's polar offset from the eye, reeled inward every frame. */
+  captured: Map<Fighter, { angle: number; dist: number }>;
+  /** 'player' tornadoes sweep enemies; 'npc' (online replay) sweeps the local player. */
+  owner: 'player' | 'npc';
+}
 
 /**
  * Air Mastery only. The base Air kit (snipe, quick shot, wind trap, grapple, beam)
@@ -66,17 +83,9 @@ export class AirKit {
 
   // -- Sweeping Tornado --
   private tornadoLastCastAt = -Infinity;
-  private tornado: {
-    gfx: Phaser.GameObjects.Arc;
-    eye: Phaser.GameObjects.Text;
-    x: number;
-    y: number;
-    vx: number;
-    vy: number;
-    spin: number;
-    /** Each captive's polar offset from the eye, reeled inward every frame. */
-    captured: Map<Fighter, { angle: number; dist: number }>;
-  } | null = null;
+  private tornado: Tornado | null = null;
+  /** Online mirror: the opponent's Sweeping Tornado replayed on this victim sim. */
+  private npcTornado: Tornado | null = null;
 
   // last known aim, captured in handleInput so the tornado launches toward the cursor
   private lastMouseX = 0;
@@ -88,7 +97,8 @@ export class AirKit {
     this.swiftStacks = 0;
     this.snipeStreak = 0;
     this.tornadoLastCastAt = -Infinity;
-    this.clearTornado();
+    this.clearTornado('player');
+    this.clearTornado('npc');
   }
 
   handleInput(time: number, mouseX: number, mouseY: number): void {
@@ -108,7 +118,7 @@ export class AirKit {
   }
 
   update(_time: number, delta: number): void {
-    this.tickTornado(delta);
+    this.tickTornado(this.tornado, delta);
   }
 
   // ── Reporting hooks (called from ArenaScene) ──────────────────────────────
@@ -198,31 +208,47 @@ export class AirKit {
   private tryCastTornado(time: number, mouseX: number, mouseY: number): void {
     if (time - this.tornadoLastCastAt < TORNADO_COOLDOWN_MS) return;
     this.tornadoLastCastAt = time;
-    this.clearTornado();
+    this.spawnTornado(mouseX, mouseY, 'player');
+    this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 28, '🌪️ Sweeping Tornado!', '#c0c8d0');
+    this.arena.broadcastMasteryCast('sweeping-tornado');
+  }
 
-    const { player, scene } = this.arena;
-    const ang = Math.atan2(mouseY - player.y, mouseX - player.x);
-    const gfx = scene.add.circle(player.x, player.y, TORNADO_RADIUS, 0x4a4a52, 0.3).setDepth(4);
+  /** Online replay: the remote air player cast Sweeping Tornado — sweep our local fighter. */
+  doNpcTornado(tx: number, ty: number): void {
+    this.spawnTornado(tx, ty, 'npc');
+  }
+
+  /** Online: opponent is air — advance their replayed tornado (which drags our local fighter). */
+  updateNpc(_time: number, delta: number): void {
+    this.tickTornado(this.npcTornado, delta);
+  }
+
+  private spawnTornado(aimX: number, aimY: number, owner: 'player' | 'npc'): void {
+    this.clearTornado(owner);
+    const { player, npc, scene } = this.arena;
+    const origin = owner === 'player' ? player : npc;
+    const ang = Math.atan2(aimY - origin.y, aimX - origin.x);
+    const gfx = scene.add.circle(origin.x, origin.y, TORNADO_RADIUS, 0x4a4a52, 0.3).setDepth(4);
     gfx.setStrokeStyle(3, 0x9aa4b0, 0.8);
-    const eye = scene.add.text(player.x, player.y, '🌪️', { fontSize: '40px' }).setOrigin(0.5).setDepth(5);
+    const eye = scene.add.text(origin.x, origin.y, '🌪️', { fontSize: '40px' }).setOrigin(0.5).setDepth(5);
 
-    this.tornado = {
+    const tornado: Tornado = {
       gfx, eye,
-      x: player.x, y: player.y,
+      x: origin.x, y: origin.y,
       vx: Math.cos(ang) * TORNADO_SPEED,
       vy: Math.sin(ang) * TORNADO_SPEED,
       spin: 0,
       captured: new Map<Fighter, { angle: number; dist: number }>(),
+      owner,
     };
-    this.arena.showFloatingText(player.x, player.y - 28, '🌪️ Sweeping Tornado!', '#c0c8d0');
+    if (owner === 'player') this.tornado = tornado; else this.npcTornado = tornado;
   }
 
   /**
    * The tornado rolls forward, vacuuming up anything it touches and dragging it along.
    * Reaching any arena edge bursts it and drops everything it was holding.
    */
-  private tickTornado(delta: number): void {
-    const t = this.tornado;
+  private tickTornado(t: Tornado | null, delta: number): void {
     if (!t) return;
     const dt = delta / 1000;
 
@@ -233,8 +259,10 @@ export class AirKit {
     t.eye.setPosition(t.x, t.y);
     t.eye.setRotation(t.spin);
 
+    // 'npc' tornadoes (online replay) sweep the local player; 'player' ones sweep enemies.
+    const sweepTargets = t.owner === 'npc' ? [this.arena.player] : this.arena.enemies;
     // Vacuum: anything inside the funnel this frame is caught for the rest of the ride.
-    for (const e of this.arena.enemies) {
+    for (const e of sweepTargets) {
       if (!e.active || e.hp <= 0 || t.captured.has(e)) continue;
       const d = Phaser.Math.Distance.Between(t.x, t.y, e.x, e.y);
       if (d > TORNADO_RADIUS) continue;
@@ -258,13 +286,11 @@ export class AirKit {
     const { width, height } = this.arena;
     if (t.x <= TORNADO_RADIUS || t.x >= width - TORNADO_RADIUS
       || t.y <= TORNADO_RADIUS || t.y >= height - TORNADO_RADIUS) {
-      this.burstTornado();
+      this.burstTornado(t);
     }
   }
 
-  private burstTornado(): void {
-    const t = this.tornado;
-    if (!t) return;
+  private burstTornado(t: Tornado): void {
     for (const e of t.captured.keys()) {
       if (!e.active || e.hp <= 0) continue;
       (e.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
@@ -275,13 +301,14 @@ export class AirKit {
       targets: burst, scaleX: 1.6, scaleY: 1.6, alpha: 0, duration: 320,
       onComplete: () => burst.destroy(),
     });
-    this.clearTornado();
+    this.clearTornado(t.owner);
   }
 
-  private clearTornado(): void {
-    if (!this.tornado) return;
-    this.tornado.gfx.destroy();
-    this.tornado.eye.destroy();
-    this.tornado = null;
+  private clearTornado(owner: 'player' | 'npc'): void {
+    const t = owner === 'player' ? this.tornado : this.npcTornado;
+    if (!t) return;
+    t.gfx.destroy();
+    t.eye.destroy();
+    if (owner === 'player') this.tornado = null; else this.npcTornado = null;
   }
 }

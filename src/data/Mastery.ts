@@ -541,6 +541,54 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       },
     ],
   },
+  magic: {
+    elementId: 'magic',
+    name: 'Magic Mastery',
+    enhancedEmoji: '🧘',
+    enhancedColor: 0xddaa00,
+    requirements: [
+      {
+        key: 'meditateHealed',
+        label: 'Inner Peace',
+        howTo: 'Heal HP with Meditate (F) orbs',
+        target: 200,
+      },
+      {
+        key: 'grimoireAllSpellsUsed',
+        label: 'Grimoire Adept',
+        howTo: 'Cast every Grimoire (E) spell at least 10 times each',
+        target: 10,
+        isBest: true,
+      },
+      {
+        key: 'darkEnergyGained',
+        label: 'Soul Harvester',
+        howTo: 'Generate dark energy by casting dark-mode Grimoire, Necronomicon, or Wild Anchor spells',
+        target: 500,
+      },
+      {
+        key: 'necroAllSpellsUsed',
+        label: 'Apocalypse Scholar',
+        howTo: 'Cast every Necronomicon (Q) ultimate spell at least once each',
+        target: 1,
+        isBest: true,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'levitate',
+        name: 'Levitate',
+        description: 'Passive: immune to damage and slows from anything that hasn\'t moved in the last 3 seconds — puddles, clouds, traps, and other stationary hazards can\'t touch you. Anything that moves (projectiles, dashes, drags, orbiting effects) still hits you as normal.',
+      },
+      {
+        id: 'transmogrify',
+        name: 'Transmogrify',
+        bindable: true,
+        hudDescription: 'Slow projectile that turns the enemy into a chicken',
+        description: 'Launch a slow white projectile forward. On hit, the target turns into a chicken for 8 seconds: they wander randomly and cannot cast any abilities, though their attack speed is doubled for the duration. 12 second cooldown.',
+      },
+    ],
+  },
 };
 
 export function getMasteryDef(elementId: string): MasteryDef | undefined {

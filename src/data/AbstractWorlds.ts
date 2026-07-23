@@ -17,7 +17,7 @@ export const ABSTRACT_WORLDS: World[] = [
   { id: 'rubber',      name: 'Rubber',      emoji: '🪀', color: 0xff5577, parentId: 'slime', mapX: 320, mapY: 390, nodes: makeNodes('rubber') },
 
   // Tier 2: fate children
-  { id: 'death',       name: 'Death',       emoji: '💀', color: 0x440066, parentId: 'fate',  mapX: 430, mapY: 390, nodes: makeNodes('death') },
+  { id: 'gunpowder',   name: 'Gunpowder',   emoji: '💀', color: 0x440066, parentId: 'fate',  mapX: 430, mapY: 390, nodes: makeNodes('gunpowder') },
   { id: 'echo',        name: 'Echo',        emoji: '🦇', color: 0xccccff, parentId: 'fate',  mapX: 520, mapY: 390, nodes: makeNodes('echo') },
 
   // Tier 2: sound children

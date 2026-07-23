@@ -1,50 +1,50 @@
 import { Element } from './Element';
 import { Ability, CastContext } from './Ability';
 
-const soulOrb: Ability = {
-  id: 'soul-orb',
-  name: 'Spirit Propel',
-  description: 'Fire a ghostly orb (3s, 10 dmg/touch, +1 👻 per hit). Hold Click for Haunt mode (upgrade).',
+const soulLanternLight: Ability = {
+  id: 'soul-lantern-light',
+  name: 'Lantern Light',
+  description: 'Hold Click to trail a spark toward the cursor, dropping tiny purple puddles. Puddles burn enemies (and your own grave zombies) for 5 dmg/s and heal you + your Amalgams for 3 hp/s.',
   displayKey: 'Click',
-  cooldown: 800,
-  cast(ctx: CastContext) { ctx.fireSoulOrb(ctx.targetX, ctx.targetY); },
+  cooldown: 150,
+  cast(ctx: CastContext) { ctx.soulLanternTick(ctx.targetX, ctx.targetY); },
 };
 
-const soulSummon: Ability = {
-  id: 'soul-summon',
-  name: 'Summon',
-  description: 'Hold E: basic (1👻), ghoul (2👻 1s), banshee (3👻 2s). E+: corpse (4👻 4s), necromancer (5👻 5s). 2s CD.',
+const soulArise: Ability = {
+  id: 'soul-arise',
+  name: 'Arise!',
+  description: 'Pop the newest corpse from your 5-slot queue and raise it as an Amalgam that fights at your side. Does nothing if the queue is empty. 3s CD.',
   displayKey: 'E',
-  cooldown: 2000,
-  cast(ctx: CastContext) { ctx.summonGhost('basic'); },
+  cooldown: 3000,
+  cast(ctx: CastContext) { ctx.soulArise(); },
 };
 
-const soulSacrifice: Ability = {
-  id: 'soul-sacrifice',
-  name: 'Sacrifice',
-  description: '-10 HP self, +1 👻. 3s CD. R+: Hold to drain life for ghosts + soul explosion.',
+const soulGrave: Ability = {
+  id: 'soul-grave',
+  name: 'Grave',
+  description: 'Plant a headstone at the cursor. Every 5s it spits out a weak zombie that hunts YOU — burn your own zombies down with Lantern Light puddles to feed the corpse queue. Graves never expire and are never capped, so don\'t plant too many.',
   displayKey: 'R',
-  cooldown: 3000,
-  cast(ctx: CastContext) { ctx.soulSacrifice(); },
+  cooldown: 500,
+  cast(ctx: CastContext) { ctx.soulGrave(ctx.targetX, ctx.targetY); },
 };
 
-const soulConsume: Ability = {
-  id: 'soul-consume',
-  name: 'Consume',
-  description: 'Kill own ghosts nearby, heal 1/2 their HP. F+: type-specific buffs on consume. 3s CD.',
+const soulDeathWhistle: Ability = {
+  id: 'soul-death-whistle',
+  name: 'Death Whistle',
+  description: 'Shriek at the cursor — every living Amalgam you control rushes to that point and heals for 75% of its max HP on arrival, then resumes the fight.',
   displayKey: 'F',
-  cooldown: 3000,
-  cast(ctx: CastContext) { ctx.soulConsume(); },
+  cooldown: 8000,
+  cast(ctx: CastContext) { ctx.soulDeathWhistle(ctx.targetX, ctx.targetY); },
 };
 
-const undeadCharge: Ability = {
-  id: 'undead-charge',
-  name: 'Undead Charge',
-  description: 'Spend 5 👻: summon a bouncing knight (15 dmg). Q+: summon 2 knights; collisions = AOE + speed boost.',
+const soulHellsTorment: Ability = {
+  id: 'soul-hells-torment',
+  name: "Hell's Torment",
+  description: 'Ignite every Amalgam you control: they burn for 5 dmg/s, spraying embers and a fiery AOE around themselves each second, and detonate in a huge blast of embers when the flames finally consume them.',
   displayKey: 'Q',
   isUltimate: true,
-  cooldown: 500,
-  cast(ctx: CastContext) { ctx.summonGhost('knight'); },
+  cooldown: 20000,
+  cast(ctx: CastContext) { ctx.soulHellsTorment(); },
 };
 
 export const soulElement: Element = {
@@ -52,5 +52,5 @@ export const soulElement: Element = {
   name: 'Soul',
   color: 0xccaaff,
   emoji: '👻',
-  abilities: [soulOrb, soulSummon, soulSacrifice, soulConsume, undeadCharge],
+  abilities: [soulLanternLight, soulArise, soulGrave, soulDeathWhistle, soulHellsTorment],
 };

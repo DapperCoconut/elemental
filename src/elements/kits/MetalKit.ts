@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
+import { Projectile } from '../../combat/Projectile';
 import { CastContext } from '../Ability';
 
 // ── Metal type definitions ─────────────────────────────────────────────────
@@ -12,20 +13,7 @@ export interface MetalBloodPuddle {
   owner: 'player' | 'npc';
   drainAccum: number;
   draining: boolean;
-}
-
-export interface MetalGunProjectile {
-  sprite: Phaser.GameObjects.Arc;
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  owner: 'player' | 'npc';
-  type: 'grenade' | 'rpg' | 'taser' | 'flame';
-  damage: number;
-  explodeRadius?: number;
-  active: boolean;
-  expiresAt?: number;
+  blood: number; // remaining blood held in this puddle
 }
 
 export interface MetalChainProjectile {
@@ -36,6 +24,65 @@ export interface MetalChainProjectile {
   vy: number;
   owner: 'player' | 'npc';
   active: boolean;
+}
+
+interface MetalShardProjectile {
+  sprite: Phaser.GameObjects.Rectangle | Phaser.GameObjects.Arc;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  owner: 'player' | 'npc';
+  active: boolean;
+  dmg: number;          // damage on hit
+  spawnsPuddle: boolean; // clot shards spawn a blood puddle on hit; flung maces do not
+}
+
+interface MetalFlail {
+  headSprite: Phaser.GameObjects.Arc;
+  chainGfx: Phaser.GameObjects.Graphics;
+  angle: number;
+  angularVel: number;
+  initialAngularVel: number;
+  radius: number;
+  swinging: boolean;
+  createdAt: number;
+  swingStartAt: number;
+  lastHitAt: number;
+  owner: 'player' | 'npc';
+  heavy: boolean;       // E+ Heavy Metal Rock
+  headRadius: number;   // for drawing spikes on the heavy mace
+  spikesGfx: Phaser.GameObjects.Graphics | null;
+  firePuddleAccum: number;
+}
+
+interface MetalFirePuddle {
+  sprite: Phaser.GameObjects.Arc;
+  x: number;
+  y: number;
+  radius: number;
+  owner: 'player' | 'npc';
+  expiresAt: number;
+  tickAccum: number;
+}
+
+interface MetalGroundTether {
+  x: number;
+  y: number;
+  owner: 'player' | 'npc';
+  endTime: number;
+  blastAccum: number;
+  stake: Phaser.GameObjects.Arc;
+  ring: Phaser.GameObjects.Arc;
+}
+
+interface BloodBlade {
+  gfx: Phaser.GameObjects.Container | null; // the crash-down visual; destroyed once it lands
+  owner: 'player' | 'npc';
+  y: number;            // current vertical offset while descending
+  descending: boolean;
+  lastSwingAt: number;  // swing cadence (faster with more blood)
+  prevBlood: number;
 }
 
 // ── MetalArenaApi ──────────────────────────────────────────────────────────
@@ -57,124 +104,168 @@ export interface MetalArenaApi {
   spawnDamageNumber(x: number, y: number, amount: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
-  getNearestEnemy(x: number, y: number): Fighter;
-  dealAoeDamage(cx: number, cy: number, radius: number, damage: number, owner: 'player' | 'npc'): void;
 }
 
 // ── MetalKit ───────────────────────────────────────────────────────────────
 
-export const BASE_GUNS = ['flintlock', 'rifle', 'grenade-launcher', 'flamethrower', 'shotgun', 'rpg', 'taser', 'minigun'];
-export const GUN_NAMES: Record<string, string> = {
-  'flintlock': 'Flintlock', 'rifle': 'Rifle', 'grenade-launcher': 'Grenade Launcher',
-  'flamethrower': 'Flamethrower', 'shotgun': 'Shotgun', 'rpg': 'RPG',
-  'taser': 'Taser', 'minigun': 'Minigun', 'sniper': 'Sniper',
-};
-export const GUN_EMOJIS: Record<string, string> = {
-  'flintlock': '🔫', 'rifle': '🎯', 'grenade-launcher': '💣',
-  'flamethrower': '🔥', 'shotgun': '🔱', 'rpg': '🚀',
-  'taser': '⚡', 'minigun': '🌀', 'sniper': '🎖️',
-};
-export const GUN_DESCS: Record<string, string> = {
-  'flintlock':        'Hitscan — spawns blood puddle on hit (20 dmg)',
-  'rifle':            '3 quick hitscan shots (8 dmg each)',
-  'grenade-launcher': 'Arcing grenade — 35 dmg + AoE',
-  'flamethrower':     '7 flame bursts in cone — 8 dmg each',
-  'shotgun':          '5 shots in spread — 10 dmg each',
-  'rpg':              'Fast rocket — 50 dmg + large AoE',
-  'taser':            'Stuns enemy 2s — 15 dmg',
-  'minigun':          '30 bullets wide cone — 1 dmg each',
-  'sniper':           'Charges 0.7s then fires a powerful hitscan (55 dmg)',
-};
+const BLOOD_MAX = 100;
+const FLAIL_LIFETIME_MS = 10000;
+const FLAIL_SWING_DECAY_MS = FLAIL_LIFETIME_MS / 3; // spin slows 3x faster than the idle lifetime
+const FLAIL_BASE_ANGULAR_VEL = 9; // rad/s
+const FLAIL_MAX_ANGULAR_VEL = 24; // cap when repeatedly whipped
+const FLAIL_HIT_ACCEL = 5.4;      // speed added each time the swinging flail is struck
+const FLAIL_IDLE_RADIUS = 70;
+const FLAIL_SWING_RADIUS = 95;
+const FLAIL_CONTACT_RADIUS = 30;
+const FLAIL_HIT_COOLDOWN_MS = 250;
+const CLOT_SHARD_THRESHOLD = 25;
+const CLOT_SHARD_COUNT = 5;
+const CLOT_SHARD_DAMAGE = 10;
+const CLOT_SHARD_SPEED = 420;
+const TRANSFUSION_TICK_MS = 200;
+const TRANSFUSION_PER_TICK = 3; // 15 blood/heal per second
+const PUDDLE_BLOOD_CAPACITY = 25; // each blood puddle holds 25 blood
+const BLOOD_DRAIN_PER_SEC = 10;   // drains 10 blood/sec into the blood bar while stood on
+const CHAIN_TETHER_LEASH = 80;    // how close the chain reels the tethered target in
+const CHAIN_TETHER_MS = 5000;           // how long a landed tether holds the target
+const CHAIN_TETHER_PUDDLE_COUNT = 3;    // total puddles dropped over a single tether
+const CHAIN_TETHER_PUDDLE_INTERVAL = CHAIN_TETHER_MS / CHAIN_TETHER_PUDDLE_COUNT; // spread evenly over the duration
+
+// ── Click+ Mighty Sabre ────────────────────────────────────────────────────
+const SABRE_CHARGE_MS = 3000;
+const SABRE_MIN_DMG = 25;
+const SABRE_MAX_DMG = 75;
+const SABRE_PARRY_RADIUS = 130;
+// ── E+ Heavy Metal Rock ─────────────────────────────────────────────────────
+const HEAVY_RADIUS_MULT = 0.75; // E+ mace chain is 25% shorter than normal
+const HEAVY_MOLTEN_RATIO = 0.6;   // speedRatio above which the mace goes molten + drips fire
+// ── F+ Ground Anchor ────────────────────────────────────────────────────────
+const GROUND_TETHER_MS = 12000;
+const GROUND_TETHER_BLAST_MS = 1500;
+const GROUND_TETHER_BLAST_RADIUS = 150;
+const GROUND_TETHER_BLAST_DRAIN = 15; // blood pulled from EACH puddle in range per blast
+const F_CHARGE_MS = 3000;
+// ── Q+ Blood Blade ──────────────────────────────────────────────────────────
+const BLOOD_BLADE_COST = 100;
+const BLOOD_BLADE_SWING_DMG = 25;
+const BLOOD_BLADE_RANGE = 150;
+const Q_HOLD_THRESHOLD_MS = 500;
 
 export class MetalKit {
-  // ── Player state ─────────────────────────────────────────────────────
-  private metalArsenal: string[] = [];
+  // ── Kept-as-is: blood puddles / chain tether / aggressive bleeding ────
   private metalBloodPuddles: MetalBloodPuddle[] = [];
   private metalChainTethered = false;
   private metalChainTetherEnd = 0;
   private metalChainGraphic: Phaser.GameObjects.Graphics | null = null;
-  private metalArmorActive = false;
-  private metalArmorHp = 0;
-  private metalArmorEnd = 0;
-  private metalArmorAura: Phaser.GameObjects.Arc | null = null;
-  private metalArsenalHUD: Phaser.GameObjects.Text | null = null;
-  private metalReinforcementMenuOpen = false;
-  private metalReinforcementButtons: Phaser.GameObjects.GameObject[] = [];
   private metalChainProjectiles: MetalChainProjectile[] = [];
-  private metalGunProjectiles: MetalGunProjectile[] = [];
-  private playerMetalTaseredUntil = 0;
-  private metalArmorReflecting = false;
-  private metalBloodChainPuddle: MetalBloodPuddle | null = null;
-  private metalBloodChainAccum = 0;
-  private metalBloodChainGraphic: Phaser.GameObjects.Graphics | null = null;
+  private metalTetherNextPuddleAt = 0; // timestamp of the next drag puddle
+  private metalTetherPuddlesLeft = 0;  // remaining puddles to drop this tether (max 3)
   private playerAggressiveBleeding = false;
   private playerAggressiveBleedUntil = 0;
   private playerAggressiveBleedAura: Phaser.GameObjects.Arc | null = null;
   private playerAggressiveBleedTickAccum = 0;
   private playerAggressiveBleedPuddleAccum = 0;
 
-  // ── Gunpowder perk state ──────────────────────────────────────────────
-  private gunpowderClipActive = false;
-  private gunpowderClipX = 0;
-  private gunpowderClipY = 0;
-  private gunpowderClipVx = 0;
-  private gunpowderClipVy = 0;
-  private gunpowderClipTargetX = 0;
-  private gunpowderClipTargetY = 0;
-  private gunpowderClipSpawnedAt = 0;
-  private gunpowderClipSprite: Phaser.GameObjects.Rectangle | null = null;
-  private gunpowderDischargeCooldownUntil = 0;
-  private gunpowderFireAtWillCooldownUntil = 0;
-
-  // ── NPC state ─────────────────────────────────────────────────────────
-  private npcMetalArsenal: string[] = [];
   private npcMetalChainTethered = false;
   private npcMetalChainTetherEnd = 0;
   private npcMetalChainGraphic: Phaser.GameObjects.Graphics | null = null;
-  private npcMetalArmorActive = false;
-  private npcMetalArmorHp = 0;
-  private npcMetalArmorEnd = 0;
-  private npcMetalArmorAura: Phaser.GameObjects.Arc | null = null;
-  private npcMetalTaseredUntil = 0;
-  private npcMetalArmorReflecting = false;
+  private npcMetalTetherNextPuddleAt = 0;
+  private npcMetalTetherPuddlesLeft = 0;
   private npcAggressiveBleeding = false;
   private npcAggressiveBleedUntil = 0;
   private npcAggressiveBleedAura: Phaser.GameObjects.Arc | null = null;
   private npcAggressiveBleedTickAccum = 0;
   private npcAggressiveBleedPuddleAccum = 0;
 
+  // ── Passive: damage-dealt → blood puddle every 50 dmg ─────────────────
+  private playerDamageDealtAccum = 0;
+  private npcDamageDealtAccum = 0;
+
+  // ── Blood bar resource ─────────────────────────────────────────────────
+  private blood: Record<'player' | 'npc', number> = { player: 0, npc: 0 };
+  private bloodBarBg: Phaser.GameObjects.Rectangle | null = null;
+  private bloodBarFill: Phaser.GameObjects.Rectangle | null = null;
+  private bloodBarLabel: Phaser.GameObjects.Text | null = null;
+
+  // ── Flail Craft (E / Click-when-idle) ──────────────────────────────────
+  private playerFlail: MetalFlail | null = null;
+  private npcFlail: MetalFlail | null = null;
+
+  // ── Blood Transfusion (R, hold) — smooth per-frame drain → heal ────────
+  private transfusionActiveUntil: Record<'player' | 'npc', number> = { player: 0, npc: 0 };
+  private transfusionDripAccum: Record<'player' | 'npc', number> = { player: 0, npc: 0 };
+
+  // ── Clot Armor (Q) ──────────────────────────────────────────────────────
+  private clotArmorActive: Record<'player' | 'npc', boolean> = { player: false, npc: false };
+  private clotArmorLostAccum: Record<'player' | 'npc', number> = { player: 0, npc: 0 };
+  private clotArmorShardDecor: Record<'player' | 'npc', Phaser.GameObjects.Triangle[]> = { player: [], npc: [] };
+  private metalShardProjectiles: MetalShardProjectile[] = [];
+
+  // Player's current look direction (toward cursor), for orienting clot spikes.
+  private playerAimAngle = 0;
+
+  // ── Shared charge VFX (Click sabre / F anchor / Q blade) ──────────────────
+  private charging = false;
+  private chargeStart = 0;
+  private chargeDuration = 0;
+  private chargeAura: Phaser.GameObjects.Arc | null = null;
+  private chargeOrbs: Phaser.GameObjects.Arc[] = [];
+  private chargeFullTinted = false;
+
+  // ── Click+ Mighty Sabre charge state (player only) ────────────────────────
+  private sabreCharging = false;
+  private sabreChargeStart = 0;
+
+  // ── E+ Heavy Metal Rock fire puddles ──────────────────────────────────────
+  private metalFirePuddles: MetalFirePuddle[] = [];
+
+  // ── F+ Ground Anchor state (player only) ──────────────────────────────────
+  private fCharging = false;
+  private fChargeStart = 0;
+  private fFired = false;
+  private metalGroundTether: MetalGroundTether | null = null;
+
+  // ── Q+ Blood Blade state (player only) ────────────────────────────────────
+  private qHolding = false;
+  private qHoldStart = 0;
+  private qHoldFired = false;
+  private bloodBlade: BloodBlade | null = null;
+
   constructor(private arena: MetalArenaApi) {}
 
   // ── Public accessors ──────────────────────────────────────────────────
 
-  getNpcMetalArsenal(): string[] { return this.npcMetalArsenal; }
-  getPlayerMetalTaseredUntil(): number { return this.playerMetalTaseredUntil; }
-  getNpcMetalTaseredUntil(): number { return this.npcMetalTaseredUntil; }
   getNpcMetalChainTetherEnd(): number { return this.npcMetalChainTetherEnd; }
   setNpcMetalChainTetherEnd(v: number): void { this.npcMetalChainTetherEnd = v; }
-  getNpcMetalArmorEnd(): number { return this.npcMetalArmorEnd; }
-  setNpcMetalArmorEnd(v: number): void { this.npcMetalArmorEnd = v; }
   getNpcAggressiveBleedUntil(): number { return this.npcAggressiveBleedUntil; }
   setNpcAggressiveBleedUntil(v: number): void { this.npcAggressiveBleedUntil = v; }
 
-  isReinforcementMenuOpen(): boolean { return this.metalReinforcementMenuOpen; }
-  isArmorActive(): boolean { return this.metalArmorActive; }
+  getBlood(owner: 'player' | 'npc'): number { return this.blood[owner]; }
+  hasFlail(owner: 'player' | 'npc'): boolean { return (owner === 'player' ? this.playerFlail : this.npcFlail) !== null; }
+  isFlailSwinging(owner: 'player' | 'npc'): boolean {
+    const flail = owner === 'player' ? this.playerFlail : this.npcFlail;
+    return !!flail && flail.swinging;
+  }
+  isClotArmorActive(owner: 'player' | 'npc'): boolean { return this.clotArmorActive[owner]; }
 
   initHud(): void {
     const { scene } = this.arena;
-    const W = scene.scale.width;
-    const H = scene.scale.height;
-    if (this.metalArsenalHUD) { this.metalArsenalHUD.destroy(); this.metalArsenalHUD = null; }
-    this.metalArsenalHUD = (scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory }).add.text(W / 2, H - 68, '[ No Weapons ]', {
-      fontSize: '18px', fontFamily: '"Arial Black", sans-serif', color: '#aabbcc',
-      stroke: '#223344', strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(20);
+    if (this.bloodBarBg) { this.bloodBarBg.destroy(); this.bloodBarBg = null; }
+    if (this.bloodBarFill) { this.bloodBarFill.destroy(); this.bloodBarFill = null; }
+    if (this.bloodBarLabel) { this.bloodBarLabel.destroy(); this.bloodBarLabel = null; }
+
+    const x = 26;
+    const y = 66;
+    this.bloodBarBg = scene.add.rectangle(x, y, 150, 12, 0x1a0a0a, 0.9)
+      .setOrigin(0, 0.5).setStrokeStyle(1, 0x772233).setDepth(23).setScrollFactor(0);
+    this.bloodBarFill = scene.add.rectangle(x + 1, y, 0, 10, 0xcc0022, 0.95)
+      .setOrigin(0, 0.5).setDepth(24).setScrollFactor(0);
+    this.bloodBarLabel = scene.add.text(x, y - 14, 'BLOOD', {
+      fontSize: '10px', color: '#dd6677', fontFamily: 'Arial, sans-serif',
+    }).setOrigin(0, 0.5).setDepth(24).setScrollFactor(0);
   }
 
   reset(): void {
-    this.metalArsenal = [];
-    this.npcMetalArsenal = [];
-
     this.npcAggressiveBleeding = false; this.npcAggressiveBleedUntil = 0;
     if (this.npcAggressiveBleedAura) { this.npcAggressiveBleedAura.destroy(); this.npcAggressiveBleedAura = null; }
     this.npcAggressiveBleedTickAccum = 0; this.npcAggressiveBleedPuddleAccum = 0;
@@ -185,139 +276,239 @@ export class MetalKit {
     for (const p of this.metalBloodPuddles) p.sprite.destroy();
     this.metalBloodPuddles = [];
 
-    this.metalChainTethered = false; this.metalChainTetherEnd = 0;
+    this.metalChainTethered = false; this.metalChainTetherEnd = 0; this.metalTetherNextPuddleAt = 0; this.metalTetherPuddlesLeft = 0;
     if (this.metalChainGraphic) { this.metalChainGraphic.destroy(); this.metalChainGraphic = null; }
-    this.npcMetalChainTethered = false; this.npcMetalChainTetherEnd = 0;
+    this.npcMetalChainTethered = false; this.npcMetalChainTetherEnd = 0; this.npcMetalTetherNextPuddleAt = 0; this.npcMetalTetherPuddlesLeft = 0;
     if (this.npcMetalChainGraphic) { this.npcMetalChainGraphic.destroy(); this.npcMetalChainGraphic = null; }
-
-    this.metalArmorActive = false; this.metalArmorHp = 0; this.metalArmorEnd = 0;
-    if (this.metalArmorAura) { this.metalArmorAura.destroy(); this.metalArmorAura = null; }
-    this.npcMetalArmorActive = false; this.npcMetalArmorHp = 0; this.npcMetalArmorEnd = 0;
-    if (this.npcMetalArmorAura) { this.npcMetalArmorAura.destroy(); this.npcMetalArmorAura = null; }
-
-    for (const btn of this.metalReinforcementButtons) (btn as unknown as { destroy(): void }).destroy();
-    this.metalReinforcementButtons = []; this.metalReinforcementMenuOpen = false;
 
     for (const p of this.metalChainProjectiles) p.sprite.destroy();
     this.metalChainProjectiles = [];
-    for (const p of this.metalGunProjectiles) p.sprite.destroy();
-    this.metalGunProjectiles = [];
 
-    this.npcMetalTaseredUntil = 0; this.playerMetalTaseredUntil = 0;
-    this.metalArmorReflecting = false; this.npcMetalArmorReflecting = false;
-    this.metalBloodChainPuddle = null; this.metalBloodChainAccum = 0;
-    if (this.metalBloodChainGraphic) { this.metalBloodChainGraphic.destroy(); this.metalBloodChainGraphic = null; }
-    if (this.metalArsenalHUD) { this.metalArsenalHUD.destroy(); this.metalArsenalHUD = null; }
+    // Shared charge VFX + Click+ Mighty Sabre
+    this.clearChargeVfx();
+    this.sabreCharging = false;
 
-    // Gunpowder perk
-    if (this.gunpowderClipSprite) { this.gunpowderClipSprite.destroy(); this.gunpowderClipSprite = null; }
-    this.gunpowderClipActive = false;
-    this.gunpowderDischargeCooldownUntil = 0;
-    this.gunpowderFireAtWillCooldownUntil = 0;
+    // E+ fire puddles
+    for (const p of this.metalFirePuddles) p.sprite.destroy();
+    this.metalFirePuddles = [];
+
+    // F+ Ground Anchor
+    this.fCharging = false; this.fFired = false;
+    this.destroyGroundTether();
+
+    // Q+ Blood Blade
+    this.qHolding = false; this.qHoldFired = false;
+    this.dismissBloodBlade();
+
+    // R+ clotted HP
+    this.arena.player.clottedHp = 0;
+    this.arena.npc.clottedHp = 0;
+
+    // Passive damage tracking
+    this.playerDamageDealtAccum = 0;
+    this.npcDamageDealtAccum = 0;
+
+    // Blood bar
+    this.blood = { player: 0, npc: 0 };
+    if (this.bloodBarBg) { this.bloodBarBg.destroy(); this.bloodBarBg = null; }
+    if (this.bloodBarFill) { this.bloodBarFill.destroy(); this.bloodBarFill = null; }
+    if (this.bloodBarLabel) { this.bloodBarLabel.destroy(); this.bloodBarLabel = null; }
+
+    // Flails
+    this.destroyFlail('player');
+    this.destroyFlail('npc');
+
+    // Transfusion
+    this.transfusionActiveUntil = { player: 0, npc: 0 };
+    this.transfusionDripAccum = { player: 0, npc: 0 };
+
+    // Clot armor
+    this.clotArmorActive = { player: false, npc: false };
+    this.clotArmorLostAccum = { player: 0, npc: 0 };
+    for (const spr of this.clotArmorShardDecor.player) spr.destroy();
+    for (const spr of this.clotArmorShardDecor.npc) spr.destroy();
+    this.clotArmorShardDecor = { player: [], npc: [] };
+    this.arena.player.clearTint();
+    this.arena.npc.clearTint();
+    this.arena.player.damageAbsorber = null;
+    this.arena.npc.damageAbsorber = null;
+
+    for (const p of this.metalShardProjectiles) p.sprite.destroy();
+    this.metalShardProjectiles = [];
   }
 
   handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
-    if (this.playerMetalTaseredUntil > time) return; // stunned
-
     const { player, eKey, fKey, rKey, qKey, pointerWasDown } = this.arena;
     const playerCtx = this.arena.buildPlayerContext(mouseX, mouseY);
-    const scene = this.arena.scene as Phaser.Scene & { time: Phaser.Time.Clock };
+    this.playerAimAngle = Math.atan2(mouseY - player.y, mouseX - player.x);
+    const aimAtFlail = (): boolean => {
+      if (!this.playerFlail) return false;
+      const head = this.playerFlail.headSprite;
+      const aimAng = Math.atan2(mouseY - player.y, mouseX - player.x);
+      const maceAng = Math.atan2(head.y - player.y, head.x - player.x);
+      return Math.abs(Phaser.Math.Angle.Wrap(aimAng - maceAng)) <= Phaser.Math.DegToRad(30);
+    };
 
-    // Click: Slash — or with Gunpowder perk: Fire at Will (reduced cooldown)
-    if (pointer.isDown && !pointerWasDown) {
-      if (this.arena.hasPerk('gunpowder')) {
-        if (scene.time.now >= this.gunpowderFireAtWillCooldownUntil) {
-          this.gunpowderFireAtWillCooldownUntil = scene.time.now + 1667;
-          this.doMetalFireAtWill('player');
+    // ── Click: Blood Blade (Q+, while equipped) / Slash / Mighty Sabre ────
+    if (this.bloodBlade) {
+      // The blood blade replaces your sword. With Mighty Sabre (Click+) it
+      // charges-and-releases exactly like the normal blade — a quick tap swings
+      // for 25, holding scales up to 75 and a full charge triggers Max Charge.
+      // Without the upgrade it swings on press, faster the more blood you hold.
+      // (Both paths are ignored during its descent from the sky.)
+      if (this.arena.hasUpgrade('click')) {
+        if (pointer.isDown && !pointerWasDown) {
+          if (!this.bloodBlade.descending && player.getCooldownRatio('metal-slash') >= 1) {
+            this.sabreCharging = true;
+            this.sabreChargeStart = time;
+            this.startChargeVfx(time, SABRE_CHARGE_MS);
+          }
+          if (aimAtFlail()) this.triggerFlailSwing('player'); // still whips the mace
+        } else if (this.sabreCharging && !pointer.isDown && pointerWasDown) {
+          const held = time - this.sabreChargeStart;
+          const ratio = Math.min(1, held / SABRE_CHARGE_MS);
+          const dmg = Math.round(SABRE_MIN_DMG + (SABRE_MAX_DMG - SABRE_MIN_DMG) * ratio);
+          this.bloodBladeSwing(mouseX, mouseY, dmg);
+          player.startCooldown('metal-slash');
+          if (ratio >= 1) this.doMaxCharge(mouseX, mouseY, playerCtx);
+          this.sabreCharging = false;
+          this.clearChargeVfx();
         }
-      } else {
+      } else if (!this.bloodBlade.descending && pointer.isDown && !pointerWasDown) {
+        if (aimAtFlail()) this.triggerFlailSwing('player'); // still whips the mace
+        const interval = Phaser.Math.Clamp(700 - this.blood.player * 4, 200, 700);
+        if (time - this.bloodBlade.lastSwingAt >= interval) {
+          this.bloodBlade.lastSwingAt = time;
+          this.bloodBladeSwing(mouseX, mouseY);
+        }
+      }
+    } else if (this.arena.hasUpgrade('click')) {
+      // Charge-and-release. A quick tap ≈ 25 dmg; holding scales up to 75.
+      if (pointer.isDown && !pointerWasDown) {
+        if (player.getCooldownRatio('metal-slash') >= 1) {
+          this.sabreCharging = true;
+          this.sabreChargeStart = time;
+          this.startChargeVfx(time, SABRE_CHARGE_MS);
+        }
+        // Whip the flail on press if you're aiming at it (kept from base).
+        if (aimAtFlail()) this.triggerFlailSwing('player');
+      } else if (this.sabreCharging && !pointer.isDown && pointerWasDown) {
+        const held = time - this.sabreChargeStart;
+        const ratio = Math.min(1, held / SABRE_CHARGE_MS);
+        const dmg = Math.round(SABRE_MIN_DMG + (SABRE_MAX_DMG - SABRE_MIN_DMG) * ratio);
+        this.doMetalSlash(mouseX, mouseY, 'player', dmg);
+        player.startCooldown('metal-slash');
+        if (ratio >= 1) this.doMaxCharge(mouseX, mouseY, playerCtx);
+        this.sabreCharging = false;
+        this.clearChargeVfx();
+      }
+    } else {
+      // Base: instant slash on press, whip the flail if aimed at it.
+      if (pointer.isDown && !pointerWasDown) {
         player.castAbility('metal-slash', playerCtx);
+        if (aimAtFlail()) this.triggerFlailSwing('player');
       }
     }
 
-    // E: Fire at Will — or with Gunpowder perk: Discharge (launch clip)
+    // ── E: Flail Craft ─────────────────────────────────────────────────────
     if (Phaser.Input.Keyboard.JustDown(eKey)) {
-      if (this.arena.hasPerk('gunpowder')) {
-        if (scene.time.now >= this.gunpowderDischargeCooldownUntil && !this.gunpowderClipActive) {
-          this.doGunpowderDischarge(mouseX, mouseY);
+      player.castAbility('metal-flail-craft', playerCtx);
+    }
+
+    // ── R: Blood Transfusion (hold) — drain runs per-frame in updateTransfusion ──
+    if (rKey.isDown && this.blood.player > 0) {
+      this.transfusionActiveUntil.player = time + 120;
+    }
+
+    // ── F: Chain Tether / Ground Anchor (F+) ──────────────────────────────
+    if (this.arena.hasUpgrade('f')) {
+      if (fKey.isDown) {
+        if (!this.fCharging) {
+          if (player.getCooldownRatio('metal-chain-tether') >= 1) {
+            this.fCharging = true; this.fChargeStart = time; this.fFired = false;
+            this.startChargeVfx(time, F_CHARGE_MS);
+          }
+        } else if (!this.fFired && time - this.fChargeStart >= F_CHARGE_MS) {
+          this.fFired = true;
+          this.spawnGroundTether(mouseX, mouseY, 'player');
+          player.startCooldown('metal-chain-tether');
+          this.clearChargeVfx();
         }
-      } else {
-        player.castAbility('metal-fire-at-will', playerCtx);
+      } else if (this.fCharging) {
+        // Released early → normal chain tether toward the cursor.
+        if (!this.fFired && time - this.fChargeStart < F_CHARGE_MS) {
+          player.castAbility('metal-chain-tether', playerCtx);
+        }
+        this.fCharging = false; this.fFired = false;
+        this.clearChargeVfx();
+      }
+    } else {
+      if (Phaser.Input.Keyboard.JustDown(fKey)) {
+        player.castAbility('metal-chain-tether', playerCtx);
       }
     }
 
-    // R: Reinforce (weapon picker)
-    if (Phaser.Input.Keyboard.JustDown(rKey)) {
-      if (!this.metalReinforcementMenuOpen) {
-        player.castAbility('metal-reinforce', playerCtx);
-      }
-    }
-
-    // F: Chain Tether
-    if (Phaser.Input.Keyboard.JustDown(fKey)) {
-      player.castAbility('metal-chain-tether', playerCtx);
-    }
-
-    // Q: Blood Clot (or Recast Clot while armor is active)
-    if (Phaser.Input.Keyboard.JustDown(qKey)) {
-      if (this.arena.hasUpgrade('q') && this.metalArmorActive) {
-        // Recast: consume puddles to heal armor (no cooldown)
-        const myPuddles = this.metalBloodPuddles.filter(p => p.owner === 'player');
-        if (myPuddles.length > 0) {
-          for (const p of myPuddles) p.sprite.destroy();
-          this.metalBloodPuddles = this.metalBloodPuddles.filter(p => p.owner !== 'player');
-          this.metalArmorHp += myPuddles.length * 20;
-          this.arena.showFloatingText(player.x, player.y - 44, `🛡️ ARMOR RECHARGED (+${myPuddles.length * 20})`, '#ff4466');
+    // ── Q: Clot Armor (tap) / Blood Blade (hold, Q+) ──────────────────────
+    if (this.arena.hasUpgrade('q')) {
+      if (qKey.isDown) {
+        if (!this.qHolding) {
+          this.qHolding = true; this.qHoldStart = time; this.qHoldFired = false;
+          this.startChargeVfx(time, Q_HOLD_THRESHOLD_MS);
+        } else if (!this.qHoldFired && time - this.qHoldStart >= Q_HOLD_THRESHOLD_MS) {
+          this.qHoldFired = true;
+          this.summonBloodBlade('player'); // clears the charge VFX on summon
         }
-      } else {
-        player.castAbility('metal-blood-clot', playerCtx);
+      } else if (this.qHolding) {
+        if (!this.qHoldFired && time - this.qHoldStart < Q_HOLD_THRESHOLD_MS) {
+          player.castAbility('metal-clot-armor', playerCtx); // tap → Clot Armor
+        }
+        this.qHolding = false; this.qHoldFired = false;
+        this.clearChargeVfx();
+      }
+    } else {
+      if (Phaser.Input.Keyboard.JustDown(qKey)) {
+        player.castAbility('metal-clot-armor', playerCtx);
       }
     }
   }
 
   update(time: number, delta: number): void {
     this.updateAggressiveBleeds(time, delta);
+    this.updateTransfusion(time, delta);
     this.updateBloodPuddles(time, delta);
-    this.updateBloodSiphon(time, delta);
     this.updateChainTethers(time, delta);
     this.updateChainProjectiles(time, delta);
-    this.updateGunProjectiles(time, delta);
-    this.updateArmorTracking(time);
-    this.updateArsenalHud();
-    this.updateGunpowderClip(time, delta);
+    this.updateFlails(time, delta);
+    this.updateClotArmor(time, delta);
+    this.updateShardProjectiles(time, delta);
+    this.updateChargeVfx(time);
+    this.updateMetalFirePuddles(time, delta);
+    this.updateGroundTether(time, delta);
+    this.updateBloodBlade(time, delta);
+    this.updateBloodHud();
   }
 
   // ── Public do* methods — called from ArenaScene context builders ──────
 
-  doMetalSlash(tx: number, ty: number, owner: 'player' | 'npc'): void {
+  doMetalSlash(tx: number, ty: number, owner: 'player' | 'npc', dmgOverride?: number): void {
     const { player, npc, enemies, scene } = this.arena;
     const caster = owner === 'player' ? player : npc;
     const targets = owner === 'player' ? enemies : [player];
 
     const dx = tx - caster.x, dy = ty - caster.y;
     const ang = Math.atan2(dy, dx);
-    const arcRadius = 80;
 
-    const gfx = (scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory }).add.graphics().setDepth(9);
-    gfx.setPosition(caster.x, caster.y);
-    gfx.lineStyle(5, 0xccddee, 0.9);
-    gfx.beginPath();
-    gfx.arc(0, 0, arcRadius, ang - Math.PI / 2.5, ang + Math.PI / 2.5, false);
-    gfx.strokePath();
-    const tipX = caster.x + Math.cos(ang) * arcRadius;
-    const tipY = caster.y + Math.sin(ang) * arcRadius;
-    const tip = (scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory }).add.circle(tipX, tipY, 5, 0xffffff, 0.9).setDepth(9);
-    (scene as Phaser.Scene & { tweens: Phaser.Tweens.TweenManager }).tweens.add({ targets: [gfx, tip], alpha: 0, duration: 260, onComplete: () => { gfx.destroy(); tip.destroy(); } });
+    // Draw a sword and sweep it across the aim direction.
+    this.drawSwordSwing(caster.x, caster.y, ang, { handle: 0x6b4a2b, accent: 0xd9b25a, blade: 0xdfe8f2, edge: 0xffffff });
 
     for (const target of targets) {
       if (!target.active || target.hp <= 0) continue;
       const dist = Phaser.Math.Distance.Between(caster.x, caster.y, target.x, target.y);
       if (dist <= 90) {
-        const dmg = 25;
+        const dmg = dmgOverride ?? 25;
         target.takeDamage(dmg);
         this.arena.spawnHitFlash(target.x, target.y, 0xaabbcc);
-        this.applyMetalAggressiveBleeding(owner, 5000);
-        this.arena.showFloatingText(caster.x, caster.y - 36, '🗡️ SLASH', '#aabbcc');
+        this.arena.showFloatingText(caster.x, caster.y - 36, `🗡️ ${dmg}`, '#aabbcc');
         if (!target.knockbackImmune) {
           const kbDx = target.x - caster.x, kbDy = target.y - caster.y;
           const kbLen = Math.sqrt(kbDx * kbDx + kbDy * kbDy) || 1;
@@ -330,117 +521,10 @@ export class MetalKit {
     }
   }
 
-  doMetalFireAtWill(owner: 'player' | 'npc'): void {
-    const { player, npc, scene } = this.arena;
-    const caster = owner === 'player' ? player : npc;
-    const arsenal = owner === 'player' ? this.metalArsenal : this.npcMetalArsenal;
-
-    if (arsenal.length === 0) return;
-
-    this.arena.showFloatingText(caster.x, caster.y - 44, '🔫 FIRE AT WILL!', '#ffddaa');
-
-    arsenal.forEach((gunId, i) => {
-      (scene as Phaser.Scene & { time: Phaser.Time.Clock }).time.delayedCall(i * 130, () => {
-        if (!caster.active) return;
-        const target = owner === 'player' ? this.arena.getNearestEnemy(caster.x, caster.y) : player;
-        if (!target.active) return;
-        this.fireMetalGun(gunId, owner, target.x, target.y);
-      });
-    });
-  }
-
-  doMetalOpenReinforcementMenu(): void {
-    if (this.metalReinforcementMenuOpen) return;
-
-    const ALL_GUNS = this.arena.hasUpgrade('r') ? [...BASE_GUNS, 'sniper'] : BASE_GUNS;
-    const { player, scene } = this.arena;
-    const arsenalCap = this.arena.hasUpgrade('e') ? 5 : 3;
-    const notOwned = ALL_GUNS.filter(g => !this.metalArsenal.includes(g));
-    const pool = notOwned.length >= 3 ? notOwned : ALL_GUNS;
-    const choices = [...pool].sort(() => Math.random() - 0.5).slice(0, 3);
-
-    this.metalReinforcementMenuOpen = true;
-    const { width: W, height: H } = scene.scale;
-    const cx = W / 2, cy = H / 2;
-    const cardW = 180, cardH = 220, spacing = 200;
-    const sceneAdd = (scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory }).add;
-
-    const overlay = sceneAdd.rectangle(cx, cy, W, H, 0x000000, 0.6).setDepth(30).setInteractive();
-    this.metalReinforcementButtons.push(overlay);
-
-    const title = sceneAdd.text(cx, cy - 160, '⚙️ Reinforce Arsenal', {
-      fontSize: '22px', color: '#aabbcc', fontFamily: '"Arial Black", sans-serif',
-    }).setOrigin(0.5).setDepth(31);
-    this.metalReinforcementButtons.push(title);
-
-    const slotsText = this.metalArsenal.length >= arsenalCap ? '(Oldest weapon replaced)' : `(${this.metalArsenal.length}/${arsenalCap} slots used)`;
-    const sub = sceneAdd.text(cx, cy - 128, slotsText, {
-      fontSize: '13px', color: '#889aaa',
-    }).setOrigin(0.5).setDepth(31);
-    this.metalReinforcementButtons.push(sub);
-
-    choices.forEach((gunId, i) => {
-      const x = cx + (i - 1) * spacing;
-      const y = cy;
-
-      const bg = sceneAdd.rectangle(x, y, cardW, cardH, 0x223344)
-        .setStrokeStyle(2, 0x446688).setDepth(31).setInteractive();
-      bg.on('pointerover', () => bg.setFillStyle(0x334455));
-      bg.on('pointerout',  () => bg.setFillStyle(0x223344));
-
-      const emojiLbl = sceneAdd.text(x, y - 75, GUN_EMOJIS[gunId] ?? '?', { fontSize: '36px' }).setOrigin(0.5).setDepth(32);
-      const nameLbl  = sceneAdd.text(x, y - 28, GUN_NAMES[gunId] ?? gunId, {
-        fontSize: '14px', color: '#ccddee', fontFamily: '"Arial Black", sans-serif',
-      }).setOrigin(0.5).setDepth(32);
-      const descLbl  = sceneAdd.text(x, y + 16, GUN_DESCS[gunId] ?? '', {
-        fontSize: '11px', color: '#8899aa', wordWrap: { width: cardW - 20 }, align: 'center',
-      }).setOrigin(0.5).setDepth(32);
-
-      bg.on('pointerdown', () => {
-        if (this.metalArsenal.length >= arsenalCap) this.metalArsenal.shift();
-        this.metalArsenal.push(gunId);
-        this.arena.showFloatingText(player.x, player.y - 44, `${GUN_EMOJIS[gunId]} ${GUN_NAMES[gunId]} ACQUIRED`, '#aabbcc');
-        for (const obj of this.metalReinforcementButtons) {
-          if ((obj as Phaser.GameObjects.GameObject).active) (obj as unknown as { destroy(): void }).destroy();
-        }
-        this.metalReinforcementButtons = [];
-        this.metalReinforcementMenuOpen = false;
-      });
-
-      this.metalReinforcementButtons.push(bg, emojiLbl, nameLbl, descLbl);
-    });
-  }
-
-  doMetalNpcPickGun(): void {
-    const notOwned = BASE_GUNS.filter(g => !this.npcMetalArsenal.includes(g));
-    const pool = notOwned.length > 0 ? notOwned : BASE_GUNS;
-    const chosen = pool[Math.floor(Math.random() * pool.length)];
-    if (this.npcMetalArsenal.length >= 3) this.npcMetalArsenal.shift();
-    this.npcMetalArsenal.push(chosen);
-  }
-
   doMetalChainTether(tx: number, ty: number, owner: 'player' | 'npc'): void {
     const { player, npc, scene } = this.arena;
     const caster = owner === 'player' ? player : npc;
     const sceneAdd = (scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory }).add;
-
-    // F+: Blood Siphon — if aiming near an own-owned puddle, tether to it instead
-    if (owner === 'player' && this.arena.hasUpgrade('f')) {
-      let closestPuddle: MetalBloodPuddle | null = null;
-      let closestDist = 240;
-      for (const puddle of this.metalBloodPuddles) {
-        if (puddle.owner !== 'player') continue;
-        const d = Phaser.Math.Distance.Between(tx, ty, puddle.x, puddle.y);
-        if (d < closestDist) { closestDist = d; closestPuddle = puddle; }
-      }
-      if (closestPuddle) {
-        this.metalBloodChainPuddle = closestPuddle;
-        this.metalBloodChainAccum = 0;
-        if (!this.metalBloodChainGraphic) this.metalBloodChainGraphic = sceneAdd.graphics().setDepth(5);
-        this.arena.showFloatingText(caster.x, caster.y - 30, '🩸 BLOOD SIPHON', '#cc0000');
-        return;
-      }
-    }
 
     const dx = tx - caster.x, dy = ty - caster.y;
     const len = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -455,24 +539,146 @@ export class MetalKit {
     this.arena.showFloatingText(caster.x, caster.y - 30, '⛓️ CHAIN!', '#aabbcc');
   }
 
-  doMetalBloodClot(owner: 'player' | 'npc'): void {
+  /** E — Flail Craft: creates an idle flail head trailing the caster. */
+  doMetalFlailCraft(owner: 'player' | 'npc'): void {
     const { player, npc, scene } = this.arena;
     const caster = owner === 'player' ? player : npc;
     const sceneAdd = (scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory }).add;
-    const sceneTweens = (scene as Phaser.Scene & { tweens: Phaser.Tweens.TweenManager }).tweens;
     const sceneTime = (scene as Phaser.Scene & { time: Phaser.Time.Clock }).time;
 
-    const myPuddles = this.metalBloodPuddles.filter(p => p.owner === owner);
-    const count = myPuddles.length;
-    for (const p of myPuddles) p.sprite.destroy();
-    this.metalBloodPuddles = this.metalBloodPuddles.filter(p => p.owner !== owner);
+    this.destroyFlail(owner); // safety: replace any stale flail
 
-    const armorHp = 50 + count * 20;
-    const duration = 8000 + count * 2000;
+    // E+: Heavy Metal Rock — black spiked mace, 15% longer chain.
+    const heavy = owner === 'player' && this.arena.hasUpgrade('e');
+    const headSize = heavy ? 14 : 9;
+    const idleRadius = FLAIL_IDLE_RADIUS * (heavy ? HEAVY_RADIUS_MULT : 1);
+    const startAngle = Math.PI / 2; // trails south of the caster
+    const head = sceneAdd.circle(
+      caster.x + Math.cos(startAngle) * idleRadius,
+      caster.y + Math.sin(startAngle) * idleRadius,
+      headSize, heavy ? 0x111111 : 0xaabbcc, 0.95,
+    ).setStrokeStyle(heavy ? 3 : 2, heavy ? 0x444444 : 0x556677).setDepth(8);
+    const chain = sceneAdd.graphics().setDepth(7);
+    const spikesGfx = heavy ? sceneAdd.graphics().setDepth(7) : null;
 
-    this.arena.showFloatingText(caster.x, caster.y - 44, `🛡️ BLOOD ARMOR (${armorHp} HP)`, '#ff4466');
+    const flail: MetalFlail = {
+      headSprite: head, chainGfx: chain,
+      angle: startAngle, angularVel: 0, initialAngularVel: 0,
+      radius: idleRadius, swinging: false,
+      createdAt: sceneTime.now, swingStartAt: 0, lastHitAt: 0, owner,
+      heavy, headRadius: headSize, spikesGfx, firePuddleAccum: 0,
+    };
+    if (owner === 'player') this.playerFlail = flail; else this.npcFlail = flail;
 
-    // Blood burst VFX
+    this.arena.showFloatingText(caster.x, caster.y - 44, heavy ? '🤘 HEAVY METAL!' : '⛓️ FLAIL CRAFTED', heavy ? '#ff6600' : '#aabbcc');
+  }
+
+  /** Click while an idle flail exists — sets it swinging. */
+  triggerFlailSwing(owner: 'player' | 'npc'): void {
+    const flail = owner === 'player' ? this.playerFlail : this.npcFlail;
+    if (!flail) return;
+    const { scene } = this.arena;
+    const sceneTime = (scene as Phaser.Scene & { time: Phaser.Time.Clock }).time;
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+
+    // E+ Heavy Metal Rock accelerates 50% slower per whip.
+    const hitAccel = FLAIL_HIT_ACCEL * (flail.heavy ? 0.5 : 1);
+    if (flail.swinging) {
+      // Already whipping — a fresh hit accelerates it further (keeps its spin
+      // direction) and refreshes the decay so the new speed sticks.
+      const dir = Math.sign(flail.initialAngularVel) || 1;
+      const boosted = Math.min(Math.abs(flail.initialAngularVel) + hitAccel, FLAIL_MAX_ANGULAR_VEL);
+      flail.initialAngularVel = dir * boosted;
+      flail.angularVel = flail.initialAngularVel;
+      flail.swingStartAt = sceneTime.now;
+      this.arena.showFloatingText(caster.x, caster.y - 44, '⚡ FASTER!', '#ffcc44');
+      return;
+    }
+
+    flail.swinging = true;
+    flail.swingStartAt = sceneTime.now;
+    flail.radius = FLAIL_SWING_RADIUS * (flail.heavy ? HEAVY_RADIUS_MULT : 1);
+    flail.initialAngularVel = FLAIL_BASE_ANGULAR_VEL * (Math.random() < 0.5 ? 1 : -1);
+    flail.angularVel = flail.initialAngularVel;
+
+    this.arena.showFloatingText(caster.x, caster.y - 44, '💫 FLAIL SWING!', '#ff4466');
+  }
+
+  /** R (hold) — Blood Transfusion tick: converts stored blood into HP at a fixed rate. */
+  doMetalBloodTransfusionTick(owner: 'player' | 'npc'): void {
+    // Actual drain/heal now happens smoothly per-frame in updateTransfusion.
+    // This tick (driven by the NPC AI casting the ability on its cooldown)
+    // just keeps the channel active until the next tick lands.
+    if (this.blood[owner] <= 0) return;
+    const now = (this.arena.scene as Phaser.Scene & { time: Phaser.Time.Clock }).time.now;
+    this.transfusionActiveUntil[owner] = now + 260;
+  }
+
+  private updateTransfusion(time: number, delta: number): void {
+    const dt = delta / 1000;
+    const bloodPerSec = 2 * TRANSFUSION_PER_TICK / (TRANSFUSION_TICK_MS / 1000); // 30 blood/s
+    for (const owner of ['player', 'npc'] as const) {
+      if (time >= this.transfusionActiveUntil[owner] || this.blood[owner] <= 0) continue;
+      const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+
+      // Smoothly drain blood and heal fractional HP this frame.
+      const drain = Math.min(bloodPerSec * dt, this.blood[owner]);
+      this.blood[owner] -= drain;
+      caster.heal(drain);
+
+      // Blood dripping particles beneath the character (~every 90ms). The
+      // green heal numbers themselves are handled generically by ArenaScene.
+      this.transfusionDripAccum[owner] += delta;
+      if (this.transfusionDripAccum[owner] >= 90) {
+        this.transfusionDripAccum[owner] -= 90;
+        this.spawnBloodDrip(caster.x, caster.y);
+      }
+    }
+  }
+
+  private spawnBloodDrip(x: number, y: number): void {
+    const sceneAdd = (this.arena.scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory }).add;
+    const sceneTweens = (this.arena.scene as Phaser.Scene & { tweens: Phaser.Tweens.TweenManager }).tweens;
+    const ox = (Math.random() - 0.5) * 26;
+    const drop = sceneAdd.circle(x + ox, y + 8, 2 + Math.random() * 1.5, 0x990011, 0.9).setDepth(3);
+    sceneTweens.add({
+      targets: drop,
+      y: drop.y + 16 + Math.random() * 8,
+      scaleX: 0.3, scaleY: 0.3,
+      alpha: 0,
+      duration: 360,
+      ease: 'Quad.In',
+      onComplete: () => drop.destroy(),
+    });
+  }
+
+  /** Q — Clot Armor: consumes the entire blood bar into shieldHp; bursts shards every 25 shieldHp lost. */
+  doMetalClotArmor(owner: 'player' | 'npc'): void {
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    const bloodAmount = this.blood[owner];
+    if (bloodAmount <= 0) {
+      this.arena.showFloatingText(caster.x, caster.y - 44, 'NO BLOOD', '#886666');
+      return;
+    }
+    this.blood[owner] = 0;
+
+    // Recast: fully replace — discard remaining shieldHp, don't add to it.
+    caster.shieldHp = Math.round(bloodAmount * 1.25);
+    this.clotArmorLostAccum[owner] = 0;
+
+    if (!this.clotArmorActive[owner]) {
+      this.clotArmorActive[owner] = true;
+      caster.setTint(0xff4466);
+      this.spawnClotArmorDecor(owner);
+      this.installClotArmorAbsorber(owner);
+    }
+
+    // Quad perk: Exsanguinate — Clot Armor also fires 8 shards instead of 5 per burst (handled in fireClotShardBurst)
+    this.arena.showFloatingText(caster.x, caster.y - 44, `🛡️ CLOT ARMOR (${caster.shieldHp} HP)`, '#ff4466');
+
+    const { scene } = this.arena;
+    const sceneAdd = (scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory }).add;
+    const sceneTweens = (scene as Phaser.Scene & { tweens: Phaser.Tweens.TweenManager }).tweens;
     for (let i = 0; i < 8; i++) {
       const ang = (i / 8) * Math.PI * 2;
       const dot = sceneAdd.circle(
@@ -480,66 +686,6 @@ export class MetalKit {
         5, 0xcc0000, 0.9,
       ).setDepth(7);
       sceneTweens.add({ targets: dot, x: dot.x + Math.cos(ang) * 40, y: dot.y + Math.sin(ang) * 40, alpha: 0, duration: 600, onComplete: () => dot.destroy() });
-    }
-
-    if (owner === 'player') {
-      this.metalArmorActive = true;
-      this.metalArmorHp = armorHp;
-      this.metalArmorEnd = sceneTime.now + duration;
-      if (this.metalArmorAura) this.metalArmorAura.destroy();
-      this.metalArmorAura = sceneAdd.circle(caster.x, caster.y, 40, 0xcc2244, 0.3)
-        .setStrokeStyle(3, 0xff4466, 0.7).setDepth(3);
-      sceneTweens.add({ targets: this.metalArmorAura, alpha: 0.1, yoyo: true, repeat: -1, duration: 500 });
-      // Q+: Recast Clot — suspend the cooldown (it starts only when armor ends)
-      if (this.arena.hasUpgrade('q')) player.resetCooldown('metal-blood-clot');
-
-      player.damageAbsorber = (amount: number) => {
-        if (this.metalArmorReflecting) return false;
-        if (!this.metalArmorActive || sceneTime.now > this.metalArmorEnd) {
-          this.metalArmorActive = false; player.damageAbsorber = null; return false;
-        }
-        this.metalArmorHp -= amount;
-        this.arena.spawnDamageNumber(player.x, player.y - 20, amount);
-        const reflected = Math.ceil(amount * 0.5);
-        this.metalArmorReflecting = true;
-        npc.takeDamage(reflected);
-        this.metalArmorReflecting = false;
-        this.arena.spawnHitFlash(npc.x, npc.y, 0x882244);
-        this.arena.showFloatingText(npc.x, npc.y - 30, `↩ ${reflected} REFLECT`, '#ff8866');
-        if (this.metalArmorHp <= 0) {
-          this.metalArmorActive = false; player.damageAbsorber = null;
-          this.arena.showFloatingText(player.x, player.y - 36, '💔 ARMOR BROKEN', '#ff4466');
-          if (this.metalArmorAura) { this.metalArmorAura.destroy(); this.metalArmorAura = null; }
-        }
-        return true;
-      };
-    } else {
-      this.npcMetalArmorActive = true;
-      this.npcMetalArmorHp = armorHp;
-      this.npcMetalArmorEnd = sceneTime.now + duration;
-      if (this.npcMetalArmorAura) this.npcMetalArmorAura.destroy();
-      this.npcMetalArmorAura = sceneAdd.circle(caster.x, caster.y, 40, 0xcc2244, 0.3)
-        .setStrokeStyle(3, 0xff4466, 0.7).setDepth(3);
-      sceneTweens.add({ targets: this.npcMetalArmorAura, alpha: 0.1, yoyo: true, repeat: -1, duration: 500 });
-
-      npc.damageAbsorber = (amount: number) => {
-        if (this.npcMetalArmorReflecting) return false;
-        if (!this.npcMetalArmorActive || sceneTime.now > this.npcMetalArmorEnd) {
-          this.npcMetalArmorActive = false; npc.damageAbsorber = null; return false;
-        }
-        this.npcMetalArmorHp -= amount;
-        const reflected = Math.ceil(amount * 0.5);
-        this.npcMetalArmorReflecting = true;
-        player.takeDamage(reflected);
-        this.npcMetalArmorReflecting = false;
-        this.arena.spawnHitFlash(player.x, player.y, 0x882244);
-        this.arena.showFloatingText(player.x, player.y - 30, `↩ ${reflected} REFLECT`, '#ff8866');
-        if (this.npcMetalArmorHp <= 0) {
-          this.npcMetalArmorActive = false; npc.damageAbsorber = null;
-          if (this.npcMetalArmorAura) { this.npcMetalArmorAura.destroy(); this.npcMetalArmorAura = null; }
-        }
-        return true;
-      };
     }
   }
 
@@ -587,119 +733,72 @@ export class MetalKit {
     const sceneTweens = (scene as Phaser.Scene & { tweens: Phaser.Tweens.TweenManager }).tweens;
 
     const base = 30;
-    // Click+: Hemorrhage — puddles spawned by/for the upgraded player are 50% bigger
-    const r = (owner === 'player' && this.arena.hasUpgrade('click')) ? Math.round(base * 1.5) : base;
+    // Quad perk Exsanguinate: blood puddles are 50% bigger.
+    let mult = 1;
+    if (owner === 'player' && this.arena.hasPerk('gunpowder')) mult *= 1.5;
+    const r = Math.round(base * mult);
     const spr = sceneAdd.circle(x, y, r, 0x660000, 0.55)
       .setStrokeStyle(2, 0x990000, 0.5).setDepth(2);
-    this.metalBloodPuddles.push({ sprite: spr, x, y, radius: r, owner, drainAccum: 0, draining: false });
+    this.metalBloodPuddles.push({ sprite: spr, x, y, radius: r, owner, drainAccum: 0, draining: false, blood: PUDDLE_BLOOD_CAPACITY });
     // Small spawn VFX
     const burst = sceneAdd.circle(x, y, 6, 0xcc0000, 0.8).setDepth(5);
     sceneTweens.add({ targets: burst, scaleX: 3, scaleY: 3, alpha: 0, duration: 300, onComplete: () => burst.destroy() });
   }
 
-  // ── Gunpowder perk methods ───────────────────────────────────────────────
+  /** Passive: called from ArenaScene's 'damaged' listeners whenever `owner` deals damage to their opponent. */
+  onDamageDealt(owner: 'player' | 'npc', amount: number): void {
+    if (amount <= 0) return;
+    const { player, npc } = this.arena;
+    const victim = owner === 'player' ? npc : player;
 
-  private doGunpowderDischarge(tx: number, ty: number): void {
-    const player = this.arena.player;
-    const scene = this.arena.scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory; time: Phaser.Time.Clock };
-    const dx = tx - player.x;
-    const dy = ty - player.y;
-    const len = Math.sqrt(dx * dx + dy * dy) || 1;
-
-    this.gunpowderClipSprite = scene.add.rectangle(player.x, player.y, 12, 8, 0x778899).setDepth(8);
-    this.gunpowderClipX = player.x;
-    this.gunpowderClipY = player.y;
-    this.gunpowderClipVx = (dx / len) * 600;
-    this.gunpowderClipVy = (dy / len) * 600;
-    this.gunpowderClipTargetX = tx;
-    this.gunpowderClipTargetY = ty;
-    this.gunpowderClipSpawnedAt = scene.time.now;
-    this.gunpowderClipActive = true;
-    this.gunpowderDischargeCooldownUntil = scene.time.now + 8000;
-
-    this.arena.showFloatingText(player.x, player.y - 44, '💥 DISCHARGE!', '#ccaa44');
-  }
-
-  private triggerGunpowderExplosion(): void {
-    const scene = this.arena.scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory; tweens: Phaser.Tweens.TweenManager };
-    const player = this.arena.player;
-    const npc = this.arena.npc;
-    const cx = this.gunpowderClipX;
-    const cy = this.gunpowderClipY;
-
-    // Destroy clip sprite
-    this.gunpowderClipSprite?.destroy();
-    this.gunpowderClipSprite = null;
-    this.gunpowderClipActive = false;
-
-    // Orange explosion flash
-    const flash = scene.add.circle(cx, cy, 80, 0xff8800, 0.5).setDepth(9);
-    scene.tweens.add({ targets: flash, scaleX: 1.5, scaleY: 1.5, alpha: 0, duration: 350, onComplete: () => flash.destroy() });
-
-    // AoE damage (radius 80, 20 dmg)
-    this.arena.dealAoeDamage(cx, cy, 80, 20, 'player');
-
-    // 20 hitscan beams at equidistant angles
-    const COUNT = 20;
-    const RANGE = 900;
-    for (let i = 0; i < COUNT; i++) {
-      const angle = (i / COUNT) * Math.PI * 2;
-      const ux = Math.cos(angle);
-      const uy = Math.sin(angle);
-
-      // Draw beam
-      const gfx = scene.add.graphics().setDepth(8);
-      gfx.lineStyle(2, 0xffcc44, 1);
-      gfx.beginPath();
-      gfx.moveTo(cx, cy);
-      gfx.lineTo(cx + ux * RANGE, cy + uy * RANGE);
-      gfx.strokePath();
-      scene.tweens.add({ targets: gfx, alpha: 0, duration: 200, onComplete: () => gfx.destroy() });
-
-      // Hit check using perpendicular distance
-      const perp = Math.abs((npc.x - cx) * uy - (npc.y - cy) * ux);
-      const dot = (npc.x - cx) * ux + (npc.y - cy) * uy;
-      if (perp <= 30 && dot > 0 && dot <= RANGE && npc.active) {
-        npc.takeDamage(8);
-        this.arena.spawnHitFlash(npc.x, npc.y, 0xffcc44);
+    if (owner === 'player') {
+      this.playerDamageDealtAccum += amount;
+      // Q+ Blood Blade: damage feeds blood straight into the bar instead of puddles.
+      const bladeActive = !!this.bloodBlade;
+      while (this.playerDamageDealtAccum >= 50) {
+        this.playerDamageDealtAccum -= 50;
+        if (bladeActive) this.addBlood('player', 25);
+        else this.spawnMetalBloodPuddle(victim.x, victim.y, 'player');
       }
-    }
-
-    // Delete oldest weapon from arsenal
-    if (this.metalArsenal.length > 0) {
-      const removed = this.metalArsenal.shift()!;
-      const emoji = GUN_EMOJIS[removed] ?? '?';
-      const name = GUN_NAMES[removed] ?? removed;
-      this.arena.showFloatingText(player.x, player.y - 28, `❌ ${emoji} ${name} LOST`, '#ff8888');
-      this.updateArsenalHud();
-    }
-  }
-
-  private updateGunpowderClip(time: number, delta: number): void {
-    if (!this.gunpowderClipActive) return;
-
-    const dt = delta / 1000;
-    this.gunpowderClipX += this.gunpowderClipVx * dt;
-    this.gunpowderClipY += this.gunpowderClipVy * dt;
-
-    if (this.gunpowderClipSprite) {
-      this.gunpowderClipSprite.x = this.gunpowderClipX;
-      this.gunpowderClipSprite.y = this.gunpowderClipY;
-      this.gunpowderClipSprite.rotation = Math.atan2(this.gunpowderClipVy, this.gunpowderClipVx);
-    }
-
-    const distToTarget = Phaser.Math.Distance.Between(
-      this.gunpowderClipX, this.gunpowderClipY,
-      this.gunpowderClipTargetX, this.gunpowderClipTargetY,
-    );
-    const elapsed = time - this.gunpowderClipSpawnedAt;
-
-    if (distToTarget < 20 || elapsed >= 1200) {
-      this.triggerGunpowderExplosion();
+    } else {
+      this.npcDamageDealtAccum += amount;
+      while (this.npcDamageDealtAccum >= 50) {
+        this.npcDamageDealtAccum -= 50;
+        this.spawnMetalBloodPuddle(victim.x, victim.y, 'npc');
+      }
     }
   }
 
   // ── Private helpers ─────────────────────────────────────────────────────
+
+  /** Draws a sword pointing outward from (cx,cy) and sweeps it 90° across `ang`, then fades. */
+  private drawSwordSwing(
+    cx: number, cy: number, ang: number,
+    opts: { handle: number; accent: number; blade: number; edge: number; serrated?: boolean },
+  ): void {
+    const scene = this.arena.scene;
+    const gfx = scene.add.graphics().setDepth(9);
+    gfx.setPosition(cx, cy);
+    gfx.fillStyle(opts.handle, 1); gfx.fillRect(0, -3, 16, 6);      // handle
+    gfx.fillStyle(opts.accent, 1); gfx.fillCircle(0, 0, 5);          // pommel
+    gfx.fillStyle(opts.accent, 1); gfx.fillRect(14, -12, 6, 24);     // crossguard
+    // Blade (tapered to a point)
+    gfx.fillStyle(opts.blade, 1);
+    gfx.beginPath();
+    gfx.moveTo(20, -6); gfx.lineTo(88, -2); gfx.lineTo(98, 0); gfx.lineTo(88, 2); gfx.lineTo(20, 6);
+    gfx.closePath(); gfx.fillPath();
+    if (opts.serrated) {
+      gfx.fillStyle(opts.blade, 1);
+      for (let x = 24; x < 88; x += 9) gfx.fillTriangle(x, -4, x + 5, -11, x + 9, -4);
+    }
+    gfx.lineStyle(2, opts.edge, 0.9);                                // edge highlight
+    gfx.beginPath(); gfx.moveTo(20, -3); gfx.lineTo(96, 0); gfx.strokePath();
+
+    const swing = Phaser.Math.DegToRad(90);
+    gfx.setRotation(ang - swing / 2);
+    scene.tweens.add({ targets: gfx, rotation: ang + swing / 2, duration: 130, ease: 'Quad.Out' });
+    scene.tweens.add({ targets: gfx, alpha: 0, duration: 120, delay: 130, onComplete: () => gfx.destroy() });
+  }
 
   private drawMetalChainLine(gfx: Phaser.GameObjects.Graphics, x1: number, y1: number, x2: number, y2: number): void {
     const d = Phaser.Math.Distance.Between(x1, y1, x2, y2) || 1;
@@ -718,192 +817,76 @@ export class MetalKit {
     gfx.strokePath();
   }
 
-  private fireMetalGun(gunId: string, owner: 'player' | 'npc', targetX: number, targetY: number): void {
-    const { player, npc, scene } = this.arena;
-    const caster = owner === 'player' ? player : npc;
-    const target = owner === 'player' ? this.arena.getNearestEnemy(caster.x, caster.y) : player;
-    const dx = targetX - caster.x, dy = targetY - caster.y;
-    const len = Math.sqrt(dx * dx + dy * dy) || 1;
-    const ux = dx / len, uy = dy / len;
-
-    const sceneAdd = (scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory }).add;
-    const sceneTweens = (scene as Phaser.Scene & { tweens: Phaser.Tweens.TweenManager }).tweens;
-    const sceneTime = (scene as Phaser.Scene & { time: Phaser.Time.Clock }).time;
-
-    // Helper: perpendicular-distance hitscan check (30px tolerance)
-    const hitscanHit = (sUx: number, sUy: number, tolerance = 30): boolean => {
-      const perp = Math.abs((target.x - caster.x) * sUy - (target.y - caster.y) * sUx);
-      const dot  = (target.x - caster.x) * sUx + (target.y - caster.y) * sUy;
-      return perp <= tolerance && dot > 0;
-    };
-
-    const drawLine = (sUx: number, sUy: number, color: number, range = 900, lw = 2): void => {
-      const gfx = sceneAdd.graphics().setDepth(8);
-      gfx.lineStyle(lw, color, 1);
-      gfx.beginPath();
-      gfx.moveTo(caster.x, caster.y);
-      gfx.lineTo(caster.x + sUx * range, caster.y + sUy * range);
-      gfx.strokePath();
-      sceneTweens.add({ targets: gfx, alpha: 0, duration: 180, onComplete: () => gfx.destroy() });
-    };
-
-    switch (gunId) {
-      case 'flintlock': {
-        drawLine(ux, uy, 0x888877, 900, 3);
-        if (hitscanHit(ux, uy)) {
-          target.takeDamage(20);
-          this.arena.spawnHitFlash(target.x, target.y, 0x887766);
-          this.spawnMetalBloodPuddle(target.x, target.y, owner);
-        }
-        break;
-      }
-      case 'rifle': {
-        for (let i = 0; i < 3; i++) {
-          sceneTime.delayedCall(i * 150, () => {
-            if (!caster.active || !target.active) return;
-            drawLine(ux, uy, 0xaabb99, 900, 2);
-            const perp = Math.abs((target.x - caster.x) * uy - (target.y - caster.y) * ux);
-            const dot  = (target.x - caster.x) * ux + (target.y - caster.y) * uy;
-            if (perp <= 30 && dot > 0) {
-              target.takeDamage(8);
-              this.arena.spawnHitFlash(target.x, target.y, 0xaabb99);
-            }
-          });
-        }
-        break;
-      }
-      case 'grenade-launcher': {
-        const spr = sceneAdd.circle(caster.x, caster.y, 10, 0x445544, 0.9)
-          .setStrokeStyle(2, 0x88aa88).setDepth(8);
-        this.metalGunProjectiles.push({
-          sprite: spr, x: caster.x, y: caster.y,
-          vx: ux * 400, vy: uy * 400 - 80,
-          owner, type: 'grenade', damage: 35, explodeRadius: 80, active: true,
-        });
-        break;
-      }
-      case 'flamethrower': {
-        const baseX = caster.x + ux * 40, baseY = caster.y + uy * 40;
-        const baseAng = Math.atan2(uy, ux);
-        for (let i = 0; i < 7; i++) {
-          const spread = (Math.random() - 0.5) * 1.4;
-          const fAng = baseAng + spread;
-          const spd = 200 + Math.random() * 120;
-          const spr = sceneAdd.circle(baseX, baseY, 7, 0xff5500, 0.85 - Math.random() * 0.3).setDepth(8);
-          const expAt = sceneTime.now + 550 + Math.random() * 150;
-          this.metalGunProjectiles.push({
-            sprite: spr, x: baseX, y: baseY,
-            vx: Math.cos(fAng) * spd, vy: Math.sin(fAng) * spd,
-            owner, type: 'flame', damage: 8, active: true, expiresAt: expAt,
-          });
-        }
-        break;
-      }
-      case 'shotgun': {
-        const baseAng = Math.atan2(uy, ux);
-        for (let i = 0; i < 5; i++) {
-          const spread = (i - 2) * (Math.PI / 8);
-          const sAng = baseAng + spread;
-          const sUx = Math.cos(sAng), sUy = Math.sin(sAng);
-          drawLine(sUx, sUy, 0x998855, 600, 2);
-          if (hitscanHit(sUx, sUy, 38)) {
-            target.takeDamage(10);
-            this.arena.spawnHitFlash(target.x, target.y, 0x998855);
-          }
-        }
-        break;
-      }
-      case 'rpg': {
-        const spr = sceneAdd.circle(caster.x, caster.y, 8, 0xcc5511, 0.9)
-          .setStrokeStyle(2, 0xff8844).setDepth(8);
-        const trail = sceneAdd.circle(caster.x, caster.y, 5, 0x888888, 0.5).setDepth(7);
-        sceneTweens.add({ targets: trail, alpha: 0, scaleX: 2, scaleY: 2, duration: 300, onComplete: () => trail.destroy() });
-        this.metalGunProjectiles.push({
-          sprite: spr, x: caster.x, y: caster.y,
-          vx: ux * 700, vy: uy * 700,
-          owner, type: 'rpg', damage: 50, explodeRadius: 120, active: true,
-        });
-        break;
-      }
-      case 'taser': {
-        const spr = sceneAdd.circle(caster.x, caster.y, 8, 0xffee22, 0.9)
-          .setStrokeStyle(2, 0xffffff, 0.8).setDepth(8);
-        this.metalGunProjectiles.push({
-          sprite: spr, x: caster.x, y: caster.y,
-          vx: ux * 500, vy: uy * 500,
-          owner, type: 'taser', damage: 15, active: true,
-        });
-        break;
-      }
-      case 'minigun': {
-        const baseAng = Math.atan2(uy, ux);
-        for (let i = 0; i < 30; i++) {
-          sceneTime.delayedCall(i * 35, () => {
-            if (!caster.active || !target.active) return;
-            const spread = (Math.random() - 0.5) * (Math.PI * 2 / 3);
-            const mAng = baseAng + spread;
-            const mUx = Math.cos(mAng), mUy = Math.sin(mAng);
-            const gfx = sceneAdd.graphics().setDepth(8);
-            gfx.lineStyle(1, 0xaabbcc, 0.7);
-            gfx.beginPath();
-            gfx.moveTo(caster.x, caster.y);
-            gfx.lineTo(caster.x + mUx * 700, caster.y + mUy * 700);
-            gfx.strokePath();
-            sceneTweens.add({ targets: gfx, alpha: 0, duration: 100, onComplete: () => gfx.destroy() });
-            const mPerp = Math.abs((target.x - caster.x) * mUy - (target.y - caster.y) * mUx);
-            const mDot  = (target.x - caster.x) * mUx + (target.y - caster.y) * mUy;
-            if (mPerp <= 35 && mDot > 0) {
-              target.takeDamage(1);
-            }
-          });
-        }
-        break;
-      }
-      case 'sniper': {
-        const chargeGfx = sceneAdd.graphics().setDepth(7);
-        chargeGfx.lineStyle(1, 0xffee44, 0.35);
-        chargeGfx.beginPath();
-        chargeGfx.moveTo(caster.x, caster.y);
-        chargeGfx.lineTo(caster.x + ux * 1200, caster.y + uy * 1200);
-        chargeGfx.strokePath();
-        sceneTweens.add({ targets: chargeGfx, alpha: 0.7, yoyo: true, repeat: 1, duration: 350, onComplete: () => chargeGfx.destroy() });
-        this.arena.showFloatingText(caster.x, caster.y - 30, '🎖️ Charging…', '#ffee44');
-        sceneTime.delayedCall(700, () => {
-          if (!caster.active || !target.active) return;
-          const dx2 = target.x - caster.x, dy2 = target.y - caster.y;
-          const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2) || 1;
-          const sUx = dx2 / len2, sUy = dy2 / len2;
-          drawLine(sUx, sUy, 0xffee22, 1200, 3);
-          if (hitscanHit(sUx, sUy, 18)) {
-            target.takeDamage(55);
-            this.arena.spawnHitFlash(target.x, target.y, 0xffee22);
-            this.arena.showFloatingText(target.x, target.y - 36, '🎖️ SNIPER HIT', '#ffee22');
-          }
-        });
-        break;
-      }
-    }
+  private destroyFlail(owner: 'player' | 'npc'): void {
+    const flail = owner === 'player' ? this.playerFlail : this.npcFlail;
+    if (!flail) return;
+    flail.headSprite.destroy();
+    flail.chainGfx.destroy();
+    if (flail.spikesGfx) flail.spikesGfx.destroy();
+    if (owner === 'player') this.playerFlail = null; else this.npcFlail = null;
   }
 
-  private doMetalExplosion(x: number, y: number, radius: number, damage: number, owner: 'player' | 'npc'): void {
-    const { player, enemies, scene } = this.arena;
+  private spawnClotArmorDecor(owner: 'player' | 'npc'): void {
+    const { scene } = this.arena;
     const sceneAdd = (scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory }).add;
-    const sceneTweens = (scene as Phaser.Scene & { tweens: Phaser.Tweens.TweenManager }).tweens;
+    for (const spr of this.clotArmorShardDecor[owner]) spr.destroy();
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    // Three spike triangles (tip pointing +x locally); positioned and oriented
+    // to face away from the caster's aim each frame in updateClotArmor.
+    this.clotArmorShardDecor[owner] = [0, 1, 2].map(() =>
+      sceneAdd.triangle(caster.x, caster.y, 0, -8, 28, 0, 0, 8, 0xcc0022, 0.95).setDepth(6),
+    );
+  }
 
-    const ring = sceneAdd.circle(x, y, 10, 0xff5500, 0.85).setDepth(9);
-    sceneTweens.add({ targets: ring, scaleX: radius / 10, scaleY: radius / 10, alpha: 0, duration: 400, onComplete: () => ring.destroy() });
-    const inner = sceneAdd.circle(x, y, 6, 0xffcc44, 1).setDepth(10);
-    sceneTweens.add({ targets: inner, scaleX: 3, scaleY: 3, alpha: 0, duration: 200, onComplete: () => inner.destroy() });
+  private installClotArmorAbsorber(owner: 'player' | 'npc'): void {
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
 
-    const targets = owner === 'player' ? enemies : [player];
-    for (const target of targets) {
-      if (!target.active || target.hp <= 0) continue;
-      if (Phaser.Math.Distance.Between(x, y, target.x, target.y) <= radius) {
-        target.takeDamage(damage);
-        this.arena.spawnHitFlash(target.x, target.y, 0xff5500);
-        this.arena.showFloatingText(x, y - 30, '💥 BOOM', '#ff8844');
+    caster.damageAbsorber = (amount: number) => {
+      if (!this.clotArmorActive[owner] || caster.shieldHp <= 0) {
+        this.deactivateClotArmor(owner);
+        return false;
       }
+      caster.shieldHp = Math.max(0, caster.shieldHp - amount);
+      this.arena.spawnDamageNumber(caster.x, caster.y - 20, amount);
+      this.clotArmorLostAccum[owner] += amount;
+      while (this.clotArmorLostAccum[owner] >= CLOT_SHARD_THRESHOLD) {
+        this.clotArmorLostAccum[owner] -= CLOT_SHARD_THRESHOLD;
+        this.fireClotShardBurst(owner);
+      }
+      if (caster.shieldHp <= 0) {
+        this.arena.showFloatingText(caster.x, caster.y - 36, '💔 ARMOR BROKEN', '#ff4466');
+        this.deactivateClotArmor(owner);
+      }
+      return true;
+    };
+  }
+
+  private deactivateClotArmor(owner: 'player' | 'npc'): void {
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    this.clotArmorActive[owner] = false;
+    caster.damageAbsorber = null;
+    caster.clearTint();
+    for (const spr of this.clotArmorShardDecor[owner]) spr.destroy();
+    this.clotArmorShardDecor[owner] = [];
+  }
+
+  private fireClotShardBurst(owner: 'player' | 'npc'): void {
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    const { scene } = this.arena;
+    const sceneAdd = (scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory }).add;
+    // Quad perk: Exsanguinate — fires 8 shards per burst instead of 5
+    const shardCount = this.arena.hasPerk('gunpowder') ? 8 : CLOT_SHARD_COUNT;
+    for (let i = 0; i < shardCount; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const spr = sceneAdd.rectangle(caster.x, caster.y, 10, 4, 0xcc0022, 0.95)
+        .setDepth(8).setRotation(ang);
+      this.metalShardProjectiles.push({
+        sprite: spr, x: caster.x, y: caster.y,
+        vx: Math.cos(ang) * CLOT_SHARD_SPEED, vy: Math.sin(ang) * CLOT_SHARD_SPEED,
+        owner, active: true, dmg: CLOT_SHARD_DAMAGE, spawnsPuddle: true,
+      });
     }
+    this.arena.showFloatingText(caster.x, caster.y - 30, '🩸 SHARD BURST', '#ff3355');
   }
 
   // ── Per-frame update helpers ──────────────────────────────────────────────
@@ -921,7 +904,6 @@ export class MetalKit {
         if (this.npcAggressiveBleedTickAccum >= 1000) {
           this.npcAggressiveBleedTickAccum -= 1000;
           npc.takeDamage(2);
-          this.arena.spawnDamageNumber(npc.x, npc.y - 18, 2);
         }
         this.npcAggressiveBleedPuddleAccum += delta;
         if (this.npcAggressiveBleedPuddleAccum >= 3000) {
@@ -941,7 +923,6 @@ export class MetalKit {
         if (this.playerAggressiveBleedTickAccum >= 1000) {
           this.playerAggressiveBleedTickAccum -= 1000;
           player.takeDamage(2);
-          this.arena.spawnDamageNumber(player.x, player.y - 18, 2);
         }
         this.playerAggressiveBleedPuddleAccum += delta;
         if (this.playerAggressiveBleedPuddleAccum >= 3000) {
@@ -962,15 +943,20 @@ export class MetalKit {
 
       puddle.draining = d <= puddle.radius + 18;
 
-      if (puddle.draining) {
+      if (puddle.draining && puddle.blood > 0) {
+        // Drain a steady 5 blood/sec into the blood bar.
+        const drain = Math.min(BLOOD_DRAIN_PER_SEC * (delta / 1000), puddle.blood);
+        puddle.blood -= drain;
+        this.addBlood(puddle.owner, drain);
+        // Puddle shrinks consistently as its blood is drained.
+        puddle.sprite.setScale(Math.max(0.05, puddle.blood / PUDDLE_BLOOD_CAPACITY));
+        // Periodic drip readout (~once per second) so the number isn't spam.
         puddle.drainAccum += delta;
-        if (puddle.drainAccum >= 900) {
-          puddle.drainAccum -= 900;
-          owner.heal(2);
-          this.arena.showFloatingText(owner.x, owner.y - 22, '+2 ❤️', '#ff6688');
-          puddle.sprite.setScale(puddle.sprite.scaleX * 0.55);
+        if (puddle.drainAccum >= 1000) {
+          puddle.drainAccum -= 1000;
+          this.arena.showFloatingText(owner.x, owner.y - 22, '+10 🩸', '#ff3355');
         }
-        if (puddle.sprite.scaleX < 0.12) {
+        if (puddle.blood <= 0) {
           puddle.sprite.destroy();
           this.metalBloodPuddles.splice(i, 1);
         }
@@ -978,35 +964,23 @@ export class MetalKit {
     }
   }
 
-  private updateBloodSiphon(_time: number, delta: number): void {
-    const { player } = this.arena;
-
-    if (this.metalBloodChainPuddle) {
-      const puddle = this.metalBloodChainPuddle;
-      if (!puddle.sprite.active || puddle.sprite.scaleX < 0.12) {
-        this.metalBloodChainPuddle = null;
-        if (this.metalBloodChainGraphic) { this.metalBloodChainGraphic.clear(); }
-      } else {
-        this.metalBloodChainAccum += delta;
-        if (this.metalBloodChainAccum >= 900) {
-          this.metalBloodChainAccum -= 900;
-          player.heal(3);
-          this.arena.showFloatingText(player.x, player.y - 22, '+3 🩸', '#ff6688');
-          puddle.sprite.setScale(puddle.sprite.scaleX * (0.55 / 1.5 < 0.37 ? 0.37 : 0.55 / 1.5));
-          if (puddle.sprite.scaleX < 0.12) {
-            puddle.sprite.destroy();
-            const idx = this.metalBloodPuddles.indexOf(puddle);
-            if (idx !== -1) this.metalBloodPuddles.splice(idx, 1);
-            this.metalBloodChainPuddle = null;
-            if (this.metalBloodChainGraphic) this.metalBloodChainGraphic.clear();
-          }
-        }
-        if (this.metalBloodChainGraphic && puddle.sprite.active) {
-          this.metalBloodChainGraphic.clear();
-          this.drawMetalChainLine(this.metalBloodChainGraphic, player.x, player.y, puddle.x, puddle.y);
-        }
+  private addBlood(owner: 'player' | 'npc', amount: number): void {
+    // R+ Blood Clottage: blood gained past a full bar converts normal HP into
+    // clotted HP (no extra health — the same health simply takes 50% less damage).
+    if (owner === 'player' && this.arena.hasUpgrade('r')) {
+      const room = BLOOD_MAX - this.blood.player;
+      const toBar = Math.min(room, amount);
+      this.blood.player += toBar;
+      const overflow = amount - toBar;
+      if (overflow > 0) {
+        const player = this.arena.player;
+        const convert = Math.min(overflow, player.hp);
+        player.hp -= convert;
+        player.clottedHp = Math.min(player.maxHp, player.clottedHp + convert);
       }
+      return;
     }
+    this.blood[owner] = Math.min(BLOOD_MAX, this.blood[owner] + amount);
   }
 
   private updateChainTethers(time: number, _delta: number): void {
@@ -1019,9 +993,15 @@ export class MetalKit {
         if (this.metalChainGraphic) { this.metalChainGraphic.clear(); this.metalChainGraphic.destroy(); this.metalChainGraphic = null; }
       } else {
         const td = Phaser.Math.Distance.Between(player.x, player.y, npc.x, npc.y);
-        if (td > 160) {
+        if (td > CHAIN_TETHER_LEASH) {
           const ang = Math.atan2(npc.y - player.y, npc.x - player.x);
-          npc.setPosition(player.x + Math.cos(ang) * 160, player.y + Math.sin(ang) * 160);
+          npc.setPosition(player.x + Math.cos(ang) * CHAIN_TETHER_LEASH, player.y + Math.sin(ang) * CHAIN_TETHER_LEASH);
+        }
+        // Drip 3 blood puddles spread evenly across the tether's duration.
+        if (this.metalTetherPuddlesLeft > 0 && time >= this.metalTetherNextPuddleAt) {
+          this.metalTetherPuddlesLeft--;
+          this.metalTetherNextPuddleAt = time + CHAIN_TETHER_PUDDLE_INTERVAL;
+          this.spawnMetalBloodPuddle(npc.x, npc.y, 'player');
         }
         if (!this.metalChainGraphic) this.metalChainGraphic = sceneAdd.graphics().setDepth(5);
         this.metalChainGraphic.clear();
@@ -1035,9 +1015,14 @@ export class MetalKit {
         if (this.npcMetalChainGraphic) { this.npcMetalChainGraphic.clear(); this.npcMetalChainGraphic.destroy(); this.npcMetalChainGraphic = null; }
       } else {
         const td = Phaser.Math.Distance.Between(npc.x, npc.y, player.x, player.y);
-        if (td > 160) {
+        if (td > CHAIN_TETHER_LEASH) {
           const ang = Math.atan2(player.y - npc.y, player.x - npc.x);
-          player.setPosition(npc.x + Math.cos(ang) * 160, npc.y + Math.sin(ang) * 160);
+          player.setPosition(npc.x + Math.cos(ang) * CHAIN_TETHER_LEASH, npc.y + Math.sin(ang) * CHAIN_TETHER_LEASH);
+        }
+        if (this.npcMetalTetherPuddlesLeft > 0 && time >= this.npcMetalTetherNextPuddleAt) {
+          this.npcMetalTetherPuddlesLeft--;
+          this.npcMetalTetherNextPuddleAt = time + CHAIN_TETHER_PUDDLE_INTERVAL;
+          this.spawnMetalBloodPuddle(player.x, player.y, 'npc');
         }
         if (!this.npcMetalChainGraphic) this.npcMetalChainGraphic = sceneAdd.graphics().setDepth(5);
         this.npcMetalChainGraphic.clear();
@@ -1069,11 +1054,15 @@ export class MetalKit {
           this.arena.showFloatingText(hitTarget.x, hitTarget.y - 34, '⛓️ TETHERED!', '#aabbcc');
           if (cp.owner === 'player') {
             this.metalChainTethered = true;
-            this.metalChainTetherEnd = time + 5000;
+            this.metalChainTetherEnd = time + CHAIN_TETHER_MS;
+            this.metalTetherNextPuddleAt = time + CHAIN_TETHER_PUDDLE_INTERVAL;
+            this.metalTetherPuddlesLeft = CHAIN_TETHER_PUDDLE_COUNT;
             this.applyMetalAggressiveBleeding('player', 3000);
           } else {
             this.npcMetalChainTethered = true;
-            this.npcMetalChainTetherEnd = time + 5000;
+            this.npcMetalChainTetherEnd = time + CHAIN_TETHER_MS;
+            this.npcMetalTetherNextPuddleAt = time + CHAIN_TETHER_PUDDLE_INTERVAL;
+            this.npcMetalTetherPuddlesLeft = CHAIN_TETHER_PUDDLE_COUNT;
             this.applyMetalAggressiveBleeding('npc', 3000);
           }
           break;
@@ -1082,92 +1071,417 @@ export class MetalKit {
     }
   }
 
-  private updateGunProjectiles(time: number, delta: number): void {
-    const { player, enemies } = this.arena;
-    const W = this.arena.scene.scale.width;
-    const H = this.arena.scene.scale.height;
+  private updateFlails(time: number, delta: number): void {
+    const dt = delta / 1000;
+    for (const owner of ['player', 'npc'] as const) {
+      const flail = owner === 'player' ? this.playerFlail : this.npcFlail;
+      if (!flail) continue;
+      const caster = owner === 'player' ? this.arena.player : this.arena.npc;
 
-    for (let i = this.metalGunProjectiles.length - 1; i >= 0; i--) {
-      const p = this.metalGunProjectiles[i];
-      if (!p.active) { p.sprite.destroy(); this.metalGunProjectiles.splice(i, 1); continue; }
+      // E+ Heavy Metal Rock loses its spin twice as fast.
+      const decayMs = FLAIL_SWING_DECAY_MS / (flail.heavy ? 2 : 1);
 
-      if (p.expiresAt && time > p.expiresAt) { p.active = false; continue; }
+      // Hard lifetime cap — the mace lives 10s from creation, swinging or not.
+      if (time - flail.createdAt > FLAIL_LIFETIME_MS) { this.destroyFlail(owner); continue; }
 
-      p.x += p.vx * (delta / 1000);
-      p.y += p.vy * (delta / 1000);
-      if (p.type === 'grenade') p.vy += 220 * (delta / 1000);
-      p.sprite.setPosition(p.x, p.y);
-
-      if (p.x < 0 || p.x > W || p.y < 0 || p.y > H) {
-        if (p.type === 'grenade' || p.type === 'rpg') this.doMetalExplosion(p.x, p.y, p.explodeRadius ?? 80, p.damage, p.owner);
-        p.active = false;
-        continue;
+      if (flail.swinging) {
+        const elapsed = time - flail.swingStartAt;
+        const decayRatio = Math.max(0, 1 - elapsed / decayMs);
+        if (decayRatio <= 0) {
+          // Spin ran out — settle back into an idle mace hanging on the chain.
+          // It stays until the 10s lifetime cap above, rather than vanishing the
+          // moment it stops moving.
+          flail.swinging = false;
+          flail.angularVel = 0;
+          flail.initialAngularVel = 0;
+          flail.radius = FLAIL_IDLE_RADIUS * (flail.heavy ? HEAVY_RADIUS_MULT : 1);
+          flail.headSprite.setFillStyle(flail.heavy ? 0x111111 : 0xaabbcc, 0.95);
+          if (flail.spikesGfx) flail.spikesGfx.clear();
+        } else {
+          flail.angularVel = flail.initialAngularVel * decayRatio;
+          flail.angle += flail.angularVel * dt;
+        }
       }
 
-      const _gunRadius = p.type === 'flame' ? 36 : 24;
-      let hitT: Fighter | null = null;
-      const gunTargets = p.owner === 'player' ? enemies : [player];
-      for (const t of gunTargets) {
-        if (!t.active || t.hp <= 0) continue;
-        if (Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) <= _gunRadius) { hitT = t; break; }
+      const headX = caster.x + Math.cos(flail.angle) * flail.radius;
+      const headY = caster.y + Math.sin(flail.angle) * flail.radius;
+      flail.headSprite.setPosition(headX, headY);
+      flail.chainGfx.clear();
+      this.drawMetalChainLine(flail.chainGfx, caster.x, caster.y, headX, headY);
+
+      // E+ Heavy Metal Rock: spikes radiating from the head, spinning with it
+      // and matching the head's current colour (dark → molten orange at speed).
+      if (flail.spikesGfx) {
+        const g = flail.spikesGfx;
+        g.clear();
+        g.fillStyle(flail.headSprite.fillColor, 0.95);
+        const r = flail.headRadius;
+        const spikeLen = 9;
+        const count = 8;
+        for (let s = 0; s < count; s++) {
+          const a = flail.angle + (s / count) * Math.PI * 2;
+          const bx = headX + Math.cos(a) * (r - 1);
+          const by = headY + Math.sin(a) * (r - 1);
+          const tx = headX + Math.cos(a) * (r + spikeLen);
+          const ty = headY + Math.sin(a) * (r + spikeLen);
+          const perpX = -Math.sin(a) * 4;
+          const perpY = Math.cos(a) * 4;
+          g.fillTriangle(bx + perpX, by + perpY, bx - perpX, by - perpY, tx, ty);
+        }
       }
-      if (hitT) {
-        p.active = false;
-        if (p.type === 'grenade') {
-          this.doMetalExplosion(p.x, p.y, p.explodeRadius ?? 80, p.damage, p.owner);
-        } else if (p.type === 'rpg') {
-          this.doMetalExplosion(p.x, p.y, p.explodeRadius ?? 120, p.damage, p.owner);
-        } else if (p.type === 'taser') {
-          hitT.takeDamage(p.damage);
-          this.arena.spawnHitFlash(hitT.x, hitT.y, 0xffee22);
-          this.arena.showFloatingText(hitT.x, hitT.y - 36, '⚡ STUNNED', '#ffee22');
-          if (p.owner === 'player') {
-            this.npcMetalTaseredUntil = time + 2000;
-          } else {
-            this.playerMetalTaseredUntil = time + 2000;
-            (player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+
+      if (flail.swinging) {
+        const elapsed = time - flail.swingStartAt;
+        const speedRatio = Math.max(0, 1 - elapsed / decayMs);
+        const dmg = Math.round((10 + speedRatio * 30) / 3) * (flail.heavy ? 2 : 1);
+        if (flail.heavy) {
+          const molten = speedRatio > HEAVY_MOLTEN_RATIO;
+          flail.headSprite.setFillStyle(molten ? 0xff6600 : 0x111111, 0.95);
+          if (molten) {
+            flail.firePuddleAccum += delta;
+            if (flail.firePuddleAccum >= 150) {
+              flail.firePuddleAccum -= 150;
+              this.spawnMetalFirePuddle(headX, headY, owner);
+            }
           }
-        } else if (p.type === 'flame') {
-          hitT.takeDamage(p.damage);
-          this.arena.spawnHitFlash(hitT.x, hitT.y, 0xff5500);
+        } else {
+          const c1 = Phaser.Display.Color.ValueToColor(0xaabbcc);
+          const c2 = Phaser.Display.Color.ValueToColor(0xff2244);
+          const blended = Phaser.Display.Color.Interpolate.ColorWithColor(c1, c2, 100, Math.round(speedRatio * 100));
+          flail.headSprite.setFillStyle(Phaser.Display.Color.GetColor(blended.r, blended.g, blended.b), 0.95);
+        }
+
+        if (time - flail.lastHitAt >= FLAIL_HIT_COOLDOWN_MS) {
+          const targets = owner === 'player' ? this.arena.enemies : [this.arena.player];
+          for (const t of targets) {
+            if (!t.active || t.hp <= 0) continue;
+            if (Phaser.Math.Distance.Between(headX, headY, t.x, t.y) <= FLAIL_CONTACT_RADIUS) {
+              t.takeDamage(dmg);
+              this.arena.spawnHitFlash(t.x, t.y, 0xff4466);
+              this.arena.showFloatingText(t.x, t.y - 30, `⛓️ ${dmg}`, '#ff6688');
+              flail.lastHitAt = time;
+              break;
+            }
+          }
         }
       }
     }
   }
 
-  private updateArmorTracking(time: number): void {
-    const { player, npc } = this.arena;
-    const sceneTime = (this.arena.scene as Phaser.Scene & { time: Phaser.Time.Clock }).time;
+  private updateShardProjectiles(_time: number, delta: number): void {
+    const { player, enemies } = this.arena;
+    const W = this.arena.scene.scale.width;
+    const H = this.arena.scene.scale.height;
 
-    if (this.metalArmorActive) {
-      if (time > this.metalArmorEnd || this.metalArmorHp <= 0) {
-        this.metalArmorActive = false; player.damageAbsorber = null;
-        if (this.metalArmorAura) { this.metalArmorAura.destroy(); this.metalArmorAura = null; }
-        if (this.metalArmorHp > 0) this.arena.showFloatingText(player.x, player.y - 36, '🛡️ ARMOR EXPIRED', '#aabbcc');
-        if (this.arena.hasUpgrade('q')) player.triggerCooldown('metal-blood-clot');
-      } else {
-        if (this.metalArmorAura) this.metalArmorAura.setPosition(player.x, player.y);
+    for (let i = this.metalShardProjectiles.length - 1; i >= 0; i--) {
+      const p = this.metalShardProjectiles[i];
+      if (!p.active) { p.sprite.destroy(); this.metalShardProjectiles.splice(i, 1); continue; }
+      p.x += p.vx * (delta / 1000);
+      p.y += p.vy * (delta / 1000);
+      p.sprite.setPosition(p.x, p.y);
+      if (p.x < 0 || p.x > W || p.y < 0 || p.y > H) { p.active = false; continue; }
+
+      const targets = p.owner === 'player' ? enemies : [player];
+      for (const t of targets) {
+        if (!t.active || t.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) <= 24) {
+          p.active = false;
+          t.takeDamage(p.dmg);
+          this.arena.spawnHitFlash(t.x, t.y, 0xcc0022);
+          if (p.spawnsPuddle) this.spawnMetalBloodPuddle(t.x, t.y, p.owner);
+          break;
+        }
       }
     }
-    if (this.npcMetalArmorActive) {
-      if (time > this.npcMetalArmorEnd || this.npcMetalArmorHp <= 0) {
-        this.npcMetalArmorActive = false; npc.damageAbsorber = null;
-        if (this.npcMetalArmorAura) { this.npcMetalArmorAura.destroy(); this.npcMetalArmorAura = null; }
-      } else {
-        if (this.npcMetalArmorAura) this.npcMetalArmorAura.setPosition(npc.x, npc.y);
-      }
-    }
-
-    void sceneTime;
   }
 
-  private updateArsenalHud(): void {
-    if (this.metalArsenalHUD && this.arena.elementId === 'metal') {
-      if (this.metalArsenal.length === 0) {
-        this.metalArsenalHUD.setText('[ No Weapons ]');
-      } else {
-        this.metalArsenalHUD.setText(this.metalArsenal.map(g => GUN_EMOJIS[g] ?? '?').join('  '));
+  private updateClotArmor(_time: number, _delta: number): void {
+    for (const owner of ['player', 'npc'] as const) {
+      if (!this.clotArmorActive[owner]) continue;
+      const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+      // Spikes face opposite the caster's look direction (player → cursor,
+      // NPC → its target), spread across the character's back edge.
+      const aimAng = owner === 'player'
+        ? this.playerAimAngle
+        : Math.atan2(this.arena.player.y - caster.y, this.arena.player.x - caster.x);
+      const oppAng = aimAng + Math.PI;
+      const edge = 17;
+      // Fan the three spikes 30° apart around the back direction.
+      const spreadAngs = [-Math.PI / 6, 0, Math.PI / 6];
+      this.clotArmorShardDecor[owner].forEach((spr, i) => {
+        const a = oppAng + (spreadAngs[i] ?? 0);
+        spr.setPosition(caster.x + Math.cos(a) * edge, caster.y + Math.sin(a) * edge);
+        spr.setRotation(a);
+      });
+    }
+  }
+
+  // ── Click+ Mighty Sabre ────────────────────────────────────────────────
+
+  private startChargeVfx(startTime: number, durationMs: number): void {
+    const { player, scene } = this.arena;
+    this.clearChargeVfx();
+    this.charging = true;
+    this.chargeStart = startTime;
+    this.chargeDuration = durationMs;
+    this.chargeAura = scene.add.circle(player.x, player.y, 30, 0xffdd00, 0.16)
+      .setStrokeStyle(2, 0xffee44, 0.6).setDepth(4);
+    for (let i = 0; i < 5; i++) {
+      this.chargeOrbs.push(scene.add.circle(player.x, player.y, 3, 0xffee44, 0.9).setDepth(6));
+    }
+  }
+
+  private updateChargeVfx(time: number): void {
+    const { player } = this.arena;
+    if (!this.charging) return;
+    const ratio = Phaser.Math.Clamp((time - this.chargeStart) / this.chargeDuration, 0, 1);
+    player.chargeRatio = ratio;
+    if (this.chargeAura) {
+      this.chargeAura.setPosition(player.x, player.y)
+        .setScale(1 - ratio * 0.4).setFillStyle(0xffdd00, 0.14 + ratio * 0.26);
+    }
+    this.chargeOrbs.forEach((orb, i) => {
+      const ang = (i / this.chargeOrbs.length) * Math.PI * 2 + time / 200;
+      const dist = 34 * (1 - ratio);
+      orb.setPosition(player.x + Math.cos(ang) * dist, player.y + Math.sin(ang) * dist);
+    });
+    if (ratio >= 1 && !this.chargeFullTinted && !this.clotArmorActive.player) {
+      this.chargeFullTinted = true;
+      player.setTint(0xffee00);
+    }
+  }
+
+  private clearChargeVfx(): void {
+    if (this.chargeAura) { this.chargeAura.destroy(); this.chargeAura = null; }
+    for (const o of this.chargeOrbs) o.destroy();
+    this.chargeOrbs = [];
+    this.charging = false;
+    this.arena.player.chargeRatio = 0;
+    if (this.chargeFullTinted) {
+      this.chargeFullTinted = false;
+      if (!this.clotArmorActive.player) this.arena.player.clearTint();
+    }
+  }
+
+  /** Max-charge release: fling the flail at the cursor and parry enemy shots. */
+  private doMaxCharge(mouseX: number, mouseY: number, ctx: CastContext): void {
+    const { player, scene } = this.arena;
+    this.arena.showFloatingText(player.x, player.y - 52, '⚔️ MAX CHARGE!', '#ffee00');
+    if (this.playerFlail) {
+      const dx = mouseX - player.x, dy = mouseY - player.y;
+      const len = Math.sqrt(dx * dx + dy * dy) || 1;
+      const heavy = this.playerFlail.heavy;
+      const spr = scene.add.circle(player.x, player.y, heavy ? 12 : 9, heavy ? 0x111111 : 0xaabbcc, 0.95)
+        .setStrokeStyle(2, 0x556677).setDepth(8);
+      this.metalShardProjectiles.push({
+        sprite: spr, x: player.x, y: player.y,
+        vx: (dx / len) * 700, vy: (dy / len) * 700,
+        owner: 'player', active: true, dmg: heavy ? 60 : 40, spawnsPuddle: false,
+      });
+      this.destroyFlail('player');
+    }
+    this.parryProjectiles(ctx);
+  }
+
+  private parryProjectiles(ctx: CastContext): void {
+    const group = ctx.projectiles;
+    if (!group) return;
+    const { player, npc, scene } = this.arena;
+    let reflected = 0;
+    // Snapshot: p.destroy() mutates the group's child list mid-iteration.
+    [...group.getChildren()].forEach((obj) => {
+      const p = obj as Projectile;
+      if (!p.active || p.isFromPlayer) return;
+      if (Phaser.Math.Distance.Between(player.x, player.y, p.x, p.y) > SABRE_PARRY_RADIUS) return;
+      if (npc.active && npc.hp > 0) {
+        const ang = Math.atan2(npc.y - p.y, npc.x - p.x);
+        const line = scene.add.rectangle(p.x, p.y, Phaser.Math.Distance.Between(p.x, p.y, npc.x, npc.y), 3, 0xffee44, 0.9)
+          .setOrigin(0, 0.5).setRotation(ang).setDepth(9);
+        scene.tweens.add({ targets: line, alpha: 0, duration: 220, onComplete: () => line.destroy() });
+        npc.takeDamage(Math.round(p.damage * 1.5));
+        this.arena.spawnHitFlash(npc.x, npc.y, 0xffee44);
+      }
+      p.destroy();
+      reflected++;
+    });
+    if (reflected > 0) this.arena.showFloatingText(player.x, player.y - 34, '✨ PARRY!', '#ffee44');
+  }
+
+  // ── E+ Heavy Metal Rock fire puddles ───────────────────────────────────
+
+  private spawnMetalFirePuddle(x: number, y: number, owner: 'player' | 'npc'): void {
+    const scene = this.arena.scene;
+    const spr = scene.add.circle(x, y, 18, 0xff5500, 0.5).setStrokeStyle(2, 0xffaa00, 0.6).setDepth(2);
+    scene.tweens.add({ targets: spr, alpha: 0.28, yoyo: true, repeat: -1, duration: 300 });
+    this.metalFirePuddles.push({ sprite: spr, x, y, radius: 18, owner, expiresAt: scene.time.now + 3000, tickAccum: 0 });
+  }
+
+  private updateMetalFirePuddles(time: number, delta: number): void {
+    for (let i = this.metalFirePuddles.length - 1; i >= 0; i--) {
+      const fp = this.metalFirePuddles[i];
+      if (time >= fp.expiresAt) { fp.sprite.destroy(); this.metalFirePuddles.splice(i, 1); continue; }
+      fp.tickAccum += delta;
+      if (fp.tickAccum < 500) continue;
+      fp.tickAccum -= 500;
+      const targets = fp.owner === 'player' ? this.arena.enemies : [this.arena.player];
+      for (const t of targets) {
+        if (!t.active || t.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(fp.x, fp.y, t.x, t.y) <= fp.radius + 16) {
+          t.takeDamage(4);
+          this.arena.spawnHitFlash(t.x, t.y, 0xff6600);
+        }
       }
     }
+  }
+
+  // ── F+ Ground Anchor ───────────────────────────────────────────────────
+
+  private spawnGroundTether(x: number, y: number, owner: 'player' | 'npc'): void {
+    this.destroyGroundTether();
+    const scene = this.arena.scene;
+    const stake = scene.add.circle(x, y, 10, 0x889aaa, 0.9).setStrokeStyle(3, 0xccddee).setDepth(4);
+    const ring = scene.add.circle(x, y, GROUND_TETHER_BLAST_RADIUS, 0xffffff, 0)
+      .setStrokeStyle(2, 0xffffff, 0.22).setDepth(3);
+    this.metalGroundTether = { x, y, owner, endTime: scene.time.now + GROUND_TETHER_MS, blastAccum: 0, stake, ring };
+    this.arena.showFloatingText(x, y - 24, '⛓️ GROUND ANCHOR', '#ccddee');
+  }
+
+  private updateGroundTether(time: number, delta: number): void {
+    const gt = this.metalGroundTether;
+    if (!gt) return;
+    if (time >= gt.endTime) { this.destroyGroundTether(); return; }
+    gt.blastAccum += delta;
+    if (gt.blastAccum >= GROUND_TETHER_BLAST_MS) {
+      gt.blastAccum -= GROUND_TETHER_BLAST_MS;
+      this.groundTetherBlast(gt);
+    }
+  }
+
+  private groundTetherBlast(gt: MetalGroundTether): void {
+    const scene = this.arena.scene;
+    const blast = scene.add.circle(gt.x, gt.y, 20, 0xffffff, 0.5).setDepth(6);
+    scene.tweens.add({
+      targets: blast, scaleX: GROUND_TETHER_BLAST_RADIUS / 20, scaleY: GROUND_TETHER_BLAST_RADIUS / 20,
+      alpha: 0, duration: 500, onComplete: () => blast.destroy(),
+    });
+    // Pull blood from every puddle in range at once — up to 15 from each.
+    let drained = 0;
+    for (let i = this.metalBloodPuddles.length - 1; i >= 0; i--) {
+      const puddle = this.metalBloodPuddles[i];
+      if (puddle.owner !== gt.owner) continue;
+      if (Phaser.Math.Distance.Between(gt.x, gt.y, puddle.x, puddle.y) > GROUND_TETHER_BLAST_RADIUS) continue;
+      const take = Math.min(GROUND_TETHER_BLAST_DRAIN, puddle.blood);
+      puddle.blood -= take; drained += take;
+      puddle.sprite.setScale(Math.max(0.05, puddle.blood / PUDDLE_BLOOD_CAPACITY));
+      if (puddle.blood <= 0) { puddle.sprite.destroy(); this.metalBloodPuddles.splice(i, 1); }
+    }
+    if (drained > 0) {
+      this.addBlood(gt.owner, drained);
+      this.arena.showFloatingText(gt.x, gt.y - 20, `+${Math.round(drained)} 🩸`, '#ff3355');
+    }
+  }
+
+  private destroyGroundTether(): void {
+    if (!this.metalGroundTether) return;
+    this.metalGroundTether.stake.destroy();
+    this.metalGroundTether.ring.destroy();
+    this.metalGroundTether = null;
+  }
+
+  // ── Q+ Blood Blade ─────────────────────────────────────────────────────
+
+  private summonBloodBlade(owner: 'player' | 'npc'): void {
+    if (this.bloodBlade) return;
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    if (this.arena.player.getCooldownRatio('metal-clot-armor') < 1) return;
+    if (this.blood[owner] < BLOOD_BLADE_COST) {
+      this.arena.showFloatingText(caster.x, caster.y - 44, `NEED ${BLOOD_BLADE_COST} BLOOD`, '#886666');
+      return;
+    }
+    this.blood[owner] = 0;
+    this.arena.player.startCooldown('metal-clot-armor');
+    // Summoning takes over the weapon slot — drop any in-progress charge.
+    this.sabreCharging = false;
+    this.clearChargeVfx();
+
+    const scene = this.arena.scene;
+    const container = scene.add.container(caster.x, caster.y - scene.scale.height).setDepth(9);
+    const g = scene.add.graphics();
+    g.fillStyle(0x4a0008, 1); g.fillRect(-3, -40, 6, 16);      // handle
+    g.fillStyle(0x8a1020, 1); g.fillRect(-12, -26, 24, 5);     // crossguard
+    g.fillStyle(0xaa0018, 1);
+    g.beginPath();
+    g.moveTo(-6, -22); g.lineTo(6, -22); g.lineTo(3, 44); g.lineTo(-3, 44); g.closePath(); g.fillPath();
+    g.fillStyle(0x770010, 1);
+    for (let i = -18; i < 40; i += 8) g.fillTriangle(6, i, 12, i + 3, 6, i + 6); // serrations
+    container.add(g);
+
+    this.bloodBlade = { gfx: container, owner, y: caster.y - scene.scale.height, descending: true, lastSwingAt: 0, prevBlood: 0 };
+    this.arena.player.incomingDamageMultiplier = 1.5;
+    this.arena.showFloatingText(caster.x, caster.y - 52, '🗡️ BLOOD BLADE', '#cc0022');
+  }
+
+  private updateBloodBlade(_time: number, delta: number): void {
+    const blade = this.bloodBlade;
+    if (!blade) return;
+    const owner = blade.owner;
+    const caster = this.arena.player; // Blood Blade is player-only
+
+    // Crash straight down from the sky, then the blade "becomes" your sword:
+    // the descent visual fades out and swings are drawn per-Click like the
+    // normal slash (see bloodBladeSwing).
+    if (blade.descending && blade.gfx) {
+      blade.y += (delta / 1000) * 1100;
+      blade.gfx.setPosition(caster.x, blade.y);
+      if (blade.y >= caster.y) {
+        blade.descending = false;
+        const g = blade.gfx;
+        blade.gfx = null;
+        this.arena.spawnHitFlash(caster.x, caster.y, 0xcc0022);
+        this.arena.scene.tweens.add({ targets: g, alpha: 0, duration: 150, onComplete: () => g.destroy() });
+      }
+    }
+
+    // Vanishes the instant blood drops from any source.
+    if (this.blood[owner] < blade.prevBlood - 0.01) { this.dismissBloodBlade(); return; }
+    blade.prevBlood = this.blood[owner];
+  }
+
+  /** Click-driven swing toward the cursor — the normal slash visual in blood colours. */
+  private bloodBladeSwing(mouseX: number, mouseY: number, dmgOverride?: number): void {
+    const caster = this.arena.player;
+    const ang = Math.atan2(mouseY - caster.y, mouseX - caster.x);
+
+    // Same sword-sweep as the base slash, dark-red and serrated.
+    this.drawSwordSwing(caster.x, caster.y, ang, { handle: 0x4a0008, accent: 0x8a1020, blade: 0xaa0018, edge: 0xff4466, serrated: true });
+
+    // Hit every enemy in a frontal arc within melee range. Damage feeds blood
+    // (not puddles) via onDamageDealt while the blade is out.
+    for (const t of this.arena.enemies) {
+      if (!t.active || t.hp <= 0) continue;
+      if (Phaser.Math.Distance.Between(caster.x, caster.y, t.x, t.y) > BLOOD_BLADE_RANGE) continue;
+      const toAng = Math.atan2(t.y - caster.y, t.x - caster.x);
+      if (Math.abs(Phaser.Math.Angle.Wrap(toAng - ang)) > Math.PI / 2) continue;
+      const dmg = dmgOverride ?? BLOOD_BLADE_SWING_DMG;
+      t.takeDamage(dmg);
+      this.arena.spawnHitFlash(t.x, t.y, 0xcc0022);
+      this.arena.showFloatingText(t.x, t.y - 30, `🗡️ ${dmg}`, '#ff3355');
+    }
+  }
+
+  private dismissBloodBlade(): void {
+    if (!this.bloodBlade) return;
+    const owner = this.bloodBlade.owner;
+    if (this.bloodBlade.gfx) this.bloodBlade.gfx.destroy();
+    this.bloodBlade = null;
+    // Drop any in-progress Click+ charge so it can't leak into the normal sabre.
+    if (this.sabreCharging) { this.sabreCharging = false; this.clearChargeVfx(); }
+    (owner === 'player' ? this.arena.player : this.arena.npc).incomingDamageMultiplier = 1;
+  }
+
+  private updateBloodHud(): void {
+    if (!this.bloodBarBg || this.arena.elementId !== 'metal') return;
+    const ratio = this.blood.player / BLOOD_MAX;
+    this.bloodBarFill!.width = 148 * ratio;
   }
 }

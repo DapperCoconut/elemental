@@ -53,7 +53,7 @@ const ABSTRACT_COMBINED_ELEMENTS: ElementDef[] = [
   { id: 'magnet',     name: 'Magnet',     emoji: '🧲', color: 0xcc2244 },
   { id: 'metal',      name: 'Metal',      emoji: '⚙️',  color: 0x8899aa },
   { id: 'plasma',     name: 'Plasma',     emoji: '🔮',  color: 0xaa22ff },
-  { id: 'death',      name: 'Death',      emoji: '💀',  color: 0x440066 },
+  { id: 'gunpowder', name: 'Gunpowder', emoji: '💀',  color: 0x440066 },
   { id: 'echo',       name: 'Echo',       emoji: '🦇',  color: 0xccccff },
   { id: 'rubber',     name: 'Rubber',     emoji: '🪀',  color: 0xff5577 },
   { id: 'magic',      name: 'Magic',      emoji: '📖',  color: 0x9944ff },

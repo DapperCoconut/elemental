@@ -64,6 +64,8 @@ export interface OilArenaApi {
   get masteryActive(): boolean;
   /** Mastery enhancement id bound over the given ability slot, or null if that slot is unchanged. */
   masteryBindFor(slot: string): string | null;
+  /** Online: broadcast a bindable mastery cast so the peer's sim replays it. */
+  broadcastMasteryCast(enhId: string): void;
   recordMasteryStat(key: string, amount: number): void;
 }
 
@@ -204,6 +206,12 @@ export class OilKit {
     /** Milliseconds banked toward the next laser pulse while click is held. */
     fireAccum: number;
   } | null = null;
+  /** Online mirror: the opponent's Turret replayed on this victim sim (auto-fires at the local player). */
+  private npcTurret: {
+    gfx: Phaser.GameObjects.Graphics;
+    laserGfx: Phaser.GameObjects.Graphics;
+    x: number; y: number; hp: number; expiresAt: number; mounted: boolean; fireAccum: number;
+  } | null = null;
 
   // Train Morph (Q revamp)
   private playerTrainActive = false;
@@ -255,6 +263,7 @@ export class OilKit {
     if (this.playerShieldGen) { this.playerShieldGen.gfx.destroy(); this.playerShieldGen.laserGfx.destroy(); this.playerShieldGen = null; }
 
     this.clearTurret();
+    this.clearNpcTurret();
     this.turretLastCastAt = -Infinity;
     // droneArmorMult is rewritten every frame by updateDroneArray, and a freshly
     // built Player already defaults to 1 — reset() runs before this match's Player exists.
@@ -817,7 +826,7 @@ export class OilKit {
         if (p.igniteTickAccum >= 300) {
           p.igniteTickAccum -= 300;
           if (inPuddle) {
-            enemy.takeDamage(2);
+            enemy.takeDamage(2, { source: p, sourceX: p.x, sourceY: p.y });
             this.arena.spawnHitFlash(enemy.x, enemy.y, 0xff4400);
           }
         }
@@ -1417,6 +1426,76 @@ export class OilKit {
       fireAccum: TURRET_FIRE_INTERVAL_MS,
     };
     this.arena.showFloatingText(tx, ty - 52, '🔫 Turret!', '#66ddff');
+    // Online: the placement (not the caster-local mount toggles) is the replayed event.
+    this.arena.broadcastMasteryCast('turret');
+  }
+
+  /** Online replay: the remote oil player placed a Turret — it auto-fires at our local player. */
+  doNpcTurret(tx: number, ty: number): void {
+    this.clearNpcTurret();
+    const now = this.arena.scene.time.now;
+    this.npcTurret = {
+      gfx: this.arena.scene.add.graphics().setDepth(4),
+      laserGfx: this.arena.scene.add.graphics().setDepth(9),
+      x: tx, y: ty,
+      hp: TURRET_MAX_HP,
+      expiresAt: now + TURRET_DURATION_MS,
+      mounted: true,
+      fireAccum: TURRET_FIRE_INTERVAL_MS,
+    };
+    this.arena.showFloatingText(tx, ty - 52, '🔫 Turret!', '#66ddff');
+  }
+
+  /** Online: opponent is oil — run their replayed turret (auto-fire at us; our shots destroy it). */
+  updateNpcTurret(time: number, delta: number): void {
+    const t = this.npcTurret;
+    if (!t) return;
+    if (time > t.expiresAt) { this.clearNpcTurret(); return; }
+
+    // Our own shots destroy the turret — the caster-side 75 HP counterplay, mirrored.
+    for (const go of this.arena.projectiles.getChildren()) {
+      const proj = go as Projectile;
+      if (!proj.active || !proj.isFromPlayer) continue;
+      if (Phaser.Math.Distance.Between(proj.x, proj.y, t.x, t.y) > TURRET_BLOCK_RADIUS) continue;
+      proj.setActive(false).setVisible(false);
+      (proj.body as Phaser.Physics.Arcade.Body).stop();
+      t.hp -= proj.damage;
+      this.arena.spawnHitFlash(t.x, t.y, TURRET_COLOR);
+      this.arena.showFloatingText(t.x, t.y - 52, `-${proj.damage}`, '#ff6666');
+      if (t.hp <= 0) { this.clearNpcTurret('Turret Destroyed!'); return; }
+    }
+
+    // Auto-fire at the local player (its victim). Caster mount/fire state isn't streamed.
+    const player = this.arena.player;
+    t.fireAccum += delta;
+    while (t.fireAccum >= TURRET_FIRE_INTERVAL_MS) {
+      t.fireAccum -= TURRET_FIRE_INTERVAL_MS;
+      t.laserGfx.setAlpha(1);
+      t.laserGfx.lineStyle(2, TURRET_COLOR, 0.85);
+      t.laserGfx.lineBetween(t.x, t.y, player.x, player.y);
+      if (player.active && player.hp > 0) {
+        player.takeDamage(TURRET_LASER_DAMAGE);
+        this.arena.spawnHitFlash(player.x, player.y, TURRET_COLOR);
+      }
+    }
+    this.drawTurret(t, player.x, player.y);
+    this.arena.scene.tweens.add({
+      targets: t.laserGfx, alpha: 0, duration: 60,
+      onComplete: () => { if (this.npcTurret === t) { t.laserGfx.setAlpha(1); t.laserGfx.clear(); } },
+    });
+  }
+
+  private clearNpcTurret(label?: string): void {
+    const t = this.npcTurret;
+    if (!t) return;
+    if (label) {
+      this.arena.showFloatingText(t.x, t.y - 52, label, '#ff6666');
+      const boom = this.arena.scene.add.circle(t.x, t.y, 10, TURRET_COLOR, 0.7).setDepth(9);
+      this.arena.scene.tweens.add({ targets: boom, scaleX: 4, scaleY: 4, alpha: 0, duration: 320, onComplete: () => boom.destroy() });
+    }
+    t.gfx.destroy();
+    t.laserGfx.destroy();
+    this.npcTurret = null;
   }
 
   private toggleTurretMount(): void {

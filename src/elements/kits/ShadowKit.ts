@@ -58,6 +58,8 @@ export interface ShadowArenaApi {
   get masteryActive(): boolean;
   /** Mastery enhancement id bound over the given ability slot, or null if that slot is unchanged. */
   masteryBindFor(slot: string): string | null;
+  /** Online: broadcast a bindable mastery cast so the peer's sim replays it. */
+  broadcastMasteryCast(enhId: string): void;
   recordMasteryStat(key: string, amount: number): void;
 }
 
@@ -131,6 +133,12 @@ export class ShadowKit {
   private finalEclipseAngle = 0;
   private finalEclipseSprite: Phaser.GameObjects.Graphics | null = null;
   private finalEclipseTickAccum = 0;
+  // Online mirror: the opponent's Final Eclipse replayed on this victim sim (beams the local player).
+  private npcFinalEclipseActive = false;
+  private npcFinalEclipseAngle = 0;
+  private npcFinalEclipseSprite: Phaser.GameObjects.Graphics | null = null;
+  private npcFinalEclipseTickAccum = 0;
+  private npcFinalEclipseEndsAt = 0;
 
   constructor(private arena: ShadowArenaApi) {}
 
@@ -211,6 +219,11 @@ export class ShadowKit {
     this.finalEclipseAngle = 0;
     if (this.finalEclipseSprite) { this.finalEclipseSprite.destroy(); this.finalEclipseSprite = null; }
     this.finalEclipseTickAccum = 0;
+    this.npcFinalEclipseActive = false;
+    this.npcFinalEclipseAngle = 0;
+    if (this.npcFinalEclipseSprite) { this.npcFinalEclipseSprite.destroy(); this.npcFinalEclipseSprite = null; }
+    this.npcFinalEclipseTickAccum = 0;
+    this.npcFinalEclipseEndsAt = 0;
   }
 
   private spawnDarkCloud(x: number, y: number, owner: 'player' | 'npc'): void {
@@ -421,7 +434,7 @@ export class ShadowKit {
           for (const t of enemies) {
             if (!t.active || t.hp <= 0) continue;
             if (Phaser.Math.Distance.Between(cloud.x, cloud.y, t.x, t.y) <= cloud.radius + 14) {
-              t.takeDamage(2);
+              t.takeDamage(2, { source: cloud, sourceX: cloud.x, sourceY: cloud.y });
               this.arena.spawnHitFlash(t.x, t.y, 0x660088);
             }
           }
@@ -436,7 +449,7 @@ export class ShadowKit {
             }
           }
           if (Phaser.Math.Distance.Between(cloud.x, cloud.y, player.x, player.y) <= cloud.radius + 14) {
-            player.takeDamage(2);
+            player.takeDamage(2, { source: cloud, sourceX: cloud.x, sourceY: cloud.y });
           }
         }
       }
@@ -661,6 +674,8 @@ export class ShadowKit {
 
     // ── NPC shadow per-frame ────────────────────────────────────────
     if (isNpcShadow) {
+      // Shadow Mastery — Final Eclipse replayed from the opponent (online).
+      if (this.npcFinalEclipseActive) this.updateNpcFinalEclipse(time, delta);
       // NPC tentacle
       if (this.npcShadowTentacleActive) {
         if (time >= this.npcShadowTentacleEnd) {
@@ -856,11 +871,61 @@ export class ShadowKit {
     this.finalEclipseTickAccum = 0;
     if (!this.finalEclipseSprite) this.finalEclipseSprite = this.arena.scene.add.graphics().setDepth(6);
     this.arena.showFloatingText(player.x, player.y - 30, '🌑 FINAL ECLIPSE', '#000000');
+    // Online: toggle-on. endFinalEclipse broadcasts the matching toggle-off.
+    this.arena.broadcastMasteryCast('final-eclipse');
   }
 
   private endFinalEclipse(): void {
+    // Broadcast the toggle-off so the victim's replayed beam stops in sync.
+    if (this.finalEclipseActive) this.arena.broadcastMasteryCast('final-eclipse');
     this.finalEclipseActive = false;
     if (this.finalEclipseSprite) { this.finalEclipseSprite.destroy(); this.finalEclipseSprite = null; }
+  }
+
+  /** Online replay: toggle the opponent's Final Eclipse beam on our victim sim. */
+  doNpcFinalEclipse(): void {
+    if (this.npcFinalEclipseActive) { this.endNpcFinalEclipse(); return; }
+    const { npc, player, scene } = this.arena;
+    this.npcFinalEclipseActive = true;
+    this.npcFinalEclipseAngle = Math.atan2(player.y - npc.y, player.x - npc.x);
+    this.npcFinalEclipseTickAccum = 0;
+    // Failsafe: darkness is caster-local, so cap the beam in case the toggle-off is missed.
+    this.npcFinalEclipseEndsAt = scene.time.now + 6000;
+    if (!this.npcFinalEclipseSprite) this.npcFinalEclipseSprite = scene.add.graphics().setDepth(6);
+  }
+
+  private endNpcFinalEclipse(): void {
+    this.npcFinalEclipseActive = false;
+    if (this.npcFinalEclipseSprite) { this.npcFinalEclipseSprite.destroy(); this.npcFinalEclipseSprite = null; }
+  }
+
+  private updateNpcFinalEclipse(time: number, delta: number): void {
+    const { npc, player } = this.arena;
+    if (time >= this.npcFinalEclipseEndsAt) { this.endNpcFinalEclipse(); return; }
+
+    const targetAngle = Math.atan2(player.y - npc.y, player.x - npc.x);
+    const maxTurn = Phaser.Math.DegToRad(25) * (delta / 1000);
+    const diff = Phaser.Math.Angle.Wrap(targetAngle - this.npcFinalEclipseAngle);
+    this.npcFinalEclipseAngle += Phaser.Math.Clamp(diff, -maxTurn, maxTurn);
+
+    const endX = npc.x + Math.cos(this.npcFinalEclipseAngle) * 1200;
+    const endY = npc.y + Math.sin(this.npcFinalEclipseAngle) * 1200;
+    if (this.npcFinalEclipseSprite) {
+      this.npcFinalEclipseSprite.clear();
+      this.npcFinalEclipseSprite.lineStyle(24, 0x000000, 0.5);
+      this.npcFinalEclipseSprite.lineBetween(npc.x, npc.y, endX, endY);
+      this.npcFinalEclipseSprite.lineStyle(10, 0x8800cc, 0.85);
+      this.npcFinalEclipseSprite.lineBetween(npc.x, npc.y, endX, endY);
+    }
+
+    this.npcFinalEclipseTickAccum += delta;
+    if (this.npcFinalEclipseTickAccum >= 100) {
+      this.npcFinalEclipseTickAccum -= 100;
+      if (player.active && player.hp > 0 && this.distToSegment(player.x, player.y, npc.x, npc.y, endX, endY) <= 32) {
+        player.takeDamage(2);
+        this.arena.spawnHitFlash(player.x, player.y, 0x000000);
+      }
+    }
   }
 
   private updateFinalEclipse(time: number, delta: number): void {

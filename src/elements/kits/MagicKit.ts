@@ -35,6 +35,18 @@ export interface MagicArenaApi {
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   spawnDamageNumber(x: number, y: number, amount: number): void;
+  /** True only when the player is magic AND Magic Mastery is switched on. */
+  get masteryActive(): boolean;
+  /** Mastery enhancement id bound over the given ability slot, or null if that slot is unchanged. */
+  masteryBindFor(slot: string): string | null;
+  /** Online: broadcast a bindable mastery cast so the peer's sim replays it. */
+  broadcastMasteryCast(enhId: string): void;
+  /** Cumulative (additive) mastery progress stat. */
+  recordMasteryStat(key: string, amount: number): void;
+  /** Current value of a mastery progress stat (0 if never recorded). */
+  getMasteryStat(key: string): number;
+  /** Ratchet a mastery progress stat up to `value` — no-op if the stored value is already >= value. */
+  recordMasteryBestStat(key: string, value: number): void;
 }
 
 // ── Internal types ────────────────────────────────────────────────────────────
@@ -272,6 +284,17 @@ export class MagicKit {
   private npcThunderQCharged = false;
   private playerThunderThornCharged = false;
 
+  // ── Magic Mastery — Transmogrify ────────────────────────────────────────
+  private static readonly TRANSMOGRIFY_COOLDOWN_MS = 12000;
+  private static readonly TRANSMOGRIFY_CHICKEN_MS = 8000;
+  private transmogrifyLastCastAt = 0;
+  private transmogrifyProjectiles: {
+    sprite: Phaser.GameObjects.Arc;
+    x: number; y: number; vx: number; vy: number;
+    owner: 'player' | 'npc';
+  }[] = [];
+  private chickenStates = new Map<Fighter, { angle: number; nextTurnAt: number; prevCooldownMult: number }>();
+
   constructor(private api: MagicArenaApi) {}
 
   // ── Public getters (queried by ArenaScene) ────────────────────────────────
@@ -393,6 +416,17 @@ export class MagicKit {
     this.npcThunderECharged = false;
     this.npcThunderQCharged = false;
     this.playerThunderThornCharged = false;
+
+    this.transmogrifyLastCastAt = 0;
+    for (const p of this.transmogrifyProjectiles) p.sprite.destroy();
+    this.transmogrifyProjectiles = [];
+    for (const [f, st] of this.chickenStates) {
+      if (f.active) { f.setTexture(`elem-${f.element.id}`); f.cooldownMult = st.prevCooldownMult; }
+      f.chickenUntil = 0;
+    }
+    this.chickenStates.clear();
+    this.api.player.levitating = false;
+    this.api.npc.levitating = false;
   }
 
   private _destroyRockSet(set: RockOrbSet | null): void {
@@ -402,6 +436,7 @@ export class MagicKit {
 
   private addDarkness(amount: number): void {
     this.darkness = Math.min(100, this.darkness + amount);
+    this.api.recordMasteryStat('darkEnergyGained', amount);
     this.api.showFloatingText(this.api.player.x, this.api.player.y - 44, `+${amount} ☠`, '#880088');
     if (this.darkness >= 100) {
       this.api.player.applySelfDamage(this.api.player.hp);
@@ -519,8 +554,13 @@ export class MagicKit {
       this.api.player.castAbility('magic-sparkle-shot', this._buildPlayerCtx(mouseX, mouseY));
     }
 
+    // Magic Mastery — Transmogrify may be bound over any of E/R/F/Q, suppressing that slot's base ability.
+    const transSlot = this.transmogrifySlot();
+
     // E — open grimoire wheel (Thunder perk: first tap = Lightning Call / arm)
-    if (Phaser.Input.Keyboard.JustDown(eKey)) {
+    if (transSlot === 'e') {
+      if (Phaser.Input.Keyboard.JustDown(eKey)) this.tryCastTransmogrify(time, mouseX, mouseY);
+    } else if (Phaser.Input.Keyboard.JustDown(eKey)) {
       if (this.api.player.getCooldownRatio('magic-grimoire') >= 1) {
         if (this.api.hasPerk('player', 'thunder') && !this.playerThunderECharged) {
           this._doLightningCall('player');
@@ -535,20 +575,28 @@ export class MagicKit {
     }
 
     // R — Anchor
-    if (Phaser.Input.Keyboard.JustDown(rKey)) {
+    if (transSlot === 'r') {
+      if (Phaser.Input.Keyboard.JustDown(rKey)) this.tryCastTransmogrify(time, mouseX, mouseY);
+    } else if (Phaser.Input.Keyboard.JustDown(rKey)) {
       this.api.player.castAbility('magic-anchor', this._buildPlayerCtx(mouseX, mouseY));
     }
 
     // F — Meditate (hold to channel; F+ mobile variant allows movement)
-    if (Phaser.Input.Keyboard.JustDown(fKey)) {
-      this.api.player.castAbility('magic-meditate', this._buildPlayerCtx(mouseX, mouseY));
-    }
-    if (this.meditating && !fKey.isDown && this.playerMeditateMobile) {
-      this.endMeditate('player', false);
+    if (transSlot === 'f') {
+      if (Phaser.Input.Keyboard.JustDown(fKey)) this.tryCastTransmogrify(time, mouseX, mouseY);
+    } else {
+      if (Phaser.Input.Keyboard.JustDown(fKey)) {
+        this.api.player.castAbility('magic-meditate', this._buildPlayerCtx(mouseX, mouseY));
+      }
+      if (this.meditating && !fKey.isDown && this.playerMeditateMobile) {
+        this.endMeditate('player', false);
+      }
     }
 
     // Q — open necronomicon wheel (Thunder perk: first tap = Apocalypse Call / arm)
-    if (Phaser.Input.Keyboard.JustDown(qKey)) {
+    if (transSlot === 'q') {
+      if (Phaser.Input.Keyboard.JustDown(qKey)) this.tryCastTransmogrify(time, mouseX, mouseY);
+    } else if (Phaser.Input.Keyboard.JustDown(qKey)) {
       if (this.api.player.getCooldownRatio('magic-necronomicon') >= 1) {
         if (this.api.hasPerk('player', 'thunder') && !this.playerThunderQCharged) {
           this._doApocalypseCall('player');
@@ -568,6 +616,12 @@ export class MagicKit {
   update(time: number, delta: number): void {
     const W = this.api.getSceneWidth();
     const H = this.api.getSceneHeight();
+
+    // ── Magic Mastery — Levitate passive ────────────────────────────
+    this.api.player.levitating = this.api.masteryActive;
+
+    // ── Magic Mastery — Transmogrify projectiles ────────────────────
+    this.updateTransmogrifyProjectiles(delta, W, H);
 
     // ── Aim countdown label ───────────────────────────────────────────
     if (this.aimCountdownLabel?.active) {
@@ -628,6 +682,7 @@ export class MagicKit {
       if (Phaser.Math.Distance.Between(orb.x, orb.y, caster.x, caster.y) <= 24) {
         caster.heal(5);
         if (orb.owner === 'player') {
+          this.api.recordMasteryStat('meditateHealed', 5);
           this.api.showFloatingText(caster.x, caster.y - 28, '+5 ✨', '#cc99ff');
           // F+: each orb reduces darkness by 5
           if (this.api.hasUpgrade('f') && this.darkness > 0) {
@@ -708,7 +763,7 @@ export class MagicKit {
       const c = this.flameClouds[i];
       if (time >= c.expireAt) { c.sprite.destroy(); this.flameClouds.splice(i, 1); continue; }
       if (c.followCursor) {
-        // Dark flame cloud: lerp toward cursor (VoidKit voidAsh pattern)
+        // Dark flame cloud: lerp toward cursor
         c.x += (ptr.worldX - c.x) * 0.10;
         c.y += (ptr.worldY - c.y) * 0.10;
         c.sprite.setPosition(c.x, c.y);
@@ -727,7 +782,7 @@ export class MagicKit {
         c.tickAccum += delta;
         while (c.tickAccum >= c.tickInterval) {
           for (const t of targets) {
-            t.takeDamage(c.tickDmg);
+            t.takeDamage(c.tickDmg, { source: c, sourceX: c.x, sourceY: c.y });
             this.api.spawnHitFlash(t.x, t.y, c.cursedFire ? 0x882200 : 0xff6600);
             t.burningUntil = Math.max(t.burningUntil, time + c.burnDuration);
             if (c.cursedFire && c.owner === 'player') {
@@ -766,8 +821,7 @@ export class MagicKit {
             else this.playerStormSlowUntil = Math.max(this.playerStormSlowUntil, time + 1500);
           }
           if (c.pulseDmg > 0) {
-            t.takeDamage(c.pulseDmg);
-            this.api.spawnDamageNumber(t.x, t.y - 28, c.pulseDmg);
+            t.takeDamage(c.pulseDmg, { source: c, sourceX: c.x, sourceY: c.y });
             this.api.spawnHitFlash(t.x, t.y, c.isAcidCloud ? 0x44ff88 : 0x44aaff);
           }
         }
@@ -803,7 +857,6 @@ export class MagicKit {
             if (Phaser.Math.Distance.Between(ox, oy, enemy.x, enemy.y) <= 22) {
               enemy.takeDamage(orb.dmg);
               this.api.spawnHitFlash(enemy.x, enemy.y, 0xaa7733);
-              this.api.spawnDamageNumber(enemy.x, enemy.y - 28, orb.dmg);
               orb.lastHitAt = time;
               if (orb.canCrack && !orb.cracked) {
                 orb.cracked = true;
@@ -948,7 +1001,6 @@ export class MagicKit {
       if (allBroken || elapsed <= 0) {
         tp.gfx.destroy();
         captive.takeDamage(35);
-        this.api.spawnDamageNumber(tp.ex, tp.ey - 28, 35);
         this.api.showFloatingText(tp.ex, tp.ey - 44, allBroken ? '🌿 FREED!' : '🌿 ENSNARED', '#33ff66');
         if (owner === 'player') this.thornPrison = null;
         else this.npcThornPrison = null;
@@ -1023,7 +1075,6 @@ export class MagicKit {
           if (Math.abs(diff) <= Math.PI / 4) {
             enemy.takeDamage(18);
             this.api.spawnHitFlash(enemy.x, enemy.y, 0x999999);
-            this.api.spawnDamageNumber(enemy.x, enemy.y - 28, 18);
           }
         }
       }
@@ -1109,7 +1160,6 @@ export class MagicKit {
             if (Phaser.Math.Distance.Between(ox, oy, enemy.x, enemy.y) <= 24) {
               enemy.takeDamage(ts.contactDmg);
               this.api.spawnHitFlash(enemy.x, enemy.y, 0xaa7733);
-              this.api.spawnDamageNumber(enemy.x, enemy.y - 28, ts.contactDmg);
               orb.lastHitAt = time;
               if (ts.stunMs > 0) {
                 enemy.earthStunnedUntil = Math.max(enemy.earthStunnedUntil, time + ts.stunMs);
@@ -1344,7 +1394,19 @@ export class MagicKit {
 
   // ── Dispatch helpers ──────────────────────────────────────────────────────
 
+  /** Magic Mastery: track per-spell wheel usage and ratchet the "used every spell N times" requirement. */
+  private _recordWheelSpellUse(wheel: 'grimoire' | 'necronomicon', pick: number): void {
+    const subKey = `${wheel}Spell${pick}Uses`;
+    this.api.recordMasteryStat(subKey, 1);
+    let min = Infinity;
+    for (let i = 0; i < 5; i++) {
+      min = Math.min(min, this.api.getMasteryStat(`${wheel}Spell${i}Uses`));
+    }
+    this.api.recordMasteryBestStat(wheel === 'grimoire' ? 'grimoireAllSpellsUsed' : 'necroAllSpellsUsed', min);
+  }
+
   private _dispatchGrimoireWedge(pick: number, tx: number, ty: number, owner: 'player' | 'npc', thunderCharged = false): void {
+    if (owner === 'player') this._recordWheelSpellUse('grimoire', pick);
     if (owner === 'player' && this.darkGrimoireMode) {
       switch (pick) {
         case 0: this.doCorruptFlames(tx, ty); if (thunderCharged) this.doCorruptFlames(tx, ty); break;
@@ -1388,6 +1450,7 @@ export class MagicKit {
   }
 
   private _dispatchNecronomiconWedge(pick: number, tx: number, ty: number, owner: 'player' | 'npc', thunderCharged = false): void {
+    if (owner === 'player') this._recordWheelSpellUse('necronomicon', pick);
     if (owner === 'player' && this.darkNecroMode) {
       switch (pick) {
         case 0: this.doDarkBarrage(tx, ty); if (thunderCharged) { this.doDarkBarrage(tx, ty); this.api.showFloatingText(this.api.player.x, this.api.player.y - 38, '⚡ CHARGED!', '#ffee44'); } break;
@@ -1600,7 +1663,6 @@ export class MagicKit {
         if (Phaser.Math.Distance.Between(ax, ay, target.x, target.y) <= 120) {
           target.takeDamage(20);
           this.api.spawnHitFlash(target.x, target.y, 0x9944ff);
-          this.api.spawnDamageNumber(target.x, target.y - 30, 20);
         }
       }
       const ring = this.api.scene.add.circle(ax, ay, 30, 0x9944ff, 0.5).setDepth(8);
@@ -1617,6 +1679,108 @@ export class MagicKit {
           if (this.playerSpeedBoostAura) { this.playerSpeedBoostAura.destroy(); this.playerSpeedBoostAura = null; }
         }
       }
+    }
+  }
+
+  // ── Magic Mastery: Transmogrify ─────────────────────────────────────────
+
+  /** The slot Transmogrify is bound over this match, or null when it isn't bound anywhere. */
+  private transmogrifySlot(): 'e' | 'r' | 'f' | 'q' | null {
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      if (this.api.masteryBindFor(s) === 'transmogrify') return s;
+    }
+    return null;
+  }
+
+  /** 0–1 cooldown fill for the Transmogrify HUD card. */
+  getTransmogrifyCooldownRatio(time: number): number {
+    return Math.min(1, (time - this.transmogrifyLastCastAt) / MagicKit.TRANSMOGRIFY_COOLDOWN_MS);
+  }
+
+  private tryCastTransmogrify(time: number, tx: number, ty: number): void {
+    if (time - this.transmogrifyLastCastAt < MagicKit.TRANSMOGRIFY_COOLDOWN_MS) return;
+    this.transmogrifyLastCastAt = time;
+    this.doTransmogrify(tx, ty, 'player');
+    this.api.broadcastMasteryCast('transmogrify');
+  }
+
+  /** Online replay: the remote magic player cast Transmogrify — launch the chicken bolt at us. */
+  doNpcTransmogrify(tx: number, ty: number): void {
+    this.doTransmogrify(tx, ty, 'npc');
+  }
+
+  private doTransmogrify(tx: number, ty: number, owner: 'player' | 'npc'): void {
+    const caster = owner === 'player' ? this.api.player : this.api.npc;
+    const angle = Math.atan2(ty - caster.y, tx - caster.x);
+    const speed = 130;
+    const sprite = this.api.scene.add.circle(caster.x, caster.y, 9, 0xffffff, 0.95)
+      .setStrokeStyle(2, 0xffee88, 0.9).setDepth(6) as Phaser.GameObjects.Arc;
+    this.transmogrifyProjectiles.push({
+      sprite, x: caster.x, y: caster.y,
+      vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+      owner,
+    });
+    this.api.showFloatingText(caster.x, caster.y - 30, '🐔 Transmogrify!', '#ffffff');
+  }
+
+  private applyChicken(target: Fighter): void {
+    const nowMs = Date.now();
+    target.chickenUntil = Math.max(target.chickenUntil, nowMs + MagicKit.TRANSMOGRIFY_CHICKEN_MS);
+    if (!this.chickenStates.has(target)) {
+      target.setTexture('fx-chicken');
+      this.chickenStates.set(target, { angle: Math.random() * Math.PI * 2, nextTurnAt: 0, prevCooldownMult: target.cooldownMult });
+      target.cooldownMult *= 0.5;
+    }
+    this.api.spawnHitFlash(target.x, target.y, 0xffffff);
+    this.api.showFloatingText(target.x, target.y - 30, '🐔 CHICKEN!', '#ffffff');
+  }
+
+  private updateTransmogrifyProjectiles(delta: number, W: number, H: number): void {
+    for (let i = this.transmogrifyProjectiles.length - 1; i >= 0; i--) {
+      const p = this.transmogrifyProjectiles[i];
+      p.x += p.vx * (delta / 1000);
+      p.y += p.vy * (delta / 1000);
+      p.sprite.setPosition(p.x, p.y);
+      if (p.x < 0 || p.x > W || p.y < 0 || p.y > H) {
+        p.sprite.destroy();
+        this.transmogrifyProjectiles.splice(i, 1);
+        continue;
+      }
+      const targets = p.owner === 'player' ? this.api.enemies : [this.api.player];
+      let hit = false;
+      for (const t of targets) {
+        if (!t.active || t.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) <= 22) {
+          this.applyChicken(t);
+          hit = true;
+          break;
+        }
+      }
+      if (hit) {
+        p.sprite.destroy();
+        this.transmogrifyProjectiles.splice(i, 1);
+      }
+    }
+  }
+
+  /** Chicken wander: overrides movement post-AI so it wins over the frozen/decision-locked state, mirrors ShadowKit's drag pattern. */
+  updateAfterAI(time: number, delta: number): void {
+    void delta;
+    const nowMs = Date.now();
+    for (const f of Array.from(this.chickenStates.keys())) {
+      const st = this.chickenStates.get(f)!;
+      if (!f.active || f.chickenUntil <= nowMs) {
+        if (f.active) { f.setTexture(`elem-${f.element.id}`); f.cooldownMult = st.prevCooldownMult; }
+        this.chickenStates.delete(f);
+        continue;
+      }
+      if (time >= st.nextTurnAt) {
+        st.angle = Math.random() * Math.PI * 2;
+        st.nextTurnAt = time + Phaser.Math.Between(400, 900);
+      }
+      (f.body as Phaser.Physics.Arcade.Body).setVelocity(
+        Math.cos(st.angle) * f.speed * 0.6, Math.sin(st.angle) * f.speed * 0.6,
+      );
     }
   }
 
@@ -1773,7 +1937,6 @@ export class MagicKit {
         if (this.api.npc.magicChainBound) {
           this.api.npc.takeDamage(25);
           this.api.spawnHitFlash(this.api.npc.x, this.api.npc.y, 0x33aa44);
-          this.api.spawnDamageNumber(this.api.npc.x, this.api.npc.y - 30, 25);
           this.api.npc.magicChainBound = false;
         }
       });
@@ -1785,7 +1948,6 @@ export class MagicKit {
         if (this.playerBound) {
           this.api.player.takeDamage(25);
           this.api.spawnHitFlash(this.api.player.x, this.api.player.y, 0x33aa44);
-          this.api.spawnDamageNumber(this.api.player.x, this.api.player.y - 30, 25);
           this.playerBound = false;
         }
       });
@@ -1811,7 +1973,6 @@ export class MagicKit {
       }
       t.takeDamage(8);
       this.api.spawnHitFlash(t.x, t.y, 0xaaaaaa);
-      this.api.spawnDamageNumber(t.x, t.y - 28, 8);
     }
     this.api.showFloatingText(bx, by - 28, '💨 BLAST!', '#bbbbbb');
   }
@@ -1945,7 +2106,6 @@ export class MagicKit {
       }
       t.takeDamage(10);
       this.api.spawnHitFlash(t.x, t.y, 0x666666);
-      this.api.spawnDamageNumber(t.x, t.y - 28, 10);
     }
     // Spawn persistent tornado
     const now = this.api.scene.sys.game.loop.now;
@@ -2041,7 +2201,6 @@ export class MagicKit {
       if (this._pointToSegDist(enemy.x, enemy.y, caster.x, caster.y, ex, ey) <= 22) {
         enemy.takeDamage(15);
         this.api.spawnHitFlash(enemy.x, enemy.y, 0x44ff66);
-        this.api.spawnDamageNumber(enemy.x, enemy.y - 28, 15);
         caster.heal(15);
         this.api.showFloatingText(caster.x, caster.y - 28, '+15 🌿', '#44ff66');
         hit = true;

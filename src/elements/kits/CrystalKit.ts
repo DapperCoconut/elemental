@@ -93,6 +93,8 @@ interface CrystalShredder {
   shardsAlive: boolean[];
   core: Phaser.GameObjects.Arc;
   shardSprites: Phaser.GameObjects.Rectangle[];
+  /** 'player' chakrams shred enemies; 'npc' (online replay) shreds the local player. */
+  owner: 'player' | 'npc';
 }
 
 // ── CrystalKit ────────────────────────────────────────────────────────────
@@ -624,8 +626,10 @@ export class CrystalKit {
         }
       }
 
-      this.updateShredders(time, delta, mouseX, mouseY);
     }
+
+    // Shredders tick for both owners so an online opponent's chakram can shred our local player.
+    this.updateShredders(time, delta, mouseX, mouseY);
   }
 
   // ── Public do* methods — called from ArenaScene context builders ───────
@@ -1060,18 +1064,33 @@ export class CrystalKit {
     const { player } = this.arena;
     player.triggerCooldown('crystal-shredder');
 
-    for (const s of this.shredders) { s.core.destroy(); for (const sp of s.shardSprites) sp.destroy(); }
-    this.shredders = [];
+    this.clearShredders('player');
 
-    this.spawnShredder(player.x, player.y, mouseX, mouseY, CrystalKit.SHREDDER_MAIN_SHARDS);
+    this.spawnShredder(player.x, player.y, mouseX, mouseY, CrystalKit.SHREDDER_MAIN_SHARDS, 'player');
     // Trick of the Light: each active clone also throws a mini shredder
     for (const cl of this.crystalClones) {
-      this.spawnShredder(player.x + cl.offsetX, player.y + cl.offsetY, mouseX, mouseY, CrystalKit.SHREDDER_MINI_SHARDS);
+      this.spawnShredder(player.x + cl.offsetX, player.y + cl.offsetY, mouseX, mouseY, CrystalKit.SHREDDER_MINI_SHARDS, 'player');
     }
     this.arena.showFloatingText(player.x, player.y - 30, '🔷 CRYSTAL SHREDDER', '#88eeff');
   }
 
-  private spawnShredder(x: number, y: number, tx: number, ty: number, shardCount: number): void {
+  /** Online replay: the remote crystal player cast Crystal Shredder — hurl a chakram at us. */
+  doNpcShredder(tx: number, ty: number): void {
+    const { npc } = this.arena;
+    this.clearShredders('npc');
+    this.spawnShredder(npc.x, npc.y, tx, ty, CrystalKit.SHREDDER_MAIN_SHARDS, 'npc');
+  }
+
+  private clearShredders(owner: 'player' | 'npc'): void {
+    this.shredders = this.shredders.filter((s) => {
+      if (s.owner !== owner) return true;
+      s.core.destroy();
+      for (const sp of s.shardSprites) sp.destroy();
+      return false;
+    });
+  }
+
+  private spawnShredder(x: number, y: number, tx: number, ty: number, shardCount: number, owner: 'player' | 'npc'): void {
     const { scene } = this.arena;
     const dx = tx - x, dy = ty - y;
     const dist = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -1084,7 +1103,7 @@ export class CrystalKit {
     this.shredders.push({
       x, y, vx, vy, targetX: tx, targetY: ty, moving: true, angle: 0,
       radius: shardCount > CrystalKit.SHREDDER_MINI_SHARDS ? 26 : 18,
-      shardCount, shardsAlive: new Array(shardCount).fill(true), core, shardSprites,
+      shardCount, shardsAlive: new Array(shardCount).fill(true), core, shardSprites, owner,
     });
   }
 
@@ -1093,7 +1112,7 @@ export class CrystalKit {
 
     if (this.shredderRelaunchRequested) {
       for (const s of this.shredders) {
-        if (s.moving) continue;
+        if (s.moving || s.owner !== 'player') continue;
         const rdx = mouseX - s.x, rdy = mouseY - s.y;
         const rlen = Math.hypot(rdx, rdy) || 1;
         s.vx = (rdx / rlen) * CrystalKit.SHREDDER_SPEED;
@@ -1125,7 +1144,8 @@ export class CrystalKit {
         const ang = s.angle + (i / s.shardCount) * Math.PI * 2;
         const sx = s.x + Math.cos(ang) * s.radius, sy = s.y + Math.sin(ang) * s.radius;
         let hit = false;
-        for (const t of this.arena.enemies) {
+        const shardTargets = s.owner === 'npc' ? [this.arena.player] : this.arena.enemies;
+        for (const t of shardTargets) {
           if (!t.active || t.hp <= 0) continue;
           if (Phaser.Math.Distance.Between(sx, sy, t.x, t.y) <= CrystalKit.SHREDDER_SHARD_HIT_R) {
             t.takeDamage(2);

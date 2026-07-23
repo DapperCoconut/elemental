@@ -1309,7 +1309,6 @@ export class TimeKit {
     for (const beam of this.rifleBeams) {
       if (ptSegDist(npc.x, npc.y, beam.fromX, beam.fromY, beam.toX, beam.toY) <= 30) {
         npc.takeDamage(beam.damage);
-        this.arena.spawnDamageNumber(npc.x, npc.y - 24, beam.damage);
         this.arena.spawnHitFlash(npc.x, npc.y, 0xff4444);
       }
       scene.tweens.add({ targets: [beam.gfx, beam.coreGfx], alpha: 0, duration: 350, onComplete: () => { beam.gfx.destroy(); beam.coreGfx.destroy(); } });

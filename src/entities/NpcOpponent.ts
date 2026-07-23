@@ -46,7 +46,9 @@ export interface NpcAiState {
   npcGrowthHasNestOrClone?: boolean;
   npcGrowthCancerActive?: boolean;
   crystalNodeCount?: number;
-  npcSoulGhosts?: number;
+  npcSoulCorpseCount?: number;
+  npcSoulAmalgamCount?: number;
+  npcSoulGraveCount?: number;
   npcHuntBeastForm?: boolean;
   npcHuntTrailActive?: boolean;
   playerBleeding?: boolean;
@@ -59,25 +61,27 @@ export interface NpcAiState {
   // Fate (alt-life)
   fateNpcHandTypes?: string[];
   // Metal
-  npcMetalArsenal?: string[];
-  // Death
-  deathWispCd?: number;
-  deathHolePlaced?: boolean;
+  npcMetalHasFlail?: boolean;
+  npcMetalFlailSwinging?: boolean;
+  npcMetalBlood?: number;
+  // Gunpowder
+  npcGunpowderArsenalSize?: number;
   // Rubber
   npcRubberBounceFormActive?: boolean;
-  npcRubberBounceBackActive?: boolean;
-  npcRubberSpringPhaseEnd?: number;
+  npcRubberageActive?: boolean;
+  npcRubberBandActive?: boolean;
   // Magic
   magicAnchorPlaced?: boolean;
   magicMeditating?: boolean;
-  // Technology
-  technologyAbuse?: number;
-  technologyOpSelfUsed?: boolean;
-  technologyProtestorsSpawned?: boolean;
-  // Silence
-  npcSilenceSlasherActive?: boolean;
-  npcSilenceSlasherHp?: number;
-  npcSilenceHookConnected?: boolean;
+  // Silence (remaster)
+  /** The NPC's target (usually the player) is invisible — wander, don't fight. */
+  targetInvisible?: boolean;
+  /** Invisible silence player has stalkers out — fire blindly to hunt them. */
+  silenceStalkersPresent?: boolean;
+  npcSilenceStealth?: number;
+  npcSilenceStalkers?: number;
+  npcSilenceMatureStalker?: { x: number; y: number } | null;
+  npcSilenceInvisible?: boolean;
   // Echo — no persistent ai state needed
   echoAttachActive?: boolean;
   // Quantum
@@ -100,6 +104,17 @@ export class NpcOpponent extends Fighter {
   private chargeUntil = 0;
   private chargingAbility = '';
   private lastChargeDecision = -1; // -1 = uninitialised; set to `time` on first AI tick
+
+  // ── Blind wander (target invisible via Silence stealth) ───────────
+  private blindWanderVx = 0;
+  private blindWanderVy = 0;
+  private blindNextWanderAt = 0;
+  private blindNextShotAt = 0;
+
+  /** Silence hallucinations: 20% of shots wildly miss while afflicted. */
+  private hallucinationMissDeg(): number {
+    return Date.now() < this.hallucinatingUntil && Math.random() < 0.2 ? 50 : 0;
+  }
 
   constructor(
     scene: Phaser.Scene,
@@ -131,6 +146,11 @@ export class NpcOpponent extends Fighter {
     // immediately charge before moving.
     if (this.lastChargeDecision < 0) this.lastChargeDecision = time;
 
+    // ── Invisible target (Silence): wander naturally instead of fighting ──
+    if (aiState.targetInvisible) {
+      return this.doBlindBehavior(buildContext, time, aiState.silenceStalkersPresent ?? false);
+    }
+
     const dist = Phaser.Math.Distance.Between(this.x, this.y, target.x, target.y);
     const hpRatio = this.hp / this.maxHp;
 
@@ -157,7 +177,7 @@ export class NpcOpponent extends Fighter {
         const abilityId = this.chargingAbility;
         this.chargeUntil = 0;
         this.chargingAbility = '';
-        const aimOffsetRad2 = (Math.random() * 2 - 1) * (this.difficulty.aimOffsetDeg + (time < this.aimOffsetBonusUntil ? this.aimOffsetBonusDeg : 0)) * (Math.PI / 180);
+        const aimOffsetRad2 = (Math.random() * 2 - 1) * (this.difficulty.aimOffsetDeg + (time < this.aimOffsetBonusUntil ? this.aimOffsetBonusDeg : 0) + this.hallucinationMissDeg()) * (Math.PI / 180);
         const aimAngle2 = angleToTarget + aimOffsetRad2;
         const aimX2 = this.x + Math.cos(aimAngle2) * dist;
         const aimY2 = this.y + Math.sin(aimAngle2) * dist;
@@ -169,7 +189,7 @@ export class NpcOpponent extends Fighter {
     }
 
     // ── Compute aimed target position (with difficulty offset) ────
-    const aimOffsetRad = (Math.random() * 2 - 1) * (this.difficulty.aimOffsetDeg + (time < this.aimOffsetBonusUntil ? this.aimOffsetBonusDeg : 0)) * (Math.PI / 180);
+    const aimOffsetRad = (Math.random() * 2 - 1) * (this.difficulty.aimOffsetDeg + (time < this.aimOffsetBonusUntil ? this.aimOffsetBonusDeg : 0) + this.hallucinationMissDeg()) * (Math.PI / 180);
     const aimAngle = angleToTarget + aimOffsetRad;
     const aimX = this.x + Math.cos(aimAngle) * dist;
     const aimY = this.y + Math.sin(aimAngle) * dist;
@@ -311,11 +331,8 @@ export class NpcOpponent extends Fighter {
     if (this.element.id === 'plasma') {
       return this.doPlasmaAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
-    if (this.element.id === 'death') {
-      return this.doDeathAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
-    }
-    if (this.element.id === 'void') {
-      return this.doVoidAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    if (this.element.id === 'gunpowder') {
+      return this.doGunpowderAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
     if (this.element.id === 'rubber') {
       return this.doRubberAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
@@ -746,31 +763,28 @@ export class NpcOpponent extends Fighter {
     aimY: number,
     aiState: NpcAiState,
   ): string | null {
-    // NPC Light AI delegates heavy logic to ArenaScene (via updateLightKit reacting to npcCastId).
+    // Light Lance (car-mode) is always active for an NPC playing Light — see LightKit.update().
+    // NPC Light AI just decides when to cast the other 4 abilities; LightKit reacts to npcCastId.
     void target; void aiState;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skipSpecials) {
-      // 1. Prayer — when HP low
-      if (hpRatio < 0.6) {
-        if (this.castAbility('prayer', buildContext(aimX, aimY))) return 'prayer';
+      // 1. Speed 'O' Light — ultimate escape/burst when hurt
+      if (hpRatio < 0.5) {
+        if (this.castAbility('speed-o-light', buildContext(aimX, aimY))) return 'speed-o-light';
       }
-      // 2. Skewer — when close
-      if (dist < 200) {
-        if (this.castAbility('skewer', buildContext(aimX, aimY))) return 'skewer';
+      // 2. Light Trick — close-range burst
+      if (dist < 90) {
+        if (this.castAbility('light-trick', buildContext(aimX, aimY))) return 'light-trick';
       }
-      // 3. Photon Orbs
-      if (this.castAbility('photon-orbs', buildContext(aimX, aimY))) return 'photon-orbs';
-      // 4. Photosynthespark — when not adjacent (will charge in during accel)
+      // 3. Prism Ramp — lay down hazards opportunistically
+      if (this.castAbility('prism-ramp', buildContext(aimX, aimY))) return 'prism-ramp';
+      // 4. Blink — reposition toward the target when not already close
       if (dist > 150) {
-        if (this.castAbility('photo-spark', buildContext(aimX, aimY))) return 'photo-spark';
+        if (this.castAbility('blink', buildContext(aimX, aimY))) return 'blink';
       }
     }
 
-    // 5. Light Stab / spear tap
-    if (dist < 160) {
-      if (this.castAbility('light-stab', buildContext(aimX, aimY))) return 'light-stab';
-    }
     return null;
   }
 
@@ -968,38 +982,42 @@ export class NpcOpponent extends Fighter {
     angleToTarget: number,
   ): string | null {
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    const ghosts = aiState.npcSoulGhosts ?? 0;
+    const corpses = aiState.npcSoulCorpseCount ?? 0;
+    const amalgams = aiState.npcSoulAmalgamCount ?? 0;
+    const graves = aiState.npcSoulGraveCount ?? 0;
 
-    // Sharp aim (10% offset) for orb placement
+    // Sharp aim (10% offset) for lantern placement
     const sharpOffsetRad = (Math.random() * 2 - 1) * (this.difficulty.aimOffsetDeg + (time < this.aimOffsetBonusUntil ? this.aimOffsetBonusDeg : 0)) * 0.10 * (Math.PI / 180);
     const sharpAngle = angleToTarget + sharpOffsetRad;
     const sharpX = this.x + Math.cos(sharpAngle) * dist;
     const sharpY = this.y + Math.sin(sharpAngle) * dist;
 
     if (!skipSpecials) {
-      // 1. Undead Charge — 5 ghosts ready
-      if (ghosts >= 5) {
-        if (this.castAbility('undead-charge', buildContext(this.x, this.y))) return 'undead-charge';
+      // 1. Place a grave early if none are out yet.
+      if (graves === 0) {
+        const gx = this.x + (Math.random() - 0.5) * 140;
+        const gy = this.y + (Math.random() - 0.5) * 140;
+        if (this.castAbility('soul-grave', buildContext(gx, gy))) return 'soul-grave';
       }
 
-      // 2. Sacrifice — when ghost count < 2 and HP is healthy enough
-      if (ghosts < 2 && hpRatio > 0.35) {
-        if (this.castAbility('soul-sacrifice', buildContext(this.x, this.y))) return 'soul-sacrifice';
+      // 2. Arise whenever a corpse is queued and the cooldown is up.
+      if (corpses > 0) {
+        if (this.castAbility('soul-arise', buildContext(this.x, this.y))) return 'soul-arise';
       }
 
-      // 3. Summon — when ghosts available (NPC context auto-upgrades to best type)
-      if (ghosts >= 1) {
-        if (this.castAbility('soul-summon', buildContext(this.x, this.y))) return 'soul-summon';
+      // 3. Torment as a burst option when amalgams exist and the fight is going poorly.
+      if (amalgams > 0 && hpRatio < 0.5) {
+        if (this.castAbility('soul-hells-torment', buildContext(this.x, this.y))) return 'soul-hells-torment';
       }
 
-      // 4. Consume — when HP is low
-      if (hpRatio < 0.45) {
-        if (this.castAbility('soul-consume', buildContext(this.x, this.y))) return 'soul-consume';
+      // 4. Whistle amalgams back to heal them up when they're not already tormented.
+      if (amalgams > 0 && hpRatio < 0.7 && Math.random() < 0.3) {
+        if (this.castAbility('soul-death-whistle', buildContext(this.x, this.y))) return 'soul-death-whistle';
       }
     }
 
-    // Default: Spirit Propel orb toward player
-    if (this.castAbility('soul-orb', buildContext(sharpX, sharpY))) return 'soul-orb';
+    // Default: Lantern Light toward the target when close enough to matter.
+    if (dist < 260 && this.castAbility('soul-lantern-light', buildContext(sharpX, sharpY))) return 'soul-lantern-light';
 
     return null;
   }
@@ -1313,7 +1331,7 @@ export class NpcOpponent extends Fighter {
     return null;
   }
 
-  private doDeathAbilities(
+  private doGunpowderAbilities(
     _target: Fighter,
     buildContext: (tX: number, tY: number) => CastContext,
     time: number,
@@ -1323,76 +1341,33 @@ export class NpcOpponent extends Fighter {
     aimY: number,
     aiState: NpcAiState,
   ): string | null {
-    const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    void dist;
-
-    if (!skip) {
-      // Wisp spam (throttled to 1 cast/sec via state)
-      if (!aiState.deathWispCd || time >= aiState.deathWispCd) {
-        if (this.castAbility('death-summon-wisps', buildContext(aimX, aimY))) {
-          aiState.deathWispCd = time + 1000;
-          return 'death-summon-wisps';
-        }
-      }
-
-      // Daemon at mid-HP
-      if (hpRatio > 0.25 && hpRatio < 0.75) {
-        if (this.castAbility('death-wisp-daemon', buildContext(aimX, aimY))) return 'death-wisp-daemon';
-      }
-
-      // Looming Dread on enemy
-      if (this.castAbility('death-looming-dread', buildContext(aimX, aimY))) return 'death-looming-dread';
-
-      // Judgement Day at own position (once per cooldown, no hole placed yet)
-      if (!aiState.deathHolePlaced) {
-        if (this.castAbility('death-judgement', buildContext(this.x, this.y))) {
-          aiState.deathHolePlaced = true;
-          return 'death-judgement';
-        }
-      }
-    }
-
-    // 1000 Blades — click at enemy
-    if (this.castAbility('death-1000-blades', buildContext(aimX, aimY))) return 'death-1000-blades';
-
-    return null;
-  }
-
-  private doVoidAbilities(
-    _target: Fighter,
-    buildContext: (tX: number, tY: number) => CastContext,
-    _time: number,
-    dist: number,
-    hpRatio: number,
-    aimX: number,
-    aimY: number,
-    aiState: NpcAiState,
-  ): string | null {
-    void aiState;
+    void time;
     const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skip) {
-      // Q: Void of Hell when HP dropping
-      if (hpRatio < 0.5) {
-        if (this.castAbility('void-of-hell', buildContext(aimX, aimY))) return 'void-of-hell';
+      // Keep building out the arsenal until full
+      if ((aiState.npcGunpowderArsenalSize ?? 0) < 3) {
+        if (this.castAbility('gunpowder-arsenal-expansion', buildContext(aimX, aimY))) return 'gunpowder-arsenal-expansion';
       }
 
-      // F: Void Ash at player position
-      if (this.castAbility('void-ash', buildContext(aimX, aimY))) return 'void-ash';
-
-      // R: Re-Lapse when close enough
-      if (dist < 280) {
-        if (this.castAbility('void-relapse', buildContext(aimX, aimY))) return 'void-relapse';
+      // Final Ordinance at the enemy's position when in range
+      if (dist < 500) {
+        if (this.castAbility('gunpowder-final-ordinance', buildContext(aimX, aimY))) return 'gunpowder-final-ordinance';
       }
 
-      // E: Return to Void when close
-      if (dist < 200) {
-        if (this.castAbility('void-return', buildContext(aimX, aimY))) return 'void-return';
+      // Fire at Will as the main damage dump once weapons are equipped
+      if ((aiState.npcGunpowderArsenalSize ?? 0) > 0 && dist < 450) {
+        if (this.castAbility('gunpowder-fire-at-will', buildContext(aimX, aimY))) return 'gunpowder-fire-at-will';
+      }
+
+      // Explosive Retreat to bail out when low HP and the enemy is close
+      if (hpRatio < 0.35 && dist < 150) {
+        if (this.castAbility('gunpowder-explosive-retreat', buildContext(aimX, aimY))) return 'gunpowder-explosive-retreat';
       }
     }
 
-    // Click: Void Floater spam (follows player automatically)
-    if (this.castAbility('void-floater', buildContext(aimX, aimY))) return 'void-floater';
+    // Musket Shot — steady filler damage
+    if (this.castAbility('gunpowder-musket-shot', buildContext(aimX, aimY))) return 'gunpowder-musket-shot';
 
     return null;
   }
@@ -1408,36 +1383,37 @@ export class NpcOpponent extends Fighter {
     aiState: NpcAiState,
   ): string | null {
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    const hasGuns = aiState.npcMetalArsenal && aiState.npcMetalArsenal.length > 0;
-    const arsenalFull = aiState.npcMetalArsenal && aiState.npcMetalArsenal.length >= 3;
+    const hasFlail = aiState.npcMetalHasFlail === true;
+    const flailSwinging = aiState.npcMetalFlailSwinging === true;
+    const blood = aiState.npcMetalBlood ?? 0;
 
     if (!skipSpecials) {
-      // Blood Clot when low HP
-      if (hpRatio < 0.35) {
-        if (this.castAbility('metal-blood-clot', buildContext(aimX, aimY))) return 'metal-blood-clot';
+      // Clot Armor when low HP and blood is worth converting
+      if (hpRatio < 0.35 && blood >= 20) {
+        if (this.castAbility('metal-clot-armor', buildContext(aimX, aimY))) return 'metal-clot-armor';
+      }
+      // Blood Transfusion when hurt, safe distance, and blood available
+      if (hpRatio < 0.6 && dist > 150 && blood > 0) {
+        if (this.castAbility('metal-blood-transfusion', buildContext(aimX, aimY))) return 'metal-blood-transfusion';
+      }
+      // Trigger an idle flail into a swing once the enemy is in range
+      if (hasFlail && !flailSwinging && dist < 200) {
+        buildContext(aimX, aimY).metalTriggerFlailSwing();
+        return 'metal-flail-craft';
+      }
+      // Craft a flail as the main reach/damage option
+      if (!hasFlail && dist < 320) {
+        if (this.castAbility('metal-flail-craft', buildContext(aimX, aimY))) return 'metal-flail-craft';
       }
       // Chain Tether at medium range
       if (dist < 230) {
         if (this.castAbility('metal-chain-tether', buildContext(aimX, aimY))) return 'metal-chain-tether';
       }
-      // Pick up weapon if arsenal not full
-      if (!arsenalFull) {
-        if (this.castAbility('metal-reinforce', buildContext(aimX, aimY))) return 'metal-reinforce';
-      }
-      // Fire at will when armed
-      if (hasGuns && dist < 280) {
-        if (this.castAbility('metal-fire-at-will', buildContext(aimX, aimY))) return 'metal-fire-at-will';
-      }
     }
 
-    // Slash is melee primary
+    // Slash is melee filler
     if (dist <= 95) {
       if (this.castAbility('metal-slash', buildContext(aimX, aimY))) return 'metal-slash';
-    }
-
-    // Fallback fire at will if armed and approaching
-    if (!skipSpecials && hasGuns) {
-      if (this.castAbility('metal-fire-at-will', buildContext(aimX, aimY))) return 'metal-fire-at-will';
     }
 
     return null;
@@ -1446,9 +1422,9 @@ export class NpcOpponent extends Fighter {
   private doRubberAbilities(
     _target: Fighter,
     buildContext: (tX: number, tY: number) => CastContext,
-    time: number,
+    _time: number,
     dist: number,
-    hpRatio: number,
+    _hpRatio: number,
     aimX: number,
     aimY: number,
     aiState: NpcAiState,
@@ -1456,11 +1432,11 @@ export class NpcOpponent extends Fighter {
     const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skip) {
-      // Q: Bounce Back when low HP
-      if (hpRatio < 0.3 && !aiState.npcRubberBounceBackActive) {
-        if (this.castAbility('rubber-bounce-back', buildContext(aimX, aimY))) {
-          aiState.npcRubberBounceBackActive = true;
-          return 'rubber-bounce-back';
+      // Q: Rubberage when the player is close enough to be caught by the ball swarm
+      if (dist < 320 && !aiState.npcRubberageActive) {
+        if (this.castAbility('rubberage', buildContext(aimX, aimY))) {
+          aiState.npcRubberageActive = true;
+          return 'rubberage';
         }
       }
 
@@ -1472,11 +1448,11 @@ export class NpcOpponent extends Fighter {
         }
       }
 
-      // F: Spring Slam at close range
-      if (dist < 180 && !(aiState.npcRubberSpringPhaseEnd && time < aiState.npcRubberSpringPhaseEnd)) {
-        if (this.castAbility('rubber-spring-slam', buildContext(aimX, aimY))) {
-          aiState.npcRubberSpringPhaseEnd = time + 1700;
-          return 'rubber-spring-slam';
+      // F: Rubber Banding — plant an anchor for extra mobility / to snap back into range
+      if (dist > 220 && !aiState.npcRubberBandActive) {
+        if (this.castAbility('rubber-band', buildContext(aimX, aimY))) {
+          aiState.npcRubberBandActive = true;
+          return 'rubber-band';
         }
       }
 
@@ -1549,49 +1525,37 @@ export class NpcOpponent extends Fighter {
     _target: Fighter,
     buildContext: (tX: number, tY: number) => CastContext,
     _time: number,
-    _dist: number,
+    dist: number,
     hpRatio: number,
     aimX: number,
     aimY: number,
-    aiState: NpcAiState,
+    _aiState: NpcAiState,
   ): string | null {
-    if (aiState.technologyAbuse === undefined) aiState.technologyAbuse = 0;
-
     const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skip) {
-      // Q: Domain.Expansion when low HP
-      if (hpRatio < 0.5 && !aiState.technologyOpSelfUsed && Math.random() < 0.15) {
-        if (this.castAbility('tech-domain', buildContext(aimX, aimY))) {
-          aiState.technologyOpSelfUsed = true;
-          return 'tech-domain';
-        }
+      // Q: Admin Console when hurt
+      if (hpRatio < 0.6 && Math.random() < 0.4) {
+        if (this.castAbility('tech-admin', buildContext(aimX, aimY))) return 'tech-admin';
       }
-
-      // E: Dev.Console randomly
-      if (Math.random() < 0.20) {
-        if (this.castAbility('tech-devconsole', buildContext(aimX, aimY))) return 'tech-devconsole';
+      // R: Upload toward the enemy
+      if (Math.random() < 0.35) {
+        if (this.castAbility('tech-upload', buildContext(aimX, aimY))) return 'tech-upload';
       }
-
-      // R: Randomize.Exe when abuse is low
-      if (aiState.technologyAbuse < 50 && Math.random() < 0.25) {
-        if (this.castAbility('tech-random-r', buildContext(aimX, aimY))) {
-          aiState.technologyAbuse = Math.min(100, aiState.technologyAbuse + 30);
-          return 'tech-random-r';
-        }
+      // E: Overt Advertisement
+      if (Math.random() < 0.25) {
+        if (this.castAbility('tech-ads', buildContext(aimX, aimY))) return 'tech-ads';
       }
-
-      // F: Delete.Area — drop a zone near the enemy
-      if (Math.random() < 0.30) {
-        if (this.castAbility('tech-delete', buildContext(aimX, aimY))) {
-          aiState.technologyAbuse = Math.min(100, (aiState.technologyAbuse ?? 0) + 20);
-          return 'tech-delete';
-        }
+      // F: Web Drag (rarely — a bot gets little value from the manual grab)
+      if (Math.random() < 0.05) {
+        if (this.castAbility('tech-webdrag', buildContext(aimX, aimY))) return 'tech-webdrag';
       }
     }
 
-    // Click: Gear.Give (NPC uses quick shot variant)
-    if (this.castAbility('tech-gear-give', buildContext(aimX, aimY))) return 'tech-gear-give';
+    // Click: Addicting Cruncher
+    if (dist < 500) {
+      if (this.castAbility('tech-cruncher', buildContext(aimX, aimY))) return 'tech-cruncher';
+    }
 
     return null;
   }
@@ -1607,68 +1571,81 @@ export class NpcOpponent extends Fighter {
     aiState: NpcAiState,
   ): string | null {
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    const inSlasher = aiState.npcSilenceSlasherActive ?? false;
-    const slasherHp = aiState.npcSilenceSlasherHp ?? 10;
-    const hookConnected = aiState.npcSilenceHookConnected ?? false;
+    const stalkers = aiState.npcSilenceStalkers ?? 0;
+    const invisible = aiState.npcSilenceInvisible ?? false;
 
-    if (!inSlasher) {
-      // ── Normal horror kit ─────────────────────────────────────
-      if (!skipSpecials) {
-        // Enter slasher mode when close (opportunistic)
-        if (dist < 200 && hpRatio > 0.35) {
-          if (this.castAbility('silence-thriller', buildContext(this.x, this.y))) return 'silence-thriller';
-        }
-
-        // Possess at long range
-        if (dist > 250) {
-          if (this.castAbility('silence-possess', buildContext(aimX, aimY))) return 'silence-possess';
-        }
-
-        // DON'T LOOK at medium range (angle aimed at player)
-        if (dist < 350 && dist > 80) {
-          if (this.castAbility('silence-dont-look', buildContext(aimX, aimY))) return 'silence-dont-look';
-        }
-
-        // They Watch when low HP (panic button)
-        if (hpRatio < 0.35) {
-          if (this.castAbility('silence-watch', buildContext(this.x, this.y))) return 'silence-watch';
-        }
+    if (!skipSpecials) {
+      // Convert a matured stalker into a grabber the moment Ritual comes up.
+      const mature = aiState.npcSilenceMatureStalker;
+      if (mature) {
+        if (this.castAbility('silence-ritual', buildContext(mature.x, mature.y))) return 'silence-ritual';
       }
 
-      // Default: short-range fade burst (treat as poke ability)
-      if (dist < 180) {
-        if (this.castAbility('silence-fade', buildContext(aimX, aimY))) return 'silence-fade';
-      }
-    } else {
-      // ── Slasher kit ──────────────────────────────────────────
-      if (!skipSpecials) {
-        // Open with Slash Em Up
-        if (this.castAbility('silence-slash-em-up', buildContext(aimX, aimY))) return 'silence-slash-em-up';
-
-        // Mortal Wound: use aggressively at close range
-        if (dist < 140) {
-          if (this.castAbility('silence-mortal-wound', buildContext(aimX, aimY))) return 'silence-mortal-wound';
-        }
-
-        // Hook when mid-range; yank if hook connected
-        if (hookConnected) {
-          if (this.castAbility('silence-meat-hook', buildContext(aimX, aimY))) return 'silence-meat-hook-yank';
-        } else if (dist > 120 && dist < 400) {
-          if (this.castAbility('silence-meat-hook', buildContext(aimX, aimY))) return 'silence-meat-hook';
-        }
-
-        // Retire when near-death to minimise recoil
-        if (slasherHp <= 2) {
-          if (this.castAbility('silence-retire', buildContext(this.x, this.y))) return 'silence-retire';
-        }
+      // Keep the stalker network up — drop them along the fog border.
+      if (stalkers < 3 && Math.random() < 0.5) {
+        const W = this.scene.scale.width;
+        const H = this.scene.scale.height;
+        const edge = Phaser.Math.Between(0, 3);
+        const sx = edge === 2 ? 55 : edge === 3 ? W - 55 : Phaser.Math.Between(40, W - 40);
+        const sy = edge === 0 ? 55 : edge === 1 ? H - 55 : Phaser.Math.Between(40, H - 40);
+        if (this.castAbility('silence-watch', buildContext(sx, sy))) return 'silence-watch';
       }
 
-      // Default: machete at close range
-      if (dist < 120) {
-        if (this.castAbility('silence-machete', buildContext(aimX, aimY))) return 'silence-machete';
+      // While invisible, hold the loud specials — the kit steers us into a backstab.
+      if (!invisible) {
+        if (dist < 260) {
+          if (this.castAbility('silence-ritual', buildContext(aimX, aimY))) return 'silence-ritual';
+        }
+        if (dist < 240) {
+          if (this.castAbility('silence-feast', buildContext(aimX, aimY))) return 'silence-feast';
+        }
+        if (dist < 420 && (hpRatio < 0.6 || _target.hp / _target.maxHp < 0.6)) {
+          if (this.castAbility('silence-run', buildContext(_target.x, _target.y))) return 'silence-run';
+        }
       }
     }
 
+    // Click: stab when close (the cast itself dashes at the target).
+    if (!invisible && dist < 190) {
+      if (this.castAbility('silence-stab', buildContext(aimX, aimY))) return 'silence-stab';
+    }
+
+    return null;
+  }
+
+  /**
+   * The target is invisible (Silence stealth): amble around like nothing is
+   * there. With stalkers on the field, fire the click attack in random
+   * directions hoping to clip one.
+   */
+  private doBlindBehavior(
+    buildContext: (tX: number, tY: number) => CastContext,
+    time: number,
+    huntStalkers: boolean,
+  ): string | null {
+    const body = this.body as Phaser.Physics.Arcade.Body;
+    if (time >= this.blindNextWanderAt) {
+      this.blindNextWanderAt = time + Phaser.Math.Between(600, 1200);
+      if (Math.random() < 0.25) {
+        this.blindWanderVx = 0;
+        this.blindWanderVy = 0;
+      } else {
+        const ang = Math.random() * Math.PI * 2;
+        this.blindWanderVx = Math.cos(ang) * this.speed * 0.8;
+        this.blindWanderVy = Math.sin(ang) * this.speed * 0.8;
+      }
+    }
+    body.setVelocity(this.blindWanderVx, this.blindWanderVy);
+    if (this.stationary) body.setVelocity(0, 0);
+
+    if (huntStalkers && time >= this.blindNextShotAt) {
+      this.blindNextShotAt = time + Phaser.Math.Between(900, 1600);
+      const ang = Math.random() * Math.PI * 2;
+      const clickId = this.element.abilities[0]?.id;
+      if (clickId && this.castAbility(clickId, buildContext(this.x + Math.cos(ang) * 320, this.y + Math.sin(ang) * 320))) {
+        return clickId;
+      }
+    }
     return null;
   }
 

@@ -160,7 +160,7 @@ export const ALL_PERKS: ElementPerks[] = [
         name: 'Ward',
         emoji: '🛡️',
         color: 0xccbb55,
-        description: "Consume creates a warding hex in its AOE (if summons are consumed). Lasts 2s per consumed summon. You and your summons take 50% less damage inside.",
+        description: 'While 2 or more of your Amalgams are within range of you, you take 30% less damage.',
         ingredients: ['life', 'air', 'earth'],
         tier: 'triple',
         elementId: 'soul',
@@ -169,21 +169,6 @@ export const ALL_PERKS: ElementPerks[] = [
   },
 
   // ── Abstract triple perks (Lab Level 2 abstract tab, 4 nuclei) ──────────
-  {
-    elementId: 'silence',
-    perks: [
-      {
-        id: 'torture',
-        name: 'Torture',
-        emoji: '🪝',
-        color: 0x886688,
-        description: 'Meat hook lodges inside the enemy for 4s (6s with E+), dealing 3 damage/s. Recast delivers an electric shock — 12 damage and 2s stun — instead of pulling.',
-        ingredients: ['electricity', 'slime', 'sound'],
-        tier: 'abstract-triple',
-        elementId: 'silence',
-      },
-    ],
-  },
   {
     elementId: 'magic',
     perks: [
@@ -231,43 +216,17 @@ export const ALL_PERKS: ElementPerks[] = [
   },
   {
     elementId: 'technology',
-    perks: [
-      {
-        id: 'adrenaline',
-        name: 'Adrenaline',
-        emoji: '💉',
-        color: 0xff3355,
-        description: 'No abuse meter — events that would add abuse instead deal half that amount as self-damage. Domain Expansion ends after a fixed 8s timer rather than from abuse.',
-        ingredients: ['electricity', 'sound', 'light'],
-        tier: 'abstract-triple',
-        elementId: 'technology',
-      },
-    ],
+    // Technology was reworked into the Addicting Cruncher/Overt Advertisement/Upload/Web Drag/
+    // Admin Console kit — the old "Adrenaline" perk enhanced the removed abuse-meter and
+    // Domain Expansion mechanics. Left blank until redesigned.
+    perks: [],
   },
   {
-    elementId: 'death',
-    perks: [
-      {
-        id: 'corruption',
-        name: 'Corruption',
-        emoji: '🦠',
-        color: 0x556677,
-        description: 'While in River Styx, corruption blobs spawn on you every 0.5s (max 8). Each blob blocks one incoming projectile. Click a blob to arm your next click attack — it releases a 5-damage AoE burst on hit.',
-        ingredients: ['slime', 'fate', 'sound'],
-        tier: 'abstract-triple',
-        elementId: 'death',
-      },
-      {
-        id: 'demon',
-        name: 'Demon',
-        emoji: '😈',
-        color: 0x881133,
-        description: 'Replace 1000 Blades with dagger projectiles. Daggers start at 2 damage and deal +2 per 5 kills (instead of +1). With Click+, daggers pierce through 2 enemies (3 total hits max).',
-        ingredients: ['fate', 'sound', 'light'],
-        tier: 'abstract-triple',
-        elementId: 'death',
-      },
-    ],
+    elementId: 'gunpowder',
+    // Gunpowder (formerly Death) was reworked into an arsenal kit (Musket Shot/Explosive Retreat/
+    // Fire at Will/Arsenal Expansion/Final Ordinance) — the old "Corruption" and "Demon"
+    // perks enhanced the removed River Styx and 1000 Blades mechanics. Left blank until redesigned.
+    perks: [],
   },
 
   // ── Penta perks (Lab Level 4, 10 nuclei) ─────────────────────────────────
@@ -306,18 +265,10 @@ export const ALL_PERKS: ElementPerks[] = [
   },
   {
     elementId: 'light',
-    perks: [
-      {
-        id: 'flicker',
-        name: 'Flicker',
-        emoji: '🪝',
-        color: 0xfff4a8,
-        description: 'Releasing a held Light spear launches it as a grapple — it pierces enemies (moderate damage + mark), sticks to the nearest wall, then 1s later pulls you to it. Pull damage scales with movement speed (or dodge chance with Click+).',
-        ingredients: ['slime', 'fate', 'light'],
-        tier: 'abstract-triple',
-        elementId: 'light',
-      },
-    ],
+    // Light was reworked into a car-mode/acceleration kit (Light Lance/Blink/Prism Ramp/
+    // Light Trick/Speed 'O' Light) — the old "Flicker" perk enhanced the removed held-spear
+    // grapple-on-release mechanic. Left blank until redesigned.
+    perks: [],
   },
 
   // ── Quad perks (Lab Level 3, 5 nuclei) ───────────────────────────────────
@@ -416,10 +367,10 @@ export const ALL_PERKS: ElementPerks[] = [
     perks: [
       {
         id: 'gunpowder',
-        name: 'Gunpowder',
-        emoji: '💥',
-        color: 0xccaa44,
-        description: 'Click now fires all weapons (Fire at Will) with 1/3 the normal E cooldown. E becomes Discharge: launch a magazine clip to cursor → AoE explosion + 20 equidistant hitscan beams. Discharge deletes your oldest weapon. New weapons fill empty slots before replacing occupied ones.',
+        name: 'Exsanguinate',
+        emoji: '🩸',
+        color: 0xcc0022,
+        description: 'Clot Armor shard bursts fire 8 shards instead of 5. Blood puddles created by all sources (passive, bleeding, shard hits) are 50% bigger, so every drain tick fills your blood bar faster.',
         ingredients: ['electricity', 'fate', 'sound', 'light'],
         tier: 'quad',
         elementId: 'metal',
@@ -442,34 +393,20 @@ export const ALL_PERKS: ElementPerks[] = [
     ],
   },
   {
+    // Sonic Boom rebuilt Quantum's old Wave Reducer click as a charge-zone whip.
+    // Both are gone with the 2026-07-22 Molecular Cutter / Blade Dance revamp, so the
+    // perk is blanked rather than reworked (matching the Rubber / Growth precedent).
     elementId: 'quantum',
-    perks: [
-      {
-        id: 'sonic-boom',
-        name: 'Sonic Boom',
-        emoji: '💨',
-        color: 0x44ffcc,
-        description: "Replace Quantum's wave click with a Terraria-style whip using the same charge-zone bar. Red = short range/low damage; yellow = medium; green = max range/damage; gold = max range + AoE at tip. Any hit deals damage; hitting at maximum range deals 2× damage + 0.5s stun.",
-        ingredients: ['electricity', 'slime', 'sound', 'light'],
-        tier: 'quad',
-        elementId: 'quantum',
-      },
-    ],
+    perks: [],
   },
   {
+    // Uber-Gear was built on top of the old Bounce Back (Q) and Barrage (F) — both
+    // replaced by Rubber Banding / Rubberage in the 2026-07-22 revamp, so the perk's
+    // whole mechanic (jump rope, squish, stretch dodge, wall push) no longer applies.
+    // Blanked rather than reworked, matching the precedent set by the Growth revamp
+    // and the Light car-drift rework.
     elementId: 'rubber',
-    perks: [
-      {
-        id: 'uber-gear',
-        name: 'Uber-Gear',
-        emoji: '☁️',
-        color: 0xffffff,
-        description: "Q activates a 10s (15s with Q+) Uber-Gear form. When it ends, your HP is forced to 0 (or 80 damage with Q+). While active: +100% speed, enhanced Click/E/R/F/Barrage, and dodge becomes a stretchy caterpillar lunge. With Vulcanization, gain all bonuses without cooldown penalties.",
-        ingredients: ['electricity', 'slime', 'fate', 'sound', 'light'],
-        tier: 'penta',
-        elementId: 'rubber',
-      },
-    ],
+    perks: [],
   },
 ];
 

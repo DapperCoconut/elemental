@@ -125,6 +125,7 @@ export interface FateArenaApi {
   get qKey(): Phaser.Input.Keyboard.Key;
   get nukeChanneling(): boolean;
   get rightPointerWasDown(): boolean;
+  get isPlayerFate(): boolean;
   hasPerk(perkId: string): boolean;
   applyPlayerSpeedMult(f: number): void;
   applyNpcSpeedMult(f: number): void;
@@ -213,8 +214,12 @@ export class FateKit {
     this.poison.clear();
 
     this.teardownBar();
-    this.buildBar();
-    this.setupNumberKeys();
+    // The card bar is the player's hand HUD — only show it when the player
+    // is actually playing Fate (not when only the NPC is).
+    if (this.arena.isPlayerFate) {
+      this.buildBar();
+      this.setupNumberKeys();
+    }
 
     this.lastMouseX = 0;
     this.lastMouseY = 0;
@@ -539,7 +544,6 @@ export class FateKit {
       if (perpDist <= 28 && forwardDot > 0) {
         target.takeDamage(dmg);
         this.arena.spawnHitFlash(target.x, target.y, 0xff3333);
-        this.arena.spawnDamageNumber(target.x, target.y - 20, dmg);
         hitAny = true;
       }
     }
@@ -612,7 +616,6 @@ export class FateKit {
           if (!target.active || target.hp <= 0) continue;
           if (Phaser.Math.Distance.Between(tx, ty, target.x, target.y) <= radius) {
             target.takeDamage(dmg);
-            this.arena.spawnDamageNumber(target.x, target.y - 20, dmg);
           }
         }
         const ring = scene.add.circle(tx, ty, 10, 0xff8800, 0.6).setDepth(9);
@@ -667,7 +670,6 @@ export class FateKit {
         p.tickAccum -= 1000;
         if (target.active && target.hp > 0) {
           target.takeDamage(p.dps);
-          this.arena.spawnDamageNumber(target.x, target.y - 20, p.dps);
         }
       }
     }
@@ -734,7 +736,6 @@ export class FateKit {
       if (target.active && target.hp > 0) {
         target.takeDamage(damage);
         this.arena.spawnHitFlash(target.x, target.y, 0xffee00);
-        this.arena.spawnDamageNumber(target.x, target.y - 20, damage);
       }
 
       const toRemove = partner ? [i, this.coins.indexOf(partner)] : [i];
@@ -813,7 +814,6 @@ export class FateKit {
         if (!target.active || target.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(s.x, s.y, target.x, target.y) <= 70) {
           target.takeDamage(s.dmg);
-          this.arena.spawnDamageNumber(target.x, target.y - 20, s.dmg);
           if (target === this.arena.player) this.playerStunUntil = Math.max(this.playerStunUntil, time + s.stunMs);
           else this.npcStunUntil = Math.max(this.npcStunUntil, time + s.stunMs);
           this.arena.showFloatingText(target.x, target.y - 40, '⚡ STUNNED', '#ffee44');

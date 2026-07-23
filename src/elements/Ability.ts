@@ -68,10 +68,11 @@ export interface CastContext {
   placeCrystalPortal: (tx: number, ty: number) => void;
   activateCrystalTrick: () => void;
   // Soul
-  fireSoulOrb: (tx: number, ty: number) => void;
-  summonGhost: (ghostType: 'basic' | 'ghoul' | 'banshee' | 'knight' | 'corpse' | 'necromancer') => void;
-  soulSacrifice: () => void;
-  soulConsume: () => void;
+  soulLanternTick: (tx: number, ty: number) => void;
+  soulArise: () => void;
+  soulGrave: (tx: number, ty: number) => void;
+  soulDeathWhistle: (tx: number, ty: number) => void;
+  soulHellsTorment: () => void;
   // Hunt
   huntThrowGrenade: (tx: number, ty: number, holdMs: number) => void;
   huntHuntersTrail: () => void;
@@ -125,36 +126,31 @@ export interface CastContext {
   magnetAtomSmasher: (x: number, y: number) => void;
   // Metal (abstract combined: electricity + fate)
   metalSlash: (tx: number, ty: number) => void;
-  metalFireAtWill: () => void;
-  metalOpenReinforcementMenu: () => void;
+  metalFlailCraft: () => void;
+  /** NPC-only: trigger an idle flail into a swing (the player does this by clicking directly in MetalKit). */
+  metalTriggerFlailSwing: () => void;
+  metalBloodTransfusionTick: () => void;
   metalChainTether: (tx: number, ty: number) => void;
-  metalBloodClot: () => void;
+  metalClotArmor: () => void;
   // Plasma (abstract combined: electricity + light)
   plasmaBurst: (tx: number, ty: number) => void;
   plasmaUnstableArena: (tx: number, ty: number) => void;
   plasmaCurrentLaunch: (tx: number, ty: number) => void;
   plasmaChaosBlades: () => void;
   plasmaChaosIncarnate: () => void;
-  // Death (abstract combined: fate + sound)
-  death1000Blades: (tx: number, ty: number) => void;
-  deathSummonWisps: (count: number) => void;
-  deathLoomingDread: () => void;
-  deathWispDaemon: () => void;
-  deathTrailDash: (tx: number, ty: number) => void;
-  deathJudgement: () => void;
-  // Void (abstract combined: fate + light)
-  voidFloater: (tx: number, ty: number) => void;
-  voidReturnToVoid: (tx: number, ty: number) => void;
-  voidReLapse: (tx: number, ty: number) => void;
-  voidAsh: (tx: number, ty: number) => void;
-  voidOfHell: () => void;
+  // Gunpowder (abstract combined: fate + sound)
+  gunpowderMusketShot: (tx: number, ty: number) => void;
+  gunpowderExplosiveRetreat: (tx: number, ty: number) => void;
+  gunpowderFireAtWill: (tx: number, ty: number) => void;
+  gunpowderArsenalExpansion: () => void;
+  gunpowderFinalOrdinance: (tx: number, ty: number) => void;
   // Rubber (abstract combined: slime + fate)
   rubberPunch: (tx: number, ty: number, pullRatio: number) => void;
   rubberSlingShotStart: (cursorAngle: number) => void;
   rubberSlingShotRelease: (vx: number, vy: number) => void;
   rubberBounceForm: () => void;
-  rubberSpringSlam: (cursorAngle: number) => void;
-  rubberBounceBack: () => void;
+  rubberBandStart: () => void;
+  rubberage: () => void;
   // Magic (abstract combined: slime + light)
   magicSparkleShot: (tx: number, ty: number) => void;
   magicOpenGrimoire: () => void;
@@ -162,28 +158,17 @@ export interface CastContext {
   magicMeditateBegin: () => void;
   magicOpenNecronomicon: () => void;
   // Technology (abstract combined: sound + light)
-  techFlailEmpower: () => void;
-  techDevConsoleOpen: () => void;
-  techHackAttribute: () => void;
-  techDeleteArea: (x: number, y: number, w: number, h: number) => void;
-  techOpSelfBegin: () => void;
-  techGearGiveActivate: () => void;
-  techRandomEffect: () => void;
+  techCruncherFire: (tx: number, ty: number) => void;
+  techAdsCast: () => void;
+  techUploadCast: (tx: number, ty: number) => void;
+  techWebDragCast: () => void;
+  techAdminCast: () => void;
   // Silence (abstract combined: slime + sound)
-  silenceStartFade: () => void;
-  silenceReleaseFade: () => void;
-  silenceCastDontLook: (angleRad: number) => void;
-  silenceFirePossess: (angleRad: number) => void;
-  silenceEnterSlasher: () => void;
-  silenceExitSlasher: (voluntary: boolean) => void;
-  silenceStartWatch: () => void;
-  silenceWatchTendril: (tx: number, ty: number) => void;
-  techStartDomain: () => void;
-  silenceMachete: (angleRad: number) => void;
-  silenceThrowHook: (angleRad: number) => void;
-  silenceYankHook: () => void;
-  silenceMortalWound: (angleRad: number) => void;
-  silenceSlashEmUp: () => void;
+  silenceStab: (tx: number, ty: number) => void;
+  silenceSummonStalker: (tx: number, ty: number) => void;
+  silenceRitual: (tx: number, ty: number) => void;
+  silenceFeast: (tx: number, ty: number) => void;
+  silenceRun: (tx: number, ty: number) => void;
   // Echo (abstract combined: fate + light)
   echoEcholocation: (tx: number, ty: number) => void;
   echoGuess: (tx: number, ty: number) => void;

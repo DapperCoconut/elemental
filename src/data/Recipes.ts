@@ -20,7 +20,7 @@ export const RECIPES: Recipe[] = [
   { ingredients: ['electricity', 'slime'], result: 'magnet', resultName: 'Magnet', resultEmoji: '🧲' },
   { ingredients: ['electricity', 'fate'], result: 'metal', resultName: 'Metal', resultEmoji: '⚙️' },
   { ingredients: ['electricity', 'light'], result: 'plasma', resultName: 'Plasma', resultEmoji: '🔮' },
-  { ingredients: ['fate', 'sound'], result: 'death', resultName: 'Death', resultEmoji: '💀' },
+  { ingredients: ['fate', 'sound'], result: 'gunpowder', resultName: 'Gunpowder', resultEmoji: '💀' },
   { ingredients: ['fate', 'light'], result: 'echo', resultName: 'Echo', resultEmoji: '🦇' },
   { ingredients: ['slime', 'fate'], result: 'rubber', resultName: 'Rubber', resultEmoji: '🪀' },
   { ingredients: ['slime', 'light'], result: 'magic', resultName: 'Magic', resultEmoji: '📖' },

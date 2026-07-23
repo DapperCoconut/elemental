@@ -763,7 +763,7 @@ export class SoundKit {
         if (this.soundScreechTickAccum >= 500) {
           this.soundScreechTickAccum -= 500;
           for (const t of screechHits) {
-            t.takeDamage(barrierDmg);
+            t.takeDamage(barrierDmg, { source: this.soundScreechSprite ?? undefined, sourceX: this.soundScreechX, sourceY: this.soundScreechY });
             this.arena.spawnHitFlash(t.x, t.y, this.soundScreechRed ? 0xff3333 : 0xff66cc);
           }
         }
@@ -869,7 +869,7 @@ export class SoundKit {
         this.npcSoundScreechTickAccum += delta;
         if (this.npcSoundScreechTickAccum >= 500) {
           this.npcSoundScreechTickAccum -= 500;
-          player.takeDamage(npcBDmg);
+          player.takeDamage(npcBDmg, { source: this.npcSoundScreechSprite ?? undefined, sourceX: this.npcSoundScreechX, sourceY: this.npcSoundScreechY });
           this.arena.spawnHitFlash(player.x, player.y, this.npcSoundScreechRed ? 0xff3333 : 0xff66cc);
         }
       } else {

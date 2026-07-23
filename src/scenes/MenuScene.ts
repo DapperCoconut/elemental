@@ -37,8 +37,7 @@ import { lightElement } from '../elements/light';
 import { magnetElement } from '../elements/magnet';
 import { metalElement } from '../elements/metal';
 import { plasmaElement } from '../elements/plasma';
-import { deathElement } from '../elements/death';
-import { voidElement } from '../elements/void';
+import { gunpowderElement } from '../elements/gunpowder';
 import { rubberElement } from '../elements/rubber';
 import { magicElement } from '../elements/magic';
 import { technologyElement } from '../elements/technology';
@@ -60,8 +59,7 @@ const ELEMENT_DATA_MAP: Record<string, Element> = {
   magnet: magnetElement,
   metal: metalElement,
   plasma: plasmaElement,
-  death: deathElement,
-  void: voidElement,
+  gunpowder: gunpowderElement,
   rubber: rubberElement,
   magic: magicElement,
   technology: technologyElement,
@@ -122,7 +120,7 @@ export const ABSTRACT_COMBINED_ELEMENTS: ElementDef[] = [
   { id: 'magnet', name: 'Magnet', emoji: '🧲', color: 0xcc2244, available: true },
   { id: 'metal',  name: 'Metal',  emoji: '⚙️',  color: 0x8899aa, available: true },
   { id: 'plasma', name: 'Plasma', emoji: '🔮',  color: 0xaa22ff, available: true },
-  { id: 'death',  name: 'Death',  emoji: '💀',  color: 0x440066, available: true },
+  { id: 'gunpowder', name: 'Gunpowder', emoji: '💀',  color: 0x440066, available: true },
   { id: 'echo',   name: 'Echo',   emoji: '🦇',  color: 0xccccff, available: true },
   { id: 'rubber', name: 'Rubber', emoji: '🪀', color: 0xff5577, available: true },
   { id: 'magic', name: 'Magic', emoji: '📖', color: 0x9944ff, available: true },
@@ -1205,6 +1203,24 @@ export class MenuScene extends Phaser.Scene {
       scrollContainer.add(t);
       innerY += 20;
     };
+
+    // Quantum-specific passives (shown above the abilities list)
+    if (elementId === 'quantum') {
+      sectionHdr('— PASSIVES —', '#cc88ff');
+      let passiveText =
+        'Forms — Entropy & Order: You always hold one of two forms. Tap SPACE to dodge, which swaps your form; swapping locks that form\'s passive for 5s.\n\n' +
+        '🔴 Entropy (red): +15% damage dealt. Periodically readies Stiff Strike (red aura) — your next ability hits for ×1.5, then recharges over 5s.\n\n' +
+        '🔵 Order (blue): −15% damage taken. Periodically readies Auto-Dodge (blue aura) — you automatically sidestep a nearby projectile and go briefly invincible, then recharges over 5s.';
+      if (showUpgraded) {
+        passiveText += '\n\n▲ Q+ Ionization Energy: stand still to charge Ionization; while charged, −25% damage taken and +50% move speed.';
+      }
+      const passiveDesc = this.add.text(COL_X + 14, innerY, passiveText, {
+        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#b79ae0',
+        wordWrap: { width: COL_W - 28 }, lineSpacing: 3,
+      });
+      scrollContainer.add(passiveDesc);
+      innerY += passiveDesc.height + 20;
+    }
 
     sectionHdr('— ABILITIES —', '#7788cc');
 

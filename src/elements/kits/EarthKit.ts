@@ -583,7 +583,7 @@ export class EarthKit {
             if (!t.active || t.hp <= 0) continue;
             const d = Phaser.Math.Distance.Between(this.earthQuakeX, this.earthQuakeY, t.x, t.y);
             if (d < quakeRadius && time > (this.earthQuakeStunUntil ?? 0) && Math.random() < 0.35) {
-              t.takeDamage(tripDmg);
+              t.takeDamage(tripDmg, { source: this.earthQuakeSprite, sourceX: this.earthQuakeX, sourceY: this.earthQuakeY });
               this.arena.spawnHitFlash(t.x, t.y, this.earthQuakeMagmified ? 0xff4400 : 0x887755);
               this.arena.showFloatingText(t.x, t.y - 20, this.earthQuakeMagmified ? `🌋 MAGMA ${tripDmg}` : `⚡ TRIP ${tripDmg}`, '#ccaa66');
               t.earthStunnedUntil = Math.max(t.earthStunnedUntil, time + 500);
@@ -821,7 +821,7 @@ export class EarthKit {
           this.npcEarthQuakeTickAccum -= 750;
           const d = Phaser.Math.Distance.Between(this.npcEarthQuakeX, this.npcEarthQuakeY, player.x, player.y);
           if (d < 80 && time > (this.npcEarthQuakeStunUntil ?? 0) && Math.random() < 0.35) {
-            player.takeDamage(5);
+            player.takeDamage(5, { source: this.npcEarthQuakeSprite, sourceX: this.npcEarthQuakeX, sourceY: this.npcEarthQuakeY });
             this.arena.spawnHitFlash(player.x, player.y, 0x887755);
             this.arena.showFloatingText(player.x, player.y - 20, '⚡ TRIP 5', '#ccaa66');
             this.playerEarthStunnedUntil = Math.max(this.playerEarthStunnedUntil, time + 500);
@@ -1861,23 +1861,35 @@ export class EarthKit {
   private tryCastDustScreen(time: number, mouseX: number, mouseY: number): void {
     if (time - this.dustScreenLastCastAt < DUST_SCREEN_COOLDOWN_MS) return;
     this.dustScreenLastCastAt = time;
-    const player = this.arena.player;
-    player.triggerCooldown('dust-screen');
+    // triggerCooldown already broadcasts the cast id online; the peer replays via doNpcDustScreen.
+    this.arena.player.triggerCooldown('dust-screen');
+    this.castDustScreen(mouseX, mouseY, 'player', time);
+  }
 
-    const angle = Math.atan2(mouseY - player.y, mouseX - player.x);
+  /** Online replay: the remote earth player cast Dust Screen — blind/blur us from the npc cone. */
+  doNpcDustScreen(tx: number, ty: number): void {
+    this.castDustScreen(tx, ty, 'npc', this.arena.scene.time.now);
+  }
+
+  private castDustScreen(aimX: number, aimY: number, owner: 'player' | 'npc', time: number): void {
+    const origin = owner === 'player' ? this.arena.player : this.arena.npc;
+
+    const angle = Math.atan2(aimY - origin.y, aimX - origin.x);
     const halfAngleRad = Phaser.Math.DegToRad(DUST_SCREEN_HALF_ANGLE_DEG);
 
     const gfx = this.arena.scene.add.graphics().setDepth(4);
     gfx.fillStyle(0xaa9977, 0.32);
-    gfx.slice(player.x, player.y, DUST_SCREEN_RANGE, angle - halfAngleRad, angle + halfAngleRad, false);
+    gfx.slice(origin.x, origin.y, DUST_SCREEN_RANGE, angle - halfAngleRad, angle + halfAngleRad, false);
     gfx.fillPath();
     this.arena.scene.tweens.add({ targets: gfx, alpha: 0, duration: 450, onComplete: () => gfx.destroy() });
-    this.arena.showFloatingText(player.x, player.y - 30, '💨 DUST SCREEN', '#aa9977');
+    this.arena.showFloatingText(origin.x, origin.y - 30, '💨 DUST SCREEN', '#aa9977');
 
-    for (const t of this.arena.enemies) {
+    // 'npc' cones (online replay) blur the local player; 'player' cones blind enemies/husks.
+    const targets = owner === 'npc' ? [this.arena.player] : this.arena.enemies;
+    for (const t of targets) {
       if (!t.active || t.hp <= 0) continue;
-      if (Phaser.Math.Distance.Between(player.x, player.y, t.x, t.y) > DUST_SCREEN_RANGE) continue;
-      const toTarget = Math.atan2(t.y - player.y, t.x - player.x);
+      if (Phaser.Math.Distance.Between(origin.x, origin.y, t.x, t.y) > DUST_SCREEN_RANGE) continue;
+      const toTarget = Math.atan2(t.y - origin.y, t.x - origin.x);
       if (Math.abs(Phaser.Math.Angle.Wrap(toTarget - angle)) > halfAngleRad) continue;
 
       if (t instanceof Husk) {

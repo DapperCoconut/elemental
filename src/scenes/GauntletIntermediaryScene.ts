@@ -63,7 +63,7 @@ const INFINITY_ABSTRACT_COMBINED_ELEMENTS: ElementDef[] = [
   { id: 'magnet',     name: 'Magnet',     emoji: '🧲' },
   { id: 'metal',      name: 'Metal',      emoji: '⚙️'  },
   { id: 'plasma',     name: 'Plasma',     emoji: '🔮'  },
-  { id: 'death',      name: 'Death',      emoji: '💀'  },
+  { id: 'gunpowder', name: 'Gunpowder', emoji: '💀'  },
   { id: 'echo',       name: 'Echo',       emoji: '🦇'  },
   { id: 'rubber',     name: 'Rubber',     emoji: '🪀'  },
   { id: 'magic',      name: 'Magic',      emoji: '📖'  },

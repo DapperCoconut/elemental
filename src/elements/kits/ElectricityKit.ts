@@ -32,6 +32,8 @@ interface KineticBomb {
   detonateAt: number;
   lastHp: number;
   damageTaken: number;
+  /** 'player' bombs seek/hit enemies; 'npc' bombs (online replay) seek/hit the local player. */
+  owner: 'player' | 'npc';
 }
 
 const KINETIC_BOMB_COOLDOWN_MS = 14000;
@@ -45,6 +47,7 @@ const KINETIC_BOMB_EXPLOSION_RADIUS = 150;
 
 export interface ElectricityArenaApi {
   readonly player: Fighter;
+  readonly npc: Fighter;
   readonly enemies: Fighter[];
   readonly scene: Phaser.Scene;
   readonly projectiles: Phaser.Physics.Arcade.Group;
@@ -371,7 +374,7 @@ export class ElectricityKit {
         for (const t of enemies) {
           if (!t.active || t.hp <= 0) continue;
           if (Phaser.Math.Distance.Between(sc.x, sc.y, t.x, t.y) <= 70) {
-            t.takeDamage(18);
+            t.takeDamage(18, { source: sc, sourceX: sc.x, sourceY: sc.y });
             this.arena.spawnHitFlash(t.x, t.y, 0x88ccff);
             this.arena.showFloatingText(t.x, t.y - 20, '18', '#88ccff');
           }
@@ -758,8 +761,31 @@ export class ElectricityKit {
       sprite, x: player.x, y: player.y,
       vx: (dx / len) * KINETIC_BOMB_SPEED, vy: (dy / len) * KINETIC_BOMB_SPEED,
       attached: false, target: null, detonateAt: 0, lastHp: 0, damageTaken: 0,
+      owner: 'player',
     });
     this.arena.showFloatingText(player.x, player.y - 30, '⚡ KINETIC BOMB', '#ffaa00');
+    // Note: cast is already broadcast online via player.triggerCooldown('kinetic-bomb').
+  }
+
+  /** Online replay: the remote electricity player cast Kinetic Bomb — launch one from the npc replica. */
+  doNpcKineticBomb(tx: number, ty: number): void {
+    const { npc, scene } = this.arena;
+    const dx = tx - npc.x;
+    const dy = ty - npc.y;
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    const sprite = scene.add.circle(npc.x, npc.y, 10, 0xffaa00, 0.9)
+      .setStrokeStyle(2, 0xffee00, 0.9).setDepth(6);
+    this.kineticBombs.push({
+      sprite, x: npc.x, y: npc.y,
+      vx: (dx / len) * KINETIC_BOMB_SPEED, vy: (dy / len) * KINETIC_BOMB_SPEED,
+      attached: false, target: null, detonateAt: 0, lastHp: 0, damageTaken: 0,
+      owner: 'npc',
+    });
+  }
+
+  /** Online: opponent is electricity — advance only the systems that can affect our local fighter. */
+  updateNpc(time: number, delta: number): void {
+    this.updateKineticBombs(time, delta);
   }
 
   /** 0 = just cast, 1 = ready. Drives the HUD bar when Kinetic Bomb is bound to a slot. */
@@ -768,11 +794,13 @@ export class ElectricityKit {
   }
 
   private updateKineticBombs(time: number, delta: number): void {
-    const { enemies, scene } = this.arena;
+    const { scene } = this.arena;
     const W = scene.scale.width;
     const H = scene.scale.height;
     for (let i = this.kineticBombs.length - 1; i >= 0; i--) {
       const kb = this.kineticBombs[i];
+      // 'npc' bombs are the opponent's, replayed on this victim sim — they seek us.
+      const seekTargets = kb.owner === 'npc' ? [this.arena.player] : this.arena.enemies;
 
       if (!kb.attached) {
         kb.x += kb.vx * (delta / 1000);
@@ -784,7 +812,7 @@ export class ElectricityKit {
           continue;
         }
         let hitTarget: Fighter | null = null;
-        for (const t of enemies) {
+        for (const t of seekTargets) {
           if (!t.active || t.hp <= 0) continue;
           if (Phaser.Math.Distance.Between(kb.x, kb.y, t.x, t.y) <= KINETIC_BOMB_HIT_RADIUS) {
             hitTarget = t;
@@ -827,7 +855,8 @@ export class ElectricityKit {
     const x = kb.target ? kb.target.x : kb.x;
     const y = kb.target ? kb.target.y : kb.y;
     const dmg = KINETIC_BOMB_BASE_DAMAGE + Math.floor(kb.damageTaken / 3);
-    for (const t of this.arena.enemies) {
+    const blastTargets = kb.owner === 'npc' ? [this.arena.player] : this.arena.enemies;
+    for (const t of blastTargets) {
       if (!t.active || t.hp <= 0) continue;
       if (Phaser.Math.Distance.Between(x, y, t.x, t.y) <= KINETIC_BOMB_EXPLOSION_RADIUS) {
         t.takeDamage(dmg);

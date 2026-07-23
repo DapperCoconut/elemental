@@ -452,13 +452,11 @@ export class BootScene extends Phaser.Scene {
     gfx.strokeCircle(24, 24, 20);
     gfx.generateTexture('elem-light', 48, 48);
 
-    // Holy blade projectile (slim bright white lance shape)
+    // Prism lance projectile (plain triangle, tinted per bolt)
     gfx.clear();
     gfx.fillStyle(0xffffff);
-    gfx.fillRect(0, 3, 20, 4);
-    gfx.fillStyle(0xffee88);
-    gfx.fillTriangle(18, 0, 26, 5, 18, 10);
-    gfx.generateTexture('proj-holy-blade', 26, 10);
+    gfx.fillTriangle(0, 0, 0, 20, 24, 10);
+    gfx.generateTexture('proj-light-triangle', 24, 20);
 
     // Dummy element texture (grey circle with target crosshair stroke)
     gfx.clear();
@@ -526,7 +524,7 @@ export class BootScene extends Phaser.Scene {
     gfx.strokeCircle(24, 24, 22);
     gfx.generateTexture('elem-metal', 48, 48);
 
-    // Death element texture — dark purple circle with skull-like cross
+    // Gunpowder element texture — dark purple circle with skull-like cross
     gfx.clear();
     gfx.fillStyle(0x220033, 1);
     gfx.fillCircle(24, 24, 22);
@@ -536,19 +534,15 @@ export class BootScene extends Phaser.Scene {
     // cross lines for skull accent
     gfx.beginPath(); gfx.moveTo(24, 10); gfx.lineTo(24, 38); gfx.strokePath();
     gfx.beginPath(); gfx.moveTo(10, 24); gfx.lineTo(38, 24); gfx.strokePath();
-    gfx.generateTexture('elem-death', 48, 48);
+    gfx.generateTexture('elem-gunpowder', 48, 48);
     gfx.clear();
 
-    // proj-death-bolt — small dark purple bolt for Daemon barrage
-    gfx.fillStyle(0xcc44ff, 1);
-    gfx.fillCircle(6, 6, 5);
-    gfx.generateTexture('proj-death-bolt', 12, 12);
-    gfx.clear();
-
-    // proj-death-dagger — 14×4 dark purple pointed projectile (Demon perk)
-    gfx.fillStyle(0x660044, 1);
-    gfx.fillRect(0, 0, 14, 4);
-    gfx.generateTexture('proj-death-dagger', 14, 4);
+    // proj-gunpowder-musket — fast musket ball with a brass tip
+    gfx.fillStyle(0x3a2a1a, 1);
+    gfx.fillRect(0, 1, 16, 3);
+    gfx.fillStyle(0xddaa55, 1);
+    gfx.fillCircle(16, 2, 3);
+    gfx.generateTexture('proj-gunpowder-musket', 20, 5);
     gfx.clear();
 
     // Metal chain link projectile — small steel rect
@@ -583,33 +577,6 @@ export class BootScene extends Phaser.Scene {
     gfx.strokeCircle(8, 8, 8);
     gfx.generateTexture('proj-metal-taser', 16, 16);
 
-    // Void element texture — near-black circle with dark purple stroke and inner ring
-    gfx.clear();
-    gfx.fillStyle(0x110022, 1);
-    gfx.fillCircle(24, 24, 22);
-    gfx.lineStyle(3, 0x440066, 1);
-    gfx.strokeCircle(24, 24, 22);
-    gfx.lineStyle(2, 0x8800cc, 0.7);
-    gfx.strokeCircle(24, 24, 13);
-    gfx.generateTexture('elem-void', 48, 48);
-    gfx.clear();
-
-    // proj-void-floater — small dark orb (~10px)
-    gfx.fillStyle(0x330044, 1);
-    gfx.fillCircle(6, 6, 6);
-    gfx.lineStyle(2, 0xaa00ff, 0.9);
-    gfx.strokeCircle(6, 6, 5);
-    gfx.generateTexture('proj-void-floater', 12, 12);
-    gfx.clear();
-
-    // proj-void-pulse — medium dark circle for Re-Lapse (~14px)
-    gfx.fillStyle(0x220033, 1);
-    gfx.fillCircle(7, 7, 7);
-    gfx.lineStyle(2, 0x8800cc, 1);
-    gfx.strokeCircle(7, 7, 6);
-    gfx.generateTexture('proj-void-pulse', 14, 14);
-    gfx.clear();
-
     // Rubber element texture — pink circle with rubber-band loop
     gfx.clear();
     gfx.fillStyle(0xff5577, 1);
@@ -640,6 +607,27 @@ export class BootScene extends Phaser.Scene {
     gfx.beginPath(); gfx.moveTo(24, 24); gfx.lineTo(35, 24); gfx.strokePath();
     gfx.beginPath(); gfx.moveTo(24, 32); gfx.lineTo(35, 32); gfx.strokePath();
     gfx.generateTexture('elem-magic', 48, 48);
+    gfx.clear();
+
+    // fx-chicken — Magic Mastery Transmogrify: white circle body, yellow beak, two white wings
+    gfx.fillStyle(0xffffff, 1);
+    gfx.fillCircle(24, 24, 22);
+    gfx.lineStyle(3, 0xdddddd, 1);
+    gfx.strokeCircle(24, 24, 22);
+    gfx.fillStyle(0xffffff, 1);
+    gfx.fillEllipse(12, 16, 12, 8);
+    gfx.fillEllipse(36, 16, 12, 8);
+    gfx.lineStyle(2, 0xcccccc, 0.9);
+    gfx.strokeEllipse(12, 16, 12, 8);
+    gfx.strokeEllipse(36, 16, 12, 8);
+    gfx.fillStyle(0xffcc00, 1);
+    gfx.beginPath();
+    gfx.moveTo(24, 26);
+    gfx.lineTo(31, 30);
+    gfx.lineTo(24, 34);
+    gfx.closePath();
+    gfx.fillPath();
+    gfx.generateTexture('fx-chicken', 48, 48);
     gfx.clear();
 
     // proj-magic-missile — small purple streak with bright tip
@@ -835,118 +823,17 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('elem-technology', 48, 48);
     gfx.clear();
 
-    // proj-tech-flail-ball — 24px dark metal sphere with rivet highlights
-    gfx.fillStyle(0x334455, 1);
-    gfx.fillCircle(12, 12, 12);
-    gfx.lineStyle(2, 0x88aacc, 1);
-    gfx.strokeCircle(12, 12, 11);
-    gfx.fillStyle(0x88aacc, 1);
-    gfx.fillCircle(8, 8, 3);
-    gfx.fillCircle(17, 7, 2);
-    gfx.fillStyle(0x556677, 1);
-    gfx.fillCircle(15, 17, 4);
-    gfx.generateTexture('proj-tech-flail-ball', 24, 24);
-    gfx.clear();
-
-    // proj-tech-flail-chain — 8×8 single chain link
-    gfx.fillStyle(0x556677, 1);
-    gfx.fillRect(0, 2, 8, 4);
-    gfx.lineStyle(1, 0x88aacc, 1);
-    gfx.strokeRect(0, 2, 8, 4);
-    gfx.lineStyle(1, 0xaaccee, 0.7);
-    gfx.strokeRect(1, 3, 2, 2);
-    gfx.strokeRect(5, 3, 2, 2);
-    gfx.generateTexture('proj-tech-flail-chain', 8, 8);
-    gfx.clear();
-
-    // proj-tech-bullet — 10×6 green pixel bullet with trailing glow
-    gfx.fillStyle(0x22aa66, 1);
-    gfx.fillRect(0, 1, 8, 4);
-    gfx.fillStyle(0x88ffcc, 1);
-    gfx.fillRect(7, 0, 4, 6);
-    gfx.fillStyle(0x44ccaa, 0.5);
-    gfx.fillRect(0, 0, 4, 6);
-    gfx.generateTexture('proj-tech-bullet', 12, 6);
-    gfx.clear();
-
-    // proj-tech-protestor — 32×32 red circle
-    gfx.fillStyle(0xff2222, 1);
-    gfx.fillCircle(16, 16, 14);
-    gfx.generateTexture('proj-tech-protestor', 32, 32);
-    gfx.clear();
-
-    // proj-tech-jail-bar — 4×60 vertical cyan bar (drawn live as jail box outline)
-    gfx.fillStyle(0x44ccaa, 0.9);
-    gfx.fillRect(0, 0, 4, 60);
-    gfx.lineStyle(1, 0x88ffee, 1);
-    gfx.strokeRect(0, 0, 4, 60);
-    gfx.generateTexture('proj-tech-jail-bar', 4, 60);
-    gfx.clear();
-
-    // proj-tech-disc — 18×18 cyan spinning disc
-    gfx.fillStyle(0x2299ff, 1);
-    gfx.fillCircle(9, 9, 9);
-    gfx.lineStyle(2, 0x88ddff, 1);
-    gfx.strokeCircle(9, 9, 7);
-    gfx.fillStyle(0xaaeeff, 1);
-    gfx.fillCircle(9, 9, 3);
-    gfx.generateTexture('proj-tech-disc', 18, 18);
-    gfx.clear();
-
-    // proj-tech-grenade — 14×16 dark-green grenade
-    gfx.fillStyle(0x334422, 1);
-    gfx.fillCircle(7, 9, 7);
-    gfx.fillStyle(0x556633, 1);
-    gfx.fillRect(5, 2, 4, 5);
-    gfx.fillStyle(0x88aa44, 1);
-    gfx.fillRect(5, 0, 4, 3);
-    gfx.lineStyle(1, 0x88aa44, 1);
-    gfx.strokeCircle(7, 9, 6);
-    gfx.generateTexture('proj-tech-grenade', 14, 16);
-    gfx.clear();
-
-    // proj-tech-malware — 22×22 blue square with scan-lines
-    gfx.fillStyle(0x1133ee, 1);
-    gfx.fillRect(0, 0, 22, 22);
-    gfx.lineStyle(2, 0x5577ff, 1);
-    gfx.strokeRect(1, 1, 20, 20);
-    gfx.lineStyle(1, 0x3355cc, 0.7);
-    for (let row = 4; row < 22; row += 5) { gfx.beginPath(); gfx.moveTo(2, row); gfx.lineTo(20, row); gfx.strokePath(); }
-    gfx.generateTexture('proj-tech-malware', 22, 22);
-    gfx.clear();
-
-    // proj-tech-ransomware — 26×26 orange lock circle
-    gfx.fillStyle(0xff6600, 1);
-    gfx.fillCircle(13, 13, 13);
-    gfx.lineStyle(3, 0xffaa33, 1);
-    gfx.strokeCircle(13, 13, 11);
-    gfx.fillStyle(0xffcc66, 1);
-    gfx.fillRect(9, 8, 8, 6);
-    gfx.lineStyle(2, 0xffffff, 1);
-    gfx.strokeCircle(13, 10, 4);
-    gfx.generateTexture('proj-tech-ransomware', 26, 26);
-    gfx.clear();
-
-    // proj-tech-trojan — 28×26 wooden crate with circuit markings
-    gfx.fillStyle(0x885533, 1);
-    gfx.fillRect(1, 1, 26, 24);
-    gfx.lineStyle(2, 0xddaa66, 1);
-    gfx.strokeRect(1, 1, 26, 24);
-    gfx.lineStyle(2, 0x664422, 1);
-    gfx.beginPath(); gfx.moveTo(14, 1); gfx.lineTo(14, 25); gfx.strokePath();
-    gfx.beginPath(); gfx.moveTo(1, 13); gfx.lineTo(27, 13); gfx.strokePath();
-    gfx.lineStyle(1, 0x44ccaa, 0.8);
-    gfx.strokeRect(5, 5, 8, 8);
-    gfx.strokeRect(15, 15, 8, 6);
-    gfx.generateTexture('proj-tech-trojan', 28, 26);
-    gfx.clear();
-
-    // proj-tech-cluster — 8×8 small red cluster bomb
-    gfx.fillStyle(0xff3300, 1);
-    gfx.fillCircle(4, 4, 4);
-    gfx.lineStyle(1, 0xff7744, 1);
-    gfx.strokeCircle(4, 4, 3);
-    gfx.generateTexture('proj-tech-cluster', 8, 8);
+    // proj-tech-cruncher — 22×14 green triangle (Addicting Cruncher)
+    gfx.fillStyle(0x33ff88, 1);
+    gfx.beginPath();
+    gfx.moveTo(20, 7);
+    gfx.lineTo(2, 1);
+    gfx.lineTo(2, 13);
+    gfx.closePath();
+    gfx.fillPath();
+    gfx.lineStyle(2, 0xaaffcc, 1);
+    gfx.strokePath();
+    gfx.generateTexture('proj-tech-cruncher', 22, 14);
     gfx.clear();
 
     // ── Echo element (abstract combined: fate + light) ───────────────────────
@@ -1044,87 +931,340 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('elem-silence', 48, 48);
     gfx.clear();
 
-    // proj-silence-eye — 18×18 dark eye projectile with red iris
-    gfx.fillStyle(0x110011, 1);
-    gfx.fillCircle(9, 9, 9);
-    gfx.fillStyle(0xaa0022, 1);
-    gfx.fillCircle(9, 9, 5);
-    gfx.fillStyle(0x000000, 1);
-    gfx.fillCircle(9, 9, 2);
-    gfx.fillStyle(0xffffff, 0.7);
-    gfx.fillCircle(11, 7, 1);
-    gfx.generateTexture('proj-silence-eye', 18, 18);
+    // silence-stalker — 28×28 near-black circle that blends into the border fog
+    gfx.fillStyle(0x0a0010, 1);
+    gfx.fillCircle(14, 14, 13);
+    gfx.lineStyle(1, 0x1e0a2a, 0.9);
+    gfx.strokeCircle(14, 14, 13);
+    gfx.generateTexture('silence-stalker', 28, 28);
     gfx.clear();
 
-    // proj-silence-hook — 16×16 grey crescent hook
-    gfx.lineStyle(3, 0x888888, 1);
-    gfx.beginPath();
-    gfx.arc(8, 8, 6, -Math.PI * 0.2, Math.PI * 0.9);
-    gfx.strokePath();
-    gfx.lineStyle(2, 0xaaaaaa, 1);
-    gfx.beginPath();
-    gfx.moveTo(12, 13);
-    gfx.lineTo(14, 15);
-    gfx.strokePath();
-    gfx.generateTexture('proj-silence-hook', 16, 16);
-    gfx.clear();
-
-    // tree-silence — 48×72 leafy tree: brown trunk + dark-green canopy
-    gfx.fillStyle(0x5c3a1e, 1);
-    gfx.fillRect(18, 42, 12, 30);
-    gfx.fillStyle(0x1a4a1a, 1);
-    gfx.fillCircle(24, 28, 20);
-    gfx.fillStyle(0x0d2e0d, 1);
-    gfx.fillCircle(24, 20, 13);
-    gfx.lineStyle(1, 0x2d6e2d, 0.5);
-    gfx.strokeCircle(24, 28, 20);
-    gfx.generateTexture('tree-silence', 48, 72);
-    gfx.clear();
-
-    // eye-silence — 12×12 small eye (used in They Watch border goop)
-    gfx.fillStyle(0xdddddd, 1);
-    gfx.fillEllipse(6, 6, 10, 7);
+    // silence-stalker-eye — 14×9 white eye (tinted redder as the stalker matures)
+    gfx.fillStyle(0xffffff, 1);
+    gfx.fillEllipse(7, 4, 12, 7);
     gfx.fillStyle(0x220033, 1);
-    gfx.fillCircle(6, 6, 3);
-    gfx.fillStyle(0x000000, 1);
-    gfx.fillCircle(6, 6, 1);
-    gfx.generateTexture('eye-silence', 12, 12);
+    gfx.fillCircle(7, 4, 2);
+    gfx.generateTexture('silence-stalker-eye', 14, 9);
     gfx.clear();
 
-    // mask-silence — 28×22 white hockey mask with dark eye holes and vertical bar lines
-    gfx.fillStyle(0xeeeeee, 1);
-    gfx.fillEllipse(14, 11, 26, 20); // face oval
-    gfx.fillStyle(0x000000, 0.85);
-    gfx.fillEllipse(8, 9, 6, 5);    // left eye hole
-    gfx.fillEllipse(20, 9, 6, 5);   // right eye hole
-    gfx.fillStyle(0x000000, 0.35);
-    // Vertical bar lines (hockey mask)
-    for (let bx2 = 5; bx2 <= 23; bx2 += 6) {
-      gfx.fillRect(bx2, 14, 2, 5);
+    // silence-face-eye — 12×8 facing indicator eye (silence user's screen only)
+    gfx.fillStyle(0xddddee, 0.95);
+    gfx.fillEllipse(6, 4, 10, 6);
+    gfx.fillStyle(0x110022, 1);
+    gfx.fillCircle(7, 4, 2);
+    gfx.generateTexture('silence-face-eye', 12, 8);
+    gfx.clear();
+
+    // silence-grabber — 44×44 lumpy black blob studded with eyes
+    gfx.fillStyle(0x060009, 1);
+    gfx.fillCircle(22, 22, 19);
+    gfx.fillCircle(10, 14, 9);
+    gfx.fillCircle(34, 12, 8);
+    gfx.fillCircle(34, 33, 9);
+    gfx.fillCircle(10, 32, 8);
+    gfx.fillStyle(0xddddee, 1);
+    gfx.fillEllipse(12, 15, 7, 4);
+    gfx.fillEllipse(30, 12, 6, 4);
+    gfx.fillEllipse(22, 24, 8, 5);
+    gfx.fillEllipse(33, 32, 6, 4);
+    gfx.fillEllipse(11, 31, 5, 3);
+    gfx.fillStyle(0xaa0022, 1);
+    gfx.fillCircle(12, 15, 1.5);
+    gfx.fillCircle(30, 12, 1.5);
+    gfx.fillCircle(22, 24, 2);
+    gfx.fillCircle(33, 32, 1.5);
+    gfx.fillCircle(11, 31, 1);
+    gfx.generateTexture('silence-grabber', 44, 44);
+    gfx.clear();
+
+    // silence-hand — 32×32 gangly five-fingered hand
+    gfx.fillStyle(0x0a0010, 1);
+    gfx.fillEllipse(16, 20, 16, 13); // palm
+    for (let fi = 0; fi < 5; fi++) {
+      const fa = (-0.85 + fi * 0.42);
+      const fx = 16 + Math.cos(fa - Math.PI / 2) * 13;
+      const fy = 18 + Math.sin(fa - Math.PI / 2) * 13;
+      gfx.lineStyle(3, 0x0a0010, 1);
+      gfx.lineBetween(16, 18, fx, fy);
+      gfx.fillCircle(fx, fy, 2);
     }
-    // Horizontal chin bar
-    gfx.fillRect(5, 17, 18, 2);
-    gfx.generateTexture('mask-silence', 28, 22);
+    gfx.generateTexture('silence-hand', 32, 32);
     gfx.clear();
 
-    // goop-silence-form — 80×80 irregular black blob with yellow eyes (Q+ goop transform)
-    gfx.fillStyle(0x0a0a0a, 1);
-    gfx.fillCircle(40, 40, 36);
-    gfx.fillCircle(20, 28, 16);
-    gfx.fillCircle(58, 22, 14);
-    gfx.fillCircle(62, 52, 18);
-    gfx.fillCircle(24, 56, 15);
-    gfx.fillStyle(0xffff00, 1);
-    gfx.fillEllipse(28, 32, 8, 5);
-    gfx.fillEllipse(52, 28, 8, 5);
-    gfx.fillEllipse(22, 50, 6, 4);
-    gfx.fillEllipse(58, 50, 6, 4);
+    // silence-teeth — 220×220 feast circle: grey disc ringed with inward teeth
+    gfx.fillStyle(0x333338, 0.5);
+    gfx.fillCircle(110, 110, 108);
+    gfx.lineStyle(3, 0x555560, 0.9);
+    gfx.strokeCircle(110, 110, 108);
+    gfx.fillStyle(0xddddcc, 0.95);
+    for (let ti = 0; ti < 22; ti++) {
+      const ta = (ti / 22) * Math.PI * 2;
+      const ox = 110 + Math.cos(ta) * 104;
+      const oy = 110 + Math.sin(ta) * 104;
+      const ix = 110 + Math.cos(ta) * 82;
+      const iy = 110 + Math.sin(ta) * 82;
+      const px = Math.cos(ta + Math.PI / 2) * 6;
+      const py = Math.sin(ta + Math.PI / 2) * 6;
+      gfx.fillTriangle(ox - px, oy - py, ox + px, oy + py, ix, iy);
+    }
+    gfx.generateTexture('silence-teeth', 220, 220);
+    gfx.clear();
+
+    // silence-blob — 110×110 hallway horror: black mass of eyes, teeth and hands
+    gfx.fillStyle(0x050008, 1);
+    gfx.fillCircle(55, 58, 48);
+    gfx.fillCircle(26, 36, 22);
+    gfx.fillCircle(84, 34, 20);
+    gfx.fillCircle(20, 80, 18);
+    gfx.fillCircle(90, 82, 19);
+    // Protruding hands (finger clusters at the rim)
+    gfx.lineStyle(4, 0x050008, 1);
+    for (let hi = 0; hi < 6; hi++) {
+      const ha = -Math.PI / 2 + (hi - 2.5) * 0.5;
+      const hx = 55 + Math.cos(ha) * 52;
+      const hy = 58 + Math.sin(ha) * 52;
+      for (let fj = -1; fj <= 1; fj++) {
+        gfx.lineBetween(hx, hy, hx + Math.cos(ha + fj * 0.35) * 12, hy + Math.sin(ha + fj * 0.35) * 12);
+      }
+    }
+    // Scattered mismatched eyes
+    const blobEyes: Array<[number, number, number]> = [
+      [34, 40, 6], [70, 34, 5], [52, 52, 8], [28, 70, 5], [82, 62, 6], [60, 80, 4], [44, 28, 4],
+    ];
+    for (const [ex, ey, er] of blobEyes) {
+      gfx.fillStyle(0xddddee, 1);
+      gfx.fillEllipse(ex, ey, er * 2, er * 1.3);
+      gfx.fillStyle(0xaa0022, 1);
+      gfx.fillCircle(ex, ey, Math.max(1.5, er * 0.4));
+    }
+    // Gaping mouth full of teeth
     gfx.fillStyle(0x000000, 1);
-    gfx.fillCircle(30, 32, 2);
-    gfx.fillCircle(54, 28, 2);
-    gfx.fillCircle(23, 50, 1);
-    gfx.fillCircle(59, 50, 1);
-    gfx.generateTexture('goop-silence-form', 80, 80);
+    gfx.fillEllipse(55, 92, 44, 20);
+    gfx.fillStyle(0xddddcc, 1);
+    for (let mt = 0; mt < 7; mt++) {
+      const mx = 37 + mt * 6;
+      gfx.fillTriangle(mx, 84, mx + 5, 84, mx + 2.5, 92);
+      gfx.fillTriangle(mx, 101, mx + 5, 101, mx + 2.5, 93);
+    }
+    gfx.generateTexture('silence-blob', 110, 110);
+    gfx.clear();
+
+    // silence-spit — 12×12 grey-green glob
+    gfx.fillStyle(0x7a8a66, 1);
+    gfx.fillCircle(6, 6, 5);
+    gfx.fillStyle(0x9aaa88, 0.8);
+    gfx.fillCircle(4, 4, 2);
+    gfx.generateTexture('silence-spit', 12, 12);
+    gfx.clear();
+
+    // silence-noise-0/1/2 — 20×20 static frames for hallucination flicker
+    for (let ni = 0; ni < 3; ni++) {
+      for (let px = 0; px < 10; px++) {
+        for (let py = 0; py < 10; py++) {
+          const v = Math.random();
+          gfx.fillStyle(v > 0.5 ? 0xffffff : 0x000000, 0.25 + Math.random() * 0.5);
+          gfx.fillRect(px * 2, py * 2, 2, 2);
+        }
+      }
+      gfx.generateTexture(`silence-noise-${ni}`, 20, 20);
+      gfx.clear();
+    }
+
+    // silence-big-eye — 64×40 bloodshot eye for the hallucination eye-screen
+    gfx.fillStyle(0xddddee, 1);
+    gfx.fillEllipse(32, 20, 60, 34);
+    gfx.lineStyle(1, 0xaa4444, 0.8);
+    for (let vi = 0; vi < 6; vi++) {
+      const va = (vi / 6) * Math.PI * 2;
+      gfx.lineBetween(32 + Math.cos(va) * 10, 20 + Math.sin(va) * 6, 32 + Math.cos(va) * 27, 20 + Math.sin(va) * 15);
+    }
+    gfx.fillStyle(0x881122, 1);
+    gfx.fillCircle(32, 20, 9);
+    gfx.fillStyle(0x000000, 1);
+    gfx.fillCircle(32, 20, 4);
+    gfx.generateTexture('silence-big-eye', 64, 40);
+    gfx.clear();
+
+    // silence-seeker — 48×36 mutated watcher: lumpy body, two big black wings, red glare
+    gfx.fillStyle(0x050008, 1);
+    // wings: layered feather triangles fanning out from the shoulders
+    for (let wi = 0; wi < 4; wi++) {
+      const wy = 8 + wi * 5;
+      gfx.fillTriangle(20, 16, 2, wy, 12, 22);       // left wing feathers
+      gfx.fillTriangle(28, 16, 46, wy, 36, 22);      // right wing feathers
+    }
+    // grotesque body: off-center lumps
+    gfx.fillStyle(0x0a0010, 1);
+    gfx.fillCircle(24, 20, 12);
+    gfx.fillCircle(18, 14, 7);
+    gfx.fillCircle(31, 15, 6);
+    gfx.fillCircle(24, 29, 6);
+    gfx.lineStyle(1, 0x2a0a3a, 0.9);
+    gfx.strokeCircle(24, 20, 12);
+    // the red glare
+    gfx.fillStyle(0xddddee, 1);
+    gfx.fillEllipse(24, 19, 13, 8);
+    gfx.fillStyle(0xff1122, 1);
+    gfx.fillCircle(24, 19, 3.5);
+    gfx.fillStyle(0x000000, 1);
+    gfx.fillCircle(24, 19, 1.5);
+    // a few stray teeth under the eye
+    gfx.fillStyle(0xddddcc, 1);
+    gfx.fillTriangle(18, 26, 21, 26, 19.5, 30);
+    gfx.fillTriangle(23, 27, 26, 27, 24.5, 31);
+    gfx.fillTriangle(28, 26, 31, 26, 29.5, 30);
+    gfx.generateTexture('silence-seeker', 48, 36);
+    gfx.clear();
+
+    // silence-vulture — 48×46 terrifying smiling bird: hunched shape, dead eyes, too-wide grin
+    gfx.fillStyle(0x0a0410, 1);
+    gfx.fillEllipse(24, 30, 34, 26);                 // hunched body
+    gfx.fillCircle(24, 14, 11);                      // head
+    // ragged wing edges
+    for (let vi = 0; vi < 5; vi++) {
+      gfx.fillTriangle(8 + vi * 8, 40, 12 + vi * 8, 40, 10 + vi * 8, 46);
+    }
+    // scrawny neck ring
+    gfx.lineStyle(2, 0x2a1030, 0.9);
+    gfx.strokeCircle(24, 14, 11);
+    // dead white eyes — small pupils that don't quite point the same way
+    gfx.fillStyle(0xeeeeee, 1);
+    gfx.fillCircle(19, 11, 4);
+    gfx.fillCircle(29, 11, 4);
+    gfx.fillStyle(0x000000, 1);
+    gfx.fillCircle(20, 12, 1.4);
+    gfx.fillCircle(28, 10, 1.4);
+    // the smile: a white crescent far too wide for the head
+    gfx.fillStyle(0xddddcc, 1);
+    gfx.slice(24, 16, 9, Phaser.Math.DegToRad(15), Phaser.Math.DegToRad(165), false);
+    gfx.fillPath();
+    gfx.lineStyle(1, 0x0a0410, 1);
+    for (let ti = 0; ti < 5; ti++) {
+      const tx2 = 17 + ti * 3.5;
+      gfx.lineBetween(tx2, 17, tx2, 23);
+    }
+    gfx.generateTexture('silence-vulture', 48, 46);
+    gfx.clear();
+
+    // silence-striker — 56×56 werewolf horror: jagged fur silhouette, ears, claws, burning eyes
+    gfx.fillStyle(0x0c0612, 1);
+    gfx.fillCircle(28, 30, 20);                      // torso
+    // jagged fur all around the rim
+    for (let fi = 0; fi < 16; fi++) {
+      const fa = (fi / 16) * Math.PI * 2;
+      const bx = 28 + Math.cos(fa) * 19;
+      const by = 30 + Math.sin(fa) * 19;
+      const tx3 = 28 + Math.cos(fa + 0.09) * 27;
+      const ty3 = 30 + Math.sin(fa + 0.09) * 27;
+      const cx3 = 28 + Math.cos(fa - 0.14) * 19;
+      const cy3 = 30 + Math.sin(fa - 0.14) * 19;
+      gfx.fillTriangle(bx, by, tx3, ty3, cx3, cy3);
+    }
+    // ears
+    gfx.fillTriangle(16, 12, 22, 18, 12, 22);
+    gfx.fillTriangle(40, 12, 34, 18, 44, 22);
+    // snout + bared teeth
+    gfx.fillStyle(0x140a1c, 1);
+    gfx.fillEllipse(28, 38, 18, 12);
+    gfx.fillStyle(0xddddcc, 1);
+    for (let mt = 0; mt < 5; mt++) {
+      const mx = 21 + mt * 3.6;
+      gfx.fillTriangle(mx, 36, mx + 3, 36, mx + 1.5, 41);
+    }
+    // claws poking out both sides
+    gfx.fillStyle(0xccccdd, 1);
+    gfx.fillTriangle(6, 32, 12, 30, 10, 37);
+    gfx.fillTriangle(4, 38, 10, 36, 9, 43);
+    gfx.fillTriangle(50, 32, 44, 30, 46, 37);
+    gfx.fillTriangle(52, 38, 46, 36, 47, 43);
+    // burning eyes
+    gfx.fillStyle(0xff1122, 1);
+    gfx.fillEllipse(21, 26, 7, 4);
+    gfx.fillEllipse(35, 26, 7, 4);
+    gfx.fillStyle(0xffee88, 1);
+    gfx.fillCircle(21, 26, 1.2);
+    gfx.fillCircle(35, 26, 1.2);
+    gfx.generateTexture('silence-striker', 56, 56);
+    gfx.clear();
+
+    // silence-eyeball — 16×16 detached boggle eye on its stalk stump
+    gfx.fillStyle(0xddddee, 1);
+    gfx.fillCircle(8, 8, 7);
+    gfx.lineStyle(1, 0xaa4455, 0.9);
+    gfx.strokeCircle(8, 8, 7);
+    gfx.fillStyle(0xaa1122, 1);
+    gfx.fillCircle(8, 8, 3.4);
+    gfx.fillStyle(0x000000, 1);
+    gfx.fillCircle(8, 8, 1.6);
+    gfx.generateTexture('silence-eyeball', 16, 16);
+    gfx.clear();
+
+    // silence-eye-shot — 8×8 red bolt
+    gfx.fillStyle(0xff1133, 1);
+    gfx.fillCircle(4, 4, 3.4);
+    gfx.fillStyle(0xffaaaa, 0.9);
+    gfx.fillCircle(3, 3, 1.3);
+    gfx.generateTexture('silence-eye-shot', 8, 8);
+    gfx.clear();
+
+    // silence-midget — 22×22 pallid biter: round body, teeth crammed onto its leading edge
+    gfx.fillStyle(0xcfc4bb, 1);
+    gfx.fillCircle(11, 11, 9);
+    gfx.lineStyle(1, 0x8a7a70, 0.9);
+    gfx.strokeCircle(11, 11, 9);
+    // black maw on the right side (sprite is rotated to face its meal)
+    gfx.fillStyle(0x1a0508, 1);
+    gfx.slice(11, 11, 9, Phaser.Math.DegToRad(-55), Phaser.Math.DegToRad(55), false);
+    gfx.fillPath();
+    // ferocious interlocking teeth
+    gfx.fillStyle(0xffffff, 1);
+    for (let ti = 0; ti < 4; ti++) {
+      const ta2 = Phaser.Math.DegToRad(-45 + ti * 30);
+      const ox2 = 11 + Math.cos(ta2) * 9;
+      const oy2 = 11 + Math.sin(ta2) * 9;
+      const ix2 = 11 + Math.cos(ta2) * 3;
+      const iy2 = 11 + Math.sin(ta2) * 3;
+      gfx.fillTriangle(ox2, oy2 - 2, ox2, oy2 + 2, ix2, iy2);
+    }
+    // one tiny hateful eye
+    gfx.fillStyle(0x000000, 1);
+    gfx.fillCircle(6, 8, 1.6);
+    gfx.generateTexture('silence-midget', 22, 22);
+    gfx.clear();
+
+    // silence-blood — 6×6 pixelated blood chunk
+    gfx.fillStyle(0x7a0d14, 1);
+    gfx.fillRect(0, 0, 6, 6);
+    gfx.fillStyle(0xa01820, 1);
+    gfx.fillRect(0, 0, 3, 3);
+    gfx.fillStyle(0x550a10, 1);
+    gfx.fillRect(3, 3, 3, 3);
+    gfx.generateTexture('silence-blood', 6, 6);
+    gfx.clear();
+
+    // silence-flesh-eye — 26×26 arena decal: an eye set into puckered flesh
+    gfx.fillStyle(0x8a3040, 0.95);
+    gfx.fillCircle(13, 13, 12);
+    gfx.fillStyle(0xa54a58, 0.9);
+    gfx.fillCircle(13, 13, 9);
+    gfx.fillStyle(0xddddee, 1);
+    gfx.fillEllipse(13, 13, 13, 8);
+    gfx.fillStyle(0x226622, 1);
+    gfx.fillCircle(13, 13, 3.2);
+    gfx.fillStyle(0x000000, 1);
+    gfx.fillCircle(13, 13, 1.5);
+    gfx.generateTexture('silence-flesh-eye', 26, 26);
+    gfx.clear();
+
+    // silence-flesh-teeth — 28×18 arena decal: a gum ridge of crooked teeth
+    gfx.fillStyle(0x8a3040, 0.95);
+    gfx.fillEllipse(14, 12, 26, 11);
+    gfx.fillStyle(0xe8e2d0, 1);
+    for (let ti = 0; ti < 5; ti++) {
+      const tx4 = 4 + ti * 5;
+      gfx.fillTriangle(tx4, 11, tx4 + 4, 11, tx4 + 2, 3 + (ti % 2) * 2);
+    }
+    gfx.generateTexture('silence-flesh-teeth', 28, 18);
     gfx.clear();
 
     // domain-shard — 10×4 black-purple elongated diamond for Domain Expansion
@@ -1228,6 +1368,18 @@ export class BootScene extends Phaser.Scene {
       gfx.clear();
     }
 
+    // Soul — grave headstone (rounded-top slab + a small mound of dirt)
+    gfx.fillStyle(0x776688, 1);
+    gfx.fillCircle(16, 24, 12);
+    gfx.fillRect(4, 24, 24, 22);
+    gfx.lineStyle(2, 0xccaaff, 0.8);
+    gfx.strokeCircle(16, 24, 12);
+    gfx.strokeRect(4, 24, 24, 22);
+    gfx.fillStyle(0x3a2a44, 1);
+    gfx.fillEllipse(16, 47, 30, 8);
+    gfx.generateTexture('soul-grave', 32, 52);
+    gfx.clear();
+
     // proj-note-blue — blue rhythm note
     gfx.fillStyle(0x3388ff, 1);
     gfx.fillCircle(6, 6, 6);
@@ -1263,16 +1415,6 @@ export class BootScene extends Phaser.Scene {
       gfx.lineBetween(16, 16, 16 + Math.cos(ra) * 14, 16 + Math.sin(ra) * 14);
     }
     gfx.generateTexture('elem-fallen-angel', 32, 32);
-    gfx.clear();
-
-    // elem-light-blue — 48×48 blue player sprite (same shape as elem-light but blue)
-    gfx.fillStyle(0x4488ff, 1);
-    gfx.fillCircle(24, 24, 22);
-    gfx.lineStyle(2, 0x88bbff, 1);
-    gfx.strokeCircle(24, 24, 22);
-    gfx.fillStyle(0xffffff, 0.7);
-    gfx.fillCircle(18, 18, 5);
-    gfx.generateTexture('elem-light-blue', 48, 48);
     gfx.clear();
 
     // perk-stalagmite — 20×32 cyan spike (for Stalagmite quad perk)

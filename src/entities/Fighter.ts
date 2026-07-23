@@ -3,6 +3,28 @@ import { Element } from '../elements/Element';
 import { CastContext } from '../elements/Ability';
 import { HealthBar } from '../combat/HealthBar';
 
+/**
+ * Magic Mastery — Levitate: tracks the last known position of any damage-source object
+ * (a puddle, cloud, trap, etc.) so `Fighter.takeDamage` can tell whether it has been sitting
+ * in the same spot for at least `thresholdMs`. Keyed by object identity (WeakMap), so callers
+ * must pass the same persistent object every tick — a fresh literal each call never "ages".
+ */
+const stationaryTrackers = new WeakMap<object, { x: number; y: number; lastMovedAt: number }>();
+
+function isStationaryFor(source: object, x: number, y: number, thresholdMs: number): boolean {
+  const now = Date.now();
+  const rec = stationaryTrackers.get(source);
+  if (!rec) {
+    stationaryTrackers.set(source, { x, y, lastMovedAt: now });
+    return false;
+  }
+  if (Math.abs(rec.x - x) > 1 || Math.abs(rec.y - y) > 1) {
+    rec.x = x; rec.y = y; rec.lastMovedAt = now;
+    return false;
+  }
+  return now - rec.lastMovedAt >= thresholdMs;
+}
+
 export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public hp: number;
   public maxHp: number;
@@ -11,6 +33,10 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public isInvincible = false;
   public shieldCharges = 0;
   public shieldHp = 0;
+  /** Metal R+ (Blood Clottage): dark-red HP layer. Absorbs damage at half rate and is spent before normal HP. */
+  public clottedHp = 0;
+  /** Quantum blue E: gray "weak HP" layer. Absorbs damage like shield HP (bonus), but decays 3/s. */
+  public weakHp = 0;
   public incomingDamageMultiplier = 1;
   /** Quantum element blue-form damage reduction (0.85 in blue form, 1 otherwise). Multiplied in takeDamage. */
   public quantumIncomingMult = 1;
@@ -102,8 +128,6 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public magicChainBound = false;
   public magicChainBoundEnd = 0;
 
-  public silencePossessedUntil = 0;
-
   public slimeConfusedUntil = 0;
   public slimeConfuseVx = 0;
   public slimeConfuseVy = 0;
@@ -118,15 +142,30 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Earth Mastery — Dust Screen: while active, Husk AI wanders/misfires instead of pathfinding normally. */
   public confusedWanderUntil = 0;
 
-  // Silence upgrade status effects
-  public statueUntil = 0;
+  /** Timestamp until which healing is suppressed (mutations). Date.now() based. */
   public healStopUntil = 0;
-  public forceRetreatUntil = 0;
+
+  // ── Silence element statuses ─────────────────────────────────────
+  /** Silenced: only the click ability can be cast until this Date.now() timestamp. */
+  public silencedUntil = 0;
+  /** Hallucinating: players get visual horrors (kit-driven); bots/husks miss ~20% of attacks. Date.now() based. */
+  public hallucinatingUntil = 0;
+  /** Panicked (Silence E+ seeker cone): stabs on this fighter drain only 50 stealth. Date.now() based. */
+  public panickedUntil = 0;
+  /** Grabber perma-debuff: scales husk bite/attack cadence (>1 = slower). Fighters also get cooldownMult scaled. */
+  public attackIntervalMult = 1;
+  /** Radians. Players: aim direction; bots/husks: movement direction. Drives backstab checks + facing-eye HUD. */
+  public facingAngle = 0;
 
   // Dark magic status effects (Magic element upgrades)
   public darkVulnStacks = 0;         // +25% incoming dmg per stack (acid cloud)
   public darkLinkedUntil = 0;        // Torture Trap link expiry (Date.now() based)
   public darkLinkSource: Fighter | null = null; // healed when this fighter takes damage
+
+  // Magic Mastery — Transmogrify: turned into a chicken, can't cast (Date.now() based)
+  public chickenUntil = 0;
+  // Magic Mastery — Levitate passive: immune to static ground hazards (puddles, etc.)
+  public levitating = false;
 
   // Oil E+ Oily status
   public oilyUntil = 0;
@@ -236,9 +275,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     this.healthBar.setMaxHp(this.maxHp);
   }
 
-  takeDamage(amount: number, opts?: { pierce?: boolean; fireDot?: boolean }): void {
+  takeDamage(amount: number, opts?: { pierce?: boolean; fireDot?: boolean; source?: object; sourceX?: number; sourceY?: number }): void {
+    // Magic Mastery — Levitate: immune to damage from a source that hasn't moved in 3s.
+    if (this.levitating && opts?.source && opts.sourceX !== undefined && opts.sourceY !== undefined
+        && isStationaryFor(opts.source, opts.sourceX, opts.sourceY, 3000)) return;
     if (!opts?.pierce && this.isInvincible) return;
-    if (this.statueUntil > 0) this.statueUntil = 0;
 
     // Crit roll: use any incoming crit context set by the attacker
     const critCtx = this.incomingCritCtx;
@@ -305,6 +346,37 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       }
     }
 
+    // Quantum weak HP: a gray bonus layer that soaks damage like shield HP.
+    if (!opts?.pierce && this.weakHp > 0) {
+      const absorbed = Math.min(this.weakHp, amount);
+      this.weakHp -= absorbed;
+      amount -= absorbed;
+      if (amount === 0) {
+        this.emit('damaged', 0);
+        if (!this.forceInvisible) {
+          this.setAlpha(0.7);
+          this.scene.time.delayedCall(200, () => { if (this.active) this.setAlpha(this.forceInvisible ? 0 : 1); });
+        }
+        return;
+      }
+    }
+
+    // Metal R+ (Blood Clottage): clotted HP is spent before normal HP and soaks
+    // damage at half rate — 50 incoming removes 25 clotted and deals 25 through.
+    if (!opts?.pierce && this.clottedHp > 0) {
+      const clotAbsorb = Math.min(this.clottedHp, amount / 2);
+      this.clottedHp = Math.max(0, this.clottedHp - clotAbsorb);
+      amount = Math.max(0, amount - clotAbsorb * 2);
+      if (amount === 0) {
+        this.emit('damaged', 0);
+        if (!this.forceInvisible) {
+          this.setAlpha(0.7);
+          this.scene.time.delayedCall(200, () => { if (this.active) this.setAlpha(this.forceInvisible ? 0 : 1); });
+        }
+        return;
+      }
+    }
+
     this.hp = Math.max(0, this.hp - amount);
     this.emit('damaged', amount);
     if (amount > 0 && this.onDamaged) this.onDamaged(amount);
@@ -336,7 +408,9 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     if (this.netGhost) return;
     if (this.healStopUntil > 0 && Date.now() < this.healStopUntil) return;
     const before = this.hp;
-    this.hp = Math.min(this.maxHp, this.hp + amount);
+    // Clotted HP occupies part of the max-HP pool — normal HP can only refill
+    // up to what isn't clotted, so total (hp + clottedHp) never exceeds maxHp.
+    this.hp = Math.min(this.maxHp - this.clottedHp, this.hp + amount);
     const actual = this.hp - before;
     if (actual > 0 && this.onHeal) this.onHeal(actual);
   }
@@ -408,7 +482,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     if (!ability) return false;
 
     const now = Date.now();
-    if (now < this.disarmedUntil) return false;
+    if (now < this.disarmedUntil || now < this.chickenUntil) return false;
+    if (now < this.silencedUntil && ability.displayKey !== 'Click') return false;
     const ultimateExtra = (ability as { isUltimate?: boolean }).isUltimate ? this.ultimateCooldownMult : 1;
     if (now - (this.cooldowns.get(abilityId) ?? 0) < ability.cooldown * this.cooldownMult * ultimateExtra) return false;
 
@@ -458,7 +533,9 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
   preUpdate(time: number, delta: number): void {
     super.preUpdate(time, delta);
-    this.healthBar.update(this.x, this.y, this.hp, this.shieldHp, this.chargeRatio);
+    // Weak HP decays steadily at 3/s.
+    if (this.weakHp > 0) this.weakHp = Math.max(0, this.weakHp - 3 * (delta / 1000));
+    this.healthBar.update(this.x, this.y, this.hp, this.shieldHp, this.chargeRatio, this.clottedHp, this.weakHp);
   }
 
   destroy(fromScene?: boolean): void {

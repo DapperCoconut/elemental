@@ -28,23 +28,23 @@ const bounceForm: Ability = {
   cast(ctx) { ctx.rubberBounceForm(); },
 };
 
-const springSlam: Ability = {
-  id: 'rubber-spring-slam',
-  name: 'Spring Slam',
-  description: 'Extend both arms perpendicular to the cursor. After 1 s they sweep forward and clap together — 25 dmg per arm. Hit by both: enemy grows 25% and is stunned for 1 s.',
+const rubberBanding: Ability = {
+  id: 'rubber-band',
+  name: 'Rubber Banding',
+  description: 'Plant an anchor where you stand, tied to you by a rubber band. Straying too far from it slows you down. Recast to snap back to the anchor; hold instead to reel the anchor toward you — enough tension sends it flying past you. Disappears after 12 s, or shatters if you smack it with Click. (25 s cooldown)',
   displayKey: 'F',
-  cooldown: 6000,
-  cast(ctx) { ctx.rubberSpringSlam(Math.atan2(ctx.targetY - ctx.casterY, ctx.targetX - ctx.casterX)); },
+  cooldown: 25000,
+  cast(ctx) { ctx.rubberBandStart(); },
 };
 
-const bounceBack: Ability = {
-  id: 'rubber-bounce-back',
-  name: 'Bounce Back',
-  description: 'For 5 s: 80% slower, 20% bigger. All damage you take is nullified and reflected to the enemy. Cannot use other abilities. (30 s cooldown)',
+const rubberage: Ability = {
+  id: 'rubberage',
+  name: 'Rubberage',
+  description: 'Unleash 15 small rubber balls that ricochet off the walls and each other like a DVD screensaver gone wrong, speeding up over 10 s. Each deals 5 dmg and heavy knockback on contact.',
   displayKey: 'Q',
   isUltimate: true,
-  cooldown: 30000,
-  cast(ctx) { ctx.rubberBounceBack(); },
+  cooldown: 56000,
+  cast(ctx) { ctx.rubberage(); },
 };
 
 export const rubberElement: Element = {
@@ -52,5 +52,5 @@ export const rubberElement: Element = {
   name: 'Rubber',
   color: 0xff5577,
   emoji: '🪀',
-  abilities: [punch, slingShot, bounceForm, springSlam, bounceBack],
+  abilities: [punch, slingShot, bounceForm, rubberBanding, rubberage],
 };

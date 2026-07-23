@@ -103,6 +103,9 @@ export class Husk extends Fighter {
   private wanderVx = 0;
   private wanderVy = 0;
 
+  /** Silence: set each frame by InvasionKit while an invisible player has stalkers out. */
+  public huntInvisibleTargets = false;
+
   constructor(
     scene: Phaser.Scene,
     x: number,
@@ -144,7 +147,6 @@ export class Husk extends Fighter {
     if (this.magicChainBound && time >= this.magicChainBoundEnd) this.magicChainBound = false;
     const hardCCed = this.frozenUntil > time
       || this.earthStunnedUntil > time
-      || this.statueUntil > time
       || this.magicChainBound;
     if (hardCCed) {
       body.setVelocity(0, 0);
@@ -164,7 +166,15 @@ export class Husk extends Fighter {
     // Chase whichever viable (alive, not downed) target is nearest.
     const viable = targets.filter((t) => t.active && t.hp > 0 && !t.downed);
     if (viable.length === 0) {
-      body.setVelocity(0, 0);
+      // Nobody visible (Silence stealth): shamble around aimlessly, and with
+      // stalkers on the field fire blind shots hoping to clip one.
+      this.updateConfusedWander(time);
+      if (this.huntInvisibleTargets && time >= this.nextAttackAt
+        && (this.variant.behavior === 'ranged' || this.variant.behavior === 'ranger')) {
+        this.nextAttackAt = time + SPITTER_SHOT_MS * this.attackIntervalMult;
+        const ang = Math.random() * Math.PI * 2;
+        this.world?.fireShot(this, this.x + Math.cos(ang) * 350, this.y + Math.sin(ang) * 350, this.biteDamage);
+      }
       return;
     }
     let target = viable[0];
@@ -172,6 +182,13 @@ export class Husk extends Fighter {
     for (let i = 1; i < viable.length; i++) {
       const d = Math.hypot(viable[i].x - this.x, viable[i].y - this.y);
       if (d < bestDist) { bestDist = d; target = viable[i]; }
+    }
+
+    // Silenced (Silence element): variant specials are sealed — only the basic
+    // walk-and-bite "click attack" remains.
+    if (Date.now() < this.silencedUntil) {
+      this.updateMelee(target, bestDist, time);
+      return;
     }
 
     switch (this.variant.behavior) {
@@ -236,19 +253,24 @@ export class Husk extends Fighter {
     body.setVelocity(this.wanderVx, this.wanderVy);
   }
 
-  /** Dust Screen: jitter an aim point by aimOffsetBonusDeg while aimOffsetBonusUntil is active. */
+  /**
+   * Jitter an aim point: Dust Screen adds aimOffsetBonusDeg while active, and
+   * Silence hallucinations make 20% of shots wildly miss.
+   */
   private jitteredAim(tx: number, ty: number, time: number): { x: number; y: number } {
-    if (time >= this.aimOffsetBonusUntil) return { x: tx, y: ty };
+    let offsetDeg = time < this.aimOffsetBonusUntil ? this.aimOffsetBonusDeg : 0;
+    if (Date.now() < this.hallucinatingUntil && Math.random() < 0.2) offsetDeg += 50;
+    if (offsetDeg <= 0) return { x: tx, y: ty };
     const dist = Math.hypot(tx - this.x, ty - this.y) || 1;
     const baseAngle = Math.atan2(ty - this.y, tx - this.x);
-    const offsetRad = (Math.random() * 2 - 1) * this.aimOffsetBonusDeg * (Math.PI / 180);
+    const offsetRad = (Math.random() * 2 - 1) * offsetDeg * (Math.PI / 180);
     const ang = baseAngle + offsetRad;
     return { x: this.x + Math.cos(ang) * dist, y: this.y + Math.sin(ang) * dist };
   }
 
   private tryBite(target: Fighter, dist: number, time: number, range = BITE_RANGE, damageMult = 1): void {
     if (dist > range || time < this.nextBiteAt) return;
-    this.nextBiteAt = time + this.biteCooldownMs;
+    this.nextBiteAt = time + this.biteCooldownMs * this.attackIntervalMult;
     this.scene.tweens.add({
       targets: this,
       scaleX: this.sizeMult * 1.3,
@@ -256,6 +278,8 @@ export class Husk extends Fighter {
       duration: 90,
       yoyo: true,
     });
+    // Hallucinating husks whiff 20% of their bites (the lunge still plays).
+    if (Date.now() < this.hallucinatingUntil && Math.random() < 0.2) return;
     this.onBite?.(Math.round(this.biteDamage * damageMult), target);
   }
 
@@ -270,7 +294,7 @@ export class Husk extends Fighter {
     const range = this.variant.preferredRange ?? 270;
     this.kite(target, dist, range);
     if (time >= this.nextAttackAt) {
-      this.nextAttackAt = time + SPITTER_SHOT_MS;
+      this.nextAttackAt = time + SPITTER_SHOT_MS * this.attackIntervalMult;
       const aim = this.jitteredAim(target.x, target.y, time);
       this.world?.fireShot(this, aim.x, aim.y, this.biteDamage);
     }
@@ -281,7 +305,7 @@ export class Husk extends Fighter {
   private updateMedic(target: Fighter, dist: number, time: number): void {
     this.kite(target, dist, this.variant.preferredRange ?? 300);
     if (time >= this.nextAttackAt) {
-      this.nextAttackAt = time + MEDIC_PULSE_MS;
+      this.nextAttackAt = time + MEDIC_PULSE_MS * this.attackIntervalMult;
       this.world?.healNearbyHusks(this, MEDIC_PULSE_RADIUS, MEDIC_PULSE_FRAC);
     }
   }
@@ -344,7 +368,7 @@ export class Husk extends Fighter {
     this.moveToward(target, 1);
     this.tryBite(target, dist, time, BITE_RANGE + 20);
     if (time >= this.nextAttackAt) {
-      this.nextAttackAt = time + TITAN_SUMMON_MS;
+      this.nextAttackAt = time + TITAN_SUMMON_MS * this.attackIntervalMult;
       this.world?.summon(TITAN_SUMMON_COUNT, this.x, this.y);
     }
   }
@@ -363,7 +387,7 @@ export class Husk extends Fighter {
     }
 
     if (time < this.nextAttackAt) return;
-    this.nextAttackAt = time + RANGER_CYCLE_MS;
+    this.nextAttackAt = time + RANGER_CYCLE_MS * this.attackIntervalMult;
 
     if (this.rangerBurstNext) {
       // Burst: 5 quick shots at where the target is now.

@@ -1,6 +1,6 @@
 import { Fighter } from '../entities/Fighter';
 import { CastContext } from '../elements/Ability';
-import { Net, NetMsg } from './NetworkManager';
+import { Net, NetMsg, NetSilenceMsg, NetTechMsg } from './NetworkManager';
 
 /** Narrow surface the online sync kit needs from ArenaScene. */
 export interface OnlineArenaApi {
@@ -12,6 +12,17 @@ export interface OnlineArenaApi {
   spawnDamageNumber(x: number, y: number, amount: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   endOnlineMatch(playerWon: boolean, reason?: string): void;
+  /** Silence: local player's invisibility/stealth to broadcast (false/0 for other elements). */
+  isPlayerInvisible(): boolean;
+  playerStealth(): number;
+  /** Silence: apply the remote silence player's stealth meter to the local replica sim. */
+  setRemoteStealth(value: number): void;
+  /** Technology: remote tech event to replay on the local sim (steer already un-mirrored). */
+  onTechMsg(msg: NetTechMsg): void;
+  /** Silence upgrades: remote silence event (positions already un-mirrored). */
+  onSilenceMsg(msg: NetSilenceMsg): void;
+  /** Mastery: replay a bindable mastery ability the opponent cast (id not in element.abilities). */
+  replayNpcMastery(enhId: string, tx: number, ty: number): void;
 }
 
 const STATE_SEND_INTERVAL_MS = 50;   // 20 Hz
@@ -122,7 +133,13 @@ export class OnlineKit {
     if (!cast) return null;
     const npc = this.api.npc;
     const ability = npc.element.abilities.find((a) => a.id === cast.id);
-    if (!ability) return null;
+    if (!ability) {
+      // Bindable mastery enhancement ids (Starfall, Heatwave, …) aren't in
+      // element.abilities — route them to the kit's NPC-side mastery handler so
+      // the effect resolves on this (victim) sim.
+      this.api.replayNpcMastery(cast.id, cast.tx, cast.ty);
+      return cast.id;
+    }
     npc.startCooldown(cast.id);
     try {
       ability.cast(this.api.buildNpcContext(cast.tx, cast.ty));
@@ -130,6 +147,15 @@ export class OnlineKit {
       console.error(`Online: failed to replay remote cast ${cast.id}`, e);
     }
     return cast.id;
+  }
+
+  /**
+   * Broadcast a bindable mastery ability cast (Starfall, Heatwave, …). These are
+   * cast through kit-specific timers rather than `castAbility`, so they don't flow
+   * through `onCastStamp` — the owning kit calls this explicitly on cast.
+   */
+  sendMasteryCast(enhId: string): void {
+    this.onPlayerCast(enhId);
   }
 
   /** Concede the match (ESC-ESC). Tells the peer we died, then ends locally. */
@@ -172,6 +198,9 @@ export class OnlineKit {
       maxHp: p.maxHp,
       shieldHp: p.shieldHp,
       shieldCharges: p.shieldCharges,
+      inv: this.api.isPlayerInvisible(),
+      fa: p.facingAngle,
+      st: this.api.playerStealth(),
     });
   }
 
@@ -208,7 +237,16 @@ export class OnlineKit {
           vy: msg.vy,
           recvAt: Date.now(),
         };
-        this.api.npc.netSyncVitals(msg.hp, msg.maxHp, msg.shieldHp, msg.shieldCharges);
+        const npc = this.api.npc;
+        npc.netSyncVitals(msg.hp, msg.maxHp, msg.shieldHp, msg.shieldCharges);
+        // Silence remaster: facing (mirrored like positions), invisibility, stealth.
+        if (msg.fa !== undefined) npc.facingAngle = Math.atan2(Math.sin(msg.fa), -Math.cos(msg.fa));
+        if (msg.inv !== undefined && npc.active) {
+          npc.forceInvisible = msg.inv;
+          npc.setAlpha(msg.inv ? 0 : 1);
+          npc.setHealthBarVisible(!msg.inv);
+        }
+        if (msg.st !== undefined) this.api.setRemoteStealth(msg.st);
         break;
       }
       case 'cast':
@@ -222,6 +260,21 @@ export class OnlineKit {
       case 'death':
         this.matchEnded = true;
         this.api.endOnlineMatch(true);
+        break;
+      case 'tech':
+        // Positions are mirrored horizontally, so remote left/right steering flips.
+        if (msg.k === 'steer' && (msg.d === 'left' || msg.d === 'right')) {
+          this.api.onTechMsg({ t: 'tech', k: 'steer', d: msg.d === 'left' ? 'right' : 'left' });
+        } else {
+          this.api.onTechMsg(msg);
+        }
+        break;
+      case 'sil':
+        if (msg.k === 'vulture-drop') {
+          this.api.onSilenceMsg({ ...msg, x: this.mirrorX(msg.x) });
+        } else {
+          this.api.onSilenceMsg(msg);
+        }
         break;
       default:
         break;

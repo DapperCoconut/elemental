@@ -711,7 +711,7 @@ export class LifeKit {
           p.accum2 -= 750;
           const victim = this.nearestHostile(p.x, p.y, hostiles, 240);
           if (victim) {
-            victim.takeDamage(10);
+            victim.takeDamage(10, { source: p, sourceX: p.x, sourceY: p.y });
             if (owner === 'player') this.api.recordMasteryStat('plantDamage', 10);
             victim.walkSpeedMult = Math.min(victim.walkSpeedMult, 0.85);
             this.scheduleSlowClear(victim, 3000);
@@ -754,7 +754,7 @@ export class LifeKit {
       p.reflectAccum -= 10;
       const victim = this.nearestHostile(p.x, p.y, hostiles, 260);
       if (!victim) break;
-      victim.takeDamage(reflectPer);
+      victim.takeDamage(reflectPer, { source: p, sourceX: p.x, sourceY: p.y });
       if (p.owner === 'player') this.api.recordMasteryStat('plantDamage', reflectPer);
       this.api.spawnHitFlash(victim.x, victim.y, 0xdd3366);
       this.api.showFloatingText(victim.x, victim.y - 26, `🌹 -${reflectPer}`, '#ff6699');
@@ -1090,7 +1090,7 @@ export class LifeKit {
       for (const h of this.hostilesFor(pd.owner)) {
         if (!h.active || h.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(pd.x, pd.y, h.x, h.y) > pd.radius) continue;
-        h.takeDamage(2);
+        h.takeDamage(2, { source: pd, sourceX: pd.x, sourceY: pd.y });
         if (pd.owner === 'player') this.api.recordMasteryStat('plantDamage', 2);
         // Standing in the cap also leaves a lingering toxic DOT.
         h.toxicUntil = Math.max(h.toxicUntil, time + 3000);

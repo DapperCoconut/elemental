@@ -121,6 +121,11 @@ export class IceKit {
   private icicleDashVx = 0;
   private icicleDashVy = 0;
   private icicleDashHitThisDash = false;
+  // Online mirror: the opponent's Icicle Impale dash replayed on this victim sim. We can't
+  // drive the dead-reckoned npc's velocity, so we just watch for it to reach us and impale.
+  private npcIcicleDashActive = false;
+  private npcIcicleDashUntil = 0;
+  private npcIcicleDashHit = false;
 
   constructor(private arena: IceArenaApi) {}
 
@@ -198,6 +203,9 @@ export class IceKit {
     this.icicleImpales.forEach((ic) => ic.sprite.destroy());
     this.icicleImpales = [];
     this.icicleImpaleLastCastAt = -999999;
+    this.npcIcicleDashActive = false;
+    this.npcIcicleDashUntil = 0;
+    this.npcIcicleDashHit = false;
     this.icicleDashActive = false;
     this.icicleDashUntil = 0;
     this.icicleDashVx = 0;
@@ -333,25 +341,7 @@ export class IceKit {
       }
 
       // Icicle Impale: live icicles track damage taken by their host, then shatter at threshold
-      for (let ii = this.icicleImpales.length - 1; ii >= 0; ii--) {
-        const ic = this.icicleImpales[ii];
-        if (!ic.target.active || ic.target.hp <= 0) {
-          ic.sprite.destroy();
-          this.icicleImpales.splice(ii, 1);
-          continue;
-        }
-        this.drawIcicle(ic.sprite, ic.target.x, ic.target.y, ic.isVoid);
-        const dmgSinceLast = Math.max(0, ic.lastHp - ic.target.hp);
-        ic.lastHp = ic.target.hp;
-        if (dmgSinceLast > 0) {
-          ic.damageTaken += dmgSinceLast;
-          if (ic.damageTaken >= ICICLE_SHATTER_DAMAGE_THRESHOLD) {
-            this.shatterIcicle(ic);
-            ic.sprite.destroy();
-            this.icicleImpales.splice(ii, 1);
-          }
-        }
-      }
+      this.tickIcicleImpales();
     }
 
     // Ice arena ticks (Skate-in-BlockUp / Skate-in-BlackIce)
@@ -1058,6 +1048,51 @@ export class IceKit {
     this.icicleDashVy = Math.sin(angle) * ICICLE_DASH_SPEED;
     this.icicleDashHitThisDash = false;
     this.arena.showFloatingText(player.x, player.y - 30, '🧊 ICICLE IMPALE', '#aaddff');
+  }
+
+  /** Live icicles track damage taken by their host and shatter at the threshold. Owner-agnostic. */
+  private tickIcicleImpales(): void {
+    for (let ii = this.icicleImpales.length - 1; ii >= 0; ii--) {
+      const ic = this.icicleImpales[ii];
+      if (!ic.target.active || ic.target.hp <= 0) {
+        ic.sprite.destroy();
+        this.icicleImpales.splice(ii, 1);
+        continue;
+      }
+      this.drawIcicle(ic.sprite, ic.target.x, ic.target.y, ic.isVoid);
+      const dmgSinceLast = Math.max(0, ic.lastHp - ic.target.hp);
+      ic.lastHp = ic.target.hp;
+      if (dmgSinceLast > 0) {
+        ic.damageTaken += dmgSinceLast;
+        if (ic.damageTaken >= ICICLE_SHATTER_DAMAGE_THRESHOLD) {
+          this.shatterIcicle(ic);
+          ic.sprite.destroy();
+          this.icicleImpales.splice(ii, 1);
+        }
+      }
+    }
+  }
+
+  /** Online replay: the remote ice player cast Icicle Impale — impale us as their dash reaches us. */
+  doNpcIcicleImpale(): void {
+    this.npcIcicleDashActive = true;
+    this.npcIcicleDashUntil = this.arena.scene.time.now + ICICLE_DASH_DURATION_MS;
+    this.npcIcicleDashHit = false;
+  }
+
+  /** Online: opponent is ice — watch their replayed dash for impact and track live icicles on us. */
+  updateNpc(time: number): void {
+    const { npc, player } = this.arena;
+    if (this.npcIcicleDashActive) {
+      if (time >= this.npcIcicleDashUntil) {
+        this.npcIcicleDashActive = false;
+      } else if (!this.npcIcicleDashHit && player.active && player.hp > 0
+        && Phaser.Math.Distance.Between(npc.x, npc.y, player.x, player.y) <= ICICLE_HIT_RADIUS) {
+        this.npcIcicleDashHit = true;
+        this.impaleTarget(player);
+      }
+    }
+    this.tickIcicleImpales();
   }
 
   private impaleTarget(target: Fighter): void {
