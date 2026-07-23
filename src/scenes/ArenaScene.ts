@@ -992,6 +992,8 @@ export class ArenaScene extends Phaser.Scene {
   private slimeMasteryOn = false;
   // ── Growth mastery ────────────────────────────────────────────────────
   private growthMasteryOn = false;
+  // ── Magnet mastery ────────────────────────────────────────────────────
+  private magnetMasteryOn = false;
   /** Screen-blur guard for Dust Screen hitting the local human — only the latest call may clear it. */
   private screenBlurUntil = 0;
 
@@ -1473,6 +1475,7 @@ export class ArenaScene extends Phaser.Scene {
     this.metalMasteryOn = PlayerData.isMasteryEnabled('metal');
     this.slimeMasteryOn = PlayerData.isMasteryEnabled('slime');
     this.growthMasteryOn = PlayerData.isMasteryEnabled('growth');
+    this.magnetMasteryOn = PlayerData.isMasteryEnabled('magnet');
     this.shadowMasteryOn = PlayerData.isMasteryEnabled('shadow');
     this.iceMasteryOn = PlayerData.isMasteryEnabled('ice');
     this.crystalMasteryOn = PlayerData.isMasteryEnabled('crystal');
@@ -2049,6 +2052,12 @@ export class ArenaScene extends Phaser.Scene {
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
+        get masteryActive() { return arena.magnetMasteryOn && arena.elementId === 'magnet'; },
+        get npcMasteryActive() { return arena.isOnline && arena.npcMasteryOn && arena.npcElement.id === 'magnet'; },
+        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        recordMasteryStat: (key, amount) => {
+          if (arena.elementId === 'magnet') PlayerData.addMasteryStat('magnet', key, amount);
+        },
       };
       this.magnetKit = new MagnetKit(magnetApi);
     }
@@ -3223,6 +3232,9 @@ export class ArenaScene extends Phaser.Scene {
         break;
       case 'emisis':
         if (this.npcElement.id === 'growth') this.growthKit.doNpcEmisis(tx, ty);
+        break;
+      case 'mag-lev':
+        if (this.npcElement.id === 'magnet') this.magnetKit.doNpcMagLev();
         break;
       default:
         break;
@@ -10611,6 +10623,8 @@ export class ArenaScene extends Phaser.Scene {
         entry.fill.setSize(entry.maxWidth * this.slimeKit.getBreakdownCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'emisis') {
         entry.fill.setSize(entry.maxWidth * this.growthKit.getEmisisCooldownRatio(time), entry.fill.height);
+      } else if (entry.abilityId === 'mag-lev') {
+        entry.fill.setSize(entry.maxWidth * this.magnetKit.getMagLevCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'flame-body') {
         entry.fill.setSize(this.fireKit.isFlameBodyActive() ? entry.maxWidth : 0, entry.fill.height);
       } else if (entry.abilityId === 'splash') {

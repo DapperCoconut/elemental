@@ -71,6 +71,34 @@ export interface MagnetArenaApi {
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
   buildNpcContext(x: number, y: number): CastContext;
+  /** True only when the player is magnet AND Magnet Mastery is switched on. */
+  get masteryActive(): boolean;
+  /** True only when the online opponent is magnet AND has Magnet Mastery on. */
+  get npcMasteryActive(): boolean;
+  masteryBindFor(slot: string): string | null;
+  recordMasteryStat(key: string, amount: number): void;
+}
+
+// ── Mastery: Metal Detector passive + Mag-Lev bindable ────────────────────────
+const ANCIENT_ROD_COUNT = 2;
+const ANCIENT_EXPOSE_RADIUS = 62;      // a pulse within this of a hidden rod exposes it
+const ANCIENT_LASER_INTERVAL_MS = 3000;
+const ANCIENT_LASER_DAMAGE = 5;
+const ANCIENT_ACTIVATE_Y_BAND = 100;   // atom-smasher wall must sweep within this of the rod
+const MAGLEV_SHIELD = 50;
+const MAGLEV_BASH_DMG = 15;
+const MAGLEV_BASH_RADIUS = 36;
+const MAGLEV_BASH_CD_MS = 400;
+const MAGLEV_SLING_SPEED = 950;
+const MAGLEV_COOLDOWN_MS = 6000;       // gate on re-mounting; dismount is always allowed
+
+interface AncientRod {
+  hx: number;            // hidden position
+  hy: number;
+  exposed: boolean;
+  activated: boolean;
+  laserAccum: number;
+  rod: MagnetRod | null; // the live rod once exposed
 }
 
 // ── MagnetKit ─────────────────────────────────────────────────────────────
@@ -109,6 +137,19 @@ export class MagnetKit {
   private magnetReflectUntilNpc = 0;
   private magnetReflectCenterNpcX = 0;
   private magnetReflectCenterNpcY = 0;
+
+  // ── Mastery: Metal Detector (ancient rods) + Mag-Lev ──────────────────
+  private ancientRods: AncientRod[] = [];
+  private ancientRodsInit = false;
+  private magLevMounted = false;
+  private magLevPreShield = 0;
+  private magLevBoard: Phaser.GameObjects.Rectangle | null = null;
+  private magLevBashCd: Map<Fighter, number> = new Map();
+  private magLevLastMountAt = -MAGLEV_COOLDOWN_MS;
+  private npcMagLevMounted = false;
+  private npcMagLevPreShield = 0;
+  private npcMagLevBoard: Phaser.GameObjects.Rectangle | null = null;
+  private npcMagLevBashCd: Map<Fighter, number> = new Map();
 
   constructor(private arena: MagnetArenaApi) {}
 
@@ -157,6 +198,16 @@ export class MagnetKit {
     this.magnetPlayerPullStacks = 0; this.magnetNpcPullStacks = 0;
     this.magnetCopperSpawnAccumPlayer = 0; this.magnetCopperSpawnAccumNpc = 0;
     this.magnetReflectUntilPlayer = 0; this.magnetReflectUntilNpc = 0;
+    // Mastery — Metal Detector + Mag-Lev
+    this.ancientRods = [];
+    this.ancientRodsInit = false;
+    this.magLevMounted = false; this.magLevPreShield = 0;
+    if (this.magLevBoard) { this.magLevBoard.destroy(); this.magLevBoard = null; }
+    this.magLevBashCd = new Map();
+    this.magLevLastMountAt = -MAGLEV_COOLDOWN_MS;
+    this.npcMagLevMounted = false; this.npcMagLevPreShield = 0;
+    if (this.npcMagLevBoard) { this.npcMagLevBoard.destroy(); this.npcMagLevBoard = null; }
+    this.npcMagLevBashCd = new Map();
     void scene;
   }
 
@@ -169,8 +220,17 @@ export class MagnetKit {
     const { player, eKey, fKey, rKey, qKey, pointerWasDown, rightPointerWasDown } = this.arena;
     const playerCtx = this.arena.buildPlayerContext(mouseX, mouseY);
 
+    // ── Mastery — Mag-Lev takes over whichever slot it's bound to ────────
+    const magLevSlot = this.arena.masteryActive ? this.magLevSlot() : null;
+    if (magLevSlot) {
+      const mk = magLevSlot === 'e' ? eKey : magLevSlot === 'r' ? rKey : magLevSlot === 'f' ? fKey : qKey;
+      if (Phaser.Input.Keyboard.JustDown(mk)) this.toggleMagLev(time);
+    }
+
     if (pointer.isDown && !pointerWasDown) {
-      player.castAbility('mag-pulse', playerCtx);
+      // While riding the board, click slings you toward the cursor instead of pulsing.
+      if (this.magLevMounted) this.magLevSling(mouseX, mouseY);
+      else player.castAbility('mag-pulse', playerCtx);
     }
 
     // Click+: right-click Repulse
@@ -178,7 +238,7 @@ export class MagnetKit {
       this.doMagnetRepulse(mouseX, mouseY, 'player');
     }
 
-    if (Phaser.Input.Keyboard.JustDown(eKey)) {
+    if (magLevSlot !== 'e' && Phaser.Input.Keyboard.JustDown(eKey)) {
       if (this.arena.hasUpgrade('e')) {
         // E+ barrage: recall any implanted nails, or fire barrage
         const implanted = this.magnetPlayerNails.filter(n => n.inEnemy);
@@ -190,6 +250,7 @@ export class MagnetKit {
             this.arena.spawnHitFlash(npc.x, npc.y, 0x888899);
             nail.sprite.destroy();
           }
+          this.arena.recordMasteryStat('nailTears', implanted.length);
           this.magnetPlayerNails = this.magnetPlayerNails.filter(n => !n.inEnemy);
           this.arena.showFloatingText(this.arena.npc.x, this.arena.npc.y - 36, '🔩 RECALLED', '#ccddee');
           player.reduceCooldown('nail-implant', 2000);
@@ -203,6 +264,7 @@ export class MagnetKit {
           const { npc } = this.arena;
           npc.takeDamage(dmg);
           this.arena.spawnHitFlash(npc.x, npc.y, 0x888899);
+          this.arena.recordMasteryStat('nailTears', 1);
           this.arena.showFloatingText(npc.x, npc.y - 36, '🔩 RECALLED', '#ccddee');
           nail.sprite.destroy();
           this.magnetPlayerNail = null;
@@ -213,11 +275,11 @@ export class MagnetKit {
       }
     }
 
-    if (Phaser.Input.Keyboard.JustDown(fKey)) {
+    if (magLevSlot !== 'f' && Phaser.Input.Keyboard.JustDown(fKey)) {
       player.castAbility('magnetize', playerCtx);
     }
 
-    if (Phaser.Input.Keyboard.JustDown(rKey)) {
+    if (magLevSlot !== 'r' && Phaser.Input.Keyboard.JustDown(rKey)) {
       // R+: Reflect Burst — consume 3 orbs instead of normal protect cast
       if (this.arena.hasUpgrade('r') && this.magnetPlayerShieldOrbs.length >= 3) {
         this.doMagnetReflectBurst('player');
@@ -226,7 +288,7 @@ export class MagnetKit {
       }
     }
 
-    if (Phaser.Input.Keyboard.JustDown(qKey)) {
+    if (magLevSlot !== 'q' && Phaser.Input.Keyboard.JustDown(qKey)) {
       player.castAbility('atom-smasher', playerCtx);
     }
 
@@ -241,6 +303,8 @@ export class MagnetKit {
     this.updateMagnetMagnetized(time, delta);
     this.updateMagnetReflectBurst(time);
     this.updateMagnetSpeedBuff(time);
+    this.updateMasteryMetalDetector(time, delta);
+    this.updateMagLev(time, delta);
   }
 
   // ── Public do* methods — called from ArenaScene context builders ───────
@@ -249,6 +313,9 @@ export class MagnetKit {
     const { player, npc, scene } = this.arena;
     const caster = owner === 'player' ? player : npc;
     const target = owner === 'player' ? npc : player;
+
+    // Mastery — Metal Detector: a pulse landing on a hidden ancient rod exposes it.
+    if (owner === 'player' && this.arena.masteryActive) this.tryExposeAncientRod(x, y);
 
     const ring = scene.add.circle(x, y, 8, 0xcc2244, 0.7).setDepth(6).setStrokeStyle(2, 0xff6688);
     scene.tweens.add({
@@ -539,6 +606,7 @@ export class MagnetKit {
           if (npcDist <= 28 && time > rod.contactCooldownNpc) {
             npc.takeDamage(dmg);
             this.arena.spawnHitFlash(npc.x, npc.y, 0x99aacc);
+            this.arena.recordMasteryStat('rodSmashes', 1);
             rod.contactCooldownNpc = time + 500;
             if (rod.destroyOnHit) {
               rod.sprite.destroy();
@@ -752,6 +820,7 @@ export class MagnetKit {
               orb.hp -= proj.damage;
               proj.setActive(false).setVisible(false);
               this.arena.spawnHitFlash(ox, oy, 0x4488cc);
+              this.arena.recordMasteryStat('protectBlocks', 1);
               if (orb.hp <= 0) {
                 orb.sprite.destroy();
                 this.magnetPlayerShieldOrbs.splice(i, 1);
@@ -913,12 +982,17 @@ export class MagnetKit {
           smasher.crossed = true;
           if (smasher.flashSprite.active) smasher.flashSprite.destroy();
 
+          // Mastery — Metal Detector: the player's atom smash activates any exposed
+          // ancient rod its walls swept over, turning it into a laser turret.
+          if (owner === 'player' && this.arena.masteryActive) this.activateAncientRods(smasher.y);
+
           const aeoRadius = 120;
           const aeoDist = Phaser.Math.Distance.Between(smasher.x, smasher.y, target.x, target.y);
           if (aeoDist <= aeoRadius) {
             // Anyone caught in the crusher takes 35.
             target.takeDamage(35);
             this.arena.spawnHitFlash(target.x, target.y, 0xff2244);
+            if (owner === 'player') this.arena.recordMasteryStat('atomSmashes', 1);
             // Implanted enemies get their nails ripped out for +30 damage.
             const ripped = this.removeImplantedNails(owner);
             if (ripped > 0) {
@@ -1144,6 +1218,171 @@ export class MagnetKit {
           const body = proj.body as Phaser.Physics.Arcade.Body | null;
           if (body) body.setVelocity(-body.velocity.x, -body.velocity.y);
         }
+      }
+    }
+  }
+
+  // ── Mastery — Metal Detector (ancient rods) ───────────────────────────
+
+  private ensureAncientRods(): void {
+    if (this.ancientRodsInit || !this.arena.masteryActive) return;
+    this.ancientRodsInit = true;
+    const W = this.arena.scene.scale.width, H = this.arena.scene.scale.height;
+    for (let i = 0; i < ANCIENT_ROD_COUNT; i++) {
+      this.ancientRods.push({
+        hx: Phaser.Math.Between(80, W - 80),
+        hy: Phaser.Math.Between(80, H - 80),
+        exposed: false, activated: false, laserAccum: 0, rod: null,
+      });
+    }
+  }
+
+  /** A mag-pulse landing on a hidden ancient rod exposes it — it becomes a real, brown rod. */
+  private tryExposeAncientRod(x: number, y: number): void {
+    const scene = this.arena.scene;
+    for (const ar of this.ancientRods) {
+      if (ar.exposed) continue;
+      if (Phaser.Math.Distance.Between(x, y, ar.hx, ar.hy) > ANCIENT_EXPOSE_RADIUS) continue;
+      ar.exposed = true;
+      const spr = scene.add.circle(ar.hx, ar.hy, 9, 0x8a5a2b, 0.95).setStrokeStyle(2, 0xbb8844).setDepth(6);
+      const rod: MagnetRod = {
+        sprite: spr, trail: [], x: ar.hx, y: ar.hy, vx: 0, vy: 0,
+        contactCooldownPlayer: 0, contactCooldownNpc: 0, bouncing: false, bounceUntil: 0,
+        owner: 'player', permDamageBonus: 0,
+      };
+      ar.rod = rod;
+      this.magnetRods.push(rod);
+      this.arena.showFloatingText(ar.hx, ar.hy - 20, '⛏ ANCIENT ROD!', '#bb8844');
+      const flash = scene.add.circle(ar.hx, ar.hy, 12, 0xffcc66, 0.8).setDepth(7);
+      scene.tweens.add({ targets: flash, scaleX: 4, scaleY: 4, alpha: 0, duration: 400, onComplete: () => flash.destroy() });
+    }
+  }
+
+  /** The player's atom smash sweeping over an exposed ancient rod turns it into a laser turret. */
+  private activateAncientRods(smasherY: number): void {
+    for (const ar of this.ancientRods) {
+      if (!ar.exposed || ar.activated || !ar.rod) continue;
+      if (Math.abs(ar.rod.y - smasherY) > ANCIENT_ACTIVATE_Y_BAND) continue;
+      ar.activated = true;
+      (ar.rod.sprite as Phaser.GameObjects.Arc).setFillStyle(0xffaa33, 1);
+      this.arena.showFloatingText(ar.rod.x, ar.rod.y - 24, '⚡ ROD ONLINE', '#ffcc44');
+    }
+  }
+
+  private updateMasteryMetalDetector(_time: number, delta: number): void {
+    if (!this.arena.masteryActive) return;
+    this.ensureAncientRods();
+    const { npc, scene } = this.arena;
+    // Only fires at an enemy with magnetic properties: magnetized, or carrying our nails.
+    const npcMagnetic = this.magnetNpcMagnetized || this.countImplantedNails('player') > 0;
+    for (const ar of this.ancientRods) {
+      if (!ar.activated || !ar.rod) continue;
+      ar.laserAccum += delta;
+      if (ar.laserAccum < ANCIENT_LASER_INTERVAL_MS) continue;
+      ar.laserAccum -= ANCIENT_LASER_INTERVAL_MS;
+      if (!npcMagnetic || !npc.active || npc.hp <= 0) continue;
+      npc.takeDamage(ANCIENT_LASER_DAMAGE);
+      this.arena.spawnHitFlash(npc.x, npc.y, 0xffaa33);
+      const beam = scene.add.line(0, 0, ar.rod.x, ar.rod.y, npc.x, npc.y, 0xffcc33, 0.9)
+        .setOrigin(0, 0).setLineWidth(2).setDepth(7);
+      scene.tweens.add({ targets: beam, alpha: 0, duration: 220, onComplete: () => beam.destroy() });
+      this.arena.showFloatingText(npc.x, npc.y - 30, `⚡ ${ANCIENT_LASER_DAMAGE}`, '#ffcc44');
+    }
+  }
+
+  // ── Mastery — Mag-Lev ─────────────────────────────────────────────────
+
+  private magLevSlot(): 'e' | 'r' | 'f' | 'q' | null {
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      if (this.arena.masteryBindFor(s) === 'mag-lev') return s;
+    }
+    return null;
+  }
+
+  getMagLevCooldownRatio(time: number): number {
+    return Math.min(1, (time - this.magLevLastMountAt) / MAGLEV_COOLDOWN_MS);
+  }
+
+  private toggleMagLev(time: number): void {
+    if (this.magLevMounted) {
+      this.dismountMagLev('player');
+      this.arena.player.triggerCooldown('mag-lev'); // broadcast the toggle online
+      return;
+    }
+    if (time - this.magLevLastMountAt < MAGLEV_COOLDOWN_MS) return;
+    this.magLevLastMountAt = time;
+    this.mountMagLev('player');
+    this.arena.player.triggerCooldown('mag-lev');
+  }
+
+  /** Online replay: the remote magnet player toggled their board. */
+  doNpcMagLev(): void {
+    if (this.npcMagLevMounted) this.dismountMagLev('npc');
+    else this.mountMagLev('npc');
+  }
+
+  private mountMagLev(owner: 'player' | 'npc'): void {
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    const board = this.arena.scene.add.rectangle(caster.x, caster.y + 18, 40, 8, 0x6644aa, 0.9)
+      .setStrokeStyle(2, 0xaa66ff).setDepth(4);
+    if (owner === 'player') {
+      this.magLevMounted = true; this.magLevPreShield = caster.shieldHp;
+      this.magLevBoard = board; this.magLevBashCd = new Map();
+    } else {
+      this.npcMagLevMounted = true; this.npcMagLevPreShield = caster.shieldHp;
+      this.npcMagLevBoard = board; this.npcMagLevBashCd = new Map();
+    }
+    caster.shieldHp += MAGLEV_SHIELD;
+    this.arena.showFloatingText(caster.x, caster.y - 40, '🛹 MAG-LEV', '#aa66ff');
+  }
+
+  private dismountMagLev(owner: 'player' | 'npc'): void {
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    caster.shieldHp = 0; // dismounting removes all shield HP you have
+    if (owner === 'player') {
+      this.magLevMounted = false;
+      if (this.magLevBoard) { this.magLevBoard.destroy(); this.magLevBoard = null; }
+    } else {
+      this.npcMagLevMounted = false;
+      if (this.npcMagLevBoard) { this.npcMagLevBoard.destroy(); this.npcMagLevBoard = null; }
+    }
+    this.arena.showFloatingText(caster.x, caster.y - 40, '🛹 DISMOUNT', '#8877aa');
+  }
+
+  private magLevSling(mouseX: number, mouseY: number): void {
+    const p = this.arena.player;
+    const dx = mouseX - p.x, dy = mouseY - p.y;
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    (p.body as Phaser.Physics.Arcade.Body).setVelocity((dx / len) * MAGLEV_SLING_SPEED, (dy / len) * MAGLEV_SLING_SPEED);
+    this.arena.setIsDodging(true);
+    this.arena.scene.time.delayedCall(200, () => this.arena.setIsDodging(false));
+  }
+
+  private updateMagLev(time: number, _delta: number): void {
+    const { player, npc } = this.arena;
+    if (this.magLevMounted) {
+      if (this.magLevBoard) this.magLevBoard.setPosition(player.x, player.y + 18);
+      if (player.shieldHp <= this.magLevPreShield) {
+        this.dismountMagLev('player'); // board shield spent
+      } else if (npc.active && npc.hp > 0
+        && Phaser.Math.Distance.Between(player.x, player.y, npc.x, npc.y) <= MAGLEV_BASH_RADIUS
+        && time > (this.magLevBashCd.get(npc) ?? 0)) {
+        this.magLevBashCd.set(npc, time + MAGLEV_BASH_CD_MS);
+        npc.takeDamage(MAGLEV_BASH_DMG);
+        this.arena.spawnHitFlash(npc.x, npc.y, 0xaa66ff);
+        this.arena.showFloatingText(npc.x, npc.y - 30, `🛹 ${MAGLEV_BASH_DMG}`, '#cc99ff');
+      }
+    }
+    if (this.npcMagLevMounted) {
+      if (this.npcMagLevBoard) this.npcMagLevBoard.setPosition(npc.x, npc.y + 18);
+      if (npc.shieldHp <= this.npcMagLevPreShield) {
+        this.dismountMagLev('npc');
+      } else if (player.active && player.hp > 0
+        && Phaser.Math.Distance.Between(npc.x, npc.y, player.x, player.y) <= MAGLEV_BASH_RADIUS
+        && time > (this.npcMagLevBashCd.get(player) ?? 0)) {
+        this.npcMagLevBashCd.set(player, time + MAGLEV_BASH_CD_MS);
+        player.takeDamage(MAGLEV_BASH_DMG);
+        this.arena.spawnHitFlash(player.x, player.y, 0xaa66ff);
       }
     }
   }

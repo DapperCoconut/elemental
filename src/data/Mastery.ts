@@ -541,6 +541,52 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       },
     ],
   },
+  magnet: {
+    elementId: 'magnet',
+    name: 'Magnet Mastery',
+    enhancedEmoji: '🧲',
+    enhancedColor: 0x7733aa,
+    requirements: [
+      {
+        key: 'rodSmashes',
+        label: 'Rod Wrecker',
+        howTo: 'Smash your magnetic rods into enemies',
+        target: 500,
+      },
+      {
+        key: 'nailTears',
+        label: 'Nail Puller',
+        howTo: 'Tear implanted nails back out of enemies by recalling them (E)',
+        target: 75,
+      },
+      {
+        key: 'protectBlocks',
+        label: 'Deflector Shield',
+        howTo: 'Block enemy projectiles with your Protect (R) orbs',
+        target: 50,
+      },
+      {
+        key: 'atomSmashes',
+        label: 'Compactor',
+        howTo: 'Crush enemies with the Atom Smasher (Q) compaction',
+        target: 5,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'metal-detector',
+        name: 'Metal Detector',
+        description: 'Passive: two ancient rods lie hidden under the arena with no visible marker — land a mag-pulse (click) on one to unearth it. An exposed ancient rod smashes like any other, and if your Atom Smasher (Q) sweeps over it, it powers up: every 3 seconds it fires a 5-damage laser at any enemy that is magnetized or carrying your nails. Both can be powered up at once.',
+      },
+      {
+        id: 'mag-lev',
+        name: 'Mag-Lev',
+        bindable: true,
+        hudDescription: 'Hop on a magnetic board — bash and sling into enemies',
+        description: 'Hop onto a magnetic skateboard, gaining 50 shield HP. While riding you bash enemies you touch and can click to sling yourself across the arena into them. Lose the 50 shield HP, or re-cast, and you dismount — dismounting drops all of your shield HP. 6 second cooldown to re-mount.',
+      },
+    ],
+  },
   growth: {
     elementId: 'growth',
     name: 'Growth Mastery',
