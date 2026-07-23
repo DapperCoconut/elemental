@@ -12,10 +12,14 @@ const FATE_STUB_CTX: CastContext = new Proxy({} as CastContext, {
 // ── Card catalogue ────────────────────────────────────────────────────────────
 
 export type FateCardType =
+  // ── Base ten (always drawable) ──
   | 'laser' | 'burst' | 'barrier' | 'explosion' | 'infect'
-  | 'coin' | 'heal' | 'buff' | 'lightning' | 'slots';
+  | 'coin' | 'heal' | 'buff' | 'lightning' | 'slots'
+  // ── New Cards! (Click+ upgrade adds these to the draw pool) ──
+  | 'boomerang' | 'slash' | 'phase' | 'striker'
+  | 'pulse' | 'chill' | 'chain' | 'emperor';
 
-interface FateCardDef {
+export interface FateCardDef {
   type: FateCardType;
   name: string;
   emoji: string;
@@ -23,7 +27,7 @@ interface FateCardDef {
   blurb: string;
 }
 
-const FATE_CARD_DEFS: FateCardDef[] = [
+export const FATE_CARD_DEFS: FateCardDef[] = [
   { type: 'laser',     name: 'Laser',     emoji: '🔴', color: 0xff3333, blurb: '15 dmg hitscan laser' },
   { type: 'burst',     name: 'Burst',     emoji: '💥', color: 0xff8800, blurb: '5× 5 dmg cone blast' },
   { type: 'barrier',   name: 'Barrier',   emoji: '🛡️', color: 0x4488ff, blurb: '15× 3 dmg bullet ring' },
@@ -34,26 +38,62 @@ const FATE_CARD_DEFS: FateCardDef[] = [
   { type: 'buff',      name: 'Buff',      emoji: '💪', color: 0xdd88ff, blurb: '+10% spd/dmg/DR (8s)' },
   { type: 'lightning', name: 'Lightning', emoji: '⚡', color: 0xffee44, blurb: '20 dmg + 2s stun' },
   { type: 'slots',     name: 'Slots',     emoji: '🎰', color: 0xff66cc, blurb: 'Summon a slot machine' },
+  // New Cards — colours chosen distinct from every base card above.
+  { type: 'boomerang', name: 'Boomerang', emoji: '🪃', color: 0xb87333, blurb: 'Orbits you 3s, 15 dmg on hit' },
+  { type: 'slash',     name: 'Slash',     emoji: '⚔️', color: 0x8b0000, blurb: 'Close red slash, 15 dmg' },
+  { type: 'phase',     name: 'Phase',     emoji: '💨', color: 0x00c2c7, blurb: 'Dash at cursor, 10 dmg through' },
+  { type: 'striker',   name: 'Striker',   emoji: '⚫', color: 0x333344, blurb: 'Very slow black shot, 35 dmg' },
+  { type: 'pulse',     name: 'Pulse',     emoji: '🌀', color: 0x00a3ff, blurb: '10 dmg AoE + knockback' },
+  { type: 'chill',     name: 'Chill',     emoji: '❄️', color: 0xa8e6ff, blurb: 'Snowball: 5 dmg + big 50% slow' },
+  { type: 'chain',     name: 'Chain',     emoji: '🔗', color: 0x7b2ff7, blurb: '10 dmg chaining lightning' },
+  { type: 'emperor',   name: 'Emperor',   emoji: '👑', color: 0xffffff, blurb: '12× 3 dmg bullet volley (rare)' },
 ];
-const FATE_CARD_TYPES: FateCardType[] = FATE_CARD_DEFS.map((d) => d.type);
 const DEF_BY_TYPE = new Map<FateCardType, FateCardDef>(FATE_CARD_DEFS.map((d) => [d.type, d]));
-const ATTACK_TYPES: FateCardType[] = ['laser', 'burst', 'barrier', 'explosion', 'infect', 'lightning'];
+
+// Base pool (always drawable) vs. New Cards (only with the Click+ "New Cards!" upgrade).
+const BASE_CARD_TYPES: FateCardType[] = ['laser', 'burst', 'barrier', 'explosion', 'infect', 'coin', 'heal', 'buff', 'lightning', 'slots'];
+const NEW_CARD_TYPES: FateCardType[] = ['boomerang', 'slash', 'phase', 'striker', 'pulse', 'chill', 'chain', 'emperor'];
+const ALL_CARD_TYPES: FateCardType[] = [...BASE_CARD_TYPES, ...NEW_CARD_TYPES];
+
+const ATTACK_TYPES: FateCardType[] = [
+  'laser', 'burst', 'barrier', 'explosion', 'infect', 'lightning',
+  'boomerang', 'slash', 'phase', 'striker', 'pulse', 'chill', 'chain', 'emperor',
+];
 const BASE_DMG: Record<FateCardType, number> = {
   laser: 15, burst: 5, barrier: 3, explosion: 20, infect: 5,
   coin: 0, heal: 8, buff: 0, lightning: 20, slots: 0,
+  boomerang: 15, slash: 15, phase: 10, striker: 35,
+  pulse: 10, chill: 5, chain: 10, emperor: 3,
 };
 
-const HAND_SIZE = 6;
+// Emperor is 10× rarer than any other card in the draw pool.
+const EMPEROR_RARITY = 10;
+
+// ── E+ "Force the Hand of Fate" — face cards that restrict the draw pool ──
+export type FateFaceCard = 'king' | 'queen' | 'jack' | 'ace' | 'jester';
+export interface FateFaceCardDef { face: FateFaceCard; name: string; emoji: string; color: number; allow: FateCardType[] | null; }
+export const FATE_FACE_CARDS: FateFaceCardDef[] = [
+  { face: 'king',   name: 'King',   emoji: '🤴', color: 0xffd54a, allow: ['heal', 'buff', 'barrier', 'phase', 'emperor'] },
+  { face: 'queen',  name: 'Queen',  emoji: '👸', color: 0xff6fae, allow: ['explosion', 'lightning', 'chill', 'chain'] },
+  { face: 'jack',   name: 'Jack',   emoji: '🃏', color: 0x66d38a, allow: ['boomerang', 'slash', 'burst', 'pulse'] },
+  { face: 'ace',    name: 'Ace',    emoji: '🂡', color: 0xd0d0e0, allow: ['laser', 'coin', 'infect', 'striker'] },
+  { face: 'jester', name: 'Jester', emoji: '🎭', color: 0xaa77ff, allow: null },
+];
+const FACE_BY_ID = new Map<FateFaceCard, FateFaceCardDef>(FATE_FACE_CARDS.map((f) => [f.face, f]));
+
+const BASE_HAND_SIZE = 6;
+const UPGRADED_HAND_SIZE = 8; // R+ "Wonder Preserve"
 const DRAW_INTERVAL_MS = 5000;
+
+// Health-bar geometry (mirrors HealthBar.ts) so the Q+ gamble marker lines up.
+const HB_W = 52;
+const HB_H = 7;
+const HB_OFFSET_Y = -38;
 
 interface FateCard {
   type: FateCardType;
   preserved: boolean;
   enchanted: boolean;
-}
-
-function drawCard(): FateCard {
-  return { type: FATE_CARD_TYPES[Math.floor(Math.random() * FATE_CARD_TYPES.length)], preserved: false, enchanted: false };
 }
 
 type FateModStat = 'dmgTaken' | 'dmgDealt' | 'speed' | 'cd' | 'size';
@@ -86,6 +126,8 @@ interface FateSlotMachine {
   cycleDmgPlayer: number;
   cycleDmgNpc: number;
   cycleEnd: number;
+  /** F+ enchant bonus: halves the damage thresholds needed for buff/jackpot rolls. */
+  halfReq: boolean;
 }
 
 interface FateAllIn {
@@ -93,6 +135,8 @@ interface FateAllIn {
   owner: 'player' | 'npc';
   activatesAt: number;
   orbitAngle: number;
+  /** HP wagered — fixed 50 normally, or the Q+ gamble-bar amount for the player. */
+  wager: number;
 }
 
 interface FateLightningStrike {
@@ -111,6 +155,33 @@ interface FatePoison {
   visual: Phaser.GameObjects.Text | null;
 }
 
+// ── New Cards! kit-managed objects ─────────────────────────────────────────
+
+interface FateBoomerang {
+  sprite: Phaser.GameObjects.Arc;
+  owner: 'player' | 'npc';
+  angle: number;
+  radius: number;
+  dmg: number;
+  expiresAt: number;
+  hitAt: Map<Fighter, number>;
+}
+
+interface FateSnowball {
+  sprite: Phaser.GameObjects.Arc;
+  x: number; y: number;
+  vx: number; vy: number;
+  owner: 'player' | 'npc';
+  dmg: number;
+  slowMs: number;
+  expiresAt: number;
+}
+
+/** A one-shot forced velocity (Pulse knockback) that overrides a fighter's own movement for a short window. */
+interface FateKnock { vx: number; vy: number; until: number; }
+/** A temporary movement slow (Slash / Chill) enforced by scaling a fighter's velocity each frame. */
+interface FateSlow { factor: number; until: number; }
+
 // ── Arena API ────────────────────────────────────────────────────────────────
 
 export interface FateArenaApi {
@@ -127,6 +198,10 @@ export interface FateArenaApi {
   get rightPointerWasDown(): boolean;
   get isPlayerFate(): boolean;
   hasPerk(perkId: string): boolean;
+  /** True if the local player (Fate) has the given shop upgrade slot equipped. */
+  hasUpgrade(slot: string): boolean;
+  /** True if the online opponent (Fate) has the given shop upgrade slot equipped. */
+  hasNpcUpgrade(slot: string): boolean;
   applyPlayerSpeedMult(f: number): void;
   applyNpcSpeedMult(f: number): void;
   spawnHitFlash(x: number, y: number, color: number): void;
@@ -143,6 +218,27 @@ export class FateKit {
   private playerSelected = 0;
   private playerDrawAccum = 0;
   private npcDrawAccum = 0;
+  // Hand size grows 6 → 8 with the R+ "Wonder Preserve" upgrade (per side).
+  private playerHandSize = BASE_HAND_SIZE;
+  private npcHandSize = BASE_HAND_SIZE;
+
+  // ── E+ "Force the Hand of Fate" (player only) ─────────────────────
+  private forceHand: FateFaceCard | null = null;
+  private forceHandPending = false;
+  private forceOverlay: Phaser.GameObjects.GameObject[] = [];
+
+  // ── New Cards! world objects ──────────────────────────────────────
+  private boomerangs: FateBoomerang[] = [];
+  private snowballs: FateSnowball[] = [];
+  // Pulse knockback + Slash/Chill slows, enforced per-frame in update().
+  private knocks = new Map<Fighter, FateKnock>();
+  private slows = new Map<Fighter, FateSlow>();
+
+  // ── Q+ "Roulette Expert" gamble bar (player only) ─────────────────
+  private gambleHp = 50;
+  private gambleGraphics: Phaser.GameObjects.Graphics | null = null;
+  private gambleLabel: Phaser.GameObjects.Text | null = null;
+  private draggingGamble = false;
 
   // ── Timed stat modifiers (Buff card, Slots rolls) ──────────────────
   private playerMods: FateMod[] = [];
@@ -186,8 +282,10 @@ export class FateKit {
   // ── Lifecycle ─────────────────────────────────────────────────────
 
   reset(): void {
-    this.playerHand = Array.from({ length: HAND_SIZE }, () => drawCard());
-    this.npcHand = Array.from({ length: HAND_SIZE }, () => drawCard());
+    // R+ "Wonder Preserve": hand grows 6 → 8 for whichever side owns it.
+    this.playerHandSize = this.ownerHasUpgrade('player', 'r') ? UPGRADED_HAND_SIZE : BASE_HAND_SIZE;
+    this.npcHandSize = this.ownerHasUpgrade('npc', 'r') ? UPGRADED_HAND_SIZE : BASE_HAND_SIZE;
+
     this.playerSelected = 0;
     this.playerDrawAccum = 0;
     this.npcDrawAccum = 0;
@@ -210,8 +308,37 @@ export class FateKit {
     this.playerAllIn = null;
     this.npcAllIn = null;
 
+    for (const b of this.boomerangs) if (b.sprite.active) b.sprite.destroy();
+    this.boomerangs = [];
+    for (const s of this.snowballs) if (s.sprite.active) s.sprite.destroy();
+    this.snowballs = [];
+    this.knocks.clear();
+    this.slows.clear();
+
     for (const p of this.poison.values()) if (p.visual?.active) p.visual.destroy();
     this.poison.clear();
+
+    this.teardownForceOverlay();
+    this.forceHand = null;
+    this.forceHandPending = false;
+
+    this.gambleHp = 50;
+    this.draggingGamble = false;
+    if (this.gambleGraphics) { this.gambleGraphics.destroy(); this.gambleGraphics = null; }
+    if (this.gambleLabel) { this.gambleLabel.destroy(); this.gambleLabel = null; }
+
+    // NPC hand always deals immediately; it has no Force-the-Hand choice.
+    this.npcHand = Array.from({ length: this.npcHandSize }, () => this.drawCardFor('npc'));
+
+    // Player: with E+ "Force the Hand of Fate" the opening hand is withheld until a
+    // face card is chosen (it restricts the pool), so deal nothing yet and prompt.
+    if (this.arena.isPlayerFate && this.arena.hasUpgrade('e')) {
+      this.playerHand = [];
+      this.forceHandPending = true;
+      this.buildForceOverlay();
+    } else {
+      this.playerHand = Array.from({ length: this.playerHandSize }, () => this.drawCardFor('player'));
+    }
 
     this.teardownBar();
     // The card bar is the player's hand HUD — only show it when the player
@@ -219,11 +346,48 @@ export class FateKit {
     if (this.arena.isPlayerFate) {
       this.buildBar();
       this.setupNumberKeys();
+      if (this.arena.hasUpgrade('q')) this.gambleGraphics = this.arena.scene.add.graphics().setDepth(11);
     }
 
     this.lastMouseX = 0;
     this.lastMouseY = 0;
     this.clickWasDown = false;
+  }
+
+  /** True if the given side (player/npc, Fate) has the shop upgrade `slot` equipped. */
+  private ownerHasUpgrade(owner: 'player' | 'npc', slot: string): boolean {
+    return owner === 'player'
+      ? this.arena.isPlayerFate && this.arena.hasUpgrade(slot)
+      : this.arena.hasNpcUpgrade(slot);
+  }
+
+  // ── Draw pool (Click+ New Cards, E+ Force the Hand) ───────────────
+
+  /** The card types the given side may currently draw. */
+  private allowedTypesFor(owner: 'player' | 'npc'): FateCardType[] {
+    let pool = this.ownerHasUpgrade(owner, 'click') ? ALL_CARD_TYPES : BASE_CARD_TYPES;
+    if (owner === 'player' && this.forceHand) {
+      const def = FACE_BY_ID.get(this.forceHand);
+      if (def?.allow) {
+        const filtered = pool.filter((t) => def.allow!.includes(t));
+        if (filtered.length) pool = filtered;
+      }
+    }
+    return pool;
+  }
+
+  /** Weighted random draw from the side's allowed pool (Emperor is 10× rarer). */
+  private drawCardFor(owner: 'player' | 'npc'): FateCard {
+    const pool = this.allowedTypesFor(owner);
+    let total = 0;
+    for (const t of pool) total += t === 'emperor' ? 1 : EMPEROR_RARITY;
+    let roll = Math.random() * total;
+    let pick: FateCardType = pool[0];
+    for (const t of pool) {
+      roll -= t === 'emperor' ? 1 : EMPEROR_RARITY;
+      if (roll < 0) { pick = t; break; }
+    }
+    return { type: pick, preserved: false, enchanted: false };
   }
 
   // ── Card selection bar (mirrors Life's seed bar) ──────────────────
@@ -236,9 +400,10 @@ export class FateKit {
 
   private buildBar(): void {
     const scene = this.arena.scene;
+    const n = this.playerHandSize;
     const slotW = 60;
     const gap = 8;
-    const total = HAND_SIZE * slotW + (HAND_SIZE - 1) * gap;
+    const total = n * slotW + (n - 1) * gap;
     const startX = scene.scale.width / 2 - total / 2 + slotW / 2;
     const y = 46;
     this.barBounds = {
@@ -246,7 +411,7 @@ export class FateKit {
       x2: startX - slotW / 2 + total, y2: y + 30,
     };
 
-    for (let i = 0; i < HAND_SIZE; i++) {
+    for (let i = 0; i < n; i++) {
       const x = startX + i * (slotW + gap);
       const bg = scene.add.rectangle(x, y, slotW, 52, 0x141420, 0.85)
         .setStrokeStyle(2, 0x88eecc, 0.7)
@@ -292,6 +457,7 @@ export class FateKit {
       Phaser.Input.Keyboard.KeyCodes.ONE, Phaser.Input.Keyboard.KeyCodes.TWO,
       Phaser.Input.Keyboard.KeyCodes.THREE, Phaser.Input.Keyboard.KeyCodes.FOUR,
       Phaser.Input.Keyboard.KeyCodes.FIVE, Phaser.Input.Keyboard.KeyCodes.SIX,
+      Phaser.Input.Keyboard.KeyCodes.SEVEN, Phaser.Input.Keyboard.KeyCodes.EIGHT,
     ];
     this.numberKeys = codes.map((c) => kb.addKey(c));
   }
@@ -310,12 +476,27 @@ export class FateKit {
     this.lastMouseY = mouseY;
     if (this.arena.nukeChanneling) { this.clickWasDown = pointer.isDown; return; }
 
+    // While the Force-the-Hand overlay is up, ignore all combat input.
+    if (this.forceHandPending) { this.clickWasDown = pointer.isDown; return; }
+
     const player = this.arena.player;
 
     // ── Number keys: select card by slot ────────────────────────────
     for (let i = 0; i < this.numberKeys.length; i++) {
       if (Phaser.Input.Keyboard.JustDown(this.numberKeys[i]) && i < this.playerHand.length) {
         this.playerSelected = i;
+      }
+    }
+
+    // ── Q+ Roulette Expert: drag the gamble marker on your health bar ──
+    if (this.gambleGraphics) {
+      if (pointer.isDown && (this.draggingGamble || this.overGambleBar(mouseX, mouseY))) {
+        this.draggingGamble = true;
+        const left = player.x - HB_W / 2;
+        const ratio = Phaser.Math.Clamp((mouseX - left) / HB_W, 0, 1);
+        this.gambleHp = Math.min(Math.round(ratio * player.maxHp), Math.ceil(player.hp));
+      } else {
+        this.draggingGamble = false;
       }
     }
 
@@ -326,7 +507,7 @@ export class FateKit {
     }
 
     // ── Click (hold): throw the highlighted card ────────────────────
-    if (pointer.isDown && !this.consumedPointer()) {
+    if (pointer.isDown && !this.consumedPointer() && !this.draggingGamble) {
       if (player.castAbility('fate-card-throw', FATE_STUB_CTX)) {
         this.doThrowCard(mouseX, mouseY, 'player');
       }
@@ -361,12 +542,12 @@ export class FateKit {
   // ── Per-frame update ───────────────────────────────────────────────
 
   update(time: number, delta: number, isPlayer: boolean, isNpc: boolean): void {
-    // Draw timers
-    if (isPlayer) {
+    // Draw timers (Force-the-Hand withholds the player's deal until a face card is picked)
+    if (isPlayer && !this.forceHandPending) {
       this.playerDrawAccum += delta;
       if (this.playerDrawAccum >= DRAW_INTERVAL_MS) {
         this.playerDrawAccum -= DRAW_INTERVAL_MS;
-        if (this.playerHand.length < HAND_SIZE) this.playerHand.push(drawCard());
+        if (this.playerHand.length < this.playerHandSize) this.playerHand.push(this.drawCardFor('player'));
       }
       this.refreshBar();
     }
@@ -374,7 +555,7 @@ export class FateKit {
       this.npcDrawAccum += delta;
       if (this.npcDrawAccum >= DRAW_INTERVAL_MS) {
         this.npcDrawAccum -= DRAW_INTERVAL_MS;
-        if (this.npcHand.length < HAND_SIZE) this.npcHand.push(drawCard());
+        if (this.npcHand.length < this.npcHandSize) this.npcHand.push(this.drawCardFor('npc'));
       }
     }
 
@@ -385,6 +566,9 @@ export class FateKit {
     // Stun enforcement
     if (time < this.playerStunUntil) (this.arena.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
     if (time < this.npcStunUntil) (this.arena.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+
+    // Slash/Chill slows + Pulse knockback (override movement written earlier this frame)
+    this.updateSlowsAndKnocks(time);
 
     // Poison ticks
     this.updatePoison(time, delta);
@@ -400,9 +584,41 @@ export class FateKit {
     // Lightning strikes
     this.updateLightningStrikes(time);
 
+    // New Cards! world objects
+    this.updateBoomerangs(time);
+    this.updateSnowballs(time, delta);
+
     // All In orbits
     if (this.playerAllIn) this.updateAllIn(this.playerAllIn, time, 'player');
     if (this.npcAllIn) this.updateAllIn(this.npcAllIn, time, 'npc');
+
+    // Q+ gamble bar overlay (player only)
+    if (this.gambleGraphics && isPlayer) this.drawGambleBar();
+  }
+
+  // ── Slows (Slash/Chill) + knockback (Pulse) enforcement ────────────
+
+  private applySlow(target: Fighter, factor: number, ms: number): void {
+    const now = this.arena.scene.time.now;
+    const cur = this.slows.get(target);
+    if (!cur || cur.until < now || factor < cur.factor) this.slows.set(target, { factor, until: now + ms });
+    else cur.until = Math.max(cur.until, now + ms);
+  }
+
+  private applyKnockback(target: Fighter, vx: number, vy: number, ms: number): void {
+    this.knocks.set(target, { vx, vy, until: this.arena.scene.time.now + ms });
+  }
+
+  private updateSlowsAndKnocks(time: number): void {
+    for (const [target, s] of this.slows) {
+      if (time >= s.until) { this.slows.delete(target); continue; }
+      const body = target.body as Phaser.Physics.Arcade.Body;
+      body.setVelocity(body.velocity.x * s.factor, body.velocity.y * s.factor);
+    }
+    for (const [target, k] of this.knocks) {
+      if (time >= k.until) { this.knocks.delete(target); continue; }
+      (target.body as Phaser.Physics.Arcade.Body).setVelocity(k.vx, k.vy);
+    }
   }
 
   // ── Mods (Buff card, Slots rolls) ─────────────────────────────────
@@ -465,7 +681,9 @@ export class FateKit {
 
     this.executeCard(card, tx, ty, owner, time);
 
-    if (card.enchanted) card.enchanted = false;
+    // R+ "Wonder Preserve": a preserved card keeps its enchanted status too.
+    const keepEnchant = card.preserved && this.ownerHasUpgrade(owner, 'r');
+    if (card.enchanted && !keepEnchant) card.enchanted = false;
     if (card.preserved) {
       card.preserved = false;
     } else {
@@ -477,7 +695,8 @@ export class FateKit {
   }
 
   doReroll(owner: 'player' | 'npc'): void {
-    const hand: FateCard[] = Array.from({ length: HAND_SIZE }, () => drawCard());
+    const size = owner === 'player' ? this.playerHandSize : this.npcHandSize;
+    const hand: FateCard[] = Array.from({ length: size }, () => this.drawCardFor(owner));
     if (owner === 'player') this.playerHand = hand; else this.npcHand = hand;
     if (owner === 'player') {
       this.playerSelected = 0;
@@ -506,18 +725,28 @@ export class FateKit {
 
   private executeCard(card: FateCard, tx: number, ty: number, owner: 'player' | 'npc', time: number): void {
     const mult = card.enchanted ? 2 : 1;
+    // F+ "Enchant gives small extra bonuses": only when the card is enchanted AND the side owns F+.
+    const ep = card.enchanted && this.ownerHasUpgrade(owner, 'f');
     const dmg = Math.round(BASE_DMG[card.type] * mult * this.dmgMultFor(owner, time));
     switch (card.type) {
-      case 'laser': this.castLaser(tx, ty, owner, dmg); break;
-      case 'burst': this.castBurst(tx, ty, owner, dmg); break;
-      case 'barrier': this.castBarrier(owner, dmg); break;
-      case 'explosion': this.castExplosion(tx, ty, owner, dmg); break;
-      case 'infect': this.castInfect(tx, ty, owner, dmg, card.enchanted); break;
-      case 'coin': this.castCoin(owner, card.enchanted); break;
-      case 'heal': this.castHeal(owner, dmg); break;
-      case 'buff': this.castBuff(owner, card.enchanted); break;
-      case 'lightning': this.castLightning(tx, ty, owner, dmg, card.enchanted ? 4000 : 2000); break;
-      case 'slots': this.castSlots(tx, ty, owner, card.enchanted); break;
+      case 'laser': this.castLaser(tx, ty, owner, dmg, ep); break;
+      case 'burst': this.castBurst(tx, ty, owner, dmg, ep); break;
+      case 'barrier': this.castBarrier(owner, dmg, ep); break;
+      case 'explosion': this.castExplosion(tx, ty, owner, dmg, ep); break;
+      case 'infect': this.castInfect(tx, ty, owner, dmg, card.enchanted, ep); break;
+      case 'coin': this.castCoin(owner, card.enchanted, ep); break;
+      case 'heal': this.castHeal(owner, dmg, ep); break;
+      case 'buff': this.castBuff(owner, card.enchanted, ep); break;
+      case 'lightning': this.castLightning(tx, ty, owner, dmg, card.enchanted ? 4000 : 2000, ep); break;
+      case 'slots': this.castSlots(tx, ty, owner, card.enchanted, ep); break;
+      case 'boomerang': this.castBoomerang(owner, dmg, ep); break;
+      case 'slash': this.castSlash(tx, ty, owner, dmg, ep); break;
+      case 'phase': this.castPhase(tx, ty, owner, dmg, ep); break;
+      case 'striker': this.castStriker(tx, ty, owner, dmg, ep); break;
+      case 'pulse': this.castPulse(owner, dmg, ep); break;
+      case 'chill': this.castChill(tx, ty, owner, dmg, ep); break;
+      case 'chain': this.castChain(tx, ty, owner, dmg, ep); break;
+      case 'emperor': this.castEmperor(tx, ty, owner, dmg, ep); break;
     }
   }
 
@@ -527,34 +756,64 @@ export class FateKit {
 
   // ── Laser ──────────────────────────────────────────────────────────
 
-  private castLaser(tx: number, ty: number, owner: 'player' | 'npc', dmg: number): void {
+  private castLaser(tx: number, ty: number, owner: 'player' | 'npc', dmg: number, ep = false): void {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
-    const dx = tx - caster.x;
-    const dy = ty - caster.y;
-    const angle = Math.atan2(dy, dx);
+    const scene = this.arena.scene;
+    const angle = Math.atan2(ty - caster.y, tx - caster.x);
     const range = 1400;
-    const endX = caster.x + Math.cos(angle) * range;
-    const endY = caster.y + Math.sin(angle) * range;
+    const W = scene.scale.width; const H = scene.scale.height;
 
-    let hitAny = false;
+    // F+ "Laser can now bounce off of 3 walls": trace a reflecting polyline.
+    const bounces = ep ? 3 : 0;
+    const pts: { x: number; y: number }[] = [{ x: caster.x, y: caster.y }];
+    let px = caster.x, py = caster.y, dx = Math.cos(angle), dy = Math.sin(angle);
+    let remaining = range, segCount = 0;
+    for (;;) {
+      let tHit = remaining, axis = 0;
+      if (dx > 1e-6) { const t = (W - px) / dx; if (t < tHit) { tHit = t; axis = 1; } }
+      if (dx < -1e-6) { const t = (0 - px) / dx; if (t < tHit) { tHit = t; axis = 1; } }
+      if (dy > 1e-6) { const t = (H - py) / dy; if (t < tHit) { tHit = t; axis = 2; } }
+      if (dy < -1e-6) { const t = (0 - py) / dy; if (t < tHit) { tHit = t; axis = 2; } }
+      px += dx * tHit; py += dy * tHit; remaining -= tHit;
+      pts.push({ x: px, y: py });
+      if (axis === 0 || remaining <= 1 || segCount >= bounces) break;
+      if (axis === 1) dx = -dx; else dy = -dy;
+      segCount++;
+    }
+
+    // Damage each opponent at most once across all beam segments.
     for (const target of this.opponentsOf(owner)) {
       if (!target.active || target.hp <= 0) continue;
-      const perpDist = this.pointToSegmentDist(target.x, target.y, caster.x, caster.y, endX, endY);
-      const forwardDot = (target.x - caster.x) * Math.cos(angle) + (target.y - caster.y) * Math.sin(angle);
-      if (perpDist <= 28 && forwardDot > 0) {
+      let onBeam = false;
+      for (let s = 0; s + 1 < pts.length && !onBeam; s++) {
+        if (this.pointToSegmentDist(target.x, target.y, pts[s].x, pts[s].y, pts[s + 1].x, pts[s + 1].y) <= 28) onBeam = true;
+      }
+      if (onBeam) {
         target.takeDamage(dmg);
         this.arena.spawnHitFlash(target.x, target.y, 0xff3333);
-        hitAny = true;
       }
     }
-    void hitAny;
 
-    const scene = this.arena.scene;
-    const len = Math.sqrt(dx * dx + dy * dy) || 1;
-    const beam = scene.add.rectangle(caster.x + (endX - caster.x) / 2, caster.y + (endY - caster.y) / 2, range, 4, 0xff3333, 0.9)
-      .setRotation(angle).setDepth(9);
-    void len;
-    scene.tweens.add({ targets: beam, alpha: 0, duration: 180, onComplete: () => beam.destroy() });
+    // If the first beam segment passes over one of the caster's own coins, it
+    // reflects off the nearest one into a 2× (4× if paired) coin bounce.
+    const a = pts[0]; const b = pts[1];
+    let bestCoinIdx = -1, bestCoinDist = Infinity;
+    for (let i = 0; i < this.coins.length; i++) {
+      const c = this.coins[i];
+      if ((c.owner === 'player') !== (owner === 'player')) continue;
+      const perp = this.pointToSegmentDist(c.x, c.y, a.x, a.y, b.x, b.y);
+      const forwardDot = (c.x - a.x) * Math.cos(angle) + (c.y - a.y) * Math.sin(angle);
+      if (perp <= 22 && forwardDot > 0 && forwardDot < bestCoinDist) { bestCoinDist = forwardDot; bestCoinIdx = i; }
+    }
+    if (bestCoinIdx >= 0) this.reflectCoin(bestCoinIdx, dmg);
+
+    for (let s = 0; s + 1 < pts.length; s++) {
+      const p0 = pts[s], p1 = pts[s + 1];
+      const segLen = Phaser.Math.Distance.Between(p0.x, p0.y, p1.x, p1.y);
+      const beam = scene.add.rectangle((p0.x + p1.x) / 2, (p0.y + p1.y) / 2, segLen, 4, 0xff3333, 0.9)
+        .setRotation(Math.atan2(p1.y - p0.y, p1.x - p0.x)).setDepth(9);
+      scene.tweens.add({ targets: beam, alpha: 0, duration: 180, onComplete: () => beam.destroy() });
+    }
   }
 
   private pointToSegmentDist(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
@@ -568,12 +827,14 @@ export class FateKit {
 
   // ── Burst ──────────────────────────────────────────────────────────
 
-  private castBurst(tx: number, ty: number, owner: 'player' | 'npc', dmg: number): void {
+  private castBurst(tx: number, ty: number, owner: 'player' | 'npc', dmg: number, ep = false): void {
     const isPlayer = owner === 'player';
     const caster = isPlayer ? this.arena.player : this.arena.npc;
     const baseAngle = Math.atan2(ty - caster.y, tx - caster.x);
     const speed = 480;
-    for (const deg of [-24, -12, 0, 12, 24]) {
+    // F+ "Burst: +2 extra bullets" → 7 pellets instead of 5.
+    const degs = ep ? [-30, -20, -10, 0, 10, 20, 30] : [-24, -12, 0, 12, 24];
+    for (const deg of degs) {
       const angle = baseAngle + deg * (Math.PI / 180);
       const proj = new Projectile(this.arena.scene, caster.x, caster.y, 'proj-fate-burst', dmg, isPlayer);
       this.arena.projectiles.add(proj);
@@ -584,11 +845,12 @@ export class FateKit {
 
   // ── Barrier ────────────────────────────────────────────────────────
 
-  private castBarrier(owner: 'player' | 'npc', dmg: number): void {
+  private castBarrier(owner: 'player' | 'npc', dmg: number, ep = false): void {
     const isPlayer = owner === 'player';
     const caster = isPlayer ? this.arena.player : this.arena.npc;
-    const speed = 380;
-    const count = 15;
+    // F+ "Barrier: 2× the bullets, bullets move 300% slower".
+    const speed = ep ? 380 / 4 : 380;
+    const count = ep ? 30 : 15;
     for (let i = 0; i < count; i++) {
       const angle = (i / count) * Math.PI * 2;
       const proj = new Projectile(this.arena.scene, caster.x, caster.y, 'proj-fate-barrier', dmg, isPlayer);
@@ -600,18 +862,37 @@ export class FateKit {
 
   // ── Explosion ──────────────────────────────────────────────────────
 
-  private castExplosion(tx: number, ty: number, owner: 'player' | 'npc', dmg: number): void {
+  private castExplosion(tx: number, ty: number, owner: 'player' | 'npc', dmg: number, ep = false): void {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const scene = this.arena.scene;
     const dist = Phaser.Math.Distance.Between(caster.x, caster.y, tx, ty);
     const travelMs = Math.max(150, (dist / 500) * 1000);
 
     const bomb = scene.add.circle(caster.x, caster.y, 8, 0xcc2222, 1).setStrokeStyle(2, 0xffaa00).setDepth(8);
+    let reflected = false;
     scene.tweens.add({
       targets: bomb, x: tx, y: ty, duration: travelMs,
+      // If the bomb crosses one of the caster's own coins mid-flight, it bounces
+      // off into the same 2× (4× if paired) coin beam instead of exploding.
+      onUpdate: (tw) => {
+        if (reflected) return;
+        for (let i = 0; i < this.coins.length; i++) {
+          const c = this.coins[i];
+          if ((c.owner === 'player') !== (owner === 'player')) continue;
+          if (Phaser.Math.Distance.Between(bomb.x, bomb.y, c.x, c.y) <= 22) {
+            reflected = true;
+            tw.stop();
+            bomb.destroy();
+            this.reflectCoin(i, dmg);
+            return;
+          }
+        }
+      },
       onComplete: () => {
+        if (reflected) return;
         bomb.destroy();
-        const radius = 90;
+        // F+ "Explosion: 2× AOE range".
+        const radius = ep ? 180 : 90;
         for (const target of this.opponentsOf(owner)) {
           if (!target.active || target.hp <= 0) continue;
           if (Phaser.Math.Distance.Between(tx, ty, target.x, target.y) <= radius) {
@@ -627,10 +908,12 @@ export class FateKit {
 
   // ── Infect ─────────────────────────────────────────────────────────
 
-  private castInfect(tx: number, ty: number, owner: 'player' | 'npc', dmg: number, enchanted: boolean): void {
+  private castInfect(tx: number, ty: number, owner: 'player' | 'npc', dmg: number, enchanted: boolean, ep = false): void {
     const isPlayer = owner === 'player';
     const caster = isPlayer ? this.arena.player : this.arena.npc;
     const dotDps = enchanted ? 6 : 3;
+    // F+ "Infect: 2× infect effect duration" (3s → 6s).
+    const durMs = ep ? 6000 : 3000;
     for (let i = 0; i < 3; i++) {
       this.arena.scene.time.delayedCall(i * 100, () => {
         if (!caster.active) return;
@@ -639,6 +922,7 @@ export class FateKit {
         const len = Math.sqrt(dx * dx + dy * dy) || 1;
         const proj = new Projectile(this.arena.scene, caster.x, caster.y, 'proj-fate-infect', dmg, isPlayer);
         (proj as any).fateInfectDps = dotDps;
+        (proj as any).fateInfectDurMs = durMs;
         this.arena.projectiles.add(proj);
         proj.launch((dx / len) * 460, (dy / len) * 460);
       });
@@ -646,14 +930,14 @@ export class FateKit {
   }
 
   /** Called from ArenaScene's hit pipeline when a proj-fate-infect projectile connects. */
-  applyPoison(target: Fighter, dps: number, time: number): void {
+  applyPoison(target: Fighter, dps: number, time: number, durMs = 3000): void {
     let p = this.poison.get(target);
     if (!p) {
       const visual = this.arena.scene.add.text(target.x, target.y - 44, '☠️', { fontSize: '13px' }).setOrigin(0.5).setDepth(10);
       p = { until: 0, dps: 0, tickAccum: 0, visual };
       this.poison.set(target, p);
     }
-    p.until = time + 3000;
+    p.until = Math.max(p.until, time + durMs);
     p.dps = Math.max(p.dps, dps);
   }
 
@@ -677,17 +961,19 @@ export class FateKit {
 
   // ── Coin ───────────────────────────────────────────────────────────
 
-  private castCoin(owner: 'player' | 'npc', enchanted: boolean): void {
+  private castCoin(owner: 'player' | 'npc', enchanted: boolean, ep = false): void {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const scene = this.arena.scene;
     const time = scene.time.now;
     const count = enchanted ? 2 : 1;
     const pairId = this.coinPairCounter++;
+    // F+ "Coin: moves 50% slower" (both the rise speed and the hover-time).
+    const slow = ep ? 0.5 : 1;
     for (let i = 0; i < count; i++) {
       const sprite = scene.add.image(caster.x + (i - (count - 1) / 2) * 26, caster.y, 'proj-fate-coin').setScale(2.4).setDepth(8);
       this.coins.push({
-        sprite, x: sprite.x, y: sprite.y, vy: -260,
-        risingUntil: time + 500, expiresAt: time + 6000,
+        sprite, x: sprite.x, y: sprite.y, vy: -260 * slow,
+        risingUntil: time + 500 / slow, expiresAt: time + 6000,
         owner, pairId,
       });
     }
@@ -711,45 +997,54 @@ export class FateKit {
 
   /** Reflects an owner-matching projectile off a coin into a 2× (4× if paired/enchanted) hitscan laser. */
   private tryReflectOffCoin(proj: Projectile, time: number): boolean {
+    void time;
     for (let i = this.coins.length - 1; i >= 0; i--) {
       const c = this.coins[i];
       const sameOwner = (c.owner === 'player') === proj.isFromPlayer;
       if (!sameOwner) continue;
       if (Phaser.Math.Distance.Between(proj.x, proj.y, c.x, c.y) > 18) continue;
-
-      const partner = this.coins.find((o, j) => j !== i && o.pairId === c.pairId);
-      const damage = proj.damage * (partner ? 4 : 2);
-      const caster = c.owner === 'player' ? this.arena.player : this.arena.npc;
-      const target = this.opponentsOf(c.owner)[0] ?? (c.owner === 'player' ? this.arena.npc : this.arena.player);
-
-      const scene = this.arena.scene;
-      const drawLine = (x1: number, y1: number, x2: number, y2: number) => {
-        const midX = (x1 + x2) / 2; const midY = (y1 + y2) / 2;
-        const len = Phaser.Math.Distance.Between(x1, y1, x2, y2);
-        const ang = Math.atan2(y2 - y1, x2 - x1);
-        const line = scene.add.rectangle(midX, midY, len, 3, 0xffee00, 0.95).setRotation(ang).setDepth(9);
-        scene.tweens.add({ targets: line, alpha: 0, duration: 220, onComplete: () => line.destroy() });
-      };
-      if (partner) drawLine(caster.x, caster.y, partner.x, partner.y);
-      drawLine(c.x, c.y, target.x, target.y);
-
-      if (target.active && target.hp > 0) {
-        target.takeDamage(damage);
-        this.arena.spawnHitFlash(target.x, target.y, 0xffee00);
-      }
-
-      const toRemove = partner ? [i, this.coins.indexOf(partner)] : [i];
-      toRemove.sort((a, b) => b - a);
-      for (const idx of toRemove) { this.coins[idx].sprite.destroy(); this.coins.splice(idx, 1); }
-      void time;
+      this.reflectCoin(i, proj.damage);
       return true;
     }
     return false;
   }
 
+  /**
+   * Bounces `incomingDamage` off the coin at index `i` (and its pair) into a 2×
+   * (4× if paired) hitscan beam at the coin's owner's target, then consumes the
+   * coin(s). Shared by projectile hits and the Laser card passing over a coin.
+   */
+  private reflectCoin(i: number, incomingDamage: number): void {
+    const c = this.coins[i];
+    const partner = this.coins.find((o, j) => j !== i && o.pairId === c.pairId);
+    const damage = incomingDamage * (partner ? 4 : 2);
+    const caster = c.owner === 'player' ? this.arena.player : this.arena.npc;
+    const target = this.opponentsOf(c.owner)[0] ?? (c.owner === 'player' ? this.arena.npc : this.arena.player);
+
+    const scene = this.arena.scene;
+    const drawLine = (x1: number, y1: number, x2: number, y2: number) => {
+      const midX = (x1 + x2) / 2; const midY = (y1 + y2) / 2;
+      const len = Phaser.Math.Distance.Between(x1, y1, x2, y2);
+      const ang = Math.atan2(y2 - y1, x2 - x1);
+      const line = scene.add.rectangle(midX, midY, len, 3, 0xffee00, 0.95).setRotation(ang).setDepth(9);
+      scene.tweens.add({ targets: line, alpha: 0, duration: 220, onComplete: () => line.destroy() });
+    };
+    if (partner) drawLine(caster.x, caster.y, partner.x, partner.y);
+    drawLine(c.x, c.y, target.x, target.y);
+
+    if (target.active && target.hp > 0) {
+      target.takeDamage(damage);
+      this.arena.spawnHitFlash(target.x, target.y, 0xffee00);
+    }
+
+    const toRemove = partner ? [i, this.coins.indexOf(partner)] : [i];
+    toRemove.sort((a, b) => b - a);
+    for (const idx of toRemove) { this.coins[idx].sprite.destroy(); this.coins.splice(idx, 1); }
+  }
+
   // ── Heal ───────────────────────────────────────────────────────────
 
-  private castHeal(owner: 'player' | 'npc', amountPerOrb: number): void {
+  private castHeal(owner: 'player' | 'npc', amountPerOrb: number, ep = false): void {
     const scene = this.arena.scene;
     const time = scene.time.now;
     const W = scene.scale.width; const H = scene.scale.height;
@@ -757,8 +1052,12 @@ export class FateKit {
       const x = Phaser.Math.Between(60, W - 60);
       const y = Phaser.Math.Between(90, H - 60);
       const sprite = scene.add.circle(x, y, 8, 0x44dd88, 0.85).setStrokeStyle(2, 0xffffff, 0.6).setDepth(4);
-      scene.tweens.add({ targets: sprite, y: y - 10, yoyo: true, repeat: -1, duration: 700 });
-      this.healOrbs.push({ sprite, x, y, owner, expiresAt: time + 8000 });
+      // Homing orbs (F+) are repositioned every frame, so skip the bobbing tween.
+      if (!ep) scene.tweens.add({ targets: sprite, y: y - 10, yoyo: true, repeat: -1, duration: 700 });
+      const orb: FateHealOrb = { sprite, x, y, owner, expiresAt: time + 8000 };
+      // F+ "Heal: orbs will very slowly move towards the player".
+      (orb as any).homing = ep;
+      this.healOrbs.push(orb);
       (sprite as any).fateHealAmount = amountPerOrb;
     }
   }
@@ -768,6 +1067,13 @@ export class FateKit {
       const o = this.healOrbs[i];
       if (time > o.expiresAt) { o.sprite.destroy(); this.healOrbs.splice(i, 1); continue; }
       const fighter = o.owner === 'player' ? this.arena.player : this.arena.npc;
+      // F+ homing: drift very slowly toward the owner.
+      if ((o as any).homing) {
+        const ang = Math.atan2(fighter.y - o.y, fighter.x - o.x);
+        o.x += Math.cos(ang) * 0.6;
+        o.y += Math.sin(ang) * 0.6;
+        o.sprite.setPosition(o.x, o.y);
+      }
       if (Phaser.Math.Distance.Between(fighter.x, fighter.y, o.x, o.y) <= 24) {
         const amount = (o.sprite as any).fateHealAmount ?? 8;
         fighter.heal(amount);
@@ -780,9 +1086,10 @@ export class FateKit {
 
   // ── Buff ───────────────────────────────────────────────────────────
 
-  private castBuff(owner: 'player' | 'npc', enchanted: boolean): void {
+  private castBuff(owner: 'player' | 'npc', enchanted: boolean, ep = false): void {
     const pct = enchanted ? 0.20 : 0.10;
-    const duration = 8000;
+    // F+ "Buff: 1.5× buff duration".
+    const duration = ep ? 12000 : 8000;
     this.addMod(owner, 'speed', 1 + pct, duration);
     this.addMod(owner, 'dmgDealt', 1 + pct, duration);
     this.addMod(owner, 'dmgTaken', 1 - pct, duration);
@@ -791,11 +1098,12 @@ export class FateKit {
 
   // ── Lightning ──────────────────────────────────────────────────────
 
-  private castLightning(tx: number, ty: number, owner: 'player' | 'npc', dmg: number, stunMs: number): void {
+  private castLightning(tx: number, ty: number, owner: 'player' | 'npc', dmg: number, stunMs: number, ep = false): void {
     const scene = this.arena.scene;
     const ring = scene.add.circle(tx, ty, 70, 0xffee44, 0.25).setStrokeStyle(2, 0xffee44, 0.9).setDepth(6);
     scene.tweens.add({ targets: ring, alpha: 0.5, yoyo: true, repeat: -1, duration: 300 });
-    this.lightningStrikes.push({ ring, x: tx, y: ty, owner, dmg, stunMs, resolveAt: scene.time.now + 2000 });
+    // F+ "Lightning: 1.5× AOE duration" (telegraph window before the bolt lands).
+    this.lightningStrikes.push({ ring, x: tx, y: ty, owner, dmg, stunMs, resolveAt: scene.time.now + (ep ? 3000 : 2000) });
   }
 
   private updateLightningStrikes(time: number): void {
@@ -824,7 +1132,7 @@ export class FateKit {
 
   // ── Slots ──────────────────────────────────────────────────────────
 
-  private castSlots(tx: number, ty: number, owner: 'player' | 'npc', enchanted: boolean): void {
+  private castSlots(tx: number, ty: number, owner: 'player' | 'npc', enchanted: boolean, ep = false): void {
     const scene = this.arena.scene;
     const time = scene.time.now;
     const count = enchanted ? 2 : 1;
@@ -842,14 +1150,17 @@ export class FateKit {
       const label = scene.add.text(x, y, '🎰', { fontSize: '18px' }).setOrigin(0.5).setDepth(3);
       const barBg = scene.add.rectangle(x, y - 32, 40, 5, 0x222222, 0.8).setDepth(3);
       const barFill = scene.add.rectangle(x - 20, y - 32, 0, 5, 0xffee00, 0.95).setOrigin(0, 0.5).setDepth(4);
-      this.slotMachines.push({ sprite, label, barBg, barFill, x, y, owner, cycleDmgPlayer: 0, cycleDmgNpc: 0, cycleEnd: time + 10000 });
+      this.slotMachines.push({ sprite, label, barBg, barFill, x, y, owner, cycleDmgPlayer: 0, cycleDmgNpc: 0, cycleEnd: time + 10000, halfReq: ep });
     }
   }
 
   private updateSlotMachines(time: number): void {
     for (const sm of this.slotMachines) {
       const total = sm.cycleDmgPlayer + sm.cycleDmgNpc;
-      sm.barFill.setSize(Math.min(40, (total / 50) * 40), 5);
+      // F+ "Slots: ½ requirements to get good rolls" halves the buff/jackpot thresholds.
+      const buffReq = sm.halfReq ? 12.5 : 25;
+      const jackpotReq = sm.halfReq ? 25 : 50;
+      sm.barFill.setSize(Math.min(40, (total / jackpotReq) * 40), 5);
       if (time < sm.cycleEnd) continue;
 
       sm.cycleEnd = time + 10000;
@@ -857,8 +1168,8 @@ export class FateKit {
 
       const winner: 'player' | 'npc' = sm.cycleDmgPlayer >= sm.cycleDmgNpc ? 'player' : 'npc';
       const fighter = winner === 'player' ? this.arena.player : this.arena.npc;
-      const isBuff = total >= 25;
-      const pct = total >= 50 ? 0.35 : 0.15;
+      const isBuff = total >= buffReq;
+      const pct = total >= jackpotReq ? 0.35 : 0.15;
       const stat: FateModStat = (['dmgTaken', 'speed', 'size', 'cd', 'dmgDealt'] as FateModStat[])[Math.floor(Math.random() * 5)];
       const mult = isBuff
         ? (stat === 'dmgTaken' ? 1 - pct : stat === 'size' ? 1 - pct : stat === 'cd' ? 1 - pct : 1 + pct)
@@ -900,10 +1211,15 @@ export class FateKit {
   doAllIn(owner: 'player' | 'npc'): void {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const scene = this.arena.scene;
+    // Q+ "Roulette Expert": the player wagers the gamble-bar amount and gets +2s
+    // of orbit time before the circle detonates.
+    const rouletteExpert = owner === 'player' && this.arena.hasUpgrade('q');
+    const wager = rouletteExpert ? Math.max(1, this.gambleHp) : 50;
+    const orbitMs = rouletteExpert ? 5000 : 3000;
     const sprite = scene.add.circle(caster.x + 100, caster.y, 50, 0xffcc44, 0.4).setStrokeStyle(3, 0xffaa00, 0.9).setDepth(6);
-    const allIn: FateAllIn = { sprite, owner, activatesAt: scene.time.now + 3000, orbitAngle: 0 };
+    const allIn: FateAllIn = { sprite, owner, activatesAt: scene.time.now + orbitMs, orbitAngle: 0, wager };
     if (owner === 'player') this.playerAllIn = allIn; else this.npcAllIn = allIn;
-    this.arena.showFloatingText(caster.x, caster.y - 36, '🎰 All In! (50 HP)', '#ffcc44');
+    this.arena.showFloatingText(caster.x, caster.y - 36, `🎰 All In! (${wager} HP)`, '#ffcc44');
   }
 
   private updateAllIn(allIn: FateAllIn, time: number, owner: 'player' | 'npc'): void {
@@ -925,13 +1241,12 @@ export class FateKit {
     const hitRadius = allIn.sprite.width / 2;
     const hit = Phaser.Math.Distance.Between(ax, ay, target.x, target.y) <= hitRadius;
     if (hit) {
-      target.takeDamage(50);
-      caster.heal(75);
+      target.takeDamage(allIn.wager);
       this.arena.spawnHitFlash(target.x, target.y, 0xffcc44);
-      this.arena.showFloatingText(caster.x, caster.y - 50, '🎰 HIT! +75 HP', '#ffee44');
+      this.arena.showFloatingText(caster.x, caster.y - 50, `🎰 HIT! ${allIn.wager}`, '#ffee44');
     } else {
-      caster.applySelfDamage(50);
-      this.arena.showFloatingText(caster.x, caster.y - 50, '🎰 MISS! -50 HP', '#ff8888');
+      caster.applySelfDamage(allIn.wager);
+      this.arena.showFloatingText(caster.x, caster.y - 50, `🎰 MISS! -${allIn.wager} HP`, '#ff8888');
     }
 
     allIn.sprite.setFillStyle(hit ? 0xffee00 : 0x333333, 0.7);
@@ -940,6 +1255,329 @@ export class FateKit {
       onComplete: () => allIn.sprite.destroy(),
     });
     if (owner === 'player') this.playerAllIn = null; else this.npcAllIn = null;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  New Cards! (Click+ upgrade card pool)
+  // ═══════════════════════════════════════════════════════════════════
+
+  // ── Boomerang: a yellow orb orbits the caster for 3s, 15 dmg on contact ──
+  private castBoomerang(owner: 'player' | 'npc', dmg: number, ep: boolean): void {
+    const scene = this.arena.scene;
+    const time = scene.time.now;
+    const count = ep ? 2 : 1; // F+ "Boomerang: summon 2 projectiles instead of 1"
+    for (let i = 0; i < count; i++) {
+      const sprite = scene.add.circle(0, 0, 10, 0xffe000, 0.95).setStrokeStyle(2, 0xaa8800, 1).setDepth(8);
+      this.boomerangs.push({ sprite, owner, angle: (i / count) * Math.PI * 2, radius: 92, dmg, expiresAt: time + 3000, hitAt: new Map() });
+    }
+  }
+
+  private updateBoomerangs(time: number): void {
+    for (let i = this.boomerangs.length - 1; i >= 0; i--) {
+      const b = this.boomerangs[i];
+      if (time > b.expiresAt) { b.sprite.destroy(); this.boomerangs.splice(i, 1); continue; }
+      const caster = b.owner === 'player' ? this.arena.player : this.arena.npc;
+      b.angle += 0.13;
+      const bx = caster.x + Math.cos(b.angle) * b.radius;
+      const by = caster.y + Math.sin(b.angle) * b.radius;
+      b.sprite.setPosition(bx, by);
+      for (const target of this.opponentsOf(b.owner)) {
+        if (!target.active || target.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(bx, by, target.x, target.y) > 26) continue;
+        const last = b.hitAt.get(target) ?? -1000;
+        if (time - last < 500) continue;
+        b.hitAt.set(target, time);
+        target.takeDamage(b.dmg);
+        this.arena.spawnHitFlash(target.x, target.y, 0xffe000);
+      }
+    }
+  }
+
+  // ── Slash: a close red arc in front of the caster, 15 dmg ──
+  private castSlash(tx: number, ty: number, owner: 'player' | 'npc', dmg: number, ep: boolean): void {
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    const scene = this.arena.scene;
+    const ang = Math.atan2(ty - caster.y, tx - caster.x);
+    const range = 100;
+    const halfCone = Math.PI * 0.42;
+    for (const target of this.opponentsOf(owner)) {
+      if (!target.active || target.hp <= 0) continue;
+      if (Phaser.Math.Distance.Between(caster.x, caster.y, target.x, target.y) > range + 24) continue;
+      const to = Math.atan2(target.y - caster.y, target.x - caster.x);
+      if (Math.abs(Phaser.Math.Angle.Wrap(to - ang)) > halfCone) continue;
+      target.takeDamage(dmg);
+      this.arena.spawnHitFlash(target.x, target.y, 0xff2222);
+      // F+ "Slash: applies a 50% slow for 5 seconds".
+      if (ep) { this.applySlow(target, 0.5, 5000); this.arena.showFloatingText(target.x, target.y - 40, '🐌 SLOW', '#88ddff'); }
+    }
+    const g = scene.add.graphics().setDepth(9);
+    g.lineStyle(7, 0xff2222, 0.9);
+    g.beginPath();
+    g.arc(caster.x, caster.y, range, ang - halfCone, ang + halfCone);
+    g.strokePath();
+    scene.tweens.add({ targets: g, alpha: 0, duration: 220, onComplete: () => g.destroy() });
+  }
+
+  // ── Phase: a short blink toward the cursor, 10 dmg to anyone dashed through ──
+  private castPhase(tx: number, ty: number, owner: 'player' | 'npc', dmg: number, ep: boolean): void {
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    const scene = this.arena.scene;
+    const ang = Math.atan2(ty - caster.y, tx - caster.x);
+    const full = Phaser.Math.Distance.Between(caster.x, caster.y, tx, ty);
+    let dist = Math.min(full * 0.7, 220);
+    if (ep) dist *= 1.5; // F+ "Phase: 1.5× the dash distance"
+    const startX = caster.x, startY = caster.y;
+    let nx = caster.x + Math.cos(ang) * dist;
+    let ny = caster.y + Math.sin(ang) * dist;
+    nx = Phaser.Math.Clamp(nx, 24, scene.scale.width - 24);
+    ny = Phaser.Math.Clamp(ny, 24, scene.scale.height - 24);
+
+    for (const target of this.opponentsOf(owner)) {
+      if (!target.active || target.hp <= 0) continue;
+      if (this.pointToSegmentDist(target.x, target.y, startX, startY, nx, ny) <= 28) {
+        target.takeDamage(dmg);
+        this.arena.spawnHitFlash(target.x, target.y, 0x00c2c7);
+      }
+    }
+
+    (caster.body as Phaser.Physics.Arcade.Body).reset(nx, ny);
+    caster.setPosition(nx, ny);
+    // Teal ghost trail from start to landing.
+    for (let k = 0; k <= 4; k++) {
+      const gx = startX + (nx - startX) * (k / 4);
+      const gy = startY + (ny - startY) * (k / 4);
+      const ghost = scene.add.circle(gx, gy, 18, 0x00c2c7, 0.35).setDepth(4);
+      scene.tweens.add({ targets: ghost, alpha: 0, duration: 260, onComplete: () => ghost.destroy() });
+    }
+  }
+
+  // ── Striker: a very slow black projectile, 35 dmg on hit ──
+  private castStriker(tx: number, ty: number, owner: 'player' | 'npc', dmg: number, ep: boolean): void {
+    const isPlayer = owner === 'player';
+    const caster = isPlayer ? this.arena.player : this.arena.npc;
+    const ang = Math.atan2(ty - caster.y, tx - caster.x);
+    const speed = 130;
+    const proj = new Projectile(this.arena.scene, caster.x, caster.y, 'proj-fate-striker', dmg, isPlayer);
+    this.arena.projectiles.add(proj);
+    if (ep) proj.setScale(1.2); // F+ "Striker: 20% larger projectile"
+    proj.launch(Math.cos(ang) * speed, Math.sin(ang) * speed);
+    proj.setRotation(ang);
+  }
+
+  // ── Pulse: an AoE at the caster, 10 dmg + knockback ──
+  private castPulse(owner: 'player' | 'npc', dmg: number, ep: boolean): void {
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    const scene = this.arena.scene;
+    const radius = 130;
+    const kbMult = ep ? 2 : 1; // F+ "Pulse: 2× knockback"
+    for (const target of this.opponentsOf(owner)) {
+      if (!target.active || target.hp <= 0) continue;
+      if (Phaser.Math.Distance.Between(caster.x, caster.y, target.x, target.y) > radius) continue;
+      target.takeDamage(dmg);
+      const ang = Math.atan2(target.y - caster.y, target.x - caster.x);
+      const speed = 520 * kbMult;
+      this.applyKnockback(target, Math.cos(ang) * speed, Math.sin(ang) * speed, 260);
+      this.arena.spawnHitFlash(target.x, target.y, 0x00a3ff);
+    }
+    const ring = scene.add.circle(caster.x, caster.y, 10, 0x00a3ff, 0.5).setStrokeStyle(3, 0x66ccff, 0.9).setDepth(7);
+    scene.tweens.add({ targets: ring, scaleX: radius / 10, scaleY: radius / 10, alpha: 0, duration: 320, onComplete: () => ring.destroy() });
+  }
+
+  // ── Chill: an explosive snowball, 5 dmg + a very large 50% slow AoE ──
+  private castChill(tx: number, ty: number, owner: 'player' | 'npc', dmg: number, ep: boolean): void {
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    const scene = this.arena.scene;
+    const ang = Math.atan2(ty - caster.y, tx - caster.x);
+    const speed = 360;
+    const sprite = scene.add.circle(caster.x, caster.y, 11, 0xd6f2ff, 0.95).setStrokeStyle(2, 0x88bbdd, 1).setDepth(8);
+    // F+ "Chill: +3 second slow duration" (5s → 8s).
+    this.snowballs.push({ sprite, x: caster.x, y: caster.y, vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed, owner, dmg, slowMs: ep ? 8000 : 5000, expiresAt: scene.time.now + 2000 });
+  }
+
+  private updateSnowballs(time: number, delta: number): void {
+    const dt = delta / 1000;
+    const W = this.arena.scene.scale.width, H = this.arena.scene.scale.height;
+    for (let i = this.snowballs.length - 1; i >= 0; i--) {
+      const s = this.snowballs[i];
+      s.x += s.vx * dt; s.y += s.vy * dt;
+      s.sprite.setPosition(s.x, s.y);
+      let primary: Fighter | null = null;
+      for (const target of this.opponentsOf(s.owner)) {
+        if (target.active && target.hp > 0 && Phaser.Math.Distance.Between(s.x, s.y, target.x, target.y) <= 24) { primary = target; break; }
+      }
+      const offscreen = s.x < 0 || s.x > W || s.y < 0 || s.y > H;
+      if (primary || offscreen || time > s.expiresAt) {
+        this.explodeSnowball(s, primary);
+        this.snowballs.splice(i, 1);
+      }
+    }
+  }
+
+  private explodeSnowball(s: FateSnowball, primary: Fighter | null): void {
+    const scene = this.arena.scene;
+    const radius = 200;
+    if (primary && primary.active && primary.hp > 0) primary.takeDamage(s.dmg);
+    for (const target of this.opponentsOf(s.owner)) {
+      if (!target.active || target.hp <= 0) continue;
+      if (Phaser.Math.Distance.Between(s.x, s.y, target.x, target.y) > radius) continue;
+      target.takeDamage(s.dmg);
+      this.applySlow(target, 0.5, s.slowMs);
+      this.arena.showFloatingText(target.x, target.y - 40, '❄️ SLOW', '#aaddff');
+    }
+    const ring = scene.add.circle(s.x, s.y, 12, 0xbfeaff, 0.4).setStrokeStyle(3, 0x88bbdd, 0.9).setDepth(6);
+    scene.tweens.add({ targets: ring, scaleX: radius / 12, scaleY: radius / 12, alpha: 0, duration: 420, onComplete: () => ring.destroy() });
+    s.sprite.destroy();
+  }
+
+  // ── Chain: an electric hitscan that arcs between nearby enemies, 10 dmg each ──
+  private castChain(tx: number, ty: number, owner: 'player' | 'npc', dmg: number, ep: boolean): void {
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    const scene = this.arena.scene;
+    const chainRange = ep ? 340 : 210; // F+ "Chain: Increased range of chaining"
+    const pool = this.opponentsOf(owner).filter((t) => t.active && t.hp > 0);
+    const aimAng = Math.atan2(ty - caster.y, tx - caster.x);
+
+    let fromX = caster.x, fromY = caster.y;
+    // First hop: whichever live opponent is nearest the aim direction / caster.
+    let cur: Fighter | null = null;
+    let best = Infinity;
+    for (const t of pool) {
+      const d = Phaser.Math.Distance.Between(fromX, fromY, t.x, t.y);
+      const aligned = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(t.y - fromY, t.x - fromX) - aimAng));
+      const score = d + aligned * 60;
+      if (score < best) { best = score; cur = t; }
+    }
+    const drawArc = (x1: number, y1: number, x2: number, y2: number) => {
+      const line = scene.add.rectangle((x1 + x2) / 2, (y1 + y2) / 2, Phaser.Math.Distance.Between(x1, y1, x2, y2), 3, 0x9b5cff, 0.95)
+        .setRotation(Math.atan2(y2 - y1, x2 - x1)).setDepth(9);
+      scene.tweens.add({ targets: line, alpha: 0, duration: 200, onComplete: () => line.destroy() });
+    };
+    while (cur) {
+      drawArc(fromX, fromY, cur.x, cur.y);
+      cur.takeDamage(dmg);
+      this.arena.spawnHitFlash(cur.x, cur.y, 0x9b5cff);
+      pool.splice(pool.indexOf(cur), 1);
+      fromX = cur.x; fromY = cur.y;
+      let next: Fighter | null = null; best = chainRange;
+      for (const t of pool) {
+        const d = Phaser.Math.Distance.Between(fromX, fromY, t.x, t.y);
+        if (d < best) { best = d; next = t; }
+      }
+      cur = next;
+    }
+  }
+
+  // ── Emperor: 12 bullets fired in quick succession, 3 dmg each ──
+  private castEmperor(tx: number, ty: number, owner: 'player' | 'npc', dmg: number, ep: boolean): void {
+    const isPlayer = owner === 'player';
+    const caster = isPlayer ? this.arena.player : this.arena.npc;
+    const scene = this.arena.scene;
+    const count = ep ? 17 : 12; // F+ "Emperor: +5 bullets launched"
+    const speed = 540;
+    for (let i = 0; i < count; i++) {
+      scene.time.delayedCall(i * 55, () => {
+        if (!caster.active) return;
+        const ang = Math.atan2(ty - caster.y, tx - caster.x) + (Math.random() - 0.5) * 0.12;
+        const proj = new Projectile(scene, caster.x, caster.y, 'proj-fate-burst', dmg, isPlayer);
+        proj.setTint(0xffe680);
+        this.arena.projectiles.add(proj);
+        proj.launch(Math.cos(ang) * speed, Math.sin(ang) * speed);
+        proj.setRotation(ang);
+      });
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  E+ "Force the Hand of Fate" — pre-game card-choice overlay
+  // ═══════════════════════════════════════════════════════════════════
+
+  private buildForceOverlay(): void {
+    const scene = this.arena.scene;
+    const W = scene.scale.width, H = scene.scale.height;
+    const dim = scene.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.65).setScrollFactor(0).setDepth(500).setInteractive();
+    const title = scene.add.text(W / 2, H / 2 - 150, 'Force the Hand of Fate', {
+      fontSize: '28px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc66',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(501);
+    const sub = scene.add.text(W / 2, H / 2 - 118, 'Choose a card to limit which cards you can draw this match:', {
+      fontSize: '13px', fontFamily: 'Arial, sans-serif', color: '#ddddee',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(501);
+    this.forceOverlay.push(dim, title, sub);
+
+    const n = FATE_FACE_CARDS.length;
+    const cw = 148, gap = 14;
+    const total = n * cw + (n - 1) * gap;
+    const startX = W / 2 - total / 2 + cw / 2;
+    const y = H / 2 + 10;
+    FATE_FACE_CARDS.forEach((f, i) => {
+      const x = startX + i * (cw + gap);
+      const hex = '#' + f.color.toString(16).padStart(6, '0');
+      const box = scene.add.rectangle(x, y, cw, 190, 0x1a1030, 0.96).setStrokeStyle(3, f.color, 1)
+        .setScrollFactor(0).setDepth(501).setInteractive({ useHandCursor: true });
+      const emoji = scene.add.text(x, y - 58, f.emoji, { fontSize: '40px' }).setOrigin(0.5).setScrollFactor(0).setDepth(502);
+      const name = scene.add.text(x, y - 14, f.name, { fontSize: '20px', fontFamily: '"Arial Black", sans-serif', color: hex }).setOrigin(0.5).setScrollFactor(0).setDepth(502);
+      const allowTxt = f.allow ? f.allow.map((t) => DEF_BY_TYPE.get(t)!.name).join(', ') : 'No limit — all cards can be drawn';
+      const desc = scene.add.text(x, y + 44, allowTxt, {
+        fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#ccccdd', align: 'center', wordWrap: { width: cw - 18 },
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(502);
+      box.on('pointerover', () => box.setFillStyle(0x2a1a44, 0.98));
+      box.on('pointerout', () => box.setFillStyle(0x1a1030, 0.96));
+      box.on('pointerdown', () => this.chooseForceHand(f.face));
+      this.forceOverlay.push(box, emoji, name, desc);
+    });
+  }
+
+  private chooseForceHand(face: FateFaceCard): void {
+    this.forceHand = face;
+    this.forceHandPending = false;
+    this.playerHand = Array.from({ length: this.playerHandSize }, () => this.drawCardFor('player'));
+    this.playerSelected = 0;
+    this.playerDrawAccum = 0;
+    this.teardownForceOverlay();
+    this.refreshBar();
+    const def = FACE_BY_ID.get(face);
+    this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 40, `${def?.emoji} ${def?.name}!`, '#ffcc66');
+  }
+
+  private teardownForceOverlay(): void {
+    for (const o of this.forceOverlay) o.destroy();
+    this.forceOverlay = [];
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  Q+ "Roulette Expert" — draggable gamble marker on the health bar
+  // ═══════════════════════════════════════════════════════════════════
+
+  private overGambleBar(mx: number, my: number): boolean {
+    const p = this.arena.player;
+    const left = p.x - HB_W / 2;
+    const top = p.y + HB_OFFSET_Y;
+    return mx >= left - 6 && mx <= left + HB_W + 6 && my >= top - 8 && my <= top + HB_H + 8;
+  }
+
+  private drawGambleBar(): void {
+    const g = this.gambleGraphics;
+    if (!g) return;
+    g.clear();
+    const p = this.arena.player;
+    if (!p.active || p.hp <= 0) { if (this.gambleLabel) this.gambleLabel.setVisible(false); return; }
+    // Never gamble more HP than you currently have.
+    this.gambleHp = Math.min(this.gambleHp, Math.ceil(p.hp));
+    const left = p.x - HB_W / 2;
+    const top = p.y + HB_OFFSET_Y;
+    const ratio = Phaser.Math.Clamp(this.gambleHp / p.maxHp, 0, 1);
+    // Tint the gambled slice of the bar yellow.
+    g.fillStyle(0xffee00, 0.5);
+    g.fillRect(left, top, HB_W * ratio, HB_H);
+    // Draggable handle.
+    const hx = left + HB_W * ratio;
+    g.fillStyle(0xffffff, 1);
+    g.fillRect(hx - 2, top - 4, 4, HB_H + 8);
+    g.lineStyle(1, 0x000000, 1);
+    g.strokeRect(hx - 2, top - 4, 4, HB_H + 8);
+    if (!this.gambleLabel) {
+      this.gambleLabel = this.arena.scene.add.text(0, 0, '', { fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#ffee66' }).setOrigin(0.5, 1).setDepth(12);
+    }
+    this.gambleLabel.setVisible(true).setText(`🎰 ${this.gambleHp}`).setPosition(p.x, top - 6);
   }
 
   // ── Paper perk (right-click poker hand throw) ─────────────────────

@@ -57,6 +57,10 @@ export interface FireArenaApi {
   lockCaster(durationMs: number): void;
   hasUpgrade(slot: string): boolean;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
+  /** Cosmetics: maps a fire visual color through the owner's color cosmetic (Burnt → black hue). */
+  fireColor(owner: 'player' | 'npc', base: number): number;
+  /** Idempotent achievement unlock with in-arena popup. */
+  unlockAchievement(id: string): void;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
@@ -193,7 +197,7 @@ export class FireKit {
           this.flameChargeWaiting = false;
           if (this.flameChargeWaitVisual) { this.flameChargeWaitVisual.destroy(); this.flameChargeWaitVisual = null; }
           const cx = player.x, cy = player.y;
-          const fuseVis = scene.add.circle(cx, cy, 14, 0xff4400, 0.8).setDepth(7);
+          const fuseVis = scene.add.circle(cx, cy, 14, this.arena.fireColor('player', 0xff4400), 0.8).setDepth(7);
           scene.tweens.add({ targets: fuseVis, alpha: 0.2, yoyo: true, repeat: -1, duration: 250 });
           this.flameChargePending = { x: cx, y: cy, fireAt: time + 3000, visual: fuseVis };
         }
@@ -209,10 +213,12 @@ export class FireKit {
         if (Phaser.Math.Distance.Between(fx, fy, player.x, player.y) <= radius) {
           player.applySelfDamage(80);
           this.arena.showFloatingText(player.x, player.y - 28, '🔥 Self-Dmg!', '#ff4400');
+          // Oops achievement: blew yourself up with your own Flame Charge.
+          if (player.hp <= 0) this.arena.unlockAchievement('oops');
         }
-        const boom = scene.add.circle(fx, fy, 12, 0xff4400, 0.9).setDepth(5);
+        const boom = scene.add.circle(fx, fy, 12, this.arena.fireColor('player', 0xff4400), 0.9).setDepth(5);
         scene.tweens.add({ targets: boom, scaleX: 22, scaleY: 22, alpha: 0, duration: 700, onComplete: () => boom.destroy() });
-        const boomCore = scene.add.circle(fx, fy, 8, 0xffffff, 1).setDepth(6);
+        const boomCore = scene.add.circle(fx, fy, 8, this.arena.fireColor('player', 0xffffff), 1).setDepth(6);
         scene.tweens.add({ targets: boomCore, scaleX: 9, scaleY: 9, alpha: 0, duration: 320, onComplete: () => boomCore.destroy() });
         this.arena.showFloatingText(fx, fy - 28, '💥 Flame Charge!', '#ff6600');
       }
@@ -230,7 +236,7 @@ export class FireKit {
       // Fire Mastery — Burning Body: always-on passive while mastery is enabled
       if (this.arena.masteryActive) {
         if (!this.burningBodyAura) {
-          this.burningBodyAura = scene.add.circle(player.x, player.y, 34, 0x991100, 0.35).setDepth(3);
+          this.burningBodyAura = scene.add.circle(player.x, player.y, 34, this.arena.fireColor('player', 0x991100), 0.35).setDepth(3);
         }
         this.burningBodyAura.setPosition(player.x, player.y);
         this.burningBodyTickAccum += delta;
@@ -240,7 +246,7 @@ export class FireKit {
             if (!t.active || t.hp <= 0) continue;
             if (Phaser.Math.Distance.Between(player.x, player.y, t.x, t.y) <= 50) {
               t.takeDamage(3, { fireDot: true });
-              this.arena.spawnHitFlash(t.x, t.y, 0x991100);
+              this.arena.spawnHitFlash(t.x, t.y, this.arena.fireColor('player', 0x991100));
             }
           }
         }
@@ -301,7 +307,7 @@ export class FireKit {
                 if (dot > 0.866) {
                   const ftDmg = this.enhancedFlameBody ? 8 : 4;
                   t.takeDamage(ftDmg);
-                  this.arena.spawnHitFlash(t.x, t.y, 0xff5500);
+                  this.arena.spawnHitFlash(t.x, t.y, this.arena.fireColor('player', 0xff5500));
                   if (this.arena.hasUpgrade('click')) {
                     const wasBurning = t.burningUntil > time;
                     t.burningUntil = Math.max(t.burningUntil, time + Math.round(3000 * t.statusDurMult));
@@ -367,10 +373,10 @@ export class FireKit {
                   if (!enemy.active || enemy.hp <= 0) continue;
                   if (Phaser.Math.Distance.Between(ex, ey, enemy.x, enemy.y) <= 50) {
                     enemy.takeDamage(Phaser.Math.Between(5, 8));
-                    this.arena.spawnHitFlash(enemy.x, enemy.y, 0xff6600);
+                    this.arena.spawnHitFlash(enemy.x, enemy.y, this.arena.fireColor('player', 0xff6600));
                   }
                 }
-                const ring = scene.add.circle(ex, ey, 8, 0xff6600, 0.8).setDepth(4);
+                const ring = scene.add.circle(ex, ey, 8, this.arena.fireColor('player', 0xff6600), 0.8).setDepth(4);
                 scene.tweens.add({ targets: ring, scaleX: 5, scaleY: 5, alpha: 0, duration: 280, onComplete: () => ring.destroy() });
               });
             }
@@ -389,7 +395,7 @@ export class FireKit {
             this.pressureChargeStart = time;
             this.pressureTremorAccum = 0;
             player.incomingDamageMultiplier = this.enhancedFlameBody ? 2 : 1.5;
-            const cv = scene.add.circle(player.x, player.y, 12, 0xff8800, 0.6).setDepth(4);
+            const cv = scene.add.circle(player.x, player.y, 12, this.arena.fireColor('player', 0xff8800), 0.6).setDepth(4);
             scene.tweens.add({ targets: cv, scaleX: 0.5, scaleY: 0.5, yoyo: true, repeat: -1, duration: 300 });
             this.pressureChargeVisual = cv;
           }
@@ -409,10 +415,10 @@ export class FireKit {
                   if (!t.active || t.hp <= 0) continue;
                   if (Phaser.Math.Distance.Between(mouseX, mouseY, t.x, t.y) <= 60) {
                     t.takeDamage(tremorDmg);
-                    this.arena.spawnHitFlash(t.x, t.y, 0xff6600);
+                    this.arena.spawnHitFlash(t.x, t.y, this.arena.fireColor('player', 0xff6600));
                   }
                 }
-                const tremor = scene.add.circle(mouseX, mouseY, 8, 0xff6600, 0.75).setDepth(4);
+                const tremor = scene.add.circle(mouseX, mouseY, 8, this.arena.fireColor('player', 0xff6600), 0.75).setDepth(4);
                 scene.tweens.add({ targets: tremor, scaleX: 5, scaleY: 5, alpha: 0, duration: 350, onComplete: () => tremor.destroy() });
               }
             } else {
@@ -435,16 +441,16 @@ export class FireKit {
             if (!t.active || t.hp <= 0) continue;
             if (Phaser.Math.Distance.Between(mx, my, t.x, t.y) <= 100) {
               t.takeDamage(finalDmg);
-              this.arena.spawnHitFlash(t.x, t.y, 0xff8800);
+              this.arena.spawnHitFlash(t.x, t.y, this.arena.fireColor('player', 0xff8800));
             }
           }
           // Alcohol perk: ignite any alcohol puddles in blast radius
           if (this.arena.hasPerk('player', 'alcohol')) {
             this.igniteAlcoholPuddlesNear(mx, my, 120, scene);
           }
-          const ring = scene.add.circle(mx, my, 10, 0xff8800, 0.9).setDepth(4);
+          const ring = scene.add.circle(mx, my, 10, this.arena.fireColor('player', 0xff8800), 0.9).setDepth(4);
           scene.tweens.add({ targets: ring, scaleX: 10, scaleY: 10, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
-          const core = scene.add.circle(mx, my, 6, 0xffffff, 0.95).setDepth(5);
+          const core = scene.add.circle(mx, my, 6, this.arena.fireColor('player', 0xffffff), 0.95).setDepth(5);
           scene.tweens.add({ targets: core, scaleX: 4, scaleY: 4, alpha: 0, duration: 180, onComplete: () => core.destroy() });
           player.triggerCooldown('pressure-bomb');
           // Chaos Cluster (R+): 5 scattered explosions around the blast site
@@ -456,10 +462,10 @@ export class FireKit {
                 const dist = Math.random() * 150;
                 const cx = mx + Math.cos(ang) * dist;
                 const cy = my + Math.sin(ang) * dist;
-                this.arena.damagePlayerTargets(cx, cy, 60, 5, 0xff8800);
-                const ring = scene.add.circle(cx, cy, 12, 0xff8800, 0.85).setDepth(4);
+                this.arena.damagePlayerTargets(cx, cy, 60, 5, this.arena.fireColor('player', 0xff8800));
+                const ring = scene.add.circle(cx, cy, 12, this.arena.fireColor('player', 0xff8800), 0.85).setDepth(4);
                 scene.tweens.add({ targets: ring, scaleX: 5, scaleY: 5, alpha: 0, duration: 320, onComplete: () => ring.destroy() });
-                const core = scene.add.circle(cx, cy, 6, 0xffffff, 1).setDepth(5);
+                const core = scene.add.circle(cx, cy, 6, this.arena.fireColor('player', 0xffffff), 1).setDepth(5);
                 scene.tweens.add({ targets: core, scaleX: 3, scaleY: 3, alpha: 0, duration: 200, onComplete: () => core.destroy() });
               });
             }
@@ -486,7 +492,7 @@ export class FireKit {
           if (this.flameBodyActive) { player.cardOutgoingDamageMult *= 2; } else { player.cardOutgoingDamageMult /= 2; }
           if (this.flameBodyAura) { this.flameBodyAura.destroy(); this.flameBodyAura = null; }
           if (this.flameBodyActive) {
-            this.flameBodyAura = scene.add.circle(player.x, player.y, 40, 0xff2200, 0.4).setDepth(3);
+            this.flameBodyAura = scene.add.circle(player.x, player.y, 40, this.arena.fireColor('player', 0xff2200), 0.4).setDepth(3);
           }
         } else {
           // Base: original toggle
@@ -494,7 +500,7 @@ export class FireKit {
           this.enhancedFlameBody = false;
           this.flameBodyTickAccum = 0;
           if (this.flameBodyActive) {
-            this.flameBodyAura = scene.add.circle(player.x, player.y, 30, 0xff6600, 0.25).setDepth(3);
+            this.flameBodyAura = scene.add.circle(player.x, player.y, 30, this.arena.fireColor('player', 0xff6600), 0.25).setDepth(3);
           } else {
             if (this.flameBodyAura) { this.flameBodyAura.destroy(); this.flameBodyAura = null; }
           }
@@ -512,7 +518,7 @@ export class FireKit {
             player.triggerCooldown('flame-nuke');
             this.arena.lockCaster(1000);
             if (this.flameChargeWaitVisual) this.flameChargeWaitVisual.destroy();
-            this.flameChargeWaitVisual = scene.add.circle(player.x, player.y, 20, 0xff8800, 0.5).setDepth(6);
+            this.flameChargeWaitVisual = scene.add.circle(player.x, player.y, 20, this.arena.fireColor('player', 0xff8800), 0.5).setDepth(6);
             scene.tweens.add({ targets: this.flameChargeWaitVisual, alpha: 0.1, yoyo: true, repeat: -1, duration: 200 });
             this.arena.showFloatingText(player.x, player.y - 28, '🔥 Channeling...', '#ff8800');
           }
@@ -560,9 +566,9 @@ export class FireKit {
     const rect = scene.add.rectangle(
       origin.x, origin.y,
       HEATWAVE_HALF_THICKNESS * 2, HEATWAVE_HALF_WIDTH * 2,
-      0xffdd33, 0.55,
+      this.arena.fireColor(owner, 0xffdd33), 0.55,
     ).setDepth(6);
-    rect.setStrokeStyle(2, 0xffff99, 0.9);
+    rect.setStrokeStyle(2, this.arena.fireColor(owner, 0xffff99), 0.9);
     rect.setRotation(angle);
 
     this.heatwaves.push({
@@ -678,7 +684,7 @@ export class FireKit {
       this.npcFlameBodyActive = !this.npcFlameBodyActive;
       this.npcFlameBodyTickAccum = 0;
       if (this.npcFlameBodyActive) {
-        this.npcFlameBodyAura = scene.add.circle(npc.x, npc.y, 30, 0xff6600, 0.25).setDepth(3);
+        this.npcFlameBodyAura = scene.add.circle(npc.x, npc.y, 30, this.arena.fireColor('npc', 0xff6600), 0.25).setDepth(3);
       } else {
         if (this.npcFlameBodyAura) { this.npcFlameBodyAura.destroy(); this.npcFlameBodyAura = null; }
       }

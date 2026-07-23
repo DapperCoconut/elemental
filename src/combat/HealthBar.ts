@@ -15,19 +15,19 @@ export class HealthBar {
     this.graphics.setDepth(10);
   }
 
-  update(x: number, y: number, hp: number, shieldHp = 0, chargeRatio = 0, clottedHp = 0, weakHp = 0): void {
+  update(x: number, y: number, hp: number, shieldHp = 0, chargeRatio = 0, clottedHp = 0, weakHp = 0, chargeColor = 0xffdd00): void {
     this.graphics.clear();
     if (!this.visible) return;
 
     const bx = x - this.barW / 2;
     const by = y + this.offsetY;
 
-    // Charge bar (yellow, above HP bar)
+    // Charge bar (yellow by default, above HP bar; color overridable e.g. Rubber Bazooka overcharge)
     if (chargeRatio > 0) {
       const cby = by - this.chargeBarH - 2;
       this.graphics.fillStyle(0x111111, 0.85);
       this.graphics.fillRect(bx - 1, cby - 1, this.barW + 2, this.chargeBarH + 2);
-      this.graphics.fillStyle(0xffdd00, 1);
+      this.graphics.fillStyle(chargeColor, 1);
       this.graphics.fillRect(bx, cby, this.barW * Math.min(1, chargeRatio), this.chargeBarH);
     }
 

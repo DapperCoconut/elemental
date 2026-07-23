@@ -20,6 +20,7 @@ interface Loadout {
   upgrades: string[];
   masteryBinds: Record<string, string>;
   masteryOn: boolean;
+  cosmetics: Record<string, string>;
   ready: boolean;
 }
 
@@ -30,8 +31,8 @@ export class OnlineLobbyScene extends Phaser.Scene {
   private phase: LobbyPhase = 'entry';
   private phaseObjects: Phaser.GameObjects.GameObject[] = [];
 
-  private mySel: Loadout = { elementId: null, perkId: null, upgrades: [], masteryBinds: {}, masteryOn: false, ready: false };
-  private oppSel: Loadout = { elementId: null, perkId: null, upgrades: [], masteryBinds: {}, masteryOn: false, ready: false };
+  private mySel: Loadout = { elementId: null, perkId: null, upgrades: [], masteryBinds: {}, masteryOn: false, cosmetics: {}, ready: false };
+  private oppSel: Loadout = { elementId: null, perkId: null, upgrades: [], masteryBinds: {}, masteryOn: false, cosmetics: {}, ready: false };
   private oppInLobby = false;
 
   private roomMode: NetMatchMode = 'pvp';
@@ -68,8 +69,8 @@ export class OnlineLobbyScene extends Phaser.Scene {
     const { width, height } = this.scale;
 
     this.phaseObjects = [];
-    this.mySel = { elementId: null, perkId: null, upgrades: [], masteryBinds: {}, masteryOn: false, ready: false };
-    this.oppSel = { elementId: null, perkId: null, upgrades: [], masteryBinds: {}, masteryOn: false, ready: false };
+    this.mySel = { elementId: null, perkId: null, upgrades: [], masteryBinds: {}, masteryOn: false, cosmetics: {}, ready: false };
+    this.oppSel = { elementId: null, perkId: null, upgrades: [], masteryBinds: {}, masteryOn: false, cosmetics: {}, ready: false };
     this.oppInLobby = false;
     this.roomMode = 'pvp';
     this.roomInvasionDifficulty = 'normal';
@@ -456,6 +457,7 @@ export class OnlineLobbyScene extends Phaser.Scene {
     this.mySel.upgrades = PlayerData.getActiveUpgrades(elementId);
     this.mySel.masteryOn = PlayerData.isMasteryEnabled(elementId);
     this.mySel.masteryBinds = this.mySel.masteryOn ? PlayerData.getMasteryBinds(elementId) : {};
+    this.mySel.cosmetics = PlayerData.getEquippedCosmetics(elementId);
 
     // Rebuild the perk list for this element: none + unlocked perks
     const unlockedIds = PlayerData.getUnlockedPerks(elementId);
@@ -490,7 +492,7 @@ export class OnlineLobbyScene extends Phaser.Scene {
   }
 
   private pushMySelection(): void {
-    Net.send({ t: 'sel', elementId: this.mySel.elementId, perkId: this.mySel.perkId, upgrades: this.mySel.upgrades, masteryBinds: this.mySel.masteryBinds, masteryOn: this.mySel.masteryOn, ready: this.mySel.ready });
+    Net.send({ t: 'sel', elementId: this.mySel.elementId, perkId: this.mySel.perkId, upgrades: this.mySel.upgrades, masteryBinds: this.mySel.masteryBinds, masteryOn: this.mySel.masteryOn, cosmetics: this.mySel.cosmetics, ready: this.mySel.ready });
   }
 
   private refreshRoomWidgets(): void {
@@ -597,18 +599,18 @@ export class OnlineLobbyScene extends Phaser.Scene {
       t: 'start',
       mode: this.roomMode,
       invasionDifficulty: this.roomMode === 'invasion' ? this.roomInvasionDifficulty : undefined,
-      hostSel: { elementId: this.mySel.elementId, perkId: this.mySel.perkId, upgrades: this.mySel.upgrades, masteryBinds: this.mySel.masteryBinds, masteryOn: this.mySel.masteryOn },
-      guestSel: { elementId: this.oppSel.elementId, perkId: this.oppSel.perkId, upgrades: this.oppSel.upgrades, masteryBinds: this.oppSel.masteryBinds, masteryOn: this.oppSel.masteryOn },
+      hostSel: { elementId: this.mySel.elementId, perkId: this.mySel.perkId, upgrades: this.mySel.upgrades, masteryBinds: this.mySel.masteryBinds, masteryOn: this.mySel.masteryOn, cosmetics: this.mySel.cosmetics },
+      guestSel: { elementId: this.oppSel.elementId, perkId: this.oppSel.perkId, upgrades: this.oppSel.upgrades, masteryBinds: this.oppSel.masteryBinds, masteryOn: this.oppSel.masteryOn, cosmetics: this.oppSel.cosmetics },
     });
     this.startMatch(
-      { elementId: this.mySel.elementId, perkId: this.mySel.perkId, upgrades: this.mySel.upgrades, masteryBinds: this.mySel.masteryBinds, masteryOn: this.mySel.masteryOn },
-      { elementId: this.oppSel.elementId, perkId: this.oppSel.perkId, upgrades: this.oppSel.upgrades, masteryBinds: this.oppSel.masteryBinds, masteryOn: this.oppSel.masteryOn },
+      { elementId: this.mySel.elementId, perkId: this.mySel.perkId, upgrades: this.mySel.upgrades, masteryBinds: this.mySel.masteryBinds, masteryOn: this.mySel.masteryOn, cosmetics: this.mySel.cosmetics },
+      { elementId: this.oppSel.elementId, perkId: this.oppSel.perkId, upgrades: this.oppSel.upgrades, masteryBinds: this.oppSel.masteryBinds, masteryOn: this.oppSel.masteryOn, cosmetics: this.oppSel.cosmetics },
     );
   }
 
   private startMatch(
-    mine: { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean },
-    theirs: { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean },
+    mine: { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; cosmetics?: Record<string, string> },
+    theirs: { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; cosmetics?: Record<string, string> },
   ): void {
     const isCoop = this.roomMode === 'invasion';
     this.scene.start('ArenaScene', {
@@ -624,6 +626,7 @@ export class OnlineLobbyScene extends Phaser.Scene {
         npcUpgrades: theirs.upgrades ?? [],
         npcMasteryBinds: theirs.masteryBinds ?? {},
         npcMasteryOn: theirs.masteryOn ?? false,
+        npcCosmetics: theirs.cosmetics ?? {},
       },
     });
   }
@@ -634,7 +637,7 @@ export class OnlineLobbyScene extends Phaser.Scene {
     switch (msg.t) {
       case 'sel':
         this.oppInLobby = true;
-        this.oppSel = { elementId: msg.elementId, perkId: msg.perkId, upgrades: msg.upgrades ?? [], masteryBinds: msg.masteryBinds ?? {}, masteryOn: msg.masteryOn ?? false, ready: msg.ready };
+        this.oppSel = { elementId: msg.elementId, perkId: msg.perkId, upgrades: msg.upgrades ?? [], masteryBinds: msg.masteryBinds ?? {}, masteryOn: msg.masteryOn ?? false, cosmetics: msg.cosmetics ?? {}, ready: msg.ready };
         this.refreshRoomWidgets();
         break;
       case 'lobby':
@@ -656,8 +659,8 @@ export class OnlineLobbyScene extends Phaser.Scene {
           this.roomMode = msg.mode;
           this.roomInvasionDifficulty = msg.invasionDifficulty ?? 'normal';
           this.startMatch(
-            msg.guestSel as { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean },
-            msg.hostSel as { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean },
+            msg.guestSel as { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; cosmetics?: Record<string, string> },
+            msg.hostSel as { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; cosmetics?: Record<string, string> },
           );
         }
         break;

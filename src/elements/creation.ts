@@ -4,7 +4,7 @@ import { Ability, CastContext } from './Ability';
 const daggerSpray: Ability = {
   id: 'dagger-spray',
   name: 'Dagger Spray',
-  description: 'Click: launch a dagger at cursor. Hold to summon up to 4 more parallel daggers; release to fire all. Daggers pierce past cursor. 0.5s CD.',
+  description: 'Click & hold to fan up to 5 daggers 30° apart; release and they converge on the cursor, then fly past. Daggers pierce. 0.5s CD.',
   displayKey: 'Click',
   cooldown: 500,
   cast(ctx: CastContext) {
@@ -16,7 +16,7 @@ const daggerSpray: Ability = {
 const chargedBolt: Ability = {
   id: 'charged-bolt',
   name: 'Charged Bolt',
-  description: 'Tap E: copper bolt (5 dmg). Hold 0.5s: silver bolt (10 dmg). Hold 1s: gold bolt (15 dmg). Bolts hitting the Crucible load it; 3 bolts triggers crafting. 2s CD.',
+  description: 'Tap E: copper bolt (5). Hold 0.5s: silver (10). Hold 1s: gold (15). Load 3 bolts into the Crucible to craft — CCC bolt spray · CCS scythe · CSS medkit · SSS heal pulses · CCG ghoul · CGG damage pulses · GSS fire pools · GGS +30% speed · GGG cross-beam + armor. 2s CD.',
   displayKey: 'E',
   cooldown: 2000,
   cast(ctx: CastContext) {
@@ -51,9 +51,10 @@ const createBlock: Ability = {
 };
 
 const mazeOfDoom: Ability = {
+  // id kept as 'maze-of-doom' for cooldown/color/AI wiring; this is now the Workshop.
   id: 'maze-of-doom',
-  name: 'Maze of Doom',
-  description: 'Fill the arena with randomized walls for 10s. Walls block enemy movement and projectiles — your movement and projectiles pass through freely. 45s CD.',
+  name: 'Workshop',
+  description: 'Convert the arena into a wooden workshop for 30s: walk on top of your own barriers, gain +25% speed, and leave an afterimage trail. 45s CD.',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 45000,

@@ -37,10 +37,10 @@ const soundGrapple: Ability = {
   cast(ctx) { void ctx; }, // Handled in ArenaScene
 };
 
-const accelerando: Ability = {
-  id: 'accelerando',
-  name: 'Accelerando',
-  description: 'Requires 10 consecutive hits. For 5s: 2× rhythm speed + auto-play every note.',
+const solo: Ability = {
+  id: 'solo',
+  name: 'Solo',
+  description: 'Summon a disco ball and shred a guitar solo on stage. The rhythm track runs 4× faster and your hits auto-aim the enemy. One missed note ends the solo (accidentals save you). Cancels Flow Mode.',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 25000,
@@ -52,5 +52,5 @@ export const soundElement: Element = {
   name: 'Sound',
   color: 0xff66cc,
   emoji: '🔊',
-  abilities: [rhythmShot, flowMode, screechBarrier, soundGrapple, accelerando],
+  abilities: [rhythmShot, flowMode, screechBarrier, soundGrapple, solo],
 };

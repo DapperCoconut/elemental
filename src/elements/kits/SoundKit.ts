@@ -61,6 +61,12 @@ const NOTE_TOOLTIPS: Record<NoteType, string> = {
   purple: 'Purple — 20 dmg + grants you +25% speed for 3s.',
 };
 const HOLD_COLOR = 0x44ee88;
+// Green hold notes are long sustained bars — you hold Click the whole time the
+// bar overlaps the hit line. Width sets how long that hold window lasts.
+const HOLD_NOTE_WIDTH = 170;
+// Screech Barrier damages anyone inside this radius (a solid disc, matching the
+// ~80px visual with a little body-size forgiveness) rather than a thin ring.
+const SCREECH_RADIUS = 88;
 
 // ── SoundKit ──────────────────────────────────────────────────────────────
 
@@ -76,7 +82,6 @@ export class SoundKit {
   private soundNoteStreak = 0;
   private soundFlowActive = false;
   private soundFlowCancelRequestedAt = 0;
-  private soundAccelerandoUntil = 0;
   private soundPointerWasDown = false;
   private soundLastClickTime = 0;
   private soundAccidentals = 0;
@@ -121,13 +126,20 @@ export class SoundKit {
   private soundComposingLastSpawn = 0;
   private soundComposePalette: Phaser.GameObjects.GameObject[] = [];
   private soundComposedNoteSprites: Array<{
-    sprite: Phaser.GameObjects.Arc;
+    sprite: Phaser.GameObjects.Rectangle;
     type: NoteType;
     xFrac: number;
     patternIdx: number;
   }> = [];
 
-  // ── Q+ crescendo speed ────────────────────────────────────────────────
+  // ── Q: Solo (guitar performance mode) ─────────────────────────────────
+  private soundSoloActive = false;
+  private soundSoloReturnX = 0;
+  private soundSoloReturnY = 0;
+  private soundSoloGraceUntil = 0;
+  private soundSoloSprites: Phaser.GameObjects.GameObject[] = [];
+
+  // ── Q+ crescendo speed (reserved for a future Solo+) ──────────────────
   private soundCrescendoSpeedUntil = 0;
   private soundCrescendoSpeedBonus = 0;
 
@@ -155,7 +167,7 @@ export class SoundKit {
 
   getNoteStreak(): number { return this.soundNoteStreak; }
   isFlowActive(): boolean { return this.soundFlowActive; }
-  getAccelerandoUntil(): number { return this.soundAccelerandoUntil; }
+  isSoloActive(): boolean { return this.soundSoloActive; }
   isSelfSlowActive(time: number): boolean { return time < this.soundSelfSlowUntil; }
   isNpcSlowActive(time: number): boolean { return time < this.soundNpcSlowUntil; }
   getCrescendoSpeedBonus(): number { return this.soundCrescendoSpeedBonus; }
@@ -177,7 +189,6 @@ export class SoundKit {
     this.soundNoteStreak = 0;
     this.soundFlowActive = false;
     this.soundFlowCancelRequestedAt = 0;
-    this.soundAccelerandoUntil = 0;
     this.soundPointerWasDown = false;
     this.soundLastClickTime = 0;
     this.soundAccidentals = 0;
@@ -213,6 +224,13 @@ export class SoundKit {
     this.soundComposePalette = [];
     for (const o of this.soundComposedNoteSprites) { if (o.sprite.active) o.sprite.destroy(); }
     this.soundComposedNoteSprites = [];
+
+    this.soundSoloActive = false;
+    this.soundSoloReturnX = 0;
+    this.soundSoloReturnY = 0;
+    this.soundSoloGraceUntil = 0;
+    for (const s of this.soundSoloSprites) s.destroy();
+    this.soundSoloSprites = [];
 
     this.soundCrescendoSpeedUntil = 0;
     this.soundCrescendoSpeedBonus = 0;
@@ -291,7 +309,6 @@ export class SoundKit {
     const W = this.arena.width;
     const soundHitLineX = W / 2;
     const soundTolerance = 30;
-    const soundAccelActive = time < this.soundAccelerandoUntil;
     const tY = this.getTrackY();
 
     // ── Click+: Composing mode (right-click to toggle) ─────────────────
@@ -318,11 +335,17 @@ export class SoundKit {
 
     // ── Click: rhythm hit or miss ─────────────────────────────────────
     const soundClickJustDown = pointer.isDown && !this.soundPointerWasDown;
-    if (soundClickJustDown && !soundAccelActive && time - this.soundLastClickTime >= 200) {
+    if (soundClickJustDown && time - this.soundLastClickTime >= 200) {
       this.soundLastClickTime = time;
       const hitNote = this.soundNotes.find(n => !n.isHold && Math.abs(n.x - soundHitLineX) <= soundTolerance);
       if (hitNote) {
-        const hitCtx = { ...this.arena.buildPlayerContext(mouseX, mouseY), lockCaster: (_d: number) => {}, quickShotActive: true };
+        // During Solo, hits auto-aim the nearest enemy instead of the cursor.
+        let aimX = mouseX, aimY = mouseY;
+        if (this.soundSoloActive) {
+          const tgt = this.findNearestEnemy();
+          if (tgt) { aimX = tgt.x; aimY = tgt.y; }
+        }
+        const hitCtx = { ...this.arena.buildPlayerContext(aimX, aimY), lockCaster: (_d: number) => {}, quickShotActive: true };
         fireHitscan(hitCtx, hitNote.damage, hitNote.isRed ? 0xff4444 : NOTE_COLORS[hitNote.noteType], false);
         this.arena.spawnHitFlash(player.x, player.y, 0xff66cc);
         this.soundNoteStreak++;
@@ -347,11 +370,15 @@ export class SoundKit {
         const idx = this.soundNotes.indexOf(hitNote);
         if (idx !== -1) this.soundNotes.splice(idx, 1);
         this.flashHitRing(scene, hitNote.isRed ? 0xff4444 : 0xffaaff);
+      } else if (this.isHoldBarOverLine(soundHitLineX, soundTolerance)) {
+        // Pressing while a green hold bar covers the line begins a hold — not a miss.
       } else {
-        // Miss — consume accidental or take damage
+        // Miss — consume accidental, end a solo, or take damage
         if (this.soundAccidentals > 0) {
           this.soundAccidentals--;
           this.arena.showFloatingText(player.x, player.y - 30, '♪ SAVED!', '#ffaadd');
+        } else if (this.soundSoloActive) {
+          this.endSolo(time);
         } else {
           player.applySelfDamage(10);
           this.arena.spawnHitFlash(player.x, player.y, 0xff6666);
@@ -366,6 +393,13 @@ export class SoundKit {
     }
     this.soundPointerWasDown = pointer.isDown;
     this.soundRightPointerWasDown = pointer.rightButtonDown();
+
+    // While performing a Solo, only Q responds (to end it early) — the
+    // performer is locked into the rhythm and can't Flow/Screech/Grapple.
+    if (this.soundSoloActive) {
+      if (Phaser.Input.Keyboard.JustDown(qKey)) this.endSolo(time);
+      return;
+    }
 
     // ── E: Toggle Flow Mode (3s cancel delay) ─────────────────────────
     if (Phaser.Input.Keyboard.JustDown(eKey)) {
@@ -411,7 +445,7 @@ export class SoundKit {
 
         if (!isStar) {
           const bc = this.soundScreechRed ? 0xff3333 : 0xff66cc;
-          this.soundScreechSprite = scene.add.circle(mouseX, mouseY, 80, bc, 0).setDepth(3);
+          this.soundScreechSprite = scene.add.circle(mouseX, mouseY, SCREECH_RADIUS, bc, 0.1).setDepth(3);
           this.soundScreechSprite.setStrokeStyle(3, bc, 0.9);
           scene.tweens.add({ targets: this.soundScreechSprite, alpha: 0.15, yoyo: true, repeat: -1, duration: 600 });
         } else {
@@ -535,29 +569,105 @@ export class SoundKit {
       }
     }
 
-    // ── Q: Accelerando — requires 10 streak ───────────────────────────
+    // ── Q: Solo — enter the guitar performance (end is handled above) ──
     if (Phaser.Input.Keyboard.JustDown(qKey)) {
-      if (this.soundNoteStreak >= 10 && player.getCooldownRatio('accelerando') >= 1) {
-        // Q+: convert overflow streak to speed bonus
-        if (this.arena.hasUpgrade('q')) {
-          const overflow = this.soundNoteStreak - 10;
-          if (overflow > 0) {
-            this.soundCrescendoSpeedUntil = time + 6000;
-            this.soundCrescendoSpeedBonus = overflow * 0.02;
-            this.arena.showFloatingText(player.x, player.y - 50, `🎵 CRESCENDO +${Math.round(overflow * 2)}%`, '#cc88ff');
-          }
-        }
-
-        player.triggerCooldown('accelerando');
-        this.soundAccelerandoUntil = time + 5000;
-        this.soundNoteStreak = 0;
-        const at = scene.add.text(player.x, player.y - 40, '🎶 ACCELERANDO!', {
-          fontSize: '13px', color: '#ffaaff', fontFamily: '"Arial Black", sans-serif',
-          stroke: '#440044', strokeThickness: 2,
-        }).setOrigin(0.5).setDepth(13);
-        scene.tweens.add({ targets: at, y: at.y - 30, alpha: 0, duration: 1500, onComplete: () => at.destroy() });
+      if (player.getCooldownRatio('solo') >= 1) {
+        player.triggerCooldown('solo');
+        this.startSolo(scene, time);
       }
     }
+  }
+
+  // ── Q: Solo ────────────────────────────────────────────────────────────
+
+  private startSolo(scene: Phaser.Scene, time: number): void {
+    const { player } = this.arena;
+    const W = this.arena.width;
+    const H = this.arena.height;
+
+    // Cancel Flow Mode instantly so the speed bonuses don't stack.
+    if (this.soundFlowActive || this.soundFlowCancelRequestedAt > 0) {
+      this.soundFlowActive = false;
+      this.soundFlowCancelRequestedAt = 0;
+      if (this.soundHitRing) this.soundHitRing.setStrokeStyle(3, 0xff66cc, 0.9);
+    }
+
+    // Clear the track and grant a 2s grace before notes start scrolling in.
+    for (const n of this.soundNotes) n.sprite.destroy();
+    this.soundNotes = [];
+    this.soundSoloGraceUntil = time + 2000;
+
+    this.soundSoloActive = true;
+    this.soundSoloReturnX = player.x;
+    this.soundSoloReturnY = player.y;
+
+    // Disco ball hangs above; the stage sits below it, centered.
+    const ballX = W / 2;
+    const ballY = H * 0.30;
+    const stageY = H * 0.55;
+    const px = ballX;
+    const py = stageY - 18;
+
+    // Teleport the performer onto the stage.
+    player.setPosition(px, py);
+    const body = player.body as Phaser.Physics.Arcade.Body;
+    body.reset(px, py);
+    body.setVelocity(0, 0);
+
+    // Spotlight cone from the ball down to the stage.
+    const spot = scene.add.graphics().setDepth(1);
+    spot.fillStyle(0xffffff, 0.07);
+    spot.fillTriangle(ballX, ballY, ballX - 95, stageY + 12, ballX + 95, stageY + 12);
+    this.soundSoloSprites.push(spot);
+
+    // Stage platform.
+    const stage = scene.add.rectangle(ballX, stageY, 150, 26, 0x221133, 0.9)
+      .setStrokeStyle(2, 0xff66cc, 0.8).setDepth(2);
+    this.soundSoloSprites.push(stage);
+
+    // Hanging cord + disco ball with facet lines.
+    const cord = scene.add.rectangle(ballX, ballY - 42, 2, 40, 0x666666, 0.8).setDepth(5);
+    this.soundSoloSprites.push(cord);
+    const ball = scene.add.circle(ballX, ballY, 22, 0xccccff, 0.95).setDepth(6);
+    ball.setStrokeStyle(2, 0xffffff, 0.8);
+    this.soundSoloSprites.push(ball);
+    const facets = scene.add.graphics().setDepth(7);
+    facets.lineStyle(1, 0x8888aa, 0.7);
+    for (let i = -2; i <= 2; i++) facets.lineBetween(ballX - 21, ballY + i * 8, ballX + 21, ballY + i * 8);
+    this.soundSoloSprites.push(facets);
+    scene.tweens.add({ targets: [ball, facets], alpha: 0.55, yoyo: true, repeat: -1, duration: 300 });
+
+    // Sparkle dots twinkling around the ball.
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const sp = scene.add.circle(ballX + Math.cos(a) * 40, ballY + Math.sin(a) * 40, 3, 0xff66cc, 0.9).setDepth(4);
+      this.soundSoloSprites.push(sp);
+      scene.tweens.add({ targets: sp, alpha: 0.2, yoyo: true, repeat: -1, duration: 200 + i * 60 });
+    }
+
+    // Guitar in the performer's hands.
+    const guitar = scene.add.text(px + 15, py, '🎸', { fontSize: '20px' }).setOrigin(0.5).setDepth(11);
+    this.soundSoloSprites.push(guitar);
+
+    this.arena.showFloatingText(px, py - 44, '🎸 SOLO!', '#ffdd44');
+  }
+
+  private endSolo(time: number): void {
+    if (!this.soundSoloActive) return;
+    this.soundSoloActive = false;
+
+    for (const s of this.soundSoloSprites) s.destroy();
+    this.soundSoloSprites = [];
+
+    // Return to where the solo began.
+    const { player } = this.arena;
+    player.setPosition(this.soundSoloReturnX, this.soundSoloReturnY);
+    const body = player.body as Phaser.Physics.Arcade.Body;
+    body.reset(this.soundSoloReturnX, this.soundSoloReturnY);
+    body.setVelocity(0, 0);
+
+    this.arena.showFloatingText(player.x, player.y - 40, '🎸 ENCORE!', '#ffdd44');
+    void time;
   }
 
   // ── Per-frame update ─────────────────────────────────────────────────
@@ -572,7 +682,6 @@ export class SoundKit {
     const W = this.arena.width;
     const soundHitLineX = W / 2;
     const soundTolerance = 30;
-    const soundAccelActive = time < this.soundAccelerandoUntil;
 
     // Reset grace-note refresh counter each time the grapple cooldown becomes ready
     const grappleCdReady = player.getCooldownRatio('sound-grapple') >= 1;
@@ -581,8 +690,9 @@ export class SoundKit {
     }
     this.soundGrappleCdWasReady = grappleCdReady;
     const harmonyBoost = time < this.harmonySongSpeedUntil ? (1 + this.harmonySongSpeedBonus) : 1;
-    const soundBaseSpeed = (soundAccelActive ? 480 : (this.soundFlowActive ? 360 : 240)) * harmonyBoost;
-    const soundSpawnInterval = soundAccelActive ? 275 : (this.soundFlowActive ? 550 : 1100);
+    // Solo runs the track 3× faster than the normal tempo (240 / 1100ms).
+    const soundBaseSpeed = (this.soundSoloActive ? 720 : (this.soundFlowActive ? 360 : 240)) * harmonyBoost;
+    const soundSpawnInterval = this.soundSoloActive ? 367 : (this.soundFlowActive ? 550 : 1100);
     const tY = this.getTrackY();
 
     // ── Flow cancel 3s delay ──────────────────────────────────────────
@@ -600,8 +710,8 @@ export class SoundKit {
       this.soundHitRing.setAlpha(1);
     }
 
-    // ── Note spawning ─────────────────────────────────────────────────
-    if (!this.soundComposingActive) {
+    // ── Note spawning (suppressed during the Solo grace window) ───────
+    if (!this.soundComposingActive && time >= this.soundSoloGraceUntil) {
       if (this.soundComposedPattern.length > 0) {
         this.updateComposedLooper(time, soundBaseSpeed, soundSpawnInterval, tY);
       } else if (time - this.soundLastSpawnAt >= soundSpawnInterval) {
@@ -615,10 +725,10 @@ export class SoundKit {
 
         let noteSprite: Phaser.GameObjects.Arc | Phaser.GameObjects.Rectangle;
         if (isHold) {
-          noteSprite = scene.add.rectangle(W + 20, tY, 30, 12, HOLD_COLOR, 0.85)
-            .setStrokeStyle(1.5, 0x66ffcc, 0.9).setDepth(21);
+          noteSprite = scene.add.rectangle(W + 20, tY, HOLD_NOTE_WIDTH, 20, HOLD_COLOR, 0.7)
+            .setStrokeStyle(2, 0x66ffcc, 0.95).setDepth(21);
         } else {
-          noteSprite = scene.add.circle(W + 20, tY, 10, NOTE_COLORS[noteType], 0.85).setDepth(21);
+          noteSprite = this.createRhythmNoteSprite(W + 20, tY, noteType);
         }
 
         this.soundNotes.push({
@@ -642,27 +752,11 @@ export class SoundKit {
         note.sprite.setX(note.x);
       }
 
-      // Auto-hit during accelerando (non-hold notes only)
-      if (!note.isHold && soundAccelActive && Math.abs(note.x - soundHitLineX) <= soundTolerance) {
-        const autoDmg = Math.round(note.damage * 0.25);
-        const autoCtx = { ...this.arena.buildPlayerContext(0, 0), lockCaster: (_d: number) => {}, quickShotActive: true };
-        fireHitscan(autoCtx, autoDmg, note.isRed ? 0xff4444 : NOTE_COLORS[note.noteType], false);
-        if (this.soundHitRing) {
-          scene.tweens.killTweensOf(this.soundHitRing);
-          this.soundHitRing.setScale(1);
-          scene.tweens.add({ targets: this.soundHitRing, scaleX: 1.5, scaleY: 1.5, alpha: 0.8, duration: 80, yoyo: true, onComplete: () => { if (this.soundHitRing) this.soundHitRing.setScale(1); } });
-        }
-        const at = scene.add.text(note.sprite.x, tY - 16, note.isRed ? '🔴 AUTO!' : '🎵 AUTO', {
-          fontSize: '9px', color: note.isRed ? '#ff4444' : '#cc88ff', fontFamily: 'Arial Black',
-        }).setOrigin(0.5).setDepth(25);
-        scene.tweens.add({ targets: at, y: at.y - 14, alpha: 0, duration: 600, onComplete: () => at.destroy() });
-        note.sprite.destroy();
-        this.soundNotes.splice(i, 1);
-        continue;
-      }
-
-      // E+: green hold note processing
-      if (note.isHold && Math.abs(note.x - soundHitLineX) <= soundTolerance * 1.5) {
+      // E+: green hold note processing — holdable while the long bar overlaps the hit line
+      const holdHalfW = HOLD_NOTE_WIDTH / 2;
+      const holdOverLine = note.x - holdHalfW - soundTolerance <= soundHitLineX
+        && soundHitLineX <= note.x + holdHalfW + soundTolerance;
+      if (note.isHold && holdOverLine) {
         if (pointerIsDown) {
           note.holdActive = true;
           this.soundHoldMissHandled = false;
@@ -703,6 +797,14 @@ export class SoundKit {
             this.arena.showFloatingText(player.x, player.y - 30, '♪ HOLD MISSED -10', '#ff4444');
           }
           if (this.soundHoldBeamGraphic) { this.soundHoldBeamGraphic.destroy(); this.soundHoldBeamGraphic = null; }
+        } else if (this.soundSoloActive) {
+          // Solo: a dropped note ends the performance unless an accidental saves it.
+          if (this.soundAccidentals > 0) {
+            this.soundAccidentals--;
+            this.arena.showFloatingText(player.x, player.y - 30, '♪ SAVED!', '#ffaadd');
+          } else {
+            this.endSolo(time);
+          }
         } else if (this.soundFlowActive) {
           // Flow penalty — consume accidental or take damage
           if (this.soundAccidentals > 0) {
@@ -726,7 +828,9 @@ export class SoundKit {
 
     // Clear beam if no active hold note
     const hasActiveHold = this.soundNotes.some(n =>
-      n.isHold && n.holdActive && Math.abs(n.x - soundHitLineX) <= soundTolerance * 1.5 && pointerIsDown
+      n.isHold && n.holdActive && pointerIsDown
+      && n.x - HOLD_NOTE_WIDTH / 2 - soundTolerance <= soundHitLineX
+      && soundHitLineX <= n.x + HOLD_NOTE_WIDTH / 2 + soundTolerance
     );
     if (!hasActiveHold && this.soundHoldBeamGraphic?.active) {
       this.soundHoldBeamGraphic.clear();
@@ -756,7 +860,7 @@ export class SoundKit {
       for (const t of this.arena.enemies) {
         if (!t.active || t.hp <= 0) continue;
         const sd = Phaser.Math.Distance.Between(this.soundScreechX, this.soundScreechY, t.x, t.y);
-        if (Math.abs(sd - 88) <= 12) screechHits.push(t);
+        if (sd <= SCREECH_RADIUS) screechHits.push(t);
       }
       if (screechHits.length > 0) {
         this.soundScreechTickAccum += delta;
@@ -850,9 +954,8 @@ export class SoundKit {
 
     // ── HUD update ────────────────────────────────────────────────────
     if (this.soundStreakText) {
-      if (soundAccelActive) {
-        const remSec = ((this.soundAccelerandoUntil - time) / 1000).toFixed(1);
-        this.soundStreakText.setText(`🎶 ${remSec}s`).setColor('#ffaaff');
+      if (this.soundSoloActive) {
+        this.soundStreakText.setText('🎸 SOLO').setColor('#ffdd44');
       } else {
         this.soundStreakText.setText(`🎵 ${this.soundNoteStreak}`).setColor('#ffaadd');
       }
@@ -865,7 +968,7 @@ export class SoundKit {
     if (time < this.npcSoundScreechExpiry) {
       const npcBDmg = this.npcSoundScreechRed ? 25 : 15;
       const nd = Phaser.Math.Distance.Between(this.npcSoundScreechX, this.npcSoundScreechY, player.x, player.y);
-      if (Math.abs(nd - 88) <= 12) {
+      if (nd <= SCREECH_RADIUS) {
         this.npcSoundScreechTickAccum += delta;
         if (this.npcSoundScreechTickAccum >= 500) {
           this.npcSoundScreechTickAccum -= 500;
@@ -892,7 +995,7 @@ export class SoundKit {
       this.npcSoundScreechRed = false;
       this.npcSoundScreechTickAccum = 0;
       if (this.npcSoundScreechSprite) this.npcSoundScreechSprite.destroy();
-      this.npcSoundScreechSprite = scene.add.circle(px, py, 80, 0xff66cc, 0).setDepth(3);
+      this.npcSoundScreechSprite = scene.add.circle(px, py, SCREECH_RADIUS, 0xff66cc, 0.1).setDepth(3);
       this.npcSoundScreechSprite.setStrokeStyle(3, 0xff66cc, 0.9);
       scene.tweens.add({ targets: this.npcSoundScreechSprite, alpha: 0.12, yoyo: true, repeat: -1, duration: 600 });
     }
@@ -963,22 +1066,22 @@ export class SoundKit {
       const cost = costs[i];
       const color = NOTE_COLORS[noteType];
 
-      const circle = scene.add.circle(nx, cy - 6, 10, color, 0.9).setDepth(52);
-      circle.setInteractive({ useHandCursor: true });
-      scene.input.setDraggable(circle);
+      const token = scene.add.rectangle(nx, cy - 6, 20, 18, color, 0.9).setDepth(52);
+      token.setInteractive({ useHandCursor: true });
+      scene.input.setDraggable(token);
 
-      circle.on('pointerover', () => tooltip.setText(NOTE_TOOLTIPS[noteType]).setVisible(true));
-      circle.on('pointerout', () => tooltip.setVisible(false));
+      token.on('pointerover', () => tooltip.setText(NOTE_TOOLTIPS[noteType]).setVisible(true));
+      token.on('pointerout', () => tooltip.setVisible(false));
 
       const originX = nx, originY = cy - 6;
       const tY = this.getTrackY();
 
-      circle.on('drag', (_ptr: unknown, dragX: number, dragY: number) => {
-        circle.setPosition(dragX, dragY);
+      token.on('drag', (_ptr: unknown, dragX: number, dragY: number) => {
+        token.setPosition(dragX, dragY);
       });
 
-      circle.on('dragend', () => {
-        const px = circle.x, py = circle.y;
+      token.on('dragend', () => {
+        const px = token.x, py = token.y;
         if (Math.abs(py - tY) <= 20 && px > 20 && px < W - 20) {
           if (this.soundComposurePoints >= cost) {
             this.soundComposurePoints -= cost;
@@ -986,7 +1089,7 @@ export class SoundKit {
             const patIdx = this.soundComposedPattern.length;
             this.soundComposedPattern.push({ xFrac, type: noteType });
 
-            const placed = scene.add.circle(px, tY, 10, color, 0.9)
+            const placed = scene.add.rectangle(px, tY, 24, 20, color, 0.9)
               .setStrokeStyle(2, 0xffffff, 0.6).setDepth(22);
             placed.setInteractive({ useHandCursor: true });
             const entry = { sprite: placed, type: noteType, xFrac, patternIdx: patIdx };
@@ -1015,10 +1118,10 @@ export class SoundKit {
             this.arena.showFloatingText(px, py - 20, '✖ NOT ENOUGH COMPOSURE', '#ff4444');
           }
         }
-        circle.setPosition(originX, originY);
+        token.setPosition(originX, originY);
       });
 
-      this.soundComposePalette.push(circle);
+      this.soundComposePalette.push(token);
 
       const lbl = scene.add.text(nx, cy + 7, `${labels[i]}(${cost})`, {
         fontSize: '8px', color: '#ccaadd', fontFamily: 'Arial',
@@ -1049,7 +1152,6 @@ export class SoundKit {
 
   private updateComposedLooper(time: number, _baseSpeed: number, spawnInterval: number, tY: number): void {
     if (this.soundComposedPattern.length === 0) return;
-    const { scene } = this.arena;
     const W = this.arena.width;
     if (time - this.soundComposingLastSpawn >= spawnInterval) {
       this.soundComposingLastSpawn = time;
@@ -1057,7 +1159,7 @@ export class SoundKit {
       this.soundComposingLooperIdx++;
       const noteType = pattern.type;
       const isRed = noteType === 'red';
-      const noteSprite = scene.add.circle(W + 20, tY, 10, NOTE_COLORS[noteType], 0.85).setDepth(21);
+      const noteSprite = this.createRhythmNoteSprite(W + 20, tY, noteType);
       this.soundNotes.push({
         sprite: noteSprite,
         x: W + 20,
@@ -1071,6 +1173,22 @@ export class SoundKit {
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────
+
+  /** True while any green hold bar overlaps the hit line (so a press starts a hold). */
+  private isHoldBarOverLine(hitLineX: number, tolerance: number): boolean {
+    const halfW = HOLD_NOTE_WIDTH / 2;
+    return this.soundNotes.some(n =>
+      n.isHold
+      && n.x - halfW - tolerance <= hitLineX
+      && hitLineX <= n.x + halfW + tolerance
+    );
+  }
+
+  /** The clickable rhythm notes — large rectangles that scroll toward the hit line. */
+  private createRhythmNoteSprite(x: number, tY: number, noteType: NoteType): Phaser.GameObjects.Rectangle {
+    return this.arena.scene.add.rectangle(x, tY, 26, 22, NOTE_COLORS[noteType], 0.85)
+      .setStrokeStyle(1.5, 0xffffff, 0.55).setDepth(21);
+  }
 
   private flashHitRing(scene: Phaser.Scene, color: number): void {
     if (!this.soundHitRing) return;

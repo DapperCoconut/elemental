@@ -41,6 +41,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Quantum element blue-form damage reduction (0.85 in blue form, 1 otherwise). Multiplied in takeDamage. */
   public quantumIncomingMult = 1;
   public chargeRatio = 0;   // 0–1, drives the yellow charge bar in HealthBar
+  public chargeColor = 0xffdd00; // charge-bar fill color (Rubber Bazooka reddens it while overcharging)
   public lastIncomingDamage = 0; // set in takeDamage() before shield check — used by reflect upgrades
   /** Multiply all ability cooldowns by this factor (< 1 = faster, e.g. Reborn post-revival). */
   public cooldownMult = 1;
@@ -83,6 +84,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public burningUntil = 0;
   public burnTickAccum = 0;
   public burnAura: Phaser.GameObjects.Arc | null = null;
+  /** How long this fighter has been continuously on fire (burning or molten), in ms. Tracked in preUpdate; drives the Wildfire achievement. */
+  public burnContinuousMs = 0;
   /** Fire Mastery — Cremation stoke bonus: added to burn tick damage; persists through re-ignition, cleared only when burningUntil expires. */
   public fireStokeBonus = 0;
 
@@ -198,6 +201,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Earth Mastery — Unbreakable: caps any single hit's damage to this value. 0 = no cap. */
   public hardDamageCap = 0;
 
+  /** Metal Mastery — Natural Clot: flat amount subtracted from every incoming hit. Default 0. */
+  public flatDamageReduction = 0;
+  /** Metal Mastery — Steel Shield: incoming damage multiplier while the shield is up. Default 1. */
+  public steelShieldMult = 1;
+
   // ── Gauntlet card stat fields ────────────────────────────────────────
   /** Card: reduces all incoming damage. Default 1 (Protected card). */
   public cardDamageTakenMult = 1;
@@ -290,7 +298,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       amount = Math.round(amount * (critCtx?.mult ?? 2));
     }
 
-    amount = Math.round(amount * this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.quantumIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult);
+    amount = Math.round(amount * this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.quantumIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult);
     if (this.darkVulnStacks > 0) amount = Math.round(amount * (1 + 0.25 * this.darkVulnStacks));
     // Fire Mastery — Heatwave: exposed amplifies the next hit, then is consumed.
     // Fire damage-over-time is exempt on both counts: burn/molten ticks are neither
@@ -299,6 +307,12 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       amount = Math.round(amount * 1.5);
       this.exposedUntil = 0;
       this.exposedConsumedAt = this.scene.time.now;
+    }
+    // Metal Mastery — Natural Clot: flat reduction on the final amount. A fully-absorbed
+    // hit spends nothing (no shield charge, no clotted HP) — it simply bounces off.
+    if (this.flatDamageReduction > 0) {
+      amount = Math.max(0, amount - this.flatDamageReduction);
+      if (amount <= 0) { this.lastIncomingDamage = 0; this.emit('damaged', 0); return; }
     }
     // Earth Mastery — Unbreakable: applied last so nothing upstream can push a hit back above the cap.
     if (this.hardDamageCap > 0) amount = Math.min(amount, this.hardDamageCap);
@@ -535,7 +549,12 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     super.preUpdate(time, delta);
     // Weak HP decays steadily at 3/s.
     if (this.weakHp > 0) this.weakHp = Math.max(0, this.weakHp - 3 * (delta / 1000));
-    this.healthBar.update(this.x, this.y, this.hp, this.shieldHp, this.chargeRatio, this.clottedHp, this.weakHp);
+    if (time < this.burningUntil || time < this.moltenUntil) {
+      this.burnContinuousMs += delta;
+    } else {
+      this.burnContinuousMs = 0;
+    }
+    this.healthBar.update(this.x, this.y, this.hp, this.shieldHp, this.chargeRatio, this.clottedHp, this.weakHp, this.chargeColor);
   }
 
   destroy(fromScene?: boolean): void {

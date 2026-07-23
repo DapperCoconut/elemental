@@ -541,6 +541,52 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       },
     ],
   },
+  metal: {
+    elementId: 'metal',
+    name: 'Metal Mastery',
+    enhancedEmoji: '🗡️',
+    enhancedColor: 0x8b0000,
+    requirements: [
+      {
+        key: 'flailHits',
+        label: 'Flail Master',
+        howTo: 'Smack enemies with a swinging flail',
+        target: 150,
+      },
+      {
+        key: 'transfusionHealed',
+        label: 'Blood Doctor',
+        howTo: 'Heal HP by draining your blood bar with Blood Transfusion (R)',
+        target: 500,
+      },
+      {
+        key: 'parries',
+        label: 'Duelist',
+        howTo: 'Parry enemy projectiles with a Max-Charge Mighty Sabre (Click+)',
+        target: 25,
+      },
+      {
+        key: 'bloodBladeKills',
+        label: 'Forbidden Reaper',
+        howTo: 'Land the killing blow on enemies with the Blood Blade (Q+)',
+        target: 5,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'natural-clot',
+        name: 'Natural Clot',
+        description: 'Passive: all damage you take is reduced by 3. Chip hits and weak damage-over-time bounce off you entirely.',
+      },
+      {
+        id: 'steel-shield',
+        name: 'Steel Shield',
+        bindable: true,
+        hudDescription: 'Plant a shield that blocks shots and cuts damage 25%',
+        description: 'Spends 25% of your blood bar (needs at least that much) to plant a shield in front of you for 5 seconds. It blocks enemy projectiles outright and reduces all damage you take by 25% while it stands. Cast it while Clot Armor (Q) is active and the shield turns red — every projectile it blocks then sprays a full burst of blood shards. 8 second cooldown.',
+      },
+    ],
+  },
   magic: {
     elementId: 'magic',
     name: 'Magic Mastery',

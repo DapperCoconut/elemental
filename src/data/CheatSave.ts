@@ -17,6 +17,7 @@ import { MASTERY_DEFS, MASTERY_SLOTS } from './Mastery';
 import { WORLDS, getFightNodes } from './Worlds';
 import { ABSTRACT_WORLDS } from './AbstractWorlds';
 import { ITEMS } from './Items';
+import { ACHIEVEMENTS } from './Achievements';
 
 const BASE_ELEMENTS = ['fire', 'water', 'life', 'air', 'earth'];
 
@@ -63,6 +64,9 @@ function maxOutCurrentProfile(): void {
   // ── Mutations + secret enemy ───────────────────────────────────────
   for (const m of MUTATIONS) PlayerData.unlockMutation(m.id);
   PlayerData.unlockDummy();
+
+  // ── Achievements (cosmetics unlock with them, not auto-equipped) ───
+  for (const a of ACHIEVEMENTS) PlayerData.unlockAchievement(a.id);
 
   // ── Gauntlets: normal + hard, all elements ─────────────────────────
   PlayerData.unlockGauntlet();

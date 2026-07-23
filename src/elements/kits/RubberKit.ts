@@ -84,6 +84,10 @@ export interface RubberArenaApi {
   readonly abilityBars: { fill: Phaser.GameObjects.Rectangle; maxWidth: number }[];
   hasUpgrade(slot: string): boolean;
   hasPerk(perkId: string): boolean;
+  /** True when the local player's element is Rubber (upgrade flags are only meaningful then). */
+  readonly isPlayerRubber: boolean;
+  /** True while the player is mid-dodge/dash (Space dodge, sling launch, or band recall). */
+  readonly isDodging: boolean;
   setIsDodging(v: boolean): void;
   applyPlayerSpeedMult(f: number): void;
   applyNpcSpeedMult(f: number): void;
@@ -102,6 +106,38 @@ interface RubberageBall {
   vy: number;
   lastHitAt: number;
 }
+
+/** Click+ Rubber Bazooka: an over-stretched punch fired as a projectile that bounces off up to 3 walls. */
+interface BazookaPunch {
+  gfx: Phaser.GameObjects.Graphics;
+  x: number; y: number;
+  vx: number; vy: number;
+  dmg: number;
+  bouncesLeft: number;
+  /** Per-target last-hit timestamp — the projectile can re-hit a target after a 0.5s cooldown. */
+  hitAt: Map<Fighter, number>;
+  /** Every position the fist has visited — the rubber arm is drawn along this whole trail. */
+  path: { x: number; y: number }[];
+  /** Once it has spent its bounces, the fist snaps back along `path` to the user, then despawns. */
+  returning: boolean;
+}
+
+/** F+ Bounce Combo: an anchor bounced off the player, flying free off the arena with a motion-blur trail. */
+interface FreeAnchor {
+  x: number; y: number;
+  vx: number; vy: number;
+  dmg: number;
+  hitSet: Set<Fighter>;
+  gfx: Phaser.GameObjects.Graphics;
+  blurAccum: number;
+}
+
+// Click+ Rubber Bazooka
+const BAZOOKA_SPEED = 780;
+const BAZOOKA_RADIUS = 14;
+const BAZOOKA_SNAP_SPEED = 2600; // how fast the fist retraces its path back to the user
+// Q+ purple player-ball
+const PLAYER_BALL_SIZE_MULT = 0.42;
 
 // ── RubberKit ─────────────────────────────────────────────────────────────────
 
@@ -219,6 +255,25 @@ export class RubberKit {
   private npcRubberageEnd = 0;
   private npcRubberageDmg = RUBBERAGE_DMG;
 
+  // ── New upgrade state ────────────────────────────────────────────────────
+  // Click+ Rubber Bazooka
+  private bazookas: BazookaPunch[] = [];
+  // E+ Bouncy House
+  private rubberBorderGfx: Phaser.GameObjects.Graphics | null = null;
+  private slingBouncesLeft = 0;
+  // Previous-frame player velocity, used to reflect a dash off the coated walls.
+  private dashPrevVx = 0;
+  private dashPrevVy = 0;
+  // Launch speed of the current sling flight — reused on each wall bounce so it never slows.
+  private slingSpeed = 0;
+  // F+ Bounce Combo
+  private freeAnchor: FreeAnchor | null = null;
+  // Q+ purple player-ball
+  private playerBallActive = false;
+  private playerBallVx = 0;
+  private playerBallVy = 0;
+  private playerBallLastHitAt = 0;
+
   constructor(arena: RubberArenaApi) {
     this.arena = arena;
   }
@@ -231,6 +286,7 @@ export class RubberKit {
     this.punchHolding = false;
     this.punchFistVisual?.destroy(); this.punchFistVisual = null;
     player.chargeRatio = 0;
+    player.chargeColor = 0xffdd00;
 
     this.punchStretching = false;
     this.punchArmGfx?.destroy(); this.punchArmGfx = null;
@@ -251,12 +307,13 @@ export class RubberKit {
     this.npcBounceFormActive = false;
     this.npcBounceFormVisual?.destroy(); this.npcBounceFormVisual = null;
 
-    // Vulcanization
+    // Vulcanization is retired — the reworked upgrades don't use it. Kept inert
+    // (vulcUnlocked stays false) so its dead branches never fire.
     if (this.vulcCdMultCaptured) player.cooldownMult = this.vulcPlayerCdMultBase;
     player.clearTint();
     for (const t of this.vulcSlowTexts) t.destroy();
     this.vulcSlowTexts = [];
-    this.vulcUnlocked = this.ownsAnyRubberUpgrade();
+    this.vulcUnlocked = false;
     this.vulcCharging = false;
     this.vulcCharge = 0;
     this.vulcCdMultCaptured = false;
@@ -295,6 +352,68 @@ export class RubberKit {
     // Rubberage
     this.clearRubberageBalls('player');
     this.clearRubberageBalls('npc');
+
+    // ── Reworked upgrade state ──
+    for (const b of this.bazookas) b.gfx.destroy();
+    this.bazookas = [];
+    this.slingBouncesLeft = 0;
+    this.freeAnchor?.gfx.destroy();
+    this.freeAnchor = null;
+    if (this.playerBallActive) { player.sizeMult = 1; player.applySizeMult(); player.clearTint(); }
+    this.playerBallActive = false;
+    this.playerBallVx = 0; this.playerBallVy = 0; this.playerBallLastHitAt = 0;
+
+    // E+ Bouncy House coating is (re)drawn lazily in update() — see there.
+    this.rubberBorderGfx?.destroy(); this.rubberBorderGfx = null;
+  }
+
+  /** E+ Bouncy House: draws the rubber coating around the arena edges. */
+  private drawRubberBorder(): void {
+    const { scene } = this.arena;
+    // Align exactly with the arena's physics bounds (the real walls the player bounces off).
+    const wb = scene.physics.world.bounds;
+    const g = scene.add.graphics().setDepth(3);
+    g.lineStyle(8, 0xff5577, 0.55);
+    g.strokeRect(wb.x, wb.y, wb.width, wb.height);
+    g.lineStyle(3, 0xffaacc, 0.8);
+    g.strokeRect(wb.x, wb.y, wb.width, wb.height);
+    this.rubberBorderGfx = g;
+  }
+
+  /** E+ Bouncy House: reflect a Space-dash off the coated walls, sending the player flying back. */
+  private updateDashBounce(): void {
+    const { player } = this.arena;
+    const body = player.body as Phaser.Physics.Arcade.Body;
+    // Only a genuine dash — not a sling launch, band recall, or the Q+ ball.
+    const dashing = this.arena.isPlayerRubber && this.arena.hasUpgrade('e')
+      && this.arena.isDodging && this.slingState === 'idle'
+      && !this.bandRecalling && !this.playerBallActive;
+
+    if (dashing) {
+      const b = body.blocked;
+      if (b.left || b.right || b.up || b.down) {
+        const speed = Math.sqrt(this.dashPrevVx ** 2 + this.dashPrevVy ** 2);
+        if (speed > 300) {
+          // Reflect last frame's dash velocity off whichever wall we hit, at 2× the speed
+          // so the rubber flings the player twice as far back.
+          let vx = this.dashPrevVx, vy = this.dashPrevVy;
+          if (b.left) vx = Math.abs(vx);
+          else if (b.right) vx = -Math.abs(vx);
+          if (b.up) vy = Math.abs(vy);
+          else if (b.down) vy = -Math.abs(vy);
+          vx *= 2; vy *= 2;
+          const s = Math.sqrt(vx * vx + vy * vy) || 1;
+          player.setPosition(player.x + (vx / s) * 5, player.y + (vy / s) * 5);
+          body.setVelocity(vx, vy);
+          const scene = this.arena.scene;
+          const ring = scene.add.circle(player.x, player.y, 16, 0xffaacc, 0.6).setDepth(6);
+          scene.tweens.add({ targets: ring, scaleX: 2.6, scaleY: 2.6, alpha: 0, duration: 260, onComplete: () => ring.destroy() });
+        }
+      }
+    }
+
+    this.dashPrevVx = body.velocity.x;
+    this.dashPrevVy = body.velocity.y;
   }
 
   private ownsAnyRubberUpgrade(): boolean {
@@ -340,14 +459,21 @@ export class RubberKit {
         this.punchHolding = false;
         if (time >= player.disarmedUntil) {
           const holdMs = time - this.punchHoldStart;
-          const resistance = this.arena.hasUpgrade('click') ? (1 + this.vulcCharge) : 1;
-          const pullRatio = Math.min(1, (holdMs / resistance) / PUNCH_MAX_HOLD_MS);
+          const pullRatio = Math.min(1, holdMs / PUNCH_MAX_HOLD_MS);
+          // Click+ Rubber Bazooka: holding past full stretch over-stretches the punch;
+          // only a FULLY over-stretched (max charge) release fires the wall-bouncing fist —
+          // anything short of that is a normal punch.
+          const overRatio = this.arena.hasUpgrade('click')
+            ? Math.max(0, Math.min(1, (holdMs - PUNCH_MAX_HOLD_MS) / PUNCH_MAX_HOLD_MS))
+            : 0;
           const ctx = this.arena.buildPlayerContext(mouseX, mouseY);
           player.castAbility('rubber-punch', ctx);
-          this.startStretchPunch('player', mouseX, mouseY, pullRatio);
+          if (overRatio >= 1) this.fireBazooka(mouseX, mouseY, overRatio);
+          else this.startStretchPunch('player', mouseX, mouseY, pullRatio);
         }
         this.punchFistVisual?.destroy(); this.punchFistVisual = null;
         player.chargeRatio = 0;
+        player.chargeColor = 0xffdd00;
       }
     } else if (this.slingState !== 'idle' && justReleased) {
       // Cancel punch state if sling is active
@@ -371,7 +497,13 @@ export class RubberKit {
     }
 
     if (Phaser.Input.Keyboard.JustDown(rKey) && !blocked && time >= player.disarmedUntil) {
-      player.castAbility('rubber-bounce-form', this.arena.buildPlayerContext(mouseX, mouseY));
+      // F+ Bounce Combo: tapping R while the reeled-in anchor is flying at you bounces
+      // it off toward the cursor instead of casting Bounce Form.
+      if (this.canBounceCombo()) {
+        this.startBounceCombo(mouseX, mouseY);
+      } else {
+        player.castAbility('rubber-bounce-form', this.arena.buildPlayerContext(mouseX, mouseY));
+      }
     }
 
     // F: Rubber Banding — tap with no anchor plants one; tap while tethered snaps you
@@ -446,6 +578,14 @@ export class RubberKit {
   update(time: number, delta: number): void {
     const { player, npc } = this.arena;
 
+    // E+ Bouncy House coating — drawn lazily (works on the first match too, where the
+    // kit is constructed but reset() isn't called; and only once world bounds exist).
+    if (!this.rubberBorderGfx && this.arena.isPlayerRubber && this.arena.hasUpgrade('e')) {
+      this.drawRubberBorder();
+    }
+    // E+ Bouncy House: a Space-dash into a coated wall bounces the player off it.
+    this.updateDashBounce();
+
     // Punch stretch animations
     this.updateStretchPunch(time, 'player');
     this.updateStretchPunch(time, 'npc');
@@ -453,9 +593,11 @@ export class RubberKit {
     // Punch fist visual tracks behind player
     if (this.punchHolding && this.punchFistVisual) {
       const holdMs = time - this.punchHoldStart;
-      const resistance = this.arena.hasUpgrade('click') ? (1 + this.vulcCharge) : 1;
-      const pullRatio = Math.min(1, (holdMs / resistance) / PUNCH_MAX_HOLD_MS);
-      const pullLen = PUNCH_MAX_PULL * Math.sqrt(pullRatio);
+      const pullRatio = Math.min(1, holdMs / PUNCH_MAX_HOLD_MS);
+      const overRatio = this.arena.hasUpgrade('click')
+        ? Math.max(0, Math.min(1, (holdMs - PUNCH_MAX_HOLD_MS) / PUNCH_MAX_HOLD_MS))
+        : 0;
+      const pullLen = PUNCH_MAX_PULL * (Math.sqrt(pullRatio) + 0.5 * overRatio);
       const dx = this.punchMouseX - player.x;
       const dy = this.punchMouseY - player.y;
       const dist = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -464,6 +606,14 @@ export class RubberKit {
         player.x + (dx / dist) * pullLen,
         player.y + (dy / dist) * pullLen,
       );
+      // Over-stretch reddens the fist to telegraph the Bazooka release.
+      this.punchFistVisual.setFillStyle(overRatio > 0
+        ? Phaser.Display.Color.GetColor(255, Math.round(90 * (1 - overRatio)), 60)
+        : 0xff5577);
+      // ...and slowly turns the yellow charge bar orange as it overcharges.
+      player.chargeColor = overRatio > 0
+        ? Phaser.Display.Color.GetColor(255, Math.round(221 - 85 * overRatio), 0)
+        : 0xffdd00;
       player.chargeRatio = pullRatio;
     }
 
@@ -483,8 +633,13 @@ export class RubberKit {
       // `blocked` instead of raw velocity matters for a diagonal launch: only the axis that
       // actually hit a wall zeroes out, so the other axis can retain a small residual velocity
       // forever and never trip a "speed near zero" check.
-      if (time > this.slingFlyEnd || body.blocked.up || body.blocked.down || body.blocked.left || body.blocked.right) {
+      const hitWall = body.blocked.up || body.blocked.down || body.blocked.left || body.blocked.right;
+      if (time > this.slingFlyEnd) {
         this.endSlingFlight();
+      } else if (hitWall) {
+        // E+ Bouncy House: bounce off the coated wall toward the cursor instead of stopping.
+        if (this.slingBouncesLeft > 0) this.bounceSlingOffWall();
+        else this.endSlingFlight();
       } else {
         this.checkSlingContact('player', time);
       }
@@ -505,6 +660,11 @@ export class RubberKit {
     // Rubberage
     this.updateRubberageBalls(time, delta, 'player');
     this.updateRubberageBalls(time, delta, 'npc');
+
+    // Reworked upgrades
+    this.updateBazookas(time, delta);       // Click+
+    this.updateFreeAnchor(time, delta);     // F+
+    this.updatePlayerBall(time, delta);     // Q+
 
     // Vulcanization: charge accumulation + cooldown mult + tint + slow HUD
     if (this.vulcCharging) {
@@ -702,6 +862,8 @@ export class RubberKit {
       this.rubberageEnd = time + duration;
       this.rubberageDmg = dmg;
       this.arena.showFloatingText(caster.x, caster.y - 40, '🔴 RUBBERAGE!', '#ff5577');
+      // Q+ : the player joins the swarm as a purple rubber ball.
+      if (this.arena.hasUpgrade('q')) this.startPlayerBall();
     } else {
       this.clearRubberageBalls('npc');
       this.npcRubberageBalls = balls;
@@ -878,6 +1040,7 @@ export class RubberKit {
 
     const pullRatio = Math.min(1, pullDist / SLING_MAX_PULL);
     const speed = SLING_MIN_SPEED + (SLING_MAX_SPEED - SLING_MIN_SPEED) * pullRatio;
+    this.slingSpeed = speed;
     // Real slingshot: launch back through the rest position, opposite the pull direction.
     const vx = -(pdx / pullDist) * speed;
     const vy = -(pdy / pullDist) * speed;
@@ -899,6 +1062,27 @@ export class RubberKit {
     this.slingState = 'flying';
     this.slingFlyEnd = time + SLING_LAUNCH_MAX_MS;
     this.slingHitThisFlight.clear();
+    // E+ Bouncy House: the launch bounces off the rubber-coated walls up to 3 more times.
+    this.slingBouncesLeft = this.arena.hasUpgrade('e') ? 3 : 0;
+  }
+
+  /** E+ Bouncy House: reflect the sling launch off a wall, redirecting toward the cursor. */
+  private bounceSlingOffWall(): void {
+    const { player, scene } = this.arena;
+    const body = player.body as Phaser.Physics.Arcade.Body;
+    // Reuse the original launch speed — the wall collision has already zeroed the
+    // blocked axis, so reading the current velocity would slow the bounce each time.
+    const spd = this.slingSpeed || SLING_MIN_SPEED;
+    let dx = this.punchMouseX - player.x;
+    let dy = this.punchMouseY - player.y;
+    let d = Math.sqrt(dx * dx + dy * dy);
+    if (d < 1) { dx = -body.velocity.x; dy = -body.velocity.y; d = Math.sqrt(dx * dx + dy * dy) || 1; }
+    // Nudge off the wall so `blocked` clears next frame, then relaunch toward the cursor.
+    player.setPosition(player.x + (dx / d) * 5, player.y + (dy / d) * 5);
+    body.setVelocity((dx / d) * spd, (dy / d) * spd);
+    this.slingBouncesLeft--;
+    const ring = scene.add.circle(player.x, player.y, 14, 0xffaacc, 0.6).setDepth(6);
+    scene.tweens.add({ targets: ring, scaleX: 2.4, scaleY: 2.4, alpha: 0, duration: 260, onComplete: () => ring.destroy() });
   }
 
   private drawSlingArms(): void {
@@ -932,6 +1116,7 @@ export class RubberKit {
     this.slingState = 'idle';
     this.slingGfx?.destroy(); this.slingGfx = null;
     this.slingHitThisFlight.clear();
+    this.slingBouncesLeft = 0;
   }
 
   private checkSlingContact(owner: 'player' | 'npc', time: number): void {
@@ -947,14 +1132,13 @@ export class RubberKit {
         t.takeDamage(SLING_CONTACT_DMG);
         hitSet.add(t);
         this.arena.spawnHitFlash(t.x, t.y, 0xff5577);
-        // E+ Fireball Sling: apply fire DOT on contact
-        if (owner === 'player' && this.fireballFlight) {
-          const dotMs = FIREBALL_DOT_BASE_MS + FIREBALL_DOT_BONUS_MS * this.vulcCharge;
-          this.npcFireDotUntil = Math.max(this.npcFireDotUntil, time + dotMs);
-          this.arena.showFloatingText(t.x, t.y - 55, '🔥 BURNING!', '#ff7733');
+        if (owner === 'player') {
+          // E+ Bouncy House: keep flying (and keep dealing contact damage) after a hit;
+          // without it, a contact ends the launch as before.
+          if (!this.arena.hasUpgrade('e')) this.endSlingFlight();
+        } else {
+          this.npcSlingFlyEnd = 0;
         }
-        if (owner === 'player') this.endSlingFlight();
-        else this.npcSlingFlyEnd = 0;
         break;
       }
     }
@@ -1004,12 +1188,30 @@ export class RubberKit {
       (proj as unknown as Record<string, unknown>)['isFromPlayer'] = isPlayer;
       (proj as unknown as Record<string, unknown>)['rubberHomingTarget'] = isPlayer ? npc : player;
 
-      // R+ Powerful Parry: boost damage and tag fire DOT when vulcanized
-      if (isPlayer && this.arena.hasUpgrade('r') && this.vulcCharge > 0) {
-        (proj as unknown as Record<string, unknown>)['damage'] = Math.round(proj.damage * (1 + this.vulcCharge * 1.5));
-        const dotMs = 1500 + 2500 * this.vulcCharge;
-        (proj as unknown as Record<string, unknown>)['rubberParryFireDot'] = dotMs;
+      // R+ Shatter Bounce: the reflected homing bullet deals +25%, and 4 copies at
+      // 25% of its damage spray out in an even cone.
+      if (isPlayer && this.arena.hasUpgrade('r')) {
+        const mainDmg = Math.round(proj.damage * 1.25);
+        (proj as unknown as Record<string, unknown>)['damage'] = mainDmg;
+        this.spawnShatterCopies(proj, mainDmg);
       }
+    }
+  }
+
+  /** R+ Shatter Bounce: 4 cone copies of a reflected bullet at 25% of its damage. */
+  private spawnShatterCopies(proj: Projectile, mainDmg: number): void {
+    const body = proj.body as Phaser.Physics.Arcade.Body | null;
+    if (!body) return;
+    const baseAng = Math.atan2(body.velocity.y, body.velocity.x);
+    const spd = Math.sqrt(body.velocity.x ** 2 + body.velocity.y ** 2) || 400;
+    const copyDmg = Math.max(1, Math.round(mainDmg * 0.25));
+    const texKey = (proj as unknown as Phaser.GameObjects.Image).texture?.key ?? 'proj-fate-burst';
+    for (const off of [-0.36, -0.12, 0.12, 0.36]) {
+      const ang = baseAng + off;
+      const copy = new Projectile(this.arena.scene, proj.x, proj.y, texKey, copyDmg, true);
+      this.arena.projectiles.add(copy);
+      copy.launch(Math.cos(ang) * spd, Math.sin(ang) * spd);
+      copy.setRotation(ang);
     }
   }
 
@@ -1338,5 +1540,248 @@ export class RubberKit {
     }
 
     for (const ball of balls) ball.gfx.setPosition(ball.x, ball.y);
+  }
+
+  // ── Click+ Rubber Bazooka ──────────────────────────────────────────────────
+
+  private fireBazooka(mouseX: number, mouseY: number, overRatio: number): void {
+    const { player, scene } = this.arena;
+    const dx = mouseX - player.x;
+    const dy = mouseY - player.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    // Fires opposite the pull, matching the melee punch's slingshot feel.
+    const dirX = -dx / dist, dirY = -dy / dist;
+    // Fixed 50 damage on a fully over-stretched (max charge) release.
+    void overRatio;
+    const dmg = 50;
+    const gfx = scene.add.graphics().setDepth(8);
+    this.bazookas.push({
+      gfx, x: player.x, y: player.y,
+      vx: dirX * BAZOOKA_SPEED, vy: dirY * BAZOOKA_SPEED,
+      dmg, bouncesLeft: 3, hitAt: new Map(),
+      path: [{ x: player.x, y: player.y }],
+      returning: false,
+    });
+    this.arena.showFloatingText(player.x, player.y - 44, '🥊 BAZOOKA!', '#ff5577');
+  }
+
+  private updateBazookas(time: number, delta: number): void {
+    if (this.bazookas.length === 0) return;
+    const { player, width, height, enemies, npc } = this.arena;
+    const wallL = 25 + BAZOOKA_RADIUS, wallR = width - 25 - BAZOOKA_RADIUS;
+    const wallT = 85 + BAZOOKA_RADIUS, wallB = height - 25 - BAZOOKA_RADIUS;
+    const dt = delta / 1000;
+    const targets = enemies.length > 0 ? enemies : [npc];
+
+    for (let i = this.bazookas.length - 1; i >= 0; i--) {
+      const b = this.bazookas[i];
+
+      if (!b.returning) {
+        b.x += b.vx * dt;
+        b.y += b.vy * dt;
+        b.path.push({ x: b.x, y: b.y });
+
+        let bounced = false;
+        if (b.x < wallL) { b.x = wallL; b.vx = Math.abs(b.vx); bounced = true; }
+        else if (b.x > wallR) { b.x = wallR; b.vx = -Math.abs(b.vx); bounced = true; }
+        if (b.y < wallT) { b.y = wallT; b.vy = Math.abs(b.vy); bounced = true; }
+        else if (b.y > wallB) { b.y = wallB; b.vy = -Math.abs(b.vy); bounced = true; }
+        if (bounced) {
+          b.bouncesLeft--;
+          // After bouncing off up to 3 walls it snaps back along its path to the user.
+          if (b.bouncesLeft < 0) b.returning = true;
+        }
+      } else {
+        // Retrace the recorded path backward at high speed, then despawn at the user.
+        let budget = BAZOOKA_SNAP_SPEED * dt;
+        let reachedUser = false;
+        while (budget > 0) {
+          const target = b.path.length > 0 ? b.path[b.path.length - 1] : { x: player.x, y: player.y };
+          const dx = target.x - b.x, dy = target.y - b.y;
+          const d = Math.sqrt(dx * dx + dy * dy);
+          if (d <= budget) {
+            b.x = target.x; b.y = target.y; budget -= d;
+            if (b.path.length > 0) b.path.pop();
+            else { reachedUser = true; break; }
+          } else {
+            b.x += (dx / d) * budget; b.y += (dy / d) * budget; budget = 0;
+          }
+        }
+        if (reachedUser) { b.gfx.destroy(); this.bazookas.splice(i, 1); continue; }
+      }
+
+      // Contact damage — can re-hit the same target twice per second.
+      for (const t of targets) {
+        if (!t.active || t.hp <= 0) continue;
+        if (time - (b.hitAt.get(t) ?? -1000) < 500) continue;
+        if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) <= BAZOOKA_RADIUS + 20) {
+          b.hitAt.set(t, time);
+          t.takeDamage(b.dmg);
+          this.arena.spawnHitFlash(t.x, t.y, 0xff5577);
+        }
+      }
+
+      b.gfx.clear();
+      // Rubber arm: snakes from the user along the fist's entire travelled path.
+      b.gfx.lineStyle(5, 0xff5577, 0.7);
+      b.gfx.beginPath();
+      b.gfx.moveTo(player.x, player.y);
+      for (const p of b.path) b.gfx.lineTo(p.x, p.y);
+      b.gfx.strokePath();
+      // Fist.
+      b.gfx.fillStyle(0xff5577, 1);
+      b.gfx.fillCircle(b.x, b.y, BAZOOKA_RADIUS);
+      b.gfx.lineStyle(3, 0xffaacc, 1);
+      b.gfx.strokeCircle(b.x, b.y, BAZOOKA_RADIUS);
+    }
+  }
+
+  // ── F+ Bounce Combo ────────────────────────────────────────────────────────
+
+  /** True while the reeled-in anchor is flying toward the player (the R-bounce window). */
+  private canBounceCombo(): boolean {
+    return this.arena.isPlayerRubber && this.arena.hasUpgrade('f') && this.bandActive && this.bandAnchorFlying;
+  }
+
+  /** F+ Bounce Combo: bounce the incoming anchor off the player toward the cursor. */
+  private startBounceCombo(mouseX: number, mouseY: number): void {
+    const { player, scene } = this.arena;
+    const dx = mouseX - player.x, dy = mouseY - player.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    const speed = 1400;
+    // Detach the anchor from the band entirely — it flies off the arena.
+    this.bandAnchorFlying = false;
+    this.expireBand('player');
+    const gfx = scene.add.graphics().setDepth(9);
+    this.freeAnchor = {
+      x: player.x, y: player.y,
+      vx: (dx / dist) * speed, vy: (dy / dist) * speed,
+      dmg: 50, hitSet: new Set(), gfx, blurAccum: 0,
+    };
+    this.arena.showFloatingText(player.x, player.y - 44, '💠 BOUNCE COMBO!', '#5588ff');
+  }
+
+  private updateFreeAnchor(time: number, delta: number): void {
+    void time;
+    const fa = this.freeAnchor;
+    if (!fa) return;
+    const { width, height, enemies, npc, scene } = this.arena;
+    const dt = delta / 1000;
+    fa.x += fa.vx * dt;
+    fa.y += fa.vy * dt;
+
+    // Damage anything in its path.
+    const targets = enemies.length > 0 ? enemies : [npc];
+    for (const t of targets) {
+      if (!t.active || t.hp <= 0 || fa.hitSet.has(t)) continue;
+      if (Phaser.Math.Distance.Between(fa.x, fa.y, t.x, t.y) <= BAND_ANCHOR_HIT_RADIUS) {
+        fa.hitSet.add(t);
+        t.takeDamage(fa.dmg);
+        this.arena.spawnHitFlash(t.x, t.y, 0x5588ff);
+      }
+    }
+
+    // Motion-blur trail: lighter-blue after-images.
+    fa.blurAccum += delta;
+    if (fa.blurAccum >= 16) {
+      fa.blurAccum = 0;
+      const ghost = scene.add.circle(fa.x, fa.y, BAND_ANCHOR_RADIUS, 0x88bbff, 0.5).setDepth(8);
+      scene.tweens.add({ targets: ghost, alpha: 0, duration: 300, onComplete: () => ghost.destroy() });
+    }
+
+    // Dark-blue anchor body.
+    fa.gfx.clear();
+    fa.gfx.fillStyle(0x1a2a6a, 1);
+    fa.gfx.fillCircle(fa.x, fa.y, BAND_ANCHOR_RADIUS);
+    fa.gfx.lineStyle(2, 0x5588ff, 1);
+    fa.gfx.strokeCircle(fa.x, fa.y, BAND_ANCHOR_RADIUS);
+
+    // Flies clean off the arena, then despawns.
+    if (fa.x < -60 || fa.x > width + 60 || fa.y < -60 || fa.y > height + 60) {
+      fa.gfx.destroy();
+      this.freeAnchor = null;
+    }
+  }
+
+  // ── Q+ purple player-ball ──────────────────────────────────────────────────
+
+  /** Turns the player into a purple rubber ball for the rubberage duration. */
+  private startPlayerBall(): void {
+    const { player } = this.arena;
+    this.playerBallActive = true;
+    this.playerBallLastHitAt = 0;
+    // Kick off in a random direction; wall bounces then steer toward the cursor.
+    const ang = Math.random() * Math.PI * 2;
+    this.playerBallVx = Math.cos(ang) * RUBBERAGE_BASE_SPEED;
+    this.playerBallVy = Math.sin(ang) * RUBBERAGE_BASE_SPEED;
+    player.sizeMult = PLAYER_BALL_SIZE_MULT;
+    player.applySizeMult();
+    player.setTint(0xaa55ff);
+  }
+
+  private endPlayerBall(): void {
+    const { player } = this.arena;
+    this.playerBallActive = false;
+    player.sizeMult = 1;
+    player.applySizeMult();
+    player.clearTint();
+  }
+
+  private updatePlayerBall(time: number, delta: number): void {
+    if (!this.playerBallActive) return;
+    const { player, npc, enemies, width, height } = this.arena;
+    // End with the rubberage.
+    if (time > this.rubberageEnd || player.hp <= 0) { this.endPlayerBall(); return; }
+
+    const dt = delta / 1000;
+    // Speeds up over the ability's life, like the other balls.
+    const spd = Math.sqrt(this.playerBallVx ** 2 + this.playerBallVy ** 2) || 1;
+    if (spd < RUBBERAGE_MAX_SPEED) {
+      const growth = 1 + delta * RUBBERAGE_SPEED_GROWTH_PER_MS;
+      const ns = Math.min(RUBBERAGE_MAX_SPEED, spd * growth);
+      this.playerBallVx = (this.playerBallVx / spd) * ns;
+      this.playerBallVy = (this.playerBallVy / spd) * ns;
+    }
+
+    let nx = player.x + this.playerBallVx * dt;
+    let ny = player.y + this.playerBallVy * dt;
+    const r = RUBBERAGE_FIGHTER_RADIUS * PLAYER_BALL_SIZE_MULT;
+    const wallL = 25 + r, wallR = width - 25 - r, wallT = 85 + r, wallB = height - 25 - r;
+    let bounced = false;
+    if (nx < wallL) { nx = wallL; bounced = true; }
+    else if (nx > wallR) { nx = wallR; bounced = true; }
+    if (ny < wallT) { ny = wallT; bounced = true; }
+    else if (ny > wallB) { ny = wallB; bounced = true; }
+    // On a wall bounce, redirect toward the cursor.
+    if (bounced) {
+      const cx = this.punchMouseX - nx, cy = this.punchMouseY - ny;
+      const cd = Math.sqrt(cx * cx + cy * cy) || 1;
+      const curSpd = Math.sqrt(this.playerBallVx ** 2 + this.playerBallVy ** 2) || 1;
+      this.playerBallVx = (cx / cd) * curSpd;
+      this.playerBallVy = (cy / cd) * curSpd;
+    }
+
+    const body = player.body as Phaser.Physics.Arcade.Body;
+    body.reset(nx, ny);
+    body.setVelocity(this.playerBallVx, this.playerBallVy);
+
+    // Contact: 5 dmg + a bit of knockback.
+    const targets = enemies.length > 0 ? enemies : [npc];
+    for (const t of targets) {
+      if (!t.active || t.hp <= 0) continue;
+      const dx = t.x - nx, dy = t.y - ny;
+      const d = Math.sqrt(dx * dx + dy * dy) || 1;
+      if (d < r + RUBBERAGE_FIGHTER_RADIUS && time - this.playerBallLastHitAt > RUBBERAGE_HIT_COOLDOWN_MS) {
+        this.playerBallLastHitAt = time;
+        t.takeDamage(5);
+        this.arena.spawnHitFlash(t.x, t.y, 0xaa55ff);
+        const tb = t.body as Phaser.Physics.Arcade.Body | null;
+        if (tb) tb.setVelocity((dx / d) * 320, (dy / d) * 320);
+        // Bounce back off the target.
+        const s = Math.sqrt(this.playerBallVx ** 2 + this.playerBallVy ** 2) || 1;
+        this.playerBallVx = -(dx / d) * s;
+        this.playerBallVy = -(dy / d) * s;
+      }
+    }
   }
 }

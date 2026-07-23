@@ -26,6 +26,8 @@ interface SaveData {
   masteryProgress: Record<string, Record<string, number>>; // elementId -> statKey -> count
   masteryEnabled: Record<string, boolean>;                 // elementId -> enabled
   masteryBinds: Record<string, Record<string, string>>;    // elementId -> slot -> enhancement id
+  achievements: string[];                                  // unlocked achievement ids
+  equippedCosmetics: Record<string, Partial<Record<'color' | 'sigil', string>>>; // elementId -> slot -> cosmetic id
 }
 
 function load(): SaveData {
@@ -54,6 +56,8 @@ function load(): SaveData {
         masteryProgress: parsed.masteryProgress ?? {},
         masteryEnabled: parsed.masteryEnabled ?? {},
         masteryBinds: parsed.masteryBinds ?? {},
+        achievements: parsed.achievements ?? [],
+        equippedCosmetics: parsed.equippedCosmetics ?? {},
       };
       // Sanity: clear equipped perk if no longer unlocked
       for (const el of Object.keys(d.equippedPerks)) {
@@ -66,7 +70,7 @@ function load(): SaveData {
   } catch {
     // corrupted save — start fresh
   }
-  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {} };
+  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedCosmetics: {} };
 }
 
 function save(data: SaveData): void {
@@ -378,4 +382,49 @@ export function clearMasteryBind(elementId: string, slot: string): void {
   delete binds[slot];
   data.masteryBinds = { ...data.masteryBinds, [elementId]: binds };
   save(data);
+}
+
+// ── Achievements + cosmetics ─────────────────────────────────────────
+
+export function isAchievementUnlocked(id: string): boolean {
+  return load().achievements.includes(id);
+}
+
+/** Idempotent. Returns true only on the first unlock so callers can show the popup once. */
+export function unlockAchievement(id: string): boolean {
+  const data = load();
+  if (data.achievements.includes(id)) return false;
+  data.achievements = [...data.achievements, id];
+  save(data);
+  return true;
+}
+
+export function getUnlockedAchievements(): string[] {
+  return load().achievements;
+}
+
+export function getEquippedCosmetic(elementId: string, slot: 'color' | 'sigil'): string | null {
+  return load().equippedCosmetics[elementId]?.[slot] ?? null;
+}
+
+export function setEquippedCosmetic(elementId: string, slot: 'color' | 'sigil', cosmeticId: string | null): void {
+  const data = load();
+  const forElement = { ...(data.equippedCosmetics[elementId] ?? {}) };
+  if (cosmeticId === null) {
+    delete forElement[slot];
+  } else {
+    forElement[slot] = cosmeticId;
+  }
+  data.equippedCosmetics = { ...data.equippedCosmetics, [elementId]: forElement };
+  save(data);
+}
+
+/** slot → cosmetic id for one element (only slots with something equipped). */
+export function getEquippedCosmetics(elementId: string): Record<string, string> {
+  const forElement = load().equippedCosmetics[elementId] ?? {};
+  const out: Record<string, string> = {};
+  for (const [slot, id] of Object.entries(forElement)) {
+    if (id) out[slot] = id;
+  }
+  return out;
 }

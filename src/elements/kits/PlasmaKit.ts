@@ -100,6 +100,14 @@ interface PlasmaVoltPoint {
   pairedRef?: PlasmaVoltPoint;
 }
 
+/** A pending Plasma Burst AoE that detonates at (x, y) once `fireAt` is reached. */
+interface PlasmaClickBlast {
+  x: number;
+  y: number;
+  owner: 'player' | 'npc';
+  fireAt: number;
+}
+
 // ── PlasmaKit ─────────────────────────────────────────────────────────────
 
 export class PlasmaKit {
@@ -110,6 +118,7 @@ export class PlasmaKit {
   private plasmaChaosEffects: PlasmaChaosEffect[] = [];
   private plasmaChaosOrbs: PlasmaChaosOrb[] = [];
   private plasmaVoltPoints: PlasmaVoltPoint[] = [];
+  private plasmaClickBlasts: PlasmaClickBlast[] = [];
 
   // ── Player incarnate state ────────────────────────────────────────
   private plasmaIncarnateActive = false;
@@ -161,6 +170,8 @@ export class PlasmaKit {
 
     for (const vp of this.plasmaVoltPoints) vp.sprite.destroy();
     this.plasmaVoltPoints = [];
+
+    this.plasmaClickBlasts = [];
 
     this.plasmaIncarnateActive = false;
     this.plasmaIncarnateEnd = 0;
@@ -567,6 +578,15 @@ export class PlasmaKit {
       }
     }
 
+    // ── Plasma Burst click blasts (staggered 0.2s apart) ──────────
+    for (let i = this.plasmaClickBlasts.length - 1; i >= 0; i--) {
+      const blast = this.plasmaClickBlasts[i];
+      if (time >= blast.fireAt) {
+        this.plasmaClickBlasts.splice(i, 1);
+        this.doPlasmaClickBlast(blast.x, blast.y, blast.owner);
+      }
+    }
+
     // ── Solar: beam intersection puddles ──────────────────────────
     if (this.arena.hasPerk('player', 'solar') || this.arena.hasPerk('npc', 'solar')) {
       this.solarPuddleAccum += delta;
@@ -613,58 +633,78 @@ export class PlasmaKit {
   // ── Public do* methods (called from buildPlayerContext / buildNpcContext) ──
 
   doPlasmaBurst(tx: number, ty: number, owner: 'player' | 'npc'): void {
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    const now = this.arena.scene.time ? this.arena.scene.time.now : 0;
+
+    // Arc a chain of lightning from the caster to the cursor to sell the attack.
+    this.doPlasmaChainLightning(caster.x, caster.y, tx, ty);
+
+    // Three small AoEs land at the cursor, 0.2s apart.
+    for (let i = 0; i < 3; i++) {
+      this.plasmaClickBlasts.push({ x: tx, y: ty, owner, fireAt: now + i * 200 });
+    }
+    this.arena.showFloatingText(caster.x, caster.y - 36, '⚡ Plasma Burst', '#dd66ff');
+  }
+
+  /** One staggered Plasma Burst AoE: 4 dmg to enemies at the cursor, else a red bolt back. */
+  private doPlasmaClickBlast(tx: number, ty: number, owner: 'player' | 'npc'): void {
     const { scene } = this.arena;
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
-    const plasmaTargets = owner === 'player' ? this.arena.enemies : [this.arena.player];
-    const range = 120;
+    const targets = owner === 'player' ? this.arena.enemies : [this.arena.player];
+    const aoeRadius = 42;
+    const dmg = 4;
 
-    for (let i = 0; i < 3; i++) {
-      const spreadAngle = ((i - 1) * 18) * (Math.PI / 180);
-      const baseAngle = Math.atan2(ty - caster.y, tx - caster.x);
-      const ang = baseAngle + spreadAngle;
-      const endX = caster.x + Math.cos(ang) * range;
-      const endY = caster.y + Math.sin(ang) * range;
+    // Small AoE burst + an arcing bolt from the caster to the strike point.
+    const flash = scene.add.circle(tx, ty, aoeRadius, 0xdd66ff, 0.5)
+      .setStrokeStyle(2, 0xffffff, 0.85).setDepth(8);
+    scene.tweens.add({ targets: flash, scaleX: 1.4, scaleY: 1.4, alpha: 0, duration: 250, onComplete: () => flash.destroy() });
+    this.doPlasmaChainLightning(caster.x, caster.y, tx, ty);
 
-      const gfx = scene.add.graphics().setDepth(8);
-      gfx.lineStyle(3, 0xdd66ff, 1.0);
-      gfx.lineBetween(caster.x, caster.y, endX, endY);
-      for (let j = 0; j < 3; j++) {
-        const t = (j + 1) / 4;
-        const midX = caster.x + (endX - caster.x) * t + (Math.random() - 0.5) * 14;
-        const midY = caster.y + (endY - caster.y) * t + (Math.random() - 0.5) * 14;
-        gfx.lineStyle(2, 0xffffff, 0.7);
-        gfx.lineBetween(
-          caster.x + (endX - caster.x) * (t - 0.25), caster.y + (endY - caster.y) * (t - 0.25),
-          midX, midY,
-        );
+    // Direct hits: enemies standing inside the AoE.
+    const hitSet = new Set<Fighter>();
+    for (const target of targets) {
+      if (!target.active || target.hp <= 0) continue;
+      if (Phaser.Math.Distance.Between(tx, ty, target.x, target.y) <= aoeRadius) {
+        hitSet.add(target);
       }
-      scene.tweens.add({ targets: gfx, alpha: 0, duration: 200, onComplete: () => gfx.destroy() });
+    }
+    for (const target of hitSet) {
+      target.takeDamage(dmg);
+      this.arena.spawnHitFlash(target.x, target.y, 0xdd66ff);
+    }
 
-      let hitLanded = false;
-      for (const target of plasmaTargets) {
-        if (!target.active || target.hp <= 0) continue;
-        const dist = Phaser.Math.Distance.Between(caster.x, caster.y, target.x, target.y);
-        if (dist <= range) {
-          const targetAngle = Math.atan2(target.y - caster.y, target.x - caster.x);
-          const angleDiff = Math.abs(Phaser.Math.Angle.Wrap(targetAngle - ang));
-          if (angleDiff < Math.PI / 4) {
-            target.takeDamage(5);
-            this.arena.spawnHitFlash(target.x, target.y, 0xcc44ff);
-            hitLanded = true;
+    // Click+ Chain Lightning: bolts leap from hit enemies to other nearby ones.
+    if (hitSet.size > 0 && owner === 'player' && this.arena.hasUpgrade('click')) {
+      const chainRange = 160;
+      const queue: Fighter[] = [...hitSet];
+      while (queue.length > 0) {
+        const cur = queue.shift()!;
+        for (const target of targets) {
+          if (hitSet.has(target)) continue;
+          if (!target.active || target.hp <= 0) continue;
+          if (Phaser.Math.Distance.Between(cur.x, cur.y, target.x, target.y) <= chainRange) {
+            hitSet.add(target);
+            queue.push(target);
+            this.doPlasmaChainLightning(cur.x, cur.y, target.x, target.y);
+            target.takeDamage(dmg);
+            this.arena.spawnHitFlash(target.x, target.y, 0xdd66ff);
           }
         }
       }
-      if (hitLanded && owner === 'player' && this.arena.hasUpgrade('click')) {
-        this.doPlasmaApplyChaos('npc', 2000);
-      } else if (hitLanded && owner === 'npc' && this.arena.hasUpgrade('click')) {
-        this.doPlasmaApplyChaos('player', 2000);
-      }
-      if (hitLanded && this.arena.hasUpgrade('r')) {
-        this.doPlasmaVoltRelay(endX, endY, owner);
-      }
     }
 
-    this.arena.showFloatingText(caster.x, caster.y - 36, '⚡ Plasma Burst', '#dd66ff');
+    // Volt Points: any blast landing near a volt relays electricity to its partner.
+    if (this.arena.hasUpgrade('r')) {
+      this.doPlasmaVoltRelay(tx, ty, owner);
+    }
+
+    // Missed: a red bolt snaps back to the caster, who takes 2 self-damage.
+    if (hitSet.size === 0) {
+      this.doPlasmaChainLightning(tx, ty, caster.x, caster.y, 0xff2244);
+      caster.takeDamage(2);
+      this.arena.spawnHitFlash(caster.x, caster.y, 0xff2244);
+      this.arena.showFloatingText(caster.x, caster.y - 30, '⚡ Missed!', '#ff4444');
+    }
   }
 
   doPlasmaUnstableArena(tx: number, ty: number, owner: 'player' | 'npc'): void {
@@ -856,10 +896,10 @@ export class PlasmaKit {
     }
   }
 
-  private doPlasmaChainLightning(fromX: number, fromY: number, toX: number, toY: number): void {
+  private doPlasmaChainLightning(fromX: number, fromY: number, toX: number, toY: number, color = 0xee88ff): void {
     const { scene } = this.arena;
     const gfx = scene.add.graphics().setDepth(8);
-    gfx.lineStyle(3, 0xee88ff, 1.0);
+    gfx.lineStyle(3, color, 1.0);
     const steps = 5;
     let px = fromX, py = fromY;
     for (let i = 1; i <= steps; i++) {

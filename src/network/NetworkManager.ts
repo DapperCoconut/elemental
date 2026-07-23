@@ -2,7 +2,7 @@ import Peer, { DataConnection } from 'peerjs';
 import type { InvasionFx, HuskStatus } from '../invasion/InvasionKit';
 
 /** Bump when the wire protocol or gameplay sync changes incompatibly. */
-export const NET_PROTOCOL_VERSION = 7;
+export const NET_PROTOCOL_VERSION = 8;
 
 /** Lobby selection payload exchanged while both players pick loadouts. */
 export interface NetSelection {
@@ -14,6 +14,8 @@ export interface NetSelection {
   masteryBinds: Record<string, string>;
   /** Whether Element Mastery is enabled for the selected element (drives passives too). */
   masteryOn: boolean;
+  /** Equipped cosmetics for the selected element (slot → cosmetic id), rendered by the peer. */
+  cosmetics: Record<string, string>;
   ready: boolean;
 }
 
@@ -55,14 +57,14 @@ export type NetMatchMode = 'pvp' | 'invasion';
 
 export type NetMsg =
   | { t: 'hello'; version: number }
-  | { t: 'sel'; elementId: string | null; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; ready: boolean }
+  | { t: 'sel'; elementId: string | null; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; cosmetics?: Record<string, string>; ready: boolean }
   | { t: 'mode'; mode: NetMatchMode; invasionDifficulty: string }
   | {
       t: 'start';
       mode: NetMatchMode;
       invasionDifficulty?: string;
-      hostSel: { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean };
-      guestSel: { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean };
+      hostSel: { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; cosmetics?: Record<string, string> };
+      guestSel: { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; cosmetics?: Record<string, string> };
     }
   // inv/fa/st: Silence remaster — invisibility flag, facing angle (radians), stealth meter.
   | { t: 'state'; x: number; y: number; vx: number; vy: number; hp: number; maxHp: number; shieldHp: number; shieldCharges: number; downed?: boolean; inv?: boolean; fa?: number; st?: number }

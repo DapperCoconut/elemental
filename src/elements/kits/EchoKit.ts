@@ -31,9 +31,6 @@ export interface EchoArenaApi {
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
 }
 
-// Keep old export name so ArenaScene import still compiles during migration
-export type QuantumArenaApi = EchoArenaApi;
-
 // ── Internal types ───────────────────────────────────────────────────────────
 
 interface EchoProj {
@@ -121,6 +118,9 @@ export class EchoKit {
   private playerGuessSlowUntil = 0;
   private npcGuessSlowUntil = 0;
 
+  // Q+ Hypersense (auto-dodge window granted by a non-direct eclipse)
+  private playerHypersenseUntil = 0;
+
   // Lantern
   private playerLanternActive = false;
   private playerLanternHp = 0;
@@ -186,6 +186,7 @@ export class EchoKit {
 
     this.playerGuessSlowUntil = 0;
     this.npcGuessSlowUntil = 0;
+    this.playerHypersenseUntil = 0;
     this.playerLanternActive = false;
     this.npcLanternActive = false;
     if (this.playerLanternIndicator?.active) { this.playerLanternIndicator.destroy(); }
@@ -228,6 +229,11 @@ export class EchoKit {
   // Called by ArenaScene to know if eclipse is active (for NPC random aim)
   isEclipseRevealActive(): boolean {
     return this._eclipseRevealActive;
+  }
+
+  /** Q+ Hypersense window — ArenaScene auto-dodges incoming attacks while this is true. */
+  isHypersenseActive(): boolean {
+    return this.arena.scene.time.now < this.playerHypersenseUntil;
   }
 
   // Speed mults for ArenaScene to apply
@@ -296,8 +302,13 @@ export class EchoKit {
         if (player.getCooldownRatio('echo-guess') >= 1) {
           let etx = mx, ety = my;
           if (this.playerEyePowerUpArmed) { etx = enemy.x; ety = enemy.y; this.playerEyePowerUpArmed = false; }
-          this.doGuess(etx, ety, 'player');
+          const hit = this.doGuess(etx, ety, 'player');
           player.startCooldown('echo-guess');
+          // E+ Paranoia: a correct guess drops the guess cooldown to 1s (base 5s).
+          if (hit && this.arena.hasUpgrade('e')) {
+            player.reduceCooldown('echo-guess', 4000);
+            this.arena.showFloatingText(player.x, player.y - 52, '👁 Paranoia', '#ffbbff');
+          }
         }
       }
 
@@ -584,7 +595,8 @@ export class EchoKit {
 
   // ── Guess (E) ─────────────────────────────────────────────────────────────
 
-  doGuess(tx: number, ty: number, owner: 'player' | 'npc'): void {
+  /** Returns true if the guess correctly landed on the enemy (direct or AoE hit). */
+  doGuess(tx: number, ty: number, owner: 'player' | 'npc'): boolean {
     const time = this.arena.scene.time.now;
     const enemy = owner === 'player' ? this.arena.npc : this.arena.player;
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
@@ -603,27 +615,26 @@ export class EchoKit {
       this.arena.spawnHitFlash(enemy.x, enemy.y, 0xaaaaff);
       this.arena.showFloatingText(caster.x, caster.y - 40, 'Vision', '#ffdd44');
       this.guessReveals.push({ x: enemy.x, y: enemy.y, expiresAt: time + 500 });
-      // E+ spawn psychic eye
-      if (owner === 'player' && this.arena.hasUpgrade('e')) {
-        this.spawnPsychicEye();
-      }
-    } else {
-      // AoE check
-      const aoeDist = Phaser.Math.Distance.Between(tx, ty, enemy.x, enemy.y);
-      if (aoeDist <= 72 && enemy.hp > 0) {
-        enemy.takeDamage(15);
-        this.arena.spawnHitFlash(enemy.x, enemy.y, 0xaaaaff);
-        this.guessReveals.push({ x: enemy.x, y: enemy.y, expiresAt: time + 500 });
-      } else {
-        // Miss — slow caster
-        if (owner === 'player') {
-          this.playerGuessSlowUntil = time + 3000;
-          this.arena.showFloatingText(caster.x, caster.y - 36, 'Disoriented!', '#ff8888');
-        } else {
-          this.npcGuessSlowUntil = time + 3000;
-        }
-      }
+      return true;
     }
+
+    // AoE check
+    const aoeDist = Phaser.Math.Distance.Between(tx, ty, enemy.x, enemy.y);
+    if (aoeDist <= 72 && enemy.hp > 0) {
+      enemy.takeDamage(15);
+      this.arena.spawnHitFlash(enemy.x, enemy.y, 0xaaaaff);
+      this.guessReveals.push({ x: enemy.x, y: enemy.y, expiresAt: time + 500 });
+      return true;
+    }
+
+    // Miss — slow caster
+    if (owner === 'player') {
+      this.playerGuessSlowUntil = time + 3000;
+      this.arena.showFloatingText(caster.x, caster.y - 36, 'Disoriented!', '#ff8888');
+    } else {
+      this.npcGuessSlowUntil = time + 3000;
+    }
+    return false;
   }
 
   private updateGuessReveals(time: number): void {
@@ -939,10 +950,10 @@ export class EchoKit {
       // Bug 2 fix: actually scramble enemy aim via the standard offset channel
       enemy.aimOffsetBonusDeg = 90;
       enemy.aimOffsetBonusUntil = time + 4000;
-      // Q+ grant 3 psychic eyes
+      // Q+ Hypersense: for the 4s reveal you auto-dodge incoming attacks (see ArenaScene).
       if (owner === 'player' && this.arena.hasUpgrade('q')) {
-        for (let i = 0; i < 3; i++) this.spawnPsychicEye();
-        this.arena.showFloatingText(caster.x, caster.y - 54, '👁 ×3', '#aaddff');
+        this.playerHypersenseUntil = time + 4000;
+        this.arena.showFloatingText(caster.x, caster.y - 54, '👁 Hypersense!', '#aaddff');
       }
     }
   }
@@ -1168,6 +1179,3 @@ export class EchoKit {
     this.doEclipse(tx, ty, 'npc');
   }
 }
-
-// Keep old export name for ArenaScene
-export class QuantumKit extends EchoKit {}

@@ -40,7 +40,7 @@ const enchant: Ability = {
 const allIn: Ability = {
   id: 'fate-all-in',
   name: 'All In!',
-  description: 'Wager 50 HP on a slow orbiting strike. Land it: deal 50 damage and heal 75 HP. Miss: take 50 damage.',
+  description: 'Wager 50 HP on a slow orbiting strike. Land it: deal 50 damage. Miss: take 50 damage.',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 25000,

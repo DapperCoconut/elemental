@@ -6,12 +6,14 @@ import { clearConsumedItems } from '../data/Items';
 import * as PlayerData from '../data/PlayerData';
 import { applyKonamiCheat } from '../data/CheatSave';
 import { getPerksForElement, getPerkById, ALL_PERKS } from '../data/Perks';
+import { CosmeticSlot, COSMETIC_SLOTS, getCosmeticsForElement, isCosmeticUnlocked, cosmeticUnlockHint } from '../data/Cosmetics';
 import { getAbilityVariants } from '../data/AbilityVariants';
 import {
   getMasteryDef, isMasteryComplete, MasteryRequirement,
   getBindableEnhancements, getEnhancement, MASTERY_SLOTS, MasterySlot, MasteryEnhancement,
 } from '../data/Mastery';
 import { INVASION_DIFFICULTIES, InvasionDifficultyId } from '../invasion/InvasionKit';
+import { FATE_CARD_DEFS } from '../elements/kits/FateKit';
 
 import { Element } from '../elements/Element';
 import { fireElement } from '../elements/fire';
@@ -141,8 +143,8 @@ export class MenuScene extends Phaser.Scene {
   private elemPage = 0;
   private isInvasion = false;
   private invasionDifficultyId: InvasionDifficultyId = 'normal';
-  // Tracks displayed perk strip index per element (-1 = none). Persists across re-renders.
-  private perkIndices: Record<string, number> = {};
+  // Preserves scroll position across showCustomizeScreen rebuilds triggered by toggles/equips.
+  private customizeScrollY = 0;
 
   private phaseObjects: Phaser.GameObjects.GameObject[] = [];
   private infoOverlayObjects: Phaser.GameObjects.GameObject[] = [];
@@ -155,7 +157,7 @@ export class MenuScene extends Phaser.Scene {
   // Preserves scroll position across showMasteryScreen rebuilds triggered by bind/clear actions.
   private masteryScrollY = 0;
   private mutationScrollHandler: (...args: unknown[]) => void = () => {};
-  private elementInfoMode: 'base' | 'upgraded' = 'base';
+  private elementInfoMode: 'base' | 'upgraded' | 'build' = 'base';
   private expandedVariants: Set<string> = new Set();
   private hoveredDifficulty = 1;
   private konamiBuffer: string[] = [];
@@ -448,108 +450,23 @@ export class MenuScene extends Phaser.Scene {
 
       this.phaseObjects.push(card, emojiText, nameText, statusText, iCircle, iLabel, mCircle, mLabel);
 
-      // ── Perk strip (player phase only) ─────────────────────────
+      // ── Customize button (player phase only) — opens the element customization screen
       if (isPlayerPhase) {
-        const perks = getPerksForElement(el.id);
         const stripY = by + cardH / 2 + 22;
-
-        if (perks.length === 0) {
-          const noPerksLbl = this.add.text(bx, stripY + 6, 'no perks', {
-            fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#333344',
-          }).setOrigin(0.5);
-          this.phaseObjects.push(noPerksLbl);
-        } else {
-          // Sync perkIndices with saved equipped perk on first encounter
-          if (!(el.id in this.perkIndices)) {
-            const equippedId = PlayerData.getEquippedPerk(el.id);
-            this.perkIndices[el.id] = equippedId ? perks.findIndex((p) => p.id === equippedId) : -1;
-          }
-          const currentIdx = this.perkIndices[el.id] ?? -1;
-          const totalSlots = perks.length + 1; // +1 for "none" at index -1
-
-          // Strip background
-          const stripBg = this.add.rectangle(bx, stripY + 6, cardW, 30, 0x0d0d1a, 0.85)
-            .setStrokeStyle(1, 0x333355);
-
-          // Left arrow
-          const canLeft = totalSlots > 1;
-          const leftArrow = this.add.text(bx - cardW / 2 + 10, stripY + 6, '◀', {
-            fontSize: '12px', fontFamily: '"Arial Black", sans-serif',
-            color: canLeft ? '#7766aa' : '#222233',
-          }).setOrigin(0.5).setDepth(2);
-          if (canLeft) {
-            leftArrow.setInteractive({ useHandCursor: true });
-            leftArrow.on('pointerover', () => leftArrow.setColor('#cc88ff'));
-            leftArrow.on('pointerout',  () => leftArrow.setColor('#7766aa'));
-            leftArrow.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
-              ptr.event.stopPropagation();
-              let nextIdx = currentIdx - 1;
-              if (nextIdx < -1) nextIdx = perks.length - 1;
-              this.perkIndices[el.id] = nextIdx;
-              if (nextIdx === -1) {
-                PlayerData.equipPerk(el.id, null);
-              } else {
-                const p = perks[nextIdx];
-                if (PlayerData.isPerkUnlocked(el.id, p.id)) PlayerData.equipPerk(el.id, p.id);
-                else PlayerData.equipPerk(el.id, null);
-              }
-              this.renderPhase(width, height, cx);
-            });
-          }
-
-          // Right arrow
-          const rightArrow = this.add.text(bx + cardW / 2 - 10, stripY + 6, '▶', {
-            fontSize: '12px', fontFamily: '"Arial Black", sans-serif',
-            color: canLeft ? '#7766aa' : '#222233',
-          }).setOrigin(0.5).setDepth(2);
-          if (canLeft) {
-            rightArrow.setInteractive({ useHandCursor: true });
-            rightArrow.on('pointerover', () => rightArrow.setColor('#cc88ff'));
-            rightArrow.on('pointerout',  () => rightArrow.setColor('#7766aa'));
-            rightArrow.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
-              ptr.event.stopPropagation();
-              let nextIdx = currentIdx + 1;
-              if (nextIdx >= perks.length) nextIdx = -1;
-              this.perkIndices[el.id] = nextIdx;
-              if (nextIdx === -1) {
-                PlayerData.equipPerk(el.id, null);
-              } else {
-                const p = perks[nextIdx];
-                if (PlayerData.isPerkUnlocked(el.id, p.id)) PlayerData.equipPerk(el.id, p.id);
-                else PlayerData.equipPerk(el.id, null);
-              }
-              this.renderPhase(width, height, cx);
-            });
-          }
-
-          // Center label
-          let centerText: string;
-          let centerColor: string;
-          if (currentIdx === -1) {
-            centerText = '— none —';
-            centerColor = '#444455';
-          } else {
-            const perk = perks[currentIdx];
-            const unlocked = PlayerData.isPerkUnlocked(el.id, perk.id);
-            const isEquipped = PlayerData.getEquippedPerk(el.id) === perk.id;
-            if (unlocked) {
-              centerText = isEquipped ? `${perk.emoji} ${perk.name} ✓` : `${perk.emoji} ${perk.name}`;
-              centerColor = isEquipped ? '#88ff88' : '#ccaaff';
-            } else {
-              const recipe = getPerkById(perk.id)?.ingredients.map((r) => {
-                const em: Record<string, string> = { fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🪨' };
-                return em[r] ?? r;
-              }).join('+') ?? '';
-              centerText = `🔒 ${perk.name}  ${recipe}`;
-              centerColor = '#443344';
-            }
-          }
-          const centerLbl = this.add.text(bx, stripY + 6, centerText, {
-            fontSize: '9px', fontFamily: 'Arial, sans-serif', color: centerColor,
-          }).setOrigin(0.5).setDepth(2);
-
-          this.phaseObjects.push(stripBg, leftArrow, rightArrow, centerLbl);
-        }
+        const custBtn = this.add.rectangle(bx, stripY + 6, cardW, 30, 0x140f28, 0.9)
+          .setStrokeStyle(1, 0x7744cc, 0.8).setInteractive({ useHandCursor: true });
+        const custLbl = this.add.text(bx, stripY + 6, '⚙ CUSTOMIZE', {
+          fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#bb99ee',
+        }).setOrigin(0.5).setDepth(2);
+        custBtn
+          .on('pointerover', () => { custBtn.setFillStyle(0x2a1a4a, 0.95); custBtn.setStrokeStyle(2, 0xbb88ff, 1); custLbl.setColor('#ffffff'); })
+          .on('pointerout',  () => { custBtn.setFillStyle(0x140f28, 0.9); custBtn.setStrokeStyle(1, 0x7744cc, 0.8); custLbl.setColor('#bb99ee'); })
+          .on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+            ptr.event.stopPropagation();
+            this.customizeScrollY = 0;
+            this.showCustomizeScreen(el.id, width, height, cx);
+          });
+        this.phaseObjects.push(custBtn, custLbl);
       }
     });
 
@@ -1127,9 +1044,12 @@ export class MenuScene extends Phaser.Scene {
 
     const element = ELEMENT_DATA_MAP[elementId];
     if (!element) return;
+    // Build Mode is a Creation-only tab; drop back to Base for anything else.
+    if (this.elementInfoMode === 'build' && elementId !== 'creation') this.elementInfoMode = 'base';
     const upgrades = getElementUpgrades(elementId);
     const perks = getPerksForElement(elementId);
     const showUpgraded = this.elementInfoMode === 'upgraded';
+    const showBuild = this.elementInfoMode === 'build';
 
     const SCROLL_TOP = 128;
     const SCROLL_BOT = height - 44;
@@ -1148,34 +1068,39 @@ export class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(51);
     this.infoOverlayObjects.push(header);
 
-    // ── Base / Upgraded toggle ──
+    // ── Base / Upgraded (+ Build Mode for Creation) tabs ──
+    const tabDefs: Array<{
+      mode: 'base' | 'upgraded' | 'build'; label: string;
+      selFill: number; selStroke: number; selText: string; unselText: string;
+    }> = [
+      { mode: 'base',     label: '⚔ BASE ABILITIES',  selFill: 0x224433, selStroke: 0x66ff99, selText: '#aaffcc', unselText: '#556655' },
+      { mode: 'upgraded', label: '▲ UPGRADED EFFECTS', selFill: 0x332200, selStroke: 0xffcc44, selText: '#ffdd88', unselText: '#665533' },
+    ];
+    if (elementId === 'creation') {
+      tabDefs.push({ mode: 'build', label: '🔨 BUILD MODE', selFill: 0x2a1804, selStroke: 0xcc6622, selText: '#ffbb88', unselText: '#665544' });
+    }
     const toggleY = 66;
-    const toggleW = 150, toggleH = 26;
-    const baseBtn = this.add.rectangle(cx - toggleW / 2 - 2, toggleY, toggleW, toggleH,
-      showUpgraded ? 0x0d0d22 : 0x224433, showUpgraded ? 0.7 : 0.95)
-      .setStrokeStyle(1, showUpgraded ? 0x333355 : 0x66ff99, showUpgraded ? 0.6 : 0.9)
-      .setDepth(55).setInteractive({ useHandCursor: true });
-    const baseLbl = this.add.text(cx - toggleW / 2 - 2, toggleY, '⚔ BASE ABILITIES', {
-      fontSize: '11px', fontFamily: '"Arial Black", sans-serif',
-      color: showUpgraded ? '#556655' : '#aaffcc',
-    }).setOrigin(0.5).setDepth(56);
-
-    const upgBtn = this.add.rectangle(cx + toggleW / 2 + 2, toggleY, toggleW, toggleH,
-      showUpgraded ? 0x332200 : 0x0d0d22, showUpgraded ? 0.95 : 0.7)
-      .setStrokeStyle(1, showUpgraded ? 0xffcc44 : 0x333355, showUpgraded ? 0.9 : 0.6)
-      .setDepth(55).setInteractive({ useHandCursor: true });
-    const upgLbl = this.add.text(cx + toggleW / 2 + 2, toggleY, '▲ UPGRADED EFFECTS', {
-      fontSize: '11px', fontFamily: '"Arial Black", sans-serif',
-      color: showUpgraded ? '#ffdd88' : '#665533',
-    }).setOrigin(0.5).setDepth(56);
-
-    baseBtn.on('pointerdown', () => {
-      if (this.elementInfoMode !== 'base') { this.elementInfoMode = 'base'; this.showElementInfo(elementId, width, height, cx); }
+    const nTabs = tabDefs.length;
+    const tabW = nTabs >= 3 ? 132 : 150;
+    const tabH = 26;
+    const tabGap = 6;
+    const tabsTotalW = nTabs * tabW + (nTabs - 1) * tabGap;
+    tabDefs.forEach((td, ti) => {
+      const tx = cx - tabsTotalW / 2 + tabW / 2 + ti * (tabW + tabGap);
+      const selected = this.elementInfoMode === td.mode;
+      const btn = this.add.rectangle(tx, toggleY, tabW, tabH,
+        selected ? td.selFill : 0x0d0d22, selected ? 0.95 : 0.7)
+        .setStrokeStyle(1, selected ? td.selStroke : 0x333355, selected ? 0.9 : 0.6)
+        .setDepth(55).setInteractive({ useHandCursor: true });
+      const lbl = this.add.text(tx, toggleY, td.label, {
+        fontSize: nTabs >= 3 ? '10px' : '11px', fontFamily: '"Arial Black", sans-serif',
+        color: selected ? td.selText : td.unselText,
+      }).setOrigin(0.5).setDepth(56);
+      btn.on('pointerdown', () => {
+        if (this.elementInfoMode !== td.mode) { this.elementInfoMode = td.mode; this.showElementInfo(elementId, width, height, cx); }
+      });
+      this.infoOverlayObjects.push(btn, lbl);
     });
-    upgBtn.on('pointerdown', () => {
-      if (this.elementInfoMode !== 'upgraded') { this.elementInfoMode = 'upgraded'; this.showElementInfo(elementId, width, height, cx); }
-    });
-    this.infoOverlayObjects.push(baseBtn, baseLbl, upgBtn, upgLbl);
 
     // Divider
     const divLine = this.add.line(cx, SCROLL_TOP - 12, -width / 2 + 40, 0, width / 2 - 40, 0, 0x223355, 0.5).setDepth(51).setLineWidth(1);
@@ -1203,6 +1128,10 @@ export class MenuScene extends Phaser.Scene {
       scrollContainer.add(t);
       innerY += 20;
     };
+
+    if (showBuild) {
+      innerY = this.renderCreationBuildInfo(scrollContainer, cx, COL_X, COL_W, innerY);
+    } else {
 
     // Quantum-specific passives (shown above the abilities list)
     if (elementId === 'quantum') {
@@ -1357,6 +1286,33 @@ export class MenuScene extends Phaser.Scene {
       innerY += desc.height + 20;
     }
 
+    // Fate-specific card catalog — the 6-card hand is drawn at random from these.
+    if (elementId === 'fate') {
+      sectionHdr('— CARDS —', '#ffcc66');
+      const intro = this.add.text(COL_X + 14, innerY, 'Your hand is drawn at random from the first ten cards (a new card is dealt every 5s). Click throws the highlighted card; number keys pick a card in hand. The last eight cards below are added to your pool by the "New Cards!" shop upgrade.', {
+        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#ccbb88',
+        wordWrap: { width: COL_W - 28 }, lineSpacing: 3,
+      });
+      scrollContainer.add(intro);
+      innerY += intro.height + 12;
+
+      FATE_CARD_DEFS.forEach((card) => {
+        const rowH = 30;
+        const cardColor = '#' + card.color.toString(16).padStart(6, '0');
+        const rowBg = this.add.rectangle(cx, innerY + rowH / 2, COL_W, rowH - 4, 0x120d1f, 0.8)
+          .setStrokeStyle(1, card.color, 0.55);
+        const nameText = this.add.text(COL_X + 16, innerY + rowH / 2, `${card.emoji}  ${card.name}`, {
+          fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: cardColor,
+        }).setOrigin(0, 0.5);
+        const blurbText = this.add.text(COL_X + 160, innerY + rowH / 2, card.blurb, {
+          fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#aaaabb',
+        }).setOrigin(0, 0.5);
+        scrollContainer.add([rowBg, nameText, blurbText]);
+        innerY += rowH + 4;
+      });
+      innerY += 16;
+    }
+
     // ── Perks section ──
     sectionHdr('— PERKS —', '#cc88ff');
     if (perks.length === 0) {
@@ -1455,6 +1411,7 @@ export class MenuScene extends Phaser.Scene {
         innerY += rowH + 6;
       });
     }
+    } // end standard (Base / Upgraded) content
 
     // ── Scroll logic ──
     const totalContentH = innerY;
@@ -1489,6 +1446,52 @@ export class MenuScene extends Phaser.Scene {
       .on('pointerout',  () => backBtn.setFillStyle(0x221133, 0.9))
       .on('pointerdown', () => this.closeElementInfo());
     this.infoOverlayObjects.push(backBtn, backLbl);
+  }
+
+  /** Renders Creation's Build Mode tab — the Crucible craft recipes. Returns the new innerY. */
+  private renderCreationBuildInfo(
+    container: Phaser.GameObjects.Container,
+    cx: number, colX: number, colW: number, startY: number,
+  ): number {
+    let y = startY;
+
+    const hdr = this.add.text(cx, y, '— BUILD MODE · CRUCIBLE —', {
+      fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#ffaa55',
+    }).setOrigin(0.5);
+    container.add(hdr);
+    y += 22;
+
+    const buildSet = getAbilityVariants('creation', 'e');
+    const intro = this.add.text(colX + 14, y,
+      'Charge bolts with E — tap = Copper, hold ~0.5s = Silver, ~1s = Gold — then load 3 into the Crucible on the ground. The trio you feed it decides what gets built:',
+      { fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#ccbb99', wordWrap: { width: colW - 28 }, lineSpacing: 3 });
+    container.add(intro);
+    y += intro.height + 14;
+
+    for (const v of buildSet?.variants ?? []) {
+      const descText = this.add.text(colX + 40, y + 22, v.description, {
+        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#aab0c0',
+        wordWrap: { width: colW - 54 }, lineSpacing: 3,
+      });
+      const rowH = 22 + descText.height + 12;
+      const rowBg = this.add.rectangle(cx, y + rowH / 2, colW, rowH - 6, 0x1a1206, 0.8)
+        .setStrokeStyle(1, 0x553311, 0.7);
+      const nameText = this.add.text(colX + 14, y + 13, `${v.emoji ? v.emoji + ' ' : ''}${v.name}`, {
+        fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc88',
+      }).setOrigin(0, 0.5);
+      container.add([rowBg, nameText, descText]);
+      y += rowH + 6;
+    }
+
+    if (!buildSet || buildSet.variants.length === 0) {
+      const none = this.add.text(cx, y + 6, 'No crucible recipes are defined yet.', {
+        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#444455',
+      }).setOrigin(0.5);
+      container.add(none);
+      y += 26;
+    }
+
+    return y + 16;
   }
 
   private showMasteryScreen(elementId: string, width: number, height: number, cx: number): void {
@@ -1925,6 +1928,423 @@ export class MenuScene extends Phaser.Scene {
     if (this.masteryDragGhost) {
       for (const o of this.masteryDragGhost) o.destroy();
       this.masteryDragGhost = null;
+    }
+  }
+
+  /**
+   * Element customization screen — replaces the old per-card perk strip. One place to
+   * toggle mastery, pick a perk, toggle owned upgrades on/off, and equip cosmetics.
+   * Every action persists immediately via PlayerData and rebuilds the overlay in place
+   * (scroll offset preserved via customizeScrollY, like the mastery screen does).
+   */
+  private showCustomizeScreen(elementId: string, width: number, height: number, cx: number): void {
+    this.closeElementInfo();
+
+    const element = ELEMENT_DATA_MAP[elementId];
+    if (!element) return;
+    const elemColor = '#' + element.color.toString(16).padStart(6, '0');
+
+    const SCROLL_TOP = 96;
+    const SCROLL_BOT = height - 44;
+    const SCROLL_H = SCROLL_BOT - SCROLL_TOP;
+
+    const bg = this.add.rectangle(cx, height / 2, width, height, 0x05050f, 0.97).setDepth(50);
+    bg.setInteractive();
+    this.infoOverlayObjects.push(bg);
+
+    const header = this.add.text(cx, 34, `⚙  ${element.name.toUpperCase()} CUSTOMIZATION`, {
+      fontSize: '26px', fontFamily: '"Arial Black", sans-serif', color: elemColor,
+      stroke: '#000000', strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(51);
+    this.infoOverlayObjects.push(header);
+
+    const subHdr = this.add.text(cx, 62, '— mastery · perk · upgrades · cosmetics —', {
+      fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#555577',
+    }).setOrigin(0.5).setDepth(51);
+    this.infoOverlayObjects.push(subHdr);
+
+    const divLine = this.add.line(cx, SCROLL_TOP - 12, -width / 2 + 40, 0, width / 2 - 40, 0, 0x223355, 0.5).setDepth(51).setLineWidth(1);
+    this.infoOverlayObjects.push(divLine);
+
+    // Back button — closing re-renders the phase so card emoji/mastery state refresh.
+    const backBtn = this.add.rectangle(60, 30, 90, 32, 0x221133, 0.9)
+      .setStrokeStyle(2, 0x9944ff, 0.8).setDepth(55).setInteractive({ useHandCursor: true });
+    const backLbl = this.add.text(60, 30, '◀  BACK', {
+      fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
+    }).setOrigin(0.5).setDepth(56);
+    backBtn
+      .on('pointerover', () => backBtn.setFillStyle(0x440077, 0.95))
+      .on('pointerout',  () => backBtn.setFillStyle(0x221133, 0.9))
+      .on('pointerdown', () => {
+        this.closeElementInfo();
+        this.renderPhase(width, height, cx);
+      });
+    this.infoOverlayObjects.push(backBtn, backLbl);
+
+    const scrollContainer = this.add.container(0, SCROLL_TOP).setDepth(51);
+    this.infoOverlayObjects.push(scrollContainer);
+
+    const maskGfx = this.add.graphics();
+    maskGfx.fillStyle(0xffffff, 1);
+    maskGfx.fillRect(0, SCROLL_TOP, width, SCROLL_H);
+    scrollContainer.setMask(maskGfx.createGeometryMask());
+    this.infoOverlayObjects.push(maskGfx);
+
+    const COL_X = 40;
+    const COL_W = width - 80;
+    let innerY = 4;
+
+    const rebuild = () => this.showCustomizeScreen(elementId, width, height, cx);
+    const inView = (localY: number) => this.isInScrollWindow(scrollContainer, localY, SCROLL_TOP, SCROLL_BOT);
+
+    const sectionHdr = (text: string, color: string) => {
+      const t = this.add.text(cx, innerY, text, {
+        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color,
+      }).setOrigin(0.5);
+      scrollContainer.add(t);
+      innerY += 20;
+    };
+
+    const ELEM_EMOJI: Record<string, string> = {
+      fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🪨',
+      electricity: '⚡', slime: '🟢', fate: '🃏', sound: '🔊', light: '✨',
+    };
+
+    // ── MASTERY ─────────────────────────────────────────────────────
+    sectionHdr('— MASTERY —', '#ffcc00');
+    const masteryDef = getMasteryDef(elementId);
+    if (!masteryDef) {
+      const soon = this.add.text(cx, innerY + 8, 'Mastery for this element is coming soon.', {
+        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#555577',
+      }).setOrigin(0.5);
+      scrollContainer.add(soon);
+      innerY += 30;
+    } else {
+      const complete = isMasteryComplete(elementId);
+      const enabled = PlayerData.isMasteryEnabled(elementId);
+      const rowH = 44;
+      const rowBg = this.add.rectangle(cx, innerY + rowH / 2, COL_W, rowH - 6,
+        enabled ? 0x221a00 : 0x0d0d22, 0.8).setStrokeStyle(1, enabled ? 0x996600 : 0x222244, 0.7);
+      const nameText = this.add.text(COL_X + 14, innerY + rowH / 2 - 3, `${masteryDef.enhancedEmoji} ${masteryDef.name}`, {
+        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: complete ? '#ffcc00' : '#777788',
+      }).setOrigin(0, 0.5);
+      scrollContainer.add([rowBg, nameText]);
+
+      if (!complete) {
+        const lockLbl = this.add.text(COL_X + COL_W - 14, innerY + rowH / 2 - 3, '🔒 Complete challenges to unlock', {
+          fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#665533',
+        }).setOrigin(1, 0.5);
+        scrollContainer.add(lockLbl);
+      } else {
+        const rowLocalY = innerY + rowH / 2;
+        const tglW = 110, tglH = 26;
+        const tglX = COL_X + COL_W - 14 - tglW / 2;
+        const tglBg = this.add.rectangle(tglX, rowLocalY - 3, tglW, tglH,
+          enabled ? 0x225533 : 0x333344, 0.95)
+          .setStrokeStyle(2, enabled ? 0x44cc66 : 0x555577, 0.9)
+          .setInteractive({ useHandCursor: true });
+        const tglLbl = this.add.text(tglX, rowLocalY - 3, enabled ? '✓ ENABLED' : 'DISABLED', {
+          fontSize: '10px', fontFamily: '"Arial Black", sans-serif',
+          color: enabled ? '#88ff88' : '#8888aa',
+        }).setOrigin(0.5);
+        tglBg
+          .on('pointerover', () => tglBg.setStrokeStyle(2, 0xffffff, 1))
+          .on('pointerout',  () => tglBg.setStrokeStyle(2, enabled ? 0x44cc66 : 0x555577, 0.9))
+          .on('pointerdown', () => {
+            if (!inView(rowLocalY)) return;
+            PlayerData.setMasteryEnabled(elementId, !enabled);
+            rebuild();
+          });
+        scrollContainer.add([tglBg, tglLbl]);
+      }
+      innerY += rowH;
+
+      const link = this.add.text(COL_X + 14, innerY + 4, 'View challenges & mastery loadout ▸', {
+        fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#66ccff',
+      }).setInteractive({ useHandCursor: true });
+      const linkLocalY = innerY + 4;
+      link.on('pointerover', () => link.setColor('#aaeeff'));
+      link.on('pointerout',  () => link.setColor('#66ccff'));
+      link.on('pointerdown', () => {
+        if (!inView(linkLocalY)) return;
+        this.masteryScrollY = 0;
+        this.showMasteryScreen(elementId, width, height, cx);
+      });
+      scrollContainer.add(link);
+      innerY += 26;
+    }
+    innerY += 12;
+
+    // ── PERK ────────────────────────────────────────────────────────
+    sectionHdr('— PERK —', '#cc88ff');
+    const perks = getPerksForElement(elementId);
+    if (perks.length === 0) {
+      const noPerks = this.add.text(cx, innerY + 8, 'No perks are craftable for this element yet.', {
+        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#555577',
+      }).setOrigin(0.5);
+      scrollContainer.add(noPerks);
+      innerY += 30;
+    } else {
+      const equippedId = PlayerData.getEquippedPerk(elementId);
+
+      // "None" row
+      {
+        const rowH = 30;
+        const isEquipped = equippedId === null;
+        const rowLocalY = innerY + rowH / 2;
+        const rowBg = this.add.rectangle(cx, rowLocalY, COL_W, rowH - 4,
+          isEquipped ? 0x1a3a1a : 0x0d0d22, 0.8)
+          .setStrokeStyle(1, isEquipped ? 0x55ee55 : 0x222244, 0.7)
+          .setInteractive({ useHandCursor: true });
+        const noneLbl = this.add.text(COL_X + 14, rowLocalY, isEquipped ? '— no perk —  ✓' : '— no perk —', {
+          fontSize: '11px', fontFamily: '"Arial Black", sans-serif',
+          color: isEquipped ? '#88ff88' : '#777788',
+        }).setOrigin(0, 0.5);
+        rowBg
+          .on('pointerover', () => rowBg.setStrokeStyle(2, 0xffffff, 1))
+          .on('pointerout',  () => rowBg.setStrokeStyle(1, isEquipped ? 0x55ee55 : 0x222244, 0.7))
+          .on('pointerdown', () => {
+            if (!inView(rowLocalY)) return;
+            PlayerData.equipPerk(elementId, null);
+            rebuild();
+          });
+        scrollContainer.add([rowBg, noneLbl]);
+        innerY += rowH + 2;
+      }
+
+      for (const perk of perks) {
+        const unlocked = PlayerData.isPerkUnlocked(elementId, perk.id);
+        const isEquipped = equippedId === perk.id;
+        const alpha = unlocked ? 1 : 0.45;
+        const rowH = 30;
+        const rowLocalY = innerY + rowH / 2;
+
+        const rowBg = this.add.rectangle(cx, rowLocalY, COL_W, rowH - 4,
+          isEquipped ? 0x1a3a1a : (unlocked ? 0x150022 : 0x0a0a10), unlocked ? 0.8 : 0.5)
+          .setStrokeStyle(1, isEquipped ? 0x55ee55 : (unlocked ? 0x441155 : 0x222233), 0.7);
+        const nameLbl = this.add.text(COL_X + 14, rowLocalY,
+          `${unlocked ? '' : '🔒 '}${perk.emoji} ${perk.name}${isEquipped ? '  ✓' : ''}`, {
+            fontSize: '11px', fontFamily: '"Arial Black", sans-serif',
+            color: isEquipped ? '#88ff88' : (unlocked ? '#eecfff' : '#555566'),
+          }).setOrigin(0, 0.5).setAlpha(alpha);
+        const recipeStr = perk.ingredients.map((r) => ELEM_EMOJI[r] ?? r).join(' + ');
+        const recipeLbl = this.add.text(COL_X + COL_W - 14, rowLocalY, recipeStr, {
+          fontSize: '10px', color: unlocked ? '#886633' : '#332222',
+        }).setOrigin(1, 0.5).setAlpha(alpha);
+        scrollContainer.add([rowBg, nameLbl, recipeLbl]);
+
+        if (unlocked) {
+          rowBg.setInteractive({ useHandCursor: true })
+            .on('pointerover', () => rowBg.setStrokeStyle(2, 0xffffff, 1))
+            .on('pointerout',  () => rowBg.setStrokeStyle(1, isEquipped ? 0x55ee55 : 0x441155, 0.7))
+            .on('pointerdown', () => {
+              if (!inView(rowLocalY)) return;
+              PlayerData.equipPerk(elementId, isEquipped ? null : perk.id);
+              rebuild();
+            });
+        }
+        innerY += rowH + 2;
+      }
+    }
+    innerY += 12;
+
+    // ── UPGRADES ────────────────────────────────────────────────────
+    sectionHdr('— UPGRADES —', '#66ccff');
+    const upgrades = getElementUpgrades(elementId);
+    if (upgrades.length === 0) {
+      const noUpg = this.add.text(cx, innerY + 8, 'This element has no shop upgrades.', {
+        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#555577',
+      }).setOrigin(0.5);
+      scrollContainer.add(noUpg);
+      innerY += 30;
+    } else {
+      const ownedSlots = upgrades.filter((u) => PlayerData.isUpgradeOwned(elementId, u.slot));
+
+      // All ON / All OFF quick buttons (only useful once something is owned)
+      if (ownedSlots.length > 0) {
+        const btnLocalY = innerY + 12;
+        const mk = (label: string, x: number, turnOn: boolean) => {
+          const b = this.add.rectangle(x, btnLocalY, 84, 22, 0x222233, 0.95)
+            .setStrokeStyle(1, 0x555577, 0.9).setInteractive({ useHandCursor: true });
+          const l = this.add.text(x, btnLocalY, label, {
+            fontSize: '9px', fontFamily: '"Arial Black", sans-serif', color: '#aaaacc',
+          }).setOrigin(0.5);
+          b.on('pointerover', () => b.setStrokeStyle(2, 0xffffff, 1))
+            .on('pointerout',  () => b.setStrokeStyle(1, 0x555577, 0.9))
+            .on('pointerdown', () => {
+              if (!inView(btnLocalY)) return;
+              for (const u of ownedSlots) {
+                if (PlayerData.isUpgradeActive(elementId, u.slot) !== turnOn) {
+                  PlayerData.toggleUpgrade(elementId, u.slot);
+                }
+              }
+              rebuild();
+            });
+          scrollContainer.add([b, l]);
+        };
+        mk('ALL ON', COL_X + COL_W - 150, true);
+        mk('ALL OFF', COL_X + COL_W - 56, false);
+        innerY += 28;
+      }
+
+      for (const upg of upgrades) {
+        const owned = PlayerData.isUpgradeOwned(elementId, upg.slot);
+        const active = owned && PlayerData.isUpgradeActive(elementId, upg.slot);
+        const rowH = 34;
+        const rowLocalY = innerY + rowH / 2;
+
+        const rowBg = this.add.rectangle(cx, rowLocalY, COL_W, rowH - 4,
+          active ? 0x102a10 : (owned ? 0x0d0d22 : 0x0a0a10), owned ? 0.8 : 0.5)
+          .setStrokeStyle(1, active ? 0x338844 : (owned ? 0x222244 : 0x222233), 0.7);
+        const keyLbl = this.add.text(COL_X + 14, rowLocalY, `[${upg.displayKey}+]`, {
+          fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: owned ? elemColor : '#444455',
+        }).setOrigin(0, 0.5);
+        const nameLbl = this.add.text(COL_X + 78, rowLocalY, upg.name, {
+          fontSize: '11px', fontFamily: '"Arial Black", sans-serif',
+          color: owned ? '#ddddee' : '#555566',
+        }).setOrigin(0, 0.5);
+        scrollContainer.add([rowBg, keyLbl, nameLbl]);
+
+        if (!owned) {
+          const buyLbl = this.add.text(COL_X + COL_W - 14, rowLocalY, '🔒 Buy in Shop', {
+            fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#665533',
+          }).setOrigin(1, 0.5);
+          scrollContainer.add(buyLbl);
+        } else {
+          const tglW = 70, tglH = 22;
+          const tglX = COL_X + COL_W - 14 - tglW / 2;
+          const tglBg = this.add.rectangle(tglX, rowLocalY, tglW, tglH,
+            active ? 0x225533 : 0x333344, 0.95)
+            .setStrokeStyle(2, active ? 0x44cc66 : 0x555577, 0.9)
+            .setInteractive({ useHandCursor: true });
+          const tglLbl = this.add.text(tglX, rowLocalY, active ? 'ON' : 'OFF', {
+            fontSize: '10px', fontFamily: '"Arial Black", sans-serif',
+            color: active ? '#88ff88' : '#8888aa',
+          }).setOrigin(0.5);
+          tglBg
+            .on('pointerover', () => tglBg.setStrokeStyle(2, 0xffffff, 1))
+            .on('pointerout',  () => tglBg.setStrokeStyle(2, active ? 0x44cc66 : 0x555577, 0.9))
+            .on('pointerdown', () => {
+              if (!inView(rowLocalY)) return;
+              PlayerData.toggleUpgrade(elementId, upg.slot);
+              rebuild();
+            });
+          scrollContainer.add([tglBg, tglLbl]);
+        }
+        innerY += rowH + 2;
+      }
+    }
+    innerY += 12;
+
+    // ── COSMETICS ───────────────────────────────────────────────────
+    sectionHdr('— COSMETICS —', '#ff88cc');
+    const allCosmetics = getCosmeticsForElement(elementId);
+    if (allCosmetics.length === 0) {
+      const noCos = this.add.text(cx, innerY + 8, 'No cosmetics for this element yet — earn them through achievements!', {
+        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#555577',
+      }).setOrigin(0.5);
+      scrollContainer.add(noCos);
+      innerY += 30;
+    } else {
+      const SLOT_LABELS: Record<CosmeticSlot, string> = { color: '🎨 Color Slot', sigil: '🚩 Sigil Slot' };
+      for (const slot of COSMETIC_SLOTS) {
+        const slotCosmetics = getCosmeticsForElement(elementId, slot);
+        if (slotCosmetics.length === 0) continue;
+        const equipped = PlayerData.getEquippedCosmetic(elementId, slot);
+
+        const slotHdr = this.add.text(COL_X + 8, innerY + 6, SLOT_LABELS[slot], {
+          fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#dd99cc',
+        });
+        scrollContainer.add(slotHdr);
+        innerY += 26;
+
+        // "None" row
+        {
+          const rowH = 28;
+          const isEquipped = equipped === null;
+          const rowLocalY = innerY + rowH / 2;
+          const rowBg = this.add.rectangle(cx, rowLocalY, COL_W, rowH - 4,
+            isEquipped ? 0x1a3a1a : 0x0d0d22, 0.8)
+            .setStrokeStyle(1, isEquipped ? 0x55ee55 : 0x222244, 0.7)
+            .setInteractive({ useHandCursor: true });
+          const noneLbl = this.add.text(COL_X + 14, rowLocalY, isEquipped ? '— none —  ✓' : '— none —', {
+            fontSize: '11px', fontFamily: '"Arial Black", sans-serif',
+            color: isEquipped ? '#88ff88' : '#777788',
+          }).setOrigin(0, 0.5);
+          rowBg
+            .on('pointerover', () => rowBg.setStrokeStyle(2, 0xffffff, 1))
+            .on('pointerout',  () => rowBg.setStrokeStyle(1, isEquipped ? 0x55ee55 : 0x222244, 0.7))
+            .on('pointerdown', () => {
+              if (!inView(rowLocalY)) return;
+              PlayerData.setEquippedCosmetic(elementId, slot, null);
+              rebuild();
+            });
+          scrollContainer.add([rowBg, noneLbl]);
+          innerY += rowH + 2;
+        }
+
+        for (const cos of slotCosmetics) {
+          const unlocked = isCosmeticUnlocked(cos.id);
+          const isEquipped = equipped === cos.id;
+          const alpha = unlocked ? 1 : 0.45;
+
+          const descText = this.add.text(COL_X + 14, innerY + 22, cos.description, {
+            fontSize: '9px', fontFamily: 'Arial, sans-serif',
+            color: unlocked ? '#bbaacc' : '#555566',
+            wordWrap: { width: COL_W - 28 },
+          }).setAlpha(alpha);
+          const rowH = 22 + descText.height + 10;
+          const rowLocalY = innerY + rowH / 2;
+
+          const rowBg = this.add.rectangle(cx, rowLocalY, COL_W, rowH - 4,
+            isEquipped ? 0x1a3a1a : (unlocked ? 0x1f1028 : 0x0a0a10), unlocked ? 0.8 : 0.5)
+            .setStrokeStyle(1, isEquipped ? 0x55ee55 : (unlocked ? 0x663377 : 0x222233), 0.7);
+          const nameLbl = this.add.text(COL_X + 14, innerY + 11,
+            `${unlocked ? '' : '🔒 '}${cos.name}${isEquipped ? '  ✓ EQUIPPED' : ''}`, {
+              fontSize: '11px', fontFamily: '"Arial Black", sans-serif',
+              color: isEquipped ? '#88ff88' : (unlocked ? '#ffccee' : '#555566'),
+            }).setOrigin(0, 0.5).setAlpha(alpha);
+          scrollContainer.add([rowBg, nameLbl, descText]);
+
+          if (!unlocked) {
+            const hintLbl = this.add.text(COL_X + COL_W - 14, innerY + 11, `🏆 ${cosmeticUnlockHint(cos.id)}`, {
+              fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#665533',
+            }).setOrigin(1, 0.5);
+            scrollContainer.add(hintLbl);
+          } else {
+            rowBg.setInteractive({ useHandCursor: true })
+              .on('pointerover', () => rowBg.setStrokeStyle(2, 0xffffff, 1))
+              .on('pointerout',  () => rowBg.setStrokeStyle(1, isEquipped ? 0x55ee55 : 0x663377, 0.7))
+              .on('pointerdown', () => {
+                if (!inView(rowLocalY)) return;
+                PlayerData.setEquippedCosmetic(elementId, slot, isEquipped ? null : cos.id);
+                rebuild();
+              });
+          }
+          innerY += rowH + 2;
+        }
+        innerY += 8;
+      }
+    }
+
+    // ── Scroll logic (offset preserved across rebuilds) ─────────────
+    const totalContentH = innerY;
+    const maxScroll = Math.max(0, totalContentH - SCROLL_H);
+    let scrollY = Phaser.Math.Clamp(this.customizeScrollY, 0, maxScroll);
+    this.customizeScrollY = scrollY;
+    scrollContainer.setY(SCROLL_TOP - scrollY);
+    this.infoScrollHandler = (_ptr: unknown, _over: unknown, _dx: unknown, deltaY: unknown) => {
+      scrollY = Phaser.Math.Clamp(scrollY + (deltaY as number) * 0.5, 0, maxScroll);
+      this.customizeScrollY = scrollY;
+      scrollContainer.setY(SCROLL_TOP - scrollY);
+    };
+    this.input.on('wheel', this.infoScrollHandler);
+
+    if (maxScroll > 0) {
+      const hint = this.add.text(width - 12, SCROLL_BOT + 6, '▼ scroll for more', {
+        fontSize: '9px', fontFamily: 'Arial, sans-serif', color: '#444466',
+      }).setOrigin(1, 0).setDepth(55);
+      this.infoOverlayObjects.push(hint);
     }
   }
 

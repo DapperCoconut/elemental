@@ -104,6 +104,14 @@ export interface MetalArenaApi {
   spawnDamageNumber(x: number, y: number, amount: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
+  readonly projectiles: Phaser.Physics.Arcade.Group;
+  /** True only when the player is metal AND Metal Mastery is switched on. */
+  get masteryActive(): boolean;
+  /** True only when the online opponent is metal AND has Metal Mastery on. Drives the npc-side passive/shield. */
+  get npcMasteryActive(): boolean;
+  /** Mastery enhancement id bound over the given ability slot this match, or null. */
+  masteryBindFor(slot: string): string | null;
+  recordMasteryStat(key: string, amount: number): void;
 }
 
 // ── MetalKit ───────────────────────────────────────────────────────────────
@@ -150,6 +158,14 @@ const BLOOD_BLADE_COST = 100;
 const BLOOD_BLADE_SWING_DMG = 25;
 const BLOOD_BLADE_RANGE = 150;
 const Q_HOLD_THRESHOLD_MS = 500;
+// ── Mastery: Natural Clot passive + Steel Shield bindable ─────────────────────
+const NATURAL_CLOT_REDUCTION = 3;
+const STEEL_SHIELD_BLOOD_COST = 25;     // 25% of the 100-max blood bar
+const STEEL_SHIELD_DURATION_MS = 5000;
+const STEEL_SHIELD_COOLDOWN_MS = 8000;
+const STEEL_SHIELD_DMG_MULT = 0.75;     // take 25% less damage while it stands
+const STEEL_SHIELD_DIST = 46;           // how far in front of the caster it plants
+const STEEL_SHIELD_BLOCK_RADIUS = 38;   // a shot within this of the barrier centre is blocked
 
 export class MetalKit {
   // ── Kept-as-is: blood puddles / chain tether / aggressive bleeding ────
@@ -230,6 +246,14 @@ export class MetalKit {
   private qHoldStart = 0;
   private qHoldFired = false;
   private bloodBlade: BloodBlade | null = null;
+
+  // ── Mastery: Steel Shield state (player + npc mirrors) ────────────────────
+  private steelShields: Record<'player' | 'npc', {
+    endTime: number;
+    red: boolean;
+    barrier: Phaser.GameObjects.Rectangle;
+  } | null> = { player: null, npc: null };
+  private steelShieldLastCastAt = -STEEL_SHIELD_COOLDOWN_MS; // ready at match start; npc casts are event-driven online
 
   constructor(private arena: MetalArenaApi) {}
 
@@ -335,6 +359,15 @@ export class MetalKit {
 
     for (const p of this.metalShardProjectiles) p.sprite.destroy();
     this.metalShardProjectiles = [];
+
+    // Mastery — Steel Shield + Natural Clot passive
+    this.destroySteelShield('player');
+    this.destroySteelShield('npc');
+    this.steelShieldLastCastAt = -STEEL_SHIELD_COOLDOWN_MS;
+    this.arena.player.flatDamageReduction = 0;
+    this.arena.npc.flatDamageReduction = 0;
+    this.arena.player.steelShieldMult = 1;
+    this.arena.npc.steelShieldMult = 1;
   }
 
   handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
@@ -348,6 +381,13 @@ export class MetalKit {
       const maceAng = Math.atan2(head.y - player.y, head.x - player.x);
       return Math.abs(Phaser.Math.Angle.Wrap(aimAng - maceAng)) <= Phaser.Math.DegToRad(30);
     };
+
+    // ── Mastery — Steel Shield takes over whichever slot it's bound to ──────
+    const steelSlot = this.arena.masteryActive ? this.steelShieldSlot() : null;
+    if (steelSlot) {
+      const ssKey = steelSlot === 'e' ? eKey : steelSlot === 'r' ? rKey : steelSlot === 'f' ? fKey : qKey;
+      if (Phaser.Input.Keyboard.JustDown(ssKey)) this.tryCastSteelShield(time, mouseX, mouseY);
+    }
 
     // ── Click: Blood Blade (Q+, while equipped) / Slash / Mighty Sabre ────
     if (this.bloodBlade) {
@@ -411,16 +451,17 @@ export class MetalKit {
     }
 
     // ── E: Flail Craft ─────────────────────────────────────────────────────
-    if (Phaser.Input.Keyboard.JustDown(eKey)) {
+    if (steelSlot !== 'e' && Phaser.Input.Keyboard.JustDown(eKey)) {
       player.castAbility('metal-flail-craft', playerCtx);
     }
 
     // ── R: Blood Transfusion (hold) — drain runs per-frame in updateTransfusion ──
-    if (rKey.isDown && this.blood.player > 0) {
+    if (steelSlot !== 'r' && rKey.isDown && this.blood.player > 0) {
       this.transfusionActiveUntil.player = time + 120;
     }
 
     // ── F: Chain Tether / Ground Anchor (F+) ──────────────────────────────
+    if (steelSlot !== 'f') {
     if (this.arena.hasUpgrade('f')) {
       if (fKey.isDown) {
         if (!this.fCharging) {
@@ -447,8 +488,10 @@ export class MetalKit {
         player.castAbility('metal-chain-tether', playerCtx);
       }
     }
+    }
 
     // ── Q: Clot Armor (tap) / Blood Blade (hold, Q+) ──────────────────────
+    if (steelSlot !== 'q') {
     if (this.arena.hasUpgrade('q')) {
       if (qKey.isDown) {
         if (!this.qHolding) {
@@ -470,6 +513,7 @@ export class MetalKit {
         player.castAbility('metal-clot-armor', playerCtx);
       }
     }
+    }
   }
 
   update(time: number, delta: number): void {
@@ -485,6 +529,10 @@ export class MetalKit {
     this.updateMetalFirePuddles(time, delta);
     this.updateGroundTether(time, delta);
     this.updateBloodBlade(time, delta);
+    // Mastery — Natural Clot passive (flat -3) applied to whichever side owns Metal Mastery.
+    this.arena.player.flatDamageReduction = this.arena.masteryActive ? NATURAL_CLOT_REDUCTION : 0;
+    this.arena.npc.flatDamageReduction = this.arena.npcMasteryActive ? NATURAL_CLOT_REDUCTION : 0;
+    this.updateSteelShields(time);
     this.updateBloodHud();
   }
 
@@ -625,6 +673,7 @@ export class MetalKit {
       const drain = Math.min(bloodPerSec * dt, this.blood[owner]);
       this.blood[owner] -= drain;
       caster.heal(drain);
+      if (owner === 'player') this.arena.recordMasteryStat('transfusionHealed', drain);
 
       // Blood dripping particles beneath the character (~every 90ms). The
       // green heal numbers themselves are handled generically by ArenaScene.
@@ -1159,6 +1208,7 @@ export class MetalKit {
               t.takeDamage(dmg);
               this.arena.spawnHitFlash(t.x, t.y, 0xff4466);
               this.arena.showFloatingText(t.x, t.y - 30, `⛓️ ${dmg}`, '#ff6688');
+              if (owner === 'player') this.arena.recordMasteryStat('flailHits', 1);
               flail.lastHitAt = time;
               break;
             }
@@ -1304,7 +1354,10 @@ export class MetalKit {
       p.destroy();
       reflected++;
     });
-    if (reflected > 0) this.arena.showFloatingText(player.x, player.y - 34, '✨ PARRY!', '#ffee44');
+    if (reflected > 0) {
+      this.arena.showFloatingText(player.x, player.y - 34, '✨ PARRY!', '#ffee44');
+      this.arena.recordMasteryStat('parries', reflected);
+    }
   }
 
   // ── E+ Heavy Metal Rock fire puddles ───────────────────────────────────
@@ -1466,6 +1519,7 @@ export class MetalKit {
       t.takeDamage(dmg);
       this.arena.spawnHitFlash(t.x, t.y, 0xcc0022);
       this.arena.showFloatingText(t.x, t.y - 30, `🗡️ ${dmg}`, '#ff3355');
+      if (t.hp <= 0) this.arena.recordMasteryStat('bloodBladeKills', 1);
     }
   }
 
@@ -1477,6 +1531,113 @@ export class MetalKit {
     // Drop any in-progress Click+ charge so it can't leak into the normal sabre.
     if (this.sabreCharging) { this.sabreCharging = false; this.clearChargeVfx(); }
     (owner === 'player' ? this.arena.player : this.arena.npc).incomingDamageMultiplier = 1;
+  }
+
+  // ── Mastery — Steel Shield ─────────────────────────────────────────────
+
+  /** The slot Steel Shield is bound over this match, or null when it isn't bound anywhere. */
+  private steelShieldSlot(): 'e' | 'r' | 'f' | 'q' | null {
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      if (this.arena.masteryBindFor(s) === 'steel-shield') return s;
+    }
+    return null;
+  }
+
+  /** 0 = just cast, 1 = ready. Drives the HUD bar for the bound slot. */
+  getSteelShieldCooldownRatio(time: number): number {
+    return Math.min(1, (time - this.steelShieldLastCastAt) / STEEL_SHIELD_COOLDOWN_MS);
+  }
+
+  private tryCastSteelShield(time: number, mouseX: number, mouseY: number): void {
+    if (time - this.steelShieldLastCastAt < STEEL_SHIELD_COOLDOWN_MS) return;
+    const { player } = this.arena;
+    if (this.blood.player < STEEL_SHIELD_BLOOD_COST) {
+      this.arena.showFloatingText(player.x, player.y - 44, 'NEED 25% BLOOD', '#886666');
+      return;
+    }
+    this.blood.player -= STEEL_SHIELD_BLOOD_COST;
+    this.steelShieldLastCastAt = time;
+    // triggerCooldown fires onCastStamp, which broadcasts {t:'cast', id:'steel-shield'} online;
+    // the peer routes the unknown id to ArenaScene.replayNpcMastery → doNpcSteelShield.
+    player.triggerCooldown('steel-shield');
+    this.spawnSteelShield('player', mouseX, mouseY);
+  }
+
+  /** Online replay: the remote metal player raised a Steel Shield — plant one owned by the npc. */
+  doNpcSteelShield(_tx: number, _ty: number): void {
+    // The npc shield always faces the local player, so the exact cast aim isn't needed.
+    this.spawnSteelShield('npc', this.arena.player.x, this.arena.player.y);
+  }
+
+  private spawnSteelShield(owner: 'player' | 'npc', aimX: number, aimY: number): void {
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    this.destroySteelShield(owner);
+    const red = this.clotArmorActive[owner];
+    const ang = Math.atan2(aimY - caster.y, aimX - caster.x);
+    const bx = caster.x + Math.cos(ang) * STEEL_SHIELD_DIST;
+    const by = caster.y + Math.sin(ang) * STEEL_SHIELD_DIST;
+    const barrier = this.arena.scene.add.rectangle(bx, by, 12, 62, red ? 0xcc0022 : 0x99aabb, 0.85)
+      .setStrokeStyle(2, red ? 0xff5577 : 0xccddee).setRotation(ang + Math.PI / 2).setDepth(7);
+    this.steelShields[owner] = { endTime: this.arena.scene.time.now + STEEL_SHIELD_DURATION_MS, red, barrier };
+    caster.steelShieldMult = STEEL_SHIELD_DMG_MULT;
+    this.arena.showFloatingText(caster.x, caster.y - 44, red ? '🛡️ RED STEEL SHIELD' : '🛡️ STEEL SHIELD', red ? '#ff5577' : '#aabbcc');
+  }
+
+  private destroySteelShield(owner: 'player' | 'npc'): void {
+    const s = this.steelShields[owner];
+    if (!s) return;
+    s.barrier.destroy();
+    this.steelShields[owner] = null;
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    caster.steelShieldMult = 1;
+  }
+
+  private updateSteelShields(time: number): void {
+    for (const owner of ['player', 'npc'] as const) {
+      const s = this.steelShields[owner];
+      if (!s) continue;
+      const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+      if (time >= s.endTime || !caster.active || caster.hp <= 0) { this.destroySteelShield(owner); continue; }
+
+      // Player barrier tracks the cursor; npc barrier faces the local player.
+      const ang = owner === 'player'
+        ? this.playerAimAngle
+        : Math.atan2(this.arena.player.y - caster.y, this.arena.player.x - caster.x);
+      const bx = caster.x + Math.cos(ang) * STEEL_SHIELD_DIST;
+      const by = caster.y + Math.sin(ang) * STEEL_SHIELD_DIST;
+      s.barrier.setPosition(bx, by).setRotation(ang + Math.PI / 2);
+
+      // Block incoming projectiles: player shield eats enemy shots, npc shield eats player shots.
+      const group = this.arena.projectiles;
+      if (!group) continue;
+      for (const obj of [...group.getChildren()]) {
+        const p = obj as Projectile;
+        if (!p.active) continue;
+        const incoming = owner === 'player' ? !p.isFromPlayer : p.isFromPlayer;
+        if (!incoming) continue;
+        if (Phaser.Math.Distance.Between(bx, by, p.x, p.y) > STEEL_SHIELD_BLOCK_RADIUS) continue;
+        p.destroy();
+        this.arena.spawnHitFlash(bx, by, s.red ? 0xff5577 : 0xccddee);
+        // Red shield (cast during Clot Armor) sprays a shard burst per blocked shot.
+        if (s.red) this.fireSteelShieldShards(owner, bx, by);
+      }
+    }
+  }
+
+  private fireSteelShieldShards(owner: 'player' | 'npc', x: number, y: number): void {
+    const { scene } = this.arena;
+    const sceneAdd = (scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory }).add;
+    // Same count Clot Armor emits per burst (Exsanguinate perk bumps it to 8).
+    const shardCount = owner === 'player' && this.arena.hasPerk('gunpowder') ? 8 : CLOT_SHARD_COUNT;
+    for (let i = 0; i < shardCount; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const spr = sceneAdd.rectangle(x, y, 10, 4, 0xcc0022, 0.95).setDepth(8).setRotation(ang);
+      this.metalShardProjectiles.push({
+        sprite: spr, x, y,
+        vx: Math.cos(ang) * CLOT_SHARD_SPEED, vy: Math.sin(ang) * CLOT_SHARD_SPEED,
+        owner, active: true, dmg: CLOT_SHARD_DAMAGE, spawnsPuddle: true,
+      });
+    }
   }
 
   private updateBloodHud(): void {

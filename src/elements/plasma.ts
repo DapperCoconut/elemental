@@ -4,7 +4,7 @@ import { Ability } from './Ability';
 const plasmaBurst: Ability = {
   id: 'plasma-burst',
   name: 'Plasma Burst',
-  description: 'Release 3 lightning chains toward cursor (range ~120px). Each chain deals 5 damage.',
+  description: 'Arc lightning to the cursor and drop 3 small AoEs there (0.2s apart), each dealing 4 damage. Any that hit nothing snap a red bolt back to you for 2 self-damage — reward good aim!',
   displayKey: 'Click',
   cooldown: 600,
   cast(ctx) { ctx.plasmaBurst(ctx.targetX, ctx.targetY); },

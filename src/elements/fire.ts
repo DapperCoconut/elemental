@@ -42,7 +42,7 @@ const flameDash: Ability = {
     ctx.dashCaster((dx / len) * 640, (dy / len) * 640);
     if (!ctx.hasPerk('alcohol')) {
       ctx.dealAoeDamage(dashOriginX, dashOriginY, 90, 18);
-      const ring = ctx.scene.add.circle(dashOriginX, dashOriginY, 10, 0xff4400, 0.65);
+      const ring = ctx.scene.add.circle(dashOriginX, dashOriginY, 10, ctx.fireColor(0xff4400), 0.65);
       ctx.scene.tweens.add({
         targets: ring,
         scaleX: 9,
@@ -65,7 +65,7 @@ const pressureBomb: Ability = {
     ctx.dealAoeDamage(ctx.targetX, ctx.targetY, 100, 32);
 
     // Explosion visual at cursor
-    const ring = ctx.scene.add.circle(ctx.targetX, ctx.targetY, 10, 0xff8800, 0.9);
+    const ring = ctx.scene.add.circle(ctx.targetX, ctx.targetY, 10, ctx.fireColor(0xff8800), 0.9);
     ctx.scene.tweens.add({
       targets: ring,
       scaleX: 10,
@@ -74,7 +74,7 @@ const pressureBomb: Ability = {
       duration: 350,
       onComplete: () => ring.destroy(),
     });
-    const core = ctx.scene.add.circle(ctx.targetX, ctx.targetY, 6, 0xffffff, 0.95);
+    const core = ctx.scene.add.circle(ctx.targetX, ctx.targetY, 6, ctx.fireColor(0xffffff), 0.95);
     ctx.scene.tweens.add({
       targets: core,
       scaleX: 4,
@@ -113,7 +113,7 @@ const flameNuke: Ability = {
     ctx.lockCaster(2000);
 
     // Charge ring growing over 2s
-    const charge = ctx.scene.add.circle(ctx.casterX, ctx.casterY, 10, 0xff2200, 0.6);
+    const charge = ctx.scene.add.circle(ctx.casterX, ctx.casterY, 10, ctx.fireColor(0xff2200), 0.6);
     ctx.scene.tweens.add({
       targets: charge,
       scaleX: 22,
@@ -127,7 +127,7 @@ const flameNuke: Ability = {
     ctx.scene.time.delayedCall(2000, () => {
       ctx.dealFlameNukeDamage(ctx.casterX, ctx.casterY, 220, 80);
 
-      const boom = ctx.scene.add.circle(ctx.casterX, ctx.casterY, 12, 0xff4400, 0.9);
+      const boom = ctx.scene.add.circle(ctx.casterX, ctx.casterY, 12, ctx.fireColor(0xff4400), 0.9);
       ctx.scene.tweens.add({
         targets: boom,
         scaleX: 18,
@@ -136,7 +136,7 @@ const flameNuke: Ability = {
         duration: 600,
         onComplete: () => boom.destroy(),
       });
-      const boomCore = ctx.scene.add.circle(ctx.casterX, ctx.casterY, 8, 0xffffff, 1);
+      const boomCore = ctx.scene.add.circle(ctx.casterX, ctx.casterY, 8, ctx.fireColor(0xffffff), 1);
       ctx.scene.tweens.add({
         targets: boomCore,
         scaleX: 8,

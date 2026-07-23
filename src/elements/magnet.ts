@@ -43,7 +43,7 @@ const protect: Ability = {
 const atomSmasher: Ability = {
   id: 'atom-smasher',
   name: 'Atom Smasher',
-  description: 'Mark a point — it pulses red for 3s, dragging in magnetized enemies and metal rods. Then two walls slam together for massive damage. Rods caught in the blast bounce wildly for 3s.',
+  description: 'Drop a grey trash compactor — for 3s it strongly sucks in the enemy (harder per implanted nail) and your rods, then two plates slam together, crushing anyone caught for 35. Crushing an implanted enemy rips out the nails for +30. Rods launch ballistically and ricochet off walls for 3s.',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 20000,

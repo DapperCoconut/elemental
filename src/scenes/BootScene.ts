@@ -915,6 +915,14 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('proj-fate-infect', 10, 10);
     gfx.clear();
 
+    // proj-fate-striker — chunky black orb with a dark outline (Striker card, very slow, 35 dmg)
+    gfx.fillStyle(0x111118, 1);
+    gfx.fillCircle(9, 9, 9);
+    gfx.lineStyle(2, 0x444455, 1);
+    gfx.strokeCircle(9, 9, 8);
+    gfx.generateTexture('proj-fate-striker', 18, 18);
+    gfx.clear();
+
     // ── Silence element (abstract combined: slime + sound) ────────────────────
 
     // elem-silence — near-black purple circle with two small white eye dots

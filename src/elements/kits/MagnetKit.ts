@@ -268,16 +268,18 @@ export class MagnetKit {
       }
     }
 
-    const nail = owner === 'player' ? this.magnetPlayerNail : this.magnetNpcNail;
-    if (nail && nail.inEnemy) {
+    // Nailed enemies get yanked toward the pulse point — stronger with each nail.
+    const implantCount = this.countImplantedNails(owner);
+    if (implantCount > 0) {
       const pullAng = Math.atan2(y - target.y, x - target.x);
+      const pullSpeed = 220 + (implantCount - 1) * 140;
       if (owner === 'player') {
-        this.magnetNailPullVX = Math.cos(pullAng) * 220;
-        this.magnetNailPullVY = Math.sin(pullAng) * 220;
+        this.magnetNailPullVX = Math.cos(pullAng) * pullSpeed;
+        this.magnetNailPullVY = Math.sin(pullAng) * pullSpeed;
         this.magnetNailPullUntil = Math.max(this.magnetNailPullUntil, scene.time.now + 350);
       } else if (!target.knockbackImmune) {
         (target.body as Phaser.Physics.Arcade.Body).setVelocity(
-          Math.cos(pullAng) * 220, Math.sin(pullAng) * 220,
+          Math.cos(pullAng) * pullSpeed, Math.sin(pullAng) * pullSpeed,
         );
       }
     }
@@ -394,6 +396,40 @@ export class MagnetKit {
     this.arena.showFloatingText(caster.x, caster.y - 36, '🛡 PROTECT', '#4488cc');
   }
 
+  /** How many of `owner`'s nails are currently implanted in the enemy. */
+  private countImplantedNails(owner: 'player' | 'npc'): number {
+    const single = owner === 'player' ? this.magnetPlayerNail : this.magnetNpcNail;
+    const array = owner === 'player' ? this.magnetPlayerNails : this.magnetNpcNails;
+    let count = single && single.inEnemy ? 1 : 0;
+    count += array.filter(n => n.inEnemy).length;
+    return count;
+  }
+
+  /** Rip out all of `owner`'s implanted nails (destroying their sprites); returns how many. */
+  private removeImplantedNails(owner: 'player' | 'npc'): number {
+    let removed = 0;
+    const single = owner === 'player' ? this.magnetPlayerNail : this.magnetNpcNail;
+    if (single && single.inEnemy) {
+      single.sprite.destroy();
+      if (owner === 'player') this.magnetPlayerNail = null;
+      else this.magnetNpcNail = null;
+      removed++;
+    }
+    if (owner === 'player') {
+      for (const n of this.magnetPlayerNails) {
+        if (n.inEnemy) { n.sprite.destroy(); removed++; }
+      }
+      this.magnetPlayerNails = this.magnetPlayerNails.filter(n => !n.inEnemy);
+      if (removed > 0) this.magnetPlayerPullStacks = 0;
+    } else {
+      for (const n of this.magnetNpcNails) {
+        if (n.inEnemy) { n.sprite.destroy(); removed++; }
+      }
+      this.magnetNpcNails = this.magnetNpcNails.filter(n => !n.inEnemy);
+    }
+    return removed;
+  }
+
   doMagnetAtomSmasher(x: number, y: number, owner: 'player' | 'npc'): void {
     const { scene } = this.arena;
     const existing = owner === 'player' ? this.magnetPlayerAtomSmasher : this.magnetNpcAtomSmasher;
@@ -402,16 +438,17 @@ export class MagnetKit {
       for (const w of existing.walls) w.sprite.destroy();
     }
 
-    const flash = scene.add.circle(x, y, 30, 0xff2244, 0.35)
-      .setStrokeStyle(2, 0xff6644).setDepth(5);
+    // A small grey trash-compactor core with heavy dark plating.
+    const flash = scene.add.circle(x, y, 22, 0x888899, 0.45)
+      .setStrokeStyle(4, 0x555566).setDepth(5);
 
     const W = scene.scale.width;
     const wallH = 160;
     const wallW = 20;
-    const leftWall = scene.add.rectangle(-20, y, wallW, wallH, 0x884433)
-      .setStrokeStyle(2, 0xff6644).setDepth(7);
-    const rightWall = scene.add.rectangle(W + 20, y, wallW, wallH, 0x884433)
-      .setStrokeStyle(2, 0xff6644).setDepth(7);
+    const leftWall = scene.add.rectangle(-20, y, wallW, wallH, 0x777788)
+      .setStrokeStyle(2, 0xaabbcc).setDepth(7);
+    const rightWall = scene.add.rectangle(W + 20, y, wallW, wallH, 0x777788)
+      .setStrokeStyle(2, 0xaabbcc).setDepth(7);
 
     const smasher: MagnetAtomSmasher = {
       flashSprite: flash, x, y,
@@ -428,7 +465,7 @@ export class MagnetKit {
     if (owner === 'player') this.magnetPlayerAtomSmasher = smasher;
     else this.magnetNpcAtomSmasher = smasher;
 
-    this.arena.showFloatingText(x, y - 40, '☢ ATOM SMASHER', '#ff2244');
+    this.arena.showFloatingText(x, y - 40, '🗜 TRASH COMPACTOR', '#aabbcc');
   }
 
   // ── Private per-frame update helpers ─────────────────────────────────────
@@ -461,8 +498,10 @@ export class MagnetKit {
       if (rod.y < pad) { rod.y = pad; rod.vy = Math.abs(rod.vy); }
       if (rod.y > H - pad) { rod.y = H - pad; rod.vy = -Math.abs(rod.vy); }
 
-      rod.vx *= friction;
-      rod.vy *= friction;
+      // Bouncing rods barely lose speed so they ricochet around for the full window.
+      const rodFriction = rod.bouncing ? 0.995 : friction;
+      rod.vx *= rodFriction;
+      rod.vy *= rodFriction;
       if (Math.abs(rod.vx) < 2) rod.vx = 0;
       if (Math.abs(rod.vy) < 2) rod.vy = 0;
 
@@ -804,22 +843,26 @@ export class MagnetKit {
         const pulse = 0.3 + 0.15 * Math.sin(time * 0.01);
         if (smasher.flashSprite.active) smasher.flashSprite.setAlpha(pulse);
 
-        const isMag = owner === 'player' ? this.magnetNpcMagnetized : this.magnetPlayerMagnetized;
-        if (isMag) {
+        // Strongly suck the enemy in — even harder for every nail implanted in them.
+        // (This runs after the NPC AI each frame, so setting velocity wins.)
+        const dragDist = Phaser.Math.Distance.Between(smasher.x, smasher.y, target.x, target.y);
+        if (dragDist <= 320 && dragDist > 4 && !target.knockbackImmune) {
           const dragAng = Math.atan2(smasher.y - target.y, smasher.x - target.x);
-          const dragDist = Phaser.Math.Distance.Between(smasher.x, smasher.y, target.x, target.y);
-          if (dragDist <= 300) {
-            (target.body as Phaser.Physics.Arcade.Body).velocity.x += Math.cos(dragAng) * 180 * dt;
-            (target.body as Phaser.Physics.Arcade.Body).velocity.y += Math.sin(dragAng) * 180 * dt;
-          }
+          const nailBoost = this.countImplantedNails(owner);
+          const pullSpeed = Math.min(dragDist / dt, 260 + nailBoost * 170);
+          (target.body as Phaser.Physics.Arcade.Body).setVelocity(
+            Math.cos(dragAng) * pullSpeed, Math.sin(dragAng) * pullSpeed,
+          );
         }
+        // Drag owned rods hard into the compactor so they're primed to launch.
         for (const rod of this.magnetRods) {
           if (rod.owner !== owner) continue;
-          const dragAng = Math.atan2(smasher.y - rod.y, smasher.x - rod.x);
-          const dragDist = Phaser.Math.Distance.Between(smasher.x, smasher.y, rod.x, rod.y);
-          if (dragDist <= 300) {
-            rod.vx += Math.cos(dragAng) * 200 * dt;
-            rod.vy += Math.sin(dragAng) * 200 * dt;
+          const rodDist = Phaser.Math.Distance.Between(smasher.x, smasher.y, rod.x, rod.y);
+          if (rodDist <= 340 && rodDist > 4) {
+            const dragAng = Math.atan2(smasher.y - rod.y, smasher.x - rod.x);
+            const pull = Math.min(rodDist / dt, 560);
+            rod.vx = Math.cos(dragAng) * pull;
+            rod.vy = Math.sin(dragAng) * pull;
           }
         }
         continue;
@@ -870,30 +913,38 @@ export class MagnetKit {
           smasher.crossed = true;
           if (smasher.flashSprite.active) smasher.flashSprite.destroy();
 
-          const aeoDmg = 60;
           const aeoRadius = 120;
           const aeoDist = Phaser.Math.Distance.Between(smasher.x, smasher.y, target.x, target.y);
           if (aeoDist <= aeoRadius) {
-            target.takeDamage(aeoDmg);
+            // Anyone caught in the crusher takes 35.
+            target.takeDamage(35);
             this.arena.spawnHitFlash(target.x, target.y, 0xff2244);
+            // Implanted enemies get their nails ripped out for +30 damage.
+            const ripped = this.removeImplantedNails(owner);
+            if (ripped > 0) {
+              target.takeDamage(30);
+              this.arena.showFloatingText(target.x, target.y - 54, '🔩 IMPLANT CRUSHED +30', '#ffd060');
+            }
           }
           const boom = scene.add.circle(smasher.x, smasher.y, 20, 0xff4400, 0.9).setDepth(8);
           scene.tweens.add({ targets: boom, scaleX: 8, scaleY: 8, alpha: 0, duration: 500, onComplete: () => boom.destroy() });
-          this.arena.showFloatingText(smasher.x, smasher.y - 40, '💥 ATOM SMASH', '#ff2244');
+          this.arena.showFloatingText(smasher.x, smasher.y - 40, '💥 COMPACTED', '#aabbcc');
 
           for (const rod of this.magnetRods) {
             if (rod.owner !== owner) continue;
             const rodDist = Phaser.Math.Distance.Between(smasher.x, smasher.y, rod.x, rod.y);
-            if (rodDist <= 150) {
+            if (rodDist <= 200) {
               rod.bouncing = true;
               rod.bounceUntil = time + 3000;
-              const bounceAng = Math.atan2(rod.y - smasher.y, rod.x - smasher.x);
-              rod.vx = Math.cos(bounceAng) * 600;
-              rod.vy = Math.sin(bounceAng) * 600;
-              // Q+: Forged Rods — permanent damage bonus on bounce
+              // Fling ballistically in scattered directions — they ricochet off walls.
+              const bounceAng = Math.atan2(rod.y - smasher.y, rod.x - smasher.x) + (Math.random() - 0.5) * 1.4;
+              const speed = 750 + Math.random() * 300;
+              rod.vx = Math.cos(bounceAng) * speed;
+              rod.vy = Math.sin(bounceAng) * speed;
+              // Q+: Forged Rods — permanent bonus + blue-glow bounce window.
               if (this.arena.hasUpgrade('q')) {
                 rod.permDamageBonus += 2;
-                rod.sprite.setFillStyle(0xff9933);
+                if (!rod.isSword) rod.sprite.setFillStyle(0x3399ff);
               }
             }
           }

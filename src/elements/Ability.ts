@@ -8,6 +8,8 @@ export interface CastContext {
   targetY: number;
   isPlayerCaster: boolean;
   projectiles: Phaser.Physics.Arcade.Group;
+  /** Maps a fire visual color through the caster's equipped color cosmetic (identity without one). */
+  fireColor: (base: number) => number;
   dealAoeDamage: (cx: number, cy: number, radius: number, damage: number) => void;
   /** Fire Mastery: same as dealAoeDamage but tracks zombie kills for the Nuclear Cleansing challenge (player-only). */
   dealFlameNukeDamage: (cx: number, cy: number, radius: number, damage: number) => void;

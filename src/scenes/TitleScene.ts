@@ -123,6 +123,15 @@ export class TitleScene extends Phaser.Scene {
       .on('pointerout', () => { onlineRect.setAlpha(0.8); onlineRect.setStrokeStyle(2, 0x44ccaa); onlineLabel.setColor('#66eecc'); })
       .on('pointerdown', () => this.scene.start('OnlineLobbyScene'));
 
+    // Achievements — trophy button, top-left corner (below the cheat banner slot)
+    const trophyBtn = this.add.circle(36, 64, 20, 0x221a00, 0.9)
+      .setStrokeStyle(2, 0xffcc44, 0.9).setDepth(50).setInteractive({ useHandCursor: true });
+    this.add.text(36, 64, '🏆', { fontSize: '18px' }).setOrigin(0.5).setDepth(51);
+    trophyBtn
+      .on('pointerover', () => { trophyBtn.setFillStyle(0x443300, 0.95); trophyBtn.setStrokeStyle(2, 0xffffff, 1); })
+      .on('pointerout',  () => { trophyBtn.setFillStyle(0x221a00, 0.9); trophyBtn.setStrokeStyle(2, 0xffcc44, 0.9); })
+      .on('pointerdown', () => this.scene.start('AchievementsScene'));
+
     // Shard display
     this.add.text(width - 16, 16, `💎 ${PlayerData.getShards()}`, {
       fontSize: '16px',
