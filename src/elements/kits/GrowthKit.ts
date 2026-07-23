@@ -18,6 +18,52 @@ import {
 type Owner = 'player' | 'npc';
 type CloneVariant = 'yellow' | 'blue' | 'red';
 
+// ── Mastery: Secret Upgrades passive + Emisis bindable ────────────────────────
+const SECRET_UPGRADE_IDS = ['cancer-carapace', 'fungal-infection', 'regenerative', 'spines', 'titanic', 'micro'] as const;
+type SecretUpgradeId = typeof SECRET_UPGRADE_IDS[number];
+const SECRET_UPGRADE_NAMES: Record<SecretUpgradeId, string> = {
+  'cancer-carapace': 'Cancer Carapace',
+  'fungal-infection': 'Fungal Infection',
+  'regenerative': 'Regenerative',
+  'spines': 'Spines',
+  'titanic': 'Titanic',
+  'micro': 'Micro',
+};
+const SECRET_UPGRADE_COST = 5;
+const CARAPACE_INTERVAL_MS = 5000;
+const FUNGAL_INTERVAL_MS = 3000;
+const REGEN_PER_SEC = 3;
+const SPINES_RADIUS = 48;
+const SPINES_DAMAGE = 15;
+const SPINES_CD_MS = 500;
+const TITANIC_SIZE_MULT = 1.2;
+const TITANIC_MAXHP_BONUS = 25;
+const MICRO_SIZE_MULT = 0.75;
+const MICRO_MAXHP_LOSS = 15;
+const EMISIS_CLOUD_COUNT = 10;
+const EMISIS_CONE_DEG = 55;
+const EMISIS_RANGE = 155;
+const EMISIS_SPEED = 300;
+const EMISIS_DNA_COST = 2;
+const EMISIS_COOLDOWN_MS = 8000;
+const EMISIS_CLOUD_RADIUS = 17;
+const EMISIS_BASE_DAMAGE = 3;
+const EMISIS_MAX_DAMAGE = 10;
+const EMISIS_MAX_SPORES = 40;      // don't let cloud-splitting run the spore list away
+
+interface EmisisCloud {
+  gfx: Phaser.GameObjects.Arc;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  owner: Owner;
+  dmg: number;
+  expiresAt: number;
+  hit: Set<Fighter>;
+  splitsLeft: number;
+}
+
 const DNA_CAP = 10;
 const DNA_CAP_MAXIMIZED = 20;
 const DNA_PICKUP_RADIUS = 26;
@@ -195,6 +241,14 @@ export interface GrowthArenaApi {
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
   buildNpcContext(x: number, y: number): CastContext;
+  /** True only when the player is growth AND Growth Mastery is switched on. */
+  get masteryActive(): boolean;
+  /** True only when the online opponent is growth AND has Growth Mastery on. */
+  get npcMasteryActive(): boolean;
+  masteryBindFor(slot: string): string | null;
+  recordMasteryStat(key: string, amount: number): void;
+  recordMasteryBest(key: string, value: number): void;
+  getMasteryStat(key: string): number;
 }
 
 // ── GrowthKit ────────────────────────────────────────────────────────────
@@ -236,6 +290,17 @@ export class GrowthKit {
   private dnaHudBarBg: Phaser.GameObjects.Rectangle | null = null;
   private dnaHudBarFill: Phaser.GameObjects.Rectangle | null = null;
   private dnaHudBarText: Phaser.GameObjects.Text | null = null;
+
+  // ── Mastery: Secret Upgrades passive + Emisis bindable ────────────────
+  private secretOffered: SecretUpgradeId[] = [];
+  private secretOfferedPicked = false;
+  private secretBought: Set<SecretUpgradeId> = new Set();
+  private carapaceAccum = 0;
+  private fungalAccum = 0;
+  private regenAccum = 0;
+  private spineNextHit: Map<Fighter, number> = new Map();
+  private emisisClouds: EmisisCloud[] = [];
+  private emisisLastCastAt = -EMISIS_COOLDOWN_MS;
 
   constructor(private arena: GrowthArenaApi) {}
 
@@ -282,6 +347,18 @@ export class GrowthKit {
     if (this.dnaHudBarBg) { this.dnaHudBarBg.destroy(); this.dnaHudBarBg = null; }
     if (this.dnaHudBarFill) { this.dnaHudBarFill.destroy(); this.dnaHudBarFill = null; }
     if (this.dnaHudBarText) { this.dnaHudBarText.destroy(); this.dnaHudBarText = null; }
+
+    // Mastery — Secret Upgrades + Emisis
+    this.secretOffered = [];
+    this.secretOfferedPicked = false;
+    this.secretBought = new Set();
+    this.carapaceAccum = 0;
+    this.fungalAccum = 0;
+    this.regenAccum = 0;
+    this.spineNextHit = new Map();
+    for (const c of this.emisisClouds) c.gfx.destroy();
+    this.emisisClouds = [];
+    this.emisisLastCastAt = -EMISIS_COOLDOWN_MS;
   }
 
   // ── Input ─────────────────────────────────────────────────────────────
@@ -302,12 +379,19 @@ export class GrowthKit {
       return;
     }
 
+    // ── Mastery — Emisis takes over whichever slot it's bound to ──────────
+    const emisisSlot = this.arena.masteryActive ? this.emisisSlot() : null;
+    if (emisisSlot) {
+      const ek = emisisSlot === 'e' ? eKey : emisisSlot === 'r' ? rKey : emisisSlot === 'f' ? fKey : qKey;
+      if (Phaser.Input.Keyboard.JustDown(ek)) this.tryCastEmisis(time, mouseX, mouseY);
+    }
+
     const ctx = () => this.arena.buildPlayerContext(mouseX, mouseY);
     if (pointer.isDown) player.castAbility('growth-click', ctx());
-    if (Phaser.Input.Keyboard.JustDown(eKey)) player.castAbility('growth-evolve', ctx());
-    if (Phaser.Input.Keyboard.JustDown(rKey)) player.castAbility('spore-spread', ctx());
-    if (Phaser.Input.Keyboard.JustDown(fKey)) player.castAbility('growth-cancer', ctx());
-    if (Phaser.Input.Keyboard.JustDown(qKey)) {
+    if (emisisSlot !== 'e' && Phaser.Input.Keyboard.JustDown(eKey)) player.castAbility('growth-evolve', ctx());
+    if (emisisSlot !== 'r' && Phaser.Input.Keyboard.JustDown(rKey)) player.castAbility('spore-spread', ctx());
+    if (emisisSlot !== 'f' && Phaser.Input.Keyboard.JustDown(fKey)) player.castAbility('growth-cancer', ctx());
+    if (emisisSlot !== 'q' && Phaser.Input.Keyboard.JustDown(qKey)) {
       if (this.playerDna < this.auxCost('player')) {
         this.arena.showFloatingText(player.x, player.y - 30, 'Not enough DNA', '#ff6666');
       } else {
@@ -327,6 +411,8 @@ export class GrowthKit {
     this.updatePenicillins(time);
     this.updateNests(time, delta);
     this.updateClones(time, delta);
+    this.updateSecretPassives(time, delta);
+    this.updateEmisisClouds(time, delta);
     if (this.evolveInvincibleActive && time >= this.evolveInvincibleEndsAt) this.endEvolveInvincibility();
     this.drawDnaBar();
     this.drawDnaHudBar();
@@ -472,6 +558,7 @@ export class GrowthKit {
     const gfx = scene.add.circle(nx, ny, 12, 0x557733, 0.9).setDepth(5) as Phaser.GameObjects.Arc;
     this.nests.push({ gfx, x: nx, y: ny, hp: 10, owner });
     this.arena.showFloatingText(fighter.x, fighter.y - 40, '🥚 Nest planted', '#88bb22');
+    if (owner === 'player') this.arena.recordMasteryStat('auxClones', 1);
   }
 
   // ── Second life: intercept a lethal hit if a clone is alive ─────────
@@ -539,6 +626,7 @@ export class GrowthKit {
         orb.gfx.destroy();
         state.orbs.splice(i, 1);
         if (owner === 'player') {
+          this.arena.recordMasteryStat('cancerBlocks', 1);
           if (this.arena.hasUpgrade('f')) {
             this.arena.player.increaseMaxHp(10);
             this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 30, '+10 Max HP', '#88ffaa');
@@ -1164,6 +1252,7 @@ export class GrowthKit {
   }
 
   private renderEvolve(): void {
+    this.ensureSecretsPicked();
     if (this.evolveGfx) this.evolveGfx.destroy();
     for (const l of this.evolveLabels) l.destroy();
     this.evolveLabels = [];
@@ -1241,6 +1330,29 @@ export class GrowthKit {
       fontSize: '12px', fontFamily: 'Arial', color: '#cccccc',
     }).setOrigin(0.5).setDepth(41);
     this.evolveLabels.push(hint);
+
+    // ── Mastery — Secret Upgrades (2 random per match, 5 DNA each, once) ──
+    if (this.arena.masteryActive && this.secretOffered.length > 0) {
+      const sy = panelY + 45 + hintRows * rowGap + 90;
+      const secHeader = scene.add.text(W / 2, sy - 36, '✨ SECRET UPGRADES ✨', {
+        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc66',
+      }).setOrigin(0.5).setDepth(41);
+      this.evolveLabels.push(secHeader);
+      this.secretOffered.forEach((sid, i) => {
+        const sx = W / 2 + (i - (this.secretOffered.length - 1) / 2) * 150;
+        const bought = this.secretBought.has(sid);
+        const affordable = !bought && this.playerDna >= SECRET_UPGRADE_COST;
+        this.drawHex(gfx, sx, sy, hexR, bought ? 0x996633 : affordable ? 0x775522 : 0x443322, affordable ? 0xffcc66 : 0x775533);
+        const nameLabel = scene.add.text(sx, sy - 6, SECRET_UPGRADE_NAMES[sid], {
+          fontSize: '10px', fontFamily: 'Arial', color: '#ffeecc', align: 'center', wordWrap: { width: hexR * 1.9 },
+        }).setOrigin(0.5).setDepth(41);
+        const costLabel = scene.add.text(sx, sy + 16, bought ? 'OWNED' : `${SECRET_UPGRADE_COST}\u{1F9EC}`, {
+          fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: bought ? '#ffcc88' : '#ffee88',
+        }).setOrigin(0.5).setDepth(41);
+        this.evolveLabels.push(nameLabel, costLabel);
+        this.evolveHexAreas.push({ id: `secret:${sid}`, x: sx, y: sy, r: hexR });
+      });
+    }
   }
 
   private drawHex(gfx: Phaser.GameObjects.Graphics, cx: number, cy: number, r: number, fill: number, stroke: number): void {
@@ -1263,8 +1375,13 @@ export class GrowthKit {
     for (const area of this.evolveHexAreas) {
       const d = Phaser.Math.Distance.Between(px, py, area.x, area.y);
       if (d <= area.r) {
-        if (isSell) this.sellEvolveNode(area.id);
-        else this.buyEvolveNode(area.id);
+        if (area.id.startsWith('secret:')) {
+          if (!isSell) this.buySecretUpgrade(area.id.slice(7) as SecretUpgradeId);
+        } else if (isSell) {
+          this.sellEvolveNode(area.id);
+        } else {
+          this.buyEvolveNode(area.id);
+        }
         this.renderEvolve();
         return;
       }
@@ -1284,6 +1401,7 @@ export class GrowthKit {
     }
     this.playerDna -= cost;
     this.evolveLevels[id] = level + 1;
+    this.arena.recordMasteryStat('upgrades', 1);
     this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 30, `${def?.name ?? id} ${level + 1}/3`, '#88ffaa');
   }
 
@@ -1304,6 +1422,11 @@ export class GrowthKit {
     }
     this.playerDna -= GROWTH_EVOLVE_ULTIMATE_COST;
     this.evolveLevels[def.id] = 1;
+    this.arena.recordMasteryStat('upgrades', 1);
+    // Mastery — "upgrade every final upgrade": flag this ultimate and tally distinct ones bought.
+    this.arena.recordMasteryBest(`finalUL_${def.id}`, 1);
+    const distinctUltimates = GROWTH_EVOLVE_ULTIMATE_IDS.reduce((n, uid) => n + (this.arena.getMasteryStat(`finalUL_${uid}`) > 0 ? 1 : 0), 0);
+    this.arena.recordMasteryBest('finalUpgrades', distinctUltimates);
     this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 30, `${def.name} unlocked!`, '#ffdd44');
   }
 
@@ -1326,5 +1449,191 @@ export class GrowthKit {
     this.evolveLevels[id] = level - 1;
     this.playerDna = Math.min(this.dnaCap('player'), this.playerDna + refund);
     this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 30, `Sold, +${refund} \u{1F9EC}`, '#ffdd66');
+  }
+
+  // ── Mastery — Secret Upgrades passive ─────────────────────────────────
+
+  private ensureSecretsPicked(): void {
+    if (this.secretOfferedPicked || !this.arena.masteryActive) return;
+    this.secretOfferedPicked = true;
+    const pool: SecretUpgradeId[] = [...SECRET_UPGRADE_IDS];
+    for (let n = 0; n < 2 && pool.length > 0; n++) {
+      const idx = Math.floor(Math.random() * pool.length);
+      this.secretOffered.push(pool.splice(idx, 1)[0]);
+    }
+  }
+
+  private buySecretUpgrade(id: SecretUpgradeId): void {
+    if (!this.secretOffered.includes(id) || this.secretBought.has(id)) return;
+    if (this.playerDna < SECRET_UPGRADE_COST) {
+      this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 30, 'Not enough DNA', '#ff6666');
+      return;
+    }
+    this.playerDna -= SECRET_UPGRADE_COST;
+    this.secretBought.add(id);
+    this.arena.recordMasteryStat('upgrades', 1);
+    this.applySecretUpgrade(id);
+  }
+
+  private applySecretUpgrade(id: SecretUpgradeId): void {
+    const p = this.arena.player;
+    switch (id) {
+      case 'titanic':
+        p.sizeMult *= TITANIC_SIZE_MULT; p.applySizeMult(); p.increaseMaxHp(TITANIC_MAXHP_BONUS);
+        this.arena.showFloatingText(p.x, p.y - 40, '🦣 TITANIC', '#88ffaa');
+        break;
+      case 'micro':
+        p.sizeMult *= MICRO_SIZE_MULT; p.applySizeMult(); p.reduceMaxHp(MICRO_MAXHP_LOSS);
+        this.arena.showFloatingText(p.x, p.y - 40, '🐁 MICRO', '#88ffaa');
+        break;
+      default:
+        this.arena.showFloatingText(p.x, p.y - 40, `✨ ${SECRET_UPGRADE_NAMES[id]}`, '#ffcc66');
+        break;
+    }
+  }
+
+  private updateSecretPassives(_time: number, delta: number): void {
+    if (!this.arena.masteryActive) return;
+    this.ensureSecretsPicked();
+    const p = this.arena.player;
+
+    if (this.secretBought.has('regenerative')) {
+      this.regenAccum += delta;
+      while (this.regenAccum >= 1000) { this.regenAccum -= 1000; p.heal(REGEN_PER_SEC); }
+    }
+    if (this.secretBought.has('cancer-carapace')) {
+      this.carapaceAccum += delta;
+      if (this.carapaceAccum >= CARAPACE_INTERVAL_MS) {
+        this.carapaceAccum -= CARAPACE_INTERVAL_MS;
+        this.doCancer('player'); // grow a fresh set of cancer dots on the character
+      }
+    }
+    if (this.secretBought.has('fungal-infection')) {
+      this.fungalAccum += delta;
+      if (this.fungalAccum >= FUNGAL_INTERVAL_MS) {
+        this.fungalAccum -= FUNGAL_INTERVAL_MS;
+        const ptr = this.arena.scene.input.activePointer;
+        this.doSporeSpread(ptr.worldX, ptr.worldY, 'player');
+      }
+    }
+    if (this.secretBought.has('spines')) {
+      for (const t of this.arena.enemies) {
+        if (!t.active || t.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) > SPINES_RADIUS) continue;
+        if (_time < (this.spineNextHit.get(t) ?? 0)) continue;
+        this.spineNextHit.set(t, _time + SPINES_CD_MS);
+        t.takeDamage(SPINES_DAMAGE);
+        this.arena.spawnHitFlash(t.x, t.y, 0x88bb22);
+        this.arena.showFloatingText(t.x, t.y - 24, `🌵 ${SPINES_DAMAGE}`, '#aaff66');
+      }
+    }
+  }
+
+  // ── Mastery — Emisis ──────────────────────────────────────────────────
+
+  private emisisSlot(): 'e' | 'r' | 'f' | 'q' | null {
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      if (this.arena.masteryBindFor(s) === 'emisis') return s;
+    }
+    return null;
+  }
+
+  getEmisisCooldownRatio(time: number): number {
+    return Math.min(1, (time - this.emisisLastCastAt) / EMISIS_COOLDOWN_MS);
+  }
+
+  private tryCastEmisis(time: number, mouseX: number, mouseY: number): void {
+    if (time - this.emisisLastCastAt < EMISIS_COOLDOWN_MS) return;
+    if (this.playerDna < EMISIS_DNA_COST) {
+      this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 30, 'Not enough DNA', '#ff6666');
+      return;
+    }
+    this.playerDna -= EMISIS_DNA_COST;
+    this.emisisLastCastAt = time;
+    // triggerCooldown broadcasts the cast online; the peer replays via doNpcEmisis.
+    this.arena.player.triggerCooldown('emisis');
+    this.castEmisis('player', mouseX, mouseY);
+  }
+
+  /** Online replay: the remote growth player cast Emisis — spray clouds at the local player. */
+  doNpcEmisis(tx: number, ty: number): void {
+    this.castEmisis('npc', tx, ty);
+  }
+
+  private emisisDamage(owner: Owner): number {
+    if (owner === 'npc') return EMISIS_BASE_DAMAGE;
+    const totalUpgrades = Object.values(this.evolveLevels).reduce((a, b) => a + b, 0) + this.secretBought.size;
+    return Math.min(EMISIS_MAX_DAMAGE, EMISIS_BASE_DAMAGE + Math.floor(totalUpgrades / 2));
+  }
+
+  private castEmisis(owner: Owner, aimX: number, aimY: number): void {
+    const origin = owner === 'player' ? this.arena.player : this.arena.npc;
+    const dmg = this.emisisDamage(owner);
+    const baseAng = Math.atan2(aimY - origin.y, aimX - origin.x);
+    const halfCone = Phaser.Math.DegToRad(EMISIS_CONE_DEG) / 2;
+    const lifeMs = (EMISIS_RANGE / EMISIS_SPEED) * 1000;
+    for (let i = 0; i < EMISIS_CLOUD_COUNT; i++) {
+      const t = i / (EMISIS_CLOUD_COUNT - 1);
+      const ang = baseAng - halfCone + t * halfCone * 2 + Phaser.Math.FloatBetween(-0.06, 0.06);
+      const speed = EMISIS_SPEED * Phaser.Math.FloatBetween(0.8, 1.05);
+      const gfx = this.arena.scene.add.circle(
+        origin.x + Math.cos(ang) * 18, origin.y + Math.sin(ang) * 18,
+        EMISIS_CLOUD_RADIUS, 0x66bb33, 0.55,
+      ).setStrokeStyle(2, 0x99ee55, 0.7).setDepth(6) as Phaser.GameObjects.Arc;
+      this.emisisClouds.push({
+        gfx, x: gfx.x, y: gfx.y, vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed,
+        owner, dmg, expiresAt: this.arena.scene.time.now + lifeMs, hit: new Set(), splitsLeft: 2,
+      });
+    }
+    this.arena.showFloatingText(origin.x, origin.y - 40, '🤢 EMISIS', '#88dd44');
+  }
+
+  private updateEmisisClouds(time: number, delta: number): void {
+    if (this.emisisClouds.length === 0) return;
+    const dt = delta / 1000;
+    for (let i = this.emisisClouds.length - 1; i >= 0; i--) {
+      const c = this.emisisClouds[i];
+      c.x += c.vx * dt; c.y += c.vy * dt;
+      c.gfx.setPosition(c.x, c.y);
+      if (time >= c.expiresAt) { c.gfx.destroy(); this.emisisClouds.splice(i, 1); continue; }
+
+      const targets = c.owner === 'player' ? this.arena.enemies : [this.arena.player];
+      for (const tgt of targets) {
+        if (!tgt.active || tgt.hp <= 0 || c.hit.has(tgt)) continue;
+        if (Phaser.Math.Distance.Between(c.x, c.y, tgt.x, tgt.y) > EMISIS_CLOUD_RADIUS + 14) continue;
+        c.hit.add(tgt);
+        tgt.takeDamage(c.dmg);
+        this.arena.spawnHitFlash(tgt.x, tgt.y, 0x88ee44);
+        this.arena.showFloatingText(tgt.x, tgt.y - 22, `🤢 ${c.dmg}`, '#aaff66');
+      }
+
+      // A cloud that touches a spore bursts it into two (which grow and split again).
+      if (c.splitsLeft > 0 && this.spores.length < EMISIS_MAX_SPORES) {
+        for (let si = this.spores.length - 1; si >= 0; si--) {
+          const sp = this.spores[si];
+          if (Phaser.Math.Distance.Between(c.x, c.y, sp.x, sp.y) > EMISIS_CLOUD_RADIUS + sp.radius) continue;
+          c.splitsLeft--;
+          this.splitSpore(sp, si);
+          break;
+        }
+      }
+    }
+  }
+
+  private splitSpore(sp: Spore, index: number): void {
+    const { scene } = this.arena;
+    const owner = sp.owner;
+    const color = owner === 'player' ? 0x66cc44 : 0xcc6644;
+    sp.gfx.destroy();
+    this.spores.splice(index, 1);
+    for (let k = 0; k < 2; k++) {
+      const ox = sp.x + Phaser.Math.Between(-14, 14);
+      const oy = sp.y + Phaser.Math.Between(-14, 14);
+      const gfx = scene.add.circle(ox, oy, SPORE_MIN_RADIUS, color, 0.75).setDepth(6) as Phaser.GameObjects.Arc;
+      this.spores.push({
+        gfx, owner, x: ox, y: oy, radius: SPORE_MIN_RADIUS, isSecondary: false,
+        burstAt: scene.time.now + SPORE_GROW_MS, expiresAt: 0, tickAccum: 0, dmgMult: sp.dmgMult,
+      });
+    }
   }
 }

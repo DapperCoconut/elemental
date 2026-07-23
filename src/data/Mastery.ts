@@ -541,6 +541,53 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       },
     ],
   },
+  growth: {
+    elementId: 'growth',
+    name: 'Growth Mastery',
+    enhancedEmoji: '🦠',
+    enhancedColor: 0x66aa33,
+    requirements: [
+      {
+        key: 'cancerBlocks',
+        label: 'Malignant Wall',
+        howTo: 'Block enemy projectiles with your Cancer (F) orbs',
+        target: 50,
+      },
+      {
+        key: 'upgrades',
+        label: 'Ever-Evolving',
+        howTo: 'Buy Evolve-tree tiers — every purchase counts, across all your matches',
+        target: 200,
+      },
+      {
+        key: 'finalUpgrades',
+        label: 'Apex Organism',
+        howTo: 'Unlock each of the three Ultimate evolutions at least once (one per match)',
+        target: 3,
+        isBest: true,
+      },
+      {
+        key: 'auxClones',
+        label: 'Hive Mind',
+        howTo: 'Summon auxiliary clones with Auxiliary Growth (Q)',
+        target: 5,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'secret-upgrades',
+        name: 'Secret Upgrades',
+        description: 'Passive: two random Secret Upgrades appear in your Evolve menu every match, 5 DNA each, one-time buys. Cancer Carapace (auto-grows cancer dots every 5s), Fungal Infection (spores erupt at your cursor every 3s), Regenerative (heal 3 HP/s), Spines (nearby enemies take 15 damage on touch), Titanic (+20% size, +25% max HP), or Micro (-25% size, -15% max HP).',
+      },
+      {
+        id: 'emisis',
+        name: 'Emisis',
+        bindable: true,
+        hudDescription: 'Vomit a short cone of green clouds; splits spores',
+        description: 'Costs 2 DNA to blast out a short cone of 10 green clouds dealing 3 damage each — more scales the more Evolve upgrades you own, up to 10 per cloud. Clouds that wash over your spores burst them into two. 8 second cooldown.',
+      },
+    ],
+  },
   slime: {
     elementId: 'slime',
     name: 'Acid Mastery',

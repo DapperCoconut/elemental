@@ -990,6 +990,8 @@ export class ArenaScene extends Phaser.Scene {
   private metalMasteryOn = false;
   // ── Acid (slime) mastery ──────────────────────────────────────────────
   private slimeMasteryOn = false;
+  // ── Growth mastery ────────────────────────────────────────────────────
+  private growthMasteryOn = false;
   /** Screen-blur guard for Dust Screen hitting the local human — only the latest call may clear it. */
   private screenBlurUntil = 0;
 
@@ -1431,6 +1433,16 @@ export class ArenaScene extends Phaser.Scene {
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
+        get masteryActive() { return arena.growthMasteryOn && arena.elementId === 'growth'; },
+        get npcMasteryActive() { return arena.isOnline && arena.npcMasteryOn && arena.npcElement.id === 'growth'; },
+        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        recordMasteryStat: (key, amount) => {
+          if (arena.elementId === 'growth') PlayerData.addMasteryStat('growth', key, amount);
+        },
+        recordMasteryBest: (key, value) => {
+          if (arena.elementId === 'growth') PlayerData.recordMasteryBest('growth', key, value);
+        },
+        getMasteryStat: (key) => PlayerData.getMasteryStat('growth', key),
       };
       this.growthKit = new GrowthKit(growthApi);
     }
@@ -1460,6 +1472,7 @@ export class ArenaScene extends Phaser.Scene {
     this.earthMasteryOn = PlayerData.isMasteryEnabled('earth');
     this.metalMasteryOn = PlayerData.isMasteryEnabled('metal');
     this.slimeMasteryOn = PlayerData.isMasteryEnabled('slime');
+    this.growthMasteryOn = PlayerData.isMasteryEnabled('growth');
     this.shadowMasteryOn = PlayerData.isMasteryEnabled('shadow');
     this.iceMasteryOn = PlayerData.isMasteryEnabled('ice');
     this.crystalMasteryOn = PlayerData.isMasteryEnabled('crystal');
@@ -3207,6 +3220,9 @@ export class ArenaScene extends Phaser.Scene {
         break;
       case 'breakdown':
         if (this.npcElement.id === 'slime') this.slimeKit.doNpcBreakdown(tx, ty);
+        break;
+      case 'emisis':
+        if (this.npcElement.id === 'growth') this.growthKit.doNpcEmisis(tx, ty);
         break;
       default:
         break;
@@ -10593,6 +10609,8 @@ export class ArenaScene extends Phaser.Scene {
         entry.fill.setSize(entry.maxWidth * this.metalKit.getSteelShieldCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'breakdown') {
         entry.fill.setSize(entry.maxWidth * this.slimeKit.getBreakdownCooldownRatio(time), entry.fill.height);
+      } else if (entry.abilityId === 'emisis') {
+        entry.fill.setSize(entry.maxWidth * this.growthKit.getEmisisCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'flame-body') {
         entry.fill.setSize(this.fireKit.isFlameBodyActive() ? entry.maxWidth : 0, entry.fill.height);
       } else if (entry.abilityId === 'splash') {
