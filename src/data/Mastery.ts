@@ -541,6 +541,52 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       },
     ],
   },
+  sand: {
+    elementId: 'sand',
+    name: 'Time Mastery',
+    enhancedEmoji: '⏱️',
+    enhancedColor: 0x6688cc,
+    requirements: [
+      {
+        key: 'perfectReloads',
+        label: 'Quickdraw',
+        howTo: 'Nail the perfect-reload window (needs the Click+ reload upgrade)',
+        target: 50,
+      },
+      {
+        key: 'lassos',
+        label: 'Wrangler',
+        howTo: 'Catch enemies with your Lasso (E)',
+        target: 40,
+      },
+      {
+        key: 'remainAbsorbed',
+        label: 'Immovable',
+        howTo: 'Absorb damage with Remain (R)',
+        target: 500,
+      },
+      {
+        key: 'rifleHits',
+        label: 'Sharpshooter',
+        howTo: 'Land rifle shots during Always Noon (Q)',
+        target: 10,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'passive-manipulation',
+        name: 'Passive Manipulation',
+        description: 'Passive: you are always in either Rush or Focus. Rush speeds the whole world up 50% — everyone moves and every projectile flies faster; Focus slows it all to half speed. Dash (Space) to flip between them, with a 5 second cooldown on switching.',
+      },
+      {
+        id: 'fan-the-hammer',
+        name: 'Fan the Hammer',
+        bindable: true,
+        hudDescription: 'Empty the magazine into mines; re-cast to detonate',
+        description: 'Fire your whole magazine at once, one bullet every 0.2s, slowing you 50% as you do. The bullets travel a short way then halt, aging up in damage where they sit — enemies that touch them eat the stored damage. Re-cast to detonate every bullet in its own AoE. Halted bullets have a 5% chance each second to leak a time puddle. 10 second cooldown.',
+      },
+    ],
+  },
   magnet: {
     elementId: 'magnet',
     name: 'Magnet Mastery',

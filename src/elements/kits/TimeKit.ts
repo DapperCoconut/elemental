@@ -51,6 +51,7 @@ export interface TimeArenaApi {
   readonly rKey: Phaser.Input.Keyboard.Key;
   readonly fKey: Phaser.Input.Keyboard.Key;
   readonly qKey: Phaser.Input.Keyboard.Key;
+  readonly spaceKey: Phaser.Input.Keyboard.Key;
   readonly nukeChanneling: boolean;
   hasUpgrade(slot: string): boolean;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
@@ -60,6 +61,38 @@ export interface TimeArenaApi {
   buildPlayerContext(x: number, y: number): CastContext;
   buildNpcContext(x: number, y: number): CastContext;
   dealAoeDamageFromOwner(cx: number, cy: number, radius: number, damage: number, owner: 'player' | 'npc'): void;
+  /** True only when the player is time (sand) AND Time Mastery is switched on. */
+  get masteryActive(): boolean;
+  /** True only when the online opponent is time AND has Time Mastery on. */
+  get npcMasteryActive(): boolean;
+  masteryBindFor(slot: string): string | null;
+  recordMasteryStat(key: string, amount: number): void;
+}
+
+// ── Mastery: Passive Manipulation (focus/rush) + Fan the Hammer ───────────────
+const RUSH_FACTOR = 1.5;   // rush: the world runs 1.5x faster
+const FOCUS_FACTOR = 0.5;  // focus: the world runs at half speed
+const MODE_SWITCH_CD_MS = 5000;
+const FAN_BULLET_SPEED = 360;
+const FAN_STAGGER_MS = 200;
+const FAN_HALT_SPEED = 40;      // below this a fan bullet is considered halted
+const FAN_BULLET_RADIUS = 14;
+const FAN_DETONATE_RADIUS = 44;
+const FAN_PUDDLE_CHANCE_PER_SEC = 0.05;
+const FAN_SLOW_MULT = 0.5;
+const FAN_COOLDOWN_MS = 10000;
+
+interface FanBullet {
+  proj: Projectile;
+  owner: 'player' | 'npc';
+  spawnAt: number;
+  baseDmg: number;
+  maxDmg: number;
+  rampMs: number;
+  vx: number;
+  vy: number;
+  halted: boolean;
+  puddleAccum: number;
 }
 
 // ── TimeKit ───────────────────────────────────────────────────────────────────
@@ -195,6 +228,15 @@ export class TimeKit {
   private npcTimelessEnd = 0;
   private npcTimelessCharge = 0;
 
+  // ── Mastery: Passive Manipulation + Fan the Hammer ────────────────────
+  private timeMode: 'rush' | 'focus' = 'focus';
+  private lastModeSwitchAt = -MODE_SWITCH_CD_MS;
+  private prevSpaceDown = false;
+  private timeScaleApplied = false;
+  private fanBullets: FanBullet[] = [];
+  private fanningUntil = 0;
+  private fanLastCastAt = -FAN_COOLDOWN_MS;
+
   constructor(private arena: TimeArenaApi) {}
 
   // ── Public accessors ──────────────────────────────────────────────
@@ -320,6 +362,26 @@ export class TimeKit {
 
     this.npcTimelessActive = false; this.npcTimelessCharge = 0;
     if (npc.cooldownMult < 0.01) npc.cooldownMult = 1;
+
+    // Mastery — Passive Manipulation + Fan the Hammer
+    this.timeMode = 'focus';
+    this.lastModeSwitchAt = -MODE_SWITCH_CD_MS;
+    this.prevSpaceDown = false;
+    this.restoreTimeScale();
+    for (const b of this.fanBullets) if (b.proj.active) b.proj.destroy();
+    this.fanBullets = [];
+    this.fanningUntil = 0;
+    this.fanLastCastAt = -FAN_COOLDOWN_MS;
+    player.walkSpeedMult = 1;
+  }
+
+  private restoreTimeScale(): void {
+    const scene = this.arena.scene as Phaser.Scene & {
+      physics: Phaser.Physics.Arcade.ArcadePhysics; tweens: Phaser.Tweens.TweenManager;
+    };
+    if (scene.physics?.world) scene.physics.world.timeScale = 1;
+    scene.tweens.timeScale = 1;
+    this.timeScaleApplied = false;
   }
 
   // ── handleInput ───────────────────────────────────────────────────
@@ -329,6 +391,18 @@ export class TimeKit {
     const playerCtx = this.arena.buildPlayerContext(mouseX, mouseY);
     const pointerJustDown = pointer.isDown && !this.playerPointerWasDown;
     this.playerPointerWasDown = pointer.isDown;
+
+    // ── Mastery — Passive Manipulation: dash (Space) flips focus/rush ────
+    // Rising-edge on isDown (NOT JustDown) so we don't consume the flag the generic dodge reads.
+    const fanSlot = this.arena.masteryActive ? this.fanSlot() : null;
+    const spaceDown = this.arena.spaceKey.isDown;
+    if (this.arena.masteryActive && spaceDown && !this.prevSpaceDown) this.switchTimeMode(time);
+    this.prevSpaceDown = spaceDown;
+    // Fan the Hammer takes over its bound slot (cast, or re-cast to detonate).
+    if (fanSlot) {
+      const fk = fanSlot === 'e' ? this.arena.eKey : fanSlot === 'r' ? this.arena.rKey : fanSlot === 'f' ? this.arena.fKey : this.arena.qKey;
+      if (Phaser.Input.Keyboard.JustDown(fk)) this.tryCastFan(time, mouseX, mouseY);
+    }
 
     // Time-stop mode — rifle replaces click; Q+ allows reloading
     if (this.timelessActive) {
@@ -354,9 +428,9 @@ export class TimeKit {
     }
 
     // E: Lasso
-    if (Phaser.Input.Keyboard.JustDown(this.arena.eKey)) this.castLasso(mouseX, mouseY, playerCtx);
+    if (fanSlot !== 'e' && Phaser.Input.Keyboard.JustDown(this.arena.eKey)) this.castLasso(mouseX, mouseY, playerCtx);
     // R: Remain (or Purge recast while active)
-    if (Phaser.Input.Keyboard.JustDown(this.arena.rKey)) {
+    if (fanSlot !== 'r' && Phaser.Input.Keyboard.JustDown(this.arena.rKey)) {
       if (this.timeRemainActive && this.arena.hasPerk('player', 'purge') && !this.timeRemainPurgeUsed) {
         // Purge recast: extend duration 3s, turn aura red, lock for rest of match
         this.timeRemainEnd += 3000;
@@ -368,9 +442,9 @@ export class TimeKit {
       }
     }
     // F: Bounty / Bounty Hunter recast
-    if (Phaser.Input.Keyboard.JustDown(this.arena.fKey)) this.castBountyOrRecast(time, playerCtx);
+    if (fanSlot !== 'f' && Phaser.Input.Keyboard.JustDown(this.arena.fKey)) this.castBountyOrRecast(time, playerCtx);
     // Q: Always Noon
-    if (Phaser.Input.Keyboard.JustDown(this.arena.qKey)) this.doTimeAlwaysNoon('player');
+    if (fanSlot !== 'q' && Phaser.Input.Keyboard.JustDown(this.arena.qKey)) this.doTimeAlwaysNoon('player');
   }
 
   private castLasso(mouseX: number, mouseY: number, playerCtx: CastContext): void {
@@ -403,6 +477,14 @@ export class TimeKit {
       this.playerPosHistory.push({ x: this.arena.player.x, y: this.arena.player.y, t: time });
       while (this.npcPosHistory.length > 40) this.npcPosHistory.shift();
       while (this.playerPosHistory.length > 40) this.playerPosHistory.shift();
+    }
+
+    // Mastery — Passive Manipulation time-scale + Fan the Hammer bullets (both owners).
+    this.updatePassiveManipulation();
+    this.updateFanBullets(time, delta);
+    if (isPlayer) {
+      if (time < this.fanningUntil) this.arena.player.walkSpeedMult = FAN_SLOW_MULT;
+      else if (this.arena.player.walkSpeedMult === FAN_SLOW_MULT) this.arena.player.walkSpeedMult = 1;
     }
 
     if (isPlayer) {
@@ -858,6 +940,7 @@ export class TimeKit {
       fighter.damageAbsorber = (amount) => {
         const prev = Math.floor(this.timeRemainAbsorbed / 10);
         this.timeRemainAbsorbed += amount;
+        this.arena.recordMasteryStat('remainAbsorbed', amount);
         const next = Math.floor(this.timeRemainAbsorbed / 10);
         for (let i = prev; i < next; i++) {
           const a = Math.random() * Math.PI * 2, r = 20 + Math.random() * 40;
@@ -1006,6 +1089,7 @@ export class TimeKit {
     const { npc, player, scene } = this.arena;
     npc.takeDamage(20);
     this.arena.spawnHitFlash(npc.x, npc.y, 0xffdd44);
+    this.arena.recordMasteryStat('lassos', 1);
     this.arena.showFloatingText(npc.x, npc.y - 24, '20', '#ffdd44');
 
     if (this.arena.hasUpgrade('e') && this.npcPosHistory.length > 0) {
@@ -1152,6 +1236,7 @@ export class TimeKit {
     });
     this.playerChamberSprite?.destroy(); this.playerChamberSprite = null;
     this.completeReload('player');
+    this.arena.recordMasteryStat('perfectReloads', 1);
     this.arena.showFloatingText(player.x, player.y - 36, 'PERFECT!', '#ffff44');
   }
 
@@ -1310,6 +1395,7 @@ export class TimeKit {
       if (ptSegDist(npc.x, npc.y, beam.fromX, beam.fromY, beam.toX, beam.toY) <= 30) {
         npc.takeDamage(beam.damage);
         this.arena.spawnHitFlash(npc.x, npc.y, 0xff4444);
+        this.arena.recordMasteryStat('rifleHits', 1);
       }
       scene.tweens.add({ targets: [beam.gfx, beam.coreGfx], alpha: 0, duration: 350, onComplete: () => { beam.gfx.destroy(); beam.coreGfx.destroy(); } });
     }
@@ -1327,5 +1413,136 @@ export class TimeKit {
     let best = history[0];
     for (const s of history) if (Math.abs(s.t - targetT) < Math.abs(best.t - targetT)) best = s;
     return best;
+  }
+
+  // ── Mastery — Passive Manipulation (focus / rush) ─────────────────────
+
+  getTimeMode(): 'rush' | 'focus' { return this.timeMode; }
+
+  private switchTimeMode(time: number): void {
+    if (time - this.lastModeSwitchAt < MODE_SWITCH_CD_MS) return;
+    this.lastModeSwitchAt = time;
+    this.timeMode = this.timeMode === 'rush' ? 'focus' : 'rush';
+    const rush = this.timeMode === 'rush';
+    this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 44,
+      rush ? '⏩ RUSH' : '⏪ FOCUS', rush ? '#ff8844' : '#44aaff');
+  }
+
+  private updatePassiveManipulation(): void {
+    const scene = this.arena.scene as Phaser.Scene & {
+      physics: Phaser.Physics.Arcade.ArcadePhysics; tweens: Phaser.Tweens.TweenManager;
+    };
+    if (!this.arena.masteryActive) {
+      if (this.timeScaleApplied) this.restoreTimeScale();
+      return;
+    }
+    const factor = this.timeMode === 'rush' ? RUSH_FACTOR : FOCUS_FACTOR;
+    // Scale motion (bodies + projectiles) and visual tweens only. We deliberately do NOT
+    // scale scene.time — kits mix loop-time and scene.time.now assuming they match, so
+    // warping the Clock would drift ramps/expiries codebase-wide.
+    // Arcade world.timeScale is a divisor (2 = half speed), so invert the factor.
+    if (scene.physics?.world) scene.physics.world.timeScale = 1 / factor;
+    scene.tweens.timeScale = factor;
+    this.timeScaleApplied = true;
+  }
+
+  // ── Mastery — Fan the Hammer ──────────────────────────────────────────
+
+  private fanSlot(): 'e' | 'r' | 'f' | 'q' | null {
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      if (this.arena.masteryBindFor(s) === 'fan-the-hammer') return s;
+    }
+    return null;
+  }
+
+  getFanCooldownRatio(time: number): number {
+    // While bullets are live the slot is "ready to detonate" — show it full.
+    if (this.fanBullets.some(b => b.owner === 'player')) return 1;
+    return Math.min(1, (time - this.fanLastCastAt) / FAN_COOLDOWN_MS);
+  }
+
+  private tryCastFan(time: number, mouseX: number, mouseY: number): void {
+    const { player } = this.arena;
+    // Re-cast while your bullets hang in the air → detonate them all.
+    if (this.fanBullets.some(b => b.owner === 'player')) { this.detonateFan('player'); return; }
+    if (time - this.fanLastCastAt < FAN_COOLDOWN_MS) return;
+    const ammo = this.playerAmmo;
+    if (ammo <= 0) { this.arena.showFloatingText(player.x, player.y - 30, 'NO AMMO', '#ff6666'); return; }
+    this.fanLastCastAt = time;
+    this.startFan('player', ammo, mouseX, mouseY, time);
+    this.playerAmmo = 0;
+    this.beginReload('player', time);
+  }
+
+  /** Online replay: the remote time player fanned (or re-cast to detonate). */
+  doNpcFanTheHammer(tx: number, ty: number): void {
+    if (this.fanBullets.some(b => b.owner === 'npc')) { this.detonateFan('npc'); return; }
+    this.startFan('npc', 6, tx, ty, this.arena.scene.time.now);
+  }
+
+  private startFan(owner: 'player' | 'npc', ammo: number, aimX: number, aimY: number, time: number): void {
+    const { scene, projectiles } = this.arena;
+    const origin = owner === 'player' ? this.arena.player : this.arena.npc;
+    if (owner === 'player') this.fanningUntil = time + ammo * FAN_STAGGER_MS;
+    this.arena.showFloatingText(origin.x, origin.y - 40, '🔫 FAN THE HAMMER', '#ffcc44');
+    const baseAng = Math.atan2(aimY - origin.y, aimX - origin.x);
+    for (let i = 0; i < ammo; i++) {
+      scene.time.delayedCall(i * FAN_STAGGER_MS, () => {
+        const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+        if (!caster.active || caster.hp <= 0) return;
+        const ang = baseAng + Phaser.Math.FloatBetween(-0.28, 0.28);
+        const bullet = new Projectile(scene, caster.x, caster.y, 'proj-time-bullet', 5, owner === 'player');
+        projectiles.add(bullet);
+        const vx = Math.cos(ang) * FAN_BULLET_SPEED, vy = Math.sin(ang) * FAN_BULLET_SPEED;
+        bullet.launch(vx, vy);
+        this.fanBullets.push({ proj: bullet, owner, spawnAt: scene.time.now, baseDmg: 5, maxDmg: 14, rampMs: 2500, vx, vy, halted: false, puddleAccum: 0 });
+      });
+    }
+  }
+
+  private updateFanBullets(time: number, delta: number): void {
+    if (this.fanBullets.length === 0) return;
+    const { npc, player } = this.arena;
+    for (let i = this.fanBullets.length - 1; i >= 0; i--) {
+      const b = this.fanBullets[i];
+      if (!b.proj.active) { this.fanBullets.splice(i, 1); continue; }
+      const body = b.proj.body as Phaser.Physics.Arcade.Body;
+      if (!b.halted) {
+        b.vx *= 0.9; b.vy *= 0.9;
+        body.setVelocity(b.vx, b.vy);
+        if (Math.hypot(b.vx, b.vy) < FAN_HALT_SPEED) { b.halted = true; b.vx = 0; b.vy = 0; body.setVelocity(0, 0); }
+      }
+      // Bullets "age" like the revolver's — damage ramps up the longer they sit.
+      const t = clamp01((time - b.spawnAt) / b.rampMs);
+      const dmg = Math.round(b.baseDmg + (b.maxDmg - b.baseDmg) * t);
+      (b.proj as unknown as { damage: number }).damage = dmg;
+      b.proj.setTint(Phaser.Display.Color.GetColor(0xff, lerpN(0xdd, 0x22, t), lerpN(0x44, 0x11, t)));
+      // Halted bullets occasionally leak a time puddle. (Enemy contact is resolved by the
+      // standard projectile overlap, which consumes the bullet and applies its aged damage.)
+      if (b.halted) {
+        void npc; void player;
+        b.puddleAccum += delta;
+        if (b.puddleAccum >= 1000) {
+          b.puddleAccum -= 1000;
+          if (Math.random() < FAN_PUDDLE_CHANCE_PER_SEC) this.spawnTimePuddle(b.proj.x, b.proj.y, b.owner);
+        }
+      }
+    }
+  }
+
+  private detonateFan(owner: 'player' | 'npc'): void {
+    const { scene } = this.arena;
+    const origin = owner === 'player' ? this.arena.player : this.arena.npc;
+    for (const b of this.fanBullets) {
+      if (b.owner !== owner || !b.proj.active) continue;
+      const t = clamp01((scene.time.now - b.spawnAt) / b.rampMs);
+      const dmg = Math.round(b.baseDmg + (b.maxDmg - b.baseDmg) * t);
+      this.arena.dealAoeDamageFromOwner(b.proj.x, b.proj.y, FAN_DETONATE_RADIUS, dmg, owner);
+      const ring = scene.add.circle(b.proj.x, b.proj.y, 12, 0xff5522, 0.85).setDepth(9);
+      scene.tweens.add({ targets: ring, scaleX: FAN_DETONATE_RADIUS / 12, scaleY: FAN_DETONATE_RADIUS / 12, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
+      b.proj.destroy();
+    }
+    this.fanBullets = this.fanBullets.filter(b => b.owner !== owner);
+    this.arena.showFloatingText(origin.x, origin.y - 40, '💥 DETONATE!', '#ff6633');
   }
 }

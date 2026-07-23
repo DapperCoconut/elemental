@@ -994,6 +994,8 @@ export class ArenaScene extends Phaser.Scene {
   private growthMasteryOn = false;
   // ── Magnet mastery ────────────────────────────────────────────────────
   private magnetMasteryOn = false;
+  // ── Time (sand) mastery ───────────────────────────────────────────────
+  private timeMasteryOn = false;
   /** Screen-blur guard for Dust Screen hitting the local human — only the latest call may clear it. */
   private screenBlurUntil = 0;
 
@@ -1476,6 +1478,7 @@ export class ArenaScene extends Phaser.Scene {
     this.slimeMasteryOn = PlayerData.isMasteryEnabled('slime');
     this.growthMasteryOn = PlayerData.isMasteryEnabled('growth');
     this.magnetMasteryOn = PlayerData.isMasteryEnabled('magnet');
+    this.timeMasteryOn = PlayerData.isMasteryEnabled('sand');
     this.shadowMasteryOn = PlayerData.isMasteryEnabled('shadow');
     this.iceMasteryOn = PlayerData.isMasteryEnabled('ice');
     this.crystalMasteryOn = PlayerData.isMasteryEnabled('crystal');
@@ -2293,6 +2296,7 @@ export class ArenaScene extends Phaser.Scene {
         get rKey() { return arena.rKey; },
         get fKey() { return arena.fKey; },
         get qKey() { return arena.qKey; },
+        get spaceKey() { return arena.spaceKey; },
         get nukeChanneling() { return arena.nukeChanneling; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
@@ -2302,6 +2306,12 @@ export class ArenaScene extends Phaser.Scene {
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
         dealAoeDamageFromOwner: (x, y, r, d, o) => arena.dealAoeDamageFromOwner(x, y, r, d, o),
+        get masteryActive() { return arena.timeMasteryOn && arena.elementId === 'sand'; },
+        get npcMasteryActive() { return arena.isOnline && arena.npcMasteryOn && arena.npcElement.id === 'sand'; },
+        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        recordMasteryStat: (key, amount) => {
+          if (arena.elementId === 'sand') PlayerData.addMasteryStat('sand', key, amount);
+        },
       };
       this.timeKit = new TimeKit(timeApi);
     }
@@ -3235,6 +3245,9 @@ export class ArenaScene extends Phaser.Scene {
         break;
       case 'mag-lev':
         if (this.npcElement.id === 'magnet') this.magnetKit.doNpcMagLev();
+        break;
+      case 'fan-the-hammer':
+        if (this.npcElement.id === 'sand') this.timeKit.doNpcFanTheHammer(tx, ty);
         break;
       default:
         break;
@@ -10625,6 +10638,8 @@ export class ArenaScene extends Phaser.Scene {
         entry.fill.setSize(entry.maxWidth * this.growthKit.getEmisisCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'mag-lev') {
         entry.fill.setSize(entry.maxWidth * this.magnetKit.getMagLevCooldownRatio(time), entry.fill.height);
+      } else if (entry.abilityId === 'fan-the-hammer') {
+        entry.fill.setSize(entry.maxWidth * this.timeKit.getFanCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'flame-body') {
         entry.fill.setSize(this.fireKit.isFlameBodyActive() ? entry.maxWidth : 0, entry.fill.height);
       } else if (entry.abilityId === 'splash') {
