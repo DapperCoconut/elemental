@@ -128,7 +128,7 @@ export const ABSTRACT_COMBINED_ELEMENTS: ElementDef[] = [
   { id: 'magic', name: 'Magic', emoji: '📖', color: 0x9944ff, available: true },
   { id: 'technology', name: 'Technology', emoji: '💻', color: 0x44ccaa, available: true },
   { id: 'silence', name: 'Silence', emoji: '🫥', color: 0x1a0022, available: true },
-  { id: 'quantum', name: 'Quantum', emoji: '⚛️', color: 0xaa44ff, available: true },
+  { id: 'quantum', name: 'Subterfuge', emoji: '🕴️', color: 0xcc2233, available: true },
 ];
 
 const DIFF_COLORS = [0x22cc44, 0x88cc22, 0xddaa00, 0xee5500, 0xcc0022];
@@ -1133,18 +1133,14 @@ export class MenuScene extends Phaser.Scene {
       innerY = this.renderCreationBuildInfo(scrollContainer, cx, COL_X, COL_W, innerY);
     } else {
 
-    // Quantum-specific passives (shown above the abilities list)
+    // Subterfuge-specific passives (shown above the abilities list)
     if (elementId === 'quantum') {
-      sectionHdr('— PASSIVES —', '#cc88ff');
-      let passiveText =
-        'Forms — Entropy & Order: You always hold one of two forms. Tap SPACE to dodge, which swaps your form; swapping locks that form\'s passive for 5s.\n\n' +
-        '🔴 Entropy (red): +15% damage dealt. Periodically readies Stiff Strike (red aura) — your next ability hits for ×1.5, then recharges over 5s.\n\n' +
-        '🔵 Order (blue): −15% damage taken. Periodically readies Auto-Dodge (blue aura) — you automatically sidestep a nearby projectile and go briefly invincible, then recharges over 5s.';
-      if (showUpgraded) {
-        passiveText += '\n\n▲ Q+ Ionization Energy: stand still to charge Ionization; while charged, −25% damage taken and +50% move speed.';
-      }
+      sectionHdr('— PASSIVES —', '#ff5566');
+      const passiveText =
+        '💵 Dirty Money: three red money icons hover above you. You start each match with 2 money and earn 1 every 5 seconds (max 3). Money buys Spray reloads, Lackeys, and Bribes.\n\n' +
+        '🔫 Kickbacks: every 10 damage you deal with daggers or Spray earns 3 bullets (up to 50).';
       const passiveDesc = this.add.text(COL_X + 14, innerY, passiveText, {
-        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#b79ae0',
+        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#e09aa2',
         wordWrap: { width: COL_W - 28 }, lineSpacing: 3,
       });
       scrollContainer.add(passiveDesc);

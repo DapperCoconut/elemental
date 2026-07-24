@@ -1577,7 +1577,7 @@ export class MetalKit {
     const bx = caster.x + Math.cos(ang) * STEEL_SHIELD_DIST;
     const by = caster.y + Math.sin(ang) * STEEL_SHIELD_DIST;
     const barrier = this.arena.scene.add.rectangle(bx, by, 12, 62, red ? 0xcc0022 : 0x99aabb, 0.85)
-      .setStrokeStyle(2, red ? 0xff5577 : 0xccddee).setRotation(ang + Math.PI / 2).setDepth(7);
+      .setStrokeStyle(2, red ? 0xff5577 : 0xccddee).setRotation(ang).setDepth(7);
     this.steelShields[owner] = { endTime: this.arena.scene.time.now + STEEL_SHIELD_DURATION_MS, red, barrier };
     caster.steelShieldMult = STEEL_SHIELD_DMG_MULT;
     this.arena.showFloatingText(caster.x, caster.y - 44, red ? '🛡️ RED STEEL SHIELD' : '🛡️ STEEL SHIELD', red ? '#ff5577' : '#aabbcc');
@@ -1605,7 +1605,7 @@ export class MetalKit {
         : Math.atan2(this.arena.player.y - caster.y, this.arena.player.x - caster.x);
       const bx = caster.x + Math.cos(ang) * STEEL_SHIELD_DIST;
       const by = caster.y + Math.sin(ang) * STEEL_SHIELD_DIST;
-      s.barrier.setPosition(bx, by).setRotation(ang + Math.PI / 2);
+      s.barrier.setPosition(bx, by).setRotation(ang);
 
       // Block incoming projectiles: player shield eats enemy shots, npc shield eats player shots.
       const group = this.arena.projectiles;

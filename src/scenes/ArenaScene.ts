@@ -55,7 +55,7 @@ import { silenceElement } from '../elements/silence';
 import { echoElement } from '../elements/quantum';
 import { EchoKit, EchoArenaApi } from '../elements/kits/EchoKit';
 import { quantumElement } from '../elements/quantum-element';
-import { QuantumElementKit, QuantumElementArenaApi } from '../elements/kits/QuantumElementKit';
+import { SubterfugeKit, SubterfugeArenaApi } from '../elements/kits/SubterfugeKit';
 import { OilKit, OilArenaApi } from '../elements/kits/OilKit';
 import { FateKit, FateArenaApi } from '../elements/kits/FateKit';
 import { SoundKit, SoundArenaApi } from '../elements/kits/SoundKit';
@@ -959,7 +959,10 @@ export class ArenaScene extends Phaser.Scene {
   private fogOverlayRT: Phaser.GameObjects.RenderTexture | null = null;
 
   // ── Quantum (abstract combined: slime + fate) kit ─────────────────────
-  private quantumElementKit!: QuantumElementKit;
+  private subterfugeKit!: SubterfugeKit;
+  /** True while Dark Treachery replays a foreign element's Q — hasUpgrade() reports
+   * false so copied ultimates never pick up Q+/upgrade behavior. */
+  private foreignCastSuppress = false;
 
   // ── Oil kit ───────────────────────────────────────────────────────────
   private oilKit!: OilKit;
@@ -2384,12 +2387,17 @@ export class ArenaScene extends Phaser.Scene {
       this.fogOverlayRT = null;
     }
 
-    // Quantum element kit
-    if (this.quantumElementKit) {
-      this.quantumElementKit.reset();
+    // Subterfuge kit
+    if (this.subterfugeKit) {
+      this.subterfugeKit.reset();
     } else {
       const arena = this;
-      const quantumApi: QuantumElementArenaApi = {
+      /** Run a Dark Treachery copy with upgrade lookups suppressed (no Q+ effects). */
+      const foreign = (fn: () => void): void => {
+        arena.foreignCastSuppress = true;
+        try { fn(); } finally { arena.foreignCastSuppress = false; }
+      };
+      const subterfugeApi: SubterfugeArenaApi = {
         get player() { return arena.player as Fighter; },
         get npc() { return arena.npc; },
         get scene(): Phaser.Scene { return arena; },
@@ -2400,33 +2408,47 @@ export class ArenaScene extends Phaser.Scene {
         get qKey() { return arena.qKey; },
         get projectiles() { return arena.projectiles; },
         get nukeChanneling() { return arena.nukeChanneling; },
-        get spaceKey() { return arena.spaceKey; },
         get elementId() { return arena.elementId; },
         get npcElementId() { return arena.npcElement.id; },
         get sceneWidth() { return arena.scale.width; },
         get sceneHeight() { return arena.scale.height; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
-        hasPerk: (perkId) => arena.hasPerk('player', perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
-        spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         dealAoeDamage: (owner, cx, cy, r, d) => arena.dealAoeDamageFromOwner(cx, cy, r, d, owner),
-        startCooldown: (owner, abilityId) => {
-          if (owner === 'player') arena.player.startCooldown(abilityId);
-          else arena.npc.startCooldown(abilityId);
+        castForeignQ: (elementId, owner) => {
+          const el = ELEMENT_MAP[elementId];
+          const q = el?.abilities.find((a) => a.isUltimate);
+          if (!q) return false;
+          foreign(() => {
+            if (owner === 'player') {
+              const ptr = arena.input.activePointer;
+              q.cast(arena.buildPlayerContext(ptr.worldX, ptr.worldY));
+            } else {
+              q.cast(arena.buildNpcContext(arena.player.x, arena.player.y));
+            }
+          });
+          return true;
         },
-        setSpeedMult: (owner, mult) => {
-          if (owner === 'player') arena.playerSpeedMult = Math.max(0, mult);
-          else arena.npcSpeedMult = Math.max(0, mult);
-        },
-        lockPlayer: (durationMs) => {
-          arena.nukeChanneling = true;
-          arena.nukeChannelEnd = arena.time.now + durationMs;
-          (arena.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-        },
-        stunNpc: (ms) => { arena.npc.earthStunnedUntil = Math.max(arena.npc.earthStunnedUntil, arena.time.now + ms); },
+        earthGolem: (owner) => foreign(() => arena.earthKit.spawnEarthGolem(owner === 'player')),
+        oilTrain: (owner) => foreign(() => arena.oilKit.doStartTrainMorph(owner)),
+        iceFrozenSolidNoFrost: (owner, tx, ty) => foreign(() => {
+          if (owner === 'player') arena.iceKit.doFireFrozenSolid(tx, ty, true);
+          else arena.iceKit.doNpcFireFrozenSolid(tx, ty, true);
+        }),
+        timeAlwaysNoonForced: (owner) => foreign(() => arena.timeKit.doTimeAlwaysNoon(owner, true)),
+        lightSpeedOLight: (owner) => foreign(() => arena.lightKit.startSpeedOLight(owner, arena.time.now)),
+        echoEclipseDirect: (owner) => foreign(() => {
+          const target = owner === 'player' ? arena.npc : arena.player;
+          arena.echoKit.doEclipse(target.x, target.y, owner);
+        }),
+        magicNecronomicon: (owner) => foreign(() => {
+          if (owner === 'player') arena.magicKit.foreignOpenNecronomicon(arena.time.now);
+          else arena.magicKit.npcCastNecronomiconWedge(arena.player.x, arena.player.y);
+        }),
+        crystalClonePositions: (owner) => arena.crystalKit.getClonePositions(owner === 'player'),
       };
-      this.quantumElementKit = new QuantumElementKit(quantumApi);
+      this.subterfugeKit = new SubterfugeKit(subterfugeApi);
     }
 
     // Oil kit
@@ -3399,7 +3421,7 @@ export class ArenaScene extends Phaser.Scene {
       'gunpowder-explosive-retreat': 0xffaa33,
       'gunpowder-fire-at-will':   0xdd8833,
       'gunpowder-arsenal-expansion': 0xddaa44,
-      'gunpowder-final-ordinance': 0xff5522,
+      'gunpowder-blunderblast': 0xcfd4da,
       // Adrenaline
       'rubber-punch':       0xff5577,
       'rubber-sling':       0xff77aa,
@@ -3424,12 +3446,12 @@ export class ArenaScene extends Phaser.Scene {
       'echo-lantern':  0xffffaa,
       'echo-bat':      0x8888cc,
       'echo-eclipse':  0xffffff,
-      // Quantum (abstract combined: slime + fate)
-      'quantum-wave':      0xaa44ff,
-      'chaos-control':     0x8833cc,
-      'atom-vibration':    0x66ccff,
-      'quantum-mechanic':  0xdd88ff,
-      'atom-nhilego':      0x5511bb,
+      // Subterfuge (abstract combined: slime + fate)
+      'sub-cutter':    0xdd2233,
+      'sub-spray':     0xff4444,
+      'sub-recruit':   0x881122,
+      'sub-bribe':     0x66dd66,
+      'sub-treachery': 0x330033,
       // Silence (horror stealth remaster)
       'silence-stab':   0x442255,
       'silence-watch':  0x220033,
@@ -4117,7 +4139,7 @@ export class ArenaScene extends Phaser.Scene {
       gunpowderExplosiveRetreat: (tx, ty) => { this.gunpowderKit.doGunpowderExplosiveRetreat(tx, ty, 'player'); },
       gunpowderFireAtWill: (tx, ty) => { this.gunpowderKit.doGunpowderFireAtWill(tx, ty, 'player'); },
       gunpowderArsenalExpansion: () => { this.gunpowderKit.doGunpowderArsenalExpansion('player'); },
-      gunpowderFinalOrdinance: (tx, ty) => { this.gunpowderKit.doGunpowderFinalOrdinance(tx, ty, 'player'); },
+      gunpowderBlunderBlast: (tx, ty) => { this.gunpowderKit.doGunpowderBlunderBlast(tx, ty, 'player'); },
       // Rubber
       rubberPunch: (tx, ty, r) => { this.rubberKit.doRubberPunch(tx, ty, r, 'player'); },
       rubberSlingShotStart: (angle) => { this.rubberKit.doRubberSlingShotStart(angle, 'player'); },
@@ -4143,12 +4165,12 @@ export class ArenaScene extends Phaser.Scene {
       echoLantern: () => { /* handled in handleInput */ },
       echoBatForm: () => { /* handled in handleInput */ },
       echoEclipse: () => { /* handled in handleInput */ },
-      // Quantum (dispatched from kit via handleInput)
-      quantumWave: (tx, ty) => { this.quantumElementKit.doPlayerQuantumWave(tx, ty); },
-      quantumChaosControl: (tx, ty) => { this.quantumElementKit.doPlayerChaosControl(tx, ty); },
-      quantumAtomVibration: (tx, ty) => { this.quantumElementKit.doPlayerAtomVibration(tx, ty); },
-      quantumMechanic: (tx, ty) => { this.quantumElementKit.doPlayerMechanic(tx, ty); },
-      quantumAtomNhilego: (tx, ty) => { this.quantumElementKit.doPlayerAtomNhilego(tx, ty); },
+      // Subterfuge (dispatched from kit via handleInput; these are direct entries)
+      subterfugeCutter: (tx, ty) => { this.subterfugeKit.doPlayerCutter(tx, ty); },
+      subterfugeSpray: () => { /* hold-to-fire handled in SubterfugeKit.handleInput */ },
+      subterfugeRecruit: () => { /* handled in SubterfugeKit.handleInput */ },
+      subterfugeBribe: () => { /* handled in SubterfugeKit.handleInput */ },
+      subterfugeTreachery: () => { /* handled in SubterfugeKit.handleInput */ },
       hasPerk: (perkId) => this.hasPerk('player', perkId),
     };
   }
@@ -4443,7 +4465,7 @@ export class ArenaScene extends Phaser.Scene {
       gunpowderExplosiveRetreat: (tx, ty) => { this.gunpowderKit.doGunpowderExplosiveRetreat(tx, ty, 'npc'); },
       gunpowderFireAtWill: (tx, ty) => { this.gunpowderKit.doGunpowderFireAtWill(tx, ty, 'npc'); },
       gunpowderArsenalExpansion: () => { this.gunpowderKit.doGunpowderArsenalExpansion('npc'); },
-      gunpowderFinalOrdinance: (tx, ty) => { this.gunpowderKit.doGunpowderFinalOrdinance(tx, ty, 'npc'); },
+      gunpowderBlunderBlast: (tx, ty) => { this.gunpowderKit.doGunpowderBlunderBlast(tx, ty, 'npc'); },
       // Rubber
       rubberPunch: (tx, ty, r) => { this.rubberKit.doRubberPunch(tx, ty, r, 'npc'); },
       rubberSlingShotStart: (angle) => { this.rubberKit.doRubberSlingShotStart(angle, 'npc'); },
@@ -4469,12 +4491,12 @@ export class ArenaScene extends Phaser.Scene {
       echoLantern: (tx, ty) => this.echoKit.doNpcLantern(tx, ty),
       echoBatForm: (tx, ty) => this.echoKit.doNpcBatForm(tx, ty),
       echoEclipse: (tx, ty) => this.echoKit.doNpcEclipse(tx, ty),
-      // Quantum
-      quantumWave: (tx, ty) => this.quantumElementKit.doNpcQuantumWave(tx, ty),
-      quantumChaosControl: (tx, ty) => this.quantumElementKit.doNpcChaosControl(tx, ty),
-      quantumAtomVibration: (tx, ty) => this.quantumElementKit.doNpcAtomVibration(tx, ty),
-      quantumMechanic: (tx, ty) => this.quantumElementKit.doNpcMechanic(tx, ty),
-      quantumAtomNhilego: (tx, ty) => this.quantumElementKit.doNpcAtomNhilego(tx, ty),
+      // Subterfuge
+      subterfugeCutter: (tx, ty) => this.subterfugeKit.doNpcCutter(tx, ty),
+      subterfugeSpray: (tx, ty) => this.subterfugeKit.doNpcSpray(tx, ty),
+      subterfugeRecruit: () => this.subterfugeKit.doNpcRecruit(),
+      subterfugeBribe: (tx, ty) => this.subterfugeKit.doNpcBribe(tx, ty),
+      subterfugeTreachery: () => this.subterfugeKit.doNpcTreachery(),
       hasPerk: (perkId) => this.hasPerk('npc', perkId),
     };
   }
@@ -4631,7 +4653,7 @@ export class ArenaScene extends Phaser.Scene {
       gunpowderExplosiveRetreat: () => {},
       gunpowderFireAtWill: () => {},
       gunpowderArsenalExpansion: () => {},
-      gunpowderFinalOrdinance: () => {},
+      gunpowderBlunderBlast: () => {},
       // Rubber stubs
       rubberPunch: () => {}, rubberSlingShotStart: () => {}, rubberSlingShotRelease: () => {},
       rubberBounceForm: () => {}, rubberBandStart: () => {}, rubberage: () => {},
@@ -4652,11 +4674,11 @@ export class ArenaScene extends Phaser.Scene {
       silenceRitual: () => {},
       silenceFeast: () => {},
       silenceRun: () => {},
-      quantumWave: () => {},
-      quantumChaosControl: () => {},
-      quantumAtomVibration: () => {},
-      quantumMechanic: () => {},
-      quantumAtomNhilego: () => {},
+      subterfugeCutter: () => {},
+      subterfugeSpray: () => {},
+      subterfugeRecruit: () => {},
+      subterfugeBribe: () => {},
+      subterfugeTreachery: () => {},
       hasPerk: () => false,
     };
   }
@@ -4895,6 +4917,7 @@ export class ArenaScene extends Phaser.Scene {
   // ── Game over ────────────────────────────────────────────────────
 
   private hasUpgrade(slot: string): boolean {
+    if (this.foreignCastSuppress) return false;
     return this.activeUpgrades.includes(slot);
   }
 
@@ -4948,11 +4971,6 @@ export class ArenaScene extends Phaser.Scene {
       playerBody.setVelocity(0, 0);
     } else {
       playerBody.setVelocity(dx * 520 * this.cardDodgeLengthMult, dy * 520 * this.cardDodgeLengthMult);
-    }
-
-    // Quantum form-swap on dodge
-    if (this.elementId === 'quantum') {
-      this.quantumElementKit.toggleFormForDodge(this.time.now);
     }
 
     // Echo light trail on dodge (consumes a psychic eye if one is orbiting)
@@ -8063,7 +8081,6 @@ export class ArenaScene extends Phaser.Scene {
       if (time < this.soundKit.getHarmonyMoveSpeedUntil()) this.playerSpeedMult *= (1 + this.soundKit.getHarmonyMoveSpeedBonus());
     } else if (this.elementId === 'quantum') {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
-      this.playerSpeedMult *= this.quantumElementKit.getPlayerSpeedMult();
     } else if (this.elementId === 'water') {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
       // Water Mastery — Slipstream: +25% while standing in your own water.
@@ -8494,7 +8511,10 @@ export class ArenaScene extends Phaser.Scene {
     } else if (this.elementId === 'echo') {
       this.echoKit.handleInput(time, delta, pointer, mouseX, mouseY);
     } else if (this.elementId === 'quantum') {
-      this.quantumElementKit.handleInput(time, delta, pointer);
+      this.subterfugeKit.handleInput(time, delta, pointer);
+      // Dark Treachery magic-Q copy: while the stolen necronomicon wheel is open,
+      // route input to MagicKit (its handleInput early-returns into wheel-driving).
+      if (this.magicKit.isNecroWheelOpen()) this.magicKit.handleInput(time, delta, pointer, mouseX, mouseY);
     } else if (this.elementId === 'earth') {
       this.earthKit.handleInput(time, delta, pointer, mouseX, mouseY);
     } else if (this.elementId === 'light') {
@@ -9400,8 +9420,9 @@ export class ArenaScene extends Phaser.Scene {
       npcSilenceMatureStalker: this.silenceKit.getMatureStalkerPos('npc'),
       npcSilenceInvisible: this.npcElement.id === 'silence' && this.silenceKit.isInvisible('npc'),
       echoAttachActive: this.npcElement.id === 'echo' ? this.echoKit.isNpcBatAttaching() : false,
-      quantumMechanicActive: this.npcElement.id === 'quantum' ? this.quantumElementKit.isNpcMechanicActive() : false,
-      quantumNhilegoActive: this.npcElement.id === 'quantum' ? this.quantumElementKit.isNpcNhilegoActive() : false,
+      subMoney: this.npcElement.id === 'quantum' ? this.subterfugeKit.getNpcMoney() : 0,
+      subBullets: this.npcElement.id === 'quantum' ? this.subterfugeKit.getNpcBullets() : 0,
+      subLackeys: this.npcElement.id === 'quantum' ? this.subterfugeKit.getNpcLackeyCount() : 0,
     };
 
     const npcPreDashX = this.npc.x;
@@ -10464,7 +10485,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Quantum per-frame ─────────────────────────────────────────
     if (this.elementId === 'quantum' || this.npcElement.id === 'quantum') {
-      this.quantumElementKit.update(time, delta);
+      this.subterfugeKit.update(time, delta);
     }
 
     // ── Oil per-frame ─────────────────────────────────────────────

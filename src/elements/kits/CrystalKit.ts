@@ -812,6 +812,13 @@ export class CrystalKit {
     }
   }
 
+  /** Subterfuge Dark Treachery (crystal-Q copy): live clone positions so the kit
+   * can mirror dagger throws and Spray shots from each clone. */
+  getClonePositions(isPlayer: boolean): Array<{ x: number; y: number }> {
+    const list = isPlayer ? this.crystalClones : this.npcCrystalClones;
+    return list.filter(cl => cl.sprite?.active && cl.hp > 0).map(cl => ({ x: cl.sprite.x, y: cl.sprite.y }));
+  }
+
   // ── Diamond Shard (kite) helpers ────────────────────────────────────────
 
   private spawnKite(x: number, y: number, tx: number, ty: number, damage: number, isFromPlayer: boolean, wallBounce: boolean): void {

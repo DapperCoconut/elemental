@@ -37,14 +37,14 @@ const gunpowderArsenalExpansionAbility: Ability = {
   cast(ctx) { ctx.gunpowderArsenalExpansion(); },
 };
 
-const gunpowderFinalOrdinanceAbility: Ability = {
-  id: 'gunpowder-final-ordinance',
-  name: 'Final Ordinance',
-  description: 'Call down a barrage of explosives that track your cursor as they fall. After a 2s delay, 6 blasts rain down on your cursor in quick succession — decent damage each, plus a 0.5s stun.',
+const gunpowderBlunderBlastAbility: Ability = {
+  id: 'gunpowder-blunderblast',
+  name: 'BlunderBlast',
+  description: 'Open a silver vacuum cone in front of you for 5s — any enemy projectile that drifts into it is swallowed. Once the cone closes, your next Musket Shot coughs the whole hoard back out in a fan, each shot dealing 100% more damage.',
   displayKey: 'Q',
   isUltimate: true,
-  cooldown: 35000,
-  cast(ctx) { ctx.gunpowderFinalOrdinance(ctx.targetX, ctx.targetY); },
+  cooldown: 20000,
+  cast(ctx) { ctx.gunpowderBlunderBlast(ctx.targetX, ctx.targetY); },
 };
 
 export const gunpowderElement: Element = {
@@ -57,6 +57,6 @@ export const gunpowderElement: Element = {
     gunpowderExplosiveRetreatAbility,
     gunpowderFireAtWillAbility,
     gunpowderArsenalExpansionAbility,
-    gunpowderFinalOrdinanceAbility,
+    gunpowderBlunderBlastAbility,
   ],
 };

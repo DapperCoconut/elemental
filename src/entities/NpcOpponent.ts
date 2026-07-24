@@ -85,9 +85,9 @@ export interface NpcAiState {
   // Echo — no persistent ai state needed
   echoAttachActive?: boolean;
   // Quantum
-  quantumVibrationActive?: boolean;
-  quantumMechanicActive?: boolean;
-  quantumNhilegoActive?: boolean;
+  subMoney?: number;
+  subBullets?: number;
+  subLackeys?: number;
 }
 
 export class NpcOpponent extends Fighter {
@@ -350,7 +350,7 @@ export class NpcOpponent extends Fighter {
       return this.doEchoAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
     if (this.element.id === 'quantum') {
-      return this.doQuantumAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+      return this.doSubterfugeAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
     return null;
   }
@@ -1350,9 +1350,9 @@ export class NpcOpponent extends Fighter {
         if (this.castAbility('gunpowder-arsenal-expansion', buildContext(aimX, aimY))) return 'gunpowder-arsenal-expansion';
       }
 
-      // Final Ordinance at the enemy's position when in range
+      // BlunderBlast — open the vacuum cone toward the enemy when in range
       if (dist < 500) {
-        if (this.castAbility('gunpowder-final-ordinance', buildContext(aimX, aimY))) return 'gunpowder-final-ordinance';
+        if (this.castAbility('gunpowder-blunderblast', buildContext(aimX, aimY))) return 'gunpowder-blunderblast';
       }
 
       // Fire at Will as the main damage dump once weapons are equipped
@@ -1688,7 +1688,7 @@ export class NpcOpponent extends Fighter {
     return null;
   }
 
-  private doQuantumAbilities(
+  private doSubterfugeAbilities(
     _target: Fighter,
     buildContext: (tX: number, tY: number) => CastContext,
     _time: number,
@@ -1699,34 +1699,32 @@ export class NpcOpponent extends Fighter {
     aiState: NpcAiState,
   ): string | null {
     const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-
-    // Detonate vibration — absolute priority if vibration is ticking on target
-    if (aiState.quantumVibrationActive) {
-      if (this.castAbility('atom-vibration', buildContext(aimX, aimY))) return 'atom-vibration';
-    }
+    const money = aiState.subMoney ?? 0;
+    const bullets = aiState.subBullets ?? 0;
+    const lackeys = aiState.subLackeys ?? 0;
 
     if (!skip) {
-      // Q: Atom-Nhilego occasionally at moderate HP
-      if (!aiState.quantumNhilegoActive && hpRatio < 0.75 && Math.random() < 0.05) {
-        if (this.castAbility('atom-nhilego', buildContext(aimX, aimY))) return 'atom-nhilego';
+      // Q: Dark Treachery — steal the player's ultimate once things get serious
+      if (hpRatio < 0.85 && Math.random() < 0.04) {
+        if (this.castAbility('sub-treachery', buildContext(aimX, aimY))) return 'sub-treachery';
       }
-      // F: Quantum Mechanic — panic at low HP, in range
-      if (!aiState.quantumMechanicActive && hpRatio < 0.5 && dist < 260) {
-        if (this.castAbility('quantum-mechanic', buildContext(aimX, aimY))) return 'quantum-mechanic';
+      // R: Recruit — keep a couple of lackeys on the payroll
+      if (money >= 1 && lackeys < 2 && Math.random() < 0.05) {
+        if (this.castAbility('sub-recruit', buildContext(aimX, aimY))) return 'sub-recruit';
       }
-      // R: Atom Vibration — close-range lunge
-      if (!aiState.quantumVibrationActive && dist < 220) {
-        if (this.castAbility('atom-vibration', buildContext(aimX, aimY))) return 'atom-vibration';
+      // F: Bribe — occasionally, and only with money to spare
+      if (money >= 2 && Math.random() < 0.02) {
+        if (this.castAbility('sub-bribe', buildContext(aimX, aimY))) return 'sub-bribe';
       }
-      // E: Chaos Control — mid-range AoE
-      if (dist < 300) {
-        if (this.castAbility('chaos-control', buildContext(aimX, aimY))) return 'chaos-control';
+      // E: Spray — burst fire at mid range; also buys a reload when dry
+      if (dist < 420 && (bullets > 0 || money >= 1)) {
+        if (this.castAbility('sub-spray', buildContext(aimX, aimY))) return 'sub-spray';
       }
     }
 
-    // Click: Wave Reducer spam at range
+    // Click: Molecular Cutter dagger cadence at range
     if (dist < 500 && (this.aiState === 'attack' || this.aiState === 'chase')) {
-      if (this.castAbility('quantum-wave', buildContext(aimX, aimY))) return 'quantum-wave';
+      if (this.castAbility('sub-cutter', buildContext(aimX, aimY))) return 'sub-cutter';
     }
 
     return null;

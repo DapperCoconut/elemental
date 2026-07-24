@@ -676,7 +676,8 @@ export class LightKit {
 
   // ── Speed 'O' Light ──────────────────────────────────────────────────────
 
-  private startSpeedOLight(owner: 'player' | 'npc', time: number): void {
+  /** Public: also triggered by Subterfuge's Dark Treachery (light-Q copy). */
+  startSpeedOLight(owner: 'player' | 'npc', time: number): void {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     caster.dodgeChance += 1.0;
     if (owner === 'player') {

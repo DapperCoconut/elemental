@@ -224,7 +224,7 @@ export const ALL_PERKS: ElementPerks[] = [
   {
     elementId: 'gunpowder',
     // Gunpowder (formerly Death) was reworked into an arsenal kit (Musket Shot/Explosive Retreat/
-    // Fire at Will/Arsenal Expansion/Final Ordinance) — the old "Corruption" and "Demon"
+    // Fire at Will/Arsenal Expansion/BlunderBlast) — the old "Corruption" and "Demon"
     // perks enhanced the removed River Styx and 1000 Blades mechanics. Left blank until redesigned.
     perks: [],
   },

@@ -1012,12 +1012,13 @@ export class TimeKit {
     }
   }
 
-  doTimeAlwaysNoon(owner: 'player' | 'npc'): void {
+  /** `force` — Subterfuge's Dark Treachery time-Q copy activates without any bounty charge. */
+  doTimeAlwaysNoon(owner: 'player' | 'npc', force = false): void {
     const { scene, player, npc, projectiles } = this.arena;
     const time = scene.time.now;
 
     if (owner === 'player') {
-      const wasAtMax = this.timelessCharge >= 10000;
+      const wasAtMax = force || this.timelessCharge >= 10000;
       // Convert bounty → energy (overflow discarded)
       this.timelessCharge = Math.min(10000, this.timelessCharge + this.playerBountyFloat * 1000);
       this.playerBountyFloat = 0; this.playerBountyAccum = 0;
@@ -1050,7 +1051,7 @@ export class TimeKit {
         .rectangle(width / 2, height / 2, width, height, 0x888888, 0.35)
         .setDepth(6).setScrollFactor(0);
     } else {
-      const wasAtMax = this.npcTimelessCharge >= 10000;
+      const wasAtMax = force || this.npcTimelessCharge >= 10000;
       this.npcTimelessCharge = Math.min(10000, this.npcTimelessCharge + this.npcBountyFloat * 1000);
       this.npcBountyFloat = 0; this.npcBountyAccum = 0;
       if (!wasAtMax || this.npcTimelessActive) return;

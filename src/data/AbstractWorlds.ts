@@ -26,7 +26,7 @@ export const ABSTRACT_WORLDS: World[] = [
   // Tier 2: light children
   { id: 'magic',       name: 'Magic',       emoji: '📖', color: 0x9944ff, parentId: 'light', mapX: 720, mapY: 390, nodes: makeNodes('magic') },
   { id: 'technology',  name: 'Technology',  emoji: '💻', color: 0x44ccaa, parentId: 'light', mapX: 820, mapY: 390, nodes: makeNodes('technology') },
-  { id: 'quantum',     name: 'Quantum',     emoji: '⚛️',  color: 0xaa44ff, parentId: 'light', mapX: 920, mapY: 390, nodes: makeNodes('quantum') },
+  { id: 'quantum',     name: 'Subterfuge',  emoji: '🕴️',  color: 0xcc2233, parentId: 'light', mapX: 920, mapY: 390, nodes: makeNodes('quantum') },
 ];
 
 export function getAbstractWorld(id: string): World | undefined {

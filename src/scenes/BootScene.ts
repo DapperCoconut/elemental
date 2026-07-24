@@ -854,31 +854,32 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('elem-echo', 48, 48);
     gfx.clear();
 
-    // ── Quantum element (abstract combined: slime + fate) ────────────────────
+    // ── Subterfuge element (abstract combined: slime + fate; id 'quantum') ───
 
-    // elem-quantum — deep purple circle with orbital arcs
-    gfx.fillStyle(0x330066, 1);
+    // elem-quantum — black circle with red trim: a shady suit with a red tie
+    gfx.fillStyle(0x141414, 1);
     gfx.fillCircle(24, 24, 22);
-    gfx.lineStyle(3, 0xaa44ff, 1);
+    gfx.lineStyle(3, 0xcc2233, 1);
     gfx.strokeCircle(24, 24, 22);
-    // horizontal orbital ellipse
-    gfx.lineStyle(2, 0xcc88ff, 0.9);
+    // white collar wedge
+    gfx.fillStyle(0xdddddd, 1);
+    gfx.fillTriangle(24, 18, 17, 10, 31, 10);
+    // red tie
+    gfx.fillStyle(0xcc2233, 1);
+    gfx.fillTriangle(24, 18, 20, 26, 28, 26);
+    gfx.fillTriangle(24, 34, 20, 26, 28, 26);
+    // shoulder accents
+    gfx.lineStyle(2, 0x882222, 0.9);
     gfx.beginPath();
     gfx.arc(24, 24, 14, Math.PI * 0.15, Math.PI * 0.85, false);
     gfx.strokePath();
-    gfx.beginPath();
-    gfx.arc(24, 24, 14, Math.PI * 1.15, Math.PI * 1.85, false);
-    gfx.strokePath();
-    // nucleus dot
-    gfx.fillStyle(0xee99ff, 1);
-    gfx.fillCircle(24, 24, 4);
     gfx.generateTexture('elem-quantum', 48, 48);
     gfx.clear();
 
-    // proj-quantum — small purple orb
-    gfx.fillStyle(0xaa44ff, 1);
+    // proj-quantum — small red-black orb (kept for compatibility)
+    gfx.fillStyle(0x1a1a1a, 1);
     gfx.fillCircle(5, 5, 5);
-    gfx.lineStyle(1, 0xee99ff, 1);
+    gfx.lineStyle(1, 0xcc2233, 1);
     gfx.strokeCircle(5, 5, 4);
     gfx.generateTexture('proj-quantum', 10, 10);
     gfx.clear();

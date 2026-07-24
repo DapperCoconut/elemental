@@ -758,7 +758,8 @@ export class IceKit {
     if (this.arena.hasPerk('player', 'rink')) this.playerSkateRecentUntil = time + 2000;
   }
 
-  doFireFrozenSolid(tx: number, ty: number): void {
+  /** `noFrostStacks` — Subterfuge's Dark Treachery ice-Q copy freezes without applying frost. */
+  doFireFrozenSolid(tx: number, ty: number, noFrostStacks = false): void {
     const { player, enemies, scene } = this.arena;
     const time = scene.time.now;
     const isBlackIce = this.playerBlackIceMorphActive;
@@ -772,7 +773,7 @@ export class IceKit {
         if (t.frozenUntil > time) {
           t.frozenUntil = 0;
           this.arena.spawnHitFlash(t.x, t.y, isBlackIce ? 0x9900ff : 0x88ccff);
-          for (let fi = 0; fi < 3; fi++) this.addFrostStackTo(t);
+          if (!noFrostStacks) { for (let fi = 0; fi < 3; fi++) this.addFrostStackTo(t); }
         } else {
           t.frozenUntil = time + 3000;
           this.arena.spawnHitFlash(t.x, t.y, isBlackIce ? 0x9900ff : 0x88ccff);
@@ -851,7 +852,7 @@ export class IceKit {
     if (this.arena.hasPerk('npc', 'rink')) this.npcSkateRecentUntil = time + 2000;
   }
 
-  doNpcFireFrozenSolid(tx: number, ty: number): void {
+  doNpcFireFrozenSolid(tx: number, ty: number, noFrostStacks = false): void {
     const { player, npc, scene } = this.arena;
     const time = scene.time.now;
     const angle = Math.atan2(ty - npc.y, tx - npc.x);
@@ -861,7 +862,7 @@ export class IceKit {
     if (diff <= Math.PI / 8) {
       if (this.playerFrozenUntil > time) {
         this.playerFrozenUntil = 0;
-        for (let fi = 0; fi < 3; fi++) this.addFrostStack('player');
+        if (!noFrostStacks) { for (let fi = 0; fi < 3; fi++) this.addFrostStack('player'); }
       } else {
         this.playerFrozenUntil = time + 3000;
         this.arena.spawnHitFlash(player.x, player.y, 0x88ccff);

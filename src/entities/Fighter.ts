@@ -38,8 +38,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Quantum blue E: gray "weak HP" layer. Absorbs damage like shield HP (bonus), but decays 3/s. */
   public weakHp = 0;
   public incomingDamageMultiplier = 1;
-  /** Quantum element blue-form damage reduction (0.85 in blue form, 1 otherwise). Multiplied in takeDamage. */
-  public quantumIncomingMult = 1;
+  /** Subterfuge Bribe: 0.75 while this fighter's attacker is bribed (victim-side stand-in for "deals 25% less"). */
+  public bribeIncomingMult = 1;
   public chargeRatio = 0;   // 0–1, drives the yellow charge bar in HealthBar
   public chargeColor = 0xffdd00; // charge-bar fill color (Rubber Bazooka reddens it while overcharging)
   public lastIncomingDamage = 0; // set in takeDamage() before shield check — used by reflect upgrades
@@ -298,7 +298,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       amount = Math.round(amount * (critCtx?.mult ?? 2));
     }
 
-    amount = Math.round(amount * this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.quantumIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult);
+    amount = Math.round(amount * this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult);
     if (this.darkVulnStacks > 0) amount = Math.round(amount * (1 + 0.25 * this.darkVulnStacks));
     // Fire Mastery — Heatwave: exposed amplifies the next hit, then is consumed.
     // Fire damage-over-time is exempt on both counts: burn/molten ticks are neither

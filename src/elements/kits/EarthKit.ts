@@ -1321,7 +1321,9 @@ export class EarthKit {
     }
   }
 
-  private spawnEarthGolem(isPlayer: boolean): void {
+  /** Public: also triggered by Subterfuge's Dark Treachery (earth-Q copy — the
+   * summoner keeps attacking normally since Subterfuge has no golem input takeover). */
+  spawnEarthGolem(isPlayer: boolean): void {
     const player = this.arena.player;
     const npc = this.arena.npc;
     const scene = this.arena.scene;

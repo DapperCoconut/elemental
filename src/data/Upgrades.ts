@@ -644,8 +644,8 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
       {
         slot: 'q',
         displayKey: 'Q',
-        name: 'Shock and Awe',
-        description: 'Final Ordinance also scatters 6 random blasts across the whole arena. 3 detonate normally; 3 land as unexploded ordinance — shoot it or step on it (dashing you forward, unharmed) to set it off. If the enemy steps on one, it goes off in their face.',
+        name: 'Vortex Cannon',
+        description: "BlunderBlast's vacuum cone is bigger and wider, and the swallowed hoard is coughed back out dealing 150% more damage instead of 100%.",
         price: 750,
         currency: 'corrupt',
       },

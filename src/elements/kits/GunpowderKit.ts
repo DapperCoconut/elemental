@@ -39,6 +39,17 @@ const ARSENAL_MAX = 3;
 const ARSENAL_MAX_R_UPGRADED = 6;
 const FIRE_AT_WILL_BASE_CD = 9000;
 
+// ── BlunderBlast (Q) — a silver vacuum cone that swallows enemy projectiles for
+//    5s, then coughs the whole hoard back out (double damage) on the next shot. ──
+const BLUNDERBLAST_DURATION = 5000;
+const BLUNDERBLAST_RADIUS = 180;
+const BLUNDERBLAST_HALF_ANGLE = Math.PI / 12; // 15° half → 30° cone
+const BLUNDERBLAST_RADIUS_Q = 240;
+const BLUNDERBLAST_HALF_ANGLE_Q = Math.PI / 8; // 22.5° half → 45° cone (Q+)
+const BLUNDERBLAST_BLAST_SPREAD = Math.PI / 6; // 30° fan when the hoard is coughed back out
+const BLUNDERBLAST_COLOR = 0xcfd4da; // silver
+const BLUNDERBLAST_MAX_CAPTURE = 30;
+
 // Musket heat colors — dropped muskets fade hot red -> orange -> normal as they cool.
 const MUSKET_HOT_FILL = 0xdd2222;
 const MUSKET_WARM_FILL = 0xff8800;
@@ -125,28 +136,11 @@ interface RayBullet {
   owner: 'player' | 'npc';
 }
 
-interface OrdinanceBlast {
-  x: number;
-  y: number;
-  /** Fixed offset from the caster's current aim point — preserves the formation shape while it follows. */
-  offsetX: number;
-  offsetY: number;
-  warnGfx: Phaser.GameObjects.Arc;
-  spawnAt: number;
-  triggerAt: number;
-  owner: 'player' | 'npc';
-  /** False for Q+'s screen-wide random ordinance — those hold their random spot instead of following the cursor. */
-  tracking: boolean;
-  /** Q+ only: this one won't detonate — it lands as unexploded ordinance instead. */
-  dud?: boolean;
-}
-
-interface Uxo {
-  gfx: Phaser.GameObjects.Rectangle;
-  emoji: Phaser.GameObjects.Text;
-  x: number;
-  y: number;
-  owner: 'player' | 'npc';
+/** A projectile swallowed by BlunderBlast — only its texture + damage are kept so it
+ *  can be re-spawned facing the other way when the hoard is released. */
+interface CapturedShot {
+  textureKey: string;
+  damage: number;
 }
 
 interface ArsenalSlot {
@@ -235,9 +229,13 @@ export class GunpowderKit {
   private flameClouds: FlameCloud[] = [];
   private rayBullets: RayBullet[] = [];
 
-  // ── Final Ordinance / Shock and Awe (Q+) ─────────────────────────────────
-  private ordinanceBlasts: OrdinanceBlast[] = [];
-  private uxos: Uxo[] = [];
+  // ── BlunderBlast (Q) ──────────────────────────────────────────────────────
+  private playerVacuumUntil = 0;
+  private npcVacuumUntil = 0;
+  private playerVacuumCone: Phaser.GameObjects.Graphics | null = null;
+  private npcVacuumCone: Phaser.GameObjects.Graphics | null = null;
+  private playerCaptured: CapturedShot[] = [];
+  private npcCaptured: CapturedShot[] = [];
   private lastMouseX = 0;
   private lastMouseY = 0;
 
@@ -278,10 +276,14 @@ export class GunpowderKit {
     for (const b of this.rayBullets) b.sprite.destroy();
     this.rayBullets = [];
 
-    for (const b of this.ordinanceBlasts) b.warnGfx.destroy();
-    this.ordinanceBlasts = [];
-    for (const u of this.uxos) { u.gfx.destroy(); u.emoji.destroy(); }
-    this.uxos = [];
+    this.playerVacuumCone?.destroy();
+    this.npcVacuumCone?.destroy();
+    this.playerVacuumCone = null;
+    this.npcVacuumCone = null;
+    this.playerVacuumUntil = 0;
+    this.npcVacuumUntil = 0;
+    this.playerCaptured = [];
+    this.npcCaptured = [];
 
     this.playerArsenal = [];
     this.npcArsenal = [];
@@ -344,9 +346,9 @@ export class GunpowderKit {
       else player.castAbility('gunpowder-arsenal-expansion', ctx());
     }
 
-    // ── Q: Final Ordinance ───────────────────────────────────────────────
+    // ── Q: BlunderBlast ──────────────────────────────────────────────────
     if (Phaser.Input.Keyboard.JustDown(qKey) && !this.menuOpen) {
-      player.castAbility('gunpowder-final-ordinance', ctx());
+      player.castAbility('gunpowder-blunderblast', ctx());
     }
   }
 
@@ -358,9 +360,7 @@ export class GunpowderKit {
     this.updateRockets(time, delta);
     this.updateFlameClouds(time, delta);
     this.updateRayBullets(time, delta);
-    this.updateOrdinance(time, delta);
-    this.updateUxoSteps();
-    this.checkProjectileUxoHits();
+    this.updateBlunderBlast(time);
     this.updateStuns(time);
     this.updateBuffs(time);
   }
@@ -410,6 +410,10 @@ export class GunpowderKit {
   // ── Public do* methods (called from ArenaScene CastContext wiring) ─────────
 
   doGunpowderMusketShot(tx: number, ty: number, owner: 'player' | 'npc'): void {
+    // BlunderBlast: if a swallowed hoard is armed, this shot coughs it all back out
+    // *instead* of firing a musket ball — no ammo spent, no musket dropped.
+    if (this.releaseBlunderHoard(tx, ty, owner)) return;
+
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const ammo = owner === 'player' ? this.playerAmmo : this.npcAmmo;
     if (ammo <= 0) {
@@ -427,7 +431,16 @@ export class GunpowderKit {
     const { scene } = this.arena;
     const hotMs = 12000 * (owner === 'player' ? this.musketCoolMult() : 1);
 
-    // Click+ Attached Bayonet: the musket itself is thrown to the cursor instead of fired.
+    // Fire the bullet — always, regardless of the Click+ bayonet upgrade.
+    const rifleCount = (owner === 'player' ? this.playerArsenal : this.npcArsenal).filter((s) => s.type === 'rifle').length;
+    const dmg = Math.round(35 * (1 + 0.25 * rifleCount));
+
+    const proj = new Projectile(this.arena.scene, caster.x, caster.y, 'proj-gunpowder-musket', dmg, owner === 'player');
+    this.arena.projectiles.add(proj);
+    proj.launch(nx * 900, ny * 900);
+    proj.setRotation(angle);
+
+    // Click+ Attached Bayonet: instead of dropping the spent musket behind, hurl it to the cursor.
     if (owner === 'player' && this.arena.hasUpgrade('click')) {
       const speed = 640;
       const gfx = scene.add.rectangle(caster.x, caster.y, 40, 6, MUSKET_HOT_FILL, 0.95)
@@ -443,14 +456,6 @@ export class GunpowderKit {
       });
       return;
     }
-
-    const rifleCount = (owner === 'player' ? this.playerArsenal : this.npcArsenal).filter((s) => s.type === 'rifle').length;
-    const dmg = Math.round(35 * (1 + 0.25 * rifleCount));
-
-    const proj = new Projectile(this.arena.scene, caster.x, caster.y, 'proj-gunpowder-musket', dmg, owner === 'player');
-    this.arena.projectiles.add(proj);
-    proj.launch(nx * 900, ny * 900);
-    proj.setRotation(angle);
 
     // Drop the spent musket behind the caster — hot (red, fading through orange to normal) then pick-up-able.
     const dropX = caster.x - nx * 68, dropY = caster.y - ny * 68;
@@ -559,49 +564,106 @@ export class GunpowderKit {
     caster.resetCooldown('gunpowder-arsenal-expansion');
   }
 
-  doGunpowderFinalOrdinance(tx: number, ty: number, owner: 'player' | 'npc'): void {
+  doGunpowderBlunderBlast(tx: number, ty: number, owner: 'player' | 'npc'): void {
+    void tx; void ty; // aim is read live each frame while the cone is open
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const { scene } = this.arena;
     const now = scene.time.now;
+
+    if (owner === 'player') {
+      this.playerVacuumUntil = now + BLUNDERBLAST_DURATION;
+      this.playerCaptured = [];
+      if (!this.playerVacuumCone) this.playerVacuumCone = scene.add.graphics().setDepth(2);
+    } else {
+      this.npcVacuumUntil = now + BLUNDERBLAST_DURATION;
+      this.npcCaptured = [];
+      if (!this.npcVacuumCone) this.npcVacuumCone = scene.add.graphics().setDepth(2);
+    }
+    this.arena.showFloatingText(caster.x, caster.y - 40, '🌀 BLUNDERBLAST', '#cfd4da');
+  }
+
+  // ── BlunderBlast per-frame vacuum ──────────────────────────────────────────
+
+  private updateBlunderBlast(time: number): void {
+    this.updateVacuumCone('player', time);
+    this.updateVacuumCone('npc', time);
+  }
+
+  private updateVacuumCone(owner: 'player' | 'npc', time: number): void {
+    const cone = owner === 'player' ? this.playerVacuumCone : this.npcVacuumCone;
+    const until = owner === 'player' ? this.playerVacuumUntil : this.npcVacuumUntil;
+    if (time >= until) { cone?.clear(); return; } // window closed — hoard stays armed for the next shot
+
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    // Player aims at the cursor; the NPC aims at the player.
+    const aimX = owner === 'player' ? this.lastMouseX : this.arena.player.x;
+    const aimY = owner === 'player' ? this.lastMouseY : this.arena.player.y;
+    const dir = Math.atan2(aimY - caster.y, aimX - caster.x);
     const upgraded = owner === 'player' && this.arena.hasUpgrade('q');
-    const count = upgraded ? 8 : 6;
+    const radius = upgraded ? BLUNDERBLAST_RADIUS_Q : BLUNDERBLAST_RADIUS;
+    const half = upgraded ? BLUNDERBLAST_HALF_ANGLE_Q : BLUNDERBLAST_HALF_ANGLE;
 
-    for (let i = 0; i < count; i++) {
-      // No spatial offset — every blast tracks the caster's aim point directly.
-      const offsetX = 0;
-      const offsetY = 0;
-      const bx = tx + offsetX;
-      const by = ty + offsetY;
-      const warnGfx = scene.add.circle(bx, by, 30, 0xff3300, 0.25)
-        .setStrokeStyle(2, 0xff5522, 0.8).setDepth(6) as Phaser.GameObjects.Arc;
-      this.ordinanceBlasts.push({
-        x: bx, y: by, offsetX, offsetY, warnGfx, spawnAt: now, triggerAt: now + 2000 + i * 100, owner,
-        tracking: true,
-      });
+    if (cone) {
+      const alpha = 0.14 + 0.06 * Math.sin(time / 110);
+      cone.clear();
+      cone.fillStyle(BLUNDERBLAST_COLOR, alpha);
+      cone.lineStyle(2, BLUNDERBLAST_COLOR, 0.75);
+      cone.beginPath();
+      cone.moveTo(caster.x, caster.y);
+      cone.arc(caster.x, caster.y, radius, dir - half, dir + half, false);
+      cone.closePath();
+      cone.fillPath();
+      cone.strokePath();
     }
-    this.arena.showFloatingText(caster.x, caster.y - 40, '💥 FINAL ORDINANCE', '#ff5522');
 
-    // Q+ Shock and Awe: 6 random blasts scattered across the whole arena, 3 of which are duds
-    // that land as unexploded ordinance instead of detonating.
-    if (upgraded) {
-      const wb = this.arena.scene.physics.world.bounds;
-      const margin = 40;
-      const dudIdx = new Set<number>();
-      while (dudIdx.size < 3) dudIdx.add(Math.floor(Math.random() * 6));
-
-      for (let i = 0; i < 6; i++) {
-        const bx = Phaser.Math.Between(wb.x + margin, wb.x + wb.width - margin);
-        const by = Phaser.Math.Between(wb.y + margin, wb.y + wb.height - margin);
-        const dud = dudIdx.has(i);
-        const warnGfx = scene.add.circle(bx, by, 26, dud ? 0x999933 : 0xff3300, 0.22)
-          .setStrokeStyle(2, dud ? 0xcccc33 : 0xff5522, 0.7).setDepth(6) as Phaser.GameObjects.Arc;
-        this.ordinanceBlasts.push({
-          x: bx, y: by, offsetX: 0, offsetY: 0, warnGfx, spawnAt: now, triggerAt: now + 1600 + i * 220, owner,
-          tracking: false, dud,
-        });
-      }
-      this.arena.showFloatingText(caster.x, caster.y - 60, '☢ SHOCK AND AWE', '#cccc33');
+    // Swallow the opponent's projectiles that drift into the cone.
+    const captured = owner === 'player' ? this.playerCaptured : this.npcCaptured;
+    if (captured.length >= BLUNDERBLAST_MAX_CAPTURE) return;
+    const wantFromPlayer = owner === 'npc'; // capture the *other* fighter's shots
+    for (const obj of this.arena.projectiles.getChildren().slice()) {
+      const p = obj as Projectile;
+      if (!p.active || p.isHeal || p.isFromPlayer !== wantFromPlayer) continue;
+      if (Phaser.Math.Distance.Between(caster.x, caster.y, p.x, p.y) > radius) continue;
+      const ang = Math.atan2(p.y - caster.y, p.x - caster.x);
+      if (Math.abs(Phaser.Math.Angle.Wrap(ang - dir)) > half) continue;
+      captured.push({ textureKey: p.texture.key, damage: p.damage });
+      this.arena.spawnHitFlash(p.x, p.y, BLUNDERBLAST_COLOR);
+      p.destroy();
+      if (captured.length >= BLUNDERBLAST_MAX_CAPTURE) break;
     }
+  }
+
+  /** On the first shot after the vacuum window closes, cough the whole hoard back out
+   *  in a cone toward the aim point, each shot dealing 100% more damage (150% with Q+). */
+  private releaseBlunderHoard(tx: number, ty: number, owner: 'player' | 'npc'): boolean {
+    const now = this.arena.scene.time.now;
+    const until = owner === 'player' ? this.playerVacuumUntil : this.npcVacuumUntil;
+    if (now < until) return false; // still vacuuming — not armed yet
+    const captured = owner === 'player' ? this.playerCaptured : this.npcCaptured;
+    if (captured.length === 0) return false;
+
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    const upgraded = owner === 'player' && this.arena.hasUpgrade('q');
+    const dmgMult = upgraded ? 2.5 : 2;
+    const baseAngle = Math.atan2(ty - caster.y, tx - caster.x);
+    const n = captured.length;
+    const spread = Math.min(BLUNDERBLAST_BLAST_SPREAD, 0.16 * (n - 1)); // fan widens with the hoard, capped at 30°
+
+    for (let i = 0; i < n; i++) {
+      const c = captured[i];
+      const t = n === 1 ? 0 : i / (n - 1) - 0.5; // -0.5..0.5 across the fan
+      const ang = baseAngle + t * spread;
+      const dmg = Math.max(1, Math.round(c.damage * dmgMult));
+      const proj = new Projectile(this.arena.scene, caster.x, caster.y, c.textureKey, dmg, owner === 'player');
+      this.arena.projectiles.add(proj);
+      proj.launch(Math.cos(ang) * 820, Math.sin(ang) * 820);
+      proj.setRotation(ang);
+    }
+
+    if (owner === 'player') this.playerCaptured = [];
+    else this.npcCaptured = [];
+    this.arena.showFloatingText(caster.x, caster.y - 55, `🌀 BLUNDERBLAST ×${n}`, '#cfd4da');
+    return true;
   }
 
   // ── Weapon firing (used by Fire at Will) ────────────────────────────────────
@@ -709,16 +771,6 @@ export class GunpowderKit {
     gfx.strokePath();
     scene.tweens.add({ targets: gfx, alpha: 0, duration: 100, onComplete: () => gfx.destroy() });
 
-    // Any gun can detonate a UXO it passes near.
-    for (let i = this.uxos.length - 1; i >= 0; i--) {
-      const u = this.uxos[i];
-      const ux = u.x - caster.x, uy = u.y - caster.y;
-      const proj = ux * dx + uy * dy;
-      if (proj < 0 || proj > range) continue;
-      const perpX = ux - dx * proj, perpY = uy - dy * proj;
-      if (Math.sqrt(perpX * perpX + perpY * perpY) <= 18) this.detonateUxo(i);
-    }
-
     if (!target.active || target.hp <= 0) return false;
     const tx = target.x - caster.x, ty = target.y - caster.y;
     const proj = tx * dx + ty * dy;
@@ -759,7 +811,7 @@ export class GunpowderKit {
     }
   }
 
-  /** F+ RPG: explosive rocket that detonates on proximity to the enemy, a UXO, or its max range/lifetime. */
+  /** F+ RPG: explosive rocket that detonates on proximity to the enemy, or at its max range/lifetime. */
   private launchRocket(owner: 'player' | 'npc', angle: number): void {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const { scene } = this.arena;
@@ -843,8 +895,6 @@ export class GunpowderKit {
           m.flying = false;
         }
 
-        if (m.flying && this.tryDetonateUxoNear(m.x, m.y, 24)) m.flying = false;
-
         if (m.flying && Phaser.Math.Distance.Between(m.x, m.y, m.targetX!, m.targetY!) <= 12) {
           m.flying = false;
         }
@@ -920,12 +970,10 @@ export class GunpowderKit {
 
       const target = r.owner === 'player' ? this.arena.npc : this.arena.player;
       const hitTarget = target.active && target.hp > 0 && Phaser.Math.Distance.Between(r.x, r.y, target.x, target.y) <= 30;
-      const hitUxo = !hitTarget && this.tryDetonateUxoNear(r.x, r.y, 24);
       const traveled = Phaser.Math.Distance.Between(r.spawnX, r.spawnY, r.x, r.y);
       const outOfBounds = r.x < wb.x || r.x > wb.x + wb.width || r.y < wb.y || r.y > wb.y + wb.height;
 
       if (hitTarget) { this.explodeRocket(r); this.rockets.splice(i, 1); continue; }
-      if (hitUxo) { r.sprite.destroy(); this.rockets.splice(i, 1); continue; }
       if (traveled > 620 || time - r.spawnAt > 1600 || outOfBounds) {
         this.explodeRocket(r);
         this.rockets.splice(i, 1);
@@ -982,147 +1030,9 @@ export class GunpowderKit {
         b.lastHitAt = time;
       }
 
-      if (this.tryDetonateUxoNear(b.x, b.y, 20)) {
-        b.sprite.destroy();
-        this.rayBullets.splice(i, 1);
-        continue;
-      }
-
       if (b.hits >= 3 || time - b.spawnAt > 5000) {
         b.sprite.destroy();
         this.rayBullets.splice(i, 1);
-      }
-    }
-  }
-
-  // ── Final Ordinance / Shock and Awe ──────────────────────────────────────
-
-  private updateOrdinance(time: number, delta: number): void {
-    for (let i = this.ordinanceBlasts.length - 1; i >= 0; i--) {
-      const b = this.ordinanceBlasts[i];
-      if (time >= b.triggerAt) {
-        if (b.dud) {
-          b.warnGfx.destroy();
-          this.spawnUxo(b.x, b.y, b.owner);
-          this.ordinanceBlasts.splice(i, 1);
-          continue;
-        }
-
-        b.warnGfx.destroy();
-        const { scene } = this.arena;
-        const boom = scene.add.circle(b.x, b.y, 14, 0xff5522, 0.9).setDepth(9);
-        scene.tweens.add({ targets: boom, scaleX: 5, scaleY: 5, alpha: 0, duration: 350, onComplete: () => boom.destroy() });
-        this.arena.dealAoeDamageFromOwner(b.x, b.y, 55, 13, b.owner);
-
-        const target = b.owner === 'player' ? this.arena.npc : this.arena.player;
-        if (target.active && target.hp > 0 && Phaser.Math.Distance.Between(b.x, b.y, target.x, target.y) <= 55) {
-          if (b.owner === 'player') this.npcStunUntil = Math.max(this.npcStunUntil, time + 500);
-          else this.playerStunUntil = Math.max(this.playerStunUntil, time + 500);
-        }
-        this.ordinanceBlasts.splice(i, 1);
-      } else if (b.tracking) {
-        // Trail the caster's current aim (cursor for the player, the player's position for the NPC)
-        // with an exponential lag, so the formation drifts toward it instead of snapping.
-        const aim = b.owner === 'player'
-          ? { x: this.lastMouseX, y: this.lastMouseY }
-          : { x: this.arena.player.x, y: this.arena.player.y };
-        const targetX = aim.x + b.offsetX;
-        const targetY = aim.y + b.offsetY;
-        const followT = 1 - Math.exp(-3 * delta / 1000);
-        b.x += (targetX - b.x) * followT;
-        b.y += (targetY - b.y) * followT;
-        b.warnGfx.setPosition(b.x, b.y);
-
-        const progress = 1 - (b.triggerAt - time) / (b.triggerAt - b.spawnAt);
-        const scale = 1 + Math.sin(progress * Math.PI * 6) * 0.08;
-        b.warnGfx.setScale(scale);
-      } else {
-        // Q+ random ordinance: holds its scattered position, just pulses while telegraphing.
-        const progress = 1 - (b.triggerAt - time) / (b.triggerAt - b.spawnAt);
-        const scale = 1 + Math.sin(progress * Math.PI * 6) * 0.08;
-        b.warnGfx.setScale(scale);
-      }
-    }
-  }
-
-  private spawnUxo(x: number, y: number, owner: 'player' | 'npc'): void {
-    const { scene } = this.arena;
-    const gfx = scene.add.rectangle(x, y, 26, 16, 0x555555, 0.95)
-      .setStrokeStyle(1.5, 0x333333, 1).setDepth(4) as Phaser.GameObjects.Rectangle;
-    const emoji = scene.add.text(x, y, '🚀', { fontSize: '14px' }).setOrigin(0.5).setDepth(5);
-    this.uxos.push({ gfx, emoji, x, y, owner });
-    this.arena.showFloatingText(x, y - 20, '⚠ UXO', '#999933');
-  }
-
-  private tryDetonateUxoNear(x: number, y: number, radius: number): boolean {
-    for (let i = this.uxos.length - 1; i >= 0; i--) {
-      if (Phaser.Math.Distance.Between(x, y, this.uxos[i].x, this.uxos[i].y) <= radius) {
-        this.detonateUxo(i);
-        return true;
-      }
-    }
-    return false;
-  }
-
-  private detonateUxo(index: number, dashStepper?: 'player'): void {
-    const u = this.uxos[index];
-    if (!u) return;
-    this.uxos.splice(index, 1);
-    u.gfx.destroy();
-    u.emoji.destroy();
-
-    const { scene } = this.arena;
-    const boom = scene.add.circle(u.x, u.y, 16, 0xff5522, 0.9).setDepth(9);
-    scene.tweens.add({ targets: boom, scaleX: 6, scaleY: 6, alpha: 0, duration: 350, onComplete: () => boom.destroy() });
-    this.arena.dealAoeDamageFromOwner(u.x, u.y, 70, 20, u.owner);
-
-    const target = u.owner === 'player' ? this.arena.npc : this.arena.player;
-    if (target.active && target.hp > 0 && Phaser.Math.Distance.Between(u.x, u.y, target.x, target.y) <= 70) {
-      if (u.owner === 'player') this.npcStunUntil = Math.max(this.npcStunUntil, scene.time.now + 1000);
-      else this.playerStunUntil = Math.max(this.playerStunUntil, scene.time.now + 1000);
-    }
-
-    if (dashStepper === 'player') {
-      const body = this.arena.player.body as Phaser.Physics.Arcade.Body;
-      const angle = this.arena.player.facingAngle;
-      body.setVelocity(Math.cos(angle) * 560, Math.sin(angle) * 560);
-      this.arena.player.isInvincible = true;
-      this.arena.isDodging = true;
-      scene.time.delayedCall(220, () => {
-        if (this.arena.player.active) { this.arena.player.isInvincible = false; body.setVelocity(0, 0); }
-        this.arena.isDodging = false;
-      });
-    }
-    this.arena.showFloatingText(u.x, u.y - 30, '💥 UXO', '#ff5522');
-  }
-
-  private updateUxoSteps(): void {
-    if (this.uxos.length === 0) return;
-    for (let i = this.uxos.length - 1; i >= 0; i--) {
-      const u = this.uxos[i];
-      if (Phaser.Math.Distance.Between(this.arena.player.x, this.arena.player.y, u.x, u.y) <= 26) {
-        this.detonateUxo(i, 'player');
-        continue;
-      }
-      if (Phaser.Math.Distance.Between(this.arena.npc.x, this.arena.npc.y, u.x, u.y) <= 26) {
-        this.detonateUxo(i);
-      }
-    }
-  }
-
-  /** Physical musket bullets fly through the shared projectile pool — check those against UXOs too. */
-  private checkProjectileUxoHits(): void {
-    if (this.uxos.length === 0) return;
-    for (const obj of this.arena.projectiles.getChildren()) {
-      const p = obj as Projectile;
-      if (!p.active || p.texture.key !== 'proj-gunpowder-musket') continue;
-      for (let i = this.uxos.length - 1; i >= 0; i--) {
-        const u = this.uxos[i];
-        if (Phaser.Math.Distance.Between(p.x, p.y, u.x, u.y) <= 24) {
-          p.destroy();
-          this.detonateUxo(i);
-          break;
-        }
       }
     }
   }

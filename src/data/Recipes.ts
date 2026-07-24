@@ -26,7 +26,7 @@ export const RECIPES: Recipe[] = [
   { ingredients: ['slime', 'light'], result: 'magic', resultName: 'Magic', resultEmoji: '📖' },
   { ingredients: ['sound', 'light'], result: 'technology', resultName: 'Technology', resultEmoji: '💻' },
   { ingredients: ['slime', 'sound'], result: 'silence', resultName: 'Silence', resultEmoji: '🫥' },
-  { ingredients: ['electricity', 'sound'], result: 'quantum', resultName: 'Quantum', resultEmoji: '⚛️' },
+  { ingredients: ['electricity', 'sound'], result: 'quantum', resultName: 'Subterfuge', resultEmoji: '🕴️' },
 ];
 
 export function findRecipe(a: string, b: string): Recipe | undefined {

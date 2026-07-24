@@ -145,7 +145,7 @@ export interface CastContext {
   gunpowderExplosiveRetreat: (tx: number, ty: number) => void;
   gunpowderFireAtWill: (tx: number, ty: number) => void;
   gunpowderArsenalExpansion: () => void;
-  gunpowderFinalOrdinance: (tx: number, ty: number) => void;
+  gunpowderBlunderBlast: (tx: number, ty: number) => void;
   // Rubber (abstract combined: slime + fate)
   rubberPunch: (tx: number, ty: number, pullRatio: number) => void;
   rubberSlingShotStart: (cursorAngle: number) => void;
@@ -177,12 +177,12 @@ export interface CastContext {
   echoLantern: (tx: number, ty: number) => void;
   echoBatForm: (tx: number, ty: number) => void;
   echoEclipse: (tx: number, ty: number) => void;
-  // Quantum (abstract combined: slime + fate)
-  quantumWave: (tx: number, ty: number) => void;
-  quantumChaosControl: (tx: number, ty: number) => void;
-  quantumAtomVibration: (tx: number, ty: number) => void;
-  quantumMechanic: (tx: number, ty: number) => void;
-  quantumAtomNhilego: (tx: number, ty: number) => void;
+  // Subterfuge (abstract combined: slime + fate; element id stays 'quantum')
+  subterfugeCutter: (tx: number, ty: number) => void;
+  subterfugeSpray: (tx: number, ty: number) => void;
+  subterfugeRecruit: (tx: number, ty: number) => void;
+  subterfugeBribe: (tx: number, ty: number) => void;
+  subterfugeTreachery: (tx: number, ty: number) => void;
   hasPerk: (perkId: string) => boolean;
 }
 

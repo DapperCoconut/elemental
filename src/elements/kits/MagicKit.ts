@@ -1257,6 +1257,19 @@ export class MagicKit {
     }
   }
 
+  // ── Subterfuge Dark Treachery support ─────────────────────────────────────
+
+  /** Magic-Q copy: open the necronomicon wheel for a non-magic player. While the
+   * wheel is open, ArenaScene keeps routing input here (handleInput early-returns
+   * into pure wheel-driving); the player taps Q to fire the selected wedge. */
+  foreignOpenNecronomicon(time: number): void {
+    this.necronomiconHoldStart = time;
+    this.necronomiconKeyNavUsed = false;
+    this._openMenu('necronomicon', this.necronomiconLastPick);
+  }
+
+  isNecroWheelOpen(): boolean { return this.necronomiconMenuOpen; }
+
   // ── Wheel UI helpers ──────────────────────────────────────────────────────
 
   private _openMenu(slot: 'grimoire' | 'necronomicon', selectedIndex: number): void {
