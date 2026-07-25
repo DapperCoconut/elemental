@@ -2,7 +2,7 @@ import Peer, { DataConnection } from 'peerjs';
 import type { InvasionFx, HuskStatus } from '../invasion/InvasionKit';
 
 /** Bump when the wire protocol or gameplay sync changes incompatibly. */
-export const NET_PROTOCOL_VERSION = 8;
+export const NET_PROTOCOL_VERSION = 9;
 
 /** Lobby selection payload exchanged while both players pick loadouts. */
 export interface NetSelection {
@@ -27,7 +27,9 @@ export type NetTechMsg =
   | { t: 'tech'; k: 'quiz'; pass: boolean }
   | { t: 'tech'; k: 'mouse'; stacks: number }
   | { t: 'tech'; k: 'buff'; ms: number }
-  | { t: 'tech'; k: 'jackpot' };
+  | { t: 'tech'; k: 'jackpot' }
+  // Technology Mastery — the caster clicked their Byte-Bomb; shorten the replica's fuse too.
+  | { t: 'tech'; k: 'bytefuse' };
 
 /** Silence upgrade events that the cast relay / state stream can't carry. */
 export type NetSilenceMsg =

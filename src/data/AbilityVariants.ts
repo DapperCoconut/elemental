@@ -19,17 +19,14 @@ export interface AbilityVariantSet {
 const ABILITY_VARIANTS: Record<string, Partial<Record<string, AbilityVariantSet>>> = {
   creation: {
     e: {
-      label: 'Crucible crafts (load 3 bolts of any tiers to trigger)',
+      label: 'Nexus potions (load 2 bolts of any tiers to brew — walk onto the Nexus to drink)',
       variants: [
-        { emoji: '🟠', name: 'Copper + Copper + Copper', description: '8 copper bolts radiate outward from the Crucible (5 dmg each).' },
-        { emoji: '⚪', name: 'Copper + Copper + Silver', description: 'Summons a homing scythe from the Crucible.' },
-        { emoji: '⚪', name: 'Copper + Silver + Silver', description: 'Spawns a Medkit at the Crucible (+25 HP).' },
-        { emoji: '⚪', name: 'Silver + Silver + Silver', description: '3 healing pulses from the Crucible (10 HP each, 110px range).' },
-        { emoji: '🟡', name: 'Gold + Gold + Gold', description: 'Cross-shaped 4-beam strike (35 dmg each) + 25% damage reduction for 15s.' },
-        { emoji: '🟡', name: 'Copper + Copper + Gold', description: 'Summons a Ghoul at the Crucible.' },
-        { emoji: '🟡', name: 'Copper + Gold + Gold', description: '3 damage pulses from the Crucible (15 dmg each, 110px range).' },
-        { emoji: '🟡', name: 'Gold + Silver + Silver', description: '5 fire DOT pools scattered across the arena.' },
-        { emoji: '🟡', name: 'Gold + Gold + Silver', description: '+30% speed boost for 15s.' },
+        { emoji: '⚔️', name: 'Copper + Copper — Buff Potion', description: 'Deal 25% more damage for 20s.' },
+        { emoji: '💚', name: 'Silver + Silver — Heal Potion', description: 'Regenerate 3 HP every second for 20s.' },
+        { emoji: '🏆', name: 'Gold + Gold — Gold Potion', description: 'For 90s, every effect you gain — good or bad — lasts twice as long.' },
+        { emoji: '🛡️', name: 'Copper + Silver — Protection Potion', description: 'Take 25% less damage for 20s.' },
+        { emoji: '👟', name: 'Copper + Gold — Speed Potion', description: 'Move 50% faster for 20s.' },
+        { emoji: '⏱️', name: 'Silver + Gold — Reload Potion', description: 'Ability cooldowns recharge 25% faster for 20s.' },
       ],
     },
   },

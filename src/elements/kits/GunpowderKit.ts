@@ -50,6 +50,24 @@ const BLUNDERBLAST_BLAST_SPREAD = Math.PI / 6; // 30° fan when the hoard is cou
 const BLUNDERBLAST_COLOR = 0xcfd4da; // silver
 const BLUNDERBLAST_MAX_CAPTURE = 30;
 
+// ── Gunpowder Mastery — Quickdraw (passive) ───────────────────────────────────
+// Every QUICKDRAW_DAMAGE_STEP damage taken (cumulative, carried between hits) snaps
+// a holdout laser at the closest enemy.
+const QUICKDRAW_DAMAGE_STEP = 30;
+const QUICKDRAW_DAMAGE = 10;
+const QUICKDRAW_RANGE = 900;
+const QUICKDRAW_COLOR = 0xffe08a;
+
+// ── Gunpowder Mastery — Overload (bindable) ───────────────────────────────────
+const OVERLOAD_COOLDOWN_MS = 16000;
+const OVERLOAD_AIM_MS = 2000;
+const OVERLOAD_SHOT_DAMAGE = 15;
+const OVERLOAD_EXTRA_HEAT_MS = 3000;
+const OVERLOAD_BURN_DAMAGE = 20;
+const OVERLOAD_BURN_RADIUS = 30;
+const OVERLOAD_BURN_INTERVAL_MS = 1000;
+const OVERLOAD_LASER_COLOR = 0xff3322;
+
 // Musket heat colors — dropped muskets fade hot red -> orange -> normal as they cool.
 const MUSKET_HOT_FILL = 0xdd2222;
 const MUSKET_WARM_FILL = 0xff8800;
@@ -90,6 +108,19 @@ interface DroppedMusket {
   targetY?: number;
   bayonetGfx?: Phaser.GameObjects.Triangle;
   lastGroundHitAt?: number;
+  // Overload (mastery) fields.
+  /** Timestamp of the volley this musket is currently lining up for, 0 when it isn't aiming. */
+  aimingFor?: number;
+  /** While `time` is under this, the musket is scalding and burns its own owner on contact. */
+  overloadBurnUntil?: number;
+  lastOwnerBurnAt?: number;
+}
+
+/** One Overload cast: every grounded musket of that owner aims, then fires together. */
+interface OverloadVolley {
+  owner: 'player' | 'npc';
+  startedAt: number;
+  firesAt: number;
 }
 
 interface Grenade {
@@ -195,6 +226,18 @@ export interface GunpowderArenaApi {
   dealAoeDamageFromOwner(x: number, y: number, radius: number, damage: number, owner: 'player' | 'npc'): void;
   buildPlayerContext(x: number, y: number): CastContext;
   buildNpcContext(x: number, y: number): CastContext;
+  /** True only when the player is gunpowder AND Gunpowder Mastery is switched on. */
+  readonly masteryActive: boolean;
+  /** Online: true when the remote opponent is a gunpowder player with mastery on. */
+  readonly npcMasteryActive: boolean;
+  /** Mastery enhancement id bound over the given ability slot, or null if that slot is unchanged. */
+  masteryBindFor(slot: string): string | null;
+  /** Online: broadcast a bindable mastery cast so the peer's sim replays it. */
+  broadcastMasteryCast(enhId: string): void;
+  recordMasteryStat(key: string, amount: number): void;
+  /** Ratchet a "best single instance" mastery stat. */
+  recordMasteryBestStat(key: string, value: number): void;
+  getMasteryStat(key: string): number;
 }
 
 // ── GunpowderKit (Gunpowder) ────────────────────────────────────────────────────
@@ -251,6 +294,19 @@ export class GunpowderKit {
   private playerMinigunFiringUntil = 0;
   private npcMinigunFiringUntil = 0;
 
+  // ── Mastery: Quickdraw (passive) ──────────────────────────────────────────
+  // Damage taken is read as an HP delta each frame, so every source counts — hits,
+  // burns, self-inflicted blasts — without having to hook each one.
+  private playerLastHp = -1;
+  private npcLastHp = -1;
+  private playerQuickdrawAccum = 0;
+  private npcQuickdrawAccum = 0;
+
+  // ── Mastery: Overload (bindable) ──────────────────────────────────────────
+  private overloadLastCastAt = -OVERLOAD_COOLDOWN_MS;
+  private overloadVolleys: OverloadVolley[] = [];
+  private overloadGfx: Phaser.GameObjects.Graphics | null = null;
+
   constructor(private arena: GunpowderArenaApi) {}
 
   // ── Public accessors ──────────────────────────────────────────────────────
@@ -297,6 +353,18 @@ export class GunpowderKit {
     this.playerMinigunFiringUntil = 0;
     this.npcMinigunFiringUntil = 0;
     this.wasRightDown = false;
+
+    this.playerLastHp = -1;
+    this.npcLastHp = -1;
+    this.playerQuickdrawAccum = 0;
+    this.npcQuickdrawAccum = 0;
+
+    // Readiness is measured against the absolute clock, so a 0 here would lock the
+    // ability out for the first OVERLOAD_COOLDOWN_MS of the match.
+    this.overloadLastCastAt = -OVERLOAD_COOLDOWN_MS;
+    this.overloadVolleys = [];
+    this.overloadGfx?.destroy();
+    this.overloadGfx = null;
   }
 
   // ── Input ─────────────────────────────────────────────────────────────────
@@ -330,25 +398,32 @@ export class GunpowderKit {
       }
     }
 
+    // Gunpowder Mastery — Overload may be bound over any of E/R/F/Q, suppressing that slot's base ability.
+    const ovSlot = this.arena.masteryActive ? this.overloadSlot() : null;
+
     // ── E: Explosive Retreat ─────────────────────────────────────────────
     if (Phaser.Input.Keyboard.JustDown(eKey) && !this.menuOpen) {
-      player.castAbility('gunpowder-explosive-retreat', ctx());
+      if (ovSlot === 'e') this.tryCastOverload();
+      else player.castAbility('gunpowder-explosive-retreat', ctx());
     }
 
     // ── R: Fire at Will ──────────────────────────────────────────────────
     if (Phaser.Input.Keyboard.JustDown(rKey) && !this.menuOpen) {
-      player.castAbility('gunpowder-fire-at-will', ctx());
+      if (ovSlot === 'r') this.tryCastOverload();
+      else player.castAbility('gunpowder-fire-at-will', ctx());
     }
 
     // ── F: Arsenal Expansion ─────────────────────────────────────────────
     if (Phaser.Input.Keyboard.JustDown(fKey)) {
       if (this.menuOpen) this.autoPickArsenalMenu();
+      else if (ovSlot === 'f') this.tryCastOverload();
       else player.castAbility('gunpowder-arsenal-expansion', ctx());
     }
 
     // ── Q: BlunderBlast ──────────────────────────────────────────────────
     if (Phaser.Input.Keyboard.JustDown(qKey) && !this.menuOpen) {
-      player.castAbility('gunpowder-blunderblast', ctx());
+      if (ovSlot === 'q') this.tryCastOverload();
+      else player.castAbility('gunpowder-blunderblast', ctx());
     }
   }
 
@@ -363,6 +438,8 @@ export class GunpowderKit {
     this.updateBlunderBlast(time);
     this.updateStuns(time);
     this.updateBuffs(time);
+    this.updateOverload(time);
+    this.updateQuickdraw(time);
   }
 
   private updateStuns(time: number): void {
@@ -436,6 +513,7 @@ export class GunpowderKit {
     const dmg = Math.round(35 * (1 + 0.25 * rifleCount));
 
     const proj = new Projectile(this.arena.scene, caster.x, caster.y, 'proj-gunpowder-musket', dmg, owner === 'player');
+    (proj as unknown as { isMusketShot?: boolean }).isMusketShot = true;
     this.arena.projectiles.add(proj);
     proj.launch(nx * 900, ny * 900);
     proj.setRotation(angle);
@@ -627,6 +705,7 @@ export class GunpowderKit {
       const ang = Math.atan2(p.y - caster.y, p.x - caster.x);
       if (Math.abs(Phaser.Math.Angle.Wrap(ang - dir)) > half) continue;
       captured.push({ textureKey: p.texture.key, damage: p.damage });
+      if (owner === 'player') this.arena.recordMasteryStat('bulletsVacuumed', 1);
       this.arena.spawnHitFlash(p.x, p.y, BLUNDERBLAST_COLOR);
       p.destroy();
       if (captured.length >= BLUNDERBLAST_MAX_CAPTURE) break;
@@ -925,6 +1004,24 @@ export class GunpowderKit {
         }
       }
 
+      // Overload (mastery): the volley leaves the barrel glowing — its own owner
+      // scalds themselves for walking over it, once a second at most.
+      if (m.overloadBurnUntil) {
+        if (time >= m.overloadBurnUntil) {
+          m.overloadBurnUntil = 0;
+        } else {
+          const ownerFighter = m.owner === 'player' ? this.arena.player : this.arena.npc;
+          if (ownerFighter.active && ownerFighter.hp > 0
+            && time >= (m.lastOwnerBurnAt ?? 0) + OVERLOAD_BURN_INTERVAL_MS
+            && Phaser.Math.Distance.Between(m.x, m.y, ownerFighter.x, ownerFighter.y) <= OVERLOAD_BURN_RADIUS) {
+            ownerFighter.takeDamage(OVERLOAD_BURN_DAMAGE);
+            this.arena.spawnHitFlash(ownerFighter.x, ownerFighter.y, 0xff5522);
+            this.arena.showFloatingText(m.x, m.y - 22, '🔥 SCALDING', '#ff7733');
+            m.lastOwnerBurnAt = time;
+          }
+        }
+      }
+
       if (!m.cooled) continue;
 
       const caster = m.owner === 'player' ? this.arena.player : this.arena.npc;
@@ -1099,6 +1196,8 @@ export class GunpowderKit {
 
   private commitArsenalPick(type: WeaponType): void {
     this.playerArsenal.push({ type });
+    this.noteWeaponCollected(type);
+    if (this.playerArsenal.length >= ARSENAL_MAX_R_UPGRADED) this.arena.recordMasteryStat('fullArsenals', 1);
     this.closeArsenalMenu();
     this.arena.player.triggerCooldown('gunpowder-arsenal-expansion');
     this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 30, `+${WEAPON_DEFS[type].name}`, '#ffaa44');
@@ -1172,5 +1271,303 @@ export class GunpowderKit {
       fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#dd9944', stroke: '#220044', strokeThickness: 3,
     }).setOrigin(0.5).setDepth(21).setScrollFactor(0);
     this.arsenalHudTexts.push(ammoText);
+  }
+
+  // ── Mastery requirement tracking ─────────────────────────────────────────
+
+  /** ArenaScene's projectile-hit choke point — counts Musket Shot balls that connect. */
+  onPlayerProjectileHit(proj: Projectile): void {
+    if ((proj as unknown as { isMusketShot?: boolean }).isMusketShot) {
+      this.arena.recordMasteryStat('musketHits', 1);
+    }
+  }
+
+  /**
+   * "Collect every weapon type at least once" is a set, not a counter, so each type
+   * gets its own persisted flag and the requirement key is re-derived as their sum —
+   * monotonic, so it rides the existing best-value ratchet.
+   */
+  private noteWeaponCollected(type: WeaponType): void {
+    this.arena.recordMasteryBestStat(`gpWeapon_${type}`, 1);
+    let owned = 0;
+    for (const t of [...BASE_WEAPON_TYPES, ...EXTRA_WEAPON_TYPES]) {
+      if (this.arena.getMasteryStat(`gpWeapon_${t}`) > 0) owned++;
+    }
+    this.arena.recordMasteryBestStat('weaponTypes', owned);
+  }
+
+  // ── Mastery: Quickdraw (passive) ─────────────────────────────────────────
+
+  private updateQuickdraw(time: number): void {
+    this.tickQuickdraw('player', this.arena.masteryActive, time);
+    // Online only: the remote gunpowder player's own reflex shots must resolve on this
+    // (victim) sim, since hits on their replica never touch their real HP.
+    this.tickQuickdraw('npc', this.arena.npcMasteryActive && this.arena.npcElementId === 'gunpowder', time);
+  }
+
+  private tickQuickdraw(owner: 'player' | 'npc', enabled: boolean, time: number): void {
+    const self = owner === 'player' ? this.arena.player : this.arena.npc;
+    const prev = owner === 'player' ? this.playerLastHp : this.npcLastHp;
+    const hp = self.hp;
+
+    // Track HP every frame regardless, so switching the passive on mid-match can't
+    // cash in damage taken before it was live.
+    if (enabled && prev >= 0 && hp < prev && self.active && hp > 0) {
+      let accum = (owner === 'player' ? this.playerQuickdrawAccum : this.npcQuickdrawAccum) + (prev - hp);
+      while (accum >= QUICKDRAW_DAMAGE_STEP) {
+        accum -= QUICKDRAW_DAMAGE_STEP;
+        this.fireQuickdrawShot(owner);
+      }
+      if (owner === 'player') this.playerQuickdrawAccum = accum;
+      else this.npcQuickdrawAccum = accum;
+    }
+
+    if (owner === 'player') this.playerLastHp = hp;
+    else this.npcLastHp = hp;
+  }
+
+  /** A holdout pistol snapped from the hip: thin gold hitscan beam, no wind-up. */
+  private fireQuickdrawShot(owner: 'player' | 'npc'): void {
+    const shooter = owner === 'player' ? this.arena.player : this.arena.npc;
+    const target = owner === 'player' ? this.arena.npc : this.arena.player;
+    if (!shooter.active || !target.active || target.hp <= 0) return;
+
+    const dx = target.x - shooter.x, dy = target.y - shooter.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > QUICKDRAW_RANGE) return;
+    const angle = Math.atan2(dy, dx);
+    const { scene } = this.arena;
+
+    // Fire from the hip: offset perpendicular to the shooting line so the beam
+    // reads as a second, hidden gun rather than the musket.
+    const hipX = shooter.x + Math.cos(angle + Math.PI / 2) * 12;
+    const hipY = shooter.y + Math.sin(angle + Math.PI / 2) * 12;
+
+    const beam = scene.add.graphics().setDepth(10);
+    beam.lineStyle(5, QUICKDRAW_COLOR, 0.18);
+    beam.lineBetween(hipX, hipY, target.x, target.y);
+    beam.lineStyle(2, QUICKDRAW_COLOR, 0.6);
+    beam.lineBetween(hipX, hipY, target.x, target.y);
+    beam.lineStyle(1, 0xffffff, 0.95);
+    beam.lineBetween(hipX, hipY, target.x, target.y);
+    scene.tweens.add({ targets: beam, alpha: 0, duration: 160, onComplete: () => beam.destroy() });
+
+    // Muzzle flare — a stubby cone kicking out of the hip.
+    const flare = scene.add.triangle(hipX, hipY, 0, -5, 0, 5, 16, 0, 0xfff3c4, 0.95)
+      .setDepth(11).setRotation(angle);
+    scene.tweens.add({
+      targets: flare, scaleX: 1.8, scaleY: 0.5, alpha: 0, duration: 130,
+      onComplete: () => flare.destroy(),
+    });
+
+    // Impact sparks fanning back along the beam.
+    for (let i = 0; i < 4; i++) {
+      const a = angle + Math.PI + (Math.random() - 0.5) * 1.6;
+      const spark = scene.add.rectangle(target.x, target.y, 6, 1.5, QUICKDRAW_COLOR, 0.9)
+        .setDepth(11).setRotation(a);
+      scene.tweens.add({
+        targets: spark, x: target.x + Math.cos(a) * (14 + Math.random() * 12),
+        y: target.y + Math.sin(a) * (14 + Math.random() * 12), alpha: 0,
+        duration: 200 + Math.random() * 120, onComplete: () => spark.destroy(),
+      });
+    }
+
+    target.takeDamage(QUICKDRAW_DAMAGE);
+    this.arena.spawnHitFlash(target.x, target.y, QUICKDRAW_COLOR);
+    this.arena.showFloatingText(shooter.x, shooter.y - 46, '⚡ QUICKDRAW', '#ffe08a');
+  }
+
+  // ── Mastery: Overload (bindable) ─────────────────────────────────────────
+
+  /** The slot Overload is bound over this match, or null when it isn't bound anywhere. */
+  private overloadSlot(): 'e' | 'r' | 'f' | 'q' | null {
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      if (this.arena.masteryBindFor(s) === 'overload') return s;
+    }
+    return null;
+  }
+
+  /** 0 = just cast, 1 = ready. Drives the HUD bar when Overload is bound to a slot. */
+  getOverloadCooldownRatio(time: number): number {
+    return Math.min(1, (time - this.overloadLastCastAt) / OVERLOAD_COOLDOWN_MS);
+  }
+
+  private tryCastOverload(): void {
+    const time = this.arena.scene.time.now;
+    if (time - this.overloadLastCastAt < OVERLOAD_COOLDOWN_MS) return;
+    if (!this.beginOverload('player')) {
+      const p = this.arena.player;
+      this.arena.showFloatingText(p.x, p.y - 30, '⚠ No Muskets Down', '#ff6644');
+      return; // nothing to aim — the cooldown isn't spent
+    }
+    this.overloadLastCastAt = time;
+    // Private timer, so this cast never flows through onCastStamp — broadcast it by hand.
+    this.arena.broadcastMasteryCast('overload');
+  }
+
+  /** Online replay: the remote gunpowder player overloaded their muskets at us. */
+  doNpcOverload(): void {
+    this.beginOverload('npc');
+  }
+
+  private beginOverload(owner: 'player' | 'npc'): boolean {
+    const { scene } = this.arena;
+    const now = scene.time.now;
+    const grounded = this.muskets.filter((m) => m.owner === owner && !m.flying);
+    if (grounded.length === 0) return false;
+
+    const firesAt = now + OVERLOAD_AIM_MS;
+    for (const m of grounded) m.aimingFor = firesAt;
+    this.overloadVolleys.push({ owner, startedAt: now, firesAt });
+    // Above the fighters (depth 5) so the laser sight and crosshair aren't buried
+    // under the sprite they're aimed at.
+    if (!this.overloadGfx) this.overloadGfx = scene.add.graphics().setDepth(9);
+
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    this.arena.showFloatingText(caster.x, caster.y - 44, `🔫 OVERLOAD ×${grounded.length}`, '#dddddd');
+    return true;
+  }
+
+  private updateOverload(time: number): void {
+    if (this.overloadGfx) this.overloadGfx.clear();
+    this.drawOverloadEmbers(time);
+    if (this.overloadVolleys.length === 0) return;
+
+    for (let i = this.overloadVolleys.length - 1; i >= 0; i--) {
+      const v = this.overloadVolleys[i];
+      const aiming = this.muskets.filter((m) => m.owner === v.owner && m.aimingFor === v.firesAt);
+      if (aiming.length === 0) { this.overloadVolleys.splice(i, 1); continue; }
+
+      const target = v.owner === 'player' ? this.arena.npc : this.arena.player;
+      if (time < v.firesAt) {
+        const t = Phaser.Math.Clamp((time - v.startedAt) / OVERLOAD_AIM_MS, 0, 1);
+        for (const m of aiming) this.drawOverloadAim(m, target, t, time);
+        continue;
+      }
+
+      for (const m of aiming) this.fireOverloadShot(m, target, time);
+      this.arena.scene.cameras.main.shake(200, 0.005);
+      this.overloadVolleys.splice(i, 1);
+    }
+  }
+
+  /**
+   * A musket lining up its shot: the barrel swings onto the target and trembles harder
+   * as the hammer pulls back, a laser sight burns in from faint to solid, and the
+   * crosshair over the target draws tighter the closer the volley gets.
+   */
+  private drawOverloadAim(m: DroppedMusket, target: Fighter, t: number, time: number): void {
+    const gfx = this.overloadGfx;
+    const angle = Math.atan2(target.y - m.y, target.x - m.x);
+    const shake = 0.05 * t * Math.sin(time / 22 + m.droppedAt);
+    m.gfx.setRotation(angle + shake);
+    m.gfx.setPosition(m.x + Math.cos(time / 26) * 1.5 * t, m.y + Math.sin(time / 19) * 1.5 * t);
+    m.gfx.setFillStyle(lerpColor(MUSKET_COOL_FILL, MUSKET_HOT_FILL, t), 0.95);
+    m.gfx.setStrokeStyle(1, lerpColor(MUSKET_COOL_STROKE, MUSKET_HOT_STROKE, t), 1);
+    if (!gfx) return;
+
+    const muzzleX = m.x + Math.cos(angle) * 22;
+    const muzzleY = m.y + Math.sin(angle) * 22;
+
+    // Laser sight: wide haze, body, hot core — each tighter and brighter than the last.
+    gfx.lineStyle(6, OVERLOAD_LASER_COLOR, 0.06 + 0.10 * t);
+    gfx.lineBetween(muzzleX, muzzleY, target.x, target.y);
+    gfx.lineStyle(2, OVERLOAD_LASER_COLOR, 0.18 + 0.35 * t);
+    gfx.lineBetween(muzzleX, muzzleY, target.x, target.y);
+    gfx.lineStyle(1, 0xffaa88, 0.25 + 0.6 * t);
+    gfx.lineBetween(muzzleX, muzzleY, target.x, target.y);
+
+    // Heat blooming out of the breech as the charge builds.
+    gfx.fillStyle(0xff4422, 0.10 + 0.22 * t);
+    gfx.fillCircle(m.x, m.y, 6 + 7 * t + Math.sin(time / 90) * 1.5);
+
+    // Converging crosshair over the target — four ticks closing in, rotating slowly.
+    // Stays wider than the sprite it sits on so the tightening still reads.
+    const ring = 46 - 20 * t;
+    const spin = time / 400;
+    gfx.lineStyle(1.5, OVERLOAD_LASER_COLOR, 0.35 + 0.5 * t);
+    for (let k = 0; k < 4; k++) {
+      const a = spin + (k * Math.PI) / 2;
+      gfx.lineBetween(
+        target.x + Math.cos(a) * ring, target.y + Math.sin(a) * ring,
+        target.x + Math.cos(a) * (ring + 8), target.y + Math.sin(a) * (ring + 8),
+      );
+    }
+    gfx.strokeCircle(target.x, target.y, ring);
+  }
+
+  /** The volley itself: one musket ball each, then the barrel is left glowing. */
+  private fireOverloadShot(m: DroppedMusket, target: Fighter, time: number): void {
+    const { scene } = this.arena;
+    m.aimingFor = 0;
+
+    const angle = Math.atan2(target.y - m.y, target.x - m.x);
+    const nx = Math.cos(angle), ny = Math.sin(angle);
+    const isPlayer = m.owner === 'player';
+
+    const proj = new Projectile(scene, m.x + nx * 20, m.y + ny * 20, 'proj-gunpowder-musket', OVERLOAD_SHOT_DAMAGE, isPlayer);
+    (proj as unknown as { isMusketShot?: boolean }).isMusketShot = true;
+    this.arena.projectiles.add(proj);
+    proj.launch(nx * 900, ny * 900);
+    proj.setRotation(angle);
+
+    // Muzzle blast: a bright cone that stretches and dies in a few frames.
+    const flash = scene.add.triangle(m.x + nx * 22, m.y + ny * 22, 0, -8, 0, 8, 26, 0, 0xffddaa, 1)
+      .setDepth(11).setRotation(angle);
+    scene.tweens.add({
+      targets: flash, scaleX: 2.2, scaleY: 0.4, alpha: 0, duration: 170,
+      onComplete: () => flash.destroy(),
+    });
+    const shock = scene.add.circle(m.x + nx * 22, m.y + ny * 22, 7, 0xffbb66, 0.55).setDepth(10);
+    scene.tweens.add({
+      targets: shock, scaleX: 3.4, scaleY: 3.4, alpha: 0, duration: 260,
+      onComplete: () => shock.destroy(),
+    });
+
+    // Powder smoke rolling off the barrel.
+    for (let i = 0; i < 4; i++) {
+      const a = angle + (Math.random() - 0.5) * 1.1;
+      const puff = scene.add.circle(m.x + nx * 18, m.y + ny * 18, 4 + Math.random() * 4, 0x9a9a9a, 0.45).setDepth(9);
+      scene.tweens.add({
+        targets: puff, x: puff.x + Math.cos(a) * (26 + Math.random() * 22),
+        y: puff.y + Math.sin(a) * (26 + Math.random() * 22),
+        scaleX: 2.2, scaleY: 2.2, alpha: 0, duration: 620 + Math.random() * 260,
+        onComplete: () => puff.destroy(),
+      });
+    }
+
+    // Recoil kick, then settle back onto the musket's real position.
+    m.gfx.setPosition(m.x - nx * 10, m.y - ny * 10);
+    scene.tweens.add({ targets: m.gfx, x: m.x, y: m.y, duration: 220, ease: 'Back.easeOut' });
+
+    // Straight back to full heat, plus the Overload surcharge on top.
+    const hotMs = 12000 * (isPlayer ? this.musketCoolMult() : 1) + OVERLOAD_EXTRA_HEAT_MS;
+    m.droppedAt = time;
+    m.hotUntil = time + hotMs;
+    m.cooled = false;
+    m.overloadBurnUntil = m.hotUntil;
+    m.lastOwnerBurnAt = 0;
+  }
+
+  /** Overloaded muskets sit on the floor radiating heat until they finally cool. */
+  private drawOverloadEmbers(time: number): void {
+    const gfx = this.overloadGfx;
+    if (!gfx) return;
+    for (const m of this.muskets) {
+      if (!m.overloadBurnUntil || time >= m.overloadBurnUntil || m.flying) continue;
+      const pulse = 0.5 + 0.5 * Math.sin(time / 160 + m.droppedAt);
+      gfx.fillStyle(0xff4411, 0.05 + 0.07 * pulse);
+      gfx.fillCircle(m.x, m.y, OVERLOAD_BURN_RADIUS);
+      gfx.fillStyle(0xff7722, 0.10 + 0.10 * pulse);
+      gfx.fillCircle(m.x, m.y, 15);
+      // Embers drifting up off the barrel.
+      for (let k = 0; k < 3; k++) {
+        const phase = (time / 900 + k / 3 + m.droppedAt / 5000) % 1;
+        const ex = m.x + Math.sin(time / 220 + k * 2.1) * 9;
+        const ey = m.y - phase * 22;
+        gfx.fillStyle(0xffcc55, (1 - phase) * 0.75);
+        gfx.fillCircle(ex, ey, 1.6);
+      }
+    }
   }
 }

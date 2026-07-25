@@ -45,11 +45,12 @@ export const ALL_PERKS: ElementPerks[] = [
         elementId: 'shadow',
       },
       {
+        // id kept as 'plume' so previously-forged copies of this perk survive the rework.
         id: 'plume',
-        name: 'Plume',
-        emoji: '💨',
+        name: 'String',
+        emoji: '🧵',
         color: 0x6633aa,
-        description: "Snap Traps become Plume Traps: deal more damage on trigger, spawn 5 Dark Clouds instead of stunning, and are slightly larger. Upgraded traps are even bigger and can still be dragged with Tentacle.",
+        description: 'Snap Traps become Snap Stakes, which do nothing on their own and last twice as long. Every two stakes are joined by a tripline — an enemy crossing it takes 5 dmg, 10% Hopelessness and a 50% slow for 3s. With Tentacle upgraded you can drag stakes around, and the string follows.',
         ingredients: ['fire', 'water', 'air', 'earth'],
         tier: 'quad',
         elementId: 'shadow',

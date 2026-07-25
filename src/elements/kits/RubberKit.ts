@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
 import { Projectile } from '../../combat/Projectile';
+import { CustomStatus } from './StatusHudKit';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -30,6 +31,60 @@ const BOUNCE_REFLECT_SPEED = 1.6;
 
 const FIREBALL_DOT_BASE_MS = 2000;
 const FIREBALL_DOT_BONUS_MS = 1500;
+
+// ── Rubber Mastery: Vulcanization ───────────────────────────────────────────
+/**
+ * Damage that must be soaked to cure one percent. A full 100% cure therefore costs 500
+ * damage — about 1.25 of the player's 400 HP bar, so it takes a long, punishing fight (or
+ * a lot of healing) to get there, and the 75% fire tier lands at roughly one bar soaked.
+ */
+const VULC_DMG_PER_PCT = 5;
+/**
+ * Vulcanization is deliberately back-loaded: every bonus below is scaled by
+ * `vulc ^ VULC_CURVE_EXP`, which pays out roughly 10% / 28% / 49% / 73% / 100%
+ * of its maximum at 20 / 40 / 60 / 80 / 100% cured. That keeps the early bar
+ * near-invisible and makes the last quarter genuinely frightening.
+ */
+const VULC_CURVE_EXP = 1.4;
+/** Fraction knocked off the click's wind-up at full cure. */
+const VULC_CHARGE_CUT = 0.5;
+/** Extra sling launch speed at full cure. */
+const VULC_SLING_SPEED = 0.6;
+/** Extra wall bounces the sling launch gets at full cure. */
+const VULC_SLING_BOUNCES = 4;
+/** Extra Bounce Form duration at full cure. */
+const VULC_BOUNCE_FORM = 1.0;
+/** Extra anchor reel speed (and therefore anchor impact damage) at full cure. */
+const VULC_ANCHOR = 0.8;
+/** Extra Rubberage ball acceleration at full cure. */
+const VULC_RUBBERAGE_ACCEL = 1.5;
+/** Fraction knocked off every cooldown at full cure. */
+const VULC_COOLDOWN_CUT = 0.4;
+/** At or above this cure the rubber runs hot and everything it touches catches fire. */
+const VULC_FIRE_THRESHOLD = 0.75;
+const VULC_FIRE_DOT_MS = 3000;
+const VULC_FIRE_SLING_MULT = 1.5;
+const VULC_FIRE_REFLECT_MULT = 1.5;
+const VULC_FIRE_BALL_BONUS_DMG = 2;
+const VULC_FIRE_ANCHOR_PERIOD_MS = 3000;
+const VULC_FIRE_ANCHOR_DMG = 15;
+const VULC_FIRE_ANCHOR_RADIUS = 78;
+
+// ── Rubber Mastery: Atom-Nhilego ────────────────────────────────────────────
+const NHILEGO_COOLDOWN_MS = 20000;
+const NHILEGO_FUSE_MS = 3000;
+const NHILEGO_START_RADIUS = 70;
+const NHILEGO_GROWTH = 1.1;
+const NHILEGO_DMG = 25;
+const NHILEGO_HEAL_PER_HIT = 10;
+
+// ── F+ Bouncy Anchor ────────────────────────────────────────────────────────
+/** Knockback the anchor picks up per point of damage that struck it. */
+const BOUNCY_ANCHOR_KNOCK_PER_DMG = 22;
+const BOUNCY_ANCHOR_KNOCK_BASE = 160;
+const BOUNCY_ANCHOR_KNOCK_MAX = 1300;
+/** Per-second velocity decay while the knocked anchor is rolling. */
+const BOUNCY_ANCHOR_FRICTION = 1.6;
 
 // Rubber Banding (F)
 const BAND_LIFETIME_MS = 12000;
@@ -81,7 +136,6 @@ export interface RubberArenaApi {
   readonly rKey: Phaser.Input.Keyboard.Key;
   readonly fKey: Phaser.Input.Keyboard.Key;
   readonly qKey: Phaser.Input.Keyboard.Key;
-  readonly abilityBars: { fill: Phaser.GameObjects.Rectangle; maxWidth: number }[];
   hasUpgrade(slot: string): boolean;
   hasPerk(perkId: string): boolean;
   /** True when the local player's element is Rubber (upgrade flags are only meaningful then). */
@@ -96,6 +150,25 @@ export interface RubberArenaApi {
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
   buildNpcContext(x: number, y: number): CastContext;
+  /** Show/clear an element-specific effect in the top-right status tray (player-side only). */
+  setStatusIndicator(id: string, status: CustomStatus | null): void;
+  /** True when Rubber Mastery is unlocked, enabled, and Rubber is the local element. */
+  readonly masteryActive: boolean;
+  /** The mastery enhancement bound over the given ability slot this match, or null. */
+  masteryBindFor(slot: string): string | null;
+  /** Bank progress toward a Rubber Mastery requirement. */
+  recordMasteryStat(key: string, amount: number): void;
+  /** Online: tell the peer's sim we just cast a bindable mastery ability. */
+  broadcastMasteryCast(enhId: string): void;
+}
+
+/** Mastery — Atom-Nhilego: one collapse zone in an ongoing chain. */
+interface NhilegoShadow {
+  circle: Phaser.GameObjects.Arc;
+  x: number;
+  y: number;
+  radius: number;
+  fireAt: number;
 }
 
 interface RubberageBall {
@@ -195,13 +268,23 @@ export class RubberKit {
   private npcBounceFormEnd = 0;
   private npcBounceFormVisual: Phaser.GameObjects.Rectangle | null = null;
 
-  // Vulcanization
-  private vulcUnlocked = false;
-  private vulcCharging = false;
-  private vulcCharge = 0;
-  private vulcPlayerCdMultBase = 1;
+  // ── Mastery: Vulcanization (passive) ─────────────────────────────────────
+  /** Cure level, 0..1. Rises as the player soaks damage; never falls during a match. */
+  private vulc = 0;
+  private vulcCdMultBase = 1;
   private vulcCdMultCaptured = false;
-  private vulcSlowTexts: Phaser.GameObjects.Text[] = [];
+  /** Fire-mode anchor pulse timer (75%+ cure). */
+  private vulcAnchorPulseAt = 0;
+  private vulcAura: Phaser.GameObjects.Arc | null = null;
+
+  // ── Mastery: Atom-Nhilego (bindable) ─────────────────────────────────────
+  private nhilegoLastCastAt = -NHILEGO_COOLDOWN_MS;
+  private playerNhilegoShadow: NhilegoShadow | null = null;
+  private playerNhilegoRadius = NHILEGO_START_RADIUS;
+  private playerNhilegoHits = 0;
+  private npcNhilegoShadow: NhilegoShadow | null = null;
+  private npcNhilegoRadius = NHILEGO_START_RADIUS;
+  private npcNhilegoHits = 0;
 
   // Fireball Sling (E+)
   private fireballFlight = false;
@@ -233,6 +316,11 @@ export class RubberKit {
   private bandRecallFromX = 0; private bandRecallFromY = 0;
   private bandRecallToX = 0; private bandRecallToY = 0;
   private bandRecallStart = 0;
+  /** F+ Bouncy Anchor: rolling velocity picked up from attacks that struck the anchor. */
+  private bandAnchorKnockVx = 0;
+  private bandAnchorKnockVy = 0;
+  /** Debounce so a lingering fist or projectile can't re-launch the ball every frame. */
+  private bandAnchorLastKnockAt = 0;
 
   // Rubber Banding (NPC — simplified: auto snap-back when overstretched)
   private npcBandActive = false;
@@ -307,17 +395,24 @@ export class RubberKit {
     this.npcBounceFormActive = false;
     this.npcBounceFormVisual?.destroy(); this.npcBounceFormVisual = null;
 
-    // Vulcanization is retired — the reworked upgrades don't use it. Kept inert
-    // (vulcUnlocked stays false) so its dead branches never fire.
-    if (this.vulcCdMultCaptured) player.cooldownMult = this.vulcPlayerCdMultBase;
+    // Mastery — Vulcanization: cures from scratch each match.
+    if (this.vulcCdMultCaptured) player.cooldownMult = this.vulcCdMultBase;
     player.clearTint();
-    for (const t of this.vulcSlowTexts) t.destroy();
-    this.vulcSlowTexts = [];
-    this.vulcUnlocked = false;
-    this.vulcCharging = false;
-    this.vulcCharge = 0;
+    this.vulc = 0;
     this.vulcCdMultCaptured = false;
-    this.vulcPlayerCdMultBase = 1;
+    this.vulcCdMultBase = 1;
+    this.vulcAnchorPulseAt = 0;
+    this.vulcAura?.destroy(); this.vulcAura = null;
+    this.arena.setStatusIndicator('vulcanization', null);
+
+    // Mastery — Atom-Nhilego
+    this.nhilegoLastCastAt = -NHILEGO_COOLDOWN_MS;
+    this.playerNhilegoShadow?.circle.destroy(); this.playerNhilegoShadow = null;
+    this.playerNhilegoRadius = NHILEGO_START_RADIUS;
+    this.playerNhilegoHits = 0;
+    this.npcNhilegoShadow?.circle.destroy(); this.npcNhilegoShadow = null;
+    this.npcNhilegoRadius = NHILEGO_START_RADIUS;
+    this.npcNhilegoHits = 0;
 
     // Fireball Sling
     if (this.fireballFlight) { player.sizeMult = 1; player.applySizeMult(); }
@@ -343,6 +438,8 @@ export class RubberKit {
     this.bandPullTriggeredThisPress = false;
     this.bandReinforced = false;
     this.bandLifetimeMs = BAND_LIFETIME_MS;
+    this.bandAnchorKnockVx = 0; this.bandAnchorKnockVy = 0;
+    this.bandAnchorLastKnockAt = 0;
 
     this.npcBandGfx?.destroy(); this.npcBandGfx = null;
     this.npcBandActive = false;
@@ -435,15 +532,9 @@ export class RubberKit {
     const justPressed = pointer.isDown && !this.arena.pointerWasDown;
     const justReleased = !pointer.isDown && this.arena.pointerWasDown;
 
-    // Right-click vulcanization
-    const rightDown = pointer.rightButtonDown();
-    if (this.vulcUnlocked && !this.bounceFormActive && this.vulcCharge < 1) {
-      this.vulcCharging = rightDown;
-    } else {
-      this.vulcCharging = false;
-    }
-
-    const blocked = this.bounceFormActive || this.vulcCharging;
+    const blocked = this.bounceFormActive;
+    // Mastery — whichever of E/R/F/Q Atom-Nhilego is bound over loses its base ability.
+    const nhilegoSlot = this.nhilegoSlot();
 
     // ── Punch: hold click to charge, release to fire ─────────────────────────
     if (this.slingState === 'idle' && !blocked) {
@@ -459,12 +550,13 @@ export class RubberKit {
         this.punchHolding = false;
         if (time >= player.disarmedUntil) {
           const holdMs = time - this.punchHoldStart;
-          const pullRatio = Math.min(1, holdMs / PUNCH_MAX_HOLD_MS);
+          const maxHold = this.punchMaxHoldMs();
+          const pullRatio = Math.min(1, holdMs / maxHold);
           // Click+ Rubber Bazooka: holding past full stretch over-stretches the punch;
           // only a FULLY over-stretched (max charge) release fires the wall-bouncing fist —
           // anything short of that is a normal punch.
           const overRatio = this.arena.hasUpgrade('click')
-            ? Math.max(0, Math.min(1, (holdMs - PUNCH_MAX_HOLD_MS) / PUNCH_MAX_HOLD_MS))
+            ? Math.max(0, Math.min(1, (holdMs - maxHold) / maxHold))
             : 0;
           const ctx = this.arena.buildPlayerContext(mouseX, mouseY);
           player.castAbility('rubber-punch', ctx);
@@ -493,14 +585,18 @@ export class RubberKit {
     const { eKey, rKey, fKey, qKey } = this.arena;
 
     if (Phaser.Input.Keyboard.JustDown(eKey) && !blocked && time >= player.disarmedUntil) {
-      player.castAbility('rubber-sling', this.arena.buildPlayerContext(mouseX, mouseY));
+      if (nhilegoSlot === 'e') this.tryCastNhilego(time);
+      else player.castAbility('rubber-sling', this.arena.buildPlayerContext(mouseX, mouseY));
     }
 
     if (Phaser.Input.Keyboard.JustDown(rKey) && !blocked && time >= player.disarmedUntil) {
-      // F+ Bounce Combo: tapping R while the reeled-in anchor is flying at you bounces
-      // it off toward the cursor instead of casting Bounce Form.
+      // R+ Bounce Combo: tapping R while the reeled-in anchor is flying at you bounces
+      // it off toward the cursor. It beats the mastery bind too — the combo window only
+      // opens while an anchor is mid-flight, so nothing else is competing for the key.
       if (this.canBounceCombo()) {
         this.startBounceCombo(mouseX, mouseY);
+      } else if (nhilegoSlot === 'r') {
+        this.tryCastNhilego(time);
       } else {
         player.castAbility('rubber-bounce-form', this.arena.buildPlayerContext(mouseX, mouseY));
       }
@@ -508,33 +604,40 @@ export class RubberKit {
 
     // F: Rubber Banding — tap with no anchor plants one; tap while tethered snaps you
     // back to it; hold while tethered reels the anchor toward you instead.
-    if (Phaser.Input.Keyboard.JustDown(fKey) && !blocked && time >= player.disarmedUntil) {
-      if (!this.bandActive) {
-        player.castAbility('rubber-band', this.arena.buildPlayerContext(mouseX, mouseY));
-      } else {
-        this.bandFHoldStart = time;
+    if (nhilegoSlot === 'f') {
+      if (Phaser.Input.Keyboard.JustDown(fKey) && !blocked && time >= player.disarmedUntil) {
+        this.tryCastNhilego(time);
+      }
+    } else {
+      if (Phaser.Input.Keyboard.JustDown(fKey) && !blocked && time >= player.disarmedUntil) {
+        if (!this.bandActive) {
+          player.castAbility('rubber-band', this.arena.buildPlayerContext(mouseX, mouseY));
+        } else {
+          this.bandFHoldStart = time;
+          this.bandPullTriggeredThisPress = false;
+        }
+      }
+      if (fKey.isDown && this.bandActive && this.bandFHoldStart > 0 && !this.bandPullTriggeredThisPress) {
+        if (time - this.bandFHoldStart >= BAND_HOLD_THRESHOLD_MS) {
+          this.startBandPull(time);
+          this.bandPullTriggeredThisPress = true;
+        }
+      }
+      if (!fKey.isDown && this.bandFKeyWasDown && this.bandFHoldStart > 0) {
+        const heldMs = time - this.bandFHoldStart;
+        if (heldMs < BAND_HOLD_THRESHOLD_MS && this.bandActive) {
+          this.startBandRecall('player');
+        }
+        this.bandFHoldStart = 0;
         this.bandPullTriggeredThisPress = false;
       }
+      this.bandFKeyWasDown = fKey.isDown;
     }
-    if (fKey.isDown && this.bandActive && this.bandFHoldStart > 0 && !this.bandPullTriggeredThisPress) {
-      if (time - this.bandFHoldStart >= BAND_HOLD_THRESHOLD_MS) {
-        this.startBandPull(time);
-        this.bandPullTriggeredThisPress = true;
-      }
-    }
-    if (!fKey.isDown && this.bandFKeyWasDown && this.bandFHoldStart > 0) {
-      const heldMs = time - this.bandFHoldStart;
-      if (heldMs < BAND_HOLD_THRESHOLD_MS && this.bandActive) {
-        this.startBandRecall('player');
-      }
-      this.bandFHoldStart = 0;
-      this.bandPullTriggeredThisPress = false;
-    }
-    this.bandFKeyWasDown = fKey.isDown;
 
     // Q: Rubberage
     if (Phaser.Input.Keyboard.JustDown(qKey) && !blocked && time >= player.disarmedUntil) {
-      player.castAbility('rubberage', this.arena.buildPlayerContext(mouseX, mouseY));
+      if (nhilegoSlot === 'q') this.tryCastNhilego(time);
+      else player.castAbility('rubberage', this.arena.buildPlayerContext(mouseX, mouseY));
     }
   }
 
@@ -593,9 +696,10 @@ export class RubberKit {
     // Punch fist visual tracks behind player
     if (this.punchHolding && this.punchFistVisual) {
       const holdMs = time - this.punchHoldStart;
-      const pullRatio = Math.min(1, holdMs / PUNCH_MAX_HOLD_MS);
+      const maxHold = this.punchMaxHoldMs();
+      const pullRatio = Math.min(1, holdMs / maxHold);
       const overRatio = this.arena.hasUpgrade('click')
-        ? Math.max(0, Math.min(1, (holdMs - PUNCH_MAX_HOLD_MS) / PUNCH_MAX_HOLD_MS))
+        ? Math.max(0, Math.min(1, (holdMs - maxHold) / maxHold))
         : 0;
       const pullLen = PUNCH_MAX_PULL * (Math.sqrt(pullRatio) + 0.5 * overRatio);
       const dx = this.punchMouseX - player.x;
@@ -666,43 +770,10 @@ export class RubberKit {
     this.updateFreeAnchor(time, delta);     // F+
     this.updatePlayerBall(time, delta);     // Q+
 
-    // Vulcanization: charge accumulation + cooldown mult + tint + slow HUD
-    if (this.vulcCharging) {
-      this.vulcCharge = Math.min(1, this.vulcCharge + (delta / 1000) * 0.05);
-    }
-    if (this.vulcUnlocked) {
-      if (!this.vulcCdMultCaptured) {
-        this.vulcPlayerCdMultBase = player.cooldownMult;
-        this.vulcCdMultCaptured = true;
-      }
-      const netFactor = Math.max(0.5, 1 + this.vulcCharge);
-      player.cooldownMult = this.vulcPlayerCdMultBase * netFactor;
-      if (this.vulcCharge > 0) {
-        const v = Math.round(255 * (1 - 0.7 * this.vulcCharge));
-        player.setTint(Phaser.Display.Color.GetColor(v, v, v));
-      } else {
-        player.clearTint();
-      }
-      // Lazy-create HUD slow texts once abilityBars is populated
-      if (this.vulcSlowTexts.length === 0 && this.arena.abilityBars.length > 0) {
-        for (const entry of this.arena.abilityBars) {
-          const cx = entry.fill.x + entry.maxWidth / 2;
-          const t = this.arena.scene.add.text(cx, entry.fill.y, '', {
-            fontFamily: 'monospace', fontSize: '10px', color: '#ff4444', fontStyle: 'bold',
-            stroke: '#000000', strokeThickness: 2,
-          }).setOrigin(0.5, 0.5).setDepth(25).setVisible(false);
-          this.vulcSlowTexts.push(t);
-        }
-      }
-      if (this.vulcSlowTexts.length > 0) {
-        const netPct = Math.round((netFactor - 1) * 100);
-        for (const t of this.vulcSlowTexts) {
-          if (netPct > 0) { t.setText(`${netPct}% slower`); t.setColor('#ff4444'); t.setVisible(true); }
-          else if (netPct < 0) { t.setText(`${Math.abs(netPct)}% faster`); t.setColor('#44ff88'); t.setVisible(true); }
-          else { t.setVisible(false); }
-        }
-      }
-    }
+    // Mastery — Vulcanization passive + Atom-Nhilego chains
+    this.updateVulcanization(time, delta);
+    this.tickNhilego(time, 'player');
+    this.tickNhilego(time, 'npc');
 
     // Fireball trail
     if (this.fireballFlight && this.slingState === 'flying') {
@@ -793,7 +864,8 @@ export class RubberKit {
     if (owner === 'player') {
       this.bounceFormVisual?.destroy();
       this.bounceFormActive = true;
-      this.bounceFormEnd = time + BOUNCE_FORM_MS;
+      // Vulcanization holds the ball together longer.
+      this.bounceFormEnd = time + BOUNCE_FORM_MS * (1 + VULC_BOUNCE_FORM * this.vulcK());
       this.bounceFormVisual = vis;
       this.arena.showFloatingText(caster.x, caster.y - 40, '🔲 BOUNCE FORM', '#ff5577');
     } else {
@@ -842,12 +914,14 @@ export class RubberKit {
     const dmg = isPlus ? RUBBERAGE_DMG_PLUS : RUBBERAGE_DMG;
     const duration = isPlus ? RUBBERAGE_DURATION_PLUS_MS : RUBBERAGE_DURATION_MS;
 
+    // Vulcanization 75%+: the player's swarm comes out glowing.
+    const hot = owner === 'player' && this.vulcFire();
     const balls: RubberageBall[] = [];
     for (let i = 0; i < count; i++) {
       const angle = (Math.PI * 2 * i) / count + Math.random() * 0.3;
       const speed = RUBBERAGE_BASE_SPEED * (0.8 + Math.random() * 0.4);
-      const gfx = scene.add.circle(caster.x, caster.y, RUBBERAGE_RADIUS, 0xff5577, 1)
-        .setStrokeStyle(2, 0xffaacc).setDepth(7);
+      const gfx = scene.add.circle(caster.x, caster.y, RUBBERAGE_RADIUS, hot ? 0xff7733 : 0xff5577, 1)
+        .setStrokeStyle(2, hot ? 0xffcc66 : 0xffaacc).setDepth(7);
       balls.push({
         gfx,
         x: caster.x, y: caster.y,
@@ -890,10 +964,8 @@ export class RubberKit {
   private startStretchPunch(owner: 'player' | 'npc', targetX: number, targetY: number, pullRatio: number): void {
     const { player, npc, scene } = this.arena;
     const caster = owner === 'player' ? player : npc;
-    const isUpgraded = owner === 'player' && this.arena.hasUpgrade('click');
-    const vulcMult = isUpgraded ? (1 + this.vulcCharge) : 1;
-    const damage = Math.round((PUNCH_MIN_DMG + (PUNCH_MAX_DMG - PUNCH_MIN_DMG) * pullRatio) * vulcMult);
-    const maxReach = PUNCH_REACH * (isUpgraded ? (1 + 0.5 * this.vulcCharge) : 1);
+    const damage = Math.round(PUNCH_MIN_DMG + (PUNCH_MAX_DMG - PUNCH_MIN_DMG) * pullRatio);
+    const maxReach = PUNCH_REACH;
 
     const dx = targetX - caster.x;
     const dy = targetY - caster.y;
@@ -970,11 +1042,19 @@ export class RubberKit {
       gfx.fillCircle(fistX, fistY, 12);
     }
 
-    // Rubber Banding: smack your own anchor with a stretched punch to shatter it
+    // Rubber Banding: smack your own anchor with a stretched punch to shatter it —
+    // unless F+ Bouncy Anchor has made it unbreakable, in which case it just gets launched.
     if (isPlayer && this.bandActive) {
       const bandDist = Phaser.Math.Distance.Between(fistX, fistY, this.bandAnchorX, this.bandAnchorY);
       if (bandDist < BAND_SMASH_RADIUS) {
-        this.shatterBand('player');
+        if (this.bouncyAnchor()) {
+          if (!hit) {
+            this.knockAnchor(dirX, dirY, damage);
+            if (isPlayer) this.punchStretchHit = true;
+          }
+        } else {
+          this.shatterBand('player');
+        }
       }
     }
 
@@ -986,7 +1066,10 @@ export class RubberKit {
         const d = Phaser.Math.Distance.Between(fistX, fistY, tgt.x, tgt.y);
         if (d < PUNCH_FIST_RADIUS) {
           tgt.takeDamage(damage);
-          this.arena.spawnHitFlash(tgt.x, tgt.y, 0xff5577);
+          // Vulcanization 75%+: a charged fist is hot enough to set them alight.
+          const ignites = isPlayer && this.vulcFire();
+          if (ignites) this.applyFireDot(tgt);
+          this.arena.spawnHitFlash(tgt.x, tgt.y, ignites ? 0xff7733 : 0xff5577);
           if (isPlayer) this.punchStretchHit = true;
           else this.npcPunchStretchHit = true;
           break;
@@ -1039,16 +1122,18 @@ export class RubberKit {
     }
 
     const pullRatio = Math.min(1, pullDist / SLING_MAX_PULL);
-    const speed = SLING_MIN_SPEED + (SLING_MAX_SPEED - SLING_MIN_SPEED) * pullRatio;
+    // Vulcanized rubber snaps back harder, so the whole launch is faster.
+    const speed = (SLING_MIN_SPEED + (SLING_MAX_SPEED - SLING_MIN_SPEED) * pullRatio)
+      * (1 + VULC_SLING_SPEED * this.vulcK());
     this.slingSpeed = speed;
     // Real slingshot: launch back through the rest position, opposite the pull direction.
     const vx = -(pdx / pullDist) * speed;
     const vy = -(pdy / pullDist) * speed;
 
-    // E+ Fireball Sling: launch as fireball when vulcanized
-    if (this.arena.hasUpgrade('e') && this.vulcCharge > 0) {
+    // Vulcanization 75%+: the launch goes up, riding across the arena as a fireball.
+    if (this.vulcFire()) {
       this.fireballFlight = true;
-      this.fireballSize = 1 + 0.6 * this.vulcCharge;
+      this.fireballSize = 1.5;
       player.sizeMult = this.fireballSize;
       player.applySizeMult();
     } else {
@@ -1063,7 +1148,9 @@ export class RubberKit {
     this.slingFlyEnd = time + SLING_LAUNCH_MAX_MS;
     this.slingHitThisFlight.clear();
     // E+ Bouncy House: the launch bounces off the rubber-coated walls up to 3 more times.
-    this.slingBouncesLeft = this.arena.hasUpgrade('e') ? 3 : 0;
+    // Vulcanization adds bounces of its own, coating or not.
+    this.slingBouncesLeft = (this.arena.hasUpgrade('e') ? 3 : 0)
+      + Math.floor(VULC_SLING_BOUNCES * this.vulcK());
   }
 
   /** E+ Bouncy House: reflect the sling launch off a wall, redirecting toward the cursor. */
@@ -1129,13 +1216,16 @@ export class RubberKit {
       if (!t.active || hitSet.has(t)) continue;
       const d = Phaser.Math.Distance.Between(caster.x, caster.y, t.x, t.y);
       if (d < 52) {
-        t.takeDamage(SLING_CONTACT_DMG);
+        // A vulcanized fireball launch hits harder and leaves the target burning.
+        const fireball = owner === 'player' && this.fireballFlight;
+        t.takeDamage(Math.round(SLING_CONTACT_DMG * (fireball ? VULC_FIRE_SLING_MULT : 1)));
+        if (fireball) this.applyFireDot(t);
         hitSet.add(t);
-        this.arena.spawnHitFlash(t.x, t.y, 0xff5577);
+        this.arena.spawnHitFlash(t.x, t.y, fireball ? 0xff7733 : 0xff5577);
         if (owner === 'player') {
           // E+ Bouncy House: keep flying (and keep dealing contact damage) after a hit;
           // without it, a contact ends the launch as before.
-          if (!this.arena.hasUpgrade('e')) this.endSlingFlight();
+          if (!this.arena.hasUpgrade('e') && this.slingBouncesLeft <= 0) this.endSlingFlight();
         } else {
           this.npcSlingFlyEnd = 0;
         }
@@ -1160,7 +1250,15 @@ export class RubberKit {
       vis?.destroy();
       if (isPlayer) { this.bounceFormActive = false; this.bounceFormVisual = null; }
       else { this.npcBounceFormActive = false; this.npcBounceFormVisual = null; }
+      if (isPlayer) this.arena.setStatusIndicator('bounce-form', null);
       return;
+    }
+
+    if (isPlayer) {
+      this.arena.setStatusIndicator('bounce-form', {
+        name: 'Bounce Form', emoji: '🏓', color: 0xffaacc, priority: 108, until: endTime,
+        description: 'Balled up and bouncing — enemy projectiles that come near are reflected back.',
+      });
     }
 
     // Track visual to caster position and rotate toward cursor / enemy
@@ -1188,30 +1286,16 @@ export class RubberKit {
       (proj as unknown as Record<string, unknown>)['isFromPlayer'] = isPlayer;
       (proj as unknown as Record<string, unknown>)['rubberHomingTarget'] = isPlayer ? npc : player;
 
-      // R+ Shatter Bounce: the reflected homing bullet deals +25%, and 4 copies at
-      // 25% of its damage spray out in an even cone.
-      if (isPlayer && this.arena.hasUpgrade('r')) {
-        const mainDmg = Math.round(proj.damage * 1.25);
-        (proj as unknown as Record<string, unknown>)['damage'] = mainDmg;
-        this.spawnShatterCopies(proj, mainDmg);
+      if (isPlayer) {
+        this.arena.recordMasteryStat('reflects', 1);
+        // Vulcanization 75%+: the bullet leaves your skin superheated.
+        if (this.vulcFire()) {
+          (proj as unknown as Record<string, unknown>)['damage'] = Math.round(proj.damage * VULC_FIRE_REFLECT_MULT);
+          // Read back in ArenaScene.applyProjectileToEnemy to light the target up.
+          (proj as unknown as Record<string, unknown>)['rubberParryFireDot'] = VULC_FIRE_DOT_MS;
+          (proj as unknown as Phaser.GameObjects.Image).setTint?.(0xff7733);
+        }
       }
-    }
-  }
-
-  /** R+ Shatter Bounce: 4 cone copies of a reflected bullet at 25% of its damage. */
-  private spawnShatterCopies(proj: Projectile, mainDmg: number): void {
-    const body = proj.body as Phaser.Physics.Arcade.Body | null;
-    if (!body) return;
-    const baseAng = Math.atan2(body.velocity.y, body.velocity.x);
-    const spd = Math.sqrt(body.velocity.x ** 2 + body.velocity.y ** 2) || 400;
-    const copyDmg = Math.max(1, Math.round(mainDmg * 0.25));
-    const texKey = (proj as unknown as Phaser.GameObjects.Image).texture?.key ?? 'proj-fate-burst';
-    for (const off of [-0.36, -0.12, 0.12, 0.36]) {
-      const ang = baseAng + off;
-      const copy = new Projectile(this.arena.scene, proj.x, proj.y, texKey, copyDmg, true);
-      this.arena.projectiles.add(copy);
-      copy.launch(Math.cos(ang) * spd, Math.sin(ang) * spd);
-      copy.setRotation(ang);
     }
   }
 
@@ -1301,7 +1385,9 @@ export class RubberKit {
     if (dist < 8) return;
 
     const tension = Math.min(1, dist / BAND_MAX_STRETCH);
-    const speed = BAND_ANCHOR_MIN_SPEED + (BAND_ANCHOR_MAX_SPEED - BAND_ANCHOR_MIN_SPEED) * tension;
+    // Vulcanization whips the anchor in faster — and a faster anchor hits harder (see updateBand).
+    const speed = (BAND_ANCHOR_MIN_SPEED + (BAND_ANCHOR_MAX_SPEED - BAND_ANCHOR_MIN_SPEED) * tension)
+      * (1 + VULC_ANCHOR * this.vulcK());
     const overshoot = BAND_ANCHOR_MAX_OVERSHOOT * tension;
     const totalDist = dist + overshoot;
 
@@ -1350,7 +1436,10 @@ export class RubberKit {
 
         // The flying anchor damages anything it passes through, harder the more tension it was reeled in under.
         const flyTargets = enemies.length > 0 ? enemies : [npc];
-        const flyDmg = Math.round(BAND_ANCHOR_MIN_FLY_DMG + (BAND_ANCHOR_MAX_FLY_DMG - BAND_ANCHOR_MIN_FLY_DMG) * this.bandAnchorFlyTension);
+        const flyDmg = Math.round(
+          (BAND_ANCHOR_MIN_FLY_DMG + (BAND_ANCHOR_MAX_FLY_DMG - BAND_ANCHOR_MIN_FLY_DMG) * this.bandAnchorFlyTension)
+          * (1 + VULC_ANCHOR * this.vulcK()),
+        );
         for (const t of flyTargets) {
           if (!t.active || t.hp <= 0 || this.bandAnchorFlyHitSet.has(t)) continue;
           if (Phaser.Math.Distance.Between(anchorX, anchorY, t.x, t.y) <= BAND_ANCHOR_HIT_RADIUS) {
@@ -1360,6 +1449,19 @@ export class RubberKit {
           }
         }
       }
+    }
+
+    // F+ Bouncy Anchor: the ball can no longer be broken, so instead it rolls — attacks
+    // batter it around the arena and it bounces off the walls until friction stops it.
+    if (isPlayer && this.bouncyAnchor()) {
+      this.updateBouncyAnchor(time, delta);
+      anchorX = this.bandAnchorX; anchorY = this.bandAnchorY;
+    }
+
+    // Vulcanization 75%+: the anchor runs hot and pulses fire at whatever is stood near it.
+    if (isPlayer && this.vulcFire() && time >= this.vulcAnchorPulseAt) {
+      this.vulcAnchorPulseAt = time + VULC_FIRE_ANCHOR_PERIOD_MS;
+      this.pulseAnchorFire(anchorX, anchorY);
     }
 
     // Snap-back recall: lerp position directly rather than relying on physics velocity
@@ -1414,10 +1516,27 @@ export class RubberKit {
       gfx.clear();
       gfx.lineStyle(3, 0xff77aa, 0.85);
       gfx.beginPath(); gfx.moveTo(anchorX, anchorY); gfx.lineTo(caster.x, caster.y); gfx.strokePath();
-      gfx.fillStyle(0x111111, 1);
-      gfx.fillCircle(anchorX, anchorY, BAND_ANCHOR_RADIUS);
-      gfx.lineStyle(2, 0xff5577, 1);
-      gfx.strokeCircle(anchorX, anchorY, BAND_ANCHOR_RADIUS);
+      if (isPlayer && this.bouncyAnchor()) {
+        // F+ Bouncy Anchor: a glossy blue superball rather than the usual dead-weight anchor.
+        gfx.fillStyle(0x1e5fd0, 1);
+        gfx.fillCircle(anchorX, anchorY, BAND_ANCHOR_RADIUS);
+        gfx.fillStyle(0x66aaff, 0.85);
+        gfx.fillCircle(anchorX - BAND_ANCHOR_RADIUS * 0.3, anchorY - BAND_ANCHOR_RADIUS * 0.3, BAND_ANCHOR_RADIUS * 0.42);
+        gfx.fillStyle(0xffffff, 0.9);
+        gfx.fillCircle(anchorX - BAND_ANCHOR_RADIUS * 0.38, anchorY - BAND_ANCHOR_RADIUS * 0.4, BAND_ANCHOR_RADIUS * 0.18);
+        gfx.lineStyle(2, 0x88ccff, 1);
+        gfx.strokeCircle(anchorX, anchorY, BAND_ANCHOR_RADIUS);
+        // Fire mode paints a heat ring around it so the 3s pulse is telegraphed.
+        if (this.vulcFire()) {
+          gfx.lineStyle(2, 0xff7733, 0.7);
+          gfx.strokeCircle(anchorX, anchorY, BAND_ANCHOR_RADIUS + 5);
+        }
+      } else {
+        gfx.fillStyle(0x111111, 1);
+        gfx.fillCircle(anchorX, anchorY, BAND_ANCHOR_RADIUS);
+        gfx.lineStyle(2, 0xff5577, 1);
+        gfx.strokeCircle(anchorX, anchorY, BAND_ANCHOR_RADIUS);
+      }
     }
   }
 
@@ -1426,6 +1545,7 @@ export class RubberKit {
       this.bandGfx?.destroy(); this.bandGfx = null;
       this.bandActive = false;
       this.bandAnchorFlying = false;
+      this.bandAnchorKnockVx = 0; this.bandAnchorKnockVy = 0;
     } else {
       this.npcBandGfx?.destroy(); this.npcBandGfx = null;
       this.npcBandActive = false;
@@ -1479,7 +1599,12 @@ export class RubberKit {
     const wallL = 25 + RUBBERAGE_RADIUS; const wallR = width - 25 - RUBBERAGE_RADIUS;
     const wallT = 85 + RUBBERAGE_RADIUS; const wallB = height - 25 - RUBBERAGE_RADIUS;
     const dt = delta / 1000;
-    const growth = 1 + delta * RUBBERAGE_SPEED_GROWTH_PER_MS;
+    // Vulcanization spins the player's swarm up to full speed much sooner.
+    const accel = isPlayer ? 1 + VULC_RUBBERAGE_ACCEL * this.vulcK() : 1;
+    const growth = 1 + delta * RUBBERAGE_SPEED_GROWTH_PER_MS * accel;
+    // Vulcanization 75%+: burning-hot balls that hit harder and leave fires behind.
+    const onFire = isPlayer && this.vulcFire();
+    const hitDmg = dmg + (onFire ? VULC_FIRE_BALL_BONUS_DMG : 0);
 
     for (const ball of balls) {
       const spd = Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy) || 1;
@@ -1527,8 +1652,11 @@ export class RubberKit {
         const d = Math.sqrt(dx * dx + dy * dy) || 1;
         if (d < RUBBERAGE_RADIUS + RUBBERAGE_FIGHTER_RADIUS && time - ball.lastHitAt > RUBBERAGE_HIT_COOLDOWN_MS) {
           ball.lastHitAt = time;
-          tgt.takeDamage(dmg);
-          this.arena.spawnHitFlash(tgt.x, tgt.y, 0xff5577);
+          const wasAlive = tgt.hp > 0;
+          tgt.takeDamage(hitDmg);
+          if (onFire) this.applyFireDot(tgt);
+          if (isPlayer && wasAlive && tgt.hp <= 0) this.arena.recordMasteryStat('rubberageKills', 1);
+          this.arena.spawnHitFlash(tgt.x, tgt.y, onFire ? 0xff7733 : 0xff5577);
           const body = tgt.body as Phaser.Physics.Arcade.Body | null;
           if (body) body.setVelocity((dx / d) * RUBBERAGE_KNOCKBACK, (dy / d) * RUBBERAGE_KNOCKBACK);
           const ballSpd = Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy) || 1;
@@ -1617,8 +1745,19 @@ export class RubberKit {
         if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) <= BAZOOKA_RADIUS + 20) {
           b.hitAt.set(t, time);
           t.takeDamage(b.dmg);
-          this.arena.spawnHitFlash(t.x, t.y, 0xff5577);
+          // The bazooka IS the fully charged click, so it ignites at 75%+ cure too.
+          const ignites = this.vulcFire();
+          if (ignites) this.applyFireDot(t);
+          this.arena.recordMasteryStat('bazookaHits', 1);
+          this.arena.spawnHitFlash(t.x, t.y, ignites ? 0xff7733 : 0xff5577);
         }
+      }
+
+      // F+ Bouncy Anchor: your own fist sends the superball flying rather than shattering it.
+      if (!b.returning && this.bandActive && this.bouncyAnchor()
+          && Phaser.Math.Distance.Between(b.x, b.y, this.bandAnchorX, this.bandAnchorY) <= BAZOOKA_RADIUS + BAND_ANCHOR_RADIUS) {
+        const s = Math.sqrt(b.vx * b.vx + b.vy * b.vy) || 1;
+        this.knockAnchor(b.vx / s, b.vy / s, b.dmg);
       }
 
       b.gfx.clear();
@@ -1636,14 +1775,14 @@ export class RubberKit {
     }
   }
 
-  // ── F+ Bounce Combo ────────────────────────────────────────────────────────
+  // ── R+ Bounce Combo ────────────────────────────────────────────────────────
 
   /** True while the reeled-in anchor is flying toward the player (the R-bounce window). */
   private canBounceCombo(): boolean {
-    return this.arena.isPlayerRubber && this.arena.hasUpgrade('f') && this.bandActive && this.bandAnchorFlying;
+    return this.arena.isPlayerRubber && this.arena.hasUpgrade('r') && this.bandActive && this.bandAnchorFlying;
   }
 
-  /** F+ Bounce Combo: bounce the incoming anchor off the player toward the cursor. */
+  /** R+ Bounce Combo: bounce the incoming anchor off the player toward the cursor. */
   private startBounceCombo(mouseX: number, mouseY: number): void {
     const { player, scene } = this.arena;
     const dx = mouseX - player.x, dy = mouseY - player.y;
@@ -1658,6 +1797,7 @@ export class RubberKit {
       vx: (dx / dist) * speed, vy: (dy / dist) * speed,
       dmg: 50, hitSet: new Set(), gfx, blurAccum: 0,
     };
+    this.arena.recordMasteryStat('bounceCombos', 1);
     this.arena.showFloatingText(player.x, player.y - 44, '💠 BOUNCE COMBO!', '#5588ff');
   }
 
@@ -1773,7 +1913,10 @@ export class RubberKit {
       const d = Math.sqrt(dx * dx + dy * dy) || 1;
       if (d < r + RUBBERAGE_FIGHTER_RADIUS && time - this.playerBallLastHitAt > RUBBERAGE_HIT_COOLDOWN_MS) {
         this.playerBallLastHitAt = time;
-        t.takeDamage(5);
+        const wasAlive = t.hp > 0;
+        t.takeDamage(5 + (this.vulcFire() ? VULC_FIRE_BALL_BONUS_DMG : 0));
+        if (this.vulcFire()) this.applyFireDot(t);
+        if (wasAlive && t.hp <= 0) this.arena.recordMasteryStat('rubberageKills', 1);
         this.arena.spawnHitFlash(t.x, t.y, 0xaa55ff);
         const tb = t.body as Phaser.Physics.Arcade.Body | null;
         if (tb) tb.setVelocity((dx / d) * 320, (dy / d) * 320);
@@ -1782,6 +1925,295 @@ export class RubberKit {
         this.playerBallVx = -(dx / d) * s;
         this.playerBallVy = -(dy / d) * s;
       }
+    }
+  }
+
+  // ── F+ Bouncy Anchor ───────────────────────────────────────────────────────
+
+  /** True when the player's anchor is the unbreakable superball rather than dead weight. */
+  private bouncyAnchor(): boolean {
+    return this.arena.isPlayerRubber && this.arena.hasUpgrade('f');
+  }
+
+  /**
+   * Send the superball flying. Direction is the attack's own travel direction; the shove
+   * scales with how much damage the attack was carrying, so a bazooka fist punts it across
+   * the arena while a stray pellet barely nudges it.
+   */
+  private knockAnchor(dirX: number, dirY: number, dmg: number): void {
+    const time = this.arena.scene.time.now;
+    if (time - this.bandAnchorLastKnockAt < 200) return;
+    this.bandAnchorLastKnockAt = time;
+
+    const power = Math.min(BOUNCY_ANCHOR_KNOCK_MAX, BOUNCY_ANCHOR_KNOCK_BASE + dmg * BOUNCY_ANCHOR_KNOCK_PER_DMG);
+    const d = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
+    this.bandAnchorKnockVx = (dirX / d) * power;
+    this.bandAnchorKnockVy = (dirY / d) * power;
+    // A flying reel-in is cancelled — the ball is loose again.
+    this.bandAnchorFlying = false;
+
+    const { scene } = this.arena;
+    const ring = scene.add.circle(this.bandAnchorX, this.bandAnchorY, BAND_ANCHOR_RADIUS, 0x88ccff, 0.6).setDepth(9);
+    scene.tweens.add({ targets: ring, scaleX: 2.2, scaleY: 2.2, alpha: 0, duration: 240, onComplete: () => ring.destroy() });
+    this.arena.showFloatingText(this.bandAnchorX, this.bandAnchorY - 24, '🔵 BOING!', '#88ccff');
+  }
+
+  /**
+   * Roll the knocked superball: integrate its velocity, bounce it off the arena walls, bleed
+   * it off with friction, and let enemy fire batter it around too.
+   */
+  private updateBouncyAnchor(time: number, delta: number): void {
+    const { width, height, projectiles } = this.arena;
+    const dt = delta / 1000;
+
+    // Any live projectile that touches the ball shoves it and is spent doing so.
+    for (const go of projectiles.getChildren()) {
+      const proj = go as unknown as Projectile;
+      if (!proj.active) continue;
+      if (Phaser.Math.Distance.Between(proj.x, proj.y, this.bandAnchorX, this.bandAnchorY) > BAND_ANCHOR_RADIUS + 10) continue;
+      const body = proj.body as Phaser.Physics.Arcade.Body | null;
+      const vx = body?.velocity.x ?? 0;
+      const vy = body?.velocity.y ?? 0;
+      this.knockAnchor(vx, vy, proj.damage ?? 0);
+      this.arena.spawnHitFlash(proj.x, proj.y, 0x88ccff);
+      proj.destroy();
+      break;
+    }
+
+    const speed = Math.sqrt(this.bandAnchorKnockVx ** 2 + this.bandAnchorKnockVy ** 2);
+    if (speed < 1) { this.bandAnchorKnockVx = 0; this.bandAnchorKnockVy = 0; return; }
+
+    let x = this.bandAnchorX + this.bandAnchorKnockVx * dt;
+    let y = this.bandAnchorY + this.bandAnchorKnockVy * dt;
+    const wallL = 25 + BAND_ANCHOR_RADIUS; const wallR = width - 25 - BAND_ANCHOR_RADIUS;
+    const wallT = 85 + BAND_ANCHOR_RADIUS; const wallB = height - 25 - BAND_ANCHOR_RADIUS;
+    if (x < wallL) { x = wallL; this.bandAnchorKnockVx = Math.abs(this.bandAnchorKnockVx); }
+    else if (x > wallR) { x = wallR; this.bandAnchorKnockVx = -Math.abs(this.bandAnchorKnockVx); }
+    if (y < wallT) { y = wallT; this.bandAnchorKnockVy = Math.abs(this.bandAnchorKnockVy); }
+    else if (y > wallB) { y = wallB; this.bandAnchorKnockVy = -Math.abs(this.bandAnchorKnockVy); }
+    this.bandAnchorX = x; this.bandAnchorY = y;
+
+    const decay = Math.max(0, 1 - BOUNCY_ANCHOR_FRICTION * dt);
+    this.bandAnchorKnockVx *= decay;
+    this.bandAnchorKnockVy *= decay;
+    void time;
+  }
+
+  // ── Mastery: Vulcanization ─────────────────────────────────────────────────
+
+  /**
+   * The back-loaded response curve every Vulcanization bonus is scaled by. Returns 0 when
+   * the mastery isn't active so every call site can multiply through unconditionally.
+   */
+  private vulcK(): number {
+    if (!this.arena.masteryActive) return 0;
+    return Math.pow(this.vulc, VULC_CURVE_EXP);
+  }
+
+  /** True once the rubber is cured hot enough to set things alight. */
+  private vulcFire(): boolean {
+    return this.arena.masteryActive && this.vulc >= VULC_FIRE_THRESHOLD;
+  }
+
+  /** Click wind-up length — Vulcanization shortens it. */
+  private punchMaxHoldMs(): number {
+    return PUNCH_MAX_HOLD_MS * (1 - VULC_CHARGE_CUT * this.vulcK());
+  }
+
+  /** Set a target alight with the standard generic burn DOT. */
+  private applyFireDot(t: Fighter, ms: number = VULC_FIRE_DOT_MS): void {
+    t.burningUntil = Math.max(t.burningUntil, this.arena.scene.time.now + Math.round(ms * t.statusDurMult));
+  }
+
+  /** Everything the given side is allowed to hurt. */
+  private aoeTargets(owner: 'player' | 'npc'): Fighter[] {
+    if (owner === 'npc') return [this.arena.player];
+    return this.arena.enemies.length > 0 ? this.arena.enemies : [this.arena.npc];
+  }
+
+  /** Damage soaked by the player cures more rubber. Wired from ArenaScene's onDamaged hook. */
+  onPlayerDamaged(amount: number): void {
+    if (!this.arena.masteryActive || this.vulc >= 1 || amount <= 0) return;
+    const before = this.vulc;
+    this.vulc = Math.min(1, this.vulc + amount / (VULC_DMG_PER_PCT * 100));
+    if (before < VULC_FIRE_THRESHOLD && this.vulc >= VULC_FIRE_THRESHOLD) {
+      this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 50, '🔥 VULCANIZED!', '#ff7733');
+    }
+  }
+
+  /** Applies the cure's standing effects: cooldown cut, body tint, heat aura, HUD chip. */
+  private updateVulcanization(time: number, delta: number): void {
+    const { player, scene } = this.arena;
+    if (!this.arena.masteryActive) return;
+
+    // Cooldowns are scaled off whatever the rest of the game set as the baseline.
+    if (!this.vulcCdMultCaptured) {
+      this.vulcCdMultBase = player.cooldownMult;
+      this.vulcCdMultCaptured = true;
+    }
+    player.cooldownMult = this.vulcCdMultBase * (1 - VULC_COOLDOWN_CUT * this.vulcK());
+
+    // Body darkens toward cured black rubber, then glows once it runs hot.
+    // The Q+ purple ball owns the tint while it's up, so leave it alone there.
+    if (this.vulc > 0 && !this.playerBallActive) {
+      const k = this.vulcK();
+      const r = Math.round(255 - 40 * k);
+      const g = Math.round(255 - 190 * k);
+      const b = Math.round(255 - 190 * k);
+      player.setTint(Phaser.Display.Color.GetColor(r, g, b));
+    }
+
+    if (this.vulcFire()) {
+      if (!this.vulcAura) this.vulcAura = scene.add.circle(player.x, player.y, 30, 0xff7733, 0.22).setDepth(4);
+      this.vulcAura.setPosition(player.x, player.y);
+      // Gentle breathing so the fire state reads at a glance.
+      this.vulcAura.setScale(1 + 0.08 * Math.sin(time / 180));
+    } else if (this.vulcAura) {
+      this.vulcAura.destroy(); this.vulcAura = null;
+    }
+
+    this.arena.setStatusIndicator('vulcanization', {
+      name: 'Vulcanization',
+      emoji: this.vulcFire() ? '🔥' : '🛞',
+      color: this.vulcFire() ? 0xff7733 : 0x992233,
+      count: Math.round(this.vulc * 100),
+      suffix: '%',
+      priority: 104,
+      description: this.vulcFire()
+        ? 'Cured and running hot: faster charge, sling, anchor and Rubberage, shorter cooldowns — and everything you hit catches fire.'
+        : 'Soaking damage cures your rubber. Faster charge, sling, anchor and Rubberage, plus shorter cooldowns. At 75% you catch fire.',
+    });
+    void delta;
+  }
+
+  /** Vulcanization 75%+: the anchor spits a ring of fire at whatever is stood near it. */
+  private pulseAnchorFire(x: number, y: number): void {
+    const { scene } = this.arena;
+    const ring = scene.add.circle(x, y, VULC_FIRE_ANCHOR_RADIUS, 0xff7733, 0.35).setDepth(5);
+    scene.tweens.add({ targets: ring, scaleX: 1.25, scaleY: 1.25, alpha: 0, duration: 320, onComplete: () => ring.destroy() });
+    for (const t of this.aoeTargets('player')) {
+      if (!t.active || t.hp <= 0) continue;
+      if (Phaser.Math.Distance.Between(x, y, t.x, t.y) > VULC_FIRE_ANCHOR_RADIUS) continue;
+      t.takeDamage(VULC_FIRE_ANCHOR_DMG);
+      this.applyFireDot(t);
+      this.arena.spawnHitFlash(t.x, t.y, 0xff7733);
+    }
+  }
+
+  // ── Mastery: Atom-Nhilego ──────────────────────────────────────────────────
+
+  /** Which slot Atom-Nhilego is bound over this match, or null when it isn't bound. */
+  private nhilegoSlot(): 'e' | 'r' | 'f' | 'q' | null {
+    if (!this.arena.masteryActive) return null;
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      if (this.arena.masteryBindFor(s) === 'atom-nhilego') return s;
+    }
+    return null;
+  }
+
+  /** HUD ability-bar fill for the bound Atom-Nhilego slot. */
+  getAtomNhilegoCooldownRatio(time: number): number {
+    return Phaser.Math.Clamp((time - this.nhilegoLastCastAt) / NHILEGO_COOLDOWN_MS, 0, 1);
+  }
+
+  private tryCastNhilego(time: number): void {
+    if (time < this.nhilegoLastCastAt + NHILEGO_COOLDOWN_MS) return;
+    if (this.playerNhilegoShadow) return;
+    this.nhilegoLastCastAt = time;
+    this.startNhilego('player', time);
+    this.arena.broadcastMasteryCast('atom-nhilego');
+  }
+
+  /** Online replay: the opposing Rubber player opened a collapse zone on our sim. */
+  doNpcAtomNhilego(): void {
+    if (this.npcNhilegoShadow) return;
+    this.startNhilego('npc', this.arena.scene.time.now);
+  }
+
+  private startNhilego(owner: 'player' | 'npc', time: number): void {
+    if (owner === 'player') {
+      this.playerNhilegoRadius = NHILEGO_START_RADIUS;
+      this.playerNhilegoHits = 0;
+      const { player } = this.arena;
+      this.arena.showFloatingText(player.x, player.y - 40, '⚛ ATOM-NHILEGO!', '#cc88ff');
+    } else {
+      this.npcNhilegoRadius = NHILEGO_START_RADIUS;
+      this.npcNhilegoHits = 0;
+    }
+    this.spawnNhilegoShadow(owner, time);
+  }
+
+  /** Open the next collapse zone somewhere in the arena, fused for 3 seconds. */
+  private spawnNhilegoShadow(owner: 'player' | 'npc', time: number): void {
+    const { scene, width, height } = this.arena;
+    const radius = owner === 'player' ? this.playerNhilegoRadius : this.npcNhilegoRadius;
+    const pad = 100;
+    const x = pad + Math.random() * Math.max(1, width - pad * 2);
+    const y = pad + Math.random() * Math.max(1, height - pad * 2);
+
+    const circle = scene.add.circle(x, y, radius, 0x2a1044, 0.65).setDepth(4);
+    circle.setStrokeStyle(3, owner === 'player' ? 0xcc88ff : 0xff5577, 0.9);
+    scene.tweens.add({
+      targets: circle,
+      scaleX: 0.9, scaleY: 0.9,
+      yoyo: true, repeat: -1,
+      duration: 700,
+      ease: 'Sine.easeInOut',
+    });
+
+    const shadow: NhilegoShadow = { circle, x, y, radius, fireAt: time + NHILEGO_FUSE_MS };
+    if (owner === 'player') this.playerNhilegoShadow = shadow;
+    else this.npcNhilegoShadow = shadow;
+  }
+
+  private tickNhilego(time: number, owner: 'player' | 'npc'): void {
+    const shadow = owner === 'player' ? this.playerNhilegoShadow : this.npcNhilegoShadow;
+    if (!shadow || !shadow.circle.active) return;
+    if (time < shadow.fireAt) return;
+    this.nhilegoImpact(owner, shadow, time);
+  }
+
+  /**
+   * Detonate a zone. Standing inside it as the caster keeps the chain alive (and grows the
+   * next zone); missing it ends the run and pays out the accumulated heal.
+   */
+  private nhilegoImpact(owner: 'player' | 'npc', shadow: NhilegoShadow, time: number): void {
+    const { scene } = this.arena;
+    const { x, y, radius } = shadow;
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+
+    const flash = scene.add.circle(x, y, radius, 0xcc88ff, 0.75).setDepth(12);
+    scene.tweens.add({ targets: flash, alpha: 0, scaleX: 1.15, scaleY: 1.15, duration: 300, onComplete: () => flash.destroy() });
+    for (const t of this.aoeTargets(owner)) {
+      if (!t.active || t.hp <= 0) continue;
+      if (Phaser.Math.Distance.Between(x, y, t.x, t.y) > radius) continue;
+      t.takeDamage(NHILEGO_DMG);
+      this.arena.spawnHitFlash(t.x, t.y, 0xcc88ff);
+    }
+
+    shadow.circle.destroy();
+    const inside = Phaser.Math.Distance.Between(caster.x, caster.y, x, y) <= radius;
+    if (inside) {
+      if (owner === 'player') {
+        this.playerNhilegoRadius *= NHILEGO_GROWTH;
+        this.playerNhilegoHits++;
+        this.arena.showFloatingText(x, y - 30, `⚛ CHAIN ${this.playerNhilegoHits}`, '#cc88ff');
+      } else {
+        this.npcNhilegoRadius *= NHILEGO_GROWTH;
+        this.npcNhilegoHits++;
+      }
+      this.spawnNhilegoShadow(owner, time);
+      return;
+    }
+
+    const hits = owner === 'player' ? this.playerNhilegoHits : this.npcNhilegoHits;
+    if (owner === 'player') this.playerNhilegoShadow = null;
+    else this.npcNhilegoShadow = null;
+
+    const heal = hits * NHILEGO_HEAL_PER_HIT;
+    if (heal > 0) {
+      caster.heal(heal);
+      if (owner === 'player') this.arena.showFloatingText(caster.x, caster.y - 35, `+${heal}`, '#aaffaa');
     }
   }
 }

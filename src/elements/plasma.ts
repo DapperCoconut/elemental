@@ -37,14 +37,14 @@ const chaosBlades: Ability = {
   cast(ctx) { ctx.plasmaChaosBlades(); },
 };
 
-const chaosIncarnate: Ability = {
-  id: 'plasma-chaos-incarnate',
-  name: 'Chaos Incarnate',
-  description: 'Become invincible for 5s as a plasma ball (15% speed). Touching enemy deals 50 damage. Auto-chains lightning to nearby enemies every 0.5s.',
+const pureChaos: Ability = {
+  id: 'plasma-pure-chaos',
+  name: 'Pure CHAOS!',
+  description: 'Wrap yourself in raw lightning for 20s. Immediately and every 5s after, you spit out 5 homing plasma orbs — with an enemy nearby they hunt it for 8 damage each, with nobody in range they turn on YOU for 5 each.',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 30000,
-  cast(ctx) { ctx.plasmaChaosIncarnate(); },
+  cast(ctx) { ctx.plasmaPureChaos(); },
 };
 
 export const plasmaElement: Element = {
@@ -52,5 +52,5 @@ export const plasmaElement: Element = {
   name: 'Plasma',
   color: 0xaa22ff,
   emoji: '🔮',
-  abilities: [plasmaBurst, unstableArena, plasmaCurrent, chaosBlades, chaosIncarnate],
+  abilities: [plasmaBurst, unstableArena, plasmaCurrent, chaosBlades, pureChaos],
 };

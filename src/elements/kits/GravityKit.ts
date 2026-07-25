@@ -318,17 +318,6 @@ export class GravityKit {
     scene.tweens.add({ targets: this.gravLunarShadow, alpha: 0.75, yoyo: true, repeat: -1, duration: 600 });
   }
 
-  /**
-   * Creation's Crucible 'gss' recipe (1 gold + 2 silver) reuses the gravity fire-puddle
-   * system purely for its DOT-pool visuals/ticking — preserved as-is from ArenaScene.
-   */
-  addFirePuddle(x: number, y: number, owner: 'player' | 'npc', time: number): void {
-    const scene = this.arena.scene;
-    const puddleSpr = scene.add.circle(x, y, 35, 0xff4422, 0.55).setDepth(2).setStrokeStyle(1, 0xff8844, 0.5);
-    scene.tweens.add({ targets: puddleSpr, alpha: 0.3, yoyo: true, repeat: -1, duration: 800 });
-    this.gravFirePuddles.push({ sprite: puddleSpr, expiresAt: time + 8000, x, y, radius: 35, tickAccum: 0, owner });
-  }
-
   // ── Gravity Mastery ────────────────────────────────────────────────────
 
   /** Credits damage dealt to the npc toward the "tetherDamage" requirement while Gravity Anchor holds it. */

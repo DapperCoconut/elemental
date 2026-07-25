@@ -3,8 +3,8 @@ import { Ability, CastContext } from './Ability';
 
 const growthClick: Ability = {
   id: 'growth-click',
-  name: 'Leech Brood',
-  description: 'Launch a leech that sticks to an enemy, dealing 3 dmg every 0.5s for 3s. Max 5 leeches per enemy.',
+  name: 'Bacterium',
+  description: 'Launch a flagellated bacterium that flies straight ahead and deals 12 damage on impact.',
   displayKey: 'Click',
   cooldown: 750,
   cast(ctx: CastContext) {
@@ -23,37 +23,37 @@ const growthEvolve: Ability = {
   },
 };
 
-const sporeSpread: Ability = {
-  id: 'spore-spread',
-  name: 'Spore Spread',
-  description: 'Launch 3 spores near the cursor. They grow over 5s, then each bursts into 3 secondary spores. Touching a spore deals damage scaled to its size.',
+const growthVirus: Ability = {
+  id: 'growth-virus',
+  name: 'Virus',
+  description: 'Launch a virus triangle that deals 10 damage and infects for 8s. Infected enemies expel 3 viruses every 2s, which lie on the floor and deal 6 damage to enemies that touch them.',
   displayKey: 'R',
-  cooldown: 6000,
+  cooldown: 8000,
   cast(ctx: CastContext) {
-    ctx.growthSporeSpread(ctx.targetX, ctx.targetY);
+    ctx.growthVirus(ctx.targetX, ctx.targetY);
   },
 };
 
-const cancer: Ability = {
-  id: 'growth-cancer',
-  name: 'Cancer',
-  description: 'Summon 3 growths that orbit you, each blocking one enemy projectile so you take no damage. Lasts 8s.',
+const sporeSpray: Ability = {
+  id: 'spore-spray',
+  name: 'Spore Spray',
+  description: 'Spray 5 green spores in front of you, one after another. Each has 50 HP, blocks projectiles and enemies, and slowly grows (+10 max HP/s, mature after 5s). Spores fade after 10s.',
   displayKey: 'F',
-  cooldown: 20000,
+  cooldown: 15000,
   cast(ctx: CastContext) {
-    ctx.growthCancer();
+    ctx.growthSporeSpray(ctx.targetX, ctx.targetY);
   },
 };
 
 const auxiliaryGrowth: Ability = {
   id: 'auxiliary-growth',
   name: 'Auxiliary Growth',
-  description: 'Costs 8 DNA. Plant a nest that heals to full HP, then hatches into a 200 HP clone that fights alongside you, casting Cancer, Spore Spread, and Leech Brood on its own. Die with a clone alive and you inhabit it instead.',
+  description: 'Costs 8 DNA. Plant a nest at your cursor that heals to full, then hatches a 200 HP clone with its own upgrade tree. Press SPACE to switch bodies with it. A dying clone melts into primordial soup — nest on it to inherit its upgrades.',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 1000,
   cast(ctx: CastContext) {
-    ctx.growthAuxiliaryGrowth();
+    ctx.growthAuxiliaryGrowth(ctx.targetX, ctx.targetY);
   },
 };
 
@@ -62,5 +62,5 @@ export const growthElement: Element = {
   name: 'Growth',
   color: 0x88bb22,
   emoji: '🦠',
-  abilities: [growthClick, growthEvolve, sporeSpread, cancer, auxiliaryGrowth],
+  abilities: [growthClick, growthEvolve, growthVirus, sporeSpray, auxiliaryGrowth],
 };

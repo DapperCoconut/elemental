@@ -1,6 +1,12 @@
 import { Element } from './Element';
-import { Ability } from './Ability';
+import { Ability, CastContext } from './Ability';
 import { Projectile } from '../combat/Projectile';
+import { FireFx, FIRE } from './kits/FireVisuals';
+
+/** Effects painter bound to whoever is casting (so the Burnt cosmetic recolours their fire). */
+function fx(ctx: CastContext): FireFx {
+  return new FireFx(ctx.scene, ctx.fireColor);
+}
 
 const fireball: Ability = {
   id: 'fireball',
@@ -14,16 +20,13 @@ const fireball: Ability = {
     const len = Math.sqrt(dx * dx + dy * dy) || 1;
     const speed = 520;
     const spawnDist = 32;
-    const proj = new Projectile(
-      ctx.scene,
-      ctx.casterX + (dx / len) * spawnDist,
-      ctx.casterY + (dy / len) * spawnDist,
-      'proj-fire',
-      20,
-      ctx.isPlayerCaster,
-    );
+    const sx = ctx.casterX + (dx / len) * spawnDist;
+    const sy = ctx.casterY + (dy / len) * spawnDist;
+    const proj = new Projectile(ctx.scene, sx, sy, 'proj-fire', 20, ctx.isPlayerCaster);
     ctx.projectiles.add(proj);
     proj.launch((dx / len) * speed, (dy / len) * speed);
+
+    fx(ctx).muzzleFlash(sx, sy, Math.atan2(dy, dx));
   },
 };
 
@@ -37,20 +40,21 @@ const flameDash: Ability = {
     const dx = ctx.targetX - ctx.casterX;
     const dy = ctx.targetY - ctx.casterY;
     const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    const nx = dx / len, ny = dy / len;
     const dashOriginX = ctx.casterX;
     const dashOriginY = ctx.casterY;
-    ctx.dashCaster((dx / len) * 640, (dy / len) * 640);
+    ctx.dashCaster(nx * 640, ny * 640);
+
+    const f = fx(ctx);
+    // Comet tail laid down along the path the dash carries the caster through.
+    f.dashTrail(dashOriginX, dashOriginY, dashOriginX + nx * 180, dashOriginY + ny * 180);
+
     if (!ctx.hasPerk('alcohol')) {
       ctx.dealAoeDamage(dashOriginX, dashOriginY, 90, 18);
-      const ring = ctx.scene.add.circle(dashOriginX, dashOriginY, 10, ctx.fireColor(0xff4400), 0.65);
-      ctx.scene.tweens.add({
-        targets: ring,
-        scaleX: 9,
-        scaleY: 9,
-        alpha: 0,
-        duration: 400,
-        onComplete: () => ring.destroy(),
-      });
+      // Launch burst: a flower of flame kicked out of the spot you left.
+      f.bloom(dashOriginX, dashOriginY, 88, 12);
+      f.scorch(dashOriginX, dashOriginY, 46);
+      f.embers(dashOriginX, dashOriginY, 12, { speed: 190, size: 3.4, life: 560 });
     }
   },
 };
@@ -63,26 +67,8 @@ const pressureBomb: Ability = {
   cooldown: 3000,
   cast(ctx) {
     ctx.dealAoeDamage(ctx.targetX, ctx.targetY, 100, 32);
-
-    // Explosion visual at cursor
-    const ring = ctx.scene.add.circle(ctx.targetX, ctx.targetY, 10, ctx.fireColor(0xff8800), 0.9);
-    ctx.scene.tweens.add({
-      targets: ring,
-      scaleX: 10,
-      scaleY: 10,
-      alpha: 0,
-      duration: 350,
-      onComplete: () => ring.destroy(),
-    });
-    const core = ctx.scene.add.circle(ctx.targetX, ctx.targetY, 6, ctx.fireColor(0xffffff), 0.95);
-    ctx.scene.tweens.add({
-      targets: core,
-      scaleX: 4,
-      scaleY: 4,
-      alpha: 0,
-      duration: 180,
-      onComplete: () => core.destroy(),
-    });
+    fx(ctx).explosion(ctx.targetX, ctx.targetY, 100);
+    ctx.scene.cameras.main.shake(140, 0.004);
   },
 };
 
@@ -111,40 +97,23 @@ const flameNuke: Ability = {
   cooldown: 30000,
   cast(ctx) {
     ctx.lockCaster(2000);
+    const f = fx(ctx);
+    const cx = ctx.casterX, cy = ctx.casterY;
 
-    // Charge ring growing over 2s
-    const charge = ctx.scene.add.circle(ctx.casterX, ctx.casterY, 10, ctx.fireColor(0xff2200), 0.6);
-    ctx.scene.tweens.add({
-      targets: charge,
-      scaleX: 22,
-      scaleY: 22,
-      alpha: 0.15,
-      duration: 2000,
-      onComplete: () => charge.destroy(),
-    });
+    // 2s gather: fire spirals inward while a containment ring squeezes down on the core.
+    f.channelCharge(cx, cy, 200, 2000);
 
-    // After channel: massive explosion
     ctx.scene.time.delayedCall(2000, () => {
-      ctx.dealFlameNukeDamage(ctx.casterX, ctx.casterY, 220, 80);
+      ctx.dealFlameNukeDamage(cx, cy, 220, 80);
 
-      const boom = ctx.scene.add.circle(ctx.casterX, ctx.casterY, 12, ctx.fireColor(0xff4400), 0.9);
-      ctx.scene.tweens.add({
-        targets: boom,
-        scaleX: 18,
-        scaleY: 18,
-        alpha: 0,
-        duration: 600,
-        onComplete: () => boom.destroy(),
-      });
-      const boomCore = ctx.scene.add.circle(ctx.casterX, ctx.casterY, 8, ctx.fireColor(0xffffff), 1);
-      ctx.scene.tweens.add({
-        targets: boomCore,
-        scaleX: 8,
-        scaleY: 8,
-        alpha: 0,
-        duration: 300,
-        onComplete: () => boomCore.destroy(),
-      });
+      // Detonation: a wall of fire, a column punching skyward, and a long shrapnel tail.
+      f.explosion(cx, cy, 220, { shards: 34, smoke: 10, duration: 720 });
+      f.firePillar(cx, cy, 60, 210);
+      f.ring(cx, cy, 40, 300, FIRE.white, 500, 8, 8);
+      ctx.scene.time.delayedCall(120, () => f.bloom(cx, cy, 210, 16));
+      ctx.scene.time.delayedCall(260, () => f.embers(cx, cy, 22, { speed: 420, size: 4.5, life: 900, rise: 90 }));
+      ctx.scene.cameras.main.shake(420, 0.012);
+      ctx.scene.cameras.main.flash(160, 255, 190, 120);
     });
   },
 };

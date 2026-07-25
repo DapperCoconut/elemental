@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
 import { Projectile } from '../../combat/Projectile';
+import { CustomStatus } from './StatusHudKit';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -67,6 +68,8 @@ export interface TimeArenaApi {
   get npcMasteryActive(): boolean;
   masteryBindFor(slot: string): string | null;
   recordMasteryStat(key: string, amount: number): void;
+  /** Show/clear an element-specific effect in the top-right status tray (player-side only). */
+  setStatusIndicator(id: string, status: CustomStatus | null): void;
 }
 
 // ── Mastery: Passive Manipulation (focus/rush) + Fan the Hammer ───────────────
@@ -717,6 +720,13 @@ export class TimeKit {
     const { npc, projectiles } = this.arena;
     if (!this.timelessActive) return;
 
+    // Timeless is always player-cast (it freezes the npc), so this only ever shows on your tray.
+    // Registered every frame while active; cleared in the expiry branch below.
+    this.arena.setStatusIndicator('timeless', {
+      name: 'Timeless', emoji: '⏳', color: 0xffdd88, priority: 109, until: this.timelessEnd,
+      description: 'Time is stopped. Enemies and projectiles are frozen and your cooldowns are free.',
+    });
+
     // Freeze all projectiles (including newly spawned)
     for (const child of projectiles.getChildren()) {
       const proj = child as Projectile;
@@ -741,6 +751,7 @@ export class TimeKit {
 
     if (time >= this.timelessEnd) {
       this.timelessActive = false;
+      this.arena.setStatusIndicator('timeless', null);
       if (this.rifleReloading) { this.rifleReloading = false; this.destroyRifleReloadBar(); }
       for (const [p, v] of this.timelessFrozenProjs) if (p.active) (p.body as Phaser.Physics.Arcade.Body).setVelocity(v.vx, v.vy);
       this.timelessFrozenProjs.clear();

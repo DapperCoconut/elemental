@@ -32,6 +32,13 @@ const BURNT_FALLBACK = 0x1a1a1a;
 const BURNT_PROJECTILE_TINT = 0x111111;
 
 /**
+ * Water has no colour-slot cosmetic yet, so every remap table here is empty and `waterColor`
+ * is the identity. Water's visuals still route through it, which keeps adding one later to a
+ * table edit rather than a sweep through WaterVisuals and WaterKit.
+ */
+const WATER_PALETTES: Record<string, Record<number, number>> = {};
+
+/**
  * Renders equipped cosmetics on both fighters: the color-slot body tint (and the
  * fire-attack palette other code queries via fireColor) plus the sigil-slot emoji
  * floating above the fighter. The npc loadout arrives via the online lobby
@@ -72,6 +79,16 @@ export class CosmeticsKit {
   fireColor(owner: Owner, base: number): number {
     if (!this.hasCosmetic(owner, 'burnt')) return base;
     return BURNT_PALETTE[base] ?? BURNT_FALLBACK;
+  }
+
+  /**
+   * Maps a water visual color through the owner's color cosmetic. Identity until a water
+   * colour cosmetic exists — see WATER_PALETTES.
+   */
+  waterColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = WATER_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
   }
 
   update(): void {

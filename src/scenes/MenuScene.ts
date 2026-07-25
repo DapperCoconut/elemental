@@ -1444,14 +1444,14 @@ export class MenuScene extends Phaser.Scene {
     this.infoOverlayObjects.push(backBtn, backLbl);
   }
 
-  /** Renders Creation's Build Mode tab — the Crucible craft recipes. Returns the new innerY. */
+  /** Renders Creation's Build Mode tab — the Nexus potion recipes. Returns the new innerY. */
   private renderCreationBuildInfo(
     container: Phaser.GameObjects.Container,
     cx: number, colX: number, colW: number, startY: number,
   ): number {
     let y = startY;
 
-    const hdr = this.add.text(cx, y, '— BUILD MODE · CRUCIBLE —', {
+    const hdr = this.add.text(cx, y, '— BUILD MODE · NEXUS —', {
       fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#ffaa55',
     }).setOrigin(0.5);
     container.add(hdr);
@@ -1459,7 +1459,7 @@ export class MenuScene extends Phaser.Scene {
 
     const buildSet = getAbilityVariants('creation', 'e');
     const intro = this.add.text(colX + 14, y,
-      'Charge bolts with E — tap = Copper, hold ~0.5s = Silver, ~1s = Gold — then load 3 into the Crucible on the ground. The trio you feed it decides what gets built:',
+      'Charge bolts with E — tap = Copper, hold ~0.5s = Silver, ~1s = Gold — then load 2 into the Nexus on the ground. The pair you feed it decides which potion it brews; the bottle sits on the Nexus until you walk over and drink it:',
       { fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#ccbb99', wordWrap: { width: colW - 28 }, lineSpacing: 3 });
     container.add(intro);
     y += intro.height + 14;
@@ -1480,7 +1480,7 @@ export class MenuScene extends Phaser.Scene {
     }
 
     if (!buildSet || buildSet.variants.length === 0) {
-      const none = this.add.text(cx, y + 6, 'No crucible recipes are defined yet.', {
+      const none = this.add.text(cx, y + 6, 'No nexus recipes are defined yet.', {
         fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#444455',
       }).setOrigin(0.5);
       container.add(none);
@@ -1823,7 +1823,9 @@ export class MenuScene extends Phaser.Scene {
         if (!this.isInScrollWindow(container, chipY, scrollTop, scrollBot)) return;
         this.beginMasteryDrag({
           enh, elementId, pointer, chip, chipLbl, emoji,
-          dropTargets, slotY, slotW, slotH, container,
+          // Some enhancements refuse particular slots (Creation's Mortar Command can't take E).
+          dropTargets: dropTargets.filter((t) => !(enh.excludeSlots ?? []).includes(t.slot)),
+          slotY, slotW, slotH, container,
           width, height, cx,
         });
       });

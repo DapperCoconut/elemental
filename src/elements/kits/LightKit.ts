@@ -28,6 +28,13 @@ export interface LightArenaApi {
   buildPlayerContext(x: number, y: number): CastContext;
   getNearestEnemy(x: number, y: number): Fighter;
   hasUpgrade(slot: string): boolean;
+  /** True only when the player is light AND Light Mastery is switched on. */
+  get masteryActive(): boolean;
+  /** True only when the online opponent is light AND has Light Mastery on. */
+  get npcMasteryActive(): boolean;
+  masteryBindFor(slot: string): string | null;
+  recordMasteryStat(key: string, amount: number): void;
+  broadcastMasteryCast(enhId: string): void;
 }
 
 // ── Tuning ──────────────────────────────────────────────────────────────
@@ -101,6 +108,26 @@ const F_PLUS_JAVELIN_SPEED = 480;
 const FLARE_TELEPORT_INTERVAL = 10;
 const FLARE_BEAM_LIFETIME_MS = 35000;
 const FLARE_ACCEL_MULT = 3;
+
+// ── Mastery: Unstoppable + Killer Kebab ─────────────────────────────────
+/** Unstoppable: hard turns bleed off only a fraction of the usual acceleration. */
+const UNSTOPPABLE_BRAKE_MULT = 0.35;
+const KEBAB_COOLDOWN_MS = 20000;
+const KEBAB_WINDOW_MS = 5000;   // how long the lance stays enhanced and can skewer
+const KEBAB_CARRY_MS = 12000;   // a rider slides free on its own after this long
+const KEBAB_MAX_RIDERS = 3;
+const KEBAB_RIDER_SPACING = 30; // gap between riders along the shaft
+const KEBAB_FIRST_OFFSET = 46;  // distance from the caster to the first rider
+const KEBAB_BASE_DAMAGE = 25;
+const KEBAB_MAX_BONUS_DAMAGE = 130; // added at full acceleration (scales with ratio^2)
+const KEBAB_COLOR = 0xffaa22;
+
+interface KebabRider {
+  fighter: Fighter;
+  until: number;
+  /** Spike drawn through the rider, so it reads as skewered rather than merely held. */
+  spike: Phaser.GameObjects.Rectangle;
+}
 
 interface LightRamp {
   x: number;
@@ -201,6 +228,15 @@ export class LightKit {
   private playerTeleportCount = 0;
   private flareBeams: LightFlareBeam[] = [];
 
+  // ── Mastery: Killer Kebab ────────────────────────────────────────────────
+  private kebabLastCastAt = -KEBAB_COOLDOWN_MS;
+  private kebabWindowUntil = 0;
+  private kebabRiders: KebabRider[] = [];
+  private kebabShaft: Phaser.GameObjects.Rectangle | null = null;
+  private npcKebabWindowUntil = 0;
+  private npcKebabRiders: KebabRider[] = [];
+  private npcKebabShaft: Phaser.GameObjects.Rectangle | null = null;
+
   // ── NPC mirror state ────────────────────────────────────────────────────
   private npcLanceSprite: Phaser.GameObjects.Triangle | null = null;
   private npcCarAngle = 0;
@@ -264,6 +300,31 @@ export class LightKit {
     this.npcSpeedOLightActive = false;
     this.npcSpeedOLightBouncesLeft = 0;
     this.npcSpeedOLightNextBounceAt = 0;
+
+    // Mastery — Unstoppable + Killer Kebab
+    this.arena.player.unstoppable = false;
+    this.arena.npc.unstoppable = false;
+    this.kebabLastCastAt = -KEBAB_COOLDOWN_MS;
+    this.kebabWindowUntil = 0;
+    this.npcKebabWindowUntil = 0;
+    this.clearKebab('player');
+    this.clearKebab('npc');
+  }
+
+  /** Drop every rider and tear down the shaft art without dealing release damage. */
+  private clearKebab(owner: 'player' | 'npc'): void {
+    const riders = owner === 'player' ? this.kebabRiders : this.npcKebabRiders;
+    for (const r of riders) {
+      r.spike.destroy();
+      r.fighter.skeweredUntil = 0;
+    }
+    if (owner === 'player') {
+      this.kebabRiders = [];
+      if (this.kebabShaft) { this.kebabShaft.destroy(); this.kebabShaft = null; }
+    } else {
+      this.npcKebabRiders = [];
+      if (this.npcKebabShaft) { this.npcKebabShaft.destroy(); this.npcKebabShaft = null; }
+    }
   }
 
   // ── Per-frame update ─────────────────────────────────────────────────────
@@ -272,6 +333,11 @@ export class LightKit {
     const { player, npc, scene } = this.arena;
     const playerBody = player.body as Phaser.Physics.Arcade.Body;
     const npcBody = npc.body as Phaser.Physics.Arcade.Body;
+
+    // Mastery — Unstoppable. The flag lives on Fighter so ArenaScene's speed/stun
+    // chokepoint (and any kit holding its own stun timer) can honour it generically.
+    player.unstoppable = isPlayerLight && this.arena.masteryActive;
+    npc.unstoppable = isNpcLight && this.arena.npcMasteryActive;
 
     if (isPlayerLight) {
       while (this.blinkRechargeQueue.length > 0 && time >= this.blinkRechargeQueue[0]) {
@@ -291,7 +357,7 @@ export class LightKit {
         this.carAngle = Math.atan2(ptr.worldY - player.y, ptr.worldX - player.x);
         if (this.lanceSprite) {
           this.lanceSprite.setVisible(true);
-          this.updateLanceVisual(this.lanceSprite, player, this.carAngle, this.carSpeed / CAR_MAX_SPEED);
+          this.updateLanceVisual(this.lanceSprite, player, this.carAngle, this.carSpeed / CAR_MAX_SPEED, time < this.kebabWindowUntil);
         }
         if (time >= this.nextSteamAt) {
           this.nextSteamAt = time + E_PLUS_STEAM_INTERVAL_MS;
@@ -304,13 +370,14 @@ export class LightKit {
         const desired = Math.atan2(ptr.worldY - player.y, ptr.worldX - player.x);
         const ratio = this.stepCar(playerBody, time, delta, desired, true);
         if (this.lanceSprite) {
-          this.updateLanceVisual(this.lanceSprite, player, this.carAngle, ratio);
-          this.checkLanceContact(time, this.lanceSprite.x, this.lanceSprite.y, ratio, this.arena.enemies, this.lanceHitCooldowns);
+          this.updateLanceVisual(this.lanceSprite, player, this.carAngle, ratio, time < this.kebabWindowUntil);
+          this.checkLanceContact(time, this.lanceSprite.x, this.lanceSprite.y, ratio, this.arena.enemies, this.lanceHitCooldowns, 'player');
         }
         this.updateAccelBar(ratio);
 
-        // Click+ Redline: doubled meter (already folded into `ratio` by stepCar), danger zone above 3/4
-        if (this.arena.hasUpgrade('click')) {
+        // Click+ Redline: doubled meter (already folded into `ratio` by stepCar), danger zone above 3/4.
+        // Killer Kebab riders take the impact for you — no wall damage while anything is on the lance.
+        if (this.arena.hasUpgrade('click') && this.kebabRiders.length === 0) {
           const dangerAlpha = ratio > CLICK_PLUS_DANGER_RATIO
             ? Phaser.Math.Clamp((ratio - CLICK_PLUS_DANGER_RATIO) / (1 - CLICK_PLUS_DANGER_RATIO), 0, 1) * 0.4
             : 0;
@@ -344,8 +411,8 @@ export class LightKit {
         this.npcLanceSprite.setVisible(true);
         const desired = Math.atan2(player.y - npc.y, player.x - npc.x);
         const ratio = this.stepCar(npcBody, time, delta, desired, false);
-        this.updateLanceVisual(this.npcLanceSprite, npc, this.npcCarAngle, ratio);
-        this.checkLanceContact(time, this.npcLanceSprite.x, this.npcLanceSprite.y, ratio, [player], this.npcLanceHitCooldowns);
+        this.updateLanceVisual(this.npcLanceSprite, npc, this.npcCarAngle, ratio, time < this.npcKebabWindowUntil);
+        this.checkLanceContact(time, this.npcLanceSprite.x, this.npcLanceSprite.y, ratio, [player], this.npcLanceHitCooldowns, 'npc');
       }
 
       const npcCastId = this.arena.npcCastId;
@@ -375,9 +442,13 @@ export class LightKit {
     this.updateDrills(time, delta);
     this.updateFlareBeams(time);
 
+    // Mastery — Killer Kebab. Runs after the car step so riders land on this frame's lance.
+    this.updateKebab(time, 'player');
+    this.updateKebab(time, 'npc');
+
     // R+ Prism Drill stun — same "zero velocity while stunned" approach used elsewhere in this codebase
-    if (time < this.playerStunUntil) playerBody.setVelocity(0, 0);
-    if (time < this.npcStunUntil) npcBody.setVelocity(0, 0);
+    if (time < this.playerStunUntil && !player.unstoppable) playerBody.setVelocity(0, 0);
+    if (time < this.npcStunUntil && !npc.unstoppable) npcBody.setVelocity(0, 0);
   }
 
   private stepCar(body: Phaser.Physics.Arcade.Body, time: number, delta: number, desiredAngle: number, isPlayer: boolean): number {
@@ -402,10 +473,14 @@ export class LightKit {
       accelRate *= FLARE_ACCEL_MULT;
     }
 
+    // Mastery — Unstoppable: the lance bites into the corner, so a hard turn costs far less speed.
+    const unstoppable = isPlayer ? this.arena.masteryActive : this.arena.npcMasteryActive;
+    const brakeRate = unstoppable ? CAR_TURN_BRAKE_RATE * UNSTOPPABLE_BRAKE_MULT : CAR_TURN_BRAKE_RATE;
+
     if (absDiff < STRAIGHT_THRESHOLD) {
       speed = Math.min(maxSpeed, speed + accelRate * dtS);
     } else {
-      speed = Math.max(CAR_MIN_COAST, speed - CAR_TURN_BRAKE_RATE * dtS * (absDiff / Math.PI));
+      speed = Math.max(CAR_MIN_COAST, speed - brakeRate * dtS * (absDiff / Math.PI));
     }
 
     if (time < boostUntil) speed = Math.max(speed, BOOST_TARGET_SPEED);
@@ -417,19 +492,29 @@ export class LightKit {
     return speed / maxSpeed;
   }
 
-  private updateLanceVisual(sprite: Phaser.GameObjects.Triangle, caster: Fighter, angle: number, ratio: number): void {
-    const dist = 34;
+  private updateLanceVisual(sprite: Phaser.GameObjects.Triangle, caster: Fighter, angle: number, ratio: number, enhanced = false): void {
+    const dist = enhanced ? 44 : 34;
     sprite.setPosition(caster.x + Math.cos(angle) * dist, caster.y + Math.sin(angle) * dist);
     sprite.setRotation(angle);
-    sprite.setFillStyle(lerpColor(LANCE_COLOR_SLOW, LANCE_COLOR_FAST, ratio));
+    // Killer Kebab: the lance runs gold and grows a bigger head while it can impale.
+    sprite.setScale(enhanced ? 1.6 : 1);
+    sprite.setFillStyle(enhanced ? lerpColor(KEBAB_COLOR, LANCE_COLOR_FAST, ratio) : lerpColor(LANCE_COLOR_SLOW, LANCE_COLOR_FAST, ratio));
   }
 
   /** Contact damage for the held/driven lance tip — scales with the current acceleration ratio. */
-  private checkLanceContact(time: number, lanceX: number, lanceY: number, ratio: number, targets: Fighter[], hitCooldowns: Map<Fighter, number>): void {
+  private checkLanceContact(time: number, lanceX: number, lanceY: number, ratio: number, targets: Fighter[], hitCooldowns: Map<Fighter, number>, owner: 'player' | 'npc'): void {
+    const kebabOpen = time < (owner === 'player' ? this.kebabWindowUntil : this.npcKebabWindowUntil);
     for (const t of targets) {
       if (!t.active || t.hp <= 0) continue;
+      // A rider sits on the lance tip — it must not re-hit them every contact tick.
+      if (this.isSkewered(t)) continue;
       if (time < (hitCooldowns.get(t) ?? 0)) continue;
       if (Phaser.Math.Distance.Between(lanceX, lanceY, t.x, t.y) <= LANCE_HIT_RADIUS) {
+        // Mastery — Killer Kebab: while the lance is enhanced a stab impales instead of damaging.
+        if (kebabOpen && this.trySkewer(time, owner, t)) {
+          hitCooldowns.set(t, time + LANCE_HIT_COOLDOWN_MS);
+          continue;
+        }
         const dmg = LANCE_BASE_DAMAGE + Math.round(LANCE_MAX_BONUS_DAMAGE * ratio * ratio);
         t.takeDamage(dmg);
         this.arena.spawnHitFlash(t.x, t.y, LANCE_COLOR_SLOW);
@@ -534,8 +619,10 @@ export class LightKit {
             this.launchRampLances(ramp);
             this.arena.spawnHitFlash(ramp.x, ramp.y, 0x66ddff);
             if (f === ownerFighter) {
-              if (ramp.owner === 'player') this.carBoostUntil = time + RAMP_BOOST_MS;
-              else this.npcCarBoostUntil = time + RAMP_BOOST_MS;
+              if (ramp.owner === 'player') {
+                this.carBoostUntil = time + RAMP_BOOST_MS;
+                this.arena.recordMasteryStat('rampRides', 1);
+              } else this.npcCarBoostUntil = time + RAMP_BOOST_MS;
               this.arena.showFloatingText(f.x, f.y - 30, '⚡ RAMP BOOST', '#66ddff');
             }
           }
@@ -597,6 +684,7 @@ export class LightKit {
           d.speed *= DRILL_SLOW_MULT;
           t.takeDamage(d.dmg);
           this.arena.spawnHitFlash(t.x, t.y, LANCE_COLOR_FAST);
+          this.arena.recordMasteryStat('drillHits', 1);
           d.nextStunAt = time;
         }
         if (time >= d.nextStunAt) {
@@ -637,6 +725,7 @@ export class LightKit {
       if (Phaser.Math.Distance.Between(caster.x, caster.y, t.x, t.y) <= TRICK_RADIUS) {
         t.takeDamage(TRICK_DAMAGE);
         this.arena.spawnHitFlash(t.x, t.y, LANCE_COLOR_SLOW);
+        if (owner === 'player') this.arena.recordMasteryStat('trickHits', 1);
         hit = true;
       }
     }
@@ -754,6 +843,7 @@ export class LightKit {
           s.hitSet.add(t);
           t.takeDamage(STREAK_DAMAGE);
           this.arena.spawnHitFlash(t.x, t.y, LANCE_COLOR_SLOW);
+          if (s.owner === 'player' && t.hp <= 0) this.arena.recordMasteryStat('speedOLightKills', 1);
         }
       }
       s.sprite.setAlpha(Math.max(0, 0.85 * (s.until - time) / STREAK_LIFETIME_MS));
@@ -773,6 +863,198 @@ export class LightKit {
       if (distToSegment(x, y, b.x1, b.y1, b.x2, b.y2) <= STREAK_HIT_RADIUS) return true;
     }
     return false;
+  }
+
+  // ── Mastery — Killer Kebab ───────────────────────────────────────────────
+
+  private kebabSlot(): 'e' | 'r' | 'f' | 'q' | null {
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      if (this.arena.masteryBindFor(s) === 'killer-kebab') return s;
+    }
+    return null;
+  }
+
+  /** Ability-bar fill: full while the lance is still enhanced, otherwise the recharge. */
+  getKebabCooldownRatio(time: number): number {
+    if (time < this.kebabWindowUntil) return 1;
+    return Math.min(1, (time - this.kebabLastCastAt) / KEBAB_COOLDOWN_MS);
+  }
+
+  private tryCastKebab(time: number): void {
+    if (time - this.kebabLastCastAt < KEBAB_COOLDOWN_MS) return;
+    this.kebabLastCastAt = time;
+    this.kebabWindowUntil = time + KEBAB_WINDOW_MS;
+    this.arena.broadcastMasteryCast('killer-kebab');
+    this.flashKebabEnhance('player');
+  }
+
+  /** Online replay: the remote light player enhanced their lance. */
+  doNpcKillerKebab(): void {
+    this.npcKebabWindowUntil = this.arena.scene.time.now + KEBAB_WINDOW_MS;
+    this.flashKebabEnhance('npc');
+  }
+
+  /** Gold flare + orbiting sparks announcing the enhanced lance. */
+  private flashKebabEnhance(owner: 'player' | 'npc'): void {
+    const { scene } = this.arena;
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    const ring = scene.add.circle(caster.x, caster.y, 16, KEBAB_COLOR, 0)
+      .setStrokeStyle(3, KEBAB_COLOR, 0.9).setDepth(9);
+    scene.tweens.add({
+      targets: ring, scaleX: 3.4, scaleY: 3.4, alpha: 0, duration: 420,
+      onComplete: () => ring.destroy(),
+    });
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const spark = scene.add.rectangle(caster.x, caster.y, 10, 3, KEBAB_COLOR, 0.95)
+        .setRotation(a).setDepth(10);
+      scene.tweens.add({
+        targets: spark, x: caster.x + Math.cos(a) * 54, y: caster.y + Math.sin(a) * 54,
+        alpha: 0, duration: 380, onComplete: () => spark.destroy(),
+      });
+    }
+    this.arena.showFloatingText(caster.x, caster.y - 40, '🍢 KILLER KEBAB', '#ffaa22');
+  }
+
+  private isSkewered(f: Fighter): boolean {
+    return this.kebabRiders.some((r) => r.fighter === f) || this.npcKebabRiders.some((r) => r.fighter === f);
+  }
+
+  /** Impale `target` on `owner`'s lance. Returns false when the lance is already full. */
+  private trySkewer(time: number, owner: 'player' | 'npc', target: Fighter): boolean {
+    const riders = owner === 'player' ? this.kebabRiders : this.npcKebabRiders;
+    if (riders.length >= KEBAB_MAX_RIDERS) return false;
+    if (this.isSkewered(target)) return false;
+
+    const { scene } = this.arena;
+    const spike = scene.add.rectangle(target.x, target.y, 58, 5, KEBAB_COLOR, 0.95)
+      .setStrokeStyle(1, 0xfff0c0, 0.9).setDepth(11);
+    riders.push({ fighter: target, until: time + KEBAB_CARRY_MS, spike });
+    target.skeweredUntil = time + KEBAB_CARRY_MS;
+    // Re-applied in short bursts every frame by updateKebab, so releasing early frees them
+    // without having to clear a disarm that might not be ours.
+    target.applyDisarm(250);
+
+    this.arena.spawnHitFlash(target.x, target.y, KEBAB_COLOR);
+    this.arena.showFloatingText(target.x, target.y - 30, '🍢 SKEWERED', '#ffaa22');
+    return true;
+  }
+
+  private updateKebab(time: number, owner: 'player' | 'npc'): void {
+    const isPlayer = owner === 'player';
+    const riders = isPlayer ? this.kebabRiders : this.npcKebabRiders;
+    if (riders.length === 0) { this.destroyKebabShaft(owner); return; }
+
+    const caster = isPlayer ? this.arena.player : this.arena.npc;
+    if (!caster.active || caster.hp <= 0) { this.clearKebab(owner); return; }
+
+    const angle = isPlayer ? this.carAngle : this.npcCarAngle;
+    const ratio = Phaser.Math.Clamp((isPlayer ? this.carSpeed : this.npcCarSpeed) / CAR_MAX_SPEED, 0, 1);
+    const body = caster.body as Phaser.Physics.Arcade.Body;
+    if (body.blocked.up || body.blocked.down || body.blocked.left || body.blocked.right) {
+      this.slamKebab(owner, ratio);
+      return;
+    }
+
+    // Riders hang off the shaft in the order they were speared, nose to tail.
+    for (let i = riders.length - 1; i >= 0; i--) {
+      const r = riders[i];
+      if (!r.fighter.active || r.fighter.hp <= 0) { this.dropRider(owner, i, false); continue; }
+      if (time >= r.until) { this.dropRider(owner, i, true); continue; }
+
+      const dist = KEBAB_FIRST_OFFSET + i * KEBAB_RIDER_SPACING;
+      const rx = caster.x + Math.cos(angle) * dist;
+      const ry = caster.y + Math.sin(angle) * dist;
+      const rb = r.fighter.body as Phaser.Physics.Arcade.Body;
+      r.fighter.setPosition(rx, ry);
+      rb.reset(rx, ry);
+      r.fighter.skeweredUntil = r.until;
+      r.fighter.applyDisarm(250);
+      r.spike.setPosition(rx, ry).setRotation(angle);
+      r.spike.setAlpha(0.65 + 0.35 * Math.abs(Math.sin(time / 120 + i)));
+    }
+
+    if (riders.length > 0) this.updateKebabShaft(owner, caster, angle, riders.length, ratio);
+    else this.destroyKebabShaft(owner);
+  }
+
+  /** The golden shaft running from the caster out past the last rider. */
+  private updateKebabShaft(owner: 'player' | 'npc', caster: Fighter, angle: number, count: number, ratio: number): void {
+    const len = KEBAB_FIRST_OFFSET + (count - 1) * KEBAB_RIDER_SPACING + 26;
+    let shaft = owner === 'player' ? this.kebabShaft : this.npcKebabShaft;
+    if (!shaft) {
+      shaft = this.arena.scene.add.rectangle(0, 0, len, 7, KEBAB_COLOR, 0.95)
+        .setStrokeStyle(1, 0xfff0c0, 0.8).setDepth(10);
+      if (owner === 'player') this.kebabShaft = shaft; else this.npcKebabShaft = shaft;
+    }
+    shaft.setSize(len, 7);
+    shaft.setPosition(caster.x + Math.cos(angle) * (len / 2), caster.y + Math.sin(angle) * (len / 2));
+    shaft.setRotation(angle);
+    shaft.setFillStyle(lerpColor(KEBAB_COLOR, LANCE_COLOR_FAST, ratio), 0.95);
+  }
+
+  private destroyKebabShaft(owner: 'player' | 'npc'): void {
+    if (owner === 'player') {
+      if (this.kebabShaft) { this.kebabShaft.destroy(); this.kebabShaft = null; }
+    } else if (this.npcKebabShaft) {
+      this.npcKebabShaft.destroy();
+      this.npcKebabShaft = null;
+    }
+  }
+
+  /** Remove one rider without a wall slam. `timedOut` distinguishes the 12s slide-off. */
+  private dropRider(owner: 'player' | 'npc', index: number, timedOut: boolean): void {
+    const riders = owner === 'player' ? this.kebabRiders : this.npcKebabRiders;
+    const r = riders[index];
+    if (!r) return;
+    riders.splice(index, 1);
+    r.spike.destroy();
+    r.fighter.skeweredUntil = 0;
+    if (timedOut && r.fighter.active && r.fighter.hp > 0) {
+      this.arena.showFloatingText(r.fighter.x, r.fighter.y - 30, '🍢 SLID FREE', '#ccbb88');
+    }
+    if (riders.length === 0) this.destroyKebabShaft(owner);
+  }
+
+  /** Ram a wall: every rider is torn off the lance, harder the more speed was banked. */
+  private slamKebab(owner: 'player' | 'npc', ratio: number): void {
+    const { scene } = this.arena;
+    const riders = owner === 'player' ? this.kebabRiders : this.npcKebabRiders;
+    if (riders.length === 0) return;
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    const dmg = KEBAB_BASE_DAMAGE + Math.round(KEBAB_MAX_BONUS_DAMAGE * ratio * ratio);
+
+    for (const r of riders) {
+      const f = r.fighter;
+      r.spike.destroy();
+      f.skeweredUntil = 0;
+      if (!f.active || f.hp <= 0) continue;
+      f.takeDamage(dmg);
+      this.arena.spawnHitFlash(f.x, f.y, LANCE_COLOR_FAST);
+      // Shards spraying off the impact point.
+      for (let i = 0; i < 6; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const shard = scene.add.rectangle(f.x, f.y, 9, 3, lerpColor(KEBAB_COLOR, LANCE_COLOR_FAST, ratio), 0.9)
+          .setRotation(a).setDepth(11);
+        scene.tweens.add({
+          targets: shard, x: f.x + Math.cos(a) * (30 + Math.random() * 40), y: f.y + Math.sin(a) * (30 + Math.random() * 40),
+          alpha: 0, duration: 300 + Math.random() * 200, onComplete: () => shard.destroy(),
+        });
+      }
+      const fb = f.body as Phaser.Physics.Arcade.Body | null;
+      if (fb && !f.knockbackImmune) {
+        const away = Math.atan2(f.y - caster.y, f.x - caster.x);
+        fb.setVelocity(Math.cos(away) * 180, Math.sin(away) * 180);
+      }
+    }
+    if (owner === 'player') this.kebabRiders = []; else this.npcKebabRiders = [];
+    this.destroyKebabShaft(owner);
+
+    const burst = scene.add.circle(caster.x, caster.y, 20, LANCE_COLOR_FAST, 0.6).setDepth(9);
+    scene.tweens.add({ targets: burst, scaleX: 4, scaleY: 4, alpha: 0, duration: 380, onComplete: () => burst.destroy() });
+    this.arena.showFloatingText(caster.x, caster.y - 44, `💥 KEBAB SLAM ${dmg}`, '#ff6622');
+    // The impact eats all your speed, riders or not.
+    if (owner === 'player') this.carSpeed = 0; else this.npcCarSpeed = 0;
   }
 
   // ── Input ────────────────────────────────────────────────────────────────
@@ -799,10 +1081,19 @@ export class LightKit {
       if (this.lanceSprite) { this.lanceSprite.destroy(); this.lanceSprite = null; }
     }
 
+    // Mastery — Killer Kebab takes over whichever slot it is bound to.
+    const kebabSlot = this.arena.masteryActive ? this.kebabSlot() : null;
+    if (kebabSlot) {
+      const kk = kebabSlot === 'e' ? eKey : kebabSlot === 'r' ? rKey : kebabSlot === 'f' ? fKey : qKey;
+      if (Phaser.Input.Keyboard.JustDown(kk)) this.tryCastKebab(time);
+    }
+
     // E: Blink — instantly snap heading to cursor, preserving speed
     // E+ Steam Charge: hold instead of tap — root in place aiming at the cursor, then release for a
     // stronger boost the longer you held.
-    if (this.arena.hasUpgrade('e')) {
+    if (kebabSlot === 'e') {
+      // slot taken over by the mastery ability
+    } else if (this.arena.hasUpgrade('e')) {
       if (Phaser.Input.Keyboard.JustDown(eKey)) {
         if (!this.ePlusHolding && this.blinkCharges > 0 && !this.speedOLightActive) {
           this.ePlusHolding = true;
@@ -831,7 +1122,7 @@ export class LightKit {
     }
 
     // R: Prism Ramp
-    if (Phaser.Input.Keyboard.JustDown(rKey)) {
+    if (kebabSlot !== 'r' && Phaser.Input.Keyboard.JustDown(rKey)) {
       if (player.castAbility('prism-ramp', playerCtx)) {
         const angle = this.lanceHeld ? this.carAngle : Math.atan2(mouseY - player.y, mouseX - player.x);
         this.placeRamp('player', player.x, player.y, angle);
@@ -840,14 +1131,14 @@ export class LightKit {
     }
 
     // F: Light Trick
-    if (Phaser.Input.Keyboard.JustDown(fKey)) {
+    if (kebabSlot !== 'f' && Phaser.Input.Keyboard.JustDown(fKey)) {
       if (player.castAbility('light-trick', playerCtx)) {
         this.triggerLightTrick('player', time, player, this.arena.enemies);
       }
     }
 
     // Q: Speed 'O' Light
-    if (Phaser.Input.Keyboard.JustDown(qKey)) {
+    if (kebabSlot !== 'q' && Phaser.Input.Keyboard.JustDown(qKey)) {
       if (!this.speedOLightActive && player.castAbility('speed-o-light', playerCtx)) {
         this.startSpeedOLight('player', time);
       }

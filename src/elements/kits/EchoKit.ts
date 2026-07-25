@@ -13,9 +13,17 @@ export interface EchoArenaApi {
   get rKey(): Phaser.Input.Keyboard.Key;
   get fKey(): Phaser.Input.Keyboard.Key;
   get qKey(): Phaser.Input.Keyboard.Key;
+  get spaceKey(): Phaser.Input.Keyboard.Key;
   get projectiles(): Phaser.Physics.Arcade.Group;
   get nukeChanneling(): boolean;
   get npcElementId(): string;
+  /** The ability id the NPC cast this frame, or null. Drives Vibration Detection's cast pings. */
+  get npcCastId(): string | null;
+  /** Echo Mastery is on for the local player this match. */
+  get masteryActive(): boolean;
+  masteryBindFor(slot: string): string | null;
+  recordMasteryStat(key: string, amount: number): void;
+  broadcastMasteryCast(enhId: string): void;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   dealAoeDamageToNpc(cx: number, cy: number, radius: number, damage: number): void;
@@ -99,6 +107,89 @@ interface BatTracker {
   lastPingAt: number;
 }
 
+// ── Mastery: Echo Bloom ──────────────────────────────────────────────────────
+
+const BLOOM_COOLDOWN_MS = 12000;
+/** Blooms one owner may keep planted. Planting past this replaces the oldest. */
+const BLOOM_MAX = 3;
+const BLOOM_SEED_SPEED = 540;
+/** Hold the bound key this long to open the bloom's eye instead of planting a seed. */
+const BLOOM_HOLD_MS = 220;
+const BLOOM_VIEW_RADIUS = 76;
+/** Terror blooms see by heat trail, so their own pool of light is deliberately meaner. */
+const TERROR_VIEW_RADIUS = 50;
+const BLOOM_SHOT_COOLDOWN_MS = 350;
+const BLOOM_SHOT_SPEED = 620;
+const BLOOM_SHOT_DAMAGE = 5;
+const TERROR_SHOT_DAMAGE = 10;
+const BLOOM_SHOT_LIFETIME_MS = 2200;
+const TERROR_LIFETIME_MS = 15000;
+/** Outgoing-damage multiplier applied to whoever a terror bloom is rooted in. */
+const TERROR_WEAKEN_MULT = 0.75;
+const VIEW_SHIELD_HP = 100;
+const VIEW_SELF_SHOT_SHIELD = 25;
+const TERROR_WARP_WEAK_HP = 100;
+const BIOLUM_MS = 8000;
+const BIOLUM_RADIUS_MULT = 1.25;
+/** How far back the heat trail a terror bloom paints reaches. */
+const HEAT_TRAIL_MS = 6000;
+const HEAT_TRAIL_SAMPLE_MS = 70;
+const ECHO_BLOOM_COLOR = 0xaab4ff;
+const TERROR_BLOOM_COLOR = 0xdd2c44;
+
+interface Blossom {
+  kind: 'echo' | 'terror';
+  x: number;
+  y: number;
+  gfx: Phaser.GameObjects.Graphics;
+  /** Fighter the bloom is rooted in; null once it is planted in scenery (or its host died). */
+  host: Fighter | null;
+  offX: number;
+  offY: number;
+  bornAt: number;
+  /** Infinity for echo blooms — they only ever leave by being replaced or spent. */
+  expiresAt: number;
+  owner: 'player' | 'npc';
+  /** True while this bloom's 25% weaken is folded into its host's outgoingDamageMult. */
+  weakenApplied: boolean;
+  swaySeed: number;
+}
+
+interface BloomSeed {
+  gfx: Phaser.GameObjects.Graphics;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  owner: 'player' | 'npc';
+  trail: { x: number; y: number }[];
+}
+
+interface BloomBullet {
+  gfx: Phaser.GameObjects.Graphics;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  damage: number;
+  kind: 'echo' | 'terror';
+  owner: 'player' | 'npc';
+  bornAt: number;
+}
+
+/** One quadrant flare of the Vibration Detection ring. */
+interface VibeArc {
+  quadrant: number;
+  bornAt: number;
+  strong: boolean;
+}
+
+interface HeatSample {
+  x: number;
+  y: number;
+  at: number;
+}
+
 // ── EchoKit ──────────────────────────────────────────────────────────────────
 
 export class EchoKit {
@@ -170,6 +261,36 @@ export class EchoKit {
   private playerBeaconConeBoostUntil = 0;
   private playerBeaconIconsCreated = false;
 
+  // ── Mastery: Echo Bloom ─────────────────────────────────────────────
+  private playerBlossoms: Blossom[] = [];
+  private npcBlossoms: Blossom[] = [];
+  private bloomSeeds: BloomSeed[] = [];
+  private bloomBullets: BloomBullet[] = [];
+  private bloomLastCastAt = -BLOOM_COOLDOWN_MS;
+  private bloomKeyDownAt = 0;
+  /** Set once a hold has opened the eye, so the matching key-up doesn't also plant a seed. */
+  private bloomHoldConsumed = false;
+  private viewing = false;
+  private viewIndex = 0;
+  private lastBloomShotAt = -BLOOM_SHOT_COOLDOWN_MS;
+  private playerBiolumUntil = 0;
+  private biolumGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Which bloom the remote echo player is looking through, mirrored for their shots. */
+  private npcViewIndex = 0;
+
+  // ── Mastery: Vibration Detection ────────────────────────────────────
+  private vibeGfx: Phaser.GameObjects.Graphics | null = null;
+  private vibeArcs: VibeArc[] = [];
+  private vibeLastEnemyX = 0;
+  private vibeLastEnemyY = 0;
+  private vibeNextSampleAt = 0;
+  private vibeNextMoveArcAt = 0;
+
+  // Heat trail (painted only while looking through a terror bloom)
+  private heatTrail: HeatSample[] = [];
+  private heatNextSampleAt = 0;
+  private heatGfx: Phaser.GameObjects.Graphics | null = null;
+
   constructor(arena: EchoArenaApi) {
     this.arena = arena;
   }
@@ -218,6 +339,37 @@ export class EchoKit {
     this.playerBeaconConeBoostUntil = 0;
     this.playerBeaconIconsCreated = false;
 
+    // Mastery — Echo Bloom
+    for (const b of [...this.playerBlossoms, ...this.npcBlossoms]) this.releaseBlossom(b);
+    this.playerBlossoms = [];
+    this.npcBlossoms = [];
+    for (const s of this.bloomSeeds) s.gfx.destroy();
+    this.bloomSeeds = [];
+    for (const b of this.bloomBullets) b.gfx.destroy();
+    this.bloomBullets = [];
+    this.bloomLastCastAt = -BLOOM_COOLDOWN_MS;
+    this.bloomKeyDownAt = 0;
+    this.bloomHoldConsumed = false;
+    this.viewing = false;
+    this.viewIndex = 0;
+    this.npcViewIndex = 0;
+    this.lastBloomShotAt = -BLOOM_SHOT_COOLDOWN_MS;
+    this.playerBiolumUntil = 0;
+
+    // Mastery — Vibration Detection. Graphics are rebuilt lazily; a scene shutdown
+    // destroys the old ones, so drop the stale handles rather than reusing them.
+    this.vibeArcs = [];
+    this.vibeNextSampleAt = 0;
+    this.vibeNextMoveArcAt = 0;
+    this.vibeLastEnemyX = 0;
+    this.vibeLastEnemyY = 0;
+    this.heatTrail = [];
+    this.heatNextSampleAt = 0;
+    for (const g of [this.vibeGfx, this.heatGfx, this.biolumGfx]) g?.destroy();
+    this.vibeGfx = null;
+    this.heatGfx = null;
+    this.biolumGfx = null;
+
     // Initialize fog eraser — recreate if destroyed (scene shutdown destroys game objects)
     if (!this.fogEraser || !this.fogEraser.active) {
       this.fogEraser = this.arena.scene.add.graphics();
@@ -264,18 +416,26 @@ export class EchoKit {
   // ── Player input ─────────────────────────────────────────────────────────
 
   handleInput(time: number, _delta: number, pointer: Phaser.Input.Pointer, mx: number, my: number): void {
-    void time;
     const player = this.arena.player;
     const enemy = this.arena.npc;
+
+    // Mastery — Echo Bloom owns whichever slot it is bound to, and while its eye is
+    // open it owns click/right-click/Space too. Run it before the bat-attach guard so
+    // the eye can still be closed if something roots you mid-view.
+    const bloomSlot = this.arena.masteryActive ? this.bloomSlot() : null;
+    if (bloomSlot) this.handleBloomInput(time, bloomSlot, pointer, mx, my);
+    if (this.viewing) {
+      this._prevPointerDown = pointer.isDown;
+      this._prevRightDown = pointer.rightButtonDown();
+      return;
+    }
+
     // Block input during bat attach
     if (this.playerBatAttach) return;
     // Block non-shot input during bat form
     const batBlocked = this.playerBatFormActive;
 
     // Click — Echolocation
-    if (Phaser.Input.Keyboard.JustDown(this.arena.scene.input.keyboard!.addKey('SPACE') as Phaser.Input.Keyboard.Key)) {
-      // space is dodge, skip
-    }
     if (pointer.isDown && !this._prevPointerDown) {
       if (player.getCooldownRatio('echo-shot') >= 1) {
         this.doEcholocation(mx, my, 'player');
@@ -298,7 +458,7 @@ export class EchoKit {
 
     if (!batBlocked) {
       // E — Guess
-      if (Phaser.Input.Keyboard.JustDown(this.arena.eKey)) {
+      if (bloomSlot !== 'e' && Phaser.Input.Keyboard.JustDown(this.arena.eKey)) {
         if (player.getCooldownRatio('echo-guess') >= 1) {
           let etx = mx, ety = my;
           if (this.playerEyePowerUpArmed) { etx = enemy.x; ety = enemy.y; this.playerEyePowerUpArmed = false; }
@@ -313,7 +473,7 @@ export class EchoKit {
       }
 
       // R — Lantern (Beacon perk: battery-gated)
-      if (Phaser.Input.Keyboard.JustDown(this.arena.rKey)) {
+      if (bloomSlot !== 'r' && Phaser.Input.Keyboard.JustDown(this.arena.rKey)) {
         if (player.getCooldownRatio('echo-lantern') >= 1) {
           let rtx = mx, rty = my;
           if (this.playerEyePowerUpArmed) { rtx = enemy.x; rty = enemy.y; this.playerEyePowerUpArmed = false; }
@@ -338,7 +498,7 @@ export class EchoKit {
       }
 
       // Q — Eclipse
-      if (Phaser.Input.Keyboard.JustDown(this.arena.qKey)) {
+      if (bloomSlot !== 'q' && Phaser.Input.Keyboard.JustDown(this.arena.qKey)) {
         if (player.getCooldownRatio('echo-eclipse') >= 1) {
           let qtx = mx, qty = my;
           if (this.playerEyePowerUpArmed) { qtx = enemy.x; qty = enemy.y; this.playerEyePowerUpArmed = false; }
@@ -349,7 +509,7 @@ export class EchoKit {
     }
 
     // F — Bat Form (F+ allows recast to cancel; otherwise only usable outside bat form)
-    if (Phaser.Input.Keyboard.JustDown(this.arena.fKey)) {
+    if (bloomSlot !== 'f' && Phaser.Input.Keyboard.JustDown(this.arena.fKey)) {
       if (this.playerBatFormActive && !this.playerBatAttach && this.arena.hasUpgrade('f')) {
         // Alpha Bat cancel — free, no cooldown spent
         this.playerBatFormActive = false;
@@ -387,6 +547,16 @@ export class EchoKit {
       this.updateBatTracker(time);
       this.updateBeaconBatteries(time);
     }
+    // Mastery — the bloom sim runs for either side; the passive is player-only.
+    if (isPlayer && this.arena.masteryActive) {
+      this.updateVibrationDetection(time);
+      this.updateHeatTrail(time);
+      this.updateBiolum(time);
+    }
+    this.updateBloomSeeds(time, delta);
+    this.updateBlossoms(time);
+    this.updateBloomBullets(time, delta);
+    if (isPlayer && this.arena.masteryActive) this.updateViewing();
   }
 
   private updateBeaconBatteries(time: number): void {
@@ -476,11 +646,16 @@ export class EchoKit {
         this._eclipseRevealActive = false;
       }
 
-      // Player reveal
-      if (this.arena.hasPerk('player', 'beacon')) {
+      // Mastery — while an eye is open you see out of the bloom, not out of yourself.
+      const viewed = this.viewing ? this.activeBlossom() : null;
+      if (viewed) {
+        this.fogEraser.fillCircle(viewed.x, viewed.y,
+          viewed.kind === 'terror' ? TERROR_VIEW_RADIUS : BLOOM_VIEW_RADIUS);
+      } else if (this.arena.hasPerk('player', 'beacon')) {
         const ptr = this.arena.pointer;
         const aimAngle = Math.atan2(ptr.worldY - player.y, ptr.worldX - player.x);
-        const range = this.playerBatFormActive ? 60 : this.playerBeaconConeBoostUntil > time ? 156 : 130;
+        let range = this.playerBatFormActive ? 60 : this.playerBeaconConeBoostUntil > time ? 156 : 130;
+        if (time < this.playerBiolumUntil) range *= BIOLUM_RADIUS_MULT;
         const halfAngle = Phaser.Math.DegToRad(35);
         this.fogEraser.beginPath();
         this.fogEraser.moveTo(player.x, player.y);
@@ -488,7 +663,8 @@ export class EchoKit {
         this.fogEraser.closePath();
         this.fogEraser.fillPath();
       } else {
-        const playerRadius = this.playerBatFormActive ? 45 : this.playerLanternActive ? 128 : 90;
+        let playerRadius = this.playerBatFormActive ? 45 : this.playerLanternActive ? 128 : 90;
+        if (time < this.playerBiolumUntil) playerRadius *= BIOLUM_RADIUS_MULT;
         this.fogEraser.fillCircle(player.x, player.y, playerRadius);
       }
 
@@ -574,6 +750,7 @@ export class EchoKit {
       if (enemy.hp > 0 && Phaser.Math.Distance.Between(p.x, p.y, enemy.x, enemy.y) <= 28) {
         enemy.takeDamage(18);
         this.arena.spawnHitFlash(enemy.x, enemy.y, 0xccccff);
+        if (p.owner === 'player') this.arena.recordMasteryStat('echolocationHits', 1);
         p.active = false;
         continue;
       }
@@ -615,6 +792,7 @@ export class EchoKit {
       this.arena.spawnHitFlash(enemy.x, enemy.y, 0xaaaaff);
       this.arena.showFloatingText(caster.x, caster.y - 40, 'Vision', '#ffdd44');
       this.guessReveals.push({ x: enemy.x, y: enemy.y, expiresAt: time + 500 });
+      if (owner === 'player') this.arena.recordMasteryStat('correctGuesses', 1);
       return true;
     }
 
@@ -624,6 +802,7 @@ export class EchoKit {
       enemy.takeDamage(15);
       this.arena.spawnHitFlash(enemy.x, enemy.y, 0xaaaaff);
       this.guessReveals.push({ x: enemy.x, y: enemy.y, expiresAt: time + 500 });
+      if (owner === 'player') this.arena.recordMasteryStat('correctGuesses', 1);
       return true;
     }
 
@@ -1124,6 +1303,7 @@ export class EchoKit {
     if (this.playerLanternHealAccum >= 200) {
       this.playerLanternHealAccum -= 200;
       this.arena.healCaster('player', 1);
+      this.arena.recordMasteryStat('lanternHealed', 1);
       this.playerLanternHealTextAccum += 200;
       if (this.playerLanternHealTextAccum >= 1000) {
         this.playerLanternHealTextAccum -= 1000;
@@ -1157,7 +1337,612 @@ export class EchoKit {
     }
   }
 
+  // ── Mastery — Vibration Detection (passive) ───────────────────────────────
+
+  /**
+   * Quadrant the given world point falls into relative to the player: 0 = right,
+   * 1 = down, 2 = left, 3 = up. Deliberately coarse — the ring is meant to say
+   * "over there somewhere", never how far.
+   */
+  private quadrantOf(x: number, y: number): number {
+    const player = this.arena.player;
+    const a = Math.atan2(y - player.y, x - player.x) + Math.PI / 4;
+    const norm = ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+    return Math.floor(norm / (Math.PI / 2)) % 4;
+  }
+
+  private updateVibrationDetection(time: number): void {
+    const enemy = this.arena.npc;
+    if (!this.vibeGfx || !this.vibeGfx.active) {
+      this.vibeGfx = this.arena.scene.add.graphics().setDepth(20);
+    }
+
+    // A cast is a much louder disturbance than a footstep — it always registers.
+    if (this.arena.npcCastId && enemy.hp > 0) {
+      this.vibeArcs.push({ quadrant: this.quadrantOf(enemy.x, enemy.y), bornAt: time, strong: true });
+    }
+
+    if (time >= this.vibeNextSampleAt) {
+      this.vibeNextSampleAt = time + 90;
+      const moved = Phaser.Math.Distance.Between(this.vibeLastEnemyX, this.vibeLastEnemyY, enemy.x, enemy.y);
+      // First sample of the match just seeds the baseline — a spawn is not a footstep.
+      if (this.vibeLastEnemyX !== 0 || this.vibeLastEnemyY !== 0) {
+        if (moved > 6 && enemy.hp > 0 && time >= this.vibeNextMoveArcAt) {
+          this.vibeNextMoveArcAt = time + 220;
+          this.vibeArcs.push({ quadrant: this.quadrantOf(enemy.x, enemy.y), bornAt: time, strong: false });
+        }
+      }
+      this.vibeLastEnemyX = enemy.x;
+      this.vibeLastEnemyY = enemy.y;
+    }
+
+    const player = this.arena.player;
+    const g = this.vibeGfx;
+    g.clear();
+    for (let i = this.vibeArcs.length - 1; i >= 0; i--) {
+      const arc = this.vibeArcs[i];
+      const life = arc.strong ? 700 : 420;
+      const t = (time - arc.bornAt) / life;
+      if (t >= 1) { this.vibeArcs.splice(i, 1); continue; }
+      const fade = 1 - t;
+      const mid = arc.quadrant * (Math.PI / 2);
+      const half = Phaser.Math.DegToRad(arc.strong ? 42 : 32);
+      const radius = (arc.strong ? 40 : 34) + t * (arc.strong ? 9 : 5);
+      g.lineStyle(arc.strong ? 4 : 2.5, arc.strong ? 0xffcc55 : 0x99ffee, fade * (arc.strong ? 0.85 : 0.55));
+      g.beginPath();
+      g.arc(player.x, player.y, radius, mid - half, mid + half, false);
+      g.strokePath();
+      // Faint inner echo of the same segment, so a cast reads as a double pulse.
+      if (arc.strong) {
+        g.lineStyle(2, 0xffee99, fade * 0.4);
+        g.beginPath();
+        g.arc(player.x, player.y, radius - 8, mid - half * 0.7, mid + half * 0.7, false);
+        g.strokePath();
+      }
+    }
+  }
+
+  /** Rolling record of where the enemy has been — painted by terror-bloom vision. */
+  private updateHeatTrail(time: number): void {
+    const enemy = this.arena.npc;
+    if (time >= this.heatNextSampleAt) {
+      this.heatNextSampleAt = time + HEAT_TRAIL_SAMPLE_MS;
+      if (enemy.hp > 0) this.heatTrail.push({ x: enemy.x, y: enemy.y, at: time });
+    }
+    while (this.heatTrail.length > 0 && time - this.heatTrail[0].at > HEAT_TRAIL_MS) this.heatTrail.shift();
+
+    if (!this.heatGfx || !this.heatGfx.active) {
+      this.heatGfx = this.arena.scene.add.graphics().setDepth(18);
+    }
+    const g = this.heatGfx;
+    g.clear();
+    const viewed = this.viewing ? this.activeBlossom() : null;
+    if (!viewed || viewed.kind !== 'terror') return;
+
+    // Heat-seeker read: hot where they just were, cooling to deep red behind them.
+    for (const s of this.heatTrail) {
+      const age = (time - s.at) / HEAT_TRAIL_MS;
+      const heat = 1 - age;
+      const color = Phaser.Display.Color.Interpolate.ColorWithColor(
+        new Phaser.Display.Color(0x66, 0x00, 0x11),
+        new Phaser.Display.Color(0xff, 0xdd, 0x55),
+        100, Math.round(heat * 100),
+      );
+      const tint = (color.r << 16) | (color.g << 8) | color.b;
+      g.fillStyle(tint, 0.1 + 0.4 * heat);
+      g.fillCircle(s.x, s.y, 5 + 9 * heat);
+    }
+  }
+
+  private updateBiolum(time: number): void {
+    if (time >= this.playerBiolumUntil) {
+      if (this.biolumGfx?.active) { this.biolumGfx.destroy(); this.biolumGfx = null; }
+      return;
+    }
+    if (!this.biolumGfx || !this.biolumGfx.active) {
+      this.biolumGfx = this.arena.scene.add.graphics().setDepth(6);
+    }
+    const player = this.arena.player;
+    const g = this.biolumGfx;
+    g.clear();
+    const fade = Phaser.Math.Clamp((this.playerBiolumUntil - time) / 1200, 0, 1);
+    const pulse = 0.75 + 0.25 * Math.sin(time / 180);
+    g.fillStyle(0x66ffcc, 0.1 * fade * pulse);
+    g.fillCircle(player.x, player.y, 34 * pulse);
+    g.fillStyle(0x99ffdd, 0.2 * fade);
+    g.fillCircle(player.x, player.y, 20);
+    // Motes drifting off the glowing skin.
+    for (let i = 0; i < 6; i++) {
+      const a = time / 700 + (i / 6) * Math.PI * 2;
+      const r = 18 + 8 * Math.sin(time / 300 + i);
+      g.fillStyle(0xccffee, 0.55 * fade);
+      g.fillCircle(player.x + Math.cos(a) * r, player.y + Math.sin(a) * r, 1.8);
+    }
+  }
+
+  // ── Mastery — Echo Bloom ──────────────────────────────────────────────────
+
+  private bloomSlot(): 'e' | 'r' | 'f' | 'q' | null {
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      if (this.arena.masteryBindFor(s) === 'echo-bloom') return s;
+    }
+    return null;
+  }
+
+  /** Ability-bar fill: full while the eye is open, otherwise the seed recharge. */
+  getBloomCooldownRatio(time: number): number {
+    if (this.viewing) return 1;
+    return Math.min(1, (time - this.bloomLastCastAt) / BLOOM_COOLDOWN_MS);
+  }
+
+  /** True while the player is looking out of a bloom — ArenaScene suppresses aiming feedback. */
+  isViewingThroughBloom(): boolean {
+    return this.viewing;
+  }
+
+  private handleBloomInput(
+    time: number,
+    slot: 'e' | 'r' | 'f' | 'q',
+    pointer: Phaser.Input.Pointer,
+    mx: number,
+    my: number,
+  ): void {
+    const key = slot === 'e' ? this.arena.eKey
+      : slot === 'r' ? this.arena.rKey
+      : slot === 'f' ? this.arena.fKey
+      : this.arena.qKey;
+
+    if (Phaser.Input.Keyboard.JustDown(key)) {
+      this.bloomKeyDownAt = time;
+      this.bloomHoldConsumed = false;
+    }
+    // Held past the threshold with something planted: open the eye instead of planting.
+    if (key.isDown && !this.viewing && !this.bloomHoldConsumed
+        && this.bloomKeyDownAt > 0 && time - this.bloomKeyDownAt >= BLOOM_HOLD_MS
+        && this.playerBlossoms.length > 0) {
+      this.enterViewing(time);
+      this.bloomHoldConsumed = true;
+    }
+    if (Phaser.Input.Keyboard.JustUp(key)) {
+      this.bloomKeyDownAt = 0;
+      if (this.viewing) this.exitViewing('Eye Closed');
+      else if (!this.bloomHoldConsumed) this.tryCastBloom(time, mx, my);
+      this.bloomHoldConsumed = false;
+      return;
+    }
+
+    if (!this.viewing) return;
+
+    // Click — spit a bullet from the bloom toward the cursor.
+    if (pointer.isDown && !this._prevPointerDown) this.fireBloomBullet(time, mx, my, 'player');
+
+    // Right-click — hop to the next bloom.
+    const rightDown = pointer.rightButtonDown();
+    if (rightDown && !this._prevRightDown) this.cycleView(1);
+
+    // Space — teleport to the bloom, spending it. Consuming JustDown here stops
+    // ArenaScene's dodge from also firing (it reads the same key later this frame).
+    if (Phaser.Input.Keyboard.JustDown(this.arena.spaceKey)) this.warpToBlossom(time);
+  }
+
+  private tryCastBloom(time: number, mx: number, my: number): void {
+    if (time - this.bloomLastCastAt < BLOOM_COOLDOWN_MS) return;
+    this.bloomLastCastAt = time;
+    this.castBloom(mx, my, 'player');
+    this.arena.broadcastMasteryCast('echo-bloom');
+  }
+
+  /** Aimed straight at an enemy: a terror bloom erupts out of them. Otherwise: launch a seed. */
+  private castBloom(tx: number, ty: number, owner: 'player' | 'npc'): void {
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    const enemy = owner === 'player' ? this.arena.npc : this.arena.player;
+
+    if (enemy.hp > 0 && Phaser.Math.Distance.Between(tx, ty, enemy.x, enemy.y) <= 35) {
+      this.plantBlossom('terror', enemy.x, enemy.y, owner, enemy);
+      this.arena.showFloatingText(caster.x, caster.y - 40, 'Vision', '#ffdd44');
+      this.arena.showFloatingText(enemy.x, enemy.y - 34, '🌺 TERROR BLOOM', '#ff5566');
+      return;
+    }
+
+    const angle = Math.atan2(ty - caster.y, tx - caster.x);
+    const gfx = this.arena.scene.add.graphics().setDepth(17);
+    this.bloomSeeds.push({
+      gfx,
+      x: caster.x, y: caster.y,
+      vx: Math.cos(angle) * BLOOM_SEED_SPEED,
+      vy: Math.sin(angle) * BLOOM_SEED_SPEED,
+      owner,
+      trail: [],
+    });
+    this.arena.showFloatingText(caster.x, caster.y - 36, '🌱 Seed', '#ccd4ff');
+  }
+
+  private plantBlossom(
+    kind: 'echo' | 'terror',
+    x: number,
+    y: number,
+    owner: 'player' | 'npc',
+    host: Fighter | null,
+  ): void {
+    const list = owner === 'player' ? this.playerBlossoms : this.npcBlossoms;
+    // Blooms never wilt on their own — going over the cap is the only thing that
+    // uproots an echo bloom, and it always takes the oldest.
+    if (list.length >= BLOOM_MAX) this.dropBlossom(list, 0, owner);
+
+    const time = this.arena.scene.time.now;
+    const b: Blossom = {
+      kind, x, y,
+      gfx: this.arena.scene.add.graphics().setDepth(host ? 15 : 17),
+      host,
+      offX: host ? x - host.x : 0,
+      offY: host ? y - host.y : 0,
+      bornAt: time,
+      expiresAt: kind === 'terror' ? time + TERROR_LIFETIME_MS : Infinity,
+      owner,
+      weakenApplied: false,
+      swaySeed: Math.random() * Math.PI * 2,
+    };
+    if (kind === 'terror' && host) {
+      host.outgoingDamageMult *= TERROR_WEAKEN_MULT;
+      b.weakenApplied = true;
+    }
+    list.push(b);
+    this.arena.spawnHitFlash(x, y, kind === 'terror' ? TERROR_BLOOM_COLOR : ECHO_BLOOM_COLOR);
+  }
+
+  /** Undo a bloom's lingering effects and free its graphics. Never touches the owning list. */
+  private releaseBlossom(b: Blossom): void {
+    if (b.weakenApplied && b.host) {
+      b.host.outgoingDamageMult /= TERROR_WEAKEN_MULT;
+      b.weakenApplied = false;
+    }
+    if (b.gfx.active) b.gfx.destroy();
+  }
+
+  /** Remove index `i` from `list`, keeping the owner's view cursor pointing somewhere sane. */
+  private dropBlossom(list: Blossom[], i: number, owner: 'player' | 'npc'): void {
+    this.releaseBlossom(list[i]);
+    list.splice(i, 1);
+    if (owner === 'player') {
+      if (this.viewIndex > i) this.viewIndex--;
+      if (this.viewIndex >= list.length) this.viewIndex = 0;
+    } else {
+      if (this.npcViewIndex > i) this.npcViewIndex--;
+      if (this.npcViewIndex >= list.length) this.npcViewIndex = 0;
+    }
+  }
+
+  private activeBlossom(): Blossom | null {
+    return this.playerBlossoms[this.viewIndex] ?? null;
+  }
+
+  private enterViewing(time: number): void {
+    if (this.playerBlossoms.length === 0) return;
+    this.viewing = true;
+    if (this.viewIndex >= this.playerBlossoms.length) this.viewIndex = 0;
+    this.lastBloomShotAt = time - BLOOM_SHOT_COOLDOWN_MS;
+    const player = this.arena.player;
+    player.shieldHp += VIEW_SHIELD_HP;
+    this.arena.showFloatingText(player.x, player.y - 44, '👁 VIEWING', '#ccd4ff');
+  }
+
+  private exitViewing(reason: string): void {
+    if (!this.viewing) return;
+    this.viewing = false;
+    const player = this.arena.player;
+    // Whatever shield is left belongs to the eye, not to you.
+    player.shieldHp = 0;
+    this.arena.showFloatingText(player.x, player.y - 44, reason, '#8899cc');
+  }
+
+  private cycleView(step: number): void {
+    if (this.playerBlossoms.length <= 1) return;
+    this.viewIndex = (this.viewIndex + step + this.playerBlossoms.length) % this.playerBlossoms.length;
+    const b = this.activeBlossom();
+    if (b) this.arena.spawnHitFlash(b.x, b.y, b.kind === 'terror' ? TERROR_BLOOM_COLOR : ECHO_BLOOM_COLOR);
+    this.arena.broadcastMasteryCast('echo-bloom-cycle');
+  }
+
+  private warpToBlossom(time: number): void {
+    const b = this.activeBlossom();
+    if (!b) return;
+    const player = this.arena.player;
+    const wasTerror = b.kind === 'terror';
+    const tx = b.x, ty = b.y;
+
+    this.dropBlossom(this.playerBlossoms, this.viewIndex, 'player');
+    this.exitViewing('Warped');
+
+    player.setPosition(tx, ty);
+    (player.body as Phaser.Physics.Arcade.Body).reset(tx, ty);
+    this.playerBiolumUntil = time + BIOLUM_MS;
+    this.arena.spawnHitFlash(tx, ty, 0x99ffdd);
+    this.arena.showFloatingText(tx, ty - 40, '✨ BIOLUMINESCENT', '#66ffcc');
+    if (wasTerror) {
+      player.weakHp += TERROR_WARP_WEAK_HP;
+      this.arena.showFloatingText(tx, ty - 56, `+${TERROR_WARP_WEAK_HP} 🩶`, '#cccccc');
+    }
+    this.arena.broadcastMasteryCast('echo-bloom-warp');
+  }
+
+  private fireBloomBullet(time: number, tx: number, ty: number, owner: 'player' | 'npc'): void {
+    if (owner === 'player' && time - this.lastBloomShotAt < BLOOM_SHOT_COOLDOWN_MS) return;
+    const list = owner === 'player' ? this.playerBlossoms : this.npcBlossoms;
+    const b = list[owner === 'player' ? this.viewIndex : this.npcViewIndex];
+    if (!b) return;
+    if (owner === 'player') this.lastBloomShotAt = time;
+
+    const angle = Math.atan2(ty - b.y, tx - b.x);
+    this.bloomBullets.push({
+      gfx: this.arena.scene.add.graphics().setDepth(18),
+      x: b.x, y: b.y,
+      vx: Math.cos(angle) * BLOOM_SHOT_SPEED,
+      vy: Math.sin(angle) * BLOOM_SHOT_SPEED,
+      damage: b.kind === 'terror' ? TERROR_SHOT_DAMAGE : BLOOM_SHOT_DAMAGE,
+      kind: b.kind,
+      owner,
+      bornAt: time,
+    });
+    if (owner === 'player') this.arena.broadcastMasteryCast('echo-bloom-shot');
+  }
+
+  private updateBloomSeeds(time: number, delta: number): void {
+    const dt = delta / 1000;
+    const MARGIN = 34;
+    const W = this.arena.getSceneWidth();
+    const H = this.arena.getSceneHeight();
+
+    for (let i = this.bloomSeeds.length - 1; i >= 0; i--) {
+      const s = this.bloomSeeds[i];
+      s.x += s.vx * dt;
+      s.y += s.vy * dt;
+      s.trail.push({ x: s.x, y: s.y });
+      if (s.trail.length > 8) s.trail.shift();
+
+      const enemy = s.owner === 'player' ? this.arena.npc : this.arena.player;
+      if (enemy.hp > 0 && Phaser.Math.Distance.Between(s.x, s.y, enemy.x, enemy.y) <= 26) {
+        this.plantBlossom('echo', enemy.x, enemy.y, s.owner, enemy);
+        s.gfx.destroy();
+        this.bloomSeeds.splice(i, 1);
+        continue;
+      }
+      if (s.x <= MARGIN || s.x >= W - MARGIN || s.y <= MARGIN || s.y >= H - MARGIN) {
+        this.plantBlossom('echo',
+          Phaser.Math.Clamp(s.x, MARGIN, W - MARGIN),
+          Phaser.Math.Clamp(s.y, MARGIN, H - MARGIN),
+          s.owner, null);
+        s.gfx.destroy();
+        this.bloomSeeds.splice(i, 1);
+        continue;
+      }
+
+      // A dart with a fading wisp behind it.
+      const a = Math.atan2(s.vy, s.vx);
+      const g = s.gfx;
+      g.clear();
+      for (let t = 0; t < s.trail.length; t++) {
+        const p = s.trail[t];
+        g.fillStyle(ECHO_BLOOM_COLOR, 0.06 + 0.22 * (t / s.trail.length));
+        g.fillCircle(p.x, p.y, 1.5 + 2.5 * (t / s.trail.length));
+      }
+      g.fillStyle(0xe8ecff, 0.95);
+      g.fillTriangle(
+        s.x + Math.cos(a) * 9, s.y + Math.sin(a) * 9,
+        s.x - Math.cos(a) * 5 - Math.sin(a) * 3.5, s.y - Math.sin(a) * 5 + Math.cos(a) * 3.5,
+        s.x - Math.cos(a) * 5 + Math.sin(a) * 3.5, s.y - Math.sin(a) * 5 - Math.cos(a) * 3.5,
+      );
+    }
+  }
+
+  private updateBlossoms(time: number): void {
+    for (const owner of ['player', 'npc'] as const) {
+      const list = owner === 'player' ? this.playerBlossoms : this.npcBlossoms;
+      for (let i = list.length - 1; i >= 0; i--) {
+        const b = list[i];
+        if (time >= b.expiresAt) {
+          this.arena.showFloatingText(b.x, b.y - 26, 'Wilted', '#886677');
+          this.dropBlossom(list, i, owner);
+          continue;
+        }
+        if (b.host) {
+          // A dead host drops the bloom where it stood, weaken and all.
+          if (b.host.hp <= 0 || !b.host.active) {
+            if (b.weakenApplied) { b.host.outgoingDamageMult /= TERROR_WEAKEN_MULT; b.weakenApplied = false; }
+            b.host = null;
+            b.gfx.setDepth(17);
+          } else {
+            b.x = b.host.x + b.offX;
+            b.y = b.host.y + b.offY;
+          }
+        }
+        this.drawBlossom(b, time, owner === 'player' && this.viewing && i === this.viewIndex);
+      }
+    }
+  }
+
+  /**
+   * Six (terror: seven) tapered petals swaying around a central eye, opening as the
+   * bloom grows in and pulsing a sonar ring once it is fully open.
+   */
+  private drawBlossom(b: Blossom, time: number, active: boolean): void {
+    const g = b.gfx;
+    g.clear();
+    const terror = b.kind === 'terror';
+    const base = terror ? TERROR_BLOOM_COLOR : ECHO_BLOOM_COLOR;
+    const deep = terror ? 0x551122 : 0x445588;
+    const petals = terror ? 7 : 6;
+    const age = time - b.bornAt;
+    const grow = Phaser.Math.Clamp(age / 420, 0, 1);
+    const scale = (0.35 + 0.65 * grow) * (active ? 1.18 : 1);
+    const life = b.expiresAt === Infinity ? 1 : Phaser.Math.Clamp((b.expiresAt - time) / 1500, 0, 1);
+    const alpha = 0.35 + 0.65 * life;
+
+    g.fillStyle(0x000000, 0.3 * alpha);
+    g.fillEllipse(b.x, b.y + 11 * scale, 30 * scale, 10 * scale);
+
+    // Petal outline in axis-local coords: fraction along the petal, fraction of its
+    // half-width. Traced up one side and back down the other, so the silhouette is a
+    // leaf that swells past halfway and tapers to a point.
+    const OUTLINE: [number, number][] = [
+      [0.14, 0.0], [0.30, 0.55], [0.58, 0.98], [0.84, 0.62], [1.0, 0.0],
+      [0.84, -0.62], [0.58, -0.98], [0.30, -0.55],
+    ];
+
+    for (let i = 0; i < petals; i++) {
+      const sway = Math.sin(time / 420 + b.swaySeed + i * 0.7) * 0.16;
+      const a = (i / petals) * Math.PI * 2 + sway;
+      // Each petal breathes on its own clock — a bloom that pulses in lockstep reads mechanical.
+      const breathe = 1 + 0.07 * Math.sin(time / 330 + b.swaySeed * 2 + i);
+      const len = (terror ? 23 : 20) * scale * breathe;
+      const wid = (terror ? 6.5 : 9) * scale;
+      const cos = Math.cos(a), sin = Math.sin(a);
+      const pts = OUTLINE.map(([u, v]) => new Phaser.Geom.Point(
+        b.x + cos * len * u - sin * wid * v,
+        b.y + sin * len * u + cos * wid * v,
+      ));
+      g.fillStyle(base, 0.72 * alpha);
+      g.fillPoints(pts, true);
+      g.lineStyle(1, deep, 0.85 * alpha);
+      g.strokePoints(pts, true);
+      // Spine highlight — catches the light down the middle of each petal.
+      g.lineStyle(1.4, terror ? 0xff8899 : 0xe4e8ff, 0.5 * alpha);
+      g.lineBetween(
+        b.x + cos * len * 0.2, b.y + sin * len * 0.2,
+        b.x + cos * len * 0.88, b.y + sin * len * 0.88,
+      );
+      if (terror) {
+        // Barbed tips — a terror bloom is a hooked thing, not a flower.
+        const tx = b.x + cos * len, ty = b.y + sin * len;
+        g.fillStyle(0xff6677, 0.9 * alpha);
+        g.fillTriangle(
+          tx + cos * 5 * scale, ty + sin * 5 * scale,
+          tx - sin * 2.5 * scale, ty + cos * 2.5 * scale,
+          tx + sin * 2.5 * scale, ty - cos * 2.5 * scale,
+        );
+      }
+    }
+
+    // Calyx: a ring of short sepals tucked under the petals, hiding where they meet.
+    for (let i = 0; i < petals; i++) {
+      const a = ((i + 0.5) / petals) * Math.PI * 2 + Math.sin(time / 500 + b.swaySeed) * 0.1;
+      const cos = Math.cos(a), sin = Math.sin(a);
+      g.fillStyle(deep, 0.85 * alpha);
+      g.fillTriangle(
+        b.x + cos * 12 * scale, b.y + sin * 12 * scale,
+        b.x - sin * 3.5 * scale, b.y + cos * 3.5 * scale,
+        b.x + sin * 3.5 * scale, b.y - cos * 3.5 * scale,
+      );
+    }
+
+    // The eye. It tracks your cursor while you are behind it, and idles otherwise.
+    const look = active
+      ? Math.atan2(this.arena.pointer.worldY - b.y, this.arena.pointer.worldX - b.x)
+      : time / 900 + b.swaySeed;
+    g.fillStyle(terror ? 0xffdddd : 0xf2f4ff, 0.95 * alpha);
+    g.fillCircle(b.x, b.y, 7 * scale);
+    g.fillStyle(terror ? 0xaa1122 : 0x5566aa, 0.9 * alpha);
+    g.fillCircle(b.x + Math.cos(look) * 2 * scale, b.y + Math.sin(look) * 2 * scale, 4.4 * scale);
+    g.fillStyle(0x080810, 0.95 * alpha);
+    g.fillCircle(b.x + Math.cos(look) * 3 * scale, b.y + Math.sin(look) * 3 * scale, 2.2 * scale);
+
+    if (grow >= 1) {
+      const ping = (age % 1600) / 1600;
+      g.lineStyle(1.5, base, (1 - ping) * 0.45 * alpha);
+      g.strokeCircle(b.x, b.y, 12 + ping * 26);
+    }
+    if (active) {
+      g.lineStyle(2, 0xffffff, 0.5);
+      g.strokeCircle(b.x, b.y, 24 * scale);
+    }
+  }
+
+  private updateBloomBullets(time: number, delta: number): void {
+    const dt = delta / 1000;
+    const W = this.arena.getSceneWidth();
+    const H = this.arena.getSceneHeight();
+
+    for (let i = this.bloomBullets.length - 1; i >= 0; i--) {
+      const p = this.bloomBullets[i];
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+
+      const caster = p.owner === 'player' ? this.arena.player : this.arena.npc;
+      const enemy = p.owner === 'player' ? this.arena.npc : this.arena.player;
+      let done = false;
+
+      if (enemy.hp > 0 && Phaser.Math.Distance.Between(p.x, p.y, enemy.x, enemy.y) <= 24) {
+        enemy.takeDamage(p.damage);
+        this.arena.spawnHitFlash(enemy.x, enemy.y, p.kind === 'terror' ? TERROR_BLOOM_COLOR : ECHO_BLOOM_COLOR);
+        done = true;
+      } else if (Phaser.Math.Distance.Between(p.x, p.y, caster.x, caster.y) <= 24) {
+        // Shooting yourself feeds the eye instead of hurting you — but only while it is open.
+        if (p.owner === 'player' && this.viewing) {
+          caster.shieldHp += VIEW_SELF_SHOT_SHIELD;
+          this.arena.showFloatingText(caster.x, caster.y - 40, `+${VIEW_SELF_SHOT_SHIELD} 💠`, '#44ccff');
+          this.arena.spawnHitFlash(caster.x, caster.y, 0x44ccff);
+          done = true;
+        }
+      }
+
+      if (done || time - p.bornAt > BLOOM_SHOT_LIFETIME_MS
+          || p.x < 0 || p.x > W || p.y < 0 || p.y > H) {
+        p.gfx.destroy();
+        this.bloomBullets.splice(i, 1);
+        continue;
+      }
+
+      const color = p.kind === 'terror' ? TERROR_BLOOM_COLOR : ECHO_BLOOM_COLOR;
+      const a = Math.atan2(p.vy, p.vx);
+      const g = p.gfx;
+      g.clear();
+      g.fillStyle(color, 0.25);
+      g.fillCircle(p.x - Math.cos(a) * 8, p.y - Math.sin(a) * 8, 4);
+      g.fillStyle(color, 0.9);
+      g.fillCircle(p.x, p.y, 4.5);
+      g.fillStyle(0xffffff, 0.9);
+      g.fillCircle(p.x, p.y, 2);
+    }
+  }
+
+  /** Close the eye when the bloom, the shield, or you run out. */
+  private updateViewing(): void {
+    if (!this.viewing) return;
+    const player = this.arena.player;
+    if (player.hp <= 0 || !player.active) { this.exitViewing('Eye Closed'); return; }
+    if (this.playerBlossoms.length === 0) { this.exitViewing('Bloom Lost'); return; }
+    if (player.shieldHp <= 0) {
+      this.exitViewing('💠 SHIELD BROKEN');
+      this.arena.spawnHitFlash(player.x, player.y, 0x44ccff);
+      return;
+    }
+    if (this.viewIndex >= this.playerBlossoms.length) this.viewIndex = 0;
+  }
+
   // ── NPC dispatchers ───────────────────────────────────────────────────────
+
+  /** Online: the remote echo player planted a bloom (seed or terror). */
+  doNpcEchoBloom(tx: number, ty: number): void {
+    this.castBloom(tx, ty, 'npc');
+  }
+
+  /** Online: the remote echo player spat a bullet out of the bloom they are behind. */
+  doNpcBloomShot(tx: number, ty: number): void {
+    this.fireBloomBullet(this.arena.scene.time.now, tx, ty, 'npc');
+  }
+
+  /** Online: the remote echo player hopped to their next bloom. */
+  doNpcBloomCycle(): void {
+    if (this.npcBlossoms.length <= 1) return;
+    this.npcViewIndex = (this.npcViewIndex + 1) % this.npcBlossoms.length;
+  }
+
+  /** Online: the remote echo player warped to a bloom, spending it. Their position syncs itself. */
+  doNpcBloomWarp(): void {
+    if (this.npcBlossoms.length === 0) return;
+    const b = this.npcBlossoms[this.npcViewIndex];
+    if (b) this.arena.spawnHitFlash(b.x, b.y, 0x99ffdd);
+    this.dropBlossom(this.npcBlossoms, this.npcViewIndex, 'npc');
+  }
 
   doNpcEcholocation(tx: number, ty: number): void {
     this.doEcholocation(tx, ty, 'npc');

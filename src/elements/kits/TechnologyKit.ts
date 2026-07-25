@@ -4,6 +4,7 @@ import { CastContext } from '../Ability';
 import { Projectile } from '../../combat/Projectile';
 import { ProjectileRegistry, RegisteredProjectile } from '../../combat/ProjectileRegistry';
 import { NetTechMsg } from '../../network/NetworkManager';
+import { CustomStatus } from './StatusHudKit';
 
 type Owner = 'player' | 'npc';
 const OWNERS: Owner[] = ['player', 'npc'];
@@ -80,6 +81,33 @@ const ADMIN_TIERS = [5, 10, 20, 35, 50] as const;
 // ── Security Breach (Q+) ──────────────────────────────────────────────────
 const BREACH_POINTS = 5;
 const BREACH_TEXTS = ['Git Haxxed!', 'H4X0R3D', '0wn3d', 'sudo rm -rf you', 'pwned by admin', '1337'];
+
+// ── Technology Mastery — VPN (passive) ────────────────────────────────────
+/** Continuous movement time needed to reach the full speed boost. */
+const VPN_RAMP_MS = 5000;
+const VPN_MAX_BONUS = 0.5;
+/** Per-frame distance under which the player counts as standing still. */
+const VPN_MOVE_EPSILON = 0.35;
+const VPN_TRAIL_MAX_MS = 120;
+const VPN_TRAIL_MIN_MS = 34;
+
+// ── Technology Mastery — Byte-Bomb (bindable) ─────────────────────────────
+const BYTE_BOMB_COOLDOWN_MS = 15000;
+const BYTE_BOMB_FUSE_MS = 8000;
+const BYTE_BOMB_CLICK_CUT_MS = 500;
+const BYTE_BOMB_TRAVEL_SPEED = 780;
+const BYTE_BOMB_RADIUS = 26;
+const BYTE_BOMB_BLAST_RADIUS = 120;
+const BYTE_BOMB_DAMAGE = 10;
+
+// ── Lag (Byte-Bomb debuff) ────────────────────────────────────────────────
+const LAG_DURATION_MS = 10000;
+/** How far back in time a rubber-band snaps you. */
+const LAG_REWIND_MS = 1000;
+const LAG_HISTORY_SAMPLE_MS = 100;
+const LAG_FREEZE_MS = 1000;
+const LAG_EVENT_MIN_GAP_MS = 1600;
+const LAG_EVENT_MAX_GAP_MS = 2600;
 
 function randomBinaryString(len: number): string {
   let s = '';
@@ -207,6 +235,35 @@ interface HuskVirus {
   icon: Phaser.GameObjects.Text;
 }
 
+// ── Technology Mastery state ──────────────────────────────────────────────
+
+interface ByteBomb {
+  owner: Owner;
+  x: number; y: number;
+  vx: number; vy: number;
+  /** Cursor point it is flying toward; once reached it parks and ticks down. */
+  destX: number; destY: number;
+  flying: boolean;
+  /** Milliseconds left on the fuse. */
+  fuse: number;
+  shell: Phaser.GameObjects.Arc;
+  shadow: Phaser.GameObjects.Graphics;
+  face: Phaser.GameObjects.Graphics;
+  label: Phaser.GameObjects.Text;
+}
+
+interface LagState {
+  until: number;
+  /** Recent positions, oldest first — the rubber-band rewind target comes from here. */
+  history: Array<{ x: number; y: number; t: number }>;
+  sampleAccum: number;
+  nextEventAt: number;
+  freezeUntil: number;
+  cooldownFreezeUntil: number;
+  spinner: Phaser.GameObjects.Graphics | null;
+  spinnerAngle: number;
+}
+
 // ── TechArenaApi ──────────────────────────────────────────────────────────
 
 export interface TechArenaApi {
@@ -236,6 +293,17 @@ export interface TechArenaApi {
   showFloatingText(x: number, y: number, text: string, color: string): void;
   spawnFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
+  /** True only when the player is technology AND Technology Mastery is switched on. */
+  get masteryActive(): boolean;
+  /** Mastery enhancement id bound over the given ability slot, or null if that slot is unchanged. */
+  masteryBindFor(slot: string): string | null;
+  /** Online: broadcast a bindable mastery cast so the peer's sim replays it. */
+  broadcastMasteryCast(enhId: string): void;
+  recordMasteryStat(key: string, amount: number): void;
+  /** Ratchet a "best single instance" mastery stat. */
+  recordMasteryBest(key: string, value: number): void;
+  /** Push a kit-owned effect into the top-right status tray (player-side only). */
+  setStatusIndicator(id: string, status: CustomStatus | null): void;
 }
 
 // ── TechnologyKit ─────────────────────────────────────────────────────────
@@ -318,6 +386,27 @@ export class TechnologyKit {
   private breachTimes: Record<Owner, number[]> = { player: [], npc: [] };
   private adminJackpot: Record<Owner, boolean> = { player: false, npc: false };
 
+  // Mastery requirement tracking
+  private cruncherStreak = 0;
+
+  // Technology Mastery — VPN (passive)
+  private vpnRamp = 0;
+  private vpnTrailAccum = 0;
+  private vpnLastX = 0;
+  private vpnLastY = 0;
+  private vpnHasLastPos = false;
+  private vpnIndicatorShown = false;
+
+  // Technology Mastery — Byte-Bomb (bindable)
+  // First match runs the constructor, not reset(), and readiness compares against the
+  // absolute scene clock — so start fully off-cooldown rather than at 0.
+  private byteBombLastCastAt = -BYTE_BOMB_COOLDOWN_MS;
+  private byteBombs: ByteBomb[] = [];
+  private byteBombPointerWasDown = false;
+
+  // Lag (Byte-Bomb debuff)
+  private lagged: Map<Fighter, LagState> = new Map();
+
   constructor(private arena: TechArenaApi) {}
 
   // ── Public accessors ──────────────────────────────────────────────────
@@ -370,6 +459,12 @@ export class TechnologyKit {
       case 'jackpot':
         this.adminJackpot.npc = true;
         break;
+      case 'bytefuse': {
+        // The remote caster clicked their bomb — trim our replica's fuse to match.
+        const bomb = this.byteBombs.find((b) => b.owner === 'npc');
+        if (bomb) bomb.fuse = Math.max(0, bomb.fuse - BYTE_BOMB_CLICK_CUT_MS);
+        break;
+      }
     }
   }
 
@@ -487,6 +582,27 @@ export class TechnologyKit {
 
     this.breachTimes = { player: [], npc: [] };
     this.adminJackpot = { player: false, npc: false };
+
+    this.cruncherStreak = 0;
+
+    this.vpnRamp = 0;
+    this.vpnTrailAccum = 0;
+    this.vpnHasLastPos = false;
+    if (this.vpnIndicatorShown) {
+      this.arena.setStatusIndicator('vpn', null);
+      this.vpnIndicatorShown = false;
+    }
+
+    this.byteBombLastCastAt = -BYTE_BOMB_COOLDOWN_MS;
+    for (const b of this.byteBombs) this.destroyByteBomb(b);
+    this.byteBombs = [];
+    this.byteBombPointerWasDown = false;
+
+    for (const [f, st] of this.lagged) {
+      st.spinner?.destroy();
+      if (f.active) f.laggedUntil = 0;
+    }
+    this.lagged.clear();
   }
 
   // ── handleInput ────────────────────────────────────────────────────────
@@ -496,19 +612,37 @@ export class TechnologyKit {
     const player = this.arena.player;
     const ctx = this.arena.buildPlayerContext(mouseX, mouseY);
 
-    if (Phaser.Input.Keyboard.JustDown(this.arena.eKey)) player.castAbility('tech-ads', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.arena.rKey)) player.castAbility('tech-upload', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.arena.fKey)) player.castAbility('tech-webdrag', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.arena.qKey)) player.castAbility('tech-admin', ctx);
+    // Technology Mastery — Byte-Bomb may be bound over any of E/R/F/Q, suppressing that slot's base ability.
+    const bbSlot = this.arena.masteryActive ? this.byteBombSlot() : null;
+
+    if (Phaser.Input.Keyboard.JustDown(this.arena.eKey)) {
+      if (bbSlot === 'e') this.tryCastByteBomb(mouseX, mouseY);
+      else player.castAbility('tech-ads', ctx);
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.arena.rKey)) {
+      if (bbSlot === 'r') this.tryCastByteBomb(mouseX, mouseY);
+      else player.castAbility('tech-upload', ctx);
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.arena.fKey)) {
+      if (bbSlot === 'f') this.tryCastByteBomb(mouseX, mouseY);
+      else player.castAbility('tech-webdrag', ctx);
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.arena.qKey)) {
+      if (bbSlot === 'q') this.tryCastByteBomb(mouseX, mouseY);
+      else player.castAbility('tech-admin', ctx);
+    }
 
     this.handleTrojanSteering();
 
     if (this.dragActive.player) {
       this.handleWebDragPointer(pointer, mouseX, mouseY);
+      this.byteBombPointerWasDown = pointer.leftButtonDown();
     } else {
       const disarmed = Date.now() < player.disarmedUntil;
       const overUi = this.browserOpen || this.isPointerOverSurfPopup(mouseX, mouseY);
-      if (!disarmed && !overUi && pointer.leftButtonDown()) this.doTechCruncherFire('player', mouseX, mouseY);
+      // A click that lands on your own Byte-Bomb trims its fuse instead of firing a cruncher.
+      const trimmedFuse = !overUi && this.handleByteBombClick(pointer, mouseX, mouseY);
+      if (!disarmed && !overUi && !trimmedFuse && pointer.leftButtonDown()) this.doTechCruncherFire('player', mouseX, mouseY);
     }
   }
 
@@ -558,14 +692,18 @@ export class TechnologyKit {
     this.updateCoinProjs(time, delta);
     this.updateAdmin(time);
     this.updateJail(time);
+    this.updateVpn(time, delta);
+    this.updateByteBombs(time, delta);
+    this.updateLag(time, delta);
 
     if (this.arena.elementId === 'technology') this.updateShelter('player');
     if (this.arena.npcElementId === 'technology') this.updateShelter('npc');
   }
 
-  /** Wheel of Fortune speed buff — read in ArenaScene's speed-mult block. */
+  /** Wheel of Fortune speed buff + the VPN mastery ramp — read in ArenaScene's speed-mult block. */
   getPlayerSpeedMult(): number {
-    return this.arena.scene.time.now < this.wheelSpeedUntil ? 1.5 : 1;
+    const wheel = this.arena.scene.time.now < this.wheelSpeedUntil ? 1.5 : 1;
+    return wheel * (1 + this.vpnRamp * VPN_MAX_BONUS);
   }
 
   private updateShelter(owner: Owner): void {
@@ -612,6 +750,20 @@ export class TechnologyKit {
     };
     this.crunchers.push(entry);
     this.arena.projReg.add(entry.reg);
+  }
+
+  /**
+   * Mastery: longest run of consecutive cruncher hits. Called on every resolved shot, including
+   * the firewalled misses that skip `bumpCruncher` — a miss is a miss as far as the streak goes.
+   */
+  private noteCruncherResolved(owner: Owner, hit: boolean): void {
+    if (owner !== 'player') return;
+    if (hit) {
+      this.cruncherStreak++;
+      this.arena.recordMasteryBest('cruncherStreak', this.cruncherStreak);
+    } else {
+      this.cruncherStreak = 0;
+    }
   }
 
   private bumpCruncher(owner: Owner, hit: boolean): void {
@@ -671,6 +823,7 @@ export class TechnologyKit {
         this.arena.spawnHitFlash(hitTarget.x, hitTarget.y, 0x33ff88);
         this.arena.spawnDamageNumber(hitTarget.x, hitTarget.y, c.damage);
         this.bumpCruncher(c.owner, true);
+        this.noteCruncherResolved(c.owner, true);
         this.removeCruncher(i);
       } else if (outOfBounds || c.traveled >= CRUNCHER_MAX_RANGE) {
         // Firewall (Click+): the first N misses are absorbed at the arena edge — no penalty.
@@ -688,6 +841,7 @@ export class TechnologyKit {
         } else {
           this.bumpCruncher(c.owner, false);
         }
+        this.noteCruncherResolved(c.owner, false);
         this.removeCruncher(i);
       }
     }
@@ -1251,6 +1405,7 @@ export class TechnologyKit {
   }
 
   private applyBoxed(victim: Fighter, casterOwner: Owner, time: number): void {
+    if (casterOwner === 'player') this.arena.recordMasteryStat('cordHits', 1);
     const victimOwner: Owner | null =
       victim === this.arena.player ? 'player' : victim === this.arena.npc ? 'npc' : null;
 
@@ -1565,6 +1720,13 @@ export class TechnologyKit {
     this.browserCoinText?.setText(`🪙 ${this.browserCoins}`);
   }
 
+  /** Every coin earned on the web — clicker, factory or wheel — counts toward the mastery. */
+  private gainBrowserCoins(n: number): void {
+    if (n <= 0) return;
+    this.browserCoins += n;
+    this.arena.recordMasteryStat('webCoins', n);
+  }
+
   private showBrowserHome(): void {
     this.clearBrowserContent();
     const { cx, cy } = this.browserCenter();
@@ -1584,7 +1746,7 @@ export class TechnologyKit {
     const coin = scene.add.text(cx, cy + 14, '🪙', { fontSize: '84px' }).setOrigin(0.5).setDepth(46).setScrollFactor(0)
       .setInteractive({ useHandCursor: true });
     coin.on('pointerdown', () => {
-      this.browserCoins++;
+      this.gainBrowserCoins(1);
       this.updateBrowserCoinText();
       scene.tweens.add({ targets: coin, scaleX: 1.15, scaleY: 1.15, duration: 60, yoyo: true });
     });
@@ -1692,11 +1854,11 @@ export class TechnologyKit {
     const roll = Phaser.Math.Between(0, 7);
     switch (roll) {
       case 0:
-        this.browserCoins += 10;
+        this.gainBrowserCoins(10);
         result.setText('Win! +10 coins');
         break;
       case 1:
-        this.browserCoins += 25;
+        this.gainBrowserCoins(25);
         result.setText('Big Win! +25 coins');
         break;
       case 2:
@@ -1802,7 +1964,7 @@ export class TechnologyKit {
       this.browserCoinAccum += delta;
       while (this.browserCoinAccum >= 1000) {
         this.browserCoinAccum -= 1000;
-        this.browserCoins++;
+        this.gainBrowserCoins(1);
       }
       this.updateBrowserCoinText();
     }
@@ -1917,6 +2079,7 @@ export class TechnologyKit {
     }
     if (points >= ADMIN_TIERS[4]) {
       if (enemy.hp / enemy.maxHp < 0.15) enemy.takeDamage(9999, { pierce: true });
+      if (owner === 'player') this.arena.recordMasteryStat('adminBans', 1);
       lines.push(';ban');
     }
     if (lines.length === 0) lines.push(';No admin privileges obtained');
@@ -2005,6 +2168,421 @@ export class TechnologyKit {
         fighter.setAlpha(1);
       }
     }
+  }
+
+  // ── Technology Mastery — VPN (passive) ────────────────────────────────
+
+  /**
+   * Ramps a movement speed bonus while the player keeps moving and drops it the instant
+   * they stop. Caster-local: online opponents replicate by position, so there is nothing
+   * to mirror on the victim sim.
+   */
+  private updateVpn(time: number, delta: number): void {
+    void time;
+    if (!this.arena.masteryActive) {
+      if (this.vpnIndicatorShown) {
+        this.arena.setStatusIndicator('vpn', null);
+        this.vpnIndicatorShown = false;
+      }
+      this.vpnRamp = 0;
+      this.vpnHasLastPos = false;
+      return;
+    }
+
+    const player = this.arena.player;
+    const moved = this.vpnHasLastPos
+      ? Math.hypot(player.x - this.vpnLastX, player.y - this.vpnLastY)
+      : 0;
+    this.vpnLastX = player.x;
+    this.vpnLastY = player.y;
+    this.vpnHasLastPos = true;
+
+    // Scale the epsilon by frame length so a slow frame isn't mistaken for movement.
+    if (moved > VPN_MOVE_EPSILON * (delta / 16.67)) {
+      this.vpnRamp = Math.min(1, this.vpnRamp + delta / VPN_RAMP_MS);
+      this.spawnVpnTrail(delta);
+    } else {
+      this.vpnRamp = 0;
+      this.vpnTrailAccum = 0;
+    }
+
+    const pct = Math.round(this.vpnRamp * VPN_MAX_BONUS * 100);
+    if (pct > 0) {
+      this.arena.setStatusIndicator('vpn', {
+        name: 'VPN', emoji: '🌐', color: 0x2288cc,
+        description: 'Private tunnel: your speed climbs the longer you keep moving. Stop and it resets to zero.',
+        count: pct, suffix: '%', priority: 120,
+      });
+      this.vpnIndicatorShown = true;
+    } else if (this.vpnIndicatorShown) {
+      this.arena.setStatusIndicator('vpn', null);
+      this.vpnIndicatorShown = false;
+    }
+  }
+
+  /** Datastream behind the player — denser, larger, brighter and longer-lived as the ramp climbs. */
+  private spawnVpnTrail(delta: number): void {
+    const r = this.vpnRamp;
+    this.vpnTrailAccum += delta;
+    const interval = VPN_TRAIL_MAX_MS - (VPN_TRAIL_MAX_MS - VPN_TRAIL_MIN_MS) * r;
+    if (this.vpnTrailAccum < interval) return;
+    this.vpnTrailAccum = 0;
+
+    const scene = this.arena.scene;
+    const player = this.arena.player;
+    // One column at rest, up to three side-by-side at full tunnel speed.
+    const columns = 1 + Math.floor(r * 2.99);
+    const life = 400 + 700 * r;
+    const size = 11 + Math.round(5 * r);
+    const color = r > 0.85 ? '#aaffff' : r > 0.5 ? '#66ffdd' : '#33ff88';
+    for (let i = 0; i < columns; i++) {
+      const spread = columns === 1 ? 0 : (i - (columns - 1) / 2) * (10 + 8 * r);
+      const glyph = Math.random() < 0.5 ? '0' : '1';
+      const text = scene.add.text(player.x + spread, player.y + Phaser.Math.Between(-6, 6), glyph, {
+        fontSize: `${size}px`, color, fontFamily: 'monospace',
+      }).setOrigin(0.5).setDepth(9).setAlpha(0.55 + 0.45 * r);
+      scene.tweens.add({
+        targets: text, alpha: 0, y: text.y + 14 + 20 * r, duration: life,
+        onComplete: () => text.destroy(),
+      });
+    }
+  }
+
+  // ── Technology Mastery — Byte-Bomb (bindable) ─────────────────────────
+
+  /** The slot Byte-Bomb is bound over this match, or null when it isn't bound anywhere. */
+  private byteBombSlot(): 'e' | 'r' | 'f' | 'q' | null {
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      if (this.arena.masteryBindFor(s) === 'byte-bomb') return s;
+    }
+    return null;
+  }
+
+  /** 0 = just cast, 1 = ready. Drives the HUD bar when Byte-Bomb is bound to a slot. */
+  getByteBombCooldownRatio(time: number): number {
+    return Math.min(1, (time - this.byteBombLastCastAt) / BYTE_BOMB_COOLDOWN_MS);
+  }
+
+  private tryCastByteBomb(tx: number, ty: number): void {
+    const time = this.arena.scene.time.now;
+    if (time - this.byteBombLastCastAt < BYTE_BOMB_COOLDOWN_MS) return;
+    if (Date.now() < this.arena.player.disarmedUntil) return;
+    this.byteBombLastCastAt = time;
+    this.spawnByteBomb('player', tx, ty);
+    this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 34, '💣 BYTE-BOMB', '#66ddff');
+    // Online: the opponent's sim owns their HP, so replay the bomb there too.
+    this.arena.broadcastMasteryCast('byte-bomb');
+  }
+
+  /** Online replay: the remote technology player lobbed a Byte-Bomb — it must hurt the local player. */
+  doNpcByteBomb(tx: number, ty: number): void {
+    this.spawnByteBomb('npc', tx, ty);
+  }
+
+  private spawnByteBomb(owner: Owner, tx: number, ty: number): void {
+    const scene = this.arena.scene;
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    const angle = Math.atan2(ty - caster.y, tx - caster.x);
+    const shadow = scene.add.graphics().setDepth(6);
+    const shell = scene.add.circle(caster.x, caster.y, 16, 0x0d2740, 0.95)
+      .setStrokeStyle(2, 0x33aaee, 0.95).setDepth(17);
+    const face = scene.add.graphics().setDepth(18);
+    const label = scene.add.text(caster.x, caster.y, '8.0', {
+      fontSize: '13px', color: '#aaffff', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(19);
+    this.byteBombs.push({
+      owner,
+      x: caster.x, y: caster.y,
+      vx: Math.cos(angle) * BYTE_BOMB_TRAVEL_SPEED,
+      vy: Math.sin(angle) * BYTE_BOMB_TRAVEL_SPEED,
+      destX: tx, destY: ty,
+      flying: true,
+      fuse: BYTE_BOMB_FUSE_MS,
+      shell, shadow, face, label,
+    });
+  }
+
+  private destroyByteBomb(b: ByteBomb): void {
+    b.shell.destroy();
+    b.shadow.destroy();
+    b.face.destroy();
+    b.label.destroy();
+  }
+
+  /**
+   * Rising-edge click on one of the player's own bombs — trims half a second off its fuse.
+   * Returns true when the click was consumed so it doesn't also fire a cruncher.
+   */
+  private handleByteBombClick(pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): boolean {
+    const down = pointer.leftButtonDown();
+    const rising = down && !this.byteBombPointerWasDown;
+    this.byteBombPointerWasDown = down;
+    if (!rising) return false;
+
+    for (const b of this.byteBombs) {
+      if (b.owner !== 'player') continue;
+      if (Phaser.Math.Distance.Between(mouseX, mouseY, b.x, b.y) > BYTE_BOMB_RADIUS) continue;
+      b.fuse = Math.max(0, b.fuse - BYTE_BOMB_CLICK_CUT_MS);
+      this.arena.spawnFloatingText(b.x, b.y - 26, '-0.5s', '#66ddff');
+      this.arena.scene.tweens.add({
+        targets: [b.shell, b.label], scaleX: 1.25, scaleY: 1.25, duration: 70, yoyo: true,
+      });
+      if (this.arena.isOnline) this.arena.sendTechMsg({ t: 'tech', k: 'bytefuse' });
+      return true;
+    }
+    return false;
+  }
+
+  private updateByteBombs(time: number, delta: number): void {
+    for (let i = this.byteBombs.length - 1; i >= 0; i--) {
+      const b = this.byteBombs[i];
+
+      if (b.flying) {
+        const prevX = b.x, prevY = b.y;
+        b.x += b.vx * delta / 1000;
+        b.y += b.vy * delta / 1000;
+        // Overshoot test against the destination along the travel axis.
+        const before = (b.destX - prevX) * b.vx + (b.destY - prevY) * b.vy;
+        const after = (b.destX - b.x) * b.vx + (b.destY - b.y) * b.vy;
+        if (before >= 0 && after < 0) {
+          b.x = b.destX; b.y = b.destY;
+          b.flying = false;
+        }
+      } else {
+        b.fuse -= delta;
+      }
+
+      const secs = Math.max(0, b.fuse / 1000);
+      b.label.setText(secs.toFixed(1));
+      b.shell.setPosition(b.x, b.y);
+      b.label.setPosition(b.x, b.y);
+      this.drawByteBombFace(b, time, secs);
+
+      if (!b.flying && b.fuse <= 0) {
+        this.detonateByteBomb(b, time);
+        this.destroyByteBomb(b);
+        this.byteBombs.splice(i, 1);
+      }
+    }
+  }
+
+  /**
+   * The bomb is a fat surface-mount chip: soldered legs down both sides, a plated face with
+   * a scanline sweeping across it, a status LED, and the fuse ring draining around the whole
+   * package. Everything blinks harder the closer the countdown gets to zero.
+   */
+  private drawByteBombFace(b: ByteBomb, time: number, secs: number): void {
+    const g = b.face;
+    g.clear();
+    const frac = Phaser.Math.Clamp(b.fuse / BYTE_BOMB_FUSE_MS, 0, 1);
+    // Blink rate climbs under 3s, then goes frantic under 1s.
+    const rate = secs > 3 ? 500 : secs > 1 ? 220 : 100;
+    const hot = Math.floor(time / rate) % 2 === 0;
+    const danger = secs <= 3;
+    const ringColor = danger && hot ? 0xff5555 : 0x33aaee;
+
+    // Ground shadow — squashed while the packet is still in the air.
+    b.shadow.clear();
+    b.shadow.fillStyle(0x000000, b.flying ? 0.18 : 0.32);
+    b.shadow.fillEllipse(b.x, b.y + 20, b.flying ? 20 : 28, b.flying ? 5 : 8);
+
+    // Chip legs: three solder pins down each side, long enough to clear the fuse ring.
+    g.lineStyle(2, 0x99aabb, 0.85);
+    for (let i = -1; i <= 1; i++) {
+      const ly = b.y + i * 8;
+      g.lineBetween(b.x - 15, ly, b.x - 28, ly);
+      g.lineBetween(b.x + 15, ly, b.x + 28, ly);
+    }
+
+    // Face plating: etched traces, plus a bright scanline sweeping top to bottom.
+    g.lineStyle(1, 0x66ddff, 0.45);
+    g.lineBetween(b.x - 12, b.y - 8, b.x + 12, b.y - 8);
+    g.lineBetween(b.x - 12, b.y + 8, b.x + 12, b.y + 8);
+    g.lineBetween(b.x - 12, b.y - 8, b.x - 12, b.y + 8);
+    const sweepY = b.y - 11 + ((time / 6) % 22);
+    g.lineStyle(2, 0xaaffff, 0.55);
+    g.lineBetween(b.x - 11, sweepY, b.x + 11, sweepY);
+
+    // Status LED, tucked into the top-left corner of the package away from the countdown.
+    g.fillStyle(hot ? (danger ? 0xff3322 : 0x33ff88) : 0x223344, hot ? 1 : 0.7);
+    g.fillCircle(b.x - 9, b.y - 11, 3);
+
+    // Fuse ring draining around the package.
+    g.lineStyle(3, 0x112233, 0.55);
+    g.strokeCircle(b.x, b.y, 21);
+    g.lineStyle(3, ringColor, 0.95);
+    g.beginPath();
+    g.arc(b.x, b.y, 21, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac, false);
+    g.strokePath();
+
+    // Danger pulse: a faint ring breathing outward once the countdown goes red.
+    if (danger) {
+      const pulse = 24 + 7 * (1 - ((time % rate) / rate));
+      g.lineStyle(2, 0xff5555, 0.3);
+      g.strokeCircle(b.x, b.y, pulse);
+    }
+
+    b.shell.setFillStyle(secs <= 1 && hot ? 0x442233 : 0x0d2740, 0.95);
+    b.label.setColor(danger && hot ? '#ffdddd' : '#aaffff');
+  }
+
+  private detonateByteBomb(b: ByteBomb, time: number): void {
+    const scene = this.arena.scene;
+    const ring = scene.add.circle(b.x, b.y, BYTE_BOMB_BLAST_RADIUS * 0.35, 0x33aaee, 0.55)
+      .setStrokeStyle(3, 0xaaffff, 0.9).setDepth(17);
+    scene.tweens.add({
+      targets: ring, scaleX: 2.9, scaleY: 2.9, alpha: 0, duration: 420,
+      onComplete: () => ring.destroy(),
+    });
+    for (let i = 0; i < 14; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const d = 30 + Math.random() * BYTE_BOMB_BLAST_RADIUS;
+      const glyph = scene.add.text(b.x, b.y, Math.random() < 0.5 ? '0' : '1', {
+        fontSize: '15px', color: '#aaffff', fontFamily: 'monospace',
+      }).setOrigin(0.5).setDepth(18);
+      scene.tweens.add({
+        targets: glyph, x: b.x + Math.cos(a) * d, y: b.y + Math.sin(a) * d, alpha: 0,
+        duration: 480, onComplete: () => glyph.destroy(),
+      });
+    }
+    scene.cameras.main.shake(180, 0.004);
+
+    for (const target of this.enemiesOf(b.owner)) {
+      if (Phaser.Math.Distance.Between(b.x, b.y, target.x, target.y) > BYTE_BOMB_BLAST_RADIUS) continue;
+      target.takeDamage(BYTE_BOMB_DAMAGE, { source: b, sourceX: b.x, sourceY: b.y });
+      this.arena.spawnHitFlash(target.x, target.y, 0x33aaee);
+      this.applyLag(target, time);
+    }
+  }
+
+  // ── Lag (Byte-Bomb debuff) ────────────────────────────────────────────
+
+  private applyLag(target: Fighter, time: number): void {
+    const until = time + LAG_DURATION_MS;
+    target.laggedUntil = Math.max(target.laggedUntil, until);
+    const existing = this.lagged.get(target);
+    if (existing) {
+      existing.until = Math.max(existing.until, until);
+      return;
+    }
+    this.lagged.set(target, {
+      until,
+      history: [{ x: target.x, y: target.y, t: time }],
+      sampleAccum: 0,
+      nextEventAt: time + Phaser.Math.Between(600, 1400),
+      freezeUntil: 0,
+      cooldownFreezeUntil: 0,
+      spinner: null,
+      spinnerAngle: 0,
+    });
+    // Above the loading-circle band (y-58) so the two never stack on each other.
+    this.arena.spawnFloatingText(target.x, target.y - 84, '📶 LAG', '#66ddff');
+  }
+
+  private updateLag(time: number, delta: number): void {
+    if (this.lagged.size === 0) return;
+    for (const [f, st] of this.lagged) {
+      if (!f.active || f.hp <= 0 || time >= st.until) {
+        st.spinner?.destroy();
+        if (f.active) f.laggedUntil = 0;
+        this.lagged.delete(f);
+        continue;
+      }
+      f.laggedUntil = st.until;
+
+      // Position history — the rubber-band rewinds to roughly a second ago.
+      st.sampleAccum += delta;
+      if (st.sampleAccum >= LAG_HISTORY_SAMPLE_MS) {
+        st.sampleAccum = 0;
+        st.history.push({ x: f.x, y: f.y, t: time });
+        while (st.history.length > 0 && time - st.history[0].t > LAG_REWIND_MS * 1.5) st.history.shift();
+      }
+
+      if (time >= st.nextEventAt && time >= st.freezeUntil) {
+        st.nextEventAt = time + Phaser.Math.Between(LAG_EVENT_MIN_GAP_MS, LAG_EVENT_MAX_GAP_MS);
+        switch (Phaser.Math.Between(0, 2)) {
+          case 0: this.lagRubberBand(f, st, time); break;
+          case 1: this.lagFreeze(f, st, time); break;
+          default: this.lagStallCooldowns(f, st, time); break;
+        }
+      }
+
+      // Frozen: pinned in place under a spinning loading circle.
+      if (time < st.freezeUntil) {
+        if (!f.netGhost) (f.body as Phaser.Physics.Arcade.Body | null)?.setVelocity(0, 0);
+        st.spinnerAngle += delta * 0.009;
+        this.drawLagSpinner(f, st);
+      } else if (st.spinner) {
+        st.spinner.destroy();
+        st.spinner = null;
+      }
+
+      // Stalled cooldowns: push every stamp forward so nothing ticks down.
+      if (time < st.cooldownFreezeUntil) f.shiftCooldowns(delta);
+    }
+  }
+
+  private lagRubberBand(f: Fighter, st: LagState, time: number): void {
+    if (f.netGhost) return; // remote replicas are interpolated; their own sim rewinds them
+    let target = st.history[0];
+    for (const h of st.history) {
+      if (time - h.t >= LAG_REWIND_MS) target = h;
+    }
+    if (!target) return;
+    if (Phaser.Math.Distance.Between(f.x, f.y, target.x, target.y) < 12) return;
+
+    const scene = this.arena.scene;
+    const trail = scene.add.graphics().setDepth(12);
+    trail.lineStyle(2, 0x66ddff, 0.8);
+    trail.lineBetween(f.x, f.y, target.x, target.y);
+    scene.tweens.add({ targets: trail, alpha: 0, duration: 320, onComplete: () => trail.destroy() });
+
+    const ghost = scene.add.circle(f.x, f.y, 14, 0x33aaee, 0.4).setDepth(11);
+    scene.tweens.add({ targets: ghost, alpha: 0, duration: 300, onComplete: () => ghost.destroy() });
+
+    f.setPosition(target.x, target.y);
+    st.history = [{ x: target.x, y: target.y, t: time }];
+    this.arena.spawnFloatingText(f.x, f.y - 40, '⇤ rubber-band', '#66ddff');
+  }
+
+  private lagFreeze(f: Fighter, st: LagState, time: number): void {
+    st.freezeUntil = time + LAG_FREEZE_MS;
+    st.spinnerAngle = 0;
+    // Below the fighter — the loading circle owns the space above their head.
+    this.arena.spawnFloatingText(f.x, f.y + 36, '⏳ not responding', '#66ddff');
+  }
+
+  private lagStallCooldowns(f: Fighter, st: LagState, time: number): void {
+    st.cooldownFreezeUntil = time + Phaser.Math.Between(3000, 4000);
+    this.arena.spawnFloatingText(f.x, f.y - 40, '⌛ cooldowns stalled', '#66ddff');
+  }
+
+  /**
+   * The classic buffering ring above the frozen fighter's head: a dark disc so it stays
+   * readable over damage numbers, a track, and a bright arc chasing around it with a
+   * fading tail behind the leading edge.
+   */
+  private drawLagSpinner(f: Fighter, st: LagState): void {
+    if (!st.spinner) st.spinner = this.arena.scene.add.graphics().setDepth(24);
+    const g = st.spinner;
+    const cx = f.x;
+    const cy = f.y - 58;
+    const R = 13;
+    g.clear();
+    g.fillStyle(0x04121e, 0.75);
+    g.fillCircle(cx, cy, R + 4);
+    g.lineStyle(3, 0x1b4a6b, 0.9);
+    g.strokeCircle(cx, cy, R);
+    // Tail: three arc segments dimming away from the head of the sweep.
+    for (let i = 0; i < 3; i++) {
+      const a = st.spinnerAngle - i * 0.45;
+      g.lineStyle(3, 0x66ddff, 0.9 - i * 0.28);
+      g.beginPath();
+      g.arc(cx, cy, R, a - 0.4, a, false);
+      g.strokePath();
+    }
+    g.fillStyle(0xaaffff, 1);
+    g.fillCircle(cx + Math.cos(st.spinnerAngle) * R, cy + Math.sin(st.spinnerAngle) * R, 2.6);
   }
 
   private updateJail(time: number): void {

@@ -40,9 +40,36 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public incomingDamageMultiplier = 1;
   /** Subterfuge Bribe: 0.75 while this fighter's attacker is bribed (victim-side stand-in for "deals 25% less"). */
   public bribeIncomingMult = 1;
+  /**
+   * Subterfuge Mastery — Smoke Break: 0.75 while this fighter has a cigarette lit. Kept out of
+   * the `armored` status aggregate on purpose — SubterfugeKit shows its own 🚬 timer box, and
+   * the cigarette's shrinking duration is the part worth watching.
+   */
+  public smokeIncomingMult = 1;
+  /** Creation Buff Potion: 1.25 while whoever is damaging this fighter is potion-empowered (victim-side stand-in for "deals 25% more"). */
+  public empoweredIncomingMult = 1;
+  /** Creation Protection Potion: 0.75 while this fighter is potion-protected. */
+  public potionArmorMult = 1;
+  /**
+   * Shadow Hopelessness: 0–100. Applied by Shadow's pools, traps and tentacles. Every 2%
+   * cuts the afflicted fighter's outgoing damage by 1% (capped at 50% at 100%). Held here
+   * rather than in ShadowKit so the status tray and any sim can read it.
+   */
+  public hopelessness = 0;
+  /**
+   * Victim-side stand-in for "my attacker is hopeless, so they deal less". ShadowKit keeps
+   * this in sync with the opposing fighter's `hopelessness` each frame — same pattern as
+   * `bribeIncomingMult`, since `takeDamage` has no attacker reference.
+   */
+  public hopelessIncomingMult = 1;
   public chargeRatio = 0;   // 0–1, drives the yellow charge bar in HealthBar
   public chargeColor = 0xffdd00; // charge-bar fill color (Rubber Bazooka reddens it while overcharging)
   public lastIncomingDamage = 0; // set in takeDamage() before shield check — used by reflect upgrades
+  /**
+   * True while a `damaged` event is being emitted from applySelfDamage. Listeners that
+   * treat "victim took damage" as "the other side dealt damage" must check this first.
+   */
+  public damageWasSelfInflicted = false;
   /** Multiply all ability cooldowns by this factor (< 1 = faster, e.g. Reborn post-revival). */
   public cooldownMult = 1;
   /** If set, called with the damage amount before shields; return true to absorb the hit entirely. */
@@ -145,6 +172,14 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Earth Mastery — Dust Screen: while active, Husk AI wanders/misfires instead of pathfinding normally. */
   public confusedWanderUntil = 0;
 
+  /** Technology Mastery — Byte-Bomb: laggy connection (rubber-banding, freezes, stalled cooldowns) until this `scene.time.now` timestamp. */
+  public laggedUntil = 0;
+
+  /** Fate Mastery — Confusing curse: WASD input is mirrored until this `scene.time.now` timestamp. */
+  public invertedControlsUntil = 0;
+  /** Fate Mastery — Vulnerable curse: the next hit taken is doubled, then this clears. */
+  public vulnerableNextHit = false;
+
   /** Timestamp until which healing is suppressed (mutations). Date.now() based. */
   public healStopUntil = 0;
 
@@ -200,6 +235,27 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public knockbackImmune = false;
   /** Earth Mastery — Unbreakable: caps any single hit's damage to this value. 0 = no cap. */
   public hardDamageCap = 0;
+
+  /**
+   * Light Mastery — Unstoppable: this fighter ignores every stun, root and slow. Checked by
+   * ArenaScene's speed/stun chokepoint (which clears the generic control fields each frame)
+   * and by kits that hold their own stun timers.
+   */
+  public unstoppable = false;
+  /**
+   * Light Mastery — Killer Kebab: `scene.time.now` timestamp until which this fighter is
+   * skewered on a light lance — dragged along with it and unable to act.
+   */
+  public skeweredUntil = 0;
+
+  /**
+   * Growth Mastery — Syringe Shot: sick until this `scene.time.now` timestamp. Deliberately a
+   * single field: every sickness upgrade (extra ticks, vulnerability, slows, weakening, spread)
+   * rides on this one effect rather than adding its own status box.
+   */
+  public sicknessUntil = 0;
+  /** Growth Mastery — Carrier: permanent leftovers of a survived sickness. Never clears. */
+  public sicknessCarrier = false;
 
   /** Metal Mastery — Natural Clot: flat amount subtracted from every incoming hit. Default 0. */
   public flatDamageReduction = 0;
@@ -285,6 +341,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
   takeDamage(amount: number, opts?: { pierce?: boolean; fireDot?: boolean; source?: object; sourceX?: number; sourceY?: number }): void {
     // Magic Mastery — Levitate: immune to damage from a source that hasn't moved in 3s.
+    this.damageWasSelfInflicted = false;
     if (this.levitating && opts?.source && opts.sourceX !== undefined && opts.sourceY !== undefined
         && isStationaryFor(opts.source, opts.sourceX, opts.sourceY, 3000)) return;
     if (!opts?.pierce && this.isInvincible) return;
@@ -298,7 +355,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       amount = Math.round(amount * (critCtx?.mult ?? 2));
     }
 
-    amount = Math.round(amount * this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult);
+    amount = Math.round(amount * this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult);
     if (this.darkVulnStacks > 0) amount = Math.round(amount * (1 + 0.25 * this.darkVulnStacks));
     // Fire Mastery — Heatwave: exposed amplifies the next hit, then is consumed.
     // Fire damage-over-time is exempt on both counts: burn/molten ticks are neither
@@ -307,6 +364,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       amount = Math.round(amount * 1.5);
       this.exposedUntil = 0;
       this.exposedConsumedAt = this.scene.time.now;
+    }
+    // Fate Mastery — Vulnerable curse: doubles exactly one incoming hit, then clears.
+    if (this.vulnerableNextHit) {
+      amount = Math.round(amount * 2);
+      this.vulnerableNextHit = false;
     }
     // Metal Mastery — Natural Clot: flat reduction on the final amount. A fully-absorbed
     // hit spends nothing (no shield charge, no clotted HP) — it simply bounces off.
@@ -461,6 +523,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Like takeDamage but bypasses isInvincible — used for self-inflicted effects. */
   applySelfDamage(amount: number): void {
     if (this.netGhost) return;
+    this.damageWasSelfInflicted = true;
     this.hp = Math.max(0, this.hp - amount);
     this.emit('damaged', amount);
 

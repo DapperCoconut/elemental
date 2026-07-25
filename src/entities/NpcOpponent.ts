@@ -44,7 +44,6 @@ export interface NpcAiState {
   iceBlockActive?: boolean;
   npcGrowthDna?: number;
   npcGrowthHasNestOrClone?: boolean;
-  npcGrowthCancerActive?: boolean;
   crystalNodeCount?: number;
   npcSoulCorpseCount?: number;
   npcSoulAmalgamCount?: number;
@@ -853,17 +852,22 @@ export class NpcOpponent extends Fighter {
     const sharpY = this.y + Math.sin(sharpAngle) * dist;
 
     if (!skipSpecials) {
-      // 1. Tentacle — extend toward player when in attack range
+      // 1. Tentacle Wall — grow a spiked wall toward the player from mid range
+      if (dist > 90 && dist < 340) {
+        if (this.castAbility('tentacle-wall', buildContext(target.x, target.y))) return 'tentacle-wall';
+      }
+
+      // 2. Tentacle — extend toward player when in attack range
       if (dist < 280) {
         if (this.castAbility('tentacle', buildContext(target.x, target.y))) return 'tentacle';
       }
 
-      // 2. Snap Trap — place at own feet occasionally
+      // 3. Snap Trap — place at own feet occasionally
       if (dist < 200) {
         if (this.castAbility('snap-trap', buildContext(this.x, this.y))) return 'snap-trap';
       }
 
-      // 3. Dark bomb — sharp aim
+      // 4. Dark bomb — sharp aim
       if (dist < 400) {
         if (this.castAbility('dark-drain', buildContext(sharpX, sharpY))) return 'dark-drain';
       }
@@ -948,23 +952,26 @@ export class NpcOpponent extends Fighter {
     const sharpY = this.y + Math.sin(sharpAngle) * dist;
 
     if (!skipSpecials) {
-      // 1. Cancer — defensive shield when low HP and not already up
-      if (hpRatio < 0.5 && !aiState.npcGrowthCancerActive) {
-        if (this.castAbility('growth-cancer', buildContext(this.x, this.y))) return 'growth-cancer';
-      }
-
-      // 2. Auxiliary Growth — once enough DNA is banked and no clone/nest yet
+      // 1. Auxiliary Growth — once enough DNA is banked and no clone/nest yet.
+      //    Plant the nest a short way off to the side, like a cursor drop.
       if ((aiState.npcGrowthDna ?? 0) >= 8 && !aiState.npcGrowthHasNestOrClone) {
-        if (this.castAbility('auxiliary-growth', buildContext(this.x, this.y))) return 'auxiliary-growth';
+        const nx = this.x + (Math.random() - 0.5) * 140;
+        const ny = this.y + (Math.random() - 0.5) * 140;
+        if (this.castAbility('auxiliary-growth', buildContext(nx, ny))) return 'auxiliary-growth';
       }
 
-      // 3. Spore Spread — when in range
-      if (dist < 450) {
-        if (this.castAbility('spore-spread', buildContext(sharpX, sharpY))) return 'spore-spread';
+      // 2. Spore Spray — defensive wall between us and the target when hurt
+      if (hpRatio < 0.6 && dist < 400) {
+        if (this.castAbility('spore-spray', buildContext(sharpX, sharpY))) return 'spore-spray';
+      }
+
+      // 3. Virus — keep the infection ticking whenever the target is reachable
+      if (dist < 520) {
+        if (this.castAbility('growth-virus', buildContext(sharpX, sharpY))) return 'growth-virus';
       }
     }
 
-    // Default: Leech Brood
+    // Default: Bacterium
     if (this.castAbility('growth-click', buildContext(sharpX, sharpY))) return 'growth-click';
 
     return null;
@@ -1305,9 +1312,9 @@ export class NpcOpponent extends Fighter {
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skipSpecials) {
-      // Q: Chaos Incarnate when low HP or to close gap
-      if (hpRatio < 0.35) {
-        if (this.castAbility('plasma-chaos-incarnate', buildContext(aimX, aimY))) return 'plasma-chaos-incarnate';
+      // Q: Pure CHAOS! — only worth it with the enemy in volley range, or as a low-HP swing
+      if (dist < 280 || hpRatio < 0.35) {
+        if (this.castAbility('plasma-pure-chaos', buildContext(aimX, aimY))) return 'plasma-pure-chaos';
       }
       // F: Chaos Blades at medium range
       if (dist < 250) {

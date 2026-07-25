@@ -16,7 +16,7 @@ const daggerSpray: Ability = {
 const chargedBolt: Ability = {
   id: 'charged-bolt',
   name: 'Charged Bolt',
-  description: 'Tap E: copper bolt (5). Hold 0.5s: silver (10). Hold 1s: gold (15). Load 3 bolts into the Crucible to craft — CCC bolt spray · CCS scythe · CSS medkit · SSS heal pulses · CCG ghoul · CGG damage pulses · GSS fire pools · GGS +30% speed · GGG cross-beam + armor. 2s CD.',
+  description: 'Tap E: copper bolt (5). Hold 0.5s: silver (10). Hold 1s: gold (15). Load 2 bolts into the Nexus to brew a potion, then walk onto the Nexus to drink it — CC buff · SS heal · GG gold · CS protection · CG speed · SG reload. 2s CD.',
   displayKey: 'E',
   cooldown: 2000,
   cast(ctx: CastContext) {

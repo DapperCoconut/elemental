@@ -26,20 +26,76 @@ export class BootScene extends Phaser.Scene {
   create(): void {
     const gfx = this.add.graphics();
 
-    // Fire element texture (red-orange circle)
+    // Fire element texture — a living ember: charred rim, banked coals, white-hot heart,
+    // with flame tips licking up around the crown. Radius stays 22 to match the physics body.
     gfx.clear();
-    gfx.fillStyle(0xff4400);
+    gfx.fillStyle(0x991100, 1);
     gfx.fillCircle(24, 24, 22);
-    gfx.lineStyle(3, 0xff8800);
-    gfx.strokeCircle(24, 24, 22);
+    // Flame tips around the upper half, drawn under the body so only their points show.
+    for (let i = 0; i < 9; i++) {
+      const a = -Math.PI + (i / 8) * Math.PI;
+      const len = 22 + (i % 2 === 0 ? 1.5 : 0.5);
+      gfx.fillStyle(i % 2 === 0 ? 0xff6600 : 0xff2200, 1);
+      gfx.fillTriangle(
+        24 + Math.cos(a - 0.22) * 17, 24 + Math.sin(a - 0.22) * 17,
+        24 + Math.cos(a) * len, 24 + Math.sin(a) * len,
+        24 + Math.cos(a + 0.22) * 17, 24 + Math.sin(a + 0.22) * 17,
+      );
+    }
+    gfx.fillStyle(0xcc1100, 1);
+    gfx.fillCircle(24, 24, 19.5);
+    gfx.fillStyle(0xff4400, 1);
+    gfx.fillCircle(24, 25, 16);
+    gfx.fillStyle(0xff6600, 1);
+    gfx.fillCircle(24, 26, 12.5);
+    gfx.fillStyle(0xff9900, 1);
+    gfx.fillCircle(24, 27, 8.5);
+    gfx.fillStyle(0xffdd33, 1);
+    gfx.fillCircle(24, 28, 5);
+    // Rim light along the top edge sells the sphere.
+    gfx.lineStyle(2.5, 0xff8800, 0.9);
+    gfx.strokeCircle(24, 24, 21);
+    gfx.lineStyle(2, 0xffdd33, 0.55);
+    gfx.beginPath();
+    gfx.arc(24, 24, 19, Math.PI * 1.15, Math.PI * 1.85);
+    gfx.strokePath();
     gfx.generateTexture('elem-fire', 48, 48);
 
-    // Water element texture (blue circle)
+    // Water element texture — a bead of water held by its own surface tension: dark rim,
+    // ocean body, a caustic pooling low where light refracts through, and a hard specular
+    // glint up-left. Radius stays 22 to match the physics body.
     gfx.clear();
-    gfx.fillStyle(0x0066cc);
+    gfx.fillStyle(0x00224d, 1);
     gfx.fillCircle(24, 24, 22);
-    gfx.lineStyle(3, 0x44aaff);
-    gfx.strokeCircle(24, 24, 22);
+    gfx.fillStyle(0x00468c, 1);
+    gfx.fillCircle(24, 24, 20);
+    gfx.fillStyle(0x0066bb, 1);
+    gfx.fillCircle(24, 25, 17);
+    gfx.fillStyle(0x0088dd, 1);
+    gfx.fillCircle(24, 26.5, 13);
+    // Caustic: light that passed through the bead concentrates against the far wall.
+    gfx.fillStyle(0x22aaee, 1);
+    gfx.fillEllipse(24, 31, 20, 10);
+    gfx.fillStyle(0x55ccff, 0.85);
+    gfx.fillEllipse(24, 33, 13, 5.5);
+    // Meniscus band across the waist.
+    gfx.lineStyle(2, 0x88ddff, 0.45);
+    gfx.beginPath();
+    gfx.arc(24, 24, 15, Math.PI * 0.08, Math.PI * 0.92);
+    gfx.strokePath();
+    // Rim light along the top edge sells the sphere.
+    gfx.lineStyle(2.5, 0x22aaee, 0.9);
+    gfx.strokeCircle(24, 24, 21);
+    gfx.lineStyle(2, 0xbbeeff, 0.6);
+    gfx.beginPath();
+    gfx.arc(24, 24, 19, Math.PI * 1.12, Math.PI * 1.88);
+    gfx.strokePath();
+    // Specular glint + two trapped bubbles.
+    gfx.fillStyle(0xffffff, 0.9);
+    gfx.fillEllipse(17.5, 16, 9, 5.5);
+    gfx.fillStyle(0xddf6ff, 0.55);
+    gfx.fillCircle(31, 19, 2.6);
+    gfx.fillCircle(28.5, 30, 1.7);
     gfx.generateTexture('elem-water', 48, 48);
 
     // Air element texture (light blue/white circle)
@@ -70,34 +126,80 @@ export class BootScene extends Phaser.Scene {
     gfx.fillCircle(6, 6, 6);
     gfx.generateTexture('proj-sakura', 12, 12);
 
-    // Fireball projectile (small orange circle)
+    // Fireball projectile — layered hot core inside a ragged red shell. Canvas stays 14×14
+    // so the physics hitbox is unchanged; the extra read comes from the colour banding.
     gfx.clear();
-    gfx.fillStyle(0xff8800);
+    gfx.fillStyle(0xcc1100, 0.85);
     gfx.fillCircle(7, 7, 7);
+    for (let i = 0; i < 7; i++) {
+      const a = (i / 7) * Math.PI * 2;
+      gfx.fillStyle(0xff2200, 0.9);
+      gfx.fillCircle(7 + Math.cos(a) * 2.6, 7 + Math.sin(a) * 2.6, 3.6);
+    }
+    gfx.fillStyle(0xff5500, 1);
+    gfx.fillCircle(7, 7, 5.2);
+    gfx.fillStyle(0xff9900, 1);
+    gfx.fillCircle(7, 7, 3.6);
+    gfx.fillStyle(0xffdd33, 1);
+    gfx.fillCircle(7, 7, 2.2);
+    gfx.fillStyle(0xffffff, 0.95);
+    gfx.fillCircle(6.6, 6.6, 1.1);
     gfx.generateTexture('proj-fire', 14, 14);
 
-    // Cremation ember projectile (small deep-red circle, Fire Mastery)
+    // Cremation ember projectile (deep-red coal with a glowing crack, Fire Mastery)
     gfx.clear();
-    gfx.fillStyle(0xcc1100);
+    gfx.fillStyle(0x991100, 1);
     gfx.fillCircle(5, 5, 5);
-    gfx.lineStyle(1, 0xff5500);
+    gfx.fillStyle(0xcc1100, 1);
+    gfx.fillCircle(5, 5, 3.8);
+    gfx.fillStyle(0xff5500, 1);
+    gfx.fillCircle(4.6, 4.6, 2.2);
+    gfx.fillStyle(0xff9900, 1);
+    gfx.fillCircle(4.4, 4.4, 1.1);
+    gfx.lineStyle(1, 0xff5500, 0.9);
     gfx.strokeCircle(5, 5, 5);
     gfx.generateTexture('proj-ember', 10, 10);
 
-    // Water cut projectile (cyan-blue rectangle — slash shape)
+    // Water cut projectile — a thrown ribbon: filament tail on the left, fat bead leading on
+    // the right where surface tension gathers it. Canvas stays 22×14 so the hitbox is unchanged.
     gfx.clear();
-    gfx.fillStyle(0x00ccff);
-    gfx.fillRect(0, 3, 22, 8);
-    gfx.lineStyle(1, 0xaaeeff);
-    gfx.strokeRect(0, 3, 22, 8);
+    gfx.fillStyle(0x00468c, 1);
+    gfx.fillTriangle(0, 7, 15, 2, 15, 12);
+    gfx.fillCircle(16.2, 7, 5.4);
+    gfx.fillStyle(0x0088dd, 1);
+    gfx.fillTriangle(2.5, 7, 15, 3.6, 15, 10.4);
+    gfx.fillCircle(16, 7, 4);
+    gfx.fillStyle(0x55ccff, 1);
+    gfx.fillTriangle(6, 7, 15.5, 4.8, 15.5, 9.2);
+    gfx.fillCircle(15.8, 7, 2.6);
+    // Foam catching the light along the leading edge, plus a specular pip.
+    gfx.lineStyle(1.2, 0xbbeeff, 0.85);
+    gfx.beginPath();
+    gfx.arc(16.2, 7, 5.2, Math.PI * 1.25, Math.PI * 0.75);
+    gfx.strokePath();
+    gfx.fillStyle(0xffffff, 0.95);
+    gfx.fillCircle(15.2, 5.4, 1.3);
     gfx.generateTexture('proj-water', 22, 14);
 
-    // Pressure dagger projectile (deep-blue triangle pointing right)
+    // Pressure dagger projectile — the same ribbon crushed down: near-black abyss core under
+    // a bright pressure edge, so the charged shot reads as denser rather than merely bigger.
     gfx.clear();
-    gfx.fillStyle(0x0044bb);
-    gfx.fillTriangle(0, 0, 0, 14, 18, 7);
-    gfx.lineStyle(1, 0x4488ff);
-    gfx.strokeTriangle(0, 0, 0, 14, 18, 7);
+    gfx.fillStyle(0x00224d, 1);
+    gfx.fillTriangle(0, 7, 12.5, 2.4, 12.5, 11.6);
+    gfx.fillCircle(13.4, 7, 4.5);
+    gfx.fillStyle(0x00468c, 1);
+    gfx.fillTriangle(2, 7, 12.5, 3.8, 12.5, 10.2);
+    gfx.fillCircle(13.2, 7, 3.2);
+    gfx.fillStyle(0x22aaee, 1);
+    gfx.fillTriangle(5, 7, 13, 5, 13, 9);
+    // Pressure edge: a hard bright line down the top face of the lance.
+    gfx.lineStyle(1.4, 0xddf6ff, 0.9);
+    gfx.beginPath();
+    gfx.moveTo(1.5, 6.4);
+    gfx.lineTo(13, 3.4);
+    gfx.strokePath();
+    gfx.fillStyle(0xffffff, 0.95);
+    gfx.fillCircle(13, 5.6, 1.2);
     gfx.generateTexture('proj-pressure-dagger', 18, 14);
 
     // Earth element texture (brown circle)

@@ -4,7 +4,7 @@ import { Ability, CastContext } from './Ability';
 const darkDrain: Ability = {
   id: 'dark-drain',
   name: 'Dark Drain',
-  description: 'Tap: dark bomb (10 dmg + leaves cloud). Hold: spawn clouds that heal you & damage enemy.',
+  description: 'Tap: dark bomb (10 dmg + leaves a shadow pool). Hold: spawn pools that heal you, damage the enemy and build 3% Hopelessness per second on anyone standing in them.',
   displayKey: 'Click',
   cooldown: 800,
   cast(ctx: CastContext) {
@@ -15,7 +15,7 @@ const darkDrain: Ability = {
 const tentacle: Ability = {
   id: 'tentacle',
   name: 'Tentacle',
-  description: 'Extend a dark tentacle toward cursor for 3s — enemy touching it is snared for 2s.',
+  description: 'Extend a dark tentacle toward cursor for 3s — enemies hit take 10 dmg + 10% Hopelessness, and a touched enemy is snared for 2s.',
   displayKey: 'E',
   cooldown: 5000,
   cast(ctx: CastContext) {
@@ -26,7 +26,7 @@ const tentacle: Ability = {
 const snapTrap: Ability = {
   id: 'snap-trap',
   name: 'Snap Trap',
-  description: 'Place a trap at your feet (12s lifetime). Enemy trigger: 20 dmg + 1s stun.',
+  description: 'Place a trap at your feet (12s lifetime). Enemy trigger: 20 dmg + 20% Hopelessness + 2s stun.',
   displayKey: 'R',
   cooldown: 5000,
   cast(ctx: CastContext) {
@@ -34,14 +34,14 @@ const snapTrap: Ability = {
   },
 };
 
-const shadowDance: Ability = {
-  id: 'shadow-dance',
-  name: 'Shadow Dance',
-  description: 'Charges from dark cloud healing (35 needed). When full: press F to instantly heal 25 HP.',
+const tentacleWall: Ability = {
+  id: 'tentacle-wall',
+  name: 'Tentacle Wall',
+  description: 'Erupt a wall of 8 spiked tentacles that grows from your feet toward the cursor. Each tentacle hit deals 5 dmg + 10% Hopelessness (1s between hits from the same wall). Lasts 6s.',
   displayKey: 'F',
-  cooldown: 500,
+  cooldown: 12000,
   cast(ctx: CastContext) {
-    ctx.activateShadowDance();
+    ctx.summonTentacleWall(ctx.targetX, ctx.targetY);
   },
 };
 
@@ -62,5 +62,5 @@ export const shadowElement: Element = {
   name: 'Shadow',
   color: 0x330044,
   emoji: '🌑',
-  abilities: [darkDrain, tentacle, snapTrap, shadowDance, blackHole],
+  abilities: [darkDrain, tentacle, snapTrap, tentacleWall, blackHole],
 };

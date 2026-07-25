@@ -10,6 +10,8 @@ export interface CastContext {
   projectiles: Phaser.Physics.Arcade.Group;
   /** Maps a fire visual color through the caster's equipped color cosmetic (identity without one). */
   fireColor: (base: number) => number;
+  /** Maps a water visual color through the caster's equipped color cosmetic (identity without one). */
+  waterColor: (base: number) => number;
   dealAoeDamage: (cx: number, cy: number, radius: number, damage: number) => void;
   /** Fire Mastery: same as dealAoeDamage but tracks zombie kills for the Nuclear Cleansing challenge (player-only). */
   dealFlameNukeDamage: (cx: number, cy: number, radius: number, damage: number) => void;
@@ -55,14 +57,14 @@ export interface CastContext {
   fireFrozenSolid: (targetX: number, targetY: number) => void;
   activateTentacle: (x: number, y: number) => void;
   placeSnapTrap: () => void;
-  activateShadowDance: () => void;
+  summonTentacleWall: (x: number, y: number) => void;
   startBlackHole: (x: number, y: number) => void;
   // Growth
   fireGrowthClick: (tx: number, ty: number) => void;
   growthToggleEvolve: () => void;
-  growthSporeSpread: (tx: number, ty: number) => void;
-  growthCancer: () => void;
-  growthAuxiliaryGrowth: () => void;
+  growthVirus: (tx: number, ty: number) => void;
+  growthSporeSpray: (tx: number, ty: number) => void;
+  growthAuxiliaryGrowth: (tx: number, ty: number) => void;
   // Crystal
   fireCrystalLaser: (tx: number, ty: number) => void;
   placeCrystalNode: (tx: number, ty: number) => void;
@@ -139,7 +141,7 @@ export interface CastContext {
   plasmaUnstableArena: (tx: number, ty: number) => void;
   plasmaCurrentLaunch: (tx: number, ty: number) => void;
   plasmaChaosBlades: () => void;
-  plasmaChaosIncarnate: () => void;
+  plasmaPureChaos: () => void;
   // Gunpowder (abstract combined: fate + sound)
   gunpowderMusketShot: (tx: number, ty: number) => void;
   gunpowderExplosiveRetreat: (tx: number, ty: number) => void;

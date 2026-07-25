@@ -20,6 +20,8 @@ export interface MasteryEnhancement {
   description: string;
   /** True for active abilities the player binds over one of their E/R/F/Q abilities. Passives omit it. */
   bindable?: boolean;
+  /** Slots this enhancement may not be bound to — the MenuScene loadout refuses them as drop targets. */
+  excludeSlots?: MasterySlot[];
   /** Short blurb for the in-arena ability card (falls back to `description`). */
   hudDescription?: string;
 }
@@ -320,7 +322,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         key: 'healedHp',
         label: 'Umbral Vitality',
-        howTo: 'Heal HP — Shadow Dance bursts and dark cloud healing both count',
+        howTo: 'Heal HP — standing in your own shadow pools (and Q+ Void Singularity) both count',
         target: 500,
       },
       {
@@ -344,16 +346,16 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
     ],
     enhancements: [
       {
-        id: 'dark-resonance',
-        name: 'Dark Resonance',
-        description: 'Passive: slowly generate darkness on your own — the same charge Shadow Dance spends to heal — even without standing in a dark cloud.',
+        id: 'shared-suffering',
+        name: 'Shared Suffering',
+        description: 'Passive: for every 30 damage you take, 5% Hopelessness spreads to every enemy.',
       },
       {
-        id: 'final-eclipse',
-        name: 'Final Eclipse',
+        id: 'shadow-beacon',
+        name: 'Shadow Beacon',
         bindable: true,
-        hudDescription: 'Thick beam that burns darkness for constant damage',
-        description: 'Unleash a thick beam that deals 2 damage every 0.1s and slowly rotates to track your cursor. Channeling burns 20% of your darkness bar every second, and the beam cuts out the instant darkness hits zero — a minimum-charge cast lasts about 1 second. Needs at least 20% darkness to start. 0 second cooldown: recast the instant you have darkness again.',
+        hudDescription: 'Mortar you walk over to shell a marked spot',
+        description: 'Drop a shadow mortar at your feet and a purple targeting dot at your cursor. Every time you walk onto the mortar it launches an explosive at the dot for 20 damage and 10% Hopelessness. Both expire after 20s. 35 second cooldown.',
       },
     ],
   },
@@ -633,6 +635,52 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       },
     ],
   },
+  fate: {
+    elementId: 'fate',
+    name: 'Fate Mastery',
+    enhancedEmoji: '🔮',
+    enhancedColor: 0x6b2fa8,
+    requirements: [
+      {
+        key: 'cardsDrawn',
+        label: 'Fortune Teller',
+        howTo: 'Draw cards — every card that enters your hand counts, so a Reroll (E) is worth a whole hand at once',
+        target: 250,
+      },
+      {
+        key: 'coinBounces',
+        label: 'Ricochet',
+        howTo: 'Bounce your own shots off a Coin card',
+        target: 50,
+      },
+      {
+        key: 'allInHits',
+        label: 'High Roller',
+        howTo: 'Land All In (Q) on an enemy instead of eating the wager yourself',
+        target: 5,
+      },
+      {
+        key: 'bigCardHits',
+        label: 'Big Hand',
+        howTo: 'Deal 50 damage with a single card',
+        target: 3,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'cycle',
+        name: 'Cycle',
+        description: 'Passive: right-click a card in your hand to bin it. Every third card you bin, the deck immediately deals you 2 fresh ones — so a hand full of dead draws can be churned straight back into something playable.',
+      },
+      {
+        id: 'tarot-of-fate',
+        name: 'Tarot of Fate',
+        bindable: true,
+        hudDescription: 'Greatly enchant the hovered card — 4x power, one curse',
+        description: 'The card your mouse is hovering becomes GREATLY ENCHANTED: 4x a normal card, overruling (and never stacking with) a plain Enchant. It also picks up a curse, shown as a small emoji on the bottom line of the card, which fires the moment you play it. Painful 🩹 deals you 30. Immolating 🔥 burns every other card out of your hand. Weakening 🦠 slows you 33% for 10s. Confusing 🌀 inverts your WASD for 5s. Vulnerable 🦴 makes the next hit you take double. Cursed 💀 rains 15 purple bullets at you from the sides of the arena for 3 each. Stunning ⭐ locks you out of playing cards for 5s. Cocky 😈 makes All In wager your entire health bar for the rest of the match. Purging ✨ strips enchant, great enchant and preserve off your whole hand and puts Tarot, Preserve and Enchant on 20s cooldowns. 20 second cooldown.',
+      },
+    ],
+  },
   magnet: {
     elementId: 'magnet',
     name: 'Magnet Mastery',
@@ -686,9 +734,9 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
     enhancedColor: 0x66aa33,
     requirements: [
       {
-        key: 'cancerBlocks',
-        label: 'Malignant Wall',
-        howTo: 'Block enemy projectiles with your Cancer (F) orbs',
+        key: 'sporeBlocks',
+        label: 'Living Wall',
+        howTo: 'Block enemy projectiles with your Spore Spray (F) walls',
         target: 50,
       },
       {
@@ -715,14 +763,15 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         id: 'secret-upgrades',
         name: 'Secret Upgrades',
-        description: 'Passive: two random Secret Upgrades appear in your Evolve menu every match, 5 DNA each, one-time buys. Cancer Carapace (auto-grows cancer dots every 5s), Fungal Infection (spores erupt at your cursor every 3s), Regenerative (heal 3 HP/s), Spines (nearby enemies take 15 damage on touch), Titanic (+20% size, +25% max HP), or Micro (-25% size, -15% max HP).',
+        description: 'Passive: every time you load in, two random Secret Upgrades are unlocked in your Evolve menu. They cost 8 DNA, have a single tier, and cannot be sold. The pool: Brood (click launches two bacteria), Ruler (keep 2 clones, SPACE cycles), Viral Consumption (healthy viruses grant +20% speed and damage for 3s), Mitosis (20% chance DNA pays out double), Crawling Spores (spores crawl at the enemy and jostle past each other), Pandemic (floor viruses also infect for 3s), R Specialized (-25% size, +25% speed), K Specialized (+30% size, +50 max HP and HP), and Apex (Tier 3 upgrades cost 1 less DNA, Ultimates 2 less).',
       },
       {
-        id: 'emisis',
-        name: 'Emisis',
+        id: 'syringe-shot',
+        name: 'Syringe Shot',
         bindable: true,
-        hudDescription: 'Vomit a short cone of green clouds; splits spores',
-        description: 'Costs 2 DNA to blast out a short cone of 10 green clouds dealing 3 damage each — more scales the more Evolve upgrades you own, up to 10 per cloud. Clouds that wash over your spores burst them into two. 8 second cooldown.',
+        excludeSlots: ['e'],
+        hudDescription: 'Fast syringe that inflicts Sickness — no damage of its own',
+        description: 'Fire a small, very fast syringe straight ahead. It deals no damage; instead it inflicts Sickness for 10s, ticking 2 damage a second. Equipping it opens a second Evolve tree you can cycle to on the upgrade screen — Lethality, Transmission and Severity — that stacks damage, spread and debuffs onto that one Sickness effect. 8 second cooldown. Cannot be bound over E.',
       },
     ],
   },
@@ -864,6 +913,427 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         bindable: true,
         hudDescription: 'Slow projectile that turns the enemy into a chicken',
         description: 'Launch a slow white projectile forward. On hit, the target turns into a chicken for 8 seconds: they wander randomly and cannot cast any abilities, though their attack speed is doubled for the duration. 12 second cooldown.',
+      },
+    ],
+  },
+  creation: {
+    elementId: 'creation',
+    name: 'Creation Mastery',
+    enhancedEmoji: '🎆',
+    enhancedColor: 0xff3399,
+    requirements: [
+      {
+        key: 'daggerStabs',
+        label: 'Thousand Cuts',
+        howTo: 'Stab entities with Dagger Spray daggers — a fully charged throw lands up to 5 at once',
+        target: 1000,
+      },
+      {
+        key: 'nexusCrafts',
+        label: 'Master Brewer',
+        howTo: 'Brew potions by loading two charged bolts into the Nexus',
+        target: 100,
+      },
+      {
+        key: 'wallsBuilt',
+        label: 'Contractor',
+        howTo: 'Build walls, kill blocks, or speed pads',
+        target: 200,
+      },
+      {
+        key: 'workshopKills',
+        label: 'Home Advantage',
+        howTo: 'Kill entities while your Workshop (Q) is up',
+        target: 5,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'springboard',
+        name: 'Springboard',
+        description: 'Passive: every dash leaves a small speed pad where you land. Standing on it gives the usual +25% speed for 3s; the pad fades after 10 seconds.',
+      },
+      {
+        id: 'mortar-command',
+        name: 'Mortar Command',
+        bindable: true,
+        excludeSlots: ['e'],
+        hudDescription: 'Nexus fires its potions at the cursor — inverted effects',
+        description: 'Only usable while a potion of yours is sitting on the Nexus. The Nexus launches every one of your potions at the cursor, landing as a large blast for 20 damage that inflicts the INVERSE of each potion\'s effect — Buff becomes -25% damage dealt, Protection becomes +25% damage taken, Heal becomes 3 HP lost per second, Speed becomes half speed, Reload becomes 25% slower cooldowns. The Gold Potion is the exception: it lands unchanged, doubling every effect the target gains — good or bad. Cannot be bound to E, and in Build Mode the slot keeps its normal build ability. 14 second cooldown.',
+      },
+    ],
+  },
+  rubber: {
+    elementId: 'rubber',
+    name: 'Rubber Mastery',
+    enhancedEmoji: '🛞',
+    enhancedColor: 0x992233,
+    requirements: [
+      {
+        key: 'bazookaHits',
+        label: 'Haymaker',
+        howTo: 'Punch entities with the Rubber Bazooka fist (needs the Click+ upgrade)',
+        target: 100,
+      },
+      {
+        key: 'reflects',
+        label: 'Backboard',
+        howTo: 'Reflect enemy projectiles with Bounce Form (R)',
+        target: 250,
+      },
+      {
+        key: 'bounceCombos',
+        label: 'Trick Shot',
+        howTo: 'Bounce a reeled-in anchor off yourself with a Bounce Combo (needs the R+ upgrade)',
+        target: 10,
+      },
+      {
+        key: 'rubberageKills',
+        label: 'Ball Pit',
+        howTo: 'Land the killing blow on entities with Rubberage (Q) balls',
+        target: 3,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'vulcanization',
+        name: 'Vulcanization',
+        description: 'Passive: every 5 damage you take cures 1% more Vulcanization, up to 100%. Vulcanized rubber charges its punch faster, slings faster and off more walls, holds Bounce Form longer, whips its anchor around harder, spins Rubberage up quicker, and shortens every cooldown. The curve is slow at first and brutal at the top — barely there at 20%, dangerous by 60%. At 75% you run hot: your sling becomes a fireball that hits 50% harder, reflected bullets deal 1.5x and set fires, Rubberage balls hit for 2 more, charged punches ignite, and your anchor pulses a 15-damage fire blast every 3 seconds. Everything it burns catches fire.',
+      },
+      {
+        id: 'atom-nhilego',
+        name: 'Atom-Nhilego',
+        bindable: true,
+        hudDescription: 'Blast zones you must stand inside to keep the chain alive',
+        description: 'A pulsing collapse zone opens somewhere in the arena and detonates 3 seconds later for 25 damage to every enemy inside it. If YOU are standing in it when it goes off, the chain continues: the next zone opens 10% larger, and so on for as long as you keep chasing them down. The first zone you fail to reach ends the run and you are healed 10 HP for every zone you did make. 20 second cooldown.',
+      },
+    ],
+  },
+  technology: {
+    elementId: 'technology',
+    name: 'Technology Mastery',
+    enhancedEmoji: '🌐',
+    enhancedColor: 0x2288cc,
+    requirements: [
+      {
+        key: 'cruncherStreak',
+        label: 'Flawless Streak',
+        howTo: 'Hit 25 Addicting Cruncher (Click) shots in a row without a single miss — one qualifying streak completes this permanently',
+        target: 25,
+        isBest: true,
+      },
+      {
+        key: 'cordHits',
+        label: 'Bandwidth Hog',
+        howTo: 'Box entities by hitting them with your Upload (R) cord',
+        target: 50,
+      },
+      {
+        key: 'adminBans',
+        label: 'Banhammer',
+        howTo: 'Reach 50 points in the Admin Console (Q) to run the ban command',
+        target: 1,
+      },
+      {
+        key: 'webCoins',
+        label: 'Coin Farmer',
+        howTo: 'Collect coins inside the Surf the web! (F+) browser',
+        target: 500,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'vpn',
+        name: 'VPN',
+        description: 'Passive: your connection tunnels through a private route — the longer you keep moving, the faster you get, ramping smoothly to +50% movement speed over 5 seconds. A binary datastream trails behind you, growing longer, brighter and wider as the boost climbs. The moment you stop moving the tunnel drops: the whole boost is gone and you start again from zero.',
+      },
+      {
+        id: 'byte-bomb',
+        name: 'Byte-Bomb',
+        bindable: true,
+        hudDescription: 'Timed packet charge that Lags everything in the blast',
+        description: 'Lob an explosive packet to your cursor with an 8 second fuse counting down on its shell. Click the bomb to burn half a second off the timer — click it fast to detonate on your terms. It bursts for 10 damage in a wide area, and everything caught in the blast gets Lag for 10 seconds: they rubber-band back to where they stood a second ago, freeze solid for a second at a time under a spinning loading circle, and their ability cooldowns stop ticking for 3–4 seconds at a stretch. 15 second cooldown.',
+      },
+    ],
+  },
+  gunpowder: {
+    elementId: 'gunpowder',
+    name: 'Gunpowder Mastery',
+    enhancedEmoji: '🔫',
+    enhancedColor: 0x8a8a8a,
+    requirements: [
+      {
+        key: 'musketHits',
+        label: 'Dead Eye',
+        howTo: 'Land Musket Shot (Click) balls on entities',
+        target: 50,
+      },
+      {
+        key: 'weaponTypes',
+        label: 'Gun Collector',
+        howTo: 'Take every one of the 13 weapon types at least once from Arsenal Expansion (F) — the 7 exotics need the F+ upgrade to be offered',
+        target: 13,
+        isBest: true,
+      },
+      {
+        key: 'bulletsVacuumed',
+        label: 'Hoover',
+        howTo: 'Swallow enemy projectiles with the BlunderBlast (Q) cone',
+        target: 200,
+      },
+      {
+        key: 'fullArsenals',
+        label: 'Fully Loaded',
+        howTo: 'Fill your arsenal all the way to 6 weapons (needs the R+ upgrade)',
+        target: 5,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'quickdraw',
+        name: 'Quickdraw',
+        description: 'Passive: you fire back on reflex. Every 30 damage you take — it does not have to arrive in one hit, the count carries over — a holdout pistol snaps a hitscan laser at the closest enemy for 10 damage.',
+      },
+      {
+        id: 'overload',
+        name: 'Overload',
+        bindable: true,
+        hudDescription: 'Every spent musket on the floor takes aim, then volleys',
+        description: 'Every musket lying on the floor swivels around and takes aim for 2 seconds, then all of them fire a musket ball at once for 15 damage each. The volley slams them back to full heat with an extra 3 seconds on top before they cool enough to pick back up — and they come out so scalding that walking over one burns you for 20 damage (at most once a second per musket). 16 second cooldown.',
+      },
+    ],
+  },
+  light: {
+    elementId: 'light',
+    name: 'Light Mastery',
+    enhancedEmoji: '☀️',
+    enhancedColor: 0xff8800,
+    requirements: [
+      {
+        key: 'trickHits',
+        label: 'Showboat',
+        howTo: 'Hit entities with a sick trick — the Light Trick (F) burst',
+        target: 100,
+      },
+      {
+        key: 'drillHits',
+        label: 'Driller',
+        howTo: 'Skewer entities with a Prism Drill (hold R and drive your lance onto your own ramp)',
+        target: 50,
+      },
+      {
+        key: 'rampRides',
+        label: 'Stunt Course',
+        howTo: 'Drive over your own Prism Ramps (R)',
+        target: 150,
+      },
+      {
+        key: 'speedOLightKills',
+        label: 'Hit and Run',
+        howTo: "Land the killing blow with a Speed 'O' Light (Q) streak",
+        target: 5,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'unstoppable',
+        name: 'Unstoppable',
+        description: 'Passive: your lance bites into the corner — hard turns bleed off far less acceleration, so you keep your speed through the whole course. You also cannot be stunned, frozen, rooted or slowed by anything: every slowing effect applied to you is ignored outright.',
+      },
+      {
+        id: 'killer-kebab',
+        name: 'Killer Kebab',
+        bindable: true,
+        hudDescription: 'Enhance your lance — stabbed enemies ride it until you hit a wall',
+        description: 'Enhance your lance for 5 seconds. Anything you stab during that window is skewered onto it instead of taking the hit: they are dragged along wherever you drive, disarmed the whole time, and you can carry up to 3 at once. Ram a wall to rip them off for heavy damage — the more acceleration you have banked, the worse it is for them — and you take no wall damage at all while anything is on the lance. Riders that survive slide free on their own after 12 seconds. 20 second cooldown.',
+      },
+    ],
+  },
+  echo: {
+    elementId: 'echo',
+    name: 'Echo Mastery',
+    enhancedEmoji: '🌸',
+    enhancedColor: 0x7f6fd0,
+    requirements: [
+      {
+        key: 'echolocationHits',
+        label: 'Sonar Sniper',
+        howTo: 'Hit entities with your bouncing Echolocation (Click)',
+        target: 100,
+      },
+      {
+        key: 'correctGuesses',
+        label: 'Sixth Sense',
+        howTo: 'Land a Guess (E) on an entity instead of missing it',
+        target: 50,
+      },
+      {
+        key: 'hypersenseDodges',
+        label: 'Untouchable',
+        howTo: 'Auto-dodge incoming attacks during Hypersense (needs the Q+ upgrade)',
+        target: 25,
+      },
+      {
+        key: 'lanternHealed',
+        label: 'Warm Glow',
+        howTo: 'Heal HP by keeping your Lantern (R) lit (needs the R+ upgrade)',
+        target: 100,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'vibration-detection',
+        name: 'Vibration Detection',
+        description: 'Passive: you feel the floor. Whenever an enemy moves or casts an ability, a short ring segment flares around you pointing at the quadrant the disturbance came from — a cast flares brighter and wider than a footstep. It never tells you the distance, only roughly which way to look.',
+      },
+      {
+        id: 'echo-bloom',
+        name: 'Echo Bloom',
+        bindable: true,
+        hudDescription: 'Tap to plant a bloom, hold to see through its eye',
+        description: 'Tap to launch an echo seed. It plants a bloom on the first wall or enemy it touches, and you may keep 3 at once — they never wilt, but planting a fourth replaces the oldest. Aim the cast directly at an enemy instead and a red terror bloom sprouts straight out of them for 15 seconds, cutting their damage by 25%. Hold the key to see through a bloom: a small pool of light around it, click to spit a bullet at your cursor (5 damage, 10 from a terror bloom, and shooting yourself gives +25 shield HP), right-click to hop to the next bloom, and Space to teleport to it — the bloom is spent, but you glow with bioluminescence for 8 seconds and your own light is 25% wider. Looking through a terror bloom instead paints every trail the enemy has walked. Entering the view grants 100 shield HP; lose it and you are thrown out instantly, and leaving strips whatever is left. 12 second cooldown.',
+      },
+    ],
+  },
+  // Subterfuge keeps the legacy element id 'quantum'.
+  quantum: {
+    elementId: 'quantum',
+    name: 'Subterfuge Mastery',
+    enhancedEmoji: '🚬',
+    enhancedColor: 0x6b0f1a,
+    requirements: [
+      {
+        key: 'bulletsFired',
+        label: 'Trigger Discipline',
+        howTo: 'Fire bullets out of your Spray (E) — every round out of the barrel counts',
+        target: 500,
+      },
+      {
+        key: 'recruitBestLevel',
+        label: 'Made Man',
+        howTo: 'Raise one recruit all the way to level V (needs the F+ Hardened Criminals upgrade)',
+        target: 5,
+        isBest: true,
+      },
+      {
+        key: 'moneySpent',
+        label: 'Cash Flow',
+        howTo: 'Spend money — reloads, recruits, bribes and retainer recasts all count',
+        target: 50,
+      },
+      {
+        key: 'stolenElements',
+        label: 'Industrial Espionage',
+        howTo: 'Steal the ultimate of 10 different elements with Dark Treachery (Q)',
+        target: 10,
+        isBest: true,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'big-pockets',
+        name: 'Big Pockets',
+        description: 'Passive: you can hold 4 money at a time instead of 3, so a full wallet buys a Specialist and still leaves change.',
+      },
+      {
+        id: 'smoke-break',
+        name: 'Smoke Break',
+        bindable: true,
+        hudDescription: 'Light up for 25% less damage — press again to throw it as a smoke cloud',
+        description: 'Light a cigarette: you take 25% less damage for as long as it is lit. It burns for 25 seconds, but every hit you take burns a second off it. Press the key again while it is still in your mouth and you flick it at your cursor, where it bursts into a smoke cloud for 8 seconds. Standing in the cloud makes you invisible — attacking someone gives you away and exposes you for 3 seconds — and your recruits inside it lose loyalty at less than half the usual rate. The cloud blinds the enemy and only the enemy: on their screen it is a solid wall of smoke, on yours it is a thin haze. 20 second cooldown, counted from lighting up.',
+      },
+    ],
+  },
+  plasma: {
+    elementId: 'plasma',
+    name: 'Plasma Mastery',
+    enhancedEmoji: '⚛️',
+    enhancedColor: 0xff2f8f,
+    requirements: [
+      {
+        key: 'arenaCrumbles',
+        label: 'Ground Gives Way',
+        howTo: 'Catch an enemy in an Unstable Arena (E) explosion — watch the floor crumble under their feet',
+        target: 10,
+      },
+      {
+        key: 'voltRelays',
+        label: 'Relay Race',
+        howTo: 'Shock enemies through Volt Point relays (hold R past 2.5s — needs the R+ Volt Points upgrade)',
+        target: 100,
+      },
+      {
+        key: 'pureChaosKills',
+        label: 'Eye of the Storm',
+        howTo: 'Kill enemies while Pure CHAOS! (Q) is still wrapped around you',
+        target: 5,
+      },
+      {
+        key: 'chaosBladeKills',
+        label: 'Cut to Ribbons',
+        howTo: 'Land the killing blow with a Chaos Blade (F)',
+        target: 3,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'chaos-storm',
+        name: 'Chaos Storm',
+        description: 'Passive: the arena itself is unstable. From the first second of the match the walls creep inward, and after 120 seconds all that is left is a small square in the middle. The live edge crackles with plasma — step onto or past it and a bolt comes down on you for 5 damage, once a second, until you get back inside. It does not care whose mastery it is: you and the enemy are both being herded.',
+      },
+      {
+        id: 'unstable-orbital',
+        name: 'Unstable Orbital',
+        bindable: true,
+        hudDescription: 'Orbit a plasma nucleus — it closes in for 50 unless you keep dealing damage',
+        description: 'Summon a pulsating plasma orbital that swings around you the way an electron swings around an atom, on a tilted, precessing ring. It creeps inward the whole time, and if it ever reaches you it detonates on you for 50 damage. Every point of damage you deal shoves it back out — enough pressure keeps it at arm\'s length, but it will never sit further out than the ring it started on. Anything else it sweeps through takes 20 damage. 20 second cooldown, counted from the summon.',
+      },
+    ],
+  },
+  hunt: {
+    elementId: 'hunt',
+    name: 'Hunt Mastery',
+    enhancedEmoji: '👹',
+    enhancedColor: 0x7a4a1e,
+    requirements: [
+      {
+        key: 'normalKills',
+        label: 'Tracker',
+        howTo: 'Kill entities while in normal (human) form',
+        target: 100,
+      },
+      {
+        key: 'beastKills',
+        label: 'Apex Predator',
+        howTo: 'Kill entities while transformed into the beast (Q)',
+        target: 50,
+      },
+      {
+        key: 'hybridKills',
+        label: 'Best of Both',
+        howTo: 'Kill entities while in Hybrid form (needs the Q+ upgrade — double-tap Q on transform)',
+        target: 50,
+      },
+      {
+        key: 'grenadeHits',
+        label: 'Frag Out',
+        howTo: 'Catch entities in your grenade explosions',
+        target: 50,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'weak-points',
+        name: 'Weak Points',
+        description: 'Passive: you read the seams in anything you are hunting. A red weak-point wedge sweeps slowly around every enemy, and shotgun pellets that punch into it deal double damage — so does Beast form\'s Slash when you come at the enemy from that side.',
+      },
+      {
+        id: 'beastling',
+        name: 'Beastling',
+        bindable: true,
+        excludeSlots: ['q'],
+        hudDescription: 'Summon a beastling pup for 15s — it bites, fetches your grenades, and roars',
+        description: 'Whistle up a beastling — a small, eager pup that trots after you and goes for whoever is closest. It bites for 5 every 2 seconds, double against anything bleeding, and it runs faster over a Hunter\'s Trail. Throw a grenade and it will fetch it: the fuse stops dead in its mouth while it sprints the thing to the enemy and sets it off on them. Blood Hunt makes it roar too, for a 20% slow over 5 seconds that stacks with your own. Under a Blood Moon it grows, speeds up, hits harder, and its bites draw blood. Lasts 15 seconds, 30 second cooldown.',
       },
     ],
   },

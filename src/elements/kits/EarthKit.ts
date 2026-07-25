@@ -10,6 +10,73 @@ const DUST_SCREEN_RANGE = 180;
 const DUST_SCREEN_HALF_ANGLE_DEG = 40;
 const DUST_SCREEN_EFFECT_MS = 5000;
 
+// ── Titan Form constants (Earth Q+) ─────────────────────────────────────
+// The golem is drawn far larger than the arena on purpose: only the head (hanging
+// over the top edge) and the two arms (running down the left/right edges) ever fit.
+
+const TITAN_DURATION_MS = 20000;
+const TITAN_HEAD_RX = 250;
+const TITAN_HEAD_RY = 205;
+const TITAN_HEAD_CY = -30;      // head centre sits above the top edge; chin lands at ~175
+const TITAN_MOUTH_Y = 128;      // beam origin
+const TITAN_SMASH_CD_MS = 1400;
+const TITAN_TREMOR_CD_MS = 5000;
+const TITAN_TREMOR_MS = 10000;
+const TITAN_TSUNAMI_CD_MS = 13000;
+const TITAN_BEAM_CD_MS = 10000;
+const TITAN_BEAM_MS = 5000;
+const TITAN_ROCK_FALL_MS = 2000; // telegraph window for every falling rock
+const TITAN_PAD = 32;            // arena border inset — keeps effects off the HUD strip
+
+interface TitanArm {
+  side: -1 | 1;
+  shoulderX: number; shoulderY: number;
+  elbowX: number; elbowY: number;
+  restX: number; restY: number;
+  fistX: number; fistY: number;
+  fromX: number; fromY: number;   // lerp source for the current phase
+  toX: number; toY: number;       // lerp destination for the current phase
+  targetX: number; targetY: number;
+  phase: 'rest' | 'raise' | 'strike' | 'recover';
+  phaseStart: number;
+  phaseEnd: number;
+  marker: Phaser.GameObjects.Arc | null;
+}
+
+interface TitanRock {
+  g: Phaser.GameObjects.Graphics;
+  shadow: Phaser.GameObjects.Ellipse;
+  sx: number; sy: number;
+  lx: number; ly: number;
+  startAt: number; landAt: number;
+  peak: number; spin: number; size: number;
+  dmg: number; radius: number;
+}
+
+interface TitanTremor {
+  x: number;
+  expiresAt: number;
+  g: Phaser.GameObjects.Graphics;
+  nextHit: Map<Fighter, number>;
+}
+
+interface TitanWave {
+  x: number;
+  speed: number;
+  sprite: Phaser.GameObjects.Rectangle;
+  crest: Phaser.GameObjects.Rectangle;
+  hit: Set<Fighter>;
+  slammed: boolean;
+}
+
+interface TitanBeam {
+  until: number;
+  x: number; y: number;
+  nextTickAt: number;
+  nextScorchAt: number;
+  g: Phaser.GameObjects.Graphics;
+}
+
 // ── EarthArenaApi ─────────────────────────────────────────────────────────
 
 export interface EarthArenaApi {
@@ -28,7 +95,7 @@ export interface EarthArenaApi {
   readonly width: number;
   readonly height: number;
   readonly playerAbilities: Ability[];
-  readonly abilityBars: Array<{ lbl?: Phaser.GameObjects.Text }>;
+  readonly abilityBars: Array<{ lbl?: Phaser.GameObjects.Text; desc?: Phaser.GameObjects.Text }>;
   isDodging: boolean;
   hasUpgrade(slot: string): boolean;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
@@ -119,24 +186,33 @@ export class EarthKit {
   private earthQuakeStandAccum = 0;
   // Earth upgrade state (F+: tsunami waves — kept for legacy cleanup only, no longer spawned)
   private earthTsunamiWaves: Array<{ sprite: Phaser.GameObjects.Rectangle; vx: number; vy: number; expiresAt: number; owner?: 'player' | 'npc' }> = [];
-  // Earth upgrade state (Q+: golem fusion)
-  private earthGolemFuseHolding = false;
-  private earthGolemFuseHoldStart = 0;
-  private earthGolemFused = false;
-  private earthGolemFusedHp = 0;
-  private earthGolemFusedMaxHp = 100;
-  private earthGolemFusedUntil = 0;
-  private earthGolemFusedPreHp = 0;
-  private earthGolemFusedSprite: Phaser.GameObjects.Rectangle | null = null;
-  private earthGolemFusedHpLabel: Phaser.GameObjects.Text | null = null;
-  private earthGolemFuseChargeVisual: Phaser.GameObjects.Arc | null = null;
-  private earthGolemFusedPunchCdUntil = 0;
-  private earthGolemFusedRepairHolding = false;
-  private earthGolemFusedRepairEnd = 0;
-  private earthGolemFusedPoundCdUntil = 0;
-  private earthGolemFusedFaultCdUntil = 0;
-  private earthGolemFusedFaultWallSprite: Phaser.GameObjects.Rectangle | null = null;
-  private earthGolemFusedFaultWallUntil = 0;
+  // Earth upgrade state (Q+: Titan Form — hold Q to become the titanic golem)
+  private earthTitanChargeHolding = false;
+  private earthTitanChargeStart = 0;
+  private earthTitanChargeVisual: Phaser.GameObjects.Arc | null = null;
+  private titanActive = false;
+  private titanUntil = 0;
+  private titanPreHp = 0;
+  /** While > time the player is still being flung back into the arena: frozen + untouchable. */
+  private titanLandingUntil = 0;
+  private titanHeadG: Phaser.GameObjects.Graphics | null = null;
+  private titanArmsG: Phaser.GameObjects.Graphics | null = null;
+  private titanTimerLabel: Phaser.GameObjects.Text | null = null;
+  private titanArms: TitanArm[] = [];
+  private titanSmashCdUntil = 0;
+  private titanTremorCdUntil = 0;
+  private titanTsunamiCdUntil = 0;
+  private titanBeamCdUntil = 0;
+  // World effects the titan leaves behind — these outlive the form itself, so they
+  // are ticked every frame regardless of `titanActive`.
+  private titanRocks: TitanRock[] = [];
+  private titanTremorLine: TitanTremor | null = null;
+  private titanWave: TitanWave | null = null;
+  private titanBeam: TitanBeam | null = null;
+  private titanScorch: Array<{ sprite: Phaser.GameObjects.Arc; x: number; y: number; r: number; expiresAt: number }> = [];
+  private titanScorchAccum = 0;
+  private titanEruptionsLeft = 0;
+  private titanEruptionNextAt = 0;
 
   // ── NPC mirror state ────────────────────────────────────────────────────
   private npcEarthShieldHp = 0;
@@ -191,7 +267,8 @@ export class EarthKit {
 
   getPlayerStunnedUntil(): number { return this.playerEarthStunnedUntil; }
   isRepairActive(): boolean { return this.earthRepairActive; }
-  isGolemFusedRepairSlowing(): boolean { return this.earthGolemFused && this.earthGolemFusedRepairHolding; }
+  /** Titan Form (Q+): the player is the golem — rooted, hidden and untouchable. */
+  isTitanActive(): boolean { return this.titanActive || this.titanLandingUntil > this.arena.scene.time.now; }
   getNpcShieldHp(): number { return this.npcEarthShieldHp; }
   getNpcRocksActive(): boolean { return this.npcEarthRocks.length > 0; }
 
@@ -267,22 +344,10 @@ export class EarthKit {
     this.earthQuakeStandAccum = 0;
     this.earthTsunamiWaves.forEach(w => w.sprite.destroy());
     this.earthTsunamiWaves = [];
-    this.earthGolemFuseHolding = false;
-    this.earthGolemFuseHoldStart = 0;
-    this.earthGolemFused = false;
-    this.earthGolemFusedHp = 0;
-    this.earthGolemFusedUntil = 0;
-    this.earthGolemFusedPreHp = 0;
-    if (this.earthGolemFusedSprite) { this.earthGolemFusedSprite.destroy(); this.earthGolemFusedSprite = null; }
-    if (this.earthGolemFusedHpLabel) { this.earthGolemFusedHpLabel.destroy(); this.earthGolemFusedHpLabel = null; }
-    if (this.earthGolemFuseChargeVisual) { this.earthGolemFuseChargeVisual.destroy(); this.earthGolemFuseChargeVisual = null; }
-    this.earthGolemFusedPunchCdUntil = 0;
-    this.earthGolemFusedRepairHolding = false;
-    this.earthGolemFusedRepairEnd = 0;
-    this.earthGolemFusedPoundCdUntil = 0;
-    this.earthGolemFusedFaultCdUntil = 0;
-    if (this.earthGolemFusedFaultWallSprite) { this.earthGolemFusedFaultWallSprite.destroy(); this.earthGolemFusedFaultWallSprite = null; }
-    this.earthGolemFusedFaultWallUntil = 0;
+    this.earthTitanChargeHolding = false;
+    this.earthTitanChargeStart = 0;
+    if (this.earthTitanChargeVisual) { this.earthTitanChargeVisual.destroy(); this.earthTitanChargeVisual = null; }
+    this.clearTitanState();
     // NPC earth new kit reset
     this.npcEarthShieldHp = 75;
     this.npcEarthShieldMaxHp = 75;
@@ -350,7 +415,7 @@ export class EarthKit {
       const playerBody = player.body as Phaser.Physics.Arcade.Body;
 
       // Lazy-spawn initial shield (HP starts at 75 from reset() but sprite doesn't exist yet)
-      if (this.earthShieldHp > 0 && !this.earthShieldSprite && !this.earthShieldBroken && !this.earthGolemActive && !this.earthGolemFused) {
+      if (this.earthShieldHp > 0 && !this.earthShieldSprite && !this.earthShieldBroken && !this.earthGolemActive && !this.titanActive) {
         // With Click+: adjust initial HP to 50
         if (this.arena.hasUpgrade('click') && this.earthShieldMaxHp === 75) {
           this.earthShieldHp = 50;
@@ -364,8 +429,8 @@ export class EarthKit {
         this.earthShieldAngle = Math.atan2(ptr.worldY - player.y, ptr.worldX - player.x);
       }
 
-      // Shield respawn check (only if not golem-active or fused)
-      if (!this.earthGolemActive && !this.earthGolemFused && this.earthShieldBroken && this.earthShieldRespawnAt > 0 && time >= this.earthShieldRespawnAt) {
+      // Shield respawn check (only if not golem-active or in titan form)
+      if (!this.earthGolemActive && !this.titanActive && this.earthShieldBroken && this.earthShieldRespawnAt > 0 && time >= this.earthShieldRespawnAt) {
         this.spawnEarthShield(true);
         this.arena.showFloatingText(player.x, player.y - 30, '🛡 SHIELD RESTORED', '#ccaa66');
       }
@@ -669,45 +734,15 @@ export class EarthKit {
         this.earthShieldSprite.setScale(1);
       }
 
-      // Q+ Golem fusion: charge bar visual
-      if (this.earthGolemFuseHolding && this.earthGolemFuseChargeVisual) {
-        const holdPct = Math.min(1, (time - this.earthGolemFuseHoldStart) / 5000);
-        this.earthGolemFuseChargeVisual.setRadius(10 + holdPct * 20);
-        this.earthGolemFuseChargeVisual.setPosition(player.x, player.y - 36);
+      // Q+ Titan Form: charge bar visual
+      if (this.earthTitanChargeHolding && this.earthTitanChargeVisual) {
+        const holdPct = Math.min(1, (time - this.earthTitanChargeStart) / 5000);
+        this.earthTitanChargeVisual.setRadius(10 + holdPct * 24);
+        this.earthTitanChargeVisual.setPosition(player.x, player.y - 36);
       }
 
-      // Q+ Golem Fused: per-frame handling
-      if (this.earthGolemFused) {
-        if (this.earthGolemFusedHp <= 0 || time >= this.earthGolemFusedUntil) {
-          this.exitGolemFusion(time);
-        } else {
-          // Update fused sprite to player position
-          if (this.earthGolemFusedSprite) {
-            this.earthGolemFusedSprite.setPosition(player.x, player.y);
-          }
-          if (this.earthGolemFusedHpLabel) {
-            this.earthGolemFusedHpLabel.setPosition(player.x, player.y - 56);
-            this.earthGolemFusedHpLabel.setText(`🗿 ${Math.ceil(this.earthGolemFusedHp)}/100`);
-          }
-          // Fused self-repair
-          if (this.earthGolemFusedRepairHolding && time >= this.earthGolemFusedRepairEnd) {
-            this.earthGolemFusedRepairHolding = false;
-            this.earthGolemFusedHp = Math.min(this.earthGolemFusedMaxHp, this.earthGolemFusedHp + 25);
-            this.arena.showFloatingText(player.x, player.y - 30, '🔧 REPAIR +25', '#ccaa66');
-          }
-          // Fused fault wall cleanup
-          if (this.earthGolemFusedFaultWallSprite && time >= this.earthGolemFusedFaultWallUntil) {
-            this.earthGolemFusedFaultWallSprite.destroy(); this.earthGolemFusedFaultWallSprite = null;
-          }
-          // Wire fused HP as damageAbsorber
-          player.damageAbsorber = (amount: number) => {
-            if (!this.earthGolemFused) return false;
-            this.earthGolemFusedHp = Math.max(0, this.earthGolemFusedHp - amount);
-            this.arena.spawnHitFlash(player.x, player.y, 0x665533);
-            return true;
-          };
-        }
-      }
+      // Q+ Titan Form: the golem itself plus everything it left lying around
+      this.updateTitan(time, delta);
     }
 
     // ── NPC earth ─────────────────────────────────────────────────
@@ -934,36 +969,830 @@ export class EarthKit {
     }
   }
 
-  private exitGolemFusion(time: number): void {
+  // ══════════════════════════════════════════════════════════════════════
+  //  Q+ TITAN FORM
+  //  Hold Q for 5s to become a titanic golem that looms over the arena: only
+  //  its head (over the top edge) and its two arms (down the left/right edges)
+  //  fit on screen. 20s, untouchable, five bespoke world-scale attacks.
+  // ══════════════════════════════════════════════════════════════════════
+
+  /** Fixed craggy jitter for the skull silhouette — deterministic so the head doesn't boil. */
+  private static readonly HEAD_JITTER = [1.03, 0.93, 1.07, 0.9, 1.09, 0.95, 1.02, 0.91, 1.08, 0.94, 1.01, 0.92, 1.06, 0.97, 1.04, 0.9];
+
+  private shake(ms: number, intensity: number): void {
+    this.arena.scene.cameras.main.shake(ms, intensity);
+  }
+
+  private titanTargets(): Fighter[] {
+    return this.arena.enemies.filter(t => t.active && t.hp > 0);
+  }
+
+  /** Destroys every titan-owned display object and zeroes the state. Safe to call any time. */
+  private clearTitanState(): void {
+    this.titanActive = false;
+    this.titanUntil = 0;
+    this.titanPreHp = 0;
+    this.titanLandingUntil = 0;
+    if (this.titanHeadG) { this.titanHeadG.destroy(); this.titanHeadG = null; }
+    if (this.titanArmsG) { this.titanArmsG.destroy(); this.titanArmsG = null; }
+    if (this.titanTimerLabel) { this.titanTimerLabel.destroy(); this.titanTimerLabel = null; }
+    this.titanArms.forEach(a => a.marker?.destroy());
+    this.titanArms = [];
+    this.titanSmashCdUntil = 0;
+    this.titanTremorCdUntil = 0;
+    this.titanTsunamiCdUntil = 0;
+    this.titanBeamCdUntil = 0;
+    this.titanRocks.forEach(r => { r.g.destroy(); r.shadow.destroy(); });
+    this.titanRocks = [];
+    if (this.titanTremorLine) { this.titanTremorLine.g.destroy(); this.titanTremorLine = null; }
+    if (this.titanWave) { this.titanWave.sprite.destroy(); this.titanWave.crest.destroy(); this.titanWave = null; }
+    if (this.titanBeam) { this.titanBeam.g.destroy(); this.titanBeam = null; }
+    this.titanScorch.forEach(s => s.sprite.destroy());
+    this.titanScorch = [];
+    this.titanScorchAccum = 0;
+    this.titanEruptionsLeft = 0;
+    this.titanEruptionNextAt = 0;
+  }
+
+  private enterTitanForm(time: number): void {
     const player = this.arena.player;
-    this.earthGolemFused = false;
-    player.damageAbsorber = null;
-    // Restore pre-transform HP
-    player.hp = Math.max(1, this.earthGolemFusedPreHp);
-    // Restore player appearance
-    player.setScale(1.0);
-    (player.body as Phaser.Physics.Arcade.Body).setCircle(22, 2, 2);
-    // Destroy fused visuals
-    if (this.earthGolemFusedSprite) { this.earthGolemFusedSprite.destroy(); this.earthGolemFusedSprite = null; }
-    if (this.earthGolemFusedHpLabel) { this.earthGolemFusedHpLabel.destroy(); this.earthGolemFusedHpLabel = null; }
-    if (this.earthGolemFusedFaultWallSprite) { this.earthGolemFusedFaultWallSprite.destroy(); this.earthGolemFusedFaultWallSprite = null; }
-    this.earthGolemFusedRepairHolding = false;
-    // Shields respawn after 8s
+    const W = this.arena.width;
+    const H = this.arena.height;
+
+    this.clearTitanState();
+    this.titanActive = true;
+    this.titanUntil = time + TITAN_DURATION_MS;
+    this.titanPreHp = player.hp;
+
+    // The player *is* the golem now: hidden, rooted (ArenaScene zeroes their speed
+    // via isTitanActive()) and immune to everything.
+    player.forceInvisible = true;
+    player.setAlpha(0);
+    player.setHealthBarVisible(false);
+    player.isInvincible = true;
+    player.damageAbsorber = () => true;
+    (player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+
+    // Shields are absorbed into the transformation.
+    this.earthShieldHp = 0;
+    this.earthShieldBroken = true;
+    this.earthShieldRespawnAt = 0;
+    if (this.earthShieldSprite) { this.earthShieldSprite.destroy(); this.earthShieldSprite = null; }
+    if (this.earthShieldLabel) { this.earthShieldLabel.destroy(); this.earthShieldLabel = null; }
+    if (this.earthBackShieldHp > 0) {
+      this.earthBackShieldHp = 0;
+      if (this.earthBackShieldSprite) { this.earthBackShieldSprite.destroy(); this.earthBackShieldSprite = null; }
+      if (this.earthBackShieldLabel) { this.earthBackShieldLabel.destroy(); this.earthBackShieldLabel = null; }
+    }
+
+    this.titanArmsG = this.arena.scene.add.graphics().setDepth(30);
+    this.titanHeadG = this.arena.scene.add.graphics().setDepth(31);
+    this.titanTimerLabel = this.arena.scene.add.text(W / 2, 200, '', {
+      fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#ffbb55',
+      stroke: '#2a1c0c', strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(32);
+
+    const mkArm = (side: -1 | 1): TitanArm => {
+      const sx = side < 0 ? -70 : W + 70;
+      const ex = side < 0 ? 46 : W - 46;
+      const rx = side < 0 ? 68 : W - 68;
+      const ry = H * 0.78;
+      return {
+        side,
+        shoulderX: sx, shoulderY: -70,
+        elbowX: ex, elbowY: H * 0.36,
+        restX: rx, restY: ry,
+        fistX: rx, fistY: ry,
+        fromX: rx, fromY: ry, toX: rx, toY: ry,
+        targetX: rx, targetY: ry,
+        phase: 'rest', phaseStart: 0, phaseEnd: 0, marker: null,
+      };
+    };
+    this.titanArms = [mkArm(-1), mkArm(1)];
+
+    // Ability bar takes on the titan's kit.
+    const titanCards: Array<[string, string]> = [
+      ['[Click] Titan Smash', 'Hand slam: 20 dmg, 3 rocks fall'],
+      ['[E] Titan Tremor', 'Rift splits arena: 15 dmg/1s'],
+      ['[R] Titan Tsunami', 'Wave pins to wall, 50 rocks'],
+      ['[F] Titan Beam', '5s beam + molten ground'],
+      ['[Q] Titan Eruption', 'Self-destruct: 20 blasts'],
+    ];
+    this.arena.abilityBars.forEach((bar, idx) => {
+      if (idx >= titanCards.length) return;
+      bar.lbl?.setText(titanCards[idx][0]);
+      bar.desc?.setText(titanCards[idx][1]);
+    });
+
+    // Rise: dust wall along the top, a long heavy quake.
+    this.shake(1200, 0.028);
+    for (let i = 0; i < 14; i++) {
+      const dx = 40 + Math.random() * (W - 80);
+      const puff = this.arena.scene.add.circle(dx, 30 + Math.random() * 120, 10 + Math.random() * 26, 0x6b5a44, 0.55).setDepth(29);
+      this.arena.scene.tweens.add({
+        targets: puff, y: puff.y + 90 + Math.random() * 70, scale: 2.4, alpha: 0,
+        duration: 700 + Math.random() * 500, onComplete: () => puff.destroy(),
+      });
+    }
+    this.arena.showFloatingText(W / 2, 240, '🗿 TITAN GOLEM RISES!', '#ffbb55');
+  }
+
+  /** `erupt` = the Q self-destruct (flings the player back in + carpet bombs the arena). */
+  private exitTitanForm(time: number, erupt: boolean): void {
+    const player = this.arena.player;
+    const W = this.arena.width;
+    const H = this.arena.height;
+    if (!this.titanActive) return;
+
+    this.titanActive = false;
+    this.titanUntil = 0;
+
+    // Crumble the body away — the world effects it spawned keep running.
+    if (this.titanHeadG) { this.titanHeadG.destroy(); this.titanHeadG = null; }
+    if (this.titanArmsG) { this.titanArmsG.destroy(); this.titanArmsG = null; }
+    if (this.titanTimerLabel) { this.titanTimerLabel.destroy(); this.titanTimerLabel = null; }
+    this.titanArms.forEach(a => a.marker?.destroy());
+    this.titanArms = [];
+    if (this.titanBeam) { this.titanBeam.g.destroy(); this.titanBeam = null; }
+
+    // Debris shower from where the head and arms were.
+    for (let i = 0; i < 18; i++) {
+      const cx = Math.random() < 0.5 ? Phaser.Math.Between(W / 2 - 240, W / 2 + 240) : (Math.random() < 0.5 ? Phaser.Math.Between(10, 90) : Phaser.Math.Between(W - 90, W - 10));
+      const chunk = this.arena.scene.add.rectangle(cx, Phaser.Math.Between(20, 200), Phaser.Math.Between(10, 26), Phaser.Math.Between(10, 26), 0x5b4c39, 0.9)
+        .setDepth(27).setStrokeStyle(2, 0x3a3025);
+      this.arena.scene.tweens.add({
+        targets: chunk, y: chunk.y + Phaser.Math.Between(120, 400), x: chunk.x + Phaser.Math.Between(-90, 90),
+        angle: Phaser.Math.Between(-360, 360), alpha: 0, duration: 700 + Math.random() * 500,
+        onComplete: () => chunk.destroy(),
+      });
+    }
+
+    // Player comes back to earth. Restoring HP mirrors the old fusion: the form
+    // is a detour, not a heal — but it never costs you anything either.
+    player.hp = Math.max(1, this.titanPreHp);
+    player.forceInvisible = false;
+    player.setHealthBarVisible(true);
     this.earthShieldBroken = true;
     this.earthShieldHp = 0;
     this.earthShieldRespawnAt = time + 8000;
-    this.arena.showFloatingText(player.x, player.y - 30, '🗿 FUSION ENDED', '#887755');
-    // Break AoE on Q+break
-    const ring = this.arena.scene.add.circle(player.x, player.y, 10, 0x887755, 0.8).setDepth(6);
-    this.arena.scene.tweens.add({ targets: ring, scaleX: 10, scaleY: 10, alpha: 0, duration: 400, onComplete: () => ring.destroy() });
-    // Restore original ability bar labels
+
+    // Restore the real ability bar cards.
     const originalAbilities = this.arena.playerAbilities;
     this.arena.abilityBars.forEach((bar, idx) => {
-      if (bar.lbl && idx < originalAbilities.length) {
-        const ab = originalAbilities[idx];
-        bar.lbl.setText(`[${ab.displayKey}] ${ab.name}`);
-      }
+      if (idx >= originalAbilities.length) return;
+      const ab = originalAbilities[idx];
+      bar.lbl?.setText(`[${ab.displayKey}] ${ab.name}`);
+      bar.desc?.setText(ab.description);
     });
+
+    if (erupt) {
+      // Hurled out of the collapsing golem: land somewhere central, stay a rock
+      // until you touch down, then 20 staggered eruptions walk across the arena.
+      const landX = Phaser.Math.Clamp(W / 2 + Phaser.Math.Between(-140, 140), 60, W - 60);
+      const landY = Phaser.Math.Clamp(H * 0.62 + Phaser.Math.Between(-60, 60), 120, H - 60);
+      player.setPosition(landX, landY);
+      (player.body as Phaser.Physics.Arcade.Body).reset(landX, landY);
+      player.setAlpha(0);
+      this.titanLandingUntil = time + 620;
+      this.spawnTitanRock(W / 2, TITAN_MOUTH_Y, landX, landY, 620, 0, 0, 30);
+      this.titanEruptionsLeft = 20;
+      this.titanEruptionNextAt = time + 700;
+      this.shake(900, 0.045);
+      this.arena.showFloatingText(W / 2, 240, '🌋 TITAN ERUPTION!', '#ff7733');
+    } else {
+      player.setAlpha(1);
+      player.isInvincible = false;
+      player.damageAbsorber = null;
+      this.titanLandingUntil = 0;
+      this.shake(700, 0.02);
+      this.arena.showFloatingText(player.x, player.y - 34, '🗿 TITAN CRUMBLES', '#887755');
+    }
+  }
+
+  // ── Titan per-frame ─────────────────────────────────────────────────────
+
+  private updateTitan(time: number, delta: number): void {
+    const player = this.arena.player;
+
+    if (this.titanActive) {
+      // Rooted and untouchable for the whole 20s — reasserted every frame so
+      // nothing else (dodge end, a cleanse, a knockback) can chip away at it.
+      (player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+      player.isInvincible = true;
+      player.damageAbsorber = () => true;
+      player.setAlpha(0);
+
+      if (time >= this.titanUntil) {
+        this.exitTitanForm(time, false);
+      } else {
+        this.updateTitanArms(time);
+        this.drawTitanHead(time);
+        this.drawTitanArms(time);
+        if (this.titanTimerLabel) {
+          this.titanTimerLabel.setText(`🗿 TITAN  ${((this.titanUntil - time) / 1000).toFixed(1)}s`);
+        }
+      }
+    } else if (this.titanLandingUntil > 0) {
+      (player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+      player.isInvincible = true;
+      if (time >= this.titanLandingUntil) {
+        this.titanLandingUntil = 0;
+        player.isInvincible = false;
+        player.damageAbsorber = null;
+        player.setAlpha(1);
+        const ring = this.arena.scene.add.circle(player.x, player.y, 14, 0x887755, 0.75).setDepth(6);
+        this.arena.scene.tweens.add({ targets: ring, scaleX: 9, scaleY: 9, alpha: 0, duration: 420, onComplete: () => ring.destroy() });
+        this.shake(320, 0.02);
+      }
+    }
+
+    this.updateTitanWorld(time, delta);
+  }
+
+  /** Falling rocks, the tremor rift, the tsunami, the beam, scorched ground and the eruption queue. */
+  private updateTitanWorld(time: number, delta: number): void {
+    const W = this.arena.width;
+    const H = this.arena.height;
+    const dt = delta / 1000;
+
+    // ── Falling rocks (Smash + Tsunami + the eruption launch) ───────────
+    for (let i = this.titanRocks.length - 1; i >= 0; i--) {
+      const r = this.titanRocks[i];
+      const t = Phaser.Math.Clamp((time - r.startAt) / Math.max(1, r.landAt - r.startAt), 0, 1);
+      const x = Phaser.Math.Linear(r.sx, r.lx, t);
+      const y = Phaser.Math.Linear(r.sy, r.ly, t) - Math.sin(t * Math.PI) * r.peak;
+      r.g.setPosition(x, y);
+      r.g.setRotation(t * r.spin);
+      const sw = Math.max(8, r.size * 2 * (0.3 + 0.7 * t));
+      r.shadow.setSize(sw, sw * 0.42);
+      r.shadow.setAlpha(0.14 + 0.36 * t);
+      if (t >= 1) {
+        this.titanRockImpact(r, time);
+        r.g.destroy();
+        r.shadow.destroy();
+        this.titanRocks.splice(i, 1);
+      }
+    }
+
+    // ── Tremor rift ─────────────────────────────────────────────────────
+    if (this.titanTremorLine) {
+      const tr = this.titanTremorLine;
+      if (time >= tr.expiresAt) {
+        tr.g.destroy();
+        this.titanTremorLine = null;
+      } else {
+        this.drawTitanTremor(tr, time);
+        for (const t of this.titanTargets()) {
+          if (Math.abs(t.x - tr.x) > 26) continue;
+          const next = tr.nextHit.get(t) ?? 0;
+          if (time < next) continue;
+          tr.nextHit.set(t, time + 1000);       // 1s collision cooldown per target
+          t.takeDamage(15);
+          this.arena.spawnHitFlash(t.x, t.y, 0xff8844);
+          this.arena.showFloatingText(t.x, t.y - 26, '⛰ TREMOR', '#ffaa55');
+          this.shake(180, 0.012);
+        }
+      }
+    }
+
+    // ── Tsunami ─────────────────────────────────────────────────────────
+    if (this.titanWave) {
+      const w = this.titanWave;
+      w.x += w.speed * dt;
+      w.sprite.setX(w.x);
+      w.crest.setX(w.x + 92);
+      const front = w.x + 78;
+      for (const t of this.titanTargets()) {
+        if (t.x > front) continue;
+        if (!w.hit.has(t)) {
+          w.hit.add(t);
+          t.takeDamage(25);
+          this.arena.spawnHitFlash(t.x, t.y, 0x88ddff);
+          this.arena.showFloatingText(t.x, t.y - 26, '🌊 TITAN TSUNAMI', '#88ddff');
+        }
+        // Shoved along the wall of water.
+        const pushX = Math.min(W - TITAN_PAD - 12, front);
+        t.setPosition(pushX, t.y);
+        const tb = t.body as Phaser.Physics.Arcade.Body | null;
+        if (tb) tb.setVelocity(w.speed, tb.velocity.y * 0.4);
+      }
+      if (!w.slammed && front >= W - 30) {
+        w.slammed = true;
+        this.shake(520, 0.04);
+        for (const t of this.titanTargets()) {
+          if (t.x < W - 170) continue;
+          t.takeDamage(30);
+          t.earthStunnedUntil = Math.max(t.earthStunnedUntil, time + 700);
+          this.arena.spawnHitFlash(t.x, t.y, 0x88ddff);
+          this.arena.showFloatingText(t.x, t.y - 40, '💥 SLAMMED INTO THE WALL', '#aaeeff');
+          const splash = this.arena.scene.add.circle(W - 20, t.y, 20, 0xaaeeff, 0.7).setDepth(6);
+          this.arena.scene.tweens.add({ targets: splash, scaleX: 6, scaleY: 6, alpha: 0, duration: 450, onComplete: () => splash.destroy() });
+        }
+      }
+      if (w.x > W + 160) {
+        w.sprite.destroy();
+        w.crest.destroy();
+        this.titanWave = null;
+        // …and then the sky falls in.
+        for (let i = 0; i < 50; i++) {
+          const lx = Phaser.Math.Between(TITAN_PAD + 20, W - TITAN_PAD - 20);
+          const ly = Phaser.Math.Between(TITAN_PAD + 40, H - TITAN_PAD - 20);
+          this.spawnTitanRock(lx + Phaser.Math.Between(-60, 60), -90 - Math.random() * 120, lx, ly,
+            TITAN_ROCK_FALL_MS + Phaser.Math.Between(0, 400), 12, 46, 11 + Math.random() * 8);
+        }
+        this.arena.showFloatingText(W / 2, 250, '☄ THE SKY FALLS', '#ccaa66');
+      }
+    }
+
+    // ── Beam ────────────────────────────────────────────────────────────
+    if (this.titanBeam) {
+      const b = this.titanBeam;
+      if (time >= b.until) {
+        b.g.destroy();
+        this.titanBeam = null;
+      } else {
+        const ptr = this.arena.scene.input.activePointer;
+        b.x = Phaser.Math.Clamp(ptr.worldX, 10, W - 10);
+        b.y = Phaser.Math.Clamp(ptr.worldY, TITAN_MOUTH_Y + 20, H - TITAN_PAD);
+        this.drawTitanBeam(b, time);
+        if (time >= b.nextTickAt) {
+          b.nextTickAt = time + 200;
+          for (const t of this.titanTargets()) {
+            if (this.distToSegment(t.x, t.y, W / 2, TITAN_MOUTH_Y, b.x, b.y) > 34) continue;
+            t.takeDamage(5);
+            this.arena.spawnHitFlash(t.x, t.y, 0xff9933);
+          }
+        }
+        if (time >= b.nextScorchAt) {
+          b.nextScorchAt = time + 110;
+          this.spawnTitanScorch(b.x, b.y, 32, time + 7000);
+          this.shake(90, 0.004);
+        }
+      }
+    }
+
+    // ── Scorched ground ─────────────────────────────────────────────────
+    if (this.titanScorch.length > 0) {
+      for (let i = this.titanScorch.length - 1; i >= 0; i--) {
+        const s = this.titanScorch[i];
+        if (time >= s.expiresAt) { s.sprite.destroy(); this.titanScorch.splice(i, 1); continue; }
+        s.sprite.setAlpha(0.36 + 0.16 * Math.sin(time / 160 + s.x));
+      }
+      this.titanScorchAccum += delta;
+      if (this.titanScorchAccum >= 500) {
+        this.titanScorchAccum = 0;
+        for (const t of this.titanTargets()) {
+          const burning = this.titanScorch.some(s => Phaser.Math.Distance.Between(t.x, t.y, s.x, s.y) <= s.r);
+          if (!burning) continue;
+          t.takeDamage(5);
+          this.arena.spawnHitFlash(t.x, t.y, 0xff6622);
+        }
+      }
+    }
+
+    // ── Eruption carpet (fires after the titan is already gone) ─────────
+    if (this.titanEruptionsLeft > 0 && time >= this.titanEruptionNextAt) {
+      this.titanEruptionsLeft--;
+      this.titanEruptionNextAt = time + 140;
+      this.titanExplosion(Phaser.Math.Between(TITAN_PAD + 30, W - TITAN_PAD - 30), Phaser.Math.Between(TITAN_PAD + 40, H - TITAN_PAD - 30), time);
+    }
+  }
+
+  // ── Titan drawing ───────────────────────────────────────────────────────
+
+  private headPoints(cx: number, cy: number): Phaser.Geom.Point[] {
+    const pts: Phaser.Geom.Point[] = [];
+    const j = EarthKit.HEAD_JITTER;
+    for (let i = 0; i < j.length; i++) {
+      const a = (i / j.length) * Math.PI * 2;
+      pts.push(new Phaser.Geom.Point(cx + Math.cos(a) * TITAN_HEAD_RX * j[i], cy + Math.sin(a) * TITAN_HEAD_RY * j[i]));
+    }
+    return pts;
+  }
+
+  private drawTitanHead(time: number): void {
+    const g = this.titanHeadG;
+    if (!g) return;
+    const W = this.arena.width;
+    g.clear();
+
+    const sway = Math.sin(time / 1100) * 7;
+    const cx = W / 2 + sway;
+    const cy = TITAN_HEAD_CY + Math.sin(time / 800) * 3;
+
+    // Skull
+    const pts = this.headPoints(cx, cy);
+    g.fillStyle(0x5b4c39, 1);
+    g.fillPoints(pts, true);
+    g.lineStyle(5, 0x342b20, 1);
+    g.strokePoints(pts, true);
+
+    // Cheek plates — lighter slabs so the face reads as stacked rock
+    g.fillStyle(0x6d5c45, 1);
+    g.fillTriangle(cx - 200, cy + 60, cx - 120, cy + 40, cx - 140, cy + 150);
+    g.fillTriangle(cx + 200, cy + 60, cx + 120, cy + 40, cx + 140, cy + 150);
+    g.fillStyle(0x4a3d2d, 1);
+    g.fillTriangle(cx - 70, cy + 150, cx + 70, cy + 150, cx, cy + 205);
+
+    // Brow ridge
+    g.fillStyle(0x403527, 1);
+    g.fillRect(cx - 210, cy + 30, 420, 26);
+
+    // Eyes — molten, pulsing
+    const pulse = 0.72 + 0.28 * Math.sin(time / 220);
+    for (const sx of [-1, 1]) {
+      const ex = cx + sx * 104;
+      const ey = cy + 88;
+      g.fillStyle(0x1a1008, 1);
+      g.fillEllipse(ex, ey, 92, 54);
+      g.fillStyle(0xff6a10, pulse);
+      g.fillEllipse(ex, ey, 62 * pulse + 12, 32 * pulse + 8);
+      g.fillStyle(0xffd070, pulse);
+      g.fillEllipse(ex, ey, 26 * pulse + 6, 15 * pulse + 4);
+      // heavy stone lid
+      g.fillStyle(0x5b4c39, 1);
+      g.fillTriangle(ex - 54, ey - 30, ex + 54, ey - 30, ex + sx * 20, ey - 6);
+    }
+
+    // Jagged mouth with lava between the teeth — kept locked to the beam origin
+    // so Titan Beam always fires from between the jaws, sway included.
+    const mouthY = TITAN_MOUTH_Y + (cy - TITAN_HEAD_CY);
+    g.fillStyle(0x120a04, 1);
+    g.fillRect(cx - 130, mouthY - 20, 260, 40);
+    g.fillStyle(0xff5a0f, 0.5 + 0.3 * Math.sin(time / 300));
+    g.fillRect(cx - 126, mouthY - 8, 252, 16);
+    g.fillStyle(0x8b7a5f, 1);
+    for (let i = 0; i < 7; i++) {
+      const tx = cx - 126 + i * 38;
+      g.fillTriangle(tx, mouthY - 20, tx + 34, mouthY - 20, tx + 17, mouthY + 8);
+      g.fillTriangle(tx + 8, mouthY + 20, tx + 42, mouthY + 20, tx + 25, mouthY - 6);
+    }
+
+    // Lava cracks crawling down the face
+    g.lineStyle(4, 0xff5a0f, 0.55 + 0.25 * Math.sin(time / 260));
+    g.beginPath();
+    g.moveTo(cx - 168, cy + 20); g.lineTo(cx - 150, cy + 72); g.lineTo(cx - 176, cy + 120); g.lineTo(cx - 152, cy + 168);
+    g.moveTo(cx + 172, cy + 34); g.lineTo(cx + 148, cy + 86); g.lineTo(cx + 178, cy + 134);
+    g.moveTo(cx + 20, cy + 8); g.lineTo(cx - 6, cy + 54);
+    g.strokePath();
+  }
+
+  /** One tapered stone limb segment plus its joint cap. */
+  private limbSegment(g: Phaser.GameObjects.Graphics, x1: number, y1: number, x2: number, y2: number, w1: number, w2: number): void {
+    const a = Math.atan2(y2 - y1, x2 - x1);
+    const nx = Math.cos(a + Math.PI / 2);
+    const ny = Math.sin(a + Math.PI / 2);
+    const quad = [
+      new Phaser.Geom.Point(x1 + nx * w1, y1 + ny * w1),
+      new Phaser.Geom.Point(x2 + nx * w2, y2 + ny * w2),
+      new Phaser.Geom.Point(x2 - nx * w2, y2 - ny * w2),
+      new Phaser.Geom.Point(x1 - nx * w1, y1 - ny * w1),
+    ];
+    g.fillStyle(0x5b4c39, 1);
+    g.fillPoints(quad, true);
+    g.lineStyle(5, 0x342b20, 1);
+    g.strokePoints(quad, true);
+    // Plate seams across the limb
+    g.lineStyle(3, 0x40352b, 0.9);
+    for (let i = 1; i <= 3; i++) {
+      const t = i / 4;
+      const px = Phaser.Math.Linear(x1, x2, t);
+      const py = Phaser.Math.Linear(y1, y2, t);
+      const pw = Phaser.Math.Linear(w1, w2, t) * 0.92;
+      g.lineBetween(px + nx * pw, py + ny * pw, px - nx * pw, py - ny * pw);
+    }
+  }
+
+  private drawTitanArms(time: number): void {
+    const g = this.titanArmsG;
+    if (!g) return;
+    g.clear();
+
+    for (const a of this.titanArms) {
+      // Elbow drifts with the fist so the arm bends instead of hinging rigidly.
+      const midX = (a.shoulderX + a.fistX) / 2 + a.side * 46;
+      const midY = (a.shoulderY + a.fistY) / 2;
+      const ex = Phaser.Math.Linear(a.elbowX, midX, 0.55);
+      const ey = Phaser.Math.Linear(a.elbowY, midY, 0.55);
+
+      this.limbSegment(g, a.shoulderX, a.shoulderY, ex, ey, 62, 50);
+      this.limbSegment(g, ex, ey, a.fistX, a.fistY, 50, 40);
+
+      // Elbow boulder
+      g.fillStyle(0x6d5c45, 1);
+      g.fillCircle(ex, ey, 54);
+      g.lineStyle(5, 0x342b20, 1);
+      g.strokeCircle(ex, ey, 54);
+
+      // Fist: craggy knuckled boulder
+      const r = 56;
+      const fpts: Phaser.Geom.Point[] = [];
+      const j = EarthKit.HEAD_JITTER;
+      for (let i = 0; i < 12; i++) {
+        const ang = (i / 12) * Math.PI * 2;
+        fpts.push(new Phaser.Geom.Point(a.fistX + Math.cos(ang) * r * j[i], a.fistY + Math.sin(ang) * r * j[(i + 3) % j.length]));
+      }
+      g.fillStyle(0x6d5c45, 1);
+      g.fillPoints(fpts, true);
+      g.lineStyle(5, 0x342b20, 1);
+      g.strokePoints(fpts, true);
+      g.fillStyle(0x7d6a50, 1);
+      for (let k = 0; k < 4; k++) {
+        g.fillCircle(a.fistX - 33 + k * 22, a.fistY - 22, 13);
+      }
+      // Knuckle lava glow while the arm is winding up or striking
+      if (a.phase !== 'rest') {
+        g.lineStyle(4, 0xff6a10, 0.5 + 0.4 * Math.sin(time / 90));
+        g.strokeCircle(a.fistX, a.fistY, r + 6);
+      }
+      g.lineStyle(4, 0xff5a0f, 0.35 + 0.2 * Math.sin(time / 300 + a.side));
+      g.lineBetween(a.fistX - 26, a.fistY + 20, a.fistX + 12, a.fistY + 34);
+    }
+  }
+
+  private drawTitanTremor(tr: TitanTremor, time: number): void {
+    const top = TITAN_PAD;
+    const bot = this.arena.height - TITAN_PAD;
+    const g = tr.g;
+    g.clear();
+    const flicker = 0.55 + 0.25 * Math.sin(time / 180);
+    const seam = (y: number) => tr.x + Math.sin((y + time / 6) / 55) * 13;
+
+    // Wide dark rift…
+    g.fillStyle(0x1c1208, 0.85);
+    g.fillRect(tr.x - 24, top, 48, bot - top);
+    // …with a jagged molten seam down the middle.
+    for (const [w, c, a] of [[10, 0xff5a0f, flicker], [4, 0xffd070, flicker * 0.9]] as const) {
+      g.lineStyle(w, c, a);
+      g.beginPath();
+      g.moveTo(tr.x, top);
+      for (let y = top; y <= bot; y += 40) g.lineTo(seam(y), y);
+      g.lineTo(seam(bot), bot);
+      g.strokePath();
+    }
+    // Broken slabs along both lips
+    g.fillStyle(0x4a3d2d, 1);
+    for (let y = top + 10; y < bot - 30; y += 66) {
+      g.fillRect(tr.x - 34, y, 14, 30);
+      g.fillRect(tr.x + 20, Math.min(y + 30, bot - 30), 14, 30);
+    }
+  }
+
+  private drawTitanBeam(b: TitanBeam, time: number): void {
+    const W = this.arena.width;
+    const g = b.g;
+    g.clear();
+    const ox = W / 2;
+    const oy = TITAN_MOUTH_Y;
+    const jitter = Math.sin(time / 40) * 3;
+
+    g.lineStyle(46 + jitter, 0x7a2a05, 0.35);
+    g.lineBetween(ox, oy, b.x, b.y);
+    g.lineStyle(26 + jitter, 0xff5a0f, 0.75);
+    g.lineBetween(ox, oy, b.x, b.y);
+    g.lineStyle(10, 0xffd070, 0.95);
+    g.lineBetween(ox, oy, b.x, b.y);
+
+    // Molten pool where it lands
+    g.fillStyle(0xff5a0f, 0.5 + 0.2 * Math.sin(time / 100));
+    g.fillCircle(b.x, b.y, 30 + Math.sin(time / 90) * 4);
+    g.fillStyle(0xffd070, 0.8);
+    g.fillCircle(b.x, b.y, 14);
+
+    // Sparks kicking off the impact point
+    g.lineStyle(3, 0xffbb55, 0.8);
+    for (let i = 0; i < 5; i++) {
+      const a = (time / 120) + (i / 5) * Math.PI * 2;
+      const len = 20 + ((i * 37 + Math.floor(time / 60)) % 22);
+      g.lineBetween(b.x, b.y, b.x + Math.cos(a) * len, b.y + Math.sin(a) * len);
+    }
+  }
+
+  // ── Titan attacks ───────────────────────────────────────────────────────
+
+  private updateTitanArms(time: number): void {
+    for (const a of this.titanArms) {
+      if (a.phase === 'rest') {
+        a.fistX = a.restX + Math.sin(time / 780 + a.side) * 5;
+        a.fistY = a.restY + Math.sin(time / 560 + a.side) * 7;
+        continue;
+      }
+      const span = Math.max(1, a.phaseEnd - a.phaseStart);
+      const t = Phaser.Math.Clamp((time - a.phaseStart) / span, 0, 1);
+      const e = a.phase === 'strike' ? t * t : 1 - (1 - t) * (1 - t);
+      a.fistX = Phaser.Math.Linear(a.fromX, a.toX, e);
+      a.fistY = Phaser.Math.Linear(a.fromY, a.toY, e);
+      if (a.marker) a.marker.setScale(0.8 + 0.35 * Math.sin(time / 70));
+      if (t >= 1) {
+        if (a.phase === 'raise') {
+          a.phase = 'strike';
+          a.phaseStart = time; a.phaseEnd = time + 110;
+          a.fromX = a.fistX; a.fromY = a.fistY;
+          a.toX = a.targetX; a.toY = a.targetY;
+        } else if (a.phase === 'strike') {
+          this.titanSmashImpact(a, time);
+          a.phase = 'recover';
+          a.phaseStart = time; a.phaseEnd = time + 480;
+          a.fromX = a.fistX; a.fromY = a.fistY;
+          a.toX = a.restX; a.toY = a.restY;
+        } else {
+          a.phase = 'rest';
+        }
+      }
+    }
+  }
+
+  /** Click — Titan Smash: bring a hand down on the cursor. */
+  private titanSmash(time: number, mx: number, my: number): void {
+    const W = this.arena.width;
+    const H = this.arena.height;
+    const preferred = mx < W / 2 ? -1 : 1;
+    const arm = this.titanArms.find(a => a.side === preferred && a.phase === 'rest')
+      ?? this.titanArms.find(a => a.phase === 'rest');
+    if (!arm) return;
+
+    const tx = Phaser.Math.Clamp(mx, TITAN_PAD + 20, W - TITAN_PAD - 20);
+    const ty = Phaser.Math.Clamp(my, TITAN_PAD + 40, H - TITAN_PAD - 20);
+    arm.targetX = tx;
+    arm.targetY = ty;
+    arm.phase = 'raise';
+    arm.phaseStart = time;
+    arm.phaseEnd = time + 200;
+    arm.fromX = arm.fistX; arm.fromY = arm.fistY;
+    arm.toX = tx; arm.toY = ty - 250;
+
+    arm.marker?.destroy();
+    arm.marker = this.arena.scene.add.circle(tx, ty, 74, 0xff5a0f, 0.16).setDepth(4).setStrokeStyle(4, 0xff8844, 0.8);
+    this.titanSmashCdUntil = time + TITAN_SMASH_CD_MS;
+    this.shake(160, 0.008);
+  }
+
+  private titanSmashImpact(arm: TitanArm, time: number): void {
+    const W = this.arena.width;
+    const H = this.arena.height;
+    arm.marker?.destroy();
+    arm.marker = null;
+
+    this.shake(430, 0.032);
+    let hit = false;
+    for (const t of this.titanTargets()) {
+      if (Phaser.Math.Distance.Between(arm.targetX, arm.targetY, t.x, t.y) > 96) continue;
+      t.takeDamage(20);
+      this.arena.spawnHitFlash(t.x, t.y, 0x665533);
+      hit = true;
+    }
+    this.arena.showFloatingText(arm.targetX, arm.targetY - 40, hit ? '🖐 TITAN SMASH' : '🖐 SMASH', '#ccaa66');
+
+    // Impact crater + dust ring
+    const ring = this.arena.scene.add.circle(arm.targetX, arm.targetY, 20, 0x8b7a5f, 0.7).setDepth(5);
+    this.arena.scene.tweens.add({ targets: ring, scaleX: 6, scaleY: 6, alpha: 0, duration: 460, onComplete: () => ring.destroy() });
+    for (let i = 0; i < 8; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const puff = this.arena.scene.add.circle(arm.targetX, arm.targetY, 8 + Math.random() * 10, 0x6b5a44, 0.6).setDepth(5);
+      this.arena.scene.tweens.add({
+        targets: puff, x: arm.targetX + Math.cos(a) * (70 + Math.random() * 70), y: arm.targetY + Math.sin(a) * (70 + Math.random() * 70),
+        alpha: 0, scale: 1.9, duration: 500, onComplete: () => puff.destroy(),
+      });
+    }
+
+    // Three chunks of arena kicked into the air; they come back down 2s later.
+    for (let i = 0; i < 3; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const dist = 90 + Math.random() * 150;
+      const lx = Phaser.Math.Clamp(arm.targetX + Math.cos(ang) * dist, TITAN_PAD + 20, W - TITAN_PAD - 20);
+      const ly = Phaser.Math.Clamp(arm.targetY + Math.sin(ang) * dist, TITAN_PAD + 40, H - TITAN_PAD - 20);
+      this.spawnTitanRock(arm.targetX, arm.targetY, lx, ly, TITAN_ROCK_FALL_MS, 10, 46, 13 + Math.random() * 7);
+    }
+    void time;
+  }
+
+  /** E — Titan Tremor: a rift splitting the arena vertically at the cursor. */
+  private titanTremorCast(time: number, mx: number): void {
+    const W = this.arena.width;
+    if (this.titanTremorLine) this.titanTremorLine.g.destroy();
+    this.titanTremorLine = {
+      x: Phaser.Math.Clamp(mx, 40, W - 40),
+      expiresAt: time + TITAN_TREMOR_MS,
+      g: this.arena.scene.add.graphics().setDepth(4),
+      nextHit: new Map<Fighter, number>(),
+    };
+    this.titanTremorCdUntil = time + TITAN_TREMOR_CD_MS;
+    this.shake(700, 0.03);
+    this.arena.showFloatingText(this.titanTremorLine.x, 250, '⛰ TITAN TREMOR', '#ffaa55');
+  }
+
+  /** R — Titan Tsunami: a wall of water sweeps the arena and pins the enemy to the far wall. */
+  private titanTsunamiCast(time: number): void {
+    const H = this.arena.height;
+    if (this.titanWave) { this.titanWave.sprite.destroy(); this.titanWave.crest.destroy(); }
+    const wallH = H - TITAN_PAD * 2;
+    const sprite = this.arena.scene.add.rectangle(-110, H / 2, 180, wallH, 0x2f7d9e, 0.72).setDepth(18).setStrokeStyle(4, 0x88ddff, 0.8);
+    const crest = this.arena.scene.add.rectangle(-18, H / 2, 34, wallH, 0xcdf3ff, 0.55).setDepth(19);
+    this.titanWave = { x: -110, speed: 720, sprite, crest, hit: new Set<Fighter>(), slammed: false };
+    this.titanTsunamiCdUntil = time + TITAN_TSUNAMI_CD_MS;
+    this.shake(1600, 0.016);
+    this.arena.showFloatingText(this.arena.width / 2, 250, '🌊 TITAN TSUNAMI!', '#88ddff');
+  }
+
+  /** F — Titan Beam: a 5s molten beam that scorches everything it is dragged across. */
+  private titanBeamCast(time: number, mx: number, my: number): void {
+    const W = this.arena.width;
+    const H = this.arena.height;
+    if (this.titanBeam) this.titanBeam.g.destroy();
+    this.titanBeam = {
+      until: time + TITAN_BEAM_MS,
+      x: Phaser.Math.Clamp(mx, 10, W - 10),
+      y: Phaser.Math.Clamp(my, TITAN_MOUTH_Y + 20, H - TITAN_PAD),
+      nextTickAt: time,
+      nextScorchAt: time,
+      g: this.arena.scene.add.graphics().setDepth(28),
+    };
+    this.titanBeamCdUntil = time + TITAN_BEAM_CD_MS;
+    this.shake(400, 0.02);
+    this.arena.showFloatingText(W / 2, 250, '☀ TITAN BEAM', '#ffbb55');
+  }
+
+  // ── Titan shared effects ────────────────────────────────────────────────
+
+  private spawnTitanRock(sx: number, sy: number, lx: number, ly: number, flightMs: number, dmg: number, radius: number, size: number): void {
+    const scene = this.arena.scene;
+    const g = scene.add.graphics().setDepth(17);
+    // Craggy chunk drawn once around its own origin, then flown as a whole.
+    const pts: Phaser.Geom.Point[] = [];
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const r = size * (0.72 + Math.random() * 0.5);
+      pts.push(new Phaser.Geom.Point(Math.cos(a) * r, Math.sin(a) * r));
+    }
+    g.fillStyle(0x6d5c45, 1);
+    g.fillPoints(pts, true);
+    g.lineStyle(3, 0x342b20, 1);
+    g.strokePoints(pts, true);
+    g.lineStyle(2, 0xff5a0f, 0.7);
+    g.lineBetween(-size * 0.4, -size * 0.2, size * 0.3, size * 0.4);
+    g.setPosition(sx, sy);
+
+    const shadow = scene.add.ellipse(lx, ly, 10, 4, 0x000000, 0.2).setDepth(3);
+    this.titanRocks.push({
+      g, shadow, sx, sy, lx, ly,
+      startAt: this.arena.scene.time.now,
+      landAt: this.arena.scene.time.now + flightMs,
+      // Rocks kicked up off the ground arc high; ones already falling out of the
+      // sky just come straight down (an arc would park them off-screen).
+      peak: sy < 0 ? 0 : 160 + Math.random() * 90,
+      spin: (Math.random() < 0.5 ? -1 : 1) * (2 + Math.random() * 4),
+      size, dmg, radius,
+    });
+  }
+
+  private titanRockImpact(r: TitanRock, time: number): void {
+    void time;
+    const scene = this.arena.scene;
+    const ring = scene.add.circle(r.lx, r.ly, 10, 0x8b7a5f, 0.7).setDepth(5);
+    scene.tweens.add({ targets: ring, scaleX: 4.5, scaleY: 4.5, alpha: 0, duration: 320, onComplete: () => ring.destroy() });
+    if (r.dmg <= 0) return;
+    this.shake(170, 0.012);
+    for (const t of this.titanTargets()) {
+      if (Phaser.Math.Distance.Between(r.lx, r.ly, t.x, t.y) > r.radius) continue;
+      t.takeDamage(r.dmg);
+      this.arena.spawnHitFlash(t.x, t.y, 0x8b7a5f);
+      this.arena.showFloatingText(t.x, t.y - 26, '🪨 ROCKFALL', '#ccaa66');
+    }
+  }
+
+  private spawnTitanScorch(x: number, y: number, r: number, expiresAt: number): void {
+    const sprite = this.arena.scene.add.circle(x, y, r, 0xff5522, 0.42).setDepth(3).setStrokeStyle(3, 0xffaa33, 0.7);
+    this.titanScorch.push({ sprite, x, y, r, expiresAt });
+    // Cap the ground clutter so a long beam + a full eruption can't pile up forever.
+    while (this.titanScorch.length > 90) {
+      const old = this.titanScorch.shift();
+      old?.sprite.destroy();
+    }
+  }
+
+  private titanExplosion(x: number, y: number, time: number): void {
+    const scene = this.arena.scene;
+    this.shake(220, 0.022);
+    const blast = scene.add.circle(x, y, 18, 0xff7733, 0.85).setDepth(7);
+    scene.tweens.add({ targets: blast, scaleX: 4.4, scaleY: 4.4, alpha: 0, duration: 380, onComplete: () => blast.destroy() });
+    const core = scene.add.circle(x, y, 10, 0xffe08a, 0.95).setDepth(8);
+    scene.tweens.add({ targets: core, scaleX: 2.6, scaleY: 2.6, alpha: 0, duration: 240, onComplete: () => core.destroy() });
+    for (const t of this.titanTargets()) {
+      if (Phaser.Math.Distance.Between(x, y, t.x, t.y) > 76) continue;
+      t.takeDamage(20);
+      this.arena.spawnHitFlash(t.x, t.y, 0xff7733);
+      this.arena.showFloatingText(t.x, t.y - 30, '🌋 ERUPTION', '#ff9955');
+    }
+    this.spawnTitanScorch(x, y, 46, time + 9000);
+  }
+
+  private distToSegment(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const len2 = dx * dx + dy * dy;
+    if (len2 === 0) return Phaser.Math.Distance.Between(px, py, x1, y1);
+    const t = Phaser.Math.Clamp(((px - x1) * dx + (py - y1) * dy) / len2, 0, 1);
+    return Phaser.Math.Distance.Between(px, py, x1 + dx * t, y1 + dy * t);
   }
 
   private spawnTsunamiWaves(): void {
@@ -1503,87 +2332,32 @@ export class EarthKit {
     const player = this.arena.player;
     const playerCtx = this.arena.buildPlayerContext(mouseX, mouseY);
 
-    // ── Golem Fused Form (Q+ upgrade) ─────────────────────────────
-    if (this.earthGolemFused) {
-      // Click: Punch (close range, 2s cd)
-      if (pointer.isDown && !this.arena.pointerWasDown) {
-        if (time >= this.earthGolemFusedPunchCdUntil) {
-          const dist = Phaser.Math.Distance.Between(player.x, player.y, this.arena.npc.x, this.arena.npc.y);
-          if (dist < 90) {
-            this.arena.npc.takeDamage(20);
-            this.arena.spawnHitFlash(this.arena.npc.x, this.arena.npc.y, 0x665533);
-            this.arena.showFloatingText(this.arena.npc.x, this.arena.npc.y - 20, '👊 GOLEM PUNCH 20', '#ccaa66');
-            this.earthGolemFusedPunchCdUntil = time + 2000;
-          } else {
-            this.arena.showFloatingText(player.x, player.y - 20, 'Too far!', '#888888');
-          }
-        }
+    // ── Titan Form (Q+ upgrade) — the whole kit is replaced while it's up ──
+    if (this.titanActive) {
+      // Click: Titan Smash
+      if (pointer.isDown && !this.arena.pointerWasDown && time >= this.titanSmashCdUntil) {
+        this.titanSmash(time, mouseX, mouseY);
       }
-      // E: Self-Repair (slow 3s, then +25 HP)
-      if (Phaser.Input.Keyboard.JustDown(this.arena.eKey)) {
-        if (!this.earthGolemFusedRepairHolding) {
-          this.earthGolemFusedRepairHolding = true;
-          this.earthGolemFusedRepairEnd = time + 3000;
-          // 20% speed during repair
-          this.arena.showFloatingText(player.x, player.y - 30, '🔧 REPAIRING...', '#ccaa66');
-        }
+      // E: Titan Tremor
+      if (Phaser.Input.Keyboard.JustDown(this.arena.eKey) && time >= this.titanTremorCdUntil) {
+        this.titanTremorCast(time, mouseX);
       }
-      // R: Pound (AoE, 10s cd)
-      if (Phaser.Input.Keyboard.JustDown(this.arena.rKey)) {
-        if (time >= this.earthGolemFusedPoundCdUntil) {
-          let poundHit = false;
-          for (const t of this.arena.enemies) {
-            if (!t.active || t.hp <= 0) continue;
-            const dist = Phaser.Math.Distance.Between(player.x, player.y, t.x, t.y);
-            if (dist < 100) {
-              t.takeDamage(45);
-              this.arena.spawnHitFlash(t.x, t.y, 0x665533);
-              this.arena.showFloatingText(t.x, t.y - 20, '💥 GOLEM POUND 45', '#ccaa66');
-              t.earthStunnedUntil = Math.max(t.earthStunnedUntil, time + 600);
-              poundHit = true;
-            }
-          }
-          if (poundHit) {
-            const ring = this.arena.scene.add.circle(player.x, player.y, 10, 0x665533, 0.8).setDepth(6);
-            this.arena.scene.tweens.add({ targets: ring, scaleX: 12, scaleY: 12, alpha: 0, duration: 400, onComplete: () => ring.destroy() });
-            this.earthGolemFusedPoundCdUntil = time + 10000;
-          } else {
-            this.arena.showFloatingText(player.x, player.y - 20, 'Too far!', '#888888');
-          }
-        }
+      // R: Titan Tsunami
+      if (Phaser.Input.Keyboard.JustDown(this.arena.rKey) && time >= this.titanTsunamiCdUntil) {
+        this.titanTsunamiCast(time);
       }
-      // F: Fault (wall + damage, 5s cd)
-      if (Phaser.Input.Keyboard.JustDown(this.arena.fKey)) {
-        if (time >= this.earthGolemFusedFaultCdUntil) {
-          const midX = (player.x + this.arena.npc.x) / 2;
-          const midY = (player.y + this.arena.npc.y) / 2;
-          if (this.earthGolemFusedFaultWallSprite) this.earthGolemFusedFaultWallSprite.destroy();
-          this.earthGolemFusedFaultWallSprite = this.arena.scene.add.rectangle(midX, midY, 140, 18, 0x665533).setDepth(7).setStrokeStyle(2, 0xbbaa77);
-          this.earthGolemFusedFaultWallUntil = time + 1500;
-          for (const t of this.arena.enemies) {
-            if (!t.active || t.hp <= 0) continue;
-            t.takeDamage(25);
-            this.arena.spawnHitFlash(t.x, t.y, 0x665533);
-          }
-          this.arena.showFloatingText(midX, midY - 20, '⛰ FAULT LINE 25', '#ccaa66');
-          this.earthGolemFusedFaultCdUntil = time + 5000;
-        }
+      // F: Titan Beam
+      if (Phaser.Input.Keyboard.JustDown(this.arena.fKey) && time >= this.titanBeamCdUntil) {
+        this.titanBeamCast(time, mouseX, mouseY);
       }
-      // Q: Break (exit + 25 AoE)
+      // Q: Titan Eruption — self-destruct
       if (Phaser.Input.Keyboard.JustDown(this.arena.qKey)) {
-        for (const t of this.arena.enemies) {
-          if (!t.active || t.hp <= 0) continue;
-          const dist = Phaser.Math.Distance.Between(player.x, player.y, t.x, t.y);
-          if (dist < 120) {
-            t.takeDamage(25);
-            this.arena.spawnHitFlash(t.x, t.y, 0x665533);
-            this.arena.showFloatingText(t.x, t.y - 20, '💥 BREAK 25', '#ccaa66');
-          }
-        }
-        this.exitGolemFusion(time);
+        this.exitTitanForm(time, true);
       }
-      return; // block normal inputs while fused
+      return; // block normal inputs while titanic
     }
+    // Still being flung back into the arena after an eruption: no input yet.
+    if (this.titanLandingUntil > time) return;
 
     // ── Earth Mastery — Dust Screen takes over whichever slot it's bound to ──
     const dustScreenSlot = this.arena.masteryActive ? this.dustScreenSlot() : null;
@@ -1597,54 +2371,21 @@ export class EarthKit {
       }
     }
 
-    // ── Q+ Golem Fusion hold charge ────────────────────────────────
+    // ── Q+ Titan Form hold charge (tap Q still casts the plain Golem Ritual) ──
     if (dustScreenSlot !== 'q' && this.arena.hasUpgrade('q')) {
-      if (this.arena.qKey.isDown && !this.earthGolemFuseHolding && !this.earthGolemActive && !this.earthGolemFused) {
-        this.earthGolemFuseHolding = true;
-        this.earthGolemFuseHoldStart = time;
-        if (this.earthGolemFuseChargeVisual) this.earthGolemFuseChargeVisual.destroy();
-        this.earthGolemFuseChargeVisual = this.arena.scene.add.circle(player.x, player.y - 36, 10, 0x665533, 0.7).setDepth(14);
-        this.arena.scene.tweens.add({ targets: this.earthGolemFuseChargeVisual, alpha: 0.3, yoyo: true, repeat: -1, duration: 300 });
+      if (this.arena.qKey.isDown && !this.earthTitanChargeHolding && !this.earthGolemActive && !this.titanActive) {
+        this.earthTitanChargeHolding = true;
+        this.earthTitanChargeStart = time;
+        if (this.earthTitanChargeVisual) this.earthTitanChargeVisual.destroy();
+        this.earthTitanChargeVisual = this.arena.scene.add.circle(player.x, player.y - 36, 10, 0x665533, 0.7).setDepth(14);
+        this.arena.scene.tweens.add({ targets: this.earthTitanChargeVisual, alpha: 0.3, yoyo: true, repeat: -1, duration: 300 });
       }
-      if (!this.arena.qKey.isDown && this.earthGolemFuseHolding) {
-        const heldMs = time - this.earthGolemFuseHoldStart;
-        if (this.earthGolemFuseChargeVisual) { this.earthGolemFuseChargeVisual.destroy(); this.earthGolemFuseChargeVisual = null; }
-        this.earthGolemFuseHolding = false;
+      if (!this.arena.qKey.isDown && this.earthTitanChargeHolding) {
+        const heldMs = time - this.earthTitanChargeStart;
+        if (this.earthTitanChargeVisual) { this.earthTitanChargeVisual.destroy(); this.earthTitanChargeVisual = null; }
+        this.earthTitanChargeHolding = false;
         if (heldMs >= 5000) {
-          // Long hold: enter golem fusion
-          this.earthGolemFusedPreHp = player.hp;
-          this.earthGolemFused = true;
-          this.earthGolemFusedHp = this.earthGolemFusedMaxHp;
-          this.earthGolemFusedUntil = time + 10000;
-          this.earthGolemFusedPunchCdUntil = 0;
-          this.earthGolemFusedPoundCdUntil = 0;
-          this.earthGolemFusedFaultCdUntil = 0;
-          this.earthGolemFusedRepairHolding = false;
-          // Remove shields
-          this.earthShieldHp = 0;
-          this.earthShieldBroken = true;
-          this.earthShieldRespawnAt = 0; // will be set on exit
-          if (this.earthShieldSprite) { this.earthShieldSprite.destroy(); this.earthShieldSprite = null; }
-          if (this.earthBackShieldHp > 0) {
-            this.earthBackShieldHp = 0;
-            if (this.earthBackShieldSprite) { this.earthBackShieldSprite.destroy(); this.earthBackShieldSprite = null; }
-          }
-          // Make player a square
-          (player.body as Phaser.Physics.Arcade.Body).setSize(44, 44, true);
-          // Spawn fused sprite overlay
-          if (this.earthGolemFusedSprite) this.earthGolemFusedSprite.destroy();
-          this.earthGolemFusedSprite = this.arena.scene.add.rectangle(player.x, player.y, 44, 44, 0x665533, 0.9)
-            .setDepth(8).setStrokeStyle(2, 0xbbaa77);
-          if (this.earthGolemFusedHpLabel) this.earthGolemFusedHpLabel.destroy();
-          this.earthGolemFusedHpLabel = this.arena.scene.add.text(player.x, player.y - 36, '🗿 100/100', {
-            fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#ccaa66',
-          }).setOrigin(0.5).setDepth(12);
-          this.arena.showFloatingText(player.x, player.y - 50, '🗿 GOLEM FUSION!', '#ccaa66');
-          // Update ability bar labels to golem form names
-          const golemLabels = ['[Click] Punch', '[E] Repair (Slow)', '[R] Pound', '[F] Fault Line', '[Q] Break'];
-          this.arena.abilityBars.forEach((bar, idx) => {
-            if (bar.lbl && idx < golemLabels.length) bar.lbl.setText(golemLabels[idx]);
-          });
+          this.enterTitanForm(time);
         } else {
           // Short tap: cast normal golem ritual
           if (!this.earthGolemActive && this.earthShieldHp > 0) {

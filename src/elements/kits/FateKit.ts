@@ -81,6 +81,40 @@ export const FATE_FACE_CARDS: FateFaceCardDef[] = [
 ];
 const FACE_BY_ID = new Map<FateFaceCard, FateFaceCardDef>(FATE_FACE_CARDS.map((f) => [f.face, f]));
 
+// ── Fate Mastery — "Tarot of Fate" curses ────────────────────────────────────
+export type FateCurse =
+  | 'painful' | 'immolating' | 'weakening' | 'confusing' | 'vulnerable'
+  | 'cursed' | 'stunning' | 'cocky' | 'purging';
+
+export interface FateCurseDef { curse: FateCurse; name: string; emoji: string; blurb: string; }
+export const FATE_CURSES: FateCurseDef[] = [
+  { curse: 'painful',    name: 'Painful',    emoji: '🩹', blurb: 'Deals 30 damage to you' },
+  { curse: 'immolating', name: 'Immolating', emoji: '🔥', blurb: 'Burns every other card out of your hand' },
+  { curse: 'weakening',  name: 'Weakening',  emoji: '🦠', blurb: '33% slower for 10s' },
+  { curse: 'confusing',  name: 'Confusing',  emoji: '🌀', blurb: 'Inverts WASD for 5s' },
+  { curse: 'vulnerable', name: 'Vulnerable', emoji: '🦴', blurb: 'Next hit you take is doubled' },
+  { curse: 'cursed',     name: 'Cursed',     emoji: '💀', blurb: '15 purple bullets hunt you for 3 each' },
+  { curse: 'stunning',   name: 'Stunning',   emoji: '⭐', blurb: 'No cards for 5s' },
+  { curse: 'cocky',      name: 'Cocky',      emoji: '😈', blurb: 'All In wagers all your HP for the rest of the match' },
+  { curse: 'purging',    name: 'Purging',    emoji: '✨', blurb: 'Strips your hand; locks Tarot/Preserve/Enchant for 20s' },
+];
+const CURSE_BY_ID = new Map<FateCurse, FateCurseDef>(FATE_CURSES.map((c) => [c.curse, c]));
+
+/** Multiplier a greatly-enchanted (Tarot) card applies, in place of Enchant's 2x. */
+const GREAT_ENCHANT_MULT = 4;
+const TAROT_COOLDOWN_MS = 20000;
+/** How long Purging locks Tarot / Preserve / Enchant out for. */
+const PURGE_LOCK_MS = 20000;
+/** How long Stunning blocks card throws for. */
+const STUN_LOCK_MS = 5000;
+/** Cards binned by the Cycle passive before it deals a fresh pair. */
+const CYCLE_BIN_TARGET = 3;
+const CYCLE_DRAW_COUNT = 2;
+/** Damage one card has to rack up to tick the "Big Hand" mastery requirement. */
+const BIG_HAND_THRESHOLD = 50;
+/** How long a card's damage keeps counting toward Big Hand after it is played. */
+const LEDGER_WINDOW_MS = 10000;
+
 const BASE_HAND_SIZE = 6;
 const UPGRADED_HAND_SIZE = 8; // R+ "Wonder Preserve"
 const DRAW_INTERVAL_MS = 5000;
@@ -94,6 +128,10 @@ interface FateCard {
   type: FateCardType;
   preserved: boolean;
   enchanted: boolean;
+  /** Fate Mastery — Tarot of Fate: 4x power, overrules `enchanted`, always paired with a curse. */
+  greatEnchanted: boolean;
+  /** The curse Tarot stapled on, resolved when this card is played. */
+  curse: FateCurse | null;
 }
 
 type FateModStat = 'dmgTaken' | 'dmgDealt' | 'speed' | 'cd' | 'size';
@@ -114,6 +152,8 @@ interface FateCoinToken {
   expiresAt: number;
   owner: 'player' | 'npc';
   pairId: number;
+  /** Big Hand ledger the coin's reflected damage is credited to (0 = untracked). */
+  ledgerId: number;
 }
 
 interface FateSlotMachine {
@@ -146,6 +186,7 @@ interface FateLightningStrike {
   dmg: number;
   stunMs: number;
   resolveAt: number;
+  ledgerId: number;
 }
 
 interface FatePoison {
@@ -153,6 +194,7 @@ interface FatePoison {
   dps: number;
   tickAccum: number;
   visual: Phaser.GameObjects.Text | null;
+  ledgerId: number;
 }
 
 // ── New Cards! kit-managed objects ─────────────────────────────────────────
@@ -165,6 +207,7 @@ interface FateBoomerang {
   dmg: number;
   expiresAt: number;
   hitAt: Map<Fighter, number>;
+  ledgerId: number;
 }
 
 interface FateSnowball {
@@ -175,6 +218,27 @@ interface FateSnowball {
   dmg: number;
   slowMs: number;
   expiresAt: number;
+  ledgerId: number;
+}
+
+/**
+ * Fate Mastery — Cursed: a purple bullet swept in from the arena edge that only ever
+ * damages the fighter the curse fired on. Kit-managed rather than a real `Projectile`
+ * so it can never clip the wrong side.
+ */
+interface FateCurseBullet {
+  sprite: Phaser.GameObjects.Arc;
+  x: number; y: number;
+  vx: number; vy: number;
+  victim: Fighter;
+  expiresAt: number;
+}
+
+/** Running damage total for one played card — drives the Big Hand mastery requirement. */
+interface FateCardLedger {
+  total: number;
+  expiresAt: number;
+  credited: boolean;
 }
 
 /** A one-shot forced velocity (Pulse knockback) that overrides a fighter's own movement for a short window. */
@@ -202,6 +266,12 @@ export interface FateArenaApi {
   hasUpgrade(slot: string): boolean;
   /** True if the online opponent (Fate) has the given shop upgrade slot equipped. */
   hasNpcUpgrade(slot: string): boolean;
+  /** True when the local player is Fate and has Element Mastery switched on. */
+  get masteryActive(): boolean;
+  /** The mastery enhancement bound over the given ability slot this match, or null. */
+  masteryBindFor(slot: string): string | null;
+  /** Adds to a Fate mastery progress counter (no-op when the player isn't Fate). */
+  recordMasteryStat(key: string, amount: number): void;
   applyPlayerSpeedMult(f: number): void;
   applyNpcSpeedMult(f: number): void;
   spawnHitFlash(x: number, y: number, color: number): void;
@@ -267,9 +337,32 @@ export class FateKit {
     bg: Phaser.GameObjects.Rectangle;
     icon: Phaser.GameObjects.Text;
     name: Phaser.GameObjects.Text;
+    curse: Phaser.GameObjects.Text;
   }[] = [];
   private barBounds = { x1: 0, y1: 0, x2: 0, y2: 0 };
   private numberKeys: Phaser.Input.Keyboard.Key[] = [];
+  /** Slot the mouse is currently over — Tarot of Fate enchants whatever card sits here. */
+  private hoveredSlot = -1;
+
+  // ── Fate Mastery ───────────────────────────────────────────────────
+  /** Cycle passive: cards binned since the last free pair was dealt. */
+  private cycleBinned = 0;
+  private tarotLastCastAt = -TAROT_COOLDOWN_MS;
+  /** Stunning curse: no card may be played before this timestamp. */
+  private cardLockUntil = 0;
+  /** Purging curse: Tarot / Preserve / Enchant lockouts. */
+  private tarotLockUntil = 0;
+  private preserveLockUntil = 0;
+  private enchantLockUntil = 0;
+  /** Cocky curse: All In wagers the player's entire health bar for the rest of the match. */
+  private cockyAllIn = false;
+  private curseBullets: FateCurseBullet[] = [];
+
+  // ── Big Hand ledger (damage attributed to a single played card) ────
+  private ledgers = new Map<number, FateCardLedger>();
+  private ledgerCounter = 0;
+  /** Ledger the card currently mid-`executeCard` writes to. 0 = nothing being tracked. */
+  private activeLedgerId = 0;
 
   private lastMouseX = 0;
   private lastMouseY = 0;
@@ -317,6 +410,24 @@ export class FateKit {
 
     for (const p of this.poison.values()) if (p.visual?.active) p.visual.destroy();
     this.poison.clear();
+
+    for (const b of this.curseBullets) if (b.sprite.active) b.sprite.destroy();
+    this.curseBullets = [];
+    this.ledgers.clear();
+    this.activeLedgerId = 0;
+    this.cycleBinned = 0;
+    // Absolute-clock readiness: the kit's first match runs the constructor, not reset(),
+    // so seed the last-cast stamp a full cooldown in the past or Tarot starts locked.
+    this.tarotLastCastAt = -TAROT_COOLDOWN_MS;
+    this.cardLockUntil = 0;
+    this.tarotLockUntil = 0;
+    this.preserveLockUntil = 0;
+    this.enchantLockUntil = 0;
+    this.cockyAllIn = false;
+    this.hoveredSlot = -1;
+    // No need to clear `invertedControlsUntil` / `vulnerableNextHit` here: reset() runs
+    // before ArenaScene builds the match's Player, so `arena.player` is either absent or
+    // last match's object — the fresh Fighter starts with both fields already clear.
 
     this.teardownForceOverlay();
     this.forceHand = null;
@@ -387,13 +498,16 @@ export class FateKit {
       roll -= t === 'emperor' ? 1 : EMPEROR_RARITY;
       if (roll < 0) { pick = t; break; }
     }
-    return { type: pick, preserved: false, enchanted: false };
+    // Mastery "Fortune Teller": every card that lands in the player's hand counts,
+    // which is why a Reroll is worth a whole hand's worth of progress at once.
+    if (owner === 'player') this.arena.recordMasteryStat('cardsDrawn', 1);
+    return { type: pick, preserved: false, enchanted: false, greatEnchanted: false, curse: null };
   }
 
   // ── Card selection bar (mirrors Life's seed bar) ──────────────────
 
   private teardownBar(): void {
-    for (const s of this.barSlots) { s.bg.destroy(); s.icon.destroy(); s.name.destroy(); }
+    for (const s of this.barSlots) { s.bg.destroy(); s.icon.destroy(); s.name.destroy(); s.curse.destroy(); }
     this.barSlots = [];
     this.barBounds = { x1: 0, y1: 0, x2: 0, y2: 0 };
   }
@@ -407,25 +521,32 @@ export class FateKit {
     const startX = scene.scale.width / 2 - total / 2 + slotW / 2;
     const y = 46;
     this.barBounds = {
-      x1: startX - slotW / 2, y1: y - 30,
-      x2: startX - slotW / 2 + total, y2: y + 30,
+      x1: startX - slotW / 2, y1: y - 36,
+      x2: startX - slotW / 2 + total, y2: y + 36,
     };
 
     for (let i = 0; i < n; i++) {
       const x = startX + i * (slotW + gap);
-      const bg = scene.add.rectangle(x, y, slotW, 52, 0x141420, 0.85)
+      const bg = scene.add.rectangle(x, y, slotW, 58, 0x141420, 0.85)
         .setStrokeStyle(2, 0x88eecc, 0.7)
         .setDepth(200)
         .setScrollFactor(0)
         .setInteractive({ useHandCursor: true });
-      const icon = scene.add.text(x, y - 8, '', { fontSize: '20px' })
+      const icon = scene.add.text(x, y - 12, '', { fontSize: '20px' })
         .setOrigin(0.5).setDepth(201).setScrollFactor(0);
-      const name = scene.add.text(x, y + 16, '', { fontSize: '8px', color: '#bbddcc' })
+      const name = scene.add.text(x, y + 8, '', { fontSize: '8px', color: '#bbddcc' })
         .setOrigin(0.5).setDepth(201).setScrollFactor(0);
-      bg.on('pointerdown', () => {
+      // Bottom line: the Tarot curse riding on this card, when it has one.
+      const curse = scene.add.text(x, y + 21, '', { fontSize: '10px' })
+        .setOrigin(0.5).setDepth(201).setScrollFactor(0);
+      bg.on('pointerdown', (p: Phaser.Input.Pointer) => {
+        // Mastery "Cycle": right-click bins the card instead of selecting it.
+        if (p.rightButtonDown()) { this.tryCycleDelete(i); return; }
         if (i < this.playerHand.length) this.playerSelected = i;
       });
-      this.barSlots.push({ bg, icon, name });
+      bg.on('pointerover', () => { this.hoveredSlot = i; });
+      bg.on('pointerout', () => { if (this.hoveredSlot === i) this.hoveredSlot = -1; });
+      this.barSlots.push({ bg, icon, name, curse });
     }
   }
 
@@ -434,19 +555,25 @@ export class FateKit {
       const slot = this.barSlots[i];
       const card = this.playerHand[i];
       if (!card) {
-        slot.bg.setVisible(false); slot.icon.setVisible(false); slot.name.setVisible(false);
+        slot.bg.setVisible(false); slot.icon.setVisible(false);
+        slot.name.setVisible(false); slot.curse.setVisible(false);
         continue;
       }
       slot.bg.setVisible(true); slot.icon.setVisible(true); slot.name.setVisible(true);
       const def = DEF_BY_TYPE.get(card.type)!;
       const isSel = i === this.playerSelected;
-      const borderColor = card.enchanted ? 0xaa44ff : card.preserved ? 0xffee44 : def.color;
+      const borderColor = card.greatEnchanted ? 0xff33cc
+        : card.enchanted ? 0xaa44ff
+        : card.preserved ? 0xffee44
+        : def.color;
       slot.bg.setFillStyle(isSel ? 0x2a2a44 : 0x141420, isSel ? 0.95 : 0.85);
-      slot.bg.setStrokeStyle(isSel ? 3 : 2, borderColor, 1);
+      slot.bg.setStrokeStyle(card.greatEnchanted ? 4 : isSel ? 3 : 2, borderColor, 1);
       slot.bg.setScale(isSel ? 1.15 : 1);
       slot.icon.setText(def.emoji).setScale(isSel ? 1.2 : 1);
-      slot.name.setText(def.name);
-      slot.name.setColor(isSel ? '#ffffff' : '#88aa99');
+      slot.name.setText(card.greatEnchanted ? `${def.name} ×4` : def.name);
+      slot.name.setColor(card.greatEnchanted ? '#ff88dd' : isSel ? '#ffffff' : '#88aa99');
+      const curseDef = card.curse ? CURSE_BY_ID.get(card.curse) : undefined;
+      slot.curse.setVisible(!!curseDef).setText(curseDef?.emoji ?? '');
     }
   }
 
@@ -500,14 +627,24 @@ export class FateKit {
       }
     }
 
-    // ── Right-click: Paper perk card throw ──────────────────────────
+    // ── Right-click: Paper perk card throw (never over the hand — that bins a card) ──
     const rightJustDown = pointer.rightButtonDown() && !this.arena.rightPointerWasDown;
-    if (rightJustDown && this.arena.hasPerk('paper') && time >= this.paperCooldownUntil) {
+    if (rightJustDown && !this.consumedPointer() && this.arena.hasPerk('paper') && time >= this.paperCooldownUntil) {
       this.doPaperCardThrow(mouseX, mouseY, time);
     }
 
+    // ── Mastery: Tarot of Fate, on whichever slot it was bound over ──
+    const tSlot = this.tarotSlot();
+    if (tSlot) {
+      const key = tSlot === 'e' ? this.arena.eKey
+        : tSlot === 'r' ? this.arena.rKey
+        : tSlot === 'f' ? this.arena.fKey
+        : this.arena.qKey;
+      if (Phaser.Input.Keyboard.JustDown(key)) this.tryCastTarot(time);
+    }
+
     // ── Click (hold): throw the highlighted card ────────────────────
-    if (pointer.isDown && !this.consumedPointer() && !this.draggingGamble) {
+    if (pointer.isDown && !this.consumedPointer() && !this.draggingGamble && time >= this.cardLockUntil) {
       if (player.castAbility('fate-card-throw', FATE_STUB_CTX)) {
         this.doThrowCard(mouseX, mouseY, 'player');
       }
@@ -515,12 +652,12 @@ export class FateKit {
     this.clickWasDown = pointer.isDown;
 
     // ── F: Enchant ───────────────────────────────────────────────────
-    if (Phaser.Input.Keyboard.JustDown(this.arena.fKey)) {
+    if (tSlot !== 'f' && time >= this.enchantLockUntil && Phaser.Input.Keyboard.JustDown(this.arena.fKey)) {
       if (player.castAbility('fate-enchant', FATE_STUB_CTX)) this.doEnchant('player');
     }
 
     // ── Q: All In ────────────────────────────────────────────────────
-    if (Phaser.Input.Keyboard.JustDown(this.arena.qKey)) {
+    if (tSlot !== 'q' && Phaser.Input.Keyboard.JustDown(this.arena.qKey)) {
       if (player.castAbility('fate-all-in', FATE_STUB_CTX)) this.doAllIn('player');
     }
 
@@ -528,16 +665,234 @@ export class FateKit {
   }
 
   onEKey(): void {
+    if (this.tarotSlot() === 'e') return;
     if (this.arena.player.castAbility('fate-reroll', FATE_STUB_CTX)) this.doReroll('player');
   }
 
   onRKey(): void {
+    if (this.tarotSlot() === 'r') return;
+    if (this.arena.scene.time.now < this.preserveLockUntil) return;
     if (this.arena.player.castAbility('fate-preserve', FATE_STUB_CTX)) this.doPreserve('player');
   }
 
   // ── Public accessors ───────────────────────────────────────────────
 
   getNpcHandTypes(): FateCardType[] { return this.npcHand.map((c) => c.type); }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  Fate Mastery — Cycle (passive) + Tarot of Fate (bindable)
+  // ═══════════════════════════════════════════════════════════════════
+
+  /** The slot Tarot of Fate is bound over this match, or null when it isn't bound anywhere. */
+  private tarotSlot(): 'e' | 'r' | 'f' | 'q' | null {
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      if (this.arena.masteryBindFor(s) === 'tarot-of-fate') return s;
+    }
+    return null;
+  }
+
+  /** 0 = just cast, 1 = ready. Drives the HUD bar on whichever slot Tarot is bound to. */
+  getTarotCooldownRatio(time: number): number {
+    const lockLeft = this.tarotLockUntil - time;
+    if (lockLeft > 0) return Math.max(0, 1 - lockLeft / PURGE_LOCK_MS);
+    return Math.min(1, (time - this.tarotLastCastAt) / TAROT_COOLDOWN_MS);
+  }
+
+  /** True while the Purging curse has Preserve (R) or Enchant (F) locked out. */
+  isCurseLocked(abilityId: string): boolean {
+    const now = this.arena.scene.time.now;
+    if (abilityId === 'fate-preserve') return now < this.preserveLockUntil;
+    if (abilityId === 'fate-enchant') return now < this.enchantLockUntil;
+    return false;
+  }
+
+  /** 0 = just locked, 1 = free again. Drives the HUD bar for a Purging-locked ability. */
+  getCurseLockRatio(abilityId: string, time: number): number {
+    const until = abilityId === 'fate-preserve' ? this.preserveLockUntil : this.enchantLockUntil;
+    return Phaser.Math.Clamp(1 - (until - time) / PURGE_LOCK_MS, 0, 1);
+  }
+
+  private tryCastTarot(time: number): void {
+    if (time < this.tarotLockUntil) return;
+    if (time - this.tarotLastCastAt < TAROT_COOLDOWN_MS) return;
+    const player = this.arena.player;
+    const idx = this.hoveredSlot;
+    const card = idx >= 0 ? this.playerHand[idx] : undefined;
+    if (!card) {
+      this.arena.showFloatingText(player.x, player.y - 36, '🔮 Hover a card!', '#cc99ff');
+      return;
+    }
+    if (card.greatEnchanted) {
+      this.arena.showFloatingText(player.x, player.y - 36, '🔮 Already greatly enchanted', '#cc99ff');
+      return;
+    }
+    this.tarotLastCastAt = time;
+
+    // Great enchant overrules a plain enchant outright rather than stacking with it.
+    card.enchanted = false;
+    card.greatEnchanted = true;
+    card.curse = FATE_CURSES[Math.floor(Math.random() * FATE_CURSES.length)].curse;
+    const def = CURSE_BY_ID.get(card.curse)!;
+    this.arena.showFloatingText(player.x, player.y - 36, '🔮 TAROT OF FATE ×4', '#ff88dd');
+    this.arena.showFloatingText(player.x, player.y - 56, `${def.emoji} ${def.name}: ${def.blurb}`, '#ffaa66');
+    this.refreshBar();
+  }
+
+  /**
+   * Cycle passive: right-clicking a card bins it. Every third bin the deck immediately
+   * deals two fresh cards, so a hand of dead draws can be churned back into something live.
+   */
+  private tryCycleDelete(idx: number): void {
+    if (!this.arena.masteryActive) return;
+    if (idx < 0 || idx >= this.playerHand.length) return;
+    const player = this.arena.player;
+    this.playerHand.splice(idx, 1);
+    if (this.playerSelected >= this.playerHand.length) {
+      this.playerSelected = Math.max(0, this.playerHand.length - 1);
+    }
+    this.cycleBinned++;
+    if (this.cycleBinned >= CYCLE_BIN_TARGET) {
+      this.cycleBinned -= CYCLE_BIN_TARGET;
+      let drawn = 0;
+      for (let i = 0; i < CYCLE_DRAW_COUNT && this.playerHand.length < this.playerHandSize; i++) {
+        this.playerHand.push(this.drawCardFor('player'));
+        drawn++;
+      }
+      this.arena.showFloatingText(player.x, player.y - 36, `🔁 Cycle! +${drawn}`, '#88eecc');
+    } else {
+      this.arena.showFloatingText(player.x, player.y - 36, `🗑️ Binned (${this.cycleBinned}/${CYCLE_BIN_TARGET})`, '#99aabb');
+    }
+    this.refreshBar();
+  }
+
+  /**
+   * Fires the curse riding on a greatly-enchanted card, the moment that card is played.
+   * `survivor` is the played card when Preserve kept it in hand — Immolating spares it,
+   * since the curse burns every *other* card.
+   */
+  private resolveCurse(curse: FateCurse, time: number, survivor: FateCard | null = null): void {
+    const player = this.arena.player;
+    const def = CURSE_BY_ID.get(curse)!;
+    this.arena.showFloatingText(player.x, player.y - 52, `${def.emoji} ${def.name.toUpperCase()}`, '#ff6688');
+    switch (curse) {
+      case 'painful':
+        player.applySelfDamage(30);
+        break;
+      case 'immolating': {
+        // Deliberately does NOT feed the Cycle counter — these cards burn, they aren't binned.
+        const kept = survivor && this.playerHand.includes(survivor) ? [survivor] : [];
+        const burned = this.playerHand.length - kept.length;
+        this.playerHand = kept;
+        this.playerSelected = 0;
+        if (burned > 0) this.arena.showFloatingText(player.x, player.y - 68, `🔥 −${burned} cards`, '#ff7733');
+        break;
+      }
+      case 'weakening':
+        this.addMod('player', 'speed', 0.67, 10000);
+        break;
+      case 'confusing':
+        player.invertedControlsUntil = Math.max(player.invertedControlsUntil, time + 5000);
+        break;
+      case 'vulnerable':
+        player.vulnerableNextHit = true;
+        break;
+      case 'cursed':
+        this.spawnCurseBullets(player);
+        break;
+      case 'stunning':
+        this.cardLockUntil = Math.max(this.cardLockUntil, time + STUN_LOCK_MS);
+        break;
+      case 'cocky':
+        this.cockyAllIn = true;
+        break;
+      case 'purging':
+        for (const c of this.playerHand) {
+          c.enchanted = false;
+          c.greatEnchanted = false;
+          c.preserved = false;
+          c.curse = null;
+        }
+        this.tarotLockUntil = time + PURGE_LOCK_MS;
+        this.preserveLockUntil = time + PURGE_LOCK_MS;
+        this.enchantLockUntil = time + PURGE_LOCK_MS;
+        break;
+    }
+  }
+
+  /** Cursed: 15 purple bullets sweep in from the arena's left and right edges, homing on the victim once. */
+  private spawnCurseBullets(victim: Fighter): void {
+    const scene = this.arena.scene;
+    const W = scene.scale.width;
+    const H = scene.scale.height;
+    for (let i = 0; i < 15; i++) {
+      scene.time.delayedCall(i * 70, () => {
+        if (!victim.active || victim.hp <= 0) return;
+        const fromLeft = i % 2 === 0;
+        const x = fromLeft ? -12 : W + 12;
+        const y = 40 + Math.random() * (H - 80);
+        const ang = Math.atan2(victim.y - y, victim.x - x);
+        const speed = 300;
+        const sprite = scene.add.circle(x, y, 6, 0xaa33ff, 0.95).setStrokeStyle(2, 0xdd88ff, 1).setDepth(8);
+        this.curseBullets.push({
+          sprite, x, y,
+          vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed,
+          victim, expiresAt: scene.time.now + 6000,
+        });
+      });
+    }
+  }
+
+  private updateCurseBullets(time: number, delta: number): void {
+    const dt = delta / 1000;
+    const W = this.arena.scene.scale.width;
+    const H = this.arena.scene.scale.height;
+    for (let i = this.curseBullets.length - 1; i >= 0; i--) {
+      const b = this.curseBullets[i];
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      b.sprite.setPosition(b.x, b.y);
+      const hit = b.victim.active && b.victim.hp > 0
+        && Phaser.Math.Distance.Between(b.x, b.y, b.victim.x, b.victim.y) <= 24;
+      const gone = time > b.expiresAt || b.x < -40 || b.x > W + 40 || b.y < -40 || b.y > H + 40;
+      if (hit) {
+        b.victim.takeDamage(3);
+        this.arena.spawnHitFlash(b.x, b.y, 0xaa33ff);
+      }
+      if (hit || gone) {
+        b.sprite.destroy();
+        this.curseBullets.splice(i, 1);
+      }
+    }
+  }
+
+  // ── Big Hand ledger ────────────────────────────────────────────────
+
+  /** Opens a fresh damage tally for a card the player just played. */
+  private openLedger(time: number): number {
+    const id = ++this.ledgerCounter;
+    this.ledgers.set(id, { total: 0, expiresAt: time + LEDGER_WINDOW_MS, credited: false });
+    return id;
+  }
+
+  /**
+   * Credits damage to the card that caused it. Once one card's tally crosses 50 the
+   * "Big Hand" mastery requirement ticks — once per card, however far past 50 it goes.
+   */
+  creditCardDamage(ledgerId: number, amount: number): void {
+    if (!ledgerId || amount <= 0) return;
+    const ledger = this.ledgers.get(ledgerId);
+    if (!ledger || ledger.credited) return;
+    ledger.total += amount;
+    if (ledger.total >= BIG_HAND_THRESHOLD) {
+      ledger.credited = true;
+      this.arena.recordMasteryStat('bigCardHits', 1);
+      this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 60, '🃏 BIG HAND!', '#ffee66');
+    }
+  }
+
+  private pruneLedgers(time: number): void {
+    for (const [id, l] of this.ledgers) if (time > l.expiresAt) this.ledgers.delete(id);
+  }
 
   // ── Per-frame update ───────────────────────────────────────────────
 
@@ -587,6 +942,10 @@ export class FateKit {
     // New Cards! world objects
     this.updateBoomerangs(time);
     this.updateSnowballs(time, delta);
+
+    // Fate Mastery: Cursed bullets + expiring Big Hand tallies
+    this.updateCurseBullets(time, delta);
+    this.pruneLedgers(time);
 
     // All In orbits
     if (this.playerAllIn) this.updateAllIn(this.playerAllIn, time, 'player');
@@ -678,20 +1037,34 @@ export class FateKit {
     if (idx < 0 || idx >= hand.length) return;
     const card = hand[idx];
     const time = this.arena.scene.time.now;
+    // Stunning curse: the hand is frozen out entirely for a few seconds.
+    if (owner === 'player' && time < this.cardLockUntil) return;
 
+    // Open a damage tally so everything this one card ends up dealing — including
+    // delayed projectiles, poison ticks and coin bounces — feeds the Big Hand stat.
+    const ledgerId = owner === 'player' ? this.openLedger(time) : 0;
+    this.activeLedgerId = ledgerId;
     this.executeCard(card, tx, ty, owner, time);
+    this.activeLedgerId = 0;
 
     // R+ "Wonder Preserve": a preserved card keeps its enchanted status too.
     const keepEnchant = card.preserved && this.ownerHasUpgrade(owner, 'r');
+    const curse = card.curse;
     if (card.enchanted && !keepEnchant) card.enchanted = false;
+    if (card.greatEnchanted && !keepEnchant) { card.greatEnchanted = false; card.curse = null; }
+    let survivor: FateCard | null = null;
     if (card.preserved) {
       card.preserved = false;
+      survivor = card;
     } else {
       hand.splice(idx, 1);
       if (owner === 'player' && this.playerSelected >= hand.length) {
         this.playerSelected = Math.max(0, hand.length - 1);
       }
     }
+
+    // The curse fires once the hand has settled, so Immolating/Purging see the real hand.
+    if (owner === 'player' && curse) this.resolveCurse(curse, time, survivor);
   }
 
   doReroll(owner: 'player' | 'npc'): void {
@@ -719,26 +1092,35 @@ export class FateKit {
     const hand = owner === 'player' ? this.playerHand : this.npcHand;
     const idx = owner === 'player' ? this.playerSelected : this.pickNpcIndex(hand);
     if (idx < 0 || idx >= hand.length) return;
+    // Tarot's great enchant overrules a plain one and never stacks with it.
+    if (hand[idx].greatEnchanted) {
+      if (owner === 'player') this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 36, '🔮 Already greatly enchanted', '#cc99ff');
+      return;
+    }
     hand[idx].enchanted = true;
     if (owner === 'player') this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 36, '🔮 Enchanted!', '#cc88ff');
   }
 
   private executeCard(card: FateCard, tx: number, ty: number, owner: 'player' | 'npc', time: number): void {
-    const mult = card.enchanted ? 2 : 1;
+    // A greatly-enchanted (Tarot) card is 4x and replaces Enchant's 2x entirely; for the
+    // non-damage "enchanted" perks on individual cards it counts as enchanted too, since
+    // it is strictly the stronger version of the same effect.
+    const mult = card.greatEnchanted ? GREAT_ENCHANT_MULT : card.enchanted ? 2 : 1;
+    const strong = card.enchanted || card.greatEnchanted;
     // F+ "Enchant gives small extra bonuses": only when the card is enchanted AND the side owns F+.
-    const ep = card.enchanted && this.ownerHasUpgrade(owner, 'f');
+    const ep = strong && this.ownerHasUpgrade(owner, 'f');
     const dmg = Math.round(BASE_DMG[card.type] * mult * this.dmgMultFor(owner, time));
     switch (card.type) {
       case 'laser': this.castLaser(tx, ty, owner, dmg, ep); break;
       case 'burst': this.castBurst(tx, ty, owner, dmg, ep); break;
       case 'barrier': this.castBarrier(owner, dmg, ep); break;
       case 'explosion': this.castExplosion(tx, ty, owner, dmg, ep); break;
-      case 'infect': this.castInfect(tx, ty, owner, dmg, card.enchanted, ep); break;
-      case 'coin': this.castCoin(owner, card.enchanted, ep); break;
+      case 'infect': this.castInfect(tx, ty, owner, dmg, strong, ep); break;
+      case 'coin': this.castCoin(owner, strong, ep); break;
       case 'heal': this.castHeal(owner, dmg, ep); break;
-      case 'buff': this.castBuff(owner, card.enchanted, ep); break;
-      case 'lightning': this.castLightning(tx, ty, owner, dmg, card.enchanted ? 4000 : 2000, ep); break;
-      case 'slots': this.castSlots(tx, ty, owner, card.enchanted, ep); break;
+      case 'buff': this.castBuff(owner, strong, ep); break;
+      case 'lightning': this.castLightning(tx, ty, owner, dmg, strong ? 4000 : 2000, ep); break;
+      case 'slots': this.castSlots(tx, ty, owner, strong, ep); break;
       case 'boomerang': this.castBoomerang(owner, dmg, ep); break;
       case 'slash': this.castSlash(tx, ty, owner, dmg, ep); break;
       case 'phase': this.castPhase(tx, ty, owner, dmg, ep); break;
@@ -759,6 +1141,7 @@ export class FateKit {
   private castLaser(tx: number, ty: number, owner: 'player' | 'npc', dmg: number, ep = false): void {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const scene = this.arena.scene;
+    const lid = this.activeLedgerId;
     const angle = Math.atan2(ty - caster.y, tx - caster.x);
     const range = 1400;
     const W = scene.scale.width; const H = scene.scale.height;
@@ -790,6 +1173,7 @@ export class FateKit {
       }
       if (onBeam) {
         target.takeDamage(dmg);
+        this.creditCardDamage(lid, dmg);
         this.arena.spawnHitFlash(target.x, target.y, 0xff3333);
       }
     }
@@ -837,6 +1221,7 @@ export class FateKit {
     for (const deg of degs) {
       const angle = baseAngle + deg * (Math.PI / 180);
       const proj = new Projectile(this.arena.scene, caster.x, caster.y, 'proj-fate-burst', dmg, isPlayer);
+      (proj as any).fateLedgerId = this.activeLedgerId;
       this.arena.projectiles.add(proj);
       proj.launch(Math.cos(angle) * speed, Math.sin(angle) * speed);
       proj.setRotation(angle);
@@ -854,6 +1239,7 @@ export class FateKit {
     for (let i = 0; i < count; i++) {
       const angle = (i / count) * Math.PI * 2;
       const proj = new Projectile(this.arena.scene, caster.x, caster.y, 'proj-fate-barrier', dmg, isPlayer);
+      (proj as any).fateLedgerId = this.activeLedgerId;
       this.arena.projectiles.add(proj);
       proj.launch(Math.cos(angle) * speed, Math.sin(angle) * speed);
       proj.setRotation(angle);
@@ -867,6 +1253,7 @@ export class FateKit {
     const scene = this.arena.scene;
     const dist = Phaser.Math.Distance.Between(caster.x, caster.y, tx, ty);
     const travelMs = Math.max(150, (dist / 500) * 1000);
+    const lid = this.activeLedgerId;
 
     const bomb = scene.add.circle(caster.x, caster.y, 8, 0xcc2222, 1).setStrokeStyle(2, 0xffaa00).setDepth(8);
     let reflected = false;
@@ -897,6 +1284,7 @@ export class FateKit {
           if (!target.active || target.hp <= 0) continue;
           if (Phaser.Math.Distance.Between(tx, ty, target.x, target.y) <= radius) {
             target.takeDamage(dmg);
+            this.creditCardDamage(lid, dmg);
           }
         }
         const ring = scene.add.circle(tx, ty, 10, 0xff8800, 0.6).setDepth(9);
@@ -914,6 +1302,7 @@ export class FateKit {
     const dotDps = enchanted ? 6 : 3;
     // F+ "Infect: 2× infect effect duration" (3s → 6s).
     const durMs = ep ? 6000 : 3000;
+    const lid = this.activeLedgerId;
     for (let i = 0; i < 3; i++) {
       this.arena.scene.time.delayedCall(i * 100, () => {
         if (!caster.active) return;
@@ -923,6 +1312,7 @@ export class FateKit {
         const proj = new Projectile(this.arena.scene, caster.x, caster.y, 'proj-fate-infect', dmg, isPlayer);
         (proj as any).fateInfectDps = dotDps;
         (proj as any).fateInfectDurMs = durMs;
+        (proj as any).fateLedgerId = lid;
         this.arena.projectiles.add(proj);
         proj.launch((dx / len) * 460, (dy / len) * 460);
       });
@@ -930,15 +1320,17 @@ export class FateKit {
   }
 
   /** Called from ArenaScene's hit pipeline when a proj-fate-infect projectile connects. */
-  applyPoison(target: Fighter, dps: number, time: number, durMs = 3000): void {
+  applyPoison(target: Fighter, dps: number, time: number, durMs = 3000, ledgerId = 0): void {
     let p = this.poison.get(target);
     if (!p) {
       const visual = this.arena.scene.add.text(target.x, target.y - 44, '☠️', { fontSize: '13px' }).setOrigin(0.5).setDepth(10);
-      p = { until: 0, dps: 0, tickAccum: 0, visual };
+      p = { until: 0, dps: 0, tickAccum: 0, visual, ledgerId };
       this.poison.set(target, p);
     }
     p.until = Math.max(p.until, time + durMs);
     p.dps = Math.max(p.dps, dps);
+    // Refreshing with a newer card re-points the tally so its ticks count toward that card.
+    if (ledgerId) p.ledgerId = ledgerId;
   }
 
   private updatePoison(time: number, delta: number): void {
@@ -954,6 +1346,7 @@ export class FateKit {
         p.tickAccum -= 1000;
         if (target.active && target.hp > 0) {
           target.takeDamage(p.dps);
+          this.creditCardDamage(p.ledgerId, p.dps);
         }
       }
     }
@@ -974,7 +1367,7 @@ export class FateKit {
       this.coins.push({
         sprite, x: sprite.x, y: sprite.y, vy: -260 * slow,
         risingUntil: time + 500 / slow, expiresAt: time + 6000,
-        owner, pairId,
+        owner, pairId, ledgerId: this.activeLedgerId,
       });
     }
   }
@@ -1034,8 +1427,11 @@ export class FateKit {
 
     if (target.active && target.hp > 0) {
       target.takeDamage(damage);
+      this.creditCardDamage(c.ledgerId, damage);
       this.arena.spawnHitFlash(target.x, target.y, 0xffee00);
     }
+    // Mastery "Ricochet": one tick per bounce, whether or not it connected.
+    if (c.owner === 'player') this.arena.recordMasteryStat('coinBounces', 1);
 
     const toRemove = partner ? [i, this.coins.indexOf(partner)] : [i];
     toRemove.sort((a, b) => b - a);
@@ -1103,7 +1499,7 @@ export class FateKit {
     const ring = scene.add.circle(tx, ty, 70, 0xffee44, 0.25).setStrokeStyle(2, 0xffee44, 0.9).setDepth(6);
     scene.tweens.add({ targets: ring, alpha: 0.5, yoyo: true, repeat: -1, duration: 300 });
     // F+ "Lightning: 1.5× AOE duration" (telegraph window before the bolt lands).
-    this.lightningStrikes.push({ ring, x: tx, y: ty, owner, dmg, stunMs, resolveAt: scene.time.now + (ep ? 3000 : 2000) });
+    this.lightningStrikes.push({ ring, x: tx, y: ty, owner, dmg, stunMs, resolveAt: scene.time.now + (ep ? 3000 : 2000), ledgerId: this.activeLedgerId });
   }
 
   private updateLightningStrikes(time: number): void {
@@ -1122,6 +1518,7 @@ export class FateKit {
         if (!target.active || target.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(s.x, s.y, target.x, target.y) <= 70) {
           target.takeDamage(s.dmg);
+          this.creditCardDamage(s.ledgerId, s.dmg);
           if (target === this.arena.player) this.playerStunUntil = Math.max(this.playerStunUntil, time + s.stunMs);
           else this.npcStunUntil = Math.max(this.npcStunUntil, time + s.stunMs);
           this.arena.showFloatingText(target.x, target.y - 40, '⚡ STUNNED', '#ffee44');
@@ -1214,12 +1611,16 @@ export class FateKit {
     // Q+ "Roulette Expert": the player wagers the gamble-bar amount and gets +2s
     // of orbit time before the circle detonates.
     const rouletteExpert = owner === 'player' && this.arena.hasUpgrade('q');
-    const wager = rouletteExpert ? Math.max(1, this.gambleHp) : 50;
+    // Cocky curse: the bet is no longer yours to size — it's the whole health bar.
+    const cocky = owner === 'player' && this.cockyAllIn;
+    const wager = cocky ? Math.max(1, Math.ceil(caster.hp))
+      : rouletteExpert ? Math.max(1, this.gambleHp)
+      : 50;
     const orbitMs = rouletteExpert ? 5000 : 3000;
-    const sprite = scene.add.circle(caster.x + 100, caster.y, 50, 0xffcc44, 0.4).setStrokeStyle(3, 0xffaa00, 0.9).setDepth(6);
+    const sprite = scene.add.circle(caster.x + 100, caster.y, 50, 0xffcc44, 0.4).setStrokeStyle(3, cocky ? 0xff3333 : 0xffaa00, 0.9).setDepth(6);
     const allIn: FateAllIn = { sprite, owner, activatesAt: scene.time.now + orbitMs, orbitAngle: 0, wager };
     if (owner === 'player') this.playerAllIn = allIn; else this.npcAllIn = allIn;
-    this.arena.showFloatingText(caster.x, caster.y - 36, `🎰 All In! (${wager} HP)`, '#ffcc44');
+    this.arena.showFloatingText(caster.x, caster.y - 36, `${cocky ? '😈' : '🎰'} All In! (${wager} HP)`, cocky ? '#ff6666' : '#ffcc44');
   }
 
   private updateAllIn(allIn: FateAllIn, time: number, owner: 'player' | 'npc'): void {
@@ -1244,6 +1645,8 @@ export class FateKit {
       target.takeDamage(allIn.wager);
       this.arena.spawnHitFlash(target.x, target.y, 0xffcc44);
       this.arena.showFloatingText(caster.x, caster.y - 50, `🎰 HIT! ${allIn.wager}`, '#ffee44');
+      // Mastery "High Roller": only the player's landed wagers count.
+      if (owner === 'player') this.arena.recordMasteryStat('allInHits', 1);
     } else {
       caster.applySelfDamage(allIn.wager);
       this.arena.showFloatingText(caster.x, caster.y - 50, `🎰 MISS! -${allIn.wager} HP`, '#ff8888');
@@ -1268,7 +1671,7 @@ export class FateKit {
     const count = ep ? 2 : 1; // F+ "Boomerang: summon 2 projectiles instead of 1"
     for (let i = 0; i < count; i++) {
       const sprite = scene.add.circle(0, 0, 10, 0xffe000, 0.95).setStrokeStyle(2, 0xaa8800, 1).setDepth(8);
-      this.boomerangs.push({ sprite, owner, angle: (i / count) * Math.PI * 2, radius: 92, dmg, expiresAt: time + 3000, hitAt: new Map() });
+      this.boomerangs.push({ sprite, owner, angle: (i / count) * Math.PI * 2, radius: 92, dmg, expiresAt: time + 3000, hitAt: new Map(), ledgerId: this.activeLedgerId });
     }
   }
 
@@ -1288,6 +1691,7 @@ export class FateKit {
         if (time - last < 500) continue;
         b.hitAt.set(target, time);
         target.takeDamage(b.dmg);
+        this.creditCardDamage(b.ledgerId, b.dmg);
         this.arena.spawnHitFlash(target.x, target.y, 0xffe000);
       }
     }
@@ -1297,6 +1701,7 @@ export class FateKit {
   private castSlash(tx: number, ty: number, owner: 'player' | 'npc', dmg: number, ep: boolean): void {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const scene = this.arena.scene;
+    const lid = this.activeLedgerId;
     const ang = Math.atan2(ty - caster.y, tx - caster.x);
     const range = 100;
     const halfCone = Math.PI * 0.42;
@@ -1306,6 +1711,7 @@ export class FateKit {
       const to = Math.atan2(target.y - caster.y, target.x - caster.x);
       if (Math.abs(Phaser.Math.Angle.Wrap(to - ang)) > halfCone) continue;
       target.takeDamage(dmg);
+      this.creditCardDamage(lid, dmg);
       this.arena.spawnHitFlash(target.x, target.y, 0xff2222);
       // F+ "Slash: applies a 50% slow for 5 seconds".
       if (ep) { this.applySlow(target, 0.5, 5000); this.arena.showFloatingText(target.x, target.y - 40, '🐌 SLOW', '#88ddff'); }
@@ -1336,6 +1742,7 @@ export class FateKit {
       if (!target.active || target.hp <= 0) continue;
       if (this.pointToSegmentDist(target.x, target.y, startX, startY, nx, ny) <= 28) {
         target.takeDamage(dmg);
+        this.creditCardDamage(this.activeLedgerId, dmg);
         this.arena.spawnHitFlash(target.x, target.y, 0x00c2c7);
       }
     }
@@ -1358,6 +1765,7 @@ export class FateKit {
     const ang = Math.atan2(ty - caster.y, tx - caster.x);
     const speed = 130;
     const proj = new Projectile(this.arena.scene, caster.x, caster.y, 'proj-fate-striker', dmg, isPlayer);
+    (proj as any).fateLedgerId = this.activeLedgerId;
     this.arena.projectiles.add(proj);
     if (ep) proj.setScale(1.2); // F+ "Striker: 20% larger projectile"
     proj.launch(Math.cos(ang) * speed, Math.sin(ang) * speed);
@@ -1374,6 +1782,7 @@ export class FateKit {
       if (!target.active || target.hp <= 0) continue;
       if (Phaser.Math.Distance.Between(caster.x, caster.y, target.x, target.y) > radius) continue;
       target.takeDamage(dmg);
+      this.creditCardDamage(this.activeLedgerId, dmg);
       const ang = Math.atan2(target.y - caster.y, target.x - caster.x);
       const speed = 520 * kbMult;
       this.applyKnockback(target, Math.cos(ang) * speed, Math.sin(ang) * speed, 260);
@@ -1391,7 +1800,7 @@ export class FateKit {
     const speed = 360;
     const sprite = scene.add.circle(caster.x, caster.y, 11, 0xd6f2ff, 0.95).setStrokeStyle(2, 0x88bbdd, 1).setDepth(8);
     // F+ "Chill: +3 second slow duration" (5s → 8s).
-    this.snowballs.push({ sprite, x: caster.x, y: caster.y, vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed, owner, dmg, slowMs: ep ? 8000 : 5000, expiresAt: scene.time.now + 2000 });
+    this.snowballs.push({ sprite, x: caster.x, y: caster.y, vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed, owner, dmg, slowMs: ep ? 8000 : 5000, expiresAt: scene.time.now + 2000, ledgerId: this.activeLedgerId });
   }
 
   private updateSnowballs(time: number, delta: number): void {
@@ -1416,11 +1825,15 @@ export class FateKit {
   private explodeSnowball(s: FateSnowball, primary: Fighter | null): void {
     const scene = this.arena.scene;
     const radius = 200;
-    if (primary && primary.active && primary.hp > 0) primary.takeDamage(s.dmg);
+    if (primary && primary.active && primary.hp > 0) {
+      primary.takeDamage(s.dmg);
+      this.creditCardDamage(s.ledgerId, s.dmg);
+    }
     for (const target of this.opponentsOf(s.owner)) {
       if (!target.active || target.hp <= 0) continue;
       if (Phaser.Math.Distance.Between(s.x, s.y, target.x, target.y) > radius) continue;
       target.takeDamage(s.dmg);
+      this.creditCardDamage(s.ledgerId, s.dmg);
       this.applySlow(target, 0.5, s.slowMs);
       this.arena.showFloatingText(target.x, target.y - 40, '❄️ SLOW', '#aaddff');
     }
@@ -1455,6 +1868,7 @@ export class FateKit {
     while (cur) {
       drawArc(fromX, fromY, cur.x, cur.y);
       cur.takeDamage(dmg);
+      this.creditCardDamage(this.activeLedgerId, dmg);
       this.arena.spawnHitFlash(cur.x, cur.y, 0x9b5cff);
       pool.splice(pool.indexOf(cur), 1);
       fromX = cur.x; fromY = cur.y;
@@ -1474,11 +1888,13 @@ export class FateKit {
     const scene = this.arena.scene;
     const count = ep ? 17 : 12; // F+ "Emperor: +5 bullets launched"
     const speed = 540;
+    const lid = this.activeLedgerId;
     for (let i = 0; i < count; i++) {
       scene.time.delayedCall(i * 55, () => {
         if (!caster.active) return;
         const ang = Math.atan2(ty - caster.y, tx - caster.x) + (Math.random() - 0.5) * 0.12;
         const proj = new Projectile(scene, caster.x, caster.y, 'proj-fate-burst', dmg, isPlayer);
+        (proj as any).fateLedgerId = lid;
         proj.setTint(0xffe680);
         this.arena.projectiles.add(proj);
         proj.launch(Math.cos(ang) * speed, Math.sin(ang) * speed);
