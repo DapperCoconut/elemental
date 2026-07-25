@@ -12,6 +12,10 @@ export interface CastContext {
   fireColor: (base: number) => number;
   /** Maps a water visual color through the caster's equipped color cosmetic (identity without one). */
   waterColor: (base: number) => number;
+  /** Maps a life visual color through the caster's equipped color cosmetic (identity without one). */
+  lifeColor: (base: number) => number;
+  /** Maps an air visual color through the caster's equipped color cosmetic (identity without one). */
+  airColor: (base: number) => number;
   dealAoeDamage: (cx: number, cy: number, radius: number, damage: number) => void;
   /** Fire Mastery: same as dealAoeDamage but tracks zombie kills for the Nuclear Cleansing challenge (player-only). */
   dealFlameNukeDamage: (cx: number, cy: number, radius: number, damage: number) => void;
@@ -78,6 +82,8 @@ export interface CastContext {
   soulDeathWhistle: (tx: number, ty: number) => void;
   soulHellsTorment: () => void;
   // Hunt
+  /** Shotgun recoil + muzzle sheet for whichever side is firing. */
+  huntShotgunBlast: (angle: number) => void;
   huntThrowGrenade: (tx: number, ty: number, holdMs: number) => void;
   huntHuntersTrail: () => void;
   huntBloodPact: () => void;

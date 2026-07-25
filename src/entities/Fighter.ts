@@ -194,6 +194,12 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public attackIntervalMult = 1;
   /** Radians. Players: aim direction; bots/husks: movement direction. Drives backstab checks + facing-eye HUD. */
   public facingAngle = 0;
+  /**
+   * Silence Mastery — Puppetmaster: someone else is steering this body until this
+   * `scene.time.now` timestamp. Its own AI must yield entirely — no movement, no
+   * attacks — and leave the velocity to whoever is driving.
+   */
+  public puppetControlledUntil = 0;
 
   // Dark magic status effects (Magic element upgrades)
   public darkVulnStacks = 0;         // +25% incoming dmg per stack (acid cloud)
@@ -256,6 +262,12 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public sicknessUntil = 0;
   /** Growth Mastery — Carrier: permanent leftovers of a survived sickness. Never clears. */
   public sicknessCarrier = false;
+
+  /**
+   * Sound Mastery — Bugle: rattled by a caravan until this `scene.time.now` timestamp.
+   * Every note the bugler lands while this holds shakes a little more damage loose.
+   */
+  public vibrationUntil = 0;
 
   /** Metal Mastery — Natural Clot: flat amount subtracted from every incoming hit. Default 0. */
   public flatDamageReduction = 0;

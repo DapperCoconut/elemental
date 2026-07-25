@@ -1,8 +1,13 @@
 import Phaser from 'phaser';
+import { AvatarSpec, BaseAvatar, ColorFn, FxBase, TAU, easeIn, easeOut } from './ElementVisuals';
 
 /**
  * Shared drawing kit for everything Fire renders: the living-flame avatar (ball arms + eyes
  * + body heat), the flame wreath aura, and the one-shot effects every fire ability fires off.
+ *
+ * The generic halves — the tween-backed animation runner and the character rig itself — live
+ * in ElementVisuals.ts and are shared with the other elements. What stays here is what makes
+ * fire fire: the flame tongue, the palette, and the effects built out of them.
  *
  * Colours must come from the FIRE palette below — those exact values are the keys of the
  * Burnt cosmetic's remap table, so anything drawn with an off-palette orange would stay
@@ -10,7 +15,9 @@ import Phaser from 'phaser';
  */
 
 /** `(base) => displayed` — CosmeticsKit.fireColor bound to one owner. */
-export type FireColorFn = (base: number) => number;
+export type FireColorFn = ColorFn;
+
+export type { ArmGesture, ArmHold } from './ElementVisuals';
 
 export const FIRE = {
   ember: 0x991100,
@@ -25,11 +32,6 @@ export const FIRE = {
   pale: 0xffff99,
   white: 0xffffff,
 } as const;
-
-const TAU = Math.PI * 2;
-
-const easeOut = (t: number): number => 1 - (1 - t) * (1 - t);
-const easeIn = (t: number): number => t * t;
 
 /**
  * A tapered, slightly-curved flame tongue: wide at the root, pinched at the waist, drawn out
@@ -104,24 +106,9 @@ export interface ExplosionOpts {
  * One-shot fire effects. Cheap to construct — build one per owner (or per cast, as the
  * ability files do) and hand it the owner's colour mapper.
  */
-export class FireFx {
-  constructor(private scene: Phaser.Scene, private tint: FireColorFn = (c) => c) {}
-
-  /**
-   * Runs `draw(g, t)` every frame for `duration` ms with `t` sweeping 0→1, then cleans up.
-   * Built on a tween so a scene restart kills it along with everything else.
-   */
-  anim(depth: number, duration: number, draw: (g: Phaser.GameObjects.Graphics, t: number) => void): void {
-    const g = this.scene.add.graphics().setDepth(depth);
-    this.scene.tweens.addCounter({
-      from: 0, to: 1, duration,
-      onUpdate: (tw) => {
-        if (!g.active) return;
-        g.clear();
-        draw(g, Number(tw.getValue()));
-      },
-      onComplete: () => g.destroy(),
-    });
+export class FireFx extends FxBase {
+  constructor(scene: Phaser.Scene, tint: FireColorFn = (c) => c) {
+    super(scene, tint);
   }
 
   /**
@@ -150,12 +137,7 @@ export class FireFx {
 
   /** Blown-out white core — the first two frames of any real explosion. */
   flash(x: number, y: number, radius: number, depth = 7): void {
-    this.anim(depth, 150, (g, t) => {
-      g.fillStyle(this.tint(FIRE.white), (1 - t) * 0.95);
-      g.fillCircle(x, y, radius * (0.5 + t * 0.9));
-      g.fillStyle(this.tint(FIRE.pale), (1 - t) * 0.6);
-      g.fillCircle(x, y, radius * (0.8 + t * 1.5));
-    });
+    this.flashIn(x, y, radius, FIRE.white, FIRE.pale, depth);
   }
 
   /**
@@ -565,332 +547,82 @@ export class FireWreath {
 
 // ── FireAvatar ────────────────────────────────────────────────────────────
 
-/** One-shot arm gestures. `spray` and `charge` are held instead (see `hold`). */
-export type ArmGesture =
-  | 'punch'    // throw a fireball — one arm jabs along the aim
-  | 'dash'     // wind both arms back, then fling them forward
-  | 'slam'     // raise overhead, then drive down at the target
-  | 'raise'    // both arms thrust skyward and hold (ultimates)
-  | 'sweep'    // wide horizontal arc across the aim
-  | 'clap'     // arms smack together in front, then bounce apart
-  | 'flex';    // both arms pump out to the sides (toggles, buffs)
-
-/** Sustained poses held for as long as the ability is being channelled. */
-export type ArmHold = 'spray' | 'charge' | null;
-
-interface ArmPose { ang: number; dist: number; scale: number }
-
-const IDLE_DIST = 24;
-const ARM_STIFFNESS = 0.32;
+/** Concentric discs of one glowing ball hand, outermost first. */
+const FIRE_AVATAR: AvatarSpec = {
+  hands: [
+    { r: 9, color: FIRE.core, alpha: 0.28 },
+    { r: 6.4, color: FIRE.amber, alpha: 0.9 },
+    { r: 3.6, color: FIRE.yellow, alpha: 1 },
+    { r: 1.5, color: FIRE.white, alpha: 0.9, ox: -1, oy: -1 },
+  ],
+  eyeWhite: FIRE.pale,
+  eyePupil: 0x1a0600,
+  squash: { div: 14, x: 0.5, y: 0.28 },
+};
 
 /**
  * The fire character rig: two little glowing ball arms plus a pair of eyes and a halo of
- * body heat, all layered over the fighter sprite. The arms trail the body with spring
- * physics so movement reads as weight, and every ability drives a gesture through `play`.
+ * body heat, all layered over the fighter sprite. The arms, eyes and gestures come from
+ * BaseAvatar; what fire adds is the heat haze beneath and the plume off the crown.
  */
-export class FireAvatar {
-  private armObjs: Phaser.GameObjects.Container[] = [];
-  private eyeObjs: { white: Phaser.GameObjects.Arc; pupil: Phaser.GameObjects.Arc }[] = [];
-  /** Soft heat haze under the sprite. */
-  private glow: Phaser.GameObjects.Graphics;
-  /** Flames rising off the crown. Drawn *over* the sprite — under it, only the dark tips clear the body. */
-  private plume: Phaser.GameObjects.Graphics;
+export class FireAvatar extends BaseAvatar {
   private fx: FireFx;
 
-  /** Live arm positions in world space — lerped toward the pose target each frame. */
-  private armX = [0, 0];
-  private armY = [0, 0];
-  private armScale = [1, 1];
-
-  private facing = 0;
-  private t = 0;
-  private intensity = 1;
-  private orbit = 0;
-  private mastered = false;
-
-  private gesture: ArmGesture | null = null;
-  private gestureT = 0;
-  private gestureDur = 0;
-  private gestureSide = 1;
-  private gestureAngle = 0;
-  private nextPunchSide = 1;
-
-  private hold: ArmHold = null;
-  private holdAngle = 0;
-
-  private blinkAt = 0;
-  private blinkUntil = 0;
-  private trailAccum = 0;
-
-  constructor(private scene: Phaser.Scene, private tint: FireColorFn, depth = 6) {
+  constructor(scene: Phaser.Scene, tint: FireColorFn, depth = 6) {
+    super(scene, tint, depth, FIRE_AVATAR);
     this.fx = new FireFx(scene, tint);
-    this.glow = scene.add.graphics().setDepth(depth - 3);
-    this.plume = scene.add.graphics().setDepth(depth + 2);
-
-    for (let i = 0; i < 2; i++) {
-      const glow = scene.add.circle(0, 0, 9, tint(FIRE.core), 0.28);
-      const shell = scene.add.circle(0, 0, 6.4, tint(FIRE.amber), 0.9);
-      const core = scene.add.circle(0, 0, 3.6, tint(FIRE.yellow), 1);
-      const spark = scene.add.circle(-1, -1, 1.5, tint(FIRE.white), 0.9);
-      this.armObjs.push(scene.add.container(0, 0, [glow, shell, core, spark]).setDepth(depth));
-
-      const white = scene.add.circle(0, 0, 4.4, tint(FIRE.pale), 0.95).setDepth(depth);
-      const pupil = scene.add.circle(0, 0, 2.2, 0x1a0600, 1).setDepth(depth + 1);
-      this.eyeObjs.push({ white, pupil });
-    }
-    this.blinkAt = 1500 + Math.random() * 3000;
   }
-
-  /** Aim direction in radians — arms and eyes orient off this. */
-  setFacing(angle: number): void { this.facing = angle; }
-
-  /** 1 = normal, higher while Flame Body-style buffs are up (bigger, hotter, orbiting). */
-  setIntensity(v: number): void { this.intensity = v; }
 
   /**
    * Mastery tell — a permanent, readable upgrade to the character itself so a mastered fire
    * user is identifiable at a glance, before they cast anything: white-hot eyes, a wider
    * corona on each hand, a taller plume, and a crown of embers orbiting the head.
    */
-  setMastered(on: boolean): void {
-    if (on === this.mastered) return;
-    this.mastered = on;
-    for (const e of this.eyeObjs) e.white.setFillStyle(this.tint(on ? FIRE.white : FIRE.pale), 0.95);
-    for (const c of this.armObjs) {
-      const glow = c.list[0] as Phaser.GameObjects.Arc;
+  protected applyMastery(on: boolean): void {
+    this.setEyeWhite(on ? FIRE.white : FIRE.pale);
+    this.forEachHandLayer(0, (glow) => {
       glow.setRadius(on ? 12.5 : 9);
       glow.setFillStyle(this.tint(on ? FIRE.amber : FIRE.core), on ? 0.35 : 0.28);
-    }
+    });
   }
 
-  /** Fire a one-shot gesture. `angle` defaults to the current facing. */
-  play(gesture: ArmGesture, angle?: number, duration?: number): void {
-    this.gesture = gesture;
-    this.gestureT = 0;
-    this.gestureAngle = angle ?? this.facing;
-    this.gestureDur = duration ?? {
-      punch: 320, dash: 420, slam: 460, raise: 900, sweep: 460, clap: 380, flex: 520,
-    }[gesture];
-    if (gesture === 'punch') {
-      this.gestureSide = this.nextPunchSide;
-      this.nextPunchSide = -this.nextPunchSide as 1 | -1;
-    }
+  /** Fast-moving arms shed sparks. */
+  protected emitTrail(x: number, y: number): void {
+    this.fx.embers(x, y, 1, { speed: 18, size: 2.2, life: 420, rise: 26, depth: 5 });
   }
 
-  /** Enter/leave a sustained pose. Overrides any running gesture while set. */
-  setHold(hold: ArmHold, angle?: number): void {
-    this.hold = hold;
-    if (angle !== undefined) this.holdAngle = angle;
+  protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
+    g.fillStyle(this.tint(FIRE.gold), a * 0.3 * this.intensity);
+    g.fillCircle(x, y, 27 * this.intensity);
   }
 
-  /** World position of the arm that just threw something — good for muzzle flashes. */
-  castHand(): { x: number; y: number } {
-    const i = this.gestureSide > 0 ? 1 : 0;
-    return { x: this.armX[i], y: this.armY[i] };
-  }
-
-  update(delta: number, x: number, y: number, alpha: number): void {
-    const dt = delta / 1000;
-    this.t += dt;
-    if (this.gesture) {
-      this.gestureT += delta;
-      if (this.gestureT >= this.gestureDur) this.gesture = null;
-    }
-    this.orbit += dt * (this.intensity > 1 ? 2.4 : 0.35);
-
-    const visible = alpha > 0.02;
-    for (const c of this.armObjs) c.setVisible(visible);
-    for (const e of this.eyeObjs) { e.white.setVisible(visible); e.pupil.setVisible(visible); }
-
-    // ── Arms ────────────────────────────────────────────────────────────
-    for (let i = 0; i < 2; i++) {
-      const side = i === 0 ? -1 : 1;
-      const pose = this.poseFor(side);
-      const tx = x + Math.cos(pose.ang) * pose.dist;
-      const ty = y + Math.sin(pose.ang) * pose.dist;
-
-      // Spring follow: the arms lag the body, so running drags them behind you.
-      const k = Math.min(1, ARM_STIFFNESS * (delta / 16.67));
-      const prevX = this.armX[i], prevY = this.armY[i];
-      this.armX[i] += (tx - this.armX[i]) * k;
-      this.armY[i] += (ty - this.armY[i]) * k;
-      this.armScale[i] += (pose.scale - this.armScale[i]) * k;
-
-      const c = this.armObjs[i];
-      c.setPosition(this.armX[i], this.armY[i]);
-      // Squash along the direction of travel for a bit of motion smear.
-      const vx = this.armX[i] - prevX, vy = this.armY[i] - prevY;
-      const sp = Math.min(1, Math.hypot(vx, vy) / 14);
-      c.setRotation(sp > 0.05 ? Math.atan2(vy, vx) : 0);
-      c.setScale(this.armScale[i] * (1 + sp * 0.5), this.armScale[i] * (1 - sp * 0.28));
-      c.setAlpha(alpha);
+  /**
+   * Flames rising off the crown, plus the mastery ember crown. Rooted at `y - 18` so the
+   * tongues never cover the face, and drawn over the sprite so their bright middles show
+   * instead of just the dark tips poking out past the body.
+   */
+  protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    const mastery = this.mastered ? 1.3 : 1;
+    for (let i = 0; i < 5; i++) {
+      const p = this.t * 3.4 + i * 1.7;
+      const ang = -Math.PI / 2 + (i - 2) * 0.46 + Math.sin(p) * 0.2;
+      const len = (26 + Math.sin(p * 1.3) * 9) * this.intensity * mastery;
+      flameTongueLayered(g, this.tint, x, y - 18, ang, len, 8.5 * mastery, Math.sin(p) * 6, a);
     }
 
-    // Fast-moving arms shed sparks.
-    this.trailAccum += delta;
-    if (this.trailAccum >= 90 && visible) {
-      this.trailAccum = 0;
-      const moved = Math.hypot(this.armX[0] - x, this.armY[0] - y);
-      if (moved > IDLE_DIST * 1.35 || this.intensity > 1) {
-        const i = Math.random() < 0.5 ? 0 : 1;
-        this.fx.embers(this.armX[i], this.armY[i], 1, { speed: 18, size: 2.2, life: 420, rise: 26, depth: 5 });
+    // Mastery crown: three embers circling the head on a shallow ellipse.
+    if (this.mastered) {
+      for (let i = 0; i < 3; i++) {
+        const p = this.t * 1.5 + (i / 3) * TAU;
+        const cx = x + Math.cos(p) * 21;
+        const cy = y - 27 + Math.sin(p) * 6;
+        g.fillStyle(this.tint(FIRE.gold), alpha * 0.5);
+        g.fillCircle(cx, cy, 5);
+        g.fillStyle(this.tint(FIRE.yellow), alpha * 0.95);
+        g.fillCircle(cx, cy, 3);
+        g.fillStyle(this.tint(FIRE.white), alpha * 0.9);
+        g.fillCircle(cx, cy, 1.4);
       }
     }
-
-    // ── Eyes ────────────────────────────────────────────────────────────
-    this.blinkAt -= delta;
-    if (this.blinkAt <= 0) { this.blinkUntil = 110; this.blinkAt = 2200 + Math.random() * 3400; }
-    if (this.blinkUntil > 0) this.blinkUntil -= delta;
-    const open = this.blinkUntil > 0 ? 0.12 : (this.gesture || this.hold ? 0.72 : 1);
-
-    const look = this.facing;
-    const bob = Math.sin(this.t * 2.6) * 1.1;
-    for (let i = 0; i < 2; i++) {
-      const side = i === 0 ? -1 : 1;
-      const e = this.eyeObjs[i];
-      const ex = x + side * 7.2 + Math.cos(look) * 2.4;
-      const ey = y - 4 + Math.sin(look) * 2.0 + bob;
-      e.white.setPosition(ex, ey);
-      e.white.setScale(1, open);
-      e.white.setAlpha(alpha);
-      e.pupil.setPosition(ex + Math.cos(look) * 1.8, ey + Math.sin(look) * 1.6);
-      e.pupil.setScale(1, open);
-      e.pupil.setAlpha(alpha);
-    }
-
-    // ── Body heat ───────────────────────────────────────────────────────
-    this.glow.clear();
-    this.plume.clear();
-    if (visible) {
-      const a = alpha * (0.66 + 0.12 * Math.sin(this.t * 6));
-      this.glow.fillStyle(this.tint(FIRE.gold), a * 0.3 * this.intensity);
-      this.glow.fillCircle(x, y, 27 * this.intensity);
-
-      // Rooted at the crown so the tongues never cover the face, and drawn over the sprite
-      // so their bright middles show instead of just the dark tips poking out.
-      const mastery = this.mastered ? 1.3 : 1;
-      for (let i = 0; i < 5; i++) {
-        const p = this.t * 3.4 + i * 1.7;
-        const ang = -Math.PI / 2 + (i - 2) * 0.46 + Math.sin(p) * 0.2;
-        const len = (26 + Math.sin(p * 1.3) * 9) * this.intensity * mastery;
-        flameTongueLayered(this.plume, this.tint, x, y - 18, ang, len, 8.5 * mastery, Math.sin(p) * 6, a);
-      }
-
-      // Mastery crown: three embers circling the head on a shallow ellipse.
-      if (this.mastered) {
-        for (let i = 0; i < 3; i++) {
-          const p = this.t * 1.5 + (i / 3) * TAU;
-          const cx = x + Math.cos(p) * 21;
-          const cy = y - 27 + Math.sin(p) * 6;
-          this.plume.fillStyle(this.tint(FIRE.gold), alpha * 0.5);
-          this.plume.fillCircle(cx, cy, 5);
-          this.plume.fillStyle(this.tint(FIRE.yellow), alpha * 0.95);
-          this.plume.fillCircle(cx, cy, 3);
-          this.plume.fillStyle(this.tint(FIRE.white), alpha * 0.9);
-          this.plume.fillCircle(cx, cy, 1.4);
-        }
-      }
-    }
-  }
-
-  /** Target polar offset for one arm, blending the idle sway with any active gesture/hold. */
-  private poseFor(side: number): ArmPose {
-    const idleAng = this.facing + this.orbit + side * 1.28 + Math.sin(this.t * 2.2 + side) * 0.09;
-    const idle: ArmPose = {
-      ang: idleAng,
-      dist: (IDLE_DIST + Math.sin(this.t * 3.1 + side * 1.7) * 2.6) * (this.intensity > 1 ? 1.2 : 1),
-      scale: this.intensity > 1 ? 1.3 : 1,
-    };
-
-    if (this.hold === 'spray') {
-      const jitter = (Math.random() - 0.5) * 0.12;
-      return { ang: this.holdAngle + side * 0.28 + jitter, dist: 32 + Math.random() * 3, scale: idle.scale * 1.15 };
-    }
-    if (this.hold === 'charge') {
-      return {
-        ang: this.facing + this.t * 7 + side * Math.PI,
-        dist: 15 + Math.random() * 2.5,
-        scale: idle.scale * 0.9,
-      };
-    }
-    if (!this.gesture) return idle;
-
-    const t = Math.min(1, this.gestureT / this.gestureDur);
-    const a = this.gestureAngle;
-    let target: ArmPose = idle;
-    let blend = 0;
-
-    switch (this.gesture) {
-      case 'punch': {
-        const active = side === this.gestureSide;
-        blend = t < 0.22 ? easeOut(t / 0.22) : 1 - easeIn((t - 0.22) / 0.78);
-        target = active
-          ? { ang: a, dist: 46, scale: idle.scale * 1.2 }
-          : { ang: a + side * 2.0, dist: 15, scale: idle.scale * 0.85 };
-        break;
-      }
-      case 'dash': {
-        // Wind up behind, then fling forward.
-        if (t < 0.3) {
-          blend = easeOut(t / 0.3);
-          target = { ang: a + Math.PI + side * 0.4, dist: 38, scale: idle.scale };
-        } else {
-          blend = 1 - easeIn((t - 0.3) / 0.7);
-          target = { ang: a + side * 0.22, dist: 42, scale: idle.scale * 1.15 };
-        }
-        break;
-      }
-      case 'slam': {
-        if (t < 0.4) {
-          blend = easeOut(t / 0.4);
-          target = { ang: -Math.PI / 2 + side * 0.5, dist: 40, scale: idle.scale * 1.15 };
-        } else {
-          blend = 1 - easeIn((t - 0.4) / 0.6);
-          target = { ang: a + side * 0.16, dist: 46, scale: idle.scale * 1.25 };
-        }
-        break;
-      }
-      case 'raise': {
-        blend = t < 0.15 ? easeOut(t / 0.15) : t > 0.8 ? 1 - easeIn((t - 0.8) / 0.2) : 1;
-        target = {
-          ang: -Math.PI / 2 + side * 0.55,
-          dist: 46 + Math.sin(this.t * 12) * 2,
-          scale: idle.scale * 1.35,
-        };
-        break;
-      }
-      case 'sweep': {
-        blend = t < 0.12 ? t / 0.12 : t > 0.85 ? 1 - (t - 0.85) / 0.15 : 1;
-        target = { ang: a - 1.35 + t * 2.7 + side * 0.18, dist: 42, scale: idle.scale * 1.15 };
-        break;
-      }
-      case 'clap': {
-        blend = t < 0.35 ? easeOut(t / 0.35) : 1 - easeIn((t - 0.35) / 0.65);
-        target = t < 0.35
-          ? { ang: a + side * 0.9, dist: 40, scale: idle.scale }
-          : { ang: a + side * 0.06, dist: 26, scale: idle.scale * 1.3 };
-        break;
-      }
-      case 'flex': {
-        blend = t < 0.2 ? easeOut(t / 0.2) : 1 - easeIn((t - 0.2) / 0.8);
-        target = { ang: this.facing + side * (Math.PI / 2), dist: 40, scale: idle.scale * 1.35 };
-        break;
-      }
-    }
-
-    return {
-      ang: Phaser.Math.Angle.RotateTo(idle.ang, target.ang, Math.abs(Phaser.Math.Angle.Wrap(target.ang - idle.ang)) * blend),
-      dist: idle.dist + (target.dist - idle.dist) * blend,
-      scale: idle.scale + (target.scale - idle.scale) * blend,
-    };
-  }
-
-  destroy(): void {
-    for (const c of this.armObjs) c.destroy();
-    for (const e of this.eyeObjs) { e.white.destroy(); e.pupil.destroy(); }
-    this.glow.destroy();
-    this.plume.destroy();
-    this.armObjs = [];
-    this.eyeObjs = [];
   }
 }

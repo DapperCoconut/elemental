@@ -210,22 +210,6 @@ In the kit:
 - Mirror gestures for the NPC in `handleNpcCastId` via a `Record<string, ArmGesture>` map, and in
   any online mastery-replay entry point.
 
-## Step 9 — Verify in the browser
-
-Follow the `verify` skill. Element-specific traps:
-
-- **`page.keyboard.press(k)` is too fast.** A same-frame down+up is swallowed by Phaser's
-  `JustDown`, so the ability silently never fires and you conclude your effect is broken. Always
-  `keyboard.down` → wait ~140ms → `keyboard.up`.
-- Park both fighters and set `npc.disarmedUntil = Date.now() + 9e6` before close-ups, or the
-  opponent's effects land on top of the frame you are trying to judge.
-- Screenshot with a `clip` box and `deviceScaleFactor: 3` to judge the character rig; full-canvas
-  shots are too small to see the hands and eyes.
-- Capture the effect at its **peak** (~60–150ms after the cast), not after it has faded.
-- Check FPS (`game.loop.actualFps`) and `scene.children.list.length` after a burst of casts —
-  a leaking effect shows up as a display list that never comes back down.
-- Restart across elements (fire → water → fire) to prove `reset()` rebuilds the rig.
-
 ## Checklist
 
 - [ ] Element-specific primitive shape, not a recoloured Fire tongue
@@ -240,4 +224,3 @@ Follow the `verify` skill. Element-specific traps:
 - [ ] Every `add.circle` + scale-tween in the element replaced
 - [ ] ArenaScene net smaller
 - [ ] `reset()` destroys and nulls every GameObject; `update()` rebuilds
-- [ ] `npm run build` clean, browser-verified, FPS steady, display list stable

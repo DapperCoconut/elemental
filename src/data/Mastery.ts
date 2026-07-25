@@ -403,6 +403,13 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         hudDescription: 'Dash and impale — shatters into bonus frost after 50 damage',
         description: 'Dash forward a short distance. The first enemy you hit is impaled with a visible icicle. Once they take 50 more damage, the icicle shatters, slamming 2 bonus frost (or void frost) stacks onto them — this can push them past the normal 5-stack cap, up to a hard max of 7. More stacks means more slow and bonus damage taken for frost, more DOT damage for void. While impaled, every frost/void stack applied to them lasts 10 seconds instead of 8.',
       },
+      {
+        id: 'curling-stone',
+        name: 'Curling Stone',
+        bindable: true,
+        hudDescription: 'Summon a stone — shoot it to send it sliding',
+        description: 'Summon a curling stone in front of you for 20 seconds. Shooting the stone shoves it a short way and freezes another layer of frost onto it, up to 5 — the more frost it carries, the further and faster it slides and the harder it hits. Void frost counts exactly the same. It bounces off the arena walls, and any enemy it slams into takes 30 damage (60 at 5 stacks), once per second each. On one of your Skate trails the stone goes flying.',
+      },
     ],
   },
   crystal: {
@@ -627,11 +634,11 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         description: 'Passive: you are always in either Rush or Focus. Rush speeds the whole world up 50% — everyone moves and every projectile flies faster; Focus slows it all to half speed. Dash (Space) to flip between them, with a 5 second cooldown on switching.',
       },
       {
-        id: 'fan-the-hammer',
-        name: 'Fan the Hammer',
+        id: 'time-bomb',
+        name: 'Time Bomb',
         bindable: true,
-        hudDescription: 'Empty the magazine into mines; re-cast to detonate',
-        description: 'Fire your whole magazine at once, one bullet every 0.2s, slowing you 50% as you do. The bullets travel a short way then halt, aging up in damage where they sit — enemies that touch them eat the stored damage. Re-cast to detonate every bullet in its own AoE. Halted bullets have a 5% chance each second to leak a time puddle. 10 second cooldown.',
+        hudDescription: 'Sticky bomb that ages into a bigger blast; time the ring for 1.5x',
+        description: 'Lob a time bomb at the enemy. If it lands it straps itself to them and starts ageing — a 10 damage blast the moment it sticks, reddening all the way up to 50 damage after 30 seconds. Re-cast to arm it: a white ring closes in on the bomb over 1.4 seconds and it goes off on its own when the ring lands. Re-cast a third time just as the ring reaches the bomb and it detonates on the beat for 1.5x damage — go early and it just goes off for normal damage. 14 second cooldown, running from the throw, so a bomb left to ripen costs you nothing.',
       },
     ],
   },
@@ -1090,9 +1097,9 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
     ],
     enhancements: [
       {
-        id: 'quickdraw',
-        name: 'Quickdraw',
-        description: 'Passive: you fire back on reflex. Every 30 damage you take — it does not have to arrive in one hit, the count carries over — a holdout pistol snaps a hitscan laser at the closest enemy for 10 damage.',
+        id: 'fireworks',
+        name: 'Fireworks',
+        description: 'Passive: scraping the edge of the arena plants a firework on the wall behind you. One second later it screams straight across the arena — an enemy it runs into takes 10 damage, and it bursts for another 10 damage in a wide area (the one it hit is spared the burst). If nothing gets in its way it goes off against the far wall instead. You can plant one every half second, and never two on the same patch of wall.',
       },
       {
         id: 'overload',
@@ -1334,6 +1341,100 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         excludeSlots: ['q'],
         hudDescription: 'Summon a beastling pup for 15s — it bites, fetches your grenades, and roars',
         description: 'Whistle up a beastling — a small, eager pup that trots after you and goes for whoever is closest. It bites for 5 every 2 seconds, double against anything bleeding, and it runs faster over a Hunter\'s Trail. Throw a grenade and it will fetch it: the fuse stops dead in its mouth while it sprints the thing to the enemy and sets it off on them. Blood Hunt makes it roar too, for a 20% slow over 5 seconds that stacks with your own. Under a Blood Moon it grows, speeds up, hits harder, and its bites draw blood. Lasts 15 seconds, 30 second cooldown.',
+      },
+    ],
+  },
+  silence: {
+    elementId: 'silence',
+    name: 'Silence Mastery',
+    enhancedEmoji: '🪆',
+    enhancedColor: 0x2b0a30,
+    requirements: [
+      {
+        key: 'backstabs',
+        label: 'From Behind',
+        howTo: 'Stab entities from inside their rear arc (come at them from the side their eye is not looking)',
+        target: 50,
+      },
+      {
+        key: 'grabbers',
+        label: 'It Grabs Now',
+        howTo: 'Raise Grabbers — cast Ritual (R) on one of your own fully-matured watchers',
+        target: 25,
+      },
+      {
+        key: 'strikerKills',
+        label: 'Night Terror',
+        howTo: 'Kill entities while transformed into the Striker (needs the R+ Night Terror upgrade — ritual yourself at full terror)',
+        target: 50,
+      },
+      {
+        key: 'runCatches',
+        label: 'No Way Out',
+        howTo: 'Catch entities in the hallway with Run (Q) before they reach the door',
+        target: 5,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'weep',
+        name: 'Weep',
+        description: 'Passive: you only exist while you are looked at. Whenever every enemy is facing away from you, you move 50% faster and your stealth drains 25% slower — the moment one of them turns their eye on you, you drop back to a normal walk. It also keeps a TERROR bar for you even without the Night Terror upgrade, so Puppetmaster always has something to spend.',
+      },
+      {
+        id: 'puppetmaster',
+        name: 'Puppetmaster',
+        bindable: true,
+        excludeSlots: ['r'],
+        hudDescription: 'Spend 25 terror on a voodoo doll of the enemy — ritual the doll to awaken and possess them',
+        description: 'Within 5 seconds of a stab landing, spend 25 terror to stitch a voodoo doll of the enemy and plant it in the ground. Every knife you put into the doll — Stab, Striker slashes, anything you shoot at it — is relayed straight into the opponent with a 25% bonus, and they cannot touch the thing themselves. It breaks after 50 damage has gone through it.\n\nCast Ritual (R) on the doll and it survives; the enemy awakens instead. Their eyes go white, their body cracks open, and something with black eyes and four spider-legged tentacles climbs out wearing them. You steer that instead of your own body: Click slashes for 15, E bites for 10 and heals you 12, R cannibalizes their own muck for 20 and heals you 20, F slams the ground and drags up awakened-kin that crawl over and stab them for 10 apiece. Bite a kin to eat it and heal 12; ritual a kin and it becomes a corrupted copy of the enemy — black, eyeless, grinning — that fights on your side for 20 seconds, though you gain no stealth at all while one is out. Q hands the body back and costs them 20 on the way out. 12 second cooldown.',
+      },
+    ],
+  },
+  sound: {
+    elementId: 'sound',
+    name: 'Sound Mastery',
+    enhancedEmoji: '🎵',
+    enhancedColor: 0xffffff,
+    requirements: [
+      {
+        key: 'flowNotes',
+        label: 'In the Flow',
+        howTo: 'Hit rhythm notes while Flow Mode (E) is running',
+        target: 250,
+      },
+      {
+        key: 'perfectScreeches',
+        label: 'Perfect Pitch',
+        howTo: 'Cast Screech Barrier (R) on the beat, with a rhythm note sitting over the hit line',
+        target: 50,
+      },
+      {
+        key: 'soloNotes',
+        label: 'Showstopper',
+        howTo: 'Hit rhythm notes while performing a Solo (Q)',
+        target: 50,
+      },
+      {
+        key: 'grappleChain',
+        label: 'Grace Under Pressure',
+        howTo: 'Chain 3 note-timed Sonic Grapples (F) in a row without the cooldown ever starting — needs the F+ Grace Note upgrade. One qualifying chain completes this permanently',
+        target: 3,
+        isBest: true,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'resonance-barrier',
+        name: 'Resonance Barrier',
+        description: 'Passive: every note you land rings another plate of armour into place — 10 shield HP a note, stacking with no ceiling. Drop one and the whole barrier shatters back to nothing. An accidental spends itself to cover the miss, and notes lost during a Solo never count against you.',
+      },
+      {
+        id: 'bugle',
+        name: 'Bugle',
+        bindable: true,
+        hudDescription: 'Sound the charge — a caravan tears across the screen for 35 and leaves them vibrating',
+        description: 'Put a brass bugle to your lips and sound the charge. A moment later a full caravan comes barrelling across the screen at the height your cursor was, running down anything in its lane for 35 damage and hurling it aside. Whoever it hits is left Vibrating for 15 seconds, and every note you hit while that lasts shakes another 5 damage out of them. 15 second cooldown.',
       },
     ],
   },

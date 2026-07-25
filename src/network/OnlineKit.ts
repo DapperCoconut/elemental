@@ -270,8 +270,16 @@ export class OnlineKit {
         }
         break;
       case 'sil':
-        if (msg.k === 'vulture-drop') {
+        // Positions mirror like every other coordinate; a drive vector mirrors as a
+        // sign flip on x, and an aim angle reflects about the vertical axis.
+        if (msg.k === 'vulture-drop' || msg.k === 'doll') {
           this.api.onSilenceMsg({ ...msg, x: this.mirrorX(msg.x) });
+        } else if (msg.k === 'puppet-move') {
+          this.api.onSilenceMsg({
+            ...msg,
+            vx: -msg.vx,
+            fa: Math.atan2(Math.sin(msg.fa), -Math.cos(msg.fa)),
+          });
         } else {
           this.api.onSilenceMsg(msg);
         }

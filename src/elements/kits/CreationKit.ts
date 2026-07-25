@@ -4,12 +4,19 @@ import { CastContext } from '../Ability';
 import { Projectile } from '../../combat/Projectile';
 import { CustomStatus } from './StatusHudKit';
 import { seedEffectSnapshot, stretchNewEffects } from '../../combat/StatusEffects';
+import {
+  ArmGesture, CREATION, CREATION_TIER_COLORS, CreationAvatar, CreationColorFn, CreationForge,
+  CreationFx, CreationNexus, blueprintFrame, craftPlank, drawAutomaton, drawBolt, drawDagger,
+  drawFlask, drawMech, drawNail, drawSaw, drawScythe, drawSpeedPad, drawSpikedPanel, forgedShard,
+  plankPanel, rivet,
+} from './CreationVisuals';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
 export interface CreationNexusBolt {
   tier: 'copper' | 'silver' | 'gold';
-  icon: Phaser.GameObjects.Rectangle;
+  /** The loaded slug shown on the Nexus shelf — an ingot drawn in its own metal. */
+  icon: Phaser.GameObjects.Graphics;
 }
 
 /** The six potions the Nexus can brew, keyed by the sorted two-bolt recipe that makes them. */
@@ -23,10 +30,10 @@ export interface CreationPotion {
   slot: number;
   x: number;
   y: number;
-  /** Every GameObject making up the bottle — destroyed together on pickup or replacement. */
-  parts: Phaser.GameObjects.GameObject[];
-  /** The liquid blob, tweened separately so the potion bobs and glows on the pedestal. */
-  liquid: Phaser.GameObjects.Arc;
+  /** The whole bottle, redrawn each frame so its liquid rocks and its bubbles rise. */
+  gfx: Phaser.GameObjects.Graphics;
+  /** Seconds since it was brewed — drives the bob, the meniscus and the bubble column. */
+  t: number;
 }
 
 export interface CreationPotionDef {
@@ -62,7 +69,7 @@ export const CREATION_POTION_BY_RECIPE = new Map<string, CreationPotionKind>(
 );
 
 export interface CreationDagger {
-  sprite: Phaser.GameObjects.Rectangle;
+  sprite: Phaser.GameObjects.Graphics;
   vx: number;
   vy: number;
   damage: number;
@@ -76,7 +83,7 @@ export interface CreationDagger {
 }
 
 export interface CreationBoltInFlight {
-  sprite: Phaser.GameObjects.Arc;
+  sprite: Phaser.GameObjects.Graphics;
   vx: number;
   vy: number;
   tier: 'copper' | 'silver' | 'gold';
@@ -89,7 +96,7 @@ export interface CreationBoltInFlight {
 }
 
 export interface CreationScythe {
-  sprite: Phaser.GameObjects.Rectangle;
+  sprite: Phaser.GameObjects.Graphics;
   hp: number;
   maxHp: number;
   vx: number;
@@ -101,7 +108,7 @@ export interface CreationScythe {
 }
 
 export interface CreationBlocker {
-  rect: Phaser.GameObjects.Rectangle;
+  rect: Phaser.GameObjects.Graphics;
   x: number;
   y: number;
   w: number;
@@ -114,7 +121,7 @@ export interface CreationBlocker {
 }
 
 export interface CreationMazeWall {
-  rect: Phaser.GameObjects.Rectangle;
+  rect: Phaser.GameObjects.Graphics;
   x: number;
   y: number;
   w: number;
@@ -136,7 +143,7 @@ export interface CreationSaw {
 
 /** Ultimate Invention hazard: a nail flying inward from a workshop edge. */
 export interface CreationNail {
-  sprite: Phaser.GameObjects.Rectangle;
+  sprite: Phaser.GameObjects.Graphics;
   x: number; y: number;
   vx: number; vy: number;
   damage: number;
@@ -144,7 +151,7 @@ export interface CreationNail {
 }
 
 export interface CreationSpeedPad {
-  rect: Phaser.GameObjects.Rectangle;
+  rect: Phaser.GameObjects.Graphics;
   x: number; y: number; w: number; h: number;
   hp: number; maxHp: number;
   hpBar: Phaser.GameObjects.Rectangle;
@@ -155,7 +162,7 @@ export interface CreationSpeedPad {
 }
 
 export interface CreationSpikedBlock {
-  rect: Phaser.GameObjects.Rectangle;
+  rect: Phaser.GameObjects.Graphics;
   x: number; y: number; w: number; h: number;
   hp: number; maxHp: number;
   hpBar: Phaser.GameObjects.Rectangle;
@@ -166,7 +173,7 @@ export interface CreationSpikedBlock {
 }
 
 export interface CreationMech {
-  sprite: Phaser.GameObjects.Rectangle;
+  sprite: Phaser.GameObjects.Graphics;
   stage: 1 | 2 | 3;
   hp: number;
   maxHp: number;
@@ -174,6 +181,21 @@ export interface CreationMech {
   hpBg: Phaser.GameObjects.Rectangle;
   rocketAccum: number;
   dodgeCdUntil: number;
+}
+
+/**
+ * Automaton perk: a wandering clockwork bot spawned by the Workshop that bounces off walls
+ * and shoulder-charges whoever it runs into.
+ */
+export interface CreationAutomaton {
+  gfx: Phaser.GameObjects.Graphics;
+  x: number; y: number;
+  vx: number; vy: number;
+  /** Seconds alive — drives the walk cycle and the head gear. */
+  t: number;
+  expireAt: number;
+  meleeCooldownUntil: number;
+  owner: 'player' | 'npc';
 }
 
 /** Creation Q+ Ultimate Invention slider panel layout (screen-space, top-left). */
@@ -224,10 +246,14 @@ export interface CreationArenaApi {
   readonly qKey: Phaser.Input.Keyboard.Key;
   readonly spaceKey: Phaser.Input.Keyboard.Key;
   readonly elementId: string;
+  readonly npcElementId: string;
   readonly width: number;
   readonly height: number;
   readonly isDodging: boolean;
   readonly pointerWasDown: boolean;
+  /** Live cursor position — the player's avatar aims at it. */
+  readonly aimX: number;
+  readonly aimY: number;
   get npcSpeedMult(): number;
   set npcSpeedMult(v: number);
   hasUpgrade(slot: string): boolean;
@@ -239,8 +265,10 @@ export interface CreationArenaApi {
   setStatusIndicator(id: string, status: CustomStatus | null): void;
   /** Shared rectangle depenetration helper — ArenaScene owns it (Apprehension uses it too). */
   pushFighterOutOfRect(body: Phaser.Physics.Arcade.Body, bx: number, by: number, bw: number, bh: number): void;
-  /** Automaton perk: Workshop spawns wandering bots. */
-  spawnAutomatons(owner: 'player' | 'npc', count: number): void;
+  /** `(base) => displayed` through the owner's colour cosmetic. */
+  creationColor(owner: 'player' | 'npc', base: number): number;
+  /** HUD ability cards, so Build Mode can re-label them the way Earth's Titan Form does. */
+  readonly abilityBars: Array<{ lbl?: Phaser.GameObjects.Text; desc?: Phaser.GameObjects.Text }>;
   /** True only when the player is creation AND Creation Mastery is switched on. */
   get masteryActive(): boolean;
   /** Mastery enhancement id bound over the given ability slot, or null if that slot is unchanged. */
@@ -253,15 +281,34 @@ export interface CreationArenaApi {
 // ── CreationKit ───────────────────────────────────────────────────────────
 
 export class CreationKit {
+  // ── Visuals ──
+  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  private readonly pcol: CreationColorFn;
+  private readonly ncol: CreationColorFn;
+  private readonly pfx: CreationFx;
+  private readonly nfx: CreationFx;
+  /** The artisan rig (forge hands, gripped hammer, gear crown) for each creation fighter. */
+  private playerAvatar: CreationAvatar | null = null;
+  private npcAvatar: CreationAvatar | null = null;
+  /** Ring of orbiting stock worn by whoever has the Workshop up. */
+  private workshopForge: CreationForge | null = null;
+  /**
+   * The always-on tell for live potions and mortar hexes: one Graphics per side carrying a
+   * little bottle per effect. The status tray only covers the local player, and only in the
+   * corner — this is what makes a hexed fighter readable across the arena.
+   */
+  private brewAura: { player: Phaser.GameObjects.Graphics | null; npc: Phaser.GameObjects.Graphics | null } =
+    { player: null, npc: null };
+  private brewAuraT = 0;
+  /** ~45ms accumulator behind the in-flight trails on daggers, bolts and scythes. */
+  private trailAccum = 0;
+
   // Nexus (shared world object, one per match)
-  private nexusSprite: Phaser.GameObjects.Arc | null = null;
+  private nexusRig: CreationNexus | null = null;
   private nexusLabel: Phaser.GameObjects.Text | null = null;
   private nexusX = 0;
   private nexusY = 0;
   private nexusBolts: CreationNexusBolt[] = [];
-  private nexusDecor: Phaser.GameObjects.GameObject[] = [];
-  /** Energy motes racing around the nexus rings — see `updateNexusEnergy`. */
-  private nexusEnergy: Array<{ dot: Phaser.GameObjects.Arc; radius: number; angle: number; speed: number }> = [];
   // Brewed potions resting on the nexus (1 normally, 2 with E+)
   private creatPotions: CreationPotion[] = [];
   /** Active potion effects, keyed `${owner}|${kind}` → expiry (scene clock). */
@@ -281,16 +328,20 @@ export class CreationKit {
   private creatDaggerHoldStart = 0;
   private creatDaggerHoldX = 0;
   private creatDaggerHoldY = 0;
-  private creatDaggerPreviews: Phaser.GameObjects.Line[] = [];
+  /** One Graphics carrying every ghost blade in the fan being lined up. */
+  private creatDaggerPreview: Phaser.GameObjects.Graphics | null = null;
   // Bolt E-charge
   private creatBoltHolding = false;
   private creatBoltHoldStart = 0;
-  private creatBoltChargeOrb: Phaser.GameObjects.Arc | null = null;
+  /** The slug being forged over the caster's head while E is held. */
+  private creatBoltChargeOrb: Phaser.GameObjects.Graphics | null = null;
+  /** Last tier the charge had reached, so crossing into a new one lands a hammer blow once. */
+  private creatBoltChargeTier = -1;
   // F-block drag
   private creatBlockDragging = false;
   private creatBlockDragStartX = 0;
   private creatBlockDragStartY = 0;
-  private creatBlockPreview: Phaser.GameObjects.Rectangle | null = null;
+  private creatBlockPreview: Phaser.GameObjects.Graphics | null = null;
   // Shared in-flight arrays (owner field distinguishes sides)
   private creatDaggers: CreationDagger[] = [];
   private creatBolts: CreationBoltInFlight[] = [];
@@ -306,9 +357,9 @@ export class CreationKit {
   // Q Workshop
   private creatWorkshopEnd = 0;
   private creatWorkshopOwner: 'player' | 'npc' = 'player';
-  private creatWorkshopOverlay: Phaser.GameObjects.Rectangle | null = null;
+  private creatWorkshopOverlay: Phaser.GameObjects.Graphics | null = null;
   private creatWorkshopTrailAccum = 0;
-  private creatWorkshopTrail: Phaser.GameObjects.Arc[] = [];
+  private creatWorkshopTrail: Phaser.GameObjects.Graphics[] = [];
   // Q+ Ultimate Invention sliders
   private creatInventionActive = false;
   private creatInventionTimer = 0;
@@ -330,26 +381,27 @@ export class CreationKit {
   private creatLastCraftKey: string | null = null;
   private creatBoltElectroMode = false;
   private creatBuildMode = false;
+  /** `[label, description]` per ability card as it read before Build Mode took the bar over. */
+  private preBuildBarText: Array<[string, string]> = [];
   private creatBuildBlockDragging = false;
   private creatBuildBlockDragStartX = 0;
   private creatBuildBlockDragStartY = 0;
   private creatBuildBlockPreview: CreationBlocker | null = null;
-  private creatBuildNewBlockPreview: Phaser.GameObjects.Rectangle | null = null;
+  private creatBuildNewBlockPreview: Phaser.GameObjects.Graphics | null = null;
   private creatBuildNewBlockCdUntil = 0;
   private creatBuildLaunchCdUntil = 0;
-  private creatBuildLaunchArrows: Phaser.GameObjects.Text[] = [];
   private creatSpeedPads: CreationSpeedPad[] = [];
   private creatSpikedBlocks: CreationSpikedBlock[] = [];
   private creatBuildSpeedPadDragging = false;
   private creatBuildSpeedPadDragStartX = 0;
   private creatBuildSpeedPadDragStartY = 0;
-  private creatBuildSpeedPadPreview: Phaser.GameObjects.Rectangle | null = null;
+  private creatBuildSpeedPadPreview: Phaser.GameObjects.Graphics | null = null;
   private creatBuildSpeedPadDragRef: CreationSpeedPad | null = null;
   private creatBuildSpeedPadCdUntil = 0;
   private creatBuildSpikedDragging = false;
   private creatBuildSpikedDragStartX = 0;
   private creatBuildSpikedDragStartY = 0;
-  private creatBuildSpikedPreview: Phaser.GameObjects.Rectangle | null = null;
+  private creatBuildSpikedPreview: Phaser.GameObjects.Graphics | null = null;
   private creatBuildSpikedDragRef: CreationSpikedBlock | null = null;
   private creatBuildSpikedCdUntil = 0;
   private creatPlayerSpeedPadEnd = 0;
@@ -371,10 +423,44 @@ export class CreationKit {
   private creatHexReloadOn = { player: false, npc: false };
   /** Springboard watches for the dash ending, so it needs last frame's dodge state. */
   private prevDodging = false;
+  /** Where the current dash started — the trail is drawn from here to where it lands. */
+  private dashFromX = 0;
+  private dashFromY = 0;
   /** Enemies already wired up for the workshopKills requirement this match. */
   private workshopTrackedEnemies = new WeakSet<Fighter>();
 
-  constructor(private api: CreationArenaApi) {}
+  /** Automaton perk (Creation): wandering clockwork bots spawned by the Workshop. */
+  private automatons: CreationAutomaton[] = [];
+
+  constructor(private api: CreationArenaApi) {
+    this.pcol = (base) => api.creationColor('player', base);
+    this.ncol = (base) => api.creationColor('npc', base);
+    this.pfx = new CreationFx(api.scene, this.pcol);
+    this.nfx = new CreationFx(api.scene, this.ncol);
+  }
+
+  /** Colour mapper for a side. */
+  private col(owner: 'player' | 'npc'): CreationColorFn { return owner === 'player' ? this.pcol : this.ncol; }
+  /** Effect painter for a side. */
+  private fx(owner: 'player' | 'npc'): CreationFx { return owner === 'player' ? this.pfx : this.nfx; }
+  /** Character rig for a side, if that side is creation this match. */
+  private avatar(owner: 'player' | 'npc'): CreationAvatar | null {
+    return owner === 'player' ? this.playerAvatar : this.npcAvatar;
+  }
+
+  /**
+   * Fire an arm gesture on one side's rig. Every Creation ability routes through here from its
+   * owner-aware spawner, which is why the npc's arms move on its casts too without a separate
+   * npcCastId table.
+   */
+  private gesture(owner: 'player' | 'npc', g: ArmGesture, angle?: number, duration?: number): void {
+    this.avatar(owner)?.play(g, angle, duration);
+  }
+
+  /** Enter/leave a sustained pose on one side's rig. */
+  private hold(owner: 'player' | 'npc', h: 'spray' | 'charge' | 'draw' | 'sow' | 'brace' | null, angle?: number): void {
+    this.avatar(owner)?.setHold(h, angle);
+  }
 
   private get scene(): Phaser.Scene { return this.api.scene; }
   private get add(): Phaser.GameObjects.GameObjectFactory { return this.api.scene.add; }
@@ -386,15 +472,23 @@ export class CreationKit {
   get mazeWalls(): CreationMazeWall[] { return this.creatMazeWalls; }
 
   reset(): void {
-    if (this.nexusSprite) { this.nexusSprite.destroy(); this.nexusSprite = null; }
+    // Visuals — every GameObject dies with the old scene run, so rebuild lazily in update().
+    if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
+    if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
+    if (this.workshopForge) { this.workshopForge.destroy(); this.workshopForge = null; }
+    for (const side of ['player', 'npc'] as const) {
+      if (this.brewAura[side]) { this.brewAura[side]!.destroy(); this.brewAura[side] = null; }
+    }
+    this.brewAuraT = 0;
+    this.trailAccum = 0;
+    for (const a of this.automatons) a.gfx.destroy();
+    this.automatons = [];
+
+    if (this.nexusRig) { this.nexusRig.destroy(); this.nexusRig = null; }
     if (this.nexusLabel) { this.nexusLabel.destroy(); this.nexusLabel = null; }
-    for (const d of this.nexusDecor) d.destroy();
-    this.nexusDecor = [];
-    for (const e of this.nexusEnergy) e.dot.destroy();
-    this.nexusEnergy = [];
     for (const b of this.nexusBolts) b.icon.destroy();
     this.nexusBolts = [];
-    for (const p of this.creatPotions) for (const part of p.parts) part.destroy();
+    for (const p of this.creatPotions) p.gfx.destroy();
     this.creatPotions = [];
     this.creatPotionEnds.clear();
     this.creatPotionHealAccum = { player: 0, npc: 0 };
@@ -403,9 +497,8 @@ export class CreationKit {
     this.creatGoldSnapshots.npc.clear();
     this.creatCraftInProgress = false; this.creatCraftStartTime = 0;
     this.creatDaggerHolding = false; this.creatDaggerHoldStart = 0;
-    for (const l of this.creatDaggerPreviews) l.destroy();
-    this.creatDaggerPreviews = [];
-    this.creatBoltHolding = false;
+    if (this.creatDaggerPreview) { this.creatDaggerPreview.destroy(); this.creatDaggerPreview = null; }
+    this.creatBoltHolding = false; this.creatBoltChargeTier = -1;
     if (this.creatBoltChargeOrb) { this.creatBoltChargeOrb.destroy(); this.creatBoltChargeOrb = null; }
     this.creatBlockDragging = false;
     if (this.creatBlockPreview) { this.creatBlockPreview.destroy(); this.creatBlockPreview = null; }
@@ -439,13 +532,14 @@ export class CreationKit {
 
     // Creation upgrade reset
     this.creatLastCraftKey = null; this.creatBoltElectroMode = false;
-    this.creatBuildMode = false; this.creatBuildBlockDragging = false;
+    // The HUD is rebuilt from scratch each match, so the snapshot is dropped rather than
+    // replayed — restoring stale text onto fresh cards would be worse than doing nothing.
+    this.creatBuildMode = false; this.preBuildBarText = [];
+    this.creatBuildBlockDragging = false;
     if (this.creatBuildBlockPreview) { this.creatBuildBlockPreview = null; }
     if (this.creatBuildNewBlockPreview) { this.creatBuildNewBlockPreview.destroy(); this.creatBuildNewBlockPreview = null; }
     this.creatBuildNewBlockCdUntil = 0;
     this.creatBuildLaunchCdUntil = 0;
-    for (const a of this.creatBuildLaunchArrows) a.destroy();
-    this.creatBuildLaunchArrows = [];
     for (const sp of this.creatSpeedPads) { sp.rect.destroy(); sp.hpBar.destroy(); sp.hpBg.destroy(); }
     this.creatSpeedPads = [];
     for (const sb of this.creatSpikedBlocks) { sb.rect.destroy(); sb.hpBar.destroy(); sb.hpBg.destroy(); }
@@ -467,6 +561,7 @@ export class CreationKit {
     this.creatHexDrainAccum = { player: 0, npc: 0 };
     this.creatHexReloadOn = { player: false, npc: false };
     this.prevDodging = false;
+    this.dashFromX = 0; this.dashFromY = 0;
     this.workshopTrackedEnemies = new WeakSet<Fighter>();
   }
 
@@ -477,43 +572,14 @@ export class CreationKit {
   spawnNexus(cx: number, cy: number): void {
     this.nexusX = cx;
     this.nexusY = cy;
-    // Blocky pink housing — a squared plinth with corner studs — holding a stack of
-    // concentric rings. Energy motes race around those rings (see updateNexusEnergy).
-    const plinth = this.add.rectangle(cx, cy, 76, 76, 0x2a0a22, 1).setStrokeStyle(4, 0xff3399, 0.9).setDepth(2);
-    const inner = this.add.rectangle(cx, cy, 58, 58, 0x45114a, 1).setStrokeStyle(2, 0xff88cc, 0.7).setDepth(2);
-    const studs: Phaser.GameObjects.GameObject[] = [];
-    for (const sx of [-1, 1]) {
-      for (const sy of [-1, 1]) {
-        studs.push(this.add.rectangle(cx + sx * 32, cy + sy * 32, 14, 14, 0xff55aa, 1)
-          .setStrokeStyle(2, 0xffaadd, 0.9).setDepth(3));
-      }
-    }
-    // Rings: outer to inner, each pulsing at its own rate so the stack never sits still.
-    const ringDefs: Array<[number, number, number]> = [[30, 0xff2288, 900], [23, 0xff66bb, 700], [16, 0xffaadd, 520]];
-    const rings = ringDefs.map(([r, color, dur]) => {
-      const ring = this.add.circle(cx, cy, r, color, 0).setStrokeStyle(3, color, 0.9).setDepth(3);
-      this.tweens.add({ targets: ring, scaleX: 1.12, scaleY: 1.12, alpha: 0.55, yoyo: true, repeat: -1, duration: dur });
-      return ring;
-    });
-    // The core doubles as the "nexus exists" hit target for incoming bolts.
-    this.nexusSprite = this.add.circle(cx, cy, 11, 0xff66cc, 0.95)
-      .setStrokeStyle(2, 0xffddee, 1).setDepth(4);
-    this.tweens.add({ targets: this.nexusSprite, alpha: 0.55, scaleX: 1.35, scaleY: 1.35, yoyo: true, repeat: -1, duration: 380 });
-    this.nexusLabel = this.add.text(cx, cy + 50, 'Nexus',
+    // The whole machine — riveted plinth, counter-rotating gears, caged core — is one
+    // self-driving rig (see CreationNexus); the kit just tells it what it is doing.
+    this.nexusRig = new CreationNexus(this.scene, this.pcol, cx, cy, 3);
+    this.nexusLabel = this.add.text(cx, cy + 52, 'Nexus',
       { fontSize: '11px', fontFamily: 'Arial', color: '#ff99cc' }).setOrigin(0.5).setDepth(4);
-    this.nexusDecor = [plinth, inner, ...studs, ...rings];
-    // Motes orbit fast and in alternating directions, reading as energy coursing through.
-    this.nexusEnergy = [];
-    for (let i = 0; i < 12; i++) {
-      const radius = ringDefs[i % 3][0];
-      const dot = this.add.circle(cx, cy, 3, 0xffeeff, 0.95).setDepth(5);
-      this.nexusEnergy.push({
-        dot,
-        radius,
-        angle: (i / 12) * Math.PI * 2,
-        speed: (i % 2 === 0 ? 1 : -1) * (7 + (i % 3) * 2.5),
-      });
-    }
+    // It powers on rather than blinking into being.
+    this.pfx.gearPulse(cx, cy, 46, 700, CREATION.nexusLit, 5);
+    this.pfx.sparks(cx, cy, 10, { speed: 120, size: 2.4, life: 620, depth: 5 });
   }
 
   // ── Spawners (called from CastContext) ───────────────────────────
@@ -523,37 +589,57 @@ export class CreationKit {
     const baseAngle = Math.atan2(ty - fromY, tx - fromX);
     const speed = 620;
     const spread = Phaser.Math.DegToRad(30);
+    const tint = this.col(owner);
+    const fx = this.fx(owner);
     for (let i = 0; i < count; i++) {
       const a = baseAngle + (i - (count - 1) / 2) * spread;
-      const spr = this.add.rectangle(fromX, fromY, 18, 4, 0xeeeeff, 0.9).setRotation(a).setDepth(7);
+      const spr = this.add.graphics().setDepth(7);
+      drawDagger(spr, tint);
+      spr.setPosition(fromX, fromY).setRotation(a);
       this.creatDaggers.push({
         sprite: spr, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
         damage: 8, owner, hitSet: new Set(), cutSet: new Set(),
         targetX: tx, targetY: ty, converged: false,
       });
     }
+    // One throw, one gesture — a wide arm-sweep along the fan, sized to how many went out.
+    this.gesture(owner, 'sweep', baseAngle, 300 + count * 30);
+    fx.sparks(fromX + Math.cos(baseAngle) * 20, fromY + Math.sin(baseAngle) * 20, 3 + count,
+      { angle: baseAngle, spread: 0.7, speed: 180, size: 2, life: 320, depth: 6 });
   }
 
   spawnBolt(fromX: number, fromY: number, tx: number, ty: number, tier: 'copper' | 'silver' | 'gold', owner: 'player' | 'npc'): void {
     const dx = tx - fromX, dy = ty - fromY;
     const len = Math.hypot(dx, dy) || 1;
     const speed = 380;
-    const colors: Record<string, number> = { copper: 0xcc6622, silver: 0xccccdd, gold: 0xffdd22 };
+    const angle = Math.atan2(dy, dx);
     const damages: Record<string, number> = { copper: 5, silver: 10, gold: 15 };
-    const spr = this.add.circle(fromX + (dx / len) * 24, fromY + (dy / len) * 24, 7, colors[tier], 0.9)
-      .setStrokeStyle(1, 0xffffff, 0.5).setDepth(7);
+    const spr = this.add.graphics().setDepth(7);
+    drawBolt(spr, this.col(owner), tier);
+    spr.setPosition(fromX + (dx / len) * 24, fromY + (dy / len) * 24).setRotation(angle);
     this.creatBolts.push({ sprite: spr, vx: (dx / len) * speed, vy: (dy / len) * speed, tier, damage: damages[tier], owner });
+    // The bigger the slug, the bigger the recoil.
+    const scale = tier === 'gold' ? 1.5 : tier === 'silver' ? 1.2 : 1;
+    this.gesture(owner, 'punch', angle);
+    this.fx(owner).muzzleFlash(fromX + (dx / len) * 22, fromY + (dy / len) * 22, angle, scale);
   }
 
   spawnScythe(fromX: number, fromY: number, tx: number, ty: number, owner: 'player' | 'npc'): void {
     const dx = tx - fromX, dy = ty - fromY;
     const len = Math.hypot(dx, dy) || 1;
+    const angle = Math.atan2(dy, dx);
     const maxHp = 25;
-    const spr = this.add.rectangle(fromX + (dx / len) * 30, fromY + (dy / len) * 30, 20, 12, 0xcc22aa, 0.9)
-      .setStrokeStyle(2, 0xff44ee, 0.9).setDepth(8);
+    const spr = this.add.graphics().setDepth(8);
+    drawScythe(spr, this.col(owner));
+    spr.setPosition(fromX + (dx / len) * 30, fromY + (dy / len) * 30);
     const hpBg = this.add.rectangle(fromX, fromY - 20, 28, 4, 0x333333).setDepth(9);
-    const hpBar = this.add.rectangle(fromX - 14, fromY - 20, 28, 4, 0xcc22aa).setDepth(10).setOrigin(0, 0.5);
+    const hpBar = this.add.rectangle(fromX - 14, fromY - 20, 28, 4, CREATION.nexus).setDepth(10).setOrigin(0, 0.5);
     this.creatScythes.push({ sprite: spr, hp: maxHp, maxHp, vx: (dx / len) * 87, vy: (dy / len) * 87, owner, lastContactTick: -99999, hpBar, hpBg });
+    // Forged on the spot and hurled overhand.
+    this.gesture(owner, 'slam', angle);
+    const fx = this.fx(owner);
+    fx.gearPulse(fromX + (dx / len) * 30, fromY + (dy / len) * 30, 26, 480, CREATION.nexusLit, 7);
+    fx.sparks(fromX + (dx / len) * 26, fromY + (dy / len) * 26, 8, { angle, spread: 0.9, speed: 190, size: 2.4, life: 460, depth: 7 });
   }
 
   /**
@@ -563,31 +649,53 @@ export class CreationKit {
   spawnBlocker(cx: number, cy: number, w: number, h: number, owner: 'player' | 'npc', countAsBuild = true): void {
     if (owner === 'player' && countAsBuild) this.api.recordMasteryStat('wallsBuilt', 1);
     const maxHp = 125;
-    const rect = this.add.rectangle(cx, cy, w, h, 0xcc8844, 0.55)
-      .setStrokeStyle(2, 0xff9955, 0.9).setDepth(4);
+    const rect = this.add.graphics().setDepth(4);
+    plankPanel(rect, this.col(owner), w, h, 0.92);
+    rect.setPosition(cx, cy);
     const hpBg = this.add.rectangle(cx, cy - h / 2 - 6, w, 4, 0x333333).setDepth(5);
-    const hpBar = this.add.rectangle(cx - w / 2, cy - h / 2 - 6, w, 4, 0xcc8844).setDepth(6).setOrigin(0, 0.5);
+    const hpBar = this.add.rectangle(cx - w / 2, cy - h / 2 - 6, w, 4, CREATION.tan).setDepth(6).setOrigin(0, 0.5);
     this.creatBlockers.push({ rect, x: cx, y: cy, w, h, hp: maxHp, maxHp, owner, hpBar, hpBg });
+    // Halves left by Blade Split were already standing — only a fresh build gets assembled.
+    if (countAsBuild) {
+      this.fx(owner).assemble(cx, cy, w, h);
+      this.gesture(owner, 'clap', Math.atan2(cy - (owner === 'player' ? this.player.y : this.npc.y),
+        cx - (owner === 'player' ? this.player.x : this.npc.x)));
+    }
   }
 
   private spawnMech(stage: 1 | 2 | 3): void {
     if (this.creatMech) { this.creatMech.sprite.destroy(); this.creatMech.hpBar.destroy(); this.creatMech.hpBg.destroy(); this.creatMech = null; }
     const mechHp = stage === 3 ? 60 : stage === 2 ? 40 : 20;
-    const mechColor = stage === 3 ? 0x5511aa : stage === 2 ? 0x8844cc : 0xbb88ee;
-    const mSpr = this.add.rectangle(this.player.x, this.player.y + 28, 32, 32, mechColor, 0.9).setStrokeStyle(2, 0xffffff, 0.5).setDepth(3);
+    const mSpr = this.add.graphics().setDepth(3);
+    drawMech(mSpr, this.pcol, stage);
+    mSpr.setPosition(this.player.x, this.player.y + 28);
     const mHpBg = this.add.rectangle(this.player.x, this.player.y + 50, 34, 5, 0x333333, 0.8).setDepth(4);
-    const mHpBar = this.add.rectangle(this.player.x - 17, this.player.y + 50, 34, 5, 0x8844cc, 0.9).setDepth(5).setOrigin(0, 0.5);
+    const mHpBar = this.add.rectangle(this.player.x - 17, this.player.y + 50, 34, 5, CREATION.brass, 0.9).setDepth(5).setOrigin(0, 0.5);
     this.creatMech = { sprite: mSpr, stage, hp: mechHp, maxHp: mechHp, hpBar: mHpBar, hpBg: mHpBg, rocketAccum: 0, dodgeCdUntil: 0 };
+    // It gets bolted together in front of you, one gear pulse per stage.
+    this.pfx.assemble(this.player.x, this.player.y + 28, 40, 40, 420);
+    for (let i = 0; i < stage; i++) {
+      this.scene.time.delayedCall(120 * i, () => {
+        this.pfx.gearPulse(this.player.x, this.player.y + 28, 24 + i * 8, 460, CREATION.brass, 7);
+      });
+    }
+    this.pfx.hammerStrike(this.player.x, this.player.y + 28, -Math.PI / 2, 1 + stage * 0.15);
+    this.gesture('player', 'flex');
     if (!this.player.damageAbsorber) {
       this.player.damageAbsorber = (amt: number) => {
         if (!this.creatMech) return false;
         this.creatMech.hp -= amt;
         const ratio = Math.max(0, this.creatMech.hp / this.creatMech.maxHp);
         this.creatMech.hpBar.setScale(ratio, 1);
-        this.api.spawnHitFlash(this.creatMech.sprite.x, this.creatMech.sprite.y, 0x8844cc);
+        this.api.spawnHitFlash(this.creatMech.sprite.x, this.creatMech.sprite.y, CREATION.brass);
+        // Plating spalling off wherever it just took a hit.
+        this.pfx.sparks(this.creatMech.sprite.x, this.creatMech.sprite.y, 5,
+          { speed: 130, size: 2.2, life: 380, depth: 7 });
         if (this.creatMech.hp <= 0) {
-          const ex = this.add.circle(this.creatMech.sprite.x, this.creatMech.sprite.y, 30, 0x8844cc, 0.7).setDepth(8);
-          this.tweens.add({ targets: ex, scaleX: 3, scaleY: 3, alpha: 0, duration: 400, onComplete: () => ex.destroy() });
+          // It comes apart into its own plating rather than puffing out of existence.
+          this.pfx.explosion(this.creatMech.sprite.x, this.creatMech.sprite.y, 74,
+            { shards: 14, smoke: 3, core: CREATION.brass });
+          this.pfx.bloom(this.creatMech.sprite.x, this.creatMech.sprite.y, 42, 9);
           this.creatMech.sprite.destroy(); this.creatMech.hpBar.destroy(); this.creatMech.hpBg.destroy(); this.creatMech = null;
           this.player.damageAbsorber = null;
           this.api.showFloatingText(this.player.x, this.player.y - 40, 'MECH DESTROYED', '#ff4422');
@@ -595,7 +703,7 @@ export class CreationKit {
         return true;
       };
     }
-    this.api.showFloatingText(this.player.x, this.player.y - 40, `MECH STAGE ${stage}`, '#bb88ee');
+    this.api.showFloatingText(this.player.x, this.player.y - 40, `⚙️ MECH STAGE ${stage}`, '#ffaa44');
     this.player.triggerCooldown('scythe-of-doom');
   }
 
@@ -606,29 +714,36 @@ export class CreationKit {
     this.creatWorkshopEnd = time + 30000;
     this.creatWorkshopOwner = owner;
     if (!this.creatWorkshopOverlay) {
-      // Warm wooden tint over the arena (below the fighters).
-      this.creatWorkshopOverlay = this.add.rectangle(W / 2, H / 2, W, H, 0x6b4a2a, 0.3)
-        .setStrokeStyle(6, 0x3d2a17, 0.9).setDepth(0);
+      // A boarded floor laid over the whole arena, below the fighters: planks with grain,
+      // a rivet at each corner, and a heavy frame around the edge.
+      const floor = this.add.graphics().setDepth(0);
+      floor.setPosition(W / 2, H / 2);
+      plankPanel(floor, this.col(owner), W, H, 0.34, { boardH: 46, frame: 6 });
+      this.creatWorkshopOverlay = floor;
     }
-    const flash = this.add.rectangle(W / 2, H / 2, W, H, 0x8a5a2a, 0.45).setDepth(0);
-    this.tweens.add({ targets: flash, alpha: 0, duration: 500, onComplete: () => flash.destroy() });
     const caster = owner === 'player' ? this.player : this.npc;
+    const fx = this.fx(owner);
+    // The floor gets hammered down: a strike at the caster, boards flashing in, dust everywhere.
+    fx.hammerStrike(caster.x, caster.y + 18, Math.PI / 2, 1.6);
+    fx.ring(caster.x, caster.y, 20, Math.max(W, H) * 0.75, CREATION.tan, 620, 8, 1);
+    fx.sawdust(W / 2, H / 2, W, H, 40);
+    fx.gearPulse(caster.x, caster.y, 60, 700, CREATION.gold, 5);
+    this.gesture(owner, 'raise');
     this.api.showFloatingText(caster.x, caster.y - 40, '🔨 WORKSHOP', '#d9a066');
     // Q+ Ultimate Invention: draggable danger/bias/clutter sliders + an unstable timer.
     if (owner === 'player' && this.api.hasUpgrade('q')) this.startUltimateInvention();
     // Automaton perk: spawn 3 wandering bots
-    if (this.api.hasPerk(owner, 'automaton')) this.api.spawnAutomatons(owner, 3);
+    if (this.api.hasPerk(owner, 'automaton')) this.spawnAutomatons(owner, 3);
   }
 
   // ── Nexus crafting ───────────────────────────────────────────────
 
-  /** Race the energy motes around the nexus rings. */
+  /** Keep the machine turning, and let it show what it is doing. */
   private updateNexusEnergy(delta: number): void {
-    const dt = delta / 1000;
-    for (const e of this.nexusEnergy) {
-      e.angle += e.speed * dt;
-      e.dot.setPosition(this.nexusX + Math.cos(e.angle) * e.radius, this.nexusY + Math.sin(e.angle) * e.radius);
-    }
+    if (!this.nexusRig) return;
+    this.nexusRig.setBrewing(this.creatCraftInProgress);
+    this.nexusRig.setLoad(this.nexusBolts.length);
+    this.nexusRig.update(delta);
   }
 
   /** How many potions this side may leave on the nexus — E+ (Electro Bolt) raises it to 2. */
@@ -655,9 +770,11 @@ export class CreationKit {
     if (!kind) return;
     if (owner === 'player') this.api.recordMasteryStat('nexusCrafts', 1);
 
-    // Brew flash, tinted to whatever came out.
-    const burst = this.add.circle(this.nexusX, this.nexusY, 14, CREATION_POTIONS[kind].color, 0.9).setDepth(8);
-    this.tweens.add({ targets: burst, scaleX: 4, scaleY: 4, alpha: 0, duration: 400, onComplete: () => burst.destroy() });
+    // The machine finishes its cycle and coughs the brew out, tinted to whatever came out.
+    const fx = this.fx(owner);
+    fx.gearPulse(this.nexusX, this.nexusY, 44, 560, CREATION.nexusLit, 8);
+    fx.ring(this.nexusX, this.nexusY, 12, 70, CREATION_POTIONS[kind].color, 460, 5, 8);
+    fx.sparks(this.nexusX, this.nexusY, 14, { speed: 190, size: 2.6, life: 560, depth: 8 });
 
     this.spawnCreationPotion(kind, owner);
   }
@@ -671,11 +788,13 @@ export class CreationKit {
    */
   private spawnCreationPotion(kind: CreationPotionKind, owner: 'player' | 'npc'): void {
     const cap = this.nexusPotionCapacity(owner);
+    const fx = this.fx(owner);
     while (this.creatPotions.filter((p) => p.owner === owner).length >= cap) {
       const [stale] = this.creatPotions.splice(this.creatPotions.findIndex((p) => p.owner === owner), 1);
-      const puff = this.add.circle(stale.x, stale.y, 12, 0xaa77aa, 0.6).setDepth(8);
-      this.tweens.add({ targets: puff, scaleX: 2, scaleY: 2, alpha: 0, duration: 250, onComplete: () => puff.destroy() });
-      for (const part of stale.parts) part.destroy();
+      // Displaced bottles are dropped and smash, rather than politely dissolving.
+      fx.shrapnel(stale.x, stale.y, 7, 22, 8);
+      fx.ring(stale.x, stale.y, 3, 22, CREATION.silver, 260, 2, 8);
+      stale.gfx.destroy();
     }
 
     // Lowest free shelf slot, so a replacement never lands on top of a surviving bottle.
@@ -689,29 +808,29 @@ export class CreationKit {
     // same nexus, so the npc's shelf is stacked higher again to keep them apart.
     const y = this.nexusY - (owner === 'player' ? 62 : 92);
 
-    const glow = this.add.circle(x, y, 16, def.color, 0.3).setDepth(5);
-    const liquid = this.add.circle(x, y + 2, 10, def.color, 0.95).setStrokeStyle(2, 0xffffff, 0.55).setDepth(6);
-    const neck = this.add.rectangle(x, y - 11, 7, 9, 0xdde6ff, 0.85).setStrokeStyle(1, 0xffffff, 0.6).setDepth(6);
-    const cork = this.add.rectangle(x, y - 17, 9, 5, 0xa9744f, 1).setDepth(7);
-    const shine = this.add.circle(x - 4, y - 1, 2.5, 0xffffff, 0.75).setDepth(7);
-    const parts: Phaser.GameObjects.GameObject[] = [glow, liquid, neck, cork, shine];
-    this.tweens.add({ targets: glow, alpha: 0.65, scaleX: 1.3, scaleY: 1.3, yoyo: true, repeat: -1, duration: 700 });
-    this.tweens.add({ targets: parts, y: '-=5', yoyo: true, repeat: -1, duration: 850, ease: 'Sine.easeInOut' });
+    // One Graphics for the whole bottle, redrawn each frame in updateCreationPotions so the
+    // liquid rocks, the bubbles rise and it bobs on the pedestal without a stack of tweens.
+    const gfx = this.add.graphics().setDepth(6);
+    drawFlask(gfx, this.col(owner), def.color, 0);
+    gfx.setPosition(x, y);
 
-    this.creatPotions.push({ kind, owner, slot, x, y, parts, liquid });
+    this.creatPotions.push({ kind, owner, slot, x, y, gfx, t: 0 });
     const hex = `#${def.color.toString(16).padStart(6, '0')}`;
     this.api.showFloatingText(this.nexusX, this.nexusY - 96, `${def.emoji} ${def.name.toUpperCase()}`, hex);
   }
 
-  /** Hand a potion to whoever brewed it once they step onto the nexus. */
-  private updateCreationPotions(time: number): void {
+  /** Bob the bottles on their shelf, and hand one over when its brewer steps onto the nexus. */
+  private updateCreationPotions(time: number, delta: number): void {
     for (let i = this.creatPotions.length - 1; i >= 0; i--) {
       const p = this.creatPotions[i];
+      p.t += delta / 1000;
+      drawFlask(p.gfx, this.col(p.owner), CREATION_POTIONS[p.kind].color, p.t);
+      p.gfx.setPosition(p.x, p.y + Math.sin(p.t * 2.2) * 4);
       const drinker = p.owner === 'player' ? this.player : this.npc;
       if (!drinker.active || drinker.hp <= 0) continue;
       if (Phaser.Math.Distance.Between(this.nexusX, this.nexusY, drinker.x, drinker.y) > 46) continue;
       this.creatPotions.splice(i, 1);
-      for (const part of p.parts) part.destroy();
+      p.gfx.destroy();
       this.drinkCreationPotion(p.kind, p.owner, time);
     }
   }
@@ -727,8 +846,12 @@ export class CreationKit {
 
     const hex = `#${def.color.toString(16).padStart(6, '0')}`;
     this.api.showFloatingText(drinker.x, drinker.y - 40, `${def.emoji} ${def.name.toUpperCase()}`, hex);
-    const flash = this.add.circle(drinker.x, drinker.y, 22, def.color, 0.55).setDepth(9);
-    this.tweens.add({ targets: flash, scaleX: 2.6, scaleY: 2.6, alpha: 0, duration: 320, onComplete: () => flash.destroy() });
+    // Downed in one: a swig gesture, the brew washing outward, and the empty bottle smashed.
+    const fx = this.fx(owner);
+    this.gesture(owner, 'flex');
+    fx.ring(drinker.x, drinker.y, 8, 52, def.color, 380, 5, 9);
+    fx.sparks(drinker.x, drinker.y, 10, { speed: 130, size: 2.2, life: 520, gravity: -50, depth: 9 });
+    fx.shrapnel(drinker.x, drinker.y, 6, 26, 9);
   }
 
   /**
@@ -809,6 +932,60 @@ export class CreationKit {
     }
   }
 
+  /**
+   * Paint the live-effect tell on both fighters: upright bottles orbiting above a fighter for
+   * every potion running on them, inverted dripping ones below for every mortar hex.
+   */
+  private updateBrewAuras(time: number, delta: number): void {
+    this.brewAuraT += delta / 1000;
+    for (const side of ['player', 'npc'] as const) {
+      const fighter = side === 'player' ? this.player : this.npc;
+      const potions = CREATION_POTION_KINDS.filter((k) => time < (this.creatPotionEnds.get(`${side}|${k}`) ?? 0));
+      const hexes = CREATION_HEX_KINDS.filter((k) => time < (this.creatHexEnds.get(`${side}|${k}`) ?? 0));
+
+      if ((potions.length + hexes.length) === 0 || !fighter?.active || fighter.hp <= 0) {
+        if (this.brewAura[side]) { this.brewAura[side]!.destroy(); this.brewAura[side] = null; }
+        continue;
+      }
+      if (!this.brewAura[side]) this.brewAura[side] = this.add.graphics().setDepth(9);
+      const g = this.brewAura[side]!;
+      if (!g.active) { this.brewAura[side] = null; continue; }
+      g.clear();
+      const alpha = fighter.forceInvisible ? 0 : fighter.alpha;
+      if (alpha <= 0.02) continue;
+      const tint = this.col(side);
+
+      const bottle = (bx: number, by: number, color: number, flipped: boolean, a: number) => {
+        const s = flipped ? -1 : 1;
+        g.fillStyle(color, 0.45 * a);
+        g.fillCircle(bx, by, 8);
+        g.fillStyle(color, 0.95 * a);
+        g.fillCircle(bx, by, 4.4);
+        g.fillStyle(tint(CREATION.brass), 0.95 * a);
+        g.fillRect(bx - 2.4, by - s * 8, 4.8, 4 * s);
+        g.fillStyle(tint(CREATION.white), 0.7 * a);
+        g.fillCircle(bx - 1.6, by - 1.6, 1.3);
+      };
+
+      // Potions ride a shallow ring above the head.
+      potions.forEach((kind, i) => {
+        const p = this.brewAuraT * 1.1 + (i / Math.max(1, potions.length)) * Math.PI * 2;
+        bottle(fighter.x + Math.cos(p) * 22, fighter.y - 30 + Math.sin(p) * 5,
+          CREATION_POTIONS[kind].color, false, alpha);
+      });
+      // Hexes hang upside-down at the feet and drip.
+      hexes.forEach((kind, i) => {
+        const p = -this.brewAuraT * 0.9 + (i / Math.max(1, hexes.length)) * Math.PI * 2;
+        const bx = fighter.x + Math.cos(p) * 20;
+        const by = fighter.y + 22 + Math.sin(p) * 4;
+        bottle(bx, by, CREATION_POTIONS[kind].color, true, alpha * 0.9);
+        const drip = (this.brewAuraT * 1.6 + i * 0.37) % 1;
+        g.fillStyle(CREATION_POTIONS[kind].color, 0.7 * alpha * (1 - drip));
+        g.fillCircle(bx, by + 6 + drip * 12, 2 * (1 - drip * 0.6));
+      });
+    }
+  }
+
   private updateCreationWorkshop(time: number, delta: number): void {
     if (time >= this.creatWorkshopEnd) {
       if (this.creatWorkshopOverlay) { this.creatWorkshopOverlay.destroy(); this.creatWorkshopOverlay = null; }
@@ -817,14 +994,24 @@ export class CreationKit {
       if (this.creatInventionActive) this.endUltimateInvention();
       return;
     }
-    // White circle afterimage trail behind the workshop owner
+    // Sawdust footprints stamped behind the workshop owner — the floor is theirs, and the
+    // trail is the read on which side that is.
     const walker = this.creatWorkshopOwner === 'player' ? this.player : this.npc;
+    const tint = this.col(this.creatWorkshopOwner);
     this.creatWorkshopTrailAccum += delta;
-    if (this.creatWorkshopTrailAccum >= 55) {
+    if (this.creatWorkshopTrailAccum >= 70) {
       this.creatWorkshopTrailAccum = 0;
-      const c = this.add.circle(walker.x, walker.y, 14, 0xffffff, 0.5).setDepth(2);
-      this.tweens.add({ targets: c, alpha: 0, duration: 500, onComplete: () => c.destroy() });
-      this.creatWorkshopTrail.push(c);
+      const step = this.add.graphics().setDepth(1);
+      const vel = (walker.body as Phaser.Physics.Arcade.Body | null)?.velocity;
+      const ang = Math.atan2(vel?.y ?? 0, vel?.x ?? 1);
+      for (let i = 0; i < 5; i++) {
+        const a = ang + (i - 2) * 0.6;
+        craftPlank(step, tint, Math.cos(a) * 9, Math.sin(a) * 9, a, 12, 2.6, 0.7);
+      }
+      rivet(step, tint, 0, 0, 3);
+      step.setPosition(walker.x, walker.y + 6).setScale(1, 0.55);
+      this.tweens.add({ targets: step, alpha: 0, duration: 620, onComplete: () => step.destroy() });
+      this.creatWorkshopTrail.push(step);
     }
     this.creatWorkshopTrail = this.creatWorkshopTrail.filter((t) => t.active);
   }
@@ -937,13 +1124,7 @@ export class CreationKit {
     const x = fromLeft ? -24 : W + 24;
     const vx = (fromLeft ? 1 : -1) * (240 + Math.random() * 140);
     const g = this.add.graphics().setDepth(6);
-    g.fillStyle(0x999aa8, 1); g.fillCircle(0, 0, 16);
-    g.fillStyle(0xccccdd, 1);
-    for (let t = 0; t < 8; t++) {
-      const a = (t / 8) * Math.PI * 2;
-      g.fillTriangle(Math.cos(a) * 14, Math.sin(a) * 14, Math.cos(a + 0.3) * 24, Math.sin(a + 0.3) * 24, Math.cos(a - 0.3) * 24, Math.sin(a - 0.3) * 24);
-    }
-    g.fillStyle(0x555560, 1); g.fillCircle(0, 0, 5);
+    drawSaw(g, this.col(owner), 22);
     g.setPosition(x, y);
     this.creatSaws.push({ sprite: g, x, y, vx, owner, hitSet: new Set() });
   }
@@ -961,7 +1142,10 @@ export class CreationKit {
         const tId = en === this.player ? 'player' : String(this.api.enemies.indexOf(en as Fighter));
         if (!s.hitSet.has(tId) && Phaser.Math.Distance.Between(s.x, s.y, en.x, en.y) <= 30) {
           en.takeDamage(25);
-          this.api.spawnHitFlash(en.x, en.y, 0xccccdd);
+          this.api.spawnHitFlash(en.x, en.y, CREATION.silver);
+          // A blade that bites throws a spray of sparks off the contact point.
+          this.fx(s.owner).sparks(en.x, en.y, 12,
+            { angle: s.vx > 0 ? 0 : Math.PI, spread: 1.1, speed: 240, size: 2.6, life: 480, depth: 7 });
           s.hitSet.add(tId);
         }
       }
@@ -977,11 +1161,16 @@ export class CreationKit {
     else if (side === 2) { ox = 60 + Math.random() * (W - 120); oy = -10; baseAng = Math.PI / 2; }
     else { ox = 60 + Math.random() * (W - 120); oy = H + 10; baseAng = -Math.PI / 2; }
     const speed = 380;
+    const tint = this.col(owner);
     for (let i = 0; i < 5; i++) {
       const a = baseAng + (i - 2) * Phaser.Math.DegToRad(14);
-      const spr = this.add.rectangle(ox, oy, 12, 3, 0xdddddd, 1).setRotation(a).setDepth(6);
+      const spr = this.add.graphics().setDepth(6);
+      drawNail(spr, tint);
+      spr.setPosition(ox, oy).setRotation(a);
       this.creatNails.push({ sprite: spr, x: ox, y: oy, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed, damage: 10, owner });
     }
+    // A nail gun going off just off screen.
+    this.fx(owner).muzzleFlash(ox, oy, baseAng, 1.2);
   }
 
   private updateCreationNails(delta: number): void {
@@ -995,7 +1184,13 @@ export class CreationKit {
       let hit = false;
       for (const en of (n.owner === 'player' ? this.api.enemies : [this.player])) {
         if (!en.active || en.hp <= 0) continue;
-        if (Phaser.Math.Distance.Between(n.x, n.y, en.x, en.y) <= 18) { en.takeDamage(n.damage); this.api.spawnHitFlash(en.x, en.y, 0xdddddd); hit = true; break; }
+        if (Phaser.Math.Distance.Between(n.x, n.y, en.x, en.y) <= 18) {
+          en.takeDamage(n.damage);
+          this.api.spawnHitFlash(en.x, en.y, CREATION.silver);
+          this.fx(n.owner).sparks(n.x, n.y, 5,
+            { angle: Math.atan2(-n.vy, -n.vx), spread: 0.8, speed: 150, size: 1.8, life: 340, depth: 7 });
+          hit = true; break;
+        }
       }
       if (hit) { n.sprite.destroy(); this.creatNails.splice(ni, 1); }
     }
@@ -1024,8 +1219,10 @@ export class CreationKit {
 
   private pushClutterBox(x: number, y: number, size: number, owner: 'player' | 'npc', expireAt: number): void {
     // Keep the nexus reachable.
-    if (this.nexusSprite && Math.abs(x - this.nexusX) < size && Math.abs(y - this.nexusY) < size) return;
-    const rect = this.add.rectangle(x, y, size, size, 0x8a5a2a, 0.85).setStrokeStyle(2, 0x5a3a1a, 1).setDepth(4);
+    if (this.nexusRig && Math.abs(x - this.nexusX) < size && Math.abs(y - this.nexusY) < size) return;
+    const rect = this.add.graphics().setDepth(4);
+    plankPanel(rect, this.col(owner), size, size, 0.95, { boardH: 15 });
+    rect.setPosition(x, y);
     this.creatClutterBoxes.push({ rect, x, y, w: size, h: size, owner, expireAt, spiked: false, spikeAccum: 0 });
   }
 
@@ -1125,26 +1322,22 @@ export class CreationKit {
   private fireMortar(kinds: CreationPotionKind[], owner: 'player' | 'npc', tx: number, ty: number): void {
     for (let i = this.creatPotions.length - 1; i >= 0; i--) {
       if (this.creatPotions[i].owner !== owner) continue;
-      for (const part of this.creatPotions[i].parts) part.destroy();
+      this.creatPotions[i].gfx.destroy();
       this.creatPotions.splice(i, 1);
     }
 
-    const muzzle = this.add.circle(this.nexusX, this.nexusY, 20, 0xff66cc, 0.7).setDepth(9);
-    this.tweens.add({ targets: muzzle, scaleX: 2.4, scaleY: 2.4, alpha: 0, duration: 260, onComplete: () => muzzle.destroy() });
+    const fx = this.fx(owner);
+    const angle = Math.atan2(ty - this.nexusY, tx - this.nexusX);
+    fx.muzzleFlash(this.nexusX, this.nexusY, angle, 2.2, 9);
+    fx.ring(this.nexusX, this.nexusY, 10, 64, CREATION.nexusLit, 340, 5, 9);
+    fx.smoke(this.nexusX, this.nexusY, 3, 30, 8);
+    this.gesture(owner, 'raise', angle);
     this.api.showFloatingText(this.nexusX, this.nexusY - 70, '🎆 MORTAR', '#ff66cc');
 
     kinds.forEach((kind, i) => {
-      const def = CREATION_POTIONS[kind];
       // Fan the shells slightly so a two-potion volley reads as two shells, not one.
       const jitter = (i - (kinds.length - 1) / 2) * 26;
-      const shell = this.add.circle(this.nexusX, this.nexusY, 8, def.color, 0.95)
-        .setStrokeStyle(2, 0xffffff, 0.6).setDepth(9);
-      // Arc: a mid-flight scale-up stands in for the lob.
-      this.tweens.add({
-        targets: shell, x: tx + jitter, y: ty, duration: MORTAR_FLIGHT_MS, ease: 'Quad.easeIn',
-        onComplete: () => shell.destroy(),
-      });
-      this.tweens.add({ targets: shell, scaleX: 1.9, scaleY: 1.9, duration: MORTAR_FLIGHT_MS / 2, yoyo: true });
+      fx.mortarShell(this.nexusX, this.nexusY, tx + jitter, ty, CREATION_POTIONS[kind].color, MORTAR_FLIGHT_MS);
     });
 
     this.scene.time.delayedCall(MORTAR_FLIGHT_MS, () => this.landMortar(kinds, owner, tx, ty));
@@ -1152,22 +1345,31 @@ export class CreationKit {
 
   private landMortar(kinds: CreationPotionKind[], owner: 'player' | 'npc', tx: number, ty: number): void {
     const time = this.scene.time.now;
-    const blast = this.add.circle(tx, ty, MORTAR_RADIUS * 0.35, 0xff66cc, 0.5).setDepth(9);
-    this.tweens.add({
-      targets: blast, scaleX: 2.85, scaleY: 2.85, alpha: 0, duration: 420,
-      onComplete: () => blast.destroy(),
+    const fx = this.fx(owner);
+    // A two-potion volley is a visibly bigger event than a one-potion one: more shrapnel,
+    // more smoke, a longer burn and a harder shake.
+    const tier = kinds.length - 1;
+    fx.explosion(tx, ty, MORTAR_RADIUS, {
+      shards: 16 + tier * 8,
+      smoke: 4 + tier * 2,
+      duration: 460 + tier * 140,
+      core: CREATION_POTIONS[kinds[0]].color,
     });
-    const ring = this.add.circle(tx, ty, MORTAR_RADIUS, 0x000000, 0)
-      .setStrokeStyle(4, 0xffaadd, 0.9).setDepth(9);
-    this.tweens.add({ targets: ring, alpha: 0, duration: 420, onComplete: () => ring.destroy() });
-    this.scene.cameras.main.shake(180, 0.006);
+    // Each shell's own colour still lands as its own splash, so you can read what hit you.
+    kinds.forEach((kind, i) => {
+      this.scene.time.delayedCall(70 * i, () => {
+        fx.ring(tx, ty, 14, MORTAR_RADIUS * 1.05, CREATION_POTIONS[kind].color, 520, 5, 9);
+        fx.bloom(tx, ty, MORTAR_RADIUS * 0.55, 8);
+      });
+    });
+    this.scene.cameras.main.shake(180 + tier * 70, 0.006 + tier * 0.003);
 
     const victimSide: 'player' | 'npc' = owner === 'player' ? 'npc' : 'player';
     for (const target of (owner === 'player' ? this.api.enemies : [this.player])) {
       if (!target.active || target.hp <= 0) continue;
       if (Phaser.Math.Distance.Between(tx, ty, target.x, target.y) > MORTAR_RADIUS) continue;
       target.takeDamage(MORTAR_DAMAGE);
-      this.api.spawnHitFlash(target.x, target.y, 0xff66cc);
+      this.api.spawnHitFlash(target.x, target.y, CREATION.nexus);
     }
     // The debuffs are side-keyed like the potions themselves, so in a crowd only the
     // opposing fighter carries them — everyone else in the blast just eats the damage.
@@ -1185,6 +1387,12 @@ export class CreationKit {
     const goldOn = time < (this.creatPotionEnds.get(`${side}|gold`) ?? 0);
     const duration = def.durationMs * (goldOn && kind !== 'gold' ? 2 : 1);
 
+    // The payload snapping onto the victim — an inverted brew closing over them, drawn on
+    // whichever side owns the mortar so a cosmetic recolours the right half of the exchange.
+    const fx = this.fx(side === 'player' ? 'npc' : 'player');
+    fx.ring(victim.x, victim.y, 40, 12, def.color, 340, 4, 9);
+    fx.sparks(victim.x, victim.y, 8, { speed: 90, size: 2.2, life: 620, gravity: 260, depth: 9 });
+
     if (kind === 'gold') {
       this.creatPotionEnds.set(`${side}|gold`, time + def.durationMs);
       seedEffectSnapshot(victim, this.creatGoldSnapshots[side]);
@@ -1201,23 +1409,35 @@ export class CreationKit {
   /** Springboard passive: a dash that just ended drops a small speed pad where it landed. */
   private updateSpringboard(time: number): void {
     const dodging = this.api.isDodging;
-    if (this.api.masteryActive && this.prevDodging && !dodging) {
-      this.spawnSpringboardPad(this.player.x, this.player.y, time);
+    if (dodging && !this.prevDodging) {
+      // Dash launching: note where from, and throw the arms forward.
+      this.dashFromX = this.player.x;
+      this.dashFromY = this.player.y;
+      this.gesture('player', 'dash');
+      this.pfx.sparks(this.player.x, this.player.y, 8, { speed: 150, size: 2.2, life: 400, depth: 5 });
+    }
+    if (this.prevDodging && !dodging) {
+      // Sawdust kicked up along the whole path, whether or not the pad drops.
+      this.pfx.dashTrail(this.dashFromX, this.dashFromY, this.player.x, this.player.y);
+      if (this.api.masteryActive) this.spawnSpringboardPad(this.player.x, this.player.y, time);
     }
     this.prevDodging = dodging;
   }
 
   private spawnSpringboardPad(x: number, y: number, time: number): void {
     const w = SPRINGBOARD_PAD_W, h = SPRINGBOARD_PAD_H;
-    const rect = this.add.rectangle(x, y, w, h, 0x44aaff, 0.75).setStrokeStyle(2, 0x88ddff, 0.9).setDepth(4);
+    const rect = this.add.graphics().setDepth(4);
+    drawSpeedPad(rect, this.pcol, w, h);
+    rect.setPosition(x, y);
     const hpBg = this.add.rectangle(x, y - h / 2 - 6, w, 4, 0x333333, 0.8).setDepth(5);
-    const hpBar = this.add.rectangle(x - w / 2, y - h / 2 - 6, w, 4, 0x44aaff, 0.9).setDepth(6).setOrigin(0, 0.5);
+    const hpBar = this.add.rectangle(x - w / 2, y - h / 2 - 6, w, 4, CREATION.steel, 0.9).setDepth(6).setOrigin(0, 0.5);
     this.creatSpeedPads.push({
       rect, x, y, w, h, hp: SPRINGBOARD_PAD_HP, maxHp: SPRINGBOARD_PAD_HP,
       hpBar, hpBg, owner: 'player', expireAt: time + SPRINGBOARD_PAD_MS,
     });
-    const pop = this.add.circle(x, y, 10, 0x88ddff, 0.6).setDepth(5);
-    this.tweens.add({ targets: pop, scaleX: 2.2, scaleY: 2.2, alpha: 0, duration: 240, onComplete: () => pop.destroy() });
+    // Stamped into the floor where the dash landed.
+    this.pfx.hammerStrike(x, y, Math.PI / 2, 0.85);
+    this.pfx.ring(x, y, 4, 34, CREATION.spark, 300, 3, 5);
   }
 
   /**
@@ -1234,6 +1454,131 @@ export class CreationKit {
           this.api.recordMasteryStat('workshopKills', 1);
         }
       });
+    }
+  }
+
+  // ── Avatars, aura and automatons ─────────────────────────────────
+
+  /**
+   * Builds (on first frame) and drives the artisan avatar for whichever fighters are creation,
+   * plus the workshop forge ring worn by whoever has the Workshop up. The player faces the
+   * cursor; the npc faces whoever it is fighting.
+   */
+  private updateAvatars(time: number, delta: number): void {
+    const { scene, player, npc, elementId, npcElementId } = this.api;
+
+    if (elementId === 'creation' && player?.active) {
+      if (!this.playerAvatar) this.playerAvatar = new CreationAvatar(scene, this.pcol);
+      const av = this.playerAvatar;
+      av.setFacing(Math.atan2(this.api.aimY - player.y, this.api.aimX - player.x));
+      // Workshop up, or a mech at your back, is the smith at full stretch.
+      const workshop = time < this.creatWorkshopEnd && this.creatWorkshopOwner === 'player';
+      av.setIntensity(workshop ? 1.35 : this.creatMech ? 1.15 : 1);
+      av.setMastered(this.api.masteryActive);
+      av.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
+    } else if (this.playerAvatar) {
+      this.playerAvatar.destroy();
+      this.playerAvatar = null;
+    }
+
+    if (npcElementId === 'creation' && npc?.active) {
+      if (!this.npcAvatar) this.npcAvatar = new CreationAvatar(scene, this.ncol);
+      const av = this.npcAvatar;
+      av.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
+      av.setIntensity(time < this.creatWorkshopEnd && this.creatWorkshopOwner === 'npc' ? 1.35 : 1);
+      av.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
+    } else if (this.npcAvatar) {
+      this.npcAvatar.destroy();
+      this.npcAvatar = null;
+    }
+
+    // The Workshop stance: raw stock orbiting whoever owns the floor.
+    if (time < this.creatWorkshopEnd) {
+      const owner = this.creatWorkshopOwner;
+      const walker = owner === 'player' ? this.player : this.npc;
+      if (!this.workshopForge) this.workshopForge = new CreationForge(scene, this.col(owner), 34, 1, 2);
+      this.workshopForge.update(delta, walker.x, walker.y, walker.forceInvisible ? 0 : walker.alpha);
+    } else if (this.workshopForge) {
+      this.workshopForge.destroy();
+      this.workshopForge = null;
+    }
+  }
+
+  // ── Automaton perk ───────────────────────────────────────────────
+
+  /** Workshop + the Automaton perk: wind up three bots and let them loose on the floor. */
+  private spawnAutomatons(owner: 'player' | 'npc', count: number): void {
+    const W = this.api.width, H = this.api.height;
+    const expireAt = this.scene.time.now + 10000;
+    for (let i = 0; i < count; i++) {
+      let ax = 0, ay = 0;
+      for (let attempt = 0; attempt < 30; attempt++) {
+        ax = 60 + Math.random() * (W - 120);
+        ay = 60 + Math.random() * (H - 120);
+        // Avoid maze wall overlap (simple bounding box check)
+        let blocked = false;
+        for (const wall of this.creatMazeWalls) {
+          if (wall.owner === owner && Math.abs(ax - wall.x) < wall.w / 2 + 20 && Math.abs(ay - wall.y) < wall.h / 2 + 20) {
+            blocked = true; break;
+          }
+        }
+        if (!blocked) break;
+      }
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 60;
+      const gfx = this.add.graphics().setDepth(5);
+      gfx.setPosition(ax, ay);
+      this.automatons.push({
+        gfx, x: ax, y: ay, t: Math.random() * 6,
+        vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+        expireAt, meleeCooldownUntil: 0, owner,
+      });
+      this.fx(owner).gearPulse(ax, ay, 20, 420, CREATION.brass, 6);
+    }
+  }
+
+  private updateAutomatons(time: number, delta: number): void {
+    const W = this.api.width, H = this.api.height;
+    for (let i = this.automatons.length - 1; i >= 0; i--) {
+      const a = this.automatons[i];
+      if (time >= a.expireAt) {
+        // They run down rather than blinking out.
+        this.fx(a.owner).bloom(a.x, a.y, 22, 7);
+        a.gfx.destroy();
+        this.automatons.splice(i, 1);
+        continue;
+      }
+      a.t += delta / 1000;
+      a.x += a.vx * (delta / 1000);
+      a.y += a.vy * (delta / 1000);
+      // Reflect off maze walls
+      for (const wall of this.creatMazeWalls) {
+        if (wall.owner !== a.owner) continue;
+        const closestX = Math.max(wall.x - wall.w / 2, Math.min(a.x, wall.x + wall.w / 2));
+        const closestY = Math.max(wall.y - wall.h / 2, Math.min(a.y, wall.y + wall.h / 2));
+        const distSq = (a.x - closestX) ** 2 + (a.y - closestY) ** 2;
+        if (distSq < 14 * 14) {
+          if (Math.abs(a.x - closestX) < Math.abs(a.y - closestY)) a.vy *= -1; else a.vx *= -1;
+          break;
+        }
+      }
+      // Bounce off arena edges
+      if (a.x < 20 || a.x > W - 20) { a.vx *= -1; a.x = Math.max(20, Math.min(W - 20, a.x)); }
+      if (a.y < 20 || a.y > H - 20) { a.vy *= -1; a.y = Math.max(20, Math.min(H - 20, a.y)); }
+      drawAutomaton(a.gfx, this.col(a.owner), a.t);
+      a.gfx.setPosition(a.x, a.y);
+      // Contact damage
+      const enemy = a.owner === 'player' ? this.npc : this.player;
+      if (enemy && enemy.active && enemy.hp > 0 && time >= a.meleeCooldownUntil) {
+        const ddx = a.x - enemy.x, ddy = a.y - enemy.y;
+        if (ddx * ddx + ddy * ddy < 24 * 24) {
+          a.meleeCooldownUntil = time + 500;
+          enemy.takeDamage(12);
+          this.api.spawnHitFlash(a.x, a.y, CREATION.nexus);
+          this.fx(a.owner).sparks(a.x, a.y, 6,
+            { angle: Math.atan2(-ddy, -ddx), spread: 0.9, speed: 150, size: 2.2, life: 380, depth: 6 });
+        }
+      }
     }
   }
 
@@ -1258,29 +1603,33 @@ export class CreationKit {
       }
       if (this.creatDaggerHolding) {
         const count = Math.min(5, 1 + Math.floor((time - this.creatDaggerHoldStart) / 600));
-        // Redraw preview lines — a 30°-apart fan around the aim direction.
-        while (this.creatDaggerPreviews.length < count) {
-          this.creatDaggerPreviews.push(this.add.line(0, 0, 0, 0, 0, 0, 0xeeeeff, 0.35).setOrigin(0, 0).setDepth(5));
-        }
-        while (this.creatDaggerPreviews.length > count) {
-          this.creatDaggerPreviews.pop()!.destroy();
-        }
+        // A fan of ghost blades, 30° apart, each already pointed where it will go: the shape
+        // of the throw, not a bundle of aiming lines.
+        if (!this.creatDaggerPreview) this.creatDaggerPreview = this.add.graphics().setDepth(5);
+        const g = this.creatDaggerPreview;
+        g.clear();
         const baseAngle = Math.atan2(mouseY - this.player.y, mouseX - this.player.x);
         const spread = Phaser.Math.DegToRad(30);
-        const previewLen = 64;
+        const pulse = 0.35 + 0.2 * Math.sin(time / 90);
         for (let i = 0; i < count; i++) {
           const a = baseAngle + (i - (count - 1) / 2) * spread;
-          this.creatDaggerPreviews[i].setTo(
-            this.player.x, this.player.y,
-            this.player.x + Math.cos(a) * previewLen, this.player.y + Math.sin(a) * previewLen,
-          );
+          const ox = this.player.x + Math.cos(a) * 26, oy = this.player.y + Math.sin(a) * 26;
+          g.fillStyle(this.pcol(CREATION.silver), pulse);
+          forgedShard(g, ox, oy, a, 26, 4);
+          g.fillStyle(this.pcol(CREATION.spark), pulse * 1.2);
+          forgedShard(g, ox, oy, a, 18, 1.4);
         }
+        // Where they will converge.
+        g.lineStyle(1.5, this.pcol(CREATION.gold), pulse);
+        g.strokeCircle(mouseX, mouseY, 12 + Math.sin(time / 120) * 3);
+        // Hands hauled wide, blades drawn back ready to fan out.
+        this.hold('player', 'draw', baseAngle);
       }
       if (!pointer.isDown && this.creatDaggerHolding) {
         this.creatDaggerHolding = false;
         const count = Math.min(5, 1 + Math.floor((time - this.creatDaggerHoldStart) / 600));
-        for (const l of this.creatDaggerPreviews) l.destroy();
-        this.creatDaggerPreviews = [];
+        if (this.creatDaggerPreview) { this.creatDaggerPreview.destroy(); this.creatDaggerPreview = null; }
+        this.hold('player', null);
         playerCtx.creationDaggerSpray(mouseX, mouseY, count);
         this.player.triggerCooldown('dagger-spray');
       }
@@ -1290,33 +1639,56 @@ export class CreationKit {
         if (this.player.getCooldownRatio('charged-bolt') >= 1) {
           this.creatBoltHolding = true;
           this.creatBoltHoldStart = time;
+          this.creatBoltChargeTier = -1;
           if (this.creatBoltChargeOrb) this.creatBoltChargeOrb.destroy();
-          this.creatBoltChargeOrb = this.add.circle(this.player.x, this.player.y - 38, 8, 0xcc6622, 0.9).setDepth(15);
-          this.tweens.add({ targets: this.creatBoltChargeOrb, scaleX: 1.4, scaleY: 1.4, alpha: 0.5, yoyo: true, repeat: -1, duration: 250 });
+          this.creatBoltChargeOrb = this.add.graphics().setDepth(15);
         }
       }
       if (this.creatBoltHolding && this.creatBoltChargeOrb) {
-        // Update orb color by charge
+        // The slug is forged over the smith's head: a glowing ingot in whatever metal the
+        // charge has reached, hammered up a tier at each threshold.
         const held = time - this.creatBoltHoldStart;
         const electroThresh = 3000; // 2s past gold (gold at 1000ms)
-        if (this.api.hasUpgrade('e') && held >= electroThresh) {
-          this.creatBoltElectroMode = true;
-          this.creatBoltChargeOrb.setFillStyle(0x44ddff, 0.9);
-        } else {
-          const tierColor = held >= 1000 ? 0xffdd22 : held >= 500 ? 0xccccdd : 0xcc6622;
-          this.creatBoltChargeOrb.setFillStyle(tierColor, 0.9);
+        const electro = this.api.hasUpgrade('e') && held >= electroThresh;
+        if (electro) this.creatBoltElectroMode = true;
+        const tierIdx = electro ? 3 : held >= 1000 ? 2 : held >= 500 ? 1 : 0;
+        const metal = electro ? CREATION.nexusLit
+          : tierIdx === 2 ? CREATION.gold : tierIdx === 1 ? CREATION.silver : CREATION.copper;
+        const ox = this.player.x, oy = this.player.y - 40;
+        if (tierIdx !== this.creatBoltChargeTier) {
+          // Crossing into a new tier: one hammer blow, once.
+          if (this.creatBoltChargeTier >= 0) this.pfx.hammerStrike(ox, oy, -Math.PI / 2, 0.8 + tierIdx * 0.12);
+          this.creatBoltChargeTier = tierIdx;
         }
-        this.creatBoltChargeOrb.setPosition(this.player.x, this.player.y - 38);
+        const g = this.creatBoltChargeOrb;
+        g.clear();
+        const beat = 1 + Math.sin(time / 90) * 0.1;
+        g.fillStyle(this.pcol(metal), 0.28);
+        g.fillCircle(ox, oy, (12 + tierIdx * 2.5) * beat);
+        g.fillStyle(this.pcol(CREATION.soot), 0.9);
+        forgedShard(g, ox - 9, oy, 0, 18 + tierIdx * 2, 6 + tierIdx * 0.8);
+        g.fillStyle(this.pcol(metal), 1);
+        forgedShard(g, ox - 8, oy, 0, 16 + tierIdx * 2, 4.6 + tierIdx * 0.8);
+        g.fillStyle(this.pcol(CREATION.spark), 0.8);
+        forgedShard(g, ox - 7, oy - 1.5, 0, 11 + tierIdx, 1.2);
+        // Anvil face under it, so the ingot is sitting on something.
+        craftPlank(g, this.pcol, ox, oy + 10, 0, 26, 3.2, 0.9);
+        // Hands in tight, working the piece.
+        this.hold('player', 'charge');
       }
       if (!this.api.eKey.isDown && this.creatBoltHolding) {
         this.creatBoltHolding = false;
+        this.creatBoltChargeTier = -1;
+        this.hold('player', null);
         if (this.creatBoltChargeOrb) { this.creatBoltChargeOrb.destroy(); this.creatBoltChargeOrb = null; }
         const held = time - this.creatBoltHoldStart;
         if (this.creatBoltElectroMode && this.creatLastCraftKey) {
           // E+ Electro Bolt: instantly re-brew the last recipe onto the nexus
           this.creatBoltElectroMode = false;
-          const flash = this.add.circle(this.player.x, this.player.y, 40, 0x44ddff, 0.7).setDepth(15);
-          this.tweens.add({ targets: flash, scaleX: 3, scaleY: 3, alpha: 0, duration: 350, onComplete: () => flash.destroy() });
+          this.gesture('player', 'clap');
+          this.pfx.ring(this.player.x, this.player.y, 10, 90, CREATION.nexusLit, 380, 5, 15);
+          this.pfx.gearPulse(this.nexusX, this.nexusY, 40, 520, CREATION.nexusLit, 8);
+          this.pfx.sparks(this.player.x, this.player.y, 14, { speed: 220, size: 2.4, life: 480, depth: 15 });
           this.api.showFloatingText(this.player.x, this.player.y - 40, 'ELECTRO!', '#44ddff');
           this.resolveNexusCraft(time, this.creatLastCraftKey, 'player');
           this.player.triggerCooldown('charged-bolt');
@@ -1336,18 +1708,25 @@ export class CreationKit {
           this.creatMechHolding = true;
           this.creatMechHoldStart = time;
           if (this.creatMechStageVisual) this.creatMechStageVisual.destroy();
-          this.creatMechStageVisual = this.add.text(this.player.x, this.player.y - 55, 'Building... 0%', { fontSize: '12px', color: '#bb88ee' }).setOrigin(0.5).setDepth(15);
+          this.creatMechStageVisual = this.add.text(this.player.x, this.player.y - 55, 'Building... 0%', { fontSize: '12px', color: '#cc6622' }).setOrigin(0.5).setDepth(15);
         }
         if (this.creatMechHolding && this.creatMechStageVisual) {
           const mechHeld = time - this.creatMechHoldStart;
           // Show which stage is being built (1 during 0-3s, 2 during 3-6s, 3 during 6-9s)
           const buildingStage = Math.min(3, Math.floor(mechHeld / 3000) + 1);
           const stagePct = Math.min(100, Math.round((mechHeld % 3000) / 3000 * 100));
-          const stageColor = buildingStage === 3 ? '#9966ff' : buildingStage === 2 ? '#cc88ff' : '#bb88ee';
+          const stageColor = buildingStage === 3 ? '#ffdd22' : buildingStage === 2 ? '#ffaa44' : '#cc6622';
           this.creatMechStageVisual.setStyle({ color: stageColor }).setText(`Stage ${buildingStage} ${stagePct}%`).setPosition(this.player.x, this.player.y - 55);
+          // Hands low and working, with sparks coming off the build.
+          this.hold('player', 'sow', Math.PI / 2);
+          if (Math.random() < 0.14) {
+            this.pfx.sparks(this.player.x + (Math.random() - 0.5) * 26, this.player.y + 24, 2,
+              { speed: 90, size: 2, life: 420, depth: 6 });
+          }
           // Auto-activate at 9s (stage 3 complete)
           if (mechHeld >= 9000) {
             this.creatMechHolding = false;
+            this.hold('player', null);
             if (this.creatMechStageVisual) {
               const sv = this.creatMechStageVisual;
               sv.setStyle({ color: '#ffdd44' }).setText('FINISHED!');
@@ -1359,6 +1738,7 @@ export class CreationKit {
         }
         if (!this.api.rKey.isDown && this.creatMechHolding) {
           this.creatMechHolding = false;
+          this.hold('player', null);
           if (this.creatMechStageVisual) { this.creatMechStageVisual.destroy(); this.creatMechStageVisual = null; }
           const mechHeld = time - this.creatMechHoldStart;
           // Stage is determined by full 3s periods completed
@@ -1373,11 +1753,12 @@ export class CreationKit {
         // Mech explosive dodge (stage 2+): space bar when mech is active
         if (this.creatMech && this.creatMech.stage >= 2 && Phaser.Input.Keyboard.JustDown(this.api.spaceKey) && time >= this.creatMech.dodgeCdUntil) {
           this.creatMech.dodgeCdUntil = time + 3000;
-          const exRing = this.add.circle(this.player.x, this.player.y, 10, 0xbb88ee, 0.8).setDepth(9);
-          this.tweens.add({ targets: exRing, scaleX: 6, scaleY: 6, alpha: 0, duration: 350, onComplete: () => exRing.destroy() });
+          // The mech vents its charge in a burst of scrap and sparks.
+          this.pfx.explosion(this.player.x, this.player.y, 80, { shards: 10, smoke: 2, core: CREATION.brass });
+          this.gesture('player', 'flex');
           if (Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y) <= 80) {
             this.npc.takeDamage(15);
-            this.api.spawnHitFlash(this.npc.x, this.npc.y, 0xbb88ee);
+            this.api.spawnHitFlash(this.npc.x, this.npc.y, CREATION.brass);
           }
           this.api.showFloatingText(this.player.x, this.player.y - 40, 'MECH DODGE', '#bb88ee');
         }
@@ -1442,8 +1823,8 @@ export class CreationKit {
           this.creatBuildBlockDragStartY = mouseY;
           this.creatBuildBlockPreview = null; // null = creating new
           if (this.creatBuildNewBlockPreview) this.creatBuildNewBlockPreview.destroy();
-          this.creatBuildNewBlockPreview = this.add.rectangle(mouseX, mouseY, 0, 0, 0xcc8844, 0.3)
-            .setStrokeStyle(2, 0xff9955, 0.8).setDepth(5);
+          this.creatBuildNewBlockPreview = this.add.graphics().setDepth(5);
+          this.creatBuildNewBlockPreview.setPosition(mouseX, mouseY);
         }
       }
       // Dragging existing block
@@ -1456,12 +1837,16 @@ export class CreationKit {
           this.creatBuildBlockPreview.hpBar.setPosition(nx - this.creatBuildBlockPreview.w / 2, ny - this.creatBuildBlockPreview.h / 2 - 8);
           this.creatBuildBlockPreview.hpBg.setPosition(nx, ny - this.creatBuildBlockPreview.h / 2 - 8);
         } else if (this.creatBuildNewBlockPreview) {
-          // Creating new block: update preview size
+          // Creating new block: redraw the drafting frame at the size being dragged out.
           const rw = Math.min(200, Math.abs(mouseX - this.creatBuildBlockDragStartX));
           const rh = Math.min(200, Math.abs(mouseY - this.creatBuildBlockDragStartY));
           const rx = this.creatBuildBlockDragStartX + (mouseX > this.creatBuildBlockDragStartX ? 1 : -1) * rw / 2;
           const ry = this.creatBuildBlockDragStartY + (mouseY > this.creatBuildBlockDragStartY ? 1 : -1) * rh / 2;
-          this.creatBuildNewBlockPreview.setPosition(rx, ry).setSize(rw, rh);
+          const g = this.creatBuildNewBlockPreview;
+          g.clear();
+          g.setPosition(rx, ry);
+          if (rw > 2 && rh > 2) blueprintFrame(g, this.pcol, rw, rh, 1, time / 40);
+          this.hold('player', 'sow', Math.atan2(ry - this.player.y, rx - this.player.x));
         }
       }
       // Dragging speed pad
@@ -1486,6 +1871,7 @@ export class CreationKit {
       }
       if (!pointer.isDown && this.creatBuildBlockDragging) {
         this.creatBuildBlockDragging = false;
+        this.hold('player', null);
         if (!this.creatBuildBlockPreview) {
           // Create new block
           const rw = Math.min(200, Math.abs(mouseX - this.creatBuildBlockDragStartX));
@@ -1511,31 +1897,15 @@ export class CreationKit {
       // E — Launch all player blocks toward cursor
       if (Phaser.Input.Keyboard.JustDown(this.api.eKey) && time >= this.creatBuildLaunchCdUntil) {
         this.creatBuildLaunchCdUntil = time + 5000;
-        // Show arrows for 1.5s then move
-        const arrows: Phaser.GameObjects.Text[] = [];
-        for (const b of this.creatBlockers) {
-          if (b.owner !== 'player') continue;
-          const arr = this.add.text(b.x, b.y, '→', { fontSize: '18px', color: '#ffcc44' }).setOrigin(0.5).setDepth(12)
-            .setRotation(Math.atan2(mouseY - b.y, mouseX - b.x));
-          arrows.push(arr);
-          this.creatBuildLaunchArrows.push(arr);
-        }
-        for (const b of this.creatSpeedPads) {
-          if (b.owner !== 'player') continue;
-          const arr = this.add.text(b.x, b.y, '→', { fontSize: '18px', color: '#44aaff' }).setOrigin(0.5).setDepth(12)
-            .setRotation(Math.atan2(mouseY - b.y, mouseX - b.x));
-          arrows.push(arr);
-          this.creatBuildLaunchArrows.push(arr);
-        }
-        for (const b of this.creatSpikedBlocks) {
-          if (b.owner !== 'player') continue;
-          const arr = this.add.text(b.x, b.y, '→', { fontSize: '18px', color: '#ff4422' }).setOrigin(0.5).setDepth(12)
-            .setRotation(Math.atan2(mouseY - b.y, mouseX - b.x));
-          arrows.push(arr);
-          this.creatBuildLaunchArrows.push(arr);
+        // Marching chevrons over everything that is about to be thrown, for 1.5s.
+        this.gesture('player', 'sweep', Math.atan2(mouseY - this.player.y, mouseX - this.player.x), 1500);
+        const launchables = [
+          ...this.creatBlockers, ...this.creatSpeedPads, ...this.creatSpikedBlocks,
+        ].filter((b) => b.owner === 'player');
+        for (const b of launchables) {
+          this.pfx.launchMarker(b.x, b.y, Math.atan2(mouseY - b.y, mouseX - b.x), 1500);
         }
         this.scene.time.delayedCall(1500, () => {
-          for (const a of arrows) a.destroy();
           // Launch blocks: fast movement toward cursor each frame (handled via vx/vy in per-frame section)
           for (const b of this.creatBlockers) {
             if (b.owner !== 'player') continue;
@@ -1564,26 +1934,39 @@ export class CreationKit {
       if (Phaser.Input.Keyboard.JustDown(this.api.rKey) && time >= this.creatBuildSpeedPadCdUntil) {
         this.creatBuildSpeedPadCdUntil = time + 6000;
         const pw = 60, ph = 20;
-        const padSpr = this.add.rectangle(mouseX, mouseY, pw, ph, 0x44aaff, 0.75).setStrokeStyle(2, 0x88ddff, 0.9).setDepth(4);
+        const padSpr = this.add.graphics().setDepth(4);
+        drawSpeedPad(padSpr, this.pcol, pw, ph);
+        padSpr.setPosition(mouseX, mouseY);
         const padHpBg = this.add.rectangle(mouseX, mouseY - ph / 2 - 6, pw, 4, 0x333333, 0.8).setDepth(5);
-        const padHpBar = this.add.rectangle(mouseX - pw / 2, mouseY - ph / 2 - 6, pw, 4, 0x44aaff, 0.9).setDepth(6).setOrigin(0, 0.5);
+        const padHpBar = this.add.rectangle(mouseX - pw / 2, mouseY - ph / 2 - 6, pw, 4, CREATION.steel, 0.9).setDepth(6).setOrigin(0, 0.5);
         this.creatSpeedPads.push({ rect: padSpr, x: mouseX, y: mouseY, w: pw, h: ph, hp: 40, maxHp: 40, hpBar: padHpBar, hpBg: padHpBg, owner: 'player' });
+        this.pfx.assemble(mouseX, mouseY, pw, ph, 300);
+        this.pfx.hammerStrike(mouseX, mouseY, Math.PI / 2, 1);
+        this.gesture('player', 'slam', Math.atan2(mouseY - this.player.y, mouseX - this.player.x));
         this.api.recordMasteryStat('wallsBuilt', 1);
         this.api.showFloatingText(mouseX, mouseY - 30, 'SPEED PAD', '#44aaff');
       }
       // F — Exit build mode
       if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) {
         this.creatBuildMode = false;
+        this.applyBuildModeBar(false);
+        this.gesture('player', 'flex');
+        this.pfx.gearPulse(this.player.x, this.player.y, 30, 420, CREATION.iron, 7);
         this.api.showFloatingText(this.player.x, this.player.y - 40, 'Build Mode OFF', '#aaaaaa');
       }
       // Q — Spike block
       if (Phaser.Input.Keyboard.JustDown(this.api.qKey) && time >= this.creatBuildSpikedCdUntil) {
         this.creatBuildSpikedCdUntil = time + 20000;
         const sw = 50, sh = 50;
-        const spkSpr = this.add.rectangle(mouseX, mouseY, sw, sh, 0xcc2222, 0.8).setStrokeStyle(2, 0xff4444, 0.9).setDepth(4);
+        const spkSpr = this.add.graphics().setDepth(4);
+        drawSpikedPanel(spkSpr, this.pcol, sw, sh, false);
+        spkSpr.setPosition(mouseX, mouseY);
         const spkHpBg = this.add.rectangle(mouseX, mouseY - sh / 2 - 6, sw, 4, 0x333333, 0.8).setDepth(5);
-        const spkHpBar = this.add.rectangle(mouseX - sw / 2, mouseY - sh / 2 - 6, sw, 4, 0xcc2222, 0.9).setDepth(6).setOrigin(0, 0.5);
+        const spkHpBar = this.add.rectangle(mouseX - sw / 2, mouseY - sh / 2 - 6, sw, 4, CREATION.rust, 0.9).setDepth(6).setOrigin(0, 0.5);
         this.creatSpikedBlocks.push({ rect: spkSpr, x: mouseX, y: mouseY, w: sw, h: sh, hp: 50, maxHp: 50, hpBar: spkHpBar, hpBg: spkHpBg, owner: 'player', tickAccum: 0, invincible: false });
+        this.pfx.assemble(mouseX, mouseY, sw, sh, 340);
+        this.pfx.shrapnel(mouseX, mouseY, 8, 30, 5);
+        this.gesture('player', 'slam', Math.atan2(mouseY - this.player.y, mouseX - this.player.x));
         this.api.recordMasteryStat('wallsBuilt', 1);
         this.api.showFloatingText(mouseX, mouseY - 30, 'SPIKE BLOCK', '#cc2222');
       }
@@ -1593,6 +1976,10 @@ export class CreationKit {
         // F is Mortar Command — Create (and the Build Mode toggle with it) is replaced.
       } else if (this.api.hasUpgrade('f') && Phaser.Input.Keyboard.JustDown(this.api.fKey)) {
         this.creatBuildMode = true;
+        this.applyBuildModeBar(true);
+        this.gesture('player', 'flex');
+        this.pfx.gearPulse(this.player.x, this.player.y, 34, 520, CREATION.gold, 7);
+        this.pfx.sparks(this.player.x, this.player.y, 8, { speed: 120, size: 2.2, life: 460, depth: 7 });
         this.api.showFloatingText(this.player.x, this.player.y - 40, 'Build Mode ON', '#bb88ff');
       } else {
         if (this.api.fKey.isDown && !this.creatBlockDragging) {
@@ -1601,8 +1988,8 @@ export class CreationKit {
             this.creatBlockDragStartX = mouseX;
             this.creatBlockDragStartY = mouseY;
             if (this.creatBlockPreview) this.creatBlockPreview.destroy();
-            this.creatBlockPreview = this.add.rectangle(mouseX, mouseY, 0, 0, 0xcc8844, 0.3)
-              .setStrokeStyle(2, 0xff9955, 0.8).setDepth(5);
+            this.creatBlockPreview = this.add.graphics().setDepth(5);
+            this.creatBlockPreview.setPosition(mouseX, mouseY);
           }
         }
         if (this.creatBlockDragging && this.creatBlockPreview) {
@@ -1610,10 +1997,15 @@ export class CreationKit {
           const rh = Math.min(200, Math.abs(mouseY - this.creatBlockDragStartY));
           const rx = this.creatBlockDragStartX + (mouseX > this.creatBlockDragStartX ? 1 : -1) * rw / 2;
           const ry = this.creatBlockDragStartY + (mouseY > this.creatBlockDragStartY ? 1 : -1) * rh / 2;
-          this.creatBlockPreview.setPosition(rx, ry).setSize(rw, rh);
+          const g = this.creatBlockPreview;
+          g.clear();
+          g.setPosition(rx, ry);
+          if (rw > 2 && rh > 2) blueprintFrame(g, this.pcol, rw, rh, 1, time / 40);
+          this.hold('player', 'sow', Math.atan2(ry - this.player.y, rx - this.player.x));
         }
         if (!this.api.fKey.isDown && this.creatBlockDragging) {
           this.creatBlockDragging = false;
+          this.hold('player', null);
           const rw = Math.min(200, Math.abs(mouseX - this.creatBlockDragStartX));
           const rh = Math.min(200, Math.abs(mouseY - this.creatBlockDragStartY));
           if (this.creatBlockPreview) { this.creatBlockPreview.destroy(); this.creatBlockPreview = null; }
@@ -1632,6 +2024,69 @@ export class CreationKit {
     }
   }
 
+  // ── Build Mode HUD ───────────────────────────────────────────────
+
+  /**
+   * Build Mode is a whole second loadout on the same five keys, so the ability cards have to
+   * say so — otherwise entering it looks like nothing happened. Same swap Earth's Titan Form
+   * does: rewrite the card labels going in, restore the element's real ones coming out.
+   */
+  private applyBuildModeBar(on: boolean): void {
+    const bars = this.api.abilityBars;
+    if (on) {
+      // Snapshot whatever the cards actually say right now rather than rebuilding them from
+      // the element's ability list on the way out — a mastery bind or an upgrade may have
+      // already rewritten a card, and reconstructing would quietly wipe that.
+      this.preBuildBarText = bars.map((b) => [b.lbl?.text ?? '', b.desc?.text ?? ''] as [string, string]);
+      const cards: Array<[string, string]> = [
+        ['[Click] Build / Move', 'Drag out a new block, or drag an existing one'],
+        ['[E] Launch All', 'Everything you built flies at the cursor'],
+        ['[R] Speed Pad', 'Sprung plate: +25% speed while stood on'],
+        ['[F] Exit Build Mode', 'Back to the normal Creation loadout'],
+        ['[Q] Spike Block', '50 HP hazard, 5 dmg/0.3s to anything near it'],
+      ];
+      bars.forEach((bar, i) => {
+        if (i >= cards.length) return;
+        bar.lbl?.setText(cards[i][0]);
+        bar.desc?.setText(cards[i][1]);
+      });
+    } else {
+      bars.forEach((bar, i) => {
+        const saved = this.preBuildBarText[i];
+        if (!saved) return;
+        bar.lbl?.setText(saved[0]);
+        bar.desc?.setText(saved[1]);
+      });
+      this.preBuildBarText = [];
+    }
+  }
+
+  /**
+   * Cooldown fill for a card while Build Mode is up — the build actions have their own timers,
+   * which have nothing to do with the abilities whose slots they borrowed. Returns null when
+   * Build Mode is off so ArenaScene falls through to its normal handling.
+   */
+  buildModeBarRatio(abilityId: string, time: number): number | null {
+    if (!this.creatBuildMode) return null;
+    // A mastery-bound card carries the enhancement's id, not the ability it replaced, so map
+    // it back to whichever slot it is sitting on before matching.
+    let id = abilityId;
+    if (id === 'mortar-command') {
+      const slot = this.mortarSlot();
+      id = slot === 'r' ? 'scythe-of-doom' : slot === 'f' ? 'creation-block' : 'maze-of-doom';
+    }
+    const cd = id === 'dagger-spray' ? { at: this.creatBuildNewBlockCdUntil, len: 2000 }
+      : id === 'charged-bolt' ? { at: this.creatBuildLaunchCdUntil, len: 5000 }
+      : id === 'scythe-of-doom' ? { at: this.creatBuildSpeedPadCdUntil, len: 6000 }
+      : id === 'maze-of-doom' ? { at: this.creatBuildSpikedCdUntil, len: 20000 }
+      // F is the exit toggle — always available, so it always reads full.
+      : id === 'creation-block' ? null
+      : undefined;
+    if (cd === undefined) return null;
+    if (cd === null) return 1;
+    return Phaser.Math.Clamp(1 - (cd.at - time) / cd.len, 0, 1);
+  }
+
   private keyForSlot(slot: 'r' | 'f' | 'q'): Phaser.Input.Keyboard.Key {
     return slot === 'r' ? this.api.rKey : slot === 'f' ? this.api.fKey : this.api.qKey;
   }
@@ -1639,12 +2094,20 @@ export class CreationKit {
   // ── Per-frame ────────────────────────────────────────────────────
 
   update(time: number, delta: number): void {
+    // 0. Character rigs, the workshop stance, and the live-effect tell on both fighters.
+    this.updateAvatars(time, delta);
+    this.updateBrewAuras(time, delta);
+    // Trails come off the back of everything in flight, on one shared ~45ms accumulator.
+    this.trailAccum += delta;
+    const emitTrails = this.trailAccum >= 45;
+    if (emitTrails) this.trailAccum = 0;
+
     // 1. Nexus energy, brew timer, and potions on the pedestal
     this.updateNexusEnergy(delta);
     if (this.creatCraftInProgress && time >= this.creatCraftStartTime + this.creatCraftDuration) {
       this.resolveNexusCraft(time);
     }
-    this.updateCreationPotions(time);
+    this.updateCreationPotions(time, delta);
     this.updateCreationPotionEffects(time, delta);
 
     // 2. Daggers in flight
@@ -1673,12 +2136,18 @@ export class CreationKit {
         this.creatDaggers.splice(i, 1);
         continue;
       }
+      // Glint shed out of the back of the blade, so a fan of five reads as five moving objects.
+      if (emitTrails) {
+        this.fx(d.owner).emberTrail(d.sprite.x, d.sprite.y, Math.atan2(-d.vy, -d.vx), CREATION.silver);
+      }
       for (const dTarget of (d.owner === 'player' ? this.api.enemies : [this.player])) {
         if (!dTarget.active || dTarget.hp <= 0) continue;
         const tId = dTarget === this.player ? 'player' : String(this.api.enemies.indexOf(dTarget as Fighter));
         if (!d.hitSet.has(tId) && Phaser.Math.Distance.Between(d.sprite.x, d.sprite.y, dTarget.x, dTarget.y) <= 20) {
           dTarget.takeDamage(d.damage);
-          this.api.spawnHitFlash(dTarget.x, dTarget.y, 0xeeeeff);
+          this.api.spawnHitFlash(dTarget.x, dTarget.y, CREATION.silver);
+          this.fx(d.owner).sparks(d.sprite.x, d.sprite.y, 5,
+            { angle: Math.atan2(-d.vy, -d.vx), spread: 0.9, speed: 160, size: 2, life: 340, depth: 7 });
           d.hitSet.add(tId);
           if (d.owner === 'player') this.api.recordMasteryStat('daggerStabs', 1);
           // Daggers pierce — don't destroy
@@ -1696,16 +2165,19 @@ export class CreationKit {
         this.creatBolts.splice(i, 1);
         continue;
       }
+      if (emitTrails) {
+        this.fx(b.owner).emberTrail(b.sprite.x, b.sprite.y, Math.atan2(-b.vy, -b.vx),
+          b.isRocket ? CREATION.ember : CREATION_TIER_COLORS[b.tier]);
+      }
       // Rockets: explode at target position instead of entering the nexus
       if (b.isRocket && b.targetX !== undefined && b.targetY !== undefined) {
         if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, b.targetX, b.targetY) <= 20) {
-          const rktRing = this.add.circle(b.sprite.x, b.sprite.y, 10, 0xee8800, 0.85).setDepth(8);
-          this.tweens.add({ targets: rktRing, scaleX: 5, scaleY: 5, alpha: 0, duration: 300, onComplete: () => rktRing.destroy() });
+          this.fx(b.owner).explosion(b.sprite.x, b.sprite.y, 56, { shards: 8, smoke: 2, core: CREATION.ember });
           for (const rktTarget of (b.owner === 'player' ? this.api.enemies : [this.player])) {
             if (!rktTarget.active || rktTarget.hp <= 0) continue;
             if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, rktTarget.x, rktTarget.y) <= 50) {
               rktTarget.takeDamage(b.damage);
-              this.api.spawnHitFlash(rktTarget.x, rktTarget.y, 0xee8800);
+              this.api.spawnHitFlash(rktTarget.x, rktTarget.y, CREATION.ember);
             }
           }
           b.sprite.destroy();
@@ -1714,26 +2186,33 @@ export class CreationKit {
         }
       }
       // Check nexus hit (skip rockets and crafted bullets)
-      if (!b.isRocket && !b.noNexus && this.nexusSprite && Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, this.nexusX, this.nexusY) <= 30) {
+      if (!b.isRocket && !b.noNexus && this.nexusRig && Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, this.nexusX, this.nexusY) <= 30) {
+        const fx = this.fx(b.owner);
         if (this.creatCraftInProgress) {
-          // Discard during a brew
-          const puff = this.add.circle(b.sprite.x, b.sprite.y, 6, 0x888888, 0.5).setDepth(6);
-          this.tweens.add({ targets: puff, alpha: 0, scaleX: 1.5, scaleY: 1.5, duration: 200, onComplete: () => puff.destroy() });
+          // Rejected mid-brew — it bounces off the housing.
+          fx.sparks(b.sprite.x, b.sprite.y, 4, { speed: 100, size: 1.8, life: 300, depth: 6 });
         } else if (this.nexusBolts.length < 2) {
-          const iconColors: Record<string, number> = { copper: 0xcc6622, silver: 0xccccdd, gold: 0xffdd22 };
-          const iconX = this.nexusX - 10 + this.nexusBolts.length * 20;
-          const iconY = this.nexusY - 44;
-          const icon = this.add.rectangle(iconX, iconY, 14, 14, iconColors[b.tier], 0.95)
-            .setStrokeStyle(1, 0xffffff, 0.5).setDepth(5);
+          // Loaded slug on the shelf: an ingot in its own metal, not a coloured square.
+          const iconX = this.nexusX - 12 + this.nexusBolts.length * 24;
+          const iconY = this.nexusY - 46;
+          const icon = this.add.graphics().setDepth(5);
+          const tint = this.col(b.owner);
+          icon.fillStyle(tint(CREATION.soot), 0.95);
+          forgedShard(icon, -9, 0, 0, 19, 6.4);
+          icon.fillStyle(tint(CREATION_TIER_COLORS[b.tier]), 1);
+          forgedShard(icon, -8, 0, 0, 17, 5);
+          icon.fillStyle(tint(CREATION.white), 0.5);
+          forgedShard(icon, -7, -1.6, 0, 12, 1.3);
+          icon.setPosition(iconX, iconY);
           this.nexusBolts.push({ tier: b.tier, icon });
+          fx.gearPulse(this.nexusX, this.nexusY, 22, 340, CREATION.brass, 6);
+          fx.sparks(iconX, iconY, 5, { speed: 80, size: 2, life: 400, depth: 6 });
           if (this.nexusBolts.length === 2) {
             this.creatCraftInProgress = true;
             this.creatCraftStartTime = time;
             this.creatCraftOwner = b.owner;
-            // Brewing indicator on the nexus
-            const craftFlash = this.add.circle(this.nexusX, this.nexusY, 34, 0xff66cc, 0.3).setDepth(6);
-            this.tweens.add({ targets: craftFlash, alpha: 0.7, scaleX: 1.2, scaleY: 1.2, yoyo: true, repeat: -1, duration: 400 });
-            this.scene.time.delayedCall(this.creatCraftDuration + 50, () => craftFlash.destroy());
+            // The machine winds up: stock spiralling in for the whole brew.
+            fx.channelCharge(this.nexusX, this.nexusY, 46, this.creatCraftDuration, undefined, 6);
           }
         }
         b.sprite.destroy();
@@ -1746,7 +2225,12 @@ export class CreationKit {
         if (!bTarget.active || bTarget.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, bTarget.x, bTarget.y) <= 18) {
           bTarget.takeDamage(b.damage);
-          this.api.spawnHitFlash(bTarget.x, bTarget.y, 0xffaa44);
+          this.api.spawnHitFlash(bTarget.x, bTarget.y, CREATION_TIER_COLORS[b.tier]);
+          // Heavier slugs land harder.
+          const heft = b.tier === 'gold' ? 1.6 : b.tier === 'silver' ? 1.25 : 1;
+          this.fx(b.owner).sparks(b.sprite.x, b.sprite.y, Math.round(7 * heft),
+            { angle: Math.atan2(-b.vy, -b.vx), spread: 1.1, speed: 190 * heft, size: 2.4, life: 420, depth: 7 });
+          this.fx(b.owner).ring(b.sprite.x, b.sprite.y, 3, 24 * heft, CREATION_TIER_COLORS[b.tier], 300, 3, 7);
           _boltHit = true;
           break;
         }
@@ -1766,6 +2250,11 @@ export class CreationKit {
       sc.vy = (sdy / slen) * scytheSpeed;
       sc.sprite.x += sc.vx * (delta / 1000);
       sc.sprite.y += sc.vy * (delta / 1000);
+      // It spins as it stalks, and sheds a magenta glint behind it.
+      sc.sprite.rotation += 5.5 * (delta / 1000);
+      if (emitTrails) {
+        this.fx(sc.owner).emberTrail(sc.sprite.x, sc.sprite.y, Math.atan2(-sc.vy, -sc.vx), CREATION.nexus);
+      }
       // Update HP bar
       const hpFrac = Math.max(0, sc.hp / sc.maxHp);
       sc.hpBg.setPosition(sc.sprite.x, sc.sprite.y - 16);
@@ -1773,7 +2262,8 @@ export class CreationKit {
       // Contact damage — destroy on hit
       if (Phaser.Math.Distance.Between(sc.sprite.x, sc.sprite.y, scTarget.x, scTarget.y) <= 28) {
         scTarget.takeDamage(32);
-        this.api.spawnHitFlash(scTarget.x, scTarget.y, 0xcc22aa);
+        this.api.spawnHitFlash(scTarget.x, scTarget.y, CREATION.nexus);
+        this.fx(sc.owner).bloom(scTarget.x, scTarget.y, 40, 9);
         sc.hp = 0; // triggers destruction below
       }
       // Absorb enemy projectiles
@@ -1790,13 +2280,17 @@ export class CreationKit {
         }
       }
       if (sc.hp <= 0) {
+        // It comes apart into its own blade, not a puff.
+        this.fx(sc.owner).shrapnel(sc.sprite.x, sc.sprite.y, 10, 34, 8);
+        this.fx(sc.owner).ring(sc.sprite.x, sc.sprite.y, 6, 40, CREATION.nexusLit, 320, 3, 8);
         sc.sprite.destroy(); sc.hpBar.destroy(); sc.hpBg.destroy();
         this.creatScythes.splice(i, 1);
       }
     }
 
-    // 5. Workshop (owner-agnostic)
+    // 5. Workshop (owner-agnostic) + the bots the Automaton perk lets it spawn
     this.updateCreationWorkshop(time, delta);
+    this.updateAutomatons(time, delta);
     this.trackWorkshopKills(time);
     // Hazard stun enforcement
     if (time < this.creatNpcStunUntil) this.api.npcSpeedMult = 0;
@@ -1830,7 +2324,9 @@ export class CreationKit {
         // Deal contact damage to enemy while launched
         if (bl.owner === 'player' && Math.abs(this.npc.x - bl.x) <= bl.w / 2 + 18 && Math.abs(this.npc.y - bl.y) <= bl.h / 2 + 18) {
           this.npc.takeDamage(20);
-          this.api.spawnHitFlash(this.npc.x, this.npc.y, 0xcc88ff);
+          this.api.spawnHitFlash(this.npc.x, this.npc.y, CREATION.tan);
+          // A wall thrown into someone bursts into its own boards.
+          this.pfx.bloom(bl.x, bl.y, Math.max(bl.w, bl.h) * 0.6, 10);
           bl.rect.destroy(); bl.hpBar.destroy(); bl.hpBg.destroy();
           this.creatBlockers.splice(bi, 1);
           continue;
@@ -1848,7 +2344,10 @@ export class CreationKit {
           proj.setActive(false).setVisible(false);
           (proj.body as Phaser.Physics.Arcade.Body).stop();
           bl.hpBar.setSize(Math.max(0, (bl.hp / bl.maxHp)) * bl.w, 4);
+          // Splinters off the board that took the hit.
+          this.fx(bl.owner).sparks(proj.x, proj.y, 4, { speed: 110, size: 2, life: 340, depth: 6 });
           if (bl.hp <= 0) {
+            this.fx(bl.owner).bloom(bl.x, bl.y, Math.max(bl.w, bl.h) * 0.55, 10);
             bl.rect.destroy(); bl.hpBar.destroy(); bl.hpBg.destroy();
             this.creatBlockers.splice(bi, 1);
             break;
@@ -1889,7 +2388,8 @@ export class CreationKit {
           const spikeTarget = mwEnemyIsPlayer ? this.player : this.npc;
           if (Math.abs(spikeTarget.x - mw.x) <= mw.w / 2 + 30 && Math.abs(spikeTarget.y - mw.y) <= mw.h / 2 + 30) {
             spikeTarget.takeDamage(8);
-            this.api.spawnHitFlash(spikeTarget.x, spikeTarget.y, 0xcc2222);
+            this.api.spawnHitFlash(spikeTarget.x, spikeTarget.y, CREATION.rust);
+            this.fx(mw.owner).sparks(spikeTarget.x, spikeTarget.y, 4, { speed: 90, size: 1.8, life: 320, depth: 7 });
           }
         }
       }
@@ -1940,7 +2440,11 @@ export class CreationKit {
             const rdx = rtx - mech.sprite.x;
             const rdy = rty - mech.sprite.y;
             const rlen = Math.hypot(rdx, rdy) || 1;
-            const rSpr = this.add.circle(mech.sprite.x, mech.sprite.y, 6, 0xee8800, 0.9).setDepth(7);
+            // The mech's rockets are forged slugs like everything else Creation throws.
+            const rSpr = this.add.graphics().setDepth(7);
+            drawBolt(rSpr, this.pcol, 'copper');
+            rSpr.setPosition(mech.sprite.x, mech.sprite.y).setRotation(Math.atan2(rdy, rdx));
+            this.pfx.muzzleFlash(mech.sprite.x, mech.sprite.y, Math.atan2(rdy, rdx), 0.8);
             this.creatBolts.push({ sprite: rSpr, vx: (rdx / rlen) * 420, vy: (rdy / rlen) * 420, tier: 'gold', damage: 10, owner: 'player', isRocket: true, targetX: rtx, targetY: rty });
           }
         }
@@ -1973,7 +2477,8 @@ export class CreationKit {
           // Check NPC hit
           if (sp.owner === 'player' && Math.abs(this.npc.x - sp.x) <= sp.w / 2 + 18 && Math.abs(this.npc.y - sp.y) <= sp.h / 2 + 18) {
             this.npc.takeDamage(12);
-            this.api.spawnHitFlash(this.npc.x, this.npc.y, 0x44aaff);
+            this.api.spawnHitFlash(this.npc.x, this.npc.y, CREATION.steel);
+            this.pfx.shrapnel(sp.x, sp.y, 8, 28, 7);
             // Apply slow to NPC
             this.creatNpcSlowMult = 0.8; this.creatNpcSlowEnd = time + 3000;
             sp.rect.destroy(); sp.hpBar.destroy(); sp.hpBg.destroy();
@@ -2011,7 +2516,8 @@ export class CreationKit {
           }
           if (sb.owner === 'player' && Math.abs(this.npc.x - sb.x) <= sb.w / 2 + 18 && Math.abs(this.npc.y - sb.y) <= sb.h / 2 + 18) {
             this.npc.takeDamage(25);
-            this.api.spawnHitFlash(this.npc.x, this.npc.y, 0xcc2222);
+            this.api.spawnHitFlash(this.npc.x, this.npc.y, CREATION.rust);
+            this.pfx.shrapnel(sb.x, sb.y, 12, 34, 7);
             this.api.showFloatingText(this.npc.x, this.npc.y - 30, '25', '#cc2222');
             if (!sb.invincible) { sb.rect.destroy(); sb.hpBar.destroy(); sb.hpBg.destroy(); this.creatSpikedBlocks.splice(sbi, 1); continue; }
           }
@@ -2026,7 +2532,8 @@ export class CreationKit {
             if (!sbTarget.active || sbTarget.hp <= 0) continue;
             if (Math.abs(sbTarget.x - sb.x) <= sb.w / 2 + 22 && Math.abs(sbTarget.y - sb.y) <= sb.h / 2 + 22) {
               sbTarget.takeDamage(5);
-              this.api.spawnHitFlash(sbTarget.x, sbTarget.y, 0xcc2222);
+              this.api.spawnHitFlash(sbTarget.x, sbTarget.y, CREATION.rust);
+              this.fx(sb.owner).sparks(sbTarget.x, sbTarget.y, 3, { speed: 80, size: 1.6, life: 300, depth: 7 });
             }
           }
         }
@@ -2046,6 +2553,16 @@ export class CreationKit {
               const halfHp = bl.hp;
               const ox = bl.x, oy = bl.y, ow = bl.w, oh = bl.h, oOwner = bl.owner;
               const gap = 6;
+              // The cut itself: a bright kerf along the blade's path, sawdust off both faces.
+              const cutAng = Math.atan2(d.vy, d.vx);
+              const cutLen = splitH ? ow : oh;
+              this.pfx.anim(7, 260, (g, t) => {
+                const fade = 1 - t;
+                g.fillStyle(this.pcol(CREATION.spark), 0.9 * fade);
+                forgedShard(g, ox - Math.cos(cutAng) * cutLen * 0.5, oy - Math.sin(cutAng) * cutLen * 0.5,
+                  cutAng, cutLen * (0.5 + t * 0.6), 3 * fade);
+              });
+              this.pfx.sparks(ox, oy, 10, { angle: cutAng, spread: 0.5, speed: 200, size: 2.2, life: 420, depth: 7 });
               // Remove original
               bl.rect.destroy(); bl.hpBar.destroy(); bl.hpBg.destroy();
               this.creatBlockers.splice(bi, 1);

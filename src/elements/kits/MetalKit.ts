@@ -2,11 +2,17 @@ import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { Projectile } from '../../combat/Projectile';
 import { CastContext } from '../Ability';
+import {
+  ArmGesture, METAL, MetalAura, MetalAuraStyle, MetalAvatar, MetalColorFn, MetalFx,
+  bladeShardLayered, chainRun, flailHead, sword,
+} from './MetalVisuals';
 
 // ── Metal type definitions ─────────────────────────────────────────────────
+//
+// Every world object here is plain data painted into the kit's own Graphics layers — nothing
+// owns a sprite, so a puddle can congeal, a mace can go molten and a shard can spin.
 
 export interface MetalBloodPuddle {
-  sprite: Phaser.GameObjects.Arc;
   x: number;
   y: number;
   radius: number;
@@ -14,10 +20,11 @@ export interface MetalBloodPuddle {
   drainAccum: number;
   draining: boolean;
   blood: number; // remaining blood held in this puddle
+  /** Fixed splat seed, so a puddle keeps its shape instead of boiling frame to frame. */
+  seed: number;
 }
 
 export interface MetalChainProjectile {
-  sprite: Phaser.GameObjects.Arc;
   x: number;
   y: number;
   vx: number;
@@ -27,7 +34,6 @@ export interface MetalChainProjectile {
 }
 
 interface MetalShardProjectile {
-  sprite: Phaser.GameObjects.Rectangle | Phaser.GameObjects.Arc;
   x: number;
   y: number;
   vx: number;
@@ -36,11 +42,14 @@ interface MetalShardProjectile {
   active: boolean;
   dmg: number;          // damage on hit
   spawnsPuddle: boolean; // clot shards spawn a blood puddle on hit; flung maces do not
+  /** Flung flail heads are drawn as a mace, not as a sliver. */
+  isMace: boolean;
+  heavy: boolean;
 }
 
 interface MetalFlail {
-  headSprite: Phaser.GameObjects.Arc;
-  chainGfx: Phaser.GameObjects.Graphics;
+  x: number;
+  y: number;
   angle: number;
   angularVel: number;
   initialAngularVel: number;
@@ -51,18 +60,19 @@ interface MetalFlail {
   lastHitAt: number;
   owner: 'player' | 'npc';
   heavy: boolean;       // E+ Heavy Metal Rock
-  headRadius: number;   // for drawing spikes on the heavy mace
-  spikesGfx: Phaser.GameObjects.Graphics | null;
+  headRadius: number;
+  /** 0 = cold iron, 1 = molten. Drives the head's colour and its fire drip. */
+  heat: number;
   firePuddleAccum: number;
 }
 
 interface MetalFirePuddle {
-  sprite: Phaser.GameObjects.Arc;
   x: number;
   y: number;
   radius: number;
   owner: 'player' | 'npc';
   expiresAt: number;
+  spawnedAt: number;
   tickAccum: number;
 }
 
@@ -72,18 +82,40 @@ interface MetalGroundTether {
   owner: 'player' | 'npc';
   endTime: number;
   blastAccum: number;
-  stake: Phaser.GameObjects.Arc;
-  ring: Phaser.GameObjects.Arc;
 }
 
 interface BloodBlade {
-  gfx: Phaser.GameObjects.Container | null; // the crash-down visual; destroyed once it lands
   owner: 'player' | 'npc';
   y: number;            // current vertical offset while descending
   descending: boolean;
   lastSwingAt: number;  // swing cadence (faster with more blood)
   prevBlood: number;
 }
+
+/** A mace head at rest or in flight — the shared look for a flail, and for one flung as a shard. */
+function flailHeadAt(
+  g: Phaser.GameObjects.Graphics, tint: MetalColorFn,
+  x: number, y: number, spin: number, radius: number, heavy: boolean, heat = 0,
+): void {
+  flailHead(g, tint, x, y, spin, radius,
+    heavy ? METAL.char : METAL.iron, heavy ? METAL.iron : METAL.steel, heat, 1, heavy ? 10 : 8);
+}
+
+/** The live flail: colour and heat both come off how hard it is currently spinning. */
+function flailHeadFor(
+  g: Phaser.GameObjects.Graphics, tint: MetalColorFn, f: MetalFlail, t: number,
+): void {
+  flailHeadAt(g, tint, f.x, f.y, f.angle * (f.heavy ? 1 : 1.6) + t * 0.4, f.headRadius, f.heavy, f.heat);
+}
+
+/** Every ability drives an arm gesture, on the NPC rig as well as the player's. */
+const CAST_GESTURES: Record<string, ArmGesture> = {
+  'metal-slash': 'punch',
+  'metal-flail-craft': 'sweep',
+  'metal-blood-transfusion': 'flex',
+  'metal-chain-tether': 'punch',
+  'metal-clot-armor': 'raise',
+};
 
 // ── MetalArenaApi ──────────────────────────────────────────────────────────
 
@@ -98,6 +130,10 @@ export interface MetalArenaApi {
   readonly qKey: Phaser.Input.Keyboard.Key;
   readonly pointerWasDown: boolean;
   readonly elementId: string;
+  readonly npcElementId: string;
+  readonly npcCastId: string | null;
+  /** `(owner, base) => displayed` — the owner's colour cosmetic, or the identity. */
+  metalColor(owner: 'player' | 'npc', base: number): number;
   hasUpgrade(slot: string): boolean;
   hasPerk(perkId: string): boolean;
   spawnHitFlash(x: number, y: number, color: number): void;
@@ -168,28 +204,48 @@ const STEEL_SHIELD_DIST = 46;           // how far in front of the caster it pla
 const STEEL_SHIELD_BLOCK_RADIUS = 38;   // a shot within this of the barrier centre is blocked
 
 export class MetalKit {
+  // ── Visuals ────────────────────────────────────────────────────────────
+  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  private readonly pcol: MetalColorFn;
+  private readonly ncol: MetalColorFn;
+  private readonly pfx: MetalFx;
+  private readonly nfx: MetalFx;
+  /** The butcher rig (gauntlet fists, eyes, crown chain) for each metal fighter. */
+  private playerAvatar: MetalAvatar | null = null;
+  private npcAvatar: MetalAvatar | null = null;
+  /** Stance tells, per side where both can run one. */
+  private auras: Partial<Record<`${'player' | 'npc'}:${MetalAuraStyle}`, MetalAura>> = {};
+  /**
+   * Two layers, because these objects are not all in the same place. Puddles, fire pools, splats
+   * and the anchor stake lie on the floor and must pass *under* the fighters; flails, chains,
+   * shards and barriers are swung out in front of them and must pass over.
+   */
+  private groundGfx: Phaser.GameObjects.Graphics | null = null;
+  private airGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Shared animation clock for every per-frame painter in this kit. */
+  private vizT = 0;
+  /** Last cursor position, cached in handleInput — `update` has no pointer. */
+  private lastAimX = 0;
+  private lastAimY = 0;
+
   // ── Kept-as-is: blood puddles / chain tether / aggressive bleeding ────
   private metalBloodPuddles: MetalBloodPuddle[] = [];
   private metalChainTethered = false;
   private metalChainTetherEnd = 0;
-  private metalChainGraphic: Phaser.GameObjects.Graphics | null = null;
   private metalChainProjectiles: MetalChainProjectile[] = [];
   private metalTetherNextPuddleAt = 0; // timestamp of the next drag puddle
   private metalTetherPuddlesLeft = 0;  // remaining puddles to drop this tether (max 3)
   private playerAggressiveBleeding = false;
   private playerAggressiveBleedUntil = 0;
-  private playerAggressiveBleedAura: Phaser.GameObjects.Arc | null = null;
   private playerAggressiveBleedTickAccum = 0;
   private playerAggressiveBleedPuddleAccum = 0;
 
   private npcMetalChainTethered = false;
   private npcMetalChainTetherEnd = 0;
-  private npcMetalChainGraphic: Phaser.GameObjects.Graphics | null = null;
   private npcMetalTetherNextPuddleAt = 0;
   private npcMetalTetherPuddlesLeft = 0;
   private npcAggressiveBleeding = false;
   private npcAggressiveBleedUntil = 0;
-  private npcAggressiveBleedAura: Phaser.GameObjects.Arc | null = null;
   private npcAggressiveBleedTickAccum = 0;
   private npcAggressiveBleedPuddleAccum = 0;
 
@@ -214,7 +270,8 @@ export class MetalKit {
   // ── Clot Armor (Q) ──────────────────────────────────────────────────────
   private clotArmorActive: Record<'player' | 'npc', boolean> = { player: false, npc: false };
   private clotArmorLostAccum: Record<'player' | 'npc', number> = { player: 0, npc: 0 };
-  private clotArmorShardDecor: Record<'player' | 'npc', Phaser.GameObjects.Triangle[]> = { player: [], npc: [] };
+  /** Shield HP the armour was raised with, so the aura can show how much plate is left. */
+  private clotArmorMaxHp: Record<'player' | 'npc', number> = { player: 1, npc: 1 };
   private metalShardProjectiles: MetalShardProjectile[] = [];
 
   // Player's current look direction (toward cursor), for orienting clot spikes.
@@ -224,8 +281,7 @@ export class MetalKit {
   private charging = false;
   private chargeStart = 0;
   private chargeDuration = 0;
-  private chargeAura: Phaser.GameObjects.Arc | null = null;
-  private chargeOrbs: Phaser.GameObjects.Arc[] = [];
+  private chargeRatio = 0;
   private chargeFullTinted = false;
 
   // ── Click+ Mighty Sabre charge state (player only) ────────────────────────
@@ -251,11 +307,75 @@ export class MetalKit {
   private steelShields: Record<'player' | 'npc', {
     endTime: number;
     red: boolean;
-    barrier: Phaser.GameObjects.Rectangle;
+    x: number;
+    y: number;
+    angle: number;
   } | null> = { player: null, npc: null };
   private steelShieldLastCastAt = -STEEL_SHIELD_COOLDOWN_MS; // ready at match start; npc casts are event-driven online
 
-  constructor(private arena: MetalArenaApi) {}
+  constructor(private arena: MetalArenaApi) {
+    // Built here, not as field initialisers, so they see the injected arena.
+    this.pcol = (base) => arena.metalColor('player', base);
+    this.ncol = (base) => arena.metalColor('npc', base);
+    this.pfx = new MetalFx(arena.scene, this.pcol);
+    this.nfx = new MetalFx(arena.scene, this.ncol);
+  }
+
+  // ── Visual helpers ─────────────────────────────────────────────────────
+
+  /** Effect painter for a side. */
+  private fx(owner: 'player' | 'npc'): MetalFx { return owner === 'player' ? this.pfx : this.nfx; }
+  /** Colour mapper for a side. */
+  private col(owner: 'player' | 'npc'): MetalColorFn { return owner === 'player' ? this.pcol : this.ncol; }
+  /** The rig for a side, if that side is playing Metal. */
+  private avatar(owner: 'player' | 'npc'): MetalAvatar | null {
+    return owner === 'player' ? this.playerAvatar : this.npcAvatar;
+  }
+  private fighter(owner: 'player' | 'npc'): Fighter {
+    return owner === 'player' ? this.arena.player : this.arena.npc;
+  }
+
+  /** The floor layer, under the fighters. Rebuilt lazily after a reset. */
+  private ground(): Phaser.GameObjects.Graphics {
+    if (!this.groundGfx || !this.groundGfx.active) {
+      this.groundGfx = this.arena.scene.add.graphics().setDepth(2);
+    }
+    return this.groundGfx;
+  }
+
+  /** The swung-out-in-front layer, over the fighters. Rebuilt lazily after a reset. */
+  private air(): Phaser.GameObjects.Graphics {
+    if (!this.airGfx || !this.airGfx.active) {
+      this.airGfx = this.arena.scene.add.graphics().setDepth(10);
+    }
+    return this.airGfx;
+  }
+
+  /** Build/tear down one stance aura from a single "is it up?" flag. */
+  private syncAura(
+    owner: 'player' | 'npc', style: MetalAuraStyle, on: boolean,
+    delta: number, intensity: number, angle: number, radius = 28,
+  ): void {
+    const key = `${owner}:${style}` as const;
+    let aura = this.auras[key];
+    const f = this.fighter(owner);
+    if (!on || !f.active) {
+      if (aura) { aura.destroy(); delete this.auras[key]; }
+      return;
+    }
+    if (!aura) {
+      aura = new MetalAura(this.arena.scene, this.col(owner), style, radius, style === 'clot' ? 3 : 4);
+      this.auras[key] = aura;
+    }
+    aura.setIntensity(intensity);
+    aura.setAngle(angle);
+    aura.update(delta, f.x, f.y, f.forceInvisible ? 0 : f.alpha);
+  }
+
+  private destroyAuras(): void {
+    for (const a of Object.values(this.auras)) a?.destroy();
+    this.auras = {};
+  }
 
   // ── Public accessors ──────────────────────────────────────────────────
 
@@ -290,22 +410,24 @@ export class MetalKit {
   }
 
   reset(): void {
+    // Visuals — every GameObject dies with the old scene run, so rebuild lazily in update().
+    if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
+    if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
+    this.destroyAuras();
+    if (this.groundGfx) { this.groundGfx.destroy(); this.groundGfx = null; }
+    if (this.airGfx) { this.airGfx.destroy(); this.airGfx = null; }
+    this.vizT = 0;
+
     this.npcAggressiveBleeding = false; this.npcAggressiveBleedUntil = 0;
-    if (this.npcAggressiveBleedAura) { this.npcAggressiveBleedAura.destroy(); this.npcAggressiveBleedAura = null; }
     this.npcAggressiveBleedTickAccum = 0; this.npcAggressiveBleedPuddleAccum = 0;
     this.playerAggressiveBleeding = false; this.playerAggressiveBleedUntil = 0;
-    if (this.playerAggressiveBleedAura) { this.playerAggressiveBleedAura.destroy(); this.playerAggressiveBleedAura = null; }
     this.playerAggressiveBleedTickAccum = 0; this.playerAggressiveBleedPuddleAccum = 0;
 
-    for (const p of this.metalBloodPuddles) p.sprite.destroy();
     this.metalBloodPuddles = [];
 
     this.metalChainTethered = false; this.metalChainTetherEnd = 0; this.metalTetherNextPuddleAt = 0; this.metalTetherPuddlesLeft = 0;
-    if (this.metalChainGraphic) { this.metalChainGraphic.destroy(); this.metalChainGraphic = null; }
     this.npcMetalChainTethered = false; this.npcMetalChainTetherEnd = 0; this.npcMetalTetherNextPuddleAt = 0; this.npcMetalTetherPuddlesLeft = 0;
-    if (this.npcMetalChainGraphic) { this.npcMetalChainGraphic.destroy(); this.npcMetalChainGraphic = null; }
 
-    for (const p of this.metalChainProjectiles) p.sprite.destroy();
     this.metalChainProjectiles = [];
 
     // Shared charge VFX + Click+ Mighty Sabre
@@ -313,7 +435,6 @@ export class MetalKit {
     this.sabreCharging = false;
 
     // E+ fire puddles
-    for (const p of this.metalFirePuddles) p.sprite.destroy();
     this.metalFirePuddles = [];
 
     // F+ Ground Anchor
@@ -338,9 +459,10 @@ export class MetalKit {
     if (this.bloodBarFill) { this.bloodBarFill.destroy(); this.bloodBarFill = null; }
     if (this.bloodBarLabel) { this.bloodBarLabel.destroy(); this.bloodBarLabel = null; }
 
-    // Flails
-    this.destroyFlail('player');
-    this.destroyFlail('npc');
+    // Flails — nulled outright rather than via destroyFlail(), which throws sparks off the
+    // dying mace and would fire them at last match's coordinates on the first frame.
+    this.playerFlail = null;
+    this.npcFlail = null;
 
     // Transfusion
     this.transfusionActiveUntil = { player: 0, npc: 0 };
@@ -349,15 +471,12 @@ export class MetalKit {
     // Clot armor
     this.clotArmorActive = { player: false, npc: false };
     this.clotArmorLostAccum = { player: 0, npc: 0 };
-    for (const spr of this.clotArmorShardDecor.player) spr.destroy();
-    for (const spr of this.clotArmorShardDecor.npc) spr.destroy();
-    this.clotArmorShardDecor = { player: [], npc: [] };
+    this.clotArmorMaxHp = { player: 1, npc: 1 };
     this.arena.player.clearTint();
     this.arena.npc.clearTint();
     this.arena.player.damageAbsorber = null;
     this.arena.npc.damageAbsorber = null;
 
-    for (const p of this.metalShardProjectiles) p.sprite.destroy();
     this.metalShardProjectiles = [];
 
     // Mastery — Steel Shield + Natural Clot passive
@@ -374,9 +493,11 @@ export class MetalKit {
     const { player, eKey, fKey, rKey, qKey, pointerWasDown } = this.arena;
     const playerCtx = this.arena.buildPlayerContext(mouseX, mouseY);
     this.playerAimAngle = Math.atan2(mouseY - player.y, mouseX - player.x);
+    this.lastAimX = mouseX;
+    this.lastAimY = mouseY;
     const aimAtFlail = (): boolean => {
       if (!this.playerFlail) return false;
-      const head = this.playerFlail.headSprite;
+      const head = this.playerFlail;
       const aimAng = Math.atan2(mouseY - player.y, mouseX - player.x);
       const maceAng = Math.atan2(head.y - player.y, head.x - player.x);
       return Math.abs(Phaser.Math.Angle.Wrap(aimAng - maceAng)) <= Phaser.Math.DegToRad(30);
@@ -517,13 +638,14 @@ export class MetalKit {
   }
 
   update(time: number, delta: number): void {
+    this.vizT += delta / 1000;
+    this.mirrorNpcCast();
     this.updateAggressiveBleeds(time, delta);
     this.updateTransfusion(time, delta);
     this.updateBloodPuddles(time, delta);
     this.updateChainTethers(time, delta);
     this.updateChainProjectiles(time, delta);
     this.updateFlails(time, delta);
-    this.updateClotArmor(time, delta);
     this.updateShardProjectiles(time, delta);
     this.updateChargeVfx(time);
     this.updateMetalFirePuddles(time, delta);
@@ -534,6 +656,172 @@ export class MetalKit {
     this.arena.npc.flatDamageReduction = this.arena.npcMasteryActive ? NATURAL_CLOT_REDUCTION : 0;
     this.updateSteelShields(time);
     this.updateBloodHud();
+    this.paintWorld(time);
+    this.updateAvatars(time, delta);
+  }
+
+  /** Mirror the player's gestures on the NPC rig, so a metal opponent visibly casts. */
+  private mirrorNpcCast(): void {
+    const id = this.arena.npcCastId;
+    if (!id) return;
+    const gesture = CAST_GESTURES[id];
+    if (!gesture) return;
+    const { npc, player } = this.arena;
+    this.npcAvatar?.play(gesture, Math.atan2(player.y - npc.y, player.x - npc.x));
+  }
+
+  /**
+   * Every per-frame painter in one pass. The two layers are cleared and redrawn from live state,
+   * so a puddle congeals, a mace glows and a barrier drips rather than sitting there as a sprite.
+   */
+  private paintWorld(time: number): void {
+    const t = this.vizT;
+    const { player, npc } = this.arena;
+
+    // ── Floor ──
+    const hasGround = this.metalBloodPuddles.length > 0 || this.metalFirePuddles.length > 0
+      || this.metalGroundTether !== null;
+    if (hasGround || this.groundGfx) {
+      const g = this.ground();
+      g.clear();
+      for (const p of this.metalBloodPuddles) {
+        MetalFx.drawPuddle(g, this.col(p.owner), p.x, p.y, p.radius,
+          p.blood / PUDDLE_BLOOD_CAPACITY, p.seed, p.draining, t);
+      }
+      for (const fp of this.metalFirePuddles) {
+        const life = Phaser.Math.Clamp((fp.expiresAt - time) / 3000, 0, 1);
+        MetalFx.drawFirePuddle(g, this.col(fp.owner), fp.x, fp.y, fp.radius, life, t);
+      }
+      const gt = this.metalGroundTether;
+      if (gt) MetalFx.drawStake(g, this.col(gt.owner), gt.x, gt.y, GROUND_TETHER_BLAST_RADIUS, t);
+    }
+
+    // ── Swung out in front ──
+    const hasAir = this.playerFlail !== null || this.npcFlail !== null
+      || this.metalChainProjectiles.length > 0 || this.metalShardProjectiles.length > 0
+      || this.metalChainTethered || this.npcMetalChainTethered
+      || this.steelShields.player !== null || this.steelShields.npc !== null
+      || (this.bloodBlade?.descending ?? false);
+    if (hasAir || this.airGfx) {
+      const g = this.air();
+      g.clear();
+
+      // Live tethers: a chain from the caster to whoever is on the end of it.
+      if (this.metalChainTethered) {
+        chainRun(g, this.pcol, player.x, player.y, npc.x, npc.y, 22 + Math.sin(t * 3) * 8, METAL.steel, 0.95);
+      }
+      if (this.npcMetalChainTethered) {
+        chainRun(g, this.ncol, npc.x, npc.y, player.x, player.y, 22 + Math.sin(t * 3 + 1) * 8, METAL.steel, 0.95);
+      }
+
+      // Flails: the chain from the caster's fist out to a spinning, heating mace head.
+      for (const owner of ['player', 'npc'] as const) {
+        const flail = owner === 'player' ? this.playerFlail : this.npcFlail;
+        if (!flail) continue;
+        const caster = this.fighter(owner);
+        const tint = this.col(owner);
+        chainRun(g, tint, caster.x, caster.y, flail.x, flail.y,
+          flail.swinging ? 6 : 20 + Math.sin(t * 2) * 5, METAL.iron, 0.95, flail.heavy ? 1.15 : 0.9);
+        flailHeadFor(g, tint, flail, t);
+      }
+
+      // Chain hooks in flight, trailing their own line back to the thrower.
+      for (const cp of this.metalChainProjectiles) {
+        const caster = this.fighter(cp.owner);
+        const tint = this.col(cp.owner);
+        const ang = Math.atan2(cp.vy, cp.vx);
+        chainRun(g, tint, caster.x, caster.y, cp.x, cp.y, 14, METAL.iron, 0.8, 0.8);
+        bladeShardLayered(g, tint, cp.x, cp.y, ang, 20, 5, METAL.chrome, 1, 0.5, false);
+      }
+
+      // Shards and flung maces.
+      for (const p of this.metalShardProjectiles) {
+        const ang = Math.atan2(p.vy, p.vx);
+        if (p.isMace) {
+          flailHeadAt(g, this.col(p.owner), p.x, p.y, t * 14, p.heavy ? 14 : 9, p.heavy);
+        } else {
+          MetalFx.drawShardBolt(g, this.col(p.owner), p.x, p.y, ang, 17, METAL.crimson, t);
+        }
+      }
+
+      // Steel Shield barriers.
+      for (const owner of ['player', 'npc'] as const) {
+        const s = this.steelShields[owner];
+        if (!s) continue;
+        MetalFx.drawBarrier(g, this.col(owner), s.x, s.y, s.angle, s.red, t);
+      }
+
+      // The Blood Blade falling out of the sky.
+      const blade = this.bloodBlade;
+      if (blade?.descending) {
+        sword(g, this.pcol, player.x, blade.y, Math.PI / 2, 78, METAL.crimson, 1, true, true);
+        // Wind screaming past it.
+        for (let i = 0; i < 3; i++) {
+          const d = 30 + i * 26;
+          g.lineStyle(2 - i * 0.5, this.pcol(METAL.rose), 0.5 - i * 0.13);
+          g.lineBetween(player.x - 8 + i * 3, blade.y - d, player.x - 8 + i * 3, blade.y - d - 24);
+          g.lineBetween(player.x + 8 - i * 3, blade.y - d, player.x + 8 - i * 3, blade.y - d - 24);
+        }
+      }
+    }
+  }
+
+  /**
+   * The character rigs and every stance aura, for whichever sides are playing Metal. Built
+   * lazily so a scene restart (which destroys them all) simply rebuilds on the next frame, and
+   * torn down the moment a side stops being Metal.
+   */
+  private updateAvatars(time: number, delta: number): void {
+    const { scene, player, npc } = this.arena;
+    const isPlayerMetal = this.arena.elementId === 'metal';
+    const isNpcMetal = this.arena.npcElementId === 'metal';
+
+    if (isPlayerMetal && player.active) {
+      if (!this.playerAvatar) this.playerAvatar = new MetalAvatar(scene, this.pcol, 'player');
+      const aim = Math.atan2(this.lastAimY - player.y, this.lastAimX - player.x);
+      const transfusing = time < this.transfusionActiveUntil.player;
+      this.playerAvatar.setFacing(aim);
+      this.playerAvatar.setIntensity(this.clotArmorActive.player ? 1.3 : this.bloodBlade ? 1.2 : 1);
+      this.playerAvatar.setMastered(this.arena.masteryActive);
+      // Single owner of setHold: a wind-up braces, a transfusion cups both hands low.
+      this.playerAvatar.setHold(this.charging ? 'brace' : transfusing ? 'sow' : null, aim);
+      this.playerAvatar.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
+
+      this.syncAura('player', 'bleed', this.playerAggressiveBleeding, delta, 1, aim, 26);
+      this.syncAura('player', 'clot', this.clotArmorActive.player, delta,
+        player.shieldHp / Math.max(1, this.clotArmorMaxHp.player), aim, 30);
+      this.syncAura('player', 'charge', this.charging, delta, this.chargeRatio, aim, 26);
+      this.syncAura('player', 'transfuse', transfusing, delta, 1, aim, 26);
+    } else if (this.playerAvatar) {
+      this.playerAvatar.destroy();
+      this.playerAvatar = null;
+      for (const style of ['bleed', 'clot', 'charge', 'transfuse'] as const) {
+        this.auras[`player:${style}`]?.destroy();
+        delete this.auras[`player:${style}`];
+      }
+    }
+
+    if (isNpcMetal && npc.active) {
+      if (!this.npcAvatar) this.npcAvatar = new MetalAvatar(scene, this.ncol, 'npc');
+      const aim = Math.atan2(player.y - npc.y, player.x - npc.x);
+      this.npcAvatar.setFacing(aim);
+      this.npcAvatar.setIntensity(this.clotArmorActive.npc ? 1.3 : 1);
+      this.npcAvatar.setMastered(this.arena.npcMasteryActive);
+      this.npcAvatar.setHold(time < this.transfusionActiveUntil.npc ? 'sow' : null, aim);
+      this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
+
+      this.syncAura('npc', 'bleed', this.npcAggressiveBleeding, delta, 1, aim, 26);
+      this.syncAura('npc', 'clot', this.clotArmorActive.npc, delta,
+        npc.shieldHp / Math.max(1, this.clotArmorMaxHp.npc), aim, 30);
+      this.syncAura('npc', 'transfuse', time < this.transfusionActiveUntil.npc, delta, 1, aim, 26);
+    } else if (this.npcAvatar) {
+      this.npcAvatar.destroy();
+      this.npcAvatar = null;
+      for (const style of ['bleed', 'clot', 'charge', 'transfuse'] as const) {
+        this.auras[`npc:${style}`]?.destroy();
+        delete this.auras[`npc:${style}`];
+      }
+    }
   }
 
   // ── Public do* methods — called from ArenaScene context builders ──────
@@ -545,18 +833,31 @@ export class MetalKit {
 
     const dx = tx - caster.x, dy = ty - caster.y;
     const ang = Math.atan2(dy, dx);
+    const fx = this.fx(owner);
 
-    // Draw a sword and sweep it across the aim direction.
-    this.drawSwordSwing(caster.x, caster.y, ang, { handle: 0x6b4a2b, accent: 0xd9b25a, blade: 0xdfe8f2, edge: 0xffffff });
+    // The blade sweeps the aim, with a crescent of torn air chasing the tip. A heavier swing
+    // (Mighty Sabre at full charge) reaches further and hangs on screen longer.
+    const heavy = (dmgOverride ?? 25) > 40;
+    fx.slash(caster.x, caster.y, ang, heavy ? 104 : 90, {
+      color: heavy ? METAL.goldHi : METAL.chrome,
+      arc: heavy ? Phaser.Math.DegToRad(130) : undefined,
+      duration: heavy ? 320 : 260,
+    });
+    this.avatar(owner)?.play('sweep', ang);
 
     for (const target of targets) {
       if (!target.active || target.hp <= 0) continue;
       const dist = Phaser.Math.Distance.Between(caster.x, caster.y, target.x, target.y);
       if (dist <= 90) {
         const dmg = dmgOverride ?? 25;
+        const hx = target.x, hy = target.y;
         target.takeDamage(dmg);
         this.arena.spawnHitFlash(target.x, target.y, 0xaabbcc);
         this.arena.showFloatingText(caster.x, caster.y - 36, `🗡️ ${dmg}`, '#aabbcc');
+        // Opened up: blood thrown along the swing, sparks where steel bit, a splat under them.
+        fx.spray(hx, hy, 5 + Math.round(dmg / 8), { speed: 200 + dmg * 2, angle: ang, spread: 0.9, size: 3.6 });
+        fx.sparks(hx, hy, 4, ang, 10);
+        fx.splat(hx, hy, 12 + dmg * 0.2, 2);
         if (!target.knockbackImmune) {
           const kbDx = target.x - caster.x, kbDy = target.y - caster.y;
           const kbLen = Math.sqrt(kbDx * kbDx + kbDy * kbDy) || 1;
@@ -570,20 +871,21 @@ export class MetalKit {
   }
 
   doMetalChainTether(tx: number, ty: number, owner: 'player' | 'npc'): void {
-    const { player, npc, scene } = this.arena;
+    const { player, npc } = this.arena;
     const caster = owner === 'player' ? player : npc;
-    const sceneAdd = (scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory }).add;
 
     const dx = tx - caster.x, dy = ty - caster.y;
     const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    const ang = Math.atan2(dy, dx);
 
-    const spr = sceneAdd.circle(caster.x, caster.y, 8, 0x889aaa, 0.9)
-      .setStrokeStyle(2, 0xccddee).setDepth(8);
     this.metalChainProjectiles.push({
-      sprite: spr, x: caster.x, y: caster.y,
+      x: caster.x, y: caster.y,
       vx: (dx / len) * 520, vy: (dy / len) * 520,
       owner, active: true,
     });
+    // The throw itself: an overhand hurl and a shower of sparks off the chain paying out.
+    this.avatar(owner)?.play('punch', ang);
+    this.fx(owner).sparks(caster.x + Math.cos(ang) * 22, caster.y + Math.sin(ang) * 22, 6, ang, 9, METAL.chrome);
     this.arena.showFloatingText(caster.x, caster.y - 30, '⛓️ CHAIN!', '#aabbcc');
   }
 
@@ -591,33 +893,34 @@ export class MetalKit {
   doMetalFlailCraft(owner: 'player' | 'npc'): void {
     const { player, npc, scene } = this.arena;
     const caster = owner === 'player' ? player : npc;
-    const sceneAdd = (scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory }).add;
     const sceneTime = (scene as Phaser.Scene & { time: Phaser.Time.Clock }).time;
 
     this.destroyFlail(owner); // safety: replace any stale flail
 
-    // E+: Heavy Metal Rock — black spiked mace, 15% longer chain.
+    // E+: Heavy Metal Rock — black spiked mace on a shorter chain.
     const heavy = owner === 'player' && this.arena.hasUpgrade('e');
     const headSize = heavy ? 14 : 9;
     const idleRadius = FLAIL_IDLE_RADIUS * (heavy ? HEAVY_RADIUS_MULT : 1);
     const startAngle = Math.PI / 2; // trails south of the caster
-    const head = sceneAdd.circle(
-      caster.x + Math.cos(startAngle) * idleRadius,
-      caster.y + Math.sin(startAngle) * idleRadius,
-      headSize, heavy ? 0x111111 : 0xaabbcc, 0.95,
-    ).setStrokeStyle(heavy ? 3 : 2, heavy ? 0x444444 : 0x556677).setDepth(8);
-    const chain = sceneAdd.graphics().setDepth(7);
-    const spikesGfx = heavy ? sceneAdd.graphics().setDepth(7) : null;
 
     const flail: MetalFlail = {
-      headSprite: head, chainGfx: chain,
+      x: caster.x + Math.cos(startAngle) * idleRadius,
+      y: caster.y + Math.sin(startAngle) * idleRadius,
       angle: startAngle, angularVel: 0, initialAngularVel: 0,
       radius: idleRadius, swinging: false,
       createdAt: sceneTime.now, swingStartAt: 0, lastHitAt: 0, owner,
-      heavy, headRadius: headSize, spikesGfx, firePuddleAccum: 0,
+      heavy, headRadius: headSize, heat: 0, firePuddleAccum: 0,
     };
     if (owner === 'player') this.playerFlail = flail; else this.npcFlail = flail;
 
+    // Forged on the spot: sparks off the anvil and a shower of offcut shards.
+    const fx = this.fx(owner);
+    this.avatar(owner)?.play('slam', startAngle);
+    fx.flash(flail.x, flail.y, heavy ? 26 : 18, 9, heavy ? METAL.ember : METAL.chrome);
+    fx.sparks(flail.x, flail.y, heavy ? 14 : 9, -Math.PI / 2, 10, heavy ? METAL.flame : METAL.goldHi);
+    fx.shards(flail.x, flail.y, heavy ? 8 : 5, {
+      speed: 180, size: heavy ? 16 : 12, color: heavy ? METAL.char : METAL.steel, depth: 9,
+    });
     this.arena.showFloatingText(caster.x, caster.y - 44, heavy ? '🤘 HEAVY METAL!' : '⛓️ FLAIL CRAFTED', heavy ? '#ff6600' : '#aabbcc');
   }
 
@@ -639,10 +942,14 @@ export class MetalKit {
       flail.initialAngularVel = dir * boosted;
       flail.angularVel = flail.initialAngularVel;
       flail.swingStartAt = sceneTime.now;
+      this.fx(owner).sparks(flail.x, flail.y, 8, flail.angle + Math.PI / 2 * dir, 10, METAL.goldHi);
+      this.avatar(owner)?.play('sweep', flail.angle);
       this.arena.showFloatingText(caster.x, caster.y - 44, '⚡ FASTER!', '#ffcc44');
       return;
     }
 
+    this.fx(owner).ring(flail.x, flail.y, 8, 40, METAL.chrome, 300, 7, 3);
+    this.avatar(owner)?.play('sweep', flail.angle);
     flail.swinging = true;
     flail.swingStartAt = sceneTime.now;
     flail.radius = FLAIL_SWING_RADIUS * (flail.heavy ? HEAVY_RADIUS_MULT : 1);
@@ -680,25 +987,9 @@ export class MetalKit {
       this.transfusionDripAccum[owner] += delta;
       if (this.transfusionDripAccum[owner] >= 90) {
         this.transfusionDripAccum[owner] -= 90;
-        this.spawnBloodDrip(caster.x, caster.y);
+        this.fx(owner).drip(caster.x, caster.y);
       }
     }
-  }
-
-  private spawnBloodDrip(x: number, y: number): void {
-    const sceneAdd = (this.arena.scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory }).add;
-    const sceneTweens = (this.arena.scene as Phaser.Scene & { tweens: Phaser.Tweens.TweenManager }).tweens;
-    const ox = (Math.random() - 0.5) * 26;
-    const drop = sceneAdd.circle(x + ox, y + 8, 2 + Math.random() * 1.5, 0x990011, 0.9).setDepth(3);
-    sceneTweens.add({
-      targets: drop,
-      y: drop.y + 16 + Math.random() * 8,
-      scaleX: 0.3, scaleY: 0.3,
-      alpha: 0,
-      duration: 360,
-      ease: 'Quad.In',
-      onComplete: () => drop.destroy(),
-    });
   }
 
   /** Q — Clot Armor: consumes the entire blood bar into shieldHp; bursts shards every 25 shieldHp lost. */
@@ -713,85 +1004,65 @@ export class MetalKit {
 
     // Recast: fully replace — discard remaining shieldHp, don't add to it.
     caster.shieldHp = Math.round(bloodAmount * 1.25);
+    this.clotArmorMaxHp[owner] = Math.max(1, caster.shieldHp);
     this.clotArmorLostAccum[owner] = 0;
 
     if (!this.clotArmorActive[owner]) {
       this.clotArmorActive[owner] = true;
       caster.setTint(0xff4466);
-      this.spawnClotArmorDecor(owner);
       this.installClotArmorAbsorber(owner);
     }
 
     // Quad perk: Exsanguinate — Clot Armor also fires 8 shards instead of 5 per burst (handled in fireClotShardBurst)
     this.arena.showFloatingText(caster.x, caster.y - 44, `🛡️ CLOT ARMOR (${caster.shieldHp} HP)`, '#ff4466');
 
-    const { scene } = this.arena;
-    const sceneAdd = (scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory }).add;
-    const sceneTweens = (scene as Phaser.Scene & { tweens: Phaser.Tweens.TweenManager }).tweens;
-    for (let i = 0; i < 8; i++) {
-      const ang = (i / 8) * Math.PI * 2;
-      const dot = sceneAdd.circle(
-        caster.x + Math.cos(ang) * 18, caster.y + Math.sin(ang) * 18,
-        5, 0xcc0000, 0.9,
-      ).setDepth(7);
-      sceneTweens.add({ targets: dot, x: dot.x + Math.cos(ang) * 40, y: dot.y + Math.sin(ang) * 40, alpha: 0, duration: 600, onComplete: () => dot.destroy() });
+    // The blood bar slamming shut into plate: it scales with how much blood went into it.
+    const fx = this.fx(owner);
+    const size = 26 + bloodAmount * 0.3;
+    this.avatar(owner)?.play('raise', -Math.PI / 2, 700);
+    fx.flash(caster.x, caster.y, size * 0.6, 9, METAL.crimson);
+    fx.ring(caster.x, caster.y, 10, size * 1.8, METAL.rose, 420, 7, 5);
+    fx.spray(caster.x, caster.y, 8 + Math.round(bloodAmount / 8), {
+      speed: 210, size: 4, life: 620, depth: 7,
+    });
+    for (let i = 0; i < 6; i++) {
+      const ang = (i / 6) * Math.PI * 2;
+      fx.shards(caster.x + Math.cos(ang) * 16, caster.y + Math.sin(ang) * 16, 1, {
+        speed: 130, angle: ang, spread: 0.2, size: 16, color: METAL.crimson, depth: 7, fall: 0,
+      });
     }
   }
 
   applyMetalAggressiveBleeding(appliedBy: 'player' | 'npc', duration: number): void {
     const { player, npc, scene } = this.arena;
-    const sceneAdd = (scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory }).add;
-    const sceneTweens = (scene as Phaser.Scene & { tweens: Phaser.Tweens.TweenManager }).tweens;
     const sceneTime = (scene as Phaser.Scene & { time: Phaser.Time.Clock }).time;
+    const victim = appliedBy === 'player' ? npc : player;
 
     if (appliedBy === 'player') {
-      // Player bleeds NPC
       this.npcAggressiveBleeding = true;
       this.npcAggressiveBleedUntil = Math.max(this.npcAggressiveBleedUntil, sceneTime.now + duration);
-      if (!this.npcAggressiveBleedAura) {
-        this.npcAggressiveBleedAura = sceneAdd.circle(npc.x, npc.y, 30, 0x660000, 0.4)
-          .setStrokeStyle(2, 0xaa0000, 0.6).setDepth(3);
-        sceneTweens.add({ targets: this.npcAggressiveBleedAura, alpha: 0.12, yoyo: true, repeat: -1, duration: 380 });
-      }
-      this.arena.showFloatingText(npc.x, npc.y - 36, '🩸 BLEEDING', '#cc0000');
-      // Drip particles
-      for (let i = 0; i < 4; i++) {
-        const ang = Math.random() * Math.PI * 2;
-        const dot = sceneAdd.circle(
-          npc.x + Math.cos(ang) * 18, npc.y + Math.sin(ang) * 18,
-          3, 0x880000, 0.9,
-        ).setDepth(6);
-        sceneTweens.add({ targets: dot, y: dot.y + 22, alpha: 0, duration: 680, onComplete: () => dot.destroy() });
-      }
     } else {
-      // NPC bleeds player
       this.playerAggressiveBleeding = true;
       this.playerAggressiveBleedUntil = Math.max(this.playerAggressiveBleedUntil, sceneTime.now + duration);
-      if (!this.playerAggressiveBleedAura) {
-        this.playerAggressiveBleedAura = sceneAdd.circle(player.x, player.y, 30, 0x660000, 0.4)
-          .setStrokeStyle(2, 0xaa0000, 0.6).setDepth(3);
-        sceneTweens.add({ targets: this.playerAggressiveBleedAura, alpha: 0.12, yoyo: true, repeat: -1, duration: 380 });
-      }
-      this.arena.showFloatingText(player.x, player.y - 36, '🩸 BLEEDING', '#cc0000');
     }
+    // The wound opening — a snap of spray on application. The continuous tell is the bleed aura,
+    // so the status stays readable on the victim between ticks.
+    this.fx(appliedBy).spray(victim.x, victim.y, 8, { speed: 170, size: 3.4, life: 620, depth: 6 });
+    this.arena.showFloatingText(victim.x, victim.y - 36, '🩸 BLEEDING', '#cc0000');
   }
 
   spawnMetalBloodPuddle(x: number, y: number, owner: 'player' | 'npc'): void {
-    const { scene } = this.arena;
-    const sceneAdd = (scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory }).add;
-    const sceneTweens = (scene as Phaser.Scene & { tweens: Phaser.Tweens.TweenManager }).tweens;
-
     const base = 30;
     // Quad perk Exsanguinate: blood puddles are 50% bigger.
     let mult = 1;
     if (owner === 'player' && this.arena.hasPerk('gunpowder')) mult *= 1.5;
     const r = Math.round(base * mult);
-    const spr = sceneAdd.circle(x, y, r, 0x660000, 0.55)
-      .setStrokeStyle(2, 0x990000, 0.5).setDepth(2);
-    this.metalBloodPuddles.push({ sprite: spr, x, y, radius: r, owner, drainAccum: 0, draining: false, blood: PUDDLE_BLOOD_CAPACITY });
-    // Small spawn VFX
-    const burst = sceneAdd.circle(x, y, 6, 0xcc0000, 0.8).setDepth(5);
-    sceneTweens.add({ targets: burst, scaleX: 3, scaleY: 3, alpha: 0, duration: 300, onComplete: () => burst.destroy() });
+    this.metalBloodPuddles.push({
+      x, y, radius: r, owner, drainAccum: 0, draining: false,
+      blood: PUDDLE_BLOOD_CAPACITY, seed: Math.random() * 10,
+    });
+    // It lands rather than appearing: a short spray outward and a spatter ring.
+    this.fx(owner).spray(x, y, 7, { speed: 130, size: 3, life: 500, depth: 3 });
   }
 
   /** Passive: called from ArenaScene's 'damaged' listeners whenever `owner` deals damage to their opponent. */
@@ -820,71 +1091,12 @@ export class MetalKit {
 
   // ── Private helpers ─────────────────────────────────────────────────────
 
-  /** Draws a sword pointing outward from (cx,cy) and sweeps it 90° across `ang`, then fades. */
-  private drawSwordSwing(
-    cx: number, cy: number, ang: number,
-    opts: { handle: number; accent: number; blade: number; edge: number; serrated?: boolean },
-  ): void {
-    const scene = this.arena.scene;
-    const gfx = scene.add.graphics().setDepth(9);
-    gfx.setPosition(cx, cy);
-    gfx.fillStyle(opts.handle, 1); gfx.fillRect(0, -3, 16, 6);      // handle
-    gfx.fillStyle(opts.accent, 1); gfx.fillCircle(0, 0, 5);          // pommel
-    gfx.fillStyle(opts.accent, 1); gfx.fillRect(14, -12, 6, 24);     // crossguard
-    // Blade (tapered to a point)
-    gfx.fillStyle(opts.blade, 1);
-    gfx.beginPath();
-    gfx.moveTo(20, -6); gfx.lineTo(88, -2); gfx.lineTo(98, 0); gfx.lineTo(88, 2); gfx.lineTo(20, 6);
-    gfx.closePath(); gfx.fillPath();
-    if (opts.serrated) {
-      gfx.fillStyle(opts.blade, 1);
-      for (let x = 24; x < 88; x += 9) gfx.fillTriangle(x, -4, x + 5, -11, x + 9, -4);
-    }
-    gfx.lineStyle(2, opts.edge, 0.9);                                // edge highlight
-    gfx.beginPath(); gfx.moveTo(20, -3); gfx.lineTo(96, 0); gfx.strokePath();
-
-    const swing = Phaser.Math.DegToRad(90);
-    gfx.setRotation(ang - swing / 2);
-    scene.tweens.add({ targets: gfx, rotation: ang + swing / 2, duration: 130, ease: 'Quad.Out' });
-    scene.tweens.add({ targets: gfx, alpha: 0, duration: 120, delay: 130, onComplete: () => gfx.destroy() });
-  }
-
-  private drawMetalChainLine(gfx: Phaser.GameObjects.Graphics, x1: number, y1: number, x2: number, y2: number): void {
-    const d = Phaser.Math.Distance.Between(x1, y1, x2, y2) || 1;
-    const dx = x2 - x1, dy = y2 - y1;
-    const segments = Math.max(4, Math.floor(d / 22));
-    const perpX = -dy / d, perpY = dx / d;
-    gfx.lineStyle(3, 0x889aaa, 0.75);
-    gfx.beginPath();
-    gfx.moveTo(x1, y1);
-    for (let i = 1; i <= segments; i++) {
-      const t = i / segments;
-      const px = x1 + dx * t, py = y1 + dy * t;
-      const side = i % 2 === 0 ? 1 : -1;
-      gfx.lineTo(px + perpX * side * 7, py + perpY * side * 7);
-    }
-    gfx.strokePath();
-  }
-
   private destroyFlail(owner: 'player' | 'npc'): void {
     const flail = owner === 'player' ? this.playerFlail : this.npcFlail;
     if (!flail) return;
-    flail.headSprite.destroy();
-    flail.chainGfx.destroy();
-    if (flail.spikesGfx) flail.spikesGfx.destroy();
+    // Pure data — it just stops being painted. The chain gives out with a last spray of sparks.
+    this.fx(owner).sparks(flail.x, flail.y, 6, Math.random() * Math.PI * 2, 9, METAL.iron);
     if (owner === 'player') this.playerFlail = null; else this.npcFlail = null;
-  }
-
-  private spawnClotArmorDecor(owner: 'player' | 'npc'): void {
-    const { scene } = this.arena;
-    const sceneAdd = (scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory }).add;
-    for (const spr of this.clotArmorShardDecor[owner]) spr.destroy();
-    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
-    // Three spike triangles (tip pointing +x locally); positioned and oriented
-    // to face away from the caster's aim each frame in updateClotArmor.
-    this.clotArmorShardDecor[owner] = [0, 1, 2].map(() =>
-      sceneAdd.triangle(caster.x, caster.y, 0, -8, 28, 0, 0, 8, 0xcc0022, 0.95).setDepth(6),
-    );
   }
 
   private installClotArmorAbsorber(owner: 'player' | 'npc'): void {
@@ -897,6 +1109,10 @@ export class MetalKit {
       }
       caster.shieldHp = Math.max(0, caster.shieldHp - amount);
       this.arena.spawnDamageNumber(caster.x, caster.y - 20, amount);
+      // A plate cracking: shards knocked loose and blood forced out of the seams.
+      this.fx(owner).shards(caster.x, caster.y, 2, {
+        speed: 150, size: 11, color: METAL.clot, depth: 7,
+      });
       this.clotArmorLostAccum[owner] += amount;
       while (this.clotArmorLostAccum[owner] >= CLOT_SHARD_THRESHOLD) {
         this.clotArmorLostAccum[owner] -= CLOT_SHARD_THRESHOLD;
@@ -904,6 +1120,8 @@ export class MetalKit {
       }
       if (caster.shieldHp <= 0) {
         this.arena.showFloatingText(caster.x, caster.y - 36, '💔 ARMOR BROKEN', '#ff4466');
+        // The whole shell coming apart at once.
+        this.fx(owner).boom(caster.x, caster.y, 70, { color: METAL.crimson, shards: 12, mark: true });
         this.deactivateClotArmor(owner);
       }
       return true;
@@ -915,26 +1133,22 @@ export class MetalKit {
     this.clotArmorActive[owner] = false;
     caster.damageAbsorber = null;
     caster.clearTint();
-    for (const spr of this.clotArmorShardDecor[owner]) spr.destroy();
-    this.clotArmorShardDecor[owner] = [];
   }
 
   private fireClotShardBurst(owner: 'player' | 'npc'): void {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
-    const { scene } = this.arena;
-    const sceneAdd = (scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory }).add;
     // Quad perk: Exsanguinate — fires 8 shards per burst instead of 5
     const shardCount = this.arena.hasPerk('gunpowder') ? 8 : CLOT_SHARD_COUNT;
     for (let i = 0; i < shardCount; i++) {
       const ang = Math.random() * Math.PI * 2;
-      const spr = sceneAdd.rectangle(caster.x, caster.y, 10, 4, 0xcc0022, 0.95)
-        .setDepth(8).setRotation(ang);
       this.metalShardProjectiles.push({
-        sprite: spr, x: caster.x, y: caster.y,
+        x: caster.x, y: caster.y,
         vx: Math.cos(ang) * CLOT_SHARD_SPEED, vy: Math.sin(ang) * CLOT_SHARD_SPEED,
-        owner, active: true, dmg: CLOT_SHARD_DAMAGE, spawnsPuddle: true,
+        owner, active: true, dmg: CLOT_SHARD_DAMAGE, spawnsPuddle: true, isMace: false, heavy: false,
       });
     }
+    // The seams letting go: a ring pushed out with the shards riding it.
+    this.fx(owner).ring(caster.x, caster.y, 12, 46, METAL.rose, 300, 7, 3);
     this.arena.showFloatingText(caster.x, caster.y - 30, '🩸 SHARD BURST', '#ff3355');
   }
 
@@ -946,9 +1160,7 @@ export class MetalKit {
     if (this.npcAggressiveBleeding) {
       if (time > this.npcAggressiveBleedUntil) {
         this.npcAggressiveBleeding = false;
-        if (this.npcAggressiveBleedAura) { this.npcAggressiveBleedAura.destroy(); this.npcAggressiveBleedAura = null; }
       } else {
-        if (this.npcAggressiveBleedAura) this.npcAggressiveBleedAura.setPosition(npc.x, npc.y);
         this.npcAggressiveBleedTickAccum += delta;
         if (this.npcAggressiveBleedTickAccum >= 1000) {
           this.npcAggressiveBleedTickAccum -= 1000;
@@ -965,9 +1177,7 @@ export class MetalKit {
     if (this.playerAggressiveBleeding) {
       if (time > this.playerAggressiveBleedUntil) {
         this.playerAggressiveBleeding = false;
-        if (this.playerAggressiveBleedAura) { this.playerAggressiveBleedAura.destroy(); this.playerAggressiveBleedAura = null; }
       } else {
-        if (this.playerAggressiveBleedAura) this.playerAggressiveBleedAura.setPosition(player.x, player.y);
         this.playerAggressiveBleedTickAccum += delta;
         if (this.playerAggressiveBleedTickAccum >= 1000) {
           this.playerAggressiveBleedTickAccum -= 1000;
@@ -997,18 +1207,13 @@ export class MetalKit {
         const drain = Math.min(BLOOD_DRAIN_PER_SEC * (delta / 1000), puddle.blood);
         puddle.blood -= drain;
         this.addBlood(puddle.owner, drain);
-        // Puddle shrinks consistently as its blood is drained.
-        puddle.sprite.setScale(Math.max(0.05, puddle.blood / PUDDLE_BLOOD_CAPACITY));
         // Periodic drip readout (~once per second) so the number isn't spam.
         puddle.drainAccum += delta;
         if (puddle.drainAccum >= 1000) {
           puddle.drainAccum -= 1000;
           this.arena.showFloatingText(owner.x, owner.y - 22, '+10 🩸', '#ff3355');
         }
-        if (puddle.blood <= 0) {
-          puddle.sprite.destroy();
-          this.metalBloodPuddles.splice(i, 1);
-        }
+        if (puddle.blood <= 0) this.metalBloodPuddles.splice(i, 1);
       }
     }
   }
@@ -1033,13 +1238,11 @@ export class MetalKit {
   }
 
   private updateChainTethers(time: number, _delta: number): void {
-    const { player, npc, scene } = this.arena;
-    const sceneAdd = (scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory }).add;
+    const { player, npc } = this.arena;
 
     if (this.metalChainTethered) {
       if (time > this.metalChainTetherEnd) {
         this.metalChainTethered = false;
-        if (this.metalChainGraphic) { this.metalChainGraphic.clear(); this.metalChainGraphic.destroy(); this.metalChainGraphic = null; }
       } else {
         const td = Phaser.Math.Distance.Between(player.x, player.y, npc.x, npc.y);
         if (td > CHAIN_TETHER_LEASH) {
@@ -1052,16 +1255,12 @@ export class MetalKit {
           this.metalTetherNextPuddleAt = time + CHAIN_TETHER_PUDDLE_INTERVAL;
           this.spawnMetalBloodPuddle(npc.x, npc.y, 'player');
         }
-        if (!this.metalChainGraphic) this.metalChainGraphic = sceneAdd.graphics().setDepth(5);
-        this.metalChainGraphic.clear();
-        this.drawMetalChainLine(this.metalChainGraphic, player.x, player.y, npc.x, npc.y);
       }
     }
 
     if (this.npcMetalChainTethered) {
       if (time > this.npcMetalChainTetherEnd) {
         this.npcMetalChainTethered = false;
-        if (this.npcMetalChainGraphic) { this.npcMetalChainGraphic.clear(); this.npcMetalChainGraphic.destroy(); this.npcMetalChainGraphic = null; }
       } else {
         const td = Phaser.Math.Distance.Between(npc.x, npc.y, player.x, player.y);
         if (td > CHAIN_TETHER_LEASH) {
@@ -1073,9 +1272,6 @@ export class MetalKit {
           this.npcMetalTetherNextPuddleAt = time + CHAIN_TETHER_PUDDLE_INTERVAL;
           this.spawnMetalBloodPuddle(player.x, player.y, 'npc');
         }
-        if (!this.npcMetalChainGraphic) this.npcMetalChainGraphic = sceneAdd.graphics().setDepth(5);
-        this.npcMetalChainGraphic.clear();
-        this.drawMetalChainLine(this.npcMetalChainGraphic, npc.x, npc.y, player.x, player.y);
       }
     }
   }
@@ -1087,10 +1283,9 @@ export class MetalKit {
 
     for (let i = this.metalChainProjectiles.length - 1; i >= 0; i--) {
       const cp = this.metalChainProjectiles[i];
-      if (!cp.active) { cp.sprite.destroy(); this.metalChainProjectiles.splice(i, 1); continue; }
+      if (!cp.active) { this.metalChainProjectiles.splice(i, 1); continue; }
       cp.x += cp.vx * (delta / 1000);
       cp.y += cp.vy * (delta / 1000);
-      cp.sprite.setPosition(cp.x, cp.y);
       if (cp.x < 0 || cp.x > W || cp.y < 0 || cp.y > H) { cp.active = false; continue; }
 
       const hitTargets = cp.owner === 'player' ? enemies : [player];
@@ -1101,6 +1296,9 @@ export class MetalKit {
           cp.active = false;
           this.arena.spawnHitFlash(hitTarget.x, hitTarget.y, 0x889aaa);
           this.arena.showFloatingText(hitTarget.x, hitTarget.y - 34, '⛓️ TETHERED!', '#aabbcc');
+          // The hook biting: the chain snaps taut back to whoever threw it.
+          const thrower = this.fighter(cp.owner);
+          this.fx(cp.owner).chainSnap(thrower.x, thrower.y, hitTarget.x, hitTarget.y, 8);
           if (cp.owner === 'player') {
             this.metalChainTethered = true;
             this.metalChainTetherEnd = time + CHAIN_TETHER_MS;
@@ -1143,77 +1341,63 @@ export class MetalKit {
           flail.swinging = false;
           flail.angularVel = 0;
           flail.initialAngularVel = 0;
+          flail.heat = 0;
           flail.radius = FLAIL_IDLE_RADIUS * (flail.heavy ? HEAVY_RADIUS_MULT : 1);
-          flail.headSprite.setFillStyle(flail.heavy ? 0x111111 : 0xaabbcc, 0.95);
-          if (flail.spikesGfx) flail.spikesGfx.clear();
         } else {
           flail.angularVel = flail.initialAngularVel * decayRatio;
           flail.angle += flail.angularVel * dt;
         }
       }
 
-      const headX = caster.x + Math.cos(flail.angle) * flail.radius;
-      const headY = caster.y + Math.sin(flail.angle) * flail.radius;
-      flail.headSprite.setPosition(headX, headY);
-      flail.chainGfx.clear();
-      this.drawMetalChainLine(flail.chainGfx, caster.x, caster.y, headX, headY);
-
-      // E+ Heavy Metal Rock: spikes radiating from the head, spinning with it
-      // and matching the head's current colour (dark → molten orange at speed).
-      if (flail.spikesGfx) {
-        const g = flail.spikesGfx;
-        g.clear();
-        g.fillStyle(flail.headSprite.fillColor, 0.95);
-        const r = flail.headRadius;
-        const spikeLen = 9;
-        const count = 8;
-        for (let s = 0; s < count; s++) {
-          const a = flail.angle + (s / count) * Math.PI * 2;
-          const bx = headX + Math.cos(a) * (r - 1);
-          const by = headY + Math.sin(a) * (r - 1);
-          const tx = headX + Math.cos(a) * (r + spikeLen);
-          const ty = headY + Math.sin(a) * (r + spikeLen);
-          const perpX = -Math.sin(a) * 4;
-          const perpY = Math.cos(a) * 4;
-          g.fillTriangle(bx + perpX, by + perpY, bx - perpX, by - perpY, tx, ty);
-        }
-      }
+      flail.x = caster.x + Math.cos(flail.angle) * flail.radius;
+      flail.y = caster.y + Math.sin(flail.angle) * flail.radius;
 
       if (flail.swinging) {
         const elapsed = time - flail.swingStartAt;
         const speedRatio = Math.max(0, 1 - elapsed / decayMs);
         const dmg = Math.round((10 + speedRatio * 30) / 3) * (flail.heavy ? 2 : 1);
+        // The head glows with how fast it's going — molten for the heavy mace, blood-hot for
+        // the plain one. `heat` is what the painter reads, so the colour follows the sim.
         if (flail.heavy) {
           const molten = speedRatio > HEAVY_MOLTEN_RATIO;
-          flail.headSprite.setFillStyle(molten ? 0xff6600 : 0x111111, 0.95);
+          flail.heat = molten ? Phaser.Math.Clamp((speedRatio - HEAVY_MOLTEN_RATIO) / (1 - HEAVY_MOLTEN_RATIO), 0, 1) : 0;
           if (molten) {
             flail.firePuddleAccum += delta;
             if (flail.firePuddleAccum >= 150) {
               flail.firePuddleAccum -= 150;
-              this.spawnMetalFirePuddle(headX, headY, owner);
+              this.spawnMetalFirePuddle(flail.x, flail.y, owner);
             }
           }
         } else {
-          const c1 = Phaser.Display.Color.ValueToColor(0xaabbcc);
-          const c2 = Phaser.Display.Color.ValueToColor(0xff2244);
-          const blended = Phaser.Display.Color.Interpolate.ColorWithColor(c1, c2, 100, Math.round(speedRatio * 100));
-          flail.headSprite.setFillStyle(Phaser.Display.Color.GetColor(blended.r, blended.g, blended.b), 0.95);
+          flail.heat = speedRatio * 0.8;
         }
 
         if (time - flail.lastHitAt >= FLAIL_HIT_COOLDOWN_MS) {
           const targets = owner === 'player' ? this.arena.enemies : [this.arena.player];
           for (const t of targets) {
             if (!t.active || t.hp <= 0) continue;
-            if (Phaser.Math.Distance.Between(headX, headY, t.x, t.y) <= FLAIL_CONTACT_RADIUS) {
+            if (Phaser.Math.Distance.Between(flail.x, flail.y, t.x, t.y) <= FLAIL_CONTACT_RADIUS) {
+              const hx = t.x, hy = t.y;
               t.takeDamage(dmg);
               this.arena.spawnHitFlash(t.x, t.y, 0xff4466);
               this.arena.showFloatingText(t.x, t.y - 30, `⛓️ ${dmg}`, '#ff6688');
+              // A mace connecting: it hits harder the faster it was going.
+              const fx = this.fx(owner);
+              const swingAng = flail.angle + (flail.initialAngularVel > 0 ? Math.PI / 2 : -Math.PI / 2);
+              fx.sparks(hx, hy, 4 + Math.round(speedRatio * 8), swingAng, 10,
+                flail.heavy ? METAL.flame : METAL.goldHi);
+              fx.spray(hx, hy, 4 + Math.round(speedRatio * 6), {
+                speed: 160 + speedRatio * 220, angle: swingAng, spread: 1, size: 3.4,
+              });
+              fx.ring(hx, hy, 6, 24 + speedRatio * 26, flail.heavy ? METAL.ember : METAL.rose, 260, 8, 3);
               if (owner === 'player') this.arena.recordMasteryStat('flailHits', 1);
               flail.lastHitAt = time;
               break;
             }
           }
         }
+      } else {
+        flail.heat = 0;
       }
     }
   }
@@ -1225,10 +1409,9 @@ export class MetalKit {
 
     for (let i = this.metalShardProjectiles.length - 1; i >= 0; i--) {
       const p = this.metalShardProjectiles[i];
-      if (!p.active) { p.sprite.destroy(); this.metalShardProjectiles.splice(i, 1); continue; }
+      if (!p.active) { this.metalShardProjectiles.splice(i, 1); continue; }
       p.x += p.vx * (delta / 1000);
       p.y += p.vy * (delta / 1000);
-      p.sprite.setPosition(p.x, p.y);
       if (p.x < 0 || p.x > W || p.y < 0 || p.y > H) { p.active = false; continue; }
 
       const targets = p.owner === 'player' ? enemies : [player];
@@ -1236,8 +1419,19 @@ export class MetalKit {
         if (!t.active || t.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) <= 24) {
           p.active = false;
+          const hx = t.x, hy = t.y;
+          const ang = Math.atan2(p.vy, p.vx);
           t.takeDamage(p.dmg);
           this.arena.spawnHitFlash(t.x, t.y, 0xcc0022);
+          // A flung mace lands like an ordnance strike; a shard just buries itself.
+          const fx = this.fx(p.owner);
+          if (p.isMace) {
+            fx.boom(hx, hy, p.heavy ? 84 : 62, { color: METAL.crimson, shards: p.heavy ? 12 : 8 });
+            this.arena.scene.cameras.main.shake(p.heavy ? 180 : 120, p.heavy ? 0.006 : 0.004);
+          } else {
+            fx.spray(hx, hy, 5, { speed: 180, angle: ang, spread: 0.9, size: 3.2 });
+            fx.sparks(hx, hy, 3, ang + Math.PI, 10);
+          }
           if (p.spawnsPuddle) this.spawnMetalBloodPuddle(t.x, t.y, p.owner);
           break;
         }
@@ -1245,40 +1439,17 @@ export class MetalKit {
     }
   }
 
-  private updateClotArmor(_time: number, _delta: number): void {
-    for (const owner of ['player', 'npc'] as const) {
-      if (!this.clotArmorActive[owner]) continue;
-      const caster = owner === 'player' ? this.arena.player : this.arena.npc;
-      // Spikes face opposite the caster's look direction (player → cursor,
-      // NPC → its target), spread across the character's back edge.
-      const aimAng = owner === 'player'
-        ? this.playerAimAngle
-        : Math.atan2(this.arena.player.y - caster.y, this.arena.player.x - caster.x);
-      const oppAng = aimAng + Math.PI;
-      const edge = 17;
-      // Fan the three spikes 30° apart around the back direction.
-      const spreadAngs = [-Math.PI / 6, 0, Math.PI / 6];
-      this.clotArmorShardDecor[owner].forEach((spr, i) => {
-        const a = oppAng + (spreadAngs[i] ?? 0);
-        spr.setPosition(caster.x + Math.cos(a) * edge, caster.y + Math.sin(a) * edge);
-        spr.setRotation(a);
-      });
-    }
-  }
+  // Clot Armor's plating is drawn entirely by its aura, which already tracks the caster and
+  // shows how much shield is left — nothing per-frame is left for the sim to move about.
 
   // ── Click+ Mighty Sabre ────────────────────────────────────────────────
 
   private startChargeVfx(startTime: number, durationMs: number): void {
-    const { player, scene } = this.arena;
     this.clearChargeVfx();
     this.charging = true;
     this.chargeStart = startTime;
     this.chargeDuration = durationMs;
-    this.chargeAura = scene.add.circle(player.x, player.y, 30, 0xffdd00, 0.16)
-      .setStrokeStyle(2, 0xffee44, 0.6).setDepth(4);
-    for (let i = 0; i < 5; i++) {
-      this.chargeOrbs.push(scene.add.circle(player.x, player.y, 3, 0xffee44, 0.9).setDepth(6));
-    }
+    this.chargeRatio = 0;
   }
 
   private updateChargeVfx(time: number): void {
@@ -1286,26 +1457,19 @@ export class MetalKit {
     if (!this.charging) return;
     const ratio = Phaser.Math.Clamp((time - this.chargeStart) / this.chargeDuration, 0, 1);
     player.chargeRatio = ratio;
-    if (this.chargeAura) {
-      this.chargeAura.setPosition(player.x, player.y)
-        .setScale(1 - ratio * 0.4).setFillStyle(0xffdd00, 0.14 + ratio * 0.26);
-    }
-    this.chargeOrbs.forEach((orb, i) => {
-      const ang = (i / this.chargeOrbs.length) * Math.PI * 2 + time / 200;
-      const dist = 34 * (1 - ratio);
-      orb.setPosition(player.x + Math.cos(ang) * dist, player.y + Math.sin(ang) * dist);
-    });
+    this.chargeRatio = ratio;
     if (ratio >= 1 && !this.chargeFullTinted && !this.clotArmorActive.player) {
       this.chargeFullTinted = true;
       player.setTint(0xffee00);
+      // Topped out: one hard ring so a full charge is unmissable even mid-fight.
+      this.pfx.ring(player.x, player.y, 16, 52, METAL.goldHi, 300, 7, 4);
+      this.pfx.sparks(player.x, player.y, 10, this.playerAimAngle, 9, METAL.goldHi);
     }
   }
 
   private clearChargeVfx(): void {
-    if (this.chargeAura) { this.chargeAura.destroy(); this.chargeAura = null; }
-    for (const o of this.chargeOrbs) o.destroy();
-    this.chargeOrbs = [];
     this.charging = false;
+    this.chargeRatio = 0;
     this.arena.player.chargeRatio = 0;
     if (this.chargeFullTinted) {
       this.chargeFullTinted = false;
@@ -1315,19 +1479,23 @@ export class MetalKit {
 
   /** Max-charge release: fling the flail at the cursor and parry enemy shots. */
   private doMaxCharge(mouseX: number, mouseY: number, ctx: CastContext): void {
-    const { player, scene } = this.arena;
+    const { player } = this.arena;
     this.arena.showFloatingText(player.x, player.y - 52, '⚔️ MAX CHARGE!', '#ffee00');
     if (this.playerFlail) {
       const dx = mouseX - player.x, dy = mouseY - player.y;
       const len = Math.sqrt(dx * dx + dy * dy) || 1;
       const heavy = this.playerFlail.heavy;
-      const spr = scene.add.circle(player.x, player.y, heavy ? 12 : 9, heavy ? 0x111111 : 0xaabbcc, 0.95)
-        .setStrokeStyle(2, 0x556677).setDepth(8);
+      const ang = Math.atan2(dy, dx);
       this.metalShardProjectiles.push({
-        sprite: spr, x: player.x, y: player.y,
+        x: player.x, y: player.y,
         vx: (dx / len) * 700, vy: (dy / len) * 700,
         owner: 'player', active: true, dmg: heavy ? 60 : 40, spawnsPuddle: false,
+        isMace: true, heavy,
       });
+      // The chain letting go: sparks off the swivel and a hard forward ring.
+      this.pfx.sparks(player.x, player.y, 12, ang, 10, METAL.goldHi);
+      this.pfx.ring(player.x, player.y, 12, 56, METAL.goldHi, 320, 7, 4);
+      this.avatar('player')?.play('slam', ang);
       this.destroyFlail('player');
     }
     this.parryProjectiles(ctx);
@@ -1336,7 +1504,7 @@ export class MetalKit {
   private parryProjectiles(ctx: CastContext): void {
     const group = ctx.projectiles;
     if (!group) return;
-    const { player, npc, scene } = this.arena;
+    const { player, npc } = this.arena;
     let reflected = 0;
     // Snapshot: p.destroy() mutates the group's child list mid-iteration.
     [...group.getChildren()].forEach((obj) => {
@@ -1344,10 +1512,11 @@ export class MetalKit {
       if (!p.active || p.isFromPlayer) return;
       if (Phaser.Math.Distance.Between(player.x, player.y, p.x, p.y) > SABRE_PARRY_RADIUS) return;
       if (npc.active && npc.hp > 0) {
-        const ang = Math.atan2(npc.y - p.y, npc.x - p.x);
-        const line = scene.add.rectangle(p.x, p.y, Phaser.Math.Distance.Between(p.x, p.y, npc.x, npc.y), 3, 0xffee44, 0.9)
-          .setOrigin(0, 0.5).setRotation(ang).setDepth(9);
-        scene.tweens.add({ targets: line, alpha: 0, duration: 220, onComplete: () => line.destroy() });
+        // Batted back: sparks where the blade met it, then a chain of steel snapping across.
+        this.pfx.sparks(p.x, p.y, 6, Math.atan2(npc.y - p.y, npc.x - p.x), 10, METAL.goldHi);
+        this.pfx.slash(p.x, p.y, Math.atan2(npc.y - p.y, npc.x - p.x), 40, {
+          color: METAL.goldHi, duration: 200, arc: Phaser.Math.DegToRad(70), bleed: false,
+        });
         npc.takeDamage(Math.round(p.damage * 1.5));
         this.arena.spawnHitFlash(npc.x, npc.y, 0xffee44);
       }
@@ -1363,16 +1532,14 @@ export class MetalKit {
   // ── E+ Heavy Metal Rock fire puddles ───────────────────────────────────
 
   private spawnMetalFirePuddle(x: number, y: number, owner: 'player' | 'npc'): void {
-    const scene = this.arena.scene;
-    const spr = scene.add.circle(x, y, 18, 0xff5500, 0.5).setStrokeStyle(2, 0xffaa00, 0.6).setDepth(2);
-    scene.tweens.add({ targets: spr, alpha: 0.28, yoyo: true, repeat: -1, duration: 300 });
-    this.metalFirePuddles.push({ sprite: spr, x, y, radius: 18, owner, expiresAt: scene.time.now + 3000, tickAccum: 0 });
+    const now = this.arena.scene.time.now;
+    this.metalFirePuddles.push({ x, y, radius: 18, owner, expiresAt: now + 3000, spawnedAt: now, tickAccum: 0 });
   }
 
   private updateMetalFirePuddles(time: number, delta: number): void {
     for (let i = this.metalFirePuddles.length - 1; i >= 0; i--) {
       const fp = this.metalFirePuddles[i];
-      if (time >= fp.expiresAt) { fp.sprite.destroy(); this.metalFirePuddles.splice(i, 1); continue; }
+      if (time >= fp.expiresAt) { this.metalFirePuddles.splice(i, 1); continue; }
       fp.tickAccum += delta;
       if (fp.tickAccum < 500) continue;
       fp.tickAccum -= 500;
@@ -1392,10 +1559,15 @@ export class MetalKit {
   private spawnGroundTether(x: number, y: number, owner: 'player' | 'npc'): void {
     this.destroyGroundTether();
     const scene = this.arena.scene;
-    const stake = scene.add.circle(x, y, 10, 0x889aaa, 0.9).setStrokeStyle(3, 0xccddee).setDepth(4);
-    const ring = scene.add.circle(x, y, GROUND_TETHER_BLAST_RADIUS, 0xffffff, 0)
-      .setStrokeStyle(2, 0xffffff, 0.22).setDepth(3);
-    this.metalGroundTether = { x, y, owner, endTime: scene.time.now + GROUND_TETHER_MS, blastAccum: 0, stake, ring };
+    this.metalGroundTether = { x, y, owner, endTime: scene.time.now + GROUND_TETHER_MS, blastAccum: 0 };
+    // Driven in: the impact of a spike hitting the floor hard enough to shake it.
+    const fx = this.fx(owner);
+    fx.flash(x, y, 26, 9, METAL.chrome);
+    fx.ring(x, y, 10, 70, METAL.chrome, 380, 7, 4);
+    fx.shards(x, y, 8, { speed: 210, size: 14, color: METAL.iron, depth: 8 });
+    fx.sparks(x, y, 10, -Math.PI / 2, 10);
+    scene.cameras.main.shake(130, 0.004);
+    this.avatar(owner)?.play('slam', Math.PI / 2);
     this.arena.showFloatingText(x, y - 24, '⛓️ GROUND ANCHOR', '#ccddee');
   }
 
@@ -1411,12 +1583,8 @@ export class MetalKit {
   }
 
   private groundTetherBlast(gt: MetalGroundTether): void {
-    const scene = this.arena.scene;
-    const blast = scene.add.circle(gt.x, gt.y, 20, 0xffffff, 0.5).setDepth(6);
-    scene.tweens.add({
-      targets: blast, scaleX: GROUND_TETHER_BLAST_RADIUS / 20, scaleY: GROUND_TETHER_BLAST_RADIUS / 20,
-      alpha: 0, duration: 500, onComplete: () => blast.destroy(),
-    });
+    const fx = this.fx(gt.owner);
+    fx.ring(gt.x, gt.y, 20, GROUND_TETHER_BLAST_RADIUS, METAL.chrome, 500, 6, 3);
     // Pull blood from every puddle in range at once — up to 15 from each.
     let drained = 0;
     for (let i = this.metalBloodPuddles.length - 1; i >= 0; i--) {
@@ -1425,8 +1593,11 @@ export class MetalKit {
       if (Phaser.Math.Distance.Between(gt.x, gt.y, puddle.x, puddle.y) > GROUND_TETHER_BLAST_RADIUS) continue;
       const take = Math.min(GROUND_TETHER_BLAST_DRAIN, puddle.blood);
       puddle.blood -= take; drained += take;
-      puddle.sprite.setScale(Math.max(0.05, puddle.blood / PUDDLE_BLOOD_CAPACITY));
-      if (puddle.blood <= 0) { puddle.sprite.destroy(); this.metalBloodPuddles.splice(i, 1); }
+      // Each puddle visibly gives up its blood along the line to the stake.
+      fx.spray(puddle.x, puddle.y, 4, {
+        speed: 200, angle: Math.atan2(gt.y - puddle.y, gt.x - puddle.x), spread: 0.4, size: 3, depth: 6,
+      });
+      if (puddle.blood <= 0) this.metalBloodPuddles.splice(i, 1);
     }
     if (drained > 0) {
       this.addBlood(gt.owner, drained);
@@ -1435,9 +1606,6 @@ export class MetalKit {
   }
 
   private destroyGroundTether(): void {
-    if (!this.metalGroundTether) return;
-    this.metalGroundTether.stake.destroy();
-    this.metalGroundTether.ring.destroy();
     this.metalGroundTether = null;
   }
 
@@ -1458,19 +1626,9 @@ export class MetalKit {
     this.clearChargeVfx();
 
     const scene = this.arena.scene;
-    const container = scene.add.container(caster.x, caster.y - scene.scale.height).setDepth(9);
-    const g = scene.add.graphics();
-    g.fillStyle(0x4a0008, 1); g.fillRect(-3, -40, 6, 16);      // handle
-    g.fillStyle(0x8a1020, 1); g.fillRect(-12, -26, 24, 5);     // crossguard
-    g.fillStyle(0xaa0018, 1);
-    g.beginPath();
-    g.moveTo(-6, -22); g.lineTo(6, -22); g.lineTo(3, 44); g.lineTo(-3, 44); g.closePath(); g.fillPath();
-    g.fillStyle(0x770010, 1);
-    for (let i = -18; i < 40; i += 8) g.fillTriangle(6, i, 12, i + 3, 6, i + 6); // serrations
-    container.add(g);
-
-    this.bloodBlade = { gfx: container, owner, y: caster.y - scene.scale.height, descending: true, lastSwingAt: 0, prevBlood: 0 };
+    this.bloodBlade = { owner, y: caster.y - scene.scale.height, descending: true, lastSwingAt: 0, prevBlood: 0 };
     this.arena.player.incomingDamageMultiplier = 1.5;
+    this.avatar(owner)?.play('raise', -Math.PI / 2, 900);
     this.arena.showFloatingText(caster.x, caster.y - 52, '🗡️ BLOOD BLADE', '#cc0022');
   }
 
@@ -1483,15 +1641,17 @@ export class MetalKit {
     // Crash straight down from the sky, then the blade "becomes" your sword:
     // the descent visual fades out and swings are drawn per-Click like the
     // normal slash (see bloodBladeSwing).
-    if (blade.descending && blade.gfx) {
+    if (blade.descending) {
       blade.y += (delta / 1000) * 1100;
-      blade.gfx.setPosition(caster.x, blade.y);
       if (blade.y >= caster.y) {
         blade.descending = false;
-        const g = blade.gfx;
-        blade.gfx = null;
         this.arena.spawnHitFlash(caster.x, caster.y, 0xcc0022);
-        this.arena.scene.tweens.add({ targets: g, alpha: 0, duration: 150, onComplete: () => g.destroy() });
+        // It lands point-first hard enough to split the floor.
+        this.pfx.flash(caster.x, caster.y, 34, 10, METAL.crimson);
+        this.pfx.ring(caster.x, caster.y, 12, 90, METAL.rose, 460, 7, 5);
+        this.pfx.spray(caster.x, caster.y, 16, { speed: 260, size: 4.4, life: 700, depth: 7 });
+        this.pfx.splat(caster.x, caster.y, 34, 2);
+        this.arena.scene.cameras.main.shake(220, 0.007);
       }
     }
 
@@ -1505,8 +1665,11 @@ export class MetalKit {
     const caster = this.arena.player;
     const ang = Math.atan2(mouseY - caster.y, mouseX - caster.x);
 
-    // Same sword-sweep as the base slash, dark-red and serrated.
-    this.drawSwordSwing(caster.x, caster.y, ang, { handle: 0x4a0008, accent: 0x8a1020, blade: 0xaa0018, edge: 0xff4466, serrated: true });
+    // The same sweep as the base slash, but serrated and dark-red, and it reaches further.
+    this.pfx.slash(caster.x, caster.y, ang, BLOOD_BLADE_RANGE * 0.72, {
+      color: METAL.crimson, serrated: true, arc: Phaser.Math.DegToRad(150), duration: 300,
+    });
+    this.avatar('player')?.play('sweep', ang);
 
     // Hit every enemy in a frontal arc within melee range. Damage feeds blood
     // (not puddles) via onDamageDealt while the blade is out.
@@ -1516,9 +1679,12 @@ export class MetalKit {
       const toAng = Math.atan2(t.y - caster.y, t.x - caster.x);
       if (Math.abs(Phaser.Math.Angle.Wrap(toAng - ang)) > Math.PI / 2) continue;
       const dmg = dmgOverride ?? BLOOD_BLADE_SWING_DMG;
+      const hx = t.x, hy = t.y;
       t.takeDamage(dmg);
       this.arena.spawnHitFlash(t.x, t.y, 0xcc0022);
       this.arena.showFloatingText(t.x, t.y - 30, `🗡️ ${dmg}`, '#ff3355');
+      this.pfx.spray(hx, hy, 7 + Math.round(dmg / 8), { speed: 240, angle: ang, spread: 0.9, size: 4 });
+      this.pfx.splat(hx, hy, 16 + dmg * 0.25, 2);
       if (t.hp <= 0) this.arena.recordMasteryStat('bloodBladeKills', 1);
     }
   }
@@ -1526,7 +1692,6 @@ export class MetalKit {
   private dismissBloodBlade(): void {
     if (!this.bloodBlade) return;
     const owner = this.bloodBlade.owner;
-    if (this.bloodBlade.gfx) this.bloodBlade.gfx.destroy();
     this.bloodBlade = null;
     // Drop any in-progress Click+ charge so it can't leak into the normal sabre.
     if (this.sabreCharging) { this.sabreCharging = false; this.clearChargeVfx(); }
@@ -1576,17 +1741,22 @@ export class MetalKit {
     const ang = Math.atan2(aimY - caster.y, aimX - caster.x);
     const bx = caster.x + Math.cos(ang) * STEEL_SHIELD_DIST;
     const by = caster.y + Math.sin(ang) * STEEL_SHIELD_DIST;
-    const barrier = this.arena.scene.add.rectangle(bx, by, 12, 62, red ? 0xcc0022 : 0x99aabb, 0.85)
-      .setStrokeStyle(2, red ? 0xff5577 : 0xccddee).setRotation(ang).setDepth(7);
-    this.steelShields[owner] = { endTime: this.arena.scene.time.now + STEEL_SHIELD_DURATION_MS, red, barrier };
+    this.steelShields[owner] = {
+      endTime: this.arena.scene.time.now + STEEL_SHIELD_DURATION_MS, red, x: bx, y: by, angle: ang,
+    };
     caster.steelShieldMult = STEEL_SHIELD_DMG_MULT;
+    // Slammed into place: the plate lands with a ring and a shower off its rim.
+    const fx = this.fx(owner);
+    fx.flash(bx, by, 22, 9, red ? METAL.rose : METAL.chrome);
+    fx.ring(bx, by, 8, 46, red ? METAL.rose : METAL.chrome, 320, 7, 3);
+    fx.sparks(bx, by, 8, ang, 10, red ? METAL.rose : METAL.chrome);
+    this.avatar(owner)?.play('clap', ang);
     this.arena.showFloatingText(caster.x, caster.y - 44, red ? '🛡️ RED STEEL SHIELD' : '🛡️ STEEL SHIELD', red ? '#ff5577' : '#aabbcc');
   }
 
   private destroySteelShield(owner: 'player' | 'npc'): void {
     const s = this.steelShields[owner];
     if (!s) return;
-    s.barrier.destroy();
     this.steelShields[owner] = null;
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     caster.steelShieldMult = 1;
@@ -1605,7 +1775,7 @@ export class MetalKit {
         : Math.atan2(this.arena.player.y - caster.y, this.arena.player.x - caster.x);
       const bx = caster.x + Math.cos(ang) * STEEL_SHIELD_DIST;
       const by = caster.y + Math.sin(ang) * STEEL_SHIELD_DIST;
-      s.barrier.setPosition(bx, by).setRotation(ang);
+      s.x = bx; s.y = by; s.angle = ang;
 
       // Block incoming projectiles: player shield eats enemy shots, npc shield eats player shots.
       const group = this.arena.projectiles;
@@ -1616,8 +1786,12 @@ export class MetalKit {
         const incoming = owner === 'player' ? !p.isFromPlayer : p.isFromPlayer;
         if (!incoming) continue;
         if (Phaser.Math.Distance.Between(bx, by, p.x, p.y) > STEEL_SHIELD_BLOCK_RADIUS) continue;
+        const px = p.x, py = p.y;
         p.destroy();
         this.arena.spawnHitFlash(bx, by, s.red ? 0xff5577 : 0xccddee);
+        // Stopped dead on the plate: sparks off the face, thrown back along the way it came.
+        this.fx(owner).sparks(px, py, 6, Math.atan2(py - by, px - bx), 10,
+          s.red ? METAL.rose : METAL.chrome);
         // Red shield (cast during Clot Armor) sprays a shard burst per blocked shot.
         if (s.red) this.fireSteelShieldShards(owner, bx, by);
       }
@@ -1625,17 +1799,14 @@ export class MetalKit {
   }
 
   private fireSteelShieldShards(owner: 'player' | 'npc', x: number, y: number): void {
-    const { scene } = this.arena;
-    const sceneAdd = (scene as Phaser.Scene & { add: Phaser.GameObjects.GameObjectFactory }).add;
     // Same count Clot Armor emits per burst (Exsanguinate perk bumps it to 8).
     const shardCount = owner === 'player' && this.arena.hasPerk('gunpowder') ? 8 : CLOT_SHARD_COUNT;
     for (let i = 0; i < shardCount; i++) {
       const ang = Math.random() * Math.PI * 2;
-      const spr = sceneAdd.rectangle(x, y, 10, 4, 0xcc0022, 0.95).setDepth(8).setRotation(ang);
       this.metalShardProjectiles.push({
-        sprite: spr, x, y,
+        x, y,
         vx: Math.cos(ang) * CLOT_SHARD_SPEED, vy: Math.sin(ang) * CLOT_SHARD_SPEED,
-        owner, active: true, dmg: CLOT_SHARD_DAMAGE, spawnsPuddle: true,
+        owner, active: true, dmg: CLOT_SHARD_DAMAGE, spawnsPuddle: true, isMace: false, heavy: false,
       });
     }
   }

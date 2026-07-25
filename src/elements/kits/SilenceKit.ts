@@ -4,6 +4,7 @@ import { Projectile } from '../../combat/Projectile';
 import { CastContext } from '../Ability';
 import type { HuskStatus } from '../../invasion/InvasionKit';
 import type { NetSilenceMsg } from '../../network/NetworkManager';
+import type { CustomStatus } from './StatusHudKit';
 
 // ── SilenceArenaApi ────────────────────────────────────────────────────────
 
@@ -17,13 +18,17 @@ export interface SilenceArenaApi {
   readonly rKey: Phaser.Input.Keyboard.Key;
   readonly fKey: Phaser.Input.Keyboard.Key;
   readonly qKey: Phaser.Input.Keyboard.Key;
+  /** WASD — only read while Puppetmaster has you steering the possessed body. */
+  readonly wKey: Phaser.Input.Keyboard.Key;
+  readonly aKey: Phaser.Input.Keyboard.Key;
+  readonly sKey: Phaser.Input.Keyboard.Key;
+  readonly dKey: Phaser.Input.Keyboard.Key;
   readonly enemies: Fighter[];
   readonly width: number;
   readonly height: number;
   readonly isOnline: boolean;
   readonly isInvasion: boolean;
-  /** Multiplies this frame's player speed aggregate (call every frame the effect is live). */
-  applyPlayerSpeedMult(f: number): void;
+  /** Multiplies this frame's npc speed aggregate (call every frame the effect is live). */
   applyNpcSpeedMult(f: number): void;
   /** While in the future, WASD is blocked but kit-set velocities persist. */
   setPlayerYankUntil(t: number): void;
@@ -35,6 +40,25 @@ export interface SilenceArenaApi {
   hasUpgrade(owner: Owner, slot: string): boolean;
   /** Online: forward a silence upgrade event to the peer (no-op offline). */
   sendSilenceMsg(msg: NetSilenceMsg): void;
+  /** Silence Mastery is enabled and the local player is actually playing Silence. */
+  readonly masteryActive: boolean;
+  /** The mastery enhancement bound over an ability slot this match, or null. */
+  masteryBindFor(slot: string): string | null;
+  /** Requirement counters. The adapter gates these on `elementId === 'silence'`. */
+  recordMasteryStat(key: string, amount: number): void;
+  /**
+   * Online: broadcast a mastery-cast id for the peer's sim to replay. Puppetmaster's
+   * awakened actions ride this channel as their own `puppet-*` ids so both sims agree
+   * on which branch was taken, rather than each re-deriving it from a cursor position.
+   */
+  broadcastMasteryCast(enhId: string): void;
+  /**
+   * Invasion co-op guest: tell the host to hold husk `id` still and place it here.
+   * No-op when we are the host or offline (we own the husk sim in both those cases).
+   */
+  sendHuskPuppet(id: number, on: boolean, x: number, y: number): void;
+  /** Top-right status tray (player side only). */
+  setStatusIndicator(id: string, status: CustomStatus | null): void;
 }
 
 type Owner = 'player' | 'npc';
@@ -187,6 +211,63 @@ const MAZE_BOT_SURVIVE_MULT = 0.5;
 /** The blob lumbers in the maze — walls (and eating them) are its real weapon. */
 const MAZE_BLOB_SPEED = 240;
 
+// ── Mastery tuning ─────────────────────────────────────────────────────────
+
+// Weep (passive)
+const WEEP_SPEED_MULT = 1.5;
+const WEEP_DRAIN_MULT = 0.75;
+/** Half-angle of the cone an enemy counts as "looking at you" through. */
+const WEEP_WATCH_ARC_RAD = Math.PI * (100 / 180) / 2;
+
+// Puppetmaster (bindable)
+const PUPPET_COOLDOWN_MS = 12000;
+/** A stab must have landed on the enemy this recently for the doll to take. */
+const PUPPET_STAB_WINDOW_MS = 5000;
+const PUPPET_TERROR_COST = 25;
+const DOLL_HP = 50;
+const DOLL_RELAY_MULT = 1.25;
+const DOLL_HIT_RADIUS = 22;
+
+const AWAKEN_DURATION_MS = 15000;
+const AWAKEN_UNPOSSESS_DMG = 20;
+/** Matches OnlineKit's 20 Hz state cadence — the drive vector rides alongside it. */
+const PUPPET_MOVE_SEND_MS = 50;
+const AWAKEN_SLASH_DMG = 15;
+const AWAKEN_SLASH_RANGE = 100;
+const AWAKEN_SLASH_ARC_RAD = Math.PI / 3;
+const AWAKEN_BITE_DMG = 10;
+const AWAKEN_BITE_HEAL = 12;
+/**
+ * Kin are picked with the cursor, not with a cone off the host: they crawl in and huddle
+ * against the body you are steering, so a host-relative angle to one is mostly noise and
+ * you cannot see well enough through your own sprite to aim it. Point at the creature.
+ */
+const KIN_PICK_CURSOR_RADIUS = 48;
+const KIN_PICK_MAX_DIST = 220;
+const AWAKEN_CANNIBAL_DMG = 20;
+const AWAKEN_CANNIBAL_HEAL = 20;
+/** Trims off the borrowed base-slot cooldowns so the puppet moveset has its own pace. */
+const AWAKEN_BITE_TRIM_MS = 2500;      // Watch 5s → 2.5s
+const AWAKEN_CANNIBAL_TRIM_MS = 8000;  // Ritual 14s → 6s
+const AWAKEN_SLAM_TRIM_MS = 12000;     // Feast 18s → 6s
+
+const KIN_PER_SLAM = 3;
+const KIN_LIFETIME_MS = 20000;
+const KIN_SPEED = 44;
+const KIN_STAB_DMG = 10;
+const KIN_STAB_EVERY_MS = 2500;
+/** They stop at the edge of the host's sprite rather than vanishing under it. */
+const KIN_REACH = 46;
+
+const CORRUPT_LIFETIME_MS = 20000;
+const CORRUPT_SPEED = 150;
+const CORRUPT_SHOT_EVERY_MS = 1400;
+const CORRUPT_SHOT_DMG = 12;
+const CORRUPT_SHOT_SPEED = 340;
+const CORRUPT_MELEE_DMG = 8;
+const CORRUPT_MELEE_EVERY_MS = 900;
+const CORRUPT_MELEE_RANGE = 46;
+
 // Depths
 const DEPTH_GROUND_FX = 3;
 const DEPTH_STALKER = 6;
@@ -294,6 +375,71 @@ interface MazeWall {
   rect: Phaser.GameObjects.Rectangle;
   /** 0 while solid; set when the blob starts eating it (removed MAZE_EAT_MS later). */
   dyingAt: number;
+}
+
+/** Mastery — Puppetmaster: the stitched effigy standing in for one specific fighter. */
+interface VoodooDoll {
+  sprite: Phaser.GameObjects.Image;
+  barBg: Phaser.GameObjects.Rectangle;
+  barFill: Phaser.GameObjects.Rectangle;
+  owner: Owner;
+  /** Whoever the doll was stitched for — every hit on it is relayed here. */
+  target: Fighter;
+  damageTaken: number;
+}
+
+/** One of the things the awakened host hauls up out of the floor. */
+interface AwakenedKin {
+  sprite: Phaser.GameObjects.Image;
+  owner: Owner;
+  target: Fighter;
+  expiresAt: number;
+  nextStabAt: number;
+}
+
+/** A kin that was ritualled into a copy of the enemy, fighting on your side. */
+interface CorruptClone {
+  sprite: Phaser.GameObjects.Image;
+  owner: Owner;
+  target: Fighter;
+  expiresAt: number;
+  nextShotAt: number;
+  nextMeleeAt: number;
+}
+
+/** Kit-owned bolt fired by a corrupted clone (styled after the element it copies). */
+interface CorruptShot {
+  sprite: Phaser.GameObjects.Image;
+  vx: number;
+  vy: number;
+  target: Fighter;
+  diesAt: number;
+}
+
+/**
+ * Mastery — Puppetmaster: someone is driving a fighter's cracked-open body.
+ *
+ * Both machines in an online match hold one of these. On the puppeteer's side
+ * `owner` is 'player' and the host is the (possibly net-ghost) opponent, so the
+ * form is drawn but its damage lands on a ghost and evaporates. On the victim's
+ * side `owner` is 'npc' and the host is their own local fighter, which is where
+ * the simulation that counts actually happens — the same victim-authoritative
+ * split the hallway chase already uses.
+ */
+interface AwakenedState {
+  owner: Owner;
+  /** The possessed fighter — the body being steered *and* everything it hurts. */
+  host: Fighter;
+  endsAt: number;
+  gfx: Phaser.GameObjects.Graphics;
+  prevTexture: string;
+  prevScale: number;
+  /** Victim side: the drive vector + aim last streamed by the remote puppeteer. */
+  netVx: number;
+  netVy: number;
+  netFa: number;
+  /** Co-op: the net id of the possessed husk, so the host can be told to hold it. */
+  huskNetId: number | null;
 }
 
 type GrabPhase = 'reaching' | 'dragging' | 'done';
@@ -439,6 +585,22 @@ export class SilenceKit {
   private fakePosUntil = 0;
   private nextFakePosAt = 0;
 
+  // Mastery — Weep + Puppetmaster. Weep is local-player only (it is your own passive);
+  // Puppetmaster is owner-indexed, because online the victim's machine runs the copy
+  // that owns the possessed body.
+  private weepUnwatched = false;
+  private dolls: Record<Owner, VoodooDoll | null> = { player: null, npc: null };
+  private awakened: Record<Owner, AwakenedState | null> = { player: null, npc: null };
+  private kin: AwakenedKin[] = [];
+  private corrupts: CorruptClone[] = [];
+  private corruptShots: CorruptShot[] = [];
+  private puppetLastCastAt = -PUPPET_COOLDOWN_MS;
+  private lastPuppetMoveSentAt = 0;
+  /** `scene.time.now` of the last player stab that actually connected. */
+  private lastStabLandedAt = -PUPPET_STAB_WINDOW_MS;
+  /** Enemies already wired for the "killed while a Striker" requirement. */
+  private masteryTrackedFoes = new WeakSet<Fighter>();
+
   // NPC mirror AI helpers
   private npcLockUntil = 0;
 
@@ -450,6 +612,23 @@ export class SilenceKit {
   // ── Lifecycle ──────────────────────────────────────────────────────
 
   reset(): void {
+    this.endAwakened('player', false, true);
+    this.endAwakened('npc', false, true);
+    this.clearDoll('player');
+    this.clearDoll('npc');
+    for (const k of this.kin) k.sprite.destroy();
+    this.kin = [];
+    for (const c of this.corrupts) c.sprite.destroy();
+    this.corrupts = [];
+    for (const s of this.corruptShots) s.sprite.destroy();
+    this.corruptShots = [];
+    this.puppetLastCastAt = -PUPPET_COOLDOWN_MS;
+    this.lastPuppetMoveSentAt = 0;
+    this.lastStabLandedAt = -PUPPET_STAB_WINDOW_MS;
+    this.masteryTrackedFoes = new WeakSet<Fighter>();
+    this.weepUnwatched = false;
+    this.arena.setStatusIndicator('silence-weep', null);
+    this.arena.setStatusIndicator('silence-awakened', null);
     this.endStriker('player', true);
     this.endStriker('npc', true);
     this.endRunChase(false, true);
@@ -533,6 +712,36 @@ export class SilenceKit {
   /** Movement lock ArenaScene feeds into NpcAiState.isLocked. */
   getNpcYankUntil(): number { return this.npcLockUntil; }
 
+  /**
+   * Everything this kit does to the local player's walking speed, as one factor.
+   *
+   * ArenaScene *pulls* this while it computes `playerSpeedMult`, rather than the kit
+   * pushing through `applyNpcSpeedMult`'s player twin: player movement resolves earlier
+   * in the same `update()` than this kit runs, and `playerSpeedMult` is reset to 1 at the
+   * top of every frame — so anything pushed from `update()` would be wiped before it was
+   * ever read. (The npc side has no such problem: its velocity scaling happens after.)
+   */
+  getPlayerSpeedMult(time: number): number {
+    let mult = 1;
+    // Mastery — Weep: unwatched, you move half again as fast.
+    if (this.arena.masteryActive && this.weepUnwatched) mult *= WEEP_SPEED_MULT;
+    const run = this.run;
+    if (run?.phase === 'chase' && run.victim === this.arena.player) {
+      mult *= HALL_VICTIM_SLOW;
+      if (run.mazeSeed !== null) mult *= MAZE_VICTIM_SLOW;
+      if (time < run.victimSlowUntil) mult *= 0.5;
+    }
+    return mult;
+  }
+
+  /**
+   * True while the local player has no say over their own body — mid-grab, or with a
+   * Puppetmaster driving them. ArenaScene gates dodging on this.
+   */
+  isPlayerControlLost(): boolean {
+    return this.isPlayerGrabbed() || this.isPossessed();
+  }
+
   /** True while the local player is being reeled in by a grabber — suppresses dodge. */
   isPlayerGrabbed(): boolean {
     return this.grabbers.some((g) => g.grab && g.grab.phase === 'dragging' && g.grab.victim === this.arena.player && !g.grab.escaped);
@@ -572,6 +781,28 @@ export class SilenceKit {
       case 'vulture-drop':
         if (this.arena.npc.active) this.applyBloodDecals(this.arena.npc);
         break;
+      // ── Mastery — Puppetmaster, all of it aimed at our own fighter ──
+      case 'doll':
+        this.netSpawnDoll(msg.x, msg.y);
+        break;
+      case 'doll-hit':
+        this.netDollHit(msg.dmg, msg.left);
+        break;
+      case 'doll-gone':
+        this.clearDoll('npc');
+        break;
+      case 'awaken':
+        if (msg.on) {
+          this.beginAwakened('npc');
+        } else {
+          this.endAwakened('npc', (msg.dmg ?? 0) > 0);
+        }
+        break;
+      case 'puppet-move': {
+        const a = this.awakened.npc;
+        if (a) { a.netVx = msg.vx; a.netVy = msg.vy; a.netFa = msg.fa; }
+        break;
+      }
     }
   }
 
@@ -612,7 +843,6 @@ export class SilenceKit {
   // ── Input (local player as silence) ────────────────────────────────
 
   handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
-    void time;
     const player = this.arena.player;
     if (!player.active || player.hp <= 0) return;
 
@@ -621,6 +851,15 @@ export class SilenceKit {
 
     // While being reeled in by an enemy grabber you're busy mashing space.
     if (this.isPlayerGrabbed()) return;
+
+    // Mastery — while you are wearing the enemy, the puppet moveset replaces everything.
+    if (this.awakened.player) {
+      this.handleAwakenedInput(clicked, mouseX, mouseY);
+      return;
+    }
+    // …and while someone is wearing *you*, your own hands aren't yours (the disarm in
+    // driveHost blocks the casts; this stops the click from even being attempted).
+    if (this.isPossessed()) return;
 
     const ctx = () => this.arena.buildPlayerContext(mouseX, mouseY);
 
@@ -631,15 +870,98 @@ export class SilenceKit {
     if (this.run && this.run.caster === 'player') return;
 
     const kb = Phaser.Input.Keyboard;
-    if (kb.JustDown(this.arena.eKey)) player.castAbility('silence-watch', ctx());
-    if (kb.JustDown(this.arena.rKey)) player.castAbility('silence-ritual', ctx());
-    if (kb.JustDown(this.arena.fKey)) player.castAbility('silence-feast', ctx());
-    if (kb.JustDown(this.arena.qKey)) player.castAbility('silence-run', ctx());
+    const bound = this.puppetSlot();
+    const press = (slot: 'e' | 'r' | 'f' | 'q', key: Phaser.Input.Keyboard.Key, id: string): void => {
+      if (!kb.JustDown(key)) return;
+      if (bound === slot) this.tryCastPuppetmaster(time, mouseX, mouseY);
+      else player.castAbility(id, ctx());
+    };
+    press('e', this.arena.eKey, 'silence-watch');
+    press('r', this.arena.rKey, 'silence-ritual');
+    press('f', this.arena.fKey, 'silence-feast');
+    press('q', this.arena.qKey, 'silence-run');
+  }
+
+  /** The slot Puppetmaster is bound over this match, or null when it isn't bound. */
+  private puppetSlot(): 'e' | 'r' | 'f' | 'q' | null {
+    if (!this.arena.masteryActive) return null;
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      if (this.arena.masteryBindFor(s) === 'puppetmaster') return s;
+    }
+    return null;
+  }
+
+  /**
+   * The awakened moveset borrows the five base slots (and their cooldown bars), the same
+   * way the Striker form does — the trims in `stamp` give each one its own pace.
+   * Casts don't go through `castAbility`: the puppet isn't you, so being Silenced or
+   * disarmed can't strand you inside someone else's body.
+   */
+  private handleAwakenedInput(clicked: boolean, mouseX: number, mouseY: number): void {
+    const player = this.arena.player;
+    const kb = Phaser.Input.Keyboard;
+    const ready = (id: string): boolean => player.getCooldownRatio(id) >= 1;
+    const stamp = (id: string, trimMs = 0): void => {
+      player.triggerCooldown(id);
+      if (trimMs > 0) player.reduceCooldown(id, trimMs);
+    };
+
+    const a = this.awakened.player!;
+    // Each branch is decided here, once, and the decision is what goes on the wire.
+    const send = (act: string): void => this.arena.broadcastMasteryCast(act);
+
+    if (clicked && ready('silence-stab')) {
+      stamp('silence-stab');
+      this.awakenedSlash('player', mouseX, mouseY);
+      send('puppet-slash');
+    }
+    if (kb.JustDown(this.arena.eKey) && ready('silence-watch')) {
+      stamp('silence-watch', AWAKEN_BITE_TRIM_MS);
+      const eat = this.kinAtCursor(a, mouseX, mouseY) >= 0;
+      this.awakenedBite('player', mouseX, mouseY, eat);
+      send(eat ? 'puppet-eat' : 'puppet-bite');
+    }
+    if (kb.JustDown(this.arena.rKey) && ready('silence-ritual')) {
+      stamp('silence-ritual', AWAKEN_CANNIBAL_TRIM_MS);
+      const raise = this.kinAtCursor(a, mouseX, mouseY) >= 0;
+      this.awakenedCannibalize('player', mouseX, mouseY, raise);
+      send(raise ? 'puppet-raise' : 'puppet-cannibal');
+    }
+    if (kb.JustDown(this.arena.fKey) && ready('silence-feast')) {
+      stamp('silence-feast', AWAKEN_SLAM_TRIM_MS);
+      this.awakenedSlam('player');
+      send('puppet-slam');
+    }
+    // Q always answers — you can always give the body back.
+    if (kb.JustDown(this.arena.qKey)) this.endAwakened('player', true);
+  }
+
+  /**
+   * Online replay on the victim's sim: the remote puppeteer took one of the awakened
+   * actions. `tx`/`ty` arrive already mirrored, and the branch was decided by the id.
+   * Returns false for ids that aren't ours, so ArenaScene can keep looking.
+   */
+  doNpcPuppetAct(act: string, tx: number, ty: number): boolean {
+    if (!this.awakened.npc) return act.startsWith('puppet-');
+    switch (act) {
+      case 'puppet-slash': this.awakenedSlash('npc', tx, ty); return true;
+      case 'puppet-bite': this.awakenedBite('npc', tx, ty, false); return true;
+      case 'puppet-eat': this.awakenedBite('npc', tx, ty, true); return true;
+      case 'puppet-cannibal': this.awakenedCannibalize('npc', tx, ty, false); return true;
+      case 'puppet-raise': this.awakenedCannibalize('npc', tx, ty, true); return true;
+      case 'puppet-slam': this.awakenedSlam('npc'); return true;
+      default: return false;
+    }
   }
 
   // ── Cast entry points (from CastContext) ───────────────────────────
 
   doStab(tx: number, ty: number, owner: Owner): void {
+    // Mastery — Puppetmaster: while this owner is possessing, the base slots are only
+    // borrowed for their cooldown bars. The real actions ride their own puppet-* ids,
+    // so a replayed base cast here would be a phantom second hit.
+    if (this.awakened[owner]) return;
+
     const caster = this.fighterOf(owner);
     if (!caster.active) return;
 
@@ -713,10 +1035,21 @@ export class SilenceKit {
         final *= STAB_BACKSTAB_MULT;
         this.applyStatus(foe, { k: 'silence', ms: STAB_SILENCE_MS });
         this.arena.showFloatingText(foe.x, foe.y - 34, '🔪 BACKSTAB — SILENCED', '#ff2244');
+        if (owner === 'player') this.arena.recordMasteryStat('backstabs', 1);
       }
       final = Math.round(final);
       foe.takeDamage(final);
       this.arena.spawnHitFlash(foe.x, foe.y, 0x882244);
+    }
+    // Mastery: Puppetmaster only takes on a fighter you have just had the knife into,
+    // and the effigy answers to that same knife.
+    if (owner === 'player') {
+      if (hits.length > 0) this.lastStabLandedAt = this.arena.scene.time.now;
+      const d = this.dolls.player;
+      if (d) {
+        const r = STAB_LANE_HALF_W + DOLL_HIT_RADIUS;
+        if (laneDistSq(d.sprite.x, d.sprite.y) <= r * r) this.tryHitDoll(d.sprite.x, d.sprite.y, 0, Math.round(dmg));
+      }
     }
 
     // Click+ Sacrifice: stabbing one of your own watchers detonates its scream.
@@ -762,6 +1095,11 @@ export class SilenceKit {
   }
 
   doSummonStalker(tx: number, ty: number, owner: Owner): void {
+    // Mastery — Puppetmaster: while this owner is possessing, the base slots are only
+    // borrowed for their cooldown bars. The real actions ride their own puppet-* ids,
+    // so a replayed base cast here would be a phantom second hit.
+    if (this.awakened[owner]) return;
+
     const scene = this.arena.scene;
 
     // Striker form: E becomes Boggle.
@@ -817,6 +1155,11 @@ export class SilenceKit {
   }
 
   doRitual(tx: number, ty: number, owner: Owner): void {
+    // Mastery — Puppetmaster: while this owner is possessing, the base slots are only
+    // borrowed for their cooldown bars. The real actions ride their own puppet-* ids,
+    // so a replayed base cast here would be a phantom second hit.
+    if (this.awakened[owner]) return;
+
     const scene = this.arena.scene;
     const caster = this.fighterOf(owner);
 
@@ -865,6 +1208,11 @@ export class SilenceKit {
   }
 
   doFeast(tx: number, ty: number, owner: Owner): void {
+    // Mastery — Puppetmaster: while this owner is possessing, the base slots are only
+    // borrowed for their cooldown bars. The real actions ride their own puppet-* ids,
+    // so a replayed base cast here would be a phantom second hit.
+    if (this.awakened[owner]) return;
+
     void tx; void ty;
     const scene = this.arena.scene;
     const caster = this.fighterOf(owner);
@@ -886,6 +1234,11 @@ export class SilenceKit {
   }
 
   doRun(tx: number, ty: number, owner: Owner): void {
+    // Mastery — Puppetmaster: while this owner is possessing, the base slots are only
+    // borrowed for their cooldown bars. The real actions ride their own puppet-* ids,
+    // so a replayed base cast here would be a phantom second hit.
+    if (this.awakened[owner]) return;
+
     // Striker form: Q becomes Sanguine Elimination.
     if (this.strikers[owner]) {
       this.doSanguine(tx, ty, owner);
@@ -963,6 +1316,801 @@ export class SilenceKit {
     }
   }
 
+  // ══ Mastery ═══════════════════════════════════════════════════════
+  //
+  // Weep is a purely local passive. Puppetmaster reaches across every mode:
+  //
+  //  · Offline 1v1      — the npc is ours to simulate; drive it directly.
+  //  · Invasion (solo   — husks are ours to simulate; `Fighter.puppetControlledUntil`
+  //    or co-op host)     makes `Husk.update` yield and we drive the body instead.
+  //  · Invasion co-op   — the husk is the host's. We drive our local replica and
+  //    guest              stream it back over `huskPuppet`; the host holds its AI off.
+  //  · Online PvP       — the opponent is a net ghost we may never move. We stream an
+  //                       intent, and *their* sim runs the possession on their own
+  //                       body (owner 'npc' here) where the damage actually counts.
+  //
+  // Everything except movement falls out of that for free: `takeDamage` on a net
+  // ghost is already feedback-only, so the puppeteer's copy of the form animates
+  // and lands nothing while the victim's copy does the real work.
+
+  // ── Weep ───────────────────────────────────────────────────────────
+
+  /** True while nothing alive is pointed at you (drives the speed + drain bonus). */
+  private updateWeep(): void {
+    if (!this.arena.masteryActive) {
+      if (this.weepUnwatched) {
+        this.weepUnwatched = false;
+        this.arena.setStatusIndicator('silence-weep', null);
+      }
+      return;
+    }
+    const player = this.arena.player;
+    if (!player.active || player.hp <= 0) return;
+
+    let watched = false;
+    for (const foe of this.foesOf('player')) {
+      if (!foe.active || foe.hp <= 0 || foe.downed) continue;
+      const toPlayer = Math.atan2(player.y - foe.y, player.x - foe.x);
+      if (Math.abs(Phaser.Math.Angle.Wrap(toPlayer - foe.facingAngle)) <= WEEP_WATCH_ARC_RAD) {
+        watched = true;
+        break;
+      }
+    }
+    // A possessed host is looking out of your own eyes — it can't be watching you.
+    if (this.awakened.player) watched = false;
+
+    const wasUnwatched = this.weepUnwatched;
+    // The speed half of Weep is read back out of getPlayerSpeedMult(), not pushed here.
+    this.weepUnwatched = !watched;
+    if (this.weepUnwatched !== wasUnwatched) {
+      this.arena.setStatusIndicator('silence-weep', this.weepUnwatched ? {
+        name: 'Weep',
+        emoji: '🥲',
+        color: 0x8844cc,
+        description: 'Nothing is looking at you. +50% movement speed, and stealth drains 25% slower.',
+        priority: 118,
+      } : null);
+    }
+  }
+
+  /**
+   * The fighter Puppetmaster takes hold of: the one nearest the cursor among your live
+   * foes, which is the npc in a 1v1 and whichever husk you are pointing at in invasion.
+   *
+   * A net ghost is allowed — we can't move it ourselves, but there is a channel to the
+   * machine that can (the peer in PvP, the co-op host for a husk), and `driveHost`
+   * streams to it instead of touching the body.
+   */
+  private puppetTarget(tx: number, ty: number): Fighter | null {
+    let best: Fighter | null = null;
+    let bestD = Number.MAX_VALUE;
+    for (const foe of this.foesOf('player')) {
+      if (!foe.active || foe.hp <= 0 || foe.downed) continue;
+      // A ghost we have no way to reach (offline replica) can't be driven at all.
+      if (foe.netGhost && !this.arena.isOnline) continue;
+      const d = Phaser.Math.Distance.Between(tx, ty, foe.x, foe.y);
+      if (d < bestD) { bestD = d; best = foe; }
+    }
+    return best;
+  }
+
+  /** Co-op only: the net id of a husk replica, so the host can be told to hold it. */
+  private huskNetIdOf(f: Fighter): number | null {
+    const id = (f as Fighter & { netId?: number }).netId;
+    return typeof id === 'number' ? id : null;
+  }
+
+  /**
+   * True only in online 1v1. The Puppetmaster `sil` messages describe a possession of
+   * *the other player*, which is meaningless in co-op — there the target is a husk, and
+   * its damage and position already have their own channels (`huskDamage`,
+   * `huskPuppet`). Sending both would double-apply every hit.
+   */
+  private isPvpNet(): boolean {
+    return this.arena.isOnline && !this.arena.isInvasion;
+  }
+
+  // ── Puppetmaster: the doll ─────────────────────────────────────────
+
+  /** 0 = just cast, 1 = ready. While you are possessing, the bar runs the form's timer. */
+  getPuppetmasterCooldownRatio(time: number): number {
+    const a = this.awakened.player;
+    if (a) return Phaser.Math.Clamp((a.endsAt - time) / AWAKEN_DURATION_MS, 0, 1);
+    return Math.min(1, (time - this.puppetLastCastAt) / PUPPET_COOLDOWN_MS);
+  }
+
+  private tryCastPuppetmaster(time: number, tx: number, ty: number): void {
+    const player = this.arena.player;
+    const deny = (msg: string): void => {
+      this.arena.showFloatingText(player.x, player.y - 32, msg, '#8866aa');
+    };
+    if (this.dolls.player) { deny('A doll already stands'); return; }
+    if (this.strikers.player || (this.run && this.run.caster === 'player')) return;
+    if (time - this.puppetLastCastAt < PUPPET_COOLDOWN_MS) return;
+
+    const target = this.puppetTarget(tx, ty);
+    if (!target) { deny('Nothing here to stitch'); return; }
+    if (time - this.lastStabLandedAt > PUPPET_STAB_WINDOW_MS) {
+      deny('🔪 Stab them first');
+      return;
+    }
+    if (this.terror.player < PUPPET_TERROR_COST) {
+      deny(`Need ${PUPPET_TERROR_COST} terror`);
+      return;
+    }
+
+    this.terror.player -= PUPPET_TERROR_COST;
+    this.puppetLastCastAt = time;
+    // Planted just in front of you, kept clear of the arena edge.
+    const x = Phaser.Math.Clamp(player.x + Math.cos(player.facingAngle) * 46, 24, this.arena.width - 24);
+    const y = Phaser.Math.Clamp(player.y + Math.sin(player.facingAngle) * 46, 24, this.arena.height - 34);
+    this.spawnDoll('player', target, x, y);
+    // The exact spot goes on the wire: the victim's Ritual check has to agree with ours.
+    if (this.isPvpNet()) this.arena.sendSilenceMsg({ t: 'sil', k: 'doll', x, y });
+  }
+
+  private spawnDoll(owner: Owner, target: Fighter, x: number, y: number): void {
+    const scene = this.arena.scene;
+    this.clearDoll(owner);
+
+    const sprite = scene.add.image(x, y, 'silence-doll').setDepth(DEPTH_STALKER);
+    const barBg = scene.add.rectangle(x, y - 28, 32, 5, 0x1a0d08, 0.9)
+      .setStrokeStyle(1, 0x7d6440).setDepth(DEPTH_EYE);
+    const barFill = scene.add.rectangle(x - 15, y - 28, 30, 3, 0xcc1133, 0.95)
+      .setOrigin(0, 0.5).setDepth(DEPTH_EYE + 1);
+    this.dolls[owner] = { sprite, barBg, barFill, owner, target, damageTaken: 0 };
+
+    sprite.setScale(0.2).setRotation(-0.6);
+    scene.tweens.add({ targets: sprite, scaleX: 1, scaleY: 1, rotation: 0, duration: 320, ease: 'Back.Out' });
+    this.arena.showFloatingText(x, y - 40, '🪆 EFFIGY', '#ffddaa');
+    this.arena.spawnHitFlash(target.x, target.y, 0xb49a6a);
+    scene.cameras.main.shake(160, 0.003);
+  }
+
+  /** Online replay: the remote Silence player stitched an effigy of us, right here. */
+  private netSpawnDoll(x: number, y: number): void {
+    const player = this.arena.player;
+    if (!player.active || player.hp <= 0) return;
+    this.spawnDoll('npc', player, x, y);
+  }
+
+  /**
+   * Something of yours landed on the doll. Relays it to whoever the doll was stitched
+   * for, with the 25% bonus, and books the raw amount against the doll's own 50 HP.
+   * Returns true when the hit was consumed by the doll.
+   *
+   * The puppeteer is the authority here — the effigy is their object and only their
+   * attacks can reach it — so online the relayed amount is sent for the victim to
+   * apply to itself rather than being re-derived from a replayed hitbox.
+   */
+  private tryHitDoll(x: number, y: number, radius: number, amount: number): boolean {
+    const d = this.dolls.player;
+    if (!d || amount <= 0) return false;
+    if (Phaser.Math.Distance.Between(x, y, d.sprite.x, d.sprite.y) > radius + DOLL_HIT_RADIUS) return false;
+
+    d.damageTaken += amount;
+    const relayed = Math.round(amount * DOLL_RELAY_MULT);
+    if (d.target.active && d.target.hp > 0) {
+      d.target.takeDamage(relayed);
+      this.arena.spawnHitFlash(d.target.x, d.target.y, 0xffddaa);
+    }
+    this.showDollHit(d, relayed);
+    if (this.isPvpNet() && d.target.netGhost) {
+      this.arena.sendSilenceMsg({
+        t: 'sil', k: 'doll-hit', dmg: relayed, left: Math.max(0, DOLL_HP - d.damageTaken),
+      });
+    }
+    if (d.damageTaken >= DOLL_HP) this.breakDoll('player');
+    return true;
+  }
+
+  /** Victim side: the puppeteer put something into our effigy — take it. */
+  private netDollHit(dmg: number, left: number): void {
+    const player = this.arena.player;
+    if (player.active && player.hp > 0) {
+      player.takeDamage(dmg);
+      this.arena.spawnHitFlash(player.x, player.y, 0xffddaa);
+    }
+    const d = this.dolls.npc;
+    if (!d) return;
+    d.damageTaken = Math.max(0, DOLL_HP - left);
+    this.showDollHit(d, dmg);
+    if (left <= 0) this.breakDoll('npc');
+  }
+
+  private showDollHit(d: VoodooDoll, relayed: number): void {
+    const scene = this.arena.scene;
+    this.arena.showFloatingText(d.sprite.x, d.sprite.y - 34, `🪆 ${relayed}`, '#ffddaa');
+    d.sprite.setTintFill(0xffffff);
+    scene.time.delayedCall(80, () => { if (d.sprite.active) d.sprite.clearTint(); });
+    // A pin jolts out of it on every hit.
+    const pin = scene.add.rectangle(d.sprite.x, d.sprite.y, 14, 2, 0xc8ccd8, 1)
+      .setRotation(Math.random() * Math.PI).setDepth(DEPTH_EYE + 2);
+    scene.tweens.add({
+      targets: pin, x: pin.x + Phaser.Math.Between(-24, 24), y: pin.y + Phaser.Math.Between(-20, 10),
+      alpha: 0, duration: 320, onComplete: () => pin.destroy(),
+    });
+  }
+
+  private breakDoll(owner: Owner): void {
+    const d = this.dolls[owner];
+    if (!d) return;
+    const scene = this.arena.scene;
+    const { x, y } = d.sprite;
+    for (let i = 0; i < 7; i++) {
+      const scrap = scene.add.rectangle(x, y, 5, 4, 0xb49a6a, 1).setDepth(DEPTH_EYE);
+      const ang = Math.random() * Math.PI * 2;
+      scene.tweens.add({
+        targets: scrap, x: x + Math.cos(ang) * 44, y: y + Math.sin(ang) * 44,
+        alpha: 0, rotation: Math.random() * 4, duration: 420, onComplete: () => scrap.destroy(),
+      });
+    }
+    this.arena.showFloatingText(x, y - 34, '🪆 THE DOLL BREAKS', '#ffddaa');
+    this.clearDoll(owner);
+    if (owner === 'player' && this.isPvpNet()) {
+      this.arena.sendSilenceMsg({ t: 'sil', k: 'doll-gone' });
+    }
+  }
+
+  private clearDoll(owner: Owner): void {
+    const d = this.dolls[owner];
+    if (!d) return;
+    d.sprite.destroy();
+    d.barBg.destroy();
+    d.barFill.destroy();
+    this.dolls[owner] = null;
+  }
+
+  private updateDoll(owner: Owner, time: number): void {
+    const d = this.dolls[owner];
+    if (!d) return;
+    if (!d.target.active || d.target.hp <= 0) { this.clearDoll(owner); return; }
+
+    d.sprite.setRotation(Math.sin(time / 520) * 0.06);
+    const ratio = Phaser.Math.Clamp(1 - d.damageTaken / DOLL_HP, 0, 1);
+    d.barFill.width = 30 * ratio;
+    d.barFill.setFillStyle(ratio > 0.5 ? 0xcc1133 : 0xff4455, 0.95);
+
+    // Anything you shoot at the effigy counts too — but only your own doll answers to
+    // you. The replica of someone else's effigy is scenery; its damage arrives on the
+    // wire from the machine that owns it.
+    if (owner !== 'player') return;
+    for (const go of this.arena.projectiles.getChildren() as Projectile[]) {
+      if (!go.active || !go.isFromPlayer) continue;
+      if (Phaser.Math.Distance.Between(go.x, go.y, d.sprite.x, d.sprite.y) > DOLL_HIT_RADIUS + 8) continue;
+      go.setActive(false).setVisible(false);
+      (go.body as Phaser.Physics.Arcade.Body).stop();
+      this.tryHitDoll(d.sprite.x, d.sprite.y, 0, go.damage);
+      break;
+    }
+  }
+
+  // ── Puppetmaster: the awakening ────────────────────────────────────
+
+  /** True while the local player is steering someone else's body. */
+  isAwakened(): boolean { return this.awakened.player !== null; }
+
+  /** True while the local player *is* the body someone else is steering. */
+  isPossessed(): boolean {
+    const a = this.awakened.npc;
+    return a !== null && a.host === this.arena.player;
+  }
+
+  private beginAwakened(owner: Owner): void {
+    const d = this.dolls[owner];
+    if (!d || this.awakened[owner]) return;
+    const host = d.target;
+    if (!host.active || host.hp <= 0) return;
+
+    const scene = this.arena.scene;
+    this.awakened[owner] = {
+      owner,
+      host,
+      // The victim's copy runs a little long on purpose: the puppeteer's explicit
+      // hand-back should be what ends it, with this only as a lost-message backstop.
+      endsAt: scene.time.now + AWAKEN_DURATION_MS + (owner === 'npc' ? 2500 : 0),
+      gfx: scene.add.graphics().setDepth(DEPTH_STALKER - 1),
+      prevTexture: host.texture.key,
+      prevScale: host.scaleX,
+      netVx: 0,
+      netVy: 0,
+      netFa: host.facingAngle,
+      huskNetId: this.huskNetIdOf(host),
+    };
+    host.setTexture('silence-awakened');
+    host.setScale(1);
+
+    if (owner === 'player') {
+      // The puppet moveset shares the base slots — start it clean so a recently-used
+      // Feast or Ritual doesn't lock half the form out.
+      const player = this.arena.player;
+      for (const id of ['silence-stab', 'silence-watch', 'silence-ritual', 'silence-feast', 'silence-run']) {
+        player.resetCooldown(id);
+      }
+      if (this.isPvpNet()) this.arena.sendSilenceMsg({ t: 'sil', k: 'awaken', on: true });
+    }
+
+    // Their eyes go white, then the shell splits.
+    const flashEyes = scene.add.circle(host.x, host.y, 26, 0xffffff, 0.9).setDepth(DEPTH_EYE + 3);
+    scene.tweens.add({
+      targets: flashEyes, scaleX: 1.8, scaleY: 1.8, alpha: 0, duration: 420,
+      onComplete: () => flashEyes.destroy(),
+    });
+    this.arena.showFloatingText(host.x, host.y - 52, '🕷 AWAKENED', '#eeddff');
+    scene.cameras.main.shake(420, 0.01);
+    scene.cameras.main.flash(240, 40, 0, 50);
+    this.showAwakenedIndicator(owner, this.awakened[owner]!.endsAt);
+  }
+
+  private showAwakenedIndicator(owner: Owner, until: number): void {
+    // The tray shows what is happening to *you*, so the two sides read differently.
+    this.arena.setStatusIndicator('silence-awakened', owner === 'player' ? {
+      name: 'Awakened',
+      emoji: '🕷',
+      color: 0x8844cc,
+      description: 'You are wearing the enemy. Click slash · E bite · R cannibalize · F slam · Q let go.',
+      until,
+      priority: 100,
+    } : {
+      name: 'Possessed',
+      emoji: '🪆',
+      color: 0x8844cc,
+      description: 'Something has climbed inside you. It is steering your body and tearing it apart from within.',
+      until,
+      priority: 2,
+    });
+  }
+
+  /** `withPenalty` = the voluntary Q hand-back, which costs the host 20 on the way out. */
+  private endAwakened(owner: Owner, withPenalty: boolean, silent = false): void {
+    const a = this.awakened[owner];
+    if (!a) return;
+    this.awakened[owner] = null;
+    a.gfx.destroy();
+    this.arena.setStatusIndicator('silence-awakened', null);
+
+    const host = a.host;
+    if (host.active) {
+      host.setTexture(a.prevTexture);
+      host.setScale(a.prevScale);
+      host.puppetControlledUntil = 0;
+      (host.body as Phaser.Physics.Arcade.Body | null)?.setVelocity(0, 0);
+    }
+    if (owner === 'player') {
+      if (this.isPvpNet() && host.netGhost) {
+        this.arena.sendSilenceMsg({
+          t: 'sil', k: 'awaken', on: false, dmg: withPenalty ? AWAKEN_UNPOSSESS_DMG : 0,
+        });
+      }
+      if (a.huskNetId !== null) this.arena.sendHuskPuppet(a.huskNetId, false, host.x, host.y);
+    }
+    if (silent) return;
+
+    const scene = this.arena.scene;
+    const recede = scene.add.circle(host.x, host.y, 34, 0x0a0410, 0.85).setDepth(DEPTH_EYE);
+    scene.tweens.add({
+      targets: recede, scaleX: 0.05, scaleY: 0.05, alpha: 0, duration: 380,
+      onComplete: () => recede.destroy(),
+    });
+    if (withPenalty && host.active && host.hp > 0) {
+      host.takeDamage(AWAKEN_UNPOSSESS_DMG);
+      this.arena.spawnHitFlash(host.x, host.y, 0x8844cc);
+      this.arena.showFloatingText(host.x, host.y - 46, '🕷 IT GOES BACK IN', '#cc99ff');
+    }
+  }
+
+  /**
+   * Keeps a possession alive: freezes the puppeteer's own body, drives the host, and
+   * draws the tentacles. `driveHost` is where the four modes diverge; everything else
+   * here is identical whichever machine is running it.
+   */
+  private updateAwakened(owner: Owner, time: number): void {
+    const a = this.awakened[owner];
+    if (!a) return;
+    const caster = this.fighterOf(owner);
+    const host = a.host;
+
+    if (!host.active || host.hp <= 0 || !caster.active || caster.hp <= 0) {
+      this.endAwakened(owner, false);
+      return;
+    }
+    if (time >= a.endsAt) { this.endAwakened(owner, false); return; }
+
+    // The puppeteer's own body stands vacant where they left it. Only ours is ours to
+    // freeze — a ghost puppeteer is already frozen by whatever its own machine says.
+    if (owner === 'player') {
+      (caster.body as Phaser.Physics.Arcade.Body | null)?.setVelocity(0, 0);
+      this.arena.setPlayerYankUntil(time + 60);
+    }
+
+    this.driveHost(a, time);
+    this.drawAwakenedLimbs(a, time);
+  }
+
+  /**
+   * Move the possessed body, by whichever route this machine actually has.
+   *
+   * Puppeteer side reads WASD. If the host is ours to move we set its velocity and hold
+   * its AI off; if it is a ghost we send the intent to the machine that owns it. Victim
+   * side ignores input entirely and replays the streamed vector onto its own body.
+   */
+  private driveHost(a: AwakenedState, time: number): void {
+    const host = a.host;
+    const body = host.body as Phaser.Physics.Arcade.Body | null;
+
+    if (a.owner === 'npc') {
+      // We are the puppet. Our keys do nothing; the wire drives us, and we can't cast.
+      body?.setVelocity(a.netVx * host.speed, a.netVy * host.speed);
+      host.facingAngle = a.netFa;
+      if (host === this.arena.player) {
+        this.arena.setPlayerYankUntil(time + 60);
+        this.arena.player.disarmedUntil = Math.max(this.arena.player.disarmedUntil, Date.now() + 250);
+      }
+      return;
+    }
+
+    let vx = 0;
+    let vy = 0;
+    if (this.arena.aKey.isDown) vx -= 1;
+    if (this.arena.dKey.isDown) vx += 1;
+    if (this.arena.wKey.isDown) vy -= 1;
+    if (this.arena.sKey.isDown) vy += 1;
+    if (vx !== 0 && vy !== 0) { vx *= 0.7071; vy *= 0.7071; }
+
+    // Aim comes from the cursor, not from where the body is drifting.
+    const pointer = this.arena.scene.input.activePointer;
+    const fa = Math.atan2(pointer.worldY - host.y, pointer.worldX - host.x);
+    host.facingAngle = fa;
+
+    if (!host.netGhost) {
+      // Ours to move. Hold off both possible drivers: the 1v1 AI reads npcLockUntil
+      // through NpcAiState, a husk reads puppetControlledUntil in its own update.
+      if (host === this.arena.npc) this.npcLockUntil = Math.max(this.npcLockUntil, time + 60);
+      host.puppetControlledUntil = time + 200;
+      body?.setVelocity(vx * host.speed, vy * host.speed);
+      // Co-op guest: our replica is only a puppet of the host's husk — tell it where to be.
+      if (a.huskNetId !== null) this.arena.sendHuskPuppet(a.huskNetId, true, host.x, host.y);
+      return;
+    }
+
+    // A ghost: never touch the body, stream the intent at the state-stream rate.
+    if (a.huskNetId !== null) {
+      // Co-op replica husk: we still move our own copy so it feels responsive, and the
+      // host mirrors it. (applyHuskSnap skips the lerp while we are driving.)
+      host.puppetControlledUntil = time + 200;
+      body?.setVelocity(vx * host.speed, vy * host.speed);
+      this.arena.sendHuskPuppet(a.huskNetId, true, host.x, host.y);
+      return;
+    }
+    if (time - this.lastPuppetMoveSentAt >= PUPPET_MOVE_SEND_MS) {
+      this.lastPuppetMoveSentAt = time;
+      this.arena.sendSilenceMsg({ t: 'sil', k: 'puppet-move', vx, vy, fa });
+    }
+  }
+
+  /** Four long tentacles hauling the host along, swaying out of phase with each other. */
+  private drawAwakenedLimbs(a: AwakenedState, time: number): void {
+    const g = a.gfx;
+    const host = a.host;
+    g.clear();
+    g.lineStyle(5, 0x0a0410, 0.95);
+    for (let i = 0; i < 4; i++) {
+      const base = host.facingAngle + Math.PI / 2 + (i - 1.5) * 0.9;
+      const sway = Math.sin(time / (260 + i * 70) + i) * 0.42;
+      const ang = base + sway;
+      const kneeX = host.x + Math.cos(ang) * 34;
+      const kneeY = host.y + Math.sin(ang) * 34 - 14;
+      const tipAng = ang + Math.sin(time / 190 + i * 2) * 0.5;
+      const tipX = kneeX + Math.cos(tipAng) * 42;
+      const tipY = kneeY + Math.sin(tipAng) * 42 + 20;
+      g.lineBetween(host.x, host.y, kneeX, kneeY);
+      g.lineBetween(kneeX, kneeY, tipX, tipY);
+      g.fillStyle(0x0a0410, 1);
+      g.fillCircle(kneeX, kneeY, 3.2);
+      g.fillTriangle(tipX, tipY + 6, tipX - 3, tipY - 3, tipX + 3, tipY - 3);
+    }
+  }
+
+  // ── Puppetmaster: the awakened moveset ─────────────────────────────
+  //
+  // Each action resolves locally and then goes out under its own `puppet-*` id (see
+  // `doNpcPuppetAct`). Two of them — bite and cannibalize — branch on whether a kin
+  // was under the cursor, and kin wander independently on each sim, so the *decision*
+  // is what travels rather than the cursor position that produced it.
+
+  private awakenedSlash(owner: Owner, tx: number, ty: number): void {
+    const a = this.awakened[owner];
+    if (!a) return;
+    const host = a.host;
+    const scene = this.arena.scene;
+    const ang = Math.atan2(ty - host.y, tx - host.x);
+
+    for (let i = -1; i <= 1; i++) {
+      const sa = ang + i * 0.3;
+      const streak = scene.add.rectangle(
+        host.x + Math.cos(sa) * AWAKEN_SLASH_RANGE * 0.55,
+        host.y + Math.sin(sa) * AWAKEN_SLASH_RANGE * 0.55,
+        AWAKEN_SLASH_RANGE, 4, 0x2a1038, 0.95,
+      ).setRotation(sa).setDepth(DEPTH_BEAM);
+      scene.tweens.add({ targets: streak, alpha: 0, duration: 170, onComplete: () => streak.destroy() });
+    }
+
+    // A tentacle that finds the effigy first puts the relayed hit through instead.
+    const d = this.dolls.player;
+    if (owner === 'player' && d && this.inAwakenedArc(a, d.sprite.x, d.sprite.y, ang, AWAKEN_SLASH_RANGE)) {
+      this.tryHitDoll(d.sprite.x, d.sprite.y, 0, AWAKEN_SLASH_DMG);
+      return;
+    }
+    this.hurtHost(a, AWAKEN_SLASH_DMG, '🕷 SLASH');
+  }
+
+  private awakenedBite(owner: Owner, tx: number, ty: number, eatKin: boolean): void {
+    const a = this.awakened[owner];
+    if (!a) return;
+    const host = a.host;
+    const scene = this.arena.scene;
+    const ang = Math.atan2(ty - host.y, tx - host.x);
+    const maw = scene.add.circle(
+      host.x + Math.cos(ang) * 38, host.y + Math.sin(ang) * 38, 16, 0x0a0410, 0.9,
+    ).setDepth(DEPTH_BEAM);
+    scene.tweens.add({ targets: maw, scaleX: 1.7, scaleY: 1.7, alpha: 0, duration: 220, onComplete: () => maw.destroy() });
+
+    // Feasting on your own kin: it goes down whole and the puppeteer gets 12 back.
+    if (eatKin) {
+      const eaten = this.kinAtCursor(a, tx, ty);
+      if (eaten >= 0) {
+        const k = this.kin[eaten];
+        this.arena.showFloatingText(k.sprite.x, k.sprite.y - 20, '🦷 EATEN', '#ffcccc');
+        k.sprite.destroy();
+        this.kin.splice(eaten, 1);
+      }
+      this.healPuppeteer(a, AWAKEN_BITE_HEAL);
+      return;
+    }
+    this.hurtHost(a, AWAKEN_BITE_DMG, '🦷 BITE');
+    this.healPuppeteer(a, AWAKEN_BITE_HEAL);
+  }
+
+  private awakenedCannibalize(owner: Owner, tx: number, ty: number, raiseKin: boolean): void {
+    const a = this.awakened[owner];
+    if (!a) return;
+    const host = a.host;
+
+    // Ritual on a kin instead of on yourself: it stands up wearing the enemy's face.
+    if (raiseKin) {
+      const chosen = this.kinAtCursor(a, tx, ty);
+      if (chosen >= 0) {
+        const k = this.kin[chosen];
+        this.spawnCorruptClone(owner, k.sprite.x, k.sprite.y, k.target);
+        k.sprite.destroy();
+        this.kin.splice(chosen, 1);
+      } else {
+        // Our kin drifted elsewhere; honour the intent by raising one at the host.
+        this.spawnCorruptClone(owner, host.x + 60, host.y, host);
+      }
+      return;
+    }
+
+    const scene = this.arena.scene;
+    const muck = scene.add.circle(host.x, host.y, 20, 0x0a0410, 0.85).setDepth(DEPTH_EYE);
+    scene.tweens.add({ targets: muck, scaleX: 0.2, scaleY: 0.2, alpha: 0, duration: 300, onComplete: () => muck.destroy() });
+    this.hurtHost(a, AWAKEN_CANNIBAL_DMG, '🩸 CANNIBALIZE');
+    this.healPuppeteer(a, AWAKEN_CANNIBAL_HEAL);
+  }
+
+  private awakenedSlam(owner: Owner): void {
+    const a = this.awakened[owner];
+    if (!a) return;
+    const host = a.host;
+    const scene = this.arena.scene;
+    const ring = scene.add.circle(host.x, host.y, 30, 0x2a1038, 0.35)
+      .setDepth(DEPTH_GROUND_FX).setStrokeStyle(3, 0x6622aa, 0.9);
+    scene.tweens.add({
+      targets: ring, scaleX: 4.2, scaleY: 4.2, alpha: 0, duration: 480, onComplete: () => ring.destroy(),
+    });
+    scene.cameras.main.shake(260, 0.007);
+    this.arena.showFloatingText(host.x, host.y - 50, '🕳 THEY CRAWL UP', '#cc99ff');
+
+    for (let i = 0; i < KIN_PER_SLAM; i++) {
+      const ang = (i / KIN_PER_SLAM) * Math.PI * 2 + Math.random();
+      const x = Phaser.Math.Clamp(host.x + Math.cos(ang) * 90, 24, this.arena.width - 24);
+      const y = Phaser.Math.Clamp(host.y + Math.sin(ang) * 90, 24, this.arena.height - 30);
+      const sprite = scene.add.image(x, y, 'silence-kin').setDepth(DEPTH_STALKER).setScale(0.1).setAlpha(0.2);
+      scene.tweens.add({ targets: sprite, scaleX: 1, scaleY: 1, alpha: 1, duration: 380, ease: 'Back.Out' });
+      this.kin.push({
+        sprite,
+        owner,
+        target: host,
+        expiresAt: scene.time.now + KIN_LIFETIME_MS,
+        nextStabAt: scene.time.now + KIN_STAB_EVERY_MS,
+      });
+    }
+  }
+
+  /** Damage the possessed body — every awakened attack tears at the host it rode in on. */
+  private hurtHost(a: AwakenedState, amount: number, label: string): void {
+    const host = a.host;
+    if (!host.active || host.hp <= 0) return;
+    host.takeDamage(amount);
+    this.arena.spawnHitFlash(host.x, host.y, 0x6622aa);
+    this.arena.showFloatingText(host.x, host.y - 44, label, '#cc99ff');
+  }
+
+  /**
+   * Heal whoever is doing the possessing. Only ever lands on the local player: on the
+   * victim's sim the puppeteer is a ghost, and `heal` on a ghost is already a no-op,
+   * so the caster's own machine is the single place the HP actually moves.
+   */
+  private healPuppeteer(a: AwakenedState, amount: number): void {
+    this.fighterOf(a.owner).heal(amount);
+  }
+
+  private inAwakenedArc(a: AwakenedState, x: number, y: number, ang: number, range: number): boolean {
+    const host = a.host;
+    if (Phaser.Math.Distance.Between(host.x, host.y, x, y) > range) return false;
+    const to = Math.atan2(y - host.y, x - host.x);
+    return Math.abs(Phaser.Math.Angle.Wrap(to - ang)) <= AWAKEN_SLASH_ARC_RAD;
+  }
+
+  /**
+   * Index of the kin nearest the cursor, or -1. Both the bite (eat it) and the ritual
+   * (raise it) pick this way, so the same gesture — point at the thing, press the key —
+   * works for either, whichever side of you the creature has scuttled around to.
+   */
+  private kinAtCursor(a: AwakenedState, tx: number, ty: number): number {
+    const host = a.host;
+    let best = -1;
+    let bestD = KIN_PICK_CURSOR_RADIUS;
+    for (let i = 0; i < this.kin.length; i++) {
+      const k = this.kin[i];
+      if (k.owner !== a.owner) continue;
+      if (Phaser.Math.Distance.Between(host.x, host.y, k.sprite.x, k.sprite.y) > KIN_PICK_MAX_DIST) continue;
+      const d = Phaser.Math.Distance.Between(tx, ty, k.sprite.x, k.sprite.y);
+      if (d <= bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
+
+  // ── Puppetmaster: kin + corrupted clones ───────────────────────────
+
+  private updateKin(time: number, dt: number): void {
+    for (let i = this.kin.length - 1; i >= 0; i--) {
+      const k = this.kin[i];
+      if (time >= k.expiresAt || !k.target.active || k.target.hp <= 0) {
+        const s = k.sprite;
+        this.arena.scene.tweens.add({
+          targets: s, alpha: 0, scaleX: 0.2, scaleY: 0.2, duration: 260, onComplete: () => s.destroy(),
+        });
+        this.kin.splice(i, 1);
+        continue;
+      }
+      const ang = Math.atan2(k.target.y - k.sprite.y, k.target.x - k.sprite.x);
+      const d = Phaser.Math.Distance.Between(k.sprite.x, k.sprite.y, k.target.x, k.target.y);
+      if (d > KIN_REACH) {
+        k.sprite.x += Math.cos(ang) * KIN_SPEED * dt;
+        k.sprite.y += Math.sin(ang) * KIN_SPEED * dt;
+      }
+      k.sprite.setRotation(Math.sin(time / 140 + k.expiresAt) * 0.12); // scuttling wobble
+      k.sprite.setFlipX(Math.cos(ang) < 0);
+
+      if (d <= KIN_REACH && time >= k.nextStabAt) {
+        k.nextStabAt = time + KIN_STAB_EVERY_MS;
+        k.target.takeDamage(KIN_STAB_DMG);
+        this.arena.spawnHitFlash(k.target.x, k.target.y, 0x2a1038);
+        this.arena.showFloatingText(k.sprite.x, k.sprite.y - 20, '🗡', '#cc99ff');
+      }
+    }
+    this.highlightAimedKin();
+  }
+
+  /**
+   * While possessing, the kin your cursor has landed on glows — without it there is no
+   * way to tell which one an E (eat) or R (raise) is about to take, since they pile up
+   * against the host on every side.
+   */
+  private highlightAimedKin(): void {
+    for (const k of this.kin) k.sprite.clearTint();
+    const a = this.awakened.player;
+    if (!a) return;
+    const pointer = this.arena.scene.input.activePointer;
+    const aimed = this.kinAtCursor(a, pointer.worldX, pointer.worldY);
+    if (aimed >= 0) this.kin[aimed].sprite.setTint(0xcc99ff);
+  }
+
+  private spawnCorruptClone(owner: Owner, x: number, y: number, target: Fighter): void {
+    const scene = this.arena.scene;
+    const sprite = scene.add.image(x, y, 'silence-corrupt').setDepth(DEPTH_STALKER + 1);
+    this.corrupts.push({
+      sprite, owner, target,
+      expiresAt: scene.time.now + CORRUPT_LIFETIME_MS,
+      nextShotAt: scene.time.now + 600,
+      nextMeleeAt: 0,
+    });
+    sprite.setScale(0.3);
+    scene.tweens.add({ targets: sprite, scaleX: 1, scaleY: 1, duration: 340, ease: 'Back.Out' });
+    this.arena.showFloatingText(x, y - 32, '😁 CORRUPTED', '#ffffff');
+    scene.cameras.main.shake(200, 0.005);
+  }
+
+  /**
+   * The clone copies whoever it was made from: it chases them down and throws their own
+   * element back at them. It is a stand-in for the real moveset, not a full second AI —
+   * the colour and cadence carry the impression, the numbers are its own.
+   */
+  private updateCorrupts(time: number, dt: number): void {
+    const scene = this.arena.scene;
+    for (let i = this.corrupts.length - 1; i >= 0; i--) {
+      const c = this.corrupts[i];
+      const gone = time >= c.expiresAt || !c.target.active || c.target.hp <= 0;
+      if (gone) {
+        const s = c.sprite;
+        scene.tweens.add({ targets: s, alpha: 0, duration: 400, onComplete: () => s.destroy() });
+        this.corrupts.splice(i, 1);
+        continue;
+      }
+      // Fades out over its last second.
+      c.sprite.setAlpha(Math.min(1, (c.expiresAt - time) / 1000));
+
+      const ang = Math.atan2(c.target.y - c.sprite.y, c.target.x - c.sprite.x);
+      const d = Phaser.Math.Distance.Between(c.sprite.x, c.sprite.y, c.target.x, c.target.y);
+      if (d > CORRUPT_MELEE_RANGE - 6) {
+        c.sprite.x += Math.cos(ang) * CORRUPT_SPEED * dt;
+        c.sprite.y += Math.sin(ang) * CORRUPT_SPEED * dt;
+      }
+      c.sprite.setFlipX(Math.cos(ang) < 0);
+      c.sprite.setRotation(Math.sin(time / 320) * 0.06);
+
+      if (d <= CORRUPT_MELEE_RANGE && time >= c.nextMeleeAt) {
+        c.nextMeleeAt = time + CORRUPT_MELEE_EVERY_MS;
+        c.target.takeDamage(CORRUPT_MELEE_DMG);
+        this.arena.spawnHitFlash(c.target.x, c.target.y, 0xffffff);
+      } else if (d > CORRUPT_MELEE_RANGE && time >= c.nextShotAt) {
+        c.nextShotAt = time + CORRUPT_SHOT_EVERY_MS;
+        const shot = scene.add.image(c.sprite.x, c.sprite.y, 'silence-eye-shot')
+          .setDepth(DEPTH_BEAM).setScale(1.5).setTint(c.target.element.color);
+        this.corruptShots.push({
+          sprite: shot,
+          vx: Math.cos(ang) * CORRUPT_SHOT_SPEED,
+          vy: Math.sin(ang) * CORRUPT_SHOT_SPEED,
+          target: c.target,
+          diesAt: time + 2400,
+        });
+      }
+    }
+  }
+
+  private updateCorruptShots(time: number, dt: number): void {
+    for (let i = this.corruptShots.length - 1; i >= 0; i--) {
+      const s = this.corruptShots[i];
+      s.sprite.x += s.vx * dt;
+      s.sprite.y += s.vy * dt;
+      let dead = time >= s.diesAt;
+      if (!dead && s.target.active && s.target.hp > 0
+        && Phaser.Math.Distance.Between(s.sprite.x, s.sprite.y, s.target.x, s.target.y) <= 24) {
+        s.target.takeDamage(CORRUPT_SHOT_DMG);
+        this.arena.spawnHitFlash(s.target.x, s.target.y, s.target.element.color);
+        dead = true;
+      }
+      if (dead) {
+        s.sprite.destroy();
+        this.corruptShots.splice(i, 1);
+      }
+    }
+  }
+
+  // ── Requirement tracking ───────────────────────────────────────────
+
+  /** "Killed while a Striker" is booked at the moment of death, not at registration. */
+  private trackStrikerKills(): void {
+    for (const foe of this.foesOf('player')) {
+      if (!foe.active || this.masteryTrackedFoes.has(foe)) continue;
+      this.masteryTrackedFoes.add(foe);
+      foe.once('defeated', () => {
+        if (this.strikers.player) this.arena.recordMasteryStat('strikerKills', 1);
+      });
+    }
+  }
+
   // ── Per-frame update ───────────────────────────────────────────────
 
   update(time: number, delta: number, playerIsSilence: boolean, npcIsSilence: boolean): void {
@@ -972,6 +2120,7 @@ export class SilenceKit {
 
     this.ensureFog();
     this.updateFacing();
+    this.updateWeep();
     this.updateStealth('player', dt);
     this.updateStealth('npc', dt);
     this.renderInvisibility('player');
@@ -993,6 +2142,16 @@ export class SilenceKit {
     this.updateMidgets(time, dt);
     this.updatePanicOverlay(time);
     this.updateBloodDecals(time);
+    // Mastery — both owners: 'player' is our own possession, 'npc' is a remote
+    // Puppetmaster's, running here because this is the machine that owns the body.
+    if (playerIsSilence) this.trackStrikerKills();
+    this.updateDoll('player', time);
+    this.updateDoll('npc', time);
+    this.updateAwakened('player', time);
+    this.updateAwakened('npc', time);
+    this.updateKin(time, dt);
+    this.updateCorrupts(time, dt);
+    this.updateCorruptShots(time, dt);
     this.updateNpcMirrorAI(time);
     this.updateHud();
   }
@@ -1043,9 +2202,13 @@ export class SilenceKit {
     if (!f.active || f.hp <= 0) return;
     const stalkerCount = this.stalkersAlive(owner);
     if (this.isInFog(f.x, f.y)) {
+      // Mastery: a corrupted copy of the enemy walking around costs you the fog entirely.
+      if (this.corrupts.some((c) => c.owner === owner)) return;
       this.stealth[owner] = Math.min(STEALTH_MAX, this.stealth[owner] + STEALTH_GAIN_PER_S * (1 + STALKER_RATE_BONUS * stalkerCount) * dt);
     } else {
-      this.stealth[owner] = Math.max(0, this.stealth[owner] - STEALTH_DRAIN_PER_S * Math.max(0, 1 - STALKER_RATE_BONUS * stalkerCount) * dt);
+      // Mastery — Weep: unwatched, you bleed stealth 25% slower.
+      const weep = owner === 'player' && this.weepUnwatched ? WEEP_DRAIN_MULT : 1;
+      this.stealth[owner] = Math.max(0, this.stealth[owner] - STEALTH_DRAIN_PER_S * weep * Math.max(0, 1 - STALKER_RATE_BONUS * stalkerCount) * dt);
     }
   }
 
@@ -1254,6 +2417,22 @@ export class SilenceKit {
 
   private strikeRitual(r: RitualCircle): void {
     const scene = this.arena.scene;
+
+    // Mastery — Puppetmaster: a ritual laid over your own effigy spares the doll and
+    // wakes what is wearing the enemy instead. Nothing else in the circle resolves —
+    // which is why the victim's sim has to recognise it too, or their replay of this
+    // same ritual would land 25 damage the caster's screen never showed.
+    const ownDoll = this.dolls[r.owner];
+    if (ownDoll && !this.awakened[r.owner]
+      && Phaser.Math.Distance.Between(ownDoll.sprite.x, ownDoll.sprite.y, r.x, r.y) <= RITUAL_RADIUS) {
+      const beamUp = scene.add.rectangle(r.x, r.y / 2, 30, r.y, 0xeeddff, 0.8).setDepth(DEPTH_BEAM);
+      scene.tweens.add({ targets: beamUp, alpha: 0, duration: 420, onComplete: () => beamUp.destroy() });
+      // The awakening itself is only ever begun by the machine doing the possessing;
+      // the other side gets an explicit 'awaken' message so both agree on the moment.
+      if (r.owner === 'player') this.beginAwakened('player');
+      return;
+    }
+
     // Red beam from above.
     const beam = scene.add.rectangle(r.x, r.y / 2, 26, r.y, 0xff1133, 0.75).setDepth(DEPTH_BEAM);
     const flash = scene.add.circle(r.x, r.y, RITUAL_RADIUS, 0xff2244, 0.4).setDepth(DEPTH_GROUND_FX);
@@ -1306,6 +2485,7 @@ export class SilenceKit {
     scene.tweens.add({ targets: sprite, scaleX: 2, scaleY: 2, duration: 200, delay: 300 });
     this.arena.showFloatingText(x, y - 30, 'IT GRABS NOW', '#ff2244');
     scene.cameras.main.shake(250, 0.004);
+    if (owner === 'player') this.arena.recordMasteryStat('grabbers', 1);
   }
 
   private updateGrabbers(time: number, delta: number): void {
@@ -1591,9 +2771,17 @@ export class SilenceKit {
 
   // ── Terror + Striker (R+ Night Terror) ─────────────────────────────
 
+  /**
+   * Terror accrues for anyone running Night Terror — and, since Puppetmaster is priced in
+   * terror, for a mastered Silence player whether or not they bought the R+ upgrade.
+   */
+  private hasTerrorBar(owner: Owner): boolean {
+    return this.arena.hasUpgrade(owner, 'r') || (owner === 'player' && this.arena.masteryActive);
+  }
+
   private updateTerror(owner: Owner, dt: number): void {
     if (!this.hasOwnStealthSim(owner)) return;
-    if (!this.arena.hasUpgrade(owner, 'r')) return;
+    if (!this.hasTerrorBar(owner)) return;
     if (this.strikers[owner]) return; // no farming terror while transformed
     const now = Date.now();
     let afflicted = 0;
@@ -1604,7 +2792,7 @@ export class SilenceKit {
     if (afflicted === 0) return;
     const before = this.terror[owner];
     this.terror[owner] = Math.min(TERROR_MAX, before + afflicted * dt);
-    if (before < TERROR_MAX && this.terror[owner] >= TERROR_MAX) {
+    if (before < TERROR_MAX && this.terror[owner] >= TERROR_MAX && this.arena.hasUpgrade(owner, 'r')) {
       const caster = this.fighterOf(owner);
       this.arena.showFloatingText(caster.x, caster.y - 36, '🐺 TERROR FULL — RITUAL YOURSELF', '#ff2233');
     }
@@ -1844,6 +3032,16 @@ export class SilenceKit {
         SLASH_RANGE, 4, 0xff2233, 0.9,
       ).setRotation(a).setDepth(DEPTH_BEAM);
       scene.tweens.add({ targets: streak, alpha: 0, duration: 160, onComplete: () => streak.destroy() });
+    }
+
+    // Mastery: claws find the effigy too.
+    const d = owner === 'player' ? this.dolls.player : null;
+    if (d) {
+      const toDoll = Math.atan2(d.sprite.y - caster.y, d.sprite.x - caster.x);
+      if (Phaser.Math.Distance.Between(caster.x, caster.y, d.sprite.x, d.sprite.y) <= SLASH_RANGE + 18
+        && Math.abs(Phaser.Math.Angle.Wrap(toDoll - ang)) <= SLASH_ARC_HALF_RAD) {
+        this.tryHitDoll(d.sprite.x, d.sprite.y, 0, SLASH_DMG);
+      }
     }
 
     for (const foe of this.foesOf(owner)) {
@@ -2182,12 +3380,9 @@ export class SilenceKit {
 
     const maze = run.mazeSeed !== null;
 
-    // Victim slows: constant hallway dread + spit hits (+ maze smallness).
-    if (victim === this.arena.player) {
-      this.arena.applyPlayerSpeedMult(HALL_VICTIM_SLOW);
-      if (maze) this.arena.applyPlayerSpeedMult(MAZE_VICTIM_SLOW);
-      if (time < run.victimSlowUntil) this.arena.applyPlayerSpeedMult(0.5);
-    } else if (victim === this.arena.npc && time < run.victimSlowUntil) {
+    // Victim slows: constant hallway dread + spit hits (+ maze smallness). The player
+    // side is pulled by ArenaScene through getPlayerSpeedMult() instead — see there.
+    if (victim === this.arena.npc && time < run.victimSlowUntil) {
       this.arena.applyNpcSpeedMult(0.5);
     }
 
@@ -2258,6 +3453,7 @@ export class SilenceKit {
       if (victim.hp <= run.victimStartHp - BLOB_CATCH_DMG + 10) {
         this.arena.showFloatingText(victim.x, victim.y - 42, '💀 CONSUMED', '#ff2244');
         scene.cameras.main.shake(350, 0.008);
+        if (run.caster === 'player') this.arena.recordMasteryStat('runCatches', 1);
         this.endRunChase(true);
         return;
       }
@@ -2267,6 +3463,7 @@ export class SilenceKit {
       this.arena.spawnHitFlash(victim.x, victim.y, 0xff1133);
       this.arena.showFloatingText(victim.x, victim.y - 42, '💀 CONSUMED', '#ff2244');
       scene.cameras.main.shake(350, 0.008);
+      if (run.caster === 'player') this.arena.recordMasteryStat('runCatches', 1);
       this.endRunChase(true);
       return;
     }
@@ -2746,8 +3943,9 @@ export class SilenceKit {
     const count = this.stalkersAlive('player');
     this.stalkerPips.forEach((p, i) => p.setFillStyle(i < count ? 0xff2244 : 0x110016, 1));
 
-    // R+ Night Terror: the TERROR bar lives just under the stealth bar.
-    if (this.arena.hasUpgrade('player', 'r')) {
+    // R+ Night Terror (and Silence Mastery, which spends terror on Puppetmaster):
+    // the TERROR bar lives just under the stealth bar.
+    if (this.hasTerrorBar('player')) {
       if (!this.terrorBarBg) {
         const x = 26;
         const y = 94;
@@ -2761,8 +3959,12 @@ export class SilenceKit {
       }
       const tRatio = this.terror.player / TERROR_MAX;
       this.terrorBarFill!.width = 148 * tRatio;
-      this.terrorBarFill!.setFillStyle(tRatio >= 1 ? 0xff2233 : 0x991122, 0.95);
-      this.terrorLabel!.setColor(tRatio >= 1 ? '#ff4455' : '#cc5555');
+      // Lit whenever the bar can actually buy something: a Striker at full, or —
+      // with the mastery — a voodoo doll at a quarter.
+      const spendable = tRatio >= 1
+        || (this.arena.masteryActive && this.terror.player >= PUPPET_TERROR_COST);
+      this.terrorBarFill!.setFillStyle(spendable ? 0xff2233 : 0x991122, 0.95);
+      this.terrorLabel!.setColor(spendable ? '#ff4455' : '#cc5555');
     }
 
     // Striker countdown, just below the top HP bar.

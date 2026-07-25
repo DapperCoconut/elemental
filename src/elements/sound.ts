@@ -22,7 +22,7 @@ const flowMode: Ability = {
 const screechBarrier: Ability = {
   id: 'screech-barrier',
   name: 'Screech Barrier',
-  description: 'Place a sonic barrier at cursor (5s). Enemy takes 15 dmg on contact and can pass freely. In Flow Mode: red, 25 dmg.',
+  description: 'Place a sonic barrier at cursor (5s). Only its wall bites — 15 dmg while an enemy stands in the ring, nothing in the quiet middle. In Flow Mode: red, 25 dmg.',
   displayKey: 'R',
   cooldown: 16000,
   cast(ctx) { void ctx; }, // Handled in ArenaScene

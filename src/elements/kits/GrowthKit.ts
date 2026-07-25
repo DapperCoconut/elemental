@@ -4,6 +4,10 @@ import { CastContext } from '../Ability';
 import { Projectile } from '../../combat/Projectile';
 import { HealthBar } from '../../combat/HealthBar';
 import {
+  CULTURE_TONES, GROWTH, GrowthAvatar, GrowthColorFn, GrowthCulture, GrowthFx,
+  NPC_TONES, SICK_TONES, growthPod, tonesFor,
+} from './GrowthVisuals';
+import {
   GROWTH_EVOLVE_NODES,
   GROWTH_EVOLVE_PATHS,
   GROWTH_EVOLVE_MAX_LEVEL,
@@ -219,7 +223,8 @@ interface FloorVirus {
 }
 
 interface SporeWall {
-  gfx: Phaser.GameObjects.Arc;
+  /** Redrawn every frame — the membrane pulses, hardens with maturity and recedes as it takes damage. */
+  gfx: Phaser.GameObjects.Graphics;
   owner: Owner;
   spikedTier: number;
   gutTier: number;
@@ -246,7 +251,9 @@ interface DnaPickup {
 }
 
 interface Nest {
-  gfx: Phaser.GameObjects.Arc;
+  /** Redrawn every frame — the sac beats and its yolk brightens as the clone gestates. */
+  gfx: Phaser.GameObjects.Graphics;
+  spawnAt: number;
   x: number; y: number;
   hp: number;
   owner: Owner;
@@ -342,6 +349,8 @@ export interface GrowthArenaApi {
   readonly nukeChanneling: boolean;
   readonly abilityBars: ReadonlyArray<{ fill: Phaser.GameObjects.Rectangle; abilityId: string; maxWidth: number }>;
   hasUpgrade(slot: string): boolean;
+  /** Cosmetics: maps a growth visual color through the owner's color cosmetic. */
+  growthColor(owner: 'player' | 'npc', base: number): number;
   getNearestEnemy(x: number, y: number): Fighter;
   spawnHitFlash(x: number, y: number, color: number): void;
   spawnDamageNumber(x: number, y: number, amount: number): void;
@@ -364,6 +373,21 @@ export interface GrowthArenaApi {
 // a second Evolve tree that upgrades that one effect).
 
 export class GrowthKit {
+  // ── Visuals ───────────────────────────────────────────────────────────
+  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  private readonly pcol: GrowthColorFn;
+  private readonly ncol: GrowthColorFn;
+  private readonly pfx: GrowthFx;
+  private readonly nfx: GrowthFx;
+  /** The growth character rig (cell arms, eyes, budding crown) for each growth fighter. */
+  private playerAvatar: GrowthAvatar | null = null;
+  private npcAvatar: GrowthAvatar | null = null;
+  /** Last aim point, cached in handleInput so the per-frame avatar update can face it. */
+  private aimX = 0;
+  private aimY = 0;
+  /** Growth Mastery — Secret Upgrades: an always-on culture mat while mastery is enabled. */
+  private masteryCulture: GrowthCulture | null = null;
+
   private bacteria: Bacterium[] = [];
   private viruses: VirusProj[] = [];
   private infections: Infection[] = [];
@@ -427,9 +451,22 @@ export class GrowthKit {
   private fighterContactNext: Map<Fighter, number> = new Map();
 
   constructor(private arena: GrowthArenaApi) {
+    this.pcol = (base) => arena.growthColor('player', base);
+    this.ncol = (base) => arena.growthColor('npc', base);
+    this.pfx = new GrowthFx(arena.scene, this.pcol);
+    this.nfx = new GrowthFx(arena.scene, this.ncol);
     // The kit is built lazily on the first growth match and only reset()s from the
     // second one on, so the opening roll has to happen here too.
     this.rollSecretUpgrades();
+  }
+
+  /** Colour mapper for a side. */
+  private col(owner: Owner): GrowthColorFn { return owner === 'player' ? this.pcol : this.ncol; }
+  /** Effect painter for a side. */
+  private fx(owner: Owner): GrowthFx { return owner === 'player' ? this.pfx : this.nfx; }
+  /** The rig that should react to a cast by this side, if that side is playing growth. */
+  private avatarOf(owner: Owner): GrowthAvatar | null {
+    return owner === 'player' ? this.playerAvatar : this.npcAvatar;
   }
 
   private freshBody(isCloneBody: boolean, levels?: Record<string, number>): BodyState {
@@ -450,6 +487,13 @@ export class GrowthKit {
   // ── Reset ─────────────────────────────────────────────────────────────
 
   reset(): void {
+    // Visuals — every GameObject dies with the old scene run, so rebuild lazily in update().
+    if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
+    if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
+    if (this.masteryCulture) { this.masteryCulture.destroy(); this.masteryCulture = null; }
+    this.aimX = 0;
+    this.aimY = 0;
+
     for (const b of this.bacteria) b.container.destroy();
     this.bacteria = [];
     for (const v of this.viruses) v.tri.destroy();
@@ -693,6 +737,10 @@ export class GrowthKit {
     const aim = Math.atan2(dy, dx);
 
     // A real syringe: glass barrel with a fluid column, plunger stem, thumb rest, steel needle.
+    // Jabbed, not thrown — the arm drives it forward along the aim.
+    this.avatarOf(owner)?.play('punch', aim);
+    this.fx(owner).muzzleBud(ox + Math.cos(aim) * 18, oy + Math.sin(aim) * 18, aim, 1.2, 7, SICK_TONES);
+
     const container = scene.add.container(ox, oy).setDepth(7);
     const needle = scene.add.rectangle(16, 0, 16, 2, 0xdde4ee, 1);
     const tip = scene.add.triangle(25, 0, 0, -1.5, 5, 0, 0, 1.5, 0xffffff, 1);
@@ -744,6 +792,11 @@ export class GrowthKit {
       // No damage of its own — the syringe only ever delivers the plague.
       this.applySickness(struck, s.owner, s.durationMs, true, time);
       this.arena.spawnHitFlash(struck.x, struck.y, SYRINGE_COLOR);
+      // Snap on application, so Sickness has a moment as well as a state.
+      this.fx(s.owner).ring(struck.x, struck.y, 6, 34, GROWTH.flush, 320, 3, 8);
+      this.fx(s.owner).motes(struck.x, struck.y, 6, {
+        speed: 90, size: 2.4, life: 460, rise: 12, depth: 8, tones: SICK_TONES,
+      });
       if (this.sickTier(s.owner, 'syringe-shatter') > 0) {
         this.shatterSyringe(struck, s, time);
       }
@@ -755,11 +808,9 @@ export class GrowthKit {
   /** Syringe Shatter (ultimate): the glass bursts, misting half the dose over everyone nearby. */
   private shatterSyringe(struck: Fighter, s: Syringe, time: number): void {
     const { scene } = this.arena;
-    const burst = scene.add.circle(struck.x, struck.y, 12, SYRINGE_COLOR, 0.35)
-      .setStrokeStyle(2, 0xff8899, 0.9).setDepth(6);
-    scene.tweens.add({
-      targets: burst, scaleX: SHATTER_RADIUS / 12, scaleY: SHATTER_RADIUS / 12, alpha: 0,
-      duration: 340, onComplete: () => burst.destroy(),
+    // The dose mists outward as a blood-toned bloom, and the glass goes with it.
+    this.fx(s.owner).burst(struck.x, struck.y, SHATTER_RADIUS, {
+      pods: 14, haze: 3, duration: 420, tones: SICK_TONES, depth: 6,
     });
     for (let k = 0; k < 7; k++) {
       const a = Math.random() * Math.PI * 2;
@@ -897,26 +948,30 @@ export class GrowthKit {
 
   /** Sneeze cone: infects anyone caught in it, but never resets a timer already running. */
   private doSneeze(s: Sickness, time: number): void {
-    const { scene } = this.arena;
     const t = s.target;
     const tier = this.sickTier(s.owner, 'sneeze');
     const dur = SNEEZE_BASE_MS + 2000 * (tier - 1);
     const aim = this.facingOf(t);
 
-    const gfx = scene.add.graphics().setDepth(6);
-    gfx.fillStyle(0xbbdd77, 0.3);
-    gfx.slice(t.x, t.y, SNEEZE_RANGE, aim - SNEEZE_HALF_ARC, aim + SNEEZE_HALF_ARC, false);
-    gfx.fillPath();
-    scene.tweens.add({ targets: gfx, alpha: 0, duration: 420, onComplete: () => gfx.destroy() });
-    for (let k = 0; k < 8; k++) {
-      const a = aim + (Math.random() - 0.5) * SNEEZE_HALF_ARC * 2;
-      const d = 30 + Math.random() * (SNEEZE_RANGE - 30);
-      const drop = scene.add.circle(t.x, t.y, 2 + Math.random() * 2, 0xccee88, 0.85).setDepth(7);
-      scene.tweens.add({
-        targets: drop, x: t.x + Math.cos(a) * d, y: t.y + Math.sin(a) * d, alpha: 0,
-        duration: 380, onComplete: () => drop.destroy(),
-      });
-    }
+    // The cone expands out of the sneezer rather than appearing whole, and the droplets are
+    // pods so the spray reads as living material rather than as confetti.
+    const tint = this.col(s.owner);
+    this.fx(s.owner).anim(6, 420, (g, ft) => {
+      const fade = 1 - ft * ft;
+      const punch = Math.min(1, ft * 2);
+      const reach = SNEEZE_RANGE * (1 - (1 - punch) * (1 - punch));
+      g.fillStyle(tint(GROWTH.spring), 0.28 * fade);
+      g.slice(t.x, t.y, reach, aim - SNEEZE_HALF_ARC, aim + SNEEZE_HALF_ARC, false);
+      g.fillPath();
+      g.lineStyle(2 * fade, tint(GROWTH.pollen), 0.6 * fade);
+      g.beginPath();
+      g.arc(t.x, t.y, reach, aim - SNEEZE_HALF_ARC, aim + SNEEZE_HALF_ARC);
+      g.strokePath();
+    });
+    this.fx(s.owner).motes(t.x, t.y, 10, {
+      angle: aim, spread: SNEEZE_HALF_ARC, speed: SNEEZE_RANGE * 1.5,
+      size: 2.6, life: 420, rise: 6, depth: 7, tones: SICK_TONES,
+    });
     this.arena.showFloatingText(t.x, t.y - 30, '🤧', '#ccee88');
 
     for (const other of this.targetsOf(s.owner)) {
@@ -950,13 +1005,11 @@ export class GrowthKit {
 
   /** The sick body bursts. Everything nearby eats it — except the body it came out of. */
   private erupt(source: Fighter, owner: Owner, amount: number, tier: number): void {
-    const { scene } = this.arena;
     const dmg = Math.round(amount * (1 + 0.1 * tier));
-    const ring = scene.add.circle(source.x, source.y, 14, 0xcc2233, 0.3)
-      .setStrokeStyle(3, 0xff5566, 0.9).setDepth(6);
-    scene.tweens.add({
-      targets: ring, scaleX: COMPROMISE_RADIUS / 14, scaleY: COMPROMISE_RADIUS / 14, alpha: 0,
-      duration: 300, onComplete: () => ring.destroy(),
+    // Higher tiers erupt harder rather than merely wider — the content scales, not the radius.
+    this.fx(owner).burst(source.x, source.y, COMPROMISE_RADIUS, {
+      pods: 10 + tier * 4, haze: 2 + tier, duration: 380 + tier * 80,
+      tones: SICK_TONES, depth: 6,
     });
 
     this.compromiseBusy = true;
@@ -964,7 +1017,7 @@ export class GrowthKit {
       if (t === source || !t.active || t.hp <= 0) continue;
       if (Phaser.Math.Distance.Between(source.x, source.y, t.x, t.y) > COMPROMISE_RADIUS) continue;
       t.takeDamage(dmg);
-      this.arena.spawnHitFlash(t.x, t.y, 0xff5566);
+      this.arena.spawnHitFlash(t.x, t.y, GROWTH.flush);
       this.registerDamage(owner, t, dmg);
     }
     this.compromiseBusy = false;
@@ -1089,6 +1142,10 @@ export class GrowthKit {
       if (Phaser.Input.Keyboard.JustDown(key)) this.tryCastSyringe(time, mouseX, mouseY);
     }
 
+    // Cached for the avatar rig, which runs in update() and has no pointer of its own.
+    this.aimX = mouseX;
+    this.aimY = mouseY;
+
     const ctx = () => this.arena.buildPlayerContext(mouseX, mouseY);
     if (pointer.isDown && player.castAbility('growth-click', ctx())) this.shaveCooldown('growth-click');
     if (Phaser.Input.Keyboard.JustDown(eKey)) player.castAbility('growth-evolve', ctx());
@@ -1136,6 +1193,7 @@ export class GrowthKit {
   // ── Per-frame update ─────────────────────────────────────────────────
 
   update(time: number, delta: number): void {
+    this.updateAvatars(delta);
     this.updateBacteria(time, delta);
     this.updateViruses(time, delta);
     this.updateInfections(time);
@@ -1155,6 +1213,54 @@ export class GrowthKit {
     this.drawDnaBar();
     this.drawDnaHudBar();
     this.drawChargePips();
+  }
+
+  // ── Growth character rig ──────────────────────────────────────────────
+
+  /**
+   * Builds (on first frame) and drives the cell-arm avatar for whichever fighters are growth.
+   * The player faces the cursor; the NPC faces whoever it is fighting. The mastery passive's
+   * culture mat lives here too, at a lower depth than anything a cast raises, so the two stack
+   * into one silhouette rather than fighting each other.
+   */
+  private updateAvatars(delta: number): void {
+    const { player, npc, scene, elementId, npcElementId } = this.arena;
+
+    if (elementId === 'growth' && player?.active) {
+      if (!this.playerAvatar) this.playerAvatar = new GrowthAvatar(scene, this.pcol, CULTURE_TONES);
+      const aimX = this.aimX || player.x + 1;
+      const aimY = this.aimY || player.y;
+      this.playerAvatar.setFacing(Math.atan2(aimY - player.y, aimX - player.x));
+      // Chitin up or a live clone means the colony is thriving; show it on the body.
+      this.playerAvatar.setIntensity(
+        this.fighterBody.chitinUp ? 1.35 : this.hasClone('player') ? 1.2 : 1,
+      );
+      this.playerAvatar.setMastered(this.arena.masteryActive);
+      this.playerAvatar.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
+
+      if (this.arena.masteryActive) {
+        if (!this.masteryCulture) this.masteryCulture = new GrowthCulture(scene, this.pcol, CULTURE_TONES, 44, 0.75, 2, 7);
+        this.masteryCulture.update(delta, player.x, player.y, player.alpha);
+      } else if (this.masteryCulture) {
+        this.masteryCulture.destroy();
+        this.masteryCulture = null;
+      }
+    } else if (this.playerAvatar) {
+      this.playerAvatar.destroy();
+      this.playerAvatar = null;
+      if (this.masteryCulture) { this.masteryCulture.destroy(); this.masteryCulture = null; }
+    }
+
+    if (npcElementId === 'growth' && npc?.active) {
+      if (!this.npcAvatar) this.npcAvatar = new GrowthAvatar(scene, this.ncol, NPC_TONES);
+      this.npcAvatar.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
+      this.npcAvatar.setIntensity(this.npcBody.chitinUp ? 1.35 : 1);
+      this.npcAvatar.setMastered(this.arena.npcMasteryActive);
+      this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
+    } else if (this.npcAvatar) {
+      this.npcAvatar.destroy();
+      this.npcAvatar = null;
+    }
   }
 
   // ── Public do* methods (wired from CastContext) ─────────────────────
@@ -1212,8 +1318,17 @@ export class GrowthKit {
       this.arena.showFloatingText(nx, ny - 26, '🧬 Soup absorbed!', '#88ff88');
     }
 
-    const gfx = scene.add.circle(nx, ny, 12, 0x557733, 0.9).setDepth(5) as Phaser.GameObjects.Arc;
-    this.nests.push({ gfx, x: nx, y: ny, hp: 10, owner, inheritLevels: inherit });
+    // Both arms thrust out and hold — the ultimate plants something, and the nest is
+    // incubated into existence rather than dropped there.
+    this.avatarOf(owner)?.play('raise', Math.atan2(ny - fighter.y, nx - fighter.x), 900);
+    const fx = this.fx(owner);
+    fx.channelIncubate(nx, ny, 54, 700, undefined, 4, tonesFor(owner));
+    fx.stalk(nx, ny, 16, 60, 6, tonesFor(owner));
+    this.nests.push({
+      gfx: scene.add.graphics().setDepth(5),
+      spawnAt: scene.time.now,
+      x: nx, y: ny, hp: 10, owner, inheritLevels: inherit,
+    });
     this.arena.showFloatingText(fighter.x, fighter.y - 40, '🥚 Nest planted', '#88bb22');
     if (owner === 'player') this.arena.recordMasteryStat('auxClones', 1);
   }
@@ -1239,8 +1354,12 @@ export class GrowthKit {
     this.clones.splice(this.clones.indexOf(clone), 1);
     this.destroyCloneVisuals(clone);
     this.arena.showFloatingText(fighter.x, fighter.y - 40, '🧟 INHABITED CLONE!', '#88ff44');
-    const flash = this.arena.scene.add.circle(fighter.x, fighter.y, 14, 0x88bb22, 0.8).setDepth(10);
-    this.arena.scene.tweens.add({ targets: flash, scaleX: 5, scaleY: 5, alpha: 0, duration: 450, onComplete: () => flash.destroy() });
+    // Dying into a clone is the biggest thing this element does, so it gets the whole stack.
+    const fx = this.fx(owner);
+    fx.burst(fighter.x, fighter.y, 96, { pods: 16, haze: 3, duration: 560, tones: tonesFor(owner) });
+    fx.stalk(fighter.x, fighter.y, 18, 80, 10, tonesFor(owner));
+    this.avatarOf(owner)?.play('raise', 0, 800);
+    this.arena.scene.cameras.main.shake(240, 0.006);
   }
 
   // ── Body swapping (SPACE) ────────────────────────────────────────────
@@ -1274,8 +1393,11 @@ export class GrowthKit {
 
     if (!silent) {
       this.arena.showFloatingText(p.x, p.y - 40, '🔀 BODY SWAP', '#aaff66');
-      const flash = this.arena.scene.add.circle(p.x, p.y, 12, 0x88ff66, 0.7).setDepth(10);
-      this.arena.scene.tweens.add({ targets: flash, scaleX: 4, scaleY: 4, alpha: 0, duration: 350, onComplete: () => flash.destroy() });
+      // Both ends of the swap bloom, and a creep of biofilm marks the line between them.
+      this.pfx.bloom(p.x, p.y, 40, 10, 6, CULTURE_TONES);
+      this.pfx.bloom(clone.sprite.x, clone.sprite.y, 40, 10, 6, CULTURE_TONES);
+      this.pfx.creep(px, py, p.x, p.y, 4, CULTURE_TONES);
+      this.playerAvatar?.play('clap');
     }
   }
 
@@ -1375,6 +1497,13 @@ export class GrowthKit {
     const nx = dx / len, ny = dy / len;
     const speed = BACT_SPEED * (1 + 0.2 * this.lvl(srcBody, 'enhanced-flagellum'));
 
+    // The cell pinches off a hand: arms jab, then a bud tears loose where it left.
+    const aim = Math.atan2(ny, nx);
+    const avatar = this.avatarOf(owner);
+    avatar?.play('punch', aim);
+    const hand = avatar?.castHand() ?? { x: ox, y: oy };
+    this.fx(owner).muzzleBud(hand.x, hand.y, aim, 1, 7, tonesFor(owner));
+
     const color = owner === 'player' ? PLAYER_COLOR : NPC_COLOR;
     const container = scene.add.container(ox, oy).setDepth(6);
     const bodyGfx = scene.add.ellipse(0, 0, 16, 9, color, 0.95);
@@ -1397,20 +1526,32 @@ export class GrowthKit {
   }
 
   private clawSwipe(ox: number, oy: number, tx: number, ty: number, owner: Owner, srcBody: BodyState): void {
-    const { scene } = this.arena;
     const aim = Math.atan2(ty - oy, tx - ox);
     const dmg = Math.round(CLAW_DAMAGE * (srcBody.variant === 'red' ? VARIANT_DMG_MULT : 1) * this.dmgBoost(owner));
 
-    const gfx = scene.add.graphics().setDepth(7);
-    gfx.fillStyle(0xddffcc, 0.55);
-    gfx.slice(ox, oy, CLAW_RANGE, aim - CLAW_HALF_ARC * 0.7, aim + CLAW_HALF_ARC * 0.7, false);
-    gfx.fillPath();
-    gfx.lineStyle(3, 0xffffff, 0.8);
-    for (let i = -1; i <= 1; i++) {
-      const a = aim + i * 0.22;
-      gfx.lineBetween(ox + Math.cos(a) * 20, oy + Math.sin(a) * 20, ox + Math.cos(a) * CLAW_RANGE, oy + Math.sin(a) * CLAW_RANGE);
-    }
-    scene.tweens.add({ targets: gfx, alpha: 0, duration: 220, onComplete: () => gfx.destroy() });
+    // Three claws raked across the arc, each leading its own wound trail. Drawn from scratch
+    // every frame so the swipe travels rather than fading in place.
+    const tones = tonesFor(owner);
+    const tint = this.col(owner);
+    this.avatarOf(owner)?.play('sweep', aim);
+    this.fx(owner).anim(7, 240, (g, t) => {
+      const fade = 1 - t * t;
+      const sweep = aim - CLAW_HALF_ARC * 0.7 + t * CLAW_HALF_ARC * 1.4;
+      g.fillStyle(tint(tones.spark), 0.35 * fade);
+      g.slice(ox, oy, CLAW_RANGE, aim - CLAW_HALF_ARC * 0.7, sweep, false);
+      g.fillPath();
+      for (let i = -1; i <= 1; i++) {
+        const a = sweep + i * 0.2;
+        g.lineStyle(3.5 * fade, tint(i === 0 ? tones.spark : tones.lit), 0.9 * fade);
+        g.beginPath();
+        g.moveTo(ox + Math.cos(a) * 18, oy + Math.sin(a) * 18);
+        g.lineTo(ox + Math.cos(a) * CLAW_RANGE, oy + Math.sin(a) * CLAW_RANGE);
+        g.strokePath();
+        // A bead of cytoplasm running off each claw tip.
+        g.fillStyle(tint(tones.cyto), 0.8 * fade);
+        growthPod(g, ox + Math.cos(a) * CLAW_RANGE * 0.75, oy + Math.sin(a) * CLAW_RANGE * 0.75, a, 16 * fade, 3 * fade, 0);
+      }
+    });
 
     for (const t of this.targetsOf(owner)) {
       if (!t.active || t.hp <= 0) continue;
@@ -1419,7 +1560,8 @@ export class GrowthKit {
       const angDiff = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(t.y - oy, t.x - ox) - aim));
       if (angDiff > CLAW_HALF_ARC) continue;
       t.takeDamage(dmg);
-      this.arena.spawnHitFlash(t.x, t.y, 0xddffcc);
+      this.arena.spawnHitFlash(t.x, t.y, GROWTH.pollen);
+      this.fx(owner).motes(t.x, t.y, 5, { angle: aim, spread: 0.8, speed: 110, size: 2.4, life: 380, depth: 8, tones });
       this.registerDamage(owner, t, dmg);
       this.onClickDamage(owner, srcBody, dmg);
     }
@@ -1515,10 +1657,14 @@ export class GrowthKit {
     const { scene } = this.arena;
     const dx = tx - ox, dy = ty - oy;
     const len = Math.sqrt(dx * dx + dy * dy) || 1;
-    const color = owner === 'player' ? 0x77dd33 : 0xdd7733;
-    const tri = scene.add.triangle(ox, oy, 0, -10, 9, 8, -9, 8, color, 0.95).setDepth(6);
-    tri.setStrokeStyle(2, 0xccffaa, 0.9);
-    tri.setRotation(Math.atan2(dy, dx) + Math.PI / 2);
+    const tones = tonesFor(owner);
+    const aim = Math.atan2(dy, dx);
+    // Hurled overhead — the virus is thrown down at the target, not flicked.
+    this.avatarOf(owner)?.play('slam', aim);
+    this.fx(owner).muzzleBud(ox + Math.cos(aim) * 16, oy + Math.sin(aim) * 16, aim, 1.4, 7, tones);
+    const tri = scene.add.triangle(ox, oy, 0, -10, 9, 8, -9, 8, this.col(owner)(tones.cyto), 0.95).setDepth(6);
+    tri.setStrokeStyle(2, this.col(owner)(tones.spark), 0.9);
+    tri.setRotation(aim + Math.PI / 2);
     this.viruses.push({
       tri, owner, srcBody,
       x: ox, y: oy, vx: (dx / len) * VIRUS_SPEED, vy: (dy / len) * VIRUS_SPEED,
@@ -1554,7 +1700,11 @@ export class GrowthKit {
         if (!t.active || t.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(v.x, v.y, t.x, t.y) <= VIRUS_HIT_RADIUS) {
           t.takeDamage(hitDmg);
-          this.arena.spawnHitFlash(t.x, t.y, 0x77dd33);
+          this.arena.spawnHitFlash(t.x, t.y, GROWTH.shoot);
+          // The capsid ruptures and the payload takes root in the victim.
+          this.fx(v.owner).burst(v.x, v.y, 54, {
+            pods: 9, haze: 1, duration: 380, tones: tonesFor(v.owner),
+          });
           this.registerDamage(v.owner, t, hitDmg);
           this.infect(t, v.owner, v.srcBody, time);
           hit = true;
@@ -1690,6 +1840,9 @@ export class GrowthKit {
   private spraySpores(ox: number, oy: number, tx: number, ty: number, owner: Owner, srcBody: BodyState): void {
     const now = this.arena.scene.time.now;
     const aim = Math.atan2(ty - oy, tx - ox);
+    // A spray, not a throw: hands forward along the aim, jetting spores out ahead.
+    this.avatarOf(owner)?.play('sweep', aim);
+    this.fx(owner).sporeJet(ox, oy, aim, 90, 5, tonesFor(owner));
     const count = SPORE_COUNT + this.lvl(srcBody, 'gut-bacteria');
     const gutTier = this.lvl(srcBody, 'gut-bacteria');
     const spikedTier = this.lvl(srcBody, 'spiked-spores');
@@ -1718,14 +1871,14 @@ export class GrowthKit {
   private spawnSpore(x: number, y: number, owner: Owner, spikedTier: number, gutTier: number, time: number): void {
     if (this.spores.length >= SPORE_MAX_COUNT) return;
     const { scene } = this.arena;
-    const color = owner === 'player' ? 0x44bb33 : 0xbb6633;
-    const gfx = scene.add.circle(x, y, 10, color, 0.85).setDepth(5) as Phaser.GameObjects.Arc;
-    gfx.setStrokeStyle(2, 0x88ee66, 0.9);
     this.spores.push({
-      gfx, owner, spikedTier, gutTier, x, y,
+      gfx: scene.add.graphics().setDepth(5), owner, spikedTier, gutTier, x, y,
       hp: SPORE_BASE_HP, maxHp: SPORE_BASE_HP,
       spawnedAt: time, matured: false,
     });
+    // The sac isn't placed — it erupts out of the floor.
+    this.fx(owner).ring(x, y, 3, 24, tonesFor(owner).lit, 340, 3, 4);
+    this.fx(owner).motes(x, y, 4, { speed: 50, size: 2.2, life: 420, rise: 14, depth: 6, tones: tonesFor(owner) });
   }
 
   private sporeRadius(s: SporeWall): number {
@@ -1739,7 +1892,13 @@ export class GrowthKit {
       const age = time - s.spawnedAt;
 
       if (age >= SPORE_LIFESPAN || s.hp <= 0) {
-        if (s.hp <= 0) this.arena.spawnHitFlash(s.x, s.y, 0x44bb33);
+        if (s.hp <= 0) {
+          // A popped sac dumps its contents; one that simply timed out just dries up.
+          this.arena.spawnHitFlash(s.x, s.y, GROWTH.lime);
+          this.fx(s.owner).burst(s.x, s.y, this.sporeRadius(s) * 2.4, {
+            pods: 8, haze: 1, duration: 340, tones: tonesFor(s.owner),
+          });
+        }
         s.gfx.destroy();
         this.spores.splice(i, 1);
         continue;
@@ -1771,9 +1930,13 @@ export class GrowthKit {
       }
 
       const radius = this.sporeRadius(s);
-      s.gfx.setPosition(s.x, s.y);
-      s.gfx.setRadius(radius);
-      s.gfx.setAlpha(age > SPORE_LIFESPAN - 1000 ? (SPORE_LIFESPAN - age) / 1000 : 0.85);
+      s.gfx.clear();
+      s.gfx.setAlpha(age > SPORE_LIFESPAN - 1000 ? (SPORE_LIFESPAN - age) / 1000 : 1);
+      GrowthFx.drawSporeWall(
+        s.gfx, this.col(s.owner), tonesFor(s.owner), s.x, s.y, radius,
+        time / 1000, Math.min(1, age / SPORE_GROW_MS), Phaser.Math.Clamp(s.hp / s.maxHp, 0, 1),
+        s.spikedTier > 0,
+      );
 
       // Eat opposing arena projectiles on contact.
       for (const child of this.arena.projectiles.getChildren()) {
@@ -2105,15 +2268,21 @@ export class GrowthKit {
   // ── Nest / Clone / Puddle ────────────────────────────────────────────
 
   private updateNests(time: number, delta: number): void {
-    void time;
     for (let i = this.nests.length - 1; i >= 0; i--) {
       const n = this.nests[i];
       n.hp = Math.min(NEST_MAX_HP, n.hp + (NEST_HEAL_PER_SEC * delta) / 1000);
       const ratio = n.hp / NEST_MAX_HP;
-      n.gfx.setRadius(12 + ratio * 14);
+      const grow = Math.min(1, (time - n.spawnAt) / 300);
+      n.gfx.clear();
+      GrowthFx.drawNest(
+        n.gfx, this.col(n.owner), tonesFor(n.owner),
+        n.x, n.y, (12 + ratio * 14) * grow, time / 1000, ratio,
+      );
       if (n.hp >= NEST_MAX_HP) {
         n.gfx.destroy();
         this.nests.splice(i, 1);
+        // Hatching splits the sac open.
+        this.fx(n.owner).burst(n.x, n.y, 66, { pods: 12, haze: 2, duration: 460, tones: tonesFor(n.owner) });
         this.spawnClone(n.x, n.y, n.owner, n.inheritLevels);
       }
     }
@@ -2150,7 +2319,11 @@ export class GrowthKit {
     for (let i = this.clones.length - 1; i >= 0; i--) {
       const c = this.clones[i];
       if (c.hp <= 0) {
-        this.arena.spawnHitFlash(c.sprite.x, c.sprite.y, 0x88bb22);
+        this.arena.spawnHitFlash(c.sprite.x, c.sprite.y, GROWTH.lime);
+        // A dying clone doesn't pop — it liquefies into the soup it leaves behind.
+        this.fx(c.owner).burst(c.sprite.x, c.sprite.y, 80, {
+          pods: 14, haze: 3, duration: 520, tones: tonesFor(c.owner),
+        });
         this.spawnSoupPuddle(c.sprite.x, c.sprite.y, c.owner, c.body.levels);
         this.destroyCloneVisuals(c);
         this.clones.splice(i, 1);
@@ -2274,6 +2447,11 @@ export class GrowthKit {
     this.evolveInvincibleCooldownUntil = now + EVOLVE_INVINCIBLE_COOLDOWN;
     player.isInvincible = true;
     player.setTint(EVOLVE_INVINCIBLE_TINT);
+    // The body goes dormant: a shell of pods folds inward over it.
+    this.playerAvatar?.play('flex');
+    this.pfx.bloom(player.x, player.y, 40, 11, 4, CULTURE_TONES);
+    this.pfx.channelIncubate(player.x, player.y, 48, EVOLVE_INVINCIBLE_DURATION,
+      () => (player.active ? { x: player.x, y: player.y } : null), 3, CULTURE_TONES);
     this.arena.showFloatingText(player.x, player.y - 40, '🛡 Invincible', '#cccccc');
   }
 

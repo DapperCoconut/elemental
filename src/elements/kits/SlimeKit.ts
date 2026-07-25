@@ -2,11 +2,19 @@ import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
 import { Projectile } from '../../combat/Projectile';
+import {
+  ACID, AcidAura, AcidAvatar, AcidColorFn, AcidFx, ArmGesture,
+  NPC_TONES, STING_TONES, VILE_TONES,
+} from './AcidVisuals';
 
 // ── Interfaces ────────────────────────────────────────────────────────────
 
+/**
+ * Acid's world objects carry no sprites. Pools creep, bubble and eat outward at their rims, and
+ * a tweened Arc can do none of that — every one of them is repainted from scratch each frame in
+ * `drawWorld`.
+ */
 interface AcidPool {
-  sprite: Phaser.GameObjects.Arc;
   x: number;
   y: number;
   radius: number;
@@ -16,6 +24,8 @@ interface AcidPool {
   nextTickAt: number;
   /** Spray Spread (E+): next time this pool rolls its 20% chance to bud off a smaller pool. */
   nextSpreadCheckAt: number;
+  /** Fixes this pool's lobe pattern so its edge churns without crawling across the floor. */
+  seed: number;
 }
 
 interface HuskLikeVariant {
@@ -61,22 +71,26 @@ interface MeltStatus {
 }
 
 interface MeltPuddle {
-  sprite: Phaser.GameObjects.Arc;
   x: number;
   y: number;
   radius: number;
   buffs: BuffSnapshotEntry[];
+  /** The melting target's element colour — melt puddles are dyed to match ("skin color"). */
+  color: number;
+  seed: number;
 }
 
 /** Acid Mastery — Acid Walker: a short-lived acid puddle left in the player's tracks. */
 interface AcidFootprint {
-  sprite: Phaser.GameObjects.Arc;
   x: number;
   y: number;
   radius: number;
   damage: number;
   expiresAt: number;
   nextTickAt: number;
+  /** Boosted prints (dropped just after surfacing) are bigger and read hotter. */
+  boosted: boolean;
+  seed: number;
 }
 
 // ── SlimeArenaApi ─────────────────────────────────────────────────────────
@@ -87,6 +101,12 @@ export interface SlimeArenaApi {
   readonly enemies: readonly Fighter[];
   readonly scene: Phaser.Scene;
   readonly projectiles: Phaser.Physics.Arcade.Group;
+  readonly elementId: string;
+  readonly npcElementId: string;
+  /** The ability the opponent cast this frame, or null — drives their rig's gestures. */
+  readonly npcCastId: string | null;
+  /** Cosmetics: maps an acid visual color through the owner's color cosmetic. */
+  acidColor(owner: 'player' | 'npc', base: number): number;
   readonly eKey: Phaser.Input.Keyboard.Key;
   readonly fKey: Phaser.Input.Keyboard.Key;
   readonly rKey: Phaser.Input.Keyboard.Key;
@@ -119,10 +139,21 @@ const POOL_DISTANCES = [110, 180, 250];
 const POOL_HOT_DAMAGE = 5;
 const POOL_COOL_TICK_DAMAGE = 2;
 const POOL_COOL_TICK_MS = 2000;
-const POOL_HOT_COLOR = 0x33ff33;
-const POOL_HOT_STROKE = 0x99ff66;
-const POOL_COOL_COLOR = 0x225511;
-const POOL_COOL_STROKE = 0x448822;
+const POOL_HOT_COLOR = ACID.hot;
+const POOL_COOL_COLOR = ACID.cool;
+
+/** Gap between droplet puffs shed out of the back of a live acid shot. */
+const TRAIL_INTERVAL_MS = 45;
+
+/** NPC casts mirrored onto the opponent's rig. */
+const NPC_GESTURES: Record<string, ArmGesture> = {
+  'poison-whip': 'punch',
+  'vile-spray': 'sweep',
+  'snake-burrow': 'flex',
+  'purge': 'punch',
+  'acid-apocalypse': 'raise',
+  'breakdown': 'flex',
+};
 
 const BURROW_SPEED_MULT = 1.25;
 
@@ -189,6 +220,29 @@ const BREAKDOWN_MIN_COVERAGE = 0.5;   // needs the screen at least half covered 
 // ── SlimeKit ──────────────────────────────────────────────────────────────
 
 export class SlimeKit {
+  // ── Visuals ───────────────────────────────────────────────────────────
+  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  private readonly pcol: AcidColorFn;
+  private readonly ncol: AcidColorFn;
+  private readonly pfx: AcidFx;
+  private readonly nfx: AcidFx;
+  /** The dripping character rig (globule arms, eyes, running crest) for each acid fighter. */
+  private playerAvatar: AcidAvatar | null = null;
+  private npcAvatar: AcidAvatar | null = null;
+  private burrowAura: AcidAura | null = null;
+  private breakdownAura: AcidAura | null = null;
+  /** Melt/purge tells riding on their victims — one aura per fighter. */
+  private meltAuras = new Map<Fighter, AcidAura>();
+  private purgeAuras = new Map<Fighter, AcidAura>();
+  /** Every pool, footprint and melt puddle is drawn here, from scratch, every frame. */
+  private worldGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Last aim point, cached in handleInput so the per-frame avatar update can face it. */
+  private aimX = 0;
+  private aimY = 0;
+  private trailAccum = 0;
+  /** Edge-detects the opponent's cast so a gesture fires once, not every frame it is held. */
+  private lastNpcCastId: string | null = null;
+
   private acidPools: AcidPool[] = [];
   private burrowed = false;
   private purgeHpStripped: WeakSet<Fighter> = new WeakSet();
@@ -221,7 +275,28 @@ export class SlimeKit {
   private breakdownUntil = 0;
   private breakdownLastCastAt = -BREAKDOWN_COOLDOWN_MS;
 
-  constructor(private arena: SlimeArenaApi) {}
+  constructor(private arena: SlimeArenaApi) {
+    // Built here, not as field initialisers, so they see the injected arena.
+    this.pcol = (base) => arena.acidColor('player', base);
+    this.ncol = (base) => arena.acidColor('npc', base);
+    this.pfx = new AcidFx(arena.scene, this.pcol);
+    this.nfx = new AcidFx(arena.scene, this.ncol);
+  }
+
+  // ── Visual helpers ──────────────────────────────────────────────────
+
+  /** Effect painter for a side. */
+  private fx(owner: 'player' | 'npc'): AcidFx { return owner === 'player' ? this.pfx : this.nfx; }
+  /** Colour mapper for a side. */
+  private col(owner: 'player' | 'npc'): AcidColorFn { return owner === 'player' ? this.pcol : this.ncol; }
+
+  /** Shared Graphics for everything the kit repaints every frame. Rebuilt lazily after a reset. */
+  private world(): Phaser.GameObjects.Graphics {
+    if (!this.worldGfx || !this.worldGfx.active) {
+      this.worldGfx = this.arena.scene.add.graphics().setDepth(3);
+    }
+    return this.worldGfx;
+  }
 
   // ── Public accessors ────────────────────────────────────────────────
 
@@ -235,7 +310,21 @@ export class SlimeKit {
   // ── reset ────────────────────────────────────────────────────────────
 
   reset(): void {
-    for (const p of this.acidPools) p.sprite.destroy();
+    // Visuals — every GameObject dies with the old scene run, so rebuild lazily in update().
+    if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
+    if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
+    if (this.burrowAura) { this.burrowAura.destroy(); this.burrowAura = null; }
+    if (this.breakdownAura) { this.breakdownAura.destroy(); this.breakdownAura = null; }
+    for (const a of this.meltAuras.values()) a.destroy();
+    this.meltAuras.clear();
+    for (const a of this.purgeAuras.values()) a.destroy();
+    this.purgeAuras.clear();
+    if (this.worldGfx) { this.worldGfx.destroy(); this.worldGfx = null; }
+    this.aimX = 0;
+    this.aimY = 0;
+    this.trailAccum = 0;
+    this.lastNpcCastId = null;
+
     this.acidPools = [];
     if (this.burrowed) {
       this.burrowed = false;
@@ -248,12 +337,10 @@ export class SlimeKit {
     this.acidRainDropAccum = 0;
     this.drippingEnemies = new Map();
     this.meltStatuses = new Map();
-    for (const mp of this.meltPuddles) mp.sprite.destroy();
     this.meltPuddles = [];
     this.activeMeltBuffs = [];
     this.meltBuffExpireAt = 0;
     // Mastery — Acid Walker + Breakdown
-    for (const fp of this.acidFootprints) fp.sprite.destroy();
     this.acidFootprints = [];
     this.wasInAcid = false;
     this.footprintTrailUntil = 0;
@@ -274,6 +361,17 @@ export class SlimeKit {
     const durationMs = (proj as unknown as { purgeDurationMs?: number }).purgeDurationMs ?? PURGE_STAGES[0].purgeMs;
     target.purgedUntil = Math.max(target.purgedUntil, time + durationMs);
     this.arena.showFloatingText(target.x, target.y - 26, '☠️ Purged!', '#66ff33');
+    // A ball that landed on the local player came from the opponent, so it is painted in their
+    // colours — otherwise an npc's purge would splash in the player's own green.
+    const fromNpc = target === this.arena.player;
+    const fx = fromNpc ? this.nfx : this.pfx;
+    const tones = fromNpc ? NPC_TONES : VILE_TONES;
+    // Snap on application, then a boiling-off tell so the strip stays readable for its duration.
+    fx.splash(target.x, target.y, 52, { droplets: 12, fizz: 4, depth: 8, tones });
+    if (!this.purgeAuras.has(target)) {
+      this.purgeAuras.set(target, new AcidAura(
+        this.arena.scene, fromNpc ? this.ncol : this.pcol, 'purge', tones, 28, 4));
+    }
 
     // Meltdown (F+): only a fully-charged (stage 3) player purge ball melts the target.
     const stage = (proj as unknown as { purgeStage?: number }).purgeStage;
@@ -310,13 +408,15 @@ export class SlimeKit {
 
   /** Single entry point for creating an acid pool, so Spray Spread/Rattling Strike share the same object shape as Vile Spray. */
   private createAcidPool(x: number, y: number, radius: number, time: number): AcidPool {
-    const sprite = this.arena.scene.add.circle(x, y, radius, POOL_HOT_COLOR, 0.55)
-      .setStrokeStyle(2, POOL_HOT_STROKE, 0.9).setDepth(3);
     const pool: AcidPool = {
-      sprite, x, y, radius, baseRadius: radius, state: 'hot', nextTickAt: 0,
+      x, y, radius, baseRadius: radius, state: 'hot', nextTickAt: 0,
       nextSpreadCheckAt: time + SPREAD_CHECK_MS,
+      seed: Math.random() * Math.PI * 2,
     };
     this.acidPools.push(pool);
+    // A pool lands: the surface breaks and fizzes where it hit.
+    this.pfx.ring(x, y, radius * 0.3, radius, ACID.hotRim, 340, 3, 4);
+    this.pfx.fizz(x, y, Math.max(2, Math.round(radius / 12)), radius * 0.7, 4, VILE_TONES);
     // Mastery — track cumulative acid laid down (batched to keep localStorage writes rare).
     const { width: W, height: H } = this.arena.scene.scale;
     this.coverageAccum += (Math.PI * radius * radius) / Math.max(1, W * H);
@@ -344,18 +444,25 @@ export class SlimeKit {
     // Mastery — Acid Walker: footprints dropped shortly after surfacing are boosted.
     this.lastUnburrowAt = this.arena.scene.time.now;
 
+    // Surfacing: the mound bursts open and throws acid clear.
+    this.pfx.splash(player.x, player.y, 56, { droplets: 12, fizz: 4, etch: false, depth: 6, tones: VILE_TONES });
+    this.playerAvatar?.play('flex');
+
     // Rattling Strike (R+): un-burrowing detonates a red AOE and marks hit enemies as dripping.
     if (this.arena.hasUpgrade('r')) {
       const x = player.x, y = player.y, time = this.arena.scene.time.now;
-      const aoe = this.arena.scene.add.circle(x, y, RATTLING_RADIUS, 0xff3333, 0.35)
-        .setStrokeStyle(2, 0xff3333, 0.9).setDepth(4);
-      this.arena.scene.tweens.add({ targets: aoe, alpha: 0, duration: 350, onComplete: () => aoe.destroy() });
+      // The one warm effect in the element, so it can never be mistaken for a normal surface.
+      this.pfx.splash(x, y, RATTLING_RADIUS, {
+        droplets: 18, fizz: 4, depth: 6, duration: 480, tones: STING_TONES,
+      });
+      this.arena.scene.cameras.main.shake(180, 0.005);
       let hitAny = false;
       for (const t of this.arena.enemies) {
         if (!t.active || t.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(x, y, t.x, t.y) <= RATTLING_RADIUS) {
           t.takeDamage(RATTLING_DAMAGE);
-          this.arena.spawnHitFlash(t.x, t.y, 0xff3333);
+          this.arena.spawnHitFlash(t.x, t.y, ACID.sting);
+          this.pfx.splash(t.x, t.y, 34, { droplets: 6, fizz: 0, etch: false, depth: 8, tones: STING_TONES });
           this.drippingEnemies.set(t, { until: time + RATTLING_DRIP_MS, nextDripAt: time });
           // Mastery — "attack enemies by un-burrowing next to them".
           this.arena.recordMasteryStat('burrowAttacks', 1);
@@ -383,12 +490,17 @@ export class SlimeKit {
     const buffs = this.snapshotBuffs(target);
     this.meltStatuses.set(target, { until: time + MELT_DURATION_MS, nextDripAt: time + MELT_TICK_MS, buffs, color: target.element.color });
     this.arena.showFloatingText(target.x, target.y - 40, '🫠 Melting!', '#33cc33');
+    // A running tell on the victim for the whole melt, not just on the tick frames.
+    if (!this.meltAuras.has(target)) {
+      this.meltAuras.set(target, new AcidAura(this.arena.scene, this.pcol, 'melt', VILE_TONES, 24, 4));
+    }
+    this.pfx.splash(target.x, target.y, 40, { droplets: 8, fizz: 3, etch: false, depth: 8, tones: VILE_TONES });
   }
 
   private spawnMeltPuddle(x: number, y: number, buffs: BuffSnapshotEntry[], color: number): void {
-    const sprite = this.arena.scene.add.circle(x, y, MELT_PUDDLE_RADIUS, color, 0.6)
-      .setStrokeStyle(2, color, 0.95).setDepth(3);
-    this.meltPuddles.push({ sprite, x, y, radius: MELT_PUDDLE_RADIUS, buffs });
+    this.meltPuddles.push({
+      x, y, radius: MELT_PUDDLE_RADIUS, buffs, color, seed: Math.random() * Math.PI * 2,
+    });
   }
 
   private updateMeltStatuses(time: number): void {
@@ -441,7 +553,10 @@ export class SlimeKit {
       const mp = this.meltPuddles[i];
       if (Phaser.Math.Distance.Between(player.x, player.y, mp.x, mp.y) <= mp.radius) {
         this.grantMeltBuffs(player, mp.buffs, time);
-        mp.sprite.destroy();
+        // Absorbing a puddle: it collapses inward into the player rather than blinking out.
+        this.pfx.gather(mp.x, mp.y, mp.radius * 1.6, 380,
+          () => (player.active ? { x: player.x, y: player.y } : null), 5, VILE_TONES);
+        this.pfx.ring(mp.x, mp.y, mp.radius, 6, mp.color, 340, 3, 5);
         this.meltPuddles.splice(i, 1);
       }
     }
@@ -469,12 +584,16 @@ export class SlimeKit {
     const mouseX = ptr.worldX;
     const mouseY = ptr.worldY;
     const baseAngle = Math.atan2(mouseY - player.y, mouseX - player.x);
+    this.playerAvatar?.play('punch', baseAngle);
     for (let i = 0; i < count; i++) {
       scene.time.delayedCall(i * WHIP_STAGGER_MS, () => {
         if (!player.active || player.hp <= 0) return;
         const jitter = Phaser.Math.DegToRad(Phaser.Math.FloatBetween(-WHIP_SPREAD_DEG, WHIP_SPREAD_DEG));
         const ang = baseAngle + jitter;
         const spawnDist = 30;
+        // A lash every few shots, not every one: fifteen muzzle sprays in 375ms is a wall of
+        // white, and the barrage reads better as an irregular spit.
+        if (i % 3 === 0) this.pfx.muzzleSpray(player.x, player.y, ang, 0.85, 7, VILE_TONES);
         const proj = new Projectile(
           scene,
           player.x + Math.cos(ang) * spawnDist,
@@ -494,10 +613,18 @@ export class SlimeKit {
     const { player, scene } = this.arena;
     const ptr = scene.input.activePointer;
     const ang = Math.atan2(ptr.worldY - player.y, ptr.worldX - player.x);
+    this.playerAvatar?.play('sweep', ang);
+    this.pfx.muzzleSpray(player.x, player.y, ang, 1.6, 7, VILE_TONES);
     for (const dist of POOL_DISTANCES) {
       const x = player.x + Math.cos(ang) * dist;
       const y = player.y + Math.sin(ang) * dist;
       this.createAcidPool(x, y, POOL_RADIUS, time);
+      // Each pool is thrown out there, so the spray reads as one arcing stream of acid rather
+      // than three circles appearing at once.
+      this.pfx.droplets(player.x, player.y, 5, {
+        speed: dist * 2.2, angle: ang, spread: 0.22, size: 4.4,
+        life: 340, fall: 20, depth: 6, tones: VILE_TONES,
+      });
     }
     this.arena.showFloatingText(player.x, player.y - 30, '🧪 Vile Spray!', '#66ff33');
   }
@@ -527,6 +654,16 @@ export class SlimeKit {
     const speed = PURGE_BASE_SPEED * stage.sizeSpeedMult;
     proj.launch((dx / len) * speed, (dy / len) * speed);
     this.arena.showFloatingText(player.x, player.y - 30, `☠️ Purge (Stage ${stageIndex})`, '#66ff33');
+    // The stage is the whole point of the ability, so the throw grows with it rather than the
+    // projectile simply being scaled: a bigger spray, a wider front, more thrown acid.
+    const ang = Math.atan2(dy, dx);
+    this.playerAvatar?.play('slam', ang);
+    this.pfx.muzzleSpray(player.x, player.y, ang, 1 + stageIndex * 0.4, 7, VILE_TONES);
+    this.pfx.ring(player.x, player.y, 10, 30 + stageIndex * 16, ACID.neon, 300 + stageIndex * 90, 3, 5);
+    this.pfx.droplets(player.x, player.y, 4 + stageIndex * 4, {
+      speed: 200, angle: ang, spread: 0.5, size: 3.4 + stageIndex,
+      life: 420, depth: 6, tones: VILE_TONES,
+    });
   }
 
   // ── update ────────────────────────────────────────────────────────────
@@ -546,7 +683,9 @@ export class SlimeKit {
             this.noteAcidHit(t);
             pool.state = 'cool';
             pool.nextTickAt = time + POOL_COOL_TICK_MS;
-            pool.sprite.setFillStyle(POOL_COOL_COLOR, 0.55).setStrokeStyle(2, POOL_COOL_STROKE, 0.9);
+            // The pool spends its bite: it flares, throws acid up the victim, and goes dark.
+            this.pfx.splash(t.x, t.y, 40, { droplets: 8, fizz: 3, etch: false, depth: 8, tones: VILE_TONES });
+            this.pfx.fizz(pool.x, pool.y, Math.max(3, Math.round(pool.radius / 9)), pool.radius, 4, VILE_TONES);
             break;
           }
         }
@@ -558,6 +697,10 @@ export class SlimeKit {
             t.takeDamage(POOL_COOL_TICK_DAMAGE, { source: pool, sourceX: pool.x, sourceY: pool.y });
             this.arena.spawnHitFlash(t.x, t.y, POOL_COOL_COLOR);
             this.noteAcidHit(t);
+            // A quiet tick still burns — a couple of drops thrown up off the victim's feet.
+            this.pfx.droplets(t.x, t.y + 8, 3, {
+              speed: 60, angle: -Math.PI / 2, spread: 1, size: 2.4, life: 380, depth: 5, tones: VILE_TONES,
+            });
           }
         }
       }
@@ -595,8 +738,9 @@ export class SlimeKit {
             if (!t.active || t.hp <= 0) continue;
             if (Phaser.Math.Distance.Between(t.x, t.y, pool.x, pool.y) <= pool.radius) {
               t.takeDamage(RAIN_TICK_DAMAGE, { source: pool, sourceX: pool.x, sourceY: pool.y });
-              this.arena.spawnHitFlash(t.x, t.y, 0x66ff33);
+              this.arena.spawnHitFlash(t.x, t.y, ACID.neon);
               this.noteAcidHit(t);
+              this.pfx.splash(t.x, t.y, 30, { droplets: 5, fizz: 0, etch: false, depth: 8, tones: VILE_TONES });
             }
           }
         }
@@ -604,13 +748,12 @@ export class SlimeKit {
       this.acidRainDropAccum += delta;
       if (this.acidRainDropAccum >= RAIN_DROP_INTERVAL_MS && this.acidPools.length > 0) {
         this.acidRainDropAccum -= RAIN_DROP_INTERVAL_MS;
-        const pool = this.acidPools[Phaser.Math.Between(0, this.acidPools.length - 1)];
-        const dx = Phaser.Math.Between(-pool.radius, pool.radius);
-        const drop = scene.add.circle(pool.x + dx, pool.y - 90, 3, 0x66ff33, 0.9).setDepth(6);
-        scene.tweens.add({
-          targets: drop, y: pool.y, alpha: 0.2, duration: 300,
-          onComplete: () => drop.destroy(),
-        });
+        // Two or three drops per beat, each a real fall that breaks where it lands.
+        for (let i = 0; i < 3; i++) {
+          const pool = this.acidPools[Phaser.Math.Between(0, this.acidPools.length - 1)];
+          const dx = Phaser.Math.Between(-pool.radius, pool.radius);
+          this.pfx.rainDrop(pool.x + dx, pool.y + Phaser.Math.Between(-8, 8), 140, 6, VILE_TONES);
+        }
       }
 
       // Acid Flood (Q+): puddles slowly expand while the rain is active
@@ -619,8 +762,8 @@ export class SlimeKit {
         for (const pool of this.acidPools) {
           const cap = pool.baseRadius * FLOOD_MAX_RADIUS_MULT;
           if (pool.radius >= cap) continue;
+          // drawWorld reads `radius` every frame, so growing the pool is the whole update.
           pool.radius = Math.min(cap, pool.radius + growth);
-          pool.sprite.setRadius(pool.radius);
         }
       }
     }
@@ -657,25 +800,186 @@ export class SlimeKit {
       }
     }
     if (this.acidFootprints.length > 0) this.updateFootprints(time);
+
+    this.updateVisuals(time, delta);
+  }
+
+  /** Online: opponent is acid — advance only the visuals that can appear on our screen. */
+  updateNpc(time: number, delta: number): void {
+    this.updateVisuals(time, delta);
+  }
+
+  /**
+   * Everything that must run for whichever side is acid: both rigs, the persistent tells, the
+   * trails coming off live shots, one repaint of every pool, and the opponent's cast gestures.
+   */
+  private updateVisuals(time: number, delta: number): void {
+    this.updateAvatars(delta);
+    this.updateAuras(delta, time);
+    this.updateProjectileTrails(delta);
+    this.drawWorld(time);
+    const castId = this.arena.npcCastId;
+    if (castId !== this.lastNpcCastId) {
+      this.lastNpcCastId = castId;
+      this.handleNpcCastId(castId);
+    }
+  }
+
+  /**
+   * Builds (on first frame) and drives the dripping rig for whichever fighters are acid. The
+   * player faces the cursor; the NPC faces whoever it is fighting. Burrowed, the rig sinks with
+   * the fighter's own alpha, and the burrow aura closes over the top of it.
+   */
+  private updateAvatars(delta: number): void {
+    const { player, npc, scene, elementId, npcElementId } = this.arena;
+
+    if (elementId === 'slime' && player?.active) {
+      if (!this.playerAvatar) this.playerAvatar = new AcidAvatar(scene, this.pcol, VILE_TONES);
+      const aimX = this.aimX || player.x + 1;
+      const aimY = this.aimY || player.y;
+      this.playerAvatar.setFacing(Math.atan2(aimY - player.y, aimX - player.x));
+      const breaking = scene.time.now < this.breakdownUntil;
+      this.playerAvatar.setIntensity(breaking ? 1.5 : this.acidRainActiveUntil > scene.time.now ? 1.25 : 1);
+      this.playerAvatar.setMastered(this.arena.masteryActive);
+      // Burrowed, the character works low under the surface rather than standing in it.
+      this.playerAvatar.setHold(this.burrowed ? 'brace' : null,
+        Math.atan2(aimY - player.y, aimX - player.x));
+      this.playerAvatar.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
+    } else if (this.playerAvatar) {
+      this.playerAvatar.destroy();
+      this.playerAvatar = null;
+    }
+
+    if (npcElementId === 'slime' && npc?.active) {
+      if (!this.npcAvatar) this.npcAvatar = new AcidAvatar(scene, this.ncol, NPC_TONES);
+      this.npcAvatar.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
+      this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
+    } else if (this.npcAvatar) {
+      this.npcAvatar.destroy();
+      this.npcAvatar = null;
+    }
+  }
+
+  /** Burrow and Breakdown on the caster; melt and purge tells on whoever is carrying them. */
+  private updateAuras(delta: number, time: number): void {
+    const { player, scene } = this.arena;
+    const alive = player?.active ? (player.forceInvisible ? 0 : 1) : 0;
+
+    if (this.burrowed && alive) {
+      if (!this.burrowAura) this.burrowAura = new AcidAura(scene, this.pcol, 'burrow', VILE_TONES, 30, 4);
+      this.burrowAura.update(delta, player.x, player.y, 1);
+    } else if (this.burrowAura) {
+      this.burrowAura.destroy();
+      this.burrowAura = null;
+    }
+
+    if (time < this.breakdownUntil && alive) {
+      if (!this.breakdownAura) this.breakdownAura = new AcidAura(scene, this.pcol, 'breakdown', VILE_TONES, 34, 4);
+      this.breakdownAura.update(delta, player.x, player.y, 1);
+    } else if (this.breakdownAura) {
+      this.breakdownAura.destroy();
+      this.breakdownAura = null;
+    }
+
+    for (const [victim, aura] of this.meltAuras) {
+      if (!this.meltStatuses.has(victim) || !victim.active || victim.hp <= 0) {
+        aura.destroy();
+        this.meltAuras.delete(victim);
+        continue;
+      }
+      aura.update(delta, victim.x, victim.y, victim.forceInvisible ? 0 : victim.alpha);
+    }
+    for (const [victim, aura] of this.purgeAuras) {
+      if (!victim.active || victim.hp <= 0 || time >= victim.purgedUntil) {
+        aura.destroy();
+        this.purgeAuras.delete(victim);
+        continue;
+      }
+      aura.update(delta, victim.x, victim.y, victim.forceInvisible ? 0 : victim.alpha);
+    }
+  }
+
+  /**
+   * Live lashes and Purge balls shed droplets out of their *back*, which is what makes a bead of
+   * green read as something travelling rather than sliding. Scanned off the shared projectile
+   * group on an accumulator so a 200-lash Breakdown stays cheap.
+   */
+  private updateProjectileTrails(delta: number): void {
+    this.trailAccum += delta;
+    if (this.trailAccum < TRAIL_INTERVAL_MS) return;
+    this.trailAccum = 0;
+    for (const child of this.arena.projectiles.getChildren()) {
+      const proj = child as Projectile;
+      const key = proj.texture?.key;
+      if (!proj.active || (key !== 'proj-acid-whip' && key !== 'proj-purge')) continue;
+      const body = proj.body as Phaser.Physics.Arcade.Body | null;
+      if (!body) continue;
+      // Whip lashes are cheap and numerous; only a fraction of them trail on any given tick.
+      if (key === 'proj-acid-whip' && Math.random() > 0.3) continue;
+      const back = Math.atan2(-body.velocity.y, -body.velocity.x);
+      const fx = proj.isFromPlayer ? this.pfx : this.nfx;
+      const tones = proj.isFromPlayer ? VILE_TONES : NPC_TONES;
+      fx.droplets(proj.x, proj.y, key === 'proj-purge' ? 3 : 1, {
+        speed: 50, spread: 0.45, angle: back,
+        size: key === 'proj-purge' ? 3.4 : 2.2,
+        life: 320, fall: 22, depth: 5, tones,
+      });
+    }
+  }
+
+  /** Mirrors the opponent's casts onto their rig. */
+  private handleNpcCastId(id: string | null): void {
+    if (!id) return;
+    const gesture = NPC_GESTURES[id];
+    if (!gesture) return;
+    const { npc, player } = this.arena;
+    if (!npc?.active) return;
+    const ang = Math.atan2(player.y - npc.y, player.x - npc.x);
+    this.npcAvatar?.play(gesture, ang);
+    if (id === 'poison-whip' || id === 'purge') {
+      this.nfx.muzzleSpray(npc.x, npc.y, ang, id === 'purge' ? 1.4 : 0.9, 7, NPC_TONES);
+    }
+  }
+
+  /**
+   * One repaint of every pool, footprint and melt puddle the kit owns. All of them creep and
+   * bubble, so none of them can be a sprite with a tween on it.
+   */
+  private drawWorld(time: number): void {
+    const g = this.world();
+    const t = time / 1000;
+    g.clear();
+
+    for (const pool of this.acidPools) {
+      AcidFx.drawPool(g, this.pcol, pool.x, pool.y, pool.radius, t, pool.seed, pool.state === 'hot');
+    }
+    for (const fp of this.acidFootprints) {
+      // Prints fade out over their last half-second rather than popping.
+      const a = Phaser.Math.Clamp((fp.expiresAt - time) / 600, 0, 1);
+      AcidFx.drawPool(g, this.pcol, fp.x, fp.y, fp.radius, t, fp.seed, fp.boosted, a * 0.9);
+    }
+    for (const mp of this.meltPuddles) {
+      AcidFx.drawMeltPuddle(g, this.pcol, mp.x, mp.y, mp.radius, mp.color, t, mp.seed, mp.buffs.length);
+    }
   }
 
   private spawnFootprint(x: number, y: number, time: number, boosted: boolean): void {
     const radius = boosted ? FOOTPRINT_BOOST_RADIUS : FOOTPRINT_RADIUS;
-    const color = boosted ? 0x143d0a : 0x2a6b1a;
-    const sprite = this.arena.scene.add.circle(x, y, radius, color, 0.6)
-      .setStrokeStyle(2, boosted ? 0x2a5511 : 0x448822, 0.9).setDepth(3);
     this.acidFootprints.push({
-      sprite, x, y, radius,
+      x, y, radius,
       damage: boosted ? FOOTPRINT_BOOST_DAMAGE : FOOTPRINT_DAMAGE,
       expiresAt: time + FOOTPRINT_LIFETIME_MS,
       nextTickAt: time + FOOTPRINT_TICK_MS,
+      boosted, seed: Math.random() * Math.PI * 2,
     });
+    // A boosted print is a step out of a burst, so it lands with its own small splash.
+    if (boosted) this.pfx.fizz(x, y, 3, radius, 4, VILE_TONES);
   }
 
   private updateFootprints(time: number): void {
     for (let i = this.acidFootprints.length - 1; i >= 0; i--) {
       const fp = this.acidFootprints[i];
-      if (time >= fp.expiresAt) { fp.sprite.destroy(); this.acidFootprints.splice(i, 1); continue; }
+      if (time >= fp.expiresAt) { this.acidFootprints.splice(i, 1); continue; }
       if (time < fp.nextTickAt) continue;
       fp.nextTickAt = time + FOOTPRINT_TICK_MS;
       for (const t of this.arena.enemies) {
@@ -694,6 +998,9 @@ export class SlimeKit {
   handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
     const { player, eKey, fKey, rKey, qKey, pointerWasDown } = this.arena;
     const playerCtx = this.arena.buildPlayerContext(mouseX, mouseY);
+    // Cached for the avatar rig, which runs in update() and has no pointer of its own.
+    this.aimX = mouseX;
+    this.aimY = mouseY;
 
     // ── Mastery — Breakdown takes over whichever slot it's bound to ──────
     const breakdownSlot = this.arena.masteryActive ? this.breakdownSlot() : null;
@@ -726,6 +1033,11 @@ export class SlimeKit {
         player.isInvincible = true;
         player.setAlpha(0.4);
         this.arena.showFloatingText(player.x, player.y - 30, '🐍 Burrowed!', '#99ff66');
+        // Going under: the surface closes over the caster and swallows them.
+        this.playerAvatar?.play('flex');
+        this.pfx.gather(player.x, player.y, 46, 400,
+          () => (player.active ? { x: player.x, y: player.y } : null), 5, VILE_TONES);
+        this.pfx.ring(player.x, player.y, 46, 12, ACID.hotRim, 380, 3.5, 4);
       }
     }
 
@@ -742,6 +1054,14 @@ export class SlimeKit {
         this.acidRainDropAccum = 0;
         const { width: W, height: H } = this.arena.scene.scale;
         this.arena.showFloatingText(W / 2, H / 2 - 60, '☠️ Acid Apocalypse!', '#66ff33');
+        // The sky opening: the caster throws both arms up and every live pool flares at once.
+        this.playerAvatar?.play('raise', -Math.PI / 2, 900);
+        this.pfx.ring(player.x, player.y, 12, 160, ACID.neon, 620, 6, 5);
+        for (const pool of this.acidPools) {
+          this.pfx.ring(pool.x, pool.y, pool.radius * 0.4, pool.radius * 1.3, ACID.hotRim, 460, 3, 4);
+          this.pfx.fizz(pool.x, pool.y, 4, pool.radius, 4, VILE_TONES);
+        }
+        this.arena.scene.cameras.main.shake(320, 0.005);
       }
     }
   }
@@ -785,6 +1105,12 @@ export class SlimeKit {
     const fromPlayer = owner === 'player';
     if (owner === 'player') this.breakdownUntil = time + BREAKDOWN_DURATION_MS;
     this.arena.showFloatingText(origin.x, origin.y - 40, '☣️ BREAKDOWN!', '#33ff33');
+    // Coming apart: a hard burst on the frame it starts, then the aura carries the 3s of leak.
+    const bfx = this.fx(owner);
+    const btones = owner === 'player' ? VILE_TONES : NPC_TONES;
+    (owner === 'player' ? this.playerAvatar : this.npcAvatar)?.play('flex');
+    bfx.splash(origin.x, origin.y, 90, { droplets: 20, fizz: 6, duration: 560, depth: 6, tones: btones });
+    scene.cameras.main.shake(280, 0.006);
 
     // 200 acid lashes sprayed in random directions across the full 360° over 3 seconds.
     for (let i = 0; i < BREAKDOWN_LASH_COUNT; i++) {
@@ -814,8 +1140,10 @@ export class SlimeKit {
           if (!p.active || p.hp <= 0) return;
           const ox = Phaser.Math.Between(-16, 16), oy = Phaser.Math.Between(-16, 16);
           if (this.acidPools.length < MAX_ACID_POOLS) this.createAcidPool(p.x + ox, p.y + oy, BREAKDOWN_LEAK_RADIUS, scene.time.now);
-          const drip = scene.add.circle(p.x + ox, p.y, 3, 0x66ff33, 0.9).setDepth(6);
-          scene.tweens.add({ targets: drip, y: p.y + 14, alpha: 0.1, duration: 300, onComplete: () => drip.destroy() });
+          this.pfx.droplets(p.x + ox, p.y - 6, 3, {
+            speed: 40, angle: Math.PI / 2, spread: 0.6, size: 3,
+            life: 380, fall: 30, depth: 6, tones: VILE_TONES,
+          });
         });
       }
     }

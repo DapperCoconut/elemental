@@ -1,8 +1,13 @@
 import Phaser from 'phaser';
+import { AvatarSpec, BaseAvatar, ColorFn, FxBase, TAU, easeIn, easeOut } from './ElementVisuals';
 
 /**
  * Shared drawing kit for everything Water renders: the living-water avatar (ball arms + eyes
  * + a crown fountain), the surf aura, and the one-shot effects every water ability fires off.
+ *
+ * The generic halves — the tween-backed animation runner and the character rig itself — live
+ * in ElementVisuals.ts and are shared with the other elements. What stays here is what makes
+ * water water: the ribbon, the palette, and the effects built out of them.
  *
  * Colours must come from the WATER palette below. Water has no colour-slot cosmetic yet, but
  * every call still routes through the owner's `waterColor` mapper, so the day one lands it is
@@ -10,7 +15,9 @@ import Phaser from 'phaser';
  */
 
 /** `(base) => displayed` — CosmeticsKit.waterColor bound to one owner. */
-export type WaterColorFn = (base: number) => number;
+export type WaterColorFn = ColorFn;
+
+export type { ArmGesture, ArmHold } from './ElementVisuals';
 
 export const WATER = {
   abyss: 0x00224d,
@@ -24,11 +31,6 @@ export const WATER = {
   pale: 0xddf6ff,
   white: 0xffffff,
 } as const;
-
-const TAU = Math.PI * 2;
-
-const easeOut = (t: number): number => 1 - (1 - t) * (1 - t);
-const easeIn = (t: number): number => t * t;
 
 /**
  * A water ribbon: a thin tail at the root swelling into a fat rounded head at the tip, bent
@@ -127,24 +129,9 @@ export interface SprayOpts {
  * One-shot water effects. Cheap to construct — build one per owner (or per cast, as the
  * ability files do) and hand it the owner's colour mapper.
  */
-export class WaterFx {
-  constructor(private scene: Phaser.Scene, private tint: WaterColorFn = (c) => c) {}
-
-  /**
-   * Runs `draw(g, t)` every frame for `duration` ms with `t` sweeping 0→1, then cleans up.
-   * Built on a tween so a scene restart kills it along with everything else.
-   */
-  anim(depth: number, duration: number, draw: (g: Phaser.GameObjects.Graphics, t: number) => void): void {
-    const g = this.scene.add.graphics().setDepth(depth);
-    this.scene.tweens.addCounter({
-      from: 0, to: 1, duration,
-      onUpdate: (tw) => {
-        if (!g.active) return;
-        g.clear();
-        draw(g, Number(tw.getValue()));
-      },
-      onComplete: () => g.destroy(),
-    });
+export class WaterFx extends FxBase {
+  constructor(scene: Phaser.Scene, tint: WaterColorFn = (c) => c) {
+    super(scene, tint);
   }
 
   /**
@@ -174,12 +161,7 @@ export class WaterFx {
 
   /** Blown-out foam core — the first two frames of any real impact. */
   flash(x: number, y: number, radius: number, depth = 7): void {
-    this.anim(depth, 150, (g, t) => {
-      g.fillStyle(this.tint(WATER.white), (1 - t) * 0.9);
-      g.fillCircle(x, y, radius * (0.5 + t * 0.9));
-      g.fillStyle(this.tint(WATER.pale), (1 - t) * 0.55);
-      g.fillCircle(x, y, radius * (0.8 + t * 1.5));
-    });
+    this.flashIn(x, y, radius, WATER.white, WATER.pale, depth);
   }
 
   /**
@@ -745,89 +727,34 @@ export class WaterSurf {
 
 // ── WaterAvatar ───────────────────────────────────────────────────────────
 
-/** One-shot arm gestures. `spray`, `charge` and `draw` are held instead (see `hold`). */
-export type ArmGesture =
-  | 'punch'    // throw a shot — one arm jabs along the aim
-  | 'dash'     // wind both arms back, then fling them forward
-  | 'slam'     // raise overhead, then drive down at the target
-  | 'raise'    // both arms thrust skyward and hold (ultimates)
-  | 'sweep'    // wide horizontal arc across the aim
-  | 'clap'     // arms smack together in front, then bounce apart
-  | 'flex';    // both arms pump out to the sides (toggles, buffs)
-
-/** Sustained poses held for as long as the ability is being channelled. */
-export type ArmHold = 'spray' | 'charge' | 'draw' | null;
-
-interface ArmPose { ang: number; dist: number; scale: number }
-
-const IDLE_DIST = 24;
-const ARM_STIFFNESS = 0.32;
+/** Concentric discs of one liquid ball hand, outermost first. */
+const WATER_AVATAR: AvatarSpec = {
+  hands: [
+    { r: 9, color: WATER.ocean, alpha: 0.3 },
+    { r: 6.4, color: WATER.blue, alpha: 0.92 },
+    { r: 3.6, color: WATER.cyan, alpha: 1 },
+    // Glint sits up-and-left of centre: a wet sphere reads as wet only if the specular
+    // highlight is off-axis. Dead centre and it looks like a glowing bulb instead.
+    { r: 1.6, color: WATER.white, alpha: 0.95, ox: -1.8, oy: -1.8 },
+  ],
+  eyeWhite: WATER.pale,
+  eyePupil: WATER.abyss,
+  // A liquid hand stretches more than a solid one.
+  squash: { div: 13, x: 0.6, y: 0.34 },
+};
 
 /**
  * The water character rig: two liquid ball hands, a pair of eyes, and a fountain playing off
- * the crown that arcs over and drips. The hands trail the body with spring physics so movement
- * reads as weight, and every ability drives a gesture through `play`.
+ * the crown that arcs over and drips. The hands, eyes and gestures come from BaseAvatar; what
+ * water adds is the wet sheen beneath and the fountain above.
  */
-export class WaterAvatar {
-  private armObjs: Phaser.GameObjects.Container[] = [];
-  private eyeObjs: { white: Phaser.GameObjects.Arc; pupil: Phaser.GameObjects.Arc }[] = [];
-  /** Soft wet sheen under the sprite. */
-  private glow: Phaser.GameObjects.Graphics;
-  /** Crown fountain. Drawn *over* the sprite — under it, only the dark tips would clear the body. */
-  private crown: Phaser.GameObjects.Graphics;
+export class WaterAvatar extends BaseAvatar {
   private fx: WaterFx;
 
-  /** Live arm positions in world space — lerped toward the pose target each frame. */
-  private armX = [0, 0];
-  private armY = [0, 0];
-  private armScale = [1, 1];
-
-  private facing = 0;
-  private t = 0;
-  private intensity = 1;
-  private orbit = 0;
-  private mastered = false;
-
-  private gesture: ArmGesture | null = null;
-  private gestureT = 0;
-  private gestureDur = 0;
-  private gestureSide = 1;
-  private gestureAngle = 0;
-  private nextPunchSide = 1;
-
-  private hold: ArmHold = null;
-  private holdAngle = 0;
-
-  private blinkAt = 0;
-  private blinkUntil = 0;
-  private trailAccum = 0;
-
-  constructor(private scene: Phaser.Scene, private tint: WaterColorFn, depth = 6) {
+  constructor(scene: Phaser.Scene, tint: WaterColorFn, depth = 6) {
+    super(scene, tint, depth, WATER_AVATAR);
     this.fx = new WaterFx(scene, tint);
-    this.glow = scene.add.graphics().setDepth(depth - 3);
-    this.crown = scene.add.graphics().setDepth(depth + 2);
-
-    for (let i = 0; i < 2; i++) {
-      const halo = scene.add.circle(0, 0, 9, tint(WATER.ocean), 0.3);
-      const shell = scene.add.circle(0, 0, 6.4, tint(WATER.blue), 0.92);
-      const core = scene.add.circle(0, 0, 3.6, tint(WATER.cyan), 1);
-      // Glint sits up-and-left of centre: a wet sphere reads as wet only if the specular
-      // highlight is off-axis. Dead centre and it looks like a glowing bulb instead.
-      const glint = scene.add.circle(-1.8, -1.8, 1.6, tint(WATER.white), 0.95);
-      this.armObjs.push(scene.add.container(0, 0, [halo, shell, core, glint]).setDepth(depth));
-
-      const white = scene.add.circle(0, 0, 4.4, tint(WATER.pale), 0.95).setDepth(depth);
-      const pupil = scene.add.circle(0, 0, 2.2, tint(WATER.abyss), 1).setDepth(depth + 1);
-      this.eyeObjs.push({ white, pupil });
-    }
-    this.blinkAt = 1500 + Math.random() * 3000;
   }
-
-  /** Aim direction in radians — arms and eyes orient off this. */
-  setFacing(angle: number): void { this.facing = angle; }
-
-  /** 1 = normal, higher while Slipstream-style buffs are up (bigger, faster, wider). */
-  setIntensity(v: number): void { this.intensity = v; }
 
   /**
    * Mastery tell — a permanent, readable upgrade to the character itself so a mastered water
@@ -835,127 +762,28 @@ export class WaterAvatar {
    * halo and foam ring on each hand, a taller fountain, and a tide of droplets orbiting the
    * head. Shape changes, not just brighter tints — a tint alone vanishes at gameplay zoom.
    */
-  setMastered(on: boolean): void {
-    if (on === this.mastered) return;
-    this.mastered = on;
-    for (const e of this.eyeObjs) e.white.setFillStyle(this.tint(on ? WATER.white : WATER.pale), 0.95);
-    for (const c of this.armObjs) {
-      const halo = c.list[0] as Phaser.GameObjects.Arc;
+  protected applyMastery(on: boolean): void {
+    this.setEyeWhite(on ? WATER.white : WATER.pale);
+    this.forEachHandLayer(0, (halo) => {
       halo.setRadius(on ? 12.5 : 9);
       halo.setFillStyle(this.tint(on ? WATER.cyan : WATER.ocean), on ? 0.34 : 0.3);
-      const shell = c.list[1] as Phaser.GameObjects.Arc;
+    });
+    this.forEachHandLayer(1, (shell) => {
       if (on) shell.setStrokeStyle(1.6, this.tint(WATER.foam), 0.9);
       else shell.setStrokeStyle();
-    }
+    });
   }
 
-  /** Fire a one-shot gesture. `angle` defaults to the current facing. */
-  play(gesture: ArmGesture, angle?: number, duration?: number): void {
-    this.gesture = gesture;
-    this.gestureT = 0;
-    this.gestureAngle = angle ?? this.facing;
-    this.gestureDur = duration ?? {
-      punch: 320, dash: 420, slam: 460, raise: 900, sweep: 460, clap: 380, flex: 520,
-    }[gesture];
-    if (gesture === 'punch') {
-      this.gestureSide = this.nextPunchSide;
-      this.nextPunchSide = -this.nextPunchSide as 1 | -1;
-    }
+  /** Fast-moving hands shed droplets. */
+  protected emitTrail(x: number, y: number): void {
+    this.fx.spray(x, y, 1, { speed: 20, size: 2.2, life: 420, fall: 34, depth: 5 });
   }
 
-  /** Enter/leave a sustained pose. Overrides any running gesture while set. */
-  setHold(hold: ArmHold, angle?: number): void {
-    this.hold = hold;
-    if (angle !== undefined) this.holdAngle = angle;
-  }
-
-  /** World position of the hand that just threw something — good for muzzle spray. */
-  castHand(): { x: number; y: number } {
-    const i = this.gestureSide > 0 ? 1 : 0;
-    return { x: this.armX[i], y: this.armY[i] };
-  }
-
-  update(delta: number, x: number, y: number, alpha: number): void {
-    const dt = delta / 1000;
-    this.t += dt;
-    if (this.gesture) {
-      this.gestureT += delta;
-      if (this.gestureT >= this.gestureDur) this.gesture = null;
-    }
-    this.orbit += dt * (this.intensity > 1 ? 2.4 : 0.35);
-
-    const visible = alpha > 0.02;
-    for (const c of this.armObjs) c.setVisible(visible);
-    for (const e of this.eyeObjs) { e.white.setVisible(visible); e.pupil.setVisible(visible); }
-
-    // ── Hands ───────────────────────────────────────────────────────────
-    for (let i = 0; i < 2; i++) {
-      const side = i === 0 ? -1 : 1;
-      const pose = this.poseFor(side);
-      const tx = x + Math.cos(pose.ang) * pose.dist;
-      const ty = y + Math.sin(pose.ang) * pose.dist;
-
-      // Spring follow: the hands lag the body, so running drags them behind you.
-      const k = Math.min(1, ARM_STIFFNESS * (delta / 16.67));
-      const prevX = this.armX[i], prevY = this.armY[i];
-      this.armX[i] += (tx - this.armX[i]) * k;
-      this.armY[i] += (ty - this.armY[i]) * k;
-      this.armScale[i] += (pose.scale - this.armScale[i]) * k;
-
-      const c = this.armObjs[i];
-      c.setPosition(this.armX[i], this.armY[i]);
-      // Squash along the direction of travel — a liquid hand stretches more than a solid one.
-      const vx = this.armX[i] - prevX, vy = this.armY[i] - prevY;
-      const sp = Math.min(1, Math.hypot(vx, vy) / 13);
-      c.setRotation(sp > 0.05 ? Math.atan2(vy, vx) : 0);
-      c.setScale(this.armScale[i] * (1 + sp * 0.6), this.armScale[i] * (1 - sp * 0.34));
-      c.setAlpha(alpha);
-    }
-
-    // Fast-moving hands shed droplets.
-    this.trailAccum += delta;
-    if (this.trailAccum >= 90 && visible) {
-      this.trailAccum = 0;
-      const moved = Math.hypot(this.armX[0] - x, this.armY[0] - y);
-      if (moved > IDLE_DIST * 1.35 || this.intensity > 1) {
-        const i = Math.random() < 0.5 ? 0 : 1;
-        this.fx.spray(this.armX[i], this.armY[i], 1, { speed: 20, size: 2.2, life: 420, fall: 34, depth: 5 });
-      }
-    }
-
-    // ── Eyes ────────────────────────────────────────────────────────────
-    this.blinkAt -= delta;
-    if (this.blinkAt <= 0) { this.blinkUntil = 110; this.blinkAt = 2200 + Math.random() * 3400; }
-    if (this.blinkUntil > 0) this.blinkUntil -= delta;
-    const open = this.blinkUntil > 0 ? 0.12 : (this.gesture || this.hold ? 0.72 : 1);
-
-    const look = this.facing;
-    const bob = Math.sin(this.t * 2.6) * 1.1;
-    for (let i = 0; i < 2; i++) {
-      const side = i === 0 ? -1 : 1;
-      const e = this.eyeObjs[i];
-      const ex = x + side * 7.2 + Math.cos(look) * 2.4;
-      const ey = y - 4 + Math.sin(look) * 2.0 + bob;
-      e.white.setPosition(ex, ey);
-      e.white.setScale(1, open);
-      e.white.setAlpha(alpha);
-      e.pupil.setPosition(ex + Math.cos(look) * 1.8, ey + Math.sin(look) * 1.6);
-      e.pupil.setScale(1, open);
-      e.pupil.setAlpha(alpha);
-    }
-
-    // ── Sheen and crown fountain ────────────────────────────────────────
-    this.glow.clear();
-    this.crown.clear();
-    if (visible) {
-      const a = alpha * (0.66 + 0.12 * Math.sin(this.t * 5));
-      this.glow.fillStyle(this.tint(WATER.ocean), a * 0.28 * this.intensity);
-      this.glow.fillEllipse(x, y + 4, 56 * this.intensity, 40 * this.intensity);
-      this.glow.fillStyle(this.tint(WATER.bright), a * 0.14 * this.intensity);
-      this.glow.fillEllipse(x, y + 6, 34 * this.intensity, 22 * this.intensity);
-
-      this.drawCrown(x, y, a, alpha);
-    }
+  protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
+    g.fillStyle(this.tint(WATER.ocean), a * 0.28 * this.intensity);
+    g.fillEllipse(x, y + 4, 56 * this.intensity, 40 * this.intensity);
+    g.fillStyle(this.tint(WATER.bright), a * 0.14 * this.intensity);
+    g.fillEllipse(x, y + 6, 34 * this.intensity, 22 * this.intensity);
   }
 
   /**
@@ -963,8 +791,7 @@ export class WaterAvatar {
    * shed a droplet at the end of each fall. Rooted at the crown (y - 18) so it never covers
    * the face, and drawn over the sprite so the bright middles show rather than dark tips.
    */
-  private drawCrown(x: number, y: number, a: number, alpha: number): void {
-    const g = this.crown;
+  protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     const mastery = this.mastered ? 1.35 : 1;
     const rootY = y - 18;
 
@@ -1013,116 +840,5 @@ export class WaterAvatar {
         g.fillCircle(cx + Math.cos(tangent) * 6, cy + Math.sin(tangent) * 6, 1.3);
       }
     }
-  }
-
-  /** Target polar offset for one hand, blending the idle sway with any active gesture/hold. */
-  private poseFor(side: number): ArmPose {
-    const idleAng = this.facing + this.orbit + side * 1.28 + Math.sin(this.t * 2.2 + side) * 0.09;
-    const idle: ArmPose = {
-      ang: idleAng,
-      dist: (IDLE_DIST + Math.sin(this.t * 3.1 + side * 1.7) * 2.6) * (this.intensity > 1 ? 1.2 : 1),
-      scale: this.intensity > 1 ? 1.3 : 1,
-    };
-
-    if (this.hold === 'spray') {
-      const jitter = (Math.random() - 0.5) * 0.12;
-      return { ang: this.holdAngle + side * 0.28 + jitter, dist: 32 + Math.random() * 3, scale: idle.scale * 1.15 };
-    }
-    if (this.hold === 'charge') {
-      return {
-        ang: this.facing + this.t * 7 + side * Math.PI,
-        dist: 15 + Math.random() * 2.5,
-        scale: idle.scale * 0.9,
-      };
-    }
-    if (this.hold === 'draw') {
-      // Siphon: hands held wide open along the aim, pulsing back toward the body as they
-      // haul water out of whatever is in front — an outward push would read as a beam.
-      const pull = 0.5 + 0.5 * Math.sin(this.t * 6);
-      return {
-        ang: this.holdAngle + side * 0.62,
-        dist: 26 + pull * 12,
-        scale: idle.scale * (1.05 + pull * 0.25),
-      };
-    }
-    if (!this.gesture) return idle;
-
-    const t = Math.min(1, this.gestureT / this.gestureDur);
-    const a = this.gestureAngle;
-    let target: ArmPose = idle;
-    let blend = 0;
-
-    switch (this.gesture) {
-      case 'punch': {
-        const active = side === this.gestureSide;
-        blend = t < 0.22 ? easeOut(t / 0.22) : 1 - easeIn((t - 0.22) / 0.78);
-        target = active
-          ? { ang: a, dist: 46, scale: idle.scale * 1.2 }
-          : { ang: a + side * 2.0, dist: 15, scale: idle.scale * 0.85 };
-        break;
-      }
-      case 'dash': {
-        // Wind up behind, then fling forward.
-        if (t < 0.3) {
-          blend = easeOut(t / 0.3);
-          target = { ang: a + Math.PI + side * 0.4, dist: 38, scale: idle.scale };
-        } else {
-          blend = 1 - easeIn((t - 0.3) / 0.7);
-          target = { ang: a + side * 0.22, dist: 42, scale: idle.scale * 1.15 };
-        }
-        break;
-      }
-      case 'slam': {
-        if (t < 0.4) {
-          blend = easeOut(t / 0.4);
-          target = { ang: -Math.PI / 2 + side * 0.5, dist: 40, scale: idle.scale * 1.15 };
-        } else {
-          blend = 1 - easeIn((t - 0.4) / 0.6);
-          target = { ang: a + side * 0.16, dist: 46, scale: idle.scale * 1.25 };
-        }
-        break;
-      }
-      case 'raise': {
-        blend = t < 0.15 ? easeOut(t / 0.15) : t > 0.8 ? 1 - easeIn((t - 0.8) / 0.2) : 1;
-        target = {
-          ang: -Math.PI / 2 + side * 0.55,
-          dist: 46 + Math.sin(this.t * 12) * 2,
-          scale: idle.scale * 1.35,
-        };
-        break;
-      }
-      case 'sweep': {
-        blend = t < 0.12 ? t / 0.12 : t > 0.85 ? 1 - (t - 0.85) / 0.15 : 1;
-        target = { ang: a - 1.35 + t * 2.7 + side * 0.18, dist: 42, scale: idle.scale * 1.15 };
-        break;
-      }
-      case 'clap': {
-        blend = t < 0.35 ? easeOut(t / 0.35) : 1 - easeIn((t - 0.35) / 0.65);
-        target = t < 0.35
-          ? { ang: a + side * 0.9, dist: 40, scale: idle.scale }
-          : { ang: a + side * 0.06, dist: 26, scale: idle.scale * 1.3 };
-        break;
-      }
-      case 'flex': {
-        blend = t < 0.2 ? easeOut(t / 0.2) : 1 - easeIn((t - 0.2) / 0.8);
-        target = { ang: this.facing + side * (Math.PI / 2), dist: 40, scale: idle.scale * 1.35 };
-        break;
-      }
-    }
-
-    return {
-      ang: Phaser.Math.Angle.RotateTo(idle.ang, target.ang, Math.abs(Phaser.Math.Angle.Wrap(target.ang - idle.ang)) * blend),
-      dist: idle.dist + (target.dist - idle.dist) * blend,
-      scale: idle.scale + (target.scale - idle.scale) * blend,
-    };
-  }
-
-  destroy(): void {
-    for (const c of this.armObjs) c.destroy();
-    for (const e of this.eyeObjs) { e.white.destroy(); e.pupil.destroy(); }
-    this.glow.destroy();
-    this.crown.destroy();
-    this.armObjs = [];
-    this.eyeObjs = [];
   }
 }

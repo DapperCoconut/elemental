@@ -15,7 +15,7 @@ const droneCommand: Ability = {
 const barrelRoll: Ability = {
   id: 'barrel-roll',
   name: 'On a Roll',
-  description: 'Launch a barrel that rolls and drops oil puddles every 80px. Explodes on enemy contact or when shot by an enemy projectile (20 dmg, 2 extra puddles). Explodes on wall contact.',
+  description: 'Launch a barrel that rolls and drops oily puddles every 80px — enemies standing in one are Oily (8s slow). Shoot a puddle with Drone Command to set it alight, or hit an Oily enemy with it to burn the oil off them (5s burn). Explodes on enemy contact, wall contact, or when shot by an enemy projectile (20 dmg, 2 extra puddles).',
   displayKey: 'E',
   cooldown: 3000,
   cast(ctx: CastContext) {
@@ -26,7 +26,7 @@ const barrelRoll: Ability = {
 const droneDestroy: Ability = {
   id: 'drone-destroy',
   name: 'Drone Destroy',
-  description: 'Launch a drone to cursor — explodes on arrival (5 dmg per shot remaining, max 15).',
+  description: 'Launch a drone to cursor — explodes on arrival (20 dmg).',
   displayKey: 'R',
   cooldown: 3000,
   cast(ctx: CastContext) {

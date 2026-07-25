@@ -2,6 +2,10 @@ import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { CastContext, Ability } from '../Ability';
 import { Husk } from '../../invasion/Husk';
+import {
+  ArmGesture, ArmHold, EARTH, EarthAura, EarthAvatar, EarthColorFn, EarthFx, EarthGather,
+  StoneGolem, StoneShield, stoneChunkLayered,
+} from './EarthVisuals';
 
 // ── Earth Mastery constants ─────────────────────────────────────────────
 
@@ -28,6 +32,15 @@ const TITAN_BEAM_MS = 5000;
 const TITAN_ROCK_FALL_MS = 2000; // telegraph window for every falling rock
 const TITAN_PAD = 32;            // arena border inset — keeps effects off the HUD strip
 
+/** Mirrors an NPC earth cast onto its rig. */
+const NPC_GESTURES: Record<string, ArmGesture> = {
+  'bash': 'dash',
+  'repair': 'flex',
+  'rock-dance': 'flex',
+  'quake': 'slam',
+  'golem-ritual': 'raise',
+};
+
 interface TitanArm {
   side: -1 | 1;
   shoulderX: number; shoulderY: number;
@@ -40,7 +53,7 @@ interface TitanArm {
   phase: 'rest' | 'raise' | 'strike' | 'recover';
   phaseStart: number;
   phaseEnd: number;
-  marker: Phaser.GameObjects.Arc | null;
+  marker: Phaser.GameObjects.Graphics | null;
 }
 
 interface TitanRock {
@@ -63,8 +76,7 @@ interface TitanTremor {
 interface TitanWave {
   x: number;
   speed: number;
-  sprite: Phaser.GameObjects.Rectangle;
-  crest: Phaser.GameObjects.Rectangle;
+  g: Phaser.GameObjects.Graphics;
   hit: Set<Fighter>;
   slammed: boolean;
 }
@@ -75,6 +87,26 @@ interface TitanBeam {
   nextTickAt: number;
   nextScorchAt: number;
   g: Phaser.GameObjects.Graphics;
+}
+
+/** A golem's Fault Line: slabs jammed up out of the ground, drawn while they rise then held. */
+interface FaultWall {
+  g: Phaser.GameObjects.Graphics;
+  x: number; y: number;
+  angle: number;
+  spawnedAt: number;
+  expiresAt: number;
+}
+
+/** One plate thrown by Shield Splinter. Tumbles, trails grit, and shatters on whatever it hits. */
+interface SplinterShard {
+  g: Phaser.GameObjects.Graphics;
+  x: number; y: number;
+  vx: number; vy: number;
+  spin: number;
+  spawnedAt: number;
+  trailAccum: number;
+  colour: number;
 }
 
 // ── EarthArenaApi ─────────────────────────────────────────────────────────
@@ -107,18 +139,37 @@ export interface EarthArenaApi {
   /** Mastery enhancement id bound over the given ability slot, or null if that slot is unchanged. */
   masteryBindFor(slot: string): string | null;
   recordMasteryStat(key: string, amount: number): void;
-  /** Dust Screen hitting the local human in online PvP: blur their canvas for `ms`. */
-  applyScreenBlur(ms: number): void;
+  /** `CosmeticsKit.earthColor` — one owner's colour cosmetic, or the identity. */
+  earthColor(owner: 'player' | 'npc', base: number): number;
 }
 
 // ── EarthKit ──────────────────────────────────────────────────────────────
 
 export class EarthKit {
+  // ── Visuals ─────────────────────────────────────────────────────────────
+  /** Colour mappers + effect painters, one per owner so a future cosmetic recolours one side. */
+  private readonly pcol: EarthColorFn;
+  private readonly ncol: EarthColorFn;
+  private readonly pfx: EarthFx;
+  private readonly nfx: EarthFx;
+  /** The stone character rig (boulder hands, eyes, crown of slabs) for each earth fighter. */
+  private playerAvatar: EarthAvatar | null = null;
+  private npcAvatar: EarthAvatar | null = null;
+  /** Sustained rig pose and when it lapses — nothing may strand a hold. */
+  private playerHold: ArmHold = null;
+  private playerHoldUntil = 0;
+  private playerHoldAngle = 0;
+  /** Last aim, cached in handleInput so update() can steer the rig (it has no pointer). */
+  private lastMouseX = 0;
+  private lastMouseY = 0;
+  /** Dust Screen blur on the local human — owned here, not by ArenaScene. */
+  private screenBlurUntil = 0;
+
   // ── Player shield state ────────────────────────────────────────────────
   private earthShieldHp = 0;
   private earthShieldMaxHp = 75;
   private earthShieldEnhanced = false;
-  private earthShieldSprite: Phaser.GameObjects.Rectangle | null = null;
+  private earthShieldSprite: StoneShield | null = null;
   private earthShieldAngle = 0;
   private earthShieldRespawnAt = 0;
   private earthShieldBroken = false;
@@ -141,12 +192,15 @@ export class EarthKit {
 
   // ── Player repair / rocks / quake / golem state ─────────────────────────
   private earthRepairActive = false;
+  private earthRepairStart = 0;
   private earthRepairEnd = 0;
-  private earthRepairAura: Phaser.GameObjects.Arc | null = null;
-  private earthRocks: Array<{ sprite: Phaser.GameObjects.Arc; hitCdUntil: number }> = [];
+  private earthRepairAura: EarthAura | null = null;
+  private earthRocks: Array<{ sprite: Phaser.GameObjects.Graphics; hitCdUntil: number }> = [];
   private earthRockOrbitAngle = 0;
-  private earthLaunchedRocks: Array<{ sprite: Phaser.GameObjects.Arc; vx: number; vy: number; spawnedAt: number }> = [];
-  private earthQuakeSprite: Phaser.GameObjects.Arc | null = null;
+  private earthLaunchedRocks: Array<{
+    sprite: Phaser.GameObjects.Graphics; vx: number; vy: number; spawnedAt: number; trailAccum: number;
+  }> = [];
+  private earthQuakeSprite: Phaser.GameObjects.Graphics | null = null;
   private earthQuakeExpiry = 0;
   private earthQuakeX = 0;
   private earthQuakeY = 0;
@@ -157,14 +211,13 @@ export class EarthKit {
   private earthGolemMaxHp = 150;
   private earthGolemX = 0;
   private earthGolemY = 0;
-  private earthGolemSprite: Phaser.GameObjects.Rectangle | null = null;
+  private earthGolemSprite: StoneGolem | null = null;
   private earthGolemLink: Phaser.GameObjects.Graphics | null = null;
   private earthGolemUntil = 0;
   private earthGolemPunchCdUntil = 0;
   private earthGolemFaultCdUntil = 0;
   private earthGolemPoundCdUntil = 0;
-  private earthGolemFaultWallSprite: Phaser.GameObjects.Rectangle | null = null;
-  private earthGolemFaultWallUntil = 0;
+  private earthGolemFaultWall: FaultWall | null = null;
   private earthGolemHpLabel: Phaser.GameObjects.Text | null = null;
   private playerEarthCastId: string | null = null;
   private playerEarthStunnedUntil = 0;
@@ -172,24 +225,26 @@ export class EarthKit {
   // ── Earth upgrade state (Click+: dual shield) ───────────────────────────
   private earthBackShieldHp = 0;
   private earthBackShieldMaxHp = 50;
-  private earthBackShieldSprite: Phaser.GameObjects.Rectangle | null = null;
+  private earthBackShieldSprite: StoneShield | null = null;
   private earthBackShieldLabel: Phaser.GameObjects.Text | null = null;
   // Earth upgrade state (E+: shield splinter)
   private earthSplinterHolding = false;
   private earthSplinterHoldStart = 0;
   private earthSplinterReady = false;
-  private earthSplinterAura: Phaser.GameObjects.Rectangle | null = null;
   private earthSplinterRepairFast = false;
+  /** Shards thrown by Shield Splinter — drawn plates, tumbling, with a grit trail. */
+  private earthSplinterShards: SplinterShard[] = [];
   // Earth upgrade state (R+: lava rocks)
-  private earthLavaRockFirePools: Array<{ sprite: Phaser.GameObjects.Arc; expiresAt: number }> = [];
   private earthQuakeMagmified = false;
   private earthQuakeStandAccum = 0;
-  // Earth upgrade state (F+: tsunami waves — kept for legacy cleanup only, no longer spawned)
-  private earthTsunamiWaves: Array<{ sprite: Phaser.GameObjects.Rectangle; vx: number; vy: number; expiresAt: number; owner?: 'player' | 'npc' }> = [];
+  /** Quake-perk ridges (spawnQuakeWave) — shared with other elements' perk code. */
+  private earthTsunamiWaves: Array<{
+    sprite: Phaser.GameObjects.Graphics; vx: number; vy: number; expiresAt: number; owner?: 'player' | 'npc';
+  }> = [];
   // Earth upgrade state (Q+: Titan Form — hold Q to become the titanic golem)
   private earthTitanChargeHolding = false;
   private earthTitanChargeStart = 0;
-  private earthTitanChargeVisual: Phaser.GameObjects.Arc | null = null;
+  private earthTitanChargeVisual: EarthGather | null = null;
   private titanActive = false;
   private titanUntil = 0;
   private titanPreHp = 0;
@@ -209,7 +264,7 @@ export class EarthKit {
   private titanTremorLine: TitanTremor | null = null;
   private titanWave: TitanWave | null = null;
   private titanBeam: TitanBeam | null = null;
-  private titanScorch: Array<{ sprite: Phaser.GameObjects.Arc; x: number; y: number; r: number; expiresAt: number }> = [];
+  private titanScorch: Array<{ sprite: Phaser.GameObjects.Graphics; x: number; y: number; r: number; expiresAt: number }> = [];
   private titanScorchAccum = 0;
   private titanEruptionsLeft = 0;
   private titanEruptionNextAt = 0;
@@ -218,7 +273,7 @@ export class EarthKit {
   private npcEarthShieldHp = 0;
   private npcEarthShieldMaxHp = 75;
   private npcEarthShieldEnhanced = false;
-  private npcEarthShieldSprite: Phaser.GameObjects.Rectangle | null = null;
+  private npcEarthShieldSprite: StoneShield | null = null;
   private npcEarthShieldAngle = 0;
   private npcEarthShieldRespawnAt = 0;
   private npcEarthShieldBroken = false;
@@ -234,11 +289,15 @@ export class EarthKit {
   private npcEarthBashStabDmg = 0;
   private npcEarthBashFullCharge = false;
   private npcEarthRepairActive = false;
+  private npcEarthRepairStart = 0;
   private npcEarthRepairEnd = 0;
-  private npcEarthRocks: Array<{ sprite: Phaser.GameObjects.Arc; hitCdUntil: number }> = [];
+  private npcEarthRepairAura: EarthAura | null = null;
+  private npcEarthRocks: Array<{ sprite: Phaser.GameObjects.Graphics; hitCdUntil: number }> = [];
   private npcEarthRockOrbitAngle = 0;
-  private npcEarthLaunchedRocks: Array<{ sprite: Phaser.GameObjects.Arc; vx: number; vy: number; spawnedAt: number }> = [];
-  private npcEarthQuakeSprite: Phaser.GameObjects.Arc | null = null;
+  private npcEarthLaunchedRocks: Array<{
+    sprite: Phaser.GameObjects.Graphics; vx: number; vy: number; spawnedAt: number; trailAccum: number;
+  }> = [];
+  private npcEarthQuakeSprite: Phaser.GameObjects.Graphics | null = null;
   private npcEarthQuakeExpiry = 0;
   private npcEarthQuakeX = 0;
   private npcEarthQuakeY = 0;
@@ -248,20 +307,25 @@ export class EarthKit {
   private npcEarthGolemHp = 0;
   private npcEarthGolemX = 0;
   private npcEarthGolemY = 0;
-  private npcEarthGolemSprite: Phaser.GameObjects.Rectangle | null = null;
+  private npcEarthGolemSprite: StoneGolem | null = null;
   private npcEarthGolemLink: Phaser.GameObjects.Graphics | null = null;
   private npcEarthGolemUntil = 0;
   private npcEarthGolemPunchCdUntil = 0;
   private npcEarthGolemFaultCdUntil = 0;
   private npcEarthGolemPoundCdUntil = 0;
-  private npcEarthGolemFaultWallSprite: Phaser.GameObjects.Rectangle | null = null;
-  private npcEarthGolemFaultWallUntil = 0;
+  private npcEarthGolemFaultWall: FaultWall | null = null;
   private npcEarthGolemHpLabel: Phaser.GameObjects.Text | null = null;
 
   // ── Earth Mastery: Dust Screen ──────────────────────────────────────────
   private dustScreenLastCastAt = -Infinity;
 
-  constructor(private arena: EarthArenaApi) {}
+  constructor(private arena: EarthArenaApi) {
+    // Built here rather than as field initialisers so they see the injected arena.
+    this.pcol = (base) => arena.earthColor('player', base);
+    this.ncol = (base) => arena.earthColor('npc', base);
+    this.pfx = new EarthFx(arena.scene, this.pcol);
+    this.nfx = new EarthFx(arena.scene, this.ncol);
+  }
 
   // ── Public accessors for cross-cutting arena state ─────────────────────
 
@@ -273,6 +337,16 @@ export class EarthKit {
   getNpcRocksActive(): boolean { return this.npcEarthRocks.length > 0; }
 
   reset(): void {
+    // Visuals — every GameObject dies with the old scene run, so rebuild lazily in update().
+    if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
+    if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
+    this.playerHold = null;
+    this.playerHoldUntil = 0;
+    this.playerHoldAngle = 0;
+    this.lastMouseX = 0;
+    this.lastMouseY = 0;
+    this.screenBlurUntil = 0;
+
     // Earth new kit reset
     // Obsidian perk raises base shield HP: 100 single, or 75 each with Double Shield upgrade
     const obsidianOn = this.arena.hasPerk('player', 'obsidian') && this.arena.elementId === 'earth';
@@ -299,8 +373,9 @@ export class EarthKit {
     this.earthBashChargeStart = 0;
     this.earthBashChargeRatio = 0;
     this.earthRepairActive = false;
+    this.earthRepairStart = 0;
     this.earthRepairEnd = 0;
-    this.earthRepairAura = null;
+    if (this.earthRepairAura) { this.earthRepairAura.destroy(); this.earthRepairAura = null; }
     this.earthRocks.forEach(r => r.sprite.destroy());
     this.earthRocks = [];
     this.earthRockOrbitAngle = 0;
@@ -322,8 +397,7 @@ export class EarthKit {
     this.earthGolemPunchCdUntil = 0;
     this.earthGolemFaultCdUntil = 0;
     this.earthGolemPoundCdUntil = 0;
-    this.earthGolemFaultWallSprite = null;
-    this.earthGolemFaultWallUntil = 0;
+    this.earthGolemFaultWall = null;
     this.earthGolemHpLabel = null;
     this.playerEarthCastId = null;
     this.playerEarthStunnedUntil = 0;
@@ -336,10 +410,9 @@ export class EarthKit {
     this.earthSplinterHolding = false;
     this.earthSplinterHoldStart = 0;
     this.earthSplinterReady = false;
-    if (this.earthSplinterAura) { this.earthSplinterAura.destroy(); this.earthSplinterAura = null; }
     this.earthSplinterRepairFast = false;
-    this.earthLavaRockFirePools.forEach(p => p.sprite.destroy());
-    this.earthLavaRockFirePools = [];
+    this.earthSplinterShards.forEach(s => s.g.destroy());
+    this.earthSplinterShards = [];
     this.earthQuakeMagmified = false;
     this.earthQuakeStandAccum = 0;
     this.earthTsunamiWaves.forEach(w => w.sprite.destroy());
@@ -368,7 +441,9 @@ export class EarthKit {
     this.npcEarthBashStabDmg = 0;
     this.npcEarthBashFullCharge = false;
     this.npcEarthRepairActive = false;
+    this.npcEarthRepairStart = 0;
     this.npcEarthRepairEnd = 0;
+    if (this.npcEarthRepairAura) { this.npcEarthRepairAura.destroy(); this.npcEarthRepairAura = null; }
     this.npcEarthRocks.forEach(r => r.sprite.destroy());
     this.npcEarthRocks = [];
     this.npcEarthRockOrbitAngle = 0;
@@ -390,8 +465,7 @@ export class EarthKit {
     this.npcEarthGolemPunchCdUntil = 0;
     this.npcEarthGolemFaultCdUntil = 0;
     this.npcEarthGolemPoundCdUntil = 0;
-    this.npcEarthGolemFaultWallSprite = null;
-    this.npcEarthGolemFaultWallUntil = 0;
+    this.npcEarthGolemFaultWall = null;
     this.npcEarthGolemHpLabel = null;
     this.dustScreenLastCastAt = -Infinity;
   }
@@ -409,6 +483,9 @@ export class EarthKit {
     // Unbreakable passive — masteries are player-only progression, so this never touches npc.
     player.knockbackImmune = this.arena.masteryActive;
     player.hardDamageCap = this.arena.masteryActive ? 50 : 0;
+
+    this.updateAvatars(time, delta);
+    this.updateSplinterShards(time, delta);
 
     // ── Player earth ──────────────────────────────────────────────
     if (this.arena.elementId === 'earth') {
@@ -436,13 +513,16 @@ export class EarthKit {
       }
 
       // Update shield sprite position
-      if (this.earthShieldSprite) this.updateEarthShieldSpritePosition(true);
+      if (this.earthShieldSprite) this.updateEarthShieldSpritePosition(true, delta);
 
       // Repair active — slow + aura
       if (this.earthRepairActive) {
         if (time >= this.earthRepairEnd) {
           this.earthRepairActive = false;
           if (this.earthRepairAura) { this.earthRepairAura.destroy(); this.earthRepairAura = null; }
+          // The work lands: the scaffold slams shut around whatever it was mending.
+          this.pfx.ring(player.x, player.y, 34, 8, EARTH.dust, 320, 4, 6);
+          this.pfx.grit(player.x, player.y, 8, { speed: 60, size: 2.4, life: 520, fall: 60, depth: 6 });
           // Apply repair effect
           const hasDualShield = this.arena.hasUpgrade('click');
           if (this.earthGolemActive) {
@@ -464,22 +544,20 @@ export class EarthKit {
               this.earthShieldEnhanced = true;
               this.earthShieldMaxHp = hasDualShield ? 100 : 125;
               this.earthShieldHp = this.earthShieldMaxHp;
-              if (this.earthShieldSprite) {
-                this.earthShieldSprite.setSize(55, 14);
-                this.earthShieldSprite.setFillStyle(0xffcc44);
-                this.earthShieldSprite.setStrokeStyle(2, 0xffe899);
-              }
+              this.earthShieldSprite?.setEnhanced(true);
               if (hasDualShield) {
                 this.earthBackShieldHp = 100;
-                if (this.earthBackShieldSprite) {
-                  this.earthBackShieldSprite.setSize(55, 14);
-                  this.earthBackShieldSprite.setFillStyle(0xffcc44);
-                  this.earthBackShieldSprite.setStrokeStyle(2, 0xffe899);
-                }
+                this.earthBackShieldSprite?.setEnhanced(true);
                 this.arena.showFloatingText(player.x, player.y - 30, '⚒ SHIELDS ENHANCED!', '#ffcc44');
               } else {
                 this.arena.showFloatingText(player.x, player.y - 30, '⚒ SHIELD ENHANCED!', '#ffcc44');
               }
+              // Brass poured into the plate: a bright flare off the shield itself.
+              this.pfx.flash(
+                player.x + Math.cos(this.earthShieldAngle) * 28,
+                player.y + Math.sin(this.earthShieldAngle) * 28, 22, 9,
+              );
+              this.pfx.ring(player.x, player.y, 20, 62, EARTH.brassLit, 420, 4, 8);
             } else {
               // Heal front shield
               if (this.earthShieldHp < fMaxHp) {
@@ -493,8 +571,9 @@ export class EarthKit {
               }
             }
           }
-        } else {
-          if (this.earthRepairAura) this.earthRepairAura.setPosition(player.x, player.y);
+        } else if (this.earthRepairAura) {
+          const span = Math.max(1, this.earthRepairEnd - this.earthRepairStart);
+          this.earthRepairAura.update(delta, player.x, player.y, (time - this.earthRepairStart) / span);
         }
       }
 
@@ -504,6 +583,8 @@ export class EarthKit {
           this.earthBashActive = false;
           this.arena.isDodging = false;
           playerBody.setVelocity(0, 0);
+          // Ploughed furrow from where the charge began to where it stopped.
+          this.pfx.furrow(this.earthBashStartX, this.earthBashStartY, player.x, player.y);
         } else {
           // Check hit against enemies
           if (!this.earthBashHitDealt) {
@@ -512,19 +593,34 @@ export class EarthKit {
               const dist = Phaser.Math.Distance.Between(player.x, player.y, t.x, t.y);
               if (dist < 70) {
                 this.earthBashHitDealt = true;
-                if (this.earthShieldHp > 0) {
+                const shielded = this.earthShieldHp > 0;
+                if (shielded) {
                   t.takeDamage(this.earthBashShieldDmg);
-                  this.arena.spawnHitFlash(t.x, t.y, 0x887755);
+                  this.arena.spawnHitFlash(t.x, t.y, EARTH.clay);
                   this.arena.showFloatingText(t.x, t.y - 20, `🛡 BASH ${this.earthBashShieldDmg}`, '#ccaa66');
                 } else {
                   t.takeDamage(this.earthBashStabDmg);
-                  this.arena.spawnHitFlash(t.x, t.y, 0x887755);
+                  this.arena.spawnHitFlash(t.x, t.y, EARTH.clay);
                   this.arena.showFloatingText(t.x, t.y - 20, `🗡 STAB ${this.earthBashStabDmg}`, '#aa8844');
                 }
+                // The collision itself: a slab of shield driven through someone. Scales with
+                // the charge, so a full-power bash reads as heavier and not merely redder.
+                const bashAng = Math.atan2(t.y - player.y, t.x - player.x);
+                const power = this.earthBashFullCharge ? 1 : 0.55;
+                this.pfx.impact(t.x, t.y, (shielded ? 62 : 44) * (0.7 + power * 0.5), {
+                  shards: shielded ? 10 : 6, dust: 2, crater: false, depth: 7,
+                });
+                this.pfx.debris(t.x, t.y, shielded ? 8 : 5, {
+                  angle: bashAng, spread: 0.8, speed: 260 * power, size: 4, life: 560, fall: 130, depth: 7,
+                });
+                this.arena.scene.cameras.main.shake(140 + power * 110, 0.006 + power * 0.006);
                 // Full-charge bash stuns on hit (reuses the same stun field the rock launch uses)
                 if (this.earthBashFullCharge) {
                   t.earthStunnedUntil = Math.max(t.earthStunnedUntil, time + 700);
                   this.arena.recordMasteryStat('bashStuns', 1);
+                  // Stunned: the ground itself gives out under them.
+                  this.pfx.pillar(t.x, t.y, 16, 40, 7);
+                  this.pfx.ring(t.x, t.y, 12, 92, EARTH.gold, 420, 5, 7);
                 }
               }
             }
@@ -542,14 +638,23 @@ export class EarthKit {
         const rock = this.earthRocks[ri];
         const ang = this.earthRockOrbitAngle + ri * (Math.PI * 2 / rockCount);
         rock.sprite.setPosition(player.x + Math.cos(ang) * orbitR, player.y + Math.sin(ang) * orbitR);
+        // Rocks tumble as they orbit rather than sliding round face-on, which is the whole
+        // difference between four escorts and four stickers.
+        rock.sprite.setRotation(ang * (lavaRocks ? 2.4 : 1.7) + ri);
         if (time >= rock.hitCdUntil) {
           for (const t of this.arena.enemies) {
             if (!t.active || t.hp <= 0) continue;
             const d = Phaser.Math.Distance.Between(rock.sprite.x, rock.sprite.y, t.x, t.y);
             if (d < 22) {
               t.takeDamage(8);
-              this.arena.spawnHitFlash(t.x, t.y, lavaRocks ? 0xff4400 : 0x887755);
+              this.arena.spawnHitFlash(t.x, t.y, lavaRocks ? EARTH.ember : EARTH.clay);
               this.arena.showFloatingText(t.x, t.y - 20, '🪨 8', '#aa8844');
+              // A glancing blow: chips off the rock, not a full detonation.
+              this.pfx.debris(rock.sprite.x, rock.sprite.y, 4, {
+                angle: ang, spread: 1.1, speed: 130, size: 2.6, life: 420, fall: 70,
+                depth: 8, molten: lavaRocks,
+              });
+              this.pfx.ring(t.x, t.y, 6, 26, lavaRocks ? EARTH.magma : EARTH.dust, 260, 3, 7);
               if (lavaRocks) {
                 t.lavaRockBurnUntil = Math.max(t.lavaRockBurnUntil, time + 2000);
               }
@@ -563,14 +668,21 @@ export class EarthKit {
         const lr = this.earthLaunchedRocks[i];
         lr.sprite.x += lr.vx * (delta / 1000);
         lr.sprite.y += lr.vy * (delta / 1000);
+        lr.sprite.rotation += (delta / 1000) * 9;
+        // Grit shed out of the *back* of the shot, so the trail reads as speed.
+        lr.trailAccum += delta;
+        if (lr.trailAccum >= 45) {
+          lr.trailAccum = 0;
+          this.pfx.grit(lr.sprite.x, lr.sprite.y, 1, {
+            angle: Math.atan2(-lr.vy, -lr.vx), spread: 0.5, speed: 40, size: 2.4,
+            life: 380, fall: 24, depth: 7, molten: lavaRocks,
+          });
+        }
         // R+: lava rock ignites quake zone on pass-through (not just on enemy hit)
         if (lavaRocks && this.earthQuakeSprite && this.earthQuakeExpiry > time && !this.earthQuakeMagmified) {
           const qZoneR = this.arena.hasUpgrade('f') ? 100 : 80;
           if (Phaser.Math.Distance.Between(lr.sprite.x, lr.sprite.y, this.earthQuakeX, this.earthQuakeY) < qZoneR) {
-            this.earthQuakeMagmified = true;
-            this.earthQuakeSprite.setFillStyle(0xff0000, 0.3);
-            this.earthQuakeSprite.setStrokeStyle(2, 0xff2200, 0.9);
-            this.arena.showFloatingText(this.earthQuakeX, this.earthQuakeY - 20, '🌋 MAGMA QUAKE', '#ff2200');
+            this.magmifyQuake();
           }
         }
         const hitWall = lr.sprite.x < 20 || lr.sprite.x > W - 20 || lr.sprite.y < 20 || lr.sprite.y > H - 20;
@@ -582,24 +694,26 @@ export class EarthKit {
           if (d < 28) {
             const launchDmg = lavaRocks ? 60 : 40;
             t.takeDamage(launchDmg);
-            this.arena.spawnHitFlash(t.x, t.y, lavaRocks ? 0xff4400 : 0x887755);
+            this.arena.spawnHitFlash(t.x, t.y, lavaRocks ? EARTH.ember : EARTH.clay);
             this.arena.showFloatingText(t.x, t.y - 20, lavaRocks ? `🔥 LAVA HIT ${launchDmg}` : `🪨 LAUNCH STUN ${launchDmg}`, '#ffcc44');
             t.earthStunnedUntil = Math.max(t.earthStunnedUntil, time + 3000);
+            // A boulder at 500px/s meeting a body: the full detonation stack, upgraded to the
+            // molten flavour when it is a lava rock rather than merely recoloured.
+            this.pfx.impact(t.x, t.y, lavaRocks ? 96 : 74, {
+              shards: lavaRocks ? 16 : 11, dust: 3, molten: lavaRocks, depth: 7,
+              duration: lavaRocks ? 520 : 420,
+            });
+            this.arena.scene.cameras.main.shake(lavaRocks ? 260 : 190, lavaRocks ? 0.016 : 0.011);
             if (lavaRocks) {
               t.lavaRockBurnUntil = Math.max(t.lavaRockBurnUntil, time + 3000);
-              const poolSpr = this.arena.scene.add.circle(t.x, t.y, 32, 0xff4400, 0.4).setDepth(3);
-              this.arena.scene.tweens.add({ targets: poolSpr, scaleX: 1.1, scaleY: 1.1, alpha: 0.1, duration: 2500, onComplete: () => poolSpr.destroy() });
-              this.earthLavaRockFirePools.push({ sprite: poolSpr, expiresAt: time + 2500 });
+              // Splattered magma left cooking on the floor.
+              this.pfx.crater(t.x, t.y, 30, 3, true);
+              this.pfx.pillar(t.x, t.y, 18, 46, 8);
               // Magmify quake if enemy is inside quake zone
               if (this.earthQuakeSprite && this.earthQuakeExpiry > time) {
                 const qZoneR = this.arena.hasUpgrade('f') ? 100 : 80;
                 const qd = Phaser.Math.Distance.Between(t.x, t.y, this.earthQuakeX, this.earthQuakeY);
-                if (qd < qZoneR) {
-                  this.earthQuakeMagmified = true;
-                  this.earthQuakeSprite.setFillStyle(0xff0000, 0.3);
-                  this.earthQuakeSprite.setStrokeStyle(2, 0xff2200, 0.9);
-                  this.arena.showFloatingText(this.earthQuakeX, this.earthQuakeY - 20, '🌋 MAGMA QUAKE', '#ff2200');
-                }
+                if (qd < qZoneR) this.magmifyQuake();
               }
             }
             lr.sprite.destroy();
@@ -610,6 +724,10 @@ export class EarthKit {
         }
         if (rockHit) continue;
         if (hitWall || expired) {
+          // Rocks don't wink out — a rock that hit a wall breaks against it.
+          this.pfx.impact(lr.sprite.x, lr.sprite.y, 40, {
+            shards: 6, dust: 1, crater: false, depth: 7, duration: 300, molten: lavaRocks,
+          });
           lr.sprite.destroy();
           this.earthLaunchedRocks.splice(i, 1);
         }
@@ -621,23 +739,27 @@ export class EarthKit {
           t.lavaRockBurnAccum += delta;
           if (t.lavaRockBurnAccum >= 500) {
             t.lavaRockBurnAccum -= 500;
-            t.takeDamage(2); this.arena.spawnHitFlash(t.x, t.y, 0xff4400);
+            t.takeDamage(2);
+            this.arena.spawnHitFlash(t.x, t.y, EARTH.ember);
+            // A continuous tell, so the burn is readable on the victim between ticks.
+            this.pfx.grit(t.x, t.y - 6, 2, {
+              speed: 26, size: 1.8, life: 420, fall: -18, depth: 8, molten: true,
+            });
           }
         } else {
           t.lavaRockBurnAccum = 0;
-        }
-      }
-      // Lava fire pool cleanup
-      for (let i = this.earthLavaRockFirePools.length - 1; i >= 0; i--) {
-        if (time >= this.earthLavaRockFirePools[i].expiresAt) {
-          this.earthLavaRockFirePools[i].sprite.destroy();
-          this.earthLavaRockFirePools.splice(i, 1);
         }
       }
 
       // Quake zone
       const quakeRadius = this.arena.hasUpgrade('f') ? 100 : 80;
       if (this.earthQuakeSprite && time < this.earthQuakeExpiry) {
+        // The floor won't hold still: the whole field is repainted every frame.
+        this.earthQuakeSprite.clear();
+        EarthFx.drawQuakeField(
+          this.earthQuakeSprite, this.pcol, this.earthQuakeX, this.earthQuakeY,
+          quakeRadius, time / 1000, this.earthQuakeMagmified, this.arena.hasUpgrade('f'),
+        );
         this.earthQuakeTickAccum += delta;
         const isQuakeF = this.arena.hasUpgrade('f');
         const tripInterval = this.earthQuakeMagmified ? (isQuakeF ? 350 : 500) : (isQuakeF ? 500 : 750);
@@ -649,8 +771,13 @@ export class EarthKit {
             const d = Phaser.Math.Distance.Between(this.earthQuakeX, this.earthQuakeY, t.x, t.y);
             if (d < quakeRadius && time > (this.earthQuakeStunUntil ?? 0) && Math.random() < 0.35) {
               t.takeDamage(tripDmg, { source: this.earthQuakeSprite, sourceX: this.earthQuakeX, sourceY: this.earthQuakeY });
-              this.arena.spawnHitFlash(t.x, t.y, this.earthQuakeMagmified ? 0xff4400 : 0x887755);
+              this.arena.spawnHitFlash(t.x, t.y, this.earthQuakeMagmified ? EARTH.ember : EARTH.clay);
               this.arena.showFloatingText(t.x, t.y - 20, this.earthQuakeMagmified ? `🌋 MAGMA ${tripDmg}` : `⚡ TRIP ${tripDmg}`, '#ccaa66');
+              // Tripped: a plate kicks up under their feet and dumps them off it.
+              this.pfx.pillar(t.x, t.y + 6, 12, this.earthQuakeMagmified ? 34 : 24, 7);
+              this.pfx.debris(t.x, t.y, this.earthQuakeMagmified ? 7 : 4, {
+                speed: 120, size: 3, life: 460, fall: 90, depth: 7, molten: this.earthQuakeMagmified,
+              });
               t.earthStunnedUntil = Math.max(t.earthStunnedUntil, time + 500);
               this.earthQuakeStunUntil = time + 500;
               this.arena.recordMasteryStat('quakeTrips', 1);
@@ -661,6 +788,10 @@ export class EarthKit {
           }
         }
       } else if (this.earthQuakeSprite && time >= this.earthQuakeExpiry) {
+        // Settles rather than vanishing: the broken ground sinks back and throws up dust.
+        this.pfx.dust(this.earthQuakeX, this.earthQuakeY, 4, quakeRadius * 0.8, 5);
+        this.pfx.ring(this.earthQuakeX, this.earthQuakeY, quakeRadius, quakeRadius * 0.4,
+          this.earthQuakeMagmified ? EARTH.magma : EARTH.umber, 460, 4, 4);
         this.earthQuakeSprite.destroy(); this.earthQuakeSprite = null;
         this.earthQuakeMagmified = false;
         this.earthQuakeStandAccum = 0;
@@ -676,17 +807,25 @@ export class EarthKit {
             this.earthQuakeStandAccum = 0;
             this.spawnEarthRock(true, 0);
             this.arena.showFloatingText(player.x, player.y - 30, '🪨 QUAKE ROCK', '#ccaa66');
+            // Torn out of the shaking floor at the player's feet.
+            this.pfx.pillar(player.x, player.y + 10, 13, 30, 7);
+            this.pfx.ring(player.x, player.y, 10, 44, EARTH.dust, 320, 3, 6);
           }
         } else {
           this.earthQuakeStandAccum = 0;
         }
       }
 
-      // Tsunami waves (legacy, no longer spawned)
+      // Quake-perk ridges: a lip of upheaved ground rolling outward from an impact.
       for (let ti = this.earthTsunamiWaves.length - 1; ti >= 0; ti--) {
         const wave = this.earthTsunamiWaves[ti];
         wave.sprite.x += wave.vx * (delta / 1000);
         wave.sprite.y += wave.vy * (delta / 1000);
+        // Grinding along: the ridge sheds grit as it travels.
+        if (Math.random() < 0.35) {
+          this.pfx.grit(wave.sprite.x, wave.sprite.y + Phaser.Math.Between(-40, 40), 1,
+            { angle: Math.atan2(wave.vy, wave.vx), spread: 0.9, speed: 60, size: 2.4, life: 420, fall: 60, depth: 6 });
+        }
         if (time >= wave.expiresAt || wave.sprite.x < -100 || wave.sprite.x > W + 100 || wave.sprite.y < -100 || wave.sprite.y > H + 100) {
           wave.sprite.destroy();
           this.earthTsunamiWaves.splice(ti, 1);
@@ -702,8 +841,8 @@ export class EarthKit {
           const wd = Phaser.Math.Distance.Between(wave.sprite.x, wave.sprite.y, t.x, t.y);
           if (wd < waveHitRadius) {
             t.takeDamage(waveDamage);
-            this.arena.spawnHitFlash(t.x, t.y, 0x88ddff);
-            if (!wave.owner) this.arena.showFloatingText(t.x, t.y - 20, '🌊 TSUNAMI 35', '#88ddff');
+            this.arena.spawnHitFlash(t.x, t.y, EARTH.dust);
+            this.pfx.impact(t.x, t.y, 52, { shards: 7, dust: 1, crater: false, depth: 7, duration: 340 });
             const tb = t.body as Phaser.Physics.Arcade.Body;
             tb.setVelocity(wave.vx * 0.8, wave.vy * 0.8);
             t.earthStunnedUntil = Math.max(t.earthStunnedUntil, time + 500);
@@ -724,21 +863,26 @@ export class EarthKit {
         }
       }
 
-      // E+ Shield Splinter: throb visual
-      if (this.earthSplinterHolding && this.earthSplinterReady && this.earthShieldSprite) {
-        const t2 = (Math.sin(time / 100) + 1) / 2; // oscillate 0→1
-        const scale = 0.9 + t2 * 0.3;
-        this.earthShieldSprite.setScale(scale);
-        this.earthShieldSprite.setFillStyle(0xff2222);
-      } else if (this.earthShieldSprite && !this.earthSplinterHolding) {
-        this.earthShieldSprite.setScale(1);
+      // E+ Shield Splinter: the plate cooks itself from the inside before it lets go.
+      if (this.earthShieldSprite) {
+        if (this.earthSplinterHolding) {
+          const wind = Phaser.Math.Clamp((time - this.earthSplinterHoldStart) / 2000, 0, 1);
+          this.earthShieldSprite.setSplinter(this.earthSplinterReady ? 1 : wind * 0.7);
+          // Once armed it starts flinging chips off itself.
+          if (this.earthSplinterReady && Math.random() < 0.3) {
+            const sa = this.earthShieldAngle;
+            this.pfx.grit(player.x + Math.cos(sa) * 28, player.y + Math.sin(sa) * 28, 1,
+              { speed: 70, size: 2.2, life: 420, fall: 60, depth: 9, molten: true });
+          }
+        } else {
+          this.earthShieldSprite.setSplinter(0);
+        }
       }
 
-      // Q+ Titan Form: charge bar visual
+      // Q+ Titan Form: rock hauled off the floor and stacked onto the caster.
       if (this.earthTitanChargeHolding && this.earthTitanChargeVisual) {
         const holdPct = Math.min(1, (time - this.earthTitanChargeStart) / 5000);
-        this.earthTitanChargeVisual.setRadius(10 + holdPct * 24);
-        this.earthTitanChargeVisual.setPosition(player.x, player.y - 36);
+        this.earthTitanChargeVisual.update(delta, player.x, player.y, holdPct);
       }
 
       // Q+ Titan Form: the golem itself plus everything it left lying around
@@ -765,12 +909,21 @@ export class EarthKit {
         this.spawnEarthShield(false);
         this.arena.showFloatingText(npc.x, npc.y - 30, '🛡 SHIELD RESTORED', '#ccaa66');
       }
-      if (this.npcEarthShieldSprite) this.updateEarthShieldSpritePosition(false);
+      if (this.npcEarthShieldSprite) this.updateEarthShieldSpritePosition(false, delta);
 
       // NPC Repair
       if (this.npcEarthRepairActive) {
-        if (time >= this.npcEarthRepairEnd) {
+        if (time < this.npcEarthRepairEnd) {
+          if (!this.npcEarthRepairAura) {
+            this.npcEarthRepairAura = new EarthAura(this.arena.scene, this.ncol, 30, 4);
+          }
+          const span = Math.max(1, this.npcEarthRepairEnd - this.npcEarthRepairStart);
+          this.npcEarthRepairAura.update(delta, npc.x, npc.y, (time - this.npcEarthRepairStart) / span);
+        } else {
           this.npcEarthRepairActive = false;
+          if (this.npcEarthRepairAura) { this.npcEarthRepairAura.destroy(); this.npcEarthRepairAura = null; }
+          this.nfx.ring(npc.x, npc.y, 34, 8, EARTH.dust, 320, 4, 6);
+          this.nfx.grit(npc.x, npc.y, 8, { speed: 60, size: 2.4, life: 520, fall: 60, depth: 6 });
           if (this.npcEarthGolemActive) {
             this.npcEarthGolemHp = Math.min(this.earthGolemMaxHp, this.npcEarthGolemHp + 50);
             this.arena.showFloatingText(npc.x, npc.y - 30, '🔧 GOLEM REPAIR +50', '#ccaa66');
@@ -782,7 +935,11 @@ export class EarthKit {
             this.npcEarthShieldEnhanced = true;
             this.npcEarthShieldMaxHp = 125;
             this.npcEarthShieldHp = 125;
-            if (this.npcEarthShieldSprite) this.npcEarthShieldSprite.setSize(55, 14);
+            this.npcEarthShieldSprite?.setEnhanced(true);
+            this.nfx.flash(
+              npc.x + Math.cos(this.npcEarthShieldAngle) * 28,
+              npc.y + Math.sin(this.npcEarthShieldAngle) * 28, 22, 9,
+            );
           }
         }
       }
@@ -792,21 +949,34 @@ export class EarthKit {
         if (time >= this.npcEarthBashEnd) {
           this.npcEarthBashActive = false;
           npcBody.setVelocity(0, 0);
+          this.nfx.furrow(this.npcEarthBashStartX, this.npcEarthBashStartY, npc.x, npc.y);
         } else if (!this.npcEarthBashHitDealt) {
           const dist = Phaser.Math.Distance.Between(npc.x, npc.y, player.x, player.y);
           if (dist < 70) {
             this.npcEarthBashHitDealt = true;
-            if (this.npcEarthShieldHp > 0) {
+            const shielded = this.npcEarthShieldHp > 0;
+            if (shielded) {
               player.takeDamage(this.npcEarthBashShieldDmg);
-              this.arena.spawnHitFlash(player.x, player.y, 0x887755);
+              this.arena.spawnHitFlash(player.x, player.y, EARTH.clay);
               this.arena.showFloatingText(player.x, player.y - 20, `🛡 BASH ${this.npcEarthBashShieldDmg}`, '#ccaa66');
             } else {
               player.takeDamage(this.npcEarthBashStabDmg);
-              this.arena.spawnHitFlash(player.x, player.y, 0x887755);
+              this.arena.spawnHitFlash(player.x, player.y, EARTH.clay);
               this.arena.showFloatingText(player.x, player.y - 20, `🗡 STAB ${this.npcEarthBashStabDmg}`, '#aa8844');
             }
+            const bashAng = Math.atan2(player.y - npc.y, player.x - npc.x);
+            const power = this.npcEarthBashFullCharge ? 1 : 0.55;
+            this.nfx.impact(player.x, player.y, (shielded ? 62 : 44) * (0.7 + power * 0.5), {
+              shards: shielded ? 10 : 6, dust: 2, crater: false, depth: 7,
+            });
+            this.nfx.debris(player.x, player.y, shielded ? 8 : 5, {
+              angle: bashAng, spread: 0.8, speed: 260 * power, size: 4, life: 560, fall: 130, depth: 7,
+            });
+            this.arena.scene.cameras.main.shake(140 + power * 110, 0.006 + power * 0.006);
             if (this.npcEarthBashFullCharge) {
               player.earthStunnedUntil = Math.max(player.earthStunnedUntil, time + 700);
+              this.nfx.pillar(player.x, player.y, 16, 40, 7);
+              this.nfx.ring(player.x, player.y, 12, 92, EARTH.gold, 420, 5, 7);
             }
           }
         }
@@ -819,12 +989,16 @@ export class EarthKit {
         const rock = this.npcEarthRocks[nri];
         const ang = this.npcEarthRockOrbitAngle + nri * (Math.PI * 2 / npcRockCount);
         rock.sprite.setPosition(npc.x + Math.cos(ang) * 52, npc.y + Math.sin(ang) * 52);
+        rock.sprite.setRotation(ang * 1.7 + nri);
         if (time >= rock.hitCdUntil) {
           const d = Phaser.Math.Distance.Between(rock.sprite.x, rock.sprite.y, player.x, player.y);
           if (d < 22) {
             player.takeDamage(8);
-            this.arena.spawnHitFlash(player.x, player.y, 0x887755);
+            this.arena.spawnHitFlash(player.x, player.y, EARTH.clay);
             this.arena.showFloatingText(player.x, player.y - 20, '🪨 8', '#aa8844');
+            this.nfx.debris(rock.sprite.x, rock.sprite.y, 4,
+              { angle: ang, spread: 1.1, speed: 130, size: 2.6, life: 420, fall: 70, depth: 8 });
+            this.nfx.ring(player.x, player.y, 6, 26, EARTH.dust, 260, 3, 7);
             rock.hitCdUntil = time + 500;
           }
         }
@@ -833,17 +1007,30 @@ export class EarthKit {
         const lr = this.npcEarthLaunchedRocks[i];
         lr.sprite.x += lr.vx * (delta / 1000);
         lr.sprite.y += lr.vy * (delta / 1000);
+        lr.sprite.rotation += (delta / 1000) * 9;
+        lr.trailAccum += delta;
+        if (lr.trailAccum >= 45) {
+          lr.trailAccum = 0;
+          this.nfx.grit(lr.sprite.x, lr.sprite.y, 1, {
+            angle: Math.atan2(-lr.vy, -lr.vx), spread: 0.5, speed: 40, size: 2.4,
+            life: 380, fall: 24, depth: 7,
+          });
+        }
         const d = Phaser.Math.Distance.Between(lr.sprite.x, lr.sprite.y, player.x, player.y);
         const hitWall = lr.sprite.x < 20 || lr.sprite.x > W - 20 || lr.sprite.y < 20 || lr.sprite.y > H - 20;
         const expired = time - lr.spawnedAt > 1200;
         if (d < 28) {
           player.takeDamage(40);
-          this.arena.spawnHitFlash(player.x, player.y, 0x887755);
+          this.arena.spawnHitFlash(player.x, player.y, EARTH.clay);
           this.arena.showFloatingText(player.x, player.y - 20, '🪨 LAUNCH STUN 40', '#ffcc44');
           this.playerEarthStunnedUntil = Math.max(this.playerEarthStunnedUntil, time + 3000);
+          this.nfx.impact(player.x, player.y, 74, { shards: 11, dust: 3, depth: 7, duration: 420 });
+          this.arena.scene.cameras.main.shake(190, 0.011);
           lr.sprite.destroy();
           this.npcEarthLaunchedRocks.splice(i, 1);
         } else if (hitWall || expired) {
+          this.nfx.impact(lr.sprite.x, lr.sprite.y, 40,
+            { shards: 6, dust: 1, crater: false, depth: 7, duration: 300 });
           lr.sprite.destroy();
           this.npcEarthLaunchedRocks.splice(i, 1);
         }
@@ -851,19 +1038,25 @@ export class EarthKit {
 
       // NPC Quake zone
       if (this.npcEarthQuakeSprite && time < this.npcEarthQuakeExpiry) {
+        this.npcEarthQuakeSprite.clear();
+        EarthFx.drawQuakeField(this.npcEarthQuakeSprite, this.ncol,
+          this.npcEarthQuakeX, this.npcEarthQuakeY, 80, time / 1000, false, false);
         this.npcEarthQuakeTickAccum += delta;
         if (this.npcEarthQuakeTickAccum >= 750) {
           this.npcEarthQuakeTickAccum -= 750;
           const d = Phaser.Math.Distance.Between(this.npcEarthQuakeX, this.npcEarthQuakeY, player.x, player.y);
           if (d < 80 && time > (this.npcEarthQuakeStunUntil ?? 0) && Math.random() < 0.35) {
             player.takeDamage(5, { source: this.npcEarthQuakeSprite, sourceX: this.npcEarthQuakeX, sourceY: this.npcEarthQuakeY });
-            this.arena.spawnHitFlash(player.x, player.y, 0x887755);
+            this.arena.spawnHitFlash(player.x, player.y, EARTH.clay);
             this.arena.showFloatingText(player.x, player.y - 20, '⚡ TRIP 5', '#ccaa66');
+            this.nfx.pillar(player.x, player.y + 6, 12, 24, 7);
+            this.nfx.debris(player.x, player.y, 4, { speed: 120, size: 3, life: 460, fall: 90, depth: 7 });
             this.playerEarthStunnedUntil = Math.max(this.playerEarthStunnedUntil, time + 500);
             this.npcEarthQuakeStunUntil = time + 500;
           }
         }
       } else if (this.npcEarthQuakeSprite && time >= this.npcEarthQuakeExpiry) {
+        this.nfx.dust(this.npcEarthQuakeX, this.npcEarthQuakeY, 4, 64, 5);
         this.npcEarthQuakeSprite.destroy(); this.npcEarthQuakeSprite = null;
       }
 
@@ -877,6 +1070,7 @@ export class EarthKit {
       }
 
       // React to npcCastId for earth abilities (signals from doEarthAbilities)
+      this.handleNpcCastId(this.arena.npcCastId);
       if (this.arena.npcCastId === 'bash') {
         // Launch a rock if shield is active and one is within ±45° of shield angle
         let npcLaunchedRock = false;
@@ -907,19 +1101,22 @@ export class EarthKit {
       if (this.arena.npcCastId === 'rock-dance' && this.npcEarthRocks.length === 0) {
         for (let i = 0; i < 4; i++) this.spawnEarthRock(false, i * Math.PI / 2);
         this.arena.showFloatingText(npc.x, npc.y - 30, '🪨 ROCK DANCE', '#ccaa66');
+        this.rockDanceBurst(this.nfx, npc.x, npc.y, false);
       }
       if (this.arena.npcCastId === 'quake') {
         const qx = player.x + Phaser.Math.Between(-60, 60);
         const qy = player.y + Phaser.Math.Between(-60, 60);
         if (this.npcEarthQuakeSprite) this.npcEarthQuakeSprite.destroy();
-        this.npcEarthQuakeSprite = this.arena.scene.add.circle(qx, qy, 80, 0x887755, 0.2).setDepth(4).setStrokeStyle(2, 0xccaa66, 0.8);
+        this.npcEarthQuakeSprite = this.arena.scene.add.graphics().setDepth(4);
         this.npcEarthQuakeX = qx; this.npcEarthQuakeY = qy;
         this.npcEarthQuakeExpiry = time + 5000;
         this.npcEarthQuakeTickAccum = 0;
         this.arena.showFloatingText(qx, qy, '⛰ QUAKE', '#ccaa66');
+        this.quakeOpeningBurst(this.nfx, qx, qy, 80, false);
       }
       if (this.arena.npcCastId === 'repair') {
         this.npcEarthRepairActive = true;
+        this.npcEarthRepairStart = time;
         this.npcEarthRepairEnd = time + 3000;
         this.arena.showFloatingText(npc.x, npc.y - 30, '🔧 REPAIR', '#ccaa66');
       }
@@ -935,22 +1132,24 @@ export class EarthKit {
       if (this.playerEarthCastId === 'rock-dance' && this.earthRocks.length === 0) {
         for (let i = 0; i < 4; i++) this.spawnEarthRock(true, i * Math.PI / 2);
         this.arena.showFloatingText(player.x, player.y - 30, '🪨 ROCK DANCE', '#ccaa66');
+        this.playPlayerGesture('flex');
+        this.rockDanceBurst(this.pfx, player.x, player.y, this.arena.hasUpgrade('r'));
       }
       if (this.playerEarthCastId === 'quake') {
         const ptr2 = this.arena.scene.input.activePointer;
         const hasTectonic = this.arena.hasUpgrade('f');
         const qRadius = hasTectonic ? 100 : 80;
         const qDuration = hasTectonic ? 6000 : 5000;
-        const qColor = hasTectonic ? 0xffffff : 0x887755;
-        const qStroke = hasTectonic ? 0xdddddd : 0xccaa66;
         if (this.earthQuakeSprite) this.earthQuakeSprite.destroy();
-        this.earthQuakeSprite = this.arena.scene.add.circle(ptr2.worldX, ptr2.worldY, qRadius, qColor, 0.15).setDepth(4).setStrokeStyle(2, qStroke, 0.8);
+        this.earthQuakeSprite = this.arena.scene.add.graphics().setDepth(4);
         this.earthQuakeX = ptr2.worldX; this.earthQuakeY = ptr2.worldY;
         this.earthQuakeExpiry = time + qDuration;
         this.earthQuakeTickAccum = 0;
         this.earthQuakeMagmified = false;
         this.earthQuakeStandAccum = 0;
         this.arena.showFloatingText(ptr2.worldX, ptr2.worldY, hasTectonic ? '⛰ TECTONIC QUAKE' : '⛰ QUAKE', '#ccaa66');
+        this.playPlayerGesture('slam', Math.atan2(ptr2.worldY - player.y, ptr2.worldX - player.x));
+        this.quakeOpeningBurst(this.pfx, ptr2.worldX, ptr2.worldY, qRadius, hasTectonic);
       }
       if (this.playerEarthCastId === 'golem-ritual') {
         if (this.earthShieldHp > 0 && !this.earthGolemActive) {
@@ -967,6 +1166,188 @@ export class EarthKit {
       }
       this.playerEarthCastId = null;
     }
+  }
+
+  // ── Character rig ───────────────────────────────────────────────────────
+
+  /** One-shot arm gesture on the player's rig, aimed at the cursor unless told otherwise. */
+  private playPlayerGesture(gesture: ArmGesture, angle?: number, duration?: number): void {
+    this.playerAvatar?.play(gesture, angle ?? this.playerAim(), duration);
+  }
+
+  /** Sustained pose for the length of a channel. Lapses on its own so nothing can strand it. */
+  private setPlayerHold(hold: ArmHold, durationMs = 0, angle?: number): void {
+    this.playerHold = hold;
+    this.playerHoldAngle = angle ?? this.playerAim();
+    this.playerHoldUntil = hold ? this.arena.scene.time.now + durationMs : 0;
+  }
+
+  private playerAim(): number {
+    const { player } = this.arena;
+    const ax = this.lastMouseX || player.x + 1;
+    const ay = this.lastMouseY || player.y;
+    return Math.atan2(ay - player.y, ax - player.x);
+  }
+
+  /**
+   * Builds (on first frame) and drives the stone avatar for whichever fighters are earth. The
+   * player faces the cursor; the NPC faces whoever it is fighting. Both are destroyed the
+   * moment their side stops being earth, so a mid-match element swap can't strand a rig.
+   */
+  private updateAvatars(time: number, delta: number): void {
+    const { player, npc, scene } = this.arena;
+    const isPlayerEarth = this.arena.elementId === 'earth';
+    const isNpcEarth = this.arena.npcElementId === 'earth';
+
+    if (isPlayerEarth && player?.active) {
+      if (!this.playerAvatar) this.playerAvatar = new EarthAvatar(scene, this.pcol);
+      this.playerAvatar.setFacing(this.playerAim());
+      // Standing in a golem or a titan makes the character itself read heavier.
+      this.playerAvatar.setIntensity(this.titanActive ? 1.5 : this.earthGolemActive ? 1.25 : 1);
+      this.playerAvatar.setMastered(this.arena.masteryActive);
+      if (this.playerHold && time >= this.playerHoldUntil) this.playerHold = null;
+      this.playerAvatar.setHold(this.playerHold, this.playerHoldAngle);
+      // Titan Form hides the player outright — the rig has to go with them.
+      const alpha = player.forceInvisible || this.titanActive ? 0 : player.alpha;
+      this.playerAvatar.update(delta, player.x, player.y, alpha);
+    } else if (this.playerAvatar) {
+      this.playerAvatar.destroy();
+      this.playerAvatar = null;
+    }
+
+    if (isNpcEarth && npc?.active) {
+      if (!this.npcAvatar) this.npcAvatar = new EarthAvatar(scene, this.ncol);
+      this.npcAvatar.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
+      this.npcAvatar.setIntensity(this.npcEarthGolemActive ? 1.25 : 1);
+      this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
+    } else if (this.npcAvatar) {
+      this.npcAvatar.destroy();
+      this.npcAvatar = null;
+    }
+  }
+
+  /** Mirrors the opponent's casts onto their rig. */
+  private handleNpcCastId(id: string | null): void {
+    if (!id) return;
+    const gesture = NPC_GESTURES[id];
+    if (!gesture) return;
+    const { npc, player } = this.arena;
+    this.npcAvatar?.play(gesture, Math.atan2(player.y - npc.y, player.x - npc.x));
+  }
+
+  // ── Shared cast flourishes ──────────────────────────────────────────────
+
+  /** Four rocks torn out of the ground and thrown into orbit. */
+  private rockDanceBurst(fx: EarthFx, x: number, y: number, lava: boolean): void {
+    const orbit = lava ? 38 : 52;
+    for (let i = 0; i < 4; i++) {
+      const a = i * (Math.PI / 2);
+      fx.pillar(x + Math.cos(a) * orbit, y + Math.sin(a) * orbit * 0.85, 10, 26, 7);
+    }
+    fx.ring(x, y, 12, orbit + 16, lava ? EARTH.magma : EARTH.dust, 420, 4, 6);
+    fx.dust(x, y, 3, orbit, 4);
+    this.arena.scene.cameras.main.shake(180, 0.007);
+  }
+
+  /** The floor opening up where a quake lands. Scales with the Tectonic upgrade. */
+  private quakeOpeningBurst(fx: EarthFx, x: number, y: number, radius: number, tectonic: boolean): void {
+    fx.impact(x, y, radius * (tectonic ? 1.05 : 0.85), {
+      shards: tectonic ? 16 : 10, dust: tectonic ? 5 : 3, crater: false, depth: 5,
+      duration: tectonic ? 520 : 400,
+    });
+    // Tectonic gets extra spires around the rim — the upgrade adds content, not just radius.
+    const spires = tectonic ? 7 : 4;
+    for (let i = 0; i < spires; i++) {
+      const a = (i / spires) * Math.PI * 2 + Math.random();
+      const d = radius * (0.4 + Math.random() * 0.5);
+      fx.pillar(x + Math.cos(a) * d, y + Math.sin(a) * d * 0.85, 12, tectonic ? 44 : 30, 6);
+    }
+    this.arena.scene.cameras.main.shake(tectonic ? 420 : 300, tectonic ? 0.018 : 0.012);
+  }
+
+  /** Both E paths (base tap and the short hold under Shield Splinter) start Repair here. */
+  private startRepair(time: number): void {
+    const player = this.arena.player;
+    this.earthRepairActive = true;
+    this.earthRepairStart = time;
+    this.earthRepairEnd = time + 3000;
+    if (this.earthRepairAura) this.earthRepairAura.destroy();
+    this.earthRepairAura = new EarthAura(this.arena.scene, this.pcol, 32, 4);
+    this.arena.showFloatingText(player.x, player.y - 30, '🔧 REPAIR', '#ccaa66');
+    // Hands drop low to the work for the whole three seconds.
+    this.setPlayerHold('sow', 3000);
+    this.pfx.ring(player.x, player.y, 8, 40, EARTH.dust, 380, 3, 5);
+  }
+
+  /** R+ lava rock met the quake zone: the whole field turns over into magma. */
+  private magmifyQuake(): void {
+    if (this.earthQuakeMagmified) return;
+    this.earthQuakeMagmified = true;
+    const r = this.arena.hasUpgrade('f') ? 100 : 80;
+    this.arena.showFloatingText(this.earthQuakeX, this.earthQuakeY - 20, '🌋 MAGMA QUAKE', '#ff2200');
+    // The ignition itself: fire spreading out from the middle to the rim.
+    this.pfx.ring(this.earthQuakeX, this.earthQuakeY, 8, r * 1.15, EARTH.gold, 520, 6, 5);
+    this.pfx.ring(this.earthQuakeX, this.earthQuakeY, 8, r * 0.7, EARTH.ember, 380, 5, 5);
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const d = r * (0.3 + Math.random() * 0.55);
+      this.pfx.pillar(this.earthQuakeX + Math.cos(a) * d, this.earthQuakeY + Math.sin(a) * d * 0.85, 13, 40, 6);
+    }
+    this.pfx.debris(this.earthQuakeX, this.earthQuakeY, 14,
+      { speed: r * 2, size: 4, life: 700, fall: 150, depth: 6, molten: true });
+    this.arena.scene.cameras.main.shake(380, 0.016);
+  }
+
+  /** Plates thrown by Shield Splinter: tumble, trail grit, shatter on contact. */
+  private updateSplinterShards(time: number, delta: number): void {
+    const npc = this.arena.npc;
+    for (let i = this.earthSplinterShards.length - 1; i >= 0; i--) {
+      const s = this.earthSplinterShards[i];
+      s.x += s.vx * (delta / 1000);
+      s.y += s.vy * (delta / 1000);
+      s.g.setPosition(s.x, s.y);
+      s.g.rotation += s.spin * (delta / 1000);
+      s.trailAccum += delta;
+      if (s.trailAccum >= 40) {
+        s.trailAccum = 0;
+        this.pfx.grit(s.x, s.y, 1, {
+          angle: Math.atan2(-s.vy, -s.vx), spread: 0.5, speed: 34, size: 2, life: 320, fall: 20, depth: 7,
+        });
+      }
+
+      const hit = npc.active && npc.hp > 0 && Phaser.Math.Distance.Between(s.x, s.y, npc.x, npc.y) < 28;
+      if (hit) {
+        npc.takeDamage(20);
+        this.arena.spawnHitFlash(npc.x, npc.y, s.colour);
+        this.arena.showFloatingText(npc.x, npc.y - 20, '🛡 SHARD 20', '#cccccc');
+        if (npc.hp <= 0) this.arena.recordMasteryStat('splinterKills', 1);
+        this.earthSplinterRepairFast = true; // next break → 4s repair
+        this.pfx.shatter(s.x, s.y, Math.atan2(s.vy, s.vx), s.colour, 7, 8);
+      }
+      if (hit || time - s.spawnedAt > 1500) {
+        if (!hit) this.pfx.shatter(s.x, s.y, Math.atan2(s.vy, s.vx), s.colour, 4, 8);
+        s.g.destroy();
+        this.earthSplinterShards.splice(i, 1);
+      }
+    }
+  }
+
+  /**
+   * Dust Screen landing on the local human: blur the canvas for `ms`, extending an existing
+   * blur rather than letting an earlier call clear it early. Lives here rather than in
+   * ArenaScene because Dust Screen is the only thing in the game that uses it.
+   */
+  private applyScreenBlur(durationMs: number): void {
+    const scene = this.arena.scene;
+    this.screenBlurUntil = Math.max(this.screenBlurUntil, scene.time.now + durationMs);
+    const canvas = scene.game.canvas as HTMLCanvasElement | undefined;
+    if (canvas) canvas.style.filter = 'blur(5px)';
+    scene.time.delayedCall(durationMs, () => {
+      if (scene.time.now >= this.screenBlurUntil) {
+        const c = scene.game.canvas as HTMLCanvasElement | undefined;
+        if (c) c.style.filter = '';
+      }
+    });
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -1005,7 +1386,7 @@ export class EarthKit {
     this.titanRocks.forEach(r => { r.g.destroy(); r.shadow.destroy(); });
     this.titanRocks = [];
     if (this.titanTremorLine) { this.titanTremorLine.g.destroy(); this.titanTremorLine = null; }
-    if (this.titanWave) { this.titanWave.sprite.destroy(); this.titanWave.crest.destroy(); this.titanWave = null; }
+    if (this.titanWave) { this.titanWave.g.destroy(); this.titanWave = null; }
     if (this.titanBeam) { this.titanBeam.g.destroy(); this.titanBeam = null; }
     this.titanScorch.forEach(s => s.sprite.destroy());
     this.titanScorch = [];
@@ -1084,16 +1465,15 @@ export class EarthKit {
       bar.desc?.setText(titanCards[idx][1]);
     });
 
-    // Rise: dust wall along the top, a long heavy quake.
+    // Rise: a wall of dust and debris torn along the top edge, and a long heavy quake.
     this.shake(1200, 0.028);
-    for (let i = 0; i < 14; i++) {
-      const dx = 40 + Math.random() * (W - 80);
-      const puff = this.arena.scene.add.circle(dx, 30 + Math.random() * 120, 10 + Math.random() * 26, 0x6b5a44, 0.55).setDepth(29);
-      this.arena.scene.tweens.add({
-        targets: puff, y: puff.y + 90 + Math.random() * 70, scale: 2.4, alpha: 0,
-        duration: 700 + Math.random() * 500, onComplete: () => puff.destroy(),
-      });
+    for (let i = 0; i < 5; i++) {
+      const dx = 60 + (i / 4) * (W - 120);
+      this.pfx.dust(dx, 90 + Math.random() * 70, 4, 70, 29);
+      this.pfx.debris(dx, 150, 6, { speed: 190, size: 7, life: 900, fall: 240, depth: 29 });
     }
+    this.pfx.ring(W / 2, 170, 60, W * 0.7, EARTH.dust, 900, 7, 29);
+    this.playPlayerGesture('raise', -Math.PI / 2, 1200);
     this.arena.showFloatingText(W / 2, 240, '🗿 TITAN GOLEM RISES!', '#ffbb55');
   }
 
@@ -1115,16 +1495,12 @@ export class EarthKit {
     this.titanArms = [];
     if (this.titanBeam) { this.titanBeam.g.destroy(); this.titanBeam = null; }
 
-    // Debris shower from where the head and arms were.
-    for (let i = 0; i < 18; i++) {
-      const cx = Math.random() < 0.5 ? Phaser.Math.Between(W / 2 - 240, W / 2 + 240) : (Math.random() < 0.5 ? Phaser.Math.Between(10, 90) : Phaser.Math.Between(W - 90, W - 10));
-      const chunk = this.arena.scene.add.rectangle(cx, Phaser.Math.Between(20, 200), Phaser.Math.Between(10, 26), Phaser.Math.Between(10, 26), 0x5b4c39, 0.9)
-        .setDepth(27).setStrokeStyle(2, 0x3a3025);
-      this.arena.scene.tweens.add({
-        targets: chunk, y: chunk.y + Phaser.Math.Between(120, 400), x: chunk.x + Phaser.Math.Between(-90, 90),
-        angle: Phaser.Math.Between(-360, 360), alpha: 0, duration: 700 + Math.random() * 500,
-        onComplete: () => chunk.destroy(),
+    // Debris shower from where the head and arms were — the body falling apart, mid-air.
+    for (const cx of [W / 2 - 160, W / 2, W / 2 + 160, 50, W - 50]) {
+      this.pfx.debris(cx, Phaser.Math.Between(60, 180), 8, {
+        speed: 130, size: 9, life: 1100, fall: 460, depth: 27, molten: cx === W / 2,
       });
+      this.pfx.dust(cx, 140, 3, 80, 26);
     }
 
     // Player comes back to earth. Restoring HP mirrors the old fusion: the form
@@ -1200,8 +1576,8 @@ export class EarthKit {
         player.isInvincible = false;
         player.damageAbsorber = null;
         player.setAlpha(1);
-        const ring = this.arena.scene.add.circle(player.x, player.y, 14, 0x887755, 0.75).setDepth(6);
-        this.arena.scene.tweens.add({ targets: ring, scaleX: 9, scaleY: 9, alpha: 0, duration: 420, onComplete: () => ring.destroy() });
+        // Touchdown: you land as the last piece of the golem to hit the floor.
+        this.pfx.impact(player.x, player.y, 84, { shards: 12, dust: 3, depth: 6, duration: 460 });
         this.shake(320, 0.02);
       }
     }
@@ -1248,7 +1624,7 @@ export class EarthKit {
           if (time < next) continue;
           tr.nextHit.set(t, time + 1000);       // 1s collision cooldown per target
           t.takeDamage(15);
-          this.arena.spawnHitFlash(t.x, t.y, 0xff8844);
+          this.arena.spawnHitFlash(t.x, t.y, EARTH.magma);
           this.arena.showFloatingText(t.x, t.y - 26, '⛰ TREMOR', '#ffaa55');
           this.shake(180, 0.012);
         }
@@ -1259,8 +1635,7 @@ export class EarthKit {
     if (this.titanWave) {
       const w = this.titanWave;
       w.x += w.speed * dt;
-      w.sprite.setX(w.x);
-      w.crest.setX(w.x + 92);
+      this.drawTitanWave(w, time);
       const front = w.x + 78;
       for (const t of this.titanTargets()) {
         if (t.x > front) continue;
@@ -1285,13 +1660,12 @@ export class EarthKit {
           t.earthStunnedUntil = Math.max(t.earthStunnedUntil, time + 700);
           this.arena.spawnHitFlash(t.x, t.y, 0x88ddff);
           this.arena.showFloatingText(t.x, t.y - 40, '💥 SLAMMED INTO THE WALL', '#aaeeff');
-          const splash = this.arena.scene.add.circle(W - 20, t.y, 20, 0xaaeeff, 0.7).setDepth(6);
-          this.arena.scene.tweens.add({ targets: splash, scaleX: 6, scaleY: 6, alpha: 0, duration: 450, onComplete: () => splash.destroy() });
+          // Crushed against the far wall: the wall itself gives way behind them.
+          this.pfx.impact(W - 20, t.y, 96, { shards: 14, dust: 3, crater: false, depth: 20, duration: 480 });
         }
       }
       if (w.x > W + 160) {
-        w.sprite.destroy();
-        w.crest.destroy();
+        w.g.destroy();
         this.titanWave = null;
         // …and then the sky falls in.
         for (let i = 0; i < 50; i++) {
@@ -1320,7 +1694,7 @@ export class EarthKit {
           for (const t of this.titanTargets()) {
             if (this.distToSegment(t.x, t.y, W / 2, TITAN_MOUTH_Y, b.x, b.y) > 34) continue;
             t.takeDamage(5);
-            this.arena.spawnHitFlash(t.x, t.y, 0xff9933);
+            this.arena.spawnHitFlash(t.x, t.y, EARTH.magma);
           }
         }
         if (time >= b.nextScorchAt) {
@@ -1345,7 +1719,7 @@ export class EarthKit {
           const burning = this.titanScorch.some(s => Phaser.Math.Distance.Between(t.x, t.y, s.x, s.y) <= s.r);
           if (!burning) continue;
           t.takeDamage(5);
-          this.arena.spawnHitFlash(t.x, t.y, 0xff6622);
+          this.arena.spawnHitFlash(t.x, t.y, EARTH.ember);
         }
       }
     }
@@ -1382,20 +1756,20 @@ export class EarthKit {
 
     // Skull
     const pts = this.headPoints(cx, cy);
-    g.fillStyle(0x5b4c39, 1);
+    g.fillStyle(this.pcol(EARTH.stone), 1);
     g.fillPoints(pts, true);
-    g.lineStyle(5, 0x342b20, 1);
+    g.lineStyle(5, this.pcol(EARTH.umber), 1);
     g.strokePoints(pts, true);
 
     // Cheek plates — lighter slabs so the face reads as stacked rock
-    g.fillStyle(0x6d5c45, 1);
+    g.fillStyle(this.pcol(EARTH.rock), 1);
     g.fillTriangle(cx - 200, cy + 60, cx - 120, cy + 40, cx - 140, cy + 150);
     g.fillTriangle(cx + 200, cy + 60, cx + 120, cy + 40, cx + 140, cy + 150);
-    g.fillStyle(0x4a3d2d, 1);
+    g.fillStyle(this.pcol(EARTH.shale), 1);
     g.fillTriangle(cx - 70, cy + 150, cx + 70, cy + 150, cx, cy + 205);
 
     // Brow ridge
-    g.fillStyle(0x403527, 1);
+    g.fillStyle(this.pcol(EARTH.umber), 1);
     g.fillRect(cx - 210, cy + 30, 420, 26);
 
     // Eyes — molten, pulsing
@@ -1403,25 +1777,25 @@ export class EarthKit {
     for (const sx of [-1, 1]) {
       const ex = cx + sx * 104;
       const ey = cy + 88;
-      g.fillStyle(0x1a1008, 1);
+      g.fillStyle(this.pcol(EARTH.crevice), 1);
       g.fillEllipse(ex, ey, 92, 54);
-      g.fillStyle(0xff6a10, pulse);
+      g.fillStyle(this.pcol(EARTH.ember), pulse);
       g.fillEllipse(ex, ey, 62 * pulse + 12, 32 * pulse + 8);
-      g.fillStyle(0xffd070, pulse);
+      g.fillStyle(this.pcol(EARTH.gold), pulse);
       g.fillEllipse(ex, ey, 26 * pulse + 6, 15 * pulse + 4);
       // heavy stone lid
-      g.fillStyle(0x5b4c39, 1);
+      g.fillStyle(this.pcol(EARTH.stone), 1);
       g.fillTriangle(ex - 54, ey - 30, ex + 54, ey - 30, ex + sx * 20, ey - 6);
     }
 
     // Jagged mouth with lava between the teeth — kept locked to the beam origin
     // so Titan Beam always fires from between the jaws, sway included.
     const mouthY = TITAN_MOUTH_Y + (cy - TITAN_HEAD_CY);
-    g.fillStyle(0x120a04, 1);
+    g.fillStyle(this.pcol(EARTH.crevice), 1);
     g.fillRect(cx - 130, mouthY - 20, 260, 40);
-    g.fillStyle(0xff5a0f, 0.5 + 0.3 * Math.sin(time / 300));
+    g.fillStyle(this.pcol(EARTH.ember), 0.5 + 0.3 * Math.sin(time / 300));
     g.fillRect(cx - 126, mouthY - 8, 252, 16);
-    g.fillStyle(0x8b7a5f, 1);
+    g.fillStyle(this.pcol(EARTH.sand), 1);
     for (let i = 0; i < 7; i++) {
       const tx = cx - 126 + i * 38;
       g.fillTriangle(tx, mouthY - 20, tx + 34, mouthY - 20, tx + 17, mouthY + 8);
@@ -1429,7 +1803,7 @@ export class EarthKit {
     }
 
     // Lava cracks crawling down the face
-    g.lineStyle(4, 0xff5a0f, 0.55 + 0.25 * Math.sin(time / 260));
+    g.lineStyle(4, this.pcol(EARTH.ember), 0.55 + 0.25 * Math.sin(time / 260));
     g.beginPath();
     g.moveTo(cx - 168, cy + 20); g.lineTo(cx - 150, cy + 72); g.lineTo(cx - 176, cy + 120); g.lineTo(cx - 152, cy + 168);
     g.moveTo(cx + 172, cy + 34); g.lineTo(cx + 148, cy + 86); g.lineTo(cx + 178, cy + 134);
@@ -1448,12 +1822,12 @@ export class EarthKit {
       new Phaser.Geom.Point(x2 - nx * w2, y2 - ny * w2),
       new Phaser.Geom.Point(x1 - nx * w1, y1 - ny * w1),
     ];
-    g.fillStyle(0x5b4c39, 1);
+    g.fillStyle(this.pcol(EARTH.stone), 1);
     g.fillPoints(quad, true);
-    g.lineStyle(5, 0x342b20, 1);
+    g.lineStyle(5, this.pcol(EARTH.umber), 1);
     g.strokePoints(quad, true);
     // Plate seams across the limb
-    g.lineStyle(3, 0x40352b, 0.9);
+    g.lineStyle(3, this.pcol(EARTH.shale), 0.9);
     for (let i = 1; i <= 3; i++) {
       const t = i / 4;
       const px = Phaser.Math.Linear(x1, x2, t);
@@ -1479,9 +1853,9 @@ export class EarthKit {
       this.limbSegment(g, ex, ey, a.fistX, a.fistY, 50, 40);
 
       // Elbow boulder
-      g.fillStyle(0x6d5c45, 1);
+      g.fillStyle(this.pcol(EARTH.rock), 1);
       g.fillCircle(ex, ey, 54);
-      g.lineStyle(5, 0x342b20, 1);
+      g.lineStyle(5, this.pcol(EARTH.umber), 1);
       g.strokeCircle(ex, ey, 54);
 
       // Fist: craggy knuckled boulder
@@ -1492,20 +1866,20 @@ export class EarthKit {
         const ang = (i / 12) * Math.PI * 2;
         fpts.push(new Phaser.Geom.Point(a.fistX + Math.cos(ang) * r * j[i], a.fistY + Math.sin(ang) * r * j[(i + 3) % j.length]));
       }
-      g.fillStyle(0x6d5c45, 1);
+      g.fillStyle(this.pcol(EARTH.rock), 1);
       g.fillPoints(fpts, true);
-      g.lineStyle(5, 0x342b20, 1);
+      g.lineStyle(5, this.pcol(EARTH.umber), 1);
       g.strokePoints(fpts, true);
-      g.fillStyle(0x7d6a50, 1);
+      g.fillStyle(this.pcol(EARTH.sand), 1);
       for (let k = 0; k < 4; k++) {
         g.fillCircle(a.fistX - 33 + k * 22, a.fistY - 22, 13);
       }
       // Knuckle lava glow while the arm is winding up or striking
       if (a.phase !== 'rest') {
-        g.lineStyle(4, 0xff6a10, 0.5 + 0.4 * Math.sin(time / 90));
+        g.lineStyle(4, this.pcol(EARTH.ember), 0.5 + 0.4 * Math.sin(time / 90));
         g.strokeCircle(a.fistX, a.fistY, r + 6);
       }
-      g.lineStyle(4, 0xff5a0f, 0.35 + 0.2 * Math.sin(time / 300 + a.side));
+      g.lineStyle(4, this.pcol(EARTH.ember), 0.35 + 0.2 * Math.sin(time / 300 + a.side));
       g.lineBetween(a.fistX - 26, a.fistY + 20, a.fistX + 12, a.fistY + 34);
     }
   }
@@ -1519,10 +1893,10 @@ export class EarthKit {
     const seam = (y: number) => tr.x + Math.sin((y + time / 6) / 55) * 13;
 
     // Wide dark rift…
-    g.fillStyle(0x1c1208, 0.85);
+    g.fillStyle(this.pcol(EARTH.crevice), 0.85);
     g.fillRect(tr.x - 24, top, 48, bot - top);
     // …with a jagged molten seam down the middle.
-    for (const [w, c, a] of [[10, 0xff5a0f, flicker], [4, 0xffd070, flicker * 0.9]] as const) {
+    for (const [w, c, a] of [[10, this.pcol(EARTH.ember), flicker], [4, this.pcol(EARTH.gold), flicker * 0.9]] as const) {
       g.lineStyle(w, c, a);
       g.beginPath();
       g.moveTo(tr.x, top);
@@ -1531,10 +1905,54 @@ export class EarthKit {
       g.strokePath();
     }
     // Broken slabs along both lips
-    g.fillStyle(0x4a3d2d, 1);
+    g.fillStyle(this.pcol(EARTH.shale), 1);
     for (let y = top + 10; y < bot - 30; y += 66) {
       g.fillRect(tr.x - 34, y, 14, 30);
       g.fillRect(tr.x + 20, Math.min(y + 30, bot - 30), 14, 30);
+    }
+  }
+
+  /**
+   * The tsunami wall: a slab of water with a churning foam crest at its leading edge, plus
+   * spray blown off the top. A plain rectangle read as a UI wipe rather than as water.
+   */
+  private drawTitanWave(w: TitanWave, time: number): void {
+    const top = TITAN_PAD;
+    const bot = this.arena.height - TITAN_PAD;
+    const g = w.g;
+    g.clear();
+    const t = time / 1000;
+
+    // Body: deep water behind, lighter toward the front.
+    g.fillStyle(0x1d4f6b, 0.68);
+    g.fillRect(w.x - 200, top, 260, bot - top);
+    g.fillStyle(0x2f7d9e, 0.72);
+    g.fillRect(w.x - 100, top, 170, bot - top);
+
+    // Crest: a boiling column of foam lobes at the leading edge, so the front churns.
+    for (let y = top; y <= bot; y += 22) {
+      const bulge = Math.sin(y / 40 + t * 6) * 11 + Math.sin(y / 17 - t * 9) * 5;
+      g.fillStyle(0xcdf3ff, 0.5);
+      g.fillCircle(w.x + 66 + bulge, y, 17);
+      g.fillStyle(0x88ddff, 0.65);
+      g.fillCircle(w.x + 54 + bulge * 0.7, y + 8, 13);
+      g.fillStyle(0xffffff, 0.42);
+      g.fillCircle(w.x + 72 + bulge, y - 5, 7);
+    }
+
+    // Spray thrown ahead of the front.
+    for (let i = 0; i < 16; i++) {
+      const y = top + ((i * 97 + Math.floor(t * 220)) % (bot - top));
+      const lead = ((i * 53 + Math.floor(t * 300)) % 60);
+      g.fillStyle(0xcdf3ff, 0.5 * (1 - lead / 60));
+      g.fillCircle(w.x + 78 + lead, y, 4 - lead / 22);
+    }
+
+    // Undertow streaks raking backward through the body.
+    g.lineStyle(3, 0x88ddff, 0.3);
+    for (let i = 0; i < 7; i++) {
+      const y = top + ((i / 7) * (bot - top)) + Math.sin(t * 3 + i) * 14;
+      g.lineBetween(w.x - 190, y, w.x + 40, y + 10);
     }
   }
 
@@ -1546,21 +1964,21 @@ export class EarthKit {
     const oy = TITAN_MOUTH_Y;
     const jitter = Math.sin(time / 40) * 3;
 
-    g.lineStyle(46 + jitter, 0x7a2a05, 0.35);
+    g.lineStyle(46 + jitter, this.pcol(EARTH.crevice), 0.35);
     g.lineBetween(ox, oy, b.x, b.y);
-    g.lineStyle(26 + jitter, 0xff5a0f, 0.75);
+    g.lineStyle(26 + jitter, this.pcol(EARTH.ember), 0.75);
     g.lineBetween(ox, oy, b.x, b.y);
-    g.lineStyle(10, 0xffd070, 0.95);
+    g.lineStyle(10, this.pcol(EARTH.gold), 0.95);
     g.lineBetween(ox, oy, b.x, b.y);
 
     // Molten pool where it lands
-    g.fillStyle(0xff5a0f, 0.5 + 0.2 * Math.sin(time / 100));
+    g.fillStyle(this.pcol(EARTH.ember), 0.5 + 0.2 * Math.sin(time / 100));
     g.fillCircle(b.x, b.y, 30 + Math.sin(time / 90) * 4);
-    g.fillStyle(0xffd070, 0.8);
+    g.fillStyle(this.pcol(EARTH.gold), 0.8);
     g.fillCircle(b.x, b.y, 14);
 
     // Sparks kicking off the impact point
-    g.lineStyle(3, 0xffbb55, 0.8);
+    g.lineStyle(3, this.pcol(EARTH.gold), 0.8);
     for (let i = 0; i < 5; i++) {
       const a = (time / 120) + (i / 5) * Math.PI * 2;
       const len = 20 + ((i * 37 + Math.floor(time / 60)) % 22);
@@ -1582,7 +2000,7 @@ export class EarthKit {
       const e = a.phase === 'strike' ? t * t : 1 - (1 - t) * (1 - t);
       a.fistX = Phaser.Math.Linear(a.fromX, a.toX, e);
       a.fistY = Phaser.Math.Linear(a.fromY, a.toY, e);
-      if (a.marker) a.marker.setScale(0.8 + 0.35 * Math.sin(time / 70));
+      if (a.marker) EarthFx.drawSmashMarker(a.marker, this.pcol, a.targetX, a.targetY, 74, time);
       if (t >= 1) {
         if (a.phase === 'raise') {
           a.phase = 'strike';
@@ -1622,7 +2040,7 @@ export class EarthKit {
     arm.toX = tx; arm.toY = ty - 250;
 
     arm.marker?.destroy();
-    arm.marker = this.arena.scene.add.circle(tx, ty, 74, 0xff5a0f, 0.16).setDepth(4).setStrokeStyle(4, 0xff8844, 0.8);
+    arm.marker = this.arena.scene.add.graphics().setDepth(4);
     this.titanSmashCdUntil = time + TITAN_SMASH_CD_MS;
     this.shake(160, 0.008);
   }
@@ -1638,22 +2056,15 @@ export class EarthKit {
     for (const t of this.titanTargets()) {
       if (Phaser.Math.Distance.Between(arm.targetX, arm.targetY, t.x, t.y) > 96) continue;
       t.takeDamage(20);
-      this.arena.spawnHitFlash(t.x, t.y, 0x665533);
+      this.arena.spawnHitFlash(t.x, t.y, EARTH.stone);
       hit = true;
     }
     this.arena.showFloatingText(arm.targetX, arm.targetY - 40, hit ? '🖐 TITAN SMASH' : '🖐 SMASH', '#ccaa66');
 
-    // Impact crater + dust ring
-    const ring = this.arena.scene.add.circle(arm.targetX, arm.targetY, 20, 0x8b7a5f, 0.7).setDepth(5);
-    this.arena.scene.tweens.add({ targets: ring, scaleX: 6, scaleY: 6, alpha: 0, duration: 460, onComplete: () => ring.destroy() });
-    for (let i = 0; i < 8; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const puff = this.arena.scene.add.circle(arm.targetX, arm.targetY, 8 + Math.random() * 10, 0x6b5a44, 0.6).setDepth(5);
-      this.arena.scene.tweens.add({
-        targets: puff, x: arm.targetX + Math.cos(a) * (70 + Math.random() * 70), y: arm.targetY + Math.sin(a) * (70 + Math.random() * 70),
-        alpha: 0, scale: 1.9, duration: 500, onComplete: () => puff.destroy(),
-      });
-    }
+    // A hand the size of a car landing on the arena floor.
+    this.pfx.impact(arm.targetX, arm.targetY, 130, {
+      shards: 18, dust: 6, depth: 5, duration: 560,
+    });
 
     // Three chunks of arena kicked into the air; they come back down 2s later.
     for (let i = 0; i < 3; i++) {
@@ -1683,12 +2094,12 @@ export class EarthKit {
 
   /** R — Titan Tsunami: a wall of water sweeps the arena and pins the enemy to the far wall. */
   private titanTsunamiCast(time: number): void {
-    const H = this.arena.height;
-    if (this.titanWave) { this.titanWave.sprite.destroy(); this.titanWave.crest.destroy(); }
-    const wallH = H - TITAN_PAD * 2;
-    const sprite = this.arena.scene.add.rectangle(-110, H / 2, 180, wallH, 0x2f7d9e, 0.72).setDepth(18).setStrokeStyle(4, 0x88ddff, 0.8);
-    const crest = this.arena.scene.add.rectangle(-18, H / 2, 34, wallH, 0xcdf3ff, 0.55).setDepth(19);
-    this.titanWave = { x: -110, speed: 720, sprite, crest, hit: new Set<Fighter>(), slammed: false };
+    if (this.titanWave) this.titanWave.g.destroy();
+    this.titanWave = {
+      x: -110, speed: 720,
+      g: this.arena.scene.add.graphics().setDepth(18),
+      hit: new Set<Fighter>(), slammed: false,
+    };
     this.titanTsunamiCdUntil = time + TITAN_TSUNAMI_CD_MS;
     this.shake(1600, 0.016);
     this.arena.showFloatingText(this.arena.width / 2, 250, '🌊 TITAN TSUNAMI!', '#88ddff');
@@ -1717,19 +2128,9 @@ export class EarthKit {
   private spawnTitanRock(sx: number, sy: number, lx: number, ly: number, flightMs: number, dmg: number, radius: number, size: number): void {
     const scene = this.arena.scene;
     const g = scene.add.graphics().setDepth(17);
-    // Craggy chunk drawn once around its own origin, then flown as a whole.
-    const pts: Phaser.Geom.Point[] = [];
-    for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2;
-      const r = size * (0.72 + Math.random() * 0.5);
-      pts.push(new Phaser.Geom.Point(Math.cos(a) * r, Math.sin(a) * r));
-    }
-    g.fillStyle(0x6d5c45, 1);
-    g.fillPoints(pts, true);
-    g.lineStyle(3, 0x342b20, 1);
-    g.strokePoints(pts, true);
-    g.lineStyle(2, 0xff5a0f, 0.7);
-    g.lineBetween(-size * 0.4, -size * 0.2, size * 0.3, size * 0.4);
+    // Craggy chunk drawn once around its own origin, then flown as a whole. Rocks torn off a
+    // titan carry its heat, so these get the molten variant.
+    EarthFx.drawRock(g, this.pcol, size, Math.random(), true);
     g.setPosition(sx, sy);
 
     const shadow = scene.add.ellipse(lx, ly, 10, 4, 0x000000, 0.2).setDepth(3);
@@ -1747,21 +2148,41 @@ export class EarthKit {
 
   private titanRockImpact(r: TitanRock, time: number): void {
     void time;
-    const scene = this.arena.scene;
-    const ring = scene.add.circle(r.lx, r.ly, 10, 0x8b7a5f, 0.7).setDepth(5);
-    scene.tweens.add({ targets: ring, scaleX: 4.5, scaleY: 4.5, alpha: 0, duration: 320, onComplete: () => ring.destroy() });
+    // Even a harmless rock breaks when it lands — no rock in this game just disappears.
+    this.pfx.impact(r.lx, r.ly, r.dmg > 0 ? 64 : 34, {
+      shards: r.dmg > 0 ? 9 : 5, dust: r.dmg > 0 ? 2 : 1,
+      crater: r.dmg > 0, depth: 5, duration: r.dmg > 0 ? 380 : 280,
+    });
     if (r.dmg <= 0) return;
     this.shake(170, 0.012);
     for (const t of this.titanTargets()) {
       if (Phaser.Math.Distance.Between(r.lx, r.ly, t.x, t.y) > r.radius) continue;
       t.takeDamage(r.dmg);
-      this.arena.spawnHitFlash(t.x, t.y, 0x8b7a5f);
+      this.arena.spawnHitFlash(t.x, t.y, EARTH.sand);
       this.arena.showFloatingText(t.x, t.y - 26, '🪨 ROCKFALL', '#ccaa66');
     }
   }
 
+  /** A patch of ground cooked to slag: crusted plates over a glowing seam network. */
   private spawnTitanScorch(x: number, y: number, r: number, expiresAt: number): void {
-    const sprite = this.arena.scene.add.circle(x, y, r, 0xff5522, 0.42).setDepth(3).setStrokeStyle(3, 0xffaa33, 0.7);
+    const sprite = this.arena.scene.add.graphics().setDepth(3);
+    sprite.fillStyle(this.pcol(EARTH.crevice), 0.55);
+    sprite.fillCircle(x, y, r);
+    sprite.fillStyle(this.pcol(EARTH.ember), 0.5);
+    sprite.fillCircle(x, y, r * 0.78);
+    // Cooling crust floating on it, with molten cracks showing between the plates.
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + Math.random();
+      const d = r * (0.15 + Math.random() * 0.5);
+      sprite.fillStyle(this.pcol(EARTH.umber), 0.85);
+      stoneChunkLayered(sprite, this.pcol,
+        x + Math.cos(a) * d, y + Math.sin(a) * d, a, r * 0.4, r * 0.2, 0.9, i * 0.6);
+    }
+    sprite.lineStyle(3, this.pcol(EARTH.gold), 0.8);
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 + 0.4;
+      sprite.lineBetween(x, y, x + Math.cos(a) * r * 0.9, y + Math.sin(a) * r * 0.9);
+    }
     this.titanScorch.push({ sprite, x, y, r, expiresAt });
     // Cap the ground clutter so a long beam + a full eruption can't pile up forever.
     while (this.titanScorch.length > 90) {
@@ -1771,16 +2192,14 @@ export class EarthKit {
   }
 
   private titanExplosion(x: number, y: number, time: number): void {
-    const scene = this.arena.scene;
     this.shake(220, 0.022);
-    const blast = scene.add.circle(x, y, 18, 0xff7733, 0.85).setDepth(7);
-    scene.tweens.add({ targets: blast, scaleX: 4.4, scaleY: 4.4, alpha: 0, duration: 380, onComplete: () => blast.destroy() });
-    const core = scene.add.circle(x, y, 10, 0xffe08a, 0.95).setDepth(8);
-    scene.tweens.add({ targets: core, scaleX: 2.6, scaleY: 2.6, alpha: 0, duration: 240, onComplete: () => core.destroy() });
+    // The full molten detonation stack, plus a spire of magma punched through the floor.
+    this.pfx.impact(x, y, 92, { shards: 13, dust: 3, molten: true, crater: false, depth: 7, duration: 440 });
+    this.pfx.pillar(x, y, 20, 58, 8);
     for (const t of this.titanTargets()) {
       if (Phaser.Math.Distance.Between(x, y, t.x, t.y) > 76) continue;
       t.takeDamage(20);
-      this.arena.spawnHitFlash(t.x, t.y, 0xff7733);
+      this.arena.spawnHitFlash(t.x, t.y, EARTH.magma);
       this.arena.showFloatingText(t.x, t.y - 30, '🌋 ERUPTION', '#ff9955');
     }
     this.spawnTitanScorch(x, y, 46, time + 9000);
@@ -1795,35 +2214,11 @@ export class EarthKit {
     return Phaser.Math.Distance.Between(px, py, x1 + dx * t, y1 + dy * t);
   }
 
-  private spawnTsunamiWaves(): void {
-    const W = this.arena.width;
-    const H = this.arena.height;
-    for (let ti = 0; ti < 2; ti++) {
-      const horizontal = Math.random() < 0.5;
-      let wx: number, wy: number, vx: number, vy: number;
-      const speed = 420;
-      if (horizontal) {
-        const fromLeft = Math.random() < 0.5;
-        wx = fromLeft ? -60 : W + 60;
-        wy = Phaser.Math.Between(60, H - 60);
-        vx = fromLeft ? speed : -speed;
-        vy = 0;
-      } else {
-        const fromTop = Math.random() < 0.5;
-        wx = Phaser.Math.Between(60, W - 60);
-        wy = fromTop ? -60 : H + 60;
-        vx = 0;
-        vy = fromTop ? speed : -speed;
-      }
-      const wSpr = horizontal
-        ? this.arena.scene.add.rectangle(wx, wy, 80, 200, 0x88ddff, 0.6).setDepth(5).setStrokeStyle(3, 0xaaeeff, 0.9)
-        : this.arena.scene.add.rectangle(wx, wy, 200, 80, 0x88ddff, 0.6).setDepth(5).setStrokeStyle(3, 0xaaeeff, 0.9);
-      this.earthTsunamiWaves.push({ sprite: wSpr, vx, vy, expiresAt: this.arena.scene.time.now + 4000 });
-    }
-    this.arena.showFloatingText(W / 2, H / 2 - 80, '🌊 TSUNAMI!', '#88ddff');
-  }
-
-  /** Quake perk (Gravity/other elements): spawn a single smaller tsunami wave radiating from an impact point. Public — called from non-earth perk code elsewhere in ArenaScene. */
+  /**
+   * Quake perk (Gravity and friends): a ridge of upheaved ground rolling away from an impact.
+   * Public — called from non-earth perk code elsewhere in ArenaScene, which is why the ridge
+   * is painted in the perk's violet rather than out of the EARTH palette.
+   */
   spawnQuakeWave(owner: 'player' | 'npc', impactX: number, impactY: number): void {
     const W = this.arena.width;
     const H = this.arena.height;
@@ -1833,10 +2228,24 @@ export class EarthKit {
     const speed = 300;
     if (horizontal) { vx = impactX < W / 2 ? speed : -speed; }
     else             { vy = impactY < H / 2 ? speed : -speed; }
-    const wSpr = horizontal
-      ? this.arena.scene.add.rectangle(impactX, impactY, 60, 120, 0x8844cc, 0.55).setDepth(5).setStrokeStyle(2, 0xcc88ff, 0.8)
-      : this.arena.scene.add.rectangle(impactX, impactY, 120, 60, 0x8844cc, 0.55).setDepth(5).setStrokeStyle(2, 0xcc88ff, 0.8);
-    this.earthTsunamiWaves.push({ sprite: wSpr, vx, vy, expiresAt: this.arena.scene.time.now + 3000, owner });
+
+    // Drawn once around its own origin as a line of tilted slabs, then translated.
+    const violet: EarthColorFn = (base) => (base === EARTH.stone ? 0x8844cc
+      : base === EARTH.sand ? 0xcc88ff
+      : base === EARTH.umber ? 0x3a1a55
+      : base === EARTH.dust ? 0xe0b8ff : base);
+    const g = this.arena.scene.add.graphics().setDepth(5);
+    const along = horizontal ? Math.PI / 2 : 0;      // the ridge lies across its travel
+    for (let i = -3; i <= 3; i++) {
+      const f = i / 3;
+      const ox = Math.cos(along) * i * 22;
+      const oy = Math.sin(along) * i * 22;
+      stoneChunkLayered(g, violet, ox, oy, Math.atan2(vy, vx),
+        30 + (1 - Math.abs(f)) * 22, 11 + (1 - Math.abs(f)) * 5, 0.85, i * 0.7);
+    }
+    g.setPosition(impactX, impactY);
+
+    this.earthTsunamiWaves.push({ sprite: g, vx, vy, expiresAt: this.arena.scene.time.now + 3000, owner });
     this.arena.showFloatingText(impactX, impactY - 20, '🌊 QUAKE', '#cc88ff');
   }
 
@@ -1858,12 +2267,15 @@ export class EarthKit {
       this.earthShieldBroken = false;
       this.earthShieldRespawnAt = 0;
       if (this.earthShieldSprite) this.earthShieldSprite.destroy();
-      const w = this.earthShieldEnhanced ? 55 : 46;
-      const h = this.earthShieldEnhanced ? 14 : 12;
-      const color = this.earthShieldEnhanced ? 0xffcc44 : (hasDual ? 0x888888 : 0x887755);
-      const strokeColor = this.earthShieldEnhanced ? 0xffe899 : (hasDual ? 0xbbbbbb : 0xccaa66);
-      this.earthShieldSprite = scene.add.rectangle(player.x, player.y, w, h, color).setDepth(7);
-      this.earthShieldSprite.setStrokeStyle(2, strokeColor);
+      this.earthShieldSprite = new StoneShield(scene, this.pcol, {
+        steel: hasDual, enhanced: this.earthShieldEnhanced, depth: 7,
+      });
+      // Hauled up out of the ground in front of you rather than blinking into existence.
+      this.pfx.pillar(
+        player.x + Math.cos(this.earthShieldAngle) * 28,
+        player.y + Math.sin(this.earthShieldAngle) * 28, 14, 30, 8,
+      );
+      this.pfx.ring(player.x, player.y, 10, 46, EARTH.dust, 340, 3, 6);
       if (!this.earthShieldLabel) {
         this.earthShieldLabel = scene.add.text(player.x, player.y - 30, '', {
           fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: hasDual ? '#bbbbbb' : '#ccaa66',
@@ -1919,12 +2331,14 @@ export class EarthKit {
       this.npcEarthShieldBroken = false;
       this.npcEarthShieldRespawnAt = 0;
       if (this.npcEarthShieldSprite) this.npcEarthShieldSprite.destroy();
-      const w = this.npcEarthShieldEnhanced ? 55 : 46;
-      const h = this.npcEarthShieldEnhanced ? 14 : 12;
-      const npcShieldColor = this.npcEarthShieldEnhanced ? 0xffcc44 : 0x887755;
-      const npcShieldStroke = this.npcEarthShieldEnhanced ? 0xffe899 : 0xccaa66;
-      this.npcEarthShieldSprite = scene.add.rectangle(npc.x, npc.y, w, h, npcShieldColor).setDepth(7);
-      this.npcEarthShieldSprite.setStrokeStyle(2, npcShieldStroke);
+      this.npcEarthShieldSprite = new StoneShield(scene, this.ncol, {
+        enhanced: this.npcEarthShieldEnhanced, depth: 7,
+      });
+      this.nfx.pillar(
+        npc.x + Math.cos(this.npcEarthShieldAngle) * 28,
+        npc.y + Math.sin(this.npcEarthShieldAngle) * 28, 14, 30, 8,
+      );
+      this.nfx.ring(npc.x, npc.y, 10, 46, EARTH.dust, 340, 3, 6);
       if (!this.npcEarthShieldLabel) {
         this.npcEarthShieldLabel = scene.add.text(npc.x, npc.y - 30, '', {
           fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#ccaa66',
@@ -1953,10 +2367,9 @@ export class EarthKit {
     const maxHp = this.earthShieldEnhanced ? 100 : (this.arena.hasPerk('player', 'obsidian') ? 75 : 50);
     this.earthBackShieldMaxHp = maxHp;
     if (this.earthBackShieldHp <= 0) this.earthBackShieldHp = maxHp;
-    const w = this.earthShieldEnhanced ? 55 : 46;
-    const h = this.earthShieldEnhanced ? 14 : 12;
-    this.earthBackShieldSprite = scene.add.rectangle(player.x, player.y, w, h, 0x888888).setDepth(6);
-    this.earthBackShieldSprite.setStrokeStyle(2, 0xaaaaaa);
+    this.earthBackShieldSprite = new StoneShield(scene, this.pcol, {
+      steel: true, enhanced: this.earthShieldEnhanced, depth: 6,
+    });
     if (!this.earthBackShieldLabel) {
       this.earthBackShieldLabel = scene.add.text(player.x, player.y - 30, '', {
         fontSize: '9px', fontFamily: '"Arial Black", sans-serif', color: '#aaaaaa',
@@ -1976,38 +2389,49 @@ export class EarthKit {
         // Back shield replaces front shield
         this.earthShieldHp = this.earthBackShieldHp;
         this.earthBackShieldHp = 0;
-        if (this.earthShieldSprite) { this.earthShieldSprite.destroy(); this.earthShieldSprite = null; }
+        if (this.earthShieldSprite) {
+          this.earthShieldSprite.shatter(this.pfx);
+          this.earthShieldSprite.destroy();
+          this.earthShieldSprite = null;
+        }
         if (this.earthBackShieldSprite) { this.earthBackShieldSprite.destroy(); this.earthBackShieldSprite = null; }
         if (this.earthBackShieldLabel) { this.earthBackShieldLabel.destroy(); this.earthBackShieldLabel = null; }
-        // Spawn new front shield with the transferred HP
-        const maxHp = this.earthShieldEnhanced ? 100 : 50;
-        const w = this.earthShieldEnhanced ? 55 : 46;
-        const h = this.earthShieldEnhanced ? 14 : 12;
-        this.earthShieldSprite = scene.add.rectangle(player.x, player.y, w, h, 0x888888).setDepth(7);
-        this.earthShieldSprite.setStrokeStyle(2, 0xbbbbbb);
+        // The plate off your back swings round into the gap.
+        this.earthShieldSprite = new StoneShield(scene, this.pcol, {
+          steel: true, enhanced: this.earthShieldEnhanced, depth: 7,
+        });
         this.earthShieldBroken = false;
         this.earthShieldRespawnAt = 0;
-        void maxHp;
+        this.pfx.ring(player.x, player.y, 34, 12, EARTH.chrome, 320, 4, 8);
         this.arena.showFloatingText(player.x, player.y - 30, '🛡 BACK SHIELD ACTIVATED', '#aaaaaa');
         return;
       }
       this.earthShieldHp = 0;
       this.earthShieldBroken = true;
       this.earthShieldRespawnAt = respawnAt;
-      if (this.earthShieldSprite) { this.earthShieldSprite.destroy(); this.earthShieldSprite = null; }
+      if (this.earthShieldSprite) {
+        this.earthShieldSprite.shatter(this.pfx);
+        this.earthShieldSprite.destroy();
+        this.earthShieldSprite = null;
+      }
+      this.arena.scene.cameras.main.shake(200, 0.01);
       player.damageAbsorber = null;
       this.arena.showFloatingText(player.x, player.y - 30, '💥 SHIELD BROKEN', '#ff8844');
     } else {
       this.npcEarthShieldHp = 0;
       this.npcEarthShieldBroken = true;
       this.npcEarthShieldRespawnAt = respawnAt;
-      if (this.npcEarthShieldSprite) { this.npcEarthShieldSprite.destroy(); this.npcEarthShieldSprite = null; }
+      if (this.npcEarthShieldSprite) {
+        this.npcEarthShieldSprite.shatter(this.nfx);
+        this.npcEarthShieldSprite.destroy();
+        this.npcEarthShieldSprite = null;
+      }
       npc.damageAbsorber = null;
       this.arena.showFloatingText(npc.x, npc.y - 30, '💥 SHIELD BROKEN', '#ff8844');
     }
   }
 
-  private updateEarthShieldSpritePosition(isPlayer: boolean): void {
+  private updateEarthShieldSpritePosition(isPlayer: boolean, delta: number): void {
     const fighter = isPlayer ? this.arena.player : this.arena.npc;
     const sprite = isPlayer ? this.earthShieldSprite : this.npcEarthShieldSprite;
     const label = isPlayer ? this.earthShieldLabel : this.npcEarthShieldLabel;
@@ -2018,8 +2442,10 @@ export class EarthKit {
     const ang = isPlayer ? this.earthShieldAngle : this.npcEarthShieldAngle;
     if (sprite) {
       const shieldDist = 28;
-      sprite.setPosition(fighter.x + Math.cos(ang) * shieldDist, fighter.y + Math.sin(ang) * shieldDist);
-      sprite.setRotation(ang + Math.PI / 2);
+      sprite.setPose(fighter.x + Math.cos(ang) * shieldDist, fighter.y + Math.sin(ang) * shieldDist, ang);
+      sprite.setHp(maxHp > 0 ? hp / maxHp : 0);
+      if (isPlayer) sprite.setCharge(this.earthBashCharging ? this.earthBashChargeRatio : 0);
+      sprite.update(delta);
     }
     if (label) {
       label.setPosition(fighter.x + Math.cos(ang) * 36, fighter.y + Math.sin(ang) * 36 - 16);
@@ -2029,17 +2455,19 @@ export class EarthKit {
     if (isPlayer && this.earthBackShieldSprite && this.earthBackShieldHp > 0) {
       const backAng = ang + Math.PI;
       const backDist = 28;
-      this.earthBackShieldSprite.setPosition(
+      const bMaxHp = this.earthShieldEnhanced ? 100 : (this.arena.hasPerk('player', 'obsidian') ? 75 : 50);
+      this.earthBackShieldSprite.setPose(
         fighter.x + Math.cos(backAng) * backDist,
         fighter.y + Math.sin(backAng) * backDist,
+        backAng,
       );
-      this.earthBackShieldSprite.setRotation(backAng + Math.PI / 2);
+      this.earthBackShieldSprite.setHp(this.earthBackShieldHp / bMaxHp);
+      this.earthBackShieldSprite.update(delta);
       if (this.earthBackShieldLabel) {
         this.earthBackShieldLabel.setPosition(
           fighter.x + Math.cos(backAng) * 36,
           fighter.y + Math.sin(backAng) * 36 - 14,
         );
-        const bMaxHp = this.earthShieldEnhanced ? 100 : (this.arena.hasPerk('player', 'obsidian') ? 75 : 50);
         this.earthBackShieldLabel.setText(`🛡${Math.floor(this.earthBackShieldHp)}/${bMaxHp}`);
       }
     }
@@ -2075,10 +2503,10 @@ export class EarthKit {
 
   private spawnEarthRock(isPlayer: boolean, _angle: number): void {
     const lava = isPlayer && this.arena.hasUpgrade('r');
-    const color = lava ? 0xff4400 : 0x887755;
-    const strokeColor = lava ? 0xff8844 : 0xccaa66;
-    const r = this.arena.scene.add.circle(0, 0, 8, color).setDepth(8).setStrokeStyle(1, strokeColor);
-    const rock = { sprite: r, hitCdUntil: 0 };
+    // Painted once around its own origin, then flown and tumbled as a whole.
+    const g = this.arena.scene.add.graphics().setDepth(8);
+    EarthFx.drawRock(g, isPlayer ? this.pcol : this.ncol, 9, Math.random(), lava);
+    const rock = { sprite: g, hitCdUntil: 0 };
     if (isPlayer) this.earthRocks.push(rock); else this.npcEarthRocks.push(rock);
   }
 
@@ -2091,8 +2519,16 @@ export class EarthKit {
     if (!rock) return;
     const lava = isPlayer && this.arena.hasUpgrade('r');
     const speed = 500;
-    launched.push({ sprite: rock.sprite, vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed, spawnedAt: this.arena.scene.time.now });
+    launched.push({
+      sprite: rock.sprite, vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed,
+      spawnedAt: this.arena.scene.time.now, trailAccum: 0,
+    });
     if (isPlayer) this.earthRocks.splice(idx, 1); else this.npcEarthRocks.splice(idx, 1);
+    // The shield slamming into the rock: recoil out of the muzzle, and an arm to match.
+    const fx = isPlayer ? this.pfx : this.nfx;
+    fx.muzzleRubble(rock.sprite.x, rock.sprite.y, ang, lava ? 1.25 : 1, 8, lava);
+    if (isPlayer) this.playPlayerGesture('punch', ang);
+    else this.npcAvatar?.play('punch', ang);
     if (lava) {
       this.arena.showFloatingText(fighter.x, fighter.y - 30, '🔥 LAVA LAUNCH!', '#ff8844');
     } else {
@@ -2135,6 +2571,13 @@ export class EarthKit {
       this.earthBashFullCharge = fullCharge;
       (fighter.body as Phaser.Physics.Arcade.Body).setVelocity(ndx * dashSpeed, ndy * dashSpeed);
       this.arena.isDodging = true;
+      this.setPlayerHold(null);
+      this.playPlayerGesture('dash', Math.atan2(ndy, ndx));
+      this.pfx.debris(fighter.x, fighter.y, 5 + Math.round(ratio * 6), {
+        angle: Math.atan2(-ndy, -ndx), spread: 0.8, speed: 130 + ratio * 130,
+        size: 3.4, life: 480, fall: 90, depth: 6,
+      });
+      if (fullCharge) this.pfx.ring(fighter.x, fighter.y, 10, 56, EARTH.gold, 340, 4, 6);
     } else {
       this.npcEarthBashActive = true;
       this.npcEarthBashEnd = this.arena.scene.time.now + dashDurationMs;
@@ -2147,6 +2590,10 @@ export class EarthKit {
       this.npcEarthBashStabDmg = stabDmg;
       this.npcEarthBashFullCharge = fullCharge;
       (fighter.body as Phaser.Physics.Arcade.Body).setVelocity(ndx * dashSpeed, ndy * dashSpeed);
+      this.nfx.debris(fighter.x, fighter.y, 5 + Math.round(ratio * 6), {
+        angle: Math.atan2(-ndy, -ndx), spread: 0.8, speed: 130 + ratio * 130,
+        size: 3.4, life: 480, fall: 90, depth: 6,
+      });
     }
   }
 
@@ -2174,7 +2621,9 @@ export class EarthKit {
       if (this.npcEarthShieldSprite) { this.npcEarthShieldSprite.destroy(); this.npcEarthShieldSprite = null; }
     }
 
-    const sprite = scene.add.rectangle(shieldX, shieldY, 48, 48, 0x665533).setDepth(6).setStrokeStyle(2, 0xbbaa77);
+    const tint = isPlayer ? this.pcol : this.ncol;
+    const fx = isPlayer ? this.pfx : this.nfx;
+    const sprite = new StoneGolem(scene, tint, 6);
     const link = scene.add.graphics().setDepth(5);
     const hpLabel = scene.add.text(shieldX, shieldY - 36, '💪 150', {
       fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#ccaa66',
@@ -2197,7 +2646,7 @@ export class EarthKit {
         if (!this.earthGolemActive) return false;
         const half = Math.ceil(amount * 0.5);
         this.earthGolemHp = Math.max(0, this.earthGolemHp - half);
-        this.arena.spawnHitFlash(this.earthGolemX, this.earthGolemY, 0x665533);
+        this.arena.spawnHitFlash(this.earthGolemX, this.earthGolemY, EARTH.stone);
         player.hp = Math.max(0, player.hp - (amount - half));
         player.emit('damaged', amount - half);
         if (player.hp <= 0) player.emit('defeated');
@@ -2217,14 +2666,28 @@ export class EarthKit {
       this.npcEarthGolemHpLabel = hpLabel;
     }
     this.arena.showFloatingText(shieldX, shieldY - 40, '🗿 GOLEM RISES', '#ccaa66');
+    // The shield doesn't vanish — it is torn open and the golem climbs out of the hole.
+    fx.impact(shieldX, shieldY, 78, { shards: 12, dust: 3, depth: 5, duration: 460 });
+    fx.pillar(shieldX, shieldY, 22, 62, 7);
+    fx.ring(shieldX, shieldY, 14, 104, EARTH.dust, 520, 5, 5);
+    if (isPlayer) this.playPlayerGesture('raise');
+    this.arena.scene.cameras.main.shake(420, 0.018);
   }
 
   private endEarthGolem(isPlayer: boolean): void {
     const scene = this.arena.scene;
+    const fx = isPlayer ? this.pfx : this.nfx;
+    const gx = isPlayer ? this.earthGolemX : this.npcEarthGolemX;
+    const gy = isPlayer ? this.earthGolemY : this.npcEarthGolemY;
+    // It comes apart where it stood: the pieces fall, they don't fade.
+    fx.impact(gx, gy, 66, { shards: 14, dust: 3, depth: 6, duration: 520 });
+    fx.debris(gx, gy - 10, 10, { speed: 110, size: 6, life: 780, fall: 190, depth: 6 });
+    this.arena.scene.cameras.main.shake(300, 0.012);
+
     if (isPlayer) {
       if (this.earthGolemSprite) { this.earthGolemSprite.destroy(); this.earthGolemSprite = null; }
       if (this.earthGolemLink) { this.earthGolemLink.destroy(); this.earthGolemLink = null; }
-      if (this.earthGolemFaultWallSprite) { this.earthGolemFaultWallSprite.destroy(); this.earthGolemFaultWallSprite = null; }
+      if (this.earthGolemFaultWall) { this.earthGolemFaultWall.g.destroy(); this.earthGolemFaultWall = null; }
       if (this.earthGolemHpLabel) { this.earthGolemHpLabel.destroy(); this.earthGolemHpLabel = null; }
       this.earthGolemActive = false;
       this.earthGolemHp = 0;
@@ -2234,7 +2697,7 @@ export class EarthKit {
     } else {
       if (this.npcEarthGolemSprite) { this.npcEarthGolemSprite.destroy(); this.npcEarthGolemSprite = null; }
       if (this.npcEarthGolemLink) { this.npcEarthGolemLink.destroy(); this.npcEarthGolemLink = null; }
-      if (this.npcEarthGolemFaultWallSprite) { this.npcEarthGolemFaultWallSprite.destroy(); this.npcEarthGolemFaultWallSprite = null; }
+      if (this.npcEarthGolemFaultWall) { this.npcEarthGolemFaultWall.g.destroy(); this.npcEarthGolemFaultWall = null; }
       if (this.npcEarthGolemHpLabel) { this.npcEarthGolemHpLabel.destroy(); this.npcEarthGolemHpLabel = null; }
       this.npcEarthGolemActive = false;
       this.npcEarthGolemHp = 0;
@@ -2255,6 +2718,8 @@ export class EarthKit {
     const punchCdUntil = isPlayer ? this.earthGolemPunchCdUntil : this.npcEarthGolemPunchCdUntil;
     const faultCdUntil = isPlayer ? this.earthGolemFaultCdUntil : this.npcEarthGolemFaultCdUntil;
     const poundCdUntil = isPlayer ? this.earthGolemPoundCdUntil : this.npcEarthGolemPoundCdUntil;
+    const fx = isPlayer ? this.pfx : this.nfx;
+    const tint = isPlayer ? this.pcol : this.ncol;
 
     const dist = Phaser.Math.Distance.Between(golemX, golemY, target.x, target.y);
     const speed = 40;
@@ -2268,11 +2733,18 @@ export class EarthKit {
     if (isPlayer) { this.earthGolemX = moveX; this.earthGolemY = moveY; }
     else { this.npcEarthGolemX = moveX; this.npcEarthGolemY = moveY; }
 
-    if (golemSprite) golemSprite.setPosition(moveX, moveY);
+    if (golemSprite) {
+      const stepped = golemSprite.update(
+        delta, moveX, moveY,
+        golemHp / this.earthGolemMaxHp,
+        Math.atan2(target.y - moveY, target.x - moveX),
+      );
+      // Each footfall puts dust under it, so the walk has weight.
+      if (stepped) fx.grit(moveX, moveY + 18, 3, { speed: 30, size: 2.2, life: 460, fall: 30, depth: 5 });
+    }
     if (golemLink) {
       golemLink.clear();
-      golemLink.lineStyle(2, 0x887755, 0.7);
-      golemLink.lineBetween(owner.x, owner.y, moveX, moveY);
+      EarthFx.drawTether(golemLink, tint, owner.x, owner.y, moveX, moveY, time / 1000);
     }
     if (golemHpLabel) {
       golemHpLabel.setPosition(moveX, moveY - 36);
@@ -2281,47 +2753,70 @@ export class EarthKit {
 
     // Golem abilities
     if (dist > 260 && time >= faultCdUntil) {
-      // Fault Line: spawn wall at midpoint, deal 25 dmg
+      // Fault Line: the ground splits between them and heaves into a wall.
       const midX = (golemX + target.x) / 2;
       const midY = (golemY + target.y) / 2;
-      const wallSprite = this.arena.scene.add.rectangle(midX, midY, 140, 18, 0x887755).setDepth(7).setStrokeStyle(2, 0xccaa66);
+      const wallAngle = Math.atan2(target.y - golemY, target.x - golemX) + Math.PI / 2;
+      const wall: FaultWall = {
+        g: this.arena.scene.add.graphics().setDepth(7),
+        x: midX, y: midY, angle: wallAngle,
+        spawnedAt: time, expiresAt: time + 1500,
+      };
       this.arena.showFloatingText(midX, midY - 20, '⛰ FAULT LINE', '#ccaa66');
       target.takeDamage(25);
-      this.arena.spawnHitFlash(target.x, target.y, 0x887755);
-      const wallExpiry = time + 1500;
+      this.arena.spawnHitFlash(target.x, target.y, EARTH.clay);
+      golemSprite?.swing('pound');
+      fx.debris(midX, midY, 10, {
+        angle: wallAngle, spread: 0.5, speed: 190, size: 4, life: 640, fall: 150, depth: 8,
+      });
+      fx.dust(midX, midY, 3, 60, 6);
+      this.arena.scene.cameras.main.shake(260, 0.012);
       if (isPlayer) {
-        if (this.earthGolemFaultWallSprite) this.earthGolemFaultWallSprite.destroy();
-        this.earthGolemFaultWallSprite = wallSprite;
-        this.earthGolemFaultWallUntil = wallExpiry;
+        if (this.earthGolemFaultWall) this.earthGolemFaultWall.g.destroy();
+        this.earthGolemFaultWall = wall;
         this.earthGolemFaultCdUntil = time + 5000;
       } else {
-        if (this.npcEarthGolemFaultWallSprite) this.npcEarthGolemFaultWallSprite.destroy();
-        this.npcEarthGolemFaultWallSprite = wallSprite;
-        this.npcEarthGolemFaultWallUntil = wallExpiry;
+        if (this.npcEarthGolemFaultWall) this.npcEarthGolemFaultWall.g.destroy();
+        this.npcEarthGolemFaultWall = wall;
         this.npcEarthGolemFaultCdUntil = time + 5000;
       }
     } else if (dist < 90 && time >= poundCdUntil) {
       // Pound: heavy AoE close range
       target.takeDamage(45);
-      this.arena.spawnHitFlash(target.x, target.y, 0x887755);
-      const ring = this.arena.scene.add.circle(moveX, moveY, 10, 0x887755, 0.8).setDepth(6);
-      this.arena.scene.tweens.add({ targets: ring, scaleX: 12, scaleY: 12, alpha: 0, duration: 400, onComplete: () => ring.destroy() });
+      this.arena.spawnHitFlash(target.x, target.y, EARTH.clay);
+      golemSprite?.swing('pound');
+      fx.impact(moveX, moveY, 92, { shards: 13, dust: 3, depth: 6, duration: 460 });
+      this.arena.scene.cameras.main.shake(320, 0.016);
       this.arena.showFloatingText(target.x, target.y - 20, '💥 POUND', '#ccaa66');
       if (isPlayer) this.earthGolemPoundCdUntil = time + 10000; else this.npcEarthGolemPoundCdUntil = time + 10000;
     } else if (dist < 90 && time >= punchCdUntil) {
       // Punch: quick melee hit
       target.takeDamage(18);
-      this.arena.spawnHitFlash(target.x, target.y, 0x887755);
+      this.arena.spawnHitFlash(target.x, target.y, EARTH.clay);
+      golemSprite?.swing('punch');
+      fx.debris(target.x, target.y, 5, {
+        angle: Math.atan2(target.y - moveY, target.x - moveX), spread: 0.7,
+        speed: 170, size: 3, life: 420, fall: 90, depth: 7,
+      });
+      fx.ring(target.x, target.y, 8, 38, EARTH.dust, 280, 3, 7);
       this.arena.showFloatingText(target.x, target.y - 20, '👊 PUNCH', '#ccaa66');
       if (isPlayer) this.earthGolemPunchCdUntil = time + 2000; else this.npcEarthGolemPunchCdUntil = time + 2000;
     }
 
-    // Fault wall cleanup
-    const faultWall = isPlayer ? this.earthGolemFaultWallSprite : this.npcEarthGolemFaultWallSprite;
-    const faultUntil = isPlayer ? this.earthGolemFaultWallUntil : this.npcEarthGolemFaultWallUntil;
-    if (faultWall && time >= faultUntil) {
-      faultWall.destroy();
-      if (isPlayer) this.earthGolemFaultWallSprite = null; else this.npcEarthGolemFaultWallSprite = null;
+    // Fault wall: rises over its first 300ms, then holds until it crumbles.
+    const faultWall = isPlayer ? this.earthGolemFaultWall : this.npcEarthGolemFaultWall;
+    if (faultWall) {
+      if (time >= faultWall.expiresAt) {
+        fx.dust(faultWall.x, faultWall.y, 2, 50, 5);
+        faultWall.g.destroy();
+        if (isPlayer) this.earthGolemFaultWall = null; else this.npcEarthGolemFaultWall = null;
+      } else {
+        faultWall.g.clear();
+        EarthFx.drawFaultWall(
+          faultWall.g, tint, faultWall.x, faultWall.y, 70, faultWall.angle,
+          time / 1000, (time - faultWall.spawnedAt) / 300,
+        );
+      }
     }
   }
 
@@ -2331,6 +2826,9 @@ export class EarthKit {
     void delta;
     const player = this.arena.player;
     const playerCtx = this.arena.buildPlayerContext(mouseX, mouseY);
+    // update() has no pointer, so the rig's aim is cached here.
+    this.lastMouseX = mouseX;
+    this.lastMouseY = mouseY;
 
     // ── Titan Form (Q+ upgrade) — the whole kit is replaced while it's up ──
     if (this.titanActive) {
@@ -2377,13 +2875,14 @@ export class EarthKit {
         this.earthTitanChargeHolding = true;
         this.earthTitanChargeStart = time;
         if (this.earthTitanChargeVisual) this.earthTitanChargeVisual.destroy();
-        this.earthTitanChargeVisual = this.arena.scene.add.circle(player.x, player.y - 36, 10, 0x665533, 0.7).setDepth(14);
-        this.arena.scene.tweens.add({ targets: this.earthTitanChargeVisual, alpha: 0.3, yoyo: true, repeat: -1, duration: 300 });
+        this.earthTitanChargeVisual = new EarthGather(this.arena.scene, this.pcol, 84, 14);
+        this.setPlayerHold('charge', 5200);
       }
       if (!this.arena.qKey.isDown && this.earthTitanChargeHolding) {
         const heldMs = time - this.earthTitanChargeStart;
         if (this.earthTitanChargeVisual) { this.earthTitanChargeVisual.destroy(); this.earthTitanChargeVisual = null; }
         this.earthTitanChargeHolding = false;
+        this.setPlayerHold(null);
         if (heldMs >= 5000) {
           this.enterTitanForm(time);
         } else {
@@ -2433,35 +2932,32 @@ export class EarthKit {
           this.earthBashCharging = true;
           this.earthBashChargeStart = time;
           this.earthBashChargeRatio = 0;
+          // Hands drawn in behind the plate, braced against what is coming.
+          this.setPlayerHold('brace', 2000, Math.atan2(mouseY - player.y, mouseX - player.x));
         }
       }
     }
 
     if (this.earthBashCharging) {
-      const hasDual = this.arena.hasUpgrade('click');
-      const baseShieldColor = this.earthShieldEnhanced ? 0xffcc44 : (hasDual ? 0x888888 : 0x887755);
       if (clickDown) {
         const held = time - this.earthBashChargeStart;
+        const wasFull = this.earthBashChargeRatio >= 1;
         this.earthBashChargeRatio = Math.min(1, held / 900);
         if (this.arena.elementId === 'earth') player.chargeRatio = this.earthBashChargeRatio;
-        if (this.earthShieldSprite) {
-          // Lerp the shield's fill color from its normal color toward red as charge builds.
-          const lerped = Phaser.Display.Color.ObjectToColor(
-            Phaser.Display.Color.Interpolate.ColorWithColor(
-              Phaser.Display.Color.IntegerToColor(baseShieldColor),
-              Phaser.Display.Color.IntegerToColor(0xff2222),
-              100,
-              Math.round(this.earthBashChargeRatio * 100),
-            ),
-          ).color;
-          this.earthShieldSprite.setFillStyle(lerped);
+        // The plate is drawn by StoneShield.setCharge in updateEarthShieldSpritePosition;
+        // topping out is the one moment worth a separate flourish.
+        if (!wasFull && this.earthBashChargeRatio >= 1) {
+          const sa = this.earthShieldAngle;
+          this.pfx.ring(player.x + Math.cos(sa) * 28, player.y + Math.sin(sa) * 28, 30, 8, EARTH.gold, 300, 4, 9);
+          this.arena.showFloatingText(player.x, player.y - 44, '⚒ FULL CHARGE', '#ffd070');
         }
+        this.setPlayerHold('brace', 2000, Math.atan2(mouseY - player.y, mouseX - player.x));
       } else {
         const ratio = this.earthBashChargeRatio;
         this.earthBashCharging = false;
         this.earthBashChargeRatio = 0;
         if (this.arena.elementId === 'earth') player.chargeRatio = 0;
-        if (this.earthShieldSprite) this.earthShieldSprite.setFillStyle(baseShieldColor);
+        this.earthShieldSprite?.setCharge(0);
         player.triggerCooldown('bash');
         this.performEarthBash(true, mouseX, mouseY, ratio);
         this.playerEarthCastId = null;
@@ -2475,16 +2971,19 @@ export class EarthKit {
         this.earthSplinterHolding = true;
         this.earthSplinterHoldStart = time;
         this.earthSplinterReady = false;
+        this.setPlayerHold('charge', 3000);
       }
       if (this.arena.eKey.isDown && this.earthSplinterHolding && !this.earthSplinterReady && time - this.earthSplinterHoldStart >= 2000) {
         this.earthSplinterReady = true;
         this.arena.showFloatingText(player.x, player.y - 30, '💥 SPLINTER READY', '#ff4444');
+        this.pfx.ring(player.x, player.y, 44, 14, EARTH.ember, 340, 4, 9);
       }
       if (!this.arena.eKey.isDown && this.earthSplinterHolding) {
         const heldMs = time - this.earthSplinterHoldStart;
         this.earthSplinterHolding = false;
         this.earthSplinterReady = false;
-        if (this.earthShieldSprite) this.earthShieldSprite.setScale(1).setFillStyle(this.arena.hasUpgrade('click') ? 0x888888 : 0x887755);
+        this.setPlayerHold(null);
+        this.earthShieldSprite?.setSplinter(0);
         if (heldMs >= 2000 && this.earthShieldHp > 0) {
           // Explode: AoE = 1/3 combined shield HP
           const totalHp = this.earthShieldHp + (this.arena.hasUpgrade('click') ? this.earthBackShieldHp : 0);
@@ -2492,40 +2991,33 @@ export class EarthKit {
           const dist = Phaser.Math.Distance.Between(player.x, player.y, this.arena.npc.x, this.arena.npc.y);
           if (dist < 120) {
             this.arena.npc.takeDamage(aoeDmg);
-            this.arena.spawnHitFlash(this.arena.npc.x, this.arena.npc.y, 0xff2222);
+            this.arena.spawnHitFlash(this.arena.npc.x, this.arena.npc.y, EARTH.ember);
             this.arena.showFloatingText(this.arena.npc.x, this.arena.npc.y - 20, `💥 SPLINTER ${aoeDmg}`, '#ff4444');
             if (this.arena.npc.hp <= 0) this.arena.recordMasteryStat('splinterKills', 1);
           }
-          const ring = this.arena.scene.add.circle(player.x, player.y, 10, 0xff2222, 0.8).setDepth(6);
-          this.arena.scene.tweens.add({ targets: ring, scaleX: 14, scaleY: 14, alpha: 0, duration: 400, onComplete: () => ring.destroy() });
-          // Launch a shield projectile forward
+          this.playPlayerGesture('clap', this.earthShieldAngle);
+          // The plate lets go: a molten blast whose reach tracks how much shield went into it.
+          this.pfx.impact(player.x, player.y, 100 + totalHp * 0.32, {
+            shards: 12 + Math.round(totalHp / 12), dust: 4, molten: true, crater: false,
+            depth: 7, duration: 480,
+          });
+          this.arena.scene.cameras.main.shake(300 + totalHp, 0.014 + totalHp * 0.00004);
+          // …and the biggest fragment is thrown forward as a weapon.
           const ang = this.earthShieldAngle;
-          const projSpr = this.arena.scene.add.rectangle(player.x, player.y, 20, 8, 0xcccccc).setDepth(8).setRotation(ang + Math.PI / 2);
-          const pvx = Math.cos(ang) * 600;
-          const pvy = Math.sin(ang) * 600;
-          const projSpawnedAt = time;
-          const projRef = { x: player.x, y: player.y, spr: projSpr, hit: false, spawnedAt: projSpawnedAt };
-          const projTimer = this.arena.scene.time.addEvent({ delay: 16, loop: true, callback: () => {
-            if (projRef.hit || this.arena.scene.time.now - projRef.spawnedAt > 1500) {
-              if (!projRef.hit) projSpr.destroy();
-              projTimer.remove();
-              return;
-            }
-            projRef.x += pvx * 0.016;
-            projRef.y += pvy * 0.016;
-            projSpr.setPosition(projRef.x, projRef.y);
-            const pd = Phaser.Math.Distance.Between(projRef.x, projRef.y, this.arena.npc.x, this.arena.npc.y);
-            if (pd < 28) {
-              projRef.hit = true;
-              this.arena.npc.takeDamage(20);
-              this.arena.spawnHitFlash(this.arena.npc.x, this.arena.npc.y, 0xcccccc);
-              this.arena.showFloatingText(this.arena.npc.x, this.arena.npc.y - 20, '🛡 SHARD 20', '#cccccc');
-              if (this.arena.npc.hp <= 0) this.arena.recordMasteryStat('splinterKills', 1);
-              this.earthSplinterRepairFast = true; // next break → 4s repair
-              projSpr.destroy();
-              projTimer.remove();
-            }
-          }});
+          const shardColour = this.earthShieldEnhanced ? EARTH.brass
+            : (this.arena.hasUpgrade('click') ? EARTH.chrome : EARTH.sand);
+          const shardG = this.arena.scene.add.graphics().setDepth(8);
+          shardG.fillStyle(this.pcol(EARTH.umber), 1);
+          stoneChunkLayered(shardG, this.pcol, -11, 0, 0, 22, 6, 1, 0.4);
+          shardG.fillStyle(this.pcol(shardColour), 0.8);
+          stoneChunkLayered(shardG, this.pcol, -8, 0, 0, 16, 3.6, 0.9, 1.6);
+          shardG.setPosition(player.x, player.y).setRotation(ang);
+          this.earthSplinterShards.push({
+            g: shardG, x: player.x, y: player.y,
+            vx: Math.cos(ang) * 600, vy: Math.sin(ang) * 600,
+            spin: 14, spawnedAt: time, trailAccum: 0, colour: shardColour,
+          });
+          this.pfx.muzzleRubble(player.x, player.y, ang, 1.3, 9, true);
           // Break the shield(s)
           this.breakEarthShield(true);
           if (this.arena.hasUpgrade('click') && this.earthBackShieldHp > 0) {
@@ -2536,26 +3028,14 @@ export class EarthKit {
         } else {
           // Short hold: trigger Repair as normal
           if (player.castAbility('repair', playerCtx)) {
-            this.earthRepairActive = true;
-            this.earthRepairEnd = time + 3000;
-            if (this.earthRepairAura) this.earthRepairAura.destroy();
-            this.earthRepairAura = this.arena.scene.add.circle(player.x, player.y, 28, 0x887755, 0.4).setDepth(6);
-            this.arena.scene.tweens.add({ targets: this.earthRepairAura, alpha: 0.1, yoyo: true, repeat: -1, duration: 400 });
-            this.arena.showFloatingText(player.x, player.y - 30, '🔧 REPAIR', '#ccaa66');
+            this.startRepair(time);
           }
         }
       }
     } else {
       // Base E: Repair
       if (Phaser.Input.Keyboard.JustDown(this.arena.eKey)) {
-        if (player.castAbility('repair', playerCtx)) {
-          this.earthRepairActive = true;
-          this.earthRepairEnd = time + 3000;
-          if (this.earthRepairAura) this.earthRepairAura.destroy();
-          this.earthRepairAura = this.arena.scene.add.circle(player.x, player.y, 28, 0x887755, 0.4).setDepth(6);
-          this.arena.scene.tweens.add({ targets: this.earthRepairAura, alpha: 0.1, yoyo: true, repeat: -1, duration: 400 });
-          this.arena.showFloatingText(player.x, player.y - 30, '🔧 REPAIR', '#ccaa66');
-        }
+        if (player.castAbility('repair', playerCtx)) this.startRepair(time);
       }
     }
     }
@@ -2620,11 +3100,15 @@ export class EarthKit {
     const angle = Math.atan2(aimY - origin.y, aimX - origin.x);
     const halfAngleRad = Phaser.Math.DegToRad(DUST_SCREEN_HALF_ANGLE_DEG);
 
-    const gfx = this.arena.scene.add.graphics().setDepth(4);
-    gfx.fillStyle(0xaa9977, 0.32);
-    gfx.slice(origin.x, origin.y, DUST_SCREEN_RANGE, angle - halfAngleRad, angle + halfAngleRad, false);
-    gfx.fillPath();
-    this.arena.scene.tweens.add({ targets: gfx, alpha: 0, duration: 450, onComplete: () => gfx.destroy() });
+    // A wall of grit kicked forward off the ground, not a flat wedge of tint.
+    const fx = owner === 'player' ? this.pfx : this.nfx;
+    fx.dustCone(origin.x, origin.y, angle, DUST_SCREEN_RANGE, halfAngleRad);
+    fx.debris(origin.x, origin.y, 7, {
+      angle, spread: halfAngleRad, speed: DUST_SCREEN_RANGE * 1.5,
+      size: 3.4, life: 620, fall: 120, depth: 6,
+    });
+    if (owner === 'player') this.playPlayerGesture('sweep', angle);
+    else this.npcAvatar?.play('sweep', angle);
     this.arena.showFloatingText(origin.x, origin.y - 30, '💨 DUST SCREEN', '#aa9977');
 
     // 'npc' cones (online replay) blur the local player; 'player' cones blind enemies/husks.
@@ -2649,7 +3133,7 @@ export class EarthKit {
       } else if (t === this.arena.player) {
         // Only reachable if a future caller ever invokes this with the local human as a target
         // (e.g. an opponent's cast replicated over the network) — solo NPCs never own mastery.
-        this.arena.applyScreenBlur(DUST_SCREEN_EFFECT_MS);
+        this.applyScreenBlur(DUST_SCREEN_EFFECT_MS);
       }
     }
   }

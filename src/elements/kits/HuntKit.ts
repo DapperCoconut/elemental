@@ -1,21 +1,26 @@
 import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import type { CustomStatus } from './StatusHudKit';
+import {
+  BEAST_TONES, HUNT, HUNTER_TONES, HuntAura, HuntAvatar, HuntColorFn, HuntForm, HuntFx,
+  HuntTones, MOON_TONES, NPC_TONES, SILVER_TONES, tonesFor,
+} from './HuntVisuals';
 
 /**
- * Hunt Mastery kit.
+ * Hunt Mastery kit — and Hunt's whole visual layer.
  *
- * Hunt itself is still implemented inline in ArenaScene — this kit holds only the
- * mastery layer, so the two enhancements (Weak Points, Beastling) stay out of an
- * already-huge scene file. It reads the inline hunt state it needs (form, blood moon,
- * grenades, trail circles) through {@link HuntArenaApi} rather than owning any of it.
+ * Hunt's *rules* are still implemented inline in ArenaScene. Its *art* is not: the character
+ * rig, the palette and every effect painter live here (and in HuntVisuals.ts), and ArenaScene
+ * calls into the `fx*` methods below at each cast site rather than building tweens of its own.
+ * That keeps the scene file from carrying a second copy of the element's look, and it is why
+ * this kit owns an avatar for both fighters even though it only simulates the mastery layer.
  */
 
 // ── Arena API ────────────────────────────────────────────────────────────────
 
 /** Structural mirror of ArenaScene's `HuntGrenade` — the kit only needs these fields. */
 export interface HuntKitGrenade {
-  sprite: Phaser.GameObjects.Arc;
+  sprite: Phaser.GameObjects.Graphics;
   x: number; y: number;
   vx: number; vy: number;
   explodeAt: number;
@@ -41,11 +46,19 @@ export interface HuntArenaApi {
   get fKey(): Phaser.Input.Keyboard.Key;
   get qKey(): Phaser.Input.Keyboard.Key;
   get elementId(): string;
+  get npcElementId(): string;
+  /** Cosmetics: maps a hunt visual color through the owner's color cosmetic. */
+  huntColor(owner: 'player' | 'npc', base: number): number;
   // ── Inline hunt state the mastery reacts to ──
   get beastForm(): boolean;
   get hybridForm(): boolean;
+  /** The NPC's own form, so its rig wears the right silhouette too. */
+  get npcBeastForm(): boolean;
   get bloodMoonActive(): boolean;
   get npcBloodMoonActive(): boolean;
+  /** Aim point the player's rig faces — ArenaScene already tracks the cursor. */
+  get aimX(): number;
+  get aimY(): number;
   get playerBleeding(): boolean;
   get playerGrenades(): HuntKitGrenade[];
   get npcGrenades(): HuntKitGrenade[];
@@ -142,6 +155,19 @@ interface Beastling {
 export class HuntKit {
   private api: HuntArenaApi;
 
+  // ── Visuals ──
+  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  private readonly pcol: HuntColorFn;
+  private readonly ncol: HuntColorFn;
+  private readonly pfx: HuntFx;
+  private readonly nfx: HuntFx;
+  /** The hunt character rig (fists, eyes, ears that grow into a head) for each hunt fighter. */
+  private playerAvatar: HuntAvatar | null = null;
+  private npcAvatar: HuntAvatar | null = null;
+  /** Blood Pact's persistent aura, one per side. */
+  private pactAura: Record<'player' | 'npc', HuntAura | null> = { player: null, npc: null };
+  private pactUntil: Record<'player' | 'npc', number> = { player: 0, npc: 0 };
+
   // ── Weak Points ──
   private weakAngle = 0;
   private weakGfx = new Map<Fighter, Phaser.GameObjects.Graphics>();
@@ -166,9 +192,53 @@ export class HuntKit {
 
   constructor(api: HuntArenaApi) {
     this.api = api;
+    this.pcol = (base) => api.huntColor('player', base);
+    this.ncol = (base) => api.huntColor('npc', base);
+    this.pfx = new HuntFx(api.scene, this.pcol);
+    this.nfx = new HuntFx(api.scene, this.ncol);
+  }
+
+  // ── Visual accessors, used from ArenaScene's hunt cast sites ─────────────
+
+  /** Colour mapper for a side. */
+  private col(owner: 'player' | 'npc'): HuntColorFn { return owner === 'player' ? this.pcol : this.ncol; }
+  /** Effect painter for a side. */
+  fx(owner: 'player' | 'npc'): HuntFx { return owner === 'player' ? this.pfx : this.nfx; }
+  /** Character rig for a side, if that side is hunt this match. */
+  avatar(owner: 'player' | 'npc'): HuntAvatar | null {
+    return owner === 'player' ? this.playerAvatar : this.npcAvatar;
+  }
+
+  /**
+   * Shades for whatever that side is currently wearing — human, beast or hybrid, reddened under
+   * a Blood Moon. Every hunt effect takes its colours from here, so a form change recolours the
+   * whole element at once instead of at thirty separate call sites.
+   */
+  tones(owner: 'player' | 'npc'): HuntTones {
+    if (owner === 'player') {
+      if (this.api.bloodMoonActive) return MOON_TONES;
+      if (this.api.hybridForm) return SILVER_TONES;
+      if (this.api.beastForm) return BEAST_TONES;
+      return HUNTER_TONES;
+    }
+    if (this.api.npcBloodMoonActive) return MOON_TONES;
+    if (this.api.npcBeastForm) return BEAST_TONES;
+    return NPC_TONES;
+  }
+
+  private formOf(owner: 'player' | 'npc'): HuntForm {
+    if (owner === 'player') return this.api.hybridForm ? 'hybrid' : this.api.beastForm ? 'beast' : 'human';
+    return this.api.npcBeastForm ? 'beast' : 'human';
   }
 
   reset(): void {
+    if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
+    if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
+    for (const o of ['player', 'npc'] as const) {
+      this.pactAura[o]?.destroy();
+      this.pactAura[o] = null;
+      this.pactUntil[o] = 0;
+    }
     for (const g of this.weakGfx.values()) g.destroy();
     this.weakGfx.clear();
     if (this.weakPlayerGfx) { this.weakPlayerGfx.destroy(); this.weakPlayerGfx = null; }
@@ -263,8 +333,200 @@ export class HuntKit {
       carrying: null,
       carryFuseLeftMs: 0,
     });
-    const poof = scene.add.circle(f.x - 28, f.y + 14, 8, 0xd9a066, 0.7).setDepth(7);
-    scene.tweens.add({ targets: poof, scaleX: 2.6, scaleY: 2.6, alpha: 0, duration: 320, onComplete: () => poof.destroy() });
+    // Whistled up: a scatter of paw-scuffed dirt and the pup standing in it.
+    const fx = this.fx(owner);
+    fx.bloom(f.x - 28, f.y + 14, 22, 7, 5, this.tones(owner));
+    fx.smoke(f.x - 28, f.y + 14, 3, 16, 4);
+    this.avatar(owner)?.play('sweep');
+  }
+
+  // ── Character rig ──────────────────────────────────────────────────────────
+
+  /**
+   * Builds (on first frame) and drives the fist-and-ears avatar for whichever fighters are hunt.
+   * The player faces the cursor; the NPC faces whoever it is fighting. Blood Pact's aura lives
+   * here too, at a lower depth than anything a cast raises, so the two stack into one
+   * silhouette rather than fighting each other.
+   */
+  private updateAvatars(delta: number): void {
+    const { scene, player, npc } = this.api;
+
+    if (this.api.elementId === 'hunt' && player?.active) {
+      if (!this.playerAvatar) this.playerAvatar = new HuntAvatar(scene, this.pcol, HUNTER_TONES);
+      const av = this.playerAvatar;
+      av.setFacing(Math.atan2(this.api.aimY - player.y, this.api.aimX - player.x));
+      av.setForm(this.formOf('player'));
+      av.setMoon(this.api.bloodMoonActive);
+      // Beast and Blood Moon are both "bigger, faster, angrier" — the rig says so.
+      av.setIntensity(this.api.bloodMoonActive ? 1.45 : this.api.beastForm ? 1.3 : this.api.hybridForm ? 1.15 : 1);
+      av.setMastered(this.api.masteryActive);
+      av.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
+    } else if (this.playerAvatar) {
+      this.playerAvatar.destroy();
+      this.playerAvatar = null;
+    }
+
+    if (this.api.npcElementId === 'hunt' && npc?.active) {
+      if (!this.npcAvatar) this.npcAvatar = new HuntAvatar(scene, this.ncol, NPC_TONES);
+      const av = this.npcAvatar;
+      av.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
+      av.setForm(this.formOf('npc'));
+      av.setMoon(this.api.npcBloodMoonActive);
+      av.setIntensity(this.api.npcBloodMoonActive ? 1.4 : this.api.npcBeastForm ? 1.25 : 1);
+      av.setMastered(this.api.npcMasteryActive);
+      av.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
+    } else if (this.npcAvatar) {
+      this.npcAvatar.destroy();
+      this.npcAvatar = null;
+    }
+
+    // Blood Pact: a live blood aura for as long as the pact is up.
+    const now = scene.time.now;
+    for (const owner of ['player', 'npc'] as const) {
+      const f = owner === 'player' ? player : npc;
+      if (this.pactUntil[owner] > now && f?.active) {
+        if (!this.pactAura[owner]) {
+          this.pactAura[owner] = new HuntAura(scene, this.col(owner), BEAST_TONES, 34, 0.9, 4, 7);
+        }
+        this.pactAura[owner]!.setTones(this.tones(owner));
+        this.pactAura[owner]!.update(delta, f.x, f.y, f.alpha);
+      } else if (this.pactAura[owner]) {
+        this.pactAura[owner]!.destroy();
+        this.pactAura[owner] = null;
+      }
+    }
+  }
+
+  // ── Cast-site effects, called from ArenaScene's hunt blocks ────────────────
+
+  /** Fire one of the rig's arm gestures for a side. Safe when that side isn't hunt. */
+  gesture(owner: 'player' | 'npc', g: 'punch' | 'dash' | 'slam' | 'raise' | 'sweep' | 'clap' | 'flex', angle?: number): void {
+    this.avatar(owner)?.play(g, angle);
+  }
+
+  /** Shotgun (or hybrid silver shot): recoil, muzzle sheet, and the arm that threw it. */
+  fxShotgun(owner: 'player' | 'npc', x: number, y: number, angle: number, silver: boolean): void {
+    this.gesture(owner, 'punch', angle);
+    const tones = silver ? SILVER_TONES : this.tones(owner);
+    this.fx(owner).muzzleBlast(x + Math.cos(angle) * 18, y + Math.sin(angle) * 18, angle, silver ? 1.2 : 1, 9, tones);
+  }
+
+  /** Grenade leaving the hand: an overhand throw plus a puff of powder at the release point. */
+  fxGrenadeThrow(owner: 'player' | 'npc', x: number, y: number, angle: number): void {
+    this.gesture(owner, 'slam', angle);
+    this.fx(owner).smoke(x + Math.cos(angle) * 16, y + Math.sin(angle) * 16, 2, 10, 5);
+  }
+
+  /**
+   * Grenade detonation. `heavy` scales the *content* — a Blood Moon frag throws more casing,
+   * more smoke and holds longer, rather than simply drawing a wider circle.
+   */
+  fxGrenadeBoom(owner: 'player' | 'npc', x: number, y: number, radius: number, isHeal: boolean, heavy: boolean): void {
+    const fx = this.fx(owner);
+    if (isHeal) {
+      // A field dressing rather than a frag: no casing, no crater, and it blooms inward.
+      fx.bloom(x, y, radius * 0.5, 9, 6, { crust: 0x1f3a18, body: 0x2f8a2f, wound: 0x44cc44, lit: 0x88ff88, spark: HUNT.white });
+      fx.ring(x, y, radius * 0.2, radius, 0x44cc44, 460, 4.5, 6);
+      return;
+    }
+    fx.frag(x, y, radius * 0.72, {
+      tones: this.tones(owner),
+      shards: heavy ? 20 : 12,
+      smoke: heavy ? 5 : 3,
+      duration: heavy ? 620 : 460,
+    });
+    this.api.scene.cameras.main.shake(heavy ? 220 : 140, heavy ? 0.007 : 0.004);
+  }
+
+  /** Shriek-converted shrapnel: a hard silver burst rather than an orange one. */
+  fxShrapnel(owner: 'player' | 'npc', x: number, y: number): void {
+    const fx = this.fx(owner);
+    fx.flash(x, y, 16, 9, SILVER_TONES);
+    fx.shrapnel(x, y, 14, 90, 8, SILVER_TONES);
+    fx.ring(x, y, 6, 60, HUNT.silver, 380, 3.5, 7);
+    fx.smoke(x, y, 2, 16, 6);
+  }
+
+  /** Beast-form claw: the lunge smear, then a three-gash rake where the claw landed. */
+  fxSlash(owner: 'player' | 'npc', fromX: number, fromY: number, x: number, y: number, angle: number): void {
+    const fx = this.fx(owner);
+    const tones = this.tones(owner);
+    this.gesture(owner, 'sweep', angle);
+    fx.pounce(fromX, fromY, x, y, 5, tones);
+    fx.rake(x, y, angle, 74, 3, 8, tones);
+    fx.splatter(x, y, 7, { speed: 190, angle, spread: 1.1, size: 3, life: 480, depth: 8, tones: BEAST_TONES });
+  }
+
+  /** Hunter's Trail switching on: the scent catching, drawn as a rake of gouges underfoot. */
+  fxTrailStart(owner: 'player' | 'npc', x: number, y: number): void {
+    const fx = this.fx(owner);
+    this.gesture(owner, 'flex');
+    fx.bloom(x, y, 30, 8, 4, this.tones(owner));
+    fx.ring(x, y, 10, 62, this.tones(owner).wound, 380, 3.5, 4);
+  }
+
+  /** Blood Pact opening — and the aura it leaves behind for its 5s. */
+  fxBloodPact(owner: 'player' | 'npc', x: number, y: number, durationMs: number): void {
+    this.pactUntil[owner] = this.api.scene.time.now + durationMs;
+    this.gesture(owner, 'clap');
+    const fx = this.fx(owner);
+    fx.bloom(x, y, 36, 9, 5, BEAST_TONES);
+    fx.splatter(x, y, 10, { speed: 120, size: 3, life: 560, depth: 6, tones: BEAST_TONES });
+    fx.ring(x, y, 12, 70, HUNT.blood, 460, 4, 5);
+  }
+
+  /** Transform in or out. `toBeast` false runs the rips inward for the revert. */
+  fxTransform(owner: 'player' | 'npc', x: number, y: number, toBeast: boolean, hybrid = false): void {
+    this.gesture(owner, toBeast ? 'raise' : 'flex');
+    const tones = hybrid ? SILVER_TONES : toBeast ? BEAST_TONES : this.tones(owner);
+    this.fx(owner).transform(x, y, 44, tones, toBeast, 8);
+    this.api.scene.cameras.main.shake(toBeast ? 260 : 150, toBeast ? 0.006 : 0.003);
+  }
+
+  /** A roar: Blood Hunt's, Beast Instinct's screech, or the pup joining in. */
+  fxRoar(owner: 'player' | 'npc', x: number, y: number, radius = 150): void {
+    this.gesture(owner, 'raise');
+    const fx = this.fx(owner);
+    fx.howl(x, y, radius, 720, 9, this.tones(owner));
+    fx.splatter(x, y, 6, { speed: radius * 1.2, size: 2.6, life: 480, depth: 8, tones: BEAST_TONES });
+    this.api.scene.cameras.main.shake(150, 0.004);
+  }
+
+  /** The 1s wind-up before an upgraded Blood Hunt teleport. */
+  fxBloodHuntCharge(owner: 'player' | 'npc', durationMs: number): void {
+    const f = owner === 'player' ? this.api.player : this.api.npc;
+    this.avatar(owner)?.setHold('brace');
+    this.fx(owner).channelHunger(f.x, f.y, 54, durationMs, () => ({ x: f.x, y: f.y }), 8, BEAST_TONES);
+    this.api.scene.time.delayedCall(durationMs, () => this.avatar(owner)?.setHold(null));
+  }
+
+  /** Explosive Leap going invisible, and landing again. */
+  fxLeap(owner: 'player' | 'npc', x: number, y: number, vanishing: boolean): void {
+    const fx = this.fx(owner);
+    const tones = this.tones(owner);
+    if (vanishing) {
+      this.avatar(owner)?.play('dash');
+      fx.bloom(x, y, 34, 8, 5, tones);
+      fx.smoke(x, y, 4, 26, 6);
+    } else {
+      fx.frag(x, y, 82, { tones, shards: 14, smoke: 4, duration: 520 });
+      this.api.scene.cameras.main.shake(200, 0.006);
+    }
+  }
+
+  /** The forward shriek box hybrid form screams into. */
+  fxShriek(owner: 'player' | 'npc', cx: number, cy: number, angle: number, halfLen: number, halfWide: number): void {
+    this.gesture(owner, 'sweep', angle);
+    const fx = this.fx(owner);
+    fx.shriekBox(cx, cy, angle, halfLen, halfWide, 7, SILVER_TONES);
+    const f = owner === 'player' ? this.api.player : this.api.npc;
+    fx.howl(f.x, f.y, 70, 420, 9, SILVER_TONES);
+  }
+
+  /** Weak Points reward pip — a rake right on the seam that was hit. */
+  fxWeakPoint(x: number, y: number, angle: number): void {
+    this.pfx.rake(x, y, angle, 40, 3, 9, BEAST_TONES, 8);
+    this.pfx.splatter(x, y, 5, { speed: 150, angle, spread: 1.2, size: 2.4, life: 380, depth: 9, tones: BEAST_TONES });
   }
 
   // ── Cross-ability hooks ────────────────────────────────────────────────────
@@ -289,11 +551,10 @@ export class HuntKit {
   }
 
   private spawnRoarRings(pup: Beastling): void {
-    const { scene } = this.api;
-    const ring = scene.add.circle(pup.x, pup.y, 10, 0xff6633, 0.7).setDepth(7);
-    scene.tweens.add({ targets: ring, scaleX: 3.4, scaleY: 3.4, alpha: 0, duration: 620, onComplete: () => ring.destroy() });
-    const core = scene.add.circle(pup.x, pup.y, 5, 0xffdd99, 0.9).setDepth(8);
-    scene.tweens.add({ targets: core, scaleX: 2.6, scaleY: 2.6, alpha: 0, duration: 380, onComplete: () => core.destroy() });
+    // A pup's howl is the same shape as its owner's, just smaller.
+    const fx = this.fx(pup.owner);
+    const tones = this.isMoonUp(pup) ? MOON_TONES : this.tones(pup.owner);
+    fx.howl(pup.x, pup.y, 62, 620, 7, tones);
   }
 
   /** Extra speed multiplier the player's pup roar puts on the enemy. */
@@ -336,9 +597,8 @@ export class HuntKit {
     if (time - this.lastWeakLabelAt < 350) return;
     this.lastWeakLabelAt = time;
     this.api.showFloatingText(x, y - 30, '🎯 WEAK POINT', '#ff5555');
-    const { scene } = this.api;
-    const pip = scene.add.circle(x, y, 5, 0xff3333, 0.85).setDepth(9);
-    scene.tweens.add({ targets: pip, scaleX: 3, scaleY: 3, alpha: 0, duration: 260, onComplete: () => pip.destroy() });
+    // The seam opens: a rake right on the wedge that was hit, thrown along the sweep.
+    this.fxWeakPoint(x, y, this.weakAngle + Math.PI);
   }
 
   private drawWeakWedge(gfx: Phaser.GameObjects.Graphics, cx: number, cy: number, pulse: number): void {
@@ -519,14 +779,15 @@ export class HuntKit {
       else this.api.applyBleedTo(target, BLEED_MS);
     }
 
-    // A little chomp arc where the teeth went in.
-    const { scene } = this.api;
+    // Teeth going in: a small two-gash bite rather than a stretched oval.
     const ang = Math.atan2(target.y - pup.y, target.x - pup.x);
-    const chomp = scene.add.circle(
-      pup.x + Math.cos(ang) * 16, pup.y + Math.sin(ang) * 16, 6,
-      moon ? 0xff3322 : 0xfff0d0, 0.8,
-    ).setDepth(8);
-    scene.tweens.add({ targets: chomp, scaleX: 2.2, scaleY: 0.7, alpha: 0, duration: 200, onComplete: () => chomp.destroy() });
+    const bx = pup.x + Math.cos(ang) * 16, by = pup.y + Math.sin(ang) * 16;
+    const fx = this.fx(pup.owner);
+    const tones = moon ? MOON_TONES : this.tones(pup.owner);
+    fx.rake(bx, by, ang, 26, 2, 8, tones, 9);
+    fx.splatter(bx, by, moon ? 6 : 3, {
+      speed: 110, angle: ang, spread: 1.2, size: 2.2, life: 400, depth: 8, tones: BEAST_TONES,
+    });
   }
 
   private updateBeastlings(time: number, dt: number): void {
@@ -537,10 +798,10 @@ export class HuntKit {
 
       if (time >= pup.endsAt || !owner.active) {
         this.releaseCarried(pup, time);
-        const poof = this.api.scene.add.circle(pup.x, pup.y, 10, 0xd9a066, 0.6).setDepth(7);
-        this.api.scene.tweens.add({
-          targets: poof, scaleX: 2.4, scaleY: 2.4, alpha: 0, duration: 300,
-          onComplete: () => poof.destroy(),
+        // Called off: it scatters back into the dirt it came out of.
+        this.fx(pup.owner).smoke(pup.x, pup.y, 3, 18, 5);
+        this.fx(pup.owner).splatter(pup.x, pup.y, 4, {
+          speed: 60, size: 2.2, life: 480, depth: 5, tones: this.tones(pup.owner),
         });
         pup.gfx.destroy();
         this.beastlings.splice(i, 1);
@@ -870,6 +1131,7 @@ export class HuntKit {
 
   update(time: number, delta: number): void {
     const dt = delta / 1000;
+    this.updateAvatars(delta);
     if (this.api.elementId === 'hunt') this.trackKills();
     this.updateWeakPoints(time, dt);
     if (this.beastlings.length) this.updateBeastlings(time, dt);

@@ -1,7 +1,9 @@
 import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
-import { fireHitscan } from '../air';
+import {
+  ArmGesture, SOUND, SoundAura, SoundAvatar, SoundColorFn, SoundFx,
+} from './SoundVisuals';
 
 // ── SoundArenaApi ─────────────────────────────────────────────────────────
 
@@ -21,24 +23,37 @@ export interface SoundArenaApi {
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
   setIsDodging(v: boolean): void;
   applyNpcSpeedMult(factor: number): void;
-  spawnHitFlash(x: number, y: number, color: number): void;
-  spawnDamageNumber(x: number, y: number, amount: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
-  spawnFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
   buildNpcContext(x: number, y: number): CastContext;
+  /** `(owner, base) => displayed` — the owner's colour cosmetic, or the identity. */
+  soundColor(owner: 'player' | 'npc', base: number): number;
+  // ── Mastery ──
+  get masteryActive(): boolean;
+  get npcMasteryActive(): boolean;
+  masteryBindFor(slot: string): string | null;
+  broadcastMasteryCast(enhId: string): void;
+  recordMasteryStat(key: string, amount: number): void;
+  recordMasteryBestStat(key: string, value: number): void;
 }
 
 type NoteType = 'normal' | 'red' | 'blue' | 'purple';
 
 interface SoundNote {
-  sprite: Phaser.GameObjects.Arc | Phaser.GameObjects.Rectangle;
+  /** A container of drawn note art — see `createRhythmNoteSprite`. */
+  sprite: Phaser.GameObjects.Container;
+  /** The Graphics inside it, repainted each frame so the note visibly rings as it travels. */
+  gfx: Phaser.GameObjects.Graphics;
   x: number;
   isRed: boolean;
   noteType: NoteType;
   damage: number;
   isHold: boolean;
   holdActive: boolean;
+  /** How far from the hit line this note still counts as struck. Solo notes are wider. */
+  tolerance: number;
+  /** Drawn length, fixed at spawn — a tempo change mid-flight must not resize a live note. */
+  width: number;
 }
 
 interface ComposedNote {
@@ -49,10 +64,10 @@ interface ComposedNote {
 const NOTE_DMGS: Record<NoteType, number> = { normal: 20, red: 30, blue: 20, purple: 20 };
 const COMPOSE_COSTS: Record<NoteType, number> = { normal: 1, red: 3, blue: 2, purple: 3 };
 const NOTE_COLORS: Record<NoteType, number> = {
-  normal: 0xddaaff,
-  red: 0xff3333,
-  blue: 0x3388ff,
-  purple: 0x9955cc,
+  normal: SOUND.rose,
+  red: SOUND.crimson,
+  blue: SOUND.flow,
+  purple: SOUND.violet,
 };
 const NOTE_TOOLTIPS: Record<NoteType, string> = {
   normal: 'Normal — 20 dmg on hit.',
@@ -60,17 +75,144 @@ const NOTE_TOOLTIPS: Record<NoteType, string> = {
   blue: 'Blue — 20 dmg + slows the enemy 30% for 2s.',
   purple: 'Purple — 20 dmg + grants you +25% speed for 3s.',
 };
-const HOLD_COLOR = 0x44ee88;
+/**
+ * F+ Grace Notes: how many times a note-timed grapple hands the cooldown straight back.
+ * Two refreshes means three grapples land in a row and the third one finally starts the
+ * cooldown — the chain has a hard end rather than a fourth free cast.
+ */
+const GRACE_NOTE_MAX_REFRESHES = 2;
+const GRACE_NOTE_CHAIN_LEN = GRACE_NOTE_MAX_REFRESHES + 1;
+
+const NOTE_WIDTH = 26;
+/**
+ * Solo runs the track 3× faster, so its notes are drawn twice as long — and the window
+ * to strike one grows with them, or the tempo alone would decide the performance.
+ */
+const SOLO_NOTE_WIDTH = NOTE_WIDTH * 2;
+const NOTE_TOLERANCE = 30;
+
+const HOLD_COLOR = SOUND.mint;
 // Green hold notes are long sustained bars — you hold Click the whole time the
 // bar overlaps the hit line. Width sets how long that hold window lasts.
 const HOLD_NOTE_WIDTH = 170;
-// Screech Barrier damages anyone inside this radius (a solid disc, matching the
-// ~80px visual with a little body-size forgiveness) rather than a thin ring.
+// Screech Barrier is a hollow ring: only the wall itself bites. Standing in the quiet
+// middle is safe, so the barrier reads as something you cross rather than something you
+// avoid. The radius matches the ~80px visual with a little body-size forgiveness.
 const SCREECH_RADIUS = 88;
+/** How thick the damaging wall is, measured inward from `SCREECH_RADIUS`. */
+const SCREECH_BAND = 26;
+
+/** Distance from a point to a segment — the lane test behind Sound's own hitscan. */
+function pointToSegmentDist(
+  px: number, py: number, ax: number, ay: number, bx: number, by: number,
+): number {
+  const dx = bx - ax, dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Math.hypot(px - ax, py - ay);
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+/** True while a fighter is standing in the barrier wall rather than inside or outside it. */
+function inScreechWall(cx: number, cy: number, t: Fighter): boolean {
+  const d = Phaser.Math.Distance.Between(cx, cy, t.x, t.y);
+  return d <= SCREECH_RADIUS && d >= SCREECH_RADIUS - SCREECH_BAND;
+}
+
+// ── Sound Mastery ─────────────────────────────────────────────────────────
+
+/** Resonance Barrier: shield laid down per note landed. Uncapped — only a miss ends it. */
+const RESONANCE_SHIELD_PER_NOTE = 10;
+/** Floating text only at these round numbers, so a note every second isn't a wall of text. */
+const RESONANCE_ANNOUNCE_STEP = 50;
+
+const BUGLE_COOLDOWN_MS = 15000;
+/** How long the horn is held to the lips before the caravan comes over the horizon. */
+const BUGLE_BLOW_MS = 550;
+
+const CARAVAN_DAMAGE = 35;
+const CARAVAN_SPEED = 760;
+/** Peak shove speed, decayed to nothing across `CARAVAN_SHOVE_MS`. */
+const CARAVAN_KNOCKBACK = 700;
+const CARAVAN_SHOVE_MS = 420;
+/** Half the wagon's hit box — generous vertically so a clipped fighter still gets run down. */
+const CARAVAN_HALF_W = 78;
+const CARAVAN_HALF_H = 44;
+const CARAVAN_BODY_W = 150;
+
+const VIBRATION_MS = 15000;
+const VIBRATION_NOTE_DMG = 5;
+/**
+ * Online only. A remote bugler's own note hits are never broadcast, so their vibration
+ * ticks on this sim at the base rhythm tempo instead — roughly what they'd shake out of
+ * us by landing every note themselves.
+ */
+const NPC_VIBRATION_TICK_MS = 1100;
+
+interface SoundCaravan {
+  owner: 'player' | 'npc';
+  gfx: Phaser.GameObjects.Graphics;
+  x: number;
+  y: number;
+  /** +1 runs left-to-right, -1 the other way. */
+  dir: 1 | -1;
+  /** Everything already run down — the caravan only hits each fighter once. */
+  hit: Set<Fighter>;
+  wheelPhase: number;
+}
+
+/** A decaying push applied after the AI/input has set velocity, so it actually lands. */
+interface CaravanShove {
+  f: Fighter;
+  vx: number;
+  vy: number;
+  until: number;
+}
+
+/** Every ability drives an arm gesture, on the NPC rig as well as the player's. */
+const CAST_GESTURES: Record<string, ArmGesture> = {
+  'rhythm-shot': 'punch',
+  'flow-mode': 'flex',
+  'screech-barrier': 'slam',
+  'sound-grapple': 'dash',
+  solo: 'raise',
+};
 
 // ── SoundKit ──────────────────────────────────────────────────────────────
 
 export class SoundKit {
+  // ── Visuals ─────────────────────────────────────────────────────────
+  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  private readonly pcol: SoundColorFn;
+  private readonly ncol: SoundColorFn;
+  private readonly pfx: SoundFx;
+  private readonly nfx: SoundFx;
+  /** The performer rig (cone hands, eyes, note crown) for each sound fighter. */
+  private playerAvatar: SoundAvatar | null = null;
+  private npcAvatar: SoundAvatar | null = null;
+  /** Stance tells. Resonance sits lowest so the mastery shell reads under everything else. */
+  private resonanceAura: SoundAura | null = null;
+  private flowAura: SoundAura | null = null;
+  private soloAura: SoundAura | null = null;
+  private harmonyAura: SoundAura | null = null;
+  /** One shaking tell per fighter still ringing from a caravan hit. */
+  private vibrationAuras = new Map<Fighter, SoundAura>();
+  /**
+   * Three world layers, because these objects are not all in the same place: barriers lie on the
+   * floor and must pass under the fighters, the grenade and the caravan sit in the air over them,
+   * and the Solo stage is furniture that everything else stands on.
+   */
+  private groundGfx: Phaser.GameObjects.Graphics | null = null;
+  private airGfx: Phaser.GameObjects.Graphics | null = null;
+  private stageGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Shared animation clock for every per-frame painter in this kit. */
+  private vizT = 0;
+  /** Last cursor position, cached in handleInput — `update` has no pointer to face. */
+  private lastAimX = 0;
+  private lastAimY = 0;
+  /** 0 = mid-strum, 1 = settled. Drives the pick hand and the ringing strings during a Solo. */
+  private strumT = 1;
+
   // ── HUD ─────────────────────────────────────────────────────────────
   private soundHitRing: Phaser.GameObjects.Arc | null = null;
   private soundStreakText: Phaser.GameObjects.Text | null = null;
@@ -88,20 +230,22 @@ export class SoundKit {
   private soundNoteSpawnCount = 0;
 
   // ── Screech state ─────────────────────────────────────────────────────
+  // The barrier is painted into `groundGfx` every frame rather than owning a sprite, so its
+  // wall can actually ring. `token` is only an identity for takeDamage's stationary-source
+  // check — a fresh object per placement, so each barrier is its own source.
   private soundScreechX = 0;
   private soundScreechY = 0;
   private soundScreechExpiry = 0;
-  private soundScreechSprite: Phaser.GameObjects.Arc | null = null;
+  private soundScreechToken: object | null = null;
   private soundScreechRed = false;
   private soundScreechTickAccum = 0;
   private soundScreechIsStar = false;
-  private soundScreechStarGraphic: Phaser.GameObjects.Graphics | null = null;
 
   // ── NPC screech ───────────────────────────────────────────────────────
   private npcSoundScreechX = 0;
   private npcSoundScreechY = 0;
   private npcSoundScreechExpiry = 0;
-  private npcSoundScreechSprite: Phaser.GameObjects.Arc | null = null;
+  private npcSoundScreechToken: object | null = null;
   private npcSoundScreechRed = false;
   private npcSoundScreechTickAccum = 0;
 
@@ -109,10 +253,16 @@ export class SoundKit {
   private soundFGrappleExplodes = false;
   private soundGrappleActive = false;
   private soundGrappleRefreshes = 0;
+  /**
+   * Note-timed grapples landed back-to-back without the cooldown ever running. Distinct
+   * from the refresh count: the last grapple of a chain gets no refresh but still counts.
+   */
+  private soundGrappleChain = 0;
   private soundGrappleCdWasReady = true;
 
   // ── E+ hold note ──────────────────────────────────────────────────────
-  private soundHoldBeamGraphic: Phaser.GameObjects.Graphics | null = null;
+  /** Endpoint of the sustain beam while a hold note is being played, or null. */
+  private soundHoldBeamTo: Fighter | null = null;
   private soundHoldBeamAccum = 0;
   private soundSelfSlowUntil = 0;
   private soundHoldMissHandled = false;
@@ -126,7 +276,7 @@ export class SoundKit {
   private soundComposingLastSpawn = 0;
   private soundComposePalette: Phaser.GameObjects.GameObject[] = [];
   private soundComposedNoteSprites: Array<{
-    sprite: Phaser.GameObjects.Rectangle;
+    sprite: Phaser.GameObjects.Container;
     type: NoteType;
     xFrac: number;
     patternIdx: number;
@@ -137,7 +287,10 @@ export class SoundKit {
   private soundSoloReturnX = 0;
   private soundSoloReturnY = 0;
   private soundSoloGraceUntil = 0;
-  private soundSoloSprites: Phaser.GameObjects.GameObject[] = [];
+  /** Where the stage and the ball hang for this performance — the set is drawn, not spawned. */
+  private soloBallX = 0;
+  private soloBallY = 0;
+  private soloStageY = 0;
 
   // ── Q+ crescendo speed (reserved for a future Solo+) ──────────────────
   private soundCrescendoSpeedUntil = 0;
@@ -149,19 +302,74 @@ export class SoundKit {
   private soundNpcSlowUntil = 0;
 
   // ── Harmony perk: sonic grenade + star buffs ──────────────────────────
-  private harmonyGrenadeSprite: Phaser.GameObjects.Arc | null = null;
+  /** Live position of the thrown resonator. Tweened as a plain object; the art is painted. */
+  private harmonyGrenade: { x: number; y: number } | null = null;
   private harmonyGrenadeX = 0;
   private harmonyGrenadeY = 0;
   private harmonyGrenadeExplodeAt = 0;
-  private harmonyGrenadeAutoExplode = false;
+  private harmonyGrenadeArmedAt = 0;
   private harmonySongSpeedBonus = 0;
   private harmonySongSpeedUntil = 0;
   private harmonyMoveSpeedBonus = 0;
   private harmonyMoveSpeedUntil = 0;
   private harmonyStarAuraUntil = 0;
-  private harmonyStarSprites: Array<{ sprite: Phaser.GameObjects.Arc; angle: number }> = [];
 
-  constructor(private arena: SoundArenaApi) {}
+  // ── Mastery: Resonance Barrier + Bugle ────────────────────────────────
+  private caravans: SoundCaravan[] = [];
+  private caravanShoves: CaravanShove[] = [];
+  /** Horns at someone's lips, repainted each frame so the call keeps ringing out of the bell. */
+  private bugles: Array<{ gfx: Phaser.GameObjects.Graphics; owner: 'player' | 'npc'; dir: 1 | -1 }> = [];
+  /**
+   * Seeded a full cooldown in the past. The kit's very first match runs the constructor
+   * rather than `reset()`, and readiness is measured against absolute `scene.time.now`,
+   * so a plain 0 would lock the horn out for the opening 15 seconds.
+   */
+  private bugleLastCastAt = -BUGLE_COOLDOWN_MS;
+  private resonanceAnnounced = 0;
+  private npcVibrationAccum = 0;
+
+  constructor(private arena: SoundArenaApi) {
+    // Built here, not as field initialisers, so they see the injected arena.
+    this.pcol = (base) => arena.soundColor('player', base);
+    this.ncol = (base) => arena.soundColor('npc', base);
+    this.pfx = new SoundFx(arena.scene, this.pcol);
+    this.nfx = new SoundFx(arena.scene, this.ncol);
+  }
+
+  // ── Visual helpers ────────────────────────────────────────────────────
+
+  /** Effect painter for a side. */
+  private fx(owner: 'player' | 'npc'): SoundFx { return owner === 'player' ? this.pfx : this.nfx; }
+  /** Colour mapper for a side. */
+  private col(owner: 'player' | 'npc'): SoundColorFn { return owner === 'player' ? this.pcol : this.ncol; }
+  /** The rig for a side, if that side is playing Sound. */
+  private avatar(owner: 'player' | 'npc'): SoundAvatar | null {
+    return owner === 'player' ? this.playerAvatar : this.npcAvatar;
+  }
+
+  /** The floor layer, under the fighters. Rebuilt lazily after a reset. */
+  private ground(): Phaser.GameObjects.Graphics {
+    if (!this.groundGfx || !this.groundGfx.active) {
+      this.groundGfx = this.arena.scene.add.graphics().setDepth(3);
+    }
+    return this.groundGfx;
+  }
+
+  /** The airborne layer, over the fighters. Rebuilt lazily after a reset. */
+  private air(): Phaser.GameObjects.Graphics {
+    if (!this.airGfx || !this.airGfx.active) {
+      this.airGfx = this.arena.scene.add.graphics().setDepth(9);
+    }
+    return this.airGfx;
+  }
+
+  /** The Solo set — stage, ball, guitar. Under the fighters, over the floor. */
+  private stage(): Phaser.GameObjects.Graphics {
+    if (!this.stageGfx || !this.stageGfx.active) {
+      this.stageGfx = this.arena.scene.add.graphics().setDepth(4);
+    }
+    return this.stageGfx;
+  }
 
   // ── Public accessors ──────────────────────────────────────────────────
 
@@ -183,6 +391,21 @@ export class SoundKit {
   reset(isSoundMatch = false): void {
     const { scene } = this.arena;
 
+    // Visuals — every GameObject dies with the old scene run, so rebuild lazily in update().
+    if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
+    if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
+    if (this.resonanceAura) { this.resonanceAura.destroy(); this.resonanceAura = null; }
+    if (this.flowAura) { this.flowAura.destroy(); this.flowAura = null; }
+    if (this.soloAura) { this.soloAura.destroy(); this.soloAura = null; }
+    if (this.harmonyAura) { this.harmonyAura.destroy(); this.harmonyAura = null; }
+    for (const a of this.vibrationAuras.values()) a.destroy();
+    this.vibrationAuras.clear();
+    if (this.groundGfx) { this.groundGfx.destroy(); this.groundGfx = null; }
+    if (this.airGfx) { this.airGfx.destroy(); this.airGfx = null; }
+    if (this.stageGfx) { this.stageGfx.destroy(); this.stageGfx = null; }
+    this.vizT = 0;
+    this.strumT = 1;
+
     for (const n of this.soundNotes) n.sprite.destroy();
     this.soundNotes = [];
     this.soundLastSpawnAt = 0;
@@ -194,22 +417,22 @@ export class SoundKit {
     this.soundAccidentals = 0;
     this.soundNoteSpawnCount = 0;
 
-    if (this.soundScreechSprite) { this.soundScreechSprite.destroy(); this.soundScreechSprite = null; }
     this.soundScreechX = 0; this.soundScreechY = 0; this.soundScreechExpiry = 0;
     this.soundScreechRed = false; this.soundScreechTickAccum = 0;
     this.soundScreechIsStar = false;
-    if (this.soundScreechStarGraphic) { this.soundScreechStarGraphic.destroy(); this.soundScreechStarGraphic = null; }
+    this.soundScreechToken = null;
 
-    if (this.npcSoundScreechSprite) { this.npcSoundScreechSprite.destroy(); this.npcSoundScreechSprite = null; }
     this.npcSoundScreechX = 0; this.npcSoundScreechY = 0; this.npcSoundScreechExpiry = 0;
     this.npcSoundScreechRed = false; this.npcSoundScreechTickAccum = 0;
+    this.npcSoundScreechToken = null;
 
     this.soundFGrappleExplodes = false;
     this.soundGrappleActive = false;
     this.soundGrappleRefreshes = 0;
+    this.soundGrappleChain = 0;
     this.soundGrappleCdWasReady = true;
 
-    if (this.soundHoldBeamGraphic) { this.soundHoldBeamGraphic.destroy(); this.soundHoldBeamGraphic = null; }
+    this.soundHoldBeamTo = null;
     this.soundHoldBeamAccum = 0;
     this.soundSelfSlowUntil = 0;
     this.soundHoldMissHandled = false;
@@ -229,8 +452,7 @@ export class SoundKit {
     this.soundSoloReturnX = 0;
     this.soundSoloReturnY = 0;
     this.soundSoloGraceUntil = 0;
-    for (const s of this.soundSoloSprites) s.destroy();
-    this.soundSoloSprites = [];
+    this.soloBallX = 0; this.soloBallY = 0; this.soloStageY = 0;
 
     this.soundCrescendoSpeedUntil = 0;
     this.soundCrescendoSpeedBonus = 0;
@@ -238,15 +460,23 @@ export class SoundKit {
     this.soundComposeSpeedBonus = 0;
     this.soundNpcSlowUntil = 0;
 
-    if (this.harmonyGrenadeSprite) { this.harmonyGrenadeSprite.destroy(); this.harmonyGrenadeSprite = null; }
+    this.harmonyGrenade = null;
     this.harmonyGrenadeExplodeAt = 0;
+    this.harmonyGrenadeArmedAt = 0;
     this.harmonySongSpeedBonus = 0;
     this.harmonySongSpeedUntil = 0;
     this.harmonyMoveSpeedBonus = 0;
     this.harmonyMoveSpeedUntil = 0;
     this.harmonyStarAuraUntil = 0;
-    for (const s of this.harmonyStarSprites) s.sprite.destroy();
-    this.harmonyStarSprites = [];
+
+    for (const c of this.caravans) c.gfx.destroy();
+    this.caravans = [];
+    this.caravanShoves = [];
+    for (const b of this.bugles) { if (b.gfx.active) b.gfx.destroy(); }
+    this.bugles = [];
+    this.bugleLastCastAt = -BUGLE_COOLDOWN_MS;
+    this.resonanceAnnounced = 0;
+    this.npcVibrationAccum = 0;
 
     if (this.soundHitRing) { this.soundHitRing.destroy(); this.soundHitRing = null; }
     if (this.soundStreakText) { this.soundStreakText.destroy(); this.soundStreakText = null; }
@@ -261,11 +491,11 @@ export class SoundKit {
     const H = this.arena.height;
     const trackY = this.getTrackY();
 
-    scene.add.rectangle(W / 2, trackY, W, 28, 0x0a0a18, 0.92)
-      .setStrokeStyle(1, 0x441133, 1).setDepth(20);
+    scene.add.rectangle(W / 2, trackY, W, 28, SOUND.shade, 0.92)
+      .setStrokeStyle(1, SOUND.plum, 1).setDepth(20);
 
     this.soundHitRing = scene.add.circle(W / 2, trackY, 13, 0x000000, 0).setDepth(22);
-    this.soundHitRing.setStrokeStyle(3, 0xff66cc, 0.9);
+    this.soundHitRing.setStrokeStyle(3, SOUND.magenta, 0.9);
 
     this.soundStreakText = scene.add.text(W - 8, trackY, '🎵 0', {
       fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#ffaadd',
@@ -279,7 +509,7 @@ export class SoundKit {
     const markerBaseX = W - 80;
     for (let i = 0; i < 3; i++) {
       const rect = scene.add.rectangle(markerBaseX - i * 14, trackY, 9, 12, 0x000000, 0)
-        .setStrokeStyle(1.5, 0xff66cc, 0.7).setDepth(23);
+        .setStrokeStyle(1.5, SOUND.magenta, 0.7).setDepth(23);
       this.soundAccidentalSprites.push(rect);
     }
 
@@ -295,7 +525,7 @@ export class SoundKit {
       const s = this.soundAccidentalSprites[i];
       if (!s?.active) continue;
       if (i < this.soundAccidentals) {
-        s.setFillStyle(0xff66cc, 0.85);
+        s.setFillStyle(SOUND.magenta, 0.85);
       } else {
         s.setFillStyle(0x000000, 0);
       }
@@ -306,6 +536,8 @@ export class SoundKit {
 
   handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
     const { player, eKey, rKey, fKey, qKey, scene } = this.arena;
+    this.lastAimX = mouseX;
+    this.lastAimY = mouseY;
     const W = this.arena.width;
     const soundHitLineX = W / 2;
     const soundTolerance = 30;
@@ -337,7 +569,7 @@ export class SoundKit {
     const soundClickJustDown = pointer.isDown && !this.soundPointerWasDown;
     if (soundClickJustDown && time - this.soundLastClickTime >= 200) {
       this.soundLastClickTime = time;
-      const hitNote = this.soundNotes.find(n => !n.isHold && Math.abs(n.x - soundHitLineX) <= soundTolerance);
+      const hitNote = this.soundNotes.find(n => !n.isHold && Math.abs(n.x - soundHitLineX) <= n.tolerance);
       if (hitNote) {
         // During Solo, hits auto-aim the nearest enemy instead of the cursor.
         let aimX = mouseX, aimY = mouseY;
@@ -345,10 +577,13 @@ export class SoundKit {
           const tgt = this.findNearestEnemy();
           if (tgt) { aimX = tgt.x; aimY = tgt.y; }
         }
-        const hitCtx = { ...this.arena.buildPlayerContext(aimX, aimY), lockCaster: (_d: number) => {}, quickShotActive: true };
-        fireHitscan(hitCtx, hitNote.damage, hitNote.isRed ? 0xff4444 : NOTE_COLORS[hitNote.noteType], false);
-        this.arena.spawnHitFlash(player.x, player.y, 0xff66cc);
+        const shotColor = NOTE_COLORS[hitNote.noteType];
+        this.soundHitscan('player', player.x, player.y, aimX, aimY, hitNote.damage, shotColor,
+          hitNote.isRed ? 1.5 : 1);
+        this.strumT = 0;
+        this.playerAvatar?.play('punch', Math.atan2(aimY - player.y, aimX - player.x));
         this.soundNoteStreak++;
+        this.onNoteHit(time);
 
         if (hitNote.noteType === 'blue') {
           this.soundNpcSlowUntil = time + 2000;
@@ -366,10 +601,14 @@ export class SoundKit {
           fontSize: '10px', color: col, fontFamily: 'Arial Black',
         }).setOrigin(0.5).setDepth(25);
         scene.tweens.add({ targets: ht, y: ht.y - 16, alpha: 0, duration: 800, onComplete: () => ht.destroy() });
+        // The note breaks up into its own colour where it was struck, on the track itself.
+        this.pfx.notes(hitNote.sprite.x, tY, 3, {
+          speed: 90, size: 5, life: 620, depth: 22, color: shotColor, rise: 18,
+        });
         hitNote.sprite.destroy();
         const idx = this.soundNotes.indexOf(hitNote);
         if (idx !== -1) this.soundNotes.splice(idx, 1);
-        this.flashHitRing(scene, hitNote.isRed ? 0xff4444 : 0xffaaff);
+        this.flashHitRing(scene, hitNote.isRed ? SOUND.crimson : SOUND.blush);
       } else if (this.isHoldBarOverLine(soundHitLineX, soundTolerance)) {
         // Pressing while a green hold bar covers the line begins a hold — not a miss.
       } else {
@@ -380,8 +619,9 @@ export class SoundKit {
         } else if (this.soundSoloActive) {
           this.endSolo(time);
         } else {
+          this.onNoteMiss();
           player.applySelfDamage(10);
-          this.arena.spawnHitFlash(player.x, player.y, 0xff6666);
+          this.pfx.discord(player.x, player.y);
           const mt = scene.add.text(player.x, player.y - 30, 'MISS -10', {
             fontSize: '11px', color: '#ff4466', fontFamily: 'Arial Black',
           }).setOrigin(0.5).setDepth(12);
@@ -401,13 +641,25 @@ export class SoundKit {
       return;
     }
 
+    // ── Mastery: Bugle takes over whichever slot it was bound to ──────
+    const bugSlot = this.bugleSlot();
+    if (bugSlot) {
+      const bugKey = bugSlot === 'e' ? eKey : bugSlot === 'r' ? rKey : bugSlot === 'f' ? fKey : qKey;
+      if (Phaser.Input.Keyboard.JustDown(bugKey)) this.tryCastBugle(time, mouseX, mouseY);
+    }
+
     // ── E: Toggle Flow Mode (3s cancel delay) ─────────────────────────
-    if (Phaser.Input.Keyboard.JustDown(eKey)) {
+    if (bugSlot !== 'e' && Phaser.Input.Keyboard.JustDown(eKey)) {
       if (!this.soundFlowActive) {
         this.soundFlowActive = true;
         this.soundFlowCancelRequestedAt = 0;
+        // Ignition: the tempo doubling, drawn as three cold fronts leaving the body at once.
+        this.playerAvatar?.play('flex');
+        this.pfx.ripple(player.x, player.y, 12, 74, SOUND.flow, 460, 5, 6, 9);
+        this.pfx.ripple(player.x, player.y, 8, 46, SOUND.flowPale, 340, 3, 6, 6);
+        this.pfx.notes(player.x, player.y, 4, { speed: 130, color: SOUND.flow, depth: 8 });
         this.arena.showFloatingText(player.x, player.y - 30, '🌊 FLOW ON', '#4488ff');
-        if (this.soundHitRing) this.soundHitRing.setStrokeStyle(3, 0x4488ff, 0.9);
+        if (this.soundHitRing) this.soundHitRing.setStrokeStyle(3, SOUND.flow, 0.9);
       } else if (this.soundFlowCancelRequestedAt === 0) {
         this.soundFlowCancelRequestedAt = time;
         this.arena.showFloatingText(player.x, player.y - 30, '♪ FLOW ENDING…', '#aaddff');
@@ -419,18 +671,22 @@ export class SoundKit {
     }
 
     // ── R: Screech Barrier ────────────────────────────────────────────
-    if (Phaser.Input.Keyboard.JustDown(rKey)) {
+    if (bugSlot !== 'r' && Phaser.Input.Keyboard.JustDown(rKey)) {
       if (player.castAbility('screech-barrier', this.arena.buildPlayerContext(mouseX, mouseY))) {
+        // A barrier laid down on the beat is "perfect" whether or not R+ is owned —
+        // only the star screech itself needs the upgrade.
+        const timedNote = this.soundNotes.find(n => Math.abs(n.x - soundHitLineX) <= n.tolerance * 1.5);
+        if (timedNote) this.arena.recordMasteryStat('perfectScreeches', 1);
+
         // R+: perfect note timing → star screech
-        const matchedNote = this.arena.hasUpgrade('r')
-          ? this.soundNotes.find(n => Math.abs(n.x - soundHitLineX) <= soundTolerance * 1.5)
-          : null;
+        const matchedNote = this.arena.hasUpgrade('r') ? timedNote : undefined;
         const isStar = matchedNote != null;
         if (isStar && matchedNote) {
           this.soundNoteStreak++;
           matchedNote.sprite.destroy();
           const mi = this.soundNotes.indexOf(matchedNote);
           if (mi !== -1) this.soundNotes.splice(mi, 1);
+          this.onNoteHit(time);
         }
 
         this.soundScreechIsStar = isStar;
@@ -439,19 +695,15 @@ export class SoundKit {
         this.soundScreechExpiry = time + 5000;
         this.soundScreechRed = this.soundFlowActive;
         this.soundScreechTickAccum = 0;
+        this.soundScreechToken = {};
 
-        if (this.soundScreechSprite) this.soundScreechSprite.destroy();
-        if (this.soundScreechStarGraphic) { this.soundScreechStarGraphic.destroy(); this.soundScreechStarGraphic = null; }
-
-        if (!isStar) {
-          const bc = this.soundScreechRed ? 0xff3333 : 0xff66cc;
-          this.soundScreechSprite = scene.add.circle(mouseX, mouseY, SCREECH_RADIUS, bc, 0.1).setDepth(3);
-          this.soundScreechSprite.setStrokeStyle(3, bc, 0.9);
-          scene.tweens.add({ targets: this.soundScreechSprite, alpha: 0.15, yoyo: true, repeat: -1, duration: 600 });
-        } else {
-          this.soundScreechStarGraphic = scene.add.graphics().setDepth(3);
-          this.drawStar(this.soundScreechStarGraphic, mouseX, mouseY);
-        }
+        // Planting it: the wall snaps outward from the cursor and settles into a standing wave.
+        const bc = isStar ? SOUND.gold : this.soundScreechRed ? SOUND.crimson : SOUND.magenta;
+        this.playerAvatar?.play('slam', Math.atan2(mouseY - player.y, mouseX - player.x));
+        this.pfx.waveBurst(player.x, player.y, Math.atan2(mouseY - player.y, mouseX - player.x), 1.1, 9, bc);
+        this.pfx.ripple(mouseX, mouseY, 6, SCREECH_RADIUS, bc, 420, 6, 6, 10);
+        this.pfx.flash(mouseX, mouseY, 20, 8, bc);
+        if (isStar) this.pfx.sparkle(mouseX, mouseY, 8, SCREECH_RADIUS * 0.7, 10, SOUND.gold);
 
         const bl = isStar ? '⭐ STARSONG!' : (this.soundScreechRed ? '🔴 SCREECH' : '🎵 SCREECH');
         const blColor = isStar ? '#ffee44' : (this.soundScreechRed ? '#ff4444' : '#ff88cc');
@@ -460,7 +712,7 @@ export class SoundKit {
     }
 
     // ── F: Sonic Grapple or Sonic Grenade (Harmony perk) ──────────────
-    if (Phaser.Input.Keyboard.JustDown(fKey)) {
+    if (bugSlot !== 'f' && Phaser.Input.Keyboard.JustDown(fKey)) {
       if (player.castAbility('sound-grapple', this.arena.buildPlayerContext(mouseX, mouseY))) {
         // Grant accidental
         if (this.soundAccidentals < 3) {
@@ -469,13 +721,14 @@ export class SoundKit {
         }
 
         // Check for perfect note timing (shared by both modes)
-        const matchedNote = this.soundNotes.find(n => Math.abs(n.x - soundHitLineX) <= soundTolerance * 1.5);
+        const matchedNote = this.soundNotes.find(n => Math.abs(n.x - soundHitLineX) <= n.tolerance * 1.5);
         const captureExplodes = matchedNote != null;
         if (captureExplodes && matchedNote) {
           this.soundNoteStreak++;
           matchedNote.sprite.destroy();
           const mi = this.soundNotes.indexOf(matchedNote);
           if (mi !== -1) this.soundNotes.splice(mi, 1);
+          this.onNoteHit(time);
         }
 
         if (this.arena.hasPerk('player', 'harmony')) {
@@ -486,32 +739,28 @@ export class SoundKit {
           const glen = Math.sqrt(gdx * gdx + gdy * gdy) || 1;
           const travelMs = Math.max(100, Math.min(400, (glen / 1200) * 1000));
 
-          // Destroy any existing grenade
-          if (this.harmonyGrenadeSprite) { this.harmonyGrenadeSprite.destroy(); this.harmonyGrenadeSprite = null; }
-          const grenSprite = scene.add.circle(player.x, player.y, 8, 0xff99ff, 0.9).setDepth(6);
-          grenSprite.setStrokeStyle(2, 0xffffff, 0.7);
-          this.harmonyGrenadeSprite = grenSprite;
+          // A plain object, not a sprite: the resonator's art is painted every frame in the
+          // air layer, and a tween drives any target with x/y just as happily.
+          const gren = { x: player.x, y: player.y };
+          this.harmonyGrenade = gren;
+          this.playerAvatar?.play('punch', Math.atan2(gy - player.y, gx - player.x));
+          this.pfx.waveBurst(player.x, player.y, Math.atan2(gy - player.y, gx - player.x), 1, 9, SOUND.rose);
 
           this.arena.showFloatingText(player.x, player.y - 30, captureExplodes ? '🎶 SONIC GRENADE!!' : '🎶 SONIC GRENADE', '#ff99ff');
 
           scene.tweens.add({
-            targets: grenSprite,
+            targets: gren,
             x: gx, y: gy,
             duration: travelMs,
             ease: 'Linear',
             onComplete: () => {
-              if (!player.active) return;
+              if (!player.active) { this.harmonyGrenade = null; return; }
               this.harmonyGrenadeX = gx;
               this.harmonyGrenadeY = gy;
               // Note-timed: auto-explode immediately; otherwise wait 2s
               const delay = captureExplodes ? 0 : 2000;
+              this.harmonyGrenadeArmedAt = scene.time.now;
               this.harmonyGrenadeExplodeAt = scene.time.now + delay;
-              if (delay > 0) {
-                // Pulse while waiting
-                if (grenSprite.active) {
-                  scene.tweens.add({ targets: grenSprite, alpha: 0.3, yoyo: true, repeat: -1, duration: 300 });
-                }
-              }
             },
           });
         } else {
@@ -534,8 +783,10 @@ export class SoundKit {
             this.soundFGrappleExplodes = false;
           }
 
-          const gtrail = scene.add.circle(player.x, player.y, 8, 0xff66cc, 0.5).setDepth(4);
-          scene.tweens.add({ targets: gtrail, alpha: 0, duration: 300, onComplete: () => gtrail.destroy() });
+          // The line the grapple rides, and the kick off the wall behind you.
+          const startX = player.x, startY = player.y;
+          this.playerAvatar?.play('dash', Math.atan2(gdy, gdx));
+          this.pfx.dashTrail(startX, startY, gx, gy, captureExplodes ? SOUND.gold : SOUND.magenta, 13);
 
           scene.time.delayedCall(gTravelTime, () => {
             if (!player.active) return;
@@ -546,23 +797,18 @@ export class SoundKit {
 
             if (captureExplodes) {
               const ex = player.x, ey = player.y;
-              const ring = scene.add.circle(ex, ey, 10, 0xff66cc, 0.9).setDepth(4);
-              scene.tweens.add({ targets: ring, scaleX: 10, scaleY: 10, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
-              const core = scene.add.circle(ex, ey, 6, 0xffffff, 0.95).setDepth(5);
-              scene.tweens.add({ targets: core, scaleX: 4, scaleY: 4, alpha: 0, duration: 180, onComplete: () => core.destroy() });
+              this.pfx.boom(ex, ey, 100, { color: SOUND.magenta, petals: 8, notes: 5 });
+              scene.cameras.main.shake(150, 0.004);
               for (const t of this.arena.enemies) {
                 if (!t.active || t.hp <= 0) continue;
                 if (Phaser.Math.Distance.Between(ex, ey, t.x, t.y) <= 100) {
                   t.takeDamage(20);
-                  this.arena.spawnHitFlash(t.x, t.y, 0xff66cc);
+                  this.pfx.ripple(t.x, t.y, 6, 34, SOUND.blush, 300, 3, 8, 7);
                 }
               }
-              // F+: grace note — refresh cooldown (max 3 times)
-              if (this.arena.hasUpgrade('f') && this.soundGrappleRefreshes < 3) {
-                this.soundGrappleRefreshes++;
-                player.resetCooldown('sound-grapple');
-                this.arena.showFloatingText(ex, ey - 40, `✨ GRACE NOTE ${this.soundGrappleRefreshes}/3`, '#ffeecc');
-              }
+              // F+: grace note — the cooldown comes straight back, but only twice, so the
+              // third grapple of the chain lands and then the cooldown finally runs.
+              this.noteGraceNote(ex, ey - 40);
             }
           });
         }
@@ -570,7 +816,7 @@ export class SoundKit {
     }
 
     // ── Q: Solo — enter the guitar performance (end is handled above) ──
-    if (Phaser.Input.Keyboard.JustDown(qKey)) {
+    if (bugSlot !== 'q' && Phaser.Input.Keyboard.JustDown(qKey)) {
       if (player.getCooldownRatio('solo') >= 1) {
         player.triggerCooldown('solo');
         this.startSolo(scene, time);
@@ -589,7 +835,7 @@ export class SoundKit {
     if (this.soundFlowActive || this.soundFlowCancelRequestedAt > 0) {
       this.soundFlowActive = false;
       this.soundFlowCancelRequestedAt = 0;
-      if (this.soundHitRing) this.soundHitRing.setStrokeStyle(3, 0xff66cc, 0.9);
+      if (this.soundHitRing) this.soundHitRing.setStrokeStyle(3, SOUND.magenta, 0.9);
     }
 
     // Clear the track and grant a 2s grace before notes start scrolling in.
@@ -601,12 +847,16 @@ export class SoundKit {
     this.soundSoloReturnX = player.x;
     this.soundSoloReturnY = player.y;
 
-    // Disco ball hangs above; the stage sits below it, centered.
+    // Disco ball hangs above; the stage sits below it, centered. The whole set is painted from
+    // these three numbers every frame — nothing here is a sprite, so it can all animate.
     const ballX = W / 2;
     const ballY = H * 0.30;
     const stageY = H * 0.55;
     const px = ballX;
     const py = stageY - 18;
+    this.soloBallX = ballX;
+    this.soloBallY = ballY;
+    this.soloStageY = stageY;
 
     // Teleport the performer onto the stage.
     player.setPosition(px, py);
@@ -614,40 +864,14 @@ export class SoundKit {
     body.reset(px, py);
     body.setVelocity(0, 0);
 
-    // Spotlight cone from the ball down to the stage.
-    const spot = scene.add.graphics().setDepth(1);
-    spot.fillStyle(0xffffff, 0.07);
-    spot.fillTriangle(ballX, ballY, ballX - 95, stageY + 12, ballX + 95, stageY + 12);
-    this.soundSoloSprites.push(spot);
-
-    // Stage platform.
-    const stage = scene.add.rectangle(ballX, stageY, 150, 26, 0x221133, 0.9)
-      .setStrokeStyle(2, 0xff66cc, 0.8).setDepth(2);
-    this.soundSoloSprites.push(stage);
-
-    // Hanging cord + disco ball with facet lines.
-    const cord = scene.add.rectangle(ballX, ballY - 42, 2, 40, 0x666666, 0.8).setDepth(5);
-    this.soundSoloSprites.push(cord);
-    const ball = scene.add.circle(ballX, ballY, 22, 0xccccff, 0.95).setDepth(6);
-    ball.setStrokeStyle(2, 0xffffff, 0.8);
-    this.soundSoloSprites.push(ball);
-    const facets = scene.add.graphics().setDepth(7);
-    facets.lineStyle(1, 0x8888aa, 0.7);
-    for (let i = -2; i <= 2; i++) facets.lineBetween(ballX - 21, ballY + i * 8, ballX + 21, ballY + i * 8);
-    this.soundSoloSprites.push(facets);
-    scene.tweens.add({ targets: [ball, facets], alpha: 0.55, yoyo: true, repeat: -1, duration: 300 });
-
-    // Sparkle dots twinkling around the ball.
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * Math.PI * 2;
-      const sp = scene.add.circle(ballX + Math.cos(a) * 40, ballY + Math.sin(a) * 40, 3, 0xff66cc, 0.9).setDepth(4);
-      this.soundSoloSprites.push(sp);
-      scene.tweens.add({ targets: sp, alpha: 0.2, yoyo: true, repeat: -1, duration: 200 + i * 60 });
-    }
-
-    // Guitar in the performer's hands.
-    const guitar = scene.add.text(px + 15, py, '🎸', { fontSize: '20px' }).setOrigin(0.5).setDepth(11);
-    this.soundSoloSprites.push(guitar);
+    // The lights coming up: a burst off the ball and gold rings opening over the boards.
+    this.pfx.flash(ballX, ballY, 46, 10, SOUND.gold);
+    this.pfx.ripple(ballX, stageY, 20, 170, SOUND.gold, 620, 6, 5, 9);
+    this.pfx.notes(px, py, 7, { speed: 190, color: SOUND.gold, depth: 10, size: 8 });
+    this.pfx.sparkle(ballX, ballY, 10, 60, 11, SOUND.white);
+    scene.cameras.main.shake(220, 0.005);
+    this.playerAvatar?.play('raise', -Math.PI / 2, 900);
+    this.strumT = 0;
 
     this.arena.showFloatingText(px, py - 44, '🎸 SOLO!', '#ffdd44');
   }
@@ -656,8 +880,10 @@ export class SoundKit {
     if (!this.soundSoloActive) return;
     this.soundSoloActive = false;
 
-    for (const s of this.soundSoloSprites) s.destroy();
-    this.soundSoloSprites = [];
+    // The set goes dark: one last flare off the ball before the stage is struck.
+    this.pfx.ripple(this.soloBallX, this.soloStageY, 30, 150, SOUND.gold, 480, 5, 5, 7);
+    this.pfx.notes(this.soloBallX, this.soloStageY - 20, 6, { speed: 150, color: SOUND.gold, depth: 10 });
+    if (this.stageGfx?.active) this.stageGfx.clear();
 
     // Return to where the solo began.
     const { player } = this.arena;
@@ -666,6 +892,7 @@ export class SoundKit {
     body.reset(this.soundSoloReturnX, this.soundSoloReturnY);
     body.setVelocity(0, 0);
 
+    this.pfx.waveBurst(player.x, player.y, -Math.PI / 2, 1.3, 9, SOUND.gold, 1.4);
     this.arena.showFloatingText(player.x, player.y - 40, '🎸 ENCORE!', '#ffdd44');
     void time;
   }
@@ -673,8 +900,185 @@ export class SoundKit {
   // ── Per-frame update ─────────────────────────────────────────────────
 
   update(time: number, delta: number, isPlayerSound: boolean, isNpcSound: boolean): void {
+    this.vizT += delta / 1000;
+    // Strum decays back to rest, so the pick hand and the ringing strings settle after a hit.
+    if (this.strumT < 1) this.strumT = Math.min(1, this.strumT + delta / 260);
+
+    // Caravans carry an owner and can belong to either side, so they tick on both sims.
+    this.updateCaravans(time, delta);
+    this.updateCaravanShoves(time);
     if (isPlayerSound) this.updatePlayerSound(time, delta);
-    if (isNpcSound) this.updateNpcScreech(time, delta);
+    if (isNpcSound) {
+      this.updateNpcScreech(time, delta);
+      this.updateNpcVibration(time, delta);
+    }
+    this.paintWorld(time);
+    this.updateAvatars(time, delta, isPlayerSound, isNpcSound);
+  }
+
+  /**
+   * Every per-frame painter in one pass: the two barriers on the floor, the Solo set, the
+   * airborne resonator and the sustain beam. Each layer is cleared and redrawn from live state,
+   * so a barrier's wall rings and the disco ball turns instead of sitting there as a sprite.
+   */
+  private paintWorld(time: number): void {
+    const anyBarrier = time < this.soundScreechExpiry || time < this.npcSoundScreechExpiry;
+    const anyAir = this.harmonyGrenade !== null || this.soundHoldBeamTo !== null || this.bugles.length > 0;
+
+    if (anyBarrier || this.groundGfx) {
+      const g = this.ground();
+      g.clear();
+      if (time < this.soundScreechExpiry) {
+        SoundFx.drawBarrier(
+          g, this.pcol, this.soundScreechX, this.soundScreechY, SCREECH_RADIUS, SCREECH_BAND,
+          this.vizT, this.soundScreechRed ? SOUND.crimson : SOUND.magenta,
+          // The last half second fades out, so a barrier visibly expires rather than vanishing.
+          Math.min(1, (this.soundScreechExpiry - time) / 500), this.soundScreechIsStar,
+        );
+      }
+      if (time < this.npcSoundScreechExpiry) {
+        SoundFx.drawBarrier(
+          g, this.ncol, this.npcSoundScreechX, this.npcSoundScreechY, SCREECH_RADIUS, SCREECH_BAND,
+          this.vizT, this.npcSoundScreechRed ? SOUND.crimson : SOUND.flow,
+          Math.min(1, (this.npcSoundScreechExpiry - time) / 500), false,
+        );
+      }
+    }
+
+    if (anyAir || this.airGfx) {
+      const g = this.air();
+      g.clear();
+      // The resonator, either in flight or sitting armed with its fuse ring closing.
+      if (this.harmonyGrenade) {
+        const fuse = this.harmonyGrenadeExplodeAt > 0
+          ? 1 - Phaser.Math.Clamp(
+            (this.harmonyGrenadeExplodeAt - time) / Math.max(1, this.harmonyGrenadeExplodeAt - this.harmonyGrenadeArmedAt), 0, 1)
+          : 0;
+        SoundFx.drawGrenade(g, this.pcol, this.harmonyGrenade.x, this.harmonyGrenade.y, this.vizT, fuse);
+      }
+      // The sustain beam opened by a green hold note.
+      const beamTo = this.soundHoldBeamTo;
+      if (beamTo?.active && beamTo.hp > 0) {
+        const { player } = this.arena;
+        SoundFx.drawSustainBeam(g, this.pcol, player.x, player.y, beamTo.x, beamTo.y, this.vizT, SOUND.mint);
+      }
+    }
+
+    // Horns own their own Graphics (they sit above the fighters, not in the air layer).
+    for (const b of this.bugles) {
+      const caster = b.owner === 'player' ? this.arena.player : this.arena.npc;
+      if (b.gfx.active) SoundFx.drawBugle(b.gfx, this.col(b.owner), caster.x, caster.y, b.dir, this.vizT);
+    }
+
+    // The Solo set: stage, ball and the guitar in the performer's hands.
+    if (this.soundSoloActive) {
+      const g = this.stage();
+      g.clear();
+      const { player } = this.arena;
+      SoundFx.drawStage(g, this.pcol, this.soloBallX, this.soloStageY, 150, this.vizT);
+      SoundFx.drawDiscoBall(g, this.pcol, this.soloBallX, this.soloBallY, 22, this.vizT,
+        this.soloStageY - this.soloBallY + 40);
+      // The guitar is *held*, so it goes on the air layer — the stage layer passes under the
+      // performer and the instrument would disappear behind them.
+      SoundFx.drawGuitar(this.air(), this.pcol, player.x + 4, player.y + 6, 0.34, 0.9, this.strumT);
+    } else if (this.stageGfx?.active) {
+      this.stageGfx.clear();
+    }
+  }
+
+  /**
+   * The character rigs and every stance aura, for whichever sides are playing Sound. Built
+   * lazily so a scene restart (which destroys them all) simply rebuilds on the next frame, and
+   * torn down the moment a side stops being Sound.
+   */
+  private updateAvatars(time: number, delta: number, isPlayerSound: boolean, isNpcSound: boolean): void {
+    const { scene, player, npc } = this.arena;
+
+    if (isPlayerSound && player?.active) {
+      if (!this.playerAvatar) this.playerAvatar = new SoundAvatar(scene, this.pcol, 'player');
+      // During a Solo the performer's shots auto-aim, so the rig looks where they land; a
+      // sustain beam pins the aim to whatever it is playing into; otherwise, the cursor.
+      const target = this.soundHoldBeamTo ?? (this.soundSoloActive ? this.findNearestEnemy() : null);
+      const aim = target
+        ? Math.atan2(target.y - player.y, target.x - player.x)
+        : Math.atan2(this.lastAimY - player.y, this.lastAimX - player.x);
+      this.playerAvatar.setFacing(aim);
+      this.playerAvatar.setIntensity(this.soundSoloActive ? 1.45 : this.soundFlowActive ? 1.18 : 1);
+      this.playerAvatar.setMastered(this.arena.masteryActive);
+      // Single owner of setHold: working the guitar takes both hands and outranks everything;
+      // a sustain beam holds them forward; otherwise the idle sway runs.
+      this.playerAvatar.setHold(
+        this.soundSoloActive ? 'brace' : this.soundHoldBeamTo ? 'spray' : null, aim);
+      const alpha = player.forceInvisible ? 0 : player.alpha;
+      this.playerAvatar.update(delta, player.x, player.y, alpha);
+
+      // Resonance shell sits lowest, so the mastery passive stacks under the stance auras
+      // instead of fighting them for the same silhouette.
+      if (this.arena.masteryActive && player.shieldHp > 0) {
+        if (!this.resonanceAura) this.resonanceAura = new SoundAura(scene, this.pcol, 'resonance', 30, 2);
+        this.resonanceAura.setIntensity(player.shieldHp / RESONANCE_ANNOUNCE_STEP);
+        this.resonanceAura.update(delta, player.x, player.y, alpha);
+      } else if (this.resonanceAura) {
+        this.resonanceAura.destroy();
+        this.resonanceAura = null;
+      }
+
+      if (this.soundFlowActive) {
+        if (!this.flowAura) this.flowAura = new SoundAura(scene, this.pcol, 'flow', 24, 3);
+        this.flowAura.update(delta, player.x, player.y, alpha);
+      } else if (this.flowAura) {
+        this.flowAura.destroy();
+        this.flowAura = null;
+      }
+
+      if (this.soundSoloActive) {
+        if (!this.soloAura) this.soloAura = new SoundAura(scene, this.pcol, 'solo', 26, 3);
+        this.soloAura.update(delta, player.x, player.y, alpha);
+      } else if (this.soloAura) {
+        this.soloAura.destroy();
+        this.soloAura = null;
+      }
+
+      if (time < this.harmonyStarAuraUntil) {
+        if (!this.harmonyAura) this.harmonyAura = new SoundAura(scene, this.pcol, 'harmony', 30, 4);
+        this.harmonyAura.update(delta, player.x, player.y, alpha);
+      } else if (this.harmonyAura) {
+        this.harmonyAura.destroy();
+        this.harmonyAura = null;
+      }
+    } else if (this.playerAvatar) {
+      this.playerAvatar.destroy();
+      this.playerAvatar = null;
+    }
+
+    if (isNpcSound && npc?.active) {
+      if (!this.npcAvatar) this.npcAvatar = new SoundAvatar(scene, this.ncol, 'npc');
+      this.npcAvatar.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
+      this.npcAvatar.setMastered(this.arena.npcMasteryActive);
+      this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
+    } else if (this.npcAvatar) {
+      this.npcAvatar.destroy();
+      this.npcAvatar = null;
+    }
+
+    // One shaking tell per fighter still ringing from a caravan, on whichever side owns them.
+    // Deduped: `enemies` already contains the npc in a normal match, and updating one aura
+    // twice in a frame would run its shake at double speed.
+    for (const f of new Set([player, npc, ...this.arena.enemies])) {
+      if (!f) continue;
+      const ringing = f.active && f.hp > 0 && time < f.vibrationUntil;
+      let aura = this.vibrationAuras.get(f);
+      if (ringing) {
+        if (!aura) {
+          aura = new SoundAura(scene, this.pcol, 'vibration', 24, 4);
+          this.vibrationAuras.set(f, aura);
+        }
+        aura.update(delta, f.x, f.y, f.forceInvisible ? 0 : f.alpha);
+      } else if (aura) {
+        aura.destroy();
+        this.vibrationAuras.delete(f);
+      }
+    }
   }
 
   private updatePlayerSound(time: number, delta: number): void {
@@ -683,10 +1087,12 @@ export class SoundKit {
     const soundHitLineX = W / 2;
     const soundTolerance = 30;
 
-    // Reset grace-note refresh counter each time the grapple cooldown becomes ready
+    // The cooldown running to completion is exactly what ends a chain, so both the
+    // refresh budget and the chain length reset the moment the grapple comes back.
     const grappleCdReady = player.getCooldownRatio('sound-grapple') >= 1;
     if (grappleCdReady && !this.soundGrappleCdWasReady) {
       this.soundGrappleRefreshes = 0;
+      this.soundGrappleChain = 0;
     }
     this.soundGrappleCdWasReady = grappleCdReady;
     const harmonyBoost = time < this.harmonySongSpeedUntil ? (1 + this.harmonySongSpeedBonus) : 1;
@@ -700,7 +1106,7 @@ export class SoundKit {
       this.soundFlowActive = false;
       this.soundFlowCancelRequestedAt = 0;
       this.arena.showFloatingText(player.x, player.y - 30, '💨 FLOW OFF', '#aaddff');
-      if (this.soundHitRing) this.soundHitRing.setStrokeStyle(3, 0xff66cc, 0.9);
+      if (this.soundHitRing) this.soundHitRing.setStrokeStyle(3, SOUND.magenta, 0.9);
     }
 
     // Strobe hit ring during cancel window
@@ -723,22 +1129,20 @@ export class SoundKit {
         const isRed = !isHold && Math.random() < 0.04;
         const noteType: NoteType = isRed ? 'red' : 'normal';
 
-        let noteSprite: Phaser.GameObjects.Arc | Phaser.GameObjects.Rectangle;
-        if (isHold) {
-          noteSprite = scene.add.rectangle(W + 20, tY, HOLD_NOTE_WIDTH, 20, HOLD_COLOR, 0.7)
-            .setStrokeStyle(2, 0x66ffcc, 0.95).setDepth(21);
-        } else {
-          noteSprite = this.createRhythmNoteSprite(W + 20, tY, noteType);
-        }
+        const metrics = this.noteMetrics();
+        const built = this.createRhythmNoteSprite(W + 20, tY, noteType, metrics.width, isHold);
 
         this.soundNotes.push({
-          sprite: noteSprite,
+          sprite: built.sprite,
+          gfx: built.gfx,
           x: W + 20,
           isRed,
           noteType,
           damage: NOTE_DMGS[noteType],
           isHold,
           holdActive: false,
+          tolerance: metrics.tolerance,
+          width: metrics.width,
         });
       }
     }
@@ -766,25 +1170,21 @@ export class SoundKit {
             const nearest = this.findNearestEnemy();
             if (nearest) {
               nearest.takeDamage(3);
-              this.arena.spawnHitFlash(nearest.x, nearest.y, 0x66ffcc);
+              // A pulse arriving at the far end every tick, so the sustain visibly lands.
+              this.pfx.ripple(nearest.x, nearest.y, 4, 26, SOUND.mint, 260, 2.4, 8, 6);
             }
           }
-          // Draw beam
-          const beamTarget = this.findNearestEnemy();
-          if (beamTarget) {
-            if (!this.soundHoldBeamGraphic || !this.soundHoldBeamGraphic.active) {
-              this.soundHoldBeamGraphic = scene.add.graphics().setDepth(4);
-            }
-            this.soundHoldBeamGraphic.clear();
-            this.soundHoldBeamGraphic.lineStyle(3, 0x66ffcc, 0.85);
-            this.soundHoldBeamGraphic.lineBetween(player.x, player.y, beamTarget.x, beamTarget.y);
-          }
+          // The beam itself is painted in the air layer; this only says where it ends. The
+          // matching arm hold is set in updateAvatars, which is the single owner of setHold.
+          this.soundHoldBeamTo = this.findNearestEnemy();
         } else if (note.holdActive && !this.soundHoldMissHandled) {
           this.soundHoldMissHandled = true;
           this.soundSelfSlowUntil = time + 3000;
+          this.onNoteMiss();
           player.applySelfDamage(10);
+          this.pfx.discord(player.x, player.y);
           this.arena.showFloatingText(player.x, player.y - 30, '♪ HOLD MISSED -10', '#ff4444');
-          if (this.soundHoldBeamGraphic) { this.soundHoldBeamGraphic.destroy(); this.soundHoldBeamGraphic = null; }
+          this.soundHoldBeamTo = null;
         }
       }
 
@@ -793,10 +1193,11 @@ export class SoundKit {
         if (note.isHold) {
           if (!note.holdActive && !this.soundHoldMissHandled) {
             this.soundSelfSlowUntil = time + 3000;
+            this.onNoteMiss();
             player.applySelfDamage(10);
             this.arena.showFloatingText(player.x, player.y - 30, '♪ HOLD MISSED -10', '#ff4444');
           }
-          if (this.soundHoldBeamGraphic) { this.soundHoldBeamGraphic.destroy(); this.soundHoldBeamGraphic = null; }
+          this.soundHoldBeamTo = null;
         } else if (this.soundSoloActive) {
           // Solo: a dropped note ends the performance unless an accidental saves it.
           if (this.soundAccidentals > 0) {
@@ -811,13 +1212,18 @@ export class SoundKit {
             this.soundAccidentals--;
             this.arena.showFloatingText(player.x, player.y - 30, '♪ SAVED!', '#ffaadd');
           } else {
+            this.onNoteMiss();
             player.applySelfDamage(5);
-            this.arena.spawnHitFlash(player.x, player.y, 0xff3333);
+            this.pfx.discord(player.x, player.y);
             const lt = scene.add.text(player.x, player.y - 30, '♪ FLOW -5', {
               fontSize: '10px', color: '#ff4444', fontFamily: 'Arial Black',
             }).setOrigin(0.5).setDepth(12);
             scene.tweens.add({ targets: lt, y: lt.y - 18, alpha: 0, duration: 900, onComplete: () => lt.destroy() });
           }
+        } else {
+          // A note that simply scrolled past outside Flow costs no HP, but the barrier
+          // does not care why it was dropped.
+          this.onNoteMiss();
         }
         if (this.soundNoteStreak > 0) this.soundNoteStreak = 0;
         note.sprite.destroy();
@@ -832,9 +1238,7 @@ export class SoundKit {
       && n.x - HOLD_NOTE_WIDTH / 2 - soundTolerance <= soundHitLineX
       && soundHitLineX <= n.x + HOLD_NOTE_WIDTH / 2 + soundTolerance
     );
-    if (!hasActiveHold && this.soundHoldBeamGraphic?.active) {
-      this.soundHoldBeamGraphic.clear();
-    }
+    if (!hasActiveHold) this.soundHoldBeamTo = null;
 
     // ── Star screech tracking ─────────────────────────────────────────
     if (this.soundScreechIsStar && time < this.soundScreechExpiry) {
@@ -847,10 +1251,6 @@ export class SoundKit {
         this.soundScreechX += (dx / d) * moveSpeed;
         this.soundScreechY += (dy / d) * moveSpeed;
       }
-      if (this.soundScreechStarGraphic?.active) {
-        this.soundScreechStarGraphic.clear();
-        this.drawStar(this.soundScreechStarGraphic, this.soundScreechX, this.soundScreechY);
-      }
     }
 
     // ── Player screech barrier damages enemies ────────────────────────
@@ -859,25 +1259,28 @@ export class SoundKit {
       const screechHits: Fighter[] = [];
       for (const t of this.arena.enemies) {
         if (!t.active || t.hp <= 0) continue;
-        const sd = Phaser.Math.Distance.Between(this.soundScreechX, this.soundScreechY, t.x, t.y);
-        if (sd <= SCREECH_RADIUS) screechHits.push(t);
+        if (inScreechWall(this.soundScreechX, this.soundScreechY, t)) screechHits.push(t);
       }
       if (screechHits.length > 0) {
         this.soundScreechTickAccum += delta;
         if (this.soundScreechTickAccum >= 500) {
           this.soundScreechTickAccum -= 500;
+          const bc = this.soundScreechIsStar ? SOUND.gold : this.soundScreechRed ? SOUND.crimson : SOUND.magenta;
           for (const t of screechHits) {
-            t.takeDamage(barrierDmg, { source: this.soundScreechSprite ?? undefined, sourceX: this.soundScreechX, sourceY: this.soundScreechY });
-            this.arena.spawnHitFlash(t.x, t.y, this.soundScreechRed ? 0xff3333 : 0xff66cc);
+            t.takeDamage(barrierDmg, { source: this.soundScreechToken ?? undefined, sourceX: this.soundScreechX, sourceY: this.soundScreechY });
+            // The wall biting: a front off the barrier into whoever is standing in it.
+            this.pfx.waveBurst(t.x, t.y, Math.atan2(t.y - this.soundScreechY, t.x - this.soundScreechX), 0.9, 8, bc);
           }
         }
       } else {
         this.soundScreechTickAccum = 0;
       }
     } else if (this.soundScreechExpiry > 0 && time >= this.soundScreechExpiry) {
-      if (this.soundScreechSprite) { this.soundScreechSprite.destroy(); this.soundScreechSprite = null; }
-      if (this.soundScreechStarGraphic) { this.soundScreechStarGraphic.destroy(); this.soundScreechStarGraphic = null; }
+      // Dying wall: it collapses inward rather than blinking out.
+      this.pfx.ripple(this.soundScreechX, this.soundScreechY, SCREECH_RADIUS, 8,
+        this.soundScreechRed ? SOUND.crimson : SOUND.magenta, 380, 4, 6, 9);
       this.soundScreechExpiry = 0;
+      this.soundScreechToken = null;
     }
 
     // ── NPC slow from blue notes ──────────────────────────────────────
@@ -889,18 +1292,16 @@ export class SoundKit {
     if (this.harmonyGrenadeExplodeAt > 0 && time >= this.harmonyGrenadeExplodeAt) {
       this.harmonyGrenadeExplodeAt = 0;
       const ex = this.harmonyGrenadeX, ey = this.harmonyGrenadeY;
-      if (this.harmonyGrenadeSprite) { this.harmonyGrenadeSprite.destroy(); this.harmonyGrenadeSprite = null; }
-      const ring = scene.add.circle(ex, ey, 10, 0xff99ff, 0.9).setDepth(4);
-      scene.tweens.add({ targets: ring, scaleX: 10, scaleY: 10, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
-      const core = scene.add.circle(ex, ey, 6, 0xffffff, 0.95).setDepth(5);
-      scene.tweens.add({ targets: core, scaleX: 4, scaleY: 4, alpha: 0, duration: 180, onComplete: () => core.destroy() });
+      this.harmonyGrenade = null;
+      this.pfx.boom(ex, ey, 100, { color: SOUND.rose, petals: 9, notes: 6 });
+      scene.cameras.main.shake(160, 0.005);
 
       let hitAny = false;
       for (const t of this.arena.enemies) {
         if (!t.active || t.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(ex, ey, t.x, t.y) <= 100) {
           t.takeDamage(20);
-          this.arena.spawnHitFlash(t.x, t.y, 0xff99ff);
+          this.pfx.ripple(t.x, t.y, 6, 34, SOUND.rose, 300, 3, 8, 7);
           hitAny = true;
         }
       }
@@ -913,46 +1314,25 @@ export class SoundKit {
         this.harmonyMoveSpeedUntil = time + 20000;
         this.harmonyStarAuraUntil = time + 20000;
 
-        // Spawn 5 orbiting star sprites
-        for (const s of this.harmonyStarSprites) s.sprite.destroy();
-        this.harmonyStarSprites = [];
-        for (let i = 0; i < 5; i++) {
-          const sprite = scene.add.circle(player.x, player.y, 5, 0xffee88, 0.9).setDepth(5);
-          sprite.setStrokeStyle(1, 0xffffff, 0.5);
-          this.harmonyStarSprites.push({ sprite, angle: (i / 5) * Math.PI * 2 });
-        }
+        // The stars themselves ride on the harmony aura, built lazily in updateAvatars.
+        this.pfx.sparkle(player.x, player.y, 9, 34, 10, SOUND.gold);
         this.arena.showFloatingText(ex, ey - 30, `🌟 HARMONY x${(this.harmonySongSpeedBonus / 0.15).toFixed(0)}`, '#ffeecc');
         // F+ grace note refresh
-        if (this.arena.hasUpgrade('f') && this.soundGrappleRefreshes < 3) {
-          this.soundGrappleRefreshes++;
-          player.resetCooldown('sound-grapple');
-          this.arena.showFloatingText(ex, ey - 50, `✨ GRACE NOTE ${this.soundGrappleRefreshes}/3`, '#ffeecc');
-        }
+        this.noteGraceNote(ex, ey - 50);
       }
     }
 
-    // ── Harmony: star aura orbit + buff expiry ─────────────────────────
-    if (this.harmonyStarAuraUntil > 0) {
-      if (time >= this.harmonyStarAuraUntil) {
-        this.harmonyStarAuraUntil = 0;
-        this.harmonySongSpeedBonus = 0;
-        this.harmonySongSpeedUntil = 0;
-        this.harmonyMoveSpeedBonus = 0;
-        this.harmonyMoveSpeedUntil = 0;
-        for (const s of this.harmonyStarSprites) s.sprite.destroy();
-        this.harmonyStarSprites = [];
-      } else {
-        for (const s of this.harmonyStarSprites) {
-          s.angle += delta * 0.003;
-          s.sprite.setPosition(
-            player.x + Math.cos(s.angle) * 30,
-            player.y + Math.sin(s.angle) * 30,
-          );
-        }
-      }
+    // ── Harmony: buff expiry (the orbiting stars are the aura, torn down with it) ──
+    if (this.harmonyStarAuraUntil > 0 && time >= this.harmonyStarAuraUntil) {
+      this.harmonyStarAuraUntil = 0;
+      this.harmonySongSpeedBonus = 0;
+      this.harmonySongSpeedUntil = 0;
+      this.harmonyMoveSpeedBonus = 0;
+      this.harmonyMoveSpeedUntil = 0;
     }
 
     // ── HUD update ────────────────────────────────────────────────────
+    this.paintTrackNotes();
     if (this.soundStreakText) {
       if (this.soundSoloActive) {
         this.soundStreakText.setText('🎸 SOLO').setColor('#ffdd44');
@@ -967,54 +1347,335 @@ export class SoundKit {
     const { player } = this.arena;
     if (time < this.npcSoundScreechExpiry) {
       const npcBDmg = this.npcSoundScreechRed ? 25 : 15;
-      const nd = Phaser.Math.Distance.Between(this.npcSoundScreechX, this.npcSoundScreechY, player.x, player.y);
-      if (nd <= SCREECH_RADIUS) {
+      if (inScreechWall(this.npcSoundScreechX, this.npcSoundScreechY, player)) {
         this.npcSoundScreechTickAccum += delta;
         if (this.npcSoundScreechTickAccum >= 500) {
           this.npcSoundScreechTickAccum -= 500;
-          player.takeDamage(npcBDmg, { source: this.npcSoundScreechSprite ?? undefined, sourceX: this.npcSoundScreechX, sourceY: this.npcSoundScreechY });
-          this.arena.spawnHitFlash(player.x, player.y, this.npcSoundScreechRed ? 0xff3333 : 0xff66cc);
+          player.takeDamage(npcBDmg, { source: this.npcSoundScreechToken ?? undefined, sourceX: this.npcSoundScreechX, sourceY: this.npcSoundScreechY });
+          this.nfx.waveBurst(
+            player.x, player.y,
+            Math.atan2(player.y - this.npcSoundScreechY, player.x - this.npcSoundScreechX),
+            0.9, 8, this.npcSoundScreechRed ? SOUND.crimson : SOUND.flow,
+          );
         }
       } else {
         this.npcSoundScreechTickAccum = 0;
       }
-    } else if (this.npcSoundScreechSprite && time >= this.npcSoundScreechExpiry) {
-      this.npcSoundScreechSprite.destroy();
-      this.npcSoundScreechSprite = null;
+    } else if (this.npcSoundScreechToken && time >= this.npcSoundScreechExpiry) {
+      this.nfx.ripple(this.npcSoundScreechX, this.npcSoundScreechY, SCREECH_RADIUS, 8, SOUND.flow, 380, 4, 6, 9);
+      this.npcSoundScreechToken = null;
     }
   }
 
   // Called from ArenaScene's npcCastId reaction block
   handleNpcCast(castId: string | null, time: number): void {
-    const { scene } = this.arena;
+    const { scene, npc, player } = this.arena;
+    if (!castId) return;
+
+    // Mirror the player's gestures on the NPC rig, so a sound opponent visibly casts.
+    const gesture = CAST_GESTURES[castId];
+    if (gesture) this.npcAvatar?.play(gesture, Math.atan2(player.y - npc.y, player.x - npc.x));
+
     if (castId === 'screech-barrier') {
-      const px = this.arena.player.x, py = this.arena.player.y;
+      const px = player.x, py = player.y;
       this.npcSoundScreechX = px;
       this.npcSoundScreechY = py;
       this.npcSoundScreechExpiry = time + 5000;
       this.npcSoundScreechRed = false;
       this.npcSoundScreechTickAccum = 0;
-      if (this.npcSoundScreechSprite) this.npcSoundScreechSprite.destroy();
-      this.npcSoundScreechSprite = scene.add.circle(px, py, SCREECH_RADIUS, 0xff66cc, 0.1).setDepth(3);
-      this.npcSoundScreechSprite.setStrokeStyle(3, 0xff66cc, 0.9);
-      scene.tweens.add({ targets: this.npcSoundScreechSprite, alpha: 0.12, yoyo: true, repeat: -1, duration: 600 });
+      this.npcSoundScreechToken = {};
+      this.nfx.waveBurst(npc.x, npc.y, Math.atan2(py - npc.y, px - npc.x), 1.1, 9, SOUND.flow);
+      this.nfx.ripple(px, py, 6, SCREECH_RADIUS, SOUND.flow, 420, 6, 6, 10);
+      this.nfx.flash(px, py, 20, 8, SOUND.flow);
     }
     if (castId === 'sound-grapple') {
-      const { npc } = this.arena;
-      const sgdx = this.arena.player.x - npc.x;
-      const sgdy = this.arena.player.y - npc.y;
+      const sgdx = player.x - npc.x;
+      const sgdy = player.y - npc.y;
       const sglen = Math.sqrt(sgdx * sgdx + sgdy * sgdy) || 1;
       const sgspeed = 1200;
       const sgTravel = Math.min(350, (sglen / sgspeed) * 1000);
       const sgbody = npc.body as Phaser.Physics.Arcade.Body;
       sgbody.setVelocity((sgdx / sglen) * sgspeed, (sgdy / sglen) * sgspeed);
+      this.nfx.dashTrail(npc.x, npc.y, npc.x + sgdx, npc.y + sgdy, SOUND.flow, 12);
       scene.time.delayedCall(sgTravel, () => {
         if (npc.active) sgbody.setVelocity(0, 0);
       });
     }
     if (castId === 'rhythm-shot') {
-      fireHitscan(this.arena.buildNpcContext(this.arena.player.x, this.arena.player.y), 25, 0xff66cc, false);
+      this.soundHitscan('npc', npc.x, npc.y, player.x, player.y, 25, SOUND.flow, 1);
     }
+  }
+
+  /**
+   * Sound's own hitscan. The shot is a pressure wave, so it is drawn as one and resolved here
+   * rather than borrowing Air's lance — same 900px reach and 30px lane, different physics.
+   */
+  private soundHitscan(
+    owner: 'player' | 'npc',
+    sx: number, sy: number, tx: number, ty: number,
+    damage: number, color: number, scale = 1,
+  ): void {
+    const dx = tx - sx, dy = ty - sy;
+    const len = Math.hypot(dx, dy) || 1;
+    const endX = sx + (dx / len) * 900;
+    const endY = sy + (dy / len) * 900;
+    const fx = this.fx(owner);
+    fx.waveLance(sx, sy, endX, endY, color, 6 * scale);
+
+    const targets = owner === 'player' ? this.arena.enemies : [this.arena.player];
+    for (const t of targets) {
+      if (!t.active || t.hp <= 0) continue;
+      if (pointToSegmentDist(t.x, t.y, sx, sy, endX, endY) > 30) continue;
+      const hx = t.x, hy = t.y;
+      t.takeDamage(damage);
+      fx.boom(hx, hy, 42 * scale, { color, mark: false, notes: 2, duration: 320 });
+    }
+  }
+
+  /**
+   * F+ Grace Notes, run after a note-timed grapple lands. The first two of a chain hand
+   * the cooldown straight back; the third gets nothing, so the chain closes on exactly
+   * three grapples and the cooldown then runs as normal. The chain counter only survives
+   * while the cooldown never completes, so its high-water mark is what the mastery's
+   * "three in a row" requirement measures.
+   */
+  private noteGraceNote(x: number, y: number): void {
+    if (!this.arena.hasUpgrade('f')) return;
+    this.soundGrappleChain++;
+    this.arena.recordMasteryBestStat('grappleChain', this.soundGrappleChain);
+
+    if (this.soundGrappleRefreshes < GRACE_NOTE_MAX_REFRESHES) {
+      this.soundGrappleRefreshes++;
+      this.arena.player.resetCooldown('sound-grapple');
+      // Refreshing makes the cooldown ready this instant, which the chain-reset detector
+      // in updatePlayerSound would otherwise read as "the cooldown ran out" and hand the
+      // budget straight back — an endless supply of free grapples. Close the latch here
+      // so only a cooldown that genuinely elapsed ends the chain.
+      this.soundGrappleCdWasReady = true;
+      this.arena.showFloatingText(x, y, `✨ GRACE NOTE ${this.soundGrappleChain}/${GRACE_NOTE_CHAIN_LEN}`, '#ffeecc');
+    } else {
+      this.arena.showFloatingText(x, y, `🎵 CHAIN COMPLETE ${GRACE_NOTE_CHAIN_LEN}/${GRACE_NOTE_CHAIN_LEN}`, '#ffeecc');
+    }
+  }
+
+  // ── Mastery: Resonance Barrier (passive) ──────────────────────────────
+
+  /**
+   * Every note that lands. Records the grind stats unconditionally — that is how the
+   * mastery is earned — then, once it is on, lays another plate onto the Resonance
+   * Barrier and shakes damage out of anything still ringing from a bugle blast.
+   */
+  private onNoteHit(time: number): void {
+    if (this.soundSoloActive) this.arena.recordMasteryStat('soloNotes', 1);
+    else if (this.soundFlowActive) this.arena.recordMasteryStat('flowNotes', 1);
+    if (!this.arena.masteryActive) return;
+
+    const { player } = this.arena;
+    player.shieldHp += RESONANCE_SHIELD_PER_NOTE;
+
+    // Another plate laid onto the shell — a ring rather than floating text, since a note lands
+    // every second or so and the status tray already carries the running total.
+    this.pfx.ripple(player.x, player.y, 18, 36, SOUND.white, 320, 3, 6, 10);
+
+    const milestone = Math.floor(player.shieldHp / RESONANCE_ANNOUNCE_STEP);
+    if (milestone > this.resonanceAnnounced) {
+      this.resonanceAnnounced = milestone;
+      this.arena.showFloatingText(player.x, player.y - 46, `🛡 ${Math.round(player.shieldHp)} RESONANCE`, '#ffffff');
+    }
+
+    for (const t of this.arena.enemies) {
+      if (!t.active || t.hp <= 0 || time >= t.vibrationUntil) continue;
+      t.takeDamage(VIBRATION_NOTE_DMG);
+      // The note shaking loose out of whatever the caravan set ringing.
+      this.pfx.ripple(t.x, t.y, 8, 30, SOUND.blush, 260, 2.4, 8, 9);
+    }
+  }
+
+  /**
+   * A note got away. An accidental will spend itself to cover the miss; without one the
+   * whole barrier shatters. Notes dropped mid-Solo never reach here — the performance
+   * ending is punishment enough — and neither does a miss an accidental already ate
+   * upstream, since that path never calls in.
+   */
+  private onNoteMiss(): void {
+    if (!this.arena.masteryActive) return;
+    const { player } = this.arena;
+    if (player.shieldHp <= 0) { this.resonanceAnnounced = 0; return; }
+
+    if (this.soundAccidentals > 0) {
+      this.soundAccidentals--;
+      this.arena.showFloatingText(player.x, player.y - 30, '♪ SAVED!', '#ffaadd');
+      return;
+    }
+
+    const lost = Math.round(player.shieldHp);
+    player.shieldHp = 0;
+    this.resonanceAnnounced = 0;
+    this.arena.showFloatingText(player.x, player.y - 52, `💥 BARRIER SHATTERED  -${lost}`, '#ffffff');
+
+    // The shell coming apart: plates of standing wave spinning off it, and one last discord.
+    this.pfx.shatter(player.x, player.y, 28, 10);
+    this.pfx.discord(player.x, player.y);
+    this.pfx.ripple(player.x, player.y, 26, 78, SOUND.white, 420, 4, 7, 12);
+  }
+
+  // ── Mastery: Bugle (bindable) ─────────────────────────────────────────
+
+  /** The slot Bugle is bound over this match, or null when it isn't bound. */
+  private bugleSlot(): 'e' | 'r' | 'f' | 'q' | null {
+    if (!this.arena.masteryActive) return null;
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      if (this.arena.masteryBindFor(s) === 'bugle') return s;
+    }
+    return null;
+  }
+
+  /** 0 = just blown, 1 = ready. */
+  getBugleCooldownRatio(time: number): number {
+    return Math.min(1, (time - this.bugleLastCastAt) / BUGLE_COOLDOWN_MS);
+  }
+
+  private tryCastBugle(time: number, tx: number, ty: number): void {
+    if (time - this.bugleLastCastAt < BUGLE_COOLDOWN_MS) return;
+    this.bugleLastCastAt = time;
+    // Private timer, so this never flows through onCastStamp — broadcast it by hand.
+    this.arena.broadcastMasteryCast('bugle');
+    this.blowBugle('player', tx, ty);
+  }
+
+  /** Online replay: the remote Sound player sounded their horn at (tx, ty) on our sim. */
+  doNpcBugle(tx: number, ty: number): void {
+    this.blowBugle('npc', tx, ty);
+  }
+
+  /**
+   * The horn call. The bugle is raised for a beat and three blasts ripple out of the
+   * bell before anything arrives — that wind-up is the tell the other side gets.
+   */
+  private blowBugle(owner: 'player' | 'npc', tx: number, ty: number): void {
+    const { scene } = this.arena;
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    const faceRight = tx >= caster.x;
+    const dir: 1 | -1 = faceRight ? 1 : -1;
+
+    const fx = this.fx(owner);
+    const gfx = scene.add.graphics().setDepth(12);
+    const bugle = { gfx, owner, dir };
+    this.bugles.push(bugle);
+    this.avatar(owner)?.play('raise', dir > 0 ? 0 : Math.PI, BUGLE_BLOW_MS);
+
+    // Three blasts out of the bell, each one further than the last, calling the wagon in.
+    const bellX = caster.x + dir * 50;
+    const bellY = caster.y - 6;
+    for (let i = 0; i < 3; i++) {
+      scene.time.delayedCall(i * 150, () => {
+        fx.waveBurst(bellX, bellY, dir > 0 ? 0 : Math.PI, 1.4 + i * 0.4, 11, SOUND.brassHi, 0.9);
+      });
+    }
+    fx.notes(bellX, bellY, 4, { speed: 150, angle: dir > 0 ? 0 : Math.PI, spread: 0.7, color: SOUND.brass, depth: 11 });
+
+    this.arena.showFloatingText(caster.x, caster.y - 48, '🎺 SOUND THE CHARGE!', '#ffe9a8');
+
+    scene.time.delayedCall(BUGLE_BLOW_MS, () => {
+      if (gfx.active) gfx.destroy();
+      this.bugles = this.bugles.filter((b) => b !== bugle);
+      this.spawnCaravan(owner, ty, dir);
+    });
+  }
+
+  private spawnCaravan(owner: 'player' | 'npc', y: number, dir: 1 | -1): void {
+    const { scene } = this.arena;
+    const W = this.arena.width;
+    const H = this.arena.height;
+    const gfx = scene.add.graphics().setDepth(7);
+    this.caravans.push({
+      owner,
+      gfx,
+      // Rolls in from the edge behind the direction it was called toward.
+      x: dir > 0 ? -CARAVAN_BODY_W : W + CARAVAN_BODY_W,
+      // Kept clear of the rhythm track and the top of the arena so the wagon reads whole.
+      y: Phaser.Math.Clamp(y, 70, H - 110),
+      dir,
+      hit: new Set<Fighter>(),
+      wheelPhase: 0,
+    });
+    scene.cameras.main.shake(260, 0.006);
+  }
+
+  private updateCaravans(time: number, delta: number): void {
+    if (this.caravans.length === 0) return;
+    const W = this.arena.width;
+
+    for (let i = this.caravans.length - 1; i >= 0; i--) {
+      const c = this.caravans[i];
+      const step = c.dir * CARAVAN_SPEED * delta / 1000;
+      c.x += step;
+      c.wheelPhase += step / 22;
+      SoundFx.drawCaravan(c.gfx, this.col(c.owner), c.x, c.y, c.dir, CARAVAN_BODY_W, c.wheelPhase, this.vizT);
+
+      const targets = c.owner === 'npc' ? [this.arena.player] : this.arena.enemies;
+      for (const t of targets) {
+        if (!t.active || t.hp <= 0 || c.hit.has(t)) continue;
+        if (Math.abs(t.x - c.x) > CARAVAN_HALF_W || Math.abs(t.y - c.y) > CARAVAN_HALF_H) continue;
+        c.hit.add(t);
+        const hx = t.x, hy = t.y;
+        t.takeDamage(CARAVAN_DAMAGE);
+        t.vibrationUntil = Math.max(t.vibrationUntil, time + Math.round(VIBRATION_MS * t.statusDurMult));
+        // Run down: the impact throws the victim's own ringing off in the wagon's direction.
+        this.fx(c.owner).boom(hx, hy, 72, { color: SOUND.brassHi, notes: 4, mark: false });
+        this.fx(c.owner).notes(hx, hy, 4, { speed: 220, angle: c.dir > 0 ? 0 : Math.PI, spread: 0.8, color: SOUND.gold, depth: 9 });
+        this.arena.showFloatingText(t.x, t.y - 38, '📳 VIBRATING', '#eeeeff');
+        if (!t.knockbackImmune) {
+          this.caravanShoves = this.caravanShoves.filter((s) => s.f !== t);
+          this.caravanShoves.push({
+            f: t,
+            vx: c.dir * CARAVAN_KNOCKBACK,
+            vy: -180,
+            until: time + CARAVAN_SHOVE_MS,
+          });
+        }
+      }
+
+      if (c.x < -CARAVAN_BODY_W - 80 || c.x > W + CARAVAN_BODY_W + 80) {
+        c.gfx.destroy();
+        this.caravans.splice(i, 1);
+      }
+    }
+  }
+
+  /**
+   * Re-apply the shove every frame while it lasts. The kit updates after both the WASD
+   * pass and the NPC AI have already written velocity, so a one-frame push would be
+   * overwritten before it moved anybody.
+   */
+  private updateCaravanShoves(time: number): void {
+    for (let i = this.caravanShoves.length - 1; i >= 0; i--) {
+      const s = this.caravanShoves[i];
+      if (time >= s.until || !s.f.active || s.f.hp <= 0 || s.f.knockbackImmune) {
+        this.caravanShoves.splice(i, 1);
+        continue;
+      }
+      const k = (s.until - time) / CARAVAN_SHOVE_MS;
+      (s.f.body as Phaser.Physics.Arcade.Body).setVelocity(s.vx * k, s.vy * k);
+    }
+  }
+
+  /**
+   * Online: a remote bugler's note hits are never broadcast, so their vibration ticks
+   * here on the base rhythm tempo instead of on their actual notes.
+   */
+  private updateNpcVibration(time: number, delta: number): void {
+    if (!this.arena.npcMasteryActive) return;
+    const { player } = this.arena;
+    if (!player.active || player.hp <= 0 || time >= player.vibrationUntil) {
+      this.npcVibrationAccum = 0;
+      return;
+    }
+    this.npcVibrationAccum += delta;
+    if (this.npcVibrationAccum < NPC_VIBRATION_TICK_MS) return;
+    this.npcVibrationAccum -= NPC_VIBRATION_TICK_MS;
+    player.takeDamage(VIBRATION_NOTE_DMG);
+    this.nfx.ripple(player.x, player.y, 8, 30, SOUND.blush, 260, 2.4, 8, 9);
   }
 
   // ── Composing mode ────────────────────────────────────────────────────
@@ -1026,7 +1687,7 @@ export class SoundKit {
     this.buildComposePalette(scene);
   }
 
-  private exitComposingMode(scene: Phaser.Scene, time: number): void {
+  private exitComposingMode(_scene: Phaser.Scene, time: number): void {
     this.soundComposingActive = false;
     this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 40, '🎼 EXIT COMPOSE', '#aaddff');
     this.teardownComposePalette();
@@ -1045,8 +1706,8 @@ export class SoundKit {
     const W = this.arena.width;
     const cy = 40;
 
-    const panel = scene.add.rectangle(W / 2, cy, 300, 54, 0x110022, 0.95)
-      .setStrokeStyle(2, 0xff66cc, 0.8).setDepth(50);
+    const panel = scene.add.rectangle(W / 2, cy, 300, 54, SOUND.night, 0.95)
+      .setStrokeStyle(2, SOUND.magenta, 0.8).setDepth(50);
     this.soundComposePalette.push(panel);
 
     const tooltip = scene.add.text(W / 2, cy + 34, '', {
@@ -1089,9 +1750,17 @@ export class SoundKit {
             const patIdx = this.soundComposedPattern.length;
             this.soundComposedPattern.push({ xFrac, type: noteType });
 
-            const placed = scene.add.rectangle(px, tY, 24, 20, color, 0.9)
-              .setStrokeStyle(2, 0xffffff, 0.6).setDepth(22);
-            placed.setInteractive({ useHandCursor: true });
+            // Drawn as a real note so a composed bar reads the same as the live track does.
+            const placedGfx = scene.add.graphics();
+            SoundFx.drawTrackNote(placedGfx, this.pcol, NOTE_WIDTH, color, false, 0);
+            placedGfx.lineStyle(1.5, this.pcol(SOUND.white), 0.6);
+            placedGfx.strokeCircle(0, 0, 13);
+            const placed = scene.add.container(px, tY, [placedGfx]).setDepth(22);
+            placed.setInteractive({
+              hitArea: new Phaser.Geom.Rectangle(-13, -13, 26, 26),
+              hitAreaCallback: Phaser.Geom.Rectangle.Contains,
+              useHandCursor: true,
+            });
             const entry = { sprite: placed, type: noteType, xFrac, patternIdx: patIdx };
             this.soundComposedNoteSprites.push(entry);
 
@@ -1159,15 +1828,19 @@ export class SoundKit {
       this.soundComposingLooperIdx++;
       const noteType = pattern.type;
       const isRed = noteType === 'red';
-      const noteSprite = this.createRhythmNoteSprite(W + 20, tY, noteType);
+      const metrics = this.noteMetrics();
+      const built = this.createRhythmNoteSprite(W + 20, tY, noteType, metrics.width, false);
       this.soundNotes.push({
-        sprite: noteSprite,
+        sprite: built.sprite,
+        gfx: built.gfx,
         x: W + 20,
         isRed,
         noteType,
         damage: NOTE_DMGS[noteType],
         isHold: false,
         holdActive: false,
+        tolerance: metrics.tolerance,
+        width: metrics.width,
       });
     }
   }
@@ -1184,10 +1857,40 @@ export class SoundKit {
     );
   }
 
-  /** The clickable rhythm notes — large rectangles that scroll toward the hit line. */
-  private createRhythmNoteSprite(x: number, tY: number, noteType: NoteType): Phaser.GameObjects.Rectangle {
-    return this.arena.scene.add.rectangle(x, tY, 26, 22, NOTE_COLORS[noteType], 0.85)
-      .setStrokeStyle(1.5, 0xffffff, 0.55).setDepth(21);
+  /** Note length + hit window for whichever tempo is currently running. */
+  private noteMetrics(): { width: number; tolerance: number } {
+    return this.soundSoloActive
+      ? { width: SOLO_NOTE_WIDTH, tolerance: NOTE_TOLERANCE * 2 }
+      : { width: NOTE_WIDTH, tolerance: NOTE_TOLERANCE };
+  }
+
+  /**
+   * A rhythm note on the track: a container holding one Graphics, repainted every frame in
+   * `paintTrackNotes` so the note rings as it travels instead of sliding along as a flat tile.
+   * A container (not a bare Graphics) because the note is *positioned* by the track logic and
+   * *drawn* in its own local space.
+   */
+  private createRhythmNoteSprite(
+    x: number, tY: number, noteType: NoteType, width: number, isHold: boolean,
+  ): { sprite: Phaser.GameObjects.Container; gfx: Phaser.GameObjects.Graphics } {
+    const gfx = this.arena.scene.add.graphics();
+    SoundFx.drawTrackNote(gfx, this.pcol, isHold ? HOLD_NOTE_WIDTH : width,
+      isHold ? HOLD_COLOR : NOTE_COLORS[noteType], isHold, 0);
+    const sprite = this.arena.scene.add.container(x, tY, [gfx]).setDepth(21);
+    return { sprite, gfx };
+  }
+
+  /** Repaint every live note, so the whole track breathes on the beat. */
+  private paintTrackNotes(): void {
+    for (const n of this.soundNotes) {
+      if (!n.gfx.active) continue;
+      SoundFx.drawTrackNote(
+        n.gfx, this.pcol,
+        n.isHold ? HOLD_NOTE_WIDTH : n.width,
+        n.isHold ? HOLD_COLOR : NOTE_COLORS[n.noteType],
+        n.isHold, this.vizT + n.x * 0.01,
+      );
+    }
   }
 
   private flashHitRing(scene: Phaser.Scene, color: number): void {
@@ -1198,7 +1901,7 @@ export class SoundKit {
     scene.tweens.add({ targets: this.soundHitRing, scaleX: 1.4, scaleY: 1.4, duration: 80, yoyo: true, onComplete: () => {
       if (this.soundHitRing) {
         this.soundHitRing.setScale(1);
-        this.soundHitRing.setStrokeStyle(3, this.soundFlowActive ? 0x4488ff : 0xff66cc, 0.9);
+        this.soundHitRing.setStrokeStyle(3, this.soundFlowActive ? SOUND.flow : SOUND.magenta, 0.9);
       }
     }});
   }
@@ -1207,30 +1910,10 @@ export class SoundKit {
     if (!this.soundHitRing) return;
     scene.tweens.killTweensOf(this.soundHitRing);
     this.soundHitRing.setScale(1);
-    this.soundHitRing.setStrokeStyle(5, 0xff3333, 1);
+    this.soundHitRing.setStrokeStyle(5, SOUND.crimson, 1);
     scene.tweens.add({ targets: this.soundHitRing, duration: 300, onComplete: () => {
-      if (this.soundHitRing) this.soundHitRing.setStrokeStyle(3, this.soundFlowActive ? 0x4488ff : 0xff66cc, 0.9);
+      if (this.soundHitRing) this.soundHitRing.setStrokeStyle(3, this.soundFlowActive ? SOUND.flow : SOUND.magenta, 0.9);
     }});
-  }
-
-  private drawStar(gfx: Phaser.GameObjects.Graphics, cx: number, cy: number): void {
-    const outerR = 80;
-    const innerR = outerR * 0.4;
-    const color = this.soundScreechRed ? 0xff3333 : 0xff66cc;
-    gfx.lineStyle(3, color, 0.9);
-    gfx.fillStyle(color, 0.08);
-    gfx.beginPath();
-    for (let i = 0; i < 10; i++) {
-      const angle = (i * Math.PI / 5) - Math.PI / 2;
-      const r = i % 2 === 0 ? outerR : innerR;
-      const px = cx + Math.cos(angle) * r;
-      const py = cy + Math.sin(angle) * r;
-      if (i === 0) gfx.moveTo(px, py);
-      else gfx.lineTo(px, py);
-    }
-    gfx.closePath();
-    gfx.strokePath();
-    gfx.fillPath();
   }
 
   private findNearestEnemy(): Fighter | null {

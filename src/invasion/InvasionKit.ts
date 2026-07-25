@@ -698,6 +698,23 @@ export class InvasionKit implements HuskWorld {
     husk.takeDamage(amount);
   }
 
+  /**
+   * Co-op host: the guest's Silence Mastery has taken hold of one of our husks. Hold
+   * its AI off (`Husk.update` yields on `puppetControlledUntil`) and put the body where
+   * the guest says it is — they are driving their replica and streaming it back.
+   */
+  applyNetworkPuppet(huskId: number, on: boolean, x: number, y: number): void {
+    const husk = this.arena.enemies.find((e): e is Husk => e instanceof Husk && e.netId === huskId);
+    if (!husk || !husk.active) return;
+    if (!on) {
+      husk.puppetControlledUntil = 0;
+      return;
+    }
+    // Generous window: at 20 Hz a dropped packet or two must not hand control back.
+    husk.puppetControlledUntil = this.arena.scene.time.now + 400;
+    (husk.body as Phaser.Physics.Arcade.Body | null)?.reset(x, y);
+  }
+
   get currentWave(): number { return this.wave; }
 
   /** Husks left in the current wave, including ones still queued to spawn. */

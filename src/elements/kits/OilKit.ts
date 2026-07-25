@@ -1,11 +1,23 @@
 import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { Projectile } from '../../combat/Projectile';
+import {
+  ArmGesture, DroneArrayLattice, OilAvatar, OilCoat, OilColorFn, OilFx, oilFlame, OIL,
+} from './OilVisuals';
 
 // ── Oil Mastery constants ────────────────────────────────────────────────────
 
 /** Drone Array: damage resistance each orbiting drone is worth. */
 const DRONE_ARRAY_RESIST_PER_DRONE = 0.1;
+
+/** Which arm gesture the opponent's rig plays when the NPC lands each ability. */
+const NPC_GESTURES: Record<string, ArmGesture> = {
+  'drone-command': 'punch',
+  'barrel-roll': 'sweep',
+  'drone-destroy': 'punch',
+  'shield-gen': 'slam',
+  'train-morph': 'raise',
+};
 
 const TURRET_COOLDOWN_MS = 20000;
 const TURRET_DURATION_MS = 10000;
@@ -21,7 +33,9 @@ const TURRET_BLOCK_RADIUS = TURRET_RADIUS + 4;
 const TURRET_FIRE_INTERVAL_MS = 100;
 const TURRET_LASER_DAMAGE = 2;
 const TURRET_LASER_RADIUS = 20;
-const TURRET_COLOR = 0x66ddff;
+const TURRET_COLOR = OIL.teal;
+/** Field radius of the Shield Generator's point defence — also the radius it paints. */
+const SHIELD_GEN_RANGE = 150;
 
 // ── Arena API ────────────────────────────────────────────────────────────────
 
@@ -67,35 +81,49 @@ export interface OilArenaApi {
   /** Online: broadcast a bindable mastery cast so the peer's sim replays it. */
   broadcastMasteryCast(enhId: string): void;
   recordMasteryStat(key: string, amount: number): void;
+  /** Cosmetics: maps an oil visual color through the owner's color cosmetic. */
+  oilColor(owner: 'player' | 'npc', base: number): number;
 }
 
 // ── Internal types ───────────────────────────────────────────────────────────
 
+/**
+ * One quadcopter. The art lives in the drone's own Graphics and is drawn in local space, so
+ * every tween, distance check and `.x`/`.y` read works exactly as it did on the old plain
+ * circle while the body itself is a rotor-blurred chassis instead of a dot.
+ */
 interface Drone {
-  sprite: Phaser.GameObjects.Arc;
+  gfx: Phaser.GameObjects.Graphics;
   shotsLeft: number;
+  /** Magazine size, so the pip strip can show spent rounds as well as loaded ones. */
+  maxShots: number;
   orbitAngle: number;
-  shielded: boolean;
-  healedByFirewall: boolean;
+  /** Where the camera lens is pointing — the foe while orbiting, the cursor while firing. */
+  aim: number;
+  /** Rotor phase, advanced every frame. */
+  spin: number;
+  /** R+ Overclock has taken this drone over: teal shell, arcing containment. */
+  overcharged: boolean;
   meleeCooldownUntil: number;
   healCdUntil: number;
   owner: 'player' | 'npc';
 }
 
 interface OilPuddle {
-  sprite: Phaser.GameObjects.Arc;
+  gfx: Phaser.GameObjects.Graphics;
   x: number;
   y: number;
   expiresAt: number;
   ignited: boolean;
   igniteTickAccum: number;
   radius: number;
-  oilyTickAccum: number;
+  /** Fixes this pool's rim wobble and film drift so a field of puddles doesn't pulse in sync. */
+  seed: number;
   owner: 'player' | 'npc';
 }
 
 interface OilFirewall {
-  sprite: Phaser.GameObjects.Rectangle;
+  gfx: Phaser.GameObjects.Graphics;
   x: number;
   y: number;
   angle: number;
@@ -104,7 +132,7 @@ interface OilFirewall {
 }
 
 interface OilBarrel {
-  gfx: Phaser.GameObjects.Arc;
+  gfx: Phaser.GameObjects.Graphics;
   x: number;
   y: number;
   vx: number;
@@ -115,15 +143,25 @@ interface OilBarrel {
   lastPuddleDist: number;
   owner: 'player' | 'npc';
   active: boolean;
+  /** E+ Barrel Roll: the caster is standing on it right now (E still held). */
+  ridden: boolean;
+  rideDustAccum: number;
+  /** Radians of drum rotation, so the staves scroll and the barrel visibly rolls. */
+  roll: number;
+  /** Where the last skid mark was laid, so the track is continuous rather than dotted. */
+  trailX: number;
+  trailY: number;
+  trailAccum: number;
 }
 
 interface ShieldGenerator {
   gfx: Phaser.GameObjects.Graphics;
-  laserGfx: Phaser.GameObjects.Graphics;
   x: number;
   y: number;
   charged: boolean;
   chargedUntil: number;
+  /** When the current charge started — the lens dims across the window, not just at the end. */
+  chargedFrom: number;
   scrap: number;
   blockCount: number;
   owner: 'player' | 'npc';
@@ -133,19 +171,46 @@ interface TrainSegment {
   x: number;
   y: number;
   lastHitAt: number;
+  /** Heading of this car, so wheels, hopper and coupling all point down the track. */
+  angle: number;
 }
 
 interface CoalPickup {
-  gfx: Phaser.GameObjects.Arc;
+  gfx: Phaser.GameObjects.Graphics;
   x: number;
   y: number;
   collected: boolean;
+  seed: number;
 }
 
 // ── OilKit ───────────────────────────────────────────────────────────────────
 
 export class OilKit {
   private arena: OilArenaApi;
+
+  // ── Visuals ─────────────────────────────────────────────────────────────
+  /** Colour mappers + effect painters, one per owner so a future cosmetic recolours one side. */
+  private readonly pcol: OilColorFn;
+  private readonly ncol: OilColorFn;
+  private readonly pfx: OilFx;
+  private readonly nfx: OilFx;
+  /** The oil character rig (crude hands, lamp eyes, wellhead/stacks) for each oil fighter. */
+  private playerAvatar: OilAvatar | null = null;
+  private npcAvatar: OilAvatar | null = null;
+  /** The Oily coating, built for whichever fighter is currently wearing the debuff. */
+  private playerCoat: OilCoat | null = null;
+  private npcCoat: OilCoat | null = null;
+  /** Drone Array mastery passive — an armour plate per orbiting drone. */
+  private arrayLattice: DroneArrayLattice | null = null;
+  /** Seconds since reset — drives every surface that ripples rather than tweens. */
+  private worldT = 0;
+  private projTrailAccum = 0;
+  /** Last known aim, cached in handleInput so update() can steer the rig and the drones. */
+  private lastMouseX = 0;
+  private lastMouseY = 0;
+  /** 0–1 barrel heat on the turret, decaying between bursts so sustained fire glows. */
+  private turretHeat = 0;
+  private turretRecoil = 0;
 
   // Drones
   private playerDrones: Drone[] = [];
@@ -182,13 +247,16 @@ export class OilKit {
   private playerDroneBaseAngle = 0;
   private npcDroneBaseAngle = 0;
 
-  // Oily visual auras
-  private playerOilyAura: Phaser.GameObjects.Arc | null = null;
-  private npcOilyAura: Phaser.GameObjects.Arc | null = null;
-
   // Barrel (E revamp)
   private playerBarrel: OilBarrel | null = null;
   private npcBarrel: OilBarrel | null = null;
+
+  /**
+   * Drones that have left the orbit — a kamikaze run or an Overclock volley. They are no
+   * longer in the owner's array, so nothing else would repaint them and their rotors would
+   * freeze mid-flight; this list is what keeps them animating until they detonate.
+   */
+  private detachedDrones: Drone[] = [];
 
   // Shield Generator (F revamp)
   private playerShieldGen: ShieldGenerator | null = null;
@@ -197,7 +265,6 @@ export class OilKit {
   private turretLastCastAt = -Infinity;
   private turret: {
     gfx: Phaser.GameObjects.Graphics;
-    laserGfx: Phaser.GameObjects.Graphics;
     x: number;
     y: number;
     hp: number;
@@ -209,7 +276,6 @@ export class OilKit {
   /** Online mirror: the opponent's Turret replayed on this victim sim (auto-fires at the local player). */
   private npcTurret: {
     gfx: Phaser.GameObjects.Graphics;
-    laserGfx: Phaser.GameObjects.Graphics;
     x: number; y: number; hp: number; expiresAt: number; mounted: boolean; fireAccum: number;
   } | null = null;
 
@@ -236,21 +302,39 @@ export class OilKit {
 
   constructor(arena: OilArenaApi) {
     this.arena = arena;
+    // Built in the constructor body, not as field initializers, so both see the injected arena.
+    this.pcol = (base) => arena.oilColor('player', base);
+    this.ncol = (base) => arena.oilColor('npc', base);
+    this.pfx = new OilFx(arena.scene, this.pcol);
+    this.nfx = new OilFx(arena.scene, this.ncol);
   }
 
   reset(): void {
+    // Visuals — every GameObject dies with the old scene run, so rebuild lazily in update().
+    if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
+    if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
+    if (this.playerCoat) { this.playerCoat.destroy(); this.playerCoat = null; }
+    if (this.npcCoat) { this.npcCoat.destroy(); this.npcCoat = null; }
+    if (this.arrayLattice) { this.arrayLattice.destroy(); this.arrayLattice = null; }
+    this.worldT = 0;
+    this.projTrailAccum = 0;
+    this.lastMouseX = 0;
+    this.lastMouseY = 0;
+    this.turretHeat = 0;
+    this.turretRecoil = 0;
+
     // Destroy all sprites
-    for (const d of this.playerDrones) d.sprite.destroy();
-    for (const d of this.npcDrones) d.sprite.destroy();
+    for (const d of this.playerDrones) d.gfx.destroy();
+    for (const d of this.npcDrones) d.gfx.destroy();
     this.playerDrones = [];
     this.npcDrones = [];
 
-    for (const p of this.playerOilPuddles) p.sprite.destroy();
-    for (const p of this.npcOilPuddles) p.sprite.destroy();
+    for (const p of this.playerOilPuddles) p.gfx.destroy();
+    for (const p of this.npcOilPuddles) p.gfx.destroy();
     this.playerOilPuddles = [];
     this.npcOilPuddles = [];
 
-    if (this.npcFirewall) { this.npcFirewall.sprite.destroy(); this.npcFirewall = null; }
+    if (this.npcFirewall) { this.npcFirewall.gfx.destroy(); this.npcFirewall = null; }
 
     if (this.playerOverdriveGfx) { this.playerOverdriveGfx.destroy(); this.playerOverdriveGfx = null; }
     if (this.npcOverdriveGfx) { this.npcOverdriveGfx.destroy(); this.npcOverdriveGfx = null; }
@@ -260,7 +344,10 @@ export class OilKit {
     if (this.playerBarrel) { this.playerBarrel.gfx.destroy(); this.playerBarrel = null; }
     if (this.npcBarrel) { this.npcBarrel.gfx.destroy(); this.npcBarrel = null; }
 
-    if (this.playerShieldGen) { this.playerShieldGen.gfx.destroy(); this.playerShieldGen.laserGfx.destroy(); this.playerShieldGen = null; }
+    for (const d of this.detachedDrones) d.gfx.destroy();
+    this.detachedDrones = [];
+
+    if (this.playerShieldGen) { this.playerShieldGen.gfx.destroy(); this.playerShieldGen = null; }
 
     this.clearTurret();
     this.clearNpcTurret();
@@ -280,8 +367,6 @@ export class OilKit {
     this.trainSpeedBonus = 1;
     this.trainDamageMult = 1;
     this.trainQPlusActive = false;
-    if (this.playerOilyAura) { this.playerOilyAura.destroy(); this.playerOilyAura = null; }
-    if (this.npcOilyAura) { this.npcOilyAura.destroy(); this.npcOilyAura = null; }
   }
 
   // ── Public accessors ──────────────────────────────────────────────────────
@@ -320,6 +405,10 @@ export class OilKit {
   // ── Player input ──────────────────────────────────────────────────────────
 
   handleInput(time: number, delta: number, pointer: Phaser.Input.Pointer, mx: number, my: number): void {
+    // update() has no pointer, so the rig's aim and the drones' lens direction come from here.
+    this.lastMouseX = mx;
+    this.lastMouseY = my;
+
     if (this.arena.masteryActive) {
       this.handleTurretInput(time, delta, pointer, mx, my);
       // Mounted: the turret owns both the movement keys and the mouse button.
@@ -362,9 +451,12 @@ export class OilKit {
       if (held < 300) {
         // Short tap: command drones or barrel-explode
         if (this.playerBarrel?.active) {
+          // Fist clenched on a detonator, not a throw.
+          this.playPlayerGesture('clap', this.aimFrom(player, mx, my));
           this.explodeBarrel(this.playerBarrel, 'player', true);
           this.playerBarrel = null;
         } else if (time >= this.playerCommandCooldownUntil) {
+          if (this.playerDrones.length > 0) this.playPlayerGesture('punch', this.aimFrom(player, mx, my));
           this.doCommandDrones(mx, my, 'player');
           if (this.playerDrones.length > 0) this.playerCommandCooldownUntil = time + 1000;
         }
@@ -382,6 +474,8 @@ export class OilKit {
           this.explodeBarrel(this.playerBarrel, 'player', false);
           this.playerBarrel = null;
         }
+        // Bowled out along the ground, so the arm swings across rather than jabbing.
+        this.playPlayerGesture('sweep', this.aimFrom(player, mx, my));
         this.doLaunchBarrel(mx, my, 'player');
         player.startCooldown('barrel-roll');
       }
@@ -390,6 +484,7 @@ export class OilKit {
     // R: Drone Destroy (unchanged)
     if (turretSlot !== 'r' && Phaser.Input.Keyboard.JustDown(this.arena.rKey)) {
       if (player.getCooldownRatio('drone-destroy') >= 1 && this.playerDrones.length > 0) {
+        this.playPlayerGesture('punch', this.aimFrom(player, mx, my));
         this.doLaunchDrone(mx, my, 'player');
         player.startCooldown('drone-destroy');
       }
@@ -398,6 +493,8 @@ export class OilKit {
     // F: Shield Generator
     if (turretSlot !== 'f' && Phaser.Input.Keyboard.JustDown(this.arena.fKey)) {
       if (player.getCooldownRatio('shield-gen') >= 1) {
+        // Planted into the ground, so the arms come overhead and drive down.
+        this.playPlayerGesture('slam', this.aimFrom(player, mx, my));
         this.doPlaceShieldGen(mx, my, 'player');
         player.startCooldown('shield-gen');
       }
@@ -406,9 +503,29 @@ export class OilKit {
     // Q: Train Morph
     if (turretSlot !== 'q' && Phaser.Input.Keyboard.JustDown(this.arena.qKey)) {
       if (player.getCooldownRatio('train-morph') >= 1 && !this.playerTrainActive) {
+        this.playPlayerGesture('raise', this.aimFrom(player, mx, my), 900);
         this.doStartTrainMorph('player');
       }
     }
+  }
+
+  /** Aim from a fighter toward a world point, with a safe fallback when they coincide. */
+  private aimFrom(f: Fighter, tx: number, ty: number): number {
+    const dx = tx - f.x, dy = ty - f.y;
+    return dx === 0 && dy === 0 ? 0 : Math.atan2(dy, dx);
+  }
+
+  private playPlayerGesture(gesture: ArmGesture, angle?: number, duration?: number): void {
+    this.playerAvatar?.play(gesture, angle, duration);
+  }
+
+  /** The opponent's rig mirrors every ability it lands, so an NPC oil user acts too. */
+  handleNpcCastId(id: string | null): void {
+    if (!id) return;
+    const gesture = NPC_GESTURES[id];
+    if (!gesture) return;
+    const { npc, player } = this.arena;
+    this.npcAvatar?.play(gesture, this.aimFrom(npc, player.x, player.y), id === 'train-morph' ? 900 : undefined);
   }
 
   private handleTrainInput(): void {
@@ -426,6 +543,15 @@ export class OilKit {
 
   update(time: number, delta: number, isPlayer: boolean, isNpc: boolean, mouseX: number, mouseY: number): void {
     const dt = delta / 1000;
+    this.worldT += dt;
+    // Barrel heat bleeds off between bursts, so a turret that has been hosing the arena glows
+    // and one that fired a single shot does not.
+    this.turretHeat = Math.max(0, this.turretHeat - dt * 0.9);
+    this.turretRecoil = Math.max(0, this.turretRecoil - dt * 7);
+
+    this.updateAvatars(time, delta, isPlayer, isNpc);
+    this.updateDetachedDrones(delta);
+    this.updateProjectileTrails(delta);
 
     if (isPlayer) {
       this.updateDroneOrbits(this.playerDrones, this.arena.player, 'player', time, delta);
@@ -447,8 +573,91 @@ export class OilKit {
     // Always tick oily burns and visuals for both fighters regardless of which side uses oil
     this.updateOilyBurn(time, delta, 'player');
     this.updateOilyBurn(time, delta, 'npc');
-    this.updateOilyVisual('player', time);
-    this.updateOilyVisual('npc', time);
+    this.updateOilyVisual('player', time, delta);
+    this.updateOilyVisual('npc', time, delta);
+  }
+
+  // ── Character rig ─────────────────────────────────────────────────────────
+
+  /**
+   * Builds (on first frame) and drives the crude-hand avatar for whichever fighters are oil,
+   * plus the Drone Array lattice underneath the player. The player faces the cursor; the NPC
+   * faces whoever it is fighting.
+   */
+  private updateAvatars(time: number, delta: number, isPlayer: boolean, isNpc: boolean): void {
+    const { player, npc, scene } = this.arena;
+
+    if (isPlayer && player?.active) {
+      if (!this.playerAvatar) this.playerAvatar = new OilAvatar(scene, this.pcol);
+      const aim = this.aimFrom(player, this.lastMouseX || player.x + 1, this.lastMouseY || player.y);
+      this.playerAvatar.setFacing(aim);
+      // Overdrive and the coal-stoked train both visibly swell the rig, so the buff reads off
+      // the character alone without hunting for what is underneath it.
+      this.playerAvatar.setIntensity(this.playerOverdriveActive || this.trainQPlusActive ? 1.35 : 1);
+      this.playerAvatar.setMastered(this.arena.masteryActive);
+      // Hold priority: bolted to a turret beats surfing a barrel beats assembling a drone.
+      if (this.turret?.mounted) this.playerAvatar.setHold('brace', aim);
+      else if (this.playerBarrel?.ridden) this.playerAvatar.setHold('ride', aim);
+      else if (this.holdModeActive) this.playerAvatar.setHold('charge', aim);
+      else this.playerAvatar.setHold(null);
+      // While morphed the player *is* the locomotive, so the rig steps aside for it entirely.
+      const hidden = this.playerTrainActive || player.forceInvisible;
+      this.playerAvatar.update(delta, player.x, player.y, hidden ? 0 : player.alpha);
+    } else if (this.playerAvatar) {
+      this.playerAvatar.destroy();
+      this.playerAvatar = null;
+    }
+
+    if (isNpc && npc?.active) {
+      if (!this.npcAvatar) this.npcAvatar = new OilAvatar(scene, this.ncol);
+      this.npcAvatar.setFacing(this.aimFrom(npc, player.x, player.y));
+      this.npcAvatar.setIntensity(this.npcOverdriveActive ? 1.35 : 1);
+      this.npcAvatar.setHold(this.npcBarrel?.ridden ? 'ride' : null);
+      this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
+    } else if (this.npcAvatar) {
+      this.npcAvatar.destroy();
+      this.npcAvatar = null;
+    }
+
+    // Drone Array passive: one armour plate per drone still flying, at a depth below any
+    // stance aura so the two stack into one silhouette instead of fighting.
+    if (isPlayer && this.arena.masteryActive && player?.active) {
+      if (!this.arrayLattice) this.arrayLattice = new DroneArrayLattice(scene, this.pcol);
+      this.arrayLattice.setPlates(this.playerDrones.length);
+      this.arrayLattice.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
+    } else if (this.arrayLattice) {
+      this.arrayLattice.destroy();
+      this.arrayLattice = null;
+    }
+    void time;
+  }
+
+  /** Keeps rotors turning on drones that have left the orbit and are mid-tween. */
+  private updateDetachedDrones(delta: number): void {
+    for (let i = this.detachedDrones.length - 1; i >= 0; i--) {
+      const d = this.detachedDrones[i];
+      if (!d.gfx.active) { this.detachedDrones.splice(i, 1); continue; }
+      d.spin += delta * 0.05;
+      this.drawDrone(d);
+    }
+  }
+
+  /** Every live oil shot drags a shrinking tail of crude out of its back end. */
+  private updateProjectileTrails(delta: number): void {
+    this.projTrailAccum += delta;
+    if (this.projTrailAccum < 45) return;
+    this.projTrailAccum = 0;
+    for (const child of this.arena.projectiles.getChildren()) {
+      const proj = child as Projectile;
+      if (!proj.active || proj.texture?.key !== 'proj-oil') continue;
+      const fx = proj.isFromPlayer ? this.pfx : this.nfx;
+      const body = proj.body as Phaser.Physics.Arcade.Body | null;
+      // Trail streams out of the back of the shot rather than puffing symmetrically.
+      const back = body ? Math.atan2(-body.velocity.y, -body.velocity.x) : 0;
+      fx.spatter(proj.x, proj.y, 2, {
+        angle: back, spread: 0.45, speed: 45, size: 2.4, life: 260, fall: 12, depth: 4,
+      });
+    }
   }
 
   // ── Drones ────────────────────────────────────────────────────────────────
@@ -466,32 +675,39 @@ export class OilKit {
     }
     const baseAngle = owner === 'player' ? this.playerDroneBaseAngle : this.npcDroneBaseAngle;
 
+    const foe = owner === 'player' ? this.arena.npc : this.arena.player;
+
     for (let di = 0; di < count; di++) {
       const drone = drones[di];
       const angle = baseAngle + (di * Math.PI * 2 / Math.max(1, count));
-      drone.sprite.setPosition(
+      drone.gfx.setPosition(
         caster.x + Math.cos(angle) * orbitR,
         caster.y + Math.sin(angle) * orbitR,
       );
+      // Rotors keep turning, and the camera lens keeps the enemy in frame while it orbits.
+      drone.spin += delta * 0.05;
+      drone.aim = foe.hp > 0
+        ? Math.atan2(foe.y - drone.gfx.y, foe.x - drone.gfx.x)
+        : angle;
+
       if (owner === 'player' && this.playerShieldGen) {
         const sg = this.playerShieldGen;
         if (time >= drone.healCdUntil) {
-          const dsg = Phaser.Math.Distance.Between(drone.sprite.x, drone.sprite.y, sg.x, sg.y);
+          const dsg = Phaser.Math.Distance.Between(drone.gfx.x, drone.gfx.y, sg.x, sg.y);
           if (dsg < 22) {
-            if (sg.scrap > 0) { sg.scrap--; this.drawShieldGenGfx(sg); }
-            if (!sg.charged) { sg.charged = true; sg.chargedUntil = time + 5000; }
-            else { sg.chargedUntil = Math.max(sg.chargedUntil, time + 5000); }
+            if (sg.scrap > 0) sg.scrap--;
+            const until = time + this.shieldGenWindow();
+            if (!sg.charged || until > sg.chargedUntil) {
+              sg.charged = true;
+              sg.chargedFrom = time;
+              sg.chargedUntil = until;
+            }
             drone.healCdUntil = time + 1500;
-            this.flashDroneHealRing(drone);
+            this.flashDroneService(drone, sg);
           }
         }
       }
-      const hasBioFuel = this.arena.hasPerk(drone.owner, 'bio-fuel');
-      const fullThresh = hasBioFuel ? 4 : 3;
-      const col = drone.shotsLeft >= fullThresh ? 0xffaa00 : drone.shotsLeft >= 2 ? 0xff6600 : 0xff2200;
-      const rad = drone.shotsLeft >= fullThresh ? 8 : drone.shotsLeft >= 2 ? 7 : 5;
-      drone.sprite.setFillStyle(col, owner === 'player' ? 0.9 : 0.7);
-      drone.sprite.setRadius(rad);
+      this.drawDrone(drone);
     }
 
     // E upgrade (now bundled in Click+): drone melee
@@ -499,8 +715,12 @@ export class OilKit {
       for (const drone of drones) {
         if (time >= drone.meleeCooldownUntil) {
           const npc = this.arena.npc;
-          if (npc.hp > 0 && Phaser.Math.Distance.Between(drone.sprite.x, drone.sprite.y, npc.x, npc.y) <= 25) {
-            this.arena.damagePlayerTargets(drone.sprite.x, drone.sprite.y, 25, 5, 0xffaa00);
+          if (npc.hp > 0 && Phaser.Math.Distance.Between(drone.gfx.x, drone.gfx.y, npc.x, npc.y) <= 25) {
+            // A rotor strike, so it throws sparks off the contact rather than a bare number.
+            const ang = Math.atan2(npc.y - drone.gfx.y, npc.x - drone.gfx.x);
+            this.pfx.sparks(npc.x, npc.y, 6, { angle: ang + Math.PI, spread: 1, speed: 170, life: 300 });
+            this.pfx.ring(npc.x, npc.y, 4, 22, OIL.gold, 240, 3, 8);
+            this.arena.damagePlayerTargets(drone.gfx.x, drone.gfx.y, 25, 5, OIL.gold);
             drone.meleeCooldownUntil = time + 1000;
           }
         }
@@ -510,12 +730,23 @@ export class OilKit {
     // Remove 0-shot drones
     for (let di = drones.length - 1; di >= 0; di--) {
       if (drones[di].shotsLeft <= 0) {
-        drones[di].sprite.destroy();
+        drones[di].gfx.destroy();
         drones.splice(di, 1);
       }
     }
 
     void maxDrones;
+  }
+
+  /** Repaints one drone into its own Graphics, in local space around (0,0). */
+  private drawDrone(drone: Drone): void {
+    const g = drone.gfx;
+    if (!g.active) return;
+    g.clear();
+    OilFx.drawDrone(
+      g, drone.owner === 'player' ? this.pcol : this.ncol,
+      drone.aim, drone.spin, drone.shotsLeft, drone.maxShots, 1, drone.overcharged,
+    );
   }
 
   doSpawnDrone(owner: 'player' | 'npc'): void {
@@ -525,13 +756,27 @@ export class OilKit {
     if (drones.length >= maxDrones) return;
     const count = drones.length;
     const spawnAngle = (count / maxDrones) * Math.PI * 2;
-    const sprite = this.arena.scene.add.circle(
-      caster.x + Math.cos(spawnAngle) * 60,
-      caster.y + Math.sin(spawnAngle) * 60,
-      8, 0xffaa00, 0.9,
-    ).setDepth(8);
+    const sx = caster.x + Math.cos(spawnAngle) * 60;
+    const sy = caster.y + Math.sin(spawnAngle) * 60;
+    const gfx = this.arena.scene.add.graphics().setPosition(sx, sy).setDepth(8);
     const shotsLeft = this.arena.hasPerk(owner, 'bio-fuel') ? 5 : 3;
-    drones.push({ sprite, shotsLeft, orbitAngle: spawnAngle, shielded: false, healedByFirewall: false, meleeCooldownUntil: 0, healCdUntil: 0, owner });
+    const drone: Drone = {
+      gfx, shotsLeft, maxShots: shotsLeft, orbitAngle: spawnAngle,
+      aim: spawnAngle, spin: Math.random() * 6, overcharged: false,
+      meleeCooldownUntil: 0, healCdUntil: 0, owner,
+    };
+    drones.push(drone);
+    this.drawDrone(drone);
+
+    // Assembly tell: the airframe spins up out of a puff of exhaust with its rotors biting.
+    const fx = owner === 'player' ? this.pfx : this.nfx;
+    fx.sparks(sx, sy, 7, { speed: 110, life: 320, fall: 40, depth: 9 });
+    fx.smoke(sx, sy, 2, 9, 6);
+    fx.ring(sx, sy, 3, 24, OIL.gold, 300, 2.5, 8);
+    this.arena.scene.tweens.add({
+      targets: gfx, scaleX: { from: 0.2, to: 1 }, scaleY: { from: 0.2, to: 1 },
+      duration: 220, ease: 'Back.easeOut',
+    });
 
     if (owner === 'player' && this.arena.masteryActive) {
       this.arena.showFloatingText(
@@ -545,44 +790,54 @@ export class OilKit {
     const drones = owner === 'player' ? this.playerDrones : this.npcDrones;
     const scene = this.arena.scene;
     const hasClickPlus = owner === 'player' && this.arena.hasUpgrade('click');
-    const ePlus = owner === 'player' && this.arena.hasUpgrade('e');
-    const rUpgrade = owner === 'player' && this.arena.hasUpgrade('r');
+    const foe = owner === 'player' ? this.arena.npc : this.arena.player;
+
+    const fx = owner === 'player' ? this.pfx : this.nfx;
 
     for (const drone of drones) {
-      const laser = scene.add.graphics().setDepth(8);
-      laser.lineStyle(2, 0xffaa00, 0.8);
-      laser.lineBetween(drone.sprite.x, drone.sprite.y, tx, ty);
-      scene.tweens.add({ targets: laser, alpha: 0, duration: 220, onComplete: () => laser.destroy() });
+      // Muzzle flare at the drone, a beam to the mark, and a bloom plus sparks where it lands.
+      const shotAngle = Math.atan2(ty - drone.gfx.y, tx - drone.gfx.x);
+      drone.aim = shotAngle;
+      fx.muzzleFlash(
+        drone.gfx.x + Math.cos(shotAngle) * 6, drone.gfx.y + Math.sin(shotAngle) * 6,
+        shotAngle, 0.55, 9,
+      );
+      fx.beam(drone.gfx.x, drone.gfx.y, tx, ty, { width: 2.6, duration: 200, impact: 9, depth: 8 });
+
+      // A laser landing on an Oily enemy burns the oil straight off them.
+      if (foe.hp > 0 && foe.oilyUntil > scene.time.now &&
+          Phaser.Math.Distance.Between(tx, ty, foe.x, foe.y) <= 40) {
+        foe.oilyUntil = 0;
+        foe.oilyBurnUntil = scene.time.now + 5000;
+        foe.oilyBurnAccum = 0;
+        this.arena.showFloatingText(foe.x, foe.y - 30, 'Ignited!', '#ff6600');
+      }
+
+      // Shooting your own puddle sets it alight — it burns twice as hot, so half as long.
+      const ownPuddles = owner === 'player' ? this.playerOilPuddles : this.npcOilPuddles;
+      for (const p of ownPuddles) {
+        if (!p.ignited && Phaser.Math.Distance.Between(tx, ty, p.x, p.y) <= p.radius + 20) {
+          this.ignitePuddle(p);
+          const remaining = p.expiresAt - scene.time.now;
+          p.expiresAt = scene.time.now + remaining * 0.5;
+        }
+      }
 
       if (owner === 'player') {
-        this.arena.damagePlayerTargets(tx, ty, 40, 3, 0xffaa00);
-        // Check oily + click hit
-        if (ePlus) {
-          const npc = this.arena.npc;
-          if (npc.hp > 0 && npc.oilyUntil > scene.time.now &&
-              Phaser.Math.Distance.Between(tx, ty, npc.x, npc.y) <= 40) {
-            npc.oilyUntil = 0;
-            npc.oilyBurnUntil = scene.time.now + 5000;
-            npc.oilyBurnAccum = 0;
-            this.arena.showFloatingText(npc.x, npc.y - 30, 'Ignited!', '#ff6600');
-          }
-        }
+        this.arena.damagePlayerTargets(tx, ty, 40, 3, OIL.gold);
         // Shield generator recharge check
         if (this.playerShieldGen && !this.playerShieldGen.charged) {
           const genDist = Phaser.Math.Distance.Between(tx, ty, this.playerShieldGen.x, this.playerShieldGen.y);
           if (genDist <= 60) {
-            this.playerShieldGen.charged = true;
-            this.playerShieldGen.chargedUntil = scene.time.now + 5000;
-            this.arena.showFloatingText(this.playerShieldGen.x, this.playerShieldGen.y - 20, 'Recharged!', '#44aacc');
-            this.drawShieldGenGfx(this.playerShieldGen);
+            this.rechargeShieldGen(this.playerShieldGen, scene.time.now);
           }
         }
       } else {
         // NPC drones damage player
         const player = this.arena.player;
-        if (player.hp > 0 && Phaser.Math.Distance.Between(drone.sprite.x, drone.sprite.y, player.x, player.y) <= 40) {
+        if (player.hp > 0 && Phaser.Math.Distance.Between(drone.gfx.x, drone.gfx.y, player.x, player.y) <= 40) {
           player.takeDamage(3);
-          this.arena.spawnHitFlash(player.x, player.y, 0xffaa00);
+          this.arena.spawnHitFlash(player.x, player.y, OIL.gold);
         }
       }
 
@@ -593,43 +848,45 @@ export class OilKit {
         for (const go of this.arena.projectiles.getChildren()) {
           const proj = go as Projectile;
           if (!proj.active || proj.isFromPlayer) continue;
-          if (this.arena.pointToSegmentDist(proj.x, proj.y, drone.sprite.x, drone.sprite.y, tx, ty) <= 14) {
+          if (this.arena.pointToSegmentDist(proj.x, proj.y, drone.gfx.x, drone.gfx.y, tx, ty) <= 14) {
             proj.setActive(false).setVisible(false);
             (proj.body as Phaser.Physics.Arcade.Body).stop();
+            fx.sparks(proj.x, proj.y, 5, { speed: 140, life: 260, depth: 9 });
           }
         }
       }
 
-      // Ignite puddles (R upgrade)
-      if (rUpgrade && owner === 'player') {
-        for (const p of this.playerOilPuddles) {
-          if (!p.ignited && Phaser.Math.Distance.Between(tx, ty, p.x, p.y) <= p.radius + 20) {
-            this.ignitePuddle(p);
-            const remaining = p.expiresAt - scene.time.now;
-            p.expiresAt = scene.time.now + remaining * 0.5;
-          }
-        }
-      }
     }
 
     // Bomb 0-shot drones (Click+ upgrade)
     for (let di = drones.length - 1; di >= 0; di--) {
       if (drones[di].shotsLeft <= 0) {
         const dead = drones[di];
-        const spawnX = dead.sprite.x, spawnY = dead.sprite.y;
-        dead.sprite.destroy();
-        drones.splice(di, 1);
+        const spawnX = dead.gfx.x, spawnY = dead.gfx.y;
         if (hasClickPlus && owner === 'player') {
-          const bomb = this.arena.scene.add.circle(spawnX, spawnY, 7, 0xff6600, 0.9).setDepth(9);
-          this.arena.scene.tweens.add({
-            targets: bomb, x: tx, y: ty, duration: 400, ease: 'Power2',
+          // Spent frame turned into a bomb: the chassis tumbles to the mark trailing smoke
+          // with its fuse lamp strobing, then goes up as a real detonation.
+          dead.overcharged = false;
+          dead.shotsLeft = 0;
+          this.detachedDrones.push(dead);
+          drones.splice(di, 1);
+          const gfx = dead.gfx;
+          this.pfx.smoke(spawnX, spawnY, 2, 8, 6);
+          scene.tweens.add({
+            targets: gfx, x: tx, y: ty, rotation: Math.PI * 2, duration: 400, ease: 'Power2',
+            onUpdate: () => { this.pfx.smoke(gfx.x, gfx.y, 1, 4, 5); },
             onComplete: () => {
-              const boom = this.arena.scene.add.circle(tx, ty, 8, 0xff6600, 0.9).setDepth(8);
-              this.arena.scene.tweens.add({ targets: boom, scaleX: 8, scaleY: 8, alpha: 0, duration: 400, onComplete: () => boom.destroy() });
-              bomb.destroy();
-              this.arena.damagePlayerTargets(tx, ty, 60, 5, 0xff6600);
+              this.dropDetachedDrone(dead);
+              gfx.destroy();
+              this.pfx.explosion(tx, ty, 60, { debris: 5, smoke: 3 });
+              this.arena.damagePlayerTargets(tx, ty, 60, 5, OIL.flame);
             },
           });
+        } else {
+          dead.gfx.destroy();
+          drones.splice(di, 1);
+          fx.sparks(spawnX, spawnY, 4, { speed: 90, life: 320, depth: 8 });
+          fx.smoke(spawnX, spawnY, 1, 7, 5);
         }
       }
     }
@@ -641,24 +898,132 @@ export class OilKit {
     const drone = drones.pop()!;
     const dmg = 20;
     const scene = this.arena.scene;
+
+    // R+ Overclock takes over the whole launch.
+    if (owner === 'player' && this.arena.hasUpgrade('r')) {
+      this.overclockDrone(drone);
+      return;
+    }
+
+    const fx = owner === 'player' ? this.pfx : this.nfx;
+    const gfx = drone.gfx;
+    this.detachedDrones.push(drone);
+
+    // Thruster kick off the orbit, then a run in under a strobing arming lamp.
+    const launchAngle = Math.atan2(ty - gfx.y, tx - gfx.x);
+    fx.muzzleFlash(gfx.x, gfx.y, launchAngle + Math.PI, 0.7, 9);
+    let lamp = 0;
     scene.tweens.add({
-      targets: drone.sprite, x: tx, y: ty, duration: 500, ease: 'Power2',
+      targets: gfx, x: tx, y: ty, duration: 500, ease: 'Power2',
+      onUpdate: (tw) => {
+        if (!gfx.active) return;
+        // Exhaust out the back, and the arming light beating faster the closer it gets.
+        const p = Number(tw.getValue());
+        fx.smoke(gfx.x, gfx.y, 1, 4, 5);
+        if (++lamp % Math.max(1, Math.round(6 - p * 4)) === 0) {
+          fx.sparks(gfx.x, gfx.y, 1, { speed: 40, life: 200, depth: 9 });
+        }
+      },
       onComplete: () => {
-        const boom = scene.add.circle(tx, ty, 8, 0xff6600, 0.9).setDepth(8);
-        scene.tweens.add({ targets: boom, scaleX: 8, scaleY: 8, alpha: 0, duration: 400, onComplete: () => boom.destroy() });
-        drone.sprite.destroy();
+        this.dropDetachedDrone(drone);
+        gfx.destroy();
+        fx.explosion(tx, ty, 68, { debris: 6, smoke: 3 });
+        this.arena.scene.cameras.main.shake(120, 0.004);
         if (owner === 'player') {
-          this.arena.damagePlayerTargets(tx, ty, 60, dmg, 0xff6600);
-          if (this.arena.hasUpgrade('r')) this.spawnOilPuddle(tx, ty, 'player');
+          this.arena.damagePlayerTargets(tx, ty, 60, dmg, OIL.flame);
         } else {
           const player = this.arena.player;
           if (player.hp > 0 && Phaser.Math.Distance.Between(tx, ty, player.x, player.y) <= 60) {
             player.takeDamage(dmg);
-            this.arena.spawnHitFlash(player.x, player.y, 0xff6600);
+            this.arena.spawnHitFlash(player.x, player.y, OIL.flame);
           }
         }
       },
     });
+  }
+
+  /**
+   * R+ Overclock. Instead of a plain kamikaze run the drone supercharges, dumps every
+   * bullet it has left at the cursor, then flies in and detonates. The blast is sized
+   * from the shot count it had *before* the volley, so emptying the magazine is free.
+   */
+  private overclockDrone(drone: Drone): void {
+    const scene = this.arena.scene;
+    const shots = Math.max(0, drone.shotsLeft);
+    const blastDmg = 5 * shots + 5;
+    const fx = this.pfx;
+    this.detachedDrones.push(drone);
+
+    const gfx = drone.gfx;
+    const CHARGE_MS = 340;
+    const SHOT_GAP_MS = 90;
+
+    // Live cursor — the drone keeps tracking you through the whole sequence.
+    const aim = () => {
+      const p = this.arena.pointer;
+      return { x: p.worldX, y: p.worldY };
+    };
+    const alive = () => gfx.active;
+
+    // ── Overcharge tell ───────────────────────────────────────────────────
+    // The magazine count is kept until the volley actually spends it, so the pip strip
+    // visibly empties round by round instead of blanking the instant R is pressed.
+    drone.overcharged = true;
+    fx.channelPressure(gfx.x, gfx.y, 30, CHARGE_MS, () => (gfx.active ? { x: gfx.x, y: gfx.y } : null), 9);
+    scene.tweens.add({ targets: gfx, scaleX: 1.6, scaleY: 1.6, duration: CHARGE_MS, ease: 'Quad.easeIn' });
+    this.arena.showFloatingText(gfx.x, gfx.y - 26, '⚡ Overclock', '#2fd6c0');
+
+    // ── Volley: one shot per remaining bullet ────────────────────────────────
+    for (let i = 0; i < shots; i++) {
+      scene.time.delayedCall(CHARGE_MS + i * SHOT_GAP_MS, () => {
+        if (!alive()) return;
+        const c = aim();
+        const shotAngle = Math.atan2(c.y - gfx.y, c.x - gfx.x);
+        drone.aim = shotAngle;
+        drone.shotsLeft = Math.max(0, shots - i - 1);
+        fx.muzzleFlash(gfx.x + Math.cos(shotAngle) * 8, gfx.y + Math.sin(shotAngle) * 8, shotAngle, 0.7, 10);
+        fx.beam(gfx.x, gfx.y, c.x, c.y, { width: 3.4, color: OIL.teal, duration: 190, impact: 12, depth: 9 });
+
+        // Recoil kick away from the target.
+        const restX = gfx.x, restY = gfx.y;
+        gfx.setPosition(restX - Math.cos(shotAngle) * 6, restY - Math.sin(shotAngle) * 6);
+        scene.tweens.add({ targets: gfx, x: restX, y: restY, duration: 70 });
+
+        this.arena.damagePlayerTargets(c.x, c.y, 40, 4, OIL.teal);
+      });
+    }
+
+    // ── Then the kamikaze run ────────────────────────────────────────────────
+    scene.time.delayedCall(CHARGE_MS + shots * SHOT_GAP_MS + 80, () => {
+      if (!alive()) { this.dropDetachedDrone(drone); return; }
+      const c = aim();
+      scene.tweens.add({
+        targets: gfx, x: c.x, y: c.y, scaleX: 1, scaleY: 1, duration: 400, ease: 'Power2',
+        onUpdate: () => { if (gfx.active) fx.smoke(gfx.x, gfx.y, 1, 5, 5); },
+        onComplete: () => {
+          // The blast scales with the magazine it burned, not just its radius: more shots
+          // means more spatter, more soot, more shrapnel and a longer, harder shake.
+          const tier = Math.min(1, shots / 5);
+          fx.explosion(c.x, c.y, 72, {
+            spatter: 10 + Math.round(shots * 3),
+            smoke: 3 + Math.round(tier * 3),
+            debris: 6 + Math.round(shots * 2),
+            duration: 420 + shots * 60,
+          });
+          fx.oilPillar(c.x, c.y, 28, 70 + shots * 26);
+          fx.ring(c.x, c.y, 10, 90 + shots * 14, OIL.teal, 420, 4, 9);
+          scene.cameras.main.shake(150 + shots * 40, 0.005 + tier * 0.004);
+          this.arena.damagePlayerTargets(c.x, c.y, 60, blastDmg, OIL.flame);
+          this.dropDetachedDrone(drone);
+          gfx.destroy();
+        },
+      });
+    });
+  }
+
+  private dropDetachedDrone(drone: Drone): void {
+    const i = this.detachedDrones.indexOf(drone);
+    if (i >= 0) this.detachedDrones.splice(i, 1);
   }
 
   // ── Barrel (E revamp) ─────────────────────────────────────────────────────
@@ -667,18 +1032,40 @@ export class OilKit {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const angle = Math.atan2(ty - caster.y, tx - caster.x);
     const speed = 300;
-    const gfx = this.arena.scene.add.circle(caster.x, caster.y, 20, 0x3d1c02, 0.9)
-      .setStrokeStyle(3, 0x7a3b10)
-      .setDepth(8);
+    // Depth 4 keeps the drum under the fighters, so a ridden barrel never hides its rider.
+    const gfx = this.arena.scene.add.graphics()
+      .setPosition(caster.x, caster.y)
+      .setRotation(angle)
+      .setDepth(owner === 'player' && this.arena.hasUpgrade('e') ? 4 : 8);
+    // E+ Barrel Roll: you throw it out from under yourself, so the ride starts the
+    // instant it launches and lasts exactly as long as E stays held.
+    const riding = owner === 'player' && this.arena.hasUpgrade('e');
     const barrel: OilBarrel = {
       gfx, x: caster.x, y: caster.y,
       vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
       targetX: tx, targetY: ty,
       distTraveled: 0, lastPuddleDist: 0,
       owner, active: true,
+      ridden: riding, rideDustAccum: 0,
+      roll: 0, trailX: caster.x, trailY: caster.y, trailAccum: 0,
     };
     if (owner === 'player') this.playerBarrel = barrel;
     else this.npcBarrel = barrel;
+    this.drawBarrel(barrel);
+
+    // The heave: crude slopping out of the drum as it leaves the hands, and a kick of dust.
+    const fx = owner === 'player' ? this.pfx : this.nfx;
+    fx.spatter(caster.x, caster.y, 6, { angle: angle + Math.PI, spread: 0.8, speed: 130, size: 3.4, life: 460 });
+    fx.ring(caster.x, caster.y, 6, 40, OIL.amber, 320, 3, 5);
+    if (riding) this.arena.showFloatingText(caster.x, caster.y - 40, '🛢️ Barrel Roll!', '#c47a2a');
+  }
+
+  /** Repaints one barrel into its own Graphics, in local space with the drum axis across travel. */
+  private drawBarrel(barrel: OilBarrel): void {
+    const g = barrel.gfx;
+    if (!g.active) return;
+    g.clear();
+    OilFx.drawBarrel(g, barrel.owner === 'player' ? this.pcol : this.ncol, barrel.roll, 1, barrel.ridden);
   }
 
   private updateBarrel(barrel: OilBarrel | null, time: number, dt: number, owner: 'player' | 'npc'): void {
@@ -687,10 +1074,64 @@ export class OilKit {
     const W = this.arena.getSceneWidth();
     const H = this.arena.getSceneHeight();
 
+    // ── E+ Barrel Roll ────────────────────────────────────────────────────
+    // While E is held the barrel curves toward the cursor and drags the caster
+    // along with it, which is where the mobility comes from.
+    if (barrel.ridden) {
+      const rider = owner === 'player' ? this.arena.player : this.arena.npc;
+      if (!this.arena.eKey.isDown || rider.hp <= 0 || this.playerTrainActive) {
+        barrel.ridden = false;
+      } else {
+        const ptr = this.arena.pointer;
+        const speed = Math.hypot(barrel.vx, barrel.vy) || 300;
+        const cur = Math.atan2(barrel.vy, barrel.vx);
+        const want = Math.atan2(ptr.worldY - barrel.y, ptr.worldX - barrel.x);
+        const diff = Phaser.Math.Angle.Wrap(want - cur);
+        const turn = (150 * Math.PI / 180) * dt;
+        const ang = cur + Math.sign(diff) * Math.min(Math.abs(diff), turn);
+        barrel.vx = Math.cos(ang) * speed;
+        barrel.vy = Math.sin(ang) * speed;
+      }
+    }
+
     const prevX = barrel.x, prevY = barrel.y;
     barrel.x += barrel.vx * dt;
     barrel.y += barrel.vy * dt;
-    barrel.distTraveled += Math.sqrt((barrel.x - prevX) ** 2 + (barrel.y - prevY) ** 2);
+    const step = Math.sqrt((barrel.x - prevX) ** 2 + (barrel.y - prevY) ** 2);
+    barrel.distTraveled += step;
+    // A 21px half-drum turns once every 2πr of travel, so the staves scroll at the real rate.
+    barrel.roll += step / 21;
+
+    // Continuous skid track laid behind the drum rather than a dotted line of puffs.
+    barrel.trailAccum += step;
+    if (barrel.trailAccum >= 30) {
+      barrel.trailAccum = 0;
+      const fx = owner === 'player' ? this.pfx : this.nfx;
+      fx.skid(barrel.trailX, barrel.trailY, barrel.x, barrel.y, 2);
+      barrel.trailX = barrel.x;
+      barrel.trailY = barrel.y;
+    }
+
+    if (barrel.ridden) {
+      // Glue the rider on. body.reset also kills the WASD velocity ArenaScene set
+      // this frame, so the barrel is the only thing moving them.
+      const rider = owner === 'player' ? this.arena.player : this.arena.npc;
+      (rider.body as Phaser.Physics.Arcade.Body).reset(barrel.x, barrel.y);
+
+      // Crude thrown up off the drum by the rider's weight, out of the back of the roll.
+      barrel.rideDustAccum += dt * 1000;
+      if (barrel.rideDustAccum >= 110) {
+        barrel.rideDustAccum -= 110;
+        const back = Math.atan2(barrel.vy, barrel.vx) + Math.PI;
+        const fx = owner === 'player' ? this.pfx : this.nfx;
+        fx.spatter(
+          barrel.x + Math.cos(back) * 20, barrel.y + Math.sin(back) * 20, 3,
+          { angle: back, spread: 0.7, speed: 120, size: 3.6, life: 480, fall: 60, depth: 5 },
+        );
+        fx.sparks(barrel.x + Math.cos(back) * 18, barrel.y + Math.sin(back) * 18, 2,
+          { angle: back, spread: 0.6, speed: 110, life: 240, depth: 5 });
+      }
+    }
 
     // Explode on wall contact
     if (barrel.x <= MARGIN || barrel.x >= W - MARGIN || barrel.y <= MARGIN || barrel.y >= H - MARGIN) {
@@ -707,6 +1148,8 @@ export class OilKit {
     }
 
     barrel.gfx.setPosition(barrel.x, barrel.y);
+    barrel.gfx.setRotation(Math.atan2(barrel.vy, barrel.vx));
+    this.drawBarrel(barrel);
 
     // Explode on enemy contact
     const enemy = owner === 'player' ? this.arena.npc : this.arena.player;
@@ -740,19 +1183,27 @@ export class OilKit {
     barrel.active = false;
     barrel.gfx.destroy();
     const x = barrel.x, y = barrel.y;
-    const scene = this.arena.scene;
+    const fx = owner === 'player' ? this.pfx : this.nfx;
 
-    // Explosion visual
-    const boom = scene.add.circle(x, y, 8, 0x7a3b10, 0.9).setDepth(8);
-    scene.tweens.add({ targets: boom, scaleX: 10, scaleY: 10, alpha: 0, duration: 450, onComplete: () => boom.destroy() });
+    // A drum full of fuel going up: ignition flash, a crude fireball, staves flung out as
+    // shrapnel, and a column of soot standing over it. A click-detonation is deliberately the
+    // bigger one — you chose the moment, so it gets the pillar and the harder shake.
+    fx.explosion(x, y, clickExplode ? 84 : 70, {
+      spatter: clickExplode ? 16 : 11,
+      smoke: clickExplode ? 5 : 3,
+      debris: clickExplode ? 12 : 8,
+      duration: clickExplode ? 560 : 440,
+    });
+    if (clickExplode) fx.oilPillar(x, y, 26, 96);
+    this.arena.scene.cameras.main.shake(clickExplode ? 220 : 150, clickExplode ? 0.007 : 0.004);
 
     // Damage
-    if (owner === 'player') this.arena.damagePlayerTargets(x, y, 50, 20, 0x7a3b10);
+    if (owner === 'player') this.arena.damagePlayerTargets(x, y, 50, 20, OIL.flame);
     else {
       const player = this.arena.player;
       if (player.hp > 0 && Phaser.Math.Distance.Between(x, y, player.x, player.y) <= 50) {
         player.takeDamage(20);
-        this.arena.spawnHitFlash(player.x, player.y, 0x7a3b10);
+        this.arena.spawnHitFlash(player.x, player.y, OIL.flame);
       }
     }
 
@@ -769,16 +1220,19 @@ export class OilKit {
   // ── Oil puddles ───────────────────────────────────────────────────────────
 
   private spawnOilPuddle(x: number, y: number, owner: 'player' | 'npc'): OilPuddle {
-    const ePlus = owner === 'player' && this.arena.hasUpgrade('e');
-    const color = this.getPuddleColor(false);
-    const sprite = this.arena.scene.add.circle(x, y, 30, color, 0.55).setDepth(2);
+    const gfx = this.arena.scene.add.graphics().setDepth(2);
     const puddle: OilPuddle = {
-      sprite, x, y,
+      gfx, x, y,
       expiresAt: this.arena.scene.time.now + 12000,
-      ignited: false, igniteTickAccum: 0, radius: 30, oilyTickAccum: 0, owner,
+      ignited: false, igniteTickAccum: 0, radius: 30,
+      seed: Math.random() * 10, owner,
     };
     if (owner === 'player') this.playerOilPuddles.push(puddle);
     else this.npcOilPuddles.push(puddle);
+    // The spill itself: crude thrown out from the drop point and welling into the pool.
+    (owner === 'player' ? this.pfx : this.nfx).spatter(x, y, 5, {
+      speed: 90, size: 3, life: 420, fall: 50, depth: 3,
+    });
     return puddle;
   }
 
@@ -789,30 +1243,35 @@ export class OilKit {
   private ignitePuddle(puddle: OilPuddle): void {
     if (puddle.ignited) return;
     puddle.ignited = true;
-    puddle.sprite.setFillStyle(this.getPuddleColor(true), 0.65);
+    // Catch: a flash across the surface, a low front running out to the rim, and soot.
+    const fx = puddle.owner === 'player' ? this.pfx : this.nfx;
+    fx.flash(puddle.x, puddle.y, puddle.radius * 0.5, 4);
+    fx.ring(puddle.x, puddle.y, 4, puddle.radius * 1.25, OIL.flame, 340, 4, 3);
+    fx.gusher(puddle.x, puddle.y, puddle.radius * 0.8, 8, 3);
+    fx.smoke(puddle.x, puddle.y, 2, puddle.radius * 0.7, 3);
     if (puddle.owner === 'player') this.arena.recordMasteryStat('puddleIgnites', 1);
   }
 
-  private getPuddleColor(ignited: boolean): number {
-    const ePlus = this.arena.hasUpgrade('e');
-    if (ignited) return 0xff4400;
-    return ePlus ? 0x336600 : 0x332200;
-  }
-
   private updateOilPuddles(puddles: OilPuddle[], time: number, delta: number, owner: 'player' | 'npc'): void {
-    const ePlus = owner === 'player' && this.arena.hasUpgrade('e');
     const enemy = owner === 'player' ? this.arena.npc : this.arena.player;
+    const tint = owner === 'player' ? this.pcol : this.ncol;
 
     for (let pi = puddles.length - 1; pi >= 0; pi--) {
       const p = puddles[pi];
       if (time >= p.expiresAt) {
-        p.sprite.destroy();
+        p.gfx.destroy();
         puddles.splice(pi, 1);
         continue;
       }
 
-      // Update puddle color
-      p.sprite.setFillStyle(this.getPuddleColor(p.ignited), p.ignited ? 0.65 : 0.55);
+      // Repaint as a living pool. Puddles fade out over their last 600ms rather than
+      // blinking away, so a floor covered in them drains instead of popping.
+      const left = p.expiresAt - time;
+      p.gfx.clear();
+      OilFx.drawPuddle(
+        p.gfx, tint, p.x, p.y, p.radius, this.worldT,
+        left < 600 ? Math.max(0, left / 600) : 1, p.seed, p.ignited,
+      );
 
       // Ignited: instant fire DOT when enemy steps in, plus slow tick damage
       if (p.ignited) {
@@ -827,13 +1286,13 @@ export class OilKit {
           p.igniteTickAccum -= 300;
           if (inPuddle) {
             enemy.takeDamage(2, { source: p, sourceX: p.x, sourceY: p.y });
-            this.arena.spawnHitFlash(enemy.x, enemy.y, 0xff4400);
+            this.arena.spawnHitFlash(enemy.x, enemy.y, OIL.flame);
           }
         }
       }
 
-      // E+ Oily: apply to enemy on puddle
-      if (ePlus && enemy.hp > 0 && Phaser.Math.Distance.Between(enemy.x, enemy.y, p.x, p.y) <= p.radius) {
+      // Oily: apply to any enemy standing in the puddle
+      if (enemy.hp > 0 && Phaser.Math.Distance.Between(enemy.x, enemy.y, p.x, p.y) <= p.radius) {
         enemy.oilyUntil = time + 8000;
       }
     }
@@ -849,14 +1308,14 @@ export class OilKit {
         if (this.playerOilyBurnAccum >= 500) {
           this.playerOilyBurnAccum -= 500;
           target.takeDamage(3);
-          this.arena.spawnHitFlash(target.x, target.y, 0xff6600);
+          this.arena.spawnHitFlash(target.x, target.y, OIL.flame);
         }
       } else {
         this.npcOilyBurnAccum += delta;
         if (this.npcOilyBurnAccum >= 500) {
           this.npcOilyBurnAccum -= 500;
           target.takeDamage(3);
-          this.arena.spawnHitFlash(target.x, target.y, 0xff6600);
+          this.arena.spawnHitFlash(target.x, target.y, OIL.flame);
         }
       }
     } else {
@@ -867,155 +1326,144 @@ export class OilKit {
 
   // ── Oily visual aura ─────────────────────────────────────────────────────
 
-  private updateOilyVisual(owner: 'player' | 'npc', time: number): void {
+  /**
+   * The Oily debuff's continuous tell, and the burning one layered on top of it. Both states
+   * are the same coating — coated crude and coated crude that has caught — so a victim reads
+   * the same whichever fighter is wearing it, and the burn is visibly a consequence of the
+   * coat rather than an unrelated effect.
+   */
+  private updateOilyVisual(owner: 'player' | 'npc', time: number, delta: number): void {
     const fighter = owner === 'player' ? this.arena.player : this.arena.npc;
     const isOily = fighter.oilyUntil > time;
-    if (isOily) {
-      if (owner === 'player') {
-        if (!this.playerOilyAura) {
-          this.playerOilyAura = this.arena.scene.add.circle(fighter.x, fighter.y, 28, 0x336600, 0.4).setDepth(7);
-        } else {
-          this.playerOilyAura.setPosition(fighter.x, fighter.y);
-        }
-      } else {
-        if (!this.npcOilyAura) {
-          this.npcOilyAura = this.arena.scene.add.circle(fighter.x, fighter.y, 28, 0x336600, 0.4).setDepth(7);
-        } else {
-          this.npcOilyAura.setPosition(fighter.x, fighter.y);
-        }
+    const isBurning = fighter.oilyBurnUntil > time;
+    const existing = owner === 'player' ? this.playerCoat : this.npcCoat;
+
+    if (!isOily && !isBurning) {
+      if (existing) {
+        existing.destroy();
+        if (owner === 'player') this.playerCoat = null; else this.npcCoat = null;
       }
-    } else {
-      if (owner === 'player' && this.playerOilyAura) {
-        this.playerOilyAura.destroy();
-        this.playerOilyAura = null;
-      } else if (owner === 'npc' && this.npcOilyAura) {
-        this.npcOilyAura.destroy();
-        this.npcOilyAura = null;
-      }
+      return;
     }
+
+    // The coating belongs to whoever *applied* it, so a future oil cosmetic recolours the
+    // slick their victim is wearing rather than the victim's own palette.
+    let coat = existing;
+    if (!coat) {
+      coat = new OilCoat(this.arena.scene, owner === 'player' ? this.ncol : this.pcol, 27);
+      if (owner === 'player') this.playerCoat = coat; else this.npcCoat = coat;
+    }
+    coat.setBurning(isBurning);
+    coat.update(delta, fighter.x, fighter.y, fighter.forceInvisible ? 0 : fighter.alpha);
   }
 
   // ── Shield Generator (F revamp) ───────────────────────────────────────────
 
   doPlaceShieldGen(tx: number, ty: number, owner: 'player' | 'npc'): void {
     if (owner !== 'player') return; // NPC keeps old firewall
-    if (this.playerShieldGen) {
-      this.playerShieldGen.gfx.destroy();
-      this.playerShieldGen.laserGfx.destroy();
-    }
-    const gfx = this.arena.scene.add.graphics().setDepth(8);
-    const laserGfx = this.arena.scene.add.graphics().setDepth(9);
+    if (this.playerShieldGen) this.playerShieldGen.gfx.destroy();
+    const now = this.arena.scene.time.now;
+    const gfx = this.arena.scene.add.graphics().setDepth(3);
     const gen: ShieldGenerator = {
-      gfx, laserGfx, x: tx, y: ty,
+      gfx, x: tx, y: ty,
       charged: true,
-      chargedUntil: this.arena.scene.time.now + 5000,
+      chargedUntil: now + this.shieldGenWindow(),
+      chargedFrom: now,
       scrap: 0,
       blockCount: 0,
       owner,
     };
     this.playerShieldGen = gen;
-    this.drawShieldGenGfx(gen);
-    this.arena.showFloatingText(tx, ty - 24, 'Shield Gen', '#44aacc');
+
+    // Landing: the plinth slams into the ground and the field snaps up around it.
+    this.pfx.ring(tx, ty, 4, 40, OIL.chrome, 300, 4, 4);
+    this.pfx.sparks(tx, ty, 10, { speed: 170, life: 340, depth: 9 });
+    this.pfx.smoke(tx, ty, 2, 12, 3);
+    this.pfx.ring(tx, ty, 20, SHIELD_GEN_RANGE, OIL.teal, 480, 3, 4);
+    this.arena.showFloatingText(tx, ty - 24, 'Shield Gen', '#2fd6c0');
   }
 
-  private lerpHex(c1: number, c2: number, t: number): number {
-    const r = Math.round(((c1 >> 16) & 0xff) * (1 - t) + ((c2 >> 16) & 0xff) * t);
-    const g = Math.round(((c1 >> 8) & 0xff) * (1 - t) + ((c2 >> 8) & 0xff) * t);
-    const b = Math.round((c1 & 0xff) * (1 - t) + (c2 & 0xff) * t);
-    return (r << 16) | (g << 8) | b;
+  /** How long one charge lasts — the denominator behind the lens dimming as it runs down. */
+  private shieldGenWindow(): number {
+    return 5000;
   }
 
-  private flashDroneHealRing(drone: Drone): void {
-    const ring = this.arena.scene.add.circle(drone.sprite.x, drone.sprite.y, 9, 0x44ff66, 0)
-      .setStrokeStyle(2, 0x44ff66, 0.95).setDepth((drone.sprite.depth ?? 7) + 1);
-    this.arena.scene.tweens.add({
-      targets: ring, alpha: 0, scaleX: 1.1, scaleY: 1.1, duration: 500,
-      onUpdate: () => { if (ring.active) ring.setPosition(drone.sprite.x, drone.sprite.y); },
-      onComplete: () => ring.destroy(),
+  private rechargeShieldGen(gen: ShieldGenerator, now: number): void {
+    gen.charged = true;
+    gen.chargedFrom = now;
+    gen.chargedUntil = now + this.shieldGenWindow();
+    this.pfx.ring(gen.x, gen.y, 6, 34, OIL.teal, 320, 4, 4);
+    this.pfx.sparks(gen.x, gen.y, 8, { speed: 150, life: 300, depth: 9 });
+    this.arena.showFloatingText(gen.x, gen.y - 20, 'Recharged!', '#2fd6c0');
+  }
+
+  /** A drone dropping into the generator to service it: a spark shower and a lift-off puff. */
+  private flashDroneService(drone: Drone, gen: ShieldGenerator): void {
+    this.pfx.sparks(drone.gfx.x, drone.gfx.y, 6, { speed: 90, life: 340, fall: 60, depth: 9 });
+    this.pfx.beam(drone.gfx.x, drone.gfx.y, gen.x, gen.y, {
+      width: 2, color: OIL.teal, duration: 240, impact: 7, depth: 8,
     });
-  }
-
-  private drawShieldGenGfx(gen: ShieldGenerator): void {
-    gen.gfx.clear();
-    const darkness = Math.min(1, gen.scrap / 10);
-    const baseColor = gen.charged ? 0x44aacc : 0x446666;
-    const color = this.lerpHex(baseColor, 0x000000, darkness);
-    const alpha = gen.charged ? 0.9 : 0.5;
-    gen.gfx.lineStyle(3, color, alpha);
-    const sides = 6;
-    const r = 18;
-    for (let i = 0; i < sides; i++) {
-      const a0 = (i / sides) * Math.PI * 2 - Math.PI / 6;
-      const a1 = ((i + 1) / sides) * Math.PI * 2 - Math.PI / 6;
-      gen.gfx.lineBetween(
-        gen.x + Math.cos(a0) * r, gen.y + Math.sin(a0) * r,
-        gen.x + Math.cos(a1) * r, gen.y + Math.sin(a1) * r,
-      );
-    }
-    gen.gfx.fillStyle(color, 0.2);
-    gen.gfx.fillCircle(gen.x, gen.y, 14);
-    if (gen.charged) {
-      gen.gfx.fillStyle(0x44aacc, 0.06);
-      gen.gfx.fillCircle(gen.x, gen.y, 150);
-      gen.gfx.lineStyle(1, 0x44aacc, 0.25);
-      gen.gfx.strokeCircle(gen.x, gen.y, 150);
-    }
   }
 
   private updateShieldGen(time: number): void {
     const gen = this.playerShieldGen;
     if (!gen) return;
 
-    // Discharge after 5s
+    // Discharge at the end of the window
     if (gen.charged && time > gen.chargedUntil) {
       gen.charged = false;
-      this.drawShieldGenGfx(gen);
+      this.pfx.smoke(gen.x, gen.y, 2, 10, 3);
+      this.pfx.sparks(gen.x, gen.y, 5, { speed: 70, life: 400, depth: 9 });
       this.arena.showFloatingText(gen.x, gen.y - 20, 'Needs Recharge', '#888888');
     }
 
-    gen.laserGfx.clear();
+    // Repaint every frame — the rotor turns, the lattice shimmers and the lens dims across
+    // the whole charge window, so the time left is readable off the generator itself.
+    const window = Math.max(1, gen.chargedUntil - gen.chargedFrom);
+    const chargeRatio = gen.charged ? Phaser.Math.Clamp((gen.chargedUntil - time) / window, 0, 1) : 0;
+    gen.gfx.clear();
+    OilFx.drawGenerator(
+      gen.gfx, this.pcol, gen.x, gen.y, this.worldT,
+      gen.charged, gen.scrap, chargeRatio, SHIELD_GEN_RANGE,
+    );
+
     if (!gen.charged) return;
 
-    // Scan enemy projectiles within 150px
+    // Scan enemy projectiles inside the field
     for (const go of this.arena.projectiles.getChildren()) {
       const proj = go as Projectile;
       if (!proj.active || proj.isFromPlayer) continue;
       const dist = Phaser.Math.Distance.Between(proj.x, proj.y, gen.x, gen.y);
-      if (dist <= 150) {
+      if (dist <= SHIELD_GEN_RANGE) {
         // Destroy projectile
         proj.setActive(false).setVisible(false);
         (proj.body as Phaser.Physics.Arcade.Body).stop();
         this.arena.recordMasteryStat('shieldBlocks', 1);
         if (this.arena.hasUpgrade('f')) {
           gen.blockCount++;
-          if (gen.blockCount % 2 === 0) {
-            gen.scrap++;
-            this.drawShieldGenGfx(gen);
-          }
+          if (gen.blockCount % 2 === 0) gen.scrap++;
         }
-        // Laser flash
-        gen.laserGfx.lineStyle(3, 0x44aacc, 0.9);
-        gen.laserGfx.lineBetween(gen.x, gen.y, proj.x, proj.y);
-        // AoE at destruction point
-        this.arena.damagePlayerTargets(proj.x, proj.y, 30, 8, 0x44aacc);
-        const boom = this.arena.scene.add.circle(proj.x, proj.y, 5, 0x44aacc, 0.8).setDepth(9);
-        this.arena.scene.tweens.add({ targets: boom, scaleX: 5, scaleY: 5, alpha: 0, duration: 300, onComplete: () => boom.destroy() });
+        // Point defence: a beam out to the interception, then the round coming apart.
+        this.pfx.beam(gen.x, gen.y, proj.x, proj.y, {
+          width: 3, color: OIL.teal, duration: 200, impact: 12, depth: 9,
+        });
+        this.pfx.ring(proj.x, proj.y, 3, 30, OIL.teal, 280, 3, 9);
+        this.pfx.shrapnel(proj.x, proj.y, 4, 26, 9);
+        this.arena.damagePlayerTargets(proj.x, proj.y, 30, 8, OIL.teal);
       }
     }
-    // Fade laser
-    this.arena.scene.tweens.add({ targets: gen.laserGfx, alpha: 0, duration: 80,
-      onComplete: () => { gen.laserGfx.setAlpha(1); gen.laserGfx.clear(); } });
   }
 
   // ── Old firewall (NPC) ────────────────────────────────────────────────────
 
   doPlaceFirewallNpc(tx: number, ty: number): void {
-    if (this.npcFirewall) this.npcFirewall.sprite.destroy();
+    if (this.npcFirewall) this.npcFirewall.gfx.destroy();
     const npc = this.arena.npc;
     const angle = Math.atan2(npc.y - ty, npc.x - tx) - Math.PI / 2;
-    const sprite = this.arena.scene.add.rectangle(tx, ty, 120, 60, 0xff6600, 0.45)
-      .setStrokeStyle(2, 0xff8800).setDepth(3).setRotation(angle);
-    this.npcFirewall = { sprite, x: tx, y: ty, angle, hp: 100, owner: 'npc' };
+    const gfx = this.arena.scene.add.graphics().setPosition(tx, ty).setRotation(angle).setDepth(3);
+    this.npcFirewall = { gfx, x: tx, y: ty, angle, hp: 100, owner: 'npc' };
+    this.nfx.ring(tx, ty, 8, 70, OIL.flame, 380, 4, 4);
+    this.nfx.sparks(tx, ty, 10, { speed: 170, life: 360, depth: 5 });
   }
 
   private updateNpcFirewall(): void {
@@ -1034,8 +1482,58 @@ export class OilKit {
         fw.hp -= (proj as Projectile).damage ?? 5;
         proj.setActive(false).setVisible(false);
         (proj.body as Phaser.Physics.Arcade.Body).stop();
-        if (fw.hp <= 0) { fw.sprite.destroy(); this.npcFirewall = null; break; }
+        this.nfx.sparks(proj.x, proj.y, 6, { speed: 150, life: 300, depth: 5 });
+        if (fw.hp <= 0) {
+          this.nfx.explosion(fw.x, fw.y, 66, { debris: 8, smoke: 3 });
+          fw.gfx.destroy();
+          this.npcFirewall = null;
+          break;
+        }
       }
+    }
+    if (this.npcFirewall) this.drawFirewall(this.npcFirewall);
+  }
+
+  /**
+   * The NPC's blast barrier: a steel hoarding standing in a trench of burning crude. Drawn in
+   * local space so the wall lies across the line of fire, and the burn thins as it is chewed
+   * through, which is the only readout of how much of it is left.
+   */
+  private drawFirewall(fw: OilFirewall): void {
+    const g = fw.gfx;
+    if (!g.active) return;
+    g.clear();
+    const health = Phaser.Math.Clamp(fw.hp / 100, 0, 1);
+    const t = this.worldT;
+    const tint = this.ncol;
+
+    // Trench of crude the wall stands in.
+    g.fillStyle(tint(OIL.tar), 0.7);
+    g.fillRect(-60, -14, 120, 28);
+    for (let i = 0; i < 3; i++) {
+      const p = t * (0.4 + i * 0.2) + i * 2.1;
+      g.fillStyle(tint(i % 2 ? OIL.teal : OIL.violet), 0.18);
+      g.fillEllipse(Math.sin(p) * 34, Math.cos(p) * 6, 34, 7);
+    }
+
+    // Hoarding: plate with hazard chevrons, and bolt heads at the posts.
+    g.fillStyle(tint(OIL.steel), 0.95);
+    g.fillRect(-60, -9, 120, 18);
+    g.fillStyle(tint(OIL.gold), 0.85);
+    for (let i = 0; i < 8; i++) g.fillRect(-58 + i * 15, -9, 7, 18);
+    g.lineStyle(2, tint(OIL.crude), 0.95);
+    g.strokeRect(-60, -9, 120, 18);
+    for (const bx of [-56, 0, 56]) {
+      g.fillStyle(tint(OIL.chrome), 0.8);
+      g.fillCircle(bx, -6, 2);
+      g.fillCircle(bx, 6, 2);
+    }
+
+    // Curtain of flame along the top edge — the height is the wall's remaining HP.
+    for (let i = 0; i < 9; i++) {
+      const x = -54 + i * 13.5;
+      const wob = Math.sin(t * (5 + i * 0.5) + i * 1.3);
+      oilFlame(g, tint, x, -8, -Math.PI / 2, (14 + wob * 7) * health + 4, 6, wob * 6, 0.85);
     }
   }
 
@@ -1073,16 +1571,16 @@ export class OilKit {
     if (time >= this.playerOverdriveEnd) {
       this.playerOverdriveActive = false;
       this.arena.nukeChanneling = false;
-      if (this.arena.hasUpgrade('r')) {
-        for (const d of this.playerDrones) this.spawnOilPuddle(d.sprite.x, d.sprite.y, 'player');
-      }
       if (this.arena.hasUpgrade('q')) {
         for (let i = 0; i < this.playerOverdriveDroneCount; i++) {
           const mx = mouseX, my = mouseY;
           this.arena.scene.time.delayedCall(i * 500, () => this.fireSalvoBomb(mx, my));
         }
       }
-      for (const d of this.playerDrones) d.sprite.destroy();
+      for (const d of this.playerDrones) {
+        this.pfx.smoke(d.gfx.x, d.gfx.y, 1, 7, 5);
+        d.gfx.destroy();
+      }
       this.playerDrones = [];
       if (this.playerOverdriveGfx) { this.playerOverdriveGfx.destroy(); this.playerOverdriveGfx = null; }
     } else {
@@ -1093,9 +1591,7 @@ export class OilKit {
       const endX = player.x + Math.cos(this.playerOverdriveAngle) * 1000;
       const endY = player.y + Math.sin(this.playerOverdriveAngle) * 1000;
       if (this.playerOverdriveGfx) {
-        this.playerOverdriveGfx.clear();
-        this.playerOverdriveGfx.lineStyle(22, 0xff6600, 0.6);
-        this.playerOverdriveGfx.lineBetween(player.x, player.y, endX, endY);
+        this.drawOverdriveBeam(this.playerOverdriveGfx, this.pcol, player.x, player.y, endX, endY);
       }
       this.playerOverdriveTickAccum += delta;
       if (this.playerOverdriveTickAccum >= 100) {
@@ -1109,7 +1605,7 @@ export class OilKit {
           const d = this.arena.pointToSegmentDist(npc.x, npc.y, player.x, player.y, endX, endY);
           if (d <= 30) {
             npc.takeDamage(15);
-            this.arena.spawnHitFlash(npc.x, npc.y, 0xff6600);
+            this.arena.spawnHitFlash(npc.x, npc.y, OIL.flame);
           }
         }
       }
@@ -1122,7 +1618,10 @@ export class OilKit {
     if (time >= this.npcOverdriveEnd) {
       this.npcOverdriveActive = false;
       this.arena.npcNukeChanneling = false;
-      for (const d of this.npcDrones) d.sprite.destroy();
+      for (const d of this.npcDrones) {
+        this.nfx.smoke(d.gfx.x, d.gfx.y, 1, 7, 5);
+        d.gfx.destroy();
+      }
       this.npcDrones = [];
       if (this.npcOverdriveGfx) { this.npcOverdriveGfx.destroy(); this.npcOverdriveGfx = null; }
     } else {
@@ -1134,9 +1633,7 @@ export class OilKit {
       const endX = npc.x + Math.cos(this.npcOverdriveAngle) * 1000;
       const endY = npc.y + Math.sin(this.npcOverdriveAngle) * 1000;
       if (this.npcOverdriveGfx) {
-        this.npcOverdriveGfx.clear();
-        this.npcOverdriveGfx.lineStyle(22, 0xff6600, 0.6);
-        this.npcOverdriveGfx.lineBetween(npc.x, npc.y, endX, endY);
+        this.drawOverdriveBeam(this.npcOverdriveGfx, this.ncol, npc.x, npc.y, endX, endY);
       }
       this.npcOverdriveTickAccum += delta;
       if (this.npcOverdriveTickAccum >= 100) {
@@ -1145,23 +1642,73 @@ export class OilKit {
         const d = this.arena.pointToSegmentDist(player.x, player.y, npc.x, npc.y, endX, endY);
         if (d <= 30) {
           player.takeDamage(15);
-          this.arena.spawnHitFlash(player.x, player.y, 0xff6600);
+          this.arena.spawnHitFlash(player.x, player.y, OIL.flame);
         }
       }
     }
   }
 
+  /**
+   * The Overdrive lance: a churning column of burning crude rather than a flat orange bar.
+   * Repainted every frame off `worldT`, so the beam boils along its length while it sweeps.
+   */
+  private drawOverdriveBeam(
+    g: Phaser.GameObjects.Graphics, tint: OilColorFn,
+    x1: number, y1: number, x2: number, y2: number,
+  ): void {
+    g.clear();
+    const ang = Math.atan2(y2 - y1, x2 - x1);
+    const dist = Phaser.Math.Distance.Between(x1, y1, x2, y2);
+    const px = -Math.sin(ang), py = Math.cos(ang);
+    const t = this.worldT;
+
+    // Outer soot sleeve, so the lance reads as burning fuel rather than as a laser.
+    g.lineStyle(30, tint(OIL.tar), 0.3);
+    g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.strokePath();
+
+    // Flame licks flapping off both flanks along the whole run.
+    const steps = Math.max(6, Math.round(dist / 60));
+    for (let i = 0; i < steps; i++) {
+      const f = (i + 0.5) / steps;
+      const cx = x1 + (x2 - x1) * f, cy = y1 + (y2 - y1) * f;
+      for (const s of [1, -1]) {
+        const wob = Math.sin(t * 9 + i * 1.7 + (s > 0 ? 0 : 2.1));
+        oilFlame(
+          g, tint, cx + px * s * 5, cy + py * s * 5,
+          ang + s * (Math.PI / 2) * (0.55 + wob * 0.12),
+          14 + wob * 6, 6, wob * 8, 0.7,
+        );
+      }
+    }
+
+    // Core: crude, then flame, then a white heart running the length of the lance.
+    g.lineStyle(20, tint(OIL.ember), 0.55);
+    g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.strokePath();
+    g.lineStyle(12, tint(OIL.flame), 0.8);
+    g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.strokePath();
+    g.lineStyle(5 + Math.sin(t * 22) * 1.5, tint(OIL.gold), 0.95);
+    g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.strokePath();
+
+    // Muzzle bloom where the lance leaves the caster.
+    g.fillStyle(tint(OIL.white), 0.75);
+    g.fillCircle(x1 + Math.cos(ang) * 14, y1 + Math.sin(ang) * 14, 9 + Math.sin(t * 26) * 2);
+  }
+
   private fireSalvoBomb(tx: number, ty: number): void {
     const player = this.arena.player;
     const scene = this.arena.scene;
-    const bomb = scene.add.circle(player.x, player.y, 7, 0xffaa00, 0.9).setDepth(8);
+    const gfx = scene.add.graphics().setPosition(player.x, player.y).setDepth(8);
+    OilFx.drawBarrel(gfx, this.pcol, 0, 1, true);
+    gfx.setScale(0.42);
+    const launch = Math.atan2(ty - player.y, tx - player.x);
+    this.pfx.muzzleFlash(player.x, player.y, launch, 0.8, 9);
     scene.tweens.add({
-      targets: bomb, x: tx, y: ty, duration: 450, ease: 'Power2',
+      targets: gfx, x: tx, y: ty, rotation: Math.PI * 3, duration: 450, ease: 'Power2',
+      onUpdate: () => { if (gfx.active) this.pfx.smoke(gfx.x, gfx.y, 1, 5, 5); },
       onComplete: () => {
-        const boom = scene.add.circle(tx, ty, 7, 0xff6600, 0.9).setDepth(8);
-        scene.tweens.add({ targets: boom, scaleX: 6, scaleY: 6, alpha: 0, duration: 350, onComplete: () => boom.destroy() });
-        bomb.destroy();
-        this.arena.damagePlayerTargets(tx, ty, 50, 10, 0xff6600);
+        gfx.destroy();
+        this.pfx.explosion(tx, ty, 58, { debris: 6, smoke: 2 });
+        this.arena.damagePlayerTargets(tx, ty, 50, 10, OIL.flame);
       },
     });
   }
@@ -1194,12 +1741,17 @@ export class OilKit {
     for (let i = 0; i < 5; i++) {
       const cx = Phaser.Math.Between(80, W - 80);
       const cy = Phaser.Math.Between(80, H - 80);
-      const gfx = this.arena.scene.add.circle(cx, cy, 8, 0x111111, 0.9)
-        .setStrokeStyle(2, 0xffa500, 0.8).setDepth(9);
-      this.coalPickups.push({ gfx, x: cx, y: cy, collected: false });
+      const gfx = this.arena.scene.add.graphics().setPosition(cx, cy).setDepth(3);
+      this.coalPickups.push({ gfx, x: cx, y: cy, collected: false, seed: Math.random() * 10 });
     }
 
-    this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 40, 'Train Morph!', '#ff8800');
+    // The morph itself: steam blasted out of the frame as the locomotive assembles.
+    const p = this.arena.player;
+    this.pfx.ring(p.x, p.y, 8, 90, OIL.chrome, 420, 5, 8);
+    this.pfx.smoke(p.x, p.y, 5, 26, 4);
+    this.pfx.sparks(p.x, p.y, 14, { speed: 240, life: 420, depth: 9 });
+    this.arena.scene.cameras.main.shake(200, 0.005);
+    this.arena.showFloatingText(p.x, p.y - 40, 'Train Morph!', '#ff8800');
   }
 
   private updateTrain(time: number, delta: number): void {
@@ -1227,22 +1779,31 @@ export class OilKit {
     // Update segment positions (each segment trails by ~30px of history)
     const SEGMENT_SPACING = 12; // history frames between segments
     while (this.playerTrainSegments.length < Math.floor(this.playerTrainPosHistory.length / SEGMENT_SPACING)) {
-      this.playerTrainSegments.push({ x: player.x, y: player.y, lastHitAt: 0 });
+      this.playerTrainSegments.push({ x: player.x, y: player.y, lastHitAt: 0, angle: 0 });
     }
     for (let i = 0; i < this.playerTrainSegments.length; i++) {
+      const seg = this.playerTrainSegments[i];
       const histIdx = Math.min((i + 1) * SEGMENT_SPACING, this.playerTrainPosHistory.length - 1);
-      this.playerTrainSegments[i].x = this.playerTrainPosHistory[histIdx].x;
-      this.playerTrainSegments[i].y = this.playerTrainPosHistory[histIdx].y;
+      seg.x = this.playerTrainPosHistory[histIdx].x;
+      seg.y = this.playerTrainPosHistory[histIdx].y;
+      // Each car points at whatever is coupled in front of it, so the rake bends round corners
+      // instead of every wagon facing the same way.
+      const ahead = i === 0 ? { x: player.x, y: player.y } : this.playerTrainSegments[i - 1];
+      const dx = ahead.x - seg.x, dy = ahead.y - seg.y;
+      if (dx !== 0 || dy !== 0) seg.angle = Math.atan2(dy, dx);
     }
 
-    // Draw train
+    // Draw the rake back to front so each car overlaps the one behind it, then the locomotive
+    // last of all — the head is the player, so it has to sit on top of its own train.
     if (this.playerTrainGfx) {
-      this.playerTrainGfx.clear();
-      const segColor = this.trainQPlusActive ? 0xff6600 : 0x996633;
-      this.playerTrainGfx.fillStyle(segColor, 0.8);
-      for (const seg of this.playerTrainSegments) {
-        this.playerTrainGfx.fillCircle(seg.x, seg.y, 12);
+      const g = this.playerTrainGfx;
+      g.clear();
+      for (let i = this.playerTrainSegments.length - 1; i >= 0; i--) {
+        const seg = this.playerTrainSegments[i];
+        OilFx.drawTrainCar(g, this.pcol, seg.x, seg.y, seg.angle, this.worldT, false, this.trainQPlusActive, i);
       }
+      const headAngle = Math.atan2(this.playerTrainDirY, this.playerTrainDirX);
+      OilFx.drawTrainCar(g, this.pcol, player.x, player.y, headAngle, this.worldT, true, this.trainQPlusActive, 0);
     }
 
     // Drop oil puddle every 2s (Q+ halves interval)
@@ -1260,17 +1821,24 @@ export class OilKit {
     if (this.playerTrainHitAccum >= 500) {
       this.playerTrainHitAccum = 0;
       const headDmg = Math.round(8 * this.trainDamageMult);
-      const res = this.arena.damagePlayerTargetsCounted(player.x, player.y, 28, headDmg, 0xff8800);
-      if (res.hits > 0) this.arena.showFloatingText(player.x, player.y - 30, `${headDmg}`, '#ff8800');
+      const res = this.arena.damagePlayerTargetsCounted(player.x, player.y, 28, headDmg, OIL.gold);
+      if (res.hits > 0) {
+        // Something went under the cowcatcher: sparks off the rails and a shove of soot.
+        const ang = Math.atan2(this.playerTrainDirY, this.playerTrainDirX);
+        this.pfx.sparks(player.x, player.y, 8, { angle: ang + Math.PI, spread: 1.1, speed: 220, life: 320 });
+        this.pfx.smoke(player.x, player.y, 1, 12, 4);
+        this.arena.showFloatingText(player.x, player.y - 30, `${headDmg}`, '#ff8800');
+      }
       if (res.kills > 0) this.arena.recordMasteryStat('trainKills', res.kills);
     }
     // Each segment has its own 500ms cooldown
     const segDmg = Math.round(3 * this.trainDamageMult);
     for (const seg of this.playerTrainSegments) {
       if (time - seg.lastHitAt < 500) continue;
-      const res = this.arena.damagePlayerTargetsCounted(seg.x, seg.y, 20, segDmg, 0xff8800);
+      const res = this.arena.damagePlayerTargetsCounted(seg.x, seg.y, 20, segDmg, OIL.gold);
       if (res.hits > 0) {
         seg.lastHitAt = time;
+        this.pfx.sparks(seg.x, seg.y, 4, { angle: seg.angle + Math.PI, spread: 1, speed: 150, life: 260 });
         if (res.kills > 0) this.arena.recordMasteryStat('trainKills', res.kills);
       }
     }
@@ -1278,12 +1846,18 @@ export class OilKit {
     // Coal pickup check
     for (const coal of this.coalPickups) {
       if (coal.collected) continue;
+      coal.gfx.clear();
+      OilFx.drawCoal(coal.gfx, this.pcol, this.worldT, coal.seed);
       if (Phaser.Math.Distance.Between(player.x, player.y, coal.x, coal.y) <= 20) {
         coal.collected = true;
         coal.gfx.destroy();
         this.playerTrainCollectedCoal++;
         this.trainSpeedBonus = Math.min(2.0, this.trainSpeedBonus + 0.05);
         this.trainDamageMult = Math.min(3.0, this.trainDamageMult + 0.1);
+        // Shovelled into the firebox: the lump breaks up and the stack answers.
+        this.pfx.sparks(coal.x, coal.y, 9, { speed: 130, life: 380, depth: 9 });
+        this.pfx.ring(coal.x, coal.y, 3, 26, OIL.gold, 300, 3, 4);
+        this.pfx.smoke(player.x, player.y - 6, 2, 10, 4);
         this.arena.showFloatingText(coal.x, coal.y - 20, '🔥 Coal!', '#ffa500');
 
         // Q+ upgrade: all 5 collected
@@ -1292,6 +1866,11 @@ export class OilKit {
           this.playerTrainEndsAt += 5000;
           this.trainDamageMult *= 2;
           this.arena.recordMasteryStat('coalOverloads', 1);
+          // Overload: the boiler lets go — a pillar out of the stack, a blast ring, a shake.
+          this.pfx.oilPillar(player.x, player.y, 26, 110);
+          this.pfx.ring(player.x, player.y, 10, 130, OIL.flame, 520, 6, 8);
+          this.pfx.smoke(player.x, player.y, 5, 26, 4);
+          this.arena.scene.cameras.main.shake(280, 0.008);
           this.arena.showFloatingText(player.x, player.y - 50, 'Train Overload!', '#ff4400');
         }
       }
@@ -1310,11 +1889,20 @@ export class OilKit {
     this.playerTrainActive = false;
     if (this.playerTrainGfx) { this.playerTrainGfx.destroy(); this.playerTrainGfx = null; }
     this.clearCoal();
+    // Steam dumped off the frame as the rake breaks up back down the line.
+    for (let i = 0; i < this.playerTrainSegments.length; i++) {
+      const seg = this.playerTrainSegments[i];
+      this.arena.scene.time.delayedCall(i * 55, () => {
+        this.pfx.smoke(seg.x, seg.y, 2, 12, 4);
+        this.pfx.sparks(seg.x, seg.y, 4, { speed: 110, life: 320, depth: 5 });
+      });
+    }
     this.playerTrainSegments = [];
     this.playerTrainPosHistory = [];
-    for (const d of this.playerDrones) d.sprite.destroy();
+    for (const d of this.playerDrones) d.gfx.destroy();
     this.playerDrones = [];
     const player = this.arena.player;
+    this.pfx.smoke(player.x, player.y, 4, 20, 4);
     player.startCooldown('train-morph');
     this.arena.showFloatingText(player.x, player.y - 40, 'Train Over', '#ff8800');
   }
@@ -1409,23 +1997,32 @@ export class OilKit {
       return;
     }
 
+    // Three drones fly in and are cannibalised into the mount, so the cost is visible.
     for (let i = 0; i < TURRET_DRONE_COST; i++) {
       const drone = this.playerDrones.pop();
-      if (drone) drone.sprite.destroy();
+      if (!drone) continue;
+      const from = { x: drone.gfx.x, y: drone.gfx.y };
+      drone.gfx.destroy();
+      this.pfx.beam(from.x, from.y, tx, ty, { width: 2, color: TURRET_COLOR, duration: 260, impact: 8, depth: 9 });
+      this.pfx.shrapnel(from.x, from.y, 3, 22, 8);
     }
     this.turretLastCastAt = time;
 
     this.turret = {
       // Depth 4 sits under the fighters (depth 5) so walking over the turret never hides you.
       gfx: this.arena.scene.add.graphics().setDepth(4),
-      laserGfx: this.arena.scene.add.graphics().setDepth(9),
       x: tx, y: ty,
       hp: TURRET_MAX_HP,
       expiresAt: time + TURRET_DURATION_MS,
       mounted: false,
       fireAccum: TURRET_FIRE_INTERVAL_MS,
     };
-    this.arena.showFloatingText(tx, ty - 52, '🔫 Turret!', '#66ddff');
+    this.turretHeat = 0;
+    this.turretRecoil = 0;
+    this.pfx.ring(tx, ty, 6, 56, OIL.chrome, 380, 5, 5);
+    this.pfx.sparks(tx, ty, 12, { speed: 190, life: 380, depth: 9 });
+    this.pfx.smoke(tx, ty, 2, 14, 3);
+    this.arena.showFloatingText(tx, ty - 52, '🔫 Turret!', '#2fd6c0');
     // Online: the placement (not the caster-local mount toggles) is the replayed event.
     this.arena.broadcastMasteryCast('turret');
   }
@@ -1436,14 +2033,15 @@ export class OilKit {
     const now = this.arena.scene.time.now;
     this.npcTurret = {
       gfx: this.arena.scene.add.graphics().setDepth(4),
-      laserGfx: this.arena.scene.add.graphics().setDepth(9),
       x: tx, y: ty,
       hp: TURRET_MAX_HP,
       expiresAt: now + TURRET_DURATION_MS,
       mounted: true,
       fireAccum: TURRET_FIRE_INTERVAL_MS,
     };
-    this.arena.showFloatingText(tx, ty - 52, '🔫 Turret!', '#66ddff');
+    this.nfx.ring(tx, ty, 6, 56, OIL.chrome, 380, 5, 5);
+    this.nfx.sparks(tx, ty, 12, { speed: 190, life: 380, depth: 9 });
+    this.arena.showFloatingText(tx, ty - 52, '🔫 Turret!', '#2fd6c0');
   }
 
   /** Online: opponent is oil — run their replayed turret (auto-fire at us; our shots destroy it). */
@@ -1460,6 +2058,7 @@ export class OilKit {
       proj.setActive(false).setVisible(false);
       (proj.body as Phaser.Physics.Arcade.Body).stop();
       t.hp -= proj.damage;
+      this.pfx.sparks(proj.x, proj.y, 6, { speed: 150, life: 300, depth: 9 });
       this.arena.spawnHitFlash(t.x, t.y, TURRET_COLOR);
       this.arena.showFloatingText(t.x, t.y - 52, `-${proj.damage}`, '#ff6666');
       if (t.hp <= 0) { this.clearNpcTurret('Turret Destroyed!'); return; }
@@ -1468,21 +2067,28 @@ export class OilKit {
     // Auto-fire at the local player (its victim). Caster mount/fire state isn't streamed.
     const player = this.arena.player;
     t.fireAccum += delta;
+    let fired = false;
     while (t.fireAccum >= TURRET_FIRE_INTERVAL_MS) {
       t.fireAccum -= TURRET_FIRE_INTERVAL_MS;
-      t.laserGfx.setAlpha(1);
-      t.laserGfx.lineStyle(2, TURRET_COLOR, 0.85);
-      t.laserGfx.lineBetween(t.x, t.y, player.x, player.y);
+      fired = true;
+      this.nfx.beam(t.x, t.y, player.x, player.y, {
+        width: 2.4, color: TURRET_COLOR, duration: 150, impact: 8, depth: 9,
+      });
       if (player.active && player.hp > 0) {
         player.takeDamage(TURRET_LASER_DAMAGE);
         this.arena.spawnHitFlash(player.x, player.y, TURRET_COLOR);
       }
     }
-    this.drawTurret(t, player.x, player.y);
-    this.arena.scene.tweens.add({
-      targets: t.laserGfx, alpha: 0, duration: 60,
-      onComplete: () => { if (this.npcTurret === t) { t.laserGfx.setAlpha(1); t.laserGfx.clear(); } },
-    });
+    if (fired) {
+      this.turretHeat = Math.min(1, this.turretHeat + 0.14);
+      this.turretRecoil = 1;
+    }
+    t.gfx.clear();
+    OilFx.drawTurret(
+      t.gfx, this.ncol, t.x, t.y, TURRET_RADIUS,
+      Math.atan2(player.y - t.y, player.x - t.x), t.hp / TURRET_MAX_HP,
+      t.mounted, this.turretHeat, this.turretRecoil,
+    );
   }
 
   private clearNpcTurret(label?: string): void {
@@ -1490,11 +2096,9 @@ export class OilKit {
     if (!t) return;
     if (label) {
       this.arena.showFloatingText(t.x, t.y - 52, label, '#ff6666');
-      const boom = this.arena.scene.add.circle(t.x, t.y, 10, TURRET_COLOR, 0.7).setDepth(9);
-      this.arena.scene.tweens.add({ targets: boom, scaleX: 4, scaleY: 4, alpha: 0, duration: 320, onComplete: () => boom.destroy() });
+      this.nfx.explosion(t.x, t.y, 56, { debris: 9, smoke: 3, slick: false });
     }
     t.gfx.destroy();
-    t.laserGfx.destroy();
     this.npcTurret = null;
   }
 
@@ -1506,7 +2110,8 @@ export class OilKit {
     if (t.mounted) {
       t.mounted = false;
       this.setMountAbsorber(false);
-      this.arena.showFloatingText(player.x, player.y - 40, 'Dismount', '#66ddff');
+      this.pfx.sparks(t.x, t.y, 6, { speed: 120, life: 300, depth: 9 });
+      this.arena.showFloatingText(player.x, player.y - 40, 'Dismount', '#2fd6c0');
       return;
     }
 
@@ -1517,7 +2122,9 @@ export class OilKit {
     t.mounted = true;
     t.fireAccum = TURRET_FIRE_INTERVAL_MS;
     this.setMountAbsorber(true);
-    this.arena.showFloatingText(t.x, t.y - 52, 'Mounted!', '#66ddff');
+    this.pfx.ring(t.x, t.y, 8, 46, TURRET_COLOR, 320, 4, 5);
+    this.pfx.sparks(t.x, t.y, 8, { speed: 150, life: 320, depth: 9 });
+    this.arena.showFloatingText(t.x, t.y - 52, 'Mounted!', '#2fd6c0');
   }
 
   /**
@@ -1537,6 +2144,7 @@ export class OilKit {
       const t = this.turret;
       if (!t || !t.mounted) return false;
       t.hp -= amount;
+      this.pfx.sparks(t.x, t.y, 6, { speed: 150, life: 300, depth: 9 });
       this.arena.spawnHitFlash(t.x, t.y, TURRET_COLOR);
       this.arena.showFloatingText(t.x, t.y - 52, `-${amount}`, '#ff6666');
       if (t.hp <= 0) this.destroyTurret('Turret Destroyed!', '#ff6666');
@@ -1547,9 +2155,17 @@ export class OilKit {
   private fireTurretLaser(mx: number, my: number): void {
     const t = this.turret;
     if (!t) return;
-    t.laserGfx.setAlpha(1);
-    t.laserGfx.lineStyle(2, TURRET_COLOR, 0.85);
-    t.laserGfx.lineBetween(t.x, t.y, mx, my);
+    // Fired from the muzzles, not the centre of the plate, so the recoil kick lines up.
+    const ang = Math.atan2(my - t.y, mx - t.x);
+    const px = -Math.sin(ang), py = Math.cos(ang);
+    const side = this.turretHeat > 0.5 ? 1 : -1;
+    const mzx = t.x + Math.cos(ang) * (TURRET_RADIUS + 15) + px * side * 5;
+    const mzy = t.y + Math.sin(ang) * (TURRET_RADIUS + 15) + py * side * 5;
+    this.pfx.beam(mzx, mzy, mx, my, {
+      width: 2.4, color: TURRET_COLOR, duration: 150, impact: 8, depth: 9,
+    });
+    this.turretHeat = Math.min(1, this.turretHeat + 0.14);
+    this.turretRecoil = 1;
     this.arena.damagePlayerTargets(mx, my, TURRET_LASER_RADIUS, TURRET_LASER_DAMAGE, TURRET_COLOR);
   }
 
@@ -1570,6 +2186,7 @@ export class OilKit {
       proj.setActive(false).setVisible(false);
       (proj.body as Phaser.Physics.Arcade.Body).stop();
       t.hp -= proj.damage;
+      this.pfx.sparks(proj.x, proj.y, 6, { speed: 150, life: 300, depth: 9 });
       this.arena.spawnHitFlash(t.x, t.y, TURRET_COLOR);
       this.arena.showFloatingText(t.x, t.y - 52, `-${proj.damage}`, '#ff6666');
       if (t.hp <= 0) {
@@ -1585,52 +2202,20 @@ export class OilKit {
       player.setPosition(t.x, t.y);
     }
 
-    this.drawTurret(t, mouseX, mouseY);
-    // Laser strokes are drawn as they fire, then wiped the frame after.
-    this.arena.scene.tweens.add({
-      targets: t.laserGfx, alpha: 0, duration: 60,
-      onComplete: () => { if (this.turret === t) { t.laserGfx.setAlpha(1); t.laserGfx.clear(); } },
-    });
-  }
-
-  private drawTurret(t: NonNullable<OilKit['turret']>, mouseX: number, mouseY: number): void {
     t.gfx.clear();
-    const bodyColor = t.mounted ? TURRET_COLOR : 0x336677;
-
-    // Base plate
-    t.gfx.fillStyle(0x1a1a1a, 0.95);
-    t.gfx.fillCircle(t.x, t.y, TURRET_RADIUS);
-    t.gfx.lineStyle(3, bodyColor, 0.95);
-    t.gfx.strokeCircle(t.x, t.y, TURRET_RADIUS);
-
-    // Barrel, tracking the cursor
-    const angle = Math.atan2(mouseY - t.y, mouseX - t.x);
-    t.gfx.lineStyle(7, bodyColor, 0.95);
-    t.gfx.lineBetween(
-      t.x, t.y,
-      t.x + Math.cos(angle) * (TURRET_RADIUS + 16),
-      t.y + Math.sin(angle) * (TURRET_RADIUS + 16),
+    OilFx.drawTurret(
+      t.gfx, this.pcol, t.x, t.y, TURRET_RADIUS,
+      Math.atan2(mouseY - t.y, mouseX - t.x), t.hp / TURRET_MAX_HP,
+      t.mounted, this.turretHeat, this.turretRecoil,
     );
-
-    // Health bar
-    const barW = TURRET_RADIUS * 2;
-    const barY = t.y - TURRET_RADIUS - 10;
-    const ratio = Math.max(0, t.hp / TURRET_MAX_HP);
-    t.gfx.fillStyle(0x000000, 0.7);
-    t.gfx.fillRect(t.x - barW / 2, barY, barW, 5);
-    t.gfx.fillStyle(ratio > 0.35 ? 0x44dd66 : 0xdd4444, 0.95);
-    t.gfx.fillRect(t.x - barW / 2, barY, barW * ratio, 5);
   }
 
   private destroyTurret(label: string, color: string): void {
     const t = this.turret;
     if (!t) return;
     this.arena.showFloatingText(t.x, t.y - 52, label, color);
-    const boom = this.arena.scene.add.circle(t.x, t.y, 10, TURRET_COLOR, 0.7).setDepth(9);
-    this.arena.scene.tweens.add({
-      targets: boom, scaleX: 4, scaleY: 4, alpha: 0, duration: 320,
-      onComplete: () => boom.destroy(),
-    });
+    this.pfx.explosion(t.x, t.y, 56, { debris: 9, smoke: 3, slick: false });
+    this.arena.scene.cameras.main.shake(130, 0.004);
     this.clearTurret();
   }
 
@@ -1639,7 +2224,6 @@ export class OilKit {
     if (!this.turret) return;
     if (this.turret.mounted) this.setMountAbsorber(false);
     this.turret.gfx.destroy();
-    this.turret.laserGfx.destroy();
     this.turret = null;
   }
 

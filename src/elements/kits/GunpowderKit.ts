@@ -2,6 +2,10 @@ import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
 import { Projectile } from '../../combat/Projectile';
+import {
+  ArmGesture, GUNPOWDER, GunpowderAura, GunpowderAuraStyle, GunpowderAvatar, GunpowderColorFn,
+  GunpowderFx, musket, smokePuff,
+} from './GunpowderVisuals';
 
 // ── Type definitions ──────────────────────────────────────────────────────────
 
@@ -50,13 +54,42 @@ const BLUNDERBLAST_BLAST_SPREAD = Math.PI / 6; // 30° fan when the hoard is cou
 const BLUNDERBLAST_COLOR = 0xcfd4da; // silver
 const BLUNDERBLAST_MAX_CAPTURE = 30;
 
-// ── Gunpowder Mastery — Quickdraw (passive) ───────────────────────────────────
-// Every QUICKDRAW_DAMAGE_STEP damage taken (cumulative, carried between hits) snaps
-// a holdout laser at the closest enemy.
-const QUICKDRAW_DAMAGE_STEP = 30;
-const QUICKDRAW_DAMAGE = 10;
-const QUICKDRAW_RANGE = 900;
-const QUICKDRAW_COLOR = 0xffe08a;
+// ── Gunpowder Mastery — Fireworks (passive) ───────────────────────────────────
+// Scraping the arena wall plants a firework on it. A second later it screams
+// straight across the arena and goes off on whatever it runs into.
+const FIREWORK_PLANT_CD_MS = 500;
+const FIREWORK_FUSE_MS = 1000;
+/** No two fireworks may share a patch of wall — a spot this close to one is refused. */
+const FIREWORK_MIN_GAP = 48;
+/** How close the fighter's body edge has to get to a wall to count as touching it. */
+const FIREWORK_WALL_PAD = 6;
+const FIREWORK_SPEED = 780;
+const FIREWORK_HIT_RADIUS = 14;
+const FIREWORK_DAMAGE = 10;
+const FIREWORK_AOE_DAMAGE = 10;
+const FIREWORK_AOE_RADIUS = 74;
+const FIREWORK_SHELL_COLORS = [
+  GUNPOWDER.ember, GUNPOWDER.gold, GUNPOWDER.lilac, GUNPOWDER.orchid, GUNPOWDER.blaze, GUNPOWDER.glow,
+];
+
+/** Heading of a unit vector — spelled out because it reads better than the inline atan2. */
+function angleOf(nx: number, ny: number): number { return Math.atan2(ny, nx); }
+
+/** Every ability drives an arm gesture, on the NPC rig as well as the player's. */
+const CAST_GESTURES: Record<string, ArmGesture> = {
+  'gunpowder-musket-shot': 'punch',
+  'gunpowder-explosive-retreat': 'dash',
+  'gunpowder-fire-at-will': 'sweep',
+  'gunpowder-arsenal-expansion': 'flex',
+  'gunpowder-blunderblast': 'raise',
+};
+
+
+// ── Q+ Vortex Cannon — the coughed-up hoard comes back out alight ─────────────
+const BLUNDER_FIRE_TINT = 0xff7733;
+const BLUNDER_FIRE_DOT_MS = 3000;
+const BLUNDER_FIRE_AOE_DAMAGE = 5;
+const BLUNDER_FIRE_AOE_RADIUS = 55;
 
 // ── Gunpowder Mastery — Overload (bindable) ───────────────────────────────────
 const OVERLOAD_COOLDOWN_MS = 16000;
@@ -68,45 +101,28 @@ const OVERLOAD_BURN_RADIUS = 30;
 const OVERLOAD_BURN_INTERVAL_MS = 1000;
 const OVERLOAD_LASER_COLOR = 0xff3322;
 
-// Musket heat colors — dropped muskets fade hot red -> orange -> normal as they cool.
-const MUSKET_HOT_FILL = 0xdd2222;
-const MUSKET_WARM_FILL = 0xff8800;
-const MUSKET_COOL_FILL = 0x5c4326;
-const MUSKET_HOT_STROKE = 0x881111;
-const MUSKET_WARM_STROKE = 0xcc5500;
-const MUSKET_COOL_STROKE = 0x8b6b3d;
-
-function lerpColor(from: number, to: number, t: number): number {
-  const r1 = (from >> 16) & 0xff, g1 = (from >> 8) & 0xff, b1 = from & 0xff;
-  const r2 = (to >> 16) & 0xff, g2 = (to >> 8) & 0xff, b2 = to & 0xff;
-  const r = Math.round(r1 + (r2 - r1) * t);
-  const g = Math.round(g1 + (g2 - g1) * t);
-  const b = Math.round(b1 + (b2 - b1) * t);
-  return (r << 16) | (g << 8) | b;
-}
-
-function musketColorAt(progress: number, hot: number, warm: number, cool: number): number {
-  const p = Phaser.Math.Clamp(progress, 0, 1);
-  return p < 0.5 ? lerpColor(hot, warm, p / 0.5) : lerpColor(warm, cool, (p - 0.5) / 0.5);
-}
+// Every world object below is plain data painted into the kit's own Graphics layers — nothing
+// here owns a sprite, so a barrel can glow, a grenade's fuse can burn down and a rocket can
+// stream exhaust instead of sitting there as a coloured disc.
 
 interface DroppedMusket {
-  gfx: Phaser.GameObjects.Rectangle;
   x: number;
   y: number;
   droppedAt: number;
   hotUntil: number;
   cooled: boolean;
   owner: 'player' | 'npc';
+  /** Barrel heading — where it landed pointing, or where it's currently aimed. */
+  angle: number;
+  /** Recoil offset along the barrel, decaying back to zero after a shot. */
+  kick: number;
   // Click+ Attached Bayonet fields — only set when this musket was thrown, not fired.
   isBayonet?: boolean;
   flying?: boolean;
   vx?: number;
   vy?: number;
-  angle?: number;
   targetX?: number;
   targetY?: number;
-  bayonetGfx?: Phaser.GameObjects.Triangle;
   lastGroundHitAt?: number;
   // Overload (mastery) fields.
   /** Timestamp of the volley this musket is currently lining up for, 0 when it isn't aiming. */
@@ -114,6 +130,27 @@ interface DroppedMusket {
   /** While `time` is under this, the musket is scalding and burns its own owner on contact. */
   overloadBurnUntil?: number;
   lastOwnerBurnAt?: number;
+}
+
+type WallSide = 'left' | 'right' | 'top' | 'bottom';
+
+/** One Fireworks (mastery passive) shell — first stuck to a wall, then flying across. */
+interface Firework {
+  owner: 'player' | 'npc';
+  /** The spot on the wall it was planted at. */
+  x: number;
+  y: number;
+  side: WallSide;
+  /** Unit vector straight across the arena, away from its own wall. */
+  dx: number;
+  dy: number;
+  plantedAt: number;
+  launchAt: number;
+  launched: boolean;
+  /** Live position — equal to (x, y) until it lifts off. */
+  px: number;
+  py: number;
+  color: number;
 }
 
 /** One Overload cast: every grounded musket of that owner aims, then fires together. */
@@ -124,17 +161,16 @@ interface OverloadVolley {
 }
 
 interface Grenade {
-  sprite: Phaser.GameObjects.Arc;
   x: number;
   y: number;
   vx: number;
   vy: number;
+  thrownAt: number;
   explodeAt: number;
   owner: 'player' | 'npc';
 }
 
 interface Rocket {
-  sprite: Phaser.GameObjects.Arc;
   x: number;
   y: number;
   vx: number;
@@ -146,17 +182,18 @@ interface Rocket {
 }
 
 interface FlameCloud {
-  sprite: Phaser.GameObjects.Arc;
   x: number;
   y: number;
   vx: number;
   vy: number;
+  spawnedAt: number;
   expiresAt: number;
   owner: 'player' | 'npc';
+  /** Fixed scatter seed, so a cloud keeps its shape instead of boiling frame to frame. */
+  seed: number;
 }
 
 interface RayBullet {
-  sprite: Phaser.GameObjects.Arc;
   x: number;
   y: number;
   vx: number;
@@ -203,6 +240,8 @@ interface ArsenalHudSlot {
 export interface GunpowderArenaApi {
   readonly player: Fighter;
   readonly npc: Fighter;
+  /** Everything the player is allowed to hurt — husks in Invasion, empty in a plain 1v1. */
+  readonly enemies: Fighter[];
   readonly scene: Phaser.Scene;
   readonly projectiles: Phaser.Physics.Arcade.Group;
   readonly eKey: Phaser.Input.Keyboard.Key;
@@ -223,7 +262,11 @@ export interface GunpowderArenaApi {
   spawnDamageNumber(x: number, y: number, amount: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   spawnFloatingText(x: number, y: number, text: string, color: string): void;
-  dealAoeDamageFromOwner(x: number, y: number, radius: number, damage: number, owner: 'player' | 'npc'): void;
+  /** `except` is spared the blast — used by Fireworks, whose direct victim doesn't eat the burst too. */
+  dealAoeDamageFromOwner(
+    x: number, y: number, radius: number, damage: number,
+    owner: 'player' | 'npc', except?: Fighter,
+  ): void;
   buildPlayerContext(x: number, y: number): CastContext;
   buildNpcContext(x: number, y: number): CastContext;
   /** True only when the player is gunpowder AND Gunpowder Mastery is switched on. */
@@ -238,11 +281,35 @@ export interface GunpowderArenaApi {
   /** Ratchet a "best single instance" mastery stat. */
   recordMasteryBestStat(key: string, value: number): void;
   getMasteryStat(key: string): number;
+  readonly npcCastId: string | null;
+  /** `(owner, base) => displayed` — the owner's colour cosmetic, or the identity. */
+  gunpowderColor(owner: 'player' | 'npc', base: number): number;
 }
 
 // ── GunpowderKit (Gunpowder) ────────────────────────────────────────────────────
 
 export class GunpowderKit {
+  // ── Visuals ────────────────────────────────────────────────────────────
+  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  private readonly pcol: GunpowderColorFn;
+  private readonly ncol: GunpowderColorFn;
+  private readonly pfx: GunpowderFx;
+  private readonly nfx: GunpowderFx;
+  /** The powder-monkey rig (bomb hands, eyes, bandolier, carried musket) for each side. */
+  private playerAvatar: GunpowderAvatar | null = null;
+  private npcAvatar: GunpowderAvatar | null = null;
+  /** Stance tells, per side where both can run one. */
+  private auras: Partial<Record<`${'player' | 'npc'}:${GunpowderAuraStyle}`, GunpowderAura>> = {};
+  /**
+   * Two layers, because these objects are not all in the same place. Dropped muskets, scorch and
+   * planted fireworks lie on the floor and pass *under* the fighters; grenades, rockets, flame
+   * and everything in flight goes over.
+   */
+  private groundGfx: Phaser.GameObjects.Graphics | null = null;
+  private airGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Shared animation clock for every per-frame painter in this kit. */
+  private vizT = 0;
+
   // ── Muskets ───────────────────────────────────────────────────────────────
   private playerAmmo = MUSKET_MAX_AMMO;
   private npcAmmo = MUSKET_MAX_AMMO;
@@ -275,8 +342,9 @@ export class GunpowderKit {
   // ── BlunderBlast (Q) ──────────────────────────────────────────────────────
   private playerVacuumUntil = 0;
   private npcVacuumUntil = 0;
-  private playerVacuumCone: Phaser.GameObjects.Graphics | null = null;
-  private npcVacuumCone: Phaser.GameObjects.Graphics | null = null;
+  /** Live cone pose per side while the vacuum is open, or null. Painted in paintWorld. */
+  private vacuumView: Record<'player' | 'npc', { dir: number; radius: number; half: number } | null> =
+    { player: null, npc: null };
   private playerCaptured: CapturedShot[] = [];
   private npcCaptured: CapturedShot[] = [];
   private lastMouseX = 0;
@@ -294,20 +362,82 @@ export class GunpowderKit {
   private playerMinigunFiringUntil = 0;
   private npcMinigunFiringUntil = 0;
 
-  // ── Mastery: Quickdraw (passive) ──────────────────────────────────────────
-  // Damage taken is read as an HP delta each frame, so every source counts — hits,
-  // burns, self-inflicted blasts — without having to hook each one.
-  private playerLastHp = -1;
-  private npcLastHp = -1;
-  private playerQuickdrawAccum = 0;
-  private npcQuickdrawAccum = 0;
+  // ── Mastery: Fireworks (passive) ──────────────────────────────────────────
+  private fireworks: Firework[] = [];
+  private playerLastPlantAt = -FIREWORK_PLANT_CD_MS;
+  private npcLastPlantAt = -FIREWORK_PLANT_CD_MS;
+
+  // ── Q+ Vortex Cannon: the lit bullets currently in the air ────────────────
+  private blunderFireShots: Projectile[] = [];
 
   // ── Mastery: Overload (bindable) ──────────────────────────────────────────
   private overloadLastCastAt = -OVERLOAD_COOLDOWN_MS;
   private overloadVolleys: OverloadVolley[] = [];
-  private overloadGfx: Phaser.GameObjects.Graphics | null = null;
 
-  constructor(private arena: GunpowderArenaApi) {}
+  constructor(private arena: GunpowderArenaApi) {
+    // Built here, not as field initialisers, so they see the injected arena.
+    this.pcol = (base) => arena.gunpowderColor('player', base);
+    this.ncol = (base) => arena.gunpowderColor('npc', base);
+    this.pfx = new GunpowderFx(arena.scene, this.pcol);
+    this.nfx = new GunpowderFx(arena.scene, this.ncol);
+  }
+
+  // ── Visual helpers ─────────────────────────────────────────────────────
+
+  /** Effect painter for a side. */
+  private fx(owner: 'player' | 'npc'): GunpowderFx { return owner === 'player' ? this.pfx : this.nfx; }
+  /** Colour mapper for a side. */
+  private col(owner: 'player' | 'npc'): GunpowderColorFn { return owner === 'player' ? this.pcol : this.ncol; }
+  /** The rig for a side, if that side is playing Gunpowder. */
+  private avatar(owner: 'player' | 'npc'): GunpowderAvatar | null {
+    return owner === 'player' ? this.playerAvatar : this.npcAvatar;
+  }
+  private fighter(owner: 'player' | 'npc'): Fighter {
+    return owner === 'player' ? this.arena.player : this.arena.npc;
+  }
+
+  /** The floor layer, under the fighters. Rebuilt lazily after a reset. */
+  private ground(): Phaser.GameObjects.Graphics {
+    if (!this.groundGfx || !this.groundGfx.active) {
+      this.groundGfx = this.arena.scene.add.graphics().setDepth(3);
+    }
+    return this.groundGfx;
+  }
+
+  /** The in-flight layer, over the fighters. Rebuilt lazily after a reset. */
+  private air(): Phaser.GameObjects.Graphics {
+    if (!this.airGfx || !this.airGfx.active) {
+      this.airGfx = this.arena.scene.add.graphics().setDepth(10);
+    }
+    return this.airGfx;
+  }
+
+  /** Build/tear down one stance aura from a single "is it up?" flag. */
+  private syncAura(
+    owner: 'player' | 'npc', style: GunpowderAuraStyle, on: boolean,
+    delta: number, intensity: number, angle: number, count = 0, radius = 28,
+  ): void {
+    const key = `${owner}:${style}` as const;
+    let aura = this.auras[key];
+    const f = this.fighter(owner);
+    if (!on || !f.active) {
+      if (aura) { aura.destroy(); delete this.auras[key]; }
+      return;
+    }
+    if (!aura) {
+      aura = new GunpowderAura(this.arena.scene, this.col(owner), style, radius, style === 'heat' ? 3 : 4);
+      this.auras[key] = aura;
+    }
+    aura.setIntensity(intensity);
+    aura.setAngle(angle);
+    aura.setCount(count);
+    aura.update(delta, f.x, f.y, f.forceInvisible ? 0 : f.alpha);
+  }
+
+  private destroyAuras(): void {
+    for (const a of Object.values(this.auras)) a?.destroy();
+    this.auras = {};
+  }
 
   // ── Public accessors ──────────────────────────────────────────────────────
 
@@ -318,24 +448,24 @@ export class GunpowderKit {
   // ── Reset ─────────────────────────────────────────────────────────────────
 
   reset(): void {
-    for (const m of this.muskets) { m.gfx.destroy(); m.bayonetGfx?.destroy(); }
+    // Visuals — every GameObject dies with the old scene run, so rebuild lazily in update().
+    if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
+    if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
+    this.destroyAuras();
+    if (this.groundGfx) { this.groundGfx.destroy(); this.groundGfx = null; }
+    if (this.airGfx) { this.airGfx.destroy(); this.airGfx = null; }
+    this.vizT = 0;
+
     this.muskets = [];
     this.playerAmmo = MUSKET_MAX_AMMO;
     this.npcAmmo = MUSKET_MAX_AMMO;
 
-    for (const g of this.grenades) g.sprite.destroy();
     this.grenades = [];
-    for (const r of this.rockets) r.sprite.destroy();
     this.rockets = [];
-    for (const c of this.flameClouds) c.sprite.destroy();
     this.flameClouds = [];
-    for (const b of this.rayBullets) b.sprite.destroy();
     this.rayBullets = [];
 
-    this.playerVacuumCone?.destroy();
-    this.npcVacuumCone?.destroy();
-    this.playerVacuumCone = null;
-    this.npcVacuumCone = null;
+    this.vacuumView = { player: null, npc: null };
     this.playerVacuumUntil = 0;
     this.npcVacuumUntil = 0;
     this.playerCaptured = [];
@@ -354,17 +484,16 @@ export class GunpowderKit {
     this.npcMinigunFiringUntil = 0;
     this.wasRightDown = false;
 
-    this.playerLastHp = -1;
-    this.npcLastHp = -1;
-    this.playerQuickdrawAccum = 0;
-    this.npcQuickdrawAccum = 0;
+    this.fireworks = [];
+    this.playerLastPlantAt = -FIREWORK_PLANT_CD_MS;
+    this.npcLastPlantAt = -FIREWORK_PLANT_CD_MS;
+
+    this.blunderFireShots = [];
 
     // Readiness is measured against the absolute clock, so a 0 here would lock the
     // ability out for the first OVERLOAD_COOLDOWN_MS of the match.
     this.overloadLastCastAt = -OVERLOAD_COOLDOWN_MS;
     this.overloadVolleys = [];
-    this.overloadGfx?.destroy();
-    this.overloadGfx = null;
   }
 
   // ── Input ─────────────────────────────────────────────────────────────────
@@ -430,6 +559,8 @@ export class GunpowderKit {
   // ── Per-frame update ──────────────────────────────────────────────────────
 
   update(time: number, delta: number): void {
+    this.vizT += delta / 1000;
+    this.mirrorNpcCast();
     this.updateMuskets(time, delta);
     this.updateGrenades(time, delta);
     this.updateRockets(time, delta);
@@ -439,7 +570,161 @@ export class GunpowderKit {
     this.updateStuns(time);
     this.updateBuffs(time);
     this.updateOverload(time);
-    this.updateQuickdraw(time);
+    this.updateFireworks(time, delta);
+    this.updateBlunderFire(time);
+    this.paintWorld(time);
+    this.updateAvatars(time, delta);
+  }
+
+  /** Mirror the player's gestures on the NPC rig, so a gunpowder opponent visibly casts. */
+  private mirrorNpcCast(): void {
+    const id = this.arena.npcCastId;
+    if (!id) return;
+    const gesture = CAST_GESTURES[id];
+    if (!gesture) return;
+    const { npc, player } = this.arena;
+    this.npcAvatar?.play(gesture, Math.atan2(player.y - npc.y, player.x - npc.x));
+  }
+
+  /**
+   * Every per-frame painter in one pass. The two layers are cleared and redrawn from live state,
+   * so a barrel cools, a fuse burns down and a rocket streams exhaust rather than sitting there.
+   */
+  private paintWorld(time: number): void {
+    const t = this.vizT;
+
+    // ── Floor: grounded muskets, planted fireworks, overload heat ──
+    const grounded = this.muskets.filter((m) => !m.flying);
+    const hasGround = grounded.length > 0 || this.fireworks.some((f) => !f.launched);
+    if (hasGround || this.groundGfx) {
+      const g = this.ground();
+      g.clear();
+      for (const m of grounded) {
+        // Overloaded barrels sit there radiating, so their danger zone is never a surprise.
+        if (m.overloadBurnUntil && time < m.overloadBurnUntil) {
+          const pulse = 0.5 + 0.5 * Math.sin(t * 6 + m.droppedAt);
+          g.fillStyle(this.col(m.owner)(GUNPOWDER.ember), 0.05 + 0.07 * pulse);
+          g.fillCircle(m.x, m.y, OVERLOAD_BURN_RADIUS);
+          smokePuff(g, this.col(m.owner), m.x + Math.sin(t * 2 + m.droppedAt) * 6, m.y - 14 - (t % 1) * 10,
+            5 + (t % 1) * 6, m.droppedAt % 6, GUNPOWDER.smoke, 0.16 * (1 - (t % 1)));
+        }
+        const heat = m.cooled ? 0
+          : Phaser.Math.Clamp(1 - (time - m.droppedAt) / Math.max(1, m.hotUntil - m.droppedAt), 0, 1);
+        const kx = m.x - Math.cos(m.angle) * m.kick;
+        const ky = m.y - Math.sin(m.angle) * m.kick;
+        musket(g, this.col(m.owner), kx, ky, m.angle, 40, heat, 1, !!m.isBayonet);
+      }
+      for (const fw of this.fireworks) {
+        if (fw.launched) continue;
+        const fuse = Phaser.Math.Clamp((time - fw.plantedAt) / FIREWORK_FUSE_MS, 0, 1);
+        GunpowderFx.drawFireworkTube(g, this.col(fw.owner), fw.x, fw.y, fw.dx, fw.dy, fuse, fw.color, t);
+      }
+    }
+
+    // ── Air: everything in flight, plus the vacuum cones and overload sights ──
+    const hasAir = this.muskets.some((m) => m.flying) || this.grenades.length > 0
+      || this.rockets.length > 0 || this.flameClouds.length > 0 || this.rayBullets.length > 0
+      || this.fireworks.some((f) => f.launched) || this.blunderFireShots.length > 0
+      || this.vacuumView.player !== null || this.vacuumView.npc !== null
+      || this.overloadVolleys.length > 0;
+    if (hasAir || this.airGfx) {
+      const g = this.air();
+      g.clear();
+
+      for (const owner of ['player', 'npc'] as const) {
+        const v = this.vacuumView[owner];
+        if (!v) continue;
+        const f = this.fighter(owner);
+        const hoard = (owner === 'player' ? this.playerCaptured : this.npcCaptured).length;
+        GunpowderFx.drawVacuumCone(g, this.col(owner), f.x, f.y, v.dir, v.radius, v.half, hoard, t);
+      }
+
+      for (const m of this.muskets) {
+        if (!m.flying) continue;
+        musket(g, this.col(m.owner), m.x, m.y, m.angle, 40, 1, 1, true);
+      }
+      for (const gr of this.grenades) {
+        const fuse = Phaser.Math.Clamp((time - gr.thrownAt) / Math.max(1, gr.explodeAt - gr.thrownAt), 0, 1);
+        GunpowderFx.drawGrenade(g, this.col(gr.owner), gr.x, gr.y, fuse, t * 6 + gr.thrownAt, t);
+      }
+      for (const r of this.rockets) {
+        GunpowderFx.drawRocket(g, this.col(r.owner), r.x, r.y, Math.atan2(r.vy, r.vx), t);
+      }
+      for (const c of this.flameClouds) {
+        const life = Phaser.Math.Clamp((c.expiresAt - time) / 3000, 0, 1);
+        GunpowderFx.drawFlameCloud(g, this.col(c.owner), c.x, c.y, Math.atan2(c.vy, c.vx), life, c.seed, t);
+      }
+      for (const b of this.rayBullets) {
+        GunpowderFx.drawRayBullet(g, this.col(b.owner), b.x, b.y, Math.atan2(b.vy, b.vx), b.hits, t);
+      }
+      for (const fw of this.fireworks) {
+        if (!fw.launched) continue;
+        GunpowderFx.drawFireworkFlight(g, this.col(fw.owner), fw.px, fw.py, fw.dx, fw.dy, fw.color, t);
+      }
+      for (const p of this.blunderFireShots) {
+        const body = p.body as Phaser.Physics.Arcade.Body | null;
+        if (!p.active || !body) continue;
+        GunpowderFx.drawBurningShot(g, this.pcol, p.x, p.y, Math.atan2(body.velocity.y, body.velocity.x), t);
+      }
+      this.drawOverloadSights(g, time);
+    }
+  }
+
+  /**
+   * The character rigs and every stance aura, for whichever sides are playing Gunpowder. Built
+   * lazily so a scene restart (which destroys them all) simply rebuilds on the next frame, and
+   * torn down the moment a side stops being Gunpowder.
+   */
+  private updateAvatars(time: number, delta: number): void {
+    const { scene, player, npc } = this.arena;
+    const isPlayerGp = this.arena.elementId === 'gunpowder';
+    const isNpcGp = this.arena.npcElementId === 'gunpowder';
+
+    for (const owner of ['player', 'npc'] as const) {
+      const isGp = owner === 'player' ? isPlayerGp : isNpcGp;
+      const f = owner === 'player' ? player : npc;
+      let av = this.avatar(owner);
+
+      if (!isGp || !f.active) {
+        if (av) {
+          av.destroy();
+          if (owner === 'player') this.playerAvatar = null; else this.npcAvatar = null;
+          for (const style of ['hoard', 'guard', 'heat'] as const) {
+            this.auras[`${owner}:${style}`]?.destroy();
+            delete this.auras[`${owner}:${style}`];
+          }
+        }
+        continue;
+      }
+
+      if (!av) {
+        av = new GunpowderAvatar(scene, this.col(owner), owner);
+        if (owner === 'player') this.playerAvatar = av; else this.npcAvatar = av;
+      }
+
+      const aim = owner === 'player'
+        ? Math.atan2(this.lastMouseY - player.y, this.lastMouseX - player.x)
+        : Math.atan2(player.y - npc.y, player.x - npc.x);
+      const ammo = owner === 'player' ? this.playerAmmo : this.npcAmmo;
+      const vacuuming = this.vacuumView[owner] !== null;
+      const hoard = (owner === 'player' ? this.playerCaptured : this.npcCaptured).length;
+      const guardUntil = owner === 'player' ? this.playerDamageReductionUntil : this.npcDamageReductionUntil;
+      const hot = this.muskets.some((m) => m.owner === owner && m.overloadBurnUntil && time < m.overloadBurnUntil);
+
+      av.setFacing(aim);
+      av.setAmmo(ammo, MUSKET_MAX_AMMO);
+      av.setIntensity(hoard > 0 ? 1.2 : 1);
+      av.setMastered(owner === 'player' ? this.arena.masteryActive : this.arena.npcMasteryActive);
+      // Single owner of setHold: an open vacuum cone braces the blunderbuss against the shoulder.
+      av.setHold(vacuuming ? 'brace' : null, aim);
+      av.update(delta, f.x, f.y, f.forceInvisible ? 0 : f.alpha);
+
+      // The armed hoard is the one status a gunpowder fighter must never lose track of.
+      this.syncAura(owner, 'hoard', !vacuuming && hoard > 0, delta, 1, aim, hoard, 32);
+      this.syncAura(owner, 'guard', time < guardUntil, delta,
+        Phaser.Math.Clamp((guardUntil - time) / 2000, 0, 1), aim, 0, 28);
+      this.syncAura(owner, 'heat', hot, delta, 1, aim, 0, 26);
+    }
   }
 
   private updateStuns(time: number): void {
@@ -518,29 +803,34 @@ export class GunpowderKit {
     proj.launch(nx * 900, ny * 900);
     proj.setRotation(angle);
 
+    // A black-powder musket going off: torn flame out the muzzle, sparks, and a cloud of smoke
+    // that hangs around long after the ball has gone.
+    const fx = this.fx(owner);
+    fx.muzzle(caster.x + nx * 26, caster.y + ny * 26, angle, 1 + rifleCount * 0.2, 10);
+    this.avatar(owner)?.play('punch', angle);
+    scene.cameras.main.shake(70, 0.002);
+
     // Click+ Attached Bayonet: instead of dropping the spent musket behind, hurl it to the cursor.
     if (owner === 'player' && this.arena.hasUpgrade('click')) {
       const speed = 640;
-      const gfx = scene.add.rectangle(caster.x, caster.y, 40, 6, MUSKET_HOT_FILL, 0.95)
-        .setStrokeStyle(1, MUSKET_HOT_STROKE, 1).setDepth(3).setRotation(angle) as Phaser.GameObjects.Rectangle;
-      const tipX = caster.x + Math.cos(angle) * 22, tipY = caster.y + Math.sin(angle) * 22;
-      const bayonetGfx = scene.add.triangle(tipX, tipY, 0, -5, 0, 5, 12, 0, 0x999999, 1)
-        .setDepth(4).setRotation(angle) as Phaser.GameObjects.Triangle;
       const droppedAt = scene.time.now;
       this.muskets.push({
-        gfx, x: caster.x, y: caster.y, droppedAt, hotUntil: droppedAt + hotMs, cooled: false, owner,
-        isBayonet: true, flying: true, vx: nx * speed, vy: ny * speed, angle, targetX: tx, targetY: ty,
-        bayonetGfx, lastGroundHitAt: 0,
+        x: caster.x, y: caster.y, droppedAt, hotUntil: droppedAt + hotMs, cooled: false, owner,
+        angle, kick: 0,
+        isBayonet: true, flying: true, vx: nx * speed, vy: ny * speed, targetX: tx, targetY: ty,
+        lastGroundHitAt: 0,
       });
       return;
     }
 
-    // Drop the spent musket behind the caster — hot (red, fading through orange to normal) then pick-up-able.
+    // Drop the spent musket behind the caster — glowing hot, then pick-up-able once it cools.
     const dropX = caster.x - nx * 68, dropY = caster.y - ny * 68;
-    const gfx = scene.add.rectangle(dropX, dropY, 40, 6, MUSKET_HOT_FILL, 0.95)
-      .setStrokeStyle(1, MUSKET_HOT_STROKE, 1).setDepth(3).setRotation(angle) as Phaser.GameObjects.Rectangle;
     const droppedAt = scene.time.now;
-    this.muskets.push({ gfx, x: dropX, y: dropY, droppedAt, hotUntil: droppedAt + hotMs, cooled: false, owner });
+    this.muskets.push({
+      x: dropX, y: dropY, droppedAt, hotUntil: droppedAt + hotMs, cooled: false, owner,
+      angle, kick: 0,
+    });
+    fx.smoke(dropX, dropY, 2, { radius: 6, life: 900, depth: 4 });
   }
 
   doGunpowderExplosiveRetreat(tx: number, ty: number, owner: 'player' | 'npc'): void {
@@ -551,14 +841,18 @@ export class GunpowderKit {
     const nx = dx / len, ny = dy / len;
     const doubleBarrel = owner === 'player' && this.arena.hasUpgrade('e');
 
+    const fx = this.fx(owner);
     const blastAt = (bx: number, by: number): void => {
-      const boom = scene.add.circle(bx, by, 12, 0xffaa33, 0.9).setDepth(9);
-      scene.tweens.add({ targets: boom, scaleX: 5, scaleY: 5, alpha: 0, duration: 250, onComplete: () => boom.destroy() });
+      fx.boom(bx, by, 55, { color: GUNPOWDER.blaze, petals: 7, shrapnel: 6 });
       this.arena.dealAoeDamageFromOwner(bx, by, 45, 20, owner);
     };
 
     const frontX = caster.x + nx * 65, frontY = caster.y + ny * 65;
     blastAt(frontX, frontY);
+    // The charge kicking the caster backwards, and the smoke it leaves in the gap.
+    this.avatar(owner)?.play('dash', angleOf(nx, ny));
+    fx.smoke(caster.x, caster.y, 4, { angle: angleOf(nx, ny), spread: 1.4, radius: 8, life: 900, depth: 5 });
+    scene.cameras.main.shake(130, 0.004);
 
     if (doubleBarrel) {
       const backX = caster.x - nx * 65, backY = caster.y - ny * 65;
@@ -617,6 +911,12 @@ export class GunpowderKit {
       else this.npcDamageReductionUntil = now + 2000;
     }
 
+    // The whole arsenal going off at once — the smoke scales with how many barrels fired.
+    this.avatar(owner)?.play('sweep', angle);
+    this.fx(owner).smoke(caster.x, caster.y, 2 + arsenal.length * 2, {
+      angle, spread: 1.6, radius: 8, life: 1100, depth: 5,
+    });
+    this.arena.scene.cameras.main.shake(90 + arsenal.length * 40, 0.002 + arsenal.length * 0.001);
     this.arena.showFloatingText(caster.x, caster.y - 40, '🔥 FIRE AT WILL', '#dd8833');
   }
 
@@ -651,12 +951,17 @@ export class GunpowderKit {
     if (owner === 'player') {
       this.playerVacuumUntil = now + BLUNDERBLAST_DURATION;
       this.playerCaptured = [];
-      if (!this.playerVacuumCone) this.playerVacuumCone = scene.add.graphics().setDepth(2);
     } else {
       this.npcVacuumUntil = now + BLUNDERBLAST_DURATION;
       this.npcCaptured = [];
-      if (!this.npcVacuumCone) this.npcVacuumCone = scene.add.graphics().setDepth(2);
     }
+    // The bell of the blunderbuss opening: a silver ring drawn inward, not a flash outward.
+    const aimX = owner === 'player' ? this.lastMouseX : this.arena.player.x;
+    const aimY = owner === 'player' ? this.lastMouseY : this.arena.player.y;
+    const dir = Math.atan2(aimY - caster.y, aimX - caster.x);
+    this.avatar(owner)?.play('raise', dir, 700);
+    this.fx(owner).ring(caster.x, caster.y, BLUNDERBLAST_RADIUS * 0.9, 20, BLUNDERBLAST_COLOR, 480, 7, 3);
+    void scene;
     this.arena.showFloatingText(caster.x, caster.y - 40, '🌀 BLUNDERBLAST', '#cfd4da');
   }
 
@@ -668,9 +973,9 @@ export class GunpowderKit {
   }
 
   private updateVacuumCone(owner: 'player' | 'npc', time: number): void {
-    const cone = owner === 'player' ? this.playerVacuumCone : this.npcVacuumCone;
     const until = owner === 'player' ? this.playerVacuumUntil : this.npcVacuumUntil;
-    if (time >= until) { cone?.clear(); return; } // window closed — hoard stays armed for the next shot
+    // Window closed — the hoard stays armed for the next shot, but the funnel is gone.
+    if (time >= until) { this.vacuumView[owner] = null; return; }
 
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     // Player aims at the cursor; the NPC aims at the player.
@@ -681,18 +986,8 @@ export class GunpowderKit {
     const radius = upgraded ? BLUNDERBLAST_RADIUS_Q : BLUNDERBLAST_RADIUS;
     const half = upgraded ? BLUNDERBLAST_HALF_ANGLE_Q : BLUNDERBLAST_HALF_ANGLE;
 
-    if (cone) {
-      const alpha = 0.14 + 0.06 * Math.sin(time / 110);
-      cone.clear();
-      cone.fillStyle(BLUNDERBLAST_COLOR, alpha);
-      cone.lineStyle(2, BLUNDERBLAST_COLOR, 0.75);
-      cone.beginPath();
-      cone.moveTo(caster.x, caster.y);
-      cone.arc(caster.x, caster.y, radius, dir - half, dir + half, false);
-      cone.closePath();
-      cone.fillPath();
-      cone.strokePath();
-    }
+    // Painted in paintWorld, where the funnel gets its intake streaks and the churning hoard.
+    this.vacuumView[owner] = { dir, radius, half };
 
     // Swallow the opponent's projectiles that drift into the cone.
     const captured = owner === 'player' ? this.playerCaptured : this.npcCaptured;
@@ -707,13 +1002,16 @@ export class GunpowderKit {
       captured.push({ textureKey: p.texture.key, damage: p.damage });
       if (owner === 'player') this.arena.recordMasteryStat('bulletsVacuumed', 1);
       this.arena.spawnHitFlash(p.x, p.y, BLUNDERBLAST_COLOR);
+      // Swallowed: it gets dragged down the throat of the funnel rather than blinking out.
+      this.fx(owner).sparks(p.x, p.y, 3, Math.atan2(caster.y - p.y, caster.x - p.x), 10, GUNPOWDER.chrome);
       p.destroy();
       if (captured.length >= BLUNDERBLAST_MAX_CAPTURE) break;
     }
   }
 
   /** On the first shot after the vacuum window closes, cough the whole hoard back out
-   *  in a cone toward the aim point, each shot dealing 100% more damage (150% with Q+). */
+   *  in a cone toward the aim point, each shot dealing 100% more damage — or 125% more
+   *  and alight, if Q+ Vortex Cannon is owned. */
   private releaseBlunderHoard(tx: number, ty: number, owner: 'player' | 'npc'): boolean {
     const now = this.arena.scene.time.now;
     const until = owner === 'player' ? this.playerVacuumUntil : this.npcVacuumUntil;
@@ -723,7 +1021,7 @@ export class GunpowderKit {
 
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const upgraded = owner === 'player' && this.arena.hasUpgrade('q');
-    const dmgMult = upgraded ? 2.5 : 2;
+    const dmgMult = upgraded ? 2.25 : 2;
     const baseAngle = Math.atan2(ty - caster.y, tx - caster.x);
     const n = captured.length;
     const spread = Math.min(BLUNDERBLAST_BLAST_SPREAD, 0.16 * (n - 1)); // fan widens with the hoard, capped at 30°
@@ -737,11 +1035,31 @@ export class GunpowderKit {
       this.arena.projectiles.add(proj);
       proj.launch(Math.cos(ang) * 820, Math.sin(ang) * 820);
       proj.setRotation(ang);
+      if (upgraded) {
+        // Tagged rather than tracked by texture — the hoard is whatever the enemy shot,
+        // so there is no single key to test for at the hit choke point.
+        (proj as unknown as { gpBlunderFire?: boolean }).gpBlunderFire = true;
+        proj.setTint(BLUNDER_FIRE_TINT);
+        this.blunderFireShots.push(proj);
+      }
     }
 
     if (owner === 'player') this.playerCaptured = [];
     else this.npcCaptured = [];
-    this.arena.showFloatingText(caster.x, caster.y - 55, `🌀 BLUNDERBLAST ×${n}`, '#cfd4da');
+    // The whole hoard coming back out at once — a blast that scales with how much was eaten.
+    const fx = this.fx(owner);
+    fx.muzzle(caster.x + Math.cos(baseAngle) * 26, caster.y + Math.sin(baseAngle) * 26, baseAngle,
+      1.2 + Math.min(n, 20) * 0.08, 11, upgraded ? GUNPOWDER.flame : BLUNDERBLAST_COLOR);
+    fx.smoke(caster.x, caster.y, 3 + Math.round(n / 4), {
+      angle: baseAngle, spread: 1.5, radius: 9, life: 1100, depth: 5,
+    });
+    this.avatar(owner)?.play('punch', baseAngle);
+    this.arena.scene.cameras.main.shake(120 + Math.min(n, 20) * 8, 0.003 + Math.min(n, 20) * 0.0004);
+    this.arena.showFloatingText(
+      caster.x, caster.y - 55,
+      upgraded ? `🔥 BLUNDERBLAST ×${n}` : `🌀 BLUNDERBLAST ×${n}`,
+      upgraded ? '#ff8844' : '#cfd4da',
+    );
     return true;
   }
 
@@ -751,23 +1069,23 @@ export class GunpowderKit {
     const { scene } = this.arena;
     switch (type) {
       case 'pistol':
-        this.resolveHitscan(owner, angle, 500, 20, 10, 0xcccccc);
+        this.resolveHitscan(owner, angle, 500, 20, 10, GUNPOWDER.chrome);
         break;
       case 'ar':
         for (let i = 0; i < 3; i++) {
-          scene.time.delayedCall(i * 110, () => this.resolveHitscan(owner, angle, 450, 20, 6, 0xddaa66));
+          scene.time.delayedCall(i * 110, () => this.resolveHitscan(owner, angle, 450, 20, 6, GUNPOWDER.gold));
         }
         break;
       case 'shotgun': {
         const pelletCount = 10;
         for (let i = 0; i < pelletCount; i++) {
           const off = (-22 + (44 * i) / (pelletCount - 1)) * (Math.PI / 180);
-          this.resolveHitscan(owner, angle + off, 160, 12, 2, 0xcc8844);
+          this.resolveHitscan(owner, angle + off, 160, 12, 2, GUNPOWDER.blaze);
         }
         break;
       }
       case 'rifle':
-        this.resolveHitscan(owner, angle, 700, 35, 15, 0x995522);
+        this.resolveHitscan(owner, angle, 700, 35, 15, GUNPOWDER.brass);
         break;
       case 'grenade':
         this.launchGrenade(owner, angle);
@@ -776,7 +1094,7 @@ export class GunpowderKit {
         for (let i = 0; i < 20; i++) {
           scene.time.delayedCall(i * 18, () => {
             const off = (Math.random() * 20 - 10) * (Math.PI / 180);
-            this.resolveHitscan(owner, angle + off, 400, 18, 2, 0xaa6633);
+            this.resolveHitscan(owner, angle + off, 400, 18, 2, GUNPOWDER.flame);
           });
         }
         break;
@@ -790,7 +1108,7 @@ export class GunpowderKit {
         for (let i = 0; i < 30; i++) {
           scene.time.delayedCall(i * 15, () => {
             const off = (Math.random() * 20 - 10) * (Math.PI / 180);
-            this.resolveHitscan(owner, angle + off, 400, 18, 2, 0xaa3399);
+            this.resolveHitscan(owner, angle + off, 400, 18, 2, GUNPOWDER.orchid);
           });
         }
         const until = scene.time.now + 460;
@@ -799,13 +1117,13 @@ export class GunpowderKit {
         break;
       }
       case 'sniper':
-        this.resolveHitscan(owner, angle, 900, 10, 20, 0x66ccff);
+        this.resolveHitscan(owner, angle, 900, 10, 20, GUNPOWDER.lilac);
         break;
       case 'raygun':
         this.launchRayBullet(owner, angle);
         break;
       case 'freezeray': {
-        const hit = this.resolveHitscan(owner, angle, 700, 14, 3, 0x66eeff);
+        const hit = this.resolveHitscan(owner, angle, 700, 14, 3, GUNPOWDER.chrome);
         if (hit) {
           if (owner === 'player') this.npcStunUntil = Math.max(this.npcStunUntil, scene.time.now + 1000);
           else this.playerStunUntil = Math.max(this.playerStunUntil, scene.time.now + 1000);
@@ -818,11 +1136,17 @@ export class GunpowderKit {
         const dist = Phaser.Math.Distance.Between(caster.x, caster.y, target.x, target.y);
         if (dist <= 100 && target.active && target.hp > 0) {
           const rd = Math.round(15 * target.incomingDamageMultiplier);
+          const hx = target.x, hy = target.y;
           target.takeDamage(rd);
           this.arena.spawnHitFlash(target.x, target.y, 0xdddddd);
+          // A point-blank slash: a silver arc across the victim rather than a beam through them.
+          this.fx(owner).shrapnel(hx, hy, 5, {
+            speed: 240, angle, spread: 0.7, size: 6, color: GUNPOWDER.silver, depth: 10,
+          });
+          this.fx(owner).sparks(hx, hy, 6, angle, 10, GUNPOWDER.chrome);
           this.maybeExecute(owner, target);
         } else {
-          this.resolveHitscan(owner, angle, 700, 12, 10, 0xbbbbbb);
+          this.resolveHitscan(owner, angle, 700, 12, 10, GUNPOWDER.silver);
         }
         break;
       }
@@ -840,15 +1164,12 @@ export class GunpowderKit {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const target = owner === 'player' ? this.arena.npc : this.arena.player;
     const dx = Math.cos(angle), dy = Math.sin(angle);
-    const { scene } = this.arena;
+    const fx = this.fx(owner);
 
-    const gfx = scene.add.graphics().setDepth(9);
-    gfx.lineStyle(2, color, 0.85);
-    gfx.beginPath();
-    gfx.moveTo(caster.x, caster.y);
-    gfx.lineTo(caster.x + dx * range, caster.y + dy * range);
-    gfx.strokePath();
-    scene.tweens.add({ targets: gfx, alpha: 0, duration: 100, onComplete: () => gfx.destroy() });
+    // A tracer with its own muzzle flash and smoke, so every barrel in a volley reads
+    // separately instead of the whole thing being one flat line.
+    const mx = caster.x + dx * 24, my = caster.y + dy * 24;
+    fx.tracer(mx, my, caster.x + dx * range, caster.y + dy * range, color, 2.4, 9);
 
     if (!target.active || target.hp <= 0) return false;
     const tx = target.x - caster.x, ty = target.y - caster.y;
@@ -858,8 +1179,13 @@ export class GunpowderKit {
     if (Math.sqrt(perpX * perpX + perpY * perpY) > halfWidth) return false;
 
     const rd = Math.round(dmg * target.incomingDamageMultiplier);
+    const hx = target.x, hy = target.y;
     target.takeDamage(rd);
     this.arena.spawnHitFlash(target.x, target.y, color);
+    // Impact spall: bits kicked back the way the round came, scaled by how hard it hit.
+    fx.shrapnel(hx, hy, 2 + Math.round(dmg / 6), {
+      speed: 160 + dmg * 6, angle: angle + Math.PI, spread: 0.9, size: 5, color, depth: 10,
+    });
     this.maybeExecute(owner, target);
     return true;
   }
@@ -868,20 +1194,18 @@ export class GunpowderKit {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const { scene } = this.arena;
     const speed = 380;
-    const sprite = scene.add.circle(caster.x, caster.y, 8, 0x445522, 0.95)
-      .setStrokeStyle(2, 0x223311, 1).setDepth(8) as Phaser.GameObjects.Arc;
+    const now = scene.time.now;
     this.grenades.push({
-      sprite, x: caster.x, y: caster.y,
+      x: caster.x, y: caster.y,
       vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
-      explodeAt: scene.time.now + 900, owner,
+      thrownAt: now, explodeAt: now + 900, owner,
     });
+    this.fx(owner).sparks(caster.x, caster.y, 3, angle, 10, GUNPOWDER.glow);
   }
 
   private explodeGrenade(g: Grenade): void {
-    g.sprite.destroy();
-    const { scene } = this.arena;
-    const boom = scene.add.circle(g.x, g.y, 10, 0xffaa33, 0.9).setDepth(9);
-    scene.tweens.add({ targets: boom, scaleX: 6, scaleY: 6, alpha: 0, duration: 300, onComplete: () => boom.destroy() });
+    this.fx(g.owner).boom(g.x, g.y, 72, { color: GUNPOWDER.flame, petals: 9, shrapnel: 10, smoke: 4 });
+    this.arena.scene.cameras.main.shake(160, 0.005);
     this.arena.dealAoeDamageFromOwner(g.x, g.y, 60, 25, g.owner);
 
     const target = g.owner === 'player' ? this.arena.npc : this.arena.player;
@@ -895,20 +1219,17 @@ export class GunpowderKit {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const { scene } = this.arena;
     const speed = 520;
-    const sprite = scene.add.circle(caster.x, caster.y, 9, 0xaa3311, 0.95)
-      .setStrokeStyle(2, 0x551100, 1).setDepth(8) as Phaser.GameObjects.Arc;
     this.rockets.push({
-      sprite, x: caster.x, y: caster.y,
+      x: caster.x, y: caster.y,
       vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
       spawnX: caster.x, spawnY: caster.y, spawnAt: scene.time.now, owner,
     });
+    this.fx(owner).muzzle(caster.x, caster.y, angle + Math.PI, 0.9, 9, GUNPOWDER.flame);
   }
 
   private explodeRocket(r: Rocket): void {
-    r.sprite.destroy();
-    const { scene } = this.arena;
-    const boom = scene.add.circle(r.x, r.y, 14, 0xff6633, 0.9).setDepth(9);
-    scene.tweens.add({ targets: boom, scaleX: 6, scaleY: 6, alpha: 0, duration: 320, onComplete: () => boom.destroy() });
+    this.fx(r.owner).boom(r.x, r.y, 84, { color: GUNPOWDER.ember, petals: 10, shrapnel: 10, smoke: 5 });
+    this.arena.scene.cameras.main.shake(180, 0.005);
     this.arena.dealAoeDamageFromOwner(r.x, r.y, 70, 20, r.owner);
   }
 
@@ -921,14 +1242,13 @@ export class GunpowderKit {
       const off = (-18 + Math.random() * 36) * (Math.PI / 180);
       const a = angle + off;
       const speed = 150 + Math.random() * 90;
-      const sprite = scene.add.circle(caster.x, caster.y, 9, 0xff6622, 0.75)
-        .setStrokeStyle(1, 0xffaa33, 0.7).setDepth(8) as Phaser.GameObjects.Arc;
       this.flameClouds.push({
-        sprite, x: caster.x, y: caster.y,
+        x: caster.x, y: caster.y,
         vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
-        expiresAt: now + 3000, owner,
+        spawnedAt: now, expiresAt: now + 3000, owner, seed: Math.random() * 10,
       });
     }
+    this.fx(owner).muzzle(caster.x + Math.cos(angle) * 20, caster.y + Math.sin(angle) * 20, angle, 1.1, 10, GUNPOWDER.flame);
   }
 
   /** F+ Ray-Gun: bounces off arena walls, pierces through the enemy up to 3 total hits. */
@@ -936,13 +1256,12 @@ export class GunpowderKit {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const { scene } = this.arena;
     const speed = 460;
-    const sprite = scene.add.circle(caster.x, caster.y, 7, 0x33ff77, 0.95)
-      .setStrokeStyle(2, 0x116622, 1).setDepth(8) as Phaser.GameObjects.Arc;
     this.rayBullets.push({
-      sprite, x: caster.x, y: caster.y,
+      x: caster.x, y: caster.y,
       vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
       hits: 0, lastHitAt: 0, spawnAt: scene.time.now, owner,
     });
+    this.fx(owner).muzzle(caster.x + Math.cos(angle) * 20, caster.y + Math.sin(angle) * 20, angle, 0.7, 10, GUNPOWDER.orchid);
   }
 
   /** R+ / Execution Volley: any weapon hit that leaves the enemy at or below 15% HP finishes them off. */
@@ -960,36 +1279,38 @@ export class GunpowderKit {
     for (let i = this.muskets.length - 1; i >= 0; i--) {
       const m = this.muskets[i];
 
+      // Recoil settles back onto the barrel's real position over a few frames.
+      if (m.kick > 0) m.kick = Math.max(0, m.kick - (delta / 1000) * 60);
+
       if (m.flying) {
         m.x += (m.vx! * delta) / 1000;
         m.y += (m.vy! * delta) / 1000;
-        m.gfx.setPosition(m.x, m.y);
-        m.bayonetGfx?.setPosition(m.x + Math.cos(m.angle!) * 22, m.y + Math.sin(m.angle!) * 22);
 
         const target = m.owner === 'player' ? this.arena.npc : this.arena.player;
         if (target.active && target.hp > 0 && Phaser.Math.Distance.Between(m.x, m.y, target.x, target.y) <= 24) {
           const rd = Math.round(10 * target.incomingDamageMultiplier);
+          const hx = target.x, hy = target.y;
           target.takeDamage(rd);
           this.arena.spawnHitFlash(target.x, target.y, 0xcccccc);
+          // The bayonet going in: sparks off the steel and a spray of splinters.
+          this.fx(m.owner).sparks(hx, hy, 6, m.angle, 10, GUNPOWDER.chrome);
+          this.fx(m.owner).shrapnel(hx, hy, 4, {
+            speed: 200, angle: m.angle + Math.PI, spread: 0.8, size: 6, color: GUNPOWDER.wood, depth: 10,
+          });
           m.flying = false;
         }
 
         if (m.flying && Phaser.Math.Distance.Between(m.x, m.y, m.targetX!, m.targetY!) <= 12) {
           m.flying = false;
+          this.fx(m.owner).smoke(m.x, m.y, 2, { radius: 5, life: 700, depth: 4 });
         }
         if (m.flying) continue;
       }
 
-      if (!m.cooled) {
-        if (time >= m.hotUntil) {
-          m.cooled = true;
-          m.gfx.setFillStyle(MUSKET_COOL_FILL, 1);
-          m.gfx.setStrokeStyle(1, MUSKET_COOL_STROKE, 1);
-        } else {
-          const progress = (time - m.droppedAt) / (m.hotUntil - m.droppedAt);
-          m.gfx.setFillStyle(musketColorAt(progress, MUSKET_HOT_FILL, MUSKET_WARM_FILL, MUSKET_COOL_FILL), 0.95);
-          m.gfx.setStrokeStyle(1, musketColorAt(progress, MUSKET_HOT_STROKE, MUSKET_WARM_STROKE, MUSKET_COOL_STROKE), 1);
-        }
+      // Heat is read straight off the clock by the painter — nothing to restyle here.
+      if (!m.cooled && time >= m.hotUntil) {
+        m.cooled = true;
+        this.fx(m.owner).smoke(m.x, m.y, 1, { radius: 4, life: 800, depth: 4 });
       }
 
       // Attached Bayonet: grounded muskets damage anyone who steps over them (1s cooldown).
@@ -1000,6 +1321,7 @@ export class GunpowderKit {
           const rd = Math.round(10 * target.incomingDamageMultiplier);
           target.takeDamage(rd);
           this.arena.spawnHitFlash(target.x, target.y, 0xaaaaaa);
+          this.fx(m.owner).sparks(m.x, m.y, 4, -Math.PI / 2, 10, GUNPOWDER.chrome);
           m.lastGroundHitAt = time;
         }
       }
@@ -1033,8 +1355,7 @@ export class GunpowderKit {
         if (m.owner === 'player') { this.playerAmmo++; this.rebuildArsenalHud(); }
         else this.npcAmmo++;
         this.arena.showFloatingText(m.x, m.y - 20, '+1 🔫', '#dd9944');
-        m.gfx.destroy();
-        m.bayonetGfx?.destroy();
+        this.fx(m.owner).sparks(m.x, m.y, 4, -Math.PI / 2, 9, GUNPOWDER.brass);
         this.muskets.splice(i, 1);
       }
     }
@@ -1047,7 +1368,6 @@ export class GunpowderKit {
       const g = this.grenades[i];
       g.x += (g.vx * delta) / 1000;
       g.y += (g.vy * delta) / 1000;
-      g.sprite.setPosition(g.x, g.y);
       if (time >= g.explodeAt) {
         this.explodeGrenade(g);
         this.grenades.splice(i, 1);
@@ -1063,7 +1383,6 @@ export class GunpowderKit {
       const r = this.rockets[i];
       r.x += (r.vx * delta) / 1000;
       r.y += (r.vy * delta) / 1000;
-      r.sprite.setPosition(r.x, r.y);
 
       const target = r.owner === 'player' ? this.arena.npc : this.arena.player;
       const hitTarget = target.active && target.hp > 0 && Phaser.Math.Distance.Between(r.x, r.y, target.x, target.y) <= 30;
@@ -1085,7 +1404,9 @@ export class GunpowderKit {
       const c = this.flameClouds[i];
       c.x += (c.vx * delta) / 1000;
       c.y += (c.vy * delta) / 1000;
-      c.sprite.setPosition(c.x, c.y);
+      // Flame drags: it slows and spreads rather than sailing on at launch speed.
+      c.vx *= 0.985;
+      c.vy *= 0.985;
 
       const target = c.owner === 'player' ? this.arena.npc : this.arena.player;
       const hit = target.active && target.hp > 0 && Phaser.Math.Distance.Between(c.x, c.y, target.x, target.y) <= 20;
@@ -1093,11 +1414,9 @@ export class GunpowderKit {
         const rd = Math.round(3 * target.incomingDamageMultiplier);
         target.takeDamage(rd);
         this.arena.spawnHitFlash(target.x, target.y, 0xff6622);
+        this.fx(c.owner).smoke(c.x, c.y, 2, { radius: 6, life: 600, depth: 8, color: GUNPOWDER.char });
       }
-      if (hit || time >= c.expiresAt) {
-        c.sprite.destroy();
-        this.flameClouds.splice(i, 1);
-      }
+      if (hit || time >= c.expiresAt) this.flameClouds.splice(i, 1);
     }
   }
 
@@ -1110,25 +1429,33 @@ export class GunpowderKit {
       b.x += (b.vx * delta) / 1000;
       b.y += (b.vy * delta) / 1000;
 
-      if (b.x < wb.x) { b.x = wb.x; b.vx *= -1; }
-      else if (b.x > wb.x + wb.width) { b.x = wb.x + wb.width; b.vx *= -1; }
-      if (b.y < wb.y) { b.y = wb.y; b.vy *= -1; }
-      else if (b.y > wb.y + wb.height) { b.y = wb.y + wb.height; b.vy *= -1; }
-      b.sprite.setPosition(b.x, b.y);
+      let bounced = false;
+      if (b.x < wb.x) { b.x = wb.x; b.vx *= -1; bounced = true; }
+      else if (b.x > wb.x + wb.width) { b.x = wb.x + wb.width; b.vx *= -1; bounced = true; }
+      if (b.y < wb.y) { b.y = wb.y; b.vy *= -1; bounced = true; }
+      else if (b.y > wb.y + wb.height) { b.y = wb.y + wb.height; b.vy *= -1; bounced = true; }
+      if (bounced) this.fx(b.owner).sparks(b.x, b.y, 4, Math.atan2(b.vy, b.vx), 10, GUNPOWDER.lilac);
 
       const target = b.owner === 'player' ? this.arena.npc : this.arena.player;
       if (target.active && target.hp > 0 && time >= b.lastHitAt + 350
         && Phaser.Math.Distance.Between(b.x, b.y, target.x, target.y) <= 20) {
         const rd = Math.round(5 * target.incomingDamageMultiplier);
+        const hx = target.x, hy = target.y;
         target.takeDamage(rd);
         this.arena.spawnHitFlash(target.x, target.y, 0x33ff77);
+        // Piercing straight through: a ring at the entry and a spray out the far side.
+        this.fx(b.owner).ring(hx, hy, 6, 30, GUNPOWDER.orchid, 260, 9, 2);
+        this.fx(b.owner).shrapnel(hx, hy, 4, {
+          speed: 200, angle: Math.atan2(b.vy, b.vx), spread: 0.7, size: 5, color: GUNPOWDER.lilac, depth: 10,
+        });
         (target.body as Phaser.Physics.Arcade.Body).setVelocity(b.vx * 0.5, b.vy * 0.5);
         b.hits++;
         b.lastHitAt = time;
       }
 
       if (b.hits >= 3 || time - b.spawnAt > 5000) {
-        b.sprite.destroy();
+        // Burning out: the last of its charge goes up rather than the bead just vanishing.
+        this.fx(b.owner).ring(b.x, b.y, 4, 24, GUNPOWDER.orchid, 240, 9, 2);
         this.rayBullets.splice(i, 1);
       }
     }
@@ -1275,10 +1602,14 @@ export class GunpowderKit {
 
   // ── Mastery requirement tracking ─────────────────────────────────────────
 
-  /** ArenaScene's projectile-hit choke point — counts Musket Shot balls that connect. */
-  onPlayerProjectileHit(proj: Projectile): void {
+  /** ArenaScene's projectile-hit choke point — counts Musket Shot balls that connect,
+   *  and sets off the Q+ lit bullets. */
+  onPlayerProjectileHit(proj: Projectile, target?: Fighter): void {
     if ((proj as unknown as { isMusketShot?: boolean }).isMusketShot) {
       this.arena.recordMasteryStat('musketHits', 1);
+    }
+    if ((proj as unknown as { gpBlunderFire?: boolean }).gpBlunderFire) {
+      this.igniteBlunderShot(proj, target);
     }
   }
 
@@ -1296,85 +1627,163 @@ export class GunpowderKit {
     this.arena.recordMasteryBestStat('weaponTypes', owned);
   }
 
-  // ── Mastery: Quickdraw (passive) ─────────────────────────────────────────
+  // ── Mastery: Fireworks (passive) ─────────────────────────────────────────
 
-  private updateQuickdraw(time: number): void {
-    this.tickQuickdraw('player', this.arena.masteryActive, time);
-    // Online only: the remote gunpowder player's own reflex shots must resolve on this
+  private updateFireworks(time: number, delta: number): void {
+    const playerOn = this.arena.masteryActive;
+    // Online only: the remote gunpowder player's fireworks must be simulated on this
     // (victim) sim, since hits on their replica never touch their real HP.
-    this.tickQuickdraw('npc', this.arena.npcMasteryActive && this.arena.npcElementId === 'gunpowder', time);
+    const npcOn = this.arena.npcMasteryActive && this.arena.npcElementId === 'gunpowder';
+    if (!playerOn && !npcOn && this.fireworks.length === 0) return;
+
+    this.tryPlantFirework('player', playerOn, time);
+    this.tryPlantFirework('npc', npcOn, time);
+    this.advanceFireworks(time, delta);
   }
 
-  private tickQuickdraw(owner: 'player' | 'npc', enabled: boolean, time: number): void {
+  /** Which wall the fighter is currently scraping, or null when they're out in the open. */
+  private wallTouchedBy(f: Fighter): WallSide | null {
+    const wb = this.arena.scene.physics.world.bounds;
+    const r = (f.body as Phaser.Physics.Arcade.Body | null)?.halfWidth ?? 22;
+    if (f.x - r <= wb.x + FIREWORK_WALL_PAD) return 'left';
+    if (f.x + r >= wb.right - FIREWORK_WALL_PAD) return 'right';
+    if (f.y - r <= wb.y + FIREWORK_WALL_PAD) return 'top';
+    if (f.y + r >= wb.bottom - FIREWORK_WALL_PAD) return 'bottom';
+    return null;
+  }
+
+  private tryPlantFirework(owner: 'player' | 'npc', enabled: boolean, time: number): void {
+    if (!enabled) return;
     const self = owner === 'player' ? this.arena.player : this.arena.npc;
-    const prev = owner === 'player' ? this.playerLastHp : this.npcLastHp;
-    const hp = self.hp;
+    if (!self.active || self.hp <= 0) return;
+    const last = owner === 'player' ? this.playerLastPlantAt : this.npcLastPlantAt;
+    if (time - last < FIREWORK_PLANT_CD_MS) return;
+    const side = this.wallTouchedBy(self);
+    if (!side) return;
 
-    // Track HP every frame regardless, so switching the passive on mid-match can't
-    // cash in damage taken before it was live.
-    if (enabled && prev >= 0 && hp < prev && self.active && hp > 0) {
-      let accum = (owner === 'player' ? this.playerQuickdrawAccum : this.npcQuickdrawAccum) + (prev - hp);
-      while (accum >= QUICKDRAW_DAMAGE_STEP) {
-        accum -= QUICKDRAW_DAMAGE_STEP;
-        this.fireQuickdrawShot(owner);
-      }
-      if (owner === 'player') this.playerQuickdrawAccum = accum;
-      else this.npcQuickdrawAccum = accum;
+    // Pin it to the wall itself, at whatever point along it the fighter is standing.
+    const wb = this.arena.scene.physics.world.bounds;
+    const x = side === 'left' ? wb.x : side === 'right' ? wb.right : Phaser.Math.Clamp(self.x, wb.x, wb.right);
+    const y = side === 'top' ? wb.y : side === 'bottom' ? wb.bottom : Phaser.Math.Clamp(self.y, wb.y, wb.bottom);
+
+    // Fireworks can't be stacked. A refused plant doesn't spend the cooldown, so
+    // stepping clear of your own tube lets you plant the moment you're past it.
+    for (const fw of this.fireworks) {
+      if (fw.launched || fw.owner !== owner) continue;
+      if (Phaser.Math.Distance.Between(fw.x, fw.y, x, y) < FIREWORK_MIN_GAP) return;
     }
 
-    if (owner === 'player') this.playerLastHp = hp;
-    else this.npcLastHp = hp;
+    const dx = side === 'left' ? 1 : side === 'right' ? -1 : 0;
+    const dy = side === 'top' ? 1 : side === 'bottom' ? -1 : 0;
+    this.fireworks.push({
+      owner, x, y, side, dx, dy,
+      plantedAt: time,
+      launchAt: time + FIREWORK_FUSE_MS,
+      launched: false,
+      px: x, py: y,
+      color: FIREWORK_SHELL_COLORS[Math.floor(Math.random() * FIREWORK_SHELL_COLORS.length)],
+    });
+    if (owner === 'player') this.playerLastPlantAt = time;
+    else this.npcLastPlantAt = time;
   }
 
-  /** A holdout pistol snapped from the hip: thin gold hitscan beam, no wind-up. */
-  private fireQuickdrawShot(owner: 'player' | 'npc'): void {
-    const shooter = owner === 'player' ? this.arena.player : this.arena.npc;
-    const target = owner === 'player' ? this.arena.npc : this.arena.player;
-    if (!shooter.active || !target.active || target.hp <= 0) return;
+  private advanceFireworks(time: number, delta: number): void {
+    const dt = delta / 1000;
+    const wb = this.arena.scene.physics.world.bounds;
 
-    const dx = target.x - shooter.x, dy = target.y - shooter.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist > QUICKDRAW_RANGE) return;
-    const angle = Math.atan2(dy, dx);
-    const { scene } = this.arena;
+    for (let i = this.fireworks.length - 1; i >= 0; i--) {
+      const fw = this.fireworks[i];
 
-    // Fire from the hip: offset perpendicular to the shooting line so the beam
-    // reads as a second, hidden gun rather than the musket.
-    const hipX = shooter.x + Math.cos(angle + Math.PI / 2) * 12;
-    const hipY = shooter.y + Math.sin(angle + Math.PI / 2) * 12;
+      if (!fw.launched) {
+        if (time < fw.launchAt) continue; // painted from its fuse timer in paintWorld
+        fw.launched = true;
+        this.playFireworkLiftoff(fw);
+      }
 
-    const beam = scene.add.graphics().setDepth(10);
-    beam.lineStyle(5, QUICKDRAW_COLOR, 0.18);
-    beam.lineBetween(hipX, hipY, target.x, target.y);
-    beam.lineStyle(2, QUICKDRAW_COLOR, 0.6);
-    beam.lineBetween(hipX, hipY, target.x, target.y);
-    beam.lineStyle(1, 0xffffff, 0.95);
-    beam.lineBetween(hipX, hipY, target.x, target.y);
-    scene.tweens.add({ targets: beam, alpha: 0, duration: 160, onComplete: () => beam.destroy() });
+      fw.px += fw.dx * FIREWORK_SPEED * dt;
+      fw.py += fw.dy * FIREWORK_SPEED * dt;
 
-    // Muzzle flare — a stubby cone kicking out of the hip.
-    const flare = scene.add.triangle(hipX, hipY, 0, -5, 0, 5, 16, 0, 0xfff3c4, 0.95)
-      .setDepth(11).setRotation(angle);
-    scene.tweens.add({
-      targets: flare, scaleX: 1.8, scaleY: 0.5, alpha: 0, duration: 130,
-      onComplete: () => flare.destroy(),
-    });
+      // Direct hit — 10 damage, and the star shell around it deliberately skips
+      // the fighter it just buried itself in.
+      const foe = this.firstFoeAt(fw);
+      if (foe) {
+        foe.takeDamage(FIREWORK_DAMAGE);
+        this.arena.spawnHitFlash(foe.x, foe.y, fw.color);
+        this.arena.showFloatingText(foe.x, foe.y - 44, '🎆 FIREWORK', '#ffcc55');
+        this.burstFirework(fw, foe);
+        this.fireworks.splice(i, 1);
+        continue;
+      }
 
-    // Impact sparks fanning back along the beam.
-    for (let i = 0; i < 4; i++) {
-      const a = angle + Math.PI + (Math.random() - 0.5) * 1.6;
-      const spark = scene.add.rectangle(target.x, target.y, 6, 1.5, QUICKDRAW_COLOR, 0.9)
-        .setDepth(11).setRotation(a);
-      scene.tweens.add({
-        targets: spark, x: target.x + Math.cos(a) * (14 + Math.random() * 12),
-        y: target.y + Math.sin(a) * (14 + Math.random() * 12), alpha: 0,
-        duration: 200 + Math.random() * 120, onComplete: () => spark.destroy(),
-      });
+      // Nothing in the way — it goes off against the far wall instead.
+      if (fw.px <= wb.x || fw.px >= wb.right || fw.py <= wb.y || fw.py >= wb.bottom) {
+        this.burstFirework(fw, null);
+        this.fireworks.splice(i, 1);
+        continue;
+      }
     }
+  }
 
-    target.takeDamage(QUICKDRAW_DAMAGE);
-    this.arena.spawnHitFlash(target.x, target.y, QUICKDRAW_COLOR);
-    this.arena.showFloatingText(shooter.x, shooter.y - 46, '⚡ QUICKDRAW', '#ffe08a');
+  /** The first thing the shell is currently overlapping that its owner may hurt. */
+  private firstFoeAt(fw: Firework): Fighter | null {
+    const foes = fw.owner === 'npc'
+      ? [this.arena.player]
+      : this.arena.enemies.length > 0 ? this.arena.enemies : [this.arena.npc];
+    for (const f of foes) {
+      if (!f.active || f.hp <= 0) continue;
+      const r = (f.body as Phaser.Physics.Arcade.Body | null)?.halfWidth ?? 22;
+      if (Phaser.Math.Distance.Between(fw.px, fw.py, f.x, f.y) <= FIREWORK_HIT_RADIUS + r) return f;
+    }
+    return null;
+  }
+
+  private burstFirework(fw: Firework, except: Fighter | null): void {
+    this.arena.dealAoeDamageFromOwner(
+      fw.px, fw.py, FIREWORK_AOE_RADIUS, FIREWORK_AOE_DAMAGE, fw.owner, except ?? undefined,
+    );
+    this.drawFireworkBurst(fw);
+  }
+
+  /** Liftoff: a torn muzzle petal off the wall and a cloud of launch smoke left behind. */
+  private playFireworkLiftoff(fw: Firework): void {
+    const ang = Math.atan2(fw.dy, fw.dx);
+    const fx = this.fx(fw.owner);
+    fx.muzzle(fw.x, fw.y, ang, 1, 11, fw.color);
+    fx.smoke(fw.x, fw.y, 5, { angle: ang + Math.PI, spread: 1.7, radius: 6, life: 700, depth: 9 });
+  }
+
+  /** The shell going off: the full star-shell chrysanthemum, sized to its AOE. */
+  private drawFireworkBurst(fw: Firework): void {
+    this.fx(fw.owner).starShell(fw.px, fw.py, FIREWORK_AOE_RADIUS, fw.color, 11);
+    this.arena.scene.cameras.main.shake(90, 0.002);
+  }
+
+  // ── Q+ Vortex Cannon: lit bullets ────────────────────────────────────────
+
+  /** Prunes dead lit bullets; the live ones are painted with the rest of the world. */
+  private updateBlunderFire(_time: number): void {
+    for (let i = this.blunderFireShots.length - 1; i >= 0; i--) {
+      const p = this.blunderFireShots[i];
+      if (!p.active || !p.body) this.blunderFireShots.splice(i, 1);
+    }
+  }
+
+  /** Impact of a lit bullet: sets the victim burning, then bursts for a small fire AOE. */
+  private igniteBlunderShot(proj: Projectile, target?: Fighter): void {
+    const now = this.arena.scene.time.now;
+    if (target) {
+      target.burningUntil = Math.max(
+        target.burningUntil, now + Math.round(BLUNDER_FIRE_DOT_MS * target.statusDurMult),
+      );
+      this.arena.showFloatingText(target.x, target.y - 40, '🔥 BURNING', '#ff7733');
+    }
+    this.arena.dealAoeDamageFromOwner(
+      proj.x, proj.y, BLUNDER_FIRE_AOE_RADIUS, BLUNDER_FIRE_AOE_DAMAGE, 'player',
+    );
+    // A lit round going off: torn petals, a pressure ring and smoke left hanging.
+    this.pfx.boom(proj.x, proj.y, BLUNDER_FIRE_AOE_RADIUS, {
+      color: GUNPOWDER.flame, petals: 8, shrapnel: 5, smoke: 4,
+    });
   }
 
   // ── Mastery: Overload (bindable) ─────────────────────────────────────────
@@ -1419,18 +1828,15 @@ export class GunpowderKit {
     const firesAt = now + OVERLOAD_AIM_MS;
     for (const m of grounded) m.aimingFor = firesAt;
     this.overloadVolleys.push({ owner, startedAt: now, firesAt });
-    // Above the fighters (depth 5) so the laser sight and crosshair aren't buried
-    // under the sprite they're aimed at.
-    if (!this.overloadGfx) this.overloadGfx = scene.add.graphics().setDepth(9);
+    void scene;
 
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    this.avatar(owner)?.play('flex');
     this.arena.showFloatingText(caster.x, caster.y - 44, `🔫 OVERLOAD ×${grounded.length}`, '#dddddd');
     return true;
   }
 
   private updateOverload(time: number): void {
-    if (this.overloadGfx) this.overloadGfx.clear();
-    this.drawOverloadEmbers(time);
     if (this.overloadVolleys.length === 0) return;
 
     for (let i = this.overloadVolleys.length - 1; i >= 0; i--) {
@@ -1440,8 +1846,12 @@ export class GunpowderKit {
 
       const target = v.owner === 'player' ? this.arena.npc : this.arena.player;
       if (time < v.firesAt) {
+        // The barrels swing onto the target and tremble harder as the hammers pull back; the
+        // laser sights themselves are painted with the rest of the world.
         const t = Phaser.Math.Clamp((time - v.startedAt) / OVERLOAD_AIM_MS, 0, 1);
-        for (const m of aiming) this.drawOverloadAim(m, target, t, time);
+        for (const m of aiming) {
+          m.angle = Math.atan2(target.y - m.y, target.x - m.x) + 0.05 * t * Math.sin(time / 22 + m.droppedAt);
+        }
         continue;
       }
 
@@ -1452,48 +1862,47 @@ export class GunpowderKit {
   }
 
   /**
-   * A musket lining up its shot: the barrel swings onto the target and trembles harder
-   * as the hammer pulls back, a laser sight burns in from faint to solid, and the
-   * crosshair over the target draws tighter the closer the volley gets.
+   * The laser sights and closing crosshairs of every volley currently lining up. Drawn over the
+   * fighters so the sight isn't buried under the sprite it is aimed at.
    */
-  private drawOverloadAim(m: DroppedMusket, target: Fighter, t: number, time: number): void {
-    const gfx = this.overloadGfx;
-    const angle = Math.atan2(target.y - m.y, target.x - m.x);
-    const shake = 0.05 * t * Math.sin(time / 22 + m.droppedAt);
-    m.gfx.setRotation(angle + shake);
-    m.gfx.setPosition(m.x + Math.cos(time / 26) * 1.5 * t, m.y + Math.sin(time / 19) * 1.5 * t);
-    m.gfx.setFillStyle(lerpColor(MUSKET_COOL_FILL, MUSKET_HOT_FILL, t), 0.95);
-    m.gfx.setStrokeStyle(1, lerpColor(MUSKET_COOL_STROKE, MUSKET_HOT_STROKE, t), 1);
-    if (!gfx) return;
+  private drawOverloadSights(g: Phaser.GameObjects.Graphics, time: number): void {
+    for (const v of this.overloadVolleys) {
+      if (time >= v.firesAt) continue;
+      const t = Phaser.Math.Clamp((time - v.startedAt) / OVERLOAD_AIM_MS, 0, 1);
+      const target = v.owner === 'player' ? this.arena.npc : this.arena.player;
+      const tint = this.col(v.owner);
+      const aiming = this.muskets.filter((m) => m.owner === v.owner && m.aimingFor === v.firesAt);
 
-    const muzzleX = m.x + Math.cos(angle) * 22;
-    const muzzleY = m.y + Math.sin(angle) * 22;
+      for (const m of aiming) {
+        const muzzleX = m.x + Math.cos(m.angle) * 22;
+        const muzzleY = m.y + Math.sin(m.angle) * 22;
+        // Wide haze, body, hot core — each tighter and brighter than the last.
+        g.lineStyle(6, tint(OVERLOAD_LASER_COLOR), 0.06 + 0.10 * t);
+        g.lineBetween(muzzleX, muzzleY, target.x, target.y);
+        g.lineStyle(2, tint(OVERLOAD_LASER_COLOR), 0.18 + 0.35 * t);
+        g.lineBetween(muzzleX, muzzleY, target.x, target.y);
+        g.lineStyle(1, tint(GUNPOWDER.glow), 0.25 + 0.6 * t);
+        g.lineBetween(muzzleX, muzzleY, target.x, target.y);
+        // Heat blooming out of the breech as the charge builds.
+        g.fillStyle(tint(GUNPOWDER.ember), 0.10 + 0.22 * t);
+        g.fillCircle(m.x, m.y, 6 + 7 * t + Math.sin(time / 90) * 1.5);
+      }
 
-    // Laser sight: wide haze, body, hot core — each tighter and brighter than the last.
-    gfx.lineStyle(6, OVERLOAD_LASER_COLOR, 0.06 + 0.10 * t);
-    gfx.lineBetween(muzzleX, muzzleY, target.x, target.y);
-    gfx.lineStyle(2, OVERLOAD_LASER_COLOR, 0.18 + 0.35 * t);
-    gfx.lineBetween(muzzleX, muzzleY, target.x, target.y);
-    gfx.lineStyle(1, 0xffaa88, 0.25 + 0.6 * t);
-    gfx.lineBetween(muzzleX, muzzleY, target.x, target.y);
-
-    // Heat blooming out of the breech as the charge builds.
-    gfx.fillStyle(0xff4422, 0.10 + 0.22 * t);
-    gfx.fillCircle(m.x, m.y, 6 + 7 * t + Math.sin(time / 90) * 1.5);
-
-    // Converging crosshair over the target — four ticks closing in, rotating slowly.
-    // Stays wider than the sprite it sits on so the tightening still reads.
-    const ring = 46 - 20 * t;
-    const spin = time / 400;
-    gfx.lineStyle(1.5, OVERLOAD_LASER_COLOR, 0.35 + 0.5 * t);
-    for (let k = 0; k < 4; k++) {
-      const a = spin + (k * Math.PI) / 2;
-      gfx.lineBetween(
-        target.x + Math.cos(a) * ring, target.y + Math.sin(a) * ring,
-        target.x + Math.cos(a) * (ring + 8), target.y + Math.sin(a) * (ring + 8),
-      );
+      if (aiming.length === 0) continue;
+      // Converging crosshair over the target — four ticks closing in, rotating slowly. Stays
+      // wider than the sprite it sits on so the tightening still reads.
+      const ring = 46 - 20 * t;
+      const spin = time / 400;
+      g.lineStyle(1.5, tint(OVERLOAD_LASER_COLOR), 0.35 + 0.5 * t);
+      for (let k = 0; k < 4; k++) {
+        const a = spin + (k * Math.PI) / 2;
+        g.lineBetween(
+          target.x + Math.cos(a) * ring, target.y + Math.sin(a) * ring,
+          target.x + Math.cos(a) * (ring + 8), target.y + Math.sin(a) * (ring + 8),
+        );
+      }
+      g.strokeCircle(target.x, target.y, ring);
     }
-    gfx.strokeCircle(target.x, target.y, ring);
   }
 
   /** The volley itself: one musket ball each, then the barrel is left glowing. */
@@ -1511,34 +1920,10 @@ export class GunpowderKit {
     proj.launch(nx * 900, ny * 900);
     proj.setRotation(angle);
 
-    // Muzzle blast: a bright cone that stretches and dies in a few frames.
-    const flash = scene.add.triangle(m.x + nx * 22, m.y + ny * 22, 0, -8, 0, 8, 26, 0, 0xffddaa, 1)
-      .setDepth(11).setRotation(angle);
-    scene.tweens.add({
-      targets: flash, scaleX: 2.2, scaleY: 0.4, alpha: 0, duration: 170,
-      onComplete: () => flash.destroy(),
-    });
-    const shock = scene.add.circle(m.x + nx * 22, m.y + ny * 22, 7, 0xffbb66, 0.55).setDepth(10);
-    scene.tweens.add({
-      targets: shock, scaleX: 3.4, scaleY: 3.4, alpha: 0, duration: 260,
-      onComplete: () => shock.destroy(),
-    });
-
-    // Powder smoke rolling off the barrel.
-    for (let i = 0; i < 4; i++) {
-      const a = angle + (Math.random() - 0.5) * 1.1;
-      const puff = scene.add.circle(m.x + nx * 18, m.y + ny * 18, 4 + Math.random() * 4, 0x9a9a9a, 0.45).setDepth(9);
-      scene.tweens.add({
-        targets: puff, x: puff.x + Math.cos(a) * (26 + Math.random() * 22),
-        y: puff.y + Math.sin(a) * (26 + Math.random() * 22),
-        scaleX: 2.2, scaleY: 2.2, alpha: 0, duration: 620 + Math.random() * 260,
-        onComplete: () => puff.destroy(),
-      });
-    }
-
-    // Recoil kick, then settle back onto the musket's real position.
-    m.gfx.setPosition(m.x - nx * 10, m.y - ny * 10);
-    scene.tweens.add({ targets: m.gfx, x: m.x, y: m.y, duration: 220, ease: 'Back.easeOut' });
+    // A remote-fired barrel goes off harder than a hand-held one — bigger petal, more smoke.
+    this.fx(m.owner).muzzle(m.x + nx * 22, m.y + ny * 22, angle, 1.3, 11, GUNPOWDER.glow);
+    m.angle = angle;
+    m.kick = 10; // decays back to zero in updateMuskets
 
     // Straight back to full heat, plus the Overload surcharge on top.
     const hotMs = 12000 * (isPlayer ? this.musketCoolMult() : 1) + OVERLOAD_EXTRA_HEAT_MS;
@@ -1547,27 +1932,5 @@ export class GunpowderKit {
     m.cooled = false;
     m.overloadBurnUntil = m.hotUntil;
     m.lastOwnerBurnAt = 0;
-  }
-
-  /** Overloaded muskets sit on the floor radiating heat until they finally cool. */
-  private drawOverloadEmbers(time: number): void {
-    const gfx = this.overloadGfx;
-    if (!gfx) return;
-    for (const m of this.muskets) {
-      if (!m.overloadBurnUntil || time >= m.overloadBurnUntil || m.flying) continue;
-      const pulse = 0.5 + 0.5 * Math.sin(time / 160 + m.droppedAt);
-      gfx.fillStyle(0xff4411, 0.05 + 0.07 * pulse);
-      gfx.fillCircle(m.x, m.y, OVERLOAD_BURN_RADIUS);
-      gfx.fillStyle(0xff7722, 0.10 + 0.10 * pulse);
-      gfx.fillCircle(m.x, m.y, 15);
-      // Embers drifting up off the barrel.
-      for (let k = 0; k < 3; k++) {
-        const phase = (time / 900 + k / 3 + m.droppedAt / 5000) % 1;
-        const ex = m.x + Math.sin(time / 220 + k * 2.1) * 9;
-        const ey = m.y - phase * 22;
-        gfx.fillStyle(0xffcc55, (1 - phase) * 0.75);
-        gfx.fillCircle(ex, ey, 1.6);
-      }
-    }
   }
 }

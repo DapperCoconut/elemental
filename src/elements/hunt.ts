@@ -18,6 +18,8 @@ const huntShotgun: Ability = {
     const dy = ctx.targetY - ctx.casterY;
     const baseAngle = Math.atan2(dy, dx);
     const expireMs = Math.round((PELLET_RANGE_PX / PELLET_SPEED) * 1000);
+    // Recoil and muzzle sheet, drawn by HuntKit for whichever side pulled the trigger.
+    ctx.huntShotgunBlast(baseAngle);
     for (let i = 0; i < PELLET_COUNT; i++) {
       const frac = i / (PELLET_COUNT - 1);
       const angleDeg = -CONE_HALF_DEG + frac * CONE_HALF_DEG * 2;

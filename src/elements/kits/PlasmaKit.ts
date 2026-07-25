@@ -1,6 +1,10 @@
 import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
+import {
+  ArmGesture, PLASMA, PlasmaAura, PlasmaAuraStyle, PlasmaAvatar, PlasmaColorFn, PlasmaFx,
+  arcBolt, plasmaBead,
+} from './PlasmaVisuals';
 
 // ── PlasmaArenaApi ────────────────────────────────────────────────────────
 
@@ -17,6 +21,11 @@ export interface PlasmaArenaApi {
   readonly pointerWasDown: boolean;
   readonly width: number;
   readonly height: number;
+  readonly elementId: string;
+  readonly npcElementId: string;
+  readonly npcCastId: string | null;
+  /** `(owner, base) => displayed` — the owner's colour cosmetic, or the identity. */
+  plasmaColor(owner: 'player' | 'npc', base: number): number;
   hasUpgrade(slot: string): boolean;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
   spawnHitFlash(x: number, y: number, color: number): void;
@@ -36,9 +45,11 @@ export interface PlasmaArenaApi {
 }
 
 // ── Internal interfaces ───────────────────────────────────────────────────
+//
+// Every world object here is plain data painted into the kit's own Graphics layers — nothing
+// owns a sprite, so an orb can boil, a blade can spin and a zone can crackle.
 
 interface PlasmaArenaZone {
-  sprite: Phaser.GameObjects.Arc;
   x: number;
   y: number;
   radius: number;
@@ -49,9 +60,6 @@ interface PlasmaArenaZone {
 }
 
 interface PlasmaCurrentOrb {
-  spriteA: Phaser.GameObjects.Arc;
-  spriteB: Phaser.GameObjects.Arc;
-  chainGraphic: Phaser.GameObjects.Graphics;
   ax: number; ay: number;
   bx: number; by: number;
   vax: number; vay: number;
@@ -64,7 +72,6 @@ interface PlasmaCurrentOrb {
 }
 
 interface PlasmaBlade {
-  sprite: Phaser.GameObjects.Arc;
   x: number;
   y: number;
   vx: number;
@@ -79,11 +86,9 @@ interface PlasmaChaosEffect {
   target: 'player' | 'npc';
   expiresAt: number;
   tickAccum: number;
-  aura: Phaser.GameObjects.Arc | null;
 }
 
 interface PlasmaChaosOrb {
-  sprite: Phaser.GameObjects.Arc;
   x: number;
   y: number;
   vx: number;
@@ -93,7 +98,6 @@ interface PlasmaChaosOrb {
 }
 
 interface PlasmaVoltPoint {
-  sprite: Phaser.GameObjects.Arc;
   x: number;
   y: number;
   owner: 'player' | 'npc';
@@ -117,8 +121,6 @@ interface PlasmaPureChaosState {
   endsAt: number;
   /** Time until the next 5-orb volley. */
   volleyAccum: number;
-  /** The crackling shell drawn around the caster. */
-  gfx: Phaser.GameObjects.Graphics;
 }
 
 /** One of the 5 orbs a Pure CHAOS! volley spits out. Homes on whoever it was pointed at. */
@@ -140,7 +142,6 @@ interface PlasmaSeekerOrb {
 
 /** The slow, player-sized orb Permanent Chaos leaves behind when Pure CHAOS! ends. */
 interface PlasmaPermanentOrb {
-  gfx: Phaser.GameObjects.Graphics;
   x: number;
   y: number;
   vx: number;
@@ -188,12 +189,20 @@ const ORBITAL_HIT_RADIUS = 24;
 const ORBITAL_ENEMY_COOLDOWN_MS = 1200;
 /** Orbit speed, rad/s. */
 const ORBITAL_ANGULAR_SPEED = 2.5;
-const ORBITAL_COLOR = 0xff2f8f;
+const ORBITAL_COLOR = PLASMA.hot;
+
+/** Every ability drives an arm gesture, on the NPC rig as well as the player's. */
+const CAST_GESTURES: Record<string, ArmGesture> = {
+  'plasma-burst': 'punch',
+  'plasma-arena': 'slam',
+  'plasma-current': 'clap',
+  'plasma-chaos-blades': 'sweep',
+  'plasma-pure-chaos': 'raise',
+};
 
 /** The electron-style orbital summoned by Unstable Orbital. One per side at most. */
 interface PlasmaOrbital {
   owner: 'player' | 'npc';
-  gfx: Phaser.GameObjects.Graphics;
   /** Where the electron sits on its ring. */
   angle: number;
   /** Distance from the caster — shrinks on its own, grows when the caster deals damage. */
@@ -208,6 +217,30 @@ interface PlasmaOrbital {
 // ── PlasmaKit ─────────────────────────────────────────────────────────────
 
 export class PlasmaKit {
+  // ── Visuals ────────────────────────────────────────────────────────────
+  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  private readonly pcol: PlasmaColorFn;
+  private readonly ncol: PlasmaColorFn;
+  private readonly pfx: PlasmaFx;
+  private readonly nfx: PlasmaFx;
+  /** The caged-lightning rig (containment hands, eyes, forked crown) for each plasma fighter. */
+  private playerAvatar: PlasmaAvatar | null = null;
+  private npcAvatar: PlasmaAvatar | null = null;
+  /** Stance tells, per side where both can run one. */
+  private auras: Partial<Record<`${'player' | 'npc'}:${PlasmaAuraStyle}`, PlasmaAura>> = {};
+  /**
+   * Two layers, because these objects are not all in the same place. Zones, scorches and the
+   * storm lie on the floor and pass *under* the fighters; orbs, blades, currents and seekers fly
+   * over them.
+   */
+  private groundGfx: Phaser.GameObjects.Graphics | null = null;
+  private airGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Shared animation clock for every per-frame painter in this kit. */
+  private vizT = 0;
+  /** Last cursor position, cached in handleInput — `update` has no pointer. */
+  private lastAimX = 0;
+  private lastAimY = 0;
+
   // ── Shared world objects ──────────────────────────────────────────
   private plasmaArenas: PlasmaArenaZone[] = [];
   private plasmaCurrentOrbs: PlasmaCurrentOrb[] = [];
@@ -219,18 +252,16 @@ export class PlasmaKit {
   private plasmaPureChaos: PlasmaPureChaosState[] = [];
   private plasmaSeekers: PlasmaSeekerOrb[] = [];
   private plasmaPermanentOrbs: PlasmaPermanentOrb[] = [];
-  /** Shared canvas for every seeker body + tail; cleared and redrawn each frame. */
-  private plasmaSeekerGfx: Phaser.GameObjects.Graphics | null = null;
 
   // ── Player R-hold state ───────────────────────────────────────────
   private plasmaRHolding = false;
   private plasmaRHeldSince = 0;
-  private plasmaRPreviewA: Phaser.GameObjects.Arc | null = null;
-  private plasmaRPreviewB: Phaser.GameObjects.Arc | null = null;
+  /** Where the two orbs would launch from if R were released right now, or null. */
+  private plasmaRPreview: { ax: number; ay: number; bx: number; by: number; ratio: number } | null = null;
 
   // ── Solar perk state ──────────────────────────────────────────────
   private solarPuddleAccum = 0;
-  private solarPuddles: { sprite: Phaser.GameObjects.Arc; expiresAt: number; tickAccum: number; owner: 'player' | 'npc' }[] = [];
+  private solarPuddles: { x: number; y: number; expiresAt: number; tickAccum: number; owner: 'player' | 'npc' }[] = [];
 
   // ── Mastery — Chaos Storm ─────────────────────────────────────────
   /** Latched on the first frame the storm is live; the mastery flags aren't set yet at reset(). */
@@ -245,50 +276,96 @@ export class PlasmaKit {
   /** Enemies already wired up for the "killed while Pure CHAOS! was up" requirement. */
   private killWatched = new WeakSet<Fighter>();
 
-  constructor(private arena: PlasmaArenaApi) {}
+  constructor(private arena: PlasmaArenaApi) {
+    // Built here, not as field initialisers, so they see the injected arena.
+    this.pcol = (base) => arena.plasmaColor('player', base);
+    this.ncol = (base) => arena.plasmaColor('npc', base);
+    this.pfx = new PlasmaFx(arena.scene, this.pcol);
+    this.nfx = new PlasmaFx(arena.scene, this.ncol);
+  }
+
+  // ── Visual helpers ─────────────────────────────────────────────────────
+
+  /** Effect painter for a side. */
+  private fx(owner: 'player' | 'npc'): PlasmaFx { return owner === 'player' ? this.pfx : this.nfx; }
+  /** Colour mapper for a side. */
+  private col(owner: 'player' | 'npc'): PlasmaColorFn { return owner === 'player' ? this.pcol : this.ncol; }
+  /** The rig for a side, if that side is playing Plasma. */
+  private avatar(owner: 'player' | 'npc'): PlasmaAvatar | null {
+    return owner === 'player' ? this.playerAvatar : this.npcAvatar;
+  }
+  private fighter(owner: 'player' | 'npc'): Fighter {
+    return owner === 'player' ? this.arena.player : this.arena.npc;
+  }
+
+  /** The floor layer, under the fighters. Rebuilt lazily after a reset. */
+  private ground(): Phaser.GameObjects.Graphics {
+    if (!this.groundGfx || !this.groundGfx.active) {
+      this.groundGfx = this.arena.scene.add.graphics().setDepth(3);
+    }
+    return this.groundGfx;
+  }
+
+  /** The flying layer, over the fighters. Rebuilt lazily after a reset. */
+  private air(): Phaser.GameObjects.Graphics {
+    if (!this.airGfx || !this.airGfx.active) {
+      this.airGfx = this.arena.scene.add.graphics().setDepth(10);
+    }
+    return this.airGfx;
+  }
+
+  /** Build/tear down one stance aura from a single "is it up?" flag. */
+  private syncAura(
+    owner: 'player' | 'npc', style: PlasmaAuraStyle, on: boolean,
+    delta: number, intensity: number, angle: number, radius = 26,
+  ): void {
+    const key = `${owner}:${style}` as const;
+    let aura = this.auras[key];
+    const f = this.fighter(owner);
+    if (!on || !f.active) {
+      if (aura) { aura.destroy(); delete this.auras[key]; }
+      return;
+    }
+    if (!aura) {
+      aura = new PlasmaAura(this.arena.scene, this.col(owner), style, radius, style === 'pure' ? 9 : 4);
+      this.auras[key] = aura;
+    }
+    aura.setIntensity(intensity);
+    aura.setAngle(angle);
+    aura.update(delta, f.x, f.y, f.forceInvisible ? 0 : f.alpha);
+  }
+
+  private destroyAuras(): void {
+    for (const a of Object.values(this.auras)) a?.destroy();
+    this.auras = {};
+  }
 
   // ── reset ─────────────────────────────────────────────────────────
 
   reset(): void {
-    for (const a of this.plasmaArenas) a.sprite.destroy();
+    // Visuals — every GameObject dies with the old scene run, so rebuild lazily in update().
+    if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
+    if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
+    this.destroyAuras();
+    if (this.groundGfx) { this.groundGfx.destroy(); this.groundGfx = null; }
+    if (this.airGfx) { this.airGfx.destroy(); this.airGfx = null; }
+    this.vizT = 0;
+
     this.plasmaArenas = [];
-
-    for (const o of this.plasmaCurrentOrbs) {
-      o.spriteA.destroy();
-      o.spriteB.destroy();
-      o.chainGraphic.destroy();
-    }
     this.plasmaCurrentOrbs = [];
-
-    for (const b of this.plasmaBlades) b.sprite.destroy();
     this.plasmaBlades = [];
-
-    for (const e of this.plasmaChaosEffects) { if (e.aura) e.aura.destroy(); }
     this.plasmaChaosEffects = [];
-
-    for (const o of this.plasmaChaosOrbs) o.sprite.destroy();
     this.plasmaChaosOrbs = [];
-
-    for (const vp of this.plasmaVoltPoints) vp.sprite.destroy();
     this.plasmaVoltPoints = [];
-
     this.plasmaClickBlasts = [];
-
-    for (const c of this.plasmaPureChaos) c.gfx.destroy();
     this.plasmaPureChaos = [];
-
     this.plasmaSeekers = [];
-    if (this.plasmaSeekerGfx) { this.plasmaSeekerGfx.destroy(); this.plasmaSeekerGfx = null; }
-
-    for (const o of this.plasmaPermanentOrbs) o.gfx.destroy();
     this.plasmaPermanentOrbs = [];
 
     this.plasmaRHolding = false;
     this.plasmaRHeldSince = 0;
-    if (this.plasmaRPreviewA) { this.plasmaRPreviewA.destroy(); this.plasmaRPreviewA = null; }
-    if (this.plasmaRPreviewB) { this.plasmaRPreviewB.destroy(); this.plasmaRPreviewB = null; }
+    this.plasmaRPreview = null;
 
-    for (const p of this.solarPuddles) p.sprite.destroy();
     this.solarPuddles = [];
     this.solarPuddleAccum = 0;
 
@@ -296,7 +373,6 @@ export class PlasmaKit {
     if (this.stormGfx) { this.stormGfx.destroy(); this.stormGfx = null; }
     this.stormLastStrike = new Map<Fighter, number>();
 
-    for (const o of this.orbitals) o.gfx.destroy();
     this.orbitals = [];
     this.orbitalLastCastAt = -ORBITAL_COOLDOWN_MS;
     this.killWatched = new WeakSet<Fighter>();
@@ -313,6 +389,8 @@ export class PlasmaKit {
   ): void {
     const { player, nukeChanneling, pointerWasDown, rKey, eKey, fKey, qKey } = this.arena;
 
+    this.lastAimX = mouseX;
+    this.lastAimY = mouseY;
     if (nukeChanneling) return;
 
     const playerCtx = this.arena.buildPlayerContext(mouseX, mouseY);
@@ -372,19 +450,13 @@ export class PlasmaKit {
       const ay = player.y + perpY * spread;
       const bx = player.x - perpX * spread;
       const by = player.y - perpY * spread;
-      const scene = this.arena.scene;
-      if (!this.plasmaRPreviewA) {
-        this.plasmaRPreviewA = scene.add.circle(ax, ay, 8, 0xcc44ff, 0.5).setDepth(5);
-        this.plasmaRPreviewB = scene.add.circle(bx, by, 8, 0xcc44ff, 0.5).setDepth(5);
-      } else {
-        this.plasmaRPreviewA.setPosition(ax, ay);
-        this.plasmaRPreviewB!.setPosition(bx, by);
-      }
+      // Painted in paintWorld: two beads of held charge with the current already arcing between
+      // them, so the wind-up shows exactly what is about to launch.
+      this.plasmaRPreview = { ax, ay, bx, by, ratio: voltMode ? 1 : Math.min(1, heldMs / 1500) };
     }
     if ((!rKey.isDown || !rFree) && this.plasmaRHolding) {
       this.plasmaRHolding = false;
-      if (this.plasmaRPreviewA) { this.plasmaRPreviewA.destroy(); this.plasmaRPreviewA = null; }
-      if (this.plasmaRPreviewB) { this.plasmaRPreviewB.destroy(); this.plasmaRPreviewB = null; }
+      this.plasmaRPreview = null;
       const totalHeldMs = time - this.plasmaRHeldSince;
       if (this.arena.hasUpgrade('r') && totalHeldMs >= 2500) {
         this.doPlasmaSpawnVoltPoints(mouseX, mouseY, 'player');
@@ -411,6 +483,8 @@ export class PlasmaKit {
 
   update(time: number, delta: number): void {
     const { scene } = this.arena;
+    this.vizT += delta / 1000;
+    this.mirrorNpcCast();
     const W = this.arena.width;
     const H = this.arena.height;
     const pad = 32;
@@ -423,7 +497,6 @@ export class PlasmaKit {
     for (let i = this.plasmaArenas.length - 1; i >= 0; i--) {
       const arena = this.plasmaArenas[i];
       if (time > arena.expiresAt) {
-        arena.sprite.destroy();
         this.plasmaArenas.splice(i, 1);
         continue;
       }
@@ -454,11 +527,6 @@ export class PlasmaKit {
       } else {
         arena.npcInAccum = 0;
       }
-
-      const urgencyRatio = Math.max(arena.playerInAccum, arena.npcInAccum) / 3000;
-      if (urgencyRatio > 0.5) {
-        arena.sprite.setStrokeStyle(3 + urgencyRatio * 3, 0xff2222, 0.9);
-      }
     }
 
     // ── Plasma Current Orbs ───────────────────────────────────────
@@ -470,9 +538,6 @@ export class PlasmaKit {
           this.doSolarEndpointExplosion(orb.ax, orb.ay, orb.owner);
           this.doSolarEndpointExplosion(orb.bx, orb.by, orb.owner);
         }
-        orb.spriteA.destroy();
-        orb.spriteB.destroy();
-        orb.chainGraphic.destroy();
         this.plasmaCurrentOrbs.splice(i, 1);
         continue;
       }
@@ -482,18 +547,12 @@ export class PlasmaKit {
       orb.ay += orb.vay * dt;
       orb.bx += orb.vbx * dt;
       orb.by += orb.vby * dt;
-      orb.spriteA.setPosition(orb.ax, orb.ay);
-      orb.spriteB.setPosition(orb.bx, orb.by);
 
       if (orb.ax < 0 || orb.ax > W || orb.ay < 0 || orb.ay > H ||
           orb.bx < 0 || orb.bx > W || orb.by < 0 || orb.by > H) {
         orb.active = false;
         continue;
       }
-
-      orb.chainGraphic.clear();
-      orb.chainGraphic.lineStyle(3, 0xcc44ff, 0.8);
-      orb.chainGraphic.lineBetween(orb.ax, orb.ay, orb.bx, orb.by);
 
       const chainTargets = orb.owner === 'player' ? this.arena.enemies : [this.arena.player];
       let chainCollapsed = false;
@@ -502,8 +561,10 @@ export class PlasmaKit {
         const dA = Phaser.Math.Distance.Between(orb.ax, orb.ay, hitTarget.x, hitTarget.y);
         const dB = Phaser.Math.Distance.Between(orb.bx, orb.by, hitTarget.x, hitTarget.y);
         if (dA <= 20 || dB <= 20) {
+          const hx = hitTarget.x, hy = hitTarget.y;
           hitTarget.takeDamage(10);
           this.arena.spawnHitFlash(hitTarget.x, hitTarget.y, 0xcc44ff);
+          this.fx(orb.owner).motes(hx, hy, 6, { speed: 220, size: 5, color: PLASMA.orchid, depth: 9 });
           this.arena.showFloatingText(hitTarget.x, hitTarget.y - 36, '💥 Chain Collapse!', '#cc44ff');
           this.doPlasmaCurrentExplode(orb);
           chainCollapsed = true;
@@ -528,7 +589,10 @@ export class PlasmaKit {
     for (let i = this.plasmaBlades.length - 1; i >= 0; i--) {
       const blade = this.plasmaBlades[i];
       if (!blade.active || time > blade.expiresAt) {
-        blade.sprite.destroy();
+        // A blade burning out throws its last charge loose rather than blinking away.
+        if (time > blade.expiresAt) {
+          this.fx(blade.owner).motes(blade.x, blade.y, 4, { speed: 90, size: 4, color: PLASMA.pink, depth: 8 });
+        }
         this.plasmaBlades.splice(i, 1);
         continue;
       }
@@ -537,12 +601,17 @@ export class PlasmaKit {
       blade.x += blade.vx * dt;
       blade.y += blade.vy * dt;
 
-      if (blade.x < leftBound) { blade.x = leftBound; blade.vx = Math.abs(blade.vx); }
-      if (blade.x > rightBound) { blade.x = rightBound; blade.vx = -Math.abs(blade.vx); }
-      if (blade.y < topBound) { blade.y = topBound; blade.vy = Math.abs(blade.vy); }
-      if (blade.y > bottomBound) { blade.y = bottomBound; blade.vy = -Math.abs(blade.vy); }
-
-      blade.sprite.setPosition(blade.x, blade.y);
+      // A wall bounce throws sparks, so a rebound reads as a hit on the arena itself.
+      let bounced = false;
+      if (blade.x < leftBound) { blade.x = leftBound; blade.vx = Math.abs(blade.vx); bounced = true; }
+      if (blade.x > rightBound) { blade.x = rightBound; blade.vx = -Math.abs(blade.vx); bounced = true; }
+      if (blade.y < topBound) { blade.y = topBound; blade.vy = Math.abs(blade.vy); bounced = true; }
+      if (blade.y > bottomBound) { blade.y = bottomBound; blade.vy = -Math.abs(blade.vy); bounced = true; }
+      if (bounced) {
+        this.fx(blade.owner).motes(blade.x, blade.y, 3, {
+          speed: 120, angle: Math.atan2(blade.vy, blade.vx), spread: 1, size: 3.4, color: PLASMA.pink, depth: 8,
+        });
+      }
 
       const ownerGrace = time < blade.spawnedAt + 2000;
       const fighterChecks: Array<{ f: Fighter; side: 'player' | 'npc' }> = [
@@ -553,8 +622,13 @@ export class PlasmaKit {
         if (ownerGrace && side === blade.owner) continue;
         const d = Phaser.Math.Distance.Between(blade.x, blade.y, f.x, f.y);
         if (d <= 20) {
+          const hx = f.x, hy = f.y;
           f.takeDamage(8);
           this.arena.spawnHitFlash(f.x, f.y, 0xff44ff);
+          // The blade biting: a fork through the victim and plasma spat out the far side.
+          const bfx = this.fx(blade.owner);
+          bfx.discharge(hx, hy, 34, 5, PLASMA.pink, 260, 9);
+          bfx.motes(hx, hy, 4, { speed: 200, size: 4, color: PLASMA.pink, depth: 9 });
           // Mastery req: the blade itself has to land the killing blow.
           if (blade.owner === 'player' && side !== 'player' && f.hp <= 0) {
             this.arena.recordMasteryStat('chaosBladeKills', 1);
@@ -571,12 +645,10 @@ export class PlasmaKit {
     for (let i = this.plasmaChaosEffects.length - 1; i >= 0; i--) {
       const effect = this.plasmaChaosEffects[i];
       if (time > effect.expiresAt) {
-        if (effect.aura) { effect.aura.destroy(); effect.aura = null; }
         this.plasmaChaosEffects.splice(i, 1);
         continue;
       }
       const fighter = effect.target === 'player' ? this.arena.player : this.arena.npc;
-      if (effect.aura) effect.aura.setPosition(fighter.x, fighter.y);
 
       effect.tickAccum += delta;
       if (effect.tickAccum >= 5000) {
@@ -589,7 +661,6 @@ export class PlasmaKit {
     for (let i = this.plasmaChaosOrbs.length - 1; i >= 0; i--) {
       const orb = this.plasmaChaosOrbs[i];
       if (!orb.active) {
-        orb.sprite.destroy();
         this.plasmaChaosOrbs.splice(i, 1);
         continue;
       }
@@ -601,7 +672,6 @@ export class PlasmaKit {
       orb.vy *= 0.98;
       if (orb.x < leftBound || orb.x > rightBound) orb.vx *= -1;
       if (orb.y < topBound || orb.y > bottomBound) orb.vy *= -1;
-      orb.sprite.setPosition(orb.x, orb.y);
 
       const opponents: Array<{ f: Fighter; side: 'player' | 'npc' }> = [
         { f: this.arena.player, side: 'player' },
@@ -609,8 +679,11 @@ export class PlasmaKit {
       ];
       for (const { f } of opponents) {
         if (Phaser.Math.Distance.Between(orb.x, orb.y, f.x, f.y) <= 20) {
+          const hx = orb.x, hy = orb.y;
           f.takeDamage(10);
           this.arena.spawnHitFlash(f.x, f.y, 0xffaaff);
+          // Popped: the containment lets go and the charge sprays out of it.
+          this.fx(orb.owner).discharge(hx, hy, 30, 6, PLASMA.blush, 250, 9);
           this.arena.showFloatingText(f.x, f.y - 36, '🌀 Chaos Orb!', '#ffaaff');
           orb.active = false;
           break;
@@ -624,8 +697,9 @@ export class PlasmaKit {
       const caster = chaos.owner === 'player' ? this.arena.player : this.arena.npc;
 
       if (time >= chaos.endsAt) {
-        chaos.gfx.destroy();
         this.plasmaPureChaos.splice(i, 1);
+        // The cage failing: everything it was holding goes out at once.
+        this.fx(chaos.owner).discharge(caster.x, caster.y, 96, 10, PLASMA.magenta, 420, 9);
         this.arena.showFloatingText(caster.x, caster.y - 40, '⚡ Chaos spent', '#cc44ff');
         // Permanent Chaos: the storm doesn't really end, it just wanders off.
         if (chaos.owner === 'player' && this.arena.hasUpgrade('q')) {
@@ -633,8 +707,6 @@ export class PlasmaKit {
         }
         continue;
       }
-
-      this.drawChaosEnvelope(chaos.gfx, caster.x, caster.y, time, chaos.endsAt);
 
       chaos.volleyAccum += delta;
       if (chaos.volleyAccum >= 5000) {
@@ -644,11 +716,6 @@ export class PlasmaKit {
     }
 
     // ── Pure CHAOS! seeker orbs ───────────────────────────────────
-    if (this.plasmaSeekers.length > 0 && !this.plasmaSeekerGfx) {
-      this.plasmaSeekerGfx = scene.add.graphics().setDepth(8);
-    }
-    if (this.plasmaSeekerGfx) this.plasmaSeekerGfx.clear();
-
     for (let i = this.plasmaSeekers.length - 1; i >= 0; i--) {
       const seeker = this.plasmaSeekers[i];
       const target = seeker.target;
@@ -679,20 +746,12 @@ export class PlasmaKit {
         this.plasmaSeekers.splice(i, 1);
         continue;
       }
-
-      this.drawSeeker(seeker, time);
-    }
-
-    if (this.plasmaSeekers.length === 0 && this.plasmaSeekerGfx) {
-      this.plasmaSeekerGfx.destroy();
-      this.plasmaSeekerGfx = null;
     }
 
     // ── Permanent Chaos orbs ──────────────────────────────────────
     for (let i = this.plasmaPermanentOrbs.length - 1; i >= 0; i--) {
       const orb = this.plasmaPermanentOrbs[i];
       if (!orb.active) {
-        orb.gfx.destroy();
         this.plasmaPermanentOrbs.splice(i, 1);
         continue;
       }
@@ -704,8 +763,6 @@ export class PlasmaKit {
       if (orb.x > rightBound - orb.radius) { orb.x = rightBound - orb.radius; orb.vx = -Math.abs(orb.vx); }
       if (orb.y < topBound + orb.radius)   { orb.y = topBound + orb.radius;   orb.vy = Math.abs(orb.vy); }
       if (orb.y > bottomBound - orb.radius){ orb.y = bottomBound - orb.radius; orb.vy = -Math.abs(orb.vy); }
-
-      this.drawPermanentOrb(orb, time);
 
       if (time < orb.armedAt) continue;
 
@@ -729,21 +786,13 @@ export class PlasmaKit {
           this.arena.showFloatingText(f.x, f.y - 36, '⚡ Chaos Strike', '#dd66ff');
         }
       }
-      if (popped) {
-        orb.gfx.destroy();
-        this.plasmaPermanentOrbs.splice(i, 1);
-      }
+      if (popped) this.plasmaPermanentOrbs.splice(i, 1);
     }
 
     // ── Volt Points ───────────────────────────────────────────────
     for (let i = this.plasmaVoltPoints.length - 1; i >= 0; i--) {
       const vp = this.plasmaVoltPoints[i];
-      if (time > vp.expiresAt || vp.charges <= 0) {
-        vp.sprite.destroy();
-        this.plasmaVoltPoints.splice(i, 1);
-      } else {
-        vp.sprite.setPosition(vp.x, vp.y);
-      }
+      if (time > vp.expiresAt || vp.charges <= 0) this.plasmaVoltPoints.splice(i, 1);
     }
 
     // ── Plasma Burst click blasts (staggered 0.2s apart) ──────────
@@ -787,20 +836,152 @@ export class PlasmaKit {
       const p = this.solarPuddles[i];
       p.tickAccum += delta;
       if (time >= p.expiresAt) {
-        p.sprite.destroy();
         this.solarPuddles.splice(i, 1);
         continue;
       }
       if (p.tickAccum >= 100) {
         p.tickAccum -= 100;
         const target = p.owner === 'player' ? this.arena.npc : this.arena.player;
-        if (target.active && Phaser.Math.Distance.Between(p.sprite.x, p.sprite.y, target.x, target.y) < 14) {
-          target.takeDamage(2, { source: p.sprite, sourceX: p.sprite.x, sourceY: p.sprite.y });
+        if (target.active && Phaser.Math.Distance.Between(p.x, p.y, target.x, target.y) < 14) {
+          target.takeDamage(2, { sourceX: p.x, sourceY: p.y });
         }
       }
     }
 
+    this.paintWorld(time);
+    this.updateAvatars(time, delta);
     void scene;
+  }
+
+  /** Mirror the player's gestures on the NPC rig, so a plasma opponent visibly casts. */
+  private mirrorNpcCast(): void {
+    const id = this.arena.npcCastId;
+    if (!id) return;
+    const gesture = CAST_GESTURES[id];
+    if (!gesture) return;
+    const { npc, player } = this.arena;
+    this.npcAvatar?.play(gesture, Math.atan2(player.y - npc.y, player.x - npc.x));
+  }
+
+  /**
+   * Every per-frame painter in one pass. The two layers are cleared and redrawn from live state,
+   * so a zone crackles, an orb boils and a current arcs rather than sitting there as a sprite.
+   */
+  private paintWorld(time: number): void {
+    const t = this.vizT;
+
+    // ── Floor ──
+    const hasGround = this.plasmaArenas.length > 0 || this.solarPuddles.length > 0;
+    if (hasGround || this.groundGfx) {
+      const g = this.ground();
+      g.clear();
+      for (const z of this.plasmaArenas) {
+        const urgency = Math.max(z.playerInAccum, z.npcInAccum) / 3000;
+        PlasmaFx.drawZone(g, this.col(z.owner), z.x, z.y, z.radius, Phaser.Math.Clamp(urgency, 0, 1), t);
+      }
+      for (const p of this.solarPuddles) {
+        plasmaBead(g, this.col(p.owner), p.x, p.y, 9, t, PLASMA.purple, 0.8, 3);
+      }
+    }
+
+    // ── Air ──
+    const hasAir = this.plasmaCurrentOrbs.length > 0 || this.plasmaBlades.length > 0
+      || this.plasmaChaosOrbs.length > 0 || this.plasmaVoltPoints.length > 0
+      || this.plasmaSeekers.length > 0 || this.plasmaPermanentOrbs.length > 0
+      || this.orbitals.length > 0 || this.plasmaRPreview !== null;
+    if (hasAir || this.airGfx) {
+      const g = this.air();
+      g.clear();
+
+      // The R wind-up: the pair already live, with the current stretched between them.
+      const pv = this.plasmaRPreview;
+      if (pv) {
+        arcBolt(g, this.pcol, pv.ax, pv.ay, pv.bx, pv.by, 14, t * 60, 2.2 + pv.ratio * 1.6,
+          PLASMA.orchid, 0.4 + pv.ratio * 0.5, 9);
+        plasmaBead(g, this.pcol, pv.ax, pv.ay, 6 + pv.ratio * 4, t, PLASMA.orchid, 0.75, 3);
+        plasmaBead(g, this.pcol, pv.bx, pv.by, 6 + pv.ratio * 4, t + 0.3, PLASMA.orchid, 0.75, 3);
+      }
+
+      for (const o of this.plasmaCurrentOrbs) {
+        PlasmaFx.drawCurrent(g, this.col(o.owner), o.ax, o.ay, o.bx, o.by, o.stopped, t);
+      }
+      for (const vp of this.plasmaVoltPoints) {
+        PlasmaFx.drawVoltPoint(g, this.col(vp.owner), vp.x, vp.y, vp.charges, t);
+      }
+      for (const b of this.plasmaBlades) {
+        PlasmaFx.drawBlade(g, this.col(b.owner), b.x, b.y, Math.atan2(b.vy, b.vx) + t * 9, t);
+      }
+      for (const o of this.plasmaChaosOrbs) {
+        plasmaBead(g, this.col(o.owner), o.x, o.y, 6, t + o.x * 0.01, PLASMA.blush, 0.95, 3);
+      }
+      for (const s of this.plasmaSeekers) {
+        PlasmaFx.drawSeeker(g, this.col(s.owner), s.x, s.y, s.trail, s.hostile, t);
+      }
+      for (const o of this.plasmaPermanentOrbs) {
+        const arming = Phaser.Math.Clamp(1 - (o.armedAt - time) / 1500, 0, 1);
+        PlasmaFx.drawPermanentOrb(g, this.col(o.owner), o.x, o.y, o.radius, PERMANENT_ORB_STRIKE_RADIUS, arming, t);
+      }
+      for (const orb of this.orbitals) {
+        const caster = this.fighter(orb.owner);
+        const tilt = time * 0.0004 + (orb.owner === 'npc' ? Math.PI / 3 : 0);
+        const closeness = Phaser.Math.Clamp(
+          1 - (orb.radius - ORBITAL_COLLAPSE_RADIUS) / (ORBITAL_START_RADIUS - ORBITAL_COLLAPSE_RADIUS), 0, 1,
+        );
+        PlasmaFx.drawOrbital(g, this.col(orb.owner), caster.x, caster.y, orb.x, orb.y,
+          orb.radius, orb.angle, tilt, closeness, t);
+      }
+    }
+  }
+
+  /**
+   * The character rigs and every stance aura, for whichever sides are playing Plasma. Built
+   * lazily so a scene restart (which destroys them all) simply rebuilds on the next frame, and
+   * torn down the moment a side stops being Plasma.
+   */
+  private updateAvatars(time: number, delta: number): void {
+    const { scene, player, npc } = this.arena;
+    const isPlayerPlasma = this.arena.elementId === 'plasma';
+    const isNpcPlasma = this.arena.npcElementId === 'plasma';
+
+    for (const owner of ['player', 'npc'] as const) {
+      const isPlasma = owner === 'player' ? isPlayerPlasma : isNpcPlasma;
+      const f = owner === 'player' ? player : npc;
+      let av = this.avatar(owner);
+
+      if (!isPlasma || !f.active) {
+        if (av) {
+          av.destroy();
+          if (owner === 'player') this.playerAvatar = null; else this.npcAvatar = null;
+          for (const style of ['chaos', 'pure', 'wind'] as const) {
+            this.auras[`${owner}:${style}`]?.destroy();
+            delete this.auras[`${owner}:${style}`];
+          }
+        }
+        continue;
+      }
+
+      if (!av) {
+        av = new PlasmaAvatar(scene, this.col(owner), owner);
+        if (owner === 'player') this.playerAvatar = av; else this.npcAvatar = av;
+      }
+
+      const aim = owner === 'player'
+        ? Math.atan2(this.lastAimY - player.y, this.lastAimX - player.x)
+        : Math.atan2(player.y - npc.y, player.x - npc.x);
+      const pure = this.plasmaPureChaos.find((c) => c.owner === owner);
+      const winding = owner === 'player' && this.plasmaRHolding;
+      av.setFacing(aim);
+      av.setIntensity(pure ? 1.5 : 1);
+      av.setMastered(owner === 'player' ? this.arena.masteryActive : this.arena.npcMasteryActive);
+      // Single owner of setHold: the R wind-up cups a knot of lightning between the hands.
+      av.setHold(winding ? 'brace' : null, aim);
+      av.update(delta, f.x, f.y, f.forceInvisible ? 0 : f.alpha);
+
+      this.syncAura(owner, 'chaos', this.plasmaChaosEffects.some((e) => e.target === owner), delta, 1, aim, 24);
+      this.syncAura(owner, 'pure', !!pure, delta, pure ? (pure.endsAt - time) / 1000 : 0, aim, 30);
+      this.syncAura(owner, 'wind', winding,
+        delta, Math.min(1, (time - this.plasmaRHeldSince) / 1500), aim, 24);
+    }
   }
 
   // ── Public do* methods (called from buildPlayerContext / buildNpcContext) ──
@@ -811,6 +992,7 @@ export class PlasmaKit {
 
     // Arc a chain of lightning from the caster to the cursor to sell the attack.
     this.doPlasmaChainLightning(caster.x, caster.y, tx, ty);
+    this.avatar(owner)?.play('punch', Math.atan2(ty - caster.y, tx - caster.x));
 
     // Three small AoEs land at the cursor, 0.2s apart.
     for (let i = 0; i < 3; i++) {
@@ -821,16 +1003,17 @@ export class PlasmaKit {
 
   /** One staggered Plasma Burst AoE: 4 dmg to enemies at the cursor, else a red bolt back. */
   private doPlasmaClickBlast(tx: number, ty: number, owner: 'player' | 'npc'): void {
-    const { scene } = this.arena;
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const targets = owner === 'player' ? this.arena.enemies : [this.arena.player];
     const aoeRadius = 42;
     const dmg = 4;
+    const fx = this.fx(owner);
 
-    // Small AoE burst + an arcing bolt from the caster to the strike point.
-    const flash = scene.add.circle(tx, ty, aoeRadius, 0xdd66ff, 0.5)
-      .setStrokeStyle(2, 0xffffff, 0.85).setDepth(8);
-    scene.tweens.add({ targets: flash, scaleX: 1.4, scaleY: 1.4, alpha: 0, duration: 250, onComplete: () => flash.destroy() });
+    // The strike itself: a bolt down from the caster, a rosette of forks at the impact and a
+    // jagged ring pushed out across the floor.
+    fx.flash(tx, ty, aoeRadius * 0.45, 8, PLASMA.magenta);
+    fx.discharge(tx, ty, aoeRadius, 6, PLASMA.magenta, 260, 8);
+    fx.ring(tx, ty, aoeRadius * 0.3, aoeRadius, PLASMA.orchid, 280, 7, 3);
     this.doPlasmaChainLightning(caster.x, caster.y, tx, ty);
 
     // Direct hits: enemies standing inside the AoE.
@@ -842,8 +1025,10 @@ export class PlasmaKit {
       }
     }
     for (const target of hitSet) {
+      const hx = target.x, hy = target.y;
       target.takeDamage(dmg);
       this.arena.spawnHitFlash(target.x, target.y, 0xdd66ff);
+      fx.motes(hx, hy, 3, { speed: 150, size: 3.6, color: PLASMA.blush, depth: 9 });
     }
 
     // Click+ Chain Lightning: bolts leap from hit enemies to other nearby ones.
@@ -873,9 +1058,10 @@ export class PlasmaKit {
 
     // Missed: a red bolt snaps back to the caster, who takes 2 self-damage.
     if (hitSet.size === 0) {
-      this.doPlasmaChainLightning(tx, ty, caster.x, caster.y, 0xff2244);
+      this.doPlasmaChainLightning(tx, ty, caster.x, caster.y, PLASMA.red);
       caster.takeDamage(2);
       this.arena.spawnHitFlash(caster.x, caster.y, 0xff2244);
+      fx.discharge(caster.x, caster.y, 22, 4, PLASMA.red, 220, 9);
       this.arena.showFloatingText(caster.x, caster.y - 30, '⚡ Missed!', '#ff4444');
     }
   }
@@ -889,30 +1075,26 @@ export class PlasmaKit {
       const playerArenas = this.plasmaArenas.filter(a => a.owner === 'player');
       if (playerArenas.length >= 2) {
         const oldest = playerArenas[0];
-        oldest.sprite.destroy();
         this.plasmaArenas.splice(this.plasmaArenas.indexOf(oldest), 1);
       }
     }
 
-    const sprite = scene.add.circle(tx, ty, radius, 0xaa22ff, 0.15).setDepth(3);
-    sprite.setStrokeStyle(3, 0xdd44ff, 0.9);
-    scene.tweens.add({
-      targets: sprite,
-      scaleX: 1.08, scaleY: 1.08,
-      alpha: 0.25,
-      yoyo: true, repeat: -1,
-      duration: 600,
-    });
-
     const now = scene.time ? scene.time.now : 0;
     const expiresAt = (owner === 'player' && this.arena.hasUpgrade('e')) ? Infinity : now + 30000;
     this.plasmaArenas.push({
-      sprite, x: tx, y: ty, radius,
+      x: tx, y: ty, radius,
       owner,
       playerInAccum: 0,
       npcInAccum: 0,
       expiresAt,
     });
+    // The floor being wired up: a ring stamped down and bolts earthing themselves round it.
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    const fx = this.fx(owner);
+    this.avatar(owner)?.play('slam', Math.atan2(ty - caster.y, tx - caster.x));
+    this.doPlasmaChainLightning(caster.x, caster.y, tx, ty);
+    fx.ring(tx, ty, 10, radius, PLASMA.purple, 420, 7, 4);
+    fx.discharge(tx, ty, radius * 0.9, 8, PLASMA.orchid, 400, 7);
     this.arena.showFloatingText(tx, ty - radius - 16, '⚠️ Unstable Arena!', '#aa22ff');
   }
 
@@ -935,13 +1117,15 @@ export class PlasmaKit {
     const bx = caster.x - perpX * spread;
     const by = caster.y - perpY * spread;
 
-    const spriteA = scene.add.circle(ax, ay, 9, 0xcc44ff, 0.9).setStrokeStyle(2, 0xffffff, 0.8).setDepth(7);
-    const spriteB = scene.add.circle(bx, by, 9, 0xcc44ff, 0.9).setStrokeStyle(2, 0xffffff, 0.8).setDepth(7);
-    const chainGraphic = scene.add.graphics().setDepth(6);
+    // Launched: both ends flare and the current snaps taut between them.
+    const fx = this.fx(owner);
+    this.avatar(owner)?.play('clap', ang);
+    fx.flash(ax, ay, 16, 9, PLASMA.orchid);
+    fx.flash(bx, by, 16, 9, PLASMA.orchid);
+    fx.bolt(ax, ay, bx, by, PLASMA.white, 9, 260, 3);
 
     const now = scene.time ? scene.time.now : 0;
     this.plasmaCurrentOrbs.push({
-      spriteA, spriteB, chainGraphic,
       ax, ay, bx, by,
       vax: Math.cos(ang) * speed, vay: Math.sin(ang) * speed,
       vbx: Math.cos(ang) * speed, vby: Math.sin(ang) * speed,
@@ -963,10 +1147,7 @@ export class PlasmaKit {
 
     for (let i = 0; i < count; i++) {
       const ang = (i * 2 * Math.PI) / count;
-      const sprite = scene.add.circle(caster.x, caster.y, 7, 0xff44ff, 0.95)
-        .setStrokeStyle(2, 0xffffff, 0.8).setDepth(8);
       this.plasmaBlades.push({
-        sprite,
         x: caster.x, y: caster.y,
         vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed,
         owner,
@@ -975,6 +1156,12 @@ export class PlasmaKit {
         active: true,
       });
     }
+    // Drawn out of the caster: a ring of bolts thrown as many ways as there are blades.
+    const fx = this.fx(owner);
+    this.avatar(owner)?.play('sweep');
+    fx.flash(caster.x, caster.y, 26, 9, PLASMA.pink);
+    fx.discharge(caster.x, caster.y, 70, count, PLASMA.pink, 360, 8);
+    fx.ring(caster.x, caster.y, 12, 60, PLASMA.blush, 340, 7, 3);
     this.arena.showFloatingText(caster.x, caster.y - 36, '🔮 Chaos Blades!', '#ff44ff');
   }
 
@@ -985,21 +1172,18 @@ export class PlasmaKit {
 
     // Recasting refreshes rather than stacking a second shell.
     const existing = this.plasmaPureChaos.findIndex(c => c.owner === owner);
-    if (existing >= 0) {
-      this.plasmaPureChaos[existing].gfx.destroy();
-      this.plasmaPureChaos.splice(existing, 1);
-    }
+    if (existing >= 0) this.plasmaPureChaos.splice(existing, 1);
 
-    const gfx = scene.add.graphics().setDepth(9);
-    this.plasmaPureChaos.push({ owner, endsAt: now + 20000, volleyAccum: 0, gfx });
+    this.plasmaPureChaos.push({ owner, endsAt: now + 20000, volleyAccum: 0 });
 
-    // A ring of lightning slams outward as the shell ignites.
-    const shock = scene.add.circle(caster.x, caster.y, 18, 0xff88ff, 0.75).setDepth(9);
-    scene.tweens.add({ targets: shock, scaleX: 5, scaleY: 5, alpha: 0, duration: 450, onComplete: () => shock.destroy() });
-    for (let i = 0; i < 8; i++) {
-      const ang = (i / 8) * Math.PI * 2;
-      this.doPlasmaChainLightning(caster.x, caster.y, caster.x + Math.cos(ang) * 90, caster.y + Math.sin(ang) * 90);
-    }
+    // The cage slamming shut: a white core, forks in every direction and two shockwaves.
+    const fx = this.fx(owner);
+    this.avatar(owner)?.play('raise', -Math.PI / 2, 900);
+    fx.flash(caster.x, caster.y, 44, 10, PLASMA.blush);
+    fx.discharge(caster.x, caster.y, 110, 12, PLASMA.magenta, 460, 9);
+    fx.ring(caster.x, caster.y, 18, 100, PLASMA.white, 450, 9, 4);
+    fx.scorch(caster.x, caster.y, 60, 3);
+    scene.cameras.main.shake(280, 0.006);
 
     this.arena.showFloatingText(caster.x, caster.y - 44, '⚡ PURE CHAOS!', '#ff88ff');
 
@@ -1048,14 +1232,16 @@ export class PlasmaKit {
 
   private doPlasmaSeekerHit(seeker: PlasmaSeekerOrb): void {
     const target = seeker.target;
-    const color = seeker.hostile ? 0xff4466 : 0xdd66ff;
+    const color = seeker.hostile ? PLASMA.blood : PLASMA.magenta;
+    const hx = target.x, hy = target.y;
     if (seeker.hostile) target.applySelfDamage(seeker.damage);
     else target.takeDamage(seeker.damage);
     this.arena.spawnHitFlash(target.x, target.y, color);
 
-    const { scene } = this.arena;
-    const pop = scene.add.circle(target.x, target.y, 14, color, 0.6).setDepth(8);
-    scene.tweens.add({ targets: pop, scaleX: 2.2, scaleY: 2.2, alpha: 0, duration: 220, onComplete: () => pop.destroy() });
+    // The bead letting go on contact — forks out of the wound, not a scaling disc.
+    const fx = this.fx(seeker.owner);
+    fx.flash(hx, hy, 16, 9, color);
+    fx.discharge(hx, hy, 32, 5, color, 240, 9);
   }
 
   private nearestEnemyWithin(owner: 'player' | 'npc', x: number, y: number, radius: number): Fighter | null {
@@ -1077,8 +1263,8 @@ export class PlasmaKit {
     const speed = 55;
     const radius = Math.max(16, Math.round(caster.displayWidth / 2));
 
+    void scene;
     this.plasmaPermanentOrbs.push({
-      gfx: scene.add.graphics().setDepth(7),
       // Pushed clear of the caster, then inert for a moment, so it doesn't pop on them.
       x: caster.x + Math.cos(ang) * (radius + 40),
       y: caster.y + Math.sin(ang) * (radius + 40),
@@ -1095,110 +1281,18 @@ export class PlasmaKit {
   }
 
   private doPlasmaPermanentOrbPop(orb: PlasmaPermanentOrb, victim: Fighter): void {
-    const { scene } = this.arena;
     const orbOwnerFighter = orb.owner === 'player' ? this.arena.player : this.arena.npc;
     if (victim === orbOwnerFighter) victim.applySelfDamage(25);
     else victim.takeDamage(25);
     this.arena.spawnHitFlash(victim.x, victim.y, 0xaa22ff);
     this.arena.showFloatingText(victim.x, victim.y - 40, '💥 CHAOS BURST!', '#ff88ff');
 
-    const flash = scene.add.circle(orb.x, orb.y, orb.radius, 0xff88ff, 0.7).setDepth(9);
-    scene.tweens.add({ targets: flash, scaleX: 3.5, scaleY: 3.5, alpha: 0, duration: 380, onComplete: () => flash.destroy() });
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * Math.PI * 2;
-      this.doPlasmaChainLightning(orb.x, orb.y, orb.x + Math.cos(a) * 70, orb.y + Math.sin(a) * 70);
-    }
+    // Player-sized orb, player-sized detonation.
+    this.fx(orb.owner).boom(orb.x, orb.y, orb.radius * 3.4, {
+      color: PLASMA.blush, bolts: 10, motes: 12,
+    });
+    this.arena.scene.cameras.main.shake(200, 0.005);
     orb.active = false;
-  }
-
-  // ── Pure CHAOS! rendering ─────────────────────────────────────────
-
-  /** The lightning shell wrapped around a Pure CHAOS! caster — 6 crawling, jagged spokes. */
-  private drawChaosEnvelope(gfx: Phaser.GameObjects.Graphics, x: number, y: number, time: number, endsAt: number): void {
-    gfx.clear();
-
-    // The whole shell strobes in the last 4s as a "duck, it's about to end" tell.
-    const flicker = endsAt - time < 4000 ? 0.55 + 0.45 * Math.sin(time * 0.022) : 1;
-
-    gfx.fillStyle(0xaa22ff, 0.14 * flicker);
-    gfx.fillCircle(x, y, 30);
-    gfx.lineStyle(2, 0xdd66ff, 0.45 * flicker);
-    gfx.strokeCircle(x, y, 30);
-
-    const spin = time * 0.0035;
-    for (let i = 0; i < 6; i++) {
-      const base = spin + (i / 6) * Math.PI * 2 + Math.sin(time * 0.011 + i * 1.7) * 0.35;
-      const inner = 11;
-      const outer = 25 + Math.sin(time * 0.017 + i * 2.3) * 9;
-      gfx.lineStyle(i % 2 === 0 ? 3 : 2, i % 2 === 0 ? 0xffffff : 0xee88ff, 0.9 * flicker);
-      gfx.beginPath();
-      gfx.moveTo(x + Math.cos(base) * inner, y + Math.sin(base) * inner);
-      for (let s = 1; s <= 3; s++) {
-        const t = s / 3;
-        const r = inner + (outer - inner) * t;
-        // Kink every segment except the tip, so the bolt forks instead of bending.
-        const a = base + (s === 3 ? 0 : Math.sin(time * 0.03 + i * 3.1 + s * 2.2) * 0.28);
-        gfx.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r);
-      }
-      gfx.strokePath();
-    }
-  }
-
-  /** A seeker body plus its fading comet tail. */
-  private drawSeeker(seeker: PlasmaSeekerOrb, time: number): void {
-    const gfx = this.plasmaSeekerGfx;
-    if (!gfx) return;
-    const color = seeker.hostile ? 0xff4466 : 0xdd66ff;
-
-    for (let t = 1; t < seeker.trail.length; t++) {
-      const a = seeker.trail[t - 1];
-      const b = seeker.trail[t];
-      const fade = t / seeker.trail.length;
-      gfx.lineStyle(1 + fade * 3, color, 0.12 + fade * 0.4);
-      gfx.lineBetween(a.x, a.y, b.x, b.y);
-    }
-
-    const pulse = 1 + 0.18 * Math.sin(time * 0.02 + seeker.x * 0.05);
-    gfx.fillStyle(color, 0.9);
-    gfx.fillCircle(seeker.x, seeker.y, 6 * pulse);
-    gfx.fillStyle(0xffffff, 0.85);
-    gfx.fillCircle(seeker.x, seeker.y, 2.5 * pulse);
-  }
-
-  /** The Permanent Chaos orb: heavy core, orbiting arcs, and a faint reach ring. */
-  private drawPermanentOrb(orb: PlasmaPermanentOrb, time: number): void {
-    const gfx = orb.gfx;
-    gfx.clear();
-
-    // Reach ring — shows exactly how close is too close. It sweeps in while the orb arms.
-    const arming = Phaser.Math.Clamp(1 - (orb.armedAt - time) / 1500, 0, 1);
-    gfx.lineStyle(1, 0xdd66ff, (0.18 + 0.07 * Math.sin(time * 0.004)) * arming);
-    gfx.strokeCircle(orb.x, orb.y, PERMANENT_ORB_STRIKE_RADIUS * (2 - arming));
-
-    const breathe = 1 + 0.06 * Math.sin(time * 0.006);
-    gfx.fillStyle(0xaa22ff, 0.35);
-    gfx.fillCircle(orb.x, orb.y, orb.radius * breathe);
-    gfx.fillStyle(0xff88ff, 0.5);
-    gfx.fillCircle(orb.x, orb.y, orb.radius * 0.55 * breathe);
-    gfx.fillStyle(0xffffff, 0.8);
-    gfx.fillCircle(orb.x, orb.y, orb.radius * 0.22);
-    gfx.lineStyle(2, 0xffffff, 0.7);
-    gfx.strokeCircle(orb.x, orb.y, orb.radius * breathe);
-
-    // Arcs crawling over the surface.
-    for (let i = 0; i < 5; i++) {
-      const base = time * 0.005 + (i / 5) * Math.PI * 2;
-      const r = orb.radius * (0.85 + 0.35 * Math.sin(time * 0.013 + i * 1.9));
-      gfx.lineStyle(2, i % 2 === 0 ? 0xffffff : 0xee88ff, 0.75);
-      gfx.beginPath();
-      gfx.moveTo(orb.x + Math.cos(base) * orb.radius * 0.3, orb.y + Math.sin(base) * orb.radius * 0.3);
-      for (let s = 1; s <= 3; s++) {
-        const a = base + Math.sin(time * 0.02 + i * 2.7 + s) * 0.5;
-        const rr = orb.radius * 0.3 + (r - orb.radius * 0.3) * (s / 3);
-        gfx.lineTo(orb.x + Math.cos(a) * rr, orb.y + Math.sin(a) * rr);
-      }
-      gfx.strokePath();
-    }
   }
 
   // ── Mastery — requirement tracking ────────────────────────────────
@@ -1250,8 +1344,9 @@ export class PlasmaKit {
     if (this.stormStartedAt < 0) this.stormStartedAt = time;
 
     const bounds = this.stormBounds(time)!;
-    if (!this.stormGfx) this.stormGfx = this.arena.scene.add.graphics().setDepth(4);
-    this.drawChaosStorm(this.stormGfx, bounds, time);
+    if (!this.stormGfx || !this.stormGfx.active) this.stormGfx = this.arena.scene.add.graphics().setDepth(1);
+    this.stormGfx.clear();
+    PlasmaFx.drawStorm(this.stormGfx, this.pcol, this.arena.width, this.arena.height, bounds, this.vizT);
 
     // Everyone outside the live edge gets struck — the storm has no allegiance.
     const victims: Fighter[] = [this.arena.player, this.arena.npc, ...this.arena.enemies];
@@ -1269,7 +1364,6 @@ export class PlasmaKit {
 
   /** A bolt drops out of the wall onto whoever strayed into it. */
   private doChaosStormStrike(victim: Fighter, bounds: { left: number; right: number; top: number; bottom: number }): void {
-    const { scene } = this.arena;
     // Come down from the nearest edge so the bolt visibly belongs to the wall they touched.
     const dl = Math.abs(victim.x - bounds.left);
     const dr = Math.abs(victim.x - bounds.right);
@@ -1282,96 +1376,13 @@ export class PlasmaKit {
     else if (nearest === dt) { fromY = bounds.top - 60; }
     else { fromY = bounds.bottom + 60; }
 
-    this.doPlasmaChainLightning(fromX, fromY, victim.x, victim.y, 0xff2f8f);
+    this.doPlasmaChainLightning(fromX, fromY, victim.x, victim.y, PLASMA.hot);
     victim.takeDamage(STORM_STRIKE_DAMAGE);
     this.arena.spawnHitFlash(victim.x, victim.y, 0xff2f8f);
-
-    const ring = scene.add.circle(victim.x, victim.y, 12, 0xff2f8f, 0)
-      .setStrokeStyle(2, 0xff88cc, 0.9).setDepth(9);
-    scene.tweens.add({ targets: ring, scaleX: 2.6, scaleY: 2.6, alpha: 0, duration: 260, onComplete: () => ring.destroy() });
+    // The wall earthing itself through whoever touched it.
+    this.pfx.discharge(victim.x, victim.y, 30, 5, PLASMA.hot, 260, 9);
+    this.pfx.ring(victim.x, victim.y, 10, 34, PLASMA.rose, 260, 8, 2);
     this.arena.showFloatingText(victim.x, victim.y - 34, '⚡ STORM WALL', '#ff88cc');
-  }
-
-  /**
-   * The dead zone outside the ring, plus a crackling edge that gets angrier as the
-   * walls close. Drawn as four shaded bands so the safe square stays clean.
-   */
-  private drawChaosStorm(
-    gfx: Phaser.GameObjects.Graphics,
-    b: { left: number; right: number; top: number; bottom: number; ratio: number },
-    time: number,
-  ): void {
-    const W = this.arena.width;
-    const H = this.arena.height;
-    gfx.clear();
-
-    // Condemned ground — darker and more violet the further the storm has come in.
-    const deadAlpha = 0.16 + 0.16 * b.ratio;
-    gfx.fillStyle(0x5a0a3a, deadAlpha);
-    gfx.fillRect(0, 0, W, b.top);
-    gfx.fillRect(0, b.bottom, W, H - b.bottom);
-    gfx.fillRect(0, b.top, b.left, b.bottom - b.top);
-    gfx.fillRect(b.right, b.top, W - b.right, b.bottom - b.top);
-
-    // Static crawling over the dead ground — sparse, so it reads as menace not noise.
-    gfx.fillStyle(0xff88cc, 0.25);
-    for (let i = 0; i < 14; i++) {
-      const seed = i * 97.3;
-      const along = (Math.sin(time * 0.0011 + seed) * 0.5 + 0.5);
-      const side = i % 4;
-      let sx: number, sy: number;
-      if (side === 0)      { sx = b.left + (b.right - b.left) * along; sy = b.top * (0.2 + 0.6 * ((i * 13) % 7) / 7); }
-      else if (side === 1) { sx = b.left + (b.right - b.left) * along; sy = b.bottom + (H - b.bottom) * (0.2 + 0.6 * ((i * 17) % 7) / 7); }
-      else if (side === 2) { sx = b.left * (0.2 + 0.6 * ((i * 11) % 7) / 7); sy = b.top + (b.bottom - b.top) * along; }
-      else                 { sx = b.right + (W - b.right) * (0.2 + 0.6 * ((i * 19) % 7) / 7); sy = b.top + (b.bottom - b.top) * along; }
-      gfx.fillCircle(sx, sy, 1.5 + Math.sin(time * 0.008 + seed) * 0.8);
-    }
-
-    // The live edge: a jagged bolt walking each wall, brighter the tighter the ring.
-    const heat = 0.5 + 0.5 * b.ratio;
-    const edges: Array<[number, number, number, number]> = [
-      [b.left, b.top, b.right, b.top],
-      [b.right, b.top, b.right, b.bottom],
-      [b.right, b.bottom, b.left, b.bottom],
-      [b.left, b.bottom, b.left, b.top],
-    ];
-    for (let e = 0; e < edges.length; e++) {
-      const [x1, y1, x2, y2] = edges[e];
-      const len = Math.hypot(x2 - x1, y2 - y1);
-      const nx = -(y2 - y1) / len;
-      const ny = (x2 - x1) / len;
-      const steps = Math.max(6, Math.round(len / 34));
-
-      gfx.lineStyle(3, 0xff2f8f, 0.35 + 0.25 * heat);
-      gfx.beginPath();
-      gfx.moveTo(x1, y1);
-      for (let s = 1; s <= steps; s++) {
-        const t = s / steps;
-        const wob = s === steps ? 0 : Math.sin(time * 0.006 + e * 2.1 + s * 1.7) * (3 + 5 * heat);
-        gfx.lineTo(x1 + (x2 - x1) * t + nx * wob, y1 + (y2 - y1) * t + ny * wob);
-      }
-      gfx.strokePath();
-
-      // A thin white core that flickers independently — reads as a live arc.
-      gfx.lineStyle(1, 0xffffff, 0.45 + 0.35 * Math.abs(Math.sin(time * 0.009 + e)));
-      gfx.beginPath();
-      gfx.moveTo(x1, y1);
-      for (let s = 1; s <= steps; s++) {
-        const t = s / steps;
-        const wob = s === steps ? 0 : Math.sin(time * 0.011 + e * 3.3 + s * 2.4) * (2 + 3 * heat);
-        gfx.lineTo(x1 + (x2 - x1) * t + nx * wob, y1 + (y2 - y1) * t + ny * wob);
-      }
-      gfx.strokePath();
-    }
-
-    // Corner nodes — the anchors the wall is being reeled in towards.
-    const pulse = 4 + Math.sin(time * 0.007) * 1.6;
-    for (const [cx, cy] of [[b.left, b.top], [b.right, b.top], [b.right, b.bottom], [b.left, b.bottom]]) {
-      gfx.fillStyle(0xff2f8f, 0.7);
-      gfx.fillCircle(cx, cy, pulse);
-      gfx.fillStyle(0xffffff, 0.85);
-      gfx.fillCircle(cx, cy, pulse * 0.4);
-    }
   }
 
   // ── Mastery — Unstable Orbital ────────────────────────────────────
@@ -1404,11 +1415,9 @@ export class PlasmaKit {
   }
 
   private spawnOrbital(owner: 'player' | 'npc'): void {
-    const { scene } = this.arena;
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     this.orbitals.push({
       owner,
-      gfx: scene.add.graphics().setDepth(9),
       angle: Math.random() * Math.PI * 2,
       radius: ORBITAL_START_RADIUS,
       x: caster.x + ORBITAL_START_RADIUS,
@@ -1416,9 +1425,11 @@ export class PlasmaKit {
       lastHit: new Map<Fighter, number>(),
     });
 
-    const flare = scene.add.circle(caster.x, caster.y, ORBITAL_START_RADIUS, ORBITAL_COLOR, 0)
-      .setStrokeStyle(3, ORBITAL_COLOR, 0.8).setDepth(9);
-    scene.tweens.add({ targets: flare, scaleX: 0.6, scaleY: 0.6, alpha: 0, duration: 480, onComplete: () => flare.destroy() });
+    // Struck into orbit: bolts fired out to the ring it will ride, then hauled inward.
+    const fx = this.fx(owner);
+    this.avatar(owner)?.play('flex');
+    fx.charge(caster.x, caster.y, ORBITAL_START_RADIUS, 480, ORBITAL_COLOR, 9);
+    fx.flash(caster.x, caster.y, 30, 10, ORBITAL_COLOR);
     this.arena.showFloatingText(caster.x, caster.y - 44, '⚛️ UNSTABLE ORBITAL', '#ff2f8f');
   }
 
@@ -1444,7 +1455,6 @@ export class PlasmaKit {
       const orb = this.orbitals[i];
       const caster = orb.owner === 'player' ? this.arena.player : this.arena.npc;
       if (!caster.active || caster.hp <= 0) {
-        orb.gfx.destroy();
         this.orbitals.splice(i, 1);
         continue;
       }
@@ -1459,12 +1469,9 @@ export class PlasmaKit {
       orb.x = caster.x + ox * Math.cos(tilt) - oy * Math.sin(tilt);
       orb.y = caster.y + ox * Math.sin(tilt) + oy * Math.cos(tilt);
 
-      this.drawOrbital(orb, caster, tilt, time);
-
       // Collapse: it finally reaches the caster.
       if (orb.radius <= ORBITAL_COLLAPSE_RADIUS) {
         this.doOrbitalCollapse(orb, caster);
-        orb.gfx.destroy();
         this.orbitals.splice(i, 1);
         continue;
       }
@@ -1485,12 +1492,12 @@ export class PlasmaKit {
         this.arena.spawnHitFlash(f.x, f.y, ORBITAL_COLOR);
         this.arena.showFloatingText(f.x, f.y - 36, '⚛️ ORBITAL', '#ff2f8f');
         this.doPlasmaChainLightning(orb.x, orb.y, f.x, f.y, ORBITAL_COLOR);
+        this.fx(orb.owner).discharge(f.x, f.y, 34, 5, ORBITAL_COLOR, 260, 9);
       }
     }
   }
 
   private doOrbitalCollapse(orb: PlasmaOrbital, caster: Fighter): void {
-    const { scene } = this.arena;
     // Online: the remote player's own sim detonates their orbital on them.
     if (!(orb.owner === 'npc' && caster.netGhost)) {
       caster.applySelfDamage(ORBITAL_SELF_DAMAGE);
@@ -1498,71 +1505,9 @@ export class PlasmaKit {
     }
     this.arena.showFloatingText(caster.x, caster.y - 44, '⚛️ ORBITAL COLLAPSE!', '#ff2f8f');
 
-    const flash = scene.add.circle(caster.x, caster.y, 30, ORBITAL_COLOR, 0.7).setDepth(10);
-    scene.tweens.add({ targets: flash, scaleX: 3.2, scaleY: 3.2, alpha: 0, duration: 400, onComplete: () => flash.destroy() });
-    for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2;
-      this.doPlasmaChainLightning(caster.x, caster.y, caster.x + Math.cos(a) * 80, caster.y + Math.sin(a) * 80, ORBITAL_COLOR);
-    }
-  }
-
-  /** Nucleus glow, the tilted orbit path, and the electron itself with a hot tail. */
-  private drawOrbital(orb: PlasmaOrbital, caster: Fighter, tilt: number, time: number): void {
-    const gfx = orb.gfx;
-    gfx.clear();
-
-    // Danger read: the ring goes from pink to white-hot as it closes on the caster.
-    const closeness = Phaser.Math.Clamp(
-      1 - (orb.radius - ORBITAL_COLLAPSE_RADIUS) / (ORBITAL_START_RADIUS - ORBITAL_COLLAPSE_RADIUS), 0, 1,
-    );
-    const urgency = closeness > 0.7 ? 0.55 + 0.45 * Math.sin(time * 0.02) : 1;
-
-    // The orbit path itself — a squashed, tilted ellipse.
-    gfx.lineStyle(1.5, ORBITAL_COLOR, (0.2 + 0.4 * closeness) * urgency);
-    gfx.beginPath();
-    for (let s = 0; s <= 48; s++) {
-      const a = (s / 48) * Math.PI * 2;
-      const px = Math.cos(a) * orb.radius;
-      const py = Math.sin(a) * orb.radius * 0.42;
-      const wx = caster.x + px * Math.cos(tilt) - py * Math.sin(tilt);
-      const wy = caster.y + px * Math.sin(tilt) + py * Math.cos(tilt);
-      if (s === 0) gfx.moveTo(wx, wy); else gfx.lineTo(wx, wy);
-    }
-    gfx.strokePath();
-
-    // Nucleus haze on the caster, so it's obvious who the orbital belongs to.
-    gfx.fillStyle(ORBITAL_COLOR, 0.1 + 0.16 * closeness);
-    gfx.fillCircle(caster.x, caster.y, 16 + 8 * closeness);
-
-    // Trailing arc behind the electron.
-    for (let s = 1; s <= 8; s++) {
-      const a = orb.angle - s * 0.09;
-      const px = Math.cos(a) * orb.radius;
-      const py = Math.sin(a) * orb.radius * 0.42;
-      const wx = caster.x + px * Math.cos(tilt) - py * Math.sin(tilt);
-      const wy = caster.y + px * Math.sin(tilt) + py * Math.cos(tilt);
-      const fade = 1 - s / 9;
-      gfx.fillStyle(ORBITAL_COLOR, 0.35 * fade * urgency);
-      gfx.fillCircle(wx, wy, 7 * fade);
-    }
-
-    // The electron: a pulsing plasma bead with a white core and a few stray arcs.
-    const beat = 1 + 0.2 * Math.sin(time * 0.018);
-    gfx.fillStyle(ORBITAL_COLOR, 0.9 * urgency);
-    gfx.fillCircle(orb.x, orb.y, 11 * beat);
-    gfx.fillStyle(0xffaadd, 0.85);
-    gfx.fillCircle(orb.x, orb.y, 6.5 * beat);
-    gfx.fillStyle(0xffffff, 0.95);
-    gfx.fillCircle(orb.x, orb.y, 2.8 * beat);
-    for (let i = 0; i < 4; i++) {
-      const a = time * 0.014 + (i / 4) * Math.PI * 2;
-      const r = 11 * beat + 5 + Math.sin(time * 0.03 + i * 2.2) * 4;
-      gfx.lineStyle(1.5, 0xffffff, 0.5 * urgency);
-      gfx.lineBetween(
-        orb.x + Math.cos(a) * 5, orb.y + Math.sin(a) * 5,
-        orb.x + Math.cos(a + 0.4) * r, orb.y + Math.sin(a + 0.4) * r,
-      );
-    }
+    // The whole orbit dumping into the nucleus at once.
+    this.fx(orb.owner).boom(caster.x, caster.y, 96, { color: ORBITAL_COLOR, bolts: 12, motes: 14 });
+    this.arena.scene.cameras.main.shake(260, 0.006);
   }
 
   // ── Private helpers ───────────────────────────────────────────────
@@ -1571,32 +1516,20 @@ export class PlasmaKit {
     const { scene } = this.arena;
     const now = scene.time ? scene.time.now : 0;
     const existing = this.plasmaChaosEffects.findIndex(e => e.target === target);
-    if (existing >= 0) {
-      const old = this.plasmaChaosEffects[existing];
-      if (old.aura) old.aura.destroy();
-      this.plasmaChaosEffects.splice(existing, 1);
-    }
+    if (existing >= 0) this.plasmaChaosEffects.splice(existing, 1);
     const fighter = target === 'player' ? this.arena.player : this.arena.npc;
-    const aura = scene.add.circle(fighter.x, fighter.y, 22, 0xff44ff, 0.3).setDepth(4);
-    scene.tweens.add({ targets: aura, alpha: 0.5, yoyo: true, repeat: -1, duration: 500 });
-    this.plasmaChaosEffects.push({
-      target,
-      expiresAt: now + durationMs,
-      tickAccum: 0,
-      aura,
-    });
+    this.plasmaChaosEffects.push({ target, expiresAt: now + durationMs, tickAccum: 0 });
+    // The snap on application. The continuous tell is the chaos aura, so the status stays
+    // readable on the victim between its 5s releases.
+    this.pfx.discharge(fighter.x, fighter.y, 28, 5, PLASMA.pink, 300, 8);
     this.arena.showFloatingText(fighter.x, fighter.y - 36, durationMs < 5000 ? '🌀 Mini-Chaos!' : '🌀 CHAOS', '#ff44ff');
   }
 
   private doPlasmaSpawnChaosOrbs(x: number, y: number, owner: 'player' | 'npc'): void {
-    const { scene } = this.arena;
     for (let i = 0; i < 5; i++) {
       const ang = (i / 5) * Math.PI * 2;
       const speed = 80 + Math.random() * 60;
-      const sprite = scene.add.circle(x + Math.cos(ang) * 20, y + Math.sin(ang) * 20, 6, 0xffaaff, 0.9)
-        .setStrokeStyle(1, 0xffffff, 0.7).setDepth(7);
       this.plasmaChaosOrbs.push({
-        sprite,
         x: x + Math.cos(ang) * 20,
         y: y + Math.sin(ang) * 20,
         vx: Math.cos(ang) * speed,
@@ -1605,22 +1538,13 @@ export class PlasmaKit {
         active: true,
       });
     }
+    this.fx(owner).ring(x, y, 8, 40, PLASMA.blush, 300, 7, 2);
   }
 
-  private doPlasmaChainLightning(fromX: number, fromY: number, toX: number, toY: number, color = 0xee88ff): void {
-    const { scene } = this.arena;
-    const gfx = scene.add.graphics().setDepth(8);
-    gfx.lineStyle(3, color, 1.0);
-    const steps = 5;
-    let px = fromX, py = fromY;
-    for (let i = 1; i <= steps; i++) {
-      const t = i / steps;
-      const nx = fromX + (toX - fromX) * t + (i < steps ? (Math.random() - 0.5) * 20 : 0);
-      const ny = fromY + (toY - fromY) * t + (i < steps ? (Math.random() - 0.5) * 20 : 0);
-      gfx.lineBetween(px, py, nx, ny);
-      px = nx; py = ny;
-    }
-    scene.tweens.add({ targets: gfx, alpha: 0, duration: 220, onComplete: () => gfx.destroy() });
+  private doPlasmaChainLightning(fromX: number, fromY: number, toX: number, toY: number, color: number = PLASMA.magenta): void {
+    // A live bolt: it re-rolls its own kinks every frame it exists, rather than being one
+    // static polyline faded out by a tween.
+    this.pfx.bolt(fromX, fromY, toX, toY, color, 8, 220, 3);
   }
 
   private doPlasmaSpawnVoltPoints(tx: number, ty: number, owner: 'player' | 'npc'): void {
@@ -1633,29 +1557,29 @@ export class PlasmaKit {
     const ax = caster.x + perpX * spread, ay = caster.y + perpY * spread;
     const bx = caster.x - perpX * spread, by = caster.y - perpY * spread;
 
-    const sprA = scene.add.circle(ax, ay, 12, 0xdd66ff, 0.8).setStrokeStyle(2, 0xffffff, 0.9).setDepth(7);
-    const sprB = scene.add.circle(bx, by, 12, 0xdd66ff, 0.8).setStrokeStyle(2, 0xffffff, 0.9).setDepth(7);
-    scene.tweens.add({ targets: sprA, scaleX: 1.2, scaleY: 1.2, alpha: 0.6, yoyo: true, repeat: -1, duration: 400 });
-    scene.tweens.add({ targets: sprB, scaleX: 1.2, scaleY: 1.2, alpha: 0.6, yoyo: true, repeat: -1, duration: 400 });
-
     const now = scene.time ? scene.time.now : 0;
     const expiresAt = now + 10000;
-    const voltA: PlasmaVoltPoint = { sprite: sprA, x: ax, y: ay, owner, charges: 3, expiresAt, paired: { x: bx, y: by } };
-    const voltB: PlasmaVoltPoint = { sprite: sprB, x: bx, y: by, owner, charges: 3, expiresAt, paired: { x: ax, y: ay } };
+    const voltA: PlasmaVoltPoint = { x: ax, y: ay, owner, charges: 3, expiresAt, paired: { x: bx, y: by } };
+    const voltB: PlasmaVoltPoint = { x: bx, y: by, owner, charges: 3, expiresAt, paired: { x: ax, y: ay } };
     voltA.pairedRef = voltB;
     voltB.pairedRef = voltA;
     this.plasmaVoltPoints.push(voltA, voltB);
+    // Both sockets earth themselves as they're planted, and the pair links up once.
+    const fx = this.fx(owner);
+    this.avatar(owner)?.play('clap', ang);
+    fx.flash(ax, ay, 20, 9, PLASMA.magenta);
+    fx.flash(bx, by, 20, 9, PLASMA.magenta);
+    fx.bolt(ax, ay, bx, by, PLASMA.white, 8, 300, 2.4);
     this.arena.showFloatingText(caster.x, caster.y - 40, '⚡ VOLT POINTS!', '#dd66ff');
   }
 
   private doPlasmaCurrentExplode(orb: PlasmaCurrentOrb): void {
-    const { scene } = this.arena;
     const cx = (orb.ax + orb.bx) / 2;
     const cy = (orb.ay + orb.by) / 2;
     const radius = 70;
 
-    const flash = scene.add.circle(cx, cy, radius, 0xcc44ff, 0.55).setDepth(8);
-    scene.tweens.add({ targets: flash, scaleX: 1.6, scaleY: 1.6, alpha: 0, duration: 350, onComplete: () => flash.destroy() });
+    // The whole current collapsing into its own midpoint.
+    this.fx(orb.owner).boom(cx, cy, radius, { color: PLASMA.orchid, bolts: 9, motes: 8 });
 
     const player = this.arena.player;
     const npc = this.arena.npc;
@@ -1700,11 +1624,12 @@ export class PlasmaKit {
   }
 
   private doPlasmaArenaExplode(arena: PlasmaArenaZone): void {
-    const { scene } = this.arena;
     const radius = arena.radius + 20;
-    const flash = scene.add.circle(arena.x, arena.y, radius, 0xaa22ff, 0.6).setDepth(9);
-    scene.tweens.add({ targets: flash, scaleX: 1.8, scaleY: 1.8, alpha: 0, duration: 400, onComplete: () => flash.destroy() });
-    arena.sprite.destroy();
+    // 80 damage deserves the full six layers, plus a shake to match.
+    this.fx(arena.owner).boom(arena.x, arena.y, radius, {
+      color: PLASMA.purple, bolts: 14, motes: 16, duration: 520,
+    });
+    this.arena.scene.cameras.main.shake(300, 0.008);
 
     const player = this.arena.player;
     const npc = this.arena.npc;
@@ -1726,9 +1651,7 @@ export class PlasmaKit {
   // ── Solar helpers ─────────────────────────────────────────────────
 
   private doSolarEndpointExplosion(cx: number, cy: number, owner: 'player' | 'npc'): void {
-    const scene = this.arena.scene;
-    const flash = scene.add.circle(cx, cy, 60, 0xcc44ff, 0.5).setDepth(8);
-    scene.tweens.add({ targets: flash, scaleX: 1.5, scaleY: 1.5, alpha: 0, duration: 400, onComplete: () => flash.destroy() });
+    this.fx(owner).boom(cx, cy, 60, { color: PLASMA.orchid, bolts: 8, motes: 8 });
     this.arena.dealAoeDamage(cx, cy, 60, 15, owner);
   }
 
@@ -1747,9 +1670,7 @@ export class PlasmaKit {
   }
 
   private spawnSolarPuddle(x: number, y: number, owner: 'player' | 'npc'): void {
-    const scene = this.arena.scene;
-    const sprite = scene.add.circle(x, y, 14, 0xaa44ff, 0.55).setDepth(5);
-    this.solarPuddles.push({ sprite, expiresAt: scene.time.now + 1000, tickAccum: 0, owner });
+    this.solarPuddles.push({ x, y, expiresAt: this.arena.scene.time.now + 1000, tickAccum: 0, owner });
   }
 
   /** Returns true if point (px, py) is within `threshold` units of the segment (ax,ay)→(bx,by). */

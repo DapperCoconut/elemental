@@ -144,6 +144,10 @@ export class Husk extends Fighter {
       }
     }
 
+    // Silence Mastery — Puppetmaster: a possessed husk has no will of its own. Yield
+    // without touching the velocity; SilenceKit drives the body later in the frame.
+    if (this.puppetControlledUntil > time) return;
+
     if (this.magicChainBound && time >= this.magicChainBoundEnd) this.magicChainBound = false;
     const hardCCed = this.frozenUntil > time
       || this.earthStunnedUntil > time

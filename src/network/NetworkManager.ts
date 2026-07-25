@@ -2,7 +2,7 @@ import Peer, { DataConnection } from 'peerjs';
 import type { InvasionFx, HuskStatus } from '../invasion/InvasionKit';
 
 /** Bump when the wire protocol or gameplay sync changes incompatibly. */
-export const NET_PROTOCOL_VERSION = 9;
+export const NET_PROTOCOL_VERSION = 10;
 
 /** Lobby selection payload exchanged while both players pick loadouts. */
 export interface NetSelection {
@@ -40,7 +40,19 @@ export type NetSilenceMsg =
   // Caster → victim: maze layout seed so both sims build identical walls.
   | { t: 'sil'; k: 'maze'; seed: number }
   // Victim → caster: vulture dropped the victim here — replay the blood FX.
-  | { t: 'sil'; k: 'vulture-drop'; x: number; y: number };
+  | { t: 'sil'; k: 'vulture-drop'; x: number; y: number }
+  // ── Silence Mastery — Puppetmaster (all caster → victim) ────────
+  // The effigy was planted here. Sent explicitly rather than derived, so both sims
+  // agree on the exact spot the Ritual has to land on.
+  | { t: 'sil'; k: 'doll'; x: number; y: number }
+  // The caster put something into the doll: `dmg` is the already-relayed amount the
+  // victim applies to itself; `left` is the doll's remaining HP for their bar.
+  | { t: 'sil'; k: 'doll-hit'; dmg: number; left: number }
+  | { t: 'sil'; k: 'doll-gone' }
+  // Possession start/stop. `dmg` carries the parting hit from a voluntary hand-back.
+  | { t: 'sil'; k: 'awaken'; on: boolean; dmg?: number }
+  // 20 Hz drive vector + aim for the possessed body, while possession lasts.
+  | { t: 'sil'; k: 'puppet-move'; vx: number; vy: number; fa: number };
 
 /** A single husk's networked state, as broadcast by the invasion co-op host. */
 export interface NetHuskState {
@@ -82,6 +94,9 @@ export type NetMsg =
   | { t: 'waveClear'; wave: number; bonus: number }
   | { t: 'huskDamage'; id: number; amount: number } // guest → host
   | { t: 'huskStatus'; id: number; s: HuskStatus }  // guest → host
+  // Silence Mastery — Puppetmaster in co-op: the guest is steering one of the host's
+  // husks. The host holds its AI off and puts it wherever the guest says. guest → host.
+  | { t: 'huskPuppet'; id: number; on: boolean; x: number; y: number }
   | { t: 'allyBite'; damage: number }
   // Husk variant effects: cosmetic replays on the guest — the host already
   // resolved any damage they represent and reports it via 'allyBite'.

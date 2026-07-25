@@ -15,6 +15,7 @@ import { fireElement } from '../elements/fire';
 import { waterElement } from '../elements/water';
 import { lifeElement } from '../elements/life';
 import { airElement, fireHitscan, fireBounceHitscan } from '../elements/air';
+import { AIR } from '../elements/kits/AirVisuals';
 import { earthElement } from '../elements/earth';
 import { oilElement } from '../elements/oil';
 import { shadowElement } from '../elements/shadow';
@@ -32,7 +33,7 @@ import { fateElement } from '../elements/fate';
 import { soundElement } from '../elements/sound';
 import { lightElement } from '../elements/light';
 import { magnetElement } from '../elements/magnet';
-import { MagnetKit, MagnetArenaApi, MagnetRod } from '../elements/kits/MagnetKit';
+import { MagnetKit, MagnetArenaApi } from '../elements/kits/MagnetKit';
 import { LightKit, LightArenaApi } from '../elements/kits/LightKit';
 import { IceKit, IceArenaApi } from '../elements/kits/IceKit';
 import { CrystalKit, CrystalArenaApi } from '../elements/kits/CrystalKit';
@@ -65,6 +66,7 @@ import { FireKit, FireArenaApi } from '../elements/kits/FireKit';
 import { AirKit, AirArenaApi } from '../elements/kits/AirKit';
 import { GunpowderKit, GunpowderArenaApi } from '../elements/kits/GunpowderKit';
 import { HuntKit, HuntArenaApi } from '../elements/kits/HuntKit';
+import { HuntFx } from '../elements/kits/HuntVisuals';
 import { MagicKit, MagicArenaApi } from '../elements/kits/MagicKit';
 import { TimeKit, TimeArenaApi } from '../elements/kits/TimeKit';
 import { PlasmaKit, PlasmaArenaApi } from '../elements/kits/PlasmaKit';
@@ -87,8 +89,6 @@ import { computeCurseShardMult } from '../data/GauntletBoosts';
 import { INFINITY_GAUNTLET_ID, infinityHpMult, infinityDmgMult, infinityFightShards, infinityDifficulty, GauntletState, getEffectiveStacks } from '../data/GauntletData';
 import { drawCampaignBackground } from './CampaignBackground';
 
-/** Air's Tracking Vortex (R upgrade): how fast the Wind Trap chases the cursor, px/sec. */
-const TRACKING_VORTEX_SPEED = 120;
 
 interface AbilityBarEntry {
   fill: Phaser.GameObjects.Rectangle;
@@ -113,17 +113,6 @@ interface Puddle {
   lavaFinal?: boolean;
 }
 
-interface LingeringBeam {
-  gfx: Phaser.GameObjects.Graphics;
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  expiresAt: number;
-  owner: 'player' | 'npc';
-  lastHitAt: Map<object, number>; // Fighter reference → timestamp
-}
-
 interface PainRainShadow {
   sprite: Phaser.GameObjects.Arc | Phaser.GameObjects.Graphics;
   fireAt: number;
@@ -137,7 +126,8 @@ interface PainRainShadow {
 }
 
 interface HuntGrenade {
-  sprite: Phaser.GameObjects.Arc;
+  /** Repainted every frame — a ribbed casing whose fuse spark climbs as it burns down. */
+  sprite: Phaser.GameObjects.Graphics;
   x: number; y: number;
   startX: number; startY: number;
   vx: number; vy: number;
@@ -158,9 +148,14 @@ interface GarlicTrap {
 }
 
 interface HuntTrailCircle {
-  sprite: Phaser.GameObjects.Arc;
+  /** Repainted every frame — paw prints with the scent still steaming off them. */
+  sprite: Phaser.GameObjects.Graphics;
   x: number; y: number;
   expiresAt: number;
+  /** Total lifetime, so the mark can fade out over its own span. */
+  durationMs: number;
+  /** Heading the quarry was moving on, so the two prints read as a stride. */
+  angle: number;
 }
 
 interface TimePuddle {
@@ -287,8 +282,6 @@ const ELEMENT_TEXTURES: Record<string, string> = {
   dummy: 'elem-dummy',
 };
 
-// Speed the Hawk perk (Air) drags a snatched enemy toward the cursor.
-const HAWK_DRAG_SPEED = 1200;
 
 export class ArenaScene extends Phaser.Scene {
   private player!: Player;
@@ -389,23 +382,18 @@ export class ArenaScene extends Phaser.Scene {
 
   // Life state lives in LifeKit — see src/elements/kits/LifeKit.ts
 
-  // Player air-specific state
+  // Player air-specific state. Every air world object (traps, hawks, lingering beams, the
+  // character rig and its drafts) lives in AirKit — what stays here is the gameplay flags
+  // other systems read.
   private grappleDodgeCharges = 0;
-  private grappleDodgeAura: Phaser.GameObjects.Arc | null = null;
   private quickShotCharged = false;
   private airConsecutiveHits = 0;
-  private playerWindTrapX = 0;
-  private playerWindTrapY = 0;
-  private playerWindTrapExpiry = 0;
-  private playerWindTrapSprite: Phaser.GameObjects.Arc | null = null;
   // Air upgrade state
   private airElectroHolding = false;
   private airElectroHeldSince = 0;
   private airElectroCharged = false;
-  private airElectroChargeVisual: Phaser.GameObjects.Arc | null = null;
   private isGrappling = false;
   private airBeamWalking = false;
-  private lingeringBeams: LingeringBeam[] = [];
 
   // NPC mirror state
   private npcSpeedMult = 1;
@@ -415,10 +403,6 @@ export class ArenaScene extends Phaser.Scene {
   private npcGeyserBuffUntil = 0;
   private npcQuickShotCharged = false;
   private npcAirConsecutiveHits = 0;
-  private npcWindTrapX = 0;
-  private npcWindTrapY = 0;
-  private npcWindTrapExpiry = 0;
-  private npcWindTrapSprite: Phaser.GameObjects.Arc | null = null;
 
   // SoundKit (manages all sound state)
   private soundKit!: SoundKit;
@@ -553,7 +537,6 @@ export class ArenaScene extends Phaser.Scene {
   private huntTrailCircles: HuntTrailCircle[] = [];
   private huntBloodPactActive = false;
   private huntBloodPactEnd = 0;
-  private huntBloodPactAura: Phaser.GameObjects.Arc | null = null;
   private huntLeapActive = false;
   private huntLeapEnd = 0;
   private huntLeapTargetX = 0;
@@ -602,7 +585,6 @@ export class ArenaScene extends Phaser.Scene {
   private npcHuntTrailCircles: HuntTrailCircle[] = [];
   private npcHuntBloodPactActive = false;
   private npcHuntBloodPactEnd = 0;
-  private npcHuntBloodPactAura: Phaser.GameObjects.Arc | null = null;
   private npcHuntLeapActive = false;
   private npcHuntLeapEnd = 0;
   private npcHuntLeapTargetX = 0;
@@ -737,8 +719,6 @@ export class ArenaScene extends Phaser.Scene {
   private soulMasteryOn = false;
   // ── Light mastery ─────────────────────────────────────────────────────
   private lightMasteryOn = false;
-  /** Screen-blur guard for Dust Screen hitting the local human — only the latest call may clear it. */
-  private screenBlurUntil = 0;
 
   // ── Shadow mastery ─────────────────────────────────────────────────────
   private shadowMasteryOn = false;
@@ -768,6 +748,8 @@ export class ArenaScene extends Phaser.Scene {
   private growthMasteryOn = false;
   private subterfugeMasteryOn = false;
   private plasmaMasteryOn = false;
+  private soundMasteryOn = false;
+  private silenceMasteryOn = false;
 
   // ── Items kit ─────────────────────────────────────────────────────────
   private itemsKit!: ItemsKit;
@@ -787,20 +769,6 @@ export class ArenaScene extends Phaser.Scene {
   // Purge perk (Time/sand): save prior cooldownMult before halving it
   private purgePriorCooldownMult = 1;
   private purgePulseTween: Phaser.Tweens.Tween | null = null;
-  // Hawk perk (Air): eagle projectiles
-  private hawkProjectiles: Array<{ sprite: Phaser.GameObjects.Arc; vx: number; vy: number; expireAt: number }> = [];
-  private npcHawkDragUntil = 0;
-  private npcHawkDragX = 0;
-  private npcHawkDragY = 0;
-  // Automaton perk (Creation): wandering damage bots
-  private automatons: Array<{
-    sprite: Phaser.GameObjects.Arc;
-    x: number; y: number;
-    vx: number; vy: number;
-    expireAt: number;
-    meleeCooldownUntil: number;
-    owner: 'player' | 'npc';
-  }> = [];
   // Rage perk (Hunt): rage meter
   private playerHuntRage = 0;
   private npcHuntRage    = 0;
@@ -851,13 +819,6 @@ export class ArenaScene extends Phaser.Scene {
     // Reset perk-specific state
     this.purgePriorCooldownMult = 1;
     if (this.purgePulseTween) { this.purgePulseTween.stop(); this.purgePulseTween = null; }
-    this.hawkProjectiles.forEach((h) => h.sprite.destroy());
-    this.hawkProjectiles = [];
-    this.npcHawkDragUntil = 0;
-    this.npcHawkDragX = 0;
-    this.npcHawkDragY = 0;
-    this.automatons.forEach((a) => a.sprite.destroy());
-    this.automatons = [];
 
     this.playerHuntRage = 0; this.npcHuntRage = 0;
     this.playerHuntRageBar?.destroy(); this.playerHuntRageBar = null;
@@ -899,27 +860,15 @@ export class ArenaScene extends Phaser.Scene {
     this.npcGeyserBuffUntil = 0;
     this.npcQuickShotCharged = false;
     this.npcAirConsecutiveHits = 0;
-    this.npcWindTrapX = 0;
-    this.npcWindTrapY = 0;
-    this.npcWindTrapExpiry = 0;
-    this.npcWindTrapSprite = null;
 
     this.grappleDodgeCharges = 0;
-    this.grappleDodgeAura = null;
     this.quickShotCharged = false;
     this.airConsecutiveHits = 0;
-    this.playerWindTrapX = 0;
-    this.playerWindTrapY = 0;
-    this.playerWindTrapExpiry = 0;
-    this.playerWindTrapSprite = null;
     this.airElectroHolding = false;
     this.airElectroHeldSince = 0;
     this.airElectroCharged = false;
-    this.airElectroChargeVisual = null;
     this.isGrappling = false;
     this.airBeamWalking = false;
-    for (const b of this.lingeringBeams) { b.gfx.destroy(); }
-    this.lingeringBeams = [];
 
     this.npcCastId = null;
 
@@ -942,11 +891,13 @@ export class ArenaScene extends Phaser.Scene {
         get fKey() { return arena.fKey; },
         get qKey() { return arena.qKey; },
         get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElementId; },
         get isInvasion() { return arena.isInvasion; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
+        soulColor: (owner, base) => arena.cosmeticsKit.soulColor(owner, base),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
@@ -974,8 +925,6 @@ export class ArenaScene extends Phaser.Scene {
     if (this.huntGrenadeVisual) { this.huntGrenadeVisual.destroy(); this.huntGrenadeVisual = null; }
     this.huntTrailActive = false; this.npcHuntTrailActive = false;
     this.huntBloodPactActive = false; this.npcHuntBloodPactActive = false;
-    if (this.huntBloodPactAura) { this.huntBloodPactAura.destroy(); this.huntBloodPactAura = null; }
-    if (this.npcHuntBloodPactAura) { this.npcHuntBloodPactAura.destroy(); this.npcHuntBloodPactAura = null; }
     this.huntLeapActive = false; this.npcHuntLeapActive = false;
     this.playerBleeding = false;
     if (this.playerBleedAura) { this.playerBleedAura.destroy(); this.playerBleedAura = null; }
@@ -1019,10 +968,15 @@ export class ArenaScene extends Phaser.Scene {
         get fKey() { return arena.fKey; },
         get qKey() { return arena.qKey; },
         get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElementId; },
+        huntColor: (owner, base) => arena.cosmeticsKit.huntColor(owner, base),
         get beastForm() { return arena.huntBeastForm; },
         get hybridForm() { return arena.huntHybridForm; },
+        get npcBeastForm() { return arena.npcHuntBeastForm; },
         get bloodMoonActive() { return arena.huntBloodMoonActive; },
         get npcBloodMoonActive() { return arena.npcHuntBloodMoonActive; },
+        get aimX() { return arena.input.activePointer.worldX; },
+        get aimY() { return arena.input.activePointer.worldY; },
         get playerBleeding() { return arena.playerBleeding; },
         get playerGrenades() { return arena.huntGrenades; },
         get npcGrenades() { return arena.npcHuntGrenades; },
@@ -1068,12 +1022,23 @@ export class ArenaScene extends Phaser.Scene {
         get rKey() { return arena.rKey; },
         get fKey() { return arena.fKey; },
         get qKey() { return arena.qKey; },
+        get wKey() { return arena.wKey; },
+        get aKey() { return arena.aKey; },
+        get sKey() { return arena.sKey; },
+        get dKey() { return arena.dKey; },
         get enemies() { return arena.enemies; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
         get isOnline() { return arena.isOnline; },
         get isInvasion() { return arena.isInvasion; },
-        applyPlayerSpeedMult: (f) => { arena.playerSpeedMult *= f; },
+        get masteryActive() { return arena.silenceMasteryOn && arena.elementId === 'silence'; },
+        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        recordMasteryStat: (key, amount) => {
+          if (arena.elementId === 'silence') PlayerData.addMasteryStat('silence', key, amount);
+        },
+        setStatusIndicator: (id, status) => arena.setStatusIndicator(id, status),
+        broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
+        sendHuskPuppet: (id, on, x, y) => arena.invasionCoopKit?.sendHuskPuppet(id, on, x, y),
         applyNpcSpeedMult: (f) => { arena.npcSpeedMult *= f; },
         setPlayerYankUntil: (t) => { arena.silencePlayerYankUntil = t; },
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
@@ -1108,10 +1073,13 @@ export class ArenaScene extends Phaser.Scene {
         get qKey() { return arena.qKey; },
         get spaceKey() { return arena.spaceKey; },
         get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
         get isDodging() { return arena.isDodging; },
         get pointerWasDown() { return arena.pointerWasDown; },
+        get aimX() { return arena.input.activePointer.worldX; },
+        get aimY() { return arena.input.activePointer.worldY; },
         get npcSpeedMult() { return arena.npcSpeedMult; },
         set npcSpeedMult(v: number) { arena.npcSpeedMult = v; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
@@ -1122,7 +1090,8 @@ export class ArenaScene extends Phaser.Scene {
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
         setStatusIndicator: (id, status) => arena.setStatusIndicator(id, status),
         pushFighterOutOfRect: (body, bx, by, bw, bh) => arena.pushFighterOutOfRect(body, bx, by, bw, bh),
-        spawnAutomatons: (owner, count) => arena.spawnAutomatons(owner, count),
+        creationColor: (owner, base) => arena.cosmeticsKit.creationColor(owner, base),
+        get abilityBars() { return arena.abilityBars; },
         get masteryActive() { return arena.creationMasteryOn && arena.elementId === 'creation'; },
         masteryBindFor: (slot) => arena.masteryBindFor(slot),
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
@@ -1150,6 +1119,10 @@ export class ArenaScene extends Phaser.Scene {
         get qKey() { return arena.qKey; },
         get wKey() { return arena.wKey; },
         get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElementId; },
+        get aimX() { return arena.input.activePointer.worldX; },
+        get aimY() { return arena.input.activePointer.worldY; },
+        gravityColor: (owner, base) => arena.cosmeticsKit.gravityColor(owner, base),
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
@@ -1197,6 +1170,7 @@ export class ArenaScene extends Phaser.Scene {
         get nukeChanneling() { return arena.nukeChanneling; },
         get abilityBars() { return arena.abilityBars; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        growthColor: (owner, base) => arena.cosmeticsKit.growthColor(owner, base),
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
@@ -1262,6 +1236,8 @@ export class ArenaScene extends Phaser.Scene {
     this.subterfugeMasteryOn = PlayerData.isMasteryEnabled('quantum');
     this.plasmaMasteryOn = PlayerData.isMasteryEnabled('plasma');
     this.huntMasteryOn = PlayerData.isMasteryEnabled('hunt');
+    this.soundMasteryOn = PlayerData.isMasteryEnabled('sound');
+    this.silenceMasteryOn = PlayerData.isMasteryEnabled('silence');
     this.waterKillWindow = [];
     this.waterMasteryTrackedEnemies = new WeakSet<Fighter>();
     this.shadowMasteryTrackedEnemies = new WeakSet<Fighter>();
@@ -1400,17 +1376,22 @@ export class ArenaScene extends Phaser.Scene {
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
         get masteryActive() { return arena.airMasteryOn && arena.elementId === 'air'; },
-        get windTrap() {
-          return arena.time.now < arena.playerWindTrapExpiry
-            ? { x: arena.playerWindTrapX, y: arena.playerWindTrapY }
-            : null;
-        },
+        get isPlayerAir() { return arena.elementId === 'air'; },
+        get isNpcAir() { return arena.npcElement.id === 'air'; },
+        get isDodging() { return arena.isDodging; },
+        get pointerX() { return arena.input.activePointer.worldX; },
+        get pointerY() { return arena.input.activePointer.worldY; },
+        get worldBounds() { return arena.physics.world.bounds; },
         masteryBindFor: (slot) => arena.masteryBindFor(slot),
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         recordMasteryStat: (key, amount) => {
           if (arena.elementId === 'air') PlayerData.addMasteryStat('air', key, amount);
         },
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        spawnHitFlash: (x, y, color) => arena.spawnHitFlash(x, y, color),
+        airColor: (owner, base) => arena.cosmeticsKit.airColor(owner, base),
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
       };
       this.airKit = new AirKit(airApi);
     }
@@ -1430,8 +1411,11 @@ export class ArenaScene extends Phaser.Scene {
         get fKey() { return arena.fKey; },
         get qKey() { return arena.qKey; },
         isPlayerLife: () => arena.elementId === 'life',
+        isNpcLife: () => arena.npcElementId === 'life',
         get masteryActive() { return arena.lifeMasteryOn && arena.elementId === 'life'; },
         masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        lifeColor: (owner, base) => arena.cosmeticsKit.lifeColor(owner, base),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         recordMasteryStat: (key, amount) => {
           if (arena.elementId === 'life') PlayerData.addMasteryStat('life', key, amount);
         },
@@ -1456,8 +1440,12 @@ export class ArenaScene extends Phaser.Scene {
         get fKey() { return arena.fKey; },
         get rKey() { return arena.rKey; },
         get qKey() { return arena.qKey; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get npcCastId() { return arena.npcCastId; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
+        electricityColor: (owner, base) => arena.cosmeticsKit.electricityColor(owner, base),
         get playerSpeedMult() { return arena.playerSpeedMult; },
         set playerSpeedMult(v: number) { arena.playerSpeedMult = v; },
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
@@ -1496,12 +1484,20 @@ export class ArenaScene extends Phaser.Scene {
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         setIsDodging: (v) => { arena.isDodging = v; },
         applyNpcSpeedMult: (f) => { arena.npcSpeedMult *= f; },
-        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
-        spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
-        spawnFloatingText: (x, y, t, c) => arena.spawnFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
+        soundColor: (owner, base) => arena.cosmeticsKit.soundColor(owner, base),
+        get masteryActive() { return arena.soundMasteryOn && arena.elementId === 'sound'; },
+        get npcMasteryActive() { return arena.isOnline && arena.npcMasteryOn && arena.npcElement.id === 'sound'; },
+        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
+        recordMasteryStat: (key, amount) => {
+          if (arena.elementId === 'sound') PlayerData.addMasteryStat('sound', key, amount);
+        },
+        recordMasteryBestStat: (key, value) => {
+          if (arena.elementId === 'sound') PlayerData.recordMasteryBest('sound', key, value);
+        },
       };
       this.soundKit = new SoundKit(soundApi);
     }
@@ -1527,13 +1523,11 @@ export class ArenaScene extends Phaser.Scene {
         get hpBarY() { return arena.hpBarY; },
         get hpBarW() { return arena.hpBarW; },
         get hpBarH() { return arena.hpBarH; },
-        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
-        spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
-        spawnFloatingText: (x, y, t, c) => arena.spawnFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        lightColor: (owner, base) => arena.cosmeticsKit.lightColor(owner, base),
         get masteryActive() { return arena.lightMasteryOn && arena.elementId === 'light'; },
         get npcMasteryActive() { return arena.isOnline && arena.npcMasteryOn && arena.npcElement.id === 'light'; },
         masteryBindFor: (slot) => arena.masteryBindFor(slot),
@@ -1570,6 +1564,7 @@ export class ArenaScene extends Phaser.Scene {
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         pointToSegmentDist: (px, py, ax, ay, bx, by) => arena.pointToSegmentDist(px, py, ax, ay, bx, by),
+        iceColor: (owner, base) => arena.cosmeticsKit.iceColor(owner, base),
         get masteryActive() { return arena.iceMasteryOn && arena.elementId === 'ice'; },
         masteryBindFor: (slot) => arena.masteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
@@ -1599,6 +1594,7 @@ export class ArenaScene extends Phaser.Scene {
         get npcElementId() { return arena.npcElement.id; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
+        crystalColor: (owner, base) => arena.cosmeticsKit.crystalColor(owner, base),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
@@ -1645,7 +1641,7 @@ export class ArenaScene extends Phaser.Scene {
         recordMasteryStat: (key, amount) => {
           if (arena.elementId === 'earth') PlayerData.addMasteryStat('earth', key, amount);
         },
-        applyScreenBlur: (ms) => arena.applyScreenBlur(ms),
+        earthColor: (owner, base) => arena.cosmeticsKit.earthColor(owner, base),
       };
       this.earthKit = new EarthKit(earthApi);
       this.earthKit.reset();
@@ -1680,6 +1676,7 @@ export class ArenaScene extends Phaser.Scene {
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
+        shadowColor: (owner, base) => arena.cosmeticsKit.shadowColor(owner, base),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
@@ -1708,6 +1705,10 @@ export class ArenaScene extends Phaser.Scene {
         get qKey() { return arena.qKey; },
         get pointerWasDown() { return arena.pointerWasDown; },
         get projectiles() { return arena.projectiles; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get npcCastId() { return arena.npcCastId; },
+        acidColor: (owner, base) => arena.cosmeticsKit.acidColor(owner, base),
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
@@ -1850,11 +1851,10 @@ export class ArenaScene extends Phaser.Scene {
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         setIsDodging: (v) => { arena.isDodging = v; },
-        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
-        spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
+        magnetColor: (owner, base) => arena.cosmeticsKit.magnetColor(owner, base),
         get masteryActive() { return arena.magnetMasteryOn && arena.elementId === 'magnet'; },
         get npcMasteryActive() { return arena.isOnline && arena.npcMasteryOn && arena.npcElement.id === 'magnet'; },
         masteryBindFor: (slot) => arena.masteryBindFor(slot),
@@ -1881,6 +1881,9 @@ export class ArenaScene extends Phaser.Scene {
         get qKey() { return arena.qKey; },
         get pointerWasDown() { return arena.pointerWasDown; },
         get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get npcCastId() { return arena.npcCastId; },
+        metalColor: (owner, base) => arena.cosmeticsKit.metalColor(owner, base),
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (perkId) => arena.hasPerk('player', perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
@@ -1916,6 +1919,10 @@ export class ArenaScene extends Phaser.Scene {
         get pointerWasDown() { return arena.pointerWasDown; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get npcCastId() { return arena.npcCastId; },
+        plasmaColor: (owner, base) => arena.cosmeticsKit.plasmaColor(owner, base),
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
@@ -1942,6 +1949,7 @@ export class ArenaScene extends Phaser.Scene {
       const gunpowderApi: GunpowderArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
         get scene(): Phaser.Scene { return arena; },
         get projectiles() { return arena.projectiles; },
         get eKey() { return arena.eKey; },
@@ -1952,6 +1960,8 @@ export class ArenaScene extends Phaser.Scene {
         get pointerWasDown() { return arena.pointerWasDown; },
         get elementId() { return arena.elementId; },
         get npcElementId() { return arena.npcElement.id; },
+        get npcCastId() { return arena.npcCastId; },
+        gunpowderColor: (owner, base) => arena.cosmeticsKit.gunpowderColor(owner, base),
         get isDodging() { return arena.isDodging; },
         set isDodging(v: boolean) { arena.isDodging = v; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
@@ -1962,7 +1972,7 @@ export class ArenaScene extends Phaser.Scene {
         spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         spawnFloatingText: (x, y, t, c) => arena.spawnFloatingText(x, y, t, c),
-        dealAoeDamageFromOwner: (x, y, r, d, o) => arena.dealAoeDamageFromOwner(x, y, r, d, o),
+        dealAoeDamageFromOwner: (x, y, r, d, o, ex) => arena.dealAoeDamageFromOwner(x, y, r, d, o, ex),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
         get masteryActive() { return arena.gunpowderMasteryOn && arena.elementId === 'gunpowder'; },
@@ -2129,7 +2139,10 @@ export class ArenaScene extends Phaser.Scene {
         get qKey() { return arena.qKey; },
         get spaceKey() { return arena.spaceKey; },
         get nukeChanneling() { return arena.nukeChanneling; },
+        get aimX() { return arena.input.activePointer.worldX; },
+        get aimY() { return arena.input.activePointer.worldY; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        sandColor: (owner, base) => arena.cosmeticsKit.sandColor(owner, base),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
@@ -2140,6 +2153,7 @@ export class ArenaScene extends Phaser.Scene {
         get masteryActive() { return arena.timeMasteryOn && arena.elementId === 'sand'; },
         get npcMasteryActive() { return arena.isOnline && arena.npcMasteryOn && arena.npcElement.id === 'sand'; },
         masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         recordMasteryStat: (key, amount) => {
           if (arena.elementId === 'sand') PlayerData.addMasteryStat('sand', key, amount);
         },
@@ -2336,6 +2350,7 @@ export class ArenaScene extends Phaser.Scene {
         recordMasteryStat: (key, amount) => {
           if (arena.elementId === 'oil') PlayerData.addMasteryStat('oil', key, amount);
         },
+        oilColor: (owner, base) => arena.cosmeticsKit.oilColor(owner, base),
       };
       this.oilKit = new OilKit(oilApi);
     }
@@ -2358,6 +2373,7 @@ export class ArenaScene extends Phaser.Scene {
         get nukeChanneling() { return arena.nukeChanneling; },
         get rightPointerWasDown() { return arena.rightPointerWasDown; },
         get isPlayerFate() { return arena.elementId === 'fate'; },
+        fateColor: (owner, base) => arena.cosmeticsKit.fateColor(owner, base),
         hasPerk: (perkId) => arena.hasPerk('player', perkId),
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
@@ -2617,10 +2633,7 @@ export class ArenaScene extends Phaser.Scene {
         const grappleDodge = this.grappleDodgeCharges > 0;
         if (grappleDodge) {
           this.grappleDodgeCharges--;
-          if (this.grappleDodgeCharges === 0 && this.grappleDodgeAura) {
-            this.grappleDodgeAura.destroy();
-            this.grappleDodgeAura = null;
-          }
+          if (this.grappleDodgeCharges === 0) this.airKit.setDodgeAura(false);
           if (this.elementId === 'air') this.airKit.onGrappleDodge();
           this.spawnDamageNumber(this.player.x, this.player.y - 34, -1); // DODGED
           proj.setActive(false).setVisible(false);
@@ -3021,26 +3034,7 @@ export class ArenaScene extends Phaser.Scene {
     // Magnet: spawn 4 rods at corners; NPC magnet also gets rods
     if (this.elementId === 'magnet' || this.npcElement.id === 'magnet') {
       const owner = this.elementId === 'magnet' ? 'player' : 'npc';
-      const isSword = this.hasPerk(owner, 'blade');
-      const cornerPad = 80;
-      const corners = [
-        { x: cornerPad, y: cornerPad },
-        { x: W - cornerPad, y: cornerPad },
-        { x: cornerPad, y: H - cornerPad },
-        { x: W - cornerPad, y: H - cornerPad },
-      ];
-      for (const c of corners) {
-        const spr = isSword
-          ? this.add.rectangle(c.x, c.y, 22, 6, 0x99aadd).setDepth(7)
-          : this.add.circle(c.x, c.y, 12, 0x99aacc, 0.9).setStrokeStyle(2, 0xddeeff).setDepth(4);
-        this.magnetKit.pushRod({
-          sprite: spr, trail: [],
-          x: c.x, y: c.y, vx: 0, vy: 0,
-          contactCooldownPlayer: 0, contactCooldownNpc: 0,
-          bouncing: false, bounceUntil: 0, owner, permDamageBonus: 0,
-          isSword,
-        });
-      }
+      this.magnetKit.spawnCornerRods(W, H, owner, this.hasPerk(owner, 'blade'));
     }
     // Time element: charge bar rendered per-frame above player; no separate HUD text needed
     // Metal: arsenal HUD bar
@@ -3098,8 +3092,22 @@ export class ArenaScene extends Phaser.Scene {
       case 'starfall':
         if (this.npcElement.id === 'gravity') this.gravityKit.doNpcStarfall(tx, ty);
         break;
+      // Silence Mastery — Puppetmaster. The awakened moveset broadcasts one id per
+      // resolved action so this sim, which owns the possessed body, applies the same
+      // branch the puppeteer saw rather than re-deriving it from a cursor position.
+      case 'puppet-slash':
+      case 'puppet-bite':
+      case 'puppet-eat':
+      case 'puppet-cannibal':
+      case 'puppet-raise':
+      case 'puppet-slam':
+        if (this.npcElement.id === 'silence') this.silenceKit.doNpcPuppetAct(enhId, tx, ty);
+        break;
       case 'beastling':
         if (this.npcElement.id === 'hunt') this.huntKit.doNpcBeastling();
+        break;
+      case 'bugle':
+        if (this.npcElement.id === 'sound') this.soundKit.doNpcBugle(tx, ty);
         break;
       case 'heatwave':
         if (this.npcElement.id === 'fire') this.fireKit.doNpcHeatwave(tx, ty);
@@ -3122,6 +3130,9 @@ export class ArenaScene extends Phaser.Scene {
       case 'icicle-impale':
         if (this.npcElement.id === 'ice') this.iceKit.doNpcIcicleImpale();
         break;
+      case 'curling-stone':
+        if (this.npcElement.id === 'ice') this.iceKit.doNpcCurlingStone(tx, ty);
+        break;
       case 'crystal-shredder':
         if (this.npcElement.id === 'crystal') this.crystalKit.doNpcShredder(tx, ty);
         break;
@@ -3140,8 +3151,18 @@ export class ArenaScene extends Phaser.Scene {
       case 'mag-lev':
         if (this.npcElement.id === 'magnet') this.magnetKit.doNpcMagLev();
         break;
-      case 'fan-the-hammer':
-        if (this.npcElement.id === 'sand') this.timeKit.doNpcFanTheHammer(tx, ty);
+      // Time Bomb is three separate signals: throw, arm, detonate (the caster owns the timing).
+      case 'time-bomb':
+        if (this.npcElement.id === 'sand') this.timeKit.doNpcTimeBomb(tx, ty);
+        break;
+      case 'time-bomb-arm':
+        if (this.npcElement.id === 'sand') this.timeKit.doNpcTimeBombArm();
+        break;
+      case 'time-bomb-boom':
+        if (this.npcElement.id === 'sand') this.timeKit.doNpcTimeBombDetonate(false);
+        break;
+      case 'time-bomb-boom-perfect':
+        if (this.npcElement.id === 'sand') this.timeKit.doNpcTimeBombDetonate(true);
         break;
       // Echo Bloom is four separate signals: plant, shoot, hop, warp.
       case 'echo-bloom':
@@ -3571,6 +3592,8 @@ export class ArenaScene extends Phaser.Scene {
       projectiles: this.projectiles,
       fireColor: (base) => this.cosmeticsKit.fireColor('player', base),
       waterColor: (base) => this.cosmeticsKit.waterColor('player', base),
+      lifeColor: (base) => this.cosmeticsKit.lifeColor('player', base),
+      airColor: (base) => this.cosmeticsKit.airColor('player', base),
       dealAoeDamage: (cx, cy, radius, damage) => {
         for (const t of this.enemies) {
           if (!t.active || t.hp <= 0) continue;
@@ -3614,17 +3637,12 @@ export class ArenaScene extends Phaser.Scene {
       startThornDrag: () => this.lifeKit.doThrive(),
       activateQuickShot: () => { this.quickShotCharged = true; },
       placeWindTrap: (x, y) => {
-        this.playerWindTrapX = x;
-        this.playerWindTrapY = y;
-        this.playerWindTrapExpiry = this.time.now + 5000;
-        if (this.playerWindTrapSprite) this.playerWindTrapSprite.destroy();
-        this.playerWindTrapSprite = this.add.circle(x, y, 80, 0xaaddff, 0).setDepth(3);
-        this.playerWindTrapSprite.setStrokeStyle(3, 0xaaddff, 0.9);
-        this.tweens.add({ targets: this.playerWindTrapSprite, alpha: 0.15, yoyo: true, repeat: -1, duration: 600 });
+        this.airKit.placeWindTrap(x, y, 'player');
+        this.airKit.playPlayerGesture('slam', Math.atan2(y - this.player.y, x - this.player.x));
       },
       grappleTo: (x, y) => {
         if (this.hasPerk('player', 'hawk')) {
-          this.doHawkDive(x, y);
+          this.airKit.spawnHawk(x, y);
           return;
         }
         const dx = x - this.player.x;
@@ -3645,6 +3663,7 @@ export class ArenaScene extends Phaser.Scene {
             if (distToPath <= 40) {
               this.tornadoGrappleSlowUntil = this.time.now + 2000;
               this.showFloatingText(this.npc.x, this.npc.y - 30, 'SLOWED', '#aaddff');
+              this.airKit.onGrappleSlow(this.npc.x, this.npc.y);
             }
           }
         }
@@ -3654,9 +3673,8 @@ export class ArenaScene extends Phaser.Scene {
             this.isGrappling = false;
             body.setVelocity(0, 0);
             this.grappleDodgeCharges = 1;
-            if (this.grappleDodgeAura) this.grappleDodgeAura.destroy();
-            this.grappleDodgeAura = this.add.circle(this.player.x, this.player.y, 26, 0x6699cc, 0.35).setDepth(6);
-            this.tweens.add({ targets: this.grappleDodgeAura, alpha: 0.6, yoyo: true, repeat: -1, duration: 400 });
+            this.airKit.setDodgeAura(true);
+            this.airKit.onGrappleLand(this.player.x, this.player.y, 'player');
             // F upgrade: extra 3s of 50% dodge + transparency after landing
             if (this.hasUpgrade('f')) {
               this.grappleDodgeUntil = this.time.now + 3000;
@@ -3669,8 +3687,7 @@ export class ArenaScene extends Phaser.Scene {
             }
           }
         });
-        const trail = this.add.circle(this.player.x, this.player.y, 8, 0xaaddff, 0.5);
-        this.tweens.add({ targets: trail, alpha: 0, duration: 300, onComplete: () => trail.destroy() });
+        this.airKit.onGrappleLaunch(this.player.x, this.player.y, x, y, 'player');
       },
       reportAirSnipeResult: (hit, hitTargets) => {
         if (hit) { this.airConsecutiveHits = Math.min(this.airConsecutiveHits + 1, 3); }
@@ -3741,6 +3758,7 @@ export class ArenaScene extends Phaser.Scene {
       soulDeathWhistle: (tx, ty) => this.soulKit.doDeathWhistle(tx, ty, 'player'),
       soulHellsTorment: () => this.soulKit.doHellsTorment('player'),
       // Hunt
+      huntShotgunBlast: (angle) => this.huntKit.fxShotgun('player', this.player.x, this.player.y, angle, false),
       huntThrowGrenade: (tx, ty, holdMs) => {
         const dx = tx - this.player.x, dy = ty - this.player.y;
         const dist = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -3748,8 +3766,8 @@ export class ArenaScene extends Phaser.Scene {
         const ox = this.player.x, oy = this.player.y;
         const fuseDur = this.hasUpgrade('e') ? 1500 : 3000;
         const isHeal = this.hasUpgrade('f') && this.huntBloodPactActive && this.time.now < this.huntBloodPactEnd;
-        const spr = this.add.circle(ox, oy, 10, isHeal ? 0x44cc44 : 0xff6600, 0.9)
-          .setStrokeStyle(2, isHeal ? 0x88ff88 : 0xffaa00, 1).setDepth(8);
+        this.huntKit.fxGrenadeThrow('player', ox, oy, Math.atan2(dy, dx));
+        const spr = this.add.graphics().setDepth(8);
         this.huntGrenades.push({
           sprite: spr, x: ox, y: oy, startX: ox, startY: oy,
           vx: (dx / dist) * speed, vy: (dy / dist) * speed,
@@ -3762,16 +3780,12 @@ export class ArenaScene extends Phaser.Scene {
         this.huntPermTrailActive = false;
         this.huntTrailEnd = this.time.now + 4500;
         this.huntTrailAccum = 0;
-        const flash = this.add.circle(this.player.x, this.player.y, 24, 0xcc3300, 0.5).setDepth(6);
-        this.tweens.add({ targets: flash, scaleX: 2, scaleY: 2, alpha: 0, duration: 300, onComplete: () => flash.destroy() });
+        this.huntKit.fxTrailStart('player', this.player.x, this.player.y);
       },
       huntBloodPact: () => {
         this.huntBloodPactActive = true;
         this.huntBloodPactEnd = this.time.now + 5000;
-        if (this.huntBloodPactAura) this.huntBloodPactAura.destroy();
-        this.huntBloodPactAura = this.add.circle(this.player.x, this.player.y, 36, 0xaa0022, 0.45)
-          .setStrokeStyle(2, 0xff2244, 0.7).setDepth(4);
-        this.tweens.add({ targets: this.huntBloodPactAura, alpha: 0.15, yoyo: true, repeat: -1, duration: 500 });
+        this.huntKit.fxBloodPact('player', this.player.x, this.player.y, 5000);
         this.showFloatingText(this.player.x, this.player.y - 24, '🩸 Blood Pact', '#ff2244');
       },
       huntTransform: () => {
@@ -3781,8 +3795,7 @@ export class ArenaScene extends Phaser.Scene {
         (this.player.body as Phaser.Physics.Arcade.Body).setCircle(26, 3, 3);
         this.player.incomingDamageMultiplier = 0.65;
         this.huntToggleBeastHud(true);
-        const burst = this.add.circle(this.player.x, this.player.y, 20, 0xcc2200, 0.8).setDepth(8);
-        this.tweens.add({ targets: burst, scaleX: 3, scaleY: 3, alpha: 0, duration: 350, onComplete: () => burst.destroy() });
+        this.huntKit.fxTransform('player', this.player.x, this.player.y, true);
       },
       huntSlash: (tx, ty) => {
         const dx = tx - this.player.x, dy = ty - this.player.y;
@@ -3822,8 +3835,11 @@ export class ArenaScene extends Phaser.Scene {
               }
             }
           }
-          const arc = this.add.circle(this.player.x + (dx / dist) * 45, this.player.y + (dy / dist) * 45, 18, 0xff3300, 0.7).setDepth(8);
-          this.tweens.add({ targets: arc, scaleX: 3.5, scaleY: 0.8, alpha: 0, duration: 200, onComplete: () => arc.destroy() });
+          this.huntKit.fxSlash(
+            'player', slashFromX, slashFromY,
+            this.player.x + (dx / dist) * 45, this.player.y + (dy / dist) * 45,
+            Math.atan2(dy, dx),
+          );
         });
       },
       huntLeap: (tx, ty) => {
@@ -3837,6 +3853,7 @@ export class ArenaScene extends Phaser.Scene {
         (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
         this.nukeChanneling = true;
         this.nukeChannelEnd = this.time.now + 2000;
+        this.huntKit.fxLeap('player', this.player.x, this.player.y, true);
       },
       huntBloodHunt: () => {
         const bhTarget = this.enemies.find(t => t.active && t.hp > 0 && t.bleeding) ?? null;
@@ -3851,8 +3868,7 @@ export class ArenaScene extends Phaser.Scene {
           this.huntBloodHuntInvincUntil = this.time.now + 2000;
           this.nukeChanneling = true;
           this.nukeChannelEnd = this.time.now + 1000; // movement unlocks after 1s; invincibility continues
-          const chargeArc = this.add.circle(this.player.x, this.player.y, 12, 0xff4400, 0.6).setDepth(9);
-          this.tweens.add({ targets: chargeArc, scaleX: 3, scaleY: 3, alpha: 0, duration: 900, onComplete: () => chargeArc.destroy() });
+          this.huntKit.fxBloodHuntCharge('player', 1000);
         } else {
           // Base: instant teleport beside target, 1s stun + 1s invincibility
           const angle = Math.random() * Math.PI * 2;
@@ -3862,10 +3878,7 @@ export class ArenaScene extends Phaser.Scene {
           this.huntBloodHuntInvincUntil = this.time.now + 1000;
           this.npcHuntSlowUntil = this.time.now + 3000;
           this.huntKit.onBloodHunt('player');
-          const roar = this.add.circle(this.player.x, this.player.y, 18, 0xff0000, 0.8).setDepth(9);
-          this.tweens.add({ targets: roar, scaleX: 4, scaleY: 4, alpha: 0, duration: 800, onComplete: () => roar.destroy() });
-          const roar2 = this.add.circle(this.player.x, this.player.y, 10, 0xffffff, 1).setDepth(10);
-          this.tweens.add({ targets: roar2, scaleX: 3, scaleY: 3, alpha: 0, duration: 500, onComplete: () => roar2.destroy() });
+          this.huntKit.fxRoar('player', this.player.x, this.player.y, 160);
         }
       },
       huntBloodMoon: () => {
@@ -3885,8 +3898,7 @@ export class ArenaScene extends Phaser.Scene {
           this.player.setScale(1.0);
           (this.player.body as Phaser.Physics.Arcade.Body).setCircle(22, 2, 2);
           this.huntToggleHybridHud(false);
-          const burst = this.add.circle(this.player.x, this.player.y, 20, 0xcc5522, 0.8).setDepth(8);
-          this.tweens.add({ targets: burst, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 300, onComplete: () => burst.destroy() });
+          this.huntKit.fxTransform('player', this.player.x, this.player.y, false, true);
           this.player.triggerCooldown('hunt-transform');
           // Extend CD to 35s (triggerCooldown records the ability CD of 25s, so add 10s more)
           this.player.reduceCooldown('hunt-transform', -10000);
@@ -3898,8 +3910,7 @@ export class ArenaScene extends Phaser.Scene {
           this.player.setScale(1.0);
           (this.player.body as Phaser.Physics.Arcade.Body).setCircle(22, 2, 2);
           this.huntToggleBeastHud(false);
-          const burst = this.add.circle(this.player.x, this.player.y, 20, 0x664422, 0.7).setDepth(8);
-          this.tweens.add({ targets: burst, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 300, onComplete: () => burst.destroy() });
+          this.huntKit.fxTransform('player', this.player.x, this.player.y, false);
           this.player.triggerCooldown('hunt-transform');
         }
       },
@@ -3927,8 +3938,7 @@ export class ArenaScene extends Phaser.Scene {
             if (proj.active) { proj.setActive(false).setVisible(false); (proj.body as Phaser.Physics.Arcade.Body).stop(); }
           });
         }
-        const flash = this.add.circle(this.player.x, this.player.y, 14, 0xdddddd, 0.7).setDepth(9);
-        this.tweens.add({ targets: flash, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 180, onComplete: () => flash.destroy() });
+        this.huntKit.fxShotgun('player', this.player.x, this.player.y, baseAngle, true);
       },
       huntHybridInstinct: () => {
         // Reuse the trail logic: spawn trail circles at NPC position
@@ -3937,17 +3947,14 @@ export class ArenaScene extends Phaser.Scene {
         this.huntTrailEnd = this.time.now + 4500;
         this.huntTrailAccum = 0;
         this.huntHybridTrailStandAccum = 0;
-        const flash = this.add.circle(this.player.x, this.player.y, 24, 0xcc3300, 0.5).setDepth(6);
-        this.tweens.add({ targets: flash, scaleX: 2, scaleY: 2, alpha: 0, duration: 300, onComplete: () => flash.destroy() });
+        this.huntKit.fxTrailStart('player', this.player.x, this.player.y);
       },
       huntHybridShriek: (tx, ty) => {
         // Rectangular shriek (120×60) oriented toward target — same math as placeFirewall
         const angle = Math.atan2(ty - this.player.y, tx - this.player.x);
         const cx = this.player.x + Math.cos(angle) * 70;
         const cy = this.player.y + Math.sin(angle) * 70;
-        const shriekRect = this.add.rectangle(cx, cy, 120, 60, 0xffcc66, 0.55)
-          .setStrokeStyle(2, 0xffffff, 0.8).setDepth(7).setRotation(angle - Math.PI / 2);
-        this.tweens.add({ targets: shriekRect, alpha: 0, duration: 250, onComplete: () => shriekRect.destroy() });
+        this.huntKit.fxShriek('player', cx, cy, angle, 60, 30);
         // Local-space AABB check for all enemies
         const fwCos = Math.cos(-angle);
         const fwSin = Math.sin(-(angle - Math.PI / 2));
@@ -3987,8 +3994,6 @@ export class ArenaScene extends Phaser.Scene {
             }
           }
         }
-        const shriekVfx = this.add.circle(this.player.x, this.player.y, 12, 0xffcc66, 0.8).setDepth(9);
-        this.tweens.add({ targets: shriekVfx, scaleX: 2, scaleY: 2, alpha: 0, duration: 200, onComplete: () => shriekVfx.destroy() });
       },
       // Silence
       silenceStab: (tx, ty) => { this.silenceKit.doStab(tx, ty, 'player'); },
@@ -4105,6 +4110,8 @@ export class ArenaScene extends Phaser.Scene {
       projectiles: this.projectiles,
       fireColor: (base) => this.cosmeticsKit.fireColor('npc', base),
       waterColor: (base) => this.cosmeticsKit.waterColor('npc', base),
+      lifeColor: (base) => this.cosmeticsKit.lifeColor('npc', base),
+      airColor: (base) => this.cosmeticsKit.airColor('npc', base),
       dealAoeDamage: (cx, cy, radius, damage) => {
         if (Phaser.Math.Distance.Between(cx, cy, this.player.x, this.player.y) <= radius) {
           this.player.takeDamage(damage);
@@ -4137,15 +4144,7 @@ export class ArenaScene extends Phaser.Scene {
       thornPlants: () => this.lifeKit.doRootShield('npc', targetX, targetY),
       startThornDrag: () => { /* state set in NPC cast reaction */ },
       activateQuickShot: () => { this.npcQuickShotCharged = true; },
-      placeWindTrap: (x, y) => {
-        this.npcWindTrapX = x;
-        this.npcWindTrapY = y;
-        this.npcWindTrapExpiry = this.time.now + 5000;
-        if (this.npcWindTrapSprite) this.npcWindTrapSprite.destroy();
-        this.npcWindTrapSprite = this.add.circle(x, y, 80, 0xaaddff, 0).setDepth(3);
-        this.npcWindTrapSprite.setStrokeStyle(3, 0xaaddff, 0.9);
-        this.tweens.add({ targets: this.npcWindTrapSprite, alpha: 0.15, yoyo: true, repeat: -1, duration: 600 });
-      },
+      placeWindTrap: (x, y) => this.airKit.placeWindTrap(x, y, 'npc'),
       grappleTo: (x, y) => {
         const dx = x - this.npc.x;
         const dy = y - this.npc.y;
@@ -4154,8 +4153,12 @@ export class ArenaScene extends Phaser.Scene {
         const travelTime = Math.min(350, (len / speed) * 1000);
         const body = this.npc.body as Phaser.Physics.Arcade.Body;
         body.setVelocity((dx / len) * speed, (dy / len) * speed);
+        this.airKit.onGrappleLaunch(this.npc.x, this.npc.y, x, y, 'npc');
         this.time.delayedCall(travelTime, () => {
-          if (this.npc.active) body.setVelocity(0, 0);
+          if (this.npc.active) {
+            body.setVelocity(0, 0);
+            this.airKit.onGrappleLand(this.npc.x, this.npc.y, 'npc');
+          }
         });
       },
       reportAirSnipeResult: (hit) => {
@@ -4216,12 +4219,14 @@ export class ArenaScene extends Phaser.Scene {
       soulDeathWhistle: (tx, ty) => this.soulKit.doDeathWhistle(tx, ty, 'npc'),
       soulHellsTorment: () => this.soulKit.doHellsTorment('npc'),
       // Hunt
+      huntShotgunBlast: (angle) => this.huntKit.fxShotgun('npc', this.npc.x, this.npc.y, angle, false),
       huntThrowGrenade: (tx, ty, holdMs) => {
         const dx = tx - this.npc.x, dy = ty - this.npc.y;
         const dist = Math.sqrt(dx * dx + dy * dy) || 1;
         const speed = 500;
         const ox = this.npc.x, oy = this.npc.y;
-        const spr = this.add.circle(ox, oy, 10, 0xcc4400, 0.9).setStrokeStyle(2, 0xff8800, 1).setDepth(8);
+        this.huntKit.fxGrenadeThrow('npc', ox, oy, Math.atan2(dy, dx));
+        const spr = this.add.graphics().setDepth(8);
         this.npcHuntGrenades.push({
           sprite: spr, x: ox, y: oy, startX: ox, startY: oy,
           vx: (dx / dist) * speed, vy: (dy / dist) * speed,
@@ -4237,17 +4242,14 @@ export class ArenaScene extends Phaser.Scene {
       huntBloodPact: () => {
         this.npcHuntBloodPactActive = true;
         this.npcHuntBloodPactEnd = this.time.now + 5000;
-        if (this.npcHuntBloodPactAura) this.npcHuntBloodPactAura.destroy();
-        this.npcHuntBloodPactAura = this.add.circle(this.npc.x, this.npc.y, 28, 0xaa0022, 0.25).setDepth(4);
-        this.tweens.add({ targets: this.npcHuntBloodPactAura, alpha: 0.08, yoyo: true, repeat: -1, duration: 600 });
+        this.huntKit.fxBloodPact('npc', this.npc.x, this.npc.y, 5000);
       },
       huntTransform: () => {
         this.npcHuntBeastForm = true;
         this.npc.setScale(1.2);
         (this.npc.body as Phaser.Physics.Arcade.Body).setCircle(26, 3, 3);
         this.npc.incomingDamageMultiplier = 0.65;
-        const burst = this.add.circle(this.npc.x, this.npc.y, 20, 0xcc2200, 0.8).setDepth(8);
-        this.tweens.add({ targets: burst, scaleX: 3, scaleY: 3, alpha: 0, duration: 350, onComplete: () => burst.destroy() });
+        this.huntKit.fxTransform('npc', this.npc.x, this.npc.y, true);
       },
       huntSlash: (tx, ty) => {
         const dx = tx - this.npc.x, dy = ty - this.npc.y;
@@ -4278,6 +4280,8 @@ export class ArenaScene extends Phaser.Scene {
               pb2.setVelocity((toPx / pd2) * 500, (toPy / pd2) * 500);
             }
           }
+          this.huntKit.fxSlash('npc', slashFromX, slashFromY,
+            this.npc.x + (dx / dist) * 45, this.npc.y + (dy / dist) * 45, Math.atan2(dy, dx));
         });
       },
       huntLeap: (tx, ty) => {
@@ -4288,6 +4292,7 @@ export class ArenaScene extends Phaser.Scene {
         this.npc.isInvincible = true;
         this.npc.setAlpha(0.15);
         (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+        this.huntKit.fxLeap('npc', this.npc.x, this.npc.y, true);
       },
       huntBloodHunt: () => {
         if (!this.playerBleeding) return;
@@ -4300,9 +4305,7 @@ export class ArenaScene extends Phaser.Scene {
         // Slow player
         this.playerHuntSlowUntil = this.time.now + 3000;
         this.huntKit.onBloodHunt('npc');
-        // Roar visual
-        const roar = this.add.circle(this.npc.x, this.npc.y, 18, 0xff0000, 0.8).setDepth(9);
-        this.tweens.add({ targets: roar, scaleX: 4, scaleY: 4, alpha: 0, duration: 800, onComplete: () => roar.destroy() });
+        this.huntKit.fxRoar('npc', this.npc.x, this.npc.y, 160);
       },
       huntBloodMoon: () => {
         this.npcHuntBloodMoonActive = true;
@@ -4317,6 +4320,7 @@ export class ArenaScene extends Phaser.Scene {
         this.npc.setScale(1.0);
         (this.npc.body as Phaser.Physics.Arcade.Body).setCircle(22, 2, 2);
         this.npc.incomingDamageMultiplier = 1.0;
+        this.huntKit.fxTransform('npc', this.npc.x, this.npc.y, false);
         this.npc.triggerCooldown('hunt-transform');
       },
       // NPC has no Q+ upgrade — hybrid methods are no-ops
@@ -4438,6 +4442,8 @@ export class ArenaScene extends Phaser.Scene {
       projectiles: projGroup,
       fireColor: (base) => base, // raid NPCs have no cosmetics
       waterColor: (base) => base,
+      lifeColor: (base) => base,
+      airColor: (base) => base,
 
       dealAoeDamage: (cx, cy, radius, damage) => {
         if (Phaser.Math.Distance.Between(cx, cy, this.player.x, this.player.y) <= radius) {
@@ -4510,6 +4516,7 @@ export class ArenaScene extends Phaser.Scene {
       soulGrave: () => {},
       soulDeathWhistle: () => {},
       soulHellsTorment: () => {},
+      huntShotgunBlast: () => {},
       huntThrowGrenade: () => {},
       huntHuntersTrail: () => {},
       huntBloodPact: () => {},
@@ -4651,168 +4658,6 @@ export class ArenaScene extends Phaser.Scene {
       const fireAt = this.time.now + Phaser.Math.Between(minDelay, maxDelay);
       const shadow = this.waterKit.createRainMarker(sx, sy, shadowRadius, owner);
       this.painRainShadows.push({ sprite: shadow, fireAt, x: sx, y: sy, fired: false, owner, damage, hitRadius, color });
-    }
-  }
-
-  // ── Perk ability helpers ────────────────────────────────────────
-
-  private doHawkDive(targetX: number, targetY: number): void {
-    const dx = targetX - this.player.x;
-    const dy = targetY - this.player.y;
-    const len = Math.sqrt(dx * dx + dy * dy) || 1;
-    const speed = 1200;
-    const spr = this.add.circle(this.player.x, this.player.y, 10, 0xcc8833, 0.9)
-      .setStrokeStyle(2, 0xffcc44, 1).setDepth(8);
-    // Tiny triangle rotated toward target (just a visual arc for simplicity)
-    const flash = this.add.text(this.player.x, this.player.y, '🦅', { fontSize: '18px' })
-      .setOrigin(0.5).setDepth(9);
-    this.hawkProjectiles.push({
-      sprite: spr,
-      vx: (dx / len) * speed,
-      vy: (dy / len) * speed,
-      expireAt: this.time.now + 1500,
-    });
-    // Fly the emoji label along with the sprite every frame (handled in update)
-    (spr as Phaser.GameObjects.Arc & { label?: Phaser.GameObjects.Text }).label = flash;
-    this.showFloatingText(this.player.x, this.player.y - 30, '🦅 HAWK!', '#ffcc44');
-  }
-
-  // Steers a snatched enemy to the stored cursor point, snapping on arrival.
-  private updateHawkDrag(dt: number): void {
-    if (this.npcHawkDragUntil <= 0) return;
-    const target = this.npc;
-    const ebody = target?.body as Phaser.Physics.Arcade.Body | undefined;
-    if (!target || !target.active || !ebody) { this.npcHawkDragUntil = 0; return; }
-
-    const dx = this.npcHawkDragX - target.x;
-    const dy = this.npcHawkDragY - target.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    const step = HAWK_DRAG_SPEED * (dt / 1000);
-
-    // Arrived (or the safety timeout fired) — land exactly on the spot.
-    if (dist <= step || this.time.now >= this.npcHawkDragUntil) {
-      target.setPosition(this.npcHawkDragX, this.npcHawkDragY);
-      ebody.reset(this.npcHawkDragX, this.npcHawkDragY);
-      this.npcHawkDragUntil = 0;
-      return;
-    }
-    ebody.setVelocity((dx / dist) * HAWK_DRAG_SPEED, (dy / dist) * HAWK_DRAG_SPEED);
-  }
-
-  private updateHawkProjectiles(dt: number): void {
-    const time = this.time.now;
-    for (let i = this.hawkProjectiles.length - 1; i >= 0; i--) {
-      const h = this.hawkProjectiles[i];
-      h.sprite.x += h.vx * (dt / 1000);
-      h.sprite.y += h.vy * (dt / 1000);
-      const label = (h.sprite as Phaser.GameObjects.Arc & { label?: Phaser.GameObjects.Text }).label;
-      if (label) { label.setPosition(h.sprite.x, h.sprite.y); }
-      // Check hit against NPC
-      const target = this.npc;
-      if (target && target.active && target.hp > 0) {
-        const ddx = h.sprite.x - target.x;
-        const ddy = h.sprite.y - target.y;
-        if (ddx * ddx + ddy * ddy < 36 * 36) {
-          // Hit: drag enemy all the way to the cursor position. The drag is
-          // steered per-frame in updateHawkDrag() so it lands on the exact
-          // spot instead of stopping short on a fixed timer.
-          const ptr = this.input.activePointer;
-          ptr.updateWorldPoint(this.cameras.main);
-          const wb = this.physics.world.bounds;
-          const ebody = target.body as Phaser.Physics.Arcade.Body;
-          const halfW = ebody.halfWidth, halfH = ebody.halfHeight;
-          // Clamp inside the world so the body can actually reach the target
-          // rather than grinding against a wall until the timeout expires.
-          this.npcHawkDragX = Phaser.Math.Clamp(ptr.worldX, wb.x + halfW, wb.right - halfW);
-          this.npcHawkDragY = Phaser.Math.Clamp(ptr.worldY, wb.y + halfH, wb.bottom - halfH);
-          const elen = Phaser.Math.Distance.Between(target.x, target.y, this.npcHawkDragX, this.npcHawkDragY);
-          // Timeout is a safety net only (+250ms slack), not the arrival cue.
-          this.npcHawkDragUntil = this.time.now + (elen / HAWK_DRAG_SPEED) * 1000 + 250;
-          this.showFloatingText(target.x, target.y - 30, '🦅 SNATCHED!', '#ffcc44');
-          this.spawnHitFlash(h.sprite.x, h.sprite.y, 0xffcc44);
-          if (label) label.destroy();
-          h.sprite.destroy();
-          this.hawkProjectiles.splice(i, 1);
-          continue;
-        }
-      }
-      // Expire
-      if (time >= h.expireAt) {
-        if (label) label.destroy();
-        h.sprite.destroy();
-        this.hawkProjectiles.splice(i, 1);
-      }
-    }
-  }
-
-  private spawnAutomatons(owner: 'player' | 'npc', count: number): void {
-    const W = this.scale.width, H = this.scale.height;
-    const expireAt = this.time.now + 10000;
-    for (let i = 0; i < count; i++) {
-      let ax = 0, ay = 0;
-      for (let attempt = 0; attempt < 30; attempt++) {
-        ax = 60 + Math.random() * (W - 120);
-        ay = 60 + Math.random() * (H - 120);
-        // Avoid maze wall overlap (simple bounding box check)
-        let blocked = false;
-        for (const wall of this.creationKit.mazeWalls) {
-          if (wall.owner === owner && Math.abs(ax - wall.x) < wall.w / 2 + 20 && Math.abs(ay - wall.y) < wall.h / 2 + 20) {
-            blocked = true; break;
-          }
-        }
-        if (!blocked) break;
-      }
-      const angle = Math.random() * Math.PI * 2;
-      const speed = 60;
-      const spr = this.add.circle(ax, ay, 12, 0x8833cc, 0.85).setStrokeStyle(2, 0xcc55ff, 0.9).setDepth(5);
-      this.tweens.add({ targets: spr, alpha: 0.6, yoyo: true, repeat: -1, duration: 400 });
-      this.automatons.push({
-        sprite: spr, x: ax, y: ay,
-        vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
-        expireAt, meleeCooldownUntil: 0, owner,
-      });
-    }
-  }
-
-  private updateAutomatons(dt: number): void {
-    const time = this.time.now;
-    const W = this.scale.width, H = this.scale.height;
-    for (let i = this.automatons.length - 1; i >= 0; i--) {
-      const a = this.automatons[i];
-      if (time >= a.expireAt) {
-        a.sprite.destroy();
-        this.automatons.splice(i, 1);
-        continue;
-      }
-      a.x += a.vx * (dt / 1000);
-      a.y += a.vy * (dt / 1000);
-      // Reflect off maze walls
-      for (const wall of this.creationKit.mazeWalls) {
-        if (wall.owner !== a.owner) continue;
-        const closestX = Math.max(wall.x - wall.w / 2, Math.min(a.x, wall.x + wall.w / 2));
-        const closestY = Math.max(wall.y - wall.h / 2, Math.min(a.y, wall.y + wall.h / 2));
-        const distSq = (a.x - closestX) ** 2 + (a.y - closestY) ** 2;
-        if (distSq < 14 * 14) {
-          // Reflect component that is overlapping
-          if (Math.abs(a.x - closestX) < Math.abs(a.y - closestY)) a.vy *= -1; else a.vx *= -1;
-          break;
-        }
-      }
-      // Bounce off arena edges
-      if (a.x < 20 || a.x > W - 20) { a.vx *= -1; a.x = Math.max(20, Math.min(W - 20, a.x)); }
-      if (a.y < 20 || a.y > H - 20) { a.vy *= -1; a.y = Math.max(20, Math.min(H - 20, a.y)); }
-      a.sprite.setPosition(a.x, a.y);
-      // Contact damage
-      const enemy = a.owner === 'player' ? this.npc : this.player;
-      if (enemy && enemy.active && enemy.hp > 0 && time >= a.meleeCooldownUntil) {
-        const ddx = a.x - enemy.x, ddy = a.y - enemy.y;
-        if (ddx * ddx + ddy * ddy < 24 * 24) {
-          a.meleeCooldownUntil = time + 500;
-          enemy.takeDamage(12);
-          this.spawnHitFlash(a.x, a.y, 0xcc55ff);
-          this.showFloatingText(a.x, a.y - 16, '12', '#cc55ff');
-        }
-      }
     }
   }
 
@@ -6863,20 +6708,6 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
-  /** Earth Mastery — Dust Screen hitting the local human: blur the canvas for `durationMs`, extending an existing blur rather than letting an earlier call clear it early. */
-  applyScreenBlur(durationMs: number): void {
-    const until = this.time.now + durationMs;
-    this.screenBlurUntil = Math.max(this.screenBlurUntil, until);
-    const canvas = this.game.canvas as HTMLCanvasElement | undefined;
-    if (canvas) canvas.style.filter = 'blur(5px)';
-    this.time.delayedCall(durationMs, () => {
-      if (this.time.now >= this.screenBlurUntil) {
-        const c = this.game.canvas as HTMLCanvasElement | undefined;
-        if (c) c.style.filter = '';
-      }
-    });
-  }
-
   private openPauseMenu(): void {
     if (this.gameEnded) return;
     if (this.scene.isPaused()) return;
@@ -7003,34 +6834,6 @@ export class ArenaScene extends Phaser.Scene {
     return Phaser.Math.Distance.Between(px, py, ax + t * dx, ay + t * dy);
   }
 
-  private updateLingeringBeams(time: number): void {
-    for (let i = this.lingeringBeams.length - 1; i >= 0; i--) {
-      const b = this.lingeringBeams[i];
-      if (time > b.expiresAt) {
-        b.gfx.destroy();
-        this.lingeringBeams.splice(i, 1);
-        continue;
-      }
-      // Fade as it ages
-      const remaining = (b.expiresAt - time) / 5000;
-      b.gfx.setAlpha(0.3 + remaining * 0.7);
-
-      const targets = b.owner === 'player' ? this.enemies : [this.player];
-      for (const t of targets) {
-        if (!t.active || t.hp <= 0) continue;
-        if (this.pointToSegmentDist(t.x, t.y, b.x1, b.y1, b.x2, b.y2) <= 30) {
-          const lastHit = (b.lastHitAt.get(t) ?? 0);
-          if (time - lastHit >= 1000) {
-            t.takeDamage(25);
-            b.lastHitAt.set(t, time);
-            this.spawnHitFlash(t.x, t.y, 0x88ccff);
-            this.showFloatingText(t.x, t.y - 24, '⚡ Lingering!', '#88ccff');
-          }
-        }
-      }
-    }
-  }
-
   // ── Hunt helpers ─────────────────────────────────────────────────
 
   private huntToggleBeastHud(toBeast: boolean): void {
@@ -7043,6 +6846,17 @@ export class ArenaScene extends Phaser.Scene {
     for (const o of this.huntNormalHudCards) (o as unknown as { setVisible: (v: boolean) => void }).setVisible(!toHybrid);
     for (const o of this.huntHybridHudCards) (o as unknown as { setVisible: (v: boolean) => void }).setVisible(toHybrid);
     this.abilityBars = toHybrid ? this.huntHybridFills : this.huntNormalFills;
+  }
+
+  /** Repaints one live grenade. HuntVisuals owns the art; this only supplies position and fuse. */
+  private drawHuntGrenade(g: HuntGrenade, time: number): void {
+    g.sprite.clear();
+    HuntFx.drawGrenade(
+      g.sprite,
+      (b: number) => this.cosmeticsKit.huntColor(g.owner, b),
+      this.huntKit.tones(g.owner),
+      g.x, g.y, time / 1000, g.explodeAt - time, !!g.isHealGrenade,
+    );
   }
 
   private spawnHuntShrapnel(x: number, y: number, owner: 'player' | 'npc'): void {
@@ -7058,8 +6872,7 @@ export class ArenaScene extends Phaser.Scene {
         if (shard.active) { shard.setActive(false).setVisible(false); (shard.body as Phaser.Physics.Arcade.Body).stop(); }
       });
     }
-    const burst = this.add.circle(x, y, 12, 0xffcc66, 0.8).setDepth(9);
-    this.tweens.add({ targets: burst, scaleX: 3, scaleY: 3, alpha: 0, duration: 300, onComplete: () => burst.destroy() });
+    this.huntKit.fxShrapnel(owner, x, y);
   }
 
   private spawnGrenadeExplosion(x: number, y: number, selfDamage: boolean, owner: 'player' | 'npc', isHeal = false): void {
@@ -7076,10 +6889,7 @@ export class ArenaScene extends Phaser.Scene {
         this.npc.heal(healAmt);
         this.showFloatingText(this.npc.x, this.npc.y - 20, `+${healAmt}`, '#44ff44');
       }
-      const ring = this.add.circle(x, y, 10, 0x44cc44, 0.9).setDepth(8);
-      this.tweens.add({ targets: ring, scaleX: 13, scaleY: 13, alpha: 0, duration: 420, onComplete: () => ring.destroy() });
-      const core = this.add.circle(x, y, 6, 0x88ff88, 1).setDepth(9);
-      this.tweens.add({ targets: core, scaleX: 4, scaleY: 4, alpha: 0, duration: 210, onComplete: () => core.destroy() });
+      this.huntKit.fxGrenadeBoom(owner, x, y, radius, true, false);
       return;
     }
     if (owner === 'player') {
@@ -7109,10 +6919,10 @@ export class ArenaScene extends Phaser.Scene {
         this.npc.applySelfDamage(20);
       }
     }
-    const ring = this.add.circle(x, y, 10, 0xff6600, 0.9).setDepth(8);
-    this.tweens.add({ targets: ring, scaleX: 13, scaleY: 13, alpha: 0, duration: 420, onComplete: () => ring.destroy() });
-    const core = this.add.circle(x, y, 6, 0xffcc44, 1).setDepth(9);
-    this.tweens.add({ targets: core, scaleX: 4, scaleY: 4, alpha: 0, duration: 210, onComplete: () => core.destroy() });
+    // A frag under a Blood Moon throws more casing and holds longer — the content scales,
+    // not just the radius.
+    const heavy = owner === 'player' ? this.huntBloodMoonActive : this.npcHuntBloodMoonActive;
+    this.huntKit.fxGrenadeBoom(owner, x, y, radius, false, heavy);
   }
 
   private applyNpcBleedVisual(): void {
@@ -7126,15 +6936,8 @@ export class ArenaScene extends Phaser.Scene {
         .setStrokeStyle(2, 0xff2222, 0.5).setDepth(3);
       this.tweens.add({ targets: t.bleedVisual, alpha: 0.1, yoyo: true, repeat: -1, duration: 600 });
     }
-    // Drip particles
-    for (let i = 0; i < 3; i++) {
-      const ang = Math.random() * Math.PI * 2;
-      const d = this.add.circle(
-        t.x + Math.cos(ang) * 18, t.y + Math.sin(ang) * 18,
-        3, 0xcc0000, 1,
-      ).setDepth(8);
-      this.tweens.add({ targets: d, y: d.y + 20, alpha: 0, duration: 600, onComplete: () => d.destroy() });
-    }
+    // The wound opening: a rake on the body and blood thrown off it.
+    this.huntKit.fxWeakPoint(t.x, t.y, Math.random() * Math.PI * 2);
     this.showFloatingText(t.x, t.y - 28, '🩸 Bleeding!', '#ff2222');
   }
 
@@ -7144,14 +6947,7 @@ export class ArenaScene extends Phaser.Scene {
         .setStrokeStyle(2, 0xff2222, 0.5).setDepth(3);
       this.tweens.add({ targets: this.playerBleedAura, alpha: 0.1, yoyo: true, repeat: -1, duration: 600 });
     }
-    for (let i = 0; i < 3; i++) {
-      const ang = Math.random() * Math.PI * 2;
-      const d = this.add.circle(
-        this.player.x + Math.cos(ang) * 18, this.player.y + Math.sin(ang) * 18,
-        3, 0xcc0000, 1,
-      ).setDepth(8);
-      this.tweens.add({ targets: d, y: d.y + 20, alpha: 0, duration: 600, onComplete: () => d.destroy() });
-    }
+    this.huntKit.fxWeakPoint(this.player.x, this.player.y, Math.random() * Math.PI * 2);
     this.showFloatingText(this.player.x, this.player.y - 28, '🩸 Bleeding!', '#ff2222');
   }
 
@@ -7273,6 +7069,9 @@ export class ArenaScene extends Phaser.Scene {
     // ── Slime per-frame ───────────────────────────────────────────
     if (this.elementId === 'slime') {
       this.slimeKit.update(time, delta);
+    } else if (this.npcElement.id === 'slime') {
+      // Online: opponent is acid — advance only their rig and the effects we can see.
+      this.slimeKit.updateNpc(time, delta);
     }
 
     // ── Burning DOT (Flameshredder upgrade / Fire Mastery stoke) ──
@@ -7372,7 +7171,6 @@ export class ArenaScene extends Phaser.Scene {
       this.playerSpeedMult = this.lifeKit.getPlayerSpeedMult();
     } else if (this.elementId === 'silence') {
       this.playerSpeedMult = 1;
-      // Kit applies enrage speed boost and watch-channel freeze via applyPlayerSpeedMult
     } else if (this.elementId === 'sand') {
       this.playerSpeedMult = this.timeKit.getPlayerSpeedMult();
     } else if (this.elementId === 'earth') {
@@ -7430,6 +7228,13 @@ export class ArenaScene extends Phaser.Scene {
       this.playerSpeedMult *= this.growthKit.getPlayerSpeedMult();
     } else {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
+    }
+
+    // Silence: hallway/maze dread on a victim, plus Weep on a mastered Silence player.
+    // Pulled here rather than pushed from SilenceKit.update(), which runs after player
+    // movement has already resolved for the frame — see getPlayerSpeedMult().
+    if (this.elementId === 'silence' || this.npcElement.id === 'silence') {
+      this.playerSpeedMult *= this.silenceKit.getPlayerSpeedMult(time);
     }
 
     this.npcSpeedMult = 1;
@@ -7646,36 +7451,7 @@ export class ArenaScene extends Phaser.Scene {
 
       // ── Click: Petal Shotgun (or Sakura Shots upgrade) ───────────
       if (pointer.isDown && !this.lifeKit.consumedPointer()) {
-        if (this.hasUpgrade('click')) {
-          if (this.player.getCooldownRatio('petal-shotgun') >= 1) {
-            this.player.triggerCooldown('petal-shotgun');
-            // Petal Burst: 5 petals at 5 dmg (25 total vs the base 3×8=24), wider cone.
-            const SAKURA_ANGLES = [-24, -12, 0, 12, 24];
-            const dx = mouseX - this.player.x;
-            const dy = mouseY - this.player.y;
-            const baseAngle = Math.atan2(dy, dx);
-            const speed = 480;
-            const spawnDist = 32;
-            for (const deg of SAKURA_ANGLES) {
-              const angle = baseAngle + deg * (Math.PI / 180);
-              const proj = new Projectile(
-                this,
-                this.player.x + Math.cos(angle) * spawnDist,
-                this.player.y + Math.sin(angle) * spawnDist,
-                'proj-sakura', 5, true,
-              );
-              proj.setTint(0xff88aa);
-              (proj as any).isSakura = true;
-              this.projectiles.add(proj);
-              proj.launch(Math.cos(angle) * speed, Math.sin(angle) * speed);
-            }
-            this.lifeKit.onPetalShotgunFired();
-          }
-        } else {
-          if (this.player.castAbility('petal-shotgun', playerCtx)) {
-            this.lifeKit.onPetalShotgunFired();
-          }
-        }
+        this.lifeKit.doPetalShotgun(mouseX, mouseY);
       }
 
       // A slot bound to Reap is handled by LifeKit.handleInput above — the
@@ -7720,8 +7496,9 @@ export class ArenaScene extends Phaser.Scene {
             // Electro charged shot: instant, 1.5× damage, miss = 20 self-damage
             this.player.triggerCooldown('air-snipe');
             this.airElectroCharged = false;
-            if (this.airElectroChargeVisual) { this.airElectroChargeVisual.destroy(); this.airElectroChargeVisual = null; }
+            this.airKit.setElectroCharged(false);
             this.player.chargeRatio = 0;
+            this.airKit.playPlayerGesture('punch');
             const electroCtx: typeof snipeBase = {
               ...snipeBase,
               lockCaster: () => {},
@@ -7736,7 +7513,7 @@ export class ArenaScene extends Phaser.Scene {
                 this.airKit.onSnipeResult(hit, hitTargets);
               },
             };
-            fireHitscan(electroCtx, 45, 0xffee44, true);
+            fireHitscan(electroCtx, 45, AIR.charge, true);
           } else {
             // Normal snipe — Click upgrade removes movement lock but keeps charge bar
             const noLockCtx = this.hasUpgrade('click')
@@ -7747,7 +7524,14 @@ export class ArenaScene extends Phaser.Scene {
                 }}
               : snipeBase;
             if (this.player.castAbility('air-snipe', noLockCtx)) {
-              if (this.quickShotCharged) this.quickShotCharged = false;
+              if (this.quickShotCharged) {
+                this.quickShotCharged = false;
+                this.airKit.playPlayerGesture('punch');
+              } else {
+                // Charged shot: the rig hauls the air back for half a second, then lets fly.
+                this.airKit.setPlayerHold('draw', 500);
+                this.time.delayedCall(500, () => this.airKit.playPlayerGesture('punch'));
+              }
             }
           }
         }
@@ -7759,18 +7543,12 @@ export class ArenaScene extends Phaser.Scene {
               // Upgrade: pressing E immediately readies the powerful electro shot
               this.player.triggerCooldown('quick-shot');
               this.airElectroCharged = true;
-              if (this.airElectroChargeVisual) this.airElectroChargeVisual.destroy();
-              this.airElectroChargeVisual = this.add.circle(this.player.x, this.player.y, 18, 0xffee44, 0.75).setDepth(8);
-              this.tweens.add({ targets: this.airElectroChargeVisual, alpha: 0.2, yoyo: true, repeat: -1, duration: 280 });
-              const pulse = this.add.circle(this.player.x, this.player.y, 14, 0xffee44, 0.6).setDepth(8);
-              this.tweens.add({ targets: pulse, scaleX: 2.2, scaleY: 2.2, alpha: 0, duration: 300, onComplete: () => pulse.destroy() });
+              this.airKit.setElectroCharged(true);
+              this.airKit.playPlayerGesture('clap');
             }
           } else {
-            this.player.castAbility('quick-shot', playerCtx);
+            if (this.player.castAbility('quick-shot', playerCtx)) this.airKit.playPlayerGesture('flex');
           }
-        }
-        if (this.airElectroCharged && this.airElectroChargeVisual) {
-          this.airElectroChargeVisual.setPosition(this.player.x, this.player.y);
         }
 
         // ── R: Wind Trap ──────────────────────────────────────────
@@ -7780,6 +7558,7 @@ export class ArenaScene extends Phaser.Scene {
 
         // ── F: Grapple ────────────────────────────────────────────
         if (this.masteryBindFor('f') !== 'sweeping-tornado' && Phaser.Input.Keyboard.JustDown(this.fKey)) {
+          // The launch/land effects and the dash pose come from grappleTo in the context.
           this.player.castAbility('grapple', this.buildPlayerContext(mouseX, mouseY));
         }
 
@@ -7794,40 +7573,33 @@ export class ArenaScene extends Phaser.Scene {
               this.nukeChannelEnd = time + 1500;
               const capX = mouseX, capY = mouseY;
               const capPX = this.player.x, capPY = this.player.y;
-              const chargeVis = this.add.circle(this.player.x, this.player.y, 14, 0x88ccff, 0.8).setDepth(8);
-              this.tweens.add({ targets: chargeVis, scaleX: 5, scaleY: 5, alpha: 0.1, duration: 1500, onComplete: () => chargeVis.destroy() });
+              // Lingering Beam leaves the caster free to walk, so the gather tracks them.
+              this.airKit.playerChannelCharge(150, 1500);
+              this.airKit.setPlayerHold('charge', 1500);
               this.time.delayedCall(1500, () => {
                 this.airBeamWalking = false;
                 this.nukeChanneling = false;
                 this.player.chargeRatio = 0;
+                this.airKit.playPlayerGesture('punch', Math.atan2(capY - capPY, capX - capPX), 520);
                 // Fire straight hitscan (100 dmg initial)
                 const ctx = this.buildPlayerContext(capX, capY);
-                this.airKit.onBeamHits(fireHitscan(ctx, 100, 0x88ccff, false).length);
+                this.airKit.onBeamHits(fireHitscan(ctx, 100, AIR.blue, false).length);
                 // Compute beam endpoint (direction from player to cursor, extended to screen edge)
                 const dx2 = capX - capPX;
                 const dy2 = capY - capPY;
                 const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2) || 1;
-                const endX = capPX + (dx2 / len2) * 900;
-                const endY = capPY + (dy2 / len2) * 900;
-                const beamGfx = this.add.graphics().setDepth(8);
-                beamGfx.lineStyle(4, 0x88ccff, 0.7);
-                beamGfx.beginPath();
-                beamGfx.moveTo(capPX, capPY);
-                beamGfx.lineTo(endX, endY);
-                beamGfx.strokePath();
-                this.lingeringBeams.push({
-                  gfx: beamGfx,
-                  x1: capPX, y1: capPY,
-                  x2: endX, y2: endY,
-                  expiresAt: this.time.now + 5000,
-                  owner: 'player',
-                  lastHitAt: new Map(),
-                });
+                this.airKit.addLingeringBeam(
+                  capPX, capPY,
+                  capPX + (dx2 / len2) * 900, capPY + (dy2 / len2) * 900,
+                  'player',
+                );
               });
             }
           } else {
             if (this.player.castAbility('charged-beam', this.buildPlayerContext(mouseX, mouseY))) {
               this.airConsecutiveHits = 0;
+              this.airKit.setPlayerHold('charge', 1500);
+              this.time.delayedCall(1500, () => this.airKit.playPlayerGesture('punch', undefined, 520));
             }
           }
         }
@@ -7967,6 +7739,7 @@ export class ArenaScene extends Phaser.Scene {
             this.player.incomingDamageMultiplier = 1.0;
             this.huntToggleBeastHud(false);
             this.huntToggleHybridHud(true);
+            this.huntKit.fxTransform('player', this.player.x, this.player.y, true, true);
             this.showFloatingText(this.player.x, this.player.y - 24, '🐺 Hybrid Form', '#ff8844');
           } else {
             this.player.castAbility('hunt-untransform', playerCtx);
@@ -8007,8 +7780,8 @@ export class ArenaScene extends Phaser.Scene {
             const speed = 500;
             const ox = this.player.x, oy = this.player.y;
             const fuseDur = hybridMaxFuse;
-            const spr = this.add.circle(ox, oy, 10, isHealNow2 ? 0x44cc44 : 0xff6600, 0.9)
-              .setStrokeStyle(2, isHealNow2 ? 0x88ff88 : 0xffaa00, 1).setDepth(8);
+            this.huntKit.fxGrenadeThrow('player', ox, oy, Math.atan2(dy, dx));
+            const spr = this.add.graphics().setDepth(8);
             this.huntGrenades.push({
               sprite: spr, x: ox, y: oy, startX: ox, startY: oy,
               vx: (dx / dist) * speed, vy: (dy / dist) * speed,
@@ -8060,16 +7833,6 @@ export class ArenaScene extends Phaser.Scene {
     // ── Water world effects (rig, pools, springs, Splash downpour) ───
     if (this.elementId === 'water' || this.npcElement.id === 'water') {
       this.waterKit.update(time, delta);
-    }
-
-    // ── Grapple dodge aura ────────────────────────────────────────
-    if (this.grappleDodgeAura) {
-      if (this.grappleDodgeCharges > 0) {
-        this.grappleDodgeAura.setPosition(this.player.x, this.player.y);
-      } else {
-        this.grappleDodgeAura.destroy();
-        this.grappleDodgeAura = null;
-      }
     }
 
     // ── Shared puddle ticks + expiry ──────────────────────────────
@@ -8207,7 +7970,6 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Lingering Air Beams ───────────────────────────────────────
-    this.updateLingeringBeams(time);
 
     // ── Pain Rain drops ───────────────────────────────────────────
     for (let i = this.painRainShadows.length - 1; i >= 0; i--) {
@@ -8247,7 +8009,7 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Dodge (Space) ────────────────────────────────────────────
-    if (Phaser.Input.Keyboard.JustDown(this.spaceKey) && !this.dodgeOnCooldown && !this.isDodging && !this.nukeChanneling && !this.cardSluggishDisableDodge && !this.silenceKit.isPlayerGrabbed()) {
+    if (Phaser.Input.Keyboard.JustDown(this.spaceKey) && !this.dodgeOnCooldown && !this.isDodging && !this.nukeChanneling && !this.cardSluggishDisableDodge && !this.silenceKit.isPlayerControlLost()) {
       let dx = (this.dKey.isDown ? 1 : 0) - (this.aKey.isDown ? 1 : 0);
       let dy = (this.sKey.isDown ? 1 : 0) - (this.wKey.isDown ? 1 : 0);
       if (dx === 0 && dy === 0) {
@@ -8264,7 +8026,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Echo Q+ Hypersense: auto-dodge incoming attacks during the 4s reveal ──
     if (this.elementId === 'echo' && this.echoKit.isHypersenseActive() && !this.isDodging
-        && !this.nukeChanneling && !this.cardSluggishDisableDodge && !this.silenceKit.isPlayerGrabbed()
+        && !this.nukeChanneling && !this.cardSluggishDisableDodge && !this.silenceKit.isPlayerControlLost()
         && time >= this.echoHypersenseNextDodgeAt) {
       const threat = this.findHypersenseThreat();
       if (threat) {
@@ -8276,14 +8038,14 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── NPC AI ───────────────────────────────────────────────────
     const aiState: NpcAiState = {
-      isLocked: this.npcNukeChanneling || this.npc.frozenUntil > time || this.magnetKit.getNailPullUntil() > time || (this.npc.magicChainBound && time < this.npc.magicChainBoundEnd) || time < this.silenceKit.getNpcYankUntil() || time < this.npcHawkDragUntil || (this.npcElement.id === 'rubber' && this.rubberKit.isBounceFormActive('npc')) || this.waterKit.isNpcSplit() || this.npc.chickenUntil > Date.now() || this.techKit.isNpcDragged(),
+      isLocked: this.npcNukeChanneling || this.npc.frozenUntil > time || this.magnetKit.getNailPullUntil() > time || (this.npc.magicChainBound && time < this.npc.magicChainBoundEnd) || time < this.silenceKit.getNpcYankUntil() || this.airKit.isNpcHawkDragged() || (this.npcElement.id === 'rubber' && this.rubberKit.isBounceFormActive('npc')) || this.waterKit.isNpcSplit() || this.npc.chickenUntil > Date.now() || this.techKit.isNpcDragged(),
       hasActiveGeyser: this.geysers.some((g) => g.owner === 'npc'),
       flameBodyActive: this.fireKit.isNpcFlameBodyActive(),
       projectiles: this.projectiles,
       plantCount: this.lifeKit.getPlantCount('npc'),
       thornDragActive: false,
       enemyNearPlant: this.lifeKit.getPlantCount('npc') > 0,
-      windTrapActive: time < this.npcWindTrapExpiry,
+      windTrapActive: this.airKit.isNpcTrapActive(time),
       chargedBeamReady: this.npcAirConsecutiveHits >= 3,
       earthShieldHp: this.earthKit.getNpcShieldHp(),
       npcEarthRocksActive: this.earthKit.getNpcRocksActive(),
@@ -8363,6 +8125,9 @@ export class ArenaScene extends Phaser.Scene {
     // React to NPC casts that need ArenaScene state
     this.fireKit.handleNpcCastId(npcCastId, time);
     this.waterKit.handleNpcCastId(npcCastId, time);
+    this.lifeKit.handleNpcCastId(npcCastId);
+    this.airKit.handleNpcCastId(npcCastId);
+    this.oilKit.handleNpcCastId(npcCastId);
     if (npcCastId === 'quick-shot') {
       this.npcQuickShotCharged = true;
     }
@@ -8375,7 +8140,7 @@ export class ArenaScene extends Phaser.Scene {
     }
     // ── Ice per-frame ─────────────────────────────────────────────
     if (this.elementId === 'ice' || this.npcElement.id === 'ice') {
-      this.iceKit.update(time, delta, this.elementId === 'ice');
+      this.iceKit.update(time, delta, this.elementId === 'ice', this.npcElement.id === 'ice');
       // Online: opponent is ice — replay their Icicle Impale dash + track its icicle on us.
       if (this.elementId !== 'ice' && this.npcElement.id === 'ice') this.iceKit.updateNpc(time);
     }
@@ -8498,8 +8263,8 @@ export class ArenaScene extends Phaser.Scene {
           g.x += g.vx * delta / 1000;
           g.y += g.vy * delta / 1000;
           if (Phaser.Math.Distance.Between(g.startX, g.startY, g.x, g.y) >= 145) g.stopped = true;
-          g.sprite.setPosition(g.x, g.y);
         }
+        this.drawHuntGrenade(g, time);
         // E+: shotgun pellet detonates grenade (in-flight OR landed)
         if (this.hasUpgrade('e') && g.owner === 'player') {
           const projs = this.projectiles.getChildren();
@@ -8534,8 +8299,8 @@ export class ArenaScene extends Phaser.Scene {
           g.x += g.vx * delta / 1000;
           g.y += g.vy * delta / 1000;
           if (Phaser.Math.Distance.Between(g.startX, g.startY, g.x, g.y) >= 145) g.stopped = true;
-          g.sprite.setPosition(g.x, g.y);
         }
+        this.drawHuntGrenade(g, time);
         if (time >= g.explodeAt) {
           this.spawnGrenadeExplosion(g.x, g.y, g.selfDamage, g.owner);
           g.sprite.destroy(); this.npcHuntGrenades.splice(i, 1);
@@ -8552,14 +8317,23 @@ export class ArenaScene extends Phaser.Scene {
             this.huntTrailAccum -= 150;
             const trailTarget = this.getNearestEnemy(this.player.x, this.player.y);
             const trailDur = this.hasPerk('player', 'rage') ? 5000 : 3000;
-            const s = this.add.circle(trailTarget.x, trailTarget.y, 30, 0xff4400, 0.18).setDepth(2);
-            this.huntTrailCircles.push({ sprite: s, x: trailTarget.x, y: trailTarget.y, expiresAt: time + trailDur });
+            const tb = trailTarget.body as Phaser.Physics.Arcade.Body;
+            this.huntTrailCircles.push({
+              sprite: this.add.graphics().setDepth(2),
+              x: trailTarget.x, y: trailTarget.y, expiresAt: time + trailDur,
+              durationMs: trailDur,
+              // Prints point the way the quarry was running when it left them.
+              angle: Math.atan2(tb.velocity.y, tb.velocity.x),
+            });
           }
         }
       }
       for (let i = this.huntTrailCircles.length - 1; i >= 0; i--) {
         const c = this.huntTrailCircles[i];
-        if (time > c.expiresAt) { c.sprite.destroy(); this.huntTrailCircles.splice(i, 1); }
+        if (time > c.expiresAt) { c.sprite.destroy(); this.huntTrailCircles.splice(i, 1); continue; }
+        c.sprite.clear();
+        HuntFx.drawTrail(c.sprite, (b: number) => this.cosmeticsKit.huntColor('player', b), this.huntKit.tones('player'),
+          c.x, c.y, 30, c.angle, time / 1000, (c.expiresAt - time) / c.durationMs);
       }
       // Rage perk: render rage bar above HP bar
       if (this.hasPerk('player', 'rage')) {
@@ -8585,10 +8359,7 @@ export class ArenaScene extends Phaser.Scene {
             this.huntHybridTrailStandAccum = 0;
             this.huntHybridScreechCdUntil = time + 4000;
             this.npcHuntSlowUntil = Math.max(this.npcHuntSlowUntil, time + 3000);
-            const roar = this.add.circle(this.player.x, this.player.y, 18, 0xff0000, 0.8).setDepth(9);
-            this.tweens.add({ targets: roar, scaleX: 4, scaleY: 4, alpha: 0, duration: 800, onComplete: () => roar.destroy() });
-            const roar2 = this.add.circle(this.player.x, this.player.y, 10, 0xffffff, 1).setDepth(10);
-            this.tweens.add({ targets: roar2, scaleX: 3, scaleY: 3, alpha: 0, duration: 500, onComplete: () => roar2.destroy() });
+            this.huntKit.fxRoar('player', this.player.x, this.player.y, 150);
             this.showFloatingText(this.player.x, this.player.y - 28, '🐺 Screech!', '#ff8844');
           }
         } else {
@@ -8622,34 +8393,26 @@ export class ArenaScene extends Phaser.Scene {
           this.npcHuntTrailAccum += delta;
           if (this.npcHuntTrailAccum >= 150) {
             this.npcHuntTrailAccum -= 150;
-            const s = this.add.circle(this.player.x, this.player.y, 30, 0xcc4400, 0.15).setDepth(2);
-            this.npcHuntTrailCircles.push({ sprite: s, x: this.player.x, y: this.player.y, expiresAt: time + 3000 });
+            const pb2 = this.player.body as Phaser.Physics.Arcade.Body;
+            this.npcHuntTrailCircles.push({
+              sprite: this.add.graphics().setDepth(2),
+              x: this.player.x, y: this.player.y, expiresAt: time + 3000,
+              durationMs: 3000, angle: Math.atan2(pb2.velocity.y, pb2.velocity.x),
+            });
           }
         }
       }
       for (let i = this.npcHuntTrailCircles.length - 1; i >= 0; i--) {
         const c = this.npcHuntTrailCircles[i];
-        if (time > c.expiresAt) { c.sprite.destroy(); this.npcHuntTrailCircles.splice(i, 1); }
+        if (time > c.expiresAt) { c.sprite.destroy(); this.npcHuntTrailCircles.splice(i, 1); continue; }
+        c.sprite.clear();
+        HuntFx.drawTrail(c.sprite, (b: number) => this.cosmeticsKit.huntColor('npc', b), this.huntKit.tones('npc'),
+          c.x, c.y, 30, c.angle, time / 1000, (c.expiresAt - time) / c.durationMs);
       }
 
-      // Blood Pact aura — player
-      if (this.huntBloodPactActive) {
-        if (time > this.huntBloodPactEnd) {
-          this.huntBloodPactActive = false;
-          if (this.huntBloodPactAura) { this.huntBloodPactAura.destroy(); this.huntBloodPactAura = null; }
-        } else if (this.huntBloodPactAura) {
-          this.huntBloodPactAura.setPosition(this.player.x, this.player.y);
-        }
-      }
-      // Blood Pact aura — NPC
-      if (this.npcHuntBloodPactActive) {
-        if (time > this.npcHuntBloodPactEnd) {
-          this.npcHuntBloodPactActive = false;
-          if (this.npcHuntBloodPactAura) { this.npcHuntBloodPactAura.destroy(); this.npcHuntBloodPactAura = null; }
-        } else if (this.npcHuntBloodPactAura) {
-          this.npcHuntBloodPactAura.setPosition(this.npc.x, this.npc.y);
-        }
-      }
+      // Blood Pact expiry. HuntKit owns the aura itself and follows the fighter for us.
+      if (this.huntBloodPactActive && time > this.huntBloodPactEnd) this.huntBloodPactActive = false;
+      if (this.npcHuntBloodPactActive && time > this.npcHuntBloodPactEnd) this.npcHuntBloodPactActive = false;
 
       // Bleeding auras
       for (const t of this.enemies) {
@@ -8724,10 +8487,8 @@ export class ArenaScene extends Phaser.Scene {
         this.npcHuntConfusedUntil = time + 3000;
         this.huntKit.onBloodHunt('player');
         this.showFloatingText(bhTgt.x, bhTgt.y - 20, '😵 Confused!', '#ff8800');
-        const roar = this.add.circle(this.player.x, this.player.y, 18, 0xff0000, 0.8).setDepth(9);
-        this.tweens.add({ targets: roar, scaleX: 4, scaleY: 4, alpha: 0, duration: 800, onComplete: () => roar.destroy() });
-        const roar2 = this.add.circle(this.player.x, this.player.y, 10, 0xffffff, 1).setDepth(10);
-        this.tweens.add({ targets: roar2, scaleX: 3, scaleY: 3, alpha: 0, duration: 500, onComplete: () => roar2.destroy() });
+        // Charged: the arrival howl is bigger than the instant version's.
+        this.huntKit.fxRoar('player', this.player.x, this.player.y, 200);
       }
 
       // Explosive Leap — player (E+ = teleport at 1s mark)
@@ -8749,8 +8510,7 @@ export class ArenaScene extends Phaser.Scene {
             if (this.huntBloodMoonActive && this.hasUpgrade('f')) this.player.heal(15);
             if (this.huntBloodPactActive && time < this.huntBloodPactEnd) this.player.heal(15);
           }
-          const boomE = this.add.circle(this.huntLeapTargetX, this.huntLeapTargetY, 10, 0xff4400, 0.9).setDepth(9);
-          this.tweens.add({ targets: boomE, scaleX: 12, scaleY: 12, alpha: 0, duration: 400, onComplete: () => boomE.destroy() });
+          this.huntKit.fxLeap('player', this.huntLeapTargetX, this.huntLeapTargetY, false);
         }
         if (time >= this.huntLeapEnd) {
           this.huntLeapActive = false;
@@ -8769,10 +8529,7 @@ export class ArenaScene extends Phaser.Scene {
               if (this.huntBloodMoonActive && this.hasUpgrade('f')) this.player.heal(15);
               if (this.huntBloodPactActive && time < this.huntBloodPactEnd) this.player.heal(15);
             }
-            const boom = this.add.circle(this.huntLeapTargetX, this.huntLeapTargetY, 10, 0xff4400, 0.9).setDepth(9);
-            this.tweens.add({ targets: boom, scaleX: 12, scaleY: 12, alpha: 0, duration: 400, onComplete: () => boom.destroy() });
-            const boomC = this.add.circle(this.huntLeapTargetX, this.huntLeapTargetY, 6, 0xffcc00, 1).setDepth(10);
-            this.tweens.add({ targets: boomC, scaleX: 4, scaleY: 4, alpha: 0, duration: 200, onComplete: () => boomC.destroy() });
+            this.huntKit.fxLeap('player', this.huntLeapTargetX, this.huntLeapTargetY, false);
           }
           this.player.isInvincible = false;
           this.player.setAlpha(1);
@@ -8878,7 +8635,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Magnet per-frame ──────────────────────────────────────────
     if (this.elementId === 'magnet' || this.npcElement.id === 'magnet') {
-      this.magnetKit.update(time, delta);
+      this.magnetKit.update(time, delta, this.elementId === 'magnet', this.npcElement.id === 'magnet');
     }
 
     // ── Metal per-frame ───────────────────────────────────────────
@@ -8945,76 +8702,9 @@ export class ArenaScene extends Phaser.Scene {
         this.npcElement.id === 'fate');
     }
 
-    // Air Mastery tornado holds captured enemies by position, so it has to run after
-    // NPC AI and husk movement have written their velocities for this frame.
-    if (this.elementId === 'air') this.airKit.update(time, delta);
-    else if (this.npcElement.id === 'air') this.airKit.updateNpc(time, delta);
-
-    // ── Wind Trap — player's trap constrains NPC ─────────────────
-    if (time < this.playerWindTrapExpiry) {
-      // R upgrade: trap drifts toward the cursor at a capped speed — it trails the
-      // aim rather than snapping to it, so enemies can outrun the vortex.
-      if (this.hasUpgrade('r')) {
-        const ptr = this.input.activePointer;
-        const step = TRACKING_VORTEX_SPEED * (delta / 1000);
-        const dx = ptr.worldX - this.playerWindTrapX;
-        const dy = ptr.worldY - this.playerWindTrapY;
-        const d = Math.hypot(dx, dy);
-        if (d > step) {
-          this.playerWindTrapX += (dx / d) * step;
-          this.playerWindTrapY += (dy / d) * step;
-        } else {
-          this.playerWindTrapX = ptr.worldX;
-          this.playerWindTrapY = ptr.worldY;
-        }
-        if (this.playerWindTrapSprite) {
-          this.playerWindTrapSprite.setPosition(this.playerWindTrapX, this.playerWindTrapY);
-        }
-      }
-      const trapR = 80;
-      for (const t of this.enemies) {
-        if (!t.active || t.hp <= 0) continue;
-        const d = Phaser.Math.Distance.Between(this.playerWindTrapX, this.playerWindTrapY, t.x, t.y);
-        if (d > trapR) {
-          const ang = Phaser.Math.Angle.Between(this.playerWindTrapX, this.playerWindTrapY, t.x, t.y);
-          t.setPosition(
-            this.playerWindTrapX + Math.cos(ang) * trapR,
-            this.playerWindTrapY + Math.sin(ang) * trapR,
-          );
-          const nb = t.body as Phaser.Physics.Arcade.Body;
-          const vDotN = nb.velocity.x * Math.cos(ang) + nb.velocity.y * Math.sin(ang);
-          if (vDotN > 0) {
-            nb.velocity.x -= vDotN * Math.cos(ang);
-            nb.velocity.y -= vDotN * Math.sin(ang);
-          }
-        }
-      }
-    } else if (this.playerWindTrapSprite) {
-      this.playerWindTrapSprite.destroy();
-      this.playerWindTrapSprite = null;
-    }
-
-    // ── Wind Trap — NPC's trap constrains player ──────────────────
-    if (time < this.npcWindTrapExpiry && !this.isDodging) {
-      const trapR = 80;
-      const d = Phaser.Math.Distance.Between(this.npcWindTrapX, this.npcWindTrapY, this.player.x, this.player.y);
-      if (d > trapR) {
-        const ang = Phaser.Math.Angle.Between(this.npcWindTrapX, this.npcWindTrapY, this.player.x, this.player.y);
-        this.player.setPosition(
-          this.npcWindTrapX + Math.cos(ang) * trapR,
-          this.npcWindTrapY + Math.sin(ang) * trapR,
-        );
-        // Cancel only the outward velocity so the player can still move inside
-        const vDotN = playerBody.velocity.x * Math.cos(ang) + playerBody.velocity.y * Math.sin(ang);
-        if (vDotN > 0) {
-          playerBody.velocity.x -= vDotN * Math.cos(ang);
-          playerBody.velocity.y -= vDotN * Math.sin(ang);
-        }
-      }
-    } else if (this.npcWindTrapSprite && time >= this.npcWindTrapExpiry) {
-      this.npcWindTrapSprite.destroy();
-      this.npcWindTrapSprite = null;
-    }
+    // Air's tornado and Wind Trap both hold their catch by position, so the kit has to run
+    // after NPC AI and husk movement have written their velocities for this frame.
+    if (this.elementId === 'air' || this.npcElement.id === 'air') this.airKit.update(time, delta);
 
     // ── Puddle slow (post-AI) ─────────────────────────────────────
     if (this.puddles.length > 0) {
@@ -9067,17 +8757,18 @@ export class ArenaScene extends Phaser.Scene {
       }
     }
 
-    // ── Perk updates ────────────────────────────────────────────
-    this.updateHawkProjectiles(delta);
-    this.updateHawkDrag(delta);
-    this.updateAutomatons(delta);
-
     // ── Update HUD cooldown bars ─────────────────────────────────
     this.updatePlayerHpBar();
     this.statusHudKit.update(delta);
 
     for (const entry of this.abilityBars) {
-      if (entry.abilityId === 'heatwave') {
+      // Creation's Build Mode borrows all five slots for a second loadout with its own
+      // timers, so it gets first refusal on every card before the per-ability chain below.
+      const buildRatio = this.elementId === 'creation'
+        ? this.creationKit.buildModeBarRatio(entry.abilityId, time) : null;
+      if (buildRatio !== null) {
+        entry.fill.setSize(entry.maxWidth * buildRatio, entry.fill.height);
+      } else if (entry.abilityId === 'heatwave') {
         entry.fill.setSize(entry.maxWidth * this.fireKit.getHeatwaveCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'siphon') {
         entry.fill.setSize(entry.maxWidth * this.waterKit.getSiphonCooldownRatio(time), entry.fill.height);
@@ -9093,6 +8784,8 @@ export class ArenaScene extends Phaser.Scene {
         entry.fill.setSize(entry.maxWidth * this.shadowKit.getShadowBeaconCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'icicle-impale') {
         entry.fill.setSize(entry.maxWidth * this.iceKit.getIcicleImpaleCooldownRatio(time), entry.fill.height);
+      } else if (entry.abilityId === 'curling-stone') {
+        entry.fill.setSize(entry.maxWidth * this.iceKit.getCurlingStoneCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'kinetic-bomb') {
         entry.fill.setSize(entry.maxWidth * this.electricityKit.getKineticBombCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'starfall') {
@@ -9110,8 +8803,8 @@ export class ArenaScene extends Phaser.Scene {
         entry.fill.setSize(entry.maxWidth * this.growthKit.getChargeBarRatio(entry.abilityId, time), entry.fill.height);
       } else if (entry.abilityId === 'mag-lev') {
         entry.fill.setSize(entry.maxWidth * this.magnetKit.getMagLevCooldownRatio(time), entry.fill.height);
-      } else if (entry.abilityId === 'fan-the-hammer') {
-        entry.fill.setSize(entry.maxWidth * this.timeKit.getFanCooldownRatio(time), entry.fill.height);
+      } else if (entry.abilityId === 'time-bomb') {
+        entry.fill.setSize(entry.maxWidth * this.timeKit.getBombCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'echo-bloom') {
         entry.fill.setSize(entry.maxWidth * this.echoKit.getBloomCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'killer-kebab') {
@@ -9134,6 +8827,8 @@ export class ArenaScene extends Phaser.Scene {
         entry.fill.setSize(entry.maxWidth * this.huntKit.getBeastlingCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'unstable-orbital') {
         entry.fill.setSize(entry.maxWidth * this.plasmaKit.getOrbitalCooldownRatio(time), entry.fill.height);
+      } else if (entry.abilityId === 'puppetmaster') {
+        entry.fill.setSize(entry.maxWidth * this.silenceKit.getPuppetmasterCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'tarot-of-fate') {
         entry.fill.setSize(entry.maxWidth * this.fateKit.getTarotCooldownRatio(time), entry.fill.height);
       } else if ((entry.abilityId === 'fate-preserve' || entry.abilityId === 'fate-enchant')
@@ -9182,6 +8877,8 @@ export class ArenaScene extends Phaser.Scene {
         entry.lockedIcon.setPosition(entry.fill.x, entry.fill.y);
       } else if (entry.abilityId === 'flow-mode') {
         entry.fill.setSize(this.soundKit.isFlowActive() ? entry.maxWidth : 0, entry.fill.height);
+      } else if (entry.abilityId === 'bugle') {
+        entry.fill.setSize(entry.maxWidth * this.soundKit.getBugleCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'magic-grimoire' && this.elementId === 'magic' && this.magicKit.isThunderCharged('e')) {
         entry.fill.setFillStyle(0xffee00, 0.55);
         entry.fill.setSize(entry.maxWidth, entry.fill.height);
@@ -9339,7 +9036,7 @@ export class ArenaScene extends Phaser.Scene {
     target.takeDamage(_npcDmg);
     if (this.elementId === 'water') this.waterKit.noteDamageDealtByPlayer(_npcDmg);
     if (this.elementId === 'life') this.lifeKit.onPlayerProjectileHit(proj, target, _npcDmg);
-    if (this.elementId === 'gunpowder') this.gunpowderKit.onPlayerProjectileHit(proj);
+    if (this.elementId === 'gunpowder') this.gunpowderKit.onPlayerProjectileHit(proj, target);
     const isVoidIceHit = proj.texture.key === 'proj-ice' && this.iceKit.isPlayerBlackIceMorphActive();
     this.spawnHitFlash(proj.x, proj.y, isVoidIceHit ? 0x9900ff : 0xff6600);
     // Hunt Blood Pact: heal player for 50% of damage dealt
@@ -9452,12 +9149,12 @@ export class ArenaScene extends Phaser.Scene {
     return { hits, kills };
   }
 
-  private dealAoeDamageFromOwner(cx: number, cy: number, radius: number, damage: number, owner: 'player' | 'npc'): void {
+  private dealAoeDamageFromOwner(cx: number, cy: number, radius: number, damage: number, owner: 'player' | 'npc', except?: Fighter): void {
     // Any AoE can wipe silence stalkers caught in the blast.
     this.silenceKit.notifyAoeDamage(cx, cy, radius, owner);
     if (owner === 'player') {
       for (const t of this.enemies) {
-        if (!t.active || t.hp <= 0) continue;
+        if (!t.active || t.hp <= 0 || t === except) continue;
         if (Phaser.Math.Distance.Between(cx, cy, t.x, t.y) <= radius) {
           t.takeDamage(damage);
           this.spawnHitFlash(t.x, t.y, 0x9944ff);
@@ -9465,7 +9162,7 @@ export class ArenaScene extends Phaser.Scene {
         }
       }
     } else {
-      if (Phaser.Math.Distance.Between(cx, cy, this.player.x, this.player.y) <= radius) {
+      if (this.player !== except && Phaser.Math.Distance.Between(cx, cy, this.player.x, this.player.y) <= radius) {
         this.player.takeDamage(damage);
         this.spawnHitFlash(this.player.x, this.player.y, 0x9944ff);
         this.spawnDamageNumber(this.player.x, this.player.y - 28, damage);

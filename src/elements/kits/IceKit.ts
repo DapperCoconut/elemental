@@ -2,23 +2,40 @@ import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
 import { Projectile } from '../../combat/Projectile';
+import {
+  FROST_TONES, ICE, IceArmor, IceAvatar, IceColorFn, IceFx, iceShard, tonesFor,
+} from './IceVisuals';
+
+/**
+ * Every ice ability — the player's and the NPC's alike — is cast through the `do*` methods
+ * below, so each one drives its own arm gesture right where it fires. That covers the local
+ * player, the AI opponent and an online peer's replayed casts from one place, which is why
+ * this kit has no separate npc-cast-id gesture table.
+ */
 
 // ── Ice type definitions ────────────────────────────────────────────────────
 
 export interface IcyTrail {
-  sprite: Phaser.GameObjects.Arc;
+  /** Redrawn every frame — a fractured plate with glints crawling across it. */
+  gfx: Phaser.GameObjects.Graphics;
   expiresAt: number;
+  spawnAt: number;
+  /** Per-patch offset so a field of trails never fractures to the same pattern. */
+  seed: number;
   x: number;
   y: number;
   radius: number;
   frostTickAccum: number;
   owner: 'player' | 'npc';
+  isVoid: boolean;
   rink?: boolean;
   skater?: boolean;
 }
 
 export interface IceArenaZone {
-  sprite: Phaser.GameObjects.Arc;
+  gfx: Phaser.GameObjects.Graphics;
+  seed: number;
+  spawnAt: number;
   x: number; y: number; radius: number;
   expiresAt: number; tickAccum: number;
   isVoid: boolean; owner: 'player' | 'npc';
@@ -33,6 +50,28 @@ interface IceIcicle {
   isVoid: boolean;
 }
 
+/**
+ * Ice Mastery — Curling Stone: a slab parked on the floor that its owner shoves around by
+ * shooting it. Every shot freezes another layer onto it, and the frost is what makes it
+ * dangerous: more stacks means a longer, faster slide and a heavier hit.
+ */
+interface CurlingStone {
+  gfx: Phaser.GameObjects.Graphics;
+  x: number; y: number;
+  vx: number; vy: number;
+  /** Accumulated roll, so the handle and rime crust turn as it travels. */
+  spin: number;
+  stacks: number;
+  isVoid: boolean;
+  owner: 'player' | 'npc';
+  expiresAt: number;
+  /** Per-target gate, so one pass through a crowd can't hit the same fighter twice. */
+  hitCooldowns: Map<Fighter, number>;
+  /** Shots that already shoved this stone — a piercing spike passes through but only counts once. */
+  shoved: WeakSet<Phaser.GameObjects.GameObject>;
+  chipAccum: number;
+}
+
 const ICICLE_IMPALE_COOLDOWN_MS = 6000;
 const ICICLE_DASH_SPEED = 900;
 const ICICLE_DASH_DURATION_MS = 150;
@@ -41,6 +80,24 @@ const ICICLE_SHATTER_DAMAGE_THRESHOLD = 50;
 const ICICLE_EXTENDED_STACK_MS = 10000;
 const ICICLE_STACK_HARD_CAP = 7;
 const BIG_HIT_THRESHOLD = 50;
+
+const CURLING_COOLDOWN_MS = 25000;
+const CURLING_LIFETIME_MS = 20000;
+/** Half-width of the slab, used for wall bounces and for catching shots. */
+const CURLING_RADIUS = 18;
+const CURLING_HIT_RADIUS = 32;
+const CURLING_HIT_COOLDOWN_MS = 1000;
+const CURLING_BASE_DAMAGE = 30;
+const CURLING_DAMAGE_PER_STACK = 0.2;
+const CURLING_MAX_STACKS = 5;
+/** Velocity one shot adds. Deliberately small — an unfrosted stone barely budges. */
+const CURLING_BASE_PUSH = 150;
+const CURLING_PUSH_PER_STACK = 62;
+/** Speed below which the stone counts as parked (no damage, no chips). */
+const CURLING_MOVING_SPEED = 26;
+/** A Skate trail is frictionless glass — the stone screams across it. */
+const CURLING_SKATE_SPEED_MULT = 3.2;
+const CURLING_SKATE_DRAG = 0.4;
 
 // ── IceArenaApi ──────────────────────────────────────────────────────────────
 
@@ -59,6 +116,8 @@ export interface IceArenaApi {
   readonly isInvasion: boolean;
   hasUpgrade(slot: string): boolean;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
+  /** Cosmetics: maps an ice visual color through the owner's color cosmetic. */
+  iceColor(owner: 'player' | 'npc', base: number): number;
   applyNpcSpeedMult(factor: number): void;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
@@ -74,6 +133,24 @@ export interface IceArenaApi {
 // ── IceKit ───────────────────────────────────────────────────────────────────
 
 export class IceKit {
+  // ── Visuals ───────────────────────────────────────────────────────────
+  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  private readonly pcol: IceColorFn;
+  private readonly ncol: IceColorFn;
+  private readonly pfx: IceFx;
+  private readonly nfx: IceFx;
+  /** The ice character rig (ball arms, eyes, shard crown) for each ice-element fighter. */
+  private playerAvatar: IceAvatar | null = null;
+  private npcAvatar: IceAvatar | null = null;
+  /** Last aim point, cached in handleInput so the per-frame avatar update can face it. */
+  private aimX = 0;
+  private aimY = 0;
+  private projTrailAccum = 0;
+  /** Ice Mastery — Viral Frost: an always-on rime shell while mastery is enabled. */
+  private masteryArmor: IceArmor | null = null;
+  /** One casing per frozen fighter, rebuilt lazily and torn down when they thaw. */
+  private frozenShells = new Map<Fighter, Phaser.GameObjects.Graphics>();
+
   // ── Player state — frost stacks ─────────────────────────────────────────
   private playerFrostStacks = 0;
   /** Expiry timestamps (Date.now()-based) for each individual frost stack — oldest first. */
@@ -84,10 +161,10 @@ export class IceKit {
 
   // ── Player state — Block Up / Black Ice ─────────────────────────────────
   private playerBlockUpActive = false;
-  private playerBlockUpAura: Phaser.GameObjects.Arc | null = null;
+  private playerBlockUpArmor: IceArmor | null = null;
   private playerFrozenUntil = 0;
   private playerBlackIceMorphActive = false;
-  private playerBlackIceAura: Phaser.GameObjects.Arc | null = null;
+  private playerBlackIceArmor: IceArmor | null = null;
   private playerIceSpeedBoostUntil = 0;
   private playerSlushLastTick = 0;
 
@@ -104,7 +181,7 @@ export class IceKit {
 
   // ── NPC state ─────────────────────────────────────────────────────────
   private npcBlockUpActive = false;
-  private npcBlockUpAura: Phaser.GameObjects.Arc | null = null;
+  private npcBlockUpArmor: IceArmor | null = null;
 
   // ── Shared ────────────────────────────────────────────────────────────
   private icyTrails: IcyTrail[] = [];
@@ -127,7 +204,22 @@ export class IceKit {
   private npcIcicleDashUntil = 0;
   private npcIcicleDashHit = false;
 
-  constructor(private arena: IceArenaApi) {}
+  // ── Ice Mastery — Curling Stone ─────────────────────────────────────
+  /** At most one stone per owner; the npc entry only exists for an online peer's cast. */
+  private curlingStones: CurlingStone[] = [];
+  private curlingLastCastAt = -999999;
+
+  constructor(private arena: IceArenaApi) {
+    this.pcol = (base) => arena.iceColor('player', base);
+    this.ncol = (base) => arena.iceColor('npc', base);
+    this.pfx = new IceFx(arena.scene, this.pcol);
+    this.nfx = new IceFx(arena.scene, this.ncol);
+  }
+
+  /** Colour mapper for a side. */
+  private col(owner: 'player' | 'npc'): IceColorFn { return owner === 'player' ? this.pcol : this.ncol; }
+  /** Effect painter for a side. */
+  private fx(owner: 'player' | 'npc'): IceFx { return owner === 'player' ? this.pfx : this.nfx; }
 
   // ── Public accessors ──────────────────────────────────────────────────
 
@@ -144,6 +236,11 @@ export class IceKit {
   /** 0 = just cast, 1 = ready. Drives the HUD bar when Icicle Impale is bound to a slot. */
   getIcicleImpaleCooldownRatio(time: number): number {
     return Math.min(1, (time - this.icicleImpaleLastCastAt) / ICICLE_IMPALE_COOLDOWN_MS);
+  }
+
+  /** 0 = just cast, 1 = ready. Drives the HUD bar when Curling Stone is bound to a slot. */
+  getCurlingStoneCooldownRatio(time: number): number {
+    return Math.min(1, (time - this.curlingLastCastAt) / CURLING_COOLDOWN_MS);
   }
 
   /** Combined multiplier contribution (frost/permafrost slow, block-up slow, own-trail boost, Rink perk) for the NPC. */
@@ -176,20 +273,30 @@ export class IceKit {
   }
 
   reset(): void {
+    // Visuals — every GameObject dies with the old scene run, so rebuild lazily in update().
+    if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
+    if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
+    if (this.masteryArmor) { this.masteryArmor.destroy(); this.masteryArmor = null; }
+    for (const g of this.frozenShells.values()) g.destroy();
+    this.frozenShells.clear();
+    this.aimX = 0;
+    this.aimY = 0;
+    this.projTrailAccum = 0;
+
     this.playerFrostStacks = 0;
     this.playerFrostStackTimers = [];
     if (this.playerFrostVisual) { this.playerFrostVisual.destroy(); this.playerFrostVisual = null; }
     if (this.playerPermafrostVisual) { this.playerPermafrostVisual.destroy(); this.playerPermafrostVisual = null; }
     if (this.playerPermavoidVisual) { this.playerPermavoidVisual.destroy(); this.playerPermavoidVisual = null; }
     this.playerBlockUpActive = false;
-    if (this.playerBlockUpAura) { this.playerBlockUpAura.destroy(); this.playerBlockUpAura = null; }
+    if (this.playerBlockUpArmor) { this.playerBlockUpArmor.destroy(); this.playerBlockUpArmor = null; }
     this.playerFrozenUntil = 0;
     this.npcBlockUpActive = false;
-    if (this.npcBlockUpAura) { this.npcBlockUpAura.destroy(); this.npcBlockUpAura = null; }
-    this.icyTrails.forEach((t) => t.sprite.destroy());
+    if (this.npcBlockUpArmor) { this.npcBlockUpArmor.destroy(); this.npcBlockUpArmor = null; }
+    this.icyTrails.forEach((t) => t.gfx.destroy());
     this.icyTrails = [];
     this.playerBlackIceMorphActive = false;
-    if (this.playerBlackIceAura) { this.playerBlackIceAura.destroy(); this.playerBlackIceAura = null; }
+    if (this.playerBlackIceArmor) { this.playerBlackIceArmor.destroy(); this.playerBlackIceArmor = null; }
     this.playerIceSpeedBoostUntil = 0;
     this.playerSlushLastTick = 0;
     this.playerSkateRecentUntil = 0;
@@ -197,7 +304,7 @@ export class IceKit {
     this.playerSkaterActive = false;
     this.playerSkaterHeading = 0;
     this.playerSkaterTrailAccum = 0;
-    this.iceArenas.forEach((a) => a.sprite.destroy());
+    this.iceArenas.forEach((a) => a.gfx.destroy());
     this.iceArenas = [];
     this.viralFrostCooldowns.clear();
     this.icicleImpales.forEach((ic) => ic.sprite.destroy());
@@ -211,21 +318,41 @@ export class IceKit {
     this.icicleDashVx = 0;
     this.icicleDashVy = 0;
     this.icicleDashHitThisDash = false;
+    this.curlingStones.forEach((s) => s.gfx.destroy());
+    this.curlingStones = [];
+    this.curlingLastCastAt = -999999;
   }
 
   // ── Per-frame update (called when either side is playing Ice) ─────────
 
-  update(time: number, delta: number, isPlayerIce: boolean): void {
+  update(time: number, delta: number, isPlayerIce: boolean, isNpcIce = false): void {
     const { player, npc, enemies, scene } = this.arena;
+
+    this.updateAvatars(delta, isPlayerIce, isNpcIce);
+    this.updateSpikeTrails(delta);
+    this.updateFrozenShells(time);
+    // Owner-agnostic, so an online peer's stone rolls on this sim too.
+    this.updateCurlingStones(time, delta);
 
     // Icy trail ticks: slow enemy + inflict frost/void-frost stacks + F+ owner speed boost
     for (let ti = this.icyTrails.length - 1; ti >= 0; ti--) {
       const trail = this.icyTrails[ti];
       if (time >= trail.expiresAt) {
-        trail.sprite.destroy();
+        trail.gfx.destroy();
         this.icyTrails.splice(ti, 1);
         continue;
       }
+      // The plate keeps growing for its first frames and thins out over its last second.
+      // Rink tiles are seeded with a future spawnAt so the sheet freezes outward, hence the
+      // clamp at the bottom end as well.
+      const grow = Phaser.Math.Clamp((time - trail.spawnAt) / 220, 0, 1);
+      const left = trail.expiresAt - time;
+      trail.gfx.clear();
+      IceFx.drawRink(
+        trail.gfx, this.col(trail.owner), tonesFor(trail.isVoid),
+        trail.x, trail.y, trail.radius * (0.55 + grow * 0.45),
+        time / 1000, left < 1000 ? Math.max(0, left / 1000) : 1, trail.seed,
+      );
       // Slow enemies standing in the trail
       if (trail.owner === 'player') {
         const enemiesInTrail: Fighter[] = [];
@@ -293,6 +420,8 @@ export class IceKit {
       const diff = Phaser.Math.Angle.Wrap(desired - this.playerSkaterHeading);
       const maxTurn = this.playerSkaterTurnRate * (delta / 1000);
       this.playerSkaterHeading += Phaser.Math.Clamp(diff, -maxTurn, maxTurn);
+      // Arms thrown out wide for balance while the ice carries them.
+      this.playerAvatar?.setHold('ride', this.playerSkaterHeading);
       this.playerSkaterTrailAccum += delta;
       if (this.playerSkaterTrailAccum >= 80) {
         this.playerSkaterTrailAccum -= 80;
@@ -347,12 +476,19 @@ export class IceKit {
     // Ice arena ticks (Skate-in-BlockUp / Skate-in-BlackIce)
     for (let ai = this.iceArenas.length - 1; ai >= 0; ai--) {
       const arenaZone = this.iceArenas[ai];
-      arenaZone.sprite.setPosition(arenaZone.x, arenaZone.y);
       if (time >= arenaZone.expiresAt) {
-        arenaZone.sprite.destroy();
+        arenaZone.gfx.destroy();
         this.iceArenas.splice(ai, 1);
         continue;
       }
+      const zoneGrow = Math.min(1, (time - arenaZone.spawnAt) / 300);
+      const zoneLeft = arenaZone.expiresAt - time;
+      arenaZone.gfx.clear();
+      IceFx.drawRink(
+        arenaZone.gfx, this.col(arenaZone.owner), tonesFor(arenaZone.isVoid),
+        arenaZone.x, arenaZone.y, arenaZone.radius * (0.4 + zoneGrow * 0.6),
+        time / 1000, zoneLeft < 900 ? Math.max(0, zoneLeft / 900) : 1, arenaZone.seed,
+      );
       arenaZone.tickAccum += delta;
       if (arenaZone.tickAccum >= 2000) {
         arenaZone.tickAccum -= 2000;
@@ -384,7 +520,9 @@ export class IceKit {
       if (t.voidFrostTickAccum >= 1000) {
         t.voidFrostTickAccum -= 1000;
         t.takeDamage(vfDps);
-        this.arena.spawnHitFlash(t.x, t.y, 0x9900ff);
+        this.arena.spawnHitFlash(t.x, t.y, ICE.voidGlow);
+        // Void frost visibly eats its host between ticks, not just on the tick.
+        this.pfx.shards(t.x, t.y, 2, { speed: 26, size: 2.2, life: 620, fall: 26, depth: 7, isVoid: true });
         this.arena.recordMasteryStat('voidFrostDamage', vfDps);
         this.recordBigHit(vfDps);
       }
@@ -527,10 +665,10 @@ export class IceKit {
       this.playerPermavoidVisual.destroy(); this.playerPermavoidVisual = null;
     }
 
-    // Block up aura positions
-    if (this.playerBlockUpAura) this.playerBlockUpAura.setPosition(player.x, player.y);
-    if (this.npcBlockUpAura) this.npcBlockUpAura.setPosition(npc.x, npc.y);
-    if (this.playerBlackIceAura) this.playerBlackIceAura.setPosition(player.x, player.y);
+    // Armour shells ride their owners.
+    this.playerBlockUpArmor?.update(delta, player.x, player.y, player.alpha);
+    this.npcBlockUpArmor?.update(delta, npc.x, npc.y, npc.alpha);
+    this.playerBlackIceArmor?.update(delta, player.x, player.y, player.alpha);
 
     // Frozen overlays (blue tint flash)
     if (this.playerFrozenUntil > 0 && time >= this.playerFrozenUntil) {
@@ -541,37 +679,136 @@ export class IceKit {
     }
   }
 
+  // ── Ice character rig ─────────────────────────────────────────────────
+
+  /**
+   * Builds (on first frame) and drives the ball-arm avatar for whichever fighters are ice.
+   * The player faces the cursor; the NPC faces whoever it is fighting. The mastery passive's
+   * rime shell lives here too, at a lower depth than the Block Up armour so the two stack into
+   * one silhouette rather than fighting each other.
+   */
+  private updateAvatars(delta: number, isPlayerIce: boolean, isNpcIce: boolean): void {
+    const { player, npc, scene } = this.arena;
+
+    if (isPlayerIce && player?.active) {
+      if (!this.playerAvatar) this.playerAvatar = new IceAvatar(scene, this.pcol);
+      const aimX = this.aimX || player.x + 1;
+      const aimY = this.aimY || player.y;
+      this.playerAvatar.setFacing(Math.atan2(aimY - player.y, aimX - player.x));
+      this.playerAvatar.setVoid(this.playerBlackIceMorphActive);
+      // Skating and armouring up are the character working at full stretch.
+      this.playerAvatar.setIntensity(
+        this.playerSkaterActive ? 1.4 : (this.playerBlockUpActive || this.playerBlackIceMorphActive) ? 1.25 : 1,
+      );
+      this.playerAvatar.setMastered(this.arena.masteryActive);
+      this.playerAvatar.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
+
+      // Ice Mastery — Viral Frost: an always-on rime shell while mastery is enabled.
+      if (this.arena.masteryActive) {
+        if (!this.masteryArmor) this.masteryArmor = new IceArmor(scene, this.pcol, FROST_TONES, 44, 0.7, 2, 6);
+        this.masteryArmor.update(delta, player.x, player.y, player.alpha);
+      } else if (this.masteryArmor) {
+        this.masteryArmor.destroy();
+        this.masteryArmor = null;
+      }
+    } else if (this.playerAvatar) {
+      this.playerAvatar.destroy();
+      this.playerAvatar = null;
+      if (this.masteryArmor) { this.masteryArmor.destroy(); this.masteryArmor = null; }
+    }
+
+    if (isNpcIce && npc?.active) {
+      if (!this.npcAvatar) this.npcAvatar = new IceAvatar(scene, this.ncol);
+      this.npcAvatar.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
+      this.npcAvatar.setIntensity(this.npcBlockUpActive ? 1.25 : 1);
+      this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
+    } else if (this.npcAvatar) {
+      this.npcAvatar.destroy();
+      this.npcAvatar = null;
+    }
+  }
+
+  /** Every live ice spike drags a shrinking tail of frost chips behind it. */
+  private updateSpikeTrails(delta: number): void {
+    this.projTrailAccum += delta;
+    if (this.projTrailAccum < 45) return;
+    this.projTrailAccum = 0;
+    for (const child of this.arena.projectiles.getChildren()) {
+      const proj = child as Projectile;
+      if (!proj.active || proj.texture?.key !== 'proj-ice') continue;
+      const fx = proj.isFromPlayer ? this.pfx : this.nfx;
+      const body = proj.body as Phaser.Physics.Arcade.Body | null;
+      // Trail streams out of the back of the shot rather than puffing symmetrically.
+      const back = body ? Math.atan2(-body.velocity.y, -body.velocity.x) : 0;
+      fx.shards(proj.x, proj.y, 2, {
+        angle: back, spread: 0.4, speed: 34, size: 2.4, life: 300, fall: 6, depth: 4,
+        isVoid: proj.isFromPlayer && this.playerBlackIceMorphActive,
+      });
+    }
+  }
+
+  /**
+   * A frozen fighter is encased in a block of ice for as long as the freeze lasts. Shells are
+   * built lazily and torn down the moment their host thaws or dies, so nothing survives a
+   * match restart.
+   */
+  private updateFrozenShells(time: number): void {
+    const { player, npc, enemies, scene } = this.arena;
+    const frozen = new Set<Fighter>();
+    if (this.playerFrozenUntil > time && player.active) frozen.add(player);
+    for (const t of [npc, ...enemies]) {
+      if (t?.active && t.frozenUntil > time) frozen.add(t);
+    }
+
+    for (const f of frozen) {
+      let g = this.frozenShells.get(f);
+      if (!g) {
+        g = scene.add.graphics().setDepth(9);
+        this.frozenShells.set(f, g);
+        // Snap on application: the casing slams shut around them.
+        const fx = f === player ? this.nfx : this.pfx;
+        fx.bloom(f.x, f.y, 34, 9, 8, f.voidFrostStacks > 0);
+      }
+      g.clear();
+      IceFx.drawFrozenShell(
+        g, f === player ? this.ncol : this.pcol,
+        tonesFor(f.voidFrostStacks > 0), f.x, f.y, time / 1000, 1,
+      );
+    }
+
+    for (const [f, g] of this.frozenShells) {
+      if (frozen.has(f)) continue;
+      g.destroy();
+      this.frozenShells.delete(f);
+      // Thawing breaks the casing rather than dissolving it.
+      if (f.active) (f === player ? this.nfx : this.pfx).shatter(f.x, f.y, 46, { shards: 10, vapor: 1, rime: false, duration: 320 });
+    }
+  }
+
   // ── Input ────────────────────────────────────────────────────────────
 
   handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
     if (this.arena.nukeChanneling) return;
     const { player, fKey, eKey, rKey, qKey } = this.arena;
     const playerCtx = this.arena.buildPlayerContext(mouseX, mouseY);
-    // Ice Mastery — Icicle Impale may be bound over any of E/R/F/Q, suppressing that slot's base ability.
-    const icicleSlot = this.arena.masteryActive ? this.icicleImpaleSlot() : null;
-
-    if (icicleSlot === 'f') {
-      if (Phaser.Input.Keyboard.JustDown(fKey)) this.tryCastIcicleImpale(time);
-    } else if (Phaser.Input.Keyboard.JustDown(fKey)) {
+    // Cached for the avatar rig, which runs in update() and has no pointer of its own.
+    this.aimX = mouseX;
+    this.aimY = mouseY;
+    // Ice Mastery abilities may be bound over any of E/R/F/Q, suppressing that slot's base ability.
+    if (Phaser.Input.Keyboard.JustDown(fKey) && !this.castMasteryBind('f', time)) {
       // While active, recast always cancels — even mid-cooldown — so bypass the
       // normal cooldown-gated castAbility() and call the cast fn directly.
       if (this.playerSkaterActive) playerCtx.startSkate();
       else player.castAbility('skate', playerCtx);
     }
     if (!this.playerSkaterActive) {
-      if (icicleSlot === 'e') {
-        if (Phaser.Input.Keyboard.JustDown(eKey)) this.tryCastIcicleImpale(time);
-      } else if (Phaser.Input.Keyboard.JustDown(eKey)) {
+      if (Phaser.Input.Keyboard.JustDown(eKey) && !this.castMasteryBind('e', time)) {
         player.castAbility('frost-blast', playerCtx);
       }
-      if (icicleSlot === 'r') {
-        if (Phaser.Input.Keyboard.JustDown(rKey)) this.tryCastIcicleImpale(time);
-      } else if (Phaser.Input.Keyboard.JustDown(rKey)) {
+      if (Phaser.Input.Keyboard.JustDown(rKey) && !this.castMasteryBind('r', time)) {
         player.castAbility('block-up', playerCtx);
       }
-      if (icicleSlot === 'q') {
-        if (Phaser.Input.Keyboard.JustDown(qKey)) this.tryCastIcicleImpale(time);
-      } else if (Phaser.Input.Keyboard.JustDown(qKey)) {
+      if (Phaser.Input.Keyboard.JustDown(qKey) && !this.castMasteryBind('q', time)) {
         player.castAbility('frozen-solid', playerCtx);
       }
       if (pointer.isDown) {
@@ -586,6 +823,9 @@ export class IceKit {
         } else {
           player.castAbility('ice-spike', playerCtx);
         }
+      } else if (this.arena.hasUpgrade('click') && !this.playerSkaterActive) {
+        // Slush Thrower is the only thing that holds 'spray'; skating owns 'ride' instead.
+        this.playerAvatar?.setHold(null);
       }
     }
   }
@@ -619,8 +859,13 @@ export class IceKit {
     const dx = tx - player.x;
     const dy = ty - player.y;
     const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    const angle = Math.atan2(dy, dx);
+    // Arms jab first so the shot reads as coming out of a hand.
+    this.playerAvatar?.play('punch', angle);
+    const hand = this.playerAvatar?.castHand() ?? { x: player.x, y: player.y };
+    this.pfx.muzzleFrost(hand.x, hand.y, angle, 1, 8, this.playerBlackIceMorphActive);
     const proj = new Projectile(scene, player.x, player.y, 'proj-ice', 8, true);
-    if (this.playerBlackIceMorphActive) proj.setTint(0x9900ff);
+    if (this.playerBlackIceMorphActive) proj.setTint(ICE.voidGlow);
     projectiles.add(proj);
     proj.launch((dx / len) * 520, (dy / len) * 520);
   }
@@ -639,13 +884,20 @@ export class IceKit {
     const angle = Math.atan2(dy / len, dx / len);
     const endX = player.x + Math.cos(angle) * 1200;
     const endY = player.y + Math.sin(angle) * 1200;
+    this.playerAvatar?.play('sweep', angle);
     this.spawnFrostBeamVisual(player.x, player.y, endX, endY, isBlackIce);
     for (const t of enemies) {
       if (!t.active || t.hp <= 0) continue;
       if (isBlackIce ? t.voidFrostStacks === 0 : t.frostStacks === 0) continue;
       const d = this.arena.pointToSegmentDist(t.x, t.y, player.x, player.y, endX, endY);
       if (d > 32) continue;
-      this.arena.spawnHitFlash(t.x, t.y, isBlackIce ? 0x9900ff : 0x88ccff);
+      this.arena.spawnHitFlash(t.x, t.y, isBlackIce ? ICE.voidGlow : ICE.sky);
+      // Stacks being spent are worth a real break, scaled by how many were on the target.
+      const spent = isBlackIce ? t.voidFrostStacks : t.frostStacks;
+      this.pfx.shatter(t.x, t.y, 50 + spent * 12, {
+        shards: 8 + spent * 3, vapor: 1 + Math.floor(spent / 2),
+        duration: 340 + spent * 40, isVoid: isBlackIce,
+      });
       // 3s immunity to new frost/void stacks (permafrost/permavoid unaffected)
       t.frostImmuneUntil = Math.max(t.frostImmuneUntil, time + 3000);
       t.voidImmuneUntil  = Math.max(t.voidImmuneUntil,  time + 3000);
@@ -694,26 +946,33 @@ export class IceKit {
 
   doToggleBlockUp(): void {
     const { player, scene } = this.arena;
+    // Both arms pump out to the sides — the classic "bracing" read.
+    this.playerAvatar?.play('flex');
     if (this.arena.hasUpgrade('r')) {
       // R+: Black Ice Morph replaces Block Up
       this.playerBlackIceMorphActive = !this.playerBlackIceMorphActive;
       this.convertEnemyFrostStacks(this.playerBlackIceMorphActive);
       if (this.playerBlackIceMorphActive) {
         player.incomingDamageMultiplier = this.frostDamageMultiplier(this.playerFrostStacks) * 1.25;
-        player.setTint(0x9900ff);
-        if (!this.playerBlackIceAura) {
-          this.playerBlackIceAura = scene.add.circle(player.x, player.y, 30, 0x220044, 0.4)
-            .setStrokeStyle(2, 0x9900ff, 0.9).setDepth(3);
+        player.setTint(ICE.voidGlow);
+        if (!this.playerBlackIceArmor) {
+          this.playerBlackIceArmor = new IceArmor(scene, this.pcol, tonesFor(true), 34, 1.15, 3, 9);
         }
+        // Plates slam inward and lock: the morph lands with weight instead of blinking on.
+        this.pfx.bloom(player.x, player.y, 40, 11, 4, true);
+        this.pfx.rime(player.x, player.y, 40, 2, true);
         const mt = scene.add.text(player.x, player.y - 36, 'BLACK ICE', { fontSize: '11px', color: '#cc88ff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
         scene.tweens.add({ targets: mt, y: mt.y - 20, alpha: 0, duration: 1200, onComplete: () => mt.destroy() });
       } else {
         player.incomingDamageMultiplier = this.frostDamageMultiplier(this.playerFrostStacks);
         player.clearTint();
-        if (this.playerBlackIceAura) { this.playerBlackIceAura.destroy(); this.playerBlackIceAura = null; }
+        if (this.playerBlackIceArmor) { this.playerBlackIceArmor.destroy(); this.playerBlackIceArmor = null; }
         player.applySelfDamage(15);
         player.sizeMult = Math.max(0.3, player.sizeMult * 0.85);
         player.applySizeMult();
+        // Dropping out of the morph costs HP, so it visibly breaks apart.
+        this.pfx.shatter(player.x, player.y, 70, { shards: 14, vapor: 2, duration: 460, isVoid: true });
+        scene.cameras.main.shake(180, 0.005);
         this.arena.showFloatingText(player.x, player.y - 30, '💢 SHATTERED', '#cc88ff');
       }
     } else {
@@ -722,12 +981,13 @@ export class IceKit {
         ? this.frostDamageMultiplier(this.playerFrostStacks) * 0.75
         : this.frostDamageMultiplier(this.playerFrostStacks);
       if (this.playerBlockUpActive) {
-        if (!this.playerBlockUpAura) {
-          this.playerBlockUpAura = scene.add.circle(player.x, player.y, 28, 0x88ccff, 0.25)
-            .setStrokeStyle(2, 0xcceeff, 0.8).setDepth(3);
+        if (!this.playerBlockUpArmor) {
+          this.playerBlockUpArmor = new IceArmor(scene, this.pcol, FROST_TONES, 32, 1, 3, 8);
         }
+        this.pfx.bloom(player.x, player.y, 36, 9, 4);
       } else {
-        if (this.playerBlockUpAura) { this.playerBlockUpAura.destroy(); this.playerBlockUpAura = null; }
+        if (this.playerBlockUpArmor) { this.playerBlockUpArmor.destroy(); this.playerBlockUpArmor = null; }
+        this.pfx.shards(player.x, player.y, 8, { speed: 110, size: 2.8, life: 480, fall: 40, depth: 5 });
       }
     }
   }
@@ -738,6 +998,8 @@ export class IceKit {
     if (this.playerSkaterActive) {
       // Recast cancels skater mode and starts cooldown — always allowed, even mid-cooldown.
       this.playerSkaterActive = false;
+      this.playerAvatar?.setHold(null);
+      this.pfx.shards(player.x, player.y, 10, { speed: 130, size: 3, life: 460, fall: 44, depth: 5, isVoid: this.playerBlackIceMorphActive });
       player.startCooldown('skate');
       return;
     }
@@ -746,6 +1008,14 @@ export class IceKit {
     this.playerSkaterHeading = Math.atan2(ptr.worldY - player.y, ptr.worldX - player.x);
     this.playerSkaterTrailAccum = 0;
     this.playerSkaterActive = true;
+    // Launch: arms flung back then forward, and the blades bite the floor.
+    this.playerAvatar?.play('dash', this.playerSkaterHeading);
+    this.pfx.wake(
+      player.x, player.y,
+      player.x + Math.cos(this.playerSkaterHeading) * 70,
+      player.y + Math.sin(this.playerSkaterHeading) * 70,
+      4, this.playerBlackIceMorphActive,
+    );
     // F+ synergies: spawn ice arena based on current state
     if (this.arena.hasUpgrade('f')) {
       if (this.playerBlackIceMorphActive) {
@@ -764,6 +1034,8 @@ export class IceKit {
     const time = scene.time.now;
     const isBlackIce = this.playerBlackIceMorphActive;
     const angle = Math.atan2(ty - player.y, tx - player.x);
+    // Both arms thrust out and hold — the ultimate is a shove, not a flick.
+    this.playerAvatar?.play('raise', angle, 900);
     this.spawnFrozenSolidVisual(player.x, player.y, angle, isBlackIce);
     for (const t of enemies) {
       if (!t.active || t.hp <= 0) continue;
@@ -772,11 +1044,11 @@ export class IceKit {
       if (diff <= Math.PI / 8) {
         if (t.frozenUntil > time) {
           t.frozenUntil = 0;
-          this.arena.spawnHitFlash(t.x, t.y, isBlackIce ? 0x9900ff : 0x88ccff);
+          this.arena.spawnHitFlash(t.x, t.y, isBlackIce ? ICE.voidGlow : ICE.sky);
           if (!noFrostStacks) { for (let fi = 0; fi < 3; fi++) this.addFrostStackTo(t); }
         } else {
           t.frozenUntil = time + 3000;
-          this.arena.spawnHitFlash(t.x, t.y, isBlackIce ? 0x9900ff : 0x88ccff);
+          this.arena.spawnHitFlash(t.x, t.y, isBlackIce ? ICE.voidGlow : ICE.sky);
           if (this.arena.hasUpgrade('q')) t.frozenSolidAmpReady = true;
         }
       }
@@ -792,6 +1064,10 @@ export class IceKit {
     const dx = tx - npc.x;
     const dy = ty - npc.y;
     const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    const angle = Math.atan2(dy, dx);
+    this.npcAvatar?.play('punch', angle);
+    const hand = this.npcAvatar?.castHand() ?? { x: npc.x, y: npc.y };
+    this.nfx.muzzleFrost(hand.x, hand.y, angle, 1, 8);
     const proj = new Projectile(scene, npc.x, npc.y, 'proj-ice', 8, false);
     projectiles.add(proj);
     proj.launch((dx / len) * 480, (dy / len) * 480);
@@ -806,11 +1082,15 @@ export class IceKit {
     const angle = Math.atan2(dy / len, dx / len);
     const endX = npc.x + Math.cos(angle) * 1200;
     const endY = npc.y + Math.sin(angle) * 1200;
-    this.spawnFrostBeamVisual(npc.x, npc.y, endX, endY);
+    this.npcAvatar?.play('sweep', angle);
+    this.spawnFrostBeamVisual(npc.x, npc.y, endX, endY, false, 'npc');
     const d = this.arena.pointToSegmentDist(player.x, player.y, npc.x, npc.y, endX, endY);
     if (d <= 32) {
       player.takeDamage(Math.round(this.playerFrostStacks * 7.5));
-      this.arena.spawnHitFlash(player.x, player.y, 0x88ccff);
+      this.arena.spawnHitFlash(player.x, player.y, ICE.sky);
+      this.nfx.shatter(player.x, player.y, 50 + this.playerFrostStacks * 12, {
+        shards: 8 + this.playerFrostStacks * 3, vapor: 1, duration: 340 + this.playerFrostStacks * 40,
+      });
       this.clearFrostStacks('player');
     }
     void scene;
@@ -822,13 +1102,15 @@ export class IceKit {
     npc.incomingDamageMultiplier = this.npcBlockUpActive
       ? this.frostDamageMultiplier(npc.frostStacks) * 0.75
       : this.frostDamageMultiplier(npc.frostStacks);
+    this.npcAvatar?.play('flex');
     if (this.npcBlockUpActive) {
-      if (!this.npcBlockUpAura) {
-        this.npcBlockUpAura = scene.add.circle(npc.x, npc.y, 28, 0x88ccff, 0.25)
-          .setStrokeStyle(2, 0xcceeff, 0.8).setDepth(3);
+      if (!this.npcBlockUpArmor) {
+        this.npcBlockUpArmor = new IceArmor(scene, this.ncol, FROST_TONES, 32, 1, 3, 8);
       }
+      this.nfx.bloom(npc.x, npc.y, 36, 9, 4);
     } else {
-      if (this.npcBlockUpAura) { this.npcBlockUpAura.destroy(); this.npcBlockUpAura = null; }
+      if (this.npcBlockUpArmor) { this.npcBlockUpArmor.destroy(); this.npcBlockUpArmor = null; }
+      this.nfx.shards(npc.x, npc.y, 8, { speed: 110, size: 2.8, life: 480, fall: 40, depth: 5 });
     }
   }
 
@@ -841,6 +1123,9 @@ export class IceKit {
     const len = Math.sqrt(dx * dx + dy * dy) || 1;
     const nBody = npc.body as Phaser.Physics.Arcade.Body;
     nBody.setVelocity((dx / len) * 620, (dy / len) * 620);
+    const away = Math.atan2(dy / len, dx / len);
+    this.npcAvatar?.play('dash', away);
+    this.nfx.wake(npc.x, npc.y, npc.x + (dx / len) * 90, npc.y + (dy / len) * 90);
     npc.isInvincible = true;
     for (let i = 0; i < 4; i++) {
       scene.time.delayedCall(i * 55, () => {
@@ -856,7 +1141,8 @@ export class IceKit {
     const { player, npc, scene } = this.arena;
     const time = scene.time.now;
     const angle = Math.atan2(ty - npc.y, tx - npc.x);
-    this.spawnFrozenSolidVisual(npc.x, npc.y, angle);
+    this.npcAvatar?.play('raise', angle, 900);
+    this.spawnFrozenSolidVisual(npc.x, npc.y, angle, false, 'npc');
     const playerAngle = Math.atan2(player.y - npc.y, player.x - npc.x);
     const diff = Math.abs(Phaser.Math.Angle.Wrap(playerAngle - angle));
     if (diff <= Math.PI / 8) {
@@ -865,7 +1151,7 @@ export class IceKit {
         if (!noFrostStacks) { for (let fi = 0; fi < 3; fi++) this.addFrostStack('player'); }
       } else {
         this.playerFrozenUntil = time + 3000;
-        this.arena.spawnHitFlash(player.x, player.y, 0x88ccff);
+        this.arena.spawnHitFlash(player.x, player.y, ICE.sky);
       }
     }
     // Rink perk: tile the cone with icy trails lasting 8s
@@ -907,12 +1193,27 @@ export class IceKit {
       if (f.voidFrostStacks < 5) f.voidFrostStackTimers.push(Date.now() + stackMs);
       f.voidFrostStacks = Math.max(f.voidFrostStacks, Math.min(5, f.voidFrostStacks + 1));
       f.incomingDamageMultiplier = this.frostDamageMultiplier(f.voidFrostStacks);
+      this.frostSnap(f, true, f.voidFrostStacks);
     } else {
       if (Date.now() < f.frostImmuneUntil) return;
       if (f.frostStacks < 5) f.frostStackTimers.push(Date.now() + stackMs);
       f.frostStacks = Math.max(f.frostStacks, Math.min(5, f.frostStacks + 1));
       f.incomingDamageMultiplier = this.frostDamageMultiplier(f.frostStacks);
+      this.frostSnap(f, false, f.frostStacks);
     }
+  }
+
+  /**
+   * Rime cracking across a target as a stack lands. Scales with the stack count so the fifth
+   * one visibly hits harder than the first — the debuff has to read as building, not just as a
+   * number ticking up in the label above their head.
+   */
+  private frostSnap(f: Fighter, isVoid: boolean, stacks: number): void {
+    const fx = f === this.arena.player ? this.nfx : this.pfx;
+    fx.ring(f.x, f.y, 6, 26 + stacks * 5, tonesFor(isVoid).lit, 300, 3, 8);
+    fx.shards(f.x, f.y, 2 + stacks, {
+      speed: 60 + stacks * 12, size: 2.2, life: 420, fall: 22, depth: 8, isVoid,
+    });
   }
 
   private addFrostStack(target: 'player' | 'npc'): void {
@@ -925,6 +1226,7 @@ export class IceKit {
       this.playerFrostStacks = Math.min(5, this.playerFrostStacks + 1);
       const baseMult = this.frostDamageMultiplier(this.playerFrostStacks);
       player.incomingDamageMultiplier = this.playerBlackIceMorphActive ? baseMult * 1.25 : baseMult;
+      this.frostSnap(player, false, this.playerFrostStacks);
     }
   }
 
@@ -956,7 +1258,7 @@ export class IceKit {
 
   /** Click+ Slush Thrower: close-range cone, low damage, refreshes (doesn't add) frost stack duration on hit. */
   private fireSlushThrower(tx: number, ty: number): void {
-    const { player, enemies, scene } = this.arena;
+    const { player, enemies } = this.arena;
     const range = 150;
     const halfAngleCos = 0.8; // ~37° half-angle
     const halfAngleRad = Math.acos(halfAngleCos);
@@ -969,28 +1271,36 @@ export class IceKit {
     const baseAngle = Math.atan2(ny, nx);
     const isBlackIce = this.playerBlackIceMorphActive;
 
-    // Flamethrower-style spray: a burst of small puffs scattered across the cone, each
-    // drifting out to its own random distance and fading — not a single static cloud.
-    const puffCount = 8;
-    for (let i = 0; i < puffCount; i++) {
-      const ang = baseAngle + (Math.random() - 0.5) * 2 * halfAngleRad;
-      const dist = 36 + Math.random() * (range - 36);
-      const cosA = Math.cos(ang), sinA = Math.sin(ang);
-      const startX = player.x + cosA * 16;
-      const startY = player.y + sinA * 16;
-      const endX = player.x + cosA * dist;
-      const endY = player.y + sinA * dist;
-      const size = 5 + Math.random() * 7;
-      const color = isBlackIce
-        ? (Math.random() < 0.5 ? 0x9900ff : 0xcc88ff)
-        : (Math.random() < 0.5 ? 0x88ccff : 0xcceeff);
-      const puff = scene.add.circle(startX, startY, size, color, 0.85 - Math.random() * 0.25).setDepth(8);
-      scene.tweens.add({
-        targets: puff, x: endX, y: endY, alpha: 0, scaleX: 1.5, scaleY: 1.5,
-        duration: 160 + Math.random() * 120,
-        onComplete: () => puff.destroy(),
-      });
-    }
+    // A churning cone of slush: nested wedges of shard-flecked ice that re-roll every tick, so
+    // a held spray boils instead of strobing one fixed triangle.
+    this.playerAvatar?.setHold('spray', baseAngle);
+    const tones = tonesFor(isBlackIce);
+    const wedges = Array.from({ length: 5 }, (_, i) => ({
+      off: ((i / 4) - 0.5) * 1.7 * halfAngleRad,
+      len: range * (0.55 + Math.random() * 0.5),
+      w: 10 + Math.random() * 9,
+      skew: (Math.random() - 0.5) * 1.3,
+    }));
+    this.pfx.anim(8, 200, (g, t) => {
+      const grow = 0.6 + t * 0.5;
+      const fade = 1 - t * t;
+      for (const w of wedges) {
+        g.fillStyle(this.pcol(tones.shell), 0.45 * fade);
+        iceShard(g, player.x + Math.cos(baseAngle + w.off) * 14, player.y + Math.sin(baseAngle + w.off) * 14,
+          baseAngle + w.off, w.len * grow, w.w * 1.4, w.skew);
+        g.fillStyle(this.pcol(tones.body), 0.7 * fade);
+        iceShard(g, player.x + Math.cos(baseAngle + w.off) * 14, player.y + Math.sin(baseAngle + w.off) * 14,
+          baseAngle + w.off, w.len * grow * 0.92, w.w, w.skew);
+      }
+      // Nozzle bloom where the slush leaves the caster.
+      g.fillStyle(this.pcol(tones.lit), 0.5 * fade);
+      g.fillCircle(player.x + Math.cos(baseAngle) * 18, player.y + Math.sin(baseAngle) * 18, 9 * grow);
+    });
+    this.pfx.shards(
+      player.x + Math.cos(baseAngle) * range * 0.6, player.y + Math.sin(baseAngle) * range * 0.6,
+      3, { angle: baseAngle, spread: halfAngleRad, speed: 90, size: 2.6, life: 340, fall: 28, depth: 8, isVoid: isBlackIce },
+    );
+    this.slushNudgeCurlingStone(baseAngle, range, halfAngleCos);
 
     for (const t of enemies) {
       if (!t.active || t.hp <= 0) continue;
@@ -1000,7 +1310,7 @@ export class IceKit {
       if (dot < halfAngleCos) continue;
 
       t.takeDamage(damage);
-      this.arena.spawnHitFlash(t.x, t.y, isBlackIce ? 0x9900ff : 0x88ccff);
+      this.arena.spawnHitFlash(t.x, t.y, isBlackIce ? ICE.voidGlow : ICE.sky);
 
       if (isBlackIce) {
         if (t.voidFrostStackTimers.length > 0) {
@@ -1028,12 +1338,18 @@ export class IceKit {
 
   // ── Ice Mastery: Icicle Impale ──────────────────────────────────────
 
-  /** The slot Icicle Impale is bound over this match, or null when it isn't bound anywhere. */
-  private icicleImpaleSlot(): 'e' | 'r' | 'f' | 'q' | null {
-    for (const s of ['e', 'r', 'f', 'q'] as const) {
-      if (this.arena.masteryBindFor(s) === 'icicle-impale') return s;
+  /**
+   * Fires whichever mastery ability is bound over `slot` and reports whether the slot was
+   * taken over — a bound slot swallows the keypress even on cooldown, so the base ability
+   * never leaks through underneath it.
+   */
+  private castMasteryBind(slot: 'e' | 'r' | 'f' | 'q', time: number): boolean {
+    if (!this.arena.masteryActive) return false;
+    switch (this.arena.masteryBindFor(slot)) {
+      case 'icicle-impale': this.tryCastIcicleImpale(time); return true;
+      case 'curling-stone': this.tryCastCurlingStone(time); return true;
+      default: return false;
     }
-    return null;
   }
 
   private tryCastIcicleImpale(time: number): void {
@@ -1048,6 +1364,14 @@ export class IceKit {
     this.icicleDashVx = Math.cos(angle) * ICICLE_DASH_SPEED;
     this.icicleDashVy = Math.sin(angle) * ICICLE_DASH_SPEED;
     this.icicleDashHitThisDash = false;
+    // Wind up and fling: a blade-carved corridor along the whole dash path.
+    this.playerAvatar?.play('dash', angle);
+    this.pfx.wake(
+      player.x, player.y,
+      player.x + Math.cos(angle) * ICICLE_DASH_SPEED * (ICICLE_DASH_DURATION_MS / 1000),
+      player.y + Math.sin(angle) * ICICLE_DASH_SPEED * (ICICLE_DASH_DURATION_MS / 1000),
+      5, this.playerBlackIceMorphActive,
+    );
     this.arena.showFloatingText(player.x, player.y - 30, '🧊 ICICLE IMPALE', '#aaddff');
   }
 
@@ -1060,7 +1384,7 @@ export class IceKit {
         this.icicleImpales.splice(ii, 1);
         continue;
       }
-      this.drawIcicle(ic.sprite, ic.target.x, ic.target.y, ic.isVoid);
+      this.drawIcicle(ic.sprite, ic.target.x, ic.target.y, ic.isVoid, ic.damageTaken / ICICLE_SHATTER_DAMAGE_THRESHOLD);
       const dmgSinceLast = Math.max(0, ic.lastHp - ic.target.hp);
       ic.lastHp = ic.target.hp;
       if (dmgSinceLast > 0) {
@@ -1106,23 +1430,20 @@ export class IceKit {
     }
     const isVoid = target.voidFrostStacks > 0;
     const sprite = scene.add.graphics().setDepth(11);
-    this.drawIcicle(sprite, target.x, target.y, isVoid);
+    this.drawIcicle(sprite, target.x, target.y, isVoid, 0);
     this.icicleImpales.push({ target, sprite, lastHp: target.hp, damageTaken: 0, isVoid });
-    this.arena.spawnHitFlash(target.x, target.y, isVoid ? 0x9900ff : 0x1a4a7a);
+    this.arena.spawnHitFlash(target.x, target.y, isVoid ? ICE.voidGlow : ICE.teal);
+    // The spike is driven in from above, so the impact throws chips out of the wound.
+    this.pfx.icePillar(target.x, target.y - 8, 14, 46, 10, isVoid);
+    this.pfx.shards(target.x, target.y, 10, { speed: 150, size: 3, life: 460, fall: 44, depth: 10, isVoid });
+    scene.cameras.main.shake(140, 0.005);
     this.arena.showFloatingText(target.x, target.y - 30, '🧊 IMPALED', '#aaddff');
   }
 
-  private drawIcicle(g: Phaser.GameObjects.Graphics, x: number, y: number, isVoid: boolean): void {
+  /** `charge` is 0–1 toward the shatter threshold and fills the band on the shaft. */
+  private drawIcicle(g: Phaser.GameObjects.Graphics, x: number, y: number, isVoid: boolean, charge: number): void {
     g.clear();
-    g.fillStyle(isVoid ? 0x6622aa : 0x1a4a7a, 0.95);
-    g.lineStyle(2, isVoid ? 0xcc88ff : 0xaaddff, 0.9);
-    g.beginPath();
-    g.moveTo(x - 7, y - 46);
-    g.lineTo(x + 7, y - 46);
-    g.lineTo(x, y - 22);
-    g.closePath();
-    g.fillPath();
-    g.strokePath();
+    IceFx.drawIcicle(g, this.pcol, tonesFor(isVoid), x, y, this.arena.scene.time.now / 1000, charge);
   }
 
   private shatterIcicle(ic: IceIcicle): void {
@@ -1140,19 +1461,232 @@ export class IceKit {
       t.frostStacks = Math.min(ICICLE_STACK_HARD_CAP, t.frostStacks + add);
       t.incomingDamageMultiplier = this.frostDamageMultiplier(t.frostStacks);
     }
-    this.arena.spawnHitFlash(t.x, t.y, useVoid ? 0x9900ff : 0x1a4a7a);
+    this.arena.spawnHitFlash(t.x, t.y, useVoid ? ICE.voidGlow : ICE.teal);
+    // The icicle bursts rather than fading — this is the payoff the charge band promised.
+    this.pfx.shatter(t.x, t.y, 78, { shards: 16, vapor: 2, duration: 480, isVoid: useVoid });
+    this.arena.scene.cameras.main.shake(220, 0.007);
     this.arena.showFloatingText(t.x, t.y - 30, '💥 SHATTER', '#aaddff');
+  }
+
+  // ── Ice Mastery: Curling Stone ──────────────────────────────────────
+
+  private tryCastCurlingStone(time: number): void {
+    if (time - this.curlingLastCastAt < CURLING_COOLDOWN_MS) return;
+    this.curlingLastCastAt = time;
+    const { player, scene } = this.arena;
+    // triggerCooldown already broadcasts the cast id online; the peer replays via doNpcCurlingStone.
+    player.triggerCooldown('curling-stone');
+    const ptr = scene.input.activePointer;
+    const angle = Math.atan2(ptr.worldY - player.y, ptr.worldX - player.x);
+    // Both arms shove it out in front — the stone is set down, not thrown.
+    this.playerAvatar?.play('raise', angle, 420);
+    this.spawnCurlingStone(
+      player.x + Math.cos(angle) * 62, player.y + Math.sin(angle) * 62, 'player',
+    );
+    this.arena.showFloatingText(player.x, player.y - 30, '🥌 CURLING STONE', '#aaddff');
+  }
+
+  /** Online replay: the remote ice player summoned their stone, so it exists on this sim too. */
+  doNpcCurlingStone(tx: number, ty: number): void {
+    const { npc } = this.arena;
+    const angle = Math.atan2(ty - npc.y, tx - npc.x);
+    this.npcAvatar?.play('raise', angle, 420);
+    this.spawnCurlingStone(npc.x + Math.cos(angle) * 62, npc.y + Math.sin(angle) * 62, 'npc');
+  }
+
+  private spawnCurlingStone(x: number, y: number, owner: 'player' | 'npc'): void {
+    const { scene } = this.arena;
+    // One stone per owner — a fresh summon replaces whatever is still sliding around.
+    const existing = this.curlingStones.findIndex((s) => s.owner === owner);
+    if (existing >= 0) {
+      this.curlingStones[existing].gfx.destroy();
+      this.curlingStones.splice(existing, 1);
+    }
+    const wb = scene.physics.world.bounds;
+    const isVoid = owner === 'player' && this.playerBlackIceMorphActive;
+    const sx = Phaser.Math.Clamp(x, wb.x + CURLING_RADIUS, wb.right - CURLING_RADIUS);
+    const sy = Phaser.Math.Clamp(y, wb.y + CURLING_RADIUS, wb.bottom - CURLING_RADIUS);
+    this.curlingStones.push({
+      gfx: scene.add.graphics().setDepth(5),
+      x: sx, y: sy, vx: 0, vy: 0, spin: 0, stacks: 0, isVoid, owner,
+      expiresAt: scene.time.now + CURLING_LIFETIME_MS,
+      hitCooldowns: new Map(), shoved: new WeakSet(), chipAccum: 0,
+    });
+    // It lands with weight: plates slamming together and rime spidering out from underneath.
+    const fx = this.fx(owner);
+    fx.bloom(sx, sy, 30, 9, 4, isVoid);
+    fx.rime(sx, sy, 32, 1, isVoid);
+    scene.cameras.main.shake(130, 0.004);
+  }
+
+  /**
+   * Slide, bounce, crush. Owner-agnostic: the player's stone answers to their shots and hurts
+   * the enemies, an online peer's stone answers to theirs and hurts us.
+   */
+  private updateCurlingStones(time: number, delta: number): void {
+    if (this.curlingStones.length === 0) return;
+    const { player, enemies, scene } = this.arena;
+    const wb = scene.physics.world.bounds;
+    const dt = delta / 1000;
+
+    for (let si = this.curlingStones.length - 1; si >= 0; si--) {
+      const stone = this.curlingStones[si];
+      const tones = tonesFor(stone.isVoid);
+      const fx = this.fx(stone.owner);
+
+      if (time >= stone.expiresAt) {
+        fx.shatter(stone.x, stone.y, 62, { shards: 15, vapor: 2, duration: 470, isVoid: stone.isVoid });
+        stone.gfx.destroy();
+        this.curlingStones.splice(si, 1);
+        continue;
+      }
+
+      // Shots shove it. A piercing spike carries on through, but only counts once.
+      for (const child of this.arena.projectiles.getChildren()) {
+        const proj = child as Projectile;
+        if (!proj.active || proj.isFromPlayer !== (stone.owner === 'player')) continue;
+        if (stone.shoved.has(proj)) continue;
+        if (Phaser.Math.Distance.Between(proj.x, proj.y, stone.x, stone.y) > CURLING_RADIUS + 8) continue;
+        stone.shoved.add(proj);
+        this.shoveCurlingStone(stone, proj.x, proj.y, this.projAngle(proj));
+      }
+
+      // A Skate trail turns the floor to glass: barely any drag and a huge speed multiplier.
+      const onSkate = this.icyTrails.some((t) => t.owner === stone.owner && t.skater
+        && Phaser.Math.Distance.Between(t.x, t.y, stone.x, stone.y) <= t.radius);
+      const speed = Math.hypot(stone.vx, stone.vy);
+      const speedMult = onSkate ? CURLING_SKATE_SPEED_MULT : 1;
+
+      if (speed > 1) {
+        stone.x += stone.vx * speedMult * dt;
+        stone.y += stone.vy * speedMult * dt;
+        stone.spin += speed * speedMult * dt * 0.022;
+
+        // Frost is what carries it: each stack shaves the drag as well as raising the push.
+        const drag = onSkate ? CURLING_SKATE_DRAG : Math.max(1.7, 4.5 - stone.stacks * 0.45);
+        const decay = Math.exp(-drag * dt);
+        stone.vx *= decay;
+        stone.vy *= decay;
+        if (Math.hypot(stone.vx, stone.vy) < 6) { stone.vx = 0; stone.vy = 0; }
+      }
+
+      // Walls: the stone rebounds off them, losing a little on each rail.
+      let bounced = false;
+      if (stone.x <= wb.x + CURLING_RADIUS) {
+        stone.x = wb.x + CURLING_RADIUS; stone.vx = Math.abs(stone.vx) * 0.86; bounced = true;
+      } else if (stone.x >= wb.right - CURLING_RADIUS) {
+        stone.x = wb.right - CURLING_RADIUS; stone.vx = -Math.abs(stone.vx) * 0.86; bounced = true;
+      }
+      if (stone.y <= wb.y + CURLING_RADIUS) {
+        stone.y = wb.y + CURLING_RADIUS; stone.vy = Math.abs(stone.vy) * 0.86; bounced = true;
+      } else if (stone.y >= wb.bottom - CURLING_RADIUS) {
+        stone.y = wb.bottom - CURLING_RADIUS; stone.vy = -Math.abs(stone.vy) * 0.86; bounced = true;
+      }
+      if (bounced && speed > 60) {
+        fx.shards(stone.x, stone.y, 5, {
+          speed: 120, size: 2.8, life: 360, fall: 26, depth: 7, isVoid: stone.isVoid,
+        });
+        fx.ring(stone.x, stone.y, 5, 28, tones.lit, 260, 3, 6);
+      }
+
+      // Chips flying off the back edge while it runs.
+      if (speed > CURLING_MOVING_SPEED) {
+        stone.chipAccum += delta;
+        if (stone.chipAccum >= (onSkate ? 45 : 95)) {
+          stone.chipAccum = 0;
+          fx.shards(stone.x, stone.y + 6, onSkate ? 3 : 2, {
+            angle: Math.atan2(-stone.vy, -stone.vx), spread: 0.5,
+            speed: 70, size: 2.4, life: 320, fall: 12, depth: 4, isVoid: stone.isVoid,
+          });
+        }
+
+        const damage = Math.round(CURLING_BASE_DAMAGE * (1 + stone.stacks * CURLING_DAMAGE_PER_STACK));
+        const targets: Fighter[] = stone.owner === 'player' ? enemies : [player];
+        for (const t of targets) {
+          if (!t.active || t.hp <= 0) continue;
+          if (time < (stone.hitCooldowns.get(t) ?? 0)) continue;
+          if (Phaser.Math.Distance.Between(stone.x, stone.y, t.x, t.y) > CURLING_HIT_RADIUS) continue;
+          stone.hitCooldowns.set(t, time + CURLING_HIT_COOLDOWN_MS);
+          t.takeDamage(damage);
+          if (stone.owner === 'player') this.recordBigHit(damage);
+          this.arena.spawnHitFlash(t.x, t.y, stone.isVoid ? ICE.voidGlow : ICE.sky);
+          fx.shatter(t.x, t.y, 46, {
+            shards: 10, vapor: 1, rime: false, duration: 310, isVoid: stone.isVoid,
+          });
+          scene.cameras.main.shake(150, 0.005);
+          this.arena.showFloatingText(t.x, t.y - 34, '🥌 CRUSHED', stone.isVoid ? '#cc88ff' : '#aaddff');
+          // It keeps going, but the collision takes the legs out of the slide.
+          stone.vx *= 0.55;
+          stone.vy *= 0.55;
+        }
+      }
+
+      const left = stone.expiresAt - time;
+      stone.gfx.clear();
+      IceFx.drawCurlingStone(
+        stone.gfx, this.col(stone.owner), tones,
+        stone.x, stone.y, stone.spin, time / 1000, stone.stacks,
+        left < 1500 ? Math.max(0.2, left / 1500) : 1,
+      );
+    }
+  }
+
+  /** Direction a shot is travelling, for anything that needs to be pushed the way it was hit. */
+  private projAngle(proj: Projectile): number {
+    const body = proj.body as Phaser.Physics.Arcade.Body | null;
+    if (!body || (body.velocity.x === 0 && body.velocity.y === 0)) return 0;
+    return Math.atan2(body.velocity.y, body.velocity.x);
+  }
+
+  /**
+   * One shot's worth of shove. The stone takes on whichever frost its owner is currently
+   * throwing, so void frost reads and behaves identically to light frost here.
+   */
+  private shoveCurlingStone(stone: CurlingStone, hitX: number, hitY: number, angle: number): void {
+    if (stone.owner === 'player') stone.isVoid = this.playerBlackIceMorphActive;
+    if (stone.stacks < CURLING_MAX_STACKS) stone.stacks++;
+    const push = CURLING_BASE_PUSH + stone.stacks * CURLING_PUSH_PER_STACK;
+    stone.vx += Math.cos(angle) * push;
+    stone.vy += Math.sin(angle) * push;
+
+    const tones = tonesFor(stone.isVoid);
+    const fx = this.fx(stone.owner);
+    this.arena.spawnHitFlash(hitX, hitY, stone.isVoid ? ICE.voidGlow : ICE.frost);
+    fx.shards(stone.x, stone.y, 4, {
+      angle, spread: 0.8, speed: 95, size: 2.6, life: 340, fall: 24, depth: 7, isVoid: stone.isVoid,
+    });
+    fx.ring(stone.x, stone.y, 6, 24 + stone.stacks * 5, tones.lit, 260, 3, 6);
+    if (stone.owner === 'player') {
+      this.arena.showFloatingText(stone.x, stone.y - 30, `❄️×${stone.stacks}`, '#aaddff');
+    }
+  }
+
+  /** Click+ Slush Thrower has no projectile to shove with, so the spray itself nudges the stone. */
+  private slushNudgeCurlingStone(baseAngle: number, range: number, halfAngleCos: number): void {
+    const { player } = this.arena;
+    const stone = this.curlingStones.find((s) => s.owner === 'player');
+    if (!stone) return;
+    const dist = Phaser.Math.Distance.Between(player.x, player.y, stone.x, stone.y);
+    if (dist > range || dist < 1) return;
+    const dot = (Math.cos(baseAngle) * (stone.x - player.x) + Math.sin(baseAngle) * (stone.y - player.y)) / dist;
+    if (dot < halfAngleCos) return;
+    // A fifth of a shot's shove per tick, and no stack — slush only refreshes frost, it never adds.
+    stone.isVoid = this.playerBlackIceMorphActive;
+    const push = (CURLING_BASE_PUSH + stone.stacks * CURLING_PUSH_PER_STACK) * 0.2;
+    stone.vx += Math.cos(baseAngle) * push;
+    stone.vy += Math.sin(baseAngle) * push;
   }
 
   private spawnIcyTrail(x: number, y: number, owner: 'player' | 'npc', opts?: { skater?: boolean }): void {
     const { scene } = this.arena;
     const isVoid = owner === 'player' && this.playerBlackIceMorphActive;
-    const fillColor = isVoid ? 0x440066 : 0x88ccff;
-    const strokeColor = isVoid ? 0x9900ff : 0xcceeff;
-    const spr = scene.add.circle(x, y, 32, fillColor, 0.35).setDepth(2)
-      .setStrokeStyle(1, strokeColor, 0.5);
-    scene.tweens.add({ targets: spr, alpha: 0.15, duration: 4800, yoyo: true, repeat: 0 });
-    this.icyTrails.push({ sprite: spr, expiresAt: scene.time.now + 5000, x, y, radius: 32, frostTickAccum: 0, owner, skater: opts?.skater });
+    this.icyTrails.push({
+      gfx: scene.add.graphics().setDepth(2),
+      expiresAt: scene.time.now + 5000,
+      spawnAt: scene.time.now,
+      seed: Math.random() * 100,
+      x, y, radius: 32, frostTickAccum: 0, owner, isVoid, skater: opts?.skater,
+    });
   }
 
   private spawnRinkConeTiles(ox: number, oy: number, angle: number, owner: 'player' | 'npc'): void {
@@ -1166,43 +1700,41 @@ export class IceKit {
         const a = angle + ao * half;
         const tx = ox + Math.cos(a) * r;
         const ty = oy + Math.sin(a) * r;
-        const spr = scene.add.circle(tx, ty, 28, 0x55ddff, 0.4).setDepth(2)
-          .setStrokeStyle(1, 0xaaffff, 0.7);
-        scene.tweens.add({ targets: spr, alpha: 0.1, duration: 7000, yoyo: false, repeat: 0 });
-        this.icyTrails.push({ sprite: spr, expiresAt: scene.time.now + 8000, x: tx, y: ty, radius: 28, frostTickAccum: 0, owner, rink: true });
+        this.icyTrails.push({
+          gfx: scene.add.graphics().setDepth(2),
+          expiresAt: scene.time.now + 8000,
+          // Staggered by distance so the rink visibly freezes outward from the caster.
+          spawnAt: scene.time.now + t * 220,
+          seed: Math.random() * 100,
+          x: tx, y: ty, radius: 28, frostTickAccum: 0, owner, isVoid: false, rink: true,
+        });
       }
     }
   }
 
-  private spawnFrozenSolidVisual(x: number, y: number, angle: number, isVoid = false): void {
-    const { scene } = this.arena;
-    const gfx = scene.add.graphics().setDepth(7);
-    const half = Math.PI / 8; // 22.5° half-angle
-    const len = 1200;
-    gfx.fillStyle(isVoid ? 0x440066 : 0x88ccff, 0.25);
-    gfx.lineStyle(2, isVoid ? 0x9900ff : 0xcceeff, 0.8);
-    gfx.beginPath();
-    gfx.moveTo(x, y);
-    gfx.lineTo(x + Math.cos(angle - half) * len, y + Math.sin(angle - half) * len);
-    gfx.lineTo(x + Math.cos(angle + half) * len, y + Math.sin(angle + half) * len);
-    gfx.closePath();
-    gfx.fillPath();
-    gfx.strokePath();
-    scene.tweens.add({ targets: gfx, alpha: 0, duration: 450, onComplete: () => gfx.destroy() });
+  private spawnFrozenSolidVisual(
+    x: number, y: number, angle: number, isVoid = false, owner: 'player' | 'npc' = 'player',
+  ): void {
+    // 22.5° half-angle out to the arena borders, matching the hit test exactly.
+    this.fx(owner).frostCone(x, y, angle, 1200, Math.PI / 8, 7, isVoid);
+    this.arena.scene.cameras.main.shake(200, 0.005);
   }
 
   private spawnIceArena(owner: 'player' | 'npc', isVoid: boolean): void {
     const { player, npc, enemies, scene } = this.arena;
     const fighter = owner === 'player' ? player : npc;
     const radius = isVoid ? 60 : 120;
-    const fill = isVoid ? 0x440066 : 0x88ccff;
-    const stroke = isVoid ? 0x9900ff : 0xcceeff;
-    const sprite = scene.add.circle(fighter.x, fighter.y, radius, fill, 0.20)
-      .setStrokeStyle(2, stroke, 0.8).setDepth(2);
     this.iceArenas.push({
-      sprite, x: fighter.x, y: fighter.y, radius,
+      gfx: scene.add.graphics().setDepth(2),
+      seed: Math.random() * 100,
+      spawnAt: scene.time.now,
+      x: fighter.x, y: fighter.y, radius,
       expiresAt: scene.time.now + 5000, tickAccum: 0, isVoid, owner,
     });
+    // The whole floor freezes over at once — a rim spreading out from under the caster.
+    const fx = this.fx(owner);
+    fx.ring(fighter.x, fighter.y, 12, radius * 1.1, tonesFor(isVoid).lit, 520, 5, 3);
+    fx.icePillar(fighter.x, fighter.y, 20, 70, 6, isVoid);
     // Initial creation: permafrost or permavoid on any enemy inside the radius
     const targets = owner === 'player' ? (enemies as Fighter[]) : [player as Fighter];
     for (const t of targets) {
@@ -1220,13 +1752,9 @@ export class IceKit {
     this.arena.showFloatingText(fighter.x, fighter.y - 30, isVoid ? '🖤 DARK ICE ARENA' : '❄️ ICE ARENA', isVoid ? '#9900ff' : '#88ccff');
   }
 
-  private spawnFrostBeamVisual(x1: number, y1: number, x2: number, y2: number, isVoid = false): void {
-    const { scene } = this.arena;
-    const gfx = scene.add.graphics().setDepth(8);
-    gfx.lineStyle(10, isVoid ? 0x9900ff : 0x88ccff, 0.7);
-    gfx.lineBetween(x1, y1, x2, y2);
-    gfx.lineStyle(3, 0xffffff, 0.9);
-    gfx.lineBetween(x1, y1, x2, y2);
-    scene.tweens.add({ targets: gfx, alpha: 0, duration: 280, onComplete: () => gfx.destroy() });
+  private spawnFrostBeamVisual(
+    x1: number, y1: number, x2: number, y2: number, isVoid = false, owner: 'player' | 'npc' = 'player',
+  ): void {
+    this.fx(owner).beam(x1, y1, x2, y2, isVoid);
   }
 }

@@ -2,6 +2,11 @@ import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { Projectile } from '../../combat/Projectile';
 import type { CastContext } from '../Ability';
+import { TAU } from './ElementVisuals';
+import {
+  ArmGesture, CardTones, FATE, FateAura, FateAvatar, FateColorFn, FateFx,
+  HOUSE_TONES, NPC_TONES, Suit, TAROT_TONES, fateCardLayered, suitGlyph, tonesFor,
+} from './FateVisuals';
 
 // Stub context passed to castAbility() so that cast() calls become no-ops.
 // FateKit handles the real logic itself; cast() just needs to not throw.
@@ -137,15 +142,23 @@ interface FateCard {
 type FateModStat = 'dmgTaken' | 'dmgDealt' | 'speed' | 'cd' | 'size';
 interface FateMod { stat: FateModStat; mult: number; until: number; }
 
+/**
+ * Everything below is pure data — no sprites. Fate's world objects are repainted from scratch
+ * every frame in `drawWorld` so a coin can turn, a wheel can spin and a slot machine's reels can
+ * roll. A tweened Arc can do none of those things.
+ */
 interface FateHealOrb {
-  sprite: Phaser.GameObjects.Arc;
   x: number; y: number;
   owner: 'player' | 'npc';
   expiresAt: number;
+  amount: number;
+  /** F+ "Heal: orbs will very slowly move towards the player". */
+  homing: boolean;
+  /** Own beat, so a scattered field of orbs doesn't pulse in lockstep. */
+  phase: number;
 }
 
 interface FateCoinToken {
-  sprite: Phaser.GameObjects.Image;
   x: number; y: number;
   vy: number;
   risingUntil: number;
@@ -157,10 +170,6 @@ interface FateCoinToken {
 }
 
 interface FateSlotMachine {
-  sprite: Phaser.GameObjects.Arc;
-  label: Phaser.GameObjects.Text;
-  barBg: Phaser.GameObjects.Rectangle;
-  barFill: Phaser.GameObjects.Rectangle;
   x: number; y: number;
   owner: 'player' | 'npc';
   cycleDmgPlayer: number;
@@ -171,21 +180,27 @@ interface FateSlotMachine {
 }
 
 interface FateAllIn {
-  sprite: Phaser.GameObjects.Arc;
   owner: 'player' | 'npc';
   activatesAt: number;
+  /** Total orbit window, so the wheel can show how close the bet is to coming due. */
+  orbitMs: number;
   orbitAngle: number;
+  x: number; y: number;
+  radius: number;
   /** HP wagered — fixed 50 normally, or the Q+ gamble-bar amount for the player. */
   wager: number;
+  /** Cocky curse: the whole health bar is on the table, and the wheel says so. */
+  cocky: boolean;
 }
 
 interface FateLightningStrike {
-  ring: Phaser.GameObjects.Arc;
   x: number; y: number;
   owner: 'player' | 'npc';
   dmg: number;
   stunMs: number;
   resolveAt: number;
+  /** When the telegraph opened, so the ring can wind up over the whole window. */
+  openedAt: number;
   ledgerId: number;
 }
 
@@ -193,14 +208,12 @@ interface FatePoison {
   until: number;
   dps: number;
   tickAccum: number;
-  visual: Phaser.GameObjects.Text | null;
   ledgerId: number;
 }
 
 // ── New Cards! kit-managed objects ─────────────────────────────────────────
 
 interface FateBoomerang {
-  sprite: Phaser.GameObjects.Arc;
   owner: 'player' | 'npc';
   angle: number;
   radius: number;
@@ -208,10 +221,11 @@ interface FateBoomerang {
   expiresAt: number;
   hitAt: Map<Fighter, number>;
   ledgerId: number;
+  /** Live world position, written each frame so drawWorld doesn't recompute the orbit. */
+  x: number; y: number;
 }
 
 interface FateSnowball {
-  sprite: Phaser.GameObjects.Arc;
   x: number; y: number;
   vx: number; vy: number;
   owner: 'player' | 'npc';
@@ -227,7 +241,6 @@ interface FateSnowball {
  * so it can never clip the wrong side.
  */
 interface FateCurseBullet {
-  sprite: Phaser.GameObjects.Arc;
   x: number; y: number;
   vx: number; vy: number;
   victim: Fighter;
@@ -261,6 +274,8 @@ export interface FateArenaApi {
   get nukeChanneling(): boolean;
   get rightPointerWasDown(): boolean;
   get isPlayerFate(): boolean;
+  /** Cosmetics: maps a fate visual color through the owner's color cosmetic. */
+  fateColor(owner: 'player' | 'npc', base: number): number;
   hasPerk(perkId: string): boolean;
   /** True if the local player (Fate) has the given shop upgrade slot equipped. */
   hasUpgrade(slot: string): boolean;
@@ -281,7 +296,46 @@ export interface FateArenaApi {
 
 // ── FateKit ──────────────────────────────────────────────────────────────────
 
+/** Every card drives a distinct arm gesture, so a hand never plays the same way twice running. */
+const CARD_GESTURES: Record<FateCardType, ArmGesture> = {
+  laser: 'punch', burst: 'sweep', barrier: 'flex', explosion: 'slam', infect: 'punch',
+  coin: 'punch', heal: 'clap', buff: 'flex', lightning: 'slam', slots: 'slam',
+  boomerang: 'sweep', slash: 'sweep', phase: 'dash', striker: 'punch',
+  pulse: 'clap', chill: 'punch', chain: 'punch', emperor: 'sweep',
+};
+
+/** Suit printed on each card's art, so a type always shows the same pip. */
+const CARD_SUITS: Record<FateCardType, Suit> = {
+  laser: 'diamond', burst: 'diamond', barrier: 'club', explosion: 'diamond', infect: 'club',
+  coin: 'heart', heal: 'heart', buff: 'heart', lightning: 'spade', slots: 'club',
+  boomerang: 'club', slash: 'spade', phase: 'diamond', striker: 'spade',
+  pulse: 'club', chill: 'diamond', chain: 'spade', emperor: 'heart',
+};
+
 export class FateKit {
+  // ── Visuals ───────────────────────────────────────────────────────
+  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  private readonly pcol: FateColorFn;
+  private readonly ncol: FateColorFn;
+  private readonly pfx: FateFx;
+  private readonly nfx: FateFx;
+  /** The card-sharp rig (chip arms, eyes, card crown) for each fate fighter. */
+  private playerAvatar: FateAvatar | null = null;
+  private npcAvatar: FateAvatar | null = null;
+  /** Buff-card aura per side, plus the Tarot ring while a loaded card sits in hand. */
+  private playerBuffAura: FateAura | null = null;
+  private npcBuffAura: FateAura | null = null;
+  private tarotAura: FateAura | null = null;
+  /** Poison tell riding on each infected fighter — one aura per victim. */
+  private poisonAuras = new Map<Fighter, FateAura>();
+  /**
+   * Two layers, because these objects are not all in the same place. Things lying *on the table*
+   * (slot machines, heal orbs, lightning telegraphs) must pass under the fighters; things in the
+   * air (coins, boomerangs, snowballs, curse bullets, the All In wheel) must pass over them.
+   */
+  private groundGfx: Phaser.GameObjects.Graphics | null = null;
+  private airGfx: Phaser.GameObjects.Graphics | null = null;
+
   // ── Hands ─────────────────────────────────────────────────────────
   private playerHand: FateCard[] = [];
   private npcHand: FateCard[] = [];
@@ -369,12 +423,60 @@ export class FateKit {
   private clickWasDown = false;
 
   constructor(private arena: FateArenaApi) {
+    // Built here, not as field initialisers, so they see the injected arena.
+    this.pcol = (base) => arena.fateColor('player', base);
+    this.ncol = (base) => arena.fateColor('npc', base);
+    this.pfx = new FateFx(arena.scene, this.pcol);
+    this.nfx = new FateFx(arena.scene, this.ncol);
     this.reset();
+  }
+
+  // ── Visual helpers ────────────────────────────────────────────────
+
+  /** Effect painter for a side. */
+  private fx(owner: 'player' | 'npc'): FateFx { return owner === 'player' ? this.pfx : this.nfx; }
+  /** Colour mapper for a side. */
+  private col(owner: 'player' | 'npc'): FateColorFn { return owner === 'player' ? this.pcol : this.ncol; }
+  /** Card stock for a side. */
+  private tones(owner: 'player' | 'npc'): CardTones { return tonesFor(owner); }
+  /** The rig for a side, if that side is playing Fate. */
+  private avatar(owner: 'player' | 'npc'): FateAvatar | null {
+    return owner === 'player' ? this.playerAvatar : this.npcAvatar;
+  }
+  private casterOf(owner: 'player' | 'npc'): Fighter {
+    return owner === 'player' ? this.arena.player : this.arena.npc;
+  }
+
+  /** The table layer, under the fighters. Rebuilt lazily after a reset. */
+  private ground(): Phaser.GameObjects.Graphics {
+    if (!this.groundGfx || !this.groundGfx.active) {
+      this.groundGfx = this.arena.scene.add.graphics().setDepth(2);
+    }
+    return this.groundGfx;
+  }
+
+  /** The airborne layer, over the fighters. Rebuilt lazily after a reset. */
+  private air(): Phaser.GameObjects.Graphics {
+    if (!this.airGfx || !this.airGfx.active) {
+      this.airGfx = this.arena.scene.add.graphics().setDepth(8);
+    }
+    return this.airGfx;
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────
 
   reset(): void {
+    // Visuals — every GameObject dies with the old scene run, so rebuild lazily in update().
+    if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
+    if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
+    if (this.playerBuffAura) { this.playerBuffAura.destroy(); this.playerBuffAura = null; }
+    if (this.npcBuffAura) { this.npcBuffAura.destroy(); this.npcBuffAura = null; }
+    if (this.tarotAura) { this.tarotAura.destroy(); this.tarotAura = null; }
+    for (const a of this.poisonAuras.values()) a.destroy();
+    this.poisonAuras.clear();
+    if (this.groundGfx) { this.groundGfx.destroy(); this.groundGfx = null; }
+    if (this.airGfx) { this.airGfx.destroy(); this.airGfx = null; }
+
     // R+ "Wonder Preserve": hand grows 6 → 8 for whichever side owns it.
     this.playerHandSize = this.ownerHasUpgrade('player', 'r') ? UPGRADED_HAND_SIZE : BASE_HAND_SIZE;
     this.npcHandSize = this.ownerHasUpgrade('npc', 'r') ? UPGRADED_HAND_SIZE : BASE_HAND_SIZE;
@@ -388,30 +490,21 @@ export class FateKit {
     this.playerStunUntil = 0;
     this.npcStunUntil = 0;
 
-    for (const o of this.healOrbs) if (o.sprite.active) o.sprite.destroy();
+    // Every world object below is plain data drawn into `worldGfx`, so clearing the arrays is
+    // the whole teardown — there are no per-object GameObjects left to destroy.
     this.healOrbs = [];
-    for (const c of this.coins) if (c.sprite.active) c.sprite.destroy();
     this.coins = [];
-    for (const sm of this.slotMachines) { sm.sprite.destroy(); sm.label.destroy(); sm.barBg.destroy(); sm.barFill.destroy(); }
     this.slotMachines = [];
-    for (const ls of this.lightningStrikes) if (ls.ring.active) ls.ring.destroy();
     this.lightningStrikes = [];
-    if (this.playerAllIn?.sprite.active) this.playerAllIn.sprite.destroy();
-    if (this.npcAllIn?.sprite.active) this.npcAllIn.sprite.destroy();
     this.playerAllIn = null;
     this.npcAllIn = null;
 
-    for (const b of this.boomerangs) if (b.sprite.active) b.sprite.destroy();
     this.boomerangs = [];
-    for (const s of this.snowballs) if (s.sprite.active) s.sprite.destroy();
     this.snowballs = [];
     this.knocks.clear();
     this.slows.clear();
 
-    for (const p of this.poison.values()) if (p.visual?.active) p.visual.destroy();
     this.poison.clear();
-
-    for (const b of this.curseBullets) if (b.sprite.active) b.sprite.destroy();
     this.curseBullets = [];
     this.ledgers.clear();
     this.activeLedgerId = 0;
@@ -735,6 +828,13 @@ export class FateKit {
     const def = CURSE_BY_ID.get(card.curse)!;
     this.arena.showFloatingText(player.x, player.y - 36, '🔮 TAROT OF FATE ×4', '#ff88dd');
     this.arena.showFloatingText(player.x, player.y - 56, `${def.emoji} ${def.name}: ${def.blurb}`, '#ffaa66');
+    // Loading a card: the whole deck draws in around the caster, then a magenta ring seals it.
+    // The Tarot aura takes over from here and stays up until the card is actually played.
+    this.playerAvatar?.play('raise', -Math.PI / 2, 900);
+    this.pfx.ante(player.x, player.y, 56, 700,
+      () => (player.active ? { x: player.x, y: player.y } : null), 5, TAROT_TONES);
+    this.pfx.ring(player.x, player.y, 74, 20, FATE.great, 520, 5, 6);
+    this.pfx.sparkle(player.x, player.y, 14, 44, 10, FATE.great);
     this.refreshBar();
   }
 
@@ -759,8 +859,16 @@ export class FateKit {
         drawn++;
       }
       this.arena.showFloatingText(player.x, player.y - 36, `🔁 Cycle! +${drawn}`, '#88eecc');
+      // Hitting the third bin deals fresh cards, so it gets the riffle rather than the discard.
+      this.pfx.riffle(player.x, player.y - 6, 40, 10, HOUSE_TONES);
+      this.pfx.ring(player.x, player.y, 8, 44, FATE.mint, 340, 3, 5);
     } else {
       this.arena.showFloatingText(player.x, player.y - 36, `🗑️ Binned (${this.cycleBinned}/${CYCLE_BIN_TARGET})`, '#99aabb');
+      // A binned card is thrown away face-down: no gold, no sparkle, nothing gained.
+      this.pfx.cards(player.x, player.y - 10, 1, {
+        speed: 90, angle: -Math.PI / 2, spread: 0.5, size: 12, life: 520, fall: 80,
+        depth: 9, face: FATE.ash, tones: HOUSE_TONES,
+      });
     }
     this.refreshBar();
   }
@@ -832,9 +940,8 @@ export class FateKit {
         const y = 40 + Math.random() * (H - 80);
         const ang = Math.atan2(victim.y - y, victim.x - x);
         const speed = 300;
-        const sprite = scene.add.circle(x, y, 6, 0xaa33ff, 0.95).setStrokeStyle(2, 0xdd88ff, 1).setDepth(8);
         this.curseBullets.push({
-          sprite, x, y,
+          x, y,
           vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed,
           victim, expiresAt: scene.time.now + 6000,
         });
@@ -850,18 +957,16 @@ export class FateKit {
       const b = this.curseBullets[i];
       b.x += b.vx * dt;
       b.y += b.vy * dt;
-      b.sprite.setPosition(b.x, b.y);
       const hit = b.victim.active && b.victim.hp > 0
         && Phaser.Math.Distance.Between(b.x, b.y, b.victim.x, b.victim.y) <= 24;
       const gone = time > b.expiresAt || b.x < -40 || b.x > W + 40 || b.y < -40 || b.y > H + 40;
       if (hit) {
         b.victim.takeDamage(3);
-        this.arena.spawnHitFlash(b.x, b.y, 0xaa33ff);
+        this.arena.spawnHitFlash(b.x, b.y, FATE.curse);
+        // The seal breaks on the victim, so a curse bullet landing is not just a number.
+        this.pfx.payout(b.x, b.y, 34, { cards: 4, chips: 2, litter: false, depth: 8, face: FATE.curse, tones: TAROT_TONES });
       }
-      if (hit || gone) {
-        b.sprite.destroy();
-        this.curseBullets.splice(i, 1);
-      }
+      if (hit || gone) this.curseBullets.splice(i, 1);
     }
   }
 
@@ -953,6 +1058,175 @@ export class FateKit {
 
     // Q+ gamble bar overlay (player only)
     if (this.gambleGraphics && isPlayer) this.drawGambleBar();
+
+    // ── Visuals: rigs, auras, and one repaint of every world object ──
+    this.updateAvatars(delta, isPlayer, isNpc);
+    this.updateAuras(delta, time, isPlayer, isNpc);
+    this.drawWorld(time);
+  }
+
+  /**
+   * Builds (on first frame) and drives the card-sharp rig for whichever fighters are Fate. The
+   * player faces the cursor; the NPC faces whoever it is fighting. Intensity climbs while a
+   * wager is on the table, which widens the arms and lifts the card crown.
+   */
+  private updateAvatars(delta: number, isPlayer: boolean, isNpc: boolean): void {
+    const { player, npc, scene } = this.arena;
+
+    if (isPlayer && player?.active) {
+      if (!this.playerAvatar) this.playerAvatar = new FateAvatar(scene, this.pcol, HOUSE_TONES);
+      const aimX = this.lastMouseX || player.x + 1;
+      const aimY = this.lastMouseY || player.y;
+      this.playerAvatar.setFacing(Math.atan2(aimY - player.y, aimX - player.x));
+      this.playerAvatar.setIntensity(this.playerAllIn ? 1.4 : this.playerMods.length > 0 ? 1.15 : 1);
+      this.playerAvatar.setMastered(this.arena.masteryActive);
+      this.playerAvatar.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
+    } else if (this.playerAvatar) {
+      this.playerAvatar.destroy();
+      this.playerAvatar = null;
+    }
+
+    if (isNpc && npc?.active) {
+      if (!this.npcAvatar) this.npcAvatar = new FateAvatar(scene, this.ncol, NPC_TONES);
+      this.npcAvatar.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
+      this.npcAvatar.setIntensity(this.npcAllIn ? 1.4 : 1);
+      this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
+    } else if (this.npcAvatar) {
+      this.npcAvatar.destroy();
+      this.npcAvatar = null;
+    }
+  }
+
+  /**
+   * Persistent tells: the Buff card's rising suits, the Tarot ring while a loaded card is still
+   * in hand, and a drip on every poisoned fighter. Poison in particular has to be readable
+   * between ticks, not only on the frame it fires.
+   */
+  private updateAuras(delta: number, time: number, isPlayer: boolean, isNpc: boolean): void {
+    const { player, npc, scene } = this.arena;
+
+    const driveBuff = (owner: 'player' | 'npc', on: boolean) => {
+      const fighter = owner === 'player' ? player : npc;
+      const cur = owner === 'player' ? this.playerBuffAura : this.npcBuffAura;
+      if (!on || !fighter?.active) {
+        if (cur) { cur.destroy(); if (owner === 'player') this.playerBuffAura = null; else this.npcBuffAura = null; }
+        return;
+      }
+      let aura = cur;
+      if (!aura) {
+        aura = new FateAura(scene, this.col(owner), 'buff', 32, 3);
+        if (owner === 'player') this.playerBuffAura = aura; else this.npcBuffAura = aura;
+      }
+      aura.update(delta, fighter.x, fighter.y, fighter.forceInvisible ? 0 : fighter.alpha);
+    };
+    // Only "helpful" mods raise the buff aura — a Slots penalty shouldn't look like a reward.
+    const buffed = (mods: FateMod[]) => mods.some((m) => m.until > time
+      && (m.stat === 'dmgTaken' || m.stat === 'cd' || m.stat === 'size' ? m.mult < 1 : m.mult > 1));
+    driveBuff('player', isPlayer && buffed(this.playerMods));
+    driveBuff('npc', isNpc && buffed(this.npcMods));
+
+    // Tarot ring: up for as long as a greatly-enchanted card is still waiting to be played.
+    const loaded = isPlayer && this.playerHand.some((c) => c.greatEnchanted);
+    if (loaded && player?.active) {
+      if (!this.tarotAura) this.tarotAura = new FateAura(scene, this.pcol, 'tarot', 38, 2);
+      this.tarotAura.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
+    } else if (this.tarotAura) {
+      this.tarotAura.destroy();
+      this.tarotAura = null;
+    }
+
+    for (const [victim, aura] of this.poisonAuras) {
+      if (!this.poison.has(victim) || !victim.active || victim.hp <= 0) {
+        aura.destroy();
+        this.poisonAuras.delete(victim);
+        continue;
+      }
+      aura.update(delta, victim.x, victim.y, victim.forceInvisible ? 0 : victim.alpha);
+    }
+  }
+
+  /**
+   * One repaint of every world object the kit owns. All of them turn, spin or roll, so none of
+   * them can be a sprite with a tween on it.
+   */
+  private drawWorld(time: number): void {
+    const g = this.ground();
+    const air = this.air();
+    const t = time / 1000;
+    g.clear();
+    air.clear();
+
+    for (const sm of this.slotMachines) {
+      const req = sm.halfReq ? 25 : 50;
+      FateFx.drawSlotMachine(g, this.col(sm.owner), sm.x, sm.y, t,
+        (sm.cycleDmgPlayer + sm.cycleDmgNpc) / req);
+    }
+
+    for (const s of this.lightningStrikes) {
+      // The telegraph tightens over its window, so you can read how long you have to move.
+      const span = Math.max(1, s.resolveAt - s.openedAt);
+      const ready = Phaser.Math.Clamp((time - s.openedAt) / span, 0, 1);
+      const col = this.col(s.owner);
+      g.fillStyle(col(0xffee44), 0.14 + ready * 0.16);
+      g.fillCircle(s.x, s.y, 70);
+      g.lineStyle(2 + ready * 2, col(0xffee44), 0.55 + ready * 0.4);
+      g.strokeCircle(s.x, s.y, 70 * (1 - ready * 0.28));
+      for (let i = 0; i < 8; i++) {
+        const a = t * (1 + ready * 5) + (i / 8) * TAU;
+        g.fillStyle(col(i % 2 === 0 ? FATE.gold : FATE.ivory), 0.8);
+        g.fillCircle(s.x + Math.cos(a) * 70 * (1 - ready * 0.28), s.y + Math.sin(a) * 70 * (1 - ready * 0.28), 2.6);
+      }
+    }
+
+    for (const o of this.healOrbs) {
+      const col = this.col(o.owner);
+      const beat = 0.85 + 0.15 * Math.sin(t * 4 + o.phase);
+      g.fillStyle(col(0x44dd88), 0.22);
+      g.fillCircle(o.x, o.y, 14 * beat);
+      g.fillStyle(col(0x44dd88), 0.9);
+      g.fillCircle(o.x, o.y, 7 * beat);
+      g.fillStyle(col(FATE.blood), 0.95);
+      suitGlyph(g, 'heart', o.x, o.y, 4.4 * beat);
+      g.fillStyle(col(FATE.ivory), 0.8);
+      g.fillCircle(o.x - 2.4, o.y - 3, 1.6);
+    }
+
+    // ── Airborne, over the fighters ──────────────────────────────────
+    for (const c of this.coins) {
+      const paired = this.coins.some((o) => o !== c && o.pairId === c.pairId);
+      FateFx.drawCoin(air, this.col(c.owner), c.x, c.y, 9, t, 1, paired);
+    }
+
+    for (const b of this.boomerangs) {
+      // Boomerangs are literally thrown cards, so they are drawn as one, mid-tumble.
+      FateFx.drawFlyingCard(air, this.col(b.owner), this.tones(b.owner),
+        b.x, b.y, b.angle + Math.PI / 2, 15, t * 2, 0xffe000, 'club');
+    }
+
+    for (const s of this.snowballs) {
+      const col = this.col(s.owner);
+      const heading = Math.atan2(s.vy, s.vx);
+      air.fillStyle(col(0xa8e6ff), 0.2);
+      air.fillCircle(s.x, s.y, 18);
+      FateFx.drawFlyingCard(air, col, this.tones(s.owner), s.x, s.y, heading, 14, t * 2.4, 0xd6f2ff, 'diamond');
+      // Frost shedding off the leading edge.
+      for (let i = 0; i < 3; i++) {
+        const a = heading + Math.PI + (i - 1) * 0.5;
+        air.fillStyle(col(FATE.ivory), 0.55);
+        air.fillCircle(s.x + Math.cos(a) * 13, s.y + Math.sin(a) * 13, 2.4);
+      }
+    }
+
+    for (const b of this.curseBullets) {
+      FateFx.drawCurseBullet(air, this.pcol, b.x, b.y, Math.atan2(b.vy, b.vx), t);
+    }
+
+    for (const allIn of [this.playerAllIn, this.npcAllIn]) {
+      if (!allIn) continue;
+      const span = Math.max(1, allIn.orbitMs);
+      const ready = Phaser.Math.Clamp(1 - (allIn.activatesAt - time) / span, 0, 1);
+      FateFx.drawWheel(air, this.col(allIn.owner), allIn.x, allIn.y, allIn.radius, t, ready, allIn.cocky);
+    }
   }
 
   // ── Slows (Slash/Chill) + knockback (Pulse) enforcement ────────────
@@ -1044,6 +1318,7 @@ export class FateKit {
     // delayed projectiles, poison ticks and coin bounces — feeds the Big Hand stat.
     const ledgerId = owner === 'player' ? this.openLedger(time) : 0;
     this.activeLedgerId = ledgerId;
+    this.paintCardPlayed(card, tx, ty, owner);
     this.executeCard(card, tx, ty, owner, time);
     this.activeLedgerId = 0;
 
@@ -1078,6 +1353,11 @@ export class FateKit {
     } else {
       this.npcDrawAccum = 0;
     }
+    // A riffle between the hands — the only shuffle in the game, so it only ever means "new hand".
+    const caster = this.casterOf(owner);
+    this.avatar(owner)?.play('clap');
+    this.fx(owner).riffle(caster.x, caster.y - 6, 46, 10, this.tones(owner));
+    this.fx(owner).ring(caster.x, caster.y, 8, 48, FATE.mint, 340, 3, 5);
   }
 
   doPreserve(owner: 'player' | 'npc'): void {
@@ -1086,6 +1366,11 @@ export class FateKit {
     if (idx < 0 || idx >= hand.length) return;
     hand[idx].preserved = true;
     if (owner === 'player') this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 36, '✨ Preserved!', '#ffee44');
+    // Sealing a card: a gilt ring closing inward and a scatter of gold.
+    const caster = this.casterOf(owner);
+    this.avatar(owner)?.play('flex');
+    this.fx(owner).ring(caster.x, caster.y, 50, 16, FATE.gold, 400, 4, 5);
+    this.fx(owner).sparkle(caster.x, caster.y - 10, 9, 30, 10, FATE.gold);
   }
 
   doEnchant(owner: 'player' | 'npc'): void {
@@ -1099,6 +1384,10 @@ export class FateKit {
     }
     hand[idx].enchanted = true;
     if (owner === 'player') this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 36, '🔮 Enchanted!', '#cc88ff');
+    const caster = this.casterOf(owner);
+    this.avatar(owner)?.play('flex');
+    this.fx(owner).ring(caster.x, caster.y, 52, 18, FATE.enchant, 400, 4, 5);
+    this.fx(owner).sparkle(caster.x, caster.y - 10, 9, 30, 10, FATE.enchant);
   }
 
   private executeCard(card: FateCard, tx: number, ty: number, owner: 'player' | 'npc', time: number): void {
@@ -1134,6 +1423,39 @@ export class FateKit {
 
   private opponentsOf(owner: 'player' | 'npc'): Fighter[] {
     return owner === 'player' ? this.arena.enemies : [this.arena.player];
+  }
+
+  /**
+   * The flourish every card shares: the caster's gesture, the card leaving their hand, and an
+   * escalation that scales with how loaded the card was. A greatly-enchanted card is 4× and has
+   * to *look* like it — more cards in the flourish, a Tarot-coloured ring, a rain of chips —
+   * rather than simply dealing a bigger number.
+   */
+  private paintCardPlayed(card: FateCard, tx: number, ty: number, owner: 'player' | 'npc'): void {
+    const caster = this.casterOf(owner);
+    const fx = this.fx(owner);
+    const def = DEF_BY_TYPE.get(card.type)!;
+    const ang = Math.atan2(ty - caster.y, tx - caster.x);
+    // Cards thrown at your own feet (Buff, Barrier, Coin, Boomerang, Pulse) point up instead,
+    // so the flourish doesn't stab sideways at nothing.
+    const selfCast = card.type === 'buff' || card.type === 'barrier' || card.type === 'coin'
+      || card.type === 'boomerang' || card.type === 'pulse' || card.type === 'heal';
+    const gestureAng = selfCast ? -Math.PI / 2 : ang;
+
+    this.avatar(owner)?.play(CARD_GESTURES[card.type], gestureAng);
+
+    const tier = card.greatEnchanted ? 2 : card.enchanted ? 1 : 0;
+    const tones = card.greatEnchanted ? TAROT_TONES : this.tones(owner);
+    const hand = this.avatar(owner)?.castHand() ?? { x: caster.x, y: caster.y };
+    fx.flick(hand.x, hand.y, gestureAng, def.color, 1 + tier * 0.35, 9, tones, CARD_SUITS[card.type]);
+
+    if (tier > 0) {
+      // Enchanted: gold. Greatly enchanted: the Tarot magenta, plus chips on the table.
+      const glow = card.greatEnchanted ? FATE.great : FATE.gold;
+      fx.ring(caster.x, caster.y, 12, 44 + tier * 22, glow, 320 + tier * 140, 3 + tier, 5);
+      fx.sparkle(caster.x, caster.y, 5 + tier * 6, 34 + tier * 14, 10, glow);
+      if (card.greatEnchanted) fx.chips(caster.x, caster.y, 7, 52, 6, FATE.great);
+    }
   }
 
   // ── Laser ──────────────────────────────────────────────────────────
@@ -1175,6 +1497,9 @@ export class FateKit {
         target.takeDamage(dmg);
         this.creditCardDamage(lid, dmg);
         this.arena.spawnHitFlash(target.x, target.y, 0xff3333);
+        this.fx(owner).payout(target.x, target.y, 40, {
+          cards: 5, chips: 2, litter: false, depth: 9, face: 0xff3333, tones: this.tones(owner),
+        });
       }
     }
 
@@ -1191,12 +1516,13 @@ export class FateKit {
     }
     if (bestCoinIdx >= 0) this.reflectCoin(bestCoinIdx, dmg);
 
+    // Each leg of the beam is a stream of cards dealt down it — bank shots off the walls read
+    // as separate legs rather than as one bent rectangle.
+    const fx = this.fx(owner);
     for (let s = 0; s + 1 < pts.length; s++) {
       const p0 = pts[s], p1 = pts[s + 1];
-      const segLen = Phaser.Math.Distance.Between(p0.x, p0.y, p1.x, p1.y);
-      const beam = scene.add.rectangle((p0.x + p1.x) / 2, (p0.y + p1.y) / 2, segLen, 4, 0xff3333, 0.9)
-        .setRotation(Math.atan2(p1.y - p0.y, p1.x - p0.x)).setDepth(9);
-      scene.tweens.add({ targets: beam, alpha: 0, duration: 180, onComplete: () => beam.destroy() });
+      scene.time.delayedCall(s * 40, () =>
+        fx.dealtBeam(p0.x, p0.y, p1.x, p1.y, 0xff3333, 9, this.tones(owner), 4));
     }
   }
 
@@ -1226,6 +1552,11 @@ export class FateKit {
       proj.launch(Math.cos(angle) * speed, Math.sin(angle) * speed);
       proj.setRotation(angle);
     }
+    // The cone the pellets left through, so a spray reads as one shot rather than five beads.
+    this.fx(owner).cards(caster.x, caster.y, degs.length, {
+      speed: 240, spread: (degs.length > 5 ? 0.55 : 0.44), angle: baseAngle,
+      size: 10, life: 340, fall: 6, depth: 7, face: 0xff8800, tones: this.tones(owner),
+    });
   }
 
   // ── Barrier ────────────────────────────────────────────────────────
@@ -1244,6 +1575,8 @@ export class FateKit {
       proj.launch(Math.cos(angle) * speed, Math.sin(angle) * speed);
       proj.setRotation(angle);
     }
+    // The wall going up: a full ring of cards laid out around the caster.
+    this.fx(owner).ring(caster.x, caster.y, 8, ep ? 70 : 50, 0x4488ff, 420, 4, 6);
   }
 
   // ── Explosion ──────────────────────────────────────────────────────
@@ -1255,42 +1588,58 @@ export class FateKit {
     const travelMs = Math.max(150, (dist / 500) * 1000);
     const lid = this.activeLedgerId;
 
-    const bomb = scene.add.circle(caster.x, caster.y, 8, 0xcc2222, 1).setStrokeStyle(2, 0xffaa00).setDepth(8);
-    let reflected = false;
-    scene.tweens.add({
-      targets: bomb, x: tx, y: ty, duration: travelMs,
-      // If the bomb crosses one of the caster's own coins mid-flight, it bounces
-      // off into the same 2× (4× if paired) coin beam instead of exploding.
-      onUpdate: (tw) => {
-        if (reflected) return;
-        for (let i = 0; i < this.coins.length; i++) {
-          const c = this.coins[i];
-          if ((c.owner === 'player') !== (owner === 'player')) continue;
-          if (Phaser.Math.Distance.Between(bomb.x, bomb.y, c.x, c.y) <= 22) {
-            reflected = true;
-            tw.stop();
-            bomb.destroy();
-            this.reflectCoin(i, dmg);
-            return;
-          }
+    const fx = this.fx(owner);
+    const tones = this.tones(owner);
+    const startX = caster.x, startY = caster.y;
+    const heading = Math.atan2(ty - startY, tx - startX);
+    // Shared with the detonation below: a bomb that bounced off a coin must not also go off.
+    const flight = { reflected: false };
+
+    // The bomb is a card in flight — it tumbles the whole way and its fuse burns visibly down,
+    // so a thrown Explosion is legible as a thrown thing rather than as a sliding dot.
+    fx.anim(8, travelMs, (g, t) => {
+      if (flight.reflected) return;
+      const bx = startX + (tx - startX) * t;
+      const by = startY + (ty - startY) * t;
+
+      // If the bomb crosses one of the caster's own coins mid-flight, it bounces off into the
+      // same 2× (4× if paired) coin beam instead of exploding.
+      for (let i = 0; i < this.coins.length; i++) {
+        const c = this.coins[i];
+        if ((c.owner === 'player') !== (owner === 'player')) continue;
+        if (Phaser.Math.Distance.Between(bx, by, c.x, c.y) <= 22) {
+          flight.reflected = true;
+          this.reflectCoin(i, dmg);
+          return;
         }
-      },
-      onComplete: () => {
-        if (reflected) return;
-        bomb.destroy();
-        // F+ "Explosion: 2× AOE range".
-        const radius = ep ? 180 : 90;
-        for (const target of this.opponentsOf(owner)) {
-          if (!target.active || target.hp <= 0) continue;
-          if (Phaser.Math.Distance.Between(tx, ty, target.x, target.y) <= radius) {
-            target.takeDamage(dmg);
-            this.creditCardDamage(lid, dmg);
-          }
+      }
+
+      FateFx.drawFlyingCard(g, this.col(owner), tones, bx, by, heading, 17, t * 10, 0xcc2222, 'diamond');
+      // Fuse: a spark riding the card's leading corner, hotter the closer it is to landing.
+      const fuse = 0.5 + 0.5 * Math.sin(t * (14 + t * 40));
+      g.fillStyle(this.col(owner)(t > 0.7 ? FATE.ivory : FATE.gold), 0.9 * fuse);
+      g.fillCircle(bx + Math.cos(heading) * 11, by + Math.sin(heading) * 11, 2.4 + t * 2.4);
+    });
+
+    scene.time.delayedCall(travelMs, () => {
+      if (flight.reflected) return;
+      // F+ "Explosion: 2× AOE range".
+      const radius = ep ? 180 : 90;
+      for (const target of this.opponentsOf(owner)) {
+        if (!target.active || target.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(tx, ty, target.x, target.y) <= radius) {
+          target.takeDamage(dmg);
+          this.creditCardDamage(lid, dmg);
         }
-        const ring = scene.add.circle(tx, ty, 10, 0xff8800, 0.6).setDepth(9);
-        scene.tweens.add({ targets: ring, scaleX: radius / 10, scaleY: radius / 10, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
-        this.arena.spawnHitFlash(tx, ty, 0xff4400);
-      },
+      }
+      // A doubled blast radius earns a correspondingly bigger hand thrown down, not just a
+      // wider circle: more cards, more chips, a longer burn and a harder shake.
+      fx.payout(tx, ty, radius, {
+        cards: ep ? 16 : 9, chips: ep ? 8 : 4,
+        duration: ep ? 620 : 400, depth: 9, face: 0xff8800, tones,
+      });
+      this.arena.spawnHitFlash(tx, ty, 0xff4400);
+      scene.cameras.main.shake(ep ? 260 : 150, ep ? 0.008 : 0.004);
     });
   }
 
@@ -1323,9 +1672,13 @@ export class FateKit {
   applyPoison(target: Fighter, dps: number, time: number, durMs = 3000, ledgerId = 0): void {
     let p = this.poison.get(target);
     if (!p) {
-      const visual = this.arena.scene.add.text(target.x, target.y - 44, '☠️', { fontSize: '13px' }).setOrigin(0.5).setDepth(10);
-      p = { until: 0, dps: 0, tickAccum: 0, visual, ledgerId };
+      p = { until: 0, dps: 0, tickAccum: 0, ledgerId };
       this.poison.set(target, p);
+      // The infection lands with a splash and then leaves a drip that reads between ticks.
+      this.pfx.payout(target.x, target.y, 34, {
+        cards: 4, chips: 0, litter: false, depth: 9, face: 0x55cc55, tones: HOUSE_TONES,
+      });
+      this.poisonAuras.set(target, new FateAura(this.arena.scene, this.pcol, 'poison', 26, 4));
     }
     p.until = Math.max(p.until, time + durMs);
     p.dps = Math.max(p.dps, dps);
@@ -1336,17 +1689,19 @@ export class FateKit {
   private updatePoison(time: number, delta: number): void {
     for (const [target, p] of this.poison) {
       if (time > p.until) {
-        if (p.visual?.active) p.visual.destroy();
         this.poison.delete(target);
         continue;
       }
-      if (p.visual?.active) p.visual.setPosition(target.x, target.y - 44);
       p.tickAccum += delta;
       if (p.tickAccum >= 1000) {
         p.tickAccum -= 1000;
         if (target.active && target.hp > 0) {
           target.takeDamage(p.dps);
           this.creditCardDamage(p.ledgerId, p.dps);
+          // A tick that isn't visible on the victim is just a number appearing out of nowhere.
+          this.pfx.cards(target.x, target.y, 2, {
+            speed: 60, size: 6, life: 420, fall: 30, depth: 7, face: 0x55cc55, tones: HOUSE_TONES,
+          });
         }
       }
     }
@@ -1363,13 +1718,16 @@ export class FateKit {
     // F+ "Coin: moves 50% slower" (both the rise speed and the hover-time).
     const slow = ep ? 0.5 : 1;
     for (let i = 0; i < count; i++) {
-      const sprite = scene.add.image(caster.x + (i - (count - 1) / 2) * 26, caster.y, 'proj-fate-coin').setScale(2.4).setDepth(8);
+      const x = caster.x + (i - (count - 1) / 2) * 26;
       this.coins.push({
-        sprite, x: sprite.x, y: sprite.y, vy: -260 * slow,
+        x, y: caster.y, vy: -260 * slow,
         risingUntil: time + 500 / slow, expiresAt: time + 6000,
         owner, pairId, ledgerId: this.activeLedgerId,
       });
+      // The toss: sparks off the hand as the coin leaves it.
+      this.fx(owner).sparkle(x, caster.y, 5, 16, 9, FATE.gold);
     }
+    void scene;
   }
 
   private updateCoins(time: number, delta: number): void {
@@ -1377,14 +1735,13 @@ export class FateKit {
     const dt = delta / 1000;
     for (let i = this.coins.length - 1; i >= 0; i--) {
       const c = this.coins[i];
-      if (time > c.expiresAt) { c.sprite.destroy(); this.coins.splice(i, 1); continue; }
+      if (time > c.expiresAt) { this.coins.splice(i, 1); continue; }
       if (time < c.risingUntil) {
         c.y += c.vy * dt;
       } else {
         c.vy = 50;
         c.y = Math.min(bottom, c.y + c.vy * dt);
       }
-      c.sprite.setPosition(c.x, c.y);
     }
   }
 
@@ -1414,28 +1771,30 @@ export class FateKit {
     const caster = c.owner === 'player' ? this.arena.player : this.arena.npc;
     const target = this.opponentsOf(c.owner)[0] ?? (c.owner === 'player' ? this.arena.npc : this.arena.player);
 
-    const scene = this.arena.scene;
-    const drawLine = (x1: number, y1: number, x2: number, y2: number) => {
-      const midX = (x1 + x2) / 2; const midY = (y1 + y2) / 2;
-      const len = Phaser.Math.Distance.Between(x1, y1, x2, y2);
-      const ang = Math.atan2(y2 - y1, x2 - x1);
-      const line = scene.add.rectangle(midX, midY, len, 3, 0xffee00, 0.95).setRotation(ang).setDepth(9);
-      scene.tweens.add({ targets: line, alpha: 0, duration: 220, onComplete: () => line.destroy() });
-    };
-    if (partner) drawLine(caster.x, caster.y, partner.x, partner.y);
-    drawLine(c.x, c.y, target.x, target.y);
+    const fx = this.fx(c.owner);
+    const tones = this.tones(c.owner);
+    // The bank shot is dealt down each leg, so a paired 4× bounce visibly travels through both
+    // coins rather than appearing as one long line.
+    if (partner) fx.dealtBeam(caster.x, caster.y, partner.x, partner.y, FATE.gold, 9, tones, 4);
+    fx.dealtBeam(c.x, c.y, target.x, target.y, FATE.gold, 9, tones, partner ? 6 : 4);
+    fx.flash(c.x, c.y, partner ? 26 : 18, 10, FATE.gold);
+    fx.chips(c.x, c.y, partner ? 8 : 4, 40, 8, FATE.gold);
 
     if (target.active && target.hp > 0) {
       target.takeDamage(damage);
       this.creditCardDamage(c.ledgerId, damage);
       this.arena.spawnHitFlash(target.x, target.y, 0xffee00);
+      fx.payout(target.x, target.y, partner ? 60 : 40, {
+        cards: partner ? 10 : 5, chips: partner ? 6 : 3,
+        litter: false, depth: 9, face: FATE.gold, tones,
+      });
     }
     // Mastery "Ricochet": one tick per bounce, whether or not it connected.
     if (c.owner === 'player') this.arena.recordMasteryStat('coinBounces', 1);
 
     const toRemove = partner ? [i, this.coins.indexOf(partner)] : [i];
     toRemove.sort((a, b) => b - a);
-    for (const idx of toRemove) { this.coins[idx].sprite.destroy(); this.coins.splice(idx, 1); }
+    for (const idx of toRemove) this.coins.splice(idx, 1);
   }
 
   // ── Heal ───────────────────────────────────────────────────────────
@@ -1444,37 +1803,37 @@ export class FateKit {
     const scene = this.arena.scene;
     const time = scene.time.now;
     const W = scene.scale.width; const H = scene.scale.height;
+    const fx = this.fx(owner);
     for (let i = 0; i < 12; i++) {
       const x = Phaser.Math.Between(60, W - 60);
       const y = Phaser.Math.Between(90, H - 60);
-      const sprite = scene.add.circle(x, y, 8, 0x44dd88, 0.85).setStrokeStyle(2, 0xffffff, 0.6).setDepth(4);
-      // Homing orbs (F+) are repositioned every frame, so skip the bobbing tween.
-      if (!ep) scene.tweens.add({ targets: sprite, y: y - 10, yoyo: true, repeat: -1, duration: 700 });
-      const orb: FateHealOrb = { sprite, x, y, owner, expiresAt: time + 8000 };
-      // F+ "Heal: orbs will very slowly move towards the player".
-      (orb as any).homing = ep;
-      this.healOrbs.push(orb);
-      (sprite as any).fateHealAmount = amountPerOrb;
+      this.healOrbs.push({
+        x, y, owner, expiresAt: time + 8000, amount: amountPerOrb,
+        // F+ "Heal: orbs will very slowly move towards the player".
+        homing: ep, phase: Math.random() * Math.PI * 2,
+      });
+      // Each orb is dealt onto the table rather than simply appearing there.
+      fx.ring(x, y, 22, 6, 0x44dd88, 300, 2.5, 4);
     }
+    void scene;
   }
 
   private updateHealOrbs(time: number): void {
     for (let i = this.healOrbs.length - 1; i >= 0; i--) {
       const o = this.healOrbs[i];
-      if (time > o.expiresAt) { o.sprite.destroy(); this.healOrbs.splice(i, 1); continue; }
+      if (time > o.expiresAt) { this.healOrbs.splice(i, 1); continue; }
       const fighter = o.owner === 'player' ? this.arena.player : this.arena.npc;
       // F+ homing: drift very slowly toward the owner.
-      if ((o as any).homing) {
+      if (o.homing) {
         const ang = Math.atan2(fighter.y - o.y, fighter.x - o.x);
         o.x += Math.cos(ang) * 0.6;
         o.y += Math.sin(ang) * 0.6;
-        o.sprite.setPosition(o.x, o.y);
       }
       if (Phaser.Math.Distance.Between(fighter.x, fighter.y, o.x, o.y) <= 24) {
-        const amount = (o.sprite as any).fateHealAmount ?? 8;
-        fighter.heal(amount);
-        this.arena.showFloatingText(o.x, o.y - 16, `+${amount} HP`, '#44dd88');
-        o.sprite.destroy();
+        fighter.heal(o.amount);
+        this.arena.showFloatingText(o.x, o.y - 16, `+${o.amount} HP`, '#44dd88');
+        this.fx(o.owner).sparkle(o.x, o.y, 7, 20, 9, 0x44dd88);
+        this.fx(o.owner).ring(o.x, o.y, 6, 30, 0x44dd88, 300, 2.5, 5);
         this.healOrbs.splice(i, 1);
       }
     }
@@ -1490,29 +1849,41 @@ export class FateKit {
     this.addMod(owner, 'dmgDealt', 1 + pct, duration);
     this.addMod(owner, 'dmgTaken', 1 - pct, duration);
     if (owner === 'player') this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 36, `💪 +${Math.round(pct * 100)}%`, '#dd88ff');
+    // Ignition burst on the frame the stance turns on; the aura carries it from there.
+    const caster = this.casterOf(owner);
+    const fx = this.fx(owner);
+    fx.ring(caster.x, caster.y, 46, 14, FATE.enchant, 380, 4, 5);
+    fx.sparkle(caster.x, caster.y, enchanted ? 12 : 7, 36, 9, FATE.enchant);
   }
 
   // ── Lightning ──────────────────────────────────────────────────────
 
   private castLightning(tx: number, ty: number, owner: 'player' | 'npc', dmg: number, stunMs: number, ep = false): void {
-    const scene = this.arena.scene;
-    const ring = scene.add.circle(tx, ty, 70, 0xffee44, 0.25).setStrokeStyle(2, 0xffee44, 0.9).setDepth(6);
-    scene.tweens.add({ targets: ring, alpha: 0.5, yoyo: true, repeat: -1, duration: 300 });
-    // F+ "Lightning: 1.5× AOE duration" (telegraph window before the bolt lands).
-    this.lightningStrikes.push({ ring, x: tx, y: ty, owner, dmg, stunMs, resolveAt: scene.time.now + (ep ? 3000 : 2000), ledgerId: this.activeLedgerId });
+    const now = this.arena.scene.time.now;
+    // F+ "Lightning: 1.5× AOE duration" (telegraph window before the bolt lands). The ring
+    // itself is repainted every frame in drawWorld so it can wind up as the timer runs out.
+    this.lightningStrikes.push({
+      x: tx, y: ty, owner, dmg, stunMs,
+      openedAt: now, resolveAt: now + (ep ? 3000 : 2000),
+      ledgerId: this.activeLedgerId,
+    });
   }
 
   private updateLightningStrikes(time: number): void {
     for (let i = this.lightningStrikes.length - 1; i >= 0; i--) {
       const s = this.lightningStrikes[i];
       if (time < s.resolveAt) continue;
-      s.ring.destroy();
       this.lightningStrikes.splice(i, 1);
 
+      const fx = this.fx(s.owner);
       const scene = this.arena.scene;
-      const bolt = scene.add.rectangle(s.x, Math.max(0, s.y - 200), 6, 400, 0xffffaa, 0.95).setDepth(11);
-      scene.tweens.add({ targets: bolt, alpha: 0, duration: 200, onComplete: () => bolt.destroy() });
+      // The bolt is dealt out of the sky as a column of cards, then the pot pays out on impact.
+      fx.dealtBeam(s.x, s.y - 320, s.x, s.y, 0xffee44, 11, this.tones(s.owner), 7);
+      fx.payout(s.x, s.y, 70, {
+        cards: 10, chips: 5, depth: 9, face: 0xffee44, tones: this.tones(s.owner),
+      });
       this.arena.spawnHitFlash(s.x, s.y, 0xffee44);
+      scene.cameras.main.shake(180, 0.005);
 
       for (const target of this.opponentsOf(s.owner)) {
         if (!target.active || target.hp <= 0) continue;
@@ -1538,17 +1909,18 @@ export class FateKit {
       if (ownSame.length >= 2) {
         const oldest = ownSame[0];
         const idx = this.slotMachines.indexOf(oldest);
-        oldest.sprite.destroy(); oldest.label.destroy(); oldest.barBg.destroy(); oldest.barFill.destroy();
+        // The retired cabinet is cashed out rather than simply vanishing.
+        this.fx(owner).chips(oldest.x, oldest.y, 5, 34, 7, FATE.brass);
         this.slotMachines.splice(idx, 1);
       }
       const x = tx + (i - (count - 1) / 2) * 50;
       const y = ty;
-      const sprite = scene.add.circle(x, y, 22, 0xff66cc, 0.65).setStrokeStyle(2, 0xffcc44, 0.9).setDepth(2);
-      const label = scene.add.text(x, y, '🎰', { fontSize: '18px' }).setOrigin(0.5).setDepth(3);
-      const barBg = scene.add.rectangle(x, y - 32, 40, 5, 0x222222, 0.8).setDepth(3);
-      const barFill = scene.add.rectangle(x - 20, y - 32, 0, 5, 0xffee00, 0.95).setOrigin(0, 0.5).setDepth(4);
-      this.slotMachines.push({ sprite, label, barBg, barFill, x, y, owner, cycleDmgPlayer: 0, cycleDmgNpc: 0, cycleEnd: time + 10000, halfReq: ep });
+      this.slotMachines.push({ x, y, owner, cycleDmgPlayer: 0, cycleDmgNpc: 0, cycleEnd: time + 10000, halfReq: ep });
+      // Landing thump: the cabinet is dropped onto the table.
+      this.fx(owner).ring(x, y, 8, 54, 0xff66cc, 380, 4, 5);
+      this.fx(owner).chips(x, y, 4, 30, 7, FATE.gold);
     }
+    void scene;
   }
 
   private updateSlotMachines(time: number): void {
@@ -1557,7 +1929,6 @@ export class FateKit {
       // F+ "Slots: ½ requirements to get good rolls" halves the buff/jackpot thresholds.
       const buffReq = sm.halfReq ? 12.5 : 25;
       const jackpotReq = sm.halfReq ? 25 : 50;
-      sm.barFill.setSize(Math.min(40, (total / jackpotReq) * 40), 5);
       if (time < sm.cycleEnd) continue;
 
       sm.cycleEnd = time + 10000;
@@ -1573,8 +1944,21 @@ export class FateKit {
         : (stat === 'dmgTaken' ? 1 + pct : stat === 'size' ? 1 + pct : stat === 'cd' ? 1 + pct : stat === 'dmgDealt' ? 1 - pct : 1 - pct);
       this.addMod(winner, stat, mult, 10000);
 
-      const label = isBuff ? (total >= 50 ? `🎰 JACKPOT +${Math.round(pct * 100)}%!` : `🎰 +${Math.round(pct * 100)}%`) : `🎰 -${Math.round(pct * 100)}%`;
+      const jackpot = total >= jackpotReq;
+      const label = isBuff ? (jackpot ? `🎰 JACKPOT +${Math.round(pct * 100)}%!` : `🎰 +${Math.round(pct * 100)}%`) : `🎰 -${Math.round(pct * 100)}%`;
       this.arena.showFloatingText(fighter.x, fighter.y - 40, label, isBuff ? '#ffee00' : '#ff6666');
+      // The machine pays out where it stands: a jackpot buries the table in chips, a bust
+      // coughs up a couple of dud cards.
+      const fx = this.fx(winner);
+      if (isBuff) {
+        fx.chips(sm.x, sm.y, jackpot ? 18 : 8, jackpot ? 90 : 50, 8, FATE.gold);
+        fx.sparkle(sm.x, sm.y, jackpot ? 16 : 7, jackpot ? 70 : 40, 10, FATE.gold);
+        fx.ring(sm.x, sm.y, 10, jackpot ? 120 : 70, FATE.gold, jackpot ? 520 : 360, 4, 6);
+        fx.ring(fighter.x, fighter.y, 44, 12, FATE.gold, 340, 3, 5);
+      } else {
+        fx.cards(sm.x, sm.y, 4, { speed: 90, size: 9, life: 520, depth: 7, face: FATE.ash, tones: this.tones(winner) });
+        fx.ring(fighter.x, fighter.y, 12, 44, FATE.blood, 340, 3, 5);
+      }
       sm.cycleDmgPlayer = 0;
       sm.cycleDmgNpc = 0;
     }
@@ -1617,10 +2001,18 @@ export class FateKit {
       : rouletteExpert ? Math.max(1, this.gambleHp)
       : 50;
     const orbitMs = rouletteExpert ? 5000 : 3000;
-    const sprite = scene.add.circle(caster.x + 100, caster.y, 50, 0xffcc44, 0.4).setStrokeStyle(3, cocky ? 0xff3333 : 0xffaa00, 0.9).setDepth(6);
-    const allIn: FateAllIn = { sprite, owner, activatesAt: scene.time.now + orbitMs, orbitAngle: 0, wager };
+    const allIn: FateAllIn = {
+      owner, activatesAt: scene.time.now + orbitMs, orbitMs, orbitAngle: 0,
+      x: caster.x + 100, y: caster.y, radius: 50, wager, cocky,
+    };
     if (owner === 'player') this.playerAllIn = allIn; else this.npcAllIn = allIn;
     this.arena.showFloatingText(caster.x, caster.y - 36, `${cocky ? '😈' : '🎰'} All In! (${wager} HP)`, cocky ? '#ff6666' : '#ffcc44');
+    // Putting the bet on the table: the ante gathers on the caster while the wheel spins up.
+    const fx = this.fx(owner);
+    this.avatar(owner)?.play('raise', -Math.PI / 2, 900);
+    fx.ante(caster.x, caster.y, 52, Math.min(1200, orbitMs),
+      () => (caster.active ? { x: caster.x, y: caster.y } : null), 5, this.tones(owner));
+    fx.ring(caster.x, caster.y, 10, 96, cocky ? FATE.blood : FATE.gold, 480, 5, 5);
   }
 
   private updateAllIn(allIn: FateAllIn, time: number, owner: 'player' | 'npc'): void {
@@ -1634,29 +2026,42 @@ export class FateKit {
     }
     const ax = caster.x + Math.cos(allIn.orbitAngle) * orbitR;
     const ay = caster.y + Math.sin(allIn.orbitAngle) * orbitR;
-    allIn.sprite.setPosition(ax, ay);
+    // Written for drawWorld, which repaints the wheel (and its ball) every frame.
+    allIn.x = ax;
+    allIn.y = ay;
 
     if (time < allIn.activatesAt) return;
 
     const target = owner === 'player' ? this.arena.npc : this.arena.player;
-    const hitRadius = allIn.sprite.width / 2;
-    const hit = Phaser.Math.Distance.Between(ax, ay, target.x, target.y) <= hitRadius;
+    const hit = Phaser.Math.Distance.Between(ax, ay, target.x, target.y) <= allIn.radius;
+    const fx = this.fx(owner);
     if (hit) {
       target.takeDamage(allIn.wager);
       this.arena.spawnHitFlash(target.x, target.y, 0xffcc44);
       this.arena.showFloatingText(caster.x, caster.y - 50, `🎰 HIT! ${allIn.wager}`, '#ffee44');
       // Mastery "High Roller": only the player's landed wagers count.
       if (owner === 'player') this.arena.recordMasteryStat('allInHits', 1);
+      // A won bet pays out in proportion to what was staked.
+      const stake = Phaser.Math.Clamp(allIn.wager / 120, 0.3, 1.6);
+      fx.payout(ax, ay, allIn.radius * 2, {
+        cards: Math.round(10 * stake) + 6, chips: Math.round(10 * stake) + 4,
+        duration: 480 + Math.round(stake * 240), depth: 9,
+        face: FATE.gold, tones: this.tones(owner),
+      });
+      fx.dealtBeam(ax, ay, target.x, target.y, FATE.gold, 10, this.tones(owner), 6);
+      this.arena.scene.cameras.main.shake(180 + stake * 140, 0.005 + stake * 0.004);
     } else {
       caster.applySelfDamage(allIn.wager);
       this.arena.showFloatingText(caster.x, caster.y - 50, `🎰 MISS! -${allIn.wager} HP`, '#ff8888');
+      // A lost bet is swept off the table: dead cards, no chips, no sparkle.
+      fx.cards(ax, ay, 9, {
+        speed: 130, size: 11, life: 700, fall: 90, depth: 8,
+        face: FATE.ash, tones: this.tones(owner),
+      });
+      fx.litter(ax, ay, allIn.radius, 1, this.tones(owner));
+      fx.ring(ax, ay, allIn.radius, 8, FATE.shade, 420, 4, 6);
     }
 
-    allIn.sprite.setFillStyle(hit ? 0xffee00 : 0x333333, 0.7);
-    this.arena.scene.tweens.add({
-      targets: allIn.sprite, scaleX: 2, scaleY: 2, alpha: 0, duration: 500,
-      onComplete: () => allIn.sprite.destroy(),
-    });
     if (owner === 'player') this.playerAllIn = null; else this.npcAllIn = null;
   }
 
@@ -1669,30 +2074,47 @@ export class FateKit {
     const scene = this.arena.scene;
     const time = scene.time.now;
     const count = ep ? 2 : 1; // F+ "Boomerang: summon 2 projectiles instead of 1"
+    const caster = this.casterOf(owner);
     for (let i = 0; i < count; i++) {
-      const sprite = scene.add.circle(0, 0, 10, 0xffe000, 0.95).setStrokeStyle(2, 0xaa8800, 1).setDepth(8);
-      this.boomerangs.push({ sprite, owner, angle: (i / count) * Math.PI * 2, radius: 92, dmg, expiresAt: time + 3000, hitAt: new Map(), ledgerId: this.activeLedgerId });
+      const angle = (i / count) * Math.PI * 2;
+      this.boomerangs.push({
+        owner, angle, radius: 92, dmg, expiresAt: time + 3000,
+        hitAt: new Map(), ledgerId: this.activeLedgerId,
+        x: caster.x + Math.cos(angle) * 92, y: caster.y + Math.sin(angle) * 92,
+      });
     }
+    this.fx(owner).ring(caster.x, caster.y, 20, 92, 0xffe000, 380, 3, 5);
+    void scene;
   }
 
   private updateBoomerangs(time: number): void {
     for (let i = this.boomerangs.length - 1; i >= 0; i--) {
       const b = this.boomerangs[i];
-      if (time > b.expiresAt) { b.sprite.destroy(); this.boomerangs.splice(i, 1); continue; }
+      if (time > b.expiresAt) {
+        // It leaves the orbit as a thrown card rather than blinking out.
+        this.fx(b.owner).cards(b.x, b.y, 3, {
+          speed: 180, angle: b.angle + Math.PI / 2, spread: 0.4,
+          size: 12, life: 420, depth: 8, face: 0xffe000, tones: this.tones(b.owner),
+        });
+        this.boomerangs.splice(i, 1);
+        continue;
+      }
       const caster = b.owner === 'player' ? this.arena.player : this.arena.npc;
       b.angle += 0.13;
-      const bx = caster.x + Math.cos(b.angle) * b.radius;
-      const by = caster.y + Math.sin(b.angle) * b.radius;
-      b.sprite.setPosition(bx, by);
+      b.x = caster.x + Math.cos(b.angle) * b.radius;
+      b.y = caster.y + Math.sin(b.angle) * b.radius;
       for (const target of this.opponentsOf(b.owner)) {
         if (!target.active || target.hp <= 0) continue;
-        if (Phaser.Math.Distance.Between(bx, by, target.x, target.y) > 26) continue;
+        if (Phaser.Math.Distance.Between(b.x, b.y, target.x, target.y) > 26) continue;
         const last = b.hitAt.get(target) ?? -1000;
         if (time - last < 500) continue;
         b.hitAt.set(target, time);
         target.takeDamage(b.dmg);
         this.creditCardDamage(b.ledgerId, b.dmg);
         this.arena.spawnHitFlash(target.x, target.y, 0xffe000);
+        this.fx(b.owner).payout(target.x, target.y, 34, {
+          cards: 4, chips: 2, litter: false, depth: 9, face: 0xffe000, tones: this.tones(b.owner),
+        });
       }
     }
   }
@@ -1715,13 +2137,32 @@ export class FateKit {
       this.arena.spawnHitFlash(target.x, target.y, 0xff2222);
       // F+ "Slash: applies a 50% slow for 5 seconds".
       if (ep) { this.applySlow(target, 0.5, 5000); this.arena.showFloatingText(target.x, target.y - 40, '🐌 SLOW', '#88ddff'); }
+      this.fx(owner).payout(target.x, target.y, 34, {
+        cards: 4, chips: 1, litter: false, depth: 9, face: 0x8b0000, tones: this.tones(owner),
+      });
     }
-    const g = scene.add.graphics().setDepth(9);
-    g.lineStyle(7, 0xff2222, 0.9);
-    g.beginPath();
-    g.arc(caster.x, caster.y, range, ang - halfCone, ang + halfCone);
-    g.strokePath();
-    scene.tweens.add({ targets: g, alpha: 0, duration: 220, onComplete: () => g.destroy() });
+    // The cut itself: a card edge sweeping the arc, thin at both ends and fat in the middle,
+    // with the blade-line running just ahead of it.
+    const col = this.col(owner);
+    this.fx(owner).anim(9, 260, (g, t) => {
+      const fade = 1 - t * t;
+      const lead = ang - halfCone + t * halfCone * 2;
+      const steps = 14;
+      for (let i = 0; i <= steps; i++) {
+        const a = ang - halfCone + (i / steps) * halfCone * 2;
+        if (a > lead) break;
+        const along = Math.sin((i / steps) * Math.PI);
+        const w = 2 + along * 9;
+        g.fillStyle(col(i % 3 === 0 ? FATE.blood : 0x8b0000), 0.75 * fade * (0.4 + along * 0.6));
+        g.fillCircle(caster.x + Math.cos(a) * range, caster.y + Math.sin(a) * range, w);
+      }
+      // Bright leading edge — where the card actually is right now.
+      g.lineStyle(3, col(FATE.ivory), 0.9 * fade);
+      g.beginPath();
+      g.arc(caster.x, caster.y, range, Math.max(ang - halfCone, lead - 0.4), lead);
+      g.strokePath();
+    });
+    void scene;
   }
 
   // ── Phase: a short blink toward the cursor, 10 dmg to anyone dashed through ──
@@ -1744,18 +2185,38 @@ export class FateKit {
         target.takeDamage(dmg);
         this.creditCardDamage(this.activeLedgerId, dmg);
         this.arena.spawnHitFlash(target.x, target.y, 0x00c2c7);
+        this.fx(owner).payout(target.x, target.y, 32, {
+          cards: 3, chips: 1, litter: false, depth: 9, face: 0x00c2c7, tones: this.tones(owner),
+        });
       }
     }
 
     (caster.body as Phaser.Physics.Arcade.Body).reset(nx, ny);
     caster.setPosition(nx, ny);
-    // Teal ghost trail from start to landing.
-    for (let k = 0; k <= 4; k++) {
-      const gx = startX + (nx - startX) * (k / 4);
-      const gy = startY + (ny - startY) * (k / 4);
-      const ghost = scene.add.circle(gx, gy, 18, 0x00c2c7, 0.35).setDepth(4);
-      scene.tweens.add({ targets: ghost, alpha: 0, duration: 260, onComplete: () => ghost.destroy() });
-    }
+    // A comet of tumbling cards along the path plus a burst at each end, so the blink reads as
+    // a body travelling rather than a body teleporting.
+    const fx = this.fx(owner);
+    const tones = this.tones(owner);
+    const col = this.col(owner);
+    fx.anim(4, 300, (g, t) => {
+      const fade = 1 - t * t;
+      const steps = 7;
+      for (let k = 0; k <= steps; k++) {
+        const f = k / steps;
+        const gx = startX + (nx - startX) * f;
+        const gy = startY + (ny - startY) * f;
+        // The tail thins toward the start — a comet, not a row of stamps.
+        const taper = 0.35 + f * 0.65;
+        g.fillStyle(col(0x00c2c7), 0.22 * fade * taper);
+        g.fillCircle(gx, gy, 17 * taper);
+        fateCardLayered(g, col, tones, gx, gy, ang, 12 * taper, 16 * taper,
+          Math.cos(t * 8 + k), 0.7 * fade * taper, { face: 0x00c2c7, suit: 'diamond', shadow: false });
+      }
+    });
+    fx.ring(startX, startY, 30, 6, 0x00c2c7, 280, 3, 5);
+    fx.ring(nx, ny, 6, 40, 0x00c2c7, 320, 3.5, 5);
+    fx.sparkle(nx, ny, 6, 24, 9, 0x00c2c7);
+    void scene;
   }
 
   // ── Striker: a very slow black projectile, 35 dmg on hit ──
@@ -1787,9 +2248,17 @@ export class FateKit {
       const speed = 520 * kbMult;
       this.applyKnockback(target, Math.cos(ang) * speed, Math.sin(ang) * speed, 260);
       this.arena.spawnHitFlash(target.x, target.y, 0x00a3ff);
+      // Cards blown off the target in the direction they were shoved.
+      this.fx(owner).cards(target.x, target.y, 5, {
+        speed: 220 * kbMult, angle: ang, spread: 0.7, size: 10, life: 460, depth: 9,
+        face: 0x00a3ff, tones: this.tones(owner),
+      });
     }
-    const ring = scene.add.circle(caster.x, caster.y, 10, 0x00a3ff, 0.5).setStrokeStyle(3, 0x66ccff, 0.9).setDepth(7);
-    scene.tweens.add({ targets: ring, scaleX: radius / 10, scaleY: radius / 10, alpha: 0, duration: 320, onComplete: () => ring.destroy() });
+    // The shove: a hard front plus a second, wider one when the knockback is doubled.
+    const fx = this.fx(owner);
+    fx.ring(caster.x, caster.y, 10, radius, 0x00a3ff, 320, 5, 7);
+    if (ep) scene.time.delayedCall(90, () => fx.ring(caster.x, caster.y, 20, radius * 1.4, 0x66ccff, 400, 3.5, 7));
+    fx.flash(caster.x, caster.y, 24, 8, 0x66ccff);
   }
 
   // ── Chill: an explosive snowball, 5 dmg + a very large 50% slow AoE ──
@@ -1798,9 +2267,12 @@ export class FateKit {
     const scene = this.arena.scene;
     const ang = Math.atan2(ty - caster.y, tx - caster.x);
     const speed = 360;
-    const sprite = scene.add.circle(caster.x, caster.y, 11, 0xd6f2ff, 0.95).setStrokeStyle(2, 0x88bbdd, 1).setDepth(8);
     // F+ "Chill: +3 second slow duration" (5s → 8s).
-    this.snowballs.push({ sprite, x: caster.x, y: caster.y, vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed, owner, dmg, slowMs: ep ? 8000 : 5000, expiresAt: scene.time.now + 2000, ledgerId: this.activeLedgerId });
+    this.snowballs.push({
+      x: caster.x, y: caster.y, vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed,
+      owner, dmg, slowMs: ep ? 8000 : 5000, expiresAt: scene.time.now + 2000,
+      ledgerId: this.activeLedgerId,
+    });
   }
 
   private updateSnowballs(time: number, delta: number): void {
@@ -1809,7 +2281,6 @@ export class FateKit {
     for (let i = this.snowballs.length - 1; i >= 0; i--) {
       const s = this.snowballs[i];
       s.x += s.vx * dt; s.y += s.vy * dt;
-      s.sprite.setPosition(s.x, s.y);
       let primary: Fighter | null = null;
       for (const target of this.opponentsOf(s.owner)) {
         if (target.active && target.hp > 0 && Phaser.Math.Distance.Between(s.x, s.y, target.x, target.y) <= 24) { primary = target; break; }
@@ -1836,10 +2307,18 @@ export class FateKit {
       this.creditCardDamage(s.ledgerId, s.dmg);
       this.applySlow(target, 0.5, s.slowMs);
       this.arena.showFloatingText(target.x, target.y - 40, '❄️ SLOW', '#aaddff');
+      this.fx(s.owner).sparkle(target.x, target.y, 6, 22, 9, 0xd6f2ff);
     }
-    const ring = scene.add.circle(s.x, s.y, 12, 0xbfeaff, 0.4).setStrokeStyle(3, 0x88bbdd, 0.9).setDepth(6);
-    scene.tweens.add({ targets: ring, scaleX: radius / 12, scaleY: radius / 12, alpha: 0, duration: 420, onComplete: () => ring.destroy() });
-    s.sprite.destroy();
+    // A very wide, very cold burst: two fronts, a shower of frozen cards, and frost on the floor.
+    const fx = this.fx(s.owner);
+    const tones = this.tones(s.owner);
+    fx.flash(s.x, s.y, 30, 8, 0xd6f2ff);
+    fx.ring(s.x, s.y, 12, radius, 0xbfeaff, 420, 5, 6);
+    scene.time.delayedCall(110, () => fx.ring(s.x, s.y, 20, radius * 1.25, 0x88bbdd, 540, 3, 6));
+    fx.cards(s.x, s.y, 12, {
+      speed: radius * 1.6, size: 10, life: 620, fall: 40, depth: 8, face: 0xd6f2ff, tones,
+    });
+    fx.litter(s.x, s.y, radius * 0.5, 1, tones);
   }
 
   // ── Chain: an electric hitscan that arcs between nearby enemies, 10 dmg each ──
@@ -1860,13 +2339,18 @@ export class FateKit {
       const score = d + aligned * 60;
       if (score < best) { best = score; cur = t; }
     }
-    const drawArc = (x1: number, y1: number, x2: number, y2: number) => {
-      const line = scene.add.rectangle((x1 + x2) / 2, (y1 + y2) / 2, Phaser.Math.Distance.Between(x1, y1, x2, y2), 3, 0x9b5cff, 0.95)
-        .setRotation(Math.atan2(y2 - y1, x2 - x1)).setDepth(9);
-      scene.tweens.add({ targets: line, alpha: 0, duration: 200, onComplete: () => line.destroy() });
-    };
+    const fx = this.fx(owner);
+    const tones = this.tones(owner);
+    let hop = 0;
     while (cur) {
-      drawArc(fromX, fromY, cur.x, cur.y);
+      const x1 = fromX, y1 = fromY, tX = cur.x, tY = cur.y;
+      // Each hop is dealt a beat after the last, so a long chain visibly walks the room instead
+      // of all its links appearing at once.
+      scene.time.delayedCall(hop * 70, () => fx.dealtBeam(x1, y1, tX, tY, 0x7b2ff7, 9, tones, 4));
+      scene.time.delayedCall(hop * 70, () => fx.payout(tX, tY, 30, {
+        cards: 3, chips: 1, litter: false, depth: 9, face: 0x7b2ff7, tones,
+      }));
+      hop++;
       cur.takeDamage(dmg);
       this.creditCardDamage(this.activeLedgerId, dmg);
       this.arena.spawnHitFlash(cur.x, cur.y, 0x9b5cff);
@@ -1899,8 +2383,13 @@ export class FateKit {
         this.arena.projectiles.add(proj);
         proj.launch(Math.cos(ang) * speed, Math.sin(ang) * speed);
         proj.setRotation(ang);
+        // Every shot in the volley recoils off the hand — a rare card should feel expensive.
+        this.fx(owner).flick(caster.x, caster.y, ang, FATE.gold, 0.8, 9, this.tones(owner));
       });
     }
+    // The crown announcing itself: a gilt ring and a shower of chips at the caster.
+    this.fx(owner).ring(caster.x, caster.y, 12, 76, FATE.gold, 520, 5, 6);
+    this.fx(owner).chips(caster.x, caster.y, ep ? 12 : 8, 56, 7, FATE.gold);
   }
 
   // ═══════════════════════════════════════════════════════════════════

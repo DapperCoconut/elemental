@@ -402,9 +402,24 @@ export class InvasionCoopKit {
     }
   }
 
+  /**
+   * Guest → host: Silence Mastery is steering husk `id`. We drive our own replica so it
+   * stays responsive under our hand, and stream the result for the host to mirror onto
+   * the real husk. No-op as host or offline, where the husk is already ours to move.
+   */
+  sendHuskPuppet(id: number, on: boolean, x: number, y: number): void {
+    if (this.isHost) return;
+    Net.send({ t: 'huskPuppet', id, on, x, y });
+  }
+
   private interpolateHuskReplicas(): void {
+    const now = this.api.scene.time.now;
     for (const rep of this.huskReplicas.values()) {
       if (!rep.husk.active) continue;
+      // A husk we are currently possessing is driven by SilenceKit, not by the snap
+      // stream — lerping it back toward the host's stale position would fight the hand
+      // that is steering it.
+      if (rep.husk.puppetControlledUntil > now) continue;
       const body = rep.husk.body as Phaser.Physics.Arcade.Body | null;
       if (!body) continue;
       const dx = rep.targetX - rep.husk.x;
@@ -552,6 +567,9 @@ export class InvasionCoopKit {
         break;
       case 'huskStatus':
         if (this.isHost) this.api.invasionKit.applyNetworkStatus(msg.id, msg.s);
+        break;
+      case 'huskPuppet':
+        if (this.isHost) this.api.invasionKit.applyNetworkPuppet(msg.id, msg.on, msg.x, msg.y);
         break;
       case 'huskFx':
         if (!this.isHost) this.playFx(msg.fx);

@@ -162,6 +162,12 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     read: (f) => f.skeweredUntil,
     write: (f, t) => { f.skeweredUntil = t; },
   },
+  {
+    id: 'vibration', name: 'Vibration', emoji: '📳', color: 0xeeeeff, priority: 16, kind: 'timer',
+    description: 'Still ringing from a bugle caravan. Every note the Sound player lands shakes another 5 damage out of you.',
+    read: (f) => f.vibrationUntil,
+    write: (f, t) => { f.vibrationUntil = t; },
+  },
 
   // ── Frost / void stacks ──────────────────────────────────────────
   {

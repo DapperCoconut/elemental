@@ -32,11 +32,34 @@ const BURNT_FALLBACK = 0x1a1a1a;
 const BURNT_PROJECTILE_TINT = 0x111111;
 
 /**
- * Water has no colour-slot cosmetic yet, so every remap table here is empty and `waterColor`
- * is the identity. Water's visuals still route through it, which keeps adding one later to a
- * table edit rather than a sweep through WaterVisuals and WaterKit.
+ * Water, Life, Air, Earth, Oil and Shadow have no colour-slot cosmetic yet, so every remap
+ * table here is empty and all six mappers are the identity. Their visuals still route through
+ * them, which keeps adding one later to a table edit rather than a sweep through the element's
+ * visuals and kit.
  */
 const WATER_PALETTES: Record<string, Record<number, number>> = {};
+const LIFE_PALETTES: Record<string, Record<number, number>> = {};
+const AIR_PALETTES: Record<string, Record<number, number>> = {};
+const EARTH_PALETTES: Record<string, Record<number, number>> = {};
+const OIL_PALETTES: Record<string, Record<number, number>> = {};
+const SHADOW_PALETTES: Record<string, Record<number, number>> = {};
+const ICE_PALETTES: Record<string, Record<number, number>> = {};
+const GROWTH_PALETTES: Record<string, Record<number, number>> = {};
+const CRYSTAL_PALETTES: Record<string, Record<number, number>> = {};
+const SOUL_PALETTES: Record<string, Record<number, number>> = {};
+const HUNT_PALETTES: Record<string, Record<number, number>> = {};
+const SAND_PALETTES: Record<string, Record<number, number>> = {};
+const GRAVITY_PALETTES: Record<string, Record<number, number>> = {};
+const CREATION_PALETTES: Record<string, Record<number, number>> = {};
+const ELECTRICITY_PALETTES: Record<string, Record<number, number>> = {};
+const FATE_PALETTES: Record<string, Record<number, number>> = {};
+const ACID_PALETTES: Record<string, Record<number, number>> = {};
+const SOUND_PALETTES: Record<string, Record<number, number>> = {};
+const LIGHT_PALETTES: Record<string, Record<number, number>> = {};
+const MAGNET_PALETTES: Record<string, Record<number, number>> = {};
+const METAL_PALETTES: Record<string, Record<number, number>> = {};
+const PLASMA_PALETTES: Record<string, Record<number, number>> = {};
+const GUNPOWDER_PALETTES: Record<string, Record<number, number>> = {};
 
 /**
  * Renders equipped cosmetics on both fighters: the color-slot body tint (and the
@@ -88,6 +111,226 @@ export class CosmeticsKit {
   waterColor(owner: Owner, base: number): number {
     const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
     const palette = WATER_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps a life visual color through the owner's color cosmetic. Identity until a life
+   * colour cosmetic exists — see LIFE_PALETTES.
+   */
+  lifeColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = LIFE_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps an air visual color through the owner's color cosmetic. Identity until an air
+   * colour cosmetic exists — see AIR_PALETTES.
+   */
+  airColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = AIR_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps an earth visual color through the owner's color cosmetic. Identity until an earth
+   * colour cosmetic exists — see EARTH_PALETTES.
+   */
+  earthColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = EARTH_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps an oil visual color through the owner's color cosmetic. Identity until an oil colour
+   * cosmetic exists — see OIL_PALETTES.
+   */
+  oilColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = OIL_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps a shadow visual color through the owner's color cosmetic. Identity until a shadow
+   * colour cosmetic exists — see SHADOW_PALETTES.
+   */
+  shadowColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = SHADOW_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps an ice visual color through the owner's color cosmetic. Identity until an ice colour
+   * cosmetic exists — see ICE_PALETTES.
+   */
+  iceColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = ICE_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps a growth visual color through the owner's color cosmetic. Identity until a growth
+   * colour cosmetic exists — see GROWTH_PALETTES.
+   */
+  growthColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = GROWTH_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps a crystal visual color through the owner's color cosmetic. Identity until a crystal
+   * colour cosmetic exists — see CRYSTAL_PALETTES.
+   */
+  crystalColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = CRYSTAL_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps a soul visual color through the owner's color cosmetic. Identity until a soul colour
+   * cosmetic exists — see SOUL_PALETTES.
+   */
+  soulColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = SOUL_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps a hunt visual color through the owner's color cosmetic. Identity until a hunt colour
+   * cosmetic exists — see HUNT_PALETTES.
+   */
+  huntColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = HUNT_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps a time visual color through the owner's color cosmetic. Identity until a time colour
+   * cosmetic exists — see SAND_PALETTES. (Time's element id is `sand`.)
+   */
+  sandColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = SAND_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps a gravity visual color through the owner's color cosmetic. Identity until a gravity
+   * colour cosmetic exists — see GRAVITY_PALETTES.
+   */
+  gravityColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = GRAVITY_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps a creation visual color through the owner's color cosmetic. Identity until a creation
+   * colour cosmetic exists — see CREATION_PALETTES.
+   */
+  creationColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = CREATION_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps an electric visual color through the owner's color cosmetic. Identity until an
+   * electricity colour cosmetic exists — see ELECTRICITY_PALETTES.
+   */
+  electricityColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = ELECTRICITY_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps a fate visual color through the owner's color cosmetic. Identity until a fate colour
+   * cosmetic exists — see FATE_PALETTES.
+   */
+  fateColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = FATE_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps an acid visual color through the owner's color cosmetic. Identity until an acid colour
+   * cosmetic exists — see ACID_PALETTES. (Acid's element id in code is still `slime`.)
+   */
+  acidColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = ACID_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps a sound visual color through the owner's color cosmetic. Identity until a sound colour
+   * cosmetic exists — see SOUND_PALETTES.
+   */
+  soundColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = SOUND_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps a light visual color through the owner's color cosmetic. Identity until a light colour
+   * cosmetic exists — see LIGHT_PALETTES.
+   */
+  lightColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = LIGHT_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps a magnet visual color through the owner's color cosmetic. Identity until a magnet
+   * colour cosmetic exists — see MAGNET_PALETTES.
+   */
+  magnetColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = MAGNET_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps a metal visual color through the owner's color cosmetic. Identity until a metal colour
+   * cosmetic exists — see METAL_PALETTES.
+   */
+  metalColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = METAL_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps a plasma visual color through the owner's color cosmetic. Identity until a plasma
+   * colour cosmetic exists — see PLASMA_PALETTES.
+   */
+  plasmaColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = PLASMA_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps a gunpowder visual color through the owner's color cosmetic. Identity until a gunpowder
+   * colour cosmetic exists — see GUNPOWDER_PALETTES.
+   */
+  gunpowderColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = GUNPOWDER_PALETTES[loadout['color'] ?? ''];
     return palette ? (palette[base] ?? base) : base;
   }
 

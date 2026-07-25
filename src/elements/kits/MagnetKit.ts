@@ -2,12 +2,16 @@ import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
 import { Projectile } from '../../combat/Projectile';
+import {
+  MAGNET, MagnetAura, MagnetAvatar, MagnetColorFn, MagnetFx, RodKind, rodColor,
+} from './MagnetVisuals';
 
 // ── Magnet type definitions ────────────────────────────────────────────────
+//
+// Every world object here is plain data painted into the kit's own Graphics layers — nothing
+// owns a sprite, so a rod can smear, an orb can dent and a compactor can wear hazard stripes.
 
 export interface MagnetRod {
-  sprite: Phaser.GameObjects.Arc | Phaser.GameObjects.Rectangle;
-  trail: Phaser.GameObjects.Arc[];
   x: number;
   y: number;
   vx: number;
@@ -20,10 +24,11 @@ export interface MagnetRod {
   destroyOnHit?: boolean;
   permDamageBonus: number;
   isSword?: boolean;
+  /** What it is made of — drives its colour and hatching. Defaults to plain steel. */
+  kind?: RodKind;
 }
 
 export interface MagnetNail {
-  sprite: Phaser.GameObjects.Arc;
   vx: number;
   vy: number;
   x: number;
@@ -31,24 +36,27 @@ export interface MagnetNail {
   inEnemy: boolean;
   implantedUntil: number;
   owner: 'player' | 'npc';
+  /** Gold for the E+ triple shot, plain iron otherwise. */
+  color: number;
 }
 
 export interface MagnetShieldOrb {
-  sprite: Phaser.GameObjects.Arc;
   angle: number;
   hp: number;
 }
 
 export interface MagnetAtomSmasher {
-  flashSprite: Phaser.GameObjects.Arc;
   x: number;
   y: number;
   fireAt: number;
-  walls: Array<{ sprite: Phaser.GameObjects.Rectangle; vx: number; vy: number; active: boolean; hitCooldown: number }>;
+  walls: Array<{ x: number; vx: number; vy: number; active: boolean; hitCooldown: number }>;
   exploded: boolean;
   crossed: boolean;
   owner: 'player' | 'npc';
 }
+
+/** Half-height of a compactor plate — its reach, and how tall it is drawn. */
+const COMPACTOR_WALL_HALF_H = 80;
 
 // ── Arena API interface ────────────────────────────────────────────────────
 
@@ -66,11 +74,11 @@ export interface MagnetArenaApi {
   hasUpgrade(slot: string): boolean;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
   setIsDodging(v: boolean): void;
-  spawnHitFlash(x: number, y: number, color: number): void;
-  spawnDamageNumber(x: number, y: number, amount: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
   buildNpcContext(x: number, y: number): CastContext;
+  /** `(owner, base) => displayed` — the owner's colour cosmetic, or the identity. */
+  magnetColor(owner: 'player' | 'npc', base: number): number;
   /** True only when the player is magnet AND Magnet Mastery is switched on. */
   get masteryActive(): boolean;
   /** True only when the online opponent is magnet AND has Magnet Mastery on. */
@@ -104,6 +112,37 @@ interface AncientRod {
 // ── MagnetKit ─────────────────────────────────────────────────────────────
 
 export class MagnetKit {
+  // ── Visuals ────────────────────────────────────────────────────────────
+  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  private readonly pcol: MagnetColorFn;
+  private readonly ncol: MagnetColorFn;
+  private readonly pfx: MagnetFx;
+  private readonly nfx: MagnetFx;
+  /** The polarised rig (north hand, south hand, horseshoe crown) for each magnet fighter. */
+  private playerAvatar: MagnetAvatar | null = null;
+  private npcAvatar: MagnetAvatar | null = null;
+  /** Field tells, per side where both can carry one. */
+  private playerMagnetizedAura: MagnetAura | null = null;
+  private npcMagnetizedAura: MagnetAura | null = null;
+  private playerProtectAura: MagnetAura | null = null;
+  private npcProtectAura: MagnetAura | null = null;
+  private playerMagLevAura: MagnetAura | null = null;
+  private npcMagLevAura: MagnetAura | null = null;
+  private playerReflectAura: MagnetAura | null = null;
+  private npcReflectAura: MagnetAura | null = null;
+  /**
+   * Two layers, because these objects are not all in the same place. Rods, buried finds and the
+   * hoverboard lie on the floor and pass *under* the fighters; nails, bearings and the compactor
+   * plates are in the air and must pass over.
+   */
+  private groundGfx: Phaser.GameObjects.Graphics | null = null;
+  private airGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Shared animation clock for every per-frame painter in this kit. */
+  private vizT = 0;
+  /** Last cursor position, cached in handleInput — `update` has no pointer to face. */
+  private lastAimX = 0;
+  private lastAimY = 0;
+
   private magnetRods: MagnetRod[] = [];
   private magnetPlayerNail: MagnetNail | null = null;
   private magnetNpcNail: MagnetNail | null = null;
@@ -115,8 +154,6 @@ export class MagnetKit {
   private magnetPlayerMagnetizedUntil = 0;
   private magnetNpcMagnetized = false;
   private magnetNpcMagnetizedUntil = 0;
-  private magnetNpcAura: Phaser.GameObjects.Arc | null = null;
-  private magnetPlayerAura: Phaser.GameObjects.Arc | null = null;
   private magnetPlayerSpeedBuffUntil = 0;
   private magnetNpcSpeedBuffUntil = 0;
   private magnetOrbOrbitAngle = 0;
@@ -143,19 +180,69 @@ export class MagnetKit {
   private ancientRodsInit = false;
   private magLevMounted = false;
   private magLevPreShield = 0;
-  private magLevBoard: Phaser.GameObjects.Rectangle | null = null;
   private magLevBashCd: Map<Fighter, number> = new Map();
   private magLevLastMountAt = -MAGLEV_COOLDOWN_MS;
   private npcMagLevMounted = false;
   private npcMagLevPreShield = 0;
-  private npcMagLevBoard: Phaser.GameObjects.Rectangle | null = null;
   private npcMagLevBashCd: Map<Fighter, number> = new Map();
 
-  constructor(private arena: MagnetArenaApi) {}
+  constructor(private arena: MagnetArenaApi) {
+    // Built here, not as field initialisers, so they see the injected arena.
+    this.pcol = (base) => arena.magnetColor('player', base);
+    this.ncol = (base) => arena.magnetColor('npc', base);
+    this.pfx = new MagnetFx(arena.scene, this.pcol);
+    this.nfx = new MagnetFx(arena.scene, this.ncol);
+  }
+
+  // ── Visual helpers ─────────────────────────────────────────────────────
+
+  /** Effect painter for a side. */
+  private fx(owner: 'player' | 'npc'): MagnetFx { return owner === 'player' ? this.pfx : this.nfx; }
+  /** Colour mapper for a side. */
+  private col(owner: 'player' | 'npc'): MagnetColorFn { return owner === 'player' ? this.pcol : this.ncol; }
+  /** The rig for a side, if that side is playing Magnet. */
+  private avatar(owner: 'player' | 'npc'): MagnetAvatar | null {
+    return owner === 'player' ? this.playerAvatar : this.npcAvatar;
+  }
+
+  /** The floor layer, under the fighters. Rebuilt lazily after a reset. */
+  private ground(): Phaser.GameObjects.Graphics {
+    if (!this.groundGfx || !this.groundGfx.active) {
+      this.groundGfx = this.arena.scene.add.graphics().setDepth(4);
+    }
+    return this.groundGfx;
+  }
+
+  /** The airborne layer, over the fighters. Rebuilt lazily after a reset. */
+  private air(): Phaser.GameObjects.Graphics {
+    if (!this.airGfx || !this.airGfx.active) {
+      this.airGfx = this.arena.scene.add.graphics().setDepth(9);
+    }
+    return this.airGfx;
+  }
 
   // ── Public accessors for cross-cutting arena state ─────────────────────
 
   pushRod(rod: MagnetRod): void { this.magnetRods.push(rod); }
+
+  /**
+   * The four rods a magnet match starts with, one in each corner. Lives here rather than in
+   * ArenaScene so the rod's art and the rod's data stay in one place.
+   */
+  spawnCornerRods(width: number, height: number, owner: 'player' | 'npc', isSword: boolean): void {
+    const pad = 80;
+    for (const c of [
+      { x: pad, y: pad }, { x: width - pad, y: pad },
+      { x: pad, y: height - pad }, { x: width - pad, y: height - pad },
+    ]) {
+      this.magnetRods.push({
+        x: c.x, y: c.y, vx: 0, vy: 0,
+        contactCooldownPlayer: 0, contactCooldownNpc: 0,
+        bouncing: false, bounceUntil: 0, owner, permDamageBonus: 0,
+        isSword, kind: 'steel',
+      });
+    }
+  }
 
   getNailPullUntil(): number { return this.magnetNailPullUntil; }
   getNailPullVX(): number { return this.magnetNailPullVX; }
@@ -163,37 +250,34 @@ export class MagnetKit {
 
   reset(): void {
     const scene = this.arena.scene;
-    for (const rod of this.magnetRods) {
-      rod.sprite.destroy();
-      for (const t of rod.trail) t.destroy();
-    }
+    // Visuals — every GameObject dies with the old scene run, so rebuild lazily in update().
+    if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
+    if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
+    for (const a of [
+      this.playerMagnetizedAura, this.npcMagnetizedAura, this.playerProtectAura, this.npcProtectAura,
+      this.playerMagLevAura, this.npcMagLevAura, this.playerReflectAura, this.npcReflectAura,
+    ]) a?.destroy();
+    this.playerMagnetizedAura = null; this.npcMagnetizedAura = null;
+    this.playerProtectAura = null; this.npcProtectAura = null;
+    this.playerMagLevAura = null; this.npcMagLevAura = null;
+    this.playerReflectAura = null; this.npcReflectAura = null;
+    if (this.groundGfx) { this.groundGfx.destroy(); this.groundGfx = null; }
+    if (this.airGfx) { this.airGfx.destroy(); this.airGfx = null; }
+    this.vizT = 0;
+
     this.magnetRods = [];
-    if (this.magnetPlayerNail) { this.magnetPlayerNail.sprite.destroy(); this.magnetPlayerNail = null; }
-    if (this.magnetNpcNail) { this.magnetNpcNail.sprite.destroy(); this.magnetNpcNail = null; }
-    for (const orb of this.magnetPlayerShieldOrbs) orb.sprite.destroy();
+    this.magnetPlayerNail = null;
+    this.magnetNpcNail = null;
     this.magnetPlayerShieldOrbs = [];
-    for (const orb of this.magnetNpcShieldOrbs) orb.sprite.destroy();
     this.magnetNpcShieldOrbs = [];
-    if (this.magnetPlayerAtomSmasher) {
-      this.magnetPlayerAtomSmasher.flashSprite.destroy();
-      for (const w of this.magnetPlayerAtomSmasher.walls) w.sprite.destroy();
-      this.magnetPlayerAtomSmasher = null;
-    }
-    if (this.magnetNpcAtomSmasher) {
-      this.magnetNpcAtomSmasher.flashSprite.destroy();
-      for (const w of this.magnetNpcAtomSmasher.walls) w.sprite.destroy();
-      this.magnetNpcAtomSmasher = null;
-    }
+    this.magnetPlayerAtomSmasher = null;
+    this.magnetNpcAtomSmasher = null;
     this.magnetPlayerMagnetized = false; this.magnetPlayerMagnetizedUntil = 0;
     this.magnetNpcMagnetized = false; this.magnetNpcMagnetizedUntil = 0;
-    if (this.magnetNpcAura) { this.magnetNpcAura.destroy(); this.magnetNpcAura = null; }
-    if (this.magnetPlayerAura) { this.magnetPlayerAura.destroy(); this.magnetPlayerAura = null; }
     this.magnetPlayerSpeedBuffUntil = 0; this.magnetNpcSpeedBuffUntil = 0;
     this.magnetOrbOrbitAngle = 0; this.magnetNpcOrbOrbitAngle = 0;
     this.magnetNailPullUntil = 0; this.magnetNailPullVX = 0; this.magnetNailPullVY = 0;
-    for (const n of this.magnetPlayerNails) n.sprite.destroy();
     this.magnetPlayerNails = [];
-    for (const n of this.magnetNpcNails) n.sprite.destroy();
     this.magnetNpcNails = [];
     this.magnetPlayerPullStacks = 0; this.magnetNpcPullStacks = 0;
     this.magnetCopperSpawnAccumPlayer = 0; this.magnetCopperSpawnAccumNpc = 0;
@@ -202,11 +286,9 @@ export class MagnetKit {
     this.ancientRods = [];
     this.ancientRodsInit = false;
     this.magLevMounted = false; this.magLevPreShield = 0;
-    if (this.magLevBoard) { this.magLevBoard.destroy(); this.magLevBoard = null; }
     this.magLevBashCd = new Map();
     this.magLevLastMountAt = -MAGLEV_COOLDOWN_MS;
     this.npcMagLevMounted = false; this.npcMagLevPreShield = 0;
-    if (this.npcMagLevBoard) { this.npcMagLevBoard.destroy(); this.npcMagLevBoard = null; }
     this.npcMagLevBashCd = new Map();
     void scene;
   }
@@ -219,6 +301,8 @@ export class MagnetKit {
   ): void {
     const { player, eKey, fKey, rKey, qKey, pointerWasDown, rightPointerWasDown } = this.arena;
     const playerCtx = this.arena.buildPlayerContext(mouseX, mouseY);
+    this.lastAimX = mouseX;
+    this.lastAimY = mouseY;
 
     // ── Mastery — Mag-Lev takes over whichever slot it's bound to ────────
     const magLevSlot = this.arena.masteryActive ? this.magLevSlot() : null;
@@ -246,10 +330,14 @@ export class MagnetKit {
           const { npc } = this.arena;
           for (const nail of implanted) {
             const dmg = 18;
+            const hx = npc.x, hy = npc.y;
             npc.takeDamage(dmg);
-            this.arena.spawnHitFlash(npc.x, npc.y, 0x888899);
-            nail.sprite.destroy();
+            // Torn back out: the nail rips free along the line back to your hand.
+            this.pfx.grasp(player.x, player.y, hx, hy, MAGNET.gold, 300);
+            this.pfx.sparks(hx, hy, 6, Math.atan2(player.y - hy, player.x - hx), 10, MAGNET.goldHi);
+            void nail;
           }
+          this.playerAvatar?.play('punch', Math.atan2(npc.y - player.y, npc.x - player.x));
           this.arena.recordMasteryStat('nailTears', implanted.length);
           this.magnetPlayerNails = this.magnetPlayerNails.filter(n => !n.inEnemy);
           this.arena.showFloatingText(this.arena.npc.x, this.arena.npc.y - 36, '🔩 RECALLED', '#ccddee');
@@ -262,11 +350,14 @@ export class MagnetKit {
           const nail = this.magnetPlayerNail;
           const dmg = 18;
           const { npc } = this.arena;
+          const hx = npc.x, hy = npc.y;
           npc.takeDamage(dmg);
-          this.arena.spawnHitFlash(npc.x, npc.y, 0x888899);
+          this.pfx.grasp(player.x, player.y, hx, hy, MAGNET.steel, 300);
+          this.pfx.sparks(hx, hy, 6, Math.atan2(player.y - hy, player.x - hx), 10, MAGNET.chrome);
+          this.playerAvatar?.play('punch', Math.atan2(hy - player.y, hx - player.x));
           this.arena.recordMasteryStat('nailTears', 1);
           this.arena.showFloatingText(npc.x, npc.y - 36, '🔩 RECALLED', '#ccddee');
-          nail.sprite.destroy();
+          void nail;
           this.magnetPlayerNail = null;
           player.reduceCooldown('nail-implant', 2000);
         } else if (!this.magnetPlayerNail) {
@@ -295,7 +386,8 @@ export class MagnetKit {
     void time;
   }
 
-  update(time: number, delta: number): void {
+  update(time: number, delta: number, isPlayerMagnet = false, isNpcMagnet = false): void {
+    this.vizT += delta / 1000;
     this.updateMagnetRods(time, delta);
     this.updateMagnetNails(time, delta);
     this.updateMagnetShieldOrbs(time);
@@ -305,6 +397,177 @@ export class MagnetKit {
     this.updateMagnetSpeedBuff(time);
     this.updateMasteryMetalDetector(time, delta);
     this.updateMagLev(time, delta);
+    this.paintWorld(time);
+    this.updateAvatars(delta, isPlayerMagnet, isNpcMagnet);
+  }
+
+  /**
+   * Every per-frame painter in one pass. Both layers are cleared and redrawn from live state, so
+   * a rod smears with its own velocity and a compactor plate wears its hazard stripes rather
+   * than any of it sitting there as a sprite.
+   */
+  private paintWorld(time: number): void {
+    const { player, npc } = this.arena;
+    // Nothing magnetic in play — don't build the layers at all in a non-magnet match.
+    const idle = this.magnetRods.length === 0 && this.ancientRods.length === 0
+      && !this.magLevMounted && !this.npcMagLevMounted
+      && !this.magnetPlayerAtomSmasher && !this.magnetNpcAtomSmasher
+      && this.magnetPlayerShieldOrbs.length === 0 && this.magnetNpcShieldOrbs.length === 0
+      && this.magnetPlayerNails.length === 0 && this.magnetNpcNails.length === 0
+      && !this.magnetPlayerNail && !this.magnetNpcNail;
+    if (idle && !this.groundGfx && !this.airGfx) return;
+
+    const g = this.ground();
+    g.clear();
+    // Buried ancient finds, under everything — they are meant to be nearly invisible.
+    for (const ar of this.ancientRods) {
+      if (!ar.exposed) MagnetFx.drawBuriedRod(g, this.pcol, ar.hx, ar.hy, this.vizT);
+    }
+    for (const rod of this.magnetRods) {
+      MagnetFx.drawRod(
+        g, this.col(rod.owner), rod.x, rod.y, rod.vx, rod.vy,
+        rod.kind ?? 'steel', rod.bouncing, rod.permDamageBonus, rod.isSword === true, this.vizT,
+      );
+    }
+    if (this.magLevMounted) {
+      MagnetFx.drawMagLevBoard(g, this.pcol, player.x, player.y + 18,
+        Phaser.Math.Clamp((player.body as Phaser.Physics.Arcade.Body).velocity.x / 900, -0.35, 0.35),
+        this.vizT);
+    }
+    if (this.npcMagLevMounted) {
+      MagnetFx.drawMagLevBoard(g, this.ncol, npc.x, npc.y + 18,
+        Phaser.Math.Clamp((npc.body as Phaser.Physics.Arcade.Body).velocity.x / 900, -0.35, 0.35),
+        this.vizT);
+    }
+
+    const a = this.air();
+    a.clear();
+    // Compactors: the drum while it winds up, then the two plates closing on it.
+    for (const sm of [this.magnetPlayerAtomSmasher, this.magnetNpcAtomSmasher]) {
+      if (!sm) continue;
+      const tint = this.col(sm.owner);
+      if (!sm.crossed && time < sm.fireAt) {
+        MagnetFx.drawCompactor(a, tint, sm.x, sm.y, 1 - (sm.fireAt - time) / 3000, this.vizT);
+      }
+      for (const w of sm.walls) {
+        if (!w.active) continue;
+        MagnetFx.drawCompactorWall(a, tint, w.x, sm.y, COMPACTOR_WALL_HALF_H, w.vx > 0 ? 1 : -1);
+      }
+    }
+    // Bearings.
+    for (const [orbs, caster, tint] of [
+      [this.magnetPlayerShieldOrbs, player, this.pcol],
+      [this.magnetNpcShieldOrbs, npc, this.ncol],
+    ] as [MagnetShieldOrb[], Fighter, MagnetColorFn][]) {
+      for (const orb of orbs) {
+        MagnetFx.drawShieldOrb(a, tint,
+          caster.x + Math.cos(orb.angle) * 52, caster.y + Math.sin(orb.angle) * 52,
+          Phaser.Math.Clamp(orb.hp / 5, 0, 1), this.vizT);
+      }
+    }
+    // Nails, each still tethered to whoever threw it.
+    for (const [nails, owner] of [
+      [this.magnetPlayerNails, 'player'], [this.magnetNpcNails, 'npc'],
+    ] as [MagnetNail[], 'player' | 'npc'][]) {
+      const caster = owner === 'player' ? player : npc;
+      for (const n of nails) {
+        MagnetFx.drawNail(a, this.col(owner), n.x, n.y, Math.atan2(n.vy, n.vx), n.color,
+          n.inEnemy, caster.x, caster.y, this.vizT);
+      }
+    }
+    for (const [n, owner] of [
+      [this.magnetPlayerNail, 'player'], [this.magnetNpcNail, 'npc'],
+    ] as [MagnetNail | null, 'player' | 'npc'][]) {
+      if (!n) continue;
+      const caster = owner === 'player' ? player : npc;
+      MagnetFx.drawNail(a, this.col(owner), n.x, n.y, Math.atan2(n.vy, n.vx), n.color,
+        n.inEnemy, caster.x, caster.y, this.vizT);
+    }
+  }
+
+  /**
+   * The character rigs and every field aura. Built lazily so a scene restart (which destroys
+   * them all) simply rebuilds on the next frame, and torn down the moment a side stops being
+   * Magnet — except the auras, which follow the *victim* and so can outlive either rig.
+   */
+  private updateAvatars(delta: number, isPlayerMagnet: boolean, isNpcMagnet: boolean): void {
+    const { scene, player, npc } = this.arena;
+
+    if (isPlayerMagnet && player.active) {
+      if (!this.playerAvatar) this.playerAvatar = new MagnetAvatar(scene, this.pcol, 'player');
+      this.playerAvatar.setFacing(Math.atan2(this.lastAimY - player.y, this.lastAimX - player.x));
+      this.playerAvatar.setIntensity(this.magLevMounted ? 1.3 : this.magnetPlayerShieldOrbs.length > 0 ? 1.15 : 1);
+      this.playerAvatar.setMastered(this.arena.masteryActive);
+      // Single owner of setHold: riding the board throws the arms out for balance, and a live
+      // orb shell has both hands working to keep it turning.
+      this.playerAvatar.setHold(
+        this.magLevMounted ? 'ride' : this.magnetPlayerShieldOrbs.length > 0 ? 'brace' : null);
+      this.playerAvatar.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
+    } else if (this.playerAvatar) {
+      this.playerAvatar.destroy();
+      this.playerAvatar = null;
+    }
+
+    if (isNpcMagnet && npc.active) {
+      if (!this.npcAvatar) this.npcAvatar = new MagnetAvatar(scene, this.ncol, 'npc');
+      this.npcAvatar.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
+      this.npcAvatar.setIntensity(this.npcMagLevMounted ? 1.3 : 1);
+      this.npcAvatar.setMastered(this.arena.npcMasteryActive);
+      this.npcAvatar.setHold(this.npcMagLevMounted ? 'ride' : null);
+      this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
+    } else if (this.npcAvatar) {
+      this.npcAvatar.destroy();
+      this.npcAvatar = null;
+    }
+
+    const now = scene.time.now;
+    // Magnetized rides on the *victim*, so the player's aura sits on the npc and vice versa.
+    this.syncAura('npcMagnetized', this.magnetNpcMagnetized, npc, delta,
+      Phaser.Math.Clamp((this.magnetNpcMagnetizedUntil - now) / 2000, 0, 1));
+    this.syncAura('playerMagnetized', this.magnetPlayerMagnetized, player, delta,
+      Phaser.Math.Clamp((this.magnetPlayerMagnetizedUntil - now) / 2000, 0, 1));
+    this.syncAura('playerProtect', this.magnetPlayerShieldOrbs.length > 0, player, delta, 1);
+    this.syncAura('npcProtect', this.magnetNpcShieldOrbs.length > 0, npc, delta, 1);
+    this.syncAura('playerMagLev', this.magLevMounted, player, delta, 1);
+    this.syncAura('npcMagLev', this.npcMagLevMounted, npc, delta, 1);
+    this.syncAura('playerReflect', now < this.magnetReflectUntilPlayer, player, delta,
+      Phaser.Math.Clamp((this.magnetReflectUntilPlayer - now) / 1500, 0, 1));
+    this.syncAura('npcReflect', now < this.magnetReflectUntilNpc, npc, delta,
+      Phaser.Math.Clamp((this.magnetReflectUntilNpc - now) / 1500, 0, 1));
+  }
+
+  /** Build/tear down one field aura from a single "is it up?" flag. */
+  private syncAura(
+    key: 'playerMagnetized' | 'npcMagnetized' | 'playerProtect' | 'npcProtect'
+      | 'playerMagLev' | 'npcMagLev' | 'playerReflect' | 'npcReflect',
+    on: boolean, f: Fighter, delta: number, intensity: number,
+  ): void {
+    const spec = {
+      // Magnetize rides on the *victim*: the field around the player was cast by the npc, so
+      // it wears the npc's colours, and vice versa.
+      // 180 is the real rod-attraction range, so the ring is a gameplay tell, not decoration.
+      playerMagnetized: ['magnetized', 180, 3, this.ncol] as const,
+      npcMagnetized: ['magnetized', 180, 3, this.pcol] as const,
+      playerProtect: ['protect', 52, 3, this.pcol] as const,
+      npcProtect: ['protect', 52, 3, this.ncol] as const,
+      playerMagLev: ['maglev', 26, 3, this.pcol] as const,
+      npcMagLev: ['maglev', 26, 3, this.ncol] as const,
+      playerReflect: ['reflect', 90, 5, this.pcol] as const,
+      npcReflect: ['reflect', 90, 5, this.ncol] as const,
+    }[key];
+
+    let aura = this[`${key}Aura` as const] as MagnetAura | null;
+    if (!on) {
+      if (aura) { aura.destroy(); this[`${key}Aura` as const] = null; }
+      return;
+    }
+    if (!aura || !f.active) {
+      if (!f.active) return;
+      aura = new MagnetAura(this.arena.scene, spec[3], spec[0], spec[1], spec[2]);
+      this[`${key}Aura` as const] = aura;
+    }
+    aura.setIntensity(intensity);
+    aura.update(delta, f.x, f.y, f.forceInvisible ? 0 : f.alpha);
   }
 
   // ── Public do* methods — called from ArenaScene context builders ───────
@@ -317,11 +580,11 @@ export class MagnetKit {
     // Mastery — Metal Detector: a pulse landing on a hidden ancient rod exposes it.
     if (owner === 'player' && this.arena.masteryActive) this.tryExposeAncientRod(x, y);
 
-    const ring = scene.add.circle(x, y, 8, 0xcc2244, 0.7).setDepth(6).setStrokeStyle(2, 0xff6688);
-    scene.tweens.add({
-      targets: ring, scaleX: 10, scaleY: 10, alpha: 0,
-      duration: 350, onComplete: () => ring.destroy(),
-    });
+    // The pulse itself: field lines springing out of the cursor and filings kicked up with them.
+    const fx = this.fx(owner);
+    fx.pulse(x, y, 80, MAGNET.rose, 380, 7, 12);
+    fx.flash(x, y, 16, 8, MAGNET.rose);
+    this.avatar(owner)?.play('punch', Math.atan2(y - caster.y, x - caster.x));
 
     const pullRange = 380;
     for (const rod of this.magnetRods) {
@@ -380,7 +643,7 @@ export class MagnetKit {
   }
 
   doMagnetNailAction(tx: number, ty: number, owner: 'player' | 'npc'): void {
-    const { player, npc, scene } = this.arena;
+    const { player, npc } = this.arena;
     const caster = owner === 'player' ? player : npc;
     const speed = 520;
 
@@ -389,10 +652,8 @@ export class MagnetKit {
       const baseAngle = Math.atan2(ty - caster.y, tx - caster.x);
       const spreadAngles = [-6, 0, 6].map(d => baseAngle + d * (Math.PI / 180));
       for (const ang of spreadAngles) {
-        const spr = scene.add.circle(caster.x, caster.y, 5, 0xffd060, 0.95)
-          .setStrokeStyle(1, 0xffee88).setDepth(6);
         const nail: MagnetNail = {
-          sprite: spr,
+          color: MAGNET.gold,
           vx: Math.cos(ang) * speed,
           vy: Math.sin(ang) * speed,
           x: caster.x,
@@ -403,16 +664,18 @@ export class MagnetKit {
         };
         this.magnetPlayerNails.push(nail);
       }
+      this.pfx.sparks(caster.x, caster.y, 6, baseAngle, 10, MAGNET.goldHi);
+      this.avatar(owner)?.play('punch', baseAngle);
     } else {
       const existing = owner === 'player' ? this.magnetPlayerNail : this.magnetNpcNail;
       if (existing) return;
       const dx = tx - caster.x;
       const dy = ty - caster.y;
       const len = Math.sqrt(dx * dx + dy * dy) || 1;
-      const spr = scene.add.circle(caster.x, caster.y, 5, 0x888899, 0.95)
-        .setStrokeStyle(1, 0xccddee).setDepth(6);
+      this.fx(owner).sparks(caster.x, caster.y, 4, Math.atan2(dy, dx), 10, MAGNET.steel);
+      this.avatar(owner)?.play('punch', Math.atan2(dy, dx));
       const nail: MagnetNail = {
-        sprite: spr,
+        color: MAGNET.iron,
         vx: (dx / len) * speed,
         vy: (dy / len) * speed,
         x: caster.x,
@@ -439,27 +702,31 @@ export class MagnetKit {
         this.magnetPlayerMagnetized = true;
         this.magnetPlayerMagnetizedUntil = scene.time.now + duration;
       }
+      // Grabbed: field lines reach out and clamp onto whoever was under the cursor.
+      const caster = owner === 'player' ? player : npc;
+      const fx = this.fx(owner);
+      fx.grasp(caster.x, caster.y, target.x, target.y, MAGNET.rose);
+      fx.pulse(target.x, target.y, 90, MAGNET.red, 420, 6, 10, true);
+      this.avatar(owner)?.play('sweep', Math.atan2(target.y - caster.y, target.x - caster.x));
       this.arena.showFloatingText(target.x, target.y - 28, '🧲 MAGNETIZED', '#ff4488');
     }
   }
 
   doMagnetProtect(owner: 'player' | 'npc'): void {
-    const { player, npc, scene } = this.arena;
+    const { player, npc } = this.arena;
     const caster = owner === 'player' ? player : npc;
     const orbArray = owner === 'player' ? this.magnetPlayerShieldOrbs : this.magnetNpcShieldOrbs;
-    for (const orb of orbArray) orb.sprite.destroy();
     orbArray.length = 0;
 
     const count = 10;
     for (let i = 0; i < count; i++) {
-      const angle = (i / count) * Math.PI * 2;
-      const r = 52;
-      const ox = caster.x + Math.cos(angle) * r;
-      const oy = caster.y + Math.sin(angle) * r;
-      const spr = scene.add.circle(ox, oy, 7, 0x4488cc, 0.9)
-        .setStrokeStyle(1, 0x88ccff).setDepth(7);
-      orbArray.push({ sprite: spr, angle, hp: 5 });
+      orbArray.push({ angle: (i / count) * Math.PI * 2, hp: 5 });
     }
+    // The bearings snapping into orbit around you.
+    const fx = this.fx(owner);
+    fx.pulse(caster.x, caster.y, 52, MAGNET.azure, 380, 6, 10, true);
+    fx.sparks(caster.x, caster.y, 8, 0, 10, MAGNET.sky);
+    this.avatar(owner)?.play('flex');
     this.arena.showFloatingText(caster.x, caster.y - 36, '🛡 PROTECT', '#4488cc');
   }
 
@@ -477,20 +744,19 @@ export class MagnetKit {
     let removed = 0;
     const single = owner === 'player' ? this.magnetPlayerNail : this.magnetNpcNail;
     if (single && single.inEnemy) {
-      single.sprite.destroy();
       if (owner === 'player') this.magnetPlayerNail = null;
       else this.magnetNpcNail = null;
       removed++;
     }
     if (owner === 'player') {
       for (const n of this.magnetPlayerNails) {
-        if (n.inEnemy) { n.sprite.destroy(); removed++; }
+        if (n.inEnemy) removed++;
       }
       this.magnetPlayerNails = this.magnetPlayerNails.filter(n => !n.inEnemy);
       if (removed > 0) this.magnetPlayerPullStacks = 0;
     } else {
       for (const n of this.magnetNpcNails) {
-        if (n.inEnemy) { n.sprite.destroy(); removed++; }
+        if (n.inEnemy) removed++;
       }
       this.magnetNpcNails = this.magnetNpcNails.filter(n => !n.inEnemy);
     }
@@ -499,35 +765,26 @@ export class MagnetKit {
 
   doMagnetAtomSmasher(x: number, y: number, owner: 'player' | 'npc'): void {
     const { scene } = this.arena;
-    const existing = owner === 'player' ? this.magnetPlayerAtomSmasher : this.magnetNpcAtomSmasher;
-    if (existing) {
-      existing.flashSprite.destroy();
-      for (const w of existing.walls) w.sprite.destroy();
-    }
-
-    // A small grey trash-compactor core with heavy dark plating.
-    const flash = scene.add.circle(x, y, 22, 0x888899, 0.45)
-      .setStrokeStyle(4, 0x555566).setDepth(5);
-
     const W = scene.scale.width;
-    const wallH = 160;
-    const wallW = 20;
-    const leftWall = scene.add.rectangle(-20, y, wallW, wallH, 0x777788)
-      .setStrokeStyle(2, 0xaabbcc).setDepth(7);
-    const rightWall = scene.add.rectangle(W + 20, y, wallW, wallH, 0x777788)
-      .setStrokeStyle(2, 0xaabbcc).setDepth(7);
-
     const smasher: MagnetAtomSmasher = {
-      flashSprite: flash, x, y,
+      x, y,
       fireAt: scene.time.now + 3000,
       walls: [
-        { sprite: leftWall,  vx: 900,  vy: 0, active: false, hitCooldown: 0 },
-        { sprite: rightWall, vx: -900, vy: 0, active: false, hitCooldown: 0 },
+        { x: -20,    vx: 900,  vy: 0, active: false, hitCooldown: 0 },
+        { x: W + 20, vx: -900, vy: 0, active: false, hitCooldown: 0 },
       ],
       exploded: false,
       crossed: false,
       owner,
     };
+
+    // Dropped, not thrown: the drum lands and immediately starts hauling everything in.
+    const fx = this.fx(owner);
+    fx.flash(x, y, 30, 9, MAGNET.plateHi);
+    fx.pulse(x, y, 150, MAGNET.rose, 520, 6, 12, true);
+    fx.filingsMark(x, y, 90, 3);
+    this.avatar(owner)?.play('slam', Math.atan2(y - (owner === 'player' ? this.arena.player.y : this.arena.npc.y), x - (owner === 'player' ? this.arena.player.x : this.arena.npc.x)));
+    scene.cameras.main.shake(180, 0.004);
 
     if (owner === 'player') this.magnetPlayerAtomSmasher = smasher;
     else this.magnetNpcAtomSmasher = smasher;
@@ -549,12 +806,9 @@ export class MagnetKit {
     for (const rod of this.magnetRods) {
       const wasMoving = Math.abs(rod.vx) > movingThreshold || Math.abs(rod.vy) > movingThreshold;
 
-      if (rod.bouncing) {
-        if (time > rod.bounceUntil) {
-          rod.bouncing = false;
-          rod.sprite.setFillStyle(rod.permDamageBonus > 0 ? 0xff9933 : 0x99aacc);
-          rod.vx *= 0.3; rod.vy *= 0.3;
-        }
+      if (rod.bouncing && time > rod.bounceUntil) {
+        rod.bouncing = false;
+        rod.vx *= 0.3; rod.vy *= 0.3;
       }
 
       rod.x += rod.vx * dt;
@@ -572,29 +826,8 @@ export class MagnetKit {
       if (Math.abs(rod.vx) < 2) rod.vx = 0;
       if (Math.abs(rod.vy) < 2) rod.vy = 0;
 
-      rod.sprite.setPosition(rod.x, rod.y);
-      // Q+: blue tint during bounce window; orange perm bonus; default grey
-      if (!rod.isSword) {
-        if (rod.bouncing && rod.permDamageBonus > 0) rod.sprite.setFillStyle(0x3399ff);
-        else if (rod.bouncing) rod.sprite.setFillStyle(0xff4400);
-        else if (rod.permDamageBonus > 0) rod.sprite.setFillStyle(0xff9933);
-      }
-      // Blade perk: rotate sword to face direction of travel
-      if (rod.isSword && rod.sprite instanceof Phaser.GameObjects.Rectangle) {
-        rod.sprite.rotation = Math.atan2(rod.vy, rod.vx);
-      }
-
+      // Colour, heading and smear all come off this data in paintWorld — see rodColor().
       const isMoving = Math.abs(rod.vx) > movingThreshold || Math.abs(rod.vy) > movingThreshold;
-
-      if (isMoving) {
-        const trail = scene.add.circle(rod.x, rod.y, 4, rod.bouncing ? 0xff6600 : 0x668899, 0.5).setDepth(3);
-        rod.trail.push(trail);
-        scene.tweens.add({ targets: trail, alpha: 0, scaleX: 0.3, scaleY: 0.3, duration: 300, onComplete: () => {
-          trail.destroy();
-          const idx = rod.trail.indexOf(trail);
-          if (idx !== -1) rod.trail.splice(idx, 1);
-        }});
-      }
 
       if (isMoving || wasMoving) {
         const baseHit = rod.isSword ? 16 : 8;
@@ -604,25 +837,26 @@ export class MagnetKit {
         if (rod.owner === 'player') {
           const npcDist = Phaser.Math.Distance.Between(rod.x, rod.y, npc.x, npc.y);
           if (npcDist <= 28 && time > rod.contactCooldownNpc) {
+            const hx = npc.x, hy = npc.y;
             npc.takeDamage(dmg);
-            this.arena.spawnHitFlash(npc.x, npc.y, 0x99aacc);
+            // Metal on metal: sparks off the point of contact, thrown along the rod's travel.
+            this.pfx.sparks(hx, hy, 5 + (rod.bouncing ? 4 : 0), Math.atan2(rod.vy, rod.vx) + Math.PI, 10);
             this.arena.recordMasteryStat('rodSmashes', 1);
             rod.contactCooldownNpc = time + 500;
             if (rod.destroyOnHit) {
-              rod.sprite.destroy();
-              for (const t of rod.trail) t.destroy();
+              this.pfx.shrapnel(rod.x, rod.y, 4, { speed: 190, size: 9, color: rodColor(rod.kind ?? 'steel', rod.bouncing, rod.permDamageBonus) });
               this.magnetRods.splice(this.magnetRods.indexOf(rod), 1);
             }
           }
         } else {
           const playerDist = Phaser.Math.Distance.Between(rod.x, rod.y, player.x, player.y);
           if (playerDist <= 28 && time > rod.contactCooldownPlayer) {
+            const hx = player.x, hy = player.y;
             player.takeDamage(dmg);
-            this.arena.spawnHitFlash(player.x, player.y, 0x99aacc);
+            this.nfx.sparks(hx, hy, 5 + (rod.bouncing ? 4 : 0), Math.atan2(rod.vy, rod.vx) + Math.PI, 10);
             rod.contactCooldownPlayer = time + 500;
             if (rod.destroyOnHit) {
-              rod.sprite.destroy();
-              for (const t of rod.trail) t.destroy();
+              this.nfx.shrapnel(rod.x, rod.y, 4, { speed: 190, size: 9, color: rodColor(rod.kind ?? 'steel', rod.bouncing, rod.permDamageBonus) });
               this.magnetRods.splice(this.magnetRods.indexOf(rod), 1);
             }
           }
@@ -687,11 +921,7 @@ export class MagnetKit {
       const target = npc;
       if (nail.inEnemy) {
         nail.x = target.x; nail.y = target.y;
-        nail.sprite.setPosition(nail.x, nail.y);
-        if (time > nail.implantedUntil) {
-          nail.sprite.destroy();
-          this.magnetPlayerNails.splice(i, 1);
-        }
+        if (time > nail.implantedUntil) this.magnetPlayerNails.splice(i, 1);
         const tDist = Phaser.Math.Distance.Between(target.x, target.y, player.x, player.y);
         if (tDist > 80 && !target.knockbackImmune) {
           const tAng = Math.atan2(player.y - target.y, player.x - target.x);
@@ -703,9 +933,8 @@ export class MagnetKit {
         }
       } else {
         nail.x += nail.vx * dt; nail.y += nail.vy * dt;
-        nail.sprite.setPosition(nail.x, nail.y);
         if (nail.x < 0 || nail.x > W || nail.y < 0 || nail.y > H) {
-          nail.sprite.destroy(); this.magnetPlayerNails.splice(i, 1); continue;
+          this.magnetPlayerNails.splice(i, 1); continue;
         }
         const isMag = this.magnetNpcMagnetized;
         if (isMag) {
@@ -720,8 +949,11 @@ export class MagnetKit {
         }
         const hitDist = Phaser.Math.Distance.Between(nail.x, nail.y, target.x, target.y);
         if (hitDist <= 24) {
+          const hx = target.x, hy = target.y;
           target.takeDamage(18);
-          this.arena.spawnHitFlash(target.x, target.y, 0xffd060);
+          // Driven home: sparks at the entry point and the nail bites in.
+          this.pfx.sparks(hx, hy, 6, Math.atan2(nail.vy, nail.vx) + Math.PI, 10, MAGNET.goldHi);
+          this.pfx.flash(hx, hy, 12, 9, MAGNET.gold);
           this.arena.showFloatingText(target.x, target.y - 36, '🔩 NAILED', '#ffd060');
           nail.inEnemy = true;
           nail.implantedUntil = time + 10000;
@@ -738,9 +970,7 @@ export class MagnetKit {
       if (nail.inEnemy) {
         nail.x = target.x;
         nail.y = target.y;
-        nail.sprite.setPosition(nail.x, nail.y);
         if (time > nail.implantedUntil) {
-          nail.sprite.destroy();
           if (owner === 'player') this.magnetPlayerNail = null;
           else this.magnetNpcNail = null;
         }
@@ -758,10 +988,8 @@ export class MagnetKit {
       } else {
         nail.x += nail.vx * dt;
         nail.y += nail.vy * dt;
-        nail.sprite.setPosition(nail.x, nail.y);
 
         if (nail.x < 0 || nail.x > W || nail.y < 0 || nail.y > H) {
-          nail.sprite.destroy();
           if (owner === 'player') this.magnetPlayerNail = null;
           else this.magnetNpcNail = null;
           continue;
@@ -784,8 +1012,10 @@ export class MagnetKit {
         const hitDist = Phaser.Math.Distance.Between(nail.x, nail.y, target.x, target.y);
         if (hitDist <= 24) {
           const dmg = 18;
+          const hx = target.x, hy = target.y;
           target.takeDamage(dmg);
-          this.arena.spawnHitFlash(target.x, target.y, 0x888899);
+          this.fx(owner).sparks(hx, hy, 6, Math.atan2(nail.vy, nail.vx) + Math.PI, 10, MAGNET.steel);
+          this.fx(owner).flash(hx, hy, 12, 9, MAGNET.iron);
           this.arena.showFloatingText(target.x, target.y - 36, '🔩 NAILED', '#ccddee');
           nail.inEnemy = true;
           nail.implantedUntil = time + 10000;
@@ -807,7 +1037,6 @@ export class MagnetKit {
         orb.angle = this.magnetOrbOrbitAngle + (i / total) * Math.PI * 2;
         const ox = player.x + Math.cos(orb.angle) * r;
         const oy = player.y + Math.sin(orb.angle) * r;
-        orb.sprite.setPosition(ox, oy);
 
         if (projectiles) {
           let orbDestroyed = false;
@@ -819,10 +1048,11 @@ export class MagnetKit {
             if (d <= 12) {
               orb.hp -= proj.damage;
               proj.setActive(false).setVisible(false);
-              this.arena.spawnHitFlash(ox, oy, 0x4488cc);
+              // A bearing eating a shot: sparks off it, and shrapnel if it finally breaks.
+              this.pfx.sparks(ox, oy, 4, Math.atan2(oy - player.y, ox - player.x), 10, MAGNET.sky);
               this.arena.recordMasteryStat('protectBlocks', 1);
               if (orb.hp <= 0) {
-                orb.sprite.destroy();
+                this.pfx.shrapnel(ox, oy, 4, { speed: 150, size: 7, color: MAGNET.azure, depth: 10 });
                 this.magnetPlayerShieldOrbs.splice(i, 1);
                 orbDestroyed = true;
               }
@@ -841,7 +1071,6 @@ export class MagnetKit {
         orb.angle = this.magnetNpcOrbOrbitAngle + (i / total) * Math.PI * 2;
         const ox = npc.x + Math.cos(orb.angle) * r;
         const oy = npc.y + Math.sin(orb.angle) * r;
-        orb.sprite.setPosition(ox, oy);
 
         if (projectiles) {
           let orbDestroyed = false;
@@ -853,9 +1082,9 @@ export class MagnetKit {
             if (d <= 12) {
               orb.hp -= proj.damage;
               proj.setActive(false).setVisible(false);
-              this.arena.spawnHitFlash(ox, oy, 0x4488cc);
+              this.nfx.sparks(ox, oy, 4, Math.atan2(oy - npc.y, ox - npc.x), 10, MAGNET.sky);
               if (orb.hp <= 0) {
-                orb.sprite.destroy();
+                this.nfx.shrapnel(ox, oy, 4, { speed: 150, size: 7, color: MAGNET.azure, depth: 10 });
                 this.magnetNpcShieldOrbs.splice(i, 1);
                 orbDestroyed = true;
               }
@@ -909,9 +1138,6 @@ export class MagnetKit {
 
       // ── Charging phase ──────────────────────────────────────────────
       if (time < smasher.fireAt) {
-        const pulse = 0.3 + 0.15 * Math.sin(time * 0.01);
-        if (smasher.flashSprite.active) smasher.flashSprite.setAlpha(pulse);
-
         // Strongly suck the enemy in — even harder for every nail implanted in them.
         // (This runs after the NPC AI each frame, so setting velocity wins.)
         const dragDist = Phaser.Math.Distance.Between(smasher.x, smasher.y, target.x, target.y);
@@ -942,7 +1168,7 @@ export class MagnetKit {
       for (const wall of smasher.walls) {
         if (!wall.active && !smasher.crossed) {
           wall.active = true;
-          wall.sprite.setPosition(wall.vx > 0 ? -20 : W + 20, smasher.y);
+          wall.x = wall.vx > 0 ? -20 : W + 20;
         }
       }
 
@@ -950,9 +1176,8 @@ export class MagnetKit {
       let anyActive = false;
       for (const wall of smasher.walls) {
         if (!wall.active) continue;
-        wall.sprite.x += wall.vx * dt;
-        if (wall.sprite.x < -80 || wall.sprite.x > W + 80) {
-          wall.sprite.destroy();
+        wall.x += wall.vx * dt;
+        if (wall.x < -80 || wall.x > W + 80) {
           wall.active = false;
           continue;
         }
@@ -962,15 +1187,15 @@ export class MagnetKit {
       // Contact damage with per-wall 500ms cooldown; after crossing, walls despawn on hit
       for (const wall of smasher.walls) {
         if (!wall.active) continue;
-        const wallDist = Phaser.Math.Distance.Between(wall.sprite.x, wall.sprite.y, target.x, target.y);
+        const wallDist = Phaser.Math.Distance.Between(wall.x, smasher.y, target.x, target.y);
         if (wallDist <= 50 && time > wall.hitCooldown) {
+          const hx = target.x, hy = target.y;
           target.takeDamage(15);
-          this.arena.spawnHitFlash(target.x, target.y, 0x884433);
+          // Rammed by a plate: sparks off the face and shrapnel torn loose.
+          this.fx(owner).sparks(hx, hy, 7, wall.vx > 0 ? 0 : Math.PI, 10, MAGNET.amber);
+          this.fx(owner).shrapnel(hx, hy, 3, { speed: 200, angle: wall.vx > 0 ? 0 : Math.PI, spread: 0.9, color: MAGNET.rust, depth: 10 });
           wall.hitCooldown = time + 500;
-          if (smasher.crossed) {
-            wall.sprite.destroy();
-            wall.active = false;
-          }
+          if (smasher.crossed) wall.active = false;
         }
       }
 
@@ -978,9 +1203,8 @@ export class MagnetKit {
       if (!smasher.crossed) {
         const lw = smasher.walls[0];
         const rw = smasher.walls[1];
-        if ((lw.active && lw.sprite.x >= smasher.x) || (rw.active && rw.sprite.x <= smasher.x)) {
+        if ((lw.active && lw.x >= smasher.x) || (rw.active && rw.x <= smasher.x)) {
           smasher.crossed = true;
-          if (smasher.flashSprite.active) smasher.flashSprite.destroy();
 
           // Mastery — Metal Detector: the player's atom smash activates any exposed
           // ancient rod its walls swept over, turning it into a laser turret.
@@ -990,8 +1214,9 @@ export class MagnetKit {
           const aeoDist = Phaser.Math.Distance.Between(smasher.x, smasher.y, target.x, target.y);
           if (aeoDist <= aeoRadius) {
             // Anyone caught in the crusher takes 35.
+            const hx = target.x, hy = target.y;
             target.takeDamage(35);
-            this.arena.spawnHitFlash(target.x, target.y, 0xff2244);
+            this.fx(owner).boom(hx, hy, 90, { color: MAGNET.red, shrapnel: 10, mark: false });
             if (owner === 'player') this.arena.recordMasteryStat('atomSmashes', 1);
             // Implanted enemies get their nails ripped out for +30 damage.
             const ripped = this.removeImplantedNails(owner);
@@ -1000,8 +1225,16 @@ export class MagnetKit {
               this.arena.showFloatingText(target.x, target.y - 54, '🔩 IMPLANT CRUSHED +30', '#ffd060');
             }
           }
-          const boom = scene.add.circle(smasher.x, smasher.y, 20, 0xff4400, 0.9).setDepth(8);
-          scene.tweens.add({ targets: boom, scaleX: 8, scaleY: 8, alpha: 0, duration: 500, onComplete: () => boom.destroy() });
+          // The plates meeting: everything caught between them comes apart at once. Q+ Forged
+          // Rods is re-tempering every rod in the blast, so the crush is visibly a bigger event
+          // — wider, longer, more metal thrown, and a harder shake — not merely a stronger one.
+          const forged = owner === 'player' && this.arena.hasUpgrade('q');
+          this.fx(owner).boom(smasher.x, smasher.y, forged ? 210 : 150, {
+            color: forged ? MAGNET.blue : MAGNET.hot,
+            shrapnel: forged ? 26 : 16,
+            duration: forged ? 620 : 480,
+          });
+          scene.cameras.main.shake(forged ? 460 : 320, forged ? 0.013 : 0.009);
           this.arena.showFloatingText(smasher.x, smasher.y - 40, '💥 COMPACTED', '#aabbcc');
 
           for (const rod of this.magnetRods) {
@@ -1016,10 +1249,7 @@ export class MagnetKit {
               rod.vx = Math.cos(bounceAng) * speed;
               rod.vy = Math.sin(bounceAng) * speed;
               // Q+: Forged Rods — permanent bonus + blue-glow bounce window.
-              if (this.arena.hasUpgrade('q')) {
-                rod.permDamageBonus += 2;
-                if (!rod.isSword) rod.sprite.setFillStyle(0x3399ff);
-              }
+              if (this.arena.hasUpgrade('q')) rod.permDamageBonus += 2;
             }
           }
         }
@@ -1027,7 +1257,6 @@ export class MagnetKit {
 
       // Clean up smasher once all walls are gone
       if (!anyActive) {
-        if (smasher.flashSprite.active) smasher.flashSprite.destroy();
         if (isPlayer) this.magnetPlayerAtomSmasher = null;
         else this.magnetNpcAtomSmasher = null;
       }
@@ -1035,44 +1264,15 @@ export class MagnetKit {
   }
 
   private updateMagnetMagnetized(time: number, delta: number): void {
-    const { player, npc, scene } = this.arena;
+    const { player, npc } = this.arena;
 
-    if (this.magnetNpcMagnetized) {
-      if (time > this.magnetNpcMagnetizedUntil) {
-        this.magnetNpcMagnetized = false;
-        if (this.magnetNpcAura) { this.magnetNpcAura.destroy(); this.magnetNpcAura = null; }
-      } else {
-        if (!this.magnetNpcAura) {
-          this.magnetNpcAura = scene.add.circle(npc.x, npc.y, 180, 0xcc2244, 0)
-            .setStrokeStyle(2, 0xff4488, 0.6).setDepth(2);
-        }
-        this.magnetNpcAura.setPosition(npc.x, npc.y);
-        const remaining = this.magnetNpcMagnetizedUntil - time;
-        const baseAlpha = remaining < 2000 ? (remaining / 2000) * 0.6 : 0.6;
-        const pulse = baseAlpha * (0.6 + 0.4 * Math.sin(time * 0.008));
-        this.magnetNpcAura.setStrokeStyle(2, 0xff4488, pulse);
-      }
-    } else if (this.magnetNpcAura) {
-      this.magnetNpcAura.destroy(); this.magnetNpcAura = null;
+    // The field tell itself is a MagnetAura, built and torn down in updateAvatars; all that
+    // is left here is expiring the state it reads.
+    if (this.magnetNpcMagnetized && time > this.magnetNpcMagnetizedUntil) {
+      this.magnetNpcMagnetized = false;
     }
-
-    if (this.magnetPlayerMagnetized) {
-      if (time > this.magnetPlayerMagnetizedUntil) {
-        this.magnetPlayerMagnetized = false;
-        if (this.magnetPlayerAura) { this.magnetPlayerAura.destroy(); this.magnetPlayerAura = null; }
-      } else {
-        if (!this.magnetPlayerAura) {
-          this.magnetPlayerAura = scene.add.circle(player.x, player.y, 180, 0xcc2244, 0)
-            .setStrokeStyle(2, 0xff4488, 0.6).setDepth(2);
-        }
-        this.magnetPlayerAura.setPosition(player.x, player.y);
-        const remaining = this.magnetPlayerMagnetizedUntil - time;
-        const baseAlpha = remaining < 2000 ? (remaining / 2000) * 0.6 : 0.6;
-        const pulse = baseAlpha * (0.6 + 0.4 * Math.sin(time * 0.008));
-        this.magnetPlayerAura.setStrokeStyle(2, 0xff4488, pulse);
-      }
-    } else if (this.magnetPlayerAura) {
-      this.magnetPlayerAura.destroy(); this.magnetPlayerAura = null;
+    if (this.magnetPlayerMagnetized && time > this.magnetPlayerMagnetizedUntil) {
+      this.magnetPlayerMagnetized = false;
     }
 
     // F+: Copper Barrage — spawn a copper rod from magnetized enemy toward caster
@@ -1083,10 +1283,8 @@ export class MagnetKit {
           this.magnetCopperSpawnAccumPlayer = 0;
           const ang = Math.atan2(player.y - npc.y, player.x - npc.x) + (Math.random() - 0.5) * 0.6;
           const speed = 250;
-          const spr = scene.add.circle(npc.x, npc.y, 6, 0xcc7744, 0.9)
-            .setStrokeStyle(1, 0xffaa66).setDepth(5);
           const copper: MagnetRod = {
-            sprite: spr, trail: [],
+            kind: 'copper',
             x: npc.x, y: npc.y,
             vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed,
             contactCooldownPlayer: 0, contactCooldownNpc: 0,
@@ -1097,6 +1295,7 @@ export class MagnetKit {
             isSword: false,
           };
           this.magnetRods.push(copper);
+          this.pfx.sparks(npc.x, npc.y, 4, ang, 10, MAGNET.copperHi);
         }
       } else {
         this.magnetCopperSpawnAccumPlayer = 0;
@@ -1119,15 +1318,17 @@ export class MagnetKit {
   // ── Upgrade ability implementations ──────────────────────────────
 
   private doMagnetRepulse(mx: number, my: number, owner: 'player' | 'npc'): void {
-    const { player, npc, scene } = this.arena;
+    const { player, npc } = this.arena;
     const caster = owner === 'player' ? player : npc;
     const target = owner === 'player' ? npc : player;
     const repulseRange = 320;
 
     // VFX
-    const ring = scene.add.circle(caster.x, caster.y, 8, 0xcc2244, 0.5)
-      .setStrokeStyle(2, 0xff88aa).setDepth(6);
-    scene.tweens.add({ targets: ring, scaleX: 12, scaleY: 12, alpha: 0, duration: 350, onComplete: () => ring.destroy() });
+    // Reversing polarity: the field lines flip and shove everything metal away.
+    const fx = this.fx(owner);
+    fx.pulse(caster.x, caster.y, repulseRange * 0.55, MAGNET.blush, 400, 6, 14);
+    fx.flash(caster.x, caster.y, 22, 8, MAGNET.blush);
+    this.avatar(owner)?.play('clap');
     this.arena.showFloatingText(caster.x, caster.y - 30, '💢 REPULSE', '#ff4466');
 
     void mx; void my;
@@ -1170,10 +1371,7 @@ export class MagnetKit {
     const orbArray = owner === 'player' ? this.magnetPlayerShieldOrbs : this.magnetNpcShieldOrbs;
 
     // Consume 3 orbs
-    for (let i = 0; i < 3; i++) {
-      const orb = orbArray.pop();
-      if (orb) orb.sprite.destroy();
-    }
+    for (let i = 0; i < 3; i++) orbArray.pop();
 
     // Set reflect state
     if (owner === 'player') {
@@ -1186,10 +1384,11 @@ export class MagnetKit {
       this.magnetReflectCenterNpcY = caster.y;
     }
 
-    const radius = 180;
-    const burst = scene.add.circle(caster.x, caster.y, radius, 0x4488cc, 0.2)
-      .setStrokeStyle(3, 0x88ccff, 0.8).setDepth(6);
-    scene.tweens.add({ targets: burst, alpha: 0, duration: 1500, onComplete: () => burst.destroy() });
+    // Three bearings spent to slam a shell up around you.
+    const fx = this.fx(owner);
+    fx.pulse(caster.x, caster.y, 180, MAGNET.sky, 520, 6, 14);
+    fx.flash(caster.x, caster.y, 40, 8, MAGNET.azure);
+    this.avatar(owner)?.play('flex');
     this.arena.showFloatingText(caster.x, caster.y - 40, '🔵 REFLECT FIELD', '#4488cc');
   }
 
@@ -1217,6 +1416,8 @@ export class MagnetKit {
           void projOwner;
           const body = proj.body as Phaser.Physics.Arcade.Body | null;
           if (body) body.setVelocity(-body.velocity.x, -body.velocity.y);
+          // The shell visibly hitting back at the point the shot turned round.
+          (isPlayer ? this.pfx : this.nfx).sparks(proj.x, proj.y, 4, Math.atan2(cy - proj.y, cx - proj.x) + Math.PI, 10, MAGNET.sky);
         }
       }
     }
@@ -1239,22 +1440,22 @@ export class MagnetKit {
 
   /** A mag-pulse landing on a hidden ancient rod exposes it — it becomes a real, brown rod. */
   private tryExposeAncientRod(x: number, y: number): void {
-    const scene = this.arena.scene;
     for (const ar of this.ancientRods) {
       if (ar.exposed) continue;
       if (Phaser.Math.Distance.Between(x, y, ar.hx, ar.hy) > ANCIENT_EXPOSE_RADIUS) continue;
       ar.exposed = true;
-      const spr = scene.add.circle(ar.hx, ar.hy, 9, 0x8a5a2b, 0.95).setStrokeStyle(2, 0xbb8844).setDepth(6);
       const rod: MagnetRod = {
-        sprite: spr, trail: [], x: ar.hx, y: ar.hy, vx: 0, vy: 0,
+        kind: 'ancient', x: ar.hx, y: ar.hy, vx: 0, vy: 0,
         contactCooldownPlayer: 0, contactCooldownNpc: 0, bouncing: false, bounceUntil: 0,
         owner: 'player', permDamageBonus: 0,
       };
       ar.rod = rod;
       this.magnetRods.push(rod);
       this.arena.showFloatingText(ar.hx, ar.hy - 20, '⛏ ANCIENT ROD!', '#bb8844');
-      const flash = scene.add.circle(ar.hx, ar.hy, 12, 0xffcc66, 0.8).setDepth(7);
-      scene.tweens.add({ targets: flash, scaleX: 4, scaleY: 4, alpha: 0, duration: 400, onComplete: () => flash.destroy() });
+      // Dug up: dirt and filings blown off whatever was buried there.
+      this.pfx.flash(ar.hx, ar.hy, 20, 8, MAGNET.bronzeHi);
+      this.pfx.shrapnel(ar.hx, ar.hy, 6, { speed: 170, size: 8, color: MAGNET.bronze, depth: 8 });
+      this.pfx.filingsMark(ar.hx, ar.hy, 34, 3, MAGNET.bronzeHi);
     }
   }
 
@@ -1264,7 +1465,9 @@ export class MagnetKit {
       if (!ar.exposed || ar.activated || !ar.rod) continue;
       if (Math.abs(ar.rod.y - smasherY) > ANCIENT_ACTIVATE_Y_BAND) continue;
       ar.activated = true;
-      (ar.rod.sprite as Phaser.GameObjects.Arc).setFillStyle(0xffaa33, 1);
+      ar.rod.kind = 'ancient-live';
+      // Coming online: the rod's own field snaps up around it.
+      this.pfx.pulse(ar.rod.x, ar.rod.y, 60, MAGNET.amber, 460, 7, 10);
       this.arena.showFloatingText(ar.rod.x, ar.rod.y - 24, '⚡ ROD ONLINE', '#ffcc44');
     }
   }
@@ -1272,7 +1475,7 @@ export class MagnetKit {
   private updateMasteryMetalDetector(_time: number, delta: number): void {
     if (!this.arena.masteryActive) return;
     this.ensureAncientRods();
-    const { npc, scene } = this.arena;
+    const { npc } = this.arena;
     // Only fires at an enemy with magnetic properties: magnetized, or carrying our nails.
     const npcMagnetic = this.magnetNpcMagnetized || this.countImplantedNails('player') > 0;
     for (const ar of this.ancientRods) {
@@ -1281,11 +1484,9 @@ export class MagnetKit {
       if (ar.laserAccum < ANCIENT_LASER_INTERVAL_MS) continue;
       ar.laserAccum -= ANCIENT_LASER_INTERVAL_MS;
       if (!npcMagnetic || !npc.active || npc.hp <= 0) continue;
+      const hx = npc.x, hy = npc.y;
       npc.takeDamage(ANCIENT_LASER_DAMAGE);
-      this.arena.spawnHitFlash(npc.x, npc.y, 0xffaa33);
-      const beam = scene.add.line(0, 0, ar.rod.x, ar.rod.y, npc.x, npc.y, 0xffcc33, 0.9)
-        .setOrigin(0, 0).setLineWidth(2).setDepth(7);
-      scene.tweens.add({ targets: beam, alpha: 0, duration: 220, onComplete: () => beam.destroy() });
+      this.pfx.laser(ar.rod.x, ar.rod.y, hx, hy, MAGNET.amber);
       this.arena.showFloatingText(npc.x, npc.y - 30, `⚡ ${ANCIENT_LASER_DAMAGE}`, '#ffcc44');
     }
   }
@@ -1323,29 +1524,29 @@ export class MagnetKit {
 
   private mountMagLev(owner: 'player' | 'npc'): void {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
-    const board = this.arena.scene.add.rectangle(caster.x, caster.y + 18, 40, 8, 0x6644aa, 0.9)
-      .setStrokeStyle(2, 0xaa66ff).setDepth(4);
     if (owner === 'player') {
       this.magLevMounted = true; this.magLevPreShield = caster.shieldHp;
-      this.magLevBoard = board; this.magLevBashCd = new Map();
+      this.magLevBashCd = new Map();
     } else {
       this.npcMagLevMounted = true; this.npcMagLevPreShield = caster.shieldHp;
-      this.npcMagLevBoard = board; this.npcMagLevBashCd = new Map();
+      this.npcMagLevBashCd = new Map();
     }
     caster.shieldHp += MAGLEV_SHIELD;
+    // Stepping on: the cushion snaps in underneath and lifts you clear of the floor.
+    const fx = this.fx(owner);
+    fx.pulse(caster.x, caster.y + 16, 46, MAGNET.lilac, 420, 6, 10, true);
+    fx.sparks(caster.x, caster.y + 16, 5, -Math.PI / 2, 10, MAGNET.lilac);
+    this.avatar(owner)?.play('flex');
     this.arena.showFloatingText(caster.x, caster.y - 40, '🛹 MAG-LEV', '#aa66ff');
   }
 
   private dismountMagLev(owner: 'player' | 'npc'): void {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     caster.shieldHp = 0; // dismounting removes all shield HP you have
-    if (owner === 'player') {
-      this.magLevMounted = false;
-      if (this.magLevBoard) { this.magLevBoard.destroy(); this.magLevBoard = null; }
-    } else {
-      this.npcMagLevMounted = false;
-      if (this.npcMagLevBoard) { this.npcMagLevBoard.destroy(); this.npcMagLevBoard = null; }
-    }
+    if (owner === 'player') this.magLevMounted = false;
+    else this.npcMagLevMounted = false;
+    // The cushion collapsing — the board comes apart into the field it was made of.
+    this.fx(owner).shrapnel(caster.x, caster.y + 16, 5, { speed: 150, size: 9, color: MAGNET.violet, depth: 8 });
     this.arena.showFloatingText(caster.x, caster.y - 40, '🛹 DISMOUNT', '#8877aa');
   }
 
@@ -1354,6 +1555,11 @@ export class MagnetKit {
     const dx = mouseX - p.x, dy = mouseY - p.y;
     const len = Math.sqrt(dx * dx + dy * dy) || 1;
     (p.body as Phaser.Physics.Arcade.Body).setVelocity((dx / len) * MAGLEV_SLING_SPEED, (dy / len) * MAGLEV_SLING_SPEED);
+    // Kicking off: field lines thrown backwards out from under the deck.
+    const ang = Math.atan2(dy, dx);
+    this.pfx.pulse(p.x, p.y + 14, 52, MAGNET.lilac, 340, 6, 8);
+    this.pfx.sparks(p.x, p.y + 14, 6, ang + Math.PI, 10, MAGNET.lilac);
+    this.playerAvatar?.play('dash', ang);
     this.arena.setIsDodging(true);
     this.arena.scene.time.delayedCall(200, () => this.arena.setIsDodging(false));
   }
@@ -1361,28 +1567,28 @@ export class MagnetKit {
   private updateMagLev(time: number, _delta: number): void {
     const { player, npc } = this.arena;
     if (this.magLevMounted) {
-      if (this.magLevBoard) this.magLevBoard.setPosition(player.x, player.y + 18);
       if (player.shieldHp <= this.magLevPreShield) {
         this.dismountMagLev('player'); // board shield spent
       } else if (npc.active && npc.hp > 0
         && Phaser.Math.Distance.Between(player.x, player.y, npc.x, npc.y) <= MAGLEV_BASH_RADIUS
         && time > (this.magLevBashCd.get(npc) ?? 0)) {
         this.magLevBashCd.set(npc, time + MAGLEV_BASH_CD_MS);
+        const hx = npc.x, hy = npc.y;
         npc.takeDamage(MAGLEV_BASH_DMG);
-        this.arena.spawnHitFlash(npc.x, npc.y, 0xaa66ff);
+        this.pfx.sparks(hx, hy, 6, Math.atan2(hy - player.y, hx - player.x), 10, MAGNET.lilac);
         this.arena.showFloatingText(npc.x, npc.y - 30, `🛹 ${MAGLEV_BASH_DMG}`, '#cc99ff');
       }
     }
     if (this.npcMagLevMounted) {
-      if (this.npcMagLevBoard) this.npcMagLevBoard.setPosition(npc.x, npc.y + 18);
       if (npc.shieldHp <= this.npcMagLevPreShield) {
         this.dismountMagLev('npc');
       } else if (player.active && player.hp > 0
         && Phaser.Math.Distance.Between(npc.x, npc.y, player.x, player.y) <= MAGLEV_BASH_RADIUS
         && time > (this.npcMagLevBashCd.get(player) ?? 0)) {
         this.npcMagLevBashCd.set(player, time + MAGLEV_BASH_CD_MS);
+        const hx = player.x, hy = player.y;
         player.takeDamage(MAGLEV_BASH_DMG);
-        this.arena.spawnHitFlash(player.x, player.y, 0xaa66ff);
+        this.nfx.sparks(hx, hy, 6, Math.atan2(hy - npc.y, hx - npc.x), 10, MAGNET.lilac);
       }
     }
   }

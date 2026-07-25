@@ -1,6 +1,17 @@
 import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
+import {
+  SHADOW, ShadowAvatar, ShadowColorFn, ShadowFx, ShadowShroud,
+  shadowTendril, shadowTendrilLayered,
+} from './ShadowVisuals';
+
+/**
+ * Every shadow ability — the player's and the NPC's alike — is cast through the `do*` methods
+ * below, so each one drives its own arm gesture right where it fires. That covers the local
+ * player, the AI opponent and an online peer's replayed casts from one place, which is why
+ * this kit has no separate npc-cast-id gesture table.
+ */
 
 // ── Hopelessness tuning ─────────────────────────────────────────────────
 /** Gained per second while standing in an enemy shadow pool. */
@@ -49,13 +60,36 @@ const BEACON_BLAST_RADIUS = 70;
 // ── Shadow world-object types ───────────────────────────────────────────
 
 interface DarkCloud {
-  sprite: Phaser.GameObjects.Arc;
+  /** Redrawn every frame — the rim crawls, filaments grope and eyes surface inside it. */
+  gfx: Phaser.GameObjects.Graphics;
   expiresAt: number;
+  spawnAt: number;
+  /** Per-pool offset so a field of pools never breathes in lockstep. */
+  seed: number;
   x: number;
   y: number;
   radius: number;
   tickAccum: number;
   owner: 'player' | 'npc';
+}
+
+/**
+ * Something dark in flight — a writhing orb of void trailing a tail of tendrils. One flight
+ * model covers all three shapes shadow throws:
+ *  - `bomb`    the Click detonation: blast damage, then a pool
+ *  - `watcher` an F+ eyed tentacle's despair amplifier: no damage, multiplies hopelessness
+ *  - `shell`   a Shadow Beacon mortar round: the beacon owns its own impact, this just flies
+ */
+interface DarkBomb {
+  gfx: Phaser.GameObjects.Graphics;
+  x: number; y: number;
+  fromX: number; fromY: number;
+  toX: number; toY: number;
+  spawnAt: number;
+  arriveAt: number;
+  owner: 'player' | 'npc';
+  mode: 'bomb' | 'watcher' | 'shell';
+  mark: Fighter | null;
 }
 
 interface SnapTrap {
@@ -151,6 +185,8 @@ export interface ShadowArenaApi {
   hasUpgrade(slot: string): boolean;
   hasNpcUpgrade(slot: string): boolean;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
+  /** Cosmetics: maps a shadow visual color through the owner's color cosmetic. */
+  shadowColor(owner: 'player' | 'npc', base: number): number;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
@@ -166,6 +202,23 @@ export interface ShadowArenaApi {
 // ── ShadowKit ────────────────────────────────────────────────────────────
 
 export class ShadowKit {
+  // ── Visuals ───────────────────────────────────────────────────────────
+  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  private readonly pcol: ShadowColorFn;
+  private readonly ncol: ShadowColorFn;
+  private readonly pfx: ShadowFx;
+  private readonly nfx: ShadowFx;
+  /** The shadow character rig (ball arms, eyes, tendril crown) for each shadow-element fighter. */
+  private playerAvatar: ShadowAvatar | null = null;
+  private npcAvatar: ShadowAvatar | null = null;
+  /** Last aim point, cached in handleInput so the per-frame avatar update can face it. */
+  private aimX = 0;
+  private aimY = 0;
+  /** Shadow Mastery passive shroud. Sits under the Consume shroud so the two stack. */
+  private masteryShroud: ShadowShroud | null = null;
+  private consumeShroud: ShadowShroud | null = null;
+  private darkBombs: DarkBomb[] = [];
+
   // ── Player shadow ────────────────────────────────────────────────────
   private shadowDrainHoldAccum = 0;
   private shadowDrainCloudAccum = 0;
@@ -213,9 +266,6 @@ export class ShadowKit {
   private npcShadowDragNextChangeAt = 0;
   private shadowPlayerSnaredUntil = 0;
   private shadowPlayerStunnedUntil = 0;
-  private npcShadowBlackHoleCharging = false;
-  private npcShadowBlackHoleChargeStart = 0;
-  private npcShadowBlackHoleChargeVisual: Phaser.GameObjects.Arc | null = null;
   private npcShadowBlackHoleActive = false;
   private npcShadowBlackHoleEnd = 0;
   private npcShadowBlackHoleSprite: Phaser.GameObjects.Graphics | null = null;
@@ -224,7 +274,6 @@ export class ShadowKit {
   private shadowConsumeActive = false;
   private shadowConsumeEnd = 0;
   private shadowConsumeTickAccum = 0;
-  private shadowConsumeAura: Phaser.GameObjects.Arc | null = null;
   private shadowConfusionUntil = 0;
   private shadowConfusionAngle = 0;
   private shadowConfusionNextChange = 0;
@@ -237,7 +286,17 @@ export class ShadowKit {
   private lastPlayerHp = -1;
   private beaconLastCastAt = -Infinity;
 
-  constructor(private arena: ShadowArenaApi) {}
+  constructor(private arena: ShadowArenaApi) {
+    this.pcol = (base) => arena.shadowColor('player', base);
+    this.ncol = (base) => arena.shadowColor('npc', base);
+    this.pfx = new ShadowFx(arena.scene, this.pcol);
+    this.nfx = new ShadowFx(arena.scene, this.ncol);
+  }
+
+  /** Colour mapper for a side. */
+  private col(owner: 'player' | 'npc'): ShadowColorFn { return owner === 'player' ? this.pcol : this.ncol; }
+  /** Effect painter for a side. */
+  private fx(owner: 'player' | 'npc'): ShadowFx { return owner === 'player' ? this.pfx : this.nfx; }
 
   // ── Public accessors for cross-cutting arena state ─────────────────────
 
@@ -263,6 +322,16 @@ export class ShadowKit {
   }
 
   reset(): void {
+    // Visuals — every GameObject dies with the old scene run, so rebuild lazily in update().
+    if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
+    if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
+    if (this.masteryShroud) { this.masteryShroud.destroy(); this.masteryShroud = null; }
+    if (this.consumeShroud) { this.consumeShroud.destroy(); this.consumeShroud = null; }
+    for (const b of this.darkBombs) b.gfx.destroy();
+    this.darkBombs = [];
+    this.aimX = 0;
+    this.aimY = 0;
+
     this.shadowDrainHoldAccum = 0;
     this.shadowDrainCloudAccum = 0;
     this.shadowTentacleActive = false;
@@ -281,6 +350,7 @@ export class ShadowKit {
     this.shadowBlackHoleDamageAccum = 0;
     this.shadowBlackHoleHealAccum = 0;
     this.shadowBlackHoleSprite = null;
+    for (const c of this.shadowDarkClouds) c.gfx.destroy();
     this.shadowDarkClouds = [];
     for (const t of this.shadowSnapTraps) t.gfx.destroy();
     this.shadowSnapTraps = [];
@@ -308,16 +378,12 @@ export class ShadowKit {
     this.npcShadowDragNextChangeAt = 0;
     this.shadowPlayerSnaredUntil = 0;
     this.shadowPlayerStunnedUntil = 0;
-    this.npcShadowBlackHoleCharging = false;
-    this.npcShadowBlackHoleChargeStart = 0;
-    this.npcShadowBlackHoleChargeVisual = null;
     this.npcShadowBlackHoleActive = false;
     this.npcShadowBlackHoleEnd = 0;
     this.npcShadowBlackHoleSprite = null;
     this.shadowConsumeActive = false;
     this.shadowConsumeEnd = 0;
     this.shadowConsumeTickAccum = 0;
-    if (this.shadowConsumeAura) { this.shadowConsumeAura.destroy(); this.shadowConsumeAura = null; }
     this.shadowConfusionUntil = 0;
     this.shadowConfusionAngle = 0;
     this.shadowConfusionNextChange = 0;
@@ -371,7 +437,6 @@ export class ShadowKit {
   /** Pool build-up, natural drain, damage suppression and the blackening/ooze visuals. */
   private updateHopelessness(time: number, delta: number): void {
     const dt = delta / 1000;
-    const scene = this.arena.scene;
     const player = this.arena.player;
 
     for (const f of this.hopelessTargets()) {
@@ -397,21 +462,20 @@ export class ShadowKit {
       }
     }
 
-    // Black ooze weeping off whoever is most consumed.
+    // Black ooze weeping off whoever is most consumed: motes that sink instead of rising, so
+    // despair reads as something draining out of the victim rather than burning off them.
     this.oozeAccum += delta;
-    if (this.oozeAccum >= 90) {
-      this.oozeAccum -= 90;
+    if (this.oozeAccum >= 110) {
+      this.oozeAccum -= 110;
       for (const f of this.hopelessTargets()) {
         if (f.hopelessness < 10) continue;
         if (Math.random() > f.hopelessness / 100) continue;
-        const drop = scene.add.ellipse(
-          f.x + Phaser.Math.Between(-14, 14), f.y + Phaser.Math.Between(-6, 10),
-          Phaser.Math.Between(4, 7), Phaser.Math.Between(6, 11), 0x08000f, 0.85,
-        ).setDepth(4);
-        scene.tweens.add({
-          targets: drop, y: drop.y + Phaser.Math.Between(16, 30), scaleX: 0.4, alpha: 0,
-          duration: 600, onComplete: () => drop.destroy(),
-        });
+        // The despair belongs to the afflicted, so it uses their own side's palette.
+        const fx = f === player ? this.pfx : this.nfx;
+        fx.wisps(
+          f.x + Phaser.Math.Between(-14, 14), f.y + Phaser.Math.Between(-8, 6), 1,
+          { angle: Math.PI / 2, spread: 0.5, speed: 26, size: 3, life: 700, rise: -22, depth: 4 },
+        );
       }
     }
 
@@ -442,53 +506,136 @@ export class ShadowKit {
     const voidOn = this.arena.hasPerk(owner, 'void-shade');
     const radius = voidOn ? 43 : 36;
     const duration = voidOn ? 9000 : 6000;
-    const spr = scene.add.circle(x, y, radius, 0x330044, 0.55).setDepth(3);
-    spr.setStrokeStyle(1, 0x8800cc, 0.5);
-    scene.tweens.add({ targets: spr, scaleX: 1.2, scaleY: 1.2, alpha: 0.35, yoyo: true, repeat: -1, duration: 700 });
-    this.shadowDarkClouds.push({ sprite: spr, expiresAt: scene.time.now + duration, x, y, radius, tickAccum: 0, owner });
+    this.shadowDarkClouds.push({
+      gfx: scene.add.graphics().setDepth(3),
+      expiresAt: scene.time.now + duration,
+      spawnAt: scene.time.now,
+      seed: Math.random() * Math.PI * 2,
+      x, y, radius, tickAccum: 0, owner,
+    });
+    // The pool doesn't fade in — it wells up, so the arrival gets its own beat.
+    const fx = this.fx(owner);
+    fx.ring(x, y, radius * 0.2, radius * 1.1, SHADOW.lilac, 420, 3, 3);
+    fx.wisps(x, y, 5, { speed: radius * 1.1, size: 2.6, life: 520, rise: 16, depth: 4 });
+  }
+
+  /** Every live dark pool repainted in one pass, plus its short spawn swell. */
+  private drawDarkClouds(time: number): void {
+    for (const c of this.shadowDarkClouds) {
+      const g = c.gfx;
+      g.clear();
+      const grow = Math.min(1, (time - c.spawnAt) / 260);
+      // Pools thin out over their last second rather than blinking off.
+      const left = c.expiresAt - time;
+      const alpha = left < 900 ? Math.max(0, left / 900) : 1;
+      ShadowFx.drawPool(
+        g, this.col(c.owner), c.x, c.y,
+        c.radius * (0.5 + grow * 0.5), time / 1000, alpha, c.seed,
+      );
+    }
   }
 
   // ── Ability-cast methods (invoked via CastContext delegates) ──────────
 
+  /**
+   * The thrown bomb: a writhing orb of void that grows a tail of tendrils as it accelerates,
+   * then implodes. Flight is stepped in `updateDarkBombs` rather than tweened, so the art can
+   * react to the orb's own velocity.
+   */
   doLaunchDarkBomb(x: number, y: number, isPlayer: boolean): void {
     const scene = this.arena.scene;
-    const { player, npc, enemies } = this.arena;
-    if (isPlayer) {
-      const bomb = scene.add.circle(player.x, player.y, 10, 0x660088, 0.95)
-        .setStrokeStyle(2, 0xcc44ff).setDepth(8);
-      scene.tweens.add({
-        targets: bomb, x, y, duration: 380, ease: 'Power2',
-        onComplete: () => {
-          const boom = scene.add.circle(x, y, 8, 0x8800cc, 0.8).setDepth(8);
-          scene.tweens.add({ targets: boom, scaleX: 7, scaleY: 7, alpha: 0, duration: 350, onComplete: () => boom.destroy() });
-          bomb.destroy();
-          for (const t of enemies) {
-            if (!t.active || t.hp <= 0) continue;
-            if (Phaser.Math.Distance.Between(x, y, t.x, t.y) <= 50) {
-              t.takeDamage(10);
-              this.arena.spawnHitFlash(t.x, t.y, 0x8800cc);
-            }
-          }
-          this.spawnDarkCloud(x, y, 'player');
-        },
-      });
-    } else {
-      const bomb = scene.add.circle(npc.x, npc.y, 10, 0x440066, 0.85)
-        .setStrokeStyle(2, 0x8800cc).setDepth(8);
-      scene.tweens.add({
-        targets: bomb, x, y, duration: 380, ease: 'Power2',
-        onComplete: () => {
-          const boom = scene.add.circle(x, y, 8, 0x440066, 0.7).setDepth(8);
-          scene.tweens.add({ targets: boom, scaleX: 7, scaleY: 7, alpha: 0, duration: 350, onComplete: () => boom.destroy() });
-          bomb.destroy();
-          if (Phaser.Math.Distance.Between(x, y, player.x, player.y) <= 50) {
-            player.takeDamage(10);
-            this.arena.spawnHitFlash(player.x, player.y, 0x8800cc);
-          }
-          this.spawnDarkCloud(x, y, 'npc');
-        },
-      });
+    const caster = isPlayer ? this.arena.player : this.arena.npc;
+    const owner: 'player' | 'npc' = isPlayer ? 'player' : 'npc';
+    const avatar = isPlayer ? this.playerAvatar : this.npcAvatar;
+    const angle = Math.atan2(y - caster.y, x - caster.x);
+
+    avatar?.play('punch', angle);
+    // Fire the muzzle out of the hand that actually threw it.
+    const hand = avatar?.castHand() ?? { x: caster.x, y: caster.y };
+    this.fx(owner).muzzleUmbra(hand.x, hand.y, angle, 1, 8);
+
+    this.darkBombs.push({
+      gfx: scene.add.graphics().setDepth(8),
+      x: caster.x, y: caster.y,
+      fromX: caster.x, fromY: caster.y,
+      toX: x, toY: y,
+      spawnAt: scene.time.now,
+      arriveAt: scene.time.now + 380,
+      owner,
+      mode: 'bomb',
+      mark: null,
+    });
+  }
+
+  /** Steps every bomb in flight, paints it, and detonates the ones that have arrived. */
+  private updateDarkBombs(time: number): void {
+    for (let i = this.darkBombs.length - 1; i >= 0; i--) {
+      const b = this.darkBombs[i];
+      const life = b.arriveAt - b.spawnAt;
+      const t = Math.min(1, (time - b.spawnAt) / life);
+      const prevX = b.x, prevY = b.y;
+      // Accelerating arc: the orb leaves lazily and slams home, which reads as weight.
+      const ease = t * t * (3 - 2 * t) * 0.4 + t * t * 0.6;
+      b.x = b.fromX + (b.toX - b.fromX) * ease;
+      b.y = b.fromY + (b.toY - b.fromY) * ease;
+
+      const tint = this.col(b.owner);
+      const g = b.gfx;
+      g.clear();
+      const back = Math.atan2(prevY - b.y, prevX - b.x);
+      const speed = Math.hypot(b.x - prevX, b.y - prevY);
+      const r = b.mode === 'watcher' ? 6.5 : b.mode === 'shell' ? 10 : 9;
+      // Tail streams out of the back of the shot and lengthens with speed.
+      for (let k = 0; k < 4; k++) {
+        const off = (k - 1.5) * 0.34;
+        shadowTendrilLayered(
+          g, tint, b.x, b.y, back + off,
+          r * 1.4 + speed * 1.5, r * 0.4, Math.sin(time * 0.01 + k) * 6,
+          0.75, 4, k * 1.7, { barbs: 0, rim: false },
+        );
+      }
+      g.fillStyle(tint(SHADOW.orchid), 0.42);
+      g.fillCircle(b.x, b.y, r * 1.7);
+      g.fillStyle(tint(SHADOW.abyss), 0.98);
+      g.fillCircle(b.x, b.y, r);
+      g.lineStyle(2, tint(b.mode === 'watcher' ? SHADOW.blood : SHADOW.mauve), 0.9);
+      g.strokeCircle(b.x, b.y, r * (1.08 + Math.sin(time * 0.02) * 0.1));
+
+      if (t < 1) continue;
+      g.destroy();
+      this.darkBombs.splice(i, 1);
+      this.detonateDarkBomb(b);
     }
+  }
+
+  private detonateDarkBomb(b: DarkBomb): void {
+    const { player, enemies, scene } = this.arena;
+    const fx = this.fx(b.owner);
+
+    // Beacon shells are only being flown here; `fireBeacon` owns their impact.
+    if (b.mode === 'shell') return;
+
+    if (b.mode === 'watcher') {
+      // Watcher bolt: no blast, a despair amplifier that gropes for whoever it was aimed at.
+      fx.implosion(b.toX, b.toY, 44, { tendrils: 7, gloom: 1, duration: 320, stain: false });
+      const mark = b.mark;
+      if (mark && mark.active && mark.hp > 0 && Phaser.Math.Distance.Between(b.toX, b.toY, mark.x, mark.y) <= 44) {
+        this.multiplyHopelessness(mark, WATCHER_HOPELESS_MULT);
+        this.arena.spawnHitFlash(mark.x, mark.y, SHADOW.blood);
+      }
+      return;
+    }
+
+    fx.implosion(b.toX, b.toY, 62, { tendrils: 10, gloom: 2, duration: 400 });
+    scene.cameras.main.shake(90, 0.003);
+    const victims: Fighter[] = b.owner === 'player' ? enemies : [player];
+    for (const t of victims) {
+      if (!t.active || t.hp <= 0) continue;
+      if (Phaser.Math.Distance.Between(b.toX, b.toY, t.x, t.y) > 50) continue;
+      t.takeDamage(10);
+      this.arena.spawnHitFlash(t.x, t.y, SHADOW.amethyst);
+    }
+    this.spawnDarkCloud(b.toX, b.toY, b.owner);
   }
 
   doActivateTentacle(x: number, y: number, isPlayer: boolean): void {
@@ -512,12 +659,16 @@ export class ShadowKit {
       if (!this.shadowTentacleSprite) {
         this.shadowTentacleSprite = scene.add.graphics().setDepth(6);
       }
+      // The limb lashes out of the body before the tether takes over the drawing.
+      this.playerAvatar?.play('sweep', angle);
+      this.pfx.lash(player.x, player.y, angle, reach);
       for (const t of enemies) {
         if (!t.active || t.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(player.x, player.y, t.x, t.y) <= 110) {
           t.takeDamage(10);
           this.applyHopelessness(t, WALL_TENTACLE_HOPELESS);
-          this.arena.spawnHitFlash(t.x, t.y, 0x8800cc);
+          this.arena.spawnHitFlash(t.x, t.y, SHADOW.amethyst);
+          this.pfx.tendrilBurst(t.x, t.y, 34, 6, 7);
         }
       }
     } else {
@@ -528,10 +679,14 @@ export class ShadowKit {
       if (!this.npcShadowTentacleSprite) {
         this.npcShadowTentacleSprite = scene.add.graphics().setDepth(6);
       }
+      const npcAim = Math.atan2(player.y - npc.y, player.x - npc.x);
+      this.npcAvatar?.play('sweep', npcAim);
+      this.nfx.lash(npc.x, npc.y, npcAim, Math.min(110, hookDist));
       if (this.npcShadowTentacleHooked) {
         player.takeDamage(10);
         this.applyHopelessness(player, WALL_TENTACLE_HOPELESS);
-        this.arena.spawnHitFlash(player.x, player.y, 0x440066);
+        this.arena.spawnHitFlash(player.x, player.y, SHADOW.violet);
+        this.nfx.tendrilBurst(player.x, player.y, 34, 6, 7);
         // Pick initial random drag target
         const { width, height } = this.arena;
         this.npcShadowDragTargetX = Phaser.Math.Between(80, width - 80);
@@ -554,6 +709,12 @@ export class ShadowKit {
     const caster = isPlayer ? player : npc;
     const isStake = this.arena.hasPerk(owner, 'plume');
     const bigTraps = isPlayer ? this.arena.hasUpgrade('r') : this.arena.hasNpcUpgrade('r');
+
+    // Hands come together low and shove the thing into the ground.
+    (isPlayer ? this.playerAvatar : this.npcAvatar)?.play('clap');
+    const fx = this.fx(owner);
+    fx.ring(caster.x, caster.y, 4, bigTraps ? 34 : 24, SHADOW.lilac, 340, 3, 3);
+    fx.wisps(caster.x, caster.y, 4, { speed: 45, size: 2.4, life: 420, rise: -10, depth: 4 });
 
     if (isStake) {
       // Snap Stake: a bare spike. Harmless until a second stake strings a tripline to it.
@@ -600,13 +761,14 @@ export class ShadowKit {
     g.clear();
     const grow = Math.min(1, (time - t.spawnAt) / 220);
     const r = t.radius * grow;
-    const accent = t.owner === 'player' ? 0xcc44ff : 0x8800cc;
+    const tint = this.col(t.owner);
+    const accent = tint(t.owner === 'player' ? SHADOW.mauve : SHADOW.amethyst);
 
-    g.fillStyle(0x000000, 0.3);
+    g.fillStyle(tint(SHADOW.abyss), 0.3);
     g.fillEllipse(t.x, t.y + r * 0.35, r * 2.1, r * 0.8);
 
     // Jaw ring the teeth are seated in.
-    g.fillStyle(0x0e0016, 0.9);
+    g.fillStyle(tint(SHADOW.pitch), 0.9);
     g.fillCircle(t.x, t.y, r);
 
     // Jaw teeth: long enough to read at game scale, each breathing on its own beat.
@@ -616,7 +778,7 @@ export class ShadowKit {
       const inner = r * 0.46;
       const outer = r * (1.08 + 0.08 * Math.sin(time * 0.01 + i + t.phase));
       const w = 0.13;
-      g.fillStyle(i % 2 ? 0x7722aa : 0x4a1170, 0.98);
+      g.fillStyle(tint(i % 2 ? SHADOW.orchid : SHADOW.plum), 0.98);
       g.lineStyle(1.5, accent, 0.9);
       g.beginPath();
       g.moveTo(t.x + Math.cos(a - w) * inner, t.y + Math.sin(a - w) * inner);
@@ -627,8 +789,17 @@ export class ShadowKit {
       g.strokePath();
     }
 
+    // Feeler tendrils groping outward from under the jaws — the tell that the trap is alive
+    // and not a piece of scenery bolted to the floor.
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 + t.phase + Math.sin(time * 0.0015 + i) * 0.4;
+      g.fillStyle(tint(SHADOW.violet), 0.75);
+      shadowTendril(g, t.x, t.y, a, r * (1.3 + 0.3 * Math.sin(time * 0.004 + i)), r * 0.13,
+        Math.sin(time * 0.003 + i) * r * 0.4);
+    }
+
     // Pressure plate + rim.
-    g.fillStyle(0x160020, 0.97);
+    g.fillStyle(tint(SHADOW.umbra), 0.97);
     g.fillCircle(t.x, t.y, r * 0.46);
     g.lineStyle(2, accent, 0.85);
     g.strokeCircle(t.x, t.y, r * 0.46);
@@ -650,14 +821,15 @@ export class ShadowKit {
     const h = 22 * grow;
     const lean = Math.sin(t.phase) * 3;
     const flutter = Math.sin(time * 0.005 + t.phase) * 3 * grow;
-    const accent = t.owner === 'player' ? 0xcc88ff : 0x8844aa;
+    const tint = this.col(t.owner);
+    const accent = tint(t.owner === 'player' ? SHADOW.mauve : SHADOW.orchid);
     const tipX = t.x + lean;
     const tipY = t.y - h;
 
-    g.fillStyle(0x000000, 0.32);
+    g.fillStyle(tint(SHADOW.abyss), 0.32);
     g.fillEllipse(t.x, t.y + 3, 16 * grow, 6 * grow);
 
-    g.fillStyle(0x14001c, 0.97);
+    g.fillStyle(tint(SHADOW.pitch), 0.97);
     g.lineStyle(1.5, accent, 0.85);
     g.beginPath();
     g.moveTo(t.x - 4.5 * grow, t.y + 2);
@@ -676,9 +848,25 @@ export class ShadowKit {
     g.lineBetween(tipX, tipY + 2, tipX + 4 + flutter * 0.6, tipY + 10);
   }
 
+  /**
+   * The jaws close: a stab of teeth converging on the victim, a shock front and a stain where
+   * the trap tore itself apart. Fired from the trap's position rather than the victim's, so
+   * the bite visibly comes from the thing that was lying in wait.
+   */
+  private snapTrapBite(trap: SnapTrap, victim: Fighter): void {
+    const fx = this.fx(trap.owner);
+    fx.implosion(trap.x, trap.y, trap.radius * 2.6, {
+      tendrils: 12, gloom: 1, duration: 380, depth: 6,
+    });
+    // Teeth driven into whatever stepped on it.
+    fx.tendrilBurst(victim.x, victim.y, 30, 8, 8);
+    this.arena.scene.cameras.main.shake(140, 0.005);
+  }
+
   /** Player-only: NPC never uses black hole. */
   doStartBlackHole(x: number, y: number): void {
     const scene = this.arena.scene;
+    const player = this.arena.player;
     this.shadowBlackHoleActive = true;
     this.shadowBlackHoleEnd = scene.time.now + 3000;
     this.shadowBlackHoleX = x;
@@ -687,6 +875,15 @@ export class ShadowKit {
     this.shadowBlackHoleHealAccum = 0;
     if (this.shadowBlackHoleSprite) this.shadowBlackHoleSprite.destroy();
     this.shadowBlackHoleSprite = scene.add.graphics().setDepth(5);
+
+    // Arms thrust up and hold for the whole ultimate, and the singularity is born out of a
+    // gather rather than simply appearing at the cursor.
+    this.playerAvatar?.play('raise', Math.atan2(y - player.y, x - player.x), 3000);
+    this.pfx.channelGather(x, y, 90, 700);
+    this.pfx.implosion(x, y, 90, { tendrils: 14, gloom: 3, duration: 520, depth: 5 });
+    // Q+ Void Singularity is a bigger event, so the ground mark it leaves is bigger too.
+    if (this.arena.hasUpgrade('q')) this.pfx.voidPillar(x, y, 26, 120, 6);
+    scene.cameras.main.shake(260, 0.007);
   }
 
   // ── Tentacle Wall (F) ─────────────────────────────────────────────────
@@ -713,6 +910,9 @@ export class ShadowKit {
     });
     // First tentacle aims where the cast was pointed; the rest re-aim as they come up.
     this.wallAim.set(this.walls[this.walls.length - 1], { x, y });
+    // Overhead, then driven into the ground — the wall is being pushed up out of the floor.
+    (isPlayer ? this.playerAvatar : this.npcAvatar)?.play('slam', Math.atan2(y - caster.y, x - caster.x));
+    this.fx(owner).ring(caster.x, caster.y, 10, 70, SHADOW.mauve, 420, 4, 3);
     this.arena.showFloatingText(caster.x, caster.y - 34, '🦑 TENTACLE WALL', '#aa44ff');
   }
 
@@ -756,6 +956,10 @@ export class ShadowKit {
       eyed: wall.watchers && Math.random() < WATCHER_CHANCE,
       nextLobAt: time + WATCHER_LOB_INTERVAL_MS,
     });
+    // Each spike breaks the ground it comes up through.
+    const fx = this.fx(wall.owner);
+    fx.stain(nx, ny, 20, 2);
+    fx.wisps(nx, ny + 4, 4, { speed: 60, size: 2.4, life: 380, rise: 22, depth: 5 });
     wall.lastX = nx;
     wall.lastY = ny;
     wall.pending--;
@@ -794,85 +998,84 @@ export class ShadowKit {
           wall.lastHit.set(v, time);
           v.takeDamage(WALL_TENTACLE_DAMAGE);
           this.applyHopelessness(v, WALL_TENTACLE_HOPELESS);
-          this.arena.spawnHitFlash(v.x, v.y, 0x6600aa);
+          this.arena.spawnHitFlash(v.x, v.y, SHADOW.orchid);
+          this.fx(wall.owner).wisps(v.x, v.y, 3, { speed: 70, size: 2.4, life: 340, rise: 14, depth: 7 });
         }
 
         // F+ Watchers: eyed tentacles lob despair amplifiers at whoever they can see.
         if (t.eyed && time >= t.nextLobAt) {
           t.nextLobAt = time + WATCHER_LOB_INTERVAL_MS;
           const mark = victims.find(v => v.active && v.hp > 0);
-          if (mark) this.lobWatcherBolt(t, mark);
+          if (mark) this.lobWatcherBolt(t, mark, wall.owner);
         }
       }
     }
   }
 
-  /** Dark purple bolt from a watcher tentacle — multiplies the target's hopelessness on impact. */
-  private lobWatcherBolt(t: WallTentacle, mark: Fighter): void {
+  /**
+   * A watcher tentacle spits a despair amplifier at whoever it can see. It flies as a dark
+   * bomb with a blood-lit rim, so the thing that is coming is unmistakably not a normal blast.
+   */
+  private lobWatcherBolt(t: WallTentacle, mark: Fighter, owner: 'player' | 'npc'): void {
     const scene = this.arena.scene;
-    const bolt = scene.add.circle(t.x, t.y - 40, 7, 0x33004d, 0.95)
-      .setStrokeStyle(2, 0xcc2244, 0.9).setDepth(8);
-    const tx = mark.x;
-    const ty = mark.y;
-    scene.tweens.add({
-      targets: bolt, x: tx, y: ty, duration: 520, ease: 'Sine.easeIn',
-      onComplete: () => {
-        const boom = scene.add.circle(tx, ty, 10, 0x33004d, 0.7).setDepth(8);
-        scene.tweens.add({ targets: boom, scaleX: 3, scaleY: 3, alpha: 0, duration: 320, onComplete: () => boom.destroy() });
-        bolt.destroy();
-        if (mark.active && mark.hp > 0 && Phaser.Math.Distance.Between(tx, ty, mark.x, mark.y) <= 44) {
-          this.multiplyHopelessness(mark, WATCHER_HOPELESS_MULT);
-          this.arena.spawnHitFlash(mark.x, mark.y, 0xcc2244);
-        }
-      },
+    this.darkBombs.push({
+      gfx: scene.add.graphics().setDepth(8),
+      x: t.x, y: t.y - 40,
+      fromX: t.x, fromY: t.y - 40,
+      toX: mark.x, toY: mark.y,
+      spawnAt: scene.time.now,
+      arriveAt: scene.time.now + 520,
+      owner,
+      mode: 'watcher',
+      mark,
     });
   }
 
-  /** A single writhing spike of corrupt energy: tapered body, hooked barbs, oily base pool. */
+  /**
+   * A single writhing spike: a barbed tendril rooted in a spreading pool of dark, swaying on
+   * its own beat. Watchers grow taller, carry an extra pair of barbs and open a blood-lit eye
+   * near the tip that tracks whoever the wall is hunting.
+   */
   private drawTentacle(t: WallTentacle, time: number, grow: number, owner: 'player' | 'npc'): void {
     const g = t.gfx;
     g.clear();
-    const height = (t.eyed ? 52 : 46) * grow;
-    const sway = Math.sin(time * 0.005 + t.phase) * 7 * grow;
-    const baseW = 11 * grow;
-    const tipX = t.x + sway;
-    const tipY = t.y - height;
-    const midX = t.x + sway * 0.35;
-    const midY = t.y - height * 0.55;
-    const body = t.eyed ? 0x14001e : 0x260033;
-    const edge = t.eyed ? 0x5c0022 : 0x8800cc;
-    const glowColor = owner === 'player' ? 0xcc66ff : 0x9944cc;
+    const tint = this.col(owner);
+    const height = (t.eyed ? 54 : 46) * grow;
+    const sway = Math.sin(time * 0.005 + t.phase) * 0.16;
+    const baseW = 10 * grow;
 
-    g.fillStyle(0x000000, 0.35);
-    g.fillEllipse(t.x, t.y + 4, 30 * grow, 11 * grow);
-
-    g.fillStyle(body, 0.96);
-    g.lineStyle(2, edge, 0.9);
-    g.beginPath();
-    g.moveTo(t.x - baseW, t.y + 2);
-    g.lineTo(midX - baseW * 0.55, midY);
-    g.lineTo(tipX, tipY);
-    g.lineTo(midX + baseW * 0.55, midY);
-    g.lineTo(t.x + baseW, t.y + 2);
-    g.closePath();
-    g.fillPath();
-    g.strokePath();
-
-    // Hooked barbs alternating down the shaft.
-    g.lineStyle(2, glowColor, 0.85);
-    for (let i = 1; i <= 3; i++) {
-      const f = i / 4;
-      const bx = Phaser.Math.Linear(t.x, tipX, f);
-      const by = Phaser.Math.Linear(t.y, tipY, f);
-      const dir = i % 2 === 0 ? 1 : -1;
-      g.lineBetween(bx, by, bx + dir * (10 - i * 1.6), by - 6);
+    // The pool it grew out of, spreading as the spike rises.
+    g.fillStyle(tint(SHADOW.abyss), 0.42);
+    g.fillEllipse(t.x, t.y + 4, 34 * grow, 12 * grow);
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * Math.PI * 2 + t.phase;
+      g.fillStyle(tint(SHADOW.pitch), 0.5);
+      shadowTendril(g, t.x, t.y + 3, a, 18 * grow, 3 * grow, Math.sin(time * 0.002 + i) * 6);
     }
 
+    shadowTendrilLayered(
+      g, tint, t.x, t.y + 2,
+      -Math.PI / 2 + sway, height, baseW,
+      Math.sin(time * 0.0032 + t.phase) * 12 * grow, 1,
+      9 * grow, time * 0.004 + t.phase,
+      { barbs: t.eyed ? 5 : 3 },
+    );
+
     if (t.eyed && grow > 0.7) {
-      const eyeY = tipY + 12;
-      g.fillStyle(0xff1133, 0.95);
-      g.fillCircle(tipX - 3.5, eyeY, 2.6);
-      g.fillCircle(tipX + 3.5, eyeY, 2.6);
+      // The eye rides the tip, which moves with the sway — pinning it to the root would leave
+      // it hanging in mid-air whenever the spike leaned.
+      const tipX = t.x + Math.cos(-Math.PI / 2 + sway) * height * 0.8
+        + -Math.sin(-Math.PI / 2 + sway) * Math.sin(time * 0.0032 + t.phase) * 12 * grow * 0.64;
+      const tipY = t.y + 2 + Math.sin(-Math.PI / 2 + sway) * height * 0.8;
+      const look = Math.sin(time * 0.002 + t.phase) * 1.5;
+      g.fillStyle(tint(SHADOW.blood), 0.35);
+      g.fillCircle(tipX, tipY, 7 * grow);
+      g.fillStyle(tint(SHADOW.pale), 0.9);
+      g.fillEllipse(tipX, tipY, 8.5 * grow, 5.5 * grow);
+      g.fillStyle(tint(SHADOW.blood), 1);
+      g.fillCircle(tipX + Math.cos(look) * 1.8, tipY, 2.6 * grow);
+      g.fillStyle(tint(SHADOW.abyss), 1);
+      g.fillCircle(tipX + Math.cos(look) * 2.2, tipY, 1.2 * grow);
     }
   }
 
@@ -889,19 +1092,28 @@ export class ShadowKit {
   private tryCastShadowBeacon(time: number, mouseX: number, mouseY: number): void {
     if (time - this.beaconLastCastAt < BEACON_COOLDOWN_MS) return;
     this.beaconLastCastAt = time;
-    this.placeBeacon(this.arena.player.x, this.arena.player.y, mouseX, mouseY, 'player');
-    this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 30, '🎯 SHADOW BEACON', '#aa44ff');
+    const player = this.arena.player;
+    this.playerAvatar?.play('slam', Math.atan2(mouseY - player.y, mouseX - player.x));
+    this.placeBeacon(player.x, player.y, mouseX, mouseY, 'player');
+    this.arena.showFloatingText(player.x, player.y - 30, '🎯 SHADOW BEACON', '#aa44ff');
     // Online: the peer mirrors the emplacement and watches our ghost walk onto it.
     this.arena.broadcastMasteryCast('shadow-beacon');
   }
 
   /** Online replay: mirror the remote shadow player's beacon so it can shell us locally. */
   doNpcShadowBeacon(tx: number, ty: number): void {
-    this.placeBeacon(this.arena.npc.x, this.arena.npc.y, tx, ty, 'npc');
+    const npc = this.arena.npc;
+    this.npcAvatar?.play('slam', Math.atan2(ty - npc.y, tx - npc.x));
+    this.placeBeacon(npc.x, npc.y, tx, ty, 'npc');
   }
 
   private placeBeacon(x: number, y: number, dotX: number, dotY: number, owner: 'player' | 'npc'): void {
     const scene = this.arena.scene;
+    const fx = this.fx(owner);
+    // The emplacement is hauled up out of the ground, and the dot is painted onto its target.
+    fx.tendrilBurst(x, y, 44, 8, 3);
+    fx.stain(x, y, 26, 2);
+    fx.ring(dotX, dotY, 4, 30, SHADOW.mauve, 420, 3, 3);
     this.beacons.push({
       gfx: scene.add.graphics().setDepth(4),
       dotGfx: scene.add.graphics().setDepth(3),
@@ -939,20 +1151,29 @@ export class ShadowKit {
       g.strokePath();
     };
     const live = b.armed ? 1 : 0.4;
-    const accent = b.owner === 'player' ? 0x9933cc : 0x772299;
+    const tint = this.col(b.owner);
+    const accent = tint(b.owner === 'player' ? SHADOW.amethyst : SHADOW.orchid);
 
-    g.fillStyle(0x000000, 0.35);
+    g.fillStyle(tint(SHADOW.abyss), 0.35);
     g.fillEllipse(b.x, b.y + 9 * grow, 50 * grow, 18 * grow);
+
+    // Tendrils anchoring the plate to the ground, restless while the mortar is armed.
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2 + 0.4;
+      const writhe = live * (2 + Math.sin(time * 0.004 + i) * 2);
+      g.fillStyle(tint(SHADOW.pitch), 0.75);
+      shadowTendril(g, b.x, b.y, a, (20 + writhe) * grow, 3.6 * grow, Math.sin(time * 0.003 + i) * 8);
+    }
 
     // Base plate stays square to the world — only the barrel swivels, so the
     // emplacement never degenerates into an anonymous rotated diamond.
     const half = 16 * grow;
-    g.fillStyle(0x150020, 0.96);
+    g.fillStyle(tint(SHADOW.pitch), 0.96);
     g.lineStyle(2, accent, 0.9);
     g.fillRect(b.x - half, b.y - half, half * 2, half * 2);
     g.strokeRect(b.x - half, b.y - half, half * 2, half * 2);
     // Sandbag blocks stacked along the plate edges.
-    g.fillStyle(0x2a0940, 0.95);
+    g.fillStyle(tint(SHADOW.violet), 0.95);
     g.lineStyle(1, accent, 0.55);
     for (const [ox, oy, w, h] of [
       [-half, -half, half * 2, 5 * grow],
@@ -961,20 +1182,20 @@ export class ShadowKit {
       g.fillRect(b.x + ox, b.y + oy, w, h);
       g.strokeRect(b.x + ox, b.y + oy, w, h);
     }
-    g.fillStyle(0xaa44ff, 0.25 + live * 0.55);
+    g.fillStyle(tint(SHADOW.lilac), 0.25 + live * 0.55);
     for (const [ox, oy] of [[-11, -11], [11, -11], [11, 11], [-11, 11]] as const) {
       g.fillCircle(b.x + ox * grow, b.y + oy * grow, 2 * grow);
     }
 
     // Barrel, trained on the dot and overhanging the plate so the aim is unmistakable.
-    g.fillStyle(0x0d0014, 0.98);
-    g.lineStyle(2, 0x9933cc, 0.95);
+    g.fillStyle(tint(SHADOW.abyss), 0.98);
+    g.lineStyle(2, tint(SHADOW.amethyst), 0.95);
     poly([[-6, -7], [27, -4.5], [27, 4.5], [-6, 7]]);
     const [mx, my] = px(28, 0);
-    g.lineStyle(2.5, 0xcc66ff, 0.95);
+    g.lineStyle(2.5, tint(SHADOW.mauve), 0.95);
     g.strokeCircle(mx, my, 5.5 * grow);
     // Muzzle brake ribs.
-    g.lineStyle(1.5, 0x9933cc, 0.8);
+    g.lineStyle(1.5, tint(SHADOW.amethyst), 0.8);
     for (const lx of [17, 21] as const) {
       const [ax, ay] = px(lx, -5);
       const [bx2, by2] = px(lx, 5);
@@ -983,9 +1204,9 @@ export class ShadowKit {
 
     // Rune core — the tell for "step here and it fires".
     const pulse = 0.5 + 0.5 * Math.sin(time * (b.armed ? 0.012 : 0.004));
-    g.fillStyle(0xaa44ff, (0.2 + pulse * 0.6) * live);
+    g.fillStyle(tint(SHADOW.lilac), (0.2 + pulse * 0.6) * live);
     g.fillCircle(b.x, b.y, (3.5 + pulse * 3) * grow);
-    g.lineStyle(1.5, 0xcc88ff, 0.5 * live);
+    g.lineStyle(1.5, tint(SHADOW.mauve), 0.5 * live);
     g.strokeCircle(b.x, b.y, (9 + pulse * 2) * grow);
   }
 
@@ -996,11 +1217,12 @@ export class ShadowKit {
     const grow = Math.min(1, (time - b.spawnAt) / 250);
     const pulse = 0.5 + 0.5 * Math.sin(time * 0.006);
     const spin = time * 0.0015;
+    const tint = this.col(b.owner);
 
-    g.fillStyle(0x000000, 0.26);
+    g.fillStyle(tint(SHADOW.abyss), 0.26);
     g.fillEllipse(b.dotX, b.dotY + 4, 24 * grow, 8 * grow);
 
-    g.lineStyle(2, 0xcc88ff, 0.85);
+    g.lineStyle(2, tint(SHADOW.mauve), 0.85);
     for (let i = 0; i < 3; i++) {
       const a = spin + i * (Math.PI * 2 / 3);
       g.beginPath();
@@ -1008,7 +1230,7 @@ export class ShadowKit {
       g.strokePath();
     }
 
-    g.lineStyle(1.5, 0xaa44ff, 0.65);
+    g.lineStyle(1.5, tint(SHADOW.lilac), 0.65);
     for (let i = 0; i < 4; i++) {
       const a = i * (Math.PI / 2) - spin * 0.6;
       const r0 = 15 * grow;
@@ -1019,9 +1241,9 @@ export class ShadowKit {
       );
     }
 
-    g.fillStyle(0xaa44ff, 0.5 + pulse * 0.45);
+    g.fillStyle(tint(SHADOW.lilac), 0.5 + pulse * 0.45);
     g.fillCircle(b.dotX, b.dotY, (4 + pulse * 1.5) * grow);
-    g.fillStyle(0x1a0026, 0.9);
+    g.fillStyle(tint(SHADOW.abyss), 0.9);
     g.fillCircle(b.dotX, b.dotY, 1.8 * grow);
   }
 
@@ -1051,27 +1273,42 @@ export class ShadowKit {
     }
   }
 
+  /**
+   * The mortar fires: a muzzle blast out of the barrel, a shell that arcs over on its own
+   * Graphics (so it can trail), and a full implosion with a void pillar where it lands.
+   */
   private fireBeacon(b: ShadowBeacon): void {
     const scene = this.arena.scene;
-    const shell = scene.add.circle(b.x, b.y, 8, 0x120020, 0.95)
-      .setStrokeStyle(2, 0xaa44ff).setDepth(9);
-    const flash = scene.add.circle(b.x, b.y, 20, 0xaa44ff, 0.5).setDepth(4);
-    scene.tweens.add({ targets: flash, scaleX: 2, scaleY: 2, alpha: 0, duration: 300, onComplete: () => flash.destroy() });
-    scene.tweens.add({
-      targets: shell, x: b.dotX, y: b.dotY, duration: 700, ease: 'Sine.easeOut',
-      onComplete: () => {
-        shell.destroy();
-        const boom = scene.add.circle(b.dotX, b.dotY, BEACON_BLAST_RADIUS * 0.35, 0x220033, 0.75).setDepth(8);
-        scene.tweens.add({ targets: boom, scaleX: 3, scaleY: 3, alpha: 0, duration: 420, onComplete: () => boom.destroy() });
-        const victims: Fighter[] = b.owner === 'player' ? this.arena.enemies : [this.arena.player];
-        for (const v of victims) {
-          if (!v.active || v.hp <= 0) continue;
-          if (Phaser.Math.Distance.Between(b.dotX, b.dotY, v.x, v.y) > BEACON_BLAST_RADIUS) continue;
-          v.takeDamage(BEACON_DAMAGE);
-          this.applyHopelessness(v, BEACON_HOPELESS);
-          this.arena.spawnHitFlash(v.x, v.y, 0xaa44ff);
-        }
-      },
+    const fx = this.fx(b.owner);
+    const ang = Math.atan2(b.dotY - b.y, b.dotX - b.x);
+
+    fx.muzzleUmbra(b.x + Math.cos(ang) * 26, b.y + Math.sin(ang) * 26, ang, 1.6, 9);
+    scene.cameras.main.shake(120, 0.004);
+
+    const shell: DarkBomb = {
+      gfx: scene.add.graphics().setDepth(9),
+      x: b.x, y: b.y,
+      fromX: b.x, fromY: b.y,
+      toX: b.dotX, toY: b.dotY,
+      spawnAt: scene.time.now,
+      arriveAt: scene.time.now + 700,
+      owner: b.owner,
+      mode: 'shell',
+      mark: null,
+    };
+    // Beacon shells detonate on their own terms, so the flight is stepped here and the impact
+    // handled below rather than routed through the dark-bomb detonation.
+    this.darkBombs.push(shell);
+    scene.time.delayedCall(700, () => {
+      fx.voidPillar(b.dotX, b.dotY, 22, 110, 8);
+      const victims: Fighter[] = b.owner === 'player' ? this.arena.enemies : [this.arena.player];
+      for (const v of victims) {
+        if (!v.active || v.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(b.dotX, b.dotY, v.x, v.y) > BEACON_BLAST_RADIUS) continue;
+        v.takeDamage(BEACON_DAMAGE);
+        this.applyHopelessness(v, BEACON_HOPELESS);
+        this.arena.spawnHitFlash(v.x, v.y, SHADOW.lilac);
+      }
     });
   }
 
@@ -1103,7 +1340,8 @@ export class ShadowKit {
   private drawTripline(line: Tripline, time: number): void {
     const g = line.gfx;
     g.clear();
-    const accent = line.owner === 'player' ? 0xcc88ff : 0x8844aa;
+    const tint = this.col(line.owner);
+    const accent = tint(line.owner === 'player' ? SHADOW.mauve : SHADOW.orchid);
     // Tie off at the stake heads rather than their feet.
     const ax = line.a.x;
     const ay = line.a.y - 20;
@@ -1119,7 +1357,7 @@ export class ShadowKit {
     };
 
     // Shadow of the string on the ground, then the string itself.
-    g.lineStyle(2, 0x000000, 0.22);
+    g.lineStyle(2, tint(SHADOW.abyss), 0.22);
     g.beginPath();
     for (let i = 0; i <= SEGMENTS; i++) {
       const [x, y] = pt(i / SEGMENTS);
@@ -1168,11 +1406,61 @@ export class ShadowKit {
         this.applyHopelessness(v, TRIPLINE_HOPELESS);
         this.slowedUntil.set(v, time + TRIPLINE_SLOW_MS);
         v.walkSpeedMult = Math.min(v.walkSpeedMult, TRIPLINE_SLOW_MULT);
-        this.arena.spawnHitFlash(v.x, v.y, 0xcc88ff);
+        this.arena.spawnHitFlash(v.x, v.y, SHADOW.mauve);
+        // The string snaps taut and drags the victim's feet out from under them.
+        this.fx(line.owner).tendrilBurst(v.x, v.y, 30, 6, 7);
         this.arena.showFloatingText(v.x, v.y - 38, '🧵 TRIPPED', '#cc88ff');
         this.arena.recordMasteryStat('trapped', 1);
         break;
       }
+    }
+  }
+
+  // ── Shadow character rig ──────────────────────────────────────────────
+
+  /**
+   * Builds (on first frame) and drives the ball-arm avatar for whichever fighters are shadow.
+   * The player faces the cursor; the NPC faces whoever it is fighting. The mastery passive's
+   * shroud lives here too, at a lower depth than the Consume shroud so the two stack into one
+   * silhouette rather than fighting each other.
+   */
+  private updateAvatars(delta: number, isPlayerShadow: boolean, isNpcShadow: boolean): void {
+    const { player, npc, scene } = this.arena;
+
+    if (isPlayerShadow && player?.active) {
+      if (!this.playerAvatar) this.playerAvatar = new ShadowAvatar(scene, this.pcol);
+      const aimX = this.aimX || player.x + 1;
+      const aimY = this.aimY || player.y;
+      this.playerAvatar.setFacing(Math.atan2(aimY - player.y, aimX - player.x));
+      // Consuming or holding a singularity is the character working at full stretch.
+      this.playerAvatar.setIntensity(
+        this.shadowConsumeActive ? 1.5 : this.shadowBlackHoleActive ? 1.3 : 1,
+      );
+      this.playerAvatar.setMastered(this.arena.masteryActive);
+      this.playerAvatar.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
+
+      // Shadow Mastery — Shared Suffering: an always-on shroud while mastery is enabled.
+      if (this.arena.masteryActive) {
+        if (!this.masteryShroud) this.masteryShroud = new ShadowShroud(scene, this.pcol, 42, 0.8, 2, 7);
+        this.masteryShroud.update(delta, player.x, player.y, player.alpha);
+      } else if (this.masteryShroud) {
+        this.masteryShroud.destroy();
+        this.masteryShroud = null;
+      }
+    } else if (this.playerAvatar) {
+      this.playerAvatar.destroy();
+      this.playerAvatar = null;
+      if (this.masteryShroud) { this.masteryShroud.destroy(); this.masteryShroud = null; }
+    }
+
+    if (isNpcShadow && npc?.active) {
+      if (!this.npcAvatar) this.npcAvatar = new ShadowAvatar(scene, this.ncol);
+      this.npcAvatar.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
+      this.npcAvatar.setIntensity(this.npcShadowBlackHoleActive ? 1.3 : 1);
+      this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
+    } else if (this.npcAvatar) {
+      this.npcAvatar.destroy();
+      this.npcAvatar = null;
     }
   }
 
@@ -1182,11 +1470,15 @@ export class ShadowKit {
     if (!isPlayerShadow && !isNpcShadow) return;
     const { player, npc, enemies, scene } = this.arena;
 
+    this.updateAvatars(delta, isPlayerShadow, isNpcShadow);
+    this.updateDarkBombs(time);
+    this.drawDarkClouds(time);
+
     // Dark cloud ticks (both owners)
     for (let ci = this.shadowDarkClouds.length - 1; ci >= 0; ci--) {
       const cloud = this.shadowDarkClouds[ci];
       if (time >= cloud.expiresAt) {
-        cloud.sprite.destroy();
+        cloud.gfx.destroy();
         this.shadowDarkClouds.splice(ci, 1);
         continue;
       }
@@ -1202,7 +1494,7 @@ export class ShadowKit {
             if (!t.active || t.hp <= 0) continue;
             if (Phaser.Math.Distance.Between(cloud.x, cloud.y, t.x, t.y) <= cloud.radius + 14) {
               t.takeDamage(2, { source: cloud, sourceX: cloud.x, sourceY: cloud.y });
-              this.arena.spawnHitFlash(t.x, t.y, 0x660088);
+              this.arena.spawnHitFlash(t.x, t.y, SHADOW.orchid);
             }
           }
         } else {
@@ -1242,7 +1534,8 @@ export class ShadowKit {
             this.arena.recordMasteryStat('trapped', 1);
             t.takeDamage(20);
             this.applyHopelessness(t, 20);
-            this.arena.spawnHitFlash(t.x, t.y, 0xcc44ff);
+            this.arena.spawnHitFlash(t.x, t.y, SHADOW.mauve);
+            this.snapTrapBite(trap, t);
             this.shadowNpcStunnedUntil = time + 2000;
             break;
           }
@@ -1251,7 +1544,8 @@ export class ShadowKit {
         trap.triggered = true;
         player.takeDamage(20);
         this.applyHopelessness(player, 20);
-        this.arena.spawnHitFlash(player.x, player.y, 0xcc44ff);
+        this.arena.spawnHitFlash(player.x, player.y, SHADOW.mauve);
+        this.snapTrapBite(trap, player);
         this.shadowPlayerStunnedUntil = time + 2000;
       }
     }
@@ -1265,26 +1559,27 @@ export class ShadowKit {
         if (time >= this.shadowTentacleEnd) {
           this.shadowTentacleActive = false;
           this.shadowTentacleHooked = false;
+          this.playerAvatar?.setHold(null);
           if (this.shadowTentacleSprite) { this.shadowTentacleSprite.destroy(); this.shadowTentacleSprite = null; }
         } else {
           const tSpr = this.shadowTentacleSprite;
           if (tSpr) {
             tSpr.clear();
-            if (this.shadowTentacleHooked) {
-              // Hooked: draw from player to NPC, show drag chain
-              tSpr.lineStyle(6, 0x8800cc, 0.85);
-              tSpr.lineBetween(player.x, player.y, npc.x, npc.y);
-              tSpr.lineStyle(2, 0xcc44ff, 0.5);
-              tSpr.lineBetween(player.x, player.y, npc.x, npc.y);
-            } else {
+            // Hands stay hauled back along the limb for as long as it is out.
+            const gripX = this.shadowTentacleHooked ? npc.x : this.shadowTentacleX;
+            const gripY = this.shadowTentacleHooked ? npc.y : this.shadowTentacleY;
+            if (!this.shadowTentacleHooked && this.canDragTraps('player')) {
               // Miss/drag: track cursor for trap drag
-              if (this.canDragTraps('player')) {
-                this.shadowTentacleX = ptr.worldX;
-                this.shadowTentacleY = ptr.worldY;
-              }
-              tSpr.lineStyle(4, 0x8800cc, 0.6);
-              tSpr.lineBetween(player.x, player.y, this.shadowTentacleX, this.shadowTentacleY);
+              this.shadowTentacleX = ptr.worldX;
+              this.shadowTentacleY = ptr.worldY;
             }
+            this.playerAvatar?.setHold('draw', Math.atan2(gripY - player.y, gripX - player.x));
+            ShadowFx.drawTether(
+              tSpr, this.pcol, player.x, player.y,
+              this.shadowTentacleHooked ? npc.x : this.shadowTentacleX,
+              this.shadowTentacleHooked ? npc.y : this.shadowTentacleY,
+              time / 1000, 1, this.shadowTentacleHooked,
+            );
           }
         }
       }
@@ -1295,6 +1590,10 @@ export class ShadowKit {
       if (this.shadowBlackHoleActive) {
         if (time >= this.shadowBlackHoleEnd) {
           this.shadowBlackHoleActive = false;
+          this.playerAvatar?.setHold(null);
+          // The hole doesn't switch off — it collapses.
+          this.pfx.implosion(this.shadowBlackHoleX, this.shadowBlackHoleY, 110, { tendrils: 16, gloom: 4, duration: 560 });
+          scene.cameras.main.shake(220, 0.006);
           if (this.shadowBlackHoleSprite) { this.shadowBlackHoleSprite.destroy(); this.shadowBlackHoleSprite = null; }
         } else {
           // Follow the live cursor for the duration of the effect
@@ -1303,20 +1602,27 @@ export class ShadowKit {
           this.shadowBlackHoleY = bhPtr.worldY;
 
           if (this.shadowBlackHoleSprite) {
-            const pulse = 18 + Math.sin(time * 0.006) * 4;
-            this.shadowBlackHoleSprite.clear();
-            this.shadowBlackHoleSprite.fillStyle(0x000000, 0.6);
-            this.shadowBlackHoleSprite.fillCircle(this.shadowBlackHoleX, this.shadowBlackHoleY, pulse);
-            this.shadowBlackHoleSprite.lineStyle(3, 0x8800cc, 0.85);
-            this.shadowBlackHoleSprite.strokeCircle(this.shadowBlackHoleX, this.shadowBlackHoleY, pulse + 8);
+            const g = this.shadowBlackHoleSprite;
+            g.clear();
+            // Q+ Void Singularity is a bigger, hungrier hole — the ultimate scales its content,
+            // not just its numbers.
+            const big = this.arena.hasUpgrade('q');
+            const r = (big ? 22 : 17) + Math.sin(time * 0.006) * 3;
+            ShadowFx.drawSingularity(g, this.pcol, this.shadowBlackHoleX, this.shadowBlackHoleY, r, time / 1000, 1);
           }
+          // Arms held up for the whole channel — the hole is being carried, not thrown.
+          this.playerAvatar?.setHold('charge');
 
           // Tick damage to enemy, 5/sec, regardless of position
           this.shadowBlackHoleDamageAccum += delta;
           if (this.shadowBlackHoleDamageAccum >= 1000) {
             this.shadowBlackHoleDamageAccum -= 1000;
             npc.takeDamage(5);
-            this.arena.spawnHitFlash(npc.x, npc.y, 0x8800cc);
+            this.arena.spawnHitFlash(npc.x, npc.y, SHADOW.amethyst);
+            this.pfx.wisps(npc.x, npc.y, 4, {
+              angle: Math.atan2(this.shadowBlackHoleY - npc.y, this.shadowBlackHoleX - npc.x),
+              spread: 0.6, speed: 100, size: 2.6, life: 420, rise: 0, depth: 7,
+            });
           }
 
           // Q+ Void Singularity: heal caster + spawn shadow clouds right on the black hole
@@ -1346,7 +1652,10 @@ export class ShadowKit {
           if (this.shadowCloudExposureAccum >= 3000 && time > this.shadowConfusionUntil) {
             this.shadowConfusionUntil = time + 6000;
             this.shadowCloudExposureAccum = 0;
-            this.arena.spawnHitFlash(npc.x, npc.y, 0x8800cc);
+            this.arena.spawnHitFlash(npc.x, npc.y, SHADOW.amethyst);
+            // Snap on application, so the debuff has a moment as well as a state.
+            this.pfx.tendrilBurst(npc.x, npc.y, 36, 8, 8);
+            this.pfx.gloom(npc.x, npc.y - 10, 2, 24, 7);
             const confTxt = scene.add.text(npc.x, npc.y - 30, '😵 CONFUSED', { fontSize: '11px', color: '#cc44ff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
             scene.tweens.add({ targets: confTxt, y: confTxt.y - 20, alpha: 0, duration: 1200, onComplete: () => confTxt.destroy() });
           }
@@ -1377,26 +1686,19 @@ export class ShadowKit {
         if (time >= this.npcShadowTentacleEnd) {
           this.npcShadowTentacleActive = false;
           this.npcShadowTentacleHooked = false;
+          this.npcAvatar?.setHold(null);
           if (this.npcShadowTentacleSprite) { this.npcShadowTentacleSprite.destroy(); this.npcShadowTentacleSprite = null; }
         } else {
           if (this.npcShadowTentacleSprite) {
+            const angle = Math.atan2(player.y - npc.y, player.x - npc.x);
+            const tipX = this.npcShadowTentacleHooked ? player.x : npc.x + Math.cos(angle) * 100;
+            const tipY = this.npcShadowTentacleHooked ? player.y : npc.y + Math.sin(angle) * 100;
             this.npcShadowTentacleSprite.clear();
-            if (this.npcShadowTentacleHooked) {
-              // Draw tentacle from NPC to player
-              this.npcShadowTentacleSprite.lineStyle(6, 0x440066, 0.9);
-              this.npcShadowTentacleSprite.lineBetween(npc.x, npc.y, player.x, player.y);
-              this.npcShadowTentacleSprite.lineStyle(2, 0x8800cc, 0.5);
-              this.npcShadowTentacleSprite.lineBetween(npc.x, npc.y, player.x, player.y);
-            } else {
-              // Miss whip
-              const angle = Math.atan2(player.y - npc.y, player.x - npc.x);
-              this.npcShadowTentacleSprite.lineStyle(4, 0x440066, 0.6);
-              this.npcShadowTentacleSprite.lineBetween(
-                npc.x, npc.y,
-                npc.x + Math.cos(angle) * 100,
-                npc.y + Math.sin(angle) * 100,
-              );
-            }
+            this.npcAvatar?.setHold('draw', angle);
+            ShadowFx.drawTether(
+              this.npcShadowTentacleSprite, this.ncol,
+              npc.x, npc.y, tipX, tipY, time / 1000, 1, this.npcShadowTentacleHooked,
+            );
           }
 
           // Periodically pick a new random drag target
@@ -1414,35 +1716,20 @@ export class ShadowKit {
         (player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
       }
 
-      // NPC black hole (P2 shadow Q ability): chargeup → activation
-      if (this.npcShadowBlackHoleCharging) {
-        if (this.npcShadowBlackHoleChargeVisual) {
-          this.npcShadowBlackHoleChargeVisual.setPosition(npc.x, npc.y);
-        }
-        if (time >= this.npcShadowBlackHoleChargeStart + 3000) {
-          this.npcShadowBlackHoleCharging = false;
-          this.arena.npcNukeChanneling = false;
-          if (this.npcShadowBlackHoleChargeVisual) { this.npcShadowBlackHoleChargeVisual.destroy(); this.npcShadowBlackHoleChargeVisual = null; }
-          this.npcShadowBlackHoleActive = true;
-          this.npcShadowBlackHoleEnd = time + 10000;
-          this.npcShadowBlackHoleSprite = scene.add.graphics().setDepth(5);
-        }
-      }
-
       // NPC black hole active: draw + pull player toward NPC
       if (this.npcShadowBlackHoleActive) {
         if (time >= this.npcShadowBlackHoleEnd) {
           this.npcShadowBlackHoleActive = false;
+          this.npcAvatar?.setHold(null);
+          this.nfx.implosion(npc.x, npc.y, 110, { tendrils: 16, gloom: 4, duration: 560 });
           if (this.npcShadowBlackHoleSprite) { this.npcShadowBlackHoleSprite.destroy(); this.npcShadowBlackHoleSprite = null; }
         } else {
           if (this.npcShadowBlackHoleSprite) {
-            const pulse = 18 + Math.sin(time * 0.006) * 4;
-            this.npcShadowBlackHoleSprite.clear();
-            this.npcShadowBlackHoleSprite.fillStyle(0x000000, 0.6);
-            this.npcShadowBlackHoleSprite.fillCircle(npc.x, npc.y, pulse);
-            this.npcShadowBlackHoleSprite.lineStyle(3, 0x8800cc, 0.85);
-            this.npcShadowBlackHoleSprite.strokeCircle(npc.x, npc.y, pulse + 8);
+            const g = this.npcShadowBlackHoleSprite;
+            g.clear();
+            ShadowFx.drawSingularity(g, this.ncol, npc.x, npc.y, 17 + Math.sin(time * 0.006) * 3, time / 1000, 1);
           }
+          this.npcAvatar?.setHold('charge');
           // Pull player toward NPC
           const bDist = Phaser.Math.Distance.Between(npc.x, npc.y, player.x, player.y);
           if (bDist > 12) {
@@ -1483,10 +1770,13 @@ export class ShadowKit {
           this.shadowConsumeTickAccum = 0;
           this.shadowTentacleActive = false;
           this.shadowTentacleHooked = false;
+          this.playerAvatar?.setHold(null);
           if (this.shadowTentacleSprite) { this.shadowTentacleSprite.destroy(); this.shadowTentacleSprite = null; }
-          if (this.shadowConsumeAura) this.shadowConsumeAura.destroy();
-          this.shadowConsumeAura = scene.add.circle(player.x, player.y, 30, 0x8800cc, 0.4).setDepth(7);
-          scene.tweens.add({ targets: this.shadowConsumeAura, alpha: 0.85, yoyo: true, repeat: -1, duration: 180 });
+          // Limbs close over the victim and hold them there.
+          if (this.consumeShroud) this.consumeShroud.destroy();
+          this.consumeShroud = new ShadowShroud(scene, this.pcol, 34, 1.3, 7, 11);
+          this.pfx.bloom(player.x, player.y, 70, 12);
+          this.arena.showFloatingText(player.x, player.y - 40, '🕳️ CONSUMED', '#aa44ff');
         }
       }
       if (!this.shadowConsumeActive) {
@@ -1507,18 +1797,18 @@ export class ShadowKit {
       const cBody = npc.body as Phaser.Physics.Arcade.Body;
       if (time >= this.shadowConsumeEnd) {
         this.shadowConsumeActive = false;
-        if (this.shadowConsumeAura) { this.shadowConsumeAura.destroy(); this.shadowConsumeAura = null; }
+        if (this.consumeShroud) { this.consumeShroud.destroy(); this.consumeShroud = null; }
       } else {
         cBody.reset(player.x, player.y);
         cBody.setVelocity(0, 0);
-        if (this.shadowConsumeAura) this.shadowConsumeAura.setPosition(player.x, player.y);
+        this.consumeShroud?.update(delta, player.x, player.y, player.alpha);
         this.shadowConsumeTickAccum += delta;
         if (this.shadowConsumeTickAccum >= 1000) {
           this.shadowConsumeTickAccum -= 1000;
           for (const t of enemies) {
             if (!t.active || t.hp <= 0) continue;
             t.takeDamage(2);
-            this.arena.spawnHitFlash(t.x, t.y, 0x8800cc);
+            this.arena.spawnHitFlash(t.x, t.y, SHADOW.amethyst);
           }
         }
       }
@@ -1557,11 +1847,15 @@ export class ShadowKit {
     if (this.arena.nukeChanneling) return;
     const { player, eKey, rKey, fKey, qKey } = this.arena;
     const playerCtx = this.arena.buildPlayerContext(mouseX, mouseY);
+    // Cached for the avatar rig, which runs in update() and has no pointer of its own.
+    this.aimX = mouseX;
+    this.aimY = mouseY;
 
     if (pointer.isDown) {
       this.shadowDrainHoldAccum += delta;
       if (this.shadowDrainHoldAccum >= 300) {
-        // Cloud mode: spawn dark cloud every 600ms
+        // Cloud mode: hands held out along the aim, pouring dark onto the ground.
+        this.playerAvatar?.setHold('spray', Math.atan2(mouseY - player.y, mouseX - player.x));
         this.shadowDrainCloudAccum += delta;
         if (this.shadowDrainCloudAccum >= 600) {
           this.shadowDrainCloudAccum -= 600;
@@ -1570,9 +1864,11 @@ export class ShadowKit {
       }
     } else {
       if (this.arena.pointerWasDown && this.shadowDrainHoldAccum < 300) {
-        // Tap: launch dark bomb
+        // Tap: launch dark bomb (the gesture fires inside doLaunchDarkBomb)
         player.castAbility('dark-drain', playerCtx);
       }
+      // Only the drain hold owns 'spray'; the tentacle's 'draw' hold must survive this.
+      if (this.shadowDrainHoldAccum >= 300) this.playerAvatar?.setHold(null);
       this.shadowDrainHoldAccum = 0;
       this.shadowDrainCloudAccum = 0;
     }
@@ -1585,11 +1881,14 @@ export class ShadowKit {
       if (this.shadowConsumeActive && this.arena.hasUpgrade('e')) {
         // Throw NPC toward cursor — stun briefly so AI doesn't cancel velocity
         this.shadowConsumeActive = false;
-        if (this.shadowConsumeAura) { this.shadowConsumeAura.destroy(); this.shadowConsumeAura = null; }
+        if (this.consumeShroud) { this.consumeShroud.destroy(); this.consumeShroud = null; }
         const throwAngle = Math.atan2(mouseY - player.y, mouseX - player.x);
         (this.arena.npc.body as Phaser.Physics.Arcade.Body).setVelocity(
           Math.cos(throwAngle) * 800, Math.sin(throwAngle) * 800,
         );
+        this.playerAvatar?.play('punch', throwAngle);
+        this.pfx.muzzleUmbra(player.x, player.y, throwAngle, 1.8, 7);
+        this.pfx.smear(player.x, player.y, player.x + Math.cos(throwAngle) * 90, player.y + Math.sin(throwAngle) * 90);
         this.shadowNpcThrowUntil = Math.max(this.shadowNpcThrowUntil, time + 600);
       } else {
         player.castAbility('tentacle', playerCtx);

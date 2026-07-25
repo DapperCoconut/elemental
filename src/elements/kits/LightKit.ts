@@ -2,6 +2,9 @@ import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
 import { Projectile } from '../../combat/Projectile';
+import {
+  ArmGesture, LIGHT, LightAura, LightAvatar, LightColorFn, LightFx, mixColor,
+} from './LightVisuals';
 
 // ── LightArenaApi ─────────────────────────────────────────────────────────
 
@@ -21,13 +24,12 @@ export interface LightArenaApi {
   readonly hpBarY: number;
   readonly hpBarW: number;
   readonly hpBarH: number;
-  spawnHitFlash(x: number, y: number, color: number): void;
-  spawnDamageNumber(x: number, y: number, amount: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
-  spawnFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
   getNearestEnemy(x: number, y: number): Fighter;
   hasUpgrade(slot: string): boolean;
+  /** `(owner, base) => displayed` — the owner's colour cosmetic, or the identity. */
+  lightColor(owner: 'player' | 'npc', base: number): number;
   /** True only when the player is light AND Light Mastery is switched on. */
   get masteryActive(): boolean;
   /** True only when the online opponent is light AND has Light Mastery on. */
@@ -71,8 +73,8 @@ const SPEED_O_LIGHT_BOUNCE_MS = 60;
 
 const BOOST_TARGET_SPEED = CAR_MAX_SPEED / 3; // Prism Ramp / Light Trick boosts now only push you to 1/3 top speed
 
-const LANCE_COLOR_SLOW = 0xfff4a8;
-const LANCE_COLOR_FAST = 0xff2200;
+const LANCE_COLOR_SLOW = LIGHT.pale;
+const LANCE_COLOR_FAST = LIGHT.red;
 
 const LANCE_HIT_RADIUS = 30;
 const LANCE_BASE_DAMAGE = 6;
@@ -120,13 +122,22 @@ const KEBAB_RIDER_SPACING = 30; // gap between riders along the shaft
 const KEBAB_FIRST_OFFSET = 46;  // distance from the caster to the first rider
 const KEBAB_BASE_DAMAGE = 25;
 const KEBAB_MAX_BONUS_DAMAGE = 130; // added at full acceleration (scales with ratio^2)
-const KEBAB_COLOR = 0xffaa22;
+const KEBAB_COLOR = LIGHT.amber;
+
+/** Every ability drives an arm gesture, on the NPC rig as well as the player's. */
+const CAST_GESTURES: Record<string, ArmGesture> = {
+  blink: 'dash',
+  'prism-ramp': 'slam',
+  'light-trick': 'clap',
+  'speed-o-light': 'raise',
+};
+
+// Every world object below is plain data painted into the kit's own Graphics layers — nothing
+// here owns a sprite, so a ramp can refract and a drill can spin instead of sitting there.
 
 interface KebabRider {
   fighter: Fighter;
   until: number;
-  /** Spike drawn through the rider, so it reads as skewered rather than merely held. */
-  spike: Phaser.GameObjects.Rectangle;
 }
 
 interface LightRamp {
@@ -134,7 +145,6 @@ interface LightRamp {
   y: number;
   angle: number;
   owner: 'player' | 'npc';
-  sprite: Phaser.GameObjects.Rectangle;
   overlapping: Set<Fighter>;
 }
 
@@ -144,7 +154,6 @@ interface LightStreak {
   x2: number;
   y2: number;
   owner: 'player' | 'npc';
-  sprite: Phaser.GameObjects.Rectangle;
   until: number;
   hitSet: Set<Fighter>;
 }
@@ -155,7 +164,6 @@ interface LightDrill {
   angle: number;
   speed: number;
   dmg: number;
-  sprite: Phaser.GameObjects.Triangle;
   hitTarget: Fighter | null;
   nextStunAt: number;
   until: number;
@@ -166,16 +174,16 @@ interface LightFlareBeam {
   y1: number;
   x2: number;
   y2: number;
-  sprite: Phaser.GameObjects.Rectangle;
   until: number;
 }
 
-function lerpColor(colorA: number, colorB: number, t: number): number {
-  const ratio = Phaser.Math.Clamp(t, 0, 1);
-  const a = Phaser.Display.Color.IntegerToColor(colorA);
-  const b = Phaser.Display.Color.IntegerToColor(colorB);
-  const out = Phaser.Display.Color.Interpolate.ColorWithColor(a, b, 100, Math.round(ratio * 100));
-  return Phaser.Display.Color.GetColor(out.r, out.g, out.b);
+/** What the lance looks like this frame, or null when it isn't out. */
+interface LanceView {
+  x: number;
+  y: number;
+  angle: number;
+  ratio: number;
+  enhanced: boolean;
 }
 
 function distToSegment(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
@@ -190,9 +198,39 @@ function distToSegment(px: number, py: number, x1: number, y1: number, x2: numbe
 // ── LightKit ──────────────────────────────────────────────────────────────
 
 export class LightKit {
+  // ── Visuals ────────────────────────────────────────────────────────────
+  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  private readonly pcol: LightColorFn;
+  private readonly ncol: LightColorFn;
+  private readonly pfx: LightFx;
+  private readonly nfx: LightFx;
+  /** The racer rig (lamp hands, eyes, prism crest) for each light fighter. */
+  private playerAvatar: LightAvatar | null = null;
+  private npcAvatar: LightAvatar | null = null;
+  /** Stance tells, per side where both can run one. */
+  private boostAura: LightAura | null = null;
+  private redlineAura: LightAura | null = null;
+  private chargeAura: LightAura | null = null;
+  private kebabAura: LightAura | null = null;
+  private npcKebabAura: LightAura | null = null;
+  /**
+   * Two layers, because these objects are not all in the same place. Ramps, streaks and flare
+   * beams lie on the floor and must pass *under* the fighters; lances, drills and the kebab
+   * shaft are held out in front of them and must pass over.
+   */
+  private groundGfx: Phaser.GameObjects.Graphics | null = null;
+  private airGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Shared animation clock for every per-frame painter in this kit. */
+  private vizT = 0;
+  /** Last cursor position, cached in handleInput — `update` faces the heading instead. */
+  private lastAimX = 0;
+  private lastAimY = 0;
+  /** This frame's lance pose per side, filled in by update() and painted at the end of it. */
+  private lanceView: LanceView | null = null;
+  private npcLanceView: LanceView | null = null;
+
   // ── Player car state ───────────────────────────────────────────────────
   private lanceHeld = false;
-  private lanceSprite: Phaser.GameObjects.Triangle | null = null;
   private carAngle = 0;
   private carSpeed = 0;
   private carBoostUntil = 0;
@@ -232,13 +270,10 @@ export class LightKit {
   private kebabLastCastAt = -KEBAB_COOLDOWN_MS;
   private kebabWindowUntil = 0;
   private kebabRiders: KebabRider[] = [];
-  private kebabShaft: Phaser.GameObjects.Rectangle | null = null;
   private npcKebabWindowUntil = 0;
   private npcKebabRiders: KebabRider[] = [];
-  private npcKebabShaft: Phaser.GameObjects.Rectangle | null = null;
 
   // ── NPC mirror state ────────────────────────────────────────────────────
-  private npcLanceSprite: Phaser.GameObjects.Triangle | null = null;
   private npcCarAngle = 0;
   private npcCarSpeed = 0;
   private npcCarBoostUntil = 0;
@@ -249,11 +284,58 @@ export class LightKit {
   private npcSpeedOLightBouncesLeft = 0;
   private npcSpeedOLightNextBounceAt = 0;
 
-  constructor(private arena: LightArenaApi) {}
+  constructor(private arena: LightArenaApi) {
+    // Built here, not as field initialisers, so they see the injected arena.
+    this.pcol = (base) => arena.lightColor('player', base);
+    this.ncol = (base) => arena.lightColor('npc', base);
+    this.pfx = new LightFx(arena.scene, this.pcol);
+    this.nfx = new LightFx(arena.scene, this.ncol);
+  }
+
+  // ── Visual helpers ─────────────────────────────────────────────────────
+
+  /** Effect painter for a side. */
+  private fx(owner: 'player' | 'npc'): LightFx { return owner === 'player' ? this.pfx : this.nfx; }
+  /** Colour mapper for a side. */
+  private col(owner: 'player' | 'npc'): LightColorFn { return owner === 'player' ? this.pcol : this.ncol; }
+  /** The rig for a side, if that side is playing Light. */
+  private avatar(owner: 'player' | 'npc'): LightAvatar | null {
+    return owner === 'player' ? this.playerAvatar : this.npcAvatar;
+  }
+
+  /** The floor layer, under the fighters. Rebuilt lazily after a reset. */
+  private ground(): Phaser.GameObjects.Graphics {
+    if (!this.groundGfx || !this.groundGfx.active) {
+      this.groundGfx = this.arena.scene.add.graphics().setDepth(4);
+    }
+    return this.groundGfx;
+  }
+
+  /** The held-out-in-front layer, over the fighters. Rebuilt lazily after a reset. */
+  private air(): Phaser.GameObjects.Graphics {
+    if (!this.airGfx || !this.airGfx.active) {
+      this.airGfx = this.arena.scene.add.graphics().setDepth(10);
+    }
+    return this.airGfx;
+  }
 
   reset(): void {
+    // Visuals — every GameObject dies with the old scene run, so rebuild lazily in update().
+    if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
+    if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
+    for (const a of [this.boostAura, this.redlineAura, this.chargeAura, this.kebabAura, this.npcKebabAura]) a?.destroy();
+    this.boostAura = null;
+    this.redlineAura = null;
+    this.chargeAura = null;
+    this.kebabAura = null;
+    this.npcKebabAura = null;
+    if (this.groundGfx) { this.groundGfx.destroy(); this.groundGfx = null; }
+    if (this.airGfx) { this.airGfx.destroy(); this.airGfx = null; }
+    this.vizT = 0;
+    this.lanceView = null;
+    this.npcLanceView = null;
+
     this.lanceHeld = false;
-    if (this.lanceSprite) { this.lanceSprite.destroy(); this.lanceSprite = null; }
     this.carAngle = 0;
     this.carSpeed = 0;
     this.carBoostUntil = 0;
@@ -261,9 +343,7 @@ export class LightKit {
     this.blinkCharges = BLINK_MAX_CHARGES;
     this.blinkRechargeQueue = [];
 
-    this.ramps.forEach((r) => r.sprite.destroy());
     this.ramps = [];
-    this.streaks.forEach((s) => s.sprite.destroy());
     this.streaks = [];
     this.lanceHitCooldowns.clear();
 
@@ -280,20 +360,16 @@ export class LightKit {
     this.ePlusHoldStart = 0;
     this.nextSteamAt = 0;
 
-    this.drills.forEach((d) => d.sprite.destroy());
     this.drills = [];
     this.playerStunUntil = 0;
     this.npcStunUntil = 0;
 
     this.playerTeleportCount = 0;
-    this.flareBeams.forEach((b) => b.sprite.destroy());
     this.flareBeams = [];
 
-    if (this.npcLanceSprite) { this.npcLanceSprite.destroy(); this.npcLanceSprite = null; }
     this.npcCarAngle = 0;
     this.npcCarSpeed = 0;
     this.npcCarBoostUntil = 0;
-    this.npcRamps.forEach((r) => r.sprite.destroy());
     this.npcRamps = [];
     this.npcLanceHitCooldowns.clear();
 
@@ -311,20 +387,12 @@ export class LightKit {
     this.clearKebab('npc');
   }
 
-  /** Drop every rider and tear down the shaft art without dealing release damage. */
+  /** Drop every rider off the lance without dealing release damage. */
   private clearKebab(owner: 'player' | 'npc'): void {
     const riders = owner === 'player' ? this.kebabRiders : this.npcKebabRiders;
-    for (const r of riders) {
-      r.spike.destroy();
-      r.fighter.skeweredUntil = 0;
-    }
-    if (owner === 'player') {
-      this.kebabRiders = [];
-      if (this.kebabShaft) { this.kebabShaft.destroy(); this.kebabShaft = null; }
-    } else {
-      this.npcKebabRiders = [];
-      if (this.npcKebabShaft) { this.npcKebabShaft.destroy(); this.npcKebabShaft = null; }
-    }
+    for (const r of riders) r.fighter.skeweredUntil = 0;
+    if (owner === 'player') this.kebabRiders = [];
+    else this.npcKebabRiders = [];
   }
 
   // ── Per-frame update ─────────────────────────────────────────────────────
@@ -333,6 +401,10 @@ export class LightKit {
     const { player, npc, scene } = this.arena;
     const playerBody = player.body as Phaser.Physics.Arcade.Body;
     const npcBody = npc.body as Phaser.Physics.Arcade.Body;
+    this.vizT += delta / 1000;
+    // Refilled below by whichever sides are actually holding a lance this frame.
+    this.lanceView = null;
+    this.npcLanceView = null;
 
     // Mastery — Unstoppable. The flag lives on Fighter so ArenaScene's speed/stun
     // chokepoint (and any kit holding its own stun timer) can honour it generically.
@@ -348,31 +420,25 @@ export class LightKit {
       if (this.speedOLightActive) {
         this.stepSpeedOLight('player', time);
         playerBody.setVelocity(0, 0);
-        if (this.lanceSprite) this.lanceSprite.setVisible(false);
         this.destroyDangerVignette();
       } else if (this.ePlusHolding) {
         // E+ Steam Charge: rooted in place, aiming at the cursor, acceleration frozen (not lost)
         playerBody.setVelocity(0, 0);
         const ptr = scene.input.activePointer;
         this.carAngle = Math.atan2(ptr.worldY - player.y, ptr.worldX - player.x);
-        if (this.lanceSprite) {
-          this.lanceSprite.setVisible(true);
-          this.updateLanceVisual(this.lanceSprite, player, this.carAngle, this.carSpeed / CAR_MAX_SPEED, time < this.kebabWindowUntil);
-        }
+        this.lanceView = this.buildLanceView(player, this.carAngle, this.carSpeed / CAR_MAX_SPEED, time < this.kebabWindowUntil);
         if (time >= this.nextSteamAt) {
           this.nextSteamAt = time + E_PLUS_STEAM_INTERVAL_MS;
-          this.spawnSteamParticle(time);
+          const heat = Phaser.Math.Clamp((time - this.ePlusHoldStart) / E_PLUS_MAX_HOLD_MS, 0, 1);
+          this.pfx.steam(player.x + Phaser.Math.Between(-6, 6), player.y - 16, heat);
         }
         this.destroyDangerVignette();
       } else if (this.lanceHeld) {
-        if (this.lanceSprite) this.lanceSprite.setVisible(true);
         const ptr = scene.input.activePointer;
         const desired = Math.atan2(ptr.worldY - player.y, ptr.worldX - player.x);
         const ratio = this.stepCar(playerBody, time, delta, desired, true);
-        if (this.lanceSprite) {
-          this.updateLanceVisual(this.lanceSprite, player, this.carAngle, ratio, time < this.kebabWindowUntil);
-          this.checkLanceContact(time, this.lanceSprite.x, this.lanceSprite.y, ratio, this.arena.enemies, this.lanceHitCooldowns, 'player');
-        }
+        this.lanceView = this.buildLanceView(player, this.carAngle, ratio, time < this.kebabWindowUntil);
+        this.checkLanceContact(time, this.lanceView.x, this.lanceView.y, ratio, this.arena.enemies, this.lanceHitCooldowns, 'player');
         this.updateAccelBar(ratio);
 
         // Click+ Redline: doubled meter (already folded into `ratio` by stepCar), danger zone above 3/4.
@@ -384,7 +450,9 @@ export class LightKit {
           this.updateDangerVignette(dangerAlpha);
           if (dangerAlpha > 0 && (playerBody.blocked.up || playerBody.blocked.down || playerBody.blocked.left || playerBody.blocked.right)) {
             player.takeDamage(CLICK_PLUS_WALL_DAMAGE);
-            this.arena.spawnHitFlash(player.x, player.y, 0xff3333);
+            // Redlining into a wall: the lance shatters against it.
+            this.pfx.boom(player.x, player.y, 78, { color: LIGHT.red, shards: 12 });
+            scene.cameras.main.shake(200, 0.007);
             this.arena.showFloatingText(player.x, player.y - 34, `💥 WALL CRASH -${CLICK_PLUS_WALL_DAMAGE}`, '#ff3333');
             this.carSpeed = 0;
             this.updateDangerVignette(0);
@@ -402,23 +470,21 @@ export class LightKit {
       if (this.npcSpeedOLightActive) {
         this.stepSpeedOLight('npc', time);
         npcBody.setVelocity(0, 0);
-        if (this.npcLanceSprite) this.npcLanceSprite.setVisible(false);
       } else {
-        if (!this.npcLanceSprite) {
-          this.npcLanceSprite = scene.add.triangle(0, 0, -10, 12, -10, -12, 22, 0, LANCE_COLOR_SLOW)
-            .setDepth(10).setStrokeStyle(1, 0xffffff);
-        }
-        this.npcLanceSprite.setVisible(true);
         const desired = Math.atan2(player.y - npc.y, player.x - npc.x);
         const ratio = this.stepCar(npcBody, time, delta, desired, false);
-        this.updateLanceVisual(this.npcLanceSprite, npc, this.npcCarAngle, ratio, time < this.npcKebabWindowUntil);
-        this.checkLanceContact(time, this.npcLanceSprite.x, this.npcLanceSprite.y, ratio, [player], this.npcLanceHitCooldowns, 'npc');
+        this.npcLanceView = this.buildLanceView(npc, this.npcCarAngle, ratio, time < this.npcKebabWindowUntil);
+        this.checkLanceContact(time, this.npcLanceView.x, this.npcLanceView.y, ratio, [player], this.npcLanceHitCooldowns, 'npc');
       }
 
       const npcCastId = this.arena.npcCastId;
+      // Mirror the player's gestures on the NPC rig, so a light opponent visibly casts.
+      const gesture = npcCastId ? CAST_GESTURES[npcCastId] : undefined;
+      if (gesture) this.npcAvatar?.play(gesture, this.npcCarAngle);
       if (npcCastId === 'blink') {
         this.npcCarAngle = Math.atan2(player.y - npc.y, player.x - npc.x);
         this.npcCarBoostUntil = time + BLINK_BOOST_MS;
+        this.blinkFlash('npc', npc.x, npc.y, this.npcCarAngle);
         this.arena.showFloatingText(npc.x, npc.y - 30, '⚡ BLINK', '#88ddff');
       }
       if (npcCastId === 'prism-ramp') {
@@ -449,6 +515,171 @@ export class LightKit {
     // R+ Prism Drill stun — same "zero velocity while stunned" approach used elsewhere in this codebase
     if (time < this.playerStunUntil && !player.unstoppable) playerBody.setVelocity(0, 0);
     if (time < this.npcStunUntil && !npc.unstoppable) npcBody.setVelocity(0, 0);
+
+    this.paintWorld(time);
+    this.updateAvatars(time, delta, isPlayerLight, isNpcLight);
+  }
+
+  /** Where the lance sits and how hot it is running this frame. */
+  private buildLanceView(caster: Fighter, angle: number, ratio: number, enhanced: boolean): LanceView {
+    const dist = enhanced ? 44 : 34;
+    return {
+      x: caster.x + Math.cos(angle) * dist,
+      y: caster.y + Math.sin(angle) * dist,
+      angle, ratio, enhanced,
+    };
+  }
+
+  /**
+   * Every per-frame painter in one pass. The two layers are cleared and redrawn from live state,
+   * so a ramp refracts, a streak pulses and a drill spins rather than sitting there as a sprite.
+   */
+  private paintWorld(time: number): void {
+    const { player, npc } = this.arena;
+
+    const hasGround = this.ramps.length > 0 || this.npcRamps.length > 0
+      || this.streaks.length > 0 || this.flareBeams.length > 0;
+    if (hasGround || this.groundGfx) {
+      const g = this.ground();
+      g.clear();
+      // Flare beams are permanent furniture, so they sit under the transient streaks.
+      for (const b of this.flareBeams) {
+        const life = Phaser.Math.Clamp((b.until - time) / FLARE_BEAM_LIFETIME_MS, 0, 1);
+        LightFx.drawStreak(g, this.pcol, b.x1, b.y1, b.x2, b.y2, STREAK_THICKNESS * 0.8,
+          LIGHT.ember, 0.25 + life * 0.55, this.vizT);
+      }
+      for (const s of this.streaks) {
+        const life = Phaser.Math.Clamp((s.until - time) / STREAK_LIFETIME_MS, 0, 1);
+        LightFx.drawStreak(g, this.col(s.owner), s.x1, s.y1, s.x2, s.y2, STREAK_THICKNESS,
+          s.owner === 'player' ? LIGHT.pale : LIGHT.cyan, 0.9 * life, this.vizT);
+      }
+      for (const r of this.ramps) LightFx.drawRamp(g, this.pcol, r.x, r.y, r.angle, this.vizT);
+      for (const r of this.npcRamps) LightFx.drawRamp(g, this.ncol, r.x, r.y, r.angle, this.vizT);
+    }
+
+    const hasAir = this.lanceView !== null || this.npcLanceView !== null
+      || this.drills.length > 0 || this.kebabRiders.length > 0 || this.npcKebabRiders.length > 0;
+    if (hasAir || this.airGfx) {
+      const g = this.air();
+      g.clear();
+      for (const d of this.drills) {
+        LightFx.drawDrill(g, this.pcol, d.x, d.y, d.angle, this.vizT, d.hitTarget !== null);
+      }
+      if (this.lanceView) {
+        const v = this.lanceView;
+        LightFx.drawLance(g, this.pcol, player.x, player.y, v.angle, v.ratio, this.vizT, v.enhanced);
+      }
+      if (this.npcLanceView) {
+        const v = this.npcLanceView;
+        LightFx.drawLance(g, this.ncol, npc.x, npc.y, v.angle, v.ratio, this.vizT, v.enhanced);
+      }
+      // The spit runs from the caster out past the last rider, with a spike through each one.
+      for (const owner of ['player', 'npc'] as const) {
+        const riders = owner === 'player' ? this.kebabRiders : this.npcKebabRiders;
+        if (riders.length === 0) continue;
+        const caster = owner === 'player' ? player : npc;
+        const angle = owner === 'player' ? this.carAngle : this.npcCarAngle;
+        const ratio = (owner === 'player' ? this.carSpeed : this.npcCarSpeed) / CAR_MAX_SPEED;
+        const len = KEBAB_FIRST_OFFSET + (riders.length - 1) * KEBAB_RIDER_SPACING + 26;
+        LightFx.drawKebabShaft(g, this.col(owner), caster.x, caster.y, angle, len, ratio, this.vizT);
+        for (const r of riders) {
+          LightFx.drawSpike(g, this.col(owner), r.fighter.x, r.fighter.y, angle, this.vizT);
+        }
+      }
+    }
+  }
+
+  /**
+   * The character rigs and every stance aura, for whichever sides are playing Light. Built
+   * lazily so a scene restart (which destroys them all) simply rebuilds on the next frame, and
+   * torn down the moment a side stops being Light.
+   */
+  private updateAvatars(time: number, delta: number, isPlayerLight: boolean, isNpcLight: boolean): void {
+    const { scene, player, npc } = this.arena;
+
+    if (isPlayerLight && player.active) {
+      if (!this.playerAvatar) this.playerAvatar = new LightAvatar(scene, this.pcol, 'player');
+      const ratio = Phaser.Math.Clamp(this.carSpeed / CAR_MAX_SPEED, 0, 1);
+      const driving = this.lanceHeld && !this.speedOLightActive;
+      const aim = driving || this.ePlusHolding
+        ? this.carAngle
+        : Math.atan2(this.lastAimY - player.y, this.lastAimX - player.x);
+      this.playerAvatar.setFacing(aim);
+      this.playerAvatar.setSpeed(driving ? ratio : 0);
+      this.playerAvatar.setIntensity(this.speedOLightActive ? 1.5 : time < this.carBoostUntil ? 1.2 : 1);
+      this.playerAvatar.setMastered(this.arena.masteryActive);
+      // Single owner of setHold: driving pins both hands to the wheel, a steam charge hauls
+      // them back into the chest, and otherwise the idle sway runs.
+      this.playerAvatar.setHold(this.ePlusHolding ? 'charge' : driving ? 'ride' : null, aim);
+      // The car itself shrinks to half size while driving, so the rig follows it down.
+      this.playerAvatar.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
+
+      this.syncAura('boost', driving && time < this.carBoostUntil, player, delta, ratio, aim);
+      this.syncAura('redline', driving && this.arena.hasUpgrade('click') && ratio > CLICK_PLUS_DANGER_RATIO,
+        player, delta, (ratio - CLICK_PLUS_DANGER_RATIO) / (1 - CLICK_PLUS_DANGER_RATIO), aim);
+      this.syncAura('charge', this.ePlusHolding, player, delta,
+        (time - this.ePlusHoldStart) / E_PLUS_MAX_HOLD_MS, aim);
+      this.syncAura('kebab', time < this.kebabWindowUntil, player, delta, 1, aim);
+    } else if (this.playerAvatar) {
+      this.playerAvatar.destroy();
+      this.playerAvatar = null;
+      for (const a of [this.boostAura, this.redlineAura, this.chargeAura, this.kebabAura]) a?.destroy();
+      this.boostAura = null;
+      this.redlineAura = null;
+      this.chargeAura = null;
+      this.kebabAura = null;
+    }
+
+    if (isNpcLight && npc.active) {
+      if (!this.npcAvatar) this.npcAvatar = new LightAvatar(scene, this.ncol, 'npc');
+      this.npcAvatar.setFacing(this.npcCarAngle);
+      this.npcAvatar.setSpeed(Phaser.Math.Clamp(this.npcCarSpeed / CAR_MAX_SPEED, 0, 1));
+      this.npcAvatar.setMastered(this.arena.npcMasteryActive);
+      this.npcAvatar.setHold(this.npcSpeedOLightActive ? null : 'ride', this.npcCarAngle);
+      this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
+
+      if (time < this.npcKebabWindowUntil) {
+        if (!this.npcKebabAura) this.npcKebabAura = new LightAura(scene, this.ncol, 'kebab', 28, 4);
+        this.npcKebabAura.setAngle(this.npcCarAngle);
+        this.npcKebabAura.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
+      } else if (this.npcKebabAura) {
+        this.npcKebabAura.destroy();
+        this.npcKebabAura = null;
+      }
+    } else if (this.npcAvatar) {
+      this.npcAvatar.destroy();
+      this.npcAvatar = null;
+      this.npcKebabAura?.destroy();
+      this.npcKebabAura = null;
+    }
+  }
+
+  /** Build/tear down one of the player's stance auras from a single "is it up?" flag. */
+  private syncAura(
+    style: 'boost' | 'redline' | 'charge' | 'kebab',
+    on: boolean, f: Fighter, delta: number, intensity: number, angle: number,
+  ): void {
+    const get = (): LightAura | null =>
+      style === 'boost' ? this.boostAura : style === 'redline' ? this.redlineAura
+        : style === 'charge' ? this.chargeAura : this.kebabAura;
+    const set = (a: LightAura | null): void => {
+      if (style === 'boost') this.boostAura = a;
+      else if (style === 'redline') this.redlineAura = a;
+      else if (style === 'charge') this.chargeAura = a;
+      else this.kebabAura = a;
+    };
+    let aura = get();
+    if (!on) {
+      if (aura) { aura.destroy(); set(null); }
+      return;
+    }
+    if (!aura) {
+      aura = new LightAura(this.arena.scene, this.pcol, style, style === 'kebab' ? 28 : 24, style === 'boost' ? 3 : 4);
+      set(aura);
+    }
+    aura.setIntensity(intensity);
+    aura.setAngle(angle);
+    aura.update(delta, f.x, f.y, f.forceInvisible ? 0 : f.alpha);
   }
 
   private stepCar(body: Phaser.Physics.Arcade.Body, time: number, delta: number, desiredAngle: number, isPlayer: boolean): number {
@@ -492,13 +723,13 @@ export class LightKit {
     return speed / maxSpeed;
   }
 
-  private updateLanceVisual(sprite: Phaser.GameObjects.Triangle, caster: Fighter, angle: number, ratio: number, enhanced = false): void {
-    const dist = enhanced ? 44 : 34;
-    sprite.setPosition(caster.x + Math.cos(angle) * dist, caster.y + Math.sin(angle) * dist);
-    sprite.setRotation(angle);
-    // Killer Kebab: the lance runs gold and grows a bigger head while it can impale.
-    sprite.setScale(enhanced ? 1.6 : 1);
-    sprite.setFillStyle(enhanced ? lerpColor(KEBAB_COLOR, LANCE_COLOR_FAST, ratio) : lerpColor(LANCE_COLOR_SLOW, LANCE_COLOR_FAST, ratio));
+  /** The snap of light thrown off a heading change — Blink, and the E+ steam release. */
+  private blinkFlash(owner: 'player' | 'npc', x: number, y: number, angle: number, scale = 1): void {
+    const fx = this.fx(owner);
+    fx.flare(x, y, 0.8 * scale, 11, LIGHT.sky, angle);
+    fx.speedLines(x, y, angle, scale, 8, LIGHT.sky);
+    fx.shards(x, y, 5, { speed: 260 * scale, angle: angle + Math.PI, spread: 0.7, size: 13, color: LIGHT.sky, depth: 9 });
+    this.avatar(owner)?.play('dash', angle);
   }
 
   /** Contact damage for the held/driven lance tip — scales with the current acceleration ratio. */
@@ -516,8 +747,15 @@ export class LightKit {
           continue;
         }
         const dmg = LANCE_BASE_DAMAGE + Math.round(LANCE_MAX_BONUS_DAMAGE * ratio * ratio);
+        const hx = t.x, hy = t.y;
         t.takeDamage(dmg);
-        this.arena.spawnHitFlash(t.x, t.y, LANCE_COLOR_SLOW);
+        // A lance run through at speed spits far more of itself out the other side.
+        const fx = this.fx(owner);
+        fx.flare(hx, hy, 0.5 + ratio * 0.9, 11, mixColor(LANCE_COLOR_SLOW, LANCE_COLOR_FAST, ratio));
+        fx.shards(hx, hy, 3 + Math.round(ratio * 7), {
+          speed: 140 + ratio * 300, angle: Math.atan2(hy - lanceY, hx - lanceX), spread: 1.1,
+          size: 10 + ratio * 12, color: mixColor(LANCE_COLOR_SLOW, LANCE_COLOR_FAST, ratio), depth: 10,
+        });
         hitCooldowns.set(t, time + LANCE_HIT_COOLDOWN_MS);
       }
     }
@@ -529,8 +767,8 @@ export class LightKit {
     const barW = 220;
     const barH = 8;
     const barY = hpBarY + hpBarH / 2 + 3 + barH / 2;
-    this.accelBarBg = scene.add.rectangle(W / 2, barY, barW + 4, barH + 4, 0x0a0a18, 0.9)
-      .setStrokeStyle(2, 0x445577).setDepth(20);
+    this.accelBarBg = scene.add.rectangle(W / 2, barY, barW + 4, barH + 4, LIGHT.shade, 0.9)
+      .setStrokeStyle(2, LIGHT.steel).setDepth(20);
     this.accelBarFill = scene.add.rectangle(W / 2 - barW / 2, barY, 0, barH, LANCE_COLOR_SLOW, 1)
       .setOrigin(0, 0.5).setDepth(21);
   }
@@ -540,7 +778,7 @@ export class LightKit {
     const barW = 220;
     if (this.accelBarFill) {
       this.accelBarFill.setSize(barW * Phaser.Math.Clamp(ratio, 0, 1), 8);
-      this.accelBarFill.setFillStyle(lerpColor(LANCE_COLOR_SLOW, LANCE_COLOR_FAST, ratio), 1);
+      this.accelBarFill.setFillStyle(mixColor(LANCE_COLOR_SLOW, LANCE_COLOR_FAST, ratio), 1);
     }
   }
 
@@ -556,14 +794,14 @@ export class LightKit {
     const { scene, width: W, height: H } = this.arena;
     const t = 36;
     const mk = (x: number, y: number, w: number, h: number) =>
-      scene.add.rectangle(x, y, w, h, 0xff0000, 0).setOrigin(0, 0).setScrollFactor(0).setDepth(999);
+      scene.add.rectangle(x, y, w, h, LIGHT.red, 0).setOrigin(0, 0).setScrollFactor(0).setDepth(999);
     this.dangerVignette = [mk(0, 0, W, t), mk(0, H - t, W, t), mk(0, 0, t, H), mk(W - t, 0, t, H)];
   }
 
   private updateDangerVignette(alpha: number): void {
     if (alpha <= 0) { this.destroyDangerVignette(); return; }
     this.ensureDangerVignette();
-    this.dangerVignette?.forEach((r) => r.setFillStyle(0xff0000, alpha));
+    this.dangerVignette?.forEach((r) => r.setFillStyle(LIGHT.red, alpha));
   }
 
   private destroyDangerVignette(): void {
@@ -572,30 +810,21 @@ export class LightKit {
     this.dangerVignette = null;
   }
 
-  // ── E+ Steam Charge ──────────────────────────────────────────────────────
-
-  private spawnSteamParticle(time: number): void {
-    const { scene, player } = this.arena;
-    const holdRatio = Phaser.Math.Clamp((time - this.ePlusHoldStart) / E_PLUS_MAX_HOLD_MS, 0, 1);
-    const color = lerpColor(0xcccccc, 0xff2200, holdRatio);
-    const ox = Phaser.Math.Between(-6, 6);
-    const c = scene.add.circle(player.x + ox, player.y - 16, 4 + holdRatio * 3, color, 0.7).setDepth(11);
-    scene.tweens.add({ targets: c, y: c.y - 26, alpha: 0, duration: 500, onComplete: () => c.destroy() });
-  }
-
   // ── Prism Ramp ───────────────────────────────────────────────────────────
 
   private placeRamp(owner: 'player' | 'npc', originX: number, originY: number, angle: number): void {
     const arr = owner === 'player' ? this.ramps : this.npcRamps;
-    if (arr.length >= MAX_RAMPS) {
-      const oldest = arr.shift();
-      oldest?.sprite.destroy();
-    }
+    // Oldest ramp falls away when the fifth is planted — it is pure data, so dropping it is all
+    // the teardown there is.
+    if (arr.length >= MAX_RAMPS) arr.shift();
     const x = originX + Math.cos(angle) * RAMP_OFFSET;
     const y = originY + Math.sin(angle) * RAMP_OFFSET;
-    const sprite = this.arena.scene.add.rectangle(x, y, 46, 26, 0x66ddff, 0.85)
-      .setStrokeStyle(2, 0xffffff).setDepth(4).setRotation(angle);
-    arr.push({ x, y, angle, owner, sprite, overlapping: new Set() });
+    // Set down, not thrown: a short flare and a spectrum spray as the glass lands.
+    const fx = this.fx(owner);
+    fx.flare(x, y, 0.7, 11, LIGHT.cyan, angle);
+    fx.sparkle(x, y, 6, 26, 11, LIGHT.cyan);
+    this.avatar(owner)?.play('slam', angle);
+    arr.push({ x, y, angle, owner, overlapping: new Set() });
   }
 
   private updateRampArray(time: number, arr: LightRamp[], ownerFighter: Fighter, otherFighters: Fighter[]): void {
@@ -617,7 +846,8 @@ export class LightKit {
             shattered.push(ramp);
           } else {
             this.launchRampLances(ramp);
-            this.arena.spawnHitFlash(ramp.x, ramp.y, 0x66ddff);
+            // Hitting the ramp: the light breaks apart into its spectrum along the heading.
+            this.fx(ramp.owner).boom(ramp.x, ramp.y, 54, { color: LIGHT.cyan, shards: 8, mark: false });
             if (f === ownerFighter) {
               if (ramp.owner === 'player') {
                 this.carBoostUntil = time + RAMP_BOOST_MS;
@@ -632,7 +862,6 @@ export class LightKit {
       }
     }
     for (const r of shattered) {
-      r.sprite.destroy();
       const idx = arr.indexOf(r);
       if (idx >= 0) arr.splice(idx, 1);
     }
@@ -644,16 +873,19 @@ export class LightKit {
     this.carSpeed = 0;
     this.lanceHeld = false;
     player.setScale(1);
-    if (this.lanceSprite) { this.lanceSprite.destroy(); this.lanceSprite = null; }
+    this.lanceView = null;
     this.destroyAccelBar();
     this.updateDangerVignette(0);
 
     const dmg = DRILL_MIN_DAMAGE + Math.round((DRILL_MAX_DAMAGE - DRILL_MIN_DAMAGE) * ratio);
-    const sprite = scene.add.triangle(ramp.x, ramp.y, -10, 12, -10, -12, 22, 0, LANCE_COLOR_FAST)
-      .setDepth(10).setStrokeStyle(1, 0xffffff).setRotation(ramp.angle);
+    // The lance being fed into the ramp and coming out the far side as a drill.
+    this.pfx.flash(ramp.x, ramp.y, 26, 11, LIGHT.red);
+    this.pfx.beam(player.x, player.y, ramp.x, ramp.y, LIGHT.red, 9, 220);
+    this.pfx.shards(ramp.x, ramp.y, 8, { speed: 300, angle: ramp.angle, spread: 0.8, color: LIGHT.ember, depth: 10 });
+    scene.cameras.main.shake(140, 0.004);
     this.drills.push({
       x: ramp.x, y: ramp.y, angle: ramp.angle, speed: DRILL_SPEED, dmg,
-      sprite, hitTarget: null, nextStunAt: 0, until: time + DRILL_LIFETIME_MS,
+      hitTarget: null, nextStunAt: 0, until: time + DRILL_LIFETIME_MS,
     });
     this.arena.showFloatingText(player.x, player.y - 30, '🔻 PRISM DRILL', '#ff4422');
   }
@@ -664,14 +896,12 @@ export class LightKit {
     const { width: W, height: H } = this.arena;
     for (let i = this.drills.length - 1; i >= 0; i--) {
       const d = this.drills[i];
-      if (time >= d.until) { d.sprite.destroy(); this.drills.splice(i, 1); continue; }
+      if (time >= d.until) { this.drills.splice(i, 1); continue; }
 
       d.x += Math.cos(d.angle) * d.speed * dtS;
       d.y += Math.sin(d.angle) * d.speed * dtS;
-      d.sprite.setPosition(d.x, d.y);
 
       if (d.x < -20 || d.x > W + 20 || d.y < -20 || d.y > H + 20) {
-        d.sprite.destroy();
         this.drills.splice(i, 1);
         continue;
       }
@@ -682,8 +912,10 @@ export class LightKit {
         if (d.hitTarget !== t) {
           d.hitTarget = t;
           d.speed *= DRILL_SLOW_MULT;
+          const hx = t.x, hy = t.y;
           t.takeDamage(d.dmg);
-          this.arena.spawnHitFlash(t.x, t.y, LANCE_COLOR_FAST);
+          // Biting in: the drill throws its spectrum back out of the wound.
+          this.pfx.boom(hx, hy, 46, { color: LIGHT.red, shards: 7, mark: false, duration: 300 });
           this.arena.recordMasteryStat('drillHits', 1);
           d.nextStunAt = time;
         }
@@ -699,7 +931,7 @@ export class LightKit {
 
   private launchRampLances(ramp: LightRamp): void {
     const { scene, projectiles } = this.arena;
-    const colors = [0xff3333, 0x33ff66, 0x3399ff];
+    const colors = [LIGHT.prismR, LIGHT.prismG, LIGHT.prismB];
     const isPlayerOwned = ramp.owner === 'player';
     const ratio = (ramp.owner === 'player' ? this.carSpeed : this.npcCarSpeed) / CAR_MAX_SPEED;
     const dmg = LANCE_BASE_DAMAGE + Math.round(LANCE_MAX_BONUS_DAMAGE * ratio * ratio);
@@ -710,21 +942,27 @@ export class LightKit {
       projectiles.add(proj);
       proj.launch(Math.cos(a) * RAMP_LANCE_SPEED, Math.sin(a) * RAMP_LANCE_SPEED);
     }
+    // The prism doing its one job: white in, three colours out.
+    this.fx(ramp.owner).flare(ramp.x, ramp.y, 0.8, 11, LIGHT.white, ramp.angle);
   }
 
   // ── Light Trick ──────────────────────────────────────────────────────────
 
   private triggerLightTrick(owner: 'player' | 'npc', time: number, caster: Fighter, targets: Fighter[]): void {
-    const scene = this.arena.scene;
-    const flash = scene.add.circle(caster.x, caster.y, TRICK_RADIUS, LANCE_COLOR_SLOW, 0.5).setDepth(9);
-    scene.time.delayedCall(150, () => flash.destroy());
+    const fx = this.fx(owner);
+    // A flick of the wrist that pops the light around you.
+    this.avatar(owner)?.play('clap');
+    fx.flash(caster.x, caster.y, TRICK_RADIUS * 0.5, 9, LIGHT.pale);
+    fx.ring(caster.x, caster.y, 10, TRICK_RADIUS, LIGHT.pale, 320, 4, 8);
+    fx.sparkle(caster.x, caster.y, 7, TRICK_RADIUS * 0.8, 11, LIGHT.glow);
 
     let hit = false;
     for (const t of targets) {
       if (!t.active || t.hp <= 0) continue;
       if (Phaser.Math.Distance.Between(caster.x, caster.y, t.x, t.y) <= TRICK_RADIUS) {
+        const hx = t.x, hy = t.y;
         t.takeDamage(TRICK_DAMAGE);
-        this.arena.spawnHitFlash(t.x, t.y, LANCE_COLOR_SLOW);
+        fx.shards(hx, hy, 4, { speed: 190, size: 11, color: LIGHT.pale, depth: 10 });
         if (owner === 'player') this.arena.recordMasteryStat('trickHits', 1);
         hit = true;
       }
@@ -740,7 +978,7 @@ export class LightKit {
 
     if (rampHit) {
       this.launchJavelinBurst(rampHit);
-      this.arena.spawnHitFlash(rampHit.x, rampHit.y, 0x66ddff);
+      fx.boom(rampHit.x, rampHit.y, 70, { color: LIGHT.cyan, shards: 12, mark: false });
       const boostUntil = time + Math.max(TRICK_BOOST_MS, RAMP_BOOST_MS);
       if (owner === 'player') this.carBoostUntil = boostUntil; else this.npcCarBoostUntil = boostUntil;
       this.arena.showFloatingText(caster.x, caster.y - 30, '🌟 JAVELIN BURST', '#66ddff');
@@ -757,7 +995,7 @@ export class LightKit {
     for (let i = 0; i < F_PLUS_JAVELIN_COUNT; i++) {
       const a = (i / F_PLUS_JAVELIN_COUNT) * Math.PI * 2;
       const proj = new Projectile(scene, ramp.x, ramp.y, 'proj-light-triangle', TRICK_DAMAGE, isPlayerOwned);
-      proj.setTint(0x66ddff);
+      proj.setTint(LIGHT.cyan);
       projectiles.add(proj);
       proj.launch(Math.cos(a) * F_PLUS_JAVELIN_SPEED, Math.sin(a) * F_PLUS_JAVELIN_SPEED);
     }
@@ -769,6 +1007,12 @@ export class LightKit {
   startSpeedOLight(owner: 'player' | 'npc', time: number): void {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     caster.dodgeChance += 1.0;
+    // Going to light speed: the body blows out into a flare and a spectrum shell.
+    const fx = this.fx(owner);
+    this.avatar(owner)?.play('raise', -Math.PI / 2, 900);
+    fx.flare(caster.x, caster.y, 1.6, 12, LIGHT.white);
+    fx.boom(caster.x, caster.y, 110, { color: LIGHT.pale, shards: 14, mark: false });
+    this.arena.scene.cameras.main.shake(300, 0.006);
     if (owner === 'player') {
       this.speedOLightActive = true;
       this.speedOLightBouncesLeft = SPEED_O_LIGHT_BOUNCES;
@@ -788,7 +1032,7 @@ export class LightKit {
 
     const caster = isPlayer ? this.arena.player : this.arena.npc;
     const body = caster.body as Phaser.Physics.Arcade.Body;
-    const { width: W, height: H, scene } = this.arena;
+    const { width: W, height: H } = this.arena;
     const margin = 24;
     const wall = Math.floor(Math.random() * 4);
     let nx = caster.x;
@@ -802,15 +1046,16 @@ export class LightKit {
     const midY = (caster.y + ny) / 2;
     const length = Math.max(4, Phaser.Math.Distance.Between(caster.x, caster.y, nx, ny));
     const angle = Math.atan2(ny - caster.y, nx - caster.x);
-    const sprite = scene.add.rectangle(midX, midY, length, STREAK_THICKNESS, LANCE_COLOR_SLOW, 0.85).setRotation(angle).setDepth(9);
-    this.streaks.push({ x1: caster.x, y1: caster.y, x2: nx, y2: ny, owner, sprite, until: time + STREAK_LIFETIME_MS, hitSet: new Set() });
+    this.streaks.push({ x1: caster.x, y1: caster.y, x2: nx, y2: ny, owner, until: time + STREAK_LIFETIME_MS, hitSet: new Set() });
+    // Each bounce leaves a flare at the wall it came off.
+    this.fx(owner).flare(nx, ny, 0.55, 12, LIGHT.white, angle);
 
     // Q+ Flare-Stream: every 10th teleport leaves a lasting orange beam
     if (owner === 'player' && this.arena.hasUpgrade('q')) {
       this.playerTeleportCount++;
       if (this.playerTeleportCount % FLARE_TELEPORT_INTERVAL === 0) {
-        const flareSprite = scene.add.rectangle(midX, midY, length, STREAK_THICKNESS, 0xff8800, 0.85).setRotation(angle).setDepth(8);
-        this.flareBeams.push({ x1: caster.x, y1: caster.y, x2: nx, y2: ny, sprite: flareSprite, until: time + FLARE_BEAM_LIFETIME_MS });
+        this.flareBeams.push({ x1: caster.x, y1: caster.y, x2: nx, y2: ny, until: time + FLARE_BEAM_LIFETIME_MS });
+        this.pfx.sparkle(midX, midY, 8, length * 0.3, 11, LIGHT.ember);
       }
     }
 
@@ -835,26 +1080,25 @@ export class LightKit {
   private updateStreaks(time: number): void {
     for (let i = this.streaks.length - 1; i >= 0; i--) {
       const s = this.streaks[i];
-      if (time >= s.until) { s.sprite.destroy(); this.streaks.splice(i, 1); continue; }
+      if (time >= s.until) { this.streaks.splice(i, 1); continue; }
       const targets = s.owner === 'player' ? this.arena.enemies : [this.arena.player];
       for (const t of targets) {
         if (!t.active || t.hp <= 0 || s.hitSet.has(t)) continue;
         if (distToSegment(t.x, t.y, s.x1, s.y1, s.x2, s.y2) <= STREAK_HIT_RADIUS) {
           s.hitSet.add(t);
+          const hx = t.x, hy = t.y;
           t.takeDamage(STREAK_DAMAGE);
-          this.arena.spawnHitFlash(t.x, t.y, LANCE_COLOR_SLOW);
+          this.fx(s.owner).flare(hx, hy, 0.7, 11, LIGHT.pale, Math.atan2(s.y2 - s.y1, s.x2 - s.x1));
           if (s.owner === 'player' && t.hp <= 0) this.arena.recordMasteryStat('speedOLightKills', 1);
         }
       }
-      s.sprite.setAlpha(Math.max(0, 0.85 * (s.until - time) / STREAK_LIFETIME_MS));
     }
   }
 
   private updateFlareBeams(time: number): void {
     for (let i = this.flareBeams.length - 1; i >= 0; i--) {
       const b = this.flareBeams[i];
-      if (time >= b.until) { b.sprite.destroy(); this.flareBeams.splice(i, 1); continue; }
-      b.sprite.setAlpha(Math.max(0.15, 0.85 * (b.until - time) / FLARE_BEAM_LIFETIME_MS));
+      if (time >= b.until) { this.flareBeams.splice(i, 1); continue; }
     }
   }
 
@@ -896,23 +1140,13 @@ export class LightKit {
 
   /** Gold flare + orbiting sparks announcing the enhanced lance. */
   private flashKebabEnhance(owner: 'player' | 'npc'): void {
-    const { scene } = this.arena;
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
-    const ring = scene.add.circle(caster.x, caster.y, 16, KEBAB_COLOR, 0)
-      .setStrokeStyle(3, KEBAB_COLOR, 0.9).setDepth(9);
-    scene.tweens.add({
-      targets: ring, scaleX: 3.4, scaleY: 3.4, alpha: 0, duration: 420,
-      onComplete: () => ring.destroy(),
-    });
-    for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2;
-      const spark = scene.add.rectangle(caster.x, caster.y, 10, 3, KEBAB_COLOR, 0.95)
-        .setRotation(a).setDepth(10);
-      scene.tweens.add({
-        targets: spark, x: caster.x + Math.cos(a) * 54, y: caster.y + Math.sin(a) * 54,
-        alpha: 0, duration: 380, onComplete: () => spark.destroy(),
-      });
-    }
+    const angle = owner === 'player' ? this.carAngle : this.npcCarAngle;
+    const fx = this.fx(owner);
+    this.avatar(owner)?.play('flex');
+    fx.flare(caster.x, caster.y, 1.1, 12, KEBAB_COLOR, angle);
+    fx.ring(caster.x, caster.y, 14, 62, KEBAB_COLOR, 420, 5, 9);
+    fx.shards(caster.x, caster.y, 8, { speed: 220, size: 15, color: KEBAB_COLOR, depth: 11 });
     this.arena.showFloatingText(caster.x, caster.y - 40, '🍢 KILLER KEBAB', '#ffaa22');
   }
 
@@ -926,16 +1160,19 @@ export class LightKit {
     if (riders.length >= KEBAB_MAX_RIDERS) return false;
     if (this.isSkewered(target)) return false;
 
-    const { scene } = this.arena;
-    const spike = scene.add.rectangle(target.x, target.y, 58, 5, KEBAB_COLOR, 0.95)
-      .setStrokeStyle(1, 0xfff0c0, 0.9).setDepth(11);
-    riders.push({ fighter: target, until: time + KEBAB_CARRY_MS, spike });
+    riders.push({ fighter: target, until: time + KEBAB_CARRY_MS });
     target.skeweredUntil = time + KEBAB_CARRY_MS;
     // Re-applied in short bursts every frame by updateKebab, so releasing early frees them
     // without having to clear a disarm that might not be ours.
     target.applyDisarm(250);
 
-    this.arena.spawnHitFlash(target.x, target.y, KEBAB_COLOR);
+    // Going on the spit: a gold flare at the point of entry and shards off the far side.
+    const fxo = this.fx(owner);
+    fxo.flare(target.x, target.y, 0.9, 12, KEBAB_COLOR);
+    fxo.shards(target.x, target.y, 6, {
+      speed: 200, angle: owner === 'player' ? this.carAngle : this.npcCarAngle, spread: 1.2,
+      size: 13, color: KEBAB_COLOR, depth: 11,
+    });
     this.arena.showFloatingText(target.x, target.y - 30, '🍢 SKEWERED', '#ffaa22');
     return true;
   }
@@ -943,7 +1180,7 @@ export class LightKit {
   private updateKebab(time: number, owner: 'player' | 'npc'): void {
     const isPlayer = owner === 'player';
     const riders = isPlayer ? this.kebabRiders : this.npcKebabRiders;
-    if (riders.length === 0) { this.destroyKebabShaft(owner); return; }
+    if (riders.length === 0) return;
 
     const caster = isPlayer ? this.arena.player : this.arena.npc;
     if (!caster.active || caster.hp <= 0) { this.clearKebab(owner); return; }
@@ -970,36 +1207,9 @@ export class LightKit {
       rb.reset(rx, ry);
       r.fighter.skeweredUntil = r.until;
       r.fighter.applyDisarm(250);
-      r.spike.setPosition(rx, ry).setRotation(angle);
-      r.spike.setAlpha(0.65 + 0.35 * Math.abs(Math.sin(time / 120 + i)));
     }
-
-    if (riders.length > 0) this.updateKebabShaft(owner, caster, angle, riders.length, ratio);
-    else this.destroyKebabShaft(owner);
-  }
-
-  /** The golden shaft running from the caster out past the last rider. */
-  private updateKebabShaft(owner: 'player' | 'npc', caster: Fighter, angle: number, count: number, ratio: number): void {
-    const len = KEBAB_FIRST_OFFSET + (count - 1) * KEBAB_RIDER_SPACING + 26;
-    let shaft = owner === 'player' ? this.kebabShaft : this.npcKebabShaft;
-    if (!shaft) {
-      shaft = this.arena.scene.add.rectangle(0, 0, len, 7, KEBAB_COLOR, 0.95)
-        .setStrokeStyle(1, 0xfff0c0, 0.8).setDepth(10);
-      if (owner === 'player') this.kebabShaft = shaft; else this.npcKebabShaft = shaft;
-    }
-    shaft.setSize(len, 7);
-    shaft.setPosition(caster.x + Math.cos(angle) * (len / 2), caster.y + Math.sin(angle) * (len / 2));
-    shaft.setRotation(angle);
-    shaft.setFillStyle(lerpColor(KEBAB_COLOR, LANCE_COLOR_FAST, ratio), 0.95);
-  }
-
-  private destroyKebabShaft(owner: 'player' | 'npc'): void {
-    if (owner === 'player') {
-      if (this.kebabShaft) { this.kebabShaft.destroy(); this.kebabShaft = null; }
-    } else if (this.npcKebabShaft) {
-      this.npcKebabShaft.destroy();
-      this.npcKebabShaft = null;
-    }
+    // The spit and every spike on it are painted in paintWorld from exactly this state.
+    void ratio;
   }
 
   /** Remove one rider without a wall slam. `timedOut` distinguishes the 12s slide-off. */
@@ -1008,12 +1218,11 @@ export class LightKit {
     const r = riders[index];
     if (!r) return;
     riders.splice(index, 1);
-    r.spike.destroy();
     r.fighter.skeweredUntil = 0;
     if (timedOut && r.fighter.active && r.fighter.hp > 0) {
+      this.fx(owner).shards(r.fighter.x, r.fighter.y, 4, { speed: 130, size: 11, color: KEBAB_COLOR, depth: 11 });
       this.arena.showFloatingText(r.fighter.x, r.fighter.y - 30, '🍢 SLID FREE', '#ccbb88');
     }
-    if (riders.length === 0) this.destroyKebabShaft(owner);
   }
 
   /** Ram a wall: every rider is torn off the lance, harder the more speed was banked. */
@@ -1024,23 +1233,17 @@ export class LightKit {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const dmg = KEBAB_BASE_DAMAGE + Math.round(KEBAB_MAX_BONUS_DAMAGE * ratio * ratio);
 
+    const fx = this.fx(owner);
     for (const r of riders) {
       const f = r.fighter;
-      r.spike.destroy();
       f.skeweredUntil = 0;
       if (!f.active || f.hp <= 0) continue;
+      const hx = f.x, hy = f.y;
       f.takeDamage(dmg);
-      this.arena.spawnHitFlash(f.x, f.y, LANCE_COLOR_FAST);
-      // Shards spraying off the impact point.
-      for (let i = 0; i < 6; i++) {
-        const a = Math.random() * Math.PI * 2;
-        const shard = scene.add.rectangle(f.x, f.y, 9, 3, lerpColor(KEBAB_COLOR, LANCE_COLOR_FAST, ratio), 0.9)
-          .setRotation(a).setDepth(11);
-        scene.tweens.add({
-          targets: shard, x: f.x + Math.cos(a) * (30 + Math.random() * 40), y: f.y + Math.sin(a) * (30 + Math.random() * 40),
-          alpha: 0, duration: 300 + Math.random() * 200, onComplete: () => shard.destroy(),
-        });
-      }
+      // Torn off the spit against a wall — the whole rider comes apart into light.
+      fx.boom(hx, hy, 60 + ratio * 40, {
+        color: mixColor(KEBAB_COLOR, LANCE_COLOR_FAST, ratio), shards: 8 + Math.round(ratio * 8), mark: false,
+      });
       const fb = f.body as Phaser.Physics.Arcade.Body | null;
       if (fb && !f.knockbackImmune) {
         const away = Math.atan2(f.y - caster.y, f.x - caster.x);
@@ -1048,10 +1251,10 @@ export class LightKit {
       }
     }
     if (owner === 'player') this.kebabRiders = []; else this.npcKebabRiders = [];
-    this.destroyKebabShaft(owner);
 
-    const burst = scene.add.circle(caster.x, caster.y, 20, LANCE_COLOR_FAST, 0.6).setDepth(9);
-    scene.tweens.add({ targets: burst, scaleX: 4, scaleY: 4, alpha: 0, duration: 380, onComplete: () => burst.destroy() });
+    fx.flare(caster.x, caster.y, 1.3, 12, LANCE_COLOR_FAST, owner === 'player' ? this.carAngle : this.npcCarAngle);
+    fx.ring(caster.x, caster.y, 16, 90, LANCE_COLOR_FAST, 400, 5, 9);
+    scene.cameras.main.shake(220, 0.006 + ratio * 0.004);
     this.arena.showFloatingText(caster.x, caster.y - 44, `💥 KEBAB SLAM ${dmg}`, '#ff6622');
     // The impact eats all your speed, riders or not.
     if (owner === 'player') this.carSpeed = 0; else this.npcCarSpeed = 0;
@@ -1062,23 +1265,29 @@ export class LightKit {
   handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
     const { player, scene, eKey, rKey, fKey, qKey } = this.arena;
     const playerCtx = this.arena.buildPlayerContext(mouseX, mouseY);
+    this.lastAimX = mouseX;
+    this.lastAimY = mouseY;
 
     // Click (hold): Light Lance / car-mode
     const down = pointer.leftButtonDown();
     if (down && !this.lanceHeld) {
       this.lanceHeld = true;
       player.setScale(0.5);
-      if (!this.lanceSprite) {
-        this.lanceSprite = scene.add.triangle(0, 0, -10, 12, -10, -12, 22, 0, LANCE_COLOR_SLOW)
-          .setDepth(10).setStrokeStyle(1, 0xffffff);
-      }
       if (this.carSpeed < 40) {
         this.carAngle = Math.atan2(mouseY - player.y, mouseX - player.x);
       }
+      // Folding down into car-mode: the lance comes out and the body compresses behind it.
+      this.pfx.flare(player.x, player.y, 0.8, 11, LIGHT.pale, this.carAngle);
+      this.pfx.speedLines(player.x, player.y, this.carAngle, 0.9);
+      this.playerAvatar?.play('punch', this.carAngle);
     } else if (!down && this.lanceHeld) {
       this.lanceHeld = false;
       player.setScale(1);
-      if (this.lanceSprite) { this.lanceSprite.destroy(); this.lanceSprite = null; }
+      this.lanceView = null;
+      // Standing back up: the stored light escapes as a puff of shards.
+      this.pfx.shards(player.x, player.y, 5, {
+        speed: 120, size: 10, color: LIGHT.pale, depth: 9,
+      });
     }
 
     // Mastery — Killer Kebab takes over whichever slot it is bound to.
@@ -1098,6 +1307,7 @@ export class LightKit {
         if (!this.ePlusHolding && this.blinkCharges > 0 && !this.speedOLightActive) {
           this.ePlusHolding = true;
           this.ePlusHoldStart = time;
+          this.pfx.ring(player.x, player.y, 50, 12, LIGHT.glass, 340, 3, 8);
           this.blinkCharges--;
           this.blinkRechargeQueue.push(time + BLINK_RECHARGE_MS);
           this.arena.showFloatingText(player.x, player.y - 30, '👁️ FOCUSING', '#88ddff');
@@ -1109,6 +1319,13 @@ export class LightKit {
         this.ePlusHolding = false;
         this.carAngle = Math.atan2(mouseY - player.y, mouseX - player.x);
         this.carBoostUntil = time + Phaser.Math.Linear(E_PLUS_BOOST_MIN_MS, E_PLUS_BOOST_MAX_MS, holdRatio);
+        // Everything wound in comes out at once, scaled by how long it was held.
+        this.blinkFlash('player', player.x, player.y, this.carAngle, 0.8 + holdRatio);
+        this.pfx.boom(player.x, player.y, 40 + holdRatio * 70, {
+          color: mixColor(LIGHT.ember, LIGHT.red, holdRatio),
+          shards: 5 + Math.round(holdRatio * 10), mark: false,
+        });
+        scene.cameras.main.shake(120 + holdRatio * 160, 0.003 + holdRatio * 0.004);
         this.arena.showFloatingText(player.x, player.y - 30, '🔥 STEAM RELEASE', '#ff6622');
       }
     } else if (Phaser.Input.Keyboard.JustDown(eKey)) {
@@ -1117,6 +1334,7 @@ export class LightKit {
         this.blinkRechargeQueue.push(time + BLINK_RECHARGE_MS);
         this.carAngle = Math.atan2(mouseY - player.y, mouseX - player.x);
         this.carBoostUntil = time + BLINK_BOOST_MS;
+        this.blinkFlash('player', player.x, player.y, this.carAngle);
         this.arena.showFloatingText(player.x, player.y - 30, '⚡ BLINK', '#88ddff');
       }
     }
