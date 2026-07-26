@@ -2593,6 +2593,11 @@ export class ArenaScene extends Phaser.Scene {
         // always receives (this.player, projectileMember) — `b` is the projectile here.
         const proj = b as Projectile;
         if (!proj.active || proj.isFromPlayer) return;
+        // Invasion co-op: every npc-owned projectile here came out of an ally's
+        // replayed cast (husks fire their own shots, not Projectiles). Ignoring it
+        // whole stops the on-hit riders — burns, poisons, frost, stuns — as well as
+        // the damage, which the block in Fighter.takeDamage alone wouldn't.
+        if (this.player.allyDamageBlocked) return;
         if (this.growthKit.trySporeBlock('player', proj)) return;
         // Time lasso orb (NPC fires): route to TimeKit
         if (proj.texture.key === 'proj-time-lasso-orb') {

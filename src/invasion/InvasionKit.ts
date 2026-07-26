@@ -338,7 +338,9 @@ export class InvasionKit implements HuskWorld {
   /** Route husk-sourced damage to whichever fighter ate it (ally hits go over the wire). */
   private damageTarget(target: Fighter, amount: number): void {
     if (target === this.arena.player || this.arena.plantTargets().includes(target)) {
-      target.takeDamage(amount);
+      // Husks are the one thing that may hit a co-op player through their
+      // friendly-fire block.
+      Fighter.asNonAllyDamage(() => target.takeDamage(amount));
       this.arena.spawnHitFlash(target.x, target.y, 0x88aa33);
     } else {
       // Co-op: hit the ally, not the local player — forward it to them.

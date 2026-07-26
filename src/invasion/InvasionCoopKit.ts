@@ -178,6 +178,10 @@ export class InvasionCoopKit {
     this.api.npc.netGhost = true;
     this.api.npc.downed = false;
     this.api.player.downed = false;
+    // The ally sits in the npc slot and its casts are replayed locally, so every
+    // npc-owned damage path aims at us. Block them for the run — only husk hits
+    // (routed through Fighter.asNonAllyDamage) may touch the local player.
+    this.api.player.allyDamageBlocked = true;
     this.api.player.onCastStamp = this.onPlayerCast;
     this.api.player.on('damaged', this.onPlayerDamaged);
     this.api.player.on('defeated', this.onLocalDefeated);
@@ -201,6 +205,7 @@ export class InvasionCoopKit {
       Net.offMessage(this.msgHandler);
       Net.offStatus(this.statusHandler);
       if (this.api.player) {
+        this.api.player.allyDamageBlocked = false;
         this.api.player.onCastStamp = null;
         this.api.player.off('damaged', this.onPlayerDamaged);
         this.api.player.off('defeated', this.onLocalDefeated);
@@ -578,7 +583,8 @@ export class InvasionCoopKit {
         if (!this.isHost) this.api.invasionKit.showBossBanner(msg.name, msg.color);
         break;
       case 'allyBite':
-        this.api.player.takeDamage(msg.damage);
+        // A husk on the host's sim bit us — hostile, so it goes through the block.
+        Fighter.asNonAllyDamage(() => this.api.player.takeDamage(msg.damage));
         this.api.spawnHitFlash(this.api.player.x, this.api.player.y, 0x88aa33);
         break;
       case 'revived':

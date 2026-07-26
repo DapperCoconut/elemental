@@ -1377,7 +1377,9 @@ export class PlasmaKit {
     else { fromY = bounds.bottom + 60; }
 
     this.doPlasmaChainLightning(fromX, fromY, victim.x, victim.y, PLASMA.hot);
-    victim.takeDamage(STORM_STRIKE_DAMAGE);
+    // The storm wall is a stage hazard with no allegiance — it strikes a co-op
+    // player through their friendly-fire block, same as it does solo.
+    Fighter.asNonAllyDamage(() => victim.takeDamage(STORM_STRIKE_DAMAGE));
     this.arena.spawnHitFlash(victim.x, victim.y, 0xff2f8f);
     // The wall earthing itself through whoever touched it.
     this.pfx.discharge(victim.x, victim.y, 30, 5, PLASMA.hot, 260, 9);
@@ -1585,7 +1587,9 @@ export class PlasmaKit {
     const npc = this.arena.npc;
     const playerDist = Phaser.Math.Distance.Between(cx, cy, player.x, player.y);
     if (playerDist <= radius) {
-      player.takeDamage(10);
+      // Our own current still burns us in co-op; the ally's is friendly fire and is blocked.
+      if (orb.owner === 'player') Fighter.asNonAllyDamage(() => player.takeDamage(10));
+      else player.takeDamage(10);
       this.arena.spawnHitFlash(player.x, player.y, 0xcc44ff);
     }
     const npcDist = Phaser.Math.Distance.Between(cx, cy, npc.x, npc.y);
@@ -1635,7 +1639,9 @@ export class PlasmaKit {
     const npc = this.arena.npc;
     const pDist = Phaser.Math.Distance.Between(arena.x, arena.y, player.x, player.y);
     if (pDist <= radius) {
-      player.takeDamage(80);
+      // Our own collapsing floor still hits us in co-op; the ally's is blocked.
+      if (arena.owner === 'player') Fighter.asNonAllyDamage(() => player.takeDamage(80));
+      else player.takeDamage(80);
       this.arena.spawnHitFlash(player.x, player.y, 0xaa22ff);
     }
     const nDist = Phaser.Math.Distance.Between(arena.x, arena.y, npc.x, npc.y);

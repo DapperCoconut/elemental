@@ -94,6 +94,31 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public onGhostDamage: ((amount: number) => void) | null = null;
   /** Invasion co-op: true while this fighter is downed and awaiting revive. Enemies should ignore downed targets. */
   public downed = false;
+  /**
+   * Invasion co-op: the ally lives in the `npc` slot, so every npc-owned damage
+   * path in the game — replayed ally casts, their projectiles, puddles and auras —
+   * points straight at the local player. Set on the local player for the whole
+   * co-op run so those hits become no-ops. Damage that is legitimately hostile
+   * (husks) or self-inflicted is applied inside `Fighter.asNonAllyDamage()`,
+   * which lifts the block for the duration of the call.
+   */
+  public allyDamageBlocked = false;
+  /** Depth counter for `asNonAllyDamage` — nested calls must not clear the bypass early. */
+  private static nonAllyDepth = 0;
+
+  /**
+   * Run `fn` with the co-op friendly-fire block lifted. Wrap any damage that is
+   * known not to originate from an ally (husk attacks, a fighter's own hazards)
+   * so it still lands on a player carrying `allyDamageBlocked`.
+   */
+  static asNonAllyDamage<T>(fn: () => T): T {
+    Fighter.nonAllyDepth++;
+    try {
+      return fn();
+    } finally {
+      Fighter.nonAllyDepth--;
+    }
+  }
   /** Online play: invoked whenever a cast is stamped (castAbility success, triggerCooldown, startCooldown). */
   public onCastStamp: ((abilityId: string) => void) | null = null;
   /** 0–1 probability that outgoing attacks deal a critical hit (2× damage). */
@@ -352,6 +377,9 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   }
 
   takeDamage(amount: number, opts?: { pierce?: boolean; fireDot?: boolean; source?: object; sourceX?: number; sourceY?: number }): void {
+    // Invasion co-op: friendly fire from the ally replica never lands. Checked
+    // before anything else so a blocked hit can't consume a buff or a shield.
+    if (this.allyDamageBlocked && Fighter.nonAllyDepth === 0) return;
     // Magic Mastery — Levitate: immune to damage from a source that hasn't moved in 3s.
     this.damageWasSelfInflicted = false;
     if (this.levitating && opts?.source && opts.sourceX !== undefined && opts.sourceY !== undefined
