@@ -1,5 +1,9 @@
 import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
+import {
+  ArmGesture, MAGIC, MagicAura, MagicAuraStyle, MagicAvatar, MagicColorFn, MagicFx,
+  arcaneRing, runeOrb, sigilStarLayered, vineLash,
+} from './MagicVisuals';
 
 // ── Arena API ─────────────────────────────────────────────────────────────────
 
@@ -47,19 +51,28 @@ export interface MagicArenaApi {
   getMasteryStat(key: string): number;
   /** Ratchet a mastery progress stat up to `value` — no-op if the stored value is already >= value. */
   recordMasteryBestStat(key: string, value: number): void;
+  /** True when the local player is Magic — drives their rig, auras and world art. */
+  get isPlayerMagic(): boolean;
+  /** True when the opponent is Magic. */
+  get isNpcMagic(): boolean;
+  /** `(owner, base) => displayed` — the owner's colour cosmetic, or the identity. */
+  magicColor(owner: 'player' | 'npc', base: number): number;
 }
 
 // ── Internal types ────────────────────────────────────────────────────────────
 
+// Every world object below is plain data painted into the kit's own Graphics layers — nothing
+// owns a sprite, so a cloud can boil, a funnel can turn and an orb can crack.
+
 interface HealOrb {
-  sprite: Phaser.GameObjects.Arc;
   x: number; y: number;
   vx: number; vy: number;
   owner: 'player' | 'npc';
 }
 
 interface FlameCloud {
-  sprite: Phaser.GameObjects.Arc;
+  /** Fixed wobble seed, so a cloud keeps its shape instead of reshuffling frame to frame. */
+  seed: number;
   x: number; y: number;
   vx: number; vy: number;
   stopped: boolean;
@@ -75,7 +88,9 @@ interface FlameCloud {
 }
 
 interface StormCloud {
-  sprite: Phaser.GameObjects.Arc;
+  seed: number;
+  /** Painted radius — the pulse reach is separate and much wider. */
+  radius: number;
   x: number; y: number;
   expireAt: number;
   nextPulseAt: number;
@@ -87,8 +102,10 @@ interface StormCloud {
 }
 
 interface RockOrb {
-  sprite: Phaser.GameObjects.Arc;
   angle: number;
+  /** Live world position, resolved each frame so hit checks and painting agree. */
+  x: number; y: number;
+  radius: number;
   cracked: boolean;
   lastHitAt: number;
   canCrack: boolean;
@@ -103,7 +120,10 @@ interface RockOrbSet {
 }
 
 interface Tornado {
-  sprite: Phaser.GameObjects.Arc;
+  seed: number;
+  radius: number;
+  /** Hurricane Vacuum funnels are ash-dark; a plain Tornado Blast is grey. */
+  dark: boolean;
   x: number; y: number;
   vx: number; vy: number;
   expireAt: number;
@@ -115,7 +135,6 @@ interface Tornado {
 interface ThornPrison {
   ex: number; ey: number;
   chainsHp: [number, number, number, number];
-  gfx: Phaser.GameObjects.Graphics;
   owner: 'player' | 'npc';
   expireAt: number;
   dotAccum: number;
@@ -137,8 +156,8 @@ interface SparkleShot {
 
 interface TempleSet {
   anchorX: number; anchorY: number;
-  templeSprite: Phaser.GameObjects.Arc;
-  templeLabel: Phaser.GameObjects.Text;
+  /** Monuments are bigger, darker stone than temples. */
+  monument: boolean;
   orbs: RockOrb[];
   expireAt: number;
   orbitR: number;
@@ -150,11 +169,27 @@ interface TempleSet {
 
 interface TortureTrapLink {
   target: Fighter;
-  gfx: Phaser.GameObjects.Graphics;
   expireAt: number; // Date.now() based
   tickAccum: number;
   owner: 'player' | 'npc';
 }
+
+/** An instant vine arm, held for a few frames after the lash lands. */
+interface VineFlash {
+  x1: number; y1: number;
+  x2: number; y2: number;
+  hit: boolean;
+  expireAt: number;
+}
+
+/** Every ability drives an arm gesture, on the NPC rig as well as the player's. */
+const CAST_GESTURES: Record<string, ArmGesture> = {
+  'magic-sparkle-shot': 'punch',
+  'magic-grimoire': 'sweep',
+  'magic-anchor': 'slam',
+  'magic-meditate': 'flex',
+  'magic-necronomicon': 'raise',
+};
 
 // ── Wheel data ────────────────────────────────────────────────────────────────
 
@@ -171,6 +206,31 @@ const DARK_NECRO_COLORS    = [0xcc1100, 0x112255, 0x226633, 0x333333, 0x442200];
 // ── MagicKit ──────────────────────────────────────────────────────────────────
 
 export class MagicKit {
+  // ── Visuals ────────────────────────────────────────────────────────────
+  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  private readonly pcol: MagicColorFn;
+  private readonly ncol: MagicColorFn;
+  private readonly pfx: MagicFx;
+  private readonly nfx: MagicFx;
+  /** The conjurer rig (rune hands, eyes, crown grimoire) for each magic fighter. */
+  private playerAvatar: MagicAvatar | null = null;
+  private npcAvatar: MagicAvatar | null = null;
+  /** Stance tells, per side where both can run one. */
+  private auras: Partial<Record<`${'player' | 'npc'}:${MagicAuraStyle}`, MagicAura>> = {};
+  /**
+   * Two layers, because these objects are not all in the same place. Anchors, temples, scorched
+   * runes and prison chains lie on the floor and pass *under* the fighters; clouds, funnels,
+   * orbiting stone, sparkles and vines are thrown out in front and pass over.
+   */
+  private groundGfx: Phaser.GameObjects.Graphics | null = null;
+  private airGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Shared animation clock for every per-frame painter in this kit. */
+  private vizT = 0;
+  /** Last cursor position, cached in handleInput — `update` has no pointer of its own. */
+  private lastAimX = 0;
+  private lastAimY = 0;
+  /** Instant vine arms (Draining Thorns / Torture Trap), held for a few frames. */
+  private vineFlashes: VineFlash[] = [];
 
   // ── Player wheel state ────────────────────────────────────────────────────
   private grimoireMenuOpen = false;
@@ -194,8 +254,8 @@ export class MagicKit {
   private aimCountdownFired = false;
 
   // ── Anchor ────────────────────────────────────────────────────────────────
-  private anchor: { x: number; y: number; sprite: Phaser.GameObjects.Arc | null } | null = null;
-  private npcAnchor: { x: number; y: number; sprite: Phaser.GameObjects.Arc | null } | null = null;
+  private anchor: { x: number; y: number } | null = null;
+  private npcAnchor: { x: number; y: number } | null = null;
 
   // ── Meditate ──────────────────────────────────────────────────────────────
   private meditating = false;
@@ -247,11 +307,9 @@ export class MagicKit {
   private playerSpeedBoostUntil = 0;
   private playerSpeedBoostMult = 1;
   private playerSpeedBoostDark = false;
-  private playerSpeedBoostAura: Phaser.GameObjects.Arc | null = null;
 
   // ── F+ mobile meditate ────────────────────────────────────────────────────
   private playerMeditateMobile = false;
-  private playerMeditateTrail: Phaser.GameObjects.Arc[] = [];
   private playerMeditateTrailNext = 0;
 
   // ── Dark status effects (internal to kit) ─────────────────────────────────
@@ -266,10 +324,6 @@ export class MagicKit {
   private playerHurricaneGaleUntil = 0;
   private playerHurricaneGaleAngle = 0;
   private playerHurricaneGaleOnce = false;
-
-  // ── Dark vine graphics (instant vine arm visual) ──────────────────────────
-  private playerDarkVineGfx: Phaser.GameObjects.Graphics | null = null;
-  private playerDarkVineExpireAt = 0;
 
   // ── Temple/Monument orb sets (fixed-anchor orbits) ────────────────────────
   private templeSets: TempleSet[] = [];
@@ -289,13 +343,79 @@ export class MagicKit {
   private static readonly TRANSMOGRIFY_CHICKEN_MS = 8000;
   private transmogrifyLastCastAt = 0;
   private transmogrifyProjectiles: {
-    sprite: Phaser.GameObjects.Arc;
     x: number; y: number; vx: number; vy: number;
     owner: 'player' | 'npc';
   }[] = [];
   private chickenStates = new Map<Fighter, { angle: number; nextTurnAt: number; prevCooldownMult: number }>();
 
-  constructor(private api: MagicArenaApi) {}
+  constructor(private api: MagicArenaApi) {
+    // Built here, not as field initialisers, so they see the injected api.
+    this.pcol = (base) => api.magicColor('player', base);
+    this.ncol = (base) => api.magicColor('npc', base);
+    this.pfx = new MagicFx(api.scene, this.pcol);
+    this.nfx = new MagicFx(api.scene, this.ncol);
+  }
+
+  // ── Visual helpers ─────────────────────────────────────────────────────
+
+  /** Effect painter for a side. */
+  private fx(owner: 'player' | 'npc'): MagicFx { return owner === 'player' ? this.pfx : this.nfx; }
+  /** Colour mapper for a side. */
+  private col(owner: 'player' | 'npc'): MagicColorFn { return owner === 'player' ? this.pcol : this.ncol; }
+  /** The rig for a side, if that side is playing Magic. */
+  private avatarFor(owner: 'player' | 'npc'): MagicAvatar | null {
+    return owner === 'player' ? this.playerAvatar : this.npcAvatar;
+  }
+  private fighter(owner: 'player' | 'npc'): Fighter {
+    return owner === 'player' ? this.api.player : this.api.npc;
+  }
+  /** Fire one arm gesture on the rig of whichever side cast. */
+  private gesture(owner: 'player' | 'npc', abilityId: string, angle?: number): void {
+    const g = CAST_GESTURES[abilityId];
+    if (g) this.avatarFor(owner)?.play(g, angle);
+  }
+
+  /** The floor layer, under the fighters. Rebuilt lazily after a reset. */
+  private ground(): Phaser.GameObjects.Graphics {
+    if (!this.groundGfx || !this.groundGfx.active) {
+      this.groundGfx = this.api.scene.add.graphics().setDepth(3);
+    }
+    return this.groundGfx;
+  }
+
+  /** The thrown-out-in-front layer, over the fighters. Rebuilt lazily after a reset. */
+  private air(): Phaser.GameObjects.Graphics {
+    if (!this.airGfx || !this.airGfx.active) {
+      this.airGfx = this.api.scene.add.graphics().setDepth(9);
+    }
+    return this.airGfx;
+  }
+
+  /** Build/tear down one stance aura from a single "is it up?" flag. */
+  private syncAura(
+    owner: 'player' | 'npc', style: MagicAuraStyle, on: boolean,
+    delta: number, intensity: number, angle: number, radius = 28,
+  ): void {
+    const key = `${owner}:${style}` as const;
+    let aura = this.auras[key];
+    const f = this.fighter(owner);
+    if (!on || !f?.active) {
+      if (aura) { aura.destroy(); delete this.auras[key]; }
+      return;
+    }
+    if (!aura) {
+      aura = new MagicAura(this.api.scene, this.col(owner), style, radius, style === 'darkness' ? 4 : 5);
+      this.auras[key] = aura;
+    }
+    aura.setIntensity(intensity);
+    aura.setAngle(angle);
+    aura.update(delta, f.x, f.y, f.forceInvisible ? 0 : f.alpha);
+  }
+
+  private destroyAuras(): void {
+    for (const a of Object.values(this.auras)) a?.destroy();
+    this.auras = {};
+  }
 
   // ── Public getters (queried by ArenaScene) ────────────────────────────────
 
@@ -334,6 +454,17 @@ export class MagicKit {
   // ── reset ─────────────────────────────────────────────────────────────────
 
   reset(): void {
+    // Visuals — every GameObject dies with the old scene run, so rebuild lazily in update().
+    if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
+    if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
+    this.destroyAuras();
+    if (this.groundGfx) { this.groundGfx.destroy(); this.groundGfx = null; }
+    if (this.airGfx) { this.airGfx.destroy(); this.airGfx = null; }
+    this.vizT = 0;
+    this.lastAimX = 0;
+    this.lastAimY = 0;
+    this.vineFlashes = [];
+
     this.grimoireMenuOpen = false;
     if (this.grimoireMenuGfx) { this.grimoireMenuGfx.destroy(); this.grimoireMenuGfx = null; }
     for (const l of this.grimoireMenuLabels) l.destroy();
@@ -351,13 +482,12 @@ export class MagicKit {
     if (this.aimCountdownLabel) { this.aimCountdownLabel.destroy(); this.aimCountdownLabel = null; }
     this.aimCountdownEnd = 0; this.aimCountdownFired = false;
 
-    if (this.anchor) { this.anchor.sprite?.destroy(); this.anchor = null; }
-    if (this.npcAnchor) { this.npcAnchor.sprite?.destroy(); this.npcAnchor = null; }
+    this.anchor = null;
+    this.npcAnchor = null;
 
     this.meditating = false; this.meditateEndAt = 0; this.meditateNextSpawn = 0;
     this.npcMeditating = false; this.npcMeditateEndAt = 0; this.npcMeditateNextSpawn = 0;
 
-    for (const o of this.healOrbs) o.sprite.destroy();
     this.healOrbs = [];
 
     this.playerBound = false; this.playerBoundEnd = 0;
@@ -365,21 +495,18 @@ export class MagicKit {
     for (const s of this.sparkleShots) { if ((s.proj as any).active) { s.proj.setActive(false).setVisible(false); } }
     this.sparkleShots = [];
 
-    for (const c of this.flameClouds) c.sprite.destroy();
     this.flameClouds = [];
 
-    for (const c of this.stormClouds) c.sprite.destroy();
     this.stormClouds = [];
     this.npcStormSlowUntil = 0; this.playerStormSlowUntil = 0;
 
-    this._destroyRockSet(this.playerRockSet); this.playerRockSet = null;
-    this._destroyRockSet(this.npcRockSet); this.npcRockSet = null;
+    this.playerRockSet = null;
+    this.npcRockSet = null;
 
-    for (const t of this.tornadoes) t.sprite.destroy();
     this.tornadoes = [];
 
-    if (this.thornPrison) { this.thornPrison.gfx.destroy(); this.thornPrison = null; }
-    if (this.npcThornPrison) { this.npcThornPrison.gfx.destroy(); this.npcThornPrison = null; }
+    this.thornPrison = null;
+    this.npcThornPrison = null;
 
     // Dark magic state
     this.darkness = 0;
@@ -390,25 +517,16 @@ export class MagicKit {
 
     this.playerJustRecalledAt = 0;
     this.playerSpeedBoostUntil = 0; this.playerSpeedBoostMult = 1; this.playerSpeedBoostDark = false;
-    if (this.playerSpeedBoostAura) { this.playerSpeedBoostAura.destroy(); this.playerSpeedBoostAura = null; }
 
     this.playerMeditateMobile = false;
-    for (const s of this.playerMeditateTrail) { if (s.active) s.destroy(); }
-    this.playerMeditateTrail = []; this.playerMeditateTrailNext = 0;
+    this.playerMeditateTrailNext = 0;
 
     this.npcCursedFireUntil = 0; this.npcCursedFireTickAccum = 0;
     this.npcDark80SlowUntil = 0;
     this.playerDarkGaleUntil = 0; this.playerHurricaneGaleUntil = 0;
-    if (this.playerDarkVineGfx) { this.playerDarkVineGfx.destroy(); this.playerDarkVineGfx = null; }
-    this.playerDarkVineExpireAt = 0;
 
-    for (const ts of this.templeSets) {
-      ts.templeSprite.destroy(); ts.templeLabel.destroy();
-      for (const o of ts.orbs) o.sprite.destroy();
-    }
     this.templeSets = [];
 
-    for (const link of this.tortureTrapLinks) link.gfx.destroy();
     this.tortureTrapLinks = [];
 
     this.playerThunderECharged = false;
@@ -418,7 +536,6 @@ export class MagicKit {
     this.playerThunderThornCharged = false;
 
     this.transmogrifyLastCastAt = 0;
-    for (const p of this.transmogrifyProjectiles) p.sprite.destroy();
     this.transmogrifyProjectiles = [];
     for (const [f, st] of this.chickenStates) {
       if (f.active) { f.setTexture(`elem-${f.element.id}`); f.cooldownMult = st.prevCooldownMult; }
@@ -429,18 +546,28 @@ export class MagicKit {
     this.api.npc.levitating = false;
   }
 
-  private _destroyRockSet(set: RockOrbSet | null): void {
-    if (!set) return;
-    for (const o of set.orbs) o.sprite.destroy();
-  }
-
   private addDarkness(amount: number): void {
+    const before = this.darkness;
     this.darkness = Math.min(100, this.darkness + amount);
     this.api.recordMasteryStat('darkEnergyGained', amount);
-    this.api.showFloatingText(this.api.player.x, this.api.player.y - 44, `+${amount} ☠`, '#880088');
+    const { player } = this.api;
+    // The corruption climbing you is the passive's whole cost, so it gets a moment.
+    this.pfx.motes(player.x, player.y + 12, 5 + Math.round(amount / 8), {
+      speed: 50, size: 2.4, life: 700, color: MAGIC.magenta, drift: -34,
+    });
+    this.api.showFloatingText(player.x, player.y - 44, `+${amount} ☠`, '#880088');
+    if (before < 75 && this.darkness >= 75) {
+      // Three-quarters gone: the arena is told, once, that this caster is close to the edge.
+      this.pfx.ring(player.x, player.y, 14, 120, MAGIC.magenta, 700, 8, 3);
+      this.api.scene.cameras.main.shake(180, 0.004);
+    }
     if (this.darkness >= 100) {
-      this.api.player.applySelfDamage(this.api.player.hp);
-      this.api.showFloatingText(this.api.player.x, this.api.player.y - 28, '☠ Consumed by Darkness!', '#220022');
+      this.pfx.boom(player.x, player.y, 110, {
+        color: MAGIC.magenta, sigils: 16, rings: 3, duration: 800,
+      });
+      this.api.scene.cameras.main.shake(400, 0.009);
+      player.applySelfDamage(player.hp);
+      this.api.showFloatingText(player.x, player.y - 28, '☠ Consumed by Darkness!', '#220022');
     }
   }
 
@@ -462,6 +589,9 @@ export class MagicKit {
     mouseY: number,
   ): void {
     const { eKey, qKey, fKey, rKey, leftKey, rightKey } = this.api;
+    // `update` has no pointer, and the rig has to keep facing the cursor between casts.
+    this.lastAimX = mouseX;
+    this.lastAimY = mouseY;
 
     // While wheel open — key nav, release detection, dark mode center toggle
     if (this.grimoireMenuOpen || this.necronomiconMenuOpen) {
@@ -616,6 +746,7 @@ export class MagicKit {
   update(time: number, delta: number): void {
     const W = this.api.getSceneWidth();
     const H = this.api.getSceneHeight();
+    this.vizT += delta / 1000;
 
     // ── Magic Mastery — Levitate passive ────────────────────────────
     this.api.player.levitating = this.api.masteryActive;
@@ -661,9 +792,7 @@ export class MagicKit {
       const orb = this.healOrbs[i];
       orb.x += orb.vx * (delta / 1000);
       orb.y += orb.vy * (delta / 1000);
-      orb.sprite.setPosition(orb.x, orb.y);
       if (orb.x < 0 || orb.x > W || orb.y < 0 || orb.y > H) {
-        orb.sprite.destroy();
         this.healOrbs.splice(i, 1);
         continue;
       }
@@ -673,14 +802,19 @@ export class MagicKit {
         if (!enemy.active || enemy.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(orb.x, orb.y, enemy.x, enemy.y) <= 28) {
           enemy.takeDamage(8);
-          this.api.spawnHitFlash(enemy.x, enemy.y, 0xcc99ff);
+          this.api.spawnHitFlash(enemy.x, enemy.y, MAGIC.lilac);
+          this.fx(orb.owner).ring(orb.x, orb.y, 4, 30, MAGIC.lilac, 300, 9, 2);
           orbHit = true;
           break;
         }
       }
-      if (orbHit) { orb.sprite.destroy(); this.healOrbs.splice(i, 1); continue; }
+      if (orbHit) { this.healOrbs.splice(i, 1); continue; }
       if (Phaser.Math.Distance.Between(orb.x, orb.y, caster.x, caster.y) <= 24) {
         caster.heal(5);
+        // Absorbed: the orb comes apart into the caster rather than just vanishing.
+        this.fx(orb.owner).sigils(orb.x, orb.y, 4, {
+          speed: 40, size: 5, life: 380, color: MAGIC.lilac,
+        });
         if (orb.owner === 'player') {
           this.api.recordMasteryStat('meditateHealed', 5);
           this.api.showFloatingText(caster.x, caster.y - 28, '+5 ✨', '#cc99ff');
@@ -690,7 +824,6 @@ export class MagicKit {
             this.api.showFloatingText(caster.x, caster.y - 44, '-5 ☠', '#aa55ff');
           }
         }
-        orb.sprite.destroy();
         this.healOrbs.splice(i, 1);
       }
     }
@@ -717,8 +850,9 @@ export class MagicKit {
             s.exploded = true;
             const dmg = Math.round(14 * (s.damageMult ?? 0.75));
             this.api.dealAoeDamageFromOwner(s.proj.x, s.proj.y, 45, dmg, s.owner);
-            const ring2 = (this.api.scene.add as Phaser.GameObjects.GameObjectFactory).circle(s.proj.x, s.proj.y, 15, 0xff99ff, 0.5).setDepth(9);
-            this.api.scene.tweens.add({ targets: ring2, scaleX: 2.5, scaleY: 2.5, alpha: 0, duration: 350, onComplete: () => ring2.destroy() });
+            this.fx(s.owner).boom(s.proj.x, s.proj.y, 45, {
+              color: MAGIC.blush, sigils: 5, rings: 1, duration: 340, mark: false,
+            });
           }
           s.proj.setActive(false).setVisible(false);
           body.stop();
@@ -746,8 +880,9 @@ export class MagicKit {
           s.exploded = true;
           if (s.id) explodedLeaders.add(s.id);
           this.api.dealAoeDamageFromOwner(s.proj.x, s.proj.y, 55, 14, s.owner);
-          const ring = (this.api.scene.add as Phaser.GameObjects.GameObjectFactory).circle(s.proj.x, s.proj.y, 20, 0xff99ff, 0.6).setDepth(9);
-          this.api.scene.tweens.add({ targets: ring, scaleX: 3, scaleY: 3, alpha: 0, duration: 400, onComplete: () => ring.destroy() });
+          this.fx(s.owner).boom(s.proj.x, s.proj.y, 58, {
+            color: MAGIC.blush, sigils: 8, rings: 2, duration: 440,
+          });
           this.api.showFloatingText(s.proj.x, s.proj.y - 20, '✨ SPARKLE', '#ff99ff');
           s.proj.setActive(false).setVisible(false);
           body.stop();
@@ -761,18 +896,22 @@ export class MagicKit {
     const ptr = this.api.scene.input.activePointer;
     for (let i = this.flameClouds.length - 1; i >= 0; i--) {
       const c = this.flameClouds[i];
-      if (time >= c.expireAt) { c.sprite.destroy(); this.flameClouds.splice(i, 1); continue; }
+      if (time >= c.expireAt) {
+        this.fx(c.owner).motes(c.x, c.y, 5, {
+          speed: 40, size: 2.4, life: 700, color: c.cursedFire ? MAGIC.cursed : MAGIC.ember, drift: -30,
+        });
+        this.flameClouds.splice(i, 1);
+        continue;
+      }
       if (c.followCursor) {
         // Dark flame cloud: lerp toward cursor
         c.x += (ptr.worldX - c.x) * 0.10;
         c.y += (ptr.worldY - c.y) * 0.10;
-        c.sprite.setPosition(c.x, c.y);
       } else if (!c.stopped) {
         c.vx *= 0.93;
         c.vy *= 0.93;
         c.x += c.vx * (delta / 1000);
         c.y += c.vy * (delta / 1000);
-        c.sprite.setPosition(c.x, c.y);
         if (Math.abs(c.vx) < 2 && Math.abs(c.vy) < 2) c.stopped = true;
       }
       // Tick damage + burn
@@ -783,7 +922,10 @@ export class MagicKit {
         while (c.tickAccum >= c.tickInterval) {
           for (const t of targets) {
             t.takeDamage(c.tickDmg, { source: c, sourceX: c.x, sourceY: c.y });
-            this.api.spawnHitFlash(t.x, t.y, c.cursedFire ? 0x882200 : 0xff6600);
+            this.api.spawnHitFlash(t.x, t.y, c.cursedFire ? MAGIC.cursed : MAGIC.ember);
+            this.fx(c.owner).sigils(t.x, t.y, 2, {
+              speed: 90, size: 5, life: 340, color: c.cursedFire ? MAGIC.corrupt : MAGIC.emberHi, points: 4,
+            });
             t.burningUntil = Math.max(t.burningUntil, time + c.burnDuration);
             if (c.cursedFire && c.owner === 'player') {
               this.npcCursedFireUntil = Math.max(this.npcCursedFireUntil, time + 3000);
@@ -799,12 +941,23 @@ export class MagicKit {
     // ── Storm clouds ──────────────────────────────────────────────────
     for (let i = this.stormClouds.length - 1; i >= 0; i--) {
       const c = this.stormClouds[i];
-      if (time >= c.expireAt) { c.sprite.destroy(); this.stormClouds.splice(i, 1); continue; }
+      if (time >= c.expireAt) {
+        this.fx(c.owner).motes(c.x, c.y, 5, {
+          speed: 40, size: 2.2, life: 700, color: c.isAcidCloud ? MAGIC.acid : MAGIC.storm, drift: 20,
+        });
+        this.stormClouds.splice(i, 1);
+        continue;
+      }
       if (time >= c.nextPulseAt && c.nextPulseAt > 0) {
         c.nextPulseAt = time + c.pulseInterval;
-        // Ring VFX
-        const ring = (this.api.scene.add as Phaser.GameObjects.GameObjectFactory).circle(c.x, c.y, 10, c.owner === 'player' ? 0x3388ff : 0x1144aa, 0.4).setDepth(8);
-        this.api.scene.tweens.add({ targets: ring, scaleX: c.pulseRadius / 10, scaleY: c.pulseRadius / 10, alpha: 0, duration: 500, onComplete: () => ring.destroy() });
+        // The downpour lets go: a hard wash out to the full pulse reach.
+        const fx = this.fx(c.owner);
+        fx.flash(c.x, c.y, c.radius * 0.6, 9, c.isAcidCloud ? MAGIC.acid : MAGIC.stormHi);
+        fx.ring(c.x, c.y, 10, c.pulseRadius, c.isAcidCloud ? MAGIC.acid : MAGIC.storm, 520, 8, 3);
+        fx.sigils(c.x, c.y, 8, {
+          speed: c.pulseRadius * 1.7, size: 7, life: 520,
+          color: c.isAcidCloud ? MAGIC.acid : MAGIC.stormHi, points: 4,
+        });
         // Apply slow / acid vuln + damage
         const targets = (c.owner === 'player' ? this.api.enemies : [this.api.player])
           .filter(t => t.active && t.hp > 0 && Phaser.Math.Distance.Between(c.x, c.y, t.x, t.y) <= c.pulseRadius);
@@ -822,7 +975,7 @@ export class MagicKit {
           }
           if (c.pulseDmg > 0) {
             t.takeDamage(c.pulseDmg, { source: c, sourceX: c.x, sourceY: c.y });
-            this.api.spawnHitFlash(t.x, t.y, c.isAcidCloud ? 0x44ff88 : 0x44aaff);
+            this.api.spawnHitFlash(t.x, t.y, c.isAcidCloud ? MAGIC.acid : MAGIC.stormHi);
           }
         }
         if (c.nextPulseAt > c.expireAt) c.nextPulseAt = 0; // no more pulses
@@ -834,7 +987,6 @@ export class MagicKit {
       const set = owner === 'player' ? this.playerRockSet : this.npcRockSet;
       if (!set) continue;
       if (time >= set.expireAt) {
-        this._destroyRockSet(set);
         if (owner === 'player') this.playerRockSet = null;
         else this.npcRockSet = null;
         continue;
@@ -848,7 +1000,7 @@ export class MagicKit {
         orb.angle += 0.003 * delta;
         const ox = caster.x + Math.cos(orb.angle) * set.orbitR;
         const oy = caster.y + Math.sin(orb.angle) * set.orbitR;
-        orb.sprite.setPosition(ox, oy);
+        orb.x = ox; orb.y = oy;
 
         // Contact with enemy
         if (time - orb.lastHitAt >= 300) {
@@ -856,14 +1008,13 @@ export class MagicKit {
             if (!enemy.active || enemy.hp <= 0) continue;
             if (Phaser.Math.Distance.Between(ox, oy, enemy.x, enemy.y) <= 22) {
               enemy.takeDamage(orb.dmg);
-              this.api.spawnHitFlash(enemy.x, enemy.y, 0xaa7733);
+              this.api.spawnHitFlash(enemy.x, enemy.y, MAGIC.sand);
               orb.lastHitAt = time;
               if (orb.canCrack && !orb.cracked) {
                 orb.cracked = true;
-                orb.sprite.setFillStyle(0x999999);
-                orb.sprite.setStrokeStyle(2, 0x666666, 1);
+                this.fx(owner).sigils(ox, oy, 4, { speed: 90, size: 5, life: 380, color: MAGIC.granite, points: 4 });
               } else {
-                orb.sprite.destroy();
+                this.shatterRock(owner, ox, oy);
                 set.orbs.splice(ri, 1);
               }
               break;
@@ -883,12 +1034,12 @@ export class MagicKit {
             p.setActive(false).setVisible(false);
             (pAny.body as Phaser.Physics.Arcade.Body)?.stop();
             orb.lastHitAt = time;
+            this.fx(owner).flash(p.x, p.y, 12, 10, MAGIC.granite);
             if (orb.canCrack && !orb.cracked) {
               orb.cracked = true;
-              orb.sprite.setFillStyle(0x999999);
-              orb.sprite.setStrokeStyle(2, 0x666666, 1);
+              this.fx(owner).sigils(ox, oy, 3, { speed: 80, size: 4, life: 340, color: MAGIC.granite, points: 4 });
             } else {
-              orb.sprite.destroy();
+              this.shatterRock(owner, ox, oy);
               set.orbs.splice(ri, 1);
             }
             break;
@@ -905,7 +1056,11 @@ export class MagicKit {
     // ── Tornadoes ─────────────────────────────────────────────────────
     for (let i = this.tornadoes.length - 1; i >= 0; i--) {
       const t = this.tornadoes[i];
-      if (time >= t.expireAt) { t.sprite.destroy(); this.tornadoes.splice(i, 1); continue; }
+      if (time >= t.expireAt) {
+        this.fx(t.owner).motes(t.x, t.y, 8, { speed: 120, size: 2.4, life: 700, color: MAGIC.gust, drift: -20 });
+        this.tornadoes.splice(i, 1);
+        continue;
+      }
       // Erratic direction change
       if (time >= t.nextDirAt) {
         const targetFighter = t.owner === 'player' ? this.api.npc : this.api.player;
@@ -929,8 +1084,6 @@ export class MagicKit {
       if (t.x > W - pad) { t.x = W - pad; t.vx = -Math.abs(t.vx); }
       if (t.y < pad) { t.y = pad; t.vy = Math.abs(t.vy); }
       if (t.y > H - pad) { t.y = H - pad; t.vy = -Math.abs(t.vy); }
-      t.sprite.setPosition(t.x, t.y);
-      t.sprite.rotation += 0.012 * delta;
 
       // Periodic damage + push
       t.tickAccum += delta;
@@ -940,7 +1093,11 @@ export class MagicKit {
           .filter(e => e.active && e.hp > 0 && Phaser.Math.Distance.Between(t.x, t.y, e.x, e.y) <= 80);
         for (const e of targets) {
           e.takeDamage(4);
-          this.api.spawnHitFlash(e.x, e.y, 0x888888);
+          this.api.spawnHitFlash(e.x, e.y, MAGIC.wind);
+          this.fx(t.owner).sigils(e.x, e.y, 2, {
+            speed: 130, angle: Math.atan2(e.y - t.y, e.x - t.x), spread: 0.6,
+            size: 5, life: 340, color: MAGIC.gust, points: 4,
+          });
           const dx = e.x - t.x; const dy = e.y - t.y;
           const len = Math.sqrt(dx * dx + dy * dy) || 1;
           (e.body as Phaser.Physics.Arcade.Body).setVelocity((dx / len) * 450, (dy / len) * 450);
@@ -960,19 +1117,11 @@ export class MagicKit {
         ? this.api.enemies.find(e => e.active && e.hp > 0) ?? this.api.npc
         : this.api.player;
       captive.setPosition(tp.ex, tp.ey);
-      tp.gfx.clear();
       let allBroken = true;
       for (let c = 0; c < 4; c++) {
-        if (tp.chainsHp[c] > 0) {
-          allBroken = false;
-          const alpha = tp.chainsHp[c] / 15;
-          tp.gfx.lineStyle(4, 0x33aa44, Math.max(0.2, alpha));
-          tp.gfx.beginPath();
-          tp.gfx.moveTo(tp.ex, tp.ey);
-          tp.gfx.lineTo(corners[c][0], corners[c][1]);
-          tp.gfx.strokePath();
-        }
+        if (tp.chainsHp[c] > 0) allBroken = false;
       }
+      void corners;
       // Captive's projectiles damage chains
       const projArray = this.api.projectiles.getMatching('active', true) as Phaser.GameObjects.Image[];
       for (const p of projArray) {
@@ -983,9 +1132,17 @@ export class MagicKit {
           if (tp.chainsHp[c] <= 0) continue;
           if (Phaser.Math.Distance.Between(p.x, p.y, corners[c][0], corners[c][1]) <= 40 ||
               Phaser.Math.Distance.Between(p.x, p.y, tp.ex, tp.ey) <= 30) {
+            const before = tp.chainsHp[c];
             tp.chainsHp[c] -= (pAny.damage ?? 0);
             p.setActive(false).setVisible(false);
             (pAny.body as Phaser.Physics.Arcade.Body)?.stop();
+            this.fx(owner).sigils(p.x, p.y, 3, { speed: 90, size: 5, life: 340, color: MAGIC.leaf, points: 4 });
+            // A chain giving out is the captive's way out — it wants to be loud.
+            if (before > 0 && tp.chainsHp[c] <= 0) {
+              this.fx(owner).boom(corners[c][0], corners[c][1], 44, {
+                color: MAGIC.vine, sigils: 6, rings: 1, duration: 380, mark: false,
+              });
+            }
           }
         }
       }
@@ -993,14 +1150,17 @@ export class MagicKit {
       tp.dotAccum += delta;
       while (tp.dotAccum >= 1000) {
         captive.takeDamage(3);
-        this.api.spawnHitFlash(captive.x, captive.y, 0x33aa44);
+        this.api.spawnHitFlash(captive.x, captive.y, MAGIC.vine);
         tp.dotAccum -= 1000;
       }
       // End condition
       const elapsed = tp.expireAt - time;
       if (allBroken || elapsed <= 0) {
-        tp.gfx.destroy();
         captive.takeDamage(35);
+        this.fx(owner).boom(tp.ex, tp.ey, 78, {
+          color: MAGIC.vine, sigils: 11, rings: 2, duration: 520,
+        });
+        this.api.scene.cameras.main.shake(180, 0.005);
         this.api.showFloatingText(tp.ex, tp.ey - 44, allBroken ? '🌿 FREED!' : '🌿 ENSNARED', '#33ff66');
         if (owner === 'player') this.thornPrison = null;
         else this.npcThornPrison = null;
@@ -1023,40 +1183,19 @@ export class MagicKit {
         const tgt = this.api.npc;
         if (tgt.active && tgt.hp > 0) {
           tgt.takeDamage(2);
-          this.api.spawnHitFlash(tgt.x, tgt.y, 0x882200);
+          this.api.spawnHitFlash(tgt.x, tgt.y, MAGIC.cursed);
         }
       }
     } else {
       this.npcCursedFireTickAccum = 0;
     }
 
-    // ── R+ speed boost aura ───────────────────────────────────────────
-    if (time < this.playerSpeedBoostUntil) {
-      if (!this.playerSpeedBoostAura) {
-        const tex = this.playerSpeedBoostDark ? 'fx-anchor-aura-black' : 'fx-anchor-aura-pink';
-        this.playerSpeedBoostAura = this.api.scene.add.circle(
-          this.api.player.x, this.api.player.y, 24,
-          this.playerSpeedBoostDark ? 0x440066 : 0xff88cc, 0.55,
-        ).setDepth(4) as Phaser.GameObjects.Arc;
-        this.api.scene.tweens.add({ targets: this.playerSpeedBoostAura, scaleX: 1.15, scaleY: 1.15, yoyo: true, repeat: -1, duration: 350 });
-        void tex;
-      }
-      this.playerSpeedBoostAura.setPosition(this.api.player.x, this.api.player.y);
-    } else if (this.playerSpeedBoostAura) {
-      this.playerSpeedBoostAura.destroy();
-      this.playerSpeedBoostAura = null;
-    }
-
-    // ── F+ mobile meditate trail ──────────────────────────────────────
+    // ── F+ mobile meditate trail — a wake of runes left where you walked ─
     if (this.playerMeditateMobile && this.meditating && time >= this.playerMeditateTrailNext) {
-      this.playerMeditateTrailNext = time + 80;
-      const spr = this.api.scene.add.circle(this.api.player.x, this.api.player.y, 7, 0xaa44ff, 0.75).setDepth(4) as Phaser.GameObjects.Arc;
-      this.playerMeditateTrail.push(spr);
-      this.api.scene.tweens.add({ targets: spr, alpha: 0, duration: 600, onComplete: () => {
-        if (spr.active) spr.destroy();
-        const idx = this.playerMeditateTrail.indexOf(spr);
-        if (idx >= 0) this.playerMeditateTrail.splice(idx, 1);
-      }});
+      this.playerMeditateTrailNext = time + 90;
+      this.pfx.motes(this.api.player.x, this.api.player.y + 8, 2, {
+        speed: 18, size: 2.6, life: 620, color: MAGIC.purple, drift: -6, depth: 4,
+      });
     }
 
     // ── Dark gale cone (E+ Recalling Gale — pulls enemies for 1s) ────
@@ -1074,7 +1213,7 @@ export class MagicKit {
           const diff = Phaser.Math.Angle.Wrap(ang - this.playerDarkGaleAngle);
           if (Math.abs(diff) <= Math.PI / 4) {
             enemy.takeDamage(18);
-            this.api.spawnHitFlash(enemy.x, enemy.y, 0x999999);
+            this.api.spawnHitFlash(enemy.x, enemy.y, MAGIC.gust);
           }
         }
       }
@@ -1109,7 +1248,7 @@ export class MagicKit {
           const diff4 = Phaser.Math.Angle.Wrap(ang4 - this.playerHurricaneGaleAngle);
           if (Math.abs(diff4) <= Math.PI / 4) {
             enemy.takeDamage(12);
-            this.api.spawnHitFlash(enemy.x, enemy.y, 0x555555);
+            this.api.spawnHitFlash(enemy.x, enemy.y, MAGIC.ash);
           }
         }
       }
@@ -1129,18 +1268,20 @@ export class MagicKit {
       }
     }
 
-    // ── Dark vine visual expiry ───────────────────────────────────────
-    if (this.playerDarkVineGfx && time >= this.playerDarkVineExpireAt) {
-      this.playerDarkVineGfx.destroy();
-      this.playerDarkVineGfx = null;
+    // ── Instant vine arms ─────────────────────────────────────────────
+    for (let i = this.vineFlashes.length - 1; i >= 0; i--) {
+      if (time >= this.vineFlashes[i].expireAt) this.vineFlashes.splice(i, 1);
     }
 
     // ── Temple / Monument orb sets (fixed-anchor orbits) ──────────────
     for (let ti = this.templeSets.length - 1; ti >= 0; ti--) {
       const ts = this.templeSets[ti];
       if (time >= ts.expireAt || ts.orbs.length === 0) {
-        ts.templeSprite.destroy(); ts.templeLabel.destroy();
-        for (const o of ts.orbs) o.sprite.destroy();
+        // The structure comes down with it.
+        this.fx(ts.owner).boom(ts.anchorX, ts.anchorY, ts.monument ? 84 : 62, {
+          color: ts.monument ? MAGIC.granite : MAGIC.stone,
+          sigils: ts.monument ? 12 : 8, rings: 2, duration: 520,
+        });
         this.templeSets.splice(ti, 1);
         continue;
       }
@@ -1152,14 +1293,15 @@ export class MagicKit {
         orb.angle += 0.003 * delta;
         const ox = ts.anchorX + Math.cos(orb.angle) * ts.orbitR;
         const oy = ts.anchorY + Math.sin(orb.angle) * ts.orbitR;
-        orb.sprite.setPosition(ox, oy);
+        orb.x = ox; orb.y = oy;
 
         if (time - orb.lastHitAt >= 400) {
           for (const enemy of enemies) {
             if (!enemy.active || enemy.hp <= 0) continue;
             if (Phaser.Math.Distance.Between(ox, oy, enemy.x, enemy.y) <= 24) {
               enemy.takeDamage(ts.contactDmg);
-              this.api.spawnHitFlash(enemy.x, enemy.y, 0xaa7733);
+              this.api.spawnHitFlash(enemy.x, enemy.y, MAGIC.sand);
+              this.fx(ts.owner).ring(ox, oy, 6, 34, MAGIC.stone, 320, 9, 2);
               orb.lastHitAt = time;
               if (ts.stunMs > 0) {
                 enemy.earthStunnedUntil = Math.max(enemy.earthStunnedUntil, time + ts.stunMs);
@@ -1169,10 +1311,8 @@ export class MagicKit {
               }
               if (orb.canCrack && !orb.cracked) {
                 orb.cracked = true;
-                orb.sprite.setFillStyle(0x888888);
-                orb.sprite.setStrokeStyle(2, 0x666666, 1);
               } else {
-                orb.sprite.destroy();
+                this.shatterRock(ts.owner, ox, oy);
                 ts.orbs.splice(ri, 1);
               }
               break;
@@ -1191,12 +1331,11 @@ export class MagicKit {
             p.setActive(false).setVisible(false);
             (pAny.body as Phaser.Physics.Arcade.Body)?.stop();
             orb.lastHitAt = time;
+            this.fx(ts.owner).flash(p.x, p.y, 12, 10, MAGIC.granite);
             if (orb.canCrack && !orb.cracked) {
               orb.cracked = true;
-              orb.sprite.setFillStyle(0x888888);
-              orb.sprite.setStrokeStyle(2, 0x666666, 1);
             } else {
-              orb.sprite.destroy();
+              this.shatterRock(ts.owner, ox, oy);
               ts.orbs.splice(ri, 1);
             }
             break;
@@ -1213,24 +1352,16 @@ export class MagicKit {
       if (nowMs >= link.expireAt || !link.target.active || link.target.hp <= 0) {
         link.target.darkLinkedUntil = 0;
         link.target.darkLinkSource = null;
-        link.gfx.destroy();
         this.tortureTrapLinks.splice(li, 1);
         continue;
       }
-      // Draw red link line
-      const srcFighter = link.owner === 'player' ? this.api.player : this.api.npc;
-      link.gfx.clear();
-      link.gfx.lineStyle(2, 0xff2222, 0.75);
-      link.gfx.beginPath();
-      link.gfx.moveTo(srcFighter.x, srcFighter.y);
-      link.gfx.lineTo(link.target.x, link.target.y);
-      link.gfx.strokePath();
-      // Tick 3 dmg per second (Fighter.takeDamage triggers heal via darkLinkSource)
+      // Tick 3 dmg per second (Fighter.takeDamage triggers heal via darkLinkSource); the thread
+      // itself is painted in paintWorld.
       link.tickAccum += delta;
       while (link.tickAccum >= 1000) {
         link.tickAccum -= 1000;
         link.target.takeDamage(3);
-        this.api.spawnHitFlash(link.target.x, link.target.y, 0xff2222);
+        this.api.spawnHitFlash(link.target.x, link.target.y, MAGIC.blood);
       }
     }
 
@@ -1254,6 +1385,187 @@ export class MagicKit {
       this.darknessBarGfx.fillRect(bx, by, barW * (this.darkness / 100), barH);
       this.darknessBarText?.setPosition(this.api.player.x, by - 1);
       this.darknessBarText?.setText(`☠ ${Math.round(this.darkness)}/100`);
+    }
+
+    this.paintWorld(time);
+    this.updateAuras(time, delta);
+    this.updateAvatars(delta);
+  }
+
+  /**
+   * Dismiss an orbit that is being replaced. Nothing to free any more — the orbs are plain data —
+   * but the stone they were made of still has to visibly go somewhere.
+   */
+  private _destroyRockSet(set: RockOrbSet | null): void {
+    if (!set) return;
+    for (const o of set.orbs) {
+      this.fx(o.owner).sigils(o.x, o.y, 3, { speed: 80, size: 5, life: 400, color: MAGIC.stone, points: 4 });
+    }
+  }
+
+  /** Thunder-charged Gaia: bolt extra stones onto the temple that was just raised. */
+  private _addTempleOrb(count: number): void {
+    const ts = this.templeSets[this.templeSets.length - 1];
+    if (!ts) return;
+    for (let i = 0; i < count; i++) {
+      const angle = (ts.orbs.length / (ts.orbs.length + 1)) * Math.PI * 2;
+      const x = ts.anchorX + Math.cos(angle) * ts.orbitR;
+      const y = ts.anchorY + Math.sin(angle) * ts.orbitR;
+      this.pfx.bolt(x, y, 90, 12, MAGIC.thunder);
+      ts.orbs.push({
+        angle, radius: 10, x, y,
+        cracked: false, lastHitAt: 0, canCrack: false, dmg: 15, owner: 'player',
+      });
+    }
+  }
+
+  /** A conjured stone coming apart — chips of it, and the rune that bound it letting go. */
+  private shatterRock(owner: 'player' | 'npc', x: number, y: number): void {
+    this.fx(owner).boom(x, y, 40, {
+      color: MAGIC.stone, sigils: 6, rings: 1, duration: 360, mark: false,
+    });
+  }
+
+  /**
+   * Every per-frame painter in one pass. Both layers are cleared and redrawn from live state, so
+   * a cloud boils, a funnel turns and a prison chain frays as it takes damage — none of which a
+   * tweened sprite could do.
+   */
+  private paintWorld(time: number): void {
+    const { player, npc } = this.api;
+    const t = this.vizT;
+    const W = this.api.getSceneWidth();
+    const H = this.api.getSceneHeight();
+
+    // ── Floor: anchors, temples, prison chains ──
+    const g0 = this.ground();
+    g0.clear();
+    if (this.anchor) MagicFx.drawAnchor(g0, this.pcol, this.anchor.x, this.anchor.y, t);
+    if (this.npcAnchor) MagicFx.drawAnchor(g0, this.ncol, this.npcAnchor.x, this.npcAnchor.y, t);
+    for (const ts of this.templeSets) {
+      MagicFx.drawTemple(g0, this.col(ts.owner), ts.anchorX, ts.anchorY, ts.monument ? 20 : 14, ts.monument, t);
+      arcaneRing(g0, this.col(ts.owner), ts.anchorX, ts.anchorY, ts.orbitR, t * 0.4,
+        ts.monument ? MAGIC.granite : MAGIC.stone, 0.3, 1.4, 6, false);
+    }
+    const pad2 = 32;
+    const corners: [number, number][] = [
+      [pad2, pad2], [W - pad2, pad2], [pad2, H - pad2], [W - pad2, H - pad2],
+    ];
+    for (const owner of ['player', 'npc'] as const) {
+      const tp = owner === 'player' ? this.thornPrison : this.npcThornPrison;
+      if (!tp) continue;
+      for (let c = 0; c < 4; c++) {
+        if (tp.chainsHp[c] <= 0) continue;
+        MagicFx.drawPrisonChain(g0, this.col(owner), corners[c][0], corners[c][1],
+          tp.ex, tp.ey, Phaser.Math.Clamp(tp.chainsHp[c] / 15, 0, 1), t);
+      }
+    }
+
+    // ── Air: everything conjured ──
+    const g = this.air();
+    g.clear();
+
+    for (const c of this.flameClouds) {
+      const fade = Phaser.Math.Clamp((c.expireAt - time) / 600, 0, 1);
+      MagicFx.drawFlameCloud(g, this.col(c.owner), c.x, c.y, c.radius, !!c.cursedFire, c.seed, t, 0.35 + 0.55 * fade);
+    }
+    for (const c of this.stormClouds) {
+      const fade = Phaser.Math.Clamp((c.expireAt - time) / 600, 0, 1);
+      // Charge climbs toward the next pulse, so the cloud visibly winds up before it lets go.
+      const charge = c.nextPulseAt > 0
+        ? Phaser.Math.Clamp(1 - (c.nextPulseAt - time) / Math.max(1, c.pulseInterval), 0, 1)
+        : 0;
+      MagicFx.drawStormCloud(g, this.col(c.owner), c.x, c.y, c.radius, !!c.isAcidCloud,
+        charge, c.seed, t, 0.4 + 0.55 * fade);
+    }
+    for (const tor of this.tornadoes) {
+      const fade = Phaser.Math.Clamp((tor.expireAt - time) / 700, 0, 1);
+      MagicFx.drawTornado(g, this.col(tor.owner), tor.x, tor.y, tor.radius, tor.dark, tor.seed, t, 0.4 + 0.55 * fade);
+    }
+    for (const owner of ['player', 'npc'] as const) {
+      const set = owner === 'player' ? this.playerRockSet : this.npcRockSet;
+      if (!set) continue;
+      for (const orb of set.orbs) {
+        runeOrb(g, this.col(owner), orb.x, orb.y, orb.radius, orb.angle * 2,
+          orb.cracked ? MAGIC.granite : MAGIC.stone, orb.cracked ? MAGIC.gust : MAGIC.sand, 1, orb.cracked);
+      }
+    }
+    for (const ts of this.templeSets) {
+      for (const orb of ts.orbs) {
+        runeOrb(g, this.col(ts.owner), orb.x, orb.y, orb.radius, orb.angle * 2,
+          orb.cracked ? MAGIC.granite : MAGIC.stone, orb.cracked ? MAGIC.gust : MAGIC.sand, 1, orb.cracked);
+      }
+    }
+    for (const orb of this.healOrbs) {
+      MagicFx.drawHealOrb(g, this.col(orb.owner), orb.x, orb.y, Math.atan2(orb.vy, orb.vx), t);
+    }
+    for (const s of this.sparkleShots) {
+      if (!s.proj.active) continue;
+      const armed = s.leaderId ? 0 : Phaser.Math.Clamp(s.stationaryAccum / 1000, 0, 1);
+      MagicFx.drawSparkle(g, this.col(s.owner), s.proj.x, s.proj.y, armed, t, !!s.leaderId);
+    }
+    for (const p of this.transmogrifyProjectiles) {
+      MagicFx.drawChickenBolt(g, this.col(p.owner), p.x, p.y, Math.atan2(p.vy, p.vx), t);
+    }
+    for (const link of this.tortureTrapLinks) {
+      const src = link.owner === 'player' ? player : npc;
+      MagicFx.drawLifeLink(g, this.col(link.owner), src.x, src.y, link.target.x, link.target.y, t);
+    }
+    for (const v of this.vineFlashes) {
+      vineLash(g, this.pcol, v.x1, v.y1, v.x2, v.y2, t,
+        v.hit ? MAGIC.leaf : MAGIC.darkVine, MAGIC.vine,
+        Phaser.Math.Clamp((v.expireAt - time) / 200, 0, 1), 4);
+    }
+  }
+
+  /** Stance tells for both sides, rebuilt from the flags that are already the source of truth. */
+  private updateAuras(time: number, delta: number): void {
+    const { player, npc } = this.api;
+    const pAim = Math.atan2((this.lastAimY || player.y) - player.y, (this.lastAimX || player.x + 1) - player.x);
+    const body = player.body as Phaser.Physics.Arcade.Body | null;
+    const moveAim = body && (body.velocity.x || body.velocity.y)
+      ? Math.atan2(body.velocity.y, body.velocity.x) : pAim;
+
+    this.syncAura('player', 'meditate', this.meditating, delta, 1, pAim, 30);
+    this.syncAura('player', 'darkness', this.darkness > 1, delta, this.darkness / 100, pAim, 28);
+    this.syncAura('player', 'boost', time < this.playerSpeedBoostUntil,
+      delta, this.playerSpeedBoostDark ? 1 : 0, moveAim, 26);
+    this.syncAura('player', 'bound', this.playerBound && time < this.playerBoundEnd, delta, 1, pAim, 26);
+    this.syncAura('player', 'chicken', player.chickenUntil > Date.now(), delta, 1, pAim, 24);
+
+    this.syncAura('npc', 'meditate', this.npcMeditating, delta, 1, 0, 30);
+    this.syncAura('npc', 'bound', npc.magicChainBound && time < npc.magicChainBoundEnd, delta, 1, 0, 26);
+    this.syncAura('npc', 'chicken', npc.chickenUntil > Date.now(), delta, 1, 0, 24);
+  }
+
+  /** Drive the rig for whichever sides are playing Magic. Built lazily; torn down when they aren't. */
+  private updateAvatars(delta: number): void {
+    const { player, npc, scene } = this.api;
+
+    if (this.api.isPlayerMagic && player?.active) {
+      if (!this.playerAvatar) this.playerAvatar = new MagicAvatar(scene, this.pcol, 'player');
+      const aim = Math.atan2((this.lastAimY || player.y) - player.y, (this.lastAimX || player.x + 1) - player.x);
+      this.playerAvatar.setFacing(aim);
+      // An open wheel visibly swells the rig, so "I am mid-spell" reads off the character alone.
+      this.playerAvatar.setIntensity(this.grimoireMenuOpen || this.necronomiconMenuOpen ? 1.35 : 1);
+      this.playerAvatar.setMastered(this.api.masteryActive);
+      this.playerAvatar.setCorruption(this.darkness / 100);
+      this.playerAvatar.setHold(this.meditating ? 'brace' : (this.grimoireMenuOpen || this.necronomiconMenuOpen) ? 'draw' : null, aim);
+      this.playerAvatar.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
+    } else if (this.playerAvatar) {
+      this.playerAvatar.destroy();
+      this.playerAvatar = null;
+    }
+
+    if (this.api.isNpcMagic && npc?.active) {
+      if (!this.npcAvatar) this.npcAvatar = new MagicAvatar(scene, this.ncol, 'npc');
+      const aim = Math.atan2(player.y - npc.y, player.x - npc.x);
+      this.npcAvatar.setFacing(aim);
+      this.npcAvatar.setHold(this.npcMeditating ? 'brace' : null, aim);
+      this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
+    } else if (this.npcAvatar) {
+      this.npcAvatar.destroy();
+      this.npcAvatar = null;
     }
   }
 
@@ -1383,7 +1695,7 @@ export class MagicKit {
     const DELAY = 2000;
     if (this.aimCountdownLabel) { this.aimCountdownLabel.destroy(); }
     this.aimCountdownLabel = this.api.scene.add.text(this.api.player.x, this.api.player.y - 54, '✨ 2.0', {
-      fontSize: '18px', fontFamily: 'Arial, sans-serif', color: '#cc99ff',
+      fontSize: '18px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#cc99ff',
       stroke: '#220044', strokeThickness: 3,
     }).setOrigin(0.5).setDepth(30);
     this.aimCountdownEnd = this.api.scene.sys.game.loop.now + DELAY;
@@ -1426,7 +1738,7 @@ export class MagicKit {
         case 1: this.doAcidCloud(tx, ty); if (thunderCharged) { const sc = this.stormClouds[this.stormClouds.length - 1]; if (sc) sc.pulseInterval = Math.round(sc.pulseInterval / 2); } break;
         case 2: this.doDrainingThorns(tx, ty); if (thunderCharged) { for (const e of this.api.enemies) { if (e.active && e.hp > 0) { e.earthStunnedUntil = Math.max(e.earthStunnedUntil, this.api.scene.sys.game.loop.now + 2000); this.api.showFloatingText(e.x, e.y - 28, '⚡ STUN', '#ffee44'); break; } } } break;
         case 3: this.doRecallingGale(tx, ty); if (thunderCharged) { this.npcStormSlowUntil = Math.max(this.npcStormSlowUntil, this.api.scene.sys.game.loop.now + 3000); } break;
-        case 4: this.doGaiasTemple(tx, ty); if (thunderCharged) { const ts = this.templeSets[this.templeSets.length - 1]; if (ts) { const now = this.api.scene.sys.game.loop.now; const a = (ts.orbs.length / (ts.orbs.length + 1)) * Math.PI * 2; const s = this.api.scene.add.circle(0, 0, 10, 0x885522, 1).setStrokeStyle(2, 0xbb8833, 1).setDepth(7) as Phaser.GameObjects.Arc; ts.orbs.push({ sprite: s, angle: a, cracked: false, lastHitAt: 0, canCrack: false, dmg: 15, owner: 'player' }); void now; } } break;
+        case 4: this.doGaiasTemple(tx, ty); if (thunderCharged) this._addTempleOrb(1); break;
       }
       return;
     }
@@ -1470,7 +1782,7 @@ export class MagicKit {
         case 1: this.doAcidRain(); if (thunderCharged) { for (const sc of this.stormClouds.slice(-3)) sc.pulseInterval = Math.round(sc.pulseInterval / 2); } break;
         case 2: this.doTortureTrap(tx, ty); if (thunderCharged) { for (const link of this.tortureTrapLinks) { if (link.owner === 'player') { link.expireAt += 3000; if (link.target.darkLinkedUntil) link.target.darkLinkedUntil += 3000; } } } break;
         case 3: this.doHurricaneVacuum(tx, ty); if (thunderCharged) { this.npcStormSlowUntil = Math.max(this.npcStormSlowUntil, this.api.scene.sys.game.loop.now + 3000); } break;
-        case 4: this.doGaiasMonument(tx, ty); if (thunderCharged) { const ts = this.templeSets[this.templeSets.length - 1]; if (ts) { const a = (ts.orbs.length / (ts.orbs.length + 1)) * Math.PI * 2; const s = this.api.scene.add.circle(0, 0, 10, 0x885522, 1).setStrokeStyle(2, 0xbb8833, 1).setDepth(7) as Phaser.GameObjects.Arc; ts.orbs.push({ sprite: s, angle: a, cracked: false, lastHitAt: 0, canCrack: false, dmg: 15, owner: 'player' }); const b = (ts.orbs.length / (ts.orbs.length + 1)) * Math.PI * 2; const s2 = this.api.scene.add.circle(0, 0, 10, 0x885522, 1).setStrokeStyle(2, 0xbb8833, 1).setDepth(7) as Phaser.GameObjects.Arc; ts.orbs.push({ sprite: s2, angle: b, cracked: false, lastHitAt: 0, canCrack: false, dmg: 15, owner: 'player' }); } } break;
+        case 4: this.doGaiasMonument(tx, ty); if (thunderCharged) this._addTempleOrb(2); break;
       }
       return;
     }
@@ -1558,23 +1870,28 @@ export class MagicKit {
 
   private _doLightningCall(owner: 'player' | 'npc'): void {
     const caster = owner === 'player' ? this.api.player : this.api.npc;
-    const flash = this.api.scene.add.graphics().setDepth(12);
-    flash.lineStyle(3, 0xffee00, 1);
-    flash.lineBetween(caster.x, caster.y - 40, caster.x - 8, caster.y - 18);
-    flash.lineBetween(caster.x - 8, caster.y - 18, caster.x + 5, caster.y - 18);
-    flash.lineBetween(caster.x + 5, caster.y - 18, caster.x - 5, caster.y + 5);
-    this.api.scene.tweens.add({ targets: flash, alpha: 0, duration: 600, onComplete: () => flash.destroy() });
-    const aura = this.api.scene.add.circle(caster.x, caster.y, 28, 0xffee00, 0.25).setDepth(4);
-    this.api.scene.tweens.add({ targets: aura, alpha: 0, scaleX: 1.6, scaleY: 1.6, duration: 500, onComplete: () => aura.destroy() });
+    const fx = this.fx(owner);
+    // Something is called down out of the sky and stored — the arming, not the discharge.
+    fx.bolt(caster.x, caster.y, 120, 12, MAGIC.thunder);
+    fx.ring(caster.x, caster.y, 10, 64, MAGIC.thunder, 520, 8, 3);
+    fx.motes(caster.x, caster.y, 8, { speed: 90, size: 2.4, life: 620, color: MAGIC.thunderHi });
+    this.avatarFor(owner)?.play('raise');
     this.api.showFloatingText(caster.x, caster.y - 44, '⚡ LIGHTNING CALL', '#ffee44');
   }
 
   private _doApocalypseCall(owner: 'player' | 'npc'): void {
     const caster = owner === 'player' ? this.api.player : this.api.npc;
-    const aura = this.api.scene.add.circle(caster.x, caster.y, 34, 0x9933ff, 0.3).setDepth(4);
-    this.api.scene.tweens.add({ targets: aura, alpha: 0, scaleX: 1.8, scaleY: 1.8, duration: 700, onComplete: () => aura.destroy() });
-    const ring = this.api.scene.add.circle(caster.x, caster.y, 18, 0x0, 0).setStrokeStyle(2, 0xcc44ff, 0.8).setDepth(12);
-    this.api.scene.tweens.add({ targets: ring, alpha: 0, scaleX: 2.5, scaleY: 2.5, duration: 700, onComplete: () => ring.destroy() });
+    const fx = this.fx(owner);
+    // The bigger sibling: three bolts, two circles, and the ground remembers it.
+    for (let i = 0; i < 3; i++) {
+      this.api.scene.time.delayedCall(i * 90, () =>
+        fx.bolt(caster.x + (i - 1) * 26, caster.y, 150, 12, i === 1 ? MAGIC.orchid : MAGIC.thunder));
+    }
+    fx.ring(caster.x, caster.y, 12, 92, MAGIC.orchid, 700, 8, 3.5);
+    fx.mark(caster.x, caster.y, 40, 3, MAGIC.violet);
+    fx.sigils(caster.x, caster.y, 10, { speed: 190, size: 9, life: 700, color: MAGIC.orchid });
+    this.api.scene.cameras.main.shake(200, 0.005);
+    this.avatarFor(owner)?.play('raise');
     this.api.showFloatingText(caster.x, caster.y - 44, '💥 APOCALYPSE CALL', '#cc44ff');
   }
 
@@ -1588,7 +1905,12 @@ export class MagicKit {
     proj.setActive(true).setVisible(true).setDepth(6);
     proj.isFromPlayer = (owner === 'player');
     proj.damage = 6;
+    proj.setVisible(false); // the kit paints it — the texture is only there for collision
     (proj.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(angle) * 450, Math.sin(angle) * 450);
+    this.gesture(owner, 'magic-sparkle-shot', angle);
+    this.fx(owner).sigils(caster.x, caster.y, 3, {
+      speed: 70, angle, spread: 0.6, size: 6, life: 340, color: MAGIC.blush,
+    });
     const leaderId = `sparkle-${Date.now()}-${Math.random()}`;
     this.sparkleShots.push({
       proj,
@@ -1609,7 +1931,7 @@ export class MagicKit {
           'proj-sparkle-star',
         ) as any;
         if (!trailProj) continue;
-        trailProj.setActive(true).setVisible(true).setDepth(6);
+        trailProj.setActive(true).setVisible(false).setDepth(6);
         trailProj.isFromPlayer = true;
         trailProj.damage = 0; // damage handled by kit, not ArenaScene collision
         (trailProj.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
@@ -1643,43 +1965,46 @@ export class MagicKit {
       const rh = this.api.getSceneHeight();
       const rx = Phaser.Math.Between(60, rw - 60);
       const ry = Phaser.Math.Between(60, rh - 60);
+      // Vanish here, arrive there — both ends get a circle, so it reads as a jump.
+      this.pfx.boom(caster.x, caster.y, 60, { color: MAGIC.wildVoid, sigils: 8, rings: 2, mark: false });
       caster.setPosition(rx, ry);
-      const ring2 = this.api.scene.add.circle(rx, ry, 24, 0x550088, 0.6).setDepth(8);
-      this.api.scene.tweens.add({ targets: ring2, scaleX: 3.5, scaleY: 3.5, alpha: 0, duration: 450, onComplete: () => ring2.destroy() });
+      this.pfx.boom(rx, ry, 76, { color: MAGIC.magenta, sigils: 10, rings: 2, duration: 520 });
       this.api.showFloatingText(rx, ry - 30, '🌑 WILD ANCHOR!', '#9900cc');
       // 50% speed boost, dark aura, 3s
       this.playerSpeedBoostUntil = now + 3000;
       this.playerSpeedBoostMult = 1.5;
       this.playerSpeedBoostDark = true;
-      if (this.playerSpeedBoostAura) { this.playerSpeedBoostAura.destroy(); this.playerSpeedBoostAura = null; }
       // +25% cooldown on this re-cast (extend anchor CD by 2000ms)
       caster.reduceCooldown('magic-anchor', -2000);
       return;
     }
 
+    this.gesture(owner, 'magic-anchor');
     if (anchorRef === null) {
-      const sprite = this.api.scene.add.circle(caster.x, caster.y, 16, 0x9944ff, 0.4)
-        .setStrokeStyle(2, 0xcc88ff, 0.7).setDepth(5) as Phaser.GameObjects.Arc;
-      this.api.scene.tweens.add({ targets: sprite, alpha: 0.1, yoyo: true, repeat: -1, duration: 700 });
-      if (owner === 'player') this.anchor = { x: caster.x, y: caster.y, sprite };
-      else this.npcAnchor = { x: caster.x, y: caster.y, sprite };
+      // Setting the mark: a circle inscribed into the ground where you stood.
+      this.fx(owner).ring(caster.x, caster.y, 4, 26, MAGIC.orchid, 460, 8, 2.4);
+      this.fx(owner).motes(caster.x, caster.y, 6, { speed: 50, size: 2.2, life: 560 });
+      if (owner === 'player') this.anchor = { x: caster.x, y: caster.y };
+      else this.npcAnchor = { x: caster.x, y: caster.y };
       if (owner === 'player') this.playerJustRecalledAt = 0; // reset window when placing new anchor
     } else {
       const ax = anchorRef.x;
       const ay = anchorRef.y;
-      anchorRef.sprite?.destroy();
       if (owner === 'player') this.anchor = null;
       else this.npcAnchor = null;
+      const fx = this.fx(owner);
+      fx.sigils(caster.x, caster.y, 6, { speed: 130, size: 7, life: 420, color: MAGIC.purple });
       caster.setPosition(ax, ay);
       for (const target of (owner === 'player' ? this.api.enemies : [this.api.player])) {
         if (!target.active || target.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(ax, ay, target.x, target.y) <= 120) {
           target.takeDamage(20);
-          this.api.spawnHitFlash(target.x, target.y, 0x9944ff);
+          this.api.spawnHitFlash(target.x, target.y, MAGIC.purple);
         }
       }
-      const ring = this.api.scene.add.circle(ax, ay, 30, 0x9944ff, 0.5).setDepth(8);
-      this.api.scene.tweens.add({ targets: ring, scaleX: 4, scaleY: 4, alpha: 0, duration: 400, onComplete: () => ring.destroy() });
+      // Arriving is the loud half: a shockwave out to the full 120px reach.
+      fx.boom(ax, ay, 120, { color: MAGIC.purple, sigils: 12, rings: 3, duration: 560 });
+      this.api.scene.cameras.main.shake(160, 0.004);
       this.api.showFloatingText(ax, ay - 30, '⚓ RECALL', '#bb88ff');
       if (owner === 'player') {
         this.api.player.triggerCooldown('magic-anchor');
@@ -1689,7 +2014,6 @@ export class MagicKit {
           this.playerSpeedBoostUntil = now + 3000;
           this.playerSpeedBoostMult = 1.25;
           this.playerSpeedBoostDark = false;
-          if (this.playerSpeedBoostAura) { this.playerSpeedBoostAura.destroy(); this.playerSpeedBoostAura = null; }
         }
       }
     }
@@ -1726,13 +2050,13 @@ export class MagicKit {
     const caster = owner === 'player' ? this.api.player : this.api.npc;
     const angle = Math.atan2(ty - caster.y, tx - caster.x);
     const speed = 130;
-    const sprite = this.api.scene.add.circle(caster.x, caster.y, 9, 0xffffff, 0.95)
-      .setStrokeStyle(2, 0xffee88, 0.9).setDepth(6) as Phaser.GameObjects.Arc;
     this.transmogrifyProjectiles.push({
-      sprite, x: caster.x, y: caster.y,
+      x: caster.x, y: caster.y,
       vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
       owner,
     });
+    this.avatarFor(owner)?.play('punch', angle);
+    this.fx(owner).ring(caster.x, caster.y, 6, 40, MAGIC.gold, 400, 9, 2.4);
     this.api.showFloatingText(caster.x, caster.y - 30, '🐔 Transmogrify!', '#ffffff');
   }
 
@@ -1744,7 +2068,11 @@ export class MagicKit {
       this.chickenStates.set(target, { angle: Math.random() * Math.PI * 2, nextTurnAt: 0, prevCooldownMult: target.cooldownMult });
       target.cooldownMult *= 0.5;
     }
-    this.api.spawnHitFlash(target.x, target.y, 0xffffff);
+    this.api.spawnHitFlash(target.x, target.y, MAGIC.white);
+    // The transformation itself: a summoning circle collapses onto them and feathers come out.
+    this.pfx.flash(target.x, target.y, 30, 11, MAGIC.gold);
+    this.pfx.ring(target.x, target.y, 46, 8, MAGIC.gold, 460, 9, 3);
+    this.pfx.sigils(target.x, target.y, 9, { speed: 170, size: 8, life: 560, color: MAGIC.white });
     this.api.showFloatingText(target.x, target.y - 30, '🐔 CHICKEN!', '#ffffff');
   }
 
@@ -1753,9 +2081,7 @@ export class MagicKit {
       const p = this.transmogrifyProjectiles[i];
       p.x += p.vx * (delta / 1000);
       p.y += p.vy * (delta / 1000);
-      p.sprite.setPosition(p.x, p.y);
       if (p.x < 0 || p.x > W || p.y < 0 || p.y > H) {
-        p.sprite.destroy();
         this.transmogrifyProjectiles.splice(i, 1);
         continue;
       }
@@ -1769,10 +2095,7 @@ export class MagicKit {
           break;
         }
       }
-      if (hit) {
-        p.sprite.destroy();
-        this.transmogrifyProjectiles.splice(i, 1);
-      }
+      if (hit) this.transmogrifyProjectiles.splice(i, 1);
     }
   }
 
@@ -1819,9 +2142,14 @@ export class MagicKit {
           return false;
         };
       }
+      this.gesture('player', 'magic-meditate');
+      this.pfx.ring(this.api.player.x, this.api.player.y, 40, 8, MAGIC.orchid, 520, 8, 2.4);
       this.api.showFloatingText(this.api.player.x, this.api.player.y - 34, '🧘 Meditate', '#cc99ff');
     } else {
+      // Guard first: a re-cast while already channelling must not replay the opening circle.
       if (this.npcMeditating) return;
+      this.gesture('npc', 'magic-meditate');
+      this.nfx.ring(this.api.npc.x, this.api.npc.y, 40, 8, MAGIC.orchid, 520, 8, 2.4);
       this.npcMeditating = true;
       this.npcMeditateEndAt = now + 3000;
       this.npcMeditateNextSpawn = now + 200;
@@ -1839,11 +2167,13 @@ export class MagicKit {
         this.api.player.damageAbsorber = null;
       }
       this.playerMeditateMobile = false;
-      for (const s of this.playerMeditateTrail) { if (s.active) s.destroy(); }
-      this.playerMeditateTrail = [];
       if (interrupted) {
         this.api.player.takeDamage(20);
-        this.api.spawnHitFlash(this.api.player.x, this.api.player.y, 0xff4444);
+        this.api.spawnHitFlash(this.api.player.x, this.api.player.y, MAGIC.blood);
+        // A broken channel shatters: the circle you were holding blows apart.
+        this.pfx.boom(this.api.player.x, this.api.player.y, 56, {
+          color: MAGIC.blood, sigils: 9, rings: 2, duration: 420, mark: false,
+        });
         this.api.showFloatingText(this.api.player.x, this.api.player.y - 30, '⛔ Interrupted! -20', '#ff4444');
       }
       this.api.player.triggerCooldown('magic-meditate');
@@ -1865,9 +2195,7 @@ export class MagicKit {
     else { ox = W; oy = Math.random() * H; }
     const angle = Math.atan2(caster.y - oy, caster.x - ox);
     const speed = 200;
-    const sprite = this.api.scene.add.circle(ox, oy, 8, 0xcc99ff, 0.9)
-      .setStrokeStyle(2, 0xffeeff, 0.6).setDepth(7) as Phaser.GameObjects.Arc;
-    this.healOrbs.push({ sprite, x: ox, y: oy, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, owner });
+    this.healOrbs.push({ x: ox, y: oy, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, owner });
   }
 
   // ── E1: Flame Burst ───────────────────────────────────────────────────────
@@ -1877,14 +2205,14 @@ export class MagicKit {
     const baseAngle = Math.atan2(ty - caster.y, tx - caster.x);
     const offsets = [-25, 0, 25];
     const now = this.api.scene.sys.game.loop.now;
+    this.gesture(owner, 'magic-grimoire', baseAngle);
+    this.fx(owner).ring(caster.x, caster.y, 8, 54, MAGIC.ember, 420, 9, 2.6);
     for (const deg of offsets) {
       const angle = baseAngle + Phaser.Math.DegToRad(deg);
       const speed = 250;
-      const sprite = this.api.scene.add.circle(caster.x, caster.y, 14, 0xff7733, 0.7)
-        .setStrokeStyle(2, 0xffaa44, 0.9).setDepth(6) as Phaser.GameObjects.Arc;
-      this.api.scene.tweens.add({ targets: sprite, scaleX: 0.85, scaleY: 0.85, yoyo: true, repeat: -1, duration: 400 });
       this.flameClouds.push({
-        sprite, x: caster.x, y: caster.y,
+        seed: Math.random() * 10,
+        x: caster.x, y: caster.y,
         vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
         stopped: false,
         expireAt: now + 3000,
@@ -1904,11 +2232,11 @@ export class MagicKit {
     const cx = caster.x + Math.cos(angle) * 80;
     const cy = caster.y + Math.sin(angle) * 80;
     const now = this.api.scene.sys.game.loop.now;
-    const sprite = this.api.scene.add.circle(cx, cy, 35, 0x2255aa, 0.6)
-      .setStrokeStyle(4, 0x55aaff, 0.8).setDepth(6) as Phaser.GameObjects.Arc;
-    this.api.scene.tweens.add({ targets: sprite, scaleX: 0.9, scaleY: 0.9, yoyo: true, repeat: -1, duration: 800 });
+    this.gesture(owner, 'magic-grimoire', angle);
+    this.fx(owner).ring(cx, cy, 8, 46, MAGIC.storm, 460, 8, 2.6);
     this.stormClouds.push({
-      sprite, x: cx, y: cy,
+      seed: Math.random() * 10, radius: 35,
+      x: cx, y: cy,
       expireAt: now + 6000,
       nextPulseAt: now + 3000,
       pulseInterval: 3000,
@@ -1931,17 +2259,25 @@ export class MagicKit {
     proj.isMagicThornVine = true;
     proj.thornVineOwner = owner;
     (proj.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(angle) * 650, Math.sin(angle) * 650);
+    this.gesture(owner, 'magic-grimoire', angle);
+    this.fx(owner).sigils(caster.x, caster.y, 4, {
+      speed: 90, angle, spread: 0.5, size: 6, life: 380, color: MAGIC.leaf, points: 4,
+    });
   }
 
   onThornVineHit(target: Fighter, owner: 'player' | 'npc'): void {
     const now = this.api.scene.sys.game.loop.now;
     target.magicChainBound = true;
     target.magicChainBoundEnd = now + 2000;
+    this.fx(owner).boom(target.x, target.y, 44, {
+      color: MAGIC.vine, sigils: 6, rings: 1, duration: 380, mark: false,
+    });
     this.api.showFloatingText(target.x, target.y - 28, '🌿 BOUND', '#33ff66');
     if (owner === 'player' && this.playerThunderThornCharged) {
       this.playerThunderThornCharged = false;
       target.earthStunnedUntil = Math.max(target.earthStunnedUntil, now + 2000);
-      this.api.spawnHitFlash(target.x, target.y, 0xffee00);
+      this.api.spawnHitFlash(target.x, target.y, MAGIC.thunder);
+      this.pfx.bolt(target.x, target.y, 110, 12, MAGIC.thunder);
       this.api.showFloatingText(target.x, target.y - 44, '⚡ STUN', '#ffee44');
     }
     if (owner === 'player' && target === this.api.npc) {
@@ -1949,7 +2285,8 @@ export class MagicKit {
       this.api.scene.time.delayedCall(2000, () => {
         if (this.api.npc.magicChainBound) {
           this.api.npc.takeDamage(25);
-          this.api.spawnHitFlash(this.api.npc.x, this.api.npc.y, 0x33aa44);
+          this.api.spawnHitFlash(this.api.npc.x, this.api.npc.y, MAGIC.vine);
+          this.pfx.boom(this.api.npc.x, this.api.npc.y, 58, { color: MAGIC.vine, sigils: 8, rings: 2 });
           this.api.npc.magicChainBound = false;
         }
       });
@@ -1960,7 +2297,8 @@ export class MagicKit {
       this.api.scene.time.delayedCall(2000, () => {
         if (this.playerBound) {
           this.api.player.takeDamage(25);
-          this.api.spawnHitFlash(this.api.player.x, this.api.player.y, 0x33aa44);
+          this.api.spawnHitFlash(this.api.player.x, this.api.player.y, MAGIC.vine);
+          this.nfx.boom(this.api.player.x, this.api.player.y, 58, { color: MAGIC.vine, sigils: 8, rings: 2 });
           this.playerBound = false;
         }
       });
@@ -1974,8 +2312,11 @@ export class MagicKit {
     const angle = Math.atan2(ty - caster.y, tx - caster.x);
     const bx = caster.x + Math.cos(angle) * 70;
     const by = caster.y + Math.sin(angle) * 70;
-    const burst = this.api.scene.add.circle(bx, by, 45, 0xbbbbbb, 0.5).setDepth(8);
-    this.api.scene.tweens.add({ targets: burst, scaleX: 2, scaleY: 2, alpha: 0, duration: 300, onComplete: () => burst.destroy() });
+    // A wall of air shoved outward — the streamers run out, not in.
+    this.gesture(owner, 'magic-grimoire', angle);
+    const fx = this.fx(owner);
+    fx.gust(caster.x, caster.y, angle, 150, Math.PI / 4, { color: MAGIC.gust, duration: 480 });
+    fx.boom(bx, by, 90, { color: MAGIC.gust, sigils: 9, rings: 2, duration: 420, mark: false });
     const targets = (owner === 'player' ? this.api.enemies : [this.api.player])
       .filter(t => t.active && t.hp > 0 && Phaser.Math.Distance.Between(bx, by, t.x, t.y) <= 90);
     for (const t of targets) {
@@ -1985,8 +2326,9 @@ export class MagicKit {
         (t.body as Phaser.Physics.Arcade.Body).setVelocity((dx / len) * 650, (dy / len) * 650);
       }
       t.takeDamage(8);
-      this.api.spawnHitFlash(t.x, t.y, 0xaaaaaa);
+      this.api.spawnHitFlash(t.x, t.y, MAGIC.gust);
     }
+    this.api.scene.cameras.main.shake(120, 0.003);
     this.api.showFloatingText(bx, by - 28, '💨 BLAST!', '#bbbbbb');
   }
 
@@ -2009,14 +2351,21 @@ export class MagicKit {
 
   private _spawnRockSet(owner: 'player' | 'npc', count: number, orbitR: number, expireAt: number, dmg: number, canCrack: boolean): RockOrbSet {
     const orbs: RockOrb[] = [];
-    const color = canCrack ? 0x777777 : 0x885522;
     const radius = canCrack ? 13 : 9;
+    const caster = this.fighter(owner);
     for (let i = 0; i < count; i++) {
       const angle = (i / count) * Math.PI * 2;
-      const sprite = this.api.scene.add.circle(0, 0, radius, color, 1)
-        .setStrokeStyle(2, canCrack ? 0xbbbbbb : 0xbb8833, 1).setDepth(7) as Phaser.GameObjects.Arc;
-      orbs.push({ sprite, angle, cracked: false, lastHitAt: 0, canCrack, dmg, owner });
+      orbs.push({
+        angle, radius,
+        x: caster.x + Math.cos(angle) * orbitR,
+        y: caster.y + Math.sin(angle) * orbitR,
+        cracked: false, lastHitAt: 0, canCrack, dmg, owner,
+      });
     }
+    // Stone hauled up out of nothing: a circle opens and each orb arrives on it.
+    const fx = this.fx(owner);
+    fx.ring(caster.x, caster.y, 8, orbitR + 12, MAGIC.stone, 520, 8, 2.6);
+    for (const o of orbs) fx.sigils(o.x, o.y, 3, { speed: 70, size: 6, life: 400, color: MAGIC.sand, points: 4 });
     const now = this.api.scene.sys.game.loop.now;
     return { orbs, expireAt: expireAt > 1e9 ? expireAt : now + expireAt, orbitR };
   }
@@ -2027,15 +2376,20 @@ export class MagicKit {
     const caster = owner === 'player' ? this.api.player : this.api.npc;
     const baseAngle = Math.atan2(ty - caster.y, tx - caster.x);
     const now = this.api.scene.sys.game.loop.now;
+    // Ten clouds is a much bigger event than three: the wind-up ring and the shake say so.
+    this.gesture(owner, 'magic-necronomicon', baseAngle);
+    const fx = this.fx(owner);
+    fx.flash(caster.x, caster.y, 40, 10, MAGIC.flameHi);
+    fx.ring(caster.x, caster.y, 10, 100, MAGIC.flameRed, 600, 9, 3.4);
+    fx.sigils(caster.x, caster.y, 12, { speed: 220, angle: baseAngle, spread: 0.7, size: 9, life: 620, color: MAGIC.ember });
+    this.api.scene.cameras.main.shake(200, 0.005);
     for (let i = 0; i < 10; i++) {
       const deg = -35 + i * (70 / 9);
       const angle = baseAngle + Phaser.Math.DegToRad(deg);
       const speed = 200 + Math.random() * 60;
-      const sprite = this.api.scene.add.circle(caster.x, caster.y, 18, 0xcc2200, 0.7)
-        .setStrokeStyle(2, 0xff4422, 0.9).setDepth(6) as Phaser.GameObjects.Arc;
-      this.api.scene.tweens.add({ targets: sprite, scaleX: 0.8, scaleY: 0.8, yoyo: true, repeat: -1, duration: 350 });
       this.flameClouds.push({
-        sprite, x: caster.x, y: caster.y,
+        seed: Math.random() * 10,
+        x: caster.x, y: caster.y,
         vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
         stopped: false,
         expireAt: now + 6000,
@@ -2055,11 +2409,11 @@ export class MagicKit {
     const cx = caster.x + Math.cos(angle) * 80;
     const cy = caster.y + Math.sin(angle) * 80;
     const now = this.api.scene.sys.game.loop.now;
-    const sprite = this.api.scene.add.circle(cx, cy, 40, 0x112255, 0.7)
-      .setStrokeStyle(5, 0x2266cc, 0.9).setDepth(6) as Phaser.GameObjects.Arc;
-    this.api.scene.tweens.add({ targets: sprite, scaleX: 0.88, scaleY: 0.88, yoyo: true, repeat: -1, duration: 1000 });
+    this.gesture(owner, 'magic-necronomicon', angle);
+    this.fx(owner).ring(cx, cy, 10, 78, MAGIC.seaMid, 620, 8, 3);
     this.stormClouds.push({
-      sprite, x: cx, y: cy,
+      seed: Math.random() * 10, radius: 40,
+      x: cx, y: cy,
       expireAt: now + 12000,
       nextPulseAt: now + 3000,
       pulseInterval: 3000,
@@ -2082,22 +2436,26 @@ export class MagicKit {
     proj.isMagicThornPrison = true;
     proj.thornPrisonOwner = owner;
     (proj.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(angle) * 380, Math.sin(angle) * 380);
+    this.gesture(owner, 'magic-necronomicon', angle);
+    this.fx(owner).sigils(caster.x, caster.y, 5, {
+      speed: 100, angle, spread: 0.5, size: 7, life: 420, color: MAGIC.darkVine, points: 4,
+    });
   }
 
   onThornPrisonHit(ex: number, ey: number, owner: 'player' | 'npc'): void {
     const now = this.api.scene.sys.game.loop.now;
-    const existingPrison = owner === 'player' ? this.thornPrison : this.npcThornPrison;
-    if (existingPrison) { existingPrison.gfx.destroy(); }
-    const gfx = this.api.scene.add.graphics().setDepth(5);
     const prison: ThornPrison = {
       ex, ey,
       chainsHp: [15, 15, 15, 15],
-      gfx, owner,
+      owner,
       expireAt: now + 5000,
       dotAccum: 0,
     };
     if (owner === 'player') this.thornPrison = prison;
     else this.npcThornPrison = prison;
+    // Four chains slam out to the arena corners at once.
+    this.fx(owner).boom(ex, ey, 64, { color: MAGIC.vine, sigils: 9, rings: 2, duration: 480 });
+    this.api.scene.cameras.main.shake(160, 0.004);
     this.api.showFloatingText(ex, ey - 28, '🌿 IMPRISONED', '#33ff66');
   }
 
@@ -2118,15 +2476,18 @@ export class MagicKit {
         (t.body as Phaser.Physics.Arcade.Body).setVelocity((dx / len) * 700, (dy / len) * 700);
       }
       t.takeDamage(10);
-      this.api.spawnHitFlash(t.x, t.y, 0x666666);
+      this.api.spawnHitFlash(t.x, t.y, MAGIC.wind);
     }
     // Spawn persistent tornado
     const now = this.api.scene.sys.game.loop.now;
-    const sprite = this.api.scene.add.circle(bx, by, 30, 0x444444, 0.6)
-      .setStrokeStyle(3, 0x888888, 0.8).setDepth(7) as Phaser.GameObjects.Arc;
-    this.api.scene.tweens.add({ targets: sprite, scaleX: 0.7, scaleY: 1.3, yoyo: true, repeat: -1, duration: 200 });
+    this.gesture(owner, 'magic-necronomicon', angle);
+    const fx = this.fx(owner);
+    fx.gust(caster.x, caster.y, angle, 170, Math.PI / 4, { color: MAGIC.gust, duration: 560 });
+    fx.boom(bx, by, 96, { color: MAGIC.wind, sigils: 10, rings: 2, duration: 480, mark: false });
+    this.api.scene.cameras.main.shake(160, 0.004);
     this.tornadoes.push({
-      sprite, x: bx, y: by, vx: 0, vy: 0,
+      seed: Math.random() * 10, radius: 30, dark: false,
+      x: bx, y: by, vx: 0, vy: 0,
       expireAt: now + 10000,
       nextDirAt: now,
       tickAccum: 0, owner,
@@ -2157,11 +2518,11 @@ export class MagicKit {
   private doCorruptFlames(tx: number, ty: number): void {
     const caster = this.api.player;
     const now = this.api.scene.sys.game.loop.now;
-    const sprite = this.api.scene.add.circle(caster.x, caster.y, 32, 0xff4400, 0.6)
-      .setStrokeStyle(3, 0xaa0066, 0.8).setDepth(6) as Phaser.GameObjects.Arc;
-    this.api.scene.tweens.add({ targets: sprite, scaleX: 0.85, scaleY: 0.85, yoyo: true, repeat: -1, duration: 350 });
+    this.gesture('player', 'magic-grimoire');
+    this.pfx.ring(caster.x, caster.y, 8, 70, MAGIC.corrupt, 520, 9, 3);
     this.flameClouds.push({
-      sprite, x: caster.x, y: caster.y,
+      seed: Math.random() * 10,
+      x: caster.x, y: caster.y,
       vx: 0, vy: 0, stopped: true,
       expireAt: now + 5000,
       tickAccum: 0, radius: 70,
@@ -2183,11 +2544,11 @@ export class MagicKit {
     const angle = Math.atan2(ty - caster.y, tx - caster.x);
     const cx = caster.x + Math.cos(angle) * 80;
     const cy = caster.y + Math.sin(angle) * 80;
-    const sprite = this.api.scene.add.circle(cx, cy, 40, 0x224488, 0.6)
-      .setStrokeStyle(4, 0x44aaff, 0.8).setDepth(6) as Phaser.GameObjects.Arc;
-    this.api.scene.tweens.add({ targets: sprite, scaleX: 0.9, scaleY: 0.9, yoyo: true, repeat: -1, duration: 900 });
+    this.gesture('player', 'magic-grimoire', angle);
+    this.pfx.ring(cx, cy, 8, 60, MAGIC.acid, 520, 8, 2.8);
     this.stormClouds.push({
-      sprite, x: cx, y: cy,
+      seed: Math.random() * 10, radius: 40,
+      x: cx, y: cy,
       expireAt: now + 8000,
       nextPulseAt: now + 3000,
       pulseInterval: 3000,
@@ -2213,26 +2574,22 @@ export class MagicKit {
       if (!enemy.active || enemy.hp <= 0) continue;
       if (this._pointToSegDist(enemy.x, enemy.y, caster.x, caster.y, ex, ey) <= 22) {
         enemy.takeDamage(15);
-        this.api.spawnHitFlash(enemy.x, enemy.y, 0x44ff66);
+        this.api.spawnHitFlash(enemy.x, enemy.y, MAGIC.leaf);
         caster.heal(15);
+        // Drained: beads of them running back up the vine into you.
+        this.pfx.sigils(enemy.x, enemy.y, 5, {
+          speed: 60, angle: Math.atan2(caster.y - enemy.y, caster.x - enemy.x), spread: 0.6,
+          size: 6, life: 420, color: MAGIC.leaf, points: 4,
+        });
         this.api.showFloatingText(caster.x, caster.y - 28, '+15 🌿', '#44ff66');
         hit = true;
         break;
       }
     }
-    // Draw vine visual
-    if (this.playerDarkVineGfx) this.playerDarkVineGfx.destroy();
-    this.playerDarkVineGfx = this.api.scene.add.graphics().setDepth(9);
-    this.playerDarkVineGfx.lineStyle(4, hit ? 0x44ff66 : 0x226633, 0.85);
-    this.playerDarkVineGfx.beginPath();
-    this.playerDarkVineGfx.moveTo(caster.x, caster.y);
-    this.playerDarkVineGfx.lineTo(ex, ey);
-    this.playerDarkVineGfx.strokePath();
+    // The lash itself, held for a few frames by paintWorld.
+    this.gesture('player', 'magic-grimoire', angle);
     const now = this.api.scene.sys.game.loop.now;
-    this.playerDarkVineExpireAt = now + 280;
-    this.api.scene.tweens.add({ targets: this.playerDarkVineGfx, alpha: 0, duration: 280, onComplete: () => {
-      if (this.playerDarkVineGfx?.active) { this.playerDarkVineGfx.destroy(); this.playerDarkVineGfx = null; }
-    }});
+    this.vineFlashes.push({ x1: caster.x, y1: caster.y, x2: ex, y2: ey, hit, expireAt: now + 280 });
     if (!hit) this.api.showFloatingText(ex, ey - 20, '🌿 MISS', '#226633');
     this.addDarkness(25);
   }
@@ -2245,14 +2602,11 @@ export class MagicKit {
     this.playerDarkGaleUntil = now + 1000;
     this.playerDarkGaleAngle = angle;
     this.playerDarkGaleOnce = false;
-    // Wind VFX: expanding arc
-    const gfx = this.api.scene.add.graphics().setDepth(9);
-    gfx.fillStyle(0x999999, 0.35);
-    gfx.beginPath();
-    gfx.moveTo(caster.x, caster.y);
-    gfx.arc(caster.x, caster.y, 200, angle - Math.PI / 4, angle + Math.PI / 4, false);
-    gfx.closePath(); gfx.fillPath();
-    this.api.scene.tweens.add({ targets: gfx, alpha: 0, duration: 600, onComplete: () => gfx.destroy() });
+    // A vacuum, not a blast: the streamers run *inward* down the cone.
+    this.gesture('player', 'magic-grimoire', angle);
+    this.pfx.gust(caster.x, caster.y, angle, 200, Math.PI / 4, {
+      color: MAGIC.gust, duration: 1000, inward: true,
+    });
     this.api.showFloatingText(caster.x, caster.y - 34, '💨 Dark Gale', '#aaaaaa');
     this.addDarkness(25);
   }
@@ -2260,20 +2614,20 @@ export class MagicKit {
   // E5 dark: Gaia's Temple — fixed-anchor, 3 brown orbs orbiting (15 dmg + 80% slow)
   private doGaiasTemple(tx: number, ty: number): void {
     const now = this.api.scene.sys.game.loop.now;
-    const templeSprite = this.api.scene.add.circle(tx, ty, 14, 0x999999, 0.85)
-      .setStrokeStyle(2, 0xcccccc, 0.9).setDepth(6) as Phaser.GameObjects.Arc;
-    const templeLabel = this.api.scene.add.text(tx, ty, '🛕', { fontSize: '12px' })
-      .setOrigin(0.5, 0.5).setDepth(7);
+    this.gesture('player', 'magic-grimoire');
+    this.pfx.ring(tx, ty, 8, 70, MAGIC.stone, 560, 8, 3);
+    this.pfx.sigils(tx, ty, 8, { speed: 130, size: 7, life: 520, color: MAGIC.sand, points: 4 });
     const orbs: RockOrb[] = [];
     for (let i = 0; i < 3; i++) {
       const angle = (i / 3) * Math.PI * 2;
-      const sprite = this.api.scene.add.circle(0, 0, 10, 0x885522, 1)
-        .setStrokeStyle(2, 0xbb8833, 1).setDepth(7) as Phaser.GameObjects.Arc;
-      orbs.push({ sprite, angle, cracked: false, lastHitAt: 0, canCrack: false, dmg: 15, owner: 'player' });
+      orbs.push({
+        angle, radius: 10, x: tx + Math.cos(angle) * 56, y: ty + Math.sin(angle) * 56,
+        cracked: false, lastHitAt: 0, canCrack: false, dmg: 15, owner: 'player',
+      });
     }
     this.templeSets.push({
       anchorX: tx, anchorY: ty,
-      templeSprite, templeLabel,
+      monument: false,
       orbs,
       expireAt: now + 10000,
       orbitR: 56,
@@ -2293,13 +2647,15 @@ export class MagicKit {
     const caster = this.api.player;
     const baseAngle = Math.atan2(ty - caster.y, tx - caster.x);
     const now = this.api.scene.sys.game.loop.now;
+    this.gesture('player', 'magic-necronomicon', baseAngle);
+    this.pfx.flash(caster.x, caster.y, 34, 10, MAGIC.corrupt);
+    this.pfx.ring(caster.x, caster.y, 10, 88, MAGIC.cursed, 560, 9, 3.2);
+    this.api.scene.cameras.main.shake(180, 0.005);
     for (const deg of [-25, 0, 25]) {
       const angle = baseAngle + Phaser.Math.DegToRad(deg);
-      const sprite = this.api.scene.add.circle(caster.x, caster.y, 28, 0xcc2200, 0.65)
-        .setStrokeStyle(2, 0x882200, 0.8).setDepth(6) as Phaser.GameObjects.Arc;
-      this.api.scene.tweens.add({ targets: sprite, scaleX: 0.8, scaleY: 0.8, yoyo: true, repeat: -1, duration: 300 });
       this.flameClouds.push({
-        sprite, x: caster.x, y: caster.y,
+        seed: Math.random() * 10,
+        x: caster.x, y: caster.y,
         vx: Math.cos(angle) * 120, vy: Math.sin(angle) * 120,
         stopped: false,
         expireAt: now + 4000,
@@ -2323,11 +2679,10 @@ export class MagicKit {
       const angle = (i / 3) * Math.PI * 2;
       const cx = caster.x + Math.cos(angle) * 100;
       const cy = caster.y + Math.sin(angle) * 100;
-      const sprite = this.api.scene.add.circle(cx, cy, 36, 0x112255, 0.65)
-        .setStrokeStyle(4, 0x2244aa, 0.9).setDepth(6) as Phaser.GameObjects.Arc;
-      this.api.scene.tweens.add({ targets: sprite, scaleX: 0.88, scaleY: 0.88, yoyo: true, repeat: -1, duration: 700 });
+      this.pfx.ring(cx, cy, 8, 56, MAGIC.acid, 520, 8, 2.6);
       this.stormClouds.push({
-        sprite, x: cx, y: cy,
+        seed: Math.random() * 10, radius: 36,
+        x: cx, y: cy,
         expireAt: now + 8000,
         nextPulseAt: now + 2000,
         pulseInterval: 2000,
@@ -2337,6 +2692,7 @@ export class MagicKit {
         isAcidCloud: true,
       });
     }
+    this.gesture('player', 'magic-necronomicon');
     this.api.showFloatingText(caster.x, caster.y - 34, '🌊 Acid Rain', '#2244aa');
     this.addDarkness(50);
   }
@@ -2356,24 +2712,17 @@ export class MagicKit {
         break;
       }
     }
-    // Draw vine visual
-    if (this.playerDarkVineGfx) this.playerDarkVineGfx.destroy();
-    this.playerDarkVineGfx = this.api.scene.add.graphics().setDepth(9);
-    this.playerDarkVineGfx.lineStyle(4, hitTarget ? 0x226633 : 0x115522, 0.85);
-    this.playerDarkVineGfx.beginPath();
-    this.playerDarkVineGfx.moveTo(caster.x, caster.y);
-    this.playerDarkVineGfx.lineTo(ex, ey);
-    this.playerDarkVineGfx.strokePath();
+    // The lash itself, held for a few frames by paintWorld.
+    this.gesture('player', 'magic-necronomicon', angle);
     const now = this.api.scene.sys.game.loop.now;
-    this.playerDarkVineExpireAt = now + 300;
-    this.api.scene.tweens.add({ targets: this.playerDarkVineGfx, alpha: 0, duration: 300, onComplete: () => {
-      if (this.playerDarkVineGfx?.active) { this.playerDarkVineGfx.destroy(); this.playerDarkVineGfx = null; }
-    }});
+    this.vineFlashes.push({ x1: caster.x, y1: caster.y, x2: ex, y2: ey, hit: !!hitTarget, expireAt: now + 300 });
     if (hitTarget) {
       hitTarget.darkLinkedUntil = Date.now() + 5000;
       hitTarget.darkLinkSource = caster;
-      const linkGfx = this.api.scene.add.graphics().setDepth(8);
-      this.tortureTrapLinks.push({ target: hitTarget, gfx: linkGfx, expireAt: Date.now() + 5000, tickAccum: 0, owner: 'player' });
+      this.tortureTrapLinks.push({ target: hitTarget, expireAt: Date.now() + 5000, tickAccum: 0, owner: 'player' });
+      this.pfx.boom(hitTarget.x, hitTarget.y, 50, {
+        color: MAGIC.blood, sigils: 7, rings: 1, duration: 420, mark: false,
+      });
       this.api.showFloatingText(hitTarget.x, hitTarget.y - 28, '🌿 LINKED', '#ff2222');
     } else {
       this.api.showFloatingText(ex, ey - 20, '🌿 MISS', '#226633');
@@ -2390,20 +2739,16 @@ export class MagicKit {
     this.playerHurricaneGaleUntil = now + 1000;
     this.playerHurricaneGaleAngle = angle;
     this.playerHurricaneGaleOnce = false;
-    // Wind VFX
-    const gfx = this.api.scene.add.graphics().setDepth(9);
-    gfx.fillStyle(0x555555, 0.3);
-    gfx.beginPath();
-    gfx.moveTo(caster.x, caster.y);
-    gfx.arc(caster.x, caster.y, 220, angle - Math.PI / 4, angle + Math.PI / 4, false);
-    gfx.closePath(); gfx.fillPath();
-    this.api.scene.tweens.add({ targets: gfx, alpha: 0, duration: 600, onComplete: () => gfx.destroy() });
+    // A vacuum: the whole cone streams inward before the funnel even lands.
+    this.gesture('player', 'magic-necronomicon', angle);
+    this.pfx.gust(caster.x, caster.y, angle, 220, Math.PI / 4, {
+      color: MAGIC.ash, duration: 1000, inward: true,
+    });
+    this.api.scene.cameras.main.shake(200, 0.005);
     // Spawn wandering pull tornado
     const bx = caster.x + Math.cos(angle) * 80;
     const by = caster.y + Math.sin(angle) * 80;
-    const sprite = this.api.scene.add.circle(bx, by, 36, 0x333333, 0.65)
-      .setStrokeStyle(3, 0x777777, 0.8).setDepth(7) as Phaser.GameObjects.Arc;
-    this.api.scene.tweens.add({ targets: sprite, scaleX: 0.6, scaleY: 1.4, yoyo: true, repeat: -1, duration: 180 });
+    this.pfx.ring(bx, by, 10, 84, MAGIC.ash, 560, 8, 3);
     // Use existing tornado system but override tick behavior to PULL instead of push
     // We mark with a special sprite alpha check — instead, we'll patch the tornado vx/vy in its update
     // to use towardTarget velocity. Easiest: spawn as a regular tornado and manually override in the
@@ -2411,7 +2756,8 @@ export class MagicKit {
     // rely on the existing push behavior (spec says "pull in and damage" — close enough for now).
     // The initial cone already does the strong pull. The tornado provides continued field presence.
     this.tornadoes.push({
-      sprite, x: bx, y: by, vx: 0, vy: 0,
+      seed: Math.random() * 10, radius: 36, dark: true,
+      x: bx, y: by, vx: 0, vy: 0,
       expireAt: now + 10000,
       nextDirAt: now,
       tickAccum: 0, owner: 'player',
@@ -2423,20 +2769,23 @@ export class MagicKit {
   // Q5 dark: Gaia's Monument — 5 large gray orbs, stun on contact, crackable
   private doGaiasMonument(tx: number, ty: number): void {
     const now = this.api.scene.sys.game.loop.now;
-    const templeSprite = this.api.scene.add.circle(tx, ty, 20, 0x555555, 0.85)
-      .setStrokeStyle(3, 0x999999, 0.9).setDepth(6) as Phaser.GameObjects.Arc;
-    const templeLabel = this.api.scene.add.text(tx, ty, '🌋', { fontSize: '16px' })
-      .setOrigin(0.5, 0.5).setDepth(7);
+    // A monument is a bigger conjuring than a temple, and gets a bigger arrival.
+    this.gesture('player', 'magic-necronomicon');
+    this.pfx.flash(tx, ty, 34, 10, MAGIC.granite);
+    this.pfx.ring(tx, ty, 10, 100, MAGIC.rock, 640, 8, 3.4);
+    this.pfx.sigils(tx, ty, 12, { speed: 160, size: 9, life: 620, color: MAGIC.granite, points: 4 });
+    this.api.scene.cameras.main.shake(220, 0.006);
     const orbs: RockOrb[] = [];
     for (let i = 0; i < 5; i++) {
       const angle = (i / 5) * Math.PI * 2;
-      const sprite = this.api.scene.add.circle(0, 0, 13, 0x777777, 1)
-        .setStrokeStyle(2, 0x999999, 1).setDepth(7) as Phaser.GameObjects.Arc;
-      orbs.push({ sprite, angle, cracked: false, lastHitAt: 0, canCrack: true, dmg: 20, owner: 'player' });
+      orbs.push({
+        angle, radius: 13, x: tx + Math.cos(angle) * 80, y: ty + Math.sin(angle) * 80,
+        cracked: false, lastHitAt: 0, canCrack: true, dmg: 20, owner: 'player',
+      });
     }
     this.templeSets.push({
       anchorX: tx, anchorY: ty,
-      templeSprite, templeLabel,
+      monument: true,
       orbs,
       expireAt: now + 15000,
       orbitR: 80,

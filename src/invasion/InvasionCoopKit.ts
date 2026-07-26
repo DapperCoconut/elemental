@@ -613,25 +613,25 @@ export class InvasionCoopKit {
     const { width } = scene.scale;
 
     this.downedBanner = scene.add.text(width / 2, 100, '⚠ DOWNED — your ally must revive you!', {
-      fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#ff6666', stroke: '#330000', strokeThickness: 3,
+      fontSize: '16px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ff6666', stroke: '#330000', strokeThickness: 3,
     }).setOrigin(0.5).setDepth(30).setVisible(false);
 
     this.reviveHint = scene.add.text(width / 2, 128, '', {
-      fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#66ff88',
+      fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#66ff88',
     }).setOrigin(0.5).setDepth(30);
 
     if (!this.isHost) {
       this.waveLabel = scene.add.text(width / 2, WAVE_LABEL_Y, '', {
-        fontSize: '14px', fontFamily: '"Arial Black", sans-serif', color: '#aacc88',
+        fontSize: '14px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#aacc88',
         stroke: '#101c08', strokeThickness: 3,
       }).setOrigin(0.5).setDepth(25);
       this.shardLabel = scene.add.text(width - 16, 16, '🩸 0', {
-        fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#cc44ff',
+        fontSize: '16px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#cc44ff',
       }).setOrigin(1, 0).setDepth(25);
       this.leaveBtn = scene.add.rectangle(62, 30, 92, 30, 0x221111, 0.9)
         .setStrokeStyle(1, 0xcc4444).setDepth(25).setInteractive({ useHandCursor: true });
       this.leaveLabel = scene.add.text(62, 30, '🚪 LEAVE', {
-        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#cc6666',
+        fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#cc6666',
       }).setOrigin(0.5).setDepth(26);
       this.leaveBtn
         .on('pointerover', () => { this.leaveBtn!.setStrokeStyle(2, 0xff8888); this.leaveLabel!.setColor('#ffaaaa'); })

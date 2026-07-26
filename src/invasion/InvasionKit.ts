@@ -238,17 +238,17 @@ export class InvasionKit implements HuskWorld {
     const { width } = scene.scale;
     this.waveBanner?.destroy();
     this.waveBanner = scene.add.text(width / 2, WAVE_BANNER_Y, '', {
-      fontSize: '28px', fontFamily: '"Arial Black", sans-serif',
+      fontSize: '28px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
       color: '#88cc44', stroke: '#1d2e0f', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(25);
     this.waveLabel?.destroy();
     this.waveLabel = scene.add.text(width / 2, WAVE_LABEL_Y, '', {
-      fontSize: '14px', fontFamily: '"Arial Black", sans-serif', color: '#aacc88',
+      fontSize: '14px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#aacc88',
       stroke: '#101c08', strokeThickness: 3,
     }).setOrigin(0.5).setDepth(25);
     this.shardLabel?.destroy();
     this.shardLabel = scene.add.text(width - 16, 16, '🩸 0', {
-      fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#cc44ff',
+      fontSize: '16px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#cc44ff',
     }).setOrigin(1, 0).setDepth(25);
 
     // Difficulty badge — only shown for the two non-default modes so a normal
@@ -256,7 +256,7 @@ export class InvasionKit implements HuskWorld {
     this.difficultyLabel?.destroy();
     this.difficultyLabel = difficulty.id === 'normal' ? null : scene.add.text(
       width - 16, 38, difficulty.label,
-      { fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: difficulty.colorHex },
+      { fontSize: '12px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: difficulty.colorHex },
     ).setOrigin(1, 0).setDepth(25);
 
     // Leave button — retreat with the shards earned so far
@@ -265,7 +265,7 @@ export class InvasionKit implements HuskWorld {
     this.leaveBtn = scene.add.rectangle(62, 30, 92, 30, 0x221111, 0.9)
       .setStrokeStyle(1, 0xcc4444).setDepth(25).setInteractive({ useHandCursor: true });
     this.leaveLabel = scene.add.text(62, 30, '🚪 LEAVE', {
-      fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#cc6666',
+      fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#cc6666',
     }).setOrigin(0.5).setDepth(26);
     this.leaveBtn
       .on('pointerover', () => { this.leaveBtn!.setStrokeStyle(2, 0xff8888); this.leaveLabel!.setColor('#ffaaaa'); })
@@ -369,7 +369,7 @@ export class InvasionKit implements HuskWorld {
     const scene = this.arena.scene;
     const { width } = scene.scale;
     const text = scene.add.text(width / 2, WAVE_BANNER_Y + 40, `☠  ${name}  ☠`, {
-      fontSize: '30px', fontFamily: '"Arial Black", sans-serif',
+      fontSize: '30px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
       color: colorHex, stroke: '#000000', strokeThickness: 5,
     }).setOrigin(0.5).setDepth(26);
     scene.tweens.add({ targets: text, alpha: 0, scaleX: 1.3, scaleY: 1.3, delay: 1400, duration: 800, onComplete: () => text.destroy() });

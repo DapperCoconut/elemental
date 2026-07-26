@@ -4,6 +4,10 @@ import { ABSTRACT_WORLDS } from '../data/AbstractWorlds';
 import * as CP from '../data/CampaignProgress';
 import { drawWorldMapBackground, drawAbstractWorldMapBackground } from './CampaignBackground';
 import { addInventoryButton } from './InventoryScene';
+import {
+  C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
+  addBackButton, addButton, addChip, fillDiamond, fillHex, strokeHex,
+} from '../ui';
 
 export class CampaignWorldMapScene extends Phaser.Scene {
   private slotIdx: 0 | 1 | 2 = 0;
@@ -24,57 +28,46 @@ export class CampaignWorldMapScene extends Phaser.Scene {
     const slot = this.slotIdx;
     const isAbstract = this.mode === 'abstract';
     const worlds = isAbstract ? ABSTRACT_WORLDS : WORLDS;
+    const accent = isAbstract ? C.arcane : C.ember;
 
-    // Background
+    // The painted map art stays — only the chrome over it is restyled.
     const bgFn = isAbstract ? drawAbstractWorldMapBackground : drawWorldMapBackground;
-    bgFn(this, width, height).setDepth(-100);
+    bgFn(this, width, height).setDepth(DEPTH.backdrop);
 
-    // Title
-    this.add.text(cx, 28, isAbstract ? 'ABSTRACT WORLD MAP' : 'WORLD MAP', {
-      fontSize: '26px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: isAbstract ? '#cc88ff' : '#ffaa44',
-      stroke: isAbstract ? '#5522aa' : '#cc6600',
-      strokeThickness: 3,
-    }).setOrigin(0.5);
+    // ── Title plaque ────────────────────────────────────────────────
+    // A floating banner rather than a full header bar, so the map art below it
+    // stays visible.
+    const plaque = this.add.graphics().setDepth(DEPTH.panel);
+    plaque.fillStyle(0x04040c, 0.55);
+    plaque.fillRect(0, 0, width, 62);
+    plaque.lineStyle(2, accent, 0.5);
+    plaque.beginPath(); plaque.moveTo(60, 62); plaque.lineTo(width - 60, 62); plaque.strokePath();
+    fillDiamond(plaque, cx, 62, 5, mix(accent, 0xffffff, 0.4), 0.95);
 
-    // Slot name
+    this.add.text(cx, 24, isAbstract ? 'ABSTRACT REALM' : 'WORLD MAP', {
+      fontSize: '24px', fontFamily: FONT_DISPLAY,
+      color: hex(mix(accent, 0xffffff, 0.6)),
+      stroke: hex(mix(accent, 0x000000, 0.8)), strokeThickness: 4,
+      letterSpacing: 5,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
+
     const slotName = CP.getSlot(slot)?.name ?? `Slot ${slot + 1}`;
-    this.add.text(cx, 54, slotName, {
-      fontSize: '13px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#888888',
-    }).setOrigin(0.5);
+    this.add.text(cx, 46, slotName.toUpperCase(), {
+      fontSize: '10px', fontFamily: FONT_UI, color: T.dim, letterSpacing: 3,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
 
-    // Currency display — top right
-    const keys = CP.getKeys(slot);
-    const sparks = CP.getSparks(slot);
-    this.add.text(width - 16, 22, `🗝️  ${keys}`, {
-      fontSize: '15px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#ffdd55',
-    }).setOrigin(1, 0.5);
-    this.add.text(width - 16, 44, `⚡  ${sparks}`, {
-      fontSize: '15px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#55ffcc',
-    }).setOrigin(1, 0.5);
+    addChip(this, {
+      x: width - 16, y: 20, icon: '🗝️', value: `${CP.getKeys(slot)}`,
+      accent: C.gold, originX: 1, fontSize: 13,
+    });
+    addChip(this, {
+      x: width - 16, y: 48, icon: '⚡', value: `${CP.getSparks(slot)}`,
+      accent: 0x2ee6c0, originX: 1, fontSize: 13,
+    });
 
-    // Back button
-    const backRect = this.add
-      .rectangle(52, 36, 88, 36, 0x222233)
-      .setStrokeStyle(2, 0x555577)
-      .setInteractive({ useHandCursor: true });
-    const backLbl = this.add.text(52, 36, '← BACK', {
-      fontSize: '13px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#aaaaaa',
-    }).setOrigin(0.5);
-    backRect
-      .on('pointerover', () => { backRect.setFillStyle(0x333355); backLbl.setColor('#ffffff'); })
-      .on('pointerout', () => { backRect.setFillStyle(0x222233); backLbl.setColor('#aaaaaa'); })
-      .on('pointerdown', () => this.scene.start('CampaignSlotSelectScene'));
-    this.input.keyboard!.on('keydown-ESC', () => this.scene.start('CampaignSlotSelectScene'));
+    const back = () => this.scene.start('CampaignSlotSelectScene');
+    addBackButton(this, back);
+    this.input.keyboard!.on('keydown-ESC', back);
 
     // SPACE: toggle between normal and abstract map (only if portal is unlocked)
     this.input.keyboard!.on('keydown-SPACE', () => {
@@ -86,104 +79,102 @@ export class CampaignWorldMapScene extends Phaser.Scene {
       });
     });
 
-    // Draw connector lines first (below circles)
-    const lineGfx = this.add.graphics();
+    // ── Connector lines (below the nodes) ───────────────────────────
+    const lineGfx = this.add.graphics().setDepth(DEPTH.panel);
     for (const world of worlds) {
       if (!world.parentId) continue;
       const parent = worlds.find((w) => w.id === world.parentId);
       if (!parent) continue;
       const unlocked = CP.isWorldUnlocked(slot, world.id);
-      lineGfx.lineStyle(2, unlocked ? 0x555555 : 0x2a2a2a, 1);
-      lineGfx.lineBetween(parent.mapX, parent.mapY, world.mapX, world.mapY);
+
+      // Twin-stroke path: a dark casing with a lit core, so routes read as
+      // channels rather than pencil lines.
+      lineGfx.lineStyle(6, 0x04040c, unlocked ? 0.75 : 0.5);
+      lineGfx.beginPath(); lineGfx.moveTo(parent.mapX, parent.mapY); lineGfx.lineTo(world.mapX, world.mapY); lineGfx.strokePath();
+      lineGfx.lineStyle(2, unlocked ? mix(accent, 0xffffff, 0.25) : C.line, unlocked ? 0.8 : 0.35);
+      lineGfx.beginPath(); lineGfx.moveTo(parent.mapX, parent.mapY); lineGfx.lineTo(world.mapX, world.mapY); lineGfx.strokePath();
+
+      // Waypoint pip at the midpoint of an open route.
+      if (unlocked) {
+        fillDiamond(lineGfx, (parent.mapX + world.mapX) / 2, (parent.mapY + world.mapY) / 2, 3, mix(accent, 0xffffff, 0.5), 0.8);
+      }
     }
 
-    // Draw world circles
     for (const world of worlds) {
-      this.drawWorldNode(world, slot);
+      this.drawWorldNode(world, slot, accent);
     }
 
-    // Inventory button (bottom-right)
-    addInventoryButton(this, this.slotIdx);
+    addInventoryButton(this, this.slotIdx, DEPTH.content + 5);
 
-    // Portal button (normal map only)
+    // ── Portal (normal map only) ────────────────────────────────────
     if (!isAbstract) {
       const portalUnlocked = CP.isPortalUnlocked(slot);
-      const portalRect = this.add
-        .rectangle(cx, 580, 200, 52, 0x1a1033)
-        .setStrokeStyle(2, 0xaa44ff)
-        .setInteractive({ useHandCursor: true });
-      const portalLbl = this.add.text(cx, 580, '🌀 PORTAL', {
-        fontSize: '22px',
-        fontFamily: '"Arial Black", sans-serif',
-        color: '#cc88ff',
-      }).setOrigin(0.5);
-      portalRect
-        .on('pointerover', () => { portalRect.setFillStyle(0x2a1055); portalLbl.setColor('#ffffff'); })
-        .on('pointerout', () => { portalRect.setFillStyle(0x1a1033); portalLbl.setColor('#cc88ff'); })
-        .on('pointerdown', () => {
+      addButton(this, {
+        x: cx, y: 578, w: 230, h: 52,
+        label: 'PORTAL', icon: '🌀',
+        sublabel: portalUnlocked ? 'SPACE to cross realms' : 'Purchase to cross realms',
+        accent: C.arcane, variant: portalUnlocked ? 'solid' : 'ghost',
+        fontSize: 19, align: 'left',
+        onClick: () => {
           this.scene.pause();
           this.scene.launch('CampaignPortalScene', { slotIdx: this.slotIdx });
-        });
-
-      // Hint text beneath the portal button
-      const hintText = portalUnlocked
-        ? 'Press SPACE to travel to the Abstract realm'
-        : 'Purchase the portal to travel realms';
-      this.add.text(cx, 614, hintText, {
-        fontSize: '11px',
-        fontFamily: 'Arial, sans-serif',
-        color: '#775599',
-      }).setOrigin(0.5);
+        },
+      });
     }
   }
 
-  private drawWorldNode(world: World, slot: 0 | 1 | 2): void {
+  /**
+   * A world as a hex node: element-coloured plate, glyph, and a ring that turns
+   * gold once the world's challenge is cleared.
+   */
+  private drawWorldNode(world: World, slot: 0 | 1 | 2, accent: number): void {
     const unlocked = CP.isWorldUnlocked(slot, world.id);
     const allFightsDone = CP.isChallengeCompleted(slot, world.id);
-    const alpha = unlocked ? 1 : 0.3;
-    const r = 28;
+    const r = 30;
+    const ringColor = allFightsDone ? C.gold : (unlocked ? mix(world.color, 0xffffff, 0.4) : C.line);
 
-    const circle = this.add.circle(world.mapX, world.mapY, r, world.color, unlocked ? 0.85 : 0.3)
-      .setStrokeStyle(2, allFightsDone ? 0xffdd44 : (unlocked ? 0xffffff : 0x444444));
+    const g = this.add.graphics().setDepth(DEPTH.panel + 1);
 
-    const emojiText = this.add.text(world.mapX, world.mapY - 6, world.emoji, {
-      fontSize: '18px',
-    }).setOrigin(0.5).setAlpha(alpha);
+    const paint = (hot: boolean): void => {
+      g.clear();
+      if (unlocked) {
+        for (let k = 4; k >= 1; k--) {
+          g.fillStyle(world.color, hot ? 0.07 : 0.04);
+          g.fillCircle(world.mapX, world.mapY, r + k * 5);
+        }
+      }
+      fillHex(g, world.mapX, world.mapY, r,
+        unlocked ? mix(world.color, 0x000000, hot ? 0.28 : 0.45) : mix(C.plate, 0x000000, 0.45),
+        unlocked ? 0.96 : 0.7);
+      strokeHex(g, world.mapX, world.mapY, r, hot ? 0xffffff : ringColor, unlocked ? 1 : 0.5, hot ? 3 : 2);
+      strokeHex(g, world.mapX, world.mapY, r - 5, world.color, unlocked ? 0.35 : 0.12, 1);
+      if (allFightsDone) {
+        // Cleared worlds wear a crown of diamonds on the upper hex faces.
+        for (const a of [-Math.PI / 2, -Math.PI / 2 - 1.05, -Math.PI / 2 + 1.05]) {
+          fillDiamond(g, world.mapX + Math.cos(a) * (r + 6), world.mapY + Math.sin(a) * (r + 6), 3, C.gold, 0.9);
+        }
+      }
+    };
+    paint(false);
 
-    const nameText = this.add.text(world.mapX, world.mapY + 16, world.name, {
-      fontSize: '8px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#ffffff',
-    }).setOrigin(0.5).setAlpha(alpha);
+    const emoji = this.add.text(world.mapX, world.mapY - 7, unlocked ? world.emoji : '🔒', { fontSize: '18px' })
+      .setOrigin(0.5).setDepth(DEPTH.content).setAlpha(unlocked ? 1 : 0.55);
+    void emoji;
 
-    if (!unlocked) {
-      this.add.text(world.mapX, world.mapY + 4, '🔒', {
-        fontSize: '14px',
-      }).setOrigin(0.5).setAlpha(0.6);
-      return;
-    }
+    const nameText = this.add.text(world.mapX, world.mapY + 15, world.name.toUpperCase(), {
+      fontSize: '8px', fontFamily: FONT_DISPLAY,
+      color: unlocked ? T.bright : T.ghost, letterSpacing: 0.5,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
 
-    circle.setInteractive({ useHandCursor: true });
-    circle
-      .on('pointerover', () => {
-        circle.setStrokeStyle(3, 0xffffff);
-        nameText.setColor('#ffcc44');
-      })
-      .on('pointerout', () => {
-        circle.setStrokeStyle(2, allFightsDone ? 0xffdd44 : 0xffffff);
-        nameText.setColor('#ffffff');
-      })
-      .on('pointerdown', () => {
-        this.scene.start('CampaignWorldScene', { worldId: world.id, slotIdx: this.slotIdx, mode: this.mode });
-      });
+    if (!unlocked) return;
 
-    // Completion badge
-    if (allFightsDone) {
-      this.add.text(world.mapX + r - 4, world.mapY - r + 4, '⭐', {
-        fontSize: '12px',
-      }).setOrigin(0.5);
-    }
-
-    void emojiText; // suppress unused warning
+    const hit = this.add.circle(world.mapX, world.mapY, r, 0xffffff, 0)
+      .setDepth(DEPTH.content + 1)
+      .setInteractive({ useHandCursor: true });
+    hit.on('pointerover', () => { paint(true); nameText.setColor(hex(mix(accent, 0xffffff, 0.6))); });
+    hit.on('pointerout', () => { paint(false); nameText.setColor(T.bright); });
+    hit.on('pointerdown', () => {
+      this.scene.start('CampaignWorldScene', { worldId: world.id, slotIdx: this.slotIdx, mode: this.mode });
+    });
   }
 }

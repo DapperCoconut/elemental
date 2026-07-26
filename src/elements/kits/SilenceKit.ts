@@ -5,6 +5,10 @@ import { CastContext } from '../Ability';
 import type { HuskStatus } from '../../invasion/InvasionKit';
 import type { NetSilenceMsg } from '../../network/NetworkManager';
 import type { CustomStatus } from './StatusHudKit';
+import {
+  ArmGesture, SILENCE, SilenceAura, SilenceAuraStyle, SilenceAvatar, SilenceColorFn, SilenceFx,
+  bloodSplat, clawFingerLayered, fogBank, silenceEye, toothRing,
+} from './SilenceVisuals';
 
 // ── SilenceArenaApi ────────────────────────────────────────────────────────
 
@@ -40,6 +44,8 @@ export interface SilenceArenaApi {
   hasUpgrade(owner: Owner, slot: string): boolean;
   /** Online: forward a silence upgrade event to the peer (no-op offline). */
   sendSilenceMsg(msg: NetSilenceMsg): void;
+  /** Owner's colour cosmetic applied to one Silence palette value. */
+  silenceColor(owner: Owner, base: number): number;
   /** Silence Mastery is enabled and the local player is actually playing Silence. */
   readonly masteryActive: boolean;
   /** The mastery enhancement bound over an ability slot this match, or null. */
@@ -282,8 +288,12 @@ const DEPTH_EYE_SCREEN = 30;
 // ── World-object types ─────────────────────────────────────────────────────
 
 interface Stalker {
-  sprite: Phaser.GameObjects.Image;
-  eye: Phaser.GameObjects.Image;
+  x: number;
+  y: number;
+  /** Fixed per-watcher wobble offset, so a row of them never boils in step. */
+  seed: number;
+  /** Set while it is soaking a hit — drives the white flash in the painter. */
+  hitFlashUntil: number;
   owner: Owner;
   bornAt: number;
   nextPulseAt: number;
@@ -292,7 +302,6 @@ interface Stalker {
   hitsLeft: number;
   heading: number;
   nextTurnAt: number;
-  coneGfx: Phaser.GameObjects.Graphics | null;
   /** A pending ritual holds the seeker still so the 1s strike can land on it. */
   pinnedUntil: number;
 }
@@ -308,8 +317,9 @@ interface VultureCarry {
 }
 
 interface Vulture {
-  sprite: Phaser.GameObjects.Image;
-  coneGfx: Phaser.GameObjects.Graphics;
+  x: number;
+  y: number;
+  seed: number;
   owner: Owner;
   expiresAt: number;
   nextCarryAt: number;
@@ -319,13 +329,15 @@ interface Vulture {
 }
 
 interface BoggleEye {
-  sprite: Phaser.GameObjects.Image;
+  x: number;
+  y: number;
   angleOffset: number;
   nextShotAt: number;
 }
 
 interface EyeShot {
-  sprite: Phaser.GameObjects.Image;
+  x: number;
+  y: number;
   vx: number;
   vy: number;
   owner: Owner;
@@ -333,10 +345,10 @@ interface EyeShot {
 }
 
 interface SanguineCharge {
-  gfx: Phaser.GameObjects.Rectangle;
-  x: number;         // rect center
+  x: number;         // kill-box center
   y: number;
   ang: number;
+  castAt: number;
   strikeAt: number;
   slashesLeft: number;
   nextSlashAt: number;
@@ -349,7 +361,6 @@ interface StrikerState {
   boggleReadyAt: number;
   boggleUntil: number;
   eyes: BoggleEye[];
-  tetherGfx: Phaser.GameObjects.Graphics | null;
   sanguine: SanguineCharge | null;
   prevTexture: string;
   prevScale: number;
@@ -359,15 +370,19 @@ interface StrikerState {
 }
 
 interface Midget {
-  sprite: Phaser.GameObjects.Image;
+  x: number;
+  y: number;
+  angle: number;
   nextBiteAt: number;
 }
 
 interface BloodDecal {
-  sprite: Phaser.GameObjects.Image;
   target: Fighter;
   ox: number;
   oy: number;
+  /** Size and splatter shape, fixed at application so the stain doesn't reshuffle each frame. */
+  r: number;
+  seed: number;
   until: number;
 }
 
@@ -379,18 +394,25 @@ interface MazeWall {
 
 /** Mastery — Puppetmaster: the stitched effigy standing in for one specific fighter. */
 interface VoodooDoll {
-  sprite: Phaser.GameObjects.Image;
+  x: number;
+  y: number;
   barBg: Phaser.GameObjects.Rectangle;
   barFill: Phaser.GameObjects.Rectangle;
   owner: Owner;
   /** Whoever the doll was stitched for — every hit on it is relayed here. */
   target: Fighter;
   damageTaken: number;
+  /** Set on each relayed hit; the painter jolts the effigy while it runs. */
+  hitFlashUntil: number;
+  bornAt: number;
 }
 
 /** One of the things the awakened host hauls up out of the floor. */
 interface AwakenedKin {
-  sprite: Phaser.GameObjects.Image;
+  x: number;
+  y: number;
+  facing: number;
+  bornAt: number;
   owner: Owner;
   target: Fighter;
   expiresAt: number;
@@ -399,7 +421,12 @@ interface AwakenedKin {
 
 /** A kin that was ritualled into a copy of the enemy, fighting on your side. */
 interface CorruptClone {
-  sprite: Phaser.GameObjects.Image;
+  x: number;
+  y: number;
+  facing: number;
+  bornAt: number;
+  /** The copied fighter's element colour — the only thing that says whose face it wears. */
+  borrowed: number;
   owner: Owner;
   target: Fighter;
   expiresAt: number;
@@ -409,9 +436,11 @@ interface CorruptClone {
 
 /** Kit-owned bolt fired by a corrupted clone (styled after the element it copies). */
 interface CorruptShot {
-  sprite: Phaser.GameObjects.Image;
+  x: number;
+  y: number;
   vx: number;
   vy: number;
+  borrowed: number;
   target: Fighter;
   diesAt: number;
 }
@@ -431,7 +460,6 @@ interface AwakenedState {
   /** The possessed fighter — the body being steered *and* everything it hurts. */
   host: Fighter;
   endsAt: number;
-  gfx: Phaser.GameObjects.Graphics;
   prevTexture: string;
   prevScale: number;
   /** Victim side: the drive vector + aim last streamed by the remote puppeteer. */
@@ -455,9 +483,10 @@ interface GrabAttempt {
 }
 
 interface Grabber {
-  sprite: Phaser.GameObjects.Image;
-  armGfx: Phaser.GameObjects.Graphics;
-  hand: Phaser.GameObjects.Image;
+  x: number;
+  y: number;
+  seed: number;
+  bornAt: number;
   owner: Owner;
   expiresAt: number;
   nextGrabAt: number;
@@ -465,25 +494,26 @@ interface Grabber {
 }
 
 interface RitualCircle {
-  gfx: Phaser.GameObjects.Graphics;
   x: number;
   y: number;
   owner: Owner;
+  castAt: number;
   strikeAt: number;
 }
 
 interface FeastCircle {
-  sprite: Phaser.GameObjects.Image;
   x: number;
   y: number;
   owner: Owner;
+  bornAt: number;
   endsAt: number;
   insideMs: Map<Fighter, number>;
   triggered: Set<Fighter>;
 }
 
 interface SpitGlob {
-  sprite: Phaser.GameObjects.Image;
+  x: number;
+  y: number;
   vx: number;
   vy: number;
   owner: Owner;
@@ -498,7 +528,7 @@ interface RunState {
   victim: Fighter;
   /** True when the victim is the 1v1 fighter of a bot match / a husk — cosmetic runner + roll. */
   victimIsBot: boolean;
-  armGfx: Phaser.GameObjects.Graphics;
+  armStart: number;         // arm animation start (arm phase)
   armEnd: number;           // arm animation end (arm phase)
   armTx: number;
   armTy: number;
@@ -535,7 +565,29 @@ interface RunState {
  * local player and the NPC mirror (offline bot or online replica — the replica
  * side only replays casts; its stealth/invisibility arrives via the net).
  */
+/** Every ability drives an arm gesture, on the NPC rig as well as the player's. */
+const CAST_GESTURES: Record<string, ArmGesture> = {
+  'silence-stab': 'dash',
+  'silence-watch': 'sweep',
+  'silence-ritual': 'slam',
+  'silence-feast': 'clap',
+  'silence-run': 'punch',
+};
+
 export class SilenceKit {
+  // ── Visuals ────────────────────────────────────────────────────────
+  // One colour mapper and one effect painter per side, because the two fighters can have
+  // different colour cosmetics equipped.
+  private readonly pcol: SilenceColorFn;
+  private readonly ncol: SilenceColorFn;
+  private readonly pfx: SilenceFx;
+  private readonly nfx: SilenceFx;
+  private playerAvatar: SilenceAvatar | null = null;
+  private npcAvatar: SilenceAvatar | null = null;
+  private auras = new Map<string, SilenceAura>();
+  /** Shared per-frame paint layers, one per depth band. Rebuilt lazily after a reset. */
+  private layers = new Map<number, Phaser.GameObjects.Graphics>();
+
   // Passive state (indexed by owner)
   private stealth: Record<Owner, number> = { player: 0, npc: 0 };
   private playerIsSilence = false;
@@ -557,7 +609,8 @@ export class SilenceKit {
   private strikers: Record<Owner, StrikerState | null> = { player: null, npc: null };
   private midgets = new Map<Fighter, Midget[]>();
   private fleshOverlay: Phaser.GameObjects.Rectangle | null = null;
-  private fleshDecals: Phaser.GameObjects.Image[] = [];
+  /** Flesh-arena dressing: fixed placements, repainted every frame so they pulse and blink. */
+  private fleshDecals: Array<{ x: number; y: number; a: number; s: number; eye: boolean }> = [];
   private panicText: Phaser.GameObjects.Text | null = null;
   private terrorBarBg: Phaser.GameObjects.Rectangle | null = null;
   private terrorBarFill: Phaser.GameObjects.Rectangle | null = null;
@@ -566,19 +619,17 @@ export class SilenceKit {
   private pendingMazeSeed: number | null = null;
 
   // Fog + HUD
-  private fogGfx: Phaser.GameObjects.Graphics | null = null;
   private stealthBarBg: Phaser.GameObjects.Rectangle | null = null;
   private stealthBarFill: Phaser.GameObjects.Rectangle | null = null;
   private stealthLabel: Phaser.GameObjects.Text | null = null;
   private stalkerPips: Phaser.GameObjects.Arc[] = [];
 
-  // Facing eyes (silence player's screen only)
-  private faceEyes = new Map<Fighter, Phaser.GameObjects.Image>();
+  // Facing eyes (silence player's screen only) — painted per frame, so they blink and track.
+  private faceEyes: Fighter[] = [];
 
   // Hallucination FX (local player as victim)
-  private noisePool: Phaser.GameObjects.Image[] = [];
   private eyeScreenRect: Phaser.GameObjects.Rectangle | null = null;
-  private eyeScreenEyes: Phaser.GameObjects.Image[] = [];
+  private eyeScreenEyes: Array<{ x: number; y: number; a: number; s: number }> = [];
   private eyeScreenUntil = 0;
   private nextEyeScreenAt = 0;
   private fakePosGhost: Phaser.GameObjects.Image | null = null;
@@ -607,7 +658,60 @@ export class SilenceKit {
   // Input edge tracking
   private prevPointerDown = false;
 
-  constructor(private readonly arena: SilenceArenaApi) {}
+  constructor(private readonly arena: SilenceArenaApi) {
+    // Built here, not as field initialisers, so they see the injected arena.
+    this.pcol = (base) => arena.silenceColor('player', base);
+    this.ncol = (base) => arena.silenceColor('npc', base);
+    this.pfx = new SilenceFx(arena.scene, this.pcol);
+    this.nfx = new SilenceFx(arena.scene, this.ncol);
+  }
+
+  // ── Visual helpers ─────────────────────────────────────────────────
+
+  /** Effect painter for a side. */
+  private fx(owner: Owner): SilenceFx { return owner === 'player' ? this.pfx : this.nfx; }
+  /** Colour mapper for a side. */
+  private col(owner: Owner): SilenceColorFn { return owner === 'player' ? this.pcol : this.ncol; }
+  /** The rig for a side, if that side is playing Silence. */
+  private avatarFor(owner: Owner): SilenceAvatar | null {
+    return owner === 'player' ? this.playerAvatar : this.npcAvatar;
+  }
+
+  /** Fire one arm gesture on the rig of whichever side cast. */
+  private gesture(owner: Owner, abilityId: string, angle?: number): void {
+    const g = CAST_GESTURES[abilityId];
+    if (g) this.avatarFor(owner)?.play(g, angle);
+  }
+
+  /** A shared paint layer at one depth. Cleared and repainted every frame by paintWorld. */
+  private layer(depth: number): Phaser.GameObjects.Graphics {
+    let g = this.layers.get(depth);
+    if (!g || !g.active) {
+      g = this.arena.scene.add.graphics().setDepth(depth);
+      this.layers.set(depth, g);
+    }
+    return g;
+  }
+
+  /**
+   * A persistent aura on one fighter, keyed by id. Built on first use and torn down by
+   * `dropAura` — a scene restart kills the Graphics, so `layer`/`aura` both rebuild lazily.
+   */
+  private aura(id: string, style: SilenceAuraStyle, tint: SilenceColorFn, radius: number, depth: number): SilenceAura {
+    let a = this.auras.get(id);
+    if (!a) {
+      a = new SilenceAura(this.arena.scene, tint, style, radius, depth);
+      this.auras.set(id, a);
+    }
+    return a;
+  }
+
+  private dropAura(id: string): void {
+    const a = this.auras.get(id);
+    if (!a) return;
+    a.destroy();
+    this.auras.delete(id);
+  }
 
   // ── Lifecycle ──────────────────────────────────────────────────────
 
@@ -616,12 +720,17 @@ export class SilenceKit {
     this.endAwakened('npc', false, true);
     this.clearDoll('player');
     this.clearDoll('npc');
-    for (const k of this.kin) k.sprite.destroy();
     this.kin = [];
-    for (const c of this.corrupts) c.sprite.destroy();
     this.corrupts = [];
-    for (const s of this.corruptShots) s.sprite.destroy();
     this.corruptShots = [];
+    // Avatars and auras are GameObjects: a scene restart already killed the old ones, so they
+    // are dropped here and rebuilt lazily by update().
+    if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
+    if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
+    for (const a of this.auras.values()) a.destroy();
+    this.auras.clear();
+    for (const g of this.layers.values()) g.destroy();
+    this.layers.clear();
     this.puppetLastCastAt = -PUPPET_COOLDOWN_MS;
     this.lastPuppetMoveSentAt = 0;
     this.lastStabLandedAt = -PUPPET_STAB_WINDOW_MS;
@@ -632,24 +741,16 @@ export class SilenceKit {
     this.endStriker('player', true);
     this.endStriker('npc', true);
     this.endRunChase(false, true);
-    for (const s of this.stalkers) { s.sprite.destroy(); s.eye.destroy(); s.coneGfx?.destroy(); }
     this.stalkers = [];
-    for (const g of this.grabbers) { g.sprite.destroy(); g.armGfx.destroy(); g.hand.destroy(); }
     this.grabbers = [];
     for (const v of this.vultures) {
       if (v.carry) (v.carry.victim.body as Phaser.Physics.Arcade.Body | null)?.setCollideWorldBounds(true);
-      v.sprite.destroy();
-      v.coneGfx.destroy();
     }
     this.vultures = [];
-    for (const s of this.eyeShots) s.sprite.destroy();
     this.eyeShots = [];
-    for (const b of this.bloodDecals) b.sprite.destroy();
     this.bloodDecals = [];
-    for (const pack of this.midgets.values()) for (const m of pack) m.sprite.destroy();
     this.midgets.clear();
     this.fleshOverlay?.destroy(); this.fleshOverlay = null;
-    for (const d of this.fleshDecals) d.destroy();
     this.fleshDecals = [];
     this.panicText?.destroy(); this.panicText = null;
     this.terrorBarBg?.destroy(); this.terrorBarBg = null;
@@ -658,24 +759,16 @@ export class SilenceKit {
     this.strikerTimerText?.destroy(); this.strikerTimerText = null;
     this.terror = { player: 0, npc: 0 };
     this.pendingMazeSeed = null;
-    for (const r of this.rituals) r.gfx.destroy();
     this.rituals = [];
-    for (const f of this.feasts) f.sprite.destroy();
     this.feasts = [];
-    for (const s of this.spits) s.sprite.destroy();
     this.spits = [];
-    this.fogGfx?.destroy(); this.fogGfx = null;
     this.stealthBarBg?.destroy(); this.stealthBarBg = null;
     this.stealthBarFill?.destroy(); this.stealthBarFill = null;
     this.stealthLabel?.destroy(); this.stealthLabel = null;
     for (const p of this.stalkerPips) p.destroy();
     this.stalkerPips = [];
-    for (const e of this.faceEyes.values()) e.destroy();
-    this.faceEyes.clear();
-    for (const n of this.noisePool) n.destroy();
-    this.noisePool = [];
+    this.faceEyes = [];
     this.eyeScreenRect?.destroy(); this.eyeScreenRect = null;
-    for (const e of this.eyeScreenEyes) e.destroy();
     this.eyeScreenEyes = [];
     this.eyeScreenUntil = 0;
     this.nextEyeScreenAt = 0;
@@ -810,7 +903,7 @@ export class SilenceKit {
   getMatureStalkerPos(owner: Owner): { x: number; y: number } | null {
     const now = this.arena.scene.time.now;
     const s = this.stalkers.find((st) => st.owner === owner && now - st.bornAt >= STALKER_MATURE_MS);
-    return s ? { x: s.sprite.x, y: s.sprite.y } : null;
+    return s ? { x: s.x, y: s.y } : null;
   }
 
   /**
@@ -823,7 +916,7 @@ export class SilenceKit {
     for (let i = this.stalkers.length - 1; i >= 0; i--) {
       const s = this.stalkers[i];
       if (s.owner !== targetOwner) continue;
-      if (Phaser.Math.Distance.Between(x, y, s.sprite.x, s.sprite.y) > radius + STALKER_RADIUS) continue;
+      if (Phaser.Math.Distance.Between(x, y, s.x, s.y) > radius + STALKER_RADIUS) continue;
       this.damageStalker(i);
       return true;
     }
@@ -836,7 +929,7 @@ export class SilenceKit {
     for (let i = this.stalkers.length - 1; i >= 0; i--) {
       const s = this.stalkers[i];
       if (s.owner === owner) continue;
-      if (Phaser.Math.Distance.Between(x, y, s.sprite.x, s.sprite.y) <= radius + STALKER_RADIUS) this.damageStalker(i);
+      if (Phaser.Math.Distance.Between(x, y, s.x, s.y) <= radius + STALKER_RADIUS) this.damageStalker(i);
     }
   }
 
@@ -980,6 +1073,7 @@ export class SilenceKit {
     const ang = Math.atan2(ty - caster.y, tx - caster.x);
     const startX = caster.x;
     const startY = caster.y;
+    this.gesture(owner, 'silence-stab', ang);
 
     // Dash impulse — WASD/AI suppressed briefly so the impulse isn't overwritten.
     const body = caster.body as Phaser.Physics.Arcade.Body | null;
@@ -1029,6 +1123,7 @@ export class SilenceKit {
       this.arena.showFloatingText(caster.x, caster.y - 30, '👁 stealth held', '#aa66ee');
     }
 
+    const fx = this.fx(owner);
     for (const { foe, isBackstab } of hits) {
       let final = dmg;
       if (isBackstab) {
@@ -1036,6 +1131,12 @@ export class SilenceKit {
         this.applyStatus(foe, { k: 'silence', ms: STAB_SILENCE_MS });
         this.arena.showFloatingText(foe.x, foe.y - 34, '🔪 BACKSTAB — SILENCED', '#ff2244');
         if (owner === 'player') this.arena.recordMasteryStat('backstabs', 1);
+        // A backstab is the whole element's payoff, so it gets its own art: a hand closing
+        // over the mouth from behind, and the wound opening under it.
+        fx.rupture(foe.x, foe.y, 44, { bloody: true, claws: 8, rings: 2, duration: 420 });
+        this.arena.scene.cameras.main.shake(160, 0.004);
+      } else {
+        fx.slash(foe.x, foe.y, ang, 46, 0.9, { bloody: true, scores: 2, duration: 220 });
       }
       final = Math.round(final);
       foe.takeDamage(final);
@@ -1048,7 +1149,7 @@ export class SilenceKit {
       const d = this.dolls.player;
       if (d) {
         const r = STAB_LANE_HALF_W + DOLL_HIT_RADIUS;
-        if (laneDistSq(d.sprite.x, d.sprite.y) <= r * r) this.tryHitDoll(d.sprite.x, d.sprite.y, 0, Math.round(dmg));
+        if (laneDistSq(d.x, d.y) <= r * r) this.tryHitDoll(d.x, d.y, 0, Math.round(dmg));
       }
     }
 
@@ -1057,32 +1158,30 @@ export class SilenceKit {
       for (const s of this.stalkers) {
         if (s.owner !== owner) continue;
         const r = STAB_LANE_HALF_W + STALKER_RADIUS;
-        if (laneDistSq(s.sprite.x, s.sprite.y) > r * r) continue;
+        if (laneDistSq(s.x, s.y) > r * r) continue;
         this.sacrificeWatcher(s, owner);
       }
     }
 
-    // Slash streak visual along the lane.
-    const slash = this.arena.scene.add.rectangle(
-      (startX + endX) / 2, (startY + endY) / 2, STAB_DASH_LEN, 6, 0xddddee, 0.8,
-    ).setRotation(ang).setDepth(DEPTH_BEAM);
-    this.arena.scene.tweens.add({ targets: slash, alpha: 0, duration: 180, onComplete: () => slash.destroy() });
+    // The lunge itself: fog dragged down the lane, scores raked out of the floor, and a
+    // three-score claw sweep at the far end. Banked stealth widens the sweep, so a full
+    // meter looks like the 45-damage strike it is.
+    const charge = spent / STEALTH_MAX;
+    fx.lunge(startX, startY, endX, endY, { color: SILENCE.plum, duration: 300 + charge * 140 });
+    fx.slash(endX, endY, ang, STAB_LANE_HALF_W * (1 + charge * 0.5), 0.75 + charge * 0.35, {
+      scores: 3 + Math.round(charge * 2), duration: 240 + charge * 120,
+    });
   }
 
   /** Click+ Sacrifice: shockwave from a stabbed watcher + 5s maturity setback. */
   private sacrificeWatcher(s: Stalker, owner: Owner): void {
-    const scene = this.arena.scene;
-    const x = s.sprite.x;
-    const y = s.sprite.y;
+    const x = s.x;
+    const y = s.y;
     s.bornAt += SACRIFICE_MATURE_DELAY_MS;
-    const ring = scene.add.circle(x, y, STALKER_RADIUS, 0xff2233, 0.3)
-      .setDepth(DEPTH_EYE).setStrokeStyle(3, 0xff2233, 0.9);
-    scene.tweens.add({
-      targets: ring,
-      scaleX: SACRIFICE_RADIUS / STALKER_RADIUS,
-      scaleY: SACRIFICE_RADIUS / STALKER_RADIUS,
-      alpha: 0, duration: 350, onComplete: () => ring.destroy(),
-    });
+    // The watcher's eye bursts and its scream goes out as a ring of fingers.
+    const fx = this.fx(owner);
+    fx.watchPulse(x, y, 16, SILENCE.gore, DEPTH_EYE, 220);
+    fx.rupture(x, y, SACRIFICE_RADIUS, { bloody: true, claws: 10, rings: 2, duration: 420 });
     this.arena.showFloatingText(x, y - 26, '🔪 SACRIFICE', '#ff2244');
     for (const foe of this.foesOf(owner)) {
       if (!foe.active || foe.hp <= 0) continue;
@@ -1113,9 +1212,9 @@ export class SilenceKit {
     if (this.arena.hasUpgrade(owner, 'e')) {
       const target = this.stalkers.find((s) =>
         s.owner === owner && s.kind === 'watcher'
-        && Phaser.Math.Distance.Between(tx, ty, s.sprite.x, s.sprite.y) <= STALKER_RADIUS * 2.2);
+        && Phaser.Math.Distance.Between(tx, ty, s.x, s.y) <= STALKER_RADIUS * 2.2);
       if (target) {
-        this.mutateIntoSeeker(target);
+        this.mutateIntoSeeker(target, owner);
         return;
       }
     }
@@ -1127,31 +1226,39 @@ export class SilenceKit {
     }
     const x = Phaser.Math.Clamp(tx, 20, this.arena.width - 20);
     const y = Phaser.Math.Clamp(ty, 20, this.arena.height - 20);
-    const sprite = scene.add.image(x, y, 'silence-stalker').setDepth(DEPTH_STALKER);
-    const eye = scene.add.image(x, y, 'silence-stalker-eye').setDepth(DEPTH_EYE).setVisible(false);
+    const caster = this.fighterOf(owner);
+    this.gesture(owner, 'silence-watch', Math.atan2(y - caster.y, x - caster.x));
     this.stalkers.push({
-      sprite, eye, owner,
+      x, y, owner,
+      seed: Math.random() * Math.PI * 2,
+      hitFlashUntil: 0,
       bornAt: scene.time.now,
       nextPulseAt: scene.time.now + STALKER_PULSE_MS,
-      kind: 'watcher', hitsLeft: 1, heading: 0, nextTurnAt: 0, coneGfx: null, pinnedUntil: 0,
+      kind: 'watcher', hitsLeft: 1, heading: 0, nextTurnAt: 0, pinnedUntil: 0,
     });
-    sprite.setScale(0.2);
-    scene.tweens.add({ targets: sprite, scaleX: 1, scaleY: 1, duration: 250 });
+    // It does not appear — it *opens*, out of a knot of fog that was already there.
+    const fx = this.fx(owner);
+    fx.motes(x, y, 7, { speed: 55, size: 5, life: 620, depth: DEPTH_STALKER - 1, color: SILENCE.void, drift: -4 });
+    fx.watchPulse(x, y, 11, SILENCE.amethyst, DEPTH_EYE, 620);
   }
 
   /** E+ Mutant: a watcher sprouts wings and takes flight as a seeker. */
-  private mutateIntoSeeker(s: Stalker): void {
-    const scene = this.arena.scene;
+  private mutateIntoSeeker(s: Stalker, owner: Owner): void {
     s.kind = 'seeker';
     s.hitsLeft = SEEKER_HITS;
     s.heading = Math.random() * Math.PI * 2;
     s.nextTurnAt = 0;
-    s.sprite.setTexture('silence-seeker');
-    s.coneGfx = scene.add.graphics().setDepth(DEPTH_GROUND_FX + 1);
-    s.sprite.setScale(0.3);
-    scene.tweens.add({ targets: s.sprite, scaleX: 1, scaleY: 1, duration: 300, ease: 'Back.Out' });
-    this.arena.showFloatingText(s.sprite.x, s.sprite.y - 26, '🪽 IT SEES', '#ff2244');
-    scene.cameras.main.shake(150, 0.003);
+    // The wings tear their way out — fingers thrown clear on both sides of the body.
+    const fx = this.fx(owner);
+    for (const side of [-1, 1]) {
+      fx.claws(s.x + side * 8, s.y, 5, {
+        angle: side > 0 ? 0 : Math.PI, spread: 0.7, speed: 190, size: 20,
+        life: 480, depth: DEPTH_STALKER + 1, color: SILENCE.pitch,
+      });
+    }
+    fx.rupture(s.x, s.y, 40, { claws: 0, rings: 1, mark: false, duration: 380 });
+    this.arena.showFloatingText(s.x, s.y - 26, '🪽 IT SEES', '#ff2244');
+    this.arena.scene.cameras.main.shake(150, 0.003);
   }
 
   doRitual(tx: number, ty: number, owner: Owner): void {
@@ -1193,18 +1300,19 @@ export class SilenceKit {
       tx = caster.x + Math.cos(ang) * RITUAL_RANGE;
       ty = caster.y + Math.sin(ang) * RITUAL_RANGE;
     }
-    const gfx = scene.add.graphics().setDepth(DEPTH_GROUND_FX);
-    gfx.lineStyle(3, 0xcc1133, 0.9).strokeCircle(tx, ty, RITUAL_RADIUS);
-    gfx.lineStyle(1, 0x660022, 0.7).strokeCircle(tx, ty, RITUAL_RADIUS * 0.65);
     const strikeAt = scene.time.now + RITUAL_DELAY_MS;
+    this.gesture(owner, 'silence-ritual', Math.atan2(ty - caster.y, tx - caster.x));
+    // The one-second wind-up is a tooth ring closing over the spot with fingers converging
+    // on it, so the delay reads as something being cornered rather than as a pause.
+    this.fx(owner).dread(tx, ty, RITUAL_RADIUS, RITUAL_DELAY_MS, { depth: DEPTH_GROUND_FX + 1 });
     // Matured seekers caught in the circle freeze mid-air so the strike can land.
     for (const s of this.stalkers) {
       if (s.owner !== owner || s.kind !== 'seeker') continue;
       if (scene.time.now - s.bornAt < STALKER_MATURE_MS) continue;
-      if (Phaser.Math.Distance.Between(s.sprite.x, s.sprite.y, tx, ty) > RITUAL_RADIUS) continue;
+      if (Phaser.Math.Distance.Between(s.x, s.y, tx, ty) > RITUAL_RADIUS) continue;
       s.pinnedUntil = Math.max(s.pinnedUntil, strikeAt + 150);
     }
-    this.rituals.push({ gfx, x: tx, y: ty, owner, strikeAt });
+    this.rituals.push({ x: tx, y: ty, owner, castAt: scene.time.now, strikeAt });
   }
 
   doFeast(tx: number, ty: number, owner: Owner): void {
@@ -1224,13 +1332,19 @@ export class SilenceKit {
     }
     const x = caster.x + Math.cos(caster.facingAngle) * FEAST_FOLLOW_OFFSET;
     const y = caster.y + Math.sin(caster.facingAngle) * FEAST_FOLLOW_OFFSET;
-    const sprite = scene.add.image(x, y, 'silence-teeth').setDepth(DEPTH_GROUND_FX).setAlpha(0.9);
+    this.gesture(owner, 'silence-feast', caster.facingAngle);
     this.feasts.push({
-      sprite, x, y, owner,
+      x, y, owner,
+      bornAt: scene.time.now,
       endsAt: scene.time.now + FEAST_DURATION_MS,
       insideMs: new Map(),
       triggered: new Set(),
     });
+    // The ground splits and the teeth come up through it.
+    const fx = this.fx(owner);
+    fx.motes(x, y, 12, { speed: FEAST_RADIUS * 1.4, size: 6, life: 700, depth: DEPTH_GROUND_FX, color: SILENCE.void });
+    fx.graspRing(x, y, FEAST_RADIUS * 0.3, FEAST_RADIUS, SILENCE.bone, 520, DEPTH_GROUND_FX + 1, true);
+    scene.cameras.main.shake(180, 0.003);
   }
 
   doRun(tx: number, ty: number, owner: Owner): void {
@@ -1250,7 +1364,7 @@ export class SilenceKit {
     const caster = this.fighterOf(owner);
     const ang = Math.atan2(ty - caster.y, tx - caster.x);
     const reach = Math.min(RUN_ARM_RANGE, Phaser.Math.Distance.Between(caster.x, caster.y, tx, ty) + RUN_HIT_RADIUS);
-    const armGfx = scene.add.graphics().setDepth(DEPTH_EYE);
+    this.gesture(owner, 'silence-run', ang);
 
     // Q+ The Labyrinth: pick the maze layout now so the seed reaches the peer
     // well before their replayed arm can land (messages are ordered).
@@ -1273,7 +1387,7 @@ export class SilenceKit {
       caster: owner,
       victim: caster, // placeholder until the arm lands
       victimIsBot: false,
-      armGfx,
+      armStart: scene.time.now,
       armEnd: scene.time.now + RUN_ARM_MS,
       armTx: caster.x + Math.cos(ang) * reach,
       armTy: caster.y + Math.sin(ang) * reach,
@@ -1305,15 +1419,18 @@ export class SilenceKit {
     const base = Math.atan2(ty - caster.y, tx - caster.x);
     for (let i = -1; i <= 1; i++) {
       const ang = base + i * 0.12;
-      const sprite = scene.add.image(caster.x, caster.y, 'silence-spit').setDepth(DEPTH_BEAM);
       this.spits.push({
-        sprite,
+        x: caster.x, y: caster.y,
         vx: Math.cos(ang) * SPIT_SPEED,
         vy: Math.sin(ang) * SPIT_SPEED,
         owner,
         diesAt: scene.time.now + 2000,
       });
     }
+    // The maw opening to throw it — a splash of bile out of the muzzle.
+    this.fx(owner).motes(caster.x + Math.cos(base) * 20, caster.y + Math.sin(base) * 20, 5, {
+      angle: base, spread: 0.5, speed: 130, size: 4, life: 320, depth: DEPTH_BEAM - 1, color: SILENCE.bile, drift: 6,
+    });
   }
 
   // ══ Mastery ═══════════════════════════════════════════════════════
@@ -1453,15 +1570,24 @@ export class SilenceKit {
     const scene = this.arena.scene;
     this.clearDoll(owner);
 
-    const sprite = scene.add.image(x, y, 'silence-doll').setDepth(DEPTH_STALKER);
     const barBg = scene.add.rectangle(x, y - 28, 32, 5, 0x1a0d08, 0.9)
       .setStrokeStyle(1, 0x7d6440).setDepth(DEPTH_EYE);
     const barFill = scene.add.rectangle(x - 15, y - 28, 30, 3, 0xcc1133, 0.95)
       .setOrigin(0, 0.5).setDepth(DEPTH_EYE + 1);
-    this.dolls[owner] = { sprite, barBg, barFill, owner, target, damageTaken: 0 };
+    this.dolls[owner] = {
+      x, y, barBg, barFill, owner, target, damageTaken: 0,
+      hitFlashUntil: 0, bornAt: scene.time.now,
+    };
 
-    sprite.setScale(0.2).setRotation(-0.6);
-    scene.tweens.add({ targets: sprite, scaleX: 1, scaleY: 1, rotation: 0, duration: 320, ease: 'Back.Out' });
+    // Stitched together on the spot: scraps of burlap dragged in, then the thread pulled tight.
+    const fx = this.fx(owner);
+    fx.shred(x, y, 8, { color: SILENCE.burlap, speed: -110, life: 320, depth: DEPTH_STALKER + 1 });
+    fx.graspRing(x, y, 44, 12, SILENCE.twine, 340, DEPTH_STALKER + 1, true);
+    // …and a thread visibly pulled out of whoever it was made for.
+    fx.claws(target.x, target.y, 4, {
+      angle: Math.atan2(y - target.y, x - target.x), spread: 0.5, speed: 200,
+      size: 12, life: 380, depth: DEPTH_EYE, color: SILENCE.twine,
+    });
     this.arena.showFloatingText(x, y - 40, '🪆 EFFIGY', '#ffddaa');
     this.arena.spawnHitFlash(target.x, target.y, 0xb49a6a);
     scene.cameras.main.shake(160, 0.003);
@@ -1486,7 +1612,7 @@ export class SilenceKit {
   private tryHitDoll(x: number, y: number, radius: number, amount: number): boolean {
     const d = this.dolls.player;
     if (!d || amount <= 0) return false;
-    if (Phaser.Math.Distance.Between(x, y, d.sprite.x, d.sprite.y) > radius + DOLL_HIT_RADIUS) return false;
+    if (Phaser.Math.Distance.Between(x, y, d.x, d.y) > radius + DOLL_HIT_RADIUS) return false;
 
     d.damageTaken += amount;
     const relayed = Math.round(amount * DOLL_RELAY_MULT);
@@ -1519,32 +1645,25 @@ export class SilenceKit {
   }
 
   private showDollHit(d: VoodooDoll, relayed: number): void {
-    const scene = this.arena.scene;
-    this.arena.showFloatingText(d.sprite.x, d.sprite.y - 34, `🪆 ${relayed}`, '#ffddaa');
-    d.sprite.setTintFill(0xffffff);
-    scene.time.delayedCall(80, () => { if (d.sprite.active) d.sprite.clearTint(); });
-    // A pin jolts out of it on every hit.
-    const pin = scene.add.rectangle(d.sprite.x, d.sprite.y, 14, 2, 0xc8ccd8, 1)
-      .setRotation(Math.random() * Math.PI).setDepth(DEPTH_EYE + 2);
-    scene.tweens.add({
-      targets: pin, x: pin.x + Phaser.Math.Between(-24, 24), y: pin.y + Phaser.Math.Between(-20, 10),
-      alpha: 0, duration: 320, onComplete: () => pin.destroy(),
+    this.arena.showFloatingText(d.x, d.y - 34, `🪆 ${relayed}`, '#ffddaa');
+    d.hitFlashUntil = this.arena.scene.time.now + 110;
+    // Pins jolt out of it, and a puff of stuffing goes with them.
+    const fx = this.fx(d.owner);
+    fx.shred(d.x, d.y, 3, { color: SILENCE.twine, speed: 170, size: 3, life: 340, depth: DEPTH_EYE + 2 });
+    fx.claws(d.x, d.y, 2, {
+      speed: 190, size: 9, life: 300, depth: DEPTH_EYE + 2, color: SILENCE.sclera,
     });
   }
 
   private breakDoll(owner: Owner): void {
     const d = this.dolls[owner];
     if (!d) return;
-    const scene = this.arena.scene;
-    const { x, y } = d.sprite;
-    for (let i = 0; i < 7; i++) {
-      const scrap = scene.add.rectangle(x, y, 5, 4, 0xb49a6a, 1).setDepth(DEPTH_EYE);
-      const ang = Math.random() * Math.PI * 2;
-      scene.tweens.add({
-        targets: scrap, x: x + Math.cos(ang) * 44, y: y + Math.sin(ang) * 44,
-        alpha: 0, rotation: Math.random() * 4, duration: 420, onComplete: () => scrap.destroy(),
-      });
-    }
+    const { x, y } = d;
+    // It comes apart at the seams: burlap scraps, stuffing, and the thread whipping loose.
+    const fx = this.fx(owner);
+    fx.shred(x, y, 12, { color: SILENCE.burlap, speed: 210, size: 6, life: 520, depth: DEPTH_EYE });
+    fx.shred(x, y, 8, { color: SILENCE.twine, speed: 140, size: 3, life: 620, depth: DEPTH_EYE });
+    fx.graspRing(x, y, 8, 52, SILENCE.twine, 420, DEPTH_EYE);
     this.arena.showFloatingText(x, y - 34, '🪆 THE DOLL BREAKS', '#ffddaa');
     this.clearDoll(owner);
     if (owner === 'player' && this.isPvpNet()) {
@@ -1555,7 +1674,6 @@ export class SilenceKit {
   private clearDoll(owner: Owner): void {
     const d = this.dolls[owner];
     if (!d) return;
-    d.sprite.destroy();
     d.barBg.destroy();
     d.barFill.destroy();
     this.dolls[owner] = null;
@@ -1566,7 +1684,6 @@ export class SilenceKit {
     if (!d) return;
     if (!d.target.active || d.target.hp <= 0) { this.clearDoll(owner); return; }
 
-    d.sprite.setRotation(Math.sin(time / 520) * 0.06);
     const ratio = Phaser.Math.Clamp(1 - d.damageTaken / DOLL_HP, 0, 1);
     d.barFill.width = 30 * ratio;
     d.barFill.setFillStyle(ratio > 0.5 ? 0xcc1133 : 0xff4455, 0.95);
@@ -1577,12 +1694,13 @@ export class SilenceKit {
     if (owner !== 'player') return;
     for (const go of this.arena.projectiles.getChildren() as Projectile[]) {
       if (!go.active || !go.isFromPlayer) continue;
-      if (Phaser.Math.Distance.Between(go.x, go.y, d.sprite.x, d.sprite.y) > DOLL_HIT_RADIUS + 8) continue;
+      if (Phaser.Math.Distance.Between(go.x, go.y, d.x, d.y) > DOLL_HIT_RADIUS + 8) continue;
       go.setActive(false).setVisible(false);
       (go.body as Phaser.Physics.Arcade.Body).stop();
-      this.tryHitDoll(d.sprite.x, d.sprite.y, 0, go.damage);
+      this.tryHitDoll(d.x, d.y, 0, go.damage);
       break;
     }
+    void time;
   }
 
   // ── Puppetmaster: the awakening ────────────────────────────────────
@@ -1609,7 +1727,6 @@ export class SilenceKit {
       // The victim's copy runs a little long on purpose: the puppeteer's explicit
       // hand-back should be what ends it, with this only as a lost-message backstop.
       endsAt: scene.time.now + AWAKEN_DURATION_MS + (owner === 'npc' ? 2500 : 0),
-      gfx: scene.add.graphics().setDepth(DEPTH_STALKER - 1),
       prevTexture: host.texture.key,
       prevScale: host.scaleX,
       netVx: 0,
@@ -1630,11 +1747,12 @@ export class SilenceKit {
       if (this.isPvpNet()) this.arena.sendSilenceMsg({ t: 'sil', k: 'awaken', on: true });
     }
 
-    // Their eyes go white, then the shell splits.
-    const flashEyes = scene.add.circle(host.x, host.y, 26, 0xffffff, 0.9).setDepth(DEPTH_EYE + 3);
-    scene.tweens.add({
-      targets: flashEyes, scaleX: 1.8, scaleY: 1.8, alpha: 0, duration: 420,
-      onComplete: () => flashEyes.destroy(),
+    // Their eyes go white, the shell splits, and what comes out is all hands.
+    const fx = this.fx(owner);
+    fx.watchPulse(host.x, host.y - 4, 22, SILENCE.white, DEPTH_EYE + 3, 520);
+    fx.rupture(host.x, host.y, 70, { claws: 12, rings: 2, duration: 560, mark: false });
+    fx.claws(host.x, host.y, 8, {
+      speed: 130, size: 30, life: 620, depth: DEPTH_EYE + 2, color: SILENCE.void,
     });
     this.arena.showFloatingText(host.x, host.y - 52, '🕷 AWAKENED', '#eeddff');
     scene.cameras.main.shake(420, 0.01);
@@ -1666,7 +1784,6 @@ export class SilenceKit {
     const a = this.awakened[owner];
     if (!a) return;
     this.awakened[owner] = null;
-    a.gfx.destroy();
     this.arena.setStatusIndicator('silence-awakened', null);
 
     const host = a.host;
@@ -1686,12 +1803,10 @@ export class SilenceKit {
     }
     if (silent) return;
 
-    const scene = this.arena.scene;
-    const recede = scene.add.circle(host.x, host.y, 34, 0x0a0410, 0.85).setDepth(DEPTH_EYE);
-    scene.tweens.add({
-      targets: recede, scaleX: 0.05, scaleY: 0.05, alpha: 0, duration: 380,
-      onComplete: () => recede.destroy(),
-    });
+    // It pulls back inside: a ring of fingers closing down to nothing over the host.
+    const fx = this.fx(owner);
+    fx.graspRing(host.x, host.y, 46, 6, SILENCE.void, 400, DEPTH_EYE, true);
+    fx.motes(host.x, host.y, 8, { speed: 30, size: 6, life: 480, depth: DEPTH_EYE - 1, color: SILENCE.void, drift: 4 });
     if (withPenalty && host.active && host.hp > 0) {
       host.takeDamage(AWAKEN_UNPOSSESS_DMG);
       this.arena.spawnHitFlash(host.x, host.y, 0x8844cc);
@@ -1724,7 +1839,6 @@ export class SilenceKit {
     }
 
     this.driveHost(a, time);
-    this.drawAwakenedLimbs(a, time);
   }
 
   /**
@@ -1788,29 +1902,6 @@ export class SilenceKit {
     }
   }
 
-  /** Four long tentacles hauling the host along, swaying out of phase with each other. */
-  private drawAwakenedLimbs(a: AwakenedState, time: number): void {
-    const g = a.gfx;
-    const host = a.host;
-    g.clear();
-    g.lineStyle(5, 0x0a0410, 0.95);
-    for (let i = 0; i < 4; i++) {
-      const base = host.facingAngle + Math.PI / 2 + (i - 1.5) * 0.9;
-      const sway = Math.sin(time / (260 + i * 70) + i) * 0.42;
-      const ang = base + sway;
-      const kneeX = host.x + Math.cos(ang) * 34;
-      const kneeY = host.y + Math.sin(ang) * 34 - 14;
-      const tipAng = ang + Math.sin(time / 190 + i * 2) * 0.5;
-      const tipX = kneeX + Math.cos(tipAng) * 42;
-      const tipY = kneeY + Math.sin(tipAng) * 42 + 20;
-      g.lineBetween(host.x, host.y, kneeX, kneeY);
-      g.lineBetween(kneeX, kneeY, tipX, tipY);
-      g.fillStyle(0x0a0410, 1);
-      g.fillCircle(kneeX, kneeY, 3.2);
-      g.fillTriangle(tipX, tipY + 6, tipX - 3, tipY - 3, tipX + 3, tipY - 3);
-    }
-  }
-
   // ── Puppetmaster: the awakened moveset ─────────────────────────────
   //
   // Each action resolves locally and then goes out under its own `puppet-*` id (see
@@ -1822,23 +1913,22 @@ export class SilenceKit {
     const a = this.awakened[owner];
     if (!a) return;
     const host = a.host;
-    const scene = this.arena.scene;
     const ang = Math.atan2(ty - host.y, tx - host.x);
 
-    for (let i = -1; i <= 1; i++) {
-      const sa = ang + i * 0.3;
-      const streak = scene.add.rectangle(
-        host.x + Math.cos(sa) * AWAKEN_SLASH_RANGE * 0.55,
-        host.y + Math.sin(sa) * AWAKEN_SLASH_RANGE * 0.55,
-        AWAKEN_SLASH_RANGE, 4, 0x2a1038, 0.95,
-      ).setRotation(sa).setDepth(DEPTH_BEAM);
-      scene.tweens.add({ targets: streak, alpha: 0, duration: 170, onComplete: () => streak.destroy() });
-    }
+    // Four of the limbs rake across the arc at once — this thing has more arms than a body.
+    const fx = this.fx(owner);
+    fx.slash(host.x, host.y, ang, AWAKEN_SLASH_RANGE, AWAKEN_SLASH_ARC_RAD, {
+      color: SILENCE.lilac, scores: 4, duration: 240,
+    });
+    fx.claws(host.x + Math.cos(ang) * 40, host.y + Math.sin(ang) * 40, 5, {
+      angle: ang, spread: AWAKEN_SLASH_ARC_RAD, speed: 210, size: 18, life: 340,
+      depth: DEPTH_BEAM, color: SILENCE.void,
+    });
 
     // A tentacle that finds the effigy first puts the relayed hit through instead.
     const d = this.dolls.player;
-    if (owner === 'player' && d && this.inAwakenedArc(a, d.sprite.x, d.sprite.y, ang, AWAKEN_SLASH_RANGE)) {
-      this.tryHitDoll(d.sprite.x, d.sprite.y, 0, AWAKEN_SLASH_DMG);
+    if (owner === 'player' && d && this.inAwakenedArc(a, d.x, d.y, ang, AWAKEN_SLASH_RANGE)) {
+      this.tryHitDoll(d.x, d.y, 0, AWAKEN_SLASH_DMG);
       return;
     }
     this.hurtHost(a, AWAKEN_SLASH_DMG, '🕷 SLASH');
@@ -1848,20 +1938,23 @@ export class SilenceKit {
     const a = this.awakened[owner];
     if (!a) return;
     const host = a.host;
-    const scene = this.arena.scene;
     const ang = Math.atan2(ty - host.y, tx - host.x);
-    const maw = scene.add.circle(
-      host.x + Math.cos(ang) * 38, host.y + Math.sin(ang) * 38, 16, 0x0a0410, 0.9,
-    ).setDepth(DEPTH_BEAM);
-    scene.tweens.add({ targets: maw, scaleX: 1.7, scaleY: 1.7, alpha: 0, duration: 220, onComplete: () => maw.destroy() });
+    const mx = host.x + Math.cos(ang) * 38;
+    const my = host.y + Math.sin(ang) * 38;
+    // A ring of teeth snapping shut on the spot, rather than a circle that grows.
+    const fx = this.fx(owner);
+    fx.anim(DEPTH_BEAM, 240, (g, t) => {
+      // Snaps shut over the first third, then hangs open bleeding out.
+      toothRing(g, this.col(owner), mx, my, 20 * (1 - t * 0.35), 14, Math.min(1, t * 3), 1 - t, SILENCE.meat);
+    });
 
     // Feasting on your own kin: it goes down whole and the puppeteer gets 12 back.
     if (eatKin) {
       const eaten = this.kinAtCursor(a, tx, ty);
       if (eaten >= 0) {
         const k = this.kin[eaten];
-        this.arena.showFloatingText(k.sprite.x, k.sprite.y - 20, '🦷 EATEN', '#ffcccc');
-        k.sprite.destroy();
+        this.arena.showFloatingText(k.x, k.y - 20, '🦷 EATEN', '#ffcccc');
+        fx.shred(k.x, k.y, 6, { color: SILENCE.void, speed: 130, size: 4, life: 380, depth: DEPTH_STALKER });
         this.kin.splice(eaten, 1);
       }
       this.healPuppeteer(a, AWAKEN_BITE_HEAL);
@@ -1881,8 +1974,7 @@ export class SilenceKit {
       const chosen = this.kinAtCursor(a, tx, ty);
       if (chosen >= 0) {
         const k = this.kin[chosen];
-        this.spawnCorruptClone(owner, k.sprite.x, k.sprite.y, k.target);
-        k.sprite.destroy();
+        this.spawnCorruptClone(owner, k.x, k.y, k.target);
         this.kin.splice(chosen, 1);
       } else {
         // Our kin drifted elsewhere; honour the intent by raising one at the host.
@@ -1891,9 +1983,10 @@ export class SilenceKit {
       return;
     }
 
-    const scene = this.arena.scene;
-    const muck = scene.add.circle(host.x, host.y, 20, 0x0a0410, 0.85).setDepth(DEPTH_EYE);
-    scene.tweens.add({ targets: muck, scaleX: 0.2, scaleY: 0.2, alpha: 0, duration: 300, onComplete: () => muck.destroy() });
+    // It eats inward: the whole ring of fingers closes on the body it is riding.
+    const fx = this.fx(owner);
+    fx.graspRing(host.x, host.y, 34, 4, SILENCE.blood, 320, DEPTH_EYE, true);
+    fx.stain(host.x, host.y, 18, DEPTH_GROUND_FX, true);
     this.hurtHost(a, AWAKEN_CANNIBAL_DMG, '🩸 CANNIBALIZE');
     this.healPuppeteer(a, AWAKEN_CANNIBAL_HEAL);
   }
@@ -1903,11 +1996,10 @@ export class SilenceKit {
     if (!a) return;
     const host = a.host;
     const scene = this.arena.scene;
-    const ring = scene.add.circle(host.x, host.y, 30, 0x2a1038, 0.35)
-      .setDepth(DEPTH_GROUND_FX).setStrokeStyle(3, 0x6622aa, 0.9);
-    scene.tweens.add({
-      targets: ring, scaleX: 4.2, scaleY: 4.2, alpha: 0, duration: 480, onComplete: () => ring.destroy(),
-    });
+    const fx = this.fx(owner);
+    // The slam itself: a shockwave of fingers punching up out of the floor.
+    fx.graspRing(host.x, host.y, 30, 126, SILENCE.amethyst, 480, DEPTH_GROUND_FX);
+    fx.stain(host.x, host.y, 40, DEPTH_GROUND_FX - 1);
     scene.cameras.main.shake(260, 0.007);
     this.arena.showFloatingText(host.x, host.y - 50, '🕳 THEY CRAWL UP', '#cc99ff');
 
@@ -1915,15 +2007,17 @@ export class SilenceKit {
       const ang = (i / KIN_PER_SLAM) * Math.PI * 2 + Math.random();
       const x = Phaser.Math.Clamp(host.x + Math.cos(ang) * 90, 24, this.arena.width - 24);
       const y = Phaser.Math.Clamp(host.y + Math.sin(ang) * 90, 24, this.arena.height - 30);
-      const sprite = scene.add.image(x, y, 'silence-kin').setDepth(DEPTH_STALKER).setScale(0.1).setAlpha(0.2);
-      scene.tweens.add({ targets: sprite, scaleX: 1, scaleY: 1, alpha: 1, duration: 380, ease: 'Back.Out' });
       this.kin.push({
-        sprite,
+        x, y,
+        facing: ang + Math.PI,
+        bornAt: scene.time.now,
         owner,
         target: host,
         expiresAt: scene.time.now + KIN_LIFETIME_MS,
         nextStabAt: scene.time.now + KIN_STAB_EVERY_MS,
       });
+      // Each one claws its own hole open on the way out.
+      fx.motes(x, y, 4, { speed: 45, size: 5, life: 460, depth: DEPTH_GROUND_FX, color: SILENCE.void });
     }
   }
 
@@ -1964,8 +2058,8 @@ export class SilenceKit {
     for (let i = 0; i < this.kin.length; i++) {
       const k = this.kin[i];
       if (k.owner !== a.owner) continue;
-      if (Phaser.Math.Distance.Between(host.x, host.y, k.sprite.x, k.sprite.y) > KIN_PICK_MAX_DIST) continue;
-      const d = Phaser.Math.Distance.Between(tx, ty, k.sprite.x, k.sprite.y);
+      if (Phaser.Math.Distance.Between(host.x, host.y, k.x, k.y) > KIN_PICK_MAX_DIST) continue;
+      const d = Phaser.Math.Distance.Between(tx, ty, k.x, k.y);
       if (d <= bestD) { bestD = d; best = i; }
     }
     return best;
@@ -1977,57 +2071,60 @@ export class SilenceKit {
     for (let i = this.kin.length - 1; i >= 0; i--) {
       const k = this.kin[i];
       if (time >= k.expiresAt || !k.target.active || k.target.hp <= 0) {
-        const s = k.sprite;
-        this.arena.scene.tweens.add({
-          targets: s, alpha: 0, scaleX: 0.2, scaleY: 0.2, duration: 260, onComplete: () => s.destroy(),
+        // They do not fade — they go back down the hole they came out of.
+        this.fx(k.owner).motes(k.x, k.y, 3, {
+          speed: 20, size: 4, life: 300, depth: DEPTH_GROUND_FX, color: SILENCE.void, drift: 6,
         });
         this.kin.splice(i, 1);
         continue;
       }
-      const ang = Math.atan2(k.target.y - k.sprite.y, k.target.x - k.sprite.x);
-      const d = Phaser.Math.Distance.Between(k.sprite.x, k.sprite.y, k.target.x, k.target.y);
+      const ang = Math.atan2(k.target.y - k.y, k.target.x - k.x);
+      const d = Phaser.Math.Distance.Between(k.x, k.y, k.target.x, k.target.y);
       if (d > KIN_REACH) {
-        k.sprite.x += Math.cos(ang) * KIN_SPEED * dt;
-        k.sprite.y += Math.sin(ang) * KIN_SPEED * dt;
+        k.x += Math.cos(ang) * KIN_SPEED * dt;
+        k.y += Math.sin(ang) * KIN_SPEED * dt;
       }
-      k.sprite.setRotation(Math.sin(time / 140 + k.expiresAt) * 0.12); // scuttling wobble
-      k.sprite.setFlipX(Math.cos(ang) < 0);
+      k.facing = ang;
 
       if (d <= KIN_REACH && time >= k.nextStabAt) {
         k.nextStabAt = time + KIN_STAB_EVERY_MS;
         k.target.takeDamage(KIN_STAB_DMG);
         this.arena.spawnHitFlash(k.target.x, k.target.y, 0x2a1038);
-        this.arena.showFloatingText(k.sprite.x, k.sprite.y - 20, '🗡', '#cc99ff');
+        this.arena.showFloatingText(k.x, k.y - 20, '🗡', '#cc99ff');
+        this.fx(k.owner).slash(k.x, k.y, ang, 26, 0.6, { scores: 1, duration: 180, bloody: true });
       }
     }
-    this.highlightAimedKin();
   }
 
   /**
-   * While possessing, the kin your cursor has landed on glows — without it there is no
-   * way to tell which one an E (eat) or R (raise) is about to take, since they pile up
-   * against the host on every side.
+   * While possessing, the kin your cursor has landed on is drawn with a halo — without it
+   * there is no way to tell which one an E (eat) or R (raise) is about to take, since they
+   * pile up against the host on every side. Returns that kin's index, or -1.
    */
-  private highlightAimedKin(): void {
-    for (const k of this.kin) k.sprite.clearTint();
+  private aimedKinIndex(): number {
     const a = this.awakened.player;
-    if (!a) return;
+    if (!a) return -1;
     const pointer = this.arena.scene.input.activePointer;
-    const aimed = this.kinAtCursor(a, pointer.worldX, pointer.worldY);
-    if (aimed >= 0) this.kin[aimed].sprite.setTint(0xcc99ff);
+    return this.kinAtCursor(a, pointer.worldX, pointer.worldY);
   }
 
   private spawnCorruptClone(owner: Owner, x: number, y: number, target: Fighter): void {
     const scene = this.arena.scene;
-    const sprite = scene.add.image(x, y, 'silence-corrupt').setDepth(DEPTH_STALKER + 1);
     this.corrupts.push({
-      sprite, owner, target,
+      x, y,
+      facing: 0,
+      bornAt: scene.time.now,
+      borrowed: target.element.color,
+      owner, target,
       expiresAt: scene.time.now + CORRUPT_LIFETIME_MS,
       nextShotAt: scene.time.now + 600,
       nextMeleeAt: 0,
     });
-    sprite.setScale(0.3);
-    scene.tweens.add({ targets: sprite, scaleX: 1, scaleY: 1, duration: 340, ease: 'Back.Out' });
+    // It stands up wearing their colour — the ring that raises it is theirs, not Silence's.
+    const fx = this.fx(owner);
+    fx.graspRing(x, y, 8, 60, SILENCE.void, 420, DEPTH_STALKER + 2);
+    fx.claws(x, y, 7, { speed: 150, size: 16, life: 480, depth: DEPTH_STALKER + 2, color: SILENCE.void });
+    fx.flash(x, y, 26, DEPTH_STALKER + 2, SILENCE.white);
     this.arena.showFloatingText(x, y - 32, '😁 CORRUPTED', '#ffffff');
     scene.cameras.main.shake(200, 0.005);
   }
@@ -2038,43 +2135,42 @@ export class SilenceKit {
    * the colour and cadence carry the impression, the numbers are its own.
    */
   private updateCorrupts(time: number, dt: number): void {
-    const scene = this.arena.scene;
     for (let i = this.corrupts.length - 1; i >= 0; i--) {
       const c = this.corrupts[i];
       const gone = time >= c.expiresAt || !c.target.active || c.target.hp <= 0;
       if (gone) {
-        const s = c.sprite;
-        scene.tweens.add({ targets: s, alpha: 0, duration: 400, onComplete: () => s.destroy() });
+        this.fx(c.owner).motes(c.x, c.y, 6, {
+          speed: 40, size: 6, life: 420, depth: DEPTH_STALKER, color: SILENCE.void, drift: 4,
+        });
         this.corrupts.splice(i, 1);
         continue;
       }
-      // Fades out over its last second.
-      c.sprite.setAlpha(Math.min(1, (c.expiresAt - time) / 1000));
 
-      const ang = Math.atan2(c.target.y - c.sprite.y, c.target.x - c.sprite.x);
-      const d = Phaser.Math.Distance.Between(c.sprite.x, c.sprite.y, c.target.x, c.target.y);
+      const ang = Math.atan2(c.target.y - c.y, c.target.x - c.x);
+      const d = Phaser.Math.Distance.Between(c.x, c.y, c.target.x, c.target.y);
       if (d > CORRUPT_MELEE_RANGE - 6) {
-        c.sprite.x += Math.cos(ang) * CORRUPT_SPEED * dt;
-        c.sprite.y += Math.sin(ang) * CORRUPT_SPEED * dt;
+        c.x += Math.cos(ang) * CORRUPT_SPEED * dt;
+        c.y += Math.sin(ang) * CORRUPT_SPEED * dt;
       }
-      c.sprite.setFlipX(Math.cos(ang) < 0);
-      c.sprite.setRotation(Math.sin(time / 320) * 0.06);
+      c.facing = ang;
 
       if (d <= CORRUPT_MELEE_RANGE && time >= c.nextMeleeAt) {
         c.nextMeleeAt = time + CORRUPT_MELEE_EVERY_MS;
         c.target.takeDamage(CORRUPT_MELEE_DMG);
         this.arena.spawnHitFlash(c.target.x, c.target.y, 0xffffff);
+        this.fx(c.owner).slash(c.x, c.y, ang, CORRUPT_MELEE_RANGE, 0.7, { scores: 2, duration: 190 });
       } else if (d > CORRUPT_MELEE_RANGE && time >= c.nextShotAt) {
         c.nextShotAt = time + CORRUPT_SHOT_EVERY_MS;
-        const shot = scene.add.image(c.sprite.x, c.sprite.y, 'silence-eye-shot')
-          .setDepth(DEPTH_BEAM).setScale(1.5).setTint(c.target.element.color);
         this.corruptShots.push({
-          sprite: shot,
+          x: c.x, y: c.y,
           vx: Math.cos(ang) * CORRUPT_SHOT_SPEED,
           vy: Math.sin(ang) * CORRUPT_SHOT_SPEED,
+          borrowed: c.borrowed,
           target: c.target,
           diesAt: time + 2400,
         });
+        // Muzzle flare in the copied element's own colour.
+        this.fx(c.owner).flash(c.x + Math.cos(ang) * 18, c.y + Math.sin(ang) * 18, 12, DEPTH_BEAM, c.borrowed);
       }
     }
   }
@@ -2082,19 +2178,17 @@ export class SilenceKit {
   private updateCorruptShots(time: number, dt: number): void {
     for (let i = this.corruptShots.length - 1; i >= 0; i--) {
       const s = this.corruptShots[i];
-      s.sprite.x += s.vx * dt;
-      s.sprite.y += s.vy * dt;
+      s.x += s.vx * dt;
+      s.y += s.vy * dt;
       let dead = time >= s.diesAt;
       if (!dead && s.target.active && s.target.hp > 0
-        && Phaser.Math.Distance.Between(s.sprite.x, s.sprite.y, s.target.x, s.target.y) <= 24) {
+        && Phaser.Math.Distance.Between(s.x, s.y, s.target.x, s.target.y) <= 24) {
         s.target.takeDamage(CORRUPT_SHOT_DMG);
         this.arena.spawnHitFlash(s.target.x, s.target.y, s.target.element.color);
+        this.pfx.rupture(s.x, s.y, 24, { color: s.borrowed, claws: 4, rings: 1, duration: 300, mark: false });
         dead = true;
       }
-      if (dead) {
-        s.sprite.destroy();
-        this.corruptShots.splice(i, 1);
-      }
+      if (dead) this.corruptShots.splice(i, 1);
     }
   }
 
@@ -2118,7 +2212,6 @@ export class SilenceKit {
     this.npcIsSilence = npcIsSilence;
     const dt = delta / 1000;
 
-    this.ensureFog();
     this.updateFacing();
     this.updateWeep();
     this.updateStealth('player', dt);
@@ -2154,6 +2247,487 @@ export class SilenceKit {
     this.updateCorruptShots(time, dt);
     this.updateNpcMirrorAI(time);
     this.updateHud();
+    // Everything the kit owns is repainted from scratch here, after the sim has moved it.
+    this.paintWorld(time);
+    this.updateAuras(delta);
+    this.updateAvatars(delta);
+  }
+
+  // ── Painting ───────────────────────────────────────────────────────
+  //
+  // Every world object this kit owns is plain data, drawn per frame into a handful of shared
+  // Graphics layers. That is what lets a watcher's eye track you, a grabber's arm sag under its
+  // own weight and a wall of teeth chew — none of which a static texture can do.
+
+  private paintWorld(time: number): void {
+    const t = time / 1000;
+    const ground = this.layer(DEPTH_GROUND_FX);
+    const world = this.layer(DEPTH_STALKER);
+    const air = this.layer(DEPTH_BEAM);
+    ground.clear();
+    world.clear();
+    air.clear();
+
+    this.paintFog(time);
+    this.paintMazeWalls(ground, t);
+    this.paintFeasts(ground, t);
+    this.paintGazeCones(ground, time);
+    this.paintStalkers(world, time, t);
+    this.paintGrabbers(world, air, time, t);
+    this.paintVultures(world, ground, time, t);
+    this.paintPuppetry(world, air, t);
+    this.paintMidgets(world, t);
+    this.paintBloodDecals(world, time);
+    this.paintProjectiles(air, t);
+    this.paintStrikers(world, air, t);
+    this.paintRunArm(air, time, t);
+    this.paintBlob(world, t);
+    this.paintFaceEyes(air, t);
+    this.paintFleshDecals(ground, t);
+    this.paintEyeScreen(t);
+  }
+
+  private paintFeasts(g: Phaser.GameObjects.Graphics, t: number): void {
+    const now = this.arena.scene.time.now;
+    for (const f of this.feasts) {
+      const col = this.col(f.owner);
+      const age = Phaser.Math.Clamp((now - f.bornAt) / 320, 0, 1);
+      const life = Phaser.Math.Clamp((f.endsAt - now) / 600, 0, 1);
+      const a = age * life;
+      // A gullet, not a disc: a dark throat with a ring of teeth grinding round it.
+      fogBank(g, f.x, f.y, FEAST_RADIUS * 0.85 * age, f.bornAt * 0.001, t, col(SILENCE.void), a * 0.7, 9);
+      g.fillStyle(col(SILENCE.meat), a * 0.3);
+      g.fillCircle(f.x, f.y, FEAST_RADIUS * 0.62 * age);
+      // The bite cycles — it is always in the middle of chewing on something.
+      const bite = 0.45 + 0.45 * Math.sin(t * 2.4 + f.bornAt);
+      toothRing(g, col, f.x, f.y, FEAST_RADIUS * age, 24, bite, a);
+      toothRing(g, col, f.x, f.y, FEAST_RADIUS * 0.6 * age, 16, 1 - bite, a * 0.8);
+      // Anyone standing in it has fingers coming up round their ankles.
+      for (const [foe, ms] of f.insideMs) {
+        if (!foe.active || f.triggered.has(foe)) continue;
+        const k = Phaser.Math.Clamp(ms / FEAST_REQUIRED_INSIDE_MS, 0, 1);
+        for (let i = 0; i < 6; i++) {
+          const ang = (i / 6) * Math.PI * 2 + t;
+          clawFingerLayered(g, col, foe.x + Math.cos(ang) * 18, foe.y + Math.sin(ang) * 10 + 8,
+            -Math.PI / 2 + Math.cos(ang) * 0.5, 10 + k * 18, 2.2,
+            SILENCE.pitch, SILENCE.bone, a * (0.4 + k * 0.6), 0.4, false);
+        }
+      }
+    }
+  }
+
+  /**
+   * Q+ The Labyrinth: a wall the blob has started on. The alpha fade underneath says it is
+   * dying; this says *how* — a mouth working its way through it, spitting out the pieces.
+   */
+  private paintMazeWalls(g: Phaser.GameObjects.Graphics, t: number): void {
+    const run = this.run;
+    if (!run || run.mazeWalls.length === 0) return;
+    const now = this.arena.scene.time.now;
+    for (const w of run.mazeWalls) {
+      if (w.dyingAt === 0) continue;
+      const k = Phaser.Math.Clamp(1 - (w.dyingAt - now) / MAZE_EAT_MS, 0, 1);
+      const r = w.rect;
+      const bite = 0.4 + 0.6 * Math.abs(Math.sin(t * 9));
+      toothRing(g, this.col(run.caster), r.x, r.y, Math.max(r.width, r.height) * 0.5 * (0.5 + k * 0.5),
+        12, bite, 1 - k * 0.4);
+      // Masonry coming away in lumps.
+      if (Math.random() < 0.25) {
+        this.fx(run.caster).shred(r.x, r.y, 2, {
+          color: SILENCE.plum, speed: 90, size: 4, life: 420, depth: DEPTH_HALL_FLOOR + 2,
+        });
+      }
+    }
+  }
+
+  private paintGazeCones(g: Phaser.GameObjects.Graphics, time: number): void {
+    const cone = (x: number, y: number, heading: number, col: SilenceColorFn): void => {
+      // A cone of attention rather than a flat wedge: banded, and brightest at its throat.
+      const pulse = 0.5 + 0.5 * Math.sin(time / 250);
+      for (let i = 3; i >= 1; i--) {
+        const r = SEEKER_CONE_LEN * (i / 3);
+        g.fillStyle(col(SILENCE.gore), 0.05 + 0.045 * (4 - i) * pulse);
+        g.beginPath();
+        g.moveTo(x, y);
+        g.arc(x, y, r, heading - SEEKER_CONE_HALF_RAD, heading + SEEKER_CONE_HALF_RAD);
+        g.closePath();
+        g.fillPath();
+      }
+      g.lineStyle(1.2, col(SILENCE.gore), 0.45 + 0.25 * pulse);
+      g.beginPath();
+      g.moveTo(x, y);
+      g.arc(x, y, SEEKER_CONE_LEN, heading - SEEKER_CONE_HALF_RAD, heading + SEEKER_CONE_HALF_RAD);
+      g.closePath();
+      g.strokePath();
+    };
+    for (const s of this.stalkers) if (s.kind === 'seeker') cone(s.x, s.y, s.heading, this.col(s.owner));
+    for (const v of this.vultures) if (!v.carry) cone(v.x, v.y, v.heading, this.col(v.owner));
+  }
+
+  private paintStalkers(g: Phaser.GameObjects.Graphics, time: number, t: number): void {
+    for (const s of this.stalkers) {
+      const maturity = Phaser.Math.Clamp((time - s.bornAt) / STALKER_MATURE_MS, 0, 1);
+      // A young watcher is only fully open to whoever planted it; everyone else sees a squint.
+      const ownerSees = s.owner === 'player' ? this.playerIsSilence : this.npcIsSilence;
+      const flash = time < s.hitFlashUntil;
+      SilenceFx.drawWatcher(g, flash ? () => SILENCE.white : this.col(s.owner),
+        s.x, s.y, maturity, s.kind === 'seeker', t + s.seed, 1, ownerSees);
+    }
+  }
+
+  private paintGrabbers(
+    world: Phaser.GameObjects.Graphics, air: Phaser.GameObjects.Graphics, time: number, t: number,
+  ): void {
+    for (const gr of this.grabbers) {
+      const col = this.col(gr.owner);
+      const pop = Phaser.Math.Clamp((time - gr.bornAt) / 300, 0, 1);
+      SilenceFx.drawGrabber(world, col, gr.x, gr.y, gr.seed, t, pop, gr.grab !== null);
+      const grab = gr.grab;
+      if (!grab || !grab.victim.active) continue;
+      // The arm, and how tight the hand is: a reaching grab is open, a dragging one is shut.
+      const closed = grab.phase === 'reaching'
+        ? Phaser.Math.Clamp(1 - (grab.phaseEnd - time) / 450, 0, 1) * 0.5
+        : 1;
+      SilenceFx.drawReachingArm(air, col, gr.x, gr.y, grab.victim.x, grab.victim.y, t, 1, closed);
+    }
+  }
+
+  private paintVultures(
+    world: Phaser.GameObjects.Graphics, ground: Phaser.GameObjects.Graphics, time: number, t: number,
+  ): void {
+    for (const v of this.vultures) {
+      const col = this.col(v.owner);
+      const fade = Phaser.Math.Clamp((v.expiresAt - time) / 1200, 0, 1);
+      // Wings first, behind the body: two big fans of clawed feathers on the downbeat.
+      const beat = Math.sin(t * (v.carry ? 13 : 7) + v.seed);
+      for (const side of [-1, 1]) {
+        const facing = v.carry ? -Math.PI / 2 : v.heading;
+        for (let i = 0; i < 5; i++) {
+          const a = facing + side * (0.5 + i * 0.3) + side * beat * 0.42;
+          clawFingerLayered(world, col, v.x + side * 6, v.y - 4, a,
+            30 - i * 3.4, 4 - i * 0.4, SILENCE.void, SILENCE.violet, fade * 0.95, side * 0.34, false);
+        }
+      }
+      // Hunched body, dead eyes, and the grin that is the whole point of the thing.
+      fogBank(world, v.x, v.y, 17, v.seed, t, col(SILENCE.void), fade, 6);
+      const look = v.carry ? 0 : Math.cos(v.heading) < 0 ? -0.9 : 0.9;
+      silenceEye(world, col, v.x - 5, v.y - 4, 0, 4.4, look, 1, SILENCE.sclera, fade);
+      silenceEye(world, col, v.x + 5, v.y - 4, 0, 4.4, look, 1, SILENCE.sclera, fade);
+      world.fillStyle(col(SILENCE.bone), fade);
+      for (let i = 0; i < 7; i++) {
+        const gx = v.x - 9 + i * 3;
+        const h = 4 + (i % 2) * 2.5;
+        world.fillTriangle(gx - 1.4, v.y + 4, gx + 1.4, v.y + 4, gx, v.y + 4 + h);
+      }
+      // Talons hanging under it, and a shadow on the floor so the height reads.
+      for (const side of [-1, 1]) {
+        clawFingerLayered(world, col, v.x + side * 5, v.y + 8, Math.PI / 2 + side * 0.3,
+          13, 2, SILENCE.void, SILENCE.violet, fade * 0.9, side * 0.5);
+      }
+      ground.fillStyle(col(SILENCE.void), fade * 0.3);
+      ground.fillEllipse(v.x, v.y + 34, 30, 9);
+    }
+  }
+
+  private paintPuppetry(
+    world: Phaser.GameObjects.Graphics, air: Phaser.GameObjects.Graphics, t: number,
+  ): void {
+    const now = this.arena.scene.time.now;
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const d = this.dolls[owner];
+      if (d) {
+        const col = now < d.hitFlashUntil ? () => SILENCE.white : this.col(owner);
+        const pop = Phaser.Math.Clamp((now - d.bornAt) / 320, 0, 1);
+        SilenceFx.drawDoll(world, col, d.x, d.y, Phaser.Math.Clamp(1 - d.damageTaken / DOLL_HP, 0, 1), t, pop);
+        // The thread back to whoever it was stitched for, so the relay is never a mystery.
+        if (d.target.active && d.target.hp > 0) {
+          air.lineStyle(1.2, this.col(owner)(SILENCE.twine), 0.35 + 0.2 * Math.sin(t * 3));
+          air.lineBetween(d.x, d.y - 8, d.target.x, d.target.y);
+        }
+      }
+      const a = this.awakened[owner];
+      if (a && a.host.active) {
+        SilenceFx.drawAwakened(world, this.col(owner), a.host.x, a.host.y, a.host.facingAngle, t,
+          a.host.forceInvisible ? 0 : a.host.alpha);
+      }
+    }
+    const aimed = this.aimedKinIndex();
+    for (let i = 0; i < this.kin.length; i++) {
+      const k = this.kin[i];
+      const pop = Phaser.Math.Clamp((now - k.bornAt) / 380, 0, 1);
+      SilenceFx.drawKin(world, this.col(k.owner), k.x, k.y, k.facing, t, pop, i === aimed);
+    }
+    for (const c of this.corrupts) {
+      const pop = Phaser.Math.Clamp((now - c.bornAt) / 340, 0, 1);
+      // Fades out over its last second.
+      const fade = Math.min(pop, (c.expiresAt - now) / 1000);
+      SilenceFx.drawCorrupt(world, this.col(c.owner), c.x, c.y, c.borrowed, t, Phaser.Math.Clamp(fade, 0, 1));
+    }
+  }
+
+  private paintMidgets(g: Phaser.GameObjects.Graphics, t: number): void {
+    for (const pack of this.midgets.values()) {
+      for (const m of pack) SilenceFx.drawMidget(g, this.pcol, m.x, m.y, m.angle, t, 1);
+    }
+  }
+
+  private paintBloodDecals(g: Phaser.GameObjects.Graphics, time: number): void {
+    for (const b of this.bloodDecals) {
+      if (!b.target.active) continue;
+      // Drawn onto the victim, so it travels with them — it is on them, not on the floor.
+      const a = Math.min(1, (b.until - time) / 3000);
+      bloodSplat(g, this.pcol, b.target.x + b.ox, b.target.y + b.oy, b.r, b.seed, a);
+    }
+  }
+
+  private paintProjectiles(g: Phaser.GameObjects.Graphics, t: number): void {
+    for (const s of this.spits) {
+      SilenceFx.drawSpit(g, this.col(s.owner), s.x, s.y, Math.atan2(s.vy, s.vx), t, 1);
+    }
+    for (const s of this.eyeShots) {
+      const col = this.col(s.owner);
+      const ang = Math.atan2(s.vy, s.vx);
+      // A shot eye: the eyeball itself, flying, with the nerve streaming behind it.
+      g.lineStyle(2, col(SILENCE.meat), 0.7);
+      g.lineBetween(s.x - Math.cos(ang) * 16, s.y - Math.sin(ang) * 16, s.x, s.y);
+      silenceEye(g, col, s.x, s.y, ang, 5.5, 0.9, 1, SILENCE.gore, 1);
+    }
+    for (const s of this.corruptShots) {
+      // The clone throws the copied element's colour, wrapped in Silence's dark.
+      g.fillStyle(s.borrowed, 0.28);
+      g.fillCircle(s.x, s.y, 11);
+      g.fillStyle(this.pcol(SILENCE.void), 0.9);
+      g.fillCircle(s.x, s.y, 6);
+      g.fillStyle(s.borrowed, 1);
+      g.fillCircle(s.x, s.y, 3.4);
+    }
+  }
+
+  private paintStrikers(
+    world: Phaser.GameObjects.Graphics, air: Phaser.GameObjects.Graphics, t: number,
+  ): void {
+    const now = this.arena.scene.time.now;
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const st = this.strikers[owner];
+      if (!st) continue;
+      const caster = this.fighterOf(owner);
+      const col = this.col(owner);
+      if (caster.active) {
+        SilenceFx.drawStrikerAura(world, col, caster.x, caster.y, st.storedDamage, t,
+          caster.forceInvisible ? 0 : caster.alpha);
+      }
+      for (const e of st.eyes) SilenceFx.drawBoggleEye(air, col, caster.x, caster.y, e.x, e.y, t, 1);
+
+      const sg = st.sanguine;
+      if (!sg) continue;
+      // The kill box: a marked-out rectangle that fills with dread, then empties as it is used.
+      const charging = now < sg.strikeAt;
+      const k = charging
+        ? Phaser.Math.Clamp((now - sg.castAt) / SANGUINE_CHARGE_MS, 0, 1)
+        : sg.slashesLeft / SANGUINE_SLASHES;
+      const cos = Math.cos(sg.ang), sin = Math.sin(sg.ang);
+      const corner = (lx: number, ly: number): { x: number; y: number } =>
+        ({ x: sg.x + lx * cos - ly * sin, y: sg.y + lx * sin + ly * cos });
+      const hw = SANGUINE_LEN / 2, hh = SANGUINE_WID / 2;
+      const pts = [corner(-hw, -hh), corner(hw, -hh), corner(hw, hh), corner(-hw, hh)];
+      world.fillStyle(col(SILENCE.blood), (charging ? 0.1 + k * 0.22 : 0.18) * (charging ? 1 : k));
+      world.beginPath();
+      world.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < 4; i++) world.lineTo(pts[i].x, pts[i].y);
+      world.closePath();
+      world.fillPath();
+      world.lineStyle(2, col(SILENCE.gore), charging ? 0.5 + 0.4 * Math.sin(t * 14) : 0.6 * k);
+      world.strokePath();
+      // Fingers standing up along the long edges while it charges — the box is a mouth.
+      if (!charging) continue;
+      for (let i = 0; i <= 8; i++) {
+        for (const side of [-1, 1]) {
+          const p = corner(-hw + (i / 8) * SANGUINE_LEN, side * hh);
+          clawFingerLayered(world, col, p.x, p.y, sg.ang + side * Math.PI / 2 + Math.PI,
+            26 * k, 3, SILENCE.pitch, SILENCE.gore, 0.85 * k, 0.4, false);
+        }
+      }
+    }
+  }
+
+  private paintRunArm(g: Phaser.GameObjects.Graphics, time: number, t: number): void {
+    const run = this.run;
+    if (!run || run.phase !== 'arm') return;
+    const caster = this.fighterOf(run.caster);
+    const k = Phaser.Math.Clamp(1 - (run.armEnd - time) / RUN_ARM_MS, 0, 1);
+    const hx = caster.x + (run.armTx - caster.x) * k;
+    const hy = caster.y + (run.armTy - caster.y) * k;
+    SilenceFx.drawReachingArm(g, this.col(run.caster), caster.x, caster.y, hx, hy, t, 1, 0.1);
+  }
+
+  /**
+   * The blob, painted over the mass the fighter texture provides. It is worth the extra layer:
+   * the hands on its leading edge grope forward, its eyes track the victim and its maw chews,
+   * none of which a stamped texture on a moving sprite can do — and this is the one thing in
+   * the element the victim spends fourteen unbroken seconds looking at.
+   */
+  private paintBlob(g: Phaser.GameObjects.Graphics, t: number): void {
+    const run = this.run;
+    if (!run || run.phase !== 'chase') return;
+    const caster = this.fighterOf(run.caster);
+    if (!caster.active) return;
+    SilenceFx.drawBlob(g, this.col(run.caster), caster.x, caster.y, 48 * caster.scaleX, t, 1);
+  }
+
+  /**
+   * The facing pip every fighter wears on a Silence player's screen. Backstabs are the whole
+   * click ability, so knowing which way each body is pointed has to be readable at a glance —
+   * and an eye that looks where its owner is looking says it better than an arrow would.
+   */
+  private paintFaceEyes(g: Phaser.GameObjects.Graphics, t: number): void {
+    for (const f of this.faceEyes) {
+      if (!f.active || f.alpha <= 0.01) continue;
+      const r = 26 * (f.sizeMult || 1);
+      silenceEye(g, this.pcol,
+        f.x + Math.cos(f.facingAngle) * r, f.y + Math.sin(f.facingAngle) * r,
+        f.facingAngle, 5, 0.9,
+        // Blinks on a per-fighter clock derived from its position — cheap, and never in unison.
+        Math.sin(t * 1.3 + f.x * 0.01) > 0.96 ? 0.1 : 1,
+        f === this.arena.player ? SILENCE.amethyst : SILENCE.rust, 0.9);
+    }
+  }
+
+  private paintFleshDecals(g: Phaser.GameObjects.Graphics, t: number): void {
+    for (const d of this.fleshDecals) {
+      if (d.eye) {
+        // Set into puckered flesh, and it opens and closes on its own.
+        g.fillStyle(this.pcol(SILENCE.meat), 0.75);
+        g.fillCircle(d.x, d.y, 13 * d.s);
+        silenceEye(g, this.pcol, d.x, d.y, d.a, 7 * d.s, Math.sin(t * 0.9 + d.x) * 0.9,
+          Phaser.Math.Clamp(Math.sin(t * 0.7 + d.y * 0.05) * 2, 0, 1), SILENCE.gore, 0.9);
+      } else {
+        toothRing(g, this.pcol, d.x, d.y, 13 * d.s, 10, 0.4 + 0.4 * Math.sin(t * 1.6 + d.x * 0.05), 0.85);
+      }
+    }
+  }
+
+  private paintEyeScreen(t: number): void {
+    if (this.eyeScreenEyes.length === 0 || !this.eyeScreenRect?.visible) {
+      this.layers.get(DEPTH_EYE_SCREEN + 1)?.clear();
+      return;
+    }
+    const g = this.layer(DEPTH_EYE_SCREEN + 1);
+    g.clear();
+    g.setScrollFactor(0);
+    for (const e of this.eyeScreenEyes) {
+      // Huge, bloodshot, and none of them blink together.
+      const r = 26 * e.s;
+      g.fillStyle(this.pcol(SILENCE.sclera), 0.95);
+      g.fillEllipse(e.x, e.y, r * 2.1, r * 1.3);
+      g.lineStyle(1.2, this.pcol(SILENCE.rust), 0.7);
+      for (let i = 0; i < 7; i++) {
+        const a = e.a + (i / 7) * Math.PI * 2;
+        g.lineBetween(e.x + Math.cos(a) * r * 0.4, e.y + Math.sin(a) * r * 0.25,
+          e.x + Math.cos(a) * r, e.y + Math.sin(a) * r * 0.62);
+      }
+      silenceEye(g, this.pcol, e.x, e.y, e.a, r * 0.62,
+        Math.sin(t * 2.2 + e.x * 0.02) * 0.9,
+        Math.sin(t * 1.1 + e.y * 0.03) > 0.93 ? 0.15 : 1, SILENCE.rust, 1);
+    }
+  }
+
+  // ── Auras + rig ────────────────────────────────────────────────────
+
+  /**
+   * The persistent tells: what the fog is doing to each Silence user, and what has been done
+   * to whoever is on the receiving end. Every one of them is keyed and dropped the frame its
+   * condition lapses, so several can stack into one silhouette without leaking.
+   */
+  private updateAuras(delta: number): void {
+    const now = Date.now();
+    const live = new Set<string>();
+    const run = (id: string, style: SilenceAuraStyle, f: Fighter, tint: SilenceColorFn,
+      radius: number, depth: number, intensity: number, angle: number): void => {
+      live.add(id);
+      const a = this.aura(id, style, tint, radius, depth);
+      a.setIntensity(intensity);
+      a.setAngle(angle);
+      a.update(delta, f.x, f.y, f.forceInvisible ? 0 : f.alpha);
+    };
+
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const isSilence = owner === 'player' ? this.playerIsSilence : this.npcIsSilence;
+      const f = this.fighterOf(owner);
+      if (!isSilence || !f?.active || f.hp <= 0) continue;
+      const tint = this.col(owner);
+      // Stealth pools at your feet as it charges. Depth 2 — under the terror eyes, so a
+      // mastered Silence player in the fog stacks into one silhouette instead of two.
+      run(`${owner}-stealth`, 'stealth', f, tint, 26, 2, this.stealth[owner] / STEALTH_MAX, 0);
+      if (this.hasTerrorBar(owner)) {
+        run(`${owner}-terror`, 'terror', f, tint, 30, 3, this.terror[owner] / TERROR_MAX, 0);
+      }
+      const st = this.strikers[owner];
+      if (st && now < st.allureUntil + 0) {
+        run(`${owner}-allure`, 'allure', f, tint, 30, 3, 1, f.facingAngle);
+      }
+    }
+
+    // Victim-side tells. These ride on whoever is suffering, whichever side put it there.
+    const victims: Fighter[] = [this.arena.player, this.arena.npc, ...this.arena.enemies];
+    for (const f of victims) {
+      if (!f?.active || f.hp <= 0) continue;
+      const id = f === this.arena.player ? 'p' : f === this.arena.npc ? 'n' : `e${f.x.toFixed(0)}`;
+      const tint = this.pcol;
+      if (now < f.silencedUntil) {
+        run(`${id}-silenced`, 'silenced', f, tint, 26, 7, 1, f.facingAngle);
+      }
+      if (now < f.hallucinatingUntil) {
+        run(`${id}-halluc`, 'halluc', f, tint, 24, 7, 1, 0);
+      }
+      const grabbed = this.grabbers.find((g) => g.grab?.victim === f && g.grab.phase === 'dragging');
+      if (grabbed) {
+        run(`${id}-grabbed`, 'grabbed', f, tint, 24, 7, 1,
+          Math.atan2(grabbed.y - f.y, grabbed.x - f.x));
+      }
+      const possessed = (['player', 'npc'] as Owner[]).some((o) => this.awakened[o]?.host === f);
+      if (possessed) run(`${id}-possessed`, 'possessed', f, tint, 22, 7, 1, f.facingAngle);
+    }
+
+    for (const id of [...this.auras.keys()]) if (!live.has(id)) this.dropAura(id);
+  }
+
+  /** Drive the rig for whichever sides are playing Silence. Built lazily; torn down when they aren't. */
+  private updateAvatars(delta: number): void {
+    const { player, npc, scene } = this.arena;
+
+    if (this.playerIsSilence && player?.active && player.hp > 0) {
+      if (!this.playerAvatar) this.playerAvatar = new SilenceAvatar(scene, this.pcol, 'player');
+      const av = this.playerAvatar;
+      av.setFacing(player.facingAngle);
+      av.setMastered(this.arena.masteryActive);
+      av.setStealth(this.stealth.player / STEALTH_MAX);
+      av.setTerror(this.hasTerrorBar('player') ? this.terror.player / TERROR_MAX : 0);
+      // A striker is visibly bigger and further gone; a blob or a possession is not the rig at all.
+      av.setIntensity(this.strikers.player ? 1.4 : 1);
+      av.setHold(this.isInvisible('player') ? 'brace' : null, player.facingAngle);
+      const hideRig = (this.run?.caster === 'player' && this.run.phase === 'chase')
+        || this.awakened.npc?.host === player;
+      av.update(delta, player.x, player.y, hideRig ? 0 : player.forceInvisible ? 0 : player.alpha);
+    } else if (this.playerAvatar) {
+      this.playerAvatar.destroy();
+      this.playerAvatar = null;
+    }
+
+    if (this.npcIsSilence && npc?.active && npc.hp > 0) {
+      if (!this.npcAvatar) this.npcAvatar = new SilenceAvatar(scene, this.ncol, 'npc');
+      const av = this.npcAvatar;
+      av.setFacing(npc.facingAngle);
+      av.setStealth(this.stealth.npc / STEALTH_MAX);
+      av.setTerror(this.hasTerrorBar('npc') ? this.terror.npc / TERROR_MAX : 0);
+      av.setIntensity(this.strikers.npc ? 1.4 : 1);
+      av.setHold(this.isInvisible('npc') ? 'brace' : null, npc.facingAngle);
+      const hideRig = (this.run?.caster === 'npc' && this.run.phase === 'chase')
+        || this.awakened.player?.host === npc;
+      av.update(delta, npc.x, npc.y, hideRig ? 0 : npc.forceInvisible ? 0 : npc.alpha);
+    } else if (this.npcAvatar) {
+      this.npcAvatar.destroy();
+      this.npcAvatar = null;
+    }
   }
 
   // ── Fog & stealth ──────────────────────────────────────────────────
@@ -2174,26 +2748,64 @@ export class SilenceKit {
     return x < FOG_WIDTH || x > W - FOG_WIDTH || y < FOG_WIDTH || y > H - FOG_WIDTH;
   }
 
-  private ensureFog(): void {
-    if (!this.hasSilenceUser()) return;
-    if (this.fogGfx) return;
-    const scene = this.arena.scene;
+  /**
+   * The border fog: the element's home, and the one thing on screen for the whole match. It is
+   * repainted every frame rather than stamped once, because a static frame of flat black reads
+   * as a letterbox — and this is supposed to read as something you can hide *inside*.
+   *
+   * Four dense bands at the edge fading inward, boiling lobes crawling along the inner lip, and
+   * fingers that occasionally feel their way out of it and withdraw.
+   */
+  private paintFog(time: number): void {
+    if (!this.hasSilenceUser()) {
+      this.layers.get(DEPTH_FOG)?.clear();
+      return;
+    }
+    const g = this.layer(DEPTH_FOG);
+    g.clear();
     const W = this.arena.width;
     const H = this.arena.height;
-    const gfx = scene.add.graphics().setDepth(DEPTH_FOG);
-    // Layered translucent frames: dense at the border, fading inward.
+    const t = time / 1000;
+    const breathe = 0.9 + 0.1 * Math.sin(t * 0.7);
+
     const bands = 5;
     const w = FOG_WIDTH / bands + 1;
     for (let i = 0; i < bands; i++) {
       const inset = (FOG_WIDTH / bands) * i;
-      gfx.fillStyle(0x05000a, 0.55 * (1 - i / bands));
-      gfx.fillRect(0, inset, W, w);                // top
-      gfx.fillRect(0, H - inset - w, W, w);        // bottom
-      gfx.fillRect(inset, 0, w, H);                // left
-      gfx.fillRect(W - inset - w, 0, w, H);        // right
+      g.fillStyle(this.pcol(SILENCE.void), 0.55 * (1 - i / bands) * breathe);
+      g.fillRect(0, inset, W, w);
+      g.fillRect(0, H - inset - w, W, w);
+      g.fillRect(inset, 0, w, H);
+      g.fillRect(W - inset - w, 0, w, H);
     }
-    this.fogGfx = gfx;
-    scene.tweens.add({ targets: gfx, alpha: { from: 0.85, to: 1 }, duration: 2200, yoyo: true, repeat: -1 });
+
+    // The inner lip, boiling. Lobes drift along each edge on their own phase so the four
+    // sides never look like the same animation rotated.
+    const perEdge = 9;
+    for (let e = 0; e < 4; e++) {
+      for (let i = 0; i < perEdge; i++) {
+        const u = ((i / perEdge) + t * 0.03 * (e % 2 === 0 ? 1 : -1)) % 1;
+        const bulge = FOG_WIDTH * (0.85 + 0.3 * Math.sin(t * 0.9 + e * 2.1 + i * 1.7));
+        const px = e === 0 || e === 1 ? u * W : e === 2 ? bulge * 0.4 : W - bulge * 0.4;
+        const py = e === 0 ? bulge * 0.4 : e === 1 ? H - bulge * 0.4 : u * H;
+        fogBank(g, px, py, FOG_WIDTH * 0.5, e * 1.9 + i, t, this.pcol(SILENCE.void), 0.34, 5);
+      }
+    }
+
+    // Every so often something in there reaches out, thinks better of it, and pulls back.
+    for (let e = 0; e < 4; e++) {
+      const phase = (t * 0.22 + e * 0.25) % 1;
+      if (phase > 0.45) continue;
+      const reach = Math.sin((phase / 0.45) * Math.PI);
+      const u = (Math.sin(e * 7.3 + Math.floor(t * 0.22 + e * 0.25) * 2.7) * 0.5 + 0.5);
+      const inward = e === 0 ? Math.PI / 2 : e === 1 ? -Math.PI / 2 : e === 2 ? 0 : Math.PI;
+      const px = e === 0 || e === 1 ? u * W : e === 2 ? FOG_WIDTH * 0.8 : W - FOG_WIDTH * 0.8;
+      const py = e === 0 ? FOG_WIDTH * 0.8 : e === 1 ? H - FOG_WIDTH * 0.8 : u * H;
+      for (let f = 0; f < 3; f++) {
+        clawFingerLayered(g, this.pcol, px, py, inward + (f - 1) * 0.32,
+          52 * reach, 4, SILENCE.void, SILENCE.violet, 0.7 * reach, 0.45);
+      }
+    }
   }
 
   private updateStealth(owner: Owner, dt: number): void {
@@ -2256,26 +2868,13 @@ export class SilenceKit {
     }
   }
 
+  /** Rebuild the list of fighters wearing a facing pip. `paintFaceEyes` draws them. */
   private updateFaceEyes(): void {
-    const wanted = new Set<Fighter>();
-    if (this.playerIsSilence) {
-      const list: Fighter[] = [this.arena.player, this.arena.npc, ...this.arena.enemies];
-      for (const f of list) {
-        if (!f || !f.active || f.hp <= 0) continue;
-        wanted.add(f);
-        let eye = this.faceEyes.get(f);
-        if (!eye) {
-          eye = this.arena.scene.add.image(f.x, f.y, 'silence-face-eye').setDepth(DEPTH_EYE);
-          this.faceEyes.set(f, eye);
-        }
-        const r = 26 * (f.sizeMult || 1);
-        eye.setPosition(f.x + Math.cos(f.facingAngle) * r, f.y + Math.sin(f.facingAngle) * r);
-        eye.setRotation(f.facingAngle);
-        eye.setVisible(f.alpha > 0.01); // no eye floating on an invisible fighter
-      }
-    }
-    for (const [f, eye] of this.faceEyes) {
-      if (!wanted.has(f)) { eye.destroy(); this.faceEyes.delete(f); }
+    this.faceEyes.length = 0;
+    if (!this.playerIsSilence) return;
+    for (const f of [this.arena.player, this.arena.npc, ...this.arena.enemies]) {
+      if (!f || !f.active || f.hp <= 0) continue;
+      this.faceEyes.push(f);
     }
   }
 
@@ -2293,32 +2892,17 @@ export class SilenceKit {
           s.heading = Math.random() * Math.PI * 2;
         }
         if (time >= s.pinnedUntil) {
-          s.sprite.x = Phaser.Math.Clamp(s.sprite.x + Math.cos(s.heading) * SEEKER_SPEED * dt, 30, this.arena.width - 30);
-          s.sprite.y = Phaser.Math.Clamp(s.sprite.y + Math.sin(s.heading) * SEEKER_SPEED * dt, 30, this.arena.height - 30);
+          s.x = Phaser.Math.Clamp(s.x + Math.cos(s.heading) * SEEKER_SPEED * dt, 30, this.arena.width - 30);
+          s.y = Phaser.Math.Clamp(s.y + Math.sin(s.heading) * SEEKER_SPEED * dt, 30, this.arena.height - 30);
         }
-        s.sprite.setRotation(Math.sin(time / 180) * 0.15); // wing flap wobble
-        this.drawGazeCone(s.coneGfx!, s.sprite.x, s.sprite.y, s.heading, time);
-        this.checkGazeCone(s.sprite.x, s.sprite.y, s.heading, s.owner);
+        this.checkGazeCone(s.x, s.y, s.heading, s.owner);
       }
 
-      // The eye is only ever drawn on the owning silence user's screen.
-      const ownerViews = s.owner === 'player' && this.playerIsSilence;
-      s.eye.setVisible(ownerViews);
-      if (ownerViews) {
-        s.eye.setPosition(s.sprite.x, s.sprite.y);
-        // Eye reddens as the stalker matures.
-        const red = Math.round(120 + 135 * maturity);
-        s.eye.setTint(Phaser.Display.Color.GetColor(red, Math.round(60 * (1 - maturity)), Math.round(60 * (1 - maturity))));
-      }
-
-      // Red pulse on everyone's screen.
+      // The reminder pulse on everyone's screen: the eye snaps wide open, stares, and shuts.
       if (time >= s.nextPulseAt) {
         s.nextPulseAt = time + STALKER_PULSE_MS;
-        const ring = this.arena.scene.add.circle(s.sprite.x, s.sprite.y, STALKER_RADIUS, 0xff2233, 0.35)
-          .setDepth(DEPTH_EYE).setStrokeStyle(2, 0xff2233, 0.8);
-        this.arena.scene.tweens.add({
-          targets: ring, scaleX: 2.2, scaleY: 2.2, alpha: 0, duration: 700, onComplete: () => ring.destroy(),
-        });
+        this.fx(s.owner).watchPulse(s.x, s.y, 14 + maturity * 8,
+          maturity > 0.7 ? SILENCE.gore : SILENCE.rust, DEPTH_EYE, 900);
       }
 
       // Projectile hits (enemy projectiles for player stalkers and vice versa).
@@ -2326,7 +2910,7 @@ export class SilenceKit {
       const wantFromPlayer = s.owner === 'npc';
       for (const go of this.arena.projectiles.getChildren() as Projectile[]) {
         if (!go.active || go.isFromPlayer !== wantFromPlayer) continue;
-        if (Phaser.Math.Distance.Between(go.x, go.y, s.sprite.x, s.sprite.y) <= STALKER_RADIUS + 10) {
+        if (Phaser.Math.Distance.Between(go.x, go.y, s.x, s.y) <= STALKER_RADIUS + 10) {
           go.setActive(false).setVisible(false);
           (go.body as Phaser.Physics.Arcade.Body).stop();
           this.damageStalker(i);
@@ -2341,9 +2925,11 @@ export class SilenceKit {
     const s = this.stalkers[index];
     s.hitsLeft--;
     if (s.hitsLeft > 0) {
-      s.sprite.setTintFill(0xffffff);
-      this.arena.scene.time.delayedCall(90, () => { if (s.sprite.active) s.sprite.clearTint(); });
-      this.arena.showFloatingText(s.sprite.x, s.sprite.y - 18, `👁 ${s.hitsLeft} left`, '#aa88bb');
+      s.hitFlashUntil = this.arena.scene.time.now + 90;
+      this.fx(s.owner).claws(s.x, s.y, 3, {
+        speed: 130, size: 10, life: 300, depth: DEPTH_EYE, color: SILENCE.pitch,
+      });
+      this.arena.showFloatingText(s.x, s.y - 18, `👁 ${s.hitsLeft} left`, '#aa88bb');
       return;
     }
     this.killStalker(index);
@@ -2352,28 +2938,15 @@ export class SilenceKit {
   private killStalker(index: number): void {
     const s = this.stalkers[index];
     this.stalkers.splice(index, 1);
-    const burst = this.arena.scene.add.circle(s.sprite.x, s.sprite.y, STALKER_RADIUS, 0x110016, 0.8).setDepth(DEPTH_EYE);
-    this.arena.scene.tweens.add({ targets: burst, scaleX: 2, scaleY: 2, alpha: 0, duration: 300, onComplete: () => burst.destroy() });
-    this.arena.showFloatingText(s.sprite.x, s.sprite.y - 18, '👁 destroyed', '#aa88bb');
-    s.sprite.destroy();
-    s.eye.destroy();
-    s.coneGfx?.destroy();
+    // The eye bursts and the fog that was holding it together comes apart.
+    const fx = this.fx(s.owner);
+    fx.flash(s.x, s.y, 14, DEPTH_EYE, SILENCE.sclera);
+    fx.claws(s.x, s.y, 6, { speed: 170, size: 12, life: 400, depth: DEPTH_EYE, color: SILENCE.pitch });
+    fx.motes(s.x, s.y, 6, { speed: 90, size: 5, life: 520, depth: DEPTH_STALKER, color: SILENCE.void });
+    this.arena.showFloatingText(s.x, s.y - 18, '👁 destroyed', '#aa88bb');
   }
 
   // ── Gaze cones (seekers + vultures) ────────────────────────────────
-
-  private drawGazeCone(gfx: Phaser.GameObjects.Graphics, x: number, y: number, heading: number, time: number): void {
-    gfx.clear();
-    const pulse = 0.16 + Math.sin(time / 250) * 0.05;
-    gfx.fillStyle(0xff1122, pulse);
-    gfx.lineStyle(1, 0xff2233, 0.5);
-    gfx.beginPath();
-    gfx.moveTo(x, y);
-    gfx.arc(x, y, SEEKER_CONE_LEN, heading - SEEKER_CONE_HALF_RAD, heading + SEEKER_CONE_HALF_RAD);
-    gfx.closePath();
-    gfx.fillPath();
-    gfx.strokePath();
-  }
 
   private coneContains(cx: number, cy: number, heading: number, f: Fighter): boolean {
     const d = Phaser.Math.Distance.Between(cx, cy, f.x, f.y);
@@ -2410,13 +2983,12 @@ export class SilenceKit {
       const r = this.rituals[i];
       if (time < r.strikeAt) continue;
       this.rituals.splice(i, 1);
-      r.gfx.destroy();
       this.strikeRitual(r);
     }
   }
 
   private strikeRitual(r: RitualCircle): void {
-    const scene = this.arena.scene;
+    const fx = this.fx(r.owner);
 
     // Mastery — Puppetmaster: a ritual laid over your own effigy spares the doll and
     // wakes what is wearing the enemy instead. Nothing else in the circle resolves —
@@ -2424,20 +2996,19 @@ export class SilenceKit {
     // same ritual would land 25 damage the caster's screen never showed.
     const ownDoll = this.dolls[r.owner];
     if (ownDoll && !this.awakened[r.owner]
-      && Phaser.Math.Distance.Between(ownDoll.sprite.x, ownDoll.sprite.y, r.x, r.y) <= RITUAL_RADIUS) {
-      const beamUp = scene.add.rectangle(r.x, r.y / 2, 30, r.y, 0xeeddff, 0.8).setDepth(DEPTH_BEAM);
-      scene.tweens.add({ targets: beamUp, alpha: 0, duration: 420, onComplete: () => beamUp.destroy() });
+      && Phaser.Math.Distance.Between(ownDoll.x, ownDoll.y, r.x, r.y) <= RITUAL_RADIUS) {
+      // A pale column instead of a red one — this ritual gives rather than takes.
+      fx.beam(r.x, r.y, RITUAL_RADIUS * 0.5, { color: SILENCE.pale, duration: 540 });
       // The awakening itself is only ever begun by the machine doing the possessing;
       // the other side gets an explicit 'awaken' message so both agree on the moment.
       if (r.owner === 'player') this.beginAwakened('player');
       return;
     }
 
-    // Red beam from above.
-    const beam = scene.add.rectangle(r.x, r.y / 2, 26, r.y, 0xff1133, 0.75).setDepth(DEPTH_BEAM);
-    const flash = scene.add.circle(r.x, r.y, RITUAL_RADIUS, 0xff2244, 0.4).setDepth(DEPTH_GROUND_FX);
-    scene.tweens.add({ targets: beam, alpha: 0, duration: 350, onComplete: () => beam.destroy() });
-    scene.tweens.add({ targets: flash, alpha: 0, scaleX: 1.3, scaleY: 1.3, duration: 400, onComplete: () => flash.destroy() });
+    // The column comes down as a hand and lands as a rupture.
+    fx.beam(r.x, r.y, RITUAL_RADIUS * 0.55);
+    fx.rupture(r.x, r.y, RITUAL_RADIUS, { bloody: true, claws: 10, rings: 2, duration: 480 });
+    this.arena.scene.cameras.main.shake(220, 0.005);
 
     const dmg = Math.round(RITUAL_DMG * (1 + STALKER_DMG_BONUS * this.stalkersAlive(r.owner)));
     for (const foe of this.foesOf(r.owner)) {
@@ -2456,12 +3027,9 @@ export class SilenceKit {
       const s = this.stalkers[i];
       if (s.owner !== r.owner) continue;
       if (now - s.bornAt < STALKER_MATURE_MS) continue;
-      if (Phaser.Math.Distance.Between(s.sprite.x, s.sprite.y, r.x, r.y) > RITUAL_RADIUS) continue;
-      if (s.kind === 'seeker') this.spawnVulture(s.sprite.x, s.sprite.y, r.owner);
-      else this.spawnGrabber(s.sprite.x, s.sprite.y, r.owner);
-      s.sprite.destroy();
-      s.eye.destroy();
-      s.coneGfx?.destroy();
+      if (Phaser.Math.Distance.Between(s.x, s.y, r.x, r.y) > RITUAL_RADIUS) continue;
+      if (s.kind === 'seeker') this.spawnVulture(s.x, s.y, r.owner);
+      else this.spawnGrabber(s.x, s.y, r.owner);
       this.stalkers.splice(i, 1);
       break;
     }
@@ -2471,18 +3039,21 @@ export class SilenceKit {
 
   private spawnGrabber(x: number, y: number, owner: Owner): void {
     const scene = this.arena.scene;
-    const sprite = scene.add.image(x, y, 'silence-grabber').setDepth(DEPTH_STALKER);
-    const armGfx = scene.add.graphics().setDepth(DEPTH_EYE);
-    const hand = scene.add.image(x, y, 'silence-hand').setDepth(DEPTH_EYE).setVisible(false);
     this.grabbers.push({
-      sprite, armGfx, hand, owner,
+      x, y, owner,
+      seed: Math.random() * Math.PI * 2,
+      bornAt: scene.time.now,
       expiresAt: scene.time.now + GRABBER_LIFETIME_MS,
       nextGrabAt: scene.time.now + GRABBER_FIRST_GRAB_MS,
       grab: null,
     });
-    sprite.setScale(0.6);
-    scene.tweens.add({ targets: sprite, scaleX: 2.3, scaleY: 2.3, yoyo: true, duration: 300 });
-    scene.tweens.add({ targets: sprite, scaleX: 2, scaleY: 2, duration: 200, delay: 300 });
+    // It swells up out of the watcher — every eye it has snapping open at once.
+    const fx = this.fx(owner);
+    fx.rupture(x, y, 70, { claws: 9, rings: 2, duration: 520, mark: false });
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2;
+      fx.watchPulse(x + Math.cos(a) * 12, y + Math.sin(a) * 12, 6, SILENCE.gore, DEPTH_EYE, 700);
+    }
     this.arena.showFloatingText(x, y - 30, 'IT GRABS NOW', '#ff2244');
     scene.cameras.main.shake(250, 0.004);
     if (owner === 'player') this.arena.recordMasteryStat('grabbers', 1);
@@ -2494,13 +3065,12 @@ export class SilenceKit {
       const g = this.grabbers[i];
 
       if (time >= g.expiresAt && !g.grab) {
-        g.sprite.destroy(); g.armGfx.destroy(); g.hand.destroy();
+        this.fx(g.owner).motes(g.x, g.y, 8, {
+          speed: 50, size: 8, life: 520, depth: DEPTH_STALKER, color: SILENCE.void, drift: 6,
+        });
         this.grabbers.splice(i, 1);
         continue;
       }
-
-      // Idle wobble so it reads as alive.
-      g.sprite.setRotation(Math.sin(time / 400) * 0.08);
 
       if (!g.grab && time >= g.nextGrabAt) this.startGrab(g, time);
       if (g.grab) this.updateGrab(g, time);
@@ -2514,7 +3084,7 @@ export class SilenceKit {
     let victim = foes[0];
     let best = Number.MAX_VALUE;
     for (const f of foes) {
-      const d = Phaser.Math.Distance.Between(f.x, f.y, g.sprite.x, g.sprite.y);
+      const d = Phaser.Math.Distance.Between(f.x, f.y, g.x, g.y);
       if (d < best) { best = d; victim = f; }
     }
     const victimIsLocalPlayer = victim === this.arena.player;
@@ -2537,20 +3107,7 @@ export class SilenceKit {
     const victim = grab.victim;
     if (!victim.active || victim.hp <= 0) { this.finishGrab(g); return; }
 
-    // Draw the gangly arm from the grabber to the victim.
-    g.armGfx.clear();
-    g.armGfx.lineStyle(7, 0x0a0010, 0.95);
-    const midX = (g.sprite.x + victim.x) / 2 + Math.sin(time / 120) * 14;
-    const midY = (g.sprite.y + victim.y) / 2 + Math.cos(time / 150) * 14;
-    const curve = new Phaser.Curves.QuadraticBezier(
-      new Phaser.Math.Vector2(g.sprite.x, g.sprite.y),
-      new Phaser.Math.Vector2(midX, midY),
-      new Phaser.Math.Vector2(victim.x, victim.y),
-    );
-    curve.draw(g.armGfx, 24);
-    g.hand.setVisible(true).setPosition(victim.x, victim.y)
-      .setRotation(Math.atan2(victim.y - g.sprite.y, victim.x - g.sprite.x));
-
+    // The arm itself is painted by paintGrabbers, off this same grab state.
     if (grab.phase === 'reaching') {
       if (time >= grab.phaseEnd) {
         grab.phase = 'dragging';
@@ -2583,13 +3140,13 @@ export class SilenceKit {
 
     // Reel the victim in. Online replicas aren't force-dragged — their own
     // machine runs the authoritative grab and streams the resulting position.
-    const ang = Math.atan2(g.sprite.y - victim.y, g.sprite.x - victim.x);
+    const ang = Math.atan2(g.y - victim.y, g.x - victim.x);
     const body = victim.body as Phaser.Physics.Arcade.Body | null;
     if (body && !victim.knockbackImmune && !victim.netGhost) {
       body.setVelocity(Math.cos(ang) * GRABBER_DRAG_SPEED, Math.sin(ang) * GRABBER_DRAG_SPEED);
     }
 
-    const dist = Phaser.Math.Distance.Between(victim.x, victim.y, g.sprite.x, g.sprite.y);
+    const dist = Phaser.Math.Distance.Between(victim.x, victim.y, g.x, g.y);
     if (dist <= GRABBER_CATCH_DIST || time >= grab.phaseEnd) {
       // Caught: damage + permanent slow-down of everything they do.
       victim.takeDamage(GRABBER_DMG);
@@ -2597,33 +3154,38 @@ export class SilenceKit {
       this.arena.spawnHitFlash(victim.x, victim.y, 0xff1133);
       this.arena.showFloatingText(victim.x, victim.y - 42, '💀 CONSUMED — 20% SLOWER FOREVER', '#ff2244');
       this.arena.scene.cameras.main.shake(300, 0.006);
+      // The hand closes: a bloody rupture where the victim was pulled in.
+      this.fx(g.owner).rupture(victim.x, victim.y, 60, { bloody: true, claws: 10, rings: 2, duration: 520 });
       this.finishGrab(g);
     }
   }
 
   private finishGrab(g: Grabber): void {
     g.grab = null;
-    g.armGfx.clear();
-    g.hand.setVisible(false);
   }
 
   // ── Vultures (E+ Mutant) ───────────────────────────────────────────
 
   private spawnVulture(x: number, y: number, owner: Owner): void {
     const scene = this.arena.scene;
-    const sprite = scene.add.image(x, y, 'silence-vulture').setDepth(DEPTH_STALKER + 1);
-    const coneGfx = scene.add.graphics().setDepth(DEPTH_GROUND_FX + 1);
     this.vultures.push({
-      sprite, coneGfx, owner,
+      x, y, owner,
+      seed: Math.random() * Math.PI * 2,
       expiresAt: scene.time.now + VULTURE_LIFETIME_MS,
       nextCarryAt: scene.time.now + VULTURE_FIRST_CARRY_MS,
       heading: Math.random() * Math.PI * 2,
       nextTurnAt: 0,
       carry: null,
     });
-    sprite.setScale(0.4);
-    scene.tweens.add({ targets: sprite, scaleX: 1.6, scaleY: 1.6, yoyo: true, duration: 260 });
-    scene.tweens.add({ targets: sprite, scaleX: 1.3, scaleY: 1.3, duration: 180, delay: 260 });
+    // Wings tearing open on both sides, and the grin arriving with them.
+    const fx = this.fx(owner);
+    for (const side of [-1, 1]) {
+      fx.claws(x + side * 10, y, 6, {
+        angle: side > 0 ? 0 : Math.PI, spread: 0.8, speed: 230, size: 24,
+        life: 520, depth: DEPTH_STALKER + 2, color: SILENCE.void,
+      });
+    }
+    fx.rupture(x, y, 64, { claws: 0, rings: 2, duration: 460, mark: false });
     this.arena.showFloatingText(x, y - 30, 'IT SMILES', '#ff2244');
     scene.cameras.main.shake(250, 0.004);
   }
@@ -2632,8 +3194,9 @@ export class SilenceKit {
     for (let i = this.vultures.length - 1; i >= 0; i--) {
       const v = this.vultures[i];
       if (time >= v.expiresAt && !v.carry) {
-        v.sprite.destroy();
-        v.coneGfx.destroy();
+        this.fx(v.owner).motes(v.x, v.y, 6, {
+          speed: 60, size: 6, life: 480, depth: DEPTH_STALKER, color: SILENCE.void,
+        });
         this.vultures.splice(i, 1);
         continue;
       }
@@ -2648,18 +3211,15 @@ export class SilenceKit {
         v.nextTurnAt = time + SEEKER_TURN_EVERY_MS * (0.6 + Math.random() * 0.8);
         v.heading = Math.random() * Math.PI * 2;
       }
-      v.sprite.x = Phaser.Math.Clamp(v.sprite.x + Math.cos(v.heading) * VULTURE_SPEED * dt, 30, this.arena.width - 30);
-      v.sprite.y = Phaser.Math.Clamp(v.sprite.y + Math.sin(v.heading) * VULTURE_SPEED * dt, 30, this.arena.height - 30);
-      v.sprite.setFlipX(Math.cos(v.heading) < 0);
-      v.sprite.setRotation(Math.sin(time / 220) * 0.1);
-      this.drawGazeCone(v.coneGfx, v.sprite.x, v.sprite.y, v.heading, time);
+      v.x = Phaser.Math.Clamp(v.x + Math.cos(v.heading) * VULTURE_SPEED * dt, 30, this.arena.width - 30);
+      v.y = Phaser.Math.Clamp(v.y + Math.sin(v.heading) * VULTURE_SPEED * dt, 30, this.arena.height - 30);
 
       // Carry detection — position authority stays with the victim's machine,
       // so net ghosts (PvP replicas, co-op husk replicas) are never grabbed here.
       if (time < v.nextCarryAt) continue;
       for (const foe of this.foesOf(v.owner)) {
         if (!foe.active || foe.hp <= 0 || foe.downed || foe.netGhost) continue;
-        if (!this.coneContains(v.sprite.x, v.sprite.y, v.heading, foe)) continue;
+        if (!this.coneContains(v.x, v.y, v.heading, foe)) continue;
         v.carry = {
           victim: foe,
           phase: 'up',
@@ -2690,7 +3250,8 @@ export class SilenceKit {
 
     // The victim dangles from the vulture — both are position-driven.
     const place = (x: number, y: number): void => {
-      v.sprite.setPosition(x, y - 26);
+      v.x = x;
+      v.y = y - 26;
       (victim.body as Phaser.Physics.Arcade.Body | null)?.reset(x, y);
     };
     if (victim === this.arena.player) this.arena.setPlayerYankUntil(this.arena.scene.time.now + 60);
@@ -2726,45 +3287,39 @@ export class SilenceKit {
     this.arena.spawnHitFlash(victim.x, victim.y, 0x991122);
     this.arena.showFloatingText(victim.x, victim.y - 42, '🦅 DROPPED', '#ff2244');
     this.arena.scene.cameras.main.shake(300, 0.006);
+    // They land hard, and they land wet.
+    this.fx(v.owner).rupture(victim.x, victim.y, 56, { bloody: true, claws: 8, rings: 2, duration: 480 });
     if (victim === this.arena.player && this.arena.isOnline) {
       this.arena.sendSilenceMsg({ t: 'sil', k: 'vulture-drop', x: victim.x, y: victim.y });
     }
   }
 
-  // ── Pixelated blood (vulture drops) ────────────────────────────────
+  // ── Blood (vulture drops) ──────────────────────────────────────────
 
   applyBloodDecals(target: Fighter): void {
     const scene = this.arena.scene;
     for (let i = 0; i < 8; i++) {
-      const sprite = scene.add.image(target.x, target.y, 'silence-blood').setDepth(DEPTH_EYE)
-        .setScale(0.7 + Math.random() * 0.8).setRotation((Math.floor(Math.random() * 4) * Math.PI) / 2);
       this.bloodDecals.push({
-        sprite, target,
+        target,
         ox: Phaser.Math.Between(-16, 16),
         oy: Phaser.Math.Between(-18, 14),
+        r: 3.5 + Math.random() * 4,
+        seed: Math.random() * Math.PI * 2,
         until: scene.time.now + BLOOD_DECAL_MS,
       });
     }
   }
 
   private updateBloodDecals(time: number): void {
-    const scene = this.arena.scene;
     for (let i = this.bloodDecals.length - 1; i >= 0; i--) {
       const b = this.bloodDecals[i];
       if (time >= b.until || !b.target.active) {
-        b.sprite.destroy();
         this.bloodDecals.splice(i, 1);
         continue;
       }
-      b.sprite.setPosition(b.target.x + b.ox, b.target.y + b.oy);
-      b.sprite.setAlpha(Math.min(1, (b.until - time) / 3000));
-      // The blood is still fresh — some of it drips off.
+      // Still fresh — some of it runs off onto the floor and stays there.
       if (Math.random() < 0.02) {
-        const drip = scene.add.image(b.target.x + b.ox, b.target.y + b.oy, 'silence-blood')
-          .setDepth(DEPTH_GROUND_FX).setScale(0.45);
-        scene.tweens.add({
-          targets: drip, y: drip.y + 26, alpha: 0, duration: 600, onComplete: () => drip.destroy(),
-        });
+        this.pfx.stain(b.target.x + b.ox, b.target.y + b.oy + 14, b.r * 0.6, DEPTH_GROUND_FX, true);
       }
     }
   }
@@ -2811,7 +3366,6 @@ export class SilenceKit {
       boggleReadyAt: 0,
       boggleUntil: 0,
       eyes: [],
-      tetherGfx: null,
       sanguine: null,
       prevTexture: caster.texture.key,
       prevScale: caster.scaleX,
@@ -2823,6 +3377,12 @@ export class SilenceKit {
     caster.setScale(1.25);
     scene.cameras.main.shake(350, 0.008);
     scene.cameras.main.flash(180, 30, 0, 0);
+    // The transformation: the old body comes apart and the claws arrive through it.
+    const fx = this.fx(owner);
+    fx.rupture(caster.x, caster.y, 90, { bloody: true, claws: 14, rings: 3, duration: 620, mark: false });
+    fx.claws(caster.x, caster.y, 10, {
+      speed: 110, size: 34, life: 700, depth: DEPTH_EYE, color: SILENCE.void,
+    });
     this.arena.showFloatingText(caster.x, caster.y - 46, '🐺 THE STRIKER', '#ff2233');
     if (!replica) {
       // The striker moveset shares the base ability slots — start it fresh so a
@@ -2851,10 +3411,8 @@ export class SilenceKit {
     if (!st) return;
     this.strikers[owner] = null;
     const caster = this.fighterOf(owner);
-    for (const e of st.eyes) e.sprite.destroy();
     st.eyes = [];
-    st.tetherGfx?.destroy();
-    st.sanguine?.gfx.destroy();
+    st.sanguine = null;
     if (caster.active) {
       caster.setTexture(st.prevTexture);
       caster.setScale(st.prevScale);
@@ -2875,6 +3433,11 @@ export class SilenceKit {
       this.arena.spawnHitFlash(caster.x, caster.y, 0xff1133);
       this.arena.showFloatingText(caster.x, caster.y - 46, `💥 ${burst} DEFERRED DAMAGE`, '#ff2244');
       this.arena.scene.cameras.main.shake(300, 0.007);
+      // The bill comes due all at once, and it scales with what was held back.
+      const r = 50 + Math.min(90, burst);
+      this.fx(owner).rupture(caster.x, caster.y, r, {
+        bloody: true, claws: 8 + Math.round(burst / 8), rings: 3, duration: 520 + burst * 3,
+      });
     }
   }
 
@@ -2907,9 +3470,10 @@ export class SilenceKit {
     // Boggle eyes: orbit on fleshy strings, shoot, retreat when hit.
     if (st.eyes.length > 0) {
       if (time >= st.boggleUntil) {
-        for (const e of st.eyes) e.sprite.destroy();
+        for (const e of st.eyes) {
+          this.fx(owner).motes(e.x, e.y, 2, { speed: 30, size: 3, life: 280, depth: DEPTH_EYE, color: SILENCE.meat });
+        }
         st.eyes = [];
-        st.tetherGfx?.clear();
       } else {
         this.updateBoggleEyes(st, caster, owner, time);
       }
@@ -2922,7 +3486,6 @@ export class SilenceKit {
         (caster.body as Phaser.Physics.Arcade.Body | null)?.setVelocity(0, 0);
         if (owner === 'player') this.arena.setPlayerYankUntil(this.arena.scene.time.now + 60);
         else this.npcLockUntil = Math.max(this.npcLockUntil, this.arena.scene.time.now + 60);
-        sg.gfx.setFillStyle(0xff0022, 0.2 + 0.16 * ((sg.strikeAt - time) % 500 < 250 ? 1 : 0));
       } else if (sg.slashesLeft > 0) {
         if (time >= sg.nextSlashAt) {
           sg.nextSlashAt = time + SANGUINE_STAGGER_MS;
@@ -2930,42 +3493,33 @@ export class SilenceKit {
           this.sanguineSlash(sg, owner);
         }
       } else {
-        sg.gfx.destroy();
         st.sanguine = null;
       }
     }
   }
 
   private updateBoggleEyes(st: StrikerState, caster: Fighter, owner: Owner, time: number): void {
-    const scene = this.arena.scene;
-    const gfx = st.tetherGfx!;
-    gfx.clear();
-    gfx.lineStyle(3, 0xaa4455, 0.9);
     const foes = this.foesOf(owner).filter((f) => f.active && f.hp > 0);
     const wantFromPlayer = owner === 'npc';
     for (let i = st.eyes.length - 1; i >= 0; i--) {
       const e = st.eyes[i];
       const ang = e.angleOffset + time / 900;
-      const ex = caster.x + Math.cos(ang) * BOGGLE_ORBIT_R;
-      const ey = caster.y + Math.sin(ang) * BOGGLE_ORBIT_R;
-      e.sprite.setPosition(ex, ey);
-      const midX = (caster.x + ex) / 2 + Math.sin(time / 130 + i * 2) * 6;
-      const midY = (caster.y + ey) / 2 + Math.cos(time / 150 + i * 2) * 6;
-      new Phaser.Curves.QuadraticBezier(
-        new Phaser.Math.Vector2(caster.x, caster.y),
-        new Phaser.Math.Vector2(midX, midY),
-        new Phaser.Math.Vector2(ex, ey),
-      ).draw(gfx, 12);
+      e.x = caster.x + Math.cos(ang) * BOGGLE_ORBIT_R;
+      e.y = caster.y + Math.sin(ang) * BOGGLE_ORBIT_R;
 
       // Any incoming projectile scares the eye back in.
       let retreated = false;
       for (const go of this.arena.projectiles.getChildren() as Projectile[]) {
         if (!go.active || go.isFromPlayer !== wantFromPlayer) continue;
-        if (Phaser.Math.Distance.Between(go.x, go.y, ex, ey) <= 18) { retreated = true; break; }
+        if (Phaser.Math.Distance.Between(go.x, go.y, e.x, e.y) <= 18) { retreated = true; break; }
       }
       if (retreated) {
-        this.arena.showFloatingText(ex, ey - 14, 'eye retreats', '#cc8899');
-        e.sprite.destroy();
+        this.arena.showFloatingText(e.x, e.y - 14, 'eye retreats', '#cc8899');
+        // It snaps back down the nerve it came out on.
+        this.fx(owner).motes(e.x, e.y, 3, {
+          angle: Math.atan2(caster.y - e.y, caster.x - e.x), spread: 0.4, speed: 220,
+          size: 3, life: 260, depth: DEPTH_EYE, color: SILENCE.meat, drift: 0,
+        });
         st.eyes.splice(i, 1);
         continue;
       }
@@ -2975,13 +3529,12 @@ export class SilenceKit {
         let target = foes[0];
         let best = Number.MAX_VALUE;
         for (const f of foes) {
-          const d = Phaser.Math.Distance.Between(f.x, f.y, ex, ey);
+          const d = Phaser.Math.Distance.Between(f.x, f.y, e.x, e.y);
           if (d < best) { best = d; target = f; }
         }
-        const sAng = Math.atan2(target.y - ey, target.x - ex);
-        const shot = scene.add.image(ex, ey, 'silence-eye-shot').setDepth(DEPTH_BEAM);
+        const sAng = Math.atan2(target.y - e.y, target.x - e.x);
         this.eyeShots.push({
-          sprite: shot,
+          x: e.x, y: e.y,
           vx: Math.cos(sAng) * BOGGLE_SHOT_SPEED,
           vy: Math.sin(sAng) * BOGGLE_SHOT_SPEED,
           owner,
@@ -2989,30 +3542,27 @@ export class SilenceKit {
         });
       }
     }
-    if (st.eyes.length === 0) gfx.clear();
   }
 
   private updateEyeShots(time: number, dt: number): void {
     for (let i = this.eyeShots.length - 1; i >= 0; i--) {
       const s = this.eyeShots[i];
-      s.sprite.x += s.vx * dt;
-      s.sprite.y += s.vy * dt;
+      s.x += s.vx * dt;
+      s.y += s.vy * dt;
       let dead = time >= s.diesAt;
       if (!dead) {
         for (const foe of this.foesOf(s.owner)) {
           if (!foe.active || foe.hp <= 0) continue;
-          if (Phaser.Math.Distance.Between(s.sprite.x, s.sprite.y, foe.x, foe.y) > 24) continue;
+          if (Phaser.Math.Distance.Between(s.x, s.y, foe.x, foe.y) > 24) continue;
           foe.takeDamage(BOGGLE_SHOT_DMG);
           this.arena.spawnHitFlash(foe.x, foe.y, 0xdd1133);
           this.grantStrikerTime(s.owner, BOGGLE_SHOT_DMG);
+          this.fx(s.owner).rupture(s.x, s.y, 22, { bloody: true, claws: 3, rings: 1, duration: 280, mark: false });
           dead = true;
           break;
         }
       }
-      if (dead) {
-        s.sprite.destroy();
-        this.eyeShots.splice(i, 1);
-      }
+      if (dead) this.eyeShots.splice(i, 1);
     }
   }
 
@@ -3023,24 +3573,23 @@ export class SilenceKit {
     const scene = this.arena.scene;
     const ang = Math.atan2(ty - caster.y, tx - caster.x);
 
-    // Claw fan visual.
-    for (let i = -1; i <= 1; i++) {
-      const a = ang + i * 0.28;
-      const streak = scene.add.rectangle(
-        caster.x + Math.cos(a) * SLASH_RANGE * 0.6,
-        caster.y + Math.sin(a) * SLASH_RANGE * 0.6,
-        SLASH_RANGE, 4, 0xff2233, 0.9,
-      ).setRotation(a).setDepth(DEPTH_BEAM);
-      scene.tweens.add({ targets: streak, alpha: 0, duration: 160, onComplete: () => streak.destroy() });
-    }
+    // Three curved claw scores raked through the front arc, plus the claws themselves.
+    const fx = this.fx(owner);
+    fx.slash(caster.x, caster.y, ang, SLASH_RANGE, SLASH_ARC_HALF_RAD, {
+      bloody: true, scores: 3, duration: 230,
+    });
+    fx.claws(caster.x + Math.cos(ang) * 30, caster.y + Math.sin(ang) * 30, 4, {
+      angle: ang, spread: SLASH_ARC_HALF_RAD, speed: 240, size: 20, life: 300,
+      depth: DEPTH_BEAM, color: SILENCE.void,
+    });
 
     // Mastery: claws find the effigy too.
     const d = owner === 'player' ? this.dolls.player : null;
     if (d) {
-      const toDoll = Math.atan2(d.sprite.y - caster.y, d.sprite.x - caster.x);
-      if (Phaser.Math.Distance.Between(caster.x, caster.y, d.sprite.x, d.sprite.y) <= SLASH_RANGE + 18
+      const toDoll = Math.atan2(d.y - caster.y, d.x - caster.x);
+      if (Phaser.Math.Distance.Between(caster.x, caster.y, d.x, d.y) <= SLASH_RANGE + 18
         && Math.abs(Phaser.Math.Angle.Wrap(toDoll - ang)) <= SLASH_ARC_HALF_RAD) {
-        this.tryHitDoll(d.sprite.x, d.sprite.y, 0, SLASH_DMG);
+        this.tryHitDoll(d.x, d.y, 0, SLASH_DMG);
       }
     }
 
@@ -3079,15 +3628,17 @@ export class SilenceKit {
     }
     st.boggleReadyAt = time + BOGGLE_CD_MS;
     st.boggleUntil = time + BOGGLE_LIFETIME_MS;
-    if (!st.tetherGfx) st.tetherGfx = scene.add.graphics().setDepth(DEPTH_EYE);
-    for (const e of st.eyes) e.sprite.destroy();
     st.eyes = [];
+    const fx = this.fx(owner);
     for (let i = 0; i < BOGGLE_EYES; i++) {
+      const a = (i * Math.PI * 2) / BOGGLE_EYES;
       st.eyes.push({
-        sprite: scene.add.image(caster.x, caster.y, 'silence-eyeball').setDepth(DEPTH_EYE + 1),
-        angleOffset: (i * Math.PI * 2) / BOGGLE_EYES,
+        x: caster.x, y: caster.y,
+        angleOffset: a,
         nextShotAt: time + 400 + i * 220,
       });
+      // Each one is squeezed out of the body — the eye opens as it clears the skin.
+      fx.watchPulse(caster.x + Math.cos(a) * 18, caster.y + Math.sin(a) * 18, 7, SILENCE.gore, DEPTH_EYE + 1, 480);
     }
     this.arena.showFloatingText(caster.x, caster.y - 34, '👁👁👁 BOGGLE', '#ff5566');
   }
@@ -3097,9 +3648,12 @@ export class SilenceKit {
     const scene = this.arena.scene;
     const caster = this.fighterOf(owner);
     st.allureUntil = scene.time.now + ALLURE_MS;
-    const ring = scene.add.circle(caster.x, caster.y, 40, 0xff0022, 0.2)
-      .setDepth(DEPTH_GROUND_FX).setStrokeStyle(3, 0xff2233, 0.9);
-    scene.tweens.add({ targets: ring, scaleX: 9, scaleY: 9, alpha: 0, duration: 600, onComplete: () => ring.destroy() });
+    // A call that goes out as three rings of fingers beckoning inward.
+    const fx = this.fx(owner);
+    for (let i = 0; i < 3; i++) {
+      scene.time.delayedCall(i * 110, () =>
+        fx.graspRing(caster.x, caster.y, 40, 340, SILENCE.gore, 620, DEPTH_GROUND_FX, true));
+    }
     this.arena.showFloatingText(caster.x, caster.y - 36, '💋 ALLURE', '#ff2244');
   }
 
@@ -3120,8 +3674,14 @@ export class SilenceKit {
       { x: Phaser.Math.Between(m, W - m), y: H - m },
     ];
     (caster.body as Phaser.Physics.Arcade.Body | null)?.reset(spots[side].x, spots[side].y);
-    const poof = scene.add.circle(fromX, fromY, 26, 0x110016, 0.8).setDepth(DEPTH_EYE);
-    scene.tweens.add({ targets: poof, scaleX: 2.4, scaleY: 2.4, alpha: 0, duration: 300, onComplete: () => poof.destroy() });
+    // It does not vanish — it *unravels*, and something reassembles over in the fog.
+    const fx = this.fx(owner);
+    fx.motes(fromX, fromY, 12, { speed: 120, size: 8, life: 520, depth: DEPTH_EYE, color: SILENCE.void });
+    fx.graspRing(fromX, fromY, 34, 4, SILENCE.void, 340, DEPTH_EYE, true);
+    fx.motes(spots[side].x, spots[side].y, 8, {
+      speed: 70, size: 7, life: 460, depth: DEPTH_EYE, color: SILENCE.void, drift: 0,
+    });
+    void scene;
     this.endStriker(owner);
   }
 
@@ -3133,10 +3693,9 @@ export class SilenceKit {
     const ang = Math.atan2(ty - caster.y, tx - caster.x);
     const cx = caster.x + Math.cos(ang) * (SANGUINE_LEN / 2 + 30);
     const cy = caster.y + Math.sin(ang) * (SANGUINE_LEN / 2 + 30);
-    const gfx = scene.add.rectangle(cx, cy, SANGUINE_LEN, SANGUINE_WID, 0xff0022, 0.26)
-      .setRotation(ang).setDepth(DEPTH_GROUND_FX).setStrokeStyle(2, 0xff2233, 0.85);
     st.sanguine = {
-      gfx, x: cx, y: cy, ang,
+      x: cx, y: cy, ang,
+      castAt: scene.time.now,
       strikeAt: scene.time.now + SANGUINE_CHARGE_MS,
       slashesLeft: SANGUINE_SLASHES,
       nextSlashAt: 0,
@@ -3153,14 +3712,16 @@ export class SilenceKit {
   }
 
   private sanguineSlash(sg: SanguineCharge, owner: Owner): void {
-    const scene = this.arena.scene;
     const rx = (Math.random() - 0.5) * SANGUINE_LEN * 0.85;
     const ry = (Math.random() - 0.5) * SANGUINE_WID * 0.85;
     const wx = sg.x + Math.cos(sg.ang) * rx - Math.sin(sg.ang) * ry;
     const wy = sg.y + Math.sin(sg.ang) * rx + Math.cos(sg.ang) * ry;
-    const slash = scene.add.rectangle(wx, wy, 100, 5, 0xff1133, 0.95)
-      .setRotation(sg.ang + (Math.random() - 0.5) * 1.4).setDepth(DEPTH_BEAM);
-    scene.tweens.add({ targets: slash, alpha: 0, duration: 220, onComplete: () => slash.destroy() });
+    // Ten of these land a frame apart from random angles — the box fills with cuts.
+    const fx = this.fx(owner);
+    fx.slash(wx, wy, sg.ang + (Math.random() - 0.5) * 2.4, 60, 0.8, {
+      bloody: true, scores: 2, duration: 220,
+    });
+    fx.stain(wx, wy, 9, DEPTH_GROUND_FX, true);
     for (const foe of this.foesOf(owner)) {
       if (!foe.active || foe.hp <= 0) continue;
       if (!this.sanguineContains(sg, foe)) continue;
@@ -3194,7 +3755,7 @@ export class SilenceKit {
         const edge = Math.floor(Math.random() * 4);
         const x = edge === 0 ? -20 : edge === 1 ? this.arena.width + 20 : Phaser.Math.Between(0, this.arena.width);
         const y = edge === 2 ? -20 : edge === 3 ? this.arena.height + 20 : Phaser.Math.Between(0, this.arena.height);
-        pack.push({ sprite: scene.add.image(x, y, 'silence-midget').setDepth(DEPTH_STALKER), nextBiteAt: 0 });
+        pack.push({ x, y, angle: 0, nextBiteAt: 0 });
       }
       this.midgets.set(f, pack);
       this.arena.showFloatingText(f.x, f.y - 44, '🦷 THEY COME', '#ffaaaa');
@@ -3202,19 +3763,19 @@ export class SilenceKit {
 
     for (const [f, pack] of this.midgets) {
       if (!wanted.has(f)) {
-        for (const m of pack) m.sprite.destroy();
         this.midgets.delete(f);
         continue;
       }
       for (const m of pack) {
-        const ang = Math.atan2(f.y - m.sprite.y, f.x - m.sprite.x);
-        m.sprite.x += Math.cos(ang) * MIDGET_SPEED * dt;
-        m.sprite.y += Math.sin(ang) * MIDGET_SPEED * dt;
-        m.sprite.setRotation(ang); // teeth face the meal
-        if (time >= m.nextBiteAt && Phaser.Math.Distance.Between(m.sprite.x, m.sprite.y, f.x, f.y) < 24) {
+        const ang = Math.atan2(f.y - m.y, f.x - m.x);
+        m.x += Math.cos(ang) * MIDGET_SPEED * dt;
+        m.y += Math.sin(ang) * MIDGET_SPEED * dt;
+        m.angle = ang; // teeth face the meal
+        if (time >= m.nextBiteAt && Phaser.Math.Distance.Between(m.x, m.y, f.x, f.y) < 24) {
           m.nextBiteAt = time + MIDGET_BITE_CD_MS;
           f.takeDamage(MIDGET_DMG);
           this.arena.spawnHitFlash(f.x, f.y, 0xffaa99);
+          this.pfx.stain(m.x, m.y, 5, DEPTH_GROUND_FX, true);
         }
       }
     }
@@ -3229,19 +3790,17 @@ export class SilenceKit {
       ).setDepth(DEPTH_FOG + 1);
       scene.tweens.add({ targets: this.fleshOverlay, alpha: 0.34, yoyo: true, repeat: -1, duration: 900 });
       for (let i = 0; i < FLESH_DECAL_COUNT; i++) {
-        const tex = i % 2 === 0 ? 'silence-flesh-eye' : 'silence-flesh-teeth';
-        this.fleshDecals.push(
-          scene.add.image(
-            Phaser.Math.Between(30, this.arena.width - 30),
-            Phaser.Math.Between(30, this.arena.height - 30),
-            tex,
-          ).setDepth(DEPTH_GROUND_FX).setRotation(Math.random() * Math.PI * 2).setScale(0.8 + Math.random() * 0.9),
-        );
+        this.fleshDecals.push({
+          x: Phaser.Math.Between(30, this.arena.width - 30),
+          y: Phaser.Math.Between(30, this.arena.height - 30),
+          a: Math.random() * Math.PI * 2,
+          s: 0.8 + Math.random() * 0.9,
+          eye: i % 2 === 0,
+        });
       }
     } else if (!localFlesh && this.fleshOverlay) {
       this.fleshOverlay.destroy();
       this.fleshOverlay = null;
-      for (const d of this.fleshDecals) d.destroy();
       this.fleshDecals = [];
     }
   }
@@ -3272,9 +3831,7 @@ export class SilenceKit {
   private updateFeasts(time: number, delta: number): void {
     for (let i = this.feasts.length - 1; i >= 0; i--) {
       const f = this.feasts[i];
-      f.sprite.rotation += delta / 4000;
       if (time >= f.endsAt) {
-        f.sprite.destroy();
         this.feasts.splice(i, 1);
         continue;
       }
@@ -3283,7 +3840,6 @@ export class SilenceKit {
       if (caster.active) {
         f.x = caster.x + Math.cos(caster.facingAngle) * FEAST_FOLLOW_OFFSET;
         f.y = caster.y + Math.sin(caster.facingAngle) * FEAST_FOLLOW_OFFSET;
-        f.sprite.setPosition(f.x, f.y);
       }
 
       for (const foe of this.foesOf(f.owner)) {
@@ -3298,6 +3854,9 @@ export class SilenceKit {
           this.applyStatus(foe, { k: 'halluc', ms: HALLUCINATE_MS });
           this.arena.spawnHitFlash(foe.x, foe.y, 0x99aa88);
           this.arena.showFloatingText(foe.x, foe.y - 40, '🌀 HALLUCINATING', '#aaffaa');
+          // The jaws finally close, and the victim's picture of the world tears.
+          this.fx(f.owner).rupture(foe.x, foe.y, 64, { bloody: true, claws: 9, rings: 2, duration: 480 });
+          this.fx(f.owner).staticBurst(foe.x, foe.y, 60, DEPTH_NOISE, 420);
         }
       }
     }
@@ -3308,14 +3867,14 @@ export class SilenceKit {
   private updateSpits(time: number, dt: number): void {
     for (let i = this.spits.length - 1; i >= 0; i--) {
       const s = this.spits[i];
-      s.sprite.x += s.vx * dt;
-      s.sprite.y += s.vy * dt;
+      s.x += s.vx * dt;
+      s.y += s.vy * dt;
       let dead = time >= s.diesAt;
 
       const run = this.run;
       if (!dead && run?.phase === 'chase' && run.caster === s.owner) {
         const victim = run.victim;
-        if (victim.active && Phaser.Math.Distance.Between(s.sprite.x, s.sprite.y, victim.x, victim.y) < 26) {
+        if (victim.active && Phaser.Math.Distance.Between(s.x, s.y, victim.x, victim.y) < 26) {
           dead = true;
           run.spitHits++;
           run.victimSlowUntil = this.arena.scene.time.now + SPIT_SLOW_MS;
@@ -3323,10 +3882,7 @@ export class SilenceKit {
           this.arena.spawnHitFlash(victim.x, victim.y, 0x99bb88);
         }
       }
-      if (dead) {
-        s.sprite.destroy();
-        this.spits.splice(i, 1);
-      }
+      if (dead) this.spits.splice(i, 1);
     }
   }
 
@@ -3342,9 +3898,7 @@ export class SilenceKit {
       const t = 1 - Math.max(0, (run.armEnd - time) / RUN_ARM_MS);
       const ax = caster.x + (run.armTx - caster.x) * t;
       const ay = caster.y + (run.armTy - caster.y) * t;
-      run.armGfx.clear();
-      run.armGfx.lineStyle(8, 0x0a0010, 0.95);
-      run.armGfx.lineBetween(caster.x, caster.y, ax, ay);
+      // The arm itself is painted by paintRunArm off this same state.
 
       // Did the hand reach a victim?
       const foes = this.foesOf(run.caster).filter((f) => f.active && f.hp > 0 && !f.downed);
@@ -3353,13 +3907,15 @@ export class SilenceKit {
         if (Phaser.Math.Distance.Between(ax, ay, f.x, f.y) <= RUN_HIT_RADIUS) { hit = f; break; }
       }
       if (hit) {
-        run.armGfx.clear();
         this.startChase(run, hit, time);
         return;
       }
       if (time >= run.armEnd) {
-        // Whiffed: most of the cooldown comes back.
-        run.armGfx.destroy();
+        // Whiffed: the hand closes on nothing and is withdrawn.
+        this.fx(run.caster).claws(ax, ay, 4, {
+          angle: Math.atan2(caster.y - ay, caster.x - ax), spread: 0.6, speed: 260,
+          size: 16, life: 300, depth: DEPTH_BEAM, color: SILENCE.pitch,
+        });
         caster.reduceCooldown('silence-run', RUN_MISS_REFUND_MS);
         if (run.caster === 'player') this.arena.showFloatingText(caster.x, caster.y - 28, 'Missed…', '#8866aa');
         this.run = null;
@@ -3721,7 +4277,6 @@ export class SilenceKit {
     if (!run) return;
     this.run = null;
     void caught;
-    run.armGfx.destroy();
     run.maskGfx?.destroy();
     run.floor?.destroy();
     run.exitGfx?.destroy();
@@ -3749,7 +4304,6 @@ export class SilenceKit {
     if (victim.active && victim.hp > 0) {
       (victim.body as Phaser.Physics.Arcade.Body | null)?.reset(run.victimPrev.x, run.victimPrev.y);
     }
-    for (const s of this.spits) s.sprite.destroy();
     this.spits = [];
     if (!silent) this.arena.scene.cameras.main.flash(250, 5, 0, 10);
   }
@@ -3761,11 +4315,9 @@ export class SilenceKit {
     const active = Date.now() < player.hallucinatingUntil;
     const scene = this.arena.scene;
 
+    const noise = this.layer(DEPTH_NOISE);
+    noise.clear();
     if (!active) {
-      if (this.noisePool.length > 0) {
-        for (const n of this.noisePool) n.destroy();
-        this.noisePool = [];
-      }
       this.hideEyeScreen();
       this.clearFakePos();
       this.nextEyeScreenAt = 0;
@@ -3773,7 +4325,9 @@ export class SilenceKit {
       return;
     }
 
-    // 1) Static noise over every fighter and projectile.
+    // 1) Dead-channel static tearing across every fighter and projectile. Painted rather
+    // than stamped from a texture, so it actually crawls instead of flickering between
+    // three fixed frames.
     const targets: Array<{ x: number; y: number }> = [];
     const npc = this.arena.npc;
     if (npc.active && npc.alpha > 0.01) targets.push(npc);
@@ -3782,16 +4336,17 @@ export class SilenceKit {
       if (go.active) targets.push(go);
       if (targets.length >= 40) break;
     }
-    while (this.noisePool.length < targets.length) {
-      this.noisePool.push(scene.add.image(0, 0, `silence-noise-${this.noisePool.length % 3}`).setDepth(DEPTH_NOISE));
-    }
-    while (this.noisePool.length > targets.length) this.noisePool.pop()!.destroy();
-    for (let i = 0; i < targets.length; i++) {
-      const n = this.noisePool[i];
-      n.setPosition(targets[i].x + Phaser.Math.Between(-6, 6), targets[i].y + Phaser.Math.Between(-6, 6));
-      n.setAlpha(0.55 + Math.random() * 0.4);
-      n.setRotation(Math.random() * Math.PI);
-      n.setScale(1.6 + Math.random() * 1.2);
+    for (const t of targets) {
+      for (let i = 0; i < 9; i++) {
+        const w = 6 + Math.random() * 26;
+        noise.fillStyle(Math.random() > 0.5 ? this.pcol(SILENCE.pale) : this.pcol(SILENCE.void),
+          0.3 + Math.random() * 0.55);
+        noise.fillRect(t.x - w / 2 + Phaser.Math.Between(-8, 8), t.y - 16 + i * 4, w, 2 + Math.random() * 2);
+      }
+      // Every so often an eye surfaces where the fighter should be.
+      if (Math.random() < 0.04) {
+        silenceEye(noise, this.pcol, t.x, t.y, 0, 7, Math.sin(time / 300) * 0.9, 1, SILENCE.gore, 0.85);
+      }
     }
 
     // 2) Eye-screen popup.
@@ -3838,23 +4393,23 @@ export class SilenceKit {
     const H = this.arena.height;
     if (!this.eyeScreenRect) {
       this.eyeScreenRect = scene.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.94).setDepth(DEPTH_EYE_SCREEN);
-      for (let i = 0; i < 7; i++) {
-        this.eyeScreenEyes.push(
-          scene.add.image(Phaser.Math.Between(60, W - 60), Phaser.Math.Between(60, H - 60), 'silence-big-eye')
-            .setDepth(DEPTH_EYE_SCREEN + 1).setRotation(Math.random() * 0.6 - 0.3).setScale(0.7 + Math.random()),
-        );
-      }
     }
     this.eyeScreenRect.setVisible(true);
-    for (const e of this.eyeScreenEyes) {
-      e.setVisible(true).setPosition(Phaser.Math.Between(60, W - 60), Phaser.Math.Between(60, H - 60));
-    }
+    // Reshuffled every time it opens — the same seven eyes in the same seven places would
+    // stop being frightening on the second showing.
+    this.eyeScreenEyes = Array.from({ length: 7 }, () => ({
+      x: Phaser.Math.Between(60, W - 60),
+      y: Phaser.Math.Between(60, H - 60),
+      a: Math.random() * 0.6 - 0.3,
+      s: 0.7 + Math.random(),
+    }));
   }
 
   private hideEyeScreen(): void {
     this.eyeScreenUntil = 0;
     this.eyeScreenRect?.setVisible(false);
-    for (const e of this.eyeScreenEyes) e.setVisible(false);
+    this.eyeScreenEyes = [];
+    this.layers.get(DEPTH_EYE_SCREEN + 1)?.clear();
   }
 
   private clearFakePos(): void {
@@ -3928,7 +4483,7 @@ export class SilenceKit {
       this.stealthBarFill = scene.add.rectangle(x + 1, y, 0, 10, 0x8844cc, 0.95)
         .setOrigin(0, 0.5).setDepth(24).setScrollFactor(0);
       this.stealthLabel = scene.add.text(x, y - 14, 'STEALTH', {
-        fontSize: '10px', color: '#9977bb', fontFamily: 'Arial, sans-serif',
+        fontSize: '10px', color: '#9977bb', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
       }).setOrigin(0, 0.5).setDepth(24).setScrollFactor(0);
       for (let i = 0; i < STALKER_MAX; i++) {
         this.stalkerPips.push(
@@ -3954,7 +4509,7 @@ export class SilenceKit {
         this.terrorBarFill = scene.add.rectangle(x + 1, y, 0, 10, 0xcc1122, 0.95)
           .setOrigin(0, 0.5).setDepth(24).setScrollFactor(0);
         this.terrorLabel = scene.add.text(x, y - 14, 'TERROR', {
-          fontSize: '10px', color: '#cc5555', fontFamily: 'Arial, sans-serif',
+          fontSize: '10px', color: '#cc5555', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
         }).setOrigin(0, 0.5).setDepth(24).setScrollFactor(0);
       }
       const tRatio = this.terror.player / TERROR_MAX;
@@ -3972,7 +4527,7 @@ export class SilenceKit {
     if (st) {
       if (!this.strikerTimerText) {
         this.strikerTimerText = scene.add.text(this.arena.width / 2, 58, '', {
-          fontSize: '15px', color: '#ff3344', fontFamily: 'Arial, sans-serif', fontStyle: 'bold',
+          fontSize: '15px', color: '#ff3344', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', fontStyle: 'bold',
         }).setOrigin(0.5).setDepth(24).setScrollFactor(0);
       }
       const remain = Math.max(0, st.endsAt - scene.time.now) / 1000;

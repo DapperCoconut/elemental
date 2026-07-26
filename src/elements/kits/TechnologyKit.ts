@@ -5,6 +5,10 @@ import { Projectile } from '../../combat/Projectile';
 import { ProjectileRegistry, RegisteredProjectile } from '../../combat/ProjectileRegistry';
 import { NetTechMsg } from '../../network/NetworkManager';
 import { CustomStatus } from './StatusHudKit';
+import {
+  ArmGesture, TECH, TechAuraStyle, TechColorFn, TechnologyAura, TechnologyAvatar, TechnologyFx,
+  bitTileLayered, windowPane,
+} from './TechnologyVisuals';
 
 type Owner = 'player' | 'npc';
 const OWNERS: Owner[] = ['player', 'npc'];
@@ -116,24 +120,21 @@ function randomBinaryString(len: number): string {
 }
 
 interface CordState {
+  owner: Owner;
   state: 'traveling' | 'parked';
   x: number; y: number; vx: number; vy: number;
   parkX: number; parkY: number;
   expiresAt: number;
-  head: Phaser.GameObjects.Arc;
-  line: Phaser.GameObjects.Graphics;
 }
 
 interface AdBox {
   owner: Owner;
-  rect: Phaser.GameObjects.Rectangle;
-  label: Phaser.GameObjects.Text;
   x: number; y: number; w: number; h: number;
+  bornAt: number;
   expiresAt: number;
 }
 
 interface JailBox {
-  graphics: Phaser.GameObjects.Graphics;
   x: number; y: number; w: number; h: number;
   lastDmgAt: number;
   expiresAt: number;
@@ -165,7 +166,7 @@ type DragGrab = { kind: 'fighter'; ref: Fighter } | { kind: 'cord'; ref: CordSta
 
 interface GooseState {
   kind: 'goose';
-  sprite: Phaser.GameObjects.Text;
+  facing: number;
   x: number; y: number;
   targetX: number; targetY: number;
   mode: 'wander' | 'poke' | 'carry' | 'steal' | 'throw';
@@ -188,7 +189,6 @@ interface ClippyState {
 }
 
 interface PongBall {
-  sprite: Phaser.GameObjects.Arc;
   x: number; y: number; vx: number; vy: number;
   lastHitAt: Map<Fighter, number>;
 }
@@ -203,14 +203,12 @@ type MalwareState = (GooseState | ClippyState | PongState) & { owner: Owner; exp
 
 interface ThrownBullet {
   owner: Owner;
-  sprite: Phaser.GameObjects.Arc;
   x: number; y: number; vx: number; vy: number;
   damage: number;
 }
 
 interface CoinProj {
   owner: Owner;
-  sprite: Phaser.GameObjects.Arc;
   x: number; y: number; vx: number; vy: number;
   reg: RegisteredProjectile;
 }
@@ -219,20 +217,17 @@ interface TrojanState {
   victim: Fighter;
   until: number;
   dir: { x: number; y: number };
-  wire: Phaser.GameObjects.Graphics;
 }
 
 interface BoxedHusk {
   f: Fighter;
   until: number;
-  icon: Phaser.GameObjects.Text;
 }
 
 interface HuskVirus {
   f: Fighter;
   until: number;
   nextTickAt: number;
-  icon: Phaser.GameObjects.Text;
 }
 
 // ── Technology Mastery state ──────────────────────────────────────────────
@@ -246,10 +241,6 @@ interface ByteBomb {
   flying: boolean;
   /** Milliseconds left on the fuse. */
   fuse: number;
-  shell: Phaser.GameObjects.Arc;
-  shadow: Phaser.GameObjects.Graphics;
-  face: Phaser.GameObjects.Graphics;
-  label: Phaser.GameObjects.Text;
 }
 
 interface LagState {
@@ -304,20 +295,50 @@ export interface TechArenaApi {
   recordMasteryBest(key: string, value: number): void;
   /** Push a kit-owned effect into the top-right status tray (player-side only). */
   setStatusIndicator(id: string, status: CustomStatus | null): void;
+  /** Owner's colour cosmetic applied to one Technology palette value. */
+  technologyColor(owner: Owner, base: number): number;
 }
 
 // ── TechnologyKit ─────────────────────────────────────────────────────────
 
+/** Every ability drives an arm gesture, on the NPC rig as well as the player's. */
+const CAST_GESTURES: Record<string, ArmGesture> = {
+  'tech-cruncher': 'punch',
+  'tech-ads': 'sweep',
+  'tech-upload': 'punch',
+  'tech-webdrag': 'flex',
+  'tech-admin': 'raise',
+};
+
+/** Depths for the kit's shared paint layers. */
+const D_FLOOR = 6;    // grids, burn-ins, firewall border
+const D_WORLD = 13;   // crunchers, cords, bombs, malware, coins
+const D_UI = 19;      // popups and boxes that sit over the fighters
+
 export class TechnologyKit {
+  // ── Visuals ───────────────────────────────────────────────────────────────
+  // One colour mapper and one effect painter per side, because the two fighters can have
+  // different colour cosmetics equipped.
+  private readonly pcol: TechColorFn;
+  private readonly ncol: TechColorFn;
+  private readonly pfx: TechnologyFx;
+  private readonly nfx: TechnologyFx;
+  private playerAvatar: TechnologyAvatar | null = null;
+  private npcAvatar: TechnologyAvatar | null = null;
+  private auras = new Map<string, TechnologyAura>();
+  /** Shared per-frame paint layers, one per depth band. Rebuilt lazily after a reset. */
+  private layers = new Map<number, Phaser.GameObjects.Graphics>();
+
   // Addicting Cruncher
   private cruncherCd: Record<Owner, number> = { player: 0, npc: 0 };
   private cruncherDmg: Record<Owner, number> = { player: 0, npc: 0 };
   private cruncherSpeed: Record<Owner, number> = { player: 0, npc: 0 };
   private cruncherLastFireAt: Record<Owner, number> = { player: 0, npc: 0 };
   private crunchers: Array<{
-    sprite: Phaser.GameObjects.Sprite;
     x: number; y: number; vx: number; vy: number;
     owner: Owner; damage: number; traveled: number; trailAccum: number;
+    /** Gaming mouse (F+): an RGB cruncher cycles hue instead of wearing the element colour. */
+    rgb: boolean;
     reg: RegisteredProjectile;
   }> = [];
 
@@ -332,7 +353,6 @@ export class TechnologyKit {
   private ads: AdBox[] = [];
   private virusUntil: Record<Owner, number> = { player: 0, npc: 0 };
   private virusNextTickAt: Record<Owner, number> = { player: 0, npc: 0 };
-  private virusIcon: Record<Owner, Phaser.GameObjects.Text | null> = { player: null, npc: null };
   private huskViruses: HuskVirus[] = [];
   private wasSheltered: Record<Owner, boolean> = { player: false, npc: false };
 
@@ -344,7 +364,6 @@ export class TechnologyKit {
   // Upload
   private cords: Record<Owner, CordState | null> = { player: null, npc: null };
   private boxedUntil: Record<Owner, number> = { player: 0, npc: 0 };
-  private boxIcon: Record<Owner, Phaser.GameObjects.Text | null> = { player: null, npc: null };
   private boxedHusks: BoxedHusk[] = [];
 
   // Trojan Takeover (R+) — keyed by the CASTER owner
@@ -407,7 +426,70 @@ export class TechnologyKit {
   // Lag (Byte-Bomb debuff)
   private lagged: Map<Fighter, LagState> = new Map();
 
-  constructor(private arena: TechArenaApi) {}
+  constructor(private arena: TechArenaApi) {
+    // Built here, not as field initialisers, so they see the injected arena.
+    this.pcol = (base) => arena.technologyColor('player', base);
+    this.ncol = (base) => arena.technologyColor('npc', base);
+    this.pfx = new TechnologyFx(arena.scene, this.pcol);
+    this.nfx = new TechnologyFx(arena.scene, this.ncol);
+  }
+
+  // ── Visual helpers ────────────────────────────────────────────────────────
+
+  /** Effect painter for a side. */
+  private fx(owner: Owner): TechnologyFx { return owner === 'player' ? this.pfx : this.nfx; }
+  /** Colour mapper for a side. */
+  private col(owner: Owner): TechColorFn { return owner === 'player' ? this.pcol : this.ncol; }
+  /** The rig for a side, if that side is playing Technology. */
+  private avatarFor(owner: Owner): TechnologyAvatar | null {
+    return owner === 'player' ? this.playerAvatar : this.npcAvatar;
+  }
+
+  /** Fire one arm gesture on the rig of whichever side cast. */
+  private gesture(owner: Owner, abilityId: string, angle?: number): void {
+    const g = CAST_GESTURES[abilityId];
+    if (g) this.avatarFor(owner)?.play(g, angle);
+  }
+
+  /** A shared paint layer at one depth. Cleared and repainted every frame by paintWorld. */
+  private layer(depth: number): Phaser.GameObjects.Graphics {
+    let g = this.layers.get(depth);
+    if (!g || !g.active) {
+      g = this.arena.scene.add.graphics().setDepth(depth);
+      this.layers.set(depth, g);
+    }
+    return g;
+  }
+
+  /**
+   * A persistent aura on one fighter, keyed by id. Built on first use and torn down by
+   * `dropAura` — a scene restart kills the Graphics, so both rebuild lazily.
+   */
+  private aura(id: string, style: TechAuraStyle, tint: TechColorFn, radius: number, depth: number): TechnologyAura {
+    let a = this.auras.get(id);
+    if (!a) {
+      a = new TechnologyAura(this.arena.scene, tint, style, radius, depth);
+      this.auras.set(id, a);
+    }
+    return a;
+  }
+
+  private dropAura(id: string): void {
+    const a = this.auras.get(id);
+    if (!a) return;
+    a.destroy();
+    this.auras.delete(id);
+  }
+
+  /** Destroy every GameObject the visuals own. Called from reset(); update() rebuilds. */
+  private teardownVisuals(): void {
+    if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
+    if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
+    for (const a of this.auras.values()) a.destroy();
+    this.auras.clear();
+    for (const g of this.layers.values()) g.destroy();
+    this.layers.clear();
+  }
 
   // ── Public accessors ──────────────────────────────────────────────────
 
@@ -502,8 +584,9 @@ export class TechnologyKit {
   // ── reset() ───────────────────────────────────────────────────────────
 
   reset(): void {
-    for (const c of this.crunchers) { c.sprite.destroy(); this.arena.projReg.remove(c.reg); }
+    for (const c of this.crunchers) this.arena.projReg.remove(c.reg);
     this.crunchers = [];
+    this.teardownVisuals();
     this.cruncherCd = { player: 0, npc: 0 };
     this.cruncherDmg = { player: 0, npc: 0 };
     this.cruncherSpeed = { player: 0, npc: 0 };
@@ -516,12 +599,9 @@ export class TechnologyKit {
     this.firewallObjs = [];
     this.firewallShownCharges = -1;
 
-    for (const ad of this.ads) { ad.rect.destroy(); ad.label.destroy(); }
     this.ads = [];
     this.virusUntil = { player: 0, npc: 0 };
     this.virusNextTickAt = { player: 0, npc: 0 };
-    for (const o of OWNERS) { this.virusIcon[o]?.destroy(); this.virusIcon[o] = null; }
-    for (const v of this.huskViruses) v.icon.destroy();
     this.huskViruses = [];
     this.wasSheltered = { player: false, npc: false };
     this.arena.player.incomingDamageMultiplier = 1;
@@ -529,7 +609,6 @@ export class TechnologyKit {
 
     for (const o of OWNERS) this.destroyMalware(o);
     this.malwareCdUntil = { player: 0, npc: 0 };
-    for (const b of this.thrownBullets) b.sprite.destroy();
     this.thrownBullets = [];
 
     this.destroyCord('player');
@@ -538,15 +617,9 @@ export class TechnologyKit {
     for (const o of OWNERS) {
       const f = o === 'player' ? this.arena.player : this.arena.npc;
       f.clearTint();
-      this.boxIcon[o]?.destroy();
-      this.boxIcon[o] = null;
     }
-    for (const b of this.boxedHusks) b.icon.destroy();
     this.boxedHusks = [];
-    for (const o of OWNERS) {
-      this.trojan[o]?.wire.destroy();
-      this.trojan[o] = null;
-    }
+    for (const o of OWNERS) this.trojan[o] = null;
     this.dragActive = { player: false, npc: false };
     this.dragExpiresAt = { player: 0, npc: 0 };
     this.dragGrabbed = null;
@@ -560,7 +633,7 @@ export class TechnologyKit {
     this.browserFactory = false;
     this.browserCoinAccum = 0;
     this.wheelSpinning = false;
-    for (const c of this.coinProjs) { c.sprite.destroy(); this.arena.projReg.remove(c.reg); }
+    for (const c of this.coinProjs) this.arena.projReg.remove(c.reg);
     this.coinProjs = [];
     this.gamingMouseStacks = { player: 0, npc: 0 };
     this.dmgBuffUntil = { player: 0, npc: 0 };
@@ -575,7 +648,7 @@ export class TechnologyKit {
     }
     this.adminInvisibleUntil = { player: 0, npc: 0 };
     this.wasAdminInvisible = { player: false, npc: false };
-    for (const o of OWNERS) { this.jail[o]?.graphics.destroy(); this.jail[o] = null; }
+    for (const o of OWNERS) this.jail[o] = null;
 
     for (const t of this.consoleLogTexts) t.destroy();
     this.consoleLogTexts = [];
@@ -594,7 +667,6 @@ export class TechnologyKit {
     }
 
     this.byteBombLastCastAt = -BYTE_BOMB_COOLDOWN_MS;
-    for (const b of this.byteBombs) this.destroyByteBomb(b);
     this.byteBombs = [];
     this.byteBombPointerWasDown = false;
 
@@ -698,6 +770,252 @@ export class TechnologyKit {
 
     if (this.arena.elementId === 'technology') this.updateShelter('player');
     if (this.arena.npcElementId === 'technology') this.updateShelter('npc');
+
+    // Everything the kit owns is repainted from scratch here, after the sim has moved it.
+    this.paintWorld(time);
+    this.updateAuras(delta, time);
+    this.updateAvatars(delta);
+  }
+
+  // ── Painting ──────────────────────────────────────────────────────────────
+  //
+  // Every world object this kit owns is plain data, drawn per frame into three shared Graphics
+  // layers. That is what lets a cruncher chomp, a cable sag between its two ends and a bomb's
+  // countdown tick down on its own face — none of which a static sprite can do.
+
+  private paintWorld(time: number): void {
+    const t = time / 1000;
+    const floor = this.layer(D_FLOOR);
+    const world = this.layer(D_WORLD);
+    const ui = this.layer(D_UI);
+    floor.clear();
+    world.clear();
+    ui.clear();
+
+    this.paintFirewall(floor, t);
+    this.paintCrunchers(world, time, t);
+    this.paintCords(world, t);
+    this.paintByteBombs(world, floor, time);
+    this.paintMalware(world, t);
+    this.paintAds(ui, time, t);
+    this.paintBoxed(ui, t);
+    this.paintLoose(world);
+    this.paintJail(ui, time, t);
+  }
+
+  /** The odds and ends: stolen rounds the goose is throwing back, and loose browser coins. */
+  private paintLoose(g: Phaser.GameObjects.Graphics): void {
+    for (const b of this.thrownBullets) {
+      const ang = Math.atan2(b.vy, b.vx);
+      const tint = this.col(b.owner);
+      // A stolen round, still wearing the trail it had when it was taken.
+      g.fillStyle(tint(TECH.amber), 0.3);
+      g.fillCircle(b.x - Math.cos(ang) * 7, b.y - Math.sin(ang) * 7, 4);
+      g.fillStyle(tint(TECH.amber), 1);
+      g.fillCircle(b.x, b.y, 5);
+      g.fillStyle(tint(TECH.white), 0.85);
+      g.fillCircle(b.x - 1.4, b.y - 1.6, 1.8);
+    }
+    for (const c of this.coinProjs) {
+      const tint = this.col(c.owner);
+      // Coins spin edge-on and back, so a scatter of them shimmers instead of sliding.
+      const spin = Math.abs(Math.cos(c.x * 0.06 + c.y * 0.06));
+      g.fillStyle(tint(TECH.gold), 1);
+      g.fillEllipse(c.x, c.y, 10 * spin + 2, 10);
+      g.lineStyle(1.2, tint(TECH.night), 0.7);
+      g.strokeEllipse(c.x, c.y, 10 * spin + 2, 10);
+    }
+  }
+
+  /** The colour a cruncher is wearing this frame. Gaming mice (F+) cycle hue; the rest don't. */
+  private cruncherColor(c: { owner: Owner; rgb: boolean }, time: number, i: number): number {
+    if (!c.rgb) return c.owner === 'player' ? TECH.phosphor : TECH.cyan;
+    const hue = ((time / 4) + i * 40) % 360;
+    return Phaser.Display.Color.HSLToColor(hue / 360, 1, 0.6).color;
+  }
+
+  private paintCrunchers(g: Phaser.GameObjects.Graphics, time: number, t: number): void {
+    for (let i = 0; i < this.crunchers.length; i++) {
+      const c = this.crunchers[i];
+      TechnologyFx.drawCruncher(g, this.col(c.owner), c.x, c.y, Math.atan2(c.vy, c.vx), t,
+        this.cruncherColor(c, time, i), 1);
+    }
+  }
+
+  private paintCords(g: Phaser.GameObjects.Graphics, t: number): void {
+    for (const owner of OWNERS) {
+      const cord = this.cords[owner];
+      if (cord) {
+        const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+        TechnologyFx.drawCord(g, this.col(owner), caster.x, caster.y, cord.x, cord.y, t, 1,
+          cord.state === 'parked');
+      }
+      // R+ Trojan Takeover: the caster stays plugged into the body they boxed.
+      const tr = this.trojan[owner];
+      if (!tr || !tr.victim.active) continue;
+      const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+      TechnologyFx.drawCord(g, this.col(owner), caster.x, caster.y, tr.victim.x, tr.victim.y, t, 0.85, false);
+    }
+  }
+
+  private paintByteBombs(
+    world: Phaser.GameObjects.Graphics, floor: Phaser.GameObjects.Graphics, time: number,
+  ): void {
+    for (const b of this.byteBombs) this.drawByteBombFace(world, floor, b, time);
+  }
+
+  private paintMalware(g: Phaser.GameObjects.Graphics, t: number): void {
+    for (const owner of OWNERS) {
+      const m = this.malware[owner];
+      if (!m) continue;
+      if (m.kind === 'goose') {
+        TechnologyFx.drawGoose(g, this.col(owner), m.x, m.y, m.facing, t, 1);
+      } else if (m.kind === 'pong') {
+        // Pong balls: a bright square with a trail, because this is a 1972 video game.
+        for (const b of m.balls) {
+          const ang = Math.atan2(b.vy, b.vx);
+          for (let i = 3; i >= 1; i--) {
+            bitTileLayered(g, this.col(owner), b.x - Math.cos(ang) * i * 6, b.y - Math.sin(ang) * i * 6,
+              0, 12 - i * 1.5, i % 2 === 0, TECH.white, 0.16 * (4 - i), false);
+          }
+          g.fillStyle(this.col(owner)(TECH.white), 1);
+          g.fillRect(b.x - 6, b.y - 6, 12, 12);
+          g.lineStyle(2, this.col(owner)(TECH.alert), 0.9);
+          g.strokeRect(b.x - 6, b.y - 6, 12, 12);
+        }
+      }
+    }
+  }
+
+  private paintAds(g: Phaser.GameObjects.Graphics, time: number, t: number): void {
+    for (const ad of this.ads) {
+      // Yours is a see-through overlay; the enemy's is opaque and squarely in the way.
+      const mine = ad.owner === 'player';
+      const pop = Phaser.Math.Clamp((time - ad.bornAt) / 160, 0, 1);
+      TechnologyFx.drawAd(g, this.col(ad.owner), ad.x, ad.y,
+        ad.w * (0.4 + pop * 0.6), ad.h * (0.4 + pop * 0.6), t, mine ? 0.5 : 1, mine);
+    }
+  }
+
+  private paintBoxed(g: Phaser.GameObjects.Graphics, t: number): void {
+    const now = this.arena.scene.time.now;
+    for (const owner of OWNERS) {
+      if (now >= this.boxedUntil[owner]) continue;
+      const f = owner === 'player' ? this.arena.player : this.arena.npc;
+      if (!f.active) continue;
+      TechnologyFx.drawBoxed(g, this.col(opposite(owner)), f.x, f.y, 16, t, 1);
+    }
+    for (const b of this.boxedHusks) {
+      if (!b.f.active) continue;
+      TechnologyFx.drawBoxed(g, this.pcol, b.f.x, b.f.y, 16, t, 1);
+    }
+  }
+
+  /**
+   * Click+ Firewall: the arena border becomes a live packet filter. Repainted every frame rather
+   * than stamped once, so the wall visibly *scans* — which is what says it is still up.
+   */
+  private paintFirewall(g: Phaser.GameObjects.Graphics, t: number): void {
+    const charges = this.firewallCharges.player;
+    if (charges <= 0) return;
+    const { width: W, height: H } = this.arena.scene.scale;
+    const alpha = 0.3 + 0.14 * charges;
+    g.lineStyle(5, this.pcol(TECH.rust), alpha);
+    g.strokeRect(6, 6, W - 12, H - 12);
+    g.lineStyle(1.4, this.pcol(TECH.gold), alpha * 0.6);
+    g.strokeRect(12, 12, W - 24, H - 24);
+    // Packets running the perimeter, one lap every few seconds.
+    const per = 5 * charges;
+    const peri = (W - 24) * 2 + (H - 24) * 2;
+    for (let i = 0; i < per; i++) {
+      let d = ((t * 0.16 + i / per) % 1) * peri;
+      let x: number, y: number;
+      if (d < W - 24) { x = 12 + d; y = 12; }
+      else if ((d -= W - 24) < H - 24) { x = W - 12; y = 12 + d; }
+      else if ((d -= H - 24) < W - 24) { x = W - 12 - d; y = H - 12; }
+      else { x = 12; y = H - 12 - (d - (W - 24)); }
+      bitTileLayered(g, this.pcol, x, y, 0, 9, i % 2 === 0, TECH.gold, alpha + 0.3, false);
+    }
+  }
+
+  // ── Auras + rig ───────────────────────────────────────────────────────────
+
+  /**
+   * The persistent tells. Every one is keyed and dropped the frame its condition lapses, so
+   * several can stack into one silhouette without leaking Graphics.
+   */
+  private updateAuras(delta: number, time: number): void {
+    const live = new Set<string>();
+    const run = (id: string, style: TechAuraStyle, f: Fighter, tint: TechColorFn,
+      radius: number, depth: number, intensity: number, angle: number): void => {
+      if (!f?.active || f.hp <= 0) return;
+      live.add(id);
+      const a = this.aura(id, style, tint, radius, depth);
+      a.setIntensity(intensity);
+      a.setAngle(angle);
+      a.update(delta, f.x, f.y, f.forceInvisible ? 0 : Math.max(f.alpha, 0.25));
+    };
+
+    for (const owner of OWNERS) {
+      const f = owner === 'player' ? this.arena.player : this.arena.npc;
+      const foe = this.col(opposite(owner));
+      if (time < this.virusUntil[owner]) run(`${owner}-virus`, 'virus', f, foe, 22, D_UI, 1, 0);
+      if (time < this.boxedUntil[owner]) run(`${owner}-boxed`, 'boxed', f, foe, 22, D_FLOOR + 1, 1, 0);
+      if (time < this.adminInvisibleUntil[owner]) {
+        run(`${owner}-admin`, 'invincible', f, this.col(owner), 26, D_UI, 1, 0);
+      }
+      const sheltered = owner === 'player' ? this.isPlayerSheltered() : this.isNpcSheltered();
+      if (sheltered) run(`${owner}-shelter`, 'shelter', f, this.col(owner), 22, D_UI, 1, 0);
+    }
+    for (const v of this.huskViruses) {
+      run(`husk-virus-${v.until}`, 'virus', v.f, this.pcol, 20, D_UI, 1, 0);
+    }
+    for (const [f, st] of this.lagged) {
+      if (time >= st.until) continue;
+      run(`lag-${f === this.arena.player ? 'p' : 'n'}`, 'lag', f, this.pcol, 20, D_UI, 1, 0);
+    }
+    // Mastery — VPN: the ramp is only ever the local player's, and it streams behind them.
+    if (this.arena.masteryActive && this.vpnRamp > 0.05) {
+      const p = this.arena.player;
+      const body = p.body as Phaser.Physics.Arcade.Body | null;
+      const heading = body ? Math.atan2(body.velocity.y, body.velocity.x) : 0;
+      run('player-vpn', 'vpn', p, this.pcol, 22, D_FLOOR + 2, this.vpnRamp, heading);
+    }
+
+    for (const id of [...this.auras.keys()]) if (!live.has(id)) this.dropAura(id);
+  }
+
+  /** Drive the rig for whichever sides are playing Technology. Built lazily; torn down otherwise. */
+  private updateAvatars(delta: number): void {
+    const { player, npc, scene } = this.arena;
+    const pointer = scene.input.activePointer;
+
+    if (this.arena.elementId === 'technology' && player?.active && player.hp > 0) {
+      if (!this.playerAvatar) this.playerAvatar = new TechnologyAvatar(scene, this.pcol, 'player');
+      const av = this.playerAvatar;
+      av.setFacing(Math.atan2(pointer.worldY - player.y, pointer.worldX - player.x));
+      av.setMastered(this.arena.masteryActive);
+      av.setVpn(this.vpnRamp);
+      // The admin console visibly swells the rig — you are inside the machine while it runs.
+      av.setIntensity(this.admin.player.active ? 1.35 : 1);
+      av.setHold(this.admin.player.active ? 'brace' : null);
+      av.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
+    } else if (this.playerAvatar) {
+      this.playerAvatar.destroy();
+      this.playerAvatar = null;
+    }
+
+    if (this.arena.npcElementId === 'technology' && npc?.active && npc.hp > 0) {
+      if (!this.npcAvatar) this.npcAvatar = new TechnologyAvatar(scene, this.ncol, 'npc');
+      const av = this.npcAvatar;
+      av.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
+      av.setIntensity(this.admin.npc.active ? 1.35 : 1);
+      av.setHold(this.admin.npc.active ? 'brace' : null);
+      av.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
+    } else if (this.npcAvatar) {
+      this.npcAvatar.destroy();
+      this.npcAvatar = null;
+    }
   }
 
   /** Wheel of Fortune speed buff + the VPN mastery ramp — read in ArenaScene's speed-mult block. */
@@ -730,11 +1048,12 @@ export class TechnologyKit {
     const mouseMult = 1 + this.gamingMouseStacks[owner] * 0.1;
     const buffMult = time < this.dmgBuffUntil[owner] ? 1.25 : 1;
     const damage = CRUNCHER_BASE_DAMAGE * (1 + this.cruncherDmg[owner] / 100) * mouseMult * buffMult;
-    const sprite = this.arena.scene.add.sprite(caster.x, caster.y, 'proj-tech-cruncher').setRotation(angle).setDepth(14);
+    this.gesture(owner, 'tech-cruncher', angle);
     const entry = {
-      sprite, x: caster.x, y: caster.y,
+      x: caster.x, y: caster.y,
       vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
       owner, damage, traveled: 0, trailAccum: 0,
+      rgb: this.gamingMouseStacks[owner] > 0,
       reg: null as unknown as RegisteredProjectile,
     };
     entry.reg = {
@@ -743,11 +1062,14 @@ export class TechnologyKit {
       getY: () => entry.y,
       damage,
       steal: () => {
-        entry.sprite.destroy();
         const idx = this.crunchers.indexOf(entry);
         if (idx >= 0) this.crunchers.splice(idx, 1);
       },
     };
+    // Muzzle: a burst of bits out of the hand it was thrown from.
+    this.fx(owner).bits(caster.x, caster.y, 3, {
+      angle, spread: 0.6, speed: 120, size: 8, life: 320, depth: D_WORLD, drift: 0,
+    });
     this.crunchers.push(entry);
     this.arena.projReg.add(entry.reg);
   }
@@ -778,16 +1100,14 @@ export class TechnologyKit {
     }
   }
 
-  private spawnBinaryTrail(x: number, y: number): void {
-    const glyph = Math.random() < 0.5 ? '0' : '1';
-    const text = this.arena.scene.add.text(x, y, glyph, { fontSize: '12px', color: '#33ff88', fontFamily: 'monospace' }).setOrigin(0.5).setDepth(13);
-    this.arena.scene.tweens.add({ targets: text, alpha: 0, y: y - 10, duration: 500, onComplete: () => text.destroy() });
+  /** One bit shed out of the *back* of a cruncher, so the trail reads as exhaust. */
+  private spawnBinaryTrail(owner: Owner, x: number, y: number, color: number): void {
+    this.fx(owner).bit(x, y, color, D_WORLD - 1, 9, 520);
   }
 
   private removeCruncher(i: number): void {
     const c = this.crunchers[i];
     this.arena.projReg.remove(c.reg);
-    c.sprite.destroy();
     this.crunchers.splice(i, 1);
   }
 
@@ -797,19 +1117,15 @@ export class TechnologyKit {
       const c = this.crunchers[i];
       c.x += c.vx * delta / 1000;
       c.y += c.vy * delta / 1000;
-      c.sprite.setPosition(c.x, c.y);
       c.traveled += Math.hypot(c.vx, c.vy) * delta / 1000;
-
-      // Gaming mouse (F+ Grub-Shop): RGB crunchers
-      if (this.gamingMouseStacks[c.owner] > 0) {
-        const hue = ((time / 4) + i * 40) % 360;
-        c.sprite.setTint(Phaser.Display.Color.HSLToColor(hue / 360, 1, 0.6).color);
-      }
 
       c.trailAccum += delta;
       if (c.trailAccum >= CRUNCHER_TRAIL_INTERVAL_MS) {
         c.trailAccum = 0;
-        this.spawnBinaryTrail(c.x, c.y);
+        // Emitted out of the back of the shot, not off its centre.
+        const back = Math.atan2(-c.vy, -c.vx);
+        this.spawnBinaryTrail(c.owner, c.x + Math.cos(back) * 12, c.y + Math.sin(back) * 12,
+          this.cruncherColor(c, time, i));
       }
 
       let hitTarget: Fighter | null = null;
@@ -911,11 +1227,10 @@ export class TechnologyKit {
     for (let i = 0; i < ADS_COUNT; i++) {
       const x = Phaser.Math.Between(50, W - 50);
       const y = Phaser.Math.Between(50, H - 50);
-      const rect = this.arena.scene.add.rectangle(x, y, ADS_W, ADS_H, 0x2255aa, translucent ? 0.5 : 1)
-        .setStrokeStyle(2, 0xffffff, translucent ? 0.5 : 0.9).setDepth(9);
-      const label = this.arena.scene.add.text(x, y, '📢', { fontSize: '48px' }).setOrigin(0.5).setDepth(10).setAlpha(translucent ? 0.5 : 1);
-      this.ads.push({ owner, rect, label, x, y, w: ADS_W, h: ADS_H, expiresAt: now + ADS_LIFETIME_MS });
+      this.ads.push({ owner, x, y, w: ADS_W, h: ADS_H, bornAt: now, expiresAt: now + ADS_LIFETIME_MS });
     }
+    void translucent;
+    this.gesture(owner, 'tech-ads');
 
     // Palware (E+): caster also summons a malware. Only the local player rolls;
     // the remote sim mirrors it via the 'malware' net message.
@@ -932,9 +1247,6 @@ export class TechnologyKit {
     if (owner) {
       this.virusUntil[owner] = time + VIRUS_DURATION_MS;
       this.virusNextTickAt[owner] = time + VIRUS_TICK_MS;
-      if (!this.virusIcon[owner]) {
-        this.virusIcon[owner] = this.arena.scene.add.text(fighter.x, fighter.y - 34, '🦠', { fontSize: '14px' }).setOrigin(0.5).setDepth(12);
-      }
     } else {
       const existing = this.huskViruses.find((v) => v.f === fighter);
       if (existing) {
@@ -944,10 +1256,13 @@ export class TechnologyKit {
           f: fighter,
           until: time + VIRUS_DURATION_MS,
           nextTickAt: time + VIRUS_TICK_MS,
-          icon: this.arena.scene.add.text(fighter.x, fighter.y - 34, '🦠', { fontSize: '14px' }).setOrigin(0.5).setDepth(12),
         });
       }
     }
+    // Infection lands as a burst of corrupted cells and a tear across the victim.
+    const fx = owner === 'npc' ? this.pfx : this.nfx;
+    fx.bits(fighter.x, fighter.y, 8, { speed: 150, size: 9, life: 620, depth: D_UI, color: TECH.plague });
+    fx.glitch(fighter.x, fighter.y, 60, 48, TECH.plague, 420, D_UI);
   }
 
   private virusTick(fighter: Fighter): number {
@@ -964,7 +1279,10 @@ export class TechnologyKit {
     for (let i = this.ads.length - 1; i >= 0; i--) {
       const ad = this.ads[i];
       if (time >= ad.expiresAt) {
-        ad.rect.destroy(); ad.label.destroy();
+        // Popups do not fade — they close.
+        this.fx(ad.owner).bits(ad.x, ad.y, 5, {
+          speed: 130, size: 9, life: 380, depth: D_UI, color: TECH.white,
+        });
         this.ads.splice(i, 1);
         continue;
       }
@@ -973,33 +1291,28 @@ export class TechnologyKit {
         const toucherOwner: Owner | null =
           toucher === this.arena.player ? 'player' : toucher === this.arena.npc ? 'npc' : null;
         this.applyVirus(toucher, toucherOwner, time);
-        ad.rect.destroy(); ad.label.destroy();
+        this.fx(ad.owner).crash(ad.x, ad.y, 46, {
+          bits: 8, rings: 1, duration: 420, color: TECH.plague, mark: false,
+        });
         this.ads.splice(i, 1);
       }
     }
 
     for (const owner of OWNERS) {
       const fighter = owner === 'player' ? this.arena.player : this.arena.npc;
-      if (time < this.virusUntil[owner]) {
-        this.virusIcon[owner]?.setPosition(fighter.x, fighter.y - 34);
-        if (time >= this.virusNextTickAt[owner]) {
-          this.virusNextTickAt[owner] = time + VIRUS_TICK_MS;
-          this.virusTick(fighter);
-        }
-      } else if (this.virusIcon[owner]) {
-        this.virusIcon[owner]!.destroy();
-        this.virusIcon[owner] = null;
+      // The crawling cells are the 'virus' aura's job; this is only the damage tick.
+      if (time < this.virusUntil[owner] && time >= this.virusNextTickAt[owner]) {
+        this.virusNextTickAt[owner] = time + VIRUS_TICK_MS;
+        this.virusTick(fighter);
       }
     }
 
     for (let i = this.huskViruses.length - 1; i >= 0; i--) {
       const v = this.huskViruses[i];
       if (time >= v.until || !v.f.active || v.f.hp <= 0) {
-        v.icon.destroy();
         this.huskViruses.splice(i, 1);
         continue;
       }
-      v.icon.setPosition(v.f.x, v.f.y - 34);
       if (time >= v.nextTickAt) {
         v.nextTickAt = time + VIRUS_TICK_MS;
         this.virusTick(v.f);
@@ -1019,10 +1332,9 @@ export class TechnologyKit {
     if (kind === 'goose') {
       const x = Phaser.Math.Between(80, W - 80);
       const y = Phaser.Math.Between(80, H - 80);
-      const sprite = scene.add.text(x, y, '🪿', { fontSize: '30px' }).setOrigin(0.5).setDepth(15);
       this.malware[owner] = {
         kind: 'goose', owner, expiresAt,
-        sprite, x, y,
+        facing: 0, x, y,
         targetX: Phaser.Math.Between(60, W - 60), targetY: Phaser.Math.Between(60, H - 60),
         mode: 'wander', modeUntil: 0, nextActionAt: now + 2500,
         carried: null, stolenDamage: 0, bulletIcon: null,
@@ -1054,7 +1366,6 @@ export class TechnologyKit {
 
   private makePongBall(x: number, y: number, angle: number): PongBall {
     return {
-      sprite: this.arena.scene.add.circle(x, y, 8, 0xffffff).setStrokeStyle(2, 0xff4444, 0.9).setDepth(15),
       x, y,
       vx: Math.cos(angle) * PONG_SPEED,
       vy: Math.sin(angle) * PONG_SPEED,
@@ -1066,14 +1377,12 @@ export class TechnologyKit {
     const m = this.malware[owner];
     if (!m) return;
     if (m.kind === 'goose') {
-      m.sprite.destroy();
       m.bulletIcon?.destroy();
     } else if (m.kind === 'clippy') {
       if (m.keyListener) window.removeEventListener('keydown', m.keyListener);
       for (const o of m.objs) o.destroy();
-    } else {
-      for (const b of m.balls) b.sprite.destroy();
     }
+    // Pong holds nothing but data — its balls are painted from `m.balls` each frame.
     this.malware[owner] = null;
   }
 
@@ -1103,8 +1412,7 @@ export class TechnologyKit {
       const step = Math.min(d, speed * delta / 1000);
       g.x += ((tx - g.x) / d) * step;
       g.y += ((ty - g.y) / d) * step;
-      g.sprite.setPosition(g.x, g.y);
-      g.sprite.setFlipX(tx < g.x);
+      g.facing = Math.atan2(ty - g.y, tx - g.x);
     }
     return d;
   }
@@ -1227,7 +1535,6 @@ export class TechnologyKit {
             const angle = Math.atan2(target.y - g.y, target.x - g.x);
             this.thrownBullets.push({
               owner: g.owner,
-              sprite: scene.add.circle(g.x, g.y, 5, 0xffee66).setDepth(15),
               x: g.x, y: g.y,
               vx: Math.cos(angle) * 380, vy: Math.sin(angle) * 380,
               damage: Math.max(1, g.stolenDamage),
@@ -1256,15 +1563,12 @@ export class TechnologyKit {
       const b = this.thrownBullets[i];
       b.x += b.vx * delta / 1000;
       b.y += b.vy * delta / 1000;
-      b.sprite.setPosition(b.x, b.y);
       const hit = this.enemiesOf(b.owner).find((f) => Phaser.Math.Distance.Between(b.x, b.y, f.x, f.y) <= 22);
       if (hit) {
         hit.takeDamage(b.damage);
         this.arena.spawnHitFlash(hit.x, hit.y, 0xffee66);
-        b.sprite.destroy();
         this.thrownBullets.splice(i, 1);
       } else if (b.x < -20 || b.x > W + 20 || b.y < -20 || b.y > H + 20) {
-        b.sprite.destroy();
         this.thrownBullets.splice(i, 1);
       }
     }
@@ -1367,7 +1671,6 @@ export class TechnologyKit {
       if (b.x > W - 10 && b.vx > 0) b.vx = -b.vx;
       if (b.y < 10 && b.vy < 0) b.vy = -b.vy;
       if (b.y > H - 10 && b.vy > 0) b.vy = -b.vy;
-      b.sprite.setPosition(b.x, b.y);
 
       for (const f of enemies) {
         if (Phaser.Math.Distance.Between(b.x, b.y, f.x, f.y) > 26) continue;
@@ -1387,20 +1690,23 @@ export class TechnologyKit {
     if (this.cords[owner]) return;
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const angle = Math.atan2(ty - caster.y, tx - caster.x);
-    const head = this.arena.scene.add.circle(caster.x, caster.y, 8, 0xff3355).setStrokeStyle(2, 0xffffff, 0.9).setDepth(20);
-    const line = this.arena.scene.add.graphics().setDepth(19);
+    this.gesture(owner, 'tech-upload', angle);
     this.cords[owner] = {
+      owner,
       state: 'traveling', x: caster.x, y: caster.y,
       vx: Math.cos(angle) * UPLOAD_SPEED, vy: Math.sin(angle) * UPLOAD_SPEED,
-      parkX: tx, parkY: ty, expiresAt: 0, head, line,
+      parkX: tx, parkY: ty, expiresAt: 0,
     };
+    this.fx(owner).bits(caster.x, caster.y, 4, {
+      angle, spread: 0.5, speed: 140, size: 8, life: 300, depth: D_WORLD, drift: 0,
+    });
   }
 
   private destroyCord(owner: Owner): void {
     const cord = this.cords[owner];
     if (!cord) return;
-    cord.head.destroy();
-    cord.line.destroy();
+    // The plug is yanked and the connection drops.
+    this.fx(owner).bits(cord.x, cord.y, 4, { speed: 110, size: 8, life: 300, depth: D_WORLD });
     this.cords[owner] = null;
   }
 
@@ -1412,9 +1718,6 @@ export class TechnologyKit {
     if (victimOwner) {
       this.boxedUntil[victimOwner] = time + UPLOAD_BOX_DURATION_MS;
       victim.setTint(0xcc8844);
-      if (!this.boxIcon[victimOwner]) {
-        this.boxIcon[victimOwner] = this.arena.scene.add.text(victim.x, victim.y - 34, '📦', { fontSize: '16px' }).setOrigin(0.5).setDepth(12);
-      }
     } else {
       victim.setTint(0xcc8844);
       const existing = this.boxedHusks.find((b) => b.f === victim);
@@ -1424,15 +1727,17 @@ export class TechnologyKit {
         this.boxedHusks.push({
           f: victim,
           until: time + UPLOAD_BOX_DURATION_MS,
-          icon: this.arena.scene.add.text(victim.x, victim.y - 34, '📦', { fontSize: '16px' }).setOrigin(0.5).setDepth(12),
         });
       }
     }
+    // The crate slams shut round them and the grid snaps on underneath.
+    const fx = this.fx(casterOwner);
+    fx.crash(victim.x, victim.y, 54, { bits: 7, rings: 2, duration: 460, color: TECH.gold, mark: false });
+    fx.ring(victim.x, victim.y, 60, 20, TECH.cyan, 320, D_UI, 2.4);
     this.arena.spawnFloatingText(victim.x, victim.y - 46, 'BOXED!', '#cc8844');
 
     // Trojan Takeover (R+): the caster stays wired in and steers the victim.
     if (this.arena.hasUpgrade(casterOwner, 'r')) {
-      this.trojan[casterOwner]?.wire.destroy();
       const body = victim.body as Phaser.Physics.Arcade.Body | null;
       const dir = body && Math.abs(body.velocity.x) + Math.abs(body.velocity.y) > 1
         ? (Math.abs(body.velocity.x) >= Math.abs(body.velocity.y)
@@ -1443,7 +1748,6 @@ export class TechnologyKit {
         victim,
         until: time + UPLOAD_BOX_DURATION_MS,
         dir,
-        wire: this.arena.scene.add.graphics().setDepth(19),
       };
       if (casterOwner === 'player') {
         this.arena.spawnFloatingText(this.arena.player.x, this.arena.player.y - 40, '🔌 TROJAN — arrow keys!', '#66eecc');
@@ -1492,10 +1796,7 @@ export class TechnologyKit {
         }
       }
 
-      cord.head.setPosition(cord.x, cord.y);
-      cord.line.clear();
-      cord.line.lineStyle(3, 0xff3355, 0.85);
-      cord.line.lineBetween(caster.x, caster.y, cord.x, cord.y);
+      void caster;
     }
   }
 
@@ -1508,11 +1809,8 @@ export class TechnologyKit {
           if (Math.abs(body.velocity.x) >= Math.abs(body.velocity.y)) body.setVelocityY(0);
           else body.setVelocityX(0);
         }
-        this.boxIcon[owner]?.setPosition(fighter.x, fighter.y - 34);
-      } else if (this.boxIcon[owner]) {
+      } else if (fighter.isTinted) {
         fighter.clearTint();
-        this.boxIcon[owner]!.destroy();
-        this.boxIcon[owner] = null;
       }
     }
 
@@ -1520,7 +1818,6 @@ export class TechnologyKit {
       const b = this.boxedHusks[i];
       if (time >= b.until || !b.f.active || b.f.hp <= 0) {
         if (b.f.active) b.f.clearTint();
-        b.icon.destroy();
         this.boxedHusks.splice(i, 1);
         continue;
       }
@@ -1529,7 +1826,6 @@ export class TechnologyKit {
         if (Math.abs(body.velocity.x) >= Math.abs(body.velocity.y)) body.setVelocityY(0);
         else body.setVelocityX(0);
       }
-      b.icon.setPosition(b.f.x, b.f.y - 34);
     }
   }
 
@@ -1540,14 +1836,10 @@ export class TechnologyKit {
       const t = this.trojan[casterOwner];
       if (!t) continue;
       if (time >= t.until || !t.victim.active || t.victim.hp <= 0) {
-        t.wire.destroy();
         this.trojan[casterOwner] = null;
         continue;
       }
-      const caster = casterOwner === 'player' ? this.arena.player : this.arena.npc;
-      t.wire.clear();
-      t.wire.lineStyle(2, 0x66eecc, 0.8);
-      t.wire.lineBetween(caster.x, caster.y, t.victim.x, t.victim.y);
+      // The wire itself is painted by paintCords off this same state.
 
       // Force movement on the victim (their own sim is authoritative — a net
       // ghost keeps interpolating instead; the real steering happens peer-side).
@@ -1565,6 +1857,13 @@ export class TechnologyKit {
     const now = this.arena.scene.time.now;
     this.dragActive[owner] = true;
     this.dragExpiresAt[owner] = now + WEBDRAG_DURATION_MS;
+    this.gesture(owner, 'tech-webdrag');
+    // The cursor is being reassigned — a ring of bits reboots round the caster.
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    this.fx(owner).ring(caster.x, caster.y, 10, 52, TECH.mint, 420, D_WORLD, 2.6);
+    this.fx(owner).bits(caster.x, caster.y, 6, {
+      speed: 130, size: 8, life: 460, depth: D_WORLD, color: TECH.mint,
+    });
     if (owner === 'player') {
       this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 36, 'Drag mode!', '#66eecc');
       // Surf the web! (F+): also offer the browser (caster-local UI).
@@ -1601,8 +1900,6 @@ export class TechnologyKit {
       } else {
         const ad = this.dragGrabbed.ref;
         ad.x = mouseX; ad.y = mouseY;
-        ad.rect.setPosition(mouseX, mouseY);
-        ad.label.setPosition(mouseX, mouseY);
       }
     }
 
@@ -1913,7 +2210,6 @@ export class TechnologyKit {
       const speed = COIN_SPEED * Phaser.Math.FloatBetween(0.7, 1.3);
       const entry: CoinProj = {
         owner,
-        sprite: this.arena.scene.add.circle(x, y, 5, 0xffdd44).setStrokeStyle(1, 0xaa8822).setDepth(15),
         x, y,
         vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
         reg: null as unknown as RegisteredProjectile,
@@ -1924,7 +2220,6 @@ export class TechnologyKit {
         getY: () => entry.y,
         damage: COIN_DMG,
         steal: () => {
-          entry.sprite.destroy();
           const idx = this.coinProjs.indexOf(entry);
           if (idx >= 0) this.coinProjs.splice(idx, 1);
         },
@@ -1942,7 +2237,6 @@ export class TechnologyKit {
       const c = this.coinProjs[i];
       c.x += c.vx * delta / 1000;
       c.y += c.vy * delta / 1000;
-      c.sprite.setPosition(c.x, c.y);
       const hit = this.enemiesOf(c.owner).find((f) => Phaser.Math.Distance.Between(c.x, c.y, f.x, f.y) <= 22);
       const out = c.x < -20 || c.x > W + 20 || c.y < -20 || c.y > H + 20;
       if (hit) {
@@ -1951,7 +2245,6 @@ export class TechnologyKit {
       }
       if (hit || out) {
         this.arena.projReg.remove(c.reg);
-        c.sprite.destroy();
         this.coinProjs.splice(i, 1);
       }
     }
@@ -1980,6 +2273,13 @@ export class TechnologyKit {
   doTechAdminCast(owner: Owner): void {
     const now = this.arena.scene.time.now;
     const st = this.admin[owner];
+    this.gesture(owner, 'tech-admin');
+    // Dropping to a console: the caster is visibly taken out of the simulation for 8s.
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    this.fx(owner).loading(caster.x, caster.y, 40, ADMIN_WINDOW_MS, {
+      color: TECH.amber, depth: D_UI, follow: () => ({ x: caster.x, y: caster.y }),
+    });
+    this.fx(owner).glitch(caster.x, caster.y, 70, 60, TECH.amber, 520, D_UI);
     st.active = true;
     st.endAt = now + ADMIN_WINDOW_MS;
     st.points = this.adminJackpot[owner] ? 999 : 0;
@@ -2041,11 +2341,35 @@ export class TechnologyKit {
   private applyJail(targetOwner: Owner, now: number): void {
     const fighter = targetOwner === 'player' ? this.arena.player : this.arena.npc;
     const w = 240, h = 240;
-    const gfx = this.arena.scene.add.graphics().setDepth(16);
-    gfx.lineStyle(3, 0xff4444, 0.9);
-    gfx.strokeRect(fighter.x - w / 2, fighter.y - h / 2, w, h);
-    this.jail[targetOwner] = { graphics: gfx, x: fighter.x, y: fighter.y, w, h, lastDmgAt: 0, expiresAt: now + 5000 };
+    this.jail[targetOwner] = { x: fighter.x, y: fighter.y, w, h, lastDmgAt: 0, expiresAt: now + 5000 };
+    // A window slams open around them — the cell is a dialog box they cannot close.
+    this.fx(opposite(targetOwner)).crash(fighter.x, fighter.y, 70, {
+      bits: 10, rings: 2, duration: 520, color: TECH.alert, mark: false,
+    });
     this.arena.spawnFloatingText(fighter.x, fighter.y - 40, 'JAILED', '#ff4444');
+  }
+
+  /**
+   * The jail cell: a full-size error dialog with the victim inside it. Painted per frame so the
+   * scanlines crawl and the walls flash on each contact — a static stroked rectangle read as
+   * arena furniture rather than as something holding you.
+   */
+  private paintJail(g: Phaser.GameObjects.Graphics, time: number, t: number): void {
+    for (const owner of OWNERS) {
+      const box = this.jail[owner];
+      if (!box) continue;
+      const hot = time - box.lastDmgAt < 220;
+      windowPane(g, this.col(opposite(owner)), box.x, box.y, box.w, box.h, t,
+        hot ? 0.55 : 0.32, {
+          body: TECH.night, bar: TECH.alert, accent: hot ? TECH.white : TECH.alert, lines: 0,
+        });
+      // Bars across the opening, so it reads as a cell and not just a window.
+      g.lineStyle(2.4, this.col(opposite(owner))(TECH.alert), hot ? 0.95 : 0.6);
+      for (let i = 1; i < 7; i++) {
+        const bx = box.x - box.w / 2 + (i / 7) * box.w;
+        g.lineBetween(bx, box.y - box.h / 2 + 18, bx, box.y + box.h / 2);
+      }
+    }
   }
 
   private applyAdminRewards(owner: Owner, points: number): void {
@@ -2234,18 +2558,12 @@ export class TechnologyKit {
     const columns = 1 + Math.floor(r * 2.99);
     const life = 400 + 700 * r;
     const size = 11 + Math.round(5 * r);
-    const color = r > 0.85 ? '#aaffff' : r > 0.5 ? '#66ffdd' : '#33ff88';
+    const color = r > 0.85 ? TECH.ice : r > 0.5 ? TECH.mint : TECH.phosphor;
     for (let i = 0; i < columns; i++) {
       const spread = columns === 1 ? 0 : (i - (columns - 1) / 2) * (10 + 8 * r);
-      const glyph = Math.random() < 0.5 ? '0' : '1';
-      const text = scene.add.text(player.x + spread, player.y + Phaser.Math.Between(-6, 6), glyph, {
-        fontSize: `${size}px`, color, fontFamily: 'monospace',
-      }).setOrigin(0.5).setDepth(9).setAlpha(0.55 + 0.45 * r);
-      scene.tweens.add({
-        targets: text, alpha: 0, y: text.y + 14 + 20 * r, duration: life,
-        onComplete: () => text.destroy(),
-      });
+      this.pfx.bit(player.x + spread, player.y + Phaser.Math.Between(-6, 6), color, 9, size, life);
     }
+    void scene;
   }
 
   // ── Technology Mastery — Byte-Bomb (bindable) ─────────────────────────
@@ -2283,13 +2601,7 @@ export class TechnologyKit {
     const scene = this.arena.scene;
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const angle = Math.atan2(ty - caster.y, tx - caster.x);
-    const shadow = scene.add.graphics().setDepth(6);
-    const shell = scene.add.circle(caster.x, caster.y, 16, 0x0d2740, 0.95)
-      .setStrokeStyle(2, 0x33aaee, 0.95).setDepth(17);
-    const face = scene.add.graphics().setDepth(18);
-    const label = scene.add.text(caster.x, caster.y, '8.0', {
-      fontSize: '13px', color: '#aaffff', fontFamily: 'monospace', fontStyle: 'bold',
-    }).setOrigin(0.5).setDepth(19);
+    void scene;
     this.byteBombs.push({
       owner,
       x: caster.x, y: caster.y,
@@ -2298,15 +2610,10 @@ export class TechnologyKit {
       destX: tx, destY: ty,
       flying: true,
       fuse: BYTE_BOMB_FUSE_MS,
-      shell, shadow, face, label,
     });
-  }
-
-  private destroyByteBomb(b: ByteBomb): void {
-    b.shell.destroy();
-    b.shadow.destroy();
-    b.face.destroy();
-    b.label.destroy();
+    this.fx(owner).bits(caster.x, caster.y, 4, {
+      angle, spread: 0.5, speed: 150, size: 8, life: 320, depth: D_WORLD, drift: 0,
+    });
   }
 
   /**
@@ -2324,9 +2631,8 @@ export class TechnologyKit {
       if (Phaser.Math.Distance.Between(mouseX, mouseY, b.x, b.y) > BYTE_BOMB_RADIUS) continue;
       b.fuse = Math.max(0, b.fuse - BYTE_BOMB_CLICK_CUT_MS);
       this.arena.spawnFloatingText(b.x, b.y - 26, '-0.5s', '#66ddff');
-      this.arena.scene.tweens.add({
-        targets: [b.shell, b.label], scaleX: 1.25, scaleY: 1.25, duration: 70, yoyo: true,
-      });
+      // Clicking the chip visibly knocks bits loose out of it.
+      this.pfx.bits(b.x, b.y, 3, { speed: 90, size: 7, life: 260, depth: D_WORLD + 1, color: TECH.ice });
       if (this.arena.isOnline) this.arena.sendTechMsg({ t: 'tech', k: 'bytefuse' });
       return true;
     }
@@ -2352,15 +2658,8 @@ export class TechnologyKit {
         b.fuse -= delta;
       }
 
-      const secs = Math.max(0, b.fuse / 1000);
-      b.label.setText(secs.toFixed(1));
-      b.shell.setPosition(b.x, b.y);
-      b.label.setPosition(b.x, b.y);
-      this.drawByteBombFace(b, time, secs);
-
       if (!b.flying && b.fuse <= 0) {
         this.detonateByteBomb(b, time);
-        this.destroyByteBomb(b);
         this.byteBombs.splice(i, 1);
       }
     }
@@ -2371,23 +2670,30 @@ export class TechnologyKit {
    * a scanline sweeping across it, a status LED, and the fuse ring draining around the whole
    * package. Everything blinks harder the closer the countdown gets to zero.
    */
-  private drawByteBombFace(b: ByteBomb, time: number, secs: number): void {
-    const g = b.face;
-    g.clear();
+  private drawByteBombFace(
+    g: Phaser.GameObjects.Graphics, shadowG: Phaser.GameObjects.Graphics, b: ByteBomb, time: number,
+  ): void {
+    const tint = this.col(b.owner);
+    const secs = Math.max(0, b.fuse / 1000);
     const frac = Phaser.Math.Clamp(b.fuse / BYTE_BOMB_FUSE_MS, 0, 1);
     // Blink rate climbs under 3s, then goes frantic under 1s.
     const rate = secs > 3 ? 500 : secs > 1 ? 220 : 100;
     const hot = Math.floor(time / rate) % 2 === 0;
     const danger = secs <= 3;
-    const ringColor = danger && hot ? 0xff5555 : 0x33aaee;
+    const ringColor = tint(danger && hot ? TECH.alert : TECH.cyan);
 
     // Ground shadow — squashed while the packet is still in the air.
-    b.shadow.clear();
-    b.shadow.fillStyle(0x000000, b.flying ? 0.18 : 0.32);
-    b.shadow.fillEllipse(b.x, b.y + 20, b.flying ? 20 : 28, b.flying ? 5 : 8);
+    shadowG.fillStyle(tint(TECH.night), b.flying ? 0.18 : 0.32);
+    shadowG.fillEllipse(b.x, b.y + 20, b.flying ? 20 : 28, b.flying ? 5 : 8);
+
+    // The package itself: a dark chip body under everything else.
+    g.fillStyle(tint(secs <= 1 && hot ? TECH.plum : TECH.board), 0.95);
+    g.fillCircle(b.x, b.y, 16);
+    g.lineStyle(2, tint(TECH.cyan), 0.95);
+    g.strokeCircle(b.x, b.y, 16);
 
     // Chip legs: three solder pins down each side, long enough to clear the fuse ring.
-    g.lineStyle(2, 0x99aabb, 0.85);
+    g.lineStyle(2, tint(TECH.wire), 0.85);
     for (let i = -1; i <= 1; i++) {
       const ly = b.y + i * 8;
       g.lineBetween(b.x - 15, ly, b.x - 28, ly);
@@ -2395,20 +2701,33 @@ export class TechnologyKit {
     }
 
     // Face plating: etched traces, plus a bright scanline sweeping top to bottom.
-    g.lineStyle(1, 0x66ddff, 0.45);
+    g.lineStyle(1, tint(TECH.ice), 0.45);
     g.lineBetween(b.x - 12, b.y - 8, b.x + 12, b.y - 8);
     g.lineBetween(b.x - 12, b.y + 8, b.x + 12, b.y + 8);
     g.lineBetween(b.x - 12, b.y - 8, b.x - 12, b.y + 8);
     const sweepY = b.y - 11 + ((time / 6) % 22);
-    g.lineStyle(2, 0xaaffff, 0.55);
+    g.lineStyle(2, tint(TECH.ice), 0.55);
     g.lineBetween(b.x - 11, sweepY, b.x + 11, sweepY);
 
     // Status LED, tucked into the top-left corner of the package away from the countdown.
-    g.fillStyle(hot ? (danger ? 0xff3322 : 0x33ff88) : 0x223344, hot ? 1 : 0.7);
+    g.fillStyle(tint(hot ? (danger ? TECH.alert : TECH.phosphor) : TECH.steel), hot ? 1 : 0.7);
     g.fillCircle(b.x - 9, b.y - 11, 3);
 
+    // The countdown, drawn as lit cells rather than typed — one per tenth still to run.
+    const tenths = Math.min(10, Math.ceil(secs * 10) % 10 || (secs > 0 ? 10 : 0));
+    g.fillStyle(tint(danger && hot ? TECH.alert : TECH.ice), 0.95);
+    for (let d = 0; d < tenths; d++) {
+      g.fillRect(b.x - 9 + (d % 5) * 4, b.y + (d < 5 ? 0 : 4.4), 2.6, 3);
+    }
+    // …and the whole seconds as bigger blocks above them.
+    const whole = Math.min(8, Math.floor(secs));
+    g.fillStyle(tint(danger && hot ? TECH.alert : TECH.phosphor), 0.95);
+    for (let d = 0; d < whole; d++) {
+      g.fillRect(b.x - 9 + (d % 4) * 5, b.y - 6 + (d < 4 ? 0 : 3), 3.4, 2.2);
+    }
+
     // Fuse ring draining around the package.
-    g.lineStyle(3, 0x112233, 0.55);
+    g.lineStyle(3, tint(TECH.night), 0.55);
     g.strokeCircle(b.x, b.y, 21);
     g.lineStyle(3, ringColor, 0.95);
     g.beginPath();
@@ -2418,34 +2737,18 @@ export class TechnologyKit {
     // Danger pulse: a faint ring breathing outward once the countdown goes red.
     if (danger) {
       const pulse = 24 + 7 * (1 - ((time % rate) / rate));
-      g.lineStyle(2, 0xff5555, 0.3);
+      g.lineStyle(2, tint(TECH.alert), 0.3);
       g.strokeCircle(b.x, b.y, pulse);
     }
-
-    b.shell.setFillStyle(secs <= 1 && hot ? 0x442233 : 0x0d2740, 0.95);
-    b.label.setColor(danger && hot ? '#ffdddd' : '#aaffff');
   }
 
   private detonateByteBomb(b: ByteBomb, time: number): void {
-    const scene = this.arena.scene;
-    const ring = scene.add.circle(b.x, b.y, BYTE_BOMB_BLAST_RADIUS * 0.35, 0x33aaee, 0.55)
-      .setStrokeStyle(3, 0xaaffff, 0.9).setDepth(17);
-    scene.tweens.add({
-      targets: ring, scaleX: 2.9, scaleY: 2.9, alpha: 0, duration: 420,
-      onComplete: () => ring.destroy(),
+    // A full crash: core, stepped shockwaves, the chip's own bits thrown clear, torn signal
+    // and a burned-in rectangle where the package was.
+    this.fx(b.owner).crash(b.x, b.y, BYTE_BOMB_BLAST_RADIUS, {
+      bits: 16, rings: 3, duration: 620, color: TECH.cyan,
     });
-    for (let i = 0; i < 14; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const d = 30 + Math.random() * BYTE_BOMB_BLAST_RADIUS;
-      const glyph = scene.add.text(b.x, b.y, Math.random() < 0.5 ? '0' : '1', {
-        fontSize: '15px', color: '#aaffff', fontFamily: 'monospace',
-      }).setOrigin(0.5).setDepth(18);
-      scene.tweens.add({
-        targets: glyph, x: b.x + Math.cos(a) * d, y: b.y + Math.sin(a) * d, alpha: 0,
-        duration: 480, onComplete: () => glyph.destroy(),
-      });
-    }
-    scene.cameras.main.shake(180, 0.004);
+    this.arena.scene.cameras.main.shake(180, 0.004);
 
     for (const target of this.enemiesOf(b.owner)) {
       if (Phaser.Math.Distance.Between(b.x, b.y, target.x, target.y) > BYTE_BOMB_BLAST_RADIUS) continue;
@@ -2531,14 +2834,9 @@ export class TechnologyKit {
     if (!target) return;
     if (Phaser.Math.Distance.Between(f.x, f.y, target.x, target.y) < 12) return;
 
-    const scene = this.arena.scene;
-    const trail = scene.add.graphics().setDepth(12);
-    trail.lineStyle(2, 0x66ddff, 0.8);
-    trail.lineBetween(f.x, f.y, target.x, target.y);
-    scene.tweens.add({ targets: trail, alpha: 0, duration: 320, onComplete: () => trail.destroy() });
-
-    const ghost = scene.add.circle(f.x, f.y, 14, 0x33aaee, 0.4).setDepth(11);
-    scene.tweens.add({ targets: ghost, alpha: 0, duration: 300, onComplete: () => ghost.destroy() });
+    // The rewind reads as packets travelling back up the wire to where you actually were.
+    this.pfx.packet(f.x, f.y, target.x, target.y, { count: 5, duration: 320, depth: 12, color: TECH.ice });
+    this.pfx.glitch(f.x, f.y, 44, 40, TECH.cyan, 300, 12);
 
     f.setPosition(target.x, target.y);
     st.history = [{ x: target.x, y: target.y, t: time }];
@@ -2591,7 +2889,10 @@ export class TechnologyKit {
       if (!box) continue;
       const fighter = owner === 'player' ? this.arena.player : this.arena.npc;
       if (time >= box.expiresAt) {
-        box.graphics.destroy();
+        // The dialog closes and the bits go with it.
+        this.fx(opposite(owner)).bits(box.x, box.y, 8, {
+          speed: 200, size: 9, life: 420, depth: D_UI, color: TECH.alert,
+        });
         this.jail[owner] = null;
         continue;
       }

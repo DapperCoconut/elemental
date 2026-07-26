@@ -47,6 +47,11 @@ import { silenceElement } from '../elements/silence';
 import { echoElement } from '../elements/quantum';
 import { quantumElement } from '../elements/quantum-element';
 import { dummyElement } from '../elements/dummy';
+import {
+  C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
+  addBackdrop, addBackButton, addButton, addCardPlate, addIconButton, addOverlayChrome,
+  addPagerButton, addRowPlate, addSectionLabel, addWell, addTitle, fillDiamond,
+} from '../ui';
 
 const ELEMENT_DATA_MAP: Record<string, Element> = {
   fire: fireElement, water: waterElement, life: lifeElement, air: airElement,
@@ -181,39 +186,22 @@ export class MenuScene extends Phaser.Scene {
     const cx = width / 2;
 
     // ── Persistent chrome ──────────────────────────────────────────
-    this.add.rectangle(cx, height / 2, width, height, 0x0d0d1a);
+    const sceneAccent = this.isInvasion ? C.corrupt : C.ember;
+    addBackdrop(this, { accent: sceneAccent, variant: 'lattice', motes: 20 });
 
-    const grid = this.add.graphics();
-    grid.lineStyle(1, 0x1a1a33, 1);
-    for (let x = 0; x < width; x += 60) grid.lineBetween(x, 0, x, height);
-    for (let y = 0; y < height; y += 60) grid.lineBetween(0, y, width, y);
+    addTitle(this, { x: cx, y: 76, text: 'ELEMENTAL', accent: sceneAccent, size: 54, rule: true });
 
-    this.add.text(cx, 90, 'ELEMENTAL', {
-      fontSize: '68px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#ff8800',
-      stroke: '#ff2200',
-      strokeThickness: 5,
-    }).setOrigin(0.5);
+    // Footer: controls first, mission statement beneath it.
+    const controlsHint = 'WASD MOVE     ·     LMB / E / R / F / Q ABILITIES     ·     SPACE DODGE';
+    this.add.text(cx, height - 42, controlsHint, {
+      fontSize: '10px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 1.5,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
 
-    this.add.text(cx, height - 24, this.isInvasion ? 'Survive as long as you can!' : 'Defeat the enemy to win!', {
-      fontSize: '13px',
-      color: '#666666',
-    }).setOrigin(0.5);
+    this.add.text(cx, height - 22, this.isInvasion ? 'Survive as long as you can.' : 'Defeat the enemy to win.', {
+      fontSize: '12px', fontFamily: FONT_UI, color: T.ghost,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
 
-    const controlsHint = 'WASD — move   •   Click / E / R / F / Q — abilities   •   SPACE — Dodge';
-    this.add.text(cx, height - 48, controlsHint, {
-      fontSize: '11px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#555555',
-    }).setOrigin(0.5);
-
-    // Back button
-    const backBtn = this.add.rectangle(52, 36, 88, 36, 0x222233).setStrokeStyle(1, 0x555577).setInteractive({ useHandCursor: true });
-    const backLabel = this.add.text(52, 36, '← BACK', { fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#aaaaaa' }).setOrigin(0.5);
-    backBtn.on('pointerover', () => { backBtn.setFillStyle(0x333355); backLabel.setColor('#ffffff'); });
-    backBtn.on('pointerout',  () => { backBtn.setFillStyle(0x222233); backLabel.setColor('#aaaaaa'); });
-    backBtn.on('pointerdown', () => this.goBack());
+    addBackButton(this, () => this.goBack());
 
     // Esc: close mutation info overlay, then element info overlay, then go back
     this.input.keyboard!.on('keydown-ESC', () => {
@@ -276,22 +264,27 @@ export class MenuScene extends Phaser.Scene {
     const subtitle = isPlayerPhase
       ? (this.isInvasion ? 'INVASION — pick your element' : 'Choose your element')
       : 'Choose enemy element';
-    const subtitleObj = this.add.text(cx, 158, subtitle, {
-      fontSize: '20px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#888888',
-    }).setOrigin(0.5);
+    const subtitleObj = addSectionLabel(this, {
+      x: cx, y: 152, text: subtitle.toUpperCase(),
+      accent: isPlayerPhase ? C.verdant : C.blood, width: 560,
+    });
     this.phaseObjects.push(subtitleObj);
 
     if (!isPlayerPhase && this.playerChoice) {
       const chosen = this.findElement(this.playerChoice);
       if (chosen) {
-        const indicator = this.add.text(cx, 196, `YOU:  ${chosen.emoji} ${chosen.name}`, {
-          fontSize: '15px',
-          fontFamily: 'Arial, sans-serif',
-          color: '#ffcc44',
-        }).setOrigin(0.5);
-        this.phaseObjects.push(indicator);
+        // Reminder of the pick you already locked in, framed as a duel card.
+        const g = this.add.graphics().setDepth(DEPTH.content - 1);
+        fillDiamond(g, cx - 96, 190, 4, C.verdant, 0.7);
+        fillDiamond(g, cx + 96, 190, 4, C.blood, 0.7);
+        g.lineStyle(1, C.line, 0.6);
+        g.beginPath(); g.moveTo(cx - 90, 190); g.lineTo(cx + 90, 190); g.strokePath();
+
+        const indicator = this.add.text(cx, 190, `  ${chosen.emoji} ${chosen.name.toUpperCase()}   VS   ?  `, {
+          fontSize: '14px', fontFamily: FONT_DISPLAY, color: T.gold, letterSpacing: 1.5,
+          backgroundColor: hex(C.void_), padding: { x: 10, y: 3 },
+        }).setOrigin(0.5).setDepth(DEPTH.content);
+        this.phaseObjects.push(g, indicator);
       }
     }
 
@@ -319,42 +312,26 @@ export class MenuScene extends Phaser.Scene {
     }
 
     // Page indicator (pushed down to make room for perk strips)
-    const pageLabel = this.add.text(cx, height / 2 + 155, `${this.elemPage + 1} / ${totalPages}`, {
-      fontSize: '12px', fontFamily: 'Arial, sans-serif', color: '#555566',
-    }).setOrigin(0.5);
+    const pageLabel = this.add.text(cx, height / 2 + 158, `${this.elemPage + 1}  /  ${totalPages}`, {
+      fontSize: '11px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 3,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
     this.phaseObjects.push(pageLabel);
 
     // Page arrows
     if (this.elemPage > 0) {
-      const leftBtn = this.add.rectangle(28, height / 2 + 20, 32, 64, 0x330066)
-        .setStrokeStyle(1, 0x9944ff).setInteractive({ useHandCursor: true });
-      const leftLbl = this.add.text(28, height / 2 + 20, '◀', {
-        fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
-      }).setOrigin(0.5).setDepth(1);
-      leftBtn
-        .on('pointerover', () => leftBtn.setFillStyle(0x550099))
-        .on('pointerout',  () => leftBtn.setFillStyle(0x330066))
-        .on('pointerdown', () => {
-          this.elemPage--;
-          this.renderPhase(width, height, cx);
-        });
-      this.phaseObjects.push(leftBtn, leftLbl);
+      const leftBtn = addPagerButton(this, {
+        x: 32, y: height / 2 + 20, dir: 'left', accent: C.arcane,
+        onClick: () => { this.elemPage--; this.renderPhase(width, height, cx); },
+      });
+      this.phaseObjects.push(leftBtn.container);
     }
 
     if (this.elemPage < totalPages - 1 && (this.elemPage > 0 || unlockedExtra.length > 0)) {
-      const rightBtn = this.add.rectangle(width - 28, height / 2 + 20, 32, 64, 0x330066)
-        .setStrokeStyle(1, 0x9944ff).setInteractive({ useHandCursor: true });
-      const rightLbl = this.add.text(width - 28, height / 2 + 20, '▶', {
-        fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
-      }).setOrigin(0.5).setDepth(1);
-      rightBtn
-        .on('pointerover', () => rightBtn.setFillStyle(0x550099))
-        .on('pointerout',  () => rightBtn.setFillStyle(0x330066))
-        .on('pointerdown', () => {
-          this.elemPage++;
-          this.renderPhase(width, height, cx);
-        });
-      this.phaseObjects.push(rightBtn, rightLbl);
+      const rightBtn = addPagerButton(this, {
+        x: width - 32, y: height / 2 + 20, dir: 'right', accent: C.arcane,
+        onClick: () => { this.elemPage++; this.renderPhase(width, height, cx); },
+      });
+      this.phaseObjects.push(rightBtn.container);
     }
 
     // Element cards
@@ -365,9 +342,9 @@ export class MenuScene extends Phaser.Scene {
     const startX = cx - totalW / 2;
 
     if (this.elemPage > 0 && currentElements.length === 0) {
-      const noElems = this.add.text(cx, height / 2 + 20, 'No extra elements discovered yet.\nVisit the LAB to unlock combined elements,\nor complete Gauntlets to unlock Abstract Elements.', {
-        fontSize: '14px', fontFamily: 'Arial, sans-serif', color: '#555577', align: 'center',
-      }).setOrigin(0.5);
+      const noElems = this.add.text(cx, height / 2 + 20, 'No extra elements discovered yet.\nVisit the LAB to unlock combined elements,\nor clear Gauntlets to unlock Abstract Elements.', {
+        fontSize: '14px', fontFamily: FONT_UI, color: T.faint, align: 'center', lineSpacing: 6,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
       this.phaseObjects.push(noElems);
       return;
     }
@@ -384,135 +361,117 @@ export class MenuScene extends Phaser.Scene {
       const displayColor = masteryOn && masteryDef ? masteryDef.enhancedColor : el.color;
       const borderColor = clickable ? displayColor : 0x444444;
 
-      const card = this.add
-        .rectangle(bx, by, cardW, cardH, clickable ? displayColor : 0x222233, fillAlpha)
-        .setStrokeStyle(2, borderColor);
+      void fillAlpha;
+      const plate = addCardPlate(this, {
+        x: bx, y: by, w: cardW, h: cardH,
+        accent: clickable ? displayColor : C.steel,
+        cut: 16, muted: !clickable,
+      });
 
-      const emojiText = this.add.text(bx, by - 32, displayEmoji, { fontSize: '44px' }).setOrigin(0.5);
-
-      const nameText = this.add.text(bx, by + 26, el.name.toUpperCase(), {
-        fontSize: '15px',
-        fontFamily: '"Arial Black", sans-serif',
-        color: clickable ? '#ffffff' : '#555555',
-      }).setOrigin(0.5);
-
-      let statusText: Phaser.GameObjects.Text;
+      // Colour pool behind the glyph — the element's signature at a glance.
+      const halo = this.add.graphics().setDepth(DEPTH.content - 1);
       if (clickable) {
-        statusText = this.add.text(bx, by + 52, '▶  SELECT', {
-          fontSize: '12px',
-          fontFamily: 'Arial, sans-serif',
-          color: '#ffcc00',
-        }).setOrigin(0.5);
-
-        card
-          .setInteractive({ useHandCursor: true })
-          .on('pointerover', () => { card.setAlpha(1); card.setStrokeStyle(3, 0xffffff); })
-          .on('pointerout', () => { card.setAlpha(fillAlpha); card.setStrokeStyle(2, borderColor); })
-          .on('pointerdown', () => this.handleElementClick(el.id, width, height, cx));
-      } else {
-        statusText = this.add.text(bx, by + 52, 'coming soon', {
-          fontSize: '11px', color: '#444444',
-        }).setOrigin(0.5);
+        for (let k = 5; k >= 1; k--) {
+          halo.fillStyle(displayColor, 0.05);
+          halo.fillCircle(bx, by - 30, 18 + k * 6);
+        }
+      }
+      // A mastered element gets a crown of diamonds over its glyph.
+      if (masteryOn) {
+        for (const a of [-2.36, -1.57, -0.79]) {
+          fillDiamond(halo, bx + Math.cos(a) * 44, by - 30 + Math.sin(a) * 44, 3.5, C.gold, 0.9);
+        }
       }
 
-      // "i" info button — top-right corner of card
-      const iBtnX = bx + cardW / 2 - 14;
-      const iBtnY = by - cardH / 2 + 14;
-      const iCircle = this.add.circle(iBtnX, iBtnY, 11, 0x222244, 0.9)
-        .setStrokeStyle(1, 0x8888cc, 0.9).setDepth(3).setInteractive({ useHandCursor: true });
-      const iLabel = this.add.text(iBtnX, iBtnY, 'i', {
-        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#aaaaff',
-      }).setOrigin(0.5).setDepth(4);
-      iCircle
-        .on('pointerover', () => iCircle.setFillStyle(0x4444aa, 0.95))
-        .on('pointerout',  () => iCircle.setFillStyle(0x222244, 0.9))
-        .on('pointerdown', (ptr: Phaser.Input.Pointer) => {
-          ptr.event.stopPropagation();
-          this.showElementInfo(el.id, width, height, cx);
-        });
+      const emojiText = this.add.text(bx, by - 30, displayEmoji, { fontSize: '44px' })
+        .setOrigin(0.5).setDepth(DEPTH.content).setAlpha(clickable ? 1 : 0.4);
 
-      // "M" mastery button — top-left corner of card
-      const mBtnX = bx - cardW / 2 + 14;
-      const mBtnY = by - cardH / 2 + 14;
-      const mCircle = this.add.circle(mBtnX, mBtnY, 11, 0x332200, 0.9)
-        .setStrokeStyle(1, 0xffcc00, 0.9).setDepth(3).setInteractive({ useHandCursor: true });
-      const mLabel = this.add.text(mBtnX, mBtnY, 'M', {
-        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc00',
-      }).setOrigin(0.5).setDepth(4);
-      mCircle
-        .on('pointerover', () => mCircle.setFillStyle(0x664400, 0.95))
-        .on('pointerout',  () => mCircle.setFillStyle(0x332200, 0.9))
-        .on('pointerdown', (ptr: Phaser.Input.Pointer) => {
-          ptr.event.stopPropagation();
-          this.masteryScrollY = 0;
-          this.showMasteryScreen(el.id, width, height, cx);
-        });
+      const nameText = this.add.text(bx, by + 26, el.name.toUpperCase(), {
+        fontSize: '15px', fontFamily: FONT_DISPLAY,
+        color: clickable ? T.bright : T.ghost, letterSpacing: 1,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
 
-      this.phaseObjects.push(card, emojiText, nameText, statusText, iCircle, iLabel, mCircle, mLabel);
+      const statusColor = hex(mix(displayColor, 0xffffff, 0.55));
+      const statusText = this.add.text(bx, by + 50, clickable ? '▶  SELECT' : 'COMING SOON', {
+        fontSize: clickable ? '11px' : '10px', fontFamily: FONT_DISPLAY,
+        color: clickable ? statusColor : T.ghost, letterSpacing: 2,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+
+      this.phaseObjects.push(plate.g, halo, emojiText, nameText, statusText);
+
+      if (clickable) {
+        const hit = this.add.rectangle(bx, by, cardW, cardH, 0xffffff, 0)
+          .setDepth(DEPTH.content + 1)
+          .setInteractive({ useHandCursor: true });
+        hit
+          .on('pointerover', () => { plate.paint('hover'); statusText.setColor('#ffffff'); })
+          .on('pointerout', () => { plate.paint('idle'); statusText.setColor(statusColor); })
+          .on('pointerdown', () => this.handleElementClick(el.id, width, height, cx));
+        this.phaseObjects.push(hit);
+      }
+
+      // Corner affordances sit above the card's own hit area.
+      const iBtn = addIconButton(this, {
+        x: bx + cardW / 2 - 15, y: by - cardH / 2 + 15, r: 12,
+        icon: 'ℹ', accent: C.frost, depth: DEPTH.content + 3,
+        onClick: () => this.showElementInfo(el.id, width, height, cx),
+      });
+      const mBtn = addIconButton(this, {
+        x: bx - cardW / 2 + 15, y: by - cardH / 2 + 15, r: 12,
+        icon: 'M', accent: masteryOn ? C.gold : C.steel, depth: DEPTH.content + 3,
+        onClick: () => { this.masteryScrollY = 0; this.showMasteryScreen(el.id, width, height, cx); },
+      });
+      this.phaseObjects.push(iBtn, mBtn);
 
       // ── Customize button (player phase only) — opens the element customization screen
       if (isPlayerPhase) {
         const stripY = by + cardH / 2 + 22;
-        const custBtn = this.add.rectangle(bx, stripY + 6, cardW, 30, 0x140f28, 0.9)
-          .setStrokeStyle(1, 0x7744cc, 0.8).setInteractive({ useHandCursor: true });
-        const custLbl = this.add.text(bx, stripY + 6, '⚙ CUSTOMIZE', {
-          fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#bb99ee',
-        }).setOrigin(0.5).setDepth(2);
-        custBtn
-          .on('pointerover', () => { custBtn.setFillStyle(0x2a1a4a, 0.95); custBtn.setStrokeStyle(2, 0xbb88ff, 1); custLbl.setColor('#ffffff'); })
-          .on('pointerout',  () => { custBtn.setFillStyle(0x140f28, 0.9); custBtn.setStrokeStyle(1, 0x7744cc, 0.8); custLbl.setColor('#bb99ee'); })
-          .on('pointerdown', (ptr: Phaser.Input.Pointer) => {
-            ptr.event.stopPropagation();
-            this.customizeScrollY = 0;
-            this.showCustomizeScreen(el.id, width, height, cx);
-          });
-        this.phaseObjects.push(custBtn, custLbl);
+        const custBtn = addButton(this, {
+          x: bx, y: stripY + 6, w: cardW, h: 30,
+          label: 'CUSTOMIZE', icon: '⚙', fontSize: 10,
+          accent: C.arcane, variant: 'ghost', cut: 8,
+          depth: DEPTH.content + 3,
+          onClick: () => { this.customizeScrollY = 0; this.showCustomizeScreen(el.id, width, height, cx); },
+        });
+        this.phaseObjects.push(custBtn.container);
       }
     });
 
     // ── Perk Dictionary button (player phase only, top-right) ─────
     if (isPlayerPhase) {
       const { width: w } = this.scale;
-      const dictCircle = this.add.circle(w - 40, 36, 18, 0x221133, 0.9)
-        .setStrokeStyle(2, 0x9944ff, 0.9).setDepth(5).setInteractive({ useHandCursor: true });
-      const dictLbl = this.add.text(w - 40, 36, '📖', { fontSize: '16px' }).setOrigin(0.5).setDepth(6);
-      dictCircle
-        .on('pointerover', () => dictCircle.setFillStyle(0x440077, 0.95))
-        .on('pointerout',  () => dictCircle.setFillStyle(0x221133, 0.9))
-        .on('pointerdown', (ptr: Phaser.Input.Pointer) => {
-          ptr.event.stopPropagation();
-          this.showPerkDictionary(w, this.scale.height, w / 2);
-        });
-      this.phaseObjects.push(dictCircle, dictLbl);
+      const dictBtn = addIconButton(this, {
+        x: w - 40, y: 38, r: 19, icon: '📖', accent: C.arcane,
+        depth: DEPTH.content + 5, tooltip: 'Perk dictionary',
+        onClick: () => this.showPerkDictionary(w, this.scale.height, w / 2),
+      });
+      this.phaseObjects.push(dictBtn);
     }
 
     // Dummy enemy — shown only on enemy phase when unlocked via konami code
     if (!isPlayerPhase && PlayerData.isDummyUnlocked()) {
-      const dy = height / 2 + 130;
-      const dBtn = this.add.rectangle(cx, dy, 180, 32, 0x333333)
-        .setStrokeStyle(2, 0xaaaaaa).setInteractive({ useHandCursor: true });
-      const dLbl = this.add.text(cx, dy, '🎯  DUMMY MODE', {
-        fontSize: '14px', fontFamily: '"Arial Black", sans-serif', color: '#bbbbbb',
-      }).setOrigin(0.5).setDepth(1);
-      dBtn
-        .on('pointerover', () => dBtn.setFillStyle(0x555555))
-        .on('pointerout',  () => dBtn.setFillStyle(0x333333))
-        .on('pointerdown', () => this.handleElementClick('dummy', width, height, cx));
-      this.phaseObjects.push(dBtn, dLbl);
+      const dBtn = addButton(this, {
+        x: cx, y: height / 2 + 130, w: 200, h: 34,
+        label: 'DUMMY MODE', icon: '🎯', fontSize: 13,
+        accent: C.steel, variant: 'quiet', cut: 8,
+        onClick: () => this.handleElementClick('dummy', width, height, cx),
+      });
+      this.phaseObjects.push(dBtn.container);
     }
   }
 
   private renderInvasionStartPhase(width: number, height: number, cx: number, playerEl: ElementDef | undefined): void {
-    const subtitle = this.add.text(cx, 155, 'INVASION', {
-      fontSize: '28px', fontFamily: '"Arial Black", sans-serif', color: '#cc44ff',
-      stroke: '#330055', strokeThickness: 4,
-    }).setOrigin(0.5);
+    const subtitle = this.add.text(cx, 158, 'INVASION', {
+      fontSize: '30px', fontFamily: FONT_DISPLAY,
+      color: hex(mix(C.corrupt, 0xffffff, 0.5)),
+      stroke: hex(mix(C.corrupt, 0x000000, 0.78)), strokeThickness: 5, letterSpacing: 8,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
     this.phaseObjects.push(subtitle);
 
     if (playerEl) {
-      const indicator = this.add.text(cx, 220, `${playerEl.emoji} ${playerEl.name}  —  Defend against the waves`, {
-        fontSize: '18px', fontFamily: 'Arial, sans-serif', color: '#ffcc44',
-      }).setOrigin(0.5);
+      const indicator = this.add.text(cx, 214, `${playerEl.emoji}  ${playerEl.name.toUpperCase()}   ·   HOLD THE LINE`, {
+        fontSize: '15px', fontFamily: FONT_DISPLAY, color: T.gold, letterSpacing: 2,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
       this.phaseObjects.push(indicator);
     }
 
@@ -523,64 +482,69 @@ export class MenuScene extends Phaser.Scene {
     const diffBtnY = 296;
     const diffDescY = 336;
 
-    const diffHeader = this.add.text(cx, diffHeaderY, 'DIFFICULTY', {
-      fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#777777',
-    }).setOrigin(0.5);
-    this.phaseObjects.push(diffHeader);
+    this.phaseObjects.push(addSectionLabel(this, {
+      x: cx, y: diffHeaderY, text: 'DIFFICULTY', accent: C.corrupt, width: 560,
+    }));
 
     const descText = this.add.text(cx, diffDescY, '', {
-      fontSize: '12px', fontFamily: 'Arial, sans-serif', color: '#aaaaaa',
-      wordWrap: { width: 420 }, align: 'center',
-    }).setOrigin(0.5);
+      fontSize: '12px', fontFamily: FONT_UI, color: T.normal,
+      wordWrap: { width: 420 }, align: 'center', lineSpacing: 4,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
     this.phaseObjects.push(descText);
 
-    const btnW = 150, btnH = 40, gap = 12;
+    const btnW = 152, btnH = 44, gap = 12;
     const totalW = INVASION_DIFFICULTIES.length * btnW + (INVASION_DIFFICULTIES.length - 1) * gap;
     const startX = cx - totalW / 2 + btnW / 2;
 
-    const entries: Array<{ id: InvasionDifficultyId; color: number; bg: Phaser.GameObjects.Rectangle; lbl: Phaser.GameObjects.Text }> = [];
+    // Selection is repaint-driven: each tile keeps a paint hook, and choosing
+    // one re-lights every tile so exactly one reads as active.
+    const tiles: Array<{ id: InvasionDifficultyId; paint: (s: 'idle' | 'hover' | 'active') => void; lbl: Phaser.GameObjects.Text; color: number }> = [];
     const updateSelection = () => {
-      for (const e of entries) {
-        const selected = e.id === this.invasionDifficultyId;
-        e.bg.setFillStyle(selected ? e.color : 0x222233, selected ? 0.3 : 1);
-        e.bg.setStrokeStyle(selected ? 3 : 1, e.color, selected ? 1 : 0.5);
-        e.lbl.setColor(selected ? '#ffffff' : '#999999');
+      for (const t of tiles) {
+        const selected = t.id === this.invasionDifficultyId;
+        t.paint(selected ? 'active' : 'idle');
+        t.lbl.setColor(selected ? '#ffffff' : hex(mix(t.color, 0xffffff, 0.4)));
       }
       descText.setText(INVASION_DIFFICULTIES.find((d) => d.id === this.invasionDifficultyId)!.description);
     };
 
     INVASION_DIFFICULTIES.forEach((def, i) => {
       const bx = startX + i * (btnW + gap);
-      const bg = this.add.rectangle(bx, diffBtnY, btnW, btnH, 0x222233)
-        .setStrokeStyle(1, def.color, 0.5).setInteractive({ useHandCursor: true });
-      const lbl = this.add.text(bx, diffBtnY, def.label, {
-        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#999999',
-      }).setOrigin(0.5);
-      bg.on('pointerdown', () => { this.invasionDifficultyId = def.id; updateSelection(); });
-      entries.push({ id: def.id, color: def.color, bg, lbl });
-      this.phaseObjects.push(bg, lbl);
+      const plate = addCardPlate(this, {
+        x: bx, y: diffBtnY, w: btnW, h: btnH, accent: def.color, cut: 10,
+      });
+      const lbl = this.add.text(bx, diffBtnY, def.label.toUpperCase(), {
+        fontSize: '13px', fontFamily: FONT_DISPLAY, color: T.dim, letterSpacing: 1.5,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+
+      const hit = this.add.rectangle(bx, diffBtnY, btnW, btnH, 0xffffff, 0)
+        .setDepth(DEPTH.content + 1)
+        .setInteractive({ useHandCursor: true });
+      hit.on('pointerover', () => { if (def.id !== this.invasionDifficultyId) plate.paint('hover'); });
+      hit.on('pointerout', () => { if (def.id !== this.invasionDifficultyId) plate.paint('idle'); });
+      hit.on('pointerdown', () => { this.invasionDifficultyId = def.id; updateSelection(); });
+
+      tiles.push({ id: def.id, paint: plate.paint, lbl, color: def.color });
+      this.phaseObjects.push(plate.g, lbl, hit);
     });
     updateSelection();
 
     // START button
-    const startY = height - 55;
-    const startBtn = this.add.rectangle(cx, startY, 280, 50, 0x330055)
-      .setStrokeStyle(3, 0x8800cc).setInteractive({ useHandCursor: true });
-    const startLbl = this.add.text(cx, startY, '⚔  START INVASION', {
-      fontSize: '20px', fontFamily: '"Arial Black", sans-serif', color: '#cc44ff',
-    }).setOrigin(0.5);
-    startBtn
-      .on('pointerover', () => { startBtn.setFillStyle(0x550088); startBtn.setStrokeStyle(3, 0xcc44ff); startLbl.setColor('#ffffff'); })
-      .on('pointerout',  () => { startBtn.setFillStyle(0x330055); startBtn.setStrokeStyle(3, 0x8800cc); startLbl.setColor('#cc44ff'); })
-      .on('pointerdown', () => {
+    const startBtn = addButton(this, {
+      x: cx, y: height - 74, w: 300, h: 56,
+      label: 'START INVASION', icon: '⚔',
+      accent: C.corrupt, variant: 'solid', fontSize: 19,
+      onClick: () => {
         this.scene.start('ArenaScene', {
           elementId: this.playerChoice,
           mode: 'invasion',
           invasionDifficulty: this.invasionDifficultyId,
           playerPerk: PlayerData.getEquippedPerk(this.playerChoice ?? ''),
         });
-      });
-    this.phaseObjects.push(startBtn, startLbl);
+      },
+    });
+    startBtn.pulse();
+    this.phaseObjects.push(startBtn.container);
   }
 
   private renderDifficultyPhase(width: number, height: number, cx: number): void {
@@ -591,20 +555,35 @@ export class MenuScene extends Phaser.Scene {
     const descY     = 292;
     const mutTitleY = 327;
 
-    const subtitle = this.add.text(cx, 155, 'Choose difficulty', {
-      fontSize: '20px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#888888',
-    }).setOrigin(0.5);
-    this.phaseObjects.push(subtitle);
+    this.phaseObjects.push(addSectionLabel(this, {
+      x: cx, y: 152, text: 'CHOOSE DIFFICULTY', accent: C.gold, width: 560,
+    }));
 
     if (playerEl && enemyEl) {
-      const indicator = this.add.text(
-        cx, 186,
-        `${playerEl.emoji} ${playerEl.name}   vs   ${enemyEl.emoji} ${enemyEl.name}`,
-        { fontSize: '16px', fontFamily: 'Arial, sans-serif', color: '#ffcc44' },
-      ).setOrigin(0.5);
-      this.phaseObjects.push(indicator);
+      // The matchup banner: your element, a struck VS, then the opponent.
+      const g = this.add.graphics().setDepth(DEPTH.content - 1);
+      g.lineStyle(1, C.line, 0.7);
+      g.beginPath(); g.moveTo(cx - 220, 186); g.lineTo(cx - 26, 186); g.strokePath();
+      g.beginPath(); g.moveTo(cx + 26, 186); g.lineTo(cx + 220, 186); g.strokePath();
+      fillDiamond(g, cx - 220, 186, 3, C.verdant, 0.7);
+      fillDiamond(g, cx + 220, 186, 3, C.blood, 0.7);
+
+      const you = this.add.text(cx - 34, 186, `${playerEl.emoji}  ${playerEl.name.toUpperCase()}`, {
+        fontSize: '15px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 1,
+        backgroundColor: hex(C.void_), padding: { x: 8, y: 3 },
+      }).setOrigin(1, 0.5).setDepth(DEPTH.content);
+
+      const vs = this.add.text(cx, 186, 'VS', {
+        fontSize: '13px', fontFamily: FONT_DISPLAY, color: T.gold, letterSpacing: 2,
+        backgroundColor: hex(C.void_), padding: { x: 6, y: 3 },
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+
+      const foe = this.add.text(cx + 34, 186, `${enemyEl.emoji}  ${enemyEl.name.toUpperCase()}`, {
+        fontSize: '15px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 1,
+        backgroundColor: hex(C.void_), padding: { x: 8, y: 3 },
+      }).setOrigin(0, 0.5).setDepth(DEPTH.content);
+
+      this.phaseObjects.push(g, you, vs, foe);
     }
 
     const btnW = 148;
@@ -614,11 +593,8 @@ export class MenuScene extends Phaser.Scene {
     const startX = cx - totalW / 2;
 
     const descText = this.add.text(cx, descY, '', {
-      fontSize: '12px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#aaaaaa',
-      align: 'center',
-    }).setOrigin(0.5);
+      fontSize: '12px', fontFamily: FONT_UI, color: T.normal, align: 'center',
+    }).setOrigin(0.5).setDepth(DEPTH.content);
     this.phaseObjects.push(descText);
 
     const DIFF_DESCRIPTIONS = [
@@ -632,30 +608,36 @@ export class MenuScene extends Phaser.Scene {
     DIFFICULTY_PRESETS.forEach((diff, i) => {
       const bx = startX + i * (btnW + btnGap) + btnW / 2;
       const color = DIFF_COLORS[i];
-      const btn = this.add
-        .rectangle(bx, diffBtnY, btnW, btnH, color, 0.75)
-        .setStrokeStyle(2, color)
+      const plate = addCardPlate(this, {
+        x: bx, y: diffBtnY, w: btnW, h: btnH, accent: color, cut: 12,
+      });
+
+      // Threat pips — one lit diamond per difficulty level.
+      const pips = this.add.graphics().setDepth(DEPTH.content);
+      for (let k = 0; k < DIFFICULTY_PRESETS.length; k++) {
+        fillDiamond(pips, bx - 22 + k * 11, diffBtnY - btnH / 2 + 9, k <= i ? 3 : 2,
+          k <= i ? mix(color, 0xffffff, 0.45) : C.line, k <= i ? 1 : 0.6);
+      }
+
+      const labelText = this.add.text(bx, diffBtnY + 1, diff.label.toUpperCase(), {
+        fontSize: '13px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 1.5,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+
+      const hpText = this.add.text(bx, diffBtnY + 19, `${diff.hp} HP   💎+${SHARD_REWARDS[i]}`, {
+        fontSize: '10px', fontFamily: FONT_DISPLAY,
+        color: hex(mix(color, 0xffffff, 0.5)), letterSpacing: 0.5,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+
+      const btn = this.add.rectangle(bx, diffBtnY, btnW, btnH, 0xffffff, 0)
+        .setDepth(DEPTH.content + 1)
         .setInteractive({ useHandCursor: true });
-
-      const labelText = this.add.text(bx, diffBtnY - 8, diff.label.toUpperCase(), {
-        fontSize: '13px',
-        fontFamily: '"Arial Black", sans-serif',
-        color: '#ffffff',
-      }).setOrigin(0.5);
-
-      const hpText = this.add.text(bx, diffBtnY + 8, `HP: ${diff.hp}  💎+${SHARD_REWARDS[i]}`, {
-        fontSize: '10px',
-        fontFamily: 'Arial, sans-serif',
-        color: '#eeeeee',
-      }).setOrigin(0.5);
-
       btn
         .on('pointerover', () => {
-          btn.setAlpha(1); btn.setStrokeStyle(3, 0xffffff); descText.setText(DIFF_DESCRIPTIONS[i]);
+          plate.paint('hover'); descText.setText(DIFF_DESCRIPTIONS[i]);
           this.hoveredDifficulty = diff.level;
           this.refreshRewardsPanel(width);
         })
-        .on('pointerout',  () => { btn.setAlpha(0.75); btn.setStrokeStyle(2, color); descText.setText(''); })
+        .on('pointerout',  () => { plate.paint('idle'); descText.setText(''); })
         .on('pointerdown', () => {
           const npcPool = getPerksForElement(this.enemyChoice ?? '');
           const npcPerk: string | null = (diff.level >= 4 && npcPool.length > 0)
@@ -672,7 +654,7 @@ export class MenuScene extends Phaser.Scene {
           });
         });
 
-      this.phaseObjects.push(btn, labelText, hpText);
+      this.phaseObjects.push(plate.g, pips, btn, labelText, hpText);
     });
 
     // ── New mutation panel (scrollable list + rewards sidebar) ────────
@@ -699,22 +681,19 @@ export class MenuScene extends Phaser.Scene {
     const RWD_W     = width - RWD_X - 16;
     const RWD_CX    = RWD_X + RWD_W / 2;
 
-    const mutTitle = this.add.text(cx, titleY, '— MUTATIONS —', {
-      fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#aaaaaa',
-    }).setOrigin(0.5);
-    this.phaseObjects.push(mutTitle);
+    this.phaseObjects.push(addSectionLabel(this, {
+      x: cx, y: titleY, text: 'MUTATIONS', accent: C.arcane, width: 620,
+    }));
 
     // ── Rewards panel (static background) ──
-    const rPanelBg = this.add.rectangle(RWD_CX, PANEL_TOP + PANEL_H / 2, RWD_W, PANEL_H, 0x10101a, 0.7)
-      .setStrokeStyle(1, 0x3a3a55, 1);
+    const rPanelBg = addWell(this, RWD_CX, PANEL_TOP + PANEL_H / 2, RWD_W, PANEL_H, C.gold, 4);
     const rPanelTitle = this.add.text(RWD_CX, PANEL_TOP + 12, 'REWARDS PREVIEW', {
-      fontSize: '9px', fontFamily: '"Arial Black", sans-serif', color: '#777799',
-    }).setOrigin(0.5);
+      fontSize: '9px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 1.5,
+    }).setOrigin(0.5).setDepth(5);
     this.phaseObjects.push(rPanelBg, rPanelTitle);
 
     // ── Mutation list panel background ──
-    const listPanelBg = this.add.rectangle(LIST_X + LIST_W / 2, PANEL_TOP + PANEL_H / 2, LIST_W, PANEL_H, 0x1a0f2a, 0.7)
-      .setStrokeStyle(1, 0x553388, 1).setDepth(4);
+    const listPanelBg = addWell(this, LIST_X + LIST_W / 2, PANEL_TOP + PANEL_H / 2, LIST_W, PANEL_H, C.arcane, 4);
     this.phaseObjects.push(listPanelBg);
 
     // ── Mutation list mask + container ──
@@ -773,17 +752,20 @@ export class MenuScene extends Phaser.Scene {
         const borderColor = equipped ? 0x55ee55 : (unlocked ? 0x6677aa : 0x333344);
         const alpha       = unlocked ? 1 : 0.45;
 
-        const rowBg = this.add.rectangle(ROW_W / 2, innerY + ROW_H / 2, ROW_W, ROW_H - 4, fillColor, 1)
-          .setStrokeStyle(1, borderColor, 1).setAlpha(alpha);
-        scrollContainer.add(rowBg);
-        this.mutationListObjects.push(rowBg);
+        const row = this.overlayRow(ROW_W / 2, innerY + ROW_H / 2, ROW_W, ROW_H - 4, borderColor, alpha < 1);
+        void fillColor;
+        scrollContainer.add(row.g);
+        this.mutationListObjects.push(row.g);
 
         const rowShapes: InteractiveShape[] = [];
 
         if (unlocked) {
-          rowBg.setInteractive({ useHandCursor: true })
-            .on('pointerover', () => rowBg.setStrokeStyle(2, 0xffffff, 1))
-            .on('pointerout',  () => rowBg.setStrokeStyle(1, borderColor, 1))
+          const rowHit = this.overlayRowHit(ROW_W / 2, innerY + ROW_H / 2, ROW_W, ROW_H - 4);
+          scrollContainer.add(rowHit);
+          this.mutationListObjects.push(rowHit);
+          rowHit
+            .on('pointerover', () => row.paint(true))
+            .on('pointerout',  () => row.paint(false))
             .on('pointerdown', () => {
               if (equipped) {
                 activeMutationIds.delete(mut.id);
@@ -794,14 +776,14 @@ export class MenuScene extends Phaser.Scene {
               buildRows();
               this.buildRewardsPanel(RWD_CX, PANEL_TOP, PANEL_H, RWD_W);
             });
-          rowShapes.push(rowBg);
+          rowShapes.push(rowHit);
         }
 
         // Emoji + name
         const nameColor = unlocked ? '#ffffff' : '#555566';
         const prefix    = unlocked ? '' : '🔒 ';
         const nameText = this.add.text(10, innerY + 12, `${prefix}${mut.emoji} ${mut.name}`, {
-          fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: nameColor,
+          fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: nameColor,
         }).setAlpha(alpha);
         scrollContainer.add(nameText);
         this.mutationListObjects.push(nameText);
@@ -809,7 +791,7 @@ export class MenuScene extends Phaser.Scene {
         // Short desc
         const descColor = unlocked ? '#999999' : '#444455';
         const descText = this.add.text(10, innerY + 32, mut.shortDesc, {
-          fontSize: '9px', fontFamily: 'Arial, sans-serif', color: descColor,
+          fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: descColor,
           wordWrap: { width: ROW_W - 60 },
         }).setAlpha(alpha);
         scrollContainer.add(descText);
@@ -848,7 +830,7 @@ export class MenuScene extends Phaser.Scene {
         const iCircle = this.add.circle(iX, innerY + ROW_H / 2 - 2, 11, 0x222244, 0.9)
           .setStrokeStyle(1, 0x8888cc, 0.9).setDepth(6).setInteractive({ useHandCursor: true });
         const iLabel = this.add.text(iX, innerY + ROW_H / 2 - 2, 'i', {
-          fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#aaaaff',
+          fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#aaaaff',
         }).setOrigin(0.5).setDepth(7);
         iCircle
           .on('pointerover', () => iCircle.setFillStyle(0x4444aa, 0.95))
@@ -881,7 +863,7 @@ export class MenuScene extends Phaser.Scene {
 
     if (maxScroll > 0) {
       const hint = this.add.text(LIST_X + LIST_W - 4, PANEL_BOT - 2, '▼ scroll', {
-        fontSize: '9px', fontFamily: 'Arial, sans-serif', color: '#444466',
+        fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#444466',
       }).setOrigin(1, 1).setDepth(6);
       this.phaseObjects.push(hint);
     }
@@ -901,7 +883,7 @@ export class MenuScene extends Phaser.Scene {
 
     if (equipped.length === 0) {
       const empty = this.add.text(innerX, panelTop + panelH / 2, 'No mutations\nequipped', {
-        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#666677', align: 'center',
+        fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#666677', align: 'center',
       }).setOrigin(0.5).setDepth(6);
       this.rewardsPanelDynObjects.push(empty);
     } else {
@@ -914,10 +896,10 @@ export class MenuScene extends Phaser.Scene {
         const multStr = `×${mult.toFixed(2)}`;
         const rowColor = isStarred ? '#ffeebb' : '#ddddee';
         const lText = this.add.text(innerX, innerY, label, {
-          fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: rowColor,
+          fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: rowColor,
         }).setOrigin(0.5).setDepth(6);
         const mText = this.add.text(innerX, innerY + 14, multStr, {
-          fontSize: '9px', fontFamily: 'Arial, sans-serif', color: rowColor,
+          fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: rowColor,
         }).setOrigin(0.5).setDepth(6);
         this.rewardsPanelDynObjects.push(lText, mText);
         innerY += 32;
@@ -932,7 +914,7 @@ export class MenuScene extends Phaser.Scene {
 
       const totalMult = getTotalRewardMult();
       const totalText = this.add.text(innerX, innerY, `Total  ×${totalMult.toFixed(2)}`, {
-        fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc44',
+        fontSize: '12px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffcc44',
       }).setOrigin(0.5).setDepth(6);
       this.rewardsPanelDynObjects.push(totalText);
       innerY += 22;
@@ -940,7 +922,7 @@ export class MenuScene extends Phaser.Scene {
       const baseShard = SHARD_REWARDS[Math.max(0, this.hoveredDifficulty - 1)] ?? 0;
       if (baseShard > 0) {
         const shardsText = this.add.text(innerX, innerY, `💎 +${Math.round(baseShard * totalMult)} shards`, {
-          fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#88ccff',
+          fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#88ccff',
         }).setOrigin(0.5).setDepth(6);
         this.rewardsPanelDynObjects.push(shardsText);
       }
@@ -973,26 +955,15 @@ export class MenuScene extends Phaser.Scene {
     if (!def) return;
     const unlocked = PlayerData.isMutationUnlocked(id);
 
-    const bg = this.add.rectangle(cx, height / 2, width, height, 0x05050f, 0.97).setDepth(60);
-    bg.setInteractive();
-    this.mutationOverlayObjects.push(bg);
-
-    const header = this.add.text(cx, 48, `${def.emoji}  ${def.name.toUpperCase()}`, {
-      fontSize: '32px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc44',
-      stroke: '#000000', strokeThickness: 4,
-    }).setOrigin(0.5).setDepth(61);
-    this.mutationOverlayObjects.push(header);
-
-    const statusLabel = this.add.text(cx, 84, unlocked ? '✓ UNLOCKED' : '🔒 LOCKED', {
-      fontSize: '12px', fontFamily: '"Arial Black", sans-serif',
-      color: unlocked ? '#44ff88' : '#ff4444',
-    }).setOrigin(0.5).setDepth(61);
-    this.mutationOverlayObjects.push(statusLabel);
-
-    const divLine = this.add.graphics().setDepth(61);
-    divLine.lineStyle(1, 0x223355, 0.6);
-    divLine.lineBetween(40, 102, width - 40, 102);
-    this.mutationOverlayObjects.push(divLine);
+    const chrome = addOverlayChrome(this, {
+      title: `${def.emoji}  ${def.name.toUpperCase()}`,
+      subtitle: unlocked ? '✓ UNLOCKED' : '🔒 LOCKED',
+      accent: unlocked ? C.gold : C.steel,
+      depth: 60,
+      onBack: () => this.closeMutationInfo(),
+    });
+    this.mutationOverlayObjects.push(...chrome.objects);
+    void cx; void height;
 
     const sections: Array<{ label: string; text: string; color: string; y: number }> = [
       { label: 'Effects', text: def.fullDesc, color: '#ddddee', y: 125 },
@@ -1008,26 +979,41 @@ export class MenuScene extends Phaser.Scene {
     ];
 
     for (const s of sections) {
-      const hdr = this.add.text(60, s.y, s.label, {
-        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#8888cc',
-      }).setDepth(61);
-      const body = this.add.text(60, s.y + 22, s.text, {
-        fontSize: '12px', fontFamily: 'Arial, sans-serif', color: s.color,
-        wordWrap: { width: width - 120 },
-      }).setDepth(61);
-      this.mutationOverlayObjects.push(hdr, body);
+      const hdr = this.add.text(60, s.y, s.label.toUpperCase(), {
+        fontSize: '12px', fontFamily: FONT_DISPLAY, color: hex(mix(C.frost, 0xffffff, 0.3)),
+        letterSpacing: 2,
+      }).setDepth(63);
+      const rule = this.add.graphics().setDepth(63);
+      rule.lineStyle(1, C.line, 0.7);
+      rule.beginPath(); rule.moveTo(60, s.y + 16); rule.lineTo(width - 60, s.y + 16); rule.strokePath();
+      const body = this.add.text(60, s.y + 26, s.text, {
+        fontSize: '12px', fontFamily: FONT_UI, color: s.color,
+        wordWrap: { width: width - 120 }, lineSpacing: 4,
+      }).setDepth(63);
+      this.mutationOverlayObjects.push(hdr, rule, body);
     }
+  }
 
-    const backBtn = this.add.rectangle(60, 30, 90, 32, 0x221133, 0.9)
-      .setStrokeStyle(2, 0x9944ff, 0.8).setDepth(65).setInteractive({ useHandCursor: true });
-    const backLbl = this.add.text(60, 30, '◀  BACK', {
-      fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
-    }).setOrigin(0.5).setDepth(66);
-    backBtn
-      .on('pointerover', () => backBtn.setFillStyle(0x440077, 0.95))
-      .on('pointerout',  () => backBtn.setFillStyle(0x221133, 0.9))
-      .on('pointerdown', () => this.closeMutationInfo());
-    this.mutationOverlayObjects.push(backBtn, backLbl);
+  /**
+   * Row background shared by every overlay list in this scene. One notched
+   * plate with an accent spine, so the info, mastery, customize and dictionary
+   * screens all read as the same list.
+   */
+  private overlayRow(
+    cx: number, y: number, w: number, h: number, accent: number, muted = false,
+  ): { g: Phaser.GameObjects.Graphics; paint: (hover: boolean) => void } {
+    return addRowPlate(this, { x: cx, y, w, h, accent, muted });
+  }
+
+  /**
+   * Transparent hit plate for a scrolling row. Lives in the same container as
+   * the row art, so it scrolls with it; the plate itself is a Graphics and
+   * cannot take input.
+   */
+  private overlayRowHit(
+    cx: number, y: number, w: number, h: number,
+  ): Phaser.GameObjects.Rectangle {
+    return this.add.rectangle(cx, y, w, h, 0xffffff, 0).setInteractive({ useHandCursor: true });
   }
 
   private closeElementInfo(): void {
@@ -1057,13 +1043,13 @@ export class MenuScene extends Phaser.Scene {
     const elemColor = '#' + element.color.toString(16).padStart(6, '0');
 
     // Full-screen dark backdrop
-    const bg = this.add.rectangle(cx, height / 2, width, height, 0x05050f, 0.97).setDepth(50);
+    const bg = this.add.rectangle(cx, height / 2, width, height, 0x04040c, 0.97).setDepth(50);
     bg.setInteractive(); // capture clicks so they don't fall through
     this.infoOverlayObjects.push(bg);
 
     // Header
     const header = this.add.text(cx, 34, `${element.emoji}  ${element.name.toUpperCase()}`, {
-      fontSize: '28px', fontFamily: '"Arial Black", sans-serif', color: elemColor,
+      fontSize: '28px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: elemColor,
       stroke: '#000000', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(51);
     this.infoOverlayObjects.push(header);
@@ -1088,14 +1074,21 @@ export class MenuScene extends Phaser.Scene {
     tabDefs.forEach((td, ti) => {
       const tx = cx - tabsTotalW / 2 + tabW / 2 + ti * (tabW + tabGap);
       const selected = this.elementInfoMode === td.mode;
-      const btn = this.add.rectangle(tx, toggleY, tabW, tabH,
-        selected ? td.selFill : 0x0d0d22, selected ? 0.95 : 0.7)
-        .setStrokeStyle(1, selected ? td.selStroke : 0x333355, selected ? 0.9 : 0.6)
-        .setDepth(55).setInteractive({ useHandCursor: true });
+      const plate = addCardPlate(this, {
+        x: tx, y: toggleY, w: tabW, h: tabH, accent: td.selStroke, cut: 8,
+        depth: 55, muted: !selected,
+      });
+      if (selected) plate.paint('active');
+      const btn = this.add.rectangle(tx, toggleY, tabW, tabH, 0xffffff, 0)
+        .setDepth(56).setInteractive({ useHandCursor: true });
+      btn.on('pointerover', () => { if (!selected) plate.paint('hover'); });
+      btn.on('pointerout', () => plate.paint(selected ? 'active' : 'idle'));
       const lbl = this.add.text(tx, toggleY, td.label, {
-        fontSize: nTabs >= 3 ? '10px' : '11px', fontFamily: '"Arial Black", sans-serif',
+        fontSize: nTabs >= 3 ? '10px' : '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
         color: selected ? td.selText : td.unselText,
-      }).setOrigin(0.5).setDepth(56);
+      }).setOrigin(0.5).setDepth(57);
+      this.infoOverlayObjects.push(plate.g);
+      void td.selFill;
       btn.on('pointerdown', () => {
         if (this.elementInfoMode !== td.mode) { this.elementInfoMode = td.mode; this.showElementInfo(elementId, width, height, cx); }
       });
@@ -1103,7 +1096,7 @@ export class MenuScene extends Phaser.Scene {
     });
 
     // Divider
-    const divLine = this.add.line(cx, SCROLL_TOP - 12, -width / 2 + 40, 0, width / 2 - 40, 0, 0x223355, 0.5).setDepth(51).setLineWidth(1);
+    const divLine = this.add.line(cx, SCROLL_TOP - 12, -width / 2 + 40, 0, width / 2 - 40, 0, C.arcane, 0.45).setDepth(51).setLineWidth(1);
     this.infoOverlayObjects.push(divLine);
 
     // ── Scrollable content ──
@@ -1123,7 +1116,7 @@ export class MenuScene extends Phaser.Scene {
 
     const sectionHdr = (text: string, color: string) => {
       const t = this.add.text(cx, innerY, text, {
-        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color,
+        fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color,
       }).setOrigin(0.5);
       scrollContainer.add(t);
       innerY += 20;
@@ -1140,7 +1133,7 @@ export class MenuScene extends Phaser.Scene {
         '💵 Dirty Money: three red money icons hover above you. You start each match with 2 money and earn 1 every 5 seconds (max 3). Money buys Spray reloads, Lackeys, and Bribes.\n\n' +
         '🔫 Kickbacks: every 10 damage you deal with daggers or Spray earns 3 bullets (up to 50).';
       const passiveDesc = this.add.text(COL_X + 14, innerY, passiveText, {
-        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#e09aa2',
+        fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#e09aa2',
         wordWrap: { width: COL_W - 28 }, lineSpacing: 3,
       });
       scrollContainer.add(passiveDesc);
@@ -1168,7 +1161,7 @@ export class MenuScene extends Phaser.Scene {
       const cdSec = ab.cooldown >= 1000 ? `   ${ab.cooldown / 1000}s CD` : '';
 
       const descText = this.add.text(COL_X + 14, innerY + 26, bodyText, {
-        fontSize: '11px', fontFamily: 'Arial, sans-serif',
+        fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
         color: showUpgraded && upgrade ? '#ccbb88' : '#999aad',
         wordWrap: { width: COL_W - 28 }, lineSpacing: 4,
       });
@@ -1182,7 +1175,7 @@ export class MenuScene extends Phaser.Scene {
         const toggleText = this.add.text(COL_X + 14, toggleY, variantsExpanded
           ? `▲ Hide ${variantSet.variants.length} possibilities`
           : `▼ See all ${variantSet.variants.length} possibilities`, {
-          fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#66ccff',
+          fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#66ccff',
         }).setInteractive({ useHandCursor: true });
         toggleText.on('pointerover', () => toggleText.setColor('#aaeeff'));
         toggleText.on('pointerout', () => toggleText.setColor('#66ccff'));
@@ -1203,7 +1196,7 @@ export class MenuScene extends Phaser.Scene {
             const locked = (!!v.requiresUpgrade && !PlayerData.isUpgradeOwned(elementId, v.requiresUpgrade))
               || (!!v.requiresPerk && !PlayerData.isPerkUnlocked(elementId, v.requiresPerk));
             const vDesc = this.add.text(listX, innerY + rowH + 21, v.description, {
-              fontSize: '9px', fontFamily: 'Arial, sans-serif',
+              fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
               color: locked ? '#555566' : '#8899aa',
               wordWrap: { width: listW - 10 }, lineSpacing: 2,
             }).setAlpha(locked ? 0.6 : 1);
@@ -1212,7 +1205,7 @@ export class MenuScene extends Phaser.Scene {
             const vBg = this.add.rectangle(cx, innerY + rowH + vRowH / 2, listW, vRowH - 2,
               locked ? 0x0a0a12 : 0x10101f, 0.7).setStrokeStyle(1, locked ? 0x222233 : 0x2a2a44, 0.6);
             const vName = this.add.text(listX, innerY + rowH + 6, `${v.emoji ? v.emoji + ' ' : ''}${v.name}`, {
-              fontSize: '10px', fontFamily: '"Arial Black", sans-serif',
+              fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
               color: locked ? '#666677' : '#cceeff',
             }).setAlpha(locked ? 0.6 : 1);
             rowObjs.push(vBg, vName, vDesc);
@@ -1222,7 +1215,7 @@ export class MenuScene extends Phaser.Scene {
                 ? `${v.requiresUpgrade.toUpperCase()}+`
                 : `${getPerkById(v.requiresPerk!)?.name ?? v.requiresPerk} perk`;
               const vLock = this.add.text(COL_X + COL_W - 24, innerY + rowH + 6, `🔒 ${lockLabel}`, {
-                fontSize: '9px', fontFamily: '"Arial Black", sans-serif', color: '#665533',
+                fontSize: '9px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#665533',
               }).setOrigin(1, 0);
               rowObjs.push(vLock);
             }
@@ -1233,24 +1226,23 @@ export class MenuScene extends Phaser.Scene {
         }
       }
 
-      const rowBg = this.add.rectangle(cx, innerY + rowH / 2, COL_W, rowH - 6,
-        showUpgraded && upgrade ? 0x1a1508 : 0x0d0d22, 0.75)
-        .setStrokeStyle(1, showUpgraded && upgrade ? 0x554422 : 0x222244, 0.6);
+      const rowBg = this.overlayRow(cx, innerY + rowH / 2, COL_W, rowH - 6,
+        showUpgraded && upgrade ? C.gold : C.frost, !(showUpgraded && upgrade)).g;
 
       const keyBadge = this.add.text(COL_X + 24, innerY + 13, `[${ab.displayKey}]`, {
-        fontSize: '14px', fontFamily: '"Arial Black", sans-serif', color: elemColor,
+        fontSize: '14px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: elemColor,
         stroke: '#000000', strokeThickness: 2,
       }).setOrigin(0.5);
 
       const abilityName = this.add.text(COL_X + 52, innerY + 13, `${ab.name}${cdSec}`, {
-        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#ddddee',
+        fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ddddee',
       }).setOrigin(0, 0.5);
 
       scrollContainer.add([rowBg, keyBadge, abilityName, ...rowObjs]);
 
       if (showUpgraded && upgrade) {
         const badge = this.add.text(COL_X + COL_W - 14, innerY + 13, owned ? '✓ OWNED' : '🔒 LOCKED', {
-          fontSize: '10px', fontFamily: '"Arial Black", sans-serif',
+          fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
           color: owned ? '#88ff88' : '#665533',
         }).setOrigin(1, 0.5);
         scrollContainer.add(badge);
@@ -1265,7 +1257,7 @@ export class MenuScene extends Phaser.Scene {
     if (elementId === 'rubber') {
       sectionHdr('— VULCANIZATION —', '#ff5577');
       const desc = this.add.text(COL_X + 14, innerY, 'Requires owning any rubber upgrade. Hold RIGHT-CLICK to vulcanize (5%/s, max 100%). Locks attacks while charging. Slows cooldowns up to 100% and darkens your player.', {
-        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#ffaaaa',
+        fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#ffaaaa',
         wordWrap: { width: COL_W - 28 }, lineSpacing: 3,
       });
       scrollContainer.add(desc);
@@ -1276,7 +1268,7 @@ export class MenuScene extends Phaser.Scene {
     if (elementId === 'echo' && (PlayerData.isUpgradeOwned('echo', 'e') || PlayerData.isUpgradeOwned('echo', 'q'))) {
       sectionHdr('👁  PSYCHIC EYE CONTROLS', '#aaddff');
       const desc = this.add.text(COL_X + 14, innerY, 'Space — Light Trail (consume 1 eye, 3s damage trail)\nRight click — Power-up next attack as direct (consume 1 eye)', {
-        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#88bbff', lineSpacing: 4,
+        fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#88bbff', lineSpacing: 4,
       });
       scrollContainer.add(desc);
       innerY += desc.height + 20;
@@ -1286,7 +1278,7 @@ export class MenuScene extends Phaser.Scene {
     if (elementId === 'fate') {
       sectionHdr('— CARDS —', '#ffcc66');
       const intro = this.add.text(COL_X + 14, innerY, 'Your hand is drawn at random from the first ten cards (a new card is dealt every 5s). Click throws the highlighted card; number keys pick a card in hand. The last eight cards below are added to your pool by the "New Cards!" shop upgrade.', {
-        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#ccbb88',
+        fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#ccbb88',
         wordWrap: { width: COL_W - 28 }, lineSpacing: 3,
       });
       scrollContainer.add(intro);
@@ -1295,13 +1287,12 @@ export class MenuScene extends Phaser.Scene {
       FATE_CARD_DEFS.forEach((card) => {
         const rowH = 30;
         const cardColor = '#' + card.color.toString(16).padStart(6, '0');
-        const rowBg = this.add.rectangle(cx, innerY + rowH / 2, COL_W, rowH - 4, 0x120d1f, 0.8)
-          .setStrokeStyle(1, card.color, 0.55);
+        const rowBg = this.overlayRow(cx, innerY + rowH / 2, COL_W, rowH - 4, card.color).g;
         const nameText = this.add.text(COL_X + 16, innerY + rowH / 2, `${card.emoji}  ${card.name}`, {
-          fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: cardColor,
+          fontSize: '12px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: cardColor,
         }).setOrigin(0, 0.5);
         const blurbText = this.add.text(COL_X + 160, innerY + rowH / 2, card.blurb, {
-          fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#aaaabb',
+          fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#aaaabb',
         }).setOrigin(0, 0.5);
         scrollContainer.add([rowBg, nameText, blurbText]);
         innerY += rowH + 4;
@@ -1313,7 +1304,7 @@ export class MenuScene extends Phaser.Scene {
     sectionHdr('— PERKS —', '#cc88ff');
     if (perks.length === 0) {
       const noPerks = this.add.text(cx, innerY + 6, 'No perks are craftable for this element yet.', {
-        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#444455',
+        fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#444455',
       }).setOrigin(0.5);
       scrollContainer.add(noPerks);
       innerY += 26;
@@ -1329,19 +1320,17 @@ export class MenuScene extends Phaser.Scene {
         const alpha = unlocked ? 1.0 : 0.4;
 
         const descText = this.add.text(COL_X + 14, innerY + 24, perk.description, {
-          fontSize: '10px', fontFamily: 'Arial, sans-serif',
+          fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
           color: unlocked ? '#bbaadd' : '#555566',
           wordWrap: { width: COL_W - 28 }, lineSpacing: 3,
         }).setAlpha(alpha);
 
         const rowH = 24 + descText.height + 12;
 
-        const rowBg = this.add.rectangle(cx, innerY + rowH / 2, COL_W, rowH - 6,
-          unlocked ? 0x150022 : 0x0a0a10, unlocked ? 0.8 : 0.5)
-          .setStrokeStyle(1, unlocked ? 0x441155 : 0x222233, 0.7);
+        const rowBg = this.overlayRow(cx, innerY + rowH / 2, COL_W, rowH - 6, C.arcane, !unlocked).g;
 
         const nameText = this.add.text(COL_X + 14, innerY + 12, `${perk.emoji} ${perk.name}`, {
-          fontSize: '12px', fontFamily: '"Arial Black", sans-serif',
+          fontSize: '12px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
           color: unlocked ? '#eecfff' : '#555566',
         }).setOrigin(0, 0.5).setAlpha(alpha);
 
@@ -1354,7 +1343,7 @@ export class MenuScene extends Phaser.Scene {
 
         if (equipped) {
           const eqLbl = this.add.text(COL_X + 14 + nameText.width + 8, innerY + 12, '✓ EQUIPPED', {
-            fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#88ff88',
+            fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#88ff88',
           }).setOrigin(0, 0.5);
           scrollContainer.add(eqLbl);
         } else if (!unlocked) {
@@ -1376,15 +1365,13 @@ export class MenuScene extends Phaser.Scene {
       const masteryOn = PlayerData.isMasteryEnabled(elementId);
       masteryDef.enhancements.forEach((enh) => {
         const descText = this.add.text(COL_X + 14, innerY + 24, enh.description, {
-          fontSize: '10px', fontFamily: 'Arial, sans-serif',
+          fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
           color: masteryOn ? '#ffddaa' : '#555566',
           wordWrap: { width: COL_W - 28 }, lineSpacing: 3,
         }).setAlpha(masteryOn ? 1 : 0.6);
 
         const rowH = 24 + descText.height + 12;
-        const rowBg = this.add.rectangle(cx, innerY + rowH / 2, COL_W, rowH - 6,
-          masteryOn ? 0x221100 : 0x0a0a10, masteryOn ? 0.8 : 0.5)
-          .setStrokeStyle(1, masteryOn ? 0x996600 : 0x222233, 0.7);
+        const rowBg = this.overlayRow(cx, innerY + rowH / 2, COL_W, rowH - 6, C.gold, !masteryOn).g;
 
         const infoBinds = PlayerData.getMasteryBinds(elementId);
         const infoSlot = enh.bindable
@@ -1394,12 +1381,12 @@ export class MenuScene extends Phaser.Scene {
           ? `${enh.name}  [${infoSlot ? infoSlot.toUpperCase() : 'unbound'}]`
           : `${enh.name}  [Passive]`;
         const nameText = this.add.text(COL_X + 14, innerY + 12, title, {
-          fontSize: '12px', fontFamily: '"Arial Black", sans-serif',
+          fontSize: '12px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
           color: masteryOn ? '#ffcc00' : '#555566',
         }).setOrigin(0, 0.5);
 
         const badge = this.add.text(COL_X + COL_W - 14, innerY + 12, masteryOn ? '✓ ACTIVE' : '🔒 LOCKED', {
-          fontSize: '10px', fontFamily: '"Arial Black", sans-serif',
+          fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
           color: masteryOn ? '#88ff88' : '#665533',
         }).setOrigin(1, 0.5);
 
@@ -1426,22 +1413,18 @@ export class MenuScene extends Phaser.Scene {
 
     if (maxScroll > 0) {
       const hint = this.add.text(width - 12, SCROLL_BOT + 6, '▼ scroll for more', {
-        fontSize: '9px', fontFamily: 'Arial, sans-serif', color: '#444466',
+        fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#444466',
       }).setOrigin(1, 0).setDepth(55);
       this.infoOverlayObjects.push(hint);
     }
 
     // Back button
-    const backBtn = this.add.rectangle(60, 30, 90, 32, 0x221133, 0.9)
-      .setStrokeStyle(2, 0x9944ff, 0.8).setDepth(55).setInteractive({ useHandCursor: true });
-    const backLbl = this.add.text(60, 30, '◀  BACK', {
-      fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
-    }).setOrigin(0.5).setDepth(56);
-    backBtn
-      .on('pointerover', () => backBtn.setFillStyle(0x440077, 0.95))
-      .on('pointerout',  () => backBtn.setFillStyle(0x221133, 0.9))
-      .on('pointerdown', () => this.closeElementInfo());
-    this.infoOverlayObjects.push(backBtn, backLbl);
+    this.infoOverlayObjects.push(addButton(this, {
+      x: 66, y: 32, w: 100, h: 32,
+      label: 'BACK', icon: '◄', fontSize: 12, variant: 'quiet', accent: C.arcane,
+      depth: 56, cut: 8,
+      onClick: () => this.closeElementInfo(),
+    }).container);
   }
 
   /** Renders Creation's Build Mode tab — the Nexus potion recipes. Returns the new innerY. */
@@ -1452,7 +1435,7 @@ export class MenuScene extends Phaser.Scene {
     let y = startY;
 
     const hdr = this.add.text(cx, y, '— BUILD MODE · NEXUS —', {
-      fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#ffaa55',
+      fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffaa55',
     }).setOrigin(0.5);
     container.add(hdr);
     y += 22;
@@ -1460,20 +1443,19 @@ export class MenuScene extends Phaser.Scene {
     const buildSet = getAbilityVariants('creation', 'e');
     const intro = this.add.text(colX + 14, y,
       'Charge bolts with E — tap = Copper, hold ~0.5s = Silver, ~1s = Gold — then load 2 into the Nexus on the ground. The pair you feed it decides which potion it brews; the bottle sits on the Nexus until you walk over and drink it:',
-      { fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#ccbb99', wordWrap: { width: colW - 28 }, lineSpacing: 3 });
+      { fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#ccbb99', wordWrap: { width: colW - 28 }, lineSpacing: 3 });
     container.add(intro);
     y += intro.height + 14;
 
     for (const v of buildSet?.variants ?? []) {
       const descText = this.add.text(colX + 40, y + 22, v.description, {
-        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#aab0c0',
+        fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#aab0c0',
         wordWrap: { width: colW - 54 }, lineSpacing: 3,
       });
       const rowH = 22 + descText.height + 12;
-      const rowBg = this.add.rectangle(cx, y + rowH / 2, colW, rowH - 6, 0x1a1206, 0.8)
-        .setStrokeStyle(1, 0x553311, 0.7);
+      const rowBg = this.overlayRow(cx, y + rowH / 2, colW, rowH - 6, C.ember).g;
       const nameText = this.add.text(colX + 14, y + 13, `${v.emoji ? v.emoji + ' ' : ''}${v.name}`, {
-        fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc88',
+        fontSize: '12px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffcc88',
       }).setOrigin(0, 0.5);
       container.add([rowBg, nameText, descText]);
       y += rowH + 6;
@@ -1481,7 +1463,7 @@ export class MenuScene extends Phaser.Scene {
 
     if (!buildSet || buildSet.variants.length === 0) {
       const none = this.add.text(cx, y + 6, 'No nexus recipes are defined yet.', {
-        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#444455',
+        fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#444455',
       }).setOrigin(0.5);
       container.add(none);
       y += 26;
@@ -1502,34 +1484,30 @@ export class MenuScene extends Phaser.Scene {
     const SCROLL_BOT = height - 78;
     const SCROLL_H = SCROLL_BOT - SCROLL_TOP;
 
-    const bg = this.add.rectangle(cx, height / 2, width, height, 0x05050f, 0.97).setDepth(50);
+    const bg = this.add.rectangle(cx, height / 2, width, height, 0x04040c, 0.97).setDepth(50);
     bg.setInteractive();
     this.infoOverlayObjects.push(bg);
 
     const header = this.add.text(cx, 34, `${element.emoji}  ${element.name.toUpperCase()} MASTERY`, {
-      fontSize: '26px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc00',
+      fontSize: '26px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffcc00',
       stroke: '#000000', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(51);
     this.infoOverlayObjects.push(header);
 
-    const divLine = this.add.line(cx, SCROLL_TOP - 12, -width / 2 + 40, 0, width / 2 - 40, 0, 0x223355, 0.5).setDepth(51).setLineWidth(1);
+    const divLine = this.add.line(cx, SCROLL_TOP - 12, -width / 2 + 40, 0, width / 2 - 40, 0, C.arcane, 0.45).setDepth(51).setLineWidth(1);
     this.infoOverlayObjects.push(divLine);
 
     // Back button (declared early so early-return paths can still use it)
-    const backBtn = this.add.rectangle(60, 30, 90, 32, 0x221133, 0.9)
-      .setStrokeStyle(2, 0x9944ff, 0.8).setDepth(55).setInteractive({ useHandCursor: true });
-    const backLbl = this.add.text(60, 30, '◀  BACK', {
-      fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
-    }).setOrigin(0.5).setDepth(56);
-    backBtn
-      .on('pointerover', () => backBtn.setFillStyle(0x440077, 0.95))
-      .on('pointerout',  () => backBtn.setFillStyle(0x221133, 0.9))
-      .on('pointerdown', () => this.closeElementInfo());
-    this.infoOverlayObjects.push(backBtn, backLbl);
+    this.infoOverlayObjects.push(addButton(this, {
+      x: 66, y: 32, w: 100, h: 32,
+      label: 'BACK', icon: '◄', fontSize: 12, variant: 'quiet', accent: C.arcane,
+      depth: 56, cut: 8,
+      onClick: () => this.closeElementInfo(),
+    }).container);
 
     if (!def) {
       const soon = this.add.text(cx, height / 2, 'Mastery for this element is coming soon.', {
-        fontSize: '14px', fontFamily: 'Arial, sans-serif', color: '#555577',
+        fontSize: '14px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#555577',
       }).setOrigin(0.5).setDepth(51);
       this.infoOverlayObjects.push(soon);
       return;
@@ -1551,7 +1529,7 @@ export class MenuScene extends Phaser.Scene {
 
     const sectionHdr = (text: string, color: string) => {
       const t = this.add.text(cx, innerY, text, {
-        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color,
+        fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color,
       }).setOrigin(0.5);
       scrollContainer.add(t);
       innerY += 20;
@@ -1565,7 +1543,7 @@ export class MenuScene extends Phaser.Scene {
       const done = current >= req.target;
 
       const howToText = this.add.text(COL_X + 14, innerY + 24, req.howTo, {
-        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#aaaacc',
+        fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#aaaacc',
         wordWrap: { width: COL_W - 28 }, lineSpacing: 3,
       });
 
@@ -1576,18 +1554,18 @@ export class MenuScene extends Phaser.Scene {
       const barFill = this.add.rectangle(COL_X + 14, barY, fillW, 8, done ? 0x44ff88 : 0xffcc00, 0.9).setOrigin(0, 0.5);
 
       const rowH = 24 + howToText.height + 14 + 14;
-      const rowBg = this.add.rectangle(cx, innerY + rowH / 2, COL_W, rowH - 6,
-        done ? 0x102010 : 0x0d0d22, 0.75).setStrokeStyle(1, done ? 0x226644 : 0x222244, 0.6);
+      const rowBg = this.overlayRow(cx, innerY + rowH / 2, COL_W, rowH - 6,
+        done ? C.verdant : C.steel, !done).g;
 
       const nameText = this.add.text(COL_X + 14, innerY + 13, req.label, {
-        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#ddddee',
+        fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ddddee',
       }).setOrigin(0, 0.5);
 
       const countLabel = req.isBest
         ? `best ${current}/${req.target} in one${done ? '  ✓' : ''}`
         : `${current}/${req.target}${done ? '  ✓' : ''}`;
       const countText = this.add.text(COL_X + COL_W - 14, innerY + 13, countLabel, {
-        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: done ? '#88ff88' : '#ccaa44',
+        fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: done ? '#88ff88' : '#ccaa44',
       }).setOrigin(1, 0.5);
 
       scrollContainer.add([rowBg, nameText, countText, howToText, barBg, barFill]);
@@ -1598,12 +1576,11 @@ export class MenuScene extends Phaser.Scene {
     sectionHdr('— ENHANCEMENTS —', '#ff8844');
     def.enhancements.forEach((enh) => {
       const descText = this.add.text(COL_X + 14, innerY + 24, enh.description, {
-        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#ffccaa',
+        fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#ffccaa',
         wordWrap: { width: COL_W - 28 }, lineSpacing: 3,
       });
       const rowH = 24 + descText.height + 12;
-      const rowBg = this.add.rectangle(cx, innerY + rowH / 2, COL_W, rowH - 6, 0x1a1508, 0.75)
-        .setStrokeStyle(1, 0x554422, 0.6);
+      const rowBg = this.overlayRow(cx, innerY + rowH / 2, COL_W, rowH - 6, C.ember).g;
       const boundSlot = enh.bindable
         ? Object.keys(PlayerData.getMasteryBinds(elementId)).find((s) => PlayerData.getMasteryBinds(elementId)[s] === enh.id)
         : undefined;
@@ -1611,7 +1588,7 @@ export class MenuScene extends Phaser.Scene {
         ? `${enh.name}  [${boundSlot ? boundSlot.toUpperCase() : 'unbound'}]`
         : `${enh.name}  [Passive]`;
       const nameText = this.add.text(COL_X + 14, innerY + 13, title, {
-        fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#ffaa66',
+        fontSize: '12px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffaa66',
       }).setOrigin(0, 0.5);
       scrollContainer.add([rowBg, nameText, descText]);
       innerY += rowH + 6;
@@ -1623,7 +1600,7 @@ export class MenuScene extends Phaser.Scene {
     const previewCard = this.add.rectangle(cx, previewY, 100, 108, def.enhancedColor, 0.8).setStrokeStyle(2, def.enhancedColor);
     const previewEmoji = this.add.text(cx, previewY - 20, def.enhancedEmoji, { fontSize: '34px' }).setOrigin(0.5);
     const previewLbl = this.add.text(cx, previewY + 34, `${element.name.toUpperCase()} MASTERED`, {
-      fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#ffffff',
+      fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffffff',
     }).setOrigin(0.5);
     scrollContainer.add([previewCard, previewEmoji, previewLbl]);
     innerY = previewY + 70;
@@ -1653,7 +1630,7 @@ export class MenuScene extends Phaser.Scene {
     this.input.on('wheel', this.infoScrollHandler);
     if (maxScroll > 0) {
       const hint = this.add.text(width - 12, SCROLL_BOT + 6, '▼ scroll for more', {
-        fontSize: '9px', fontFamily: 'Arial, sans-serif', color: '#444466',
+        fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#444466',
       }).setOrigin(1, 0).setDepth(55);
       this.infoOverlayObjects.push(hint);
     }
@@ -1662,38 +1639,26 @@ export class MenuScene extends Phaser.Scene {
     const enabled = PlayerData.isMasteryEnabled(elementId);
     const btnY = height - 40;
     const btnW = 320, btnH = 44;
-    let btnLabel: string;
-    let btnColor: number;
-    let btnTextColor: string;
-    if (!complete) {
-      btnLabel = '🔒  Complete all challenges to unlock';
-      btnColor = 0x1a1a22;
-      btnTextColor = '#555566';
-    } else if (enabled) {
-      btnLabel = `✓  ${def.name.toUpperCase()} ENABLED — click to disable`;
-      btnColor = 0x225533;
-      btnTextColor = '#88ff88';
-    } else {
-      btnLabel = `${def.enhancedEmoji}  ENABLE ${def.name.toUpperCase()}`;
-      btnColor = 0x552200;
-      btnTextColor = '#ffcc00';
-    }
-    const enableBtn = this.add.rectangle(cx, btnY, btnW, btnH, btnColor, 0.9)
-      .setStrokeStyle(2, complete ? (enabled ? 0x44cc66 : 0xffaa00) : 0x333344, 0.9).setDepth(55);
-    const enableLbl = this.add.text(cx, btnY, btnLabel, {
-      fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: btnTextColor,
-    }).setOrigin(0.5).setDepth(56);
-    if (complete) {
-      enableBtn.setInteractive({ useHandCursor: true })
-        .on('pointerover', () => enableBtn.setAlpha(0.85))
-        .on('pointerout',  () => enableBtn.setAlpha(1))
-        .on('pointerdown', () => {
-          PlayerData.setMasteryEnabled(elementId, !enabled);
-          this.renderPhase(width, height, cx);
-          this.showMasteryScreen(elementId, width, height, cx);
-        });
-    }
-    this.infoOverlayObjects.push(enableBtn, enableLbl);
+    const enableBtn = addButton(this, {
+      x: cx, y: btnY, w: btnW, h: btnH,
+      label: !complete ? 'LOCKED'
+        : enabled ? `${def.name.toUpperCase()} ENABLED`
+        : `ENABLE ${def.name.toUpperCase()}`,
+      sublabel: !complete ? 'Complete every challenge to unlock'
+        : enabled ? 'Click to disable' : undefined,
+      icon: !complete ? '🔒' : enabled ? '✓' : def.enhancedEmoji,
+      accent: !complete ? C.steel : enabled ? C.verdant : C.gold,
+      variant: !complete ? 'quiet' : 'solid',
+      fontSize: 14,
+      depth: 55,
+      disabled: !complete,
+      onClick: () => {
+        PlayerData.setMasteryEnabled(elementId, !enabled);
+        this.renderPhase(width, height, cx);
+        this.showMasteryScreen(elementId, width, height, cx);
+      },
+    });
+    this.infoOverlayObjects.push(enableBtn.container);
   }
 
   /**
@@ -1722,7 +1687,7 @@ export class MenuScene extends Phaser.Scene {
 
     innerY += 16;
     const hdr = this.add.text(cx, innerY, '— LOADOUT —', {
-      fontSize: '11px', fontFamily: '"Arial Black", sans-serif',
+      fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
       color: unlocked ? '#ffcc00' : '#555566',
     }).setOrigin(0.5);
     container.add(hdr);
@@ -1731,7 +1696,7 @@ export class MenuScene extends Phaser.Scene {
     const sub = this.add.text(cx, innerY, unlocked
       ? 'Drag a mastery ability onto a slot to replace that ability. Click cannot be replaced.'
       : 'Complete the challenges above to bind mastery abilities.', {
-      fontSize: '10px', fontFamily: 'Arial, sans-serif',
+      fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
       color: unlocked ? '#aaaacc' : '#555566',
     }).setOrigin(0.5);
     container.add(sub);
@@ -1768,12 +1733,12 @@ export class MenuScene extends Phaser.Scene {
         .setStrokeStyle(2, boundEnh ? 0xffaa00 : slot ? 0x334466 : 0x22222e, 0.9);
 
       const keyLbl = this.add.text(x - slotW / 2 + 8, slotY - 12, `[${ab.displayKey}]`, {
-        fontSize: '10px', fontFamily: '"Arial Black", sans-serif',
+        fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
         color: slot ? '#8899cc' : '#444455',
       }).setOrigin(0, 0.5);
 
       const nameLbl = this.add.text(x, slotY + 8, boundEnh ? boundEnh.name : ab.name, {
-        fontSize: '11px', fontFamily: '"Arial Black", sans-serif',
+        fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
         color: boundEnh ? '#ffcc00' : slot ? '#ccccdd' : '#555566',
       }).setOrigin(0.5);
 
@@ -1791,7 +1756,7 @@ export class MenuScene extends Phaser.Scene {
       if (boundEnh) {
         // ✕ unbinds, restoring the element's own ability to this slot.
         const clear = this.add.text(x + slotW / 2 - 8, slotY - 12, '✕', {
-          fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#ff8866',
+          fontSize: '12px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ff8866',
         }).setOrigin(1, 0.5).setInteractive({ useHandCursor: true });
         clear.on('pointerdown', () => {
           // Ignore clicks on rows scrolled out of the visible window.
@@ -1808,7 +1773,7 @@ export class MenuScene extends Phaser.Scene {
       const chip = this.add.rectangle(homeX, chipY, chipW, chipH, 0x552200, 0.95)
         .setStrokeStyle(2, 0xffaa00, 0.9);
       const chipLbl = this.add.text(homeX, chipY, `${emoji} ${enh.name}`, {
-        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc00',
+        fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffcc00',
       }).setOrigin(0.5);
       container.add([chip, chipLbl]);
 
@@ -1835,7 +1800,7 @@ export class MenuScene extends Phaser.Scene {
 
     if (unlocked && !masteryOn) {
       const note = this.add.text(cx, innerY + 4, 'Mastery is disabled — bindings apply once enabled.', {
-        fontSize: '9px', fontFamily: 'Arial, sans-serif', color: '#775544',
+        fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#775544',
       }).setOrigin(0.5);
       container.add(note);
       innerY += 18;
@@ -1877,7 +1842,7 @@ export class MenuScene extends Phaser.Scene {
     const ghost = this.add.rectangle(pointer.x, pointer.y, chip.width, chip.height, 0x552200, 0.95)
       .setStrokeStyle(2, 0xffcc44, 1).setDepth(70);
     const ghostLbl = this.add.text(pointer.x, pointer.y, `${emoji} ${enh.name}`, {
-      fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#ffdd66',
+      fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffdd66',
     }).setOrigin(0.5).setDepth(71);
     this.masteryDragGhost = [ghost, ghostLbl];
 
@@ -1946,38 +1911,31 @@ export class MenuScene extends Phaser.Scene {
     const SCROLL_BOT = height - 44;
     const SCROLL_H = SCROLL_BOT - SCROLL_TOP;
 
-    const bg = this.add.rectangle(cx, height / 2, width, height, 0x05050f, 0.97).setDepth(50);
+    const bg = this.add.rectangle(cx, height / 2, width, height, 0x04040c, 0.97).setDepth(50);
     bg.setInteractive();
     this.infoOverlayObjects.push(bg);
 
     const header = this.add.text(cx, 34, `⚙  ${element.name.toUpperCase()} CUSTOMIZATION`, {
-      fontSize: '26px', fontFamily: '"Arial Black", sans-serif', color: elemColor,
+      fontSize: '26px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: elemColor,
       stroke: '#000000', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(51);
     this.infoOverlayObjects.push(header);
 
     const subHdr = this.add.text(cx, 62, '— mastery · perk · upgrades · cosmetics —', {
-      fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#555577',
+      fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#555577',
     }).setOrigin(0.5).setDepth(51);
     this.infoOverlayObjects.push(subHdr);
 
-    const divLine = this.add.line(cx, SCROLL_TOP - 12, -width / 2 + 40, 0, width / 2 - 40, 0, 0x223355, 0.5).setDepth(51).setLineWidth(1);
+    const divLine = this.add.line(cx, SCROLL_TOP - 12, -width / 2 + 40, 0, width / 2 - 40, 0, C.arcane, 0.45).setDepth(51).setLineWidth(1);
     this.infoOverlayObjects.push(divLine);
 
     // Back button — closing re-renders the phase so card emoji/mastery state refresh.
-    const backBtn = this.add.rectangle(60, 30, 90, 32, 0x221133, 0.9)
-      .setStrokeStyle(2, 0x9944ff, 0.8).setDepth(55).setInteractive({ useHandCursor: true });
-    const backLbl = this.add.text(60, 30, '◀  BACK', {
-      fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
-    }).setOrigin(0.5).setDepth(56);
-    backBtn
-      .on('pointerover', () => backBtn.setFillStyle(0x440077, 0.95))
-      .on('pointerout',  () => backBtn.setFillStyle(0x221133, 0.9))
-      .on('pointerdown', () => {
-        this.closeElementInfo();
-        this.renderPhase(width, height, cx);
-      });
-    this.infoOverlayObjects.push(backBtn, backLbl);
+    this.infoOverlayObjects.push(addButton(this, {
+      x: 66, y: 32, w: 100, h: 32,
+      label: 'BACK', icon: '◄', fontSize: 12, variant: 'quiet', accent: C.arcane,
+      depth: 56, cut: 8,
+      onClick: () => { this.closeElementInfo(); this.renderPhase(width, height, cx); },
+    }).container);
 
     const scrollContainer = this.add.container(0, SCROLL_TOP).setDepth(51);
     this.infoOverlayObjects.push(scrollContainer);
@@ -1997,7 +1955,7 @@ export class MenuScene extends Phaser.Scene {
 
     const sectionHdr = (text: string, color: string) => {
       const t = this.add.text(cx, innerY, text, {
-        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color,
+        fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color,
       }).setOrigin(0.5);
       scrollContainer.add(t);
       innerY += 20;
@@ -2013,7 +1971,7 @@ export class MenuScene extends Phaser.Scene {
     const masteryDef = getMasteryDef(elementId);
     if (!masteryDef) {
       const soon = this.add.text(cx, innerY + 8, 'Mastery for this element is coming soon.', {
-        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#555577',
+        fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#555577',
       }).setOrigin(0.5);
       scrollContainer.add(soon);
       innerY += 30;
@@ -2021,16 +1979,15 @@ export class MenuScene extends Phaser.Scene {
       const complete = isMasteryComplete(elementId);
       const enabled = PlayerData.isMasteryEnabled(elementId);
       const rowH = 44;
-      const rowBg = this.add.rectangle(cx, innerY + rowH / 2, COL_W, rowH - 6,
-        enabled ? 0x221a00 : 0x0d0d22, 0.8).setStrokeStyle(1, enabled ? 0x996600 : 0x222244, 0.7);
+      const rowBg = this.overlayRow(cx, innerY + rowH / 2, COL_W, rowH - 6, C.gold, !enabled).g;
       const nameText = this.add.text(COL_X + 14, innerY + rowH / 2 - 3, `${masteryDef.enhancedEmoji} ${masteryDef.name}`, {
-        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: complete ? '#ffcc00' : '#777788',
+        fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: complete ? '#ffcc00' : '#777788',
       }).setOrigin(0, 0.5);
       scrollContainer.add([rowBg, nameText]);
 
       if (!complete) {
         const lockLbl = this.add.text(COL_X + COL_W - 14, innerY + rowH / 2 - 3, '🔒 Complete challenges to unlock', {
-          fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#665533',
+          fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#665533',
         }).setOrigin(1, 0.5);
         scrollContainer.add(lockLbl);
       } else {
@@ -2042,7 +1999,7 @@ export class MenuScene extends Phaser.Scene {
           .setStrokeStyle(2, enabled ? 0x44cc66 : 0x555577, 0.9)
           .setInteractive({ useHandCursor: true });
         const tglLbl = this.add.text(tglX, rowLocalY - 3, enabled ? '✓ ENABLED' : 'DISABLED', {
-          fontSize: '10px', fontFamily: '"Arial Black", sans-serif',
+          fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
           color: enabled ? '#88ff88' : '#8888aa',
         }).setOrigin(0.5);
         tglBg
@@ -2058,7 +2015,7 @@ export class MenuScene extends Phaser.Scene {
       innerY += rowH;
 
       const link = this.add.text(COL_X + 14, innerY + 4, 'View challenges & mastery loadout ▸', {
-        fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#66ccff',
+        fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#66ccff',
       }).setInteractive({ useHandCursor: true });
       const linkLocalY = innerY + 4;
       link.on('pointerover', () => link.setColor('#aaeeff'));
@@ -2078,7 +2035,7 @@ export class MenuScene extends Phaser.Scene {
     const perks = getPerksForElement(elementId);
     if (perks.length === 0) {
       const noPerks = this.add.text(cx, innerY + 8, 'No perks are craftable for this element yet.', {
-        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#555577',
+        fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#555577',
       }).setOrigin(0.5);
       scrollContainer.add(noPerks);
       innerY += 30;
@@ -2090,23 +2047,22 @@ export class MenuScene extends Phaser.Scene {
         const rowH = 30;
         const isEquipped = equippedId === null;
         const rowLocalY = innerY + rowH / 2;
-        const rowBg = this.add.rectangle(cx, rowLocalY, COL_W, rowH - 4,
-          isEquipped ? 0x1a3a1a : 0x0d0d22, 0.8)
-          .setStrokeStyle(1, isEquipped ? 0x55ee55 : 0x222244, 0.7)
-          .setInteractive({ useHandCursor: true });
+        const row = this.overlayRow(cx, rowLocalY, COL_W, rowH - 4,
+          isEquipped ? C.verdant : C.steel, !isEquipped);
         const noneLbl = this.add.text(COL_X + 14, rowLocalY, isEquipped ? '— no perk —  ✓' : '— no perk —', {
-          fontSize: '11px', fontFamily: '"Arial Black", sans-serif',
+          fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
           color: isEquipped ? '#88ff88' : '#777788',
         }).setOrigin(0, 0.5);
-        rowBg
-          .on('pointerover', () => rowBg.setStrokeStyle(2, 0xffffff, 1))
-          .on('pointerout',  () => rowBg.setStrokeStyle(1, isEquipped ? 0x55ee55 : 0x222244, 0.7))
+        const rowHit = this.overlayRowHit(cx, rowLocalY, COL_W, rowH - 4);
+        rowHit
+          .on('pointerover', () => row.paint(true))
+          .on('pointerout',  () => row.paint(false))
           .on('pointerdown', () => {
             if (!inView(rowLocalY)) return;
             PlayerData.equipPerk(elementId, null);
             rebuild();
           });
-        scrollContainer.add([rowBg, noneLbl]);
+        scrollContainer.add([row.g, noneLbl, rowHit]);
         innerY += rowH + 2;
       }
 
@@ -2117,24 +2073,25 @@ export class MenuScene extends Phaser.Scene {
         const rowH = 30;
         const rowLocalY = innerY + rowH / 2;
 
-        const rowBg = this.add.rectangle(cx, rowLocalY, COL_W, rowH - 4,
-          isEquipped ? 0x1a3a1a : (unlocked ? 0x150022 : 0x0a0a10), unlocked ? 0.8 : 0.5)
-          .setStrokeStyle(1, isEquipped ? 0x55ee55 : (unlocked ? 0x441155 : 0x222233), 0.7);
+        const row = this.overlayRow(cx, rowLocalY, COL_W, rowH - 4,
+          isEquipped ? C.verdant : C.arcane, !unlocked);
         const nameLbl = this.add.text(COL_X + 14, rowLocalY,
           `${unlocked ? '' : '🔒 '}${perk.emoji} ${perk.name}${isEquipped ? '  ✓' : ''}`, {
-            fontSize: '11px', fontFamily: '"Arial Black", sans-serif',
+            fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
             color: isEquipped ? '#88ff88' : (unlocked ? '#eecfff' : '#555566'),
           }).setOrigin(0, 0.5).setAlpha(alpha);
         const recipeStr = perk.ingredients.map((r) => ELEM_EMOJI[r] ?? r).join(' + ');
         const recipeLbl = this.add.text(COL_X + COL_W - 14, rowLocalY, recipeStr, {
           fontSize: '10px', color: unlocked ? '#886633' : '#332222',
         }).setOrigin(1, 0.5).setAlpha(alpha);
-        scrollContainer.add([rowBg, nameLbl, recipeLbl]);
+        scrollContainer.add([row.g, nameLbl, recipeLbl]);
 
         if (unlocked) {
-          rowBg.setInteractive({ useHandCursor: true })
-            .on('pointerover', () => rowBg.setStrokeStyle(2, 0xffffff, 1))
-            .on('pointerout',  () => rowBg.setStrokeStyle(1, isEquipped ? 0x55ee55 : 0x441155, 0.7))
+          const rowHit = this.overlayRowHit(cx, rowLocalY, COL_W, rowH - 4);
+          scrollContainer.add(rowHit);
+          rowHit
+            .on('pointerover', () => row.paint(true))
+            .on('pointerout',  () => row.paint(false))
             .on('pointerdown', () => {
               if (!inView(rowLocalY)) return;
               PlayerData.equipPerk(elementId, isEquipped ? null : perk.id);
@@ -2151,7 +2108,7 @@ export class MenuScene extends Phaser.Scene {
     const upgrades = getElementUpgrades(elementId);
     if (upgrades.length === 0) {
       const noUpg = this.add.text(cx, innerY + 8, 'This element has no shop upgrades.', {
-        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#555577',
+        fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#555577',
       }).setOrigin(0.5);
       scrollContainer.add(noUpg);
       innerY += 30;
@@ -2165,7 +2122,7 @@ export class MenuScene extends Phaser.Scene {
           const b = this.add.rectangle(x, btnLocalY, 84, 22, 0x222233, 0.95)
             .setStrokeStyle(1, 0x555577, 0.9).setInteractive({ useHandCursor: true });
           const l = this.add.text(x, btnLocalY, label, {
-            fontSize: '9px', fontFamily: '"Arial Black", sans-serif', color: '#aaaacc',
+            fontSize: '9px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#aaaacc',
           }).setOrigin(0.5);
           b.on('pointerover', () => b.setStrokeStyle(2, 0xffffff, 1))
             .on('pointerout',  () => b.setStrokeStyle(1, 0x555577, 0.9))
@@ -2191,21 +2148,20 @@ export class MenuScene extends Phaser.Scene {
         const rowH = 34;
         const rowLocalY = innerY + rowH / 2;
 
-        const rowBg = this.add.rectangle(cx, rowLocalY, COL_W, rowH - 4,
-          active ? 0x102a10 : (owned ? 0x0d0d22 : 0x0a0a10), owned ? 0.8 : 0.5)
-          .setStrokeStyle(1, active ? 0x338844 : (owned ? 0x222244 : 0x222233), 0.7);
+        const rowBg = this.overlayRow(cx, rowLocalY, COL_W, rowH - 4,
+          active ? C.verdant : C.steel, !owned).g;
         const keyLbl = this.add.text(COL_X + 14, rowLocalY, `[${upg.displayKey}+]`, {
-          fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: owned ? elemColor : '#444455',
+          fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: owned ? elemColor : '#444455',
         }).setOrigin(0, 0.5);
         const nameLbl = this.add.text(COL_X + 78, rowLocalY, upg.name, {
-          fontSize: '11px', fontFamily: '"Arial Black", sans-serif',
+          fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
           color: owned ? '#ddddee' : '#555566',
         }).setOrigin(0, 0.5);
         scrollContainer.add([rowBg, keyLbl, nameLbl]);
 
         if (!owned) {
           const buyLbl = this.add.text(COL_X + COL_W - 14, rowLocalY, '🔒 Buy in Shop', {
-            fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#665533',
+            fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#665533',
           }).setOrigin(1, 0.5);
           scrollContainer.add(buyLbl);
         } else {
@@ -2216,7 +2172,7 @@ export class MenuScene extends Phaser.Scene {
             .setStrokeStyle(2, active ? 0x44cc66 : 0x555577, 0.9)
             .setInteractive({ useHandCursor: true });
           const tglLbl = this.add.text(tglX, rowLocalY, active ? 'ON' : 'OFF', {
-            fontSize: '10px', fontFamily: '"Arial Black", sans-serif',
+            fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
             color: active ? '#88ff88' : '#8888aa',
           }).setOrigin(0.5);
           tglBg
@@ -2239,7 +2195,7 @@ export class MenuScene extends Phaser.Scene {
     const allCosmetics = getCosmeticsForElement(elementId);
     if (allCosmetics.length === 0) {
       const noCos = this.add.text(cx, innerY + 8, 'No cosmetics for this element yet — earn them through achievements!', {
-        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#555577',
+        fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#555577',
       }).setOrigin(0.5);
       scrollContainer.add(noCos);
       innerY += 30;
@@ -2251,7 +2207,7 @@ export class MenuScene extends Phaser.Scene {
         const equipped = PlayerData.getEquippedCosmetic(elementId, slot);
 
         const slotHdr = this.add.text(COL_X + 8, innerY + 6, SLOT_LABELS[slot], {
-          fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#dd99cc',
+          fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#dd99cc',
         });
         scrollContainer.add(slotHdr);
         innerY += 26;
@@ -2261,23 +2217,22 @@ export class MenuScene extends Phaser.Scene {
           const rowH = 28;
           const isEquipped = equipped === null;
           const rowLocalY = innerY + rowH / 2;
-          const rowBg = this.add.rectangle(cx, rowLocalY, COL_W, rowH - 4,
-            isEquipped ? 0x1a3a1a : 0x0d0d22, 0.8)
-            .setStrokeStyle(1, isEquipped ? 0x55ee55 : 0x222244, 0.7)
-            .setInteractive({ useHandCursor: true });
+          const row = this.overlayRow(cx, rowLocalY, COL_W, rowH - 4,
+            isEquipped ? C.verdant : C.steel, !isEquipped);
           const noneLbl = this.add.text(COL_X + 14, rowLocalY, isEquipped ? '— none —  ✓' : '— none —', {
-            fontSize: '11px', fontFamily: '"Arial Black", sans-serif',
+            fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
             color: isEquipped ? '#88ff88' : '#777788',
           }).setOrigin(0, 0.5);
-          rowBg
-            .on('pointerover', () => rowBg.setStrokeStyle(2, 0xffffff, 1))
-            .on('pointerout',  () => rowBg.setStrokeStyle(1, isEquipped ? 0x55ee55 : 0x222244, 0.7))
+          const rowHit = this.overlayRowHit(cx, rowLocalY, COL_W, rowH - 4);
+          rowHit
+            .on('pointerover', () => row.paint(true))
+            .on('pointerout',  () => row.paint(false))
             .on('pointerdown', () => {
               if (!inView(rowLocalY)) return;
               PlayerData.setEquippedCosmetic(elementId, slot, null);
               rebuild();
             });
-          scrollContainer.add([rowBg, noneLbl]);
+          scrollContainer.add([row.g, noneLbl, rowHit]);
           innerY += rowH + 2;
         }
 
@@ -2287,32 +2242,33 @@ export class MenuScene extends Phaser.Scene {
           const alpha = unlocked ? 1 : 0.45;
 
           const descText = this.add.text(COL_X + 14, innerY + 22, cos.description, {
-            fontSize: '9px', fontFamily: 'Arial, sans-serif',
+            fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
             color: unlocked ? '#bbaacc' : '#555566',
             wordWrap: { width: COL_W - 28 },
           }).setAlpha(alpha);
           const rowH = 22 + descText.height + 10;
           const rowLocalY = innerY + rowH / 2;
 
-          const rowBg = this.add.rectangle(cx, rowLocalY, COL_W, rowH - 4,
-            isEquipped ? 0x1a3a1a : (unlocked ? 0x1f1028 : 0x0a0a10), unlocked ? 0.8 : 0.5)
-            .setStrokeStyle(1, isEquipped ? 0x55ee55 : (unlocked ? 0x663377 : 0x222233), 0.7);
+          const row = this.overlayRow(cx, rowLocalY, COL_W, rowH - 4,
+            isEquipped ? C.verdant : C.arcane, !unlocked);
           const nameLbl = this.add.text(COL_X + 14, innerY + 11,
             `${unlocked ? '' : '🔒 '}${cos.name}${isEquipped ? '  ✓ EQUIPPED' : ''}`, {
-              fontSize: '11px', fontFamily: '"Arial Black", sans-serif',
+              fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
               color: isEquipped ? '#88ff88' : (unlocked ? '#ffccee' : '#555566'),
             }).setOrigin(0, 0.5).setAlpha(alpha);
-          scrollContainer.add([rowBg, nameLbl, descText]);
+          scrollContainer.add([row.g, nameLbl, descText]);
 
           if (!unlocked) {
             const hintLbl = this.add.text(COL_X + COL_W - 14, innerY + 11, `🏆 ${cosmeticUnlockHint(cos.id)}`, {
-              fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#665533',
+              fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#665533',
             }).setOrigin(1, 0.5);
             scrollContainer.add(hintLbl);
           } else {
-            rowBg.setInteractive({ useHandCursor: true })
-              .on('pointerover', () => rowBg.setStrokeStyle(2, 0xffffff, 1))
-              .on('pointerout',  () => rowBg.setStrokeStyle(1, isEquipped ? 0x55ee55 : 0x663377, 0.7))
+            const rowHit = this.overlayRowHit(cx, rowLocalY, COL_W, rowH - 4);
+            scrollContainer.add(rowHit);
+            rowHit
+              .on('pointerover', () => row.paint(true))
+              .on('pointerout',  () => row.paint(false))
               .on('pointerdown', () => {
                 if (!inView(rowLocalY)) return;
                 PlayerData.setEquippedCosmetic(elementId, slot, isEquipped ? null : cos.id);
@@ -2340,7 +2296,7 @@ export class MenuScene extends Phaser.Scene {
 
     if (maxScroll > 0) {
       const hint = this.add.text(width - 12, SCROLL_BOT + 6, '▼ scroll for more', {
-        fontSize: '9px', fontFamily: 'Arial, sans-serif', color: '#444466',
+        fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#444466',
       }).setOrigin(1, 0).setDepth(55);
       this.infoOverlayObjects.push(hint);
     }
@@ -2358,24 +2314,25 @@ export class MenuScene extends Phaser.Scene {
     const SCROLL_BOT = height - 52;
     const SCROLL_H = SCROLL_BOT - SCROLL_TOP;
 
-    const bg = this.add.rectangle(cx, height / 2, width, height, 0x05050f, 0.97)
+    const bg = this.add.rectangle(cx, height / 2, width, height, 0x04040c, 0.97)
       .setDepth(50).setInteractive();
     this.infoOverlayObjects.push(bg);
 
     const header = this.add.text(cx, 36, '📖  PERK DICTIONARY', {
-      fontSize: '28px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
+      fontSize: '28px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#cc88ff',
       stroke: '#440088', strokeThickness: 3,
     }).setOrigin(0.5).setDepth(55);
     this.infoOverlayObjects.push(header);
 
     const subHdr = this.add.text(cx, 70, '— craft perks in the Lab to equip them on your element —', {
-      fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#555577',
+      fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#555577',
     }).setOrigin(0.5).setDepth(55);
     this.infoOverlayObjects.push(subHdr);
 
     const divider = this.add.graphics().setDepth(55);
-    divider.lineStyle(1, 0x223355, 0.5);
-    divider.lineBetween(40, 90, width - 40, 90);
+    divider.lineStyle(2, C.arcane, 0.45);
+    divider.beginPath(); divider.moveTo(40, 90); divider.lineTo(width - 40, 90); divider.strokePath();
+    fillDiamond(divider, width / 2, 90, 4, mix(C.arcane, 0xffffff, 0.4), 0.9);
     this.infoOverlayObjects.push(divider);
 
     // ── Scrollable container ──
@@ -2411,7 +2368,7 @@ export class MenuScene extends Phaser.Scene {
       const tierColor = tier === 'penta' ? '#cc88ff' : (tier === 'quad' ? '#ffaa44' : (tier === 'abstract-triple' ? '#cc66ff' : '#44aaff'));
 
       const tierHdr = this.add.text(cx, innerY, tierLabel, {
-        fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: tierColor,
+        fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: tierColor,
       }).setOrigin(0.5);
       scrollContainer.add(tierHdr);
       innerY += 20;
@@ -2421,23 +2378,25 @@ export class MenuScene extends Phaser.Scene {
         const equipped  = PlayerData.getEquippedPerk(perk.elementId) === perk.id;
         const alpha = unlocked ? 1.0 : 0.35;
 
-        const rowBgFill   = unlocked ? (tier === 'penta' ? 0x1a0022 : (tier === 'quad' ? 0x1a0d00 : (tier === 'abstract-triple' ? 0x150022 : 0x0d0d1a))) : 0x080808;
-        const rowBgStroke = unlocked ? (tier === 'penta' ? 0x441155 : (tier === 'quad' ? 0x443322 : (tier === 'abstract-triple' ? 0x441144 : 0x222244))) : 0x111111;
+        const rowBgFill = 0;
+        const rowBgStroke = tier === 'penta' ? C.corrupt
+          : tier === 'quad' ? C.gold
+          : tier === 'abstract-triple' ? C.arcane
+          : C.frost;
 
         const descText = this.add.text(COL_X + 10, innerY + DESC_Y, perk.description, {
-          fontSize: '9px', fontFamily: 'Arial, sans-serif',
+          fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
           color: unlocked ? '#888899' : '#444455',
           wordWrap: { width: COL_W - 20 },
         }).setAlpha(alpha);
 
         const rowH = DESC_Y + descText.height + ROW_PAD;
 
-        const rowBg = this.add.rectangle(cx, innerY + rowH / 2, COL_W, rowH - 2,
-          rowBgFill, unlocked ? 0.8 : 0.5)
-          .setStrokeStyle(1, rowBgStroke, 0.8);
+        const rowBg = this.overlayRow(cx, innerY + rowH / 2, COL_W, rowH - 2, rowBgStroke, !unlocked).g;
+        void rowBgFill;
 
         const nameText = this.add.text(COL_X + 10, innerY + NAME_Y, `${perk.emoji} ${perk.name}`, {
-          fontSize: '13px', fontFamily: '"Arial Black", sans-serif',
+          fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
           color: unlocked ? '#ffffff' : '#555566',
         }).setAlpha(alpha);
 
@@ -2483,22 +2442,18 @@ export class MenuScene extends Phaser.Scene {
 
     if (maxScroll > 0) {
       const hint = this.add.text(width - 12, SCROLL_BOT - 4, '▼ scroll', {
-        fontSize: '9px', fontFamily: 'Arial, sans-serif', color: '#444466',
+        fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#444466',
       }).setOrigin(1, 1).setDepth(55);
       this.infoOverlayObjects.push(hint);
     }
 
     // Back button
-    const backBtn = this.add.rectangle(60, 30, 90, 32, 0x221133, 0.9)
-      .setStrokeStyle(2, 0x9944ff, 0.8).setDepth(55).setInteractive({ useHandCursor: true });
-    const backLbl = this.add.text(60, 30, '◀  BACK', {
-      fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
-    }).setOrigin(0.5).setDepth(56);
-    backBtn
-      .on('pointerover', () => backBtn.setFillStyle(0x440077, 0.95))
-      .on('pointerout',  () => backBtn.setFillStyle(0x221133, 0.9))
-      .on('pointerdown', () => this.closeElementInfo());
-    this.infoOverlayObjects.push(backBtn, backLbl);
+    this.infoOverlayObjects.push(addButton(this, {
+      x: 66, y: 32, w: 100, h: 32,
+      label: 'BACK', icon: '◄', fontSize: 12, variant: 'quiet', accent: C.arcane,
+      depth: 56, cut: 8,
+      onClick: () => this.closeElementInfo(),
+    }).container);
   }
 
   private goBack(): void {

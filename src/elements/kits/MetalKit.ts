@@ -405,7 +405,7 @@ export class MetalKit {
     this.bloodBarFill = scene.add.rectangle(x + 1, y, 0, 10, 0xcc0022, 0.95)
       .setOrigin(0, 0.5).setDepth(24).setScrollFactor(0);
     this.bloodBarLabel = scene.add.text(x, y - 14, 'BLOOD', {
-      fontSize: '10px', color: '#dd6677', fontFamily: 'Arial, sans-serif',
+      fontSize: '10px', color: '#dd6677', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
     }).setOrigin(0, 0.5).setDepth(24).setScrollFactor(0);
   }
 

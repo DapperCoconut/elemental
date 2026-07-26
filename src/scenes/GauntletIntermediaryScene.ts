@@ -25,6 +25,11 @@ import {
   boostBorderColor,
   boostLabelColor,
 } from '../data/GauntletBoosts';
+import {
+  C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
+  addBackdrop, addButton, addCardPlate, addSectionLabel, addTitle, UiButton,
+  fillDiamond, fillHex, strokeHex,
+} from '../ui';
 
 // ── Element pools for Infinity enemy selection ───────────────────────────────
 
@@ -105,13 +110,13 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
     const cx = width / 2;
     const cy = height / 2;
 
-    this.add.rectangle(cx, cy, width, height, 0x0d0d1a);
-    const grid = this.add.graphics();
-    grid.lineStyle(1, 0x1a1a33, 1);
-    for (let x = 0; x < width; x += 60) grid.lineBetween(x, 0, x, height);
-    for (let y = 0; y < height; y += 60) grid.lineBetween(0, y, width, y);
-
     const isInfinity = gs.gauntletElement === INFINITY_GAUNTLET_ID;
+    addBackdrop(this, {
+      accent: isInfinity ? C.arcane : gs.hardMode ? C.corrupt : C.gold,
+      variant: isInfinity ? 'void' : 'lattice',
+      motes: 20,
+    });
+
     const totalFights = gs.hardMode ? 8 : 6;
     const isBossComplete = !isInfinity && gs.currentFight === totalFights;
 
@@ -165,46 +170,51 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
     const titleColor = gs.hardMode ? '#ff88ff' : '#ffcc00';
     const battleCount = gs.hardMode ? '7' : '5';
 
-    this.add.text(cx, cy - 160, `${elEmoji} ${elName.toUpperCase()} GAUNTLET`, {
-      fontSize: '28px', fontFamily: '"Arial Black", sans-serif',
-      color: '#ffaa00', stroke: '#884400', strokeThickness: 3,
-    }).setOrigin(0.5);
+    const accent = gs.hardMode ? C.corrupt : C.gold;
 
-    const title = this.add.text(cx, cy - 110, titleText, {
-      fontSize: gs.hardMode ? '48px' : '64px', fontFamily: '"Arial Black", sans-serif',
-      color: titleColor, stroke: '#000000', strokeThickness: 6,
-    }).setOrigin(0.5);
-    this.tweens.add({ targets: title, scaleX: 1.04, scaleY: 1.04, duration: 700, yoyo: true, repeat: -1 });
+    // Laurel: a slowly turning ring of gold diamonds behind the headline.
+    // Drawn around the Graphics origin so the rotation tween spins in place.
+    const laurel = this.add.graphics().setDepth(DEPTH.base + 1);
+    for (let i = 0; i < 28; i++) {
+      const a = (Math.PI * 2 * i) / 28;
+      fillDiamond(laurel, Math.cos(a) * 210, Math.sin(a) * 96, 3, accent, 0.25);
+    }
+    laurel.setPosition(cx, cy - 96);
+    this.tweens.add({ targets: laurel, angle: 360, duration: 180000, repeat: -1 });
 
-    this.add.text(cx, cy - 20, `★ You survived all ${battleCount} battles and defeated the boss! ★`, {
-      fontSize: '18px', fontFamily: 'Arial, sans-serif', color: '#aaaaaa',
-    }).setOrigin(0.5);
+    this.add.text(cx, cy - 176, `${elEmoji}  ${elName.toUpperCase()} GAUNTLET`, {
+      fontSize: '20px', fontFamily: FONT_DISPLAY,
+      color: hex(mix(accent, 0xffffff, 0.45)), letterSpacing: 4,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
+
+    const heading = addTitle(this, {
+      x: cx, y: cy - 116, text: titleText, accent, size: gs.hardMode ? 40 : 54,
+      subtitle: `YOU SURVIVED ALL ${battleCount} BATTLES AND FELLED THE BOSS`,
+    });
+    this.tweens.add({
+      targets: heading.text, scaleX: 1.03, scaleY: 1.03,
+      duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+    });
+    void titleColor;
 
     const rewardLabel = isCampaign
       ? `+${reward} ⚡`
-      : (curseShardMult > 1 ? `+${reward} 💎  (×${curseShardMult.toFixed(2)} curse bonus)` : `+${reward} 💎`);
-    this.add.text(cx, cy + 20, rewardLabel, {
-      fontSize: '32px', fontFamily: '"Arial Black", sans-serif', color: titleColor,
-    }).setOrigin(0.5);
+      : (curseShardMult > 1 ? `+${reward} 💎   ×${curseShardMult.toFixed(2)} curse bonus` : `+${reward} 💎`);
+    this.add.text(cx, cy + 6, rewardLabel, {
+      fontSize: '32px', fontFamily: FONT_DISPLAY,
+      color: hex(mix(accent, 0xffffff, 0.55)), letterSpacing: 2,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
 
     if (newlyUnlocked.length > 0) {
       const unlockDef = getMutationDef(newlyUnlocked[0])!;
-      this.add.text(cx, cy + 65, '✨ NEW MUTATION UNLOCKED ✨', {
-        fontSize: '14px', fontFamily: '"Arial Black", sans-serif',
-        color: '#ffee88', stroke: '#553300', strokeThickness: 2,
-      }).setOrigin(0.5);
-      this.add.text(cx, cy + 88, `${unlockDef.emoji}  ${unlockDef.name.toUpperCase()}`, {
-        fontSize: '18px', fontFamily: '"Arial Black", sans-serif', color: '#ffffff',
-      }).setOrigin(0.5);
+      this.add.text(cx, cy + 56, '✨  NEW MUTATION UNLOCKED  ✨', {
+        fontSize: '12px', fontFamily: FONT_DISPLAY, color: T.gold, letterSpacing: 3,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+      this.add.text(cx, cy + 82, `${unlockDef.emoji}   ${unlockDef.name.toUpperCase()}`, {
+        fontSize: '18px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 1.5,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
     }
 
-    const btnOffsetY = newlyUnlocked.length > 0 ? 145 : 100;
-    const btn = this.add.rectangle(cx, cy + btnOffsetY, 280, 64, 0x1a2a1a, 0.9)
-      .setStrokeStyle(2, 0x44cc44).setInteractive({ useHandCursor: true });
-    const backLabel = isCampaign ? 'BACK TO WORLD' : 'BACK TO GAUNTLETS';
-    const btnLabel = this.add.text(cx, cy + btnOffsetY, backLabel, {
-      fontSize: '22px', fontFamily: '"Arial Black", sans-serif', color: '#ffffff',
-    }).setOrigin(0.5);
     const goBack = () => {
       if (isCampaign) {
         this.scene.start('CampaignWorldScene', { worldId: gs.campaignContext!.worldId, slotIdx: gs.campaignContext!.slot });
@@ -212,10 +222,14 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
         this.scene.start('GauntletSelectScene');
       }
     };
-    btn
-      .on('pointerover', () => { btn.setAlpha(1); btn.setStrokeStyle(3, 0xffffff); btnLabel.setColor('#ffcc00'); })
-      .on('pointerout',  () => { btn.setAlpha(0.9); btn.setStrokeStyle(2, 0x44cc44); btnLabel.setColor('#ffffff'); })
-      .on('pointerdown', goBack);
+
+    addButton(this, {
+      x: cx, y: cy + (newlyUnlocked.length > 0 ? 146 : 108), w: 300, h: 60,
+      label: isCampaign ? 'BACK TO WORLD' : 'BACK TO GAUNTLETS',
+      icon: '◄', accent: C.verdant, variant: 'solid', fontSize: 19,
+      onClick: goBack,
+    }).pulse();
+
     this.input.keyboard!.on('keydown-ESC', goBack);
   }
 
@@ -227,33 +241,35 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
     const nextFight = gs.currentFight + 1;
 
     // ── Header ───────────────────────────────────────────────────────
+    const runAccent = isInfinity ? C.arcane : gs.hardMode ? C.corrupt : C.gold;
+
     if (isInfinity) {
-      this.add.text(cx, 40, `♾️  INFINITY GAUNTLET  ${gs.hardMode ? '🔥 HARD' : ''}`, {
-        fontSize: '22px', fontFamily: '"Arial Black", sans-serif',
-        color: '#cc88ff', stroke: '#330066', strokeThickness: 2,
-      }).setOrigin(0.5);
-      this.add.text(cx, 70, `FIGHT ${gs.currentFight} COMPLETE`, {
-        fontSize: '36px', fontFamily: '"Arial Black", sans-serif',
-        color: '#ffffff', stroke: '#000000', strokeThickness: 4,
-      }).setOrigin(0.5);
-      // Infinity stats
+      this.add.text(cx, 32, `♾️  INFINITY GAUNTLET${gs.hardMode ? '   🔥 HARD' : ''}`, {
+        fontSize: '18px', fontFamily: FONT_DISPLAY,
+        color: hex(mix(C.arcane, 0xffffff, 0.5)), letterSpacing: 4,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+      this.add.text(cx, 68, `FIGHT ${gs.currentFight} COMPLETE`, {
+        fontSize: '34px', fontFamily: FONT_DISPLAY, color: T.bright,
+        stroke: hex(mix(C.arcane, 0x000000, 0.8)), strokeThickness: 5, letterSpacing: 3,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+
       const bestFight = PlayerData.getInfinityBestFight(gs.hardMode);
-      this.add.text(cx, 105, `Shards this run: 💎 ${gs.infinityShards}   •   Personal best: Fight ${bestFight}`, {
-        fontSize: '13px', fontFamily: 'Arial, sans-serif', color: '#888888',
-      }).setOrigin(0.5);
+      this.add.text(cx, 100, `THIS RUN 💎 ${gs.infinityShards}     ·     PERSONAL BEST  FIGHT ${bestFight}`, {
+        fontSize: '11px', fontFamily: FONT_DISPLAY, color: T.dim, letterSpacing: 2,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
     } else {
       const elDef = GAUNTLET_ELEMENTS.find((e) => e.id === gs.gauntletElement) ?? getAnyWorld(gs.gauntletElement);
       const elEmoji = elDef?.emoji ?? '🏆';
       const elName = elDef ? ('name' in elDef ? elDef.name : '') : gs.gauntletElement;
-      this.add.text(cx, 40, `${elEmoji} ${elName.toUpperCase()} GAUNTLET${gs.hardMode ? '  🔥 HARD' : ''}`, {
-        fontSize: '22px', fontFamily: '"Arial Black", sans-serif',
-        color: '#ffaa00', stroke: '#884400', strokeThickness: 2,
-      }).setOrigin(0.5);
-      this.add.text(cx, 72, `FIGHT ${gs.currentFight} COMPLETE`, {
-        fontSize: '38px', fontFamily: '"Arial Black", sans-serif',
-        color: '#ffffff', stroke: '#000000', strokeThickness: 4,
-      }).setOrigin(0.5);
-      this.drawProgress(cx, 110, gs.currentFight, totalFights);
+      this.add.text(cx, 30, `${elEmoji} ${elName.toUpperCase()} GAUNTLET${gs.hardMode ? '   🔥 HARD' : ''}`, {
+        fontSize: '18px', fontFamily: FONT_DISPLAY,
+        color: hex(mix(runAccent, 0xffffff, 0.45)), letterSpacing: 4,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+      this.add.text(cx, 66, `FIGHT ${gs.currentFight} COMPLETE`, {
+        fontSize: '36px', fontFamily: FONT_DISPLAY, color: T.bright,
+        stroke: hex(mix(runAccent, 0x000000, 0.8)), strokeThickness: 5, letterSpacing: 3,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+      this.drawProgress(cx, 108, gs.currentFight, totalFights);
     }
 
     // ── Deck summary ─────────────────────────────────────────────────
@@ -264,172 +280,137 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
     const curseMult = computeCurseShardMult(gs.boosts);
     const pickHeaderY = deckY + 28;
     const shardSuffix = curseMult > 1 ? `  💎×${curseMult.toFixed(2)}` : '';
-    this.add.text(cx, pickHeaderY, `─── CHOOSE ONE ───${shardSuffix}`, {
-      fontSize: '16px', fontFamily: '"Arial Black", sans-serif',
-      color: '#44ccff', stroke: '#003366', strokeThickness: 2,
-    }).setOrigin(0.5);
+    addSectionLabel(this, {
+      x: cx, y: pickHeaderY, text: `CHOOSE ONE${shardSuffix}`,
+      accent: C.frost, width: 620,
+    });
 
     // ── Roll picks and render grid ───────────────────────────────────
     const picks = rollPicks(gs.boosts);
     const cardCellW = 132;
-    const cardCellH = 138;
+    const cardCellH = 126;
     const cellGap = 10;
 
     let selectedDef: BoostDef | null = null;
-    const allCells: Phaser.GameObjects.Rectangle[] = [];
+    /** Repaint hooks for every pick tile, so selecting one dims the rest. */
+    const cellPainters: Array<{ def: BoostDef; paint: (s: 'idle' | 'hover' | 'active') => void }> = [];
 
-    // Next Fight button (inactive until selection)
-    const nextBtnY = height - 52;
-    const nextBtn = this.add.rectangle(cx, nextBtnY, 300, 52, 0x1a2a1a, 0)
-      .setStrokeStyle(0).setInteractive({ useHandCursor: false });
     const isBossFight = !isInfinity && nextFight === totalFights;
-    const nextLabel = this.add.text(cx, nextBtnY,
-      isBossFight ? '⚔️ FIGHT THE BOSS' : isInfinity ? `NEXT FIGHT (Fight ${nextFight}) →` : `NEXT FIGHT →`,
-      { fontSize: '20px', fontFamily: '"Arial Black", sans-serif', color: '#444444' }).setOrigin(0.5);
+    const nextBtnY = height - 46;
 
-    const activateNextBtn = (def: BoostDef): void => {
+    // Locked until a pick is made — the button itself carries that state.
+    const nextBtn: UiButton = addButton(this, {
+      x: cx, y: nextBtnY, w: 320, h: 52,
+      label: isBossFight ? 'FIGHT THE BOSS' : isInfinity ? `NEXT FIGHT ${nextFight}` : 'NEXT FIGHT',
+      icon: isBossFight ? '☠' : '▶',
+      sublabel: 'Choose a boost first',
+      accent: isBossFight ? C.blood : C.verdant,
+      variant: 'solid', fontSize: 19,
+      disabled: true,
+      onClick: () => {
+        if (!selectedDef) return;
+        const kind = selectedDef.kind === 'card' ? 'cards' : selectedDef.kind === 'charm' ? 'charms' : 'curses';
+        const newGs: GauntletState = {
+          ...gs,
+          currentFight: nextFight,
+          boosts: addBoostPick(gs.boosts, kind, selectedDef.id),
+        };
+        this.launchNextFight(newGs);
+      },
+    });
+
+    /** Called when a pick is chosen: light the winner, dim the losers, arm the button. */
+    const selectPick = (def: BoostDef): void => {
       selectedDef = def;
-      nextBtn.setFillStyle(0x1a2a1a, 0.9).setStrokeStyle(2, 0x44cc44).setInteractive({ useHandCursor: true });
-      nextLabel.setColor('#ffffff');
-      nextBtn
-        .on('pointerover', () => { nextBtn.setAlpha(1); nextBtn.setStrokeStyle(3, 0xffffff); nextLabel.setColor('#ffcc00'); })
-        .on('pointerout',  () => { nextBtn.setAlpha(0.9); nextBtn.setStrokeStyle(2, 0x44cc44); nextLabel.setColor('#ffffff'); })
-        .on('pointerdown', () => {
-          if (!selectedDef) return;
-          const kind = selectedDef.kind === 'card' ? 'cards' : selectedDef.kind === 'charm' ? 'charms' : 'curses';
-          const newGs: GauntletState = {
-            ...gs,
-            currentFight: nextFight,
-            boosts: addBoostPick(gs.boosts, kind, selectedDef.id),
-          };
-          this.launchNextFight(newGs);
-        });
+      for (const cell of cellPainters) cell.paint(cell.def === def ? 'active' : 'idle');
+      nextBtn.setDisabled(false);
+      nextBtn.setSublabel(`Taking ${def.name}`);
+    };
+
+    /** One pick tile — shared by the card, charm and curse rows. */
+    const buildPick = (def: BoostDef, bx: number, by: number, w: number, h: number, wide: boolean): void => {
+      const borderCol = boostBorderColor(def);
+      const labelCol = boostLabelColor(def);
+      const currentStacks = getEffectiveStacks(gs.boosts, def.id);
+
+      const plate = addCardPlate(this, { x: bx, y: by, w, h, accent: borderCol, cut: 12 });
+      cellPainters.push({ def, paint: plate.paint });
+
+      if (wide) {
+        const left = bx - w / 2;
+        this.add.text(left + 30, by, def.emoji, { fontSize: '28px' })
+          .setOrigin(0.5).setDepth(DEPTH.content);
+        this.add.text(left + 58, by - 11, def.name, {
+          fontSize: '14px', fontFamily: FONT_DISPLAY, color: labelCol, letterSpacing: 0.5,
+        }).setOrigin(0, 0.5).setDepth(DEPTH.content);
+        this.add.text(left + 58, by + 11, def.description, {
+          fontSize: '10px', fontFamily: FONT_UI, color: T.dim,
+          wordWrap: { width: w - 92 },
+        }).setOrigin(0, 0.5).setDepth(DEPTH.content);
+      } else {
+        this.add.text(bx, by - 46, def.emoji, { fontSize: '28px' })
+          .setOrigin(0.5).setDepth(DEPTH.content);
+        this.add.text(bx, by - 16, def.name, {
+          fontSize: '13px', fontFamily: FONT_DISPLAY, color: labelCol,
+          wordWrap: { width: w - 12 }, align: 'center', letterSpacing: 0.5,
+        }).setOrigin(0.5).setDepth(DEPTH.content);
+        this.add.text(bx, by + 12, def.description, {
+          fontSize: '10px', fontFamily: FONT_UI, color: T.dim,
+          wordWrap: { width: w - 14 }, align: 'center', lineSpacing: 2,
+        }).setOrigin(0.5).setDepth(DEPTH.content);
+      }
+
+      // Stack counter, if this boost is already in the deck.
+      if (currentStacks > 0) {
+        const sx = bx + w / 2 - 16;
+        const sy = by - h / 2 + 12;
+        const g = this.add.graphics().setDepth(DEPTH.content);
+        fillDiamond(g, sx, sy, 12, mix(C.gold, 0x000000, 0.7), 1);
+        g.lineStyle(1, C.gold, 0.9);
+        g.beginPath();
+        g.moveTo(sx, sy - 12); g.lineTo(sx + 12, sy); g.lineTo(sx, sy + 12); g.lineTo(sx - 12, sy);
+        g.closePath(); g.strokePath();
+        this.add.text(sx, sy, `${currentStacks}`, {
+          fontSize: '10px', fontFamily: FONT_DISPLAY, color: T.gold,
+        }).setOrigin(0.5).setDepth(DEPTH.content + 1);
+      }
+
+      const hit = this.add.rectangle(bx, by, w, h, 0xffffff, 0)
+        .setDepth(DEPTH.content + 1)
+        .setInteractive({ useHandCursor: true });
+      hit.on('pointerover', () => { if (selectedDef !== def) plate.paint('hover'); });
+      hit.on('pointerout', () => { if (selectedDef !== def) plate.paint('idle'); });
+      hit.on('pointerdown', () => selectPick(def));
     };
 
     const renderRow = (items: BoostDef[], rowY: number, rowLabel: string): void => {
-      this.add.text(cx, rowY - 12, rowLabel, {
-        fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#555577',
-      }).setOrigin(0.5);
+      addSectionLabel(this, { x: cx, y: rowY - 10, text: rowLabel, accent: C.steel, width: 480 });
 
       const totalW = items.length * cardCellW + (items.length - 1) * cellGap;
       const startX = cx - totalW / 2 + cardCellW / 2;
 
       items.forEach((def, i) => {
-        const bx = startX + i * (cardCellW + cellGap);
-        const by = rowY + cardCellH / 2 + 2;
-        const borderCol = boostBorderColor(def);
-        const labelCol = boostLabelColor(def);
-        const currentStacks = getEffectiveStacks(gs.boosts, def.id);
-
-        const cell = this.add.rectangle(bx, by, cardCellW, cardCellH, 0x111122, 0.85)
-          .setStrokeStyle(2, borderCol).setInteractive({ useHandCursor: true });
-        allCells.push(cell);
-
-        this.add.text(bx, by - 48, def.emoji, { fontSize: '28px' }).setOrigin(0.5);
-        this.add.text(bx, by - 18, def.name, {
-          fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: labelCol,
-        }).setOrigin(0.5);
-        this.add.text(bx, by + 8, def.description, {
-          fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#999999',
-          wordWrap: { width: cardCellW - 12 }, align: 'center',
-        }).setOrigin(0.5);
-
-        if (currentStacks > 0) {
-          const chip = this.add.rectangle(bx + cardCellW / 2 - 14, by - cardCellH / 2 + 10, 24, 16, 0x333300, 1)
-            .setStrokeStyle(1, 0xffcc00);
-          this.add.text(bx + cardCellW / 2 - 14, by - cardCellH / 2 + 10, `×${currentStacks}`, {
-            fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc00',
-          }).setOrigin(0.5).setDepth(chip.depth + 1);
-        }
-
-        cell
-          .on('pointerover', () => {
-            if (selectedDef !== def) {
-              cell.setStrokeStyle(3, 0xffffff);
-              cell.setAlpha(1);
-            }
-          })
-          .on('pointerout', () => {
-            if (selectedDef !== def) {
-              cell.setStrokeStyle(2, borderCol);
-              cell.setAlpha(0.85);
-            }
-          })
-          .on('pointerdown', () => {
-            // Allow switching selection
-            selectedDef = def;
-            allCells.forEach((c, ci) => {
-              const isThis = allCells.indexOf(cell) === ci;
-              if (isThis) {
-                c.setStrokeStyle(3, 0xffcc00);
-                c.setAlpha(1);
-              } else {
-                c.setStrokeStyle(1, 0x333344);
-                c.setAlpha(0.4);
-              }
-            });
-            activateNextBtn(def);
-          });
+        buildPick(def, startX + i * (cardCellW + cellGap), rowY + cardCellH / 2 + 6, cardCellW, cardCellH, false);
       });
     };
 
-    const cardsY = pickHeaderY + 22;
-    const charmsY = cardsY + cardCellH + 28;
-    const curseY = charmsY + cardCellH + 14;
+    // Row stack budget for a 640-tall screen: picks fill the middle, the
+    // curse banner sits above the fold, and the next-fight plate holds the foot.
+    const cardsY = pickHeaderY + 28;
+    const charmsY = cardsY + cardCellH + 26;
+    const curseY = charmsY + cardCellH + 12;
 
     renderRow(picks.cards, cardsY, 'CARDS');
     renderRow(picks.charms, charmsY, 'CHARMS');
 
     // ── Compact curse banner (single wide row) ───────────────────────
-    const curseBannerH = 62;
-    const curseBannerW = 420;
-    const curseDef = picks.curse;
-    const curseBannerCY = curseY + curseBannerH / 2 + 2;
-    const curseBorderCol = boostBorderColor(curseDef);
-    const curseLabelCol = boostLabelColor(curseDef);
+    // Curses are always offered one at a time, so they get a wide plate rather
+    // than competing for space in the three-up grid.
+    const curseBannerH = 66;
+    const curseBannerW = 440;
 
-    this.add.text(cx, curseY - 12, 'CURSE', {
-      fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#555577',
-    }).setOrigin(0.5);
-
-    const curseCell = this.add.rectangle(cx, curseBannerCY, curseBannerW, curseBannerH, 0x111122, 0.85)
-      .setStrokeStyle(2, curseBorderCol).setInteractive({ useHandCursor: true });
-    allCells.push(curseCell);
-
-    this.add.text(cx - curseBannerW / 2 + 28, curseBannerCY, curseDef.emoji, { fontSize: '28px' }).setOrigin(0.5);
-    this.add.text(cx - curseBannerW / 2 + 68, curseBannerCY - 11, curseDef.name, {
-      fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: curseLabelCol,
-    }).setOrigin(0, 0.5);
-    this.add.text(cx - curseBannerW / 2 + 68, curseBannerCY + 10, curseDef.description, {
-      fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#999999',
-      wordWrap: { width: curseBannerW - 82 },
-    }).setOrigin(0, 0.5);
-
-    const curseCurrentStacks = getEffectiveStacks(gs.boosts, curseDef.id);
-    if (curseCurrentStacks > 0) {
-      const chip = this.add.rectangle(cx + curseBannerW / 2 - 14, curseBannerCY - curseBannerH / 2 + 10, 24, 16, 0x333300, 1)
-        .setStrokeStyle(1, 0xffcc00);
-      this.add.text(cx + curseBannerW / 2 - 14, curseBannerCY - curseBannerH / 2 + 10, `×${curseCurrentStacks}`, {
-        fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc00',
-      }).setOrigin(0.5).setDepth(chip.depth + 1);
-    }
-
-    curseCell
-      .on('pointerover', () => {
-        if (selectedDef !== curseDef) { curseCell.setStrokeStyle(3, 0xffffff); curseCell.setAlpha(1); }
-      })
-      .on('pointerout', () => {
-        if (selectedDef !== curseDef) { curseCell.setStrokeStyle(2, curseBorderCol); curseCell.setAlpha(0.85); }
-      })
-      .on('pointerdown', () => {
-        selectedDef = curseDef;
-        allCells.forEach((c) => {
-          const isThis = c === curseCell;
-          if (isThis) { c.setStrokeStyle(3, 0xffcc00); c.setAlpha(1); }
-          else { c.setStrokeStyle(1, 0x333344); c.setAlpha(0.4); }
-        });
-        activateNextBtn(curseDef);
-      });
+    addSectionLabel(this, { x: cx, y: curseY - 10, text: 'CURSE', accent: C.blood, width: 480 });
+    buildPick(picks.curse, cx, curseY + curseBannerH / 2 + 6, curseBannerW, curseBannerH, true);
   }
 
   // ── Deck summary strip ───────────────────────────────────────────────────────
@@ -457,35 +438,57 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
       ...curseParts.map((p) => `🩸 ${p}`),
     ];
 
-    this.add.text(cx, y, allParts.join('  '), {
-      fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#888888',
-      wordWrap: { width: width - 80 }, align: 'center',
-    }).setOrigin(0.5);
+    this.add.text(cx, y, allParts.join('   '), {
+      fontSize: '11px', fontFamily: FONT_UI, color: T.dim,
+      wordWrap: { width: width - 80 }, align: 'center', letterSpacing: 0.5,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
   }
 
   // ── Progress dots ────────────────────────────────────────────────────────────
 
+  /**
+   * Run tracker: a hex per fight along a rail, the boss marked with a diamond.
+   * Cleared fights are lit; the one you are about to enter pulses.
+   */
   private drawProgress(cx: number, y: number, completedFights: number, totalFights: number): void {
-    const dotR = totalFights > 6 ? 8 : 10;
-    const dotGap = totalFights > 6 ? 20 : 28;
+    const dotR = totalFights > 6 ? 9 : 11;
+    const dotGap = totalFights > 6 ? 20 : 26;
     const totalW = totalFights * dotR * 2 + (totalFights - 1) * dotGap;
     const startX = cx - totalW / 2 + dotR;
-    const g = this.add.graphics();
+    const g = this.add.graphics().setDepth(DEPTH.content);
+
+    // Rail behind the markers.
+    g.lineStyle(2, C.line, 0.6);
+    g.beginPath(); g.moveTo(startX, y); g.lineTo(startX + totalW - dotR * 2, y); g.strokePath();
+
     for (let i = 0; i < totalFights; i++) {
       const dx = startX + i * (dotR * 2 + dotGap);
       const isBoss = i === totalFights - 1;
       const done = i < completedFights;
-      const color = done ? 0x44cc44 : isBoss ? 0xff4422 : 0x333366;
-      g.fillStyle(color, done ? 1 : 0.5);
+      const next = i === completedFights;
+      const color = done ? C.verdant : isBoss ? C.blood : C.line;
+
+      if (done) {
+        for (let k = 3; k >= 1; k--) {
+          g.fillStyle(color, 0.06);
+          g.fillCircle(dx, y, dotR + k * 3);
+        }
+      }
+
       if (isBoss) {
-        g.fillTriangle(dx, y - dotR, dx - dotR, y + dotR, dx + dotR, y + dotR);
+        fillDiamond(g, dx, y, dotR + 2, mix(color, 0x000000, done ? 0.25 : 0.5), done ? 1 : 0.75);
+        g.lineStyle(2, mix(color, 0xffffff, 0.4), done ? 1 : 0.6);
+        g.beginPath();
+        g.moveTo(dx, y - dotR - 2); g.lineTo(dx + dotR + 2, y);
+        g.lineTo(dx, y + dotR + 2); g.lineTo(dx - dotR - 2, y);
+        g.closePath(); g.strokePath();
       } else {
-        g.fillCircle(dx, y, dotR);
+        fillHex(g, dx, y, dotR, mix(color, 0x000000, done ? 0.3 : 0.6), 1);
+        strokeHex(g, dx, y, dotR, mix(color, 0xffffff, 0.35), done ? 1 : 0.5, 2);
       }
-      if (i < totalFights - 1) {
-        g.fillStyle(0x333355, 1);
-        g.fillRect(dx + dotR, y - 1, dotGap, 2);
-      }
+
+      // The upcoming fight gets a bright outer ring so the eye lands on it.
+      if (next) strokeHex(g, dx, y, dotR + 5, C.gold, 0.7, 1);
     }
   }
 

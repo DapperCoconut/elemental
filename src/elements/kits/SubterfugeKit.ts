@@ -1,6 +1,10 @@
 import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import type { CustomStatus } from './StatusHudKit';
+import {
+  ArmGesture, SUB, SubAuraStyle, SubColorFn, SubterfugeAura, SubterfugeAvatar, SubterfugeFx,
+  banknoteLayered, smokeBank, stiletto,
+} from './SubterfugeVisuals';
 
 // ── Arena API ────────────────────────────────────────────────────────────────
 
@@ -48,12 +52,13 @@ export interface SubterfugeArenaApi {
   /** Every registered element id — the denominator for "steal 10 different ultimates". */
   allElementIds(): string[];
   setStatusIndicator(id: string, status: CustomStatus | null): void;
+  /** Owner's colour cosmetic applied to one Subterfuge palette value. */
+  subterfugeColor(owner: 'player' | 'npc', base: number): number;
 }
 
 // ── Internal types ───────────────────────────────────────────────────────────
 
 interface SubDagger {
-  sprite: Phaser.GameObjects.Rectangle;
   owner: 'player' | 'npc';
   color: 'red' | 'black';
   x: number;
@@ -72,14 +77,15 @@ type RecruitType = 'lackey' | 'runner' | 'thug' | 'specialist';
 interface Lackey {
   owner: 'player' | 'npc';
   type: RecruitType;
-  sprite: Phaser.GameObjects.Arc;
-  tie: Phaser.GameObjects.Rectangle;
-  icon: Phaser.GameObjects.Text | null;
   barBg: Phaser.GameObjects.Rectangle;
   barFill: Phaser.GameObjects.Rectangle;
   levelText: Phaser.GameObjects.Text | null;
   x: number;
   y: number;
+  /** Which way it is looking — drives the gun hand and the shades. */
+  facing: number;
+  /** Whether F+ Hardened Criminals is running for this hire (it used to be `levelText !== null`). */
+  ranked: boolean;
   loyaltyMs: number;
   loyaltyMaxMs: number;
   bullets: number;
@@ -87,7 +93,6 @@ interface Lackey {
   nextShotAt: number;
   strafeDir: number;
   ignited: boolean;
-  igniteAura: Phaser.GameObjects.Arc | null;
   // ── Hardened Criminals (F+) ──
   xp: number;
   level: number;
@@ -103,7 +108,6 @@ interface Lackey {
 /** Blade Dance (Click+): a returned dagger that stayed on as a bodyguard. */
 interface OrbitDagger {
   owner: 'player' | 'npc';
-  sprite: Phaser.GameObjects.Rectangle;
   color: 'red' | 'black';
   angle: number;
   endsAt: number;
@@ -112,8 +116,8 @@ interface OrbitDagger {
 
 interface DiscoBall {
   owner: 'player' | 'npc';
-  sprite: Phaser.GameObjects.Arc;
-  shine: Phaser.GameObjects.Graphics;
+  x: number;
+  y: number;
   endsAt: number;
   nextShotAt: number;
 }
@@ -123,8 +127,6 @@ interface Cigarette {
   owner: 'player' | 'npc';
   /** Burn time left in ms — drains in real time and loses a whole second per hit taken. */
   msLeft: number;
-  sprite: Phaser.GameObjects.Rectangle;
-  ember: Phaser.GameObjects.Arc;
   smokeAccumMs: number;
 }
 
@@ -135,7 +137,6 @@ interface SmokeCloud {
   y: number;
   radius: number;
   endsAt: number;
-  gfx: Phaser.GameObjects.Graphics;
   /** Per-puff drift so the blob roils instead of sitting as a flat disc. */
   puffs: Array<{ ox: number; oy: number; r: number; phase: number; speed: number }>;
   wispAccumMs: number;
@@ -143,7 +144,7 @@ interface SmokeCloud {
 
 /** Preserved Atom-Nhilego state (see note at the nhilego section below). */
 interface NhilegoShadow {
-  circle: Phaser.GameObjects.Arc;
+  bornAt: number;
   x: number;
   y: number;
   radius: number;
@@ -272,16 +273,41 @@ const ACID_RAIN_TICK_DMG = 1.5;
 
 // ── Kit ──────────────────────────────────────────────────────────────────────
 
+/** Every ability drives an arm gesture, on the NPC rig as well as the player's. */
+const CAST_GESTURES: Record<string, ArmGesture> = {
+  'sub-cutter': 'punch',
+  'sub-spray': 'punch',
+  'sub-recruit': 'clap',
+  'sub-bribe': 'sweep',
+  'sub-treachery': 'raise',
+};
+
+/** Depths for the kit's shared paint layers. */
+const D_GROUND = 3;    // scorches, cloud shadows, nhilego marks
+const D_WORLD = 7;     // recruits, planted daggers, disco balls
+const D_AIR = 11;      // daggers in flight, orbiters, cigarettes
+
 export class SubterfugeKit {
   private api: SubterfugeArenaApi;
+
+  // ── Visuals ──────────────────────────────────────────────────────────────
+  // One colour mapper and one effect painter per side, because the two fighters can have
+  // different colour cosmetics equipped.
+  private readonly pcol: SubColorFn;
+  private readonly ncol: SubColorFn;
+  private readonly pfx: SubterfugeFx;
+  private readonly nfx: SubterfugeFx;
+  private playerAvatar: SubterfugeAvatar | null = null;
+  private npcAvatar: SubterfugeAvatar | null = null;
+  private auras = new Map<string, SubterfugeAura>();
+  /** Shared per-frame paint layers, one per depth band. Rebuilt lazily after a reset. */
+  private layers = new Map<number, Phaser.GameObjects.Graphics>();
 
   // ── Money ────────────────────────────────────────────────────────────────
   private money = MONEY_START;
   private npcMoney = MONEY_START;
   private moneyAccumMs = 0;
   private npcMoneyAccumMs = 0;
-  private moneyIcons: Phaser.GameObjects.Text[] = [];
-  private npcMoneyIcons: Phaser.GameObjects.Text[] = [];
 
   // ── Molecular Cutter daggers (Click — unchanged from Quantum) ────────────
   private playerDaggers: SubDagger[] = [];
@@ -345,8 +371,6 @@ export class SubterfugeKit {
   private npcLinkUntil = 0;
   private overchargeUntil = 0;         // Electricity copy (player)
   private npcOverchargeUntil = 0;
-  private overchargeAura: Phaser.GameObjects.Arc | null = null;
-  private npcOverchargeAura: Phaser.GameObjects.Arc | null = null;
   private acidRainUntil = 0;           // Acid copy (player-owned rain)
   private npcAcidRainUntil = 0;
   private acidRainTickAccum = 0;
@@ -363,7 +387,7 @@ export class SubterfugeKit {
   private cigarettes: Cigarette[] = [];
   private smokeClouds: SmokeCloud[] = [];
   /** Flicked cigarette in flight, before it lands and blooms into a cloud. */
-  private smokeTosses: Array<{ owner: 'player' | 'npc'; x: number; y: number; destX: number; destY: number; sprite: Phaser.GameObjects.Rectangle }> = [];
+  private smokeTosses: Array<{ owner: 'player' | 'npc'; x: number; y: number; destX: number; destY: number }> = [];
   /** Attacking from cover gives you away — invisibility is suppressed until this passes. */
   private smokeExposedUntil = { player: 0, npc: 0 };
   /** Whether *we* are the ones currently hiding this fighter, so we only ever unhide our own. */
@@ -384,6 +408,68 @@ export class SubterfugeKit {
 
   constructor(api: SubterfugeArenaApi) {
     this.api = api;
+    // Built here, not as field initialisers, so they see the injected api.
+    this.pcol = (base) => api.subterfugeColor('player', base);
+    this.ncol = (base) => api.subterfugeColor('npc', base);
+    this.pfx = new SubterfugeFx(api.scene, this.pcol);
+    this.nfx = new SubterfugeFx(api.scene, this.ncol);
+  }
+
+  // ── Visual helpers ───────────────────────────────────────────────────────
+
+  /** Effect painter for a side. */
+  private fx(owner: 'player' | 'npc'): SubterfugeFx { return owner === 'player' ? this.pfx : this.nfx; }
+  /** Colour mapper for a side. */
+  private col(owner: 'player' | 'npc'): SubColorFn { return owner === 'player' ? this.pcol : this.ncol; }
+  /** The rig for a side, if that side is playing Subterfuge. */
+  private avatarFor(owner: 'player' | 'npc'): SubterfugeAvatar | null {
+    return owner === 'player' ? this.playerAvatar : this.npcAvatar;
+  }
+
+  /** Fire one arm gesture on the rig of whichever side cast. */
+  private gesture(owner: 'player' | 'npc', abilityId: string, angle?: number): void {
+    const g = CAST_GESTURES[abilityId];
+    if (g) this.avatarFor(owner)?.play(g, angle);
+  }
+
+  /** A shared paint layer at one depth. Cleared and repainted every frame by paintWorld. */
+  private layer(depth: number): Phaser.GameObjects.Graphics {
+    let g = this.layers.get(depth);
+    if (!g || !g.active) {
+      g = this.api.scene.add.graphics().setDepth(depth);
+      this.layers.set(depth, g);
+    }
+    return g;
+  }
+
+  /**
+   * A persistent aura on one fighter, keyed by id. Built on first use and torn down by
+   * `dropAura` — a scene restart kills the Graphics, so both rebuild lazily.
+   */
+  private aura(id: string, style: SubAuraStyle, tint: SubColorFn, radius: number, depth: number): SubterfugeAura {
+    let a = this.auras.get(id);
+    if (!a) {
+      a = new SubterfugeAura(this.api.scene, tint, style, radius, depth);
+      this.auras.set(id, a);
+    }
+    return a;
+  }
+
+  private dropAura(id: string): void {
+    const a = this.auras.get(id);
+    if (!a) return;
+    a.destroy();
+    this.auras.delete(id);
+  }
+
+  /** Destroy every GameObject the visuals own. Called from reset(); update() rebuilds. */
+  private teardownVisuals(): void {
+    if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
+    if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
+    for (const a of this.auras.values()) a.destroy();
+    this.auras.clear();
+    for (const g of this.layers.values()) g.destroy();
+    this.layers.clear();
   }
 
   // ── Public getters (NPC AI / ArenaScene) ─────────────────────────────────
@@ -400,18 +486,11 @@ export class SubterfugeKit {
     this.npcMoney = MONEY_START;
     this.moneyAccumMs = 0;
     this.npcMoneyAccumMs = 0;
-    for (const t of this.moneyIcons) { if (t?.active) t.destroy(); }
-    this.moneyIcons = [];
-    for (const t of this.npcMoneyIcons) { if (t?.active) t.destroy(); }
-    this.npcMoneyIcons = [];
 
-    for (const d of this.playerDaggers) { if (d.sprite?.active) d.sprite.destroy(); }
     this.playerDaggers = [];
-    for (const d of this.npcDaggers) { if (d.sprite?.active) d.sprite.destroy(); }
     this.npcDaggers = [];
     this.npcDaggerNextThrowAt = 0;
     this.pointerWasDown = false;
-    for (const o of this.orbitDaggers) { if (o.sprite?.active) o.sprite.destroy(); }
     this.orbitDaggers = [];
 
     this.bullets = BULLETS_START;
@@ -438,10 +517,6 @@ export class SubterfugeKit {
 
     this.npcBribedUntil = 0;
     this.playerBribedUntil = 0;
-    if (this.npcCensorBar?.active) this.npcCensorBar.destroy();
-    this.npcCensorBar = null;
-    if (this.playerCensorBar?.active) this.playerCensorBar.destroy();
-    this.playerCensorBar = null;
     this.api.player.bribeIncomingMult = 1;
     this.api.npc.bribeIncomingMult = 1;
 
@@ -457,19 +532,11 @@ export class SubterfugeKit {
     if (this.retainerLabel?.active) this.retainerLabel.destroy();
     this.retainerLabel = null;
 
-    for (const b of this.discoBalls) {
-      if (b.sprite?.active) b.sprite.destroy();
-      if (b.shine?.active) b.shine.destroy();
-    }
     this.discoBalls = [];
     this.linkUntil = 0;
     this.npcLinkUntil = 0;
     this.overchargeUntil = 0;
     this.npcOverchargeUntil = 0;
-    if (this.overchargeAura?.active) this.overchargeAura.destroy();
-    this.overchargeAura = null;
-    if (this.npcOverchargeAura?.active) this.npcOverchargeAura.destroy();
-    this.npcOverchargeAura = null;
     this.acidRainUntil = 0;
     this.npcAcidRainUntil = 0;
     this.acidRainTickAccum = 0;
@@ -479,11 +546,8 @@ export class SubterfugeKit {
     this.acidRainDropAccum = 0;
 
     this.smokeLastCastAt = -SMOKE_COOLDOWN_MS;
-    for (const c of this.cigarettes) this._destroyCigaretteVisuals(c);
     this.cigarettes = [];
-    for (const c of this.smokeClouds) { if (c.gfx?.active) c.gfx.destroy(); }
     this.smokeClouds = [];
-    for (const t of this.smokeTosses) { if (t.sprite?.active) t.sprite.destroy(); }
     this.smokeTosses = [];
     this.smokeExposedUntil = { player: 0, npc: 0 };
     this.smokeHidden = { player: false, npc: false };
@@ -497,13 +561,13 @@ export class SubterfugeKit {
     this.playerNhilegoActive = false;
     this.playerNhilegoRadius = 70;
     this.playerNhilegoSuccessCount = 0;
-    if (this.playerNhilegoShadow?.circle?.active) this.playerNhilegoShadow.circle.destroy();
     this.playerNhilegoShadow = null;
     this.npcNhilegoActive = false;
     this.npcNhilegoRadius = 70;
     this.npcNhilegoSuccessCount = 0;
-    if (this.npcNhilegoShadow?.circle?.active) this.npcNhilegoShadow.circle.destroy();
     this.npcNhilegoShadow = null;
+
+    this.teardownVisuals();
   }
 
   // ── Upgrades ─────────────────────────────────────────────────────────────
@@ -636,7 +700,6 @@ export class SubterfugeKit {
 
     if (isPlayerSub) {
       this._tickMoney('player', delta);
-      this._renderMoneyHud('player');
       this._renderBulletCounter(time);
       this._tickTreacheryChannel('player', time);
       this._renderRetainerLabel(time);
@@ -644,7 +707,6 @@ export class SubterfugeKit {
     }
     if (isNpcSub) {
       this._tickMoney('npc', delta);
-      this._renderMoneyHud('npc');
       this._tickTreacheryChannel('npc', time);
       this._tickNpcRetainer(time);
     }
@@ -664,6 +726,260 @@ export class SubterfugeKit {
 
     if (this.playerNhilegoActive) this._tickNhilego(time, 'player');
     if (this.npcNhilegoActive) this._tickNhilego(time, 'npc');
+
+    // Everything the kit owns is repainted from scratch here, after the sim has moved it.
+    this._paintWorld(time, isPlayerSub, isNpcSub);
+    this._updateAuras(delta, time);
+    this._updateAvatars(delta, isPlayerSub, isNpcSub);
+  }
+
+  // ── Painting ───────────────────────────────────────────────────────────────
+  //
+  // Every world object this kit owns is plain data, drawn per frame into three shared Graphics
+  // layers. That is what lets a recruit turn to face what it is shooting, a dagger quiver where
+  // it landed and a cigarette visibly burn down — none of which a static sprite can do.
+
+  private _paintWorld(time: number, isPlayerSub: boolean, isNpcSub: boolean): void {
+    const t = time / 1000;
+    const ground = this.layer(D_GROUND);
+    const world = this.layer(D_WORLD);
+    const air = this.layer(D_AIR);
+    ground.clear();
+    world.clear();
+    air.clear();
+
+    this._paintNhilego(ground, t);
+    this._paintSmokeClouds(time);
+    this._paintRecruits(world, t);
+    this._paintDaggers(world, air, t);
+    this._paintDisco(air, t);
+    this._paintCigarettes(air, t);
+    this._paintMoney(air, time, isPlayerSub, isNpcSub);
+  }
+
+  private _paintNhilego(g: Phaser.GameObjects.Graphics, t: number): void {
+    const now = this.api.scene.time.now;
+    for (const s of [this.playerNhilegoShadow, this.npcNhilegoShadow]) {
+      if (!s) continue;
+      const charge = Phaser.Math.Clamp(1 - (s.fireAt - now) / 3000, 0, 1);
+      SubterfugeFx.drawNhilego(g, this.col(s.owner), s.x, s.y, s.radius, charge, t, 1);
+    }
+  }
+
+  /**
+   * Every live cloud. A cloud you laid down is a thin haze *under* the fighters; the enemy's is
+   * a solid bank *over* everything — the same object doing opposite jobs, which is why the two
+   * go into different depth layers rather than differing only by alpha.
+   */
+  private _paintSmokeClouds(time: number): void {
+    const own = this.layer(SMOKE_DEPTH_OWN);
+    const theirs = this.layer(SMOKE_DEPTH_ENEMY);
+    own.clear();
+    theirs.clear();
+    const t = time / 1000;
+    for (const c of this.smokeClouds) {
+      const mine = c.owner === 'player';
+      const age = SMOKE_CLOUD_MS - (c.endsAt - time);
+      // Bloom out over the first 400ms, thin away over the last second.
+      const grow = Phaser.Math.Clamp(age / 400, 0.35, 1);
+      const fade = Phaser.Math.Clamp((c.endsAt - time) / 1000, 0, 1);
+      const g = mine ? own : theirs;
+      SubterfugeFx.drawSmokeCloud(g, this.col(c.owner), c.x, c.y, c.radius * grow, t, mine, fade,
+        c.puffs.map((p) => ({ ...p, r: p.r * grow, speed: p.speed * 1000 })));
+      if (!mine) continue;
+      // Your own cover is thin enough to see through, so it gets a rim: without it you cannot
+      // tell where the cloud stops hiding you.
+      g.lineStyle(2, this.pcol(SUB.paperShade), 0.28 * fade);
+      g.strokeCircle(c.x, c.y, c.radius * grow);
+    }
+  }
+
+  private _paintRecruits(g: Phaser.GameObjects.Graphics, t: number): void {
+    const now = this.api.scene.time.now;
+    for (const l of this.lackeys) {
+      SubterfugeFx.drawRecruit(g, this.col(l.owner), l.x, l.y, l.facing, RECRUIT_RADIUS[l.type], t, 1, {
+        type: l.type,
+        inverted: l.inverted,
+        reloading: l.reloadingUntil > now,
+        ignited: l.ignited,
+        enemy: l.owner === 'npc',
+      });
+    }
+  }
+
+  private _paintDaggers(
+    world: Phaser.GameObjects.Graphics, air: Phaser.GameObjects.Graphics, t: number,
+  ): void {
+    const now = this.api.scene.time.now;
+    for (const list of [this.playerDaggers, this.npcDaggers]) {
+      for (const d of list) {
+        // A planted dagger is scenery on the floor; one in the air is over everything.
+        const g = d.state === 'planted' ? world : air;
+        SubterfugeFx.drawDagger(g, this.col(d.owner), d.x, d.y, Math.atan2(d.dirY, d.dirX),
+          d.state, d.color === 'red' ? SUB.blood : SUB.ink, t, 1);
+      }
+    }
+    for (const o of this.orbitDaggers) {
+      const caster = o.owner === 'player' ? this.api.player : this.api.npc;
+      if (!caster.active) continue;
+      SubterfugeFx.drawOrbitDagger(air, this.col(o.owner),
+        caster.x + Math.cos(o.angle) * ORBIT_RADIUS, caster.y + Math.sin(o.angle) * ORBIT_RADIUS,
+        o.angle + Math.PI / 2, o.color === 'red' ? SUB.blood : SUB.ink,
+        (o.endsAt - now) / 1000, 1);
+    }
+  }
+
+  private _paintDisco(g: Phaser.GameObjects.Graphics, t: number): void {
+    for (const b of this.discoBalls) SubterfugeFx.drawDisco(g, this.col(b.owner), b.x, b.y, t, 1);
+  }
+
+  private _paintCigarettes(g: Phaser.GameObjects.Graphics, t: number): void {
+    for (const c of this.cigarettes) {
+      const f = c.owner === 'player' ? this.api.player : this.api.npc;
+      if (!f.active) continue;
+      // Held at the corner of the mouth, bobbing with the idle sway.
+      SubterfugeFx.drawCigarette(g, this.col(c.owner), f.x + 13, f.y - 3 + Math.sin(t * 3) * 1.2,
+        f.facingAngle, c.msLeft / CIG_BURN_MS, t, 1);
+    }
+    // Flicked cigarettes, still in the air.
+    for (const s of this.smokeTosses) {
+      const ang = Math.atan2(s.destY - s.y, s.destX - s.x) + t * 14;
+      SubterfugeFx.drawCigarette(g, this.col(s.owner), s.x, s.y, ang, 0.6, t, 1);
+    }
+  }
+
+  /**
+   * The wallet, drawn over each Subterfuge fighter's head as a row of notes rather than as a
+   * row of emoji: spent slots stay as a faint outline, so what you *had* is as readable as what
+   * you have left. Big Pockets widens the row to four.
+   */
+  private _paintMoney(
+    g: Phaser.GameObjects.Graphics, time: number, isPlayerSub: boolean, isNpcSub: boolean,
+  ): void {
+    const t = time / 1000;
+    const row = (owner: 'player' | 'npc'): void => {
+      const f = owner === 'player' ? this.api.player : this.api.npc;
+      if (!f?.active || f.hp <= 0) return;
+      const amount = owner === 'player' ? this.money : this.npcMoney;
+      const cap = this._moneyMax(owner);
+      const tint = this.col(owner);
+      for (let i = 0; i < cap; i++) {
+        const x = f.x + (i - (cap - 1) / 2) * 17;
+        const y = f.y - 44 + Math.sin(t * 2.4 + i * 0.7) * 1.4;
+        if (i < amount) {
+          banknoteLayered(g, tint, x, y, Math.sin(t * 1.6 + i) * 0.12, 15, 5.2, 0.95, 0.1, SUB.gold);
+        } else {
+          // An empty slot: the note-shaped hole it left.
+          g.lineStyle(1, tint(SUB.slate), 0.5);
+          g.strokeRect(x - 7.5, y - 5.2, 15, 10.4);
+        }
+      }
+    };
+    if (isPlayerSub) row('player');
+    if (isNpcSub) row('npc');
+  }
+
+  // ── Auras + rig ────────────────────────────────────────────────────────────
+
+  /**
+   * The persistent tells. Every one is keyed and dropped the frame its condition lapses, so
+   * several can stack into one silhouette without leaking Graphics.
+   */
+  private _updateAuras(delta: number, time: number): void {
+    const live = new Set<string>();
+    const run = (id: string, style: SubAuraStyle, f: Fighter, tint: SubColorFn,
+      radius: number, depth: number, intensity: number, angle: number): void => {
+      if (!f?.active || f.hp <= 0) return;
+      live.add(id);
+      const a = this.aura(id, style, tint, radius, depth);
+      a.setIntensity(intensity);
+      a.setAngle(angle);
+      a.update(delta, f.x, f.y, f.forceInvisible ? 0 : f.alpha);
+    };
+
+    // Bribes ride on whoever was bought off, in the colours of whoever paid.
+    if (time < this.npcBribedUntil) {
+      run('npc-bribed', 'bribed', this.api.npc, this.pcol, 26, 13,
+        (this.npcBribedUntil - time) / BRIBE_MS, 0);
+    }
+    if (time < this.playerBribedUntil) {
+      run('player-bribed', 'bribed', this.api.player, this.ncol, 26, 13,
+        (this.playerBribedUntil - time) / BRIBE_MS, 0);
+    }
+    if (time < this.overchargeUntil) {
+      run('player-overcharge', 'overcharge', this.api.player, this.pcol, 30, 6,
+        (this.overchargeUntil - time) / OVERCHARGE_MS, 0);
+    }
+    if (time < this.npcOverchargeUntil) {
+      run('npc-overcharge', 'overcharge', this.api.npc, this.ncol, 30, 6,
+        (this.npcOverchargeUntil - time) / OVERCHARGE_MS, 0);
+    }
+    if (this.retainerElementId && time < this.retainerUntil) {
+      run('player-retainer', 'retainer', this.api.player, this.pcol, 24, 13,
+        (this.retainerUntil - time) / RETAINER_MS, 0);
+    }
+    if (this.npcRetainerElementId && time < this.npcRetainerUntil) {
+      run('npc-retainer', 'retainer', this.api.npc, this.ncol, 24, 13,
+        (this.npcRetainerUntil - time) / RETAINER_MS, 0);
+    }
+    if (time < this.playerStunUntil) {
+      run('player-stunned', 'stunned', this.api.player, this.ncol, 22, 13, 1, 0);
+    }
+    if (time < this.npcStunUntil) {
+      run('npc-stunned', 'stunned', this.api.npc, this.pcol, 22, 13, 1, 0);
+    }
+    // Cover: only ever shown for your own cloud, because the enemy's hides them from you.
+    if (this.smokeHidden.player && this._inOwnSmoke('player', this.api.player.x, this.api.player.y)) {
+      run('player-covered', 'covered', this.api.player, this.pcol, 28, SMOKE_DEPTH_OWN + 1, 1, 0);
+    }
+    for (const l of this.lackeys) {
+      if (!l.ignited) continue;
+      // A burning hire gets its flames from the painter; this is the heat haze under it.
+      live.add(`lackey-${l.owner}-${l.x.toFixed(0)}`);
+    }
+
+    for (const id of [...this.auras.keys()]) if (!live.has(id)) this.dropAura(id);
+  }
+
+  /** Drive the rig for whichever sides are playing Subterfuge. Built lazily; torn down otherwise. */
+  private _updateAvatars(delta: number, isPlayerSub: boolean, isNpcSub: boolean): void {
+    const { player, npc, scene } = this.api;
+    const now = scene.time.now;
+
+    if (isPlayerSub && player?.active && player.hp > 0) {
+      if (!this.playerAvatar) this.playerAvatar = new SubterfugeAvatar(scene, this.pcol, 'player');
+      const av = this.playerAvatar;
+      const p = this.api.pointer;
+      av.setFacing(Math.atan2(p.worldY - player.y, p.worldX - player.x));
+      av.setMastered(this.api.masteryActive);
+      av.setWallet(this.money / this._moneyMax('player'));
+      const cig = this._cigaretteOf('player');
+      av.setCigarette(cig ? cig.msLeft / CIG_BURN_MS : -1);
+      // A live Q channel visibly swells the rig, so "mid-deal" reads off the character alone.
+      av.setIntensity(this.treacheryFiresAt > now ? 1.35 : 1);
+      av.setHold(this.recruitMenuOpen ? 'brace' : this.sprayHeld ? 'spray' : null,
+        Math.atan2(p.worldY - player.y, p.worldX - player.x));
+      av.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
+    } else if (this.playerAvatar) {
+      this.playerAvatar.destroy();
+      this.playerAvatar = null;
+    }
+
+    if (isNpcSub && npc?.active && npc.hp > 0) {
+      if (!this.npcAvatar) this.npcAvatar = new SubterfugeAvatar(scene, this.ncol, 'npc');
+      const av = this.npcAvatar;
+      const aim = Math.atan2(player.y - npc.y, player.x - npc.x);
+      av.setFacing(aim);
+      av.setMastered(this.api.npcMasteryActive);
+      av.setWallet(this.npcMoney / this._moneyMax('npc'));
+      const cig = this._cigaretteOf('npc');
+      av.setCigarette(cig ? cig.msLeft / CIG_BURN_MS : -1);
+      av.setIntensity(this.npcTreacheryFiresAt > now ? 1.35 : 1);
+      av.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
+    } else if (this.npcAvatar) {
+      this.npcAvatar.destroy();
+      this.npcAvatar = null;
+    }
   }
 
   // ── Money ────────────────────────────────────────────────────────────────
@@ -709,31 +1025,11 @@ export class SubterfugeKit {
     }
   }
 
-  private _renderMoneyHud(owner: 'player' | 'npc'): void {
-    const fighter = owner === 'player' ? this.api.player : this.api.npc;
-    const icons = owner === 'player' ? this.moneyIcons : this.npcMoneyIcons;
-    const amount = owner === 'player' ? this.money : this.npcMoney;
-    const cap = this._moneyMax(owner);
-    // Big Pockets can widen the wallet mid-construction, so top the row up rather than
-    // building it once — the icons are laid out from `cap` each frame anyway.
-    while (icons.length < cap) {
-      const t = this.api.scene.add.text(0, 0, '💵', { fontSize: '13px' })
-        .setOrigin(0.5).setDepth(21).setTint(0xff4444) as Phaser.GameObjects.Text;
-      icons.push(t);
-    }
-    for (let i = 0; i < icons.length; i++) {
-      const t = icons[i];
-      if (!t.active) continue;
-      t.setVisible(i < cap);
-      t.setPosition(fighter.x + (i - (cap - 1) / 2) * 16, fighter.y - 44);
-      t.setAlpha(i < amount ? 1 : 0.15);
-    }
-  }
-
   // ── Spray ────────────────────────────────────────────────────────────────
 
   private _fireSprayShot(owner: 'player' | 'npc', tx: number, ty: number): void {
     const caster = owner === 'player' ? this.api.player : this.api.npc;
+    this.gesture(owner, 'sub-spray', Math.atan2(ty - caster.y, tx - caster.x));
     if (owner === 'player') {
       if (this.bullets <= 0) return;
       this.bullets -= 1;
@@ -794,13 +1090,7 @@ export class SubterfugeKit {
         this.api.spawnHitFlash(l.x, l.y, color);
       }
     }
-    const gfx = this.api.scene.add.graphics().setDepth(8);
-    gfx.lineStyle(2, color, 0.9);
-    gfx.beginPath();
-    gfx.moveTo(sx, sy);
-    gfx.lineTo(ex, ey);
-    gfx.strokePath();
-    this.api.scene.tweens.add({ targets: gfx, alpha: 0, duration: 120, onComplete: () => gfx.destroy() });
+    this.fx(owner).tracer(sx, sy, ex, ey, { color, depth: D_AIR });
   }
 
   /** Every 10 damage dealt (daggers + spray) grants 3 bullets. */
@@ -858,6 +1148,7 @@ export class SubterfugeKit {
       return false;
     }
     this._spendMoney(owner, cost);
+    this.gesture(owner, 'sub-recruit');
     this._spawnLackey(owner, type);
     fighter.startCooldown('sub-recruit');
     return true;
@@ -869,12 +1160,6 @@ export class SubterfugeKit {
     const angle = Math.random() * Math.PI * 2;
     const x = caster.x + Math.cos(angle) * 50;
     const y = caster.y + Math.sin(angle) * 50;
-    const r = RECRUIT_RADIUS[type];
-    const sprite = scene.add.circle(x, y, r, 0x222222, 1)
-      .setStrokeStyle(2, owner === 'player' ? 0xdd2233 : 0x992222, 1).setDepth(7) as Phaser.GameObjects.Arc;
-    const tie = scene.add.rectangle(x, y + 2, type === 'specialist' ? 12 : 4, 10, 0xdd2233).setDepth(8) as Phaser.GameObjects.Rectangle;
-    const icon = type === 'lackey' ? null
-      : scene.add.text(x, y - 1, RECRUIT_EMOJI[type], { fontSize: '11px' }).setOrigin(0.5).setDepth(9) as Phaser.GameObjects.Text;
     const barBg = scene.add.rectangle(x, y - 24, 32, 5, 0x333311, 0.8).setDepth(11) as Phaser.GameObjects.Rectangle;
     const barFill = scene.add.rectangle(x - 16, y - 24, 32, 5, 0xffdd33, 0.95).setOrigin(0, 0.5).setDepth(12) as Phaser.GameObjects.Rectangle;
     const levelText = this._up(owner, 'f')
@@ -885,32 +1170,33 @@ export class SubterfugeKit {
       : null;
     const loyalty = RECRUIT_LOYALTY_MS[type];
     this.lackeys.push({
-      owner, type, sprite, tie, icon, barBg, barFill, levelText, x, y,
+      owner, type, barBg, barFill, levelText, x, y,
+      facing: angle + Math.PI,
+      ranked: levelText !== null,
       loyaltyMs: loyalty, loyaltyMaxMs: loyalty,
       bullets: type === 'specialist' ? SPEC_MAG : LACKEY_MAG, reloadingUntil: 0, nextShotAt: 0,
       strafeDir: Math.random() < 0.5 ? 1 : -1,
-      ignited: false, igniteAura: null,
+      ignited: false,
       xp: 0, level: 1, xpDmgAccum: 0, xpSecAccum: 0, inverted: false,
       wanderX: x, wanderY: y, payoutAccum: 0,
     });
+    // Hired on the spot: cash changes hands from the caster to the new man.
+    this.fx(owner).payment(caster.x, caster.y, x, y, { count: RECRUIT_COST[type] * 2, depth: D_AIR });
+    this.fx(owner).smoke(x, y, 4, { speed: 40, size: 6, life: 520, depth: D_WORLD - 1 });
     this.api.showFloatingText(x, y - 34, `${RECRUIT_EMOJI[type]} ${RECRUIT_NAME[type]}!`, '#dd2233');
   }
 
   private _destroyLackeyVisuals(l: Lackey): void {
-    if (l.sprite?.active) l.sprite.destroy();
-    if (l.tie?.active) l.tie.destroy();
-    if (l.icon?.active) l.icon.destroy();
     if (l.barBg?.active) l.barBg.destroy();
     if (l.barFill?.active) l.barFill.destroy();
     if (l.levelText?.active) l.levelText.destroy();
-    if (l.igniteAura?.active) l.igniteAura.destroy();
   }
 
   // ── Hardened Criminals (F+) ──────────────────────────────────────────────
 
   /** Award XP and promote; returns silently when the owner lacks F+. */
   private _addRecruitXp(l: Lackey, amount: number): void {
-    if (!l.levelText) return;
+    if (!l.ranked) return;
     l.xp = Math.min(l.xp + amount, (XP_MAX_LEVEL - 1) * XP_PER_LEVEL);
     const next = Math.min(XP_MAX_LEVEL, 1 + Math.floor(l.xp / XP_PER_LEVEL));
     if (next === l.level) return;
@@ -918,10 +1204,10 @@ export class SubterfugeKit {
     if (l.owner === 'player') this.api.recordMasteryBestStat('recruitBestLevel', l.level);
     this.api.showFloatingText(l.x, l.y - 46, `⭐ ${ROMAN[l.level]}`, '#ffdd33');
     if (l.level >= XP_MAX_LEVEL && !l.inverted) {
-      // Level V wears the palette inside out: red body, black trim.
+      // Level V wears the palette inside out: red suit, black trim. The painter reads
+      // `inverted` — this just marks the promotion and throws a fistful of cash for it.
       l.inverted = true;
-      l.sprite.setFillStyle(0xdd2233, 1).setStrokeStyle(2, 0x111111, 1);
-      l.tie.setFillStyle(0x111111);
+      this.fx(l.owner).cash(l.x, l.y, 8, { speed: 170, size: 15, life: 720, depth: D_AIR, seal: SUB.gold });
     }
   }
 
@@ -934,7 +1220,7 @@ export class SubterfugeKit {
 
   /** Books damage a recruit dealt toward its next XP point. */
   private _creditRecruitDamage(l: Lackey, dmg: number): void {
-    if (!l.levelText) return;
+    if (!l.ranked) return;
     l.xpDmgAccum += dmg;
     while (l.xpDmgAccum >= XP_DMG_PER_POINT) {
       l.xpDmgAccum -= XP_DMG_PER_POINT;
@@ -1080,17 +1366,17 @@ export class SubterfugeKit {
       this._moveRecruit(l, enemy, dt, W, H);
       this._fireRecruit(l, enemy, time);
 
-      // Visuals
-      l.sprite.setPosition(l.x, l.y);
-      l.tie.setPosition(l.x, l.y + 2);
-      l.icon?.setPosition(l.x, l.y - 1);
+      // The loyalty bar and the rank are HUD, so they stay as GameObjects; the man himself
+      // is painted from this state by paintRecruits.
       l.barBg.setPosition(l.x, l.y - 24);
       const ratio = Phaser.Math.Clamp(l.loyaltyMs / l.loyaltyMaxMs, 0, 1);
       l.barFill.setPosition(l.x - 16, l.y - 24).setSize(32 * ratio, 5);
       l.levelText?.setPosition(l.x, l.y - 38).setText(ROMAN[l.level]);
-      if (l.reloadingUntil > 0) l.sprite.setAlpha(0.6);
-      else l.sprite.setAlpha(1);
-      if (l.igniteAura?.active) l.igniteAura.setPosition(l.x, l.y);
+      if (enemy.active && enemy.hp > 0 && l.type !== 'runner') {
+        l.facing = Math.atan2(enemy.y - l.y, enemy.x - l.x);
+      } else {
+        l.facing = Math.atan2(l.wanderY - l.y, l.wanderX - l.x);
+      }
     }
   }
 
@@ -1200,10 +1486,10 @@ export class SubterfugeKit {
     });
     this.api.showFloatingText(enemy.x, enemy.y - 34, '🏏 CLOBBERED!', '#dd2233');
 
-    // Bat arc
-    const bat = this.api.scene.add.rectangle(l.x + Math.cos(ang) * 22, l.y + Math.sin(ang) * 22, 26, 5, 0x885522)
-      .setRotation(ang).setDepth(9);
-    this.api.scene.tweens.add({ targets: bat, alpha: 0, duration: 200, onComplete: () => bat.destroy() });
+    // The bat comes round in an arc and the victim's pocket change goes with it.
+    const fx = this.fx(l.owner);
+    fx.cut(l.x, l.y, ang, THUG_SWING_RANGE + 18, { color: SUB.wood, scores: 1, duration: 260, depth: D_AIR });
+    fx.deal(enemy.x, enemy.y, 40, { notes: 5, rings: 1, duration: 380, mark: false, color: SUB.gold });
   }
 
   /** Enforces the thug's stun + knockback: this codebase drives those from update(). */
@@ -1226,21 +1512,15 @@ export class SubterfugeKit {
       this._creditRecruitDamage(l, dmg);
       this.api.spawnHitFlash(enemy.x, enemy.y, color);
     }
-    const gfx = this.api.scene.add.graphics().setDepth(7);
-    gfx.lineStyle(1, color, 0.8);
-    gfx.beginPath();
-    gfx.moveTo(sx, sy);
-    gfx.lineTo(ex, ey);
-    gfx.strokePath();
-    this.api.scene.tweens.add({ targets: gfx, alpha: 0, duration: 100, onComplete: () => gfx.destroy() });
+    this.fx(l.owner).tracer(sx, sy, ex, ey, { color, depth: D_WORLD, duration: 110, width: 1.4 });
   }
 
   /** Soul copy: an ignited lackey erupts in a burning AoE when it expires. */
   private _lackeyBurnout(l: Lackey): void {
-    const { scene } = this.api;
     this.api.dealAoeDamage(l.owner, l.x, l.y, 90, 20);
-    const ring = scene.add.circle(l.x, l.y, 14, 0xff5522, 0.75).setDepth(9);
-    scene.tweens.add({ targets: ring, scaleX: 6.5, scaleY: 6.5, alpha: 0, duration: 450, onComplete: () => ring.destroy() });
+    // He goes up, and everything he was carrying goes up with him.
+    this.fx(l.owner).deal(l.x, l.y, 90, { notes: 10, rings: 2, duration: 520, color: SUB.ember });
+    this.fx(l.owner).smoke(l.x, l.y, 8, { speed: 130, size: 9, life: 900, depth: D_AIR, color: SUB.ashDark });
     this.api.showFloatingText(l.x, l.y - 24, '🔥 Burnout!', '#ff5522');
   }
 
@@ -1250,12 +1530,8 @@ export class SubterfugeKit {
       if (l.owner !== owner || l.ignited) continue;
       l.ignited = true;
       any = true;
-      if (l.igniteAura?.active) l.igniteAura.destroy();
-      l.igniteAura = this.api.scene.add.circle(l.x, l.y, 20, 0xff4400, 0.35)
-        .setStrokeStyle(2, 0xff8844, 0.8).setDepth(6) as Phaser.GameObjects.Arc;
-      this.api.scene.tweens.add({
-        targets: l.igniteAura, scaleX: 1.25, scaleY: 1.25, yoyo: true, repeat: -1, duration: 320,
-      });
+      // The painter reads `ignited` for the standing flames; this is the moment it catches.
+      this.fx(owner).smoke(l.x, l.y, 4, { speed: 70, size: 6, life: 620, depth: D_AIR, color: SUB.ember, drift: -50 });
     }
     const caster = owner === 'player' ? this.api.player : this.api.npc;
     this.api.showFloatingText(caster.x, caster.y - 40, any ? '🔥 Lackeys Ignited!' : 'No lackeys to ignite', '#ff5522');
@@ -1287,12 +1563,18 @@ export class SubterfugeKit {
     }
     if (!target) return false;
 
+    const caster = owner === 'player' ? this.api.player : this.api.npc;
     if (target === 'enemy') {
       if (owner === 'player') this.npcBribedUntil = time + BRIBE_MS;
       else this.playerBribedUntil = time + BRIBE_MS;
+      this.gesture(owner, 'sub-bribe', Math.atan2(enemy.y - caster.y, enemy.x - caster.x));
+      // The money physically crosses the gap. That is the whole ability.
+      this.fx(owner).payment(caster.x, caster.y, enemy.x, enemy.y, { count: 6, depth: D_AIR });
       this.api.showFloatingText(enemy.x, enemy.y - 34, '💵 Bribed! -25% dmg', '#66dd66');
     } else {
       target.loyaltyMs = target.loyaltyMaxMs * LACKEY_BRIBE_BONUS;
+      this.gesture(owner, 'sub-bribe', Math.atan2(target.y - caster.y, target.x - caster.x));
+      this.fx(owner).payment(caster.x, caster.y, target.x, target.y, { count: 6, depth: D_AIR });
       this.api.showFloatingText(target.x, target.y - 30, '💵 Loyalty +120%!', '#ffdd33');
       // F+ Hardened Criminals: nothing teaches like being paid.
       this._addRecruitXp(target, XP_PER_BRIBE);
@@ -1307,21 +1589,7 @@ export class SubterfugeKit {
     this.api.player.bribeIncomingMult = npcBribed ? BRIBE_DMG_MULT : 1;
     this.api.npc.bribeIncomingMult = playerBribed ? BRIBE_DMG_MULT : 1;
 
-    this.npcCensorBar = this._syncCensorBar(this.npcCensorBar, this.api.npc, npcBribed);
-    this.playerCensorBar = this._syncCensorBar(this.playerCensorBar, this.api.player, playerBribed);
-  }
-
-  private _syncCensorBar(bar: Phaser.GameObjects.Rectangle | null, fighter: Fighter, active: boolean): Phaser.GameObjects.Rectangle | null {
-    if (!active) {
-      if (bar?.active) bar.destroy();
-      return null;
-    }
-    if (!bar || !bar.active) {
-      bar = this.api.scene.add.rectangle(fighter.x, fighter.y - 6, 30, 8, 0x000000, 0.95)
-        .setStrokeStyle(1, 0x222222, 1).setDepth(15) as Phaser.GameObjects.Rectangle;
-    }
-    bar.setPosition(fighter.x, fighter.y - 6);
-    return bar;
+    // The censor bar and the money raining down on them are the 'bribed' aura's job.
   }
 
   // ── Dark Treachery ───────────────────────────────────────────────────────
@@ -1336,21 +1604,21 @@ export class SubterfugeKit {
     if (time >= fogNextAt) {
       if (owner === 'player') this.treacheryFogNextAt = time + 130;
       else this.npcTreacheryFogNextAt = time + 130;
-      const angle = Math.random() * Math.PI * 2;
-      const r = 55 + Math.random() * 25;
-      const fog = this.api.scene.add.circle(
-        caster.x + Math.cos(angle) * r, caster.y + Math.sin(angle) * r,
-        8 + Math.random() * 8, 0x110011, 0.55,
-      ).setDepth(9);
-      this.api.scene.tweens.add({
-        targets: fog, x: caster.x, y: caster.y, alpha: 0, scaleX: 0.4, scaleY: 0.4,
-        duration: 320, onComplete: () => fog.destroy(),
+      // Fog and cash spiralling *inward* onto the caster — a deal being struck, not a blast.
+      this.fx(owner).shakedown(caster.x, caster.y, 62, 340, {
+        depth: 9, follow: () => ({ x: caster.x, y: caster.y }),
       });
     }
 
     if (time >= firesAt) {
       if (owner === 'player') this.treacheryFiresAt = 0;
       else this.npcTreacheryFiresAt = 0;
+      // The deal closes: everything that gathered comes back out at once.
+      this.gesture(owner, 'sub-treachery');
+      this.fx(owner).deal(caster.x, caster.y, 110, {
+        notes: 16, rings: 3, duration: 700, color: SUB.neon, mark: false,
+      });
+      this.api.scene.cameras.main.shake(280, 0.006);
       this._executeTreachery(owner, time);
     }
   }
@@ -1519,16 +1787,8 @@ export class SubterfugeKit {
   private _armOvercharge(owner: 'player' | 'npc'): void {
     const fighter = owner === 'player' ? this.api.player : this.api.npc;
     this.api.showFloatingText(fighter.x, fighter.y - 40, '⚡ OVERCHARGED', '#ffee00');
-    const aura = this.api.scene.add.circle(fighter.x, fighter.y, 30, 0xffee00, 0.25)
-      .setStrokeStyle(2, 0xffff88, 0.9).setDepth(8) as Phaser.GameObjects.Arc;
-    this.api.scene.tweens.add({ targets: aura, scaleX: 1.2, scaleY: 1.2, yoyo: true, repeat: -1, duration: 300 });
-    if (owner === 'player') {
-      if (this.overchargeAura?.active) this.overchargeAura.destroy();
-      this.overchargeAura = aura;
-    } else {
-      if (this.npcOverchargeAura?.active) this.npcOverchargeAura.destroy();
-      this.npcOverchargeAura = aura;
-    }
+    // The standing cage of arcs is the 'overcharge' aura; this is the moment it kicks in.
+    this.fx(owner).ring(fighter.x, fighter.y, 8, 46, SUB.volt, 380, D_AIR, 3);
     fighter.damageAbsorber = (amount: number) => {
       const until = owner === 'player' ? this.overchargeUntil : this.npcOverchargeUntil;
       if (this.api.scene.time.now >= until) return false;
@@ -1539,30 +1799,24 @@ export class SubterfugeKit {
       else this.npcOverchargeUntil = 0;
       fighter.damageAbsorber = null;
       this.api.showFloatingText(fighter.x, fighter.y - 40, '⚡ RESTART!', '#ffee00');
-      const flash = this.api.scene.add.circle(fighter.x, fighter.y, 20, 0xffee00, 0.9).setDepth(12);
-      this.api.scene.tweens.add({ targets: flash, scaleX: 4, scaleY: 4, alpha: 0, duration: 500, onComplete: () => flash.destroy() });
+      // Cheating death is the biggest thing this element can do, so it gets the biggest bang.
+      this.fx(owner).deal(fighter.x, fighter.y, 90, {
+        notes: 12, rings: 3, duration: 640, color: SUB.volt, mark: false,
+      });
+      this.api.scene.cameras.main.shake(300, 0.007);
       return true;
     };
   }
 
+  /** Clears the revive absorber once the window lapses. The cage of arcs is drawn by the aura. */
   private _updateOvercharge(time: number): void {
-    if (this.overchargeAura?.active) {
-      if (time >= this.overchargeUntil) {
-        this.overchargeAura.destroy();
-        this.overchargeAura = null;
-        if (this.api.player.damageAbsorber) this.api.player.damageAbsorber = null;
-      } else {
-        this.overchargeAura.setPosition(this.api.player.x, this.api.player.y);
-      }
+    if (this.overchargeUntil > 0 && time >= this.overchargeUntil) {
+      this.overchargeUntil = 0;
+      if (this.api.player.damageAbsorber) this.api.player.damageAbsorber = null;
     }
-    if (this.npcOverchargeAura?.active) {
-      if (time >= this.npcOverchargeUntil) {
-        this.npcOverchargeAura.destroy();
-        this.npcOverchargeAura = null;
-        if (this.api.npc.damageAbsorber) this.api.npc.damageAbsorber = null;
-      } else {
-        this.npcOverchargeAura.setPosition(this.api.npc.x, this.api.npc.y);
-      }
+    if (this.npcOverchargeUntil > 0 && time >= this.npcOverchargeUntil) {
+      this.npcOverchargeUntil = 0;
+      if (this.api.npc.damageAbsorber) this.api.npc.damageAbsorber = null;
     }
   }
 
@@ -1573,10 +1827,8 @@ export class SubterfugeKit {
     const time = scene.time.now;
     const x = this.api.sceneWidth / 2;
     const y = 90;
-    const sprite = scene.add.circle(x, y, 22, 0xcccccc, 1)
-      .setStrokeStyle(2, 0xffffff, 1).setDepth(10) as Phaser.GameObjects.Arc;
-    const shine = scene.add.graphics().setDepth(9);
-    this.discoBalls.push({ owner, sprite, shine, endsAt: time + DISCO_MS, nextShotAt: time + DISCO_SHOT_INTERVAL });
+    this.discoBalls.push({ owner, x, y, endsAt: time + DISCO_MS, nextShotAt: time + DISCO_SHOT_INTERVAL });
+    void scene;
     this.api.showFloatingText(x, y - 36, '🪩 Disco!', '#ff66cc');
   }
 
@@ -1584,30 +1836,22 @@ export class SubterfugeKit {
     for (let i = this.discoBalls.length - 1; i >= 0; i--) {
       const b = this.discoBalls[i];
       if (time >= b.endsAt) {
-        if (b.sprite?.active) b.sprite.destroy();
-        if (b.shine?.active) b.shine.destroy();
+        // It drops off the wire and shatters into its own tiles.
+        this.fx(b.owner).deal(b.x, b.y, 44, { notes: 0, rings: 1, duration: 400, mark: false, color: SUB.neon });
         this.discoBalls.splice(i, 1);
         continue;
-      }
-      // sparkle
-      b.shine.clear();
-      const hue = (time * 0.15) % 360;
-      const color = Phaser.Display.Color.HSLToColor(hue / 360, 0.8, 0.6).color;
-      b.shine.lineStyle(2, color, 0.6);
-      for (let s = 0; s < 4; s++) {
-        const a = (time * 0.002) + (s / 4) * Math.PI * 2;
-        b.shine.lineBetween(b.sprite.x, b.sprite.y, b.sprite.x + Math.cos(a) * 34, b.sprite.y + Math.sin(a) * 34);
       }
       if (time >= b.nextShotAt) {
         b.nextShotAt = time + DISCO_SHOT_INTERVAL;
         const enemy = b.owner === 'player' ? this.api.npc : this.api.player;
         if (enemy.active && enemy.hp > 0) {
           enemy.takeDamage(DISCO_DMG);
+          // The beam it picks you out with, and the light that lands on you.
+          const hue = (time * 0.15) % 360;
+          const color = Phaser.Display.Color.HSLToColor(hue / 360, 0.8, 0.6).color;
           this.api.spawnHitFlash(enemy.x, enemy.y, color);
-          const gfx = this.api.scene.add.graphics().setDepth(11);
-          gfx.lineStyle(3, color, 0.9);
-          gfx.lineBetween(b.sprite.x, b.sprite.y, enemy.x, enemy.y);
-          this.api.scene.tweens.add({ targets: gfx, alpha: 0, duration: 250, onComplete: () => gfx.destroy() });
+          this.fx(b.owner).tracer(b.x, b.y, enemy.x, enemy.y, { color, depth: D_AIR, duration: 260, width: 3.4 });
+          this.fx(b.owner).ring(enemy.x, enemy.y, 6, 34, color, 340, D_AIR, 2.4);
         }
       }
     }
@@ -1645,8 +1889,16 @@ export class SubterfugeKit {
         this.acidRainDropAccum -= 60;
         const dx = Math.random() * this.api.sceneWidth;
         const dy = Math.random() * this.api.sceneHeight;
-        const drop = this.api.scene.add.circle(dx, dy - 90, 3, 0x66ff33, 0.9).setDepth(6);
-        this.api.scene.tweens.add({ targets: drop, y: dy, alpha: 0.2, duration: 300, onComplete: () => drop.destroy() });
+        // Each drop falls, then spatters where it lands.
+        this.fx(owner).anim(D_GROUND + 3, 380, (g, t) => {
+          const y2 = dy - 90 + 90 * t * t;
+          g.fillStyle(this.col(owner)(SUB.acid), 0.9 * (1 - t * 0.5));
+          g.fillEllipse(dx, y2, 3, 3 + 7 * t);
+          if (t < 0.75) return;
+          const k = (t - 0.75) / 0.25;
+          g.lineStyle(1.4, this.col(owner)(SUB.acid), (1 - k) * 0.8);
+          g.strokeCircle(dx, dy, 4 + k * 12);
+        });
       }
     }
   }
@@ -1663,16 +1915,17 @@ export class SubterfugeKit {
   private _throwDagger(owner: 'player' | 'npc', tx: number, ty: number, color: 'red' | 'black', originX?: number, originY?: number): void {
     const { scene } = this.api;
     const caster = owner === 'player' ? this.api.player : this.api.npc;
+    this.gesture(owner, 'sub-cutter', Math.atan2(ty - caster.y, tx - caster.x));
     const ox = originX ?? caster.x;
     const oy = originY ?? caster.y;
     const dx = tx - ox, dy = ty - oy;
     const d = Math.hypot(dx, dy) || 1;
-    const sprite = scene.add.rectangle(ox, oy, 16, 4, DAGGER_FILL[color])
-      .setDepth(10).setRotation(Math.atan2(dy, dx)) as Phaser.GameObjects.Rectangle;
-    sprite.setStrokeStyle(1, color === 'red' ? 0xffffff : 0xdd2233, 0.7);
+    void scene;
     const list = owner === 'player' ? this.playerDaggers : this.npcDaggers;
+    // Thrown, not fired: a puff off the hand and a flash off the blade.
+    this.fx(owner).smoke(ox, oy, 2, { angle: Math.atan2(dy, dx), spread: 0.5, speed: 60, size: 3, life: 300, depth: D_AIR - 1 });
     list.push({
-      sprite, owner, color,
+      owner, color,
       x: ox, y: oy,
       destX: tx, destY: ty, dirX: dx / d, dirY: dy / d,
       state: 'flying', hitSet: new Set<Fighter>(),
@@ -1685,6 +1938,12 @@ export class SubterfugeKit {
     for (const d of list) { if (d.state !== 'returning') { d.state = 'returning'; d.hitSet.clear(); any = true; } }
     if (any) {
       const caster = owner === 'player' ? this.api.player : this.api.npc;
+      // A beckon rather than a throw: the hands snap back to the chest and the blades follow.
+      this.avatarFor(owner)?.play('clap');
+      for (const d of list) {
+        this.fx(owner).cut(d.x, d.y, Math.atan2(caster.y - d.y, caster.x - d.x), 20,
+          { color: SUB.steelHi, scores: 1, duration: 200, depth: D_AIR });
+      }
       this.api.showFloatingText(caster.x, caster.y - 34, 'Recall!', '#ffaaaa');
     }
   }
@@ -1704,7 +1963,6 @@ export class SubterfugeKit {
     const enemies: Fighter[] = owner === 'player' ? [this.api.npc] : [this.api.player];
     for (let i = list.length - 1; i >= 0; i--) {
       const d = list[i];
-      if (!d.sprite?.active) { list.splice(i, 1); continue; }
       if (d.state === 'flying') {
         d.x += d.dirX * DAGGER_SPEED * dt;
         d.y += d.dirY * DAGGER_SPEED * dt;
@@ -1719,15 +1977,13 @@ export class SubterfugeKit {
         d.dirX = dx / dist; d.dirY = dy / dist;
         d.x += d.dirX * DAGGER_SPEED * dt;
         d.y += d.dirY * DAGGER_SPEED * dt;
-        d.sprite.setRotation(Math.atan2(dy, dx));
         this._daggerHit(d, enemies, DAGGER_RETURN_DMG);
         if (dist <= DAGGER_ARRIVE_R + 6) {
           // Click+ Blade Dance: a blade that makes it home sometimes stays out.
           if (this._up(owner, 'click') && Math.random() < ORBIT_CHANCE) this._spawnOrbitDagger(owner, d.color);
-          d.sprite.destroy(); list.splice(i, 1); continue;
+          list.splice(i, 1); continue;
         }
       }
-      d.sprite.setPosition(d.x, d.y);
     }
   }
 
@@ -1738,6 +1994,11 @@ export class SubterfugeKit {
         d.hitSet.add(t);
         t.takeDamage(dmg);
         this.api.spawnHitFlash(t.x, t.y, DAGGER_FILL[d.color]);
+        // The recall hits harder and cuts deeper, so it gets the bigger arc.
+        this.fx(d.owner).cut(t.x, t.y, Math.atan2(d.dirY, d.dirX), dmg > DAGGER_THROW_DMG ? 42 : 30, {
+          color: d.color === 'red' ? SUB.scarlet : SUB.steelHi,
+          scores: dmg > DAGGER_THROW_DMG ? 3 : 2, depth: D_AIR,
+        });
         this._addSprayAmmoFromDamage(d.owner, dmg);
         this._noteSmokeAttack(d.owner);
       }
@@ -1749,14 +2010,8 @@ export class SubterfugeKit {
   private _spawnOrbitDagger(owner: 'player' | 'npc', color: 'red' | 'black'): void {
     const caster = owner === 'player' ? this.api.player : this.api.npc;
     const angle = Math.random() * Math.PI * 2;
-    const sprite = this.api.scene.add.rectangle(
-      caster.x + Math.cos(angle) * ORBIT_RADIUS,
-      caster.y + Math.sin(angle) * ORBIT_RADIUS,
-      16, 4, DAGGER_FILL[color],
-    ).setDepth(10) as Phaser.GameObjects.Rectangle;
-    sprite.setStrokeStyle(1, color === 'red' ? 0xffffff : 0xdd2233, 0.7);
     this.orbitDaggers.push({
-      owner, sprite, color, angle,
+      owner, color, angle,
       endsAt: this.api.scene.time.now + ORBIT_MS,
       nextHitAt: 0,
     });
@@ -1766,8 +2021,7 @@ export class SubterfugeKit {
   private _updateOrbitDaggers(time: number, dt: number): void {
     for (let i = this.orbitDaggers.length - 1; i >= 0; i--) {
       const o = this.orbitDaggers[i];
-      if (time >= o.endsAt || !o.sprite?.active) {
-        if (o.sprite?.active) o.sprite.destroy();
+      if (time >= o.endsAt) {
         this.orbitDaggers.splice(i, 1);
         continue;
       }
@@ -1775,9 +2029,6 @@ export class SubterfugeKit {
       o.angle += ORBIT_RAD_PER_SEC * dt;
       const ox = caster.x + Math.cos(o.angle) * ORBIT_RADIUS;
       const oy = caster.y + Math.sin(o.angle) * ORBIT_RADIUS;
-      o.sprite.setPosition(ox, oy).setRotation(o.angle + Math.PI / 2);
-      // Fade out over the final second so its expiry reads
-      o.sprite.setAlpha(Phaser.Math.Clamp((o.endsAt - time) / 1000, 0.25, 1));
 
       if (time < o.nextHitAt) continue;
       const enemy = o.owner === 'player' ? this.api.npc : this.api.player;
@@ -1786,6 +2037,9 @@ export class SubterfugeKit {
         o.nextHitAt = time + ORBIT_HIT_CD_MS;
         enemy.takeDamage(ORBIT_DMG);
         this.api.spawnHitFlash(enemy.x, enemy.y, DAGGER_FILL[o.color]);
+        this.fx(o.owner).cut(enemy.x, enemy.y, o.angle + Math.PI / 2, 34, {
+          color: o.color === 'red' ? SUB.scarlet : SUB.steelHi, scores: 2, depth: D_AIR,
+        });
         this._addSprayAmmoFromDamage(o.owner, ORBIT_DMG);
         this._noteSmokeAttack(o.owner);
       }
@@ -1929,34 +2183,24 @@ export class SubterfugeKit {
   }
 
   private _lightCigarette(owner: 'player' | 'npc'): void {
-    const { scene } = this.api;
     const f = owner === 'player' ? this.api.player : this.api.npc;
-    const sprite = scene.add.rectangle(f.x, f.y, 13, 4, 0xf2ece0)
-      .setStrokeStyle(1, 0x998877, 1).setDepth(11) as Phaser.GameObjects.Rectangle;
-    const ember = scene.add.circle(f.x, f.y, 2.4, 0xff5522, 1).setDepth(12) as Phaser.GameObjects.Arc;
-    scene.tweens.add({ targets: ember, alpha: 0.45, yoyo: true, repeat: -1, duration: 620 });
-    this.cigarettes.push({ owner, msLeft: CIG_BURN_MS, sprite, ember, smokeAccumMs: 0 });
+    this.cigarettes.push({ owner, msLeft: CIG_BURN_MS, smokeAccumMs: 0 });
+    // The match: a flare at the mouth and the first drag going up.
+    this.fx(owner).flash(f.x + 13, f.y - 3, 10, D_AIR, SUB.ember);
+    this.fx(owner).smoke(f.x + 13, f.y - 6, 3, { speed: 24, size: 4, life: 700, depth: D_AIR });
   }
 
   private _tossCigarette(owner: 'player' | 'npc', tx: number, ty: number): void {
     const idx = this.cigarettes.findIndex(c => c.owner === owner);
     if (idx < 0) return;
-    const cig = this.cigarettes[idx];
     const f = owner === 'player' ? this.api.player : this.api.npc;
-    this._destroyCigaretteVisuals(cig);
     this.cigarettes.splice(idx, 1);
 
-    const sprite = this.api.scene.add.rectangle(f.x, f.y, 13, 4, 0xf2ece0)
-      .setStrokeStyle(1, 0xff6633, 1)
-      .setRotation(Math.atan2(ty - f.y, tx - f.x))
-      .setDepth(11) as Phaser.GameObjects.Rectangle;
-    this.smokeTosses.push({ owner, x: f.x, y: f.y, destX: tx, destY: ty, sprite });
+    this.smokeTosses.push({ owner, x: f.x, y: f.y, destX: tx, destY: ty });
     this.api.showFloatingText(f.x, f.y - 44, '🚬 Flick!', '#cccc99');
   }
 
   private _spawnSmokeCloud(owner: 'player' | 'npc', x: number, y: number): void {
-    const own = owner === 'player';
-    const gfx = this.api.scene.add.graphics().setDepth(own ? SMOKE_DEPTH_OWN : SMOKE_DEPTH_ENEMY);
     const puffs: SmokeCloud['puffs'] = [];
     for (let i = 0; i < SMOKE_PUFF_COUNT; i++) {
       // First puff sits dead centre so the middle never thins out.
@@ -1972,7 +2216,12 @@ export class SubterfugeKit {
     this.smokeClouds.push({
       owner, x, y, radius: SMOKE_CLOUD_RADIUS,
       endsAt: this.api.scene.time.now + SMOKE_CLOUD_MS,
-      gfx, puffs, wispAccumMs: 0,
+      puffs, wispAccumMs: 0,
+    });
+    // It does not fade in — it bursts, then settles.
+    this.fx(owner).smoke(x, y, 10, {
+      speed: SMOKE_CLOUD_RADIUS * 1.5, size: 10, life: 700, depth: D_GROUND + 1, drift: -6,
+      color: owner === 'player' ? SUB.ash : SUB.ashDark,
     });
     this.api.showFloatingText(x, y - SMOKE_CLOUD_RADIUS * 0.6, '💨 Smoke Screen!', '#bbbbaa');
   }
@@ -2012,11 +2261,6 @@ export class SubterfugeKit {
     this.api.showFloatingText(f.x + 18, f.y - 30, '🚬 -1s', '#998877');
   }
 
-  private _destroyCigaretteVisuals(c: Cigarette): void {
-    if (c.sprite?.active) c.sprite.destroy();
-    if (c.ember?.active) c.ember.destroy();
-  }
-
   private _updateSmokeBreak(time: number, delta: number, dt: number): void {
     this._updateCigarettes(time, delta);
     this._updateSmokeTosses(dt);
@@ -2035,36 +2279,25 @@ export class SubterfugeKit {
       const f = c.owner === 'player' ? this.api.player : this.api.npc;
       c.msLeft -= delta;
       if (c.msLeft <= 0 || !f.active || f.hp <= 0) {
-        this._destroyCigaretteVisuals(c);
         this.cigarettes.splice(i, 1);
         if (c.owner === 'player') this.api.showFloatingText(f.x, f.y - 44, '🚬 Burnt Out', '#888888');
         continue;
       }
       f.smokeIncomingMult = CIG_DAMAGE_MULT;
 
-      // Held at the corner of the mouth, angled up, bobbing with the idle sway.
-      const bob = Math.sin(time / 340) * 1.2;
-      const cx = f.x + 13;
-      const cy = f.y - 3 + bob;
-      c.sprite.setPosition(cx, cy).setRotation(-0.32);
-      c.ember.setPosition(cx + 6.2, cy - 2.1);
-
-      // A wisp curling off the tip every so often — thicker as it burns down.
+      // The cigarette itself is painted by paintCigarettes; this is only the wisp coming
+      // off the tip, which has to outlive the frame it was emitted on.
       c.smokeAccumMs += delta;
       const every = 240;
       if (c.smokeAccumMs >= every) {
         c.smokeAccumMs -= every;
-        const puff = scene.add.circle(c.ember.x, c.ember.y, 2 + Math.random() * 2, 0xbbbbbb, 0.42).setDepth(10);
-        scene.tweens.add({
-          targets: puff,
-          x: puff.x + Phaser.Math.Between(-14, 14),
-          y: puff.y - 22 - Math.random() * 14,
-          scaleX: 2.6, scaleY: 2.6, alpha: 0,
-          duration: 900 + Math.random() * 400,
-          onComplete: () => puff.destroy(),
+        this.fx(c.owner).smoke(f.x + 19, f.y - 6, 1, {
+          speed: 18, size: 3.4, life: 1100, depth: D_AIR - 1, drift: -34,
         });
       }
+      void time;
     }
+    void scene;
   }
 
   private _updateSmokeTosses(dt: number): void {
@@ -2075,79 +2308,37 @@ export class SubterfugeKit {
       const step = SMOKE_TOSS_SPEED * dt;
       if (dist <= step || dist < 1) {
         this._spawnSmokeCloud(t.owner, t.destX, t.destY);
-        if (t.sprite?.active) t.sprite.destroy();
         this.smokeTosses.splice(i, 1);
         continue;
       }
       t.x += (dx / dist) * step;
       t.y += (dy / dist) * step;
-      t.sprite.setPosition(t.x, t.y).setRotation(t.sprite.rotation + 0.35);
     }
   }
 
   /**
-   * Draws every live cloud. The camera is the local player's eye, so a cloud you laid down
-   * renders as a thin haze under the fighters, while the enemy's renders as a solid bank of
-   * smoke over the top of everything — the same object, opposite jobs.
+   * Ages every live cloud. The drawing happens in paintSmokeClouds — the camera is the local
+   * player's eye, so a cloud you laid down renders as a thin haze under the fighters while the
+   * enemy's renders as a solid bank over the top of everything: same object, opposite jobs.
    */
   private _updateSmokeClouds(time: number): void {
     for (let i = this.smokeClouds.length - 1; i >= 0; i--) {
       const c = this.smokeClouds[i];
-      if (time >= c.endsAt || !c.gfx?.active) {
-        if (c.gfx?.active) c.gfx.destroy();
+      if (time >= c.endsAt) {
         this.smokeClouds.splice(i, 1);
         continue;
       }
-      const own = c.owner === 'player';
-      const age = SMOKE_CLOUD_MS - (c.endsAt - time);
-      // Bloom out over the first 400ms, thin away over the last second.
-      const grow = Phaser.Math.Clamp(age / 400, 0.35, 1);
-      const fade = Phaser.Math.Clamp((c.endsAt - time) / 1000, 0, 1);
-      const baseAlpha = (own ? 0.34 : 0.94) * fade;
-
-      const gfx = c.gfx;
-      gfx.clear();
-      for (const p of c.puffs) {
-        const drift = Math.sin(time * p.speed + p.phase);
-        const px = c.x + p.ox + drift * 7;
-        const py = c.y + p.oy + Math.cos(time * p.speed * 0.8 + p.phase) * 5;
-        const pr = p.r * grow * (1 + 0.06 * drift);
-        // Stacked rings from wide-and-faint to tight-and-solid: the overlap feathers the
-        // edge into the next puff, so the bank reads as smoke rather than a pile of discs.
-        // Each puff also sits a shade off its neighbours, which breaks up the silhouette.
-        const tone = 0.86 + 0.28 * (0.5 + 0.5 * Math.sin(p.phase * 3.1));
-        for (let ring = 0; ring < 6; ring++) {
-          const t = ring / 5;
-          const shade = own
-            ? this._smokeShade(0x8e8e86, 0xd2d2c6, t * tone)
-            : this._smokeShade(0x30302d, 0x76766d, t * tone);
-          gfx.fillStyle(shade, baseAlpha * (0.16 + 0.16 * t));
-          gfx.fillCircle(px, py, pr * (1 - 0.14 * ring));
-        }
-      }
-
-      // Your own cover is thin enough to see through, so it also gets a soft rim: without
-      // it you cannot tell where the cloud stops hiding you.
-      if (own) {
-        gfx.lineStyle(2, 0xd8d8cc, 0.28 * fade);
-        gfx.strokeCircle(c.x, c.y, c.radius * grow);
-      }
-
       // A wisp peeling off the edge now and then keeps the bank from looking painted on.
+      // It has to outlive the frame it was emitted on, so it goes through the Fx runner
+      // rather than into the per-frame layer.
       c.wispAccumMs += this.api.scene.game.loop.delta;
       if (c.wispAccumMs >= 200) {
         c.wispAccumMs -= 200;
         const a = Math.random() * Math.PI * 2;
-        const wx = c.x + Math.cos(a) * c.radius * 0.85;
-        const wy = c.y + Math.sin(a) * c.radius * 0.85;
-        const wisp = this.api.scene.add.circle(wx, wy, 5 + Math.random() * 7, own ? 0xc4c4b8 : 0x5e5e57, baseAlpha * 0.55)
-          .setDepth(own ? SMOKE_DEPTH_OWN : SMOKE_DEPTH_ENEMY);
-        this.api.scene.tweens.add({
-          targets: wisp,
-          x: wx + Math.cos(a) * 26, y: wy + Math.sin(a) * 26 - 12,
-          scaleX: 2.2, scaleY: 2.2, alpha: 0,
-          duration: 1100 + Math.random() * 500,
-          onComplete: () => wisp.destroy(),
+        this.fx(c.owner).smoke(c.x + Math.cos(a) * c.radius * 0.85, c.y + Math.sin(a) * c.radius * 0.85, 1, {
+          angle: a, spread: 0.3, speed: 26, size: 7, life: 1300, drift: -14,
+          depth: c.owner === 'player' ? SMOKE_DEPTH_OWN : SMOKE_DEPTH_ENEMY,
+          color: c.owner === 'player' ? SUB.ash : SUB.ashDark,
         });
       }
     }
@@ -2230,7 +2421,7 @@ export class SubterfugeKit {
 
   private _tickNhilego(time: number, owner: 'player' | 'npc'): void {
     const shadow = owner === 'player' ? this.playerNhilegoShadow : this.npcNhilegoShadow;
-    if (!shadow || !shadow.circle?.active) return;
+    if (!shadow) return;
     if (time < shadow.fireAt) return;
     this._nhilegoImpact(shadow, owner, time);
   }
@@ -2241,8 +2432,8 @@ export class SubterfugeKit {
     const { x, y, radius } = shadow;
     const caster = owner === 'player' ? api.player : api.npc;
 
-    const flash = scene.add.circle(x, y, radius, 0xcc88ff, 0.8).setDepth(12) as Phaser.GameObjects.Arc;
-    scene.time.delayedCall(300, () => { if (flash?.active) flash.destroy(); });
+    void scene;
+    this.fx(owner).deal(x, y, radius, { notes: 8, rings: 2, duration: 480, color: SUB.neon });
     api.dealAoeDamage(owner, x, y, radius, 25);
 
     const dist = Math.hypot(caster.x - x, caster.y - y);
@@ -2256,10 +2447,8 @@ export class SubterfugeKit {
       }
       const successCount = owner === 'player' ? this.playerNhilegoSuccessCount : this.npcNhilegoSuccessCount;
       api.showFloatingText(x, y - 30, `Hit! (${successCount})`, '#cc88ff');
-      shadow.circle.destroy();
       this._spawnNhilegoShadow(owner, time);
     } else {
-      shadow.circle.destroy();
       if (owner === 'player') this.playerNhilegoShadow = null;
       else this.npcNhilegoShadow = null;
 
@@ -2284,20 +2473,8 @@ export class SubterfugeKit {
     const x = pad + Math.random() * (W - pad * 2);
     const y = pad + Math.random() * (H - pad * 2);
 
-    const circle = scene.add
-      .circle(x, y, radius, 0x221144, 0.7)
-      .setDepth(4) as Phaser.GameObjects.Arc;
-    circle.setStrokeStyle(2, 0x8844cc, 0.8);
-
-    scene.tweens.add({
-      targets: circle,
-      scaleX: 0.9, scaleY: 0.9,
-      yoyo: true, repeat: -1,
-      duration: 700,
-      ease: 'Sine.easeInOut',
-    });
-
-    const shadowObj: NhilegoShadow = { circle, x, y, radius, fireAt: time + 3000, owner };
+    void scene;
+    const shadowObj: NhilegoShadow = { bornAt: time, x, y, radius, fireAt: time + 3000, owner };
     if (owner === 'player') this.playerNhilegoShadow = shadowObj;
     else this.npcNhilegoShadow = shadowObj;
   }

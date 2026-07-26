@@ -4,6 +4,18 @@ import { getAbstractWorld, getAnyWorld } from '../data/AbstractWorlds';
 import * as CP from '../data/CampaignProgress';
 import { drawCampaignBackground } from './CampaignBackground';
 import { addInventoryButton } from './InventoryScene';
+import {
+  C, T, DEPTH, FONT_DISPLAY, hex, mix,
+  addBackButton, fillDiamond, fillHex, strokeHex,
+} from '../ui';
+
+/** Visual spec for each node kind on a world's path. */
+const NODE_STYLES: Record<string, { accent: number; glyph: string; label: string; radius: number }> = {
+  shop:     { accent: C.gold,    glyph: '🛒', label: 'SHOP',      radius: 28 },
+  challenge:{ accent: C.corrupt, glyph: '⚔️', label: 'CHALLENGE', radius: 34 },
+  invasion: { accent: C.ember,   glyph: '👾', label: 'INVASION',  radius: 28 },
+  gauntlet: { accent: C.frost,   glyph: '🏆', label: 'GAUNTLET',  radius: 28 },
+};
 
 export class CampaignWorldScene extends Phaser.Scene {
   private worldId = 'fire';
@@ -25,63 +37,60 @@ export class CampaignWorldScene extends Phaser.Scene {
     const mapMode: 'normal' | 'abstract' = getAbstractWorld(this.worldId) ? 'abstract' : 'normal';
     if (!world) { this.scene.start('CampaignWorldMapScene', { slotIdx: this.slotIdx, mode: mapMode }); return; }
 
-    // Background
-    drawCampaignBackground(this, this.worldId, width, height).setDepth(-100);
+    drawCampaignBackground(this, this.worldId, width, height).setDepth(DEPTH.backdrop);
 
-    // World-color accent strip at top
-    this.add.rectangle(cx, 0, width, 4, world.color, 0.7).setOrigin(0.5, 0);
+    // ── World banner ────────────────────────────────────────────────
+    const banner = this.add.graphics().setDepth(DEPTH.panel);
+    banner.fillStyle(0x04040c, 0.5);
+    banner.fillRect(0, 0, width, 68);
+    // The world's own colour becomes the rule under its name.
+    banner.lineStyle(3, world.color, 0.75);
+    banner.beginPath(); banner.moveTo(50, 68); banner.lineTo(width - 50, 68); banner.strokePath();
+    banner.lineStyle(1, mix(world.color, 0xffffff, 0.5), 0.3);
+    banner.beginPath(); banner.moveTo(50, 72); banner.lineTo(width - 50, 72); banner.strokePath();
+    fillDiamond(banner, cx, 68, 6, mix(world.color, 0xffffff, 0.5), 1);
 
-    // Header
-    this.add.text(cx, 36, `${world.emoji}  ${world.name.toUpperCase()}`, {
-      fontSize: '32px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: Phaser.Display.Color.IntegerToColor(world.color).lighten(20).rgba,
-      stroke: '#000000',
-      strokeThickness: 4,
-    }).setOrigin(0.5);
+    this.add.text(cx, 32, `${world.emoji}   ${world.name.toUpperCase()}`, {
+      fontSize: '30px', fontFamily: FONT_DISPLAY,
+      color: hex(mix(world.color, 0xffffff, 0.55)),
+      stroke: hex(mix(world.color, 0x000000, 0.82)), strokeThickness: 5,
+      letterSpacing: 4,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
 
-    // Back button
-    const backRect = this.add
-      .rectangle(52, 36, 88, 36, 0x222233)
-      .setStrokeStyle(2, 0x555577)
-      .setInteractive({ useHandCursor: true });
-    const backLbl = this.add.text(52, 36, '← BACK', {
-      fontSize: '13px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#aaaaaa',
-    }).setOrigin(0.5);
-    backRect
-      .on('pointerover', () => { backRect.setFillStyle(0x333355); backLbl.setColor('#ffffff'); })
-      .on('pointerout', () => { backRect.setFillStyle(0x222233); backLbl.setColor('#aaaaaa'); })
-      .on('pointerdown', () => this.scene.start('CampaignWorldMapScene', { slotIdx: this.slotIdx, mode: mapMode }));
-    this.input.keyboard!.on('keydown-ESC', () =>
-      this.scene.start('CampaignWorldMapScene', { slotIdx: this.slotIdx, mode: mapMode }),
-    );
+    const back = () => this.scene.start('CampaignWorldMapScene', { slotIdx: this.slotIdx, mode: mapMode });
+    addBackButton(this, back);
+    this.input.keyboard!.on('keydown-ESC', back);
 
-    // Draw connector lines between fight nodes
+    // ── Path between fight nodes ────────────────────────────────────
     const fightNodes = getFightNodes(world);
-    const lineGfx = this.add.graphics();
-    lineGfx.lineStyle(2, 0x333355, 1);
+    const lineGfx = this.add.graphics().setDepth(DEPTH.panel);
     for (let i = 0; i < fightNodes.length - 1; i++) {
-      const a = fightNodes[i];
-      const b = fightNodes[i + 1];
-      lineGfx.lineBetween(a.x, a.y, b.x, b.y);
+      this.drawPath(lineGfx, fightNodes[i], fightNodes[i + 1], world.color, 0.6);
     }
-    // Line from last fight to challenge
     const lastFight = fightNodes[fightNodes.length - 1];
     const challengeNode = world.nodes.find((n) => n.kind === 'challenge');
     if (lastFight && challengeNode) {
-      lineGfx.lineStyle(2, 0x550066, 1);
-      lineGfx.lineBetween(lastFight.x, lastFight.y, challengeNode.x, challengeNode.y);
+      this.drawPath(lineGfx, lastFight, challengeNode, C.corrupt, 0.7);
     }
 
-    // Draw all nodes
     for (const node of world.nodes) {
       this.drawNode(node, world.color);
     }
 
-    // Inventory button (bottom-right)
-    addInventoryButton(this, this.slotIdx);
+    addInventoryButton(this, this.slotIdx, DEPTH.content + 5);
+  }
+
+  /** Twin-stroke route with a waypoint diamond, matching the world map. */
+  private drawPath(
+    g: Phaser.GameObjects.Graphics,
+    a: { x: number; y: number }, b: { x: number; y: number },
+    color: number, alpha: number,
+  ): void {
+    g.lineStyle(7, 0x04040c, 0.6);
+    g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.strokePath();
+    g.lineStyle(2, mix(color, 0xffffff, 0.3), alpha);
+    g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.strokePath();
+    fillDiamond(g, (a.x + b.x) / 2, (a.y + b.y) / 2, 3, mix(color, 0xffffff, 0.5), alpha);
   }
 
   private drawNode(node: WorldNode, worldColor: number): void {
@@ -92,125 +101,111 @@ export class CampaignWorldScene extends Phaser.Scene {
       const fightIndex = parseInt(node.id.split('-fight-')[1] ?? '1', 10);
       const unlocked = CP.isFightUnlocked(slot, worldId, node.id);
       const completed = CP.isFightCompleted(slot, worldId, node.id);
-      const r = 28;
-      const color = completed ? worldColor : (unlocked ? worldColor : 0x222233);
-      const alpha = unlocked ? 0.85 : 0.35;
 
-      const circle = this.add.circle(node.x, node.y, r, color, alpha)
-        .setStrokeStyle(2, completed ? 0xffdd44 : (unlocked ? 0xffffff : 0x333355));
-
-      this.add.text(node.x, node.y - 8, `${fightIndex}`, {
-        fontSize: '18px',
-        fontFamily: '"Arial Black", sans-serif',
-        color: unlocked ? '#ffffff' : '#444444',
-      }).setOrigin(0.5);
-
-      this.add.text(node.x, node.y + 12, 'FIGHT', {
-        fontSize: '8px',
-        fontFamily: 'Arial, sans-serif',
-        color: unlocked ? '#cccccc' : '#444444',
-      }).setOrigin(0.5);
-
-      if (completed) {
-        this.add.text(node.x + r - 4, node.y - r + 4, '✓', {
-          fontSize: '12px', color: '#ffdd44',
-        }).setOrigin(0.5);
-      }
-
-      if (!unlocked) return;
-
-      circle.setInteractive({ useHandCursor: true });
-      circle
-        .on('pointerover', () => circle.setStrokeStyle(3, 0xffffff))
-        .on('pointerout', () => circle.setStrokeStyle(2, completed ? 0xffdd44 : 0xffffff))
-        .on('pointerdown', () => this.openFightMenu(node.id, false));
-
-    } else if (node.kind === 'shop') {
-      const r = 28;
-      const circle = this.add.circle(node.x, node.y, r, 0xaa8800, 0.8)
-        .setStrokeStyle(2, 0xffcc00)
-        .setInteractive({ useHandCursor: true });
-
-      this.add.text(node.x, node.y - 6, '🛒', { fontSize: '18px' }).setOrigin(0.5);
-      this.add.text(node.x, node.y + 14, 'SHOP', {
-        fontSize: '8px', fontFamily: 'Arial, sans-serif', color: '#ffcc00',
-      }).setOrigin(0.5);
-
-      circle
-        .on('pointerover', () => circle.setStrokeStyle(3, 0xffffff))
-        .on('pointerout', () => circle.setStrokeStyle(2, 0xffcc00))
-        .on('pointerdown', () => this.openShopMenu());
-
-    } else if (node.kind === 'challenge') {
-      const unlocked = CP.isChallengeUnlocked(slot, worldId);
-      const completed = CP.isChallengeCompleted(slot, worldId);
-      const r = 32;
-      const alpha = unlocked ? 0.85 : 0.35;
-
-      const circle = this.add.circle(node.x, node.y, r, 0x440066, alpha)
-        .setStrokeStyle(2, completed ? 0xffdd44 : (unlocked ? 0xcc44ff : 0x440055));
-
-      this.add.text(node.x, node.y - 8, '⚔️', { fontSize: '18px' }).setOrigin(0.5).setAlpha(alpha);
-      this.add.text(node.x, node.y + 14, 'CHALLENGE', {
-        fontSize: '8px', fontFamily: '"Arial Black", sans-serif', color: unlocked ? '#cc88ff' : '#553366',
-      }).setOrigin(0.5);
-
-      if (completed) {
-        this.add.text(node.x + r - 4, node.y - r + 4, '✓', {
-          fontSize: '12px', color: '#ffdd44',
-        }).setOrigin(0.5);
-      }
-
-      if (!unlocked) {
-        this.add.text(node.x, node.y + 4, '🔒', { fontSize: '14px' }).setOrigin(0.5).setAlpha(0.5);
-        return;
-      }
-
-      circle.setInteractive({ useHandCursor: true });
-      circle
-        .on('pointerover', () => circle.setStrokeStyle(3, 0xee88ff))
-        .on('pointerout', () => circle.setStrokeStyle(2, completed ? 0xffdd44 : 0xcc44ff))
-        .on('pointerdown', () => this.openFightMenu(node.id, true));
-
-    } else if (node.kind === 'invasion') {
-      const r = 28;
-      const circle = this.add.circle(node.x, node.y, r, 0x3a1000, 0.85)
-        .setStrokeStyle(2, 0xff7722)
-        .setInteractive({ useHandCursor: true });
-
-      this.add.text(node.x, node.y - 8, '👾', { fontSize: '18px' }).setOrigin(0.5);
-      this.add.text(node.x, node.y + 13, 'INVASION', {
-        fontSize: '7px', fontFamily: '"Arial Black", sans-serif', color: '#ff7722',
-      }).setOrigin(0.5);
-
-      circle
-        .on('pointerover', () => circle.setStrokeStyle(3, 0xffaa66))
-        .on('pointerout', () => circle.setStrokeStyle(2, 0xff7722))
-        .on('pointerdown', () => this.openFightMenu(node.id, false, node.kind));
-
-    } else if (node.kind === 'gauntlet') {
-      const cleared = CP.isGauntletCompleted(slot, worldId);
-      const r = 28;
-      const circle = this.add.circle(node.x, node.y, r, 0x050520, 0.85)
-        .setStrokeStyle(2, cleared ? 0xffdd44 : 0x4488ff)
-        .setInteractive({ useHandCursor: true });
-
-      this.add.text(node.x, node.y - 8, '🏆', { fontSize: '18px' }).setOrigin(0.5);
-      this.add.text(node.x, node.y + 13, 'GAUNTLET', {
-        fontSize: '7px', fontFamily: '"Arial Black", sans-serif', color: cleared ? '#ffdd44' : '#4488ff',
-      }).setOrigin(0.5);
-
-      if (cleared) {
-        this.add.text(node.x + r - 4, node.y - r + 4, '✓', {
-          fontSize: '12px', color: '#ffdd44',
-        }).setOrigin(0.5);
-      }
-
-      circle
-        .on('pointerover', () => circle.setStrokeStyle(3, 0x88bbff))
-        .on('pointerout', () => circle.setStrokeStyle(2, cleared ? 0xffdd44 : 0x4488ff))
-        .on('pointerdown', () => this.openFightMenu(node.id, false, node.kind));
+      this.buildNode({
+        x: node.x, y: node.y, r: 29,
+        accent: worldColor,
+        glyph: `${fightIndex}`,
+        glyphIsText: true,
+        label: 'FIGHT',
+        unlocked, completed,
+        onClick: () => this.openFightMenu(node.id, false),
+      });
+      return;
     }
+
+    const style = NODE_STYLES[node.kind];
+    if (!style) return;
+
+    if (node.kind === 'shop') {
+      this.buildNode({
+        x: node.x, y: node.y, r: style.radius,
+        accent: style.accent, glyph: style.glyph, label: style.label,
+        unlocked: true, completed: false,
+        onClick: () => this.openShopMenu(),
+      });
+      return;
+    }
+
+    if (node.kind === 'challenge') {
+      this.buildNode({
+        x: node.x, y: node.y, r: style.radius,
+        accent: style.accent, glyph: style.glyph, label: style.label,
+        unlocked: CP.isChallengeUnlocked(slot, worldId),
+        completed: CP.isChallengeCompleted(slot, worldId),
+        onClick: () => this.openFightMenu(node.id, true),
+      });
+      return;
+    }
+
+    // Invasion and gauntlet nodes are always open.
+    this.buildNode({
+      x: node.x, y: node.y, r: style.radius,
+      accent: style.accent, glyph: style.glyph, label: style.label,
+      unlocked: true,
+      completed: node.kind === 'gauntlet' && CP.isGauntletCompleted(slot, worldId),
+      onClick: () => this.openFightMenu(node.id, false, node.kind),
+    });
+  }
+
+  /**
+   * Shared node chrome: hex plate, glyph, caption, and — once cleared — a gold
+   * ring plus a check mark on the upper-right face.
+   */
+  private buildNode(opts: {
+    x: number; y: number; r: number; accent: number;
+    glyph: string; glyphIsText?: boolean; label: string;
+    unlocked: boolean; completed: boolean;
+    onClick: () => void;
+  }): void {
+    const { x, y, r, accent, unlocked, completed } = opts;
+    const g = this.add.graphics().setDepth(DEPTH.panel + 1);
+    const ring = completed ? C.gold : unlocked ? mix(accent, 0xffffff, 0.4) : C.line;
+
+    const paint = (hot: boolean): void => {
+      g.clear();
+      if (unlocked) {
+        for (let k = 4; k >= 1; k--) {
+          g.fillStyle(accent, hot ? 0.08 : 0.04);
+          g.fillCircle(x, y, r + k * 5);
+        }
+      }
+      fillHex(g, x, y, r,
+        unlocked ? mix(accent, 0x000000, hot ? 0.3 : 0.48) : mix(C.plate, 0x000000, 0.5),
+        unlocked ? 0.96 : 0.7);
+      strokeHex(g, x, y, r, hot ? 0xffffff : ring, unlocked ? 1 : 0.45, hot ? 3 : 2);
+      strokeHex(g, x, y, r - 5, accent, unlocked ? 0.32 : 0.1, 1);
+      if (completed) {
+        for (const a of [-Math.PI / 2, -Math.PI / 2 - 1.05, -Math.PI / 2 + 1.05]) {
+          fillDiamond(g, x + Math.cos(a) * (r + 6), y + Math.sin(a) * (r + 6), 3, C.gold, 0.9);
+        }
+      }
+    };
+    paint(false);
+
+    if (opts.glyphIsText) {
+      this.add.text(x, y - 6, opts.glyph, {
+        fontSize: '19px', fontFamily: FONT_DISPLAY,
+        color: unlocked ? T.bright : T.ghost, letterSpacing: 1,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+    } else {
+      this.add.text(x, y - 6, unlocked ? opts.glyph : '🔒', { fontSize: '18px' })
+        .setOrigin(0.5).setDepth(DEPTH.content).setAlpha(unlocked ? 1 : 0.55);
+    }
+
+    const label = this.add.text(x, y + 14, opts.label, {
+      fontSize: '7.5px', fontFamily: FONT_DISPLAY,
+      color: unlocked ? hex(mix(accent, 0xffffff, 0.55)) : T.ghost, letterSpacing: 1,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
+
+    if (!unlocked) return;
+
+    const hit = this.add.circle(x, y, r, 0xffffff, 0)
+      .setDepth(DEPTH.content + 1)
+      .setInteractive({ useHandCursor: true });
+    hit.on('pointerover', () => { paint(true); label.setColor(T.bright); });
+    hit.on('pointerout', () => { paint(false); label.setColor(hex(mix(accent, 0xffffff, 0.55))); });
+    hit.on('pointerdown', opts.onClick);
   }
 
   private openFightMenu(nodeId: string, isChallenge: boolean, kind?: string): void {

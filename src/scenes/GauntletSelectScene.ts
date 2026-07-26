@@ -1,6 +1,11 @@
 import Phaser from 'phaser';
 import * as PlayerData from '../data/PlayerData';
 import { GAUNTLET_GROUPS, GAUNTLET_ELEMENTS, INFINITY_GAUNTLET_ID } from '../data/GauntletData';
+import {
+  C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
+  addBackdrop, addBackButton, addBadge, addButton, addCardPlate, addChip, addTitle, addToggle,
+  fillDiamond,
+} from '../ui';
 
 export class GauntletSelectScene extends Phaser.Scene {
   private hardMode = false;
@@ -18,184 +23,144 @@ export class GauntletSelectScene extends Phaser.Scene {
   create(): void {
     const { width, height } = this.scale;
     const cx = width / 2;
-    const cy = height / 2;
 
-    // Background
-    this.add.rectangle(cx, cy, width, height, 0x0d0d1a);
-    const grid = this.add.graphics();
-    grid.lineStyle(1, 0x1a1a33, 1);
-    for (let x = 0; x < width; x += 60) grid.lineBetween(x, 0, x, height);
-    for (let y = 0; y < height; y += 60) grid.lineBetween(0, y, width, y);
+    // Hard mode re-lights the entire screen — it should feel like a different
+    // place, not a checkbox.
+    const accent = this.hardMode ? C.corrupt : C.gold;
+    addBackdrop(this, { accent, variant: this.hardMode ? 'void' : 'lattice', motes: this.hardMode ? 30 : 16 });
 
-    // Title
-    this.add.text(cx, 52, 'GAUNTLETS', {
-      fontSize: '52px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#ffaa00',
-      stroke: '#884400',
-      strokeThickness: 4,
-    }).setOrigin(0.5);
+    addTitle(this, {
+      x: cx, y: 68, text: 'GAUNTLETS', accent, size: 48,
+      subtitle: 'FIVE BATTLES AND A BOSS — ONE LIFE',
+    });
 
-    this.add.text(cx, 100, 'Survive 5 battles + a boss without dying', {
-      fontSize: '15px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#888888',
-    }).setOrigin(0.5);
+    addChip(this, {
+      x: width - 18, y: 26, icon: '💎', value: `${PlayerData.getShards()}`,
+      accent: C.gold, originX: 1,
+    });
 
     const completedGauntlets = PlayerData.getCompletedGauntlets();
     const completedGauntletsHard = PlayerData.getCompletedGauntletsHard();
     const hardUnlocked = PlayerData.isGauntletHardUnlocked();
 
-    // Gauntlet cards (5 base elements)
-    const cardW = 148;
-    const cardH = 200;
+    // ── Element gauntlet cards ──────────────────────────────────────
+    const cardW = 156;
+    const cardH = 218;
     const cardGap = 18;
     const totalW = GAUNTLET_ELEMENTS.length * cardW + (GAUNTLET_ELEMENTS.length - 1) * cardGap;
     const startX = cx - totalW / 2 + cardW / 2;
+    const cardCY = 300;
 
     GAUNTLET_ELEMENTS.forEach((el, i) => {
       const bx = startX + i * (cardW + cardGap);
-      const by = cy + 20;
       const isCompleted = completedGauntlets.includes(el.id);
       const isHardCompleted = completedGauntletsHard.includes(el.id);
 
-      const card = this.add
-        .rectangle(bx, by, cardW, cardH, 0x111122, 0.9)
-        .setStrokeStyle(2, el.color)
-        .setInteractive({ useHandCursor: true });
+      const card = addCardPlate(this, {
+        x: bx, y: cardCY, w: cardW, h: cardH,
+        accent: isCompleted ? C.gold : el.color, cut: 16,
+      });
 
-      this.add.text(bx, by - 55, el.emoji, { fontSize: '48px' }).setOrigin(0.5);
-      this.add.text(bx, by + 8, el.name.toUpperCase(), {
-        fontSize: '18px',
-        fontFamily: '"Arial Black", sans-serif',
-        color: '#ffffff',
-        wordWrap: { width: cardW - 8 },
-      }).setOrigin(0.5);
+      const top = cardCY - cardH / 2;
+
+      // Element sigil — glyph over a soft pool of its own colour.
+      const halo = this.add.graphics().setDepth(DEPTH.content - 1);
+      for (let k = 5; k >= 1; k--) {
+        halo.fillStyle(el.color, 0.05);
+        halo.fillCircle(bx, top + 58, 20 + k * 6);
+      }
+      this.add.text(bx, top + 58, el.emoji, { fontSize: '44px' })
+        .setOrigin(0.5).setDepth(DEPTH.content);
+
+      this.add.text(bx, top + 108, el.name.toUpperCase(), {
+        fontSize: '17px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 1.5,
+        wordWrap: { width: cardW - 16 }, align: 'center',
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+
+      // Opponent roster, drawn as a rule of element glyphs.
+      const rule = this.add.graphics().setDepth(DEPTH.content - 1);
+      rule.lineStyle(1, el.color, 0.25);
+      rule.beginPath(); rule.moveTo(bx - cardW / 2 + 18, top + 132); rule.lineTo(bx + cardW / 2 - 18, top + 132); rule.strokePath();
+      fillDiamond(rule, bx, top + 132, 3, el.color, 0.6);
+
+      this.add.text(bx, top + 148, 'FOES', {
+        fontSize: '8px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
 
       const pool = GAUNTLET_GROUPS[el.id];
-      this.add.text(bx, by + 34, pool.map((e) => {
+      this.add.text(bx, top + 172, pool.map((e) => {
         const found = GAUNTLET_ELEMENTS.find((ge) => ge.id === e);
         return found?.emoji ?? e;
-      }).join(' '), { fontSize: '16px', wordWrap: { width: cardW - 8 } }).setOrigin(0.5);
+      }).join(' '), {
+        fontSize: '15px', wordWrap: { width: cardW - 20 }, align: 'center',
+      }).setOrigin(0.5).setDepth(DEPTH.content);
 
       if (isCompleted) {
-        const badgeColor = isHardCompleted ? '#cc66ff' : '#ffcc00';
-        const strokeColor = isHardCompleted ? '#440066' : '#664400';
-        const badgeText = isHardCompleted ? '★ CLEARED  🔥' : '★ CLEARED';
-        const badge = this.add.text(bx, by - 80, badgeText, {
-          fontSize: '13px',
-          fontFamily: '"Arial Black", sans-serif',
-          color: badgeColor,
-          stroke: strokeColor,
-          strokeThickness: 3,
-        }).setOrigin(0.5);
-        this.tweens.add({ targets: badge, alpha: 0.6, duration: 900, yoyo: true, repeat: -1 });
+        addBadge(this, {
+          x: bx, y: top - 4,
+          text: isHardCompleted ? '★ CLEARED  🔥' : '★ CLEARED',
+          accent: isHardCompleted ? C.corrupt : C.gold,
+          depth: DEPTH.content + 2,
+          glow: true,
+        });
       }
 
-      card
-        .on('pointerover', () => { card.setStrokeStyle(3, 0xffffff); card.setAlpha(1); })
-        .on('pointerout',  () => { card.setStrokeStyle(2, el.color);  card.setAlpha(0.9); })
-        .on('pointerdown', () => this.scene.start('GauntletElementSelectScene', { gauntletId: el.id, hardMode: this.hardMode }));
+      const hit = this.add.rectangle(bx, cardCY, cardW, cardH, 0xffffff, 0)
+        .setDepth(DEPTH.content + 1)
+        .setInteractive({ useHandCursor: true });
+      hit.on('pointerover', () => card.paint('hover'));
+      hit.on('pointerout', () => card.paint('idle'));
+      hit.on('pointerdown', () =>
+        this.scene.start('GauntletElementSelectScene', { gauntletId: el.id, hardMode: this.hardMode }));
     });
 
-    // ── Infinity tile ────────────────────────────────────────────────
+    // ── Infinity gauntlet ───────────────────────────────────────────
     const infinityUnlocked = completedGauntlets.length >= GAUNTLET_ELEMENTS.length;
     const infinityBest = PlayerData.getInfinityBestFight(this.hardMode);
-    {
-      const infX = cx;
-      const infY = cy + 148;
-      const infW = 340;
-      const infH = 56;
-      const infColor = infinityUnlocked ? 0x330055 : 0x111122;
-      const infBorder = infinityUnlocked ? 0xcc88ff : 0x333355;
+    const cleared = completedGauntlets.length;
 
-      const infCard = this.add.rectangle(infX, infY, infW, infH, infColor, 0.9)
-        .setStrokeStyle(2, infBorder);
-      if (infinityUnlocked) infCard.setInteractive({ useHandCursor: true });
+    addButton(this, {
+      x: cx, y: 470, w: 400, h: 62,
+      label: 'INFINITY GAUNTLET',
+      sublabel: infinityUnlocked
+        ? (infinityBest > 0 ? `Endless · best run reached fight ${infinityBest}` : 'Endless mode — how far can you go?')
+        : `Clear all 5 base gauntlets to unlock  (${cleared}/5)`,
+      icon: '♾️',
+      accent: C.arcane,
+      variant: infinityUnlocked ? 'solid' : 'quiet',
+      fontSize: 19,
+      align: 'left',
+      disabled: !infinityUnlocked,
+      onClick: () =>
+        this.scene.start('GauntletElementSelectScene', { gauntletId: INFINITY_GAUNTLET_ID, hardMode: this.hardMode }),
+    });
 
-      this.add.text(infX - 100, infY, '♾️', { fontSize: '28px' }).setOrigin(0.5);
-      this.add.text(infX - 40, infY - 10, 'INFINITY GAUNTLET', {
-        fontSize: '16px', fontFamily: '"Arial Black", sans-serif',
-        color: infinityUnlocked ? '#cc88ff' : '#444455',
-      }).setOrigin(0, 0.5);
-
-      if (infinityUnlocked) {
-        const bestLabel = infinityBest > 0 ? `Best: Fight ${infinityBest}` : 'Endless mode';
-        this.add.text(infX - 40, infY + 10, bestLabel, {
-          fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#886699',
-        }).setOrigin(0, 0.5);
-        infCard
-          .on('pointerover', () => { infCard.setStrokeStyle(3, 0xffffff); infCard.setAlpha(1); })
-          .on('pointerout',  () => { infCard.setStrokeStyle(2, infBorder); infCard.setAlpha(0.9); })
-          .on('pointerdown', () => this.scene.start('GauntletElementSelectScene', { gauntletId: INFINITY_GAUNTLET_ID, hardMode: this.hardMode }));
-      } else {
-        const cleared = completedGauntlets.length;
-        this.add.text(infX - 40, infY + 10, `Clear all 5 base gauntlets to unlock (${cleared}/5)`, {
-          fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#333355',
-        }).setOrigin(0, 0.5);
-      }
-    }
-
-    // Hard-mode toggle (below the cards)
-    const toggleY = cy + 216;
-
+    // ── Hard mode ───────────────────────────────────────────────────
+    const toggleY = 552;
     if (!hardUnlocked) {
-      this.add.text(cx, toggleY, '🔥 HARD MODE  —  purchase in Shop for 1500 💎', {
-        fontSize: '13px', fontFamily: 'Arial, sans-serif', color: '#444455',
-      }).setOrigin(0.5);
+      this.add.text(cx, toggleY, '🔥  HARD MODE — purchase in the Shop for 💎 1500', {
+        fontSize: '12px', fontFamily: FONT_DISPLAY, color: T.ghost, letterSpacing: 1,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
     } else {
-      this.add.text(cx - 120, toggleY, '🔥 HARD MODE', {
-        fontSize: '15px', fontFamily: '"Arial Black", sans-serif', color: '#dd88ff',
-      }).setOrigin(0.5);
-
-      const trackW = 52;
-      const trackH = 24;
-      const knobR = 10;
-      const trackX = cx + 50;
-
-      const track = this.add.rectangle(trackX, toggleY, trackW, trackH, this.hardMode ? 0x882299 : 0x333344, 1)
-        .setStrokeStyle(1, this.hardMode ? 0xdd44ff : 0x666677)
-        .setInteractive({ useHandCursor: true });
-
-      const knobOffX = trackX - trackW / 2 + knobR + 2;
-      const knobOnX  = trackX + trackW / 2 - knobR - 2;
-      const knob = this.add.circle(this.hardMode ? knobOnX : knobOffX, toggleY, knobR, this.hardMode ? 0xff88ff : 0x888899);
-
-      track.on('pointerdown', () => {
-        this.hardMode = !this.hardMode;
-        this.scene.restart({ hardMode: this.hardMode });
+      addToggle(this, {
+        x: cx + 40, y: toggleY, value: this.hardMode, accent: C.corrupt,
+        label: '🔥 HARD MODE',
+        onChange: (v) => {
+          this.hardMode = v;
+          this.scene.restart({ hardMode: v });
+        },
       });
-      knob.setInteractive({ useHandCursor: true }).on('pointerdown', () => {
-        this.hardMode = !this.hardMode;
-        this.scene.restart({ hardMode: this.hardMode });
-      });
-
-      const modeLabel = this.add.text(cx + 90, toggleY, this.hardMode ? 'ON' : 'OFF', {
-        fontSize: '13px', fontFamily: '"Arial Black", sans-serif',
-        color: this.hardMode ? '#ff88ff' : '#555566',
-      }).setOrigin(0, 0.5);
-      void modeLabel;
+      this.add.text(cx, toggleY + 30, this.hardMode
+        ? 'Foes hit harder, spoils run richer.'
+        : 'Standard difficulty.', {
+        fontSize: '10px', fontFamily: FONT_UI,
+        color: this.hardMode ? hex(mix(C.corrupt, 0xffffff, 0.4)) : T.faint,
+        letterSpacing: 1,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
     }
 
-    // Back button
-    const backBtn = this.add
-      .rectangle(60, 32, 100, 36, 0x221100, 0.85)
-      .setStrokeStyle(1, 0x664422)
-      .setInteractive({ useHandCursor: true });
-    this.add.text(60, 32, '← BACK', {
-      fontSize: '14px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#aaaaaa',
-    }).setOrigin(0.5);
-    backBtn
-      .on('pointerover', () => { backBtn.setStrokeStyle(2, 0xffffff); })
-      .on('pointerout',  () => { backBtn.setStrokeStyle(1, 0x664422); })
-      .on('pointerdown', () => this.scene.start('TitleScene'));
-    this.input.keyboard!.on('keydown-ESC', () => this.scene.start('TitleScene'));
-
-    this.add.text(width - 16, 16, `💎 ${PlayerData.getShards()}`, {
-      fontSize: '16px', fontFamily: 'Arial, sans-serif', color: '#ffcc44',
-    }).setOrigin(1, 0);
+    const back = () => this.scene.start('TitleScene');
+    addBackButton(this, back);
+    this.input.keyboard!.on('keydown-ESC', back);
   }
-
 }

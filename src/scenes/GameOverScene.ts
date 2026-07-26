@@ -3,8 +3,15 @@ import * as PlayerData from '../data/PlayerData';
 import * as CP from '../data/CampaignProgress';
 import { SHARD_REWARDS } from '../data/Upgrades';
 import { MUTATIONS } from '../data/Mutations';
+import {
+  C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
+  addBackdrop, addButton, addPanel, addTitle, fillDiamond,
+} from '../ui';
 
 type CampaignPayload = { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean };
+
+/** One line in the rewards ledger. */
+type RewardLine = { icon: string; text: string; color: string; big?: boolean };
 
 export class GameOverScene extends Phaser.Scene {
   constructor() {
@@ -31,9 +38,6 @@ export class GameOverScene extends Phaser.Scene {
   }): void {
     const { width, height } = this.scale;
     const cx = width / 2;
-    const cy = height / 2;
-
-    this.add.rectangle(cx, cy, width, height, 0x0d0d1a);
 
     const isInvasion = data.mode === 'invasion';
     const isCampaign = !!data.campaign;
@@ -89,112 +93,109 @@ export class GameOverScene extends Phaser.Scene {
       sparksEarned = 1;
     }
 
-    let title: string, subtitle: string, titleColor: string;
+    // ── Headline ────────────────────────────────────────────────────
+    let title: string, subtitle: string, accent: number;
     if (isOnline && isInvasion) {
-      [title, subtitle, titleColor] = ['TEAM DOWN', `Waves cleared together: ${data.wavesCompleted ?? 0}`, '#cc44ff'];
+      [title, subtitle, accent] = ['TEAM DOWN', `Waves cleared together: ${data.wavesCompleted ?? 0}`, C.corrupt];
     } else if (isOnline) {
-      [title, subtitle, titleColor] = data.playerWon
-        ? ['VICTORY!', data.onlineReason ?? 'You bested your rival! ⚔️', '#ff8800']
-        : ['DEFEATED', data.onlineReason ?? 'Your rival takes this round…', '#44aaff'];
+      [title, subtitle, accent] = data.playerWon
+        ? ['VICTORY', data.onlineReason ?? 'You bested your rival! ⚔️', C.gold]
+        : ['DEFEATED', data.onlineReason ?? 'Your rival takes this round…', C.frost];
     } else if (isInfinityRun) {
       const fightsCleared = data.infinityFightsCleared ?? 0;
       const bestFight = PlayerData.getInfinityBestFight(data.hardMode ?? false);
       const isNewBest = fightsCleared >= bestFight;
-      title = 'INFINITY RUN OVER';
-      subtitle = `Fights cleared: ${fightsCleared}${isNewBest && fightsCleared > 0 ? '  ★ NEW BEST!' : ''}`;
-      titleColor = '#cc88ff';
+      title = 'RUN OVER';
+      subtitle = `Fights cleared: ${fightsCleared}${isNewBest && fightsCleared > 0 ? '   ★ NEW BEST' : ''}`;
+      accent = C.arcane;
     } else if (isInvasion) {
-      [title, subtitle, titleColor] = ['YOU FELL', `Waves cleared: ${data.wavesCompleted ?? 0}`, '#cc44ff'];
+      [title, subtitle, accent] = ['YOU FELL', `Waves cleared: ${data.wavesCompleted ?? 0}`, C.corrupt];
     } else if (data.isGauntlet && !data.playerWon) {
-      [title, subtitle, titleColor] = ['GAUNTLET FAILED', 'Your run has ended...', '#ff4444'];
+      [title, subtitle, accent] = ['GAUNTLET FAILED', 'Your run has ended…', C.blood];
     } else {
-      [title, subtitle, titleColor] = data.playerWon
-        ? ['VICTORY!', 'The flames triumph! 🔥', '#ff8800']
-        : ['DEFEATED', 'Better luck next time...', '#44aaff'];
+      [title, subtitle, accent] = data.playerWon
+        ? ['VICTORY', 'The flames triumph! 🔥', C.gold]
+        : ['DEFEATED', 'Better luck next time…', C.frost];
     }
 
-    this.add.text(cx, cy - 110, title, {
-      fontSize: isInfinityRun ? '56px' : '80px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: titleColor,
-      stroke: '#000000',
-      strokeThickness: 6,
-    }).setOrigin(0.5);
+    addBackdrop(this, {
+      accent,
+      variant: data.playerWon ? 'rays' : 'void',
+      motes: data.playerWon ? 34 : 12,
+    });
 
-    this.add.text(cx, cy - 20, subtitle, {
-      fontSize: '26px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#aaaaaa',
-    }).setOrigin(0.5);
+    const titleY = 148;
+    addTitle(this, {
+      x: cx, y: titleY, text: title, accent,
+      size: title.length > 10 ? 52 : 74,
+      subtitle,
+    });
 
-    let rewardLineY = cy + 18;
+    if (data.playerWon) this.burstSparks(cx, titleY, accent);
 
-    // Infinity shards display
+    // ── Rewards ledger ──────────────────────────────────────────────
+    const lines: RewardLine[] = [];
+
     if (isInfinityRun && (data.infinityShards ?? 0) > 0) {
-      this.add.text(cx, rewardLineY, `+${data.infinityShards} 💎  (shards from run)`, {
-        fontSize: '22px',
-        fontFamily: '"Arial Black", sans-serif',
-        color: '#cc88ff',
-      }).setOrigin(0.5);
-      rewardLineY += 32;
+      lines.push({ icon: '💎', text: `+${data.infinityShards}  shards from run`, color: hex(mix(C.arcane, 0xffffff, 0.5)), big: true });
     }
-
     if (shardsEarned > 0) {
-      const multLabel = (data.rewardMult ?? 1) > 1 ? ` ×${data.rewardMult!.toFixed(2)}` : '';
-      this.add.text(cx, rewardLineY, `+${shardsEarned} 💎${multLabel}`, {
-        fontSize: '22px',
-        fontFamily: '"Arial Black", sans-serif',
-        color: '#ffcc00',
-      }).setOrigin(0.5);
-      rewardLineY += 32;
+      const multLabel = (data.rewardMult ?? 1) > 1 ? `   ×${data.rewardMult!.toFixed(2)} bonus` : '';
+      lines.push({ icon: '💎', text: `+${shardsEarned}  shards${multLabel}`, color: T.gold, big: true });
     }
-
-    if (unlockedMutation) {
-      this.add.text(cx, rewardLineY, `🎉 New mutation discovered: ${unlockedMutation.emoji} ${unlockedMutation.name}`, {
-        fontSize: '15px',
-        fontFamily: '"Arial Black", sans-serif',
-        color: '#ffcc66',
-        stroke: '#000000',
-        strokeThickness: 3,
-      }).setOrigin(0.5);
+    if (sparksEarned > 0) {
+      lines.push({ icon: '⚡', text: `+${sparksEarned}  Spark`, color: '#7cf5d8' });
     }
-
-    if (sparksEarned > 0 || keysEarned > 0) {
-      const parts: string[] = [];
-      if (sparksEarned > 0) parts.push(`+${sparksEarned} ⚡ Spark`);
-      if (keysEarned > 0) parts.push(`+${keysEarned} 🗝️ Key`);
-      this.add.text(cx, cy + 18, parts.join('   '), {
-        fontSize: '22px',
-        fontFamily: '"Arial Black", sans-serif',
-        color: '#aaffdd',
-      }).setOrigin(0.5);
+    if (keysEarned > 0) {
+      lines.push({ icon: '🗝️', text: `+${keysEarned}  Key`, color: T.gold });
     }
-
     if (isInvasion && (data.corruptShardsEarned ?? 0) > 0) {
-      this.add.text(cx, cy + 18, `+${data.corruptShardsEarned} 🩸 Corrupt Shards`, {
-        fontSize: '22px',
-        fontFamily: '"Arial Black", sans-serif',
-        color: '#cc44ff',
-      }).setOrigin(0.5);
+      lines.push({ icon: '🩸', text: `+${data.corruptShardsEarned}  Corrupt Shards`, color: hex(mix(C.corrupt, 0xffffff, 0.4)) });
+    }
+    if (unlockedMutation) {
+      lines.push({
+        icon: unlockedMutation.emoji,
+        text: `New mutation discovered — ${unlockedMutation.name}`,
+        color: hex(mix(C.gold, 0xffffff, 0.3)),
+      });
     }
 
-    // Play Again button
-    const btnW = 240;
-    const btnH = 64;
-    const btnY = cy + 90;
+    const btnY = height - 96;
 
-    const btn = this.add
-      .rectangle(cx, btnY, btnW, btnH, 0x222233)
-      .setStrokeStyle(2, 0x666688)
-      .setInteractive({ useHandCursor: true });
+    if (lines.length > 0) {
+      const rowH = 30;
+      const panelH = 44 + lines.length * rowH;
+      const panelY = titleY + 118 + panelH / 2;
+      const panel = addPanel(this, {
+        x: cx, y: panelY, w: 470, h: panelH,
+        accent, title: 'SPOILS', glow: 0.3,
+      });
 
-    const btnText = isOnline ? 'BACK TO LOBBY' : data.campaign ? 'BACK TO WORLD' : 'PLAY AGAIN';
-    const btnLabel = this.add.text(cx, btnY, btnText, {
-      fontSize: '24px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#ffffff',
-    }).setOrigin(0.5);
+      lines.forEach((line, i) => {
+        const ly = panel.contentTop + 22 + i * rowH;
+        this.add.text(cx - 190, ly, line.icon, { fontSize: line.big ? '20px' : '16px' })
+          .setOrigin(0.5).setDepth(DEPTH.content);
+        this.add.text(cx - 168, ly, line.text, {
+          fontSize: line.big ? '17px' : '14px',
+          fontFamily: line.big ? FONT_DISPLAY : FONT_UI,
+          color: line.color,
+          letterSpacing: 0.5,
+        }).setOrigin(0, 0.5).setDepth(DEPTH.content);
 
+        // Ledger rule between rows.
+        if (i < lines.length - 1) {
+          const g = this.add.graphics().setDepth(DEPTH.content - 1);
+          g.lineStyle(1, accent, 0.14);
+          g.beginPath(); g.moveTo(cx - 200, ly + rowH / 2); g.lineTo(cx + 200, ly + rowH / 2); g.strokePath();
+        }
+      });
+    } else {
+      this.add.text(cx, titleY + 150, 'No spoils this time.', {
+        fontSize: '14px', fontFamily: FONT_UI, color: T.faint, letterSpacing: 1,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+    }
+
+    // ── Continue ────────────────────────────────────────────────────
     const goBack = () => {
       if (isOnline) {
         this.scene.start('OnlineLobbyScene');
@@ -208,18 +209,38 @@ export class GameOverScene extends Phaser.Scene {
       }
     };
 
-    btn
-      .on('pointerover', () => {
-        btn.setFillStyle(0x333355);
-        btn.setStrokeStyle(2, 0xaaaacc);
-        btnLabel.setColor('#ffcc00');
-      })
-      .on('pointerout', () => {
-        btn.setFillStyle(0x222233);
-        btn.setStrokeStyle(2, 0x666688);
-        btnLabel.setColor('#ffffff');
-      })
-      .on('pointerdown', goBack);
+    const btnLabel = isOnline ? 'BACK TO LOBBY' : data.campaign ? 'BACK TO WORLD' : 'PLAY AGAIN';
+    addButton(this, {
+      x: cx, y: btnY, w: 280, h: 60,
+      label: btnLabel, icon: '▶', variant: 'solid', accent, fontSize: 20,
+      onClick: goBack,
+    }).pulse();
+
+    this.add.text(cx, btnY + 44, 'ESC', {
+      fontSize: '10px', fontFamily: FONT_DISPLAY, color: T.ghost, letterSpacing: 2,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
+
     this.input.keyboard!.on('keydown-ESC', goBack);
+  }
+
+  /** Diamond shards flung outward from the headline on a win. */
+  private burstSparks(cx: number, cy: number, accent: number): void {
+    for (let i = 0; i < 26; i++) {
+      const a = (Math.PI * 2 * i) / 26 + Math.random() * 0.2;
+      const g = this.add.graphics().setDepth(DEPTH.content - 1);
+      fillDiamond(g, 0, 0, Phaser.Math.FloatBetween(2.5, 5), mix(accent, 0xffffff, Math.random() * 0.6), 1);
+      g.setPosition(cx, cy);
+      const dist = Phaser.Math.Between(150, 380);
+      this.tweens.add({
+        targets: g,
+        x: cx + Math.cos(a) * dist,
+        y: cy + Math.sin(a) * dist * 0.65,
+        alpha: 0,
+        scaleX: 0.3, scaleY: 0.3,
+        duration: Phaser.Math.Between(700, 1500),
+        ease: 'Cubic.easeOut',
+        onComplete: () => g.destroy(),
+      });
+    }
   }
 }

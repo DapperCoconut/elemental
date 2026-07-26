@@ -925,7 +925,7 @@ export class CrystalKit {
       this.pfx.channelFacet(tx, ty, 40, 420, undefined, 4, CLEAR_TONES);
       this.pfx.bloom(tx, ty, 34, 8, 4, CLEAR_TONES);
       const lblObj = scene.add.text(tx, ty, lbl, {
-        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#ffffff',
+        fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffffff',
       }).setOrigin(0.5).setDepth(5);
       this.crystalPortals.push({
         gfx: scene.add.graphics().setDepth(4), label: lblObj,
@@ -942,7 +942,7 @@ export class CrystalKit {
       this.npcAvatar?.play('slam', Math.atan2(ty - this.arena.npc.y, tx - this.arena.npc.x));
       this.nfx.bloom(tx, ty, 34, 8, 4, NPC_TONES);
       const lblObj = scene.add.text(tx, ty, lbl, {
-        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#888888',
+        fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#888888',
       }).setOrigin(0.5).setDepth(5);
       this.npcCrystalPortals.push({
         gfx: scene.add.graphics().setDepth(4), label: lblObj,

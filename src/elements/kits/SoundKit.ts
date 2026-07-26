@@ -498,11 +498,11 @@ export class SoundKit {
     this.soundHitRing.setStrokeStyle(3, SOUND.magenta, 0.9);
 
     this.soundStreakText = scene.add.text(W - 8, trackY, '🎵 0', {
-      fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#ffaadd',
+      fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffaadd',
     }).setOrigin(1, 0.5).setDepth(23);
 
     scene.add.text(6, trackY, 'RHYTHM', {
-      fontSize: '9px', fontFamily: 'Arial, sans-serif', color: '#884466',
+      fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#884466',
     }).setOrigin(0, 0.5).setDepth(23);
 
     // Accidental markers (3 boxes to the left of streak text)

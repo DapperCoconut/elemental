@@ -11,6 +11,10 @@ import {
   ABSTRACT_COMBINED_ELEMENTS,
   ABSTRACT_ELEMENT_UNLOCK_MAP,
 } from './MenuScene';
+import {
+  C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
+  addBackdrop, addButton, addCardPlate, addPanel, addTitle, addWell, showToast, UiButton,
+} from '../ui';
 
 type LobbyPhase = 'entry' | 'hosting' | 'joining' | 'room';
 
@@ -24,8 +28,8 @@ interface Loadout {
   ready: boolean;
 }
 
-const PANEL_BG = 0x141428;
-const ACCENT = 0x44ccaa;
+/** The lobby's own accent — a teal that reads as "network", not "element". */
+const ACCENT = 0x2ee6c0;
 
 export class OnlineLobbyScene extends Phaser.Scene {
   private phase: LobbyPhase = 'entry';
@@ -37,8 +41,8 @@ export class OnlineLobbyScene extends Phaser.Scene {
 
   private roomMode: NetMatchMode = 'pvp';
   private roomInvasionDifficulty = 'normal';
-  private pvpBtn: Phaser.GameObjects.Rectangle | null = null;
-  private coopBtn: Phaser.GameObjects.Rectangle | null = null;
+  private pvpPaint: ((state: 'idle' | 'hover' | 'active') => void) | null = null;
+  private coopPaint: ((state: 'idle' | 'hover' | 'active') => void) | null = null;
   private diffLabel: Phaser.GameObjects.Text | null = null;
   private oppPanelHeader: Phaser.GameObjects.Text | null = null;
 
@@ -50,11 +54,9 @@ export class OnlineLobbyScene extends Phaser.Scene {
   // Room-phase widgets that get refreshed in place
   private oppPanelTexts: Phaser.GameObjects.Text[] = [];
   private myPerkLabel: Phaser.GameObjects.Text | null = null;
-  private readyBtn: Phaser.GameObjects.Rectangle | null = null;
-  private readyLbl: Phaser.GameObjects.Text | null = null;
-  private startBtn: Phaser.GameObjects.Rectangle | null = null;
-  private startLbl: Phaser.GameObjects.Text | null = null;
-  private tileByElement = new Map<string, { rect: Phaser.GameObjects.Rectangle; color: number }>();
+  private readyBtn: UiButton | null = null;
+  private startBtn: UiButton | null = null;
+  private tileByElement = new Map<string, { paint: (state: 'idle' | 'hover' | 'active') => void }>();
   private perkList: { id: string | null; name: string }[] = [];
   private perkIdx = 0;
 
@@ -78,23 +80,13 @@ export class OnlineLobbyScene extends Phaser.Scene {
     this.joinError = '';
     this.toastText = null;
 
-    this.add.rectangle(width / 2, height / 2, width, height, 0x0d0d1a);
-    const grid = this.add.graphics();
-    grid.lineStyle(1, 0x1a1a33, 1);
-    for (let x = 0; x < width; x += 60) grid.lineBetween(x, 0, x, height);
-    for (let y = 0; y < height; y += 60) grid.lineBetween(0, y, width, y);
+    addBackdrop(this, { accent: ACCENT, variant: 'void', motes: 22 });
+    addTitle(this, { x: width / 2, y: 48, text: 'ONLINE BATTLE', accent: ACCENT, size: 38 });
+    void height;
 
-    this.add.text(width / 2, 48, 'ONLINE BATTLE', {
-      fontSize: '42px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#44ccaa',
-      stroke: '#116655',
-      strokeThickness: 4,
-    }).setOrigin(0.5);
-
-    this.pingText = this.add.text(width - 14, 14, '', {
-      fontSize: '13px', fontFamily: 'Arial, sans-serif', color: '#88ccbb',
-    }).setOrigin(1, 0).setDepth(50);
+    this.pingText = this.add.text(width - 16, 16, '', {
+      fontSize: '12px', fontFamily: FONT_DISPLAY, color: hex(mix(ACCENT, 0xffffff, 0.4)), letterSpacing: 1,
+    }).setOrigin(1, 0).setDepth(DEPTH.content + 10);
     this.time.addEvent({
       delay: 1000,
       loop: true,
@@ -134,11 +126,9 @@ export class OnlineLobbyScene extends Phaser.Scene {
     this.oppPanelTexts = [];
     this.myPerkLabel = null;
     this.readyBtn = null;
-    this.readyLbl = null;
     this.startBtn = null;
-    this.startLbl = null;
-    this.pvpBtn = null;
-    this.coopBtn = null;
+    this.pvpPaint = null;
+    this.coopPaint = null;
     this.diffLabel = null;
     this.oppPanelHeader = null;
     this.tileByElement.clear();
@@ -151,17 +141,17 @@ export class OnlineLobbyScene extends Phaser.Scene {
     const cx = width / 2;
 
     this.addPhaseText(cx, 150, 'Battle a friend — one of you hosts, the other joins with the room code.', {
-      fontSize: '16px', fontFamily: 'Arial, sans-serif', color: '#8899aa',
+      fontSize: '16px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#8899aa',
     }).setOrigin(0.5);
 
-    this.makeButton(cx, 260, 300, 74, 'HOST GAME', 0x113322, 0x44cc44, () => {
+    this.makeButton(cx, 260, 300, 74, 'HOST GAME', C.verdant, () => {
       Net.host();
       this.showHosting();
-    });
-    this.makeButton(cx, 360, 300, 74, 'JOIN GAME', 0x112233, 0x4488ff, () => {
+    }, '🏠');
+    this.makeButton(cx, 360, 300, 74, 'JOIN GAME', C.frost, () => {
       this.showJoining();
-    });
-    this.makeButton(cx, height - 60, 200, 48, 'BACK', 0x222233, 0x666688, () => {
+    }, '🔑');
+    this.makeButton(cx, height - 60, 200, 48, 'BACK', C.steel, () => {
       Net.disconnect();
       this.scene.start('TitleScene');
     });
@@ -174,25 +164,25 @@ export class OnlineLobbyScene extends Phaser.Scene {
     const cx = width / 2;
 
     this.addPhaseText(cx, 170, 'ROOM CODE', {
-      fontSize: '18px', fontFamily: 'Arial, sans-serif', color: '#8899aa',
+      fontSize: '18px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#8899aa',
     }).setOrigin(0.5);
 
     const codeText = this.addPhaseText(cx, 235, Net.roomCode ?? '····', {
       fontSize: '72px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#ffcc00',
-      stroke: '#664400',
+      fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+      color: hex(mix(C.gold, 0xffffff, 0.3)),
+      stroke: hex(mix(C.gold, 0x000000, 0.75)),
       strokeThickness: 5,
       letterSpacing: 18,
     } as Phaser.Types.GameObjects.Text.TextStyle).setOrigin(0.5);
 
     const waiting = this.addPhaseText(cx, 330, 'Waiting for a challenger', {
-      fontSize: '20px', fontFamily: 'Arial, sans-serif', color: '#44ccaa',
+      fontSize: '20px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#44ccaa',
     }).setOrigin(0.5);
     this.tweens.add({ targets: waiting, alpha: 0.35, duration: 700, yoyo: true, repeat: -1 });
 
     this.addPhaseText(cx, 380, 'Your friend picks JOIN GAME and types this code.', {
-      fontSize: '14px', fontFamily: 'Arial, sans-serif', color: '#667788',
+      fontSize: '14px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#667788',
     }).setOrigin(0.5);
 
     // Room code may not be claimed yet — refresh once it is.
@@ -208,7 +198,7 @@ export class OnlineLobbyScene extends Phaser.Scene {
       });
     }
 
-    this.makeButton(cx, height - 60, 200, 48, 'CANCEL', 0x222233, 0x666688, () => {
+    this.makeButton(cx, height - 60, 200, 48, 'CANCEL', C.steel, () => {
       Net.disconnect();
       this.showEntry();
     });
@@ -221,14 +211,14 @@ export class OnlineLobbyScene extends Phaser.Scene {
     const cx = width / 2;
 
     this.addPhaseText(cx, 170, 'ENTER ROOM CODE', {
-      fontSize: '18px', fontFamily: 'Arial, sans-serif', color: '#8899aa',
+      fontSize: '18px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#8899aa',
     }).setOrigin(0.5);
 
-    const codeBox = this.add.rectangle(cx, 245, 320, 90, 0x141428).setStrokeStyle(3, 0x4488ff);
+    const codeBox = addWell(this, cx, 245, 330, 92, C.frost, DEPTH.panel, 10);
     this.phaseObjects.push(codeBox);
     const codeText = this.addPhaseText(cx, 245, '', {
       fontSize: '56px',
-      fontFamily: '"Arial Black", sans-serif',
+      fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
       color: '#ffffff',
       letterSpacing: 14,
     } as Phaser.Types.GameObjects.Text.TextStyle).setOrigin(0.5).setName('joinCodeText');
@@ -237,15 +227,15 @@ export class OnlineLobbyScene extends Phaser.Scene {
     refresh();
 
     this.addPhaseText(cx, 315, 'Type the 4-letter code, then press ENTER', {
-      fontSize: '14px', fontFamily: 'Arial, sans-serif', color: '#667788',
+      fontSize: '14px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#667788',
     }).setOrigin(0.5);
 
     this.addPhaseText(cx, 350, '', {
-      fontSize: '15px', fontFamily: 'Arial, sans-serif', color: '#ff5555',
+      fontSize: '15px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#ff5555',
     }).setOrigin(0.5).setName('joinErrorText');
 
-    this.makeButton(cx, 425, 240, 56, 'JOIN', 0x112233, 0x4488ff, () => this.tryJoin());
-    this.makeButton(cx, height - 60, 200, 48, 'BACK', 0x222233, 0x666688, () => {
+    this.makeButton(cx, 425, 240, 56, 'JOIN', C.frost, () => this.tryJoin(), '▶');
+    this.makeButton(cx, height - 60, 200, 48, 'BACK', C.steel, () => {
       Net.disconnect();
       this.showEntry();
     });
@@ -284,48 +274,55 @@ export class OnlineLobbyScene extends Phaser.Scene {
     this.mySel.ready = false;
 
     this.addPhaseText(cx, 92, `ROOM ${Net.roomCode ?? ''}   —   ${Net.isHost ? 'you are hosting' : 'joined as challenger'}`, {
-      fontSize: '15px', fontFamily: 'Arial, sans-serif', color: '#8899aa',
+      fontSize: '15px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#8899aa',
     }).setOrigin(0.5);
 
     // ── Match mode + invasion difficulty (host-controlled) ──────────
-    this.pvpBtn = this.add.rectangle(cx - 110, 122, 130, 26, 0x113322, 0.9).setStrokeStyle(2, 0x44cc44);
-    const pvpLbl = this.add.text(cx - 110, 122, '⚔ PVP', {
-      fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#ffffff',
-    }).setOrigin(0.5);
-    this.coopBtn = this.add.rectangle(cx + 30, 122, 140, 26, 0x221133, 0.9).setStrokeStyle(2, 0x8866cc);
-    const coopLbl = this.add.text(cx + 30, 122, '🧟 CO-OP', {
-      fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#ffffff',
-    }).setOrigin(0.5);
-    this.phaseObjects.push(this.pvpBtn, pvpLbl, this.coopBtn, coopLbl);
-    if (Net.isHost) {
-      this.pvpBtn.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.setRoomMode('pvp'));
-      this.coopBtn.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.setRoomMode('invasion'));
-    }
+    const modeTile = (x: number, w: number, label: string, accent: number, onPick: () => void) => {
+      const plate = addCardPlate(this, { x, y: 122, w, h: 28, accent, cut: 8 });
+      this.add.text(x, 122, label, {
+        fontSize: '12px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 1,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+      this.phaseObjects.push(plate.g);
+      if (Net.isHost) {
+        const hit = this.add.rectangle(x, 122, w, 28, 0xffffff, 0)
+          .setDepth(DEPTH.content + 1)
+          .setInteractive({ useHandCursor: true })
+          .on('pointerdown', onPick);
+        this.phaseObjects.push(hit);
+      }
+      return plate.paint;
+    };
+    this.pvpPaint = modeTile(cx - 110, 130, '⚔ PVP', C.verdant, () => this.setRoomMode('pvp'));
+    this.coopPaint = modeTile(cx + 30, 140, '🧟 CO-OP', C.arcane, () => this.setRoomMode('invasion'));
+
     const diffArrow = (x: number, dir: -1 | 1) => {
       const a = this.add.text(x, 122, dir < 0 ? '◀' : '▶', {
-        fontSize: '14px', fontFamily: 'Arial, sans-serif', color: '#ffffff',
-      }).setOrigin(0.5);
+        fontSize: '13px', fontFamily: FONT_DISPLAY, color: T.dim,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
       this.phaseObjects.push(a);
       if (Net.isHost) {
-        a.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.cycleInvasionDifficulty(dir));
+        a.setInteractive({ useHandCursor: true })
+          .on('pointerover', () => a.setColor(T.bright))
+          .on('pointerout', () => a.setColor(T.dim))
+          .on('pointerdown', () => this.cycleInvasionDifficulty(dir));
       }
       return a;
     };
     diffArrow(cx + 150, -1);
     diffArrow(cx + 250, 1);
     this.diffLabel = this.addPhaseText(cx + 200, 122, '', {
-      fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc88',
+      fontSize: '12px', fontFamily: FONT_DISPLAY, color: T.gold, letterSpacing: 1,
     }).setOrigin(0.5);
 
     // ── My panel (left) ─────────────────────────────
     const panelY = 148;
     const panelH = 400;
-    const myPanel = this.add.rectangle(250, panelY + panelH / 2, 460, panelH, PANEL_BG, 0.9)
-      .setStrokeStyle(2, ACCENT);
-    this.phaseObjects.push(myPanel);
-    this.addPhaseText(250, panelY + 18, 'YOUR LOADOUT', {
-      fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#44ccaa',
-    }).setOrigin(0.5);
+    const myPanel = addPanel(this, {
+      x: 250, y: panelY + panelH / 2, w: 460, h: panelH,
+      accent: ACCENT, title: 'YOUR LOADOUT', glow: 0.35,
+    });
+    this.phaseObjects.push(...myPanel.objects);
 
     // Element grid — every element this save has unlocked (dummy excluded).
     // Compact 8-wide tiles so even a fully-unlocked save (30 elements, 4 rows)
@@ -344,29 +341,34 @@ export class OnlineLobbyScene extends Phaser.Scene {
       const bx = gx0 + col * (tile + gap);
       const by = gy0 + row * (tile + gap);
 
-      const rect = this.add.rectangle(bx, by, tile, tile, el.color, 0.28)
-        .setStrokeStyle(2, el.color)
-        .setInteractive({ useHandCursor: true });
-      const emoji = this.add.text(bx, by - 7, el.emoji, { fontSize: '19px' }).setOrigin(0.5);
+      const plate = addCardPlate(this, {
+        x: bx, y: by, w: tile, h: tile, accent: el.color, cut: 9,
+      });
+      const emoji = this.add.text(bx, by - 7, el.emoji, { fontSize: '19px' })
+        .setOrigin(0.5).setDepth(DEPTH.content);
       const name = this.add.text(bx, by + 15, el.name, {
-        fontSize: '8px', fontFamily: 'Arial, sans-serif', color: '#ccddee',
-      }).setOrigin(0.5);
-      this.phaseObjects.push(rect, emoji, name);
-      this.tileByElement.set(el.id, { rect, color: el.color });
+        fontSize: '8px', fontFamily: FONT_UI, color: T.normal,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
 
-      rect.on('pointerover', () => { if (this.mySel.elementId !== el.id) rect.setFillStyle(el.color, 0.5); });
-      rect.on('pointerout', () => { if (this.mySel.elementId !== el.id) rect.setFillStyle(el.color, 0.28); });
-      rect.on('pointerdown', () => this.pickElement(el.id));
+      const hit = this.add.rectangle(bx, by, tile, tile, 0xffffff, 0)
+        .setDepth(DEPTH.content + 1)
+        .setInteractive({ useHandCursor: true });
+      this.phaseObjects.push(plate.g, emoji, name, hit);
+      this.tileByElement.set(el.id, { paint: plate.paint });
+
+      hit.on('pointerover', () => { if (this.mySel.elementId !== el.id) plate.paint('hover'); });
+      hit.on('pointerout', () => { if (this.mySel.elementId !== el.id) plate.paint('idle'); });
+      hit.on('pointerdown', () => this.pickElement(el.id));
     });
 
     // Perk cycler
     const perkY = panelY + panelH - 84;
     this.addPhaseText(250, perkY - 22, 'PERK', {
-      fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#8899aa',
+      fontSize: '12px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#8899aa',
     }).setOrigin(0.5);
     const mkArrow = (x: number, dir: -1 | 1) => {
       const a = this.add.text(x, perkY, dir < 0 ? '◀' : '▶', {
-        fontSize: '22px', fontFamily: 'Arial, sans-serif', color: '#ffffff',
+        fontSize: '22px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#ffffff',
       }).setOrigin(0.5).setInteractive({ useHandCursor: true });
       a.on('pointerover', () => a.setColor('#ffcc00'));
       a.on('pointerout', () => a.setColor('#ffffff'));
@@ -376,56 +378,55 @@ export class OnlineLobbyScene extends Phaser.Scene {
     mkArrow(250 - 150, -1);
     mkArrow(250 + 150, 1);
     this.myPerkLabel = this.addPhaseText(250, perkY, '—', {
-      fontSize: '15px', fontFamily: 'Arial, sans-serif', color: '#ffcc88',
+      fontSize: '15px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#ffcc88',
     }).setOrigin(0.5);
 
     // Ready button
-    this.readyBtn = this.add.rectangle(250, panelY + panelH - 30, 220, 44, 0x333311)
-      .setStrokeStyle(2, 0xcccc44)
-      .setInteractive({ useHandCursor: true });
-    this.readyLbl = this.add.text(250, panelY + panelH - 30, 'READY UP', {
-      fontSize: '18px', fontFamily: '"Arial Black", sans-serif', color: '#ffff88',
-    }).setOrigin(0.5);
-    this.phaseObjects.push(this.readyBtn, this.readyLbl);
-    this.readyBtn.on('pointerdown', () => this.toggleReady());
+    this.readyBtn = addButton(this, {
+      x: 250, y: panelY + panelH - 32, w: 230, h: 46,
+      label: 'READY UP', accent: C.gold, variant: 'solid', fontSize: 17,
+      onClick: () => this.toggleReady(),
+    });
+    this.phaseObjects.push(this.readyBtn.container);
 
     // ── Opponent panel (right) ──────────────────────
-    const oppPanel = this.add.rectangle(710, panelY + panelH / 2, 400, panelH, PANEL_BG, 0.9)
-      .setStrokeStyle(2, 0x8866cc);
-    this.phaseObjects.push(oppPanel);
-    this.oppPanelHeader = this.addPhaseText(710, panelY + 18, 'OPPONENT', {
-      fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#aa88ee',
+    const oppPanel = addPanel(this, {
+      x: 710, y: panelY + panelH / 2, w: 400, h: panelH,
+      accent: C.arcane, glow: 0.35,
+    });
+    this.phaseObjects.push(...oppPanel.objects);
+    this.oppPanelHeader = this.addPhaseText(710, panelY + 22, 'OPPONENT', {
+      fontSize: '16px', fontFamily: FONT_DISPLAY,
+      color: hex(mix(C.arcane, 0xffffff, 0.5)), letterSpacing: 3,
     }).setOrigin(0.5);
 
     const oppEmoji = this.addPhaseText(710, panelY + 150, '❔', { fontSize: '72px' }).setOrigin(0.5);
     const oppName = this.addPhaseText(710, panelY + 225, 'Choosing…', {
-      fontSize: '22px', fontFamily: '"Arial Black", sans-serif', color: '#ffffff',
+      fontSize: '22px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffffff',
     }).setOrigin(0.5);
     const oppPerk = this.addPhaseText(710, panelY + 260, '', {
-      fontSize: '14px', fontFamily: 'Arial, sans-serif', color: '#ffcc88',
+      fontSize: '14px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#ffcc88',
     }).setOrigin(0.5);
     const oppReady = this.addPhaseText(710, panelY + panelH - 30, 'NOT READY', {
-      fontSize: '18px', fontFamily: '"Arial Black", sans-serif', color: '#886666',
+      fontSize: '18px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#886666',
     }).setOrigin(0.5);
     this.oppPanelTexts = [oppEmoji, oppName, oppPerk, oppReady];
 
     // ── Bottom bar: start / leave ───────────────────
     if (Net.isHost) {
-      this.startBtn = this.add.rectangle(cx + 110, height - 52, 300, 54, 0x113322)
-        .setStrokeStyle(3, 0x44cc44)
-        .setInteractive({ useHandCursor: true });
-      this.startLbl = this.add.text(cx + 110, height - 52, '⚔  START BATTLE', {
-        fontSize: '20px', fontFamily: '"Arial Black", sans-serif', color: '#88ff88',
-      }).setOrigin(0.5);
-      this.phaseObjects.push(this.startBtn, this.startLbl);
-      this.startBtn.on('pointerdown', () => this.hostStart());
+      this.startBtn = addButton(this, {
+        x: cx + 110, y: height - 52, w: 300, h: 56,
+        label: 'START BATTLE', icon: '⚔', accent: C.verdant, variant: 'solid', fontSize: 19,
+        onClick: () => this.hostStart(),
+      });
+      this.phaseObjects.push(this.startBtn.container);
     } else {
       this.addPhaseText(cx + 110, height - 52, 'The host starts the battle when both players are ready.', {
-        fontSize: '13px', fontFamily: 'Arial, sans-serif', color: '#667788',
+        fontSize: '13px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#667788',
       }).setOrigin(0.5);
     }
 
-    this.makeButton(120, height - 52, 160, 48, 'LEAVE', 0x331111, 0xcc4444, () => {
+    this.makeButton(120, height - 52, 160, 48, 'LEAVE', C.blood, () => {
       Net.disconnect();
       this.showEntry();
     });
@@ -499,25 +500,18 @@ export class OnlineLobbyScene extends Phaser.Scene {
     if (this.phase !== 'room') return;
 
     // Element tile highlight
-    for (const [id, { rect, color }] of this.tileByElement) {
-      if (!rect.active) continue;
-      const selected = id === this.mySel.elementId;
-      rect.setStrokeStyle(selected ? 4 : 2, selected ? 0xffffff : color);
-      rect.setFillStyle(color, selected ? 0.6 : 0.28);
+    for (const [id, tile] of this.tileByElement) {
+      tile.paint(id === this.mySel.elementId ? 'active' : 'idle');
     }
 
     if (this.myPerkLabel?.active) {
       this.myPerkLabel.setText(this.perkList[this.perkIdx]?.name ?? '—');
     }
 
-    if (this.readyBtn?.active && this.readyLbl?.active) {
-      if (this.mySel.ready) {
-        this.readyBtn.setFillStyle(0x115511).setStrokeStyle(2, 0x44ff44);
-        this.readyLbl.setText('✔ READY').setColor('#66ff66');
-      } else {
-        this.readyBtn.setFillStyle(0x333311).setStrokeStyle(2, 0xcccc44);
-        this.readyLbl.setText('READY UP').setColor('#ffff88');
-      }
+    if (this.readyBtn) {
+      this.readyBtn
+        .setLabel(this.mySel.ready ? '✔ READY' : 'READY UP')
+        .setAccent(this.mySel.ready ? C.verdant : C.gold);
     }
 
     // Opponent panel
@@ -542,20 +536,17 @@ export class OnlineLobbyScene extends Phaser.Scene {
       }
     }
 
-    // Start button state (host only)
-    if (this.startBtn?.active && this.startLbl?.active) {
+    // Start button state (host only) — disabled until both sides are locked in.
+    if (this.startBtn) {
       const canStart = this.mySel.ready && this.oppSel.ready && !!this.mySel.elementId && !!this.oppSel.elementId && this.oppInLobby;
-      this.startBtn.setAlpha(canStart ? 1 : 0.35);
-      this.startLbl.setAlpha(canStart ? 1 : 0.35);
+      this.startBtn.setDisabled(!canStart);
     }
 
     // Match mode + invasion difficulty
-    if (this.pvpBtn?.active && this.coopBtn?.active) {
+    if (this.pvpPaint && this.coopPaint) {
       const isCoop = this.roomMode === 'invasion';
-      this.pvpBtn.setStrokeStyle(isCoop ? 2 : 3, isCoop ? 0x336633 : 0x88ff88);
-      this.pvpBtn.setFillStyle(0x113322, isCoop ? 0.5 : 0.9);
-      this.coopBtn.setStrokeStyle(isCoop ? 3 : 2, isCoop ? 0xbb99ff : 0x442266);
-      this.coopBtn.setFillStyle(0x221133, isCoop ? 0.9 : 0.5);
+      this.pvpPaint(isCoop ? 'idle' : 'active');
+      this.coopPaint(isCoop ? 'active' : 'idle');
     }
     if (this.diffLabel?.active) {
       const diff = INVASION_DIFFICULTIES.find((d) => d.id === this.roomInvasionDifficulty) ?? INVASION_DIFFICULTIES[0];
@@ -712,21 +703,8 @@ export class OnlineLobbyScene extends Phaser.Scene {
 
   private toast(msg: string): void {
     this.toastText?.destroy();
-    const { width } = this.scale;
-    this.toastText = this.add.text(width / 2, 605, msg, {
-      fontSize: '15px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#ffee88',
-      stroke: '#553300',
-      strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(60);
-    this.tweens.add({
-      targets: this.toastText,
-      alpha: 0,
-      delay: 2600,
-      duration: 700,
-      onComplete: () => { this.toastText?.destroy(); this.toastText = null; },
-    });
+    this.toastText = null;
+    showToast(this, msg, { accent: C.gold, y: this.scale.height - 34 });
   }
 
   private addPhaseText(x: number, y: number, text: string, style: Phaser.Types.GameObjects.Text.TextStyle): Phaser.GameObjects.Text {
@@ -735,17 +713,17 @@ export class OnlineLobbyScene extends Phaser.Scene {
     return t;
   }
 
-  private makeButton(x: number, y: number, w: number, h: number, label: string, fill: number, border: number, onClick: () => void): void {
-    const rect = this.add.rectangle(x, y, w, h, fill, 0.9).setStrokeStyle(2, border).setInteractive({ useHandCursor: true });
-    const lbl = this.add.text(x, y, label, {
-      fontSize: `${Math.min(22, h - 26)}px`,
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#ffffff',
-    }).setOrigin(0.5);
-    rect
-      .on('pointerover', () => { rect.setAlpha(1); rect.setStrokeStyle(3, 0xffffff); })
-      .on('pointerout', () => { rect.setAlpha(0.9); rect.setStrokeStyle(2, border); })
-      .on('pointerdown', onClick);
-    this.phaseObjects.push(rect, lbl);
+  /** Phase-scoped button — torn down with the rest of the phase. */
+  private makeButton(
+    x: number, y: number, w: number, h: number,
+    label: string, accent: number, onClick: () => void, icon?: string,
+  ): void {
+    const btn = addButton(this, {
+      x, y, w, h, label, icon, accent,
+      variant: h >= 60 ? 'solid' : 'ghost',
+      fontSize: Math.min(21, h - 26),
+      onClick,
+    });
+    this.phaseObjects.push(btn.container);
   }
 }

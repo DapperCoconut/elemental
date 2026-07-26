@@ -208,7 +208,7 @@ export class StatusHudKit {
       const icon = scene.add.text(0, 0, '', { fontSize: '18px' })
         .setOrigin(0.5).setDepth(DEPTH_ICON).setScrollFactor(0).setVisible(false);
       const count = scene.add.text(0, 0, '', {
-        fontSize: '10px', fontFamily: '"Arial Black", sans-serif',
+        fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
         color: '#ffffff', stroke: '#000000', strokeThickness: 3,
       }).setOrigin(1, 1).setDepth(DEPTH_COUNT).setScrollFactor(0).setVisible(false);
 
@@ -249,10 +249,10 @@ export class StatusHudKit {
       .setOrigin(0, 0).setStrokeStyle(2, 0x445577)
       .setDepth(DEPTH_TIP_PANEL).setScrollFactor(0).setVisible(false);
     this.tipTitle = scene.add.text(0, 0, '', {
-      fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#ffffff',
+      fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffffff',
     }).setOrigin(0, 0).setDepth(DEPTH_TIP_TEXT).setScrollFactor(0).setVisible(false);
     this.tipTimer = scene.add.text(0, 0, '', {
-      fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#ffdd66',
+      fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffdd66',
     }).setOrigin(0, 0).setDepth(DEPTH_TIP_TEXT).setScrollFactor(0).setVisible(false);
     this.tipBody = scene.add.text(0, 0, '', {
       fontSize: '11px', color: '#bbccdd', wordWrap: { width: TIP_W - TIP_PAD * 2 },

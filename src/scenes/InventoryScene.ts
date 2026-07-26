@@ -1,13 +1,20 @@
 import Phaser from 'phaser';
 import * as CP from '../data/CampaignProgress';
 import { ITEMS, getItem, consumedItemIds } from '../data/Items';
+import {
+  C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
+  addButton, addChip, addIconButton, addPanel, addRowPlate, addWell, addBody, fillDiamond,
+} from '../ui';
 
-const PANEL_COLOR = 0x222233;
-const PANEL_STROKE = 0x555566;
-const ROW_H = 72;
+const ACCENT = 0x2ee6c0;
+const ROW_H = 74;
 const ROW_PAD = 8;
 const VISIBLE_ROWS = 7;
 
+/**
+ * Slide-over item drawer. Occupies the right half of the screen; the left half
+ * is dimmed and click-to-close, so the campaign map stays visible behind it.
+ */
 export class InventoryScene extends Phaser.Scene {
   private slotIdx: 0 | 1 | 2 = 0;
   private callerKey = 'CampaignWorldMapScene';
@@ -16,11 +23,9 @@ export class InventoryScene extends Phaser.Scene {
   private panelW = 0;
 
   private rowContainer!: Phaser.GameObjects.Container;
-  private detailGroup!: Phaser.GameObjects.GameObject[];
-  private listGroup!: Phaser.GameObjects.GameObject[];
+  private detailGroup: Phaser.GameObjects.GameObject[] = [];
   private scrollOffset = 0;
   private totalRows = 0;
-  private maskGraphics!: Phaser.GameObjects.Graphics;
 
   constructor() {
     super({ key: 'InventoryScene' });
@@ -33,69 +38,70 @@ export class InventoryScene extends Phaser.Scene {
 
   create(): void {
     const { width, height } = this.scale;
-    this.panelW = Math.floor(width * 0.5);
+    this.panelW = Math.floor(width * 0.52);
     this.panelX = width - this.panelW;
     this.scrollOffset = 0;
+    this.detailGroup = [];
 
-    // Dim left half
-    this.add.rectangle(this.panelX / 2, height / 2, this.panelX, height, 0x000000, 0.45)
-      .setDepth(0)
+    // Dim + close on the exposed left side
+    this.add.rectangle(this.panelX / 2, height / 2, this.panelX, height, 0x03030a, 0.6)
+      .setDepth(DEPTH.overlay)
       .setInteractive()
       .on('pointerdown', () => this.close());
 
-    // Panel background
-    this.add.rectangle(this.panelX + this.panelW / 2, height / 2, this.panelW, height, PANEL_COLOR, 1)
-      .setStrokeStyle(2, PANEL_STROKE)
-      .setDepth(1);
+    // Drawer plate — square on the right edge so it reads as attached to it.
+    addPanel(this, {
+      x: this.panelX + this.panelW / 2, y: height / 2,
+      w: this.panelW, h: height,
+      accent: ACCENT,
+      corners: [true, false, false, true],
+      cut: 24,
+      depth: DEPTH.overlay + 1,
+      glow: 0.5,
+      title: '🎒  INVENTORY',
+      subtitle: 'ITEMS APPLY TO YOUR NEXT MATCH',
+    });
 
-    // Title
-    this.add.text(this.panelX + this.panelW / 2, 24, '🎒  INVENTORY', {
-      fontSize: '22px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#ccccdd',
-      stroke: '#000000',
-      strokeThickness: 2,
-    }).setOrigin(0.5, 0.5).setDepth(2);
+    addChip(this, {
+      x: width - 20, y: 30, icon: '⚡', value: `${CP.getSparks(this.slotIdx)}`,
+      accent: ACCENT, originX: 1, depth: DEPTH.overlay + 3,
+    });
 
-    // Spark counter
-    const sparks = CP.getSparks(this.slotIdx);
-    this.add.text(this.panelX + this.panelW - 12, 24, `⚡  ${sparks}`, {
-      fontSize: '14px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#55ffcc',
-    }).setOrigin(1, 0.5).setDepth(2);
+    addIconButton(this, {
+      x: this.panelX + 32, y: 30, r: 16, icon: '✕', accent: C.steel,
+      depth: DEPTH.overlay + 3, tooltip: 'Close',
+      onClick: () => this.close(),
+    });
 
-    // Divider
-    const divGfx = this.add.graphics().setDepth(2);
-    divGfx.lineStyle(1, 0x444455, 1);
-    divGfx.lineBetween(this.panelX + 8, 44, width - 8, 44);
-
-    // Close / ESC
     this.input.keyboard!.on('keydown-ESC', () => this.close());
 
-    // Scroll
     this.input.on('wheel', (_ptr: unknown, _objs: unknown, _dx: number, dy: number) => {
-      if (this.detailGroup) return;
+      if (this.detailGroup.length > 0) return;
       this.scrollOffset = Phaser.Math.Clamp(
         this.scrollOffset + dy * 0.5,
         0,
-        Math.max(0, this.totalRows * ROW_H - VISIBLE_ROWS * ROW_H),
+        Math.max(0, this.totalRows * (ROW_H + ROW_PAD) - VISIBLE_ROWS * (ROW_H + ROW_PAD)),
       );
-      this.rebuildList();
+      this.buildList();
     });
 
     this.buildList();
   }
 
+  private get listY(): number { return 74; }
+
   private buildList(): void {
-    const { width, height } = this.scale;
-    const listY = 52;
-    const listH = height - listY - 8;
+    const { height } = this.scale;
+    const listY = this.listY;
+    const listH = height - listY - 14;
 
     if (this.rowContainer) this.rowContainer.destroy();
-    this.rowContainer = this.add.container(0, 0).setDepth(3);
 
-    const maskGfx = this.add.graphics();
+    addWell(this, this.panelX + this.panelW / 2, listY + listH / 2, this.panelW - 20, listH, ACCENT, DEPTH.overlay + 2);
+
+    this.rowContainer = this.add.container(0, 0).setDepth(DEPTH.overlay + 3);
+    const maskGfx = this.make.graphics({}, false);
+    maskGfx.fillStyle(0xffffff, 1);
     maskGfx.fillRect(this.panelX, listY, this.panelW, listH);
     this.rowContainer.setMask(maskGfx.createGeometryMask());
 
@@ -104,147 +110,140 @@ export class InventoryScene extends Phaser.Scene {
     this.totalRows = ownedItems.length;
 
     if (ownedItems.length === 0) {
-      const empty = this.add.text(this.panelX + this.panelW / 2, listY + 60, 'No items yet.\nBuy some in the World Shop!', {
-        fontSize: '15px',
-        fontFamily: 'Arial, sans-serif',
-        color: '#555566',
-        align: 'center',
-      }).setOrigin(0.5, 0).setDepth(3);
+      const empty = this.add.text(this.panelX + this.panelW / 2, listY + 80,
+        'Nothing in the bag.\n\nWorld Shops trade items for ⚡ Sparks.', {
+          fontSize: '14px', fontFamily: FONT_UI, color: T.faint, align: 'center', lineSpacing: 6,
+        }).setOrigin(0.5, 0);
       this.rowContainer.add(empty);
       return;
     }
 
     ownedItems.forEach((def, i) => {
-      const y = listY + i * (ROW_H + ROW_PAD) - this.scrollOffset;
+      const y = listY + 8 + i * (ROW_H + ROW_PAD) - this.scrollOffset;
       const count = inventory[def.id] ?? 0;
       const alreadyActive = consumedItemIds.has(def.id);
+      const rowCx = this.panelX + this.panelW / 2;
+      const rowW = this.panelW - 36;
 
-      const bg = this.add.rectangle(
-        this.panelX + this.panelW / 2, y + ROW_H / 2,
-        this.panelW - 16, ROW_H,
-        0x1a1a2e, 1,
-      ).setStrokeStyle(1, alreadyActive ? 0x4488aa : 0x333355)
+      const row = addRowPlate(this, {
+        x: rowCx, y: y + ROW_H / 2, w: rowW, h: ROW_H,
+        accent: alreadyActive ? C.frost : ACCENT,
+        depth: DEPTH.overlay + 3,
+      });
+
+      const hit = this.add.rectangle(rowCx, y + ROW_H / 2, rowW, ROW_H, 0xffffff, 0)
         .setInteractive({ useHandCursor: true })
-        .on('pointerover', () => bg.setFillStyle(0x252540))
-        .on('pointerout', () => bg.setFillStyle(0x1a1a2e))
+        .on('pointerover', () => row.paint(true))
+        .on('pointerout', () => row.paint(false))
         .on('pointerdown', () => this.openDetail(def.id));
 
-      const emojiTxt = this.add.text(this.panelX + 20, y + ROW_H / 2, def.emoji, {
-        fontSize: '28px',
-      }).setOrigin(0, 0.5);
+      const left = rowCx - rowW / 2;
+      const objs: Phaser.GameObjects.GameObject[] = [
+        row.g,
+        this.add.text(left + 26, y + ROW_H / 2, def.emoji, { fontSize: '28px' }).setOrigin(0.5),
+        this.add.text(left + 52, y + ROW_H / 2 - 13, def.name, {
+          fontSize: '15px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 0.5,
+        }).setOrigin(0, 0.5),
+        this.add.text(left + 52, y + ROW_H / 2 + 11, def.shortDesc, {
+          fontSize: '11px', fontFamily: FONT_UI, color: T.dim,
+          wordWrap: { width: rowW - 140 },
+        }).setOrigin(0, 0.5),
+        this.add.text(left + rowW - 18, y + ROW_H / 2 - 11, `×${count}`, {
+          fontSize: '17px', fontFamily: FONT_DISPLAY, color: T.gold,
+        }).setOrigin(1, 0.5),
+        hit,
+      ];
 
-      const nameTxt = this.add.text(this.panelX + 58, y + ROW_H / 2 - 12, def.name, {
-        fontSize: '14px',
-        fontFamily: '"Arial Black", sans-serif',
-        color: '#ccccdd',
-      }).setOrigin(0, 0.5);
+      if (alreadyActive) {
+        objs.push(this.add.text(left + rowW - 18, y + ROW_H / 2 + 12, '✓ ACTIVE', {
+          fontSize: '10px', fontFamily: FONT_DISPLAY, color: hex(mix(C.frost, 0xffffff, 0.3)), letterSpacing: 1,
+        }).setOrigin(1, 0.5));
+      }
 
-      const descTxt = this.add.text(this.panelX + 58, y + ROW_H / 2 + 10, def.shortDesc, {
-        fontSize: '11px',
-        fontFamily: 'Arial, sans-serif',
-        color: '#888899',
-      }).setOrigin(0, 0.5);
-
-      const countTxt = this.add.text(
-        this.panelX + this.panelW - 24, y + ROW_H / 2 - 8,
-        `×${count}`,
-        { fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc44' },
-      ).setOrigin(1, 0.5);
-
-      const statusTxt = alreadyActive
-        ? this.add.text(this.panelX + this.panelW - 24, y + ROW_H / 2 + 10, '✓ Active', {
-            fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#55aacc',
-          }).setOrigin(1, 0.5)
-        : null;
-
-      const objs: Phaser.GameObjects.GameObject[] = [bg, emojiTxt, nameTxt, descTxt, countTxt];
-      if (statusTxt) objs.push(statusTxt);
       this.rowContainer.add(objs);
     });
 
-    void width;
+    if (this.totalRows > VISIBLE_ROWS) {
+      const hint = this.add.text(this.panelX + this.panelW - 20, this.scale.height - 20, 'scroll ▼', {
+        fontSize: '9px', fontFamily: FONT_UI, color: T.ghost, letterSpacing: 1,
+      }).setOrigin(1, 1);
+      this.rowContainer.add(hint);
+    }
   }
 
-  private rebuildList(): void {
-    this.buildList();
-  }
-
+  /** Full-drawer detail view for one item, with the USE action. */
   private openDetail(itemId: string): void {
     const def = getItem(itemId);
     if (!def) return;
-    const { width, height } = this.scale;
+    const { height } = this.scale;
     const cx = this.panelX + this.panelW / 2;
     const midY = height / 2;
 
-    if (this.rowContainer) this.rowContainer.setVisible(false);
+    this.rowContainer?.setVisible(false);
 
     const alreadyActive = consumedItemIds.has(itemId);
     const count = CP.getInventory(this.slotIdx)[itemId] ?? 0;
+    const depth = DEPTH.overlay + 4;
 
-    const emojiTxt = this.add.text(cx, midY - 100, def.emoji, { fontSize: '52px' }).setOrigin(0.5).setDepth(4);
-    const nameTxt = this.add.text(cx, midY - 42, def.name, {
-      fontSize: '22px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#ccccdd',
-    }).setOrigin(0.5).setDepth(4);
-    const descTxt = this.add.text(cx, midY + 10, def.fullDesc, {
-      fontSize: '14px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#aaaaaa',
-      align: 'center',
-      wordWrap: { width: this.panelW - 32 },
-    }).setOrigin(0.5, 0).setDepth(4);
+    // Emblem: the item glyph set in a lit diamond.
+    const emblem = this.add.graphics().setDepth(depth);
+    for (let k = 6; k >= 1; k--) {
+      emblem.fillStyle(ACCENT, 0.04);
+      emblem.fillCircle(cx, midY - 118, 30 + k * 7);
+    }
+    fillDiamond(emblem, cx, midY - 118, 44, mix(C.plate, ACCENT, 0.2), 0.95);
+    emblem.lineStyle(2, ACCENT, 0.7);
+    emblem.strokeCircle(cx, midY - 118, 44);
 
-    const countTxt = this.add.text(cx, midY - 64, `Owned: ${count}`, {
-      fontSize: '13px', fontFamily: 'Arial, sans-serif', color: '#ffcc44',
-    }).setOrigin(0.5).setDepth(4);
+    const objs: Phaser.GameObjects.GameObject[] = [
+      emblem,
+      this.add.text(cx, midY - 118, def.emoji, { fontSize: '44px' }).setOrigin(0.5).setDepth(depth + 1),
+      this.add.text(cx, midY - 52, def.name, {
+        fontSize: '23px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 1.5,
+      }).setOrigin(0.5).setDepth(depth + 1),
+      this.add.text(cx, midY - 26, `OWNED  ×${count}`, {
+        fontSize: '11px', fontFamily: FONT_DISPLAY, color: T.gold, letterSpacing: 2,
+      }).setOrigin(0.5).setDepth(depth + 1),
+      addBody(this, {
+        x: cx, y: midY + 4, text: def.fullDesc, size: 14, color: T.normal,
+        wrap: this.panelW - 80, align: 'center', originX: 0.5, depth: depth + 1,
+      }),
+    ];
 
-    let useBtnRect: Phaser.GameObjects.Rectangle;
-    let useBtnLbl: Phaser.GameObjects.Text;
     if (alreadyActive) {
-      useBtnRect = this.add.rectangle(cx, midY + 110, 160, 44, 0x333344)
-        .setStrokeStyle(2, 0x555566).setDepth(4);
-      useBtnLbl = this.add.text(cx, midY + 110, '✓ Active for next match', {
-        fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#55aacc',
-      }).setOrigin(0.5).setDepth(5);
+      objs.push(addButton(this, {
+        x: cx, y: midY + 116, w: 220, h: 46,
+        label: 'ALREADY ACTIVE', sublabel: 'Takes effect next match',
+        accent: C.frost, variant: 'ghost', fontSize: 14, depth,
+        disabled: true,
+      }).container);
     } else {
-      useBtnRect = this.add.rectangle(cx, midY + 110, 140, 44, 0x441111)
-        .setStrokeStyle(2, 0xcc2222).setDepth(4)
-        .setInteractive({ useHandCursor: true })
-        .on('pointerover', () => useBtnRect.setFillStyle(0x662222))
-        .on('pointerout', () => useBtnRect.setFillStyle(0x441111))
-        .on('pointerdown', () => {
+      objs.push(addButton(this, {
+        x: cx, y: midY + 116, w: 200, h: 52,
+        label: 'USE', icon: '✦', accent: C.verdant, variant: 'solid', fontSize: 20, depth,
+        onClick: () => {
           if (CP.consumeItem(this.slotIdx, itemId)) {
             consumedItemIds.add(itemId);
             this.closeDetail();
           }
-        });
-      useBtnLbl = this.add.text(cx, midY + 110, 'USE', {
-        fontSize: '20px', fontFamily: '"Arial Black", sans-serif', color: '#ff5555',
-      }).setOrigin(0.5).setDepth(5);
+        },
+      }).container);
     }
 
-    const backBtn = this.add.rectangle(cx, midY + 165, 140, 36, 0x222233)
-      .setStrokeStyle(1, 0x444455).setDepth(4)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerover', () => backBtn.setFillStyle(0x333355))
-      .on('pointerout', () => backBtn.setFillStyle(0x222233))
-      .on('pointerdown', () => this.closeDetail());
-    const backLbl = this.add.text(cx, midY + 165, '← BACK', {
-      fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#aaaaaa',
-    }).setOrigin(0.5).setDepth(5);
+    objs.push(addButton(this, {
+      x: cx, y: midY + 176, w: 160, h: 38,
+      label: 'BACK', icon: '◄', variant: 'quiet', accent: C.steel, fontSize: 13, depth,
+      onClick: () => this.closeDetail(),
+    }).container);
 
-    this.detailGroup = [emojiTxt, nameTxt, descTxt, countTxt, useBtnRect, useBtnLbl, backBtn, backLbl];
-    void width;
+    this.detailGroup = objs;
   }
 
   private closeDetail(): void {
-    if (this.detailGroup) {
-      for (const obj of this.detailGroup) obj.destroy();
-      this.detailGroup = [];
-    }
-    if (this.rowContainer) this.rowContainer.setVisible(true);
-    this.rebuildList();
+    for (const obj of this.detailGroup) obj.destroy();
+    this.detailGroup = [];
+    this.rowContainer?.setVisible(true);
+    this.buildList();
   }
 
   private close(): void {
@@ -260,19 +259,12 @@ export function addInventoryButton(
   depth = 10,
 ): void {
   const { width, height } = scene.scale;
-  const x = width - 28;
-  const y = height - 28;
-
-  const btn = scene.add.rectangle(x, y, 44, 44, 0x333344, 1)
-    .setStrokeStyle(1, 0x666677)
-    .setDepth(depth)
-    .setInteractive({ useHandCursor: true })
-    .on('pointerover', () => btn.setFillStyle(0x4a4a5e))
-    .on('pointerout', () => btn.setFillStyle(0x333344))
-    .on('pointerdown', () => {
+  addIconButton(scene, {
+    x: width - 36, y: height - 36, r: 22, icon: '🎒', accent: ACCENT, depth,
+    tooltip: 'Inventory',
+    onClick: () => {
       scene.scene.pause();
       scene.scene.launch('InventoryScene', { slotIdx, callerKey: scene.scene.key });
-    });
-
-  scene.add.text(x, y, '🎒', { fontSize: '20px' }).setOrigin(0.5).setDepth(depth + 1);
+    },
+  });
 }

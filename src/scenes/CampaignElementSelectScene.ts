@@ -4,6 +4,10 @@ import { WORLDS } from '../data/Worlds';
 import * as PlayerData from '../data/PlayerData';
 import { getPerksForElement, getPerkById } from '../data/Perks';
 import {
+  C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
+  addBackdrop, addBackButton, addCardPlate, addPagerButton, addTitle, addWell,
+} from '../ui';
+import {
   GauntletState,
   CampaignGauntletContext,
   GAUNTLET_DIFFICULTY,
@@ -112,36 +116,21 @@ export class CampaignElementSelectScene extends Phaser.Scene {
     const cx = width / 2;
     const world = getAnyWorld(this.worldId);
 
-    this.add.rectangle(cx, height / 2, width, height, 0x0d0d1a);
-    const grid = this.add.graphics();
-    grid.lineStyle(1, 0x1a1a33, 1);
-    for (let x = 0; x < width; x += 60) grid.lineBetween(x, 0, x, height);
-    for (let y = 0; y < height; y += 60) grid.lineBetween(0, y, width, y);
-
-    this.add.text(cx, 60, 'CHOOSE YOUR ELEMENT', {
-      fontSize: '32px', fontFamily: '"Arial Black", sans-serif',
-      color: '#ff8800', stroke: '#ff2200', strokeThickness: 4,
-    }).setOrigin(0.5);
+    const accent = world?.color ?? C.ember;
+    addBackdrop(this, { accent, variant: 'lattice', motes: 18 });
 
     const enemyDef = this.findElement(this.enemyElementId);
-    const worldName = world?.name ?? '';
+    const worldName = (world?.name ?? '').toUpperCase();
     const vsLine = enemyDef
-      ? `${worldName} World  •  vs  ${enemyDef.emoji} ${enemyDef.name}`
-      : worldName + ' World';
-    this.add.text(cx, 102, vsLine, {
-      fontSize: '15px', fontFamily: 'Arial, sans-serif', color: '#888888',
-    }).setOrigin(0.5);
+      ? `${worldName} WORLD   ·   VS  ${enemyDef.emoji} ${enemyDef.name.toUpperCase()}`
+      : `${worldName} WORLD`;
 
-    const backBtn = this.add.rectangle(52, 36, 88, 36, 0x222233)
-      .setStrokeStyle(1, 0x555577).setInteractive({ useHandCursor: true });
-    const backLabel = this.add.text(52, 36, '← BACK', {
-      fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#aaaaaa',
-    }).setOrigin(0.5);
-    backBtn
-      .on('pointerover', () => { backBtn.setFillStyle(0x333355); backLabel.setColor('#ffffff'); })
-      .on('pointerout',  () => { backBtn.setFillStyle(0x222233); backLabel.setColor('#aaaaaa'); })
-      .on('pointerdown', () => this.goBack());
+    addTitle(this, {
+      x: cx, y: 62, text: 'CHOOSE YOUR ELEMENT', accent, size: 34,
+      subtitle: vsLine,
+    });
 
+    addBackButton(this, () => this.goBack());
     this.input.keyboard!.on('keydown-ESC', () => this.goBack());
 
     this.renderElements(width, height, cx);
@@ -182,41 +171,31 @@ export class CampaignElementSelectScene extends Phaser.Scene {
       currentElements = unlockedExtra.slice(start, start + PAGE_SIZE);
     }
 
-    const pageLabel = this.add.text(cx, height / 2 + 155, `${this.elemPage + 1} / ${totalPages}`, {
-      fontSize: '12px', fontFamily: 'Arial, sans-serif', color: '#555566',
-    }).setOrigin(0.5);
+    const pageLabel = this.add.text(cx, height / 2 + 158, `${this.elemPage + 1}  /  ${totalPages}`, {
+      fontSize: '11px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 3,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
     this.phaseObjects.push(pageLabel);
 
     if (this.elemPage > 0) {
-      const leftBtn = this.add.rectangle(28, height / 2 + 20, 32, 64, 0x330066)
-        .setStrokeStyle(1, 0x9944ff).setInteractive({ useHandCursor: true });
-      const leftLbl = this.add.text(28, height / 2 + 20, '◀', {
-        fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
-      }).setOrigin(0.5).setDepth(1);
-      leftBtn
-        .on('pointerover', () => leftBtn.setFillStyle(0x550099))
-        .on('pointerout',  () => leftBtn.setFillStyle(0x330066))
-        .on('pointerdown', () => { this.elemPage--; this.renderElements(width, height, cx); });
-      this.phaseObjects.push(leftBtn, leftLbl);
+      const leftBtn = addPagerButton(this, {
+        x: 32, y: height / 2 + 20, dir: 'left', accent: C.arcane,
+        onClick: () => { this.elemPage--; this.renderElements(width, height, cx); },
+      });
+      this.phaseObjects.push(leftBtn.container);
     }
 
     if (this.elemPage < totalPages - 1 && (this.elemPage > 0 || unlockedExtra.length > 0)) {
-      const rightBtn = this.add.rectangle(width - 28, height / 2 + 20, 32, 64, 0x330066)
-        .setStrokeStyle(1, 0x9944ff).setInteractive({ useHandCursor: true });
-      const rightLbl = this.add.text(width - 28, height / 2 + 20, '▶', {
-        fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
-      }).setOrigin(0.5).setDepth(1);
-      rightBtn
-        .on('pointerover', () => rightBtn.setFillStyle(0x550099))
-        .on('pointerout',  () => rightBtn.setFillStyle(0x330066))
-        .on('pointerdown', () => { this.elemPage++; this.renderElements(width, height, cx); });
-      this.phaseObjects.push(rightBtn, rightLbl);
+      const rightBtn = addPagerButton(this, {
+        x: width - 32, y: height / 2 + 20, dir: 'right', accent: C.arcane,
+        onClick: () => { this.elemPage++; this.renderElements(width, height, cx); },
+      });
+      this.phaseObjects.push(rightBtn.container);
     }
 
     if (this.elemPage > 0 && currentElements.length === 0) {
       const noElems = this.add.text(cx, height / 2 + 20, 'No extra elements discovered yet.\nVisit the LAB to unlock combined elements.', {
-        fontSize: '14px', fontFamily: 'Arial, sans-serif', color: '#555577', align: 'center',
-      }).setOrigin(0.5);
+        fontSize: '14px', fontFamily: FONT_UI, color: T.faint, align: 'center', lineSpacing: 6,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
       this.phaseObjects.push(noElems);
       return;
     }
@@ -231,33 +210,44 @@ export class CampaignElementSelectScene extends Phaser.Scene {
       const bx = startX + i * (cardW + gap) + cardW / 2;
       const by = height / 2 + 20;
 
-      const card = this.add
-        .rectangle(bx, by, cardW, cardH, el.color, 0.8)
-        .setStrokeStyle(2, el.color)
-        .setInteractive({ useHandCursor: true });
-      const emojiText = this.add.text(bx, by - 32, el.emoji, { fontSize: '44px' }).setOrigin(0.5);
-      const nameText = this.add.text(bx, by + 26, el.name.toUpperCase(), {
-        fontSize: '15px', fontFamily: '"Arial Black", sans-serif', color: '#ffffff',
-      }).setOrigin(0.5);
-      const selectText = this.add.text(bx, by + 52, '▶  SELECT', {
-        fontSize: '12px', fontFamily: 'Arial, sans-serif', color: '#ffcc00',
-      }).setOrigin(0.5);
+      const plate = addCardPlate(this, {
+        x: bx, y: by, w: cardW, h: cardH, accent: el.color, cut: 16,
+      });
 
+      const halo = this.add.graphics().setDepth(DEPTH.content - 1);
+      for (let k = 5; k >= 1; k--) {
+        halo.fillStyle(el.color, 0.05);
+        halo.fillCircle(bx, by - 30, 18 + k * 6);
+      }
+
+      const emojiText = this.add.text(bx, by - 30, el.emoji, { fontSize: '44px' })
+        .setOrigin(0.5).setDepth(DEPTH.content);
+      const nameText = this.add.text(bx, by + 26, el.name.toUpperCase(), {
+        fontSize: '15px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 1,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+      const selectText = this.add.text(bx, by + 50, '▶  SELECT', {
+        fontSize: '11px', fontFamily: FONT_DISPLAY,
+        color: hex(mix(el.color, 0xffffff, 0.55)), letterSpacing: 2,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+
+      const card = this.add.rectangle(bx, by, cardW, cardH, 0xffffff, 0)
+        .setDepth(DEPTH.content + 1)
+        .setInteractive({ useHandCursor: true });
       card
-        .on('pointerover', () => { card.setAlpha(1); card.setStrokeStyle(3, 0xffffff); })
-        .on('pointerout',  () => { card.setAlpha(0.8); card.setStrokeStyle(2, el.color); })
+        .on('pointerover', () => { plate.paint('hover'); selectText.setColor('#ffffff'); })
+        .on('pointerout',  () => { plate.paint('idle'); selectText.setColor(hex(mix(el.color, 0xffffff, 0.55))); })
         .on('pointerdown', () => this.selectElement(el.id));
 
-      this.phaseObjects.push(card, emojiText, nameText, selectText);
+      this.phaseObjects.push(plate.g, halo, card, emojiText, nameText, selectText);
 
       // Perk strip
       const perks = getPerksForElement(el.id);
       const stripY = by + cardH / 2 + 22;
 
       if (perks.length === 0) {
-        const noPerksLbl = this.add.text(bx, stripY + 6, 'no perks', {
-          fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#333344',
-        }).setOrigin(0.5);
+        const noPerksLbl = this.add.text(bx, stripY + 6, 'NO PERKS', {
+          fontSize: '9px', fontFamily: FONT_DISPLAY, color: T.ghost, letterSpacing: 2,
+        }).setOrigin(0.5).setDepth(DEPTH.content);
         this.phaseObjects.push(noPerksLbl);
         return;
       }
@@ -268,14 +258,13 @@ export class CampaignElementSelectScene extends Phaser.Scene {
       }
       const currentIdx = this.perkIndices[el.id] ?? -1;
 
-      const stripBg = this.add.rectangle(bx, stripY + 6, cardW, 30, 0x0d0d1a, 0.85)
-        .setStrokeStyle(1, 0x333355);
+      const stripBg = addWell(this, bx, stripY + 6, cardW, 30, C.arcane, DEPTH.content);
 
       const leftArrow = this.add.text(bx - cardW / 2 + 10, stripY + 6, '◀', {
-        fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#7766aa',
-      }).setOrigin(0.5).setDepth(2).setInteractive({ useHandCursor: true });
-      leftArrow.on('pointerover', () => leftArrow.setColor('#cc88ff'));
-      leftArrow.on('pointerout',  () => leftArrow.setColor('#7766aa'));
+        fontSize: '12px', fontFamily: FONT_DISPLAY, color: hex(mix(C.arcane, 0x000000, 0.2)),
+      }).setOrigin(0.5).setDepth(DEPTH.content + 2).setInteractive({ useHandCursor: true });
+      leftArrow.on('pointerover', () => leftArrow.setColor(T.bright));
+      leftArrow.on('pointerout',  () => leftArrow.setColor(hex(mix(C.arcane, 0x000000, 0.2))));
       leftArrow.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
         ptr.event.stopPropagation();
         let nextIdx = currentIdx - 1;
@@ -292,10 +281,10 @@ export class CampaignElementSelectScene extends Phaser.Scene {
       });
 
       const rightArrow = this.add.text(bx + cardW / 2 - 10, stripY + 6, '▶', {
-        fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#7766aa',
-      }).setOrigin(0.5).setDepth(2).setInteractive({ useHandCursor: true });
-      rightArrow.on('pointerover', () => rightArrow.setColor('#cc88ff'));
-      rightArrow.on('pointerout',  () => rightArrow.setColor('#7766aa'));
+        fontSize: '12px', fontFamily: FONT_DISPLAY, color: hex(mix(C.arcane, 0x000000, 0.2)),
+      }).setOrigin(0.5).setDepth(DEPTH.content + 2).setInteractive({ useHandCursor: true });
+      rightArrow.on('pointerover', () => rightArrow.setColor(T.bright));
+      rightArrow.on('pointerout',  () => rightArrow.setColor(hex(mix(C.arcane, 0x000000, 0.2))));
       rightArrow.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
         ptr.event.stopPropagation();
         let nextIdx = currentIdx + 1;
@@ -315,26 +304,26 @@ export class CampaignElementSelectScene extends Phaser.Scene {
       let centerColor: string;
       if (currentIdx === -1) {
         centerText = '— none —';
-        centerColor = '#444455';
+        centerColor = T.ghost;
       } else {
         const perk = perks[currentIdx];
         const unlocked = PlayerData.isPerkUnlocked(el.id, perk.id);
         const isEquipped = PlayerData.getEquippedPerk(el.id) === perk.id;
         if (unlocked) {
           centerText = isEquipped ? `${perk.emoji} ${perk.name} ✓` : `${perk.emoji} ${perk.name}`;
-          centerColor = isEquipped ? '#88ff88' : '#ccaaff';
+          centerColor = isEquipped ? T.good : hex(mix(C.arcane, 0xffffff, 0.5));
         } else {
           const recipe = getPerkById(perk.id)?.ingredients.map((r) => {
             const em: Record<string, string> = { fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🪨' };
             return em[r] ?? r;
           }).join('+') ?? '';
           centerText = `🔒 ${perk.name}  ${recipe}`;
-          centerColor = '#443344';
+          centerColor = T.ghost;
         }
       }
       const centerLbl = this.add.text(bx, stripY + 6, centerText, {
-        fontSize: '9px', fontFamily: 'Arial, sans-serif', color: centerColor,
-      }).setOrigin(0.5).setDepth(2);
+        fontSize: '9px', fontFamily: FONT_UI, color: centerColor,
+      }).setOrigin(0.5).setDepth(DEPTH.content + 2);
 
       this.phaseObjects.push(stripBg, leftArrow, rightArrow, centerLbl);
     });

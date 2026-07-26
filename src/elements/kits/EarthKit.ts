@@ -1429,7 +1429,7 @@ export class EarthKit {
     this.titanArmsG = this.arena.scene.add.graphics().setDepth(30);
     this.titanHeadG = this.arena.scene.add.graphics().setDepth(31);
     this.titanTimerLabel = this.arena.scene.add.text(W / 2, 200, '', {
-      fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#ffbb55',
+      fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffbb55',
       stroke: '#2a1c0c', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(32);
 
@@ -2278,7 +2278,7 @@ export class EarthKit {
       this.pfx.ring(player.x, player.y, 10, 46, EARTH.dust, 340, 3, 6);
       if (!this.earthShieldLabel) {
         this.earthShieldLabel = scene.add.text(player.x, player.y - 30, '', {
-          fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: hasDual ? '#bbbbbb' : '#ccaa66',
+          fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: hasDual ? '#bbbbbb' : '#ccaa66',
         }).setOrigin(0.5).setDepth(11);
       }
       // Also spawn back shield if Click+
@@ -2341,7 +2341,7 @@ export class EarthKit {
       this.nfx.ring(npc.x, npc.y, 10, 46, EARTH.dust, 340, 3, 6);
       if (!this.npcEarthShieldLabel) {
         this.npcEarthShieldLabel = scene.add.text(npc.x, npc.y - 30, '', {
-          fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#ccaa66',
+          fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ccaa66',
         }).setOrigin(0.5).setDepth(11);
       }
       // Wire NPC shield as damage absorber
@@ -2372,7 +2372,7 @@ export class EarthKit {
     });
     if (!this.earthBackShieldLabel) {
       this.earthBackShieldLabel = scene.add.text(player.x, player.y - 30, '', {
-        fontSize: '9px', fontFamily: '"Arial Black", sans-serif', color: '#aaaaaa',
+        fontSize: '9px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#aaaaaa',
       }).setOrigin(0.5).setDepth(10);
     }
   }
@@ -2626,7 +2626,7 @@ export class EarthKit {
     const sprite = new StoneGolem(scene, tint, 6);
     const link = scene.add.graphics().setDepth(5);
     const hpLabel = scene.add.text(shieldX, shieldY - 36, '💪 150', {
-      fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#ccaa66',
+      fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ccaa66',
     }).setOrigin(0.5).setDepth(11);
 
     if (isPlayer) {

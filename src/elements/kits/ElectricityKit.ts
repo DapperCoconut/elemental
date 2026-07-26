@@ -255,7 +255,7 @@ export class ElectricityKit {
       const cx = scene.scale.width / 2;
       const cap = this.arena.hasUpgrade('r') ? 100 : 50;
       this.kineticPowerText = scene.add.text(cx, 52, `⚡ 0/${cap}`, {
-        fontSize: '18px', fontFamily: '"Arial Black", sans-serif', color: '#ffee00',
+        fontSize: '18px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffee00',
         stroke: '#664400', strokeThickness: 3,
       }).setOrigin(0.5).setDepth(20);
     }

@@ -3,6 +3,11 @@ import * as PlayerData from '../data/PlayerData';
 import { ALL_UPGRADES, getElementUpgrades, UpgradeDef } from '../data/Upgrades';
 import { GAUNTLET_COST, GAUNTLET_HARD_COST } from '../data/GauntletData';
 import { ABSTRACT_ELEMENT_IDS, ABSTRACT_ELEMENT_UNLOCK_MAP, ABSTRACT_MIX_ELEMENT_IDS } from '../data/AbstractElements';
+import {
+  C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix, tintPlate,
+  addBackdrop, addBackButton, addButton, addChip, addHeaderBar, addModal, addPanel, addPagerButton,
+  addSectionLabel, addCardPlate, addWell, fillDiamond, fillNotchedGradient, strokeNotched, ALL_CORNERS,
+} from '../ui';
 
 const ELEMENT_COLORS: Record<string, number> = {
   fire:        0xff4400,
@@ -59,6 +64,11 @@ const ELEMENT_EMOJIS: Record<string, string> = {
 const BASE_ELEMENT_IDS = ['fire', 'water', 'life', 'air', 'earth'];
 const LAB_UPGRADE_COST = 500;
 
+const SLOT_KEYS = ['click', 'e', 'r', 'f', 'q'];
+const SLOT_DISPLAY = ['LMB', 'E', 'R', 'F', 'Q'];
+const SHARD_PRICES = [10, 20, 35, 50, 75];
+const CORRUPT_PRICES = [100, 200, 350, 500, 750];
+
 const LAB_UPGRADES: { level: number; name: string; description: string; cost?: number; corruptCost?: number }[] = [
   { level: 1, name: 'Abstract Fusion', description: 'Fuse two Abstract Elements together in the Lab (costs 3 nuclei). Mismatched fusions waste 1 nucleus.' },
   { level: 2, name: 'Resonant Core', description: 'Forge Perks — toggle the Lab to Perk Mode and combine 3 base elements into a per-element Perk (2 ⚛️ each). One Perk can be equipped per element on the select screen.' },
@@ -66,11 +76,15 @@ const LAB_UPGRADES: { level: number; name: string; description: string; cost?: n
   { level: 4, name: 'Penta Synthesis', description: 'Unlocks the Penta Perk Forge — combine all 5 base elements into a legendary perk (10 ⚛️ each).', cost: 2500, corruptCost: 10000 },
 ];
 
+/** Which currency a shop page trades in. */
+type Currency = 'shards' | 'corrupt';
+
 export class ShopScene extends Phaser.Scene {
-  private shardText!: Phaser.GameObjects.Text;
-  private corruptShardText!: Phaser.GameObjects.Text;
-  private nucleiText!: Phaser.GameObjects.Text;
   private currentPage = 0;
+  private shardChip!: { setValue: (v: string) => void };
+  private nucleiChip!: { setValue: (v: string) => void };
+  /** Everything belonging to the open slot-detail card, torn down on close. */
+  private detailObjects: Phaser.GameObjects.GameObject[] = [];
 
   constructor() {
     super({ key: 'ShopScene' });
@@ -78,69 +92,14 @@ export class ShopScene extends Phaser.Scene {
 
   init(data: { page?: number }): void {
     this.currentPage = data?.page ?? 0;
+    this.detailObjects = [];
   }
 
   create(): void {
     const { width, height } = this.scale;
     const cx = width / 2;
 
-    // Background
-    this.add.rectangle(cx, height / 2, width, height, 0x0d0d1a);
-
-    const grid = this.add.graphics();
-    grid.lineStyle(1, 0x1a1a33, 1);
-    for (let x = 0; x < width; x += 60) grid.lineBetween(x, 0, x, height);
-    for (let y = 0; y < height; y += 60) grid.lineBetween(0, y, width, y);
-
-    // Header
-    this.add.text(cx, 36, 'SHOP', {
-      fontSize: '40px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#ffffff',
-      stroke: '#333333',
-      strokeThickness: 3,
-    }).setOrigin(0.5);
-
-    // Shard counter
-    this.shardText = this.add.text(width - 16, 12, '', {
-      fontSize: '18px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#ffcc44',
-    }).setOrigin(1, 0);
-    this.refreshShardDisplay();
-
-    // Nucleus counter
-    this.nucleiText = this.add.text(width - 16, 38, `⚛️ ×${PlayerData.getNuclei()}`, {
-      fontSize: '14px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#cc88ff',
-    }).setOrigin(1, 0);
-
-    // Corrupt shard counter
-    this.corruptShardText = this.add.text(width - 16, 60, '', {
-      fontSize: '14px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#cc44ff',
-    }).setOrigin(1, 0);
-    this.refreshCorruptShardDisplay();
-
-    // Back button
-    const backBtn = this.add
-      .rectangle(52, 36, 88, 36, 0x222233)
-      .setStrokeStyle(1, 0x555577)
-      .setInteractive({ useHandCursor: true });
-    const backLabel = this.add.text(52, 36, '← BACK', {
-      fontSize: '13px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#aaaaaa',
-    }).setOrigin(0.5);
-    backBtn
-      .on('pointerover', () => { backBtn.setFillStyle(0x333355); backLabel.setColor('#ffffff'); })
-      .on('pointerout', () => { backBtn.setFillStyle(0x222233); backLabel.setColor('#aaaaaa'); })
-      .on('pointerdown', () => this.scene.start('TitleScene'));
-    this.input.keyboard!.on('keydown-ESC', () => this.scene.start('TitleScene'));
-
-    // ── Page navigation ──────────────────────────────────────────
+    // ── Page routing ─────────────────────────────────────────────
     const combinedIds = ALL_UPGRADES
       .map((e) => e.elementId)
       .filter((id) => !BASE_ELEMENT_IDS.includes(id) && !ABSTRACT_ELEMENT_IDS.includes(id) && !ABSTRACT_MIX_ELEMENT_IDS.includes(id) && PlayerData.isElementUnlocked(id));
@@ -156,450 +115,479 @@ export class ShopScene extends Phaser.Scene {
     const MIX_PAGE = ABSTRACT_PAGE + 1;
     const SPECIALS_PAGE = MIX_PAGE + 1;
     const totalPages = SPECIALS_PAGE + 1;
-    const hasNextPage = this.currentPage < totalPages - 1;
-    const hasPrevPage = this.currentPage > 0;
 
-    if (hasPrevPage) {
-      const leftBtn = this.add.rectangle(cx - 90, 36, 28, 28, 0x330066)
-        .setStrokeStyle(1, 0x9944ff).setInteractive({ useHandCursor: true });
-      this.add.text(cx - 90, 36, '◀', {
-        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
-      }).setOrigin(0.5).setDepth(1);
-      leftBtn
-        .on('pointerover', () => leftBtn.setFillStyle(0x550099))
-        .on('pointerout',  () => leftBtn.setFillStyle(0x330066))
-        .on('pointerdown', () => this.scene.restart({ page: this.currentPage - 1 }));
+    // Each page carries its own accent, so where you are is legible at a glance.
+    const pageInfo: { name: string; accent: number } =
+      this.currentPage === 0 ? { name: 'BASE ELEMENTS', accent: C.frost } :
+      this.currentPage === ABSTRACT_PAGE ? { name: 'ABSTRACT', accent: C.corrupt } :
+      this.currentPage === MIX_PAGE ? { name: 'ABSTRACT MIX', accent: C.corrupt } :
+      this.currentPage === SPECIALS_PAGE ? { name: 'SPECIALS', accent: C.gold } :
+      { name: `COMBINED  ${this.currentPage} / ${totalCombinedPages}`, accent: C.arcane };
+
+    addBackdrop(this, { accent: pageInfo.accent, variant: 'lattice', motes: 14 });
+
+    const header = addHeaderBar(this, {
+      title: 'SHOP',
+      subtitle: pageInfo.name,
+      accent: pageInfo.accent,
+      height: 72,
+    });
+
+    // Currency rail, top right.
+    this.shardChip = addChip(this, {
+      x: width - 18, y: 22, icon: '💎', value: `${PlayerData.getShards()}`,
+      accent: C.gold, originX: 1,
+    });
+    this.nucleiChip = addChip(this, {
+      x: width - 18, y: 52, icon: '⚛️', value: `×${PlayerData.getNuclei()}`,
+      accent: C.arcane, originX: 1, fontSize: 13,
+    });
+    addChip(this, {
+      x: width - 130, y: 52, icon: '🩸', value: `${PlayerData.getCorruptShards()}`,
+      accent: C.corrupt, originX: 1, fontSize: 13,
+    });
+
+    const back = () => this.scene.start('TitleScene');
+    addBackButton(this, back);
+    this.input.keyboard!.on('keydown-ESC', () => {
+      if (this.detailObjects.length > 0) this.closeSlotDetail();
+      else back();
+    });
+
+    if (this.currentPage > 0) {
+      addPagerButton(this, {
+        x: cx - 132, y: 36, dir: 'left', accent: pageInfo.accent,
+        onClick: () => this.scene.restart({ page: this.currentPage - 1 }),
+      });
+    }
+    if (this.currentPage < totalPages - 1) {
+      addPagerButton(this, {
+        x: cx + 132, y: 36, dir: 'right', accent: pageInfo.accent,
+        onClick: () => this.scene.restart({ page: this.currentPage + 1 }),
+      });
     }
 
-    if (hasNextPage) {
-      const rightBtn = this.add.rectangle(cx + 90, 36, 28, 28, 0x330066)
-        .setStrokeStyle(1, 0x9944ff).setInteractive({ useHandCursor: true });
-      this.add.text(cx + 90, 36, '▶', {
-        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
-      }).setOrigin(0.5).setDepth(1);
-      rightBtn
-        .on('pointerover', () => rightBtn.setFillStyle(0x550099))
-        .on('pointerout',  () => rightBtn.setFillStyle(0x330066))
-        .on('pointerdown', () => this.scene.restart({ page: this.currentPage + 1 }));
+    // Page pips, so the shop's depth is visible.
+    const pips = this.add.graphics().setDepth(DEPTH.content);
+    for (let i = 0; i < totalPages; i++) {
+      const px = cx - ((totalPages - 1) * 11) / 2 + i * 11;
+      fillDiamond(pips, px, header.bottom + 6, i === this.currentPage ? 4 : 2.5,
+        i === this.currentPage ? mix(pageInfo.accent, 0xffffff, 0.5) : C.line, i === this.currentPage ? 1 : 0.7);
     }
 
-    // Page indicator for abstract / mix / specials
-    if (this.currentPage === ABSTRACT_PAGE) {
-      this.add.text(cx, 36, '🩸 ABSTRACT', {
-        fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#cc44ff',
-      }).setOrigin(0.5);
-    }
-    if (this.currentPage === MIX_PAGE) {
-      this.add.text(cx, 36, '🩸 ABSTRACT MIX', {
-        fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#cc44ff',
-      }).setOrigin(0.5);
-    }
+    const contentTop = header.bottom + 18;
+
+    // ── Page bodies ──────────────────────────────────────────────
     if (this.currentPage === SPECIALS_PAGE) {
-      this.add.text(cx, 36, '⚙️ SPECIALS', {
-        fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc44',
-      }).setOrigin(0.5);
-    }
-
-    // ── Abstract page ──────────────────────────────────────────────
-    if (this.currentPage === ABSTRACT_PAGE) {
-      this.buildAbstractPage(width, height, cx, abstractIds);
+      this.buildSpecialsPage(width, cx, contentTop);
       return;
     }
 
-    // ── Abstract mix page ──────────────────────────────────────────
-    if (this.currentPage === MIX_PAGE) {
-      this.buildAbstractPage(width, height, cx, mixIds, 'Fuse two abstract elements in the LAB to unlock abstract-mix elements.\nUpgrades are purchased with 🩸 corrupt shards.');
+    // One shared hint beats repeating a description on all 25 tiles. Only
+    // drawn once a page actually has columns to click.
+    const columnsTop = header.bottom + 32;
+    const showClickHint = () => {
+      this.add.text(cx, header.bottom + 18, 'CLICK A SLOT TO SEE WHAT IT DOES', {
+        fontSize: '9px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+    };
+
+    if (this.currentPage === ABSTRACT_PAGE || this.currentPage === MIX_PAGE) {
+      const ids = this.currentPage === ABSTRACT_PAGE ? abstractIds : mixIds;
+      const emptyMsg = this.currentPage === ABSTRACT_PAGE
+        ? 'Complete a Gauntlet to unlock Abstract Elements.\nTheir upgrades are bought with 🩸 corrupt shards.'
+        : 'Fuse two Abstract Elements in the LAB to unlock Abstract-Mix.\nTheir upgrades are bought with 🩸 corrupt shards.';
+      if (ids.length === 0) {
+        this.buildEmptyState(cx, height / 2, emptyMsg, pageInfo.accent);
+        return;
+      }
+      showClickHint();
+      this.buildColumns(width, columnsTop, ALL_UPGRADES.filter((e) => ids.includes(e.elementId)).map((e) => e.elementId), 'corrupt');
       return;
     }
 
-    // ── Specials page ──────────────────────────────────────────────
-    if (this.currentPage === SPECIALS_PAGE) {
-      this.buildSpecialsPage(width, height, cx);
-      return;
-    }
-
-    // ── Element columns ──────────────────────────────────────────
-    let elements;
+    let elementIds: string[];
     if (this.currentPage === 0) {
-      elements = ALL_UPGRADES.filter((e) => BASE_ELEMENT_IDS.includes(e.elementId));
+      elementIds = ALL_UPGRADES.filter((e) => BASE_ELEMENT_IDS.includes(e.elementId)).map((e) => e.elementId);
     } else {
       const startIdx = (this.currentPage - 1) * COMBINED_PER_PAGE;
       const pageIds = combinedIds.slice(startIdx, startIdx + COMBINED_PER_PAGE);
-      elements = ALL_UPGRADES.filter((e) => pageIds.includes(e.elementId));
+      elementIds = ALL_UPGRADES.filter((e) => pageIds.includes(e.elementId)).map((e) => e.elementId);
     }
 
-    const colW = elements.length > 0 ? Math.floor(width / elements.length) : width;
-    const colStartY = 80;
-
-    if (elements.length === 0) {
-      this.add.text(cx, height / 2, 'No unlocked elements on this page.\nDiscover combined elements in the LAB.', {
-        fontSize: '16px', fontFamily: 'Arial, sans-serif', color: '#555577', align: 'center',
-      }).setOrigin(0.5);
+    if (elementIds.length === 0) {
+      this.buildEmptyState(cx, height / 2,
+        'No unlocked elements on this page.\nDiscover combined elements in the LAB.', pageInfo.accent);
+      return;
     }
 
-    elements.forEach((elemUpgrades, colIdx) => {
-      const elementId = elemUpgrades.elementId;
+    showClickHint();
+    this.buildColumns(width, columnsTop, elementIds, 'shards');
+  }
+
+  private buildEmptyState(cx: number, cy: number, message: string, accent: number): void {
+    const panel = addPanel(this, { x: cx, y: cy, w: 520, h: 150, accent, glow: 0.25 });
+    this.add.text(cx, panel.top + 46, '⌀', {
+      fontSize: '30px', fontFamily: FONT_DISPLAY, color: hex(mix(accent, 0x000000, 0.3)),
+    }).setOrigin(0.5).setDepth(DEPTH.content);
+    this.add.text(cx, panel.top + 96, message, {
+      fontSize: '14px', fontFamily: FONT_UI, color: T.dim, align: 'center', lineSpacing: 6,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
+  }
+
+  /**
+   * One column per element, five ability-slot plates beneath its crest.
+   *
+   * Shard and corrupt-shard pages differ only in price table and wallet, so
+   * they share this builder rather than keeping two near-identical copies.
+   */
+  private buildColumns(width: number, top: number, elementIds: string[], currency: Currency): void {
+    const colW = Math.floor(width / elementIds.length);
+    const crestH = 46;
+    const slotH = 80;
+    const slotGap = 6;
+
+    elementIds.forEach((elementId, colIdx) => {
       const colCX = colIdx * colW + colW / 2;
-      const color = ELEMENT_COLORS[elementId] ?? 0x888888;
+      const accent = ELEMENT_COLORS[elementId] ?? C.steel;
       const emoji = ELEMENT_EMOJIS[elementId] ?? '?';
       const upgrades = getElementUpgrades(elementId);
 
-      // Element header card
-      this.add.rectangle(colCX, colStartY + 28, colW - 8, 50, color, 0.2)
-        .setStrokeStyle(1, color);
-      this.add.text(colCX, colStartY + 18, `${emoji} ${elementId.toUpperCase()}`, {
-        fontSize: '13px',
-        fontFamily: '"Arial Black", sans-serif',
-        color: '#ffffff',
-      }).setOrigin(0.5);
+      // ── Element crest ────────────────────────────────────────
+      const crestG = this.add.graphics().setDepth(DEPTH.panel);
+      const cx0 = colCX - (colW - 10) / 2;
+      fillNotchedGradient(crestG, cx0, top, colW - 10, crestH,
+        tintPlate(accent, 0.4), mix(tintPlate(accent, 0.2), 0x000000, 0.4), 1, 10, ALL_CORNERS, 12);
+      strokeNotched(crestG, cx0, top, colW - 10, crestH, accent, 0.85, 2, 10, ALL_CORNERS);
+      crestG.fillStyle(accent, 0.9);
+      crestG.fillRect(cx0 + 10, top + crestH - 3, colW - 30, 3);
 
-      // Slot buttons
-      const SLOT_KEYS    = ['click', 'e', 'r', 'f', 'q'];
-      const SLOT_DISPLAY = ['Click', 'E', 'R', 'F', 'Q'];
-      const SLOT_PRICES  = [10, 20, 35, 50, 75];
+      this.add.text(colCX, top + 15, emoji, { fontSize: '18px' }).setOrigin(0.5).setDepth(DEPTH.content);
+      this.add.text(colCX, top + 34, elementId.toUpperCase(), {
+        fontSize: '12px', fontFamily: FONT_DISPLAY,
+        color: hex(mix(accent, 0xffffff, 0.6)), letterSpacing: 2,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
 
-      const btnW = colW - 16;
-      const btnH = 82;
-      const btnGap = 6;
-      const firstBtnY = colStartY + 60;
+      // ── Slots ────────────────────────────────────────────────
+      const firstSlotY = top + crestH + 8;
 
       SLOT_KEYS.forEach((slot, slotIdx) => {
-        const bx = colCX;
-        const by = firstBtnY + slotIdx * (btnH + btnGap) + btnH / 2;
+        const by = firstSlotY + slotIdx * (slotH + slotGap) + slotH / 2;
         const upgDef: UpgradeDef | undefined = upgrades.find((u) => u.slot === slot);
-        const price = upgDef?.price ?? SLOT_PRICES[slotIdx];
+        const defaultPrice = currency === 'shards' ? SHARD_PRICES[slotIdx] : CORRUPT_PRICES[slotIdx];
+        const price = upgDef?.price ?? defaultPrice;
 
-        const owned         = PlayerData.isUpgradeOwned(elementId, slot);
-        const active        = PlayerData.isUpgradeActive(elementId, slot);
-        const hasUpgradeDef = upgDef !== undefined;
+        const owned = PlayerData.isUpgradeOwned(elementId, slot);
+        const active = PlayerData.isUpgradeActive(elementId, slot);
 
-        let fillColor   = 0x1a1a1a;
-        let borderColor = 0x333333;
-        let labelColor  = '#555555';
+        // State drives the whole plate: green when live, red when shelved,
+        // element-coloured when purchasable, dead grey when unimplemented.
+        const stateAccent = !upgDef ? C.steel
+          : owned && active ? C.verdant
+          : owned ? C.blood
+          : accent;
 
-        if (owned && active) {
-          fillColor = 0x0d2b0d; borderColor = 0x33aa33; labelColor = '#44ff44';
-        } else if (owned && !active) {
-          fillColor = 0x2b0d0d; borderColor = 0xaa3333; labelColor = '#ff4444';
-        } else if (hasUpgradeDef) {
-          fillColor = 0x1a1a2b; borderColor = 0x444466; labelColor = '#aaaaaa';
+        const plate = addCardPlate(this, {
+          x: colCX, y: by, w: colW - 14, h: slotH,
+          accent: stateAccent, cut: 10, depth: DEPTH.panel, muted: !upgDef,
+        });
+
+        const left = colCX - (colW - 14) / 2;
+
+        // Key cap, top-left of the plate.
+        const capG = this.add.graphics().setDepth(DEPTH.content);
+        fillNotchedGradient(capG, left + 7, by - slotH / 2 + 6, 30, 15,
+          mix(stateAccent, 0x000000, 0.55), mix(stateAccent, 0x000000, 0.78), 1, 4, ALL_CORNERS, 4);
+        strokeNotched(capG, left + 7, by - slotH / 2 + 6, 30, 15, stateAccent, 0.6, 1, 4, ALL_CORNERS);
+        this.add.text(left + 22, by - slotH / 2 + 14, SLOT_DISPLAY[slotIdx], {
+          fontSize: '9px', fontFamily: FONT_DISPLAY,
+          color: hex(mix(stateAccent, 0xffffff, 0.55)), letterSpacing: 1,
+        }).setOrigin(0.5).setDepth(DEPTH.content + 1);
+
+        if (!upgDef) {
+          this.add.text(colCX, by + 4, 'COMING SOON', {
+            fontSize: '10px', fontFamily: FONT_DISPLAY, color: T.ghost, letterSpacing: 1.5,
+          }).setOrigin(0.5).setDepth(DEPTH.content);
+          return;
         }
 
-        const btn = this.add
-          .rectangle(bx, by, btnW, btnH, fillColor)
-          .setStrokeStyle(1, borderColor);
+        // Name only — what the upgrade *does* lives in the detail card, so a
+        // full page of 25 slots stays scannable.
+        this.add.text(colCX, by - 2, upgDef.name, {
+          fontSize: '12px', fontFamily: FONT_DISPLAY,
+          color: hex(mix(stateAccent, 0xffffff, 0.6)),
+          wordWrap: { width: colW - 30 }, align: 'center', lineSpacing: 2,
+        }).setOrigin(0.5).setDepth(DEPTH.content);
 
-        this.add.text(bx, by - 26, `[${SLOT_DISPLAY[slotIdx]}]`, {
-          fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#666666',
-        }).setOrigin(0.5);
+        const statusStr = owned
+          ? (active ? '● ACTIVE' : '○ SHELVED')
+          : `${currency === 'shards' ? '💎' : '🩸'} ${price}`;
+        this.add.text(colCX, by + slotH / 2 - 11, statusStr, {
+          fontSize: '10px', fontFamily: FONT_DISPLAY,
+          color: owned
+            ? (active ? T.good : T.bad)
+            : hex(mix(currency === 'shards' ? C.gold : C.corrupt, 0xffffff, 0.3)),
+          letterSpacing: 1,
+        }).setOrigin(0.5).setDepth(DEPTH.content);
 
-        if (hasUpgradeDef && upgDef) {
-          this.add.text(bx, by - 12, upgDef.name, {
-            fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: labelColor,
-          }).setOrigin(0.5);
-
-          this.add.text(bx, by + 6, upgDef.description, {
-            fontSize: '9px', fontFamily: 'Arial, sans-serif', color: '#777777',
-            wordWrap: { width: btnW - 8 }, align: 'center',
-          }).setOrigin(0.5);
-
-          const statusStr = owned
-            ? (active ? 'ACTIVE — click to disable' : 'OWNED — click to enable')
-            : `💎 ${price} shards`;
-          this.add.text(bx, by + 32, statusStr, {
-            fontSize: '9px', fontFamily: 'Arial, sans-serif',
-            color: owned ? (active ? '#33aa33' : '#aa3333') : '#ffcc44',
-          }).setOrigin(0.5);
-
-          btn.setInteractive({ useHandCursor: true });
-          btn
-            .on('pointerover', () => btn.setStrokeStyle(2, 0xffffff))
-            .on('pointerout',  () => btn.setStrokeStyle(1, borderColor))
-            .on('pointerdown', () => {
-              if (!PlayerData.isUpgradeOwned(elementId, slot)) {
-                if (PlayerData.spendShards(price)) {
-                  PlayerData.purchaseUpgrade(elementId, slot);
-                  this.scene.restart({ page: this.currentPage });
-                }
-              } else {
-                PlayerData.toggleUpgrade(elementId, slot);
-                this.scene.restart({ page: this.currentPage });
-              }
-            });
-        } else {
-          this.add.text(bx, by, 'Coming Soon', {
-            fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#333333',
-          }).setOrigin(0.5);
-        }
+        const hit = this.add.rectangle(colCX, by, colW - 14, slotH, 0xffffff, 0)
+          .setDepth(DEPTH.content + 2)
+          .setInteractive({ useHandCursor: true });
+        hit.on('pointerover', () => plate.paint('hover'));
+        hit.on('pointerout', () => plate.paint('idle'));
+        hit.on('pointerdown', () => this.openSlotDetail({
+          elementId, elementAccent: accent, emoji,
+          slot, slotLabel: SLOT_DISPLAY[slotIdx],
+          def: upgDef, price, currency,
+        }));
       });
+
+      // Column footer: how much of this element's kit you own.
+      const ownedCount = SLOT_KEYS.filter((slot) => PlayerData.isUpgradeOwned(elementId, slot)).length;
+      const definedCount = SLOT_KEYS.filter((slot) => upgrades.some((u) => u.slot === slot)).length;
+      const footY = firstSlotY + SLOT_KEYS.length * (slotH + slotGap) + 8;
+      this.add.text(colCX, footY, `${ownedCount} / ${definedCount} OWNED`, {
+        fontSize: '9px', fontFamily: FONT_DISPLAY,
+        color: ownedCount === definedCount && definedCount > 0 ? T.good : T.faint,
+        letterSpacing: 2,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
     });
   }
 
-  private buildSpecialsPage(width: number, height: number, cx: number): void {
+  /**
+   * Detail card for one ability slot: the full description plus the buy /
+   * equip / shelve action.
+   *
+   * Purchases and toggles now live here rather than on the grid tile, which is
+   * what lets the grid drop to name-and-price and stay readable.
+   */
+  private openSlotDetail(opts: {
+    elementId: string;
+    elementAccent: number;
+    emoji: string;
+    slot: string;
+    slotLabel: string;
+    def: UpgradeDef;
+    price: number;
+    currency: Currency;
+  }): void {
+    this.closeSlotDetail();
+
+    const { width, height } = this.scale;
+    const cx = width / 2;
+    const cy = height / 2;
+    const { elementId, slot, def, price, currency } = opts;
+
+    const owned = PlayerData.isUpgradeOwned(elementId, slot);
+    const active = PlayerData.isUpgradeActive(elementId, slot);
+    const wallet = currency === 'shards' ? PlayerData.getShards() : PlayerData.getCorruptShards();
+    const coin = currency === 'shards' ? '💎' : '🩸';
+    const coinAccent = currency === 'shards' ? C.gold : C.corrupt;
+    const canAfford = wallet >= price;
+
+    const accent = owned ? (active ? C.verdant : C.blood) : opts.elementAccent;
+
+    const modal = addModal(this, {
+      w: 520, h: 330, accent, glow: 0.5,
+      title: `${opts.emoji}  ${elementId.toUpperCase()}   ·   [ ${opts.slotLabel} ]`,
+      onScrimClick: () => this.closeSlotDetail(),
+    });
+    this.detailObjects.push(modal.scrim, ...modal.objects);
+
+    this.detailObjects.push(this.add.text(cx, modal.contentTop + 34, def.name, {
+      fontSize: '24px', fontFamily: FONT_DISPLAY,
+      color: hex(mix(accent, 0xffffff, 0.65)), letterSpacing: 1,
+      wordWrap: { width: 460 }, align: 'center',
+    }).setOrigin(0.5).setDepth(DEPTH.modalContent));
+
+    this.detailObjects.push(this.add.text(cx, modal.contentTop + 86, def.description, {
+      fontSize: '15px', fontFamily: FONT_UI, color: T.normal,
+      wordWrap: { width: 440 }, align: 'center', lineSpacing: 6,
+    }).setOrigin(0.5, 0).setDepth(DEPTH.modalContent));
+
+    // Price / wallet ledger — only meaningful before you own the upgrade.
+    const ledgerY = modal.bottom - 108;
+    if (!owned) {
+      this.detailObjects.push(addWell(this, cx, ledgerY, 320, 42, coinAccent, DEPTH.modal + 1, 6));
+      this.detailObjects.push(this.add.text(cx - 140, ledgerY, 'COST', {
+        fontSize: '9px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2,
+      }).setOrigin(0, 0.5).setDepth(DEPTH.modalContent));
+      this.detailObjects.push(this.add.text(cx - 100, ledgerY, `${coin} ${price}`, {
+        fontSize: '16px', fontFamily: FONT_DISPLAY, color: hex(mix(coinAccent, 0xffffff, 0.4)),
+      }).setOrigin(0, 0.5).setDepth(DEPTH.modalContent));
+      this.detailObjects.push(this.add.text(cx + 140, ledgerY, `YOU HAVE  ${coin} ${wallet}`, {
+        fontSize: '12px', fontFamily: FONT_DISPLAY,
+        color: canAfford ? T.good : T.bad, letterSpacing: 0.5,
+      }).setOrigin(1, 0.5).setDepth(DEPTH.modalContent));
+    } else {
+      this.detailObjects.push(this.add.text(cx, ledgerY, active ? '● ACTIVE THIS MATCH' : '○ SHELVED', {
+        fontSize: '12px', fontFamily: FONT_DISPLAY,
+        color: active ? T.good : T.bad, letterSpacing: 3,
+      }).setOrigin(0.5).setDepth(DEPTH.modalContent));
+    }
+
+    const commit = (fn: () => void) => {
+      fn();
+      this.scene.restart({ page: this.currentPage });
+    };
+
+    const actionY = modal.bottom - 46;
+    if (!owned) {
+      this.detailObjects.push(addButton(this, {
+        x: cx - 78, y: actionY, w: 200, h: 48,
+        label: 'BUY', icon: coin,
+        sublabel: canAfford ? undefined : 'Not enough',
+        accent: canAfford ? C.verdant : C.steel,
+        variant: canAfford ? 'solid' : 'quiet',
+        fontSize: 18, depth: DEPTH.modalContent,
+        disabled: !canAfford,
+        onClick: () => commit(() => {
+          const paid = currency === 'shards'
+            ? PlayerData.spendShards(price)
+            : PlayerData.spendCorruptShards(price);
+          if (paid) PlayerData.purchaseUpgrade(elementId, slot);
+        }),
+      }).container);
+    } else {
+      this.detailObjects.push(addButton(this, {
+        x: cx - 78, y: actionY, w: 200, h: 48,
+        label: active ? 'SHELVE' : 'EQUIP',
+        icon: active ? '○' : '●',
+        accent: active ? C.blood : C.verdant,
+        variant: active ? 'danger' : 'solid',
+        fontSize: 18, depth: DEPTH.modalContent,
+        onClick: () => commit(() => PlayerData.toggleUpgrade(elementId, slot)),
+      }).container);
+    }
+
+    this.detailObjects.push(addButton(this, {
+      x: cx + 148, y: actionY, w: 150, h: 48,
+      label: 'CLOSE', icon: '✕', accent: C.steel, variant: 'quiet',
+      fontSize: 14, depth: DEPTH.modalContent,
+      onClick: () => this.closeSlotDetail(),
+    }).container);
+  }
+
+  private closeSlotDetail(): void {
+    for (const obj of this.detailObjects) obj.destroy();
+    this.detailObjects = [];
+  }
+
+  // ── Specials ───────────────────────────────────────────────────
+
+  private buildSpecialsPage(width: number, cx: number, top: number): void {
     const labLevel = PlayerData.getLabLevel();
     const gauntletUnlocked = PlayerData.isGauntletUnlocked();
+    const panelW = Math.min(660, width - 100);
 
-    let y = 90;
+    addSectionLabel(this, { x: cx, y: top + 8, text: '⚗  LAB UPGRADES', accent: C.arcane, width: panelW });
 
-    // ── Lab Upgrades section ──────────────────────────────────────
-    this.add.text(cx, y, '⚗️  LAB UPGRADES', {
-      fontSize: '20px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
-    }).setOrigin(0.5);
-    y += 32;
+    let y = top + 34;
+    const rowH = 62;
 
     LAB_UPGRADES.forEach((upg) => {
       const owned = labLevel >= upg.level;
       const available = labLevel >= upg.level - 1;
-      const fillColor = owned ? 0x1a2b1a : (available ? 0x1a1a2b : 0x111111);
-      const borderColor = owned ? 0x33aa33 : (available ? 0x9944ff : 0x333333);
-      const labelColor = owned ? '#44ff44' : (available ? '#cc88ff' : '#444444');
-
-      const btnH = 64;
-      const btnW = Math.min(600, width - 80);
-      const btn = this.add.rectangle(cx, y + btnH / 2, btnW, btnH, fillColor)
-        .setStrokeStyle(2, borderColor);
-
-      this.add.text(cx - btnW / 2 + 16, y + 14, `⚗️ Lab Level ${upg.level}: ${upg.name}`, {
-        fontSize: '14px', fontFamily: '"Arial Black", sans-serif', color: labelColor,
-      }).setOrigin(0, 0.5);
-
-      this.add.text(cx - btnW / 2 + 16, y + 38, upg.description, {
-        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#777799',
-        wordWrap: { width: btnW - 140 },
-      }).setOrigin(0, 0.5);
+      const accent = owned ? C.verdant : available ? C.arcane : C.steel;
 
       const cost = upg.cost ?? LAB_UPGRADE_COST;
       const corruptCost = upg.corruptCost ?? 0;
-      let statusText: string;
-      if (owned) {
-        statusText = 'OWNED';
-      } else if (available) {
-        statusText = corruptCost > 0
-          ? `💎 ${cost} + 🌀 ${corruptCost}`
-          : `💎 ${cost} shards`;
-      } else {
-        statusText = 'Requires previous level';
-      }
-      this.add.text(cx + btnW / 2 - 16, y + btnH / 2, statusText, {
-        fontSize: '12px', fontFamily: '"Arial Black", sans-serif',
-        color: owned ? '#33aa33' : (available ? '#ffcc44' : '#555555'),
-      }).setOrigin(1, 0.5);
+      const statusText = owned ? 'OWNED'
+        : available ? (corruptCost > 0 ? `💎 ${cost}  +  🩸 ${corruptCost}` : `💎 ${cost}`)
+        : 'LOCKED';
 
-      if (available && !owned) {
-        btn.setInteractive({ useHandCursor: true });
-        btn
-          .on('pointerover', () => btn.setStrokeStyle(2, 0xffffff))
-          .on('pointerout',  () => btn.setStrokeStyle(2, borderColor))
-          .on('pointerdown', () => {
-            if (corruptCost > 0) {
-              if (PlayerData.getShards() >= cost && PlayerData.getCorruptShards() >= corruptCost) {
-                PlayerData.spendShards(cost);
-                PlayerData.spendCorruptShards(corruptCost);
-                PlayerData.upgradelab();
-                this.scene.restart({ page: this.currentPage });
-              }
-            } else if (PlayerData.spendShards(cost)) {
+      const canBuy = available && !owned;
+
+      addButton(this, {
+        x: cx, y: y + rowH / 2, w: panelW, h: rowH,
+        label: `LV.${upg.level}  ${upg.name.toUpperCase()}`,
+        sublabel: upg.description,
+        icon: owned ? '✔' : available ? '⚗' : '🔒',
+        trailing: statusText,
+        trailingColor: owned ? T.good : available ? T.gold : T.ghost,
+        accent,
+        variant: owned ? 'ghost' : canBuy ? 'solid' : 'quiet',
+        fontSize: 14,
+        align: 'left',
+        disabled: !canBuy,
+        onClick: () => {
+          if (corruptCost > 0) {
+            if (PlayerData.getShards() >= cost && PlayerData.getCorruptShards() >= corruptCost) {
+              PlayerData.spendShards(cost);
+              PlayerData.spendCorruptShards(corruptCost);
               PlayerData.upgradelab();
               this.scene.restart({ page: this.currentPage });
             }
-          });
-      }
-
-      y += btnH + 10;
-    });
-
-    y += 20;
-
-    // ── Nucleus purchase ──────────────────────────────────────────
-    this.add.text(cx, y, '⚛️  ELEMENTAL NUCLEUS', {
-      fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
-    }).setOrigin(0.5);
-    y += 28;
-
-    const nucBtnH = 52;
-    const nucBtnW = 340;
-    const nucBtn = this.add.rectangle(cx, y + nucBtnH / 2, nucBtnW, nucBtnH, 0x220044)
-      .setStrokeStyle(2, 0x9944ff).setInteractive({ useHandCursor: true });
-    this.add.text(cx, y + nucBtnH / 2, '⚛️  Buy Elemental Nucleus  —  💎 100 shards', {
-      fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
-    }).setOrigin(0.5);
-    nucBtn
-      .on('pointerover', () => nucBtn.setFillStyle(0x440088))
-      .on('pointerout',  () => nucBtn.setFillStyle(0x220044))
-      .on('pointerdown', () => {
-        if (PlayerData.spendShards(100)) {
-          PlayerData.addNuclei(1);
-          this.nucleiText.setText(`⚛️ ×${PlayerData.getNuclei()}`);
-          this.refreshShardDisplay();
-        }
+          } else if (PlayerData.spendShards(cost)) {
+            PlayerData.upgradelab();
+            this.scene.restart({ page: this.currentPage });
+          }
+        },
       });
 
-    y += nucBtnH + 20;
+      y += rowH + 8;
+    });
 
-    // ── Gauntlet unlock ───────────────────────────────────────────
-    this.add.text(cx, y, '🏆  GAUNTLETS', {
-      fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc66',
-    }).setOrigin(0.5);
-    y += 28;
+    // ── Nucleus ──────────────────────────────────────────────────
+    y += 12;
+    addSectionLabel(this, { x: cx, y, text: '⚛  ELEMENTAL NUCLEUS', accent: C.arcane, width: panelW });
+    y += 24;
 
-    const gauntBtnH = 52;
-    const gauntBtnW = 340;
+    addButton(this, {
+      x: cx, y: y + 24, w: 400, h: 48,
+      label: 'BUY NUCLEUS', sublabel: 'Fuel for Lab fusions',
+      icon: '⚛️', trailing: '💎 100',
+      accent: C.arcane, variant: 'ghost', fontSize: 16, align: 'left',
+      onClick: () => {
+        if (PlayerData.spendShards(100)) {
+          PlayerData.addNuclei(1);
+          this.nucleiChip.setValue(`×${PlayerData.getNuclei()}`);
+          this.shardChip.setValue(`${PlayerData.getShards()}`);
+        }
+      },
+    });
+    y += 60;
+
+    // ── Gauntlets ────────────────────────────────────────────────
+    y += 12;
+    addSectionLabel(this, { x: cx, y, text: '🏆  GAUNTLETS', accent: C.gold, width: panelW });
+    y += 24;
+
     const hardUnlocked = PlayerData.isGauntletHardUnlocked();
 
     if (!gauntletUnlocked) {
-      // Step 1: buy normal gauntlets
-      const gauntBtn = this.add.rectangle(cx, y + gauntBtnH / 2, gauntBtnW, gauntBtnH, 0x221100)
-        .setStrokeStyle(2, 0xffaa00).setInteractive({ useHandCursor: true });
-      this.add.text(cx, y + gauntBtnH / 2, `🏆  Unlock Gauntlets  —  💎 ${GAUNTLET_COST} shards`, {
-        fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc66',
-      }).setOrigin(0.5);
-      gauntBtn
-        .on('pointerover', () => gauntBtn.setFillStyle(0x442200))
-        .on('pointerout',  () => gauntBtn.setFillStyle(0x221100))
-        .on('pointerdown', () => {
+      addButton(this, {
+        x: cx, y: y + 24, w: 400, h: 48,
+        label: 'UNLOCK GAUNTLETS', sublabel: 'Six fights, one life',
+        icon: '🏆', trailing: `💎 ${GAUNTLET_COST}`,
+        accent: C.gold, variant: 'ghost', fontSize: 16, align: 'left',
+        onClick: () => {
           if (PlayerData.spendShards(GAUNTLET_COST)) {
             PlayerData.unlockGauntlet();
             this.scene.restart({ page: this.currentPage });
           }
-        });
+        },
+      });
     } else if (!hardUnlocked) {
-      // Step 2: buy hard mode (gauntlets already owned)
-      const hardBtn = this.add.rectangle(cx, y + gauntBtnH / 2, gauntBtnW, gauntBtnH, 0x1a0011)
-        .setStrokeStyle(2, 0xcc44ff).setInteractive({ useHandCursor: true });
-      this.add.text(cx, y + gauntBtnH / 2, `🔥  Unlock Hard Mode  —  💎 ${GAUNTLET_HARD_COST} shards`, {
-        fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#dd88ff',
-      }).setOrigin(0.5);
-      hardBtn
-        .on('pointerover', () => hardBtn.setFillStyle(0x330022))
-        .on('pointerout',  () => hardBtn.setFillStyle(0x1a0011))
-        .on('pointerdown', () => {
+      addButton(this, {
+        x: cx, y: y + 24, w: 400, h: 48,
+        label: 'UNLOCK HARD MODE', sublabel: 'Deadlier foes, richer spoils',
+        icon: '🔥', trailing: `💎 ${GAUNTLET_HARD_COST}`,
+        accent: C.corrupt, variant: 'ghost', fontSize: 16, align: 'left',
+        onClick: () => {
           if (PlayerData.spendShards(GAUNTLET_HARD_COST)) {
             PlayerData.unlockGauntletHard();
             this.scene.restart({ page: this.currentPage });
           }
-        });
-    } else {
-      // Both unlocked
-      const allOwned = this.add.rectangle(cx, y + gauntBtnH / 2, gauntBtnW, gauntBtnH, 0x1a0d1a)
-        .setStrokeStyle(2, 0xcc44cc);
-      void allOwned;
-      this.add.text(cx, y + gauntBtnH / 2, '✅  Gauntlets + 🔥 Hard Mode Unlocked', {
-        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#ff88ff',
-      }).setOrigin(0.5);
-    }
-  }
-
-  private refreshShardDisplay(): void {
-    this.shardText.setText(`💎 ${PlayerData.getShards()}`);
-  }
-
-  private refreshCorruptShardDisplay(): void {
-    this.corruptShardText.setText(`🩸 ${PlayerData.getCorruptShards()}`);
-  }
-
-  private buildAbstractPage(width: number, height: number, cx: number, abstractIds: string[], emptyMsg?: string): void {
-    if (abstractIds.length === 0) {
-      this.add.text(cx, height / 2, emptyMsg ?? 'Complete a gauntlet to unlock abstract elements.\nAbstract upgrades are purchased with 🩸 corrupt shards.', {
-        fontSize: '16px', fontFamily: 'Arial, sans-serif', color: '#555577', align: 'center',
-      }).setOrigin(0.5);
-      return;
-    }
-
-    const elements = ALL_UPGRADES.filter((e) => abstractIds.includes(e.elementId));
-    const colW = elements.length > 0 ? Math.floor(width / elements.length) : width;
-    const colStartY = 80;
-
-    elements.forEach((elemUpgrades, colIdx) => {
-      const elementId = elemUpgrades.elementId;
-      const colCX = colIdx * colW + colW / 2;
-      const color = ELEMENT_COLORS[elementId] ?? 0x880044;
-      const emoji = ELEMENT_EMOJIS[elementId] ?? '?';
-      const upgrades = getElementUpgrades(elementId);
-
-      this.add.rectangle(colCX, colStartY + 28, colW - 8, 50, color, 0.2)
-        .setStrokeStyle(1, color);
-      this.add.text(colCX, colStartY + 18, `${emoji} ${elementId.toUpperCase()}`, {
-        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#ffffff',
-      }).setOrigin(0.5);
-
-      const SLOT_KEYS    = ['click', 'e', 'r', 'f', 'q'];
-      const SLOT_DISPLAY = ['Click', 'E', 'R', 'F', 'Q'];
-      const CORRUPT_PRICES = [100, 200, 350, 500, 750];
-
-      const btnW = colW - 16;
-      const btnH = 82;
-      const btnGap = 6;
-      const firstBtnY = colStartY + 60;
-
-      SLOT_KEYS.forEach((slot, slotIdx) => {
-        const bx = colCX;
-        const by = firstBtnY + slotIdx * (btnH + btnGap) + btnH / 2;
-        const upgDef: UpgradeDef | undefined = upgrades.find((u) => u.slot === slot);
-        const price = upgDef?.price ?? CORRUPT_PRICES[slotIdx];
-
-        const owned   = PlayerData.isUpgradeOwned(elementId, slot);
-        const active  = PlayerData.isUpgradeActive(elementId, slot);
-        const hasDef  = upgDef !== undefined;
-
-        let fillColor   = 0x1a1a1a;
-        let borderColor = 0x333333;
-        let labelColor  = '#555555';
-
-        if (owned && active) {
-          fillColor = 0x0d2b0d; borderColor = 0x33aa33; labelColor = '#44ff44';
-        } else if (owned && !active) {
-          fillColor = 0x2b0d0d; borderColor = 0xaa3333; labelColor = '#ff4444';
-        } else if (hasDef) {
-          fillColor = 0x1a0a2b; borderColor = 0x660088; labelColor = '#cc88ff';
-        }
-
-        const btn = this.add
-          .rectangle(bx, by, btnW, btnH, fillColor)
-          .setStrokeStyle(1, borderColor);
-
-        this.add.text(bx, by - 26, `[${SLOT_DISPLAY[slotIdx]}]`, {
-          fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#666666',
-        }).setOrigin(0.5);
-
-        if (hasDef && upgDef) {
-          this.add.text(bx, by - 12, upgDef.name, {
-            fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: labelColor,
-          }).setOrigin(0.5);
-
-          this.add.text(bx, by + 6, upgDef.description, {
-            fontSize: '9px', fontFamily: 'Arial, sans-serif', color: '#777777',
-            wordWrap: { width: btnW - 8 }, align: 'center',
-          }).setOrigin(0.5);
-
-          const statusStr = owned
-            ? (active ? 'ACTIVE — click to disable' : 'OWNED — click to enable')
-            : `🩸 ${price} corrupt shards`;
-          this.add.text(bx, by + 32, statusStr, {
-            fontSize: '9px', fontFamily: 'Arial, sans-serif',
-            color: owned ? (active ? '#33aa33' : '#aa3333') : '#cc44ff',
-          }).setOrigin(0.5);
-
-          btn.setInteractive({ useHandCursor: true });
-          btn
-            .on('pointerover', () => btn.setStrokeStyle(2, 0xffffff))
-            .on('pointerout',  () => btn.setStrokeStyle(1, borderColor))
-            .on('pointerdown', () => {
-              if (!PlayerData.isUpgradeOwned(elementId, slot)) {
-                if (PlayerData.spendCorruptShards(price)) {
-                  PlayerData.purchaseUpgrade(elementId, slot);
-                  this.scene.restart({ page: this.currentPage });
-                }
-              } else {
-                PlayerData.toggleUpgrade(elementId, slot);
-                this.scene.restart({ page: this.currentPage });
-              }
-            });
-        } else {
-          this.add.text(bx, by, 'Coming Soon', {
-            fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#333333',
-          }).setOrigin(0.5);
-        }
+        },
       });
-    });
+    } else {
+      addButton(this, {
+        x: cx, y: y + 24, w: 400, h: 48,
+        label: 'ALL UNLOCKED', sublabel: 'Gauntlets + Hard Mode',
+        icon: '✔', accent: C.verdant, variant: 'ghost', fontSize: 16, align: 'left',
+        disabled: true,
+      });
+    }
   }
 }

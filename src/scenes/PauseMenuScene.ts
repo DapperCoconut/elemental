@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { C, T, DEPTH, FONT_UI, addButton, addModal } from '../ui';
 
 export class PauseMenuScene extends Phaser.Scene {
   private parentSceneKey = 'ArenaScene';
@@ -16,49 +17,6 @@ export class PauseMenuScene extends Phaser.Scene {
     const cx = width / 2;
     const cy = height / 2;
 
-    // Dim overlay — blocks all click-through to arena
-    this.add.rectangle(cx, cy, width, height, 0x000000, 0.65)
-      .setDepth(100)
-      .setScrollFactor(0)
-      .setInteractive();
-
-    // Panel
-    this.add.rectangle(cx, cy, 320, 200, 0x0d0d1a, 1)
-      .setStrokeStyle(2, 0x4444aa)
-      .setDepth(101)
-      .setScrollFactor(0);
-
-    // Title
-    this.add.text(cx, cy - 68, 'PAUSED', {
-      fontSize: '28px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#ffffff',
-    }).setOrigin(0.5).setDepth(102).setScrollFactor(0);
-
-    // RESUME button
-    const resumeBtn = this.add.rectangle(cx, cy - 4, 200, 44, 0x112211, 1)
-      .setStrokeStyle(2, 0x44cc44)
-      .setDepth(102)
-      .setScrollFactor(0)
-      .setInteractive({ useHandCursor: true });
-    const resumeLbl = this.add.text(cx, cy - 4, 'RESUME', {
-      fontSize: '16px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#44cc44',
-    }).setOrigin(0.5).setDepth(103).setScrollFactor(0);
-
-    // EXIT TO MENU button
-    const exitBtn = this.add.rectangle(cx, cy + 58, 200, 44, 0x221111, 1)
-      .setStrokeStyle(2, 0xcc4444)
-      .setDepth(102)
-      .setScrollFactor(0)
-      .setInteractive({ useHandCursor: true });
-    const exitLbl = this.add.text(cx, cy + 58, 'EXIT TO MENU', {
-      fontSize: '16px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#cc4444',
-    }).setOrigin(0.5).setDepth(103).setScrollFactor(0);
-
     const resume = () => {
       this.scene.resume(this.parentSceneKey);
       this.scene.stop();
@@ -73,17 +31,35 @@ export class PauseMenuScene extends Phaser.Scene {
       this.scene.start('MenuScene', {});
     };
 
-    resumeBtn
-      .on('pointerover', () => resumeBtn.setStrokeStyle(3, 0xaaffaa))
-      .on('pointerout', () => resumeBtn.setStrokeStyle(2, 0x44cc44))
-      .on('pointerdown', resume);
-    resumeLbl.setInteractive().on('pointerdown', resume);
+    // The scrim is interactive, so nothing leaks through to the paused arena.
+    const modal = addModal(this, {
+      w: 380, h: 244, accent: C.arcane,
+      title: '❚❚  PAUSED', glow: 0.5,
+      scrimAlpha: 0.7,
+    });
+    // Scene-launched overlays render above the arena regardless of depth, but
+    // the scroll factor still has to be pinned or a moving camera drags the UI.
+    modal.g.setScrollFactor(0);
+    for (const o of modal.objects) (o as Phaser.GameObjects.Text).setScrollFactor?.(0);
+    modal.scrim.setScrollFactor(0);
 
-    exitBtn
-      .on('pointerover', () => exitBtn.setStrokeStyle(3, 0xffaaaa))
-      .on('pointerout', () => exitBtn.setStrokeStyle(2, 0xcc4444))
-      .on('pointerdown', exitToMenu);
-    exitLbl.setInteractive().on('pointerdown', exitToMenu);
+    addButton(this, {
+      x: cx, y: cy - 12, w: 240, h: 48,
+      label: 'RESUME', icon: '▶', accent: C.verdant, variant: 'solid', fontSize: 17,
+      depth: DEPTH.modalContent,
+      onClick: resume,
+    });
+
+    addButton(this, {
+      x: cx, y: cy + 50, w: 240, h: 44,
+      label: 'EXIT TO MENU', icon: '⏻', accent: C.blood, variant: 'danger', fontSize: 15,
+      depth: DEPTH.modalContent,
+      onClick: exitToMenu,
+    });
+
+    this.add.text(cx, cy + 92, 'ESC to resume', {
+      fontSize: '10px', fontFamily: FONT_UI, color: T.faint, letterSpacing: 2,
+    }).setOrigin(0.5).setDepth(DEPTH.modalContent).setScrollFactor(0);
 
     this.input.keyboard!.on('keydown-ESC', resume);
   }

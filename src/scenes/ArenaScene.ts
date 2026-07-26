@@ -88,6 +88,7 @@ import { ItemsKit } from '../elements/kits/ItemsKit';
 import { computeCurseShardMult } from '../data/GauntletBoosts';
 import { INFINITY_GAUNTLET_ID, infinityHpMult, infinityDmgMult, infinityFightShards, infinityDifficulty, GauntletState, getEffectiveStacks } from '../data/GauntletData';
 import { drawCampaignBackground } from './CampaignBackground';
+import * as UI from '../ui';
 
 
 interface AbilityBarEntry {
@@ -670,7 +671,6 @@ export class ArenaScene extends Phaser.Scene {
 
   // ── Echo (abstract combined: fate + light) kit ───────────────────────
   private echoKit!: EchoKit;
-  private fogOverlayRT: Phaser.GameObjects.RenderTexture | null = null;
 
   // ── Quantum (abstract combined: slime + fate) kit ─────────────────────
   private subterfugeKit!: SubterfugeKit;
@@ -1049,6 +1049,7 @@ export class ArenaScene extends Phaser.Scene {
           ? arena.elementId === 'silence' && arena.hasUpgrade(slot)
           : arena.isOnline && arena.npcElement.id === 'silence' && arena.npcUpgrades.includes(slot),
         sendSilenceMsg: (msg) => { if (arena.isOnline) Net.send(msg); },
+        silenceColor: (owner, base) => arena.cosmeticsKit.silenceColor(owner, base),
       };
       this.silenceKit = new SilenceKit(silenceApi);
     }
@@ -2019,6 +2020,8 @@ export class ArenaScene extends Phaser.Scene {
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (perkId) => arena.hasPerk('player', perkId),
         get isPlayerRubber() { return arena.elementId === 'rubber'; },
+        get isNpcRubber() { return arena.npcElement?.id === 'rubber'; },
+        rubberColor: (owner, base) => arena.cosmeticsKit.rubberColor(owner, base),
         get isDodging() { return arena.isDodging; },
         setStatusIndicator: (id, status) => arena.setStatusIndicator(id, status),
         get masteryActive() { return arena.rubberMasteryOn && arena.elementId === 'rubber'; },
@@ -2038,6 +2041,9 @@ export class ArenaScene extends Phaser.Scene {
       const magicApi: MagicArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
+        get isPlayerMagic() { return arena.elementId === 'magic'; },
+        get isNpcMagic() { return arena.npcElement?.id === 'magic'; },
+        magicColor: (owner, base) => arena.cosmeticsKit.magicColor(owner, base),
         get enemies() { return arena.enemies; },
         get scene(): Phaser.Scene { return arena; },
         get projectiles() { return arena.projectiles; },
@@ -2120,6 +2126,7 @@ export class ArenaScene extends Phaser.Scene {
           if (arena.elementId === 'technology') PlayerData.recordMasteryBest('technology', key, value);
         },
         setStatusIndicator: (id, status) => arena.setStatusIndicator(id, status),
+        technologyColor: (owner, base) => arena.cosmeticsKit.technologyColor(owner, base),
       };
       this.techKit = new TechnologyKit(techApi);
     }
@@ -2207,27 +2214,15 @@ export class ArenaScene extends Phaser.Scene {
         },
         getSceneWidth: () => arena.scale.width,
         getSceneHeight: () => arena.scale.height,
-        fogOverlay: () => arena.fogOverlayRT,
         isEclipseRevealActive: () => arena.echoKit?.isEclipseRevealActive() ?? false,
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
+        echoColor: (owner, base) => arena.cosmeticsKit.echoColor(owner, base),
       };
       this.echoKit = new EchoKit(echoApi);
     }
-    this.echoKit.reset();
-    // Create/recreate fog RT for echo element
-    if (this.elementId === 'echo' || this.npcElement?.id === 'echo') {
-      if (!this.fogOverlayRT || !this.fogOverlayRT.active) {
-        const { width: W, height: H } = this.scale;
-        this.fogOverlayRT = this.add.renderTexture(0, 0, W, H)
-          .setDepth(16)
-          .setScrollFactor(0)
-          .setOrigin(0, 0);
-      }
-    } else if (this.fogOverlayRT) {
-      this.fogOverlayRT.destroy();
-      this.fogOverlayRT = null;
-    }
+    // The kit owns the fog render texture; it only needs to know whether anyone is playing Echo.
+    this.echoKit.reset(this.elementId === 'echo' || this.npcElement?.id === 'echo');
 
     // Subterfuge kit
     if (this.subterfugeKit) {
@@ -2303,6 +2298,7 @@ export class ArenaScene extends Phaser.Scene {
         getMasteryStat: (key) => PlayerData.getMasteryStat('quantum', key),
         allElementIds: () => Object.keys(ELEMENT_MAP),
         setStatusIndicator: (id, status) => arena.setStatusIndicator(id, status),
+        subterfugeColor: (owner, base) => arena.cosmeticsKit.subterfugeColor(owner, base),
       };
       this.subterfugeKit = new SubterfugeKit(subterfugeApi);
     }
@@ -2468,7 +2464,7 @@ export class ArenaScene extends Phaser.Scene {
     if (this.npcElement.id === 'dummy') {
       this.dummyBackBtn = this.add.text(14, 14, '◀ BACK', {
         fontSize: '15px',
-        fontFamily: '"Arial Black", sans-serif',
+        fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
         color: '#aaaaaa',
         backgroundColor: '#222222',
         padding: { x: 8, y: 4 },
@@ -2505,7 +2501,7 @@ export class ArenaScene extends Phaser.Scene {
         const fontSize = active.length > 2 ? '12px' : '15px';
         this.add.text(cx, pad + 14, label, {
           fontSize,
-          fontFamily: '"Arial Black", sans-serif',
+          fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
           color: '#ffcc00',
           stroke: '#000000',
           strokeThickness: 3,
@@ -2852,7 +2848,7 @@ export class ArenaScene extends Phaser.Scene {
     }
     if (this.isOnline) {
       this.onlinePingText = this.add.text(this.scale.width - 12, 40, '', {
-        fontSize: '12px', fontFamily: 'Arial, sans-serif', color: '#88ccbb',
+        fontSize: '12px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#88ccbb',
       }).setOrigin(1, 0).setDepth(30);
       this.time.addEvent({
         delay: 1000,
@@ -3221,7 +3217,19 @@ export class ArenaScene extends Phaser.Scene {
       ? this.playerElement.abilities.slice(0, 5)
       : this.playerElement.abilities;
 
-    this.add.rectangle(W / 2, hudY, W, cardH + 4, 0x0a0a18, 0.95).setDepth(20);
+    // Ability tray: a machined band, not a flat strip. Lit rule along the top
+    // edge with etched ticks, so the bar reads as part of the same UI as the
+    // menus rather than a black box taped to the screen.
+    const trayTop = hudY - (cardH + 4) / 2;
+    const tray = this.add.graphics().setDepth(20);
+    UI.fillNotchedGradient(tray, 0, trayTop, W, cardH + 4,
+      UI.mix(UI.C.void_, UI.C.arcane, 0.1), UI.C.void_, 0.96, 0, UI.ALL_CORNERS, 10);
+    tray.lineStyle(2, UI.C.arcane, 0.4);
+    tray.beginPath(); tray.moveTo(20, trayTop); tray.lineTo(W - 20, trayTop); tray.strokePath();
+    tray.lineStyle(1, UI.C.arcane, 0.14);
+    for (let tx = 40; tx < W - 40; tx += 14) {
+      tray.beginPath(); tray.moveTo(tx, trayTop + 2); tray.lineTo(tx, trayTop + (tx % 70 === 40 ? 9 : 5)); tray.strokePath();
+    }
 
     const totalWidth = 5 * cardW; // always 5-wide layout for consistency
     const startX = W / 2 - totalWidth / 2 + cardW / 2;
@@ -3399,25 +3407,34 @@ export class ArenaScene extends Phaser.Scene {
       const cardId = boundEnh ? boundEnh.id : ab.id;
       const cardColor = boundEnh ? 0xffaa00 : (fillColors[ab.id] ?? 0x4466aa);
 
-      const bg = this.add
-        .rectangle(x, hudY, cardW - 4, cardH - 4, boundEnh ? 0x2a1a05 : 0x1a1a30)
-        .setStrokeStyle(1, boundEnh ? 0x775522 : 0x333355)
-        .setDepth(21);
+      // The card is its own accent: a notched plate tinted by the ability
+      // colour, gold-framed when a mastery ability has taken the slot.
+      const plateAccent = boundEnh ? UI.C.gold : cardColor;
+      const bg = this.add.graphics().setDepth(21);
+      const px = x - (cardW - 4) / 2;
+      const py = hudY - (cardH - 4) / 2;
+      UI.fillNotchedGradient(bg, px, py, cardW - 4, cardH - 4,
+        UI.mix(UI.tintPlate(plateAccent, 0.18), 0xffffff, 0.05),
+        UI.mix(UI.tintPlate(plateAccent, 0.1), 0x000000, 0.5), 1, 8, UI.ALL_CORNERS, 10);
+      UI.strokeNotched(bg, px, py, cardW - 4, cardH - 4, plateAccent, boundEnh ? 0.95 : 0.5, 1.5, 8, UI.ALL_CORNERS);
+      UI.drawSheen(bg, px, py, cardW - 4, cardH - 4, UI.mix(plateAccent, 0xffffff, 0.7), 0.22, 8);
 
       const fill = this.add
         .rectangle(x - (cardW - 4) / 2, hudY, 0, cardH - 4, cardColor, 0.45)
         .setOrigin(0, 0.5)
         .setDepth(22);
 
-      const lbl = this.add.text(x, hudY - 6, `[${ab.displayKey}] ${boundEnh ? boundEnh.name : ab.name}`, {
+      const lbl = this.add.text(x, hudY - 7, `${ab.displayKey}  ${boundEnh ? boundEnh.name : ab.name}`, {
         fontSize: '11px',
-        fontFamily: 'Arial, sans-serif',
-        color: boundEnh ? '#ffcc00' : '#dddddd',
+        fontFamily: UI.FONT_DISPLAY,
+        color: boundEnh ? UI.T.gold : UI.T.bright,
+        letterSpacing: 0.5,
       }).setOrigin(0.5, 0.5).setDepth(23);
 
       const desc = this.add.text(x, hudY + 8, boundEnh ? (boundEnh.hudDescription ?? boundEnh.description) : ab.description, {
         fontSize: '9px',
-        color: '#000000',
+        fontFamily: UI.FONT_UI,
+        color: UI.T.dim,
         wordWrap: { width: cardW - 12 },
         maxLines: 2,
         align: 'center',
@@ -3441,7 +3458,7 @@ export class ArenaScene extends Phaser.Scene {
         const fill = this.add.rectangle(x - (cardW - 4) / 2, hudY, 0, cardH - 4, fillColors[ab.id] ?? 0xaa2233, 0.5)
           .setOrigin(0, 0.5).setDepth(22).setVisible(false);
         const lbl = this.add.text(x, hudY - 6, `[${ab.displayKey}] ${ab.name}`, {
-          fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#ffaaaa',
+          fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#ffaaaa',
         }).setOrigin(0.5, 0.5).setDepth(23).setVisible(false);
         const desc = this.add.text(x, hudY + 8, ab.description, {
           fontSize: '9px', color: '#000000', wordWrap: { width: cardW - 12 }, maxLines: 2, align: 'center',
@@ -3458,7 +3475,7 @@ export class ArenaScene extends Phaser.Scene {
         const fill = this.add.rectangle(x - (cardW - 4) / 2, hudY, 0, cardH - 4, fillColors[ab.id] ?? 0xcc5522, 0.5)
           .setOrigin(0, 0.5).setDepth(22).setVisible(false);
         const lbl = this.add.text(x, hudY - 6, `[${ab.displayKey}] ${ab.name}`, {
-          fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#ffddaa',
+          fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#ffddaa',
         }).setOrigin(0.5, 0.5).setDepth(23).setVisible(false);
         const desc = this.add.text(x, hudY + 8, ab.description, {
           fontSize: '9px', color: '#000000', wordWrap: { width: cardW - 12 }, maxLines: 2, align: 'center',
@@ -3482,9 +3499,27 @@ export class ArenaScene extends Phaser.Scene {
     const barY = this.hpBarY;
     const left = W / 2 - this.hpBarW / 2;
 
-    this.add.rectangle(W / 2, barY, this.hpBarW + 6, this.hpBarH + 6, 0x0a0a18, 0.9)
-      .setStrokeStyle(2, 0x445577)
-      .setDepth(20);
+    // Housing: a notched trough with corner brackets and a hairline scale, so
+    // the bar reads as an instrument rather than a coloured rectangle.
+    const housing = this.add.graphics().setDepth(20);
+    const hx = left - 5;
+    const hy = barY - this.hpBarH / 2 - 5;
+    const hw = this.hpBarW + 10;
+    const hh = this.hpBarH + 10;
+    UI.drawGlow(housing, hx, hy, hw, hh, UI.C.frost, 0.22, 3, 3, 8);
+    UI.fillNotchedGradient(housing, hx, hy, hw, hh,
+      UI.mix(UI.C.void_, UI.C.frost, 0.08), UI.C.void_, 0.94, 8, UI.ALL_CORNERS, 8);
+    UI.strokeNotched(housing, hx, hy, hw, hh, UI.C.frost, 0.55, 2, 8, UI.ALL_CORNERS);
+    UI.drawCornerBrackets(housing, hx, hy, hw, hh, UI.mix(UI.C.frost, 0xffffff, 0.3), 0.8, 2, 12, 8);
+    // Quarter marks across the trough.
+    housing.lineStyle(1, UI.C.frost, 0.2);
+    for (let q = 1; q < 4; q++) {
+      const qx = left + (this.hpBarW / 4) * q;
+      housing.beginPath();
+      housing.moveTo(qx, barY - this.hpBarH / 2);
+      housing.lineTo(qx, barY + this.hpBarH / 2);
+      housing.strokePath();
+    }
 
     this.hpBarFill = this.add
       .rectangle(left, barY, this.hpBarW, this.hpBarH, 0x22dd55, 1)
@@ -3504,11 +3539,12 @@ export class ArenaScene extends Phaser.Scene {
 
     this.hpBarText = this.add
       .text(W / 2, barY, '', {
-        fontSize: '15px',
-        fontFamily: 'Arial, sans-serif',
+        fontSize: '14px',
+        fontFamily: UI.FONT_DISPLAY,
         color: '#ffffff',
         stroke: '#000000',
         strokeThickness: 3,
+        letterSpacing: 1,
       })
       .setOrigin(0.5)
       .setDepth(22);
@@ -4941,7 +4977,7 @@ export class ArenaScene extends Phaser.Scene {
       this.nuclearStartedAt = this.time.now;
       this.nuclearDetonated = false;
       this.nuclearText = this.add.text(this.npc.x, this.npc.y - 40, '60', {
-        fontSize: '16px', fontFamily: '"Arial Black", sans-serif',
+        fontSize: '16px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
         color: '#ffaa00', stroke: '#220000', strokeThickness: 4,
       }).setOrigin(0.5).setDepth(20);
     }
@@ -4957,7 +4993,7 @@ export class ArenaScene extends Phaser.Scene {
       const hpBar = this.add.rectangle(this.npc.x - 22, this.npc.y + 38, 44, 5, 0x33cc55)
         .setOrigin(0, 0.5).setDepth(8);
       const hpLabel = this.add.text(this.npc.x, this.npc.y + 48, `${maxHp}`, {
-        fontSize: '11px', fontFamily: '"Arial Black", sans-serif',
+        fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
         color: '#dfffd0', stroke: '#000', strokeThickness: 2,
       }).setOrigin(0.5).setDepth(8);
       this.amberDino = { sprite, hpBg, hpBar, hpLabel, hp: maxHp, maxHp, speed };
@@ -5203,7 +5239,7 @@ export class ArenaScene extends Phaser.Scene {
         // Floating label pinned to NPC
         if (this.painLabel) this.painLabel.destroy();
         this.painLabel = this.add.text(this.npc.x, this.npc.y - 50, 'I WONT DIE', {
-          fontSize: '18px', fontFamily: '"Arial Black", sans-serif',
+          fontSize: '18px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
           color: '#ff3344', stroke: '#000000', strokeThickness: 5,
         }).setOrigin(0.5).setDepth(25);
         this.showFloatingText(this.npc.x, this.npc.y - 30, '😣 PAIN', '#ff3344');
@@ -5719,7 +5755,7 @@ export class ArenaScene extends Phaser.Scene {
     const hpBg = this.add.rectangle(x, y - 20, barW, 4, 0x333333, 0.8).setDepth(5);
     const hpBar = this.add.rectangle(x - barW / 2, y - 20, barW, 4, stroke, 0.9).setDepth(6).setOrigin(0, 0.5);
     const hpLabel = this.add.text(x, y - 28, this.tinkerBuildingLabel(kind), {
-      fontSize: '8px', fontFamily: '"Arial Black", sans-serif', color: '#ffffff',
+      fontSize: '8px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffffff',
     }).setOrigin(0.5).setDepth(7);
 
     let aura: Phaser.GameObjects.Arc | null = null;
@@ -5764,7 +5800,7 @@ export class ArenaScene extends Phaser.Scene {
     const hpBar = this.add.rectangle(x - barW / 2, y - 54, barW, 6, 0xff2244, 0.95)
       .setOrigin(0, 0.5).setDepth(8);
     const hpLabel = this.add.text(x, y - 64, '🩸 BLOOD TREE', {
-      fontSize: '9px', fontFamily: '"Arial Black", sans-serif', color: '#ff6688',
+      fontSize: '9px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ff6688',
     }).setOrigin(0.5).setDepth(9);
 
     // Invisible Fighter hitbox: registering it in enemies/enemyGroup lets every
@@ -6174,19 +6210,19 @@ export class ArenaScene extends Phaser.Scene {
     const W = this.scale.width;
     for (let i = 0; i < 3; i++) {
       const pt = this.add.text(W / 2 - 80 + i * 28, 60, '|', {
-        fontSize: '28px', fontFamily: '"Arial Black", sans-serif',
+        fontSize: '28px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
         color: '#444444', stroke: '#000000', strokeThickness: 3,
       }).setOrigin(0.5).setDepth(20).setAlpha(0.85);
       this.honorPlayerTallyTexts.push(pt);
 
       const nt = this.add.text(W / 2 + 80 - i * 28, 60, '|', {
-        fontSize: '28px', fontFamily: '"Arial Black", sans-serif',
+        fontSize: '28px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
         color: '#444444', stroke: '#000000', strokeThickness: 3,
       }).setOrigin(0.5).setDepth(20).setAlpha(0.85);
       this.honorNpcTallyTexts.push(nt);
     }
     const label = this.add.text(W / 2, 38, '⚔️ HONOR', {
-      fontSize: '11px', fontFamily: 'Arial, sans-serif',
+      fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
       color: '#aaaaaa', stroke: '#000', strokeThickness: 2,
     }).setOrigin(0.5).setDepth(20);
     this.honorPlayerTallyTexts.push(label);
@@ -6267,7 +6303,7 @@ export class ArenaScene extends Phaser.Scene {
     this.golfBall = { sprite, vx: 0, vy: 0, lastEnemyHitAt: -9999, radius };
 
     const labelText = this.add.text(W / 2, H / 2 - radius - 16, 'Hit the ball!', {
-      fontSize: '11px', fontFamily: 'Arial, sans-serif',
+      fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
       color: '#ffffff', stroke: '#000', strokeThickness: 2,
     }).setOrigin(0.5).setDepth(9);
     this.golfBallSpeedLabel = labelText;
@@ -6741,7 +6777,7 @@ export class ArenaScene extends Phaser.Scene {
 
     const txt = this.add.text(sx, sy, `+${amount}`, {
       fontSize: `${Math.min(20, 12 + Math.floor(amount / 10))}px`,
-      fontFamily: '"Arial Black", sans-serif',
+      fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
       color: '#55ff66',
       stroke: '#0a3a12',
       strokeThickness: 3,
@@ -6794,7 +6830,7 @@ export class ArenaScene extends Phaser.Scene {
 
     const txt = this.add.text(sx, sy, label, {
       fontSize: (isBlocked || isDodged || isReflected) ? '13px' : `${Math.min(20, 12 + Math.floor(amount / 10))}px`,
-      fontFamily: '"Arial Black", sans-serif',
+      fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
       color,
       stroke,
       strokeThickness: 3,

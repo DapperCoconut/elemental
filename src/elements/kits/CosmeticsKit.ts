@@ -60,6 +60,12 @@ const MAGNET_PALETTES: Record<string, Record<number, number>> = {};
 const METAL_PALETTES: Record<string, Record<number, number>> = {};
 const PLASMA_PALETTES: Record<string, Record<number, number>> = {};
 const GUNPOWDER_PALETTES: Record<string, Record<number, number>> = {};
+const ECHO_PALETTES: Record<string, Record<number, number>> = {};
+const RUBBER_PALETTES: Record<string, Record<number, number>> = {};
+const MAGIC_PALETTES: Record<string, Record<number, number>> = {};
+const SILENCE_PALETTES: Record<string, Record<number, number>> = {};
+const SUBTERFUGE_PALETTES: Record<string, Record<number, number>> = {};
+const TECHNOLOGY_PALETTES: Record<string, Record<number, number>> = {};
 
 /**
  * Renders equipped cosmetics on both fighters: the color-slot body tint (and the
@@ -331,6 +337,66 @@ export class CosmeticsKit {
   gunpowderColor(owner: Owner, base: number): number {
     const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
     const palette = GUNPOWDER_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps an echo visual color through the owner's color cosmetic. Identity until an echo colour
+   * cosmetic exists — see ECHO_PALETTES.
+   */
+  echoColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = ECHO_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps a rubber visual color through the owner's color cosmetic. Identity until a rubber colour
+   * cosmetic exists — see RUBBER_PALETTES.
+   */
+  rubberColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = RUBBER_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps a magic visual color through the owner's color cosmetic. Identity until a magic colour
+   * cosmetic exists — see MAGIC_PALETTES.
+   */
+  magicColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = MAGIC_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps a silence visual color through the owner's color cosmetic. Identity until a silence
+   * colour cosmetic exists — see SILENCE_PALETTES.
+   */
+  silenceColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = SILENCE_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps a subterfuge visual color through the owner's color cosmetic. Identity until a
+   * subterfuge colour cosmetic exists — see SUBTERFUGE_PALETTES.
+   */
+  subterfugeColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = SUBTERFUGE_PALETTES[loadout['color'] ?? ''];
+    return palette ? (palette[base] ?? base) : base;
+  }
+
+  /**
+   * Maps a technology visual color through the owner's color cosmetic. Identity until a
+   * technology colour cosmetic exists — see TECHNOLOGY_PALETTES.
+   */
+  technologyColor(owner: Owner, base: number): number {
+    const loadout = owner === 'player' ? this.playerCosmetics : this.npcCosmetics;
+    const palette = TECHNOLOGY_PALETTES[loadout['color'] ?? ''];
     return palette ? (palette[base] ?? base) : base;
   }
 

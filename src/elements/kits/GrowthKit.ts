@@ -2125,7 +2125,7 @@ export class GrowthKit {
       this.dnaHudBarText = scene.add
         .text(width / 2, barY, '', {
           fontSize: '11px',
-          fontFamily: 'Arial, sans-serif',
+          fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
           color: '#ffffff',
           stroke: '#000000',
           strokeThickness: 3,
@@ -2523,11 +2523,11 @@ export class GrowthKit {
     const titleText = sickTab ? '🩸 SICKNESS'
       : body.isCloneBody ? '🧬 EVOLVE — CLONE BODY' : '🧬 EVOLVE';
     const title = scene.add.text(W / 2, panelY + 10, titleText, {
-      fontSize: '17px', fontFamily: '"Arial Black", sans-serif',
+      fontSize: '17px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
       color: sickTab ? '#ff8899' : body.isCloneBody ? '#ffcc88' : '#aaffcc',
     }).setOrigin(0.5).setDepth(41);
     const dnaText = scene.add.text(W / 2, panelY + 30, `\u{1F9EC} DNA: ${this.playerDna}/${DNA_CAP}`, {
-      fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#44ddaa',
+      fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#44ddaa',
     }).setOrigin(0.5).setDepth(41);
     this.evolveLabels.push(title, dnaText);
 
@@ -2566,7 +2566,7 @@ export class GrowthKit {
       gfx.lineStyle(2, t.color, on ? 1 : 0.5);
       gfx.strokeRoundedRect(bx, y - tabH / 2, tabW, tabH, 6);
       const lbl = scene.add.text(cx, y, t.label, {
-        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: on ? '#ffffff' : '#999999',
+        fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: on ? '#ffffff' : '#999999',
       }).setOrigin(0.5).setDepth(41);
       this.evolveLabels.push(lbl);
       this.evolveAreas.push({ id: `__tab:${t.id}`, x: bx, y: y - tabH / 2, w: tabW, h: tabH });
@@ -2599,7 +2599,7 @@ export class GrowthKit {
     gfx.strokeRoundedRect(bx, ny - cardH / 2, cardW, cardH, 8);
 
     const nameLabel = scene.add.text(bx + 7, ny - cardH / 2 + 5, `${node.isUltimate ? '★ ' : ''}${node.name}`, {
-      fontSize: '11px', fontFamily: '"Arial Black", sans-serif',
+      fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
       color: node.isUltimate ? '#ffdd66' : '#eeffee',
     }).setOrigin(0, 0).setDepth(41);
     const costText = maxed ? 'MAX'
@@ -2607,7 +2607,7 @@ export class GrowthKit {
       : otherChosenLocked ? '🔒'
       : `${cost}\u{1F9EC}`;
     const costLabel = scene.add.text(bx + cardW - 7, ny - cardH / 2 + 5, costText, {
-      fontSize: '11px', fontFamily: '"Arial Black", sans-serif',
+      fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
       color: maxed ? '#88ffaa' : lockedOut ? '#dd8888' : affordable ? '#ffee88' : '#997755',
     }).setOrigin(1, 0).setDepth(41);
     const descLabel = scene.add.text(bx + 7, ny - cardH / 2 + 21, node.description, {
@@ -2644,7 +2644,7 @@ export class GrowthKit {
       const cx = panelX + colW * colIdx + colW / 2;
       const cssColor = `#${path.color.toString(16).padStart(6, '0')}`;
       const pathLabel = scene.add.text(cx, topY, path.name.toUpperCase(), {
-        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: cssColor,
+        fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: cssColor,
       }).setOrigin(0.5).setDepth(41);
       this.evolveLabels.push(pathLabel);
 
@@ -2692,10 +2692,10 @@ export class GrowthKit {
       gfx.lineStyle(2, affordable ? 0xffaa55 : 0x7a5a3a, 1);
       gfx.strokeRoundedRect(bx, bottomY - cardH / 2, cardW, cardH, 8);
       const nameLabel = scene.add.text(bx + 7, bottomY - cardH / 2 + 5, `💪 ${GROWTH_CLONE_MATURITY_NAME}`, {
-        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc99',
+        fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffcc99',
       }).setOrigin(0, 0).setDepth(41);
       const costLabel = scene.add.text(bx + cardW - 7, bottomY - cardH / 2 + 5, maxed ? 'MAX' : `${GROWTH_CLONE_MATURITY_COST}\u{1F9EC}`, {
-        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: maxed ? '#88ffaa' : affordable ? '#ffee88' : '#997755',
+        fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: maxed ? '#88ffaa' : affordable ? '#ffee88' : '#997755',
       }).setOrigin(1, 0).setDepth(41);
       const descLabel = scene.add.text(bx + 7, bottomY - cardH / 2 + 21, GROWTH_CLONE_MATURITY_DESC, {
         fontSize: '9px', fontFamily: 'Arial', color: '#ccaa88', wordWrap: { width: cardW - 40 }, maxLines: 3,
@@ -2717,7 +2717,7 @@ export class GrowthKit {
       // the two before carving out space for this section's header.
       const rowY = bottomY + (body.isCloneBody ? 0 : 10) + 8;
       const label = scene.add.text(W / 2, rowY - cardH / 2 - 12, 'SECRET UPGRADES', {
-        fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#ccaaff',
+        fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ccaaff',
       }).setOrigin(0.5).setDepth(41);
       this.evolveLabels.push(label);
 
@@ -2733,11 +2733,11 @@ export class GrowthKit {
         gfx.lineStyle(2, owned ? 0xbb99ff : affordable ? 0x8866cc : 0x443366, 1);
         gfx.strokeRoundedRect(bx, rowY - cardH / 2, cardW, cardH, 8);
         const nameLabel = scene.add.text(bx + 7, rowY - cardH / 2 + 5, `🧫 ${def.name}`, {
-          fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#ddccff',
+          fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ddccff',
         }).setOrigin(0, 0).setDepth(41);
         const costLabel = scene.add.text(bx + cardW - 7, rowY - cardH / 2 + 5,
           owned ? 'OWNED' : `${GROWTH_SECRET_COST}\u{1F9EC}`, {
-            fontSize: '11px', fontFamily: '"Arial Black", sans-serif',
+            fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
             color: owned ? '#bb99ff' : affordable ? '#ffee88' : '#776699',
           }).setOrigin(1, 0).setDepth(41);
         const descLabel = scene.add.text(bx + 7, rowY - cardH / 2 + 21, def.description, {
@@ -2766,7 +2766,7 @@ export class GrowthKit {
       const cx = panelX + colW * colIdx + colW / 2;
       const cssColor = `#${path.color.toString(16).padStart(6, '0')}`;
       const pathLabel = scene.add.text(cx, topY, path.name.toUpperCase(), {
-        fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: cssColor,
+        fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: cssColor,
       }).setOrigin(0.5).setDepth(41);
       this.evolveLabels.push(pathLabel);
 

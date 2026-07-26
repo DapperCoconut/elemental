@@ -1,6 +1,10 @@
 import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { HealthBar } from '../../combat/HealthBar';
+import {
+  ArmGesture, ECHO, EchoAura, EchoAuraStyle, EchoAvatar, EchoColorFn, EchoFx,
+  chirpRing, echoChirpLayered, eyeGlyph,
+} from './EchoVisuals';
 
 // ── Arena API ────────────────────────────────────────────────────────────────
 
@@ -24,6 +28,8 @@ export interface EchoArenaApi {
   masteryBindFor(slot: string): string | null;
   recordMasteryStat(key: string, amount: number): void;
   broadcastMasteryCast(enhId: string): void;
+  /** `(owner, base) => displayed` — the owner's colour cosmetic, or the identity. */
+  echoColor(owner: 'player' | 'npc', base: number): number;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   dealAoeDamageToNpc(cx: number, cy: number, radius: number, damage: number): void;
@@ -33,7 +39,6 @@ export interface EchoArenaApi {
   startCooldown(owner: 'player' | 'npc', abilityId: string): void;
   getSceneWidth(): number;
   getSceneHeight(): number;
-  fogOverlay(): Phaser.GameObjects.RenderTexture | null;
   isEclipseRevealActive(): boolean;
   hasUpgrade(slot: string): boolean;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
@@ -42,7 +47,6 @@ export interface EchoArenaApi {
 // ── Internal types ───────────────────────────────────────────────────────────
 
 interface EchoProj {
-  gfx: Phaser.GameObjects.Graphics;
   x: number;
   y: number;
   vx: number;
@@ -60,7 +64,6 @@ interface GuessReveal {
 }
 
 interface EchoSummon {
-  sprite: Phaser.GameObjects.Arc;
   hpBar: HealthBar;
   hp: number;
   maxHp: number;
@@ -69,11 +72,21 @@ interface EchoSummon {
   owner: 'player' | 'npc';
   expiresAt: number;
   shootAccum: number;
-  lightGfx: Phaser.GameObjects.Graphics | null;
+  /** R+ lantern summons carry their own light. */
+  lit: boolean;
+}
+
+/** A shot spat by an Echo summon — plain data, painted with the rest of the kit's air layer. */
+interface SummonShot {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  owner: 'player' | 'npc';
+  bornAt: number;
 }
 
 interface EclipseLine {
-  gfx: Phaser.GameObjects.Graphics;
   cx: number;
   cy: number;
   angle: number;
@@ -90,12 +103,12 @@ interface BatAttach {
 }
 
 interface PsychicEye {
-  sprite: Phaser.GameObjects.Image;
   angleOffset: number;
+  x: number;
+  y: number;
 }
 
 interface LightTrail {
-  gfx: Phaser.GameObjects.Graphics;
   pts: { x: number; y: number }[];
   expiresAt: number;
   lastTickAt: number;
@@ -134,14 +147,15 @@ const BIOLUM_RADIUS_MULT = 1.25;
 /** How far back the heat trail a terror bloom paints reaches. */
 const HEAT_TRAIL_MS = 6000;
 const HEAT_TRAIL_SAMPLE_MS = 70;
-const ECHO_BLOOM_COLOR = 0xaab4ff;
-const TERROR_BLOOM_COLOR = 0xdd2c44;
+const ECHO_BLOOM_COLOR = ECHO.pale;
+const TERROR_BLOOM_COLOR = ECHO.terror;
 
 interface Blossom {
   kind: 'echo' | 'terror';
   x: number;
   y: number;
-  gfx: Phaser.GameObjects.Graphics;
+  /** Blooms rooted in a fighter ride under it; planted ones sit above the fog. */
+  onHost: boolean;
   /** Fighter the bloom is rooted in; null once it is planted in scenery (or its host died). */
   host: Fighter | null;
   offX: number;
@@ -156,7 +170,6 @@ interface Blossom {
 }
 
 interface BloomSeed {
-  gfx: Phaser.GameObjects.Graphics;
   x: number;
   y: number;
   vx: number;
@@ -166,7 +179,6 @@ interface BloomSeed {
 }
 
 interface BloomBullet {
-  gfx: Phaser.GameObjects.Graphics;
   x: number;
   y: number;
   vx: number;
@@ -192,10 +204,44 @@ interface HeatSample {
 
 // ── EchoKit ──────────────────────────────────────────────────────────────────
 
+/** Every ability drives an arm gesture, on the NPC rig as well as the player's. */
+const CAST_GESTURES: Record<string, ArmGesture> = {
+  'echo-shot': 'punch',
+  'echo-guess': 'sweep',
+  'echo-lantern': 'flex',
+  'echo-bat': 'dash',
+  'echo-eclipse': 'raise',
+};
+
 export class EchoKit {
   private arena: EchoArenaApi;
 
+  // ── Visuals ────────────────────────────────────────────────────────────
+  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  private readonly pcol: EchoColorFn;
+  private readonly ncol: EchoColorFn;
+  private readonly pfx: EchoFx;
+  private readonly nfx: EchoFx;
+  /** The bat-thing rig (membrane hands, eyes, crown wings) for each echo fighter. */
+  private playerAvatar: EchoAvatar | null = null;
+  private npcAvatar: EchoAvatar | null = null;
+  /** Stance tells, per side where both can run one. */
+  private auras: Partial<Record<`${'player' | 'npc'}:${EchoAuraStyle}`, EchoAura>> = {};
+  /**
+   * Two layers, because these objects are not all in the same place. Blooms rooted in a fighter,
+   * listening marks and summon light lie under the fog and under the fighters; bolts, lines,
+   * summons and psychic eyes are thrown out in front and must clear it.
+   */
+  private groundGfx: Phaser.GameObjects.Graphics | null = null;
+  private airGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Shared animation clock for every per-frame painter in this kit. */
+  private vizT = 0;
+  /** Last cursor position, cached in handleInput — `update` has no pointer. */
+  private lastAimX = 0;
+  private lastAimY = 0;
+
   // Fog
+  private fogOverlayRT: Phaser.GameObjects.RenderTexture | null = null;
   private fogEraser: Phaser.GameObjects.Graphics | null = null;
   private fogInitialized = false;
   private _eclipseRevealActive = false;
@@ -216,10 +262,10 @@ export class EchoKit {
   private playerLanternActive = false;
   private playerLanternHp = 0;
   private npcLanternActive = false;
-  private playerLanternIndicator: Phaser.GameObjects.Arc | null = null;
 
   // Echo summons
   private echoSummons: EchoSummon[] = [];
+  private summonShots: SummonShot[] = [];
 
   // Bat form
   private playerBatFormActive = false;
@@ -274,7 +320,6 @@ export class EchoKit {
   private viewIndex = 0;
   private lastBloomShotAt = -BLOOM_SHOT_COOLDOWN_MS;
   private playerBiolumUntil = 0;
-  private biolumGfx: Phaser.GameObjects.Graphics | null = null;
   /** Which bloom the remote echo player is looking through, mirrored for their shots. */
   private npcViewIndex = 0;
 
@@ -293,15 +338,92 @@ export class EchoKit {
 
   constructor(arena: EchoArenaApi) {
     this.arena = arena;
+    // Built here, not as field initialisers, so they see the injected arena.
+    this.pcol = (base) => arena.echoColor('player', base);
+    this.ncol = (base) => arena.echoColor('npc', base);
+    this.pfx = new EchoFx(arena.scene, this.pcol);
+    this.nfx = new EchoFx(arena.scene, this.ncol);
   }
 
-  reset(): void {
-    // Destroy all active graphics
-    for (const p of this.echoProjs) p.gfx.destroy();
+  // ── Visual helpers ─────────────────────────────────────────────────────
+
+  /** Effect painter for a side. */
+  private fx(owner: 'player' | 'npc'): EchoFx { return owner === 'player' ? this.pfx : this.nfx; }
+  /** Colour mapper for a side. */
+  private col(owner: 'player' | 'npc'): EchoColorFn { return owner === 'player' ? this.pcol : this.ncol; }
+  private fighter(owner: 'player' | 'npc'): Fighter {
+    return owner === 'player' ? this.arena.player : this.arena.npc;
+  }
+  /** The rig for a side, if that side is playing Echo. */
+  private avatarFor(owner: 'player' | 'npc'): EchoAvatar | null {
+    return owner === 'player' ? this.playerAvatar : this.npcAvatar;
+  }
+
+  /**
+   * The under-the-fog layer: over the fighters (so a bloom rooted in someone reads on top of
+   * them) but under the fog itself, which is what makes a lit summon a *source* of light rather
+   * than a thing you can see regardless.
+   */
+  private ground(): Phaser.GameObjects.Graphics {
+    if (!this.groundGfx || !this.groundGfx.active) {
+      this.groundGfx = this.arena.scene.add.graphics().setDepth(15);
+    }
+    return this.groundGfx;
+  }
+
+  /** The over-the-fog layer. Rebuilt lazily after a reset. */
+  private air(): Phaser.GameObjects.Graphics {
+    if (!this.airGfx || !this.airGfx.active) {
+      this.airGfx = this.arena.scene.add.graphics().setDepth(17);
+    }
+    return this.airGfx;
+  }
+
+  /** Build/tear down one stance aura from a single "is it up?" flag. */
+  private syncAura(
+    owner: 'player' | 'npc', style: EchoAuraStyle, on: boolean,
+    delta: number, intensity: number, angle: number, radius = 28,
+  ): void {
+    const key = `${owner}:${style}` as const;
+    let aura = this.auras[key];
+    const f = this.fighter(owner);
+    if (!on || !f?.active) {
+      if (aura) { aura.destroy(); delete this.auras[key]; }
+      return;
+    }
+    if (!aura) {
+      aura = new EchoAura(this.arena.scene, this.col(owner), style, radius, style === 'biolum' ? 3 : 5);
+      this.auras[key] = aura;
+    }
+    aura.setIntensity(intensity);
+    aura.setAngle(angle);
+    aura.update(delta, f.x, f.y, f.forceInvisible ? 0 : f.alpha);
+  }
+
+  private destroyAuras(): void {
+    for (const a of Object.values(this.auras)) a?.destroy();
+    this.auras = {};
+  }
+
+  /**
+   * Stand up (or tear down) the fog render texture. Echo owns the fog outright, so ArenaScene
+   * only has to say whether anyone in this match is playing it.
+   */
+  reset(needed = false): void {
+    // Visuals — every GameObject dies with the old scene run, so rebuild lazily in update().
+    if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
+    if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
+    this.destroyAuras();
+    if (this.groundGfx) { this.groundGfx.destroy(); this.groundGfx = null; }
+    if (this.airGfx) { this.airGfx.destroy(); this.airGfx = null; }
+    this.vizT = 0;
+    this.lastAimX = 0;
+    this.lastAimY = 0;
+
     this.echoProjs = [];
-    for (const s of this.echoSummons) { s.sprite.destroy(); s.hpBar.destroy(); }
+    for (const s of this.echoSummons) s.hpBar.destroy();
     this.echoSummons = [];
-    for (const l of this.eclipseLines) l.gfx.destroy();
+    this.summonShots = [];
     this.eclipseLines = [];
     this.guessReveals = [];
 
@@ -310,8 +432,6 @@ export class EchoKit {
     this.playerHypersenseUntil = 0;
     this.playerLanternActive = false;
     this.npcLanternActive = false;
-    if (this.playerLanternIndicator?.active) { this.playerLanternIndicator.destroy(); }
-    this.playerLanternIndicator = null;
     this.playerBatFormActive = false;
     this.playerBatFormEndsAt = 0;
     this.playerBatAttach = null;
@@ -322,10 +442,8 @@ export class EchoKit {
     this.eclipseRevealUntil = 0;
 
     // Psychic eyes / light trails
-    for (const eye of this.playerEyes) eye.sprite.destroy();
     this.playerEyes = [];
     this.playerEyePowerUpArmed = false;
-    for (const trail of this.playerLightTrails) trail.gfx.destroy();
     this.playerLightTrails = [];
     this.playerLanternHealAccum = 0;
     this.playerLanternHealTextAccum = 0;
@@ -343,9 +461,7 @@ export class EchoKit {
     for (const b of [...this.playerBlossoms, ...this.npcBlossoms]) this.releaseBlossom(b);
     this.playerBlossoms = [];
     this.npcBlossoms = [];
-    for (const s of this.bloomSeeds) s.gfx.destroy();
     this.bloomSeeds = [];
-    for (const b of this.bloomBullets) b.gfx.destroy();
     this.bloomBullets = [];
     this.bloomLastCastAt = -BLOOM_COOLDOWN_MS;
     this.bloomKeyDownAt = 0;
@@ -365,10 +481,9 @@ export class EchoKit {
     this.vibeLastEnemyY = 0;
     this.heatTrail = [];
     this.heatNextSampleAt = 0;
-    for (const g of [this.vibeGfx, this.heatGfx, this.biolumGfx]) g?.destroy();
+    for (const g of [this.vibeGfx, this.heatGfx]) g?.destroy();
     this.vibeGfx = null;
     this.heatGfx = null;
-    this.biolumGfx = null;
 
     // Initialize fog eraser — recreate if destroyed (scene shutdown destroys game objects)
     if (!this.fogEraser || !this.fogEraser.active) {
@@ -376,6 +491,21 @@ export class EchoKit {
       this.fogEraser.setVisible(false);
     }
     this.fogInitialized = false;
+
+    // The fog itself. Echo is the only element that darkens the arena, so the render texture
+    // lives here rather than in ArenaScene.
+    if (needed) {
+      if (!this.fogOverlayRT || !this.fogOverlayRT.active) {
+        this.fogOverlayRT = this.arena.scene.add
+          .renderTexture(0, 0, this.arena.getSceneWidth(), this.arena.getSceneHeight())
+          .setDepth(16)
+          .setScrollFactor(0)
+          .setOrigin(0, 0);
+      }
+    } else if (this.fogOverlayRT) {
+      this.fogOverlayRT.destroy();
+      this.fogOverlayRT = null;
+    }
   }
 
   // Called by ArenaScene to know if eclipse is active (for NPC random aim)
@@ -418,6 +548,9 @@ export class EchoKit {
   handleInput(time: number, _delta: number, pointer: Phaser.Input.Pointer, mx: number, my: number): void {
     const player = this.arena.player;
     const enemy = this.arena.npc;
+    // `update` has no pointer, and the rig has to keep facing the cursor between casts.
+    this.lastAimX = mx;
+    this.lastAimY = my;
 
     // Mastery — Echo Bloom owns whichever slot it is bound to, and while its eye is
     // open it owns click/right-click/Space too. Run it before the bat-attach guard so
@@ -448,8 +581,11 @@ export class EchoKit {
     const rightDown = pointer.rightButtonDown();
     if (rightDown && !this._prevRightDown && this.playerEyes.length > 0 && !this.playerEyePowerUpArmed) {
       if (this.arena.hasUpgrade('e') || this.arena.hasUpgrade('q')) {
-        const consumedEye = this.playerEyes.shift()!;
-        consumedEye.sprite.destroy();
+        const consumed = this.playerEyes.shift()!;
+        // The eye is spent, and what it saw arms the next cast.
+        this.pfx.flash(consumed.x, consumed.y, 14, 19, ECHO.terrorHi);
+        this.pfx.motes(consumed.x, consumed.y, 7, { speed: 100, size: 2, life: 480, color: ECHO.terror });
+        this.pfx.ring(player.x, player.y, 34, 8, ECHO.terror, 360, 18, 5);
         this.playerEyePowerUpArmed = true;
         this.arena.showFloatingText(player.x, player.y - 36, '👁 Power!', '#ff5566');
       }
@@ -530,16 +666,18 @@ export class EchoKit {
   // ── Per-frame update ──────────────────────────────────────────────────────
 
   update(time: number, delta: number, isPlayer: boolean, isNpc: boolean): void {
+    this.vizT += delta / 1000;
+    this.mirrorNpcCast();
     this.updateFog(time);
     this.updateEchoProjs(time, delta);
     this.updateEchoSummons(time, delta, isPlayer);
+    this.updateSummonShots(time, delta);
     this.updateEclipseLines(time, isPlayer);
     this.updateGuessReveals(time);
     if (isPlayer) this.updateBatForm(time, 'player');
     if (isNpc) this.updateBatForm(time, 'npc');
     this.checkLanternShatter(time, isPlayer, isNpc);
     if (isNpc) this.updateNpcEclipseRandom(time);
-    if (isPlayer) this.updateLanternIndicator();
     if (isPlayer) {
       this.updateEyes(time);
       this.updateLightTrails(time);
@@ -551,12 +689,153 @@ export class EchoKit {
     if (isPlayer && this.arena.masteryActive) {
       this.updateVibrationDetection(time);
       this.updateHeatTrail(time);
-      this.updateBiolum(time);
     }
     this.updateBloomSeeds(time, delta);
     this.updateBlossoms(time);
     this.updateBloomBullets(time, delta);
     if (isPlayer && this.arena.masteryActive) this.updateViewing();
+
+    this.paintWorld(time);
+    this.updateAuras(time, delta, isPlayer, isNpc);
+    this.updateAvatars(time, delta, isPlayer, isNpc);
+  }
+
+  /** Mirror the player's gestures on the NPC rig, so an echo opponent visibly casts. */
+  private mirrorNpcCast(): void {
+    const id = this.arena.npcCastId;
+    if (!id) return;
+    const gesture = CAST_GESTURES[id];
+    if (!gesture) return;
+    const { npc, player } = this.arena;
+    this.npcAvatar?.play(gesture, Math.atan2(player.y - npc.y, player.x - npc.x));
+  }
+
+  /**
+   * Every per-frame painter in one pass. Both layers are cleared and redrawn from live state, so
+   * a bolt beats, a summon comes apart and an eclipse line marches rather than sitting there as a
+   * sprite.
+   */
+  private paintWorld(time: number): void {
+    const t = this.vizT;
+
+    // ── Under the fog: light the summons cast, and blooms rooted in a body ──
+    const litSummons = this.echoSummons.filter((s) => s.lit);
+    const rooted = [...this.playerBlossoms, ...this.npcBlossoms].filter((b) => b.onHost);
+    if (litSummons.length > 0 || rooted.length > 0 || this.groundGfx) {
+      const g = this.ground();
+      g.clear();
+      for (const s of litSummons) {
+        const col = this.col(s.owner);
+        g.fillStyle(col(ECHO.lampCore), 0.16);
+        g.fillCircle(s.x, s.y, 30 + Math.sin(t * 3) * 2);
+        g.fillStyle(col(ECHO.lamp), 0.3);
+        g.fillCircle(s.x, s.y, 15);
+      }
+      for (const b of rooted) this.drawBlossom(g, b, time, this.isViewedBlossom(b));
+    }
+
+    // ── Over the fog: everything thrown ──
+    const hasAir = this.echoProjs.length > 0 || this.echoSummons.length > 0
+      || this.summonShots.length > 0 || this.eclipseLines.length > 0
+      || this.playerEyes.length > 0 || this.playerLightTrails.length > 0
+      || this.bloomSeeds.length > 0 || this.bloomBullets.length > 0
+      || this.playerBlossoms.some((b) => !b.onHost) || this.npcBlossoms.some((b) => !b.onHost);
+    if (hasAir || this.airGfx) {
+      const g = this.air();
+      g.clear();
+
+      for (const p of this.echoProjs) {
+        EchoFx.drawBolt(g, this.col(p.owner), p.x, p.y, Math.atan2(p.vy, p.vx), p.bounceCount, t);
+      }
+      for (const s of this.echoSummons) {
+        const target = s.owner === 'player' ? this.arena.npc : this.arena.player;
+        EchoFx.drawSummon(g, this.col(s.owner), s.x, s.y,
+          Math.atan2(target.y - s.y, target.x - s.x), s.hp / s.maxHp, t);
+      }
+      for (const shot of this.summonShots) {
+        const a = Math.atan2(shot.vy, shot.vx);
+        echoChirpLayered(g, this.col(shot.owner), shot.x, shot.y, a, 8, 0.8, 9,
+          ECHO.slate, 0.9, 3, 0, false);
+      }
+      for (const l of this.eclipseLines) {
+        const left = l.detonateAt - time;
+        EchoFx.drawEclipseLine(g, this.col(l.owner), l.cx, l.cy, l.angle, l.len,
+          Phaser.Math.Clamp(1 - left / 3000, 0, 1), t);
+      }
+      for (const eye of this.playerEyes) {
+        const look = Math.atan2(this.arena.npc.y - eye.y, this.arena.npc.x - eye.x);
+        EchoFx.drawPsychicEye(g, this.pcol, eye.x, eye.y, look, this.playerEyePowerUpArmed, eye.angleOffset, t);
+      }
+      for (const trail of this.playerLightTrails) {
+        const alpha = Math.max(0, 0.9 * ((trail.expiresAt - time) / 3000));
+        EchoFx.drawLightTrail(g, this.pcol, trail.pts, alpha, t);
+      }
+      for (const s of this.bloomSeeds) this.drawBloomSeed(g, s, t);
+      for (const b of this.bloomBullets) this.drawBloomBullet(g, b, t);
+      for (const b of [...this.playerBlossoms, ...this.npcBlossoms]) {
+        if (b.onHost) continue;
+        this.drawBlossom(g, b, time, this.isViewedBlossom(b));
+      }
+    }
+  }
+
+  /** True for the one bloom the local player currently has their eye open behind. */
+  private isViewedBlossom(b: Blossom): boolean {
+    return this.viewing && b.owner === 'player' && this.playerBlossoms[this.viewIndex] === b;
+  }
+
+  /** Stance tells for both sides, rebuilt from the flags that are already the source of truth. */
+  private updateAuras(time: number, delta: number, isPlayer: boolean, isNpc: boolean): void {
+    const { player, npc } = this.arena;
+    const pAim = Math.atan2((this.lastAimY || player.y) - player.y, (this.lastAimX || player.x + 1) - player.x);
+    const nAim = Math.atan2(player.y - npc.y, player.x - npc.x);
+
+    this.syncAura('player', 'bat', isPlayer && this.playerBatFormActive && !this.playerBatAttach,
+      delta, 1, pAim, 26);
+    this.syncAura('player', 'drain', isPlayer && !!this.playerBatAttach, delta, 1, pAim, 30);
+    this.syncAura('player', 'lantern', isPlayer && this.playerLanternActive, delta, 1, pAim, 34);
+    this.syncAura('player', 'biolum', isPlayer && time < this.playerBiolumUntil,
+      delta, Phaser.Math.Clamp((this.playerBiolumUntil - time) / 1200, 0, 1), pAim, 30);
+    this.syncAura('player', 'view', isPlayer && this.viewing,
+      delta, Phaser.Math.Clamp(player.shieldHp / 100, 0, 1), pAim, 28);
+
+    this.syncAura('npc', 'bat', isNpc && this.npcBatFormActive && !this.npcBatAttach, delta, 1, nAim, 26);
+    this.syncAura('npc', 'drain', isNpc && !!this.npcBatAttach, delta, 1, nAim, 30);
+    this.syncAura('npc', 'lantern', isNpc && this.npcLanternActive, delta, 1, nAim, 34);
+  }
+
+  /** Drive the rig for whichever sides are playing Echo. Built lazily; torn down when they aren't. */
+  private updateAvatars(time: number, delta: number, isPlayer: boolean, isNpc: boolean): void {
+    const { player, npc, scene } = this.arena;
+
+    if (isPlayer && player?.active) {
+      if (!this.playerAvatar) this.playerAvatar = new EchoAvatar(scene, this.pcol, 'player');
+      const aim = Math.atan2((this.lastAimY || player.y) - player.y, (this.lastAimX || player.x + 1) - player.x);
+      this.playerAvatar.setFacing(aim);
+      // Bat form and a live lantern both visibly swell the rig, so the buff reads off the
+      // character alone without hunting for the aura underneath it.
+      this.playerAvatar.setIntensity(this.playerBatFormActive ? 1.5 : this.playerLanternActive ? 1.25 : 1);
+      this.playerAvatar.setMastered(this.arena.masteryActive);
+      // Hold priority: listening through a bloom beats everything else this rig can be doing.
+      this.playerAvatar.setHold(this.viewing ? 'brace' : this.playerBatAttach ? 'draw' : null, aim);
+      this.playerAvatar.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
+    } else if (this.playerAvatar) {
+      this.playerAvatar.destroy();
+      this.playerAvatar = null;
+    }
+
+    if (isNpc && npc?.active) {
+      if (!this.npcAvatar) this.npcAvatar = new EchoAvatar(scene, this.ncol, 'npc');
+      const aim = Math.atan2(player.y - npc.y, player.x - npc.x);
+      this.npcAvatar.setFacing(aim);
+      this.npcAvatar.setIntensity(this.npcBatFormActive ? 1.5 : this.npcLanternActive ? 1.25 : 1);
+      this.npcAvatar.setHold(this.npcBatAttach ? 'draw' : null, aim);
+      this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
+    } else if (this.npcAvatar) {
+      this.npcAvatar.destroy();
+      this.npcAvatar = null;
+    }
+    void time;
   }
 
   private updateBeaconBatteries(time: number): void {
@@ -606,26 +885,11 @@ export class EchoKit {
     }
   }
 
-  private updateLanternIndicator(): void {
-    const player = this.arena.player;
-    if (this.playerLanternActive) {
-      if (!this.playerLanternIndicator || !this.playerLanternIndicator.active) {
-        this.playerLanternIndicator = this.arena.scene.add.circle(0, 0, 6, 0xffffaa, 0.9)
-          .setStrokeStyle(1, 0xffffff, 0.7)
-          .setDepth(20);
-      }
-      this.playerLanternIndicator.setPosition(player.x, player.y - 26);
-    } else if (this.playerLanternIndicator?.active) {
-      this.playerLanternIndicator.destroy();
-      this.playerLanternIndicator = null;
-    }
-  }
-
   // ── Fog of War ────────────────────────────────────────────────────────────
 
   private updateFog(time: number): void {
-    const rt = this.arena.fogOverlay();
-    if (!rt || !this.fogEraser) return;
+    const rt = this.fogOverlayRT;
+    if (!rt || !rt.active || !this.fogEraser) return;
 
     const player = this.arena.player;
     const W = this.arena.getSceneWidth();
@@ -688,9 +952,10 @@ export class EchoKit {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const angle = Math.atan2(ty - caster.y, tx - caster.x);
     const speed = 440;
-    const gfx = this.arena.scene.add.graphics().setDepth(17);
+    // The shout leaving the mouth, and the arm that threw it.
+    this.fx(owner).chirp(caster.x, caster.y, angle, { reach: 44, color: ECHO.lilac });
+    this.avatarFor(owner)?.play('punch', angle);
     this.echoProjs.push({
-      gfx,
       x: caster.x,
       y: caster.y,
       vx: Math.cos(angle) * speed,
@@ -711,7 +976,6 @@ export class EchoKit {
     for (let i = this.echoProjs.length - 1; i >= 0; i--) {
       const p = this.echoProjs[i];
       if (!p.active) {
-        p.gfx.destroy();
         this.echoProjs.splice(i, 1);
         continue;
       }
@@ -727,6 +991,10 @@ export class EchoKit {
         if (bounced) {
           p.bounceCount++;
           p.lastBounceAt = time;
+          // The wall answers: a chirp kicked back off it, and dust knocked loose.
+          const off = Math.atan2(p.vy, p.vx);
+          this.fx(p.owner).chirp(p.x, p.y, off, { reach: 26, color: ECHO.mist, waves: 2, duration: 260 });
+          this.fx(p.owner).motes(p.x, p.y, 3, { speed: 70, angle: off, spread: 1.1, size: 1.8, life: 420 });
           if (p.bounceCount > 5) { p.active = false; continue; }
           // Click+ Re-location: bend toward cursor (player) or player position (NPC)
           if (this.arena.hasUpgrade('click')) {
@@ -749,24 +1017,21 @@ export class EchoKit {
       const enemy = p.owner === 'player' ? this.arena.npc : this.arena.player;
       if (enemy.hp > 0 && Phaser.Math.Distance.Between(p.x, p.y, enemy.x, enemy.y) <= 28) {
         enemy.takeDamage(18);
-        this.arena.spawnHitFlash(enemy.x, enemy.y, 0xccccff);
+        this.arena.spawnHitFlash(enemy.x, enemy.y, ECHO.lilac);
+        // The wavefront collapses on them, harder the further it had travelled to get there.
+        const angle = Math.atan2(p.vy, p.vx);
+        this.fx(p.owner).boom(p.x, p.y, 46 + p.bounceCount * 6, {
+          color: ECHO.lilac,
+          arcs: 5 + p.bounceCount * 2,
+          motes: 8 + p.bounceCount * 3,
+          duration: 380 + p.bounceCount * 60,
+          mark: false,
+        });
+        this.fx(p.owner).chirp(p.x, p.y, angle, { reach: 40, color: ECHO.white, duration: 260 });
         if (p.owner === 'player') this.arena.recordMasteryStat('echolocationHits', 1);
         p.active = false;
         continue;
       }
-
-      // Draw as rotated rectangle (8×40), perpendicular to travel direction
-      const angle = Math.atan2(p.vy, p.vx);
-      const hw = 4, hh = 20;
-      const cos = Math.cos(angle), sin = Math.sin(angle);
-      p.gfx.clear();
-      p.gfx.fillStyle(0xffffff, 0.92);
-      p.gfx.fillPoints([
-        new Phaser.Geom.Point(p.x + cos * hw - sin * hh, p.y + sin * hw + cos * hh),
-        new Phaser.Geom.Point(p.x - cos * hw - sin * hh, p.y - sin * hw + cos * hh),
-        new Phaser.Geom.Point(p.x - cos * hw + sin * hh, p.y - sin * hw - cos * hh),
-        new Phaser.Geom.Point(p.x + cos * hw + sin * hh, p.y + sin * hw - cos * hh),
-      ], true);
     }
   }
 
@@ -780,16 +1045,21 @@ export class EchoKit {
 
     const directDist = Phaser.Math.Distance.Between(tx, ty, enemy.x, enemy.y);
     const directHit = directDist <= 35;
+    const fx = this.fx(owner);
+    const aim = Math.atan2(ty - caster.y, tx - caster.x);
+    this.avatarFor(owner)?.play('sweep', aim);
 
-    // Visual AoE circle at cursor
+    // The guess itself: a sonar wash thrown at a patch of dark, tight when it lands and loose
+    // when it does not, so the shape alone tells you whether you were right.
     const aoeR = directHit ? 44 : 72;
-    const flash = this.arena.scene.add.circle(tx, ty, aoeR, 0xaaaaff, 0.35).setDepth(17);
-    this.arena.scene.tweens.add({ targets: flash, alpha: 0, duration: 400, onComplete: () => flash.destroy() });
+    fx.sonar(tx, ty, aoeR, { pulses: directHit ? 4 : 2, color: directHit ? ECHO.ghost : ECHO.slate, duration: 640 });
 
     if (directHit) {
-      // Direct hit
+      // Direct hit — the dark peels back off them and an eye opens on the spot.
       enemy.takeDamage(30);
-      this.arena.spawnHitFlash(enemy.x, enemy.y, 0xaaaaff);
+      this.arena.spawnHitFlash(enemy.x, enemy.y, ECHO.pale);
+      fx.boom(enemy.x, enemy.y, 62, { color: ECHO.pale, arcs: 9, motes: 16 });
+      fx.eyeOpen(enemy.x, enemy.y - 34, 14, { color: ECHO.gold, duration: 780 });
       this.arena.showFloatingText(caster.x, caster.y - 40, 'Vision', '#ffdd44');
       this.guessReveals.push({ x: enemy.x, y: enemy.y, expiresAt: time + 500 });
       if (owner === 'player') this.arena.recordMasteryStat('correctGuesses', 1);
@@ -800,13 +1070,22 @@ export class EchoKit {
     const aoeDist = Phaser.Math.Distance.Between(tx, ty, enemy.x, enemy.y);
     if (aoeDist <= 72 && enemy.hp > 0) {
       enemy.takeDamage(15);
-      this.arena.spawnHitFlash(enemy.x, enemy.y, 0xaaaaff);
+      this.arena.spawnHitFlash(enemy.x, enemy.y, ECHO.pale);
+      fx.ring(enemy.x, enemy.y, 8, 44, ECHO.pale, 340, 18, 7);
+      fx.eyeOpen(enemy.x, enemy.y - 30, 10, { color: ECHO.pale, duration: 560 });
       this.guessReveals.push({ x: enemy.x, y: enemy.y, expiresAt: time + 500 });
       if (owner === 'player') this.arena.recordMasteryStat('correctGuesses', 1);
       return true;
     }
 
-    // Miss — slow caster
+    // Miss — the sound comes back empty, and the caster loses their footing in it.
+    fx.mark(tx, ty, 30, 4, ECHO.dusk);
+    fx.motes(caster.x, caster.y, 10, { speed: 60, size: 2, life: 900, color: ECHO.slate, drift: 6 });
+    for (let i = 0; i < 3; i++) {
+      this.arena.scene.time.delayedCall(i * 130, () =>
+        fx.chirp(caster.x, caster.y, Math.random() * Math.PI * 2,
+          { reach: 30, color: ECHO.dusk, waves: 1, duration: 420 }));
+    }
     if (owner === 'player') {
       this.playerGuessSlowUntil = time + 3000;
       this.arena.showFloatingText(caster.x, caster.y - 36, 'Disoriented!', '#ff8888');
@@ -829,38 +1108,45 @@ export class EchoKit {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const directDist = Phaser.Math.Distance.Between(tx, ty, enemy.x, enemy.y);
 
+    const fx = this.fx(owner);
     if (directDist <= 35 && enemy.hp > 0) {
-      // Summon an Echo of the enemy
+      // Summon an Echo of the enemy — sound torn off a body and left standing next to it.
+      this.avatarFor(owner)?.play('punch', Math.atan2(ty - caster.y, tx - caster.x));
+      fx.sonar(enemy.x, enemy.y, 70, { pulses: 3, color: ECHO.ghost, duration: 700 });
+      fx.tether(enemy.x, enemy.y, enemy.x + 40, enemy.y, ECHO.pale, 18);
       this.spawnEchoSummon(enemy.x + 40, enemy.y, owner);
       this.arena.showFloatingText(caster.x, caster.y - 40, 'Vision', '#ffdd44');
     } else if (owner === 'player') {
       // Toggle lantern
+      this.avatarFor(owner)?.play('flex');
       if (this.playerLanternActive) {
         this.playerLanternActive = false;
         this.playerLanternHealAccum = 0;
         this.playerLanternHealTextAccum = 0;
+        fx.motes(caster.x, caster.y, 8, { speed: 60, size: 2, life: 700, color: ECHO.gold });
         this.arena.showFloatingText(caster.x, caster.y - 36, 'Lantern Off', '#aaaaff');
       } else {
         this.playerLanternActive = true;
         this.playerLanternHp = caster.hp;
+        // Ignition burst: the wick catching, and the dark shoved back off it.
+        fx.flash(caster.x, caster.y - 30, 22, 19, ECHO.lamp);
+        fx.ring(caster.x, caster.y, 14, 120, ECHO.lamp, 520, 15, 8);
+        fx.motes(caster.x, caster.y - 26, 12, { speed: 80, size: 2.2, life: 900, color: ECHO.gold, drift: -30 });
         this.arena.showFloatingText(caster.x, caster.y - 36, 'Lantern', '#ffffaa');
       }
     } else {
       this.npcLanternActive = !this.npcLanternActive;
+      fx.ring(caster.x, caster.y, 14, 100, ECHO.lamp, 460, 15, 7);
     }
   }
 
   private spawnEchoSummon(x: number, y: number, owner: 'player' | 'npc'): void {
     const time = this.arena.scene.time.now;
-    const sprite = this.arena.scene.add.circle(x, y, 14, 0x8888cc, 0.85)
-      .setDepth(17)
-      .setStrokeStyle(2, 0xddddff);
     const hpBar = new HealthBar(this.arena.scene, 25);
     hpBar['graphics'].setDepth(17); // bump above fog
-    const lightGfx = this.arena.hasUpgrade('r') ? this.arena.scene.add.graphics().setDepth(15) : null;
     this.echoSummons.push({
-      sprite, hpBar, hp: 25, maxHp: 25, x, y, owner,
-      expiresAt: time + 10000, shootAccum: 0, lightGfx,
+      hpBar, hp: 25, maxHp: 25, x, y, owner,
+      expiresAt: time + 10000, shootAccum: 0, lit: this.arena.hasUpgrade('r'),
     });
   }
 
@@ -874,9 +1160,10 @@ export class EchoKit {
       const s = this.echoSummons[i];
 
       if (s.hp <= 0 || time > s.expiresAt) {
-        s.sprite.destroy();
         s.hpBar.destroy();
-        if (s.lightGfx) s.lightGfx.destroy();
+        // It comes apart the way it was made: one last pulse and a scatter of motes.
+        this.fx(s.owner).ring(s.x, s.y, 6, 40, ECHO.slate, 380, 18, 6);
+        this.fx(s.owner).motes(s.x, s.y, 9, { speed: 90, size: 2, life: 620, color: ECHO.pale });
         this.echoSummons.splice(i, 1);
         continue;
       }
@@ -893,15 +1180,7 @@ export class EchoKit {
         s.y = Phaser.Math.Clamp(s.y, 36, H - 36);
       }
 
-      s.sprite.setPosition(s.x, s.y);
       s.hpBar.update(s.x, s.y, s.hp);
-      if (s.lightGfx) {
-        s.lightGfx.clear();
-        s.lightGfx.fillStyle(0xfff7cc, 0.18);
-        s.lightGfx.fillCircle(s.x, s.y, 28);
-        s.lightGfx.fillStyle(0xfff7cc, 0.35);
-        s.lightGfx.fillCircle(s.x, s.y, 14);
-      }
 
       // Take incoming hits (simple proximity damage check from projectiles)
       // Note: ArenaScene projectiles are Phaser physics objects; we check overlap manually
@@ -914,7 +1193,10 @@ export class EchoKit {
         if (!fromEnemy) continue;
         if (Phaser.Math.Distance.Between(proj.x, proj.y, s.x, s.y) <= 20) {
           s.hp -= 8;
-          this.arena.spawnHitFlash(s.x, s.y, 0xccccff);
+          this.arena.spawnHitFlash(s.x, s.y, ECHO.lilac);
+          this.fx(s.owner).motes(s.x, s.y, 5, {
+            speed: 110, angle: Math.atan2(s.y - proj.y, s.x - proj.x), spread: 1, size: 2, life: 420,
+          });
           proj.setActive(false).setVisible(false);
         }
       }
@@ -932,35 +1214,35 @@ export class EchoKit {
 
   private fireSummonShot(s: EchoSummon, target: Fighter): void {
     if (target.hp <= 0) return;
-    const scene = this.arena.scene;
     const angle = Math.atan2(target.y - s.y, target.x - s.x);
     const speed = 160; // 40% of typical ~400 speed
-    const ball = scene.add.circle(s.x, s.y, 6, 0x8888cc, 0.9).setDepth(17);
-    let bx = s.x, by = s.y;
-    const vx = Math.cos(angle) * speed;
-    const vy = Math.sin(angle) * speed;
-    let hit = false;
-    let ticks = 0;
-
-    scene.time.addEvent({
-      delay: 16,
-      repeat: 80,
-      callback: () => {
-        if (hit) return;
-        ticks++;
-        bx += vx * 0.016;
-        by += vy * 0.016;
-        ball.setPosition(bx, by);
-        if (target.hp > 0 && Phaser.Math.Distance.Between(bx, by, target.x, target.y) <= 24) {
-          target.takeDamage(5);
-          this.arena.spawnHitFlash(target.x, target.y, 0x8888cc);
-          ball.destroy();
-          hit = true;
-        } else if (ticks >= 80) {
-          ball.destroy();
-        }
-      },
+    this.fx(s.owner).chirp(s.x, s.y, angle, { reach: 26, color: ECHO.slate, waves: 2, duration: 260 });
+    this.summonShots.push({
+      x: s.x, y: s.y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      owner: s.owner,
+      bornAt: this.arena.scene.time.now,
     });
+  }
+
+  /** Summon shots are a plain sim so they can be painted with the rest of the air layer. */
+  private updateSummonShots(time: number, delta: number): void {
+    const dt = delta / 1000;
+    for (let i = this.summonShots.length - 1; i >= 0; i--) {
+      const p = this.summonShots[i];
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      const target = p.owner === 'player' ? this.arena.npc : this.arena.player;
+      if (target.hp > 0 && Phaser.Math.Distance.Between(p.x, p.y, target.x, target.y) <= 24) {
+        target.takeDamage(5);
+        this.arena.spawnHitFlash(target.x, target.y, ECHO.slate);
+        this.fx(p.owner).ring(p.x, p.y, 4, 30, ECHO.slate, 300, 18, 5);
+        this.summonShots.splice(i, 1);
+        continue;
+      }
+      if (time - p.bornAt > 1300) this.summonShots.splice(i, 1);
+    }
   }
 
   private checkLanternShatter(time: number, isPlayer: boolean, _isNpc: boolean): void {
@@ -973,7 +1255,11 @@ export class EchoKit {
       this.playerLanternHealAccum = 0;
       this.playerLanternHealTextAccum = 0;
       this.arena.showFloatingText(player.x, player.y - 40, 'Lantern Shattered!', '#ff8844');
-      this.arena.spawnHitFlash(player.x, player.y, 0xffffaa);
+      this.arena.spawnHitFlash(player.x, player.y, ECHO.lamp);
+      // The glass goes: one hard flash, then the light rushes away and the dark closes in.
+      this.pfx.flash(player.x, player.y - 26, 26, 19, ECHO.lampCore);
+      this.pfx.motes(player.x, player.y - 26, 16, { speed: 210, size: 2.4, life: 780, color: ECHO.gold, drift: 40 });
+      this.pfx.ring(player.x, player.y, 90, 8, ECHO.umbra, 420, 15, 10);
     }
     this.playerLanternHp = player.hp;
   }
@@ -985,9 +1271,17 @@ export class EchoKit {
     const enemy = owner === 'player' ? this.arena.npc : this.arena.player;
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const directDist = Phaser.Math.Distance.Between(tx, ty, enemy.x, enemy.y);
+    const fx = this.fx(owner);
+    const aim = Math.atan2(ty - caster.y, tx - caster.x);
+    this.avatarFor(owner)?.play('dash', aim);
+    // Turning into a bat is a shape change, so it gets one: the body scatters into a flock.
+    fx.bats(caster.x, caster.y, 7, { speed: 230, angle: aim, spread: 1.5, size: 10, life: 620 });
+    fx.ring(caster.x, caster.y, 10, 54, ECHO.umbra, 380, 15, 9);
 
     if (directDist <= 35 && enemy.hp > 0) {
       // Attach mode — dash to enemy
+      fx.dashTrail(caster.x, caster.y, enemy.x, enemy.y, { color: ECHO.mist });
+      fx.tether(caster.x, caster.y, enemy.x, enemy.y, ECHO.terror, 17);
       this.arena.showFloatingText(caster.x, caster.y - 40, 'Vision', '#ffdd44');
       if (owner === 'player') {
         this.playerBatAttach = { targetRef: enemy, drainAccum: 0, endsAt: time + 3000, owner: 'player' };
@@ -1064,8 +1358,12 @@ export class EchoKit {
         attach.drainAccum -= 500;
         if (target.hp > 0) {
           target.takeDamage(3);
-          this.arena.spawnHitFlash(target.x, target.y, 0x8888cc);
-          this.arena.showFloatingText(target.x, target.y - 25, '3', '#ccccff');
+          this.arena.spawnHitFlash(target.x, target.y, ECHO.terror);
+          // Each pull drags a thread of them back toward the thing on their shoulder.
+          this.fx(owner).motes(target.x, target.y, 4, {
+            speed: 70, angle: Math.atan2(caster.y - target.y, caster.x - target.x),
+            spread: 0.7, size: 2, life: 380, color: ECHO.terrorHi, drift: 0,
+          });
         }
       }
       return;
@@ -1076,6 +1374,9 @@ export class EchoKit {
     if (batActive && time > (owner === 'player' ? this.playerBatFormEndsAt : this.npcBatFormEndsAt)) {
       caster.setScale(1.0);
       caster.clearTint();
+      // The flock lands and puts itself back together.
+      this.fx(owner).bats(caster.x, caster.y, 6, { speed: 130, size: 9, life: 480 });
+      this.fx(owner).ring(caster.x, caster.y, 46, 8, ECHO.mist, 340, 15, 8);
       if (owner === 'player') {
         this.playerBatFormActive = false;
         this.arena.showFloatingText(caster.x, caster.y - 36, 'Returned', '#aaaaff');
@@ -1084,14 +1385,8 @@ export class EchoKit {
       }
     }
 
-    // Prevent attacking while attached (handled in handleInput check)
-    // Apply speed boost via getPlayerSpeedMult() read by ArenaScene
-
-    // Dodge projectiles during bat attach (handled by isInvincible)
-    // Visual: enemy indicator
-    if (attach) {
-      this.arena.spawnHitFlash(caster.x, caster.y, 0x8888cc);
-    }
+    // Speed boost is applied via getPlayerSpeedMult(), read by ArenaScene; invincibility during
+    // the attach is on the Fighter. The stance tells themselves are EchoAura 'bat' / 'drain'.
   }
 
   // ── Eclipse (Q) ───────────────────────────────────────────────────────────
@@ -1104,27 +1399,32 @@ export class EchoKit {
     const W = this.arena.getSceneWidth();
     const H = this.arena.getSceneHeight();
 
+    const fx = this.fx(owner);
+    this.avatarFor(owner)?.play('raise', Math.atan2(ty - caster.y, tx - caster.x), 1100);
+
     if (directDist <= 35 && enemy.hp > 0) {
-      // Line bombs
+      // Line bombs — eight standing waves strung across the arena, each announcing itself.
       this.arena.showFloatingText(caster.x, caster.y - 40, 'Vision', '#ffdd44');
+      fx.channelCharge(caster.x, caster.y, 60, 600, { color: ECHO.ghost, depth: 18 });
       for (let i = 0; i < 8; i++) {
         const cx = Phaser.Math.Between(80, W - 80);
         const cy = Phaser.Math.Between(80, H - 80);
         const angle = Math.random() * Math.PI * 2;
         const len = Math.sqrt(W * W + H * H);
-        const gfx = this.arena.scene.add.graphics().setDepth(17);
-        gfx.lineStyle(14, 0xffffff, 0.85);
-        gfx.lineBetween(
-          cx - Math.cos(angle) * len / 2, cy - Math.sin(angle) * len / 2,
-          cx + Math.cos(angle) * len / 2, cy + Math.sin(angle) * len / 2,
-        );
-        this.eclipseLines.push({ gfx, cx, cy, angle, len, detonateAt: time + 3000, owner });
+        this.arena.scene.time.delayedCall(i * 60, () =>
+          fx.chirp(cx, cy, angle, { reach: 60, spread: 1.1, color: ECHO.ghost, duration: 400 }));
+        this.eclipseLines.push({ cx, cy, angle, len, detonateAt: time + 3000, owner });
       }
     } else {
-      // Reveal mode
+      // Reveal mode — the dark is torn off the whole room at once.
       this._eclipseRevealActive = true;
       this.eclipseRevealUntil = time + 4000;
       this.eclipseRevealNpcChangeDirAt = 0; // force immediate direction change
+      fx.sonar(caster.x, caster.y, Math.hypot(W, H) * 0.6, { pulses: 4, color: ECHO.lamp, duration: 1400 });
+      fx.flash(caster.x, caster.y, 60, 19, ECHO.white);
+      fx.bats(caster.x, caster.y, 12, { speed: 340, size: 11, life: 900 });
+      fx.eyeOpen(enemy.x, enemy.y - 36, 16, { color: ECHO.terror, duration: 900 });
+      this.arena.scene.cameras.main.shake(160, 0.004);
       this.arena.showFloatingText(caster.x, caster.y - 36, 'Total Eclipse!', '#ffffaa');
       // Bug 2 fix: actually scramble enemy aim via the standard offset channel
       enemy.aimOffsetBonusDeg = 90;
@@ -1156,34 +1456,29 @@ export class EchoKit {
         const closestDist = Phaser.Math.Distance.Between(enemy.x, enemy.y, ax + tt * ddx, ay + tt * ddy);
         if (enemy.hp > 0 && closestDist <= 35) {
           enemy.takeDamage(60);
-          this.arena.spawnHitFlash(enemy.x, enemy.y, 0xffffff);
+          this.arena.spawnHitFlash(enemy.x, enemy.y, ECHO.white);
         }
-        // Detonation flash
-        const flash = this.arena.scene.add.graphics().setDepth(17);
-        flash.lineStyle(24, 0xffffff, 0.9);
-        flash.lineBetween(
-          l.cx - Math.cos(l.angle) * l.len / 2, l.cy - Math.sin(l.angle) * l.len / 2,
-          l.cx + Math.cos(l.angle) * l.len / 2, l.cy + Math.sin(l.angle) * l.len / 2,
-        );
-        if (this.arena.hasUpgrade('q') && l.owner === 'player') {
-          this.arena.scene.tweens.add({ targets: flash, alpha: 0, duration: 300, delay: 2000, onComplete: () => flash.destroy() });
-        } else {
-          this.arena.scene.tweens.add({ targets: flash, alpha: 0, duration: 300, onComplete: () => flash.destroy() });
+
+        // Detonation: the standing wave lets go all along its length. Q+ lines hold their
+        // afterimage a full two seconds longer, so the upgrade is visibly a bigger event.
+        const fx = this.fx(l.owner);
+        const lingering = this.arena.hasUpgrade('q') && l.owner === 'player';
+        const blasts = lingering ? 9 : 6;
+        for (let k = 0; k < blasts; k++) {
+          const u = (k + 0.5) / blasts;
+          const px = ax + ddx * u, py = ay + ddy * u;
+          this.arena.scene.time.delayedCall(k * 34, () => {
+            fx.boom(px, py, lingering ? 62 : 48, {
+              color: ECHO.white, arcs: lingering ? 9 : 6, motes: lingering ? 12 : 7,
+              duration: lingering ? 520 : 360, mark: k % 2 === 0,
+            });
+          });
         }
-        l.gfx.destroy();
+        fx.dashTrail(ax, ay, bx, by, { color: ECHO.ghost, width: 26, duration: lingering ? 2400 : 500 });
+        this.arena.scene.cameras.main.shake(lingering ? 200 : 120, lingering ? 0.006 : 0.003);
         this.eclipseLines.splice(i, 1);
         continue;
       }
-
-      // Pulse warning
-      const timeLeft = l.detonateAt - time;
-      const pulse = timeLeft < 1000 ? 0.5 + 0.5 * Math.sin(time * 0.02) : 0.85;
-      l.gfx.clear();
-      l.gfx.lineStyle(14, 0xffffff, pulse);
-      l.gfx.lineBetween(
-        l.cx - Math.cos(l.angle) * l.len / 2, l.cy - Math.sin(l.angle) * l.len / 2,
-        l.cx + Math.cos(l.angle) * l.len / 2, l.cy + Math.sin(l.angle) * l.len / 2,
-      );
     }
     void isPlayer; // suppress unused warning
   }
@@ -1217,19 +1512,19 @@ export class EchoKit {
       return;
     }
     const player = this.arena.player;
-    const sprite = this.arena.scene.add.image(player.x, player.y - 24, 'echo-psychic-eye')
-      .setDepth(20).setScale(0.9);
-    this.playerEyes.push({ sprite, angleOffset: Math.random() * Math.PI * 2 });
+    this.pfx.eyeOpen(player.x, player.y - 24, 11, { color: ECHO.pale, duration: 520 });
+    this.playerEyes.push({
+      angleOffset: Math.random() * Math.PI * 2,
+      x: player.x, y: player.y - 24,
+    });
   }
 
   private updateEyes(time: number): void {
     if (this.playerEyes.length === 0) return;
     const player = this.arena.player;
     for (const eye of this.playerEyes) {
-      const ex = player.x + Math.cos(time / 600 + eye.angleOffset) * 26;
-      const ey = player.y + Math.sin(time / 600 + eye.angleOffset) * 26;
-      eye.sprite.setPosition(ex, ey);
-      eye.sprite.setTint(this.playerEyePowerUpArmed ? 0xff5566 : 0xffffff);
+      eye.x = player.x + Math.cos(time / 600 + eye.angleOffset) * 26;
+      eye.y = player.y + Math.sin(time / 600 + eye.angleOffset) * 26;
     }
   }
 
@@ -1238,15 +1533,15 @@ export class EchoKit {
     if (this.playerEyes.length === 0) return;
     if (!this.arena.hasUpgrade('e') && !this.arena.hasUpgrade('q')) return;
     const eye = this.playerEyes.shift()!;
-    eye.sprite.destroy();
+    this.pfx.flash(eye.x, eye.y, 12, 19, ECHO.lamp);
     const time = this.arena.scene.time.now;
     const totalDist = 520 * 0.28;
     const pts: { x: number; y: number }[] = [];
     for (let i = 0; i <= 6; i++) {
       pts.push({ x: x + dx * totalDist * (i / 6), y: y + dy * totalDist * (i / 6) });
     }
-    const gfx = this.arena.scene.add.graphics().setDepth(18);
-    this.playerLightTrails.push({ gfx, pts, expiresAt: time + 3000, lastTickAt: 0 });
+    this.pfx.dashTrail(x, y, pts[6].x, pts[6].y, { color: ECHO.lamp, width: 12 });
+    this.playerLightTrails.push({ pts, expiresAt: time + 3000, lastTickAt: 0 });
   }
 
   private updateLightTrails(time: number): void {
@@ -1254,7 +1549,6 @@ export class EchoKit {
     for (let i = this.playerLightTrails.length - 1; i >= 0; i--) {
       const trail = this.playerLightTrails[i];
       if (time > trail.expiresAt) {
-        trail.gfx.destroy();
         this.playerLightTrails.splice(i, 1);
         continue;
       }
@@ -1273,25 +1567,14 @@ export class EchoKit {
             const closestDist = Phaser.Math.Distance.Between(npc.x, npc.y, ax + t * ddx, ay + t * ddy);
             if (closestDist <= 14) {
               npc.takeDamage(8, { source: trail, sourceX: ax + t * ddx, sourceY: ay + t * ddy });
-              this.arena.spawnHitFlash(npc.x, npc.y, 0xffffaa);
+              this.arena.spawnHitFlash(npc.x, npc.y, ECHO.lamp);
+              this.pfx.ring(npc.x, npc.y, 6, 34, ECHO.lamp, 320, 18, 6);
               this.arena.showFloatingText(npc.x, npc.y - 24, 'Light', '#ffffaa');
               hit = true;
             }
           }
         }
       }
-
-      // Render fading polyline
-      const elapsed = time - (trail.expiresAt - 3000);
-      const alpha = Math.max(0, 0.9 * (1 - elapsed / 3000));
-      trail.gfx.clear();
-      trail.gfx.lineStyle(8, 0xffffff, alpha);
-      trail.gfx.beginPath();
-      trail.gfx.moveTo(trail.pts[0].x, trail.pts[0].y);
-      for (let j = 1; j < trail.pts.length; j++) {
-        trail.gfx.lineTo(trail.pts[j].x, trail.pts[j].y);
-      }
-      trail.gfx.strokePath();
     }
   }
 
@@ -1324,15 +1607,9 @@ export class EchoKit {
     }
     if (time - t.lastPingAt >= 3000) {
       t.lastPingAt = time;
-      const scene = this.arena.scene;
-      const ping = scene.add.graphics().setDepth(22);
-      ping.fillStyle(0x44ff66, 0.6);
-      ping.fillCircle(t.targetRef.x, t.targetRef.y, 10);
-      scene.tweens.add({
-        targets: ping,
-        scaleX: 1.8, scaleY: 1.8, alpha: 0, duration: 600,
-        onComplete: () => ping.destroy(),
-      });
+      // A tagged target answers the sound whether they like it or not.
+      this.pfx.sonar(t.targetRef.x, t.targetRef.y, 42, { pulses: 2, color: ECHO.biolum, duration: 620 });
+      this.pfx.eyeOpen(t.targetRef.x, t.targetRef.y - 30, 8, { color: ECHO.biolum, duration: 520 });
       this.arena.showFloatingText(t.targetRef.x, t.targetRef.y - 28, 'ping', '#44ff66');
     }
   }
@@ -1388,17 +1665,7 @@ export class EchoKit {
       const mid = arc.quadrant * (Math.PI / 2);
       const half = Phaser.Math.DegToRad(arc.strong ? 42 : 32);
       const radius = (arc.strong ? 40 : 34) + t * (arc.strong ? 9 : 5);
-      g.lineStyle(arc.strong ? 4 : 2.5, arc.strong ? 0xffcc55 : 0x99ffee, fade * (arc.strong ? 0.85 : 0.55));
-      g.beginPath();
-      g.arc(player.x, player.y, radius, mid - half, mid + half, false);
-      g.strokePath();
-      // Faint inner echo of the same segment, so a cast reads as a double pulse.
-      if (arc.strong) {
-        g.lineStyle(2, 0xffee99, fade * 0.4);
-        g.beginPath();
-        g.arc(player.x, player.y, radius - 8, mid - half * 0.7, mid + half * 0.7, false);
-        g.strokePath();
-      }
+      EchoFx.drawVibeArc(g, this.pcol, player.x, player.y, mid, half, radius, arc.strong, fade);
     }
   }
 
@@ -1419,44 +1686,17 @@ export class EchoKit {
     const viewed = this.viewing ? this.activeBlossom() : null;
     if (!viewed || viewed.kind !== 'terror') return;
 
-    // Heat-seeker read: hot where they just were, cooling to deep red behind them.
-    for (const s of this.heatTrail) {
-      const age = (time - s.at) / HEAT_TRAIL_MS;
-      const heat = 1 - age;
-      const color = Phaser.Display.Color.Interpolate.ColorWithColor(
-        new Phaser.Display.Color(0x66, 0x00, 0x11),
-        new Phaser.Display.Color(0xff, 0xdd, 0x55),
-        100, Math.round(heat * 100),
-      );
-      const tint = (color.r << 16) | (color.g << 8) | color.b;
-      g.fillStyle(tint, 0.1 + 0.4 * heat);
-      g.fillCircle(s.x, s.y, 5 + 9 * heat);
-    }
-  }
-
-  private updateBiolum(time: number): void {
-    if (time >= this.playerBiolumUntil) {
-      if (this.biolumGfx?.active) { this.biolumGfx.destroy(); this.biolumGfx = null; }
-      return;
-    }
-    if (!this.biolumGfx || !this.biolumGfx.active) {
-      this.biolumGfx = this.arena.scene.add.graphics().setDepth(6);
-    }
-    const player = this.arena.player;
-    const g = this.biolumGfx;
-    g.clear();
-    const fade = Phaser.Math.Clamp((this.playerBiolumUntil - time) / 1200, 0, 1);
-    const pulse = 0.75 + 0.25 * Math.sin(time / 180);
-    g.fillStyle(0x66ffcc, 0.1 * fade * pulse);
-    g.fillCircle(player.x, player.y, 34 * pulse);
-    g.fillStyle(0x99ffdd, 0.2 * fade);
-    g.fillCircle(player.x, player.y, 20);
-    // Motes drifting off the glowing skin.
-    for (let i = 0; i < 6; i++) {
-      const a = time / 700 + (i / 6) * Math.PI * 2;
-      const r = 18 + 8 * Math.sin(time / 300 + i);
-      g.fillStyle(0xccffee, 0.55 * fade);
-      g.fillCircle(player.x + Math.cos(a) * r, player.y + Math.sin(a) * r, 1.8);
+    // Heat-seeker read: hot where they just were, cooling to deep red behind them. Each sample
+    // is a chirp along the direction they were moving, so the trail reads as a path rather than
+    // as a string of beads.
+    for (let i = 0; i < this.heatTrail.length; i++) {
+      const s = this.heatTrail[i];
+      const heat = 1 - (time - s.at) / HEAT_TRAIL_MS;
+      const nxt = this.heatTrail[i + 1] ?? s;
+      const a = Math.atan2(nxt.y - s.y, nxt.x - s.x);
+      echoChirpLayered(g, this.pcol, s.x, s.y, a, 4 + 9 * heat, 1.1, 6 + 8 * heat,
+        heat > 0.55 ? ECHO.gold : heat > 0.25 ? ECHO.terror : ECHO.terrorDeep,
+        0.16 + 0.5 * heat, 3, i * 0.4, false);
     }
   }
 
@@ -1538,6 +1778,10 @@ export class EchoKit {
     const enemy = owner === 'player' ? this.arena.npc : this.arena.player;
 
     if (enemy.hp > 0 && Phaser.Math.Distance.Between(tx, ty, enemy.x, enemy.y) <= 35) {
+      this.avatarFor(owner)?.play('slam', Math.atan2(ty - caster.y, tx - caster.x));
+      // Something erupts out of them: a hard flash, thorn-red petals thrown clear, and a mark.
+      this.fx(owner).boom(enemy.x, enemy.y, 58, { color: ECHO.terror, arcs: 8, motes: 14 });
+      this.fx(owner).eyeOpen(enemy.x, enemy.y, 15, { color: ECHO.terror, duration: 760 });
       this.plantBlossom('terror', enemy.x, enemy.y, owner, enemy);
       this.arena.showFloatingText(caster.x, caster.y - 40, 'Vision', '#ffdd44');
       this.arena.showFloatingText(enemy.x, enemy.y - 34, '🌺 TERROR BLOOM', '#ff5566');
@@ -1545,9 +1789,9 @@ export class EchoKit {
     }
 
     const angle = Math.atan2(ty - caster.y, tx - caster.x);
-    const gfx = this.arena.scene.add.graphics().setDepth(17);
+    this.avatarFor(owner)?.play('punch', angle);
+    this.fx(owner).chirp(caster.x, caster.y, angle, { reach: 32, color: ECHO.pale, waves: 2 });
     this.bloomSeeds.push({
-      gfx,
       x: caster.x, y: caster.y,
       vx: Math.cos(angle) * BLOOM_SEED_SPEED,
       vy: Math.sin(angle) * BLOOM_SEED_SPEED,
@@ -1572,7 +1816,7 @@ export class EchoKit {
     const time = this.arena.scene.time.now;
     const b: Blossom = {
       kind, x, y,
-      gfx: this.arena.scene.add.graphics().setDepth(host ? 15 : 17),
+      onHost: !!host,
       host,
       offX: host ? x - host.x : 0,
       offY: host ? y - host.y : 0,
@@ -1596,7 +1840,6 @@ export class EchoKit {
       b.host.outgoingDamageMult /= TERROR_WEAKEN_MULT;
       b.weakenApplied = false;
     }
-    if (b.gfx.active) b.gfx.destroy();
   }
 
   /** Remove index `i` from `list`, keeping the owner's view cursor pointing somewhere sane. */
@@ -1623,6 +1866,14 @@ export class EchoKit {
     this.lastBloomShotAt = time - BLOOM_SHOT_COOLDOWN_MS;
     const player = this.arena.player;
     player.shieldHp += VIEW_SHIELD_HP;
+    // Your sight leaves you and arrives somewhere else — drawn as exactly that, in that order.
+    const b = this.activeBlossom();
+    this.pfx.motes(player.x, player.y, 10, { speed: 90, size: 2.2, life: 620, color: ECHO.biolumHi });
+    if (b) {
+      this.pfx.tether(player.x, player.y, b.x, b.y, ECHO.biolum, 19);
+      this.pfx.eyeOpen(b.x, b.y, 16, { color: ECHO.biolum, duration: 700 });
+      this.pfx.sonar(b.x, b.y, 70, { pulses: 2, color: ECHO.biolumPale, duration: 640 });
+    }
     this.arena.showFloatingText(player.x, player.y - 44, '👁 VIEWING', '#ccd4ff');
   }
 
@@ -1632,14 +1883,23 @@ export class EchoKit {
     const player = this.arena.player;
     // Whatever shield is left belongs to the eye, not to you.
     player.shieldHp = 0;
+    const b = this.activeBlossom();
+    if (b) this.pfx.tether(b.x, b.y, player.x, player.y, ECHO.slate, 19, 0.7);
+    this.pfx.ring(player.x, player.y, 34, 8, ECHO.dusk, 340, 18, 6);
     this.arena.showFloatingText(player.x, player.y - 44, reason, '#8899cc');
   }
 
   private cycleView(step: number): void {
     if (this.playerBlossoms.length <= 1) return;
+    const from = this.activeBlossom();
     this.viewIndex = (this.viewIndex + step + this.playerBlossoms.length) % this.playerBlossoms.length;
     const b = this.activeBlossom();
-    if (b) this.arena.spawnHitFlash(b.x, b.y, b.kind === 'terror' ? TERROR_BLOOM_COLOR : ECHO_BLOOM_COLOR);
+    if (b) {
+      // The hop is visible as a hop: a line drawn from the eye you left to the one you took.
+      if (from && from !== b) this.pfx.tether(from.x, from.y, b.x, b.y, ECHO.biolum, 19);
+      this.arena.spawnHitFlash(b.x, b.y, b.kind === 'terror' ? TERROR_BLOOM_COLOR : ECHO_BLOOM_COLOR);
+      this.pfx.eyeOpen(b.x, b.y, 13, { color: ECHO.biolum, duration: 520 });
+    }
     this.arena.broadcastMasteryCast('echo-bloom-cycle');
   }
 
@@ -1653,10 +1913,14 @@ export class EchoKit {
     this.dropBlossom(this.playerBlossoms, this.viewIndex, 'player');
     this.exitViewing('Warped');
 
+    // You come apart where you stood and reassemble inside the flower.
+    this.pfx.bats(player.x, player.y, 6, { speed: 200, size: 9, life: 520 });
+    this.pfx.dashTrail(player.x, player.y, tx, ty, { color: ECHO.biolumHi, width: 16, duration: 460 });
     player.setPosition(tx, ty);
     (player.body as Phaser.Physics.Arcade.Body).reset(tx, ty);
     this.playerBiolumUntil = time + BIOLUM_MS;
-    this.arena.spawnHitFlash(tx, ty, 0x99ffdd);
+    this.pfx.boom(tx, ty, 54, { color: ECHO.biolum, arcs: 7, motes: 14, mark: false });
+    this.arena.spawnHitFlash(tx, ty, ECHO.biolumHi);
     this.arena.showFloatingText(tx, ty - 40, '✨ BIOLUMINESCENT', '#66ffcc');
     if (wasTerror) {
       player.weakHp += TERROR_WARP_WEAK_HP;
@@ -1673,8 +1937,10 @@ export class EchoKit {
     if (owner === 'player') this.lastBloomShotAt = time;
 
     const angle = Math.atan2(ty - b.y, tx - b.x);
+    this.fx(owner).chirp(b.x, b.y, angle, {
+      reach: 22, color: b.kind === 'terror' ? ECHO.terror : ECHO.pale, waves: 2, duration: 240,
+    });
     this.bloomBullets.push({
-      gfx: this.arena.scene.add.graphics().setDepth(18),
       x: b.x, y: b.y,
       vx: Math.cos(angle) * BLOOM_SHOT_SPEED,
       vy: Math.sin(angle) * BLOOM_SHOT_SPEED,
@@ -1701,37 +1967,39 @@ export class EchoKit {
 
       const enemy = s.owner === 'player' ? this.arena.npc : this.arena.player;
       if (enemy.hp > 0 && Phaser.Math.Distance.Between(s.x, s.y, enemy.x, enemy.y) <= 26) {
+        this.fx(s.owner).ring(enemy.x, enemy.y, 6, 40, ECHO.pale, 360, 18, 6);
         this.plantBlossom('echo', enemy.x, enemy.y, s.owner, enemy);
-        s.gfx.destroy();
         this.bloomSeeds.splice(i, 1);
         continue;
       }
       if (s.x <= MARGIN || s.x >= W - MARGIN || s.y <= MARGIN || s.y >= H - MARGIN) {
-        this.plantBlossom('echo',
-          Phaser.Math.Clamp(s.x, MARGIN, W - MARGIN),
-          Phaser.Math.Clamp(s.y, MARGIN, H - MARGIN),
-          s.owner, null);
-        s.gfx.destroy();
+        const px = Phaser.Math.Clamp(s.x, MARGIN, W - MARGIN);
+        const py = Phaser.Math.Clamp(s.y, MARGIN, H - MARGIN);
+        // It bites into the wall: dust off the impact, then the bloom unfurls out of it.
+        this.fx(s.owner).motes(px, py, 8, {
+          speed: 100, angle: Math.atan2(-s.vy, -s.vx), spread: 1.2, size: 2, life: 560, color: ECHO.pale,
+        });
+        this.fx(s.owner).ring(px, py, 4, 34, ECHO.pale, 420, 18, 6);
+        this.plantBlossom('echo', px, py, s.owner, null);
         this.bloomSeeds.splice(i, 1);
         continue;
       }
-
-      // A dart with a fading wisp behind it.
-      const a = Math.atan2(s.vy, s.vx);
-      const g = s.gfx;
-      g.clear();
-      for (let t = 0; t < s.trail.length; t++) {
-        const p = s.trail[t];
-        g.fillStyle(ECHO_BLOOM_COLOR, 0.06 + 0.22 * (t / s.trail.length));
-        g.fillCircle(p.x, p.y, 1.5 + 2.5 * (t / s.trail.length));
-      }
-      g.fillStyle(0xe8ecff, 0.95);
-      g.fillTriangle(
-        s.x + Math.cos(a) * 9, s.y + Math.sin(a) * 9,
-        s.x - Math.cos(a) * 5 - Math.sin(a) * 3.5, s.y - Math.sin(a) * 5 + Math.cos(a) * 3.5,
-        s.x - Math.cos(a) * 5 + Math.sin(a) * 3.5, s.y - Math.sin(a) * 5 - Math.cos(a) * 3.5,
-      );
     }
+  }
+
+  /** A seed in flight: a barbed dart with a fading wisp behind it. */
+  private drawBloomSeed(g: Phaser.GameObjects.Graphics, s: BloomSeed, t: number): void {
+    const col = this.col(s.owner);
+    const a = Math.atan2(s.vy, s.vx);
+    for (let i = 0; i < s.trail.length; i++) {
+      const p = s.trail[i];
+      const u = i / s.trail.length;
+      echoChirpLayered(g, col, p.x, p.y, a, 3 + u * 4, 0.9, 4 + u * 4,
+        ECHO.pale, 0.08 + 0.22 * u, 3, i, false);
+    }
+    echoChirpLayered(g, col, s.x, s.y, a, 9, 0.66, 10, ECHO.ghost, 0.95, 3, 0);
+    g.fillStyle(col(ECHO.white), 0.6 + 0.3 * Math.sin(t * 20));
+    g.fillCircle(s.x, s.y, 2.6);
   }
 
   private updateBlossoms(time: number): void {
@@ -1740,6 +2008,7 @@ export class EchoKit {
       for (let i = list.length - 1; i >= 0; i--) {
         const b = list[i];
         if (time >= b.expiresAt) {
+          this.fx(owner).motes(b.x, b.y, 10, { speed: 60, size: 2.2, life: 900, color: ECHO.terrorDeep, drift: 24 });
           this.arena.showFloatingText(b.x, b.y - 26, 'Wilted', '#886677');
           this.dropBlossom(list, i, owner);
           continue;
@@ -1749,13 +2018,12 @@ export class EchoKit {
           if (b.host.hp <= 0 || !b.host.active) {
             if (b.weakenApplied) { b.host.outgoingDamageMult /= TERROR_WEAKEN_MULT; b.weakenApplied = false; }
             b.host = null;
-            b.gfx.setDepth(17);
+            b.onHost = false;
           } else {
             b.x = b.host.x + b.offX;
             b.y = b.host.y + b.offY;
           }
         }
-        this.drawBlossom(b, time, owner === 'player' && this.viewing && i === this.viewIndex);
       }
     }
   }
@@ -1764,12 +2032,11 @@ export class EchoKit {
    * Six (terror: seven) tapered petals swaying around a central eye, opening as the
    * bloom grows in and pulsing a sonar ring once it is fully open.
    */
-  private drawBlossom(b: Blossom, time: number, active: boolean): void {
-    const g = b.gfx;
-    g.clear();
+  private drawBlossom(g: Phaser.GameObjects.Graphics, b: Blossom, time: number, active: boolean): void {
+    const tint = this.col(b.owner);
     const terror = b.kind === 'terror';
     const base = terror ? TERROR_BLOOM_COLOR : ECHO_BLOOM_COLOR;
-    const deep = terror ? 0x551122 : 0x445588;
+    const deep = terror ? ECHO.terrorDeep : ECHO.dusk;
     const petals = terror ? 7 : 6;
     const age = time - b.bornAt;
     const grow = Phaser.Math.Clamp(age / 420, 0, 1);
@@ -1777,7 +2044,7 @@ export class EchoKit {
     const life = b.expiresAt === Infinity ? 1 : Phaser.Math.Clamp((b.expiresAt - time) / 1500, 0, 1);
     const alpha = 0.35 + 0.65 * life;
 
-    g.fillStyle(0x000000, 0.3 * alpha);
+    g.fillStyle(tint(ECHO.voidBlack), 0.4 * alpha);
     g.fillEllipse(b.x, b.y + 11 * scale, 30 * scale, 10 * scale);
 
     // Petal outline in axis-local coords: fraction along the petal, fraction of its
@@ -1800,12 +2067,12 @@ export class EchoKit {
         b.x + cos * len * u - sin * wid * v,
         b.y + sin * len * u + cos * wid * v,
       ));
-      g.fillStyle(base, 0.72 * alpha);
+      g.fillStyle(tint(base), 0.72 * alpha);
       g.fillPoints(pts, true);
-      g.lineStyle(1, deep, 0.85 * alpha);
+      g.lineStyle(1, tint(deep), 0.85 * alpha);
       g.strokePoints(pts, true);
       // Spine highlight — catches the light down the middle of each petal.
-      g.lineStyle(1.4, terror ? 0xff8899 : 0xe4e8ff, 0.5 * alpha);
+      g.lineStyle(1.4, tint(terror ? ECHO.terrorHi : ECHO.ghost), 0.5 * alpha);
       g.lineBetween(
         b.x + cos * len * 0.2, b.y + sin * len * 0.2,
         b.x + cos * len * 0.88, b.y + sin * len * 0.88,
@@ -1813,7 +2080,7 @@ export class EchoKit {
       if (terror) {
         // Barbed tips — a terror bloom is a hooked thing, not a flower.
         const tx = b.x + cos * len, ty = b.y + sin * len;
-        g.fillStyle(0xff6677, 0.9 * alpha);
+        g.fillStyle(tint(ECHO.terrorHi), 0.9 * alpha);
         g.fillTriangle(
           tx + cos * 5 * scale, ty + sin * 5 * scale,
           tx - sin * 2.5 * scale, ty + cos * 2.5 * scale,
@@ -1826,7 +2093,7 @@ export class EchoKit {
     for (let i = 0; i < petals; i++) {
       const a = ((i + 0.5) / petals) * Math.PI * 2 + Math.sin(time / 500 + b.swaySeed) * 0.1;
       const cos = Math.cos(a), sin = Math.sin(a);
-      g.fillStyle(deep, 0.85 * alpha);
+      g.fillStyle(tint(deep), 0.85 * alpha);
       g.fillTriangle(
         b.x + cos * 12 * scale, b.y + sin * 12 * scale,
         b.x - sin * 3.5 * scale, b.y + cos * 3.5 * scale,
@@ -1838,21 +2105,23 @@ export class EchoKit {
     const look = active
       ? Math.atan2(this.arena.pointer.worldY - b.y, this.arena.pointer.worldX - b.x)
       : time / 900 + b.swaySeed;
-    g.fillStyle(terror ? 0xffdddd : 0xf2f4ff, 0.95 * alpha);
-    g.fillCircle(b.x, b.y, 7 * scale);
-    g.fillStyle(terror ? 0xaa1122 : 0x5566aa, 0.9 * alpha);
-    g.fillCircle(b.x + Math.cos(look) * 2 * scale, b.y + Math.sin(look) * 2 * scale, 4.4 * scale);
-    g.fillStyle(0x080810, 0.95 * alpha);
-    g.fillCircle(b.x + Math.cos(look) * 3 * scale, b.y + Math.sin(look) * 3 * scale, 2.2 * scale);
+    eyeGlyph(g, tint, b.x, b.y, Math.sin(time / 700 + b.swaySeed) * 0.25, look, 8 * scale,
+      terror ? ECHO.terror : ECHO.slate, 0.95 * alpha, grow);
 
     if (grow >= 1) {
+      // The bloom listens on its own clock — one chirp ring every 1.6 s.
       const ping = (age % 1600) / 1600;
-      g.lineStyle(1.5, base, (1 - ping) * 0.45 * alpha);
-      g.strokeCircle(b.x, b.y, 12 + ping * 26);
+      chirpRing(g, tint, b.x, b.y, 12 + ping * 26, 5 * (1 - ping),
+        base, (1 - ping) * 0.45 * alpha, 5, b.swaySeed, 3);
     }
     if (active) {
-      g.lineStyle(2, 0xffffff, 0.5);
+      // The one you are behind wears a hard rim so it never gets lost among the others.
+      g.lineStyle(2, tint(ECHO.white), 0.5);
       g.strokeCircle(b.x, b.y, 24 * scale);
+      for (let i = 0; i < 3; i++) {
+        const ang = time / 600 + (i / 3) * Math.PI * 2;
+        echoChirpLayered(g, tint, b.x, b.y, ang, 27 * scale, 0.3, 6, ECHO.biolumHi, 0.6, 2, 0, false);
+      }
     }
   }
 
@@ -1870,38 +2139,44 @@ export class EchoKit {
       const enemy = p.owner === 'player' ? this.arena.npc : this.arena.player;
       let done = false;
 
+      const color = p.kind === 'terror' ? TERROR_BLOOM_COLOR : ECHO_BLOOM_COLOR;
       if (enemy.hp > 0 && Phaser.Math.Distance.Between(p.x, p.y, enemy.x, enemy.y) <= 24) {
         enemy.takeDamage(p.damage);
-        this.arena.spawnHitFlash(enemy.x, enemy.y, p.kind === 'terror' ? TERROR_BLOOM_COLOR : ECHO_BLOOM_COLOR);
+        this.arena.spawnHitFlash(enemy.x, enemy.y, color);
+        this.fx(p.owner).ring(p.x, p.y, 4, 30, color, 300, 18, 6);
         done = true;
       } else if (Phaser.Math.Distance.Between(p.x, p.y, caster.x, caster.y) <= 24) {
         // Shooting yourself feeds the eye instead of hurting you — but only while it is open.
         if (p.owner === 'player' && this.viewing) {
           caster.shieldHp += VIEW_SELF_SHOT_SHIELD;
           this.arena.showFloatingText(caster.x, caster.y - 40, `+${VIEW_SELF_SHOT_SHIELD} 💠`, '#44ccff');
-          this.arena.spawnHitFlash(caster.x, caster.y, 0x44ccff);
+          this.arena.spawnHitFlash(caster.x, caster.y, ECHO.biolum);
+          this.pfx.ring(caster.x, caster.y, 30, 6, ECHO.biolum, 380, 18, 7);
           done = true;
         }
       }
 
       if (done || time - p.bornAt > BLOOM_SHOT_LIFETIME_MS
           || p.x < 0 || p.x > W || p.y < 0 || p.y > H) {
-        p.gfx.destroy();
         this.bloomBullets.splice(i, 1);
         continue;
       }
-
-      const color = p.kind === 'terror' ? TERROR_BLOOM_COLOR : ECHO_BLOOM_COLOR;
-      const a = Math.atan2(p.vy, p.vx);
-      const g = p.gfx;
-      g.clear();
-      g.fillStyle(color, 0.25);
-      g.fillCircle(p.x - Math.cos(a) * 8, p.y - Math.sin(a) * 8, 4);
-      g.fillStyle(color, 0.9);
-      g.fillCircle(p.x, p.y, 4.5);
-      g.fillStyle(0xffffff, 0.9);
-      g.fillCircle(p.x, p.y, 2);
     }
+  }
+
+  /** A bloom's spit: a small hard chirp with a tail, red and barbed if it came out of a terror. */
+  private drawBloomBullet(g: Phaser.GameObjects.Graphics, p: BloomBullet, t: number): void {
+    const tint = this.col(p.owner);
+    const terror = p.kind === 'terror';
+    const color = terror ? TERROR_BLOOM_COLOR : ECHO_BLOOM_COLOR;
+    const a = Math.atan2(p.vy, p.vx);
+    for (let i = 2; i >= 1; i--) {
+      echoChirpLayered(g, tint, p.x - Math.cos(a) * i * 7, p.y - Math.sin(a) * i * 7, a,
+        4 + i * 2, 0.8, 5, color, 0.22 * (3 - i), 3, i, false);
+    }
+    echoChirpLayered(g, tint, p.x, p.y, a, 7, 0.7, 8, color, 0.95, terror ? 4 : 3, 0);
+    g.fillStyle(tint(ECHO.white), 0.7 + 0.25 * Math.sin(t * 22));
+    g.fillCircle(p.x, p.y, 2.2);
   }
 
   /** Close the eye when the bloom, the shield, or you run out. */

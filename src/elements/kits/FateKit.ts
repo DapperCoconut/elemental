@@ -2401,10 +2401,10 @@ export class FateKit {
     const W = scene.scale.width, H = scene.scale.height;
     const dim = scene.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.65).setScrollFactor(0).setDepth(500).setInteractive();
     const title = scene.add.text(W / 2, H / 2 - 150, 'Force the Hand of Fate', {
-      fontSize: '28px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc66',
+      fontSize: '28px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffcc66',
     }).setOrigin(0.5).setScrollFactor(0).setDepth(501);
     const sub = scene.add.text(W / 2, H / 2 - 118, 'Choose a card to limit which cards you can draw this match:', {
-      fontSize: '13px', fontFamily: 'Arial, sans-serif', color: '#ddddee',
+      fontSize: '13px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#ddddee',
     }).setOrigin(0.5).setScrollFactor(0).setDepth(501);
     this.forceOverlay.push(dim, title, sub);
 
@@ -2419,10 +2419,10 @@ export class FateKit {
       const box = scene.add.rectangle(x, y, cw, 190, 0x1a1030, 0.96).setStrokeStyle(3, f.color, 1)
         .setScrollFactor(0).setDepth(501).setInteractive({ useHandCursor: true });
       const emoji = scene.add.text(x, y - 58, f.emoji, { fontSize: '40px' }).setOrigin(0.5).setScrollFactor(0).setDepth(502);
-      const name = scene.add.text(x, y - 14, f.name, { fontSize: '20px', fontFamily: '"Arial Black", sans-serif', color: hex }).setOrigin(0.5).setScrollFactor(0).setDepth(502);
+      const name = scene.add.text(x, y - 14, f.name, { fontSize: '20px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: hex }).setOrigin(0.5).setScrollFactor(0).setDepth(502);
       const allowTxt = f.allow ? f.allow.map((t) => DEF_BY_TYPE.get(t)!.name).join(', ') : 'No limit — all cards can be drawn';
       const desc = scene.add.text(x, y + 44, allowTxt, {
-        fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#ccccdd', align: 'center', wordWrap: { width: cw - 18 },
+        fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#ccccdd', align: 'center', wordWrap: { width: cw - 18 },
       }).setOrigin(0.5).setScrollFactor(0).setDepth(502);
       box.on('pointerover', () => box.setFillStyle(0x2a1a44, 0.98));
       box.on('pointerout', () => box.setFillStyle(0x1a1030, 0.96));
@@ -2480,7 +2480,7 @@ export class FateKit {
     g.lineStyle(1, 0x000000, 1);
     g.strokeRect(hx - 2, top - 4, 4, HB_H + 8);
     if (!this.gambleLabel) {
-      this.gambleLabel = this.arena.scene.add.text(0, 0, '', { fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#ffee66' }).setOrigin(0.5, 1).setDepth(12);
+      this.gambleLabel = this.arena.scene.add.text(0, 0, '', { fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffee66' }).setOrigin(0.5, 1).setDepth(12);
     }
     this.gambleLabel.setVisible(true).setText(`🎰 ${this.gambleHp}`).setPosition(p.x, top - 6);
   }

@@ -1,6 +1,16 @@
 import Phaser from 'phaser';
 import * as CP from '../data/CampaignProgress';
 import { TOTAL_FIGHTS, TOTAL_CHALLENGES } from '../data/Worlds';
+import {
+  C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
+  addBackdrop, addBackButton, addButton, addCardPlate, addTitle,
+  drawMeter, fillDiamond, fillHex, strokeHex,
+} from '../ui';
+
+const CARD_CENTERS = [160, 480, 800];
+const CARD_W = 250;
+const CARD_H = 348;
+const CARD_CY = 372;
 
 export class CampaignSlotSelectScene extends Phaser.Scene {
   private renameInput: HTMLInputElement | null = null;
@@ -11,162 +21,152 @@ export class CampaignSlotSelectScene extends Phaser.Scene {
   }
 
   create(): void {
-    const { width, height } = this.scale;
+    const { width } = this.scale;
     const cx = width / 2;
-    const cy = height / 2;
 
     this.renameInput = null;
     this.renameSlotIdx = null;
 
-    // Background
-    this.add.rectangle(cx, cy, width, height, 0x0d0d1a);
-    const grid = this.add.graphics();
-    grid.lineStyle(1, 0x1a1a33, 1);
-    for (let x = 0; x < width; x += 60) grid.lineBetween(x, 0, x, height);
-    for (let y = 0; y < height; y += 60) grid.lineBetween(0, y, width, y);
+    addBackdrop(this, { accent: C.ember, variant: 'lattice', motes: 20 });
 
-    // Title
-    this.add.text(cx, 55, 'CAMPAIGN', {
-      fontSize: '44px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#ffaa44',
-      stroke: '#cc6600',
-      strokeThickness: 4,
-    }).setOrigin(0.5);
+    addTitle(this, {
+      x: cx, y: 76, text: 'CAMPAIGN', accent: C.ember, size: 46,
+      subtitle: 'CHOOSE A SAVE SLOT',
+    });
 
-    this.add.text(cx, 100, 'Select a save slot', {
-      fontSize: '16px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#888888',
-    }).setOrigin(0.5);
-
-    // Back button
-    const backRect = this.add
-      .rectangle(52, 36, 88, 36, 0x222233)
-      .setStrokeStyle(2, 0x555577)
-      .setInteractive({ useHandCursor: true });
-    const backLbl = this.add.text(52, 36, '← BACK', {
-      fontSize: '13px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#aaaaaa',
-    }).setOrigin(0.5);
-    backRect
-      .on('pointerover', () => { backRect.setFillStyle(0x333355); backLbl.setColor('#ffffff'); })
-      .on('pointerout', () => { backRect.setFillStyle(0x222233); backLbl.setColor('#aaaaaa'); })
-      .on('pointerdown', () => this.scene.start('TitleScene'));
-    this.input.keyboard!.on('keydown-ESC', () => this.scene.start('TitleScene'));
-
-    this.renderCards();
-  }
-
-  private renderCards(): void {
-    // Clear previous card objects (all objects except background, grid, title, back btn)
-    // Easiest: just restart the scene to re-render — but that's wasteful.
-    // Instead, track card group objects.
-    // For simplicity, restart scene on any mutation.
-    const cardCenters = [160, 480, 800];
-    const cardW = 240;
-    const cardH = 340;
-    const cy = 360;
+    const back = () => this.scene.start('TitleScene');
+    addBackButton(this, back);
+    this.input.keyboard!.on('keydown-ESC', back);
 
     for (let i = 0; i < 3; i++) {
       const idx = i as 0 | 1 | 2;
-      const cx = cardCenters[i];
-      const slot = CP.getSlot(idx);
-      this.drawSlotCard(cx, cy, cardW, cardH, idx, slot);
+      this.drawSlotCard(CARD_CENTERS[i], idx, CP.getSlot(idx));
     }
   }
 
-  private drawSlotCard(
-    cx: number, cy: number, cardW: number, cardH: number,
-    idx: 0 | 1 | 2, slot: CP.CampaignSlot | null,
-  ): void {
+  /**
+   * One save slot as a wax-sealed dossier: crest at the top, progress meters in
+   * the middle, actions at the foot. Empty slots show a hollow seal instead.
+   */
+  private drawSlotCard(cx: number, idx: 0 | 1 | 2, slot: CP.CampaignSlot | null): void {
     const summary = CP.getSlotSummary(idx);
+    const cheated = CP.isCheated(idx);
+    const accent = !slot ? C.steel : cheated ? C.arcane : C.ember;
 
-    // Card border
-    this.add.rectangle(cx, cy, cardW, cardH, 0x111122, 0.9)
-      .setStrokeStyle(2, slot ? (CP.isCheated(idx) ? 0xaa44ff : 0xffaa44) : 0x333355);
+    const card = addCardPlate(this, {
+      x: cx, y: CARD_CY, w: CARD_W, h: CARD_H,
+      accent, cut: 18, muted: !slot,
+    });
 
-    // Slot label
-    this.add.text(cx, cy - cardH / 2 + 22, `SLOT ${idx + 1}`, {
-      fontSize: '14px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#888888',
-    }).setOrigin(0.5);
+    const top = CARD_CY - CARD_H / 2;
+
+    // Slot number, engraved into the header strip.
+    this.add.text(cx, top + 22, `SLOT ${idx + 1}`, {
+      fontSize: '11px', fontFamily: FONT_DISPLAY,
+      color: hex(mix(accent, 0x000000, 0.2)), letterSpacing: 4,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
+
+    // Crest — a hex seal holding either the campaign mark or a hollow slot.
+    const crest = this.add.graphics().setDepth(DEPTH.content);
+    const crestY = top + 76;
+    if (slot) {
+      for (let k = 5; k >= 1; k--) {
+        crest.fillStyle(accent, 0.05);
+        crest.fillCircle(cx, crestY, 22 + k * 5);
+      }
+      fillHex(crest, cx, crestY, 30, mix(C.plate, accent, 0.3), 1);
+      strokeHex(crest, cx, crestY, 30, mix(accent, 0xffffff, 0.4), 1, 2);
+      strokeHex(crest, cx, crestY, 24, accent, 0.35, 1);
+      this.add.text(cx, crestY, cheated ? '🌀' : '🗺', { fontSize: '26px' })
+        .setOrigin(0.5).setDepth(DEPTH.content + 1);
+    } else {
+      strokeHex(crest, cx, crestY, 30, C.steel, 0.3, 2);
+      strokeHex(crest, cx, crestY, 24, C.steel, 0.15, 1);
+      // Hollow slots get a dashed cross rather than a glyph.
+      crest.lineStyle(1, C.steel, 0.25);
+      crest.beginPath(); crest.moveTo(cx - 12, crestY - 12); crest.lineTo(cx + 12, crestY + 12); crest.strokePath();
+      crest.beginPath(); crest.moveTo(cx + 12, crestY - 12); crest.lineTo(cx - 12, crestY + 12); crest.strokePath();
+    }
 
     if (!slot) {
-      // Empty slot
-      this.add.text(cx, cy - 30, 'Empty', {
-        fontSize: '18px',
-        fontFamily: 'Arial, sans-serif',
-        color: '#444466',
-      }).setOrigin(0.5);
+      this.add.text(cx, top + 148, 'EMPTY', {
+        fontSize: '18px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 4,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+      this.add.text(cx, top + 174, 'Begin a new journey', {
+        fontSize: '11px', fontFamily: FONT_UI, color: T.ghost,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
 
-      const createBtn = this.add.rectangle(cx, cy + 60, 140, 40, 0x1a2a1a)
-        .setStrokeStyle(2, 0x44cc44)
-        .setInteractive({ useHandCursor: true });
-      const createLbl = this.add.text(cx, cy + 60, 'CREATE', {
-        fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#44cc44',
-      }).setOrigin(0.5);
-      createBtn
-        .on('pointerover', () => { createBtn.setFillStyle(0x253525); createLbl.setColor('#aaffaa'); })
-        .on('pointerout', () => { createBtn.setFillStyle(0x1a2a1a); createLbl.setColor('#44cc44'); })
-        .on('pointerdown', () => this.startCreate(idx));
-    } else {
-      // Filled slot
-      this.add.text(cx, cy - cardH / 2 + 52, slot.name, {
-        fontSize: '22px',
-        fontFamily: '"Arial Black", sans-serif',
-        color: '#ffffff',
-      }).setOrigin(0.5);
-
-      // Progress
-      this.add.text(cx, cy - 30, `⚔️ ${summary.fights} / ${TOTAL_FIGHTS} fights`, {
-        fontSize: '14px', fontFamily: 'Arial, sans-serif', color: '#aaaaaa',
-      }).setOrigin(0.5);
-      this.add.text(cx, cy - 8, `🏆 ${summary.challenges} / ${TOTAL_CHALLENGES} challenges`, {
-        fontSize: '14px', fontFamily: 'Arial, sans-serif', color: '#aaaaaa',
-      }).setOrigin(0.5);
-
-      // PLAY button
-      const playBtn = this.add.rectangle(cx, cy + 55, 140, 40, 0x1a2a1a)
-        .setStrokeStyle(2, 0x44cc44)
-        .setInteractive({ useHandCursor: true });
-      const playLbl = this.add.text(cx, cy + 55, 'PLAY', {
-        fontSize: '16px', fontFamily: '"Arial Black", sans-serif', color: '#44cc44',
-      }).setOrigin(0.5);
-      playBtn
-        .on('pointerover', () => { playBtn.setFillStyle(0x253525); playLbl.setColor('#aaffaa'); })
-        .on('pointerout', () => { playBtn.setFillStyle(0x1a2a1a); playLbl.setColor('#44cc44'); })
-        .on('pointerdown', () => {
-          CP.setActiveSlot(idx);
-          this.scene.start('CampaignWorldMapScene', { slotIdx: idx });
-        });
-
-      // RENAME button
-      const renameBtn = this.add.rectangle(cx - 38, cy + 105, 68, 32, 0x1a1a2a)
-        .setStrokeStyle(1, 0x4466aa)
-        .setInteractive({ useHandCursor: true });
-      const renameLbl = this.add.text(cx - 38, cy + 105, 'RENAME', {
-        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#4488cc',
-      }).setOrigin(0.5);
-      renameBtn
-        .on('pointerover', () => { renameBtn.setFillStyle(0x22223a); renameLbl.setColor('#88ccff'); })
-        .on('pointerout', () => { renameBtn.setFillStyle(0x1a1a2a); renameLbl.setColor('#4488cc'); })
-        .on('pointerdown', () => this.startRename(idx, cx, cy));
-
-      // DELETE button
-      const deleteBtn = this.add.rectangle(cx + 42, cy + 105, 68, 32, 0x2a1a1a)
-        .setStrokeStyle(1, 0xaa4444)
-        .setInteractive({ useHandCursor: true });
-      const deleteLbl = this.add.text(cx + 42, cy + 105, 'DELETE', {
-        fontSize: '11px', fontFamily: '"Arial Black", sans-serif', color: '#cc4444',
-      }).setOrigin(0.5);
-      deleteBtn
-        .on('pointerover', () => { deleteBtn.setFillStyle(0x3a2222); deleteLbl.setColor('#ff8888'); })
-        .on('pointerout', () => { deleteBtn.setFillStyle(0x2a1a1a); deleteLbl.setColor('#cc4444'); })
-        .on('pointerdown', () => this.confirmDelete(idx));
+      addButton(this, {
+        x: cx, y: CARD_CY + 88, w: 168, h: 46,
+        label: 'CREATE', icon: '✦', accent: C.verdant, variant: 'solid', fontSize: 16,
+        onHover: () => card.paint('hover'),
+        onOut: () => card.paint('idle'),
+        onClick: () => this.startCreate(idx),
+      });
+      return;
     }
+
+    // ── Filled slot ───────────────────────────────────────────────
+    this.add.text(cx, top + 132, slot.name, {
+      fontSize: '21px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 1,
+      wordWrap: { width: CARD_W - 30 }, align: 'center',
+    }).setOrigin(0.5).setDepth(DEPTH.content);
+
+    if (cheated) {
+      this.add.text(cx, top + 156, 'CHEAT-FLAGGED', {
+        fontSize: '9px', fontFamily: FONT_DISPLAY,
+        color: hex(mix(C.arcane, 0xffffff, 0.4)), letterSpacing: 2,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+    }
+
+    const meters = this.add.graphics().setDepth(DEPTH.content);
+    const meterW = CARD_W - 56;
+    const meterX = cx - meterW / 2;
+
+    const rows: Array<{ label: string; value: number; total: number; color: number }> = [
+      { label: '⚔  FIGHTS', value: summary.fights, total: TOTAL_FIGHTS, color: C.ember },
+      { label: '🏆  CHALLENGES', value: summary.challenges, total: TOTAL_CHALLENGES, color: C.gold },
+    ];
+
+    rows.forEach((row, i) => {
+      const ry = top + 186 + i * 44;
+      this.add.text(meterX, ry, row.label, {
+        fontSize: '10px', fontFamily: FONT_DISPLAY, color: T.dim, letterSpacing: 1.5,
+      }).setOrigin(0, 0.5).setDepth(DEPTH.content);
+      this.add.text(meterX + meterW, ry, `${row.value} / ${row.total}`, {
+        fontSize: '11px', fontFamily: FONT_DISPLAY, color: hex(mix(row.color, 0xffffff, 0.4)),
+      }).setOrigin(1, 0.5).setDepth(DEPTH.content);
+      drawMeter(meters, meterX, ry + 10, meterW, 7, row.value / row.total, row.color);
+    });
+
+    // Ledger rule above the actions.
+    const rule = this.add.graphics().setDepth(DEPTH.content);
+    rule.lineStyle(1, accent, 0.2);
+    rule.beginPath(); rule.moveTo(cx - meterW / 2, top + 274); rule.lineTo(cx + meterW / 2, top + 274); rule.strokePath();
+    fillDiamond(rule, cx, top + 274, 3, accent, 0.5);
+
+    addButton(this, {
+      x: cx, y: CARD_CY + 62, w: 168, h: 44,
+      label: 'PLAY', icon: '▶', accent: C.verdant, variant: 'solid', fontSize: 17,
+      onHover: () => card.paint('hover'),
+      onOut: () => card.paint('idle'),
+      onClick: () => {
+        CP.setActiveSlot(idx);
+        this.scene.start('CampaignWorldMapScene', { slotIdx: idx });
+      },
+    });
+
+    addButton(this, {
+      x: cx - 44, y: CARD_CY + 118, w: 80, h: 32,
+      label: 'RENAME', accent: C.frost, variant: 'quiet', fontSize: 10,
+      onClick: () => this.startRename(idx),
+    });
+
+    addButton(this, {
+      x: cx + 44, y: CARD_CY + 118, w: 80, h: 32,
+      label: 'DELETE', accent: C.blood, variant: 'danger', fontSize: 10,
+      onClick: () => this.confirmDelete(idx),
+    });
   }
 
   private startCreate(idx: 0 | 1 | 2): void {
@@ -176,7 +176,7 @@ export class CampaignSlotSelectScene extends Phaser.Scene {
     });
   }
 
-  private startRename(idx: 0 | 1 | 2, _cx: number, _cy: number): void {
+  private startRename(idx: 0 | 1 | 2): void {
     const current = CP.getSlot(idx)?.name ?? '';
     this.openRenameInput(idx, current, (name) => {
       CP.renameSlot(idx, name);
@@ -189,6 +189,10 @@ export class CampaignSlotSelectScene extends Phaser.Scene {
     this.scene.restart();
   }
 
+  /**
+   * Text entry rides on a real DOM input positioned over the canvas — Phaser has
+   * no native text field, and this keeps IME and mobile keyboards working.
+   */
   private openRenameInput(idx: 0 | 1 | 2, initial: string, onCommit: (name: string) => void): void {
     this.cleanupInput();
     this.renameSlotIdx = idx;
@@ -198,28 +202,29 @@ export class CampaignSlotSelectScene extends Phaser.Scene {
     const scaleX = rect.width / this.scale.width;
     const scaleY = rect.height / this.scale.height;
 
-    const cardCenters = [160, 480, 800];
-    const gameX = cardCenters[idx];
-    const gameY = 360;
+    const gameX = CARD_CENTERS[idx];
+    const gameY = CARD_CY;
 
     const inputEl = document.createElement('input');
     inputEl.type = 'text';
     inputEl.maxLength = 20;
     inputEl.value = initial;
     inputEl.style.position = 'fixed';
-    inputEl.style.left = `${rect.left + (gameX - 70) * scaleX}px`;
-    inputEl.style.top = `${rect.top + (gameY - 16) * scaleY}px`;
-    inputEl.style.width = `${140 * scaleX}px`;
-    inputEl.style.height = `${32 * scaleY}px`;
+    inputEl.style.left = `${rect.left + (gameX - 80) * scaleX}px`;
+    inputEl.style.top = `${rect.top + (gameY - 18) * scaleY}px`;
+    inputEl.style.width = `${160 * scaleX}px`;
+    inputEl.style.height = `${36 * scaleY}px`;
     inputEl.style.fontSize = `${16 * scaleX}px`;
-    inputEl.style.background = '#1a1a33';
-    inputEl.style.color = '#ffffff';
-    inputEl.style.border = '2px solid #4488cc';
-    inputEl.style.borderRadius = '4px';
+    inputEl.style.background = '#0d0d1c';
+    inputEl.style.color = '#f2f2ff';
+    inputEl.style.border = `2px solid ${hex(C.ember)}`;
+    inputEl.style.borderRadius = '2px';
     inputEl.style.textAlign = 'center';
     inputEl.style.outline = 'none';
+    inputEl.style.letterSpacing = '1px';
+    inputEl.style.boxShadow = `0 0 18px ${hex(C.ember)}66`;
     inputEl.style.zIndex = '9999';
-    inputEl.style.fontFamily = '"Arial Black", sans-serif';
+    inputEl.style.fontFamily = FONT_DISPLAY;
 
     const commit = () => {
       const name = inputEl.value.trim() || `Save ${idx + 1}`;

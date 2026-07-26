@@ -2,6 +2,10 @@ import Phaser from 'phaser';
 import { getAnyWorld } from '../data/AbstractWorlds';
 import { getCampaignFightDef, DIFFICULTY_LABEL, ELEMENT_DISPLAY } from '../data/CampaignFights';
 import { MUTATIONS } from '../data/Mutations';
+import {
+  C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
+  addBadge, addButton, addModal, addToggle, addWell, fillDiamond,
+} from '../ui';
 
 export class CampaignFightMenuScene extends Phaser.Scene {
   private worldId = 'fire';
@@ -30,142 +34,112 @@ export class CampaignFightMenuScene extends Phaser.Scene {
     const cy = height / 2;
     const world = getAnyWorld(this.worldId);
 
-    const borderColor =
-      this.kind === 'invasion' ? 0xff7722 :
-      this.kind === 'gauntlet' ? 0x4488ff :
-      this.kind === 'challenge' ? 0x8800cc :
-      (world?.color ?? 0x4466ff);
+    const accent =
+      this.kind === 'invasion' ? C.ember :
+      this.kind === 'gauntlet' ? C.frost :
+      this.kind === 'challenge' ? C.corrupt :
+      (world?.color ?? C.arcane);
 
-    const panelW = 520;
-    const panelH = 360;
-
-    // Dim overlay
-    this.add.rectangle(cx, cy, width, height, 0x000000, 0.65)
-      .setDepth(0)
-      .setInteractive();
-
-    // Panel background
-    this.add.rectangle(cx, cy, panelW, panelH, 0x0d0d1a, 1)
-      .setStrokeStyle(3, borderColor)
-      .setDepth(1);
-
-    // Title
     const fightNum = this.nodeId.includes('fight-') ? this.nodeId.split('fight-')[1] : null;
     const titleText =
       this.kind === 'invasion'  ? '👾  INVASION' :
       this.kind === 'gauntlet'  ? '🏆  GAUNTLET' :
       this.kind === 'challenge' ? `${world?.emoji ?? '⚔️'}  CHALLENGE` :
       `${world?.emoji ?? '⚔️'}  FIGHT ${fightNum ?? '?'}`;
-    const titleColor =
-      this.kind === 'invasion'  ? '#ff9955' :
-      this.kind === 'gauntlet'  ? '#88bbff' :
-      this.kind === 'challenge' ? '#cc88ff' :
-      '#ffffff';
 
-    this.add.text(cx, cy - 130, titleText, {
-      fontSize: '28px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: titleColor,
-      stroke: '#000000',
-      strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(2);
-
-    this.add.text(cx, cy - 94, world ? world.name.toUpperCase() + ' WORLD' : '', {
-      fontSize: '13px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#888888',
-    }).setOrigin(0.5).setDepth(2);
-
-    // Fight details
-    const def = getCampaignFightDef(this.nodeId);
-    const buildDetailsLine = (): string => {
-      if (!def) return '';
-      const mutNames = MUTATIONS
-        .filter((m) => def.mutations?.includes(m.id))
-        .map((m) => {
-          const starred = def.starredMutations?.includes(m.id);
-          return (starred ? '★ ' : '') + m.name;
-        });
-      const elem = ELEMENT_DISPLAY[def.enemyElementId];
-      const enemyStr = elem ? `${elem.emoji} ${elem.name}` : def.enemyElementId;
-      const diffStr = DIFFICULTY_LABEL[def.difficulty] ?? String(def.difficulty);
-      return mutNames.length > 0
-        ? `${enemyStr}  •  ${diffStr}  •  ${mutNames.join(', ')}`
-        : `${enemyStr}  •  ${diffStr}`;
-    };
-    const detailsText = this.add.text(cx, cy - 20, buildDetailsLine(), {
-      fontSize: '14px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#aaaacc',
-      wordWrap: { width: 460 },
-      align: 'center',
-    }).setOrigin(0.5).setDepth(2);
-
-    // Hard mode toggle
-    const toggleY = cy + 60;
-    const toggleLabelX = cx - 54;
-    const toggleTrackX = cx + 42;
-
-    this.add.text(toggleLabelX, toggleY, 'HARD MODE', {
-      fontSize: '13px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#888888',
-    }).setOrigin(0.5).setDepth(2);
-
-    const trackW = 44;
-    const trackH = 22;
-    const track = this.add.rectangle(toggleTrackX, toggleY, trackW, trackH, 0x222233)
-      .setStrokeStyle(1, 0x555566)
-      .setDepth(2)
-      .setInteractive({ useHandCursor: true });
-
-    const knob = this.add.circle(toggleTrackX - 10, toggleY, 8, 0x888888)
-      .setDepth(3);
-
-    const updateToggle = () => {
-      if (this.hardMode) {
-        track.setFillStyle(0x661111).setStrokeStyle(1, 0xcc3333);
-        knob.setFillStyle(0xff4444).setX(toggleTrackX + 10);
-      } else {
-        track.setFillStyle(0x222233).setStrokeStyle(1, 0x555566);
-        knob.setFillStyle(0x888888).setX(toggleTrackX - 10);
-      }
-    };
-
-    track.on('pointerdown', () => {
-      this.hardMode = !this.hardMode;
-      updateToggle();
+    const panel = addModal(this, {
+      w: 540, h: 386, accent,
+      title: titleText,
+      subtitle: world ? `${world.name.toUpperCase()} WORLD` : undefined,
+      glow: 0.5,
     });
 
-    // START button
-    const startBtn = this.add.rectangle(cx, cy + 130, 200, 52, 0x1a2a1a)
-      .setStrokeStyle(2, 0x44cc44)
-      .setDepth(2)
-      .setInteractive({ useHandCursor: true });
-    const startLbl = this.add.text(cx, cy + 130, 'START', {
-      fontSize: '22px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#44cc44',
-    }).setOrigin(0.5).setDepth(3);
-    startBtn
-      .on('pointerover', () => { startBtn.setFillStyle(0x253525); startLbl.setColor('#aaffaa'); })
-      .on('pointerout', () => { startBtn.setFillStyle(0x1a2a1a); startLbl.setColor('#44cc44'); })
-      .on('pointerdown', () => this.startFight());
+    // ── Briefing ────────────────────────────────────────────────────
+    const def = getCampaignFightDef(this.nodeId);
+    const briefY = panel.contentTop + 62;
+    addWell(this, cx, briefY, 460, 92, accent, DEPTH.modal + 1, 8);
 
-    // BACK button
-    const backBtn = this.add.rectangle(cx, cy + 140 + 60, 140, 36, 0x222233)
-      .setStrokeStyle(1, 0x555577)
-      .setDepth(2)
-      .setInteractive({ useHandCursor: true });
-    const backLbl = this.add.text(cx, cy + 140 + 60, '← BACK', {
-      fontSize: '13px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#aaaaaa',
-    }).setOrigin(0.5).setDepth(3);
-    backBtn
-      .on('pointerover', () => { backBtn.setFillStyle(0x333355); backLbl.setColor('#ffffff'); })
-      .on('pointerout', () => { backBtn.setFillStyle(0x222233); backLbl.setColor('#aaaaaa'); })
-      .on('pointerdown', () => this.close());
+    if (def) {
+      const elem = ELEMENT_DISPLAY[def.enemyElementId];
+      const enemyStr = elem ? `${elem.emoji}  ${elem.name}` : def.enemyElementId;
+      const diffStr = DIFFICULTY_LABEL[def.difficulty] ?? String(def.difficulty);
+
+      // Opponent and difficulty read as two labelled stats, not a run-on line.
+      const statY = briefY - 22;
+      this.add.text(cx - 200, statY - 9, 'OPPONENT', {
+        fontSize: '9px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2,
+      }).setOrigin(0, 0.5).setDepth(DEPTH.modalContent);
+      this.add.text(cx - 200, statY + 10, enemyStr, {
+        fontSize: '15px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 0.5,
+      }).setOrigin(0, 0.5).setDepth(DEPTH.modalContent);
+
+      this.add.text(cx + 200, statY - 9, 'DIFFICULTY', {
+        fontSize: '9px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2,
+      }).setOrigin(1, 0.5).setDepth(DEPTH.modalContent);
+      this.add.text(cx + 200, statY + 10, diffStr.toUpperCase(), {
+        fontSize: '15px', fontFamily: FONT_DISPLAY,
+        color: hex(mix(accent, 0xffffff, 0.55)), letterSpacing: 1,
+      }).setOrigin(1, 0.5).setDepth(DEPTH.modalContent);
+
+      const divider = this.add.graphics().setDepth(DEPTH.modal + 2);
+      divider.lineStyle(1, accent, 0.2);
+      divider.beginPath(); divider.moveTo(cx - 200, briefY + 6); divider.lineTo(cx + 200, briefY + 6); divider.strokePath();
+      fillDiamond(divider, cx, briefY + 6, 3, accent, 0.5);
+
+      // Mutations become their own badge row — starred ones flagged.
+      const active = MUTATIONS.filter((m) => def.mutations?.includes(m.id));
+      if (active.length > 0) {
+        this.add.text(cx - 200, briefY + 26, 'MUTATIONS', {
+          fontSize: '9px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2,
+        }).setOrigin(0, 0.5).setDepth(DEPTH.modalContent);
+
+        let bx = cx - 108;
+        for (const m of active) {
+          const starred = def.starredMutations?.includes(m.id);
+          const badge = addBadge(this, {
+            x: bx, y: briefY + 26,
+            text: `${starred ? '★ ' : ''}${m.emoji} ${m.name}`,
+            accent: starred ? C.gold : C.steel,
+            depth: DEPTH.modalContent,
+            glow: starred,
+          });
+          // Badges pack left-to-right; nudge the cursor by the one just placed.
+          badge.setX(bx + badge.width / 2);
+          bx += badge.width + 8;
+        }
+      } else {
+        this.add.text(cx, briefY + 26, 'NO MUTATIONS', {
+          fontSize: '10px', fontFamily: FONT_DISPLAY, color: T.ghost, letterSpacing: 2,
+        }).setOrigin(0.5).setDepth(DEPTH.modalContent);
+      }
+    }
+
+    // ── Hard mode ───────────────────────────────────────────────────
+    const toggleY = cy + 62;
+    addToggle(this, {
+      x: cx + 30, y: toggleY, value: this.hardMode, accent: C.blood,
+      label: '🔥 HARD MODE', depth: DEPTH.modalContent,
+      onChange: (v) => { this.hardMode = v; },
+    });
+
+    // ── Actions ─────────────────────────────────────────────────────
+    addButton(this, {
+      x: cx, y: cy + 132, w: 240, h: 56,
+      label: 'START', icon: '⚔', accent: C.verdant, variant: 'solid', fontSize: 21,
+      depth: DEPTH.modalContent,
+      onClick: () => this.startFight(),
+    }).pulse();
+
+    addButton(this, {
+      x: cx, y: cy + 190, w: 160, h: 34,
+      label: 'BACK', icon: '◄', variant: 'quiet', accent: C.steel, fontSize: 12,
+      depth: DEPTH.modalContent,
+      onClick: () => this.close(),
+    });
+
+    this.add.text(cx, cy + 218, 'ESC to cancel', {
+      fontSize: '9px', fontFamily: FONT_UI, color: T.ghost, letterSpacing: 1,
+    }).setOrigin(0.5).setDepth(DEPTH.modalContent);
 
     this.input.keyboard!.on('keydown-ESC', () => this.close());
   }

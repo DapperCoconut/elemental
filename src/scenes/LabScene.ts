@@ -3,6 +3,20 @@ import * as PlayerData from '../data/PlayerData';
 import { findRecipe } from '../data/Recipes';
 import { ABSTRACT_ELEMENT_IDS, ABSTRACT_ELEMENT_UNLOCK_MAP } from '../data/AbstractElements';
 import { findPerkRecipe, findQuadPerkRecipe, findPentaPerkRecipe, findAbstractTriplePerkRecipe, PerkDef, ALL_PERKS } from '../data/Perks';
+import {
+  C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix, tintPlate,
+  addBackdrop, addBackButton, addButton, addChip, addHeaderBar, addIconButton, addSectionLabel,
+  addTabs, addRowPlate, addWell, UiButton,
+  ALL_CORNERS, fillHex, strokeHex, fillDiamond, fillNotchedGradient, strokeNotched, drawGlow,
+} from '../ui';
+
+/** Per-mode accent — the whole screen re-lights when you change forge mode. */
+const MODE_ACCENT: Record<'elements' | 'perks' | 'quad-perks' | 'penta-perks', number> = {
+  'elements': 0x9d5cff,
+  'perks': 0x4fc3ff,
+  'quad-perks': 0xffaa44,
+  'penta-perks': 0xd946ef,
+};
 
 const BASE_ELEMENTS = [
   { id: 'fire',  name: 'Fire',  emoji: '🔥', color: 0xff4400 },
@@ -38,7 +52,7 @@ export class LabScene extends Phaser.Scene {
   private slot5Visual: Phaser.GameObjects.Container | null = null;
   private nucleiText!: Phaser.GameObjects.Text;
   private messageText!: Phaser.GameObjects.Text;
-  private mergeBtnLabel!: Phaser.GameObjects.Text;
+  private mergeButton: UiButton | null = null;
   private perkBookObjects: Phaser.GameObjects.GameObject[] = [];
   private perkBookScrollHandler: (...args: unknown[]) => void = () => {};
 
@@ -65,95 +79,57 @@ export class LabScene extends Phaser.Scene {
   create(): void {
     const { width, height } = this.scale;
     const cx = width / 2;
+    const accent = MODE_ACCENT[this.labMode];
 
-    // Background + grid
-    this.add.rectangle(cx, height / 2, width, height, 0x0d0d1a);
-    const grid = this.add.graphics();
-    grid.lineStyle(1, 0x1a1a33, 1);
-    for (let x = 0; x < width; x += 60) grid.lineBetween(x, 0, x, height);
-    for (let y = 0; y < height; y += 60) grid.lineBetween(0, y, width, y);
-
-    // Title
-    this.add.text(cx, 36, '⚗️  LAB', {
-      fontSize: '40px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#cc88ff',
-      stroke: '#440088',
-      strokeThickness: 3,
-    }).setOrigin(0.5);
-
-    // Lab level indicator
     const labLevel = PlayerData.getLabLevel();
-    const labLevelStr = labLevel === 0 ? 'Base Lab' : `Lab Level ${labLevel}`;
-    this.add.text(cx, 62, labLevelStr, {
-      fontSize: '12px', fontFamily: 'Arial, sans-serif', color: '#9966cc',
-    }).setOrigin(0.5);
+    addBackdrop(this, { accent, variant: 'lattice', motes: 20 });
 
-    // Back button
-    const backBtn = this.add.rectangle(52, 36, 88, 36, 0x222233).setStrokeStyle(1, 0x555577).setInteractive({ useHandCursor: true });
-    const backLabel = this.add.text(52, 36, '← BACK', { fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#aaaaaa' }).setOrigin(0.5);
-    backBtn.on('pointerover', () => { backBtn.setFillStyle(0x333355); backLabel.setColor('#ffffff'); });
-    backBtn.on('pointerout',  () => { backBtn.setFillStyle(0x222233); backLabel.setColor('#aaaaaa'); });
-    backBtn.on('pointerdown', () => this.scene.start('TitleScene'));
-    this.input.keyboard!.on('keydown-ESC', () => this.scene.start('TitleScene'));
+    addHeaderBar(this, {
+      title: '⚗  LAB',
+      subtitle: labLevel === 0 ? 'BASE LAB' : `LAB LEVEL ${labLevel}`,
+      accent,
+      height: 66,
+    });
+
+    const back = () => this.scene.start('TitleScene');
+    addBackButton(this, back);
+    this.input.keyboard!.on('keydown-ESC', back);
 
     // Nucleus counter (top right)
-    this.nucleiText = this.add.text(width - 16, 12, '', {
-      fontSize: '18px',
-      fontFamily: '"Arial Black", sans-serif',
-      color: '#cc88ff',
-    }).setOrigin(1, 0);
+    this.nucleiText = this.add.text(width - 60, 26, '', {
+      fontSize: '17px', fontFamily: FONT_DISPLAY,
+      color: hex(mix(C.arcane, 0xffffff, 0.5)), letterSpacing: 1,
+    }).setOrigin(1, 0.5).setDepth(DEPTH.content);
     this.refreshNuclei();
 
-    // Perk book button
-    const bookCircle = this.add.circle(width - 52, 60, 18, 0x221133).setStrokeStyle(2, 0x9944ff).setInteractive({ useHandCursor: true });
-    this.add.text(width - 52, 60, '📖', { fontSize: '16px' }).setOrigin(0.5);
-    bookCircle.on('pointerover', () => bookCircle.setFillStyle(0x440077));
-    bookCircle.on('pointerout',  () => bookCircle.setFillStyle(0x221133));
-    bookCircle.on('pointerdown', () => this.showPerkBook());
+    addIconButton(this, {
+      x: width - 32, y: 26, r: 17, icon: '📖', accent: C.arcane, tooltip: 'Perk dictionary',
+      onClick: () => this.showPerkBook(),
+    });
 
     // ── Mode toggle (ELEMENTS | PERKS | QUAD | PENTA) ──────────
     const canPerks = labLevel >= 2;
     const canQuad  = labLevel >= 3;
     const canPenta = labLevel >= 4;
     const tabY = 88;
-    const tabW = 82;
-    const tabH = 28;
-    const tabGap = 4;
 
-    const tabCx = [
-      cx - tabW * 1.5 - tabGap * 1.5,
-      cx - tabW * 0.5 - tabGap * 0.5,
-      cx + tabW * 0.5 + tabGap * 0.5,
-      cx + tabW * 1.5 + tabGap * 1.5,
-    ];
-    const tabLabels = [
-      'ELEMENTS',
-      canPerks ? 'PERKS' : 'PERKS 🔒',
-      canQuad ? 'QUAD' : 'QUAD 🔒',
-      canPenta ? 'PENTA' : 'PENTA 🔒',
-    ];
     const tabModes: Array<'elements' | 'perks' | 'quad-perks' | 'penta-perks'> = [
       'elements', 'perks', 'quad-perks', 'penta-perks',
     ];
+    const tabUnlocked = [true, canPerks, canQuad, canPenta];
 
-    tabCx.forEach((tx, idx) => {
-      const active = this.labMode === tabModes[idx];
-      const unlocked = idx === 0 || (idx === 1 && canPerks) || (idx === 2 && canQuad) || (idx === 3 && canPenta);
-      const bg = this.add.rectangle(tx, tabY, tabW, tabH, active ? 0x330066 : 0x111122)
-        .setStrokeStyle(1, unlocked ? 0x9944ff : 0x333344)
-        .setInteractive({ useHandCursor: true });
-      this.add.text(tx, tabY, tabLabels[idx], {
-        fontSize: '9px', fontFamily: '"Arial Black", sans-serif',
-        color: active ? '#cc88ff' : (unlocked ? '#666688' : '#333355'),
-      }).setOrigin(0.5);
-
-      bg.on('pointerdown', () => {
-        if (idx === 1 && !canPerks)  { this.showMessage('Requires Lab Level 2 (upgrade in Shop).', '#ff8888'); return; }
-        if (idx === 2 && !canQuad)   { this.showMessage('Requires Lab Level 3 (upgrade in Shop).', '#ff8888'); return; }
-        if (idx === 3 && !canPenta)  { this.showMessage('Requires Penta Synthesis (upgrade in Shop).', '#ff8888'); return; }
+    addTabs(this, {
+      x: cx, y: tabY, tabW: 96, tabH: 30,
+      active: tabModes.indexOf(this.labMode),
+      tabs: tabModes.map((mode, idx) => ({
+        label: ['ELEMENTS', 'PERKS', 'QUAD', 'PENTA'][idx],
+        accent: MODE_ACCENT[mode],
+        disabled: !tabUnlocked[idx],
+        hint: tabUnlocked[idx] ? undefined : `LV.${idx + 1}`,
+      })),
+      onSelect: (idx) => {
         if (this.labMode !== tabModes[idx]) this.scene.restart({ labMode: tabModes[idx] });
-      });
+      },
     });
 
     // Instructions
@@ -162,19 +138,14 @@ export class LabScene extends Phaser.Scene {
       this.labMode === 'quad-perks' ? 'Drag 4 elements (base or abstract) into the slots, then FORGE QUAD PERK (5 ⚛️)' :
       this.labMode === 'penta-perks'? 'Drag 5 elements (base or abstract) into the slots, then FORGE PENTA PERK (10 ⚛️)' :
                                          'Drag elements into the merge slots, then press MERGE';
-    this.add.text(cx, tabY + 20, instructionText, {
-      fontSize: '12px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#666688',
-    }).setOrigin(0.5);
+    this.add.text(cx, tabY + 30, instructionText, {
+      fontSize: '11px', fontFamily: FONT_UI, color: T.dim, letterSpacing: 0.5,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
 
     // ── Base element circles (draggable) ──────────────────────────
     const circleY = 200;
 
-    // Section label
-    this.add.text(cx, 125, 'BASE ELEMENTS', {
-      fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#555566',
-    }).setOrigin(0.5);
+    addSectionLabel(this, { x: cx, y: 138, text: 'BASE ELEMENTS', accent, width: 560 });
 
     // Draw base elements
     const baseCount = BASE_ELEMENTS.length;
@@ -196,9 +167,7 @@ export class LabScene extends Phaser.Scene {
         const absTotalW = unlockedAbstract.length * 100 + (unlockedAbstract.length - 1) * 20;
         const absStartX = cx - absTotalW / 2 + 50;
 
-        this.add.text(cx, circleY + 75, 'ABSTRACT ELEMENTS', {
-          fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#9966cc',
-        }).setOrigin(0.5);
+        addSectionLabel(this, { x: cx, y: circleY + 75, text: 'ABSTRACT ELEMENTS', accent: C.corrupt, width: 560 });
 
         unlockedAbstract.forEach((el, i) => {
           const ox = absStartX + i * 120;
@@ -216,19 +185,9 @@ export class LabScene extends Phaser.Scene {
       this.slot2X = cx + 90;
       this.slot2Y = slotY;
 
-      this.add.rectangle(this.slot1X, this.slot1Y, SLOT_W, SLOT_H, 0x220044, 1).setStrokeStyle(2, 0x9944ff);
-      this.add.text(this.slot1X, this.slot1Y, 'Slot 1', {
-        fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#664499',
-      }).setOrigin(0.5).setDepth(1);
-
-      this.add.rectangle(this.slot2X, this.slot2Y, SLOT_W, SLOT_H, 0x220044, 1).setStrokeStyle(2, 0x9944ff);
-      this.add.text(this.slot2X, this.slot2Y, 'Slot 2', {
-        fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#664499',
-      }).setOrigin(0.5).setDepth(1);
-
-      this.add.text(cx, slotY, '+', {
-        fontSize: '28px', fontFamily: '"Arial Black", sans-serif', color: '#9944ff',
-      }).setOrigin(0.5);
+      this.drawSlot(this.slot1X, this.slot1Y, SLOT_W, SLOT_H, accent, 1);
+      this.drawSlot(this.slot2X, this.slot2Y, SLOT_W, SLOT_H, accent, 2);
+      this.drawJoiner(cx, slotY, accent);
 
     } else if (this.labMode === 'perks') {
       // Perk mode: show abstract elements below base elements, then three slots
@@ -238,9 +197,7 @@ export class LabScene extends Phaser.Scene {
         const absTotalW = unlockedAbstract.length * 100 + (unlockedAbstract.length - 1) * 20;
         const absStartX = cx - absTotalW / 2 + 50;
 
-        this.add.text(cx, circleY + 65, 'ABSTRACT ELEMENTS', {
-          fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#9966cc',
-        }).setOrigin(0.5);
+        addSectionLabel(this, { x: cx, y: circleY + 65, text: 'ABSTRACT ELEMENTS', accent: C.corrupt, width: 560 });
 
         unlockedAbstract.forEach((el, i) => {
           const ox = absStartX + i * 120;
@@ -261,17 +218,10 @@ export class LabScene extends Phaser.Scene {
 
       for (let i = 0; i < 3; i++) {
         const sx = [this.slot1X, this.slot2X, this.slot3X][i];
-        this.add.rectangle(sx, slotY, SLOT_W, SLOT_H, 0x001122, 1).setStrokeStyle(2, 0x44aaff);
-        this.add.text(sx, slotY, `Slot ${i + 1}`, {
-          fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#336688',
-        }).setOrigin(0.5).setDepth(1);
+        this.drawSlot(sx, slotY, SLOT_W, SLOT_H, accent, i + 1);
       }
-      this.add.text(cx - 80, slotY, '+', {
-        fontSize: '28px', fontFamily: '"Arial Black", sans-serif', color: '#44aaff',
-      }).setOrigin(0.5);
-      this.add.text(cx + 80, slotY, '+', {
-        fontSize: '28px', fontFamily: '"Arial Black", sans-serif', color: '#44aaff',
-      }).setOrigin(0.5);
+      this.drawJoiner(cx - 80, slotY, accent);
+      this.drawJoiner(cx + 80, slotY, accent);
 
     } else if (this.labMode === 'quad-perks') {
       // Quad-perk mode: show abstract elements then four slots
@@ -280,9 +230,7 @@ export class LabScene extends Phaser.Scene {
         const absY = circleY + 110;
         const absTotalW = unlockedAbstract.length * 100 + (unlockedAbstract.length - 1) * 20;
         const absStartX = cx - absTotalW / 2 + 50;
-        this.add.text(cx, circleY + 65, 'ABSTRACT ELEMENTS', {
-          fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#9966cc',
-        }).setOrigin(0.5);
+        addSectionLabel(this, { x: cx, y: circleY + 65, text: 'ABSTRACT ELEMENTS', accent: C.corrupt, width: 560 });
         unlockedAbstract.forEach((el, i) => {
           const ox = absStartX + i * 120;
           const container = this.createElementCircle(el.id, el.name, el.emoji, el.color, ox, absY, true);
@@ -304,21 +252,16 @@ export class LabScene extends Phaser.Scene {
 
       for (let i = 0; i < 4; i++) {
         const sx = [this.slot1X, this.slot2X, this.slot3X, this.slot4X][i];
-        this.add.rectangle(sx, slotY, SLOT_W, SLOT_H, 0x110022, 1).setStrokeStyle(2, 0xffaa44);
-        this.add.text(sx, slotY, `Slot ${i + 1}`, {
-          fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#887733',
-        }).setOrigin(0.5).setDepth(1);
+        this.drawSlot(sx, slotY, SLOT_W, SLOT_H, accent, i + 1);
       }
       for (let i = 0; i < 3; i++) {
         const sx = [this.slot1X, this.slot2X, this.slot3X][i];
-        this.add.text(sx + 60, slotY, '+', {
-          fontSize: '22px', fontFamily: '"Arial Black", sans-serif', color: '#ffaa44',
-        }).setOrigin(0.5);
+        this.drawJoiner(sx + 60, slotY, accent, 9);
       }
 
-      this.add.text(cx, slotY + 68, 'Any 4 elements — base or abstract', {
-        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#887733',
-      }).setOrigin(0.5);
+      this.add.text(cx, slotY + 72, 'ANY 4 ELEMENTS — BASE OR ABSTRACT', {
+        fontSize: '10px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
 
     } else {
       // Penta-perk mode: show abstract elements then five slots (tighter spacing)
@@ -327,9 +270,7 @@ export class LabScene extends Phaser.Scene {
         const absY = circleY + 110;
         const absTotalW = unlockedAbstract.length * 100 + (unlockedAbstract.length - 1) * 20;
         const absStartX = cx - absTotalW / 2 + 50;
-        this.add.text(cx, circleY + 65, 'ABSTRACT ELEMENTS', {
-          fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: '#9966cc',
-        }).setOrigin(0.5);
+        addSectionLabel(this, { x: cx, y: circleY + 65, text: 'ABSTRACT ELEMENTS', accent: C.corrupt, width: 560 });
         unlockedAbstract.forEach((el, i) => {
           const ox = absStartX + i * 120;
           const container = this.createElementCircle(el.id, el.name, el.emoji, el.color, ox, absY, true);
@@ -350,67 +291,78 @@ export class LabScene extends Phaser.Scene {
 
       const pentaSlotXs = [this.slot1X, this.slot2X, this.slot3X, this.slot4X, this.slot5X];
       for (let i = 0; i < 5; i++) {
-        this.add.rectangle(pentaSlotXs[i], slotY, 88, SLOT_H, 0x110011, 1).setStrokeStyle(2, 0xaa44ff);
-        this.add.text(pentaSlotXs[i], slotY, `Slot ${i + 1}`, {
-          fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#774499',
-        }).setOrigin(0.5).setDepth(1);
+        this.drawSlot(pentaSlotXs[i], slotY, 88, SLOT_H, accent, i + 1);
       }
       for (let i = 0; i < 4; i++) {
-        this.add.text(pentaSlotXs[i] + pentaSpacing / 2, slotY, '+', {
-          fontSize: '18px', fontFamily: '"Arial Black", sans-serif', color: '#aa44ff',
-        }).setOrigin(0.5);
+        this.drawJoiner(pentaSlotXs[i] + pentaSpacing / 2, slotY, accent, 8);
       }
 
-      this.add.text(cx, slotY + 68, 'Any 5 elements — base or abstract', {
-        fontSize: '10px', fontFamily: 'Arial, sans-serif', color: '#774499',
-      }).setOrigin(0.5);
+      this.add.text(cx, slotY + 72, 'ANY 5 ELEMENTS — BASE OR ABSTRACT', {
+        fontSize: '10px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
     }
 
     // ── MERGE / FORGE button ──────────────────────────────────────
-    const mergeY = slotY + (this.labMode === 'elements' ? 80 : 100);
+    const mergeY = slotY + (this.labMode === 'elements' ? 84 : 104);
     const btnLabel =
-      this.labMode === 'penta-perks' ? '⚡ FORGE PENTA PERK  (10 ⚛️)' :
-      this.labMode === 'quad-perks'  ? '⚡ FORGE QUAD PERK  (5 ⚛️)' :
-      this.labMode === 'perks'       ? '⚡ FORGE PERK  (2–4 ⚛️)' :
-                                      '⚛️  MERGE  (1 Nucleus)';
-    const btnColor =
-      this.labMode === 'penta-perks' ? 0x220033 :
-      this.labMode === 'quad-perks'  ? 0x332200 :
-      this.labMode === 'perks'       ? 0x003366 : 0x330066;
-    const btnStroke =
-      this.labMode === 'penta-perks' ? 0xaa44ff :
-      this.labMode === 'quad-perks'  ? 0xffaa44 :
-      this.labMode === 'perks'       ? 0x44aaff : 0x9944ff;
-    const btnTextColor =
-      this.labMode === 'penta-perks' ? '#cc88ff' :
-      this.labMode === 'quad-perks'  ? '#ffaa44' :
-      this.labMode === 'perks'       ? '#44ccff' : '#cc88ff';
+      this.labMode === 'penta-perks' ? 'FORGE PENTA PERK' :
+      this.labMode === 'quad-perks'  ? 'FORGE QUAD PERK' :
+      this.labMode === 'perks'       ? 'FORGE PERK' :
+                                       'MERGE';
+    const btnCost =
+      this.labMode === 'penta-perks' ? '10 ⚛️' :
+      this.labMode === 'quad-perks'  ? '5 ⚛️' :
+      this.labMode === 'perks'       ? '2–4 ⚛️' :
+                                       '1 ⚛️';
 
-    const mergeBtn = this.add.rectangle(cx, mergeY, 280, 48, btnColor, 1)
-      .setStrokeStyle(2, btnStroke)
-      .setInteractive({ useHandCursor: true })
-      .setDepth(5);
-    this.mergeBtnLabel = this.add.text(cx, mergeY, btnLabel, {
-      fontSize: '14px', fontFamily: '"Arial Black", sans-serif',
-      color: btnTextColor,
-    }).setOrigin(0.5).setDepth(6);
-
-    mergeBtn.on('pointerover', () => mergeBtn.setFillStyle(btnColor + 0x111111));
-    mergeBtn.on('pointerout',  () => mergeBtn.setFillStyle(btnColor));
-    mergeBtn.on('pointerdown', () => {
-      if (this.labMode === 'penta-perks') this.attemptPentaPerkForge();
-      else if (this.labMode === 'quad-perks') this.attemptQuadPerkForge();
-      else if (this.labMode === 'perks') this.attemptPerkForge();
-      else this.attemptMerge();
+    this.mergeButton = addButton(this, {
+      x: cx, y: mergeY, w: 320, h: 54,
+      label: btnLabel, icon: '⚡', trailing: btnCost,
+      trailingColor: hex(mix(accent, 0xffffff, 0.4)),
+      accent, variant: 'solid', fontSize: 17, align: 'left',
+      onClick: () => {
+        if (this.labMode === 'penta-perks') this.attemptPentaPerkForge();
+        else if (this.labMode === 'quad-perks') this.attemptQuadPerkForge();
+        else if (this.labMode === 'perks') this.attemptPerkForge();
+        else this.attemptMerge();
+      },
     });
-
     // Message text (result / error feedback)
-    this.messageText = this.add.text(cx, mergeY + 44, '', {
-      fontSize: '13px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#ffcc44',
-      align: 'center',
-    }).setOrigin(0.5).setDepth(6);
+    this.messageText = this.add.text(cx, mergeY + 48, '', {
+      fontSize: '13px', fontFamily: FONT_DISPLAY, color: T.gold,
+      align: 'center', letterSpacing: 0.5, lineSpacing: 4,
+    }).setOrigin(0.5).setDepth(DEPTH.content + 5);
+  }
+
+  // ── Slot chrome ──────────────────────────────────────────────
+
+  /** Empty ingredient socket: a recessed notched plate with a hex ghost. */
+  private drawSlot(x: number, y: number, w: number, h: number, accent: number, index: number): void {
+    const g = this.add.graphics().setDepth(DEPTH.panel);
+    const left = x - w / 2;
+    const top = y - h / 2;
+
+    fillNotchedGradient(g, left, top, w, h,
+      mix(C.well, accent, 0.06), mix(C.void_, accent, 0.03), 1, 12, ALL_CORNERS, 12);
+    strokeNotched(g, left, top, w, h, accent, 0.7, 2, 12, ALL_CORNERS);
+    strokeNotched(g, left + 5, top + 5, w - 10, h - 10, accent, 0.16, 1, 8, ALL_CORNERS);
+
+    // Ghost hexagon marking where a gem will land.
+    strokeHex(g, x, y - 6, 22, accent, 0.22, 1);
+
+    this.add.text(x, y + h / 2 - 13, `SLOT ${index}`, {
+      fontSize: '9px', fontFamily: FONT_DISPLAY,
+      color: hex(mix(accent, 0x000000, 0.35)), letterSpacing: 1.5,
+    }).setOrigin(0.5).setDepth(DEPTH.panel + 1);
+  }
+
+  /** The "+" between two sockets, drawn as an accent cross with a diamond. */
+  private drawJoiner(x: number, y: number, accent: number, size = 11): void {
+    const g = this.add.graphics().setDepth(DEPTH.panel + 1);
+    g.lineStyle(3, accent, 0.75);
+    g.beginPath(); g.moveTo(x - size, y); g.lineTo(x + size, y); g.strokePath();
+    g.beginPath(); g.moveTo(x, y - size); g.lineTo(x, y + size); g.strokePath();
+    fillDiamond(g, x, y, 3.5, mix(accent, 0xffffff, 0.6), 1);
   }
 
   // ── Helpers ──────────────────────────────────────────────────
@@ -427,16 +379,35 @@ export class LabScene extends Phaser.Scene {
     });
   }
 
+  /**
+   * A draggable element token: a cut gem in the element's own colour, with an
+   * abstract variant that gets a second corrupt-violet ring.
+   */
   private createElementCircle(
     id: string, name: string, emoji: string, color: number,
     x: number, y: number, isAbstract = false,
   ): Phaser.GameObjects.Container {
-    const circle = this.add.circle(0, 0, 38, color, 0.85).setStrokeStyle(isAbstract ? 3 : 2, isAbstract ? 0xcc88ff : 0xffffff);
-    const label = this.add.text(0, -6, emoji, { fontSize: '24px' }).setOrigin(0.5);
-    const nameLbl = this.add.text(0, 20, name, { fontSize: '9px', fontFamily: 'Arial, sans-serif', color: '#ffffff' }).setOrigin(0.5);
     void id;
-    const container = this.add.container(x, y, [circle, label, nameLbl]).setDepth(10);
-    return container;
+    const g = this.add.graphics();
+
+    for (let k = 5; k >= 1; k--) {
+      g.fillStyle(color, 0.05);
+      g.fillCircle(0, 0, 26 + k * 4);
+    }
+    fillHex(g, 0, 0, 34, mix(color, 0x000000, 0.55), 0.95);
+    fillHex(g, 0, 0, 30, mix(color, 0x000000, 0.25), 0.95);
+    strokeHex(g, 0, 0, 34, mix(color, 0xffffff, 0.35), 0.95, 2);
+    strokeHex(g, 0, 0, 27, mix(color, 0xffffff, 0.6), 0.3, 1);
+    if (isAbstract) strokeHex(g, 0, 0, 39, C.corrupt, 0.7, 2);
+
+    const label = this.add.text(0, -5, emoji, { fontSize: '23px' }).setOrigin(0.5);
+    const nameLbl = this.add.text(0, 19, name.toUpperCase(), {
+      fontSize: '8px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 1,
+    }).setOrigin(0.5);
+
+    // Resting tokens sit just above the socket plates so a layout shift can
+    // never bury one behind a socket.
+    return this.add.container(x, y, [g, label, nameLbl]).setDepth(DEPTH.panel + 2);
   }
 
   private makeCircleDraggable(
@@ -451,7 +422,8 @@ export class LabScene extends Phaser.Scene {
 
     let dragging = false;
 
-    container.on('dragstart', () => { dragging = true; container.setDepth(20); });
+    // A dragged token floats above everything, seated gems included.
+    container.on('dragstart', () => { dragging = true; container.setDepth(DEPTH.content); });
 
     container.on('drag', (_ptr: Phaser.Input.Pointer, dragX: number, dragY: number) => {
       container.setPosition(dragX, dragY);
@@ -459,7 +431,7 @@ export class LabScene extends Phaser.Scene {
 
     container.on('dragend', () => {
       dragging = false;
-      container.setDepth(10);
+      container.setDepth(DEPTH.panel + 2);
       const cx = container.x;
       const cy = container.y;
 
@@ -524,12 +496,24 @@ export class LabScene extends Phaser.Scene {
     slot: 1 | 2 | 3 | 4 | 5,
   ): Phaser.GameObjects.Container {
     const isAbs = ABSTRACT_ELEMENT_IDS.includes((el as { id?: string }).id ?? '');
-    const circle = this.add.circle(0, 0, 34, el.color, 0.9).setStrokeStyle(isAbs ? 3 : 2, isAbs ? 0xcc88ff : 0xffffff);
-    const emoji = this.add.text(0, -5, el.emoji, { fontSize: '22px' }).setOrigin(0.5);
-    const name = this.add.text(0, 18, el.name, { fontSize: '8px', fontFamily: 'Arial, sans-serif', color: '#ffffff' }).setOrigin(0.5);
-    circle.setInteractive({ useHandCursor: true });
-    const container = this.add.container(x, y, [circle, emoji, name]).setDepth(4);
-    circle.on('pointerdown', () => {
+    const g = this.add.graphics();
+    drawGlow(g, -30, -30, 60, 60, el.color, 0.5, 4, 3, 14);
+    fillHex(g, 0, 0, 31, mix(el.color, 0x000000, 0.5), 0.97);
+    fillHex(g, 0, 0, 27, mix(el.color, 0x000000, 0.2), 0.97);
+    strokeHex(g, 0, 0, 31, mix(el.color, 0xffffff, 0.45), 1, 2);
+    if (isAbs) strokeHex(g, 0, 0, 36, C.corrupt, 0.8, 2);
+
+    const emoji = this.add.text(0, -4, el.emoji, { fontSize: '21px' }).setOrigin(0.5);
+    const name = this.add.text(0, 17, el.name.toUpperCase(), {
+      fontSize: '8px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 1,
+    }).setOrigin(0.5);
+
+    // Click the seated gem to eject it.
+    const hit = this.add.circle(0, 0, 32, 0xffffff, 0).setInteractive({ useHandCursor: true });
+    // Above the socket plate (DEPTH.panel) and its caption, but below a token
+    // being dragged (depth 20) so one can still be dropped over a filled slot.
+    const container = this.add.container(x, y, [g, emoji, name, hit]).setDepth(DEPTH.panel + 5);
+    hit.on('pointerdown', () => {
       if (slot === 1) { this.slot1Id = null; if (this.slot1Visual) { this.slot1Visual.destroy(); this.slot1Visual = null; } }
       else if (slot === 2) { this.slot2Id = null; if (this.slot2Visual) { this.slot2Visual.destroy(); this.slot2Visual = null; } }
       else if (slot === 3) { this.slot3Id = null; if (this.slot3Visual) { this.slot3Visual.destroy(); this.slot3Visual = null; } }
@@ -540,26 +524,14 @@ export class LabScene extends Phaser.Scene {
     return container;
   }
 
+  /**
+   * Element mode is the only one whose price moves with the ingredients, so the
+   * forge button's trailing cost is re-stamped whenever a socket changes.
+   */
   private updateMergeButtonLabel(): void {
-    if (!this.mergeBtnLabel) return;
-    if (this.labMode === 'penta-perks') {
-      this.mergeBtnLabel.setText('⚡ FORGE PENTA PERK  (10 ⚛️)');
-      return;
-    }
-    if (this.labMode === 'quad-perks') {
-      this.mergeBtnLabel.setText('⚡ FORGE QUAD PERK  (5 ⚛️)');
-      return;
-    }
-    if (this.labMode === 'perks') {
-      this.mergeBtnLabel.setText('⚡ FORGE PERK  (2–4 ⚛️)');
-      return;
-    }
+    if (!this.mergeButton || this.labMode !== 'elements') return;
     const cost = this.getMergeCost();
-    if (cost === null) {
-      this.mergeBtnLabel.setText('⚛️  MERGE  (1 Nucleus)');
-    } else {
-      this.mergeBtnLabel.setText(`⚛️  MERGE  (${cost} Nucleus${cost > 1 ? 'i' : ''})`);
-    }
+    this.mergeButton.setTrailing(`${cost ?? 1} ⚛️`);
   }
 
   private getMergeCost(): number | null {
@@ -744,19 +716,19 @@ export class LabScene extends Phaser.Scene {
     const card = this.add.rectangle(cx, cy, 360, 220, 0x110022, 1).setStrokeStyle(3, 0xcc88ff).setDepth(51);
     const sparkle = this.add.text(cx, cy - 70, '✨', { fontSize: '36px' }).setOrigin(0.5).setDepth(52);
     const title = this.add.text(cx, cy - 30, 'NEW ELEMENT DISCOVERED!', {
-      fontSize: '18px', fontFamily: '"Arial Black", sans-serif', color: '#ffcc44',
+      fontSize: '18px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffcc44',
     }).setOrigin(0.5).setDepth(52);
     const emojiText = this.add.text(cx, cy + 14, `${emoji}  ${name.toUpperCase()}`, {
-      fontSize: '28px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
+      fontSize: '28px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#cc88ff',
     }).setOrigin(0.5).setDepth(52);
     const hint = this.add.text(cx, cy + 56, 'Now available in Element Select!', {
-      fontSize: '12px', fontFamily: 'Arial, sans-serif', color: '#aaaaaa',
+      fontSize: '12px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#aaaaaa',
     }).setOrigin(0.5).setDepth(52);
 
     const continueBtn = this.add.rectangle(cx, cy + 90, 140, 36, 0x440088, 1)
       .setStrokeStyle(2, 0xcc88ff).setDepth(52).setInteractive({ useHandCursor: true });
     const continueLbl = this.add.text(cx, cy + 90, 'CONTINUE', {
-      fontSize: '14px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
+      fontSize: '14px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#cc88ff',
     }).setOrigin(0.5).setDepth(53);
 
     continueBtn.on('pointerdown', () => {
@@ -786,23 +758,23 @@ export class LabScene extends Phaser.Scene {
     const card = this.add.rectangle(cx, cy, 380, 240, cardColor, 1).setStrokeStyle(3, strokeColor).setDepth(51);
     const sparkle = this.add.text(cx, cy - 80, isPenta ? '🍄' : (isQuad ? '✦' : (isAbstract ? '✨' : '⚡')), { fontSize: '36px' }).setOrigin(0.5).setDepth(52);
     const title = this.add.text(cx, cy - 38, isPenta ? 'PENTA PERK FORGED!' : (isQuad ? 'QUAD PERK FORGED!' : (isAbstract ? 'ABSTRACT PERK FORGED!' : 'NEW PERK FORGED!')), {
-      fontSize: '18px', fontFamily: '"Arial Black", sans-serif', color: titleColor,
+      fontSize: '18px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: titleColor,
     }).setOrigin(0.5).setDepth(52);
     const emojiText = this.add.text(cx, cy + 8, `${perk.emoji}  ${perk.name.toUpperCase()}`, {
-      fontSize: '26px', fontFamily: '"Arial Black", sans-serif', color: '#ffffff',
+      fontSize: '26px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffffff',
     }).setOrigin(0.5).setDepth(52);
     const desc = this.add.text(cx, cy + 48, perk.description, {
-      fontSize: '12px', fontFamily: 'Arial, sans-serif', color: '#aaccff',
+      fontSize: '12px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#aaccff',
       align: 'center', wordWrap: { width: 320 },
     }).setOrigin(0.5).setDepth(52);
     const hint = this.add.text(cx, cy + 78, `Equip on ${perk.elementId.toUpperCase()} in Element Select`, {
-      fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#556688',
+      fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#556688',
     }).setOrigin(0.5).setDepth(52);
 
     const continueBtn = this.add.rectangle(cx, cy + 104, 140, 36, isPenta ? 0x220033 : (isQuad ? 0x332200 : (isAbstract ? 0x1a0033 : 0x003366)), 1)
       .setStrokeStyle(2, strokeColor).setDepth(52).setInteractive({ useHandCursor: true });
     const continueLbl = this.add.text(cx, cy + 104, 'CONTINUE', {
-      fontSize: '14px', fontFamily: '"Arial Black", sans-serif', color: titleColor,
+      fontSize: '14px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: titleColor,
     }).setOrigin(0.5).setDepth(53);
 
     continueBtn.on('pointerdown', () => {
@@ -833,25 +805,19 @@ export class LabScene extends Phaser.Scene {
     const SCROLL_H = SCROLL_BOT - SCROLL_TOP;
 
     // ── Fixed background + header ──
-    const bg = this.add.rectangle(cx, height / 2, width, height, 0x05050f, 0.97)
+    const bg = this.add.rectangle(cx, height / 2, width, height, 0x04040c, 0.97)
       .setDepth(50).setInteractive();
     this.perkBookObjects.push(bg);
 
-    const header = this.add.text(cx, 36, '📖  PERK DICTIONARY', {
-      fontSize: '28px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
-      stroke: '#440088', strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(55);
-    this.perkBookObjects.push(header);
-
-    const subHdr = this.add.text(cx, 70, '— craft perks in the Lab to equip them on your element —', {
-      fontSize: '11px', fontFamily: 'Arial, sans-serif', color: '#555577',
-    }).setOrigin(0.5).setDepth(55);
-    this.perkBookObjects.push(subHdr);
-
-    const divider = this.add.graphics().setDepth(55);
-    divider.lineStyle(1, 0x223355, 0.5);
-    divider.lineBetween(40, 90, width - 40, 90);
-    this.perkBookObjects.push(divider);
+    const headerBar = addHeaderBar(this, {
+      title: '📖  PERK DICTIONARY',
+      subtitle: 'CRAFT PERKS IN THE LAB TO EQUIP THEM ON AN ELEMENT',
+      accent: C.arcane,
+      height: 74,
+      depth: 54,
+    });
+    this.perkBookObjects.push(headerBar.g, headerBar.titleText);
+    if (headerBar.subtitleText) this.perkBookObjects.push(headerBar.subtitleText);
 
     // ── Scrollable container ──
     const scrollContainer = this.add.container(0, SCROLL_TOP).setDepth(51);
@@ -883,10 +849,13 @@ export class LabScene extends Phaser.Scene {
           : tier === 'quad'
             ? '— QUAD PERKS  (Lab Level 3 · 5 ⚛️)  ·  Perkaholic Mutation —'
             : '— PENTA PERKS  (Penta Synthesis · 10 ⚛️) —';
-      const tierColor = tier === 'penta' ? '#cc88ff' : (tier === 'quad' ? '#ffaa44' : (tier === 'abstract-triple' ? '#cc66ff' : '#44aaff'));
+      const tierColor = tier === 'penta' ? hex(mix(C.corrupt, 0xffffff, 0.4))
+        : tier === 'quad' ? T.gold
+        : tier === 'abstract-triple' ? hex(mix(C.arcane, 0xffffff, 0.4))
+        : hex(mix(C.frost, 0xffffff, 0.3));
 
       const tierHdr = this.add.text(cx, innerY, tierLabel, {
-        fontSize: '10px', fontFamily: '"Arial Black", sans-serif', color: tierColor,
+        fontSize: '10px', fontFamily: FONT_DISPLAY, color: tierColor, letterSpacing: 2,
       }).setOrigin(0.5);
       scrollContainer.add(tierHdr);
       innerY += 20;
@@ -896,34 +865,37 @@ export class LabScene extends Phaser.Scene {
         const equipped  = PlayerData.getEquippedPerk(perk.elementId) === perk.id;
         const alpha = unlocked ? 1.0 : 0.35;
 
-        const rowBgFill   = unlocked ? (tier === 'penta' ? 0x1a0022 : (tier === 'quad' ? 0x1a0d00 : (tier === 'abstract-triple' ? 0x150022 : 0x0d0d1a))) : 0x080808;
-        const rowBgStroke = unlocked ? (tier === 'penta' ? 0x441155 : (tier === 'quad' ? 0x443322 : (tier === 'abstract-triple' ? 0x441144 : 0x222244))) : 0x111111;
+        const tierAccent = tier === 'penta' ? C.corrupt
+          : tier === 'quad' ? C.gold
+          : tier === 'abstract-triple' ? C.arcane
+          : C.frost;
 
         // Create description first to measure its wrapped height
-        const descText = this.add.text(COL_X + 10, innerY + DESC_Y, perk.description, {
-          fontSize: '9px', fontFamily: 'Arial, sans-serif',
-          color: unlocked ? '#888899' : '#444455',
-          wordWrap: { width: COL_W - 20 },
+        const descText = this.add.text(COL_X + 12, innerY + DESC_Y, perk.description, {
+          fontSize: '9px', fontFamily: FONT_UI,
+          color: unlocked ? T.dim : T.ghost,
+          wordWrap: { width: COL_W - 24 },
         }).setAlpha(alpha);
 
         const rowH = DESC_Y + descText.height + ROW_PAD;
 
-        const rowBg = this.add.rectangle(cx, innerY + rowH / 2, COL_W, rowH - 2,
-          rowBgFill, unlocked ? 0.8 : 0.5)
-          .setStrokeStyle(1, rowBgStroke, 0.8);
+        const row = addRowPlate(this, {
+          x: cx, y: innerY + rowH / 2, w: COL_W, h: rowH - 2,
+          accent: tierAccent, muted: !unlocked,
+        });
 
-        const nameText = this.add.text(COL_X + 10, innerY + NAME_Y, `${perk.emoji} ${perk.name}`, {
-          fontSize: '13px', fontFamily: '"Arial Black", sans-serif',
-          color: unlocked ? '#ffffff' : '#555566',
+        const nameText = this.add.text(COL_X + 12, innerY + NAME_Y, `${perk.emoji} ${perk.name}`, {
+          fontSize: '13px', fontFamily: FONT_DISPLAY,
+          color: unlocked ? T.bright : T.faint, letterSpacing: 0.5,
         }).setAlpha(alpha);
 
-        const recipeStr = perk.ingredients.map((r) => ELEM_EMOJI[r] ?? r).join(' + ');
-        const recipeText = this.add.text(COL_X + COL_W - 8, innerY + NAME_Y, recipeStr, {
-          fontSize: '11px', color: unlocked ? '#886633' : '#332222',
+        const recipeStr = perk.ingredients.map((r) => ELEM_EMOJI[r] ?? r).join('  +  ');
+        const recipeText = this.add.text(COL_X + COL_W - 10, innerY + NAME_Y, recipeStr, {
+          fontSize: '11px', color: unlocked ? T.normal : T.ghost,
         }).setOrigin(1, 0).setAlpha(alpha);
 
-        // Add in back-to-front order (rowBg first so texts render over it)
-        scrollContainer.add([rowBg, nameText, recipeText, descText]);
+        // Add in back-to-front order (plate first so texts render over it)
+        scrollContainer.add([row.g, nameText, recipeText, descText]);
 
         if (equipped) {
           const eqLbl = this.add.text(COL_X + 10 + nameText.width + 6, innerY + NAME_Y + 1, '✓', {
@@ -959,23 +931,20 @@ export class LabScene extends Phaser.Scene {
     this.input.on('wheel', this.perkBookScrollHandler);
 
     if (maxScroll > 0) {
-      const hint = this.add.text(width - 12, SCROLL_BOT - 4, '▼ scroll', {
-        fontSize: '9px', fontFamily: 'Arial, sans-serif', color: '#444466',
-      }).setOrigin(1, 1).setDepth(55);
+      const hint = this.add.text(width - 16, SCROLL_BOT - 4, 'scroll ▼', {
+        fontSize: '9px', fontFamily: FONT_UI, color: T.ghost, letterSpacing: 1,
+      }).setOrigin(1, 1).setDepth(56);
       this.perkBookObjects.push(hint);
     }
 
     // ── Fixed back button ──
-    const backBtn = this.add.rectangle(60, 30, 90, 32, 0x221133, 0.9)
-      .setStrokeStyle(2, 0x9944ff, 0.8).setDepth(55).setInteractive({ useHandCursor: true });
-    const backLbl = this.add.text(60, 30, '◀  BACK', {
-      fontSize: '12px', fontFamily: '"Arial Black", sans-serif', color: '#cc88ff',
-    }).setOrigin(0.5).setDepth(56);
-    backBtn
-      .on('pointerover', () => backBtn.setFillStyle(0x440077, 0.95))
-      .on('pointerout',  () => backBtn.setFillStyle(0x221133, 0.9))
-      .on('pointerdown', () => this.closePerkBook());
-    this.perkBookObjects.push(backBtn, backLbl);
+    const backBtn = addButton(this, {
+      x: 66, y: 37, w: 100, h: 34,
+      label: 'BACK', icon: '◄', fontSize: 13, variant: 'quiet', accent: C.arcane,
+      depth: 56, cut: 8,
+      onClick: () => this.closePerkBook(),
+    });
+    this.perkBookObjects.push(backBtn.container);
   }
 
   private closePerkBook(): void {
@@ -985,6 +954,6 @@ export class LabScene extends Phaser.Scene {
   }
 
   private refreshNuclei(): void {
-    this.nucleiText.setText(`⚛️ ×${PlayerData.getNuclei()}`);
+    this.nucleiText.setText(`⚛️  ×${PlayerData.getNuclei()}`);
   }
 }

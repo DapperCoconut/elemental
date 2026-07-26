@@ -1595,7 +1595,7 @@ export class GunpowderKit {
     }
 
     const ammoText = scene.add.text(this.arsenalHudCx, y - 22, `🔫 ${this.playerAmmo}/${MUSKET_MAX_AMMO}`, {
-      fontSize: '13px', fontFamily: '"Arial Black", sans-serif', color: '#dd9944', stroke: '#220044', strokeThickness: 3,
+      fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#dd9944', stroke: '#220044', strokeThickness: 3,
     }).setOrigin(0.5).setDepth(21).setScrollFactor(0);
     this.arsenalHudTexts.push(ammoText);
   }
