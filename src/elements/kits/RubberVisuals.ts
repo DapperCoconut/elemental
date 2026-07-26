@@ -991,8 +991,11 @@ export class RubberAvatar extends BaseAvatar {
     };
   }
 
-  /** A squashed contact shadow that flattens as the character picks up speed. */
-  protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
+  /**
+   * A squashed contact shadow that flattens as the character picks up speed, plus the elastic
+   * arms — both belong under the sprite so nothing here can cover the face.
+   */
+  protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     const k = this.intensity;
     g.fillStyle(this.tint(RUBBER.gum), a * 0.3 * k);
     g.fillEllipse(x, y + 11, 52 * k, 16 * k);
@@ -1002,29 +1005,32 @@ export class RubberAvatar extends BaseAvatar {
     const bob = 0.5 + 0.5 * Math.sin(this.t * 3.2);
     g.fillStyle(this.tint(this.accent), a * 0.1);
     g.fillEllipse(x, y + 12, (56 + bob * 10) * k, (10 - bob * 3) * k);
+
+    // ── Elastic arms: the hands are physically attached, and the strands show it ──
+    // Drawn on the *under* layer and rooted at the chest, not the body centre: an arm swinging
+    // across the head would otherwise sit on top of the face and blank the eyes out.
+    const rootX = x, rootY = y + 3;
+    for (let i = 0; i < 2; i++) {
+      const hx = this.armX[i], hy = this.armY[i];
+      if (hx === 0 && hy === 0) continue;
+      const reach = Math.hypot(hx - rootX, hy - rootY);
+      const w = strandWidthFor(6.5 * this.intensity, Math.max(0, reach / 30 - 1));
+      // The bow lags the swing: the arm always trails the fist a little.
+      const bow = Phaser.Math.Clamp((reach - 26) * 0.4, -14, 14) * (i === 0 ? 1 : -1);
+      rubberStrandLayered(g, this.tint, rootX, rootY, hx, hy, w * 1.4, w,
+        bow + Math.sin(this.t * 5 + i * 2) * 3,
+        this.mastered ? RUBBER.cured : RUBBER.maroon, alpha * 0.95);
+    }
   }
 
   /**
-   * Rubber webbing between each fist and the body, and the crown: a compression spring on its own
-   * damped oscillator, so it lags the body and overshoots on every stop.
+   * The crown: a compression spring on its own damped oscillator, so it lags the body and
+   * overshoots on every stop. (The arms live on the under layer — see `drawGlow`.)
    *
    * Rooted above the head so it never covers the face, and drawn over the sprite so the coil
    * reads instead of only its dark tips clearing the body.
    */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    // ── Elastic arms: the hands are physically attached, and the strands show it ──
-    for (let i = 0; i < 2; i++) {
-      const hx = this.armX[i], hy = this.armY[i];
-      if (hx === 0 && hy === 0) continue;
-      const reach = Math.hypot(hx - x, hy - y);
-      const w = strandWidthFor(6.5 * this.intensity, Math.max(0, reach / 30 - 1));
-      // The bow lags the swing: the arm always trails the fist a little.
-      const bow = Phaser.Math.Clamp((reach - 26) * 0.4, -14, 14) * (i === 0 ? 1 : -1);
-      rubberStrandLayered(g, this.tint, x, y, hx, hy, w * 1.4, w,
-        bow + Math.sin(this.t * 5 + i * 2) * 3,
-        this.mastered ? RUBBER.cured : RUBBER.maroon, alpha * 0.95);
-    }
-
     // ── The crown coil ──
     const rootY = y - 18;
     // Damped spring driven by the body's own vertical motion.

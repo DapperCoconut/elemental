@@ -105,7 +105,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         key: 'killSprees',
         label: 'Riptide',
         howTo: 'Kill 5 enemies within a 3 second window',
-        target: 50,
+        target: 20,
       },
       {
         key: 'painRainKills',
