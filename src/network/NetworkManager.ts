@@ -1,8 +1,9 @@
 import Peer, { DataConnection } from 'peerjs';
 import type { InvasionFx, HuskStatus } from '../invasion/InvasionKit';
+import type { NetStatusEntry } from './NetStatusSync';
 
 /** Bump when the wire protocol or gameplay sync changes incompatibly. */
-export const NET_PROTOCOL_VERSION = 10;
+export const NET_PROTOCOL_VERSION = 11;
 
 /** Lobby selection payload exchanged while both players pick loadouts. */
 export interface NetSelection {
@@ -81,9 +82,18 @@ export type NetMsg =
       guestSel: { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; cosmetics?: Record<string, string> };
     }
   // inv/fa/st: Silence remaster — invisibility flag, facing angle (radians), stealth meter.
-  | { t: 'state'; x: number; y: number; vx: number; vy: number; hp: number; maxHp: number; shieldHp: number; shieldCharges: number; downed?: boolean; inv?: boolean; fa?: number; st?: number }
+  // dm/fr/dc: the sender's own damage reduction, cap and flat soak, applied by the peer's
+  // sim when it resolves a hit on their replica of us (see Fighter.netDefenseMult).
+  | { t: 'state'; x: number; y: number; vx: number; vy: number; hp: number; maxHp: number; shieldHp: number; shieldCharges: number; downed?: boolean; inv?: boolean; fa?: number; st?: number; dm?: number; fr?: number; dc?: number }
   | { t: 'cast'; id: string; tx: number; ty: number }
   | { t: 'hit'; amount: number }
+  // Attacker → victim: a hit the attacker's sim resolved against its replica of the
+  // victim. All multipliers already applied; the victim runs only its own absorb layers.
+  | { t: 'dmg'; a: number; p?: 1; f?: 1 }
+  // Attacker → victim (10 Hz): status effects the attacker currently has on the victim.
+  | { t: 'fx'; e: NetStatusEntry[]; spd: number; cd: number }
+  // Attacker → victim: a knockback/pull the attacker's sim applied to its replica.
+  | { t: 'push'; vx: number; vy: number; ms: number }
   | { t: 'death' }
   | { t: 'lobby' }
   | { t: 'ping'; ts: number }

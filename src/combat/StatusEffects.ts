@@ -168,6 +168,12 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     read: (f) => f.vibrationUntil,
     write: (f, t) => { f.vibrationUntil = t; },
   },
+  {
+    id: 'wrenched', name: 'Wrenched', emoji: '🔧', color: 0xcc6622, priority: 17, kind: 'timer',
+    description: 'A wrench is jammed in your gear. Every ability you use costs you health until it works loose.',
+    read: (f) => f.castPunishUntil,
+    write: (f, t) => { f.castPunishUntil = t; },
+  },
 
   // ── Frost / void stacks ──────────────────────────────────────────
   {
@@ -235,6 +241,12 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     description: 'Your shots scatter off-target.',
     read: (f) => (f.aimOffsetBonusDeg > 0 ? f.aimOffsetBonusUntil : 0),
     write: (f, t) => { f.aimOffsetBonusUntil = t; },
+  },
+  {
+    id: 'high-gravity', name: 'High Gravity', emoji: '⬇️', color: 0x8844cc, priority: 37, kind: 'timer',
+    description: 'Crushed under enormous gravity. Speed boosts are cancelled, the Space dodge is dead, and no dash or movement ability will fire.',
+    read: (f) => f.highGravityUntil,
+    write: (f, t) => { f.highGravityUntil = t; },
   },
   {
     id: 'inverted', name: 'Inverted', emoji: '🔄', color: 0x9966ff, priority: 36, kind: 'timer',

@@ -1,84 +1,64 @@
 import { Element } from './Element';
 import { Ability, CastContext } from './Ability';
-import { Projectile } from '../combat/Projectile';
 
-const PELLET_COUNT = 20;
-const CONE_HALF_DEG = 25;
-const PELLET_SPEED = 320;
-const PELLET_RANGE_PX = 120;
+/**
+ * Hunt — a three-form element.
+ *
+ * Human form is a hunter: crossbow, shotgun, grenades and a scent trail. It has no transform
+ * button. The beast comes out on its own every 30 seconds and drags you along for 12, then
+ * hands you back. Beast form is teeth and momentum. Hybrid form (the Q+ upgrade) is the man
+ * who kept the gun and the claws and pays for it — the beast's spirit seizes the controls
+ * every ten seconds.
+ *
+ * The whole simulation lives in HuntKit; every ability here is a one-line delegate.
+ */
 
-const huntShotgun: Ability = {
-  id: 'hunt-shotgun',
-  name: 'Shotgun',
-  description: '20 pellets in a cone, 1 dmg each.',
+// ── Human form ──────────────────────────────────────────────────
+
+const huntCrossbow: Ability = {
+  id: 'hunt-crossbow',
+  name: 'Crossbow Shot',
+  description: '30 dmg bolt. Bolts stay buried in the target (max 3). Any other ability reloads it instantly.',
   displayKey: 'Click',
-  cooldown: 500,
-  cast(ctx: CastContext) {
-    const dx = ctx.targetX - ctx.casterX;
-    const dy = ctx.targetY - ctx.casterY;
-    const baseAngle = Math.atan2(dy, dx);
-    const expireMs = Math.round((PELLET_RANGE_PX / PELLET_SPEED) * 1000);
-    // Recoil and muzzle sheet, drawn by HuntKit for whichever side pulled the trigger.
-    ctx.huntShotgunBlast(baseAngle);
-    for (let i = 0; i < PELLET_COUNT; i++) {
-      const frac = i / (PELLET_COUNT - 1);
-      const angleDeg = -CONE_HALF_DEG + frac * CONE_HALF_DEG * 2;
-      const angle = baseAngle + angleDeg * (Math.PI / 180);
-      const proj = new Projectile(
-        ctx.scene,
-        ctx.casterX + Math.cos(angle) * 22,
-        ctx.casterY + Math.sin(angle) * 22,
-        'proj-hunt-pellet',
-        1,
-        ctx.isPlayerCaster,
-      );
-      ctx.projectiles.add(proj);
-      proj.launch(Math.cos(angle) * PELLET_SPEED, Math.sin(angle) * PELLET_SPEED);
-      ctx.scene.time.delayedCall(expireMs, () => {
-        if (proj.active) {
-          proj.setActive(false).setVisible(false);
-          (proj.body as Phaser.Physics.Arcade.Body).stop();
-        }
-      });
-    }
-  },
+  cooldown: 1250,
+  cast(ctx: CastContext) { ctx.huntCrossbow(ctx.targetX, ctx.targetY); },
+};
+
+const huntBlast: Ability = {
+  id: 'hunt-blast',
+  name: 'Blast',
+  description: 'Shotgun cone — 15 dmg and heavy knockback. Holds 2 charges.',
+  displayKey: 'E',
+  cooldown: 400,
+  cast(ctx: CastContext) { ctx.huntBlast(ctx.targetX, ctx.targetY, 0); },
 };
 
 const huntGrenade: Ability = {
   id: 'hunt-grenade',
   name: 'Grenade',
-  description: 'Hold E: fuse ticks. Release to throw ~145px. Explodes 3s after arming. Full hold = self-dmg.',
-  displayKey: 'E',
-  cooldown: 5000,
-  cast(ctx: CastContext) { ctx.huntThrowGrenade(ctx.targetX, ctx.targetY, 0); },
+  description: 'Lob a frag ~145px. 3s fuse, 35 dmg in a wide blast.',
+  displayKey: 'R',
+  cooldown: 6000,
+  cast(ctx: CastContext) { ctx.huntGrenade(ctx.targetX, ctx.targetY); },
 };
 
-const huntHuntersTrail: Ability = {
+const huntTrail: Ability = {
   id: 'hunt-trail',
   name: "Hunter's Trail",
-  description: "Enemy leaves trail 3s. Walking on trail: +50% speed (2s circles).",
-  displayKey: 'R',
-  cooldown: 8000,
-  cast(ctx: CastContext) { ctx.huntHuntersTrail(); },
-};
-
-const huntBloodPact: Ability = {
-  id: 'hunt-blood-pact',
-  name: 'Blood Pact',
-  description: '5s: heal 50% of damage dealt.',
+  description: 'The quarry bleeds a scent trail for 8s. Marks last 4s; standing on one gives +50% speed.',
   displayKey: 'F',
   cooldown: 12000,
-  cast(ctx: CastContext) { ctx.huntBloodPact(); },
+  cast(ctx: CastContext) { ctx.huntTrail(); },
 };
 
-const huntTransform: Ability = {
-  id: 'hunt-transform',
-  name: 'Transform',
-  description: 'Become the beast: +20% size, +50% speed. 25s CD after reverting.',
+const huntReleaseBeast: Ability = {
+  id: 'hunt-release-beast',
+  name: 'Release the Beast!',
+  description: 'Not castable. Fires on its own after 30s: 12s as the beast, then 50s before it takes you again.',
   displayKey: 'Q',
   isUltimate: true,
-  cooldown: 25000,
-  cast(ctx: CastContext) { ctx.huntTransform(); },
+  cooldown: 0,
+  cast(ctx: CastContext) { ctx.huntReleaseBeast(); },
 };
 
 // ── Beast form ──────────────────────────────────────────────────
@@ -86,95 +66,95 @@ const huntTransform: Ability = {
 const huntSlash: Ability = {
   id: 'hunt-slash',
   name: 'Slash',
-  description: 'Lunge + 20 dmg + knockback. Applies bleeding (8s).',
+  description: 'Fast claw — 5 dmg, or 15 against a target with a bolt in it (and rips one out).',
   displayKey: 'Click',
-  cooldown: 800,
+  cooldown: 400,
   cast(ctx: CastContext) { ctx.huntSlash(ctx.targetX, ctx.targetY); },
 };
 
-const huntLeap: Ability = {
-  id: 'hunt-leap',
-  name: 'Explosive Leap',
-  description: 'Invisible+invincible 2s, teleport to cursor with AoE explosion.',
+const huntPounce: Ability = {
+  id: 'hunt-pounce',
+  name: 'Pounce',
+  description: 'Launch forward and land in a wide slash for 25 dmg.',
   displayKey: 'E',
-  cooldown: 8000,
-  cast(ctx: CastContext) { ctx.huntLeap(ctx.targetX, ctx.targetY); },
+  cooldown: 5000,
+  cast(ctx: CastContext) { ctx.huntPounce(ctx.targetX, ctx.targetY); },
 };
 
-const huntBloodHunt: Ability = {
-  id: 'hunt-blood-hunt',
-  name: 'Blood Hunt',
-  description: 'Teleport to bleeding enemy, roar + 50% slow 3s. Requires bleed.',
+const huntRoar: Ability = {
+  id: 'hunt-roar',
+  name: 'Roar',
+  description: '30° cone the length of the arena — 25% slow for 5s. Hit anything and take 33% less damage for 5s.',
   displayKey: 'R',
   cooldown: 12000,
-  cast(ctx: CastContext) { ctx.huntBloodHunt(); },
+  cast(ctx: CastContext) { ctx.huntRoar(ctx.targetX, ctx.targetY); },
 };
 
-const huntBloodMoon: Ability = {
-  id: 'hunt-blood-moon',
-  name: 'Blood Moon',
-  description: '12s: bleeding enemies take chip dmg + attack 20% less.',
+const huntGrapple: Ability = {
+  id: 'hunt-grapple',
+  name: 'Grapple',
+  description: 'Lunge; on contact hold them for 1s, then hurl them at your cursor.',
   displayKey: 'F',
-  cooldown: 35000,
-  cast(ctx: CastContext) { ctx.huntBloodMoon(); },
+  cooldown: 10000,
+  cast(ctx: CastContext) { ctx.huntGrapple(ctx.targetX, ctx.targetY); },
 };
 
-const huntUntransform: Ability = {
-  id: 'hunt-untransform',
-  name: 'Revert',
-  description: 'Return to normal form. Starts 25s transform CD.',
+const huntBloodScent: Ability = {
+  id: 'hunt-blood-scent',
+  name: 'Blood Scent',
+  description: '+25% attack speed and +20% move speed for 8s — only if something on screen is under 30% HP.',
   displayKey: 'Q',
   isUltimate: true,
-  cooldown: 0,
-  cast(ctx: CastContext) { ctx.huntUntransform(); },
+  cooldown: 20000,
+  cast(ctx: CastContext) { ctx.huntBloodScent(); },
 };
 
-// ── Hybrid form (Q+ upgrade, double-tap Q after transform) ──────
+// ── Hybrid form (Q+ upgrade) ────────────────────────────────────
 
 const huntHybridShotgun: Ability = {
   id: 'hunt-hybrid-shotgun',
-  name: 'Monster Hunter',
-  description: '6 silver bullets in a wide cone — long range, 4 dmg each, applies bleed 8s. Click+ = +50% dmg to bleeding.',
+  name: 'Shotgun Blast',
+  description: 'Fire the shotgun forward — 15 dmg in a cone.',
   displayKey: 'Click',
   cooldown: 700,
   cast(ctx: CastContext) { ctx.huntHybridShotgun(ctx.targetX, ctx.targetY); },
 };
 
-const huntHybridGrenadeLeap: Ability = {
-  id: 'hunt-hybrid-grenade-leap',
-  name: 'Grenade Leap',
-  description: 'Hold E to arm, release to throw — teleport to the explosion. Full hold = self-dmg + speed boost. E+ = 1.5s fuse.',
+const huntRoll: Ability = {
+  id: 'hunt-roll',
+  name: 'Tactical Roll',
+  description: 'Roll toward the cursor.',
   displayKey: 'E',
-  cooldown: 5000,
-  cast(_ctx: CastContext) { /* input block handles hold/release */ },
+  cooldown: 4000,
+  cast(ctx: CastContext) { ctx.huntRoll(ctx.targetX, ctx.targetY); },
 };
 
-const huntHybridInstinct: Ability = {
-  id: 'hunt-hybrid-instinct',
-  name: 'Beast Instinct',
-  description: 'Drop a trail at the enemy. After standing on it for 2s, screech — slows enemy 50% for 3s. R+ = permanent trail.',
+const huntHook: Ability = {
+  id: 'hunt-hook',
+  name: 'Hook',
+  description: 'Throw a hook. On a hit, press R again to reel them in.',
   displayKey: 'R',
-  cooldown: 10000,
-  cast(ctx: CastContext) { ctx.huntHybridInstinct(); },
-};
-
-const huntHybridShriek: Ability = {
-  id: 'hunt-hybrid-shriek',
-  name: 'Shriek',
-  description: 'Forward rectangle shriek: refreshes enemy bleed to 8s, deals 3 dmg/s, heals you for all bleed damage. F+ = shriek on grenade spawns shrapnel (bleeds).',
-  displayKey: 'F',
   cooldown: 8000,
-  cast(ctx: CastContext) { ctx.huntHybridShriek(ctx.targetX, ctx.targetY); },
+  cast(ctx: CastContext) { ctx.huntHook(ctx.targetX, ctx.targetY); },
 };
 
-const huntHybridUntransform: Ability = {
-  id: 'hunt-hybrid-untransform',
-  name: 'Exhausted Return',
-  description: 'Exit hybrid form. 35s transform cooldown.',
+const huntAdrenaline: Ability = {
+  id: 'hunt-adrenaline',
+  name: 'Adrenaline',
+  description: '+33% speed and damage for 8s, then a 5s crash at −25% speed and damage.',
+  displayKey: 'F',
+  cooldown: 12000,
+  cast(ctx: CastContext) { ctx.huntAdrenaline(); },
+};
+
+const huntGiveIn: Ability = {
+  id: 'hunt-give-in',
+  name: 'Give In',
+  description: 'Stop fighting it. Become the beast — permanently.',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 0,
-  cast(ctx: CastContext) { ctx.huntUntransform(); },
+  cast(ctx: CastContext) { ctx.huntGiveIn(); },
 };
 
 export const huntElement: Element = {
@@ -183,8 +163,8 @@ export const huntElement: Element = {
   color: 0xcc4400,
   emoji: '🐺',
   abilities: [
-    huntShotgun, huntGrenade, huntHuntersTrail, huntBloodPact, huntTransform,
-    huntSlash, huntLeap, huntBloodHunt, huntBloodMoon, huntUntransform,
-    huntHybridShotgun, huntHybridGrenadeLeap, huntHybridInstinct, huntHybridShriek, huntHybridUntransform,
+    huntCrossbow, huntBlast, huntGrenade, huntTrail, huntReleaseBeast,
+    huntSlash, huntPounce, huntRoar, huntGrapple, huntBloodScent,
+    huntHybridShotgun, huntRoll, huntHook, huntAdrenaline, huntGiveIn,
   ],
 };

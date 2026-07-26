@@ -1,123 +1,167 @@
 import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
+import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
 import {
   BEAST_TONES, HUNT, HUNTER_TONES, HuntAura, HuntAvatar, HuntColorFn, HuntForm, HuntFx,
-  HuntTones, MOON_TONES, NPC_TONES, SILVER_TONES, tonesFor,
+  HuntTones, MOON_TONES, NPC_TONES, SILVER_TONES,
 } from './HuntVisuals';
 
 /**
- * Hunt Mastery kit — and Hunt's whole visual layer.
+ * Hunt — the whole element: three forms, their fifteen abilities, every world object they
+ * leave behind, and the mastery layer on top.
  *
- * Hunt's *rules* are still implemented inline in ArenaScene. Its *art* is not: the character
- * rig, the palette and every effect painter live here (and in HuntVisuals.ts), and ArenaScene
- * calls into the `fx*` methods below at each cast site rather than building tweens of its own.
- * That keeps the scene file from carrying a second copy of the element's look, and it is why
- * this kit owns an avatar for both fighters even though it only simulates the mastery layer.
+ * Nothing here uses a Phaser sprite. Bolts, grenades, trail marks, searing gashes and the
+ * hook chain are all plain data repainted into two Graphics layers every frame, which is what
+ * lets a bolt stay buried in a moving enemy and a grenade tumble while its fuse burns down.
+ *
+ * The one thing Hunt does that no other element does is take the controls away from you. The
+ * beast comes out on a timer whether you want it or not, and in hybrid form its spirit seizes
+ * the body every ten seconds. Both are enforced here, in `update`, after ArenaScene has already
+ * resolved WASD for the frame — so the override always wins.
  */
 
-// ── Arena API ────────────────────────────────────────────────────────────────
+// ── Human form ───────────────────────────────────────────────────────────────
 
-/** Structural mirror of ArenaScene's `HuntGrenade` — the kit only needs these fields. */
-export interface HuntKitGrenade {
-  sprite: Phaser.GameObjects.Graphics;
-  x: number; y: number;
-  vx: number; vy: number;
-  explodeAt: number;
-  owner: 'player' | 'npc';
-  stopped: boolean;
-  /** Hybrid-form Grenade Leap. The pup leaves these alone — they are the hunter's own ride. */
-  isLeap?: boolean;
-}
+const CROSSBOW_DMG = 30;
+const CROSSBOW_SPEED = 780;
+/** How many bolts can be buried in one body at once. The fourth simply doesn't stick. */
+const MAX_STUCK = 3;
 
-/** Structural mirror of ArenaScene's `HuntTrailCircle`. */
-export interface HuntKitTrail {
-  x: number; y: number;
-  expiresAt: number;
-}
+const BLAST_DMG = 15;
+const BLAST_RANGE = 168;
+const BLAST_HALF_ANGLE = Phaser.Math.DegToRad(25);
+const BLAST_KNOCKBACK = 620;
+const BLAST_MAX_CHARGES = 2;
+const BLAST_RECHARGE_MS = 6000;
+/** E+ Mine Blast: hold time that reaches full power, and what full power is worth. */
+const MINE_MAX_CHARGE_MS = 3000;
+const MINE_MAX_DMG = 35;
+const MINE_STUN_MS = 3000;
 
-export interface HuntArenaApi {
-  get scene(): Phaser.Scene;
-  get player(): Fighter;
-  get npc(): Fighter;
-  get enemies(): Fighter[];
-  get eKey(): Phaser.Input.Keyboard.Key;
-  get rKey(): Phaser.Input.Keyboard.Key;
-  get fKey(): Phaser.Input.Keyboard.Key;
-  get qKey(): Phaser.Input.Keyboard.Key;
-  get elementId(): string;
-  get npcElementId(): string;
-  /** Cosmetics: maps a hunt visual color through the owner's color cosmetic. */
-  huntColor(owner: 'player' | 'npc', base: number): number;
-  // ── Inline hunt state the mastery reacts to ──
-  get beastForm(): boolean;
-  get hybridForm(): boolean;
-  /** The NPC's own form, so its rig wears the right silhouette too. */
-  get npcBeastForm(): boolean;
-  get bloodMoonActive(): boolean;
-  get npcBloodMoonActive(): boolean;
-  /** Aim point the player's rig faces — ArenaScene already tracks the cursor. */
-  get aimX(): number;
-  get aimY(): number;
-  get playerBleeding(): boolean;
-  get playerGrenades(): HuntKitGrenade[];
-  get npcGrenades(): HuntKitGrenade[];
-  get playerTrailCircles(): HuntKitTrail[];
-  get npcTrailCircles(): HuntKitTrail[];
-  spawnHitFlash(x: number, y: number, color: number): void;
-  showFloatingText(x: number, y: number, text: string, color: string): void;
-  /** Apply Hunt's bleed (plus its aura) to an enemy for `durMs`. */
-  applyBleedTo(target: Fighter, durMs: number): void;
-  /** Apply Hunt's bleed to the local player for `durMs`. */
-  applyPlayerBleed(durMs: number): void;
-  // ── Mastery ──
-  get masteryActive(): boolean;
-  get npcMasteryActive(): boolean;
-  masteryBindFor(slot: string): string | null;
-  broadcastMasteryCast(enhId: string): void;
-  recordMasteryStat(key: string, amount: number): void;
-  setStatusIndicator(id: string, status: CustomStatus | null): void;
-}
+const GRENADE_SPEED = 500;
+const GRENADE_THROW_RANGE = 145;
+const GRENADE_FUSE_MS = 3000;
+const GRENADE_DMG = 35;
+const GRENADE_RADIUS = 130;
+/** R+ Grenade Combo: a bolt that eats a grenade carries the blast to whatever it hits. */
+const BOMB_BOLT_DMG = 35;
+const BOMB_BOLT_RADIUS = 92;
 
-// ── Weak Points (passive) ────────────────────────────────────────────────────
+const TRAIL_DURATION_MS = 8000;
+const TRAIL_MARK_LIFE_MS = 4000;
+const TRAIL_MARK_INTERVAL_MS = 150;
+const TRAIL_RADIUS = 30;
+const TRAIL_SPEED_MULT = 1.5;
+/** F+ Enhanced Scent. */
+const SCENT_BEAST_SPEED_MULT = 1.25;
+const SCENT_SLOW_MULT = 0.8;
+const SCENT_SLOW_MS = 3000;
 
-/** Half-width of the wedge. 30° each way = a 60° slice, a sixth of the circle. */
+/** Click+ Tracking Arrows: ping period by how many bolts are buried, index 1..3. */
+const TRACK_PERIOD_MS = [0, 9000, 6000, 3000];
+const TRACK_SPEED_MULT = 1.25;
+const TRACK_SPEED_MS = 2000;
+
+/** Release the Beast: it is a clock, not a button. */
+const BEAST_FIRST_DELAY_MS = 30000;
+const BEAST_DURATION_MS = 12000;
+const BEAST_RECHARGE_MS = 50000;
+const MOON_BEAST_BONUS_MS = 5000;
+
+// ── Beast form ───────────────────────────────────────────────────────────────
+
+const SLASH_DMG = 5;
+const SLASH_BOLT_DMG = 15;
+const SLASH_STUNNED_BONUS = 5;
+const SLASH_RANGE = 80;
+
+const POUNCE_DIST = 215;
+const POUNCE_MS = 220;
+const POUNCE_DMG = 25;
+const POUNCE_RADIUS = 88;
+const SEAR_DMG = 4;
+const SEAR_TICK_MS = 500;
+const SEAR_LIFE_MS = 6000;
+const SEAR_RADIUS = 26;
+
+const ROAR_HALF_ANGLE = Phaser.Math.DegToRad(15);   // 30° cone
+const ROAR_SLOW_MULT = 0.75;
+const ROAR_SLOW_MS = 5000;
+const ROAR_DR_MULT = 0.67;
+const ROAR_DR_MS = 5000;
+const PRIMAL_FEAR_MS = 3000;
+
+const GRAPPLE_DIST = 250;
+const GRAPPLE_MS = 240;
+const GRAPPLE_HOLD_MS = 1000;
+const GRAPPLE_FLING_SPEED = 780;
+const WALL_SLAM_DMG = 20;
+const WALL_SLAM_STUN_MS = 2000;
+
+const BLOOD_SCENT_MS = 8000;
+const BLOOD_SCENT_SPEED = 1.2;
+const BLOOD_SCENT_HASTE = 0.8;          // cooldownMult while it holds
+const BLOOD_SCENT_HP_RATIO = 0.3;
+const BLOOD_SCENT_HP_RATIO_MOON = 0.5;
+const BLOOD_MOON_MS = 20000;
+
+// ── Hybrid form ──────────────────────────────────────────────────────────────
+
+const PUMP_MS = 500;
+const PUMP_BONUS_DMG = 5;
+const PUMP_SAFE_MAX = 3;
+const OVERLOAD_DMG = 35;
+const OVERLOAD_SELF_DMG = 10;
+const OVERLOAD_RADIUS = 96;
+
+const ROLL_DIST = 215;
+const ROLL_MS = 300;
+
+const HOOK_SPEED = 800;
+const HOOK_RANGE = 340;
+const HOOK_HIT_R = 20;
+const HOOK_PULL_SPEED = 640;
+/** R+ Scrape: damage per 100px dragged. A long pull hurts; a short one barely registers. */
+const SCRAPE_DMG_PER_100 = 12;
+
+const ADRENALINE_MS = 8000;
+const ADRENALINE_BOOST = 1.33;
+const CRASH_MS = 5000;
+const CRASH_MULT = 0.75;
+const CRASH_DELAY_HP = 20;
+
+const SPIRIT_INTERVAL_MS = 10000;
+const SPIRIT_MS = 3000;
+
+const ALPHA_DR_MULT = 0.67;
+const ALPHA_CD_MULT = 0.8;
+
+// ── Mastery: Weak Points (passive) ───────────────────────────────────────────
+
 const WEAK_HALF_ANGLE = Phaser.Math.DegToRad(30);
-const WEAK_SPIN_RAD_PER_SEC = 0.9;   // ~7s per revolution — slow enough to line a shot up
-/** The slice starts outside the fighter's own body so the whole wedge stays readable. */
+const WEAK_SPIN_RAD_PER_SEC = 0.9;
 const WEAK_INNER_R = 24;
 const WEAK_OUTER_R = 54;
 const WEAK_DMG_MULT = 2;
 
-// ── Beastling (bindable) ─────────────────────────────────────────────────────
+// ── Mastery: Beastling (bindable) ────────────────────────────────────────────
 
 const BEASTLING_DURATION_MS = 15000;
 const BEASTLING_COOLDOWN_MS = 30000;
-
 const BITE_INTERVAL_MS = 2000;
 const BITE_DMG = 5;
+const BITE_BOLT_MULT = 2;
 const BITE_RANGE = 34;
-const BITE_BLEED_MULT = 2;
-const BLEED_MS = 8000;
-
 const PUP_SPEED = 210;
 const PUP_TRAIL_SPEED_MULT = 1.5;
 const PUP_FOLLOW_DIST = 46;
-/**
- * How far the pup will break off from your heel to go for something. Deliberately shorter
- * than the arena: outside this it stays with you, which is what makes it read as a pet
- * rather than a second fighter roaming the map.
- */
 const PUP_AGGRO_RANGE = 420;
-const TRAIL_RADIUS = 30;
-
 const MOON_SPEED_MULT = 1.35;
 const MOON_DMG_MULT = 1.6;
 const MOON_SCALE = 1.4;
-
-const ROAR_SLOW_MULT = 0.8;   // 20% slow, stacks on top of Blood Hunt's own 50%
-const ROAR_SLOW_MS = 5000;
-
+const PUP_ROAR_SLOW_MULT = 0.8;
+const PUP_ROAR_SLOW_MS = 5000;
 const FETCH_PICKUP_R = 22;
 const FETCH_DELIVER_R = 44;
 
@@ -130,64 +174,292 @@ const PUP_MUZZLE = 0xe8cba6;
 const PUP_EAR = 0x6b4423;
 const PUP_EAR_MOON = 0x7d2e22;
 
+/** Alpha's coat: the beast that came out on purpose is ash-grey, not blood-red. */
+const ALPHA_TONES: HuntTones = {
+  crust: 0x2a2c30, body: 0x6d7278, wound: 0x9aa0a8, lit: 0xd6dae0, spark: HUNT.white,
+};
+
+// ── World objects ────────────────────────────────────────────────────────────
+
+type Owner = 'player' | 'npc';
+
+interface Bolt {
+  owner: Owner;
+  x: number; y: number;
+  vx: number; vy: number;
+  /** R+ Grenade Combo: this bolt swallowed a grenade and detonates where it lands. */
+  bomb: boolean;
+  bornAt: number;
+}
+
+interface StuckBolt {
+  owner: Owner;
+  victim: Fighter;
+  /** Offset from the victim's centre, so the bolt rides the body instead of a fixed spot. */
+  offX: number; offY: number;
+  angle: number;
+  stuckAt: number;
+}
+
+interface Grenade {
+  owner: Owner;
+  x: number; y: number;
+  startX: number; startY: number;
+  vx: number; vy: number;
+  explodeAt: number;
+  stopped: boolean;
+  /** Tumble angle, frozen once it lands. */
+  spin: number;
+  /** A pup has this in its jaws: hidden, fuse frozen. */
+  carried: boolean;
+}
+
+interface TrailMark {
+  owner: Owner;
+  x: number; y: number;
+  expiresAt: number;
+  durationMs: number;
+  angle: number;
+}
+
+interface SearPatch {
+  owner: Owner;
+  x: number; y: number;
+  angle: number;
+  len: number;
+  expiresAt: number;
+  durationMs: number;
+  nextTickAt: number;
+}
+
+interface Hook {
+  owner: Owner;
+  x: number; y: number;
+  vx: number; vy: number;
+  startX: number; startY: number;
+  latched: Fighter | null;
+  /** Set once the owner recasts R — the chain is winching them in. */
+  reeling: boolean;
+  /** Distance already dragged, for R+ Scrape. */
+  dragged: number;
+  bornAt: number;
+}
+
+interface Fling {
+  owner: Owner;
+  victim: Fighter;
+  vx: number; vy: number;
+  until: number;
+  slammed: boolean;
+}
+
 interface Beastling {
-  owner: 'player' | 'npc';
+  owner: Owner;
   gfx: Phaser.GameObjects.Graphics;
-  x: number;
-  y: number;
+  x: number; y: number;
   endsAt: number;
   nextBiteAt: number;
-  /** Last movement heading, in radians — drives which way the pup faces. */
   heading: number;
-  /** Gait phase; advances with distance travelled so the legs match the speed. */
   gait: number;
   tailPhase: number;
   earLag: number;
   blinkUntil: number;
   nextBlinkAt: number;
-  /** Squash-and-stretch pulse played on a bite and on a roar. */
   lungeUntil: number;
-  /** The grenade currently in its mouth, and the fuse time frozen when it grabbed it. */
-  carrying: HuntKitGrenade | null;
+  carrying: Grenade | null;
   carryFuseLeftMs: number;
+}
+
+/** Everything one hunter is currently doing. Both sides carry the whole record. */
+interface Side {
+  owner: Owner;
+  form: HuntForm;
+  // Human
+  blastCharges: number;
+  blastRechargeAt: number;
+  charging: boolean;
+  chargeStartedAt: number;
+  trailUntil: number;
+  trailAccum: number;
+  // The beast clock
+  nextBeastAt: number;
+  beastUntil: number;
+  permanentBeast: boolean;
+  alpha: boolean;
+  // Beast
+  roarDrUntil: number;
+  scentUntil: number;
+  moonUntil: number;
+  /** Any lunge that is currently driving the body (pounce, grapple, roll). */
+  dashUntil: number;
+  /** Only Grapple catches — a pounce that runs through someone must not grab them. */
+  grappleUntil: number;
+  grabbed: Fighter | null;
+  grabUntil: number;
+  // Hybrid
+  pumps: number;
+  pumpingUntil: number;
+  overloaded: boolean;
+  rollUntil: number;
+  rollInvincible: boolean;
+  spiritUntil: number;
+  nextSpiritAt: number;
+  spiritSlashAt: number;
+  adrenalineUntil: number;
+  crashUntil: number;
+  crashDelays: number;
+  // Debuffs this side is inflicting on the other
+  slowUntil: number;
+  slowMult: number;
+  fearUntil: number;
+  // Click+ Tracking Arrows
+  trackSpeedUntil: number;
+  nextTrackPingAt: number;
+}
+
+function makeSide(owner: Owner): Side {
+  return {
+    owner,
+    form: 'human',
+    blastCharges: BLAST_MAX_CHARGES,
+    blastRechargeAt: 0,
+    charging: false,
+    chargeStartedAt: 0,
+    trailUntil: 0,
+    trailAccum: 0,
+    nextBeastAt: 0,
+    beastUntil: 0,
+    permanentBeast: false,
+    alpha: false,
+    roarDrUntil: 0,
+    scentUntil: 0,
+    moonUntil: 0,
+    dashUntil: 0,
+    grappleUntil: 0,
+    grabbed: null,
+    grabUntil: 0,
+    pumps: 0,
+    pumpingUntil: 0,
+    overloaded: false,
+    rollUntil: 0,
+    rollInvincible: false,
+    spiritUntil: 0,
+    nextSpiritAt: 0,
+    spiritSlashAt: 0,
+    adrenalineUntil: 0,
+    crashUntil: 0,
+    crashDelays: 0,
+    slowUntil: 0,
+    slowMult: 1,
+    fearUntil: 0,
+    trackSpeedUntil: 0,
+    nextTrackPingAt: 0,
+  };
+}
+
+// ── Arena API ────────────────────────────────────────────────────────────────
+
+export interface HuntArenaApi {
+  get scene(): Phaser.Scene;
+  get player(): Fighter;
+  get npc(): Fighter;
+  /** Everything the player is allowed to hurt — husks in Invasion, the npc in a plain 1v1. */
+  get enemies(): Fighter[];
+  get eKey(): Phaser.Input.Keyboard.Key;
+  get rKey(): Phaser.Input.Keyboard.Key;
+  get fKey(): Phaser.Input.Keyboard.Key;
+  get qKey(): Phaser.Input.Keyboard.Key;
+  get pointerWasDown(): boolean;
+  get elementId(): string;
+  get npcElementId(): string;
+  /** Player-only: skips WASD movement while true, so a lunge isn't overwritten same-frame. */
+  isDodging: boolean;
+  get aimX(): number;
+  get aimY(): number;
+  hasUpgrade(slot: string): boolean;
+  hasPerk(owner: Owner, perkId: string): boolean;
+  /** Cosmetics: maps a hunt visual colour through the owner's colour cosmetic. */
+  huntColor(owner: Owner, base: number): number;
+  spawnHitFlash(x: number, y: number, color: number): void;
+  showFloatingText(x: number, y: number, text: string, color: string): void;
+  dealAoeDamageFromOwner(
+    x: number, y: number, radius: number, damage: number, owner: Owner, except?: Fighter,
+  ): void;
+  getNearestEnemy(fromX: number, fromY: number): Fighter;
+  buildPlayerContext(x: number, y: number): CastContext;
+  /** Swap the ability tray to the form the local player is wearing. */
+  setHudForm(form: HuntForm): void;
+  // ── Mastery ──
+  get masteryActive(): boolean;
+  get npcMasteryActive(): boolean;
+  masteryBindFor(slot: string): string | null;
+  broadcastMasteryCast(enhId: string): void;
+  recordMasteryStat(key: string, amount: number): void;
+  setStatusIndicator(id: string, status: CustomStatus | null): void;
 }
 
 export class HuntKit {
   private api: HuntArenaApi;
 
   // ── Visuals ──
-  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
   private readonly pcol: HuntColorFn;
   private readonly ncol: HuntColorFn;
   private readonly pfx: HuntFx;
   private readonly nfx: HuntFx;
-  /** The hunt character rig (fists, eyes, ears that grow into a head) for each hunt fighter. */
   private playerAvatar: HuntAvatar | null = null;
   private npcAvatar: HuntAvatar | null = null;
-  /** Blood Pact's persistent aura, one per side. */
-  private pactAura: Record<'player' | 'npc', HuntAura | null> = { player: null, npc: null };
-  private pactUntil: Record<'player' | 'npc', number> = { player: 0, npc: 0 };
+  /** Blood Scent's aura, one per side. */
+  private scentAura: Record<Owner, HuntAura | null> = { player: null, npc: null };
+  /** Under the fighters: trail marks, searing gashes, grenade shadows. */
+  private groundGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Over them: bolts, grenades, chains. */
+  private airGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Over the arena but under the HUD (which starts at depth 20): the Blood Moon sky. */
+  private skyGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Shared animation clock for every per-frame painter here. */
+  private vizT = 0;
 
-  // ── Weak Points ──
+  // ── Sim ──
+  private sides: Record<Owner, Side> = { player: makeSide('player'), npc: makeSide('npc') };
+  private bolts: Bolt[] = [];
+  private stuck: StuckBolt[] = [];
+  private grenades: Grenade[] = [];
+  private trails: TrailMark[] = [];
+  private sears: SearPatch[] = [];
+  private hooks: Hook[] = [];
+  private flings: Fling[] = [];
+  /** Set on the first frame of a match so the beast clock starts from the bell. */
+  private started = false;
+  /**
+   * Whether Hunt currently owns each shared Fighter stat. Hunt writes these every frame while
+   * it has something to say and exactly once more to clear them, so a neutral hunt frame never
+   * stomps a value another system (Rebirth's cooldownMult, a Lust payload) is holding.
+   */
+  private wroteDr: Record<Owner, boolean> = { player: false, npc: false };
+  private wroteCd: Record<Owner, boolean> = { player: false, npc: false };
+  private wroteOut: Record<Owner, boolean> = { player: false, npc: false };
+  /** Latch for the hybrid possession, so the controls are handed back exactly once. */
+  private possessing: Record<Owner, boolean> = { player: false, npc: false };
+  /** Latch for the Mine Blast charge bar, so releasing clears it exactly once. */
+  private chargedLastFrame = false;
+
+  // ── Mastery: Weak Points ──
   private weakAngle = 0;
   private weakGfx = new Map<Fighter, Phaser.GameObjects.Graphics>();
-  /** The wedge drawn on the local player when the online opponent has this mastery. */
   private weakPlayerGfx: Phaser.GameObjects.Graphics | null = null;
   private lastWeakLabelAt = -1000;
 
-  // ── Beastling ──
+  // ── Mastery: Beastling ──
   private beastlings: Beastling[] = [];
   /**
-   * Absolute timestamp of the last summon. Seeded a full cooldown in the past because
-   * the kit's first match runs the constructor and NOT reset(), and readiness is measured
-   * against `scene.time.now` — leaving this at 0 would lock the ability for 30s.
+   * Absolute timestamp of the last summon. Seeded a full cooldown in the past because the
+   * kit's first match runs the constructor and NOT reset(), and readiness is measured against
+   * `scene.time.now` — leaving this at 0 would lock the ability for 30s.
    */
   private pupLastCastAt = -BEASTLING_COOLDOWN_MS;
-  /** Roar slow, one channel per victim so the two sides never share an expiry. */
   private npcRoarSlowUntil = 0;
   private playerRoarSlowUntil = 0;
 
-  // ── Requirement tracking ──
   private trackedEnemies = new WeakSet<Fighter>();
 
   constructor(api: HuntArenaApi) {
@@ -198,67 +470,1016 @@ export class HuntKit {
     this.nfx = new HuntFx(api.scene, this.ncol);
   }
 
-  // ── Visual accessors, used from ArenaScene's hunt cast sites ─────────────
+  // ── Small helpers ──────────────────────────────────────────────────────────
 
-  /** Colour mapper for a side. */
-  private col(owner: 'player' | 'npc'): HuntColorFn { return owner === 'player' ? this.pcol : this.ncol; }
+  private get now(): number { return this.api.scene.time.now; }
+  private side(owner: Owner): Side { return this.sides[owner]; }
+  private body(f: Fighter): Phaser.Physics.Arcade.Body { return f.body as Phaser.Physics.Arcade.Body; }
+  private fighter(owner: Owner): Fighter { return owner === 'player' ? this.api.player : this.api.npc; }
+  private col(owner: Owner): HuntColorFn { return owner === 'player' ? this.pcol : this.ncol; }
   /** Effect painter for a side. */
-  fx(owner: 'player' | 'npc'): HuntFx { return owner === 'player' ? this.pfx : this.nfx; }
+  fx(owner: Owner): HuntFx { return owner === 'player' ? this.pfx : this.nfx; }
   /** Character rig for a side, if that side is hunt this match. */
-  avatar(owner: 'player' | 'npc'): HuntAvatar | null {
+  avatar(owner: Owner): HuntAvatar | null {
     return owner === 'player' ? this.playerAvatar : this.npcAvatar;
   }
 
   /**
-   * Shades for whatever that side is currently wearing — human, beast or hybrid, reddened under
-   * a Blood Moon. Every hunt effect takes its colours from here, so a form change recolours the
-   * whole element at once instead of at thirty separate call sites.
+   * Which way that side is looking: the player at the cursor, the NPC at the player. Effects
+   * that have a front — the head that comes out of a transform, the spine that comes out of the
+   * back — need it, and neither one gets an aim vector handed to it.
    */
-  tones(owner: 'player' | 'npc'): HuntTones {
-    if (owner === 'player') {
-      if (this.api.bloodMoonActive) return MOON_TONES;
-      if (this.api.hybridForm) return SILVER_TONES;
-      if (this.api.beastForm) return BEAST_TONES;
-      return HUNTER_TONES;
-    }
-    if (this.api.npcBloodMoonActive) return MOON_TONES;
-    if (this.api.npcBeastForm) return BEAST_TONES;
-    return NPC_TONES;
+  private leanOf(owner: Owner): number {
+    const f = this.fighter(owner);
+    if (owner === 'player') return Math.atan2(this.api.aimY - f.y, this.api.aimX - f.x);
+    const p = this.api.player;
+    return p ? Math.atan2(p.y - f.y, p.x - f.x) : -Math.PI / 2;
   }
 
-  private formOf(owner: 'player' | 'npc'): HuntForm {
-    if (owner === 'player') return this.api.hybridForm ? 'hybrid' : this.api.beastForm ? 'beast' : 'human';
-    return this.api.npcBeastForm ? 'beast' : 'human';
+  /** Is this side hunt at all this match? Every ability entry point checks it. */
+  private isHunt(owner: Owner): boolean {
+    return owner === 'player' ? this.api.elementId === 'hunt' : this.api.npcElementId === 'hunt';
+  }
+
+  /** Upgrades only ever belong to the local player. */
+  private up(owner: Owner, slot: string): boolean {
+    return owner === 'player' && this.api.hasUpgrade(slot);
+  }
+
+  /** Everything `owner` may hurt. */
+  private targetsOf(owner: Owner): Fighter[] {
+    if (owner === 'player') return this.api.enemies.filter((t) => t.active && t.hp > 0);
+    const p = this.api.player;
+    return p.active && p.hp > 0 ? [p] : [];
+  }
+
+  /** Whoever this side is hunting right now. */
+  private quarryOf(owner: Owner): Fighter | null {
+    const f = this.fighter(owner);
+    const list = this.targetsOf(owner);
+    let best: Fighter | null = null;
+    let bestD = Infinity;
+    for (const t of list) {
+      const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
+      if (d < bestD) { bestD = d; best = t; }
+    }
+    return best;
+  }
+
+  private hit(target: Fighter, dmg: number, owner: Owner, color = 0xff4400): void {
+    if (dmg <= 0) return;
+    target.takeDamage(dmg);
+    this.api.spawnHitFlash(target.x, target.y, color);
+  }
+
+  private knock(target: Fighter, fromX: number, fromY: number, speed: number): void {
+    if (target.knockbackImmune || target.unstoppable) return;
+    const dx = target.x - fromX, dy = target.y - fromY;
+    const d = Math.hypot(dx, dy) || 1;
+    this.body(target).setVelocity((dx / d) * speed, (dy / d) * speed);
+  }
+
+  /**
+   * Hunt's stun. `earthStunnedUntil` is set so husk AI and ArenaScene's own npc override
+   * respect it, but the kit also zeroes velocity itself every frame — that field is not
+   * consumed for the player, and Hunt can stun either side.
+   */
+  private stun(target: Fighter, ms: number, owner: Owner): void {
+    if (target.unstoppable) return;
+    const until = this.now + ms;
+    target.earthStunnedUntil = Math.max(target.earthStunnedUntil, until);
+    void owner;
+    this.api.showFloatingText(target.x, target.y - 34, '💫 Stunned!', '#ffdd66');
+  }
+
+  private isStunned(f: Fighter): boolean {
+    return !f.unstoppable && f.earthStunnedUntil > this.now;
+  }
+
+  /** Apply a slow the other side has to live with. One channel per attacking side. */
+  private slowVictim(owner: Owner, mult: number, ms: number): void {
+    const s = this.side(owner);
+    s.slowUntil = Math.max(s.slowUntil, this.now + ms);
+    s.slowMult = Math.min(s.slowMult === 1 ? mult : s.slowMult, mult);
+  }
+
+  private arenaW(): number { return this.api.scene.scale.width; }
+  private arenaH(): number { return this.api.scene.scale.height; }
+
+  /**
+   * Shades for whatever that side is currently wearing. Every hunt effect takes its colours
+   * from here, so a form change recolours the whole element at once.
+   */
+  tones(owner: Owner): HuntTones {
+    const s = this.side(owner);
+    if (s.moonUntil > this.now) return MOON_TONES;
+    if (s.form === 'beast') return s.alpha ? ALPHA_TONES : BEAST_TONES;
+    if (s.form === 'hybrid') return SILVER_TONES;
+    return owner === 'player' ? HUNTER_TONES : NPC_TONES;
+  }
+
+  private moonUp(owner: Owner): boolean { return this.side(owner).moonUntil > this.now; }
+
+  // ── Public form queries, read by ArenaScene ────────────────────────────────
+
+  isBeastForm(owner: Owner): boolean { return this.side(owner).form === 'beast'; }
+  isHybridForm(owner: Owner): boolean { return this.side(owner).form === 'hybrid'; }
+  isBloodMoonActive(owner: Owner): boolean { return this.moonUp(owner); }
+  /** NPC AI: don't re-lay a trail that is still being laid. */
+  isTrailActive(owner: Owner): boolean { return this.side(owner).trailUntil > this.now; }
+  /** NPC AI: Blast is charge-gated, and its ability cooldown says nothing about that. */
+  getBlastCharges(owner: Owner): number { return this.side(owner).blastCharges; }
+  /** True while the beast's spirit is driving — ArenaScene must not read WASD. */
+  isPossessed(): boolean { return this.sides.player.spiritUntil > this.now; }
+  /** Rage perk: the meter only fills while the player is standing in the quarry's tracks. */
+  isPlayerOnOwnTrail(): boolean { return this.onOwnTrail('player'); }
+
+  /** Rage perk: 100 rage drags the beast out early, cooldown or not. */
+  forceBeast(owner: Owner): void {
+    if (this.side(owner).form !== 'human') return;
+    this.enterBeast(owner, false);
   }
 
   reset(): void {
     if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
     if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
     for (const o of ['player', 'npc'] as const) {
-      this.pactAura[o]?.destroy();
-      this.pactAura[o] = null;
-      this.pactUntil[o] = 0;
+      this.scentAura[o]?.destroy();
+      this.scentAura[o] = null;
     }
+    this.groundGfx?.destroy(); this.groundGfx = null;
+    this.airGfx?.destroy(); this.airGfx = null;
+    this.skyGfx?.destroy(); this.skyGfx = null;
+    this.vizT = 0;
+
+    this.sides = { player: makeSide('player'), npc: makeSide('npc') };
+    this.bolts = [];
+    this.stuck = [];
+    this.grenades = [];
+    this.trails = [];
+    this.sears = [];
+    this.hooks = [];
+    this.flings = [];
+    this.started = false;
+    this.wroteDr = { player: false, npc: false };
+    this.wroteCd = { player: false, npc: false };
+    this.wroteOut = { player: false, npc: false };
+    this.possessing = { player: false, npc: false };
+    this.chargedLastFrame = false;
+    this.rightWasDown = false;
+
     for (const g of this.weakGfx.values()) g.destroy();
     this.weakGfx.clear();
     if (this.weakPlayerGfx) { this.weakPlayerGfx.destroy(); this.weakPlayerGfx = null; }
     this.weakAngle = 0;
     this.lastWeakLabelAt = -1000;
-    // Carried grenades are deliberately not handed back here — reset() runs on match start,
-    // after ArenaScene has already destroyed every grenade sprite.
-    for (const b of this.beastlings) {
-      b.carrying = null;
-      b.gfx.destroy();
-    }
+
+    for (const b of this.beastlings) { b.carrying = null; b.gfx.destroy(); }
     this.beastlings = [];
     this.pupLastCastAt = -BEASTLING_COOLDOWN_MS;
     this.npcRoarSlowUntil = 0;
     this.playerRoarSlowUntil = 0;
     this.trackedEnemies = new WeakSet<Fighter>();
     this.api.setStatusIndicator('beastling-roar', null);
+    this.api.setStatusIndicator('hunt-adrenaline', null);
+    this.api.setStatusIndicator('hunt-crash', null);
+    this.api.setStatusIndicator('hunt-fear', null);
   }
 
-  // ── Input ──────────────────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Human form
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Crossbow Shot. The reload is the interesting part: every *other* ability in the kit
+   * clears it, so the rhythm of human form is "bolt, ability, bolt, ability" rather than
+   * standing still and plinking.
+   */
+  doCrossbow(tx: number, ty: number, owner: Owner): void {
+    const f = this.fighter(owner);
+    const angle = Math.atan2(ty - f.y, tx - f.x);
+    this.bolts.push({
+      owner,
+      x: f.x + Math.cos(angle) * 22,
+      y: f.y + Math.sin(angle) * 22,
+      vx: Math.cos(angle) * CROSSBOW_SPEED,
+      vy: Math.sin(angle) * CROSSBOW_SPEED,
+      bomb: false,
+      bornAt: this.now,
+    });
+    const av = this.avatar(owner);
+    av?.play('punch', angle);
+    // The string is gone forward and the stock has jumped — both read off the same shot.
+    av?.setLoad(0);
+    av?.kick(0.7);
+    this.fx(owner).boltRelease(f.x + Math.cos(angle) * 26, f.y + Math.sin(angle) * 26, angle, 8, this.tones(owner));
+  }
+
+  /** Clears the crossbow reload. Called from every non-Click cast on that side. */
+  private reloadCrossbow(owner: Owner): void {
+    if (this.side(owner).form !== 'human') return;
+    this.fighter(owner).resetCooldown('hunt-crossbow');
+  }
+
+  /**
+   * Blast (and its charged E+ form). A hitscan cone rather than a spray of pellets: the
+   * knockback is the point, and twenty separate bodies arriving at slightly different times
+   * made it read as mush.
+   */
+  doBlast(tx: number, ty: number, chargeMs: number, owner: Owner): void {
+    const s = this.side(owner);
+    if (s.blastCharges <= 0) return;
+    s.blastCharges--;
+    if (s.blastRechargeAt <= this.now) s.blastRechargeAt = this.now + BLAST_RECHARGE_MS;
+
+    const f = this.fighter(owner);
+    const angle = Math.atan2(ty - f.y, tx - f.x);
+    const charged = this.up(owner, 'e');
+    const k = charged ? Phaser.Math.Clamp(chargeMs / MINE_MAX_CHARGE_MS, 0, 1) : 0;
+    const dmg = Math.round(BLAST_DMG + (MINE_MAX_DMG - BLAST_DMG) * k);
+    const full = charged && k >= 0.999;
+
+    const av = this.avatar(owner);
+    av?.play('punch', angle);
+    // Human form walks around with the crossbow up; Blast is the shotgun coming off his back.
+    av?.flashWeapon('shotgun', 1100);
+    av?.kick(1 + k * 0.4);
+    av?.rack();
+    const tones = this.tones(owner);
+    // The pattern is the ability: BLAST_RANGE and BLAST_HALF_ANGLE are exactly what the shot
+    // covers, so what you see the pellets reach is what actually got hit.
+    this.fx(owner).shotgunBlast(f.x + Math.cos(angle) * 20, f.y + Math.sin(angle) * 20, angle, {
+      range: BLAST_RANGE, halfAngle: BLAST_HALF_ANGLE, pellets: 18 + Math.round(k * 12),
+      scale: 1 + k * 0.5, tones, shell: true, depth: 9,
+    });
+    this.api.scene.cameras.main.shake(full ? 200 : 90, full ? 0.006 : 0.0022);
+
+    for (const t of this.targetsOf(owner)) {
+      const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
+      if (d > BLAST_RANGE) continue;
+      const a = Math.atan2(t.y - f.y, t.x - f.x);
+      if (Math.abs(Phaser.Math.Angle.Wrap(a - angle)) > BLAST_HALF_ANGLE) continue;
+      let dealt = dmg;
+      const weak = this.weakPointMult(t, f.x, f.y, owner);
+      if (weak > 1) { dealt = Math.round(dealt * weak); this.showWeakPointHit(t.x, t.y); }
+      this.hit(t, dealt, owner, 0xff7722);
+      this.onDamageDealt(owner, t);
+      this.knock(t, f.x, f.y, BLAST_KNOCKBACK);
+      if (full) this.stun(t, MINE_STUN_MS, owner);
+    }
+    if (full) this.api.showFloatingText(f.x, f.y - 34, '💣 MINE BLAST', '#ffaa44');
+  }
+
+  /** Grenade. Flies a fixed distance, then sits and ticks. */
+  doGrenade(tx: number, ty: number, owner: Owner): void {
+    const f = this.fighter(owner);
+    const angle = Math.atan2(ty - f.y, tx - f.x);
+    this.grenades.push({
+      owner,
+      x: f.x, y: f.y, startX: f.x, startY: f.y,
+      vx: Math.cos(angle) * GRENADE_SPEED,
+      vy: Math.sin(angle) * GRENADE_SPEED,
+      explodeAt: this.now + GRENADE_FUSE_MS,
+      stopped: false,
+      spin: angle,
+      carried: false,
+    });
+    this.avatar(owner)?.play('slam', angle);
+    this.fx(owner).smoke(f.x + Math.cos(angle) * 16, f.y + Math.sin(angle) * 16, 2, 10, 5);
+  }
+
+  /** Hunter's Trail — the quarry starts leaving prints, and they are yours to run on. */
+  doTrail(owner: Owner): void {
+    const s = this.side(owner);
+    s.trailUntil = this.now + TRAIL_DURATION_MS;
+    s.trailAccum = 0;
+    const f = this.fighter(owner);
+    this.avatar(owner)?.play('flex');
+    const tones = this.tones(owner);
+    this.fx(owner).bloom(f.x, f.y, 30, 8, 4, tones);
+    this.fx(owner).ring(f.x, f.y, 10, 62, tones.wound, 380, 3.5, 4);
+    this.api.showFloatingText(f.x, f.y - 30, '🐾 On the scent', '#ff8844');
+  }
+
+  /** The Q slot in human form is a clock, not a button — but the AI may still poke it. */
+  doReleaseBeast(owner: Owner): void {
+    if (this.side(owner).form !== 'human') return;
+    this.enterBeast(owner, false);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Beast form
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  doSlash(tx: number, ty: number, owner: Owner): void {
+    const f = this.fighter(owner);
+    const angle = Math.atan2(ty - f.y, tx - f.x);
+    const tones = this.tones(owner);
+    const av = this.avatar(owner);
+    av?.play('sweep', angle);
+    av?.snap(0.8);
+    const hx = f.x + Math.cos(angle) * 44;
+    const hy = f.y + Math.sin(angle) * 44;
+    this.fx(owner).rake(hx, hy, angle, 62, 3, 8, tones);
+
+    for (const t of this.targetsOf(owner)) {
+      if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > SLASH_RANGE) continue;
+      const a = Math.atan2(t.y - f.y, t.x - f.x);
+      if (Math.abs(Phaser.Math.Angle.Wrap(a - angle)) > Math.PI / 2) continue;
+
+      // A bolt in the body is a handle. The claw goes for it, tears it out, and the wound
+      // it leaves is worth three times a clean swipe.
+      const pulled = this.pullOneBolt(t);
+      let dmg = pulled ? SLASH_BOLT_DMG : SLASH_DMG;
+      if (this.up(owner, 'click') && this.isStunned(t)) dmg += SLASH_STUNNED_BONUS;
+      const weak = this.weakPointMult(t, f.x, f.y, owner);
+      if (weak > 1) { dmg = Math.round(dmg * weak); this.showWeakPointHit(t.x, t.y); }
+      this.hit(t, dmg, owner, pulled ? 0xff2200 : 0xcc4422);
+      this.onDamageDealt(owner, t);
+      if (pulled) {
+        this.api.showFloatingText(t.x, t.y - 30, '🩸 Bolt ripped out!', '#ff4444');
+        this.fx(owner).splatter(t.x, t.y, 7, { speed: 190, angle, spread: 1.1, size: 3, life: 480, depth: 8, tones: BEAST_TONES });
+      }
+    }
+  }
+
+  doPounce(tx: number, ty: number, owner: Owner): void {
+    const f = this.fighter(owner);
+    const angle = Math.atan2(ty - f.y, tx - f.x);
+    const s = this.side(owner);
+    const fromX = f.x, fromY = f.y;
+    s.dashUntil = this.now + POUNCE_MS;
+    if (owner === 'player') this.api.isDodging = true;
+    this.body(f).setVelocity(Math.cos(angle) * (POUNCE_DIST / (POUNCE_MS / 1000)), Math.sin(angle) * (POUNCE_DIST / (POUNCE_MS / 1000)));
+    this.avatar(owner)?.play('dash', angle);
+    this.avatar(owner)?.snap(1);
+
+    this.api.scene.time.delayedCall(POUNCE_MS, () => {
+      if (!f.active) return;
+      const tones = this.tones(owner);
+      this.fx(owner).pounce(fromX, fromY, f.x, f.y, 5, tones);
+      this.fx(owner).rake(f.x, f.y, angle, 110, 4, 8, tones, 18);
+      this.api.scene.cameras.main.shake(140, 0.004);
+      for (const t of this.targetsOf(owner)) {
+        if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > POUNCE_RADIUS) continue;
+        let dmg = POUNCE_DMG;
+        const weak = this.weakPointMult(t, fromX, fromY, owner);
+        if (weak > 1) { dmg = Math.round(dmg * weak); this.showWeakPointHit(t.x, t.y); }
+        this.hit(t, dmg, owner, 0xff3311);
+        this.onDamageDealt(owner, t);
+      }
+      // E+ Searing Slash: the gashes stay in the floor, still hot.
+      if (this.up(owner, 'e')) {
+        for (let i = -1; i <= 1; i++) {
+          const a = angle + i * 0.5;
+          this.sears.push({
+            owner,
+            x: f.x + Math.cos(a) * 34,
+            y: f.y + Math.sin(a) * 34,
+            angle: a + Math.PI / 2,
+            len: 52,
+            expiresAt: this.now + SEAR_LIFE_MS,
+            durationMs: SEAR_LIFE_MS,
+            nextTickAt: 0,
+          });
+        }
+        this.api.showFloatingText(f.x, f.y - 34, '🔥 Searing!', '#ff8833');
+      }
+    });
+  }
+
+  /**
+   * Roar. The cone runs to the far corner of the arena, so at range this is a control tool
+   * and up close it is a panic button — hitting anything at all buys five seconds of armour.
+   */
+  doRoar(tx: number, ty: number, owner: Owner): void {
+    const f = this.fighter(owner);
+    const angle = Math.atan2(ty - f.y, tx - f.x);
+    const len = Math.hypot(this.arenaW(), this.arenaH());
+    const s = this.side(owner);
+    this.avatar(owner)?.play('raise');
+    this.avatar(owner)?.snap(1);
+    this.fx(owner).roarCone(f.x, f.y, angle, ROAR_HALF_ANGLE, len, 9, this.tones(owner));
+    this.fx(owner).howl(f.x, f.y, 90, 520, 9, this.tones(owner));
+    this.api.scene.cameras.main.shake(220, 0.005);
+
+    let hitAny = false;
+    for (const t of this.targetsOf(owner)) {
+      const a = Math.atan2(t.y - f.y, t.x - f.x);
+      if (Math.abs(Phaser.Math.Angle.Wrap(a - angle)) > ROAR_HALF_ANGLE) continue;
+      hitAny = true;
+      this.api.showFloatingText(t.x, t.y - 30, '🔊 −25% speed', '#ffaa66');
+      if (this.up(owner, 'r')) {
+        // R+ Primal Fear: they turn their back and run. Enforced in update().
+        s.fearUntil = this.now + PRIMAL_FEAR_MS;
+        this.api.showFloatingText(t.x, t.y - 46, '😱 PRIMAL FEAR', '#ff6644');
+      }
+    }
+    if (hitAny) {
+      this.slowVictim(owner, ROAR_SLOW_MULT, ROAR_SLOW_MS);
+      s.roarDrUntil = this.now + ROAR_DR_MS;
+      this.api.showFloatingText(f.x, f.y - 40, '🛡️ −33% damage taken', '#ffcc88');
+    }
+    this.onBeastlingRoar(owner);
+  }
+
+  doGrapple(tx: number, ty: number, owner: Owner): void {
+    const f = this.fighter(owner);
+    const angle = Math.atan2(ty - f.y, tx - f.x);
+    const s = this.side(owner);
+    s.dashUntil = this.now + GRAPPLE_MS;
+    s.grappleUntil = s.dashUntil;
+    if (owner === 'player') this.api.isDodging = true;
+    this.body(f).setVelocity(
+      Math.cos(angle) * (GRAPPLE_DIST / (GRAPPLE_MS / 1000)),
+      Math.sin(angle) * (GRAPPLE_DIST / (GRAPPLE_MS / 1000)),
+    );
+    this.avatar(owner)?.play('dash', angle);
+    this.avatar(owner)?.snap(1);
+    this.fx(owner).pounce(f.x, f.y, f.x + Math.cos(angle) * GRAPPLE_DIST, f.y + Math.sin(angle) * GRAPPLE_DIST, 5, this.tones(owner));
+    // The catch itself is resolved in update() over the whole lunge, not just at the end.
+  }
+
+  doBloodScent(owner: Owner): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    // Q+ Blood Moon: the sky turns first, and it is the moon that widens the scent.
+    if (this.up(owner, 'q')) {
+      s.moonUntil = this.now + BLOOD_MOON_MS;
+      s.beastUntil = s.permanentBeast ? s.beastUntil : s.beastUntil + MOON_BEAST_BONUS_MS;
+      this.api.scene.cameras.main.shake(420, 0.005);
+      this.fx(owner).transformBeast(f.x, f.y, 78, MOON_TONES, this.leanOf(owner), 8);
+      this.api.showFloatingText(f.x, f.y - 46, '🌕 BLOOD MOON', '#ff4444');
+    }
+    const ratio = this.moonUp(owner) ? BLOOD_SCENT_HP_RATIO_MOON : BLOOD_SCENT_HP_RATIO;
+    const wounded = this.targetsOf(owner).some((t) => t.hp / Math.max(1, t.maxHp) <= ratio);
+    if (!wounded) {
+      this.api.showFloatingText(f.x, f.y - 30, 'No blood in the air…', '#886666');
+      return;
+    }
+    s.scentUntil = this.now + BLOOD_SCENT_MS;
+    this.avatar(owner)?.play('flex');
+    this.fx(owner).bloom(f.x, f.y, 40, 10, 6, MOON_TONES);
+    this.api.showFloatingText(f.x, f.y - 32, '🩸 BLOOD SCENT', '#ff2244');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Hybrid form
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  doHybridShotgun(tx: number, ty: number, owner: Owner): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    const angle = Math.atan2(ty - f.y, tx - f.x);
+
+    // Click+ Shotgun Pump: the fourth shell is one too many and it lets go in your hands.
+    if (s.overloaded) {
+      s.overloaded = false;
+      s.pumps = 0;
+      const bx = f.x + Math.cos(angle) * 46;
+      const by = f.y + Math.sin(angle) * 46;
+      this.fx(owner).frag(bx, by, OVERLOAD_RADIUS, { tones: SILVER_TONES, shards: 22, smoke: 5, duration: 620 });
+      this.api.scene.cameras.main.shake(300, 0.009);
+      this.api.dealAoeDamageFromOwner(bx, by, OVERLOAD_RADIUS, OVERLOAD_DMG, owner);
+      f.applySelfDamage(OVERLOAD_SELF_DMG);
+      this.api.showFloatingText(f.x, f.y - 40, '💥 IT BLEW UP!', '#ff5533');
+      return;
+    }
+
+    const dmg = BLAST_DMG + Math.min(s.pumps, PUMP_SAFE_MAX) * PUMP_BONUS_DMG;
+    const pumped = s.pumps;
+    s.pumps = 0;
+    const av = this.avatar(owner);
+    av?.play('punch', angle);
+    av?.kick(1 + pumped * 0.15);
+    av?.rack();
+    this.fx(owner).shotgunBlast(f.x + Math.cos(angle) * 20, f.y + Math.sin(angle) * 20, angle, {
+      range: BLAST_RANGE, halfAngle: BLAST_HALF_ANGLE, pellets: 16 + pumped * 6,
+      scale: 1 + pumped * 0.16, tones: SILVER_TONES, shell: true, depth: 9,
+    });
+    this.api.scene.cameras.main.shake(90 + pumped * 30, 0.002 + pumped * 0.001);
+
+    for (const t of this.targetsOf(owner)) {
+      const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
+      if (d > BLAST_RANGE) continue;
+      const a = Math.atan2(t.y - f.y, t.x - f.x);
+      if (Math.abs(Phaser.Math.Angle.Wrap(a - angle)) > BLAST_HALF_ANGLE) continue;
+      let dealt = dmg;
+      const weak = this.weakPointMult(t, f.x, f.y, owner);
+      if (weak > 1) { dealt = Math.round(dealt * weak); this.showWeakPointHit(t.x, t.y); }
+      this.hit(t, dealt, owner, 0xdddde6);
+      this.onDamageDealt(owner, t);
+      this.knock(t, f.x, f.y, BLAST_KNOCKBACK * 0.7);
+    }
+  }
+
+  doRoll(tx: number, ty: number, owner: Owner): void {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    const angle = Math.atan2(ty - f.y, tx - f.x);
+    s.rollUntil = this.now + ROLL_MS;
+    s.dashUntil = s.rollUntil;
+    if (owner === 'player') this.api.isDodging = true;
+    this.body(f).setVelocity(
+      Math.cos(angle) * (ROLL_DIST / (ROLL_MS / 1000)),
+      Math.sin(angle) * (ROLL_DIST / (ROLL_MS / 1000)),
+    );
+    this.avatar(owner)?.play('dash', angle);
+    this.fx(owner).smoke(f.x, f.y, 3, 18, 5);
+    // E+: nothing lands on you while you are tumbling.
+    if (this.up(owner, 'e')) {
+      s.rollInvincible = true;
+      f.isInvincible = true;
+      this.api.showFloatingText(f.x, f.y - 30, '🌀 Untouchable', '#aaddff');
+    }
+  }
+
+  doHook(tx: number, ty: number, owner: Owner): void {
+    const existing = this.hooks.find((h) => h.owner === owner);
+    if (existing) {
+      // Recast: reel whatever is on the end of the chain.
+      if (existing.latched) existing.reeling = true;
+      return;
+    }
+    const f = this.fighter(owner);
+    const angle = Math.atan2(ty - f.y, tx - f.x);
+    this.hooks.push({
+      owner,
+      x: f.x, y: f.y, startX: f.x, startY: f.y,
+      vx: Math.cos(angle) * HOOK_SPEED,
+      vy: Math.sin(angle) * HOOK_SPEED,
+      latched: null,
+      reeling: false,
+      dragged: 0,
+      bornAt: this.now,
+    });
+    this.avatar(owner)?.play('slam', angle);
+  }
+
+  doAdrenaline(owner: Owner): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    // F+ Adrenaline Junkie: recasting before the crash lands pushes it back — and the bill
+    // grows every time you do it.
+    const delaying = s.adrenalineUntil > this.now || s.crashUntil > this.now;
+    if (delaying && this.up(owner, 'f')) {
+      s.crashDelays++;
+      s.crashUntil = 0;
+      this.api.showFloatingText(f.x, f.y - 42, `⏳ Delay ×${s.crashDelays}`, '#ffdd66');
+    }
+    s.adrenalineUntil = this.now + ADRENALINE_MS;
+    s.crashUntil = 0;
+    // F+ halves the cooldown. The cast has already stamped, so shift the stamp back rather
+    // than trying to teach the ability table about upgrades.
+    if (this.up(owner, 'f')) f.reduceCooldown('hunt-adrenaline', 6000);
+    this.avatar(owner)?.play('clap');
+    this.fx(owner).syringeJab(f.x, f.y - 6, 9);
+    this.fx(owner).bloom(f.x, f.y, 34, 8, 5, this.tones(owner));
+    this.api.showFloatingText(f.x, f.y - 30, '💉 ADRENALINE', '#66ff99');
+  }
+
+  doGiveIn(owner: Owner): void {
+    if (this.side(owner).form !== 'hybrid') return;
+    this.enterBeast(owner, true);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Form transitions
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /** `permanent` marks a Give In transform, which also brings Alpha with it. */
+  private enterBeast(owner: Owner, permanent: boolean): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    s.form = 'beast';
+    s.permanentBeast = permanent;
+    s.alpha = permanent && this.up(owner, 'q');
+    s.beastUntil = permanent ? Infinity : this.now + BEAST_DURATION_MS + (this.moonUp(owner) ? MOON_BEAST_BONUS_MS : 0);
+    s.pumps = 0;
+    s.overloaded = false;
+    s.spiritUntil = 0;
+    s.charging = false;
+    f.setScale(1.2);
+    this.body(f).setCircle(26, 3, 3);
+    // Give In comes out of hybrid form, which was wearing the silver sprite. The beast gets a
+    // sprite of its own — a matted fur skull rather than the hunter's hide.
+    f.setTexture('elem-hunt-beast');
+    if (s.alpha) {
+      f.setTint(0xb9bfc6);
+      f.cooldownMult = ALPHA_CD_MULT;
+    } else {
+      f.clearTint();
+    }
+    const av = this.avatar(owner);
+    av?.play('raise');
+    av?.snap(1);
+    this.fx(owner).transformBeast(
+      f.x, f.y, 52, s.alpha ? ALPHA_TONES : BEAST_TONES, this.leanOf(owner), 8,
+    );
+    this.api.scene.cameras.main.shake(360, 0.009);
+    this.api.showFloatingText(f.x, f.y - 44,
+      s.alpha ? '🐺 ALPHA' : permanent ? '🐺 GIVE IN' : '🐺 RELEASE THE BEAST', s.alpha ? '#ccd4dd' : '#ff3322');
+    if (owner === 'player') this.api.setHudForm('beast');
+  }
+
+  private leaveBeast(owner: Owner): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    s.form = 'human';
+    s.alpha = false;
+    s.charging = false;
+    s.permanentBeast = false;
+    s.beastUntil = 0;
+    s.scentUntil = 0;
+    s.nextBeastAt = this.now + BEAST_RECHARGE_MS;
+    f.setScale(1);
+    this.body(f).setCircle(22, 2, 2);
+    f.setTexture('elem-hunt');
+    f.clearTint();
+    this.fx(owner).transformRevert(f.x, f.y, 44, this.tones(owner), 8);
+    this.api.showFloatingText(f.x, f.y - 40, 'The beast lets go…', '#cc9977');
+    if (owner === 'player') this.api.setHudForm('human');
+  }
+
+  private enterHybrid(owner: Owner): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    s.form = 'hybrid';
+    s.nextSpiritAt = this.now + SPIRIT_INTERVAL_MS;
+    s.charging = false;
+    s.pumps = 0;
+    s.overloaded = false;
+    f.setScale(1.1);
+    this.body(f).setCircle(24, 2, 2);
+    f.clearTint();
+    f.setTexture('elem-hunt-hybrid');
+    const av = this.avatar(owner);
+    av?.play('raise');
+    av?.snap(0.7);
+    this.fx(owner).transformBeast(f.x, f.y, 46, SILVER_TONES, this.leanOf(owner), 8);
+    this.api.scene.cameras.main.shake(240, 0.006);
+    this.api.showFloatingText(f.x, f.y - 44, '🐺 HYBRID FORM', '#ddddee');
+    if (owner === 'player') this.api.setHudForm('hybrid');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Bolts
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /** How many of `owner`'s bolts are buried in `victim`. */
+  private stuckCount(victim: Fighter, owner?: Owner): number {
+    let n = 0;
+    for (const b of this.stuck) {
+      if (b.victim === victim && (!owner || b.owner === owner)) n++;
+    }
+    return n;
+  }
+
+  /** Rip the newest bolt out of a body. Returns true if there was one. */
+  private pullOneBolt(victim: Fighter): boolean {
+    for (let i = this.stuck.length - 1; i >= 0; i--) {
+      if (this.stuck[i].victim === victim) { this.stuck.splice(i, 1); return true; }
+    }
+    return false;
+  }
+
+  private updateBolts(dt: number): void {
+    const time = this.now;
+    const W = this.arenaW(), H = this.arenaH();
+
+    for (let i = this.bolts.length - 1; i >= 0; i--) {
+      const b = this.bolts[i];
+      const px = b.x, py = b.y;
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+
+      // R+ Grenade Combo: a bolt through your own grenade picks the blast up and carries it.
+      if (!b.bomb && this.up(b.owner, 'r')) {
+        for (let gi = this.grenades.length - 1; gi >= 0; gi--) {
+          const g = this.grenades[gi];
+          if (g.owner !== b.owner || g.carried) continue;
+          if (Phaser.Math.Distance.Between(b.x, b.y, g.x, g.y) > 22) continue;
+          this.grenades.splice(gi, 1);
+          b.bomb = true;
+          this.fx(b.owner).flash(g.x, g.y, 16, 9, this.tones(b.owner));
+          this.fx(b.owner).smoke(g.x, g.y, 2, 14, 6);
+          this.api.showFloatingText(g.x, g.y - 24, '💣 BOMB BOLT', '#ffaa33');
+          break;
+        }
+      }
+
+      let consumed = false;
+      for (const t of this.targetsOf(b.owner)) {
+        if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) > 24) continue;
+        const angle = Math.atan2(b.vy, b.vx);
+        let dmg = b.bomb ? BOMB_BOLT_DMG : CROSSBOW_DMG;
+        const weak = this.weakPointMult(t, px, py, b.owner);
+        if (weak > 1) { dmg = Math.round(dmg * weak); this.showWeakPointHit(t.x, t.y); }
+        this.hit(t, dmg, b.owner, b.bomb ? 0xff7722 : 0xcc4400);
+        this.onDamageDealt(b.owner, t);
+        this.fx(b.owner).boltBite(b.x, b.y, angle, 9, this.tones(b.owner));
+
+        if (b.bomb) {
+          this.fx(b.owner).frag(b.x, b.y, BOMB_BOLT_RADIUS, { tones: this.tones(b.owner), shards: 16, smoke: 4 });
+          this.api.dealAoeDamageFromOwner(b.x, b.y, BOMB_BOLT_RADIUS, BOMB_BOLT_DMG, b.owner, t);
+          this.api.scene.cameras.main.shake(200, 0.006);
+          this.noteGrenadeHits(b.owner, 1);
+        } else if (this.stuckCount(t) < MAX_STUCK) {
+          // It stays in. This is the whole point of the weapon.
+          this.stuck.push({
+            owner: b.owner, victim: t,
+            offX: b.x - t.x, offY: b.y - t.y,
+            angle, stuckAt: time,
+          });
+          if (this.stuckCount(t) === 1) this.side(b.owner).nextTrackPingAt = time + TRACK_PERIOD_MS[1];
+        }
+        consumed = true;
+        break;
+      }
+
+      if (consumed || b.x < -20 || b.x > W + 20 || b.y < -20 || b.y > H + 20 || time - b.bornAt > 3000) {
+        if (!consumed && b.bomb) {
+          this.fx(b.owner).frag(b.x, b.y, BOMB_BOLT_RADIUS * 0.7, { tones: this.tones(b.owner), shards: 10, smoke: 3 });
+        }
+        this.bolts.splice(i, 1);
+      }
+    }
+
+    // Buried bolts ride the body, and fall out of a corpse.
+    for (let i = this.stuck.length - 1; i >= 0; i--) {
+      const s = this.stuck[i];
+      if (!s.victim.active || s.victim.hp <= 0) this.stuck.splice(i, 1);
+    }
+  }
+
+  /**
+   * Click+ Tracking Arrows. Every buried bolt is a transmitter; the more of them are in there,
+   * the more often they call home. The speed only lands in beast or hybrid form — as a human
+   * you are getting the information, not the legs to use it.
+   */
+  private updateTracking(): void {
+    const time = this.now;
+    for (const owner of ['player', 'npc'] as const) {
+      if (!this.isHunt(owner) || !this.up(owner, 'click')) continue;
+      const s = this.side(owner);
+      // Count against the most-studded victim — three bolts in one body, not one each in three.
+      let best = 0;
+      let bestVictim: Fighter | null = null;
+      for (const t of this.targetsOf(owner)) {
+        const n = this.stuckCount(t, owner);
+        if (n > best) { best = n; bestVictim = t; }
+      }
+      if (best <= 0 || !bestVictim) { s.nextTrackPingAt = 0; continue; }
+      const period = TRACK_PERIOD_MS[Math.min(best, 3)];
+      if (s.nextTrackPingAt === 0) s.nextTrackPingAt = time + period;
+      if (time < s.nextTrackPingAt) continue;
+      s.nextTrackPingAt = time + period;
+      this.fx(owner).boltPing(bestVictim.x, bestVictim.y, 74, 4, this.tones(owner));
+      if (s.form === 'beast' || s.form === 'hybrid') {
+        s.trackSpeedUntil = time + TRACK_SPEED_MS;
+        const f = this.fighter(owner);
+        this.api.showFloatingText(f.x, f.y - 36, '📡 +25% speed', '#ffcc66');
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Grenades, trail, sears, hooks, flings
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  private explodeGrenade(g: Grenade): void {
+    const heavy = this.moonUp(g.owner);
+    this.fx(g.owner).frag(g.x, g.y, GRENADE_RADIUS * 0.72, {
+      tones: this.tones(g.owner),
+      shards: heavy ? 20 : 12,
+      smoke: heavy ? 5 : 3,
+      duration: heavy ? 620 : 460,
+    });
+    this.api.scene.cameras.main.shake(heavy ? 220 : 140, heavy ? 0.007 : 0.004);
+    let hits = 0;
+    for (const t of this.targetsOf(g.owner)) {
+      if (Phaser.Math.Distance.Between(g.x, g.y, t.x, t.y) > GRENADE_RADIUS) continue;
+      this.hit(t, GRENADE_DMG, g.owner, 0xff6600);
+      this.onDamageDealt(g.owner, t);
+      hits++;
+    }
+    this.noteGrenadeHits(g.owner, hits);
+  }
+
+  private updateGrenades(dt: number): void {
+    const time = this.now;
+    for (let i = this.grenades.length - 1; i >= 0; i--) {
+      const g = this.grenades[i];
+      if (g.carried) continue;
+      if (!g.stopped) {
+        g.x += g.vx * dt;
+        g.y += g.vy * dt;
+        g.spin += dt * 11;
+        if (Phaser.Math.Distance.Between(g.startX, g.startY, g.x, g.y) >= GRENADE_THROW_RANGE) g.stopped = true;
+      }
+      if (time >= g.explodeAt) {
+        this.explodeGrenade(g);
+        this.grenades.splice(i, 1);
+      }
+    }
+  }
+
+  private updateTrails(delta: number): void {
+    const time = this.now;
+    for (const owner of ['player', 'npc'] as const) {
+      const s = this.side(owner);
+      if (s.trailUntil <= time) continue;
+      s.trailAccum += delta;
+      if (s.trailAccum < TRAIL_MARK_INTERVAL_MS) continue;
+      s.trailAccum -= TRAIL_MARK_INTERVAL_MS;
+      const f = this.fighter(owner);
+      const quarry = owner === 'player' ? this.api.getNearestEnemy(f.x, f.y) : this.api.player;
+      if (!quarry?.active) continue;
+      const qb = this.body(quarry);
+      // Rage perk holds the marks in the ground longer.
+      const life = this.api.hasPerk(owner, 'rage') ? TRAIL_MARK_LIFE_MS + 2000 : TRAIL_MARK_LIFE_MS;
+      this.trails.push({
+        owner, x: quarry.x, y: quarry.y,
+        expiresAt: time + life, durationMs: life,
+        angle: Math.atan2(qb.velocity.y, qb.velocity.x),
+      });
+    }
+    for (let i = this.trails.length - 1; i >= 0; i--) {
+      if (time > this.trails[i].expiresAt) this.trails.splice(i, 1);
+    }
+  }
+
+  /** True while that side is standing on one of its own trail marks. */
+  private onOwnTrail(owner: Owner): boolean {
+    const f = this.fighter(owner);
+    const time = this.now;
+    for (const c of this.trails) {
+      if (c.owner !== owner || time > c.expiresAt) continue;
+      if (Phaser.Math.Distance.Between(f.x, f.y, c.x, c.y) <= TRAIL_RADIUS) return true;
+    }
+    return false;
+  }
+
+  private updateSears(): void {
+    const time = this.now;
+    for (let i = this.sears.length - 1; i >= 0; i--) {
+      const p = this.sears[i];
+      if (time > p.expiresAt) { this.sears.splice(i, 1); continue; }
+      if (time < p.nextTickAt) continue;
+      for (const t of this.targetsOf(p.owner)) {
+        if (Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) > SEAR_RADIUS) continue;
+        p.nextTickAt = time + SEAR_TICK_MS;
+        this.hit(t, SEAR_DMG, p.owner, 0xff8833);
+      }
+    }
+  }
+
+  private updateHooks(dt: number): void {
+    const time = this.now;
+    for (let i = this.hooks.length - 1; i >= 0; i--) {
+      const h = this.hooks[i];
+      const f = this.fighter(h.owner);
+      if (!f.active) { this.hooks.splice(i, 1); continue; }
+
+      if (!h.latched) {
+        h.x += h.vx * dt;
+        h.y += h.vy * dt;
+        for (const t of this.targetsOf(h.owner)) {
+          if (Phaser.Math.Distance.Between(h.x, h.y, t.x, t.y) > HOOK_HIT_R + 14) continue;
+          h.latched = t;
+          this.api.showFloatingText(t.x, t.y - 34, '⚓ Hooked! (R to reel)', '#ccddee');
+          this.fx(h.owner).flash(h.x, h.y, 12, 9, SILVER_TONES);
+          break;
+        }
+        const flown = Phaser.Math.Distance.Between(h.startX, h.startY, h.x, h.y);
+        if (!h.latched && (flown > HOOK_RANGE || time - h.bornAt > 1400)) { this.hooks.splice(i, 1); continue; }
+      } else {
+        const t = h.latched;
+        if (!t.active || t.hp <= 0) { this.hooks.splice(i, 1); continue; }
+        h.x = t.x; h.y = t.y;
+        if (h.reeling) {
+          const dx = f.x - t.x, dy = f.y - t.y;
+          const d = Math.hypot(dx, dy) || 1;
+          const step = Math.min(HOOK_PULL_SPEED * dt, d);
+          if (!t.knockbackImmune && !t.unstoppable) {
+            this.body(t).setVelocity((dx / d) * HOOK_PULL_SPEED, (dy / d) * HOOK_PULL_SPEED);
+            h.dragged += step;
+          }
+          // R+ Scrape: the chain takes the skin off on the way in.
+          if (this.up(h.owner, 'r') && h.dragged >= 100) {
+            const chunks = Math.floor(h.dragged / 100);
+            h.dragged -= chunks * 100;
+            this.hit(t, SCRAPE_DMG_PER_100 * chunks, h.owner, 0xbbccdd);
+            this.onDamageDealt(h.owner, t);
+          }
+          if (d < 56 || time - h.bornAt > 4000) {
+            this.body(t).setVelocity(0, 0);
+            this.hooks.splice(i, 1);
+            continue;
+          }
+        }
+        if (time - h.bornAt > 6000) { this.hooks.splice(i, 1); continue; }
+      }
+    }
+  }
+
+  /** Grapple's catch window, and the throw that ends it. */
+  private updateGrapple(): void {
+    const time = this.now;
+    for (const owner of ['player', 'npc'] as const) {
+      const s = this.side(owner);
+      const f = this.fighter(owner);
+      if (!f.active) continue;
+
+      // Still lunging: grab the first thing we run through.
+      if (!s.grabbed && s.grappleUntil > time) {
+        for (const t of this.targetsOf(owner)) {
+          if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > 46) continue;
+          s.grabbed = t;
+          s.grabUntil = time + GRAPPLE_HOLD_MS;
+          s.dashUntil = 0;
+          s.grappleUntil = 0;
+          this.body(f).setVelocity(0, 0);
+          if (owner === 'player') this.api.isDodging = false;
+          this.api.showFloatingText(t.x, t.y - 34, '🤜 Caught!', '#ffaa66');
+          this.fx(owner).rake(t.x, t.y, Math.atan2(t.y - f.y, t.x - f.x), 50, 3, 8, this.tones(owner));
+          break;
+        }
+      }
+
+      if (!s.grabbed) continue;
+      const v = s.grabbed;
+      if (!v.active || v.hp <= 0) { s.grabbed = null; continue; }
+
+      if (time < s.grabUntil) {
+        // Held off the ground beside the beast — they cannot move, and neither can it.
+        const a = Math.atan2(v.y - f.y, v.x - f.x);
+        v.setPosition(f.x + Math.cos(a) * 40, f.y + Math.sin(a) * 40);
+        this.body(v).setVelocity(0, 0);
+        v.earthStunnedUntil = Math.max(v.earthStunnedUntil, s.grabUntil);
+        continue;
+      }
+
+      // Time's up: hurl them at the cursor (or at open ground, for the npc).
+      const aimX = owner === 'player' ? this.api.aimX : this.arenaW() - f.x;
+      const aimY = owner === 'player' ? this.api.aimY : this.arenaH() - f.y;
+      const a = Math.atan2(aimY - f.y, aimX - f.x);
+      this.flings.push({
+        owner, victim: v,
+        vx: Math.cos(a) * GRAPPLE_FLING_SPEED,
+        vy: Math.sin(a) * GRAPPLE_FLING_SPEED,
+        until: time + 700,
+        slammed: false,
+      });
+      this.avatar(owner)?.play('slam', a);
+      this.fx(owner).pounce(f.x, f.y, f.x + Math.cos(a) * 90, f.y + Math.sin(a) * 90, 6, this.tones(owner));
+      this.api.showFloatingText(v.x, v.y - 30, '🌀 Thrown!', '#ffcc88');
+      s.grabbed = null;
+    }
+  }
+
+  /** Flung bodies, and the wall they may find. */
+  private updateFlings(): void {
+    const time = this.now;
+    const W = this.arenaW(), H = this.arenaH();
+    const PAD = 34;
+    for (let i = this.flings.length - 1; i >= 0; i--) {
+      const fl = this.flings[i];
+      const v = fl.victim;
+      if (!v.active || v.hp <= 0 || time > fl.until) { this.flings.splice(i, 1); continue; }
+      if (!v.knockbackImmune && !v.unstoppable) this.body(v).setVelocity(fl.vx, fl.vy);
+      // F+ Wall Slam.
+      if (!fl.slammed && this.up(fl.owner, 'f')
+        && (v.x <= PAD || v.x >= W - PAD || v.y <= PAD || v.y >= H - PAD)) {
+        fl.slammed = true;
+        this.hit(v, WALL_SLAM_DMG, fl.owner, 0xff3311);
+        this.onDamageDealt(fl.owner, v);
+        this.stun(v, WALL_SLAM_STUN_MS, fl.owner);
+        this.fx(fl.owner).frag(v.x, v.y, 62, { tones: BEAST_TONES, shards: 10, smoke: 2, crater: false });
+        this.api.scene.cameras.main.shake(260, 0.008);
+        this.api.showFloatingText(v.x, v.y - 40, '🧱 WALL SLAM', '#ff5533');
+        this.flings.splice(i, 1);
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Cross-ability hooks
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * F+ Enhanced Scent: hits landed while you are standing in the quarry's own tracks leave
+   * them slower. Routed through one place so every damage source in the kit gets it.
+   */
+  private onDamageDealt(owner: Owner, victim: Fighter): void {
+    if (!this.up(owner, 'f') || !this.onOwnTrail(owner)) return;
+    this.slowVictim(owner, SCENT_SLOW_MULT, SCENT_SLOW_MS);
+    this.api.showFloatingText(victim.x, victim.y - 22, '🐾 −20%', '#ffbb77');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Input (player only)
+  // ═══════════════════════════════════════════════════════════════════════════
 
   /** The slot Beastling is bound over this match, or null when it isn't bound. */
   private pupSlot(): 'e' | 'r' | 'f' | 'q' | null {
@@ -269,97 +1490,485 @@ export class HuntKit {
     return null;
   }
 
+  handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
+    if (this.api.elementId !== 'hunt') return;
+    const s = this.sides.player;
+    const p = this.api.player;
+
+    // Mastery: Beastling takes over whichever human-form slot it is bound to. Runs first —
+    // JustDown() clears the flag, so testing the bind afterwards would swallow the keypress.
+    const pup = this.pupSlot();
+    if (pup && s.form === 'human') {
+      const key = pup === 'e' ? this.api.eKey : pup === 'r' ? this.api.rKey
+        : pup === 'f' ? this.api.fKey : this.api.qKey;
+      if (Phaser.Input.Keyboard.JustDown(key)) this.trySummonPup(time);
+    }
+
+    // The spirit has the wheel. Nothing you press matters for three seconds.
+    if (s.spiritUntil > time) return;
+
+    const ctx = this.api.buildPlayerContext(mouseX, mouseY);
+    const clicked = pointer.isDown && !this.api.pointerWasDown;
+    const rightClicked = pointer.rightButtonDown() && !this.rightWasDown;
+    this.rightWasDown = pointer.rightButtonDown();
+
+    if (s.form === 'human') {
+      if (clicked) p.castAbility('hunt-crossbow', ctx);
+
+      // E: Blast. Plain tap without E+, hold-and-release with it.
+      if (this.up('player', 'e')) {
+        if (Phaser.Input.Keyboard.JustDown(this.api.eKey) && s.blastCharges > 0 && pup !== 'e') {
+          s.charging = true;
+          s.chargeStartedAt = time;
+        }
+        if (s.charging && !this.api.eKey.isDown) {
+          const held = time - s.chargeStartedAt;
+          s.charging = false;
+          if (p.getCooldownRatio('hunt-blast') >= 1) {
+            p.triggerCooldown('hunt-blast');
+            this.doBlast(mouseX, mouseY, held, 'player');
+            this.reloadCrossbow('player');
+          }
+        }
+      } else if (pup !== 'e' && Phaser.Input.Keyboard.JustDown(this.api.eKey)) {
+        if (s.blastCharges > 0 && p.castAbility('hunt-blast', ctx)) this.reloadCrossbow('player');
+      }
+
+      if (pup !== 'r' && Phaser.Input.Keyboard.JustDown(this.api.rKey)) {
+        if (p.castAbility('hunt-grenade', ctx)) this.reloadCrossbow('player');
+      }
+      if (pup !== 'f' && Phaser.Input.Keyboard.JustDown(this.api.fKey)) {
+        if (p.castAbility('hunt-trail', ctx)) this.reloadCrossbow('player');
+      }
+      // Q is the beast's clock — unless Q+ is owned, in which case it is the door to hybrid.
+      if (pup !== 'q' && Phaser.Input.Keyboard.JustDown(this.api.qKey) && this.api.hasUpgrade('q')) {
+        this.enterHybrid('player');
+      }
+      return;
+    }
+
+    if (s.form === 'beast') {
+      if (clicked) p.castAbility('hunt-slash', ctx);
+      if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('hunt-pounce', ctx);
+      if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('hunt-roar', ctx);
+      if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('hunt-grapple', ctx);
+      if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('hunt-blood-scent', ctx);
+      return;
+    }
+
+    // Hybrid.
+    if (clicked && s.pumpingUntil <= time) p.castAbility('hunt-hybrid-shotgun', ctx);
+    // Click+ Shotgun Pump: right-click racks another shell in.
+    if (rightClicked && this.api.hasUpgrade('click') && s.pumpingUntil <= time) {
+      s.pumpingUntil = time + PUMP_MS;
+      this.api.scene.time.delayedCall(PUMP_MS, () => {
+        if (this.sides.player.form !== 'hybrid') return;
+        const st = this.sides.player;
+        st.pumps++;
+        if (st.pumps > PUMP_SAFE_MAX) {
+          st.overloaded = true;
+          st.pumps = PUMP_SAFE_MAX + 1;
+          this.api.showFloatingText(p.x, p.y - 40, '⚠️ OVERPACKED', '#ff4433');
+        } else {
+          this.api.showFloatingText(p.x, p.y - 34, `🔧 Pump ×${st.pumps}`, '#ffdd99');
+        }
+        this.pfx.smoke(p.x, p.y - 6, 1, 8, 7);
+      });
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('hunt-roll', ctx);
+    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) {
+      // A hook in the air recasts to reel; only a fresh throw pays the cooldown.
+      if (this.hooks.some((h) => h.owner === 'player')) this.doHook(mouseX, mouseY, 'player');
+      else p.castAbility('hunt-hook', ctx);
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('hunt-adrenaline', ctx);
+    if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('hunt-give-in', ctx);
+  }
+
+  private rightWasDown = false;
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Per-side simulation
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  private updateSide(owner: Owner, time: number, delta: number): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!this.isHunt(owner) || !f.active) return;
+
+    // Blast charges tick back up one at a time.
+    if (s.blastCharges < BLAST_MAX_CHARGES && time >= s.blastRechargeAt) {
+      s.blastCharges++;
+      if (s.blastCharges < BLAST_MAX_CHARGES) s.blastRechargeAt = time + BLAST_RECHARGE_MS;
+    }
+
+    // The beast clock. It runs in human form only; hybrid form has locked the door.
+    if (s.form === 'human') {
+      if (s.nextBeastAt === 0) s.nextBeastAt = time + BEAST_FIRST_DELAY_MS;
+      if (time >= s.nextBeastAt) this.enterBeast(owner, false);
+    } else if (s.form === 'beast' && !s.permanentBeast && time >= s.beastUntil) {
+      this.leaveBeast(owner);
+    }
+
+    // Blood Moon fading out.
+    if (s.moonUntil > 0 && time > s.moonUntil) s.moonUntil = 0;
+    // The slow channel keeps only the strongest live slow, so it has to be released.
+    if (s.slowUntil <= time) s.slowMult = 1;
+
+    // Alpha and Roar keep their own armour; recomputed from scratch each frame so nothing
+    // sticks after the effect ends. `write` only touches the fighter while hunt has an
+    // opinion, so a neutral frame leaves whatever else set the field (Rebirth, Lust) alone.
+    let dr = 1;
+    if (s.alpha) dr *= ALPHA_DR_MULT;
+    if (s.roarDrUntil > time) dr *= ROAR_DR_MULT;
+    if (this.api.hasPerk(owner, 'rage') && s.form === 'beast') dr *= 0.5;
+    if (dr !== 1 || this.wroteDr[owner]) { f.incomingDamageMultiplier = dr; this.wroteDr[owner] = dr !== 1; }
+
+    // Attack speed: Blood Scent and Alpha both shorten cooldowns; they multiply.
+    let cd = 1;
+    if (s.alpha) cd *= ALPHA_CD_MULT;
+    if (s.scentUntil > time) cd *= BLOOD_SCENT_HASTE;
+    if (cd !== 1 || this.wroteCd[owner]) { f.cooldownMult = cd; this.wroteCd[owner] = cd !== 1; }
+
+    // Adrenaline and the crash it books in.
+    let outgoing = 1;
+    if (s.adrenalineUntil > time) {
+      outgoing *= ADRENALINE_BOOST;
+    } else if (s.adrenalineUntil > 0) {
+      // The buff just ran out: the crash starts now (unless it was pushed back by F+).
+      s.adrenalineUntil = 0;
+      s.crashUntil = time + CRASH_MS;
+      const owed = s.crashDelays * CRASH_DELAY_HP;
+      s.crashDelays = 0;
+      this.api.showFloatingText(f.x, f.y - 36, '💤 Crash', '#8899aa');
+      if (owed > 0) {
+        f.applySelfDamage(owed);
+        this.api.showFloatingText(f.x, f.y - 52, `💔 −${owed} (the bill)`, '#ff4466');
+      }
+    }
+    if (s.crashUntil > time) outgoing *= CRASH_MULT;
+    if (outgoing !== 1 || this.wroteOut[owner]) { f.outgoingDamageMult = outgoing; this.wroteOut[owner] = outgoing !== 1; }
+
+    // Roll invincibility drops the moment the tumble ends.
+    if (s.rollInvincible && s.rollUntil <= time) {
+      s.rollInvincible = false;
+      f.isInvincible = false;
+    }
+
+    // Dash windows: hand movement back when they close.
+    if (s.dashUntil > 0 && time >= s.dashUntil) {
+      s.dashUntil = 0;
+      if (!s.grabbed) this.body(f).setVelocity(0, 0);
+      if (owner === 'player') this.api.isDodging = false;
+    }
+
+    // Hybrid passive: the beast's spirit takes the controls every ten seconds.
+    if (s.form === 'hybrid' && s.spiritUntil <= time && time >= (s.nextSpiritAt || time + 1)) {
+      s.spiritUntil = time + SPIRIT_MS;
+      s.nextSpiritAt = time + SPIRIT_INTERVAL_MS + SPIRIT_MS;
+      s.spiritSlashAt = 0;
+      this.fx(owner).howl(f.x, f.y, 80, 520, 9, BEAST_TONES);
+      this.api.showFloatingText(f.x, f.y - 44, '👹 THE BEAST TAKES OVER', '#ff5533');
+    }
+    if (s.form === 'hybrid' && s.nextSpiritAt === 0) s.nextSpiritAt = time + SPIRIT_INTERVAL_MS;
+    // The latch is checked outside the form test as well, so a Give In mid-possession still
+    // hands the controls back instead of leaving the player pinned by a stale isDodging.
+    if (s.spiritUntil > time && s.form === 'hybrid') {
+      this.possessing[owner] = true;
+      this.drivePossessed(owner, time);
+    } else if (this.possessing[owner]) {
+      this.possessing[owner] = false;
+      s.spiritUntil = 0;
+      if (owner === 'player') this.api.isDodging = false;
+      this.api.showFloatingText(f.x, f.y - 40, 'You have it back.', '#aab4c0');
+    }
+    void delta;
+  }
+
   /**
-   * True when the given normal-form slot is displaced by Beastling this match, so
-   * ArenaScene's hunt input block must skip that slot's own ability.
+   * The three seconds the spirit owns. It runs straight at whatever is nearest and swings —
+   * no abilities, no steering. Velocity is set here, after ArenaScene resolved WASD, so this
+   * always wins the frame.
    */
-  isSlotBound(slot: 'e' | 'r' | 'f' | 'q'): boolean {
-    return this.pupSlot() === slot;
+  private drivePossessed(owner: Owner, time: number): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    const quarry = this.quarryOf(owner);
+    if (owner === 'player') this.api.isDodging = true;
+    if (!quarry) { this.body(f).setVelocity(0, 0); return; }
+    const dx = quarry.x - f.x, dy = quarry.y - f.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const rush = f.speed * 1.35;
+    if (d > SLASH_RANGE * 0.7) this.body(f).setVelocity((dx / d) * rush, (dy / d) * rush);
+    else this.body(f).setVelocity(0, 0);
+    if (time >= s.spiritSlashAt && d <= SLASH_RANGE) {
+      s.spiritSlashAt = time + 380;
+      this.doSlash(quarry.x, quarry.y, owner);
+    }
   }
 
-  handleInput(time: number): void {
-    const slot = this.pupSlot();
-    if (!slot) return;
-    // The pup is whistled up as a human — no transforming with a hand in your mouth.
-    if (this.api.beastForm || this.api.hybridForm) return;
-    const key = slot === 'e' ? this.api.eKey
-      : slot === 'r' ? this.api.rKey
-        : slot === 'f' ? this.api.fKey : this.api.qKey;
-    if (Phaser.Input.Keyboard.JustDown(key)) this.trySummon(time);
+  /** Primal Fear and the Hunt stun, both enforced by taking the body over. */
+  private updateControl(time: number): void {
+    for (const owner of ['player', 'npc'] as const) {
+      const s = this.side(owner);
+      if (!this.isHunt(owner)) continue;
+      const f = this.fighter(owner);
+      for (const v of this.targetsOf(owner)) {
+        if (this.isStunned(v)) { this.body(v).setVelocity(0, 0); continue; }
+        if (s.fearUntil > time && !v.unstoppable) {
+          // Backs turned and running. Not a slow — they lose the wheel entirely.
+          const a = Math.atan2(v.y - f.y, v.x - f.x);
+          this.body(v).setVelocity(Math.cos(a) * v.speed * 1.1, Math.sin(a) * v.speed * 1.1);
+          v.facingAngle = a + Math.PI;
+        }
+      }
+    }
   }
 
-  /** 0 = just summoned, 1 = ready. While a pup is out the bar counts down its 15s instead. */
-  getBeastlingCooldownRatio(time: number): number {
-    const mine = this.beastlings.find((b) => b.owner === 'player');
-    if (mine) return Phaser.Math.Clamp((mine.endsAt - time) / BEASTLING_DURATION_MS, 0, 1);
-    return Math.min(1, (time - this.pupLastCastAt) / BEASTLING_COOLDOWN_MS);
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Speed multipliers — pulled by ArenaScene before movement resolves
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /** Every hunt contribution to the local player's speed, in one number. */
+  getPlayerSpeedMult(time: number): number {
+    let m = 1;
+    if (this.api.elementId === 'hunt') {
+      const s = this.sides.player;
+      if (s.form === 'beast') m *= 1.5;
+      else if (s.form === 'hybrid') m *= 1.25;
+      if (this.onOwnTrail('player')) {
+        m *= TRAIL_SPEED_MULT;
+        if (this.api.hasUpgrade('f') && s.form === 'beast') m *= SCENT_BEAST_SPEED_MULT;
+      }
+      if (s.trackSpeedUntil > time) m *= TRACK_SPEED_MULT;
+      if (s.scentUntil > time) m *= BLOOD_SCENT_SPEED;
+      if (s.adrenalineUntil > time) m *= ADRENALINE_BOOST;
+      if (s.crashUntil > time) m *= CRASH_MULT;
+      if (s.spiritUntil > time) m = 0;   // the spirit drives the body itself
+    }
+    // Debuffs the opposing hunter has put on us.
+    const foe = this.sides.npc;
+    if (this.api.npcElementId === 'hunt' && foe.slowUntil > time) m *= foe.slowMult;
+    if (time < this.playerRoarSlowUntil) m *= PUP_ROAR_SLOW_MULT;
+    return m;
   }
 
-  private trySummon(time: number): void {
-    if (this.beastlings.some((b) => b.owner === 'player')) return;
-    if (time - this.pupLastCastAt < BEASTLING_COOLDOWN_MS) return;
-    this.pupLastCastAt = time;
-    this.spawn('player', time);
-    // Private timer, so this never flows through onCastStamp — broadcast it by hand.
-    this.api.broadcastMasteryCast('beastling');
-    const { player } = this.api;
-    this.api.showFloatingText(player.x, player.y - 44, '🐕 Beastling!', '#d9a066');
+  /** Every hunt contribution to the npc's speed. */
+  getNpcSpeedMult(time: number): number {
+    let m = 1;
+    if (this.api.npcElementId === 'hunt') {
+      const s = this.sides.npc;
+      if (s.form === 'beast') m *= 1.5;
+      if (this.onOwnTrail('npc')) m *= TRAIL_SPEED_MULT;
+      if (s.scentUntil > time) m *= BLOOD_SCENT_SPEED;
+    }
+    const mine = this.sides.player;
+    if (this.api.elementId === 'hunt' && mine.slowUntil > time) m *= mine.slowMult;
+    if (time < this.npcRoarSlowUntil) m *= PUP_ROAR_SLOW_MULT;
+    return m;
   }
 
-  /** Online replay: the remote Hunt player whistled up their own pup. */
-  doNpcBeastling(): void {
-    if (this.beastlings.some((b) => b.owner === 'npc')) return;
-    this.spawn('npc', this.api.scene.time.now);
+  // ═══════════════════════════════════════════════════════════════════════════
+  // HUD
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Cooldown-bar fill for any hunt slot. Most are plain ability cooldowns; Blast shows its
+   * two charges as a part-filled bar, and Q shows whichever half of the beast cycle is running.
+   */
+  getBarRatio(abilityId: string, time: number): number {
+    const s = this.sides.player;
+    const p = this.api.player;
+    if (abilityId === 'hunt-blast') {
+      const partial = s.blastCharges < BLAST_MAX_CHARGES
+        ? Phaser.Math.Clamp(1 - (s.blastRechargeAt - time) / BLAST_RECHARGE_MS, 0, 1)
+        : 0;
+      return Phaser.Math.Clamp((s.blastCharges + partial) / BLAST_MAX_CHARGES, 0, 1);
+    }
+    if (abilityId === 'hunt-release-beast') {
+      if (s.form === 'beast' && !s.permanentBeast) {
+        return Phaser.Math.Clamp((s.beastUntil - time) / BEAST_DURATION_MS, 0, 1);
+      }
+      if (s.form !== 'human') return 1;
+      const span = s.nextBeastAt > time + BEAST_FIRST_DELAY_MS ? BEAST_RECHARGE_MS : BEAST_FIRST_DELAY_MS;
+      return Phaser.Math.Clamp(1 - (s.nextBeastAt - time) / span, 0, 1);
+    }
+    if (abilityId === 'hunt-give-in') return 1;
+    return p.getCooldownRatio(abilityId);
   }
 
-  private spawn(owner: 'player' | 'npc', time: number): void {
-    const { scene } = this.api;
-    const f = owner === 'player' ? this.api.player : this.api.npc;
-    const gfx = scene.add.graphics().setDepth(6);
-    this.beastlings.push({
-      owner,
-      gfx,
-      x: f.x - 28,
-      y: f.y + 14,
-      endsAt: time + BEASTLING_DURATION_MS,
-      nextBiteAt: time + BITE_INTERVAL_MS,
-      heading: 0,
-      gait: 0,
-      tailPhase: 0,
-      earLag: 0,
-      blinkUntil: 0,
-      nextBlinkAt: time + 1800,
-      lungeUntil: 0,
-      carrying: null,
-      carryFuseLeftMs: 0,
-    });
-    // Whistled up: a scatter of paw-scuffed dirt and the pup standing in it.
-    const fx = this.fx(owner);
-    fx.bloom(f.x - 28, f.y + 14, 22, 7, 5, this.tones(owner));
-    fx.smoke(f.x - 28, f.y + 14, 3, 16, 4);
-    this.avatar(owner)?.play('sweep');
+  /** Status-tray entries Hunt owns on the local player. */
+  private updateIndicators(time: number): void {
+    const s = this.sides.player;
+    if (this.api.elementId === 'hunt' && s.adrenalineUntil > time) {
+      this.api.setStatusIndicator('hunt-adrenaline', {
+        name: 'Adrenaline', emoji: '💉', color: 0x66ff99,
+        description: '+33% speed and damage. The crash is coming.',
+        until: s.adrenalineUntil, count: s.crashDelays > 0 ? s.crashDelays : undefined,
+        suffix: s.crashDelays > 0 ? ' delays' : undefined,
+      });
+    } else {
+      this.api.setStatusIndicator('hunt-adrenaline', null);
+    }
+    if (this.api.elementId === 'hunt' && s.crashUntil > time) {
+      this.api.setStatusIndicator('hunt-crash', {
+        name: 'Crash', emoji: '💤', color: 0x8899aa,
+        description: '−25% speed and damage while the adrenaline wears off.',
+        until: s.crashUntil,
+      });
+    } else {
+      this.api.setStatusIndicator('hunt-crash', null);
+    }
+    // The opponent's roar on us.
+    const foe = this.sides.npc;
+    if (this.api.npcElementId === 'hunt' && foe.fearUntil > time) {
+      this.api.setStatusIndicator('hunt-fear', {
+        name: 'Primal Fear', emoji: '😱', color: 0xff6644,
+        description: 'You are running from it and you cannot stop.',
+        until: foe.fearUntil,
+      });
+    } else {
+      this.api.setStatusIndicator('hunt-fear', null);
+    }
+    if (this.playerRoarSlowUntil > time) {
+      this.api.setStatusIndicator('beastling-roar', {
+        name: 'Beastling Roar', emoji: '🐕', color: 0xd9a066,
+        description: '20% slower — a beastling roared at you.',
+        until: this.playerRoarSlowUntil, count: 20, suffix: '%',
+      });
+    } else {
+      this.api.setStatusIndicator('beastling-roar', null);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Painting
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  private ensureLayers(): void {
+    const scene = this.api.scene;
+    if (!this.groundGfx) this.groundGfx = scene.add.graphics().setDepth(2);
+    if (!this.airGfx) this.airGfx = scene.add.graphics().setDepth(8);
+    if (!this.skyGfx) this.skyGfx = scene.add.graphics().setDepth(18).setScrollFactor(0);
+  }
+
+  private paintWorld(): void {
+    this.ensureLayers();
+    const g = this.groundGfx!;
+    const a = this.airGfx!;
+    const sky = this.skyGfx!;
+    const t = this.vizT;
+    const time = this.now;
+    g.clear(); a.clear(); sky.clear();
+
+    // ── Ground ──
+    for (const c of this.trails) {
+      HuntFx.drawTrail(g, this.col(c.owner), this.tones(c.owner), c.x, c.y, TRAIL_RADIUS, c.angle,
+        t, (c.expiresAt - time) / c.durationMs);
+    }
+    for (const p of this.sears) {
+      HuntFx.drawSear(g, this.col(p.owner), this.tones(p.owner), p.x, p.y, p.angle, p.len,
+        t, (p.expiresAt - time) / p.durationMs);
+    }
+
+    // ── Air ──
+    for (const h of this.hooks) {
+      const f = this.fighter(h.owner);
+      HuntFx.drawHookChain(a, this.col(h.owner), this.tones(h.owner), f.x, f.y, h.x, h.y, t, !!h.latched);
+    }
+    for (const gr of this.grenades) {
+      if (gr.carried) continue;
+      HuntFx.drawGrenade(a, this.col(gr.owner), this.tones(gr.owner), gr.x, gr.y, t,
+        gr.explodeAt - time, false, gr.spin, gr.stopped);
+    }
+    for (const b of this.bolts) {
+      HuntFx.drawBolt(a, this.col(b.owner), this.tones(b.owner), b.x, b.y,
+        Math.atan2(b.vy, b.vx), 1, 0, b.bomb);
+    }
+    for (const s of this.stuck) {
+      const bite = Phaser.Math.Clamp((time - s.stuckAt) / 200, 0, 1);
+      HuntFx.drawBolt(a, this.col(s.owner), this.tones(s.owner),
+        s.victim.x + s.offX, s.victim.y + s.offY, s.angle, 0.85, bite, false);
+    }
+    // Hybrid pump gauge, over the local player's shoulder.
+    const ps = this.sides.player;
+    if (this.api.elementId === 'hunt' && ps.form === 'hybrid' && this.api.hasUpgrade('click')) {
+      HuntFx.drawPumpGauge(a, this.pcol, this.api.player.x, this.api.player.y - 46,
+        Math.min(ps.pumps, 4), ps.overloaded, t);
+    }
+    // Mine Blast winding up: a ring closing on the barrel that snaps white at full charge.
+    if (ps.charging) {
+      const p = this.api.player;
+      const k = Phaser.Math.Clamp((time - ps.chargeStartedAt) / MINE_MAX_CHARGE_MS, 0, 1);
+      const ang = Math.atan2(this.api.aimY - p.y, this.api.aimX - p.x);
+      const mx = p.x + Math.cos(ang) * 26;
+      const my = p.y + Math.sin(ang) * 26;
+      const tones = this.tones('player');
+      a.lineStyle(2 + k * 2, this.pcol(k >= 1 ? HUNT.white : tones.wound), 0.4 + k * 0.5);
+      a.strokeCircle(mx, my, 30 - k * 18 + (k >= 1 ? Math.sin(t * 22) * 2 : 0));
+      a.fillStyle(this.pcol(tones.lit), 0.25 + k * 0.6);
+      a.fillCircle(mx, my, 3 + k * 7);
+      // Powder building in the barrel — four packing ticks around the ring.
+      for (let i = 0; i < 4; i++) {
+        const ta = (i / 4) * Math.PI * 2 + t * 2;
+        const tr = 30 - k * 18;
+        a.fillStyle(this.pcol(tones.spark), 0.35 + k * 0.5);
+        a.fillCircle(mx + Math.cos(ta) * tr, my + Math.sin(ta) * tr, 1.2 + k * 1.6);
+      }
+      // The generic yellow charge bar under the HP bar reads the same number.
+      this.api.player.chargeRatio = k;
+    } else if (this.api.elementId === 'hunt' && this.api.player.chargeRatio > 0 && this.chargedLastFrame) {
+      this.api.player.chargeRatio = 0;
+    }
+    this.chargedLastFrame = ps.charging;
+
+    // ── Sky ──
+    const moon = Math.max(
+      this.sides.player.moonUntil > time ? 1 : 0,
+      this.sides.npc.moonUntil > time ? 0.8 : 0,
+    );
+    if (moon > 0) {
+      HuntFx.drawBloodMoonSky(sky, this.pcol, this.arenaW(), this.arenaH(), t, moon);
+    }
   }
 
   // ── Character rig ──────────────────────────────────────────────────────────
 
   /**
-   * Builds (on first frame) and drives the fist-and-ears avatar for whichever fighters are hunt.
-   * The player faces the cursor; the NPC faces whoever it is fighting. Blood Pact's aura lives
-   * here too, at a lower depth than anything a cast raises, so the two stack into one
-   * silhouette rather than fighting each other.
+   * Hands the character its kit for the frame: which weapon, how far the crossbow is spanned,
+   * and how many shells are still in the stock loops.
+   *
+   * The crossbow's span is the ability's own cooldown, so the string visibly hauls back over
+   * the reload and the bolt slides into the groove as it finishes — which makes "any other
+   * ability reloads it instantly" something you can *watch* happen rather than read in a
+   * tooltip. Beast form carries nothing; it has claws.
    */
+  private driveWeapon(owner: Owner, av: HuntAvatar): void {
+    const s = this.side(owner);
+    if (s.form === 'beast') { av.setWeapon(null); return; }
+    if (s.form === 'hybrid') {
+      av.setWeapon('shotgun');
+      av.setShells(s.overloaded ? 4 : s.pumps);
+      return;
+    }
+    av.setWeapon('crossbow');
+    av.setLoad(this.fighter(owner).getCooldownRatio('hunt-crossbow'));
+  }
+
   private updateAvatars(delta: number): void {
     const { scene, player, npc } = this.api;
+    const time = this.now;
 
     if (this.api.elementId === 'hunt' && player?.active) {
       if (!this.playerAvatar) this.playerAvatar = new HuntAvatar(scene, this.pcol, HUNTER_TONES);
+      const s = this.sides.player;
       const av = this.playerAvatar;
       av.setFacing(Math.atan2(this.api.aimY - player.y, this.api.aimX - player.x));
-      av.setForm(this.formOf('player'));
-      av.setMoon(this.api.bloodMoonActive);
-      // Beast and Blood Moon are both "bigger, faster, angrier" — the rig says so.
-      av.setIntensity(this.api.bloodMoonActive ? 1.45 : this.api.beastForm ? 1.3 : this.api.hybridForm ? 1.15 : 1);
+      av.setForm(s.form);
+      av.setMoon(this.moonUp('player'));
+      av.setIntensity(this.moonUp('player') ? 1.45 : s.form === 'beast' ? 1.3 : s.form === 'hybrid' ? 1.15 : 1);
       av.setMastered(this.api.masteryActive);
+      this.driveWeapon('player', av);
       av.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
     } else if (this.playerAvatar) {
       this.playerAvatar.destroy();
@@ -368,159 +1977,58 @@ export class HuntKit {
 
     if (this.api.npcElementId === 'hunt' && npc?.active) {
       if (!this.npcAvatar) this.npcAvatar = new HuntAvatar(scene, this.ncol, NPC_TONES);
+      const s = this.sides.npc;
       const av = this.npcAvatar;
       av.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
-      av.setForm(this.formOf('npc'));
-      av.setMoon(this.api.npcBloodMoonActive);
-      av.setIntensity(this.api.npcBloodMoonActive ? 1.4 : this.api.npcBeastForm ? 1.25 : 1);
+      av.setForm(s.form);
+      av.setMoon(this.moonUp('npc'));
+      av.setIntensity(this.moonUp('npc') ? 1.4 : s.form === 'beast' ? 1.25 : 1);
       av.setMastered(this.api.npcMasteryActive);
+      this.driveWeapon('npc', av);
       av.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
     } else if (this.npcAvatar) {
       this.npcAvatar.destroy();
       this.npcAvatar = null;
     }
 
-    // Blood Pact: a live blood aura for as long as the pact is up.
-    const now = scene.time.now;
+    // Blood Scent clings to whoever caught it.
     for (const owner of ['player', 'npc'] as const) {
-      const f = owner === 'player' ? player : npc;
-      if (this.pactUntil[owner] > now && f?.active) {
-        if (!this.pactAura[owner]) {
-          this.pactAura[owner] = new HuntAura(scene, this.col(owner), BEAST_TONES, 34, 0.9, 4, 7);
+      const f = this.fighter(owner);
+      if (this.side(owner).scentUntil > time && f?.active) {
+        if (!this.scentAura[owner]) {
+          this.scentAura[owner] = new HuntAura(scene, this.col(owner), BEAST_TONES, 34, 0.9, 4, 7);
         }
-        this.pactAura[owner]!.setTones(this.tones(owner));
-        this.pactAura[owner]!.update(delta, f.x, f.y, f.alpha);
-      } else if (this.pactAura[owner]) {
-        this.pactAura[owner]!.destroy();
-        this.pactAura[owner] = null;
+        this.scentAura[owner]!.setTones(this.tones(owner));
+        this.scentAura[owner]!.update(delta, f.x, f.y, f.alpha);
+      } else if (this.scentAura[owner]) {
+        this.scentAura[owner]!.destroy();
+        this.scentAura[owner] = null;
       }
     }
   }
 
-  // ── Cast-site effects, called from ArenaScene's hunt blocks ────────────────
-
-  /** Fire one of the rig's arm gestures for a side. Safe when that side isn't hunt. */
-  gesture(owner: 'player' | 'npc', g: 'punch' | 'dash' | 'slam' | 'raise' | 'sweep' | 'clap' | 'flex', angle?: number): void {
-    this.avatar(owner)?.play(g, angle);
-  }
-
-  /** Shotgun (or hybrid silver shot): recoil, muzzle sheet, and the arm that threw it. */
-  fxShotgun(owner: 'player' | 'npc', x: number, y: number, angle: number, silver: boolean): void {
-    this.gesture(owner, 'punch', angle);
-    const tones = silver ? SILVER_TONES : this.tones(owner);
-    this.fx(owner).muzzleBlast(x + Math.cos(angle) * 18, y + Math.sin(angle) * 18, angle, silver ? 1.2 : 1, 9, tones);
-  }
-
-  /** Grenade leaving the hand: an overhand throw plus a puff of powder at the release point. */
-  fxGrenadeThrow(owner: 'player' | 'npc', x: number, y: number, angle: number): void {
-    this.gesture(owner, 'slam', angle);
-    this.fx(owner).smoke(x + Math.cos(angle) * 16, y + Math.sin(angle) * 16, 2, 10, 5);
-  }
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Mastery — Weak Points
+  // ═══════════════════════════════════════════════════════════════════════════
 
   /**
-   * Grenade detonation. `heavy` scales the *content* — a Blood Moon frag throws more casing,
-   * more smoke and holds longer, rather than simply drawing a wider circle.
+   * Damage multiplier for a hit that came in from (hitX, hitY) against `target`: 2 inside the
+   * sweeping wedge, 1 everywhere else.
    */
-  fxGrenadeBoom(owner: 'player' | 'npc', x: number, y: number, radius: number, isHeal: boolean, heavy: boolean): void {
-    const fx = this.fx(owner);
-    if (isHeal) {
-      // A field dressing rather than a frag: no casing, no crater, and it blooms inward.
-      fx.bloom(x, y, radius * 0.5, 9, 6, { crust: 0x1f3a18, body: 0x2f8a2f, wound: 0x44cc44, lit: 0x88ff88, spark: HUNT.white });
-      fx.ring(x, y, radius * 0.2, radius, 0x44cc44, 460, 4.5, 6);
-      return;
-    }
-    fx.frag(x, y, radius * 0.72, {
-      tones: this.tones(owner),
-      shards: heavy ? 20 : 12,
-      smoke: heavy ? 5 : 3,
-      duration: heavy ? 620 : 460,
-    });
-    this.api.scene.cameras.main.shake(heavy ? 220 : 140, heavy ? 0.007 : 0.004);
+  weakPointMult(target: Fighter, hitX: number, hitY: number, attacker: Owner): number {
+    if (attacker === 'player' ? !this.api.masteryActive : !this.api.npcMasteryActive) return 1;
+    const ang = Math.atan2(hitY - target.y, hitX - target.x);
+    const diff = Math.abs(Phaser.Math.Angle.Wrap(ang - this.weakAngle));
+    return diff <= WEAK_HALF_ANGLE ? WEAK_DMG_MULT : 1;
   }
 
-  /** Shriek-converted shrapnel: a hard silver burst rather than an orange one. */
-  fxShrapnel(owner: 'player' | 'npc', x: number, y: number): void {
-    const fx = this.fx(owner);
-    fx.flash(x, y, 16, 9, SILVER_TONES);
-    fx.shrapnel(x, y, 14, 90, 8, SILVER_TONES);
-    fx.ring(x, y, 6, 60, HUNT.silver, 380, 3.5, 7);
-    fx.smoke(x, y, 2, 16, 6);
-  }
-
-  /** Beast-form claw: the lunge smear, then a three-gash rake where the claw landed. */
-  fxSlash(owner: 'player' | 'npc', fromX: number, fromY: number, x: number, y: number, angle: number): void {
-    const fx = this.fx(owner);
-    const tones = this.tones(owner);
-    this.gesture(owner, 'sweep', angle);
-    fx.pounce(fromX, fromY, x, y, 5, tones);
-    fx.rake(x, y, angle, 74, 3, 8, tones);
-    fx.splatter(x, y, 7, { speed: 190, angle, spread: 1.1, size: 3, life: 480, depth: 8, tones: BEAST_TONES });
-  }
-
-  /** Hunter's Trail switching on: the scent catching, drawn as a rake of gouges underfoot. */
-  fxTrailStart(owner: 'player' | 'npc', x: number, y: number): void {
-    const fx = this.fx(owner);
-    this.gesture(owner, 'flex');
-    fx.bloom(x, y, 30, 8, 4, this.tones(owner));
-    fx.ring(x, y, 10, 62, this.tones(owner).wound, 380, 3.5, 4);
-  }
-
-  /** Blood Pact opening — and the aura it leaves behind for its 5s. */
-  fxBloodPact(owner: 'player' | 'npc', x: number, y: number, durationMs: number): void {
-    this.pactUntil[owner] = this.api.scene.time.now + durationMs;
-    this.gesture(owner, 'clap');
-    const fx = this.fx(owner);
-    fx.bloom(x, y, 36, 9, 5, BEAST_TONES);
-    fx.splatter(x, y, 10, { speed: 120, size: 3, life: 560, depth: 6, tones: BEAST_TONES });
-    fx.ring(x, y, 12, 70, HUNT.blood, 460, 4, 5);
-  }
-
-  /** Transform in or out. `toBeast` false runs the rips inward for the revert. */
-  fxTransform(owner: 'player' | 'npc', x: number, y: number, toBeast: boolean, hybrid = false): void {
-    this.gesture(owner, toBeast ? 'raise' : 'flex');
-    const tones = hybrid ? SILVER_TONES : toBeast ? BEAST_TONES : this.tones(owner);
-    this.fx(owner).transform(x, y, 44, tones, toBeast, 8);
-    this.api.scene.cameras.main.shake(toBeast ? 260 : 150, toBeast ? 0.006 : 0.003);
-  }
-
-  /** A roar: Blood Hunt's, Beast Instinct's screech, or the pup joining in. */
-  fxRoar(owner: 'player' | 'npc', x: number, y: number, radius = 150): void {
-    this.gesture(owner, 'raise');
-    const fx = this.fx(owner);
-    fx.howl(x, y, radius, 720, 9, this.tones(owner));
-    fx.splatter(x, y, 6, { speed: radius * 1.2, size: 2.6, life: 480, depth: 8, tones: BEAST_TONES });
-    this.api.scene.cameras.main.shake(150, 0.004);
-  }
-
-  /** The 1s wind-up before an upgraded Blood Hunt teleport. */
-  fxBloodHuntCharge(owner: 'player' | 'npc', durationMs: number): void {
-    const f = owner === 'player' ? this.api.player : this.api.npc;
-    this.avatar(owner)?.setHold('brace');
-    this.fx(owner).channelHunger(f.x, f.y, 54, durationMs, () => ({ x: f.x, y: f.y }), 8, BEAST_TONES);
-    this.api.scene.time.delayedCall(durationMs, () => this.avatar(owner)?.setHold(null));
-  }
-
-  /** Explosive Leap going invisible, and landing again. */
-  fxLeap(owner: 'player' | 'npc', x: number, y: number, vanishing: boolean): void {
-    const fx = this.fx(owner);
-    const tones = this.tones(owner);
-    if (vanishing) {
-      this.avatar(owner)?.play('dash');
-      fx.bloom(x, y, 34, 8, 5, tones);
-      fx.smoke(x, y, 4, 26, 6);
-    } else {
-      fx.frag(x, y, 82, { tones, shards: 14, smoke: 4, duration: 520 });
-      this.api.scene.cameras.main.shake(200, 0.006);
-    }
-  }
-
-  /** The forward shriek box hybrid form screams into. */
-  fxShriek(owner: 'player' | 'npc', cx: number, cy: number, angle: number, halfLen: number, halfWide: number): void {
-    this.gesture(owner, 'sweep', angle);
-    const fx = this.fx(owner);
-    fx.shriekBox(cx, cy, angle, halfLen, halfWide, 7, SILVER_TONES);
-    const f = owner === 'player' ? this.api.player : this.api.npc;
-    fx.howl(f.x, f.y, 70, 420, 9, SILVER_TONES);
+  /** Announce a weak-point hit. Self-throttled — a cone puts several hits in at once. */
+  showWeakPointHit(x: number, y: number): void {
+    const time = this.now;
+    if (time - this.lastWeakLabelAt < 350) return;
+    this.lastWeakLabelAt = time;
+    this.api.showFloatingText(x, y - 30, '🎯 WEAK POINT', '#ff5555');
+    this.fxWeakPoint(x, y, this.weakAngle + Math.PI);
   }
 
   /** Weak Points reward pip — a rake right on the seam that was hit. */
@@ -529,85 +2037,12 @@ export class HuntKit {
     this.pfx.splatter(x, y, 5, { speed: 150, angle, spread: 1.2, size: 2.4, life: 380, depth: 9, tones: BEAST_TONES });
   }
 
-  // ── Cross-ability hooks ────────────────────────────────────────────────────
-
-  /**
-   * Blood Hunt's roar. The caster's pup throws its head back and joins in, adding a
-   * second, separate 20% slow on top of the ability's own — the two stack.
-   */
-  onBloodHunt(owner: 'player' | 'npc'): void {
-    const pup = this.beastlings.find((b) => b.owner === owner);
-    if (!pup) return;
-    const time = this.api.scene.time.now;
-    pup.lungeUntil = time + 260;
-    if (owner === 'player') {
-      this.npcRoarSlowUntil = Math.max(this.npcRoarSlowUntil, time + ROAR_SLOW_MS);
-      this.api.showFloatingText(pup.x, pup.y - 26, '🐕 ROAR! −20%', '#ffaa66');
-    } else {
-      this.playerRoarSlowUntil = Math.max(this.playerRoarSlowUntil, time + ROAR_SLOW_MS);
-      this.api.showFloatingText(this.api.player.x, this.api.player.y - 46, '🐕 Roared! −20%', '#ffaa66');
-    }
-    this.spawnRoarRings(pup);
-  }
-
-  private spawnRoarRings(pup: Beastling): void {
-    // A pup's howl is the same shape as its owner's, just smaller.
-    const fx = this.fx(pup.owner);
-    const tones = this.isMoonUp(pup) ? MOON_TONES : this.tones(pup.owner);
-    fx.howl(pup.x, pup.y, 62, 620, 7, tones);
-  }
-
-  /** Extra speed multiplier the player's pup roar puts on the enemy. */
-  getEnemySpeedMult(time: number): number {
-    return time < this.npcRoarSlowUntil ? ROAR_SLOW_MULT : 1;
-  }
-
-  /** Extra speed multiplier the opponent's pup roar puts on the local player. */
-  getPlayerSpeedMult(time: number): number {
-    return time < this.playerRoarSlowUntil ? ROAR_SLOW_MULT : 1;
-  }
-
-  /** Grenade explosions that caught somebody — feeds the "Frag Out" requirement. */
-  noteGrenadeHits(owner: 'player' | 'npc', hits: number): void {
-    if (owner !== 'player' || hits <= 0) return;
-    this.api.recordMasteryStat('grenadeHits', hits);
-  }
-
-  // ── Weak Points ────────────────────────────────────────────────────────────
-
-  /**
-   * Damage multiplier for a hit that landed at (hitX, hitY) on `target`: 2 inside the
-   * sweeping wedge, 1 everywhere else. `attacker` picks which side's passive applies —
-   * the player's own mastery for their shots, the opponent's for theirs.
-   */
-  weakPointMult(target: Fighter, hitX: number, hitY: number, attacker: 'player' | 'npc'): number {
-    if (attacker === 'player' ? !this.api.masteryActive : !this.api.npcMasteryActive) return 1;
-    const ang = Math.atan2(hitY - target.y, hitX - target.x);
-    const diff = Math.abs(Phaser.Math.Angle.Wrap(ang - this.weakAngle));
-    return diff <= WEAK_HALF_ANGLE ? WEAK_DMG_MULT : 1;
-  }
-
-  /**
-   * Announce a weak-point hit. Kept separate from {@link weakPointMult} so callers that
-   * only need the number can just take it, and self-throttled because a shotgun puts
-   * several pellets into the wedge at once and one label per volley is plenty.
-   */
-  showWeakPointHit(x: number, y: number): void {
-    const time = this.api.scene.time.now;
-    if (time - this.lastWeakLabelAt < 350) return;
-    this.lastWeakLabelAt = time;
-    this.api.showFloatingText(x, y - 30, '🎯 WEAK POINT', '#ff5555');
-    // The seam opens: a rake right on the wedge that was hit, thrown along the sweep.
-    this.fxWeakPoint(x, y, this.weakAngle + Math.PI);
-  }
-
   private drawWeakWedge(gfx: Phaser.GameObjects.Graphics, cx: number, cy: number, pulse: number): void {
     const a0 = this.weakAngle - WEAK_HALF_ANGLE;
     const a1 = this.weakAngle + WEAK_HALF_ANGLE;
     gfx.clear();
     gfx.setPosition(0, 0);
 
-    // Body of the slice — a dark base with a hotter core wedge inside it.
     gfx.fillStyle(0x8b0000, 0.26 + pulse * 0.08);
     gfx.beginPath();
     gfx.arc(cx, cy, WEAK_OUTER_R, a0, a1, false);
@@ -634,7 +2069,6 @@ export class HuntKit {
     gfx.lineTo(cx + Math.cos(a0) * WEAK_OUTER_R, cy + Math.sin(a0) * WEAK_OUTER_R);
     gfx.strokePath();
 
-    // Ticked outer rim — five short radial nicks along the crust.
     gfx.lineStyle(1, 0xff8877, 0.5);
     for (let i = 0; i <= 4; i++) {
       const a = a0 + (i / 4) * (a1 - a0);
@@ -662,7 +2096,6 @@ export class HuntKit {
     this.weakAngle = Phaser.Math.Angle.Wrap(this.weakAngle + WEAK_SPIN_RAD_PER_SEC * dt);
     const pulse = 0.5 + 0.5 * Math.sin(time / 260);
 
-    // On every enemy while the local player has the passive.
     if (this.api.masteryActive) {
       for (const t of this.api.enemies) {
         if (!t.active || t.hp <= 0) {
@@ -682,7 +2115,6 @@ export class HuntKit {
       this.weakGfx.clear();
     }
 
-    // Mirrored onto the local player when the online opponent is the mastered hunter.
     if (this.api.npcMasteryActive) {
       if (!this.weakPlayerGfx) this.weakPlayerGfx = scene.add.graphics().setDepth(3);
       this.drawWeakWedge(this.weakPlayerGfx, this.api.player.x, this.api.player.y, pulse);
@@ -692,99 +2124,141 @@ export class HuntKit {
     }
   }
 
-  // ── Beastling simulation ───────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Mastery — Beastling
+  // ═══════════════════════════════════════════════════════════════════════════
 
-  /** The pup's quarry: whoever its owner is hunting. */
-  private targetOf(pup: Beastling): Fighter | null {
-    if (pup.owner === 'npc') {
-      const p = this.api.player;
-      return p.active && p.hp > 0 ? p : null;
+  /** 0 = just summoned, 1 = ready. While a pup is out the bar counts down its 15s instead. */
+  getBeastlingCooldownRatio(time: number): number {
+    const mine = this.beastlings.find((b) => b.owner === 'player');
+    if (mine) return Phaser.Math.Clamp((mine.endsAt - time) / BEASTLING_DURATION_MS, 0, 1);
+    return Math.min(1, (time - this.pupLastCastAt) / BEASTLING_COOLDOWN_MS);
+  }
+
+  private trySummonPup(time: number): void {
+    if (this.beastlings.some((b) => b.owner === 'player')) return;
+    if (time - this.pupLastCastAt < BEASTLING_COOLDOWN_MS) return;
+    this.pupLastCastAt = time;
+    this.spawnPup('player', time);
+    // Private timer, so this never flows through onCastStamp — broadcast it by hand.
+    this.api.broadcastMasteryCast('beastling');
+    const { player } = this.api;
+    this.api.showFloatingText(player.x, player.y - 44, '🐕 Beastling!', '#d9a066');
+  }
+
+  /** Online replay: the remote Hunt player whistled up their own pup. */
+  doNpcBeastling(): void {
+    if (this.beastlings.some((b) => b.owner === 'npc')) return;
+    this.spawnPup('npc', this.now);
+  }
+
+  private spawnPup(owner: Owner, time: number): void {
+    const { scene } = this.api;
+    const f = this.fighter(owner);
+    const gfx = scene.add.graphics().setDepth(6);
+    this.beastlings.push({
+      owner, gfx,
+      x: f.x - 28, y: f.y + 14,
+      endsAt: time + BEASTLING_DURATION_MS,
+      nextBiteAt: time + BITE_INTERVAL_MS,
+      heading: 0, gait: 0, tailPhase: 0, earLag: 0,
+      blinkUntil: 0, nextBlinkAt: time + 1800,
+      lungeUntil: 0, carrying: null, carryFuseLeftMs: 0,
+    });
+    const fx = this.fx(owner);
+    fx.bloom(f.x - 28, f.y + 14, 22, 7, 5, this.tones(owner));
+    fx.smoke(f.x - 28, f.y + 14, 3, 16, 4);
+    this.avatar(owner)?.play('sweep');
+  }
+
+  /** A roar makes the caster's pup throw its head back and join in. */
+  private onBeastlingRoar(owner: Owner): void {
+    const pup = this.beastlings.find((b) => b.owner === owner);
+    if (!pup) return;
+    const time = this.now;
+    pup.lungeUntil = time + 260;
+    if (owner === 'player') {
+      this.npcRoarSlowUntil = Math.max(this.npcRoarSlowUntil, time + PUP_ROAR_SLOW_MS);
+      this.api.showFloatingText(pup.x, pup.y - 26, '🐕 ROAR! −20%', '#ffaa66');
+    } else {
+      this.playerRoarSlowUntil = Math.max(this.playerRoarSlowUntil, time + PUP_ROAR_SLOW_MS);
+      this.api.showFloatingText(this.api.player.x, this.api.player.y - 46, '🐕 Roared! −20%', '#ffaa66');
     }
+    this.fx(pup.owner).howl(pup.x, pup.y, 62, 620, 7, this.moonUp(pup.owner) ? MOON_TONES : this.tones(pup.owner));
+  }
+
+  /** Grenade explosions that caught somebody — feeds the "Frag Out" requirement. */
+  noteGrenadeHits(owner: Owner, hits: number): void {
+    if (owner !== 'player' || hits <= 0) return;
+    this.api.recordMasteryStat('grenadeHits', hits);
+  }
+
+  private targetOfPup(pup: Beastling): Fighter | null {
+    const list = this.targetsOf(pup.owner);
     let best: Fighter | null = null;
     let bestD = Infinity;
-    for (const t of this.api.enemies) {
-      if (!t.active || t.hp <= 0) continue;
+    for (const t of list) {
       const d = Phaser.Math.Distance.Between(pup.x, pup.y, t.x, t.y);
       if (d < bestD) { bestD = d; best = t; }
     }
     return best;
   }
 
-  private isMoonUp(pup: Beastling): boolean {
-    return pup.owner === 'player' ? this.api.bloodMoonActive : this.api.npcBloodMoonActive;
-  }
-
-  /** Trail circles belong to the hunter who laid them — the pup only speeds up on its own. */
-  private onTrail(pup: Beastling, time: number): boolean {
-    const circles = pup.owner === 'player' ? this.api.playerTrailCircles : this.api.npcTrailCircles;
-    for (const c of circles) {
-      if (time > c.expiresAt) continue;
+  private pupOnTrail(pup: Beastling, time: number): boolean {
+    for (const c of this.trails) {
+      if (c.owner !== pup.owner || time > c.expiresAt) continue;
       if (Phaser.Math.Distance.Between(pup.x, pup.y, c.x, c.y) <= TRAIL_RADIUS) return true;
     }
     return false;
   }
 
-  /** A thrown grenade of the pup's owner that nobody has fetched yet. */
-  private fetchableGrenade(pup: Beastling): HuntKitGrenade | null {
-    const list = pup.owner === 'player' ? this.api.playerGrenades : this.api.npcGrenades;
-    for (const g of list) {
-      if (g.owner !== pup.owner || g.isLeap) continue;
-      if (this.beastlings.some((b) => b.carrying === g)) continue;
+  private fetchableGrenade(pup: Beastling): Grenade | null {
+    for (const g of this.grenades) {
+      if (g.owner !== pup.owner || g.carried) continue;
       return g;
     }
     return null;
   }
 
-  /** Hand a fetched grenade back to the normal fuse, wherever the pup is standing. */
   private releaseCarried(pup: Beastling, time: number): void {
     const g = pup.carrying;
     if (!g) return;
-    g.x = pup.x;
-    g.y = pup.y;
-    g.sprite.setPosition(pup.x, pup.y).setVisible(true);
+    g.x = pup.x; g.y = pup.y;
+    g.carried = false;
     g.explodeAt = time + pup.carryFuseLeftMs;
     pup.carrying = null;
     pup.carryFuseLeftMs = 0;
   }
 
-  /** Set the fetched grenade off right here — ArenaScene's grenade loop does the boom. */
-  private detonateCarried(pup: Beastling, time: number): void {
+  private detonateCarried(pup: Beastling): void {
     const g = pup.carrying;
     if (!g) return;
-    g.x = pup.x;
-    g.y = pup.y;
-    g.sprite.setPosition(pup.x, pup.y).setVisible(true);
-    g.explodeAt = time;   // due now; the scene's own loop explodes it and counts the hits
+    g.x = pup.x; g.y = pup.y;
+    g.carried = false;
+    const idx = this.grenades.indexOf(g);
+    if (idx >= 0) this.grenades.splice(idx, 1);
+    this.explodeGrenade(g);
     pup.carrying = null;
     pup.carryFuseLeftMs = 0;
     this.api.showFloatingText(pup.x, pup.y - 24, '🐕 Fetch!', '#ffaa44');
   }
 
   private bite(pup: Beastling, target: Fighter, time: number): void {
-    const moon = this.isMoonUp(pup);
-    const bleeding = pup.owner === 'npc' ? this.api.playerBleeding : target.bleeding;
+    const moon = this.moonUp(pup.owner);
     let dmg = BITE_DMG;
-    if (bleeding) dmg *= BITE_BLEED_MULT;
+    // A pup goes for the bolt already sticking out of them.
+    if (this.stuckCount(target) > 0) dmg *= BITE_BOLT_MULT;
     if (moon) dmg *= MOON_DMG_MULT;
     dmg = Math.round(dmg);
 
-    target.takeDamage(dmg);
-    this.api.spawnHitFlash(target.x, target.y, moon ? 0xcc2222 : 0xd9a066);
+    this.hit(target, dmg, pup.owner, moon ? 0xcc2222 : 0xd9a066);
     pup.lungeUntil = time + 200;
     pup.nextBiteAt = time + BITE_INTERVAL_MS;
 
-    // Under a Blood Moon the bites break the skin.
-    if (moon) {
-      if (pup.owner === 'npc') this.api.applyPlayerBleed(BLEED_MS);
-      else this.api.applyBleedTo(target, BLEED_MS);
-    }
-
-    // Teeth going in: a small two-gash bite rather than a stretched oval.
     const ang = Math.atan2(target.y - pup.y, target.x - pup.x);
     const bx = pup.x + Math.cos(ang) * 16, by = pup.y + Math.sin(ang) * 16;
     const fx = this.fx(pup.owner);
-    const tones = moon ? MOON_TONES : this.tones(pup.owner);
-    fx.rake(bx, by, ang, 26, 2, 8, tones, 9);
+    fx.rake(bx, by, ang, 26, 2, 8, moon ? MOON_TONES : this.tones(pup.owner), 9);
     fx.splatter(bx, by, moon ? 6 : 3, {
       speed: 110, angle: ang, spread: 1.2, size: 2.2, life: 400, depth: 8, tones: BEAST_TONES,
     });
@@ -793,12 +2267,11 @@ export class HuntKit {
   private updateBeastlings(time: number, dt: number): void {
     for (let i = this.beastlings.length - 1; i >= 0; i--) {
       const pup = this.beastlings[i];
-      const owner = pup.owner === 'player' ? this.api.player : this.api.npc;
-      const moon = this.isMoonUp(pup);
+      const owner = this.fighter(pup.owner);
+      const moon = this.moonUp(pup.owner);
 
       if (time >= pup.endsAt || !owner.active) {
         this.releaseCarried(pup, time);
-        // Called off: it scatters back into the dirt it came out of.
         this.fx(pup.owner).smoke(pup.x, pup.y, 3, 18, 5);
         this.fx(pup.owner).splatter(pup.x, pup.y, 4, {
           speed: 60, size: 2.2, life: 480, depth: 5, tones: this.tones(pup.owner),
@@ -810,47 +2283,32 @@ export class HuntKit {
 
       // ── Fetching ────────────────────────────────────────────────────
       if (pup.carrying) {
-        const g = pup.carrying;
-        if (g.explodeAt <= time) {
-          // Something else forced it due (E+ pellet detonation) — let go and let it blow.
-          g.sprite.setVisible(true);
-          pup.carrying = null;
-          pup.carryFuseLeftMs = 0;
-        } else {
-          // Frozen fuse: the grenade cannot come due while it is in the pup's mouth. Its own
-          // sprite is hidden — the pup is drawn holding one in its jaws instead, and the real
-          // one would otherwise sit on top of the whole animal.
-          g.stopped = true;
-          g.explodeAt = Infinity;
-          g.x = pup.x;
-          g.y = pup.y - 6;
-          g.sprite.setPosition(g.x, g.y).setVisible(false);
-        }
+        // Frozen fuse: it cannot come due while it is in the pup's mouth.
+        pup.carrying.x = pup.x;
+        pup.carrying.y = pup.y - 6;
+        pup.carrying.explodeAt = Infinity;
       } else {
         const loose = this.fetchableGrenade(pup);
         if (loose && Phaser.Math.Distance.Between(pup.x, pup.y, loose.x, loose.y) <= FETCH_PICKUP_R) {
           pup.carryFuseLeftMs = Math.max(200, loose.explodeAt - time);
           pup.carrying = loose;
           loose.stopped = true;
-          loose.explodeAt = Infinity;
-          loose.sprite.setVisible(false);
+          loose.carried = true;
           this.api.showFloatingText(pup.x, pup.y - 24, '🐕 Got it!', '#ffcc66');
         }
       }
 
       // ── Where to run ────────────────────────────────────────────────
-      const quarry = this.targetOf(pup);
+      const quarry = this.targetOfPup(pup);
       const loose = pup.carrying ? null : this.fetchableGrenade(pup);
-      let destX: number;
-      let destY: number;
+      let destX: number, destY: number;
       let arriveR = 6;
 
       if (pup.carrying && quarry) {
-        // Carrying: sprint the grenade onto the enemy and set it off there.
         destX = quarry.x; destY = quarry.y;
         arriveR = FETCH_DELIVER_R;
         if (Phaser.Math.Distance.Between(pup.x, pup.y, quarry.x, quarry.y) <= FETCH_DELIVER_R) {
-          this.detonateCarried(pup, time);
+          this.detonateCarried(pup);
         }
       } else if (loose) {
         destX = loose.x; destY = loose.y;
@@ -859,7 +2317,6 @@ export class HuntKit {
         destX = quarry.x; destY = quarry.y;
         arriveR = BITE_RANGE - 8;
       } else {
-        // Heel: trot to a spot just behind the owner rather than into them.
         const back = Math.atan2(pup.y - owner.y, pup.x - owner.x);
         destX = owner.x + Math.cos(back) * PUP_FOLLOW_DIST;
         destY = owner.y + Math.sin(back) * PUP_FOLLOW_DIST;
@@ -867,7 +2324,7 @@ export class HuntKit {
       }
 
       let speed = PUP_SPEED;
-      if (this.onTrail(pup, time)) speed *= PUP_TRAIL_SPEED_MULT;
+      if (this.pupOnTrail(pup, time)) speed *= PUP_TRAIL_SPEED_MULT;
       if (moon) speed *= MOON_SPEED_MULT;
 
       const dx = destX - pup.x;
@@ -880,23 +2337,18 @@ export class HuntKit {
         pup.heading = Math.atan2(dy, dx);
         pup.gait += step / 7;
       } else {
-        // Idle fidget so a stopped pup never looks like a decal.
         pup.gait += dt * 1.6;
       }
 
-      // ── Biting ──────────────────────────────────────────────────────
       if (!pup.carrying && quarry && time >= pup.nextBiteAt) {
         if (Phaser.Math.Distance.Between(pup.x, pup.y, quarry.x, quarry.y) <= BITE_RANGE) {
           this.bite(pup, quarry, time);
         }
       }
 
-      // ── Animation state ─────────────────────────────────────────────
-      // Tail wags hardest near the owner and while carrying a prize.
       const nearOwner = Phaser.Math.Distance.Between(pup.x, pup.y, owner.x, owner.y) < 90;
       const wagRate = pup.carrying ? 15 : nearOwner ? 11 : 6;
       pup.tailPhase += dt * wagRate;
-      // Ears lag the turn, then flop back — the delay is what makes them read as floppy.
       const wantLag = Math.sin(pup.gait * 0.5) * 0.25;
       pup.earLag += (wantLag - pup.earLag) * Math.min(1, dt * 6);
       if (time >= pup.nextBlinkAt) {
@@ -907,28 +2359,6 @@ export class HuntKit {
       this.drawPup(pup, time, moon);
     }
   }
-
-  /**
-   * Status tray: the opponent's pup roaring at you is a real debuff on you. Runs outside
-   * the pup loop because the slow outlives a pup that expired mid-roar.
-   */
-  private updateRoarIndicator(time: number): void {
-    if (this.playerRoarSlowUntil > time) {
-      this.api.setStatusIndicator('beastling-roar', {
-        name: 'Beastling Roar',
-        emoji: '🐕',
-        color: 0xd9a066,
-        description: '20% slower — a beastling roared at you.',
-        until: this.playerRoarSlowUntil,
-        count: 20,
-        suffix: '%',
-      });
-    } else {
-      this.api.setStatusIndicator('beastling-roar', null);
-    }
-  }
-
-  // ── Beastling art ──────────────────────────────────────────────────────────
 
   /**
    * The pup, drawn from scratch every frame: gait-bobbed legs, floppy ears that lag the
@@ -942,7 +2372,6 @@ export class HuntKit {
     const s = (moon ? MOON_SCALE : 1) * (time < pup.lungeUntil ? 1.12 : 1);
     const flip = Math.cos(pup.heading) < 0 ? -1 : 1;
     const cx = pup.x;
-    // Trot bob — the whole body rises and falls twice per stride.
     const bob = Math.sin(pup.gait) * 1.4 * s;
     const cy = pup.y + bob;
 
@@ -950,17 +2379,13 @@ export class HuntKit {
     const belly = moon ? PUP_BELLY_MOON : PUP_BELLY;
     const ear = moon ? PUP_EAR_MOON : PUP_EAR;
 
-    // Ground shadow — squashes as the body rises.
     g.fillStyle(0x000000, 0.22);
     g.fillEllipse(cx, pup.y + 13 * s, 26 * s - bob, 7 * s);
 
-    // ── Tail: four tapering segments curling up off the rump, hinged clear of the body
-    // so the wag actually shows instead of being buried under the barrel ──
+    // Tail: four tapering segments curling up off the rump.
     const wag = Math.sin(pup.tailPhase) * 0.5;
     let tx = cx - 13 * s * flip;
     let ty = cy - 4 * s;
-    // Points away from the head, then curls up over the back — a short question-mark hook,
-    // not a broom handle, so the wag stays legible at real game scale.
     let tang = (flip > 0 ? Math.PI : 0) - 0.35 * flip + wag;
     for (let seg = 0; seg < 4; seg++) {
       const len = (5.2 - seg * 0.8) * s;
@@ -972,13 +2397,11 @@ export class HuntKit {
       g.lineTo(nx, ny);
       g.strokePath();
       tx = nx; ty = ny;
-      tang += 0.62 * flip;   // sweeps up and back over the spine
+      tang += 0.62 * flip;
     }
-    // Pale tail tip
     g.fillStyle(PUP_MUZZLE, 1);
     g.fillCircle(tx, ty, 1.9 * s);
 
-    // ── Legs: fore and hind pairs, offset half a stride apart ──
     const legPairs: Array<[number, number]> = [
       [-9 * s * flip, 0], [-6 * s * flip, Math.PI],
       [7 * s * flip, Math.PI], [10 * s * flip, 0],
@@ -987,23 +2410,18 @@ export class HuntKit {
       const swing = Math.sin(pup.gait * 2 + phase);
       g.fillStyle(coat, 1);
       g.fillRoundedRect(cx + ox - 2 * s, cy + 4 * s, 4 * s, (7 + swing * 1.6) * s, 2 * s);
-      // Paw
       g.fillStyle(PUP_MUZZLE, 1);
       g.fillEllipse(cx + ox, cy + (11.5 + swing * 1.6) * s, 5 * s, 3 * s);
     }
 
-    // ── Body ──
     g.fillStyle(coat, 1);
     g.fillEllipse(cx, cy, 30 * s, 19 * s);
     g.fillStyle(belly, 1);
     g.fillEllipse(cx, cy + 4 * s, 22 * s, 9 * s);
-    // A couple of darker back patches — pups are rarely one flat colour.
     g.fillStyle(ear, 0.55);
     g.fillEllipse(cx - 5 * s * flip, cy - 5 * s, 9 * s, 5 * s);
     g.fillEllipse(cx + 6 * s * flip, cy - 4 * s, 6 * s, 4 * s);
 
-    // Collar with a hanging tag — the "it's yours" tell. Drawn on the neck before the head
-    // goes down, and kept to a thin band rather than a stripe painted along the shoulder.
     const collarX = cx + 10 * s * flip;
     g.lineStyle(2.4 * s, 0xaa2233, 1);
     g.beginPath();
@@ -1015,14 +2433,10 @@ export class HuntKit {
     const hx = cx + 15 * s * flip;
     const hy = cy - 6 * s + Math.sin(pup.gait) * 0.8 * s;
 
-    /**
-     * One floppy ear: a rounded flap hinged at the top of the skull that hangs down past
-     * the jaw. `swing` is the lag from the last turn — the delay is what sells "floppy".
-     */
     const drawEar = (hingeDx: number, swing: number, shade: number, len: number, wide: number) => {
       const bx = hx + hingeDx * s * flip;
       const by = hy - 7 * s;
-      const a = Math.PI / 2 + swing;             // straight down, plus the flop
+      const a = Math.PI / 2 + swing;
       const midX = bx + Math.cos(a) * len * 0.55 * s * flip - wide * 0.3 * s * flip;
       const midY = by + Math.sin(a) * len * 0.55 * s;
       const tipX = bx + Math.cos(a) * len * s * flip;
@@ -1036,20 +2450,16 @@ export class HuntKit {
       g.lineTo(midX - wide * 0.5 * s, midY);
       g.closePath();
       g.fillPath();
-      g.fillCircle(tipX, tipY, wide * 0.42 * s);   // rounds the hanging tip off
+      g.fillCircle(tipX, tipY, wide * 0.42 * s);
     };
 
-    // Far ear behind the skull — only a sliver shows, which is what gives the head depth.
     drawEar(-1, pup.earLag * 0.6 - 0.22, 0x4e3018, 12, 7);
 
-    // ── Head ──
     g.fillStyle(coat, 1);
     g.fillCircle(hx, hy, 10 * s);
-    // Slightly domed forehead so the skull isn't a plain disc.
     g.fillStyle(belly, 0.35);
     g.fillEllipse(hx + 2 * s * flip, hy - 4 * s, 11 * s, 6 * s);
 
-    // Muzzle + nose
     const mx = hx + 6 * s * flip;
     const my = hy + 3 * s;
     g.fillStyle(PUP_MUZZLE, 1);
@@ -1057,8 +2467,6 @@ export class HuntKit {
     g.fillStyle(0x241a12, 1);
     g.fillEllipse(mx + 4 * s * flip, my - 1 * s, 4 * s, 3 * s);
 
-    // Eyes — a cream sclera so they read against the brown coat, blinking shut to a line,
-    // lit red under a Blood Moon.
     const eyeY = hy - 1.5 * s;
     for (const side of [-1, 1]) {
       const ex = hx + (side === 1 ? 4.5 : -1.5) * s * flip;
@@ -1081,10 +2489,9 @@ export class HuntKit {
       g.fillCircle(ex + 1.1 * s * flip, eyeY - 1 * s, 0.9 * s);
     }
 
-    // Near ear, over the top of the head and hanging past the jaw.
     drawEar(-3.5, pup.earLag, ear, 15, 8.5);
 
-    // ── Carried grenade, clamped in the jaws ──
+    // Carried grenade, clamped in the jaws.
     if (pup.carrying) {
       const gx = mx + 8 * s * flip;
       const gy = my + 3 * s;
@@ -1094,12 +2501,10 @@ export class HuntKit {
       g.strokeCircle(gx, gy, 6 * s);
       g.fillStyle(0x776655, 1);
       g.fillRect(gx - 1.2 * s, gy - 9 * s, 2.4 * s, 4 * s);
-      // Spark on the fuse
       g.fillStyle(0xffdd44, 0.7 + 0.3 * Math.sin(time / 70));
       g.fillCircle(gx, gy - 9 * s, 2 * s);
     }
 
-    // ── Blood Moon extras: aura ring and a couple of drips ──
     if (moon) {
       g.lineStyle(1.5, 0xcc2222, 0.35 + 0.2 * Math.sin(time / 220));
       g.strokeCircle(cx, cy, 24 * s);
@@ -1111,30 +2516,51 @@ export class HuntKit {
 
   // ── Requirement tracking ───────────────────────────────────────────────────
 
-  /**
-   * Kills are booked against whichever form was worn at the moment of death, so the
-   * three form requirements can only be advanced by actually playing that form.
-   */
+  /** Kills are booked against whichever form was worn at the moment of death. */
   private trackKills(): void {
     for (const t of this.api.enemies) {
       if (!t.active || this.trackedEnemies.has(t)) continue;
       this.trackedEnemies.add(t);
       t.once('defeated', () => {
-        if (this.api.hybridForm) this.api.recordMasteryStat('hybridKills', 1);
-        else if (this.api.beastForm) this.api.recordMasteryStat('beastKills', 1);
+        const form = this.sides.player.form;
+        if (form === 'hybrid') this.api.recordMasteryStat('hybridKills', 1);
+        else if (form === 'beast') this.api.recordMasteryStat('beastKills', 1);
         else this.api.recordMasteryStat('normalKills', 1);
       });
     }
   }
 
-  // ── Per-frame ──────────────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Per-frame
+  // ═══════════════════════════════════════════════════════════════════════════
 
   update(time: number, delta: number): void {
     const dt = delta / 1000;
+    this.vizT += dt;
+
+    if (!this.started) {
+      this.started = true;
+      for (const o of ['player', 'npc'] as const) this.sides[o].nextBeastAt = time + BEAST_FIRST_DELAY_MS;
+    }
+
     this.updateAvatars(delta);
     if (this.api.elementId === 'hunt') this.trackKills();
     this.updateWeakPoints(time, dt);
+
+    this.updateSide('player', time, delta);
+    this.updateSide('npc', time, delta);
+    this.updateBolts(dt);
+    this.updateTracking();
+    this.updateGrenades(dt);
+    this.updateTrails(delta);
+    this.updateSears();
+    this.updateHooks(dt);
+    this.updateGrapple();
+    this.updateFlings();
+    this.updateControl(time);
+
     if (this.beastlings.length) this.updateBeastlings(time, dt);
-    this.updateRoarIndicator(time);
+    this.updateIndicators(time);
+    this.paintWorld();
   }
 }

@@ -163,6 +163,8 @@ export class MenuScene extends Phaser.Scene {
   private masteryScrollY = 0;
   private mutationScrollHandler: (...args: unknown[]) => void = () => {};
   private elementInfoMode: 'base' | 'upgraded' | 'build' = 'base';
+  /** Hunt only: which of its three forms the info panel is listing. */
+  private elementInfoHuntForm: 0 | 1 | 2 = 0;
   private expandedVariants: Set<string> = new Set();
   private hoveredDifficulty = 1;
   private konamiBuffer: string[] = [];
@@ -1036,8 +1038,12 @@ export class MenuScene extends Phaser.Scene {
     const perks = getPerksForElement(elementId);
     const showUpgraded = this.elementInfoMode === 'upgraded';
     const showBuild = this.elementInfoMode === 'build';
+    // Hunt is really three kits sharing five keys, so its abilities get a form selector of
+    // their own rather than fifteen rows in one list.
+    const huntForms = elementId === 'hunt';
+    if (!huntForms) this.elementInfoHuntForm = 0;
 
-    const SCROLL_TOP = 128;
+    const SCROLL_TOP = huntForms ? 158 : 128;
     const SCROLL_BOT = height - 44;
     const SCROLL_H = SCROLL_BOT - SCROLL_TOP;
     const elemColor = '#' + element.color.toString(16).padStart(6, '0');
@@ -1095,6 +1101,51 @@ export class MenuScene extends Phaser.Scene {
       this.infoOverlayObjects.push(btn, lbl);
     });
 
+    // ── Hunt form selector: Human / Beast / Hybrid ──
+    if (huntForms) {
+      const formDefs: Array<{ idx: 0 | 1 | 2; label: string; accent: number; text: string }> = [
+        { idx: 0, label: '🏹 HUMAN', accent: 0xcc6622, text: '#ffbb88' },
+        { idx: 1, label: '🐺 BEAST', accent: 0xcc2233, text: '#ff9999' },
+        { idx: 2, label: '🌗 HYBRID', accent: 0x99a3ad, text: '#dde4ec' },
+      ];
+      const formY = 98;
+      const fw = 118;
+      const fgap = 6;
+      const ftotal = formDefs.length * fw + (formDefs.length - 1) * fgap;
+      formDefs.forEach((fd, fi) => {
+        const fx = cx - ftotal / 2 + fw / 2 + fi * (fw + fgap);
+        const selected = this.elementInfoHuntForm === fd.idx;
+        const plate = addCardPlate(this, {
+          x: fx, y: formY, w: fw, h: 24, accent: fd.accent, cut: 7, depth: 55, muted: !selected,
+        });
+        if (selected) plate.paint('active');
+        const btn = this.add.rectangle(fx, formY, fw, 24, 0xffffff, 0)
+          .setDepth(56).setInteractive({ useHandCursor: true });
+        btn.on('pointerover', () => { if (!selected) plate.paint('hover'); });
+        btn.on('pointerout', () => plate.paint(selected ? 'active' : 'idle'));
+        const lbl = this.add.text(fx, formY, fd.label, {
+          fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+          color: selected ? fd.text : '#55545c',
+        }).setOrigin(0.5).setDepth(57);
+        btn.on('pointerdown', () => {
+          if (this.elementInfoHuntForm === fd.idx) return;
+          this.elementInfoHuntForm = fd.idx;
+          this.showElementInfo(elementId, width, height, cx);
+        });
+        this.infoOverlayObjects.push(plate.g, btn, lbl);
+      });
+      const hint = this.add.text(cx, formY + 20,
+        this.elementInfoHuntForm === 0
+          ? 'The beast comes out on its own after 30s — Q is a clock, not a button.'
+          : this.elementInfoHuntForm === 1
+            ? 'Beast form lasts 12s, then 50s before it takes you again.'
+            : 'Hybrid form needs the Q+ upgrade. The beast seizes the controls every 10s.',
+        {
+          fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#7a7a8c',
+        }).setOrigin(0.5, 0).setDepth(55);
+      this.infoOverlayObjects.push(hint);
+    }
+
     // Divider
     const divLine = this.add.line(cx, SCROLL_TOP - 12, -width / 2 + 40, 0, width / 2 - 40, 0, C.arcane, 0.45).setDepth(51).setLineWidth(1);
     this.infoOverlayObjects.push(divLine);
@@ -1140,9 +1191,28 @@ export class MenuScene extends Phaser.Scene {
       innerY += passiveDesc.height + 20;
     }
 
+    // Hybrid form gets its own passive spelled out — nothing else in the game takes the
+    // controls off you, so it needs saying before the ability list.
+    if (huntForms && this.elementInfoHuntForm === 2) {
+      sectionHdr('— PASSIVE —', '#ccd4dd');
+      const passiveDesc = this.add.text(COL_X + 14, innerY,
+        '👹 Possession: every 10 seconds the spirit of the beast takes your body for 3 seconds. '
+        + 'It runs straight at the nearest enemy and swings its claws. You cannot move or cast '
+        + 'until it hands you back.', {
+          fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#b9c2cc',
+          wordWrap: { width: COL_W - 28 }, lineSpacing: 3,
+        });
+      scrollContainer.add(passiveDesc);
+      innerY += passiveDesc.height + 20;
+    }
+
     sectionHdr('— ABILITIES —', '#7788cc');
 
-    element.abilities.forEach((ab, idx) => {
+    const shownAbilities = huntForms
+      ? element.abilities.slice(this.elementInfoHuntForm * 5, this.elementInfoHuntForm * 5 + 5)
+      : element.abilities;
+
+    shownAbilities.forEach((ab, idx) => {
       const upgrade = upgrades.find((u) => u.slot === ab.displayKey.toLowerCase());
       const owned = upgrade ? PlayerData.isUpgradeOwned(elementId, upgrade.slot) : false;
       const variantSet = getAbilityVariants(elementId, ab.displayKey);
@@ -1248,7 +1318,7 @@ export class MenuScene extends Phaser.Scene {
         scrollContainer.add(badge);
       }
 
-      innerY += rowH + (idx < element.abilities.length - 1 ? 6 : 0);
+      innerY += rowH + (idx < shownAbilities.length - 1 ? 6 : 0);
     });
 
     innerY += 16;

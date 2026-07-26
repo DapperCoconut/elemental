@@ -634,8 +634,6 @@ export class InvasionKit implements HuskWorld {
         return this.arena.hasUpgrade('click')
           ? { k: 'burn', ms: Math.round(3000 * husk.statusDurMult) }
           : null;
-      case 'proj-hunt-silver':
-        return { k: 'bleed', ms: Math.round(8000 * husk.statusDurMult) };
       case 'proj-ice':
         return {
           k: 'frost',

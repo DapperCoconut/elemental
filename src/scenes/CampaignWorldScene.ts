@@ -73,7 +73,7 @@ export class CampaignWorldScene extends Phaser.Scene {
     const challengeDone = CP.isChallengeCompleted(this.slotIdx, this.worldId);
     const progress = challengeDone
       ? '★  WORLD CLEARED'
-      : `${cleared} / ${fightNodes.length} FIGHTS CLEARED   ·   CHALLENGE ${cleared === fightNodes.length ? 'OPEN' : 'LOCKED'}`;
+      : `${cleared} / ${fightNodes.length} FIGHTS CLEARED   ·   OPTIONAL CHALLENGE ${cleared === fightNodes.length ? 'OPEN' : 'LOCKED'}`;
     this.add.text(cx, 51, progress, {
       fontSize: '10px', fontFamily: FONT_DISPLAY,
       color: challengeDone ? T.gold : T.dim, letterSpacing: 2.5,
@@ -140,7 +140,7 @@ export class CampaignWorldScene extends Phaser.Scene {
       fontSize: '10.5px', fontFamily: FONT_UI, color: T.dim,
     }).setOrigin(0.5).setDepth(DEPTH.content);
 
-    this.infoDefault = 'Hover a node to scout it   ·   clear all five fights to open the Challenge';
+    this.infoDefault = 'Hover a node to scout it   ·   five fights opens the next worlds   ·   the Challenge is optional';
     this.setInfo('', this.infoDefault);
   }
 
@@ -188,7 +188,7 @@ export class CampaignWorldScene extends Phaser.Scene {
       return {
         title: '🔒  LOCKED',
         body: node.kind === 'challenge'
-          ? 'Clear every fight in this world first.'
+          ? 'Clear every fight in this world first. Optional — the next worlds open without it.'
           : 'Win the fight before it first.',
       };
     }
@@ -206,6 +206,8 @@ export class CampaignWorldScene extends Phaser.Scene {
       muts.length > 0 ? muts.join(' + ') : 'no mutations',
       `⚡${reward.sparks}${reward.keys > 0 ? `  🗝️${reward.keys}` : ''}`,
     ];
+    // Challenges are bonus content — say so, and say what the keys buy.
+    if (node.kind === 'challenge') bits.push('optional — keys open the Portal');
     return { title: (def.name ?? node.id).toUpperCase(), body: bits.join('   ·   ') };
   }
 

@@ -601,103 +601,122 @@ export class BootScene extends Phaser.Scene {
     gfx.fillCircle(3.6, 3.6, 1);
     gfx.generateTexture('proj-soul-bolt', 10, 10);
 
-    // Hunt element texture — hide over dried blood, with three claw gouges torn across the
-    // body and the powder-heat showing through them.
+    // Hunt element texture — the hunter's head under a fur-lined hood. This one is a face, not
+    // a pattern: HuntAvatar paints the eyes, the hood peak and the crossbow over the top of it,
+    // so what the texture has to supply is the skin the features sit on and a hood shadow deep
+    // enough that the lit gear reads against it. Radius stays 22 to match the physics body.
     gfx.clear();
-    gfx.fillStyle(0x3d1a0e);
+    // Hood: dark leather all the way to the rim, with a ragged fur edge bitten out of the top.
+    gfx.fillStyle(0x2a1208);
     gfx.fillCircle(24, 24, 22);
-    gfx.fillStyle(0x6b2412);
-    gfx.fillCircle(24, 25, 19);
-    gfx.fillStyle(0xaa3300);
-    gfx.fillCircle(23, 23, 15.5);
-    // Three raked gouges, each a dark cut with a hot lip below it.
-    for (let i = 0; i < 3; i++) {
-      const ox = -7 + i * 7;
-      gfx.lineStyle(3.4, 0x2a0f06, 0.95);
-      gfx.beginPath();
-      gfx.moveTo(24 + ox - 5, 11); gfx.lineTo(24 + ox + 2, 24); gfx.lineTo(24 + ox - 3, 37);
-      gfx.strokePath();
-      gfx.lineStyle(1.3, 0xff6600, 0.9);
-      gfx.beginPath();
-      gfx.moveTo(24 + ox - 3.6, 12); gfx.lineTo(24 + ox + 3.4, 24); gfx.lineTo(24 + ox - 1.6, 36);
-      gfx.strokePath();
+    for (let i = 0; i < 14; i++) {
+      const a = -Math.PI - 0.2 + (i / 13) * (Math.PI + 0.4);
+      gfx.fillStyle(i % 2 === 0 ? 0x452213 : 0x2a1208);
+      gfx.fillCircle(24 + Math.cos(a) * 19.5, 24 + Math.sin(a) * 19.5, 3.4);
     }
-    gfx.fillStyle(0xffaa44, 0.55);
-    gfx.fillCircle(17, 17, 5.5);
-    gfx.lineStyle(2.5, 0xff6600, 0.9);
+    gfx.fillStyle(0x3d1a0e);
+    gfx.fillCircle(24, 25, 19);
+    // Face: weathered skin, brightest across the brow where the light falls.
+    gfx.fillStyle(0x8a5433);
+    gfx.fillEllipse(24, 24, 27, 30);
+    gfx.fillStyle(0xa4693f);
+    gfx.fillEllipse(23.5, 21, 23, 20);
+    // Hood shadow across the upper face — the reason the eyes read as lit from below.
+    gfx.fillStyle(0x1e0d05, 0.55);
+    gfx.beginPath();
+    gfx.moveTo(9, 20); gfx.lineTo(39, 20); gfx.lineTo(37, 11); gfx.lineTo(11, 11);
+    gfx.closePath();
+    gfx.fillPath();
+    // Stubble along the jaw, and one scar down the cheek.
+    gfx.fillStyle(0x3d2416, 0.5);
+    gfx.fillEllipse(24, 33, 21, 10);
+    gfx.lineStyle(1.4, 0x6b2412, 0.85);
+    gfx.lineBetween(31, 19, 34, 30);
+    // Rim light down the hood's leading edge.
+    gfx.lineStyle(2.5, 0xcc4400, 0.85);
     gfx.strokeCircle(24, 24, 22);
+    gfx.lineStyle(1.6, 0xffaa44, 0.45);
+    gfx.beginPath();
+    gfx.arc(24, 24, 20, Math.PI * 1.1, Math.PI * 1.8);
+    gfx.strokePath();
     gfx.generateTexture('elem-hunt', 48, 48);
 
-    // Hunt hybrid form — the same body under a silver hunter's plate, gouges gone cold.
+    // Hunt beast form — matted fur with a skull under it. No hood, no skin: the whole disc is
+    // the animal's face, so the avatar's muzzle and jaws have fur to grow out of.
+    gfx.clear();
+    gfx.fillStyle(0x2c0606);
+    gfx.fillCircle(24, 24, 22);
+    // Fur: two rings of tufts, the outer one darker, angled so the coat has a direction.
+    for (let ring = 0; ring < 2; ring++) {
+      const r = 20 - ring * 5;
+      const n = 16 - ring * 4;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + ring * 0.4;
+        gfx.fillStyle(ring === 0 ? 0x452213 : 0x5e3018, 0.95);
+        gfx.fillTriangle(
+          24 + Math.cos(a - 0.16) * (r - 4), 24 + Math.sin(a - 0.16) * (r - 4),
+          24 + Math.cos(a + 0.3) * (r + 2.5), 24 + Math.sin(a + 0.3) * (r + 2.5),
+          24 + Math.cos(a + 0.16) * (r - 4), 24 + Math.sin(a + 0.16) * (r - 4),
+        );
+      }
+    }
+    gfx.fillStyle(0x5e3018);
+    gfx.fillCircle(24, 24, 16);
+    // Face mask: a paler blaze running down the middle, which is where the muzzle lands.
+    gfx.fillStyle(0x8b0000, 0.45);
+    gfx.fillEllipse(24, 26, 18, 24);
+    gfx.fillStyle(0x7a4222);
+    gfx.fillEllipse(24, 27, 13, 20);
+    // Sunken sockets, so the rig's eyes sit in a hollow instead of on a flat disc.
+    gfx.fillStyle(0x1a0a06, 0.7);
+    gfx.fillEllipse(17, 20, 12, 9);
+    gfx.fillEllipse(31, 20, 12, 9);
+    gfx.lineStyle(2.5, 0xcc1111, 0.9);
+    gfx.strokeCircle(24, 24, 22);
+    gfx.generateTexture('elem-hunt-beast', 48, 48);
+
+    // Hunt hybrid form — caught halfway. Skin and hood on one side, fur and silver on the other,
+    // split straight down the middle so the two halves argue with each other.
     gfx.clear();
     gfx.fillStyle(0x2b0c06);
     gfx.fillCircle(24, 24, 22);
-    gfx.fillStyle(0x3a3f46);
-    gfx.fillCircle(24, 25, 19);
-    gfx.fillStyle(0x9aa0ab);
-    gfx.fillCircle(23, 23, 15);
-    gfx.fillStyle(0x6b2412, 0.55);
-    gfx.fillEllipse(24, 30, 26, 12);
-    for (let i = 0; i < 3; i++) {
-      const ox = -7 + i * 7;
-      gfx.lineStyle(3, 0x1d2126, 0.95);
-      gfx.beginPath();
-      gfx.moveTo(24 + ox - 5, 12); gfx.lineTo(24 + ox + 2, 24); gfx.lineTo(24 + ox - 3, 36);
-      gfx.strokePath();
-      gfx.lineStyle(1.2, 0xf2f4ff, 0.85);
-      gfx.beginPath();
-      gfx.moveTo(24 + ox - 3.6, 13); gfx.lineTo(24 + ox + 3.4, 24); gfx.lineTo(24 + ox - 1.6, 35);
-      gfx.strokePath();
+    // Left: the man. Hood, skin, hood shadow.
+    gfx.fillStyle(0x3d1a0e);
+    gfx.slice(24, 24, 21, Math.PI / 2, Math.PI * 1.5, false);
+    gfx.fillPath();
+    gfx.fillStyle(0x8a5433);
+    gfx.slice(24, 24, 15.5, Math.PI / 2, Math.PI * 1.5, false);
+    gfx.fillPath();
+    // Right: the animal. Fur tufts breaking the rim, red under-hide.
+    gfx.fillStyle(0x452213);
+    gfx.slice(24, 24, 21, Math.PI * 1.5, Math.PI / 2, false);
+    gfx.fillPath();
+    for (let i = 0; i < 8; i++) {
+      const a = -Math.PI / 2 + (i / 7) * Math.PI;
+      gfx.fillStyle(i % 2 === 0 ? 0x5e3018 : 0x8b0000, 0.95);
+      gfx.fillTriangle(
+        24 + Math.cos(a - 0.18) * 15, 24 + Math.sin(a - 0.18) * 15,
+        24 + Math.cos(a + 0.24) * 23, 24 + Math.sin(a + 0.24) * 23,
+        24 + Math.cos(a + 0.18) * 15, 24 + Math.sin(a + 0.18) * 15,
+      );
     }
-    gfx.fillStyle(0xf2f4ff, 0.6);
-    gfx.fillCircle(17, 17, 5);
+    gfx.fillStyle(0x7a4222);
+    gfx.slice(24, 24, 15.5, Math.PI * 1.5, Math.PI / 2, false);
+    gfx.fillPath();
+    // The seam, torn rather than cut.
+    gfx.lineStyle(2.2, 0xcc1111, 0.9);
+    gfx.beginPath();
+    gfx.moveTo(24, 3);
+    gfx.lineTo(21, 14); gfx.lineTo(26, 24); gfx.lineTo(21.5, 34); gfx.lineTo(24, 45);
+    gfx.strokePath();
+    // Silver gorget across the throat — the hunter's kit, still on.
+    gfx.fillStyle(0x9aa0ab);
+    gfx.fillEllipse(24, 36, 30, 11);
+    gfx.fillStyle(0xf2f4ff, 0.55);
+    gfx.fillEllipse(24, 34.5, 24, 4);
     gfx.lineStyle(3.5, 0xdddde6);
     gfx.strokeCircle(24, 24, 22);
-    gfx.lineStyle(1.6, 0xcc1111, 0.7);
-    gfx.strokeCircle(24, 24, 14);
     gfx.generateTexture('elem-hunt-hybrid', 48, 48);
-
-    // Hunt pellet — buckshot: a lead ball with a hot leading face.
-    gfx.clear();
-    gfx.fillStyle(0x3d1a0e);
-    gfx.fillCircle(4, 4, 4);
-    gfx.fillStyle(0xcc4400);
-    gfx.fillCircle(4, 4, 3);
-    gfx.fillStyle(0xffaa44);
-    gfx.fillCircle(3.2, 3.2, 1.4);
-    gfx.generateTexture('proj-hunt-pellet', 8, 8);
-
-    // Hunt silver bullet — a cold slug with a bright rim and a punched nose.
-    gfx.clear();
-    gfx.fillStyle(0x3a3f46);
-    gfx.fillCircle(5, 5, 5);
-    gfx.fillStyle(0x9aa0ab);
-    gfx.fillCircle(5, 5, 4);
-    gfx.fillStyle(0xdddde6);
-    gfx.fillCircle(4.2, 4.2, 2.4);
-    gfx.fillStyle(0xffffff);
-    gfx.fillCircle(3.6, 3.6, 1.1);
-    gfx.lineStyle(1, 0xf2f4ff, 0.9);
-    gfx.strokeCircle(5, 5, 4.6);
-    gfx.generateTexture('proj-hunt-silver', 10, 10);
-
-    // Hunt shrapnel — a torn sliver of casing, not a bar: wide at the break, tapering to a barb.
-    gfx.clear();
-    gfx.fillStyle(0x3a3f46);
-    gfx.fillTriangle(0, 1, 0, 6, 10, 4);
-    gfx.fillStyle(0x9aa0ab);
-    gfx.fillTriangle(0.5, 2, 0.5, 5.4, 8.6, 3.9);
-    gfx.fillStyle(0xf2f4ff);
-    gfx.fillTriangle(1, 2.6, 1, 4, 6.5, 3.6);
-    gfx.generateTexture('proj-hunt-shrapnel', 10, 7);
-
-    // Hunt vampire stake (dark red elongated rectangle) — kept for any legacy refs
-    gfx.clear();
-    gfx.fillStyle(0x880033);
-    gfx.fillRect(0, 4, 20, 6);
-    gfx.fillStyle(0xcc2255);
-    gfx.fillTriangle(20, 0, 20, 14, 28, 7);
-    gfx.generateTexture('proj-hunt-stake', 28, 14);
 
     // Gravity element texture — a well seen from above: an accretion disc of spiral arms
     // falling into a black core, with the photon ring bent around it.

@@ -81,21 +81,25 @@ export interface CastContext {
   soulGrave: (tx: number, ty: number) => void;
   soulDeathWhistle: (tx: number, ty: number) => void;
   soulHellsTorment: () => void;
-  // Hunt
-  /** Shotgun recoil + muzzle sheet for whichever side is firing. */
-  huntShotgunBlast: (angle: number) => void;
-  huntThrowGrenade: (tx: number, ty: number, holdMs: number) => void;
-  huntHuntersTrail: () => void;
-  huntBloodPact: () => void;
-  huntTransform: () => void;
+  // Hunt — human form
+  huntCrossbow: (tx: number, ty: number) => void;
+  /** `chargeMs` is the E+ Mine Blast hold; 0 for the uncharged cone. */
+  huntBlast: (tx: number, ty: number, chargeMs: number) => void;
+  huntGrenade: (tx: number, ty: number) => void;
+  huntTrail: () => void;
+  huntReleaseBeast: () => void;
+  // Hunt — beast form
   huntSlash: (tx: number, ty: number) => void;
-  huntLeap: (tx: number, ty: number) => void;
-  huntBloodHunt: () => void;
-  huntBloodMoon: () => void;
-  huntUntransform: () => void;
+  huntPounce: (tx: number, ty: number) => void;
+  huntRoar: (tx: number, ty: number) => void;
+  huntGrapple: (tx: number, ty: number) => void;
+  huntBloodScent: () => void;
+  // Hunt — hybrid form
   huntHybridShotgun: (tx: number, ty: number) => void;
-  huntHybridInstinct: () => void;
-  huntHybridShriek: (tx: number, ty: number) => void;
+  huntRoll: (tx: number, ty: number) => void;
+  huntHook: (tx: number, ty: number) => void;
+  huntAdrenaline: () => void;
+  huntGiveIn: () => void;
   // Sand (legacy)
   sandFlintlock: (tx: number, ty: number) => void;
   sandBlindingSand: (tx: number, ty: number) => void;
@@ -118,7 +122,7 @@ export interface CastContext {
   // Creation
   creationDaggerSpray: (tx: number, ty: number, count: number) => void;
   creationBolt: (tx: number, ty: number, tier: 'copper' | 'silver' | 'gold') => void;
-  creationScytheLaunch: (tx: number, ty: number) => void;
+  creationWrench: (tx: number, ty: number) => void;
   creationBlock: (x: number, y: number, w: number, h: number) => void;
   creationMaze: () => void;
   // Fate (alt-life)

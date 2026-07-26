@@ -5,10 +5,11 @@ import { Projectile } from '../../combat/Projectile';
 import { CustomStatus } from './StatusHudKit';
 import { seedEffectSnapshot, stretchNewEffects } from '../../combat/StatusEffects';
 import {
-  ArmGesture, CREATION, CREATION_TIER_COLORS, CreationAvatar, CreationColorFn, CreationForge,
-  CreationFx, CreationNexus, blueprintFrame, craftPlank, drawAutomaton, drawBolt, drawDagger,
-  drawFlask, drawMech, drawNail, drawSaw, drawScythe, drawSpeedPad, drawSpikedPanel, forgedShard,
-  plankPanel, rivet,
+  ArmGesture, ArmHold, CREATION, CREATION_TIER_COLORS, CreationAvatar, CreationColorFn,
+  CreationForge, CreationFx, CreationMechRig, CreationNexus, MECH_ARM_TONES, MechArmKind,
+  MechArmView, blueprintFrame, craftPlank, drawAutomaton, drawBolt, drawDagger, drawFlask,
+  drawNail, drawSaw, drawSpeedPad, drawSpikedPanel, drawWrench, forgedShard, plankPanel, rivet,
+  wrenchShape,
 } from './CreationVisuals';
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -93,18 +94,23 @@ export interface CreationBoltInFlight {
   targetX?: number;
   targetY?: number;
   noNexus?: boolean; // crafted bullets must not re-load the nexus
+  /** Barrage-arm rockets steer toward the nearest enemy each frame and detonate on contact. */
+  homing?: boolean;
+  /** Blast radius for a homing rocket's AoE. */
+  blastRadius?: number;
 }
 
-export interface CreationScythe {
+/** R — a wrench tumbling end over end toward wherever it was aimed. */
+export interface CreationWrench {
   sprite: Phaser.GameObjects.Graphics;
-  hp: number;
-  maxHp: number;
-  vx: number;
-  vy: number;
+  x: number; y: number;
+  vx: number; vy: number;
   owner: 'player' | 'npc';
-  lastContactTick: number;
-  hpBar: Phaser.GameObjects.Rectangle;
-  hpBg: Phaser.GameObjects.Rectangle;
+  /**
+   * Scene-clock stamp before which the Nexus is ignored. A wrench thrown while standing on
+   * the pedestal would otherwise wake it on frame one, from any range, by accident.
+   */
+  armedAt: number;
 }
 
 export interface CreationBlocker {
@@ -172,15 +178,53 @@ export interface CreationSpikedBlock {
   invincible: boolean; // true for maze-spawned spiked blocks
 }
 
+/**
+ * One arm welded onto the mech by a potion that was sitting on the Nexus. `view` is the
+ * rig's own mutable draw state for that slot — the sim writes into it rather than pushing a
+ * fresh object across every frame.
+ */
+export interface CreationMechArm {
+  kind: MechArmKind;
+  view: MechArmView;
+  /** Milliseconds toward the next volley / batch / grab attempt. */
+  cd: number;
+  /** Chainsaw: milliseconds of continuous cutting, and when the vent finishes. */
+  heatMs: number;
+  coolUntil: number;
+  /** Chainsaw: scene-clock stamp of the next allowed bite. */
+  biteAt: number;
+  /** Grabber: who is in the claw, until when, and along which bearing they are held. */
+  held: Fighter | null;
+  heldUntil: number;
+  heldAngle: number;
+}
+
+/**
+ * R+ — the Nexus folded up into a walker. It stands dormant where the Nexus was until the
+ * player climbs in, then follows them around soaking everything aimed at them.
+ */
 export interface CreationMech {
-  sprite: Phaser.GameObjects.Graphics;
-  stage: 1 | 2 | 3;
+  rig: CreationMechRig;
   hp: number;
   maxHp: number;
   hpBar: Phaser.GameObjects.Rectangle;
   hpBg: Phaser.GameObjects.Rectangle;
-  rocketAccum: number;
-  dodgeCdUntil: number;
+  arms: CreationMechArm[];
+  mounted: boolean;
+  /** Where it is standing. Tracks the player once mounted. */
+  x: number; y: number;
+  /** Damage instances taken, for the Shield arm's every-Nth block. */
+  hits: number;
+  prompt: Phaser.GameObjects.Text | null;
+}
+
+/** A repair orb lobbed out by a Med Core arm, waiting to be walked over. */
+export interface CreationMedOrb {
+  gfx: Phaser.GameObjects.Graphics;
+  x: number; y: number;
+  t: number;
+  heal: number;
+  expireAt: number;
 }
 
 /**
@@ -197,6 +241,62 @@ export interface CreationAutomaton {
   meleeCooldownUntil: number;
   owner: 'player' | 'npc';
 }
+
+// ── R: Wrench in your Plans ───────────────────────────────────────────────
+
+const WRENCH_SPEED = 640;
+const WRENCH_DAMAGE = 20;
+const WRENCH_HIT_RADIUS = 22;
+/** How long a wrenched fighter pays for using abilities, and what each use costs. */
+const WRENCH_PUNISH_MS = 5000;
+const WRENCH_PUNISH_DAMAGE = 5;
+
+// ── R+: Nexus Awakening ───────────────────────────────────────────────────
+
+const MECH_HP = 100;
+/** The mech is heavy: you move at three quarters speed while you are in it. */
+const MECH_SPEED_MULT = 0.75;
+const MECH_MOUNT_RANGE = 80;
+/** The Nexus reassembles itself this long after its mech is wrecked. */
+const NEXUS_REBUILD_MS = 4000;
+
+const CHAINSAW_RANGE = 66;
+const CHAINSAW_HEAT_MS = 5000;
+const CHAINSAW_COOL_MS = 3000;
+const MEDCORE_INTERVAL = 8000;
+const MEDCORE_ORB_MS = 20000;
+const GRABBER_RANGE = 92;
+const GRABBER_HOLD_MS = 3000;
+const GRABBER_CD = 8000;
+const SHIELD_BONUS_HP = 25;
+const BARRAGE_INTERVAL = 8000;
+const OVERCLOCK_SPEED_MULT = 1.25;
+/** Everything built while an Overclock arm is running comes out steel-plated at double HP. */
+const STEEL_PLATE_HP_MULT = 2;
+
+/**
+ * Which potion welds on which arm. These are the same two-bolt recipes the Nexus brews from,
+ * read one step further: CC→chainsaw, SS→med core, GG→grabber, CS→shield, CG→barrage,
+ * GS→overclock. Keeping it keyed by potion kind rather than by recipe string means the
+ * recipe table stays the single source of truth for what makes what.
+ */
+const CREATION_POTION_ARM: Record<CreationPotionKind, MechArmKind> = {
+  buff: 'chainsaw',
+  heal: 'medcore',
+  gold: 'grabber',
+  protection: 'shield',
+  speed: 'barrage',
+  reload: 'overclock',
+};
+
+export const CREATION_MECH_ARM_INFO: Record<MechArmKind, { name: string; emoji: string; effect: string }> = {
+  chainsaw:  { name: 'Chainsaw Arm',  emoji: '🪚', effect: 'Cuts anything that comes close, on its own. Overheats after 5s and vents for 3s.' },
+  medcore:   { name: 'Med Core Arm',  emoji: '💊', effect: 'Lobs 3 repair orbs around you every 8s. Each one you walk over restores 15 mech HP.' },
+  grabber:   { name: 'Grabber Arm',   emoji: '🦾', effect: 'Seizes anyone who gets close and holds them for 3s. They cannot attack in the claw.' },
+  shield:    { name: 'Shield Arm',    emoji: '🛡️', effect: '+25 mech HP, and every 5th hit is blocked outright (every 3rd with two shields).' },
+  barrage:   { name: 'Barrage Arm',   emoji: '🚀', effect: 'Fires 3 homing rockets every 8s — 5 damage each, plus a small blast.' },
+  overclock: { name: 'Overclock Arm', emoji: '⚙️', effect: '+25% mech speed, supercharges the other arm, and steel-plates everything you build.' },
+};
 
 /** Creation Q+ Ultimate Invention slider panel layout (screen-space, top-left). */
 const INVENTION_SLIDER_X = 20;
@@ -300,7 +400,7 @@ export class CreationKit {
   private brewAura: { player: Phaser.GameObjects.Graphics | null; npc: Phaser.GameObjects.Graphics | null } =
     { player: null, npc: null };
   private brewAuraT = 0;
-  /** ~45ms accumulator behind the in-flight trails on daggers, bolts and scythes. */
+  /** ~45ms accumulator behind the in-flight trails on daggers, bolts and wrenches. */
   private trailAccum = 0;
 
   // Nexus (shared world object, one per match)
@@ -345,7 +445,7 @@ export class CreationKit {
   // Shared in-flight arrays (owner field distinguishes sides)
   private creatDaggers: CreationDagger[] = [];
   private creatBolts: CreationBoltInFlight[] = [];
-  private creatScythes: CreationScythe[] = [];
+  private creatWrenches: CreationWrench[] = [];
   // Persistent world objects
   private creatBlockers: CreationBlocker[] = [];
   private creatMazeWalls: CreationMazeWall[] = [];
@@ -407,10 +507,15 @@ export class CreationKit {
   private creatPlayerSpeedPadEnd = 0;
   private creatNpcSlowEnd = 0;
   private creatNpcSlowMult = 1;
-  private creatMechHolding = false;
-  private creatMechHoldStart = 0;
-  private creatMechStageVisual: Phaser.GameObjects.Text | null = null;
+  // R+ Nexus Awakening
   private creatMech: CreationMech | null = null;
+  private creatMedOrbs: CreationMedOrb[] = [];
+  /** Scene-clock stamp at which a wrecked mech's Nexus reassembles itself. 0 = nothing pending. */
+  private nexusRebuildAt = 0;
+  /** Which sustained pose the player's rig is in, so the mech's `ride` never stamps on a cast. */
+  private playerHold: ArmHold = null;
+  /** Sides currently carrying a wrench debuff, so it can be cleared exactly once when it lapses. */
+  private wrenchedSides = new Set<Fighter>();
 
   // ── Mastery: Springboard + Mortar Command ──────────────────────────────
   /** Absolute scene-clock stamp of the last Mortar Command. Starts a full cooldown in the past
@@ -457,8 +562,12 @@ export class CreationKit {
     this.avatar(owner)?.play(g, angle, duration);
   }
 
-  /** Enter/leave a sustained pose on one side's rig. */
-  private hold(owner: 'player' | 'npc', h: 'spray' | 'charge' | 'draw' | 'sow' | 'brace' | null, angle?: number): void {
+  /**
+   * Enter/leave a sustained pose on one side's rig. The player's current pose is remembered
+   * so the mech's `ride` stance can yield to any pose an ability is actually holding.
+   */
+  private hold(owner: 'player' | 'npc', h: ArmHold, angle?: number): void {
+    if (owner === 'player') this.playerHold = h;
     this.avatar(owner)?.setHold(h, angle);
   }
 
@@ -506,8 +615,10 @@ export class CreationKit {
     this.creatDaggers = [];
     for (const b of this.creatBolts) b.sprite.destroy();
     this.creatBolts = [];
-    for (const s of this.creatScythes) { s.sprite.destroy(); s.hpBar.destroy(); s.hpBg.destroy(); }
-    this.creatScythes = [];
+    for (const w of this.creatWrenches) w.sprite.destroy();
+    this.creatWrenches = [];
+    for (const f of this.wrenchedSides) this.clearWrench(f);
+    this.wrenchedSides.clear();
     for (const bl of this.creatBlockers) { bl.rect.destroy(); bl.hpBar.destroy(); bl.hpBg.destroy(); }
     this.creatBlockers = [];
     for (const w of this.creatMazeWalls) w.rect.destroy();
@@ -551,9 +662,17 @@ export class CreationKit {
     if (this.creatBuildSpikedPreview) { this.creatBuildSpikedPreview.destroy(); this.creatBuildSpikedPreview = null; }
     this.creatBuildSpikedCdUntil = 0;
     this.creatPlayerSpeedPadEnd = 0; this.creatNpcSlowEnd = 0; this.creatNpcSlowMult = 1;
-    this.creatMechHolding = false; this.creatMechHoldStart = 0;
-    if (this.creatMechStageVisual) { this.creatMechStageVisual.destroy(); this.creatMechStageVisual = null; }
-    if (this.creatMech) { this.creatMech.sprite.destroy(); this.creatMech.hpBar.destroy(); this.creatMech.hpBg.destroy(); this.creatMech = null; }
+    if (this.creatMech) {
+      const m = this.creatMech;
+      m.rig.destroy(); m.hpBar.destroy(); m.hpBg.destroy(); m.prompt?.destroy();
+      this.creatMech = null;
+    }
+    for (const o of this.creatMedOrbs) o.gfx.destroy();
+    this.creatMedOrbs = [];
+    this.nexusRebuildAt = 0;
+    this.playerHold = null;
+    this.api.setStatusIndicator('creation-mech', null);
+    for (let i = 0; i < 2; i++) this.api.setStatusIndicator(`creation-mech-arm-${i}`, null);
 
     // Mastery reset
     this.mortarLastCastAt = -MORTAR_COOLDOWN_MS;
@@ -624,22 +743,201 @@ export class CreationKit {
     this.fx(owner).muzzleFlash(fromX + (dx / len) * 22, fromY + (dy / len) * 22, angle, scale);
   }
 
-  spawnScythe(fromX: number, fromY: number, tx: number, ty: number, owner: 'player' | 'npc'): void {
+  /** R — hurl a wrench along the aim. It tumbles, so the throw reads even at speed. */
+  spawnWrench(fromX: number, fromY: number, tx: number, ty: number, owner: 'player' | 'npc'): void {
     const dx = tx - fromX, dy = ty - fromY;
     const len = Math.hypot(dx, dy) || 1;
     const angle = Math.atan2(dy, dx);
-    const maxHp = 25;
     const spr = this.add.graphics().setDepth(8);
-    drawScythe(spr, this.col(owner));
-    spr.setPosition(fromX + (dx / len) * 30, fromY + (dy / len) * 30);
-    const hpBg = this.add.rectangle(fromX, fromY - 20, 28, 4, 0x333333).setDepth(9);
-    const hpBar = this.add.rectangle(fromX - 14, fromY - 20, 28, 4, CREATION.nexus).setDepth(10).setOrigin(0, 0.5);
-    this.creatScythes.push({ sprite: spr, hp: maxHp, maxHp, vx: (dx / len) * 87, vy: (dy / len) * 87, owner, lastContactTick: -99999, hpBar, hpBg });
-    // Forged on the spot and hurled overhand.
+    drawWrench(spr, this.col(owner));
+    const sx = fromX + (dx / len) * 24, sy = fromY + (dy / len) * 24;
+    spr.setPosition(sx, sy);
+    this.creatWrenches.push({
+      sprite: spr, x: sx, y: sy,
+      vx: (dx / len) * WRENCH_SPEED, vy: (dy / len) * WRENCH_SPEED,
+      owner, armedAt: this.scene.time.now + 90,
+    });
+    // Thrown overhand off the shoulder, with the shop-floor clatter to match.
     this.gesture(owner, 'slam', angle);
     const fx = this.fx(owner);
-    fx.gearPulse(fromX + (dx / len) * 30, fromY + (dy / len) * 30, 26, 480, CREATION.nexusLit, 7);
-    fx.sparks(fromX + (dx / len) * 26, fromY + (dy / len) * 26, 8, { angle, spread: 0.9, speed: 190, size: 2.4, life: 460, depth: 7 });
+    fx.sparks(sx, sy, 7, { angle, spread: 0.8, speed: 200, size: 2.2, life: 380, depth: 7 });
+  }
+
+  // ── R+ Nexus Awakening ───────────────────────────────────────────
+
+  /** True while the Nexus is standing, armed, and waiting for a wrench (player side only). */
+  private get nexusAwakened(): boolean {
+    return !!this.nexusRig && !this.creatMech && this.api.elementId === 'creation' && this.api.hasUpgrade('r');
+  }
+
+  /** True while a mounted mech is running an Overclock arm — everything built comes out steel. */
+  private get mechOverclocked(): boolean {
+    return !!this.creatMech?.mounted && this.creatMech.arms.some((a) => a.kind === 'overclock');
+  }
+
+  /**
+   * The wrench found the charged core: the Nexus folds itself up into a walker on the spot,
+   * welding on whichever potions were sitting on its shelf as arms. Everything the Nexus was
+   * holding is spent doing it — the machine is the mech now, and it only comes back when the
+   * mech is wrecked.
+   */
+  private awakenNexus(): void {
+    const kinds = this.creatPotions
+      .filter((p) => p.owner === 'player')
+      .sort((a, b) => a.slot - b.slot)
+      .map((p) => p.kind);
+
+    // Clear the pedestal: bottles and loaded slugs alike are consumed by the transformation.
+    for (let i = this.creatPotions.length - 1; i >= 0; i--) {
+      if (this.creatPotions[i].owner !== 'player') continue;
+      this.creatPotions[i].gfx.destroy();
+      this.creatPotions.splice(i, 1);
+    }
+    for (const b of this.nexusBolts) b.icon.destroy();
+    this.nexusBolts = [];
+    this.creatCraftInProgress = false;
+
+    const x = this.nexusX, y = this.nexusY;
+    this.nexusRig?.destroy();
+    this.nexusRig = null;
+    this.nexusLabel?.destroy();
+    this.nexusLabel = null;
+
+    // The machine tearing itself apart and standing up out of its own pieces.
+    this.pfx.explosion(x, y, 78, { shards: 16, smoke: 3, core: CREATION.rust, debris: false });
+    this.pfx.gearPulse(x, y, 70, 760, CREATION.ember, 8);
+    this.pfx.ring(x, y, 12, 120, CREATION.spark, 620, 6, 8);
+    this.scene.cameras.main.shake(260, 0.007);
+    this.api.showFloatingText(x, y - 70, '⚙️ NEXUS AWAKENS', '#ffaa44');
+
+    this.buildMech(x, y, kinds.map((k) => CREATION_POTION_ARM[k]));
+  }
+
+  /** Stand a dormant mech up at `x,y` with the given arms welded on. */
+  private buildMech(x: number, y: number, kinds: MechArmKind[]): void {
+    const rig = new CreationMechRig(this.scene, this.pcol, 5);
+    const arms: CreationMechArm[] = kinds.slice(0, 2).map((kind, i) => {
+      const view = rig.arm(i as 0 | 1);
+      view.kind = kind;
+      return {
+        kind, view, cd: 0, heatMs: 0, coolUntil: 0, biteAt: 0,
+        held: null, heldUntil: 0, heldAngle: 0,
+      };
+    });
+    // An Overclock arm supercharges whatever is on the *other* side. Two of them feed each
+    // other, which is how a double-overclock build ends up boosted on both arms.
+    if (arms.length === 2) {
+      if (arms[0].kind === 'overclock') arms[1].view.boosted = true;
+      if (arms[1].kind === 'overclock') arms[0].view.boosted = true;
+    }
+
+    let maxHp = MECH_HP;
+    for (const a of arms) {
+      if (a.kind === 'shield') maxHp += a.view.boosted ? SHIELD_BONUS_HP + 15 : SHIELD_BONUS_HP;
+    }
+
+    const hpBg = this.add.rectangle(x, y + 58, 60, 6, 0x221108, 0.85).setDepth(10);
+    const hpBar = this.add.rectangle(x - 30, y + 58, 60, 6, CREATION.brass, 0.95).setDepth(11).setOrigin(0, 0.5);
+    const prompt = this.add.text(x, y - 62, '[R] BOARD', {
+      fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+      color: '#ffcc66', stroke: '#2a1206', strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(16);
+
+    this.creatMech = { rig, hp: maxHp, maxHp, hpBar, hpBg, arms, mounted: false, x, y, hits: 0, prompt };
+    // Announce what it came out of the forge carrying.
+    arms.forEach((a, i) => {
+      const info = CREATION_MECH_ARM_INFO[a.kind];
+      this.scene.time.delayedCall(240 + i * 220, () => {
+        this.api.showFloatingText(x + (i === 0 ? 34 : -34), y - 18,
+          `${info.emoji} ${info.name.toUpperCase()}`,
+          `#${MECH_ARM_TONES[a.kind].toString(16).padStart(6, '0')}`);
+      });
+    });
+  }
+
+  /**
+   * Climb in. Returns true when the key press was spent boarding, so the caller knows not to
+   * also throw a wrench with it.
+   */
+  private tryBoardMech(): boolean {
+    const mech = this.creatMech;
+    if (!mech || mech.mounted || this.creatBuildMode) return false;
+    if (!Phaser.Input.Keyboard.JustDown(this.api.rKey)) return false;
+    if (Phaser.Math.Distance.Between(this.player.x, this.player.y, mech.x, mech.y) > MECH_MOUNT_RANGE) return false;
+
+    mech.mounted = true;
+    mech.prompt?.destroy();
+    mech.prompt = null;
+    // Only claim the absorber slot if nothing else owns it — same rule the old build used.
+    if (!this.player.damageAbsorber) {
+      this.player.damageAbsorber = (amt: number) => this.absorbIntoMech(amt);
+    }
+    this.gesture('player', 'flex');
+    this.pfx.gearPulse(this.player.x, this.player.y, 46, 620, CREATION.brass, 7);
+    this.pfx.ring(this.player.x, this.player.y, 10, 90, CREATION.spark, 460, 5, 7);
+    this.pfx.hammerStrike(this.player.x, this.player.y + 20, -Math.PI / 2, 1.3);
+    this.api.showFloatingText(this.player.x, this.player.y - 56, '🤖 MECH ONLINE', '#ffaa44');
+    return true;
+  }
+
+  /** How many hits the Shield arms swallow one in. 0 = no shield arm on this mech. */
+  private mechBlockEvery(mech: CreationMech): number {
+    const shields = mech.arms.filter((a) => a.kind === 'shield');
+    if (shields.length === 0) return 0;
+    if (shields.length >= 2) return 3;
+    return shields[0].view.boosted ? 4 : 5;
+  }
+
+  /** Damage routed into the mech instead of the pilot. Always absorbs — that is the point. */
+  private absorbIntoMech(amount: number): boolean {
+    const mech = this.creatMech;
+    if (!mech || !mech.mounted) return false;
+    mech.hits++;
+    const every = this.mechBlockEvery(mech);
+    if (every > 0 && mech.hits % every === 0) {
+      // A shield arm eats this one whole.
+      for (const a of mech.arms) if (a.kind === 'shield') a.view.fire = 1;
+      this.pfx.ring(mech.x, mech.y - 10, 14, 62, MECH_ARM_TONES.shield, 340, 4, 10);
+      this.pfx.flash(mech.x, mech.y - 10, 22, 10);
+      this.api.showFloatingText(mech.x, mech.y - 58, 'BLOCKED', '#66aaff');
+      return true;
+    }
+    mech.hp -= amount;
+    this.api.spawnHitFlash(mech.x, mech.y - 8, CREATION.brass);
+    // Plating spalling off wherever it just took the hit.
+    this.pfx.sparks(mech.x, mech.y - 8, 6, { speed: 150, size: 2.2, life: 400, depth: 10 });
+    if (mech.hp <= 0) this.wreckMech();
+    return true;
+  }
+
+  /** The mech comes apart; the Nexus starts rebuilding itself out of what is left. */
+  private wreckMech(): void {
+    const mech = this.creatMech;
+    if (!mech) return;
+    for (const a of mech.arms) this.releaseGrab(a);
+    mech.rig.wreck(mech.x, mech.y);
+    mech.rig.destroy();
+    mech.hpBar.destroy();
+    mech.hpBg.destroy();
+    mech.prompt?.destroy();
+    if (mech.mounted) {
+      this.player.damageAbsorber = null;
+      if (this.playerHold === 'ride') this.hold('player', null);
+      this.api.showFloatingText(this.player.x, this.player.y - 46, 'MECH DESTROYED', '#ff4422');
+    }
+    this.creatMech = null;
+    this.api.setStatusIndicator('creation-mech', null);
+    for (let i = 0; i < 2; i++) this.api.setStatusIndicator(`creation-mech-arm-${i}`, null);
+    // The Nexus reassembles where it always was — losing it for good would take the whole
+    // brewing half of the element off the table for the rest of the match.
+    this.nexusRebuildAt = this.scene.time.now + NEXUS_REBUILD_MS;
+  }
+
+  private releaseGrab(arm: CreationMechArm): void {
+    if (!arm.held) return;
+    arm.held = null;
+    arm.heldUntil = 0;
+    arm.view.grip = 0;
   }
 
   /**
@@ -648,9 +946,11 @@ export class CreationKit {
    */
   spawnBlocker(cx: number, cy: number, w: number, h: number, owner: 'player' | 'npc', countAsBuild = true): void {
     if (owner === 'player' && countAsBuild) this.api.recordMasteryStat('wallsBuilt', 1);
-    const maxHp = 125;
+    // Overclock arm: what comes off the line is plate, not board, and twice as tough.
+    const steel = owner === 'player' && this.mechOverclocked;
+    const maxHp = steel ? 125 * STEEL_PLATE_HP_MULT : 125;
     const rect = this.add.graphics().setDepth(4);
-    plankPanel(rect, this.col(owner), w, h, 0.92);
+    plankPanel(rect, this.col(owner), w, h, 0.92, { steel });
     rect.setPosition(cx, cy);
     const hpBg = this.add.rectangle(cx, cy - h / 2 - 6, w, 4, 0x333333).setDepth(5);
     const hpBar = this.add.rectangle(cx - w / 2, cy - h / 2 - 6, w, 4, CREATION.tan).setDepth(6).setOrigin(0, 0.5);
@@ -663,48 +963,41 @@ export class CreationKit {
     }
   }
 
-  private spawnMech(stage: 1 | 2 | 3): void {
-    if (this.creatMech) { this.creatMech.sprite.destroy(); this.creatMech.hpBar.destroy(); this.creatMech.hpBg.destroy(); this.creatMech = null; }
-    const mechHp = stage === 3 ? 60 : stage === 2 ? 40 : 20;
-    const mSpr = this.add.graphics().setDepth(3);
-    drawMech(mSpr, this.pcol, stage);
-    mSpr.setPosition(this.player.x, this.player.y + 28);
-    const mHpBg = this.add.rectangle(this.player.x, this.player.y + 50, 34, 5, 0x333333, 0.8).setDepth(4);
-    const mHpBar = this.add.rectangle(this.player.x - 17, this.player.y + 50, 34, 5, CREATION.brass, 0.9).setDepth(5).setOrigin(0, 0.5);
-    this.creatMech = { sprite: mSpr, stage, hp: mechHp, maxHp: mechHp, hpBar: mHpBar, hpBg: mHpBg, rocketAccum: 0, dodgeCdUntil: 0 };
-    // It gets bolted together in front of you, one gear pulse per stage.
-    this.pfx.assemble(this.player.x, this.player.y + 28, 40, 40, 420);
-    for (let i = 0; i < stage; i++) {
-      this.scene.time.delayedCall(120 * i, () => {
-        this.pfx.gearPulse(this.player.x, this.player.y + 28, 24 + i * 8, 460, CREATION.brass, 7);
-      });
+  // ── Wrenched (the R debuff) ──────────────────────────────────────
+
+  /**
+   * Jam a wrench in someone's gear. `Fighter.castPunish*` is the only honest chokepoint for
+   * "an ability was used", so the cost is charged there; everything here is bookkeeping and
+   * the visual that makes it readable.
+   */
+  private applyWrench(victim: Fighter, owner: 'player' | 'npc'): void {
+    victim.castPunishUntil = Math.max(victim.castPunishUntil, Date.now() + WRENCH_PUNISH_MS);
+    victim.castPunishDamage = WRENCH_PUNISH_DAMAGE;
+    const fx = this.fx(owner);
+    victim.onCastPunish = () => {
+      // Their own cast grinding against the wrench: a hard gear pulse and a shower of swarf.
+      fx.gearPulse(victim.x, victim.y, 26, 380, CREATION.rust, 9);
+      fx.sparks(victim.x, victim.y, 8, { speed: 170, size: 2.2, life: 420, depth: 9 });
+    };
+    this.wrenchedSides.add(victim);
+    this.api.showFloatingText(victim.x, victim.y - 46, '🔧 WRENCHED', '#cc6622');
+  }
+
+  private clearWrench(victim: Fighter): void {
+    victim.castPunishUntil = 0;
+    victim.castPunishDamage = 0;
+    victim.onCastPunish = null;
+  }
+
+  /** Drop the debuff off anyone whose 5 seconds are up. */
+  private updateWrenchDebuffs(): void {
+    if (this.wrenchedSides.size === 0) return;
+    const now = Date.now();
+    for (const f of this.wrenchedSides) {
+      if (now < f.castPunishUntil && f.active) continue;
+      this.clearWrench(f);
+      this.wrenchedSides.delete(f);
     }
-    this.pfx.hammerStrike(this.player.x, this.player.y + 28, -Math.PI / 2, 1 + stage * 0.15);
-    this.gesture('player', 'flex');
-    if (!this.player.damageAbsorber) {
-      this.player.damageAbsorber = (amt: number) => {
-        if (!this.creatMech) return false;
-        this.creatMech.hp -= amt;
-        const ratio = Math.max(0, this.creatMech.hp / this.creatMech.maxHp);
-        this.creatMech.hpBar.setScale(ratio, 1);
-        this.api.spawnHitFlash(this.creatMech.sprite.x, this.creatMech.sprite.y, CREATION.brass);
-        // Plating spalling off wherever it just took a hit.
-        this.pfx.sparks(this.creatMech.sprite.x, this.creatMech.sprite.y, 5,
-          { speed: 130, size: 2.2, life: 380, depth: 7 });
-        if (this.creatMech.hp <= 0) {
-          // It comes apart into its own plating rather than puffing out of existence.
-          this.pfx.explosion(this.creatMech.sprite.x, this.creatMech.sprite.y, 74,
-            { shards: 14, smoke: 3, core: CREATION.brass });
-          this.pfx.bloom(this.creatMech.sprite.x, this.creatMech.sprite.y, 42, 9);
-          this.creatMech.sprite.destroy(); this.creatMech.hpBar.destroy(); this.creatMech.hpBg.destroy(); this.creatMech = null;
-          this.player.damageAbsorber = null;
-          this.api.showFloatingText(this.player.x, this.player.y - 40, 'MECH DESTROYED', '#ff4422');
-        }
-        return true;
-      };
-    }
-    this.api.showFloatingText(this.player.x, this.player.y - 40, `⚙️ MECH STAGE ${stage}`, '#ffaa44');
-    this.player.triggerCooldown('scythe-of-doom');
   }
 
   // Q — Workshop: the "maze" ctx name is legacy; it now builds a 30s wooden workshop.
@@ -743,6 +1036,7 @@ export class CreationKit {
     if (!this.nexusRig) return;
     this.nexusRig.setBrewing(this.creatCraftInProgress);
     this.nexusRig.setLoad(this.nexusBolts.length);
+    this.nexusRig.setAwakened(this.nexusAwakened);
     this.nexusRig.update(delta);
   }
 
@@ -942,8 +1236,10 @@ export class CreationKit {
       const fighter = side === 'player' ? this.player : this.npc;
       const potions = CREATION_POTION_KINDS.filter((k) => time < (this.creatPotionEnds.get(`${side}|${k}`) ?? 0));
       const hexes = CREATION_HEX_KINDS.filter((k) => time < (this.creatHexEnds.get(`${side}|${k}`) ?? 0));
+      // The wrench rides the same aura: `castPunishUntil` is a wall clock, not the scene one.
+      const wrenched = !!fighter && Date.now() < fighter.castPunishUntil;
 
-      if ((potions.length + hexes.length) === 0 || !fighter?.active || fighter.hp <= 0) {
+      if ((potions.length + hexes.length === 0 && !wrenched) || !fighter?.active || fighter.hp <= 0) {
         if (this.brewAura[side]) { this.brewAura[side]!.destroy(); this.brewAura[side] = null; }
         continue;
       }
@@ -983,6 +1279,14 @@ export class CreationKit {
         g.fillStyle(CREATION_POTIONS[kind].color, 0.7 * alpha * (1 - drip));
         g.fillCircle(bx, by + 6 + drip * 12, 2 * (1 - drip * 0.6));
       });
+
+      // Wrenched: the spanner itself stuck through their works, juddering as it binds.
+      if (wrenched) {
+        const bind = Math.sin(this.brewAuraT * 14) * 0.12;
+        wrenchShape(g, tint, fighter.x + 16, fighter.y - 16, -0.7 + bind, 0.72, alpha * 0.95);
+        g.lineStyle(2, tint(CREATION.rust), alpha * (0.25 + 0.25 * Math.sin(this.brewAuraT * 9)));
+        g.strokeCircle(fighter.x + 16, fighter.y - 16, 15);
+      }
     }
   }
 
@@ -1254,8 +1558,11 @@ export class CreationKit {
     let mult = base;
     // Speed pad boost (F+ Build Mode)
     if (time < this.creatPlayerSpeedPadEnd) mult *= 1.25;
-    // Mech stage 3 speed bonus
-    if (this.creatMech && this.creatMech.stage === 3) mult = Math.max(mult, 1.4);
+    // R+ mech: heavy to walk in, unless an Overclock arm is driving the legs.
+    if (this.creatMech?.mounted) {
+      mult *= MECH_SPEED_MULT;
+      for (const a of this.creatMech.arms) if (a.kind === 'overclock') mult *= OVERCLOCK_SPEED_MULT;
+    }
     // Q Workshop: +25% while active
     if (time < this.creatWorkshopEnd && this.creatWorkshopOwner === 'player') mult *= 1.25;
     // Speed Potion: +50%
@@ -1582,6 +1889,333 @@ export class CreationKit {
     }
   }
 
+  // ── R: wrenches in flight ────────────────────────────────────────
+
+  private updateWrenches(time: number, delta: number, emitTrails: boolean): void {
+    const W = this.api.width, H = this.api.height;
+    for (let i = this.creatWrenches.length - 1; i >= 0; i--) {
+      const w = this.creatWrenches[i];
+      w.x += w.vx * (delta / 1000);
+      w.y += w.vy * (delta / 1000);
+      // End over end, the way a thrown spanner actually goes.
+      w.sprite.setPosition(w.x, w.y);
+      w.sprite.rotation += 17 * (delta / 1000);
+      if (w.x < -30 || w.x > W + 30 || w.y < -30 || w.y > H + 30) {
+        w.sprite.destroy();
+        this.creatWrenches.splice(i, 1);
+        continue;
+      }
+      if (emitTrails) {
+        this.fx(w.owner).emberTrail(w.x, w.y, Math.atan2(-w.vy, -w.vx), CREATION.silver);
+      }
+
+      // The charged core. This is the only way into the mech, so it is checked before
+      // fighters — a wrench that clips someone standing on the pedestal still wakes it.
+      if (w.owner === 'player' && time >= w.armedAt && this.nexusAwakened
+          && Phaser.Math.Distance.Between(w.x, w.y, this.nexusX, this.nexusY) <= 34) {
+        w.sprite.destroy();
+        this.creatWrenches.splice(i, 1);
+        this.awakenNexus();
+        continue;
+      }
+
+      let hit = false;
+      for (const target of (w.owner === 'player' ? this.api.enemies : [this.player])) {
+        if (!target.active || target.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(w.x, w.y, target.x, target.y) > WRENCH_HIT_RADIUS) continue;
+        target.takeDamage(WRENCH_DAMAGE);
+        this.api.spawnHitFlash(target.x, target.y, CREATION.silver);
+        const fx = this.fx(w.owner);
+        // A tool landing on machinery: a hard clang, swarf, and a gear jolting out of true.
+        fx.hammerStrike(target.x, target.y, Math.atan2(w.vy, w.vx), 1.1);
+        fx.gearPulse(target.x, target.y, 30, 460, CREATION.rust, 9);
+        fx.sparks(target.x, target.y, 10,
+          { angle: Math.atan2(-w.vy, -w.vx), spread: 1.1, speed: 210, size: 2.4, life: 460, depth: 9 });
+        this.applyWrench(target, w.owner);
+        hit = true;
+        break;
+      }
+      if (hit) {
+        w.sprite.destroy();
+        this.creatWrenches.splice(i, 1);
+      }
+    }
+  }
+
+  // ── R+: the mech ─────────────────────────────────────────────────
+
+  private updateMech(time: number, delta: number): void {
+    const mech = this.creatMech;
+    if (!mech) return;
+
+    if (mech.mounted) {
+      mech.x = this.player.x;
+      mech.y = this.player.y;
+      // The pilot's hands go to the yokes — but only when no ability is holding them.
+      if (this.playerHold === null) this.hold('player', 'ride');
+    }
+
+    const aim = mech.mounted
+      ? Math.atan2(this.api.aimY - mech.y, this.api.aimX - mech.x)
+      : Math.atan2(this.player.y - mech.y, this.player.x - mech.x);
+    const body = this.player.body as Phaser.Physics.Arcade.Body | null;
+    const walkSpeed = mech.mounted && body ? Math.hypot(body.velocity.x, body.velocity.y) : 0;
+    mech.rig.setMounted(mech.mounted);
+    mech.rig.setAim(aim);
+    mech.rig.update(delta, mech.x, mech.y, this.player.forceInvisible && mech.mounted ? 0 : 1, walkSpeed);
+
+    // HP bar rides under the feet.
+    const frac = Math.max(0, mech.hp / mech.maxHp);
+    mech.hpBg.setPosition(mech.x, mech.y + 58);
+    mech.hpBar.setPosition(mech.x - 30, mech.y + 58).setSize(60 * frac, 6);
+
+    // Boarding prompt: only while you are close enough for R to actually do it.
+    if (mech.prompt) {
+      const near = Phaser.Math.Distance.Between(this.player.x, this.player.y, mech.x, mech.y) <= MECH_MOUNT_RANGE;
+      mech.prompt.setPosition(mech.x, mech.y - 62 + Math.sin(time / 260) * 3);
+      mech.prompt.setAlpha(near ? 1 : 0.35);
+      mech.prompt.setScale(near ? 1 + Math.sin(time / 180) * 0.06 : 0.85);
+    }
+
+    if (mech.mounted) {
+      for (const arm of mech.arms) this.updateMechArm(mech, arm, aim, time, delta);
+    }
+    this.updateMechHud(mech, time);
+  }
+
+  private updateMechArm(mech: CreationMech, arm: CreationMechArm, aim: number, time: number, delta: number): void {
+    const v = arm.view;
+    const boosted = v.boosted;
+    const dt = delta / 1000;
+    // Every arm has something turning on it; the rate is the arm's personality.
+    const spinRate = arm.kind === 'chainsaw' ? (boosted ? 5.5 : 3.6)
+      : arm.kind === 'overclock' ? (boosted ? 2.6 : 1.7) : 0.5;
+    v.spin = (v.spin + dt * spinRate) % 1;
+    v.fire = Math.max(0, v.fire - dt * 3.6);
+
+    const nearest = this.api.getNearestEnemy(mech.x, mech.y);
+    const alive = nearest?.active && nearest.hp > 0;
+    const distToEnemy = alive ? Phaser.Math.Distance.Between(mech.x, mech.y, nearest.x, nearest.y) : Infinity;
+    const ease = (target: number, k: number) => Math.min(1, dt * k) * target;
+
+    switch (arm.kind) {
+      case 'chainsaw': {
+        const range = boosted ? CHAINSAW_RANGE * 1.2 : CHAINSAW_RANGE;
+        const heatCap = boosted ? CHAINSAW_HEAT_MS * 1.4 : CHAINSAW_HEAT_MS;
+        const coolMs = boosted ? CHAINSAW_COOL_MS * 0.66 : CHAINSAW_COOL_MS;
+        const cooling = time < arm.coolUntil;
+        const cutting = !cooling && alive && distToEnemy <= range;
+        v.extend += ((cutting ? 1 : 0) - v.extend) * Math.min(1, dt * 9);
+        if (cooling) {
+          // Venting: heat bleeds off over the whole lockout, and it visibly steams.
+          v.heat = Phaser.Math.Clamp((arm.coolUntil - time) / coolMs, 0, 1);
+          if (Math.random() < dt * 6) this.pfx.smoke(mech.x + Math.cos(aim) * 34, mech.y + Math.sin(aim) * 24, 1, 14, 9);
+          break;
+        }
+        v.heat = Phaser.Math.Clamp(arm.heatMs / heatCap, 0, 1);
+        if (!cutting) {
+          arm.heatMs = Math.max(0, arm.heatMs - delta * 0.7);
+          break;
+        }
+        arm.heatMs += delta;
+        if (time >= arm.biteAt) {
+          arm.biteAt = time + (boosted ? 140 : 200);
+          nearest.takeDamage(boosted ? 5 : 3);
+          this.api.spawnHitFlash(nearest.x, nearest.y, CREATION.silver);
+          this.pfx.sparks(nearest.x, nearest.y, 5,
+            { angle: Math.atan2(mech.y - nearest.y, mech.x - nearest.x), spread: 1, speed: 190, size: 2, life: 300, depth: 9 });
+        }
+        if (arm.heatMs >= heatCap) {
+          arm.heatMs = 0;
+          arm.coolUntil = time + coolMs;
+          this.pfx.smoke(mech.x, mech.y - 20, 3, 26, 9);
+          this.api.showFloatingText(mech.x, mech.y - 62, 'OVERHEAT', '#ff6644');
+        }
+        break;
+      }
+
+      case 'medcore': {
+        const interval = boosted ? MEDCORE_INTERVAL * 0.75 : MEDCORE_INTERVAL;
+        arm.cd += delta;
+        if (arm.cd >= interval) {
+          arm.cd = 0;
+          v.fire = 1;
+          this.dropMedOrbs(mech, boosted ? 4 : 3, boosted ? 22 : 15, time);
+        }
+        break;
+      }
+
+      case 'grabber': {
+        const holdMs = boosted ? GRABBER_HOLD_MS * 1.5 : GRABBER_HOLD_MS;
+        const cd = boosted ? GRABBER_CD * 0.7 : GRABBER_CD;
+        const range = boosted ? GRABBER_RANGE * 1.25 : GRABBER_RANGE;
+        if (arm.held) {
+          const captive = arm.held;
+          if (time >= arm.heldUntil || !captive.active || captive.hp <= 0 || captive.unstoppable) {
+            this.api.showFloatingText(captive.x, captive.y - 40, 'RELEASED', '#ffcc22');
+            this.releaseGrab(arm);
+            break;
+          }
+          // Pinned at the claw and unable to swing back. `reset` is what glues a body to a
+          // moving kit object — setting x/y alone leaves the physics step to undo it.
+          const gx = mech.x + Math.cos(arm.heldAngle) * 62;
+          const gy = mech.y + Math.sin(arm.heldAngle) * 62;
+          (captive.body as Phaser.Physics.Arcade.Body).reset(gx, gy);
+          captive.disarmedUntil = Math.max(captive.disarmedUntil, Date.now() + 150);
+          v.grip += (1 - v.grip) * Math.min(1, dt * 12);
+          v.extend += (1 - v.extend) * Math.min(1, dt * 12);
+          if (Math.random() < dt * 8) {
+            this.pfx.sparks(gx, gy, 2, { speed: 90, size: 1.8, life: 300, depth: 9 });
+          }
+          break;
+        }
+        v.grip -= ease(v.grip, 8);
+        v.extend -= ease(v.extend, 7);
+        arm.cd += delta;
+        if (arm.cd >= cd && alive && distToEnemy <= range && !nearest.unstoppable) {
+          arm.cd = 0;
+          arm.held = nearest;
+          arm.heldUntil = time + holdMs;
+          arm.heldAngle = Math.atan2(nearest.y - mech.y, nearest.x - mech.x);
+          v.extend = 1;
+          this.pfx.ring(nearest.x, nearest.y, 34, 10, MECH_ARM_TONES.grabber, 300, 4, 9);
+          this.pfx.gearPulse(mech.x, mech.y, 34, 420, CREATION.brass, 9);
+          this.api.showFloatingText(nearest.x, nearest.y - 44, '🦾 GRABBED', '#ffcc22');
+        }
+        break;
+      }
+
+      case 'shield': {
+        // Braced flat, easing back out of the block flash the absorber sets.
+        v.grip += (0.55 - v.grip) * Math.min(1, dt * 4);
+        break;
+      }
+
+      case 'barrage': {
+        const interval = boosted ? BARRAGE_INTERVAL * 0.75 : BARRAGE_INTERVAL;
+        arm.cd += delta;
+        if (arm.cd >= interval && alive) {
+          arm.cd = 0;
+          v.fire = 1;
+          this.fireBarrage(mech, aim, boosted ? 5 : 3, boosted ? 8 : 5);
+        }
+        break;
+      }
+
+      case 'overclock':
+        // Pure passive: speed, the boost flag on the other arm, and steel-plated builds.
+        v.grip += (0.3 - v.grip) * Math.min(1, dt * 3);
+        break;
+    }
+  }
+
+  /** Barrage arm: a fan of homing rockets off the pod. */
+  private fireBarrage(mech: CreationMech, aim: number, count: number, damage: number): void {
+    for (let i = 0; i < count; i++) {
+      const a = aim + (i - (count - 1) / 2) * 0.34;
+      const spr = this.add.graphics().setDepth(9);
+      drawBolt(spr, this.pcol, 'silver');
+      const sx = mech.x + Math.cos(a) * 26, sy = mech.y + Math.sin(a) * 18;
+      spr.setPosition(sx, sy).setRotation(a);
+      this.creatBolts.push({
+        sprite: spr, vx: Math.cos(a) * 400, vy: Math.sin(a) * 400,
+        tier: 'silver', damage, owner: 'player',
+        isRocket: true, homing: true, blastRadius: 52,
+        targetX: sx + Math.cos(a) * 400, targetY: sy + Math.sin(a) * 400, noNexus: true,
+      });
+      this.pfx.muzzleFlash(sx, sy, a, 0.9, 9);
+    }
+    this.api.showFloatingText(mech.x, mech.y - 62, '🚀 BARRAGE', '#99ff66');
+  }
+
+  /** Med core arm: scatter repair orbs around the mech for the pilot to drive over. */
+  private dropMedOrbs(mech: CreationMech, count: number, heal: number, time: number): void {
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2 + Math.random() * 0.5;
+      const d = 52 + Math.random() * 34;
+      const x = Phaser.Math.Clamp(mech.x + Math.cos(a) * d, 24, this.api.width - 24);
+      const y = Phaser.Math.Clamp(mech.y + Math.sin(a) * d, 24, this.api.height - 24);
+      const gfx = this.add.graphics().setDepth(6);
+      this.creatMedOrbs.push({ gfx, x, y, t: Math.random() * 3, heal, expireAt: time + MEDCORE_ORB_MS });
+      this.pfx.ring(x, y, 2, 20, MECH_ARM_TONES.medcore, 300, 3, 6);
+    }
+    this.api.showFloatingText(mech.x, mech.y - 62, '💊 REPAIR KIT', '#33dd66');
+  }
+
+  private updateMedOrbs(time: number, delta: number): void {
+    const mech = this.creatMech;
+    for (let i = this.creatMedOrbs.length - 1; i >= 0; i--) {
+      const o = this.creatMedOrbs[i];
+      if (time >= o.expireAt) {
+        this.pfx.bloom(o.x, o.y, 16, 6);
+        o.gfx.destroy();
+        this.creatMedOrbs.splice(i, 1);
+        continue;
+      }
+      o.t += delta / 1000;
+      // A capsule in a brass ring, bobbing, with a cross that reads at a glance.
+      const g = o.gfx;
+      const tone = MECH_ARM_TONES.medcore;
+      const bob = Math.sin(o.t * 2.6) * 3;
+      const fade = Math.min(1, (o.expireAt - time) / 1200);
+      g.clear();
+      g.setPosition(o.x, o.y + bob);
+      g.fillStyle(tone, 0.2 * fade);
+      g.fillCircle(0, 0, 15 + Math.sin(o.t * 4) * 2);
+      g.fillStyle(this.pcol(CREATION.soot), 0.9 * fade);
+      g.fillCircle(0, 0, 9.4);
+      g.fillStyle(tone, 0.95 * fade);
+      g.fillCircle(0, 0, 8);
+      g.fillStyle(this.pcol(CREATION.white), 0.9 * fade);
+      g.fillRect(-4.4, -1.6, 8.8, 3.2);
+      g.fillRect(-1.6, -4.4, 3.2, 8.8);
+      g.lineStyle(1.8, this.pcol(CREATION.brass), 0.9 * fade);
+      g.strokeCircle(0, 0, 10);
+      for (let k = 0; k < 4; k++) {
+        const a = o.t * 1.4 + (k / 4) * Math.PI * 2;
+        rivet(g, this.pcol, Math.cos(a) * 10, Math.sin(a) * 10, 1.8, fade);
+      }
+
+      if (!mech || !mech.mounted) continue;
+      if (Phaser.Math.Distance.Between(o.x, o.y, mech.x, mech.y) > 30) continue;
+      const before = mech.hp;
+      mech.hp = Math.min(mech.maxHp, mech.hp + o.heal);
+      const gained = Math.round(mech.hp - before);
+      this.pfx.ring(o.x, o.y, 6, 44, MECH_ARM_TONES.medcore, 340, 4, 9);
+      this.pfx.sparks(o.x, o.y, 8, { speed: 110, size: 2, life: 480, gravity: -70, depth: 9 });
+      this.api.showFloatingText(mech.x, mech.y - 50, `+${gained}`, '#33dd66');
+      o.gfx.destroy();
+      this.creatMedOrbs.splice(i, 1);
+    }
+  }
+
+  /** Mirror the mech and everything bolted to it into the top-right effect tray. */
+  private updateMechHud(mech: CreationMech, time: number): void {
+    this.api.setStatusIndicator('creation-mech', mech.mounted ? {
+      name: 'Mech', emoji: '🤖', color: CREATION.brass,
+      description: `Piloting the awakened Nexus. It soaks every hit aimed at you and you move ${Math.round((1 - MECH_SPEED_MULT) * 100)}% slower. ${mech.maxHp} HP total.`,
+      count: Math.max(0, Math.ceil(mech.hp)), suffix: ' HP', priority: 108,
+    } : null);
+    for (let i = 0; i < 2; i++) {
+      const arm = mech.mounted ? mech.arms[i] : undefined;
+      if (!arm) {
+        this.api.setStatusIndicator(`creation-mech-arm-${i}`, null);
+        continue;
+      }
+      const info = CREATION_MECH_ARM_INFO[arm.kind];
+      // Chainsaws show their vent timer; everything else shows how close the next cycle is.
+      const venting = arm.kind === 'chainsaw' && time < arm.coolUntil;
+      this.api.setStatusIndicator(`creation-mech-arm-${i}`, {
+        name: `${info.name}${arm.view.boosted ? ' (Overclocked)' : ''}`,
+        emoji: venting ? '♨️' : info.emoji,
+        color: MECH_ARM_TONES[arm.kind],
+        description: arm.view.boosted ? `${info.effect} Supercharged by an Overclock arm.` : info.effect,
+        until: venting ? arm.coolUntil : undefined,
+        priority: 109 + i,
+      });
+    }
+  }
+
   // ── Input ────────────────────────────────────────────────────────
 
   handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number, playerCtx: CastContext): void {
@@ -1700,72 +2334,14 @@ export class CreationKit {
         }
       }
 
-      // R — Scythe of Doom (or Mech Constructor with R+ upgrade)
-      if (mortarSlot === 'r') {
+      // R — Wrench in your Plans. A dormant mech in reach takes the key first: climbing in
+      // matters more than one wrench, and the prompt over its head says so.
+      if (this.tryBoardMech()) {
+        // Key spent boarding.
+      } else if (mortarSlot === 'r') {
         // Slot is Mortar Command — dispatched below.
-      } else if (this.api.hasUpgrade('r')) {
-        if (this.api.rKey.isDown && !this.creatMechHolding) {
-          this.creatMechHolding = true;
-          this.creatMechHoldStart = time;
-          if (this.creatMechStageVisual) this.creatMechStageVisual.destroy();
-          this.creatMechStageVisual = this.add.text(this.player.x, this.player.y - 55, 'Building... 0%', { fontSize: '12px', color: '#cc6622' }).setOrigin(0.5).setDepth(15);
-        }
-        if (this.creatMechHolding && this.creatMechStageVisual) {
-          const mechHeld = time - this.creatMechHoldStart;
-          // Show which stage is being built (1 during 0-3s, 2 during 3-6s, 3 during 6-9s)
-          const buildingStage = Math.min(3, Math.floor(mechHeld / 3000) + 1);
-          const stagePct = Math.min(100, Math.round((mechHeld % 3000) / 3000 * 100));
-          const stageColor = buildingStage === 3 ? '#ffdd22' : buildingStage === 2 ? '#ffaa44' : '#cc6622';
-          this.creatMechStageVisual.setStyle({ color: stageColor }).setText(`Stage ${buildingStage} ${stagePct}%`).setPosition(this.player.x, this.player.y - 55);
-          // Hands low and working, with sparks coming off the build.
-          this.hold('player', 'sow', Math.PI / 2);
-          if (Math.random() < 0.14) {
-            this.pfx.sparks(this.player.x + (Math.random() - 0.5) * 26, this.player.y + 24, 2,
-              { speed: 90, size: 2, life: 420, depth: 6 });
-          }
-          // Auto-activate at 9s (stage 3 complete)
-          if (mechHeld >= 9000) {
-            this.creatMechHolding = false;
-            this.hold('player', null);
-            if (this.creatMechStageVisual) {
-              const sv = this.creatMechStageVisual;
-              sv.setStyle({ color: '#ffdd44' }).setText('FINISHED!');
-              this.scene.time.delayedCall(900, () => { if (sv.active) sv.destroy(); });
-              this.creatMechStageVisual = null;
-            }
-            this.spawnMech(3);
-          }
-        }
-        if (!this.api.rKey.isDown && this.creatMechHolding) {
-          this.creatMechHolding = false;
-          this.hold('player', null);
-          if (this.creatMechStageVisual) { this.creatMechStageVisual.destroy(); this.creatMechStageVisual = null; }
-          const mechHeld = time - this.creatMechHoldStart;
-          // Stage is determined by full 3s periods completed
-          const stage = Math.min(3, Math.floor(mechHeld / 3000)) as 0 | 1 | 2 | 3;
-          if (stage >= 1) {
-            this.spawnMech(stage as 1 | 2 | 3);
-          } else {
-            // Short press: normal scythe
-            this.player.castAbility('scythe-of-doom', playerCtx);
-          }
-        }
-        // Mech explosive dodge (stage 2+): space bar when mech is active
-        if (this.creatMech && this.creatMech.stage >= 2 && Phaser.Input.Keyboard.JustDown(this.api.spaceKey) && time >= this.creatMech.dodgeCdUntil) {
-          this.creatMech.dodgeCdUntil = time + 3000;
-          // The mech vents its charge in a burst of scrap and sparks.
-          this.pfx.explosion(this.player.x, this.player.y, 80, { shards: 10, smoke: 2, core: CREATION.brass });
-          this.gesture('player', 'flex');
-          if (Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y) <= 80) {
-            this.npc.takeDamage(15);
-            this.api.spawnHitFlash(this.npc.x, this.npc.y, CREATION.brass);
-          }
-          this.api.showFloatingText(this.player.x, this.player.y - 40, 'MECH DODGE', '#bb88ee');
-        }
-      } else {
-        if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) {
-          this.player.castAbility('scythe-of-doom', playerCtx);
-        }
+      } else if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) {
+        this.player.castAbility('wrench-plans', playerCtx);
       }
 
       // Mastery — Mortar Command on its bound key (never E, never in Build Mode).
@@ -1934,12 +2510,13 @@ export class CreationKit {
       if (Phaser.Input.Keyboard.JustDown(this.api.rKey) && time >= this.creatBuildSpeedPadCdUntil) {
         this.creatBuildSpeedPadCdUntil = time + 6000;
         const pw = 60, ph = 20;
+        const padHp = this.mechOverclocked ? 40 * STEEL_PLATE_HP_MULT : 40;
         const padSpr = this.add.graphics().setDepth(4);
         drawSpeedPad(padSpr, this.pcol, pw, ph);
         padSpr.setPosition(mouseX, mouseY);
         const padHpBg = this.add.rectangle(mouseX, mouseY - ph / 2 - 6, pw, 4, 0x333333, 0.8).setDepth(5);
         const padHpBar = this.add.rectangle(mouseX - pw / 2, mouseY - ph / 2 - 6, pw, 4, CREATION.steel, 0.9).setDepth(6).setOrigin(0, 0.5);
-        this.creatSpeedPads.push({ rect: padSpr, x: mouseX, y: mouseY, w: pw, h: ph, hp: 40, maxHp: 40, hpBar: padHpBar, hpBg: padHpBg, owner: 'player' });
+        this.creatSpeedPads.push({ rect: padSpr, x: mouseX, y: mouseY, w: pw, h: ph, hp: padHp, maxHp: padHp, hpBar: padHpBar, hpBg: padHpBg, owner: 'player' });
         this.pfx.assemble(mouseX, mouseY, pw, ph, 300);
         this.pfx.hammerStrike(mouseX, mouseY, Math.PI / 2, 1);
         this.gesture('player', 'slam', Math.atan2(mouseY - this.player.y, mouseX - this.player.x));
@@ -1958,12 +2535,14 @@ export class CreationKit {
       if (Phaser.Input.Keyboard.JustDown(this.api.qKey) && time >= this.creatBuildSpikedCdUntil) {
         this.creatBuildSpikedCdUntil = time + 20000;
         const sw = 50, sh = 50;
+        const spkSteel = this.mechOverclocked;
+        const spkHp = spkSteel ? 50 * STEEL_PLATE_HP_MULT : 50;
         const spkSpr = this.add.graphics().setDepth(4);
-        drawSpikedPanel(spkSpr, this.pcol, sw, sh, false);
+        drawSpikedPanel(spkSpr, this.pcol, sw, sh, false, spkSteel);
         spkSpr.setPosition(mouseX, mouseY);
         const spkHpBg = this.add.rectangle(mouseX, mouseY - sh / 2 - 6, sw, 4, 0x333333, 0.8).setDepth(5);
         const spkHpBar = this.add.rectangle(mouseX - sw / 2, mouseY - sh / 2 - 6, sw, 4, CREATION.rust, 0.9).setDepth(6).setOrigin(0, 0.5);
-        this.creatSpikedBlocks.push({ rect: spkSpr, x: mouseX, y: mouseY, w: sw, h: sh, hp: 50, maxHp: 50, hpBar: spkHpBar, hpBg: spkHpBg, owner: 'player', tickAccum: 0, invincible: false });
+        this.creatSpikedBlocks.push({ rect: spkSpr, x: mouseX, y: mouseY, w: sw, h: sh, hp: spkHp, maxHp: spkHp, hpBar: spkHpBar, hpBg: spkHpBg, owner: 'player', tickAccum: 0, invincible: false });
         this.pfx.assemble(mouseX, mouseY, sw, sh, 340);
         this.pfx.shrapnel(mouseX, mouseY, 8, 30, 5);
         this.gesture('player', 'slam', Math.atan2(mouseY - this.player.y, mouseX - this.player.x));
@@ -2073,11 +2652,11 @@ export class CreationKit {
     let id = abilityId;
     if (id === 'mortar-command') {
       const slot = this.mortarSlot();
-      id = slot === 'r' ? 'scythe-of-doom' : slot === 'f' ? 'creation-block' : 'maze-of-doom';
+      id = slot === 'r' ? 'wrench-plans' : slot === 'f' ? 'creation-block' : 'maze-of-doom';
     }
     const cd = id === 'dagger-spray' ? { at: this.creatBuildNewBlockCdUntil, len: 2000 }
       : id === 'charged-bolt' ? { at: this.creatBuildLaunchCdUntil, len: 5000 }
-      : id === 'scythe-of-doom' ? { at: this.creatBuildSpeedPadCdUntil, len: 6000 }
+      : id === 'wrench-plans' ? { at: this.creatBuildSpeedPadCdUntil, len: 6000 }
       : id === 'maze-of-doom' ? { at: this.creatBuildSpikedCdUntil, len: 20000 }
       // F is the exit toggle — always available, so it always reads full.
       : id === 'creation-block' ? null
@@ -2158,6 +2737,24 @@ export class CreationKit {
     // 3. Bolts in flight
     for (let i = this.creatBolts.length - 1; i >= 0; i--) {
       const b = this.creatBolts[i];
+      // Barrage rockets chase: turn-rate limited so they arc in rather than snapping on.
+      if (b.homing) {
+        const chase = b.owner === 'player'
+          ? this.api.getNearestEnemy(b.sprite.x, b.sprite.y)
+          : this.player;
+        if (chase?.active && chase.hp > 0) {
+          const desired = Math.atan2(chase.y - b.sprite.y, chase.x - b.sprite.x);
+          const cur = Math.atan2(b.vy, b.vx);
+          const maxTurn = 5.5 * (delta / 1000);
+          const na = cur + Phaser.Math.Clamp(Phaser.Math.Angle.Wrap(desired - cur), -maxTurn, maxTurn);
+          const sp = Math.hypot(b.vx, b.vy);
+          b.vx = Math.cos(na) * sp;
+          b.vy = Math.sin(na) * sp;
+          b.sprite.setRotation(na);
+          b.targetX = chase.x;
+          b.targetY = chase.y;
+        }
+      }
       b.sprite.x += b.vx * (delta / 1000);
       b.sprite.y += b.vy * (delta / 1000);
       if (b.sprite.x < 0 || b.sprite.x > W2 || b.sprite.y < 0 || b.sprite.y > H2) {
@@ -2171,11 +2768,12 @@ export class CreationKit {
       }
       // Rockets: explode at target position instead of entering the nexus
       if (b.isRocket && b.targetX !== undefined && b.targetY !== undefined) {
+        const blast = b.blastRadius ?? 50;
         if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, b.targetX, b.targetY) <= 20) {
-          this.fx(b.owner).explosion(b.sprite.x, b.sprite.y, 56, { shards: 8, smoke: 2, core: CREATION.ember });
+          this.fx(b.owner).explosion(b.sprite.x, b.sprite.y, blast + 6, { shards: 8, smoke: 2, core: CREATION.ember });
           for (const rktTarget of (b.owner === 'player' ? this.api.enemies : [this.player])) {
             if (!rktTarget.active || rktTarget.hp <= 0) continue;
-            if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, rktTarget.x, rktTarget.y) <= 50) {
+            if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, rktTarget.x, rktTarget.y) <= blast) {
               rktTarget.takeDamage(b.damage);
               this.api.spawnHitFlash(rktTarget.x, rktTarget.y, CREATION.ember);
             }
@@ -2238,55 +2836,9 @@ export class CreationKit {
       if (_boltHit) { b.sprite.destroy(); this.creatBolts.splice(i, 1); }
     }
 
-    // 4. Scythe steering + contact + absorption
-    for (let i = this.creatScythes.length - 1; i >= 0; i--) {
-      const sc = this.creatScythes[i];
-      const scTarget = sc.owner === 'player' ? this.api.getNearestEnemy(sc.sprite.x, sc.sprite.y) : this.player;
-      const sdx = scTarget.x - sc.sprite.x;
-      const sdy = scTarget.y - sc.sprite.y;
-      const slen = Math.hypot(sdx, sdy) || 1;
-      const scytheSpeed = 87; // slowed 3x from original 260
-      sc.vx = (sdx / slen) * scytheSpeed;
-      sc.vy = (sdy / slen) * scytheSpeed;
-      sc.sprite.x += sc.vx * (delta / 1000);
-      sc.sprite.y += sc.vy * (delta / 1000);
-      // It spins as it stalks, and sheds a magenta glint behind it.
-      sc.sprite.rotation += 5.5 * (delta / 1000);
-      if (emitTrails) {
-        this.fx(sc.owner).emberTrail(sc.sprite.x, sc.sprite.y, Math.atan2(-sc.vy, -sc.vx), CREATION.nexus);
-      }
-      // Update HP bar
-      const hpFrac = Math.max(0, sc.hp / sc.maxHp);
-      sc.hpBg.setPosition(sc.sprite.x, sc.sprite.y - 16);
-      sc.hpBar.setPosition(sc.sprite.x - 14, sc.sprite.y - 16).setSize(28 * hpFrac, 4);
-      // Contact damage — destroy on hit
-      if (Phaser.Math.Distance.Between(sc.sprite.x, sc.sprite.y, scTarget.x, scTarget.y) <= 28) {
-        scTarget.takeDamage(32);
-        this.api.spawnHitFlash(scTarget.x, scTarget.y, CREATION.nexus);
-        this.fx(sc.owner).bloom(scTarget.x, scTarget.y, 40, 9);
-        sc.hp = 0; // triggers destruction below
-      }
-      // Absorb enemy projectiles
-      for (const go of this.api.projectiles.getChildren()) {
-        const proj = go as Projectile;
-        if (!proj.active) continue;
-        const isEnemyProj = sc.owner === 'player' ? !proj.isFromPlayer : proj.isFromPlayer;
-        if (!isEnemyProj) continue;
-        if (Phaser.Math.Distance.Between(proj.x, proj.y, sc.sprite.x, sc.sprite.y) <= 20) {
-          sc.hp -= proj.damage;
-          proj.setActive(false).setVisible(false);
-          (proj.body as Phaser.Physics.Arcade.Body).stop();
-          break;
-        }
-      }
-      if (sc.hp <= 0) {
-        // It comes apart into its own blade, not a puff.
-        this.fx(sc.owner).shrapnel(sc.sprite.x, sc.sprite.y, 10, 34, 8);
-        this.fx(sc.owner).ring(sc.sprite.x, sc.sprite.y, 6, 40, CREATION.nexusLit, 320, 3, 8);
-        sc.sprite.destroy(); sc.hpBar.destroy(); sc.hpBg.destroy();
-        this.creatScythes.splice(i, 1);
-      }
-    }
+    // 4. Wrenches in flight, and the debuff they leave behind
+    this.updateWrenches(time, delta, emitTrails);
+    this.updateWrenchDebuffs();
 
     // 5. Workshop (owner-agnostic) + the bots the Automaton perk lets it spawn
     this.updateCreationWorkshop(time, delta);
@@ -2420,34 +2972,13 @@ export class CreationKit {
       this.updateCreationNails(delta);
       this.updateCreationClutter(time);
 
-      // 9. Mech per-frame (R+)
-      if (this.creatMech) {
-        const mech = this.creatMech;
-        // Follow player
-        mech.sprite.setPosition(this.player.x, this.player.y + 32);
-        mech.hpBg.setPosition(this.player.x, this.player.y + 52);
-        mech.hpBar.setPosition(this.player.x - 17, this.player.y + 52);
-        // Auto rocket (toward cursor)
-        mech.rocketAccum += delta;
-        if (mech.rocketAccum >= 2000) {
-          mech.rocketAccum -= 2000;
-          const ptr = this.scene.input.activePointer;
-          const rCount = mech.stage === 3 ? 2 : 1;
-          for (let ri = 0; ri < rCount; ri++) {
-            const rOffX = ri === 0 ? 0 : 20;
-            const rtx = ptr.worldX + rOffX;
-            const rty = ptr.worldY;
-            const rdx = rtx - mech.sprite.x;
-            const rdy = rty - mech.sprite.y;
-            const rlen = Math.hypot(rdx, rdy) || 1;
-            // The mech's rockets are forged slugs like everything else Creation throws.
-            const rSpr = this.add.graphics().setDepth(7);
-            drawBolt(rSpr, this.pcol, 'copper');
-            rSpr.setPosition(mech.sprite.x, mech.sprite.y).setRotation(Math.atan2(rdy, rdx));
-            this.pfx.muzzleFlash(mech.sprite.x, mech.sprite.y, Math.atan2(rdy, rdx), 0.8);
-            this.creatBolts.push({ sprite: rSpr, vx: (rdx / rlen) * 420, vy: (rdy / rlen) * 420, tier: 'gold', damage: 10, owner: 'player', isRocket: true, targetX: rtx, targetY: rty });
-          }
-        }
+      // 9. R+ mech: the walker, its arms, and the repair orbs a med core throws
+      this.updateMech(time, delta);
+      this.updateMedOrbs(time, delta);
+      // The Nexus rebuilding itself after its mech was wrecked.
+      if (this.nexusRebuildAt > 0 && time >= this.nexusRebuildAt && !this.nexusRig) {
+        this.nexusRebuildAt = 0;
+        this.spawnNexus(this.nexusX, this.nexusY);
       }
 
       // 10. Speed pads (F+ Build Mode)

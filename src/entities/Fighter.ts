@@ -25,6 +25,27 @@ function isStationaryFor(source: object, x: number, y: number, thresholdMs: numb
   return now - rec.lastMovedAt >= thresholdMs;
 }
 
+export interface DamageOpts {
+  pierce?: boolean;
+  fireDot?: boolean;
+  source?: object;
+  sourceX?: number;
+  sourceY?: number;
+  /**
+   * Online PvP: this hit was computed on the attacker's machine and relayed. Every
+   * multiplier stage (crit, vulnerability, armour, caps) already ran there against a
+   * replica carrying the same passives, so only the local absorb layers — invincibility,
+   * absorber, shields, clotted/weak HP — are applied again here.
+   */
+  netApplied?: boolean;
+  /**
+   * Damage a fighter inflicts on itself through the normal (shielded) pipeline. Exempt
+   * from the online damage gate: the opponent's sim has no copy of it to relay, so
+   * blocking it would simply delete the ability's cost.
+   */
+  selfInflicted?: boolean;
+}
+
 export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public hp: number;
   public maxHp: number;
@@ -74,8 +95,6 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public cooldownMult = 1;
   /** If set, called with the damage amount before shields; return true to absorb the hit entirely. */
   public damageAbsorber: ((amount: number) => boolean) | null = null;
-  /** Used by Hunt element roar lock. Default false for non-NPC fighters. */
-  public npcHuntRoarLocked = false;
   /** Gauntlet boost: multiplies all incoming damage (stacks with incomingDamageMultiplier). Default 1. */
   public gauntletDamageTakenMult = 1;
   /** When true, skip alpha flash in takeDamage/applySelfDamage and keep alpha at 0 (Stealthy mutation). */
@@ -85,13 +104,53 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Timestamp after which the fighter can cast abilities again (Disarm effect). */
   public disarmedUntil = 0;
   /**
+   * Creation R (Wrench in your Plans): a wrench is jammed in this fighter's gear. Every
+   * ability it uses costs `castPunishDamage` HP until this `Date.now()` timestamp. Held here
+   * rather than in CreationKit because the only honest chokepoint for "an ability was used"
+   * is the cast stamp itself.
+   */
+  public castPunishUntil = 0;
+  public castPunishDamage = 0;
+  /** Invoked with the HP lost whenever a cast backfires, so the kit that applied it can draw the grind. */
+  public onCastPunish: ((amount: number) => void) | null = null;
+  /**
    * Online play: when true this fighter is a remote-player replica whose HP is
    * network-authoritative. Local damage/heals only play hit feedback and never
    * change vitals — the real numbers arrive via netSyncVitals().
    */
   public netGhost = false;
-  /** Invoked with the final computed damage when a netGhost fighter is hit — used to report damage to the authoritative peer (invasion co-op husk replicas). */
-  public onGhostDamage: ((amount: number) => void) | null = null;
+  /** Invoked with the final computed damage when a netGhost fighter is hit — used to report damage to the authoritative peer (invasion co-op husk replicas, online PvP opponents). */
+  public onGhostDamage: ((amount: number, opts?: DamageOpts) => void) | null = null;
+  /**
+   * Online PvP: this fighter's health is driven by the network. Every hit on it is
+   * computed on the *attacker's* machine (where the attacking element's own sim runs at
+   * full fidelity) and relayed as a `dmg` message; the local replay of the opponent's
+   * casts is for visuals and status effects only. Local damage is therefore dropped
+   * unless it arrives with `netApplied`, so a hit can never be counted twice — and,
+   * more importantly, an ability whose npc-side replay is incomplete still lands.
+   */
+  public netAuthoritativeDamage = false;
+  /**
+   * Online PvP: aggregate slow the opponent's sim is applying to us (≤ 1), mirrored from
+   * their replica's speed multiplier. Folded into the local player's movement so slows
+   * land regardless of whether the ability that applied them replays locally.
+   */
+  public netSpeedMult = 1;
+  /** Online PvP: cooldown multiplier the opponent's sim is applying to us (≥ 1). */
+  public netCooldownMult = 1;
+  /**
+   * Online PvP, replica side: the owner's own damage reduction, relayed from the machine
+   * that owns this fighter. Their armour buffs and mastery passives live only on their
+   * sim, but hits are now resolved on ours — without this, defensive abilities would stop
+   * working the moment a match went online. Inert (1 / 0 / 0) for a locally-owned fighter.
+   */
+  public netDefenseMult = 1;
+  public netFlatReduction = 0;
+  public netDamageCap = 0;
+  /** Online PvP: `scene.time.now` timestamp until which a relayed knockback/pull owns our velocity. */
+  public netShoveUntil = 0;
+  public netShoveVx = 0;
+  public netShoveVy = 0;
   /** Invasion co-op: true while this fighter is downed and awaiting revive. Enemies should ignore downed targets. */
   public downed = false;
   /**
@@ -280,6 +339,15 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public skeweredUntil = 0;
 
   /**
+   * Gravity F+ (Anti-Grav) and Q+ (Crushing Field): pinned under enormous gravity until this
+   * `scene.time.now` timestamp. Not a slow — it kills *movement effects*: speed multipliers are
+   * clamped back to 1, the Space dodge is refused, and `dashCaster` (the chokepoint every
+   * dash-style ability goes through) becomes a no-op. Cleared by Unstoppable like any other
+   * control effect.
+   */
+  public highGravityUntil = 0;
+
+  /**
    * Growth Mastery — Syringe Shot: sick until this `scene.time.now` timestamp. Deliberately a
    * single field: every sickness upgrade (extra ticks, vulnerability, slows, weakening, spread)
    * rides on this one effect rather than adding its own status box.
@@ -376,55 +444,68 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     this.healthBar.setMaxHp(this.maxHp);
   }
 
-  takeDamage(amount: number, opts?: { pierce?: boolean; fireDot?: boolean; source?: object; sourceX?: number; sourceY?: number }): void {
+  takeDamage(amount: number, opts?: DamageOpts): void {
     // Invasion co-op: friendly fire from the ally replica never lands. Checked
     // before anything else so a blocked hit can't consume a buff or a shield.
     if (this.allyDamageBlocked && Fighter.nonAllyDepth === 0) return;
+    // Online PvP: only relayed hits change our health — see `netAuthoritativeDamage`.
+    if (this.netAuthoritativeDamage && !opts?.netApplied && !opts?.selfInflicted) return;
     // Magic Mastery — Levitate: immune to damage from a source that hasn't moved in 3s.
     this.damageWasSelfInflicted = false;
     if (this.levitating && opts?.source && opts.sourceX !== undefined && opts.sourceY !== undefined
         && isStationaryFor(opts.source, opts.sourceX, opts.sourceY, 3000)) return;
     if (!opts?.pierce && this.isInvincible) return;
 
-    // Crit roll: use any incoming crit context set by the attacker
-    const critCtx = this.incomingCritCtx;
-    this.incomingCritCtx = null;
-    const effectiveCritChance = critCtx ? Math.min(1, critCtx.chance + this.incomingCritBonus) : 0;
-    const isCrit = effectiveCritChance > 0 && Math.random() < effectiveCritChance;
-    if (isCrit) {
-      amount = Math.round(amount * (critCtx?.mult ?? 2));
-    }
+    let isCrit = false;
+    if (opts?.netApplied) {
+      // Already multiplied through on the attacker's sim; don't let a stale crit
+      // context leak into the next locally-computed hit.
+      this.incomingCritCtx = null;
+    } else {
+      // Crit roll: use any incoming crit context set by the attacker
+      const critCtx = this.incomingCritCtx;
+      this.incomingCritCtx = null;
+      const effectiveCritChance = critCtx ? Math.min(1, critCtx.chance + this.incomingCritBonus) : 0;
+      isCrit = effectiveCritChance > 0 && Math.random() < effectiveCritChance;
+      if (isCrit) {
+        amount = Math.round(amount * (critCtx?.mult ?? 2));
+      }
 
-    amount = Math.round(amount * this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult);
-    if (this.darkVulnStacks > 0) amount = Math.round(amount * (1 + 0.25 * this.darkVulnStacks));
-    // Fire Mastery — Heatwave: exposed amplifies the next hit, then is consumed.
-    // Fire damage-over-time is exempt on both counts: burn/molten ticks are neither
-    // amplified nor allowed to eat the buff, so a tick can't rob the next real hit.
-    if (!opts?.fireDot && this.exposedUntil > this.scene.time.now) {
-      amount = Math.round(amount * 1.5);
-      this.exposedUntil = 0;
-      this.exposedConsumedAt = this.scene.time.now;
+      amount = Math.round(amount * this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.netDefenseMult);
+      if (this.darkVulnStacks > 0) amount = Math.round(amount * (1 + 0.25 * this.darkVulnStacks));
+      // Fire Mastery — Heatwave: exposed amplifies the next hit, then is consumed.
+      // Fire damage-over-time is exempt on both counts: burn/molten ticks are neither
+      // amplified nor allowed to eat the buff, so a tick can't rob the next real hit.
+      if (!opts?.fireDot && this.exposedUntil > this.scene.time.now) {
+        amount = Math.round(amount * 1.5);
+        this.exposedUntil = 0;
+        this.exposedConsumedAt = this.scene.time.now;
+      }
+      // Fate Mastery — Vulnerable curse: doubles exactly one incoming hit, then clears.
+      if (this.vulnerableNextHit) {
+        amount = Math.round(amount * 2);
+        this.vulnerableNextHit = false;
+      }
+      // Metal Mastery — Natural Clot: flat reduction on the final amount. A fully-absorbed
+      // hit spends nothing (no shield charge, no clotted HP) — it simply bounces off.
+      const flatReduction = Math.max(this.flatDamageReduction, this.netFlatReduction);
+      if (flatReduction > 0) {
+        amount = Math.max(0, amount - flatReduction);
+        if (amount <= 0) { this.lastIncomingDamage = 0; this.emit('damaged', 0); return; }
+      }
+      // Earth Mastery — Unbreakable: applied last so nothing upstream can push a hit back above the cap.
+      const damageCap = this.hardDamageCap > 0 && this.netDamageCap > 0
+        ? Math.min(this.hardDamageCap, this.netDamageCap)
+        : Math.max(this.hardDamageCap, this.netDamageCap);
+      if (damageCap > 0) amount = Math.min(amount, damageCap);
     }
-    // Fate Mastery — Vulnerable curse: doubles exactly one incoming hit, then clears.
-    if (this.vulnerableNextHit) {
-      amount = Math.round(amount * 2);
-      this.vulnerableNextHit = false;
-    }
-    // Metal Mastery — Natural Clot: flat reduction on the final amount. A fully-absorbed
-    // hit spends nothing (no shield charge, no clotted HP) — it simply bounces off.
-    if (this.flatDamageReduction > 0) {
-      amount = Math.max(0, amount - this.flatDamageReduction);
-      if (amount <= 0) { this.lastIncomingDamage = 0; this.emit('damaged', 0); return; }
-    }
-    // Earth Mastery — Unbreakable: applied last so nothing upstream can push a hit back above the cap.
-    if (this.hardDamageCap > 0) amount = Math.min(amount, this.hardDamageCap);
     this.lastIncomingDamage = amount;
     if (isCrit) this.emit('damaged-crit', amount);
 
     if (this.netGhost) {
       // Hit feedback only — vitals come from the network. Report the computed
       // amount so the local owner can forward it to the authoritative peer.
-      this.onGhostDamage?.(amount);
+      this.onGhostDamage?.(amount, opts);
       if (!this.forceInvisible) {
         this.setAlpha(0.5);
         this.scene.time.delayedCall(120, () => {
@@ -602,18 +683,35 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     if (now < this.disarmedUntil || now < this.chickenUntil) return false;
     if (now < this.silencedUntil && ability.displayKey !== 'Click') return false;
     const ultimateExtra = (ability as { isUltimate?: boolean }).isUltimate ? this.ultimateCooldownMult : 1;
-    if (now - (this.cooldowns.get(abilityId) ?? 0) < ability.cooldown * this.cooldownMult * ultimateExtra) return false;
+    if (now - (this.cooldowns.get(abilityId) ?? 0) < ability.cooldown * this.cooldownMult * this.netCooldownMult * ultimateExtra) return false;
 
-    this.cooldowns.set(abilityId, now);
-    this.onCastStamp?.(abilityId);
+    this.stampCast(abilityId);
     ability.cast(ctx);
     return true;
   }
 
-  /** Starts the cooldown for an ability without calling cast() — for charge-and-release abilities. */
-  triggerCooldown(abilityId: string): void {
+  /**
+   * Everything that counts as "this fighter used an ability" funnels through here: the
+   * cooldown stamp, the online broadcast hook, and the Wrenched backfire. Charge-and-release
+   * abilities stamp through `triggerCooldown`/`startCooldown` rather than `castAbility`, so
+   * all three routes go via this — otherwise a wrenched fighter could dodge the cost simply
+   * by picking the right key.
+   */
+  private stampCast(abilityId: string): void {
     this.cooldowns.set(abilityId, Date.now());
     this.onCastStamp?.(abilityId);
+    if (this.castPunishDamage > 0 && Date.now() < this.castPunishUntil) {
+      const cost = this.castPunishDamage;
+      // The wrench belongs to whoever threw it, so this is not self-inflicted damage — it
+      // still has to land on a co-op player carrying `allyDamageBlocked`.
+      Fighter.asNonAllyDamage(() => this.takeDamage(cost));
+      this.onCastPunish?.(cost);
+    }
+  }
+
+  /** Starts the cooldown for an ability without calling cast() — for charge-and-release abilities. */
+  triggerCooldown(abilityId: string): void {
+    this.stampCast(abilityId);
   }
 
   /** Shift all stored cooldown timestamps forward by deltaMs (used to compensate for real-time elapsed during a game pause). */
@@ -623,8 +721,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
   /** Force an ability's cooldown to start right now (used by kits that manage their own CD timing). */
   startCooldown(abilityId: string): void {
-    this.cooldowns.set(abilityId, Date.now());
-    this.onCastStamp?.(abilityId);
+    this.stampCast(abilityId);
   }
 
   /** Reduce remaining cooldown of an ability by byMs milliseconds (cannot make it readier than fully ready). */
@@ -644,7 +741,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     if (!ability) return 1;
     const elapsed = Date.now() - (this.cooldowns.get(abilityId) ?? 0);
     const ultimateCdExtra = (ability as { isUltimate?: boolean }).isUltimate ? this.ultimateCooldownMult : 1;
-    const effectiveCd = ability.cooldown * (this.cooldownMult || 1) * ultimateCdExtra;
+    const effectiveCd = ability.cooldown * (this.cooldownMult || 1) * this.netCooldownMult * ultimateCdExtra;
     return Math.min(1, elapsed / effectiveCd);
   }
 

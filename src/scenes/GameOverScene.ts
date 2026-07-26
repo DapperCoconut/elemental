@@ -4,6 +4,7 @@ import * as CP from '../data/CampaignProgress';
 import { SHARD_REWARDS } from '../data/Upgrades';
 import { MUTATIONS } from '../data/Mutations';
 import { getCampaignReward, getCampaignFightDef } from '../data/CampaignFights';
+import { getAnyWorld } from '../data/AbstractWorlds';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackdrop, addButton, addPanel, addTitle, fillDiamond,
@@ -86,6 +87,8 @@ export class GameOverScene extends Phaser.Scene {
     let keysEarned = 0;
     let sparksEarned = 0;
     let campaignHardMode = false;
+    // Worlds opened by this win — the five fights are the gate, not the challenge.
+    let worldsOpened: string[] = [];
     if (isCampaign && data.playerWon && data.campaign) {
       const c = data.campaign;
       campaignHardMode = !!c.hardMode;
@@ -93,7 +96,12 @@ export class GameOverScene extends Phaser.Scene {
       if (c.isChallenge) {
         CP.markChallengeCompleted(c.slot, c.worldId);
       } else {
+        const wasAlreadyWon = CP.isFightCompleted(c.slot, c.worldId, c.fightId);
         CP.markFightCompleted(c.slot, c.worldId, c.fightId);
+        if (!wasAlreadyWon && CP.areFightsCleared(c.slot, c.worldId)) {
+          worldsOpened = CP.getUnlockedChildWorlds(c.slot, c.worldId)
+            .flatMap((id) => { const w = getAnyWorld(id); return w ? [w.name] : []; });
+        }
       }
       if (reward.keys > 0) {
         CP.addKeys(c.slot, reward.keys);
@@ -169,6 +177,13 @@ export class GameOverScene extends Phaser.Scene {
     }
     if (isInvasion && (data.corruptShardsEarned ?? 0) > 0) {
       lines.push({ icon: '🩸', text: `+${data.corruptShardsEarned}  Corrupt Shards`, color: hex(mix(C.corrupt, 0xffffff, 0.4)) });
+    }
+    if (worldsOpened.length > 0) {
+      lines.push({
+        icon: '🗺️',
+        text: `World${worldsOpened.length === 1 ? '' : 's'} opened — ${worldsOpened.join(', ')}`,
+        color: hex(mix(C.gold, 0xffffff, 0.3)),
+      });
     }
     if (unlockedMutation) {
       lines.push({

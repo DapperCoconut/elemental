@@ -29,6 +29,17 @@ const ABILITY_VARIANTS: Record<string, Partial<Record<string, AbilityVariantSet>
         { emoji: '⏱️', name: 'Silver + Gold — Reload Potion', description: 'Ability cooldowns recharge 25% faster for 20s.' },
       ],
     },
+    r: {
+      label: 'Mech arms (R+ — whichever potions were sitting on the Nexus when the wrench woke it)',
+      variants: [
+        { emoji: '🪚', name: 'Buff Potion — Chainsaw Arm', description: 'Rips into anything that comes within reach on its own — small, very fast damage. Overheats after 5s of cutting and needs 3s to cool.', requiresUpgrade: 'r' },
+        { emoji: '💊', name: 'Heal Potion — Med Core Arm', description: 'Every 8s it lobs 3 healing orbs around you. Walk over one to repair the mech for 15 HP.', requiresUpgrade: 'r' },
+        { emoji: '🦾', name: 'Gold Potion — Grabber Arm', description: 'Reaches out and seizes anyone who gets close, holding them for 3s. They cannot attack while they are in the claw.', requiresUpgrade: 'r' },
+        { emoji: '🛡️', name: 'Protection Potion — Shield Arm', description: '+25 mech HP, and every 5th hit the mech takes is blocked outright. Two shield arms block every 3rd.', requiresUpgrade: 'r' },
+        { emoji: '🚀', name: 'Speed Potion — Barrage Arm', description: 'Every 8s it fires 3 homing rockets, each dealing 5 damage plus a small blast.', requiresUpgrade: 'r' },
+        { emoji: '⚙️', name: 'Reload Potion — Overclock Arm', description: '+25% mech speed, and it supercharges whatever is on the other arm — more damage, more healing, shorter cooldowns. Everything you build while overclocked comes out steel-plated with double health.', requiresUpgrade: 'r' },
+      ],
+    },
   },
   magic: {
     e: {

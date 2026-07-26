@@ -248,6 +248,13 @@ export function purchasePortal(idx: 0 | 1 | 2): boolean {
 const findWorld = (id: string) =>
   WORLDS.find((w) => w.id === id) ?? ABSTRACT_WORLDS.find((w) => w.id === id);
 
+/** True once all five numbered fights of a world are won (the challenge is not counted). */
+export function areFightsCleared(idx: 0 | 1 | 2, worldId: string): boolean {
+  const world = findWorld(worldId);
+  if (!world) return false;
+  return getFightNodes(world).every((n) => isFightCompleted(idx, worldId, n.id));
+}
+
 export function isWorldUnlocked(idx: 0 | 1 | 2, worldId: string): boolean {
   const world = findWorld(worldId);
   if (!world) return false;
@@ -256,7 +263,9 @@ export function isWorldUnlocked(idx: 0 | 1 | 2, worldId: string): boolean {
     if (ABSTRACT_WORLDS.some((w) => w.id === worldId)) return isPortalUnlocked(idx);
     return true;
   }
-  return isChallengeCompleted(idx, world.parentId);
+  // Clearing the parent's five fights is enough to move on — its challenge is
+  // optional bonus content (it pays the 🗝️ keys the portal wants).
+  return isWorldUnlocked(idx, world.parentId) && areFightsCleared(idx, world.parentId);
 }
 
 export function isFightUnlocked(idx: 0 | 1 | 2, worldId: string, fightId: string): boolean {
@@ -272,10 +281,7 @@ export function isFightUnlocked(idx: 0 | 1 | 2, worldId: string, fightId: string
 
 export function isChallengeUnlocked(idx: 0 | 1 | 2, worldId: string): boolean {
   if (!isWorldUnlocked(idx, worldId)) return false;
-  const world = findWorld(worldId);
-  if (!world) return false;
-  const fightNodes = getFightNodes(world);
-  return fightNodes.every((n) => isFightCompleted(idx, worldId, n.id));
+  return areFightsCleared(idx, worldId);
 }
 
 // ── Children unlock preview ───────────────────────────────────────────

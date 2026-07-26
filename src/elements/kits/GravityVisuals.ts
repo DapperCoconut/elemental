@@ -954,6 +954,229 @@ export class GravityFx extends FxBase {
     g.lineStyle(1.2, tint(tones.hot), 0.9);
     g.strokeCircle(x, y, 5.1);
   }
+
+  // ── Anti-Grav (F+) ──────────────────────────────────────────────────────
+
+  /**
+   * The Anti-Grav landing mark: the patch of ground the caster is about to arrive on.
+   *
+   * Read entirely off `progress` (0 = just launched, 1 = touchdown). Far away it is a wide,
+   * faint smudge with a slow ring; as the fall closes it darkens, tightens and the caster
+   * themself resolves out of the sky above it as a speck that grows into a dark star. The
+   * shadow *shrinking* while the body *grows* is the whole depth cue — a shadow that only
+   * ever grew would read as something rising, not falling.
+   */
+  static drawLandingShadow(
+    g: Phaser.GameObjects.Graphics, tint: GravityColorFn, tones: GravityTones,
+    x: number, y: number, t: number, progress: number,
+  ): void {
+    const p = Phaser.Math.Clamp(progress, 0, 1);
+    // Wide and vague at altitude, tight and black at touchdown.
+    const r = 70 - 44 * easeIn(p);
+    const dark = 0.16 + 0.6 * p * p;
+
+    g.fillStyle(tint(GRAVITY.void), dark);
+    g.fillEllipse(x, y, r * 2, r * 0.82);
+    g.fillStyle(tint(tones.dark), dark * 0.55);
+    g.fillEllipse(x, y, r * 2.5, r * 1.05);
+
+    // Space starting to bow toward the point of arrival.
+    for (let i = 0; i < 5; i++) {
+      const phase = (t * (0.7 + p) + i / 5) % 1;
+      const ar = r * 1.5 * (1 - easeIn(phase));
+      g.fillStyle(tint(tones.lit), 0.35 * (1 - phase) * (0.4 + p * 0.6));
+      gravArm(g, x, y, (i / 5) * TAU + t * 0.9, ar, ar * 0.3, 3.2 * (1 - phase * 0.5) * (0.6 + p), 1.5);
+    }
+
+    // The countdown ring: sweeps in once per fall and closes exactly on impact.
+    g.lineStyle(2 + 2.5 * p, tint(tones.hot), 0.35 + 0.55 * p);
+    g.strokeEllipse(x, y, r * 2 * (1.35 - 0.35 * p), r * 0.82 * (1.35 - 0.35 * p));
+
+    // The caster falling into it — nothing for the first half, then a dark star growing fast.
+    if (p > 0.45) {
+      const fp = (p - 0.45) / 0.55;
+      const bodyY = y - 210 * (1 - easeIn(fp));
+      const br = 4 + 13 * fp;
+      g.fillStyle(tint(GRAVITY.violet), 0.3);
+      g.fillCircle(x, bodyY, br * 1.9);
+      g.fillStyle(tint(tones.body), 0.9);
+      g.fillCircle(x, bodyY, br);
+      g.fillStyle(tint(GRAVITY.void), 1);
+      g.fillCircle(x, bodyY, br * 0.55);
+      g.fillStyle(tint(tones.spark), 0.85);
+      g.fillCircle(x - br * 0.3, bodyY - br * 0.32, br * 0.22);
+      // The column of air it is coming down through.
+      g.fillStyle(tint(tones.lit), 0.28 * fp);
+      plume(g, x, bodyY - br, -Math.PI / 2, 70 * fp, 5 * fp, 2.4, t * 4);
+    }
+  }
+
+  // ── Moon Rider (Q+) ─────────────────────────────────────────────────────
+
+  /**
+   * Night over the whole arena while the moon is up: a deep wash with a star field punched
+   * through it. The stars are seeded off their index, so they hold still and only twinkle —
+   * a re-rolled sky every frame would strobe.
+   */
+  static drawNight(
+    g: Phaser.GameObjects.Graphics, tint: GravityColorFn,
+    w: number, h: number, t: number, intensity: number,
+  ): void {
+    const a = Phaser.Math.Clamp(intensity, 0, 1);
+    if (a <= 0.01) return;
+    // Dark enough to read as night, light enough that both fighters stay legible under it —
+    // the arena still has to be playable while the moon is up.
+    g.fillStyle(tint(GRAVITY.void), 0.34 * a);
+    g.fillRect(0, 0, w, h);
+    g.fillStyle(tint(GRAVITY.abyss), 0.16 * a);
+    g.fillRect(0, 0, w, h);
+
+    for (let i = 0; i < 90; i++) {
+      const sx = rnd(i * 1.7) * w;
+      const sy = rnd(i * 3.1 + 5) * h;
+      const twinkle = 0.35 + 0.65 * Math.abs(Math.sin(t * (0.6 + rnd(i) * 1.8) + i));
+      const r = 0.7 + rnd(i * 5.3) * 1.5;
+      g.fillStyle(tint(i % 7 === 0 ? GRAVITY.lilac : GRAVITY.pale), 0.75 * twinkle * a);
+      g.fillCircle(sx, sy, r);
+      if (i % 11 === 0) {
+        g.fillStyle(tint(GRAVITY.white), 0.4 * twinkle * a);
+        starburst(g, sx, sy, r * 5, r * 0.5, 4, 0, 3);
+      }
+    }
+  }
+
+  /**
+   * The moonlight pool the ridden moon drags across the ground, and the lit rim it throws on
+   * the arena edge it is currently hugging. Meant to be drawn on an ADD-blended layer over
+   * the night wash — that is what makes it read as light rather than more paint.
+   */
+  static drawMoonlight(
+    g: Phaser.GameObjects.Graphics, tint: GravityColorFn,
+    x: number, y: number, radius: number, t: number,
+  ): void {
+    const pulse = 1 + 0.045 * Math.sin(t * 2.2);
+    for (let i = 6; i >= 1; i--) {
+      g.fillStyle(tint(GRAVITY.moonlit), 0.035 + i * 0.006);
+      g.fillCircle(x, y, radius * i * 1.5 * pulse);
+    }
+    g.fillStyle(tint(GRAVITY.white), 0.14);
+    g.fillCircle(x, y, radius * 1.5);
+  }
+
+  /**
+   * A firefly: a soft blown-out mote with a hard core. Draw on the same ADD layer as the
+   * moonlight. `glow` 0→1 is its own blink phase, so a swarm never pulses in unison.
+   */
+  static drawFirefly(
+    g: Phaser.GameObjects.Graphics, tint: GravityColorFn,
+    x: number, y: number, glow: number,
+  ): void {
+    if (glow <= 0.02) return;
+    g.fillStyle(tint(0xccff88), 0.06 * glow);
+    g.fillCircle(x, y, 9);
+    g.fillStyle(tint(0xddff99), 0.14 * glow);
+    g.fillCircle(x, y, 5);
+    g.fillStyle(tint(0xeeffbb), 0.5 * glow);
+    g.fillCircle(x, y, 2.1);
+    g.fillStyle(tint(GRAVITY.white), 0.85 * glow);
+    g.fillCircle(x, y, 1);
+  }
+
+  /**
+   * The flying moon: `drawMoon`'s body plus the things that only make sense once it is moving —
+   * a compression bow-wave out front and a wake of torn dust behind. `heading` is its direction
+   * of travel in radians.
+   */
+  static drawFlyingMoon(
+    g: Phaser.GameObjects.Graphics, tint: GravityColorFn,
+    x: number, y: number, radius: number, t: number, hpFrac: number, heading: number,
+  ): void {
+    const bx = Math.cos(heading), by = Math.sin(heading);
+    // Wake: matter it has ripped loose, curling as it falls behind.
+    for (let i = 0; i < 7; i++) {
+      const f = (i + (t * 2.6) % 1) / 7;
+      const d = radius * (1.1 + f * 2.6);
+      const spread = (rnd(i * 9.7) - 0.5) * radius * 1.1 * f;
+      g.fillStyle(tint(GRAVITY.moonDark), 0.35 * (1 - f));
+      g.fillCircle(x - bx * d - by * spread, y - by * d + bx * spread, radius * 0.34 * (1 - f * 0.6));
+    }
+    // Bow-wave: space piling up in front of something this heavy.
+    g.lineStyle(2.6, tint(GRAVITY.lilac), 0.5);
+    g.beginPath();
+    for (let i = 0; i <= 12; i++) {
+      const a = heading - 1.0 + (i / 12) * 2.0;
+      const rr = radius * (1.28 + 0.05 * Math.sin(t * 7 + i));
+      const px = x + Math.cos(a) * rr, py = y + Math.sin(a) * rr;
+      if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+    }
+    g.strokePath();
+
+    GravityFx.drawMoon(g, tint, x, y, radius, t, hpFrac);
+  }
+
+  /**
+   * The Crushing Field (Q+ F): the whole screen visibly pulled down. Sheets of matter raking
+   * downward, sagging pressure lines, a black press along the top and a lit compression band
+   * where everything is piling up against the floor.
+   *
+   * `strength` 0→1 ramps the whole thing in and out so it never snaps on or off.
+   */
+  static drawCrushField(
+    g: Phaser.GameObjects.Graphics, tint: GravityColorFn,
+    w: number, h: number, t: number, strength: number,
+  ): void {
+    const s = Phaser.Math.Clamp(strength, 0, 1);
+    if (s <= 0.01) return;
+
+    // The press: dark at the top, weight coming down out of it.
+    for (let i = 0; i < 6; i++) {
+      g.fillStyle(tint(GRAVITY.void), 0.06 * s);
+      g.fillRect(0, 0, w, h * (0.1 + i * 0.06));
+    }
+
+    // Rain of falling matter — fast, dense, and always straight down.
+    for (let i = 0; i < 46; i++) {
+      const sx = rnd(i * 2.3) * w;
+      const speed = 1.6 + rnd(i * 7.1) * 2.4;
+      const fy = ((t * speed + rnd(i * 4.9)) % 1) * (h + 120) - 60;
+      const len = 26 + rnd(i * 11.3) * 46;
+      g.fillStyle(tint(i % 4 === 0 ? GRAVITY.violet : GRAVITY.amethyst), (0.16 + 0.2 * rnd(i * 3.7)) * s);
+      g.fillRect(sx, fy, 1.6 + rnd(i * 6.1) * 1.6, len);
+    }
+
+    // Pressure lines: horizontals that sag more the lower down they sit.
+    for (let row = 1; row < 8; row++) {
+      const baseY = (row / 8) * h;
+      const sag = (row / 8) * 26 * (0.7 + 0.3 * Math.sin(t * 2.4 + row));
+      g.lineStyle(1.2, tint(GRAVITY.lilac), 0.16 * s);
+      g.beginPath();
+      for (let i = 0; i <= 18; i++) {
+        const px = (i / 18) * w;
+        const py = baseY + Math.sin((i / 18) * Math.PI) * sag;
+        if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+      }
+      g.strokePath();
+    }
+
+    // Floor: everything that fell is stacking up against it.
+    const floorPulse = 0.5 + 0.5 * Math.sin(t * 5);
+    g.fillStyle(tint(GRAVITY.violet), 0.1 * s * (0.6 + floorPulse * 0.4));
+    g.fillRect(0, h - 26, w, 26);
+    g.lineStyle(2.5, tint(GRAVITY.lilac), 0.4 * s);
+    g.beginPath();
+    for (let i = 0; i <= 26; i++) {
+      const px = (i / 26) * w;
+      g.lineTo(px, h - 22 + Math.sin(t * 6 + i * 0.7) * 3);
+    }
+    g.strokePath();
+
+    // And a hard vignette, because the edges of the screen are being squeezed too.
+    for (let i = 0; i < 5; i++) {
+      const inset = i * 7;
+      g.lineStyle(9, tint(GRAVITY.void), 0.07 * s * (5 - i) / 5);
+      g.strokeRect(inset, inset, w - inset * 2, h - inset * 2);
+    }
+  }
 }
 
 // ── GravityWell ───────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { AvatarSpec, BaseAvatar, ColorFn, FxBase, TAU, easeIn, easeOut } from './ElementVisuals';
+import { ArmHold, ArmPose, AvatarSpec, BaseAvatar, ColorFn, FxBase, TAU, easeIn, easeOut } from './ElementVisuals';
 
 /**
  * Shared drawing kit for everything Creation renders: the artisan avatar (forge-hot ball
@@ -200,25 +200,36 @@ export function drawGear(
 export function plankPanel(
   g: Phaser.GameObjects.Graphics, tint: CreationColorFn,
   w: number, h: number, alpha = 1,
-  opts: { boardH?: number; frame?: number } = {},
+  opts: { boardH?: number; frame?: number; steel?: boolean } = {},
 ): void {
   const hw = w / 2, hh = h / 2;
   g.fillStyle(tint(CREATION.soot), alpha * 0.95);
   g.fillRect(-hw, -hh, w, h);
 
-  const boardH = opts.boardH ?? 15;
+  // Steel plating (built while an Overclock arm is running): the same panel construction in
+  // plate rather than board — no grain, a hard specular bevel, and a silver frame.
+  const steel = opts.steel === true;
+  const boardH = opts.boardH ?? (steel ? 20 : 15);
   const rows = Phaser.Math.Clamp(Math.round(h / boardH), 1, 12);
   const bh = h / rows;
   for (let i = 0; i < rows; i++) {
     const y = -hh + i * bh;
-    const tone = i % 2 === 0 ? CREATION.wood : CREATION.timber;
+    const tone = steel
+      ? (i % 2 === 0 ? CREATION.steel : CREATION.iron)
+      : (i % 2 === 0 ? CREATION.wood : CREATION.timber);
     g.fillStyle(tint(tone), alpha);
     g.fillRect(-hw + 1.5, y + 1, w - 3, bh - 2);
     // Lit bevel across the top of the board, shadow under it.
-    g.fillStyle(tint(CREATION.tan), alpha * 0.75);
+    g.fillStyle(tint(steel ? CREATION.silver : CREATION.tan), alpha * (steel ? 0.9 : 0.75));
     g.fillRect(-hw + 1.5, y + 1, w - 3, Math.min(2.5, bh * 0.22));
     g.fillStyle(tint(CREATION.soot), alpha * 0.45);
     g.fillRect(-hw + 1.5, y + bh - 2.5, w - 3, 1.5);
+    if (steel) {
+      // Weld seam down each plate join instead of grain.
+      g.lineStyle(1.4, tint(CREATION.soot), alpha * 0.5);
+      g.lineBetween(-hw + 3, y + bh - 1, hw - 3, y + bh - 1);
+      continue;
+    }
     // Two grain runs per board, offset so no two rows look stamped from the same die.
     g.lineStyle(1, tint(CREATION.soot), alpha * 0.3);
     for (let k = 0; k < 2; k++) {
@@ -227,7 +238,7 @@ export function plankPanel(
     }
   }
 
-  g.lineStyle(opts.frame ?? 2, tint(CREATION.copper), alpha * 0.95);
+  g.lineStyle(opts.frame ?? (steel ? 3 : 2), tint(steel ? CREATION.silver : CREATION.copper), alpha * 0.95);
   g.strokeRect(-hw, -hh, w, h);
   const rr = Math.min(3.4, Math.min(w, h) * 0.16);
   if (rr > 1.2) {
@@ -347,41 +358,83 @@ export function drawBolt(
   g.fillCircle(-8.5, 0, 1.5);
 }
 
-/** A war scythe: crescent blade on a riveted haft, drawn spinning about its balance point. */
-export function drawScythe(g: Phaser.GameObjects.Graphics, tint: CreationColorFn): void {
-  g.clear();
-  // Shift the whole shape back over the local origin so the scythe spins about its balance
-  // point rather than swinging round on an invisible tether.
-  g.translateCanvas(-8, 0);
-  // Haft.
-  g.fillStyle(tint(CREATION.iron), 1);
-  g.fillRect(-14, -2, 26, 4);
-  g.fillStyle(tint(CREATION.timber), 1);
-  g.fillRect(-13, -1.4, 24, 2.2);
-  rivet(g, tint, -11, 0, 2.2);
-  rivet(g, tint, 6, 0, 2.2);
-  // Crescent blade: an outer sweep minus an inner sweep, so the edge is a true curve.
-  const arc = (r: number, spread: number, color: number, alpha: number) => {
-    g.fillStyle(tint(color), alpha);
+/**
+ * A combination wrench, drawn centred on its balance point so it spins end over end: a box
+ * ring at one end, an open jaw at the other, and a knurled shaft between them. Redrawn once
+ * into a Graphics the kit then rotates — the shape never changes, only its angle.
+ */
+export function wrenchShape(
+  g: Phaser.GameObjects.Graphics, tint: CreationColorFn,
+  cx: number, cy: number, angle: number, scale = 1, alpha = 1,
+): void {
+  const cos = Math.cos(angle) * scale, sin = Math.sin(angle) * scale;
+  const px = -sin, py = cos;
+  /** Local (along-shaft, across-shaft) → world. */
+  const at = (f: number, o: number) => ({ x: cx + cos * f + px * o, y: cy + sin * f + py * o });
+  const slab = (f0: number, f1: number, halfW: number, color: number, alp: number) => {
+    g.fillStyle(tint(color), alp * alpha);
+    const a = at(f0, halfW), b = at(f1, halfW), c = at(f1, -halfW), d = at(f0, -halfW);
     g.beginPath();
-    for (let i = 0; i <= 16; i++) {
-      const a = -1.5 + (i / 16) * 2.5;
-      const px = 12 + Math.cos(a) * r, py = Math.sin(a) * r;
-      if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
-    }
-    for (let i = 16; i >= 0; i--) {
-      const a = -1.5 + (i / 16) * 2.5;
-      g.lineTo(12 + Math.cos(a) * (r - spread), Math.sin(a) * (r - spread));
-    }
+    g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.lineTo(c.x, c.y); g.lineTo(d.x, d.y);
     g.closePath();
     g.fillPath();
   };
-  arc(17, 8, CREATION.nexus, 0.95);
-  arc(17, 3.4, CREATION.nexusLit, 0.95);
-  arc(17, 1.4, CREATION.white, 0.85);
-  g.fillStyle(tint(CREATION.brass), 1);
-  g.fillRect(8, -4, 6, 8);
-  rivet(g, tint, 11, 0, 2.4);
+
+  // Shaft, with a lit top face and three knurled grip notches.
+  slab(-12, 12, 4, CREATION.soot, 0.9);
+  slab(-12, 12, 3.2, CREATION.steel, 1);
+  g.fillStyle(tint(CREATION.silver), 0.9 * alpha);
+  const lit0 = at(-12, -3.2), lit1 = at(12, -3.2), lit2 = at(12, -1.8), lit3 = at(-12, -1.8);
+  g.beginPath();
+  g.moveTo(lit0.x, lit0.y); g.lineTo(lit1.x, lit1.y); g.lineTo(lit2.x, lit2.y); g.lineTo(lit3.x, lit3.y);
+  g.closePath();
+  g.fillPath();
+  for (let i = 0; i < 3; i++) slab(-4 + i * 4, -2.6 + i * 4, 2.6, CREATION.soot, 0.5);
+
+  // Box end: a ring with a hex bore.
+  const box = at(-15, 0);
+  g.fillStyle(tint(CREATION.soot), 0.9 * alpha);
+  g.fillCircle(box.x, box.y, 8 * scale);
+  g.fillStyle(tint(CREATION.steel), alpha);
+  g.fillCircle(box.x, box.y, 6.8 * scale);
+  g.fillStyle(tint(CREATION.silver), 0.85 * alpha);
+  g.fillCircle(box.x - px * 1.2 * scale, box.y - py * 1.2 * scale, 5.4 * scale);
+  g.fillStyle(tint(CREATION.soot), alpha);
+  g.beginPath();
+  for (let i = 0; i <= 6; i++) {
+    const a = (i / 6) * TAU + Math.PI / 6 + angle;
+    const hx = box.x + Math.cos(a) * 3.6 * scale, hy = box.y + Math.sin(a) * 3.6 * scale;
+    if (i === 0) g.moveTo(hx, hy); else g.lineTo(hx, hy);
+  }
+  g.closePath();
+  g.fillPath();
+
+  // Open end: a throat with two jaws splayed off it, like a real spanner head.
+  const throat = at(10, 0);
+  g.fillStyle(tint(CREATION.soot), 0.9 * alpha);
+  g.fillCircle(throat.x, throat.y, 6.4 * scale);
+  for (const s of [-1, 1]) {
+    const root = at(9, s * 2.6);
+    g.fillStyle(tint(CREATION.soot), 0.9 * alpha);
+    forgedShard(g, root.x, root.y, angle + s * 0.3, 13 * scale, 5 * scale);
+  }
+  g.fillStyle(tint(CREATION.steel), alpha);
+  g.fillCircle(throat.x, throat.y, 5.2 * scale);
+  for (const s of [-1, 1]) {
+    const root = at(9, s * 2.6);
+    g.fillStyle(tint(CREATION.steel), alpha);
+    forgedShard(g, root.x, root.y, angle + s * 0.3, 11.6 * scale, 3.8 * scale);
+    // The bright ground face on the inside of each jaw — where a spanner actually shines.
+    g.fillStyle(tint(CREATION.white), 0.55 * alpha);
+    forgedShard(g, root.x, root.y, angle + s * 0.3, 9 * scale, 1 * scale);
+  }
+  rivet(g, tint, throat.x, throat.y, 2 * scale, alpha);
+}
+
+/** The thrown wrench, drawn once at the local origin — the kit rotates the Graphics. */
+export function drawWrench(g: Phaser.GameObjects.Graphics, tint: CreationColorFn): void {
+  g.clear();
+  wrenchShape(g, tint, 0, 0, 0, 1, 1);
 }
 
 /** A nail: flat head, tapering shaft, ground point. */
@@ -419,57 +472,6 @@ export function drawSaw(g: Phaser.GameObjects.Graphics, tint: CreationColorFn, r
   g.fillStyle(tint(CREATION.brass), 1);
   g.fillCircle(0, 0, r * 0.2);
   rivet(g, tint, 0, 0, r * 0.13);
-}
-
-/** The R+ mech: a riveted chassis whose armour and rocket pods grow with the build stage. */
-export function drawMech(g: Phaser.GameObjects.Graphics, tint: CreationColorFn, stage: 1 | 2 | 3): void {
-  g.clear();
-  const w = 14 + stage * 4;
-  // Legs first, so the chassis sits over them.
-  g.fillStyle(tint(CREATION.iron), 1);
-  for (const sx of [-1, 1]) {
-    g.fillRect(sx * w * 0.55 - 3, 8, 6, 10);
-    g.fillRect(sx * w * 0.55 - 5, 16, 10, 4);
-  }
-  // Chassis.
-  g.fillStyle(tint(CREATION.soot), 1);
-  g.fillRect(-w, -12, w * 2, 22);
-  g.fillStyle(tint(CREATION.bronze), 1);
-  g.fillRect(-w + 2, -10, w * 2 - 4, 18);
-  g.fillStyle(tint(CREATION.copper), 1);
-  g.fillRect(-w + 2, -10, w * 2 - 4, 5);
-  // Visor.
-  g.fillStyle(tint(CREATION.soot), 1);
-  g.fillRect(-w * 0.6, -6, w * 1.2, 6);
-  g.fillStyle(tint(stage === 3 ? CREATION.nexus : CREATION.gold), 1);
-  g.fillRect(-w * 0.5, -5, w, 3.4);
-  g.fillStyle(tint(CREATION.white), 0.8);
-  g.fillRect(-w * 0.5, -5, w * 0.3, 1.4);
-  // Rocket pods — one per side from stage 1, doubled tubes at stage 3.
-  for (const sx of [-1, 1]) {
-    g.fillStyle(tint(CREATION.steel), 1);
-    g.fillRect(sx * w - (sx > 0 ? 0 : 7), -9, 7, 8);
-    g.fillStyle(tint(CREATION.ember), 0.95);
-    g.fillCircle(sx * (w + 3.5), -5, 2);
-    if (stage === 3) {
-      g.fillStyle(tint(CREATION.steel), 1);
-      g.fillRect(sx * w - (sx > 0 ? 0 : 7), 0, 7, 7);
-      g.fillStyle(tint(CREATION.ember), 0.95);
-      g.fillCircle(sx * (w + 3.5), 3.5, 2);
-    }
-  }
-  // Plating studs.
-  for (const sx of [-1, 1]) {
-    rivet(g, tint, sx * (w - 4), -8, 2.2);
-    rivet(g, tint, sx * (w - 4), 6, 2.2);
-  }
-  if (stage >= 2) {
-    // Stage 2+ bolts on a chest plate with the stage stamped as pips.
-    g.fillStyle(tint(CREATION.brass), 1);
-    g.fillRect(-6, 0, 12, 7);
-    g.fillStyle(tint(CREATION.soot), 0.85);
-    for (let i = 0; i < stage; i++) g.fillCircle(-3 + i * 3, 3.5, 1.2);
-  }
 }
 
 /**
@@ -540,7 +542,8 @@ export function drawSpeedPad(
 
 /** A spiked block: a plank crate with ground spikes driven out through every face. */
 export function drawSpikedPanel(
-  g: Phaser.GameObjects.Graphics, tint: CreationColorFn, w: number, h: number, invincible: boolean,
+  g: Phaser.GameObjects.Graphics, tint: CreationColorFn, w: number, h: number,
+  invincible: boolean, steel = false,
 ): void {
   g.clear();
   const hw = w / 2, hh = h / 2;
@@ -563,7 +566,7 @@ export function drawSpikedPanel(
       forgedShard(g, sx, sy, sa, 7, 0.9);
     }
   }
-  plankPanel(g, tint, w, h, 1, { boardH: 17 });
+  plankPanel(g, tint, w, h, 1, { boardH: 17, steel });
   // Hazard banding across the face. Drawn as a staircase of clipped slices rather than true
   // diagonals — Graphics does not clip, and honest diagonals spill out past the crate.
   g.fillStyle(tint(invincible ? CREATION.nexus : CREATION.rust), invincible ? 0.55 : 0.45);
@@ -1208,6 +1211,7 @@ export class CreationNexus {
   private t = 0;
   private brewing = false;
   private load = 0;
+  private awakened = false;
   private arcSeeds = Array.from({ length: 6 }, () => Math.random());
 
   constructor(
@@ -1224,6 +1228,12 @@ export class CreationNexus {
   setBrewing(on: boolean): void { this.brewing = on; }
   /** 0–2 bolts loaded — the core burns brighter as the recipe fills up. */
   setLoad(n: number): void { this.load = n; }
+  /**
+   * R+ Nexus Awakening: the core runs charged red instead of nexus pink, breathing hard and
+   * throwing heat off the cage. It is the whole tell for "a wrench thrown at this becomes a
+   * mech", so it has to be unmistakable from across the arena.
+   */
+  setAwakened(on: boolean): void { this.awakened = on; }
 
   update(delta: number): void {
     if (!this.g.active) return;
@@ -1258,16 +1268,34 @@ export class CreationNexus {
       craftPlank(g, this.tint, x + Math.cos(a) * 13, y + Math.sin(a) * 13, a + Math.PI / 2, 13, 2.2, 0.9);
     }
 
-    // The core.
-    const cr = 8 + this.load * 1.6 + Math.sin(this.t * 7) * 1.4;
-    g.fillStyle(this.tint(CREATION.nexus), 0.35 * glow);
-    g.fillCircle(x, y, cr * 2.1);
-    g.fillStyle(this.tint(CREATION.nexus), 0.95);
+    // The core. Awakened it runs on the hot half of the palette and beats harder — a heart
+    // rather than a lamp — with a containment ring counting the charge down around it.
+    const beat = this.awakened
+      ? Math.pow(0.5 + 0.5 * Math.sin(this.t * 4.4), 2.2)
+      : 0;
+    const cr = 8 + this.load * 1.6 + Math.sin(this.t * 7) * 1.4 + beat * 3.4;
+    const hot = this.awakened ? CREATION.rust : CREATION.nexus;
+    const lit = this.awakened ? CREATION.ember : CREATION.nexusLit;
+    g.fillStyle(this.tint(hot), (this.awakened ? 0.5 + beat * 0.3 : 0.35) * glow);
+    g.fillCircle(x, y, cr * (this.awakened ? 2.6 : 2.1));
+    g.fillStyle(this.tint(hot), 0.95);
     g.fillCircle(x, y, cr);
-    g.fillStyle(this.tint(CREATION.nexusLit), 0.95);
+    g.fillStyle(this.tint(lit), 0.95);
     g.fillCircle(x, y, cr * 0.62);
     g.fillStyle(this.tint(CREATION.white), 0.9);
     g.fillCircle(x - cr * 0.2, y - cr * 0.24, cr * 0.28);
+    if (this.awakened) {
+      // Ring pulse rolling outward off every beat, plus veins of charge crawling up the cage.
+      const roll = (this.t * 0.55) % 1;
+      g.lineStyle(2.4 * (1 - roll), this.tint(CREATION.ember), 0.7 * (1 - roll));
+      g.strokeCircle(x, y, 12 + roll * 30);
+      g.lineStyle(1.8, this.tint(CREATION.spark), 0.45 + beat * 0.5);
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * TAU + this.t * 0.3;
+        g.lineBetween(x + Math.cos(a) * cr, y + Math.sin(a) * cr,
+          x + Math.cos(a) * (13 + beat * 3), y + Math.sin(a) * (13 + beat * 3));
+      }
+    }
 
     // Arcs crackling between cage and core while a brew runs.
     if (this.brewing) {
@@ -1298,6 +1326,727 @@ export class CreationNexus {
 
   destroy(): void {
     this.g.destroy();
+  }
+}
+
+// ── CreationMechRig ───────────────────────────────────────────────────────
+
+/** What a potion welded onto one of the mech's arms turned it into. */
+export type MechArmKind = 'chainsaw' | 'medcore' | 'grabber' | 'shield' | 'barrage' | 'overclock';
+
+/** Signature colour for each attachment — its glow, its pips and its status chip. */
+export const MECH_ARM_TONES: Record<MechArmKind, number> = {
+  chainsaw: 0xff4466,
+  medcore: 0x33dd66,
+  grabber: 0xffcc22,
+  shield: 0x66aaff,
+  barrage: 0x99ff66,
+  overclock: 0xcc88ff,
+};
+
+/** Everything the rig needs to know about one arm to draw it this frame. */
+export interface MechArmView {
+  kind: MechArmKind | null;
+  /** Overclocked by the other arm — heavier housing, brighter coils. */
+  boosted: boolean;
+  /** 0–1 reach along the arm: the grabber lunging, the saw thrusting. */
+  extend: number;
+  /** 0–1 close: claw fingers shutting, shield bracing flat. */
+  grip: number;
+  /** Free-running phase — chain links marching, turbine blades turning. */
+  spin: number;
+  /** 0–1 overheat. Reddens the saw and vents steam off the housing. */
+  heat: number;
+  /** 0–1 recoil flash, decayed by the kit after each volley. */
+  fire: number;
+}
+
+export function emptyMechArm(): MechArmView {
+  return { kind: null, boosted: false, extend: 0, grip: 0, spin: 0, heat: 0, fire: 0 };
+}
+
+/** A tapered riveted beam between two points — every limb segment on the mech is one of these. */
+function mechStrut(
+  g: Phaser.GameObjects.Graphics, tint: CreationColorFn,
+  x0: number, y0: number, x1: number, y1: number,
+  halfW: number, body: number, alpha = 1,
+): void {
+  const a = Math.atan2(y1 - y0, x1 - x0);
+  const len = Math.hypot(x1 - x0, y1 - y0) || 1;
+  const cos = Math.cos(a), sin = Math.sin(a);
+  const px = -sin, py = cos;
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  // Tapers toward the far end — a limb of constant width reads as a pipe, not a machine.
+  const quad = (w0: number, w1: number, color: number, alp: number) => {
+    g.fillStyle(tint(color), alp);
+    g.beginPath();
+    g.moveTo(cx - cos * len / 2 + px * w0, cy - sin * len / 2 + py * w0);
+    g.lineTo(cx + cos * len / 2 + px * w1, cy + sin * len / 2 + py * w1);
+    g.lineTo(cx + cos * len / 2 - px * w1, cy + sin * len / 2 - py * w1);
+    g.lineTo(cx - cos * len / 2 - px * w0, cy - sin * len / 2 - py * w0);
+    g.closePath();
+    g.fillPath();
+  };
+  quad(halfW + 1.3, halfW * 0.78 + 1.3, CREATION.soot, alpha * 0.9);
+  quad(halfW, halfW * 0.78, body, alpha);
+  // Lit flank and shadowed flank: without both, the beam is a flat silhouette.
+  g.lineStyle(Math.max(1, halfW * 0.46), tint(CREATION.tan), alpha * 0.55);
+  g.lineBetween(x0 + px * halfW * 0.52, y0 + py * halfW * 0.52, x1 + px * halfW * 0.42, y1 + py * halfW * 0.42);
+  g.lineStyle(Math.max(1, halfW * 0.36), tint(CREATION.soot), alpha * 0.45);
+  g.lineBetween(x0 - px * halfW * 0.62, y0 - py * halfW * 0.62, x1 - px * halfW * 0.5, y1 - py * halfW * 0.5);
+  rivet(g, tint, x0, y0, Math.max(1.6, halfW * 0.42), alpha);
+}
+
+/** A hydraulic ram alongside a limb segment: cylinder plus a rod that slides with `push`. */
+function mechPiston(
+  g: Phaser.GameObjects.Graphics, tint: CreationColorFn,
+  x0: number, y0: number, x1: number, y1: number, push: number, alpha = 1,
+): void {
+  const a = Math.atan2(y1 - y0, x1 - x0);
+  const len = Math.hypot(x1 - x0, y1 - y0);
+  const cos = Math.cos(a), sin = Math.sin(a);
+  g.lineStyle(4.4, tint(CREATION.iron), alpha);
+  g.lineBetween(x0, y0, x0 + cos * len * 0.55, y0 + sin * len * 0.55);
+  g.lineStyle(2.2, tint(CREATION.silver), alpha);
+  const rodEnd = 0.5 + push * 0.5;
+  g.lineBetween(x0 + cos * len * 0.5, y0 + sin * len * 0.5,
+    x0 + cos * len * rodEnd, y0 + sin * len * rodEnd);
+  g.lineStyle(1, tint(CREATION.spark), alpha * 0.5);
+  g.lineBetween(x0 - sin * 1.4, y0 + cos * 1.4,
+    x0 + cos * len * 0.5 - sin * 1.4, y0 + sin * len * 0.5 + cos * 1.4);
+}
+
+/** The default hand when a slot has no potion welded to it: a three-plate clamp fist. */
+function mechFist(
+  g: Phaser.GameObjects.Graphics, tint: CreationColorFn,
+  x: number, y: number, ang: number, alpha: number,
+): void {
+  const cos = Math.cos(ang), sin = Math.sin(ang);
+  g.fillStyle(tint(CREATION.soot), alpha);
+  g.fillCircle(x, y, 8.4);
+  g.fillStyle(tint(CREATION.bronze), alpha);
+  g.fillCircle(x, y, 7);
+  g.fillStyle(tint(CREATION.copper), alpha * 0.9);
+  g.fillCircle(x - sin * 2, y + cos * 2, 4.6);
+  for (const s of [-1, 0, 1]) {
+    g.fillStyle(tint(CREATION.iron), alpha);
+    forgedShard(g, x + cos * 4, y + sin * 4, ang + s * 0.5, 8, 2.4);
+  }
+  rivet(g, tint, x, y, 2.2, alpha);
+}
+
+/**
+ * Chainsaw arm: a guide bar with a chain of teeth marching round it, a drive sprocket at the
+ * root and a motor housing behind that. The chain is the whole point, so it is drawn as real
+ * teeth walking the perimeter rather than a hatched band.
+ */
+function mechArmChainsaw(
+  g: Phaser.GameObjects.Graphics, tint: CreationColorFn,
+  x: number, y: number, ang: number, v: MechArmView, alpha: number,
+): void {
+  const cos = Math.cos(ang), sin = Math.sin(ang);
+  const px = -sin, py = cos;
+  const barLen = v.boosted ? 34 : 28;
+  const halfH = v.boosted ? 5.4 : 4.6;
+  const at = (f: number, off: number) => ({ x: x + cos * f + px * off, y: y + sin * f + py * off });
+
+  // Motor housing: a riveted drum with a pull-cord boss and cooling fins.
+  g.fillStyle(tint(CREATION.soot), alpha);
+  g.fillCircle(x, y, 9.6);
+  g.fillStyle(tint(v.boosted ? CREATION.brass : CREATION.bronze), alpha);
+  g.fillCircle(x, y, 8);
+  for (let i = 0; i < 5; i++) {
+    const a = ang + Math.PI / 2 + (i - 2) * 0.42;
+    g.lineStyle(1.6, tint(CREATION.soot), alpha * 0.6);
+    g.lineBetween(x + Math.cos(a) * 4, y + Math.sin(a) * 4, x + Math.cos(a) * 8, y + Math.sin(a) * 8);
+  }
+  rivet(g, tint, x, y, 2.6, alpha);
+
+  // Guide bar: a flat blade plate with a rounded nose.
+  g.fillStyle(tint(CREATION.soot), alpha);
+  g.fillCircle(at(barLen, 0).x, at(barLen, 0).y, halfH + 1.6);
+  g.beginPath();
+  g.moveTo(at(4, halfH + 1.6).x, at(4, halfH + 1.6).y);
+  g.lineTo(at(barLen, halfH + 1.6).x, at(barLen, halfH + 1.6).y);
+  g.lineTo(at(barLen, -halfH - 1.6).x, at(barLen, -halfH - 1.6).y);
+  g.lineTo(at(4, -halfH - 1.6).x, at(4, -halfH - 1.6).y);
+  g.closePath();
+  g.fillPath();
+  g.fillStyle(tint(CREATION.steel), alpha);
+  g.fillCircle(at(barLen, 0).x, at(barLen, 0).y, halfH);
+  g.beginPath();
+  g.moveTo(at(4, halfH).x, at(4, halfH).y);
+  g.lineTo(at(barLen, halfH).x, at(barLen, halfH).y);
+  g.lineTo(at(barLen, -halfH).x, at(barLen, -halfH).y);
+  g.lineTo(at(4, -halfH).x, at(4, -halfH).y);
+  g.closePath();
+  g.fillPath();
+  // Groove down the middle of the bar.
+  g.lineStyle(1.4, tint(CREATION.soot), alpha * 0.7);
+  g.lineBetween(at(6, 0).x, at(6, 0).y, at(barLen - 2, 0).x, at(barLen - 2, 0).y);
+
+  // The chain. Teeth run out along one flank and back along the other, one continuous loop.
+  const teeth = 11;
+  const hot = Phaser.Display.Color.Interpolate.ColorWithColor(
+    Phaser.Display.Color.ValueToColor(tint(CREATION.silver)),
+    Phaser.Display.Color.ValueToColor(tint(CREATION.rust)), 100, Math.round(v.heat * 100),
+  );
+  const chainColor = Phaser.Display.Color.GetColor(hot.r, hot.g, hot.b);
+  for (let i = 0; i < teeth * 2; i++) {
+    const p = ((i / (teeth * 2)) + v.spin) % 1;
+    // First half of the loop runs out along the +offset flank; the rest comes back on the −.
+    const out = p < 0.5;
+    const f = out ? 4 + (p * 2) * (barLen - 4) : barLen - ((p - 0.5) * 2) * (barLen - 4);
+    const off = (out ? 1 : -1) * (halfH + 1.2);
+    const root = at(f, off);
+    g.fillStyle(chainColor, alpha);
+    forgedShard(g, root.x, root.y, ang + (out ? 0.9 : -0.9), 5.2, 1.8);
+    g.fillStyle(tint(CREATION.soot), alpha * 0.7);
+    g.fillCircle(root.x, root.y, 1.3);
+  }
+
+  // Overheat: the bar glows and vents.
+  if (v.heat > 0.02) {
+    g.fillStyle(tint(CREATION.ember), 0.35 * v.heat * alpha);
+    g.fillCircle(at(barLen * 0.6, 0).x, at(barLen * 0.6, 0).y, 11 * v.heat + 4);
+    g.fillStyle(tint(CREATION.spark), 0.5 * v.heat * alpha);
+    g.fillCircle(x, y, 4 + v.heat * 3);
+  }
+}
+
+/**
+ * Med core arm: a glass canister of green brew in a brass cage, with a cross plate on the
+ * front and three dispensing ports that light up as the next batch comes due.
+ */
+function mechArmMedcore(
+  g: Phaser.GameObjects.Graphics, tint: CreationColorFn,
+  x: number, y: number, ang: number, v: MechArmView, alpha: number,
+): void {
+  const cos = Math.cos(ang), sin = Math.sin(ang);
+  const px = -sin, py = cos;
+  const tone = MECH_ARM_TONES.medcore;
+  const at = (f: number, off: number) => ({ x: x + cos * f + px * off, y: y + sin * f + py * off });
+
+  // Cage frame.
+  g.fillStyle(tint(CREATION.soot), alpha);
+  g.fillCircle(x, y, 10);
+  g.fillCircle(at(18, 0).x, at(18, 0).y, 9);
+  g.lineStyle(11, tint(CREATION.soot), alpha);
+  g.lineBetween(x, y, at(18, 0).x, at(18, 0).y);
+  g.lineStyle(8.4, tint(v.boosted ? CREATION.brass : CREATION.bronze), alpha);
+  g.lineBetween(x, y, at(18, 0).x, at(18, 0).y);
+
+  // Glass canister with a liquid line that sloshes and a bubble column.
+  g.fillStyle(tone, alpha * 0.85);
+  g.fillCircle(at(9, 0).x, at(9, 0).y, 6.4);
+  g.fillStyle(tint(CREATION.white), alpha * 0.35);
+  g.fillCircle(at(8, -2.4).x, at(8, -2.4).y, 2.6);
+  for (let i = 0; i < 3; i++) {
+    const p = (v.spin * 1.4 + i / 3) % 1;
+    g.fillStyle(tint(CREATION.white), alpha * 0.55 * (1 - p));
+    const b = at(6 + p * 7, -2 + i * 2);
+    g.fillCircle(b.x, b.y, 1.5 * (1 - p * 0.4));
+  }
+  // Cage bars over the glass.
+  g.lineStyle(1.6, tint(CREATION.brass), alpha * 0.9);
+  for (const o of [-4, 0, 4]) {
+    g.lineBetween(at(3, o).x, at(3, o).y, at(15, o).x, at(15, o).y);
+  }
+
+  // Cross plate on the nose — the read for "this is the healing one".
+  const nose = at(19, 0);
+  g.fillStyle(tint(CREATION.silver), alpha);
+  g.fillCircle(nose.x, nose.y, 6.6);
+  g.fillStyle(tone, alpha);
+  g.fillRect(nose.x - 4.8, nose.y - 1.6, 9.6, 3.2);
+  g.fillRect(nose.x - 1.6, nose.y - 4.8, 3.2, 9.6);
+  // Ports charging toward the next batch.
+  const charge = 0.5 + 0.5 * Math.sin(v.spin * TAU);
+  for (const s of [-1, 1]) {
+    const p = at(15, s * 7);
+    g.fillStyle(tone, alpha * (0.4 + charge * 0.6));
+    g.fillCircle(p.x, p.y, 2.4 + charge * 1.2);
+  }
+  if (v.fire > 0.02) {
+    g.fillStyle(tone, alpha * 0.45 * v.fire);
+    g.fillCircle(nose.x, nose.y, 10 + v.fire * 14);
+  }
+  rivet(g, tint, x, y, 2.6, alpha);
+}
+
+/**
+ * Grabber arm: a hydraulic ram carrying three hooked fingers. `grip` shuts them, `extend`
+ * shoots the whole assembly out on its rail — the two together are the entire read.
+ */
+function mechArmGrabber(
+  g: Phaser.GameObjects.Graphics, tint: CreationColorFn,
+  x: number, y: number, ang: number, v: MechArmView, alpha: number,
+): void {
+  const cos = Math.cos(ang), sin = Math.sin(ang);
+  const px = -sin, py = cos;
+  const at = (f: number, off: number) => ({ x: x + cos * f + px * off, y: y + sin * f + py * off });
+  const reach = 10 + v.extend * 22;
+
+  // Rail the claw rides out on, with the ram alongside it.
+  g.lineStyle(7, tint(CREATION.soot), alpha);
+  g.lineBetween(x, y, at(reach, 0).x, at(reach, 0).y);
+  g.lineStyle(4.6, tint(CREATION.iron), alpha);
+  g.lineBetween(x, y, at(reach, 0).x, at(reach, 0).y);
+  mechPiston(g, tint, at(0, 5).x, at(0, 5).y, at(reach, 5).x, at(reach, 5).y, v.extend, alpha);
+  mechPiston(g, tint, at(0, -5).x, at(0, -5).y, at(reach, -5).x, at(reach, -5).y, v.extend, alpha);
+
+  // Wrist boss.
+  const wrist = at(reach, 0);
+  g.fillStyle(tint(CREATION.soot), alpha);
+  g.fillCircle(wrist.x, wrist.y, 7.4);
+  g.fillStyle(tint(v.boosted ? CREATION.brass : CREATION.bronze), alpha);
+  g.fillCircle(wrist.x, wrist.y, 6);
+
+  // Three hooked fingers: a straight knuckle segment, then a hook that curls with `grip`.
+  const fingers = [-1, 0, 1];
+  for (const s of fingers) {
+    const spread = (1 - v.grip) * 0.62 + 0.12;
+    const a0 = ang + s * spread;
+    const k = { x: wrist.x + Math.cos(a0) * 11, y: wrist.y + Math.sin(a0) * 11 };
+    const a1 = a0 - s * (0.5 + v.grip * 1.15) - (s === 0 ? v.grip * 0.35 : 0);
+    const tipX = k.x + Math.cos(a1) * 9, tipY = k.y + Math.sin(a1) * 9;
+    mechStrut(g, tint, wrist.x, wrist.y, k.x, k.y, 3, CREATION.steel, alpha);
+    mechStrut(g, tint, k.x, k.y, tipX, tipY, 2.4, CREATION.silver, alpha);
+    // Ground point on the inside of the hook.
+    g.fillStyle(tint(CREATION.white), alpha * 0.7);
+    forgedShard(g, tipX, tipY, a1, 4.4, 1.2);
+  }
+  rivet(g, tint, wrist.x, wrist.y, 2.4, alpha);
+  if (v.grip > 0.6) {
+    // Hydraulics under load.
+    g.fillStyle(tint(MECH_ARM_TONES.grabber), alpha * 0.3 * (v.grip - 0.6) / 0.4);
+    g.fillCircle(wrist.x + cos * 12, wrist.y + sin * 12, 14);
+  }
+}
+
+/**
+ * Shield arm: a riveted tower plate on a forearm mount, with a domed boss and a hazard band.
+ * It angles to face outward and flattens as `grip` rises, which is how a block reads.
+ */
+function mechArmShield(
+  g: Phaser.GameObjects.Graphics, tint: CreationColorFn,
+  x: number, y: number, ang: number, v: MechArmView, alpha: number,
+): void {
+  const face = ang + (1 - v.grip) * 0.35;
+  const cos = Math.cos(face), sin = Math.sin(face);
+  const px = -sin, py = cos;
+  const h = v.boosted ? 24 : 20;
+  const d = 9;
+  const corner = (f: number, off: number) => ({ x: x + cos * f + px * off, y: y + sin * f + py * off });
+
+  // Mount block behind the plate.
+  g.fillStyle(tint(CREATION.soot), alpha);
+  g.fillCircle(x, y, 8);
+  g.fillStyle(tint(CREATION.iron), alpha);
+  g.fillCircle(x, y, 6.4);
+
+  // The plate itself: a kite, wider at the top, drawn as one polygon so it holds an edge.
+  const pts = [
+    corner(d, -h * 0.62), corner(d + 3, -h * 0.2), corner(d + 2, h * 0.2), corner(d, h * 0.62),
+    corner(d - 5, h * 0.5), corner(d - 6, 0), corner(d - 5, -h * 0.5),
+  ];
+  const plate = (inset: number, color: number, alp: number) => {
+    g.fillStyle(tint(color), alp);
+    g.beginPath();
+    pts.forEach((p, i) => {
+      const sx = x + (p.x - x) * inset, sy = y + (p.y - y) * inset;
+      if (i === 0) g.moveTo(sx, sy); else g.lineTo(sx, sy);
+    });
+    g.closePath();
+    g.fillPath();
+  };
+  plate(1.06, CREATION.soot, alpha * 0.95);
+  plate(1, v.boosted ? CREATION.silver : CREATION.steel, alpha);
+  plate(0.82, CREATION.iron, alpha * 0.7);
+  // Hazard band across the face, plus the boss.
+  g.lineStyle(3, tint(MECH_ARM_TONES.shield), alpha * 0.85);
+  g.lineBetween(corner(d + 1, -h * 0.34).x, corner(d + 1, -h * 0.34).y,
+    corner(d + 1, h * 0.34).x, corner(d + 1, h * 0.34).y);
+  const boss = corner(d + 1, 0);
+  g.fillStyle(tint(CREATION.soot), alpha);
+  g.fillCircle(boss.x, boss.y, 5.4);
+  g.fillStyle(tint(CREATION.brass), alpha);
+  g.fillCircle(boss.x, boss.y, 4.2);
+  g.fillStyle(tint(CREATION.white), alpha * 0.8);
+  g.fillCircle(boss.x - 1.2, boss.y - 1.2, 1.6);
+  for (const s of [-1, 1]) {
+    const r = corner(d, s * h * 0.48);
+    rivet(g, tint, r.x, r.y, 2.2, alpha);
+  }
+  // Charge ring counting down to the next free block.
+  if (v.fire > 0.02) {
+    g.lineStyle(3 * v.fire, tint(MECH_ARM_TONES.shield), alpha * v.fire);
+    g.strokeCircle(boss.x, boss.y, 12 + (1 - v.fire) * 20);
+  }
+}
+
+/**
+ * Barrage arm: a three-tube rocket pod with loaded warheads showing at the muzzles, blast
+ * doors down the flank and a targeting fin on top.
+ */
+function mechArmBarrage(
+  g: Phaser.GameObjects.Graphics, tint: CreationColorFn,
+  x: number, y: number, ang: number, v: MechArmView, alpha: number,
+): void {
+  const cos = Math.cos(ang), sin = Math.sin(ang);
+  const px = -sin, py = cos;
+  const at = (f: number, off: number) => ({ x: x + cos * f + px * off, y: y + sin * f + py * off });
+  const tubes = v.boosted ? [-6, 0, 6] : [-5, 5];
+  const len = v.boosted ? 24 : 21;
+
+  // Pod body.
+  const body = (inset: number, color: number, alp: number) => {
+    g.fillStyle(tint(color), alp);
+    g.beginPath();
+    const w = (v.boosted ? 11 : 9) * inset;
+    g.moveTo(at(-4, w).x, at(-4, w).y);
+    g.lineTo(at(len, w * 0.85).x, at(len, w * 0.85).y);
+    g.lineTo(at(len, -w * 0.85).x, at(len, -w * 0.85).y);
+    g.lineTo(at(-4, -w).x, at(-4, -w).y);
+    g.closePath();
+    g.fillPath();
+  };
+  body(1.15, CREATION.soot, alpha);
+  body(1, v.boosted ? CREATION.brass : CREATION.bronze, alpha);
+  g.fillStyle(tint(CREATION.copper), alpha * 0.8);
+  body(0.42, CREATION.copper, alpha * 0.8);
+
+  // Tubes with warheads sitting in them.
+  for (const off of tubes) {
+    const m = at(len, off * 0.7);
+    g.fillStyle(tint(CREATION.soot), alpha);
+    g.fillCircle(m.x, m.y, 4.4);
+    g.fillStyle(tint(CREATION.iron), alpha);
+    g.fillCircle(m.x, m.y, 3.4);
+    g.fillStyle(tint(v.fire > 0.02 ? CREATION.spark : CREATION.rust), alpha);
+    forgedShard(g, m.x - cos * 2, m.y - sin * 2, ang, 6, 2.4);
+    if (v.fire > 0.02) {
+      g.fillStyle(tint(CREATION.ember), alpha * 0.8 * v.fire);
+      forgedShard(g, m.x, m.y, ang, 16 * v.fire, 4 * v.fire);
+    }
+  }
+  // Blast doors and the targeting fin.
+  g.lineStyle(1.4, tint(CREATION.soot), alpha * 0.6);
+  for (let i = 0; i < 4; i++) {
+    const f = 0 + i * 5;
+    g.lineBetween(at(f, 9).x, at(f, 9).y, at(f, -9).x, at(f, -9).y);
+  }
+  g.fillStyle(tint(CREATION.steel), alpha);
+  forgedShard(g, at(6, 0).x, at(6, 0).y, ang + Math.PI / 2, 12, 2.6);
+  g.fillStyle(tint(MECH_ARM_TONES.barrage), alpha * 0.9);
+  g.fillCircle(at(6, 11).x, at(6, 11).y, 2);
+  rivet(g, tint, x, y, 2.6, alpha);
+}
+
+/**
+ * Overclock arm: a supercharger — an intake ring with blades turning inside it, a coil pack
+ * wrapped round the housing and a heat haze coming off the top.
+ */
+function mechArmOverclock(
+  g: Phaser.GameObjects.Graphics, tint: CreationColorFn,
+  x: number, y: number, ang: number, v: MechArmView, alpha: number,
+): void {
+  const cos = Math.cos(ang), sin = Math.sin(ang);
+  const px = -sin, py = cos;
+  const at = (f: number, off: number) => ({ x: x + cos * f + px * off, y: y + sin * f + py * off });
+  const tone = MECH_ARM_TONES.overclock;
+  const hub = at(16, 0);
+
+  // Housing barrel.
+  g.lineStyle(17, tint(CREATION.soot), alpha);
+  g.lineBetween(x, y, hub.x, hub.y);
+  g.lineStyle(14, tint(CREATION.iron), alpha);
+  g.lineBetween(x, y, hub.x, hub.y);
+  // Coil pack wound round it — the tell that this arm is feeding the other one.
+  for (let i = 0; i < 5; i++) {
+    const f = 2 + i * 3;
+    const glow = 0.4 + 0.6 * Math.max(0, Math.sin(v.spin * TAU * 2 - i * 0.8));
+    g.lineStyle(2.4, tone, alpha * glow);
+    g.lineBetween(at(f, 7).x, at(f, 7).y, at(f + 1.5, -7).x, at(f + 1.5, -7).y);
+  }
+
+  // Intake ring and blades.
+  g.fillStyle(tint(CREATION.soot), alpha);
+  g.fillCircle(hub.x, hub.y, 12);
+  g.fillStyle(tint(v.boosted ? CREATION.brass : CREATION.bronze), alpha);
+  g.fillCircle(hub.x, hub.y, 10.4);
+  g.fillStyle(tint(CREATION.soot), alpha);
+  g.fillCircle(hub.x, hub.y, 8.6);
+  const blades = 7;
+  for (let i = 0; i < blades; i++) {
+    const a = v.spin * TAU * 3 + (i / blades) * TAU;
+    g.fillStyle(tint(CREATION.silver), alpha * 0.9);
+    forgedShard(g, hub.x + Math.cos(a) * 2.4, hub.y + Math.sin(a) * 2.4, a + 1.1, 6.8, 2.2, 2.4);
+  }
+  g.fillStyle(tone, alpha * 0.85);
+  g.fillCircle(hub.x, hub.y, 3);
+  g.fillStyle(tint(CREATION.white), alpha * 0.8);
+  g.fillCircle(hub.x - 0.8, hub.y - 0.9, 1.3);
+  drawGear(g, tint, hub.x, hub.y, 11.6, 12, -v.spin * TAU, CREATION.iron, tone, alpha * 0.9);
+
+  // Heat haze lifting off the housing.
+  for (let i = 0; i < 3; i++) {
+    const p = (v.spin * 1.6 + i / 3) % 1;
+    g.lineStyle(1.6, tone, alpha * 0.28 * (1 - p));
+    const s = at(4 + i * 4, -9 - p * 9);
+    g.strokeCircle(s.x, s.y, 2 + p * 4);
+  }
+  rivet(g, tint, x, y, 2.8, alpha);
+}
+
+function drawMechArmHand(
+  g: Phaser.GameObjects.Graphics, tint: CreationColorFn,
+  x: number, y: number, ang: number, v: MechArmView, alpha: number,
+): void {
+  switch (v.kind) {
+    case 'chainsaw':  mechArmChainsaw(g, tint, x, y, ang, v, alpha); break;
+    case 'medcore':   mechArmMedcore(g, tint, x, y, ang, v, alpha); break;
+    case 'grabber':   mechArmGrabber(g, tint, x, y, ang, v, alpha); break;
+    case 'shield':    mechArmShield(g, tint, x, y, ang, v, alpha); break;
+    case 'barrage':   mechArmBarrage(g, tint, x, y, ang, v, alpha); break;
+    case 'overclock': mechArmOverclock(g, tint, x, y, ang, v, alpha); break;
+    default:          mechFist(g, tint, x, y, ang, alpha); break;
+  }
+}
+
+/**
+ * The R+ mech: a two-legged walker the pilot actually sits inside.
+ *
+ * It is drawn across two Graphics rather than one, because the whole illusion depends on the
+ * fighter sprite being *between* them — the chassis, legs and seat go behind at `depth - 2`,
+ * the roll cage, harness and both arms in front at `depth + 4`. One layer would leave the
+ * pilot either floating on top of a decal or buried under a box.
+ *
+ * Everything animates off two inputs: `gait` (how fast it is walking, which drives the stride
+ * and the exhaust) and `aim` (where the pilot is looking, which swings both arms).
+ */
+export class CreationMechRig {
+  private back: Phaser.GameObjects.Graphics;
+  private front: Phaser.GameObjects.Graphics;
+  private fx: CreationFx;
+  private t = 0;
+  private stride = 0;
+  private gait = 0;
+  private aim = 0;
+  private mounted = false;
+  /** 0 = standing ready, 1 = folded down dormant. Eased, so waking up is a movement. */
+  private crouch = 1;
+  private smokeAccum = 0;
+  private arms: [MechArmView, MechArmView] = [emptyMechArm(), emptyMechArm()];
+
+  constructor(
+    private scene: Phaser.Scene,
+    private tint: CreationColorFn,
+    depth = 5,
+  ) {
+    this.back = scene.add.graphics().setDepth(depth - 2);
+    this.front = scene.add.graphics().setDepth(depth + 4);
+    this.fx = new CreationFx(scene, tint);
+  }
+
+  /** Index 0 is the right arm (the first potion), index 1 the left. */
+  arm(i: 0 | 1): MechArmView { return this.arms[i]; }
+
+  setMounted(on: boolean): void { this.mounted = on; }
+  setAim(angle: number): void { this.aim = angle; }
+
+  update(delta: number, x: number, y: number, alpha: number, speed: number): void {
+    if (!this.back.active || !this.front.active) return;
+    const dt = delta / 1000;
+    this.t += dt;
+    // Gait eases toward how fast the chassis is actually travelling, so it doesn't snap
+    // between standing and running on a single frame of stick input.
+    const wanted = this.mounted ? Phaser.Math.Clamp(speed / 190, 0, 1) : 0;
+    this.gait += (wanted - this.gait) * Math.min(1, dt * 7);
+    this.stride += dt * (2.6 + this.gait * 7.5);
+    const wantCrouch = this.mounted ? 0 : 1;
+    this.crouch += (wantCrouch - this.crouch) * Math.min(1, dt * 4);
+
+    const b = this.back, f = this.front;
+    b.clear();
+    f.clear();
+    if (alpha <= 0.02) return;
+
+    const tint = this.tint;
+    const sink = this.crouch * 9;
+    const bounce = Math.sin(this.stride * 2) * this.gait * 2.2;
+    const cy = y + sink + bounce;
+
+    // ── Legs (behind everything) ─────────────────────────────────────
+    for (const side of [-1, 1] as const) {
+      const ph = this.stride + (side < 0 ? Math.PI : 0);
+      const lift = Math.max(0, Math.sin(ph)) * 7 * this.gait;
+      const swing = Math.cos(ph) * 9 * this.gait;
+      const hipX = x + side * 13, hipY = cy + 12;
+      // Folded knees while dormant — a mech at rest sits on its haunches.
+      const kneeX = hipX + side * (7 + this.crouch * 5) + swing * 0.5;
+      const kneeY = cy + 30 - lift - this.crouch * 6;
+      const ankleX = kneeX + swing - side * this.crouch * 3;
+      const ankleY = cy + 46 - lift - this.crouch * 9;
+      mechStrut(b, tint, hipX, hipY, kneeX, kneeY, 6.4, CREATION.bronze, alpha);
+      mechPiston(b, tint, hipX + side * 5, hipY, kneeX + side * 4, kneeY, 0.4 + lift / 14, alpha);
+      mechStrut(b, tint, kneeX, kneeY, ankleX, ankleY, 5, CREATION.iron, alpha);
+      // Foot: a tread plate with a toe bevel and cleats.
+      b.fillStyle(tint(CREATION.soot), alpha);
+      b.fillRect(ankleX - 12, ankleY - 1, 24, 7);
+      b.fillStyle(tint(CREATION.steel), alpha);
+      b.fillRect(ankleX - 10.5, ankleY, 21, 4.6);
+      b.fillStyle(tint(CREATION.silver), alpha * 0.6);
+      b.fillRect(ankleX - 10.5, ankleY, 21, 1.4);
+      b.fillStyle(tint(CREATION.soot), alpha * 0.7);
+      for (let i = 0; i < 4; i++) b.fillRect(ankleX - 9 + i * 5, ankleY + 3.4, 2.6, 2.6);
+      rivet(b, tint, ankleX, ankleY + 1, 2.2, alpha);
+    }
+
+    // ── Hip block ────────────────────────────────────────────────────
+    b.fillStyle(tint(CREATION.soot), alpha);
+    b.fillRoundedRect(x - 19, cy + 4, 38, 16, 5);
+    b.fillStyle(tint(CREATION.iron), alpha);
+    b.fillRoundedRect(x - 17, cy + 5.5, 34, 13, 4);
+    b.fillStyle(tint(CREATION.copper), alpha * 0.9);
+    b.fillRect(x - 17, cy + 5.5, 34, 3.4);
+    for (const s of [-1, 1]) rivet(b, tint, x + s * 13, cy + 12, 2.4, alpha);
+
+    // ── Torso + seat back ────────────────────────────────────────────
+    b.fillStyle(tint(CREATION.soot), alpha);
+    b.fillRoundedRect(x - 27, cy - 30, 54, 40, 8);
+    b.fillStyle(tint(CREATION.bronze), alpha);
+    b.fillRoundedRect(x - 24.5, cy - 28, 49, 36, 7);
+    b.fillStyle(tint(CREATION.copper), alpha);
+    b.fillRoundedRect(x - 24.5, cy - 28, 49, 9, 4);
+    // Radiator slats down the back plate.
+    b.fillStyle(tint(CREATION.soot), alpha * 0.55);
+    for (let i = 0; i < 4; i++) b.fillRect(x - 20, cy - 15 + i * 6, 40, 2.6);
+    // A gear stamped into the plate — maker's mark, and it keeps turning.
+    drawGear(b, tint, x, cy - 6, 9, 10, this.t * 0.9, CREATION.iron, CREATION.brass, alpha * 0.75);
+    for (const s of [-1, 1]) {
+      for (const sy of [-1, 1]) rivet(b, tint, x + s * 21, cy - 24 + (sy > 0 ? 28 : 0), 2.6, alpha);
+    }
+
+    // Exhaust stacks over the shoulders.
+    for (const s of [-1, 1]) {
+      const sx = x + s * 19;
+      b.fillStyle(tint(CREATION.soot), alpha);
+      b.fillRect(sx - 4.4, cy - 42, 8.8, 14);
+      b.fillStyle(tint(CREATION.iron), alpha);
+      b.fillRect(sx - 3.4, cy - 41, 6.8, 13);
+      b.fillStyle(tint(CREATION.brass), alpha * 0.9);
+      b.fillRect(sx - 4.8, cy - 42, 9.6, 2.6);
+      b.fillStyle(tint(CREATION.soot), alpha);
+      b.fillEllipse(sx, cy - 42, 8, 3.4);
+    }
+
+    // Shoulder pauldrons, behind the arms so the arms read as hanging off them.
+    for (const s of [-1, 1]) {
+      const sx = x + s * 29, sy = cy - 18;
+      b.fillStyle(tint(CREATION.soot), alpha);
+      b.fillCircle(sx, sy, 13);
+      b.fillStyle(tint(CREATION.bronze), alpha);
+      b.fillCircle(sx, sy, 11.2);
+      b.fillStyle(tint(CREATION.copper), alpha);
+      b.fillCircle(sx, sy - 2.4, 7.4);
+      b.fillStyle(tint(CREATION.tan), alpha * 0.7);
+      b.fillCircle(sx - s * 2, sy - 4.6, 3.4);
+      rivet(b, tint, sx, sy + 6, 2.4, alpha);
+    }
+
+    // ── Arms (in front) ──────────────────────────────────────────────
+    for (let i = 0; i < 2; i++) {
+      const side = i === 0 ? 1 : -1;
+      const v = this.arms[i];
+      const sx = x + side * 29, sy = cy - 18;
+      // Dormant arms hang; mounted arms track the aim with the far one held wider.
+      const rest = Math.PI / 2 - side * 0.2;
+      const live = this.aim + side * 0.62;
+      const a0 = Phaser.Math.Angle.RotateTo(live, rest, this.crouch * Math.PI);
+      const ex = sx + Math.cos(a0) * 17, ey = sy + Math.sin(a0) * 17;
+      const a1 = Phaser.Math.Angle.RotateTo(this.aim + side * 0.2, rest, this.crouch * Math.PI);
+      const fore = 15 + v.extend * 4;
+      const hx = ex + Math.cos(a1) * fore, hy = ey + Math.sin(a1) * fore;
+      mechStrut(f, tint, sx, sy, ex, ey, 6, CREATION.iron, alpha);
+      mechPiston(f, tint, sx, sy + 6, ex, ey + 4, 0.5 + v.extend * 0.5, alpha);
+      f.fillStyle(tint(CREATION.soot), alpha);
+      f.fillCircle(ex, ey, 6.6);
+      f.fillStyle(tint(CREATION.brass), alpha);
+      f.fillCircle(ex, ey, 5);
+      mechStrut(f, tint, ex, ey, hx, hy, 5, CREATION.steel, alpha);
+      drawMechArmHand(f, tint, hx, hy, a1, v, alpha);
+    }
+
+    // ── Roll cage + harness, over the pilot ──────────────────────────
+    const cageA = alpha * (0.55 + this.crouch * 0.35);
+    for (const s of [-1, 1]) {
+      f.lineStyle(4.6, tint(CREATION.soot), cageA);
+      f.lineBetween(x + s * 22, cy + 6, x + s * 18, cy - 30);
+      f.lineStyle(2.8, tint(CREATION.brass), cageA);
+      f.lineBetween(x + s * 22, cy + 6, x + s * 18, cy - 30);
+    }
+    // Top arch, drawn as a shallow curve so the cage has a roof.
+    f.lineStyle(3.6, tint(CREATION.soot), cageA);
+    f.beginPath();
+    f.moveTo(x - 18, cy - 30);
+    for (let i = 1; i <= 8; i++) {
+      const p = i / 8;
+      f.lineTo(x - 18 + p * 36, cy - 30 - Math.sin(p * Math.PI) * 7);
+    }
+    f.strokePath();
+    f.lineStyle(2, tint(CREATION.copper), cageA);
+    f.beginPath();
+    f.moveTo(x - 18, cy - 30);
+    for (let i = 1; i <= 8; i++) {
+      const p = i / 8;
+      f.lineTo(x - 18 + p * 36, cy - 30 - Math.sin(p * Math.PI) * 7);
+    }
+    f.strokePath();
+    // Harness across the pilot's chest, and the canopy pane on the aim side.
+    if (this.mounted) {
+      f.lineStyle(3, tint(CREATION.iron), alpha * 0.85);
+      f.lineBetween(x - 17, cy + 2, x + 17, cy + 2);
+      f.lineStyle(1.6, tint(CREATION.brass), alpha * 0.9);
+      f.lineBetween(x - 17, cy + 1, x + 17, cy + 1);
+      rivet(f, tint, x, cy + 2, 3, alpha);
+      const px = Math.cos(this.aim), py = Math.sin(this.aim);
+      f.fillStyle(tint(CREATION.white), alpha * 0.1);
+      f.fillEllipse(x + px * 20, cy + py * 16 - 8, 26, 22);
+      f.lineStyle(1.6, tint(CREATION.spark), alpha * 0.4);
+      f.strokeEllipse(x + px * 20, cy + py * 16 - 8, 26, 22);
+    }
+    // Brow crest with a running light — dark and slow while dormant, hot while crewed.
+    const lampOn = this.mounted ? 0.7 + 0.3 * Math.sin(this.t * 5) : 0.25 + 0.25 * Math.sin(this.t * 1.6);
+    f.fillStyle(tint(CREATION.soot), alpha);
+    forgedShard(f, x, cy - 38, -Math.PI / 2, 8, 9);
+    f.fillStyle(tint(CREATION.iron), alpha);
+    forgedShard(f, x, cy - 38, -Math.PI / 2, 6.4, 7.4);
+    f.fillStyle(tint(this.mounted ? CREATION.nexus : CREATION.rust), alpha * lampOn);
+    f.fillCircle(x, cy - 41, 3.4);
+    f.fillStyle(tint(CREATION.white), alpha * lampOn * 0.8);
+    f.fillCircle(x - 0.8, cy - 41.8, 1.4);
+
+    // Exhaust puffs, tied to how hard the legs are working.
+    this.smokeAccum += delta * (0.4 + this.gait * 2.2) * (this.mounted ? 1 : 0.25);
+    if (this.smokeAccum >= 420) {
+      this.smokeAccum = 0;
+      const s = Math.random() < 0.5 ? -1 : 1;
+      this.fx.smoke(x + s * 19, cy - 44, 1, 12, 4);
+    }
+  }
+
+  /** Comes apart into its own plating rather than blinking out. */
+  wreck(x: number, y: number): void {
+    this.fx.explosion(x, y, 92, { shards: 20, smoke: 5, core: CREATION.brass });
+    this.fx.bloom(x, y + 10, 54, 12);
+    this.fx.shrapnel(x, y + 24, 12, 46, 6);
+    this.scene.cameras.main.shake(220, 0.008);
+  }
+
+  destroy(): void {
+    this.back.destroy();
+    this.front.destroy();
   }
 }
 
@@ -1349,6 +2098,21 @@ export class CreationAvatar extends BaseAvatar {
       if (on) shell.setStrokeStyle(1.6, this.tint(CREATION.gold), 0.9);
       else shell.setStrokeStyle();
     });
+  }
+
+  /**
+   * `ride` (in the mech): both hands drop to the control yokes in front of the chest and
+   * judder with the walk, instead of the arms-out-wide balancing pose the default gives —
+   * the smith is driving this thing, not surfing on it.
+   */
+  protected extraHoldPose(hold: ArmHold, side: number, idle: ArmPose): ArmPose | null {
+    if (hold !== 'ride') return null;
+    const judder = Math.sin(this.t * 11 + side) * 0.05;
+    return {
+      ang: Math.PI / 2 - side * 0.62 + judder,
+      dist: 19 + Math.sin(this.t * 9 + side * 2) * 1.4,
+      scale: idle.scale * 0.95,
+    };
   }
 
   /** Fast-moving hands throw sparks off whatever they are working. */

@@ -151,9 +151,12 @@ export class CampaignWorldMapScene extends Phaser.Scene {
    */
   private drawWorldNode(world: World, slot: 0 | 1 | 2, accent: number): void {
     const unlocked = CP.isWorldUnlocked(slot, world.id);
-    const allFightsDone = CP.isChallengeCompleted(slot, world.id);
+    // The gold ring / crown is the *full* clear — challenge included. Children only
+    // need the five fights, so a world can be open-but-uncrowned.
+    const challengeDone = CP.isChallengeCompleted(slot, world.id);
+    const fightsDone = CP.areFightsCleared(slot, world.id);
     const r = 30;
-    const ringColor = allFightsDone ? C.gold : (unlocked ? mix(world.color, 0xffffff, 0.4) : C.line);
+    const ringColor = challengeDone ? C.gold : (unlocked ? mix(world.color, 0xffffff, 0.4) : C.line);
 
     const g = this.add.graphics().setDepth(DEPTH.panel + 1);
 
@@ -170,8 +173,8 @@ export class CampaignWorldMapScene extends Phaser.Scene {
         unlocked ? 0.96 : 0.7);
       strokeHex(g, world.mapX, world.mapY, r, hot ? 0xffffff : ringColor, unlocked ? 1 : 0.5, hot ? 3 : 2);
       strokeHex(g, world.mapX, world.mapY, r - 5, world.color, unlocked ? 0.35 : 0.12, 1);
-      if (allFightsDone) {
-        // Cleared worlds wear a crown of diamonds on the upper hex faces.
+      if (challengeDone) {
+        // Fully cleared worlds wear a crown of diamonds on the upper hex faces.
         for (const a of [-Math.PI / 2, -Math.PI / 2 - 1.05, -Math.PI / 2 + 1.05]) {
           fillDiamond(g, world.mapX + Math.cos(a) * (r + 6), world.mapY + Math.sin(a) * (r + 6), 3, C.gold, 0.9);
         }
@@ -193,11 +196,13 @@ export class CampaignWorldMapScene extends Phaser.Scene {
     const done = fightNodes.filter((n) => CP.isFightCompleted(slot, world.id, n.id)).length;
     const parent = world.parentId ? (WORLDS.find((w) => w.id === world.parentId) ?? ABSTRACT_WORLDS.find((w) => w.id === world.parentId)) : null;
     const caption = !unlocked
-      ? (parent ? `beat ${parent.name}` : 'locked')
-      : allFightsDone ? '★ CLEARED' : `${done}/${fightNodes.length}`;
+      ? (parent ? `clear ${parent.name}` : 'locked')
+      : challengeDone ? '★ CLEARED'
+      : fightsDone ? 'CHALLENGE OPEN'
+      : `${done}/${fightNodes.length}`;
     this.add.text(world.mapX, world.mapY + 25, caption, {
       fontSize: '7.5px', fontFamily: FONT_DISPLAY,
-      color: !unlocked ? T.ghost : allFightsDone ? T.gold : T.faint, letterSpacing: 0.5,
+      color: !unlocked ? T.ghost : challengeDone ? T.gold : T.faint, letterSpacing: 0.5,
     }).setOrigin(0.5).setDepth(DEPTH.content);
 
     if (!unlocked) return;

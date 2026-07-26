@@ -311,7 +311,7 @@ export const ALL_PERKS: ElementPerks[] = [
         name: 'Rage',
         emoji: '🩸',
         color: 0xcc2233,
-        description: "Trail lasts 5s. Standing on your trail builds Rage (10/sec); Blood Pact hits also give Rage (1 dmg = 1 rage). At 100 Rage: instantly transform into Beast even off cooldown, gaining silvery armor and 50% DR. Hybrid form gains silvery look and 10% DR instead.",
+        description: "Trail marks last 2s longer. Standing on your own trail builds Rage at 10/sec. At 100 Rage the beast is dragged out early, whatever its clock says — and while that beast is out you take 50% less damage.",
         ingredients: ['fire', 'life', 'air', 'earth'],
         tier: 'quad',
         elementId: 'hunt',

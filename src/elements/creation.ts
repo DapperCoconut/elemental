@@ -27,14 +27,14 @@ const chargedBolt: Ability = {
   },
 };
 
-const scytheOfDoom: Ability = {
-  id: 'scythe-of-doom',
-  name: 'Scythe of Doom',
-  description: 'Launch a homing scythe that tracks the enemy. 75 HP — destroyable by enemy projectiles. Deals 32 damage on contact. 8s CD.',
+const wrenchInYourPlans: Ability = {
+  id: 'wrench-plans',
+  name: 'Wrench in your Plans',
+  description: 'Hurl a spinning wrench. 20 damage on hit, and for the next 5s every ability the target uses costs them 5 HP. 8s CD.',
   displayKey: 'R',
   cooldown: 8000,
   cast(ctx: CastContext) {
-    ctx.creationScytheLaunch(ctx.targetX, ctx.targetY);
+    ctx.creationWrench(ctx.targetX, ctx.targetY);
   },
 };
 
@@ -68,5 +68,5 @@ export const creationElement: Element = {
   name: 'Creation',
   color: 0xcc6622,
   emoji: '⚒️',
-  abilities: [daggerSpray, chargedBolt, scytheOfDoom, createBlock, mazeOfDoom],
+  abilities: [daggerSpray, chargedBolt, wrenchInYourPlans, createBlock, mazeOfDoom],
 };

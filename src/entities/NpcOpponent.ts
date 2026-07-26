@@ -50,8 +50,9 @@ export interface NpcAiState {
   npcSoulGraveCount?: number;
   npcHuntBeastForm?: boolean;
   npcHuntTrailActive?: boolean;
+  /** Blast is charge-gated inside HuntKit; its ability cooldown says nothing about that. */
+  npcHuntBlastCharges?: number;
   playerBleeding?: boolean;
-  huntBloodMoonActive?: boolean;
   npcTimeRemainActive?: boolean;
   npcTimeHaltActive?: boolean;
   npcTimeBountyAuraActive?: boolean;
@@ -133,7 +134,7 @@ export class NpcOpponent extends Fighter {
     time: number,
     aiState: NpcAiState,
   ): string | null {
-    if (aiState.isLocked || this.npcHuntRoarLocked) return null;
+    if (aiState.isLocked) return null;
 
     // Dummy element: stand completely still, do nothing
     if (this.element.id === 'dummy') {
@@ -1134,56 +1135,44 @@ export class NpcOpponent extends Fighter {
   ): string | null {
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
     const inBeastForm = aiState.npcHuntBeastForm ?? false;
-    const bloodMoonDebuff = aiState.huntBloodMoonActive ?? false;
+    void hpRatio;
 
-    // Blood moon 20% attack penalty on bleeding NPC
-    if (bloodMoonDebuff && Math.random() < 0.20) return null;
-
+    // The npc never presses Q: the beast comes out on HuntKit's own clock, and hybrid form
+    // needs an upgrade the npc does not have.
     if (!inBeastForm) {
       if (!skipSpecials) {
-        // Transform — transition once enough time has passed (NPC transforms aggressively)
-        if (this.castAbility('hunt-transform', buildContext(this.x, this.y))) return 'hunt-transform';
-
-        // Blood pact when low HP
-        if (hpRatio < 0.45) {
-          if (this.castAbility('hunt-blood-pact', buildContext(this.x, this.y))) return 'hunt-blood-pact';
-        }
-
-        // Hunter's trail when not active
+        // Lay the scent early — everything else in human form is better while it is down.
         if (!aiState.npcHuntTrailActive) {
           if (this.castAbility('hunt-trail', buildContext(this.x, this.y))) return 'hunt-trail';
         }
-
-        // Grenade at medium range
-        if (dist < 380 && dist > 80) {
+        // Grenades are lobbed at mid range, where the fuse has time to matter.
+        if (dist < 340 && dist > 90) {
           if (this.castAbility('hunt-grenade', buildContext(aimX, aimY))) return 'hunt-grenade';
         }
+        // Blast is a shove: only worth spending a charge on inside its own cone range.
+        if (dist < 150 && (aiState.npcHuntBlastCharges ?? 0) > 0) {
+          if (this.castAbility('hunt-blast', buildContext(aimX, aimY))) return 'hunt-blast';
+        }
       }
-
-      // Default: shotgun
-      if (this.castAbility('hunt-shotgun', buildContext(aimX, aimY))) return 'hunt-shotgun';
+      // Default: put a bolt in them.
+      if (this.castAbility('hunt-crossbow', buildContext(aimX, aimY))) return 'hunt-crossbow';
     } else {
       if (!skipSpecials) {
-        // Blood hunt if player is bleeding and on CD
-        if (aiState.playerBleeding) {
-          if (this.castAbility('hunt-blood-hunt', buildContext(this.x, this.y))) return 'hunt-blood-hunt';
+        // Roar into the cone whenever the quarry is roughly in front — it is the only
+        // defensive tool the beast has.
+        if (dist < 500) {
+          if (this.castAbility('hunt-roar', buildContext(aimX, aimY))) return 'hunt-roar';
         }
-
-        // Blood moon
-        if (this.castAbility('hunt-blood-moon', buildContext(this.x, this.y))) return 'hunt-blood-moon';
-
-        // Explosive leap when far from target
-        if (dist > 180) {
-          if (this.castAbility('hunt-leap', buildContext(aimX, aimY))) return 'hunt-leap';
+        // Blood Scent when the quarry is nearly done.
+        if (this.castAbility('hunt-blood-scent', buildContext(this.x, this.y))) return 'hunt-blood-scent';
+        // Close the gap with a pounce, or pick them up and throw them at point blank.
+        if (dist > 140 && dist < 320) {
+          if (this.castAbility('hunt-pounce', buildContext(aimX, aimY))) return 'hunt-pounce';
         }
-
-        // Untransform when low HP to regain shotgun flexibility
-        if (hpRatio < 0.25) {
-          if (this.castAbility('hunt-untransform', buildContext(this.x, this.y))) return 'hunt-untransform';
+        if (dist < 120) {
+          if (this.castAbility('hunt-grapple', buildContext(aimX, aimY))) return 'hunt-grapple';
         }
       }
-
-      // Default: slash when close
       if (dist < 110) {
         if (this.castAbility('hunt-slash', buildContext(aimX, aimY))) return 'hunt-slash';
       }
@@ -1248,8 +1237,8 @@ export class NpcOpponent extends Fighter {
       if (dist < 140) {
         if (this.castAbility('creation-block', buildContext(aimX, aimY))) return 'creation-block';
       }
-      // Scythe of doom
-      if (this.castAbility('scythe-of-doom', buildContext(aimX, aimY))) return 'scythe-of-doom';
+      // Wrench in your Plans — 20 dmg plus a 5s tax on everything they cast
+      if (this.castAbility('wrench-plans', buildContext(aimX, aimY))) return 'wrench-plans';
       // Charged bolt (weighted random tier)
       if (this.castAbility('charged-bolt', buildContext(aimX, aimY))) return 'charged-bolt';
     }

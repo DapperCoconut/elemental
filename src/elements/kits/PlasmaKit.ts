@@ -1588,7 +1588,7 @@ export class PlasmaKit {
     const playerDist = Phaser.Math.Distance.Between(cx, cy, player.x, player.y);
     if (playerDist <= radius) {
       // Our own current still burns us in co-op; the ally's is friendly fire and is blocked.
-      if (orb.owner === 'player') Fighter.asNonAllyDamage(() => player.takeDamage(10));
+      if (orb.owner === 'player') Fighter.asNonAllyDamage(() => player.takeDamage(10, { selfInflicted: true }));
       else player.takeDamage(10);
       this.arena.spawnHitFlash(player.x, player.y, 0xcc44ff);
     }
@@ -1640,7 +1640,7 @@ export class PlasmaKit {
     const pDist = Phaser.Math.Distance.Between(arena.x, arena.y, player.x, player.y);
     if (pDist <= radius) {
       // Our own collapsing floor still hits us in co-op; the ally's is blocked.
-      if (arena.owner === 'player') Fighter.asNonAllyDamage(() => player.takeDamage(80));
+      if (arena.owner === 'player') Fighter.asNonAllyDamage(() => player.takeDamage(80, { selfInflicted: true }));
       else player.takeDamage(80);
       this.arena.spawnHitFlash(player.x, player.y, 0xaa22ff);
     }

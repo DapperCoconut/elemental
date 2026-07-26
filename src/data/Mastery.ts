@@ -966,7 +966,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         bindable: true,
         excludeSlots: ['e'],
         hudDescription: 'Nexus fires its potions at the cursor — inverted effects',
-        description: 'Only usable while a potion of yours is sitting on the Nexus. The Nexus launches every one of your potions at the cursor, landing as a large blast for 20 damage that inflicts the INVERSE of each potion\'s effect — Buff becomes -25% damage dealt, Protection becomes +25% damage taken, Heal becomes 3 HP lost per second, Speed becomes half speed, Reload becomes 25% slower cooldowns. The Gold Potion is the exception: it lands unchanged, doubling every effect the target gains — good or bad. Cannot be bound to E, and in Build Mode the slot keeps its normal build ability. 14 second cooldown.',
+        description: 'Only usable while a potion of yours is sitting on the Nexus. The Nexus launches every one of your potions at the cursor, landing as a large blast for 20 damage that inflicts the INVERSE of each potion\'s effect — Buff becomes -25% damage dealt, Protection becomes +25% damage taken, Heal becomes 3 HP lost per second, Speed becomes half speed, Reload becomes 25% slower cooldowns. The Gold Potion is the exception: it lands unchanged, doubling every effect the target gains — good or bad. Cannot be bound to E, and in Build Mode the slot keeps its normal build ability. Note that binding it over R gives up Wrench in your Plans — and with it the only way to wake the Nexus if you own R+. 14 second cooldown.',
       },
     ],
   },
@@ -1318,7 +1318,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         key: 'hybridKills',
         label: 'Best of Both',
-        howTo: 'Kill entities while in Hybrid form (needs the Q+ upgrade — double-tap Q on transform)',
+        howTo: 'Kill entities while in Hybrid form (needs the Q+ upgrade — press Q as a human)',
         target: 50,
       },
       {
@@ -1332,7 +1332,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         id: 'weak-points',
         name: 'Weak Points',
-        description: 'Passive: you read the seams in anything you are hunting. A red weak-point wedge sweeps slowly around every enemy, and shotgun pellets that punch into it deal double damage — so does Beast form\'s Slash when you come at the enemy from that side.',
+        description: 'Passive: you read the seams in anything you are hunting. A red weak-point wedge sweeps slowly around every enemy, and anything of yours that comes in through it deals double damage — a crossbow bolt, a shotgun cone, a claw, a pounce. It is about the angle you attack from, not the weapon.',
       },
       {
         id: 'beastling',
@@ -1340,7 +1340,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         bindable: true,
         excludeSlots: ['q'],
         hudDescription: 'Summon a beastling pup for 15s — it bites, fetches your grenades, and roars',
-        description: 'Whistle up a beastling — a small, eager pup that trots after you and goes for whoever is closest. It bites for 5 every 2 seconds, double against anything bleeding, and it runs faster over a Hunter\'s Trail. Throw a grenade and it will fetch it: the fuse stops dead in its mouth while it sprints the thing to the enemy and sets it off on them. Blood Hunt makes it roar too, for a 20% slow over 5 seconds that stacks with your own. Under a Blood Moon it grows, speeds up, hits harder, and its bites draw blood. Lasts 15 seconds, 30 second cooldown.',
+        description: 'Whistle up a beastling — a small, eager pup that trots after you and goes for whoever is closest. It bites for 5 every 2 seconds, double against anything with one of your bolts still in it, and it runs faster over a Hunter\'s Trail. Throw a grenade and it will fetch it: the fuse stops dead in its mouth while it sprints the thing to the enemy and sets it off on them. Roar makes it roar too, for a 20% slow over 5 seconds that stacks with your own. Under a Blood Moon it grows, speeds up and hits harder. Lasts 15 seconds, 30 second cooldown.',
       },
     ],
   },
