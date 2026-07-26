@@ -68,6 +68,12 @@ const HEAL_VIRUS_CHANCE = 0.5;
 const HEAL_VIRUS_AMOUNT = 30;
 const HEAL_VIRUS_PICKUP_RADIUS = 26;
 
+// Virus perk: the outbreak runs longer, coughs harder, and reseeds itself off the floor.
+const PERK_VIRUS_INFECT_DURATION = 12000;
+const PERK_VIRUS_EXPEL_INTERVAL = 1400;
+const PERK_VIRUS_EXPEL_COUNT = 5;
+const PERK_VIRUS_RESEED_MS = 3000;
+
 const SPORE_COUNT = 5;
 const SPORE_BASE_HP = 50;
 const SPORE_GROW_RATE = 10;      // max HP + HP per second while growing
@@ -349,7 +355,8 @@ export interface GrowthArenaApi {
   readonly nukeChanneling: boolean;
   readonly abilityBars: ReadonlyArray<{ fill: Phaser.GameObjects.Rectangle; abilityId: string; maxWidth: number }>;
   hasUpgrade(slot: string): boolean;
-  /** Cosmetics: maps a growth visual color through the owner's color cosmetic. */
+  hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
+  /** Skins: maps a growth visual color through the owner's skin. */
   growthColor(owner: 'player' | 'npc', base: number): number;
   getNearestEnemy(x: number, y: number): Fighter;
   spawnHitFlash(x: number, y: number, color: number): void;
@@ -374,7 +381,7 @@ export interface GrowthArenaApi {
 
 export class GrowthKit {
   // ── Visuals ───────────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a skin recolours one side. */
   private readonly pcol: GrowthColorFn;
   private readonly ncol: GrowthColorFn;
   private readonly pfx: GrowthFx;
@@ -1723,7 +1730,18 @@ export class GrowthKit {
     return Math.round(base * (srcBody.variant === 'red' ? VARIANT_DMG_MULT : 1) * this.dmgBoost(owner));
   }
 
+  /** Virus perk: a plague strain runs longer and coughs more often than a plain infection. */
+  private hasVirusPerk(owner: Owner): boolean {
+    return this.arena.hasPerk(owner, 'virus');
+  }
+
+  private expelIntervalFor(owner: Owner): number {
+    return this.hasVirusPerk(owner) ? PERK_VIRUS_EXPEL_INTERVAL : INFECT_EXPEL_INTERVAL;
+  }
+
   private infect(target: Fighter, owner: Owner, srcBody: BodyState, time: number, durationMs = INFECT_DURATION): void {
+    // Only the stock infection is stretched — Pandemic's short reseed keeps its own clock.
+    if (durationMs === INFECT_DURATION && this.hasVirusPerk(owner)) durationMs = PERK_VIRUS_INFECT_DURATION;
     const existing = this.infections.find((inf) => inf.target === target && inf.owner === owner);
     if (existing) {
       existing.until = Math.max(existing.until, time + durationMs);
@@ -1733,8 +1751,9 @@ export class GrowthKit {
     const icon = this.arena.scene.add.triangle(target.x, target.y - 34, 0, -6, 5, 4, -5, 4, 0x77dd33, 0.95).setDepth(9);
     icon.setStrokeStyle(1, 0xccffaa, 0.9);
     this.arena.scene.tweens.add({ targets: icon, scaleX: 1.35, scaleY: 1.35, yoyo: true, repeat: -1, duration: 380 });
-    this.infections.push({ target, owner, srcBody, until: time + durationMs, nextExpelAt: time + INFECT_EXPEL_INTERVAL, icon });
-    this.arena.showFloatingText(target.x, target.y - 44, '🦠 INFECTED', '#99ee55');
+    this.infections.push({ target, owner, srcBody, until: time + durationMs, nextExpelAt: time + this.expelIntervalFor(owner), icon });
+    this.arena.showFloatingText(target.x, target.y - 44,
+      this.hasVirusPerk(owner) ? '🦠 PLAGUED' : '🦠 INFECTED', '#99ee55');
   }
 
   private updateInfections(time: number): void {
@@ -1748,7 +1767,7 @@ export class GrowthKit {
       }
       inf.icon.setPosition(t.x, t.y - 34);
       if (time >= inf.nextExpelAt) {
-        inf.nextExpelAt = time + INFECT_EXPEL_INTERVAL;
+        inf.nextExpelAt = time + this.expelIntervalFor(inf.owner);
         this.expelViruses(inf, time);
       }
     }
@@ -1760,7 +1779,8 @@ export class GrowthKit {
     const t = inf.target;
     const dropDmg = Math.round((FLOOR_VIRUS_DAMAGE + 2 * this.lvl(inf.srcBody, 'viral-spikes'))
       * (inf.srcBody.variant === 'red' ? VARIANT_DMG_MULT : 1));
-    for (let k = 0; k < INFECT_EXPEL_COUNT; k++) {
+    const expelCount = this.hasVirusPerk(inf.owner) ? PERK_VIRUS_EXPEL_COUNT : INFECT_EXPEL_COUNT;
+    for (let k = 0; k < expelCount; k++) {
       const ang = Math.random() * Math.PI * 2;
       const dist = 40 + Math.random() * 70;
       const fx = Phaser.Math.Clamp(t.x + Math.cos(ang) * dist, 20, scene.scale.width - 20);
@@ -1826,6 +1846,9 @@ export class GrowthKit {
           // Pandemic (secret): the dropped virus takes hold, so the victim starts dropping their own.
           if (fv.owner === 'player' && this.hasSecret('pandemic')) {
             this.infect(t, fv.owner, this.fighterBody, time, PANDEMIC_INFECT_MS);
+          } else if (this.hasVirusPerk(fv.owner)) {
+            // Virus perk: the strain on the floor is still live, so it reseeds the host it touches.
+            this.infect(t, fv.owner, this.bodyFor(fv.owner), time, PERK_VIRUS_RESEED_MS);
           }
           fv.tri.destroy();
           this.floorViruses.splice(i, 1);

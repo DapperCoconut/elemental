@@ -10,12 +10,12 @@ import { AvatarSpec, BaseAvatar, ColorFn, FxBase, TAU, easeIn, easeOut } from '.
  * ElementVisuals.ts and are shared with the other elements. What stays here is what makes hunt
  * hunt: the gash, the palette, and the effects built out of it.
  *
- * Colours must come from the HUNT palette below. Hunt has no colour-slot cosmetic yet, but every
+ * Colours must come from the HUNT palette below. Hunt has no skin yet, but every
  * call still routes through the owner's `huntColor` mapper, so the day one lands it is a table
- * edit in CosmeticsKit rather than a sweep through this file.
+ * edit in SkinsKit rather than a sweep through this file.
  */
 
-/** `(base) => displayed` — CosmeticsKit.huntColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.huntColor bound to one owner. */
 export type HuntColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';

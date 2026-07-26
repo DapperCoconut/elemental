@@ -11,15 +11,15 @@ import { ArmHold, ArmPose, AvatarSpec, BaseAvatar, ColorFn, FxBase, TAU, easeIn,
  * ElementVisuals.ts and are shared with the other elements. What stays here is what makes
  * Creation Creation: the forged shard, the riveted plank, the gear, and the palette.
  *
- * Colours must come from the CREATION palette below. There is no Creation colour cosmetic
+ * Colours must come from the CREATION palette below. There is no Creation skin
  * yet, but every call still routes through the owner's `creationColor` mapper, so the day one
- * lands it is a table edit in CosmeticsKit rather than a sweep through this file.
+ * lands it is a table edit in SkinsKit rather than a sweep through this file.
  *
  * The one deliberate exception is the six potion colours: those are recipe identity (they key
  * the status tray and the info panel too), not element palette, so they are passed through raw.
  */
 
-/** `(base) => displayed` — CosmeticsKit.creationColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.creationColor bound to one owner. */
 export type CreationColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';

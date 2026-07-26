@@ -9,12 +9,12 @@ import { AvatarSpec, BaseAvatar, ColorFn, FxBase, TAU, easeIn, easeOut } from '.
  * ElementVisuals.ts and are shared with the other elements. What stays here is what makes time
  * time: the clock hand, the palette, and the effects built out of it.
  *
- * Colours must come from the TIME palette below. Time has no colour-slot cosmetic yet, but every
+ * Colours must come from the TIME palette below. Time has no skin yet, but every
  * call still routes through the owner's `sandColor` mapper (the element's id is `sand`), so the
- * day one lands it is a table edit in CosmeticsKit rather than a sweep through this file.
+ * day one lands it is a table edit in SkinsKit rather than a sweep through this file.
  */
 
-/** `(base) => displayed` — CosmeticsKit.sandColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.sandColor bound to one owner. */
 export type TimeColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';

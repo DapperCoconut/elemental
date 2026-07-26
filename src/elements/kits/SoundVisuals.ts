@@ -10,12 +10,12 @@ import { AvatarSpec, ArmHold, ArmPose, BaseAvatar, ColorFn, FxBase, TAU, easeIn,
  * ElementVisuals.ts and are shared with the other elements. What stays here is what makes sound
  * sound: the wave ribbon, the ripple, the music note, and everything built from those three.
  *
- * Every structural colour must come from the SOUND palette below. Sound has no colour-slot
- * cosmetic yet, but every call still routes through the owner's `soundColor` mapper, so the day
- * one lands it is a table edit in CosmeticsKit rather than a sweep through this file.
+ * Every structural colour must come from the SOUND palette below. Sound has no skin yet,
+ * but every call still routes through the owner's `soundColor` mapper, so the day
+ * one lands it is a table edit in SkinsKit rather than a sweep through this file.
  */
 
-/** `(base) => displayed` — CosmeticsKit.soundColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.soundColor bound to one owner. */
 export type SoundColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';
@@ -32,6 +32,10 @@ export const SOUND = {
   plum: 0x66225c,
   /** Flow Mode, and the blue note that slows. */
   flow: 0x3388ff,
+  /** The Bass note's water charges — the only wet colours in the kit. */
+  aqua: 0x22bbdd,
+  brine: 0x0a3d66,
+  foam: 0xd8f6ff,
   flowPale: 0x9ecdff,
   /** Red notes, and a barrier screeching in Flow. */
   crimson: 0xff3333,
@@ -1013,6 +1017,48 @@ export class SoundFx extends FxBase {
     g.lineStyle(2.4, tint(SOUND.white), alpha * (0.4 + fuse * 0.6));
     g.beginPath();
     g.arc(x, y, 14, -Math.PI / 2, -Math.PI / 2 + TAU * Phaser.Math.Clamp(fuse, 0, 1), false);
+    g.strokePath();
+  }
+
+  /**
+   * A Bass charge waiting to go off: a bulging drop of water held together by the note
+   * ringing inside it, with a fuse ring closing around it.
+   *
+   * `fuse` runs 1 → 0. The drop swells and the ring tightens as it comes due, so a row of
+   * seven of them reads as a countdown running down the line rather than seven identical blobs.
+   */
+  static drawBassCharge(
+    g: Phaser.GameObjects.Graphics, tint: SoundColorFn,
+    x: number, y: number, t: number, fuse: number, alpha = 1,
+  ): void {
+    const swell = 1 + (1 - fuse) * 0.45;
+    const r = 11 * swell;
+
+    g.fillStyle(tint(SOUND.shade), alpha * 0.35);
+    g.fillEllipse(x, y + 12, 18 * swell, 6);
+
+    // The body of water: a heavy base with a lighter crown, wobbling on its own beat.
+    const wob = Math.sin(t * 7 + x * 0.05) * 1.4;
+    g.fillStyle(tint(SOUND.aqua), alpha * 0.22);
+    g.fillCircle(x, y, r * 1.5);
+    g.fillStyle(tint(SOUND.brine), alpha * 0.95);
+    g.fillEllipse(x, y + 1, r * 2 + wob, r * 1.9 - wob);
+    g.fillStyle(tint(SOUND.aqua), alpha * 0.9);
+    g.fillEllipse(x, y - 1, r * 1.4, r * 1.3);
+    // Highlight — a drop is only readable as water once something glints off it.
+    g.fillStyle(tint(SOUND.foam), alpha * 0.85);
+    g.fillEllipse(x - r * 0.35, y - r * 0.4, r * 0.42, r * 0.3);
+
+    // The note trapped inside, ringing harder the closer it gets.
+    g.fillStyle(tint(SOUND.foam), alpha * 0.9);
+    musicNote(g, x, y + 1, 4.6, Math.sin(t * 3) * 0.15, { flags: 0 });
+    g.fillStyle(tint(SOUND.foam), alpha * 0.3);
+    rippleBand(g, x, y, r * 1.6, 2, 7, t * (4 + (1 - fuse) * 12), 1.4);
+
+    // Fuse ring closing in.
+    g.lineStyle(2.2, tint(SOUND.foam), alpha * (0.35 + (1 - fuse) * 0.6));
+    g.beginPath();
+    g.arc(x, y, r * 1.8, -Math.PI / 2, -Math.PI / 2 + TAU * Phaser.Math.Clamp(fuse, 0, 1), false);
     g.strokePath();
   }
 

@@ -51,6 +51,33 @@ interface IceIcicle {
 }
 
 /**
+ * Snow perk — a turret packed out of snow where Frozen Solid used to freeze. It holds no
+ * ammunition of its own: every frost stack shot into it is one round it can throw back.
+ */
+interface SnowTurret {
+  gfx: Phaser.GameObjects.Graphics;
+  x: number; y: number;
+  ammo: number;
+  /** Where the barrel is pointing, eased toward whatever it is tracking. */
+  aim: number;
+  t: number;
+  nextFireAt: number;
+  expiresAt: number;
+  owner: 'player' | 'npc';
+  ammoLabel: Phaser.GameObjects.Text | null;
+}
+
+/** One round in flight from a snow turret. */
+interface Snowball {
+  gfx: Phaser.GameObjects.Graphics;
+  x: number; y: number;
+  vx: number; vy: number;
+  t: number;
+  expiresAt: number;
+  owner: 'player' | 'npc';
+}
+
+/**
  * Ice Mastery — Curling Stone: a slab parked on the floor that its owner shoves around by
  * shooting it. Every shot freezes another layer onto it, and the frost is what makes it
  * dangerous: more stacks means a longer, faster slide and a heavier hit.
@@ -80,6 +107,18 @@ const ICICLE_SHATTER_DAMAGE_THRESHOLD = 50;
 const ICICLE_EXTENDED_STACK_MS = 10000;
 const ICICLE_STACK_HARD_CAP = 7;
 const BIG_HIT_THRESHOLD = 50;
+
+// ── Snow perk (divine) ───────────────────────────────────────────────────────
+const SNOW_TURRET_MS = 30000;
+const SNOW_FIRE_INTERVAL_MS = 5000;
+const SNOW_TURRET_RANGE = 460;
+const SNOW_FEED_RADIUS = 30;
+const SNOW_AMMO_MAX = 5;
+const SNOW_BALL_SPEED = 460;
+const SNOW_BALL_HIT_RADIUS = 24;
+const SNOW_BALL_DAMAGE = 15;
+const SNOW_SLOW_MULT = 0.5;
+const SNOW_SLOW_MS = 3000;
 
 const CURLING_COOLDOWN_MS = 25000;
 const CURLING_LIFETIME_MS = 20000;
@@ -116,7 +155,7 @@ export interface IceArenaApi {
   readonly isInvasion: boolean;
   hasUpgrade(slot: string): boolean;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
-  /** Cosmetics: maps an ice visual color through the owner's color cosmetic. */
+  /** Skins: maps an ice visual color through the owner's skin. */
   iceColor(owner: 'player' | 'npc', base: number): number;
   applyNpcSpeedMult(factor: number): void;
   spawnHitFlash(x: number, y: number, color: number): void;
@@ -134,7 +173,7 @@ export interface IceArenaApi {
 
 export class IceKit {
   // ── Visuals ───────────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a skin recolours one side. */
   private readonly pcol: IceColorFn;
   private readonly ncol: IceColorFn;
   private readonly pfx: IceFx;
@@ -208,6 +247,11 @@ export class IceKit {
   /** At most one stone per owner; the npc entry only exists for an online peer's cast. */
   private curlingStones: CurlingStone[] = [];
   private curlingLastCastAt = -999999;
+
+  // ── Snow perk — turrets, their rounds, and who they have slowed ─────
+  private snowTurrets: SnowTurret[] = [];
+  private snowballs: Snowball[] = [];
+  private snowSlowUntil = new Map<Fighter, number>();
 
   constructor(private arena: IceArenaApi) {
     this.pcol = (base) => arena.iceColor('player', base);
@@ -321,6 +365,12 @@ export class IceKit {
     this.curlingStones.forEach((s) => s.gfx.destroy());
     this.curlingStones = [];
     this.curlingLastCastAt = -999999;
+    this.snowTurrets.forEach((t) => { t.gfx.destroy(); t.ammoLabel?.destroy(); });
+    this.snowTurrets = [];
+    this.snowballs.forEach((b) => b.gfx.destroy());
+    this.snowballs = [];
+    for (const f of this.snowSlowUntil.keys()) if (f.active) f.walkSpeedMult = 1;
+    this.snowSlowUntil.clear();
   }
 
   // ── Per-frame update (called when either side is playing Ice) ─────────
@@ -333,6 +383,7 @@ export class IceKit {
     this.updateFrozenShells(time);
     // Owner-agnostic, so an online peer's stone rolls on this sim too.
     this.updateCurlingStones(time, delta);
+    this.updateSnowTurrets(time, delta);
 
     // Icy trail ticks: slow enemy + inflict frost/void-frost stacks + F+ owner speed boost
     for (let ti = this.icyTrails.length - 1; ti >= 0; ti--) {
@@ -1032,6 +1083,8 @@ export class IceKit {
   doFireFrozenSolid(tx: number, ty: number, noFrostStacks = false): void {
     const { player, enemies, scene } = this.arena;
     const time = scene.time.now;
+    // Snow perk: nothing freezes any more — the cone's worth of cold is packed into a turret.
+    if (this.arena.hasPerk('player', 'snow')) { this.buildSnowTurret(tx, ty, 'player'); return; }
     const isBlackIce = this.playerBlackIceMorphActive;
     const angle = Math.atan2(ty - player.y, tx - player.x);
     // Both arms thrust out and hold — the ultimate is a shove, not a flick.
@@ -1466,6 +1519,189 @@ export class IceKit {
     this.pfx.shatter(t.x, t.y, 78, { shards: 16, vapor: 2, duration: 480, isVoid: useVoid });
     this.arena.scene.cameras.main.shake(220, 0.007);
     this.arena.showFloatingText(t.x, t.y - 30, '💥 SHATTER', '#aaddff');
+  }
+
+  // ── Snow perk: the snowball turret ──────────────────────────────────
+
+  /**
+   * Frozen Solid with Snow equipped: instead of a cone that locks people in place, the whole
+   * cast is packed into an emplacement standing where you aimed. It arrives empty — the frost
+   * it throws is frost you have to shoot into it.
+   */
+  private buildSnowTurret(tx: number, ty: number, owner: 'player' | 'npc'): void {
+    const { scene } = this.arena;
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    const wb = scene.physics.world.bounds;
+    const x = Phaser.Math.Clamp(tx, wb.x + 34, wb.right - 34);
+    const y = Phaser.Math.Clamp(ty, wb.y + 34, wb.bottom - 34);
+    const angle = Math.atan2(y - caster.y, x - caster.x);
+    (owner === 'player' ? this.playerAvatar : this.npcAvatar)?.play('raise', angle, 800);
+
+    this.snowTurrets.push({
+      gfx: scene.add.graphics().setDepth(5),
+      x, y, ammo: 0, aim: angle, t: 0,
+      nextFireAt: scene.time.now + SNOW_FIRE_INTERVAL_MS,
+      expiresAt: scene.time.now + SNOW_TURRET_MS,
+      owner,
+      ammoLabel: scene.add.text(x, y - 46, '❄️ 0', {
+        fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+        color: '#cceeff', stroke: '#062338', strokeThickness: 3,
+      }).setOrigin(0.5).setDepth(12),
+    });
+
+    // It is thrown up out of the floor: a pillar of snow that packs itself down into a turret.
+    const fx = this.fx(owner);
+    fx.icePillar(x, y, 24, 66);
+    fx.bloom(x, y, 42, 11, 4);
+    fx.rime(x, y, 40, 1);
+    scene.cameras.main.shake(120, 0.004);
+    this.arena.showFloatingText(x, y - 62, '⛄ SNOW TURRET!', '#cceeff');
+  }
+
+  /** Feeds, aims, fires and finally melts every turret, then flies its rounds. */
+  private updateSnowTurrets(time: number, delta: number): void {
+    if (this.snowTurrets.length > 0) {
+      const dt = delta / 1000;
+      for (let i = this.snowTurrets.length - 1; i >= 0; i--) {
+        const turret = this.snowTurrets[i];
+        const fx = this.fx(turret.owner);
+
+        if (time >= turret.expiresAt) {
+          fx.shatter(turret.x, turret.y, 70, { shards: 14, vapor: 3, duration: 460 });
+          turret.gfx.destroy();
+          turret.ammoLabel?.destroy();
+          this.snowTurrets.splice(i, 1);
+          continue;
+        }
+
+        // Loading: every round its owner shoots into it is one round it can throw back.
+        for (const child of this.arena.projectiles.getChildren()) {
+          const proj = child as Projectile;
+          if (!proj.active || proj.isFromPlayer !== (turret.owner === 'player')) continue;
+          if (Phaser.Math.Distance.Between(proj.x, proj.y, turret.x, turret.y) > SNOW_FEED_RADIUS) continue;
+          proj.destroy();
+          if (turret.ammo >= SNOW_AMMO_MAX) {
+            this.arena.showFloatingText(turret.x, turret.y - 58, 'FULL', '#88aacc');
+            continue;
+          }
+          turret.ammo++;
+          fx.bloom(turret.x, turret.y - 10, 26, 7, 6);
+          this.arena.showFloatingText(turret.x, turret.y - 58, `❄️ +1 (${turret.ammo})`, '#cceeff');
+        }
+
+        // Tracking: the barrel swings round rather than snapping, so it can be walked around.
+        const mark = this.snowTurretTarget(turret);
+        if (mark) {
+          const want = Math.atan2(mark.y - turret.y, mark.x - turret.x);
+          turret.aim += Phaser.Math.Clamp(Phaser.Math.Angle.Wrap(want - turret.aim), -2.4 * dt, 2.4 * dt);
+        }
+
+        turret.t += dt;
+        const ready = Phaser.Math.Clamp(1 - (turret.nextFireAt - time) / SNOW_FIRE_INTERVAL_MS, 0, 1);
+        if (turret.gfx.active) {
+          turret.gfx.clear();
+          const left = turret.expiresAt - time;
+          IceFx.drawSnowTurret(
+            turret.gfx, this.col(turret.owner), FROST_TONES,
+            turret.x, turret.y, turret.aim, turret.t, turret.ammo, ready,
+            left < 1200 ? Math.max(0.15, left / 1200) : 1,
+          );
+        }
+        turret.ammoLabel?.setPosition(turret.x, turret.y - 46).setText(`❄️ ${turret.ammo}`);
+
+        if (mark && turret.ammo > 0 && time >= turret.nextFireAt) {
+          turret.nextFireAt = time + SNOW_FIRE_INTERVAL_MS;
+          turret.ammo--;
+          this.fireSnowball(turret, mark);
+        } else if (turret.ammo <= 0) {
+          // An empty turret never comes off cooldown early — it waits for its next round.
+          turret.nextFireAt = Math.max(turret.nextFireAt, time + 400);
+        }
+      }
+    }
+
+    this.updateSnowballs(time, delta);
+
+    // The chill the rounds leave behind, ticked here so it lapses even after the turret melts.
+    for (const [f, until] of this.snowSlowUntil) {
+      if (!f.active) { this.snowSlowUntil.delete(f); continue; }
+      if (time >= until) { f.walkSpeedMult = 1; this.snowSlowUntil.delete(f); }
+      else f.walkSpeedMult = Math.min(f.walkSpeedMult, SNOW_SLOW_MULT);
+    }
+  }
+
+  /** Nearest live target in range for a turret, or null if it has nothing to shoot at. */
+  private snowTurretTarget(turret: SnowTurret): Fighter | null {
+    const candidates = turret.owner === 'player' ? this.arena.enemies : [this.arena.player];
+    let best: Fighter | null = null;
+    let bestD = SNOW_TURRET_RANGE;
+    for (const t of candidates) {
+      if (!t.active || t.hp <= 0) continue;
+      const d = Phaser.Math.Distance.Between(turret.x, turret.y, t.x, t.y);
+      if (d < bestD) { bestD = d; best = t; }
+    }
+    return best;
+  }
+
+  private fireSnowball(turret: SnowTurret, mark: Fighter): void {
+    const { scene } = this.arena;
+    const angle = Math.atan2(mark.y - turret.y, mark.x - turret.x);
+    turret.aim = angle;
+    const mx = turret.x + Math.cos(angle) * 34;
+    const my = turret.y - 16 + Math.sin(angle) * 34;
+    this.snowballs.push({
+      gfx: scene.add.graphics().setDepth(8),
+      x: mx, y: my,
+      vx: Math.cos(angle) * SNOW_BALL_SPEED,
+      vy: Math.sin(angle) * SNOW_BALL_SPEED,
+      t: 0,
+      expiresAt: scene.time.now + 2500,
+      owner: turret.owner,
+    });
+    const fx = this.fx(turret.owner);
+    fx.muzzleFrost(mx, my, angle, 0.9, 7);
+    fx.vapor(turret.x, turret.y - 12, 3, 18, 6);
+  }
+
+  private updateSnowballs(time: number, delta: number): void {
+    if (this.snowballs.length === 0) return;
+    const dt = delta / 1000;
+    const wb = this.arena.scene.physics.world.bounds;
+
+    for (let i = this.snowballs.length - 1; i >= 0; i--) {
+      const ball = this.snowballs[i];
+      ball.x += ball.vx * dt;
+      ball.y += ball.vy * dt;
+      ball.t += dt;
+      if (ball.gfx.active) {
+        ball.gfx.clear();
+        IceFx.drawSnowball(ball.gfx, this.col(ball.owner), FROST_TONES, ball.x, ball.y, Math.atan2(ball.vy, ball.vx), ball.t);
+      }
+
+      const targets: Fighter[] = ball.owner === 'player' ? this.arena.enemies : [this.arena.player];
+      let struck: Fighter | null = null;
+      for (const t of targets) {
+        if (!t.active || t.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(ball.x, ball.y, t.x, t.y) <= SNOW_BALL_HIT_RADIUS) { struck = t; break; }
+      }
+
+      if (struck) {
+        struck.takeDamage(SNOW_BALL_DAMAGE);
+        if (ball.owner === 'player') { this.addFrostStackTo(struck); this.recordBigHit(SNOW_BALL_DAMAGE); }
+        else this.addFrostStack('player');
+        this.snowSlowUntil.set(struck, Math.max(this.snowSlowUntil.get(struck) ?? 0, time + SNOW_SLOW_MS));
+        this.arena.spawnHitFlash(struck.x, struck.y, ICE.pale);
+        this.fx(ball.owner).shatter(struck.x, struck.y, 40, { shards: 8, vapor: 2, rime: false, duration: 300 });
+        this.arena.showFloatingText(struck.x, struck.y - 30, '⛄ SNOWBALL! -50%', '#cceeff');
+      }
+
+      const outside = ball.x < wb.x || ball.x > wb.right || ball.y < wb.y || ball.y > wb.bottom;
+      if (struck || outside || time >= ball.expiresAt) {
+        if (!struck) this.fx(ball.owner).vapor(ball.x, ball.y, 3, 14, 6);
+        ball.gfx.destroy();
+        this.snowballs.splice(i, 1);
+      }
+    }
   }
 
   // ── Ice Mastery: Curling Stone ──────────────────────────────────────

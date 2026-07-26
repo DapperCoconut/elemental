@@ -83,6 +83,13 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    * `bribeIncomingMult`, since `takeDamage` has no attacker reference.
    */
   public hopelessIncomingMult = 1;
+  /**
+   * Running total of damage aimed at this fighter this match, tallied *before* any of the
+   * incoming-damage multipliers below are applied — so a mitigation that saves your life
+   * (Shadow's Hopelessness above all) doesn't also erase the fact that you were hit that hard.
+   * Achievements read this; nothing in combat does.
+   */
+  public rawDamageTaken = 0;
   public chargeRatio = 0;   // 0–1, drives the yellow charge bar in HealthBar
   public chargeColor = 0xffdd00; // charge-bar fill color (Rubber Bazooka reddens it while overcharging)
   public lastIncomingDamage = 0; // set in takeDamage() before shield check — used by reflect upgrades
@@ -195,8 +202,6 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public burningUntil = 0;
   public burnTickAccum = 0;
   public burnAura: Phaser.GameObjects.Arc | null = null;
-  /** How long this fighter has been continuously on fire (burning or molten), in ms. Tracked in preUpdate; drives the Wildfire achievement. */
-  public burnContinuousMs = 0;
   /** Fire Mastery — Cremation stoke bonus: added to burn tick damage; persists through re-ignition, cleared only when burningUntil expires. */
   public fireStokeBonus = 0;
 
@@ -461,6 +466,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // Already multiplied through on the attacker's sim; don't let a stale crit
       // context leak into the next locally-computed hit.
       this.incomingCritCtx = null;
+      this.rawDamageTaken += amount;
     } else {
       // Crit roll: use any incoming crit context set by the attacker
       const critCtx = this.incomingCritCtx;
@@ -471,6 +477,9 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
         amount = Math.round(amount * (critCtx?.mult ?? 2));
       }
 
+      // Tallied here: after the crit roll (a crit really is a bigger hit) but before every
+      // mitigation multiplier on the line below, which is what "damage aimed at you" means.
+      this.rawDamageTaken += amount;
       amount = Math.round(amount * this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.netDefenseMult);
       if (this.darkVulnStacks > 0) amount = Math.round(amount * (1 + 0.25 * this.darkVulnStacks));
       // Fire Mastery — Heatwave: exposed amplifies the next hit, then is consumed.
@@ -749,11 +758,6 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     super.preUpdate(time, delta);
     // Weak HP decays steadily at 3/s.
     if (this.weakHp > 0) this.weakHp = Math.max(0, this.weakHp - 3 * (delta / 1000));
-    if (time < this.burningUntil || time < this.moltenUntil) {
-      this.burnContinuousMs += delta;
-    } else {
-      this.burnContinuousMs = 0;
-    }
     this.healthBar.update(this.x, this.y, this.hp, this.shieldHp, this.chargeRatio, this.clottedHp, this.weakHp, this.chargeColor);
   }
 

@@ -10,12 +10,12 @@ import { AvatarSpec, ArmHold, ArmPose, BaseAvatar, ColorFn, FxBase, TAU, easeIn,
  * ElementVisuals.ts and are shared with the other elements. What stays here is what makes
  * electricity electric: the bolt, the palette, and the effects built out of them.
  *
- * Colours must come from the ELECTRIC palette below. Electricity has no colour-slot cosmetic
+ * Colours must come from the ELECTRIC palette below. Electricity has no skin
  * yet, but every call still routes through the owner's `electricityColor` mapper, so the day one
- * lands it is a table edit in CosmeticsKit rather than a sweep through this file.
+ * lands it is a table edit in SkinsKit rather than a sweep through this file.
  */
 
-/** `(base) => displayed` — CosmeticsKit.electricityColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.electricityColor bound to one owner. */
 export type ElectricColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';

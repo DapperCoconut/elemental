@@ -3,6 +3,8 @@ import { Fighter } from '../../entities/Fighter';
 import { Projectile } from '../../combat/Projectile';
 import { CastContext } from '../Ability';
 import { ArmGesture, WaterAvatar, WaterColorFn, WaterFx, WaterSurf, WATER, waterRibbon, waterRibbonLayered } from './WaterVisuals';
+import { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
 
 // ── Shared Geyser type (exported so ArenaScene can import instead of redefining) ──
 
@@ -24,6 +26,8 @@ const SIPHON_RANGE = 190;
 const SIPHON_HALF_ANGLE = Math.PI / 5;     // 36° either side of the aim line
 const SIPHON_DEHYDRATION_PER_SEC = 10;
 const SLIPSTREAM_SPEED_MULT = 1.25;
+/** Enemies held at 100% dehydration at once to earn The Great Drought (→ the Coral skin). */
+const DROUGHT_TARGETS = 5;
 
 /** Which arm gesture the opponent's rig plays when the NPC lands each ability. */
 const NPC_GESTURES: Record<string, ArmGesture> = {
@@ -81,8 +85,12 @@ export interface WaterArenaApi {
   recordMasteryStat(key: string, amount: number): void;
   isPlayerWater(): boolean;
   isNpcWater(): boolean;
-  /** Cosmetics: maps a water visual color through the owner's color cosmetic. */
+  /** Skins: maps a water visual color through the owner's skin. */
   waterColor(owner: 'player' | 'npc', base: number): number;
+  /** Equipped skin id for that side, or null — decides which character rig gets built. */
+  skinId(owner: 'player' | 'npc'): string | null;
+  /** Idempotent achievement unlock with in-arena popup. */
+  unlockAchievement(id: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
   hasUpgrade(slot: string): boolean;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
@@ -99,14 +107,17 @@ export interface WaterArenaApi {
 
 export class WaterKit {
   // ── Visuals ─────────────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a future cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a future skin recolours one side. */
   private readonly pcol: WaterColorFn;
   private readonly ncol: WaterColorFn;
   private readonly pfx: WaterFx;
   private readonly nfx: WaterFx;
-  /** The water character rig (liquid hands, eyes, crown fountain) for each water fighter. */
-  private playerAvatar: WaterAvatar | null = null;
-  private npcAvatar: WaterAvatar | null = null;
+  /**
+   * The character rig for each water fighter — water's own living-water avatar, or the
+   * equipped skin's replacement (Coral's reef colony).
+   */
+  private playerAvatar: BaseAvatar | null = null;
+  private npcAvatar: BaseAvatar | null = null;
   /** Seconds since reset — drives every surface that ripples rather than tweens. */
   private worldT = 0;
   private projTrailAccum = 0;
@@ -134,6 +145,9 @@ export class WaterKit {
   private playerWasInGeyser = false;
   private npcWasInGeyser = false;
   private playerInGeyser = false;
+
+  // -- The Great Drought achievement (unlocks the Coral skin) --
+  private droughtUnlocked = false;
 
   // -- Boiling Geyser (R+ upgrade): per-enemy scald cooldown --
   private boilLastHitAt = new Map<Fighter, number>();
@@ -222,6 +236,7 @@ export class WaterKit {
     this.playerWasInGeyser = false;
     this.npcWasInGeyser = false;
     this.playerInGeyser = false;
+    this.droughtUnlocked = false;
 
     this.siphonLastCastAt = -Infinity;
     this.siphonActiveUntil = 0;
@@ -250,6 +265,7 @@ export class WaterKit {
     // -- Player side --
     if (isPlayerWater) {
       this.updatePlayerSplash(time, delta);
+      this.checkGreatDrought();
 
       let currentGeyser: Geyser | null = null;
       for (const g of geysers) {
@@ -522,11 +538,22 @@ export class WaterKit {
    * Builds (on first frame) and drives the liquid-hand avatar for whichever fighters are
    * water. The player faces the cursor; the NPC faces whoever it is fighting.
    */
+  /**
+   * That side's rig: the skin's if one is equipped, water's living water otherwise. Built
+   * lazily in `updateAvatars` and torn down in `reset`, so changing skin between matches
+   * swaps the character.
+   */
+  private makeAvatar(owner: 'player' | 'npc'): BaseAvatar {
+    const { scene } = this.arena;
+    const col = owner === 'player' ? this.pcol : this.ncol;
+    return makeSkinAvatar(this.arena.skinId(owner), scene) ?? new WaterAvatar(scene, col);
+  }
+
   private updateAvatars(time: number, delta: number, isPlayerWater: boolean, isNpcWater: boolean): void {
-    const { player, npc, scene } = this.arena;
+    const { player, npc } = this.arena;
 
     if (isPlayerWater && player?.active) {
-      if (!this.playerAvatar) this.playerAvatar = new WaterAvatar(scene, this.pcol);
+      if (!this.playerAvatar) this.playerAvatar = this.makeAvatar('player');
       const aimX = this.lastMouseX || player.x + 1;
       const aimY = this.lastMouseY || player.y;
       const aim = Math.atan2(aimY - player.y, aimX - player.x);
@@ -547,7 +574,7 @@ export class WaterKit {
     }
 
     if (isNpcWater && npc?.active) {
-      if (!this.npcAvatar) this.npcAvatar = new WaterAvatar(scene, this.ncol);
+      if (!this.npcAvatar) this.npcAvatar = this.makeAvatar('npc');
       const aim = Math.atan2(player.y - npc.y, player.x - npc.x);
       this.npcAvatar.setFacing(aim);
       this.npcAvatar.setIntensity(this.npcWasInGeyser ? 1.35 : 1);
@@ -606,6 +633,23 @@ export class WaterKit {
       pool.g.clear();
       WaterFx.drawPool(pool.g, tint, pool.p.x, pool.p.y, pool.p.radius, this.worldT, alpha, pool.seed);
     }
+  }
+
+  /**
+   * The Great Drought: five enemies wrung out to 100% dehydration at the same time, which
+   * unlocks the Coral skin. Self-gating to Invasion — a duel only ever has the one opponent —
+   * and dehydration never decays, so this is about spreading Siphon and white shots across a
+   * whole wave instead of drying out one husk at a time.
+   */
+  private checkGreatDrought(): void {
+    if (this.droughtUnlocked) return;
+    let parched = 0;
+    for (const [fighter, pct] of this.dehydration) {
+      if (pct >= 100 && fighter.active && fighter.hp > 0) parched++;
+    }
+    if (parched < DROUGHT_TARGETS) return;
+    this.droughtUnlocked = true;
+    this.arena.unlockAchievement('great-drought');
   }
 
   /**

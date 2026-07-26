@@ -28,7 +28,8 @@ export interface LightArenaApi {
   buildPlayerContext(x: number, y: number): CastContext;
   getNearestEnemy(x: number, y: number): Fighter;
   hasUpgrade(slot: string): boolean;
-  /** `(owner, base) => displayed` — the owner's colour cosmetic, or the identity. */
+  hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
+  /** `(owner, base) => displayed` — the owner's skin, or the identity. */
   lightColor(owner: 'player' | 'npc', base: number): number;
   /** True only when the player is light AND Light Mastery is switched on. */
   get masteryActive(): boolean;
@@ -51,6 +52,13 @@ const STRAIGHT_THRESHOLD = 0.4; // rad (~23°) — below this counts as a straig
 
 const BLINK_MAX_CHARGES = 2;
 const BLINK_RECHARGE_MS = 5000;
+
+// Flicker perk: one more charge, a faster refill, and a burning afterimage left behind.
+const FLICKER_MAX_CHARGES = 3;
+const FLICKER_RECHARGE_MS = 3000;
+const FLICKER_FLARE_DELAY_MS = 400;
+const FLICKER_FLARE_RADIUS = 62;
+const FLICKER_FLARE_DAMAGE = 12;
 const BLINK_BOOST_MS = 600;
 
 const MAX_RAMPS = 5;
@@ -110,6 +118,12 @@ const F_PLUS_JAVELIN_SPEED = 480;
 const FLARE_TELEPORT_INTERVAL = 10;
 const FLARE_BEAM_LIFETIME_MS = 35000;
 const FLARE_ACCEL_MULT = 3;
+
+// ── Aurora (divine perk) ────────────────────────────────────────────────
+/** Speed handed over for being hit at all, before the size of the hit is counted. */
+const AURORA_BASE_ACCEL = 70;
+/** Extra speed per point of damage taken — a big hit is worth far more than a chip. */
+const AURORA_ACCEL_PER_DAMAGE = 4;
 
 // ── Mastery: Unstoppable + Killer Kebab ─────────────────────────────────
 /** Unstoppable: hard turns bleed off only a fraction of the usual acceleration. */
@@ -199,7 +213,7 @@ function distToSegment(px: number, py: number, x1: number, y1: number, x2: numbe
 
 export class LightKit {
   // ── Visuals ────────────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a skin recolours one side. */
   private readonly pcol: LightColorFn;
   private readonly ncol: LightColorFn;
   private readonly pfx: LightFx;
@@ -237,6 +251,8 @@ export class LightKit {
 
   private blinkCharges = BLINK_MAX_CHARGES;
   private blinkRechargeQueue: number[] = [];
+  /** Flicker perk: afterimages waiting to flare where a blink left from. */
+  private flickerGhosts: Array<{ x: number; y: number; angle: number; owner: 'player' | 'npc'; bornAt: number; flareAt: number }> = [];
 
   private ramps: LightRamp[] = [];
   private streaks: LightStreak[] = [];
@@ -265,6 +281,12 @@ export class LightKit {
   // ── Q+ Flare-Stream ──────────────────────────────────────────────────────
   private playerTeleportCount = 0;
   private flareBeams: LightFlareBeam[] = [];
+
+  // ── Aurora (perk) ────────────────────────────────────────────────────────
+  /** Last seen player HP, so a drop can be read as "you were hit" without a damage hook. */
+  private auroraLastHp = -1;
+  /** 0–1 flare on the curtain, spiked by a hit and bled off over the following second. */
+  private auroraSurge = 0;
 
   // ── Mastery: Killer Kebab ────────────────────────────────────────────────
   private kebabLastCastAt = -KEBAB_COOLDOWN_MS;
@@ -340,8 +362,9 @@ export class LightKit {
     this.carSpeed = 0;
     this.carBoostUntil = 0;
 
-    this.blinkCharges = BLINK_MAX_CHARGES;
+    this.blinkCharges = this.blinkMaxCharges();
     this.blinkRechargeQueue = [];
+    this.flickerGhosts = [];
 
     this.ramps = [];
     this.streaks = [];
@@ -366,6 +389,9 @@ export class LightKit {
 
     this.playerTeleportCount = 0;
     this.flareBeams = [];
+
+    this.auroraLastHp = -1;
+    this.auroraSurge = 0;
 
     this.npcCarAngle = 0;
     this.npcCarSpeed = 0;
@@ -412,9 +438,11 @@ export class LightKit {
     npc.unstoppable = isNpcLight && this.arena.npcMasteryActive;
 
     if (isPlayerLight) {
+      this.updateAurora(delta);
+
       while (this.blinkRechargeQueue.length > 0 && time >= this.blinkRechargeQueue[0]) {
         this.blinkRechargeQueue.shift();
-        this.blinkCharges = Math.min(BLINK_MAX_CHARGES, this.blinkCharges + 1);
+        this.blinkCharges = Math.min(this.blinkMaxCharges(), this.blinkCharges + 1);
       }
 
       if (this.speedOLightActive) {
@@ -482,6 +510,7 @@ export class LightKit {
       const gesture = npcCastId ? CAST_GESTURES[npcCastId] : undefined;
       if (gesture) this.npcAvatar?.play(gesture, this.npcCarAngle);
       if (npcCastId === 'blink') {
+        this.leaveFlickerGhost('npc', npc.x, npc.y, this.npcCarAngle, time);
         this.npcCarAngle = Math.atan2(player.y - npc.y, player.x - npc.x);
         this.npcCarBoostUntil = time + BLINK_BOOST_MS;
         this.blinkFlash('npc', npc.x, npc.y, this.npcCarAngle);
@@ -516,6 +545,7 @@ export class LightKit {
     if (time < this.playerStunUntil && !player.unstoppable) playerBody.setVelocity(0, 0);
     if (time < this.npcStunUntil && !npc.unstoppable) npcBody.setVelocity(0, 0);
 
+    this.updateFlickerGhosts(time);
     this.paintWorld(time);
     this.updateAvatars(time, delta, isPlayerLight, isNpcLight);
   }
@@ -534,14 +564,88 @@ export class LightKit {
    * Every per-frame painter in one pass. The two layers are cleared and redrawn from live state,
    * so a ramp refracts, a streak pulses and a drill spins rather than sitting there as a sprite.
    */
+  // ── Flicker (perk) ───────────────────────────────────────────────────────
+
+  private blinkMaxCharges(): number {
+    return this.arena.hasPerk('player', 'flicker') ? FLICKER_MAX_CHARGES : BLINK_MAX_CHARGES;
+  }
+
+  private blinkRechargeMs(): number {
+    return this.arena.hasPerk('player', 'flicker') ? FLICKER_RECHARGE_MS : BLINK_RECHARGE_MS;
+  }
+
+  /** The light you left behind — it hangs for a beat, then goes off where you were. */
+  private leaveFlickerGhost(owner: 'player' | 'npc', x: number, y: number, angle: number, time: number): void {
+    if (!this.arena.hasPerk(owner, 'flicker')) return;
+    this.flickerGhosts.push({ x, y, angle, owner, bornAt: time, flareAt: time + FLICKER_FLARE_DELAY_MS });
+  }
+
+  private updateFlickerGhosts(time: number): void {
+    for (let i = this.flickerGhosts.length - 1; i >= 0; i--) {
+      const gh = this.flickerGhosts[i];
+      if (time < gh.flareAt) continue;
+      this.flickerGhosts.splice(i, 1);
+
+      const fx = gh.owner === 'player' ? this.pfx : this.nfx;
+      fx.flash(gh.x, gh.y, FLICKER_FLARE_RADIUS * 0.5, 9, LIGHT.pale);
+      fx.ring(gh.x, gh.y, 8, FLICKER_FLARE_RADIUS, LIGHT.glow, 300, 4, 8);
+      fx.sparkle(gh.x, gh.y, 6, FLICKER_FLARE_RADIUS * 0.8, 11, LIGHT.glow);
+
+      const targets = gh.owner === 'player'
+        ? (this.arena.enemies.length > 0 ? this.arena.enemies : [this.arena.npc])
+        : [this.arena.player];
+      for (const t of targets) {
+        if (!t || !t.active || t.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(gh.x, gh.y, t.x, t.y) > FLICKER_FLARE_RADIUS) continue;
+        const hx = t.x, hy = t.y;
+        t.takeDamage(FLICKER_FLARE_DAMAGE);
+        fx.shards(hx, hy, 4, { speed: 190, size: 10, color: LIGHT.glow, depth: 10 });
+      }
+    }
+  }
+
+  /**
+   * The afterimage itself: a hollow outline of the car you were, drawn thinner and
+   * brighter as it winds up, so the flare never lands without warning.
+   */
+  private paintFlickerGhosts(g: Phaser.GameObjects.Graphics, time: number): void {
+    for (const gh of this.flickerGhosts) {
+      const k = Phaser.Math.Clamp((time - gh.bornAt) / FLICKER_FLARE_DELAY_MS, 0, 1);
+      const col = gh.owner === 'player' ? this.pcol : this.ncol;
+      const cos = Math.cos(gh.angle), sin = Math.sin(gh.angle);
+      // A wedge pointing the way you were travelling, shrinking as it tightens up.
+      const len = 18 * (1 - k * 0.35), wid = 10 * (1 - k * 0.35);
+      const nose = { x: gh.x + cos * len, y: gh.y + sin * len };
+      const tailL = { x: gh.x - cos * len * 0.7 - sin * wid, y: gh.y - sin * len * 0.7 + cos * wid };
+      const tailR = { x: gh.x - cos * len * 0.7 + sin * wid, y: gh.y - sin * len * 0.7 - cos * wid };
+      g.lineStyle(1.5 + k * 2, col(LIGHT.pale), 0.35 + 0.5 * k);
+      g.beginPath();
+      g.moveTo(nose.x, nose.y);
+      g.lineTo(tailL.x, tailL.y);
+      g.lineTo(tailR.x, tailR.y);
+      g.closePath();
+      g.strokePath();
+      // The charge gathering in the middle of it before it lets go.
+      g.fillStyle(col(LIGHT.glow), 0.15 + 0.45 * k * k);
+      g.fillCircle(gh.x, gh.y, 3 + 7 * k * k);
+      // A tightening ring reading the fuse.
+      g.lineStyle(1, col(LIGHT.glow), 0.5 * (1 - k));
+      g.strokeCircle(gh.x, gh.y, FLICKER_FLARE_RADIUS * (1 - k * 0.75));
+    }
+  }
+
   private paintWorld(time: number): void {
     const { player, npc } = this.arena;
 
+    const auroraUp = this.arena.hasPerk('player', 'aurora') && player.active && player.hp > 0;
     const hasGround = this.ramps.length > 0 || this.npcRamps.length > 0
-      || this.streaks.length > 0 || this.flareBeams.length > 0;
+      || this.streaks.length > 0 || this.flareBeams.length > 0 || this.flickerGhosts.length > 0
+      || auroraUp;
     if (hasGround || this.groundGfx) {
       const g = this.ground();
       g.clear();
+      // The curtain is worn, so it goes down first and everything else lies over it.
+      if (auroraUp) LightFx.drawAurora(g, this.pcol, player.x, player.y, this.vizT, this.auroraSurge);
       // Flare beams are permanent furniture, so they sit under the transient streaks.
       for (const b of this.flareBeams) {
         const life = Phaser.Math.Clamp((b.until - time) / FLARE_BEAM_LIFETIME_MS, 0, 1);
@@ -555,6 +659,7 @@ export class LightKit {
       }
       for (const r of this.ramps) LightFx.drawRamp(g, this.pcol, r.x, r.y, r.angle, this.vizT);
       for (const r of this.npcRamps) LightFx.drawRamp(g, this.ncol, r.x, r.y, r.angle, this.vizT);
+      this.paintFlickerGhosts(g, time);
     }
 
     const hasAir = this.lanceView !== null || this.npcLanceView !== null
@@ -721,6 +826,42 @@ export class LightKit {
 
     if (isPlayer) { this.carAngle = angle; this.carSpeed = speed; } else { this.npcCarAngle = angle; this.npcCarSpeed = speed; }
     return speed / maxSpeed;
+  }
+
+  // ── Aurora (perk) ────────────────────────────────────────────────────────
+
+  /**
+   * Aurora: the curtain feeds on damage. HP is sampled rather than hooked, because every
+   * route into the player's health — projectiles, AOE, DOT ticks, a wall crash — has to
+   * count, and there is no single place all of those pass through.
+   *
+   * The shove is added straight onto the car's speed; `stepCar` clamps it to whatever this
+   * build's ceiling is, so a Redline racer can bank more of it than a stock one.
+   */
+  private updateAurora(delta: number): void {
+    const { player } = this.arena;
+    if (!this.arena.hasPerk('player', 'aurora')) {
+      this.auroraLastHp = -1;
+      this.auroraSurge = 0;
+      return;
+    }
+
+    // The curtain settles back down over about a second.
+    this.auroraSurge = Math.max(0, this.auroraSurge - delta / 900);
+
+    const hp = player.hp;
+    if (this.auroraLastHp >= 0 && hp < this.auroraLastHp) {
+      const taken = this.auroraLastHp - hp;
+      const gain = AURORA_BASE_ACCEL + taken * AURORA_ACCEL_PER_DAMAGE;
+      this.carSpeed += gain;
+      this.auroraSurge = Math.min(1, this.auroraSurge + 0.4 + taken / 80);
+
+      // The hit throws the curtain up: a wash off the ground and sparks riding it.
+      this.pfx.ring(player.x, player.y, 16, 74, LIGHT.auroraGreen, 420, 4, 4);
+      this.pfx.sparkle(player.x, player.y - 10, 6, 40, 11, LIGHT.auroraViolet);
+      this.arena.showFloatingText(player.x, player.y - 46, `🌌 +${Math.round(gain)} ACCEL`, '#66ffcc');
+    }
+    this.auroraLastHp = hp;
   }
 
   /** The snap of light thrown off a heading change — Blink, and the E+ steam release. */
@@ -1309,7 +1450,8 @@ export class LightKit {
           this.ePlusHoldStart = time;
           this.pfx.ring(player.x, player.y, 50, 12, LIGHT.glass, 340, 3, 8);
           this.blinkCharges--;
-          this.blinkRechargeQueue.push(time + BLINK_RECHARGE_MS);
+          this.blinkRechargeQueue.push(time + this.blinkRechargeMs());
+          this.leaveFlickerGhost('player', player.x, player.y, this.carAngle, time);
           this.arena.showFloatingText(player.x, player.y - 30, '👁️ FOCUSING', '#88ddff');
         }
       }
@@ -1331,7 +1473,9 @@ export class LightKit {
     } else if (Phaser.Input.Keyboard.JustDown(eKey)) {
       if (this.blinkCharges > 0 && !this.speedOLightActive) {
         this.blinkCharges--;
-        this.blinkRechargeQueue.push(time + BLINK_RECHARGE_MS);
+        this.blinkRechargeQueue.push(time + this.blinkRechargeMs());
+        // Flicker: the shape you were still standing there when you left.
+        this.leaveFlickerGhost('player', player.x, player.y, this.carAngle, time);
         this.carAngle = Math.atan2(mouseY - player.y, mouseX - player.x);
         this.carBoostUntil = time + BLINK_BOOST_MS;
         this.blinkFlash('player', player.x, player.y, this.carAngle);

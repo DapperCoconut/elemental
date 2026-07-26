@@ -3,7 +3,7 @@ import { Ability, CastContext } from './Ability';
 import { Projectile } from '../combat/Projectile';
 import { FireFx, FIRE } from './kits/FireVisuals';
 
-/** Effects painter bound to whoever is casting (so the Burnt cosmetic recolours their fire). */
+/** Effects painter bound to whoever is casting (so a skin recolours their fire). */
 function fx(ctx: CastContext): FireFx {
   return new FireFx(ctx.scene, ctx.fireColor);
 }

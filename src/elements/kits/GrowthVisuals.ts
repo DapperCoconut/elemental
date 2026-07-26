@@ -10,12 +10,12 @@ import { AvatarSpec, BaseAvatar, ColorFn, FxBase, TAU, easeIn, easeOut } from '.
  * ElementVisuals.ts and are shared with the other elements. What stays here is what makes growth
  * growth: the pseudopod, the palette, and the effects built out of them.
  *
- * Colours must come from the GROWTH palette below. Growth has no colour-slot cosmetic yet, but
+ * Colours must come from the GROWTH palette below. Growth has no skin yet, but
  * every call still routes through the owner's `growthColor` mapper, so the day one lands it is a
- * table edit in CosmeticsKit rather than a sweep through this file.
+ * table edit in SkinsKit rather than a sweep through this file.
  */
 
-/** `(base) => displayed` — CosmeticsKit.growthColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.growthColor bound to one owner. */
 export type GrowthColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';

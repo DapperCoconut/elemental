@@ -12,12 +12,12 @@ import { AvatarSpec, ArmHold, ArmPose, BaseAvatar, ColorFn, FxBase, TAU, easeIn,
  * of.
  *
  * Every structural colour must come from the GUNPOWDER palette below. Gunpowder has no
- * colour-slot cosmetic yet, but every call still routes through the owner's `gunpowderColor`
- * mapper, so the day one lands it is a table edit in CosmeticsKit rather than a sweep through
+ * skin yet, but every call still routes through the owner's `gunpowderColor`
+ * mapper, so the day one lands it is a table edit in SkinsKit rather than a sweep through
  * this file.
  */
 
-/** `(base) => displayed` — CosmeticsKit.gunpowderColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.gunpowderColor bound to one owner. */
 export type GunpowderColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';

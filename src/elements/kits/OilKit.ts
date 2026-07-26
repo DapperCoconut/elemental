@@ -81,7 +81,7 @@ export interface OilArenaApi {
   /** Online: broadcast a bindable mastery cast so the peer's sim replays it. */
   broadcastMasteryCast(enhId: string): void;
   recordMasteryStat(key: string, amount: number): void;
-  /** Cosmetics: maps an oil visual color through the owner's color cosmetic. */
+  /** Skins: maps an oil visual color through the owner's skin. */
   oilColor(owner: 'player' | 'npc', base: number): number;
 }
 
@@ -92,6 +92,34 @@ export interface OilArenaApi {
  * every tween, distance check and `.x`/`.y` read works exactly as it did on the old plain
  * circle while the body itself is a rotor-blurred chassis instead of a dot.
  */
+/**
+ * Gasoline perk (divine): the workshop sometimes turns out a special instead of a standard
+ * airframe. Every kind still orbits, still spends shots and still dies at zero — what changes
+ * is what it does with a shot, and what a Drone Destroy leaves of it.
+ */
+type DroneKind = 'standard' | 'med' | 'bash' | 'blast' | 'prime';
+
+/** Roll table for the specials. Whatever is left over is a standard drone. */
+const GASOLINE_ODDS: Array<{ kind: DroneKind; chance: number }> = [
+  { kind: 'med', chance: 0.14 },
+  { kind: 'bash', chance: 0.14 },
+  { kind: 'blast', chance: 0.14 },
+  { kind: 'prime', chance: 0.08 },
+];
+const DRONE_KIND_TAG: Record<DroneKind, string> = {
+  standard: '🛩️ Drone',
+  med: '💊 Med-Drone',
+  bash: '🥊 Bash-Drone',
+  blast: '💣 Blast-Drone',
+  prime: '⭐ Drone-Prime',
+};
+const MED_DRONE_HPS = 2;
+const BASH_DRONE_DAMAGE = 10;
+const BASH_DRONE_KNOCKBACK = 620;
+const BASH_DRONE_KNOCK_MS = 220;
+const BASH_DRONE_MS = 420;
+const BLAST_DRONE_DAMAGE = 10;
+
 interface Drone {
   gfx: Phaser.GameObjects.Graphics;
   shotsLeft: number;
@@ -107,6 +135,12 @@ interface Drone {
   meleeCooldownUntil: number;
   healCdUntil: number;
   owner: 'player' | 'npc';
+  /** Gasoline: which special this one rolled, or 'standard'. */
+  kind: DroneKind;
+  /** Med-Drone: fractional HP carried between frames so 2 HP/s is exactly 2 HP/s. */
+  healAccum: number;
+  /** While this is in the future the drone is flying itself — the orbit lets go of it. */
+  busyUntil: number;
 }
 
 interface OilPuddle {
@@ -189,7 +223,7 @@ export class OilKit {
   private arena: OilArenaApi;
 
   // ── Visuals ─────────────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a future cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a future skin recolours one side. */
   private readonly pcol: OilColorFn;
   private readonly ncol: OilColorFn;
   private readonly pfx: OilFx;
@@ -215,6 +249,8 @@ export class OilKit {
   // Drones
   private playerDrones: Drone[] = [];
   private npcDrones: Drone[] = [];
+  /** Gasoline — Bash-Drone shoves, enforced per frame the way every knockback here is. */
+  private droneKnocks = new Map<Fighter, { vx: number; vy: number; until: number }>();
 
   // Firewalls (legacy F — kept for NPC, replaced for player by shield gen)
   private npcFirewall: OilFirewall | null = null;
@@ -328,6 +364,7 @@ export class OilKit {
     for (const d of this.npcDrones) d.gfx.destroy();
     this.playerDrones = [];
     this.npcDrones = [];
+    this.droneKnocks.clear();
 
     for (const p of this.playerOilPuddles) p.gfx.destroy();
     for (const p of this.npcOilPuddles) p.gfx.destroy();
@@ -570,6 +607,13 @@ export class OilKit {
       this.updateBarrel(this.npcBarrel, time, dt, 'npc');
       this.updateNpcFirewall();
     }
+    // Gasoline — a bashed fighter is shoved by having their velocity written every frame the
+    // shove lasts; anything less loses to whatever wrote velocity after us.
+    for (const [victim, k] of this.droneKnocks) {
+      if (!victim.active || time >= k.until) { this.droneKnocks.delete(victim); continue; }
+      (victim.body as Phaser.Physics.Arcade.Body).setVelocity(k.vx, k.vy);
+    }
+
     // Always tick oily burns and visuals for both fighters regardless of which side uses oil
     this.updateOilyBurn(time, delta, 'player');
     this.updateOilyBurn(time, delta, 'npc');
@@ -680,10 +724,25 @@ export class OilKit {
     for (let di = 0; di < count; di++) {
       const drone = drones[di];
       const angle = baseAngle + (di * Math.PI * 2 / Math.max(1, count));
-      drone.gfx.setPosition(
-        caster.x + Math.cos(angle) * orbitR,
-        caster.y + Math.sin(angle) * orbitR,
-      );
+      // A drone in the middle of its own run (a bash lunge, a Prime coming home) flies itself.
+      if (time >= drone.busyUntil) {
+        drone.gfx.setPosition(
+          caster.x + Math.cos(angle) * orbitR,
+          caster.y + Math.sin(angle) * orbitR,
+        );
+      }
+
+      // Gasoline — Med-Drone: patches its owner up for as long as it is on station.
+      if (drone.kind === 'med' && caster.hp > 0 && caster.hp < caster.maxHp) {
+        drone.healAccum += (delta / 1000) * MED_DRONE_HPS;
+        if (drone.healAccum >= 1) {
+          const heal = Math.floor(drone.healAccum);
+          drone.healAccum -= heal;
+          caster.hp = Math.min(caster.maxHp, caster.hp + heal);
+          this.pfx.sparks(drone.gfx.x, drone.gfx.y, 2, { speed: 60, life: 260, depth: 9 });
+          if (owner === 'player') this.arena.showFloatingText(caster.x, caster.y - 40, `+${heal}`, '#66dd66');
+        }
+      }
       // Rotors keep turning, and the camera lens keeps the enemy in frame while it orbits.
       drone.spin += delta * 0.05;
       drone.aim = foe.hp > 0
@@ -747,6 +806,20 @@ export class OilKit {
       g, drone.owner === 'player' ? this.pcol : this.ncol,
       drone.aim, drone.spin, drone.shotsLeft, drone.maxShots, 1, drone.overcharged,
     );
+    if (drone.kind !== 'standard') {
+      OilFx.drawDroneBadge(g, drone.owner === 'player' ? this.pcol : this.ncol, drone.kind, drone.spin);
+    }
+  }
+
+  /** Gasoline: what came off the line this time. Without the perk it is always a standard. */
+  private rollDroneKind(owner: 'player' | 'npc'): DroneKind {
+    if (!this.arena.hasPerk(owner, 'gasoline')) return 'standard';
+    let roll = Math.random();
+    for (const entry of GASOLINE_ODDS) {
+      if (roll < entry.chance) return entry.kind;
+      roll -= entry.chance;
+    }
+    return 'standard';
   }
 
   doSpawnDrone(owner: 'player' | 'npc'): void {
@@ -759,14 +832,20 @@ export class OilKit {
     const sx = caster.x + Math.cos(spawnAngle) * 60;
     const sy = caster.y + Math.sin(spawnAngle) * 60;
     const gfx = this.arena.scene.add.graphics().setPosition(sx, sy).setDepth(8);
-    const shotsLeft = this.arena.hasPerk(owner, 'bio-fuel') ? 5 : 3;
+    const kind = this.rollDroneKind(owner);
+    // A Prime carries a full five rounds whatever else the workshop has fitted.
+    const shotsLeft = kind === 'prime' ? 5 : (this.arena.hasPerk(owner, 'bio-fuel') ? 5 : 3);
     const drone: Drone = {
       gfx, shotsLeft, maxShots: shotsLeft, orbitAngle: spawnAngle,
       aim: spawnAngle, spin: Math.random() * 6, overcharged: false,
       meleeCooldownUntil: 0, healCdUntil: 0, owner,
+      kind, healAccum: 0, busyUntil: 0,
     };
     drones.push(drone);
     this.drawDrone(drone);
+    if (kind !== 'standard' && owner === 'player') {
+      this.arena.showFloatingText(sx, sy - 28, `${DRONE_KIND_TAG[kind]}!`, '#ffaa33');
+    }
 
     // Assembly tell: the airframe spins up out of a puff of exhaust with its rotors biting.
     const fx = owner === 'player' ? this.pfx : this.nfx;
@@ -798,6 +877,10 @@ export class OilKit {
       // Muzzle flare at the drone, a beam to the mark, and a bloom plus sparks where it lands.
       const shotAngle = Math.atan2(ty - drone.gfx.y, tx - drone.gfx.x);
       drone.aim = shotAngle;
+
+      // Gasoline specials spend their shot on something other than the laser.
+      if (drone.kind === 'bash') { this.bashDrone(drone, tx, ty, owner); drone.shotsLeft -= 1; continue; }
+      if (drone.kind === 'blast') { this.bombDrone(drone, tx, ty, owner); drone.shotsLeft -= 1; continue; }
       fx.muzzleFlash(
         drone.gfx.x + Math.cos(shotAngle) * 6, drone.gfx.y + Math.sin(shotAngle) * 6,
         shotAngle, 0.55, 9,
@@ -892,11 +975,101 @@ export class OilKit {
     }
   }
 
+  // ── Gasoline specials ─────────────────────────────────────────────────────
+
+  /**
+   * Bash-Drone: no laser — it drops off the orbit, rams the mark, and shoves whatever it hits
+   * before climbing back onto station. The orbit leaves it alone while `busyUntil` is running.
+   */
+  private bashDrone(drone: Drone, tx: number, ty: number, owner: 'player' | 'npc'): void {
+    const scene = this.arena.scene;
+    const fx = owner === 'player' ? this.pfx : this.nfx;
+    const gfx = drone.gfx;
+    const ang = Math.atan2(ty - gfx.y, tx - gfx.x);
+    drone.busyUntil = scene.time.now + BASH_DRONE_MS;
+
+    fx.muzzleFlash(gfx.x, gfx.y, ang + Math.PI, 0.6, 9);
+    scene.tweens.add({
+      targets: gfx, x: tx, y: ty, duration: BASH_DRONE_MS * 0.5, ease: 'Power2',
+      onUpdate: () => { if (gfx.active) fx.smoke(gfx.x, gfx.y, 1, 4, 5); },
+      onComplete: () => {
+        if (!gfx.active) return;
+        // The hit itself: a rotor-first shunt, not an explosion.
+        fx.sparks(tx, ty, 8, { angle: ang + Math.PI, spread: 1.1, speed: 220, life: 320 });
+        fx.ring(tx, ty, 6, 40, OIL.gold, 280, 3, 9);
+        scene.cameras.main.shake(90, 0.003);
+        const victim = owner === 'player' ? this.arena.npc : this.arena.player;
+        if (owner === 'player') this.arena.damagePlayerTargets(tx, ty, 46, BASH_DRONE_DAMAGE, OIL.gold);
+        else if (victim.hp > 0 && Phaser.Math.Distance.Between(tx, ty, victim.x, victim.y) <= 46) {
+          victim.takeDamage(BASH_DRONE_DAMAGE);
+          this.arena.spawnHitFlash(victim.x, victim.y, OIL.gold);
+        }
+        // Knockback lands on the duellist — husks take the damage but keep their footing.
+        if (victim.hp > 0 && Phaser.Math.Distance.Between(tx, ty, victim.x, victim.y) <= 60) {
+          this.droneKnocks.set(victim, {
+            vx: Math.cos(ang) * BASH_DRONE_KNOCKBACK,
+            vy: Math.sin(ang) * BASH_DRONE_KNOCKBACK,
+            until: scene.time.now + BASH_DRONE_KNOCK_MS,
+          });
+          this.arena.showFloatingText(victim.x, victim.y - 34, '🥊 BASHED!', '#ffaa33');
+        }
+      },
+    });
+  }
+
+  /** Blast-Drone: lobs a bomb at the mark instead of firing, for a small blast. */
+  private bombDrone(drone: Drone, tx: number, ty: number, owner: 'player' | 'npc'): void {
+    const scene = this.arena.scene;
+    const fx = owner === 'player' ? this.pfx : this.nfx;
+    const from = { x: drone.gfx.x, y: drone.gfx.y };
+    const bomb = scene.add.graphics().setDepth(9);
+    OilFx.drawBomb(bomb, owner === 'player' ? this.pcol : this.ncol);
+    bomb.setPosition(from.x, from.y);
+    fx.muzzleFlash(from.x, from.y, Math.atan2(ty - from.y, tx - from.x), 0.5, 9);
+
+    scene.tweens.add({
+      targets: bomb, x: tx, y: ty, rotation: Math.PI * 3, duration: 420, ease: 'Quad.easeOut',
+      onUpdate: () => { if (bomb.active) fx.smoke(bomb.x, bomb.y, 1, 3, 5); },
+      onComplete: () => {
+        bomb.destroy();
+        fx.explosion(tx, ty, 52, { debris: 5, smoke: 2 });
+        if (owner === 'player') {
+          this.arena.damagePlayerTargets(tx, ty, 52, BLAST_DRONE_DAMAGE, OIL.flame);
+        } else {
+          const player = this.arena.player;
+          if (player.hp > 0 && Phaser.Math.Distance.Between(tx, ty, player.x, player.y) <= 52) {
+            player.takeDamage(BLAST_DRONE_DAMAGE);
+            this.arena.spawnHitFlash(player.x, player.y, OIL.flame);
+          }
+        }
+      },
+    });
+  }
+
+  /** A Prime that survived its run climbs back onto the orbit with everything it left with. */
+  private returnDroneHome(drone: Drone): void {
+    const drones = drone.owner === 'player' ? this.playerDrones : this.npcDrones;
+    const caster = drone.owner === 'player' ? this.arena.player : this.arena.npc;
+    this.dropDetachedDrone(drone);
+    if (!drone.gfx.active) return;
+    const maxDrones = drone.owner === 'player' ? 6 : 4;
+    if (drones.length >= maxDrones) { drone.gfx.destroy(); return; }
+    drone.busyUntil = this.arena.scene.time.now + 420;
+    drone.overcharged = false;
+    drones.push(drone);
+    this.arena.scene.tweens.add({
+      targets: drone.gfx, x: caster.x, y: caster.y, scaleX: 1, scaleY: 1, duration: 400, ease: 'Power2',
+      onUpdate: () => { if (drone.gfx.active) this.pfx.smoke(drone.gfx.x, drone.gfx.y, 1, 3, 5); },
+    });
+    this.arena.showFloatingText(caster.x, caster.y - 44, '⭐ PRIME RETURNS!', '#ffdd66');
+  }
+
   doLaunchDrone(tx: number, ty: number, owner: 'player' | 'npc'): void {
     const drones = owner === 'player' ? this.playerDrones : this.npcDrones;
     if (drones.length === 0) return;
     const drone = drones.pop()!;
-    const dmg = 20;
+    // Gasoline — a Blast-Drone is packed with ordnance, so the kamikaze run hits twice as hard.
+    const dmg = drone.kind === 'blast' ? 40 : 20;
     const scene = this.arena.scene;
 
     // R+ Overclock takes over the whole launch.
@@ -925,8 +1098,9 @@ export class OilKit {
         }
       },
       onComplete: () => {
-        this.dropDetachedDrone(drone);
-        gfx.destroy();
+        // A Prime pulls up out of the run — the blast still lands, the airframe doesn't.
+        if (drone.kind === 'prime') this.returnDroneHome(drone);
+        else { this.dropDetachedDrone(drone); gfx.destroy(); }
         fx.explosion(tx, ty, 68, { debris: 6, smoke: 3 });
         this.arena.scene.cameras.main.shake(120, 0.004);
         if (owner === 'player') {
@@ -950,7 +1124,8 @@ export class OilKit {
   private overclockDrone(drone: Drone): void {
     const scene = this.arena.scene;
     const shots = Math.max(0, drone.shotsLeft);
-    const blastDmg = 5 * shots + 5;
+    // A Blast-Drone doubles whatever the magazine was worth.
+    const blastDmg = (5 * shots + 5) * (drone.kind === 'blast' ? 2 : 1);
     const fx = this.pfx;
     this.detachedDrones.push(drone);
 
@@ -1014,8 +1189,8 @@ export class OilKit {
           fx.ring(c.x, c.y, 10, 90 + shots * 14, OIL.teal, 420, 4, 9);
           scene.cameras.main.shake(150 + shots * 40, 0.005 + tier * 0.004);
           this.arena.damagePlayerTargets(c.x, c.y, 60, blastDmg, OIL.flame);
-          this.dropDetachedDrone(drone);
-          gfx.destroy();
+          if (drone.kind === 'prime') { drone.shotsLeft = drone.maxShots; this.returnDroneHome(drone); }
+          else { this.dropDetachedDrone(drone); gfx.destroy(); }
         },
       });
     });
@@ -1346,7 +1521,7 @@ export class OilKit {
       return;
     }
 
-    // The coating belongs to whoever *applied* it, so a future oil cosmetic recolours the
+    // The coating belongs to whoever *applied* it, so a future oil skin recolours the
     // slick their victim is wearing rather than the victim's own palette.
     let coat = existing;
     if (!coat) {

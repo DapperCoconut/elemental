@@ -42,9 +42,10 @@ export interface SilenceArenaApi {
   buildNpcContext(x: number, y: number): CastContext;
   /** Shop upgrades. Player side reads the local save; npc side is the online peer's synced list. */
   hasUpgrade(owner: Owner, slot: string): boolean;
+  hasPerk(owner: Owner, perkId: string): boolean;
   /** Online: forward a silence upgrade event to the peer (no-op offline). */
   sendSilenceMsg(msg: NetSilenceMsg): void;
-  /** Owner's colour cosmetic applied to one Silence palette value. */
+  /** Owner's skin applied to one Silence palette value. */
   silenceColor(owner: Owner, base: number): number;
   /** Silence Mastery is enabled and the local player is actually playing Silence. */
   readonly masteryActive: boolean;
@@ -97,6 +98,15 @@ const RITUAL_RADIUS = 75;
 const RITUAL_DELAY_MS = 1000;
 const RITUAL_DMG = 25;
 const RITUAL_SILENCE_MS = 20000;
+
+// Torture perk: the ritual stops being an execution and becomes a rack.
+const TORTURE_MS = 6000;
+const TORTURE_TICK_MS = 1000;
+const TORTURE_BASE_DPS = 4;
+const TORTURE_STACK_DPS = 2;
+const TORTURE_MAX_STACKS = 3;
+/** Every tick of the rack drags the victim's silence out another second. */
+const TORTURE_SILENCE_PER_TICK_MS = 1000;
 
 const GRABBER_LIFETIME_MS = 60000;
 const GRABBER_FIRST_GRAB_MS = 10000;
@@ -501,6 +511,17 @@ interface RitualCircle {
   strikeAt: number;
 }
 
+/** Torture perk: hooks and chains left in a victim by a Ritual, grinding on a 1s clock. */
+interface TortureRack {
+  target: Fighter;
+  owner: Owner;
+  stacks: number;
+  until: number;
+  nextTickAt: number;
+  /** Fixed phase so each rack's chains sway on their own rhythm. */
+  seed: number;
+}
+
 interface FeastCircle {
   x: number;
   y: number;
@@ -577,7 +598,7 @@ const CAST_GESTURES: Record<string, ArmGesture> = {
 export class SilenceKit {
   // ── Visuals ────────────────────────────────────────────────────────
   // One colour mapper and one effect painter per side, because the two fighters can have
-  // different colour cosmetics equipped.
+  // different skins equipped.
   private readonly pcol: SilenceColorFn;
   private readonly ncol: SilenceColorFn;
   private readonly pfx: SilenceFx;
@@ -597,6 +618,7 @@ export class SilenceKit {
   private stalkers: Stalker[] = [];
   private grabbers: Grabber[] = [];
   private rituals: RitualCircle[] = [];
+  private racks: TortureRack[] = [];   // Torture perk
   private feasts: FeastCircle[] = [];
   private spits: SpitGlob[] = [];
   private run: RunState | null = null;
@@ -760,6 +782,7 @@ export class SilenceKit {
     this.terror = { player: 0, npc: 0 };
     this.pendingMazeSeed = null;
     this.rituals = [];
+    this.racks = [];
     this.feasts = [];
     this.spits = [];
     this.stealthBarBg?.destroy(); this.stealthBarBg = null;
@@ -2223,6 +2246,7 @@ export class SilenceKit {
     this.updateGrabbers(time, delta);
     this.updateVultures(time, dt);
     this.updateRituals(time);
+    this.updateRacks(time);
     this.updateFeasts(time, delta);
     this.updateSpits(time, dt);
     this.updateRunChase(time);
@@ -2280,6 +2304,7 @@ export class SilenceKit {
     this.paintBloodDecals(world, time);
     this.paintProjectiles(air, t);
     this.paintStrikers(world, air, t);
+    this.paintRacks(world, air, t);
     this.paintRunArm(air, time, t);
     this.paintBlob(world, t);
     this.paintFaceEyes(air, t);
@@ -3018,6 +3043,8 @@ export class SilenceKit {
       this.applyStatus(foe, { k: 'silence', ms: RITUAL_SILENCE_MS });
       this.arena.spawnHitFlash(foe.x, foe.y, 0xff1133);
       this.arena.showFloatingText(foe.x, foe.y - 38, '🤫 SILENCED', '#ff5566');
+      // Torture perk: the beam leaves hooks in whoever it found.
+      if (this.arena.hasPerk(r.owner, 'torture')) this.rackVictim(foe, r.owner);
     }
 
     // A fully-matured stalker in the circle ascends — watchers become
@@ -3032,6 +3059,97 @@ export class SilenceKit {
       else this.spawnGrabber(s.x, s.y, r.owner);
       this.stalkers.splice(i, 1);
       break;
+    }
+  }
+
+  // ── Torture perk: the rack ─────────────────────────────────────────
+
+  /**
+   * Hook a victim onto the rack, or tighten the one already in them. Re-ritualling a
+   * racked victim is the only way to stack it, so the perk rewards patience over burst.
+   */
+  private rackVictim(target: Fighter, owner: Owner): void {
+    const now = this.arena.scene.time.now;
+    const existing = this.racks.find((k) => k.target === target && k.owner === owner);
+    if (existing) {
+      existing.until = now + TORTURE_MS;
+      if (existing.stacks < TORTURE_MAX_STACKS) {
+        existing.stacks++;
+        this.arena.showFloatingText(target.x, target.y - 56, `⛓️ RACK ×${existing.stacks}`, '#ff3355');
+      }
+      return;
+    }
+    this.racks.push({
+      target, owner, stacks: 1,
+      until: now + TORTURE_MS,
+      nextTickAt: now + TORTURE_TICK_MS,
+      seed: Math.random() * Math.PI * 2,
+    });
+    this.arena.showFloatingText(target.x, target.y - 56, '⛓️ TORTURED', '#ff3355');
+  }
+
+  private updateRacks(time: number): void {
+    for (let i = this.racks.length - 1; i >= 0; i--) {
+      const k = this.racks[i];
+      const t = k.target;
+      if (!t.active || t.hp <= 0 || time >= k.until) {
+        this.racks.splice(i, 1);
+        continue;
+      }
+      if (time < k.nextTickAt) continue;
+      k.nextTickAt += TORTURE_TICK_MS;
+      const dps = TORTURE_BASE_DPS + TORTURE_STACK_DPS * (k.stacks - 1);
+      t.takeDamage(dps);
+      // The point of the rack: it keeps them quiet for longer than the ritual alone would.
+      this.applyStatus(t, { k: 'silence', ms: TORTURE_SILENCE_PER_TICK_MS });
+      this.arena.spawnHitFlash(t.x, t.y, 0xcc1133);
+    }
+  }
+
+  /**
+   * Chains dragged taut from the victim out to four hooks planted in the floor, sagging
+   * and jerking on the tick. More stacks means more hooks biting and a redder pull.
+   */
+  private paintRacks(world: Phaser.GameObjects.Graphics, air: Phaser.GameObjects.Graphics, t: number): void {
+    const now = this.arena.scene.time.now;
+    for (const k of this.racks) {
+      const target = k.target;
+      if (!target.active || target.hp <= 0) continue;
+      const col = this.col(k.owner);
+      // Fresh off a tick the chains snap tight, then sag again over the second.
+      const sinceTick = Phaser.Math.Clamp((now - (k.nextTickAt - TORTURE_TICK_MS)) / TORTURE_TICK_MS, 0, 1);
+      const jerk = 1 - sinceTick;
+      const hooks = 2 + k.stacks;
+      const reach = 46 + 8 * k.stacks;
+
+      for (let h = 0; h < hooks; h++) {
+        const ang = k.seed + (h / hooks) * Math.PI * 2 + Math.sin(t * 0.7 + h) * 0.12;
+        const slack = (1 - jerk) * 7;
+        const ax = target.x + Math.cos(ang) * reach;
+        const ay = target.y + Math.sin(ang) * reach;
+        // The chain: links stepped along the span, drooping in the middle when slack.
+        const links = 6;
+        for (let l = 0; l <= links; l++) {
+          const f = l / links;
+          const droop = Math.sin(f * Math.PI) * slack;
+          const lx = target.x + (ax - target.x) * f + Math.cos(ang + Math.PI / 2) * droop;
+          const ly = target.y + (ay - target.y) * f + Math.sin(ang + Math.PI / 2) * droop + droop * 0.4;
+          world.fillStyle(col(l % 2 === 0 ? SILENCE.bone : SILENCE.rust), 0.55 + 0.3 * jerk);
+          world.fillCircle(lx, ly, 2.1 - f * 0.5);
+        }
+        // The hook itself, bitten into the ground and straining outward.
+        world.lineStyle(2, col(SILENCE.gore), 0.6 + 0.3 * jerk);
+        world.beginPath();
+        world.moveTo(ax, ay);
+        world.lineTo(ax + Math.cos(ang) * 7, ay + Math.sin(ang) * 7 - 3);
+        world.strokePath();
+        world.fillStyle(col(SILENCE.blood), 0.5);
+        world.fillCircle(ax, ay, 3 + jerk * 1.5);
+      }
+
+      // A wet ring where the hooks all pull toward at once.
+      air.lineStyle(1.5, col(SILENCE.gore), 0.25 + 0.35 * jerk);
+      air.strokeCircle(target.x, target.y, 20 + jerk * 6);
     }
   }
 

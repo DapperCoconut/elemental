@@ -27,7 +27,13 @@ interface SaveData {
   masteryEnabled: Record<string, boolean>;                 // elementId -> enabled
   masteryBinds: Record<string, Record<string, string>>;    // elementId -> slot -> enhancement id
   achievements: string[];                                  // unlocked achievement ids
-  equippedCosmetics: Record<string, Partial<Record<'color' | 'sigil', string>>>; // elementId -> slot -> cosmetic id
+  equippedSkins: Record<string, string>;                   // elementId -> equipped skin id
+  divineNuclei: number;                // Divine Nucleus count — fuel for the Disgraced Lab
+  kingDefeated: boolean;               // true once the Disgraced King has been beaten
+  devourerDefeated: boolean;           // true once the hard-mode Devourer of Kings has been put down
+  devourerChoice: string;              // '' | 'spare' | 'kill' — which ending was taken first
+  bountyRerollOffset: number;          // bumped by a manual bounty refresh, shifts the hourly seed
+  completedBountyKeys: string[];       // "<seed>:<index>" of bounties already cashed in
 }
 
 function load(): SaveData {
@@ -57,7 +63,13 @@ function load(): SaveData {
         masteryEnabled: parsed.masteryEnabled ?? {},
         masteryBinds: parsed.masteryBinds ?? {},
         achievements: parsed.achievements ?? [],
-        equippedCosmetics: parsed.equippedCosmetics ?? {},
+        equippedSkins: parsed.equippedSkins ?? {},
+        divineNuclei: parsed.divineNuclei ?? 0,
+        kingDefeated: parsed.kingDefeated ?? false,
+        devourerDefeated: parsed.devourerDefeated ?? false,
+        devourerChoice: parsed.devourerChoice ?? '',
+        bountyRerollOffset: parsed.bountyRerollOffset ?? 0,
+        completedBountyKeys: parsed.completedBountyKeys ?? [],
       };
       // Sanity: clear equipped perk if no longer unlocked
       for (const el of Object.keys(d.equippedPerks)) {
@@ -70,7 +82,7 @@ function load(): SaveData {
   } catch {
     // corrupted save — start fresh
   }
-  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedCosmetics: {} };
+  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedSkins: {}, divineNuclei: 0, kingDefeated: false, devourerDefeated: false, devourerChoice: '', bountyRerollOffset: 0, completedBountyKeys: [] };
 }
 
 function save(data: SaveData): void {
@@ -172,6 +184,18 @@ export function unlockPerk(elementId: string, perkId: string): void {
 
 export function getUnlockedPerks(elementId: string): string[] {
   return load().unlockedPerks[elementId] ?? [];
+}
+
+/**
+ * Every perk forged in the Lab, summed across all elements. Gates the secret
+ * door on the last Shop page — the door wants a breadth of mastery, not one
+ * element taken far.
+ */
+export function getTotalForgedPerkCount(): number {
+  const perks = load().unlockedPerks;
+  let total = 0;
+  for (const el of Object.keys(perks)) total += (perks[el] ?? []).length;
+  return total;
 }
 
 export function getEquippedPerk(elementId: string): string | null {
@@ -384,7 +408,7 @@ export function clearMasteryBind(elementId: string, slot: string): void {
   save(data);
 }
 
-// ── Achievements + cosmetics ─────────────────────────────────────────
+// ── Achievements + skins ─────────────────────────────────────────────
 
 export function isAchievementUnlocked(id: string): boolean {
   return load().achievements.includes(id);
@@ -403,28 +427,117 @@ export function getUnlockedAchievements(): string[] {
   return load().achievements;
 }
 
-export function getEquippedCosmetic(elementId: string, slot: 'color' | 'sigil'): string | null {
-  return load().equippedCosmetics[elementId]?.[slot] ?? null;
+// ── The Disgraced King ───────────────────────────────────────────────
+
+export function getDivineNuclei(): number {
+  return load().divineNuclei;
 }
 
-export function setEquippedCosmetic(elementId: string, slot: 'color' | 'sigil', cosmeticId: string | null): void {
+export function addDivineNuclei(amount: number): void {
   const data = load();
-  const forElement = { ...(data.equippedCosmetics[elementId] ?? {}) };
-  if (cosmeticId === null) {
-    delete forElement[slot];
-  } else {
-    forElement[slot] = cosmeticId;
-  }
-  data.equippedCosmetics = { ...data.equippedCosmetics, [elementId]: forElement };
+  data.divineNuclei += amount;
   save(data);
 }
 
-/** slot → cosmetic id for one element (only slots with something equipped). */
-export function getEquippedCosmetics(elementId: string): Record<string, string> {
-  const forElement = load().equippedCosmetics[elementId] ?? {};
-  const out: Record<string, string> = {};
-  for (const [slot, id] of Object.entries(forElement)) {
-    if (id) out[slot] = id;
+export function spendDivineNuclei(n: number): boolean {
+  const data = load();
+  if (data.divineNuclei < n) return false;
+  data.divineNuclei -= n;
+  save(data);
+  return true;
+}
+
+export function isKingDefeated(): boolean {
+  return load().kingDefeated;
+}
+
+/** Idempotent. Returns true only on the first kill, so the unlock banner shows once. */
+export function markKingDefeated(): boolean {
+  const data = load();
+  if (data.kingDefeated) return false;
+  data.kingDefeated = true;
+  save(data);
+  return true;
+}
+
+// ── The Devourer of Kings (hard mode) ────────────────────────────────
+
+/**
+ * How many forged perks the second door wants. Three times the first door's
+ * price: hard mode is not a difficulty toggle, it is the end of the game.
+ */
+export const DEVOURER_PERK_REQUIREMENT = 30;
+
+/** The hard fight is only offered once the ordinary one has actually been won. */
+export function isDevourerUnlocked(): boolean {
+  return isKingDefeated() && getTotalForgedPerkCount() >= DEVOURER_PERK_REQUIREMENT;
+}
+
+export function isDevourerDefeated(): boolean {
+  return load().devourerDefeated;
+}
+
+/** '' until the fight has been finished once; then whichever ending was taken. */
+export function getDevourerChoice(): '' | 'spare' | 'kill' {
+  const c = load().devourerChoice;
+  return c === 'spare' || c === 'kill' ? c : '';
+}
+
+/**
+ * Records a finished hard-mode fight and the ending taken. Returns true only on
+ * the first clear, so the results screen can pay the first kill properly.
+ * The choice is only written once — the first ending is the canonical one, but
+ * either element stays unlocked once earned.
+ */
+export function markDevourerDefeated(choice: 'spare' | 'kill'): boolean {
+  const data = load();
+  const first = !data.devourerDefeated;
+  data.devourerDefeated = true;
+  if (!data.devourerChoice) data.devourerChoice = choice;
+  save(data);
+  return first;
+}
+
+export function getBountyRerollOffset(): number {
+  return load().bountyRerollOffset;
+}
+
+/** A paid refresh shifts the seed; completions from the old board are dead keys. */
+export function bumpBountyRerollOffset(): void {
+  const data = load();
+  data.bountyRerollOffset += 1;
+  save(data);
+}
+
+export function isBountyCompleted(key: string): boolean {
+  return load().completedBountyKeys.includes(key);
+}
+
+/**
+ * Records a cashed-in bounty. Keys carry their board's seed, so anything from a
+ * previous board is pruned here rather than accumulating forever.
+ */
+export function markBountyCompleted(key: string, liveSeed: number): void {
+  const data = load();
+  if (data.completedBountyKeys.includes(key)) return;
+  const prefix = `${liveSeed}:`;
+  data.completedBountyKeys = [...data.completedBountyKeys.filter((k) => k.startsWith(prefix)), key];
+  save(data);
+}
+
+/** The one skin equipped on an element, or null for that element's default look. */
+export function getEquippedSkin(elementId: string): string | null {
+  return load().equippedSkins[elementId] ?? null;
+}
+
+export function setEquippedSkin(elementId: string, skinId: string | null): void {
+  const data = load();
+  const next = { ...data.equippedSkins };
+  if (skinId === null) {
+    delete next[elementId];
+  } else {
+    next[elementId] = skinId;
   }
-  return out;
+  data.equippedSkins = next;
+  save(data);
 }

@@ -10,12 +10,12 @@ import { AvatarSpec, ArmHold, ArmPose, BaseAvatar, ColorFn, FxBase, TAU, easeIn,
  * ElementVisuals.ts and are shared with the other elements. What stays here is what makes light
  * light: the prism shard, the chromatic split it throws, and everything built out of them.
  *
- * Every structural colour must come from the LIGHT palette below. Light has no colour-slot
- * cosmetic yet, but every call still routes through the owner's `lightColor` mapper, so the day
- * one lands it is a table edit in CosmeticsKit rather than a sweep through this file.
+ * Every structural colour must come from the LIGHT palette below. Light has no skin yet,
+ * but every call still routes through the owner's `lightColor` mapper, so the day
+ * one lands it is a table edit in SkinsKit rather than a sweep through this file.
  */
 
-/** `(base) => displayed` — CosmeticsKit.lightColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.lightColor bound to one owner. */
 export type LightColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';
@@ -39,6 +39,9 @@ export const LIGHT = {
   prismR: 0xff3355,
   prismG: 0x33ff66,
   prismB: 0x3399ff,
+  /** The Aurora perk's curtain — the only two colours in the kit that aren't heat or glass. */
+  auroraGreen: 0x44ffaa,
+  auroraViolet: 0x9955ff,
   /** Ramps, blinks and anything made of cold glass. */
   cyan: 0x66ddff,
   sky: 0x88ddff,
@@ -525,6 +528,64 @@ export class LightFx extends FxBase {
   }
 
   /** A light streak left across the arena — a beam that lingers and still bites. */
+  /**
+   * Aurora (perk): a ring of curtain hanging around the caster.
+   *
+   * Each panel is a tall ribbon whose lateral wave travels *upward* over time, which is what
+   * makes a stack of sine bands read as an aurora rather than as a row of flags — real curtains
+   * ripple along their length, not side to side. Panels fade out at the top and are drawn back
+   * to front around the ellipse, so the far side of the ring sits behind the near side.
+   *
+   * `surge` (0–1) is the hit response: the curtain climbs, brightens and shifts violet.
+   */
+  static drawAurora(
+    g: Phaser.GameObjects.Graphics, tint: LightColorFn,
+    x: number, y: number, t: number, surge = 0,
+  ): void {
+    const PANELS = 9;
+    const rx = 40 + surge * 8;
+    const ry = 15 + surge * 3;
+    const height = 52 + surge * 40;
+
+    // Back half first (sin a < 0 sits further away), so the ring closes around the caster.
+    const order = Array.from({ length: PANELS }, (_, i) => i)
+      .sort((a, b) => Math.sin((a / PANELS) * TAU) - Math.sin((b / PANELS) * TAU));
+
+    for (const i of order) {
+      const a = (i / PANELS) * TAU + t * 0.22;
+      const bx = x + Math.cos(a) * rx;
+      const by = y + Math.sin(a) * ry + 12;
+      // Depth cue: panels at the back are shorter and dimmer than the ones in front.
+      const near = (Math.sin(a) + 1) / 2;
+      const h = height * (0.68 + near * 0.32);
+      const base = 0.16 + near * 0.16 + surge * 0.3;
+
+      const segs = 9;
+      const left: Pt[] = [];
+      const right: Pt[] = [];
+      for (let s = 0; s <= segs; s++) {
+        const f = s / segs;
+        // The ripple climbs the panel: phase runs with height, not with x.
+        const wave = Math.sin(f * 3.1 - t * 2.4 + i * 1.3) * (5 + f * 9) * (1 + surge * 0.5);
+        const halfW = (7 + near * 4) * (1 - f * 0.45);
+        const px = bx + wave;
+        const py = by - h * f;
+        left.push({ x: px - halfW, y: py });
+        right.push({ x: px + halfW, y: py });
+      }
+      const band = right.concat(left.slice().reverse());
+
+      g.fillStyle(tint(mixColor(LIGHT.auroraGreen, LIGHT.auroraViolet, 0.5 + 0.5 * Math.sin(a * 2 + t))), base * 0.5);
+      fillPts(g, band.map((p) => ({ x: p.x, y: p.y })));
+      // Bright core up the middle — the fold in the curtain that catches the light.
+      g.lineStyle(2.2, tint(mixColor(LIGHT.auroraGreen, LIGHT.white, 0.35 + surge * 0.4)), base * 1.5);
+      strokePts(g, left.map((p, s) => ({ x: (p.x + right[s].x) / 2, y: p.y })));
+      // Foot glow where the curtain meets the ground.
+      g.fillStyle(tint(LIGHT.auroraGreen), base * 0.55);
+      g.fillEllipse(bx, by, 13, 4.5);
+    }
+  }
+
   static drawStreak(
     g: Phaser.GameObjects.Graphics, tint: LightColorFn,
     x1: number, y1: number, x2: number, y2: number, width: number,

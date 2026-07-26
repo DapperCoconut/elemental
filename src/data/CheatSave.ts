@@ -12,6 +12,7 @@ import { RECIPES } from './Recipes';
 import { ABSTRACT_ELEMENT_IDS, ABSTRACT_MIX_ELEMENT_IDS } from './AbstractElements';
 import { ALL_UPGRADES } from './Upgrades';
 import { ALL_PERKS } from './Perks';
+import { DIVINE_PERKS } from './DivinePerks';
 import { MUTATIONS } from './Mutations';
 import { MASTERY_DEFS, MASTERY_SLOTS } from './Mastery';
 import { WORLDS, getFightNodes } from './Worlds';
@@ -46,6 +47,7 @@ function maxOutCurrentProfile(): void {
   PlayerData.addShards(MAX_SHARDS - PlayerData.getShards());
   PlayerData.addCorruptShards(MAX_SHARDS - PlayerData.getCorruptShards());
   PlayerData.addNuclei(MAX_NUCLEI - PlayerData.getNuclei());
+  PlayerData.addDivineNuclei(MAX_NUCLEI - PlayerData.getDivineNuclei());
 
   // ── Lab: max level, then every element ─────────────────────────────
   while (PlayerData.upgradelab()) { /* climbs to the cap, then returns false */ }
@@ -60,12 +62,16 @@ function maxOutCurrentProfile(): void {
   for (const el of ALL_PERKS) {
     for (const perk of el.perks) PlayerData.unlockPerk(el.elementId, perk.id);
   }
+  for (const perk of DIVINE_PERKS) PlayerData.unlockPerk(perk.elementId, perk.id);
+
+  // ── The Disgraced King: door open, laboratory found ────────────────
+  PlayerData.markKingDefeated();
 
   // ── Mutations + secret enemy ───────────────────────────────────────
   for (const m of MUTATIONS) PlayerData.unlockMutation(m.id);
   PlayerData.unlockDummy();
 
-  // ── Achievements (cosmetics unlock with them, not auto-equipped) ───
+  // ── Achievements (skins unlock with them, not auto-equipped) ───
   for (const a of ACHIEVEMENTS) PlayerData.unlockAchievement(a.id);
 
   // ── Gauntlets: normal + hard, all elements ─────────────────────────

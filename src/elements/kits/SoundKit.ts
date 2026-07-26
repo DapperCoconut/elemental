@@ -26,7 +26,7 @@ export interface SoundArenaApi {
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
   buildNpcContext(x: number, y: number): CastContext;
-  /** `(owner, base) => displayed` — the owner's colour cosmetic, or the identity. */
+  /** `(owner, base) => displayed` — the owner's skin, or the identity. */
   soundColor(owner: 'player' | 'npc', base: number): number;
   // ── Mastery ──
   get masteryActive(): boolean;
@@ -37,7 +37,7 @@ export interface SoundArenaApi {
   recordMasteryBestStat(key: string, value: number): void;
 }
 
-type NoteType = 'normal' | 'red' | 'blue' | 'purple';
+type NoteType = 'normal' | 'red' | 'blue' | 'purple' | 'bass';
 
 interface SoundNote {
   /** A container of drawn note art — see `createRhythmNoteSprite`. */
@@ -61,20 +61,42 @@ interface ComposedNote {
   type: NoteType;
 }
 
-const NOTE_DMGS: Record<NoteType, number> = { normal: 20, red: 30, blue: 20, purple: 20 };
-const COMPOSE_COSTS: Record<NoteType, number> = { normal: 1, red: 3, blue: 2, purple: 3 };
+/** Bass fires no wave of its own — its damage is in the charges it lays. */
+const NOTE_DMGS: Record<NoteType, number> = { normal: 20, red: 30, blue: 20, purple: 20, bass: 0 };
+const COMPOSE_COSTS: Record<NoteType, number> = { normal: 1, red: 3, blue: 2, purple: 3, bass: 5 };
 const NOTE_COLORS: Record<NoteType, number> = {
   normal: SOUND.rose,
   red: SOUND.crimson,
   blue: SOUND.flow,
   purple: SOUND.violet,
+  bass: SOUND.aqua,
 };
 const NOTE_TOOLTIPS: Record<NoteType, string> = {
   normal: 'Normal — 20 dmg on hit.',
   red: 'Red — 30 dmg on hit (crit).',
   blue: 'Blue — 20 dmg + slows the enemy 30% for 2s.',
   purple: 'Purple — 20 dmg + grants you +25% speed for 3s.',
+  bass: 'Bass — lays 7 water charges in a line through your cursor, 10 dmg each.',
 };
+
+// ── Bass (Bass perk) ──────────────────────────────────────────────────────
+const BASS_CHARGE_COUNT = 7;
+/** Gap between charges along the aim line. Seven of these span most of the arena's width. */
+const BASS_CHARGE_SPACING = 46;
+const BASS_CHARGE_DAMAGE = 10;
+const BASS_CHARGE_RADIUS = 48;
+/** Fuse on the first charge; each one further out goes off this much later again. */
+const BASS_FUSE_MS = 520;
+const BASS_FUSE_STEP_MS = 70;
+
+/** One water charge laid down by a struck Bass note. */
+interface BassCharge {
+  x: number;
+  y: number;
+  owner: 'player' | 'npc';
+  armedAt: number;
+  explodeAt: number;
+}
 /**
  * F+ Grace Notes: how many times a note-timed grapple hands the cooldown straight back.
  * Two refreshes means three grapples land in a row and the third one finally starts the
@@ -182,7 +204,7 @@ const CAST_GESTURES: Record<string, ArmGesture> = {
 
 export class SoundKit {
   // ── Visuals ─────────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a skin recolours one side. */
   private readonly pcol: SoundColorFn;
   private readonly ncol: SoundColorFn;
   private readonly pfx: SoundFx;
@@ -295,6 +317,9 @@ export class SoundKit {
   // ── Q+ crescendo speed (reserved for a future Solo+) ──────────────────
   private soundCrescendoSpeedUntil = 0;
   private soundCrescendoSpeedBonus = 0;
+
+  // ── Bass (perk): water charges in flight ──────────────────────────────
+  private bassCharges: BassCharge[] = [];
 
   // ── Purple/blue note effects ──────────────────────────────────────────
   private soundComposeSpeedUntil = 0;
@@ -460,6 +485,8 @@ export class SoundKit {
     this.soundComposeSpeedBonus = 0;
     this.soundNpcSlowUntil = 0;
 
+    this.bassCharges = [];
+
     this.harmonyGrenade = null;
     this.harmonyGrenadeExplodeAt = 0;
     this.harmonyGrenadeArmedAt = 0;
@@ -578,8 +605,13 @@ export class SoundKit {
           if (tgt) { aimX = tgt.x; aimY = tgt.y; }
         }
         const shotColor = NOTE_COLORS[hitNote.noteType];
-        this.soundHitscan('player', player.x, player.y, aimX, aimY, hitNote.damage, shotColor,
-          hitNote.isRed ? 1.5 : 1);
+        if (hitNote.noteType === 'bass') {
+          // Bass doesn't fire down the lane — it lays the lane.
+          this.layBassRow(time, player.x, player.y, aimX, aimY);
+        } else {
+          this.soundHitscan('player', player.x, player.y, aimX, aimY, hitNote.damage, shotColor,
+            hitNote.isRed ? 1.5 : 1);
+        }
         this.strumT = 0;
         this.playerAvatar?.play('punch', Math.atan2(aimY - player.y, aimX - player.x));
         this.soundNoteStreak++;
@@ -907,6 +939,7 @@ export class SoundKit {
     // Caravans carry an owner and can belong to either side, so they tick on both sims.
     this.updateCaravans(time, delta);
     this.updateCaravanShoves(time);
+    this.updateBassCharges(time);
     if (isPlayerSound) this.updatePlayerSound(time, delta);
     if (isNpcSound) {
       this.updateNpcScreech(time, delta);
@@ -923,7 +956,8 @@ export class SoundKit {
    */
   private paintWorld(time: number): void {
     const anyBarrier = time < this.soundScreechExpiry || time < this.npcSoundScreechExpiry;
-    const anyAir = this.harmonyGrenade !== null || this.soundHoldBeamTo !== null || this.bugles.length > 0;
+    const anyAir = this.harmonyGrenade !== null || this.soundHoldBeamTo !== null
+      || this.bugles.length > 0 || this.bassCharges.length > 0;
 
     if (anyBarrier || this.groundGfx) {
       const g = this.ground();
@@ -956,6 +990,8 @@ export class SoundKit {
           : 0;
         SoundFx.drawGrenade(g, this.pcol, this.harmonyGrenade.x, this.harmonyGrenade.y, this.vizT, fuse);
       }
+      // Bass charges sit on the floor but must be seen over the fighters standing on them.
+      this.paintBassCharges(g, time);
       // The sustain beam opened by a green hold note.
       const beamTo = this.soundHoldBeamTo;
       if (beamTo?.active && beamTo.hp > 0) {
@@ -1432,6 +1468,70 @@ export class SoundKit {
     }
   }
 
+  // ── Bass (perk) ───────────────────────────────────────────────────────
+
+  /**
+   * Lay a row of water charges along the line from the caster through the cursor, centred on
+   * the cursor, so the row covers both the ground short of where you pointed and the ground
+   * past it. They go off from the near end outward, which makes the row read as a wave rolling
+   * away from you rather than as seven simultaneous puffs.
+   */
+  private layBassRow(time: number, sx: number, sy: number, tx: number, ty: number): void {
+    const W = this.arena.width;
+    const H = this.arena.height;
+    const dx = tx - sx;
+    const dy = ty - sy;
+    const len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len;
+    const uy = dy / len;
+    const half = (BASS_CHARGE_COUNT - 1) / 2;
+
+    for (let i = 0; i < BASS_CHARGE_COUNT; i++) {
+      const off = (i - half) * BASS_CHARGE_SPACING;
+      const cx = Phaser.Math.Clamp(tx + ux * off, 16, W - 16);
+      const cy = Phaser.Math.Clamp(ty + uy * off, 16, H - 16);
+      this.bassCharges.push({
+        x: cx, y: cy, owner: 'player',
+        armedAt: time,
+        explodeAt: time + BASS_FUSE_MS + i * BASS_FUSE_STEP_MS,
+      });
+      // Each charge lands with a splash of its own, so the row is visibly *laid*.
+      this.pfx.ripple(cx, cy, 4, 20, SOUND.aqua, 260, 2.4, 8, 6);
+    }
+    this.pfx.waveBurst(sx, sy, Math.atan2(dy, dx), 1.3, 10, SOUND.aqua);
+    this.arena.showFloatingText(sx, sy - 40, '🎵 BASS DROP', '#88ddff');
+  }
+
+  /** Fuses tick down; anything still in the blast when one comes due takes it. */
+  private updateBassCharges(time: number): void {
+    for (let i = this.bassCharges.length - 1; i >= 0; i--) {
+      const c = this.bassCharges[i];
+      if (time < c.explodeAt) continue;
+      this.bassCharges.splice(i, 1);
+
+      const fx = this.fx(c.owner);
+      fx.boom(c.x, c.y, BASS_CHARGE_RADIUS, { color: SOUND.aqua, petals: 7, notes: 3, duration: 380 });
+      fx.ripple(c.x, c.y, 8, BASS_CHARGE_RADIUS, SOUND.foam, 340, 3.5, 7, 7);
+
+      const targets = c.owner === 'player' ? this.arena.enemies : [this.arena.player];
+      for (const t of targets) {
+        if (!t.active || t.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(c.x, c.y, t.x, t.y) > BASS_CHARGE_RADIUS) continue;
+        t.takeDamage(BASS_CHARGE_DAMAGE, { source: c, sourceX: c.x, sourceY: c.y });
+        fx.waveBurst(t.x, t.y, Math.atan2(t.y - c.y, t.x - c.x), 0.8, 7, SOUND.foam);
+      }
+    }
+  }
+
+  /** Every live charge repainted in one pass, each with its own fuse ring. */
+  private paintBassCharges(g: Phaser.GameObjects.Graphics, time: number): void {
+    for (const c of this.bassCharges) {
+      const total = c.explodeAt - c.armedAt;
+      const fuse = total > 0 ? Phaser.Math.Clamp((c.explodeAt - time) / total, 0, 1) : 0;
+      SoundFx.drawBassCharge(g, this.col(c.owner), c.x, c.y, this.vizT, fuse);
+    }
+  }
+
   /**
    * F+ Grace Notes, run after a note-timed grapple lands. The first two of a chain hand
    * the cooldown straight back; the third gets nothing, so the chain closes on exactly
@@ -1706,7 +1806,16 @@ export class SoundKit {
     const W = this.arena.width;
     const cy = 40;
 
-    const panel = scene.add.rectangle(W / 2, cy, 300, 54, SOUND.night, 0.95)
+    // Bass (perk) is a fifth token, so the panel has to grow to hold it.
+    const types: NoteType[] = this.arena.hasPerk('player', 'bass')
+      ? ['normal', 'red', 'blue', 'purple', 'bass']
+      : ['normal', 'red', 'blue', 'purple'];
+    const labels: Record<NoteType, string> = {
+      normal: 'N', red: 'R', blue: 'B', purple: 'P', bass: 'BASS',
+    };
+    const panelW = 300 + (types.length - 4) * 60;
+
+    const panel = scene.add.rectangle(W / 2, cy, panelW, 54, SOUND.night, 0.95)
       .setStrokeStyle(2, SOUND.magenta, 0.8).setDepth(50);
     this.soundComposePalette.push(panel);
 
@@ -1716,15 +1825,12 @@ export class SoundKit {
     }).setOrigin(0.5, 0).setDepth(53).setVisible(false).setName('composeTooltip');
     this.soundComposePalette.push(tooltip);
 
-    const types: NoteType[] = ['normal', 'red', 'blue', 'purple'];
-    const costs = [1, 3, 2, 3] as const;
-    const labels = ['N', 'R', 'B', 'P'] as const;
-    const startX = W / 2 - 100;
+    const startX = W / 2 - (types.length - 1) * 30;
 
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < types.length; i++) {
       const nx = startX + i * 60;
       const noteType = types[i];
-      const cost = costs[i];
+      const cost = COMPOSE_COSTS[noteType];
       const color = NOTE_COLORS[noteType];
 
       const token = scene.add.rectangle(nx, cy - 6, 20, 18, color, 0.9).setDepth(52);
@@ -1792,14 +1898,15 @@ export class SoundKit {
 
       this.soundComposePalette.push(token);
 
-      const lbl = scene.add.text(nx, cy + 7, `${labels[i]}(${cost})`, {
+      const lbl = scene.add.text(nx, cy + 7, `${labels[noteType]}(${cost})`, {
         fontSize: '8px', color: '#ccaadd', fontFamily: 'Arial',
       }).setOrigin(0.5).setDepth(52);
       this.soundComposePalette.push(lbl);
     }
 
-    // Composure counter label
-    const compLabel = scene.add.text(W / 2 + 120, cy, `${this.soundComposurePoints}/20`, {
+    // Composure counter label, pinned to the panel's inner edge so a wider panel doesn't
+    // leave it sitting on top of the last token.
+    const compLabel = scene.add.text(W / 2 + panelW / 2 - 8, cy, `${this.soundComposurePoints}/20`, {
       fontSize: '10px', color: '#ffaadd', fontFamily: 'Arial Black',
     }).setOrigin(1, 0.5).setDepth(52).setName('composeLabel');
     this.soundComposePalette.push(compLabel);

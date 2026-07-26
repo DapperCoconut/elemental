@@ -30,6 +30,10 @@ export interface InvasionArenaApi {
   plantTargets(): Fighter[];
   /** Player upgrade check, for on-hit status gates (e.g. fire's Flameshredder). */
   hasUpgrade(slot: string): boolean;
+  /** The local player's element id — gates the element-specific wave achievements. */
+  get elementId(): string;
+  /** Idempotent achievement unlock with in-arena popup. */
+  unlockAchievement(id: string): void;
   /**
    * Apply one frost stack to an arbitrary fighter. ArenaScene's own
    * addFrostStack() only speaks 'player' | 'npc', and a husk is neither.
@@ -49,6 +53,9 @@ export interface InvasionArenaApi {
 
 const INTERMISSION_MS = 3000;
 const FIRST_WAVE_DELAY_MS = 2500;
+
+/** Wave a Life player must clear for the Plants vs Zombies achievement (and the Wither skin). */
+const PLANTS_VS_ZOMBIES_WAVE = 8;
 
 /** Husk projectiles (spitter/ranger shots). */
 const SHOT_SPEED = 290;
@@ -285,6 +292,10 @@ export class InvasionKit implements HuskWorld {
       this.arena.showFloatingText(player.x, player.y - 50, `WAVE ${this.wave} CLEARED  +${bonus} 🩸`, '#88ff44');
       this.intermissionUntil = time + INTERMISSION_MS;
       this.coopHooks?.onWaveCleared(this.wave, bonus);
+      // Achievement — Plants vs Zombies: hold the line to wave 8 with a garden.
+      if (this.wave >= PLANTS_VS_ZOMBIES_WAVE && this.arena.elementId === 'life') {
+        this.arena.unlockAchievement('plants-vs-zombies');
+      }
     }
 
     // Intermission over → next wave

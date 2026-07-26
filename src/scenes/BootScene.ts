@@ -2128,6 +2128,181 @@ export class BootScene extends Phaser.Scene {
       gfx.clear();
     }
 
+    // Disgraced Knight — the Disgraced King's summon. Not an invasion variant
+    // (it never rolls in a wave), so it is baked here by hand: black plate over
+    // a rotted body, a slit-visored great helm lit cold from inside, heavy
+    // pauldrons and a notched blade held across the chest.
+    gfx.fillStyle(0x08060e, 0.5);
+    gfx.fillEllipse(24, 44, 30, 8); // ground shadow
+    // Torso plate, lit from the upper left so the armour reads as curved metal.
+    gfx.fillStyle(0x14101c, 1);
+    gfx.fillCircle(24, 25, 17);
+    gfx.fillStyle(0x241d33, 1);
+    gfx.fillCircle(22, 23, 14);
+    gfx.fillStyle(0x342a49, 1);
+    gfx.fillCircle(20, 21, 9);
+    // Pauldrons — fluted half-discs sitting proud of the torso.
+    gfx.fillStyle(0x1a1526, 1);
+    gfx.fillEllipse(9, 20, 13, 16);
+    gfx.fillEllipse(39, 20, 13, 16);
+    gfx.lineStyle(1, 0x4a3d66, 0.8);
+    gfx.strokeEllipse(9, 20, 13, 16);
+    gfx.strokeEllipse(39, 20, 13, 16);
+    // Great helm, with a cold slit where a face should be.
+    gfx.fillStyle(0x0d0a14, 1);
+    gfx.fillEllipse(24, 15, 22, 20);
+    gfx.lineStyle(2, 0x4a3d66, 0.9);
+    gfx.strokeEllipse(24, 15, 22, 20);
+    gfx.fillStyle(0xb9a3ff, 0.95);
+    gfx.fillRect(16, 14, 16, 3);
+    gfx.fillStyle(0xe8dcff, 1);
+    gfx.fillRect(17, 15, 5, 1.5);
+    gfx.fillRect(26, 15, 5, 1.5);
+    // Blade across the chest — a notched edge catching the same cold light.
+    gfx.lineStyle(3, 0x2c2440, 1);
+    gfx.lineBetween(11, 38, 37, 26);
+    gfx.lineStyle(1.5, 0x8a76bb, 0.9);
+    gfx.lineBetween(12, 37, 36, 26);
+    gfx.generateTexture('husk-knight', 48, 48);
+    gfx.clear();
+
+    // Disgraced Herald — the knight's ranged cousin. Robed rather than plated,
+    // with a hooded skull, a tall standard over one shoulder and a lantern of
+    // cold fire held out front (the thing it actually throws at you).
+    gfx.fillStyle(0x08060e, 0.5);
+    gfx.fillEllipse(24, 44, 26, 7);
+    // Standard: a pole with a torn banner, planted behind the body.
+    gfx.lineStyle(2, 0x3a2f52, 1);
+    gfx.lineBetween(37, 42, 33, 5);
+    gfx.fillStyle(0x2a1240, 1);
+    gfx.fillTriangle(33, 7, 45, 11, 33, 22);
+    gfx.lineStyle(1, 0xb9a3ff, 0.7);
+    gfx.lineBetween(33, 7, 45, 11);
+    gfx.fillStyle(0xffc44d, 0.85);
+    gfx.fillCircle(33, 5, 2.5);
+    // Robe — a bell with a lit hem.
+    gfx.fillStyle(0x171226, 1);
+    gfx.fillTriangle(10, 43, 30, 43, 20, 14);
+    gfx.fillStyle(0x241d33, 1);
+    gfx.fillTriangle(13, 42, 26, 42, 20, 17);
+    gfx.lineStyle(1, 0x6a58a0, 0.7);
+    gfx.lineBetween(10, 43, 30, 43);
+    // Hood and the skull inside it.
+    gfx.fillStyle(0x0d0a14, 1);
+    gfx.fillEllipse(20, 15, 20, 21);
+    gfx.fillStyle(0x06040a, 1);
+    gfx.fillEllipse(20, 16, 13, 15);
+    gfx.fillStyle(0xb9a3ff, 0.95);
+    gfx.fillCircle(17, 15, 2.4);
+    gfx.fillCircle(23, 15, 2.4);
+    // Lantern of cold fire, held out at arm's length.
+    gfx.lineStyle(2, 0x2c2440, 1);
+    gfx.lineBetween(20, 26, 9, 28);
+    gfx.fillStyle(0x7b3fd4, 0.5);
+    gfx.fillCircle(8, 30, 7);
+    gfx.fillStyle(0xb9a3ff, 1);
+    gfx.fillCircle(8, 30, 4);
+    gfx.fillStyle(0xe8dcff, 1);
+    gfx.fillCircle(7, 29, 1.6);
+    gfx.generateTexture('husk-herald', 48, 48);
+    gfx.clear();
+
+    // Disgraced Lancer — the charger. Same plate as the knight, but leaned
+    // forward behind a couched lance, with a spur of speed lines off the heel.
+    gfx.fillStyle(0x08060e, 0.5);
+    gfx.fillEllipse(24, 44, 30, 8);
+    // Speed lines trailing the rear.
+    gfx.lineStyle(2, 0x4a3d66, 0.55);
+    gfx.lineBetween(2, 20, 12, 22);
+    gfx.lineBetween(1, 28, 11, 29);
+    gfx.lineBetween(4, 35, 13, 35);
+    // Body, hunched forward to the right.
+    gfx.fillStyle(0x14101c, 1);
+    gfx.fillEllipse(22, 27, 30, 26);
+    gfx.fillStyle(0x241d33, 1);
+    gfx.fillEllipse(20, 25, 22, 19);
+    gfx.fillStyle(0x342a49, 1);
+    gfx.fillEllipse(18, 23, 13, 11);
+    // Single heavy pauldron on the leading shoulder.
+    gfx.fillStyle(0x1a1526, 1);
+    gfx.fillEllipse(30, 20, 15, 17);
+    gfx.lineStyle(1, 0x4a3d66, 0.85);
+    gfx.strokeEllipse(30, 20, 15, 17);
+    // Sallet helm, visor forward.
+    gfx.fillStyle(0x0d0a14, 1);
+    gfx.fillEllipse(24, 13, 21, 17);
+    gfx.lineStyle(2, 0x4a3d66, 0.9);
+    gfx.strokeEllipse(24, 13, 21, 17);
+    gfx.fillStyle(0xff8899, 0.95);
+    gfx.fillRect(19, 12, 13, 2.5);
+    // The lance: a long tapered shaft with a bright head, couched under the arm.
+    gfx.lineStyle(4, 0x2c2440, 1);
+    gfx.lineBetween(8, 36, 40, 22);
+    gfx.lineStyle(1.5, 0x8a76bb, 0.9);
+    gfx.lineBetween(9, 35, 39, 22);
+    gfx.fillStyle(0xd8c4ff, 1);
+    gfx.fillTriangle(40, 18, 47, 23, 38, 26);
+    gfx.fillStyle(0x2a1240, 1);
+    gfx.fillCircle(18, 32, 4); // vamplate
+    gfx.generateTexture('husk-lancer', 48, 48);
+    gfx.clear();
+
+    // Brood — the Devourer's spawn, and the only hard-mode summon. Not a plated
+    // thing at all: a wet, segmented grub with a lamprey mouth at the front and
+    // a fringe of legs, so a screen of them reads as vermin rather than as more
+    // soldiers. Drawn small in the frame because its variant scales to 0.8.
+    gfx.fillStyle(0x08040a, 0.5);
+    gfx.fillEllipse(24, 40, 26, 7); // ground shadow
+    // Body — four overlapping segments tapering back, lit along the top.
+    for (let i = 0; i < 4; i++) {
+      const bx = 30 - i * 6;
+      const r = 11 - i * 1.6;
+      gfx.fillStyle(i % 2 === 0 ? 0x5a1e33 : 0x4a1628, 1);
+      gfx.fillCircle(bx, 24 + i * 1.5, r);
+      gfx.fillStyle(0x8a3550, 0.8);
+      gfx.fillEllipse(bx - 1, 20 + i * 1.5, r * 0.9, r * 0.5);
+    }
+    // Legs — a fringe down both flanks.
+    gfx.lineStyle(1.5, 0x2a0c18, 1);
+    for (let i = 0; i < 4; i++) {
+      const bx = 29 - i * 6;
+      gfx.lineBetween(bx, 30 + i, bx - 3, 36 + i);
+      gfx.lineBetween(bx, 18 + i, bx - 3, 12 + i);
+    }
+    // Head — a ring mouth of teeth, wide open and pointing forward.
+    gfx.fillStyle(0x2a0c18, 1);
+    gfx.fillCircle(35, 23, 9);
+    gfx.fillStyle(0x06030a, 1);
+    gfx.fillCircle(36, 23, 5.5);
+    gfx.fillStyle(0xe9f4ec, 1);
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      gfx.fillTriangle(
+        36 + Math.cos(a - 0.22) * 8, 23 + Math.sin(a - 0.22) * 8,
+        36 + Math.cos(a + 0.22) * 8, 23 + Math.sin(a + 0.22) * 8,
+        36 + Math.cos(a) * 3, 23 + Math.sin(a) * 3,
+      );
+    }
+    // Two pale eyespots back on the first segment.
+    gfx.fillStyle(0xbdfff0, 0.95);
+    gfx.fillCircle(28, 20, 2);
+    gfx.fillCircle(28, 27, 2);
+    gfx.generateTexture('husk-larva', 48, 48);
+    gfx.clear();
+
+    // Disgraced King body sprite. The fight draws the mech and the King itself
+    // per-frame in Graphics — this texture only backs the invisible hitbox that
+    // sits in ArenaScene's npc slot, so it just has to exist and be the right size.
+    gfx.fillStyle(0x2a1240, 1);
+    gfx.fillCircle(24, 24, 21);
+    gfx.lineStyle(3, 0x7b4bc4, 1);
+    gfx.strokeCircle(24, 24, 21);
+    gfx.fillStyle(0xd8c4ff, 1);
+    gfx.fillCircle(18, 21, 3.5);
+    gfx.fillCircle(30, 21, 3.5);
+    gfx.generateTexture('elem-king', 48, 48);
+    gfx.clear();
+
     // Soul — grave headstone: a weathered, chipped slab leaning slightly, with a carved cross
     // cut into its face, moss down the shaded side and a turned mound of dirt at its foot.
     gfx.fillStyle(0x1c1424, 0.55);

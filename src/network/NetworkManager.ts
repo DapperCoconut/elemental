@@ -3,7 +3,7 @@ import type { InvasionFx, HuskStatus } from '../invasion/InvasionKit';
 import type { NetStatusEntry } from './NetStatusSync';
 
 /** Bump when the wire protocol or gameplay sync changes incompatibly. */
-export const NET_PROTOCOL_VERSION = 11;
+export const NET_PROTOCOL_VERSION = 12;
 
 /** Lobby selection payload exchanged while both players pick loadouts. */
 export interface NetSelection {
@@ -15,8 +15,8 @@ export interface NetSelection {
   masteryBinds: Record<string, string>;
   /** Whether Element Mastery is enabled for the selected element (drives passives too). */
   masteryOn: boolean;
-  /** Equipped cosmetics for the selected element (slot → cosmetic id), rendered by the peer. */
-  cosmetics: Record<string, string>;
+  /** Equipped skin id for the selected element (null = default look), rendered by the peer. */
+  skin: string | null;
   ready: boolean;
 }
 
@@ -72,14 +72,14 @@ export type NetMatchMode = 'pvp' | 'invasion';
 
 export type NetMsg =
   | { t: 'hello'; version: number }
-  | { t: 'sel'; elementId: string | null; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; cosmetics?: Record<string, string>; ready: boolean }
+  | { t: 'sel'; elementId: string | null; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; skin?: string | null; ready: boolean }
   | { t: 'mode'; mode: NetMatchMode; invasionDifficulty: string }
   | {
       t: 'start';
       mode: NetMatchMode;
       invasionDifficulty?: string;
-      hostSel: { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; cosmetics?: Record<string, string> };
-      guestSel: { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; cosmetics?: Record<string, string> };
+      hostSel: { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; skin?: string | null };
+      guestSel: { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; skin?: string | null };
     }
   // inv/fa/st: Silence remaster — invisibility flag, facing angle (radians), stealth meter.
   // dm/fr/dc: the sender's own damage reduction, cap and flat soak, applied by the peer's

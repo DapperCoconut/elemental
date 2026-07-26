@@ -2,7 +2,7 @@ import { Element } from './Element';
 import { Ability, CastContext } from './Ability';
 import { AIR, AirFx } from './kits/AirVisuals';
 
-/** Effects painter bound to whoever is casting (so a future colour cosmetic recolours their air). */
+/** Effects painter bound to whoever is casting (so a future skin recolours their air). */
 function fx(ctx: CastContext): AirFx {
   return new AirFx(ctx.scene, ctx.airColor);
 }
@@ -172,15 +172,19 @@ const airSnipe: Ability = {
   displayKey: 'Click',
   cooldown: 2000,
   cast(ctx) {
+    // Storm perk: the charge earthed out of your own weather rides this shot in at electro
+    // power. It is still a shot that has to be drawn — only the damage changes.
+    const dmg = ctx.airStormShot ? 45 : 30;
+    const col = ctx.airStormShot ? AIR.charge : AIR.frost;
     if (ctx.quickShotActive) {
-      fireHitscan(ctx, 30, AIR.frost, true);
+      fireHitscan(ctx, dmg, col, true);
     } else {
       ctx.lockCaster(500);
       // Half a second of drawing the air back into the hands before it is let go. Pinned to
       // the cast origin rather than the caster: the shot leaves from here even with Swift Aim
       // unrooting the charge, so a following gather would promise a muzzle that never fires.
       fx(ctx).channelCharge(ctx.casterX, ctx.casterY, 68, 500);
-      ctx.scene.time.delayedCall(500, () => fireHitscan(ctx, 30, AIR.frost, true));
+      ctx.scene.time.delayedCall(500, () => fireHitscan(ctx, dmg, col, true));
     }
   },
 };

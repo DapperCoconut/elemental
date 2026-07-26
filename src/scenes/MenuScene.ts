@@ -6,13 +6,14 @@ import { clearConsumedItems } from '../data/Items';
 import * as PlayerData from '../data/PlayerData';
 import { applyKonamiCheat } from '../data/CheatSave';
 import { getPerksForElement, getPerkById, ALL_PERKS } from '../data/Perks';
-import { CosmeticSlot, COSMETIC_SLOTS, getCosmeticsForElement, isCosmeticUnlocked, cosmeticUnlockHint } from '../data/Cosmetics';
+import { getSkinsForElement, isSkinUnlocked, skinUnlockHint } from '../data/Skins';
 import { getAbilityVariants } from '../data/AbilityVariants';
 import {
   getMasteryDef, isMasteryComplete, MasteryRequirement,
   getBindableEnhancements, getEnhancement, MASTERY_SLOTS, MasterySlot, MasteryEnhancement,
 } from '../data/Mastery';
 import { INVASION_DIFFICULTIES, InvasionDifficultyId } from '../invasion/InvasionKit';
+import { Bounty, difficultyLabel } from '../data/Bounties';
 import { FATE_CARD_DEFS } from '../elements/kits/FateKit';
 
 import { Element } from '../elements/Element';
@@ -47,6 +48,8 @@ import { silenceElement } from '../elements/silence';
 import { echoElement } from '../elements/quantum';
 import { quantumElement } from '../elements/quantum-element';
 import { dummyElement } from '../elements/dummy';
+import { justiceElement } from '../elements/justice';
+import { dreamElement } from '../elements/dream';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackdrop, addBackButton, addButton, addCardPlate, addIconButton, addOverlayChrome,
@@ -74,6 +77,10 @@ const ELEMENT_DATA_MAP: Record<string, Element> = {
   echo: echoElement,
   quantum: quantumElement,
   dummy: dummyElement,
+  // Kit-less for now, but their info panels are the whole point of unlocking
+  // them — leaving these out would make the ℹ button on the card do nothing.
+  justice: justiceElement,
+  dream: dreamElement,
 };
 
 export interface ElementDef {
@@ -122,6 +129,21 @@ export const ABSTRACT_ELEMENTS: ElementDef[] = [
   { id: 'light', name: 'Light', emoji: '✨', color: 0xfff4a8, available: true },
 ];
 
+/**
+ * The two endings of the Devourer of Kings. Killing it grants Justice, sparing
+ * it grants Dream — one run can only ever take one ending, so most saves will
+ * only ever show one of these.
+ *
+ * Both are `available: false` on purpose: the elements are real, registered and
+ * persisted, and their info panels are worth reading, but neither has a kit yet.
+ * Marking them unavailable is what stops a card the player has genuinely earned
+ * from dropping them into a fight with nothing behind it.
+ */
+export const DIVINE_ELEMENTS: ElementDef[] = [
+  { id: 'justice', name: 'Justice', emoji: '⚖️', color: 0xf0d68a, available: false },
+  { id: 'dream',   name: 'Dream',   emoji: '🌙', color: 0x9fb8ff, available: false },
+];
+
 /** Abstract combined elements — created by fusing two abstract elements in a Lvl 1+ Lab. */
 export const ABSTRACT_COMBINED_ELEMENTS: ElementDef[] = [
   { id: 'magnet', name: 'Magnet', emoji: '🧲', color: 0xcc2244, available: true },
@@ -147,6 +169,15 @@ export class MenuScene extends Phaser.Scene {
   private enemyChoice: string | null = null;
   private elemPage = 0;
   private isInvasion = false;
+  /**
+   * The Disgraced content reuses this screen rather than carrying its own
+   * element picker — masteries, skins, perks and the info panels all live here,
+   * and a secret fight should still be loaded out like any other.
+   */
+  private isBoss = false;
+  /** The Devourer of Kings — the hard mode behind the same door. */
+  private isBossHard = false;
+  private bounty: Bounty | null = null;
   private invasionDifficultyId: InvasionDifficultyId = 'normal';
   // Preserves scroll position across showCustomizeScreen rebuilds triggered by toggles/equips.
   private customizeScrollY = 0;
@@ -173,8 +204,13 @@ export class MenuScene extends Phaser.Scene {
     super({ key: 'MenuScene' });
   }
 
-  create(data?: { mode?: string }): void {
+  create(data?: { mode?: string; bounty?: Bounty; hard?: boolean }): void {
     this.isInvasion = data?.mode === 'invasion';
+    this.isBoss = data?.mode === 'boss';
+    // Guarded rather than trusted: the door is the only way in, but a stale
+    // scene payload must never open hard mode for a save that has not earned it.
+    this.isBossHard = this.isBoss && data?.hard === true && PlayerData.isDevourerUnlocked();
+    this.bounty = data?.mode === 'bounty' ? (data.bounty ?? null) : null;
     this.invasionDifficultyId = 'normal';
     clearMutationSelection();
     clearConsumedItems();
@@ -188,10 +224,22 @@ export class MenuScene extends Phaser.Scene {
     const cx = width / 2;
 
     // ── Persistent chrome ──────────────────────────────────────────
-    const sceneAccent = this.isInvasion ? C.corrupt : C.ember;
-    addBackdrop(this, { accent: sceneAccent, variant: 'lattice', motes: 20 });
+    const isDisgraced = this.isBoss || !!this.bounty;
+    const sceneAccent = this.isInvasion || this.isBoss ? C.corrupt
+      : this.bounty ? C.gold
+      : C.ember;
+    addBackdrop(this, {
+      accent: sceneAccent,
+      variant: this.isBoss ? 'void' : 'lattice',
+      motes: this.isBoss ? 10 : 20,
+    });
 
-    addTitle(this, { x: cx, y: 76, text: 'ELEMENTAL', accent: sceneAccent, size: 54, rule: true });
+    addTitle(this, {
+      x: cx, y: 76,
+      text: this.isBossHard ? 'THE DOOR BEHIND THE DOOR'
+        : this.isBoss ? 'THE SEALED DOOR' : isDisgraced ? 'BOUNTY CONTRACT' : 'ELEMENTAL',
+      accent: sceneAccent, size: this.isBoss ? 46 : isDisgraced ? 44 : 54, rule: true,
+    });
 
     // Footer: controls first, mission statement beneath it.
     const controlsHint = 'WASD MOVE     ·     LMB / E / R / F / Q ABILITIES     ·     SPACE DODGE';
@@ -199,7 +247,12 @@ export class MenuScene extends Phaser.Scene {
       fontSize: '10px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 1.5,
     }).setOrigin(0.5).setDepth(DEPTH.content);
 
-    this.add.text(cx, height - 22, this.isInvasion ? 'Survive as long as you can.' : 'Defeat the enemy to win.', {
+    const mission = this.isInvasion ? 'Survive as long as you can.'
+      : this.isBossHard ? 'Four phases. No heals. One decision at the end of it.'
+      : this.isBoss ? 'Two phases. No second chances.'
+      : this.bounty ? 'Complete the contract to claim its Divine Nuclei.'
+      : 'Defeat the enemy to win.';
+    this.add.text(cx, height - 22, mission, {
       fontSize: '12px', fontFamily: FONT_UI, color: T.ghost,
     }).setOrigin(0.5).setDepth(DEPTH.content);
 
@@ -236,7 +289,8 @@ export class MenuScene extends Phaser.Scene {
     return ELEMENTS.find((e) => e.id === id)
       ?? COMBINED_ELEMENTS.find((e) => e.id === id)
       ?? ABSTRACT_ELEMENTS.find((e) => e.id === id)
-      ?? ABSTRACT_COMBINED_ELEMENTS.find((e) => e.id === id);
+      ?? ABSTRACT_COMBINED_ELEMENTS.find((e) => e.id === id)
+      ?? DIVINE_ELEMENTS.find((e) => e.id === id);
   }
 
   private renderPhase(width: number, height: number, cx: number): void {
@@ -253,6 +307,9 @@ export class MenuScene extends Phaser.Scene {
     if (this.selectionPhase === 'difficulty' && this.isInvasion) {
       const playerEl = this.findElement(this.playerChoice ?? '');
       this.renderInvasionStartPhase(width, height, cx, playerEl);
+    } else if (this.selectionPhase === 'difficulty' && (this.isBoss || this.bounty)) {
+      const playerEl = this.findElement(this.playerChoice ?? '');
+      this.renderDisgracedStartPhase(width, height, cx, playerEl);
     } else if (this.selectionPhase === 'difficulty') {
       this.renderDifficultyPhase(width, height, cx);
     } else {
@@ -264,7 +321,10 @@ export class MenuScene extends Phaser.Scene {
     const isPlayerPhase = this.selectionPhase === 'player';
 
     const subtitle = isPlayerPhase
-      ? (this.isInvasion ? 'INVASION — pick your element' : 'Choose your element')
+      ? this.isInvasion ? 'INVASION — pick your element'
+        : this.isBoss ? '👑 THE DISGRACED KING — pick your element'
+        : this.bounty ? `${this.bounty.emoji} ${this.bounty.name.toUpperCase()} CONTRACT — pick your element`
+        : 'Choose your element'
       : 'Choose enemy element';
     const subtitleObj = addSectionLabel(this, {
       x: cx, y: 152, text: subtitle.toUpperCase(),
@@ -298,8 +358,11 @@ export class MenuScene extends Phaser.Scene {
       return neededGauntlet ? completedGauntlets.includes(neededGauntlet) : false;
     });
     const unlockedAbstractCombined = ABSTRACT_COMBINED_ELEMENTS.filter((e) => PlayerData.isElementUnlocked(e.id));
+    // Earned from the Devourer. Listed last so the rarest thing in the game sits
+    // at the end of the roster rather than in the middle of it.
+    const unlockedDivine = DIVINE_ELEMENTS.filter((e) => PlayerData.isElementUnlocked(e.id));
     // Pool all non-base unlocked elements together for pagination
-    const unlockedExtra = [...unlockedCombined, ...unlockedAbstract, ...unlockedAbstractCombined];
+    const unlockedExtra = [...unlockedCombined, ...unlockedAbstract, ...unlockedAbstractCombined, ...unlockedDivine];
     const PAGE_SIZE = 5;
     const extraPages = Math.max(1, Math.ceil(unlockedExtra.length / PAGE_SIZE));
     const maxPage = unlockedExtra.length > 0 ? extraPages : 0; // 0 = no extra pages
@@ -394,7 +457,11 @@ export class MenuScene extends Phaser.Scene {
       }).setOrigin(0.5).setDepth(DEPTH.content);
 
       const statusColor = hex(mix(displayColor, 0xffffff, 0.55));
-      const statusText = this.add.text(bx, by + 50, clickable ? '▶  SELECT' : 'COMING SOON', {
+      // A divine element is *earned* and locked, not undiscovered — say so, or
+      // the reward for the hardest fight in the game reads like a stub.
+      const lockedLabel = DIVINE_ELEMENTS.some((d) => d.id === el.id)
+        ? 'AWAITING ITS KIT' : 'COMING SOON';
+      const statusText = this.add.text(bx, by + 50, clickable ? '▶  SELECT' : lockedLabel, {
         fontSize: clickable ? '11px' : '10px', fontFamily: FONT_DISPLAY,
         color: clickable ? statusColor : T.ghost, letterSpacing: 2,
       }).setOrigin(0.5).setDepth(DEPTH.content);
@@ -460,6 +527,148 @@ export class MenuScene extends Phaser.Scene {
       });
       this.phaseObjects.push(dBtn.container);
     }
+  }
+
+  /**
+   * Briefing + START for the two Disgraced fights. Both are fixed encounters —
+   * there is no enemy or difficulty left to choose — so this phase exists purely
+   * to state what you are walking into and let you back out to change loadout.
+   */
+  private renderDisgracedStartPhase(
+    width: number, height: number, cx: number, playerEl: ElementDef | undefined,
+  ): void {
+    void width;
+    const boss = this.isBoss;
+    const hard = this.isBossHard;
+    const b = this.bounty;
+    const accent = hard ? C.blood : boss ? C.corrupt : C.gold;
+
+    const heading = this.add.text(cx, 158,
+      hard ? 'THE DEVOURER OF KINGS' : boss ? 'THE DISGRACED KING' : 'CONTRACT', {
+      fontSize: boss ? '30px' : '28px', fontFamily: FONT_DISPLAY,
+      color: hex(mix(accent, 0xffffff, 0.5)),
+      stroke: hex(mix(accent, 0x000000, 0.78)), strokeThickness: 5, letterSpacing: 6,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
+    this.phaseObjects.push(heading);
+
+    if (playerEl) {
+      const masteryOn = PlayerData.isMasteryEnabled(playerEl.id);
+      const perkId = PlayerData.getEquippedPerk(playerEl.id);
+      const perk = perkId ? getPerkById(perkId) : null;
+      // Restates the loadout that is actually going into the fight, so the
+      // mastery/perk toggles a step back are visibly in effect.
+      const bits = [`${playerEl.emoji}  ${playerEl.name.toUpperCase()}`];
+      if (masteryOn) bits.push('★ MASTERY ON');
+      if (perk) bits.push(`${perk.emoji} ${perk.name.toUpperCase()}`);
+      const indicator = this.add.text(cx, 206, bits.join('   ·   '), {
+        fontSize: '14px', fontFamily: FONT_DISPLAY, color: T.gold, letterSpacing: 1.5,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+      this.phaseObjects.push(indicator);
+    }
+
+    const bodyY = 262;
+
+    if (boss) {
+      this.phaseObjects.push(addSectionLabel(this, {
+        x: cx, y: bodyY,
+        text: hard ? 'WHAT WAS ALWAYS BEHIND HIM' : 'WHAT WAITS BEHIND THE DOOR',
+        accent, width: 560,
+      }));
+      const lines = hard ? [
+        'The same four bodies. Harder, faster, and worth more when they land.',
+        'NO REPAIR CELLS.  Nothing in the hall will heal you.',
+        '',
+        'PHASE IV  ·  the crown splits, and something you have not met steps out.',
+        '',
+        'It will not die at the end. You will have to decide what to do about that.',
+      ] : [
+        'PHASE I  ·  a war-mech that barely fits the hall. Only its head can be hurt.',
+        'PHASE II  ·  the King himself, and whatever he has left.',
+        '',
+        'He does not repeat himself by accident. Learn the order.',
+      ];
+      const body = this.add.text(cx, bodyY + 44, lines.join('\n'), {
+        fontSize: '13px', fontFamily: FONT_UI, color: T.normal,
+        align: 'center', lineSpacing: 8,
+      }).setOrigin(0.5, 0).setDepth(DEPTH.content);
+      this.phaseObjects.push(body);
+    } else if (b) {
+      this.phaseObjects.push(addSectionLabel(this, {
+        x: cx, y: bodyY, text: 'THE TARGET', accent, width: 560,
+      }));
+
+      const target = this.add.text(cx, bodyY + 44, `${b.emoji}  ${b.name.toUpperCase()}   ·   ${difficultyLabel(b.difficulty)}`, {
+        fontSize: '20px', fontFamily: FONT_DISPLAY,
+        color: hex(mix(b.color, 0xffffff, 0.55)), letterSpacing: 2,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+      this.phaseObjects.push(target);
+
+      const mods = b.mutationIds.length === 0
+        ? '— no modifiers —'
+        : b.mutationIds.map((id) => {
+            const d = getMutationDef(id);
+            return d ? `${d.emoji} ${d.name.toUpperCase()}` : id;
+          }).join('     +     ');
+      const modText = this.add.text(cx, bodyY + 82, mods, {
+        fontSize: '13px', fontFamily: FONT_DISPLAY,
+        color: b.mutationIds.length === 0 ? T.ghost : T.gold, letterSpacing: 1,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+      this.phaseObjects.push(modText);
+
+      const claimed = PlayerData.isBountyCompleted(b.key);
+      const payout = this.add.text(cx, bodyY + 126, claimed ? '✔  ALREADY CLAIMED' : `💠  ×${b.reward}  ON COMPLETION`, {
+        fontSize: '17px', fontFamily: FONT_DISPLAY,
+        color: claimed ? T.good : hex(mix(C.corrupt, 0xffffff, 0.55)), letterSpacing: 2,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+      this.phaseObjects.push(payout);
+    }
+
+    const startBtn = addButton(this, {
+      x: cx, y: height - 74, w: 320, h: 56,
+      label: hard ? 'GO DOWN' : boss ? 'OPEN THE DOOR' : 'ACCEPT CONTRACT',
+      icon: hard ? '🕳' : boss ? '🚪' : '⚔',
+      accent, variant: 'solid', fontSize: 19,
+      onClick: () => this.launchDisgracedFight(),
+    });
+    startBtn.pulse();
+    this.phaseObjects.push(startBtn.container);
+  }
+
+  private launchDisgracedFight(): void {
+    const elementId = this.playerChoice;
+    if (!elementId) return;
+
+    if (this.isBoss) {
+      this.cameras.main.shake(this.isBossHard ? 420 : 240, this.isBossHard ? 0.010 : 0.006);
+      this.scene.start('ArenaScene', {
+        elementId,
+        // The boss body sits in the npc slot, so it needs an element no kit
+        // reacts to — every attack comes from DisgracedKingKit instead.
+        enemyElementId: 'king',
+        difficulty: 3,
+        mode: 'boss',
+        bossHard: this.isBossHard,
+        playerPerk: PlayerData.getEquippedPerk(elementId),
+      });
+      return;
+    }
+
+    const b = this.bounty;
+    if (!b) return;
+
+    // A contract's modifiers count toward its shard payout the same way a
+    // hand-picked mutation loadout does — ArenaScene reads getTotalRewardMult()
+    // off this module-level set on a win. create() already cleared it.
+    for (const id of b.mutationIds) activeMutationIds.add(id);
+
+    this.scene.start('ArenaScene', {
+      elementId,
+      enemyElementId: b.elementId,
+      difficulty: b.difficulty,
+      mutations: b.mutationIds,
+      playerPerk: PlayerData.getEquippedPerk(elementId),
+      bounty: { key: b.key, reward: b.reward },
+    });
   }
 
   private renderInvasionStartPhase(width: number, height: number, cx: number, playerEl: ElementDef | undefined): void {
@@ -1966,7 +2175,7 @@ export class MenuScene extends Phaser.Scene {
 
   /**
    * Element customization screen — replaces the old per-card perk strip. One place to
-   * toggle mastery, pick a perk, toggle owned upgrades on/off, and equip cosmetics.
+   * toggle mastery, pick a perk, toggle owned upgrades on/off, and equip a skin.
    * Every action persists immediately via PlayerData and rebuilds the overlay in place
    * (scroll offset preserved via customizeScrollY, like the mastery screen does).
    */
@@ -1991,7 +2200,7 @@ export class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(51);
     this.infoOverlayObjects.push(header);
 
-    const subHdr = this.add.text(cx, 62, '— mastery · perk · upgrades · cosmetics —', {
+    const subHdr = this.add.text(cx, 62, '— mastery · perk · upgrades · skin —', {
       fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#555577',
     }).setOrigin(0.5).setDepth(51);
     this.infoOverlayObjects.push(subHdr);
@@ -2260,95 +2469,84 @@ export class MenuScene extends Phaser.Scene {
     }
     innerY += 12;
 
-    // ── COSMETICS ───────────────────────────────────────────────────
-    sectionHdr('— COSMETICS —', '#ff88cc');
-    const allCosmetics = getCosmeticsForElement(elementId);
-    if (allCosmetics.length === 0) {
-      const noCos = this.add.text(cx, innerY + 8, 'No cosmetics for this element yet — earn them through achievements!', {
+    // ── SKIN ────────────────────────────────────────────────────────
+    sectionHdr('— SKIN —', '#ff88cc');
+    const skins = getSkinsForElement(elementId);
+    if (skins.length === 0) {
+      const noSkins = this.add.text(cx, innerY + 8, 'No skins for this element yet — earn them through achievements!', {
         fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#555577',
       }).setOrigin(0.5);
-      scrollContainer.add(noCos);
+      scrollContainer.add(noSkins);
       innerY += 30;
     } else {
-      const SLOT_LABELS: Record<CosmeticSlot, string> = { color: '🎨 Color Slot', sigil: '🚩 Sigil Slot' };
-      for (const slot of COSMETIC_SLOTS) {
-        const slotCosmetics = getCosmeticsForElement(elementId, slot);
-        if (slotCosmetics.length === 0) continue;
-        const equipped = PlayerData.getEquippedCosmetic(elementId, slot);
+      const equipped = PlayerData.getEquippedSkin(elementId);
 
-        const slotHdr = this.add.text(COL_X + 8, innerY + 6, SLOT_LABELS[slot], {
-          fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#dd99cc',
-        });
-        scrollContainer.add(slotHdr);
-        innerY += 26;
+      // "Default" row — the element's own character and colours.
+      {
+        const rowH = 28;
+        const isEquipped = equipped === null;
+        const rowLocalY = innerY + rowH / 2;
+        const row = this.overlayRow(cx, rowLocalY, COL_W, rowH - 4,
+          isEquipped ? C.verdant : C.steel, !isEquipped);
+        const noneLbl = this.add.text(COL_X + 14, rowLocalY, isEquipped ? '— default —  ✓' : '— default —', {
+          fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+          color: isEquipped ? '#88ff88' : '#777788',
+        }).setOrigin(0, 0.5);
+        const rowHit = this.overlayRowHit(cx, rowLocalY, COL_W, rowH - 4);
+        rowHit
+          .on('pointerover', () => row.paint(true))
+          .on('pointerout',  () => row.paint(false))
+          .on('pointerdown', () => {
+            if (!inView(rowLocalY)) return;
+            PlayerData.setEquippedSkin(elementId, null);
+            rebuild();
+          });
+        scrollContainer.add([row.g, noneLbl, rowHit]);
+        innerY += rowH + 2;
+      }
 
-        // "None" row
-        {
-          const rowH = 28;
-          const isEquipped = equipped === null;
-          const rowLocalY = innerY + rowH / 2;
-          const row = this.overlayRow(cx, rowLocalY, COL_W, rowH - 4,
-            isEquipped ? C.verdant : C.steel, !isEquipped);
-          const noneLbl = this.add.text(COL_X + 14, rowLocalY, isEquipped ? '— none —  ✓' : '— none —', {
+      for (const skin of skins) {
+        const unlocked = isSkinUnlocked(skin.id);
+        const isEquipped = equipped === skin.id;
+        const alpha = unlocked ? 1 : 0.45;
+
+        const descText = this.add.text(COL_X + 14, innerY + 22, skin.description, {
+          fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
+          color: unlocked ? '#bbaacc' : '#555566',
+          wordWrap: { width: COL_W - 28 },
+        }).setAlpha(alpha);
+        const rowH = 22 + descText.height + 10;
+        const rowLocalY = innerY + rowH / 2;
+
+        const row = this.overlayRow(cx, rowLocalY, COL_W, rowH - 4,
+          isEquipped ? C.verdant : C.arcane, !unlocked);
+        const nameLbl = this.add.text(COL_X + 14, innerY + 11,
+          `${unlocked ? '' : '🔒 '}${skin.name}${isEquipped ? '  ✓ EQUIPPED' : ''}`, {
             fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
-            color: isEquipped ? '#88ff88' : '#777788',
-          }).setOrigin(0, 0.5);
+            color: isEquipped ? '#88ff88' : (unlocked ? '#ffccee' : '#555566'),
+          }).setOrigin(0, 0.5).setAlpha(alpha);
+        scrollContainer.add([row.g, nameLbl, descText]);
+
+        if (!unlocked) {
+          const hintLbl = this.add.text(COL_X + COL_W - 14, innerY + 11, `🏆 ${skinUnlockHint(skin.id)}`, {
+            fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#665533',
+          }).setOrigin(1, 0.5);
+          scrollContainer.add(hintLbl);
+        } else {
           const rowHit = this.overlayRowHit(cx, rowLocalY, COL_W, rowH - 4);
+          scrollContainer.add(rowHit);
           rowHit
             .on('pointerover', () => row.paint(true))
             .on('pointerout',  () => row.paint(false))
             .on('pointerdown', () => {
               if (!inView(rowLocalY)) return;
-              PlayerData.setEquippedCosmetic(elementId, slot, null);
+              PlayerData.setEquippedSkin(elementId, isEquipped ? null : skin.id);
               rebuild();
             });
-          scrollContainer.add([row.g, noneLbl, rowHit]);
-          innerY += rowH + 2;
         }
-
-        for (const cos of slotCosmetics) {
-          const unlocked = isCosmeticUnlocked(cos.id);
-          const isEquipped = equipped === cos.id;
-          const alpha = unlocked ? 1 : 0.45;
-
-          const descText = this.add.text(COL_X + 14, innerY + 22, cos.description, {
-            fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
-            color: unlocked ? '#bbaacc' : '#555566',
-            wordWrap: { width: COL_W - 28 },
-          }).setAlpha(alpha);
-          const rowH = 22 + descText.height + 10;
-          const rowLocalY = innerY + rowH / 2;
-
-          const row = this.overlayRow(cx, rowLocalY, COL_W, rowH - 4,
-            isEquipped ? C.verdant : C.arcane, !unlocked);
-          const nameLbl = this.add.text(COL_X + 14, innerY + 11,
-            `${unlocked ? '' : '🔒 '}${cos.name}${isEquipped ? '  ✓ EQUIPPED' : ''}`, {
-              fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
-              color: isEquipped ? '#88ff88' : (unlocked ? '#ffccee' : '#555566'),
-            }).setOrigin(0, 0.5).setAlpha(alpha);
-          scrollContainer.add([row.g, nameLbl, descText]);
-
-          if (!unlocked) {
-            const hintLbl = this.add.text(COL_X + COL_W - 14, innerY + 11, `🏆 ${cosmeticUnlockHint(cos.id)}`, {
-              fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#665533',
-            }).setOrigin(1, 0.5);
-            scrollContainer.add(hintLbl);
-          } else {
-            const rowHit = this.overlayRowHit(cx, rowLocalY, COL_W, rowH - 4);
-            scrollContainer.add(rowHit);
-            rowHit
-              .on('pointerover', () => row.paint(true))
-              .on('pointerout',  () => row.paint(false))
-              .on('pointerdown', () => {
-                if (!inView(rowLocalY)) return;
-                PlayerData.setEquippedCosmetic(elementId, slot, isEquipped ? null : cos.id);
-                rebuild();
-              });
-          }
-          innerY += rowH + 2;
-        }
-        innerY += 8;
+        innerY += rowH + 2;
       }
+      innerY += 8;
     }
 
     // ── Scroll logic (offset preserved across rebuilds) ─────────────
@@ -2433,7 +2631,7 @@ export class MenuScene extends Phaser.Scene {
         : tier === 'abstract-triple'
           ? '— ABSTRACT PERKS  (Lab Level 2 · 4 ⚛️) —'
           : tier === 'quad'
-            ? '— QUAD PERKS  (Lab Level 3 · 5 ⚛️)  ·  Perkaholic Mutation —'
+            ? '— QUAD PERKS  (Lab Level 3 · 5 ⚛️) —'
             : '— PENTA PERKS  (Penta Synthesis · 10 ⚛️) —';
       const tierColor = tier === 'penta' ? '#cc88ff' : (tier === 'quad' ? '#ffaa44' : (tier === 'abstract-triple' ? '#cc66ff' : '#44aaff'));
 
@@ -2531,15 +2729,18 @@ export class MenuScene extends Phaser.Scene {
     const { width, height } = this.scale;
     const cx = width / 2;
     if (this.selectionPhase === 'player') {
-      this.scene.start('TitleScene');
+      // Each mode backs out to wherever it was entered from.
+      if (this.isBoss) this.scene.start('ShopScene', { page: 999 });
+      else if (this.bounty) this.scene.start('DisgracedLabScene', { tab: 1 });
+      else this.scene.start('TitleScene');
     } else if (this.selectionPhase === 'enemy') {
       this.playerChoice = null;
       this.selectionPhase = 'player';
       this.elemPage = 0;
       this.renderPhase(width, height, cx);
     } else if (this.selectionPhase === 'difficulty') {
-      if (this.isInvasion) {
-        // invasion skips enemy phase, so go back to player selection
+      if (this.isInvasion || this.isBoss || this.bounty) {
+        // These modes skip the enemy phase, so back up to element selection.
         this.playerChoice = null;
         this.selectionPhase = 'player';
       } else {
@@ -2554,8 +2755,9 @@ export class MenuScene extends Phaser.Scene {
   private handleElementClick(elementId: string, width: number, height: number, cx: number): void {
     if (this.selectionPhase === 'player') {
       this.playerChoice = elementId;
-      if (this.isInvasion) {
-        this.selectionPhase = 'difficulty'; // jump straight to mutations
+      if (this.isInvasion || this.isBoss || this.bounty) {
+        // These modes have no enemy to pick — the fight is already decided.
+        this.selectionPhase = 'difficulty';
       } else {
         this.selectionPhase = 'enemy';
         this.elemPage = 0;

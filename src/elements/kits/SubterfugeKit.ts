@@ -25,6 +25,7 @@ export interface SubterfugeArenaApi {
   get sceneHeight(): number;
   hasUpgrade(slot: string): boolean;
   hasNpcUpgrade(slot: string): boolean;
+  hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   dealAoeDamage(owner: 'player' | 'npc', cx: number, cy: number, radius: number, damage: number): void;
@@ -52,11 +53,19 @@ export interface SubterfugeArenaApi {
   /** Every registered element id — the denominator for "steal 10 different ultimates". */
   allElementIds(): string[];
   setStatusIndicator(id: string, status: CustomStatus | null): void;
-  /** Owner's colour cosmetic applied to one Subterfuge palette value. */
+  /** Owner's skin applied to one Subterfuge palette value. */
   subterfugeColor(owner: 'player' | 'npc', base: number): number;
 }
 
 // ── Internal types ───────────────────────────────────────────────────────────
+
+// ── Sonic Boom (perk) — the crack a recalled blade leaves where it launched from ──
+const BOOM_RADIUS = 96;
+const BOOM_DAMAGE = 10;
+const BOOM_KNOCKBACK = 420;
+const BOOM_KNOCK_MS = 160;
+const BOOM_STAGGER_MS = 240;
+const BOOM_DRAW_MS = 420;
 
 interface SubDagger {
   owner: 'player' | 'npc';
@@ -69,10 +78,18 @@ interface SubDagger {
   dirY: number;
   state: 'flying' | 'planted' | 'returning';
   hitSet: Set<Fighter>;
+  /** Sonic Boom perk: where this blade was standing when the recall pulled it. */
+  recallFromX?: number;
+  recallFromY?: number;
+  /** Sonic Boom perk: set once this blade's one boom has gone off. */
+  boomed?: boolean;
 }
 
-/** The four hires the Rolodex (R+) unlocks. Without R+ only 'lackey' is ever built. */
-type RecruitType = 'lackey' | 'runner' | 'thug' | 'specialist';
+/**
+ * The four hires the Rolodex (R+) unlocks. Without R+ only 'lackey' is ever built.
+ * 'bard' is a fifth, and only exists when the Moral perk (divine) is equipped.
+ */
+type RecruitType = 'lackey' | 'runner' | 'thug' | 'specialist' | 'bard';
 
 interface Lackey {
   owner: 'player' | 'npc';
@@ -193,12 +210,19 @@ const LACKEY_IGNITE_EXTRA_PER_SEC = 2000; // Soul copy: +2s loyalty lost per sec
 
 // ── R+ The Rolodex ──────────────────────────────────────────────────────────
 const RECRUIT_ORDER: RecruitType[] = ['lackey', 'runner', 'thug', 'specialist'];
-const RECRUIT_COST: Record<RecruitType, number> = { lackey: 1, runner: 1, thug: 2, specialist: 3 };
-const RECRUIT_LOYALTY_MS: Record<RecruitType, number> = { lackey: LACKEY_LOYALTY_MS, runner: 12000, thug: 35000, specialist: 20000 };
-const RECRUIT_NAME: Record<RecruitType, string> = { lackey: 'Lackey', runner: 'Money Runner', thug: 'Thug', specialist: 'Specialist' };
-const RECRUIT_EMOJI: Record<RecruitType, string> = { lackey: '🕴️', runner: '💸', thug: '🏏', specialist: '🛡️' };
-const RECRUIT_RADIUS: Record<RecruitType, number> = { lackey: 14, runner: 11, thug: 16, specialist: 15 };
-const RECRUIT_WEDGE_COLOR: Record<RecruitType, number> = { lackey: 0x552222, runner: 0x226633, thug: 0x772222, specialist: 0x444466 };
+const RECRUIT_COST: Record<RecruitType, number> = { lackey: 1, runner: 1, thug: 2, specialist: 3, bard: 1 };
+const RECRUIT_LOYALTY_MS: Record<RecruitType, number> = { lackey: LACKEY_LOYALTY_MS, runner: 12000, thug: 35000, specialist: 20000, bard: 12000 };
+const RECRUIT_NAME: Record<RecruitType, string> = { lackey: 'Lackey', runner: 'Money Runner', thug: 'Thug', specialist: 'Specialist', bard: 'Bard' };
+const RECRUIT_EMOJI: Record<RecruitType, string> = { lackey: '🕴️', runner: '💸', thug: '🏏', specialist: '🛡️', bard: '🎺' };
+const RECRUIT_RADIUS: Record<RecruitType, number> = { lackey: 14, runner: 11, thug: 16, specialist: 15, bard: 13 };
+const RECRUIT_WEDGE_COLOR: Record<RecruitType, number> = { lackey: 0x552222, runner: 0x226633, thug: 0x772222, specialist: 0x444466, bard: 0x776622 };
+
+// ── Moral perk (divine) ─────────────────────────────────────────────────────
+/** Every hire is signed on for a quarter longer. */
+const MORAL_LOYALTY_MULT = 1.25;
+/** What a Bard on the payroll does to everyone else's loyalty drain. */
+const BARD_DRAIN_MULT = 0.25;
+const BARD_SPEED = 240;
 
 const RUNNER_SPEED = 280;
 const RUNNER_QUIT_MONEY = 2;
@@ -292,7 +316,7 @@ export class SubterfugeKit {
 
   // ── Visuals ──────────────────────────────────────────────────────────────
   // One colour mapper and one effect painter per side, because the two fighters can have
-  // different colour cosmetics equipped.
+  // different skins equipped.
   private readonly pcol: SubColorFn;
   private readonly ncol: SubColorFn;
   private readonly pfx: SubterfugeFx;
@@ -315,6 +339,8 @@ export class SubterfugeKit {
   private npcDaggerNextThrowAt = 0;
   private pointerWasDown = false;
   private orbitDaggers: OrbitDagger[] = [];   // Click+ Blade Dance
+  /** Sonic Boom perk: shockwaves currently drawing themselves out. */
+  private booms: Array<{ x: number; y: number; owner: 'player' | 'npc'; bornAt: number }> = [];
 
   // ── Spray (E) ────────────────────────────────────────────────────────────
   private bullets = BULLETS_START;
@@ -492,6 +518,7 @@ export class SubterfugeKit {
     this.npcDaggerNextThrowAt = 0;
     this.pointerWasDown = false;
     this.orbitDaggers = [];
+    this.booms = [];
 
     this.bullets = BULLETS_START;
     this.npcBullets = BULLETS_START;
@@ -599,7 +626,7 @@ export class SubterfugeKit {
         const pick = this.recruitSelectedIndex;
         this.recruitLastPick = pick;
         this._closeRecruitMenu();
-        this._tryHire('player', RECRUIT_ORDER[pick]);
+        this._tryHire('player', this._recruitOrder('player')[pick] ?? 'lackey');
       }
       this.pointerWasDown = pointer.isDown;
       return;
@@ -716,6 +743,7 @@ export class SubterfugeKit {
     this._updateDaggers(this.playerDaggers, 'player', dt);
     this._updateDaggers(this.npcDaggers, 'npc', dt);
     this._updateOrbitDaggers(time, dt);
+    this._updateBooms(time);
     this._updateLackeys(time, delta);
     this._updateStunsAndKnocks(time);
     this._updateBribes(time);
@@ -752,6 +780,7 @@ export class SubterfugeKit {
     this._paintSmokeClouds(time);
     this._paintRecruits(world, t);
     this._paintDaggers(world, air, t);
+    this._paintBooms(air, time);
     this._paintDisco(air, t);
     this._paintCigarettes(air, t);
     this._paintMoney(air, time, isPlayerSub, isNpcSub);
@@ -1168,7 +1197,9 @@ export class SubterfugeKit {
           stroke: '#000000', strokeThickness: 4,
         }).setOrigin(0.5).setDepth(13) as Phaser.GameObjects.Text
       : null;
-    const loyalty = RECRUIT_LOYALTY_MS[type];
+    // Moral perk: the whole payroll signs on for a quarter longer, Bards included.
+    const loyalty = RECRUIT_LOYALTY_MS[type]
+      * (this.api.hasPerk(owner, 'moral') ? MORAL_LOYALTY_MULT : 1);
     this.lackeys.push({
       owner, type, barBg, barFill, levelText, x, y,
       facing: angle + Math.PI,
@@ -1230,10 +1261,15 @@ export class SubterfugeKit {
 
   // ── The Rolodex hiring wheel (R+) ────────────────────────────────────────
 
+  /** The hires a side can pick from: the Rolodex four, plus the Bard when Moral is equipped. */
+  private _recruitOrder(owner: 'player' | 'npc'): RecruitType[] {
+    return this.api.hasPerk(owner, 'moral') ? [...RECRUIT_ORDER, 'bard'] : RECRUIT_ORDER;
+  }
+
   private _openRecruitMenu(selectedIndex: number): void {
     this._closeRecruitMenu();
     this.recruitMenuGfx = this.api.scene.add.graphics().setDepth(31);
-    for (let i = 0; i < RECRUIT_ORDER.length; i++) {
+    for (let i = 0; i < this._recruitOrder('player').length; i++) {
       this.recruitMenuLabels.push(
         this.api.scene.add.text(0, 0, '', {
           fontSize: '11px', color: '#ffffff', fontFamily: 'Arial', align: 'center',
@@ -1252,11 +1288,12 @@ export class SubterfugeKit {
     const cx = this.api.player.x;
     const cy = this.api.player.y;
     const R = 120;
-    const count = RECRUIT_ORDER.length;
+    const order = this._recruitOrder('player');
+    const count = order.length;
     const angleStep = (Math.PI * 2) / count;
     gfx.clear();
     for (let i = 0; i < count; i++) {
-      const type = RECRUIT_ORDER[i];
+      const type = order[i];
       const affordable = this.money >= RECRUIT_COST[type];
       const startA = i * angleStep - Math.PI / 2 - angleStep / 2;
       const isSelected = i === selectedIndex;
@@ -1283,7 +1320,7 @@ export class SubterfugeKit {
     const cx = this.api.player.x;
     const cy = this.api.player.y;
     if (Phaser.Math.Distance.Between(pointer.worldX, pointer.worldY, cx, cy) <= 24) return;
-    const count = RECRUIT_ORDER.length;
+    const count = this._recruitOrder('player').length;
     const angleStep = (Math.PI * 2) / count;
     const raw = Math.atan2(pointer.worldY - cy, pointer.worldX - cx);
     const normalized = (((raw + Math.PI / 2) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
@@ -1313,10 +1350,12 @@ export class SubterfugeKit {
 
       // Loyalty drain (Soul copy: ignited lackeys lose an extra 2s per second;
       // F+ levels make every recruit that bit harder to shake off; Mastery smoke
-      // clouds give the ones standing in them somewhere pleasant to loiter)
+      // clouds give the ones standing in them somewhere pleasant to loiter; and a
+      // Bard on the payroll keeps everyone but the Bards happy for four times as long)
       l.loyaltyMs -= delta * this._lvlDrain(l)
         * (l.ignited ? 1 + LACKEY_IGNITE_EXTRA_PER_SEC / 1000 : 1)
-        * (this._inOwnSmoke(l.owner, l.x, l.y) ? SMOKE_LOYALTY_DRAIN_MULT : 1);
+        * (this._inOwnSmoke(l.owner, l.x, l.y) ? SMOKE_LOYALTY_DRAIN_MULT : 1)
+        * (l.type !== 'bard' && this._hasBard(l.owner) ? BARD_DRAIN_MULT : 1);
 
       // XP: +1 per second on the payroll, and the level-V money runner stipend
       if (l.levelText) {
@@ -1372,7 +1411,7 @@ export class SubterfugeKit {
       const ratio = Phaser.Math.Clamp(l.loyaltyMs / l.loyaltyMaxMs, 0, 1);
       l.barFill.setPosition(l.x - 16, l.y - 24).setSize(32 * ratio, 5);
       l.levelText?.setPosition(l.x, l.y - 38).setText(ROMAN[l.level]);
-      if (enemy.active && enemy.hp > 0 && l.type !== 'runner') {
+      if (enemy.active && enemy.hp > 0 && l.type !== 'runner' && l.type !== 'bard') {
         l.facing = Math.atan2(enemy.y - l.y, enemy.x - l.x);
       } else {
         l.facing = Math.atan2(l.wanderY - l.y, l.wanderX - l.x);
@@ -1380,14 +1419,20 @@ export class SubterfugeKit {
     }
   }
 
+  /** Is a Bard of this side on the payroll? Its buff never reaches another Bard. */
+  private _hasBard(owner: 'player' | 'npc'): boolean {
+    return this.lackeys.some((l) => l.owner === owner && l.type === 'bard');
+  }
+
   /** Per-type positioning: gunners hold mid range, runners bolt, muscle closes in. */
   private _moveRecruit(l: Lackey, enemy: Fighter, dt: number, W: number, H: number): void {
     const lvl = this._lvlSpeed(l);
     let mx = 0, my = 0, speed = 0;
 
-    if (l.type === 'runner') {
-      // Sprints between random points, picking a new one whenever it arrives.
-      speed = RUNNER_SPEED * lvl;
+    if (l.type === 'runner' || l.type === 'bard') {
+      // Sprints between random points, picking a new one whenever it arrives. The Bard does
+      // the same thing at a stroll — it is here to be heard, not to be anywhere in particular.
+      speed = (l.type === 'bard' ? BARD_SPEED : RUNNER_SPEED) * lvl;
       if (Phaser.Math.Distance.Between(l.x, l.y, l.wanderX, l.wanderY) <= 24) {
         l.wanderX = 40 + Math.random() * (W - 80);
         l.wanderY = 40 + Math.random() * (H - 80);
@@ -1420,9 +1465,9 @@ export class SubterfugeKit {
     l.y = Phaser.Math.Clamp(l.y + my * speed * dt, 20, H - 20);
   }
 
-  /** Per-type offence. Money runners never fight — they just run the money. */
+  /** Per-type offence. Money runners and Bards never fight — they run money and play. */
   private _fireRecruit(l: Lackey, enemy: Fighter, time: number): void {
-    if (l.type === 'runner') return;
+    if (l.type === 'runner' || l.type === 'bard') return;
     if (!enemy.active || enemy.hp <= 0) return;
     const dist = Phaser.Math.Distance.Between(l.x, l.y, enemy.x, enemy.y);
 
@@ -1932,10 +1977,86 @@ export class SubterfugeKit {
     });
   }
 
+  // ── Sonic Boom (perk) ────────────────────────────────────────────────────
+
+  /**
+   * The crack a recalled blade leaves behind: a flat AoE that shoves and staggers rather
+   * than killing, so the perk is about controlling the room the daggers just crossed.
+   */
+  private _sonicBoom(x: number, y: number, owner: 'player' | 'npc'): void {
+    const time = this.api.scene.time.now;
+    this.api.dealAoeDamage(owner, x, y, BOOM_RADIUS, BOOM_DAMAGE);
+
+    const foes: Fighter[] = owner === 'player' ? [this.api.npc] : [this.api.player];
+    for (const f of foes) {
+      if (!f || !f.active || f.hp <= 0) continue;
+      const d = Phaser.Math.Distance.Between(x, y, f.x, f.y);
+      if (d > BOOM_RADIUS) continue;
+      const ang = Math.atan2(f.y - y, f.x - x);
+      this.knocks.set(f, {
+        vx: Math.cos(ang) * BOOM_KNOCKBACK, vy: Math.sin(ang) * BOOM_KNOCKBACK,
+        until: time + BOOM_KNOCK_MS,
+      });
+      // The stagger runs on from the shove, so being caught close is a real tempo loss.
+      if (f === this.api.player) this.playerStunUntil = Math.max(this.playerStunUntil, time + BOOM_KNOCK_MS + BOOM_STAGGER_MS);
+      else this.npcStunUntil = Math.max(this.npcStunUntil, time + BOOM_KNOCK_MS + BOOM_STAGGER_MS);
+      this.api.showFloatingText(f.x, f.y - 40, '💥 SONIC BOOM', '#ffcc66');
+    }
+
+    this.booms.push({ x, y, owner, bornAt: time });
+    this.api.scene.cameras.main.shake(140, 0.004);
+  }
+
+  private _updateBooms(time: number): void {
+    for (let i = this.booms.length - 1; i >= 0; i--) {
+      if (time - this.booms[i].bornAt >= BOOM_DRAW_MS) this.booms.splice(i, 1);
+    }
+  }
+
+  /**
+   * A boom drawn as pressure, not as an explosion: two shock rings racing out at different
+   * speeds, a compressed core, and streaks of displaced air torn off the leading edge.
+   */
+  private _paintBooms(g: Phaser.GameObjects.Graphics, time: number): void {
+    for (const b of this.booms) {
+      const k = Phaser.Math.Clamp((time - b.bornAt) / BOOM_DRAW_MS, 0, 1);
+      const col = this.col(b.owner);
+      const fade = 1 - k;
+
+      // Leading shock: thin, fast, nearly gone by the end.
+      g.lineStyle(2 + 3 * fade, col(SUB.steelHi), 0.75 * fade);
+      g.strokeCircle(b.x, b.y, BOOM_RADIUS * (0.25 + 0.9 * k));
+      // Trailing shock: fatter and slower, so the two never overlap.
+      g.lineStyle(1.5 + 2 * fade, col(SUB.gold), 0.5 * fade * fade);
+      g.strokeCircle(b.x, b.y, BOOM_RADIUS * (0.1 + 0.55 * k));
+      // The compressed core collapsing in on itself.
+      g.fillStyle(col(SUB.steelHi), 0.35 * fade * fade);
+      g.fillCircle(b.x, b.y, 12 * fade);
+
+      // Air torn off the front edge in spokes.
+      for (let i = 0; i < 10; i++) {
+        const a = (i / 10) * Math.PI * 2 + b.bornAt * 0.001;
+        const r0 = BOOM_RADIUS * (0.25 + 0.9 * k);
+        const len = 10 * fade + 4;
+        g.lineStyle(1.5, col(i % 2 === 0 ? SUB.steelHi : SUB.gold), 0.5 * fade);
+        g.beginPath();
+        g.moveTo(b.x + Math.cos(a) * (r0 - len), b.y + Math.sin(a) * (r0 - len));
+        g.lineTo(b.x + Math.cos(a) * r0, b.y + Math.sin(a) * r0);
+        g.strokePath();
+      }
+    }
+  }
+
   private _recallDaggers(owner: 'player' | 'npc'): void {
     const list = owner === 'player' ? this.playerDaggers : this.npcDaggers;
     let any = false;
-    for (const d of list) { if (d.state !== 'returning') { d.state = 'returning'; d.hitSet.clear(); any = true; } }
+    for (const d of list) {
+      if (d.state !== 'returning') {
+        d.state = 'returning'; d.hitSet.clear(); any = true;
+        // Sonic Boom perk: the blade leaves a hole in the air where it was standing.
+        d.recallFromX = d.x; d.recallFromY = d.y; d.boomed = false;
+      }
+    }
     if (any) {
       const caster = owner === 'player' ? this.api.player : this.api.npc;
       // A beckon rather than a throw: the hands snap back to the chest and the blades follow.
@@ -1979,6 +2100,12 @@ export class SubterfugeKit {
         d.y += d.dirY * DAGGER_SPEED * dt;
         this._daggerHit(d, enemies, DAGGER_RETURN_DMG);
         if (dist <= DAGGER_ARRIVE_R + 6) {
+          // Sonic Boom perk: it got home ahead of its own noise, which lands where it left.
+          if (!d.boomed && this.api.hasPerk(owner, 'sonic-boom')
+              && d.recallFromX !== undefined && d.recallFromY !== undefined) {
+            this._sonicBoom(d.recallFromX, d.recallFromY, owner);
+            d.boomed = true;
+          }
           // Click+ Blade Dance: a blade that makes it home sometimes stays out.
           if (this._up(owner, 'click') && Math.random() < ORBIT_CHANCE) this._spawnOrbitDagger(owner, d.color);
           list.splice(i, 1); continue;
@@ -2001,6 +2128,11 @@ export class SubterfugeKit {
         });
         this._addSprayAmmoFromDamage(d.owner, dmg);
         this._noteSmokeAttack(d.owner);
+        // Sonic Boom perk: a blade that connects on the way back breaks on them instead.
+        if (!d.boomed && d.state === 'returning' && this.api.hasPerk(d.owner, 'sonic-boom')) {
+          this._sonicBoom(t.x, t.y, d.owner);
+          d.boomed = true;
+        }
       }
     }
   }
@@ -2113,7 +2245,7 @@ export class SubterfugeKit {
     // R+ opens the Rolodex for the NPC too: hire the best muscle it can afford,
     // with a bias toward the pricier options when the wallet allows.
     if (this._up('npc', 'r')) {
-      const affordable = RECRUIT_ORDER.filter(t => RECRUIT_COST[t] <= this.npcMoney);
+      const affordable = this._recruitOrder('npc').filter(t => RECRUIT_COST[t] <= this.npcMoney);
       if (affordable.length === 0) return;
       const pick = Math.random() < 0.6
         ? affordable[affordable.length - 1]

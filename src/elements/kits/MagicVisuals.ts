@@ -12,12 +12,12 @@ import { AvatarSpec, ArmHold, ArmPose, BaseAvatar, ColorFn, FxBase, TAU, easeIn,
  * Magic is the borrower element: it casts fire, water, wind, stone and vine without being any of
  * them. So the palette below is unusually wide, and that is deliberate — but every borrowed shade
  * is still a MAGIC key, and every draw call routes through the owner's `magicColor` mapper, so the
- * day a colour cosmetic lands it is a table edit in CosmeticsKit rather than a sweep through this
+ * day a skin lands it is a table edit in SkinsKit rather than a sweep through this
  * file. What ties the borrowed spells together visually is that all of them arrive *inside a
  * sigil*: the conjuring is the element, not the thing conjured.
  */
 
-/** `(base) => displayed` — CosmeticsKit.magicColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.magicColor bound to one owner. */
 export type MagicColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';

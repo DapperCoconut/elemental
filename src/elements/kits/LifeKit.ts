@@ -6,6 +6,8 @@ import { CastContext } from '../Ability';
 import {
   ArmGesture, LifeAura, LifeAvatar, LifeColorFn, LifeFx, PlantArtType, LIFE, SEED_COLOR, sprig,
 } from './LifeVisuals';
+import { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
 
 // ── Seed catalogue ────────────────────────────────────────────────────────────
 
@@ -46,6 +48,19 @@ const REAP_COOLDOWN_MS = 15000;
 const REAP_BUFF_MS = 20000;
 /** Sunflower reap buff: extra damage on every click petal. */
 const REAP_PETAL_BONUS = 2;
+
+// ── Revitalize (divine perk) ──────────────────────────────────────────────────
+
+/** Living plants walk at roughly a third of a fighter's pace — they stalk, they don't chase. */
+const LIVING_WALK_SPEED = 62;
+/** HP a living plant knits back every second. */
+const LIVING_REGEN_PER_SEC = 5;
+/** How close an attacking plant closes to its prey — inside Rose contact and Pitcher snap range. */
+const LIVING_ENGAGE_DIST = 28;
+/** How close a supporting plant trails its owner. Just outside Cotton's pad, so you still step on it. */
+const LIVING_FOLLOW_DIST = 40;
+/** The two seeds that work on their owner rather than on the enemy, so they walk the other way. */
+const LIVING_FOLLOWERS: SeedType[] = ['cotton', 'nurse-lily'];
 
 /** Petal Burst (click upgrade): 5 petals at 5 dmg, wider cone than the base 3×8. */
 const SAKURA_ANGLES = [-24, -12, 0, 12, 24];
@@ -112,6 +127,13 @@ interface Plant {
   shieldUntil: number;
   shieldLiving: boolean;
 
+  // Revitalize (divine perk): the plant has been brought to life and walks.
+  living: boolean;
+  /** Gait clock for the root legs — advances with distance travelled, not with time. */
+  legPhase: number;
+  /** ms banked toward the next 5 HP of living regeneration. */
+  regenAccum: number;
+
   // Rose
   reflectAccum: number;
 
@@ -148,8 +170,10 @@ export interface LifeArenaApi {
   recordMasteryStat(key: string, amount: number): void;
   hasUpgrade(slot: string): boolean;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
-  /** Cosmetics: maps a life visual color through the owner's color cosmetic. */
+  /** Skins: maps a life visual color through the owner's skin. */
   lifeColor(owner: 'player' | 'npc', base: number): number;
+  /** Equipped skin id for that side, or null — decides which character rig gets built. */
+  skinId(owner: 'player' | 'npc'): string | null;
   buildPlayerContext(x: number, y: number): CastContext;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
@@ -162,14 +186,18 @@ export class LifeKit {
   private readonly api: LifeArenaApi;
 
   // ── Visuals ─────────────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a future cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a future skin recolours one side. */
   private readonly pcol: LifeColorFn;
   private readonly ncol: LifeColorFn;
   private readonly pfx: LifeFx;
   private readonly nfx: LifeFx;
-  /** The life character rig (budding hands, eyes, sprouting crown) for each life fighter. */
-  private playerAvatar: LifeAvatar | null = null;
-  private npcAvatar: LifeAvatar | null = null;
+  /**
+   * The character rig for each life-element fighter — life's own by default, or whatever that
+   * side's equipped skin installs instead. Typed as the base rig because the kit only ever
+   * drives it through poses and gestures, which every rig has.
+   */
+  private playerAvatar: BaseAvatar | null = null;
+  private npcAvatar: BaseAvatar | null = null;
   /** Overgrowth ring worn while Thrive! is up. */
   private thriveAura: LifeAura | null = null;
   /** Every poison pool repainted in one pass rather than one Graphics per pool. */
@@ -386,6 +414,8 @@ export class LifeKit {
       hp *= 0.5 + 0.25 * (Math.min(5, Math.max(1, near)) - 1);
     }
     if (p.owner === 'player' && this.api.hasUpgrade('e')) hp *= 1.5;
+    // Revitalize: a plant that has been brought to life is a hardier thing than a plant.
+    if (p.living) hp *= 1.25;
     hp *= 1 + 0.1 * p.permStacks;
     return Math.max(1, Math.round(hp));
   }
@@ -432,6 +462,7 @@ export class LifeKit {
       accum: 0, accum2: 0, age: 0, aim: -Math.PI / 2,
       fertUntil: 0, permStacks: 0,
       shieldUntil: 0, shieldLiving: false,
+      living: false, legPhase: 0, regenAccum: 0,
       reflectAccum: 0,
       trapped: null, trappedUntil: 0,
       targetX: x, targetY: y,
@@ -565,6 +596,13 @@ export class LifeKit {
     const target = this.pickPlant(list, targetX, targetY);
     if (!target) return;
 
+    // Revitalize (divine perk) replaces the shield outright: the roots tear free and the
+    // plant gets up. Nothing else about the cast happens — no dome, no delayed heal.
+    if (this.api.hasPerk(owner, 'revitalize')) {
+      this.revivePlant(target, owner);
+      return;
+    }
+
     const living = owner === 'player' && this.api.hasUpgrade('f');
     target.shieldUntil = scene.time.now + 3000;
     target.shieldLiving = living;
@@ -577,6 +615,40 @@ export class LifeKit {
     f.vineLash(caster.x, caster.y, target.x, target.y, living ? LIFE.rose : LIFE.leaf, 5);
     this.avatarFor(owner)?.play('clap', Math.atan2(target.y - caster.y, target.x - caster.x));
     this.api.showFloatingText(target.x, target.y - 44, living ? '🩸 Living Roots!' : '🛡️ Root Shield!', living ? '#ff6666' : '#aaeeff');
+  }
+
+  /**
+   * Revitalize: bring one plant to life. It grows root legs and starts walking — the
+   * attackers stalk the nearest enemy, the supports follow their owner — carries 25% more
+   * HP, and knits 5 HP back a second from then on.
+   */
+  private revivePlant(p: Plant, owner: 'player' | 'npc'): void {
+    const caster = this.casterFor(owner);
+    const f = this.fxFor(owner);
+
+    if (p.living) {
+      // Already up: the second cast just tops it back up rather than being wasted.
+      const healed = p.hitbox.maxHp - p.hitbox.hp;
+      if (healed > 0) {
+        p.hitbox.hp = p.hitbox.maxHp;
+        this.api.showFloatingText(p.x, p.y - 40, `+${Math.round(healed)} ⚡`, '#aaff66');
+      }
+      f.healBloom(p.x, p.y, 30, 5);
+      return;
+    }
+
+    p.living = true;
+    p.regenAccum = 0;
+    this.rescaleAll(owner === 'player' ? this.playerPlants : this.npcPlants);
+
+    // The ground gives up the root ball: a jolt down the vine, roots thrown clear of the
+    // hole, and the plant standing where it used to be planted.
+    f.vineLash(caster.x, caster.y, p.x, p.y, LIFE.vital, 6);
+    f.ring(p.x, p.y, 8, 54, LIFE.vital, 480, 5, 5);
+    f.petalShards(p.x, p.y + 12, 8, 170, 460, 4, LIFE.rot);
+    f.bloomBurst(p.x, p.y, 40, 10, 3);
+    this.avatarFor(owner)?.play('clap', Math.atan2(p.y - caster.y, p.x - caster.x));
+    this.api.showFloatingText(p.x, p.y - 44, '⚡ REVITALIZED!', '#aaff66');
   }
 
   /** Q — Thrive!: for 5s the player's incoming damage is split across their plants instead. */
@@ -772,15 +844,26 @@ export class LifeKit {
     return owner === 'player' ? this.api.player : this.api.npc;
   }
 
-  private avatarFor(owner: 'player' | 'npc'): LifeAvatar | null {
+  private avatarFor(owner: 'player' | 'npc'): BaseAvatar | null {
     return owner === 'player' ? this.playerAvatar : this.npcAvatar;
+  }
+
+  /**
+   * That side's rig: the skin's if one is equipped, life's sprouting figure otherwise. Built
+   * lazily in `updateAvatars` and torn down in `reset`, so changing skin between matches swaps
+   * the character.
+   */
+  private makeAvatar(owner: 'player' | 'npc'): BaseAvatar {
+    const { scene } = this.api;
+    const col = owner === 'player' ? this.pcol : this.ncol;
+    return makeSkinAvatar(this.api.skinId(owner), scene) ?? new LifeAvatar(scene, col);
   }
 
   private updateAvatars(delta: number): void {
     const { player, npc, scene } = this.api;
 
     if (this.api.isPlayerLife() && player?.active) {
-      if (!this.playerAvatar) this.playerAvatar = new LifeAvatar(scene, this.pcol);
+      if (!this.playerAvatar) this.playerAvatar = this.makeAvatar('player');
       const aimX = this.lastMouseX || player.x + 1;
       const aimY = this.lastMouseY || player.y;
       const aim = Math.atan2(aimY - player.y, aimX - player.x);
@@ -797,7 +880,7 @@ export class LifeKit {
     }
 
     if (this.api.isNpcLife() && npc?.active) {
-      if (!this.npcAvatar) this.npcAvatar = new LifeAvatar(scene, this.ncol);
+      if (!this.npcAvatar) this.npcAvatar = this.makeAvatar('npc');
       this.npcAvatar.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
       this.npcAvatar.setIntensity(scene.time.now < this.npcThriveUntil ? 1.35 : 1);
       this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
@@ -897,6 +980,19 @@ export class LifeKit {
         }
       }
 
+      // Revitalize: a living plant knits itself back together and walks.
+      if (p.living) {
+        p.regenAccum += delta;
+        while (p.regenAccum >= 1000) {
+          p.regenAccum -= 1000;
+          if (p.hitbox.hp < p.hitbox.maxHp) {
+            p.hitbox.hp = Math.min(p.hitbox.maxHp, p.hitbox.hp + LIVING_REGEN_PER_SEC);
+            f.healBloom(p.x, p.y, 18, 4);
+          }
+        }
+        this.walkPlant(p, owner, friendly, hostiles, list, delta);
+      }
+
       // Whichever hostile is closest is what the plant looks at.
       const watched = this.nearestHostile(p.x, p.y, hostiles, 700);
       if (watched) p.aim = Math.atan2(watched.y - p.y, watched.x - p.x);
@@ -937,6 +1033,41 @@ export class LifeKit {
 
       this.tickPlantBehaviour(p, owner, friendly, hostiles, time, delta);
     }
+  }
+
+  /**
+   * One step of a living plant's walk. The attacking seeds stalk whatever is nearest; the two
+   * that work on their owner (Cotton's speed pad, the Nurse Lily's healing tether) follow the
+   * owner around instead, stopping just outside contact range so they trail rather than shove.
+   */
+  private walkPlant(
+    p: Plant,
+    owner: 'player' | 'npc',
+    friendly: Fighter,
+    hostiles: Fighter[],
+    list: Plant[],
+    delta: number,
+  ): void {
+    const followsOwner = LIVING_FOLLOWERS.includes(p.type);
+    const target = followsOwner ? friendly : this.nearestHostile(p.x, p.y, hostiles, 900);
+    if (!target || !target.active) return;
+
+    const stopAt = followsOwner ? LIVING_FOLLOW_DIST : LIVING_ENGAGE_DIST;
+    const dx = target.x - p.x;
+    const dy = target.y - p.y;
+    const d = Math.hypot(dx, dy);
+    if (d <= stopAt) return;
+
+    const step = Math.min(LIVING_WALK_SPEED * (delta / 1000), d - stopAt);
+    p.x += (dx / d) * step;
+    p.y += (dy / d) * step;
+    // The gait runs off distance covered, so a plant that stops walking stops stepping.
+    p.legPhase += step / 5;
+    // E+ drag reads these; without the update a walked plant would snap back to its old spot
+    // the moment it was grabbed.
+    p.targetX = p.x;
+    p.targetY = p.y;
+    if (owner === 'player') this.rescaleAll(list);
   }
 
   private nearestHostile(x: number, y: number, hostiles: Fighter[], maxDist: number): Fighter | null {
@@ -1001,6 +1132,13 @@ export class LifeKit {
     const tint = this.colFor(owner);
 
     p.art.clear();
+    // Revitalize: the legs go down first, so the plant's own art sits on top of the hips.
+    if (p.living) {
+      LifeFx.drawRootLegs(p.art, tint, p.x, p.y, p.legPhase, {
+        alpha: 0.95,
+        facing: p.aim,
+      });
+    }
     LifeFx.drawPlant(p.art, tint, p.type, p.x, p.y, p.age, {
       hp: ratio,
       fert: this.isFertilized(p),

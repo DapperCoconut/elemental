@@ -28,7 +28,7 @@ export interface EchoArenaApi {
   masteryBindFor(slot: string): string | null;
   recordMasteryStat(key: string, amount: number): void;
   broadcastMasteryCast(enhId: string): void;
-  /** `(owner, base) => displayed` — the owner's colour cosmetic, or the identity. */
+  /** `(owner, base) => displayed` — the owner's skin, or the identity. */
   echoColor(owner: 'player' | 'npc', base: number): number;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
@@ -217,7 +217,7 @@ export class EchoKit {
   private arena: EchoArenaApi;
 
   // ── Visuals ────────────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a skin recolours one side. */
   private readonly pcol: EchoColorFn;
   private readonly ncol: EchoColorFn;
   private readonly pfx: EchoFx;

@@ -10,10 +10,10 @@ import Phaser from 'phaser';
  * its effects.
  *
  * Nothing in this file picks a colour. Every drawing call takes one from the caller, so an
- * element's palette (and its colour cosmetic) stays the element's business.
+ * element's palette (and its skin) stays the element's business.
  */
 
-/** `(base) => displayed` — an owner's colour cosmetic mapper, or the identity. */
+/** `(base) => displayed` — an owner's skin mapper, or the identity. */
 export type ColorFn = (base: number) => number;
 
 export const TAU = Math.PI * 2;
@@ -124,6 +124,8 @@ export abstract class BaseAvatar {
   private eyeObjs: { white: Phaser.GameObjects.Arc; pupil: Phaser.GameObjects.Arc }[] = [];
   /** Soft under-glow. Separate Graphics from `extras` because one Graphics has one depth. */
   private glow: Phaser.GameObjects.Graphics;
+  /** Replacement torso, drawn over the sprite but *under* the face — see `drawBody`. */
+  private body: Phaser.GameObjects.Graphics;
   /** The silhouette extra, drawn *over* the sprite — under it only the dark tips would clear the body. */
   private extras: Phaser.GameObjects.Graphics;
 
@@ -161,6 +163,9 @@ export abstract class BaseAvatar {
     spec: AvatarSpec,
   ) {
     this.glow = scene.add.graphics().setDepth(depth - 3);
+    // Fighter sprites sit at depth 5 and the rig defaults to 6, so the half step is the only
+    // slot that is over the sprite and still under the eyes.
+    this.body = scene.add.graphics().setDepth(depth - 0.5);
     this.extras = scene.add.graphics().setDepth(depth + 2);
     this.squash = spec.squash ?? { div: 14, x: 0.5, y: 0.28 };
 
@@ -289,11 +294,13 @@ export abstract class BaseAvatar {
 
     // ── Element-owned layers ────────────────────────────────────────────
     this.glow.clear();
+    this.body.clear();
     this.extras.clear();
     if (visible) {
-      // Slow breathing pulse shared by both layers, so glow and silhouette move together.
+      // Slow breathing pulse shared by every layer, so glow and silhouette move together.
       const a = alpha * (0.66 + 0.12 * Math.sin(this.t * 5.5));
       this.drawGlow(this.glow, x, y, a, alpha);
+      this.drawBody(this.body, x, y, a, alpha);
       this.drawExtras(this.extras, x, y, a, alpha);
     }
   }
@@ -302,6 +309,7 @@ export abstract class BaseAvatar {
     for (const c of this.armObjs) c.destroy();
     for (const e of this.eyeObjs) { e.white.destroy(); e.pupil.destroy(); }
     this.glow.destroy();
+    this.body.destroy();
     this.extras.destroy();
     this.armObjs = [];
     this.eyeObjs = [];
@@ -313,6 +321,17 @@ export abstract class BaseAvatar {
   protected abstract drawGlow(
     g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number,
   ): void;
+
+  /**
+   * A replacement torso, painted over the fighter sprite but under the eyes — the one layer
+   * that can change what the character *is* rather than what it is wearing. Default is
+   * nothing: an element whose sprite already is its body leaves this alone. Skins that swap
+   * the character wholesale (see `skins/`) draw their silhouette here, and repaint the
+   * sprite underneath to their own base colour so nothing of the element shows past it.
+   */
+  protected drawBody(
+    _g: Phaser.GameObjects.Graphics, _x: number, _y: number, _a: number, _alpha: number,
+  ): void {}
 
   /**
    * The silhouette extra, drawn over the sprite. Root it at the crown (`y - 18`) so it never

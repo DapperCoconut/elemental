@@ -5,7 +5,7 @@ import { LifeFx, LIFE } from './kits/LifeVisuals';
 
 const SPREAD_ANGLES_DEG = [-15, 0, 15];
 
-/** Effects painter bound to whoever is casting (so a colour cosmetic recolours their flora). */
+/** Effects painter bound to whoever is casting (so a skin recolours their flora). */
 function fx(ctx: CastContext): LifeFx {
   return new LifeFx(ctx.scene, ctx.lifeColor);
 }

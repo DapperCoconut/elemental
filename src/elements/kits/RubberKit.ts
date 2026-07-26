@@ -121,6 +121,17 @@ const RUBBERAGE_FIGHTER_RADIUS = 20;
 const RUBBERAGE_BASE_SPEED = 240;
 const RUBBERAGE_MAX_SPEED = 820;
 const RUBBERAGE_SPEED_GROWTH_PER_MS = 0.00045;
+
+// ── Uber-Gear (penta perk) — rubber that gets rubberier the more it is used ──
+/** Elasticity gained per landed rubber hit. */
+const UBER_GAIN_PER_HIT = 0.04;
+const UBER_MAX = 0.60;
+/** Grace period after your last hit before the wind starts unwinding. */
+const UBER_IDLE_MS = 5000;
+/** Once idle, this much elasticity bleeds off per second. */
+const UBER_DECAY_PER_SEC = 0.08;
+/** Rubberage runs this much longer while Uber-Gear is on. */
+const UBER_RUBBERAGE_DURATION_MULT = 1.5;
 const RUBBERAGE_HIT_COOLDOWN_MS = 350;
 const RUBBERAGE_KNOCKBACK = 620;
 
@@ -140,12 +151,12 @@ export interface RubberArenaApi {
   readonly fKey: Phaser.Input.Keyboard.Key;
   readonly qKey: Phaser.Input.Keyboard.Key;
   hasUpgrade(slot: string): boolean;
-  hasPerk(perkId: string): boolean;
+  hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
   /** True when the local player's element is Rubber (upgrade flags are only meaningful then). */
   readonly isPlayerRubber: boolean;
   /** True when the opponent is Rubber — drives their rig, auras and world art. */
   readonly isNpcRubber: boolean;
-  /** `(owner, base) => displayed` — the owner's colour cosmetic, or the identity. */
+  /** `(owner, base) => displayed` — the owner's skin, or the identity. */
   rubberColor(owner: 'player' | 'npc', base: number): number;
   /** True while the player is mid-dodge/dash (Space dodge, sling launch, or band recall). */
   readonly isDodging: boolean;
@@ -230,7 +241,7 @@ export class RubberKit {
   private readonly arena: RubberArenaApi;
 
   // ── Visuals ────────────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a skin recolours one side. */
   private readonly pcol: RubberColorFn;
   private readonly ncol: RubberColorFn;
   private readonly pfx: RubberFx;
@@ -372,6 +383,10 @@ export class RubberKit {
   private rubberageBalls: RubberageBall[] = [];
   private rubberageEnd = 0;
   private rubberageDmg = RUBBERAGE_DMG;
+  /** Uber-Gear: wound-up elasticity per side, and when each last landed a hit. */
+  private uber: Record<'player' | 'npc', number> = { player: 0, npc: 0 };
+  private uberLastHitAt: Record<'player' | 'npc', number> = { player: 0, npc: 0 };
+  private uberIndicatorShown = false;
 
   private npcRubberageBalls: RubberageBall[] = [];
   private npcRubberageEnd = 0;
@@ -505,6 +520,10 @@ export class RubberKit {
     this.vulcCdMultBase = 1;
     this.vulcAnchorPulseAt = 0;
     this.arena.setStatusIndicator('vulcanization', null);
+    this.uber = { player: 0, npc: 0 };
+    this.uberLastHitAt = { player: 0, npc: 0 };
+    this.uberIndicatorShown = false;
+    this.arena.setStatusIndicator('uber-gear', null);
 
     // Mastery — Atom-Nhilego
     this.nhilegoLastCastAt = -NHILEGO_COOLDOWN_MS;
@@ -836,6 +855,7 @@ export class RubberKit {
     this.updateBand(time, delta, 'npc');
 
     // Rubberage
+    this.updateUber(time, delta);
     this.updateRubberageBalls(time, delta, 'player');
     this.updateRubberageBalls(time, delta, 'npc');
 
@@ -1135,8 +1155,11 @@ export class RubberKit {
     const time = scene.time.now;
     const isPlus = owner === 'player' && this.arena.hasUpgrade('q');
     const count = isPlus ? RUBBERAGE_COUNT_PLUS : RUBBERAGE_COUNT;
-    const dmg = isPlus ? RUBBERAGE_DMG_PLUS : RUBBERAGE_DMG;
-    const duration = isPlus ? RUBBERAGE_DURATION_PLUS_MS : RUBBERAGE_DURATION_MS;
+    // Uber-Gear: heavier balls, and a swarm that stays out half again as long.
+    const uberK = this.uberK(owner);
+    const dmg = Math.round((isPlus ? RUBBERAGE_DMG_PLUS : RUBBERAGE_DMG) * (1 + uberK));
+    const duration = Math.round((isPlus ? RUBBERAGE_DURATION_PLUS_MS : RUBBERAGE_DURATION_MS)
+      * (this.arena.hasPerk(owner, 'uber-gear') ? UBER_RUBBERAGE_DURATION_MULT : 1));
 
     // Vulcanization 75%+: the player's swarm comes out glowing.
     const hot = owner === 'player' && this.vulcFire();
@@ -1198,7 +1221,9 @@ export class RubberKit {
   private startStretchPunch(owner: 'player' | 'npc', targetX: number, targetY: number, pullRatio: number): void {
     const { player, npc, scene } = this.arena;
     const caster = owner === 'player' ? player : npc;
-    const damage = Math.round(PUNCH_MIN_DMG + (PUNCH_MAX_DMG - PUNCH_MIN_DMG) * pullRatio);
+    // Uber-Gear: a wound-up fist lands harder than the same pull would otherwise.
+    const damage = Math.round((PUNCH_MIN_DMG + (PUNCH_MAX_DMG - PUNCH_MIN_DMG) * pullRatio)
+      * (1 + this.uberK(owner)));
     const maxReach = PUNCH_REACH;
 
     const dx = targetX - caster.x;
@@ -1303,6 +1328,7 @@ export class RubberKit {
         const d = Phaser.Math.Distance.Between(fistX, fistY, tgt.x, tgt.y);
         if (d < PUNCH_FIST_RADIUS) {
           tgt.takeDamage(damage);
+          this.noteUberHit(isPlayer ? 'player' : 'npc');
           // Vulcanization 75%+: a charged fist is hot enough to set them alight.
           const ignites = isPlayer && this.vulcFire();
           if (ignites) this.applyFireDot(tgt);
@@ -1372,7 +1398,8 @@ export class RubberKit {
     const pullRatio = Math.min(1, pullDist / SLING_MAX_PULL);
     // Vulcanized rubber snaps back harder, so the whole launch is faster.
     const speed = (SLING_MIN_SPEED + (SLING_MAX_SPEED - SLING_MIN_SPEED) * pullRatio)
-      * (1 + VULC_SLING_SPEED * this.vulcK());
+      * (1 + VULC_SLING_SPEED * this.vulcK())
+      * (1 + this.uberK('player'));
     this.slingSpeed = speed;
     // Real slingshot: launch back through the rest position, opposite the pull direction.
     const vx = -(pdx / pullDist) * speed;
@@ -1461,6 +1488,7 @@ export class RubberKit {
         // A vulcanized fireball launch hits harder and leaves the target burning.
         const fireball = owner === 'player' && this.fireballFlight;
         t.takeDamage(Math.round(SLING_CONTACT_DMG * (fireball ? VULC_FIRE_SLING_MULT : 1)));
+        this.noteUberHit(owner);
         if (fireball) this.applyFireDot(t);
         hitSet.add(t);
         this.arena.spawnHitFlash(t.x, t.y, fireball ? RUBBER.flame : RUBBER.rose);
@@ -1883,6 +1911,7 @@ export class RubberKit {
           ball.lastHitAt = time;
           const wasAlive = tgt.hp > 0;
           tgt.takeDamage(hitDmg);
+          this.noteUberHit(owner);
           if (onFire) this.applyFireDot(tgt);
           if (isPlayer && wasAlive && tgt.hp <= 0) this.arena.recordMasteryStat('rubberageKills', 1);
           this.arena.spawnHitFlash(tgt.x, tgt.y, onFire ? RUBBER.flame : RUBBER.rose);
@@ -2250,6 +2279,51 @@ export class RubberKit {
   private vulcK(): number {
     if (!this.arena.masteryActive) return 0;
     return Math.pow(this.vulc, VULC_CURVE_EXP);
+  }
+
+  // ── Uber-Gear (perk) ───────────────────────────────────────────────────────
+
+  /**
+   * The elasticity every Uber-Gear bonus is scaled by, 0 when the perk isn't equipped —
+   * same shape as vulcK() so call sites can multiply through unconditionally.
+   */
+  private uberK(owner: 'player' | 'npc'): number {
+    return this.arena.hasPerk(owner, 'uber-gear') ? this.uber[owner] : 0;
+  }
+
+  /** Any rubber hit winds the gear another notch and resets the unwind clock. */
+  private noteUberHit(owner: 'player' | 'npc'): void {
+    if (!this.arena.hasPerk(owner, 'uber-gear')) return;
+    const time = this.arena.scene.time.now;
+    this.uberLastHitAt[owner] = time;
+    const before = this.uber[owner];
+    this.uber[owner] = Math.min(UBER_MAX, before + UBER_GAIN_PER_HIT);
+    if (before < UBER_MAX && this.uber[owner] >= UBER_MAX) {
+      const f = owner === 'player' ? this.arena.player : this.arena.npc;
+      this.arena.showFloatingText(f.x, f.y - 52, '🪀 UBER-GEAR MAXED', '#ff88aa');
+    }
+  }
+
+  private updateUber(time: number, delta: number): void {
+    for (const owner of ['player', 'npc'] as const) {
+      if (this.uber[owner] <= 0) continue;
+      if (!this.arena.hasPerk(owner, 'uber-gear')) { this.uber[owner] = 0; continue; }
+      if (time - this.uberLastHitAt[owner] < UBER_IDLE_MS) continue;
+      this.uber[owner] = Math.max(0, this.uber[owner] - UBER_DECAY_PER_SEC * (delta / 1000));
+    }
+
+    const k = this.uberK('player');
+    if (k > 0.001) {
+      this.arena.setStatusIndicator('uber-gear', {
+        name: 'Uber-Gear', emoji: '🪀', color: 0xff5577,
+        description: 'Wound-up elasticity: boosts punch damage, sling launch speed and Rubberage ball damage. Winds up on every rubber hit, unwinds after 5s without one.',
+        count: Math.round(k * 100), suffix: '%', priority: 118,
+      });
+      this.uberIndicatorShown = true;
+    } else if (this.uberIndicatorShown) {
+      this.arena.setStatusIndicator('uber-gear', null);
+      this.uberIndicatorShown = false;
+    }
   }
 
   /** True once the rubber is cured hot enough to set things alight. */

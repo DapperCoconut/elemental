@@ -36,7 +36,7 @@ export interface SoulArenaApi {
   readonly width: number;
   readonly height: number;
   hasUpgrade(slot: string): boolean;
-  /** Cosmetics: maps a soul visual color through the owner's color cosmetic. */
+  /** Skins: maps a soul visual color through the owner's skin. */
   soulColor(owner: Owner, base: number): number;
   hasPerk(owner: Owner, perkId: string): boolean;
   spawnHitFlash(x: number, y: number, color: number): void;
@@ -283,7 +283,7 @@ const HUD_Y = 52;
  */
 export class SoulKit {
   // ── Visuals ───────────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a skin recolours one side. */
   private readonly pcol: SoulColorFn;
   private readonly ncol: SoulColorFn;
   private readonly pfx: SoulFx;

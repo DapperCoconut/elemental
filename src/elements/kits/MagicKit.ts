@@ -55,7 +55,7 @@ export interface MagicArenaApi {
   get isPlayerMagic(): boolean;
   /** True when the opponent is Magic. */
   get isNpcMagic(): boolean;
-  /** `(owner, base) => displayed` — the owner's colour cosmetic, or the identity. */
+  /** `(owner, base) => displayed` — the owner's skin, or the identity. */
   magicColor(owner: 'player' | 'npc', base: number): number;
 }
 
@@ -198,6 +198,12 @@ const GRIMOIRE_COLORS  = [0xff7733, 0x3388ff, 0x33aa44, 0x888888, 0x885522];
 const NECRO_LABELS     = ['🌋 Flame Barrage', '🌊 Final Drench', '🌿 Thorn Prison', '🌪️ Tornado', '🌋 Gaia Rage'];
 const NECRO_COLORS     = [0xcc2200, 0x1144aa, 0x226622, 0x444444, 0x553311];
 
+// ── Decay (divine perk) ───────────────────────────────────────────────────────
+/** Dark energy charged for buying the Grimoire's cooldown back. */
+const DECAY_GRIMOIRE_COST = 25;
+/** …and for the Necronomicon's. One point short of the 100 that kills you outright. */
+const DECAY_NECRO_COST = 99;
+
 const DARK_GRIMOIRE_LABELS = ['🔥 Corrupt Flames', '⛈️ Acid Cloud', '🌿 Drain Thorns', '💨 Dark Gale', '🛕 Gaia Temple'];
 const DARK_GRIMOIRE_COLORS = [0xff5500, 0x3366cc, 0x22aa44, 0x888888, 0x775533];
 const DARK_NECRO_LABELS    = ['🌋 Dark Barrage', '🌊 Acid Rain', '🌿 Torture Trap', '🌪️ Hurricane Vac.', '🌋 Gaia Monument'];
@@ -207,7 +213,7 @@ const DARK_NECRO_COLORS    = [0xcc1100, 0x112255, 0x226633, 0x333333, 0x442200];
 
 export class MagicKit {
   // ── Visuals ────────────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a skin recolours one side. */
   private readonly pcol: MagicColorFn;
   private readonly ncol: MagicColorFn;
   private readonly pfx: MagicFx;
@@ -701,6 +707,9 @@ export class MagicKit {
           this.grimoireKeyNavUsed = false;
           this._openMenu('grimoire', this.grimoireLastPick);
         }
+      } else {
+        // Decay (perk): the press that would have been wasted buys the cooldown back instead.
+        this.tryDecayRefresh('magic-grimoire', DECAY_GRIMOIRE_COST, '📖');
       }
     }
 
@@ -737,8 +746,34 @@ export class MagicKit {
           this.necronomiconKeyNavUsed = false;
           this._openMenu('necronomicon', this.necronomiconLastPick);
         }
+      } else {
+        this.tryDecayRefresh('magic-necronomicon', DECAY_NECRO_COST, '💀');
       }
     }
+  }
+
+  /**
+   * Decay (perk): a press on a slot that is still cooling hands the cooldown straight back,
+   * paid for in dark energy. The press itself does not then cast — the next one does, exactly
+   * as if the ability had come off cooldown on its own.
+   *
+   * No affordability check: darkness is a debt, not a currency, and the Necronomicon's 99 is
+   * meant to be a decision about whether you survive the next ten seconds.
+   */
+  private tryDecayRefresh(abilityId: string, cost: number, emoji: string): void {
+    if (!this.api.hasPerk('player', 'decay')) return;
+    const { player } = this.api;
+
+    player.resetCooldown(abilityId);
+    // The book rots forward through its own cooldown: sigils spinning off the caster and a
+    // wash of corruption climbing them.
+    this.pfx.ring(player.x, player.y, 10, 66, MAGIC.magenta, 460, 5, 6);
+    this.pfx.motes(player.x, player.y + 10, 8, {
+      speed: 70, size: 2.8, life: 640, color: MAGIC.magenta, drift: -30,
+    });
+    this.api.showFloatingText(player.x, player.y - 62, `${emoji} DECAY — READY`, '#cc66ff');
+    // Charged last: at 100 darkness this kills, and the readout should land before the blast.
+    this.addDarkness(cost);
   }
 
   // ── update (per-frame) ────────────────────────────────────────────────────

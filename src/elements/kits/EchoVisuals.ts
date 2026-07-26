@@ -10,12 +10,12 @@ import { AvatarSpec, ArmHold, ArmPose, BaseAvatar, ColorFn, FxBase, TAU, easeIn,
  * ElementVisuals.ts. What stays here is what makes echo echo: the scalloped chirp, the eye that
  * watches back, and the bat that carries both.
  *
- * Every structural colour must come from the ECHO palette below. Echo has no colour-slot cosmetic
+ * Every structural colour must come from the ECHO palette below. Echo has no skin
  * yet, but every call still routes through the owner's `echoColor` mapper, so the day one lands it
- * is a table edit in CosmeticsKit rather than a sweep through this file.
+ * is a table edit in SkinsKit rather than a sweep through this file.
  */
 
-/** `(base) => displayed` — CosmeticsKit.echoColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.echoColor bound to one owner. */
 export type EchoColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';

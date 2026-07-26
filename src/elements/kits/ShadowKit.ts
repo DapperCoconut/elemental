@@ -5,6 +5,8 @@ import {
   SHADOW, ShadowAvatar, ShadowColorFn, ShadowFx, ShadowShroud,
   shadowTendril, shadowTendrilLayered,
 } from './ShadowVisuals';
+import { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
 
 /**
  * Every shadow ability — the player's and the NPC's alike — is cast through the `do*` methods
@@ -21,6 +23,9 @@ const HOPELESS_DRAIN_PER_SEC = 1;
 /** Every 2% of hopelessness costs 1% outgoing damage, capped at 50%. */
 const HOPELESS_DAMAGE_PER_POINT = 0.005;
 const HOPELESS_DAMAGE_CAP = 0.5;
+
+/** Unmitigated damage the player must soak in one fight for the Unkillable achievement. */
+const UNKILLABLE_DAMAGE = 400;
 
 // ── Tentacle Wall (F) tuning ────────────────────────────────────────────
 const WALL_TENTACLE_COUNT = 8;
@@ -46,6 +51,19 @@ const TRIPLINE_HOPELESS = 10;
 const TRIPLINE_SLOW_MULT = 0.5;
 const TRIPLINE_SLOW_MS = 3000;
 const TRIPLINE_HIT_CD_MS = 1500;
+
+// ── Death perk (trap menu) tuning ───────────────────────────────────────
+/** Mine: the charge goes off in a circle rather than biting one victim. */
+const MINE_DAMAGE = 35;
+const MINE_RADIUS = 92;
+const MINE_HOPELESS = 10;
+/** Grabber: how long the tentacle keeps hold, and how far it lets its catch stray. */
+const GRABBER_HOLD_MS = 5000;
+const GRABBER_TETHER = 62;
+const GRABBER_HOPELESS = 15;
+/** Plume: pools thrown out when the trap bursts, and how wide they scatter. */
+const PLUME_CLOUDS = 10;
+const PLUME_SPREAD = 78;
 
 // ── Shadow Mastery tuning ───────────────────────────────────────────────
 /** Shared Suffering: every this much damage taken spreads hopelessness. */
@@ -92,6 +110,12 @@ interface DarkBomb {
   mark: Fighter | null;
 }
 
+/**
+ * Death perk: which of the four traps Snap Trap is currently loaded with. Without the perk
+ * every trap is `base`, which is the jaws Shadow has always placed.
+ */
+type TrapKind = 'base' | 'mine' | 'grabber' | 'plume';
+
 interface SnapTrap {
   /** Redrawn every frame — jaws quiver, stakes flutter their tie-off rags. */
   gfx: Phaser.GameObjects.Graphics;
@@ -106,6 +130,11 @@ interface SnapTrap {
   owner: 'player' | 'npc';
   /** String perk: this is a Snap Stake — inert on its own, dangerous once strung to a partner. */
   isStake?: boolean;
+  /** Death perk: what this trap does when something steps on it. */
+  kind: TrapKind;
+  /** Grabber: who the tentacle has hold of, and until when. */
+  grabbed?: Fighter | null;
+  grabUntil?: number;
 }
 
 /** String perk: the tripline strung between a pair of stakes. */
@@ -185,8 +214,12 @@ export interface ShadowArenaApi {
   hasUpgrade(slot: string): boolean;
   hasNpcUpgrade(slot: string): boolean;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
-  /** Cosmetics: maps a shadow visual color through the owner's color cosmetic. */
+  /** Skins: maps a shadow visual color through the owner's skin. */
   shadowColor(owner: 'player' | 'npc', base: number): number;
+  /** Equipped skin id for that side, or null — decides which character rig gets built. */
+  skinId(owner: 'player' | 'npc'): string | null;
+  /** Idempotent achievement unlock with in-arena popup. */
+  unlockAchievement(id: string): void;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
@@ -203,14 +236,18 @@ export interface ShadowArenaApi {
 
 export class ShadowKit {
   // ── Visuals ───────────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a skin recolours one side. */
   private readonly pcol: ShadowColorFn;
   private readonly ncol: ShadowColorFn;
   private readonly pfx: ShadowFx;
   private readonly nfx: ShadowFx;
-  /** The shadow character rig (ball arms, eyes, tendril crown) for each shadow-element fighter. */
-  private playerAvatar: ShadowAvatar | null = null;
-  private npcAvatar: ShadowAvatar | null = null;
+  /**
+   * The character rig for each shadow-element fighter — shadow's own by default, or whatever
+   * that side's equipped skin installs instead. Typed as the base rig because the kit only
+   * ever drives it through poses and gestures, which every rig has.
+   */
+  private playerAvatar: BaseAvatar | null = null;
+  private npcAvatar: BaseAvatar | null = null;
   /** Last aim point, cached in handleInput so the per-frame avatar update can face it. */
   private aimX = 0;
   private aimY = 0;
@@ -253,6 +290,21 @@ export class ShadowKit {
   /** Fighters this kit has tinted for hopelessness, so it only clears its own tint. */
   private tinted = new Set<Fighter>();
   private oozeAccum = 0;
+
+  // ── Death perk: trap menu ────────────────────────────────────────────
+  /** Which trap Snap Trap places. Only ever anything but 'base' while Death is equipped. */
+  private selectedTrap: TrapKind = 'base';
+  private trapBarSlots: Array<{
+    kind: TrapKind;
+    bg: Phaser.GameObjects.Rectangle;
+    /** The trap itself, drawn small — you pick by looking at what you are about to plant. */
+    art: Phaser.GameObjects.Graphics;
+    name: Phaser.GameObjects.Text;
+    x: number;
+    y: number;
+  }> = [];
+  /** Screen-space bounds of the trap bar; a click inside it must never become an attack. */
+  private trapBarBounds = { x1: 0, y1: 0, x2: 0, y2: 0 };
 
   // ── NPC shadow ───────────────────────────────────────────────────────
   private npcShadowTentacleActive = false;
@@ -367,6 +419,10 @@ export class ShadowKit {
     for (const f of this.tinted) if (f.active) f.clearTint();
     this.tinted.clear();
     this.oozeAccum = 0;
+    // Death perk: the bar's GameObjects died with the old scene run. It is rebuilt lazily by
+    // update(), which is also the only place that knows whether this match wants one.
+    this.teardownTrapBar();
+    this.selectedTrap = 'base';
     this.npcShadowTentacleActive = false;
     this.npcShadowTentacleHooked = false;
     this.npcShadowTentacleEnd = 0;
@@ -702,6 +758,103 @@ export class ShadowKit {
     return has('r') || has('e');
   }
 
+  // ── Death perk: the trap menu ──────────────────────────────────────────
+
+  /** The four traps, in bar order. Blurbs are what the bar says under each icon. */
+  private static readonly TRAP_MENU: Array<{ kind: TrapKind; name: string; color: number }> = [
+    { kind: 'base',    name: 'Snap',    color: SHADOW.mauve },
+    { kind: 'mine',    name: 'Mine',    color: SHADOW.blood },
+    { kind: 'grabber', name: 'Grabber', color: SHADOW.lilac },
+    { kind: 'plume',   name: 'Plume',   color: SHADOW.amethyst },
+  ];
+
+  private teardownTrapBar(): void {
+    for (const s of this.trapBarSlots) { s.bg.destroy(); s.art.destroy(); s.name.destroy(); }
+    this.trapBarSlots = [];
+    this.trapBarBounds = { x1: 0, y1: 0, x2: 0, y2: 0 };
+  }
+
+  private buildTrapBar(): void {
+    const scene = this.arena.scene;
+    const slotW = 74;
+    const gap = 8;
+    const menu = ShadowKit.TRAP_MENU;
+    const total = menu.length * slotW + (menu.length - 1) * gap;
+    const startX = this.arena.width / 2 - total / 2 + slotW / 2;
+    const y = 46;
+    this.trapBarBounds = {
+      x1: startX - slotW / 2, y1: y - 28,
+      x2: startX - slotW / 2 + total, y2: y + 28,
+    };
+
+    for (let i = 0; i < menu.length; i++) {
+      const def = menu[i];
+      const x = startX + i * (slotW + gap);
+      const bg = scene.add.rectangle(x, y, slotW, 56, SHADOW.pitch, 0.85)
+        .setStrokeStyle(2, def.color, 0.8)
+        .setDepth(200)
+        .setScrollFactor(0)
+        .setInteractive({ useHandCursor: true });
+      const art = scene.add.graphics().setDepth(201).setScrollFactor(0);
+      const name = scene.add.text(x, y + 18, def.name, { fontSize: '9px', color: '#ccaadd' })
+        .setOrigin(0.5).setDepth(201).setScrollFactor(0);
+
+      bg.on('pointerdown', () => {
+        this.selectedTrap = def.kind;
+        this.refreshTrapBar();
+      });
+      bg.on('pointerover', () => bg.setFillStyle(SHADOW.violet, 0.9));
+      bg.on('pointerout', () => this.refreshTrapBar());
+
+      this.trapBarSlots.push({ kind: def.kind, bg, art, name, x, y });
+    }
+    this.refreshTrapBar();
+  }
+
+  private refreshTrapBar(): void {
+    for (const s of this.trapBarSlots) {
+      const def = ShadowKit.TRAP_MENU.find((d) => d.kind === s.kind)!;
+      const sel = s.kind === this.selectedTrap;
+      s.bg.setFillStyle(sel ? SHADOW.plum : SHADOW.pitch, sel ? 0.95 : 0.85);
+      s.bg.setStrokeStyle(sel ? 3 : 2, def.color, sel ? 1 : 0.6);
+      s.name.setColor(sel ? '#ffffff' : '#9977aa');
+    }
+  }
+
+  /** Repaint the four icons, so each one twitches in the bar exactly as it will on the floor. */
+  private paintTrapBar(time: number): void {
+    for (const s of this.trapBarSlots) {
+      s.art.clear();
+      this.drawTrapIcon(s.art, s.kind, s.x, s.y - 4, time + s.x * 3, s.kind === this.selectedTrap ? 1 : 0.65);
+    }
+  }
+
+  /**
+   * True when the pointer is picking a trap rather than attacking. Tested geometrically for the
+   * same reason LifeKit's seed bar is: Phaser dispatches input before scene update, so a flag
+   * set in the pointerdown handler would already have been cleared by the time this is read.
+   */
+  private pointerOnTrapBar(pointer: Phaser.Input.Pointer): boolean {
+    if (this.trapBarSlots.length === 0) return false;
+    const b = this.trapBarBounds;
+    return pointer.x >= b.x1 && pointer.x <= b.x2 && pointer.y >= b.y1 && pointer.y <= b.y2;
+  }
+
+  /** One trap drawn small, for the bar. Shares the shapes the real traps use on the floor. */
+  private drawTrapIcon(
+    g: Phaser.GameObjects.Graphics, kind: TrapKind, x: number, y: number, time: number, alpha: number,
+  ): void {
+    const stub: SnapTrap = {
+      gfx: g, expiresAt: 0, spawnAt: -1000, phase: x * 0.01,
+      x, y, triggered: false, radius: 15, owner: 'player', kind,
+    };
+    g.setAlpha(alpha);
+    if (kind === 'mine') this.drawMine(stub, time);
+    else if (kind === 'grabber') this.drawGrabber(stub, time);
+    else if (kind === 'plume') this.drawPlumeTrap(stub, time);
+    else this.drawSnapTrap(stub, time);
+  }
+
   doPlaceSnapTrap(isPlayer: boolean): void {
     const scene = this.arena.scene;
     const { player, npc } = this.arena;
@@ -724,7 +877,7 @@ export class ShadowKit {
         spawnAt: scene.time.now,
         phase: Math.random() * Math.PI * 2,
         x: caster.x, y: caster.y,
-        triggered: false, radius: 8, owner, isStake: true,
+        triggered: false, radius: 8, owner, isStake: true, kind: 'base',
       };
       this.shadowSnapTraps.push(stake);
       const waiting = this.pendingStake[owner];
@@ -742,14 +895,28 @@ export class ShadowKit {
       return;
     }
 
+    // Death perk: the bar decides what gets planted. The NPC never has the perk, so its
+    // traps stay the jaws they have always been.
+    const kind: TrapKind = owner === 'player' && this.arena.hasPerk('player', 'death')
+      ? this.selectedTrap
+      : 'base';
+
     this.shadowSnapTraps.push({
       gfx: scene.add.graphics().setDepth(4),
       expiresAt: scene.time.now + 12000,
       spawnAt: scene.time.now,
       phase: Math.random() * Math.PI * 2,
       x: caster.x, y: caster.y,
-      triggered: false, radius: bigTraps ? 27 : 18, owner,
+      // A mine is a wider pressure plate than a set of jaws; a grabber reaches further still.
+      triggered: false,
+      radius: kind === 'grabber' ? (bigTraps ? 40 : 30) : bigTraps ? 27 : 18,
+      owner, kind, grabbed: null, grabUntil: 0,
     });
+
+    if (kind !== 'base') {
+      const label = ShadowKit.TRAP_MENU.find((d) => d.kind === kind)!.name;
+      this.arena.showFloatingText(caster.x, caster.y - 30, `☠️ ${label.toUpperCase()} SET`, '#cc88ff');
+    }
   }
 
   /**
@@ -811,6 +978,133 @@ export class ShadowKit {
   }
 
   /**
+   * A Mine: a triangular charge sunk into the floor, ringed by the blast radius it will
+   * clear. The plate is a hard-edged wedge rather than a circle — nothing else Shadow puts
+   * on the ground has corners, so a mine is identifiable at a glance and from a distance.
+   */
+  private drawMine(t: SnapTrap, time: number): void {
+    const g = t.gfx;
+    g.clear();
+    const grow = Math.min(1, (time - t.spawnAt) / 220);
+    const r = t.radius * 1.35 * grow;
+    const tint = this.col(t.owner);
+    const warn = tint(SHADOW.blood);
+    const pulse = 0.5 + 0.5 * Math.sin(time * 0.006 + t.phase);
+
+    g.fillStyle(tint(SHADOW.abyss), 0.32);
+    g.fillEllipse(t.x, t.y + r * 0.3, r * 2.1, r * 0.8);
+
+    // The reach it will clear, breathing so it never reads as a decal.
+    g.lineStyle(1.5, warn, 0.14 + pulse * 0.12);
+    g.strokeCircle(t.x, t.y, MINE_RADIUS * 0.5 * grow * (0.97 + pulse * 0.03));
+
+    // Body: three nested wedges, the innermost lit by the charge.
+    const tri = (rr: number, rot: number) => {
+      g.beginPath();
+      for (let i = 0; i < 3; i++) {
+        const a = rot + (i / 3) * Math.PI * 2 - Math.PI / 2;
+        const px = t.x + Math.cos(a) * rr;
+        const py = t.y + Math.sin(a) * rr;
+        if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+      }
+      g.closePath();
+    };
+
+    g.fillStyle(tint(SHADOW.pitch), 0.95);
+    tri(r * 1.15, t.phase * 0.05); g.fillPath();
+    g.lineStyle(2, tint(SHADOW.orchid), 0.9);
+    tri(r * 1.15, t.phase * 0.05); g.strokePath();
+    g.fillStyle(tint(SHADOW.umbra), 0.95);
+    tri(r * 0.78, -t.phase * 0.05); g.fillPath();
+
+    // Detonator: a bead of blood-red charge with prongs at each corner.
+    for (let i = 0; i < 3; i++) {
+      const a = t.phase * 0.05 + (i / 3) * Math.PI * 2 - Math.PI / 2;
+      g.fillStyle(warn, 0.5 + pulse * 0.4);
+      g.fillCircle(t.x + Math.cos(a) * r * 0.86, t.y + Math.sin(a) * r * 0.86, 2 + pulse);
+    }
+    g.fillStyle(warn, 0.35 + pulse * 0.5);
+    g.fillCircle(t.x, t.y, r * 0.26 + pulse * 2);
+    g.fillStyle(tint(SHADOW.white), 0.4 + pulse * 0.5);
+    g.fillCircle(t.x, t.y, r * 0.1);
+  }
+
+  /**
+   * A Grabber: a pit of limbs lying coiled and flat, waiting. Once it has hold of something
+   * the same limbs are drawn stretched out to the victim, so the trap and its catch are one
+   * object rather than a trap and a status effect.
+   */
+  private drawGrabber(t: SnapTrap, time: number): void {
+    const g = t.gfx;
+    g.clear();
+    const grow = Math.min(1, (time - t.spawnAt) / 220);
+    const r = t.radius * grow;
+    const tint = this.col(t.owner);
+    const holding = !!t.grabbed;
+
+    g.fillStyle(tint(SHADOW.abyss), 0.45);
+    g.fillEllipse(t.x, t.y, r * 2.2, r * 1.5);
+    g.fillStyle(tint(SHADOW.pitch), 0.9);
+    g.fillEllipse(t.x, t.y, r * 1.5, r * 1.0);
+
+    // Coiled limbs around the rim, groping outward on their own beats.
+    for (let i = 0; i < 7; i++) {
+      const a = (i / 7) * Math.PI * 2 + t.phase + Math.sin(time * 0.002 + i) * 0.5;
+      const reach = r * (0.9 + 0.5 * Math.sin(time * 0.004 + i * 1.3));
+      g.fillStyle(tint(i % 2 ? SHADOW.orchid : SHADOW.amethyst), 0.85);
+      shadowTendril(g, t.x, t.y, a, reach, r * 0.16, Math.sin(time * 0.003 + i) * r * 0.5);
+    }
+
+    // The eye in the pit — open only while it is holding something.
+    const lid = holding ? 1 : 0.35 + 0.2 * Math.sin(time * 0.004 + t.phase);
+    g.fillStyle(tint(SHADOW.white), 0.75 * lid);
+    g.fillEllipse(t.x, t.y, r * 0.6, r * 0.42 * lid);
+    g.fillStyle(tint(holding ? SHADOW.blood : SHADOW.violet), 0.95 * lid);
+    g.fillCircle(t.x, t.y, r * 0.17);
+
+    // The hold itself: a thick limb run out to the victim, barbed along its length.
+    if (t.grabbed && t.grabbed.active) {
+      const v = t.grabbed;
+      const a = Math.atan2(v.y - t.y, v.x - t.x);
+      const len = Phaser.Math.Distance.Between(t.x, t.y, v.x, v.y);
+      const sway = Math.sin(time * 0.008 + t.phase) * Math.min(14, len * 0.16);
+      shadowTendrilLayered(g, tint, t.x, t.y, a, len, 6.5, sway, 0.95, 4, t.phase, { barbs: 5 });
+      // The grip: a knot of limb closed around them.
+      g.fillStyle(tint(SHADOW.amethyst), 0.9);
+      for (let i = 0; i < 5; i++) {
+        const ga = a + Math.PI + (i - 2) * 0.55;
+        shadowTendril(g, v.x, v.y, ga, 15, 3, Math.sin(time * 0.01 + i) * 5);
+      }
+    }
+  }
+
+  /**
+   * A Plume trap: the jaws, but bloated with what it is carrying. Pools of dark visibly swirl
+   * under the plate, which is the only warning that this one bursts rather than bites.
+   */
+  private drawPlumeTrap(t: SnapTrap, time: number): void {
+    // The jaws underneath are the same trap, so the two read as a family.
+    this.drawSnapTrap(t, time);
+
+    const g = t.gfx;
+    const grow = Math.min(1, (time - t.spawnAt) / 220);
+    const r = t.radius * grow;
+    const tint = this.col(t.owner);
+
+    // Pools boiling up out of the plate, each on its own orbit.
+    for (let i = 0; i < 5; i++) {
+      const a = t.phase + (i / 5) * Math.PI * 2 + time * 0.0011;
+      const d = r * (0.2 + 0.28 * ((i % 3) + 1) / 3);
+      const bob = Math.sin(time * 0.005 + i * 1.7) * r * 0.12;
+      const rr = r * (0.2 + 0.1 * Math.sin(time * 0.006 + i));
+      g.fillStyle(tint(SHADOW.amethyst), 0.55);
+      g.fillEllipse(t.x + Math.cos(a) * d, t.y + Math.sin(a) * d * 0.7 + bob, rr * 2, rr * 1.3);
+      g.fillStyle(tint(SHADOW.lilac), 0.35);
+      g.fillEllipse(t.x + Math.cos(a) * d, t.y + Math.sin(a) * d * 0.7 + bob, rr, rr * 0.7);
+    }
+  }
+
+  /**
    * A Snap Stake: a leaning iron spike driven into the ground, with the knot and two loose
    * rag ends at its head fluttering — visibly something a string wants to be tied to.
    */
@@ -846,6 +1140,126 @@ export class ShadowKit {
     g.lineStyle(1.5, accent, 0.7);
     g.lineBetween(tipX, tipY + 2, tipX - 5 + flutter, tipY + 9);
     g.lineBetween(tipX, tipY + 2, tipX + 4 + flutter * 0.6, tipY + 10);
+  }
+
+  /** Whichever art this trap wears. Stakes are handled by their own branch upstream. */
+  private drawTrap(t: SnapTrap, time: number): void {
+    if (t.kind === 'mine') this.drawMine(t, time);
+    else if (t.kind === 'grabber') this.drawGrabber(t, time);
+    else if (t.kind === 'plume') this.drawPlumeTrap(t, time);
+    else this.drawSnapTrap(t, time);
+  }
+
+  /**
+   * Something stepped on a trap. Every kind lands its own way, but they share the ledger
+   * entry and the stun the base jaws have always applied, so a Mine still counts as a catch
+   * toward Ensnared and still leaves the victim reeling.
+   */
+  private springTrap(trap: SnapTrap, victim: Fighter, time: number): void {
+    const owner = trap.owner;
+    const fx = this.fx(owner);
+    const stun = (ms: number) => {
+      if (owner === 'player') this.shadowNpcStunnedUntil = Math.max(this.shadowNpcStunnedUntil, time + ms);
+      else this.shadowPlayerStunnedUntil = Math.max(this.shadowPlayerStunnedUntil, time + ms);
+    };
+    if (owner === 'player') this.arena.recordMasteryStat('trapped', 1);
+
+    switch (trap.kind) {
+      // ── Mine: no bite, a blast. Everything in reach goes up with it. ──────
+      case 'mine': {
+        trap.triggered = true;
+        const victims = owner === 'player' ? this.arena.enemies : [this.arena.player];
+        for (const t of victims) {
+          if (!t.active || t.hp <= 0) continue;
+          if (Phaser.Math.Distance.Between(trap.x, trap.y, t.x, t.y) > MINE_RADIUS) continue;
+          t.takeDamage(MINE_DAMAGE, { source: trap, sourceX: trap.x, sourceY: trap.y });
+          this.applyHopelessness(t, MINE_HOPELESS);
+          this.arena.spawnHitFlash(t.x, t.y, SHADOW.blood);
+          fx.tendrilBurst(t.x, t.y, 34, 8, 8);
+        }
+        // The charge itself: a hard shock front, then the dark it was packed with.
+        fx.ring(trap.x, trap.y, 10, MINE_RADIUS, SHADOW.blood, 340, 6, 5);
+        fx.bloom(trap.x, trap.y, MINE_RADIUS * 0.8, 14);
+        fx.wisps(trap.x, trap.y, 10, { speed: MINE_RADIUS * 1.4, size: 3, life: 620, rise: 14, depth: 6 });
+        this.arena.scene.cameras.main.shake(220, 0.007);
+        this.arena.showFloatingText(trap.x, trap.y - 34, '💥 MINE!', '#ff5577');
+        stun(700);
+        break;
+      }
+
+      // ── Grabber: the trap keeps hold instead of spending itself. ──────────
+      case 'grabber': {
+        trap.grabbed = victim;
+        trap.grabUntil = time + Math.round(GRABBER_HOLD_MS * victim.statusDurMult);
+        // Outlive the hold, so the limb never vanishes with its catch still on it.
+        trap.expiresAt = Math.max(trap.expiresAt, trap.grabUntil + 400);
+        this.applyHopelessness(victim, GRABBER_HOPELESS);
+        fx.tendrilBurst(victim.x, victim.y, 36, 9, 8);
+        fx.ring(trap.x, trap.y, 8, trap.radius * 2.2, SHADOW.lilac, 380, 4, 4);
+        this.arena.spawnHitFlash(victim.x, victim.y, SHADOW.lilac);
+        this.arena.showFloatingText(victim.x, victim.y - 34, '🦑 GRABBED!', '#cc88ff');
+        break;
+      }
+
+      // ── Plume: the trap bites, then comes apart into pools. ───────────────
+      case 'plume': {
+        trap.triggered = true;
+        victim.takeDamage(20, { source: trap, sourceX: trap.x, sourceY: trap.y });
+        this.applyHopelessness(victim, 20);
+        this.arena.spawnHitFlash(victim.x, victim.y, SHADOW.mauve);
+        this.snapTrapBite(trap, victim);
+        for (let i = 0; i < PLUME_CLOUDS; i++) {
+          const a = (i / PLUME_CLOUDS) * Math.PI * 2 + trap.phase;
+          const d = PLUME_SPREAD * (0.25 + 0.75 * Math.random());
+          this.spawnDarkCloud(trap.x + Math.cos(a) * d, trap.y + Math.sin(a) * d * 0.85, owner);
+        }
+        this.arena.showFloatingText(trap.x, trap.y - 34, '🕳️ PLUME!', '#aa44ff');
+        stun(2000);
+        break;
+      }
+
+      // ── Base: the jaws Shadow has always set. ─────────────────────────────
+      default: {
+        trap.triggered = true;
+        victim.takeDamage(20);
+        this.applyHopelessness(victim, 20);
+        this.arena.spawnHitFlash(victim.x, victim.y, SHADOW.mauve);
+        this.snapTrapBite(trap, victim);
+        stun(2000);
+        break;
+      }
+    }
+  }
+
+  /** Let a grabber's catch go, whether the hold ran out or the trap died under it. */
+  private releaseGrab(trap: SnapTrap): void {
+    if (!trap.grabbed) return;
+    const v = trap.grabbed;
+    trap.grabbed = null;
+    trap.grabUntil = 0;
+    if (!v.active) return;
+    this.fx(trap.owner).wisps(v.x, v.y, 5, { speed: 90, size: 2.4, life: 420, rise: 10, depth: 6 });
+    if (v === this.arena.player) this.arena.showFloatingText(v.x, v.y - 34, '🦑 Free!', '#aaddaa');
+  }
+
+  /**
+   * Keep every grabber's catch on its leash. Run after the AI and the movement pass, because
+   * this works by clamping position: doing it earlier would just be overwritten, and doing it
+   * with velocity would fight whatever else is pushing the victim around.
+   */
+  private updateGrabs(time: number): void {
+    for (const trap of this.shadowSnapTraps) {
+      const v = trap.grabbed;
+      if (!v || !v.active || v.hp <= 0 || time >= (trap.grabUntil ?? 0)) continue;
+      // Unstoppable (Light Mastery) and friends are immune to being held in place.
+      if (v.unstoppable) { this.releaseGrab(trap); continue; }
+      const d = Phaser.Math.Distance.Between(trap.x, trap.y, v.x, v.y);
+      if (d <= GRABBER_TETHER) continue;
+      const a = Math.atan2(v.y - trap.y, v.x - trap.x);
+      const body = v.body as Phaser.Physics.Arcade.Body;
+      // Snapped back to the end of the leash — they may still move, just not away.
+      body.reset(trap.x + Math.cos(a) * GRABBER_TETHER, trap.y + Math.sin(a) * GRABBER_TETHER);
+    }
   }
 
   /**
@@ -1419,6 +1833,17 @@ export class ShadowKit {
   // ── Shadow character rig ──────────────────────────────────────────────
 
   /**
+   * That side's rig: the skin's if one is equipped, shadow's umbral figure otherwise. Built
+   * lazily in `updateAvatars` and torn down in `reset`, so changing skin between matches swaps
+   * the character.
+   */
+  private makeAvatar(owner: 'player' | 'npc'): BaseAvatar {
+    const { scene } = this.arena;
+    const col = owner === 'player' ? this.pcol : this.ncol;
+    return makeSkinAvatar(this.arena.skinId(owner), scene) ?? new ShadowAvatar(scene, col);
+  }
+
+  /**
    * Builds (on first frame) and drives the ball-arm avatar for whichever fighters are shadow.
    * The player faces the cursor; the NPC faces whoever it is fighting. The mastery passive's
    * shroud lives here too, at a lower depth than the Consume shroud so the two stack into one
@@ -1428,7 +1853,7 @@ export class ShadowKit {
     const { player, npc, scene } = this.arena;
 
     if (isPlayerShadow && player?.active) {
-      if (!this.playerAvatar) this.playerAvatar = new ShadowAvatar(scene, this.pcol);
+      if (!this.playerAvatar) this.playerAvatar = this.makeAvatar('player');
       const aimX = this.aimX || player.x + 1;
       const aimY = this.aimY || player.y;
       this.playerAvatar.setFacing(Math.atan2(aimY - player.y, aimX - player.x));
@@ -1454,7 +1879,7 @@ export class ShadowKit {
     }
 
     if (isNpcShadow && npc?.active) {
-      if (!this.npcAvatar) this.npcAvatar = new ShadowAvatar(scene, this.ncol);
+      if (!this.npcAvatar) this.npcAvatar = this.makeAvatar('npc');
       this.npcAvatar.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
       this.npcAvatar.setIntensity(this.npcShadowBlackHoleActive ? 1.3 : 1);
       this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
@@ -1464,13 +1889,36 @@ export class ShadowKit {
     }
   }
 
+  /**
+   * Achievement — Unkillable: soak 400 damage in a single fight and still be standing.
+   *
+   * Read off `Fighter.rawDamageTaken`, which is tallied *before* the incoming-damage
+   * multipliers — so the Hopelessness reduction that makes surviving this possible in the
+   * first place doesn't quietly stop the damage counting toward it.
+   */
+  private checkUnkillable(isPlayerShadow: boolean): void {
+    const { player } = this.arena;
+    if (!isPlayerShadow || !player?.active || player.hp <= 0) return;
+    if (player.rawDamageTaken >= UNKILLABLE_DAMAGE) this.arena.unlockAchievement('unkillable');
+  }
+
   // ── Per-frame update (runs before NPC AI so cast state is fresh) ──────
 
   update(time: number, delta: number, isPlayerShadow: boolean, isNpcShadow: boolean): void {
     if (!isPlayerShadow && !isNpcShadow) return;
     const { player, npc, enemies, scene } = this.arena;
 
+    // Death perk: the trap bar is built the first frame it is wanted, so it survives a
+    // restart without reset() having to know what this match's loadout is.
+    if (isPlayerShadow && this.arena.hasPerk('player', 'death')) {
+      if (this.trapBarSlots.length === 0) this.buildTrapBar();
+      this.paintTrapBar(time);
+    } else if (this.trapBarSlots.length > 0) {
+      this.teardownTrapBar();
+    }
+
     this.updateAvatars(delta, isPlayerShadow, isNpcShadow);
+    this.checkUnkillable(isPlayerShadow);
     this.updateDarkBombs(time);
     this.drawDarkClouds(time);
 
@@ -1519,34 +1967,34 @@ export class ShadowKit {
     for (let ti = this.shadowSnapTraps.length - 1; ti >= 0; ti--) {
       const trap = this.shadowSnapTraps[ti];
       if (time >= trap.expiresAt || trap.triggered) {
+        this.releaseGrab(trap);
         trap.gfx.destroy();
         if (this.pendingStake[trap.owner] === trap) this.pendingStake[trap.owner] = null;
         this.shadowSnapTraps.splice(ti, 1);
         continue;
       }
       if (trap.isStake) { this.drawStake(trap, time); continue; }
-      this.drawSnapTrap(trap, time);
+      this.drawTrap(trap, time);
+
+      // A grabber that already has hold of something is busy until its hold runs out.
+      if (trap.kind === 'grabber' && trap.grabbed) {
+        if (!trap.grabbed.active || trap.grabbed.hp <= 0 || time >= (trap.grabUntil ?? 0)) {
+          this.releaseGrab(trap);
+          trap.triggered = true;
+        }
+        continue;
+      }
+
       if (trap.owner === 'player') {
         for (const t of enemies) {
           if (!t.active || t.hp <= 0) continue;
           if (Phaser.Math.Distance.Between(trap.x, trap.y, t.x, t.y) <= trap.radius + 10) {
-            trap.triggered = true;
-            this.arena.recordMasteryStat('trapped', 1);
-            t.takeDamage(20);
-            this.applyHopelessness(t, 20);
-            this.arena.spawnHitFlash(t.x, t.y, SHADOW.mauve);
-            this.snapTrapBite(trap, t);
-            this.shadowNpcStunnedUntil = time + 2000;
+            this.springTrap(trap, t, time);
             break;
           }
         }
       } else if (Phaser.Math.Distance.Between(trap.x, trap.y, player.x, player.y) <= trap.radius + 10) {
-        trap.triggered = true;
-        player.takeDamage(20);
-        this.applyHopelessness(player, 20);
-        this.arena.spawnHitFlash(player.x, player.y, SHADOW.mauve);
-        this.snapTrapBite(trap, player);
-        this.shadowPlayerStunnedUntil = time + 2000;
+        this.springTrap(trap, player, time);
       }
     }
 
@@ -1814,6 +2262,10 @@ export class ShadowKit {
       }
     }
 
+    // Death perk: grabbers hold their catch on a leash. Position-clamped, so it has to run
+    // after everything that writes movement this frame.
+    this.updateGrabs(time);
+
     // Stun from snap trap
     if (time < this.shadowNpcStunnedUntil) nBody.setVelocity(0, 0);
 
@@ -1851,7 +2303,12 @@ export class ShadowKit {
     this.aimX = mouseX;
     this.aimY = mouseY;
 
-    if (pointer.isDown) {
+    // Death perk: a click that lands on the trap bar is picking a trap, not attacking.
+    // Held down, it also has to keep the drain from charging up behind the bar.
+    if (this.pointerOnTrapBar(pointer)) {
+      this.shadowDrainHoldAccum = 0;
+      this.shadowDrainCloudAccum = 0;
+    } else if (pointer.isDown) {
       this.shadowDrainHoldAccum += delta;
       if (this.shadowDrainHoldAccum >= 300) {
         // Cloud mode: hands held out along the aim, pouring dark onto the ground.

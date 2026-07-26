@@ -378,7 +378,7 @@ export interface HuntArenaApi {
   get aimY(): number;
   hasUpgrade(slot: string): boolean;
   hasPerk(owner: Owner, perkId: string): boolean;
-  /** Cosmetics: maps a hunt visual colour through the owner's colour cosmetic. */
+  /** Skins: maps a hunt visual colour through the owner's skin. */
   huntColor(owner: Owner, base: number): number;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;

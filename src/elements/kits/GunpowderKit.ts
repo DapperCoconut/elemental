@@ -43,6 +43,25 @@ const ARSENAL_MAX = 3;
 const ARSENAL_MAX_R_UPGRADED = 6;
 const FIRE_AT_WILL_BASE_CD = 9000;
 
+// ── Corruption (perk) — rotten powder: balls leave rot, dropped muskets fester ──
+const ROT_MS = 5000;
+const ROT_TICK_MS = 1000;
+const ROT_DPS_PER_STACK = 3;
+const ROT_MAX_STACKS = 3;
+/** How close an enemy has to get to a still-hot musket to catch the rot off it. */
+const ROT_FESTER_RADIUS = 40;
+const ROT_FESTER_INTERVAL_MS = 1000;
+
+// ── Demon (perk) — the volley you fired echoes back out of the demon behind you ──
+const DEMON_ECHO_DELAY_MS = 600;
+const DEMON_ECHO_DAMAGE_MULT = 0.6;
+const DEMON_THIRD_VOLLEY_HP_RATIO = 0.35;
+const DEMON_SHOT_SPEED = 620;
+const DEMON_SHOT_LIFETIME_MS = 2600;
+const DEMON_SHOT_HIT_RADIUS = 22;
+const DEMON_SHOT_TURN_RATE = 3.4;   // rad/s of homing authority
+const DEMON_SHOT_BASE_DAMAGE = 24;
+
 // ── BlunderBlast (Q) — a silver vacuum cone that swallows enemy projectiles for
 //    5s, then coughs the whole hoard back out (double damage) on the next shot. ──
 const BLUNDERBLAST_DURATION = 5000;
@@ -130,6 +149,28 @@ interface DroppedMusket {
   /** While `time` is under this, the musket is scalding and burns its own owner on contact. */
   overloadBurnUntil?: number;
   lastOwnerBurnAt?: number;
+  /** Corruption perk: last time this festering musket dosed someone standing over it. */
+  lastFesterAt?: number;
+}
+
+/** Corruption perk: rot ticking on a victim, deepened by each fresh ball that lands. */
+interface RotStack {
+  target: Fighter;
+  owner: 'player' | 'npc';
+  stacks: number;
+  until: number;
+  nextTickAt: number;
+}
+
+/** Demon perk: one hellfire round out of the echoed volley, homing on whoever it was aimed at. */
+interface DemonShot {
+  x: number;
+  y: number;
+  angle: number;
+  owner: 'player' | 'npc';
+  damage: number;
+  diesAt: number;
+  seed: number;
 }
 
 type WallSide = 'left' | 'right' | 'top' | 'bottom';
@@ -282,7 +323,7 @@ export interface GunpowderArenaApi {
   recordMasteryBestStat(key: string, value: number): void;
   getMasteryStat(key: string): number;
   readonly npcCastId: string | null;
-  /** `(owner, base) => displayed` — the owner's colour cosmetic, or the identity. */
+  /** `(owner, base) => displayed` — the owner's skin, or the identity. */
   gunpowderColor(owner: 'player' | 'npc', base: number): number;
 }
 
@@ -290,7 +331,7 @@ export interface GunpowderArenaApi {
 
 export class GunpowderKit {
   // ── Visuals ────────────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a skin recolours one side. */
   private readonly pcol: GunpowderColorFn;
   private readonly ncol: GunpowderColorFn;
   private readonly pfx: GunpowderFx;
@@ -314,6 +355,11 @@ export class GunpowderKit {
   private playerAmmo = MUSKET_MAX_AMMO;
   private npcAmmo = MUSKET_MAX_AMMO;
   private muskets: DroppedMusket[] = [];
+  /** Corruption perk */
+  private rots: RotStack[] = [];
+  /** Demon perk */
+  private demonShots: DemonShot[] = [];
+  private demonAvatars: Array<{ owner: 'player' | 'npc'; x: number; y: number; angle: number; bornAt: number; diesAt: number }> = [];
 
   // ── Arsenal ───────────────────────────────────────────────────────────────
   private playerArsenal: ArsenalSlot[] = [];
@@ -457,6 +503,9 @@ export class GunpowderKit {
     this.vizT = 0;
 
     this.muskets = [];
+    this.rots = [];
+    this.demonShots = [];
+    this.demonAvatars = [];
     this.playerAmmo = MUSKET_MAX_AMMO;
     this.npcAmmo = MUSKET_MAX_AMMO;
 
@@ -562,6 +611,9 @@ export class GunpowderKit {
     this.vizT += delta / 1000;
     this.mirrorNpcCast();
     this.updateMuskets(time, delta);
+    this.updateRots(time);
+    this.updateFestering(time);
+    this.updateDemonShots(time, delta);
     this.updateGrenades(time, delta);
     this.updateRockets(time, delta);
     this.updateFlameClouds(time, delta);
@@ -595,11 +647,27 @@ export class GunpowderKit {
 
     // ── Floor: grounded muskets, planted fireworks, overload heat ──
     const grounded = this.muskets.filter((m) => !m.flying);
-    const hasGround = grounded.length > 0 || this.fireworks.some((f) => !f.launched);
+    const hasGround = grounded.length > 0 || this.fireworks.some((f) => !f.launched)
+      || this.rots.length > 0;
     if (hasGround || this.groundGfx) {
       const g = this.ground();
       g.clear();
+      this.paintRot(g, t);
       for (const m of grounded) {
+        // Corruption: a hot barrel weeps rot into the dirt around it until it cools.
+        if (!m.cooled && this.arena.hasPerk(m.owner, 'corruption')) {
+          const wobble = 0.5 + 0.5 * Math.sin(t * 3 + m.droppedAt);
+          g.fillStyle(0x557722, 0.10 + 0.06 * wobble);
+          g.fillCircle(m.x, m.y, ROT_FESTER_RADIUS);
+          // Blisters of it bubbling up round the rim, each on its own phase.
+          for (let b = 0; b < 5; b++) {
+            const a = m.droppedAt + b * 1.257 + t * 0.5;
+            const rr = ROT_FESTER_RADIUS * (0.45 + 0.4 * ((b * 0.37 + 0.2) % 1));
+            const pop = (Math.sin(t * 4 + b * 2.1) + 1) / 2;
+            g.fillStyle(0x88bb33, 0.10 + 0.22 * pop);
+            g.fillCircle(m.x + Math.cos(a) * rr, m.y + Math.sin(a) * rr, 1.6 + 2.4 * pop);
+          }
+        }
         // Overloaded barrels sit there radiating, so their danger zone is never a surprise.
         if (m.overloadBurnUntil && time < m.overloadBurnUntil) {
           const pulse = 0.5 + 0.5 * Math.sin(t * 6 + m.droppedAt);
@@ -626,10 +694,12 @@ export class GunpowderKit {
       || this.rockets.length > 0 || this.flameClouds.length > 0 || this.rayBullets.length > 0
       || this.fireworks.some((f) => f.launched) || this.blunderFireShots.length > 0
       || this.vacuumView.player !== null || this.vacuumView.npc !== null
-      || this.overloadVolleys.length > 0;
+      || this.overloadVolleys.length > 0
+      || this.demonShots.length > 0 || this.demonAvatars.length > 0;
     if (hasAir || this.airGfx) {
       const g = this.air();
       g.clear();
+      this.paintDemons(g, time, t);
 
       for (const owner of ['player', 'npc'] as const) {
         const v = this.vacuumView[owner];
@@ -918,6 +988,11 @@ export class GunpowderKit {
     });
     this.arena.scene.cameras.main.shake(90 + arsenal.length * 40, 0.002 + arsenal.length * 0.001);
     this.arena.showFloatingText(caster.x, caster.y - 40, '🔥 FIRE AT WILL', '#dd8833');
+
+    // Demon perk: whatever just went downrange, something behind you fires it again.
+    if (this.arena.hasPerk(owner, 'demon')) {
+      this.summonDemonEcho(tx, ty, owner, Math.max(2, arsenal.length + 1));
+    }
   }
 
   doGunpowderArsenalExpansion(owner: 'player' | 'npc'): void {
@@ -1600,6 +1675,248 @@ export class GunpowderKit {
     this.arsenalHudTexts.push(ammoText);
   }
 
+  // ── Perk painters ────────────────────────────────────────────────────────
+
+  /** Rot creeping over a victim: a sickly slick under them, thicker per stack. */
+  private paintRot(g: Phaser.GameObjects.Graphics, t: number): void {
+    for (const r of this.rots) {
+      const tg = r.target;
+      if (!tg.active || tg.hp <= 0) continue;
+      const breathe = 0.5 + 0.5 * Math.sin(t * 2.4 + r.stacks);
+      g.fillStyle(0x557722, 0.08 * r.stacks + 0.05 * breathe);
+      g.fillCircle(tg.x, tg.y + 6, 20 + 5 * r.stacks);
+      // Drips running off the edge of the slick — more of them the deeper the rot.
+      for (let d = 0; d < r.stacks * 3; d++) {
+        const a = d * 1.9 + t * 0.8;
+        const rr = 14 + 6 * r.stacks;
+        const sag = ((t * 22 + d * 13) % 14);
+        g.fillStyle(0x88bb33, 0.35 * (1 - sag / 14));
+        g.fillCircle(tg.x + Math.cos(a) * rr, tg.y + 6 + Math.sin(a) * rr * 0.5 + sag, 1.8);
+      }
+    }
+  }
+
+  /**
+   * The demon: a hunched silhouette of smoke with horns and two coal eyes, rising as it
+   * is summoned and guttering out once its volleys are spent. Its rounds are drawn as
+   * clawed flames rather than dots, so hellfire never reads as a plain bullet.
+   */
+  private paintDemons(g: Phaser.GameObjects.Graphics, time: number, t: number): void {
+    for (const d of this.demonAvatars) {
+      const col = this.col(d.owner);
+      const age = Phaser.Math.Clamp((time - d.bornAt) / 260, 0, 1);
+      const life = Phaser.Math.Clamp((d.diesAt - time) / 400, 0, 1);
+      const a = age * life;
+      const rise = (1 - age) * 14;
+      const cx = d.x, cy = d.y + rise;
+      const h = 30 * age;
+
+      // Body: a smoke column that widens at the shoulders.
+      g.fillStyle(col(GUNPOWDER.void), 0.55 * a);
+      g.fillEllipse(cx, cy, 26, h);
+      g.fillStyle(col(GUNPOWDER.violet), 0.28 * a);
+      g.fillEllipse(cx, cy - h * 0.18, 34, h * 0.5);
+      // Horns, swept back off the skull.
+      g.lineStyle(3, col(GUNPOWDER.char), 0.75 * a);
+      for (const s of [-1, 1]) {
+        g.beginPath();
+        g.moveTo(cx + s * 8, cy - h * 0.42);
+        g.lineTo(cx + s * 15, cy - h * 0.66 - 3);
+        g.lineTo(cx + s * 11, cy - h * 0.78);
+        g.strokePath();
+      }
+      // Coal eyes, flaring on the beat of the echo.
+      const flare = 0.6 + 0.4 * Math.sin(t * 9 + d.bornAt);
+      for (const s of [-1, 1]) {
+        g.fillStyle(col(GUNPOWDER.ember), a * flare);
+        g.fillCircle(cx + s * 5, cy - h * 0.38, 2.2 + flare);
+      }
+      // Smoke shedding off its shoulders.
+      for (let p = 0; p < 4; p++) {
+        const ph = (t * 0.7 + p * 0.25) % 1;
+        smokePuff(g, col, cx + Math.sin(t * 2 + p) * 9, cy - h * 0.5 - ph * 16,
+          4 + ph * 7, p, GUNPOWDER.smoke, 0.2 * a * (1 - ph));
+      }
+    }
+
+    for (const s of this.demonShots) {
+      const col = this.col(s.owner);
+      const flick = Math.sin(t * 22 + s.seed);
+      const back = s.angle + Math.PI;
+      // A head of white heat with a torn tail streaming behind it.
+      g.fillStyle(col(GUNPOWDER.glow), 0.9);
+      g.fillCircle(s.x, s.y, 3.4);
+      g.fillStyle(col(GUNPOWDER.ember), 0.75);
+      g.fillCircle(s.x, s.y, 5.5 + flick * 0.6);
+      for (let i = 1; i <= 4; i++) {
+        const f = i / 4;
+        const wob = Math.sin(t * 16 + s.seed + i) * 3 * f;
+        g.fillStyle(col(i > 2 ? GUNPOWDER.violet : GUNPOWDER.flame), 0.5 * (1 - f));
+        g.fillCircle(
+          s.x + Math.cos(back) * i * 7 + Math.cos(back + Math.PI / 2) * wob,
+          s.y + Math.sin(back) * i * 7 + Math.sin(back + Math.PI / 2) * wob,
+          4.4 * (1 - f * 0.6),
+        );
+      }
+      // Two little claws of flame raking forward off the head.
+      g.lineStyle(1.5, col(GUNPOWDER.blaze), 0.6);
+      for (const sd of [-1, 1]) {
+        const a = s.angle + sd * 0.5;
+        g.beginPath();
+        g.moveTo(s.x, s.y);
+        g.lineTo(s.x + Math.cos(a) * (7 + flick), s.y + Math.sin(a) * (7 + flick));
+        g.strokePath();
+      }
+    }
+  }
+
+  // ── Corruption (perk) ────────────────────────────────────────────────────
+
+  /**
+   * Rot from a corrupted ball or a festering musket. Stacking is what makes the perk
+   * worth carrying: three landed shots triple the tick, and every new one resets the clock.
+   */
+  applyCorruptionRot(target: Fighter, owner: 'player' | 'npc'): void {
+    if (!target.active || target.hp <= 0) return;
+    const time = this.arena.scene.time.now;
+    const existing = this.rots.find((r) => r.target === target && r.owner === owner);
+    if (existing) {
+      existing.until = time + ROT_MS;
+      if (existing.stacks < ROT_MAX_STACKS) {
+        existing.stacks++;
+        this.arena.showFloatingText(target.x, target.y - 52, `☠️ ROT ×${existing.stacks}`, '#88bb33');
+      }
+      return;
+    }
+    this.rots.push({ target, owner, stacks: 1, until: time + ROT_MS, nextTickAt: time + ROT_TICK_MS });
+    this.arena.showFloatingText(target.x, target.y - 52, '☠️ ROT', '#88bb33');
+  }
+
+  /** ArenaScene chokepoint: an npc musket ball that just landed on the player. */
+  onNpcMusketHitPlayer(target: Fighter): void {
+    if (this.arena.hasPerk('npc', 'corruption')) this.applyCorruptionRot(target, 'npc');
+  }
+
+  private updateRots(time: number): void {
+    for (let i = this.rots.length - 1; i >= 0; i--) {
+      const r = this.rots[i];
+      if (!r.target.active || r.target.hp <= 0 || time >= r.until) {
+        this.rots.splice(i, 1);
+        continue;
+      }
+      if (time < r.nextTickAt) continue;
+      r.nextTickAt += ROT_TICK_MS;
+      r.target.takeDamage(ROT_DPS_PER_STACK * r.stacks);
+      this.arena.spawnHitFlash(r.target.x, r.target.y, 0x88bb33);
+    }
+  }
+
+  /** A hot musket lying in the grass is a hazard while the perk is up, not just litter. */
+  private updateFestering(time: number): void {
+    for (const m of this.muskets) {
+      if (m.flying || m.cooled || !this.arena.hasPerk(m.owner, 'corruption')) continue;
+      if (time - (m.lastFesterAt ?? 0) < ROT_FESTER_INTERVAL_MS) continue;
+      for (const foe of this.foesOf(m.owner)) {
+        if (!foe.active || foe.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(m.x, m.y, foe.x, foe.y) > ROT_FESTER_RADIUS) continue;
+        m.lastFesterAt = time;
+        this.applyCorruptionRot(foe, m.owner);
+        break;
+      }
+    }
+  }
+
+  // ── Demon (perk) ─────────────────────────────────────────────────────────
+
+  /**
+   * The demon echo: the same volley again out of the thing standing behind you, as
+   * homing hellfire at reduced damage. Scheduled rather than fired inline so the two
+   * volleys read as call and answer.
+   */
+  private summonDemonEcho(tx: number, ty: number, owner: 'player' | 'npc', shots: number): void {
+    const { scene } = this.arena;
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    const angle = Math.atan2(ty - caster.y, tx - caster.x);
+    const now = scene.time.now;
+    // The demon rises at the caster's back, facing the same way the volley went.
+    this.demonAvatars.push({
+      owner, angle,
+      x: caster.x - Math.cos(angle) * 34,
+      y: caster.y - Math.sin(angle) * 34,
+      bornAt: now, diesAt: now + DEMON_ECHO_DELAY_MS + 900,
+    });
+    this.arena.showFloatingText(caster.x, caster.y - 56, '😈 DEMON', '#ff4422');
+
+    const volleys = caster.hp / Math.max(1, caster.maxHp) < DEMON_THIRD_VOLLEY_HP_RATIO ? 2 : 1;
+    for (let v = 0; v < volleys; v++) {
+      scene.time.delayedCall(DEMON_ECHO_DELAY_MS * (v + 1), () => {
+        if (!caster.active || caster.hp <= 0) return;
+        const ox = caster.x - Math.cos(angle) * 34, oy = caster.y - Math.sin(angle) * 34;
+        for (let i = 0; i < shots; i++) {
+          // Fanned out of the demon's spread so a big arsenal reads as a wall of hellfire.
+          const spread = (i - (shots - 1) / 2) * 0.16;
+          this.demonShots.push({
+            x: ox, y: oy, angle: angle + spread, owner,
+            damage: Math.round(DEMON_SHOT_BASE_DAMAGE * DEMON_ECHO_DAMAGE_MULT),
+            diesAt: scene.time.now + DEMON_SHOT_LIFETIME_MS,
+            seed: Math.random() * Math.PI * 2,
+          });
+        }
+        this.fx(owner).smoke(ox, oy, 3, { angle, spread: 1.2, radius: 7, life: 800, depth: 5 });
+        scene.cameras.main.shake(80, 0.002);
+      });
+    }
+  }
+
+  private updateDemonShots(time: number, delta: number): void {
+    const dt = delta / 1000;
+    const { width: W, height: H } = this.arena.scene.scale;
+    for (let i = this.demonShots.length - 1; i >= 0; i--) {
+      const s = this.demonShots[i];
+      if (time >= s.diesAt || s.x < -30 || s.x > W + 30 || s.y < -30 || s.y > H + 30) {
+        this.demonShots.splice(i, 1);
+        continue;
+      }
+      // Hellfire steers, but lazily — it can still be outrun on a hard cut.
+      const foes = this.foesOf(s.owner).filter((f) => f.active && f.hp > 0);
+      if (foes.length > 0) {
+        let best = foes[0], bestD = Infinity;
+        for (const f of foes) {
+          const d = Phaser.Math.Distance.Between(s.x, s.y, f.x, f.y);
+          if (d < bestD) { bestD = d; best = f; }
+        }
+        const want = Math.atan2(best.y - s.y, best.x - s.x);
+        s.angle += Phaser.Math.Angle.Wrap(want - s.angle) * Math.min(1, DEMON_SHOT_TURN_RATE * dt);
+      }
+      s.x += Math.cos(s.angle) * DEMON_SHOT_SPEED * dt;
+      s.y += Math.sin(s.angle) * DEMON_SHOT_SPEED * dt;
+
+      for (const f of this.foesOf(s.owner)) {
+        if (!f.active || f.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(s.x, s.y, f.x, f.y) > DEMON_SHOT_HIT_RADIUS) continue;
+        f.takeDamage(s.damage);
+        this.arena.spawnHitFlash(f.x, f.y, 0xff3311);
+        this.fx(s.owner).sparks(s.x, s.y, 5, s.angle, 9, GUNPOWDER.ember);
+        this.demonShots.splice(i, 1);
+        break;
+      }
+    }
+    for (let i = this.demonAvatars.length - 1; i >= 0; i--) {
+      if (time >= this.demonAvatars[i].diesAt) this.demonAvatars.splice(i, 1);
+    }
+  }
+
+  /**
+   * Live enemies of `owner`. Same convention the fireworks use: the npc side only ever
+   * faces the player, while the player side faces the husk pool when there is one.
+   */
+  private foesOf(owner: 'player' | 'npc'): Fighter[] {
+    const foes = owner === 'npc'
+      ? [this.arena.player]
+      : this.arena.enemies.length > 0 ? this.arena.enemies : [this.arena.npc];
+    return foes.filter((f) => f && f.active && f.hp > 0);
+  }
+
   // ── Mastery requirement tracking ─────────────────────────────────────────
 
   /** ArenaScene's projectile-hit choke point — counts Musket Shot balls that connect,
@@ -1607,6 +1924,8 @@ export class GunpowderKit {
   onPlayerProjectileHit(proj: Projectile, target?: Fighter): void {
     if ((proj as unknown as { isMusketShot?: boolean }).isMusketShot) {
       this.arena.recordMasteryStat('musketHits', 1);
+      // Corruption: the ball was rotten before it left the barrel.
+      if (target && this.arena.hasPerk('player', 'corruption')) this.applyCorruptionRot(target, 'player');
     }
     if ((proj as unknown as { gpBlunderFire?: boolean }).gpBlunderFire) {
       this.igniteBlunderShot(proj, target);

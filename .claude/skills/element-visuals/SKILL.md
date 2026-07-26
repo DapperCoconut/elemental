@@ -44,19 +44,19 @@ Write it as a free function taking `(g, cx, cy, angle, len, halfW, ...)` that ap
 Fire adds rounded fills at the root, waist and shoulder of each tongue — without them a ring of
 primitives reads as a starburst instead of an organic bloom. Your primitive needs the equivalent.
 
-## Step 2 — Palette, and the cosmetic constraint
+## Step 2 — Palette, and the skin constraint
 
 Export a frozen palette const (`export const WATER = { deep: 0x..., ... } as const`) and use
-**only** those values. Two reasons: consistency, and cosmetics.
+**only** those values. Two reasons: consistency, and skins.
 
-Check `src/data/Cosmetics.ts` for a `color`-slot cosmetic owned by this element. If one exists,
-its remap table in `CosmeticsKit.ts` (see `BURNT_PALETTE`) must have **a key for every palette
-value** — an off-palette shade would stay its original colour on a player wearing the cosmetic,
-which looks broken. If the element has no colour cosmetic yet, still route through a
-`(base) => number` mapper so adding one later is a table edit, not a sweep.
+Check `src/data/Skins.ts` for a skin owned by this element. If one exists, its `palette` table
+(see `CANDLE_PALETTE`) must have **a key for every palette value** — an off-palette shade would
+stay its original colour on a player wearing the skin, which looks broken. If the element has no
+skin yet, still route every colour through a `(base) => number` mapper so adding one later is a
+table edit rather than a sweep through this file. Adding a skin is `/element-skin`.
 
 Bind one mapper per side in the kit — Fire keeps `pcol`/`ncol` and `pfx`/`nfx` — because the
-player and the NPC can have different cosmetics equipped.
+player and the NPC can have different skins equipped.
 
 ## Step 3 — Create `src/elements/kits/[Element]Visuals.ts`
 
@@ -213,8 +213,8 @@ In the kit:
 ## Checklist
 
 - [ ] Element-specific primitive shape, not a recoloured Fire tongue
-- [ ] Frozen palette; every value covered by the element's colour-cosmetic remap table
-- [ ] Per-owner colour mappers (player and NPC cosmetics differ)
+- [ ] Frozen palette; every value covered by the element's skin remap table
+- [ ] Per-owner colour mappers (player and NPC skins differ)
 - [ ] Ball hands with spring follow + velocity squash
 - [ ] Eyes that track aim, blink, and narrow while casting
 - [ ] Silhouette extra drawn *over* the sprite, rooted at the crown

@@ -16,7 +16,7 @@ import { AvatarSpec, ArmHold, ArmPose, BaseAvatar, ColorFn, FxBase, TAU, easeIn,
  * Subterfuge is doing, somebody is getting paid.
  */
 
-/** `(base) => displayed` — CosmeticsKit.subterfugeColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.subterfugeColor bound to one owner. */
 export type SubColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';
@@ -700,7 +700,7 @@ export class SubterfugeFx extends FxBase {
   static drawRecruit(
     g: Phaser.GameObjects.Graphics, tint: SubColorFn,
     x: number, y: number, facing: number, r: number, t: number, alpha: number,
-    o: { type: 'lackey' | 'runner' | 'thug' | 'specialist'; inverted: boolean; reloading: boolean; ignited: boolean; enemy: boolean },
+    o: { type: 'lackey' | 'runner' | 'thug' | 'specialist' | 'bard'; inverted: boolean; reloading: boolean; ignited: boolean; enemy: boolean },
   ): void {
     if (o.ignited) {
       // Soul copy: it is on fire and it knows.
@@ -734,6 +734,23 @@ export class SubterfugeFx extends FxBase {
       const ba = facing + Math.sin(t * 2) * 0.2;
       const at = frame(bx, by, ba);
       fillPts(g, [at(-2, -r * 0.11), at(r * 1.25, -r * 0.2), at(r * 1.25, r * 0.2), at(-2, r * 0.11)]);
+    } else if (o.type === 'bard') {
+      // A brass horn raised to the face, flaring out to a bell, with the tune coming out of it.
+      const sway = Math.sin(t * 2.6) * 0.12;
+      const at = frame(x + look * r * 0.5, y - r * 0.25, facing + sway);
+      g.fillStyle(tint(SUB.brass), alpha);
+      fillPts(g, [at(0, -r * 0.1), at(r * 0.95, -r * 0.42), at(r * 0.95, r * 0.42), at(0, r * 0.1)]);
+      g.fillStyle(tint(SUB.gold), alpha);
+      fillPts(g, [at(r * 0.95, -r * 0.42), at(r * 1.16, -r * 0.5), at(r * 1.16, r * 0.5), at(r * 0.95, r * 0.42)]);
+      // Notes drifting off the bell — the whole point of the hire is that it is heard.
+      for (let i = 0; i < 3; i++) {
+        const p = (t * 0.9 + i / 3) % 1;
+        const n = at(r * (1.2 + p * 1.5), Math.sin(t * 3 + i * 2) * r * (0.3 + p * 0.7));
+        g.fillStyle(tint(SUB.gold), alpha * (1 - p) * 0.9);
+        g.fillCircle(n.x, n.y, 2.6 * (1 - p * 0.4));
+        g.lineStyle(1.4, tint(SUB.gold), alpha * (1 - p) * 0.9);
+        strokePts(g, [{ x: n.x + 2.2, y: n.y }, { x: n.x + 2.2, y: n.y - 6 * (1 - p * 0.4) }]);
+      }
     } else if (o.type !== 'runner') {
       // A stubby machine pistol held across the body.
       g.fillStyle(tint(SUB.graphite), alpha);

@@ -4,6 +4,8 @@ import { Projectile } from '../../combat/Projectile';
 import { CastContext } from '../Ability';
 import { CustomStatus } from './StatusHudKit';
 import { ArmGesture, FireAvatar, FireColorFn, FireFx, FireWreath, FIRE } from './FireVisuals';
+import { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
 
 // ── Heatwave (Fire Mastery) constants ───────────────────────────────────
 const HEATWAVE_COOLDOWN_MS = 6000;
@@ -72,8 +74,10 @@ export interface FireArenaApi {
   lockCaster(durationMs: number): void;
   hasUpgrade(slot: string): boolean;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
-  /** Cosmetics: maps a fire visual color through the owner's color cosmetic (Burnt → black hue). */
+  /** Skins: maps a fire visual color through the owner's equipped skin (Candle → violet). */
   fireColor(owner: 'player' | 'npc', base: number): number;
+  /** Equipped skin id for that side, or null — decides which character rig gets built. */
+  skinId(owner: 'player' | 'npc'): string | null;
   /** Idempotent achievement unlock with in-arena popup. */
   unlockAchievement(id: string): void;
   spawnHitFlash(x: number, y: number, color: number): void;
@@ -92,14 +96,18 @@ export interface FireArenaApi {
 
 export class FireKit {
   // ── Visuals ───────────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so Burnt recolours the right side. */
+  /** Colour mappers + effect painters, one per owner so a skin recolours the right side. */
   private readonly pcol: FireColorFn;
   private readonly ncol: FireColorFn;
   private readonly pfx: FireFx;
   private readonly nfx: FireFx;
-  /** The fire character rig (ball arms, eyes, body heat) for each fire-element fighter. */
-  private playerAvatar: FireAvatar | null = null;
-  private npcAvatar: FireAvatar | null = null;
+  /**
+   * The character rig for each fire-element fighter — fire's own by default, or whatever
+   * that side's equipped skin installs instead. Typed as the base rig because the kit only
+   * ever drives it through poses and gestures, which every rig has.
+   */
+  private playerAvatar: BaseAvatar | null = null;
+  private npcAvatar: BaseAvatar | null = null;
   /** Last aim point, cached in handleInput so the per-frame avatar update can face it. */
   private aimX = 0;
   private aimY = 0;
@@ -338,6 +346,17 @@ export class FireKit {
   // ── Fire character rig ────────────────────────────────────────────────
 
   /**
+   * That side's rig: the skin's if one is equipped, fire's living flame otherwise. Built
+   * lazily in `updateAvatars` and torn down in `reset`, so changing skin between matches
+   * swaps the character.
+   */
+  private makeAvatar(owner: 'player' | 'npc'): BaseAvatar {
+    const { scene } = this.arena;
+    const col = owner === 'player' ? this.pcol : this.ncol;
+    return makeSkinAvatar(this.arena.skinId(owner), scene) ?? new FireAvatar(scene, col);
+  }
+
+  /**
    * Builds (on first frame) and drives the ball-arm avatar for whichever fighters are fire.
    * The player faces the cursor; the NPC faces whoever it is fighting.
    */
@@ -345,7 +364,7 @@ export class FireKit {
     const { player, npc, scene } = this.arena;
 
     if (isPlayerFire && player?.active) {
-      if (!this.playerAvatar) this.playerAvatar = new FireAvatar(scene, this.pcol);
+      if (!this.playerAvatar) this.playerAvatar = this.makeAvatar('player');
       const aimX = this.aimX || player.x + 1;
       const aimY = this.aimY || player.y;
       this.playerAvatar.setFacing(Math.atan2(aimY - player.y, aimX - player.x));
@@ -358,7 +377,7 @@ export class FireKit {
     }
 
     if (isNpcFire && npc?.active) {
-      if (!this.npcAvatar) this.npcAvatar = new FireAvatar(scene, this.ncol);
+      if (!this.npcAvatar) this.npcAvatar = this.makeAvatar('npc');
       this.npcAvatar.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
       this.npcAvatar.setIntensity(this.npcEnhancedFlameBody ? 1.5 : this.npcFlameBodyActive ? 1.25 : 1);
       this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);

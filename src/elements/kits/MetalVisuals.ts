@@ -10,12 +10,12 @@ import { AvatarSpec, ArmHold, ArmPose, BaseAvatar, ColorFn, FxBase, TAU, easeIn,
  * ElementVisuals.ts and are shared with the other elements. What stays here is what makes metal
  * metal: the honed blade shard, the interlocking chain, and the blood that coats both.
  *
- * Every structural colour must come from the METAL palette below. Metal has no colour-slot
- * cosmetic yet, but every call still routes through the owner's `metalColor` mapper, so the day
- * one lands it is a table edit in CosmeticsKit rather than a sweep through this file.
+ * Every structural colour must come from the METAL palette below. Metal has no skin yet,
+ * but every call still routes through the owner's `metalColor` mapper, so the day
+ * one lands it is a table edit in SkinsKit rather than a sweep through this file.
  */
 
-/** `(base) => displayed` — CosmeticsKit.metalColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.metalColor bound to one owner. */
 export type MetalColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';

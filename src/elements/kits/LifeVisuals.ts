@@ -9,13 +9,13 @@ import { AvatarSpec, BaseAvatar, ColorFn, FxBase, TAU, easeIn, easeOut } from '.
  * ElementVisuals.ts. What lives here is what makes life life: the curling vine, the leaf,
  * and the flora built out of them.
  *
- * Life has no colour-slot cosmetic yet, but every call still routes through the owner's
- * `lifeColor` mapper, so the day one lands it is a table edit in CosmeticsKit rather than a
+ * Life has no skin yet, but every call still routes through the owner's
+ * `lifeColor` mapper, so the day one lands it is a table edit in SkinsKit rather than a
  * sweep through this file. That is also why the six seed accents are palette entries rather
  * than literals scattered through the plant art.
  */
 
-/** `(base) => displayed` — CosmeticsKit.lifeColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.lifeColor bound to one owner. */
 export type LifeColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';
@@ -840,6 +840,64 @@ export class LifeFx extends FxBase {
       g.fillStyle(tint(LIFE.pale), 0.5 * alpha);
       g.fillCircle(bx - radius * 0.06, by - h - radius * 0.02, radius * 0.035);
     }
+  }
+
+  /**
+   * Revitalize: the root ball tears itself out of the ground and becomes six walking legs.
+   *
+   * Each leg is two vine segments — a thigh out and down, a shin back under the body — so the
+   * silhouette is a spider's crouch rather than six spokes. `phase` advances with the plant's
+   * travel, and alternating legs are half a cycle apart, so at any moment three legs are planted
+   * and three are swinging: the gait is what sells the plant as walking rather than sliding.
+   * `facing` leans the whole rig into the direction of travel.
+   */
+  static drawRootLegs(
+    g: Phaser.GameObjects.Graphics, tint: LifeColorFn,
+    x: number, y: number, phase: number,
+    opts: { scale?: number; alpha?: number; facing?: number } = {},
+  ): void {
+    const s = opts.scale ?? 1;
+    const alpha = opts.alpha ?? 1;
+    const facing = opts.facing ?? 0;
+    const hipY = y + 8 * s;
+    const lean = Math.cos(facing) * 2.4 * s;
+
+    // Shadow the legs stand in, so the plant reads as lifted off the soil.
+    g.fillStyle(tint(LIFE.soil), 0.3 * alpha);
+    g.fillEllipse(x, y + 15 * s, 34 * s, 9 * s);
+
+    for (let i = 0; i < 6; i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      const rank = Math.floor(i / 2);            // 0 front, 1 middle, 2 back
+      const step = phase + i * (Math.PI / 3);
+      const lift = Math.max(0, Math.sin(step));  // 0 planted, 1 at the top of the swing
+      // Splay: front legs reach forward, back legs trail.
+      const out = (0.55 + rank * 0.28) * Math.PI * side * -1 + (rank - 1) * 0.18 * side;
+      const thighA = out * 0.5 - Math.PI * 0.06 + lift * 0.22 * side;
+      const len = (13 + rank * 1.6) * s;
+
+      g.fillStyle(tint(LIFE.rot), 0.9 * alpha);
+      const knee = vineStem(
+        g, x + lean * 0.4, hipY - lift * 3 * s,
+        thighA, len, 2.6 * s, side * 0.5,
+      );
+      g.fillStyle(tint(LIFE.bark), 0.95 * alpha);
+      const foot = vineStem(
+        g, knee.x, knee.y,
+        knee.angle + Math.PI * 0.34 * side * -1 + 0.5, len * 1.15, 1.9 * s, side * -0.7,
+      );
+      // The toe: a claw of fine roots gripping (or reaching for) the ground.
+      g.fillStyle(tint(lift > 0.15 ? LIFE.stem : LIFE.soil), (lift > 0.15 ? 0.8 : 0.95) * alpha);
+      for (let k = -1; k <= 1; k++) {
+        vineStem(g, foot.x, foot.y, foot.angle + k * 0.5, 4.2 * s, 0.9 * s, k * 0.4);
+      }
+    }
+
+    // The bulb the legs hang off, drawn last so the joints disappear under it.
+    g.fillStyle(tint(LIFE.shade), 0.9 * alpha);
+    g.fillEllipse(x + lean, hipY - 1 * s, 20 * s, 12 * s);
+    g.fillStyle(tint(LIFE.deep), 0.85 * alpha);
+    g.fillEllipse(x + lean, hipY - 3 * s, 14 * s, 8 * s);
   }
 
   /**

@@ -6,6 +6,8 @@ import {
   ArmGesture, METAL, MetalAura, MetalAuraStyle, MetalAvatar, MetalColorFn, MetalFx,
   bladeShardLayered, chainRun, flailHead, sword,
 } from './MetalVisuals';
+import { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
 
 // ── Metal type definitions ─────────────────────────────────────────────────
 //
@@ -132,8 +134,10 @@ export interface MetalArenaApi {
   readonly elementId: string;
   readonly npcElementId: string;
   readonly npcCastId: string | null;
-  /** `(owner, base) => displayed` — the owner's colour cosmetic, or the identity. */
+  /** `(owner, base) => displayed` — the owner's skin, or the identity. */
   metalColor(owner: 'player' | 'npc', base: number): number;
+  /** Equipped skin id for that side, or null — decides which character rig gets built. */
+  skinId(owner: 'player' | 'npc'): string | null;
   hasUpgrade(slot: string): boolean;
   hasPerk(perkId: string): boolean;
   spawnHitFlash(x: number, y: number, color: number): void;
@@ -205,14 +209,18 @@ const STEEL_SHIELD_BLOCK_RADIUS = 38;   // a shot within this of the barrier cen
 
 export class MetalKit {
   // ── Visuals ────────────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a skin recolours one side. */
   private readonly pcol: MetalColorFn;
   private readonly ncol: MetalColorFn;
   private readonly pfx: MetalFx;
   private readonly nfx: MetalFx;
-  /** The butcher rig (gauntlet fists, eyes, crown chain) for each metal fighter. */
-  private playerAvatar: MetalAvatar | null = null;
-  private npcAvatar: MetalAvatar | null = null;
+  /**
+   * The character rig for each metal-element fighter — the butcher by default, or whatever
+   * that side's equipped skin installs instead. Typed as the base rig because the kit only
+   * ever drives it through poses and gestures, which every rig has.
+   */
+  private playerAvatar: BaseAvatar | null = null;
+  private npcAvatar: BaseAvatar | null = null;
   /** Stance tells, per side where both can run one. */
   private auras: Partial<Record<`${'player' | 'npc'}:${MetalAuraStyle}`, MetalAura>> = {};
   /**
@@ -328,8 +336,19 @@ export class MetalKit {
   /** Colour mapper for a side. */
   private col(owner: 'player' | 'npc'): MetalColorFn { return owner === 'player' ? this.pcol : this.ncol; }
   /** The rig for a side, if that side is playing Metal. */
-  private avatar(owner: 'player' | 'npc'): MetalAvatar | null {
+  private avatar(owner: 'player' | 'npc'): BaseAvatar | null {
     return owner === 'player' ? this.playerAvatar : this.npcAvatar;
+  }
+
+  /**
+   * That side's rig: the skin's if one is equipped, metal's butcher otherwise. Built lazily in
+   * `updateAvatars` and torn down in `reset`, so changing skin between matches swaps the
+   * character.
+   */
+  private makeAvatar(owner: 'player' | 'npc'): BaseAvatar {
+    const { scene } = this.arena;
+    return makeSkinAvatar(this.arena.skinId(owner), scene)
+      ?? new MetalAvatar(scene, this.col(owner), owner);
   }
   private fighter(owner: 'player' | 'npc'): Fighter {
     return owner === 'player' ? this.arena.player : this.arena.npc;
@@ -772,12 +791,12 @@ export class MetalKit {
    * torn down the moment a side stops being Metal.
    */
   private updateAvatars(time: number, delta: number): void {
-    const { scene, player, npc } = this.arena;
+    const { player, npc } = this.arena;
     const isPlayerMetal = this.arena.elementId === 'metal';
     const isNpcMetal = this.arena.npcElementId === 'metal';
 
     if (isPlayerMetal && player.active) {
-      if (!this.playerAvatar) this.playerAvatar = new MetalAvatar(scene, this.pcol, 'player');
+      if (!this.playerAvatar) this.playerAvatar = this.makeAvatar('player');
       const aim = Math.atan2(this.lastAimY - player.y, this.lastAimX - player.x);
       const transfusing = time < this.transfusionActiveUntil.player;
       this.playerAvatar.setFacing(aim);
@@ -802,7 +821,7 @@ export class MetalKit {
     }
 
     if (isNpcMetal && npc.active) {
-      if (!this.npcAvatar) this.npcAvatar = new MetalAvatar(scene, this.ncol, 'npc');
+      if (!this.npcAvatar) this.npcAvatar = this.makeAvatar('npc');
       const aim = Math.atan2(player.y - npc.y, player.x - npc.x);
       this.npcAvatar.setFacing(aim);
       this.npcAvatar.setIntensity(this.clotArmorActive.npc ? 1.3 : 1);
@@ -852,7 +871,7 @@ export class MetalKit {
         const dmg = dmgOverride ?? 25;
         const hx = target.x, hy = target.y;
         target.takeDamage(dmg);
-        this.arena.spawnHitFlash(target.x, target.y, 0xaabbcc);
+        this.arena.spawnHitFlash(target.x, target.y, this.col(owner)(METAL.steel));
         this.arena.showFloatingText(caster.x, caster.y - 36, `🗡️ ${dmg}`, '#aabbcc');
         // Opened up: blood thrown along the swing, sparks where steel bit, a splat under them.
         fx.spray(hx, hy, 5 + Math.round(dmg / 8), { speed: 200 + dmg * 2, angle: ang, spread: 0.9, size: 3.6 });
@@ -1009,7 +1028,7 @@ export class MetalKit {
 
     if (!this.clotArmorActive[owner]) {
       this.clotArmorActive[owner] = true;
-      caster.setTint(0xff4466);
+      caster.setTint(this.col(owner)(METAL.rose));
       this.installClotArmorAbsorber(owner);
     }
 
@@ -1294,7 +1313,7 @@ export class MetalKit {
         const hitDist = Phaser.Math.Distance.Between(cp.x, cp.y, hitTarget.x, hitTarget.y);
         if (hitDist <= 28) {
           cp.active = false;
-          this.arena.spawnHitFlash(hitTarget.x, hitTarget.y, 0x889aaa);
+          this.arena.spawnHitFlash(hitTarget.x, hitTarget.y, this.col(cp.owner)(METAL.steel));
           this.arena.showFloatingText(hitTarget.x, hitTarget.y - 34, '⛓️ TETHERED!', '#aabbcc');
           // The hook biting: the chain snaps taut back to whoever threw it.
           const thrower = this.fighter(cp.owner);
@@ -1379,7 +1398,7 @@ export class MetalKit {
             if (Phaser.Math.Distance.Between(flail.x, flail.y, t.x, t.y) <= FLAIL_CONTACT_RADIUS) {
               const hx = t.x, hy = t.y;
               t.takeDamage(dmg);
-              this.arena.spawnHitFlash(t.x, t.y, 0xff4466);
+              this.arena.spawnHitFlash(t.x, t.y, this.col(owner)(METAL.rose));
               this.arena.showFloatingText(t.x, t.y - 30, `⛓️ ${dmg}`, '#ff6688');
               // A mace connecting: it hits harder the faster it was going.
               const fx = this.fx(owner);
@@ -1422,7 +1441,7 @@ export class MetalKit {
           const hx = t.x, hy = t.y;
           const ang = Math.atan2(p.vy, p.vx);
           t.takeDamage(p.dmg);
-          this.arena.spawnHitFlash(t.x, t.y, 0xcc0022);
+          this.arena.spawnHitFlash(t.x, t.y, this.col(p.owner)(METAL.crimson));
           // A flung mace lands like an ordnance strike; a shard just buries itself.
           const fx = this.fx(p.owner);
           if (p.isMace) {
@@ -1460,7 +1479,7 @@ export class MetalKit {
     this.chargeRatio = ratio;
     if (ratio >= 1 && !this.chargeFullTinted && !this.clotArmorActive.player) {
       this.chargeFullTinted = true;
-      player.setTint(0xffee00);
+      player.setTint(this.pcol(METAL.gold));
       // Topped out: one hard ring so a full charge is unmissable even mid-fight.
       this.pfx.ring(player.x, player.y, 16, 52, METAL.goldHi, 300, 7, 4);
       this.pfx.sparks(player.x, player.y, 10, this.playerAimAngle, 9, METAL.goldHi);
@@ -1518,7 +1537,7 @@ export class MetalKit {
           color: METAL.goldHi, duration: 200, arc: Phaser.Math.DegToRad(70), bleed: false,
         });
         npc.takeDamage(Math.round(p.damage * 1.5));
-        this.arena.spawnHitFlash(npc.x, npc.y, 0xffee44);
+        this.arena.spawnHitFlash(npc.x, npc.y, this.pcol(METAL.gold));
       }
       p.destroy();
       reflected++;
@@ -1548,7 +1567,7 @@ export class MetalKit {
         if (!t.active || t.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(fp.x, fp.y, t.x, t.y) <= fp.radius + 16) {
           t.takeDamage(4);
-          this.arena.spawnHitFlash(t.x, t.y, 0xff6600);
+          this.arena.spawnHitFlash(t.x, t.y, this.col(fp.owner)(METAL.ember));
         }
       }
     }
@@ -1645,7 +1664,7 @@ export class MetalKit {
       blade.y += (delta / 1000) * 1100;
       if (blade.y >= caster.y) {
         blade.descending = false;
-        this.arena.spawnHitFlash(caster.x, caster.y, 0xcc0022);
+        this.arena.spawnHitFlash(caster.x, caster.y, this.col(owner)(METAL.crimson));
         // It lands point-first hard enough to split the floor.
         this.pfx.flash(caster.x, caster.y, 34, 10, METAL.crimson);
         this.pfx.ring(caster.x, caster.y, 12, 90, METAL.rose, 460, 7, 5);
@@ -1681,7 +1700,7 @@ export class MetalKit {
       const dmg = dmgOverride ?? BLOOD_BLADE_SWING_DMG;
       const hx = t.x, hy = t.y;
       t.takeDamage(dmg);
-      this.arena.spawnHitFlash(t.x, t.y, 0xcc0022);
+      this.arena.spawnHitFlash(t.x, t.y, this.pcol(METAL.crimson));
       this.arena.showFloatingText(t.x, t.y - 30, `🗡️ ${dmg}`, '#ff3355');
       this.pfx.spray(hx, hy, 7 + Math.round(dmg / 8), { speed: 240, angle: ang, spread: 0.9, size: 4 });
       this.pfx.splat(hx, hy, 16 + dmg * 0.25, 2);
@@ -1788,7 +1807,7 @@ export class MetalKit {
         if (Phaser.Math.Distance.Between(bx, by, p.x, p.y) > STEEL_SHIELD_BLOCK_RADIUS) continue;
         const px = p.x, py = p.y;
         p.destroy();
-        this.arena.spawnHitFlash(bx, by, s.red ? 0xff5577 : 0xccddee);
+        this.arena.spawnHitFlash(bx, by, this.col(owner)(s.red ? METAL.rose : METAL.chrome));
         // Stopped dead on the plate: sparks off the face, thrown back along the way it came.
         this.fx(owner).sparks(px, py, 6, Math.atan2(py - by, px - bx), 10,
           s.red ? METAL.rose : METAL.chrome);

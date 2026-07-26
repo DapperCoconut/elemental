@@ -9,12 +9,12 @@ import { AvatarSpec, BaseAvatar, ColorFn, FxBase, TAU, easeIn, easeOut } from '.
  * in ElementVisuals.ts and are shared with the other elements. What stays here is what makes
  * ice ice: the faceted shard, the palette, and the effects built out of them.
  *
- * Colours must come from the ICE palette below. Ice has no colour-slot cosmetic yet, but every
+ * Colours must come from the ICE palette below. Ice has no skin yet, but every
  * call still routes through the owner's `iceColor` mapper, so the day one lands it is a table
- * edit in CosmeticsKit rather than a sweep through this file.
+ * edit in SkinsKit rather than a sweep through this file.
  */
 
-/** `(base) => displayed` — CosmeticsKit.iceColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.iceColor bound to one owner. */
 export type IceColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';
@@ -713,6 +713,98 @@ export class IceFx extends FxBase {
     const drip = (t * 0.9) % 1;
     g.fillStyle(tint(tones.lit), 0.7 * (1 - drip));
     g.fillCircle(x, y - 18 + drip * 10, 1.8 * (1 - drip * 0.5));
+  }
+
+  /**
+   * The Snow perk's turret: three packed snowballs stacked into a squat gun emplacement, with a
+   * hollowed barrel swinging round to face its mark, a magazine of loose snowballs riding on the
+   * shoulders (one per frost stack of ammo), and a drift of settled snow round the base.
+   *
+   * It is deliberately *packed snow*, not carved ice — soft round masses with a crusted rim
+   * rather than the faceted shards everything else in the element is built from, so a turret
+   * standing in a field of ice spikes still reads at a glance.
+   */
+  static drawSnowTurret(
+    g: Phaser.GameObjects.Graphics, tint: IceColorFn, tones: IceTones,
+    x: number, y: number, aim: number, t: number, ammo: number, ready: number, alpha = 1,
+  ): void {
+    const breathe = 1 + Math.sin(t * 1.6) * 0.02;
+
+    // Drift: the snow it was packed out of, still banked round its feet.
+    g.fillStyle(tint(ICE.abyss), 0.3 * alpha);
+    g.fillEllipse(x, y + 15, 54, 18);
+    g.fillStyle(tint(tones.lit), 0.5 * alpha);
+    for (let i = 0; i < 7; i++) {
+      const a = (i / 7) * TAU + t * 0.2;
+      g.fillEllipse(x + Math.cos(a) * 22, y + 13 + Math.sin(a) * 6, 16, 7);
+    }
+
+    // Body: two packed masses, the lower one squashed under the weight of the upper.
+    g.fillStyle(tint(tones.shell), 0.9 * alpha);
+    g.fillEllipse(x, y + 4, 46 * breathe, 34);
+    g.fillStyle(tint(tones.body), 0.95 * alpha);
+    g.fillEllipse(x, y + 2, 42 * breathe, 30);
+    g.fillStyle(tint(tones.lit), 0.55 * alpha);
+    g.fillEllipse(x - 6, y - 4, 22, 13);
+    g.fillStyle(tint(tones.body), 0.96 * alpha);
+    g.fillEllipse(x, y - 16, 30 * breathe, 25);
+    g.fillStyle(tint(tones.lit), 0.5 * alpha);
+    g.fillEllipse(x - 5, y - 21, 15, 9);
+    // Crust: the wind-glazed rim every packed drift has.
+    g.lineStyle(1.6, tint(tones.facet), 0.5 * alpha);
+    g.strokeEllipse(x, y - 16, 30 * breathe, 25);
+    g.strokeEllipse(x, y + 2, 42 * breathe, 30);
+
+    // Barrel: a hollow tube of packed snow, swinging to the aim and jolting as it comes ready.
+    const kick = 4 * (1 - Phaser.Math.Clamp(ready, 0, 1));
+    const bx = x + Math.cos(aim) * (10 - kick);
+    const by = y - 16 + Math.sin(aim) * (10 - kick);
+    const ex = x + Math.cos(aim) * (34 - kick);
+    const ey = y - 16 + Math.sin(aim) * (34 - kick);
+    g.lineStyle(15, tint(tones.shell), 0.95 * alpha);
+    g.lineBetween(bx, by, ex, ey);
+    g.lineStyle(11, tint(tones.body), 0.95 * alpha);
+    g.lineBetween(bx, by, ex, ey);
+    g.fillStyle(tint(ICE.abyss), 0.85 * alpha);
+    g.fillCircle(ex, ey, 4.6);
+    // Cold bleeding out of the muzzle as it comes back up to pressure.
+    g.fillStyle(tint(tones.spark), 0.35 * Phaser.Math.Clamp(ready, 0, 1) * alpha);
+    g.fillCircle(ex, ey, 3 + Math.sin(t * 4) * 0.8);
+
+    // Magazine: one loose snowball per round, riding round the shoulders.
+    for (let i = 0; i < ammo; i++) {
+      const a = -Math.PI / 2 + (i - (ammo - 1) / 2) * 0.62 + Math.sin(t * 1.1 + i) * 0.04;
+      const px = x + Math.cos(a) * 26;
+      const py = y - 8 + Math.sin(a) * 17;
+      g.fillStyle(tint(tones.facet), 0.9 * alpha);
+      g.fillCircle(px, py, 5.4);
+      g.fillStyle(tint(tones.spark), 0.85 * alpha);
+      g.fillCircle(px - 1.4, py - 1.6, 2.2);
+    }
+
+    // Two coal eyes, because it is still a thing made of snow.
+    const ex1 = x + Math.cos(aim) * 6, ey1 = y - 20 + Math.sin(aim) * 4;
+    const nx = -Math.sin(aim) * 5, ny = Math.cos(aim) * 3;
+    g.fillStyle(tint(ICE.abyss), 0.9 * alpha);
+    g.fillCircle(ex1 + nx, ey1 + ny, 2.3);
+    g.fillCircle(ex1 - nx, ey1 - ny, 2.3);
+  }
+
+  /** One snowball in flight: a packed ball with a comet of powder trailing behind it. */
+  static drawSnowball(
+    g: Phaser.GameObjects.Graphics, tint: IceColorFn, tones: IceTones,
+    x: number, y: number, angle: number, t: number,
+  ): void {
+    g.fillStyle(tint(tones.facet), 0.35);
+    for (let i = 1; i <= 3; i++) {
+      g.fillCircle(x - Math.cos(angle) * i * 7, y - Math.sin(angle) * i * 7, 6 - i * 1.3);
+    }
+    g.fillStyle(tint(tones.body), 0.95);
+    g.fillCircle(x, y, 8);
+    g.fillStyle(tint(tones.lit), 0.9);
+    g.fillCircle(x - 2, y - 2.4, 4);
+    g.fillStyle(tint(tones.spark), 0.8);
+    g.fillCircle(x - 3 + Math.sin(t * 9) * 0.6, y - 3.4, 1.8);
   }
 
   /**

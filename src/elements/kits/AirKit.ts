@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { AIR, AirAvatar, AirColorFn, AirDraft, AirFx, ArmGesture, ArmHold } from './AirVisuals';
+import { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
 
 // ── Air Mastery constants ─────────────────────────────────────────────────────
 
@@ -9,6 +11,8 @@ const SWIFT_PER_STACK = 0.05;
 const SWIFT_MAX_STACKS = 10;          // caps both bonuses at +50%
 /** Snipes in a row needed to bank one "Deadeye" mastery streak. */
 const SNIPE_STREAK_LEN = 5;
+/** Snipes in a row needed for the Sharpshooter achievement (and the Sand skin). */
+const SHARPSHOOTER_STREAK_LEN = 8;
 /** Enemies a single Charged Beam must run through to score a multi-hit. */
 const BEAM_MULTI_HIT = 2;
 
@@ -79,8 +83,12 @@ export interface AirArenaApi {
   recordMasteryStat(key: string, amount: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   spawnHitFlash(x: number, y: number, color: number): void;
-  /** Cosmetics: maps an air visual color through the owner's color cosmetic. */
+  /** Skins: maps an air visual color through the owner's skin. */
   airColor(owner: 'player' | 'npc', base: number): number;
+  /** Equipped skin id for that side, or null — decides which character rig gets built. */
+  skinId(owner: 'player' | 'npc'): string | null;
+  /** Idempotent achievement unlock with in-arena popup. */
+  unlockAchievement(id: string): void;
   hasUpgrade(slot: string): boolean;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
 }
@@ -143,14 +151,18 @@ interface LingeringBeam {
  */
 export class AirKit {
   // ── Visuals ─────────────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a future cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a future skin recolours one side. */
   private readonly pcol: AirColorFn;
   private readonly ncol: AirColorFn;
   private readonly pfx: AirFx;
   private readonly nfx: AirFx;
-  /** The wind character rig (compressed-air hands, eyes, cyclone crown) for each air fighter. */
-  private playerAvatar: AirAvatar | null = null;
-  private npcAvatar: AirAvatar | null = null;
+  /**
+   * The character rig for each air-element fighter — air's own by default, or whatever that
+   * side's equipped skin installs instead. Typed as the base rig because the kit only ever
+   * drives it through poses and gestures, which every rig has.
+   */
+  private playerAvatar: BaseAvatar | null = null;
+  private npcAvatar: BaseAvatar | null = null;
   /** Sustained rig pose and when it lapses — set by ArenaScene when a channel starts. */
   private playerHold: ArmHold = null;
   private playerHoldUntil = 0;
@@ -162,12 +174,19 @@ export class AirKit {
   private electroDraft: AirDraft | null = null;
   private dodgeAuraActive = false;
   private electroCharged = false;
+  /** Storm perk: a shot taken out of a cage or a funnel is banked and rides the next snipe. */
+  private stormCharged = false;
 
   // -- Swift as the Wind --
   private swiftStacks = 0;
 
   // -- Deadeye streak (counts toward mastery whether or not mastery is on) --
   private snipeStreak = 0;
+  /**
+   * Sharpshooter achievement streak. Tracked separately from the Deadeye streak above, which
+   * banks and resets itself every 5 — a counter that keeps zeroing can never reach 8.
+   */
+  private sharpStreak = 0;
 
   // -- Sweeping Tornado --
   private tornadoLastCastAt = -Infinity;
@@ -211,9 +230,11 @@ export class AirKit {
     this.playerHoldAngle = 0;
     this.dodgeAuraActive = false;
     this.electroCharged = false;
+    this.stormCharged = false;
 
     this.swiftStacks = 0;
     this.snipeStreak = 0;
+    this.sharpStreak = 0;
     this.tornadoLastCastAt = -Infinity;
     this.clearTornado('player');
     this.clearTornado('npc');
@@ -274,6 +295,11 @@ export class AirKit {
   onSnipeResult(hit: boolean, hitTargets?: Array<{ x: number; y: number }>): void {
     if (hit) {
       this.snipeStreak++;
+      // Achievement — Sharpshooter: 8 connecting snipes with nothing missed in between.
+      this.sharpStreak++;
+      if (this.sharpStreak >= SHARPSHOOTER_STREAK_LEN) {
+        this.arena.unlockAchievement('sharpshooter');
+      }
       if (this.snipeStreak >= SNIPE_STREAK_LEN) {
         this.snipeStreak = 0;
         this.arena.recordMasteryStat('snipeStreaks', 1);
@@ -295,6 +321,12 @@ export class AirKit {
         }
       }
 
+      // Storm perk: shooting into your own weather earths the charge through the shot.
+      if (hitTargets && this.arena.hasPerk('player', 'storm') && !this.stormCharged) {
+        const struck = hitTargets.find((t) => this.inPlayerStorm(t.x, t.y));
+        if (struck) this.chargeStorm(struck.x, struck.y);
+      }
+
       if (this.arena.masteryActive && this.swiftStacks < SWIFT_MAX_STACKS) {
         this.swiftStacks++;
         this.arena.showFloatingText(
@@ -304,6 +336,7 @@ export class AirKit {
       }
     } else {
       this.snipeStreak = 0;
+      this.sharpStreak = 0;
       // A single miss blows the whole stack away.
       if (this.arena.masteryActive && this.swiftStacks > 0) {
         this.swiftStacks = 0;
@@ -387,14 +420,25 @@ export class AirKit {
   }
 
   /**
+   * That side's rig: the skin's if one is equipped, air's living wind otherwise. Built lazily
+   * in `updateAvatars` and torn down in `reset`, so changing skin between matches swaps the
+   * character.
+   */
+  private makeAvatar(owner: 'player' | 'npc'): BaseAvatar {
+    const { scene } = this.arena;
+    const col = owner === 'player' ? this.pcol : this.ncol;
+    return makeSkinAvatar(this.arena.skinId(owner), scene) ?? new AirAvatar(scene, col);
+  }
+
+  /**
    * Builds (on first frame) and drives the wind avatar for whichever fighters are air. The
    * player faces the cursor; the NPC faces whoever it is fighting.
    */
   private updateAvatars(time: number, delta: number): void {
-    const { player, npc, scene, isPlayerAir, isNpcAir } = this.arena;
+    const { player, npc, isPlayerAir, isNpcAir } = this.arena;
 
     if (isPlayerAir && player?.active) {
-      if (!this.playerAvatar) this.playerAvatar = new AirAvatar(scene, this.pcol);
+      if (!this.playerAvatar) this.playerAvatar = this.makeAvatar('player');
       this.playerAvatar.setFacing(this.playerAim());
       // Swift stacks visibly swell the rig, so the passive is readable off the character
       // alone without having to count the draft's curls.
@@ -410,7 +454,7 @@ export class AirKit {
     }
 
     if (isNpcAir && npc?.active) {
-      if (!this.npcAvatar) this.npcAvatar = new AirAvatar(scene, this.ncol);
+      if (!this.npcAvatar) this.npcAvatar = this.makeAvatar('npc');
       this.npcAvatar.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
       this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
     } else if (this.npcAvatar) {
@@ -449,6 +493,42 @@ export class AirKit {
     this.electroCharged = charged;
   }
 
+  // ── Storm perk ────────────────────────────────────────────────────────────
+
+  /** The Storm charge is banked and waiting on the next snipe. */
+  isStormCharged(): boolean { return this.stormCharged; }
+
+  /** Spent (or wiped) by ArenaScene once the charged snipe has actually gone off. */
+  setStormCharged(v: boolean): void { this.stormCharged = v; }
+
+  /** Is this point inside the player's own thunderhead — the cage or the funnel? */
+  private inPlayerStorm(x: number, y: number): boolean {
+    const trap = this.playerTrap;
+    if (trap && Phaser.Math.Distance.Between(trap.x, trap.y, x, y) <= WIND_TRAP_RADIUS) return true;
+    const t = this.tornado;
+    return !!t && Phaser.Math.Distance.Between(t.x, t.y, x, y) <= TORNADO_RADIUS;
+  }
+
+  /** The struck target earths the storm: the bolt jumps back down the shot line to you. */
+  private chargeStorm(x: number, y: number): void {
+    const { player } = this.arena;
+    this.stormCharged = true;
+    this.pfx.staticSnap(x, y, 34);
+    this.pfx.staticSnap(player.x, player.y, 30);
+    this.pfx.ring(player.x, player.y, 46, 14, AIR.charge, 340, 4, 6);
+    this.arena.showFloatingText(player.x, player.y - 44, '⛈️ STORM CHARGE!', '#ffee44');
+  }
+
+  /**
+   * The palette a side's weather is painted in. With Storm equipped the cage and the funnel
+   * darken into a thunderhead; everyone else gets air's own blues.
+   */
+  private weatherCol(owner: 'player' | 'npc'): AirColorFn {
+    const col = owner === 'player' ? this.pcol : this.ncol;
+    if (!this.arena.hasPerk(owner, 'storm')) return col;
+    return (base) => thunderhead(col(base));
+  }
+
   /**
    * Rebuilds and drives the three drafts that ride on the player. The mastery passive sits at
    * the lowest depth so a stance draft layers over it into one silhouette instead of fighting
@@ -478,7 +558,9 @@ export class AirKit {
       this.dodgeDraft = null;
     }
 
-    if (alive && this.electroCharged) {
+    // A banked Storm charge rides in the same draft the E+ static does — both mean
+    // "the next shot is loaded", and the player should not have to read two tells.
+    if (alive && (this.electroCharged || this.stormCharged)) {
       if (!this.electroDraft) this.electroDraft = new AirDraft(scene, this.pcol, 21, 1.2, 3, 6, AIR.charge);
       this.electroDraft.update(delta, player.x, player.y, vis);
       // A stored charge keeps arcing off the player until it is spent.
@@ -558,7 +640,8 @@ export class AirKit {
           if (d > step) { trap.x += (dx / d) * step; trap.y += (dy / d) * step; }
           else { trap.x = this.arena.pointerX; trap.y = this.arena.pointerY; }
         }
-        this.paintTrap(trap, this.pcol, time);
+        this.paintTrap(trap, this.weatherCol('player'), time);
+        this.strikeInside(trap.x, trap.y, WIND_TRAP_RADIUS * 0.7, 'player');
 
         for (const t of enemies) {
           if (!t.active || t.hp <= 0) continue;
@@ -583,7 +666,8 @@ export class AirKit {
         this.burstTrap(trap, 'npc');
       } else {
         trap.t += delta / 1000;
-        this.paintTrap(trap, this.ncol, time);
+        this.paintTrap(trap, this.weatherCol('npc'), time);
+        this.strikeInside(trap.x, trap.y, WIND_TRAP_RADIUS * 0.7, 'npc');
         if (!isDodging) {
           const d = Phaser.Math.Distance.Between(trap.x, trap.y, player.x, player.y);
           if (d > WIND_TRAP_RADIUS) {
@@ -609,6 +693,14 @@ export class AirKit {
     const left = trap.expiresAt - time;
     const alpha = left < 500 ? Math.max(0, left / 500) : 1;
     AirFx.drawTrapCage(trap.g, tint, trap.x, trap.y, WIND_TRAP_RADIUS, trap.t, alpha);
+  }
+
+  /** Storm perk: the odd fork of lightning stepping down inside the weather. */
+  private strikeInside(x: number, y: number, radius: number, owner: 'player' | 'npc'): void {
+    if (!this.arena.hasPerk(owner, 'storm') || Math.random() >= 0.05) return;
+    const a = Math.random() * Math.PI * 2;
+    const r = Math.random() * radius;
+    (owner === 'player' ? this.pfx : this.nfx).staticSnap(x + Math.cos(a) * r, y + Math.sin(a) * r, 22);
   }
 
   private burstTrap(trap: WindTrap, owner: 'player' | 'npc'): void {
@@ -829,8 +921,9 @@ export class AirKit {
     t.spin += dt;
     if (t.g.active) {
       t.g.clear();
-      AirFx.drawTornado(t.g, t.owner === 'player' ? this.pcol : this.ncol, t.x, t.y, TORNADO_RADIUS, t.spin, 1);
+      AirFx.drawTornado(t.g, this.weatherCol(t.owner), t.x, t.y, TORNADO_RADIUS, t.spin, 1);
     }
+    this.strikeInside(t.x, t.y, TORNADO_RADIUS * 0.6, t.owner);
 
     // 'npc' tornadoes (online replay) sweep the local player; 'player' ones sweep enemies.
     const sweepTargets = t.owner === 'npc' ? [this.arena.player] : this.arena.enemies;
@@ -884,6 +977,15 @@ export class AirKit {
     t.g.destroy();
     if (owner === 'player') this.tornado = null; else this.npcTornado = null;
   }
+}
+
+/**
+ * Storm perk shading: drags a colour down into thunderhead territory — much darker, and what
+ * light is left pushed blue, so a charged cage reads as weather rather than as a dimmed cage.
+ */
+function thunderhead(c: number): number {
+  const r = (c >> 16) & 0xff, g = (c >> 8) & 0xff, b = c & 0xff;
+  return (Math.round(r * 0.40) << 16) | (Math.round(g * 0.46) << 8) | Math.round(b * 0.58 + 26);
 }
 
 /** Perpendicular distance from a point to a line segment — the lingering beam's hit test. */

@@ -11,12 +11,12 @@ import { ArmHold, ArmPose, AvatarSpec, BaseAvatar, ColorFn, FxBase, TAU, easeIn,
  * in ElementVisuals.ts and are shared with the other elements. What stays here is what makes
  * oil oil: the viscous glob, the iridescent film, and the industrial hardware.
  *
- * Colours must come from the OIL palette below. Oil has no colour-slot cosmetic yet, but every
+ * Colours must come from the OIL palette below. Oil has no skin yet, but every
  * call still routes through the owner's `oilColor` mapper, so the day one lands it is a table
- * edit in CosmeticsKit rather than a sweep through this file.
+ * edit in SkinsKit rather than a sweep through this file.
  */
 
-/** `(base) => displayed` — CosmeticsKit.oilColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.oilColor bound to one owner. */
 export type OilColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';
@@ -891,6 +891,77 @@ export class OilFx extends FxBase {
         g.strokePath();
       }
     }
+  }
+
+  /**
+   * Gasoline perk (divine): the hardware bolted onto a special airframe, drawn on top of the
+   * standard drone in the same local space. Each one is the tool it actually uses — a case of
+   * medicine, a ram, a bomb rack, a gold star — so a glance at the orbit says what is up there.
+   */
+  static drawDroneBadge(
+    g: Phaser.GameObjects.Graphics, tint: OilColorFn,
+    kind: 'med' | 'bash' | 'blast' | 'prime', spin: number,
+  ): void {
+    if (kind === 'med') {
+      // A white case slung under the chassis with a red cross on it.
+      g.fillStyle(tint(OIL.white), 0.95);
+      g.fillRect(-4.4, 2.6, 8.8, 6.2);
+      g.fillStyle(tint(OIL.ember), 0.95);
+      g.fillRect(-0.9, 3.6, 1.8, 4.2);
+      g.fillRect(-3, 4.8, 6, 1.8);
+      g.lineStyle(1, tint(OIL.steel), 0.9);
+      g.strokeRect(-4.4, 2.6, 8.8, 6.2);
+      return;
+    }
+    if (kind === 'bash') {
+      // A blunt steel ram out the nose, braced back to the chassis.
+      const a = spin * 0.4;
+      g.fillStyle(tint(OIL.chrome), 0.95);
+      g.fillCircle(Math.cos(a) * 10, Math.sin(a) * 10, 3.4);
+      g.lineStyle(2.4, tint(OIL.steel), 0.95);
+      g.beginPath();
+      g.moveTo(Math.cos(a) * 4, Math.sin(a) * 4);
+      g.lineTo(Math.cos(a) * 10, Math.sin(a) * 10);
+      g.strokePath();
+      return;
+    }
+    if (kind === 'blast') {
+      // Two bombs on a rack, nose down.
+      for (const side of [-1, 1]) {
+        g.fillStyle(tint(OIL.tar), 0.95);
+        g.fillCircle(side * 4.6, 4.4, 2.8);
+        g.fillStyle(tint(OIL.ember), 0.9);
+        g.fillCircle(side * 4.6, 2.2, 1.1);
+      }
+      g.lineStyle(1.2, tint(OIL.steel), 0.9);
+      g.lineBetween(-4.6, 2.4, 4.6, 2.4);
+      return;
+    }
+    // Prime: a gold star riding above the chassis, turning with the rotors.
+    const pts: Array<{ x: number; y: number }> = [];
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 === 0 ? 5.4 : 2.4;
+      const a = -Math.PI / 2 + (i / 10) * TAU + spin * 0.25;
+      pts.push({ x: Math.cos(a) * r, y: Math.sin(a) * r - 9 });
+    }
+    g.fillStyle(tint(OIL.gold), 0.95);
+    g.beginPath();
+    g.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+    g.closePath();
+    g.fillPath();
+  }
+
+  /** One Blast-Drone bomb in flight, drawn in local space and tumbled by its own rotation. */
+  static drawBomb(g: Phaser.GameObjects.Graphics, tint: OilColorFn): void {
+    g.fillStyle(tint(OIL.tar), 1);
+    g.fillCircle(0, 0, 5.4);
+    g.fillStyle(tint(OIL.steel), 0.9);
+    g.fillRect(-1.2, -8.4, 2.4, 4);
+    g.fillStyle(tint(OIL.ember), 0.95);
+    g.fillCircle(0, -9.2, 1.8);
+    g.lineStyle(1.2, tint(OIL.chrome), 0.6);
+    g.strokeCircle(0, 0, 5.4);
   }
 
   /**

@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { ACHIEVEMENTS } from '../data/Achievements';
-import { getCosmeticDef } from '../data/Cosmetics';
+import { getSkinDef } from '../data/Skins';
 import * as PlayerData from '../data/PlayerData';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
@@ -71,12 +71,12 @@ export class AchievementsScene extends Phaser.Scene {
         wordWrap: { width: COL_W - 56 }, lineSpacing: 3,
       });
 
-      const reward = ach.cosmeticReward ? getCosmeticDef(ach.cosmeticReward) : undefined;
+      const reward = ach.skinReward ? getSkinDef(ach.skinReward) : undefined;
       let rewardText: Phaser.GameObjects.Text | null = null;
       let rowH = 34 + descText.height + 16;
       if (reward) {
         rewardText = this.add.text(COL_X + 24, innerY + 34 + descText.height + 8,
-          `🎁  ${reward.name}  ·  ${reward.slot} cosmetic`, {
+          `🎁  ${reward.name}  ·  ${reward.elementId} skin`, {
             fontSize: '11px', fontFamily: FONT_DISPLAY,
             color: unlocked ? hex(mix(accent, 0xffffff, 0.45)) : T.ghost,
             letterSpacing: 0.5,

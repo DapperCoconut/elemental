@@ -3,7 +3,7 @@ import { Ability, CastContext } from './Ability';
 import { Projectile } from '../combat/Projectile';
 import { WaterFx, WATER } from './kits/WaterVisuals';
 
-/** Effects painter bound to whoever is casting (so a colour cosmetic recolours their water). */
+/** Effects painter bound to whoever is casting (so a skin recolours their water). */
 function fx(ctx: CastContext): WaterFx {
   return new WaterFx(ctx.scene, ctx.waterColor);
 }

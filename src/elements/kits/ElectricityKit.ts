@@ -99,7 +99,7 @@ export interface ElectricityArenaApi {
   readonly npcCastId: string | null;
   hasUpgrade(slot: string): boolean;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
-  /** Cosmetics: maps an electric visual color through the owner's color cosmetic. */
+  /** Skins: maps an electric visual color through the owner's skin. */
   electricityColor(owner: 'player' | 'npc', base: number): number;
   get playerSpeedMult(): number;
   set playerSpeedMult(v: number);
@@ -118,7 +118,7 @@ export interface ElectricityArenaApi {
 
 export class ElectricityKit {
   // ── Visuals ───────────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a skin recolours one side. */
   private readonly pcol: ElectricColorFn;
   private readonly ncol: ElectricColorFn;
   private readonly pfx: ElectricityFx;

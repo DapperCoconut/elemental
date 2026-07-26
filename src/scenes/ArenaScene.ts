@@ -5,6 +5,7 @@ import { NpcOpponent, NpcAiState, DIFFICULTY_PRESETS, DifficultyConfig } from '.
 import { Husk } from '../invasion/Husk';
 import { InvasionKit, InvasionArenaApi, getInvasionDifficulty } from '../invasion/InvasionKit';
 import { InvasionCoopKit, InvasionCoopArenaApi } from '../invasion/InvasionCoopKit';
+import { DisgracedKingKit, DisgracedKingArenaApi, BossOutcome } from '../boss/DisgracedKingKit';
 import { Projectile } from '../combat/Projectile';
 import { OnlineKit, OnlineArenaApi } from '../network/OnlineKit';
 import { Net } from '../network/NetworkManager';
@@ -75,11 +76,14 @@ import { MetalKit, MetalArenaApi } from '../elements/kits/MetalKit';
 import { GravityKit, GravityArenaApi } from '../elements/kits/GravityKit';
 import { CreationKit, CreationArenaApi } from '../elements/kits/CreationKit';
 import { SoulKit, SoulArenaApi } from '../elements/kits/SoulKit';
-import { CosmeticsKit, CosmeticsArenaApi } from '../elements/kits/CosmeticsKit';
+import { SkinsKit, SkinsArenaApi } from '../elements/kits/SkinsKit';
 import { StatusHudKit, StatusHudArenaApi, CustomStatus } from '../elements/kits/StatusHudKit';
 import { getAchievementDef } from '../data/Achievements';
-import { getCosmeticDef } from '../data/Cosmetics';
+import { getSkinDef } from '../data/Skins';
 import { dummyElement } from '../elements/dummy';
+import { kingElement } from '../elements/king';
+import { justiceElement } from '../elements/justice';
+import { dreamElement } from '../elements/dream';
 import * as PlayerData from '../data/PlayerData';
 import { getEnhancement } from '../data/Mastery';
 import { getTotalRewardMult, MUTATIONS, getBossMutationIds } from '../data/Mutations';
@@ -91,6 +95,8 @@ import { INFINITY_GAUNTLET_ID, infinityHpMult, infinityDmgMult, infinityFightSha
 import { drawCampaignBackground } from './CampaignBackground';
 import * as UI from '../ui';
 
+/** `DIFFICULTY_PRESETS[3]` — the "Expert" rung, named for the achievements that gate on it. */
+const EXPERT_DIFFICULTY_LEVEL = 4;
 
 interface AbilityBarEntry {
   fill: Phaser.GameObjects.Rectangle;
@@ -223,6 +229,12 @@ const ELEMENT_MAP: Record<string, Element> = {
   echo: echoElement,
   quantum: quantumElement,
   dummy: dummyElement,
+  king: kingElement,
+  // Rewards for the two endings of the Devourer fight. Their kits are not
+  // written yet, so MenuScene lists them as unavailable — these entries exist
+  // so the info panel and any future wiring have a real Element to read.
+  justice: justiceElement,
+  dream: dreamElement,
 };
 
 const ELEMENT_TEXTURES: Record<string, string> = {
@@ -257,6 +269,9 @@ const ELEMENT_TEXTURES: Record<string, string> = {
   echo: 'elem-echo',
   quantum: 'elem-quantum',
   dummy: 'elem-dummy',
+  king: 'elem-king',
+  justice: 'elem-king',
+  dream: 'elem-king',
 };
 
 
@@ -272,6 +287,15 @@ export class ArenaScene extends Phaser.Scene {
   private npcElementId = 'water';
   private npcDifficulty!: DifficultyConfig;
   private isInvasion = false;
+  /** The Disgraced King fight. Drives the npc slot itself — see DisgracedKingKit. */
+  private isBossFight = false;
+  /** Hard mode: the Devourer of Kings behind the King. */
+  private isBossHard = false;
+  /** Which ending the player took, once the Devourer offers the choice. */
+  private bossOutcome: BossOutcome | null = null;
+  private bossKit: DisgracedKingKit | null = null;
+  /** Bounty contract this fight is settling, if any. Paid out by GameOverScene. */
+  private bounty: { key: string; reward: number } | null = null;
 
   // ── Online multiplayer ─────────────────────────────────────────
   private isOnline = false;
@@ -606,7 +630,7 @@ export class ArenaScene extends Phaser.Scene {
 
   // ── Fire kit ──────────────────────────────────────────────────────────
   private fireKit!: FireKit;
-  private cosmeticsKit!: CosmeticsKit;
+  private skinsKit!: SkinsKit;
   /** Top-right status effect tray. Reads the local player's Fighter, so it works in every mode. */
   private statusHudKit!: StatusHudKit;
   private fireMasteryOn = false;
@@ -704,9 +728,13 @@ export class ArenaScene extends Phaser.Scene {
     super({ key: 'ArenaScene' });
   }
 
-  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; starredMutations?: string[]; mode?: string; invasionDifficulty?: string; gauntlet?: import('../data/GauntletData').GauntletState; playerPerk?: string | null; npcPerk?: string | null; campaign?: { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean; hardMode?: boolean }; hpMult?: number; npcOutgoingDamageMult?: number; online?: { isHost: boolean; npcUpgrades?: string[]; npcMasteryBinds?: Record<string, string>; npcMasteryOn?: boolean; npcCosmetics?: Record<string, string> } }): void {
+  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; starredMutations?: string[]; mode?: string; invasionDifficulty?: string; gauntlet?: import('../data/GauntletData').GauntletState; playerPerk?: string | null; npcPerk?: string | null; campaign?: { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean; hardMode?: boolean }; hpMult?: number; npcOutgoingDamageMult?: number; bounty?: { key: string; reward: number }; bossHard?: boolean; online?: { isHost: boolean; npcUpgrades?: string[]; npcMasteryBinds?: Record<string, string>; npcMasteryOn?: boolean; npcSkin?: string | null } }): void {
     this.elementId = data.elementId ?? 'fire';
     this.isInvasion = data.mode === 'invasion';
+    this.isBossFight = data.mode === 'boss';
+    this.isBossHard = this.isBossFight && data.bossHard === true;
+    this.bossOutcome = null;
+    this.bounty = data.bounty ?? null;
     this.isOnline = !!data.online;
     this.npcUpgrades = data.online?.npcUpgrades ?? [];
     this.npcMasteryBinds = data.online?.npcMasteryBinds ?? {};
@@ -820,7 +848,7 @@ export class ArenaScene extends Phaser.Scene {
         get height() { return arena.scale.height; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
-        soulColor: (owner, base) => arena.cosmeticsKit.soulColor(owner, base),
+        soulColor: (owner, base) => arena.skinsKit.soulColor(owner, base),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
@@ -863,7 +891,7 @@ export class ArenaScene extends Phaser.Scene {
         set isDodging(v: boolean) { arena.isDodging = v; },
         get aimX() { return arena.input.activePointer.worldX; },
         get aimY() { return arena.input.activePointer.worldY; },
-        huntColor: (owner, base) => arena.cosmeticsKit.huntColor(owner, base),
+        huntColor: (owner, base) => arena.skinsKit.huntColor(owner, base),
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
@@ -926,8 +954,9 @@ export class ArenaScene extends Phaser.Scene {
         hasUpgrade: (owner, slot) => owner === 'player'
           ? arena.elementId === 'silence' && arena.hasUpgrade(slot)
           : arena.isOnline && arena.npcElement.id === 'silence' && arena.npcUpgrades.includes(slot),
+        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         sendSilenceMsg: (msg) => { if (arena.isOnline) Net.send(msg); },
-        silenceColor: (owner, base) => arena.cosmeticsKit.silenceColor(owner, base),
+        silenceColor: (owner, base) => arena.skinsKit.silenceColor(owner, base),
       };
       this.silenceKit = new SilenceKit(silenceApi);
     }
@@ -969,7 +998,7 @@ export class ArenaScene extends Phaser.Scene {
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
         setStatusIndicator: (id, status) => arena.setStatusIndicator(id, status),
         pushFighterOutOfRect: (body, bx, by, bw, bh) => arena.pushFighterOutOfRect(body, bx, by, bw, bh),
-        creationColor: (owner, base) => arena.cosmeticsKit.creationColor(owner, base),
+        creationColor: (owner, base) => arena.skinsKit.creationColor(owner, base),
         get abilityBars() { return arena.abilityBars; },
         get masteryActive() { return arena.creationMasteryOn && arena.elementId === 'creation'; },
         masteryBindFor: (slot) => arena.masteryBindFor(slot),
@@ -1004,7 +1033,7 @@ export class ArenaScene extends Phaser.Scene {
         get npcElementId() { return arena.npcElementId; },
         get aimX() { return arena.input.activePointer.worldX; },
         get aimY() { return arena.input.activePointer.worldY; },
-        gravityColor: (owner, base) => arena.cosmeticsKit.gravityColor(owner, base),
+        gravityColor: (owner, base) => arena.skinsKit.gravityColor(owner, base),
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
@@ -1050,7 +1079,8 @@ export class ArenaScene extends Phaser.Scene {
         get nukeChanneling() { return arena.nukeChanneling; },
         get abilityBars() { return arena.abilityBars; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
-        growthColor: (owner, base) => arena.cosmeticsKit.growthColor(owner, base),
+        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
+        growthColor: (owner, base) => arena.skinsKit.growthColor(owner, base),
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
@@ -1145,7 +1175,8 @@ export class ArenaScene extends Phaser.Scene {
         lockCaster: (ms) => { arena.nukeChanneling = true; arena.nukeChannelEnd = arena.time.now + ms; (arena.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0); },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
-        fireColor: (owner, base) => arena.cosmeticsKit.fireColor(owner, base),
+        fireColor: (owner, base) => arena.skinsKit.fireColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
         unlockAchievement: (id) => arena.unlockAchievement(id),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
@@ -1165,22 +1196,22 @@ export class ArenaScene extends Phaser.Scene {
       };
       this.fireKit = new FireKit(fireApi);
     }
-    // CosmeticsKit adapter — renders equipped cosmetics for both sides
-    if (this.cosmeticsKit) {
-      this.cosmeticsKit.reset();
+    // SkinsKit adapter — renders each side's equipped skin
+    if (this.skinsKit) {
+      this.skinsKit.reset();
     } else {
       const arena = this;
-      const cosmeticsApi: CosmeticsArenaApi = {
+      const skinsApi: SkinsArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
         get scene(): Phaser.Scene { return arena; },
         get projectiles() { return arena.projectiles; },
       };
-      this.cosmeticsKit = new CosmeticsKit(cosmeticsApi);
+      this.skinsKit = new SkinsKit(skinsApi);
     }
-    this.cosmeticsKit.setLoadouts(
-      PlayerData.getEquippedCosmetics(this.elementId),
-      data.online?.npcCosmetics ?? {},
+    this.skinsKit.setLoadouts(
+      PlayerData.getEquippedSkin(this.elementId),
+      data.online?.npcSkin ?? null,
     );
     // StatusHudKit adapter — top-left effect indicator tray
     if (this.statusHudKit) {
@@ -1221,7 +1252,9 @@ export class ArenaScene extends Phaser.Scene {
         },
         isPlayerWater: () => arena.elementId === 'water',
         isNpcWater: () => arena.npcElement.id === 'water',
-        waterColor: (owner, base) => arena.cosmeticsKit.waterColor(owner, base),
+        waterColor: (owner, base) => arena.skinsKit.waterColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
+        unlockAchievement: (id) => arena.unlockAchievement(id),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
@@ -1269,7 +1302,9 @@ export class ArenaScene extends Phaser.Scene {
         },
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         spawnHitFlash: (x, y, color) => arena.spawnHitFlash(x, y, color),
-        airColor: (owner, base) => arena.cosmeticsKit.airColor(owner, base),
+        airColor: (owner, base) => arena.skinsKit.airColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
+        unlockAchievement: (id) => arena.unlockAchievement(id),
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
       };
@@ -1294,7 +1329,8 @@ export class ArenaScene extends Phaser.Scene {
         isNpcLife: () => arena.npcElementId === 'life',
         get masteryActive() { return arena.lifeMasteryOn && arena.elementId === 'life'; },
         masteryBindFor: (slot) => arena.masteryBindFor(slot),
-        lifeColor: (owner, base) => arena.cosmeticsKit.lifeColor(owner, base),
+        lifeColor: (owner, base) => arena.skinsKit.lifeColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         recordMasteryStat: (key, amount) => {
           if (arena.elementId === 'life') PlayerData.addMasteryStat('life', key, amount);
@@ -1325,7 +1361,7 @@ export class ArenaScene extends Phaser.Scene {
         get npcCastId() { return arena.npcCastId; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
-        electricityColor: (owner, base) => arena.cosmeticsKit.electricityColor(owner, base),
+        electricityColor: (owner, base) => arena.skinsKit.electricityColor(owner, base),
         get playerSpeedMult() { return arena.playerSpeedMult; },
         set playerSpeedMult(v: number) { arena.playerSpeedMult = v; },
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
@@ -1367,7 +1403,7 @@ export class ArenaScene extends Phaser.Scene {
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
-        soundColor: (owner, base) => arena.cosmeticsKit.soundColor(owner, base),
+        soundColor: (owner, base) => arena.skinsKit.soundColor(owner, base),
         get masteryActive() { return arena.soundMasteryOn && arena.elementId === 'sound'; },
         get npcMasteryActive() { return arena.isOnline && arena.npcMasteryOn && arena.npcElement.id === 'sound'; },
         masteryBindFor: (slot) => arena.masteryBindFor(slot),
@@ -1407,7 +1443,8 @@ export class ArenaScene extends Phaser.Scene {
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
-        lightColor: (owner, base) => arena.cosmeticsKit.lightColor(owner, base),
+        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
+        lightColor: (owner, base) => arena.skinsKit.lightColor(owner, base),
         get masteryActive() { return arena.lightMasteryOn && arena.elementId === 'light'; },
         get npcMasteryActive() { return arena.isOnline && arena.npcMasteryOn && arena.npcElement.id === 'light'; },
         masteryBindFor: (slot) => arena.masteryBindFor(slot),
@@ -1444,7 +1481,7 @@ export class ArenaScene extends Phaser.Scene {
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         pointToSegmentDist: (px, py, ax, ay, bx, by) => arena.pointToSegmentDist(px, py, ax, ay, bx, by),
-        iceColor: (owner, base) => arena.cosmeticsKit.iceColor(owner, base),
+        iceColor: (owner, base) => arena.skinsKit.iceColor(owner, base),
         get masteryActive() { return arena.iceMasteryOn && arena.elementId === 'ice'; },
         masteryBindFor: (slot) => arena.masteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
@@ -1474,7 +1511,7 @@ export class ArenaScene extends Phaser.Scene {
         get npcElementId() { return arena.npcElement.id; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
-        crystalColor: (owner, base) => arena.cosmeticsKit.crystalColor(owner, base),
+        crystalColor: (owner, base) => arena.skinsKit.crystalColor(owner, base),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
@@ -1521,7 +1558,7 @@ export class ArenaScene extends Phaser.Scene {
         recordMasteryStat: (key, amount) => {
           if (arena.elementId === 'earth') PlayerData.addMasteryStat('earth', key, amount);
         },
-        earthColor: (owner, base) => arena.cosmeticsKit.earthColor(owner, base),
+        earthColor: (owner, base) => arena.skinsKit.earthColor(owner, base),
       };
       this.earthKit = new EarthKit(earthApi);
       this.earthKit.reset();
@@ -1556,7 +1593,9 @@ export class ArenaScene extends Phaser.Scene {
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
-        shadowColor: (owner, base) => arena.cosmeticsKit.shadowColor(owner, base),
+        shadowColor: (owner, base) => arena.skinsKit.shadowColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
+        unlockAchievement: (id) => arena.unlockAchievement(id),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
@@ -1588,7 +1627,7 @@ export class ArenaScene extends Phaser.Scene {
         get elementId() { return arena.elementId; },
         get npcElementId() { return arena.npcElement.id; },
         get npcCastId() { return arena.npcCastId; },
-        acidColor: (owner, base) => arena.cosmeticsKit.acidColor(owner, base),
+        acidColor: (owner, base) => arena.skinsKit.acidColor(owner, base),
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
@@ -1734,7 +1773,7 @@ export class ArenaScene extends Phaser.Scene {
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
-        magnetColor: (owner, base) => arena.cosmeticsKit.magnetColor(owner, base),
+        magnetColor: (owner, base) => arena.skinsKit.magnetColor(owner, base),
         get masteryActive() { return arena.magnetMasteryOn && arena.elementId === 'magnet'; },
         get npcMasteryActive() { return arena.isOnline && arena.npcMasteryOn && arena.npcElement.id === 'magnet'; },
         masteryBindFor: (slot) => arena.masteryBindFor(slot),
@@ -1763,7 +1802,8 @@ export class ArenaScene extends Phaser.Scene {
         get elementId() { return arena.elementId; },
         get npcElementId() { return arena.npcElement.id; },
         get npcCastId() { return arena.npcCastId; },
-        metalColor: (owner, base) => arena.cosmeticsKit.metalColor(owner, base),
+        metalColor: (owner, base) => arena.skinsKit.metalColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (perkId) => arena.hasPerk('player', perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
@@ -1802,7 +1842,7 @@ export class ArenaScene extends Phaser.Scene {
         get elementId() { return arena.elementId; },
         get npcElementId() { return arena.npcElement.id; },
         get npcCastId() { return arena.npcCastId; },
-        plasmaColor: (owner, base) => arena.cosmeticsKit.plasmaColor(owner, base),
+        plasmaColor: (owner, base) => arena.skinsKit.plasmaColor(owner, base),
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
@@ -1841,7 +1881,7 @@ export class ArenaScene extends Phaser.Scene {
         get elementId() { return arena.elementId; },
         get npcElementId() { return arena.npcElement.id; },
         get npcCastId() { return arena.npcCastId; },
-        gunpowderColor: (owner, base) => arena.cosmeticsKit.gunpowderColor(owner, base),
+        gunpowderColor: (owner, base) => arena.skinsKit.gunpowderColor(owner, base),
         get isDodging() { return arena.isDodging; },
         set isDodging(v: boolean) { arena.isDodging = v; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
@@ -1897,10 +1937,10 @@ export class ArenaScene extends Phaser.Scene {
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
-        hasPerk: (perkId) => arena.hasPerk('player', perkId),
+        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         get isPlayerRubber() { return arena.elementId === 'rubber'; },
         get isNpcRubber() { return arena.npcElement?.id === 'rubber'; },
-        rubberColor: (owner, base) => arena.cosmeticsKit.rubberColor(owner, base),
+        rubberColor: (owner, base) => arena.skinsKit.rubberColor(owner, base),
         get isDodging() { return arena.isDodging; },
         setStatusIndicator: (id, status) => arena.setStatusIndicator(id, status),
         get masteryActive() { return arena.rubberMasteryOn && arena.elementId === 'rubber'; },
@@ -1922,7 +1962,7 @@ export class ArenaScene extends Phaser.Scene {
         get npc() { return arena.npc; },
         get isPlayerMagic() { return arena.elementId === 'magic'; },
         get isNpcMagic() { return arena.npcElement?.id === 'magic'; },
-        magicColor: (owner, base) => arena.cosmeticsKit.magicColor(owner, base),
+        magicColor: (owner, base) => arena.skinsKit.magicColor(owner, base),
         get enemies() { return arena.enemies; },
         get scene(): Phaser.Scene { return arena; },
         get projectiles() { return arena.projectiles; },
@@ -1989,6 +2029,7 @@ export class ArenaScene extends Phaser.Scene {
         hasUpgrade: (owner, slot) => owner === 'player'
           ? arena.hasUpgrade(slot)
           : arena.isOnline && arena.npcUpgrades.includes(slot),
+        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         sendTechMsg: (msg) => { if (arena.isOnline) Net.send(msg); },
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
@@ -2005,7 +2046,7 @@ export class ArenaScene extends Phaser.Scene {
           if (arena.elementId === 'technology') PlayerData.recordMasteryBest('technology', key, value);
         },
         setStatusIndicator: (id, status) => arena.setStatusIndicator(id, status),
-        technologyColor: (owner, base) => arena.cosmeticsKit.technologyColor(owner, base),
+        technologyColor: (owner, base) => arena.skinsKit.technologyColor(owner, base),
       };
       this.techKit = new TechnologyKit(techApi);
     }
@@ -2028,7 +2069,7 @@ export class ArenaScene extends Phaser.Scene {
         get aimX() { return arena.input.activePointer.worldX; },
         get aimY() { return arena.input.activePointer.worldY; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
-        sandColor: (owner, base) => arena.cosmeticsKit.sandColor(owner, base),
+        sandColor: (owner, base) => arena.skinsKit.sandColor(owner, base),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
@@ -2096,7 +2137,7 @@ export class ArenaScene extends Phaser.Scene {
         isEclipseRevealActive: () => arena.echoKit?.isEclipseRevealActive() ?? false,
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
-        echoColor: (owner, base) => arena.cosmeticsKit.echoColor(owner, base),
+        echoColor: (owner, base) => arena.skinsKit.echoColor(owner, base),
       };
       this.echoKit = new EchoKit(echoApi);
     }
@@ -2130,6 +2171,7 @@ export class ArenaScene extends Phaser.Scene {
         get sceneHeight() { return arena.scale.height; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
+        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         dealAoeDamage: (owner, cx, cy, r, d) => arena.dealAoeDamageFromOwner(cx, cy, r, d, owner),
@@ -2177,7 +2219,7 @@ export class ArenaScene extends Phaser.Scene {
         getMasteryStat: (key) => PlayerData.getMasteryStat('quantum', key),
         allElementIds: () => Object.keys(ELEMENT_MAP),
         setStatusIndicator: (id, status) => arena.setStatusIndicator(id, status),
-        subterfugeColor: (owner, base) => arena.cosmeticsKit.subterfugeColor(owner, base),
+        subterfugeColor: (owner, base) => arena.skinsKit.subterfugeColor(owner, base),
       };
       this.subterfugeKit = new SubterfugeKit(subterfugeApi);
     }
@@ -2225,7 +2267,7 @@ export class ArenaScene extends Phaser.Scene {
         recordMasteryStat: (key, amount) => {
           if (arena.elementId === 'oil') PlayerData.addMasteryStat('oil', key, amount);
         },
-        oilColor: (owner, base) => arena.cosmeticsKit.oilColor(owner, base),
+        oilColor: (owner, base) => arena.skinsKit.oilColor(owner, base),
       };
       this.oilKit = new OilKit(oilApi);
     }
@@ -2248,7 +2290,7 @@ export class ArenaScene extends Phaser.Scene {
         get nukeChanneling() { return arena.nukeChanneling; },
         get rightPointerWasDown() { return arena.rightPointerWasDown; },
         get isPlayerFate() { return arena.elementId === 'fate'; },
-        fateColor: (owner, base) => arena.cosmeticsKit.fateColor(owner, base),
+        fateColor: (owner, base) => arena.skinsKit.fateColor(owner, base),
         hasPerk: (perkId) => arena.hasPerk('player', perkId),
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
@@ -2280,6 +2322,9 @@ export class ArenaScene extends Phaser.Scene {
     // ── Background ────────────────────────────────────────────────
     if (this.campaign?.worldId) {
       drawCampaignBackground(this, this.campaign.worldId, W, H).setDepth(-100);
+    } else if (this.isBossFight) {
+      // The Disgraced King fights in his own throne room — DisgracedKingKit
+      // paints it. Drawing the default grid here would sit on top of it.
     } else {
       this.add.rectangle(cx, cy, W, H, 0x0d0d1a);
       this.add.rectangle(cx, cy, W - pad * 2, H - pad * 2, 0x181828);
@@ -2329,7 +2374,9 @@ export class ArenaScene extends Phaser.Scene {
     this.mutations = new Set(data.mutations ?? []);
     this.starredMutations = new Set(data.starredMutations ?? []);
 
-    if (!this.isInvasion) {
+    // The boss owns its own body outright (HP, position, invincibility windows),
+    // so mutations must not touch it.
+    if (!this.isInvasion && !this.isBossFight) {
       if (this.npcElement.id === 'dummy') {
         this.npc.maxHp = 5000;
         this.npc.hp = 5000;
@@ -2443,6 +2490,10 @@ export class ArenaScene extends Phaser.Scene {
             // Solo / co-op host: full on-hit pipeline, same as hitting the 1v1 npc.
             this.applyProjectileToEnemy(proj, target);
           }
+        } else if (this.bossKit?.ownsEnemy(target)) {
+          // Boss-owned hitboxes (the King's destructible dark orbs). Without this
+          // the fall-through below would send the shot into the boss instead.
+          this.applyProjectileToEnemy(proj, target);
         } else if (this.clotTree && target === this.clotTree.hitbox) {
           if (!proj.isHeal) {
             target.setIncomingCritContext(this.player.critChance, this.player.critMult);
@@ -2587,6 +2638,10 @@ export class ArenaScene extends Phaser.Scene {
         if (proj.texture.key === 'proj-purge') {
           this.slimeKit.onPurgeHit(this.player, proj, this.time.now);
         }
+        // Gunpowder Corruption perk: an npc musket ball leaves rot in the player
+        if ((proj as any).isMusketShot && this.npcElementId === 'gunpowder') {
+          this.gunpowderKit.onNpcMusketHitPlayer(this.player);
+        }
         proj.setActive(false).setVisible(false);
         (proj.body as Phaser.Physics.Arcade.Body).stop();
       },
@@ -2681,8 +2736,10 @@ export class ArenaScene extends Phaser.Scene {
       this.metalKit.onDamageDealt('npc', amount);
     });
 
-    // Invasion husks manage their own defeat handlers in the InvasionKit; skip here
-    if (!this.isInvasion) {
+    // Invasion husks manage their own defeat handlers in the InvasionKit; skip here.
+    // The boss also skips it — its first "death" is only the end of phase one, so
+    // DisgracedKingKit decides when the fight is actually over (bossVictory()).
+    if (!this.isInvasion && !this.isBossFight) {
       this.npc.once('defeated', () => {
         this.endGame(true);
       });
@@ -2833,6 +2890,8 @@ export class ArenaScene extends Phaser.Scene {
           endRun: () => { if (arena.isOnline) arena.invasionCoopKit?.leaveRun(); else arena.endGame(false); },
           plantTargets: () => arena.lifeKit.getPlantTargets('player'),
           hasUpgrade: (slot) => arena.hasUpgrade(slot),
+          get elementId() { return arena.elementId; },
+          unlockAchievement: (id) => arena.unlockAchievement(id),
           addFrostStackTo: (t) => arena.iceKit.addFrostStackTo(t),
           applyBleedVisual: (t) => arena.applyBleedVisualTo(t),
           isSilencePlayerHidden: () => arena.elementId === 'silence'
@@ -2888,8 +2947,41 @@ export class ArenaScene extends Phaser.Scene {
       this.physics.add.collider(this.player, this.enemyGroup);
     }
 
+    // ── Disgraced King setup ───────────────────────────────────────
+    // Sits after the npc is built, since the fight takes that body over.
+    if (this.isBossFight) {
+      if (!this.bossKit) {
+        const arena = this;
+        const bossApi: DisgracedKingArenaApi = {
+          get scene() { return arena as Phaser.Scene; },
+          get player() { return arena.player; },
+          get npc() { return arena.npc; },
+          get enemies() { return arena.enemies; },
+          get width() { return arena.scale.width; },
+          get height() { return arena.scale.height; },
+          addEnemy: (f) => { arena.enemies.push(f); arena.enemyGroup.add(f, true); },
+          removeEnemy: (f) => {
+            arena.enemies = arena.enemies.filter((e) => e !== f);
+            arena.enemyGroup.remove(f, false, false);
+          },
+          showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+          spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+          spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
+          bossVictory: (outcome) => {
+            // Hard mode's ending decides which element is granted; the kit has
+            // already written the unlock, this only carries it to the results.
+            arena.bossOutcome = outcome ?? null;
+            arena.endGame(true);
+          },
+          setPointerLatched: (latched) => { arena.pointerInputLatched = latched; },
+        };
+        this.bossKit = new DisgracedKingKit(bossApi);
+      }
+      this.bossKit.reset(this.isBossHard);
+    }
+
     // ── Arena labels ───────────────────────────────────────────────
-    if (!this.isInvasion) {
+    if (!this.isInvasion && !this.isBossFight) {
       this.add.text(180, 20, `${this.playerElement.emoji} YOU`, {
         fontSize: '14px', color: '#ffffff',
       }).setOrigin(0.5).setDepth(20);
@@ -3467,7 +3559,7 @@ export class ArenaScene extends Phaser.Scene {
       if (!t.active || t.hp <= 0) continue;
       if (Phaser.Math.Distance.Between(cx, cy, t.x, t.y) <= radius) {
         t.takeDamage(damage);
-        this.spawnHitFlash(t.x, t.y, this.cosmeticsKit.fireColor('player', 0xff6600));
+        this.spawnHitFlash(t.x, t.y, this.skinsKit.fireColor('player', 0xff6600));
         if (t.hp <= 0) kills++;
       }
     }
@@ -3501,10 +3593,10 @@ export class ArenaScene extends Phaser.Scene {
       targetY,
       isPlayerCaster: true,
       projectiles: this.projectiles,
-      fireColor: (base) => this.cosmeticsKit.fireColor('player', base),
-      waterColor: (base) => this.cosmeticsKit.waterColor('player', base),
-      lifeColor: (base) => this.cosmeticsKit.lifeColor('player', base),
-      airColor: (base) => this.cosmeticsKit.airColor('player', base),
+      fireColor: (base) => this.skinsKit.fireColor('player', base),
+      waterColor: (base) => this.skinsKit.waterColor('player', base),
+      lifeColor: (base) => this.skinsKit.lifeColor('player', base),
+      airColor: (base) => this.skinsKit.airColor('player', base),
       dealAoeDamage: (cx, cy, radius, damage) => {
         for (const t of this.enemies) {
           if (!t.active || t.hp <= 0) continue;
@@ -3798,10 +3890,10 @@ export class ArenaScene extends Phaser.Scene {
       targetY,
       isPlayerCaster: false,
       projectiles: this.projectiles,
-      fireColor: (base) => this.cosmeticsKit.fireColor('npc', base),
-      waterColor: (base) => this.cosmeticsKit.waterColor('npc', base),
-      lifeColor: (base) => this.cosmeticsKit.lifeColor('npc', base),
-      airColor: (base) => this.cosmeticsKit.airColor('npc', base),
+      fireColor: (base) => this.skinsKit.fireColor('npc', base),
+      waterColor: (base) => this.skinsKit.waterColor('npc', base),
+      lifeColor: (base) => this.skinsKit.lifeColor('npc', base),
+      airColor: (base) => this.skinsKit.airColor('npc', base),
       dealAoeDamage: (cx, cy, radius, damage) => {
         if (Phaser.Math.Distance.Between(cx, cy, this.player.x, this.player.y) <= radius) {
           this.player.takeDamage(damage);
@@ -4040,7 +4132,7 @@ export class ArenaScene extends Phaser.Scene {
       targetY,
       isPlayerCaster: false,
       projectiles: projGroup,
-      fireColor: (base) => base, // raid NPCs have no cosmetics
+      fireColor: (base) => base, // raid NPCs have no skins
       waterColor: (base) => base,
       lifeColor: (base) => base,
       airColor: (base) => base,
@@ -4309,9 +4401,9 @@ export class ArenaScene extends Phaser.Scene {
     const def = getAchievementDef(id);
     if (!def) return;
     this.showFloatingText(this.player.x, this.player.y - 52, `🏆 Achievement: ${def.name}!`, '#ffcc44');
-    const reward = def.cosmeticReward ? getCosmeticDef(def.cosmeticReward) : undefined;
+    const reward = def.skinReward ? getSkinDef(def.skinReward) : undefined;
     if (reward) {
-      this.showFloatingText(this.player.x, this.player.y - 74, `🎁 Cosmetic unlocked: ${reward.name}`, '#ffee88');
+      this.showFloatingText(this.player.x, this.player.y - 74, `🎁 Skin unlocked: ${reward.name}`, '#ffee88');
     }
   }
 
@@ -5945,7 +6037,12 @@ export class ArenaScene extends Phaser.Scene {
     if (distToNpc <= HIT_RADIUS + 24) {
       const dmg = Math.max(1, Math.round(speed * SPEED_TO_DMG));
       ball.lastEnemyHitAt = time;
-      this.npc.hp = Math.max(0, this.npc.hp - dmg);
+      // The boss owns its own body across four phases, so a golf hit has to go
+      // through `takeDamage` — writing hp directly skips the `defeated` event the
+      // kit hands phases over on, and the direct `endGame` below would end the
+      // whole fight on the first body.
+      if (this.isBossFight) this.npc.takeDamage(dmg);
+      else this.npc.hp = Math.max(0, this.npc.hp - dmg);
       this.spawnHitFlash(this.npc.x, this.npc.y, 0xffffff);
       this.spawnDamageNumber(this.npc.x, this.npc.y - 28, dmg);
       this.showFloatingText(this.npc.x, this.npc.y - 55, `⛳ ${dmg} dmg`, '#ffffff');
@@ -5955,7 +6052,7 @@ export class ArenaScene extends Phaser.Scene {
       const nl = Math.hypot(nx, ny) || 1;
       ball.vx = (nx / nl) * speed;
       ball.vy = (ny / nl) * speed;
-      if (this.npc.hp <= 0 && !this.gameEnded) {
+      if (!this.isBossFight && this.npc.hp <= 0 && !this.gameEnded) {
         this.endGame(true);
       }
     }
@@ -6232,6 +6329,14 @@ export class ArenaScene extends Phaser.Scene {
     this.gameEnded = true;
     if (this.isOnline) this.onlineKit?.onMatchEnded();
 
+    // Achievement — Swoon: put down an Expert Life bot while playing Metal. Bots only, so a
+    // human opponent who happens to be Life can't hand it over.
+    if (playerWon && !this.isOnline && !this.isInvasion
+        && this.elementId === 'metal' && this.npcElement.id === 'life'
+        && this.npcDifficulty.level === EXPERT_DIFFICULTY_LEVEL) {
+      this.unlockAchievement('swoon');
+    }
+
     this.cameras.main.flash(
       350,
       playerWon ? 255 : 0,
@@ -6276,6 +6381,14 @@ export class ArenaScene extends Phaser.Scene {
             campaign: gs.campaignContext ? { slot: gs.campaignContext.slot, worldId: gs.campaignContext.worldId, fightId: gs.gauntletElement, isChallenge: false } : undefined,
           });
         }
+      } else if (this.isBossFight) {
+        this.scene.start('GameOverScene', {
+          playerWon,
+          difficulty: this.npcDifficulty.level,
+          mode: 'boss',
+          bossHard: this.isBossHard,
+          devourerChoice: this.bossOutcome ?? undefined,
+        });
       } else if (this.isInvasion) {
         PlayerData.addCorruptShards(this.invasionKit.shardsEarned);
         this.scene.start('GameOverScene', {
@@ -6294,6 +6407,7 @@ export class ArenaScene extends Phaser.Scene {
           difficulty: this.npcDifficulty.level,
           rewardMult: playerWon ? getTotalRewardMult() : undefined,
           campaign: this.campaign ?? undefined,
+          bounty: this.bounty ?? undefined,
         });
       }
     });
@@ -6525,7 +6639,7 @@ export class ArenaScene extends Phaser.Scene {
     // ── Fire per-frame ────────────────────────────────────────────
     if (this.elementId === 'fire' || this.npcElement.id === 'fire') {
       this.fireKit.update(time, delta, this.elementId === 'fire', this.npcElement.id === 'fire');
-    this.cosmeticsKit.update();
+    this.skinsKit.update();
     }
 
     // ── Fire Mastery progress tracking (accrues even before unlock) ──
@@ -6601,11 +6715,9 @@ export class ArenaScene extends Phaser.Scene {
     // ── Burning DOT (Flameshredder upgrade / Fire Mastery stoke) ──
     for (const t of this.enemies) {
       if (!t.active) continue;
-      // Wildfire achievement: 20s of continuous fire (burning or molten) on one enemy.
-      if (this.elementId === 'fire' && t.burnContinuousMs >= 20000) this.unlockAchievement('wildfire');
       if (t.burningUntil > time) {
         const stoked = t.fireStokeBonus > 0;
-        const auraColor = this.cosmeticsKit.fireColor('player', stoked ? 0xcc1100 : 0xff4400);
+        const auraColor = this.skinsKit.fireColor('player', stoked ? 0xcc1100 : 0xff4400);
         if (!t.burnAura) {
           t.burnAura = this.add.circle(t.x, t.y, 26, auraColor, 0.3).setDepth(7);
         } else {
@@ -6837,6 +6949,9 @@ export class ArenaScene extends Phaser.Scene {
     // folded in here as one factor rather than relying on each kit's npc-side replay.
     if (this.isOnline && !this.isInvasion) this.playerSpeedMult *= this.player.netSpeedMult;
 
+    // ── Disgraced King: cleaves and grasping hands leave you wading ───
+    if (this.isBossFight && this.bossKit) this.playerSpeedMult *= this.bossKit.getPlayerSpeedMult();
+
     // ── Acid Purge: suppress positive speed multipliers while purged ──
     if (time < this.player.purgedUntil) this.playerSpeedMult = Math.min(this.playerSpeedMult, 1);
     if (time < this.npc.purgedUntil) this.npcSpeedMult = Math.min(this.npcSpeedMult, 1);
@@ -7059,7 +7174,11 @@ export class ArenaScene extends Phaser.Scene {
                   this.nukeChannelEnd = this.time.now + ms;
                 }}
               : snipeBase;
-            if (this.player.castAbility('air-snipe', noLockCtx)) {
+            // Storm perk: a banked charge is spent on this shot — full electro damage, but
+            // it is still drawn like any other snipe.
+            const storm = this.airKit.isStormCharged();
+            if (this.player.castAbility('air-snipe', storm ? { ...noLockCtx, airStormShot: true } : noLockCtx)) {
+              if (storm) this.airKit.setStormCharged(false);
               if (this.quickShotCharged) {
                 this.quickShotCharged = false;
                 this.airKit.playPlayerGesture('punch');
@@ -7454,7 +7573,9 @@ export class ArenaScene extends Phaser.Scene {
     const npcPreDashY = this.npc.y;
     const npcCastId = this.isOnline
       ? (this.isInvasion ? (this.invasionCoopKit?.consumeNpcCast() ?? null) : (this.onlineKit?.consumeNpcCast() ?? null))
-      : (this.isInvasion || this.shadowKit.isConsumeActive() || this.time.now < this.shadowKit.getNpcThrowUntil()) ? null : (this.npc as NpcOpponent).doAI(
+      // The boss never runs the NPC state machine — DisgracedKingKit drives its
+      // body and every attack it makes.
+      : (this.isInvasion || this.isBossFight || this.shadowKit.isConsumeActive() || this.time.now < this.shadowKit.getNpcThrowUntil()) ? null : (this.npc as NpcOpponent).doAI(
         this.player,
         (tx: number, ty: number) => this.buildNpcContext(tx, ty),
         time,
@@ -7467,6 +7588,7 @@ export class ArenaScene extends Phaser.Scene {
       if (this.isOnline) this.invasionCoopKit?.update(time, delta);
       else this.invasionKit.update(time, delta);
     }
+
 
     // Earth and Light kit updates (after npcCastId is known)
     if (this.elementId === 'earth' || this.npcElement.id === 'earth') {
@@ -7951,6 +8073,11 @@ export class ArenaScene extends Phaser.Scene {
       }
     }
 
+    // ── Disgraced King ────────────────────────────────────────────────
+    // Runs last on purpose: the boss body has `moves = false` and is placed by
+    // the kit, so anything that dragged or shoved it earlier this frame (a
+    // grapple, a pull) is corrected before the frame is drawn.
+    if (this.isBossFight) this.bossKit?.update(time, delta);
   }
 
   /**

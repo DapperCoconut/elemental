@@ -90,7 +90,7 @@ export interface CrystalArenaApi {
   readonly npcElementId: string;
   hasUpgrade(slot: string): boolean;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
-  /** Cosmetics: maps a crystal visual color through the owner's color cosmetic. */
+  /** Skins: maps a crystal visual color through the owner's skin. */
   crystalColor(owner: 'player' | 'npc', base: number): number;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
@@ -127,7 +127,7 @@ interface CrystalShredder {
 
 export class CrystalKit {
   // ── Visuals ───────────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a skin recolours one side. */
   private readonly pcol: CrystalColorFn;
   private readonly ncol: CrystalColorFn;
   private readonly pfx: CrystalFx;

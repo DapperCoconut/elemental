@@ -3,6 +3,7 @@ import * as PlayerData from '../data/PlayerData';
 import { findRecipe } from '../data/Recipes';
 import { ABSTRACT_ELEMENT_IDS, ABSTRACT_ELEMENT_UNLOCK_MAP } from '../data/AbstractElements';
 import { findPerkRecipe, findQuadPerkRecipe, findPentaPerkRecipe, findAbstractTriplePerkRecipe, PerkDef, ALL_PERKS } from '../data/Perks';
+import { DIVINE_PERKS } from '../data/DivinePerks';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix, tintPlate,
   addBackdrop, addBackButton, addButton, addChip, addHeaderBar, addIconButton, addSectionLabel,
@@ -94,6 +95,24 @@ export class LabScene extends Phaser.Scene {
     const back = () => this.scene.start('TitleScene');
     addBackButton(this, back);
     this.input.keyboard!.on('keydown-ESC', back);
+
+    // The King's own lab is below this one. Nothing hints at it until he is
+    // dead — after that the floor is quietly marked.
+    if (PlayerData.isKingDefeated()) {
+      const markY = height - 20;
+      const prompt = this.add.text(cx, markY, '◈   P R E S S   S P A C E   ◈', {
+        fontSize: '10px', fontFamily: FONT_DISPLAY,
+        color: hex(mix(C.corrupt, 0x000000, 0.25)), letterSpacing: 4,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+      this.tweens.add({
+        targets: prompt, alpha: { from: 0.35, to: 1 },
+        duration: 2000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+      });
+      this.input.keyboard!.on('keydown-SPACE', () => {
+        this.cameras.main.fade(280, 0, 0, 0);
+        this.time.delayedCall(300, () => this.scene.start('DisgracedLabScene'));
+      });
+    }
 
     // Nucleus counter (top right)
     this.nucleiText = this.add.text(width - 60, 26, '', {
@@ -837,9 +856,15 @@ export class LabScene extends Phaser.Scene {
     const ROW_PAD = 10;
     let innerY = 8;
 
-    const tiers: Array<'triple' | 'abstract-triple' | 'quad' | 'penta'> = ['triple', 'abstract-triple', 'quad', 'penta'];
+    const tiers: Array<'triple' | 'abstract-triple' | 'quad' | 'penta' | 'divine'> =
+      ['triple', 'abstract-triple', 'quad', 'penta', 'divine'];
     for (const tier of tiers) {
-      const allTierPerks = ALL_PERKS.flatMap((ep) => ep.perks.filter((p) => p.tier === tier));
+      // Divine perks live in their own table (they are forged downstairs, not
+      // here), but they read identically once unlocked, so the book lists them
+      // alongside everything else.
+      const allTierPerks = tier === 'divine'
+        ? DIVINE_PERKS
+        : ALL_PERKS.flatMap((ep) => ep.perks.filter((p) => p.tier === tier));
       if (allTierPerks.length === 0) continue;
 
       const tierLabel = tier === 'triple'
@@ -848,8 +873,11 @@ export class LabScene extends Phaser.Scene {
           ? '— ABSTRACT PERKS  (Lab Level 2 · 4 ⚛️) —'
           : tier === 'quad'
             ? '— QUAD PERKS  (Lab Level 3 · 5 ⚛️)  ·  Perkaholic Mutation —'
-            : '— PENTA PERKS  (Penta Synthesis · 10 ⚛️) —';
-      const tierColor = tier === 'penta' ? hex(mix(C.corrupt, 0xffffff, 0.4))
+            : tier === 'penta'
+              ? '— PENTA PERKS  (Penta Synthesis · 10 ⚛️) —'
+              : '— DIVINE PERKS  (Disgraced Lab · 1 💠) —';
+      const tierColor = tier === 'divine' ? hex(mix(C.corrupt, 0xffffff, 0.6))
+        : tier === 'penta' ? hex(mix(C.corrupt, 0xffffff, 0.4))
         : tier === 'quad' ? T.gold
         : tier === 'abstract-triple' ? hex(mix(C.arcane, 0xffffff, 0.4))
         : hex(mix(C.frost, 0xffffff, 0.3));
@@ -865,7 +893,7 @@ export class LabScene extends Phaser.Scene {
         const equipped  = PlayerData.getEquippedPerk(perk.elementId) === perk.id;
         const alpha = unlocked ? 1.0 : 0.35;
 
-        const tierAccent = tier === 'penta' ? C.corrupt
+        const tierAccent = tier === 'penta' || tier === 'divine' ? C.corrupt
           : tier === 'quad' ? C.gold
           : tier === 'abstract-triple' ? C.arcane
           : C.frost;

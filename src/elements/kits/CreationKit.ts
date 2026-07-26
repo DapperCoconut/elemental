@@ -365,7 +365,7 @@ export interface CreationArenaApi {
   setStatusIndicator(id: string, status: CustomStatus | null): void;
   /** Shared rectangle depenetration helper — ArenaScene owns it (Apprehension uses it too). */
   pushFighterOutOfRect(body: Phaser.Physics.Arcade.Body, bx: number, by: number, bw: number, bh: number): void;
-  /** `(base) => displayed` through the owner's colour cosmetic. */
+  /** `(base) => displayed` through the owner's skin. */
   creationColor(owner: 'player' | 'npc', base: number): number;
   /** HUD ability cards, so Build Mode can re-label them the way Earth's Titan Form does. */
   readonly abilityBars: Array<{ lbl?: Phaser.GameObjects.Text; desc?: Phaser.GameObjects.Text }>;
@@ -382,7 +382,7 @@ export interface CreationArenaApi {
 
 export class CreationKit {
   // ── Visuals ──
-  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a skin recolours one side. */
   private readonly pcol: CreationColorFn;
   private readonly ncol: CreationColorFn;
   private readonly pfx: CreationFx;
@@ -1695,7 +1695,7 @@ export class CreationKit {
     const duration = def.durationMs * (goldOn && kind !== 'gold' ? 2 : 1);
 
     // The payload snapping onto the victim — an inverted brew closing over them, drawn on
-    // whichever side owns the mortar so a cosmetic recolours the right half of the exchange.
+    // whichever side owns the mortar so a skin recolours the right half of the exchange.
     const fx = this.fx(side === 'player' ? 'npc' : 'player');
     fx.ring(victim.x, victim.y, 40, 12, def.color, 340, 4, 9);
     fx.sparks(victim.x, victim.y, 8, { speed: 90, size: 2.2, life: 620, gravity: 260, depth: 9 });

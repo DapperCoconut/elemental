@@ -15,7 +15,7 @@ import { AvatarSpec, ArmHold, ArmPose, BaseAvatar, ColorFn, FxBase, TAU, easeIn,
  * the world: the projectiles, the popups that block your view, the cable, the bomb, the fighter.
  */
 
-/** `(base) => displayed` — CosmeticsKit.technologyColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.technologyColor bound to one owner. */
 export type TechColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';
@@ -87,7 +87,7 @@ function frame(cx: number, cy: number, angle: number): (lx: number, ly: number) 
  * Drawing it rather than typing it is the whole point. A `scene.add.text('1')` is a character in
  * whatever font the browser felt like; a square with a lit bevel and a ring or a bar punched out
  * of it is a *cell on a board*, which is what this element is made of. It also means a bit can
- * be any size, rotate, and take the owner's colour cosmetic — none of which a Text can.
+ * be any size, rotate, and take the owner's skin — none of which a Text can.
  */
 export function bitTile(
   g: Phaser.GameObjects.Graphics,

@@ -14,12 +14,12 @@ import { AvatarSpec, ArmHold, ArmPose, BaseAvatar, ColorFn, FxBase, TAU, easeIn,
  * cards its own hue so a hand is readable at a glance, and those hues are passed in by the
  * caller. Everything else (stock, ink, rim, gold, felt, sheen) is palette.
  *
- * Fate has no colour-slot cosmetic yet, but every call still routes through the owner's
- * `fateColor` mapper, so the day one lands it is a table edit in CosmeticsKit rather than a
+ * Fate has no skin yet, but every call still routes through the owner's
+ * `fateColor` mapper, so the day one lands it is a table edit in SkinsKit rather than a
  * sweep through this file.
  */
 
-/** `(base) => displayed` — CosmeticsKit.fateColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.fateColor bound to one owner. */
 export type FateColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';

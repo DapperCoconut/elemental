@@ -23,6 +23,13 @@ const CRUNCHER_HIT_RADIUS = 26;
 const CRUNCHER_MAX_RANGE = 900;
 const CRUNCHER_TRAIL_INTERVAL_MS = 55;
 
+// Adrenaline perk: the hit streak doses you instead of only tuning the shot.
+const ADRENALINE_MAX_STACKS = 5;
+const ADRENALINE_SPEED_PER_STACK = 0.10;
+const ADRENALINE_WINDOW_MS = 5000;
+/** At a full dose the click stops waiting on you at all. */
+const ADRENALINE_WIRED_CD_MULT = 0.5;
+
 // ── Firewall (Click+) ───────────────────────────────────────────────────────
 const FIREWALL_CHARGES = 3;
 const FIREWALL_REGEN_MS = 20000;
@@ -277,6 +284,7 @@ export interface TechArenaApi {
   /** Shared registry of kit-local projectiles. */
   readonly projReg: ProjectileRegistry;
   hasUpgrade(owner: Owner, slot: string): boolean;
+  hasPerk(owner: Owner, perkId: string): boolean;
   /** Broadcast a tech event to the online peer. No-op offline. */
   sendTechMsg(msg: NetTechMsg): void;
   spawnHitFlash(x: number, y: number, color: number): void;
@@ -295,7 +303,7 @@ export interface TechArenaApi {
   recordMasteryBest(key: string, value: number): void;
   /** Push a kit-owned effect into the top-right status tray (player-side only). */
   setStatusIndicator(id: string, status: CustomStatus | null): void;
-  /** Owner's colour cosmetic applied to one Technology palette value. */
+  /** Owner's skin applied to one Technology palette value. */
   technologyColor(owner: Owner, base: number): number;
 }
 
@@ -318,7 +326,7 @@ const D_UI = 19;      // popups and boxes that sit over the fighters
 export class TechnologyKit {
   // ── Visuals ───────────────────────────────────────────────────────────────
   // One colour mapper and one effect painter per side, because the two fighters can have
-  // different colour cosmetics equipped.
+  // different skins equipped.
   private readonly pcol: TechColorFn;
   private readonly ncol: TechColorFn;
   private readonly pfx: TechnologyFx;
@@ -334,6 +342,10 @@ export class TechnologyKit {
   private cruncherDmg: Record<Owner, number> = { player: 0, npc: 0 };
   private cruncherSpeed: Record<Owner, number> = { player: 0, npc: 0 };
   private cruncherLastFireAt: Record<Owner, number> = { player: 0, npc: 0 };
+  // Adrenaline perk
+  private adrenalineStacks: Record<Owner, number> = { player: 0, npc: 0 };
+  private adrenalineUntil: Record<Owner, number> = { player: 0, npc: 0 };
+  private adrenalineIndicatorShown = false;
   private crunchers: Array<{
     x: number; y: number; vx: number; vy: number;
     owner: Owner; damage: number; traveled: number; trailAccum: number;
@@ -591,6 +603,10 @@ export class TechnologyKit {
     this.cruncherDmg = { player: 0, npc: 0 };
     this.cruncherSpeed = { player: 0, npc: 0 };
     this.cruncherLastFireAt = { player: 0, npc: 0 };
+    this.adrenalineStacks = { player: 0, npc: 0 };
+    this.adrenalineUntil = { player: 0, npc: 0 };
+    this.adrenalineIndicatorShown = false;
+    this.arena.setStatusIndicator('adrenaline', null);
 
     this.firewallInited = false;
     this.firewallCharges = { player: 0, npc: 0 };
@@ -752,6 +768,7 @@ export class TechnologyKit {
 
   update(time: number, delta: number): void {
     this.updateCrunchers(time, delta);
+    this.updateAdrenalineHud(time);
     this.updateFirewall(time);
     this.updateAds(time);
     this.updateCords(time, delta);
@@ -1020,8 +1037,10 @@ export class TechnologyKit {
 
   /** Wheel of Fortune speed buff + the VPN mastery ramp — read in ArenaScene's speed-mult block. */
   getPlayerSpeedMult(): number {
-    const wheel = this.arena.scene.time.now < this.wheelSpeedUntil ? 1.5 : 1;
-    return wheel * (1 + this.vpnRamp * VPN_MAX_BONUS);
+    const time = this.arena.scene.time.now;
+    const wheel = time < this.wheelSpeedUntil ? 1.5 : 1;
+    const adrenaline = 1 + this.adrenalineStacksFor('player', time) * ADRENALINE_SPEED_PER_STACK;
+    return wheel * (1 + this.vpnRamp * VPN_MAX_BONUS) * adrenaline;
   }
 
   private updateShelter(owner: Owner): void {
@@ -1038,7 +1057,11 @@ export class TechnologyKit {
 
   doTechCruncherFire(owner: Owner, tx: number, ty: number): void {
     const time = this.arena.scene.time.now;
-    const effectiveCd = Math.max(CRUNCHER_MIN_COOLDOWN, CRUNCHER_BASE_COOLDOWN * (1 - this.cruncherCd[owner] / 100));
+    // Wired (Adrenaline perk at full dose) cuts under the usual floor — that is the payoff.
+    const wired = this.adrenalineStacksFor(owner, time) >= ADRENALINE_MAX_STACKS;
+    const floor = wired ? CRUNCHER_MIN_COOLDOWN * ADRENALINE_WIRED_CD_MULT : CRUNCHER_MIN_COOLDOWN;
+    const effectiveCd = Math.max(floor,
+      CRUNCHER_BASE_COOLDOWN * (1 - this.cruncherCd[owner] / 100) * (wired ? ADRENALINE_WIRED_CD_MULT : 1));
     if (time - this.cruncherLastFireAt[owner] < effectiveCd) return;
     this.cruncherLastFireAt[owner] = time;
 
@@ -1097,6 +1120,54 @@ export class TechnologyKit {
       this.cruncherCd[owner] = Math.max(0, this.cruncherCd[owner] - 40);
       this.cruncherDmg[owner] = Math.max(0, this.cruncherDmg[owner] - 20);
       this.cruncherSpeed[owner] = Math.max(0, this.cruncherSpeed[owner] - 20);
+    }
+    this.bumpAdrenaline(owner, hit);
+  }
+
+  // ── Adrenaline (perk) ────────────────────────────────────────────────────
+
+  /** A landed cruncher doses you; a miss burns one dose off the top. */
+  private bumpAdrenaline(owner: Owner, hit: boolean): void {
+    if (!this.arena.hasPerk(owner, 'adrenaline')) return;
+    const time = this.arena.scene.time.now;
+    const stacks = this.adrenalineStacksFor(owner, time);
+    if (hit) {
+      this.adrenalineStacks[owner] = Math.min(ADRENALINE_MAX_STACKS, stacks + 1);
+      this.adrenalineUntil[owner] = time + ADRENALINE_WINDOW_MS;
+      if (this.adrenalineStacks[owner] === ADRENALINE_MAX_STACKS && stacks < ADRENALINE_MAX_STACKS) {
+        const f = owner === 'player' ? this.arena.player : this.arena.npc;
+        this.arena.spawnFloatingText(f.x, f.y - 46, '💉 WIRED', '#55ffcc');
+      }
+    } else {
+      this.adrenalineStacks[owner] = Math.max(0, stacks - 1);
+      // A miss only trims the dose — the clock keeps running on what is left.
+      if (this.adrenalineStacks[owner] === 0) this.adrenalineUntil[owner] = 0;
+    }
+  }
+
+  /** Live stack count, lapsing the whole dose once the window since the last hit passes. */
+  private adrenalineStacksFor(owner: Owner, time: number): number {
+    if (time >= this.adrenalineUntil[owner]) {
+      this.adrenalineStacks[owner] = 0;
+      return 0;
+    }
+    return this.adrenalineStacks[owner];
+  }
+
+  private updateAdrenalineHud(time: number): void {
+    const stacks = this.arena.hasPerk('player', 'adrenaline')
+      ? this.adrenalineStacksFor('player', time) : 0;
+    if (stacks > 0) {
+      this.arena.setStatusIndicator('adrenaline', {
+        name: 'Adrenaline', emoji: '💉', color: 0x44ccaa,
+        description: 'Cruncher hits are dosing you: +10% move speed each. At 5 doses you are wired and the click fires twice as fast.',
+        until: this.adrenalineUntil.player,
+        count: stacks * 10, suffix: '%', priority: 118,
+      });
+      this.adrenalineIndicatorShown = true;
+    } else if (this.adrenalineIndicatorShown) {
+      this.arena.setStatusIndicator('adrenaline', null);
+      this.adrenalineIndicatorShown = false;
     }
   }
 

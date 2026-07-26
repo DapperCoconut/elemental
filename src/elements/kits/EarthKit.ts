@@ -4,7 +4,7 @@ import { CastContext, Ability } from '../Ability';
 import { Husk } from '../../invasion/Husk';
 import {
   ArmGesture, ArmHold, EARTH, EarthAura, EarthAvatar, EarthColorFn, EarthFx, EarthGather,
-  StoneGolem, StoneShield, stoneChunkLayered,
+  ErosionAura, StoneGolem, StoneShield, stoneChunkLayered,
 } from './EarthVisuals';
 
 // ── Earth Mastery constants ─────────────────────────────────────────────
@@ -139,7 +139,7 @@ export interface EarthArenaApi {
   /** Mastery enhancement id bound over the given ability slot, or null if that slot is unchanged. */
   masteryBindFor(slot: string): string | null;
   recordMasteryStat(key: string, amount: number): void;
-  /** `CosmeticsKit.earthColor` — one owner's colour cosmetic, or the identity. */
+  /** `SkinsKit.earthColor` — one owner's skin, or the identity. */
   earthColor(owner: 'player' | 'npc', base: number): number;
 }
 
@@ -147,7 +147,7 @@ export interface EarthArenaApi {
 
 export class EarthKit {
   // ── Visuals ─────────────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a future cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a future skin recolours one side. */
   private readonly pcol: EarthColorFn;
   private readonly ncol: EarthColorFn;
   private readonly pfx: EarthFx;
@@ -174,6 +174,12 @@ export class EarthKit {
   private earthShieldRespawnAt = 0;
   private earthShieldBroken = false;
   private earthShieldLabel: Phaser.GameObjects.Text | null = null;
+  /**
+   * Erosion perk (divine): the plates are replaced by this belt of rock and sand. It carries
+   * the shield's whole HP pool in `earthShieldHp`, so every reader of that number — the bash,
+   * the golem ritual, Shield Splinter — keeps working without knowing the difference.
+   */
+  private erosionAura: ErosionAura | null = null;
 
   // ── Player bash state (click, hold-to-charge) ──────────────────────────
   private earthBashActive = false;
@@ -359,6 +365,7 @@ export class EarthKit {
     this.earthShieldRespawnAt = 0;
     this.earthShieldBroken = false;
     this.earthShieldLabel = null;
+    this.erosionAura = null;
     this.earthBashActive = false;
     this.earthBashEnd = 0;
     this.earthBashDirX = 0;
@@ -492,7 +499,7 @@ export class EarthKit {
       const playerBody = player.body as Phaser.Physics.Arcade.Body;
 
       // Lazy-spawn initial shield (HP starts at 75 from reset() but sprite doesn't exist yet)
-      if (this.earthShieldHp > 0 && !this.earthShieldSprite && !this.earthShieldBroken && !this.earthGolemActive && !this.titanActive) {
+      if (this.earthShieldHp > 0 && !this.playerShieldBuilt() && !this.earthShieldBroken && !this.earthGolemActive && !this.titanActive) {
         // With Click+: adjust initial HP to 50
         if (this.arena.hasUpgrade('click') && this.earthShieldMaxHp === 75) {
           this.earthShieldHp = 50;
@@ -513,7 +520,7 @@ export class EarthKit {
       }
 
       // Update shield sprite position
-      if (this.earthShieldSprite) this.updateEarthShieldSpritePosition(true, delta);
+      if (this.playerShieldBuilt()) this.updateEarthShieldSpritePosition(true, delta);
 
       // Repair active — slow + aura
       if (this.earthRepairActive) {
@@ -532,20 +539,24 @@ export class EarthKit {
             this.spawnEarthShield(true);
             this.arena.showFloatingText(player.x, player.y - 30, '🔧 SHIELD RESTORED', '#ccaa66');
           } else {
-            // Determine max HPs
-            const fMaxHp = hasDualShield ? (this.earthShieldEnhanced ? 100 : (this.arena.hasPerk('player', 'obsidian') ? 75 : 50)) : this.earthShieldMaxHp;
+            // Determine max HPs. Erosion has no second plate to check or to top up — its
+            // whole pool is the front one, so it reads its own max rather than a plate's.
+            const erosionOn = this.arena.hasPerk('player', 'erosion');
+            const fMaxHp = hasDualShield && !erosionOn
+              ? (this.earthShieldEnhanced ? 100 : (this.arena.hasPerk('player', 'obsidian') ? 75 : 50))
+              : this.earthShieldMaxHp;
             const bMaxHp = hasDualShield ? (this.earthShieldEnhanced ? 100 : (this.arena.hasPerk('player', 'obsidian') ? 75 : 50)) : fMaxHp;
             // Check if both shields are at ≥90% to allow enhancement
             const frontReady = this.earthShieldHp >= 0.9 * fMaxHp;
-            const backReady = !hasDualShield || (this.earthBackShieldHp > 0 && this.earthBackShieldHp >= 0.9 * bMaxHp);
+            const backReady = !hasDualShield || erosionOn || (this.earthBackShieldHp > 0 && this.earthBackShieldHp >= 0.9 * bMaxHp);
             const canEnhance = frontReady && backReady && !this.earthShieldEnhanced;
             if (canEnhance) {
               // Enhance both shields to gold
               this.earthShieldEnhanced = true;
-              this.earthShieldMaxHp = hasDualShield ? 100 : 125;
+              this.earthShieldMaxHp = hasDualShield ? (erosionOn ? 200 : 100) : 125;
               this.earthShieldHp = this.earthShieldMaxHp;
               this.earthShieldSprite?.setEnhanced(true);
-              if (hasDualShield) {
+              if (hasDualShield && !erosionOn) {
                 this.earthBackShieldHp = 100;
                 this.earthBackShieldSprite?.setEnhanced(true);
                 this.arena.showFloatingText(player.x, player.y - 30, '⚒ SHIELDS ENHANCED!', '#ffcc44');
@@ -1419,6 +1430,7 @@ export class EarthKit {
     this.earthShieldBroken = true;
     this.earthShieldRespawnAt = 0;
     if (this.earthShieldSprite) { this.earthShieldSprite.destroy(); this.earthShieldSprite = null; }
+    if (this.erosionAura) { this.erosionAura.destroy(); this.erosionAura = null; }
     if (this.earthShieldLabel) { this.earthShieldLabel.destroy(); this.earthShieldLabel = null; }
     if (this.earthBackShieldHp > 0) {
       this.earthBackShieldHp = 0;
@@ -2259,34 +2271,63 @@ export class EarthKit {
     // With Click+: base HP = 50 each, enhanced = 100 each; color = gray
     // Without upgrade: base HP = 75, enhanced = 125; color = brown
     if (isPlayer) {
+      // Erosion (divine): whatever the plates would have carried is poured into one belt, so
+      // Double Shield hands over both plates' worth rather than one plate and a spare.
+      const erosion = this.arena.hasPerk('player', 'erosion');
+      const plate = this.earthShieldEnhanced ? 100 : (this.arena.hasPerk('player', 'obsidian') ? 75 : 50);
       const hp = hasDual
-        ? (this.earthShieldEnhanced ? 100 : (this.arena.hasPerk('player', 'obsidian') ? 75 : 50))
+        ? (erosion ? plate * 2 : plate)
         : this.earthShieldMaxHp;
       this.earthShieldHp = hp;
-      if (!hasDual) this.earthShieldMaxHp = hp;
+      if (!hasDual || erosion) this.earthShieldMaxHp = hp;
       this.earthShieldBroken = false;
       this.earthShieldRespawnAt = 0;
+      if (erosion) {
+        this.spawnErosionAura();
+      } else {
       if (this.earthShieldSprite) this.earthShieldSprite.destroy();
       this.earthShieldSprite = new StoneShield(scene, this.pcol, {
         steel: hasDual, enhanced: this.earthShieldEnhanced, depth: 7,
       });
+      }
+      if (erosion) {
+        // The belt is torn up off the floor all the way round instead of hauled up in front.
+        this.pfx.dust(player.x, player.y, 7, 54, 4);
+        this.pfx.ring(player.x, player.y, 8, 58, EARTH.sand, 380, 4, 6);
+      } else {
       // Hauled up out of the ground in front of you rather than blinking into existence.
       this.pfx.pillar(
         player.x + Math.cos(this.earthShieldAngle) * 28,
         player.y + Math.sin(this.earthShieldAngle) * 28, 14, 30, 8,
       );
       this.pfx.ring(player.x, player.y, 10, 46, EARTH.dust, 340, 3, 6);
+      }
       if (!this.earthShieldLabel) {
         this.earthShieldLabel = scene.add.text(player.x, player.y - 30, '', {
-          fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: hasDual ? '#bbbbbb' : '#ccaa66',
+          fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+          color: erosion ? '#ddbb77' : (hasDual ? '#bbbbbb' : '#ccaa66'),
         }).setOrigin(0.5).setDepth(11);
       }
-      // Also spawn back shield if Click+
-      if (hasDual) {
+      // Also spawn back shield if Click+ — Erosion already banked that plate into the belt.
+      if (hasDual && !erosion) {
         this.spawnEarthBackShield();
       }
-      // Wire shield as damage absorber — directional: front blocks frontal hits, back blocks rear hits
+      // Wire shield as damage absorber — directional: front blocks frontal hits, back blocks rear hits.
+      // Erosion covers every side, so it never asks where the hit came from.
       player.damageAbsorber = (amount: number) => {
+        if (erosion) {
+          if (this.earthShieldHp <= 0) return false;
+          const absorbed = Math.min(this.earthShieldHp, amount);
+          this.earthShieldHp -= absorbed;
+          this.arena.recordMasteryStat('shieldBlocked', absorbed);
+          if (this.earthShieldHp <= 0) this.breakEarthShield(true);
+          const remaining = amount - absorbed;
+          if (remaining > 0) {
+            player.hp = Math.max(0, player.hp - remaining);
+            if (player.hp <= 0) player.emit('defeated');
+          }
+          return true;
+        }
         // Determine if hit comes from front (NPC in front of player relative to shield facing)
         const angleToNpc = Math.atan2(npc.y - player.y, npc.x - player.x);
         const angDiff = Math.abs(Phaser.Math.Angle.ShortestBetween(
@@ -2360,6 +2401,18 @@ export class EarthKit {
     }
   }
 
+  /** Erosion: (re)builds the belt. One aura only — a rebuild replaces whatever was left. */
+  private spawnErosionAura(): void {
+    if (this.erosionAura) this.erosionAura.destroy();
+    this.erosionAura = new ErosionAura(this.arena.scene, this.pcol, 44, 7);
+    this.erosionAura.setPose(this.arena.player.x, this.arena.player.y);
+  }
+
+  /** True while the player's shield — plate or belt — is standing. */
+  private playerShieldBuilt(): boolean {
+    return this.earthShieldSprite !== null || this.erosionAura !== null;
+  }
+
   private spawnEarthBackShield(): void {
     const player = this.arena.player;
     const scene = this.arena.scene;
@@ -2414,9 +2467,17 @@ export class EarthKit {
         this.earthShieldSprite.destroy();
         this.earthShieldSprite = null;
       }
+      if (this.erosionAura) {
+        this.erosionAura.shatter(this.pfx);
+        this.erosionAura.destroy();
+        this.erosionAura = null;
+      }
       this.arena.scene.cameras.main.shake(200, 0.01);
       player.damageAbsorber = null;
-      this.arena.showFloatingText(player.x, player.y - 30, '💥 SHIELD BROKEN', '#ff8844');
+      this.arena.showFloatingText(
+        player.x, player.y - 30,
+        this.arena.hasPerk('player', 'erosion') ? '💥 AURA SCATTERED' : '💥 SHIELD BROKEN', '#ff8844',
+      );
     } else {
       this.npcEarthShieldHp = 0;
       this.npcEarthShieldBroken = true;
@@ -2432,6 +2493,26 @@ export class EarthKit {
   }
 
   private updateEarthShieldSpritePosition(isPlayer: boolean, delta: number): void {
+    // Erosion: the belt rides the player rather than standing off at an angle, and it takes
+    // the splinter wind-up straight from the hold instead of through a plate.
+    if (isPlayer && this.erosionAura) {
+      const p = this.arena.player;
+      const time = this.arena.scene.time.now;
+      const maxHp = Math.max(1, this.earthShieldMaxHp);
+      this.erosionAura.setPose(p.x, p.y);
+      this.erosionAura.setHp(this.earthShieldHp / maxHp);
+      this.erosionAura.setSplinter(
+        this.earthSplinterHolding
+          ? (this.earthSplinterReady ? 1 : Phaser.Math.Clamp((time - this.earthSplinterHoldStart) / 2000, 0, 1) * 0.7)
+          : 0,
+      );
+      this.erosionAura.update(delta, p.forceInvisible ? 0 : p.alpha);
+      if (this.earthShieldLabel) {
+        this.earthShieldLabel.setPosition(p.x, p.y - 44);
+        this.earthShieldLabel.setText(`🪨${Math.floor(this.earthShieldHp)}/${maxHp}`);
+      }
+      return;
+    }
     const fighter = isPlayer ? this.arena.player : this.arena.npc;
     const sprite = isPlayer ? this.earthShieldSprite : this.npcEarthShieldSprite;
     const label = isPlayer ? this.earthShieldLabel : this.npcEarthShieldLabel;
@@ -2479,6 +2560,8 @@ export class EarthKit {
     const hp = isPlayer ? this.earthShieldHp : this.npcEarthShieldHp;
     const ang = isPlayer ? this.earthShieldAngle : this.npcEarthShieldAngle;
     if (hp <= 0) return false;
+    // Erosion covers every side, so anything the belt is still standing for counts as blocked.
+    if (isPlayer && this.erosionAura) return true;
     const incomingAng = Math.atan2(fromY - fighter.y, fromX - fighter.x);
     const diff = Phaser.Math.Angle.Wrap(incomingAng - ang);
     return Math.abs(diff) < Math.PI * (60 / 180);
@@ -2614,6 +2697,7 @@ export class EarthKit {
       // No 8s respawn yet — only after golem ends
       this.earthShieldRespawnAt = 0;
       if (this.earthShieldSprite) { this.earthShieldSprite.destroy(); this.earthShieldSprite = null; }
+      if (this.erosionAura) { this.erosionAura.destroy(); this.erosionAura = null; }
     } else {
       this.npcEarthShieldHp = 0;
       this.npcEarthShieldBroken = true;

@@ -90,7 +90,7 @@ export interface GravityArenaApi {
   /** Aim point the player's rig faces — ArenaScene already tracks the cursor. */
   readonly aimX: number;
   readonly aimY: number;
-  /** Cosmetics: maps a gravity visual color through the owner's color cosmetic. */
+  /** Skins: maps a gravity visual color through the owner's skin. */
   gravityColor(owner: 'player' | 'npc', base: number): number;
   readonly width: number;
   readonly height: number;
@@ -183,7 +183,7 @@ interface GroundedState {
 
 export class GravityKit {
   // ── Visuals ──
-  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a skin recolours one side. */
   private readonly pcol: GravityColorFn;
   private readonly ncol: GravityColorFn;
   private readonly pfx: GravityFx;

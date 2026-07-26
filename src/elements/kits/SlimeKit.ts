@@ -105,7 +105,7 @@ export interface SlimeArenaApi {
   readonly npcElementId: string;
   /** The ability the opponent cast this frame, or null — drives their rig's gestures. */
   readonly npcCastId: string | null;
-  /** Cosmetics: maps an acid visual color through the owner's color cosmetic. */
+  /** Skins: maps an acid visual color through the owner's skin. */
   acidColor(owner: 'player' | 'npc', base: number): number;
   readonly eKey: Phaser.Input.Keyboard.Key;
   readonly fKey: Phaser.Input.Keyboard.Key;
@@ -221,7 +221,7 @@ const BREAKDOWN_MIN_COVERAGE = 0.5;   // needs the screen at least half covered 
 
 export class SlimeKit {
   // ── Visuals ───────────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a skin recolours one side. */
   private readonly pcol: AcidColorFn;
   private readonly ncol: AcidColorFn;
   private readonly pfx: AcidFx;

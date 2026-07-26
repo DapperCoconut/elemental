@@ -9,12 +9,12 @@ import { AvatarSpec, BaseAvatar, ColorFn, FxBase, TAU, easeIn, easeOut } from '.
  * in ElementVisuals.ts and are shared with the other elements. What stays here is what makes
  * fire fire: the flame tongue, the palette, and the effects built out of them.
  *
- * Colours must come from the FIRE palette below — those exact values are the keys of the
- * Burnt cosmetic's remap table, so anything drawn with an off-palette orange would stay
- * orange on a burnt character. Every call routes through the owner's `fireColor` mapper.
+ * Colours must come from the FIRE palette below — those exact values are the keys of every
+ * fire skin's remap table, so anything drawn with an off-palette orange would stay orange on
+ * a skinned character. Every call routes through the owner's `fireColor` mapper.
  */
 
-/** `(base) => displayed` — CosmeticsKit.fireColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.fireColor bound to one owner. */
 export type FireColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';

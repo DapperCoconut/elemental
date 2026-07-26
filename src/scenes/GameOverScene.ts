@@ -5,6 +5,7 @@ import { SHARD_REWARDS } from '../data/Upgrades';
 import { MUTATIONS } from '../data/Mutations';
 import { getCampaignReward, getCampaignFightDef } from '../data/CampaignFights';
 import { getAnyWorld } from '../data/AbstractWorlds';
+import { currentBountySeed } from '../data/Bounties';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackdrop, addButton, addPanel, addTitle, fillDiamond,
@@ -16,6 +17,13 @@ type CampaignPayload = {
 
 /** One line in the rewards ledger. */
 type RewardLine = { icon: string; text: string; color: string; big?: boolean };
+
+/** Killing the Disgraced King. The first clear is the one that pays properly. */
+const BOSS_FIRST_CLEAR_SHARDS = 400;
+const BOSS_REPEAT_SHARDS = 150;
+/** And the thing behind him, which is the end of the game. */
+const DEVOURER_FIRST_CLEAR_SHARDS = 1200;
+const DEVOURER_REPEAT_SHARDS = 450;
 
 export class GameOverScene extends Phaser.Scene {
   constructor() {
@@ -31,6 +39,7 @@ export class GameOverScene extends Phaser.Scene {
     wavesCompleted?: number;
     corruptShardsEarned?: number;
     campaign?: CampaignPayload;
+    bounty?: { key: string; reward: number };
     isInfinityRun?: boolean;
     infinityFightsCleared?: number;
     infinityShards?: number;
@@ -39,14 +48,47 @@ export class GameOverScene extends Phaser.Scene {
     hardMode?: boolean;
     online?: boolean;
     onlineReason?: string;
+    bossHard?: boolean;
+    devourerChoice?: 'spare' | 'kill';
   }): void {
     const { width, height } = this.scale;
     const cx = width / 2;
 
     const isInvasion = data.mode === 'invasion';
+    const isBoss = data.mode === 'boss';
     const isCampaign = !!data.campaign;
     const isInfinityRun = !!data.isInfinityRun;
     const isOnline = !!data.online;
+
+    // ── The Disgraced King ──────────────────────────────────────────
+    // The first kill is what opens his laboratory; every kill after that pays
+    // in shards, so the door stays worth walking through.
+    const isDevourer = isBoss && !!data.bossHard;
+    let labUnlocked = false;
+    let bossShards = 0;
+    let devourerFirstClear = false;
+    if (isBoss && data.playerWon) {
+      labUnlocked = PlayerData.markKingDefeated();
+      if (isDevourer) {
+        // The element itself was already granted by the kit the moment the
+        // player chose — this only records the clear and pays the shards.
+        devourerFirstClear = PlayerData.markDevourerDefeated(data.devourerChoice ?? 'kill');
+        bossShards = devourerFirstClear ? DEVOURER_FIRST_CLEAR_SHARDS : DEVOURER_REPEAT_SHARDS;
+      } else {
+        bossShards = labUnlocked ? BOSS_FIRST_CLEAR_SHARDS : BOSS_REPEAT_SHARDS;
+      }
+      PlayerData.addShards(bossShards);
+    }
+
+    // ── Bounty payout ───────────────────────────────────────────────
+    // Marked against the live board's seed, so a contract cashed on an expired
+    // board leaves nothing behind and cannot be claimed twice on this one.
+    let divineEarned = 0;
+    if (data.bounty && data.playerWon && !PlayerData.isBountyCompleted(data.bounty.key)) {
+      divineEarned = data.bounty.reward;
+      PlayerData.addDivineNuclei(divineEarned);
+      PlayerData.markBountyCompleted(data.bounty.key, currentBountySeed());
+    }
 
     // Infinity run: award shards on loss and update best-fight record
     if (isInfinityRun && (data.infinityShards ?? 0) > 0) {
@@ -56,7 +98,7 @@ export class GameOverScene extends Phaser.Scene {
       PlayerData.setInfinityBestFight(data.infinityFightsCleared!, data.hardMode ?? false);
     }
 
-    const baseShard = (!isInvasion && !isCampaign && !isInfinityRun && !isOnline && data.playerWon) ? SHARD_REWARDS[data.difficulty - 1] : 0;
+    const baseShard = (!isInvasion && !isBoss && !isCampaign && !isInfinityRun && !isOnline && data.playerWon) ? SHARD_REWARDS[data.difficulty - 1] : 0;
     const shardsEarned = Math.round(baseShard * (data.rewardMult ?? 1));
     if (shardsEarned > 0) {
       PlayerData.addShards(shardsEarned);
@@ -65,7 +107,7 @@ export class GameOverScene extends Phaser.Scene {
     // Chance to unlock a random locked mutation on victory.
     // Mutations with unlockChance < 0.10 are "rare" and rolled independently first.
     let unlockedMutation: (typeof MUTATIONS)[number] | null = null;
-    if (data.playerWon && !isInvasion && !isCampaign && !isOnline) {
+    if (data.playerWon && !isInvasion && !isBoss && !isCampaign && !isOnline) {
       const lockedAll = MUTATIONS.filter((m) => !PlayerData.isMutationUnlocked(m.id));
       const rare = lockedAll.filter((m) => (m.unlockChance ?? 0.10) < 0.10);
       const normal = lockedAll.filter((m) => (m.unlockChance ?? 0.10) >= 0.10);
@@ -128,6 +170,16 @@ export class GameOverScene extends Phaser.Scene {
       accent = C.arcane;
     } else if (isInvasion) {
       [title, subtitle, accent] = ['YOU FELL', `Waves cleared: ${data.wavesCompleted ?? 0}`, C.corrupt];
+    } else if (isDevourer) {
+      [title, subtitle, accent] = data.playerWon
+        ? data.devourerChoice === 'spare'
+          ? ['YOU LET IT LIVE', 'It closed its eyes, and gave you what it was dreaming.', 0x9fb8ff]
+          : ['THE DEVOURER IS DEAD', 'Every king it ate is accounted for.', 0xf0d68a]
+        : ['IT IS STILL HUNGRY', 'The hole under the door has not moved.', C.blood];
+    } else if (isBoss) {
+      [title, subtitle, accent] = data.playerWon
+        ? ['THE KING IS DEAD', 'The crown is spent. The hall is quiet.', C.corrupt]
+        : ['THE KING REMAINS', 'The door is still open. Go back.', C.corrupt];
     } else if (data.isGauntlet && !data.playerWon) {
       [title, subtitle, accent] = ['GAUNTLET FAILED', 'Your run has ended…', C.blood];
     } else if (isCampaign && data.campaign) {
@@ -177,6 +229,47 @@ export class GameOverScene extends Phaser.Scene {
     }
     if (isInvasion && (data.corruptShardsEarned ?? 0) > 0) {
       lines.push({ icon: '🩸', text: `+${data.corruptShardsEarned}  Corrupt Shards`, color: hex(mix(C.corrupt, 0xffffff, 0.4)) });
+    }
+    if (bossShards > 0) {
+      lines.push({ icon: '💎', text: `+${bossShards}  shards`, color: T.gold, big: true });
+    }
+    if (labUnlocked) {
+      lines.push({
+        icon: '⚰',
+        text: 'DISGRACED LABORATORY UNLOCKED — press SPACE in the Lab',
+        color: hex(mix(C.corrupt, 0xffffff, 0.5)),
+        big: true,
+      });
+    }
+    if (isDevourer && data.playerWon && data.devourerChoice) {
+      const spared = data.devourerChoice === 'spare';
+      lines.push({
+        icon: spared ? '🌙' : '⚖️',
+        text: `${spared ? 'DREAM' : 'JUSTICE'} UNLOCKED — a new element, ${spared ? 'from what it was dreaming' : 'from what it owed'}`,
+        color: spared ? '#9fb8ff' : '#f0d68a',
+        big: true,
+      });
+      lines.push({
+        icon: '🔒',
+        text: 'Its abilities are not built yet — the element is yours, the kit comes later.',
+        color: T.faint,
+      });
+      if (devourerFirstClear) {
+        lines.push({
+          icon: '☠',
+          text: 'THE DEVOURER OF KINGS — first clear',
+          color: hex(mix(C.blood, 0xffffff, 0.45)),
+          big: true,
+        });
+      }
+    }
+    if (divineEarned > 0) {
+      lines.push({
+        icon: '💠',
+        text: `+${divineEarned}  Divine Nucle${divineEarned === 1 ? 'us' : 'i'} — bounty claimed`,
+        color: hex(mix(C.corrupt, 0xffffff, 0.55)),
+        big: true,
+      });
     }
     if (worldsOpened.length > 0) {
       lines.push({
@@ -232,6 +325,11 @@ export class GameOverScene extends Phaser.Scene {
     const goBack = () => {
       if (isOnline) {
         this.scene.start('OnlineLobbyScene');
+      } else if (isBoss) {
+        // Back to the door itself — 999 clamps to the last shop page.
+        this.scene.start('ShopScene', { page: 999 });
+      } else if (data.bounty) {
+        this.scene.start('DisgracedLabScene', { tab: 1 });
       } else if (data.campaign) {
         this.scene.start('CampaignWorldScene', {
           worldId: data.campaign!.worldId,
@@ -259,7 +357,11 @@ export class GameOverScene extends Phaser.Scene {
       });
     };
 
-    const btnLabel = isOnline ? 'BACK TO LOBBY' : data.campaign ? 'BACK TO WORLD' : 'PLAY AGAIN';
+    const btnLabel = isOnline ? 'BACK TO LOBBY'
+      : isBoss ? 'BACK TO THE DOOR'
+      : data.bounty ? 'BACK TO CONTRACTS'
+      : data.campaign ? 'BACK TO WORLD'
+      : 'PLAY AGAIN';
     const mainBtn = addButton(this, {
       x: canRetry ? cx - 150 : cx, y: btnY, w: canRetry ? 260 : 280, h: 60,
       label: btnLabel, icon: '▶', variant: canRetry ? 'ghost' : 'solid', accent, fontSize: canRetry ? 17 : 20,

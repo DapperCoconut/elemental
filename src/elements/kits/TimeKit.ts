@@ -74,7 +74,7 @@ export interface TimeArenaApi {
   readonly aimX: number;
   readonly aimY: number;
   hasUpgrade(slot: string): boolean;
-  /** Cosmetics: maps a time visual color through the owner's color cosmetic. */
+  /** Skins: maps a time visual color through the owner's skin. */
   sandColor(owner: 'player' | 'npc', base: number): number;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
   spawnHitFlash(x: number, y: number, color: number): void;
@@ -139,7 +139,7 @@ interface TimeBomb {
 
 export class TimeKit {
   // ── Visuals ───────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a skin recolours one side. */
   private readonly pcol: TimeColorFn;
   private readonly ncol: TimeColorFn;
   private readonly pfx: TimeFx;

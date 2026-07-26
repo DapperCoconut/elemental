@@ -10,12 +10,12 @@ import { ArmHold, ArmPose, AvatarSpec, BaseAvatar, ColorFn, FxBase, TAU, easeIn,
  * in ElementVisuals.ts and are shared with fire, water, life and air. What stays here is what
  * makes earth earth: the stone chunk, the palette, and the things built out of them.
  *
- * Colours must come from the EARTH palette below. Earth has no colour-slot cosmetic yet, but
+ * Colours must come from the EARTH palette below. Earth has no skin yet, but
  * every call still routes through the owner's `earthColor` mapper, so the day one lands it is
- * a table edit in CosmeticsKit rather than a sweep through this file.
+ * a table edit in SkinsKit rather than a sweep through this file.
  */
 
-/** `(base) => displayed` — CosmeticsKit.earthColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.earthColor bound to one owner. */
 export type EarthColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';
@@ -1080,6 +1080,133 @@ export class EarthAura {
       g.fillStyle(this.tint(EARTH.pale), (1 - spark) * 0.8 * alpha);
       pebble(g, x + Math.cos(a) * d, y + Math.sin(a) * d * 0.7, 2.2 * (1 - spark), a, i);
     }
+  }
+
+  destroy(): void {
+    this.g.destroy();
+  }
+}
+
+// ── ErosionAura ───────────────────────────────────────────────────────────
+
+/**
+ * Erosion perk (divine): the shield plates are gone and what is left of the mountain circles
+ * the caster instead — a churning belt of loose rock and blown sand that covers every side at
+ * once. It thins as it is worn down, so the HP left is readable off the debris alone, and it
+ * cooks red when Shield Splinter is armed, exactly as a plate does.
+ */
+export class ErosionAura {
+  private g: Phaser.GameObjects.Graphics;
+  private t = 0;
+  private hp = 1;
+  private splinter = 0;
+  private x = 0;
+  private y = 0;
+  /** `frac` is the share of the aura's HP this piece needs to still be there. */
+  private rocks: { ang: number; d: number; len: number; w: number; speed: number; lift: number; seed: number; frac: number }[];
+  private grains: { ang: number; d: number; speed: number; size: number; phase: number; frac: number }[];
+
+  constructor(
+    scene: Phaser.Scene,
+    private tint: EarthColorFn,
+    private radius = 42,
+    depth = 7,
+    count = 11,
+  ) {
+    this.g = scene.add.graphics().setDepth(depth);
+    this.rocks = Array.from({ length: count }, (_, i) => ({
+      ang: (i / count) * TAU,
+      d: 0.78 + Math.random() * 0.28,
+      len: 0.2 + Math.random() * 0.16,
+      w: 0.075 + Math.random() * 0.05,
+      speed: 1.1 + Math.random() * 0.7,
+      lift: Math.random() * TAU,
+      seed: i * 0.37,
+      frac: i / count,
+    }));
+    this.grains = Array.from({ length: 26 }, (_, i) => ({
+      ang: Math.random() * TAU,
+      d: 0.5 + Math.random() * 0.75,
+      speed: 1.6 + Math.random() * 1.6,
+      size: 1.1 + Math.random() * 1.7,
+      phase: i * 0.21,
+      frac: i / 26,
+    }));
+  }
+
+  /** 0–1 of the aura's HP left. Fewer rocks, thinner sand, and it starts to gap. */
+  setHp(v: number): void { this.hp = Phaser.Math.Clamp(v, 0, 1); }
+  /** 0–1 Shield Splinter wind-up — the belt heats and tightens before it lets go. */
+  setSplinter(v: number): void { this.splinter = Phaser.Math.Clamp(v, 0, 1); }
+  setPose(x: number, y: number): void { this.x = x; this.y = y; }
+
+  update(delta: number, alpha = 1): void {
+    if (!this.g.active) return;
+    this.t += delta / 1000;
+    const g = this.g;
+    g.clear();
+    if (alpha <= 0.02) return;
+
+    const { x, y } = this;
+    // Wear pulls the belt in and speeds it up: a nearly-spent aura whips round close.
+    const wear = 0.62 + this.hp * 0.38;
+    const R = this.radius * wear * (1 - this.splinter * 0.12);
+    const hot = this.splinter;
+
+    // The dust the belt kicks up, sitting on the floor under everything else.
+    g.fillStyle(this.tint(hot > 0.05 ? EARTH.ember : EARTH.umber), (0.1 + hot * 0.14) * alpha);
+    g.fillEllipse(x, y + 8, R * 2.5, R * 1.2);
+
+    // Blown sand: fast, small, and always ahead of the rock.
+    for (const s of this.grains) {
+      if (s.frac > this.hp) continue;
+      const a = s.ang + this.t * s.speed * (1 + hot);
+      const d = R * s.d;
+      const bob = Math.sin(this.t * 5 + s.phase * 11) * 3;
+      g.fillStyle(this.tint(hot > 0.4 ? EARTH.ember : EARTH.sand), (0.35 + hot * 0.3) * alpha);
+      g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d * 0.7 + bob, s.size);
+    }
+
+    // Rock: chunks tumbling round the belt, each riding up and down its own arc so the ring
+    // reads as a shell around the caster rather than as a flat circle of markers.
+    for (const r of this.rocks) {
+      if (r.frac > this.hp) continue;
+      const a = r.ang + this.t * r.speed;
+      const d = R * r.d;
+      const lift = Math.sin(this.t * 2.2 + r.lift) * R * 0.22;
+      g.fillStyle(this.tint(hot > 0.4 ? EARTH.ember : EARTH.umber), alpha);
+      stoneChunkLayered(
+        g, this.tint,
+        x + Math.cos(a) * d, y + Math.sin(a) * d * 0.7 - lift,
+        a + Math.PI / 2 + this.t * r.speed * 2,
+        R * r.len, R * r.w, (0.85 + hot * 0.15) * alpha, r.seed,
+      );
+    }
+
+    // The rim itself, drawn as broken arcs that gap wider the more of it has been ground off.
+    const arcs = 6;
+    for (let i = 0; i < arcs; i++) {
+      const from = this.t * 1.1 + (i / arcs) * TAU;
+      const span = 0.5 + this.hp * 0.4;
+      g.lineStyle(2 + hot * 2, this.tint(hot > 0.4 ? EARTH.ember : EARTH.dust), (0.2 + this.hp * 0.3 + hot * 0.4) * alpha);
+      g.beginPath();
+      const segs = 8;
+      for (let s = 0; s <= segs; s++) {
+        const a = from + (s / segs) * span;
+        const px = x + Math.cos(a) * R * 1.06;
+        const py = y + Math.sin(a) * R * 0.74;
+        if (s === 0) g.moveTo(px, py); else g.lineTo(px, py);
+      }
+      g.strokePath();
+    }
+  }
+
+  /** The belt comes apart: everything it was carrying is thrown outward at once. */
+  shatter(fx: EarthFx): void {
+    fx.debris(this.x, this.y, 16, { speed: 300, size: 4.2, life: 620, fall: 140, depth: 8 });
+    fx.grit(this.x, this.y, 14, { speed: 210, size: 2.6, life: 520, fall: 90, depth: 7 });
+    fx.dust(this.x, this.y, 6, this.radius * 1.4, 4);
+    fx.ring(this.x, this.y, this.radius, this.radius * 2.1, EARTH.dust, 420, 4, 6);
   }
 
   destroy(): void {

@@ -11,12 +11,12 @@ import { AvatarSpec, ArmHold, ArmPose, BaseAvatar, ColorFn, FxBase, TAU, easeIn,
  * stretches, a ball that squashes into whatever it hits, and a ring that overshoots and wobbles
  * back instead of expanding cleanly.
  *
- * Every structural colour must come from the RUBBER palette below. Rubber has no colour-slot
- * cosmetic yet, but every call still routes through the owner's `rubberColor` mapper, so the day
- * one lands it is a table edit in CosmeticsKit rather than a sweep through this file.
+ * Every structural colour must come from the RUBBER palette below. Rubber has no skin yet,
+ * but every call still routes through the owner's `rubberColor` mapper, so the day
+ * one lands it is a table edit in SkinsKit rather than a sweep through this file.
  */
 
-/** `(base) => displayed` — CosmeticsKit.rubberColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.rubberColor bound to one owner. */
 export type RubberColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';

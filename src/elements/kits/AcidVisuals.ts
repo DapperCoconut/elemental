@@ -10,14 +10,14 @@ import { AvatarSpec, ArmHold, ArmPose, BaseAvatar, ColorFn, FxBase, TAU, easeIn,
  * ElementVisuals.ts and are shared with the other elements. What stays here is what makes acid
  * acid: the drop, the palette, and the effects built out of them.
  *
- * Colours must come from the ACID palette below. Acid has no colour-slot cosmetic yet, but every
+ * Colours must come from the ACID palette below. Acid has no skin yet, but every
  * call still routes through the owner's `acidColor` mapper, so the day one lands it is a table
- * edit in CosmeticsKit rather than a sweep through this file.
+ * edit in SkinsKit rather than a sweep through this file.
  *
  * (The element's id in code is still `slime`; it was remastered into Acid without renaming.)
  */
 
-/** `(base) => displayed` — CosmeticsKit.acidColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.acidColor bound to one owner. */
 export type AcidColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';

@@ -11,12 +11,12 @@ import { AvatarSpec, ArmHold, ArmPose, BaseAvatar, ColorFn, FxBase, TAU, easeIn,
  * plasma: the forked arc that re-rolls its own kinks every frame, and the boiling bead of
  * contained lightning that every orb in the element is made of.
  *
- * Every structural colour must come from the PLASMA palette below. Plasma has no colour-slot
- * cosmetic yet, but every call still routes through the owner's `plasmaColor` mapper, so the day
- * one lands it is a table edit in CosmeticsKit rather than a sweep through this file.
+ * Every structural colour must come from the PLASMA palette below. Plasma has no skin yet,
+ * but every call still routes through the owner's `plasmaColor` mapper, so the day
+ * one lands it is a table edit in SkinsKit rather than a sweep through this file.
  */
 
-/** `(base) => displayed` — CosmeticsKit.plasmaColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.plasmaColor bound to one owner. */
 export type PlasmaColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';

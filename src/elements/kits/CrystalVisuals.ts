@@ -9,12 +9,12 @@ import { AvatarSpec, BaseAvatar, ColorFn, FxBase, TAU, easeIn, easeOut } from '.
  * ElementVisuals.ts and are shared with the other elements. What stays here is what makes
  * crystal crystal: the prism, the palette, and the effects built out of them.
  *
- * Colours must come from the CRYSTAL palette below. Crystal has no colour-slot cosmetic yet, but
+ * Colours must come from the CRYSTAL palette below. Crystal has no skin yet, but
  * every call still routes through the owner's `crystalColor` mapper, so the day one lands it is
- * a table edit in CosmeticsKit rather than a sweep through this file.
+ * a table edit in SkinsKit rather than a sweep through this file.
  */
 
-/** `(base) => displayed` — CosmeticsKit.crystalColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.crystalColor bound to one owner. */
 export type CrystalColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';

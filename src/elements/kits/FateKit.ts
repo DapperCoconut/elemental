@@ -274,7 +274,7 @@ export interface FateArenaApi {
   get nukeChanneling(): boolean;
   get rightPointerWasDown(): boolean;
   get isPlayerFate(): boolean;
-  /** Cosmetics: maps a fate visual color through the owner's color cosmetic. */
+  /** Skins: maps a fate visual color through the owner's skin. */
   fateColor(owner: 'player' | 'npc', base: number): number;
   hasPerk(perkId: string): boolean;
   /** True if the local player (Fate) has the given shop upgrade slot equipped. */
@@ -314,7 +314,7 @@ const CARD_SUITS: Record<FateCardType, Suit> = {
 
 export class FateKit {
   // ── Visuals ───────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a skin recolours one side. */
   private readonly pcol: FateColorFn;
   private readonly ncol: FateColorFn;
   private readonly pfx: FateFx;

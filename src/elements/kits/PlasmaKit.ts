@@ -24,7 +24,7 @@ export interface PlasmaArenaApi {
   readonly elementId: string;
   readonly npcElementId: string;
   readonly npcCastId: string | null;
-  /** `(owner, base) => displayed` — the owner's colour cosmetic, or the identity. */
+  /** `(owner, base) => displayed` — the owner's skin, or the identity. */
   plasmaColor(owner: 'player' | 'npc', base: number): number;
   hasUpgrade(slot: string): boolean;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
@@ -218,7 +218,7 @@ interface PlasmaOrbital {
 
 export class PlasmaKit {
   // ── Visuals ────────────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a skin recolours one side. */
   private readonly pcol: PlasmaColorFn;
   private readonly ncol: PlasmaColorFn;
   private readonly pfx: PlasmaFx;

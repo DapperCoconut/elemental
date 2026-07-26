@@ -8,13 +8,13 @@ export interface CastContext {
   targetY: number;
   isPlayerCaster: boolean;
   projectiles: Phaser.Physics.Arcade.Group;
-  /** Maps a fire visual color through the caster's equipped color cosmetic (identity without one). */
+  /** Maps a fire visual color through the caster's equipped skin (identity without one). */
   fireColor: (base: number) => number;
-  /** Maps a water visual color through the caster's equipped color cosmetic (identity without one). */
+  /** Maps a water visual color through the caster's equipped skin (identity without one). */
   waterColor: (base: number) => number;
-  /** Maps a life visual color through the caster's equipped color cosmetic (identity without one). */
+  /** Maps a life visual color through the caster's equipped skin (identity without one). */
   lifeColor: (base: number) => number;
-  /** Maps an air visual color through the caster's equipped color cosmetic (identity without one). */
+  /** Maps an air visual color through the caster's equipped skin (identity without one). */
   airColor: (base: number) => number;
   dealAoeDamage: (cx: number, cy: number, radius: number, damage: number) => void;
   /** Fire Mastery: same as dealAoeDamage but tracks zombie kills for the Nuclear Cleansing challenge (player-only). */
@@ -40,6 +40,11 @@ export interface CastContext {
   /** How many enemies a single Charged Beam ran through — feeds the Air Mastery multi-hit requirement. */
   reportAirBeamHits: (count: number) => void;
   quickShotActive: boolean;
+  /**
+   * Storm perk (divine): this snipe is carrying a charge earthed out of a wind trap or a
+   * tornado, so it lands for electro damage. Optional — only the air click sets it.
+   */
+  airStormShot?: boolean;
   addShieldHp: (amount: number) => void;
   getShieldHp: () => number;
   setShieldHp: (amount: number) => void;

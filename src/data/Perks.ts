@@ -1,3 +1,5 @@
+import { DIVINE_PERKS } from './DivinePerks';
+
 export interface PerkDef {
   id: string;
   name: string;
@@ -5,7 +7,13 @@ export interface PerkDef {
   color: number;
   description: string;
   ingredients: readonly string[];
-  tier: 'triple' | 'quad' | 'penta' | 'abstract-triple';
+  /**
+   * `divine` perks are forged in the Disgraced Laboratory from one abstract and
+   * one normal element, paid for with a Divine Nucleus. They live in their own
+   * table (DivinePerks.ts) but share this shape, so once forged they flow
+   * through unlockPerk / the perk book / the element-select strip unchanged.
+   */
+  tier: 'triple' | 'quad' | 'penta' | 'abstract-triple' | 'divine';
   elementId: string;
 }
 
@@ -119,9 +127,20 @@ export const ALL_PERKS: ElementPerks[] = [
   },
   {
     elementId: 'growth',
-    // Growth was reworked (Leech Brood / Evolve / Spore Spread / Cancer / Auxiliary Growth) —
-    // the old "Virus" perk enhanced the removed Infect ability. Left blank until redesigned.
-    perks: [],
+    perks: [
+      {
+        // Rebuilt for the bacterium rework: the old Virus perk supercharged the removed
+        // Infect ability, so it now supercharges the R infection that replaced it.
+        id: 'virus',
+        name: 'Virus',
+        emoji: '🦠',
+        color: 0x77dd33,
+        description: 'Your infection becomes a plague: it lasts 12s instead of 8s, hosts expel 5 floor viruses every 1.4s instead of 3 every 2s, and any floor virus that hits re-infects for 3s — so the outbreak keeps itself alive.',
+        ingredients: ['water', 'life', 'air'],
+        tier: 'triple',
+        elementId: 'growth',
+      },
+    ],
   },
   {
     elementId: 'gravity',
@@ -217,17 +236,63 @@ export const ALL_PERKS: ElementPerks[] = [
   },
   {
     elementId: 'technology',
-    // Technology was reworked into the Addicting Cruncher/Overt Advertisement/Upload/Web Drag/
-    // Admin Console kit — the old "Adrenaline" perk enhanced the removed abuse-meter and
-    // Domain Expansion mechanics. Left blank until redesigned.
-    perks: [],
+    perks: [
+      {
+        // The old Adrenaline rode the removed abuse meter; the Cruncher's hit/miss
+        // streak is the closest thing the reworked kit has to one.
+        id: 'adrenaline',
+        name: 'Adrenaline',
+        emoji: '💉',
+        color: 0x44ccaa,
+        description: 'Every Cruncher hit spikes your adrenaline: +10% move speed for 5s, stacking to +50%. At 5 stacks you are WIRED — Cruncher cooldown is halved on top of its own stacks. A miss burns a stack.',
+        ingredients: ['electricity', 'sound', 'light'],
+        tier: 'abstract-triple',
+        elementId: 'technology',
+      },
+    ],
   },
   {
     elementId: 'gunpowder',
-    // Gunpowder (formerly Death) was reworked into an arsenal kit (Musket Shot/Explosive Retreat/
-    // Fire at Will/Arsenal Expansion/BlunderBlast) — the old "Corruption" and "Demon"
-    // perks enhanced the removed River Styx and 1000 Blades mechanics. Left blank until redesigned.
-    perks: [],
+    perks: [
+      {
+        // Corruption used to rot the River Styx; it now rots the arsenal itself.
+        id: 'corruption',
+        name: 'Corruption',
+        emoji: '☠️',
+        color: 0x668822,
+        description: 'Your powder is corrupted. Musket balls leave rot on hit — 3 dmg/s for 5s, stacking to 3 — and every dropped hot musket festers, poisoning any enemy that walks over it while it cools.',
+        ingredients: ['slime', 'fate', 'sound'],
+        tier: 'abstract-triple',
+        elementId: 'gunpowder',
+      },
+      {
+        // The 1000 Blades demon is gone; the demon now loads the guns instead.
+        id: 'demon',
+        name: 'Demon',
+        emoji: '😈',
+        color: 0xcc2200,
+        description: 'A demon rises behind you when you Fire at Will and echoes the whole volley 0.6s later — hellfire rounds at 60% damage that home in on their target. Below 35% HP it fires a third volley for free.',
+        ingredients: ['fate', 'sound', 'light'],
+        tier: 'abstract-triple',
+        elementId: 'gunpowder',
+      },
+    ],
+  },
+  {
+    elementId: 'silence',
+    perks: [
+      {
+        // Torture predates the fog-stealth remaster; Ritual is the ceremony it belongs to now.
+        id: 'torture',
+        name: 'Torture',
+        emoji: '⛓️',
+        color: 0x881122,
+        description: 'Ritual stops killing quickly. A struck victim is racked instead: 4 dmg/s for 6s, and every tick adds 1s to their Silence. Ritual the same victim again while racked and the rack tightens — +2 dmg/s per stack, up to 3.',
+        ingredients: ['electricity', 'slime', 'sound'],
+        tier: 'abstract-triple',
+        elementId: 'silence',
+      },
+    ],
   },
 
   // ── Penta perks (Lab Level 4, 10 nuclei) ─────────────────────────────────
@@ -266,10 +331,19 @@ export const ALL_PERKS: ElementPerks[] = [
   },
   {
     elementId: 'light',
-    // Light was reworked into a car-mode/acceleration kit (Light Lance/Blink/Prism Ramp/
-    // Light Trick/Speed 'O' Light) — the old "Flicker" perk enhanced the removed held-spear
-    // grapple-on-release mechanic. Left blank until redesigned.
-    perks: [],
+    perks: [
+      {
+        // Flicker used to flick the old held spear; on the car kit it flickers the Blink.
+        id: 'flicker',
+        name: 'Flicker',
+        emoji: '🕯️',
+        color: 0xfff4a8,
+        description: 'Blink holds a 3rd charge and recharges in 3s instead of 5s. Each Blink leaves an afterimage of you at the old spot that flares 0.4s later, dealing 12 damage to anything beside it.',
+        ingredients: ['slime', 'fate', 'light'],
+        tier: 'abstract-triple',
+        elementId: 'light',
+      },
+    ],
   },
 
   // ── Quad perks (Lab Level 3, 5 nuclei) ───────────────────────────────────
@@ -394,20 +468,40 @@ export const ALL_PERKS: ElementPerks[] = [
     ],
   },
   {
-    // Sonic Boom rebuilt Quantum's old Wave Reducer click as a charge-zone whip.
-    // Both are gone with the 2026-07-22 Molecular Cutter / Blade Dance revamp, so the
-    // perk is blanked rather than reworked (matching the Rubber / Growth precedent).
+    // Sonic Boom was a charge-zone whip on the old Wave Reducer click. The whip is gone,
+    // but the dagger recall is the same "everything snaps back at once" beat, so the
+    // boom now rides the recall.
     elementId: 'quantum',
-    perks: [],
+    perks: [
+      {
+        id: 'sonic-boom',
+        name: 'Sonic Boom',
+        emoji: '💥',
+        color: 0xcc2233,
+        description: 'Recalled daggers break the sound barrier. Every dagger that makes it home detonates a shockwave where it launched from — 10 damage in a wide ring, a hard shove and a stagger. A dagger that connects on the way back booms on the victim instead.',
+        ingredients: ['electricity', 'slime', 'sound', 'light'],
+        tier: 'quad',
+        elementId: 'quantum',
+      },
+    ],
   },
   {
-    // Uber-Gear was built on top of the old Bounce Back (Q) and Barrage (F) — both
-    // replaced by Rubber Banding / Rubberage in the 2026-07-22 revamp, so the perk's
-    // whole mechanic (jump rope, squish, stretch dodge, wall push) no longer applies.
-    // Blanked rather than reworked, matching the precedent set by the Growth revamp
-    // and the Light car-drift rework.
+    // Uber-Gear's jump rope / squish / stretch dodge were built on abilities that no longer
+    // exist. Its identity — rubber that keeps getting rubberier the more you use it — is
+    // rebuilt as an elasticity meter feeding every ability in the reworked kit.
     elementId: 'rubber',
-    perks: [],
+    perks: [
+      {
+        id: 'uber-gear',
+        name: 'Uber-Gear',
+        emoji: '🪀',
+        color: 0xff5577,
+        description: 'Every rubber hit — punch, sling, or ball — winds you up +4% elasticity, up to +60%, decaying only when you go 5s without landing one. Elasticity boosts punch damage, sling launch speed and Rubberage ball damage alike, and Rubberage itself runs 50% longer with balls that never lose speed.',
+        ingredients: ['electricity', 'slime', 'fate', 'sound', 'light'],
+        tier: 'penta',
+        elementId: 'rubber',
+      },
+    ],
   },
 ];
 
@@ -436,11 +530,19 @@ export function getPerkById(id: string): PerkDef | undefined {
     const found = entry.perks.find((p) => p.id === id);
     if (found) return found;
   }
-  return undefined;
+  return DIVINE_PERKS.find((p) => p.id === id);
 }
 
+/**
+ * Every perk an element can equip, divine perks included — they are forged in
+ * the Disgraced Lab rather than the Lab, but once unlocked they sit in the same
+ * one-perk-per-element slot as everything else, so every consumer (the select
+ * screens' perk strip, ArenaScene's hasPerk) has to see them here.
+ */
 export function getPerksForElement(elementId: string): PerkDef[] {
-  return ALL_PERKS.find((e) => e.elementId === elementId)?.perks ?? [];
+  const base = ALL_PERKS.find((e) => e.elementId === elementId)?.perks ?? [];
+  const divine = DIVINE_PERKS.filter((p) => p.elementId === elementId);
+  return divine.length > 0 ? [...base, ...divine] : base;
 }
 
 export function getQuadPerksForElement(elementId: string): PerkDef[] {

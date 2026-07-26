@@ -10,12 +10,12 @@ import { AvatarSpec, BaseAvatar, ColorFn, FxBase, TAU, easeIn, easeOut } from '.
  * ElementVisuals.ts and are shared with the other elements. What stays here is what makes
  * gravity gravity: the spiral arm, the palette, and the effects built out of it.
  *
- * Colours must come from the GRAVITY palette below. Gravity has no colour-slot cosmetic yet, but
+ * Colours must come from the GRAVITY palette below. Gravity has no skin yet, but
  * every call still routes through the owner's `gravityColor` mapper, so the day one lands it is
- * a table edit in CosmeticsKit rather than a sweep through this file.
+ * a table edit in SkinsKit rather than a sweep through this file.
  */
 
-/** `(base) => displayed` — CosmeticsKit.gravityColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.gravityColor bound to one owner. */
 export type GravityColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';

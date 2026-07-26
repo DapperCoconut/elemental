@@ -7,6 +7,7 @@ import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix, tintPlate,
   addBackdrop, addBackButton, addButton, addChip, addHeaderBar, addModal, addPanel, addPagerButton,
   addSectionLabel, addCardPlate, addWell, fillDiamond, fillNotchedGradient, strokeNotched, ALL_CORNERS,
+  drawGlow, drawOrnateRule,
 } from '../ui';
 
 const ELEMENT_COLORS: Record<string, number> = {
@@ -79,6 +80,11 @@ const LAB_UPGRADES: { level: number; name: string; description: string; cost?: n
 /** Which currency a shop page trades in. */
 type Currency = 'shards' | 'corrupt';
 
+/** Perks that must have been forged (across all elements) before the door opens. */
+const DOOR_PERK_REQUIREMENT = 10;
+/** The door's near-black violet — corrupt pushed most of the way to the void. */
+const DOOR_ACCENT = mix(C.corrupt, 0x000000, 0.55);
+
 export class ShopScene extends Phaser.Scene {
   private currentPage = 0;
   private shardChip!: { setValue: (v: string) => void };
@@ -110,11 +116,16 @@ export class ShopScene extends Phaser.Scene {
                ALL_UPGRADES.some((e) => e.elementId === id),
     );
     const mixIds = ABSTRACT_MIX_ELEMENT_IDS.filter((id) => PlayerData.isElementUnlocked(id) && ALL_UPGRADES.some((e) => e.elementId === id));
-    // Page 0 = base, 1..totalCombined = combined, ABSTRACT_PAGE = abstract, MIX_PAGE = abstract-mix, SPECIALS_PAGE = specials
+    // Page 0 = base, 1..totalCombined = combined, ABSTRACT_PAGE = abstract, MIX_PAGE = abstract-mix,
+    // SPECIALS_PAGE = specials, DOOR_PAGE = the room past the end of the shop.
     const ABSTRACT_PAGE = 1 + totalCombinedPages;
     const MIX_PAGE = ABSTRACT_PAGE + 1;
     const SPECIALS_PAGE = MIX_PAGE + 1;
-    const totalPages = SPECIALS_PAGE + 1;
+    const DOOR_PAGE = SPECIALS_PAGE + 1;
+    const totalPages = DOOR_PAGE + 1;
+    // Callers that want "the last page" without knowing how many combined pages
+    // the save has (backing out of the door, for one) just pass a big number.
+    this.currentPage = Math.max(0, Math.min(this.currentPage, totalPages - 1));
 
     // Each page carries its own accent, so where you are is legible at a glance.
     const pageInfo: { name: string; accent: number } =
@@ -122,9 +133,17 @@ export class ShopScene extends Phaser.Scene {
       this.currentPage === ABSTRACT_PAGE ? { name: 'ABSTRACT', accent: C.corrupt } :
       this.currentPage === MIX_PAGE ? { name: 'ABSTRACT MIX', accent: C.corrupt } :
       this.currentPage === SPECIALS_PAGE ? { name: 'SPECIALS', accent: C.gold } :
+      this.currentPage === DOOR_PAGE ? { name: '? ? ?', accent: DOOR_ACCENT } :
       { name: `COMBINED  ${this.currentPage} / ${totalCombinedPages}`, accent: C.arcane };
 
-    addBackdrop(this, { accent: pageInfo.accent, variant: 'lattice', motes: 14 });
+    // The door page drops the lattice for a near-empty void — the shop's
+    // machined chrome stops at its threshold.
+    const isDoorPage = this.currentPage === DOOR_PAGE;
+    addBackdrop(this, {
+      accent: pageInfo.accent,
+      variant: isDoorPage ? 'void' : 'lattice',
+      motes: isDoorPage ? 6 : 14,
+    });
 
     const header = addHeaderBar(this, {
       title: 'SHOP',
@@ -178,6 +197,11 @@ export class ShopScene extends Phaser.Scene {
     const contentTop = header.bottom + 18;
 
     // ── Page bodies ──────────────────────────────────────────────
+    if (isDoorPage) {
+      this.buildDoorPage(width, height, cx);
+      return;
+    }
+
     if (this.currentPage === SPECIALS_PAGE) {
       this.buildSpecialsPage(width, cx, contentTop);
       return;
@@ -471,6 +495,183 @@ export class ShopScene extends Phaser.Scene {
   private closeSlotDetail(): void {
     for (const obj of this.detailObjects) obj.destroy();
     this.detailObjects = [];
+  }
+
+  // ── The door ───────────────────────────────────────────────────
+
+  /**
+   * The room past the end of the shop.
+   *
+   * Nothing here is sold. The page holds one thing: a slab of a door set into
+   * the far wall, sealed until enough perks have been forged to be worth what
+   * is behind it. Locked, it is stone-dead and the counter is the only tell;
+   * open, the seams light and the whole frame breathes.
+   */
+  private buildDoorPage(width: number, height: number, cx: number): void {
+    const forged = PlayerData.getTotalForgedPerkCount();
+    const open = forged >= DOOR_PERK_REQUIREMENT;
+    const kingDown = PlayerData.isKingDefeated();
+    const cy = height / 2 + 6;
+
+    // Door metrics — a tall slab, narrow enough to feel like a doorway.
+    const dw = 168;
+    const dh = 268;
+    const left = cx - dw / 2;
+    const top = cy - dh / 2;
+
+    const g = this.add.graphics().setDepth(DEPTH.panel);
+
+    // ── Wall recess ──────────────────────────────────────────────
+    // A stepped stone arch, so the door sits *in* something rather than
+    // floating on the backdrop.
+    for (let i = 3; i >= 1; i--) {
+      const o = i * 13;
+      fillNotchedGradient(g, left - o, top - o, dw + o * 2, dh + o,
+        mix(C.plate, DOOR_ACCENT, 0.10 - i * 0.02), mix(C.void_, DOOR_ACCENT, 0.05),
+        1, 16 + o, [true, true, false, false], 10);
+      strokeNotched(g, left - o, top - o, dw + o * 2, dh + o,
+        mix(C.line, DOOR_ACCENT, 0.35), 0.5, 1, 16 + o, [true, true, false, false]);
+    }
+
+    // ── Door slab ────────────────────────────────────────────────
+    const slabTop = open ? mix(DOOR_ACCENT, 0x000000, 0.25) : mix(C.plate, 0x000000, 0.55);
+    const slabBot = mix(C.void_, DOOR_ACCENT, open ? 0.12 : 0.03);
+    fillNotchedGradient(g, left, top, dw, dh, slabTop, slabBot, 1, 16, [true, true, false, false], 22);
+    strokeNotched(g, left, top, dw, dh,
+      open ? mix(C.corrupt, 0xffffff, 0.25) : C.line, open ? 0.9 : 0.5, 2, 16, [true, true, false, false]);
+
+    // Iron banding across the slab — three straps with rivets.
+    for (const by of [top + 52, top + 134, top + 216]) {
+      g.fillStyle(mix(C.void_, DOOR_ACCENT, open ? 0.22 : 0.06), 1);
+      g.fillRect(left + 4, by, dw - 8, 13);
+      g.lineStyle(1, open ? mix(C.corrupt, 0xffffff, 0.3) : C.line, open ? 0.6 : 0.35);
+      g.strokeRect(left + 4, by, dw - 8, 13);
+      for (const rx of [left + 16, left + dw - 16]) {
+        fillDiamond(g, rx, by + 6.5, 3.5, open ? mix(C.corrupt, 0xffffff, 0.5) : C.line, open ? 0.9 : 0.5);
+      }
+    }
+
+    // Centre seam — the two leaves of the door.
+    g.lineStyle(1, open ? mix(C.corrupt, 0xffffff, 0.4) : C.lineSoft, open ? 0.55 : 0.4);
+    g.beginPath(); g.moveTo(cx, top + 18); g.lineTo(cx, top + dh); g.strokePath();
+
+    // Ring handle, low and heavy.
+    g.lineStyle(4, open ? mix(C.corrupt, 0x000000, 0.2) : mix(C.line, 0x000000, 0.2), 1);
+    g.strokeCircle(cx, top + 178, 17);
+    g.lineStyle(2, open ? mix(C.corrupt, 0xffffff, 0.45) : C.line, open ? 0.85 : 0.45);
+    g.strokeCircle(cx, top + 178, 17);
+
+    // ── Sigil in the lintel ──────────────────────────────────────
+    // A broken crown — the same motif the King wears.
+    const sigilY = top + 24;
+    const crownColor = open ? mix(C.corrupt, 0xffffff, 0.55) : mix(C.line, 0x000000, 0.15);
+    g.lineStyle(2, crownColor, open ? 0.95 : 0.45);
+    g.beginPath();
+    g.moveTo(cx - 30, sigilY + 10);
+    g.lineTo(cx - 30, sigilY - 4);
+    g.lineTo(cx - 15, sigilY + 4);
+    g.lineTo(cx, sigilY - 9);
+    g.lineTo(cx + 15, sigilY + 4);
+    g.lineTo(cx + 30, sigilY - 4);
+    g.lineTo(cx + 30, sigilY + 10);
+    g.strokePath();
+    // The break: the right arm of the crown is snapped off and dropped.
+    g.lineStyle(2, crownColor, open ? 0.6 : 0.3);
+    g.beginPath(); g.moveTo(cx + 30, sigilY + 10); g.lineTo(cx + 20, sigilY + 14); g.strokePath();
+
+    if (open) {
+      // Seam light on its own layer, so only the escaping light breathes —
+      // pulsing the slab itself would make the whole wall wobble.
+      const lightG = this.add.graphics().setDepth(DEPTH.panel + 1);
+      drawGlow(lightG, left, top, dw, dh, C.corrupt, 0.6, 6, 4, 16, [true, true, false, false]);
+      for (let k = 5; k >= 1; k--) {
+        lightG.fillStyle(C.corrupt, 0.05);
+        lightG.fillCircle(cx, sigilY, 12 + k * 7);
+      }
+      // Under-door spill — light escaping across the threshold.
+      for (let i = 0; i < 8; i++) {
+        lightG.fillStyle(C.corrupt, 0.10 - i * 0.011);
+        lightG.fillRect(left - i * 4, top + dh + i * 2, dw + i * 8, 3);
+      }
+      this.tweens.add({
+        targets: lightG, alpha: { from: 0.55, to: 1 },
+        duration: 2200, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+      });
+    }
+
+    // ── Copy ─────────────────────────────────────────────────────
+    const ruleG = this.add.graphics().setDepth(DEPTH.content);
+    drawOrnateRule(ruleG, cx, cy - dh / 2 - 58, 190, open ? C.corrupt : C.line, open ? 0.7 : 0.4);
+
+    this.add.text(cx, cy - dh / 2 - 84, open ? 'IT IS OPEN' : 'SOMETHING IS SEALED HERE', {
+      fontSize: '13px', fontFamily: FONT_DISPLAY,
+      color: open ? hex(mix(C.corrupt, 0xffffff, 0.55)) : T.faint, letterSpacing: 4,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
+
+    const footY = cy + dh / 2 + 34;
+
+    if (!open) {
+      this.add.text(cx, footY, `${forged} / ${DOOR_PERK_REQUIREMENT}  PERKS FORGED`, {
+        fontSize: '15px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 3,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+      this.add.text(cx, footY + 24, 'Forge perks in the LAB. It will know when you are ready.', {
+        fontSize: '11px', fontFamily: FONT_UI, color: T.ghost,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+      return;
+    }
+
+    this.add.text(cx, footY, kingDown ? '👑  THE DISGRACED KING' : '👑  ? ? ?', {
+      fontSize: '16px', fontFamily: FONT_DISPLAY,
+      color: hex(mix(C.corrupt, 0xffffff, 0.6)), letterSpacing: 3,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
+
+    const enter = (hard: boolean) => {
+      // A shudder before the scene turns over, so entering reads as the door
+      // actually opening rather than a menu transition.
+      this.cameras.main.shake(hard ? 420 : 260, hard ? 0.011 : 0.006);
+      this.cameras.main.fade(320, 0, 0, 0);
+      this.time.delayedCall(340, () => this.scene.start('MenuScene', { mode: 'boss', hard }));
+    };
+
+    // ── The second way through ───────────────────────────────────────
+    // Once the King is down and thirty perks have been forged, there is a hole
+    // under the door as well as a door. It is only ever offered here, and only
+    // to a save that has met both halves of the gate.
+    const devourerReady = PlayerData.isDevourerUnlocked();
+    const devourerShown = kingDown;
+    const hasHardRow = devourerShown;
+
+    addButton(this, {
+      x: cx, y: footY + (hasHardRow ? 34 : 40), w: 260, h: 46,
+      label: 'ENTER', icon: '🚪',
+      sublabel: kingDown ? 'He waits for you again' : 'You do not know what is inside',
+      accent: C.corrupt, variant: 'solid', fontSize: 18, cut: 12,
+      onClick: () => enter(false),
+    }).pulse();
+
+    if (devourerShown) {
+      const forgedNow = PlayerData.getTotalForgedPerkCount();
+      const need = PlayerData.DEVOURER_PERK_REQUIREMENT;
+      const beaten = PlayerData.isDevourerDefeated();
+      const hardBtn = addButton(this, {
+        x: cx, y: footY + 90, w: 300, h: 46,
+        label: devourerReady ? 'GO DOWN' : 'SOMETHING IS UNDER IT',
+        icon: devourerReady ? '🕳' : '🔒',
+        sublabel: devourerReady
+          ? (beaten ? 'The Devourer of Kings — again' : 'The Devourer of Kings — no heals')
+          : `${forgedNow} / ${need} perks forged`,
+        accent: C.blood, variant: devourerReady ? 'solid' : 'quiet', fontSize: 17, cut: 12,
+        onClick: () => { if (devourerReady) enter(true); },
+      });
+      if (devourerReady) hardBtn.pulse();
+    }
+
+    // The slab itself is clickable too — reaching for the door should work. It
+    // always opens the ordinary fight; hard mode is a deliberate second click.
+    this.add.rectangle(cx, cy, dw, dh, 0xffffff, 0)
+      .setDepth(DEPTH.content + 2)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => enter(false));
   }
 
   // ── Specials ───────────────────────────────────────────────────

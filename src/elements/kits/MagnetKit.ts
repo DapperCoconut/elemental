@@ -77,7 +77,7 @@ export interface MagnetArenaApi {
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
   buildNpcContext(x: number, y: number): CastContext;
-  /** `(owner, base) => displayed` — the owner's colour cosmetic, or the identity. */
+  /** `(owner, base) => displayed` — the owner's skin, or the identity. */
   magnetColor(owner: 'player' | 'npc', base: number): number;
   /** True only when the player is magnet AND Magnet Mastery is switched on. */
   get masteryActive(): boolean;
@@ -113,7 +113,7 @@ interface AncientRod {
 
 export class MagnetKit {
   // ── Visuals ────────────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a colour cosmetic recolours one side. */
+  /** Colour mappers + effect painters, one per owner so a skin recolours one side. */
   private readonly pcol: MagnetColorFn;
   private readonly ncol: MagnetColorFn;
   private readonly pfx: MagnetFx;

@@ -17,7 +17,7 @@ import { AvatarSpec, ArmHold, ArmPose, BaseAvatar, ColorFn, FxBase, TAU, easeIn,
  * and the fog itself. Whatever Silence is doing, something is reaching for you.
  */
 
-/** `(base) => displayed` — CosmeticsKit.silenceColor bound to one owner. */
+/** `(base) => displayed` — SkinsKit.silenceColor bound to one owner. */
 export type SilenceColorFn = ColorFn;
 
 export type { ArmGesture, ArmHold } from './ElementVisuals';
