@@ -15,6 +15,7 @@ import {
   emptyRunBoosts,
 } from '../data/GauntletData';
 import { MUTATIONS, getBossMutationIds } from '../data/Mutations';
+import { getWorldTier, isAbstractWorld } from '../data/CampaignFights';
 
 const GAUNTLET_EXCLUDED_MUTATIONS = new Set(['boss', 'raid']);
 
@@ -337,6 +338,27 @@ export class CampaignElementSelectScene extends Phaser.Scene {
       return;
     }
 
+    if (this.kind === 'invasion') {
+      // Invasion is a survival mode, not a scripted bout — it needs the arena's
+      // invasion mode rather than the fight def, and pays corrupt shards instead
+      // of Sparks. The campaign payload is still passed so the results screen
+      // returns to the world map rather than the title.
+      this.scene.start('ArenaScene', {
+        elementId,
+        mode: 'invasion',
+        invasionDifficulty: this.invasionDifficultyId(),
+        playerPerk: PlayerData.getEquippedPerk(elementId),
+        campaign: {
+          slot: this.slotIdx,
+          worldId: this.worldId,
+          fightId: this.nodeId,
+          isChallenge: false,
+          hardMode: this.hardMode,
+        },
+      });
+      return;
+    }
+
     this.scene.start('ArenaScene', {
       elementId,
       enemyElementId: this.enemyElementId,
@@ -349,8 +371,16 @@ export class CampaignElementSelectScene extends Phaser.Scene {
         worldId: this.worldId,
         fightId: this.nodeId,
         isChallenge: this.isChallenge,
+        hardMode: this.hardMode,
       },
     });
+  }
+
+  /** Deeper worlds send tougher husks; Hard Mode sends the worst of them. */
+  private invasionDifficultyId(): string {
+    if (this.hardMode) return 'masochistic';
+    if (getWorldTier(this.worldId) >= 2 || isAbstractWorld(this.worldId)) return 'brutal';
+    return 'normal';
   }
 
   private launchCampaignGauntlet(elementId: string): void {
@@ -402,7 +432,7 @@ export class CampaignElementSelectScene extends Phaser.Scene {
       starredMutations: this.hardMode ? mutations0 : [],
       gauntlet,
       playerPerk: PlayerData.getEquippedPerk(elementId),
-      campaign: { slot: this.slotIdx, worldId: this.worldId, fightId: this.nodeId, isChallenge: false },
+      campaign: { slot: this.slotIdx, worldId: this.worldId, fightId: this.nodeId, isChallenge: false, hardMode: this.hardMode },
     });
   }
 
@@ -413,6 +443,7 @@ export class CampaignElementSelectScene extends Phaser.Scene {
       isChallenge: this.isChallenge,
       kind: this.kind,
       slotIdx: this.slotIdx,
+      hardMode: this.hardMode,
     });
   }
 }

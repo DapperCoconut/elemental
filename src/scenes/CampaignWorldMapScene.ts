@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { WORLDS, World } from '../data/Worlds';
+import { WORLDS, World, getFightNodes } from '../data/Worlds';
 import { ABSTRACT_WORLDS } from '../data/AbstractWorlds';
 import * as CP from '../data/CampaignProgress';
 import { drawWorldMapBackground, drawAbstractWorldMapBackground } from './CampaignBackground';
@@ -44,17 +44,39 @@ export class CampaignWorldMapScene extends Phaser.Scene {
     plaque.beginPath(); plaque.moveTo(60, 62); plaque.lineTo(width - 60, 62); plaque.strokePath();
     fillDiamond(plaque, cx, 62, 5, mix(accent, 0xffffff, 0.4), 0.95);
 
-    this.add.text(cx, 24, isAbstract ? 'ABSTRACT REALM' : 'WORLD MAP', {
-      fontSize: '24px', fontFamily: FONT_DISPLAY,
-      color: hex(mix(accent, 0xffffff, 0.6)),
-      stroke: hex(mix(accent, 0x000000, 0.8)), strokeThickness: 4,
-      letterSpacing: 5,
-    }).setOrigin(0.5).setDepth(DEPTH.content);
+    // Clearing every world in both realms is the end of the campaign — say so.
+    const allDone = [...WORLDS, ...ABSTRACT_WORLDS].every((w) => CP.isChallengeCompleted(slot, w.id));
+    const titleAccent = allDone ? C.gold : accent;
+    const titleText = this.add.text(cx, 24,
+      allDone ? '★  CAMPAIGN COMPLETE  ★' : (isAbstract ? 'ABSTRACT REALM' : 'WORLD MAP'), {
+        fontSize: '24px', fontFamily: FONT_DISPLAY,
+        color: hex(mix(titleAccent, 0xffffff, 0.6)),
+        stroke: hex(mix(titleAccent, 0x000000, 0.8)), strokeThickness: 4,
+        letterSpacing: 5,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+
+    if (allDone) {
+      this.tweens.add({
+        targets: titleText, alpha: 0.65,
+        duration: 1400, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+      });
+    }
 
     const slotName = CP.getSlot(slot)?.name ?? `Slot ${slot + 1}`;
-    this.add.text(cx, 46, slotName.toUpperCase(), {
-      fontSize: '10px', fontFamily: FONT_UI, color: T.dim, letterSpacing: 3,
-    }).setOrigin(0.5).setDepth(DEPTH.content);
+
+    // Realm-wide progress sits next to the save name — the map's headline number.
+    let fightsDone = 0, fightsTotal = 0, worldsDone = 0;
+    for (const w of worlds) {
+      const nodes = getFightNodes(w);
+      fightsTotal += nodes.length;
+      fightsDone += nodes.filter((n) => CP.isFightCompleted(slot, w.id, n.id)).length;
+      if (CP.isChallengeCompleted(slot, w.id)) worldsDone++;
+    }
+    this.add.text(cx, 46,
+      `${slotName.toUpperCase()}   ·   ${fightsDone}/${fightsTotal} FIGHTS   ·   ${worldsDone}/${worlds.length} WORLDS CLEARED`, {
+        fontSize: '10px', fontFamily: FONT_UI,
+        color: worldsDone === worlds.length ? T.gold : T.dim, letterSpacing: 2,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
 
     addChip(this, {
       x: width - 16, y: 20, icon: '🗝️', value: `${CP.getKeys(slot)}`,
@@ -161,9 +183,21 @@ export class CampaignWorldMapScene extends Phaser.Scene {
       .setOrigin(0.5).setDepth(DEPTH.content).setAlpha(unlocked ? 1 : 0.55);
     void emoji;
 
-    const nameText = this.add.text(world.mapX, world.mapY + 15, world.name.toUpperCase(), {
+    const nameText = this.add.text(world.mapX, world.mapY + 14, world.name.toUpperCase(), {
       fontSize: '8px', fontFamily: FONT_DISPLAY,
       color: unlocked ? T.bright : T.ghost, letterSpacing: 0.5,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
+
+    // Per-world progress, or the reason it is shut.
+    const fightNodes = getFightNodes(world);
+    const done = fightNodes.filter((n) => CP.isFightCompleted(slot, world.id, n.id)).length;
+    const parent = world.parentId ? (WORLDS.find((w) => w.id === world.parentId) ?? ABSTRACT_WORLDS.find((w) => w.id === world.parentId)) : null;
+    const caption = !unlocked
+      ? (parent ? `beat ${parent.name}` : 'locked')
+      : allFightsDone ? '★ CLEARED' : `${done}/${fightNodes.length}`;
+    this.add.text(world.mapX, world.mapY + 25, caption, {
+      fontSize: '7.5px', fontFamily: FONT_DISPLAY,
+      color: !unlocked ? T.ghost : allFightsDone ? T.gold : T.faint, letterSpacing: 0.5,
     }).setOrigin(0.5).setDepth(DEPTH.content);
 
     if (!unlocked) return;

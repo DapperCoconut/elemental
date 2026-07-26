@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import * as CP from '../data/CampaignProgress';
-import { ITEMS, getItem, consumedItemIds } from '../data/Items';
+import { ITEMS, getItem, consumedItemIds, shortDescOf, fullDescOf } from '../data/Items';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addButton, addChip, addIconButton, addPanel, addRowPlate, addWell, addBody, fillDiamond,
@@ -144,8 +144,8 @@ export class InventoryScene extends Phaser.Scene {
         this.add.text(left + 52, y + ROW_H / 2 - 13, def.name, {
           fontSize: '15px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 0.5,
         }).setOrigin(0, 0.5),
-        this.add.text(left + 52, y + ROW_H / 2 + 11, def.shortDesc, {
-          fontSize: '11px', fontFamily: FONT_UI, color: T.dim,
+        this.add.text(left + 52, y + ROW_H / 2 + 12, shortDescOf(def), {
+          fontSize: '10.5px', fontFamily: FONT_UI, color: T.dim,
           wordWrap: { width: rowW - 140 },
         }).setOrigin(0, 0.5),
         this.add.text(left + rowW - 18, y + ROW_H / 2 - 11, `×${count}`, {
@@ -205,8 +205,9 @@ export class InventoryScene extends Phaser.Scene {
         fontSize: '11px', fontFamily: FONT_DISPLAY, color: T.gold, letterSpacing: 2,
       }).setOrigin(0.5).setDepth(depth + 1),
       addBody(this, {
-        x: cx, y: midY + 4, text: def.fullDesc, size: 14, color: T.normal,
+        x: cx, y: midY + 10, text: fullDescOf(def), size: 13, color: T.normal,
         wrap: this.panelW - 80, align: 'center', originX: 0.5, depth: depth + 1,
+        lineSpacing: 4,
       }),
     ];
 

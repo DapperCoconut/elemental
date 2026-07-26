@@ -303,7 +303,7 @@ export class ArenaScene extends Phaser.Scene {
   private onlineEndReason: string | null = null;
   private onlineForfeitArmedUntil = 0;
   private onlinePingText: Phaser.GameObjects.Text | null = null;
-  private campaign: { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean } | null = null;
+  private campaign: { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean; hardMode?: boolean } | null = null;
   private enemies: Fighter[] = [];
   private enemyGroup!: Phaser.Physics.Arcade.Group;
   private invasionKit!: InvasionKit;
@@ -781,7 +781,7 @@ export class ArenaScene extends Phaser.Scene {
     super({ key: 'ArenaScene' });
   }
 
-  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; starredMutations?: string[]; mode?: string; invasionDifficulty?: string; gauntlet?: import('../data/GauntletData').GauntletState; playerPerk?: string | null; npcPerk?: string | null; campaign?: { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean }; hpMult?: number; npcOutgoingDamageMult?: number; online?: { isHost: boolean; npcUpgrades?: string[]; npcMasteryBinds?: Record<string, string>; npcMasteryOn?: boolean; npcCosmetics?: Record<string, string> } }): void {
+  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; starredMutations?: string[]; mode?: string; invasionDifficulty?: string; gauntlet?: import('../data/GauntletData').GauntletState; playerPerk?: string | null; npcPerk?: string | null; campaign?: { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean; hardMode?: boolean }; hpMult?: number; npcOutgoingDamageMult?: number; online?: { isHost: boolean; npcUpgrades?: string[]; npcMasteryBinds?: Record<string, string>; npcMasteryOn?: boolean; npcCosmetics?: Record<string, string> } }): void {
     this.elementId = data.elementId ?? 'fire';
     this.isInvasion = data.mode === 'invasion';
     this.isOnline = !!data.online;
@@ -2521,11 +2521,11 @@ export class ArenaScene extends Phaser.Scene {
         this.itemsKit.reset();
       } else {
         this.itemsKit = new ItemsKit({
+          get scene() { return arena; },
           get player() { return arena.player; },
+          get npc() { return arena.npc; },
           applySelfDamage: (n) => arena.player.applySelfDamage(n),
           applyPlayerSpeedMult: (f) => { arena.gauntletSpeedMult *= f; },
-          bumpMaxHp: (n) => arena.player.setMaxHp(arena.player.maxHp + n),
-          addShieldCharges: (n) => { arena.player.shieldCharges += n; },
           showFloatingText: (x, y, t, c) => arena.spawnFloatingText(x, y, t, c),
         });
       }
@@ -6723,6 +6723,9 @@ export class ArenaScene extends Phaser.Scene {
           mode: 'invasion',
           wavesCompleted: this.invasionKit.wavesCompleted,
           corruptShardsEarned: this.invasionKit.shardsEarned,
+          // Present only when launched from a campaign world's invasion node — it
+          // sends the results screen back to that world instead of the title.
+          campaign: this.campaign ?? undefined,
         });
       } else {
         this.scene.start('GameOverScene', {
@@ -8797,6 +8800,9 @@ export class ArenaScene extends Phaser.Scene {
         }
       }
     }
+
+    // Campaign shop items with a per-second cost (Hot Sauce and friends).
+    this.itemsKit?.update(delta);
 
     // ── Update HUD cooldown bars ─────────────────────────────────
     this.updatePlayerHpBar();

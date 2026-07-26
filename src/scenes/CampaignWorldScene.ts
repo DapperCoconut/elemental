@@ -2,11 +2,16 @@ import Phaser from 'phaser';
 import { WorldNode, getFightNodes } from '../data/Worlds';
 import { getAbstractWorld, getAnyWorld } from '../data/AbstractWorlds';
 import * as CP from '../data/CampaignProgress';
+import {
+  getCampaignFightDef, getCampaignReward, DIFFICULTY_LABEL, ELEMENT_DISPLAY,
+} from '../data/CampaignFights';
+import { getMutationDef } from '../data/Mutations';
+import { getItemsForElement } from '../data/Items';
 import { drawCampaignBackground } from './CampaignBackground';
 import { addInventoryButton } from './InventoryScene';
 import {
-  C, T, DEPTH, FONT_DISPLAY, hex, mix,
-  addBackButton, fillDiamond, fillHex, strokeHex,
+  C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
+  addBackButton, addChip, addWell, fillDiamond, fillHex, strokeHex,
 } from '../ui';
 
 /** Visual spec for each node kind on a world's path. */
@@ -20,6 +25,11 @@ const NODE_STYLES: Record<string, { accent: number; glyph: string; label: string
 export class CampaignWorldScene extends Phaser.Scene {
   private worldId = 'fire';
   private slotIdx: 0 | 1 | 2 = 0;
+
+  /** Bottom-of-screen strip that reads out whichever node the cursor is over. */
+  private infoTitle!: Phaser.GameObjects.Text;
+  private infoBody!: Phaser.GameObjects.Text;
+  private infoDefault = '';
 
   constructor() {
     super({ key: 'CampaignWorldScene' });
@@ -50,28 +60,52 @@ export class CampaignWorldScene extends Phaser.Scene {
     banner.beginPath(); banner.moveTo(50, 72); banner.lineTo(width - 50, 72); banner.strokePath();
     fillDiamond(banner, cx, 68, 6, mix(world.color, 0xffffff, 0.5), 1);
 
-    this.add.text(cx, 32, `${world.emoji}   ${world.name.toUpperCase()}`, {
-      fontSize: '30px', fontFamily: FONT_DISPLAY,
+    this.add.text(cx, 26, `${world.emoji}   ${world.name.toUpperCase()}`, {
+      fontSize: '28px', fontFamily: FONT_DISPLAY,
       color: hex(mix(world.color, 0xffffff, 0.55)),
       stroke: hex(mix(world.color, 0x000000, 0.82)), strokeThickness: 5,
       letterSpacing: 4,
     }).setOrigin(0.5).setDepth(DEPTH.content);
+
+    // ── Progress readout ────────────────────────────────────────────
+    const fightNodes = getFightNodes(world);
+    const cleared = fightNodes.filter((n) => CP.isFightCompleted(this.slotIdx, this.worldId, n.id)).length;
+    const challengeDone = CP.isChallengeCompleted(this.slotIdx, this.worldId);
+    const progress = challengeDone
+      ? '★  WORLD CLEARED'
+      : `${cleared} / ${fightNodes.length} FIGHTS CLEARED   ·   CHALLENGE ${cleared === fightNodes.length ? 'OPEN' : 'LOCKED'}`;
+    this.add.text(cx, 51, progress, {
+      fontSize: '10px', fontFamily: FONT_DISPLAY,
+      color: challengeDone ? T.gold : T.dim, letterSpacing: 2.5,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
+
+    addChip(this, {
+      x: width - 14, y: 20, icon: '⚡', value: `${CP.getSparks(this.slotIdx)}`,
+      accent: 0x2ee6c0, originX: 1, fontSize: 12, depth: DEPTH.content,
+    });
+    addChip(this, {
+      x: width - 14, y: 46, icon: '🗝️', value: `${CP.getKeys(this.slotIdx)}`,
+      accent: C.gold, originX: 1, fontSize: 12, depth: DEPTH.content,
+    });
 
     const back = () => this.scene.start('CampaignWorldMapScene', { slotIdx: this.slotIdx, mode: mapMode });
     addBackButton(this, back);
     this.input.keyboard!.on('keydown-ESC', back);
 
     // ── Path between fight nodes ────────────────────────────────────
-    const fightNodes = getFightNodes(world);
     const lineGfx = this.add.graphics().setDepth(DEPTH.panel);
     for (let i = 0; i < fightNodes.length - 1; i++) {
-      this.drawPath(lineGfx, fightNodes[i], fightNodes[i + 1], world.color, 0.6);
+      const done = CP.isFightCompleted(this.slotIdx, this.worldId, fightNodes[i].id);
+      this.drawPath(lineGfx, fightNodes[i], fightNodes[i + 1], done ? C.gold : world.color, done ? 0.85 : 0.5);
     }
     const lastFight = fightNodes[fightNodes.length - 1];
     const challengeNode = world.nodes.find((n) => n.kind === 'challenge');
     if (lastFight && challengeNode) {
-      this.drawPath(lineGfx, lastFight, challengeNode, C.corrupt, 0.7);
+      const open = CP.isChallengeUnlocked(this.slotIdx, this.worldId);
+      this.drawPath(lineGfx, lastFight, challengeNode, open ? C.corrupt : C.line, open ? 0.85 : 0.4);
     }
+
+    this.buildInfoStrip(cx, height, world.color);
 
     for (const node of world.nodes) {
       this.drawNode(node, world.color);
@@ -93,6 +127,88 @@ export class CampaignWorldScene extends Phaser.Scene {
     fillDiamond(g, (a.x + b.x) / 2, (a.y + b.y) / 2, 3, mix(color, 0xffffff, 0.5), alpha);
   }
 
+  // ── Hover briefing ────────────────────────────────────────────────
+
+  private buildInfoStrip(cx: number, height: number, worldColor: number): void {
+    const y = height - 44;
+    addWell(this, cx, y, 660, 52, worldColor, DEPTH.panel, 8);
+    this.infoTitle = this.add.text(cx, y - 11, '', {
+      fontSize: '13px', fontFamily: FONT_DISPLAY,
+      color: hex(mix(worldColor, 0xffffff, 0.6)), letterSpacing: 1,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
+    this.infoBody = this.add.text(cx, y + 10, '', {
+      fontSize: '10.5px', fontFamily: FONT_UI, color: T.dim,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
+
+    this.infoDefault = 'Hover a node to scout it   ·   clear all five fights to open the Challenge';
+    this.setInfo('', this.infoDefault);
+  }
+
+  private setInfo(title: string, body: string): void {
+    this.infoTitle?.setText(title);
+    this.infoBody?.setText(body);
+  }
+
+  private clearInfo(): void {
+    this.setInfo('', this.infoDefault);
+  }
+
+  /** The one-line scouting report shown while a node is hovered. */
+  private infoForNode(node: WorldNode): { title: string; body: string } {
+    if (node.kind === 'shop') {
+      const stock = getItemsForElement(this.worldId);
+      const cheapest = stock.reduce((m, i) => Math.min(m, i.priceSparks), Infinity);
+      return {
+        title: '🛒  WORLD SHOP',
+        body: stock.length === 0
+          ? 'Nothing stocked in this world.'
+          : `${stock.length} items stocked   ·   from ⚡${cheapest}   ·   you hold ⚡${CP.getSparks(this.slotIdx)}`,
+      };
+    }
+    if (node.kind === 'invasion') {
+      return { title: '👾  INVASION', body: 'Endless husk waves. Pays 🩸 Corrupt Shards. Always open.' };
+    }
+    if (node.kind === 'gauntlet') {
+      const done = CP.isGauntletCompleted(this.slotIdx, this.worldId);
+      return {
+        title: '🏆  GAUNTLET',
+        body: done
+          ? 'Already conquered — run it again for the practice.'
+          : 'Five randomised bouts and a boss, back to back.',
+      };
+    }
+
+    const def = getCampaignFightDef(node.id);
+    if (!def) return { title: node.id.toUpperCase(), body: '' };
+
+    const unlocked = node.kind === 'challenge'
+      ? CP.isChallengeUnlocked(this.slotIdx, this.worldId)
+      : CP.isFightUnlocked(this.slotIdx, this.worldId, node.id);
+    if (!unlocked) {
+      return {
+        title: '🔒  LOCKED',
+        body: node.kind === 'challenge'
+          ? 'Clear every fight in this world first.'
+          : 'Win the fight before it first.',
+      };
+    }
+
+    const elem = ELEMENT_DISPLAY[def.enemyElementId];
+    const muts = (def.mutations ?? []).map((id) => {
+      const m = getMutationDef(id);
+      if (!m) return id;
+      return `${def.starredMutations?.includes(id) ? '★' : ''}${m.emoji} ${m.name}`;
+    });
+    const reward = getCampaignReward(this.worldId, node.id, node.kind === 'challenge', false);
+    const bits = [
+      `vs ${elem ? `${elem.emoji} ${elem.name}` : def.enemyElementId}`,
+      (DIFFICULTY_LABEL[def.difficulty] ?? String(def.difficulty)).toUpperCase(),
+      muts.length > 0 ? muts.join(' + ') : 'no mutations',
+      `⚡${reward.sparks}${reward.keys > 0 ? `  🗝️${reward.keys}` : ''}`,
+    ];
+    return { title: (def.name ?? node.id).toUpperCase(), body: bits.join('   ·   ') };
+  }
+
   private drawNode(node: WorldNode, worldColor: number): void {
     const slot = this.slotIdx;
     const worldId = this.worldId;
@@ -103,11 +219,13 @@ export class CampaignWorldScene extends Phaser.Scene {
       const completed = CP.isFightCompleted(slot, worldId, node.id);
 
       this.buildNode({
+        node,
         x: node.x, y: node.y, r: 29,
         accent: worldColor,
         glyph: `${fightIndex}`,
         glyphIsText: true,
         label: 'FIGHT',
+        caption: unlocked ? getCampaignFightDef(node.id)?.name : undefined,
         unlocked, completed,
         onClick: () => this.openFightMenu(node.id, false),
       });
@@ -119,6 +237,7 @@ export class CampaignWorldScene extends Phaser.Scene {
 
     if (node.kind === 'shop') {
       this.buildNode({
+        node,
         x: node.x, y: node.y, r: style.radius,
         accent: style.accent, glyph: style.glyph, label: style.label,
         unlocked: true, completed: false,
@@ -128,10 +247,13 @@ export class CampaignWorldScene extends Phaser.Scene {
     }
 
     if (node.kind === 'challenge') {
+      const unlocked = CP.isChallengeUnlocked(slot, worldId);
       this.buildNode({
+        node,
         x: node.x, y: node.y, r: style.radius,
         accent: style.accent, glyph: style.glyph, label: style.label,
-        unlocked: CP.isChallengeUnlocked(slot, worldId),
+        caption: unlocked ? getCampaignFightDef(node.id)?.name : undefined,
+        unlocked,
         completed: CP.isChallengeCompleted(slot, worldId),
         onClick: () => this.openFightMenu(node.id, true),
       });
@@ -140,6 +262,7 @@ export class CampaignWorldScene extends Phaser.Scene {
 
     // Invasion and gauntlet nodes are always open.
     this.buildNode({
+      node,
       x: node.x, y: node.y, r: style.radius,
       accent: style.accent, glyph: style.glyph, label: style.label,
       unlocked: true,
@@ -150,11 +273,12 @@ export class CampaignWorldScene extends Phaser.Scene {
 
   /**
    * Shared node chrome: hex plate, glyph, caption, and — once cleared — a gold
-   * ring plus a check mark on the upper-right face.
+   * ring plus a crown of diamonds on the upper faces.
    */
   private buildNode(opts: {
+    node: WorldNode;
     x: number; y: number; r: number; accent: number;
-    glyph: string; glyphIsText?: boolean; label: string;
+    glyph: string; glyphIsText?: boolean; label: string; caption?: string;
     unlocked: boolean; completed: boolean;
     onClick: () => void;
   }): void {
@@ -198,14 +322,30 @@ export class CampaignWorldScene extends Phaser.Scene {
       color: unlocked ? hex(mix(accent, 0xffffff, 0.55)) : T.ghost, letterSpacing: 1,
     }).setOrigin(0.5).setDepth(DEPTH.content);
 
-    if (!unlocked) return;
+    // The bout's own name sits under the plate, so the path reads as a sequence of
+    // named encounters rather than five numbered circles.
+    if (opts.caption) {
+      this.add.text(x, y + r + 11, opts.caption.toUpperCase(), {
+        fontSize: '8.5px', fontFamily: FONT_DISPLAY,
+        color: completed ? T.gold : T.faint, letterSpacing: 0.8,
+        align: 'center', wordWrap: { width: 120 },
+      }).setOrigin(0.5, 0).setDepth(DEPTH.content);
+    }
 
+    // Locked nodes still report themselves — knowing what is ahead is the point.
     const hit = this.add.circle(x, y, r, 0xffffff, 0)
       .setDepth(DEPTH.content + 1)
-      .setInteractive({ useHandCursor: true });
-    hit.on('pointerover', () => { paint(true); label.setColor(T.bright); });
-    hit.on('pointerout', () => { paint(false); label.setColor(hex(mix(accent, 0xffffff, 0.55))); });
-    hit.on('pointerdown', opts.onClick);
+      .setInteractive({ useHandCursor: unlocked });
+    hit.on('pointerover', () => {
+      if (unlocked) { paint(true); label.setColor(T.bright); }
+      const info = this.infoForNode(opts.node);
+      this.setInfo(info.title, info.body);
+    });
+    hit.on('pointerout', () => {
+      if (unlocked) { paint(false); label.setColor(hex(mix(accent, 0xffffff, 0.55))); }
+      this.clearInfo();
+    });
+    if (unlocked) hit.on('pointerdown', opts.onClick);
   }
 
   private openFightMenu(nodeId: string, isChallenge: boolean, kind?: string): void {

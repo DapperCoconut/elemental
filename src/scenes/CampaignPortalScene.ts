@@ -103,7 +103,17 @@ export class CampaignPortalScene extends Phaser.Scene {
         depth: DEPTH.modalContent,
         disabled: !canAfford,
         onClick: () => {
-          if (CP.purchasePortal(this.slotIdx)) this.scene.restart();
+          if (!CP.purchasePortal(this.slotIdx)) return;
+          // Opening the portal is the campaign's biggest single moment — step
+          // straight through it rather than dumping the player back on the old map
+          // (which is also stale by now, since it was drawn with the rift sealed).
+          this.cameras.main.flash(420, 157, 92, 255);
+          this.input.keyboard!.removeAllListeners();
+          this.time.delayedCall(520, () => {
+            this.scene.stop('CampaignWorldMapScene');
+            this.scene.stop();
+            this.scene.start('CampaignWorldMapScene', { slotIdx: this.slotIdx, mode: 'abstract' });
+          });
         },
       });
 

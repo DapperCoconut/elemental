@@ -3,12 +3,15 @@ import * as PlayerData from '../data/PlayerData';
 import * as CP from '../data/CampaignProgress';
 import { SHARD_REWARDS } from '../data/Upgrades';
 import { MUTATIONS } from '../data/Mutations';
+import { getCampaignReward, getCampaignFightDef } from '../data/CampaignFights';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackdrop, addButton, addPanel, addTitle, fillDiamond,
 } from '../ui';
 
-type CampaignPayload = { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean };
+type CampaignPayload = {
+  slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean; hardMode?: boolean;
+};
 
 /** One line in the rewards ledger. */
 type RewardLine = { icon: string; text: string; color: string; big?: boolean };
@@ -78,19 +81,26 @@ export class GameOverScene extends Phaser.Scene {
       }
     }
 
-    // Mark campaign progress on win and award currencies
+    // Mark campaign progress on win and award currencies. The payout is the same
+    // figure the fight briefing promised — both sides call getCampaignReward().
     let keysEarned = 0;
     let sparksEarned = 0;
+    let campaignHardMode = false;
     if (isCampaign && data.playerWon && data.campaign) {
-      if (data.campaign.isChallenge) {
-        CP.markChallengeCompleted(data.campaign.slot, data.campaign.worldId);
-        CP.addKeys(data.campaign.slot, 1);
-        keysEarned = 1;
+      const c = data.campaign;
+      campaignHardMode = !!c.hardMode;
+      const reward = getCampaignReward(c.worldId, c.fightId, c.isChallenge, campaignHardMode);
+      if (c.isChallenge) {
+        CP.markChallengeCompleted(c.slot, c.worldId);
       } else {
-        CP.markFightCompleted(data.campaign.slot, data.campaign.worldId, data.campaign.fightId);
+        CP.markFightCompleted(c.slot, c.worldId, c.fightId);
       }
-      CP.addSparks(data.campaign.slot, 1);
-      sparksEarned = 1;
+      if (reward.keys > 0) {
+        CP.addKeys(c.slot, reward.keys);
+        keysEarned = reward.keys;
+      }
+      CP.addSparks(c.slot, reward.sparks);
+      sparksEarned = reward.sparks;
     }
 
     // ── Headline ────────────────────────────────────────────────────
@@ -112,6 +122,13 @@ export class GameOverScene extends Phaser.Scene {
       [title, subtitle, accent] = ['YOU FELL', `Waves cleared: ${data.wavesCompleted ?? 0}`, C.corrupt];
     } else if (data.isGauntlet && !data.playerWon) {
       [title, subtitle, accent] = ['GAUNTLET FAILED', 'Your run has ended…', C.blood];
+    } else if (isCampaign && data.campaign) {
+      // Campaign results name the bout that was won or lost, so a run reads as a story.
+      const boutName = getCampaignFightDef(data.campaign.fightId)?.name;
+      const hardTag = data.campaign.hardMode ? '  ·  HARD MODE' : '';
+      [title, subtitle, accent] = data.playerWon
+        ? ['VICTORY', boutName ? `${boutName} cleared${hardTag}` : 'The world bends a little further.', C.gold]
+        : ['DEFEATED', boutName ? `${boutName} holds${hardTag}` : 'The world holds. Try again.', C.frost];
     } else {
       [title, subtitle, accent] = data.playerWon
         ? ['VICTORY', 'The flames triumph! 🔥', C.gold]
@@ -144,10 +161,11 @@ export class GameOverScene extends Phaser.Scene {
       lines.push({ icon: '💎', text: `+${shardsEarned}  shards${multLabel}`, color: T.gold, big: true });
     }
     if (sparksEarned > 0) {
-      lines.push({ icon: '⚡', text: `+${sparksEarned}  Spark`, color: '#7cf5d8' });
+      const hardLabel = campaignHardMode ? '   ×1.75 HARD MODE' : '';
+      lines.push({ icon: '⚡', text: `+${sparksEarned}  Sparks${hardLabel}`, color: '#7cf5d8', big: true });
     }
     if (keysEarned > 0) {
-      lines.push({ icon: '🗝️', text: `+${keysEarned}  Key`, color: T.gold });
+      lines.push({ icon: '🗝️', text: `+${keysEarned}  Key${keysEarned === 1 ? '' : 's'}`, color: T.gold });
     }
     if (isInvasion && (data.corruptShardsEarned ?? 0) > 0) {
       lines.push({ icon: '🩸', text: `+${data.corruptShardsEarned}  Corrupt Shards`, color: hex(mix(C.corrupt, 0xffffff, 0.4)) });
@@ -209,12 +227,38 @@ export class GameOverScene extends Phaser.Scene {
       }
     };
 
+    // A lost campaign bout offers a one-click rematch — walking back through the
+    // world map to retry the fight you just lost is pure friction.
+    // Only scripted bouts can be retried in place — invasion and gauntlet runs are
+    // re-entered from their own nodes.
+    const canRetry = isCampaign && !data.playerWon && !!data.campaign && !data.isGauntlet && !isInvasion;
+    const retry = () => {
+      const c = data.campaign!;
+      this.scene.start('CampaignFightMenuScene', {
+        worldId: c.worldId,
+        nodeId: c.fightId,
+        isChallenge: c.isChallenge,
+        kind: c.isChallenge ? 'challenge' : 'fight',
+        slotIdx: c.slot,
+        hardMode: !!c.hardMode,
+      });
+    };
+
     const btnLabel = isOnline ? 'BACK TO LOBBY' : data.campaign ? 'BACK TO WORLD' : 'PLAY AGAIN';
-    addButton(this, {
-      x: cx, y: btnY, w: 280, h: 60,
-      label: btnLabel, icon: '▶', variant: 'solid', accent, fontSize: 20,
+    const mainBtn = addButton(this, {
+      x: canRetry ? cx - 150 : cx, y: btnY, w: canRetry ? 260 : 280, h: 60,
+      label: btnLabel, icon: '▶', variant: canRetry ? 'ghost' : 'solid', accent, fontSize: canRetry ? 17 : 20,
       onClick: goBack,
-    }).pulse();
+    });
+    if (!canRetry) mainBtn.pulse();
+
+    if (canRetry) {
+      addButton(this, {
+        x: cx + 150, y: btnY, w: 260, h: 60,
+        label: 'RETRY', icon: '⟳', variant: 'solid', accent: C.blood, fontSize: 20,
+        onClick: retry,
+      }).pulse();
+    }
 
     this.add.text(cx, btnY + 44, 'ESC', {
       fontSize: '10px', fontFamily: FONT_DISPLAY, color: T.ghost, letterSpacing: 2,
