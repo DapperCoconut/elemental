@@ -13,6 +13,7 @@ import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackButton, addChip, addWell, fillDiamond, fillHex, strokeHex,
 } from '../ui';
+import { Music } from '../audio';
 
 /** Visual spec for each node kind on a world's path. */
 const NODE_STYLES: Record<string, { accent: number; glyph: string; label: string; radius: number }> = {
@@ -41,6 +42,7 @@ export class CampaignWorldScene extends Phaser.Scene {
   }
 
   create(): void {
+    Music.play('campaign');
     const { width, height } = this.scale;
     const cx = width / 2;
     const world = getAnyWorld(this.worldId);

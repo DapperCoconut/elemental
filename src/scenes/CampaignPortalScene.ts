@@ -4,6 +4,7 @@ import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addButton, addModal, addWell, fillDiamond,
 } from '../ui';
+import { Music } from '../audio';
 
 const PORTAL_COST = 10;
 
@@ -19,6 +20,7 @@ export class CampaignPortalScene extends Phaser.Scene {
   }
 
   create(): void {
+    Music.play('campaign');
     const { width, height } = this.scale;
     const cx = width / 2;
     const cy = height / 2;

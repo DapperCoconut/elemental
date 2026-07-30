@@ -66,9 +66,12 @@ const pressureBomb: Ability = {
   displayKey: 'R',
   cooldown: 3000,
   cast(ctx) {
-    ctx.dealAoeDamage(ctx.targetX, ctx.targetY, 100, 32);
+    // Molten (divine perk): the charge is packed hotter — 20% more out of it, and a burn back.
+    const molten = ctx.hasPerk('molten');
+    ctx.dealAoeDamage(ctx.targetX, ctx.targetY, 100, molten ? 38 : 32);
     fx(ctx).explosion(ctx.targetX, ctx.targetY, 100);
-    ctx.scene.cameras.main.shake(140, 0.004);
+    ctx.scene.cameras.main.shake(molten ? 200 : 140, molten ? 0.006 : 0.004);
+    if (molten) ctx.fireScorchCaster?.();
   },
 };
 
@@ -104,6 +107,12 @@ const flameNuke: Ability = {
     f.channelCharge(cx, cy, 200, 2000);
 
     ctx.scene.time.delayedCall(2000, () => {
+      // Molten (divine perk): the channel opens a vent instead of throwing a bomb. The kit owns
+      // it — it is screen-wide, hits the caster too, and leaves standing magma behind.
+      if (ctx.hasPerk('molten') && ctx.fireMoltenEruption) {
+        ctx.fireMoltenEruption();
+        return;
+      }
       ctx.dealFlameNukeDamage(cx, cy, 220, 80);
 
       // Detonation: a wall of fire, a column punching skyward, and a long shrapnel tail.

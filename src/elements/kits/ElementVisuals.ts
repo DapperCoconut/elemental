@@ -79,6 +79,7 @@ export type ArmHold =
   | 'sow'      // hands low and cupped, working the ground
   | 'brace'    // hands hauled in tight behind a guard, shaking (charged blocks, shield bashes)
   | 'ride'     // arms thrown out wide for balance while something carries you
+  | 'reach'    // one hand thrown far out along the aim, the other tucked in (grapples, long limbs)
   | null;
 
 export interface ArmPose { ang: number; dist: number; scale: number }

@@ -34,6 +34,19 @@ interface SaveData {
   devourerChoice: string;              // '' | 'spare' | 'kill' — which ending was taken first
   bountyRerollOffset: number;          // bumped by a manual bounty refresh, shifts the hourly seed
   completedBountyKeys: string[];       // "<seed>:<index>" of bounties already cashed in
+  passionQTaps: number;                // taps on Passion's Q row in the info panel — 10 unlocks the toggle
+  passionQCensored: boolean;           // whether that toggle is currently on
+  paperJournal: Record<string, PaperJournalRecord>; // enemy elementId -> fights won/lost as Paper
+}
+
+/**
+ * Paper's Journal tally for one enemy element. Only ever counts fights taken *as Paper* — see
+ * `src/data/PaperJournal.ts` for what the numbers buy. Kept past three of each on purpose: the
+ * info panel shows the full record even though only the first three of each unlock anything.
+ */
+export interface PaperJournalRecord {
+  wins: number;
+  losses: number;
 }
 
 function load(): SaveData {
@@ -70,6 +83,9 @@ function load(): SaveData {
         devourerChoice: parsed.devourerChoice ?? '',
         bountyRerollOffset: parsed.bountyRerollOffset ?? 0,
         completedBountyKeys: parsed.completedBountyKeys ?? [],
+        passionQTaps: parsed.passionQTaps ?? 0,
+        passionQCensored: parsed.passionQCensored ?? false,
+        paperJournal: parsed.paperJournal ?? {},
       };
       // Sanity: clear equipped perk if no longer unlocked
       for (const el of Object.keys(d.equippedPerks)) {
@@ -82,7 +98,7 @@ function load(): SaveData {
   } catch {
     // corrupted save — start fresh
   }
-  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedSkins: {}, divineNuclei: 0, kingDefeated: false, devourerDefeated: false, devourerChoice: '', bountyRerollOffset: 0, completedBountyKeys: [] };
+  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedSkins: {}, divineNuclei: 0, kingDefeated: false, devourerDefeated: false, devourerChoice: '', bountyRerollOffset: 0, completedBountyKeys: [], passionQTaps: 0, passionQCensored: false, paperJournal: {} };
 }
 
 function save(data: SaveData): void {
@@ -468,6 +484,16 @@ export function markKingDefeated(): boolean {
  */
 export const DEVOURER_PERK_REQUIREMENT = 30;
 
+/**
+ * The two elements the Devourer's endings grant — kill → justice, spare → dream.
+ *
+ * Neither is unlockable through the Lab, so they are absent from `RECIPES` and from the
+ * abstract ID lists. Anything that wants "every element in the game" (the cheat save above
+ * all) has to name them explicitly. `MenuScene.DIVINE_ELEMENTS` is the matching display
+ * table — keep the two in step.
+ */
+export const DIVINE_ELEMENT_IDS: string[] = ['justice', 'dream'];
+
 /** The hard fight is only offered once the ordinary one has actually been won. */
 export function isDevourerUnlocked(): boolean {
   return isKingDefeated() && getTotalForgedPerkCount() >= DEVOURER_PERK_REQUIREMENT;
@@ -523,6 +549,72 @@ export function markBountyCompleted(key: string, liveSeed: number): void {
   const prefix = `${liveSeed}:`;
   data.completedBountyKeys = [...data.completedBountyKeys.filter((k) => k.startsWith(prefix)), key];
   save(data);
+}
+
+// ── Passion: the Exhibition easter egg ───────────────────────────────
+
+/** Taps on Passion's Q row before the toggle appears. */
+export const PASSION_Q_TAPS_REQUIRED = 10;
+
+/**
+ * Records one tap on the Q ability row in Passion's info panel and returns the running total.
+ * Stops counting once the toggle is out, so the number can't run away.
+ */
+export function tapPassionQ(): number {
+  const data = load();
+  if (data.passionQTaps >= PASSION_Q_TAPS_REQUIRED) return data.passionQTaps;
+  data.passionQTaps += 1;
+  save(data);
+  return data.passionQTaps;
+}
+
+export function getPassionQTaps(): number {
+  return load().passionQTaps;
+}
+
+export function isPassionQUnlocked(): boolean {
+  return load().passionQTaps >= PASSION_Q_TAPS_REQUIRED;
+}
+
+/** The alternate Exhibition pose. Only ever true once the toggle has been found. */
+export function isPassionQCensored(): boolean {
+  const d = load();
+  return d.passionQTaps >= PASSION_Q_TAPS_REQUIRED && d.passionQCensored;
+}
+
+export function setPassionQCensored(on: boolean): void {
+  const data = load();
+  data.passionQCensored = on;
+  save(data);
+}
+
+// ── Paper's Journal ──────────────────────────────────────────────────────────
+
+const EMPTY_JOURNAL: PaperJournalRecord = { wins: 0, losses: 0 };
+
+/**
+ * Paper's record against one enemy element. Returns a shared frozen-in-practice zero record
+ * rather than undefined, because every caller wants the numbers and none of them wants the
+ * null check — `journalBonuses` runs this every frame.
+ */
+export function getPaperJournal(elementId: string): PaperJournalRecord {
+  return load().paperJournal[elementId] ?? EMPTY_JOURNAL;
+}
+
+/** Add one finished fight to the journal. Only ArenaScene's end-of-match path calls this. */
+export function addPaperJournalResult(elementId: string, won: boolean): void {
+  const data = load();
+  const prev = data.paperJournal[elementId] ?? EMPTY_JOURNAL;
+  data.paperJournal = {
+    ...data.paperJournal,
+    [elementId]: { wins: prev.wins + (won ? 1 : 0), losses: prev.losses + (won ? 0 : 1) },
+  };
+  save(data);
+}
+
+/** Every element Paper has fought at least once. */
+export function getPaperJournalElements(): string[] {
+  return Object.keys(load().paperJournal);
 }
 
 /** The one skin equipped on an element, or null for that element's default look. */

@@ -6,6 +6,7 @@ import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackdrop, addBackButton, addHeaderBar, addWell, addRowPlate, drawMeter, fillDiamond,
 } from '../ui';
+import { Music } from '../audio';
 
 export class AchievementsScene extends Phaser.Scene {
   private scrollHandler: (...args: unknown[]) => void = () => {};
@@ -15,6 +16,7 @@ export class AchievementsScene extends Phaser.Scene {
   }
 
   create(): void {
+    Music.play('menu');
     const { width, height } = this.scale;
     const cx = width / 2;
     const accent = C.gold;

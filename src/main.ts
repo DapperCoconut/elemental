@@ -21,6 +21,8 @@ import { InventoryScene } from './scenes/InventoryScene';
 import { OnlineLobbyScene } from './scenes/OnlineLobbyScene';
 import { AchievementsScene } from './scenes/AchievementsScene';
 import { DisgracedLabScene } from './scenes/DisgracedLabScene';
+import { AudioSettingsScene } from './scenes/AudioSettingsScene';
+import { ConquestMenuScene } from './scenes/ConquestMenuScene';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -34,10 +36,16 @@ const config: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
-  scene: [BootScene, TitleScene, MenuScene, ShopScene, LabScene, ArenaScene, GameOverScene, GauntletSelectScene, GauntletIntermediaryScene, PauseMenuScene, CampaignSlotSelectScene, CampaignWorldMapScene, CampaignWorldScene, CampaignFightMenuScene, CampaignShopScene, CampaignPortalScene, CampaignElementSelectScene, GauntletElementSelectScene, InventoryScene, OnlineLobbyScene, AchievementsScene, DisgracedLabScene],
+  scene: [BootScene, TitleScene, MenuScene, ShopScene, LabScene, ArenaScene, GameOverScene, GauntletSelectScene, GauntletIntermediaryScene, PauseMenuScene, CampaignSlotSelectScene, CampaignWorldMapScene, CampaignWorldScene, CampaignFightMenuScene, CampaignShopScene, CampaignPortalScene, CampaignElementSelectScene, GauntletElementSelectScene, InventoryScene, OnlineLobbyScene, AchievementsScene, DisgracedLabScene, AudioSettingsScene, ConquestMenuScene],
 };
 
 const game = new Phaser.Game(config);
+
+// Audio boots before the first scene so saved volumes are in place, but the
+// browser will not actually start playback until the player's first click or
+// keypress — `Sfx.init` installs the listeners that unlock it.
+import { Sfx } from './audio';
+Sfx.init();
 
 // Debug handles for the browser console (and automated smoke tests)
 import { Net } from './network/NetworkManager';

@@ -2832,4 +2832,27 @@ export class MagicKit {
     this.api.showFloatingText(tx, ty - 34, '🌋 Gaia\'s Monument', '#886633');
     this.addDarkness(50);
   }
+
+  /**
+   * Ruin's Spikes of Ruin (see `combat/SummonPurge.ts`).
+   * Temple and monument sets, and the tornadoes. Both are conjured objects with no health
+   * of their own, and both are painted from their arrays, so splicing is the whole cleanup.
+   */
+  purgeSummons(x: number, y: number, radius: number, exceptOwner: 'player' | 'npc'): number {
+    const near = (px: number, py: number): boolean => Phaser.Math.Distance.Between(x, y, px, py) <= radius;
+    let razed = 0;
+    for (let i = this.templeSets.length - 1; i >= 0; i--) {
+      const ts = this.templeSets[i];
+      if (ts.owner === exceptOwner || !near(ts.anchorX, ts.anchorY)) continue;
+      this.templeSets.splice(i, 1);
+      razed++;
+    }
+    for (let i = this.tornadoes.length - 1; i >= 0; i--) {
+      const t = this.tornadoes[i];
+      if (t.owner === exceptOwner || !near(t.x, t.y)) continue;
+      this.tornadoes.splice(i, 1);
+      razed++;
+    }
+    return razed;
+  }
 }

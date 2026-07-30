@@ -1,9 +1,10 @@
 import Peer, { DataConnection } from 'peerjs';
 import type { InvasionFx, HuskStatus } from '../invasion/InvasionKit';
 import type { NetStatusEntry } from './NetStatusSync';
+import type { NetConquestSnap } from '../elements/kits/ConquestKit';
 
 /** Bump when the wire protocol or gameplay sync changes incompatibly. */
-export const NET_PROTOCOL_VERSION = 12;
+export const NET_PROTOCOL_VERSION = 15;
 
 /** Lobby selection payload exchanged while both players pick loadouts. */
 export interface NetSelection {
@@ -54,6 +55,49 @@ export type NetSilenceMsg =
   | { t: 'sil'; k: 'awaken'; on: boolean; dmg?: number }
   // 20 Hz drive vector + aim for the possessed body, while possession lasts.
   | { t: 'sil'; k: 'puppet-move'; vx: number; vy: number; fa: number };
+
+/**
+ * Illusion events the cast relay can't carry.
+ *
+ * A Tesseract is deliberately invisible on the victim's screen, so their sim's replay of the
+ * cast produces nothing at all — there is no local copy of the cube to hit them. The fold is
+ * therefore resolved entirely on the attacker's sim and shipped over as a finished result.
+ */
+export type NetIllusionMsg =
+  // Attacker → victim: you have been folded into this shape for this long. The victim wears
+  // it (bigger body, bigger hitbox) and spends the duration looking at an inverted screen.
+  | { t: 'ill'; k: 'shape'; s: 'square' | 'star' | 'rhombus'; ms: number };
+
+/**
+ * Psychic events, and the one element whose netcode runs *backwards*.
+ *
+ * Opened Eyes is not something the psychic does to you — it is something you do to yourself.
+ * Both machines can see who picked what, so the psychic's opponent delays their own casts on
+ * their own sim (where their shots are actually fired from, and therefore the only place a
+ * two-second delay is real rather than cosmetic) and relays the resulting queue back for the
+ * psychic to draw. Everything else here is the ordinary attacker → victim direction.
+ */
+export type NetPsychicMsg =
+  // Victim → psychic (≈6 Hz, on change): the keys sitting in my delayed-cast queue, next last.
+  | { t: 'psy'; k: 'queue'; keys: string[] }
+  // Psychic → victim: Mind Control took the front of that queue. Drop it and pay for it again.
+  | { t: 'psy'; k: 'cancel' }
+  // Psychic → victim: Migraine. Scatter your own aim for `ms`.
+  | { t: 'psy'; k: 'scatter'; ms: number }
+  // Psychic → victim: Coma. Held still and disarmed for `ms`. The half-damage half of the
+  // ability is resolved on the psychic's own replica, so it is deliberately not sent.
+  | { t: 'psy'; k: 'coma'; ms: number };
+
+/**
+ * Conquest ships its whole board rather than events.
+ *
+ * Every other element's online state is a handful of timers, so a relayed cast plus the peer's
+ * own replay of it is enough. Conquest's state is 126 squares, up to eighteen buildings with
+ * two upgrade paths each, and a garrison — all of it derived from a chain of earlier decisions,
+ * so a single dropped event leaves the two sims permanently disagreeing about who owns what.
+ * The snapshot is a few hundred bytes at 4 Hz and cannot drift.
+ */
+export type NetConquestMsg = { t: 'cnq'; s: NetConquestSnap };
 
 /** A single husk's networked state, as broadcast by the invasion co-op host. */
 export interface NetHuskState {
@@ -115,7 +159,10 @@ export type NetMsg =
   | { t: 'revived' } // either → either
   | { t: 'runEnd'; wavesCompleted: number; shardsEarned: number }
   | NetTechMsg
-  | NetSilenceMsg;
+  | NetSilenceMsg
+  | NetIllusionMsg
+  | NetPsychicMsg
+  | NetConquestMsg;
 
 export type NetStatus = 'idle' | 'starting' | 'hosting' | 'joining' | 'connected' | 'error';
 

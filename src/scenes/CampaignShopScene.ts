@@ -6,6 +6,7 @@ import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addButton, addChip, addIconButton, addModal, addRowPlate, addWell, fillDiamond, showToast,
 } from '../ui';
+import { Music, Sfx } from '../audio';
 
 const ROW_H = 88;
 const ROW_GAP = 10;
@@ -35,6 +36,7 @@ export class CampaignShopScene extends Phaser.Scene {
   }
 
   create(): void {
+    Music.play('shop');
     const world = getAnyWorld(this.worldId);
     const slotIdx = this.slotIdx;
     const accent = C.gold;
@@ -159,9 +161,11 @@ export class CampaignShopScene extends Phaser.Scene {
   private buy(def: ItemDef): void {
     if (CP.spendSparks(this.slotIdx, def.priceSparks)) {
       CP.addItem(this.slotIdx, def.id);
+      Sfx.play('ui-purchase');
       showToast(this, `${def.emoji}  ${def.name} purchased`, { accent: C.gold });
       this.refreshAll();
     } else {
+      Sfx.denied();
       // Flash the wallet rather than the row — the shortfall is the point.
       this.sparkChip.container.setAlpha(1);
       this.tweens.add({

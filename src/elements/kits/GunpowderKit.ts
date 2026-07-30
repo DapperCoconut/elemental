@@ -38,6 +38,22 @@ const WEAPON_DEFS: Record<WeaponType, WeaponDef> = {
 const BASE_WEAPON_TYPES: WeaponType[] = ['pistol', 'ar', 'shotgun', 'rifle', 'grenade', 'machinegun'];
 const EXTRA_WEAPON_TYPES: WeaponType[] = ['flamethrower', 'rpg', 'minigun', 'sniper', 'raygun', 'freezeray', 'gunblade'];
 
+// ── Anger (divine perk) ───────────────────────────────────────────────────────
+/** How long R must be held before the arsenal goes. */
+const ANGER_HOLD_MS = 3000;
+const ANGER_DURATION_MS = 8000;
+/** 100% attack speed, 33% less damage taken — the two halves of the bargain. */
+const ANGER_CD_MULT = 0.5;
+const ANGER_DR_MULT = 0.67;
+const ANGER_RAM_DAMAGE = 35;
+const ANGER_RAM_RADIUS = 40;
+const ANGER_RAM_COOLDOWN_MS = 700;
+const ANGER_BAYONET_REACH = 46;
+const ANGER_TINT = 0xffdd33;
+const ANGER_TRAIL_GAP_MS = 55;
+const ANGER_TRAIL_LIFE_MS = 320;
+const ANGER_TRAIL_MAX = 8;
+
 const MUSKET_MAX_AMMO = 3;
 const ARSENAL_MAX = 3;
 const ARSENAL_MAX_R_UPGRADED = 6;
@@ -379,6 +395,16 @@ export class GunpowderKit {
   private arsenalHudAreas: ArsenalHudSlot[] = [];
   private wasRightDown = false;
 
+  // ── Anger (divine perk) state (player only — it is driven by a held key) ──
+  /** When R went down, or 0 while it is up. */
+  private angerHoldStart = 0;
+  private angerUntil = 0;
+  private angerDrBaseline = 1;
+  private angerCdBaseline = 1;
+  private angerRamAt = new Map<Fighter, number>();
+  private angerTrail: { x: number; y: number; bornAt: number }[] = [];
+  private angerTrailAccum = 0;
+
   // ── Weapon projectiles ──────────────────────────────────────────────────────
   private grenades: Grenade[] = [];
   private rockets: Rocket[] = [];
@@ -533,6 +559,16 @@ export class GunpowderKit {
     this.npcMinigunFiringUntil = 0;
     this.wasRightDown = false;
 
+    // Anger — the tint and the two latched Fighter fields die with the old match either way,
+    // but the timers have to be cleared or a new match starts mid-charge.
+    this.angerHoldStart = 0;
+    this.angerUntil = 0;
+    this.angerDrBaseline = 1;
+    this.angerCdBaseline = 1;
+    this.angerRamAt = new Map<Fighter, number>();
+    this.angerTrail = [];
+    this.angerTrailAccum = 0;
+
     this.fireworks = [];
     this.playerLastPlantAt = -FIREWORK_PLANT_CD_MS;
     this.npcLastPlantAt = -FIREWORK_PLANT_CD_MS;
@@ -553,12 +589,20 @@ export class GunpowderKit {
     mouseX: number,
     mouseY: number,
   ): void {
-    void time;
     this.lastMouseX = mouseX;
     this.lastMouseY = mouseY;
     if (this.arena.nukeChanneling) return;
     const { player, eKey, fKey, rKey, qKey, pointerWasDown } = this.arena;
     const ctx = () => this.arena.buildPlayerContext(mouseX, mouseY);
+
+    // ── Anger (divine perk): R is a hold, and while the charge runs nothing fires ──
+    const hasAnger = this.arena.hasPerk('player', 'anger');
+    const angry = this.isAngerCharging(time);
+    if (angry) {
+      // No shooting at all — you have a bayonet and legs. Everything below is skipped.
+      this.wasRightDown = pointer.rightButtonDown();
+      return;
+    }
 
     // Right-click: discard a weapon from the arsenal HUD.
     const rightDown = pointer.rightButtonDown();
@@ -585,8 +629,23 @@ export class GunpowderKit {
       else player.castAbility('gunpowder-explosive-retreat', ctx());
     }
 
-    // ── R: Fire at Will ──────────────────────────────────────────────────
-    if (Phaser.Input.Keyboard.JustDown(rKey) && !this.menuOpen) {
+    // ── R: Fire at Will, or Anger's three-second hold ────────────────────
+    if (hasAnger && ovSlot !== 'r' && !this.menuOpen) {
+      if (rKey.isDown) {
+        if (this.angerHoldStart === 0) this.angerHoldStart = time;
+        else if (time - this.angerHoldStart >= ANGER_HOLD_MS
+          && player.getCooldownRatio('gunpowder-fire-at-will') >= 1) {
+          // Gated on R's own cooldown (and it stamps it), so the charge can't simply be
+          // re-entered the moment it lapses — the R bar is the readout for both.
+          this.startAnger(time);
+          player.startCooldown('gunpowder-fire-at-will');
+        }
+      } else if (this.angerHoldStart > 0) {
+        // Let go early and it is just a Fire at Will, exactly as before.
+        player.castAbility('gunpowder-fire-at-will', ctx());
+        this.angerHoldStart = 0;
+      }
+    } else if (Phaser.Input.Keyboard.JustDown(rKey) && !this.menuOpen) {
       if (ovSlot === 'r') this.tryCastOverload();
       else player.castAbility('gunpowder-fire-at-will', ctx());
     }
@@ -620,6 +679,7 @@ export class GunpowderKit {
     this.updateRayBullets(time, delta);
     this.updateBlunderBlast(time);
     this.updateStuns(time);
+    this.updateAnger(time, delta);
     this.updateBuffs(time);
     this.updateOverload(time);
     this.updateFireworks(time, delta);
@@ -695,11 +755,13 @@ export class GunpowderKit {
       || this.fireworks.some((f) => f.launched) || this.blunderFireShots.length > 0
       || this.vacuumView.player !== null || this.vacuumView.npc !== null
       || this.overloadVolleys.length > 0
-      || this.demonShots.length > 0 || this.demonAvatars.length > 0;
+      || this.demonShots.length > 0 || this.demonAvatars.length > 0
+      || this.angerUntil > 0;
     if (hasAir || this.airGfx) {
       const g = this.air();
       g.clear();
       this.paintDemons(g, time, t);
+      this.paintAnger(g, time);
 
       for (const owner of ['player', 'npc'] as const) {
         const v = this.vacuumView[owner];
@@ -795,6 +857,113 @@ export class GunpowderKit {
         Phaser.Math.Clamp((guardUntil - time) / 2000, 0, 1), aim, 0, 28);
       this.syncAura(owner, 'heat', hot, delta, 1, aim, 0, 26);
     }
+  }
+
+  // ── Anger (divine perk) ───────────────────────────────────────────────────
+
+  /** True while the player is mid-charge. Every attack path checks this. */
+  isAngerCharging(time: number): boolean { return time < this.angerUntil; }
+
+  /**
+   * Anger: the arsenal goes in the bin and the gunpowder user goes in with the bayonet. Eight
+   * seconds of no shooting at all, in exchange for armour, speed of hand and a body that hurts
+   * to touch. Player-only: the whole thing is driven by a held key.
+   */
+  private startAnger(time: number): void {
+    const player = this.arena.player;
+    const scrapped = this.playerArsenal.length;
+    this.playerArsenal = [];
+    this.rebuildArsenalHud();
+
+    this.angerUntil = time + ANGER_DURATION_MS;
+    this.angerHoldStart = 0;
+    this.angerRamAt = new Map<Fighter, number>();
+    this.angerTrail = [];
+    // Latched, exactly like the weapon-passive buffs above: saved on entry, put back on expiry.
+    this.angerDrBaseline = player.incomingDamageMultiplier;
+    this.angerCdBaseline = player.cooldownMult;
+    player.incomingDamageMultiplier = this.angerDrBaseline * ANGER_DR_MULT;
+    player.cooldownMult = this.angerCdBaseline * ANGER_CD_MULT;
+    player.setTint(ANGER_TINT);
+
+    // The arsenal being destroyed, then the man himself going off.
+    this.pfx.smoke(player.x, player.y, 6 + scrapped * 2, { radius: 60, life: 900, depth: 7 });
+    this.pfx.boom(player.x, player.y, 90, { petals: 12, shrapnel: 14, duration: 520 });
+    this.arena.scene.cameras.main.shake(320, 0.008);
+    this.playerAvatar?.play('raise');
+    this.arena.showFloatingText(player.x, player.y - 48,
+      scrapped > 0 ? `😡 ARSENAL SMASHED (${scrapped})` : '😡 ANGER', '#ffdd33');
+  }
+
+  private endAnger(): void {
+    const player = this.arena.player;
+    this.angerUntil = 0;
+    player.incomingDamageMultiplier = this.angerDrBaseline;
+    player.cooldownMult = this.angerCdBaseline;
+    player.clearTint();
+    this.angerTrail = [];
+    this.arena.showFloatingText(player.x, player.y - 40, '😮‍💨 Spent.', '#998877');
+  }
+
+  private updateAnger(time: number, delta: number): void {
+    if (this.angerUntil <= 0) return;
+    if (time >= this.angerUntil) { this.endAnger(); return; }
+    const player = this.arena.player;
+    if (!player.active || player.hp <= 0) { this.endAnger(); return; }
+
+    // Afterimages: a stamp of the body every few frames, fading out behind the charge.
+    this.angerTrailAccum += delta;
+    if (this.angerTrailAccum >= ANGER_TRAIL_GAP_MS) {
+      this.angerTrailAccum -= ANGER_TRAIL_GAP_MS;
+      this.angerTrail.push({ x: player.x, y: player.y, bornAt: time });
+      if (this.angerTrail.length > ANGER_TRAIL_MAX) this.angerTrail.shift();
+    }
+    for (let i = this.angerTrail.length - 1; i >= 0; i--) {
+      if (time - this.angerTrail[i].bornAt > ANGER_TRAIL_LIFE_MS) this.angerTrail.splice(i, 1);
+    }
+
+    // Ramming: the bayonet is the whole attack now. Per-target cooldown so running through
+    // someone is a hit, not a grinder.
+    const aim = Math.atan2(this.lastMouseY - player.y, this.lastMouseX - player.x);
+    const tipX = player.x + Math.cos(aim) * ANGER_BAYONET_REACH;
+    const tipY = player.y + Math.sin(aim) * ANGER_BAYONET_REACH;
+    for (const t of this.arena.enemies) {
+      if (!t.active || t.hp <= 0) continue;
+      const near = Phaser.Math.Distance.Between(player.x, player.y, t.x, t.y) <= ANGER_RAM_RADIUS
+        || Phaser.Math.Distance.Between(tipX, tipY, t.x, t.y) <= ANGER_RAM_RADIUS * 0.7;
+      if (!near) continue;
+      if (time - (this.angerRamAt.get(t) ?? -99999) < ANGER_RAM_COOLDOWN_MS) continue;
+      this.angerRamAt.set(t, time);
+      t.takeDamage(ANGER_RAM_DAMAGE);
+      this.arena.spawnHitFlash(t.x, t.y, GUNPOWDER.chrome);
+      this.pfx.sparks(t.x, t.y, 7, aim, 10);
+      this.pfx.boom(t.x, t.y, 40, { petals: 5, shrapnel: 5, smoke: 1, duration: 300, mark: false });
+      this.arena.showFloatingText(t.x, t.y - 34, '🔪 RUN THROUGH', '#ffdd33');
+    }
+  }
+
+  /** The afterimages and the levelled bayonet, painted over everything the charge runs past. */
+  private paintAnger(g: Phaser.GameObjects.Graphics, time: number): void {
+    if (time >= this.angerUntil) return;
+    const player = this.arena.player;
+    const aim = Math.atan2(this.lastMouseY - player.y, this.lastMouseX - player.x);
+
+    for (const img of this.angerTrail) {
+      const fade = 1 - (time - img.bornAt) / ANGER_TRAIL_LIFE_MS;
+      if (fade <= 0) continue;
+      g.fillStyle(this.pcol(ANGER_TINT), 0.22 * fade);
+      g.fillCircle(img.x, img.y, 20 * fade + 6);
+      g.lineStyle(1.6, this.pcol(GUNPOWDER.glow), 0.3 * fade);
+      g.strokeCircle(img.x, img.y, 20 * fade + 6);
+    }
+
+    // Held level, out front, at the full length of the arm — and running hot.
+    const gripX = player.x + Math.cos(aim) * 14;
+    const gripY = player.y + Math.sin(aim) * 14;
+    musket(g, this.pcol, gripX, gripY, aim, ANGER_BAYONET_REACH, 0.55, 1, true);
+    // A shimmer of rage around the whole man.
+    g.fillStyle(this.pcol(ANGER_TINT), 0.12 + 0.06 * Math.sin(time / 90));
+    g.fillCircle(player.x, player.y, 30);
   }
 
   private updateStuns(time: number): void {

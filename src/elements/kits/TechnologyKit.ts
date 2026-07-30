@@ -2980,4 +2980,23 @@ export class TechnologyKit {
       }
     }
   }
+
+  /**
+   * Ruin's Spikes of Ruin (see `combat/SummonPurge.ts`).
+   * Ad boxes — pop-ups nailed to the floor, and the one thing Technology actually builds.
+   * They are rectangles rather than points, so the circle is tested against the whole box.
+   */
+  purgeSummons(x: number, y: number, radius: number, exceptOwner: 'player' | 'npc'): number {
+    let razed = 0;
+    for (let i = this.ads.length - 1; i >= 0; i--) {
+      const ad = this.ads[i];
+      if (ad.owner === exceptOwner) continue;
+      const nx = Phaser.Math.Clamp(x, ad.x, ad.x + ad.w);
+      const ny = Phaser.Math.Clamp(y, ad.y, ad.y + ad.h);
+      if (Phaser.Math.Distance.Between(x, y, nx, ny) > radius) continue;
+      this.ads.splice(i, 1);
+      razed++;
+    }
+    return razed;
+  }
 }

@@ -2409,4 +2409,33 @@ export class OilKit {
   doNpcCommandDrones(tx: number, ty: number): void { this.doCommandDrones(tx, ty, 'npc'); }
 
   doNpcLaunchDrone(tx: number, ty: number): void { this.doLaunchDrone(tx, ty, 'npc'); }
+
+  /**
+   * Ruin's Spikes of Ruin (see `combat/SummonPurge.ts`).
+   * Drones, orbiting or detached. They are built machines, and the array they orbit in is
+   * rebuilt from whatever is left, so pulling one out of the middle is safe.
+   */
+  purgeSummons(x: number, y: number, radius: number, exceptOwner: 'player' | 'npc'): number {
+    const near = (g: Phaser.GameObjects.Graphics): boolean => Phaser.Math.Distance.Between(x, y, g.x, g.y) <= radius;
+    let razed = 0;
+    const cull = (list: Drone[], owner: 'player' | 'npc'): void => {
+      if (owner === exceptOwner) return;
+      for (let i = list.length - 1; i >= 0; i--) {
+        if (!near(list[i].gfx)) continue;
+        list[i].gfx.destroy();
+        list.splice(i, 1);
+        razed++;
+      }
+    };
+    cull(this.playerDrones, 'player');
+    cull(this.npcDrones, 'npc');
+    for (let i = this.detachedDrones.length - 1; i >= 0; i--) {
+      const d = this.detachedDrones[i];
+      if (d.owner === exceptOwner || !near(d.gfx)) continue;
+      d.gfx.destroy();
+      this.detachedDrones.splice(i, 1);
+      razed++;
+    }
+    return razed;
+  }
 }

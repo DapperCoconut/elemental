@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { Element } from '../elements/Element';
 import { CastContext } from '../elements/Ability';
 import { HealthBar } from '../combat/HealthBar';
+import { Sfx } from '../audio';
 
 /**
  * Magic Mastery — Levitate: tracks the last known position of any damage-source object
@@ -58,6 +59,13 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public clottedHp = 0;
   /** Quantum blue E: gray "weak HP" layer. Absorbs damage like shield HP (bonus), but decays 3/s. */
   public weakHp = 0;
+  /**
+   * Audio: true only for the fighter the local player is driving. Set by `Player`
+   * rather than tested with `instanceof`, which would make Fighter import its own
+   * subclass. Everything else (the NPC, an online replica, a co-op ally) mixes
+   * quieter so the player's own actions stay legible in a busy fight.
+   */
+  public isPlayerFighter = false;
   public incomingDamageMultiplier = 1;
   /** Subterfuge Bribe: 0.75 while this fighter's attacker is bribed (victim-side stand-in for "deals 25% less"). */
   public bribeIncomingMult = 1;
@@ -67,6 +75,135 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    * the cigarette's shrinking duration is the part worth watching.
    */
   public smokeIncomingMult = 1;
+  /**
+   * Justice: every incoming-damage multiplier that element owns, folded into one field and
+   * rewritten from scratch by JusticeKit each frame. Flight's 20% vulnerability, Sheer Will's
+   * cowed attacker and a DAMNED verdict all land here, so none of them stomps another
+   * system's armour — and a match with no Justice in it never touches this at all.
+   */
+  public justiceIncomingMult = 1;
+  /**
+   * Magma Dragon Kin: 0.8 for the twenty seconds after a dragon egg hatches. Its own field
+   * rather than a share of `incomingDamageMultiplier` for the same reason Justice has one —
+   * MagmaKit rewrites it from scratch every frame, and a shared field would stomp whatever
+   * else had written armour that tick.
+   */
+  public magmaIncomingMult = 1;
+  /**
+   * Conquest: 0.5 while this fighter is standing on a square it owns. Rewritten from scratch
+   * by ConquestKit every frame for the same reason Justice and Magma have their own fields —
+   * sharing `incomingDamageMultiplier` would stomp whatever else wrote armour that tick.
+   */
+  public conquestIncomingMult = 1;
+  /**
+   * Passion's rose: 0.95^stacks while this fighter is holding one, one stack per hit taken.
+   * Its own field for the same reason Justice, Magma and Conquest have theirs — PassionKit
+   * rewrites it from scratch every frame, and sharing `incomingDamageMultiplier` would stomp
+   * whatever else had written armour that tick.
+   */
+  public passionIncomingMult = 1;
+  /**
+   * Ruin (Unstoppable Decay): 1.1^stacks of rot on this fighter, times 0.9^stacks carried by
+   * whoever is hitting it — the victim-side stand-in for "the decayed deal less", since
+   * `takeDamage` has no attacker reference. Rewritten from scratch by RuinKit every frame,
+   * and deliberately outside the invertible mitigation block below: decay is a debuff, and
+   * Spikes of Ruin turns *buffs* inside out.
+   */
+  public ruinIncomingMult = 1;
+  /**
+   * Glass: 1.25 for being made of glass, 1.5 with every shard thrown away — and the same
+   * numbers the other way up (0.75 / 0.5) while Temper is running, which is what "the
+   * vulnerabilities are replaced with equal amounts of resistance" has to mean. Its own field
+   * for the same reason Justice, Magma, Conquest and Passion have theirs, and inside the
+   * mitigation product below on purpose: Ruin's spikes turning a tempered Glass back into a
+   * fragile one is exactly the right interaction.
+   */
+  public glassIncomingMult = 1;
+  /**
+   * Death (Styx Shot): 1 − 15% per brand this fighter's *attacker* is carrying, doubled under a
+   * Hospice noose — the victim-side stand-in for "the branded deal less", since `takeDamage` has
+   * no attacker reference. Same shape as `bribeIncomingMult` and `hopelessIncomingMult`, and its
+   * own field for the same reason Justice, Magma and Glass have theirs: DeathKit rewrites it
+   * from scratch every frame and must not stomp whatever else wrote armour that tick.
+   */
+  public deathIncomingMult = 1;
+  /**
+   * Paper's Journal. Rewritten from scratch by PaperKit every frame onto *both* sides of the
+   * fight, meaning two different things depending on who is wearing it: on the Paper player it
+   * is the resist entries (below 1), and on everyone Paper is fighting it is the pressure
+   * entries (above 1). There is no collision between those two readings because the journal is
+   * a save-backed player passive — an npc Paper has no save, so it never writes this at all.
+   */
+  public journalIncomingMult = 1;
+  /**
+   * Psychic (Coma): 0.5 while this fighter is under. Its own field for the same reason Justice,
+   * Magma, Glass and Death have theirs — PsychicKit rewrites it from scratch every frame, and
+   * sharing `incomingDamageMultiplier` would stomp whatever else wrote armour that tick. The
+   * half of every hit this field eats is not lost: PsychicKit banks it straight back as stress.
+   */
+  public psychicIncomingMult = 1;
+  /**
+   * Bind (Shards of Oblivion): 1.1^tithes of vulnerability the patron has charged this fighter
+   * for its favours. Its own field for the same reason Justice, Magma, Glass and Psychic have
+   * theirs — BindKit rewrites it from scratch every frame, and sharing
+   * `incomingDamageMultiplier` would stomp whatever else wrote armour that tick. Permanent for
+   * the match on purpose: a tithe is not a debuff, it is a price.
+   */
+  public bindIncomingMult = 1;
+  /**
+   * Radiation (Irradiated): `Date.now()` epoch until which every point of healing aimed at this
+   * fighter lands as damage instead — see `heal`. One field rather than a hook per healing
+   * source, because `heal()` is the single place every heal in the game passes through.
+   */
+  public healInvertedUntil = 0;
+  /** Invoked with the amount whenever an irradiated heal turns into a hit, so a kit can draw it. */
+  public onHealInverted: ((amount: number) => void) | null = null;
+  /**
+   * Radiation (X-Ray Vision): a multiplier on the *physics body only*, leaving the sprite the
+   * size it looks. Its own field rather than a share of `sizeMult` because the two mean
+   * different things — a target lit up by an X-ray is easier to hit without becoming bigger —
+   * and because Fate's slots and Illusion's folds must still own `sizeMult`/`shapeSizeMult`
+   * without either of them silently handing a swollen hitbox back.
+   */
+  public hitboxMult = 1;
+  /**
+   * Psychic (Migraine): `Date.now()` epoch until which everything this fighter aims goes wide.
+   * Applied where `CastContext.targetX/targetY` is built, which is the one place in the game
+   * every ability of every element takes its aim from — so one field makes all ~240 of them
+   * capable of missing without any of them knowing about it.
+   */
+  public aimScatterUntil = 0;
+  /**
+   * Psychic (Opened Eyes): while > 0, this fighter's casts are queued rather than resolved.
+   * The cooldown is stamped at the press and the effect lands this many milliseconds later,
+   * which is what makes the psychic's foreknowledge honest rather than a guess.
+   */
+  public castDelayMs = 0;
+  /**
+   * Installed by PsychicKit alongside `castDelayMs`. Returning true means the kit has taken
+   * ownership of the cast and will call `fire` itself; returning false resolves it normally,
+   * so a queue that refuses (a dead caster, a full board) can never swallow an ability.
+   */
+  public queueDelayedCast: ((abilityId: string, delayMs: number, fire: () => void) => boolean) | null = null;
+  /** Set for exactly one `announceCast` when a delayed cast resolves — see `onCastStamp`. */
+  private pendingCastAim: { x: number; y: number } | null = null;
+  /**
+   * Ruin (Spikes of Ruin): `scene.time.now` timestamp until which every buff this fighter is
+   * wearing comes back as its own opposite. Read at the two places a buff can actually be
+   * felt — the speed aggregate in ArenaScene and the mitigation product in `takeDamage` — so
+   * a boost owned by any kit is caught without that kit knowing anything about Ruin.
+   */
+  public buffsInvertedUntil = 0;
+  /**
+   * Divine perk Order (plasma): nothing this fighter does can hurt it. Both self-harm
+   * routes — `applySelfDamage` and a `selfInflicted` `takeDamage` — bail out entirely,
+   * which is every way an element can charge itself for its own abilities.
+   */
+  public selfDamageImmune = false;
+  /** Divine perk Order: 1.25 — the price of that immunity is that everyone *else* hits harder. */
+  public orderIncomingMult = 1;
+  /** Invoked with the amount whenever `selfDamageImmune` swallows a hit, so the kit can draw the tell. */
+  public onSelfDamageBlocked: ((amount: number) => void) | null = null;
   /** Creation Buff Potion: 1.25 while whoever is damaging this fighter is potion-empowered (victim-side stand-in for "deals 25% more"). */
   public empoweredIncomingMult = 1;
   /** Creation Protection Potion: 0.75 while this fighter is potion-protected. */
@@ -186,7 +323,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     }
   }
   /** Online play: invoked whenever a cast is stamped (castAbility success, triggerCooldown, startCooldown). */
-  public onCastStamp: ((abilityId: string) => void) | null = null;
+  /**
+   * `aim` is only passed for a cast that was resolved late (Psychic's delayed queue), where
+   * the point it was actually aimed at is two seconds older than wherever the mouse is now.
+   */
+  public onCastStamp: ((abilityId: string, aim?: { x: number; y: number }) => void) | null = null;
   /** 0–1 probability that outgoing attacks deal a critical hit (2× damage). */
   public critChance = 0;
   /** Damage multiplier applied on a critical hit. Default 2. */
@@ -195,6 +336,28 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public incomingCritBonus = 0;
   /** Visual/physics size multiplier applied by Fate Slots. Default 1. */
   public sizeMult = 1;
+  /**
+   * Illusion Tesseract: a second, independent size multiplier for a fighter that has been
+   * folded into a square, star or rhombus. Its own field rather than a share of `sizeMult`
+   * because the two have different owners — Fate rewrites `sizeMult` from its own state, and
+   * a slots roll landing mid-fold would otherwise silently hand the shape back.
+   */
+  public shapeSizeMult = 1;
+  /**
+   * Slime (Oozorbtion): 1.2 while this fighter has opened up to swallow the next attack. A third
+   * independent size multiplier for the same reason `shapeSizeMult` is a second one — Fate's slots
+   * own `sizeMult` and Illusion's folds own `shapeSizeMult`, and a roll landing mid-swell would
+   * otherwise silently hand the swelling back. Folded into `applySizeMult` so the hitbox grows
+   * with the body: being a bigger target is the price of the ability.
+   */
+  public oozeSizeMult = 1;
+  /**
+   * Illusion Dance: projectiles pass straight through this fighter. Checked by ArenaScene's
+   * two projectile-overlap handlers — the only place in the game where a shot decides whether
+   * it has hit somebody. Everything that isn't a projectile (AoE, hitscan, contact, DOTs) is
+   * deliberately unaffected.
+   */
+  public projectilePhase = false;
   /** Walk speed multiplier applied by Fate Slots. Default 1. */
   public walkSpeedMult = 1;
 
@@ -392,8 +555,22 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Card: burn damage multiplier for DOT ticks applied to this fighter (Painful card, set on NPC). */
   public burnDpsMult = 1;
 
+  /**
+   * Ruin (Lockdown): the last ability this fighter actually got off, which is the only thing
+   * a lock can be aimed at. Written by `stampCast`, so charge-and-release abilities that
+   * never touch `castAbility` still count.
+   */
+  public lastCastAbilityId: string | null = null;
+
   private incomingCritCtx: { chance: number; mult: number } | null = null;
   private cooldowns: Map<string, number> = new Map();
+  /**
+   * Ruin (Lockdown): a hard "not before" per ability, kept apart from `cooldowns` because the
+   * two count different things. A lock is a fixed wall-clock wait that no cooldown reduction
+   * may shorten, and lifting it must not hand back a cooldown that was already running.
+   * `ms` is stored alongside so the ability bar can drain the lock rather than the cooldown.
+   */
+  private lockouts: Map<string, { until: number; ms: number }> = new Map();
   private healthBar: HealthBar;
 
   constructor(
@@ -431,9 +608,14 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
   /** Update visual scale and physics body to match sizeMult. Call after changing sizeMult. */
   applySizeMult(): void {
-    this.setScale(this.sizeMult);
+    // Folded shapes ride on top of whatever else is scaling this fighter, so any other
+    // system calling this keeps the fold rather than quietly cancelling it.
+    const scale = this.sizeMult * this.shapeSizeMult * this.oozeSizeMult;
+    this.setScale(scale);
     const baseRadius = 22;
-    const radius = Math.round(baseRadius * this.sizeMult);
+    // `hitboxMult` deliberately misses `setScale` above: an X-rayed target is easier to hit
+    // without looking any different, which is the whole trade the ability makes.
+    const radius = Math.round(baseRadius * scale * this.hitboxMult);
     const offset = (48 - radius * 2) / 2;
     (this.body as Phaser.Physics.Arcade.Body).setCircle(radius, offset, offset);
   }
@@ -455,6 +637,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     if (this.allyDamageBlocked && Fighter.nonAllyDepth === 0) return;
     // Online PvP: only relayed hits change our health — see `netAuthoritativeDamage`.
     if (this.netAuthoritativeDamage && !opts?.netApplied && !opts?.selfInflicted) return;
+    // Divine perk Order: self-inflicted costs are refused outright.
+    if (opts?.selfInflicted && this.selfDamageImmune) { this.onSelfDamageBlocked?.(amount); return; }
     // Magic Mastery — Levitate: immune to damage from a source that hasn't moved in 3s.
     this.damageWasSelfInflicted = false;
     if (this.levitating && opts?.source && opts.sourceX !== undefined && opts.sourceY !== undefined
@@ -480,7 +664,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // Tallied here: after the crit roll (a crit really is a bigger hit) but before every
       // mitigation multiplier on the line below, which is what "damage aimed at you" means.
       this.rawDamageTaken += amount;
-      amount = Math.round(amount * this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.netDefenseMult);
+      let mitigation = this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.glassIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.orderIncomingMult * this.netDefenseMult;
+      // Ruin's spikes turn armour inside out — 25% less damage taken comes back as 25% more.
+      // Only a net *buff* is flipped; a fighter already taking extra damage is left alone.
+      if (mitigation < 1 && this.scene.time.now < this.buffsInvertedUntil) mitigation = 2 - mitigation;
+      amount = Math.round(amount * mitigation * this.ruinIncomingMult);
       if (this.darkVulnStacks > 0) amount = Math.round(amount * (1 + 0.25 * this.darkVulnStacks));
       // Fire Mastery — Heatwave: exposed amplifies the next hit, then is consumed.
       // Fire damage-over-time is exempt on both counts: burn/molten ticks are neither
@@ -509,12 +697,18 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       if (damageCap > 0) amount = Math.min(amount, damageCap);
     }
     this.lastIncomingDamage = amount;
-    if (isCrit) this.emit('damaged-crit', amount);
+    if (isCrit) {
+      this.emit('damaged-crit', amount);
+      Sfx.crit(this.x);
+    }
 
     if (this.netGhost) {
       // Hit feedback only — vitals come from the network. Report the computed
       // amount so the local owner can forward it to the authoritative peer.
       this.onGhostDamage?.(amount, opts);
+      // Sound is part of that feedback: without this, landing a hit on a remote
+      // opponent would be silent, since the ghost never reaches the real-hit path.
+      if (amount > 0 && !isCrit) Sfx.hit(amount, this.x, false);
       if (!this.forceInvisible) {
         this.setAlpha(0.5);
         this.scene.time.delayedCall(120, () => {
@@ -528,6 +722,10 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
     if (!opts?.pierce && this.shieldCharges > 0) {
       this.shieldCharges--;
+      // A charge blocking a hit rings; the layers below (shield HP, weak HP,
+      // clotted HP) only soak it, so they get the duller absorb thud instead.
+      Sfx.playAt('shield-block', this.x);
+      if (this.shieldCharges === 0) Sfx.playAt('shield-break', this.x, { volume: 0.7 });
       if (!this.forceInvisible) {
         this.setAlpha(0.7);
         this.scene.time.delayedCall(200, () => {
@@ -542,6 +740,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       const absorbed = Math.min(this.shieldHp, amount);
       this.shieldHp -= absorbed;
       amount -= absorbed;
+      if (absorbed > 0) Sfx.playAt('shield-absorb', this.x);
+      if (this.shieldHp === 0) Sfx.playAt('shield-break', this.x, { volume: 0.7 });
       if (amount === 0) {
         this.emit('damaged', 0);
         if (!this.forceInvisible) {
@@ -557,6 +757,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       const absorbed = Math.min(this.weakHp, amount);
       this.weakHp -= absorbed;
       amount -= absorbed;
+      if (absorbed > 0) Sfx.playAt('shield-absorb', this.x, { rate: 1.25, volume: 0.8 });
       if (amount === 0) {
         this.emit('damaged', 0);
         if (!this.forceInvisible) {
@@ -573,6 +774,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       const clotAbsorb = Math.min(this.clottedHp, amount / 2);
       this.clottedHp = Math.max(0, this.clottedHp - clotAbsorb);
       amount = Math.max(0, amount - clotAbsorb * 2);
+      if (clotAbsorb > 0) Sfx.playAt('shield-absorb', this.x, { rate: 0.8, volume: 0.85 });
       if (amount === 0) {
         this.emit('damaged', 0);
         if (!this.forceInvisible) {
@@ -585,6 +787,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
     this.hp = Math.max(0, this.hp - amount);
     this.emit('damaged', amount);
+    // A crit already announced itself above with its own, louder sound.
+    if (amount > 0 && !isCrit) Sfx.hit(amount, this.x, this.isPlayerFighter);
     if (amount > 0 && this.onDamaged) this.onDamaged(amount);
 
     // Torture Trap lifesteal: heal the link source for actual damage taken
@@ -601,6 +805,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
     if (this.hp <= 0) {
       this.emit('defeated');
+      Sfx.playAt(this.isPlayerFighter ? 'death-player' : 'death-npc', this.x);
     }
   }
 
@@ -613,11 +818,25 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   heal(amount: number): void {
     if (this.netGhost) return;
     if (this.healStopUntil > 0 && Date.now() < this.healStopUntil) return;
+    // Radiation (Irradiated): the heal arrives, it just arrives the wrong way round. Pierced,
+    // because a shield spent soaking your own regeneration would be a very strange thing to
+    // watch, and routed as non-ally damage so it still lands on a co-op player.
+    if (this.healInvertedUntil > 0 && Date.now() < this.healInvertedUntil) {
+      const harm = Math.round(amount);
+      if (harm > 0) {
+        Fighter.asNonAllyDamage(() => this.takeDamage(harm, { pierce: true }));
+        this.onHealInverted?.(harm);
+      }
+      return;
+    }
     const before = this.hp;
     // Clotted HP occupies part of the max-HP pool — normal HP can only refill
     // up to what isn't clotted, so total (hp + clottedHp) never exceeds maxHp.
     this.hp = Math.min(this.maxHp - this.clottedHp, this.hp + amount);
     const actual = this.hp - before;
+    // Regeneration ticks call this many times a second; the recipe's own minGap
+    // collapses those into an occasional chime rather than a continuous tone.
+    if (actual > 0) Sfx.playAt('heal', this.x, { volume: this.isPlayerFighter ? 1 : 0.6 });
     if (actual > 0 && this.onHeal) this.onHeal(actual);
   }
 
@@ -653,9 +872,14 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Like takeDamage but bypasses isInvincible — used for self-inflicted effects. */
   applySelfDamage(amount: number): void {
     if (this.netGhost) return;
+    // Divine perk Order: the other self-harm route — see `selfDamageImmune`.
+    if (this.selfDamageImmune) { this.onSelfDamageBlocked?.(amount); return; }
     this.damageWasSelfInflicted = true;
     this.hp = Math.max(0, this.hp - amount);
     this.emit('damaged', amount);
+    // Quieter than a real hit: self-damage is usually a steady drip (Flame Body,
+    // Pain Battery) and shouldn't compete with the fight for attention.
+    if (amount > 0) Sfx.playAt('hit-light', this.x, { volume: 0.55, rate: 1.2 });
 
     if (!this.forceInvisible) {
       this.setAlpha(0.3);
@@ -666,6 +890,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
     if (this.hp <= 0) {
       this.emit('defeated');
+      Sfx.playAt(this.isPlayerFighter ? 'death-player' : 'death-npc', this.x);
     }
   }
 
@@ -691,8 +916,25 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     const now = Date.now();
     if (now < this.disarmedUntil || now < this.chickenUntil) return false;
     if (now < this.silencedUntil && ability.displayKey !== 'Click') return false;
+    if (now < (this.lockouts.get(abilityId)?.until ?? 0)) return false;
     const ultimateExtra = (ability as { isUltimate?: boolean }).isUltimate ? this.ultimateCooldownMult : 1;
     if (now - (this.cooldowns.get(abilityId) ?? 0) < ability.cooldown * this.cooldownMult * this.netCooldownMult * ultimateExtra) return false;
+
+    // Psychic (Opened Eyes): the press is real — it commits the cooldown here and now — but
+    // the ability itself is handed to the kit to resolve two seconds later. Everything the
+    // cast is *announced* by (the sound, the online relay, the Wrenched backfire) waits with
+    // it, so the world only learns about the ability at the moment it actually happens.
+    if (this.castDelayMs > 0 && this.queueDelayedCast) {
+      this.cooldowns.set(abilityId, now);
+      const taken = this.queueDelayedCast(abilityId, this.castDelayMs, () => {
+        // The aim travels with the cast: by the time this runs the mouse has moved on, and
+        // the relay OnlineKit builds off `onCastStamp` would otherwise point somewhere else.
+        this.pendingCastAim = { x: ctx.targetX, y: ctx.targetY };
+        this.announceCast(abilityId);
+        ability.cast(ctx);
+      });
+      if (taken) return true;
+    }
 
     this.stampCast(abilityId);
     ability.cast(ctx);
@@ -708,7 +950,24 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   private stampCast(abilityId: string): void {
     this.cooldowns.set(abilityId, Date.now());
-    this.onCastStamp?.(abilityId);
+    this.announceCast(abilityId);
+  }
+
+  /**
+   * The half of `stampCast` that is about the ability *happening* rather than about it being
+   * paid for. Split out for Psychic's delayed casts, which stamp the cooldown two seconds
+   * before any of this runs — see `castDelayMs`.
+   */
+  private announceCast(abilityId: string): void {
+    this.lastCastAbilityId = abilityId;
+    // The one place every ability in the game passes through, so it is also the
+    // one place any of them needs to be given a voice — see `AbilitySounds.ts`.
+    const ability = this.element.abilities.find((a) => a.id === abilityId);
+    Sfx.ability(abilityId, this.element.id, ability?.displayKey, {
+      isPlayer: this.isPlayerFighter, x: this.x,
+    });
+    this.onCastStamp?.(abilityId, this.pendingCastAim ?? undefined);
+    this.pendingCastAim = null;
     if (this.castPunishDamage > 0 && Date.now() < this.castPunishUntil) {
       const cost = this.castPunishDamage;
       // The wrench belongs to whoever threw it, so this is not self-inflicted damage — it
@@ -726,6 +985,35 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Shift all stored cooldown timestamps forward by deltaMs (used to compensate for real-time elapsed during a game pause). */
   shiftCooldowns(deltaMs: number): void {
     for (const [k, v] of this.cooldowns) this.cooldowns.set(k, v + deltaMs);
+    // Locks are wall-clock waits, so a pause has to move them too or a 20s lockdown
+    // quietly expires while the game is sitting on the pause menu.
+    for (const [, lock] of this.lockouts) lock.until += deltaMs;
+  }
+
+  /**
+   * Ruin (Lockdown): refuse `abilityId` for `ms`, however ready its cooldown is. Never
+   * shortens a lock already in place.
+   */
+  lockAbility(abilityId: string, ms: number): void {
+    const until = Date.now() + ms;
+    const cur = this.lockouts.get(abilityId);
+    if (cur && cur.until >= until) return;
+    this.lockouts.set(abilityId, { until, ms });
+  }
+
+  /** Milliseconds left on an ability's lock, or 0 if it isn't locked. */
+  lockRemaining(abilityId: string): number {
+    return Math.max(0, (this.lockouts.get(abilityId)?.until ?? 0) - Date.now());
+  }
+
+  /** Every ability currently locked out, newest expiry last. Read by the status tray. */
+  lockedAbilities(): string[] {
+    const now = Date.now();
+    return [...this.lockouts.entries()].filter(([, l]) => l.until > now).map(([id]) => id);
+  }
+
+  clearLocks(): void {
+    this.lockouts.clear();
   }
 
   /** Force an ability's cooldown to start right now (used by kits that manage their own CD timing). */
@@ -737,6 +1025,15 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   reduceCooldown(abilityId: string, byMs: number): void {
     const stored = this.cooldowns.get(abilityId) ?? 0;
     this.cooldowns.set(abilityId, stored - byMs);
+  }
+
+  /**
+   * Restart an ability's cooldown from now without casting, voicing or relaying anything —
+   * Psychic's Mind Control, which takes an ability out of the queue *after* it was paid for
+   * and has to make the thief pay for it a second time.
+   */
+  restampCooldown(abilityId: string): void {
+    this.cooldowns.set(abilityId, Date.now());
   }
 
   /** Make an ability immediately ready (clears its cooldown). */
@@ -751,7 +1048,13 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     const elapsed = Date.now() - (this.cooldowns.get(abilityId) ?? 0);
     const ultimateCdExtra = (ability as { isUltimate?: boolean }).isUltimate ? this.ultimateCooldownMult : 1;
     const effectiveCd = ability.cooldown * (this.cooldownMult || 1) * this.netCooldownMult * ultimateCdExtra;
-    return Math.min(1, elapsed / effectiveCd);
+    const ratio = Math.min(1, elapsed / effectiveCd);
+    // A lock outranks the cooldown underneath it: whichever has longer to run is what the
+    // card should be draining, or a locked ability would show as ready and refuse the press.
+    const lock = this.lockouts.get(abilityId);
+    if (!lock) return ratio;
+    const left = lock.until - Date.now();
+    return left <= 0 ? ratio : Math.min(ratio, 1 - left / lock.ms);
   }
 
   preUpdate(time: number, delta: number): void {

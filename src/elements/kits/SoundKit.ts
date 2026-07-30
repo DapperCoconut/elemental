@@ -2034,4 +2034,21 @@ export class SoundKit {
     }
     return nearest;
   }
+
+  /**
+   * Ruin's Spikes of Ruin (see `combat/SummonPurge.ts`).
+   * The bugle caravans.
+   */
+  purgeSummons(x: number, y: number, radius: number, exceptOwner: 'player' | 'npc'): number {
+    const near = (px: number, py: number): boolean => Phaser.Math.Distance.Between(x, y, px, py) <= radius;
+    let razed = 0;
+    for (let i = this.caravans.length - 1; i >= 0; i--) {
+      const c = this.caravans[i];
+      if (c.owner === exceptOwner || !near(c.x, c.y)) continue;
+      c.gfx.destroy();
+      this.caravans.splice(i, 1);
+      razed++;
+    }
+    return razed;
+  }
 }

@@ -228,6 +228,40 @@ interface FloorVirus {
   healing: boolean;
 }
 
+/**
+ * Emesis (divine perk): a cloud of thrown-up bile hanging where it landed. Owned by whoever
+ * brought it up, and it only ever burns the *other* side — including when the other side is
+ * the one heaving, which is how this spreads.
+ */
+interface VomitCloud {
+  /** Redrawn every frame — it churns and sags, so it can't be a sprite with a tween on it. */
+  gfx: Phaser.GameObjects.Graphics;
+  x: number; y: number;
+  vx: number; vy: number;
+  owner: Owner;
+  expiresAt: number;
+  tickAccum: number;
+  /** Fixes this cloud's lobe pattern so its edge boils in place. */
+  seed: number;
+}
+
+/** How often a carrier's own stomach turns on it. */
+const EMESIS_INTERVAL_MS = 7000;
+const EMESIS_CLOUD_COUNT = 5;
+const EMESIS_CLOUD_LIFE_MS = 3000;
+/** Launched hard but braked hard — the clouds are meant to land just in front of you. */
+const EMESIS_CLOUD_SPEED = 190;
+const EMESIS_CLOUD_DRAG = 0.88;
+const EMESIS_CONE_HALF = Math.PI / 5;
+const EMESIS_CLOUD_RADIUS = 24;
+const EMESIS_TICK_MS = 500;
+const EMESIS_TICK_DAMAGE = 4;
+/** Anything caught in a cloud brings up this many of its own, spread over the window. */
+const EMESIS_SPREAD_COUNT = 2;
+const EMESIS_SPREAD_WINDOW_MS = 10000;
+/** Runaway cap: a chain of spreads can otherwise fill the arena. */
+const EMESIS_MAX_CLOUDS = 40;
+
 interface SporeWall {
   /** Redrawn every frame — the membrane pulses, hardens with maturity and recedes as it takes damage. */
   gfx: Phaser.GameObjects.Graphics;
@@ -406,6 +440,13 @@ export class GrowthKit {
   private clones: Clone[] = [];
   private puddles: SoupPuddle[] = [];
 
+  // ── Emesis (divine perk) ────────────────────────────────────────────────
+  private vomitClouds: VomitCloud[] = [];
+  /** Next time each side's own stomach turns, per owner. */
+  private emesisNextAt: Record<Owner, number> = { player: 0, npc: 0 };
+  /** Fighters that have been made sick and owe some heaving, and when the next one is due. */
+  private forcedVomits = new Map<Fighter, { left: number; nextAt: number }>();
+
   private playerDna = 0;
   private npcDna = 0;
   private playerDmgAccum: Map<Fighter, number> = new Map();
@@ -520,6 +561,10 @@ export class GrowthKit {
     this.clones = [];
     for (const p of this.puddles) p.container.destroy();
     this.puddles = [];
+    for (const c of this.vomitClouds) c.gfx.destroy();
+    this.vomitClouds = [];
+    this.emesisNextAt = { player: 0, npc: 0 };
+    this.forcedVomits = new Map<Fighter, { left: number; nextAt: number }>();
     for (const s of this.syringes) s.container.destroy();
     this.syringes = [];
     for (const s of this.sicknesses) this.detachSickness(s);
@@ -1216,6 +1261,7 @@ export class GrowthKit {
     this.updateSyringes(time, delta);
     this.updateSickness(time, delta);
     this.updateBloodPuddles(time);
+    this.updateEmesis(time, delta);
     if (this.evolveInvincibleActive && time >= this.evolveInvincibleEndsAt) this.endEvolveInvincibility();
     this.drawDnaBar();
     this.drawDnaHudBar();
@@ -1571,6 +1617,158 @@ export class GrowthKit {
       this.fx(owner).motes(t.x, t.y, 5, { angle: aim, spread: 0.8, speed: 110, size: 2.4, life: 380, depth: 8, tones });
       this.registerDamage(owner, t, dmg);
       this.onClickDamage(owner, srcBody, dmg);
+    }
+  }
+
+  // ── Emesis (divine perk) ──────────────────────────────────────────────
+
+  /** True while that side is playing growth with Emesis equipped. */
+  private hasEmesis(owner: Owner): boolean {
+    const elementId = owner === 'player' ? this.arena.elementId : this.arena.npcElementId;
+    return elementId === 'growth' && this.arena.hasPerk(owner, 'emesis');
+  }
+
+  /**
+   * Emesis: the carrier's own stomach turns every few seconds, and anything caught in the
+   * result owes two of its own within ten. Nothing here is aimed or cast — it is a condition,
+   * and the spread is the point.
+   */
+  private updateEmesis(time: number, delta: number): void {
+    // ── The carrier's own heaves ──
+    for (const owner of ['player', 'npc'] as const) {
+      if (!this.hasEmesis(owner)) { this.emesisNextAt[owner] = 0; continue; }
+      if (this.emesisNextAt[owner] === 0) { this.emesisNextAt[owner] = time + EMESIS_INTERVAL_MS; continue; }
+      if (time < this.emesisNextAt[owner]) continue;
+      this.emesisNextAt[owner] = time + EMESIS_INTERVAL_MS;
+      const f = owner === 'player' ? this.arena.player : this.arena.npc;
+      if (f?.active && f.hp > 0) this.heave(f, owner, time);
+    }
+
+    // ── Heaves owed by whoever has been caught in one ──
+    for (const [f, owed] of this.forcedVomits) {
+      if (!f.active || f.hp <= 0 || owed.left <= 0) { this.forcedVomits.delete(f); continue; }
+      if (time < owed.nextAt) continue;
+      owed.left--;
+      owed.nextAt = time + EMESIS_SPREAD_WINDOW_MS / (EMESIS_SPREAD_COUNT + 1);
+      // Whose clouds are these? Theirs — which is why being sicked on is dangerous to the
+      // person who did it. A husk belongs to nobody, so its bile is npc-owned by convention.
+      const owner: Owner = f === this.arena.player ? 'player' : 'npc';
+      this.heave(f, owner, time);
+      if (owed.left <= 0) this.forcedVomits.delete(f);
+    }
+
+    this.updateVomitClouds(time, delta);
+  }
+
+  /** One bout: a cone of clouds thrown out in front of `f`, braking almost immediately. */
+  private heave(f: Fighter, owner: Owner, time: number): void {
+    const aim = owner === 'player'
+      ? Math.atan2((this.aimY || f.y) - f.y, (this.aimX || f.x + 1) - f.x)
+      : Math.atan2(this.arena.player.y - f.y, this.arena.player.x - f.x);
+    this.avatarOf(owner)?.play('sweep', aim);
+    this.fx(owner).motes(f.x, f.y, 6, {
+      angle: aim, spread: EMESIS_CONE_HALF, speed: 150, size: 3, life: 420, depth: 8,
+      tones: SICK_TONES,
+    });
+    this.arena.showFloatingText(f.x, f.y - 40, '🤢 …', '#88cc44');
+
+    for (let i = 0; i < EMESIS_CLOUD_COUNT; i++) {
+      if (this.vomitClouds.length >= EMESIS_MAX_CLOUDS) break;
+      const spread = ((i / (EMESIS_CLOUD_COUNT - 1)) - 0.5) * 2 * EMESIS_CONE_HALF;
+      const a = aim + spread;
+      const speed = EMESIS_CLOUD_SPEED * (0.7 + Math.random() * 0.5);
+      this.vomitClouds.push({
+        gfx: this.arena.scene.add.graphics().setDepth(4),
+        x: f.x + Math.cos(a) * 18, y: f.y + Math.sin(a) * 18,
+        vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
+        owner,
+        expiresAt: time + EMESIS_CLOUD_LIFE_MS,
+        tickAccum: 0,
+        seed: Math.random() * Math.PI * 2,
+      });
+    }
+  }
+
+  private updateVomitClouds(time: number, delta: number): void {
+    const dt = delta / 1000;
+    for (let i = this.vomitClouds.length - 1; i >= 0; i--) {
+      const c = this.vomitClouds[i];
+      if (time >= c.expiresAt) {
+        c.gfx.destroy();
+        this.vomitClouds.splice(i, 1);
+        continue;
+      }
+      c.x += c.vx * dt;
+      c.y += c.vy * dt;
+      const drag = Math.pow(EMESIS_CLOUD_DRAG, delta / 16.67);
+      c.vx *= drag;
+      c.vy *= drag;
+
+      c.tickAccum += delta;
+      if (c.tickAccum >= EMESIS_TICK_MS) {
+        c.tickAccum -= EMESIS_TICK_MS;
+        for (const t of this.targetsOf(c.owner)) {
+          if (!t.active || t.hp <= 0) continue;
+          if (Phaser.Math.Distance.Between(c.x, c.y, t.x, t.y) > EMESIS_CLOUD_RADIUS) continue;
+          t.takeDamage(EMESIS_TICK_DAMAGE, { source: c, sourceX: c.x, sourceY: c.y });
+          this.arena.spawnHitFlash(t.x, t.y, GROWTH.lime);
+          this.registerDamage(c.owner, t, EMESIS_TICK_DAMAGE);
+          // Caught in it: they owe their own, and theirs will burn *us*.
+          if (!this.forcedVomits.has(t)) {
+            this.forcedVomits.set(t, {
+              left: EMESIS_SPREAD_COUNT,
+              nextAt: time + EMESIS_SPREAD_WINDOW_MS / (EMESIS_SPREAD_COUNT + 1),
+            });
+            this.arena.showFloatingText(t.x, t.y - 46, '🤮 Sick!', '#aadd44');
+          }
+        }
+      }
+
+      this.drawVomitCloud(c, time);
+    }
+  }
+
+  /**
+   * A cloud of bile: a sagging body of overlapping lobes, a few heavier drips settling out of
+   * the bottom of it, and a slick of it on the floor underneath.
+   */
+  private drawVomitCloud(c: VomitCloud, time: number): void {
+    const g = c.gfx;
+    const t = time / 1000;
+    const life = Phaser.Math.Clamp((c.expiresAt - time) / EMESIS_CLOUD_LIFE_MS, 0, 1);
+    const col = this.col(c.owner);
+    g.clear();
+
+    // The slick it is settling into.
+    g.fillStyle(col(GROWTH.humus), 0.22 * life);
+    g.fillEllipse(c.x, c.y + 8, EMESIS_CLOUD_RADIUS * 1.8, EMESIS_CLOUD_RADIUS * 0.7);
+
+    // Body: five lobes boiling around a centre, each on its own phase.
+    for (let i = 0; i < 5; i++) {
+      const a = c.seed + i * (Math.PI * 2 / 5) + Math.sin(t * 2 + i) * 0.3;
+      const d = EMESIS_CLOUD_RADIUS * (0.32 + 0.16 * Math.sin(t * 3 + i * 1.7));
+      const r = EMESIS_CLOUD_RADIUS * (0.5 + 0.12 * Math.sin(t * 4 + i));
+      g.fillStyle(col(i % 2 === 0 ? GROWTH.moss : GROWTH.leaf), 0.6 * life);
+      g.fillCircle(c.x + Math.cos(a) * d, c.y + Math.sin(a) * d, r);
+    }
+    g.fillStyle(col(GROWTH.lime), 0.5 * life);
+    g.fillCircle(c.x, c.y, EMESIS_CLOUD_RADIUS * 0.44);
+    // Bright flecks in it — the bits that make it read as sick rather than as smoke.
+    for (let i = 0; i < 4; i++) {
+      const a = c.seed * 2 + i * 1.9 + t * 1.4;
+      const d = EMESIS_CLOUD_RADIUS * 0.5;
+      g.fillStyle(col(GROWTH.sprout), 0.8 * life);
+      g.fillCircle(c.x + Math.cos(a) * d, c.y + Math.sin(a) * d * 0.7, 1.8);
+    }
+    // Two drips running out of the underside.
+    g.lineStyle(2, col(GROWTH.leaf), 0.55 * life);
+    for (const side of [-1, 1]) {
+      const dx = c.x + side * EMESIS_CLOUD_RADIUS * 0.42;
+      const sag = 5 + 4 * Math.abs(Math.sin(t * 2.2 + side));
+      g.beginPath();
+      g.moveTo(dx, c.y + EMESIS_CLOUD_RADIUS * 0.34);
+      g.lineTo(dx + side, c.y + EMESIS_CLOUD_RADIUS * 0.34 + sag);
+      g.strokePath();
     }
   }
 
@@ -3017,5 +3215,37 @@ export class GrowthKit {
       body.sweatR = Math.max(body.sweatR, 1);
       body.sweatF = Math.max(body.sweatF, 1);
     }
+  }
+
+  /**
+   * Ruin's Spikes of Ruin (see `combat/SummonPurge.ts`).
+   * Clones, the nests that gestate them and the spore walls. A clone is a grown body rather
+   * than a fighter — it has no `Fighter` behind it — so it counts as a summon and dies with the rest.
+   */
+  purgeSummons(x: number, y: number, radius: number, exceptOwner: 'player' | 'npc'): number {
+    const near = (px: number, py: number): boolean => Phaser.Math.Distance.Between(x, y, px, py) <= radius;
+    let razed = 0;
+    for (let i = this.clones.length - 1; i >= 0; i--) {
+      const c = this.clones[i];
+      if (c.owner === exceptOwner || !near(c.sprite.x, c.sprite.y)) continue;
+      this.destroyCloneVisuals(c);
+      this.clones.splice(i, 1);
+      razed++;
+    }
+    for (let i = this.nests.length - 1; i >= 0; i--) {
+      const n = this.nests[i];
+      if (n.owner === exceptOwner || !near(n.x, n.y)) continue;
+      n.gfx.destroy();
+      this.nests.splice(i, 1);
+      razed++;
+    }
+    for (let i = this.spores.length - 1; i >= 0; i--) {
+      const s = this.spores[i];
+      if (s.owner === exceptOwner || !near(s.x, s.y)) continue;
+      s.gfx.destroy();
+      this.spores.splice(i, 1);
+      razed++;
+    }
+    return razed;
   }
 }

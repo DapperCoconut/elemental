@@ -3,6 +3,7 @@ import { Husk, HuskWorld } from './Husk';
 import { Fighter } from '../entities/Fighter';
 import { Projectile } from '../combat/Projectile';
 import { HP_SCALE } from '../data/Balance';
+import { Sfx, Music } from '../audio';
 import {
   HuskVariantDef,
   BASIC_HUSK,
@@ -361,6 +362,10 @@ export class InvasionKit implements HuskWorld {
 
   private startWave(waveNum: number, time: number): void {
     this.wave = waveNum;
+    // Each wave is a small escalation, so the announcement climbs in pitch with
+    // the wave number and the music thickens alongside it.
+    Sfx.play('countdown-go', { rate: Math.min(1.6, 0.9 + waveNum * 0.04) });
+    Music.setIntensity(Math.min(1, 0.35 + waveNum * 0.05));
     this.pendingSpawns = Math.round((4 + 3 * (waveNum - 1)) * (this.coopHooks?.spawnMultiplier ?? 1));
     this.pendingBoss = isBossWave(waveNum) ? rollBossVariant(Math.random) : null;
     this.nextSpawnAt = time;
@@ -379,6 +384,7 @@ export class InvasionKit implements HuskWorld {
 
   /** Also called on the guest side (via the co-op kit) so both players see it. */
   showBossBanner(name: string, colorHex: string): void {
+    Sfx.play('boss-phase');
     const scene = this.arena.scene;
     const { width } = scene.scale;
     const text = scene.add.text(width / 2, WAVE_BANNER_Y + 40, `☠  ${name}  ☠`, {
@@ -595,7 +601,10 @@ export class InvasionKit implements HuskWorld {
       if (!done) {
         for (const t of targets) {
           if (!t.active || t.hp <= 0 || t.downed) continue;
-          if (Phaser.Math.Distance.Between(s.gfx.x, s.gfx.y, t.x, t.y) <= SHOT_HIT_RADIUS + 22 * t.sizeMult) {
+          // Illusion Dance: a husk shot is a projectile like any other, so it passes through.
+          if (t.projectilePhase) continue;
+          if (Phaser.Math.Distance.Between(s.gfx.x, s.gfx.y, t.x, t.y)
+              <= SHOT_HIT_RADIUS + 22 * t.sizeMult * t.shapeSizeMult) {
             this.damageTarget(t, s.damage);
             done = true;
             break;

@@ -2367,4 +2367,49 @@ export class ShadowKit {
       player.castAbility('black-hole', playerCtx);
     }
   }
+
+  /**
+   * Ruin's Spikes of Ruin (see `combat/SummonPurge.ts`).
+   * Tentacle walls, mortar beacons and snap traps. A trap taken out takes its triplines
+   * with it — a line with only one end left would hang in the air trailing off a dead stake.
+   */
+  purgeSummons(x: number, y: number, radius: number, exceptOwner: 'player' | 'npc'): number {
+    const near = (px: number, py: number): boolean => Phaser.Math.Distance.Between(x, y, px, py) <= radius;
+    let razed = 0;
+    for (let i = this.walls.length - 1; i >= 0; i--) {
+      const w = this.walls[i];
+      if (w.owner === exceptOwner) continue;
+      const inside = w.tentacles.filter((t) => near(t.x, t.y));
+      if (inside.length === 0) continue;
+      for (const t of inside) {
+        t.gfx.destroy();
+        w.tentacles.splice(w.tentacles.indexOf(t), 1);
+        razed++;
+      }
+      // A wall with nothing left standing stops trying to grow the rest of itself.
+      if (w.tentacles.length === 0) { w.pending = 0; this.walls.splice(i, 1); }
+    }
+    for (let i = this.beacons.length - 1; i >= 0; i--) {
+      const b = this.beacons[i];
+      if (b.owner === exceptOwner || !near(b.x, b.y)) continue;
+      b.gfx.destroy();
+      b.dotGfx.destroy();
+      this.beacons.splice(i, 1);
+      razed++;
+    }
+    for (let i = this.shadowSnapTraps.length - 1; i >= 0; i--) {
+      const t = this.shadowSnapTraps[i];
+      if (t.owner === exceptOwner || !near(t.x, t.y)) continue;
+      for (let j = this.triplines.length - 1; j >= 0; j--) {
+        const line = this.triplines[j];
+        if (line.a !== t && line.b !== t) continue;
+        line.gfx.destroy();
+        this.triplines.splice(j, 1);
+      }
+      t.gfx.destroy();
+      this.shadowSnapTraps.splice(i, 1);
+      razed++;
+    }
+    return razed;
+  }
 }

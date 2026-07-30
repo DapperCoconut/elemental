@@ -1552,4 +1552,28 @@ export class LifeKit {
       }
     }
   }
+
+  /**
+   * Ruin's Spikes of Ruin (see `combat/SummonPurge.ts`).
+   * Planted seeds. Every plant is a structure with its own hitbox Fighter, which
+   * `destroyPlant` tears down along with the art — including letting go of anyone a pitcher
+   * plant happened to be holding.
+   */
+  purgeSummons(x: number, y: number, radius: number, exceptOwner: 'player' | 'npc'): number {
+    const near = (px: number, py: number): boolean => Phaser.Math.Distance.Between(x, y, px, py) <= radius;
+    let razed = 0;
+    const cull = (list: Plant[], owner: 'player' | 'npc'): void => {
+      if (owner === exceptOwner) return;
+      for (let i = list.length - 1; i >= 0; i--) {
+        const p = list[i];
+        if (!near(p.x, p.y)) continue;
+        this.destroyPlant(p);
+        list.splice(i, 1);
+        razed++;
+      }
+    };
+    cull(this.playerPlants, 'player');
+    cull(this.npcPlants, 'npc');
+    return razed;
+  }
 }

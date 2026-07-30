@@ -10,6 +10,7 @@ import {
   addTabs, addRowPlate, addWell, UiButton,
   ALL_CORNERS, fillHex, strokeHex, fillDiamond, fillNotchedGradient, strokeNotched, drawGlow,
 } from '../ui';
+import { Music, Sfx } from '../audio';
 
 /** Per-mode accent — the whole screen re-lights when you change forge mode. */
 const MODE_ACCENT: Record<'elements' | 'perks' | 'quad-perks' | 'penta-perks', number> = {
@@ -78,6 +79,7 @@ export class LabScene extends Phaser.Scene {
   }
 
   create(): void {
+    Music.play('lab');
     const { width, height } = this.scale;
     const cx = width / 2;
     const accent = MODE_ACCENT[this.labMode];
@@ -442,7 +444,7 @@ export class LabScene extends Phaser.Scene {
     let dragging = false;
 
     // A dragged token floats above everything, seated gems included.
-    container.on('dragstart', () => { dragging = true; container.setDepth(DEPTH.content); });
+    container.on('dragstart', () => { dragging = true; Sfx.play('ui-drag'); container.setDepth(DEPTH.content); });
 
     container.on('drag', (_ptr: Phaser.Input.Pointer, dragX: number, dragY: number) => {
       container.setPosition(dragX, dragY);
@@ -481,6 +483,9 @@ export class LabScene extends Phaser.Scene {
   }
 
   private setSlot(slot: 1 | 2 | 3 | 4 | 5, elementId: string): void {
+    // Only a token that actually lands in a slot makes the seating sound; a
+    // drag that falls short just snaps home silently.
+    Sfx.play('ui-drop');
 
     const all = this.getAvailableElements();
     const el = all.find((e) => e.id === elementId)!;
@@ -722,11 +727,14 @@ export class LabScene extends Phaser.Scene {
   }
 
   private showMessage(text: string, color: string): void {
+    // The colour already encodes the outcome: red is a refusal, gold is a nudge.
+    Sfx.play(color === '#ff8888' || color === '#ff6644' ? 'ui-denied' : 'ui-toast');
     this.messageText.setText(text).setColor(color);
     this.time.delayedCall(3000, () => { if (this.messageText.active) this.messageText.setText(''); });
   }
 
   private showDiscoveryPopup(emoji: string, name: string): void {
+    Sfx.play('unlock');
     const { width, height } = this.scale;
     const cx = width / 2;
     const cy = height / 2;

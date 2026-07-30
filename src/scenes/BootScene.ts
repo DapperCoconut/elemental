@@ -2303,6 +2303,735 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('elem-king', 48, 48);
     gfx.clear();
 
+    // Justice — a set of scales cast in gold on dark marble. JusticeKit paints the
+    // character rig over the top of this per-frame, so the sprite only has to read as
+    // "Justice" on the element cards and at a glance in the arena.
+    gfx.fillStyle(0x241a08, 1);
+    gfx.fillCircle(24, 24, 21);
+    gfx.lineStyle(3, 0xc9a13a, 1);
+    gfx.strokeCircle(24, 24, 21);
+    // Stand + beam.
+    gfx.fillStyle(0x7d5f22, 1);
+    gfx.fillRect(22, 14, 4, 24);
+    gfx.fillEllipse(24, 39, 20, 5);
+    gfx.lineStyle(2.5, 0xf0d68a, 1);
+    gfx.lineBetween(9, 17, 39, 17);
+    // Two pans on short chains.
+    gfx.lineStyle(1.2, 0xc9a13a, 1);
+    gfx.lineBetween(11, 17, 11, 24);
+    gfx.lineBetween(37, 17, 37, 24);
+    gfx.fillStyle(0xf0d68a, 1);
+    gfx.fillEllipse(11, 25, 14, 5);
+    gfx.fillEllipse(37, 25, 14, 5);
+    // Finial.
+    gfx.fillStyle(0xfff3cf, 1);
+    gfx.fillCircle(24, 12, 3.2);
+    gfx.generateTexture('elem-justice', 48, 48);
+    gfx.clear();
+
+    // Justice's thrown spear — the head-on shape of the ground click's projectile,
+    // drawn nose-right so the kit can just rotate it to the aim.
+    gfx.fillStyle(0x7d5f22, 1);
+    gfx.fillRect(2, 7, 16, 3);
+    gfx.fillStyle(0xf0d68a, 1);
+    gfx.fillRect(2, 7, 16, 1.2);
+    gfx.fillStyle(0xc9a13a, 1);
+    gfx.fillTriangle(16, 4, 16, 13, 20, 8.5);   // crossguard flare
+    gfx.fillTriangle(18, 5.5, 18, 11.5, 30, 8.5); // leaf head
+    gfx.lineStyle(1, 0xfff3cf, 1);
+    gfx.lineBetween(18, 8.5, 30, 8.5);
+    gfx.generateTexture('proj-justice-spear', 32, 17);
+    gfx.clear();
+
+    // Dream — a crescent moon over a piece of night sky, with the pendulum's cord hanging
+    // off it. DreamKit paints the character rig over the top of this per-frame, so the
+    // sprite only has to read as "Dream" on the element cards.
+    gfx.fillStyle(0x0b0620, 1);
+    gfx.fillCircle(24, 24, 21);
+    gfx.lineStyle(3, 0x5b3fd4, 1);
+    gfx.strokeCircle(24, 24, 21);
+    // Nebula wash inside the disc.
+    gfx.fillStyle(0x1b1145, 1);
+    gfx.fillCircle(19, 28, 13);
+    gfx.fillStyle(0x4f7dff, 0.5);
+    gfx.fillCircle(29, 18, 9);
+    // Crescent: a bright disc with a dark one bitten out of it.
+    gfx.fillStyle(0xfff4c2, 1);
+    gfx.fillCircle(22, 21, 11);
+    gfx.fillStyle(0x0b0620, 1);
+    gfx.fillCircle(27, 18, 10);
+    // Stars.
+    for (const [sx, sy, sr] of [[13, 14, 2], [34, 30, 1.6], [17, 36, 1.4], [33, 12, 1.2]]) {
+      gfx.fillStyle(0xd8e2ff, 1);
+      gfx.fillCircle(sx, sy, sr);
+    }
+    // The pendulum's cord and bob, hanging out of the crescent's horn.
+    gfx.lineStyle(1.2, 0xd8e2ff, 1);
+    gfx.lineBetween(26, 30, 29, 39);
+    gfx.fillStyle(0x8b5cf6, 1);
+    gfx.fillCircle(29, 40, 3.4);
+    gfx.generateTexture('elem-dream', 48, 48);
+    gfx.clear();
+
+    // Chalk — a slate with three sticks laid on it and a scribble already drawn. ChalkKit
+    // paints the character rig over the top of this per-frame, so the sprite only has to
+    // read as "Chalk" on the element cards.
+    gfx.fillStyle(0x2a3336, 1);
+    gfx.fillRoundedRect(4, 8, 40, 32, 3);
+    gfx.lineStyle(2, 0x14181b, 1);
+    gfx.strokeRoundedRect(4, 8, 40, 32, 3);
+    // A half-rubbed-out scribble across the board.
+    gfx.lineStyle(2, 0xf4f1e6, 0.85);
+    gfx.beginPath();
+    gfx.moveTo(9, 30);
+    gfx.lineTo(16, 18);
+    gfx.lineTo(23, 30);
+    gfx.lineTo(30, 16);
+    gfx.lineTo(37, 27);
+    gfx.strokePath();
+    gfx.fillStyle(0xe8e2d0, 0.35);
+    for (const [dx, dy] of [[12, 25], [20, 22], [27, 26], [34, 20]]) gfx.fillCircle(dx, dy, 1.4);
+    // Three sticks along the chalk rail: white, red, blue.
+    for (const [sx, col] of [[11, 0xf4f1e6], [22, 0xff5f4a], [33, 0x5aa9ff]] as [number, number][]) {
+      gfx.fillStyle(0x14181b, 0.7);
+      gfx.fillRoundedRect(sx - 4, 37, 9, 5, 2);
+      gfx.fillStyle(col, 1);
+      gfx.fillRoundedRect(sx - 5, 36, 9, 5, 2);
+      gfx.fillStyle(0xffffff, 0.4);
+      gfx.fillRect(sx - 4, 37, 7, 1.2);
+    }
+    gfx.generateTexture('elem-chalk', 48, 48);
+    gfx.clear();
+
+    // Illusion — a harlequin mask with a second, misregistered copy of itself sliding out
+    // from behind it. IllusionKit paints the character rig over the top per-frame, so the
+    // sprite only has to read as "Illusion" on the element cards.
+    gfx.fillStyle(0xff4dd2, 0.35);
+    gfx.fillPoints([
+      new Phaser.Geom.Point(28, 6), new Phaser.Geom.Point(43, 22),
+      new Phaser.Geom.Point(28, 44), new Phaser.Geom.Point(13, 22),
+    ], true);
+    gfx.fillStyle(0x160b26, 1);
+    gfx.fillPoints([
+      new Phaser.Geom.Point(22, 4), new Phaser.Geom.Point(38, 21),
+      new Phaser.Geom.Point(22, 44), new Phaser.Geom.Point(6, 21),
+    ], true);
+    gfx.lineStyle(2, 0xb45cff, 1);
+    gfx.strokePoints([
+      new Phaser.Geom.Point(22, 4), new Phaser.Geom.Point(38, 21),
+      new Phaser.Geom.Point(22, 44), new Phaser.Geom.Point(6, 21),
+    ], true, true);
+    // Half the face lit violet — the split is the whole point of a two-faced mask.
+    gfx.fillStyle(0xb45cff, 0.3);
+    gfx.fillTriangle(22, 4, 38, 21, 22, 44);
+    // Eye slits.
+    gfx.fillStyle(0xfff0ff, 0.95);
+    gfx.fillEllipse(16, 19, 9, 4.5);
+    gfx.fillEllipse(28, 19, 9, 4.5);
+    gfx.fillStyle(0x160b26, 1);
+    gfx.fillCircle(16, 19, 1.6);
+    gfx.fillCircle(28, 19, 1.6);
+    // A crack running off the chin.
+    gfx.lineStyle(1.4, 0x4de8ff, 0.85);
+    gfx.beginPath();
+    gfx.moveTo(22, 30); gfx.lineTo(19, 36); gfx.lineTo(24, 40);
+    gfx.strokePath();
+    gfx.generateTexture('elem-illusion', 48, 48);
+    gfx.clear();
+
+    // proj-illusion-crack — Crack Shot's bullet: a stubby red dart with a hot core, drawn
+    // nose-right so the kit's `setRotation` points it along its own velocity.
+    gfx.fillStyle(0x8e1420, 1);
+    gfx.fillPoints([
+      new Phaser.Geom.Point(18, 5), new Phaser.Geom.Point(2, 1),
+      new Phaser.Geom.Point(5, 5), new Phaser.Geom.Point(2, 9),
+    ], true);
+    gfx.fillStyle(0xff3b4a, 1);
+    gfx.fillPoints([
+      new Phaser.Geom.Point(17, 5), new Phaser.Geom.Point(3, 2),
+      new Phaser.Geom.Point(6, 5), new Phaser.Geom.Point(3, 8),
+    ], true);
+    gfx.fillStyle(0xfff0ff, 0.9);
+    gfx.fillCircle(13, 5, 1.8);
+    gfx.generateTexture('proj-illusion-crack', 20, 10);
+    gfx.clear();
+
+    // The three fold-shapes a Tesseract turns a fighter into. Same 48×48 frame as every
+    // fighter texture, so `setTexture` alone swaps a body without disturbing its scale —
+    // IllusionKit adds the 30% on top through `shapeSizeMult`.
+    const foldShapes: Array<[string, Phaser.Geom.Point[]]> = [
+      ['illusion-shape-square', [
+        new Phaser.Geom.Point(6, 6), new Phaser.Geom.Point(42, 6),
+        new Phaser.Geom.Point(42, 42), new Phaser.Geom.Point(6, 42),
+      ]],
+      ['illusion-shape-rhombus', [
+        new Phaser.Geom.Point(24, 2), new Phaser.Geom.Point(38, 24),
+        new Phaser.Geom.Point(24, 46), new Phaser.Geom.Point(10, 24),
+      ]],
+      ['illusion-shape-star', Array.from({ length: 10 }, (_, i) => {
+        const a = -Math.PI / 2 + (i / 10) * Math.PI * 2;
+        const r = i % 2 === 0 ? 23 : 10;
+        return new Phaser.Geom.Point(24 + Math.cos(a) * r, 24 + Math.sin(a) * r);
+      })],
+    ];
+    for (const [key, pts] of foldShapes) {
+      gfx.fillStyle(0x2a1147, 1);
+      gfx.fillPoints(pts, true);
+      gfx.lineStyle(3, 0xb45cff, 1);
+      gfx.strokePoints(pts, true, true);
+      gfx.lineStyle(1.4, 0x4de8ff, 0.8);
+      gfx.strokePoints(pts.map((p) => new Phaser.Geom.Point(
+        24 + (p.x - 24) * 0.66, 24 + (p.y - 24) * 0.66,
+      )), true, true);
+      gfx.generateTexture(key, 48, 48);
+      gfx.clear();
+    }
+
+    // Depths — a lure hanging in black water: the esca glowing on the end of its rod, with the
+    // outline of the thing holding it barely readable behind. DepthsKit paints the character
+    // rig over the top per-frame, so the sprite only has to read as "Depths" on element cards.
+    gfx.fillStyle(0x04141d, 1);
+    gfx.fillCircle(24, 24, 23);
+    gfx.fillStyle(0x0a2b3a, 1);
+    gfx.fillCircle(24, 30, 18);
+    // The jaw: an underbite of teeth across the lower half.
+    gfx.fillStyle(0xf2f7f2, 0.9);
+    for (let i = 0; i < 6; i++) {
+      const tx = 12 + i * 4.2;
+      gfx.fillTriangle(tx, 30, tx + 3, 30, tx + 1.5, 36);
+      gfx.fillTriangle(tx + 1, 41, tx + 4, 41, tx + 2.5, 34);
+    }
+    // Two small eyes set high and wide.
+    gfx.fillStyle(0xd8f6ff, 0.9);
+    gfx.fillCircle(17, 25, 2.6);
+    gfx.fillCircle(31, 25, 2.6);
+    gfx.fillStyle(0x04141d, 1);
+    gfx.fillCircle(17, 25, 1.2);
+    gfx.fillCircle(31, 25, 1.2);
+    // The illicium arcing forward off the crown, and the esca burning on its tip.
+    gfx.lineStyle(2.2, 0x0a2b3a, 1);
+    gfx.beginPath();
+    gfx.moveTo(24, 15); gfx.lineTo(30, 7); gfx.lineTo(36, 8);
+    gfx.strokePath();
+    gfx.fillStyle(0x7ac64b, 0.35);
+    gfx.fillCircle(38, 9, 8);
+    gfx.fillStyle(0x7ac64b, 0.8);
+    gfx.fillCircle(38, 9, 4.5);
+    gfx.fillStyle(0xc8ffa4, 1);
+    gfx.fillCircle(38, 9, 2.4);
+    // Bubbles rising off the flank.
+    gfx.lineStyle(1.2, 0xd8f6ff, 0.55);
+    gfx.strokeCircle(9, 20, 2.4);
+    gfx.strokeCircle(7, 13, 1.5);
+    gfx.generateTexture('elem-depths', 48, 48);
+    gfx.clear();
+
+    // Conquest — a claimed square with a keep on it: the territory wash and its border, the
+    // stepped town center, and the standard flying over the whole thing. ConquestKit paints the
+    // character rig over the top per-frame, so the sprite only has to read on element cards.
+    gfx.fillStyle(0xc23a2e, 0.16);
+    gfx.fillRect(3, 3, 42, 42);
+    gfx.lineStyle(2.4, 0xd83a3a, 0.9);
+    gfx.strokeRect(3, 3, 42, 42);
+    gfx.lineStyle(1, 0xd83a3a, 0.3);
+    gfx.strokeRect(7, 7, 34, 34);
+    // Three receding tiers of the keep.
+    for (let i = 0; i < 3; i++) {
+      const w = 30 - i * 7;
+      const y = 38 - i * 7;
+      gfx.fillStyle(i % 2 === 0 ? 0xb8b2a4 : 0x5d574c, 1);
+      gfx.fillRect(24 - w / 2, y - 7, w, 7);
+      gfx.lineStyle(1, 0x3a3630, 0.8);
+      gfx.strokeRect(24 - w / 2, y - 7, w, 7);
+    }
+    // Dome and standard.
+    gfx.fillStyle(0xd83a3a, 1);
+    gfx.beginPath();
+    gfx.arc(24, 17, 6, Math.PI, Math.PI * 2, false);
+    gfx.closePath();
+    gfx.fillPath();
+    gfx.lineStyle(2, 0x3d2817, 1);
+    gfx.lineBetween(24, 16, 24, 5);
+    gfx.fillStyle(0xd83a3a, 1);
+    gfx.fillTriangle(24, 5, 38, 9, 24, 13);
+    gfx.fillStyle(0xe8c23a, 1);
+    gfx.fillCircle(24, 4, 2.2);
+    gfx.generateTexture('elem-conquest', 48, 48);
+    gfx.clear();
+
+    // Passion — a heart with the pink revolver laid across it, and a fedora brim over the top.
+    // PassionKit paints the character rig per-frame, so the sprite only has to read on a card.
+    const psnHeart = (cx: number, cy: number, size: number, color: number, alpha: number) => {
+      const pts: Phaser.Geom.Point[] = [];
+      for (let i = 0; i < 26; i++) {
+        const t = (i / 26) * Math.PI * 2;
+        const hu = 16 * Math.sin(t) ** 3;
+        const hv = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
+        pts.push(new Phaser.Geom.Point(cx + (hu / 17) * size, cy + (hv / 17) * size));
+      }
+      gfx.fillStyle(color, alpha);
+      gfx.fillPoints(pts, true);
+    };
+    psnHeart(24, 24, 21, 0x7a1338, 1);
+    psnHeart(24, 22, 18, 0xff2f7d, 1);
+    gfx.fillStyle(0xffe3ef, 0.55);
+    gfx.fillEllipse(17, 15, 8, 5);
+    // The revolver laid across it, muzzle to the right.
+    gfx.fillStyle(0x2a0a1c, 1);
+    gfx.fillPoints([new Phaser.Geom.Point(16, 27), new Phaser.Geom.Point(11, 36),
+      new Phaser.Geom.Point(16, 37), new Phaser.Geom.Point(21, 28)], true);
+    gfx.fillStyle(0xc21e5b, 1);
+    gfx.fillPoints([new Phaser.Geom.Point(15, 23), new Phaser.Geom.Point(38, 24),
+      new Phaser.Geom.Point(38, 29), new Phaser.Geom.Point(15, 29)], true);
+    gfx.fillStyle(0xff5fa2, 1);
+    gfx.fillCircle(22, 26, 4);
+    gfx.fillStyle(0x2a0a1c, 1);
+    gfx.fillCircle(22, 26, 1.4);
+    gfx.fillStyle(0xf7d774, 1);
+    gfx.fillCircle(38.5, 26.5, 1.6);
+    // Fedora brim across the top lobes.
+    gfx.fillStyle(0x2a0a1c, 1);
+    gfx.fillEllipse(24, 11, 34, 8);
+    gfx.fillStyle(0xc21e5b, 1);
+    gfx.fillPoints([new Phaser.Geom.Point(15, 10), new Phaser.Geom.Point(17, 3),
+      new Phaser.Geom.Point(31, 3), new Phaser.Geom.Point(33, 10)], true);
+    gfx.fillStyle(0x101014, 1);
+    gfx.fillRect(15, 7, 18, 3);
+    gfx.generateTexture('elem-passion', 48, 48);
+    gfx.clear();
+
+    // Ruin — a cracked red slab with a rusted spike driven through it. RuinKit paints the
+    // character rig per-frame, so the sprite only has to read as "Ruin" on element cards:
+    // something solid, broken, and impaled.
+    gfx.fillStyle(0x140a09, 1);
+    gfx.fillPoints([new Phaser.Geom.Point(9, 8), new Phaser.Geom.Point(40, 6),
+      new Phaser.Geom.Point(43, 40), new Phaser.Geom.Point(7, 42)], true);
+    gfx.fillStyle(0xc4392c, 1);
+    gfx.fillPoints([new Phaser.Geom.Point(11, 10), new Phaser.Geom.Point(38, 8),
+      new Phaser.Geom.Point(40, 38), new Phaser.Geom.Point(9, 39)], true);
+    // A bite out of the top-right corner: nothing Ruin owns has an intact edge.
+    gfx.fillStyle(0x140a09, 1);
+    gfx.fillPoints([new Phaser.Geom.Point(33, 8), new Phaser.Geom.Point(40, 8),
+      new Phaser.Geom.Point(40, 17)], true);
+    // The crack: one fork running the height of the slab.
+    gfx.lineStyle(2.6, 0x140a09, 1);
+    gfx.lineBetween(20, 9, 24, 20);
+    gfx.lineBetween(24, 20, 19, 29);
+    gfx.lineBetween(19, 29, 23, 39);
+    gfx.lineStyle(1.6, 0x140a09, 1);
+    gfx.lineBetween(24, 20, 33, 24);
+    gfx.lineBetween(19, 29, 11, 31);
+    // The spike, driven diagonally through the whole thing.
+    gfx.fillStyle(0x3a2422, 1);
+    gfx.fillPoints([new Phaser.Geom.Point(45, 45), new Phaser.Geom.Point(6, 12),
+      new Phaser.Geom.Point(3, 18)], true);
+    gfx.fillStyle(0x6b524a, 1);
+    gfx.fillPoints([new Phaser.Geom.Point(43, 44), new Phaser.Geom.Point(5, 13),
+      new Phaser.Geom.Point(3, 17)], true);
+    gfx.fillStyle(0xa4552a, 1);
+    gfx.fillPoints([new Phaser.Geom.Point(24, 27), new Phaser.Geom.Point(5, 13),
+      new Phaser.Geom.Point(3, 17)], true);
+    // One barb raked back off the shaft.
+    gfx.fillStyle(0x6b524a, 1);
+    gfx.fillPoints([new Phaser.Geom.Point(30, 32), new Phaser.Geom.Point(36, 27),
+      new Phaser.Geom.Point(33, 34)], true);
+    gfx.fillStyle(0xe6d8cf, 0.9);
+    gfx.fillCircle(4, 15, 1.6);
+    gfx.generateTexture('elem-ruin', 48, 48);
+    gfx.clear();
+
+    // Glass — a leaded rose window with one pane knocked out of it. GlassKit paints the
+    // character rig per-frame, so the sprite only has to say "stained glass, and broken":
+    // six coloured wedges, black came between them, and a hole where the seventh was.
+    const GLASS_WEDGES = [0xe0424f, 0xf2a33c, 0xf5e055, 0x3fc98a, 0x3f8ce8, 0xa25ce8, 0xf07ab8];
+    gfx.fillStyle(0x1b1430, 1);
+    gfx.fillCircle(24, 24, 21);
+    for (let i = 0; i < 7; i++) {
+      // The last wedge is left as bare came — that is the missing pane.
+      if (i === 6) continue;
+      const a0 = (i / 7) * Math.PI * 2 - Math.PI / 2;
+      const a1 = ((i + 1) / 7) * Math.PI * 2 - Math.PI / 2;
+      const pts: Phaser.Geom.Point[] = [];
+      for (let s = 0; s <= 4; s++) {
+        const a = a0 + ((a1 - a0) * s) / 4;
+        pts.push(new Phaser.Geom.Point(24 + Math.cos(a) * 18.5, 24 + Math.sin(a) * 18.5));
+      }
+      for (let s = 4; s >= 0; s--) {
+        const a = a0 + ((a1 - a0) * s) / 4;
+        pts.push(new Phaser.Geom.Point(24 + Math.cos(a) * 6.5, 24 + Math.sin(a) * 6.5));
+      }
+      gfx.fillStyle(GLASS_WEDGES[i], 0.92);
+      gfx.fillPoints(pts, true);
+    }
+    // Hub, and the specular streak that stops the whole thing reading as a pie chart.
+    gfx.fillStyle(0x1b1430, 1);
+    gfx.fillCircle(24, 24, 6.5);
+    gfx.fillStyle(0xdff2ff, 0.9);
+    gfx.fillCircle(24, 24, 4);
+    gfx.lineStyle(2.4, 0xffffff, 0.65);
+    gfx.lineBetween(13, 15, 22, 10);
+    gfx.lineStyle(1.4, 0xffffff, 0.45);
+    gfx.lineBetween(11, 20, 16, 16);
+    // A crack running out of the empty wedge to the rim.
+    gfx.lineStyle(1.6, 0x0b0818, 1);
+    gfx.lineBetween(24, 24, 31, 34);
+    gfx.lineBetween(31, 34, 28, 43);
+    gfx.generateTexture('elem-glass', 48, 48);
+    gfx.clear();
+
+    // Paper — an open storybook with a paper plane taking off out of it. PaperKit paints the
+    // character rig per-frame, so the sprite only has to carry the two ideas the element is
+    // built on: a book you read from, and something folded that flies.
+    gfx.fillStyle(0x241f14, 0.4);
+    gfx.fillEllipse(25, 40, 34, 8);
+    // The two tented pages, spine highest.
+    gfx.fillStyle(0xd6cbac, 1);
+    gfx.fillPoints([
+      new Phaser.Geom.Point(24, 24), new Phaser.Geom.Point(5, 28),
+      new Phaser.Geom.Point(6, 39), new Phaser.Geom.Point(24, 36),
+    ], true);
+    gfx.fillStyle(0xf2ead6, 1);
+    gfx.fillPoints([
+      new Phaser.Geom.Point(24, 24), new Phaser.Geom.Point(43, 28),
+      new Phaser.Geom.Point(42, 39), new Phaser.Geom.Point(24, 36),
+    ], true);
+    // Four lines of "text" a side, at a size where they read as prose rather than as stripes.
+    gfx.lineStyle(1, 0x241f14, 0.35);
+    for (let i = 0; i < 4; i++) {
+      gfx.lineBetween(9, 30 + i * 2.4, 20 - i, 29.4 + i * 2.4);
+      gfx.lineBetween(28 + i, 29.4 + i * 2.4, 39, 30 + i * 2.4);
+    }
+    // Hard cover under the pages, and the spine.
+    gfx.fillStyle(0x2f7d55, 1);
+    gfx.fillPoints([
+      new Phaser.Geom.Point(4, 38), new Phaser.Geom.Point(44, 38),
+      new Phaser.Geom.Point(42, 43), new Phaser.Geom.Point(6, 43),
+    ], true);
+    gfx.lineStyle(2, 0x6ef0a8, 0.9);
+    gfx.lineBetween(24, 23, 24, 36);
+    // The plane lifting off the right-hand page: two wings and a keel, banking away.
+    gfx.fillStyle(0xd6cbac, 1);
+    gfx.fillPoints([
+      new Phaser.Geom.Point(42, 6), new Phaser.Geom.Point(24, 17), new Phaser.Geom.Point(31, 17),
+    ], true);
+    gfx.fillStyle(0xf2ead6, 1);
+    gfx.fillPoints([
+      new Phaser.Geom.Point(42, 6), new Phaser.Geom.Point(31, 22), new Phaser.Geom.Point(32, 15),
+    ], true);
+    gfx.fillStyle(0xfffaf0, 1);
+    gfx.fillPoints([
+      new Phaser.Geom.Point(42, 6), new Phaser.Geom.Point(30, 18), new Phaser.Geom.Point(33, 18),
+    ], true);
+    gfx.lineStyle(1, 0xa8996f, 0.9);
+    gfx.lineBetween(42, 6, 29, 19);
+    gfx.generateTexture('elem-paper', 48, 48);
+    gfx.clear();
+
+    // Death — a katana standing point-down through a clock face reading a minute to twelve.
+    // DeathKit paints the character rig per-frame, so the sprite only has to carry the two
+    // objects the element is: the blade, and the thing counting down behind it.
+    gfx.fillStyle(0x07060d, 0.5);
+    gfx.fillEllipse(24, 43, 26, 7);
+    // Clock: dark case, brass bezel, and the elapsed wedge already most of the way round.
+    gfx.fillStyle(0x07060d, 1);
+    gfx.fillCircle(24, 25, 16);
+    gfx.fillStyle(0x171227, 1);
+    gfx.fillCircle(24, 25, 14.5);
+    gfx.fillStyle(0xc42a3a, 0.3);
+    gfx.slice(24, 25, 14, -Math.PI / 2, Math.PI * 1.4, false);
+    gfx.fillPath();
+    gfx.lineStyle(2, 0xd9b23a, 0.95);
+    gfx.strokeCircle(24, 25, 15.5);
+    // Twelve marks, the quarters long.
+    for (let i = 0; i < 12; i++) {
+      const a = -Math.PI / 2 + (i / 12) * Math.PI * 2;
+      const long = i % 3 === 0;
+      gfx.lineStyle(long ? 1.8 : 1, long ? 0xe9e3d2 : 0xb0a992, long ? 0.9 : 0.45);
+      gfx.lineBetween(
+        24 + Math.cos(a) * (long ? 9.5 : 11), 25 + Math.sin(a) * (long ? 9.5 : 11),
+        24 + Math.cos(a) * 13, 25 + Math.sin(a) * 13,
+      );
+    }
+    // Both hands closing on twelve — a minute to midnight, which is the whole element.
+    gfx.lineStyle(2.6, 0xe9e3d2, 0.95);
+    gfx.lineBetween(24, 25, 24 - 3, 25 - 6.5);
+    gfx.lineStyle(1.6, 0xc42a3a, 1);
+    gfx.lineBetween(24, 25, 24 + 2, 25 - 10.5);
+    gfx.fillStyle(0xd9b23a, 1);
+    gfx.fillCircle(24, 25, 2);
+    // The katana driven down through it: hilt above, blade out below the case.
+    gfx.lineStyle(4.4, 0x07060d, 1);
+    gfx.lineBetween(35, 3, 12, 45);
+    gfx.lineStyle(2.4, 0xd6dde8, 1);
+    gfx.lineBetween(31, 10, 12, 45);
+    gfx.lineStyle(1, 0xffffff, 0.8);
+    gfx.lineBetween(32, 10, 13.5, 44);
+    // Tsuba across the join, then the wrapped grip running up to the cap.
+    gfx.fillStyle(0x8a6a20, 1);
+    gfx.fillEllipse(32, 9, 9, 4);
+    gfx.lineStyle(4, 0x171227, 1);
+    gfx.lineBetween(34, 5, 38, -2);
+    gfx.lineStyle(1, 0xb0a992, 0.6);
+    gfx.lineBetween(33, 8, 37, 5);
+    gfx.lineBetween(35, 4, 39, 1);
+    gfx.generateTexture('elem-death', 48, 48);
+    gfx.clear();
+
+    // Fortune — a blood coin standing on edge in front of a crossed revolver. The coin is the
+    // legal half of the element and the gun is the half behind the second tab, so the icon shows
+    // both and lets the coin win: it is drawn last, dead centre, and it is the brightest thing.
+    // Revolver, angled up-left behind the coin.
+    gfx.fillStyle(0x3a4048, 1);
+    gfx.fillRect(6, 26, 22, 7);
+    gfx.fillRect(26, 27, 15, 5);
+    gfx.fillStyle(0x3b2a1d, 1);
+    gfx.fillPoints([
+      new Phaser.Geom.Point(9, 33), new Phaser.Geom.Point(17, 33),
+      new Phaser.Geom.Point(14, 45), new Phaser.Geom.Point(4, 43),
+    ], true);
+    gfx.fillStyle(0xb8c2cc, 1);
+    gfx.fillCircle(21, 29, 5.6);
+    gfx.fillStyle(0x140f0a, 1);
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2;
+      gfx.fillCircle(21 + Math.cos(a) * 3, 29 + Math.sin(a) * 3, 1.2);
+    }
+    // Blood coin: gold rim, milled edge, dark red face, struck skull.
+    gfx.fillStyle(0xa8791e, 1);
+    gfx.fillCircle(25, 20, 16);
+    gfx.fillStyle(0xf0c33c, 1);
+    gfx.fillCircle(25, 20, 14.6);
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2;
+      gfx.lineStyle(1.6, 0xa8791e, 0.9);
+      gfx.lineBetween(25 + Math.cos(a) * 12.6, 20 + Math.sin(a) * 12.6,
+        25 + Math.cos(a) * 14.8, 20 + Math.sin(a) * 14.8);
+    }
+    gfx.fillStyle(0xb3202e, 1);
+    gfx.fillCircle(25, 20, 11);
+    gfx.fillStyle(0x6d1119, 1);
+    gfx.fillCircle(26, 21, 10);
+    gfx.fillStyle(0xf0c33c, 1);
+    gfx.fillEllipse(25, 17, 13, 11);
+    gfx.fillRect(21, 21, 8, 5);
+    gfx.fillStyle(0x6d1119, 1);
+    gfx.fillCircle(21.5, 16, 2.4);
+    gfx.fillCircle(28.5, 16, 2.4);
+    gfx.fillRect(24, 21, 2, 4);
+    gfx.lineStyle(2, 0xfff0a8, 0.75);
+    gfx.beginPath();
+    gfx.arc(25, 20, 14, -2.5, -0.8, false);
+    gfx.strokePath();
+    gfx.generateTexture('elem-fortune', 48, 48);
+    gfx.clear();
+
+    // Amber — a nugget of resin with a mosquito trapped in it. The nugget is an irregular
+    // polygon, not a circle, with a bevelled lit face and a dark rind; the insect inside is drawn
+    // properly (thorax, abdomen, wings, six legs) because it is the whole idea of the element.
+    const nug = [
+      new Phaser.Geom.Point(24, 2), new Phaser.Geom.Point(41, 12),
+      new Phaser.Geom.Point(45, 30), new Phaser.Geom.Point(33, 45),
+      new Phaser.Geom.Point(13, 44), new Phaser.Geom.Point(3, 28),
+      new Phaser.Geom.Point(7, 10),
+    ];
+    gfx.fillStyle(0x1a0f05, 1);
+    gfx.fillPoints(nug, true);
+    gfx.fillStyle(0x8a4a08, 1);
+    gfx.fillPoints(nug.map((p) => new Phaser.Geom.Point(24 + (p.x - 24) * 0.93, 24 + (p.y - 24) * 0.93)), true);
+    gfx.fillStyle(0xd98b1f, 1);
+    gfx.fillPoints(nug.map((p) => new Phaser.Geom.Point(23 + (p.x - 24) * 0.8, 23 + (p.y - 24) * 0.8)), true);
+    gfx.fillStyle(0xf7c25a, 1);
+    gfx.fillPoints(nug.map((p) => new Phaser.Geom.Point(20 + (p.x - 24) * 0.5, 19 + (p.y - 24) * 0.5)), true);
+    // Trapped mosquito: wings behind, then legs, abdomen, thorax, head and proboscis.
+    gfx.fillStyle(0xffe9a8, 0.55);
+    gfx.fillEllipse(22, 20, 15, 7);
+    gfx.fillEllipse(22, 28, 15, 7);
+    gfx.lineStyle(1.2, 0x1a0f05, 0.85);
+    for (let i = 0; i < 3; i++) {
+      gfx.lineBetween(24 - i * 3, 25, 16 - i * 4, 33 + i * 3);
+      gfx.lineBetween(24 - i * 3, 23, 17 - i * 4, 14 - i * 2);
+    }
+    gfx.fillStyle(0x9e1f22, 1);
+    gfx.fillEllipse(17, 25, 17, 8);
+    gfx.fillStyle(0xd4413f, 1);
+    gfx.fillEllipse(15, 23, 9, 4);
+    gfx.fillStyle(0x3f2917, 1);
+    gfx.fillEllipse(28, 24, 10, 9);
+    gfx.fillStyle(0x6f4a2c, 1);
+    gfx.fillEllipse(27, 22, 6, 4);
+    gfx.fillStyle(0x1a0f05, 1);
+    gfx.fillCircle(34, 24, 3.4);
+    gfx.lineStyle(1.6, 0xe4d9bb, 1);
+    gfx.lineBetween(36, 25, 45, 27);
+    gfx.generateTexture('elem-amber', 48, 48);
+    gfx.clear();
+
+    // Psychic — the opened third eye: a violet almond with a gold iris and a slit pupil, ringed
+    // by lashes that read as rays. Deliberately the only symmetrical element icon in the set,
+    // because the whole character is about stillness.
+    gfx.fillStyle(0x140b26, 0.5);
+    gfx.fillCircle(24, 24, 22);
+    // Rays first, so the lids overlap them at the corners.
+    gfx.lineStyle(1.8, 0x6b2fb8, 0.95);
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      const inner = i % 2 ? 15 : 17;
+      gfx.lineBetween(
+        24 + Math.cos(a) * inner, 24 + Math.sin(a) * inner,
+        24 + Math.cos(a) * 22, 24 + Math.sin(a) * 22,
+      );
+    }
+    // The almond, sampled as two parabolas so it comes to a point at both corners.
+    const lid: Phaser.Geom.Point[] = [];
+    for (let i = 0; i <= 14; i++) {
+      const u = -1 + (i / 14) * 2;
+      lid.push(new Phaser.Geom.Point(24 + u * 20, 24 - (1 - u * u) * 13));
+    }
+    for (let i = 14; i >= 0; i--) {
+      const u = -1 + (i / 14) * 2;
+      lid.push(new Phaser.Geom.Point(24 + u * 20, 24 + (1 - u * u) * 13));
+    }
+    gfx.fillStyle(0x3d1b6b, 1);
+    gfx.fillPoints(lid.map((p) => new Phaser.Geom.Point(24 + (p.x - 24) * 1.1, 24 + (p.y - 24) * 1.14)), true);
+    gfx.fillStyle(0xead6ff, 1);
+    gfx.fillPoints(lid, true);
+    // Iris, slit pupil, glint.
+    gfx.fillStyle(0xc98b1a, 1);
+    gfx.fillCircle(24, 24, 10);
+    gfx.fillStyle(0xffd166, 1);
+    gfx.fillCircle(24, 24, 8);
+    gfx.fillStyle(0x9b4dff, 1);
+    gfx.fillCircle(24, 24, 5.2);
+    gfx.fillStyle(0x140b26, 1);
+    gfx.fillEllipse(24, 24, 4, 17);
+    gfx.fillStyle(0xead6ff, 0.9);
+    gfx.fillCircle(20, 20, 2.4);
+    gfx.generateTexture('elem-psychic', 48, 48);
+    gfx.clear();
+
+    // Radiation — the trefoil stamped into a lead plate. The blades are cut as real sectors
+    // rather than triangles so the inner arc survives at icon size, and the plate behind them
+    // is deliberately dull: the only bright thing on the badge is the hazard itself.
+    gfx.fillStyle(0x0b0614, 1);
+    gfx.fillCircle(24, 24, 22);
+    gfx.fillStyle(0x1c1030, 1);
+    gfx.fillCircle(24, 24, 20);
+    gfx.fillStyle(0x33194f, 1);
+    gfx.fillCircle(23, 23, 17);
+    // Rivets around the rim — a plate, not a sticker.
+    gfx.fillStyle(0x512b78, 1);
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2 + 0.4;
+      gfx.fillCircle(24 + Math.cos(a) * 19, 24 + Math.sin(a) * 19, 1.6);
+    }
+    for (const [rr, color] of [[15, 0x1f5a10], [14, 0x7cff3d]] as const) {
+      gfx.fillStyle(color, 1);
+      for (let b = 0; b < 3; b++) {
+        const mid = (b / 3) * Math.PI * 2 - Math.PI / 2;
+        const blade: Phaser.Geom.Point[] = [];
+        for (let i = 0; i <= 8; i++) {
+          const a = mid - 0.52 + (i / 8) * 1.04;
+          blade.push(new Phaser.Geom.Point(24 + Math.cos(a) * rr, 24 + Math.sin(a) * rr));
+        }
+        for (let i = 8; i >= 0; i--) {
+          const a = mid - 0.52 + (i / 8) * 1.04;
+          blade.push(new Phaser.Geom.Point(24 + Math.cos(a) * rr * 0.28, 24 + Math.sin(a) * rr * 0.28));
+        }
+        gfx.fillPoints(blade, true);
+      }
+      gfx.fillCircle(24, 24, rr * 0.19);
+    }
+    gfx.fillStyle(0xc2ff8f, 0.9);
+    gfx.fillCircle(21, 21, 2);
+    gfx.generateTexture('elem-radiation', 48, 48);
+    gfx.clear();
+
+    // Bind — a padlock with the patron's eye where the keyhole should be, hanging in a hole in
+    // the sky. Cosmic first, then the gold body over it, so the relic reads as sitting *on*
+    // something formless rather than floating on the background.
+    gfx.fillStyle(0x080415, 1);
+    gfx.fillCircle(24, 24, 22);
+    gfx.fillStyle(0x180c3a, 1);
+    gfx.fillCircle(22, 22, 18);
+    gfx.fillStyle(0x3a1f7a, 0.85);
+    gfx.fillCircle(20, 20, 12);
+    gfx.fillStyle(0x6f3fd0, 0.5);
+    gfx.fillCircle(18, 18, 6);
+    // Shackle.
+    gfx.lineStyle(4.4, 0x5d5866, 1);
+    gfx.beginPath();
+    gfx.arc(24, 17, 8.5, Math.PI, Math.PI * 2, false);
+    gfx.strokePath();
+    gfx.lineStyle(2, 0xa9a2b8, 1);
+    gfx.beginPath();
+    gfx.arc(23, 16.5, 8.5, Math.PI, Math.PI * 2, false);
+    gfx.strokePath();
+    // Body.
+    gfx.fillStyle(0x6d4a0c, 1);
+    gfx.fillRect(10, 17, 28, 21);
+    gfx.fillStyle(0xe0b743, 1);
+    gfx.fillRect(11.5, 18.5, 25, 18);
+    gfx.fillStyle(0xffe49b, 1);
+    gfx.fillRect(13, 20, 9, 15);
+    // The eye, where the keyhole goes.
+    gfx.fillStyle(0x080415, 1);
+    gfx.fillEllipse(24, 27, 17, 12);
+    gfx.fillStyle(0xffe49b, 1);
+    gfx.fillEllipse(24, 27, 15, 10);
+    gfx.fillStyle(0x8a3fe0, 1);
+    gfx.fillCircle(24, 27, 4.6);
+    gfx.fillStyle(0x080415, 1);
+    gfx.fillEllipse(24, 27, 2, 8);
+    gfx.fillStyle(0xc79bff, 1);
+    gfx.fillCircle(22, 25.4, 1.4);
+    gfx.generateTexture('elem-bind', 48, 48);
+    gfx.clear();
+
+    // Slime (id: gum) — a squat blob with one enormous hand reaching out of it, because the
+    // silhouette has to say "no legs, one arm" before anything else does. Green body, pink
+    // bubble caught in the palm, and a wet crescent on both so they read as the same material.
+    gfx.fillStyle(0x0f2410, 0.4);
+    gfx.fillEllipse(18, 41, 30, 8);
+    // Body: bottom-heavy, flat where it meets the ground.
+    gfx.fillStyle(0x1f6b2a, 1);
+    gfx.fillEllipse(16, 30, 28, 24);
+    gfx.fillStyle(0x46b93f, 1);
+    gfx.fillEllipse(16, 30, 24, 20);
+    gfx.fillStyle(0x8ce65a, 0.55);
+    gfx.fillEllipse(13, 27, 15, 12);
+    gfx.fillStyle(0x0f2410, 1);
+    gfx.fillCircle(12, 28, 2.2);
+    gfx.fillCircle(20, 28, 2.2);
+    // The arm, tapering up and to the right, sagging in the middle.
+    gfx.fillStyle(0x1f6b2a, 1);
+    gfx.fillTriangle(20, 24, 26, 32, 39, 15);
+    gfx.fillStyle(0x46b93f, 1);
+    gfx.fillTriangle(21, 25, 26, 30, 38, 16);
+    // The hand: a fat ball of ooze at the end of it, holding a bubble.
+    gfx.fillStyle(0x1f6b2a, 1);
+    gfx.fillCircle(38, 14, 10);
+    gfx.fillStyle(0x46b93f, 1);
+    gfx.fillCircle(38, 14, 8.4);
+    gfx.fillStyle(0xff70bd, 0.75);
+    gfx.fillCircle(38, 13, 4.6);
+    gfx.lineStyle(1.4, 0xffc9e8, 1);
+    gfx.strokeCircle(38, 13, 4.6);
+    // Two wet crescents, one on each mass — the element's whole signature.
+    gfx.lineStyle(2, 0xe2ffc8, 0.9);
+    gfx.beginPath();
+    gfx.arc(14, 28, 8, -2.5, -1.4, false);
+    gfx.strokePath();
+    gfx.lineStyle(1.7, 0xe2ffc8, 0.9);
+    gfx.beginPath();
+    gfx.arc(37, 13, 5.6, -2.6, -1.5, false);
+    gfx.strokePath();
+    // A drip letting go of the underside of the arm.
+    gfx.fillStyle(0x46b93f, 0.9);
+    gfx.fillEllipse(29, 27, 3, 6);
+    gfx.fillCircle(29, 30, 1.7);
+    gfx.generateTexture('elem-gum', 48, 48);
+    gfx.clear();
+
     // Soul — grave headstone: a weathered, chipped slab leaning slightly, with a carved cross
     // cut into its face, moss down the shaded side and a turned mound of dirt at its foot.
     gfx.fillStyle(0x1c1424, 0.55);

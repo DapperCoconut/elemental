@@ -38,6 +38,30 @@ const NPC_GESTURES: Record<string, ArmGesture> = {
   'flame-nuke': 'raise',
 };
 
+// ── Molten (divine perk) ─────────────────────────────────────────────────
+// Not to be confused with Fire Mastery's "molten fire" DOT above — this is the earth+fate perk.
+/** How long the hotter Pressure Bomb burns the hand that threw it. */
+const MOLTEN_SELF_BURN_MS = 3000;
+/** The eruption: screen-wide, and it does not care who is standing where. */
+const MOLTEN_ERUPTION_DAMAGE = 100;
+const MAGMA_COUNT = 9;
+const MAGMA_RADIUS = 62;
+const MAGMA_LIFE_MS = 14000;
+const MAGMA_TICK_MS = 500;
+const MAGMA_TICK_DAMAGE = 5;
+
+/** A pool of magma left standing after a Molten eruption. Burns anyone but its owner. */
+interface MagmaPool {
+  /** Body of the pool, plus the brighter crust that pulses on top of it. */
+  sprite: Phaser.GameObjects.Arc;
+  crust: Phaser.GameObjects.Arc;
+  x: number; y: number;
+  radius: number;
+  expiresAt: number;
+  tickAccum: number;
+  owner: 'player' | 'npc';
+}
+
 interface AlcoholPuddle {
   sprite: Phaser.GameObjects.Arc;
   x: number; y: number;
@@ -149,6 +173,9 @@ export class FireKit {
   private alcoholHeatAuraTickAccum = 0;
   private alcoholFlyingFlask: { sprite: Phaser.GameObjects.Arc; targetX: number; targetY: number; arriveAt: number } | null = null;
 
+  // ── Molten (divine perk) state ──────────────────────────────────────────
+  private magmaPools: MagmaPool[] = [];
+
   // ── Fire Mastery state ──────────────────────────────────────────────────
   private burningBodyWreath: FireWreath | null = null;
   private burningBodyTickAccum = 0;
@@ -213,6 +240,8 @@ export class FireKit {
     this.alcoholEWasDown = false;
     for (const p of this.alcoholPuddles) { p.sprite.destroy(); p.ignitedAura?.destroy(); }
     this.alcoholPuddles = [];
+    for (const m of this.magmaPools) { m.sprite.destroy(); m.crust.destroy(); }
+    this.magmaPools = [];
     if (this.alcoholHeatAura) { this.alcoholHeatAura.destroy(); this.alcoholHeatAura = null; }
     this.alcoholHeatAuraTickAccum = 0;
     if (this.alcoholFlyingFlask) { this.alcoholFlyingFlask.sprite.destroy(); this.alcoholFlyingFlask = null; }
@@ -230,6 +259,8 @@ export class FireKit {
 
     this.updateAvatars(delta, isPlayerFire, isNpcFire);
     this.updateFireballTrails(delta);
+    // Owner-agnostic: an eruption's magma outlives the frame either side set it down on.
+    this.updateMagma(time, delta);
 
     if (isPlayerFire) {
       // Status tray: Flame Body is a toggle with no expiry, so mirror it every frame.
@@ -1058,6 +1089,115 @@ export class FireKit {
       // Ignition by fireball/flamethrower nearby (proximity check against player's attack position)
       // This is done externally via igniteAlcoholPuddlesNear calls in handleInput
     }
+  }
+
+  // ── Molten (divine perk) ─────────────────────────────────────────────────
+
+  /**
+   * Molten's Flame Nuke: not an explosion at a point but an eruption under the whole arena.
+   * 100 damage lands screen-wide on *everyone*, the caster included — there is no outrunning
+   * it and no aiming it — and the floor is left strewn with magma that keeps burning whoever
+   * the caster was fighting.
+   */
+  doMoltenEruption(owner: 'player' | 'npc'): void {
+    const { scene } = this.arena;
+    const time = scene.time.now;
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    const fx = owner === 'player' ? this.pfx : this.nfx;
+    const col = owner === 'player' ? this.pcol : this.ncol;
+    const cx = caster.x, cy = caster.y;
+
+    // ── The cloud: a column punched up out of the floor, a cap boiling out at the top of it,
+    //    and two fronts rolling away across the ground.
+    fx.firePillar(cx, cy, 84, 320);
+    fx.explosion(cx, cy, 300, { shards: 44, smoke: 16, duration: 900 });
+    scene.time.delayedCall(140, () => {
+      // The cap — three blooms stacked at the head of the column, widest last.
+      fx.bloom(cx, cy - 250, 150, 18);
+      fx.smoke(cx, cy - 250, 14, 170);
+      fx.ring(cx, cy - 250, 40, 260, FIRE.gold, 700, 9, 8);
+    });
+    scene.time.delayedCall(90, () => fx.ring(cx, cy, 60, 900, FIRE.orange, 900, 12, 3));
+    scene.time.delayedCall(260, () => fx.ring(cx, cy, 40, 1100, FIRE.deep, 1100, 7, 3));
+    scene.time.delayedCall(320, () =>
+      fx.embers(cx, cy, 40, { speed: 620, size: 5, life: 1400, rise: 140 }));
+    scene.cameras.main.shake(900, 0.03);
+    scene.cameras.main.flash(320, 255, 150, 60);
+
+    // ── The damage: screen-wide, no falloff, no exceptions.
+    const victims = owner === 'player' ? this.arena.enemies : [this.arena.player];
+    for (const v of victims) {
+      if (!v?.active || v.hp <= 0) continue;
+      v.takeDamage(MOLTEN_ERUPTION_DAMAGE);
+      this.arena.spawnHitFlash(v.x, v.y, col(FIRE.orange));
+    }
+    // The caster is standing on it too. Self-inflicted: it is the cost of the ability, not a hit.
+    Fighter.asNonAllyDamage(() =>
+      caster.takeDamage(MOLTEN_ERUPTION_DAMAGE, { selfInflicted: true }));
+    this.arena.showFloatingText(cx, cy - 60, '🌋 ERUPTION', '#ff5522');
+
+    // ── The floor: magma scattered across the whole arena, one pool near the caster.
+    const W = this.arena.width, H = this.arena.height;
+    const pad = 60;
+    for (let i = 0; i < MAGMA_COUNT; i++) {
+      const mx = i === 0 ? cx : Phaser.Math.Between(pad, W - pad);
+      const my = i === 0 ? cy : Phaser.Math.Between(pad, H - pad);
+      this.spawnMagmaPool(time, mx, my, owner);
+    }
+  }
+
+  private spawnMagmaPool(time: number, x: number, y: number, owner: 'player' | 'npc'): void {
+    const { scene } = this.arena;
+    const col = owner === 'player' ? this.pcol : this.ncol;
+    const sprite = scene.add.circle(x, y, MAGMA_RADIUS, col(FIRE.ember), 0.5).setDepth(2);
+    sprite.setStrokeStyle(3, col(FIRE.red), 0.7);
+    // The crust breathes, so a pool reads as live rock rather than a painted disc.
+    const crust = scene.add.circle(x, y, MAGMA_RADIUS * 0.62, col(FIRE.gold), 0.45).setDepth(2);
+    scene.tweens.add({
+      targets: crust, alpha: 0.18, scale: 0.82, yoyo: true, repeat: -1,
+      duration: 620 + Math.random() * 240, ease: 'Sine.easeInOut',
+    });
+    this.magmaPools.push({
+      sprite, crust, x, y, radius: MAGMA_RADIUS,
+      expiresAt: time + MAGMA_LIFE_MS, tickAccum: 0, owner,
+    });
+  }
+
+  private updateMagma(time: number, delta: number): void {
+    for (let i = this.magmaPools.length - 1; i >= 0; i--) {
+      const m = this.magmaPools[i];
+      if (time >= m.expiresAt) {
+        m.sprite.destroy();
+        m.crust.destroy();
+        this.magmaPools.splice(i, 1);
+        continue;
+      }
+      // Cooling: the pool dims over its last third rather than blinking out.
+      const left = (m.expiresAt - time) / MAGMA_LIFE_MS;
+      m.sprite.setAlpha(0.5 * Math.min(1, left * 3));
+
+      m.tickAccum += delta;
+      if (m.tickAccum < MAGMA_TICK_MS) continue;
+      m.tickAccum -= MAGMA_TICK_MS;
+      const victims = m.owner === 'player' ? this.arena.enemies : [this.arena.player];
+      for (const v of victims) {
+        if (!v?.active || v.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(m.x, m.y, v.x, v.y) > m.radius) continue;
+        v.takeDamage(MAGMA_TICK_DAMAGE, { source: m, sourceX: m.x, sourceY: m.y });
+        v.burningUntil = Math.max(v.burningUntil, time + Math.round(2000 * v.statusDurMult));
+        this.arena.spawnHitFlash(v.x, v.y, 0xff6600);
+      }
+    }
+  }
+
+  /** Molten's Pressure Bomb sears the hand that threw it. Called from the fire ability itself. */
+  scorchCaster(owner: 'player' | 'npc'): void {
+    const f = owner === 'player' ? this.arena.player : this.arena.npc;
+    if (!f?.active) return;
+    const time = this.arena.scene.time.now;
+    f.burningUntil = Math.max(f.burningUntil, time + MOLTEN_SELF_BURN_MS);
+    (owner === 'player' ? this.pfx : this.nfx).embers(f.x, f.y, 6, { speed: 130, size: 3, life: 420 });
+    this.arena.showFloatingText(f.x, f.y - 30, '🔥 Backdraft', '#ff8844');
   }
 
   isPlayerInFlamePuddle(time: number): boolean {

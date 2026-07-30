@@ -9,6 +9,7 @@ import {
   addSectionLabel, addCardPlate, addWell, fillDiamond, fillNotchedGradient, strokeNotched, ALL_CORNERS,
   drawGlow, drawOrnateRule,
 } from '../ui';
+import { Music, Sfx } from '../audio';
 
 const ELEMENT_COLORS: Record<string, number> = {
   fire:        0xff4400,
@@ -102,6 +103,7 @@ export class ShopScene extends Phaser.Scene {
   }
 
   create(): void {
+    Music.play('shop');
     const { width, height } = this.scale;
     const cx = width / 2;
 
@@ -470,6 +472,7 @@ export class ShopScene extends Phaser.Scene {
             ? PlayerData.spendShards(price)
             : PlayerData.spendCorruptShards(price);
           if (paid) PlayerData.purchaseUpgrade(elementId, slot);
+          Sfx.play(paid ? 'ui-purchase' : 'ui-denied');
         }),
       }).container);
     } else {
@@ -480,7 +483,10 @@ export class ShopScene extends Phaser.Scene {
         accent: active ? C.blood : C.verdant,
         variant: active ? 'danger' : 'solid',
         fontSize: 18, depth: DEPTH.modalContent,
-        onClick: () => commit(() => PlayerData.toggleUpgrade(elementId, slot)),
+        onClick: () => commit(() => {
+          PlayerData.toggleUpgrade(elementId, slot);
+          Sfx.play(active ? 'ui-toggle-off' : 'ui-equip');
+        }),
       }).container);
     }
 

@@ -10,6 +10,7 @@ import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackdrop, addButton, addPanel, addTitle, fillDiamond,
 } from '../ui';
+import { Sfx } from '../audio';
 
 type CampaignPayload = {
   slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean; hardMode?: boolean;
@@ -53,6 +54,11 @@ export class GameOverScene extends Phaser.Scene {
   }): void {
     const { width, height } = this.scale;
     const cx = width / 2;
+
+    // No music here on purpose: ArenaScene's victory/defeat sting is still
+    // ringing out, and a track starting under it would step on the moment.
+    // The reward chime below lands into that silence.
+    if (data.playerWon) this.time.delayedCall(900, () => Sfx.play('reward-big'));
 
     const isInvasion = data.mode === 'invasion';
     const isBoss = data.mode === 'boss';

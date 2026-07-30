@@ -1411,4 +1411,60 @@ export class CrystalKit {
       }
     }
   }
+
+  /**
+   * Ruin's Spikes of Ruin (see `combat/SummonPurge.ts`).
+   * Nodes, portal gates, mirror clones and parked shredders — everything Crystal leaves
+   * standing on the floor.
+   */
+  purgeSummons(x: number, y: number, radius: number, exceptOwner: 'player' | 'npc'): number {
+    const near = (px: number, py: number): boolean => Phaser.Math.Distance.Between(x, y, px, py) <= radius;
+    let razed = 0;
+    const cullNodes = (list: CrystalNode[], owner: 'player' | 'npc'): void => {
+      if (owner === exceptOwner) return;
+      for (let i = list.length - 1; i >= 0; i--) {
+        if (!near(list[i].x, list[i].y)) continue;
+        list[i].gfx.destroy();
+        list.splice(i, 1);
+        razed++;
+      }
+    };
+    cullNodes(this.crystalNodes, 'player');
+    cullNodes(this.npcCrystalNodes, 'npc');
+    const cullPortals = (list: CrystalPortalGate[], owner: 'player' | 'npc'): void => {
+      if (owner === exceptOwner) return;
+      for (let i = list.length - 1; i >= 0; i--) {
+        if (!near(list[i].x, list[i].y)) continue;
+        list[i].gfx.destroy();
+        list[i].label.destroy();
+        list.splice(i, 1);
+        razed++;
+      }
+    };
+    cullPortals(this.crystalPortals, 'player');
+    cullPortals(this.npcCrystalPortals, 'npc');
+    const cullClones = (list: CrystalClone[], owner: 'player' | 'npc'): void => {
+      if (owner === exceptOwner) return;
+      for (let i = list.length - 1; i >= 0; i--) {
+        const c = list[i];
+        if (!near(c.sprite.x + c.offsetX, c.sprite.y + c.offsetY)) continue;
+        c.sprite.destroy();
+        c.hpBar.destroy();
+        c.hpBg.destroy();
+        c.dirIndicator.destroy();
+        list.splice(i, 1);
+        razed++;
+      }
+    };
+    cullClones(this.crystalClones, 'player');
+    cullClones(this.npcCrystalClones, 'npc');
+    for (let i = this.shredders.length - 1; i >= 0; i--) {
+      const s = this.shredders[i];
+      if (s.owner === exceptOwner || !near(s.x, s.y)) continue;
+      s.gfx.destroy();
+      this.shredders.splice(i, 1);
+      razed++;
+    }
+    return razed;
+  }
 }

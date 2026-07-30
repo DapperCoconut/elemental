@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix, tintPlate } from './Theme';
 import { ALL_CORNERS, drawGlow, drawOrnateRule, fillDiamond, fillNotchedGradient, strokeNotched } from './Shapes';
+import { Sfx } from '../audio';
 
 /**
  * Big centred scene title: layered stroke, accent drop-shadow, an ornate rule
@@ -229,6 +230,7 @@ export function showToast(scene: Phaser.Scene, message: string, opts: {
   container.bringToTop(label);
 
   container.setScale(0.9).setAlpha(0);
+  Sfx.play('ui-toast');
   scene.tweens.add({ targets: container, scale: 1, alpha: 1, duration: 180, ease: 'Back.easeOut' });
   scene.tweens.add({
     targets: container, alpha: 0, y: y - 34,

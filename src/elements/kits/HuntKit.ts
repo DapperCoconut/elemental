@@ -3,8 +3,8 @@ import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
 import {
-  BEAST_TONES, HUNT, HUNTER_TONES, HuntAura, HuntAvatar, HuntColorFn, HuntForm, HuntFx,
-  HuntTones, MOON_TONES, NPC_TONES, SILVER_TONES,
+  BEAST_TONES, HELL_TONES, HUNT, HUNTER_TONES, HuntAura, HuntAvatar, HuntColorFn, HuntForm,
+  HuntFx, HuntTones, MOON_TONES, NPC_TONES, SILVER_TONES,
 } from './HuntVisuals';
 
 /**
@@ -105,6 +105,17 @@ const BLOOD_SCENT_HASTE = 0.8;          // cooldownMult while it holds
 const BLOOD_SCENT_HP_RATIO = 0.3;
 const BLOOD_SCENT_HP_RATIO_MOON = 0.5;
 const BLOOD_MOON_MS = 20000;
+
+// ── Hell (divine perk) ───────────────────────────────────────────────────────
+// The released beast is a hellhound: a smaller, faster, meaner thing that has traded its hide
+// for teeth. Every number here rides the existing beast-form paths, so nothing else changes.
+const HELL_DR_MULT = 1.25;        // takes 25% more
+const HELL_OUTGOING_MULT = 1.3;   // deals 30% more
+const HELL_CD_MULT = 1 / 1.2;     // 20% faster attacks
+const HELL_SPEED_MULT = 1.3;      // on top of beast form's own 1.5
+/** Scale + body radius in place of the beast's 1.2 / 26 — visibly the smaller silhouette. */
+const HELL_SCALE = 0.85;
+const HELL_BODY_RADIUS = 18;
 
 // ── Hybrid form ──────────────────────────────────────────────────────────────
 
@@ -573,7 +584,10 @@ export class HuntKit {
   tones(owner: Owner): HuntTones {
     const s = this.side(owner);
     if (s.moonUntil > this.now) return MOON_TONES;
-    if (s.form === 'beast') return s.alpha ? ALPHA_TONES : BEAST_TONES;
+    if (s.form === 'beast') {
+      if (this.isHellhound(owner)) return HELL_TONES;
+      return s.alpha ? ALPHA_TONES : BEAST_TONES;
+    }
     if (s.form === 'hybrid') return SILVER_TONES;
     return owner === 'player' ? HUNTER_TONES : NPC_TONES;
   }
@@ -581,6 +595,15 @@ export class HuntKit {
   private moonUp(owner: Owner): boolean { return this.side(owner).moonUntil > this.now; }
 
   // ── Public form queries, read by ArenaScene ────────────────────────────────
+
+  /**
+   * Hell (divine perk): true while this side is *currently* the hellhound. Asked per frame
+   * rather than latched at transform time, so equipping/clearing the perk between matches can
+   * never leave a half-hellhound behind.
+   */
+  isHellhound(owner: Owner): boolean {
+    return this.side(owner).form === 'beast' && this.api.hasPerk(owner, 'hell');
+  }
 
   isBeastForm(owner: Owner): boolean { return this.side(owner).form === 'beast'; }
   isHybridForm(owner: Owner): boolean { return this.side(owner).form === 'hybrid'; }
@@ -1059,12 +1082,23 @@ export class HuntKit {
     s.overloaded = false;
     s.spiritUntil = 0;
     s.charging = false;
-    f.setScale(1.2);
-    this.body(f).setCircle(26, 3, 3);
+    // Hell: a hellhound is the small one. It comes out under the beast's own scale, not over it.
+    const hell = this.api.hasPerk(owner, 'hell');
+    if (hell) {
+      f.setScale(HELL_SCALE);
+      const off = (48 - HELL_BODY_RADIUS * 2) / 2;
+      this.body(f).setCircle(HELL_BODY_RADIUS, off, off);
+    } else {
+      f.setScale(1.2);
+      this.body(f).setCircle(26, 3, 3);
+    }
     // Give In comes out of hybrid form, which was wearing the silver sprite. The beast gets a
     // sprite of its own — a matted fur skull rather than the hunter's hide.
     f.setTexture('elem-hunt-beast');
-    if (s.alpha) {
+    if (hell) {
+      // Charred over the fur sprite, so the hound reads as burnt rather than bloody.
+      f.setTint(0x883322);
+    } else if (s.alpha) {
       f.setTint(0xb9bfc6);
       f.cooldownMult = ALPHA_CD_MULT;
     } else {
@@ -1074,11 +1108,13 @@ export class HuntKit {
     av?.play('raise');
     av?.snap(1);
     this.fx(owner).transformBeast(
-      f.x, f.y, 52, s.alpha ? ALPHA_TONES : BEAST_TONES, this.leanOf(owner), 8,
+      f.x, f.y, hell ? 44 : 52, hell ? HELL_TONES : s.alpha ? ALPHA_TONES : BEAST_TONES,
+      this.leanOf(owner), 8,
     );
     this.api.scene.cameras.main.shake(360, 0.009);
     this.api.showFloatingText(f.x, f.y - 44,
-      s.alpha ? '🐺 ALPHA' : permanent ? '🐺 GIVE IN' : '🐺 RELEASE THE BEAST', s.alpha ? '#ccd4dd' : '#ff3322');
+      hell ? '🐕‍🦺 HELLHOUND' : s.alpha ? '🐺 ALPHA' : permanent ? '🐺 GIVE IN' : '🐺 RELEASE THE BEAST',
+      hell ? '#ff6600' : s.alpha ? '#ccd4dd' : '#ff3322');
     if (owner === 'player') this.api.setHudForm('beast');
   }
 
@@ -1618,16 +1654,19 @@ export class HuntKit {
     // Alpha and Roar keep their own armour; recomputed from scratch each frame so nothing
     // sticks after the effect ends. `write` only touches the fighter while hunt has an
     // opinion, so a neutral frame leaves whatever else set the field (Rebirth, Lust) alone.
+    const hell = this.isHellhound(owner);
     let dr = 1;
     if (s.alpha) dr *= ALPHA_DR_MULT;
     if (s.roarDrUntil > time) dr *= ROAR_DR_MULT;
     if (this.api.hasPerk(owner, 'rage') && s.form === 'beast') dr *= 0.5;
+    if (hell) dr *= HELL_DR_MULT;
     if (dr !== 1 || this.wroteDr[owner]) { f.incomingDamageMultiplier = dr; this.wroteDr[owner] = dr !== 1; }
 
     // Attack speed: Blood Scent and Alpha both shorten cooldowns; they multiply.
     let cd = 1;
     if (s.alpha) cd *= ALPHA_CD_MULT;
     if (s.scentUntil > time) cd *= BLOOD_SCENT_HASTE;
+    if (hell) cd *= HELL_CD_MULT;
     if (cd !== 1 || this.wroteCd[owner]) { f.cooldownMult = cd; this.wroteCd[owner] = cd !== 1; }
 
     // Adrenaline and the crash it books in.
@@ -1647,6 +1686,7 @@ export class HuntKit {
       }
     }
     if (s.crashUntil > time) outgoing *= CRASH_MULT;
+    if (hell) outgoing *= HELL_OUTGOING_MULT;
     if (outgoing !== 1 || this.wroteOut[owner]) { f.outgoingDamageMult = outgoing; this.wroteOut[owner] = outgoing !== 1; }
 
     // Roll invincibility drops the moment the tumble ends.
@@ -1734,7 +1774,7 @@ export class HuntKit {
     let m = 1;
     if (this.api.elementId === 'hunt') {
       const s = this.sides.player;
-      if (s.form === 'beast') m *= 1.5;
+      if (s.form === 'beast') m *= this.isHellhound('player') ? 1.5 * HELL_SPEED_MULT : 1.5;
       else if (s.form === 'hybrid') m *= 1.25;
       if (this.onOwnTrail('player')) {
         m *= TRAIL_SPEED_MULT;
@@ -1758,7 +1798,7 @@ export class HuntKit {
     let m = 1;
     if (this.api.npcElementId === 'hunt') {
       const s = this.sides.npc;
-      if (s.form === 'beast') m *= 1.5;
+      if (s.form === 'beast') m *= this.isHellhound('npc') ? 1.5 * HELL_SPEED_MULT : 1.5;
       if (this.onOwnTrail('npc')) m *= TRAIL_SPEED_MULT;
       if (s.scentUntil > time) m *= BLOOD_SCENT_SPEED;
     }
@@ -1965,8 +2005,12 @@ export class HuntKit {
       const av = this.playerAvatar;
       av.setFacing(Math.atan2(this.api.aimY - player.y, this.api.aimX - player.x));
       av.setForm(s.form);
+      av.setHell(this.isHellhound('player'));
       av.setMoon(this.moonUp('player'));
-      av.setIntensity(this.moonUp('player') ? 1.45 : s.form === 'beast' ? 1.3 : s.form === 'hybrid' ? 1.15 : 1);
+      // A hellhound doesn't bulk up — it is the small, quick shape, so it skips beast form's swell.
+      av.setIntensity(this.moonUp('player') ? 1.45
+        : this.isHellhound('player') ? 1
+        : s.form === 'beast' ? 1.3 : s.form === 'hybrid' ? 1.15 : 1);
       av.setMastered(this.api.masteryActive);
       this.driveWeapon('player', av);
       av.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
@@ -1981,8 +2025,11 @@ export class HuntKit {
       const av = this.npcAvatar;
       av.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
       av.setForm(s.form);
+      av.setHell(this.isHellhound('npc'));
       av.setMoon(this.moonUp('npc'));
-      av.setIntensity(this.moonUp('npc') ? 1.4 : s.form === 'beast' ? 1.25 : 1);
+      av.setIntensity(this.moonUp('npc') ? 1.4
+        : this.isHellhound('npc') ? 1
+        : s.form === 'beast' ? 1.25 : 1);
       av.setMastered(this.api.npcMasteryActive);
       this.driveWeapon('npc', av);
       av.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
@@ -2562,5 +2609,23 @@ export class HuntKit {
     if (this.beastlings.length) this.updateBeastlings(time, dt);
     this.updateIndicators(time);
     this.paintWorld();
+  }
+
+  /**
+   * Ruin's Spikes of Ruin (see `combat/SummonPurge.ts`).
+   * The beastling pup. Anything it happens to be carrying goes with it, the same as when
+   * its own timer runs out.
+   */
+  purgeSummons(x: number, y: number, radius: number, exceptOwner: 'player' | 'npc'): number {
+    const near = (px: number, py: number): boolean => Phaser.Math.Distance.Between(x, y, px, py) <= radius;
+    let razed = 0;
+    for (let i = this.beastlings.length - 1; i >= 0; i--) {
+      const b = this.beastlings[i];
+      if (b.owner === exceptOwner || !near(b.x, b.y)) continue;
+      b.gfx.destroy();
+      this.beastlings.splice(i, 1);
+      razed++;
+    }
+    return razed;
   }
 }

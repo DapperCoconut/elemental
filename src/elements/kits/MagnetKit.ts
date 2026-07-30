@@ -26,6 +26,14 @@ export interface MagnetRod {
   isSword?: boolean;
   /** What it is made of — drives its colour and hatching. Defaults to plain steel. */
   kind?: RodKind;
+  /**
+   * Electromagnet (divine perk): `scene.time.now` stamp until which this rod is live —
+   * `Infinity` once the Smasher is enhanced. A charged rod arcs into anyone standing near it
+   * and stuns whatever it hits, instead of being flung across the arena.
+   */
+  chargedUntil?: number;
+  /** Next time this charged rod may arc. Rods zap on their own clock, not in unison. */
+  nextZapAt?: number;
 }
 
 export interface MagnetNail {
@@ -87,6 +95,14 @@ export interface MagnetArenaApi {
   recordMasteryStat(key: string, amount: number): void;
 }
 
+// ── Electromagnet (divine perk) ───────────────────────────────────────────────
+/** How long a compacted rod stays live — with the Smasher enhanced, forever instead. */
+const ELECTROMAGNET_CHARGE_MS = 10000;
+const ELECTROMAGNET_ZAP_RANGE = 96;
+const ELECTROMAGNET_ZAP_DAMAGE = 6;
+const ELECTROMAGNET_ZAP_GAP_MS = 700;
+const ELECTROMAGNET_STUN_MS = 500;
+
 // ── Mastery: Metal Detector passive + Mag-Lev bindable ────────────────────────
 const ANCIENT_ROD_COUNT = 2;
 const ANCIENT_EXPOSE_RADIUS = 62;      // a pulse within this of a hidden rod exposes it
@@ -144,6 +160,8 @@ export class MagnetKit {
   private lastAimY = 0;
 
   private magnetRods: MagnetRod[] = [];
+  /** Electromagnet: fighters a charged rod has locked up, and when each lock lapses. */
+  private electroStunned = new Map<Fighter, number>();
   private magnetPlayerNail: MagnetNail | null = null;
   private magnetNpcNail: MagnetNail | null = null;
   private magnetPlayerShieldOrbs: MagnetShieldOrb[] = [];
@@ -266,6 +284,7 @@ export class MagnetKit {
     this.vizT = 0;
 
     this.magnetRods = [];
+    this.electroStunned = new Map<Fighter, number>();
     this.magnetPlayerNail = null;
     this.magnetNpcNail = null;
     this.magnetPlayerShieldOrbs = [];
@@ -397,6 +416,8 @@ export class MagnetKit {
     this.updateMagnetSpeedBuff(time);
     this.updateMasteryMetalDetector(time, delta);
     this.updateMagLev(time, delta);
+    // After every movement source for the frame, so a charged rod's stun always wins.
+    this.enforceElectroStuns(time);
     this.paintWorld(time);
     this.updateAvatars(delta, isPlayerMagnet, isNpcMagnet);
   }
@@ -427,6 +448,7 @@ export class MagnetKit {
       MagnetFx.drawRod(
         g, this.col(rod.owner), rod.x, rod.y, rod.vx, rod.vy,
         rod.kind ?? 'steel', rod.bouncing, rod.permDamageBonus, rod.isSword === true, this.vizT,
+        this.isCharged(rod, time),
       );
     }
     if (this.magLevMounted) {
@@ -794,6 +816,51 @@ export class MagnetKit {
 
   // ── Private per-frame update helpers ─────────────────────────────────────
 
+  // ── Electromagnet (divine perk) ────────────────────────────────────────
+
+  /** True while a rod is holding a charge. */
+  private isCharged(rod: MagnetRod, time: number): boolean {
+    return rod.chargedUntil !== undefined && time < rod.chargedUntil;
+  }
+
+  /** A live rod arcs into whoever is standing too close to it. */
+  private zapFromRod(rod: MagnetRod, time: number): void {
+    rod.nextZapAt = time + ELECTROMAGNET_ZAP_GAP_MS;
+    // The kit only ever knows the two duellists — same as every other rod interaction here.
+    const victim = rod.owner === 'player' ? this.arena.npc : this.arena.player;
+    const fx = this.fx(rod.owner);
+    let arced = false;
+    if (victim?.active && victim.hp > 0
+      && Phaser.Math.Distance.Between(rod.x, rod.y, victim.x, victim.y) <= ELECTROMAGNET_ZAP_RANGE) {
+      victim.takeDamage(ELECTROMAGNET_ZAP_DAMAGE);
+      // The arc itself, jumping the gap from the rod to the body.
+      fx.sparks(victim.x, victim.y, 4, Math.atan2(rod.y - victim.y, rod.x - victim.x), 9, MAGNET.spark);
+      arced = true;
+    }
+    // A dry crackle even when it catches nobody, so a live rod is never silent on the floor.
+    fx.sparks(rod.x, rod.y, arced ? 5 : 2, Math.random() * Math.PI * 2, 9, MAGNET.live);
+  }
+
+  /**
+   * A charged rod that connects doesn't just hurt — it locks the target up for half a second.
+   * Written to the generic stun field, and enforced for either side by `enforceElectroStuns`
+   * (ArenaScene only consumes it for the npc).
+   */
+  private electroStun(rod: MagnetRod, victim: Fighter, time: number): void {
+    if (!this.isCharged(rod, time) || victim.unstoppable) return;
+    victim.earthStunnedUntil = Math.max(victim.earthStunnedUntil, time + ELECTROMAGNET_STUN_MS);
+    this.electroStunned.set(victim, victim.earthStunnedUntil);
+    this.arena.showFloatingText(victim.x, victim.y - 34, '⚡ Stunned!', '#66ffff');
+  }
+
+  /** Zero the velocity of anything a charged rod has locked up. Runs after movement resolves. */
+  private enforceElectroStuns(time: number): void {
+    for (const [f, until] of this.electroStunned) {
+      if (time >= until || !f.active || f.unstoppable) { this.electroStunned.delete(f); continue; }
+      (f.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+    }
+  }
+
   private updateMagnetRods(time: number, delta: number): void {
     const { player, npc, scene } = this.arena;
     const dt = delta / 1000;
@@ -829,6 +896,17 @@ export class MagnetKit {
       // Colour, heading and smear all come off this data in paintWorld — see rodColor().
       const isMoving = Math.abs(rod.vx) > movingThreshold || Math.abs(rod.vy) > movingThreshold;
 
+      // Electromagnet: a live rod arcs into anything standing next to it, whether or not the
+      // rod is moving — it is a floor hazard, not a projectile.
+      if (rod.chargedUntil !== undefined) {
+        if (time >= rod.chargedUntil) {
+          rod.chargedUntil = undefined;
+          rod.nextZapAt = undefined;
+        } else if (time >= (rod.nextZapAt ?? 0)) {
+          this.zapFromRod(rod, time);
+        }
+      }
+
       if (isMoving || wasMoving) {
         const baseHit = rod.isSword ? 16 : 8;
         const baseDmg = rod.bouncing ? baseHit * 2 : baseHit;
@@ -843,6 +921,7 @@ export class MagnetKit {
             this.pfx.sparks(hx, hy, 5 + (rod.bouncing ? 4 : 0), Math.atan2(rod.vy, rod.vx) + Math.PI, 10);
             this.arena.recordMasteryStat('rodSmashes', 1);
             rod.contactCooldownNpc = time + 500;
+            this.electroStun(rod, npc, time);
             if (rod.destroyOnHit) {
               this.pfx.shrapnel(rod.x, rod.y, 4, { speed: 190, size: 9, color: rodColor(rod.kind ?? 'steel', rod.bouncing, rod.permDamageBonus) });
               this.magnetRods.splice(this.magnetRods.indexOf(rod), 1);
@@ -855,6 +934,7 @@ export class MagnetKit {
             player.takeDamage(dmg);
             this.nfx.sparks(hx, hy, 5 + (rod.bouncing ? 4 : 0), Math.atan2(rod.vy, rod.vx) + Math.PI, 10);
             rod.contactCooldownPlayer = time + 500;
+            this.electroStun(rod, player, time);
             if (rod.destroyOnHit) {
               this.nfx.shrapnel(rod.x, rod.y, 4, { speed: 190, size: 9, color: rodColor(rod.kind ?? 'steel', rod.bouncing, rod.permDamageBonus) });
               this.magnetRods.splice(this.magnetRods.indexOf(rod), 1);
@@ -1241,6 +1321,18 @@ export class MagnetKit {
             if (rod.owner !== owner) continue;
             const rodDist = Phaser.Math.Distance.Between(smasher.x, smasher.y, rod.x, rod.y);
             if (rodDist <= 200) {
+              // Electromagnet: the compaction charges the rod instead of flinging it. It keeps
+              // its place on the floor and becomes a live hazard — and with the Smasher enhanced
+              // the charge never leaks away.
+              if (this.arena.hasPerk(owner, 'electromagnet')) {
+                const permanent = owner === 'player' ? this.arena.hasUpgrade('q') : false;
+                rod.chargedUntil = permanent ? Infinity : time + ELECTROMAGNET_CHARGE_MS;
+                rod.nextZapAt = time + Math.random() * ELECTROMAGNET_ZAP_GAP_MS;
+                this.fx(owner).sparks(rod.x, rod.y, 7, Math.random() * Math.PI * 2, 10, MAGNET.spark);
+                this.arena.showFloatingText(rod.x, rod.y - 24,
+                  permanent ? '⚡ CHARGED' : '⚡ Charged', '#66ccff');
+                continue;
+              }
               rod.bouncing = true;
               rod.bounceUntil = time + 3000;
               // Fling ballistically in scattered directions — they ricochet off walls.

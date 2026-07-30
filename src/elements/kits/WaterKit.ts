@@ -29,6 +29,14 @@ const SLIPSTREAM_SPEED_MULT = 1.25;
 /** Enemies held at 100% dehydration at once to earn The Great Drought (→ the Coral skin). */
 const DROUGHT_TARGETS = 5;
 
+// ── Sulphur (divine perk) constants ──────────────────────────────────────────
+
+/** Pressure a capped geyser builds per second, and the ceiling it builds to. */
+const SULPHUR_PRESSURE_PER_SEC = 5;
+const SULPHUR_PRESSURE_MAX = 100;
+/** How long the eruption's speed boost holds. */
+const SULPHUR_BOOST_MS = 8000;
+
 /** Which arm gesture the opponent's rig plays when the NPC lands each ability. */
 const NPC_GESTURES: Record<string, ArmGesture> = {
   'water-cut': 'punch',
@@ -146,6 +154,19 @@ export class WaterKit {
   private npcWasInGeyser = false;
   private playerInGeyser = false;
 
+  // -- Sulphur (divine perk) --
+  /**
+   * Pressure held by each capped geyser, keyed by the geyser object. A WeakMap for the same
+   * reason `geyserCharges` is one: ArenaScene owns the geyser's lifecycle, and a removed
+   * spring must take its pressure with it.
+   */
+  private sulphurPressure = new WeakMap<object, number>();
+  /** The live eruption boost per side: `until` is a `scene.time.now` stamp, `mult` is 1 + pressure/100. */
+  private sulphurBoost: Record<'player' | 'npc', { until: number; mult: number }> = {
+    player: { until: 0, mult: 1 },
+    npc: { until: 0, mult: 1 },
+  };
+
   // -- The Great Drought achievement (unlocks the Coral skin) --
   private droughtUnlocked = false;
 
@@ -236,6 +257,8 @@ export class WaterKit {
     this.playerWasInGeyser = false;
     this.npcWasInGeyser = false;
     this.playerInGeyser = false;
+    this.sulphurPressure = new WeakMap<object, number>();
+    this.sulphurBoost = { player: { until: 0, mult: 1 }, npc: { until: 0, mult: 1 } };
     this.droughtUnlocked = false;
 
     this.siphonLastCastAt = -Infinity;
@@ -277,30 +300,38 @@ export class WaterKit {
       const inGeyser = currentGeyser !== null;
       this.playerInGeyser = inGeyser;
 
-      if (inGeyser) {
-        this.arena.setPlayerGeyserBuffUntil(time + 2000);
+      // Sulphur: a capped spring is a bomb, not a boost pad — standing on it sets it off, and
+      // the spring is gone afterwards, so none of the buff/charge bookkeeping below applies.
+      if (inGeyser && this.hasSulphur('player')) {
+        if (!this.playerWasInGeyser) this.eruptSulphur(time, currentGeyser!, 'player');
+        this.playerWasInGeyser = geysers.includes(currentGeyser!);
+        this.playerInGeyser = this.playerWasInGeyser;
+      } else {
+        if (inGeyser) {
+          this.arena.setPlayerGeyserBuffUntil(time + 2000);
 
-        // Water Mastery — Pressure Rider counts each fresh step into your own geyser.
-        if (!this.playerWasInGeyser) {
-          this.arena.recordMasteryStat('geyserBoosts', 1);
-          // The spring catches you and throws you forward.
-          this.pfx.crown(player.x, player.y, 54, 11, 4);
-          this.pfx.spray(player.x, player.y, 10, { speed: 200, size: 3, life: 480, fall: 60, depth: 5 });
-        }
+          // Water Mastery — Pressure Rider counts each fresh step into your own geyser.
+          if (!this.playerWasInGeyser) {
+            this.arena.recordMasteryStat('geyserBoosts', 1);
+            // The spring catches you and throws you forward.
+            this.pfx.crown(player.x, player.y, 54, 11, 4);
+            this.pfx.spray(player.x, player.y, 10, { speed: 200, size: 3, life: 480, fall: 60, depth: 5 });
+          }
 
-        // Entry event: player just stepped in AND global CD expired
-        if (!this.playerWasInGeyser && time - this.lastGeyserUseAt >= 2000) {
-          this.lastGeyserUseAt = time;
-          this.consumeGeyserCharge(currentGeyser!);
-          // Re-check geyser still exists after charge consumption
-          if (!geysers.includes(currentGeyser!)) {
-            this.playerWasInGeyser = false;
-            this.playerInGeyser = false;
-            return;
+          // Entry event: player just stepped in AND global CD expired
+          if (!this.playerWasInGeyser && time - this.lastGeyserUseAt >= 2000) {
+            this.lastGeyserUseAt = time;
+            this.consumeGeyserCharge(currentGeyser!);
+            // Re-check geyser still exists after charge consumption
+            if (!geysers.includes(currentGeyser!)) {
+              this.playerWasInGeyser = false;
+              this.playerInGeyser = false;
+              return;
+            }
           }
         }
+        this.playerWasInGeyser = inGeyser;
       }
-      this.playerWasInGeyser = inGeyser;
 
       // -- Boiling Geyser (R+ upgrade): scald enemies standing in your geysers --
       if (this.arena.hasUpgrade('r')) {
@@ -324,16 +355,24 @@ export class WaterKit {
 
     // -- Geyser logic (NPC side): speed buff only, no charge depletion --
     {
+      const npcSulphur = this.hasSulphur('npc');
       let npcInGeyser = false;
       for (const g of geysers) {
         if (g.owner === 'npc' && Phaser.Math.Distance.Between(g.x, g.y, npc.x, npc.y) <= g.radius) {
           npcInGeyser = true;
-          this.arena.setNpcGeyserBuffUntil(time + 2000);
+          if (npcSulphur) {
+            if (!this.npcWasInGeyser) this.eruptSulphur(time, g, 'npc');
+            npcInGeyser = geysers.includes(g);
+          } else {
+            this.arena.setNpcGeyserBuffUntil(time + 2000);
+          }
           break;
         }
       }
       this.npcWasInGeyser = npcInGeyser;
     }
+
+    this.tickSulphurPressure(time, delta);
 
     // -- Pressure dagger: out-of-bounds cleanup --
     const physWorld = (scene as unknown as { physics: { world: Phaser.Physics.Arcade.World } }).physics.world;
@@ -652,6 +691,57 @@ export class WaterKit {
     this.arena.unlockAchievement('great-drought');
   }
 
+  // ── Sulphur (divine perk) ────────────────────────────────────────────────
+
+  /** True while that side is playing water with Sulphur equipped. */
+  private hasSulphur(owner: 'player' | 'npc'): boolean {
+    const isWater = owner === 'player' ? this.arena.isPlayerWater() : this.arena.isNpcWater();
+    return isWater && this.arena.hasPerk(owner, 'sulphur');
+  }
+
+  /** Pressure held by a geyser right now, 0–100. Zero for anything that isn't building any. */
+  private pressureOf(g: Geyser): number {
+    return (this.sulphurPressure.get(g) as number) ?? 0;
+  }
+
+  /**
+   * Capped geysers build sulphurous pressure while they stand. Run for both sides every frame
+   * so an online opponent's springs charge on our sim too — the eruption is read off this.
+   */
+  private tickSulphurPressure(_time: number, delta: number): void {
+    const dt = delta / 1000;
+    for (const owner of ['player', 'npc'] as const) {
+      if (!this.hasSulphur(owner)) continue;
+      for (const g of this.arena.geysers) {
+        if (g.owner !== owner) continue;
+        this.sulphurPressure.set(g,
+          Math.min(SULPHUR_PRESSURE_MAX, this.pressureOf(g) + SULPHUR_PRESSURE_PER_SEC * dt));
+      }
+    }
+  }
+
+  /**
+   * The eruption: everything the spring had been holding goes into whoever stepped on it, as a
+   * speed boost worth its stored pressure for 8s. The geyser is spent — this is the whole
+   * trade, a slow-charging launch pad you have to build in advance and can only cash once.
+   */
+  private eruptSulphur(time: number, g: Geyser, owner: 'player' | 'npc'): void {
+    const pressure = Math.round(this.pressureOf(g));
+    const f = owner === 'player' ? this.arena.player : this.arena.npc;
+    const fx = owner === 'player' ? this.pfx : this.nfx;
+
+    this.sulphurBoost[owner] = { until: time + SULPHUR_BOOST_MS, mult: 1 + pressure / 100 };
+    this.sulphurPressure.delete(g);
+    this.arena.removeGeyser(g);
+
+    // The blowout: a tall crown out of the vent, spray flung wide, and a ring off the rim.
+    fx.crown(g.x, g.y, g.radius * 1.5, 16, 5);
+    fx.spray(g.x, g.y, 20, { speed: 320, size: 3.4, life: 620, fall: -40, depth: 6 });
+    this.arena.scene.cameras.main.shake(200, 0.006);
+    this.arena.showFloatingText(f.x, f.y - 40, `🟡 SULPHUR +${pressure}%`,
+      pressure >= 80 ? '#ffee44' : '#ddcc66');
+  }
+
   /**
    * Repaints every geyser as a spring: a churning pool with a fountain standing in it. The
    * fountain's height tracks the geyser's remaining charges, so "this one is nearly spent"
@@ -665,13 +755,33 @@ export class WaterKit {
       const tint = gey.owner === 'player' ? this.pcol : this.ncol;
       const hot = boiling && gey.owner === 'player';
       const charges = (this.geyserCharges.get(gey) as number) ?? 2;
+      // Sulphur: the spring is capped and loading. Its jets grow with the pressure instead of
+      // shrinking with its charges, so "this one is nearly ready" is the thing you can see.
+      const sulphur = this.hasSulphur(gey.owner);
+      const pressure = sulphur ? this.pressureOf(gey) / SULPHUR_PRESSURE_MAX : 0;
       g.clear();
 
       WaterFx.drawPool(g, tint, gey.x, gey.y, gey.radius, this.worldT * 1.6, 0.9, gey.x * 0.01);
 
+      if (sulphur) {
+        // A brimstone crust over the pool, brightening as it loads, and a bubble ring on top.
+        g.fillStyle(0xccaa33, 0.2 + 0.35 * pressure);
+        g.fillCircle(gey.x, gey.y, gey.radius * 0.86);
+        g.lineStyle(2 + 2 * pressure, 0xffee44, 0.35 + 0.5 * pressure);
+        g.strokeCircle(gey.x, gey.y, gey.radius * (0.92 + Math.sin(this.worldT * 4) * 0.03));
+        const bubbles = 3 + Math.round(pressure * 6);
+        for (let i = 0; i < bubbles; i++) {
+          const a = this.worldT * 1.4 + (i / bubbles) * Math.PI * 2;
+          const rr = gey.radius * (0.25 + 0.5 * ((this.worldT * 0.5 + i / bubbles) % 1));
+          g.fillStyle(0xffff99, 0.5 * (1 - rr / gey.radius));
+          g.fillCircle(gey.x + Math.cos(a) * rr, gey.y + Math.sin(a) * rr * 0.6,
+            1.6 + 1.8 * pressure);
+        }
+      }
+
       // Fountain: four jets rising out of the middle, swaying out of phase. Height tracks the
       // remaining charges, so a spent spring is visibly guttering before it disappears.
-      const power = charges >= 2 ? 1 : 0.6;
+      const power = sulphur ? 0.35 + 0.95 * pressure : charges >= 2 ? 1 : 0.6;
       for (let i = 0; i < 4; i++) {
         const p = this.worldT * 3.2 + i * 1.6;
         const ox = (i - 1.5) * gey.radius * 0.3;
@@ -1044,9 +1154,21 @@ export class WaterKit {
 
   // ── Water Mastery ─────────────────────────────────────────────────────────
 
-  /** Slipstream: 25% faster while standing in your own water. 1 when the passive isn't earning. */
+  /**
+   * Every water contribution to the local player's speed: Slipstream's 25% while standing in
+   * your own water, and a live Sulphur eruption. Pulled by ArenaScene before movement resolves.
+   */
   getPlayerSpeedMult(): number {
-    return this.slipstreamActive ? SLIPSTREAM_SPEED_MULT : 1;
+    let m = this.slipstreamActive ? SLIPSTREAM_SPEED_MULT : 1;
+    const boost = this.sulphurBoost.player;
+    if (this.arena.scene.time.now < boost.until) m *= boost.mult;
+    return m;
+  }
+
+  /** The npc's side of the same, so an eruption reads on their sim too. Sulphur only. */
+  getNpcSpeedMult(): number {
+    const boost = this.sulphurBoost.npc;
+    return this.arena.scene.time.now < boost.until ? boost.mult : 1;
   }
 
   /** 0–1 cooldown fill for the Siphon HUD card. */

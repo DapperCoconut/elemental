@@ -16,6 +16,7 @@ import {
 } from '../data/GauntletData';
 import { MUTATIONS, getBossMutationIds } from '../data/Mutations';
 import { getWorldTier, isAbstractWorld } from '../data/CampaignFights';
+import { Music } from '../audio';
 
 const GAUNTLET_EXCLUDED_MUTATIONS = new Set(['boss', 'raid']);
 
@@ -113,6 +114,7 @@ export class CampaignElementSelectScene extends Phaser.Scene {
   }
 
   create(): void {
+    Music.play('campaign');
     const { width, height } = this.scale;
     const cx = width / 2;
     const world = getAnyWorld(this.worldId);

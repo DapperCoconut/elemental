@@ -2610,4 +2610,27 @@ export class SubterfugeKit {
     if (owner === 'player') this.playerNhilegoShadow = shadowObj;
     else this.npcNhilegoShadow = shadowObj;
   }
+
+  /**
+   * Ruin's Spikes of Ruin (see `combat/SummonPurge.ts`).
+   * Hired lackeys and the disco ball — both bought and placed, neither a fighter.
+   */
+  purgeSummons(x: number, y: number, radius: number, exceptOwner: 'player' | 'npc'): number {
+    const near = (px: number, py: number): boolean => Phaser.Math.Distance.Between(x, y, px, py) <= radius;
+    let razed = 0;
+    for (let i = this.lackeys.length - 1; i >= 0; i--) {
+      const l = this.lackeys[i];
+      if (l.owner === exceptOwner || !near(l.x, l.y)) continue;
+      this._destroyLackeyVisuals(l);
+      this.lackeys.splice(i, 1);
+      razed++;
+    }
+    for (let i = this.discoBalls.length - 1; i >= 0; i--) {
+      const b = this.discoBalls[i];
+      if (b.owner === exceptOwner || !near(b.x, b.y)) continue;
+      this.discoBalls.splice(i, 1);
+      razed++;
+    }
+    return razed;
+  }
 }

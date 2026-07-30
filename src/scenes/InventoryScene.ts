@@ -5,6 +5,7 @@ import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addButton, addChip, addIconButton, addPanel, addRowPlate, addWell, addBody, fillDiamond,
 } from '../ui';
+import { Music } from '../audio';
 
 const ACCENT = 0x2ee6c0;
 const ROW_H = 74;
@@ -37,6 +38,7 @@ export class InventoryScene extends Phaser.Scene {
   }
 
   create(): void {
+    Music.play('menu');
     const { width, height } = this.scale;
     this.panelW = Math.floor(width * 0.52);
     this.panelX = width - this.panelW;

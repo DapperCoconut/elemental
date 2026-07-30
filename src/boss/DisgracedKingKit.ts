@@ -8,6 +8,7 @@ import {
 } from './DisgracedKingVisuals';
 import { DevouredFx, DEVOUR } from './DevourerVisuals';
 import * as PlayerData from '../data/PlayerData';
+import { Sfx } from '../audio';
 
 /**
  * The Disgraced King — the fight behind the shop's sealed door.
@@ -1024,7 +1025,27 @@ export class DisgracedKingKit {
     this.castKingMove(time, move);
   }
 
+  /**
+   * The King's attacks bypass the ability/cooldown system entirely, so they get
+   * their voices here rather than through `Fighter.stampCast` like every element.
+   */
+  private static readonly MOVE_SOUNDS: Record<string, string> = {
+    darkmagic: 'curse-cast', purge: 'dark-drain', shield: 'shield-up',
+    summon: 'ghost-wail', blink: 'teleport', grasp: 'tentacle',
+    decree: 'judgement', spiral: 'black-hole', wail: 'screech',
+    crownfall: 'explosion-large',
+    // Devourer phase.
+    maw: 'roar', chorus: 'torment', bile: 'acid-spray',
+    brood: 'spore', tendrils: 'tentacle', feast: 'nightmare',
+  };
+
+  private playMoveSound(move: string): void {
+    const name = DisgracedKingKit.MOVE_SOUNDS[move];
+    if (name) Sfx.playAt(name, this.arena.npc.x);
+  }
+
   private castKingMove(time: number, move: KingMove | WraithMove): void {
+    this.playMoveSound(move);
     switch (move) {
       case 'darkmagic':  this.castDarkMagic(time); break;
       case 'purge':      this.castPurge(time); break;
@@ -1379,6 +1400,7 @@ export class DisgracedKingKit {
    * room while everything else on the floor is still live.
    */
   private castMaw(time: number): void {
+    this.playMoveSound('maw');
     const player = this.arena.player;
     const toPlayer = Math.atan2(player.y - this.kingY, player.x - this.kingX);
     const gap = toPlayer + Phaser.Math.FloatBetween(-0.8, 0.8);
@@ -1426,6 +1448,7 @@ export class DisgracedKingKit {
    * step has to be the right one.
    */
   private castChorus(time: number): void {
+    this.playMoveSound('chorus');
     const W = this.arena.width;
     const H = this.arena.height;
 
@@ -1488,6 +1511,7 @@ export class DisgracedKingKit {
 
   /** It is sick on the floor, and the floor stays sick. */
   private castBile(time: number): void {
+    this.playMoveSound('bile');
     const W = this.arena.width;
     const H = this.arena.height;
     const player = this.arena.player;
@@ -1528,6 +1552,7 @@ export class DisgracedKingKit {
 
   /** The brood: four at a time, small and quick, answered by clearing not duelling. */
   private castBrood(time: number): void {
+    this.playMoveSound('brood');
     const scene = this.arena.scene;
     const W = this.arena.width;
     const H = this.arena.height;
@@ -1580,6 +1605,7 @@ export class DisgracedKingKit {
    * dodge again, and the second dodge is constrained by where the first left you.
    */
   private castTendrils(time: number): void {
+    this.playMoveSound('tendrils');
     const W = this.arena.width;
     const H = this.arena.height;
     const SECOND_DELAY = 900;
@@ -1621,6 +1647,7 @@ export class DisgracedKingKit {
    * list — so every damage path in the game pops them for free.
    */
   private beginFeast(time: number): void {
+    this.playMoveSound('feast');
     const npc = this.arena.npc;
     this.feastUsed = true;
     this.feastActive = true;

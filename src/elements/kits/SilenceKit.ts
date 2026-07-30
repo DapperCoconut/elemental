@@ -4687,4 +4687,52 @@ export class SilenceKit {
     if (owner === 'npc') return [this.arena.player];
     return this.arena.npc && this.arena.npc.active ? [this.arena.npc] : [];
   }
+
+  /**
+   * Ruin's Spikes of Ruin (see `combat/SummonPurge.ts`).
+   * Watchers, seekers, grabbers, vultures, corrupt clones, ritual circles and feasts. A
+   * grabber or vulture with somebody in its hands is skipped: it is the only thing holding that
+   * fighter's body, and deleting it mid-carry would strand them.
+   */
+  purgeSummons(x: number, y: number, radius: number, exceptOwner: 'player' | 'npc'): number {
+    const near = (px: number, py: number): boolean => Phaser.Math.Distance.Between(x, y, px, py) <= radius;
+    let razed = 0;
+    for (let i = this.stalkers.length - 1; i >= 0; i--) {
+      const s = this.stalkers[i];
+      if (s.owner === exceptOwner || !near(s.x, s.y)) continue;
+      this.killStalker(i);
+      razed++;
+    }
+    for (let i = this.grabbers.length - 1; i >= 0; i--) {
+      const g = this.grabbers[i];
+      if (g.owner === exceptOwner || g.grab || !near(g.x, g.y)) continue;
+      this.grabbers.splice(i, 1);
+      razed++;
+    }
+    for (let i = this.vultures.length - 1; i >= 0; i--) {
+      const v = this.vultures[i];
+      if (v.owner === exceptOwner || v.carry || !near(v.x, v.y)) continue;
+      this.vultures.splice(i, 1);
+      razed++;
+    }
+    for (let i = this.corrupts.length - 1; i >= 0; i--) {
+      const c = this.corrupts[i];
+      if (c.owner === exceptOwner || !near(c.x, c.y)) continue;
+      this.corrupts.splice(i, 1);
+      razed++;
+    }
+    for (let i = this.rituals.length - 1; i >= 0; i--) {
+      const r = this.rituals[i];
+      if (r.owner === exceptOwner || !near(r.x, r.y)) continue;
+      this.rituals.splice(i, 1);
+      razed++;
+    }
+    for (let i = this.feasts.length - 1; i >= 0; i--) {
+      const f = this.feasts[i];
+      if (f.owner === exceptOwner || !near(f.x, f.y)) continue;
+      this.feasts.splice(i, 1);
+      razed++;
+    }
+    return razed;
+  }
 }

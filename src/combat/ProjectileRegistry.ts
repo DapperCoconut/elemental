@@ -41,6 +41,16 @@ export class ProjectileRegistry {
     return best;
   }
 
+  /** Every registered projectile belonging to `owner` within `radius` of (x, y). */
+  within(owner: 'player' | 'npc', x: number, y: number, radius: number): RegisteredProjectile[] {
+    const out: RegisteredProjectile[] = [];
+    for (const p of this.entries) {
+      if (p.owner !== owner) continue;
+      if (Math.hypot(p.getX() - x, p.getY() - y) <= radius) out.push(p);
+    }
+    return out;
+  }
+
   /** Remove `p` from the registry and the owning kit. */
   steal(p: RegisteredProjectile): void {
     this.entries.delete(p);

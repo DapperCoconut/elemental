@@ -28,12 +28,17 @@ const MAX_KEYS = 9999;
 const MAX_SPARKS = 9999;
 const MAX_ITEM_STACK = 99;
 
-/** Every element ID the Lab can unlock: combined, abstract, and abstract-mix. */
+/**
+ * Every element ID beyond the five you start with: the Lab's combined, abstract and
+ * abstract-mix recipes, plus the two divine elements — which come from the Devourer's
+ * endings rather than the Lab, so nothing recipe-shaped would ever list them.
+ */
 function allUnlockableElementIds(): string[] {
   return [
     ...RECIPES.map((r) => r.result),
     ...ABSTRACT_ELEMENT_IDS,
     ...ABSTRACT_MIX_ELEMENT_IDS,
+    ...PlayerData.DIVINE_ELEMENT_IDS,
   ];
 }
 
@@ -66,6 +71,9 @@ function maxOutCurrentProfile(): void {
 
   // ── The Disgraced King: door open, laboratory found ────────────────
   PlayerData.markKingDefeated();
+  // ...and the Devourer behind it. Recorded as the kill ending because that is the one
+  // that grants Justice; both divine elements are unlocked above regardless.
+  PlayerData.markDevourerDefeated('kill');
 
   // ── Mutations + secret enemy ───────────────────────────────────────
   for (const m of MUTATIONS) PlayerData.unlockMutation(m.id);

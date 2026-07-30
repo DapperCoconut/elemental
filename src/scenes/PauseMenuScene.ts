@@ -33,7 +33,7 @@ export class PauseMenuScene extends Phaser.Scene {
 
     // The scrim is interactive, so nothing leaks through to the paused arena.
     const modal = addModal(this, {
-      w: 380, h: 244, accent: C.arcane,
+      w: 380, h: 300, accent: C.arcane,
       title: '❚❚  PAUSED', glow: 0.5,
       scrimAlpha: 0.7,
     });
@@ -44,20 +44,32 @@ export class PauseMenuScene extends Phaser.Scene {
     modal.scrim.setScrollFactor(0);
 
     addButton(this, {
-      x: cx, y: cy - 12, w: 240, h: 48,
+      x: cx, y: cy - 40, w: 240, h: 48,
       label: 'RESUME', icon: '▶', accent: C.verdant, variant: 'solid', fontSize: 17,
       depth: DEPTH.modalContent,
       onClick: resume,
     });
 
     addButton(this, {
-      x: cx, y: cy + 50, w: 240, h: 44,
+      x: cx, y: cy + 16, w: 240, h: 40,
+      label: 'AUDIO', icon: '🔊', accent: 0x2ee6c0, variant: 'ghost', fontSize: 15,
+      depth: DEPTH.modalContent,
+      // Pausing this scene too keeps the pause menu on screen behind the panel
+      // while stopping it from eating the panel's clicks.
+      onClick: () => {
+        this.scene.pause();
+        this.scene.launch('AudioSettingsScene', { parentSceneKey: this.scene.key });
+      },
+    });
+
+    addButton(this, {
+      x: cx, y: cy + 68, w: 240, h: 44,
       label: 'EXIT TO MENU', icon: '⏻', accent: C.blood, variant: 'danger', fontSize: 15,
       depth: DEPTH.modalContent,
       onClick: exitToMenu,
     });
 
-    this.add.text(cx, cy + 92, 'ESC to resume', {
+    this.add.text(cx, cy + 108, 'ESC to resume', {
       fontSize: '10px', fontFamily: FONT_UI, color: T.faint, letterSpacing: 2,
     }).setOrigin(0.5).setDepth(DEPTH.modalContent).setScrollFactor(0);
 

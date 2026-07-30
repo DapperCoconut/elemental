@@ -15,6 +15,7 @@ import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackdrop, addBackButton, addCardPlate, addPagerButton, addTitle, addWell,
 } from '../ui';
+import { Music } from '../audio';
 
 const GAUNTLET_EXCLUDED_MUTATIONS = new Set(['boss', 'raid']);
 
@@ -86,6 +87,7 @@ export class GauntletElementSelectScene extends Phaser.Scene {
   }
 
   create(): void {
+    Music.play('gauntlet');
     const { width, height } = this.scale;
     const cx = width / 2;
 

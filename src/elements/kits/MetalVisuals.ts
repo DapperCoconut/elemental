@@ -44,6 +44,9 @@ export const METAL = {
   /** Grips, pommels and everything that isn't the blade itself. */
   leather: 0x6b4a2b,
   brass: 0xd9b25a,
+  /** Conduit perk — the only cold, live colour metal ever wears. */
+  live: 0x66ccff,
+  liveHi: 0xccf0ff,
 } as const;
 
 export interface Pt { x: number; y: number }
@@ -855,11 +858,20 @@ export class MetalAvatar extends BaseAvatar {
   /** Warm for the player, cold for the NPC, so two metal fighters never blur together. */
   private accent: number;
 
+  /**
+   * Which divine perk this fighter's steel is wearing, if any: `gold` for the golden dagger,
+   * `live` for Conduit's charged plate. Only ever one, since only one perk is equipped.
+   */
+  private metalFinish: 'none' | 'gold' | 'live' = 'none';
+
   constructor(scene: Phaser.Scene, tint: MetalColorFn, owner: 'player' | 'npc' = 'player', depth = 6) {
     super(scene, tint, depth, METAL_AVATAR);
     this.fx = new MetalFx(scene, tint);
     this.accent = owner === 'player' ? METAL.crimson : METAL.steel;
   }
+
+  /** Safe to call every frame — it only stores a flag the painter reads. */
+  setFinish(finish: 'none' | 'gold' | 'live'): void { this.metalFinish = finish; }
 
   /**
    * Mastery tell — Natural Clot, made visible: the fists grow a scabbed outer shell and a
@@ -911,9 +923,24 @@ export class MetalAvatar extends BaseAvatar {
       const hx = this.armX[i], hy = this.armY[i];
       if (hx === 0 && hy === 0) continue;
       const out = Math.atan2(hy - y, hx - x);
+      // Gold (divine perk) recolours the edges: this fighter is carrying a dagger, not a sabre,
+      // and the knuckle blades are the only steel always on screen to say so.
+      const edge = this.metalFinish === 'gold' ? METAL.gold
+        : this.metalFinish === 'live' ? METAL.live
+        : this.mastered ? METAL.crimson : METAL.steel;
       for (let k = -1; k <= 1; k++) {
         bladeShardLayered(g, this.tint, hx, hy, out + k * 0.46, 11 * this.intensity, 2.4,
-          this.mastered ? METAL.crimson : METAL.steel, alpha * 0.95, 0.08, false);
+          edge, alpha * 0.95, 0.08, false);
+      }
+      // Conduit: charge crawling between the knuckles.
+      if (this.metalFinish === 'live') {
+        const arc = this.t * 9 + i * 2.1;
+        g.lineStyle(1.4, this.tint(METAL.liveHi), alpha * (0.35 + 0.35 * Math.sin(arc)));
+        g.beginPath();
+        g.moveTo(hx - 5, hy - 3);
+        g.lineTo(hx + Math.sin(arc) * 3, hy);
+        g.lineTo(hx + 5, hy - 4);
+        g.strokePath();
       }
     }
 

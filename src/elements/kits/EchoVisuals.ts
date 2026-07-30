@@ -650,6 +650,53 @@ export class EchoFx extends FxBase {
   }
 
   /**
+   * Torch (divine perk): the burning brand the bearer carries in place of an echo-lamp. A bound
+   * haft held out at `angle`, a rag head, and three tongues leaning off it — plus a pool of warm
+   * light on the ground. `vigour` (0–1) is how much light is left in it: a guttering torch keeps
+   * its haft but loses its flame, so the drop is legible before it is fatal.
+   */
+  static drawTorch(
+    g: Phaser.GameObjects.Graphics, tint: EchoColorFn,
+    x: number, y: number, angle: number, vigour: number, t: number,
+  ): void {
+    const flick = 0.78 + 0.22 * Math.sin(t * 13) + 0.08 * Math.sin(t * 29 + 1.7);
+    const hx = x + Math.cos(angle) * 17;
+    const hy = y + Math.sin(angle) * 17 - 5;
+
+    // The glow it casts, largest and faintest first.
+    g.fillStyle(tint(ECHO.amber), 0.1 * vigour);
+    g.fillCircle(hx, hy, (26 + 6 * flick) * (0.5 + 0.5 * vigour));
+    g.fillStyle(tint(ECHO.lamp), 0.16 * vigour);
+    g.fillCircle(hx, hy, (14 + 4 * flick) * (0.5 + 0.5 * vigour));
+
+    // Haft: a stub of wood, angled back into the fist.
+    const bx = x + Math.cos(angle) * 7, by = y + Math.sin(angle) * 7 + 1;
+    g.lineStyle(3.4, tint(ECHO.umbra), 0.95);
+    g.beginPath(); g.moveTo(bx, by); g.lineTo(hx, hy); g.strokePath();
+    // Binding at the head.
+    g.lineStyle(2.2, tint(ECHO.dusk), 0.9);
+    const px = -Math.sin(angle) * 3.4, py = Math.cos(angle) * 3.4;
+    g.beginPath(); g.moveTo(hx - px, hy - py); g.lineTo(hx + px, hy + py); g.strokePath();
+
+    // Flame: three leaning tongues plus a core, all scaled by what is left of it.
+    const size = (3 + 7 * vigour) * flick;
+    for (let i = 0; i < 3; i++) {
+      const lean = -Math.PI / 2 + (i - 1) * 0.5 + Math.sin(t * 5 + i * 1.3) * 0.26;
+      const len = size * (i === 1 ? 1.5 : 1);
+      g.fillStyle(tint(i === 1 ? ECHO.lamp : ECHO.amber), 0.85);
+      g.fillEllipse(hx + Math.cos(lean) * len * 0.5, hy + Math.sin(lean) * len * 0.5,
+        size * 0.62, len * 1.4);
+    }
+    g.fillStyle(tint(ECHO.white), 0.85 * flick);
+    g.fillCircle(hx, hy - size * 0.3, Math.max(1, size * 0.3));
+    // An ember shaking loose, only while there is fire enough to shed one.
+    if (vigour > 0.45) {
+      const p = (t * 0.9) % 1;
+      mote(g, tint, hx + Math.sin(t * 3) * 5, hy - 8 - p * 14, 1.5 * (1 - p), ECHO.gold, 0.7 * (1 - p));
+    }
+  }
+
+  /**
    * An Echo summon: a hollow double of whoever it was torn out of — a body of pure wavefront with
    * an eye where a face would be, coming apart at the edges and knitting itself back together.
    */

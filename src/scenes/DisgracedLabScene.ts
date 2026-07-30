@@ -14,6 +14,7 @@ import {
   ALL_CORNERS, fillHex, strokeHex, fillDiamond, fillNotched,
   fillNotchedGradient, strokeNotched, drawGlow, drawOrnateRule,
 } from '../ui';
+import { Music } from '../audio';
 
 /** The lab's own colour — corrupt violet drowned in the dark it was left in. */
 const DECAY = mix(C.corrupt, 0x000000, 0.45);
@@ -90,6 +91,7 @@ export class DisgracedLabScene extends Phaser.Scene {
   }
 
   create(): void {
+    Music.play('lab');
     const { width, height } = this.scale;
     const cx = width / 2;
 

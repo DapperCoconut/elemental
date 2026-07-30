@@ -30,6 +30,7 @@ import {
   addBackdrop, addButton, addCardPlate, addSectionLabel, addTitle, UiButton,
   fillDiamond, fillHex, strokeHex,
 } from '../ui';
+import { Music } from '../audio';
 
 // ── Element pools for Infinity enemy selection ───────────────────────────────
 
@@ -105,6 +106,7 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
   }
 
   create(data: { gauntlet: GauntletState }): void {
+    Music.play('gauntlet');
     const gs = data.gauntlet;
     const { width, height } = this.scale;
     const cx = width / 2;

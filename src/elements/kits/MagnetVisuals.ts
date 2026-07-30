@@ -56,6 +56,9 @@ export const MAGNET = {
   plateHi: 0xaabbcc,
   rust: 0x884433,
   white: 0xffffff,
+  /** Electromagnet perk — a rod left live by the compactor rather than flung. */
+  live: 0x66ffff,
+  spark: 0xccffff,
 } as const;
 
 export interface Pt { x: number; y: number }
@@ -483,10 +486,12 @@ export class MagnetFx extends FxBase {
     g: Phaser.GameObjects.Graphics, tint: MagnetColorFn,
     x: number, y: number, vx: number, vy: number,
     kind: RodKind, bouncing: boolean, permBonus: number, isSword: boolean, t: number,
+    charged = false,
   ): void {
     const speed = Math.hypot(vx, vy);
     const angle = speed > 8 ? Math.atan2(vy, vx) : 0;
-    const color = rodColor(kind, bouncing, permBonus);
+    // Electromagnet: a live rod reads cyan whatever it is made of — the charge is the story.
+    const color = charged ? MAGNET.live : rodColor(kind, bouncing, permBonus);
     const len = isSword ? 30 : 22;
     const thick = isSword ? 6 : 11;
 
@@ -514,6 +519,32 @@ export class MagnetFx extends FxBase {
       fillPts(g, [at(-len * 0.5, -6), at(-len * 0.42, -6), at(-len * 0.42, 6), at(-len * 0.5, 6)]);
     } else {
       metalBar(g, tint, x, y, angle, len, thick, color, 1);
+    }
+
+    // Electromagnet: the charge sitting on it — a soft halo, a tight field, and forks of
+    // current jumping off the ends. Drawn over the bar so it never looks merely tinted.
+    if (charged) {
+      g.fillStyle(tint(MAGNET.live), 0.14 + 0.08 * Math.sin(t * 8));
+      g.fillCircle(x, y, 22 + Math.sin(t * 8) * 3);
+      for (let i = 0; i < 2; i++) {
+        const p = (t * 2.4 + i / 2) % 1;
+        const r = 10 + p * 18;
+        g.fillStyle(tint(MAGNET.live), 0.5 * (1 - p));
+        fieldArc(g, x - r, y, x + r, y, r * 0.7, 2.4, 12);
+        fieldArc(g, x - r, y, x + r, y, -r * 0.7, 2.4, 12);
+      }
+      // Two forks, one off each end, redrawn every frame so they never look static.
+      for (const end of [-1, 1]) {
+        const ex = x + Math.cos(angle) * len * 0.5 * end;
+        const ey = y + Math.sin(angle) * len * 0.5 * end;
+        const a0 = angle + end * (0.9 + Math.sin(t * 11 + end) * 0.7);
+        g.lineStyle(1.8, tint(MAGNET.spark), 0.5 + 0.4 * Math.sin(t * 17 + end * 2));
+        g.beginPath();
+        g.moveTo(ex, ey);
+        g.lineTo(ex + Math.cos(a0) * 7, ey + Math.sin(a0) * 7);
+        g.lineTo(ex + Math.cos(a0 + 0.8) * 12, ey + Math.sin(a0 + 0.8) * 12);
+        g.strokePath();
+      }
     }
 
     // A rod under power wears its field.

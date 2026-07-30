@@ -19,6 +19,14 @@ export interface CastContext {
   dealAoeDamage: (cx: number, cy: number, radius: number, damage: number) => void;
   /** Fire Mastery: same as dealAoeDamage but tracks zombie kills for the Nuclear Cleansing challenge (player-only). */
   dealFlameNukeDamage: (cx: number, cy: number, radius: number, damage: number) => void;
+  /**
+   * Molten perk (divine): Flame Nuke's detonation is replaced by a screen-wide eruption owned
+   * by FireKit. Optional — only fire's Q reaches for it, so the other CastContext implementers
+   * are free to leave it out.
+   */
+  fireMoltenEruption?: () => void;
+  /** Molten perk (divine): burn the caster for the hotter Pressure Bomb they just threw. */
+  fireScorchCaster?: () => void;
   dashCaster: (vx: number, vy: number) => void;
   healCaster: (amount: number) => void;
   damageCaster: (amount: number) => void;
@@ -200,6 +208,117 @@ export interface CastContext {
   subterfugeRecruit: (tx: number, ty: number) => void;
   subterfugeBribe: (tx: number, ty: number) => void;
   subterfugeTreachery: (tx: number, ty: number) => void;
+  // Justice (divine: the Devourer of Kings, killed). Ground stance, then flight stance.
+  justiceStab: (tx: number, ty: number) => void;
+  justiceColiseum: () => void;
+  justiceSheerWill: () => void;
+  justiceFlight: () => void;
+  justiceJudgementDay: () => void;
+  justiceSpearThrow: (tx: number, ty: number) => void;
+  justiceBind: (tx: number, ty: number) => void;
+  justicePillar: (tx: number, ty: number) => void;
+  justiceDescend: () => void;
+  justiceSeraphim: () => void;
+  // Dream (divine: the Devourer of Kings, spared)
+  dreamTrance: () => void;
+  dreamPillowFight: (tx: number, ty: number) => void;
+  dreamDreamcatcher: () => void;
+  dreamNightmare: () => void;
+  dreamOasis: () => void;
+  // Chalk (test element: cheat mode only for now)
+  chalkWard: () => void;
+  chalkExplosive: () => void;
+  chalkPerma: () => void;
+  chalkShield: () => void;
+  chalkMasterpiece: () => void;
+  // Magma (test element: cheat mode only for now)
+  magmaPlume: (tx: number, ty: number) => void;
+  magmaVolcano: (tx: number, ty: number) => void;
+  magmaBloat: () => void;
+  magmaFist: (tx: number, ty: number) => void;
+  magmaDragonKin: (tx: number, ty: number) => void;
+  // Illusion (test element: cheat mode only for now)
+  illusionCrackShot: (tx: number, ty: number) => void;
+  illusionVeil: (tx: number, ty: number) => void;
+  illusionRelocate: () => void;
+  illusionTesseract: (tx: number, ty: number) => void;
+  illusionDance: () => void;
+  // Ruin (test element: cheat mode only for now)
+  ruinShred: (tx: number, ty: number) => void;
+  ruinLockdown: (tx: number, ty: number) => void;
+  ruinSkewer: (tx: number, ty: number) => void;
+  ruinSpikes: () => void;
+  ruinDecay: () => void;
+  // Glass (test element: cheat mode only for now)
+  glassOrbit: () => void;
+  glassSplinter: (tx: number, ty: number) => void;
+  glassTwirl: (tx: number, ty: number) => void;
+  glassTemper: () => void;
+  glassBlow: () => void;
+  // Depths (test element: cheat mode only for now)
+  depthsPiranha: (tx: number, ty: number) => void;
+  depthsLungfish: (tx: number, ty: number) => void;
+  depthsEutrophication: () => void;
+  depthsAngler: (tx: number, ty: number) => void;
+  depthsMegalodon: (tx: number, ty: number) => void;
+  // Passion (test element: cheat mode only for now)
+  passionLoveshot: (tx: number, ty: number) => void;
+  passionFlirt: (tx: number, ty: number) => void;
+  passionSmooch: (tx: number, ty: number) => void;
+  passionManipulate: (tx: number, ty: number) => void;
+  passionExhibition: () => void;
+  // Conquest (test element: cheat mode only for now)
+  conquestBanner: () => void;
+  conquestBuild: (kind: 'barracks' | 'turret' | 'barricade') => void;
+  conquestExpansion: () => void;
+  // Paper (test element: cheat mode only for now)
+  paperStorybook: (tx: number, ty: number) => void;
+  paperPlane: (tx: number, ty: number) => void;
+  paperShuriken: (tx: number, ty: number) => void;
+  paperMache: () => void;
+  paperClimax: (tx: number, ty: number) => void;
+  // Fortune (test element: cheat mode only for now)
+  fortuneFire: (tx: number, ty: number) => void;
+  fortuneSafeInvest: () => void;
+  fortuneRiskyInvest: () => void;
+  fortunePaywall: (tx: number, ty: number) => void;
+  fortunePayToWin: (tx: number, ty: number) => void;
+  // Amber (test element: cheat mode only for now)
+  amberSling: (tx: number, ty: number) => void;
+  amberMosquitoes: () => void;
+  amberBeginHunt: (tx: number, ty: number) => void;
+  amberStampede: () => void;
+  amberEndHunt: (tx: number, ty: number) => void;
+  // Death (test element: cheat mode only for now)
+  deathStyxShot: (tx: number, ty: number) => void;
+  deathDisarm: (tx: number, ty: number) => void;
+  deathRiposte: (tx: number, ty: number) => void;
+  deathHospice: (tx: number, ty: number) => void;
+  deathDeal: (tx: number, ty: number) => void;
+  // Psychic (test element: cheat mode only for now)
+  psychicHeadache: (tx: number, ty: number) => void;
+  psychicMindControl: () => void;
+  psychicDodgeDestiny: () => void;
+  psychicMigraine: () => void;
+  psychicComa: () => void;
+  // Radiation (test element: cheat mode only for now)
+  radiationRailgun: (tx: number, ty: number) => void;
+  radiationBaton: (tx: number, ty: number) => void;
+  radiationXray: () => void;
+  radiationWaste: (tx: number, ty: number) => void;
+  radiationExtermination: () => void;
+  // Bind (test element: cheat mode only for now)
+  bindSummon: (tx: number, ty: number) => void;
+  bindShards: (tx: number, ty: number) => void;
+  bindIdol: (tx: number, ty: number) => void;
+  bindProtection: () => void;
+  bindTreachery: () => void;
+  // Slime (test element: cheat mode only for now; id is `gum`, since `slime` is Acid's)
+  gumGrab: (tx: number, ty: number) => void;
+  gumSurge: (tx: number, ty: number) => void;
+  gumGumball: (tx: number, ty: number) => void;
+  gumOozorbtion: () => void;
+  gumSolidify: () => void;
   hasPerk: (perkId: string) => boolean;
 }
 

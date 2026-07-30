@@ -144,6 +144,9 @@ const VIEW_SELF_SHOT_SHIELD = 25;
 const TERROR_WARP_WEAK_HP = 100;
 const BIOLUM_MS = 8000;
 const BIOLUM_RADIUS_MULT = 1.25;
+
+/** Torch (divine perk): raw damage taken at which the flame has burned down to its floor. */
+const TORCH_FADE_DAMAGE = 350;
 /** How far back the heat trail a terror bloom paints reaches. */
 const HEAT_TRAIL_MS = 6000;
 const HEAT_TRAIL_SAMPLE_MS = 70;
@@ -695,7 +698,7 @@ export class EchoKit {
     this.updateBloomBullets(time, delta);
     if (isPlayer && this.arena.masteryActive) this.updateViewing();
 
-    this.paintWorld(time);
+    this.paintWorld(time, isPlayer);
     this.updateAuras(time, delta, isPlayer, isNpc);
     this.updateAvatars(time, delta, isPlayer, isNpc);
   }
@@ -715,7 +718,7 @@ export class EchoKit {
    * a bolt beats, a summon comes apart and an eclipse line marches rather than sitting there as a
    * sprite.
    */
-  private paintWorld(time: number): void {
+  private paintWorld(time: number, isPlayer: boolean): void {
     const t = this.vizT;
 
     // ── Under the fog: light the summons cast, and blooms rooted in a body ──
@@ -735,7 +738,10 @@ export class EchoKit {
     }
 
     // ── Over the fog: everything thrown ──
-    const hasAir = this.echoProjs.length > 0 || this.echoSummons.length > 0
+    // The torch is the one *held* thing on this layer — it has to sit above the fog it is
+    // burning a hole in, so it cannot ride the rig's own (under-fog) layer.
+    const torch = isPlayer && this.arena.hasPerk('player', 'torch') && this.arena.player.active;
+    const hasAir = torch || this.echoProjs.length > 0 || this.echoSummons.length > 0
       || this.summonShots.length > 0 || this.eclipseLines.length > 0
       || this.playerEyes.length > 0 || this.playerLightTrails.length > 0
       || this.bloomSeeds.length > 0 || this.bloomBullets.length > 0
@@ -743,6 +749,15 @@ export class EchoKit {
     if (hasAir || this.airGfx) {
       const g = this.air();
       g.clear();
+
+      if (torch) {
+        const player = this.arena.player;
+        const aim = Math.atan2((this.lastAimY || player.y) - player.y,
+          (this.lastAimX || player.x + 1) - player.x);
+        // vigour maps the light multiplier (1.5 → 0.3) back onto 0–1 so the flame shrinks with it.
+        const vig = Phaser.Math.Clamp((this.torchVigour(time) - 0.3) / 1.2, 0, 1);
+        EchoFx.drawTorch(g, this.pcol, player.x, player.y, aim, vig, t);
+      }
 
       for (const p of this.echoProjs) {
         EchoFx.drawBolt(g, this.col(p.owner), p.x, p.y, Math.atan2(p.vy, p.vx), p.bounceCount, t);
@@ -929,6 +944,9 @@ export class EchoKit {
       } else {
         let playerRadius = this.playerBatFormActive ? 45 : this.playerLanternActive ? 128 : 90;
         if (time < this.playerBiolumUntil) playerRadius *= BIOLUM_RADIUS_MULT;
+        // Torch: no longer a steady lamp but a flame, half again as wide to start with and
+        // guttering the whole way down as its bearer is worn out.
+        if (this.arena.hasPerk('player', 'torch')) playerRadius *= this.torchVigour(time);
         this.fogEraser.fillCircle(player.x, player.y, playerRadius);
       }
 
@@ -944,6 +962,18 @@ export class EchoKit {
     }
 
     rt.erase(this.fogEraser, 0, 0);
+  }
+
+  /**
+   * Torch (divine perk): the multiplier on the plain echo-light — 1.5 fresh, 0.3 once the bearer
+   * has soaked `TORCH_FADE_DAMAGE`. Read off `rawDamageTaken` rather than current HP so healing
+   * cannot relight it: the torch burns down over the fight, it does not recover.
+   */
+  private torchVigour(time: number): number {
+    const wear = Phaser.Math.Clamp(this.arena.player.rawDamageTaken / TORCH_FADE_DAMAGE, 0, 1);
+    // Two out-of-step flickers so the light breathes like fire instead of pulsing like a lamp.
+    const flick = 1 + Math.sin(time / 90) * 0.025 + Math.sin(time / 37) * 0.02;
+    return Phaser.Math.Linear(1.5, 0.3, wear) * flick;
   }
 
   // ── Echolocation (Click) ──────────────────────────────────────────────────

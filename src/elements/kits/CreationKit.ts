@@ -3116,4 +3116,41 @@ export class CreationKit {
       }
     }
   }
+
+  /**
+   * Ruin's Spikes of Ruin (see `combat/SummonPurge.ts`).
+   * Everything built in the workshop and left standing: automatons, blockers, maze walls,
+   * clutter, speed pads and spiked blocks. The Nexus itself is left alone — it is the caster's
+   * own fixture rather than a placed structure, and it owns a rebuild timer and a potion economy
+   * that only its own death path knows how to unwind.
+   */
+  purgeSummons(x: number, y: number, radius: number, exceptOwner: 'player' | 'npc'): number {
+    const near = (px: number, py: number): boolean => Phaser.Math.Distance.Between(x, y, px, py) <= radius;
+    let razed = 0;
+    const dropRects = <T extends { x: number; y: number; owner: 'player' | 'npc'; rect: Phaser.GameObjects.Graphics;
+      hpBar?: Phaser.GameObjects.Rectangle; hpBg?: Phaser.GameObjects.Rectangle }>(list: T[]): void => {
+      for (let i = list.length - 1; i >= 0; i--) {
+        const o = list[i];
+        if (o.owner === exceptOwner || !near(o.x, o.y)) continue;
+        o.rect.destroy();
+        o.hpBar?.destroy();
+        o.hpBg?.destroy();
+        list.splice(i, 1);
+        razed++;
+      }
+    };
+    for (let i = this.automatons.length - 1; i >= 0; i--) {
+      const a = this.automatons[i];
+      if (a.owner === exceptOwner || !near(a.x, a.y)) continue;
+      a.gfx.destroy();
+      this.automatons.splice(i, 1);
+      razed++;
+    }
+    dropRects(this.creatBlockers);
+    dropRects(this.creatMazeWalls);
+    dropRects(this.creatClutterBoxes);
+    dropRects(this.creatSpeedPads);
+    dropRects(this.creatSpikedBlocks);
+    return razed;
+  }
 }

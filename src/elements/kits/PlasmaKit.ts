@@ -376,6 +376,39 @@ export class PlasmaKit {
     this.orbitals = [];
     this.orbitalLastCastAt = -ORBITAL_COOLDOWN_MS;
     this.killWatched = new WeakSet<Fighter>();
+
+    this.orderNoteAt = 0;
+  }
+
+  // ── Divine perk: Order ────────────────────────────────────────────
+
+  /** Throttle on the "⚖️ ORDER" pop-up — Chaos self-harm can tick many times a second. */
+  private orderNoteAt = 0;
+
+  /**
+   * Order rewrites the deal Plasma normally makes: it stops paying for its own chaos and
+   * starts paying on defence instead. Both halves live on generic Fighter fields, rewritten
+   * from scratch every frame so a side that isn't playing Plasma (or has swapped perks) is
+   * always left at the inert 1 / false.
+   */
+  private updateOrder(time: number): void {
+    for (const owner of ['player', 'npc'] as const) {
+      const f = owner === 'player' ? this.arena.player : this.arena.npc;
+      if (!f?.active) continue;
+      const elementId = owner === 'player' ? this.arena.elementId : this.arena.npcElementId;
+      const on = elementId === 'plasma' && this.arena.hasPerk(owner, 'order');
+      f.selfDamageImmune = on;
+      f.orderIncomingMult = on ? 1.25 : 1;
+      if (!on) {
+        if (f.onSelfDamageBlocked) f.onSelfDamageBlocked = null;
+        continue;
+      }
+      f.onSelfDamageBlocked = () => {
+        if (time - this.orderNoteAt < 700) return;
+        this.orderNoteAt = time;
+        this.arena.showFloatingText(f.x, f.y - 34, '⚖️ ORDER', '#ffffcc');
+      };
+    }
   }
 
   // ── handleInput ───────────────────────────────────────────────────
@@ -485,6 +518,7 @@ export class PlasmaKit {
     const { scene } = this.arena;
     this.vizT += delta / 1000;
     this.mirrorNpcCast();
+    this.updateOrder(time);
     const W = this.arena.width;
     const H = this.arena.height;
     const pad = 32;
@@ -623,7 +657,7 @@ export class PlasmaKit {
         const d = Phaser.Math.Distance.Between(blade.x, blade.y, f.x, f.y);
         if (d <= 20) {
           const hx = f.x, hy = f.y;
-          f.takeDamage(8);
+          f.takeDamage(8, side === blade.owner ? { selfInflicted: true } : undefined);
           this.arena.spawnHitFlash(f.x, f.y, 0xff44ff);
           // The blade biting: a fork through the victim and plasma spat out the far side.
           const bfx = this.fx(blade.owner);
@@ -677,10 +711,10 @@ export class PlasmaKit {
         { f: this.arena.player, side: 'player' },
         { f: this.arena.npc,    side: 'npc' },
       ];
-      for (const { f } of opponents) {
+      for (const { f, side } of opponents) {
         if (Phaser.Math.Distance.Between(orb.x, orb.y, f.x, f.y) <= 20) {
           const hx = orb.x, hy = orb.y;
-          f.takeDamage(10);
+          f.takeDamage(10, side === orb.owner ? { selfInflicted: true } : undefined);
           this.arena.spawnHitFlash(f.x, f.y, 0xffaaff);
           // Popped: the containment lets go and the charge sprays out of it.
           this.fx(orb.owner).discharge(hx, hy, 30, 6, PLASMA.blush, 250, 9);
@@ -1059,7 +1093,7 @@ export class PlasmaKit {
     // Missed: a red bolt snaps back to the caster, who takes 2 self-damage.
     if (hitSet.size === 0) {
       this.doPlasmaChainLightning(tx, ty, caster.x, caster.y, PLASMA.red);
-      caster.takeDamage(2);
+      caster.takeDamage(2, { selfInflicted: true });
       this.arena.spawnHitFlash(caster.x, caster.y, 0xff2244);
       fx.discharge(caster.x, caster.y, 22, 4, PLASMA.red, 220, 9);
       this.arena.showFloatingText(caster.x, caster.y - 30, '⚡ Missed!', '#ff4444');
@@ -1594,7 +1628,7 @@ export class PlasmaKit {
     }
     const npcDist = Phaser.Math.Distance.Between(cx, cy, npc.x, npc.y);
     if (npcDist <= radius) {
-      npc.takeDamage(10);
+      npc.takeDamage(10, orb.owner === 'npc' ? { selfInflicted: true } : undefined);
       this.arena.spawnHitFlash(npc.x, npc.y, 0xcc44ff);
     }
 
@@ -1646,7 +1680,7 @@ export class PlasmaKit {
     }
     const nDist = Phaser.Math.Distance.Between(arena.x, arena.y, npc.x, npc.y);
     if (nDist <= radius) {
-      npc.takeDamage(80);
+      npc.takeDamage(80, arena.owner === 'npc' ? { selfInflicted: true } : undefined);
       this.arena.spawnHitFlash(npc.x, npc.y, 0xaa22ff);
       // Mastery req: the floor crumbling under an enemy, not under you.
       if (arena.owner === 'player') this.arena.recordMasteryStat('arenaCrumbles', 1);

@@ -8,6 +8,7 @@ import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackButton, addButton, addChip, fillDiamond, fillHex, strokeHex,
 } from '../ui';
+import { Music } from '../audio';
 
 export class CampaignWorldMapScene extends Phaser.Scene {
   private slotIdx: 0 | 1 | 2 = 0;
@@ -23,6 +24,7 @@ export class CampaignWorldMapScene extends Phaser.Scene {
   }
 
   create(): void {
+    Music.play('campaign');
     const { width, height } = this.scale;
     const cx = width / 2;
     const slot = this.slotIdx;

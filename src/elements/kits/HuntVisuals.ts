@@ -83,6 +83,13 @@ export const BEAST_TONES: HuntTones = {
 export const MOON_TONES: HuntTones = {
   crust: HUNT.moonDark, body: HUNT.blood, wound: HUNT.moon, lit: 0xff8877, spark: HUNT.white,
 };
+/**
+ * Hell (divine perk): the hellhound. Beast tones burnt through — coal-black hide with fire
+ * showing under it, so the smaller silhouette still reads as the more dangerous one.
+ */
+export const HELL_TONES: HuntTones = {
+  crust: 0x140302, body: HUNT.rust, wound: HUNT.flare, lit: 0xffcc66, spark: HUNT.white,
+};
 /** Hybrid form: silver shot, silver blade, silver trim. */
 export const SILVER_TONES: HuntTones = {
   crust: 0x3a3f46, body: HUNT.steel, wound: HUNT.silver, lit: 0xf2f4ff, spark: HUNT.white,
@@ -2092,6 +2099,8 @@ export class HuntAvatar extends BaseAvatar {
   /** Eased toward 1 in beast form so the head grows rather than popping. */
   private beastness = 0;
   private moon = false;
+  /** Hell (divine perk): wearing hellhound colours over the beast shape. */
+  private hell = false;
 
   /** The kit in his hands. Driven by the kit from the form. */
   private weapon: HuntWeapon = 'crossbow';
@@ -2154,7 +2163,21 @@ export class HuntAvatar extends BaseAvatar {
   setForm(form: HuntForm): void {
     if (form === this.form) return;
     this.form = form;
-    const tones = form === 'beast' ? BEAST_TONES : form === 'hybrid' ? SILVER_TONES : this.tones;
+    this.repaintHands();
+  }
+
+  /**
+   * Hell (divine perk): the beast shape is worn by a hellhound instead — same silhouette,
+   * burnt colours. Early-outs when unchanged, so kits can call it every frame.
+   */
+  setHell(on: boolean): void {
+    if (on === this.hell) return;
+    this.hell = on;
+    this.repaintHands();
+  }
+
+  private repaintHands(): void {
+    const tones = this.formTones();
     this.forEachHandLayer(1, (shell) => shell.setFillStyle(this.tint(tones.body), 0.95));
     this.forEachHandLayer(2, (core) => core.setFillStyle(this.tint(tones.lit), 1));
     this.forEachHandLayer(0, (halo) => halo.setFillStyle(this.tint(tones.crust), 0.34));
@@ -2163,12 +2186,17 @@ export class HuntAvatar extends BaseAvatar {
   /** Blood Moon overhead — everything the character wears runs red under it. */
   setMoon(on: boolean): void { this.moon = on; }
 
+  /** Colours for the shape alone, before a Blood Moon gets a say. */
+  private formTones(): HuntTones {
+    if (this.form === 'beast') return this.hell ? HELL_TONES : BEAST_TONES;
+    if (this.form === 'hybrid') return SILVER_TONES;
+    return this.tones;
+  }
+
   /** Colours for whatever the character is currently wearing. */
   private activeTones(): HuntTones {
     if (this.moon) return MOON_TONES;
-    if (this.form === 'beast') return BEAST_TONES;
-    if (this.form === 'hybrid') return SILVER_TONES;
-    return this.tones;
+    return this.formTones();
   }
 
   /**

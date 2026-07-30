@@ -47,6 +47,32 @@ interface KineticBomb {
   owner: 'player' | 'npc';
 }
 
+/**
+ * Copper (divine perk): a scrap of charge earthed into the floor at the spot where its owner
+ * was wounded. Carries a fifth of that wound as its own bite. Deliberately data-only — a
+ * fight can leave dozens of these lying around, so they share one Graphics and hold no
+ * tweens, timers or GameObjects of their own.
+ */
+interface CopperSpark {
+  x: number;
+  y: number;
+  owner: 'player' | 'npc';
+  /** Damage per tick — one fifth of the hit that dropped it, rounded up to at least 1. */
+  dmg: number;
+  expiresAt: number;
+  tickAccum: number;
+  /** Own phase so a field of sparks crackles out of step. */
+  phase: number;
+  /** Brightened until this timestamp — the tell that this particular spark just bit. */
+  flareUntil: number;
+}
+
+const COPPER_SPARK_LIFE_MS = 3000;
+const COPPER_SPARK_TICK_MS = 500;
+const COPPER_SPARK_RADIUS = 26;
+/** Hard ceiling on the field: past this the oldest spark is dropped rather than adding draw calls. */
+const COPPER_SPARK_MAX = 40;
+
 /** Phoenix perk: a flame dropped in the player's wake that can be picked back up for regen. */
 interface PhoenixFlame {
   x: number;
@@ -187,6 +213,16 @@ export class ElectricityKit {
   private playerPhoenixFlames: PhoenixFlame[] = [];
   private playerPhoenixFlameAccum = 0;
 
+  // Copper (divine perk)
+  private copperSparks: CopperSpark[] = [];
+  private copperGfx: Phaser.GameObjects.Graphics | null = null;
+  /**
+   * Last sampled HP per side, or -1 for "not watching". Sampled rather than hooked: every
+   * route into an electric fighter's HP has to shed sparks (a burn tick, a puddle, a wall
+   * crash), and there is no single chokepoint for "I was hurt" — only for "I was hit".
+   */
+  private copperLastHp: { player: number; npc: number } = { player: -1, npc: -1 };
+
   constructor(private arena: ElectricityArenaApi) {
     this.pcol = (base) => arena.electricityColor('player', base);
     this.ncol = (base) => arena.electricityColor('npc', base);
@@ -249,6 +285,10 @@ export class ElectricityKit {
     this.playerPhoenixSpeedBaseline = 1;
     this.playerPhoenixFlames = [];
     this.playerPhoenixFlameAccum = 0;
+
+    this.copperSparks = [];
+    if (this.copperGfx) { this.copperGfx.destroy(); this.copperGfx = null; }
+    this.copperLastHp = { player: -1, npc: -1 };
 
     if (isPlayerElement) {
       const scene = this.arena.scene;
@@ -397,6 +437,7 @@ export class ElectricityKit {
     this.updateBallLightning(time, delta, enemies);
     this.updateStormClouds(time, delta, enemies);
     this.updatePhoenix(time, delta);
+    this.updateCopper(time, delta);
 
     // ── Auras ────────────────────────────────────────────────────────
     this.driveAura('shield', this.arena.masteryActive, shieldFill, delta);
@@ -411,6 +452,9 @@ export class ElectricityKit {
   /** Online: opponent is electricity — advance only the systems that can affect our local fighter. */
   updateNpc(time: number, delta: number): void {
     this.updateKineticBombs(time, delta);
+    // Copper is owner-agnostic, and this is the only per-frame call an npc-side
+    // electricity gets — without it an online opponent's sparks would never drop.
+    this.updateCopper(time, delta);
     this.updateVisuals(delta);
   }
 
@@ -706,6 +750,92 @@ export class ElectricityKit {
       }
       g.fillStyle(this.pcol(PHOENIX_TONES.core), 0.9 * a);
       g.fillCircle(f.x, f.y - 2, 2.4 * flick);
+    }
+  }
+
+  // ── Copper (divine perk) ──────────────────────────────────────────────
+
+  /**
+   * Copper earths every wound into the floor. Each side that is playing electricity with the
+   * perk is watched by HP sample; the drop becomes a spark that bites anyone *else* who stands
+   * on it. Kept deliberately cheap: one shared Graphics, no per-spark objects, and a hard cap.
+   */
+  private updateCopper(time: number, delta: number): void {
+    for (const owner of ['player', 'npc'] as const) {
+      const f = owner === 'player' ? this.arena.player : this.arena.npc;
+      const elementId = owner === 'player' ? this.arena.elementId : this.arena.npcElementId;
+      const on = elementId === 'electricity' && this.arena.hasPerk(owner, 'copper') && f?.active;
+      if (!on) { this.copperLastHp[owner] = -1; continue; }
+
+      const prev = this.copperLastHp[owner];
+      this.copperLastHp[owner] = f.hp;
+      if (prev < 0) continue;              // first frame of the watch — nothing to compare against
+      const lost = prev - f.hp;
+      if (lost <= 0) continue;             // healed or steady
+
+      if (this.copperSparks.length >= COPPER_SPARK_MAX) this.copperSparks.shift();
+      this.copperSparks.push({
+        x: f.x, y: f.y, owner,
+        dmg: Math.max(1, Math.round(lost / 5)),
+        expiresAt: time + COPPER_SPARK_LIFE_MS,
+        tickAccum: 0,
+        phase: Math.random() * Math.PI * 2,
+        flareUntil: 0,
+      });
+      // Just the shed sparks, not a full discharge — this fires on every wound taken.
+      this.fx(owner).sparks(f.x, f.y, 5, { speed: 120, size: 2.4, life: 320, fall: 14, depth: 4 });
+    }
+
+    // ── Bite ──
+    for (let i = this.copperSparks.length - 1; i >= 0; i--) {
+      const s = this.copperSparks[i];
+      if (time >= s.expiresAt) { this.copperSparks.splice(i, 1); continue; }
+      s.tickAccum += delta;
+      if (s.tickAccum < COPPER_SPARK_TICK_MS) continue;
+      s.tickAccum -= COPPER_SPARK_TICK_MS;
+      const victims = s.owner === 'player' ? this.arena.enemies : [this.arena.player];
+      for (const v of victims) {
+        if (!v?.active || v.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(s.x, s.y, v.x, v.y) > COPPER_SPARK_RADIUS) continue;
+        v.takeDamage(s.dmg);
+        this.arena.spawnHitFlash(v.x, v.y, ELECTRIC.current);
+        // No tweened bolt per bite: a whole field of these can tick in the same frame, so the
+        // spark just flares in the shared Graphics for a moment instead.
+        s.flareUntil = time + 160;
+      }
+    }
+
+    // ── Paint ──
+    if (this.copperSparks.length === 0) {
+      if (this.copperGfx) { this.copperGfx.destroy(); this.copperGfx = null; }
+      return;
+    }
+    if (!this.copperGfx) this.copperGfx = this.arena.scene.add.graphics().setDepth(3);
+    const g = this.copperGfx;
+    const t = time / 1000;
+    g.clear();
+    for (const s of this.copperSparks) {
+      const life = Phaser.Math.Clamp((s.expiresAt - time) / COPPER_SPARK_LIFE_MS, 0, 1);
+      const bit = time < s.flareUntil;
+      const col = s.owner === 'player' ? this.pcol : this.ncol;
+      // A scorch ring, then three short crooked legs off one root. Six strokes a spark —
+      // enough to read as loose current on the floor without costing a real bolt.
+      g.fillStyle(col(ELECTRIC.ash), 0.22 * life);
+      g.fillCircle(s.x, s.y, COPPER_SPARK_RADIUS * 0.5);
+      const flick = 0.7 + 0.3 * Math.sin(t * 14 + s.phase);
+      g.lineStyle(bit ? 3 : 2, col(bit ? ELECTRIC.volt : ELECTRIC.copper), 0.85 * life);
+      for (let k = 0; k < 3; k++) {
+        const a = s.phase + k * (Math.PI * 2 / 3) + Math.sin(t * 5 + k) * 0.3;
+        const len = (bit ? 12 : 7) + 5 * flick;
+        const midA = a + 0.5;
+        g.beginPath();
+        g.moveTo(s.x, s.y);
+        g.lineTo(s.x + Math.cos(a) * len * 0.6, s.y + Math.sin(a) * len * 0.6);
+        g.lineTo(s.x + Math.cos(midA) * len, s.y + Math.sin(midA) * len);
+        g.strokePath();
+      }
+      g.fillStyle(col(ELECTRIC.live), 0.9 * life * flick);
+      g.fillCircle(s.x, s.y, 2.2);
     }
   }
 

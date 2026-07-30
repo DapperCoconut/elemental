@@ -7,6 +7,9 @@ import {
   ArmGesture, CardTones, FATE, FateAura, FateAvatar, FateColorFn, FateFx,
   HOUSE_TONES, NPC_TONES, Suit, TAROT_TONES, fateCardLayered, suitGlyph, tonesFor,
 } from './FateVisuals';
+// Ash (divine perk) burns discarded cards — real fire, so it borrows fire's own painter
+// rather than approximating one out of the card palette.
+import { FireFx, FIRE } from './FireVisuals';
 
 // Stub context passed to castAbility() so that cast() calls become no-ops.
 // FateKit handles the real logic itself; cast() just needs to not throw.
@@ -113,6 +116,15 @@ const PURGE_LOCK_MS = 20000;
 /** How long Stunning blocks card throws for. */
 const STUN_LOCK_MS = 5000;
 /** Cards binned by the Cycle passive before it deals a fresh pair. */
+// ── Ash (divine perk) ────────────────────────────────────────────────────────
+const ASH_DAMAGE = 25;
+const ASH_RADIUS = 70;
+const ASH_BURN_MS = 3000;
+/** How far a falling card can drift from the caster before it catches. */
+const ASH_SCATTER = 46;
+/** Ceiling per discard event, so a full reroll is a spread of fires and not a bombardment. */
+const ASH_MAX_BLASTS = 3;
+
 const CYCLE_BIN_TARGET = 3;
 const CYCLE_DRAW_COUNT = 2;
 /** Damage one card has to rack up to tick the "Big Hand" mastery requirement. */
@@ -276,7 +288,7 @@ export interface FateArenaApi {
   get isPlayerFate(): boolean;
   /** Skins: maps a fate visual color through the owner's skin. */
   fateColor(owner: 'player' | 'npc', base: number): number;
-  hasPerk(perkId: string): boolean;
+  hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
   /** True if the local player (Fate) has the given shop upgrade slot equipped. */
   hasUpgrade(slot: string): boolean;
   /** True if the online opponent (Fate) has the given shop upgrade slot equipped. */
@@ -446,6 +458,9 @@ export class FateKit {
   private casterOf(owner: 'player' | 'npc'): Fighter {
     return owner === 'player' ? this.arena.player : this.arena.npc;
   }
+
+  /** Ash (divine perk): fire's own painter, built on the first discard that needs it. */
+  private ashFx: FireFx | null = null;
 
   /** The table layer, under the fighters. Rebuilt lazily after a reset. */
   private ground(): Phaser.GameObjects.Graphics {
@@ -722,7 +737,7 @@ export class FateKit {
 
     // ── Right-click: Paper perk card throw (never over the hand — that bins a card) ──
     const rightJustDown = pointer.rightButtonDown() && !this.arena.rightPointerWasDown;
-    if (rightJustDown && !this.consumedPointer() && this.arena.hasPerk('paper') && time >= this.paperCooldownUntil) {
+    if (rightJustDown && !this.consumedPointer() && this.arena.hasPerk('player', 'paper') && time >= this.paperCooldownUntil) {
       this.doPaperCardThrow(mouseX, mouseY, time);
     }
 
@@ -850,6 +865,7 @@ export class FateKit {
     if (this.playerSelected >= this.playerHand.length) {
       this.playerSelected = Math.max(0, this.playerHand.length - 1);
     }
+    this.burnDiscards('player', 1);
     this.cycleBinned++;
     if (this.cycleBinned >= CYCLE_BIN_TARGET) {
       this.cycleBinned -= CYCLE_BIN_TARGET;
@@ -893,6 +909,8 @@ export class FateKit {
         this.playerHand = kept;
         this.playerSelected = 0;
         if (burned > 0) this.arena.showFloatingText(player.x, player.y - 68, `🔥 −${burned} cards`, '#ff7733');
+        // Ash: cards burning out of your hand are still cards leaving it.
+        this.burnDiscards('player', burned);
         break;
       }
       case 'weakening':
@@ -1344,6 +1362,8 @@ export class FateKit {
 
   doReroll(owner: 'player' | 'npc'): void {
     const size = owner === 'player' ? this.playerHandSize : this.npcHandSize;
+    // Ash: the hand being thrown away is a hand's worth of discards.
+    this.burnDiscards(owner, (owner === 'player' ? this.playerHand : this.npcHand).length);
     const hand: FateCard[] = Array.from({ length: size }, () => this.drawCardFor(owner));
     if (owner === 'player') this.playerHand = hand; else this.npcHand = hand;
     if (owner === 'player') {
@@ -1423,6 +1443,47 @@ export class FateKit {
 
   private opponentsOf(owner: 'player' | 'npc'): Fighter[] {
     return owner === 'player' ? this.arena.enemies : [this.arena.player];
+  }
+
+  // ── Ash (divine perk) ─────────────────────────────────────────────────────
+
+  /**
+   * Ash: a card that leaves a hand without being played doesn't just vanish — it burns where it
+   * falls. Blasts land around the caster's own feet, which makes churning a dead hand into a
+   * zoning tool rather than a free ranged nuke, and staggered/capped so a whole rerolled hand
+   * reads as a spread of little fires instead of one stacked detonation.
+   */
+  private burnDiscards(owner: 'player' | 'npc', count: number): void {
+    if (count <= 0 || !this.arena.hasPerk(owner, 'ash')) return;
+    const caster = this.casterOf(owner);
+    if (!caster?.active) return;
+    if (!this.ashFx) this.ashFx = new FireFx(this.arena.scene);
+    const blasts = Math.min(ASH_MAX_BLASTS, count);
+    for (let i = 0; i < blasts; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const d = 14 + Math.random() * ASH_SCATTER;
+      const bx = caster.x + Math.cos(a) * d;
+      const by = caster.y + Math.sin(a) * d;
+      this.arena.scene.time.delayedCall(i * 90, () => this.ashBlast(bx, by, owner));
+    }
+  }
+
+  private ashBlast(x: number, y: number, owner: 'player' | 'npc'): void {
+    const fx = this.ashFx;
+    if (!fx) return;
+    const time = this.arena.scene.time.now;
+    fx.explosion(x, y, ASH_RADIUS, { shards: 10, smoke: 4, duration: 420 });
+    fx.scorch(x, y, ASH_RADIUS * 0.5);
+    fx.embers(x, y, 7, { speed: 180, size: 3, life: 520, rise: 40 });
+
+    for (const v of this.opponentsOf(owner)) {
+      if (!v?.active || v.hp <= 0) continue;
+      if (Phaser.Math.Distance.Between(x, y, v.x, v.y) > ASH_RADIUS) continue;
+      v.takeDamage(ASH_DAMAGE);
+      v.burningUntil = Math.max(v.burningUntil, time + Math.round(ASH_BURN_MS * v.statusDurMult));
+      this.arena.spawnHitFlash(v.x, v.y, FIRE.orange);
+      this.arena.showFloatingText(v.x, v.y - 34, '🌫️ ASH', '#ff8844');
+    }
   }
 
   /**

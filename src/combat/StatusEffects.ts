@@ -158,7 +158,7 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
   },
   {
     id: 'skewered', name: 'Skewered', emoji: '🍢', color: 0xffaa22, priority: 15, kind: 'timer',
-    description: 'Impaled on a light lance. Dragged wherever it goes and unable to act — until it meets a wall.',
+    description: 'Impaled. Dragged wherever the thing through you goes, and unable to act — until it meets a wall.',
     read: (f) => f.skeweredUntil,
     write: (f, t) => { f.skeweredUntil = t; },
   },
@@ -217,6 +217,12 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     description: 'Seeing things that are not there.',
     read: (f) => f.hallucinatingUntil,
     write: (f, t) => { f.hallucinatingUntil = t; },
+  },
+  {
+    id: 'migraine', name: 'Migraine', emoji: '🤯', color: 0xff3355, priority: 33, kind: 'timer',
+    description: 'Splitting psychological distress. Two casts in every three go up to 30 degrees wide of whatever you aimed them at.',
+    read: (f) => f.aimScatterUntil,
+    write: (f, t) => { f.aimScatterUntil = t; },
   },
   {
     id: 'lagging', name: 'Lag', emoji: '📶', color: 0x2288cc, priority: 34, kind: 'timer',
@@ -535,6 +541,11 @@ export function seedEffectSnapshot(f: Fighter, snapshot: Map<string, number>): v
  * behind an array rather than a single writable field. Neither are element-specific effects
  * that live in a kit rather than on `Fighter`.
  *
+ * `only` narrows which statuses are eligible. Everything is still snapshotted either way — an
+ * ineligible status has to be recorded as seen, or it would look newly applied on every frame
+ * forever. Paper's Journal passes `isDebuff` here: it shortens what an opponent puts on you, and
+ * quietly cutting your own regen in half would be the opposite of a reward.
+ *
  * Returns the descriptors that were stretched this call, for feedback/logging.
  */
 export function stretchNewEffects(
@@ -543,12 +554,13 @@ export function stretchNewEffects(
   nowGame: number,
   mult: number,
   snapshot: Map<string, number>,
+  only?: (desc: StatusDescriptor) => boolean,
 ): StatusDescriptor[] {
   const stretched: StatusDescriptor[] = [];
   for (const desc of STATUS_DESCRIPTORS) {
     if (desc.kind !== 'timer' || !desc.write) continue;
     const until = desc.read(f);
-    if (until > (snapshot.get(desc.id) ?? 0)) {
+    if ((!only || only(desc)) && until > (snapshot.get(desc.id) ?? 0)) {
       const left = remainingMs(until, nowWall, nowGame);
       if (left > 0) {
         const extended = until + left * (mult - 1);
@@ -561,4 +573,13 @@ export function stretchNewEffects(
     snapshot.set(desc.id, until);
   }
   return stretched;
+}
+
+/**
+ * True for a status that is bad to have. The descriptor table's priority bands are the source of
+ * truth for this — debuffs 0–99, buffs 100–149, always-on passives 150+ — so anything that wants
+ * to treat the two differently should ask here rather than re-deciding per effect.
+ */
+export function isDebuff(desc: StatusDescriptor): boolean {
+  return desc.priority < 100;
 }

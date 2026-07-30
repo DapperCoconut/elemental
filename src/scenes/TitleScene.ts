@@ -8,6 +8,7 @@ import {
   addBackdrop, addButton, addChip, addIconButton, addToggle, showToast,
   fillDiamond, drawGlow,
 } from '../ui';
+import { Music } from '../audio';
 
 /** Logo colours at 0 and 100 clicks — the title bleeds from ember to blood-red. */
 const LOGO_COLD = 0xff8a2b;
@@ -28,6 +29,7 @@ export class TitleScene extends Phaser.Scene {
   }
 
   create(): void {
+    Music.play('title');
     const { width, height } = this.scale;
     const cx = width / 2;
 
@@ -142,13 +144,22 @@ export class TitleScene extends Phaser.Scene {
       onClick: () => this.scene.start('AchievementsScene'),
     });
 
+    addIconButton(this, {
+      x: 92, y: 44, icon: '🔊', accent: 0x2ee6c0, tooltip: 'Audio settings',
+      onClick: () => {
+        this.scene.pause();
+        this.scene.launch('AudioSettingsScene', { parentSceneKey: this.scene.key });
+      },
+    });
+
     addChip(this, {
       x: width - 20, y: 30, icon: '💎', value: `${PlayerData.getShards()}`,
       accent: C.gold, originX: 1,
     });
 
     if (Cheats.isCheatMode()) {
-      this.add.text(78, 44, '😈 CHEAT PROFILE', {
+      // Clears the audio button that now sits beside the achievements one.
+      this.add.text(130, 44, '😈 CHEAT PROFILE', {
         fontSize: '13px', fontFamily: FONT_DISPLAY, color: hex(C.blood), letterSpacing: 1,
       }).setOrigin(0, 0.5).setDepth(DEPTH.content);
     }

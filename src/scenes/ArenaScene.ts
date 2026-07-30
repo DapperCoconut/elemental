@@ -44,6 +44,7 @@ import { ShadowKit, ShadowArenaApi } from '../elements/kits/ShadowKit';
 import { ElectricityKit, ElectricityArenaApi } from '../elements/kits/ElectricityKit';
 import { TechnologyKit, TechArenaApi } from '../elements/kits/TechnologyKit';
 import { ProjectileRegistry } from '../combat/ProjectileRegistry';
+import { SummonPurgeTarget } from '../combat/SummonPurge';
 import { SlimeKit, SlimeArenaApi } from '../elements/kits/SlimeKit';
 import { WaterKit, WaterArenaApi, Geyser } from '../elements/kits/WaterKit';
 import { LifeKit, LifeArenaApi } from '../elements/kits/LifeKit';
@@ -69,6 +70,24 @@ import { AirKit, AirArenaApi } from '../elements/kits/AirKit';
 import { GunpowderKit, GunpowderArenaApi } from '../elements/kits/GunpowderKit';
 import { HuntKit, HuntArenaApi } from '../elements/kits/HuntKit';
 import { HuntFx } from '../elements/kits/HuntVisuals';
+import { JusticeKit, JusticeArenaApi, JusticeForm } from '../elements/kits/JusticeKit';
+import { DreamKit, DreamArenaApi } from '../elements/kits/DreamKit';
+import { ChalkKit, ChalkArenaApi } from '../elements/kits/ChalkKit';
+import { MagmaKit, MagmaArenaApi } from '../elements/kits/MagmaKit';
+import { IllusionKit, IllusionArenaApi } from '../elements/kits/IllusionKit';
+import { DepthsKit, DepthsArenaApi } from '../elements/kits/DepthsKit';
+import { PassionKit, PassionArenaApi } from '../elements/kits/PassionKit';
+import { ConquestKit, ConquestArenaApi } from '../elements/kits/ConquestKit';
+import { RuinKit, RuinArenaApi } from '../elements/kits/RuinKit';
+import { GlassKit, GlassArenaApi } from '../elements/kits/GlassKit';
+import { PaperKit, PaperArenaApi } from '../elements/kits/PaperKit';
+import { DeathKit, DeathArenaApi } from '../elements/kits/DeathKit';
+import { FortuneKit, FortuneArenaApi } from '../elements/kits/FortuneKit';
+import { AmberKit, AmberArenaApi } from '../elements/kits/AmberKit';
+import { PsychicKit, PsychicArenaApi } from '../elements/kits/PsychicKit';
+import { RadiationKit, RadiationArenaApi } from '../elements/kits/RadiationKit';
+import { BindKit, BindArenaApi } from '../elements/kits/BindKit';
+import { GumKit, GumArenaApi } from '../elements/kits/GumKit';
 import { MagicKit, MagicArenaApi } from '../elements/kits/MagicKit';
 import { TimeKit, TimeArenaApi } from '../elements/kits/TimeKit';
 import { PlasmaKit, PlasmaArenaApi } from '../elements/kits/PlasmaKit';
@@ -84,6 +103,23 @@ import { dummyElement } from '../elements/dummy';
 import { kingElement } from '../elements/king';
 import { justiceElement } from '../elements/justice';
 import { dreamElement } from '../elements/dream';
+import { chalkElement } from '../elements/chalk';
+import { magmaElement } from '../elements/magma';
+import { illusionElement } from '../elements/illusion';
+import { depthsElement } from '../elements/depths';
+import { conquestElement } from '../elements/conquest';
+import { passionElement } from '../elements/passion';
+import { ruinElement } from '../elements/ruin';
+import { glassElement } from '../elements/glass';
+import { paperElement } from '../elements/paper';
+import { deathElement } from '../elements/death';
+import { fortuneElement } from '../elements/fortune';
+import { amberElement } from '../elements/amber';
+import { psychicElement } from '../elements/psychic';
+import { radiationElement } from '../elements/radiation';
+import { bindElement } from '../elements/bind';
+import { gumElement } from '../elements/gum';
+import { recordJournalResult } from '../data/PaperJournal';
 import * as PlayerData from '../data/PlayerData';
 import { getEnhancement } from '../data/Mastery';
 import { getTotalRewardMult, MUTATIONS, getBossMutationIds } from '../data/Mutations';
@@ -94,6 +130,7 @@ import { computeCurseShardMult } from '../data/GauntletBoosts';
 import { INFINITY_GAUNTLET_ID, infinityHpMult, infinityDmgMult, infinityFightShards, infinityDifficulty, GauntletState, getEffectiveStacks } from '../data/GauntletData';
 import { drawCampaignBackground } from './CampaignBackground';
 import * as UI from '../ui';
+import { Sfx, Music } from '../audio';
 
 /** `DIFFICULTY_PRESETS[3]` — the "Expert" rung, named for the achievements that gate on it. */
 const EXPERT_DIFFICULTY_LEVEL = 4;
@@ -235,6 +272,23 @@ const ELEMENT_MAP: Record<string, Element> = {
   // so the info panel and any future wiring have a real Element to read.
   justice: justiceElement,
   dream: dreamElement,
+  // Test elements. Only a cheat-mode save can pick these — see MenuScene.TEST_ELEMENTS.
+  chalk: chalkElement,
+  magma: magmaElement,
+  illusion: illusionElement,
+  depths: depthsElement,
+  conquest: conquestElement,
+  passion: passionElement,
+  ruin: ruinElement,
+  glass: glassElement,
+  paper: paperElement,
+  death: deathElement,
+  fortune: fortuneElement,
+  amber: amberElement,
+  psychic: psychicElement,
+  radiation: radiationElement,
+  bind: bindElement,
+  gum: gumElement,
 };
 
 const ELEMENT_TEXTURES: Record<string, string> = {
@@ -270,8 +324,23 @@ const ELEMENT_TEXTURES: Record<string, string> = {
   quantum: 'elem-quantum',
   dummy: 'elem-dummy',
   king: 'elem-king',
-  justice: 'elem-king',
-  dream: 'elem-king',
+  justice: 'elem-justice',
+  dream: 'elem-dream',
+  chalk: 'elem-chalk',
+  illusion: 'elem-illusion',
+  depths: 'elem-depths',
+  conquest: 'elem-conquest',
+  passion: 'elem-passion',
+  ruin: 'elem-ruin',
+  glass: 'elem-glass',
+  paper: 'elem-paper',
+  death: 'elem-death',
+  fortune: 'elem-fortune',
+  amber: 'elem-amber',
+  psychic: 'elem-psychic',
+  radiation: 'elem-radiation',
+  bind: 'elem-bind',
+  gum: 'elem-gum',
 };
 
 
@@ -537,6 +606,51 @@ export class ArenaScene extends Phaser.Scene {
   private huntNormalFills: AbilityBarEntry[] = [];
   private huntBeastFills: AbilityBarEntry[] = [];
   private huntHybridFills: AbilityBarEntry[] = [];
+
+  /**
+   * Justice — managed by JusticeKit. Same deal as Hunt: two stances, so two card rows,
+   * and the scene owns nothing else about the element.
+   */
+  private justiceKit!: JusticeKit;
+  /** Dream — managed by DreamKit. Sleepiness, the pendulum, the cursor passive and the oasis. */
+  private dreamKit!: DreamKit;
+
+  /** Chalk (test element) — managed by ChalkKit. Drawing windows, the chalk on the floor and the shield. */
+  private chalkKit!: ChalkKit;
+  /** Magma (test element) — managed by MagmaKit. Lava, pressure vessels, the fist and the dragon. */
+  private magmaKit!: MagmaKit;
+  /** Illusion (test element) — managed by IllusionKit. Panes, folds, corner-hops and the crack. */
+  private illusionKit!: IllusionKit;
+  /** Depths (test element) — managed by DepthsKit. The lure, the drowning, the fish and the shark. */
+  private depthsKit!: DepthsKit;
+  /** Conquest (test element) — managed by ConquestKit. The board, the economy and everything on it. */
+  private conquestKit!: ConquestKit;
+  /** Passion (test element) — managed by PassionKit. The love bars, the pistol, the rose and the pose. */
+  private passionKit!: PassionKit;
+  /** Ruin (test element) — managed by RuinKit. The wedge, the locks, the skewer, the spikes and the rot. */
+  private ruinKit!: RuinKit;
+  /** Glass (test element) — managed by GlassKit. The orbit, the splinter, the twirl and the blow. */
+  private glassKit!: GlassKit;
+  /** Paper (test element) — managed by PaperKit. The three storybooks, and the Journal behind them. */
+  private paperKit!: PaperKit;
+  /** Death (test element) — managed by DeathKit. The doomsday clock, the katana and the deal. */
+  private deathKit!: DeathKit;
+  /** Fortune (test element) — managed by FortuneKit. The stall, the blood coins and the guns. */
+  private fortuneKit!: FortuneKit;
+  /** Amber (test element) — managed by AmberKit. The sling and the four animals. */
+  private amberKit!: AmberKit;
+  /** Psychic (test element) — managed by PsychicKit. Foreknowledge, stress and the whip. */
+  private psychicKit!: PsychicKit;
+  /** Radiation (test element) — managed by RadiationKit. The tracer chain and the burning clock. */
+  private radiationKit!: RadiationKit;
+  /** Bind (test element) — managed by BindKit. The patron, its anger, and everything it charges. */
+  private bindKit!: BindKit;
+  /** Slime (test element) — managed by GumKit. The hand that is also the legs. */
+  private gumKit!: GumKit;
+  private justiceGroundHudCards: Phaser.GameObjects.GameObject[] = [];
+  private justiceFlightHudCards: Phaser.GameObjects.GameObject[] = [];
+  private justiceGroundFills: AbilityBarEntry[] = [];
+  private justiceFlightFills: AbilityBarEntry[] = [];
 
   // ── Silence — managed by SilenceKit ──────────────────────────────
   private silenceKit!: SilenceKit;
@@ -868,6 +982,8 @@ export class ArenaScene extends Phaser.Scene {
     this.playerBleeding = false;
     if (this.playerBleedAura) { this.playerBleedAura.destroy(); this.playerBleedAura = null; }
     this.huntNormalHudCards = []; this.huntBeastHudCards = []; this.huntHybridHudCards = [];
+    this.justiceGroundHudCards = []; this.justiceFlightHudCards = [];
+    this.justiceGroundFills = []; this.justiceFlightFills = [];
     this.huntNormalFills = []; this.huntBeastFills = []; this.huntHybridFills = [];
 
     // Hunt kit construction / reset — all three forms plus the mastery layer
@@ -1629,6 +1745,7 @@ export class ArenaScene extends Phaser.Scene {
         get npcCastId() { return arena.npcCastId; },
         acidColor: (owner, base) => arena.skinsKit.acidColor(owner, base),
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
@@ -1805,7 +1922,7 @@ export class ArenaScene extends Phaser.Scene {
         metalColor: (owner, base) => arena.skinsKit.metalColor(owner, base),
         skinId: (owner) => arena.skinsKit.skinId(owner),
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
-        hasPerk: (perkId) => arena.hasPerk('player', perkId),
+        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
@@ -1908,6 +2025,597 @@ export class ArenaScene extends Phaser.Scene {
         getMasteryStat: (key) => PlayerData.getMasteryStat('gunpowder', key),
       };
       this.gunpowderKit = new GunpowderKit(gunpowderApi);
+    }
+
+    // ── Justice kit ───────────────────────────────────────────
+    if (this.justiceKit) {
+      this.justiceKit.reset();
+    } else {
+      const arena = this;
+      const justiceApi: JusticeArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get projectiles() { return arena.projectiles; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get pointerWasDown() { return arena.pointerWasDown; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        justiceColor: (owner, base) => arena.skinsKit.justiceColor(owner, base),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        dealAoeDamageFromOwner: (x, y, r, d, o, ex) => arena.dealAoeDamageFromOwner(x, y, r, d, o, ex),
+        getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setHudForm: (form) => arena.justiceSetHudForm(form),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        get masteryActive() { return false; },
+        get npcMasteryActive() { return false; },
+      };
+      this.justiceKit = new JusticeKit(justiceApi);
+    }
+
+    // ── Dream kit ─────────────────────────────────────────────
+    if (this.dreamKit) {
+      this.dreamKit.reset();
+    } else {
+      const arena = this;
+      const dreamApi: DreamArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get pointerWasDown() { return arena.pointerWasDown; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        dreamColor: (owner, base) => arena.skinsKit.dreamColor(owner, base),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        get masteryActive() { return false; },
+        get npcMasteryActive() { return false; },
+      };
+      this.dreamKit = new DreamKit(dreamApi);
+    }
+
+    // ── Chalk kit (test element) ──────────────────────────────
+    if (this.chalkKit) {
+      this.chalkKit.reset();
+    } else {
+      const arena = this;
+      const chalkApi: ChalkArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get projectiles() { return arena.projectiles; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get pointerWasDown() { return arena.pointerWasDown; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        chalkColor: (owner, base) => arena.skinsKit.chalkColor(owner, base),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        get masteryActive() { return false; },
+        get npcMasteryActive() { return false; },
+      };
+      this.chalkKit = new ChalkKit(chalkApi);
+    }
+
+    // ── Magma kit (test element) ──────────────────────────────
+    if (this.magmaKit) {
+      this.magmaKit.reset();
+    } else {
+      const arena = this;
+      const magmaApi: MagmaArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get pointerWasDown() { return arena.pointerWasDown; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        magmaColor: (owner, base) => arena.skinsKit.magmaColor(owner, base),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        get masteryActive() { return false; },
+        get npcMasteryActive() { return false; },
+      };
+      this.magmaKit = new MagmaKit(magmaApi);
+    }
+
+    // ── Illusion kit (test element) ───────────────────────────
+    if (this.illusionKit) {
+      this.illusionKit.reset();
+    } else {
+      const arena = this;
+      const illusionApi: IllusionArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get projectiles() { return arena.projectiles; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get pointerWasDown() { return arena.pointerWasDown; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        get isOnline() { return arena.isOnline && !arena.isInvasion; },
+        illusionColor: (owner, base) => arena.skinsKit.illusionColor(owner, base),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        sendIllusionMsg: (msg) => Net.send(msg),
+        get masteryActive() { return false; },
+        get npcMasteryActive() { return false; },
+      };
+      this.illusionKit = new IllusionKit(illusionApi);
+    }
+
+    // ── Depths kit (test element) ─────────────────────────────
+    if (this.depthsKit) {
+      this.depthsKit.reset();
+    } else {
+      const arena = this;
+      const depthsApi: DepthsArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get pointerWasDown() { return arena.pointerWasDown; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        depthsColor: (owner, base) => arena.skinsKit.depthsColor(owner, base),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        get masteryActive() { return false; },
+        get npcMasteryActive() { return false; },
+      };
+      this.depthsKit = new DepthsKit(depthsApi);
+    }
+
+    // ── Passion kit (test element) ────────────────────────────
+    if (this.passionKit) {
+      this.passionKit.reset();
+    } else {
+      const arena = this;
+      const passionApi: PassionArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get pointerWasDown() { return arena.pointerWasDown; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        passionColor: (owner, base) => arena.skinsKit.passionColor(owner, base),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        get censoredExhibition() { return PlayerData.isPassionQCensored(); },
+        get masteryActive() { return false; },
+        get npcMasteryActive() { return false; },
+      };
+      this.passionKit = new PassionKit(passionApi);
+    }
+
+    // ── Ruin kit (test element) ───────────────────────────────
+    if (this.ruinKit) {
+      this.ruinKit.reset();
+    } else {
+      const arena = this;
+      const ruinApi: RuinArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get projectiles() { return arena.projectiles; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get pointerWasDown() { return arena.pointerWasDown; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        ruinColor: (owner, base) => arena.skinsKit.ruinColor(owner, base),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        purgeSummons: (x, y, r, except) => arena.purgeSummonsInCircle(x, y, r, except),
+        shredRegisteredProjectiles: (owner, x, y, r) => {
+          const found = arena.techProjReg.within(owner, x, y, r);
+          for (const p of found) arena.techProjReg.steal(p);
+          return found.length;
+        },
+        get masteryActive() { return false; },
+        get npcMasteryActive() { return false; },
+      };
+      this.ruinKit = new RuinKit(ruinApi);
+    }
+
+    // ── Glass kit (test element) ──────────────────────────────
+    if (this.glassKit) {
+      this.glassKit.reset();
+    } else {
+      const arena = this;
+      const glassApi: GlassArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get pointerWasDown() { return arena.pointerWasDown; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        get isDodging() { return arena.isDodging; },
+        set isDodging(v: boolean) { arena.isDodging = v; },
+        glassColor: (owner, base) => arena.skinsKit.glassColor(owner, base),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        get masteryActive() { return false; },
+        get npcMasteryActive() { return false; },
+      };
+      this.glassKit = new GlassKit(glassApi);
+    }
+
+    // ── Paper kit (test element) ──────────────────────────────
+    if (this.paperKit) {
+      this.paperKit.reset();
+    } else {
+      const arena = this;
+      const paperApi: PaperArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get projectiles() { return arena.projectiles; },
+        get projectileRegistry() { return arena.techProjReg; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get pointerWasDown() { return arena.pointerWasDown; },
+        get rightPointerWasDown() { return arena.rightPointerWasDown; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        get isDodging() { return arena.isDodging; },
+        set isDodging(v: boolean) { arena.isDodging = v; },
+        paperColor: (owner, base) => arena.skinsKit.paperColor(owner, base),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        get masteryActive() { return false; },
+        get npcMasteryActive() { return false; },
+      };
+      this.paperKit = new PaperKit(paperApi);
+    }
+
+    // ── Death kit (test element) ──────────────────────────────
+    if (this.deathKit) {
+      this.deathKit.reset();
+    } else {
+      const arena = this;
+      const deathApi: DeathArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get projectiles() { return arena.projectiles; },
+        get projectileRegistry() { return arena.techProjReg; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get pointerWasDown() { return arena.pointerWasDown; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        get isInvasion() { return arena.isInvasion; },
+        get isDodging() { return arena.isDodging; },
+        set isDodging(v: boolean) { arena.isDodging = v; },
+        deathColor: (owner, base) => arena.skinsKit.deathColor(owner, base),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        get masteryActive() { return false; },
+        get npcMasteryActive() { return false; },
+      };
+      this.deathKit = new DeathKit(deathApi);
+    }
+
+    // ── Fortune kit (test element) ────────────────────────────
+    if (this.fortuneKit) {
+      this.fortuneKit.reset();
+    } else {
+      const arena = this;
+      const fortuneApi: FortuneArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get projectiles() { return arena.projectiles; },
+        get projectileRegistry() { return arena.techProjReg; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get pointerWasDown() { return arena.pointerWasDown; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        get isInvasion() { return arena.isInvasion; },
+        fortuneColor: (owner, base) => arena.skinsKit.fortuneColor(owner, base),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        get masteryActive() { return false; },
+        get npcMasteryActive() { return false; },
+      };
+      this.fortuneKit = new FortuneKit(fortuneApi);
+    }
+
+    // ── Amber kit (test element) ──────────────────────────────
+    if (this.amberKit) {
+      this.amberKit.reset();
+    } else {
+      const arena = this;
+      const amberApi: AmberArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get projectiles() { return arena.projectiles; },
+        get projectileRegistry() { return arena.techProjReg; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get pointerWasDown() { return arena.pointerWasDown; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        get isInvasion() { return arena.isInvasion; },
+        amberColor: (owner, base) => arena.skinsKit.amberColor(owner, base),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        get masteryActive() { return false; },
+        get npcMasteryActive() { return false; },
+      };
+      this.amberKit = new AmberKit(amberApi);
+    }
+
+    // ── Psychic kit (test element) ────────────────────────────
+    if (this.psychicKit) {
+      this.psychicKit.reset();
+    } else {
+      const arena = this;
+      const psychicApi: PsychicArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        get isOnline() { return arena.isOnline; },
+        psychicColor: (owner, base) => arena.skinsKit.psychicColor(owner, base),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        sendPsychicMsg: (msg) => Net.send(msg),
+        get masteryActive() { return false; },
+        get npcMasteryActive() { return false; },
+      };
+      this.psychicKit = new PsychicKit(psychicApi);
+    }
+
+    // ── Radiation kit (test element) ──────────────────────────
+    if (this.radiationKit) {
+      this.radiationKit.reset();
+    } else {
+      const arena = this;
+      const radiationApi: RadiationArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        get isDodging() { return arena.isDodging; },
+        set isDodging(v: boolean) { arena.isDodging = v; },
+        radiationColor: (owner, base) => arena.skinsKit.radiationColor(owner, base),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        get masteryActive() { return false; },
+        get npcMasteryActive() { return false; },
+      };
+      this.radiationKit = new RadiationKit(radiationApi);
+    }
+
+    // ── Bind kit (test element) ───────────────────────────────
+    if (this.bindKit) {
+      this.bindKit.reset();
+    } else {
+      const arena = this;
+      const bindApi: BindArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        bindColor: (owner, base) => arena.skinsKit.bindColor(owner, base),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        get masteryActive() { return false; },
+        get npcMasteryActive() { return false; },
+      };
+      this.bindKit = new BindKit(bindApi);
+    }
+
+    // ── Slime kit (test element, id `gum`) ────────────────────
+    if (this.gumKit) {
+      this.gumKit.reset();
+    } else {
+      const arena = this;
+      const gumApi: GumArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get projectiles() { return arena.projectiles; },
+        get projectileRegistry() { return arena.techProjReg; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get isDodging() { return arena.isDodging; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        gumColor: (owner, base) => arena.skinsKit.gumColor(owner, base),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        get masteryActive() { return false; },
+        get npcMasteryActive() { return false; },
+      };
+      this.gumKit = new GumKit(gumApi);
+    }
+
+    // ── Conquest kit (test element) ───────────────────────────
+    if (this.conquestKit) {
+      this.conquestKit.reset();
+    } else {
+      const arena = this;
+      const conquestApi: ConquestArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get projectiles() { return arena.projectiles; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get pointerWasDown() { return arena.pointerWasDown; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        conquestColor: (owner, base) => arena.skinsKit.conquestColor(owner, base),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        openUpgradeMenu: () => arena.openConquestMenu(),
+        get npcIsNetReplica() { return arena.isOnline; },
+        get isCoop() { return arena.isOnline && arena.isInvasion; },
+        get masteryActive() { return false; },
+        get npcMasteryActive() { return false; },
+      };
+      this.conquestKit = new ConquestKit(conquestApi);
     }
 
     // Rubber kit construction / reset
@@ -2291,7 +2999,7 @@ export class ArenaScene extends Phaser.Scene {
         get rightPointerWasDown() { return arena.rightPointerWasDown; },
         get isPlayerFate() { return arena.elementId === 'fate'; },
         fateColor: (owner, base) => arena.skinsKit.fateColor(owner, base),
-        hasPerk: (perkId) => arena.hasPerk('player', perkId),
+        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
         get masteryActive() { return arena.fateMasteryOn && arena.elementId === 'fate'; },
@@ -2480,6 +3188,9 @@ export class ArenaScene extends Phaser.Scene {
         const target = b as Fighter;
         if (!proj.active || !proj.isFromPlayer) return;
         if (!target.active || target.hp <= 0) return;
+        // Illusion Dance: shots go straight through. Deliberately before every on-hit rider
+        // below, so a phased hit applies nothing at all rather than landing its side effects.
+        if (target.projectilePhase) return;
         if (target instanceof Husk) {
           // A possessing demon is untouchable — shots pass straight through it.
           if (target.possessing) return;
@@ -2523,6 +3234,8 @@ export class ArenaScene extends Phaser.Scene {
         // always receives (this.player, projectileMember) — `b` is the projectile here.
         const proj = b as Projectile;
         if (!proj.active || proj.isFromPlayer) return;
+        // Illusion Dance — see the twin check in the enemy overlap above.
+        if (this.player.projectilePhase) return;
         // Invasion co-op: every npc-owned projectile here came out of an ally's
         // replayed cast (husks fire their own shots, not Projectiles). Ignoring it
         // whole stops the on-hit riders — burns, poisons, frost, stuns — as well as
@@ -2707,6 +3420,15 @@ export class ArenaScene extends Phaser.Scene {
       this.cardCrippleSlowUntil = this.time.now + 2000;
     });
 
+    // Glass passive: being hit is the trigger for the whole element — every hit taken throws
+    // fifteen shards out in all directions. The kit checks who is actually Glass.
+    this.player.on('damaged', (amount: number) => {
+      this.glassKit.onDamaged('player', amount);
+    });
+    this.npc.on('damaged', (amount: number) => {
+      this.glassKit.onDamaged('npc', amount);
+    });
+
     // Subterfuge Mastery — Smoke Break: every hit taken burns a second off the cigarette
     this.player.on('damaged', (amount: number) => {
       this.subterfugeKit.onDamageReceived('player', amount);
@@ -2770,6 +3492,10 @@ export class ArenaScene extends Phaser.Scene {
           setRemoteStealth: (v) => arena.silenceKit.setNetStealth(v),
           onTechMsg: (msg) => arena.techKit.handleNetMsg(msg),
           onSilenceMsg: (msg) => arena.silenceKit.handleNetMsg(msg),
+          onIllusionMsg: (msg) => arena.illusionKit.handleNetMsg(msg),
+        onPsychicMsg: (msg) => arena.psychicKit.handleNetMsg(msg),
+          conquestSnapshot: () => arena.conquestKit.netSnapshot(),
+          onConquestSnapshot: (snap) => arena.conquestKit.applyNetSnapshot(snap),
           replayNpcMastery: (enhId, tx, ty) => arena.replayNpcMastery(enhId, tx, ty),
           npcSpeedMult: () => arena.npcSpeedMult,
           gameNow: () => arena.time.now,
@@ -3008,6 +3734,54 @@ export class ArenaScene extends Phaser.Scene {
     if (this.elementId === 'gunpowder') {
       this.gunpowderKit.initArsenalHud(cx);
     }
+
+    // ── Audio ──────────────────────────────────────────────────────
+    // The fight opens with a stinger and the groove that matches the mode; the
+    // arena track then thickens on its own as the fight turns (see `update`).
+    this.startFightAudio();
+  }
+
+  /**
+   * Picks the music for this fight and plays the opening sting. Boss fights get
+   * their own low, slow track and a longer intro so the sting has room.
+   */
+  private startFightAudio(): void {
+    // Scene restarts wipe the timer along with everything else, so this is
+    // re-armed per match rather than guarded against double-registration.
+    this.time.addEvent({ delay: 250, loop: true, callback: () => this.updateMusicIntensity() });
+
+    if (this.isBossFight) {
+      Sfx.play('boss-intro');
+      Music.play('boss', { intensity: 0.55 });
+      return;
+    }
+
+    Sfx.play('countdown-go');
+    if (this.isInvasion) Music.play('invasion', { intensity: 0.4 });
+    else if (this.isOnline) Music.play('online', { intensity: 0.45 });
+    else if (this.gauntletState) Music.play('gauntlet', { intensity: 0.45 });
+    else Music.play('arena', { intensity: 0.35 });
+  }
+
+  /**
+   * Drives the music mix from how the fight is actually going: how hurt the
+   * player is, how close the opponent is to dying, and how long it has run.
+   * Called on a timer rather than every frame — the engine eases toward the
+   * value anyway, so sampling it four times a second is plenty.
+   */
+  private updateMusicIntensity(): void {
+    if (this.gameEnded) return;
+    const playerHurt = 1 - Math.max(0, this.player.hp) / Math.max(1, this.player.maxHp);
+    const foeHurt = this.npc?.active
+      ? 1 - Math.max(0, this.npc.hp) / Math.max(1, this.npc.maxHp)
+      : 0;
+    // Weighted toward the player's own danger — a fight you are losing should
+    // sound more urgent than one you are winning.
+    const base = this.isBossFight ? 0.5 : 0.3;
+    Music.setIntensity(Math.min(1, base + playerHurt * 0.5 + foeHurt * 0.2));
+
+    // A separate heartbeat under 25% HP, so low health is felt and not just seen.
+    if (this.player.active && playerHurt > 0.75) Sfx.play('low-health');
   }
 
   /**
@@ -3180,8 +3954,9 @@ export class ArenaScene extends Phaser.Scene {
     const hudY = H - 30;
     const cardW = 130;
     const cardH = 48;
-    // Hunt, Silence, and Gunpowder have extra abilities beyond the first 5; only show 5 at a time
-    const abilities = (this.elementId === 'hunt' || this.elementId === 'silence' || this.elementId === 'gunpowder')
+    // Hunt, Silence, Gunpowder and Justice have extra abilities beyond the first 5; only show 5 at a time
+    const abilities = (this.elementId === 'hunt' || this.elementId === 'silence'
+        || this.elementId === 'gunpowder' || this.elementId === 'justice')
       ? this.playerElement.abilities.slice(0, 5)
       : this.playerElement.abilities;
 
@@ -3203,6 +3978,69 @@ export class ArenaScene extends Phaser.Scene {
     const startX = W / 2 - totalWidth / 2 + cardW / 2;
 
     const fillColors: Record<string, number> = {
+      'chalk-ward':        0xf4f1e6,
+      'chalk-explosive':   0xff5f4a,
+      'chalk-perma':       0x5aa9ff,
+      'chalk-shield':      0xcfc9b8,
+      'chalk-masterpiece': 0x3fd9d1,
+      'magma-plume':       0xff8b22,
+      'magma-volcano':     0xff5a1e,
+      'magma-bloat':       0xffc44a,
+      'magma-fist':        0xff7733,
+      'magma-dragon-kin':  0xc07dff,
+      'illusion-crack-shot': 0xff3b4a,
+      'illusion-veil':       0x8a6cff,
+      'illusion-relocate':   0xb45cff,
+      'illusion-tesseract':  0x4de8ff,
+      'illusion-dance':      0xff4dd2,
+      'ruin-shred':            0xc4392c,
+      'ruin-lockdown':         0xa4552a,
+      'ruin-skewer':           0x6b524a,
+      'ruin-spikes':           0xff6a4d,
+      'ruin-decay':            0xb08a3a,
+      // Glass takes its card colours straight off the mosaic, so the five cards are a rainbow.
+      // Paper takes its card colours from the three storybooks: green knight, blue alien,
+      // red fantasy — and the three keys that belong to no book stay paper-coloured.
+      'paper-storybook':       0x6ef0a8,
+      'paper-plane':           0xf2ead6,
+      'paper-shuriken':        0xc8324a,
+      'paper-mache':           0xa8996f,
+      'paper-climax':          0xd45cf0,
+      'glass-orbit':           0x3f8ce8,
+      'glass-splinter':        0x3fc98a,
+      'glass-twirl':           0xa25ce8,
+      'glass-temper':          0xe0424f,
+      'glass-blow':            0xf5e055,
+      // Death paints its cards with the four things it is allowed to be coloured by: the river,
+      // the afterimage, the steel and the clock. Hospice takes the rope.
+      // Fortune: money is gold, the illegal page is green, and the beam is the brightest
+      // thing the element owns.
+      'fortune-fire':          0xb8c2cc,
+      'fortune-safe':          0xf0c33c,
+      'fortune-risky':         0x2f8f57,
+      'fortune-paywall':       0xa8791e,
+      'fortune-p2w':           0xfff6d0,
+      // Amber: resin for the two things he throws, blood for the two things that eat.
+      'amber-sling':           0xf7c25a,
+      'amber-mosquitoes':      0xd4413f,
+      'amber-hunt':            0x86b45c,
+      'amber-stampede':        0xc4a678,
+      'amber-trex':            0x9c6d42,
+      'death-styx':            0x54cbb2,
+      'death-disarm':          0xf5e14a,
+      'death-riposte':         0xd6dde8,
+      'death-hospice':         0xa8875a,
+      'death-deal':            0xd9b23a,
+      'depths-piranha':        0xc4243a,
+      'depths-lungfish':       0x3fd8e8,
+      'depths-eutrophication': 0x7ac64b,
+      'depths-angler':         0xc8ffa4,
+      'depths-megalodon':      0x4a6672,
+      'conquest-banner':       0xe8503c,
+      'conquest-barracks':     0x7a5230,
+      'conquest-turret':       0x8f9aa6,
+      'conquest-barricade':    0xb8b2a4,
+      'conquest-expansion':    0xe8c23a,
       'fireball':       0xff6600,
       'flame-dash':     0xff3300,
       'pressure-bomb':  0xff8800,
@@ -3368,6 +4206,23 @@ export class ArenaScene extends Phaser.Scene {
       'silence-ritual': 0x881122,
       'silence-feast':  0x445544,
       'silence-run':    0x110016,
+      // Justice (divine) — gold on the ground, pale blue in the air
+      'justice-stab':           0xc9a13a,
+      'justice-coliseum':       0x9c9382,
+      'justice-sheer-will':     0x2f7bff,
+      'justice-flight':         0xa8ccff,
+      'justice-judgement-day':  0xf0d68a,
+      'justice-spear-throw':    0xfff3cf,
+      'justice-bind':           0x7d5f22,
+      'justice-pillar':         0xff7a1f,
+      'justice-descend':        0xe6e1d2,
+      'justice-seraphim':       0xffffff,
+      // Dream (divine) — cosmic violet, with the pillow and the oasis breaking out of it
+      'dream-trance':           0x8b5cf6,
+      'dream-pillow-fight':     0xbfd0ff,
+      'dream-dreamcatcher':     0xa87b52,
+      'dream-nightmare':        0xff3b6b,
+      'dream-oasis':            0x3fc7d6,
     };
 
     abilities.forEach((ab, i) => {
@@ -3415,42 +4270,48 @@ export class ArenaScene extends Phaser.Scene {
 
       if (this.elementId === 'hunt') {
         this.huntNormalHudCards.push(bg, fill, lbl, desc);
+      } else if (this.elementId === 'justice') {
+        this.justiceGroundHudCards.push(bg, fill, lbl, desc);
       }
     });
 
-    // Hunt's other two forms get their own hidden card rows, built on the same plates as
-    // the human row so a transform swaps the tray's contents without changing its look.
+    // Form-swapping elements get a hidden card row per extra form, built on the same plates
+    // as the first row so a transform swaps the tray's contents without changing its look.
+    const buildRow = (
+      list: Ability[], fills: AbilityBarEntry[], cards: Phaser.GameObjects.GameObject[], fallback: number,
+    ) => {
+      list.forEach((ab, i) => {
+        const x = startX + i * cardW;
+        const cardColor = fillColors[ab.id] ?? fallback;
+        const bg = this.add.graphics().setDepth(21).setVisible(false);
+        const px = x - (cardW - 4) / 2;
+        const py = hudY - (cardH - 4) / 2;
+        UI.fillNotchedGradient(bg, px, py, cardW - 4, cardH - 4,
+          UI.mix(UI.tintPlate(cardColor, 0.18), 0xffffff, 0.05),
+          UI.mix(UI.tintPlate(cardColor, 0.1), 0x000000, 0.5), 1, 8, UI.ALL_CORNERS, 10);
+        UI.strokeNotched(bg, px, py, cardW - 4, cardH - 4, cardColor, 0.5, 1.5, 8, UI.ALL_CORNERS);
+        UI.drawSheen(bg, px, py, cardW - 4, cardH - 4, UI.mix(cardColor, 0xffffff, 0.7), 0.22, 8);
+        const fill = this.add.rectangle(px, hudY, 0, cardH - 4, cardColor, 0.45)
+          .setOrigin(0, 0.5).setDepth(22).setVisible(false);
+        const lbl = this.add.text(x, hudY - 7, `${ab.displayKey}  ${ab.name}`, {
+          fontSize: '11px', fontFamily: UI.FONT_DISPLAY, color: UI.T.bright, letterSpacing: 0.5,
+        }).setOrigin(0.5, 0.5).setDepth(23).setVisible(false);
+        const desc = this.add.text(x, hudY + 8, ab.description, {
+          fontSize: '9px', fontFamily: UI.FONT_UI, color: UI.T.dim,
+          wordWrap: { width: cardW - 12 }, maxLines: 2, align: 'center',
+        }).setOrigin(0.5, 0.5).setDepth(23).setVisible(false);
+        fills.push({ fill, abilityId: ab.id, maxWidth: cardW - 4, lbl, desc, baseFillColor: cardColor });
+        cards.push(bg, fill, lbl, desc);
+      });
+    };
+
     if (this.elementId === 'hunt') {
       this.huntNormalFills = [...this.abilityBars];
-      const buildRow = (
-        list: Ability[], fills: AbilityBarEntry[], cards: Phaser.GameObjects.GameObject[], fallback: number,
-      ) => {
-        list.forEach((ab, i) => {
-          const x = startX + i * cardW;
-          const cardColor = fillColors[ab.id] ?? fallback;
-          const bg = this.add.graphics().setDepth(21).setVisible(false);
-          const px = x - (cardW - 4) / 2;
-          const py = hudY - (cardH - 4) / 2;
-          UI.fillNotchedGradient(bg, px, py, cardW - 4, cardH - 4,
-            UI.mix(UI.tintPlate(cardColor, 0.18), 0xffffff, 0.05),
-            UI.mix(UI.tintPlate(cardColor, 0.1), 0x000000, 0.5), 1, 8, UI.ALL_CORNERS, 10);
-          UI.strokeNotched(bg, px, py, cardW - 4, cardH - 4, cardColor, 0.5, 1.5, 8, UI.ALL_CORNERS);
-          UI.drawSheen(bg, px, py, cardW - 4, cardH - 4, UI.mix(cardColor, 0xffffff, 0.7), 0.22, 8);
-          const fill = this.add.rectangle(px, hudY, 0, cardH - 4, cardColor, 0.45)
-            .setOrigin(0, 0.5).setDepth(22).setVisible(false);
-          const lbl = this.add.text(x, hudY - 7, `${ab.displayKey}  ${ab.name}`, {
-            fontSize: '11px', fontFamily: UI.FONT_DISPLAY, color: UI.T.bright, letterSpacing: 0.5,
-          }).setOrigin(0.5, 0.5).setDepth(23).setVisible(false);
-          const desc = this.add.text(x, hudY + 8, ab.description, {
-            fontSize: '9px', fontFamily: UI.FONT_UI, color: UI.T.dim,
-            wordWrap: { width: cardW - 12 }, maxLines: 2, align: 'center',
-          }).setOrigin(0.5, 0.5).setDepth(23).setVisible(false);
-          fills.push({ fill, abilityId: ab.id, maxWidth: cardW - 4, lbl, desc, baseFillColor: cardColor });
-          cards.push(bg, fill, lbl, desc);
-        });
-      };
       buildRow(this.playerElement.abilities.slice(5, 10), this.huntBeastFills, this.huntBeastHudCards, 0xaa2233);
       buildRow(this.playerElement.abilities.slice(10, 15), this.huntHybridFills, this.huntHybridHudCards, 0xcc5522);
+    } else if (this.elementId === 'justice') {
+      this.justiceGroundFills = [...this.abilityBars];
+      buildRow(this.playerElement.abilities.slice(5, 10), this.justiceFlightFills, this.justiceFlightHudCards, 0xa8ccff);
     }
 
     this.add.text(W - 50, hudY, '[SPC]\nDodge', {
@@ -3584,7 +4445,29 @@ export class ArenaScene extends Phaser.Scene {
     return best;
   }
 
+  /**
+   * Psychic's Migraine, applied at the one place in the game every ability takes its aim from.
+   *
+   * `CastContext.targetX/targetY` is the single point that all ~240 abilities across every
+   * element agree on, so rotating it about the caster here is the only way to make "they miss
+   * many of their shots" true for a bot, a boss, an online replica and the player alike without
+   * touching any of them. Two casts in three go 20–35° wide; the rest land honestly, because a
+   * debuff that misses *everything* stops reading as distress and starts reading as a stun.
+   */
+  private scatterAim(caster: Fighter, tx: number, ty: number): { x: number; y: number } {
+    if (!caster || Date.now() >= caster.aimScatterUntil) return { x: tx, y: ty };
+    if (Math.random() < 0.34) return { x: tx, y: ty };
+    const dist = Phaser.Math.Distance.Between(caster.x, caster.y, tx, ty);
+    if (dist < 1) return { x: tx, y: ty };
+    const off = (Math.random() < 0.5 ? -1 : 1) * Phaser.Math.DegToRad(20 + Math.random() * 15);
+    const ang = Phaser.Math.Angle.Between(caster.x, caster.y, tx, ty) + off;
+    return { x: caster.x + Math.cos(ang) * dist, y: caster.y + Math.sin(ang) * dist };
+  }
+
   private buildPlayerContext(targetX: number, targetY: number): CastContext {
+    const aim = this.scatterAim(this.player, targetX, targetY);
+    targetX = aim.x;
+    targetY = aim.y;
     return {
       scene: this,
       casterX: this.player.x,
@@ -3607,6 +4490,8 @@ export class ArenaScene extends Phaser.Scene {
         }
       },
       dealFlameNukeDamage: (cx, cy, radius, damage) => this.dealFlameNukeDamage(cx, cy, radius, damage),
+      fireMoltenEruption: () => this.fireKit.doMoltenEruption('player'),
+      fireScorchCaster: () => this.fireKit.scorchCaster('player'),
       dashCaster: (vx, vy) => {
         // High Gravity kills every dash-style movement ability at the one place they all pass through.
         if (this.time.now < this.player.highGravityUntil) return;
@@ -3877,11 +4762,111 @@ export class ArenaScene extends Phaser.Scene {
       subterfugeRecruit: () => { /* handled in SubterfugeKit.handleInput */ },
       subterfugeBribe: () => { /* handled in SubterfugeKit.handleInput */ },
       subterfugeTreachery: () => { /* handled in SubterfugeKit.handleInput */ },
+      // Justice
+      justiceStab: (tx, ty) => this.justiceKit.doStab(tx, ty, 'player'),
+      justiceColiseum: () => this.justiceKit.doColiseum('player'),
+      justiceSheerWill: () => this.justiceKit.doSheerWill('player'),
+      justiceFlight: () => this.justiceKit.doFlight('player'),
+      justiceJudgementDay: () => this.justiceKit.doJudgementDay('player'),
+      justiceSpearThrow: (tx, ty) => this.justiceKit.doSpearThrow(tx, ty, 'player'),
+      justiceBind: (tx, ty) => this.justiceKit.doBind(tx, ty, 'player'),
+      justicePillar: (tx, ty) => this.justiceKit.doPillar(tx, ty, 'player'),
+      justiceDescend: () => this.justiceKit.doDescend('player'),
+      justiceSeraphim: () => this.justiceKit.doSeraphim('player'),
+      // Dream
+      dreamTrance: () => this.dreamKit.doTrance('player'),
+      dreamPillowFight: (tx, ty) => this.dreamKit.doPillowFight(tx, ty, 'player'),
+      dreamDreamcatcher: () => this.dreamKit.doDreamcatcher('player'),
+      dreamNightmare: () => this.dreamKit.doNightmare('player'),
+      dreamOasis: () => this.dreamKit.doOasis('player'),
+      chalkWard: () => this.chalkKit.doWard('player'),
+      chalkExplosive: () => this.chalkKit.doExplosive('player'),
+      chalkPerma: () => this.chalkKit.doPerma('player'),
+      chalkShield: () => this.chalkKit.doShield('player'),
+      chalkMasterpiece: () => this.chalkKit.doMasterpiece('player'),
+      magmaPlume: (tx, ty) => this.magmaKit.doPlume('player', tx, ty),
+      magmaVolcano: (tx, ty) => this.magmaKit.doVolcano('player', tx, ty),
+      magmaBloat: () => this.magmaKit.doBloat('player'),
+      magmaFist: (tx, ty) => this.magmaKit.doFist('player', tx, ty),
+      magmaDragonKin: (tx, ty) => this.magmaKit.doDragonKin('player', tx, ty),
+      illusionCrackShot: (tx, ty) => this.illusionKit.doCrackShot('player', tx, ty),
+      illusionVeil: (tx, ty) => this.illusionKit.doVeil('player', tx, ty),
+      illusionRelocate: () => this.illusionKit.doRelocate('player'),
+      illusionTesseract: (tx, ty) => this.illusionKit.doTesseract('player', tx, ty),
+      illusionDance: () => this.illusionKit.doDance('player'),
+      ruinShred: (tx, ty) => this.ruinKit.doShred('player', tx, ty),
+      ruinLockdown: (tx, ty) => this.ruinKit.doLockdown('player', tx, ty),
+      ruinSkewer: (tx, ty) => this.ruinKit.doSkewer('player', tx, ty),
+      ruinSpikes: () => this.ruinKit.doSpikes('player'),
+      ruinDecay: () => this.ruinKit.doDecay('player'),
+      glassOrbit: () => this.glassKit.doOrbit('player'),
+      glassSplinter: (tx, ty) => this.glassKit.doSplinter('player', tx, ty),
+      glassTwirl: (tx, ty) => this.glassKit.doTwirl('player', tx, ty),
+      glassTemper: () => this.glassKit.doTemper('player'),
+      glassBlow: () => this.glassKit.doBlow('player'),
+      deathStyxShot: (tx, ty) => this.deathKit.doStyxShot('player', tx, ty),
+      deathDisarm: (tx, ty) => this.deathKit.doDisarm('player', tx, ty),
+      deathRiposte: (tx, ty) => this.deathKit.doRiposte('player', tx, ty),
+      deathHospice: (tx, ty) => this.deathKit.doHospice('player', tx, ty),
+      deathDeal: (tx, ty) => this.deathKit.doDeal('player', tx, ty),
+      fortuneFire: (tx, ty) => this.fortuneKit.doFire('player', tx, ty),
+      fortuneSafeInvest: () => this.fortuneKit.doSafeInvest('player'),
+      fortuneRiskyInvest: () => this.fortuneKit.doRiskyInvest('player'),
+      fortunePaywall: (tx, ty) => this.fortuneKit.doPaywall('player', tx, ty),
+      fortunePayToWin: (tx, ty) => this.fortuneKit.doPayToWin('player', tx, ty),
+      amberSling: (tx, ty) => this.amberKit.doSling('player', tx, ty),
+      amberMosquitoes: () => this.amberKit.doMosquitoes('player'),
+      amberBeginHunt: (tx, ty) => this.amberKit.doBeginHunt('player', tx, ty),
+      amberStampede: () => this.amberKit.doStampede('player'),
+      amberEndHunt: (tx, ty) => this.amberKit.doEndHunt('player', tx, ty),
+      // Psychic
+      psychicHeadache: (tx, ty) => this.psychicKit.doHeadache('player', tx, ty),
+      psychicMindControl: () => this.psychicKit.doMindControl('player'),
+      psychicDodgeDestiny: () => this.psychicKit.doDodgeDestiny('player'),
+      psychicMigraine: () => this.psychicKit.doMigraine('player'),
+      psychicComa: () => this.psychicKit.doComa('player'),
+      radiationRailgun: (tx, ty) => this.radiationKit.doRailgun('player', tx, ty),
+      radiationBaton: (tx, ty) => this.radiationKit.doBaton('player', tx, ty),
+      radiationXray: () => this.radiationKit.doXray('player'),
+      radiationWaste: (tx, ty) => this.radiationKit.doWaste('player', tx, ty),
+      radiationExtermination: () => this.radiationKit.doExtermination('player'),
+      bindSummon: (tx, ty) => this.bindKit.doSummon('player', tx, ty),
+      bindShards: (tx, ty) => this.bindKit.doShards('player', tx, ty),
+      bindIdol: (tx, ty) => this.bindKit.doIdol('player', tx, ty),
+      bindProtection: () => this.bindKit.doProtection('player'),
+      bindTreachery: () => this.bindKit.doTreachery('player'),
+      // Slime
+      gumGrab: (tx, ty) => this.gumKit.doGrab('player', tx, ty),
+      gumSurge: (tx, ty) => this.gumKit.doSurge('player', tx, ty),
+      gumGumball: (tx, ty) => this.gumKit.doGumball('player', tx, ty),
+      gumOozorbtion: () => this.gumKit.doOozorbtion('player'),
+      gumSolidify: () => this.gumKit.doSolidify('player'),
+      paperStorybook: (tx, ty) => this.paperKit.doStorybook('player', tx, ty),
+      paperPlane: (tx, ty) => this.paperKit.doPlane('player', tx, ty),
+      paperShuriken: (tx, ty) => this.paperKit.doShuriken('player', tx, ty),
+      paperMache: () => this.paperKit.doMache('player'),
+      paperClimax: (tx, ty) => this.paperKit.doClimax('player', tx, ty),
+      depthsPiranha: (tx, ty) => this.depthsKit.doPiranha('player', tx, ty),
+      depthsLungfish: (tx, ty) => this.depthsKit.doLungfish('player', tx, ty),
+      depthsEutrophication: () => this.depthsKit.doEutrophication('player'),
+      depthsAngler: (tx, ty) => this.depthsKit.doAngler('player', tx, ty),
+      depthsMegalodon: (tx, ty) => this.depthsKit.doMegalodon('player', tx, ty),
+      passionLoveshot: (tx, ty) => this.passionKit.doLoveshot('player', tx, ty),
+      passionFlirt: (tx, ty) => this.passionKit.doFlirt('player', tx, ty),
+      passionSmooch: (tx, ty) => this.passionKit.doSmooch('player', tx, ty),
+      passionManipulate: (tx, ty) => this.passionKit.doManipulate('player', tx, ty),
+      passionExhibition: () => this.passionKit.doExhibition('player'),
+      conquestBanner: () => this.conquestKit.doBanner('player', targetX, targetY),
+      conquestBuild: (kind) => this.conquestKit.doBuild('player', kind),
+      conquestExpansion: () => this.conquestKit.doExpansion('player'),
       hasPerk: (perkId) => this.hasPerk('player', perkId),
     };
   }
 
   private buildNpcContext(targetX: number, targetY: number): CastContext {
+    const aim = this.scatterAim(this.npc, targetX, targetY);
+    targetX = aim.x;
+    targetY = aim.y;
     return {
       scene: this,
       casterX: this.npc.x,
@@ -3904,6 +4889,8 @@ export class ArenaScene extends Phaser.Scene {
           this.player.takeDamage(damage);
         }
       },
+      fireMoltenEruption: () => this.fireKit.doMoltenEruption('npc'),
+      fireScorchCaster: () => this.fireKit.scorchCaster('npc'),
       dashCaster: (vx, vy) => {
         if (this.time.now < this.npc.highGravityUntil) return;
         (this.npc.body as Phaser.Physics.Arcade.Body).setVelocity(vx, vy);
@@ -4119,6 +5106,103 @@ export class ArenaScene extends Phaser.Scene {
       subterfugeRecruit: () => this.subterfugeKit.doNpcRecruit(),
       subterfugeBribe: (tx, ty) => this.subterfugeKit.doNpcBribe(tx, ty),
       subterfugeTreachery: () => this.subterfugeKit.doNpcTreachery(),
+      // Justice
+      justiceStab: (tx, ty) => this.justiceKit.doStab(tx, ty, 'npc'),
+      justiceColiseum: () => this.justiceKit.doColiseum('npc'),
+      justiceSheerWill: () => this.justiceKit.doSheerWill('npc'),
+      justiceFlight: () => this.justiceKit.doFlight('npc'),
+      justiceJudgementDay: () => this.justiceKit.doJudgementDay('npc'),
+      justiceSpearThrow: (tx, ty) => this.justiceKit.doSpearThrow(tx, ty, 'npc'),
+      justiceBind: (tx, ty) => this.justiceKit.doBind(tx, ty, 'npc'),
+      justicePillar: (tx, ty) => this.justiceKit.doPillar(tx, ty, 'npc'),
+      justiceDescend: () => this.justiceKit.doDescend('npc'),
+      justiceSeraphim: () => this.justiceKit.doSeraphim('npc'),
+      // Dream
+      dreamTrance: () => this.dreamKit.doTrance('npc'),
+      dreamPillowFight: (tx, ty) => this.dreamKit.doPillowFight(tx, ty, 'npc'),
+      dreamDreamcatcher: () => this.dreamKit.doDreamcatcher('npc'),
+      dreamNightmare: () => this.dreamKit.doNightmare('npc'),
+      dreamOasis: () => this.dreamKit.doOasis('npc'),
+      chalkWard: () => this.chalkKit.doWard('npc'),
+      chalkExplosive: () => this.chalkKit.doExplosive('npc'),
+      chalkPerma: () => this.chalkKit.doPerma('npc'),
+      chalkShield: () => this.chalkKit.doShield('npc'),
+      chalkMasterpiece: () => this.chalkKit.doMasterpiece('npc'),
+      magmaPlume: (tx, ty) => this.magmaKit.doPlume('npc', tx, ty),
+      magmaVolcano: (tx, ty) => this.magmaKit.doVolcano('npc', tx, ty),
+      magmaBloat: () => this.magmaKit.doBloat('npc'),
+      magmaFist: (tx, ty) => this.magmaKit.doFist('npc', tx, ty),
+      magmaDragonKin: (tx, ty) => this.magmaKit.doDragonKin('npc', tx, ty),
+      illusionCrackShot: (tx, ty) => this.illusionKit.doCrackShot('npc', tx, ty),
+      illusionVeil: (tx, ty) => this.illusionKit.doVeil('npc', tx, ty),
+      illusionRelocate: () => this.illusionKit.doRelocate('npc'),
+      illusionTesseract: (tx, ty) => this.illusionKit.doTesseract('npc', tx, ty),
+      illusionDance: () => this.illusionKit.doDance('npc'),
+      ruinShred: (tx, ty) => this.ruinKit.doShred('npc', tx, ty),
+      ruinLockdown: (tx, ty) => this.ruinKit.doLockdown('npc', tx, ty),
+      ruinSkewer: (tx, ty) => this.ruinKit.doSkewer('npc', tx, ty),
+      ruinSpikes: () => this.ruinKit.doSpikes('npc'),
+      ruinDecay: () => this.ruinKit.doDecay('npc'),
+      glassOrbit: () => this.glassKit.doOrbit('npc'),
+      glassSplinter: (tx, ty) => this.glassKit.doSplinter('npc', tx, ty),
+      glassTwirl: (tx, ty) => this.glassKit.doTwirl('npc', tx, ty),
+      glassTemper: () => this.glassKit.doTemper('npc'),
+      glassBlow: () => this.glassKit.doBlow('npc'),
+      deathStyxShot: (tx, ty) => this.deathKit.doStyxShot('npc', tx, ty),
+      deathDisarm: (tx, ty) => this.deathKit.doDisarm('npc', tx, ty),
+      deathRiposte: (tx, ty) => this.deathKit.doRiposte('npc', tx, ty),
+      deathHospice: (tx, ty) => this.deathKit.doHospice('npc', tx, ty),
+      deathDeal: (tx, ty) => this.deathKit.doDeal('npc', tx, ty),
+      fortuneFire: (tx, ty) => this.fortuneKit.doFire('npc', tx, ty),
+      fortuneSafeInvest: () => this.fortuneKit.doSafeInvest('npc'),
+      fortuneRiskyInvest: () => this.fortuneKit.doRiskyInvest('npc'),
+      fortunePaywall: (tx, ty) => this.fortuneKit.doPaywall('npc', tx, ty),
+      fortunePayToWin: (tx, ty) => this.fortuneKit.doPayToWin('npc', tx, ty),
+      amberSling: (tx, ty) => this.amberKit.doSling('npc', tx, ty),
+      amberMosquitoes: () => this.amberKit.doMosquitoes('npc'),
+      amberBeginHunt: (tx, ty) => this.amberKit.doBeginHunt('npc', tx, ty),
+      amberStampede: () => this.amberKit.doStampede('npc'),
+      amberEndHunt: (tx, ty) => this.amberKit.doEndHunt('npc', tx, ty),
+      // Psychic
+      psychicHeadache: (tx, ty) => this.psychicKit.doHeadache('npc', tx, ty),
+      psychicMindControl: () => this.psychicKit.doMindControl('npc'),
+      psychicDodgeDestiny: () => this.psychicKit.doDodgeDestiny('npc'),
+      psychicMigraine: () => this.psychicKit.doMigraine('npc'),
+      psychicComa: () => this.psychicKit.doComa('npc'),
+      radiationRailgun: (tx, ty) => this.radiationKit.doRailgun('npc', tx, ty),
+      radiationBaton: (tx, ty) => this.radiationKit.doBaton('npc', tx, ty),
+      radiationXray: () => this.radiationKit.doXray('npc'),
+      radiationWaste: (tx, ty) => this.radiationKit.doWaste('npc', tx, ty),
+      radiationExtermination: () => this.radiationKit.doExtermination('npc'),
+      bindSummon: (tx, ty) => this.bindKit.doSummon('npc', tx, ty),
+      bindShards: (tx, ty) => this.bindKit.doShards('npc', tx, ty),
+      bindIdol: (tx, ty) => this.bindKit.doIdol('npc', tx, ty),
+      bindProtection: () => this.bindKit.doProtection('npc'),
+      bindTreachery: () => this.bindKit.doTreachery('npc'),
+      // Slime
+      gumGrab: (tx, ty) => this.gumKit.doGrab('npc', tx, ty),
+      gumSurge: (tx, ty) => this.gumKit.doSurge('npc', tx, ty),
+      gumGumball: (tx, ty) => this.gumKit.doGumball('npc', tx, ty),
+      gumOozorbtion: () => this.gumKit.doOozorbtion('npc'),
+      gumSolidify: () => this.gumKit.doSolidify('npc'),
+      paperStorybook: (tx, ty) => this.paperKit.doStorybook('npc', tx, ty),
+      paperPlane: (tx, ty) => this.paperKit.doPlane('npc', tx, ty),
+      paperShuriken: (tx, ty) => this.paperKit.doShuriken('npc', tx, ty),
+      paperMache: () => this.paperKit.doMache('npc'),
+      paperClimax: (tx, ty) => this.paperKit.doClimax('npc', tx, ty),
+      depthsPiranha: (tx, ty) => this.depthsKit.doPiranha('npc', tx, ty),
+      depthsLungfish: (tx, ty) => this.depthsKit.doLungfish('npc', tx, ty),
+      depthsEutrophication: () => this.depthsKit.doEutrophication('npc'),
+      depthsAngler: (tx, ty) => this.depthsKit.doAngler('npc', tx, ty),
+      depthsMegalodon: (tx, ty) => this.depthsKit.doMegalodon('npc', tx, ty),
+      passionLoveshot: (tx, ty) => this.passionKit.doLoveshot('npc', tx, ty),
+      passionFlirt: (tx, ty) => this.passionKit.doFlirt('npc', tx, ty),
+      passionSmooch: (tx, ty) => this.passionKit.doSmooch('npc', tx, ty),
+      passionManipulate: (tx, ty) => this.passionKit.doManipulate('npc', tx, ty),
+      passionExhibition: () => this.passionKit.doExhibition('npc'),
+      conquestBanner: () => this.conquestKit.doBanner('npc', targetX, targetY),
+      conquestBuild: (kind) => this.conquestKit.doBuild('npc', kind),
+      conquestExpansion: () => this.conquestKit.doExpansion('npc'),
       hasPerk: (perkId) => this.hasPerk('npc', perkId),
     };
   }
@@ -4307,6 +5391,99 @@ export class ArenaScene extends Phaser.Scene {
       subterfugeRecruit: () => {},
       subterfugeBribe: () => {},
       subterfugeTreachery: () => {},
+      justiceStab: () => {},
+      justiceColiseum: () => {},
+      justiceSheerWill: () => {},
+      justiceFlight: () => {},
+      justiceJudgementDay: () => {},
+      justiceSpearThrow: () => {},
+      justiceBind: () => {},
+      justicePillar: () => {},
+      justiceDescend: () => {},
+      justiceSeraphim: () => {},
+      dreamTrance: () => {},
+      dreamPillowFight: () => {},
+      dreamDreamcatcher: () => {},
+      dreamNightmare: () => {},
+      dreamOasis: () => {},
+      chalkWard: () => {},
+      chalkExplosive: () => {},
+      chalkPerma: () => {},
+      chalkShield: () => {},
+      chalkMasterpiece: () => {},
+      magmaPlume: () => {},
+      magmaVolcano: () => {},
+      magmaBloat: () => {},
+      magmaFist: () => {},
+      magmaDragonKin: () => {},
+      illusionCrackShot: () => {},
+      illusionVeil: () => {},
+      illusionRelocate: () => {},
+      illusionTesseract: () => {},
+      illusionDance: () => {},
+      ruinShred: () => {},
+      ruinLockdown: () => {},
+      ruinSkewer: () => {},
+      ruinSpikes: () => {},
+      ruinDecay: () => {},
+      glassOrbit: () => {},
+      glassSplinter: () => {},
+      glassTwirl: () => {},
+      glassTemper: () => {},
+      glassBlow: () => {},
+      paperStorybook: () => {},
+      paperPlane: () => {},
+      paperShuriken: () => {},
+      paperMache: () => {},
+      paperClimax: () => {},
+      deathStyxShot: () => {},
+      deathDisarm: () => {},
+      deathRiposte: () => {},
+      deathHospice: () => {},
+      deathDeal: () => {},
+      fortuneFire: () => {},
+      fortuneSafeInvest: () => {},
+      fortuneRiskyInvest: () => {},
+      fortunePaywall: () => {},
+      fortunePayToWin: () => {},
+      amberSling: () => {},
+      amberMosquitoes: () => {},
+      amberBeginHunt: () => {},
+      amberStampede: () => {},
+      amberEndHunt: () => {},
+      psychicHeadache: () => {},
+      psychicMindControl: () => {},
+      psychicDodgeDestiny: () => {},
+      psychicMigraine: () => {},
+      psychicComa: () => {},
+      radiationRailgun: () => {},
+      radiationBaton: () => {},
+      radiationXray: () => {},
+      radiationWaste: () => {},
+      radiationExtermination: () => {},
+      bindSummon: () => {},
+      bindShards: () => {},
+      bindIdol: () => {},
+      bindProtection: () => {},
+      bindTreachery: () => {},
+      gumGrab: () => {},
+      gumSurge: () => {},
+      gumGumball: () => {},
+      gumOozorbtion: () => {},
+      gumSolidify: () => {},
+      depthsPiranha: () => {},
+      depthsLungfish: () => {},
+      depthsEutrophication: () => {},
+      depthsAngler: () => {},
+      depthsMegalodon: () => {},
+      passionLoveshot: () => {},
+      passionFlirt: () => {},
+      passionSmooch: () => {},
+      passionManipulate: () => {},
+      passionExhibition: () => {},
+      conquestBanner: () => {},
+      conquestBuild: () => {},
+      conquestExpansion: () => {},
       hasPerk: () => false,
     };
   }
@@ -4401,9 +5578,11 @@ export class ArenaScene extends Phaser.Scene {
     const def = getAchievementDef(id);
     if (!def) return;
     this.showFloatingText(this.player.x, this.player.y - 52, `🏆 Achievement: ${def.name}!`, '#ffcc44');
+    Sfx.play('achievement');
     const reward = def.skinReward ? getSkinDef(def.skinReward) : undefined;
     if (reward) {
       this.showFloatingText(this.player.x, this.player.y - 74, `🎁 Skin unlocked: ${reward.name}`, '#ffee88');
+      Sfx.play('unlock', { delay: 0.5 });
     }
   }
 
@@ -4420,6 +5599,9 @@ export class ArenaScene extends Phaser.Scene {
     const playerBody = this.player.body as Phaser.Physics.Arcade.Body;
     const mouseX = this.input.activePointer.worldX;
     const mouseY = this.input.activePointer.worldY;
+
+    // A teleport and a dash are different moves and should not share a sound.
+    Sfx.playAt(this.cardPsychoActive ? 'teleport' : 'dash', this.player.x);
 
     // Card — Psycho: teleport to cursor; Card — Technique: extended dash length
     if (this.cardPsychoActive) {
@@ -6309,6 +7491,8 @@ export class ArenaScene extends Phaser.Scene {
     if (this.gameEnded) return;
     this.gameEnded = true;
     this.invasionCoopKit?.onMatchEnded();
+    Music.stop(0.5);
+    Sfx.play('defeat');
     if (shardsEarned > 0) PlayerData.addCorruptShards(shardsEarned);
 
     this.cameras.main.flash(350, 0, 80, 255);
@@ -6328,6 +7512,25 @@ export class ArenaScene extends Phaser.Scene {
     if (this.gameEnded) return;
     this.gameEnded = true;
     if (this.isOnline) this.onlineKit?.onMatchEnded();
+
+    // The fight music drops out under the sting so the result lands cleanly.
+    Music.stop(0.5);
+    Sfx.play(playerWon ? 'victory' : 'defeat');
+
+    // Paper's Journal: write the fight up. Only as Paper, and only where there is one enemy
+    // element to learn about — Invasion is mixed-element husk waves, so there is nothing to file
+    // it under. Everything else counts, including online: a human Fire teaches you about Fire.
+    // `recordJournalResult` ignores anything it has no entries for (the King, a dummy husk), so
+    // the mode check is the only gate that has to live here.
+    if (this.elementId === 'paper' && !this.isInvasion) {
+      const learned = recordJournalResult(this.npcElement.id, playerWon);
+      learned.forEach((entry, i) => {
+        this.time.delayedCall(220 + i * 420, () => {
+          this.showFloatingText(this.player.x, this.player.y - 60 - i * 18,
+            `📖 ${entry.name.toUpperCase()}`, '#e8c65c');
+        });
+      });
+    }
 
     // Achievement — Swoon: put down an Expert Life bot while playing Metal. Bots only, so a
     // human opponent who happens to be Life can't hand it over.
@@ -6432,6 +7635,19 @@ export class ArenaScene extends Phaser.Scene {
     if (this.scene.isPaused()) return;
     this.pausedAt = Date.now();
     this.scene.launch('PauseMenuScene', { parentSceneKey: this.scene.key });
+    this.scene.pause();
+  }
+
+  /**
+   * Conquest's building upgrade menu. Freezes the match exactly the way the pause menu does —
+   * same `pausedAt` stamp, so the RESUME handler shifts every cooldown forward by however long
+   * the player spent reading a four-tier tree.
+   */
+  private openConquestMenu(): void {
+    if (this.gameEnded) return;
+    if (this.scene.isPaused()) return;
+    this.pausedAt = Date.now();
+    this.scene.launch('ConquestMenuScene', { parentSceneKey: this.scene.key, host: this.conquestKit });
     this.scene.pause();
   }
 
@@ -6565,6 +7781,18 @@ export class ArenaScene extends Phaser.Scene {
     show(this.huntHybridHudCards, form === 'hybrid');
     this.abilityBars = form === 'beast' ? this.huntBeastFills
       : form === 'hybrid' ? this.huntHybridFills : this.huntNormalFills;
+  }
+
+  // ── Justice helpers ──────────────────────────────────────────
+
+  /** Swap the ability tray between Justice's ground and flight stances. */
+  private justiceSetHudForm(form: JusticeForm): void {
+    const show = (objs: Phaser.GameObjects.GameObject[], on: boolean) => {
+      for (const o of objs) (o as unknown as { setVisible: (v: boolean) => void }).setVisible(on);
+    };
+    show(this.justiceGroundHudCards, form === 'ground');
+    show(this.justiceFlightHudCards, form === 'flight');
+    this.abilityBars = form === 'flight' ? this.justiceFlightFills : this.justiceGroundFills;
   }
 
   /** Bleed aura + drips on any enemy Fighter. The per-frame loop repositions and expires it. */
@@ -6878,6 +8106,10 @@ export class ArenaScene extends Phaser.Scene {
     if (this.npcElement.id === 'creation') {
       this.npcSpeedMult = this.creationKit.computeNpcSpeedMult(time, this.npcSpeedMult);
     }
+    // Water NPC: a Sulphur eruption they set off under themselves.
+    if (this.npcElement.id === 'water') {
+      this.npcSpeedMult *= this.waterKit.getNpcSpeedMult();
+    }
     // Time kit speed mults (puddles, bounty aura, speed aura)
     if (this.elementId === 'sand' || this.npcElement.id === 'sand') {
       if (this.elementId !== 'sand') this.playerSpeedMult *= this.timeKit.getPlayerSpeedMult();
@@ -6897,6 +8129,73 @@ export class ArenaScene extends Phaser.Scene {
       this.npcSpeedMult *= this.shadowKit.getNpcSpeedMult(time);
       this.playerSpeedMult *= this.shadowKit.getPlayerSpeedMult(time);
     }
+    // Paper: the Journal's footwork entries against this specific opponent. Player-side only —
+    // the journal lives in the save, so an npc Paper has nothing written up. Pulled for the same
+    // reason Justice is: PaperKit.update() runs long after movement has resolved.
+    if (this.elementId === 'paper') {
+      this.playerSpeedMult *= this.paperKit.getPlayerSpeedMult();
+    }
+    // Justice: Sheer Will and Flight on whoever is wearing it, plus the flame pillar's
+    // wade on whoever is standing in one. Pulled, not pushed — JusticeKit.update() runs
+    // long after this block has already resolved the frame's movement.
+    if (this.elementId === 'justice' || this.npcElement.id === 'justice') {
+      this.playerSpeedMult *= this.justiceKit.getPlayerSpeedMult();
+      this.npcSpeedMult *= this.justiceKit.getNpcSpeedMult();
+    }
+    // Chalk: teal Masterpiece chalk, on whoever is standing on their own. Pulled for the
+    // same reason Justice is — ChalkKit.update() runs after the frame's movement resolves.
+    if (this.elementId === 'chalk' || this.npcElement.id === 'chalk') {
+      this.playerSpeedMult *= this.chalkKit.getPlayerSpeedMult();
+      this.npcSpeedMult *= this.chalkKit.getNpcSpeedMult();
+    }
+    // Magma: Dragon Kin's haste, on whoever is currently hatched. Pulled for the same reason.
+    if (this.elementId === 'magma' || this.npcElement.id === 'magma') {
+      this.playerSpeedMult *= this.magmaKit.getPlayerSpeedMult();
+      this.npcSpeedMult *= this.magmaKit.getNpcSpeedMult();
+    }
+    // Depths: the lure's feeding frenzy and an icefish's chill, on whoever is wearing either.
+    // Pulled for the same reason Chalk and Magma are — DepthsKit.update() runs after the
+    // frame's movement has already resolved.
+    if (this.elementId === 'depths' || this.npcElement.id === 'depths') {
+      this.playerSpeedMult *= this.depthsKit.getPlayerSpeedMult();
+      this.npcSpeedMult *= this.depthsKit.getNpcSpeedMult();
+    }
+    // Ruin: Unstoppable Decay's 10%-per-stack slow, on whoever the rot is working against.
+    // Pulled for the same reason Depths and Magma are — RuinKit.update() runs after the
+    // frame's movement has already resolved.
+    if (this.elementId === 'ruin' || this.npcElement.id === 'ruin') {
+      this.playerSpeedMult *= this.ruinKit.getPlayerSpeedMult();
+      this.npcSpeedMult *= this.ruinKit.getNpcSpeedMult();
+    }
+    // Death: a Styx brand's 15%-per-stack slow on whoever is wearing it, plus Disarm's and the
+    // Deal's boosts on the reaper. Pulled for the same reason Ruin is — DeathKit.update() runs
+    // after the frame's movement has already resolved.
+    if (this.elementId === 'death' || this.npcElement.id === 'death') {
+      this.playerSpeedMult *= this.deathKit.getPlayerSpeedMult();
+      this.npcSpeedMult *= this.deathKit.getNpcSpeedMult();
+    }
+    // Amber holds a body completely still while its tyrannosaur is carrying it, and a fully
+    // wound sling is a 25% drag — both have to be pulled here, after movement has resolved.
+    if (this.elementId === 'amber' || this.npcElement.id === 'amber') {
+      this.playerSpeedMult *= this.amberKit.getPlayerSpeedMult();
+      this.npcSpeedMult *= this.amberKit.getNpcSpeedMult();
+    }
+    // Psychic holds a comatose body completely still. Pulled here rather than pushed onto the
+    // body for the same reason Death and Ruin are — the kit's update runs after movement.
+    this.playerSpeedMult *= this.psychicKit.getPlayerSpeedMult();
+    this.npcSpeedMult *= this.psychicKit.getNpcSpeedMult();
+    // Radiation's Critical Mission is a speed *boost* that halves on a clock, and its baton
+    // pins a stunned body outright. Bind's is the permanent tithe the patron charges for the
+    // barrage. Both are pulled here for the same reason Psychic is — the kits update after
+    // the frame's movement has already resolved.
+    this.playerSpeedMult *= this.radiationKit.getPlayerSpeedMult();
+    this.npcSpeedMult *= this.radiationKit.getNpcSpeedMult();
+    this.playerSpeedMult *= this.bindKit.getPlayerSpeedMult();
+    this.npcSpeedMult *= this.bindKit.getNpcSpeedMult();
+    // Slime's slimeballs, gum and wall glue, plus the lurching haul that stands in for a bot
+    // dragging itself along the floor. Pulled here for the same reason the two above are.
+    this.playerSpeedMult *= this.gumKit.getPlayerSpeedMult();
+    this.npcSpeedMult *= this.gumKit.getNpcSpeedMult();
     // Growth Mastery — Sickness/Carrier slows on whoever is carrying the plague
     if (this.elementId === 'growth' || this.npcElement.id === 'growth') {
       this.playerSpeedMult *= this.growthKit.getSickSpeedMult(this.player);
@@ -6952,6 +8251,16 @@ export class ArenaScene extends Phaser.Scene {
     // ── Disgraced King: cleaves and grasping hands leave you wading ───
     if (this.isBossFight && this.bossKit) this.playerSpeedMult *= this.bossKit.getPlayerSpeedMult();
 
+    // ── Ruin's spikes: a speed buff comes back as the same-sized slow ──
+    // The one-shot flip in RuinKit can only reach fields on `Fighter`; a boost owned by some
+    // other kit is only ever visible here, as a number greater than 1.
+    if (time < this.player.buffsInvertedUntil && this.playerSpeedMult > 1) {
+      this.playerSpeedMult = Math.max(0.25, 2 - this.playerSpeedMult);
+    }
+    if (time < this.npc.buffsInvertedUntil && this.npcSpeedMult > 1) {
+      this.npcSpeedMult = Math.max(0.25, 2 - this.npcSpeedMult);
+    }
+
     // ── Acid Purge: suppress positive speed multipliers while purged ──
     if (time < this.player.purgedUntil) this.playerSpeedMult = Math.min(this.playerSpeedMult, 1);
     if (time < this.npc.purgedUntil) this.npcSpeedMult = Math.min(this.npcSpeedMult, 1);
@@ -6996,12 +8305,23 @@ export class ArenaScene extends Phaser.Scene {
     if (this.elementId === 'gravity' && this.gravityKit.drivesPlayerBody()) {
       // Anti-Grav flight, the Moon Rider orbit and the dismount finale all place the
       // body themselves — WASD must not fight them for it.
+    } else if (this.elementId === 'gum' && !this.isDodging) {
+      // Slime has no legs. WASD does nothing at all; GumKit sets the velocity from the arm's
+      // grip in its own update, which runs later this frame and therefore wins.
+      playerBody.setVelocity(0, 0);
     } else if (this.elementId === 'rubber' && this.rubberKit.isSlingActive() && !this.isDodging) {
       this.rubberKit.applySlingMovement(mouseX, mouseY);
     } else if (this.nukeChanneling && !this.airBeamWalking &&
                !(this.elementId === 'water' && this.waterKit.isDaggerCharging()) &&
                !(this.elementId === 'air' && this.hasUpgrade('click'))) {
       // Standard nuke: fully locked
+      playerBody.setVelocity(0, 0);
+    } else if (this.justiceKit.isLocked('player') || this.justiceKit.isOnTrial(this.player)) {
+      // Judgement Day and the Seraph are scenes. Whether you are holding the scales or
+      // hanging in them, WASD is not part of it.
+      playerBody.setVelocity(0, 0);
+    } else if (this.dreamKit.isPlayerLocked()) {
+      // Asleep on the floor or resting in the oasis — neither is a state you walk out of.
       playerBody.setVelocity(0, 0);
     } else if (time < this.silencePlayerYankUntil) {
       // NPC silence yank in progress — keep yank velocity, block WASD override
@@ -7300,6 +8620,40 @@ export class ArenaScene extends Phaser.Scene {
       this.soulKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'hunt') {
       this.huntKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'justice') {
+      this.justiceKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'dream') {
+      this.dreamKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'chalk') {
+      this.chalkKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'magma') {
+      this.magmaKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'illusion') {
+      this.illusionKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'depths') {
+      this.depthsKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'ruin') {
+      this.ruinKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'glass') {
+      this.glassKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'paper') {
+      this.paperKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'death') {
+      this.deathKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'amber') {
+      this.amberKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'psychic') {
+      this.psychicKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'radiation') {
+      this.radiationKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'bind') {
+      this.bindKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'gum') {
+      this.gumKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'conquest') {
+      this.conquestKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'passion') {
+      this.passionKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'silence') {
       this.silenceKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'sand') {
@@ -7309,6 +8663,10 @@ export class ArenaScene extends Phaser.Scene {
     } else if (this.elementId === 'creation') {
       this.creationKit.handleInput(time, pointer, mouseX, mouseY, playerCtx);
     }
+    // Fortune is outside the chain on purpose: an enemy of a Fortune npc is still a customer,
+    // so the number keys that buy from the stall have to be live for whoever the player is.
+    // The kit early-returns when no shop exists at all.
+    this.fortuneKit.handleInput(time, pointer, mouseX, mouseY);
     this.pointerWasDown = pointer.isDown;
     this.rightPointerWasDown = pointer.rightButtonDown();
 
@@ -7520,7 +8878,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── NPC AI ───────────────────────────────────────────────────
     const aiState: NpcAiState = {
-      isLocked: this.npcNukeChanneling || this.npc.frozenUntil > time || this.magnetKit.getNailPullUntil() > time || (this.npc.magicChainBound && time < this.npc.magicChainBoundEnd) || time < this.silenceKit.getNpcYankUntil() || this.airKit.isNpcHawkDragged() || (this.npcElement.id === 'rubber' && this.rubberKit.isBounceFormActive('npc')) || this.waterKit.isNpcSplit() || this.npc.chickenUntil > Date.now() || this.techKit.isNpcDragged(),
+      isLocked: this.npcNukeChanneling || this.npc.frozenUntil > time || this.magnetKit.getNailPullUntil() > time || (this.npc.magicChainBound && time < this.npc.magicChainBoundEnd) || time < this.silenceKit.getNpcYankUntil() || this.airKit.isNpcHawkDragged() || (this.npcElement.id === 'rubber' && this.rubberKit.isBounceFormActive('npc')) || this.waterKit.isNpcSplit() || this.npc.chickenUntil > Date.now() || this.techKit.isNpcDragged() || this.justiceKit.isLocked('npc') || this.justiceKit.isOnTrial(this.npc) || this.dreamKit.isAsleep(this.npc) || this.dreamKit.isInOasis('npc'),
       hasActiveGeyser: this.geysers.some((g) => g.owner === 'npc'),
       flameBodyActive: this.fireKit.isNpcFlameBodyActive(),
       projectiles: this.projectiles,
@@ -7567,6 +8925,115 @@ export class ArenaScene extends Phaser.Scene {
       subMoney: this.npcElement.id === 'quantum' ? this.subterfugeKit.getNpcMoney() : 0,
       subBullets: this.npcElement.id === 'quantum' ? this.subterfugeKit.getNpcBullets() : 0,
       subLackeys: this.npcElement.id === 'quantum' ? this.subterfugeKit.getNpcLackeyCount() : 0,
+      npcJusticeWill: this.justiceKit.getWill('npc'),
+      npcJusticeFlying: this.justiceKit.getForm('npc') === 'flight',
+      npcJusticeSheer: this.justiceKit.isSheerWillActive('npc'),
+      npcJusticeAnchored: this.justiceKit.hasAnchor('npc'),
+      justicePillarX: this.justiceKit.getHostilePillarX(this.npc) ?? undefined,
+      justicePillarHalfWidth: this.justiceKit.pillarAvoidHalfWidth,
+      npcDreamTrance: this.dreamKit.isTranceOn('npc'),
+      npcDreamTargetDrowsy: this.dreamKit.getDrowsy(this.player),
+      npcDreamTargetAsleep: this.dreamKit.isAsleep(this.player),
+      npcDreamCatchers: this.dreamKit.getCatcherCount('npc'),
+      // Consumes the pacing gate, so this is only ever read once a frame.
+      npcDreamMayCatch: this.npcElement.id === 'dream' && this.dreamKit.canPlaceCatcher('npc', time),
+      npcChalkDrawing: this.chalkKit.isDrawing('npc'),
+      npcChalkShieldHp: this.chalkKit.getShieldHp('npc'),
+      npcChalkMasterpiece: this.chalkKit.isMasterpieceActive('npc'),
+      npcChalkMayPerma: this.npcElement.id === 'chalk' && !this.chalkKit.hasPerma('npc'),
+      npcIllusionDancing: this.illusionKit.isDancing('npc'),
+      npcIllusionHasVeil: this.illusionKit.hasVeil('npc'),
+      npcIllusionTargetFolded: this.illusionKit.isFolded(this.player),
+      npcMagmaDragon: this.magmaKit.isDragonActive('npc'),
+      npcMagmaFist: this.magmaKit.isFistActive('npc'),
+      npcMagmaBloat: this.magmaKit.isBloatActive('npc'),
+      npcMagmaVolcanoes: this.magmaKit.volcanoCount('npc'),
+      npcMagmaHasEgg: this.magmaKit.hasEgg('npc'),
+      npcMagmaChargeTarget: this.magmaKit.chargeTarget('npc') ?? undefined,
+      // Depths: the seek point is the only one of these that moves the body, and it is
+      // deliberately live for a Depths *player* too — the lure exists to be walked into.
+      depthsSeekPoint: this.depthsKit.npcSeekPoint() ?? undefined,
+      npcDepthsFishing: this.depthsKit.isFishing('npc'),
+      npcDepthsHasFish: this.depthsKit.hasFish('npc'),
+      npcDepthsSharkOut: this.depthsKit.isSharkOut('npc'),
+      npcDepthsTargetLatches: this.depthsKit.latchCount(this.player),
+      npcDepthsDrowning: this.depthsKit.isDrowning(this.npc),
+      // Conquest: the bot has to physically stand on the square it means to build on, so its
+      // build queue is a destination before it is ever a cast.
+      conquestSeekPoint: this.conquestKit.npcSeekPoint() ?? undefined,
+      npcConquestReady: this.conquestKit.npcReadyToBuild() ?? undefined,
+      npcConquestAuthority: this.conquestKit.npcAuthority(),
+      // Passion: the bot's every decision is "how full is their bar", so that is what it gets.
+      npcPassionHasRose: this.passionKit.hasRose('npc'),
+      npcPassionPosing: this.passionKit.isPosing('npc'),
+      npcPassionTargetLove: this.passionKit.loveRatio(this.player),
+      // Ruin: three of its five refuse to be cast twice, so the bot is told what is already out.
+      npcRuinRingUp: this.ruinKit.hasRing('npc'),
+      npcRuinSkewerOut: this.ruinKit.hasSkewer('npc'),
+      npcRuinDecayStacks: this.ruinKit.decayStacks('npc'),
+      npcRuinCanLock: this.ruinKit.canLock(this.player),
+      // Glass: four of its five are refused by the kit under conditions the bot can't see —
+      // no body, no shards, a buff already up, a twirl already running.
+      // Paper: which book is open decides what the click and the Q even are, so the bot has to
+      // be told rather than guessing — and the Alien book refuses the click on its own clocks.
+      npcPaperBook: this.paperKit.getBook('npc'),
+      npcPaperLaserBusy: this.paperKit.isLaserBusy('npc'),
+      npcPaperRiding: this.paperKit.isRiding('npc'),
+      npcPaperMaches: this.paperKit.macheCount('npc'),
+      npcGlassBodyGone: this.glassKit.isBodyGone('npc'),
+      npcGlassHasShards: this.glassKit.hasShards('npc'),
+      npcGlassTempered: this.glassKit.isTempered('npc'),
+      npcGlassTwirling: this.glassKit.isTwirling('npc'),
+      // Death: three of its five refuse to be cast twice, and the handshake takes the body away
+      // entirely — none of which the bot can see from where it stands.
+      npcDeathBusy: this.deathKit.isBusy('npc'),
+      npcDeathGuarding: this.deathKit.isGuarding('npc'),
+      npcDeathDealing: this.deathKit.isDealing('npc'),
+      npcDeathHospiceOut: this.deathKit.hasHospiceOut('npc'),
+      npcDeathTargetStyx: this.deathKit.markStacks('npc', this.player),
+      npcDeathClock: this.deathKit.clockSeconds('npc'),
+
+      // Fortune: the bot is spending a resource it cannot see from the arena, and its trigger
+      // is gated by a magazine rather than by the ability's own cooldown.
+      npcFortuneCoins: this.fortuneKit.coinsOf('npc'),
+      npcFortuneInvested: this.fortuneKit.bankOf('npc') + this.fortuneKit.stocksOf('npc'),
+      npcFortuneAmmo: this.fortuneKit.ammoOf('npc'),
+      npcFortuneBeaming: this.fortuneKit.isBeaming('npc'),
+      npcFortuneWall: this.fortuneKit.hasWall('npc'),
+
+      // Amber: the sling is a hold, so the bot only ever decides when to let go — and the
+      // tyrannosaur locks out three of the other four keys while it is on the field.
+      npcAmberSwinging: this.amberKit.isSwinging('npc'),
+      npcAmberCharge: this.amberKit.swingCharge('npc'),
+      npcAmberRex: this.amberKit.hasRex('npc'),
+      npcAmberSwarm: this.amberKit.mosquitoCount('npc'),
+      npcAmberHeld: this.amberKit.isHeld('npc'),
+
+      // Psychic: every decision the bot makes is about a queue and a pool it can see and the
+      // arena cannot, so both are handed over rather than guessed at.
+      npcPsychicQueue: this.psychicKit.queueCount('npc'),
+      npcPsychicBigCast: this.psychicKit.queueHasUltimate('npc'),
+      npcPsychicStress: this.psychicKit.stressOnTarget('npc'),
+
+      // Radiation: the whole element is two chains the arena cannot see — how many tracers are
+      // already planted, and whether the flare gun is out with rounds left in it.
+      npcRadiationTracers: this.radiationKit.tracersOn('npc'),
+      npcRadiationFlares: this.radiationKit.flaresOut('npc'),
+      npcRadiationBusy: this.radiationKit.isBusy('npc'),
+      npcRadiationTargetDosed: this.radiationKit.targetIrradiated('npc'),
+
+      // Bind: every decision the bot makes is about a bar it owns and a beam that can cook it.
+      npcBindAnger: this.bindKit.angerOf('npc'),
+      npcBindForsaken: this.bindKit.isForsaken('npc'),
+      npcBindHeat: this.bindKit.heatOf('npc'),
+      npcBindOverheated: this.bindKit.isOverheated('npc'),
+      npcBindIdolFaith: this.bindKit.idolFaith('npc'),
+      npcBindWard: this.bindKit.wardCharges('npc'),
+      // Slime: the bot's whole decision surface is what its one hand is currently able to do.
+      npcGumHandless: this.gumKit.isHandless('npc'),
+      npcGumBalls: this.gumKit.ballsReady('npc'),
+      npcGumAbsorbArmed: this.gumKit.isAbsorbArmed('npc'),
+      npcGumTargetEncased: this.gumKit.isTargetEncased('npc'),
     };
 
     const npcPreDashX = this.npc.x;
@@ -7582,6 +9049,12 @@ export class ArenaScene extends Phaser.Scene {
         aiState,
       );
     this.npcCastId = npcCastId;
+    // A Conquest build only lands once the bot is standing on the square, so the destination
+    // it was walking to is retired here rather than inside the kit — this is the only place
+    // that knows the cast actually went through.
+    if (npcCastId && npcCastId.startsWith('conquest-') && npcCastId !== 'conquest-banner') {
+      this.conquestKit.npcClearSeek();
+    }
 
     // ── Invasion mode update ──────────────────────────────────────
     if (this.isInvasion) {
@@ -7827,6 +9300,60 @@ export class ArenaScene extends Phaser.Scene {
       this.gunpowderKit.update(time, delta);
     }
 
+    // ── Justice per-frame ────────────────────────────────────────
+    if (this.elementId === 'justice' || this.npcElement.id === 'justice') {
+      this.justiceKit.update(time, delta);
+    }
+
+    // ── Dream per-frame ──────────────────────────────────────────
+    if (this.elementId === 'dream' || this.npcElement.id === 'dream') {
+      this.dreamKit.update(time, delta);
+    }
+    if (this.elementId === 'chalk' || this.npcElement.id === 'chalk') {
+      this.chalkKit.update(time, delta);
+    }
+    if (this.elementId === 'magma' || this.npcElement.id === 'magma') {
+      this.magmaKit.update(time, delta);
+    }
+    // Unconditional: a fold outlives the Illusion fighter that applied it, so the kit has to
+    // keep ticking long enough to hand a victim's own body back. It early-outs on its own.
+    this.illusionKit.update(time, delta);
+    if (this.elementId === 'depths' || this.npcElement.id === 'depths') {
+      this.depthsKit.update(time, delta);
+    }
+    if (this.elementId === 'ruin' || this.npcElement.id === 'ruin') {
+      this.ruinKit.update(time, delta);
+    }
+    if (this.elementId === 'glass' || this.npcElement.id === 'glass') {
+      this.glassKit.update(time, delta);
+    }
+    // Unconditional: a rider glued to a paper plane and the Journal's multipliers both outlive
+    // being Paper, and this loop is the only thing that hands either back. It early-outs itself.
+    this.paperKit.update(time, delta);
+    // Unconditional for the same reason Paper is: a stun the kit is holding, a brand's
+    // damage mirror and a running Deal all outlive being Death. It early-outs itself.
+    this.deathKit.update(time, delta);
+    this.fortuneKit.update(time, delta);
+    this.amberKit.update(time, delta);
+    // Unconditional for the same reason Paper and Death are: a queue of borrowed casts, a
+    // coma and a stress pool all outlive the psychic that started them, and this loop is the
+    // only thing that hands any of them back. It early-outs itself.
+    this.psychicKit.update(time, delta);
+    // Unconditional for the same reason Psychic is: a dose, a swollen hitbox, a permanent tithe
+    // and a queue of puddles all outlive the fighter that started them, and this loop is the
+    // only thing that hands any of them back. Both early-out themselves.
+    this.radiationKit.update(time, delta);
+    this.bindKit.update(time, delta);
+    // Unconditional for the same reason Bind is: gum shells, wall glue, a swallowed shot and a
+    // pile of slimeballs all outlive the slime that made them. It early-outs itself.
+    this.gumKit.update(time, delta);
+    if (this.elementId === 'conquest' || this.npcElement.id === 'conquest') {
+      this.conquestKit.update(time, delta);
+    }
+    if (this.elementId === 'passion' || this.npcElement.id === 'passion') {
+      this.passionKit.update(time, delta);
+    }
+
     // ── Growth per-frame ──────────────────────────────────────────
     if (this.elementId === 'growth' || this.npcElement.id === 'growth') {
       this.growthKit.update(time, delta);
@@ -8002,6 +9529,53 @@ export class ArenaScene extends Phaser.Scene {
         entry.fill.setSize(entry.maxWidth * this.subterfugeKit.getSmokeBreakCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'beastling') {
         entry.fill.setSize(entry.maxWidth * this.huntKit.getBeastlingCooldownRatio(time), entry.fill.height);
+      } else if (entry.abilityId.startsWith('dream-')) {
+        // Trance is a toggle, not a cooldown — the kit owns the bar.
+        entry.fill.setSize(entry.maxWidth * this.dreamKit.getBarRatio(entry.abilityId, time), entry.fill.height);
+      } else if (entry.abilityId.startsWith('chalk-')) {
+        // Four of the five spend most of their life showing a drawing window, a shield's
+        // remaining board or the Masterpiece clock rather than a cooldown — the kit owns it.
+        entry.fill.setSize(entry.maxWidth * this.chalkKit.getBarRatio(entry.abilityId, time), entry.fill.height);
+      } else if (entry.abilityId.startsWith('illusion-')) {
+        // The pane's remaining seconds and the dance's own clock outlast their cooldowns.
+        entry.fill.setSize(entry.maxWidth * this.illusionKit.getBarRatio(entry.abilityId, time), entry.fill.height);
+      } else if (entry.abilityId.startsWith('ruin-')) {
+        // The spike ring's two-second fuse is the only thing worth counting on these cards.
+        entry.fill.setSize(entry.maxWidth * this.ruinKit.getBarRatio(entry.abilityId, time), entry.fill.height);
+      } else if (entry.abilityId.startsWith('paper-')) {
+        // The click is gated by the Alien book's burst and reload rather than by its own
+        // cooldown whenever that book is open, so the kit decides what the card is counting.
+        entry.fill.setSize(entry.maxWidth * this.paperKit.getBarRatio(entry.abilityId, time), entry.fill.height);
+      } else if (entry.abilityId.startsWith('glass-')) {
+        // The click counts how far the ring is pushed out, and neither Temper's five seconds
+        // nor a body in pieces is a cooldown — the kit owns all three.
+        entry.fill.setSize(entry.maxWidth * this.glassKit.getBarRatio(entry.abilityId, time), entry.fill.height);
+      } else if (entry.abilityId.startsWith('fortune-')) {
+        // The click counts a reload rather than its own cooldown, and the wall and the beam
+        // are both durations — the kit decides what all three cards are showing.
+        entry.fill.setSize(entry.maxWidth * this.fortuneKit.getBarRatio(entry.abilityId, time), entry.fill.height);
+      } else if (entry.abilityId.startsWith('amber-')) {
+        // The sling's card is a wind-up meter, not a cooldown, and the shank, the stampede and
+        // the tyrannosaur all outlast theirs.
+        entry.fill.setSize(entry.maxWidth * this.amberKit.getBarRatio(entry.abilityId, time), entry.fill.height);
+      } else if (entry.abilityId.startsWith('death-')) {
+        // A blade being held out, a noose hanging and the ten seconds of a deal all outlast
+        // their own cooldowns, so the kit decides what those three cards are counting.
+        entry.fill.setSize(entry.maxWidth * this.deathKit.getBarRatio(entry.abilityId, time), entry.fill.height);
+      } else if (entry.abilityId.startsWith('depths-')) {
+        // The line coming in, the drowning clock and the shark's eight seconds all outlast
+        // their own cooldowns, so the kit decides what these cards are counting.
+        entry.fill.setSize(entry.maxWidth * this.depthsKit.getBarRatio(entry.abilityId, time), entry.fill.height);
+      } else if (entry.abilityId.startsWith('passion-')) {
+        // The rose's fifteen seconds and the pose's five both outlast their own cooldowns.
+        entry.fill.setSize(entry.maxWidth * this.passionKit.getBarRatio(entry.abilityId, time), entry.fill.height);
+      } else if (entry.abilityId.startsWith('magma-')) {
+        // A live fist, a swollen bloat and Q's pressure-then-dragon arc all outlast their own
+        // cooldowns, so the kit decides what these five cards are counting down.
+        entry.fill.setSize(entry.maxWidth * this.magmaKit.getBarRatio(entry.abilityId, time), entry.fill.height);
+      } else if (entry.abilityId.startsWith('justice-')) {
+        // Sheer Will, Flight and a hooked chain are states, not cooldowns — the kit owns the bar.
+        entry.fill.setSize(entry.maxWidth * this.justiceKit.getBarRatio(entry.abilityId, time), entry.fill.height);
       } else if (entry.abilityId.startsWith('hunt-')) {
         // Blast counts charges and Q counts the beast's own clock, so the kit owns every hunt bar.
         entry.fill.setSize(entry.maxWidth * this.huntKit.getBarRatio(entry.abilityId, time), entry.fill.height);
@@ -8278,6 +9852,30 @@ export class ArenaScene extends Phaser.Scene {
       if (d < bestDist) { bestDist = d; best = e; }
     }
     return best;
+  }
+
+  /**
+   * Ruin's Spikes of Ruin: kill every structure, building and summon inside the circle that
+   * doesn't belong to `exceptOwner`, and report how many died.
+   *
+   * The dispatch lives here because ArenaScene is the only object holding every kit, but none
+   * of the *deciding* does — each kit answers `purgeSummons` for its own board, since only it
+   * knows which of its objects is a thing somebody built and which is a puddle or a shot in
+   * flight. Fighters are never touched by this: husks, bots and players are enemies, not
+   * structures, and they take the ring's damage like anyone else.
+   */
+  private purgeSummonsInCircle(
+    cx: number, cy: number, radius: number, exceptOwner: 'player' | 'npc',
+  ): number {
+    const kits: SummonPurgeTarget[] = [
+      this.conquestKit, this.soulKit, this.subterfugeKit, this.creationKit, this.huntKit,
+      this.growthKit, this.oilKit, this.crystalKit, this.silenceKit, this.shadowKit,
+      this.magicKit, this.soundKit, this.magmaKit, this.lifeKit, this.techKit, this.illusionKit,
+      this.paperKit,
+    ];
+    let razed = 0;
+    for (const kit of kits) razed += kit?.purgeSummons(cx, cy, radius, exceptOwner) ?? 0;
+    return razed;
   }
 
   private damagePlayerTargets(cx: number, cy: number, radius: number, damage: number, color: number): void {

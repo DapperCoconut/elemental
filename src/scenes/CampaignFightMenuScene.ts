@@ -12,6 +12,7 @@ import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBadge, addButton, addModal, addToggle, addWell, fillDiamond,
 } from '../ui';
+import { Music } from '../audio';
 
 const PANEL_W = 620;
 const PANEL_H = 572;
@@ -69,6 +70,7 @@ export class CampaignFightMenuScene extends Phaser.Scene {
   }
 
   create(): void {
+    Music.play('campaign');
     const { width, height } = this.scale;
     const cx = width / 2;
     const world = getAnyWorld(this.worldId);

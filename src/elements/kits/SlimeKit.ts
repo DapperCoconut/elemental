@@ -28,6 +28,28 @@ interface AcidPool {
   seed: number;
 }
 
+/**
+ * Murk (divine perk): the acid toad that squats on the surface while its summoner is under it.
+ * Pure data — the hop is drawn from the clock across `hopStart → hopEnd` rather than tweened,
+ * so the arc, the squash on landing and the puddle it drops all stay in step.
+ */
+interface MurkToad {
+  x: number; y: number;
+  fromX: number; fromY: number;
+  toX: number; toY: number;
+  hopStart: number;
+  hopEnd: number;
+  /** Set when the hop lands; the toad sits still until this, then picks a new spot. */
+  restUntil: number;
+  facing: number;
+}
+
+const TOAD_HOP_MS = 480;
+const TOAD_REST_MS = 340;
+const TOAD_HOP_DIST = 130;
+const TOAD_PUDDLE_RADIUS = 26;
+const TOAD_HOP_HEIGHT = 34;
+
 interface HuskLikeVariant {
   hpMult?: number;
   speedMult?: number;
@@ -113,6 +135,7 @@ export interface SlimeArenaApi {
   readonly qKey: Phaser.Input.Keyboard.Key;
   readonly pointerWasDown: boolean;
   hasUpgrade(slot: string): boolean;
+  hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
@@ -245,6 +268,8 @@ export class SlimeKit {
 
   private acidPools: AcidPool[] = [];
   private burrowed = false;
+  /** Murk (divine perk): the toad left on the surface while burrowed. Null whenever you aren't. */
+  private murkToad: MurkToad | null = null;
   private purgeHpStripped: WeakSet<Fighter> = new WeakSet();
 
   private acidRainActiveUntil = 0;
@@ -328,6 +353,7 @@ export class SlimeKit {
     this.acidPools = [];
     if (this.burrowed) {
       this.burrowed = false;
+      this.murkToad = null;
       this.arena.player.isInvincible = false;
       this.arena.player.setAlpha(1);
     }
@@ -435,8 +461,135 @@ export class SlimeKit {
     }
   }
 
+  // ── Murk (divine perk) ────────────────────────────────────────────────
+
+  /** The toad only exists while its summoner is under the surface. */
+  private spawnMurkToad(time: number): void {
+    const player = this.arena.player;
+    this.murkToad = {
+      x: player.x, y: player.y,
+      fromX: player.x, fromY: player.y, toX: player.x, toY: player.y,
+      hopStart: time, hopEnd: time, restUntil: time + TOAD_REST_MS, facing: 0,
+    };
+    this.pfx.fizz(player.x, player.y, 5, 24, 5, VILE_TONES);
+  }
+
+  private despawnMurkToad(): void {
+    const toad = this.murkToad;
+    if (!toad) return;
+    this.murkToad = null;
+    // It doesn't hop away, it melts — back down the hole with whoever called it up.
+    this.pfx.splash(toad.x, toad.y, 30, { droplets: 7, fizz: 3, etch: false, depth: 6, tones: VILE_TONES });
+  }
+
+  /**
+   * The toad's whole behaviour: rest, pick a spot at random, hop, and dribble a small pool
+   * wherever it lands. It never chases and never attacks — the pools are the threat, and they
+   * are also the acid the burrowed player needs to keep moving through.
+   */
+  private updateMurkToad(time: number): void {
+    const toad = this.murkToad;
+    if (!toad) return;
+    const { width: W, height: H } = this.arena.scene.scale;
+    const pad = 40;
+
+    if (time < toad.hopEnd) {
+      // Mid-hop: straight line across the ground, with the arc added at draw time.
+      const p = (time - toad.hopStart) / Math.max(1, toad.hopEnd - toad.hopStart);
+      toad.x = Phaser.Math.Linear(toad.fromX, toad.toX, p);
+      toad.y = Phaser.Math.Linear(toad.fromY, toad.toY, p);
+      return;
+    }
+    // Just landed this frame? The rest timer is set on landing, so an unset one means "land now".
+    if (toad.restUntil < toad.hopEnd) {
+      toad.x = toad.toX;
+      toad.y = toad.toY;
+      toad.restUntil = time + TOAD_REST_MS;
+      if (this.acidPools.length < MAX_ACID_POOLS) {
+        this.createAcidPool(toad.x, toad.y, TOAD_PUDDLE_RADIUS, time);
+      }
+      return;
+    }
+    if (time < toad.restUntil) return;
+
+    // Pick somewhere new, biased nowhere in particular — a toad has no plan.
+    const ang = Math.random() * Math.PI * 2;
+    const dist = TOAD_HOP_DIST * (0.5 + Math.random() * 0.5);
+    toad.fromX = toad.x;
+    toad.fromY = toad.y;
+    toad.toX = Phaser.Math.Clamp(toad.x + Math.cos(ang) * dist, pad, W - pad);
+    toad.toY = Phaser.Math.Clamp(toad.y + Math.sin(ang) * dist, pad, H - pad);
+    toad.facing = Math.atan2(toad.toY - toad.fromY, toad.toX - toad.fromX);
+    toad.hopStart = time;
+    toad.hopEnd = time + TOAD_HOP_MS;
+  }
+
+  /**
+   * The toad itself: a squat body that stretches into the hop and squashes on landing, four legs
+   * folded under it, two bulging eyes and a throat that pumps while it sits. Drawn on the world
+   * layer above its own pools.
+   */
+  private drawMurkToad(g: Phaser.GameObjects.Graphics, time: number): void {
+    const toad = this.murkToad;
+    if (!toad) return;
+    const hopping = time < toad.hopEnd;
+    const p = hopping ? (time - toad.hopStart) / Math.max(1, toad.hopEnd - toad.hopStart) : 1;
+    // Arc: up and back down over the hop, so the shadow and the body separate mid-flight.
+    const lift = hopping ? Math.sin(p * Math.PI) * TOAD_HOP_HEIGHT : 0;
+    const bx = toad.x, by = toad.y - lift;
+    // Stretched along the hop, squat when sitting.
+    const stretch = hopping ? 1 + Math.sin(p * Math.PI) * 0.25 : 1;
+    const throat = 1 + (hopping ? 0 : Math.sin(time / 260) * 0.12);
+    const col = this.pcol;
+
+    // Ground shadow — tightest at the ends of the hop, so the arc reads.
+    g.fillStyle(col(ACID.rot), 0.3 * (1 - lift / (TOAD_HOP_HEIGHT * 1.6)));
+    g.fillEllipse(toad.x, toad.y + 5, 24, 8);
+
+    // Legs: two folded back, two braced forward.
+    g.lineStyle(3, col(ACID.bog), 0.9);
+    for (const side of [-1, 1]) {
+      const knee = hopping ? 0.9 : 0.3;
+      g.beginPath();
+      g.moveTo(bx + side * 6, by + 3);
+      g.lineTo(bx + side * 13, by + 3 - knee * 6);
+      g.lineTo(bx + side * 9, by + 8);
+      g.strokePath();
+      g.beginPath();
+      g.moveTo(bx + side * 5, by + 1);
+      g.lineTo(bx + side * 15, by - 2 + knee * 3);
+      g.strokePath();
+    }
+
+    // Body, then the wetter back over it.
+    g.fillStyle(col(ACID.sludge), 0.95);
+    g.fillEllipse(bx, by, 26 * stretch, 18 / stretch);
+    g.fillStyle(col(ACID.neon), 0.5);
+    g.fillEllipse(bx, by - 3, 18 * stretch, 9 / stretch);
+    // Warts.
+    g.fillStyle(col(ACID.bog), 0.5);
+    for (let i = 0; i < 4; i++) {
+      const a = toad.facing + 1.2 + i * 0.9;
+      g.fillCircle(bx + Math.cos(a) * 7, by + Math.sin(a) * 4 - 2, 1.6);
+    }
+    // Throat, pumping while it sits.
+    g.fillStyle(col(ACID.hotRim), 0.5);
+    g.fillEllipse(bx, by + 6, 13 * throat, 6 * throat);
+
+    // Eyes: two bulges on top with dark slits, looking where it is going.
+    for (const side of [-1, 1]) {
+      const ex = bx + Math.cos(toad.facing) * 7 + Math.cos(toad.facing + Math.PI / 2) * side * 5;
+      const ey = by + Math.sin(toad.facing) * 4 + Math.sin(toad.facing + Math.PI / 2) * side * 5 - 7;
+      g.fillStyle(col(ACID.glow), 1);
+      g.fillCircle(ex, ey, 3.4);
+      g.fillStyle(0x120a02, 1);
+      g.fillEllipse(ex + Math.cos(toad.facing) * 1.2, ey + Math.sin(toad.facing) * 1.2, 1.6, 3);
+    }
+  }
+
   private unburrow(reason: string): void {
     this.burrowed = false;
+    this.despawnMurkToad();
     const player = this.arena.player;
     player.isInvincible = false;
     player.setAlpha(1);
@@ -719,6 +872,10 @@ export class SlimeKit {
       }
     }
 
+    // Murk: the toad hops on its own clock, before the auto-surface check below — the pool it
+    // just dribbled can be the one that keeps a burrowed player under.
+    this.updateMurkToad(time);
+
     // Auto-unburrow if the player has drifted out of every acid pool
     if (this.burrowed) {
       if (!this.isPointInAcid(player.x, player.y)) {
@@ -961,6 +1118,8 @@ export class SlimeKit {
     for (const mp of this.meltPuddles) {
       AcidFx.drawMeltPuddle(g, this.pcol, mp.x, mp.y, mp.radius, mp.color, t, mp.seed, mp.buffs.length);
     }
+    // Above its own pools, so the toad never disappears into the one it just made.
+    this.drawMurkToad(g, time);
   }
 
   private spawnFootprint(x: number, y: number, time: number, boosted: boolean): void {
@@ -1033,6 +1192,11 @@ export class SlimeKit {
         player.isInvincible = true;
         player.setAlpha(0.4);
         this.arena.showFloatingText(player.x, player.y - 30, '🐍 Burrowed!', '#99ff66');
+        // Murk: something has to be left on the surface while you are under it.
+        if (this.arena.hasPerk('player', 'murk')) {
+          this.spawnMurkToad(time);
+          this.arena.showFloatingText(player.x, player.y - 48, '🐸 Toad!', '#77aa44');
+        }
         // Going under: the surface closes over the caster and swallows them.
         this.playerAvatar?.play('flex');
         this.pfx.gather(player.x, player.y, 46, 400,

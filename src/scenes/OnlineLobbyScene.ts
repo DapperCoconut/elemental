@@ -15,6 +15,7 @@ import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackdrop, addButton, addCardPlate, addPanel, addTitle, addWell, showToast, UiButton,
 } from '../ui';
+import { Music } from '../audio';
 
 type LobbyPhase = 'entry' | 'hosting' | 'joining' | 'room';
 
@@ -68,6 +69,7 @@ export class OnlineLobbyScene extends Phaser.Scene {
   }
 
   create(): void {
+    Music.play('online');
     const { width, height } = this.scale;
 
     this.phaseObjects = [];

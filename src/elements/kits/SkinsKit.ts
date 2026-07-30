@@ -102,6 +102,24 @@ export class SkinsKit {
   silenceColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   subterfugeColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   technologyColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  justiceColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  dreamColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  chalkColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  magmaColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  illusionColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  depthsColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  ruinColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  glassColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  conquestColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  passionColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  paperColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  deathColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  fortuneColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  amberColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  psychicColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  radiationColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  bindColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  gumColor(owner: Owner, base: number): number { return this.remap(owner, base); }
 
   // ── Per-frame repaint ───────────────────────────────────────────────────
 

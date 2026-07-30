@@ -4,63 +4,115 @@ import { Ability, CastContext } from './Ability';
 /**
  * Justice — the element earned by putting the Devourer of Kings down.
  *
- * The kit is not written yet. The abilities below are declared so the element
- * has a real identity in the roster and its info panel reads properly, but each
- * `cast` is deliberately inert: `MenuScene` lists Justice with `available:false`
- * until the kit lands, so none of them is reachable from the arena. Anything
- * that *does* reach one gets a single line of feedback rather than a crash.
+ * A two-stance element. On the ground you are a magistrate with a spear: you fence
+ * off ground with the Coliseum, you burn Willpower for Sheer Will, and you close the
+ * match by weighing the enemy on the scales. In the air you are a Valkyrie: you hover
+ * over your own walls, tear the arena apart with a grappling chain, and put the enemy
+ * in a trance.
  *
- * See `dream.ts` for the other half of the choice.
+ * Willpower is the resource both stances share — Sheer Will drinks it fast, flight
+ * drinks it slowly, and running dry drops you out of both.
+ *
+ * Like Hunt, the two stances are ten abilities in one list: indices 0–4 are the ground
+ * set, 5–9 the flight set. ArenaScene builds a hidden second HUD row from the tail and
+ * `JusticeKit.setHudForm` swaps which one is on screen. Every `cast` here is a one-line
+ * delegate; the whole simulation lives in JusticeKit.
  */
 
-/** Every Justice ability routes through here until the kit exists. */
-function pending(ctx: CastContext, name: string): void {
-  void ctx; void name;
-}
+// ── Ground stance ───────────────────────────────────────────────
 
-const verdict: Ability = {
-  id: 'justice-verdict',
-  name: 'Verdict',
-  description: 'Strike a mark onto the enemy. The mark remembers every hit they land on you and pays all of it back at once when it expires.',
+const justiceStab: Ability = {
+  id: 'justice-stab',
+  name: 'Spear Thrust',
+  description: '20 dmg stab in front of you, plus a 15 dmg spear thrown along the same line.',
   displayKey: 'Click',
-  cooldown: 900,
-  cast(ctx: CastContext) { pending(ctx, 'Verdict'); },
+  cooldown: 800,
+  cast(ctx: CastContext) { ctx.justiceStab(ctx.targetX, ctx.targetY); },
 };
 
-const scales: Ability = {
-  id: 'justice-scales',
-  name: 'The Scales',
-  description: 'Hang the scales over the arena. Whichever fighter has taken less damage since they were raised begins taking more of it.',
+const justiceColiseum: Ability = {
+  id: 'justice-coliseum',
+  name: 'Coliseum',
+  description: 'Drive the spear down and raise a ring of columns for 8s. Nobody — and nothing they shoot — crosses it.',
   displayKey: 'E',
-  cooldown: 9000,
-  cast(ctx: CastContext) { pending(ctx, 'The Scales'); },
+  cooldown: 14000,
+  cast(ctx: CastContext) { ctx.justiceColiseum(); },
 };
 
-const sentence: Ability = {
-  id: 'justice-sentence',
-  name: 'Sentence',
-  description: 'Name a punishment and a window. If the enemy has not answered it by the time the window closes, the punishment lands in full.',
+const justiceSheerWill: Ability = {
+  id: 'justice-sheer-will',
+  name: 'Sheer Will',
+  description: 'Burn 10 Willpower/s for +20% speed. Whoever hits you deals 25% less for 3s and eats +33% on your next hit.',
   displayKey: 'R',
-  cooldown: 11000,
-  cast(ctx: CastContext) { pending(ctx, 'Sentence'); },
+  cooldown: 1200,
+  cast(ctx: CastContext) { ctx.justiceSheerWill(); },
 };
 
-const gavel: Ability = {
-  id: 'justice-gavel',
-  name: 'Gavel',
-  description: 'Bring the gavel down. Heavy damage in a circle, doubled against anything already carrying a Verdict.',
+const justiceFlight: Ability = {
+  id: 'justice-flight',
+  name: 'Flight of the Valkyrie',
+  description: 'Take to the air: +33% speed, hover over hazards and your own walls, −2 Willpower/s, +20% damage taken.',
   displayKey: 'F',
-  cooldown: 8000,
-  cast(ctx: CastContext) { pending(ctx, 'Gavel'); },
+  cooldown: 2500,
+  cast(ctx: CastContext) { ctx.justiceFlight(); },
 };
 
-const finalJudgement: Ability = {
-  id: 'justice-final-judgement',
-  name: 'Final Judgement',
-  description: 'The court convenes. For eight seconds every wound you have taken this match is read back onto whoever gave it to you.',
+const justiceJudgementDay: Ability = {
+  id: 'justice-judgement-day',
+  name: 'Judgement Day',
+  description: 'Weigh the enemy on the scales. The more damage they have done to you, the longer they spend in chains.',
   displayKey: 'Q',
-  cooldown: 26000,
-  cast(ctx: CastContext) { pending(ctx, 'Final Judgement'); },
+  isUltimate: true,
+  cooldown: 30000,
+  cast(ctx: CastContext) { ctx.justiceJudgementDay(); },
+};
+
+// ── Flight stance ───────────────────────────────────────────────
+
+const justiceSpearThrow: Ability = {
+  id: 'justice-spear-throw',
+  name: 'Spear of Heaven',
+  description: 'Hurl a spear at the cursor. It bursts on landing for 20 dmg.',
+  displayKey: 'Click',
+  cooldown: 1500,
+  cast(ctx: CastContext) { ctx.justiceSpearThrow(ctx.targetX, ctx.targetY); },
+};
+
+const justiceBind: Ability = {
+  id: 'justice-bind',
+  name: 'Bind',
+  description: 'Throw a grappling chain — 10 dmg through anything it passes. Recast to rip that arena wall out and drive it across.',
+  displayKey: 'E',
+  cooldown: 5000,
+  cast(ctx: CastContext) { ctx.justiceBind(ctx.targetX, ctx.targetY); },
+};
+
+const justicePillar: Ability = {
+  id: 'justice-pillar',
+  name: 'Pillar of Flame',
+  description: 'Split the arena with a wall of fire for 8s — 12 dmg/s and a 25% slow to anything standing in it.',
+  displayKey: 'R',
+  cooldown: 14000,
+  cast(ctx: CastContext) { ctx.justicePillar(ctx.targetX, ctx.targetY); },
+};
+
+const justiceDescend: Ability = {
+  id: 'justice-descend',
+  name: 'Descend',
+  description: 'Put your feet back on the floor and return to the ground stance.',
+  displayKey: 'F',
+  cooldown: 500,
+  cast(ctx: CastContext) { ctx.justiceDescend(); },
+};
+
+const justiceSeraphim: Ability = {
+  id: 'justice-seraphim',
+  name: "Seraphim's Gaze",
+  description: 'Take the centre of the arena and open every eye. The enemy walks toward you, entranced, for 10s.',
+  displayKey: 'Q',
+  isUltimate: true,
+  cooldown: 34000,
+  cast(ctx: CastContext) { ctx.justiceSeraphim(); },
 };
 
 export const justiceElement: Element = {
@@ -68,5 +120,8 @@ export const justiceElement: Element = {
   name: 'Justice',
   color: 0xf0d68a,
   emoji: '⚖️',
-  abilities: [verdict, scales, sentence, gavel, finalJudgement],
+  abilities: [
+    justiceStab, justiceColiseum, justiceSheerWill, justiceFlight, justiceJudgementDay,
+    justiceSpearThrow, justiceBind, justicePillar, justiceDescend, justiceSeraphim,
+  ],
 };

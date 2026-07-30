@@ -6,6 +6,7 @@ import {
   addBackdrop, addBackButton, addBadge, addButton, addCardPlate, addChip, addTitle, addToggle,
   fillDiamond,
 } from '../ui';
+import { Music } from '../audio';
 
 export class GauntletSelectScene extends Phaser.Scene {
   private hardMode = false;
@@ -21,6 +22,7 @@ export class GauntletSelectScene extends Phaser.Scene {
   }
 
   create(): void {
+    Music.play('gauntlet');
     const { width, height } = this.scale;
     const cx = width / 2;
 

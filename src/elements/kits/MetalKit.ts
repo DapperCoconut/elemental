@@ -139,7 +139,7 @@ export interface MetalArenaApi {
   /** Equipped skin id for that side, or null — decides which character rig gets built. */
   skinId(owner: 'player' | 'npc'): string | null;
   hasUpgrade(slot: string): boolean;
-  hasPerk(perkId: string): boolean;
+  hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
   spawnHitFlash(x: number, y: number, color: number): void;
   spawnDamageNumber(x: number, y: number, amount: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
@@ -180,6 +180,26 @@ const CHAIN_TETHER_PUDDLE_COUNT = 3;    // total puddles dropped over a single t
 const CHAIN_TETHER_PUDDLE_INTERVAL = CHAIN_TETHER_MS / CHAIN_TETHER_PUDDLE_COUNT; // spread evenly over the duration
 
 // ── Click+ Mighty Sabre ────────────────────────────────────────────────────
+// ── Conduit (divine perk) ────────────────────────────────────────────────────
+/** Live steel hits harder. Applied to the slash, the sabre and the flail head alike. */
+const CONDUIT_DAMAGE_MULT = 1.3;
+/** Earthed back into whoever's shot struck the plate. */
+const CONDUIT_EARTH_DAMAGE = 5;
+/** Empty max HP eaten per second while transfusing — the price of running live. */
+const CONDUIT_MAXHP_DRAIN_PER_SEC = 6;
+
+// ── Gold (divine perk) ───────────────────────────────────────────────────────
+/** A dagger stab: shorter reach than the sabre's sweep, more damage per hit. */
+const GOLD_STAB_DAMAGE = 34;
+const GOLD_STAB_RANGE = 62;
+/** Click+ releases a flurry rather than winding up one big swing. */
+const GOLD_BARRAGE_STABS = 5;
+const GOLD_BARRAGE_DAMAGE = 16;
+const GOLD_BARRAGE_GAP_MS = 90;
+/** Blood Blade under Gold: fixed cadence, damage scaling off the blood bar instead. */
+const GOLD_BLADE_INTERVAL_MS = 450;
+const GOLD_BLADE_DMG_PER_BLOOD = 0.5;
+
 const SABRE_CHARGE_MS = 3000;
 const SABRE_MIN_DMG = 25;
 const SABRE_MAX_DMG = 75;
@@ -274,6 +294,8 @@ export class MetalKit {
   // ── Blood Transfusion (R, hold) — smooth per-frame drain → heal ────────
   private transfusionActiveUntil: Record<'player' | 'npc', number> = { player: 0, npc: 0 };
   private transfusionDripAccum: Record<'player' | 'npc', number> = { player: 0, npc: 0 };
+  /** Conduit: fractional max HP burned away by transfusing, batched so the pop-up shows whole numbers. */
+  private transfusionBurnAccum: Record<'player' | 'npc', number> = { player: 0, npc: 0 };
 
   // ── Clot Armor (Q) ──────────────────────────────────────────────────────
   private clotArmorActive: Record<'player' | 'npc', boolean> = { player: false, npc: false };
@@ -486,6 +508,7 @@ export class MetalKit {
     // Transfusion
     this.transfusionActiveUntil = { player: 0, npc: 0 };
     this.transfusionDripAccum = { player: 0, npc: 0 };
+    this.transfusionBurnAccum = { player: 0, npc: 0 };
 
     // Clot armor
     this.clotArmorActive = { player: false, npc: false };
@@ -556,11 +579,32 @@ export class MetalKit {
         }
       } else if (!this.bloodBlade.descending && pointer.isDown && !pointerWasDown) {
         if (aimAtFlail()) this.triggerFlailSwing('player'); // still whips the mace
-        const interval = Phaser.Math.Clamp(700 - this.blood.player * 4, 200, 700);
+        // Gold: the blood dagger swings at a fixed cadence and puts the blood into the wound
+        // instead of into the swing speed.
+        const goldDagger = this.gold('player');
+        const interval = goldDagger
+          ? GOLD_BLADE_INTERVAL_MS
+          : Phaser.Math.Clamp(700 - this.blood.player * 4, 200, 700);
         if (time - this.bloodBlade.lastSwingAt >= interval) {
           this.bloodBlade.lastSwingAt = time;
-          this.bloodBladeSwing(mouseX, mouseY);
+          this.bloodBladeSwing(mouseX, mouseY, goldDagger
+            ? BLOOD_BLADE_SWING_DMG + Math.round(this.blood.player * GOLD_BLADE_DMG_PER_BLOOD)
+            : undefined);
         }
+      }
+    } else if (this.arena.hasUpgrade('click') && this.gold('player')) {
+      // Gold + Click+: a dagger has nothing to wind up. Holding queues a flurry that goes off
+      // on release, so the upgrade still rewards the hold — just with volume, not one big hit.
+      if (pointer.isDown && !pointerWasDown) {
+        if (player.getCooldownRatio('metal-slash') >= 1) {
+          this.sabreCharging = true;
+          this.sabreChargeStart = time;
+        }
+        if (aimAtFlail()) this.triggerFlailSwing('player');
+      } else if (this.sabreCharging && !pointer.isDown && pointerWasDown) {
+        this.goldBarrage(mouseX, mouseY, 'player');
+        player.startCooldown('metal-slash');
+        this.sabreCharging = false;
       }
     } else if (this.arena.hasUpgrade('click')) {
       // Charge-and-release. A quick tap ≈ 25 dmg; holding scales up to 75.
@@ -801,6 +845,10 @@ export class MetalKit {
       const transfusing = time < this.transfusionActiveUntil.player;
       this.playerAvatar.setFacing(aim);
       this.playerAvatar.setIntensity(this.clotArmorActive.player ? 1.3 : this.bloodBlade ? 1.2 : 1);
+      // A skin can replace the rig entirely, so the perk finish only applies to metal's own.
+      if (this.playerAvatar instanceof MetalAvatar) {
+        this.playerAvatar.setFinish(this.metalFinish('player'));
+      }
       this.playerAvatar.setMastered(this.arena.masteryActive);
       // Single owner of setHold: a wind-up braces, a transfusion cups both hands low.
       this.playerAvatar.setHold(this.charging ? 'brace' : transfusing ? 'sow' : null, aim);
@@ -825,6 +873,9 @@ export class MetalKit {
       const aim = Math.atan2(player.y - npc.y, player.x - npc.x);
       this.npcAvatar.setFacing(aim);
       this.npcAvatar.setIntensity(this.clotArmorActive.npc ? 1.3 : 1);
+      if (this.npcAvatar instanceof MetalAvatar) {
+        this.npcAvatar.setFinish(this.metalFinish('npc'));
+      }
       this.npcAvatar.setMastered(this.arena.npcMasteryActive);
       this.npcAvatar.setHold(time < this.transfusionActiveUntil.npc ? 'sow' : null, aim);
       this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
@@ -845,10 +896,104 @@ export class MetalKit {
 
   // ── Public do* methods — called from ArenaScene context builders ──────
 
+  // ── Conduit / Gold (divine perks) ─────────────────────────────────────
+
+  /** Conduit: this side's steel is running live. */
+  private conduit(owner: 'player' | 'npc'): boolean {
+    return this.arena.hasPerk(owner, 'conduit');
+  }
+
+  /** Gold: this side carries a golden dagger instead of the sabre. */
+  private gold(owner: 'player' | 'npc'): boolean {
+    return this.arena.hasPerk(owner, 'gold');
+  }
+
+  /** What that side's rig should be wearing. Only one perk is ever equipped, so this is exclusive. */
+  private metalFinish(owner: 'player' | 'npc'): 'none' | 'gold' | 'live' {
+    if (this.gold(owner)) return 'gold';
+    if (this.conduit(owner)) return 'live';
+    return 'none';
+  }
+
+  /**
+   * Conduit earths a shot that struck the plate straight back down the line it came from.
+   * `owner` is the shield's owner, so the charge always goes the other way.
+   */
+  private earthShotBack(owner: 'player' | 'npc', x: number, y: number): void {
+    if (!this.conduit(owner)) return;
+    const victim = owner === 'player' ? this.arena.npc : this.arena.player;
+    if (!victim?.active || victim.hp <= 0) return;
+    const fx = this.fx(owner);
+    victim.takeDamage(CONDUIT_EARTH_DAMAGE);
+    this.arena.spawnHitFlash(victim.x, victim.y, this.col(owner)(METAL.live));
+    // The charge visibly runs back up the line the shot came in on.
+    fx.sparks(x, y, 5, Math.atan2(victim.y - y, victim.x - x), 9, METAL.liveHi);
+    fx.ring(x, y, 4, 22, METAL.live, 220, 3, 7);
+  }
+
+  /**
+   * Gold's click: a stab rather than a sweep. Short reach, one target, more damage — and it is
+   * the same call the Click+ barrage fires repeatedly.
+   */
+  private goldStab(tx: number, ty: number, owner: 'player' | 'npc', damage: number): void {
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    if (!caster?.active) return;
+    const targets = owner === 'player' ? this.arena.enemies : [this.arena.player];
+    const ang = Math.atan2(ty - caster.y, tx - caster.x);
+    const fx = this.fx(owner);
+    const col = this.col(owner);
+
+    // A thrust, not an arc: a thin lance of gold punched out along the aim.
+    const tipX = caster.x + Math.cos(ang) * GOLD_STAB_RANGE;
+    const tipY = caster.y + Math.sin(ang) * GOLD_STAB_RANGE;
+    fx.slash(caster.x, caster.y, ang, GOLD_STAB_RANGE, {
+      color: METAL.gold, arc: Phaser.Math.DegToRad(24), duration: 160,
+    });
+    fx.sparks(tipX, tipY, 3, ang, 8, METAL.goldHi);
+    this.avatar(owner)?.play('punch', ang);
+
+    for (const target of targets) {
+      if (!target.active || target.hp <= 0) continue;
+      if (Phaser.Math.Distance.Between(caster.x, caster.y, target.x, target.y) > GOLD_STAB_RANGE + 20) continue;
+      const toAng = Math.atan2(target.y - caster.y, target.x - caster.x);
+      if (Math.abs(Phaser.Math.Angle.Wrap(toAng - ang)) > Math.PI / 3) continue;
+      const dmg = this.conduit(owner) ? Math.round(damage * CONDUIT_DAMAGE_MULT) : damage;
+      const hx = target.x, hy = target.y;
+      target.takeDamage(dmg);
+      this.arena.spawnHitFlash(target.x, target.y, col(METAL.gold));
+      this.arena.showFloatingText(caster.x, caster.y - 36, `🗡️ ${dmg}`, '#ffdd44');
+      fx.spray(hx, hy, 4, { speed: 180, angle: ang, spread: 0.5, size: 3 });
+      fx.splat(hx, hy, 10 + dmg * 0.2, 2);
+      break;   // a thrust goes into one body, not through a crowd
+    }
+  }
+
+  /** Click+ under Gold: a flurry of stabs on release, staggered so each one reads. */
+  private goldBarrage(tx: number, ty: number, owner: 'player' | 'npc'): void {
+    const scene = this.arena.scene;
+    for (let i = 0; i < GOLD_BARRAGE_STABS; i++) {
+      scene.time.delayedCall(i * GOLD_BARRAGE_GAP_MS, () => {
+        // Re-aim each stab at the cursor's original line; the caster may have moved, and the
+        // stab is relative to wherever they are now, which is what a flurry should do.
+        this.goldStab(tx, ty, owner, GOLD_BARRAGE_DAMAGE);
+      });
+    }
+    this.arena.showFloatingText(
+      (owner === 'player' ? this.arena.player : this.arena.npc).x,
+      (owner === 'player' ? this.arena.player : this.arena.npc).y - 52,
+      '🗡️ BARRAGE', '#ffdd44');
+  }
+
   doMetalSlash(tx: number, ty: number, owner: 'player' | 'npc', dmgOverride?: number): void {
     const { player, npc, enemies, scene } = this.arena;
     const caster = owner === 'player' ? player : npc;
     const targets = owner === 'player' ? enemies : [player];
+
+    // Gold replaces the sword outright: every sweep becomes a thrust.
+    if (this.gold(owner)) {
+      this.goldStab(tx, ty, owner, dmgOverride ?? GOLD_STAB_DAMAGE);
+      return;
+    }
 
     const dx = tx - caster.x, dy = ty - caster.y;
     const ang = Math.atan2(dy, dx);
@@ -857,18 +1002,23 @@ export class MetalKit {
     // The blade sweeps the aim, with a crescent of torn air chasing the tip. A heavier swing
     // (Mighty Sabre at full charge) reaches further and hangs on screen longer.
     const heavy = (dmgOverride ?? 25) > 40;
+    const live = this.conduit(owner);
     fx.slash(caster.x, caster.y, ang, heavy ? 104 : 90, {
-      color: heavy ? METAL.goldHi : METAL.chrome,
+      color: live ? METAL.live : heavy ? METAL.goldHi : METAL.chrome,
       arc: heavy ? Phaser.Math.DegToRad(130) : undefined,
       duration: heavy ? 320 : 260,
     });
+    // Conduit: the charge crawling off the edge of the blade as it comes round.
+    if (live) fx.sparks(caster.x + Math.cos(ang) * 60, caster.y + Math.sin(ang) * 60, 5, ang, 9, METAL.liveHi);
     this.avatar(owner)?.play('sweep', ang);
 
     for (const target of targets) {
       if (!target.active || target.hp <= 0) continue;
       const dist = Phaser.Math.Distance.Between(caster.x, caster.y, target.x, target.y);
       if (dist <= 90) {
-        const dmg = dmgOverride ?? 25;
+        const dmg = live
+          ? Math.round((dmgOverride ?? 25) * CONDUIT_DAMAGE_MULT)
+          : dmgOverride ?? 25;
         const hx = target.x, hy = target.y;
         target.takeDamage(dmg);
         this.arena.spawnHitFlash(target.x, target.y, this.col(owner)(METAL.steel));
@@ -1001,6 +1151,23 @@ export class MetalKit {
       caster.heal(drain);
       if (owner === 'player') this.arena.recordMasteryStat('transfusionHealed', drain);
 
+      // Conduit: running live burns the body out. Transfusion eats away max HP as it heals —
+      // but only the *empty* part of the bar, so it can never undo the healing it just did or
+      // kill you outright. A conduit at full HP pays nothing; a wounded one pays as it fills.
+      if (this.conduit(owner)) {
+        const empty = Math.max(0, caster.maxHp - caster.hp - caster.clottedHp);
+        const shave = Math.min(empty, CONDUIT_MAXHP_DRAIN_PER_SEC * dt);
+        if (shave > 0) {
+          caster.reduceMaxHp(shave);
+          this.transfusionBurnAccum[owner] += shave;
+          if (this.transfusionBurnAccum[owner] >= 5) {
+            const lost = Math.round(this.transfusionBurnAccum[owner]);
+            this.transfusionBurnAccum[owner] -= lost;
+            this.arena.showFloatingText(caster.x, caster.y - 52, `⚡ −${lost} MAX HP`, '#66ccff');
+          }
+        }
+      }
+
       // Blood dripping particles beneath the character (~every 90ms). The
       // green heal numbers themselves are handled generically by ArenaScene.
       this.transfusionDripAccum[owner] += delta;
@@ -1074,7 +1241,7 @@ export class MetalKit {
     const base = 30;
     // Quad perk Exsanguinate: blood puddles are 50% bigger.
     let mult = 1;
-    if (owner === 'player' && this.arena.hasPerk('gunpowder')) mult *= 1.5;
+    if (owner === 'player' && this.arena.hasPerk('player', 'gunpowder')) mult *= 1.5;
     const r = Math.round(base * mult);
     this.metalBloodPuddles.push({
       x, y, radius: r, owner, drainAccum: 0, draining: false,
@@ -1132,6 +1299,9 @@ export class MetalKit {
       this.fx(owner).shards(caster.x, caster.y, 2, {
         speed: 150, size: 11, color: METAL.clot, depth: 7,
       });
+      // Conduit: the armour is live plate — anything that strikes it is earthed back at the
+      // other side. Every hit counts here, not only shots: the absorber has no shooter to ask.
+      this.earthShotBack(owner, caster.x, caster.y);
       this.clotArmorLostAccum[owner] += amount;
       while (this.clotArmorLostAccum[owner] >= CLOT_SHARD_THRESHOLD) {
         this.clotArmorLostAccum[owner] -= CLOT_SHARD_THRESHOLD;
@@ -1157,7 +1327,7 @@ export class MetalKit {
   private fireClotShardBurst(owner: 'player' | 'npc'): void {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     // Quad perk: Exsanguinate — fires 8 shards per burst instead of 5
-    const shardCount = this.arena.hasPerk('gunpowder') ? 8 : CLOT_SHARD_COUNT;
+    const shardCount = this.arena.hasPerk(owner, 'gunpowder') ? 8 : CLOT_SHARD_COUNT;
     for (let i = 0; i < shardCount; i++) {
       const ang = Math.random() * Math.PI * 2;
       this.metalShardProjectiles.push({
@@ -1374,7 +1544,9 @@ export class MetalKit {
       if (flail.swinging) {
         const elapsed = time - flail.swingStartAt;
         const speedRatio = Math.max(0, 1 - elapsed / decayMs);
-        const dmg = Math.round((10 + speedRatio * 30) / 3) * (flail.heavy ? 2 : 1);
+        let dmg = Math.round((10 + speedRatio * 30) / 3) * (flail.heavy ? 2 : 1);
+        // Conduit: the mace is live too, so the whole weapon set hits harder.
+        if (this.conduit(owner)) dmg = Math.round(dmg * CONDUIT_DAMAGE_MULT);
         // The head glows with how fast it's going — molten for the heavy mace, blood-hot for
         // the plain one. `heat` is what the painter reads, so the colour follows the sim.
         if (flail.heavy) {
@@ -1813,13 +1985,15 @@ export class MetalKit {
           s.red ? METAL.rose : METAL.chrome);
         // Red shield (cast during Clot Armor) sprays a shard burst per blocked shot.
         if (s.red) this.fireSteelShieldShards(owner, bx, by);
+        // Conduit: the plate is earthed, so the shot goes back where it came from.
+        this.earthShotBack(owner, px, py);
       }
     }
   }
 
   private fireSteelShieldShards(owner: 'player' | 'npc', x: number, y: number): void {
     // Same count Clot Armor emits per burst (Exsanguinate perk bumps it to 8).
-    const shardCount = owner === 'player' && this.arena.hasPerk('gunpowder') ? 8 : CLOT_SHARD_COUNT;
+    const shardCount = this.arena.hasPerk(owner, 'gunpowder') ? 8 : CLOT_SHARD_COUNT;
     for (let i = 0; i < shardCount; i++) {
       const ang = Math.random() * Math.PI * 2;
       this.metalShardProjectiles.push({

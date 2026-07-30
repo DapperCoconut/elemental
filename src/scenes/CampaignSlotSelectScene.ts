@@ -6,6 +6,7 @@ import {
   addBackdrop, addBackButton, addButton, addCardPlate, addTitle,
   drawMeter, fillDiamond, fillHex, strokeHex,
 } from '../ui';
+import { Music } from '../audio';
 
 const CARD_CENTERS = [160, 480, 800];
 const CARD_W = 250;
@@ -21,6 +22,7 @@ export class CampaignSlotSelectScene extends Phaser.Scene {
   }
 
   create(): void {
+    Music.play('campaign');
     const { width } = this.scale;
     const cx = width / 2;
 

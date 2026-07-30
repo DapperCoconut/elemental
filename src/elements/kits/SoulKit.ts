@@ -226,6 +226,12 @@ const VARIANT_QUIRKS: Record<string, AmalgamQuirk> = {
   blaster: 'gut',
 };
 
+/** Call of the Void (divine perk): how far the invitation carries from the shriek. */
+const VOID_CALL_RADIUS = 150;
+const VOID_CALL_BASE = 0.10;
+const VOID_CALL_STEP = 0.05;
+const VOID_CALL_MAX = 0.30;
+
 const WHISTLE_ARRIVE_RADIUS = 30;
 const WHISTLE_HEAL_FRAC = 0.75;
 const CARRION_BUFF_MS = 10000;
@@ -298,6 +304,8 @@ export class SoulKit {
   private aimY = 0;
   /** Timestamp the lantern was last ticked, per side — drives the sustained spray pose. */
   private lanternHeldUntil: Record<Owner, number> = { player: 0, npc: 0 };
+  /** Call of the Void: the HP fraction this side's next whistle will claim at. Per-owner. */
+  private voidThreshold: Record<Owner, number> = { player: VOID_CALL_BASE, npc: VOID_CALL_BASE };
 
   private puddles: SoulPuddle[] = [];
   private graves: Grave[] = [];
@@ -352,6 +360,7 @@ export class SoulKit {
     this.aimX = 0;
     this.aimY = 0;
     this.lanternHeldUntil = { player: 0, npc: 0 };
+    this.voidThreshold = { player: VOID_CALL_BASE, npc: VOID_CALL_BASE };
 
     for (const p of this.puddles) p.sprite.destroy();
     this.puddles = [];
@@ -591,6 +600,49 @@ export class SoulKit {
     }
     if (count > 0) {
       this.arena.showFloatingText(caster.x, caster.y - 40, `📯 ${count} RECALLED`, '#ccaaff');
+    }
+
+    if (this.arena.hasPerk(owner, 'call-of-the-void')) this.answerTheCall(tx, ty, owner);
+  }
+
+  /**
+   * Call of the Void (divine perk): the whistle stops being a recall order and becomes an
+   * invitation. Anything already dying within earshot simply accepts. A whistle that claims
+   * something is answered louder next time; the first one that claims nothing sends the
+   * threshold all the way back down, so this cannot be idled up to its cap.
+   */
+  private answerTheCall(tx: number, ty: number, owner: Owner): void {
+    const caster = this.fighterOf(owner);
+    const fx = this.fx(owner);
+    const tones = tonesFor(owner);
+    const threshold = this.voidThreshold[owner];
+    let claimed = 0;
+
+    for (const foe of this.foesOf(owner)) {
+      if (Phaser.Math.Distance.Between(tx, ty, foe.x, foe.y) > VOID_CALL_RADIUS) continue;
+      if (foe.hp > foe.maxHp * threshold) continue;
+      const fx0 = foe.x, fy0 = foe.y;
+      // Pierce: an execute is the void taking what is already owed. No shield answers it.
+      foe.takeDamage(foe.hp, { pierce: true });
+      claimed++;
+      // The soul going out of it — a stain, a collapsing throat, and the thing itself rising.
+      fx.stain(fx0, fy0, 30, 1, tones);
+      fx.ring(fx0, fy0, 54, 4, SOUL.crypt, 420, 5, 6);
+      fx.soulRise(fx0, fy0, 70, 700, 7, tones);
+      fx.wisps(fx0, fy0, 8, { speed: 90, size: 3, life: 620, rise: -70, depth: 7, tones });
+      this.arena.showFloatingText(fx0, fy0 - 44, '🕳️ CALLED', '#9955ee');
+    }
+
+    if (claimed > 0) {
+      const next = Math.min(VOID_CALL_MAX, threshold + VOID_CALL_STEP);
+      this.voidThreshold[owner] = next;
+      fx.shriek(tx, ty, 150, 780, 8, tones);
+      this.arena.showFloatingText(caster.x, caster.y - 56,
+        `🕳️ THE VOID ANSWERS — ${Math.round(next * 100)}%`, '#cc99ff');
+    } else if (threshold > VOID_CALL_BASE) {
+      this.voidThreshold[owner] = VOID_CALL_BASE;
+      this.arena.showFloatingText(caster.x, caster.y - 56,
+        `🕳️ UNANSWERED — ${Math.round(VOID_CALL_BASE * 100)}%`, '#775588');
     }
   }
 
@@ -1618,5 +1670,37 @@ export class SoulKit {
     if (alpha && Phaser.Math.Distance.Between(x, y, alpha.x, alpha.y) <= radius) {
       alpha.takeDamage(damage);
     }
+  }
+
+  /**
+   * Ruin's Spikes of Ruin (see `combat/SummonPurge.ts`).
+   * Headstones, the zombies they raise and the amalgams stitched out of them.
+   *
+   * The risen are husks rather than plain records, so they are killed through their own death
+   * path instead of being spliced out from under it — a summon that skipped `defeated` would
+   * leave its aura Graphics and its corpse bookkeeping behind, and a burning amalgam owes the
+   * arena its death blast on the way out. The Alpha is left alone: it turns on whoever raised
+   * it, which makes it an enemy rather than a summon.
+   */
+  purgeSummons(x: number, y: number, radius: number, exceptOwner: 'player' | 'npc'): number {
+    const near = (px: number, py: number): boolean => Phaser.Math.Distance.Between(x, y, px, py) <= radius;
+    let razed = 0;
+    for (let i = this.graves.length - 1; i >= 0; i--) {
+      const g = this.graves[i];
+      if (g.owner === exceptOwner || !near(g.x, g.y)) continue;
+      this.fx(g.owner).stain(g.x, g.y, 20, 1, tonesFor(g.owner));
+      g.sprite.destroy();
+      g.aura.destroy();
+      this.graves.splice(i, 1);
+      razed++;
+    }
+    for (const rec of [...this.graveZombies, ...this.amalgams]) {
+      const husk = rec.husk;
+      if (rec.owner === exceptOwner || !husk.active || husk.hp <= 0) continue;
+      if (!near(husk.x, husk.y)) continue;
+      husk.takeDamage(husk.hp + 9999, { pierce: true });
+      razed++;
+    }
+    return razed;
   }
 }

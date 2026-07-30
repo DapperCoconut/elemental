@@ -3,6 +3,41 @@ import { Fighter } from '../../entities/Fighter';
 import {
   ActiveStatus, StatusDescriptor, collectStatuses, remainingMs,
 } from '../../combat/StatusEffects';
+import { Sfx } from '../../audio';
+
+/**
+ * What each status sounds like when it lands on the player.
+ *
+ * The tray already knows the exact moment an effect appears, which makes it the
+ * natural place to announce one — no kit has to remember to play a sound when it
+ * applies a slow. Anything not listed uses the generic buff/debuff sting chosen
+ * by its priority (debuffs sort below 100).
+ */
+const STATUS_SOUNDS: Record<string, string> = {
+  molten: 'status-burn', burning: 'status-burn', 'lava-burn': 'status-burn', 'oily-burn': 'status-burn',
+  toxic: 'status-poison', sickness: 'status-poison', 'plague-carrier': 'status-poison',
+  bleeding: 'status-bleed',
+  frozen: 'status-freeze', frost: 'status-freeze', 'void-frost': 'status-freeze',
+  permafrost: 'status-freeze', permavoid: 'status-freeze',
+  disarmed: 'status-stun', chicken: 'status-stun', 'chain-bound': 'status-root',
+  skewered: 'status-root', wrenched: 'status-curse', vibration: 'status-mark',
+  silenced: 'status-silence',
+  confused: 'status-confuse', wandering: 'status-confuse', hallucinating: 'status-confuse',
+  inverted: 'status-confuse', intoxicated: 'status-confuse', unsteady: 'status-debuff',
+  lagging: 'glitch', panicked: 'status-fear', hopeless: 'status-fear',
+  'high-gravity': 'status-slow', sluggish: 'status-slow', hobbled: 'status-slow', slowed: 'status-slow',
+  exposed: 'status-mark', marked: 'status-mark', vulnerable: 'status-mark',
+  purged: 'status-debuff', 'heal-block': 'status-curse', 'dark-link': 'status-drain',
+  oily: 'status-debuff', fragile: 'status-debuff', weakened: 'status-debuff',
+  shrunk: 'status-debuff', grown: 'status-buff',
+  invincible: 'status-invincible', levitating: 'status-invincible',
+  unbreakable: 'status-invincible', unstoppable: 'status-invincible',
+  'shield-charge': 'shield-up', 'shield-hp': 'shield-up', absorbing: 'shield-up',
+  armored: 'shield-up', clotted: 'shield-up', 'weak-hp': 'shield-up',
+  'natural-clot': 'status-regen', regen: 'status-regen',
+  thorns: 'status-buff', empowered: 'status-buff', crit: 'status-buff', dodge: 'status-buff',
+  haste: 'status-haste', swift: 'status-haste',
+};
 
 // ── StatusHudArenaApi ─────────────────────────────────────────────────────
 
@@ -99,6 +134,8 @@ export class StatusHudKit {
   private totals = new Map<string, number>();
   private custom = new Map<string, CustomStatus>();
   private hoveredSlot: Slot | null = null;
+  /** Status ids already announced, so a multi-second effect only sounds once. */
+  private heard = new Set<string>();
 
   constructor(private arena: StatusHudArenaApi) {
     this.buildSlots();
@@ -114,6 +151,7 @@ export class StatusHudKit {
   reset(): void {
     this.totals.clear();
     this.custom.clear();
+    this.heard.clear();
     this.destroy();
     this.buildSlots();
     this.buildTooltip();
@@ -150,6 +188,22 @@ export class StatusHudKit {
       if (known === undefined || s.remainingMs > known) this.totals.set(s.desc.id, s.remainingMs);
     }
     for (const id of [...this.totals.keys()]) if (!live.has(id)) this.totals.delete(id);
+
+    // Anything that just appeared in the tray announces itself; anything that
+    // dropped off gets a short "effect over" blip and is re-armed to sound again
+    // next time it lands.
+    for (const s of statuses) {
+      const id = s.desc.id;
+      if (this.heard.has(id)) continue;
+      this.heard.add(id);
+      const sound = STATUS_SOUNDS[id] ?? (s.desc.priority < 100 ? 'status-debuff' : 'status-buff');
+      Sfx.play(sound, { volume: 0.85 });
+    }
+    for (const id of [...this.heard]) {
+      if (live.has(id)) continue;
+      this.heard.delete(id);
+      Sfx.play('status-expire', { volume: 0.6 });
+    }
 
     // Two rows hold 18, which is already far more than a normal fight produces. If even
     // that overflows, give up the last box to a chip that names what didn't fit rather

@@ -6,5 +6,7 @@ import { HP_SCALE } from '../data/Balance';
 export class Player extends Fighter {
   constructor(scene: Phaser.Scene, x: number, y: number, element: Element, textureKey = 'elem-fire') {
     super(scene, x, y, textureKey, element, 200 * HP_SCALE, 200);
+    // Audio mixes the local player's own actions louder than anyone else's.
+    this.isPlayerFighter = true;
   }
 }

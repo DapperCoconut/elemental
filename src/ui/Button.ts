@@ -4,6 +4,7 @@ import {
   ALL_CORNERS, Corners,
   drawCornerBrackets, drawGlow, drawSheen, fillDiamond, fillHex, fillNotchedGradient, strokeHex, strokeNotched,
 } from './Shapes';
+import { Sfx } from '../audio';
 
 export type ButtonVariant =
   /** Filled accent plate — the one thing you want clicked on this screen. */
@@ -140,6 +141,7 @@ export class UiButton {
       .on('pointerover', () => {
         this.state = 'hover';
         this.paint();
+        Sfx.hover();
         this.scene.tweens.add({ targets: this.container, scaleX: 1.035, scaleY: 1.035, duration: 110, ease: 'Cubic.easeOut' });
         this.opts.onHover?.();
       })
@@ -152,6 +154,11 @@ export class UiButton {
       .on('pointerdown', () => {
         this.state = 'down';
         this.paint();
+        // The variant already encodes what the button means, so it can pick the
+        // click: `quiet` is the back/cancel chrome, `danger` is destructive.
+        if (this.opts.variant === 'quiet') Sfx.back();
+        else if (this.opts.variant === 'danger') Sfx.play('ui-click', { rate: 0.72 });
+        else Sfx.click();
         this.scene.tweens.add({
           targets: this.container, scaleX: 0.965, scaleY: 0.965, duration: 70, yoyo: true, ease: 'Quad.easeOut',
         });
@@ -357,6 +364,7 @@ export function addIconButton(scene: Phaser.Scene, opts: {
 
   hit.on('pointerover', () => {
     paint(true);
+    Sfx.hover();
     scene.tweens.add({ targets: container, scaleX: 1.1, scaleY: 1.1, duration: 110, ease: 'Back.easeOut' });
     if (opts.tooltip && !tip) {
       tip = scene.add.text(opts.x, opts.y + r + 12, opts.tooltip, {
@@ -371,6 +379,7 @@ export function addIconButton(scene: Phaser.Scene, opts: {
     tip?.destroy(); tip = null;
   });
   hit.on('pointerdown', () => {
+    Sfx.click();
     scene.tweens.add({ targets: container, scaleX: 0.9, scaleY: 0.9, duration: 70, yoyo: true });
     opts.onClick();
   });
@@ -433,6 +442,7 @@ export function addToggle(scene: Phaser.Scene, opts: {
   hit.on('pointerdown', () => {
     value = !value;
     paint();
+    Sfx.play(value ? 'ui-toggle-on' : 'ui-toggle-off');
     scene.tweens.add({ targets: knob, scaleX: 1.35, scaleY: 1.35, duration: 90, yoyo: true });
     opts.onChange(value);
   });
@@ -504,9 +514,9 @@ export function addTabs(scene: Phaser.Scene, opts: {
     const hit = scene.add.rectangle(tx, opts.y, opts.tabW, tabH, 0xffffff, 0)
       .setDepth(depth + 2)
       .setInteractive({ useHandCursor: true });
-    hit.on('pointerover', () => { paint(true); if (!isActive) label.setColor(T.bright); });
+    hit.on('pointerover', () => { paint(true); Sfx.hover(); if (!isActive) label.setColor(T.bright); });
     hit.on('pointerout', () => { paint(false); if (!isActive) label.setColor(T.dim); });
-    hit.on('pointerdown', () => opts.onSelect(i));
+    hit.on('pointerdown', () => { Sfx.play('ui-tab'); opts.onSelect(i); });
   });
 }
 

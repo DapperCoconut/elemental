@@ -5,6 +5,7 @@ import { MUTATIONS, activeMutationIds, starredMutationIds, clearMutationSelectio
 import { clearConsumedItems } from '../data/Items';
 import * as PlayerData from '../data/PlayerData';
 import { applyKonamiCheat } from '../data/CheatSave';
+import { isCheatMode } from '../data/Cheats';
 import { getPerksForElement, getPerkById, ALL_PERKS } from '../data/Perks';
 import { getSkinsForElement, isSkinUnlocked, skinUnlockHint } from '../data/Skins';
 import { getAbilityVariants } from '../data/AbilityVariants';
@@ -50,11 +51,25 @@ import { quantumElement } from '../elements/quantum-element';
 import { dummyElement } from '../elements/dummy';
 import { justiceElement } from '../elements/justice';
 import { dreamElement } from '../elements/dream';
+import { chalkElement } from '../elements/chalk';
+import { magmaElement } from '../elements/magma';
+import { illusionElement } from '../elements/illusion';
+import { depthsElement } from '../elements/depths';
+import { ruinElement } from '../elements/ruin';
+import { glassElement } from '../elements/glass';
+import { paperElement } from '../elements/paper';
+import {
+  journalElementColor, journalElementEmoji, journalElementIds, journalElementName, journalEntries,
+  journalProgress, journalTotalPossible, journalTotalUnlocked,
+} from '../data/PaperJournal';
+import { conquestElement } from '../elements/conquest';
+import { passionElement } from '../elements/passion';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackdrop, addBackButton, addButton, addCardPlate, addIconButton, addOverlayChrome,
   addPagerButton, addRowPlate, addSectionLabel, addWell, addTitle, fillDiamond,
 } from '../ui';
+import { Music, Sfx } from '../audio';
 
 const ELEMENT_DATA_MAP: Record<string, Element> = {
   fire: fireElement, water: waterElement, life: lifeElement, air: airElement,
@@ -81,6 +96,15 @@ const ELEMENT_DATA_MAP: Record<string, Element> = {
   // them — leaving these out would make the ℹ button on the card do nothing.
   justice: justiceElement,
   dream: dreamElement,
+  chalk: chalkElement,
+  magma: magmaElement,
+  illusion: illusionElement,
+  depths: depthsElement,
+  ruin: ruinElement,
+  glass: glassElement,
+  conquest: conquestElement,
+  passion: passionElement,
+  paper: paperElement,
 };
 
 export interface ElementDef {
@@ -134,14 +158,40 @@ export const ABSTRACT_ELEMENTS: ElementDef[] = [
  * it grants Dream — one run can only ever take one ending, so most saves will
  * only ever show one of these.
  *
- * Both are `available: false` on purpose: the elements are real, registered and
- * persisted, and their info panels are worth reading, but neither has a kit yet.
- * Marking them unavailable is what stops a card the player has genuinely earned
- * from dropping them into a fight with nothing behind it.
+ * Both now have kits behind them, so both are playable.
  */
 export const DIVINE_ELEMENTS: ElementDef[] = [
-  { id: 'justice', name: 'Justice', emoji: '⚖️', color: 0xf0d68a, available: false },
-  { id: 'dream',   name: 'Dream',   emoji: '🌙', color: 0x9fb8ff, available: false },
+  { id: 'justice', name: 'Justice', emoji: '⚖️', color: 0xf0d68a, available: true },
+  { id: 'dream',   name: 'Dream',   emoji: '🌙', color: 0x9fb8ff, available: true },
+];
+
+/**
+ * Elements that have no obtainment yet.
+ *
+ * These are playable, finished kits with nothing in the game that hands them out — so the
+ * only way to reach one is a cheat-mode save, which is what `isCheatMode()` gates below.
+ * Deliberately *not* routed through `PlayerData.unlockElement`: an entry here is invisible
+ * to every unlock, recipe and reward path in the game until it is given a real one, at which
+ * point it moves out of this list and into whichever roster it actually belongs to.
+ */
+export const TEST_ELEMENTS: ElementDef[] = [
+  { id: 'chalk', name: 'Chalk', emoji: '🖍️', color: 0xf4f1e6, available: true },
+  { id: 'magma', name: 'Magma', emoji: '🌋', color: 0xff5a1e, available: true },
+  { id: 'illusion', name: 'Illusion', emoji: '🎭', color: 0xb45cff, available: true },
+  { id: 'depths', name: 'Depths', emoji: '🐟', color: 0x0e8f9c, available: true },
+  { id: 'conquest', name: 'Conquest', emoji: '🏰', color: 0xc23a2e, available: true },
+  { id: 'passion', name: 'Passion', emoji: '💘', color: 0xff5fa2, available: true },
+  { id: 'ruin', name: 'Ruin', emoji: '🧱', color: 0xc4392c, available: true },
+  { id: 'glass', name: 'Glass', emoji: '🪟', color: 0x9fe8ff, available: true },
+  { id: 'paper', name: 'Paper', emoji: '📄', color: 0xf2ead6, available: true },
+  { id: 'death', name: 'Death', emoji: '⚰️', color: 0x4a4468, available: true },
+  { id: 'fortune', name: 'Fortune', emoji: '🪙', color: 0xd8a531, available: true },
+  { id: 'amber', name: 'Amber', emoji: '🟠', color: 0xd98b1f, available: true },
+  { id: 'psychic', name: 'Psychic', emoji: '👁️', color: 0x9b4dff, available: true },
+  { id: 'radiation', name: 'Radiation', emoji: '☢️', color: 0x7cff3d, available: true },
+  { id: 'bind', name: 'Bind', emoji: '⛓️', color: 0xe0b743, available: true },
+  // Slime keeps the id `gum` — `slime` still belongs to Acid, which kept the old name's slot.
+  { id: 'gum', name: 'Slime', emoji: '🫠', color: 0x46b93f, available: true },
 ];
 
 /** Abstract combined elements — created by fusing two abstract elements in a Lvl 1+ Lab. */
@@ -193,7 +243,9 @@ export class MenuScene extends Phaser.Scene {
   // Preserves scroll position across showMasteryScreen rebuilds triggered by bind/clear actions.
   private masteryScrollY = 0;
   private mutationScrollHandler: (...args: unknown[]) => void = () => {};
-  private elementInfoMode: 'base' | 'upgraded' | 'build' = 'base';
+  private elementInfoMode: 'base' | 'upgraded' | 'build' | 'journal' = 'base';
+  /** Which elements' journal entries are expanded on Paper's Journal tab. */
+  private expandedJournal = new Set<string>();
   /** Hunt only: which of its three forms the info panel is listing. */
   private elementInfoHuntForm: 0 | 1 | 2 = 0;
   private expandedVariants: Set<string> = new Set();
@@ -205,6 +257,7 @@ export class MenuScene extends Phaser.Scene {
   }
 
   create(data?: { mode?: string; bounty?: Bounty; hard?: boolean }): void {
+    Music.play('menu');
     this.isInvasion = data?.mode === 'invasion';
     this.isBoss = data?.mode === 'boss';
     // Guarded rather than trusted: the door is the only way in, but a stale
@@ -290,7 +343,8 @@ export class MenuScene extends Phaser.Scene {
       ?? COMBINED_ELEMENTS.find((e) => e.id === id)
       ?? ABSTRACT_ELEMENTS.find((e) => e.id === id)
       ?? ABSTRACT_COMBINED_ELEMENTS.find((e) => e.id === id)
-      ?? DIVINE_ELEMENTS.find((e) => e.id === id);
+      ?? DIVINE_ELEMENTS.find((e) => e.id === id)
+      ?? TEST_ELEMENTS.find((e) => e.id === id);
   }
 
   private renderPhase(width: number, height: number, cx: number): void {
@@ -361,8 +415,13 @@ export class MenuScene extends Phaser.Scene {
     // Earned from the Devourer. Listed last so the rarest thing in the game sits
     // at the end of the roster rather than in the middle of it.
     const unlockedDivine = DIVINE_ELEMENTS.filter((e) => PlayerData.isElementUnlocked(e.id));
+    // Elements with no obtainment yet. Gated on cheat mode rather than on a save flag, so a
+    // legitimate profile can never see one however it was reached.
+    const testElements = isCheatMode() ? TEST_ELEMENTS : [];
     // Pool all non-base unlocked elements together for pagination
-    const unlockedExtra = [...unlockedCombined, ...unlockedAbstract, ...unlockedAbstractCombined, ...unlockedDivine];
+    const unlockedExtra = [
+      ...unlockedCombined, ...unlockedAbstract, ...unlockedAbstractCombined, ...unlockedDivine, ...testElements,
+    ];
     const PAGE_SIZE = 5;
     const extraPages = Math.max(1, Math.ceil(unlockedExtra.length / PAGE_SIZE));
     const maxPage = unlockedExtra.length > 0 ? extraPages : 0; // 0 = no extra pages
@@ -1243,10 +1302,14 @@ export class MenuScene extends Phaser.Scene {
     if (!element) return;
     // Build Mode is a Creation-only tab; drop back to Base for anything else.
     if (this.elementInfoMode === 'build' && elementId !== 'creation') this.elementInfoMode = 'base';
+    // The Journal is Paper's whole passive and it is far too big to sit above the ability list,
+    // so it gets a tab of its own — the same way Creation's Build Mode does.
+    if (this.elementInfoMode === 'journal' && elementId !== 'paper') this.elementInfoMode = 'base';
     const upgrades = getElementUpgrades(elementId);
     const perks = getPerksForElement(elementId);
     const showUpgraded = this.elementInfoMode === 'upgraded';
     const showBuild = this.elementInfoMode === 'build';
+    const showJournal = this.elementInfoMode === 'journal';
     // Hunt is really three kits sharing five keys, so its abilities get a form selector of
     // their own rather than fifteen rows in one list.
     const huntForms = elementId === 'hunt';
@@ -1271,7 +1334,7 @@ export class MenuScene extends Phaser.Scene {
 
     // ── Base / Upgraded (+ Build Mode for Creation) tabs ──
     const tabDefs: Array<{
-      mode: 'base' | 'upgraded' | 'build'; label: string;
+      mode: 'base' | 'upgraded' | 'build' | 'journal'; label: string;
       selFill: number; selStroke: number; selText: string; unselText: string;
     }> = [
       { mode: 'base',     label: '⚔ BASE ABILITIES',  selFill: 0x224433, selStroke: 0x66ff99, selText: '#aaffcc', unselText: '#556655' },
@@ -1279,6 +1342,9 @@ export class MenuScene extends Phaser.Scene {
     ];
     if (elementId === 'creation') {
       tabDefs.push({ mode: 'build', label: '🔨 BUILD MODE', selFill: 0x2a1804, selStroke: 0xcc6622, selText: '#ffbb88', unselText: '#665544' });
+    }
+    if (elementId === 'paper') {
+      tabDefs.push({ mode: 'journal', label: '📖 THE JOURNAL', selFill: 0x2a2408, selStroke: 0xe8c65c, selText: '#ffe9a8', unselText: '#665f44' });
     }
     const toggleY = 66;
     const nTabs = tabDefs.length;
@@ -1384,6 +1450,8 @@ export class MenuScene extends Phaser.Scene {
 
     if (showBuild) {
       innerY = this.renderCreationBuildInfo(scrollContainer, cx, COL_X, COL_W, innerY);
+    } else if (showJournal) {
+      innerY = this.renderPaperJournal(scrollContainer, cx, COL_X, COL_W, innerY, width, height);
     } else {
 
     // Subterfuge-specific passives (shown above the abilities list)
@@ -1394,6 +1462,45 @@ export class MenuScene extends Phaser.Scene {
         '🔫 Kickbacks: every 10 damage you deal with daggers or Spray earns 3 bullets (up to 50).';
       const passiveDesc = this.add.text(COL_X + 14, innerY, passiveText, {
         fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#e09aa2',
+        wordWrap: { width: COL_W - 28 }, lineSpacing: 3,
+      });
+      scrollContainer.add(passiveDesc);
+      innerY += passiveDesc.height + 20;
+    }
+
+    // Passion's passive is the entire element — the five abilities below are only ways of
+    // moving the number this paragraph describes, so it has to come before them.
+    if (elementId === 'passion') {
+      sectionHdr('— PASSIVE —', '#ff5fa2');
+      const passiveText =
+        '💘 Love Bar: every enemy gets a second meter the moment you see them, as large as the '
+        + 'health they had at that instant — so a boss is a long project and an Invasion husk is '
+        + 'two clicks. Fill it and they are charmed and dead on the spot, through any shield, '
+        + 'absorb or invincibility. Nothing in the game lowers it.\n\n'
+        + '💗 They show it on their face: a light blush at 25%, a deep red one at 50%, and at 75% '
+        + 'their eyes turn into hearts.';
+      const passiveDesc = this.add.text(COL_X + 14, innerY, passiveText, {
+        fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#ffb3d0',
+        wordWrap: { width: COL_W - 28 }, lineSpacing: 3,
+      });
+      scrollContainer.add(passiveDesc);
+      innerY += passiveDesc.height + 20;
+    }
+
+    // Paper's passive is a save-backed progression system rather than an in-match mechanic, so
+    // the ability list can't carry it. This is the summary; the Journal tab is the real thing.
+    if (elementId === 'paper') {
+      sectionHdr('— PASSIVE —', '#e8c65c');
+      const filled = journalTotalUnlocked();
+      const passiveText =
+        '📖 The Journal: every fight you take as Paper is written up afterwards. Beat an element '
+        + 'and you learn how to press it; lose to it and you learn how to survive it. Three '
+        + 'entries each way, six per element, and they last forever — but only against the '
+        + 'element they were written about.\n\n'
+        + `📝 ${filled} of ${journalTotalPossible()} entries written. Open THE JOURNAL tab to read them.\n\n`
+        + '📕 Invasion does not count: it is mixed-element husk waves, so there is nobody to take notes on.';
+      const passiveDesc = this.add.text(COL_X + 14, innerY, passiveText, {
+        fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#e0d3a8',
         wordWrap: { width: COL_W - 28 }, lineSpacing: 3,
       });
       scrollContainer.add(passiveDesc);
@@ -1505,6 +1612,28 @@ export class MenuScene extends Phaser.Scene {
         }
       }
 
+      // ── Passion's Q easter egg ──
+      // Ten taps on the Exhibition row put a heart next to it; the heart toggles which of the
+      // ability's two poses the character strikes. Deliberately undiscoverable — the row gives
+      // no feedback at all until the last tap, and the toggle persists once found.
+      const passionQ = elementId === 'passion' && ab.displayKey === 'Q';
+      if (passionQ && !PlayerData.isPassionQUnlocked()) {
+        const tapZone = this.add.rectangle(cx, innerY + 13, COL_W - 10, 26, 0xffffff, 0)
+          .setInteractive({ useHandCursor: false });
+        tapZone.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+          ptr.event.stopPropagation();
+          const taps = PlayerData.tapPassionQ();
+          if (taps >= PlayerData.PASSION_Q_TAPS_REQUIRED) {
+            Sfx.play('unlock');
+            this.showElementInfo(elementId, width, height, cx);
+          } else {
+            // A whisper, not a counter: the pitch creeps up so a curious player keeps going.
+            Sfx.play('ui-hover', { rate: 0.9 + taps * 0.06, volume: 0.35 });
+          }
+        });
+        rowObjs.push(tapZone);
+      }
+
       const rowBg = this.overlayRow(cx, innerY + rowH / 2, COL_W, rowH - 6,
         showUpgraded && upgrade ? C.gold : C.frost, !(showUpgraded && upgrade)).g;
 
@@ -1518,6 +1647,27 @@ export class MenuScene extends Phaser.Scene {
       }).setOrigin(0, 0.5);
 
       scrollContainer.add([rowBg, keyBadge, abilityName, ...rowObjs]);
+
+      // The heart itself, once the taps above have earned it. Sits right after the ability's
+      // name, which is why it is built here rather than with the tap zone.
+      if (passionQ && PlayerData.isPassionQUnlocked()) {
+        const on = PlayerData.isPassionQCensored();
+        const toggle = this.add.text(COL_X + 62 + abilityName.width, innerY + 13, on ? '💖' : '🤍', {
+          fontSize: '13px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
+        }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
+        toggle.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+          ptr.event.stopPropagation();
+          PlayerData.setPassionQCensored(!on);
+          Sfx.play(on ? 'ui-toggle-off' : 'ui-toggle-on');
+          this.showElementInfo(elementId, width, height, cx);
+        });
+        const hint = this.add.text(COL_X + COL_W - 14, innerY + 13,
+          on ? '🔞 CENSORED POSE' : '✨ GLAMOUR POSE', {
+            fontSize: '9px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+            color: on ? '#ff5fa2' : '#665566',
+          }).setOrigin(1, 0.5);
+        scrollContainer.add([toggle, hint]);
+      }
 
       if (showUpgraded && upgrade) {
         const badge = this.add.text(COL_X + COL_W - 14, innerY + 13, owned ? '✓ OWNED' : '🔒 LOCKED', {
@@ -1704,6 +1854,106 @@ export class MenuScene extends Phaser.Scene {
       depth: 56, cut: 8,
       onClick: () => this.closeElementInfo(),
     }).container);
+  }
+
+  /**
+   * Renders Paper's Journal tab. Returns the new innerY.
+   *
+   * One collapsed row per element — forty-odd of them — because six entries each expanded at once
+   * is two hundred and fifty rows of text and nobody reads that. Every element is listed whether
+   * or not it has been fought, so the tab reads as a book to fill in rather than a list of things
+   * that have happened; locked entries are shown greyed with the result that would unlock them,
+   * for the same reason.
+   */
+  private renderPaperJournal(
+    container: Phaser.GameObjects.Container,
+    cx: number, colX: number, colW: number, startY: number,
+    width: number, height: number,
+  ): number {
+    let y = startY;
+
+    const filled = journalTotalUnlocked();
+    const total = journalTotalPossible();
+    const hdr = this.add.text(cx, y, `— THE JOURNAL · ${filled} / ${total} —`, {
+      fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#e8c65c',
+    }).setOrigin(0.5);
+    container.add(hdr);
+    y += 22;
+
+    const intro = this.add.text(colX + 14, y,
+      'Fight an element as Paper and the result is written up here. Three wins over it fill the '
+      + 'right-hand page, three losses to it fill the left. Every entry is permanent, and every '
+      + 'entry only applies in that matchup. Tap an element to read it.', {
+        fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#b8ac88',
+        wordWrap: { width: colW - 28 }, lineSpacing: 3,
+      });
+    container.add(intro);
+    y += intro.height + 14;
+
+    for (const id of journalElementIds()) {
+      const prog = journalProgress(id);
+      const color = journalElementColor(id);
+      const hex = '#' + color.toString(16).padStart(6, '0');
+      const expanded = this.expandedJournal.has(id);
+      const rowH = 30;
+
+      const rowBg = this.overlayRow(cx, y + rowH / 2, colW, rowH - 4, color).g;
+      const nameText = this.add.text(colX + 16, y + rowH / 2,
+        `${journalElementEmoji(id)}  ${journalElementName(id)}`, {
+          fontSize: '12px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+          color: prog.unlocked > 0 ? hex : '#5a5a66',
+        }).setOrigin(0, 0.5);
+
+      // Six pips: three for the losses, three for the wins, so the shape of a matchup — beaten
+      // it a lot, never lost to it — is readable without opening the entry.
+      const pips = this.add.text(colX + colW - 78, y + rowH / 2,
+        `${'◆'.repeat(Math.min(3, prog.losses))}${'◇'.repeat(3 - Math.min(3, prog.losses))}`
+        + ` ${'◆'.repeat(Math.min(3, prog.wins))}${'◇'.repeat(3 - Math.min(3, prog.wins))}`, {
+          fontSize: '11px', color: prog.unlocked > 0 ? '#e8c65c' : '#44424a',
+        }).setOrigin(1, 0.5);
+      const tally = this.add.text(colX + colW - 16, y + rowH / 2, `${prog.unlocked}/6`, {
+        fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+        color: prog.unlocked === 6 ? '#88ff88' : '#776f5a',
+      }).setOrigin(1, 0.5);
+
+      const hit = this.add.rectangle(cx, y + rowH / 2, colW, rowH - 4, 0xffffff, 0)
+        .setInteractive({ useHandCursor: true });
+      hit.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+        ptr.event.stopPropagation();
+        if (expanded) this.expandedJournal.delete(id); else this.expandedJournal.add(id);
+        Sfx.play('ui-click');
+        this.showElementInfo('paper', width, height, cx);
+      });
+      container.add([rowBg, nameText, pips, tally, hit]);
+      y += rowH + 4;
+
+      if (!expanded) continue;
+
+      for (const entry of journalEntries(id)) {
+        const lock = entry.source === 'loss'
+          ? `LOSE ${entry.rank}×` : `WIN ${entry.rank}×`;
+        const title = this.add.text(colX + 30, y,
+          `${entry.unlocked ? '📖' : '🔒'} ${entry.name}`, {
+            fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+            color: entry.unlocked ? '#ffe9a8' : '#5a5648',
+          });
+        const badge = this.add.text(colX + colW - 22, y, entry.unlocked ? '✓' : lock, {
+          fontSize: '9px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+          color: entry.unlocked ? '#88ff88' : '#5a5648',
+        }).setOrigin(1, 0);
+        const body = this.add.text(colX + 30, y + 15,
+          `${entry.note}\n▸ ${entry.effectText}`, {
+            fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
+            color: entry.unlocked ? '#a89c7c' : '#4a4740',
+            wordWrap: { width: colW - 62 }, lineSpacing: 2,
+          });
+        container.add([title, badge, body]);
+        y += 15 + body.height + 8;
+      }
+      y += 6;
+    }
+
+    return y + 10;
   }
 
   /** Renders Creation's Build Mode tab — the Nexus potion recipes. Returns the new innerY. */
@@ -2753,6 +3003,9 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private handleElementClick(elementId: string, width: number, height: number, cx: number): void {
+    // Locking in a choice moves the whole screen on, so it gets the heavier
+    // equip sound rather than the plain button click.
+    Sfx.play('ui-equip');
     if (this.selectionPhase === 'player') {
       this.playerChoice = elementId;
       if (this.isInvasion || this.isBoss || this.bounty) {
