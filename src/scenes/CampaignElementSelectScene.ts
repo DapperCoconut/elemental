@@ -2,6 +2,8 @@ import Phaser from 'phaser';
 import { getAnyWorld, ABSTRACT_WORLDS } from '../data/AbstractWorlds';
 import { WORLDS } from '../data/Worlds';
 import * as PlayerData from '../data/PlayerData';
+import { openBondPicker } from '../ui';
+import { unlockedFinaleElements } from './MenuScene';
 import { getPerksForElement, getPerkById } from '../data/Perks';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
@@ -15,7 +17,11 @@ import {
   emptyRunBoosts,
 } from '../data/GauntletData';
 import { MUTATIONS, getBossMutationIds } from '../data/Mutations';
-import { getWorldTier, isAbstractWorld } from '../data/CampaignFights';
+import { getWorldTier, isAbstractWorld, isCorruptWorld, ELEMENT_DISPLAY } from '../data/CampaignFights';
+import { getEffectiveFightDef } from '../data/CampaignFightsHard';
+import { CORRUPT_WORLDS } from '../data/CorruptWorlds';
+import { TagTeamState, isPledgeFight } from '../data/FightFormats';
+import { getWorldBossDef } from '../boss/bosses';
 import { Music } from '../audio';
 
 const GAUNTLET_EXCLUDED_MUTATIONS = new Set(['boss', 'raid']);
@@ -32,14 +38,14 @@ const BASE_ELEMENTS: ElementDef[] = [
   { id: 'water', name: 'Water', emoji: '💧', color: 0x0088ff },
   { id: 'life',  name: 'Life',  emoji: '🌿', color: 0x44cc44 },
   { id: 'air',   name: 'Air',   emoji: '💨', color: 0xaaddff },
-  { id: 'earth', name: 'Earth', emoji: '🪨', color: 0x887755 },
+  { id: 'earth', name: 'Earth', emoji: '🗿', color: 0x887755 },
 ];
 
 const COMBINED_ELEMENTS: ElementDef[] = [
   { id: 'oil',     name: 'Oil',      emoji: '🛢️', color: 0x664400 },
   { id: 'shadow',  name: 'Shadow',   emoji: '🌑', color: 0x330044 },
-  { id: 'ice',     name: 'Ice',      emoji: '🧊', color: 0x88ccff },
-  { id: 'growth',  name: 'Growth',   emoji: '🦠', color: 0x88bb22 },
+  { id: 'ice',     name: 'Ice',      emoji: '❄️', color: 0x88ccff },
+  { id: 'growth',  name: 'Growth',   emoji: '🐛', color: 0x88bb22 },
   { id: 'crystal', name: 'Crystal',  emoji: '💎', color: 0x88ccff },
   { id: 'soul',    name: 'Soul',     emoji: '👻', color: 0xccaaff },
   { id: 'hunt',    name: 'Hunt',     emoji: '🐺', color: 0xcc4400 },
@@ -54,26 +60,28 @@ const ABSTRACT_ELEMENT_UNLOCK_MAP: Record<string, string> = {
 
 const ABSTRACT_ELEMENTS: ElementDef[] = [
   { id: 'electricity', name: 'Electricity', emoji: '⚡', color: 0xffee00 },
-  { id: 'slime',       name: 'Acid',        emoji: '🟢', color: 0x66cc44 },
+  { id: 'slime',       name: 'Acid',        emoji: '💚', color: 0x66cc44 },
   { id: 'fate',        name: 'Fate',        emoji: '🃏', color: 0x88eecc },
   { id: 'sound',       name: 'Sound',       emoji: '🔊', color: 0xff66cc },
   { id: 'light',       name: 'Light',       emoji: '✨', color: 0xfff4a8 },
 ];
 
 const ABSTRACT_COMBINED_ELEMENTS: ElementDef[] = [
-  { id: 'magnet',     name: 'Magnet',     emoji: '🧲', color: 0xcc2244 },
+  { id: 'magnet',     name: 'Magnet',     emoji: '🔗', color: 0xcc2244 },
   { id: 'metal',      name: 'Metal',      emoji: '⚙️',  color: 0x8899aa },
   { id: 'plasma',     name: 'Plasma',     emoji: '🔮',  color: 0xaa22ff },
   { id: 'gunpowder', name: 'Gunpowder', emoji: '💀',  color: 0x440066 },
   { id: 'echo',       name: 'Echo',       emoji: '🦇',  color: 0xccccff },
-  { id: 'rubber',     name: 'Rubber',     emoji: '🪀',  color: 0xff5577 },
+  { id: 'rubber',     name: 'Rubber',     emoji: '🎾',  color: 0xff5577 },
   { id: 'magic',      name: 'Magic',      emoji: '📖',  color: 0x9944ff },
   { id: 'technology', name: 'Technology', emoji: '💻',  color: 0x44ccaa },
-  { id: 'silence',    name: 'Silence',    emoji: '🫥',  color: 0x1a0022 },
-  { id: 'quantum',    name: 'Quantum',    emoji: '⚛️',  color: 0xaa44ff },
+  { id: 'silence',    name: 'Silence',    emoji: '😶',  color: 0x1a0022 },
+  { id: 'subterfuge', name: 'Subterfuge', emoji: '🕴️', color: 0xcc2233 },
 ];
 
 export class CampaignElementSelectScene extends Phaser.Scene {
+  /** Set once the bond modal has answered, so re-entry does not reopen it. */
+  private bondChosen = false;
   private worldId = 'fire';
   private nodeId = 'fire-fight-1';
   private isChallenge = false;
@@ -84,6 +92,8 @@ export class CampaignElementSelectScene extends Phaser.Scene {
   private difficulty = 1;
   private campaignMutations: string[] = [];
   private campaignStarredMutations: string[] = [];
+  /** Mid-run tag-team state — set when re-picking after a death. */
+  private tagTeam: TagTeamState | null = null;
 
   private elemPage = 0;
   private perkIndices: Record<string, number> = {};
@@ -96,8 +106,9 @@ export class CampaignElementSelectScene extends Phaser.Scene {
   init(data: {
     worldId: string; nodeId: string; isChallenge: boolean; kind: string;
     slotIdx: 0 | 1 | 2; hardMode: boolean; enemyElementId: string; difficulty: number;
-    mutations?: string[]; starredMutations?: string[];
+    mutations?: string[]; starredMutations?: string[]; tagTeam?: TagTeamState;
   }): void {
+    this.tagTeam = data.tagTeam ?? null;
     this.worldId = data.worldId;
     this.nodeId = data.nodeId;
     this.isChallenge = data.isChallenge;
@@ -124,12 +135,25 @@ export class CampaignElementSelectScene extends Phaser.Scene {
 
     const enemyDef = this.findElement(this.enemyElementId);
     const worldName = (world?.name ?? '').toUpperCase();
-    const vsLine = enemyDef
+    let vsLine = enemyDef
       ? `${worldName} WORLD   ·   VS  ${enemyDef.emoji} ${enemyDef.name.toUpperCase()}`
       : `${worldName} WORLD`;
+    const pledge = isPledgeFight(this.tagTeam);
+    if (this.tagTeam) {
+      const burned = this.tagTeam.usedElements
+        .map((id) => this.findElement(id)?.emoji ?? id)
+        .join(' ');
+      const left = this.tagTeam.pledgesLeft ?? 0;
+      vsLine = (pledge
+        ? `🛡 ${left} PLEDGE${left === 1 ? '' : 'S'} LEFT`
+        : `FOE ${this.tagTeam.index + 1}/${this.tagTeam.enemies.length}`)
+        + (burned ? `   ·   ${pledge ? 'FALLEN' : 'BURNED'}: ${burned}` : '');
+    }
 
     addTitle(this, {
-      x: cx, y: 62, text: 'CHOOSE YOUR ELEMENT', accent, size: 34,
+      // The pledge picker is only ever reached by dying, so it never reads "choose".
+      x: cx, y: 62, size: 34, accent,
+      text: pledge ? 'A SOVEREIGN ANSWERS' : (this.tagTeam ? 'TAG IN' : 'CHOOSE YOUR ELEMENT'),
       subtitle: vsLine,
     });
 
@@ -140,10 +164,14 @@ export class CampaignElementSelectScene extends Phaser.Scene {
   }
 
   private findElement(id: string): ElementDef | undefined {
-    return BASE_ELEMENTS.find((e) => e.id === id)
+    const known = BASE_ELEMENTS.find((e) => e.id === id)
       ?? COMBINED_ELEMENTS.find((e) => e.id === id)
       ?? ABSTRACT_ELEMENTS.find((e) => e.id === id)
       ?? ABSTRACT_COMBINED_ELEMENTS.find((e) => e.id === id);
+    if (known) return known;
+    // Corrupt-realm opponents (the cast-out elements) are display-only here.
+    const display = ELEMENT_DISPLAY[id];
+    return display ? { id, name: display.name, emoji: display.emoji, color: 0xc4392c } : undefined;
   }
 
   private renderElements(width: number, height: number, cx: number): void {
@@ -159,7 +187,9 @@ export class CampaignElementSelectScene extends Phaser.Scene {
       return needed ? completedGauntlets.includes(needed) : false;
     });
     const unlockedAbstractCombined = ABSTRACT_COMBINED_ELEMENTS.filter((e) => PlayerData.isElementUnlocked(e.id));
-    const unlockedExtra = [...unlockedCombined, ...unlockedAbstract, ...unlockedAbstractCombined];
+    // The campaign's own reward, so it belongs on the campaign's roster too.
+    const unlockedFinale = unlockedFinaleElements();
+    const unlockedExtra = [...unlockedCombined, ...unlockedAbstract, ...unlockedAbstractCombined, ...unlockedFinale];
 
     const PAGE_SIZE = 5;
     const extraPages = Math.max(1, Math.ceil(unlockedExtra.length / PAGE_SIZE));
@@ -317,7 +347,7 @@ export class CampaignElementSelectScene extends Phaser.Scene {
           centerColor = isEquipped ? T.good : hex(mix(C.arcane, 0xffffff, 0.5));
         } else {
           const recipe = getPerkById(perk.id)?.ingredients.map((r) => {
-            const em: Record<string, string> = { fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🪨' };
+            const em: Record<string, string> = { fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🗿' };
             return em[r] ?? r;
           }).join('+') ?? '';
           centerText = `🔒 ${perk.name}  ${recipe}`;
@@ -333,6 +363,17 @@ export class CampaignElementSelectScene extends Phaser.Scene {
   }
 
   private selectElement(elementId: string): void {
+    // Quantum is two elements, and which two has to be settled before anything is launched.
+    // The picker writes the choice to the save; ArenaScene reads it from there.
+    if (elementId === 'quantum' && !this.bondChosen) {
+      openBondPicker(this, (a, b) => {
+        PlayerData.setQuantumBond(a, b);
+        this.bondChosen = true;
+        this.selectElement(elementId);
+      });
+      return;
+    }
+
     this.scene.stop('CampaignWorldScene');
 
     if (this.kind === 'gauntlet') {
@@ -361,12 +402,43 @@ export class CampaignElementSelectScene extends Phaser.Scene {
       return;
     }
 
+    // A challenge node whose world has a Sovereign is a boss fight, not a
+    // mutation duel — the def drives the whole encounter and mutations stay home.
+    const bossDef = this.isChallenge ? getWorldBossDef(this.worldId) : undefined;
+
+    // Tag-team: elements burned by earlier deaths in this bout stay burned.
+    if (this.tagTeam?.usedElements.includes(elementId)) {
+      this.cameras.main.shake(150, 0.004);
+      return;
+    }
+    // A fresh bout on a tag-team fight def opens the chain at foe one.
+    let tagTeam = this.tagTeam;
+    let enemyElementId = this.enemyElementId;
+    if (!tagTeam) {
+      const format = getEffectiveFightDef(this.nodeId, this.hardMode)?.format;
+      // Chains are duels only — the def drives a boss encounter, so a list of foes has
+      // nothing to swap in. A pledge fight is the opposite: it exists *for* the boss,
+      // giving the finale its lives without changing who is standing there.
+      if (format?.kind === 'tagteam' && !bossDef) {
+        tagTeam = { enemies: format.enemies, index: 0, enemyHp: null, usedElements: [] };
+      } else if (format?.kind === 'pledge') {
+        tagTeam = {
+          enemies: [this.enemyElementId], index: 0, enemyHp: null, usedElements: [],
+          pledgesLeft: format.pledges, bossResume: null,
+        };
+      }
+    }
+    if (tagTeam) enemyElementId = tagTeam.enemies[tagTeam.index];
+
     this.scene.start('ArenaScene', {
       elementId,
-      enemyElementId: this.enemyElementId,
+      enemyElementId,
       difficulty: this.difficulty,
-      mutations: this.campaignMutations,
-      starredMutations: this.campaignStarredMutations,
+      mode: bossDef ? 'worldboss' : undefined,
+      bossId: bossDef ? this.worldId : undefined,
+      mutations: bossDef ? [] : this.campaignMutations,
+      starredMutations: bossDef ? [] : this.campaignStarredMutations,
+      tagTeam: tagTeam ?? undefined,
       playerPerk: PlayerData.getEquippedPerk(elementId),
       campaign: {
         slot: this.slotIdx,
@@ -381,12 +453,15 @@ export class CampaignElementSelectScene extends Phaser.Scene {
   /** Deeper worlds send tougher husks; Hard Mode sends the worst of them. */
   private invasionDifficultyId(): string {
     if (this.hardMode) return 'masochistic';
-    if (getWorldTier(this.worldId) >= 2 || isAbstractWorld(this.worldId)) return 'brutal';
+    if (getWorldTier(this.worldId) >= 2 || isAbstractWorld(this.worldId) || isCorruptWorld(this.worldId)) return 'brutal';
     return 'normal';
   }
 
   private launchCampaignGauntlet(elementId: string): void {
-    const allElementIds = [...WORLDS, ...ABSTRACT_WORLDS].map((w) => w.id);
+    // A corrupt world's gauntlet draws its bouts from the cast-out elements —
+    // every one of them has NPC AI, and the realm should feel like itself.
+    const allElementIds = (isCorruptWorld(this.worldId) ? CORRUPT_WORLDS : [...WORLDS, ...ABSTRACT_WORLDS])
+      .map((w) => w.id);
     const regularPool = allElementIds.filter((id) => id !== this.worldId);
 
     const allowedMutations = MUTATIONS

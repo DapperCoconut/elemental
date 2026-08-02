@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import * as PlayerData from '../data/PlayerData';
+import { isCheatMode } from '../data/Cheats';
 import { findRecipe } from '../data/Recipes';
 import { ABSTRACT_ELEMENT_IDS, ABSTRACT_ELEMENT_UNLOCK_MAP } from '../data/AbstractElements';
 import { findPerkRecipe, findQuadPerkRecipe, findPentaPerkRecipe, findAbstractTriplePerkRecipe, PerkDef, ALL_PERKS } from '../data/Perks';
@@ -25,12 +26,12 @@ const BASE_ELEMENTS = [
   { id: 'water', name: 'Water', emoji: '💧', color: 0x0088ff },
   { id: 'life',  name: 'Life',  emoji: '🌿', color: 0x44cc44 },
   { id: 'air',   name: 'Air',   emoji: '💨', color: 0xaaddff },
-  { id: 'earth', name: 'Earth', emoji: '🪨', color: 0x887755 },
+  { id: 'earth', name: 'Earth', emoji: '🗿', color: 0x887755 },
 ];
 
 const ALL_ABSTRACT_ELEMENTS = [
   { id: 'electricity', name: 'Electricity', emoji: '⚡', color: 0xffee00 },
-  { id: 'slime',       name: 'Acid',        emoji: '🟢', color: 0x66cc44 },
+  { id: 'slime',       name: 'Acid',        emoji: '💚', color: 0x66cc44 },
   { id: 'fate',        name: 'Fate',        emoji: '🃏', color: 0x88eecc },
   { id: 'sound',       name: 'Sound',       emoji: '🔊', color: 0xff66cc },
   { id: 'light',       name: 'Light',       emoji: '✨', color: 0xfff4a8 },
@@ -113,6 +114,19 @@ export class LabScene extends Phaser.Scene {
       this.input.keyboard!.on('keydown-SPACE', () => {
         this.cameras.main.fade(280, 0, 0, 0);
         this.time.delayedCall(300, () => this.scene.start('DisgracedLabScene'));
+      });
+    }
+
+    // The Entanglement Lab, where Quantum is taught a new pair. Reachable whenever Quantum
+    // is owned — a bond is researched here rather than fused from nuclei upstairs.
+    // Cheat mode counts as unlocked here for the same reason the rosters treat it that way:
+    // an existing cheat profile predates the grant and will never be topped up on its own.
+    if (PlayerData.isElementUnlocked('quantum') || isCheatMode()) {
+      addButton(this, {
+        x: 92, y: height - 34, w: 150, h: 32,
+        label: '⚛ ENTANGLEMENT',
+        accent: 0x7df9ff, fontSize: 11,
+        onClick: () => this.scene.start('QuantumLabScene'),
       });
     }
 
@@ -823,8 +837,8 @@ export class LabScene extends Phaser.Scene {
     const cx = width / 2;
 
     const ELEM_EMOJI: Record<string, string> = {
-      fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🪨',
-      electricity: '⚡', slime: '🟢', fate: '🃏', sound: '🔊', light: '✨',
+      fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🗿',
+      electricity: '⚡', slime: '💚', fate: '🃏', sound: '🔊', light: '✨',
     };
 
     const SCROLL_TOP = 104;

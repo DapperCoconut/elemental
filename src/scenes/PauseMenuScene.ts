@@ -64,7 +64,7 @@ export class PauseMenuScene extends Phaser.Scene {
 
     addButton(this, {
       x: cx, y: cy + 68, w: 240, h: 44,
-      label: 'EXIT TO MENU', icon: '⏻', accent: C.blood, variant: 'danger', fontSize: 15,
+      label: 'EXIT TO MENU', icon: '🚪', accent: C.blood, variant: 'danger', fontSize: 15,
       depth: DEPTH.modalContent,
       onClick: exitToMenu,
     });

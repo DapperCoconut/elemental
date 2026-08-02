@@ -1,10 +1,16 @@
 import Phaser from 'phaser';
 import { getAnyWorld } from '../data/AbstractWorlds';
 import {
-  getCampaignFightDef, getCampaignReward, getWorldTier, isAbstractWorld,
+  getCampaignFightDef, getCampaignReward, getWorldTier, isAbstractWorld, isCorruptWorld,
   DIFFICULTY_LABEL, ELEMENT_DISPLAY,
 } from '../data/CampaignFights';
+import { getEffectiveFightDef, hasHardRemix } from '../data/CampaignFightsHard';
 import { MUTATIONS, getMutationDef } from '../data/Mutations';
+import { getWorldBossDef } from '../boss/bosses';
+import type { WorldBossDef } from '../boss/framework/BossDefs';
+import { describeFormat } from '../data/FightFormats';
+import { getWorldGimmick } from '../data/WorldGimmicks';
+import { maybePlayStory } from './DialogueScene';
 import { consumedItemIds, getItem } from '../data/Items';
 import * as CP from '../data/CampaignProgress';
 import { drawCampaignBackground } from './CampaignBackground';
@@ -32,6 +38,8 @@ export class CampaignFightMenuScene extends Phaser.Scene {
   private kind = 'fight';
   private slotIdx: 0 | 1 | 2 = 0;
   private hardMode = false;
+  /** Set when this world's challenge node has a Sovereign — the briefing becomes a boss card. */
+  private bossDef: WorldBossDef | undefined;
 
   // ── Labels re-painted whenever Hard Mode flips ────────────────────
   private rewardText: Phaser.GameObjects.Text | null = null;
@@ -56,16 +64,20 @@ export class CampaignFightMenuScene extends Phaser.Scene {
     this.hardMode = data?.hardMode ?? false;
   }
 
-  /** Difficulty actually used, once Hard Mode is folded in. */
+  /**
+   * Difficulty actually used, once Hard Mode is folded in. A Second Telling
+   * remix carries its own difficulty; only un-remixed nodes get the +1 bump.
+   */
   private get effectiveDifficulty(): number {
-    const base = getCampaignFightDef(this.nodeId)?.difficulty ?? (this.kind === 'fight' ? 1 : 2);
-    return this.hardMode ? Math.min(5, base + 1) : base;
+    const base = getEffectiveFightDef(this.nodeId, this.hardMode)?.difficulty
+      ?? (this.kind === 'fight' ? 1 : 2);
+    return this.hardMode && !hasHardRemix(this.nodeId) ? Math.min(5, base + 1) : base;
   }
 
   /** Mirrors CampaignElementSelectScene.invasionDifficultyId() for the briefing. */
   private invasionIntensityLabel(): string {
     if (this.hardMode) return 'Masochistic';
-    if (getWorldTier(this.worldId) >= 2 || isAbstractWorld(this.worldId)) return 'Brutal';
+    if (getWorldTier(this.worldId) >= 2 || isAbstractWorld(this.worldId) || isCorruptWorld(this.worldId)) return 'Brutal';
     return 'Normal';
   }
 
@@ -80,7 +92,8 @@ export class CampaignFightMenuScene extends Phaser.Scene {
     if (!this.scene.isPaused('CampaignWorldScene')) {
       drawCampaignBackground(this, this.worldId, width, height).setDepth(DEPTH.backdrop);
     }
-    const def = getCampaignFightDef(this.nodeId);
+    const def = getEffectiveFightDef(this.nodeId, this.hardMode);
+    this.bossDef = this.kind === 'challenge' ? getWorldBossDef(this.worldId) : undefined;
     const cleared = this.isChallenge
       ? CP.isChallengeCompleted(this.slotIdx, this.worldId)
       : CP.isFightCompleted(this.slotIdx, this.worldId, this.nodeId);
@@ -95,14 +108,17 @@ export class CampaignFightMenuScene extends Phaser.Scene {
     const stageLabel =
       this.kind === 'invasion'  ? '👾  INVASION' :
       this.kind === 'gauntlet'  ? '🏆  GAUNTLET' :
-      this.kind === 'challenge' ? `${world?.emoji ?? '⚔️'}  CHALLENGE` :
+      this.kind === 'challenge' ? (this.bossDef ? '👑  WORLD BOSS' : `${world?.emoji ?? '⚔️'}  CHALLENGE`) :
       `${world?.emoji ?? '⚔️'}  FIGHT ${fightNum ?? '?'}`;
 
     // The bespoke bout name is the headline; the stage number becomes the kicker.
-    const title = def?.name ? def.name.toUpperCase() : stageLabel;
-    const subtitle = def?.name
-      ? `${stageLabel}   ·   ${(world?.name ?? '').toUpperCase()} WORLD${cleared ? '   ·   ✓ CLEARED' : ''}`
-      : (world ? `${world.name.toUpperCase()} WORLD` : undefined);
+    const title = this.bossDef ? this.bossDef.name.toUpperCase()
+      : def?.name ? def.name.toUpperCase() : stageLabel;
+    const subtitle = this.bossDef
+      ? `${stageLabel}   ·   ${this.bossDef.title.toUpperCase()}${cleared ? '   ·   ✓ CLEARED' : ''}`
+      : def?.name
+        ? `${stageLabel}   ·   ${(world?.name ?? '').toUpperCase()} WORLD${cleared ? '   ·   ✓ CLEARED' : ''}`
+        : (world ? `${world.name.toUpperCase()} WORLD` : undefined);
 
     const panel = addModal(this, {
       w: PANEL_W, h: PANEL_H, accent, title, subtitle, glow: 0.5,
@@ -111,8 +127,9 @@ export class CampaignFightMenuScene extends Phaser.Scene {
     let y = panel.contentTop + 24;
 
     // ── Taunt ───────────────────────────────────────────────────────
-    if (def?.taunt) {
-      this.add.text(cx, y, `“${def.taunt}”`, {
+    const taunt = this.bossDef?.intro[0] ?? def?.taunt;
+    if (taunt) {
+      this.add.text(cx, y, `“${taunt}”`, {
         fontSize: '13px', fontFamily: FONT_UI, fontStyle: 'italic',
         color: hex(mix(accent, 0xffffff, 0.6)),
         wordWrap: { width: PANEL_W - 90 }, align: 'center',
@@ -127,7 +144,9 @@ export class CampaignFightMenuScene extends Phaser.Scene {
 
     if (def) {
       const elem = ELEMENT_DISPLAY[def.enemyElementId];
-      const enemyStr = elem ? `${elem.emoji}  ${elem.name}` : def.enemyElementId;
+      const enemyStr = this.bossDef
+        ? `👑  ${this.bossDef.name}`
+        : elem ? `${elem.emoji}  ${elem.name}` : def.enemyElementId;
       const statY = y - 14;
       const inner = PANEL_W / 2 - 54;
 
@@ -150,9 +169,28 @@ export class CampaignFightMenuScene extends Phaser.Scene {
       divider.beginPath(); divider.moveTo(cx - inner, y + 8); divider.lineTo(cx + inner, y + 8); divider.strokePath();
       fillDiamond(divider, cx, y + 8, 3, accent, 0.5);
 
-      // Mutation badges — starred ones flagged in gold.
-      const active = MUTATIONS.filter((m) => def.mutations?.includes(m.id));
-      if (active.length > 0) {
+      // Sovereign duels have no mutations — the badges read out the phases instead.
+      const active = this.bossDef ? [] : MUTATIONS.filter((m) => def.mutations?.includes(m.id));
+      if (this.bossDef) {
+        this.add.text(cx - inner, y + 26, 'PHASES', {
+          fontSize: '9px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2,
+        }).setOrigin(0, 0.5).setDepth(DEPTH.modalContent);
+        let bx = cx - inner + 86;
+        const phaseNames = this.bossDef.phases.map((p) => p.name);
+        if (this.bossDef.hard?.extraPhase) phaseNames.push(`☠ ${this.bossDef.hard.extraPhase.name}`);
+        phaseNames.forEach((name, i) => {
+          const hardOnly = name.startsWith('☠');
+          const badge = addBadge(this, {
+            x: bx, y: y + 26,
+            text: `${i + 1}. ${name.replace('☠ ', '')}${hardOnly ? ' (Hard)' : ''}`,
+            accent: hardOnly ? C.blood : C.corrupt,
+            depth: DEPTH.modalContent,
+            glow: hardOnly,
+          });
+          badge.setX(bx + badge.width / 2);
+          bx += badge.width + 8;
+        });
+      } else if (active.length > 0) {
         this.add.text(cx - inner, y + 26, 'MUTATIONS', {
           fontSize: '9px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2,
         }).setOrigin(0, 0.5).setDepth(DEPTH.modalContent);
@@ -180,7 +218,7 @@ export class CampaignFightMenuScene extends Phaser.Scene {
     } else {
       const blurb = this.kind === 'gauntlet'
         ? 'A randomised run — five bouts and a boss, back to back, no healing between them.'
-        : 'Endless husk waves. Every tenth wave brings a boss. Pays 🩸 Corrupt Shards, not Sparks.';
+        : 'Endless husk waves. Every tenth wave brings a boss. Pays 🔴 Corrupt Shards, not Sparks.';
       this.add.text(cx, y - 8, blurb, {
         fontSize: '12.5px', fontFamily: FONT_UI, color: T.dim,
         wordWrap: { width: PANEL_W - 110 }, align: 'center',
@@ -192,7 +230,14 @@ export class CampaignFightMenuScene extends Phaser.Scene {
     }
 
     // ── What each mutation does ─────────────────────────────────────
-    if (def?.mutations?.length) {
+    if (this.bossDef) {
+      const line = this.add.text(cx - PANEL_W / 2 + 40, y,
+        '👑  A choreographed duel. Every attack is telegraphed — learn the cycle, and mind the harassment underneath it.', {
+          fontSize: '11px', fontFamily: FONT_UI, color: T.dim,
+          wordWrap: { width: PANEL_W - 80 },
+        }).setOrigin(0, 0).setDepth(DEPTH.modalContent);
+      y += line.height + 9;
+    } else if (def?.mutations?.length) {
       for (const id of def.mutations) {
         const m = getMutationDef(id);
         if (!m) continue;
@@ -205,6 +250,24 @@ export class CampaignFightMenuScene extends Phaser.Scene {
         y += line.height + 5;
       }
       y += 4;
+    }
+
+    // ── Fight format + the world's standing rule ────────────────────
+    if (def?.format) {
+      const line = this.add.text(cx - PANEL_W / 2 + 40, y, describeFormat(def.format), {
+        fontSize: '11px', fontFamily: FONT_UI, color: T.gold,
+        wordWrap: { width: PANEL_W - 80 },
+      }).setOrigin(0, 0).setDepth(DEPTH.modalContent);
+      y += line.height + 6;
+    }
+    const gimmick = getWorldGimmick(this.worldId);
+    if (gimmick && this.kind !== 'invasion' && this.kind !== 'gauntlet') {
+      const line = this.add.text(cx - PANEL_W / 2 + 40, y,
+        `⚖ ${gimmick.name.toUpperCase()} — ${gimmick.blurb}`, {
+          fontSize: '10.5px', fontFamily: FONT_UI, color: T.dim,
+          wordWrap: { width: PANEL_W - 80 },
+        }).setOrigin(0, 0).setDepth(DEPTH.modalContent);
+      y += line.height + 8;
     }
 
     // ── Armed items ─────────────────────────────────────────────────
@@ -240,11 +303,24 @@ export class CampaignFightMenuScene extends Phaser.Scene {
     const hardNote =
       this.kind === 'invasion' ? 'sends the nastiest husk mix from the first wave'
       : this.kind === 'gauntlet' ? 'seven bouts instead of six, every mutation starred'
+      : this.bossDef ? '+35% health  ·  faster cycles  ·  no heals  ·  an extra phase  ·  ×1.75 Sparks'
       : '+1 difficulty  ·  every regular mutation starred  ·  ×1.75 Sparks';
     addToggle(this, {
       x: cx + 34, y: y + 8, value: this.hardMode, accent: C.blood,
       label: '🔥 HARD MODE', depth: DEPTH.modalContent,
-      onChange: (v) => { this.hardMode = v; this.refreshDerived(); },
+      onChange: (v) => {
+        this.hardMode = v;
+        // A Second Telling remix changes the whole card — opponent, name,
+        // mutations — so the briefing has to be rebuilt, not repainted.
+        if (hasHardRemix(this.nodeId)) {
+          this.scene.restart({
+            worldId: this.worldId, nodeId: this.nodeId, isChallenge: this.isChallenge,
+            kind: this.kind, slotIdx: this.slotIdx, hardMode: v,
+          });
+          return;
+        }
+        this.refreshDerived();
+      },
     });
     this.add.text(cx, y + 32, hardNote, {
       fontSize: '9.5px', fontFamily: FONT_UI, color: T.faint,
@@ -272,6 +348,9 @@ export class CampaignFightMenuScene extends Phaser.Scene {
     this.input.keyboard!.on('keydown-ESC', () => this.close());
 
     this.refreshDerived();
+
+    // First look at a Sovereign: the boss speaks before the briefing is read.
+    if (this.bossDef) maybePlayStory(this, this.slotIdx, `boss-pre:${this.worldId}`);
   }
 
   /** Repaint the two labels Hard Mode changes. */
@@ -279,7 +358,9 @@ export class CampaignFightMenuScene extends Phaser.Scene {
     const d = this.effectiveDifficulty;
     if (this.difficultyText?.active) {
       this.difficultyText
-        .setText((DIFFICULTY_LABEL[d] ?? String(d)).toUpperCase())
+        .setText(this.bossDef
+          ? (this.hardMode ? '☠ SOVEREIGN' : 'SOVEREIGN')
+          : (DIFFICULTY_LABEL[d] ?? String(d)).toUpperCase())
         .setColor(this.hardMode ? hex(mix(C.blood, 0xffffff, 0.4)) : T.bright);
     }
     if (this.rewardText?.active) {
@@ -297,16 +378,19 @@ export class CampaignFightMenuScene extends Phaser.Scene {
 
   private startFight(): void {
     const world = getAnyWorld(this.worldId);
-    const def = getCampaignFightDef(this.nodeId);
+    const def = getEffectiveFightDef(this.nodeId, this.hardMode);
     const enemyElementId = def?.enemyElementId ?? world?.parentId ?? world?.id ?? 'fire';
     const mutations = def?.mutations ?? [];
 
-    // Hard Mode stars every *regular* mutation. Boss mutations are deliberately left
-    // alone — they ship with no starred variant, so starring one changes nothing but
-    // would misreport the fight in the briefing.
-    const starredMutations = this.hardMode
-      ? mutations.filter((id) => !getMutationDef(id)?.bossOnly)
-      : (def?.starredMutations ?? []);
+    // A Second Telling remix authors its own stars. On un-remixed nodes Hard
+    // Mode stars every *regular* mutation; boss mutations are deliberately left
+    // alone — they ship with no starred variant, so starring one changes nothing
+    // but would misreport the fight in the briefing.
+    const starredMutations = this.hardMode && hasHardRemix(this.nodeId)
+      ? (def?.starredMutations ?? [])
+      : this.hardMode
+        ? mutations.filter((id) => !getMutationDef(id)?.bossOnly)
+        : (def?.starredMutations ?? []);
 
     this.scene.start('CampaignElementSelectScene', {
       worldId: this.worldId,
@@ -329,6 +413,12 @@ export class CampaignFightMenuScene extends Phaser.Scene {
    * be started fresh instead.
    */
   private close(): void {
+    // The Amalgam has no world scene behind it — it is opened straight off the
+    // corrupt map, so that is where backing out belongs.
+    if (this.worldId === 'amalgam') {
+      this.scene.start('CampaignWorldMapScene', { slotIdx: this.slotIdx, mode: 'corrupt' });
+      return;
+    }
     if (this.scene.isPaused('CampaignWorldScene')) {
       this.scene.stop();
       this.scene.resume('CampaignWorldScene');

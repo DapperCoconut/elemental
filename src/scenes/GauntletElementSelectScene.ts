@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 import * as PlayerData from '../data/PlayerData';
+import { openBondPicker } from '../ui';
+import { unlockedFinaleElements } from './MenuScene';
 import {
   GAUNTLET_GROUPS,
   GAUNTLET_ELEMENTS,
@@ -26,14 +28,14 @@ const BASE_ELEMENTS: ElementDef[] = [
   { id: 'water', name: 'Water', emoji: '💧', color: 0x0088ff },
   { id: 'life',  name: 'Life',  emoji: '🌿', color: 0x44cc44 },
   { id: 'air',   name: 'Air',   emoji: '💨', color: 0xaaddff },
-  { id: 'earth', name: 'Earth', emoji: '🪨', color: 0x887755 },
+  { id: 'earth', name: 'Earth', emoji: '🗿', color: 0x887755 },
 ];
 
 const COMBINED_ELEMENTS: ElementDef[] = [
   { id: 'oil',      name: 'Oil',      emoji: '🛢️', color: 0x664400 },
   { id: 'shadow',   name: 'Shadow',   emoji: '🌑',  color: 0x330044 },
-  { id: 'ice',      name: 'Ice',      emoji: '🧊',  color: 0x88ccff },
-  { id: 'growth',   name: 'Growth',   emoji: '🦠',  color: 0x88bb22 },
+  { id: 'ice',      name: 'Ice',      emoji: '❄️',  color: 0x88ccff },
+  { id: 'growth',   name: 'Growth',   emoji: '🐛',  color: 0x88bb22 },
   { id: 'crystal',  name: 'Crystal',  emoji: '💎',  color: 0x88ccff },
   { id: 'soul',     name: 'Soul',     emoji: '👻',  color: 0xccaaff },
   { id: 'hunt',     name: 'Hunt',     emoji: '🐺',  color: 0xcc4400 },
@@ -48,26 +50,28 @@ const ABSTRACT_ELEMENT_UNLOCK_MAP: Record<string, string> = {
 
 const ABSTRACT_ELEMENTS: ElementDef[] = [
   { id: 'electricity', name: 'Electricity', emoji: '⚡', color: 0xffee00 },
-  { id: 'slime',       name: 'Acid',        emoji: '🟢', color: 0x66cc44 },
+  { id: 'slime',       name: 'Acid',        emoji: '💚', color: 0x66cc44 },
   { id: 'fate',        name: 'Fate',        emoji: '🃏', color: 0x88eecc },
   { id: 'sound',       name: 'Sound',       emoji: '🔊', color: 0xff66cc },
   { id: 'light',       name: 'Light',       emoji: '✨', color: 0xfff4a8 },
 ];
 
 const ABSTRACT_COMBINED_ELEMENTS: ElementDef[] = [
-  { id: 'magnet',     name: 'Magnet',     emoji: '🧲', color: 0xcc2244 },
+  { id: 'magnet',     name: 'Magnet',     emoji: '🔗', color: 0xcc2244 },
   { id: 'metal',      name: 'Metal',      emoji: '⚙️',  color: 0x8899aa },
   { id: 'plasma',     name: 'Plasma',     emoji: '🔮',  color: 0xaa22ff },
   { id: 'gunpowder', name: 'Gunpowder', emoji: '💀',  color: 0x440066 },
   { id: 'echo',       name: 'Echo',       emoji: '🦇',  color: 0xccccff },
-  { id: 'rubber',     name: 'Rubber',     emoji: '🪀',  color: 0xff5577 },
+  { id: 'rubber',     name: 'Rubber',     emoji: '🎾',  color: 0xff5577 },
   { id: 'magic',      name: 'Magic',      emoji: '📖',  color: 0x9944ff },
   { id: 'technology', name: 'Technology', emoji: '💻',  color: 0x44ccaa },
-  { id: 'silence',    name: 'Silence',    emoji: '🫥',  color: 0x1a0022 },
-  { id: 'quantum',    name: 'Quantum',    emoji: '⚛️',  color: 0xaa44ff },
+  { id: 'silence',    name: 'Silence',    emoji: '😶',  color: 0x1a0022 },
+  { id: 'subterfuge', name: 'Subterfuge', emoji: '🕴️', color: 0xcc2233 },
 ];
 
 export class GauntletElementSelectScene extends Phaser.Scene {
+  /** Set once the bond modal has answered, so re-entry does not reopen it. */
+  private bondChosen = false;
   private gauntletId = 'fire';
   private hardMode = false;
   private elemPage = 0;
@@ -99,7 +103,7 @@ export class GauntletElementSelectScene extends Phaser.Scene {
     const battleCount = this.hardMode ? '7' : '5';
     const isInfinity = this.gauntletId === INFINITY_GAUNTLET_ID;
     const label = isInfinity
-      ? `♾️ INFINITY GAUNTLET${modeTag}  ·  ENDLESS — FIGHT UNTIL YOU DIE`
+      ? `∞ INFINITY GAUNTLET${modeTag}  ·  ENDLESS — FIGHT UNTIL YOU DIE`
       : gauntletEl
       ? `${gauntletEl.emoji} ${gauntletEl.name.toUpperCase()} GAUNTLET${modeTag}  ·  ${battleCount} BATTLES + A BOSS`
       : 'GAUNTLET';
@@ -129,7 +133,9 @@ export class GauntletElementSelectScene extends Phaser.Scene {
       return needed ? completedGauntlets.includes(needed) : false;
     });
     const unlockedAbstractCombined = ABSTRACT_COMBINED_ELEMENTS.filter((e) => PlayerData.isElementUnlocked(e.id));
-    const unlockedExtra = [...unlockedCombined, ...unlockedAbstract, ...unlockedAbstractCombined];
+    // The campaign's own reward, so it belongs on the campaign's roster too.
+    const unlockedFinale = unlockedFinaleElements();
+    const unlockedExtra = [...unlockedCombined, ...unlockedAbstract, ...unlockedAbstractCombined, ...unlockedFinale];
 
     const PAGE_SIZE = 5;
     const extraPages = Math.max(1, Math.ceil(unlockedExtra.length / PAGE_SIZE));
@@ -291,7 +297,7 @@ export class GauntletElementSelectScene extends Phaser.Scene {
           centerColor = isEquipped ? T.good : hex(mix(C.arcane, 0xffffff, 0.5));
         } else {
           const recipe = getPerkById(perk.id)?.ingredients.map((r) => {
-            const em: Record<string, string> = { fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🪨' };
+            const em: Record<string, string> = { fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🗿' };
             return em[r] ?? r;
           }).join('+') ?? '';
           centerText = `🔒 ${perk.name}  ${recipe}`;
@@ -307,6 +313,15 @@ export class GauntletElementSelectScene extends Phaser.Scene {
   }
 
   private selectElement(elementId: string): void {
+    // Same gate as the campaign and the main menu: Quantum needs its pair before launch.
+    if (elementId === 'quantum' && !this.bondChosen) {
+      openBondPicker(this, (a, b) => {
+        PlayerData.setQuantumBond(a, b);
+        this.bondChosen = true;
+        this.selectElement(elementId);
+      });
+      return;
+    }
     if (this.gauntletId === INFINITY_GAUNTLET_ID) {
       // Infinity: first fight is generated by GauntletIntermediaryScene's launchInfinityFight.
       // We start with fight 0 "complete" so the intermediary scene generates fight 1.

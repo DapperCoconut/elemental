@@ -1,5 +1,6 @@
-import { WORLDS, getChildWorlds, getFightNodes } from './Worlds';
-import { ABSTRACT_WORLDS, getAbstractChildWorlds } from './AbstractWorlds';
+import { getChildWorlds, getFightNodes } from './Worlds';
+import { ABSTRACT_WORLDS, ALL_WORLDS, getAbstractChildWorlds } from './AbstractWorlds';
+import { CORRUPT_WORLDS, getCorruptChildWorlds } from './CorruptWorlds';
 
 import { saveKey } from './Cheats';
 
@@ -18,7 +19,11 @@ export interface CampaignSlot {
   sparks?: number;         // earned from any campaign win
   cheated?: boolean;       // set when WWSSADADBA grants keys to this slot
   portalUnlocked?: boolean; // set when player spends 10 keys on the portal
+  /** Set when the player spends 20 keys on the scarred portal to the Corrupt Realm. */
+  corruptPortalUnlocked?: boolean;
   inventory?: Record<string, number>; // itemId → count
+  /** Story beats already shown, so dialogue never replays. */
+  seenStoryBeats?: string[];
 }
 
 interface CampaignData {
@@ -27,19 +32,64 @@ interface CampaignData {
   slots: [CampaignSlot | null, CampaignSlot | null, CampaignSlot | null];
 }
 
+/**
+ * Subterfuge's world used to be `quantum` — its fight nodes were `quantum-fight-1..5`,
+ * its challenge `quantum-challenge`, and its story beats `world-enter:quantum` and friends.
+ * The id moved to `subterfuge` when the real Quantum element took the name, so a campaign
+ * slot written before that has clears filed under ids nothing looks up any more.
+ *
+ * Rewrites them in place on load. Idempotent, and never clobbers an existing `subterfuge`
+ * entry — a slot that somehow has both keeps the newer one and merges the clears in.
+ */
+function migrateSubterfugeWorld(slot: CampaignSlot): void {
+  const OLD = 'quantum';
+  const NEW = 'subterfuge';
+  const rename = (id: string): string => (id === OLD || id.startsWith(`${OLD}-`)
+    ? NEW + id.slice(OLD.length)
+    : id);
+
+  const oldFights = slot.fightsCompleted?.[OLD];
+  if (oldFights) {
+    const merged = new Set([...(slot.fightsCompleted[NEW] ?? []), ...oldFights.map(rename)]);
+    slot.fightsCompleted[NEW] = [...merged];
+    delete slot.fightsCompleted[OLD];
+  }
+
+  const worldLists: Array<string[] | undefined> = [
+    slot.challengesCompleted, slot.gauntletsCompleted,
+  ];
+  for (const list of worldLists) {
+    if (!list) continue;
+    const at = list.indexOf(OLD);
+    if (at < 0) continue;
+    if (list.includes(NEW)) list.splice(at, 1);
+    else list[at] = NEW;
+  }
+
+  if (slot.seenStoryBeats) {
+    // Beat ids are `<kind>:<worldId>` — rewrite only the world half.
+    slot.seenStoryBeats = [...new Set(slot.seenStoryBeats.map((id) => {
+      const colon = id.lastIndexOf(':');
+      return colon < 0 ? id : `${id.slice(0, colon + 1)}${rename(id.slice(colon + 1))}`;
+    }))];
+  }
+}
+
 function load(): CampaignData {
   try {
     const raw = localStorage.getItem(campaignKey());
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<CampaignData>;
+      const slots: [CampaignSlot | null, CampaignSlot | null, CampaignSlot | null] = [
+        parsed.slots?.[0] ?? null,
+        parsed.slots?.[1] ?? null,
+        parsed.slots?.[2] ?? null,
+      ];
+      for (const slot of slots) if (slot) migrateSubterfugeWorld(slot);
       return {
         version: 1,
         activeSlot: parsed.activeSlot ?? null,
-        slots: [
-          parsed.slots?.[0] ?? null,
-          parsed.slots?.[1] ?? null,
-          parsed.slots?.[2] ?? null,
-        ],
+        slots,
       };
     }
   } catch {
@@ -233,20 +283,101 @@ export function isPortalUnlocked(idx: 0 | 1 | 2): boolean {
   return load().slots[idx]?.portalUnlocked ?? false;
 }
 
-export function purchasePortal(idx: 0 | 1 | 2): boolean {
-  if (!spendKeys(idx, 10)) return false;
+/**
+ * Opens the portal without charging for it. The cheat save's route in — granting the flag
+ * directly means a fully-unlocked profile never depends on paying a cost or meeting a
+ * prerequisite in the right order.
+ */
+export function unlockPortal(idx: 0 | 1 | 2): void {
   const data = load();
   const slot = data.slots[idx];
-  if (!slot) return false;
+  if (!slot) return;
   slot.portalUnlocked = true;
   save(data);
+}
+
+export function purchasePortal(idx: 0 | 1 | 2): boolean {
+  if (!spendKeys(idx, 10)) return false;
+  unlockPortal(idx);
   return true;
+}
+
+export const CORRUPT_PORTAL_COST = 20;
+/** Sovereigns that must fall in the Abstract Realm before the scar will open. */
+export const CORRUPT_PORTAL_CHALLENGES = 5;
+
+export function isCorruptPortalUnlocked(idx: 0 | 1 | 2): boolean {
+  return load().slots[idx]?.corruptPortalUnlocked ?? false;
+}
+
+/** How many Abstract Realm challenges are down — the scar's other prerequisite. */
+export function abstractChallengesCleared(idx: 0 | 1 | 2): number {
+  const slot = load().slots[idx];
+  if (!slot) return 0;
+  return ABSTRACT_WORLDS.filter((w) => slot.challengesCompleted.includes(w.id)).length;
+}
+
+export function canOpenCorruptPortal(idx: 0 | 1 | 2): boolean {
+  return isPortalUnlocked(idx) && abstractChallengesCleared(idx) >= CORRUPT_PORTAL_CHALLENGES;
+}
+
+/** Tears the scar open with no keys and no prerequisites — see `unlockPortal`. */
+export function unlockCorruptPortal(idx: 0 | 1 | 2): void {
+  const data = load();
+  const slot = data.slots[idx];
+  if (!slot) return;
+  slot.corruptPortalUnlocked = true;
+  save(data);
+}
+
+export function purchaseCorruptPortal(idx: 0 | 1 | 2): boolean {
+  if (!canOpenCorruptPortal(idx)) return false;
+  if (!spendKeys(idx, CORRUPT_PORTAL_COST)) return false;
+  unlockCorruptPortal(idx);
+  return true;
+}
+
+// ── The Amalgam ──────────────────────────────────────────────────────
+// The finale is not a world: it hangs off the corrupt map's heart and opens
+// only once every Sovereign in the scar has been put back on its feet.
+
+/** The pseudo-world the Amalgam's completion is filed under. */
+export const AMALGAM_WORLD_ID = 'amalgam';
+
+export function corruptChallengesCleared(idx: 0 | 1 | 2): number {
+  const slot = load().slots[idx];
+  if (!slot) return 0;
+  return CORRUPT_WORLDS.filter((w) => slot.challengesCompleted.includes(w.id)).length;
+}
+
+export function canFightAmalgam(idx: 0 | 1 | 2): boolean {
+  return isCorruptPortalUnlocked(idx) && corruptChallengesCleared(idx) >= CORRUPT_WORLDS.length;
+}
+
+export function isAmalgamFelled(idx: 0 | 1 | 2): boolean {
+  return isChallengeCompleted(idx, AMALGAM_WORLD_ID);
+}
+
+// ── Story beats ──────────────────────────────────────────────────────
+
+export function hasSeenStoryBeat(idx: 0 | 1 | 2, beatId: string): boolean {
+  return load().slots[idx]?.seenStoryBeats?.includes(beatId) ?? false;
+}
+
+export function markStoryBeatSeen(idx: 0 | 1 | 2, beatId: string): void {
+  const data = load();
+  const slot = data.slots[idx];
+  if (!slot) return;
+  if (!slot.seenStoryBeats) slot.seenStoryBeats = [];
+  if (!slot.seenStoryBeats.includes(beatId)) {
+    slot.seenStoryBeats.push(beatId);
+    save(data);
+  }
 }
 
 // ── Gating logic ─────────────────────────────────────────────────────
 
-const findWorld = (id: string) =>
-  WORLDS.find((w) => w.id === id) ?? ABSTRACT_WORLDS.find((w) => w.id === id);
+const findWorld = (id: string) => ALL_WORLDS.find((w) => w.id === id);
 
 /** True once all five numbered fights of a world are won (the challenge is not counted). */
 export function areFightsCleared(idx: 0 | 1 | 2, worldId: string): boolean {
@@ -259,7 +390,8 @@ export function isWorldUnlocked(idx: 0 | 1 | 2, worldId: string): boolean {
   const world = findWorld(worldId);
   if (!world) return false;
   if (world.parentId === null) {
-    // Abstract root requires the portal to be purchased; normal root is always open.
+    // Each realm's root is gated on its portal; the normal root is always open.
+    if (CORRUPT_WORLDS.some((w) => w.id === worldId)) return isCorruptPortalUnlocked(idx);
     if (ABSTRACT_WORLDS.some((w) => w.id === worldId)) return isPortalUnlocked(idx);
     return true;
   }
@@ -287,7 +419,7 @@ export function isChallengeUnlocked(idx: 0 | 1 | 2, worldId: string): boolean {
 // ── Children unlock preview ───────────────────────────────────────────
 
 export function getUnlockedChildWorlds(idx: 0 | 1 | 2, parentId: string): string[] {
-  return [...getChildWorlds(parentId), ...getAbstractChildWorlds(parentId)]
+  return [...getChildWorlds(parentId), ...getAbstractChildWorlds(parentId), ...getCorruptChildWorlds(parentId)]
     .filter((w) => isWorldUnlocked(idx, w.id))
     .map((w) => w.id);
 }

@@ -477,10 +477,10 @@ export class DepthsKit {
 
     this.avatar(owner)?.play('dash', ang);
     this.fx(owner).slashArc(f.x, f.y, ang, SLASH_REACH * 0.8, boosted ? DPT.lure : DPT.cyan);
-    if (boosted) this.api.showFloatingText(f.x, f.y - 50, '🩸 FED', this.hex(DPT.blood));
+    if (boosted) this.api.showFloatingText(f.x, f.y - 50, '🔴 FED', this.hex(DPT.blood));
 
     if (victim) this.startDrown(owner, victim);
-    else this.api.showFloatingText(f.x, f.y - 46, '🫧 MISSED', this.hex(DPT.trench));
+    else this.api.showFloatingText(f.x, f.y - 46, '💦 MISSED', this.hex(DPT.trench));
   }
 
   /** R — Eutrophication. The only ability in the kit that helps the person it is aimed at. */
@@ -783,7 +783,7 @@ export class DepthsKit {
 
     this.fx(owner).ring(px, py, 14, PUDDLE_R * 1.6, DPT.cyan, 620);
     this.fx(owner).splash(victim.x, victim.y, 30, DPT.trench);
-    this.api.showFloatingText(victim.x, victim.y - 48, '🫧 NO AIR', this.hex(DPT.cyan));
+    this.api.showFloatingText(victim.x, victim.y - 48, '💦 NO AIR', this.hex(DPT.cyan));
     Sfx.playAt('bubble', victim.x, { volume: 0.85, rate: 0.7 });
   }
 
@@ -792,7 +792,7 @@ export class DepthsKit {
       const d = this.drowns[i];
       if (!this.alive(d.victim) || time >= d.endsAt) {
         if (this.alive(d.victim)) {
-          this.api.showFloatingText(d.victim.x, d.victim.y - 46, '🫧 SURFACED', this.hex(DPT.foam));
+          this.api.showFloatingText(d.victim.x, d.victim.y - 46, '💦 SURFACED', this.hex(DPT.foam));
           this.fx(d.owner).bubbles(d.px, d.py, 8, 40, DPT.foam, 520, 7);
         }
         this.drowns.splice(i, 1);
@@ -971,7 +971,7 @@ export class DepthsKit {
             this.slowed.set(t, time + ICEFISH_SLOW_MS);
             this.api.spawnHitFlash(t.x, t.y, DPT.ice);
             this.fx(p.owner).bubbles(t.x, t.y, 7, 26, DPT.ice, 520, 9);
-            this.api.showFloatingText(t.x, t.y - 44, '🧊 CHILLED', this.hex(DPT.ice));
+            this.api.showFloatingText(t.x, t.y - 44, '❄️ CHILLED', this.hex(DPT.ice));
             consumed = true;
             break;
           }
@@ -1270,7 +1270,7 @@ export class DepthsKit {
     } : null);
 
     this.api.setStatusIndicator('depths-frenzy', playerIsDepths && s.boostUntil > time ? {
-      name: 'Feeding Frenzy', emoji: '🩸', color: DPT.blood,
+      name: 'Feeding Frenzy', emoji: '🔴', color: DPT.blood,
       description: 'Something took the bait. +50% movement speed, and Lungfish Strike hits for 30 instead of 15.',
       until: s.boostUntil, priority: 100,
     } : null);
@@ -1291,7 +1291,7 @@ export class DepthsKit {
     // ── Victim side: everything below can be on the player whoever is playing Depths. ──
     const drown = this.drowns.find((d) => d.victim === p);
     this.api.setStatusIndicator('depths-drowning', drown ? {
-      name: drown.o2 > 0 ? 'Drowning' : 'No Air', emoji: '🫧', color: DPT.cyan,
+      name: drown.o2 > 0 ? 'Drowning' : 'No Air', emoji: '💦', color: DPT.cyan,
       description: 'Your oxygen is running out. Reach the dark puddle to refill it — once the bar empties, the water takes 12 HP a second.',
       until: drown.endsAt, priority: 8,
     } : null);
@@ -1305,7 +1305,7 @@ export class DepthsKit {
 
     const chill = this.slowed.get(p);
     this.api.setStatusIndicator('depths-chilled', chill && chill > time ? {
-      name: 'Chilled', emoji: '🧊', color: DPT.ice,
+      name: 'Chilled', emoji: '❄️', color: DPT.ice,
       description: 'An icefish caught you. 20% slower until it wears off.',
       until: chill, priority: 30,
     } : null);

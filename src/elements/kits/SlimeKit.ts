@@ -642,7 +642,7 @@ export class SlimeKit {
   private startMelt(target: Fighter, time: number): void {
     const buffs = this.snapshotBuffs(target);
     this.meltStatuses.set(target, { until: time + MELT_DURATION_MS, nextDripAt: time + MELT_TICK_MS, buffs, color: target.element.color });
-    this.arena.showFloatingText(target.x, target.y - 40, '🫠 Melting!', '#33cc33');
+    this.arena.showFloatingText(target.x, target.y - 40, '🤢 Melting!', '#33cc33');
     // A running tell on the victim for the whole melt, not just on the tick frames.
     if (!this.meltAuras.has(target)) {
       this.meltAuras.set(target, new AcidAura(this.arena.scene, this.pcol, 'melt', VILE_TONES, 24, 4));
@@ -692,7 +692,7 @@ export class SlimeKit {
       labels.push(b.label);
     }
     this.meltBuffExpireAt = time + MELT_BUFF_GRANT_MS;
-    this.arena.showFloatingText(recipient.x, recipient.y - 44, `🫠 ${labels.join(', ')} (8s)`, '#33ff99');
+    this.arena.showFloatingText(recipient.x, recipient.y - 44, `🤢 ${labels.join(', ')} (8s)`, '#33ff99');
   }
 
   private revertMeltBuffs(recipient: Fighter): void {
@@ -779,7 +779,7 @@ export class SlimeKit {
         life: 340, fall: 20, depth: 6, tones: VILE_TONES,
       });
     }
-    this.arena.showFloatingText(player.x, player.y - 30, '🧪 Vile Spray!', '#66ff33');
+    this.arena.showFloatingText(player.x, player.y - 30, '⚗️ Vile Spray!', '#66ff33');
   }
 
   private fireBurst(): void {

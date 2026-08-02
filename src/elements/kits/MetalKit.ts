@@ -1234,7 +1234,7 @@ export class MetalKit {
     // The wound opening — a snap of spray on application. The continuous tell is the bleed aura,
     // so the status stays readable on the victim between ticks.
     this.fx(appliedBy).spray(victim.x, victim.y, 8, { speed: 170, size: 3.4, life: 620, depth: 6 });
-    this.arena.showFloatingText(victim.x, victim.y - 36, '🩸 BLEEDING', '#cc0000');
+    this.arena.showFloatingText(victim.x, victim.y - 36, '🔴 BLEEDING', '#cc0000');
   }
 
   spawnMetalBloodPuddle(x: number, y: number, owner: 'player' | 'npc'): void {
@@ -1338,7 +1338,7 @@ export class MetalKit {
     }
     // The seams letting go: a ring pushed out with the shards riding it.
     this.fx(owner).ring(caster.x, caster.y, 12, 46, METAL.rose, 300, 7, 3);
-    this.arena.showFloatingText(caster.x, caster.y - 30, '🩸 SHARD BURST', '#ff3355');
+    this.arena.showFloatingText(caster.x, caster.y - 30, '🔴 SHARD BURST', '#ff3355');
   }
 
   // ── Per-frame update helpers ──────────────────────────────────────────────
@@ -1400,7 +1400,7 @@ export class MetalKit {
         puddle.drainAccum += delta;
         if (puddle.drainAccum >= 1000) {
           puddle.drainAccum -= 1000;
-          this.arena.showFloatingText(owner.x, owner.y - 22, '+10 🩸', '#ff3355');
+          this.arena.showFloatingText(owner.x, owner.y - 22, '+10 🔴', '#ff3355');
         }
         if (puddle.blood <= 0) this.metalBloodPuddles.splice(i, 1);
       }
@@ -1792,7 +1792,7 @@ export class MetalKit {
     }
     if (drained > 0) {
       this.addBlood(gt.owner, drained);
-      this.arena.showFloatingText(gt.x, gt.y - 20, `+${Math.round(drained)} 🩸`, '#ff3355');
+      this.arena.showFloatingText(gt.x, gt.y - 20, `+${Math.round(drained)} 🔴`, '#ff3355');
     }
   }
 

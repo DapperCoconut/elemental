@@ -543,7 +543,7 @@ export class SoulKit {
         fx.bloom(grave.x, grave.y, 30, 9, 4, ANGERED_TONES);
         fx.wisps(grave.x, grave.y, 8, { speed: 90, size: 3, life: 620, rise: -40, depth: 6, tones: ANGERED_TONES });
         fx.ring(grave.x, grave.y, 8, 54, SOUL.blood, 420, 4, 5);
-        this.arena.showFloatingText(grave.x, grave.y - 30, '🩸 GRAVE ENHANCED', '#ff3333');
+        this.arena.showFloatingText(grave.x, grave.y - 30, '🔴 GRAVE ENHANCED', '#ff3333');
         return;
       }
     }
@@ -577,7 +577,7 @@ export class SoulKit {
     fx.bloom(x, y + 6, 26, 8, 4, tones);
     fx.ring(x, y + 14, 6, 44, tones.glow, 420, 3.5, 4);
     fx.motes(x, y, 4, 22, 5, tones);
-    this.arena.showFloatingText(x, y - 26, '🪦 GRAVE PLACED', '#ccaaff');
+    this.arena.showFloatingText(x, y - 26, '⚰️ GRAVE PLACED', '#ccaaff');
   }
 
   doDeathWhistle(tx: number, ty: number, owner: Owner): void {
@@ -878,7 +878,7 @@ export class SoulKit {
             rec.carrionUntil = time + CARRION_BUFF_MS;
             husk.walkSpeedMult = CARRION_SPEED_MULT;
             if (rec.dashUntil === 0) husk.biteDamage = this.effectiveDamage(rec, rec.baseBiteDamage, time);
-            this.arena.showFloatingText(husk.x, husk.y - 46, '🩸 CARRION CALL', '#ff3333');
+            this.arena.showFloatingText(husk.x, husk.y - 46, '🔴 CARRION CALL', '#ff3333');
           }
           rec.waypoint = null;
         } else {
@@ -1278,7 +1278,7 @@ export class SoulKit {
     const before = f.hp;
     f.heal(amount);
     const overflow = amount - (f.hp - before);
-    if (overflow > 0) f.weakHp = Math.min(f.maxHp, f.weakHp + overflow); // Quantum-style weak HP
+    if (overflow > 0) f.weakHp = Math.min(f.maxHp, f.weakHp + overflow); // weak HP
   }
 
   /** Blaster variant: friendly amalgams hit foes, hostile grave zombies hit the given targets directly. */

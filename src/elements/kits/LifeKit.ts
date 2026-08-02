@@ -614,7 +614,7 @@ export class LifeKit {
     f.ring(target.x, target.y, 10, 46, living ? LIFE.rose : LIFE.pale, 440, 5, 5);
     f.vineLash(caster.x, caster.y, target.x, target.y, living ? LIFE.rose : LIFE.leaf, 5);
     this.avatarFor(owner)?.play('clap', Math.atan2(target.y - caster.y, target.x - caster.x));
-    this.api.showFloatingText(target.x, target.y - 44, living ? '🩸 Living Roots!' : '🛡️ Root Shield!', living ? '#ff6666' : '#aaeeff');
+    this.api.showFloatingText(target.x, target.y - 44, living ? '🔴 Living Roots!' : '🛡️ Root Shield!', living ? '#ff6666' : '#aaeeff');
   }
 
   /**
@@ -1026,7 +1026,7 @@ export class LifeKit {
             f.vineLash(p.x, p.y, victim.x, victim.y, LIFE.rose, 6);
             f.thornSpray(victim.x, victim.y, 4, 6);
             this.api.spawnHitFlash(victim.x, victim.y, this.colFor(owner)(LIFE.rose));
-            this.api.showFloatingText(victim.x, victim.y - 24, '🩸 -10', '#ff6666');
+            this.api.showFloatingText(victim.x, victim.y - 24, '🔴 -10', '#ff6666');
           }
         }
       }
@@ -1280,7 +1280,7 @@ export class LifeKit {
           p.accum -= 2000;
           friendly.heal(3);
           f.healBloom(friendly.x, friendly.y, 22, 5);
-          this.api.showFloatingText(friendly.x, friendly.y - 28, '🪷 +3', '#88ffcc');
+          this.api.showFloatingText(friendly.x, friendly.y - 28, '🏵️ +3', '#88ffcc');
         }
         break;
       }
@@ -1319,7 +1319,7 @@ export class LifeKit {
             f.vineLash(p.x, p.y, h.x, h.y, LIFE.pitcher, 6);
             f.bloomBurst(p.x, p.y, 36, 8, 3);
             f.spores(p.x, p.y, 2, 22, 5, LIFE.pitcher);
-            this.api.showFloatingText(p.x, p.y - 44, '🪴 Trapped!', '#88dd66');
+            this.api.showFloatingText(p.x, p.y - 44, '🌷 Trapped!', '#88dd66');
             break;
           }
         }
@@ -1390,9 +1390,9 @@ export class LifeKit {
     const labels: Record<SeedType, string> = {
       'sunflower': '🌻 Sharpened Petals!',
       'rose': '🌹 Vengeful Thorns!',
-      'nurse-lily': '🪷 Lifesteal!',
+      'nurse-lily': '🏵️ Lifesteal!',
       'nightcap': '🍄 Toxic Bloom!',
-      'pitcher': '🪴 Sticky Petals!',
+      'pitcher': '🌷 Sticky Petals!',
       'cotton': '☁️ +25% Speed!',
     };
     this.api.showFloatingText(target.x, target.y - 44, `💀 Reaped! ${labels[target.type]}`, '#ffdd66');
@@ -1469,7 +1469,7 @@ export class LifeKit {
       target.walkSpeedMult = Math.min(target.walkSpeedMult, 0.85);
       this.scheduleSlowClear(target, 2000);
       this.pfx.spores(target.x, target.y, 2, 20, 6, LIFE.pitcher);
-      this.api.showFloatingText(target.x, target.y - 26, '🪴 Slowed', '#88dd66');
+      this.api.showFloatingText(target.x, target.y - 26, '🌷 Slowed', '#88dd66');
     }
   }
 

@@ -4,8 +4,9 @@ import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
 import { Sfx } from '../../audio';
 import {
-  GarmentKind, PSN, PassionAvatar, PassionColorFn, PassionFx,
-  blush, garment, heart, heartEyes, heartOutline, loveBar, rose as drawRose,
+  GarmentKind, PASSION_SKIN_TINT, PSN, PassionAvatar, PassionColorFn, PassionFx,
+  bed as drawBed, blush, censorBar, garment, heart, heartEyes, heartOutline, jitter, kissMark,
+  loveBar, rose as drawRose,
 } from './PassionVisuals';
 
 type Owner = 'player' | 'npc';
@@ -87,6 +88,27 @@ const CLOTH_FLOOR_DROP = 16;
 /** They lie there for the whole pose, then go — the fade is how long "then go" takes. */
 const CLOTH_FADE_MS = 500;
 
+// ── Shop upgrades ────────────────────────────────────────────────────────────
+/** Click, "Show-off" — how many Loveshots have to connect back-to-back. */
+const SHOWOFF_STREAK = 3;
+const IMPRESSED_MS = 5000;
+const IMPRESSED_MULT = 1.5;
+/** E, "Dating" — extra love per Flirt already performed. Uncapped, by design. */
+const DATING_STEP = 4;
+/** R, "Make-out" — the bar has to be this full before the kiss turns into the finisher. */
+const MAKEOUT_MIN_RATIO = 0.9;
+const MAKEOUT_MS = 2400;
+const MAKEOUT_KISSES = 5;
+const MAKEOUT_FIRST_KISS_MS = 320;
+/** How far apart the two are held while it plays out. */
+const MAKEOUT_GAP = 15;
+/** F, "Spare" — every enemy has to be at least this far along, and you this close to dead. */
+const SPARE_MIN_LOVE = 0.5;
+const SPARE_HP_RATIO = 0.1;
+const SPARE_MS = 5000;
+/** Q, "Seduce" — everything love-related, for as long as the pose is up. */
+const SEDUCE_MULT = 1.5;
+
 // ── World objects ────────────────────────────────────────────────────────────
 
 /** A heart bullet or a thrown rose. The two share every field but what they do on arrival. */
@@ -110,6 +132,8 @@ interface Love {
   /** How many of the three thresholds have been announced, so each fires once. */
   stage: number;
   charmed: boolean;
+  /** Show-off: while this is in the future, everything landing on them is worth 1.5×. */
+  impressedUntil: number;
 }
 
 /**
@@ -169,6 +193,28 @@ interface Side {
   nextCheerAt: number;
   nextPoseTextAt: number;
   flashSide: number;
+  // Click upgrade — Show-off
+  /** Loveshots landed back-to-back. A shot that expires without touching anyone zeroes it. */
+  hitStreak: number;
+  // E upgrade — Dating
+  /** Flirts cast this match. Every one of them makes the next worth more. */
+  flirtCount: number;
+  // R upgrade — Make-out
+  makeoutUntil: number;
+  makeoutStartedAt: number;
+  makeoutTarget: Fighter | null;
+  makeoutKisses: number;
+  nextMakeoutKissAt: number;
+  /** Where the pair is held, and which way the bed under them is pointing. */
+  makeoutX: number;
+  makeoutY: number;
+  makeoutAng: number;
+  /** Mature mode was on when it started — latched, so toggling mid-animation can't swap the art. */
+  makeoutBed: boolean;
+  // F upgrade — Spare
+  spareUntil: number;
+  /** One rose is worth one sparing. Cleared the next time a rose is taken. */
+  spareUsedThisRose: boolean;
   // Aim
   aimX: number;
   aimY: number;
@@ -180,6 +226,10 @@ function makeSide(owner: Owner): Side {
     dashUntil: 0, dashVx: 0, dashVy: 0, kissed: [],
     roseUntil: 0, roseTakenAt: 0, lastRaw: 0, stacks: [], multOwned: false,
     poseUntil: 0, nextFlashAt: 0, nextCheerAt: 0, nextPoseTextAt: 0, flashSide: 1,
+    hitStreak: 0, flirtCount: 0,
+    makeoutUntil: 0, makeoutStartedAt: 0, makeoutTarget: null, makeoutKisses: 0,
+    nextMakeoutKissAt: 0, makeoutX: 0, makeoutY: 0, makeoutAng: 0, makeoutBed: false,
+    spareUntil: 0, spareUsedThisRose: false,
     aimX: 0, aimY: 0,
   };
 }
@@ -208,8 +258,15 @@ export interface PassionArenaApi {
   getNearestEnemy(fromX: number, fromY: number): Fighter;
   buildPlayerContext(x: number, y: number): CastContext;
   setStatusIndicator(id: string, status: CustomStatus | null): void;
-  /** The Exhibition easter egg, unlocked and toggled on the element's info panel. */
-  get censoredExhibition(): boolean;
+  /**
+   * Mature mode — the easter egg unlocked and toggled on the element's info panel. It changes
+   * how Exhibition and an upgraded Make-out are drawn, and nothing else.
+   */
+  get matureMode(): boolean;
+  /** True if the local player (Passion) has the given shop upgrade slot equipped. */
+  hasUpgrade(slot: string): boolean;
+  /** True if the online opponent (Passion) has it — their upgraded casts replay on this sim. */
+  hasNpcUpgrade(slot: string): boolean;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
 }
@@ -247,6 +304,8 @@ export class PassionKit {
   private lastFacing = new Map<Fighter, number>();
   /** Both maps are keyed by Fighter, and an Invasion run retires hundreds of them. */
   private nextPruneAt = 0;
+  /** Everyone currently wearing the bare-skin tint — see `updateBareSkin`. */
+  private bareSkinned = new Set<Fighter>();
 
   constructor(api: PassionArenaApi) {
     this.api = api;
@@ -280,6 +339,16 @@ export class PassionKit {
 
   private isPassion(owner: Owner): boolean {
     return owner === 'player' ? this.api.elementId === 'passion' : this.api.npcElementId === 'passion';
+  }
+
+  /**
+   * Whether the side casting owns a shop upgrade. The NPC half only ever answers true online,
+   * where it stands in for a remote player whose upgraded casts have to replay here.
+   */
+  private ownerHasUpgrade(owner: Owner, slot: string): boolean {
+    return owner === 'player'
+      ? this.api.elementId === 'passion' && this.api.hasUpgrade(slot)
+      : this.api.hasNpcUpgrade(slot);
   }
 
   /** Everything this side is allowed to charm. */
@@ -337,7 +406,7 @@ export class PassionKit {
   private loveOf(f: Fighter): Love {
     let l = this.loves.get(f);
     if (!l) {
-      l = { cur: 0, max: Math.max(1, f.maxHp), stage: 0, charmed: false };
+      l = { cur: 0, max: Math.max(1, f.maxHp), stage: 0, charmed: false, impressedUntil: 0 };
       this.loves.set(f, l);
     }
     return l;
@@ -358,19 +427,40 @@ export class PassionKit {
   }
 
   /**
+   * Everything that scales love on its way in: Show-off's Impressed window, which lives on the
+   * victim and lifts anything at all that lands on them, and Seduce, which lives on the caster
+   * and lifts everything they do while the pose is up. They multiply — a seduced Exhibition
+   * pouring into an impressed target is 2.25×, and that is the intended ceiling of the element.
+   */
+  private loveMult(owner: Owner, victim: Fighter): number {
+    let m = 1;
+    const l = this.loves.get(victim);
+    if (l && l.impressedUntil > this.now) m *= IMPRESSED_MULT;
+    if (this.side(owner).poseUntil > this.now && this.ownerHasUpgrade(owner, 'q')) m *= SEDUCE_MULT;
+    return m;
+  }
+
+  /**
    * The one way love is ever added. Nothing anywhere takes it away — no heal, no cleanse, no
    * shield and no death of the Passion user, which is the entire point of the element.
+   *
+   * `icon` is the emoji the pop-up is tagged with; the number in it is the amount *after* the
+   * multipliers, because a "+30 ❤" over someone who just took 45 is a lie the player will spot.
    */
-  private addLove(owner: Owner, victim: Fighter, amount: number, label?: string): void {
+  private addLove(owner: Owner, victim: Fighter, amount: number, icon?: string): void {
     if (amount <= 0 || !this.alive(victim)) return;
     const l = this.loveOf(victim);
     if (l.charmed) return;
 
-    l.cur = Math.min(l.max, l.cur + amount);
+    const mult = this.loveMult(owner, victim);
+    const applied = amount * mult;
+    l.cur = Math.min(l.max, l.cur + applied);
     const ratio = l.cur / l.max;
 
-    if (label) {
-      this.api.showFloatingText(victim.x, victim.y - 34, label, this.hex(PSN.hot));
+    if (icon) {
+      const boosted = mult > 1.001;
+      this.api.showFloatingText(victim.x, victim.y - 34, `+${Math.round(applied)} ${icon}`,
+        this.hex(boosted ? PSN.gold : PSN.hot));
     }
 
     const stage = this.stageOf(ratio);
@@ -419,6 +509,10 @@ export class PassionKit {
       const f = this.fighter(owner);
       if (f && this.sides[owner].multOwned) f.passionIncomingMult = 1;
     }
+    // The bare-skin tint is written onto the sprite, so a match that ended mid-scene would
+    // otherwise start the next one with a tan fighter.
+    for (const f of this.bareSkinned) if (f.active) f.clearTint();
+    this.bareSkinned.clear();
 
     this.sides = { player: makeSide('player'), npc: makeSide('npc') };
     this.loves.clear();
@@ -443,6 +537,10 @@ export class PassionKit {
     const s = this.sides.player;
     s.aimX = mouseX;
     s.aimY = mouseY;
+
+    // Make-out runs itself to the end. Nothing is castable out of it — it is a cutscene the
+    // player has already won, and letting them cancel it would only ever be a misclick.
+    if (s.makeoutUntil > this.now) return;
 
     const p = this.api.player;
     const ctx = this.api.buildPlayerContext(mouseX, mouseY);
@@ -501,6 +599,7 @@ export class PassionKit {
     s.aimY = ty;
 
     const ang = Math.atan2(ty - f.y, tx - f.x);
+    const dating = this.ownerHasUpgrade(owner, 'e') ? s.flirtCount * DATING_STEP : 0;
     let caught = 0;
     for (const t of this.targetsOf(owner)) {
       const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
@@ -509,8 +608,16 @@ export class PassionKit {
       if (off > FLIRT_HALF_ANGLE) continue;
       // Read the stage *before* this cast lands, so the bonus is what they walked in with.
       const bonus = this.stageOf(this.loveRatio(t)) * FLIRT_STAGE_BONUS;
-      this.addLove(owner, t, FLIRT_LOVE + bonus, `+${FLIRT_LOVE + bonus} ❤`);
+      this.addLove(owner, t, FLIRT_LOVE + bonus + dating, '❤');
       caught++;
+    }
+
+    // Dating: every Flirt performed pays into the *next* one, so this lands after the cast it
+    // was cast for. Counted even when the cone caught nobody — the practice is the point.
+    if (this.ownerHasUpgrade(owner, 'e')) {
+      s.flirtCount++;
+      this.api.showFloatingText(f.x, f.y - 60, `💌 DATING +${s.flirtCount * DATING_STEP}`,
+        this.hex(PSN.gold));
     }
 
     this.avatar(owner)?.play('sweep', ang);
@@ -549,6 +656,8 @@ export class PassionKit {
     s.roseUntil = this.now + ROSE_HOLD_MS;
     s.roseTakenAt = this.now;
     s.lastRaw = f.rawDamageTaken;
+    // A fresh rose is a fresh sparing (see `updateSpare`).
+    s.spareUsedThisRose = false;
 
     this.avatar(owner)?.play('flex');
     this.avatar(owner)?.setRose(true, 0);
@@ -572,17 +681,17 @@ export class PassionKit {
     this.api.showFloatingText(f.x, f.y - 56, '📸 EXHIBITION', this.hex(PSN.gold));
 
     // The easter-egg version of the pose, and the only one that needs undressing.
-    if (owner === 'player' && this.api.censoredExhibition) this.stripClothes(owner);
+    if (owner === 'player' && this.api.matureMode) this.stripClothes(owner, POSE_MS);
   }
 
   /**
    * The suit leaving, all five pieces at once, fanned upward and outward. The avatar stops
-   * drawing them the same frame (`setStripped`), so from here until the pose ends the clothes
-   * exist only as these world objects.
+   * drawing them the same frame (`setStripped`), so from `holdMs` here the clothes exist only
+   * as these world objects — which is why the caller has to say how long its own scene runs.
    */
-  private stripClothes(owner: Owner): void {
+  private stripClothes(owner: Owner, holdMs: number): void {
     const f = this.fighter(owner);
-    const fadeAt = this.now + POSE_MS;
+    const fadeAt = this.now + holdMs;
 
     GARMENTS.forEach((kind, i) => {
       // Fanned about straight up, alternating sides so the pile lands spread out rather
@@ -654,7 +763,9 @@ export class PassionKit {
       // Sighting the enemy is what latches their bar's ceiling — see `loveOf`.
       for (const t of this.targetsOf(owner)) this.loveOf(t);
       this.updateDash(owner, time);
+      this.updateMakeout(owner, time);
       this.updateRose(owner, time);
+      this.updateSpare(owner, time);
       this.updatePose(owner, time, delta);
     }
 
@@ -663,6 +774,8 @@ export class PassionKit {
     this.updateMarks(time);
     this.updateStacks(time);
     this.prune(time);
+    // Before the avatars: `updateAvatars` reads its `stripped` flag straight off the result.
+    this.updateBareSkin();
     this.updateAvatars(delta, playerIs, npcIs);
 
     this.paintGround();
@@ -723,11 +836,188 @@ export class PassionKit {
       return;
     }
 
+    // Make-out: past 90% the kiss stops being a kiss and becomes the finisher.
+    if (ratio >= MAKEOUT_MIN_RATIO && this.ownerHasUpgrade(owner, 'r')
+      && this.side(owner).makeoutUntil <= this.now) {
+      this.startMakeout(owner, victim);
+      return;
+    }
+
     const gain = Math.round(SMOOCH_LOVE + l.cur * SMOOCH_LOVE_FRACTION);
     this.fx(owner).smooch(victim.x, victim.y - 6, ang);
     this.marks.push({ x: victim.x, y: victim.y + 12, ang, until: this.now + 3000, size: 13 });
     Sfx.playAt('bubble', victim.x, { volume: 0.9, rate: 0.62 });
-    this.addLove(owner, victim, gain, `+${gain} 💋`);
+    this.addLove(owner, victim, gain, '💋');
+  }
+
+  // ── R upgrade: Make-out ────────────────────────────────────────────────────
+
+  /**
+   * The grab. Both fighters are pinned either side of a point between them for the whole
+   * animation, five kisses land on a timer, and then the victim is charmed — which, since a
+   * filled bar is lethal and unshieldable, is the match.
+   *
+   * The dash is cancelled on the spot: sliding out from under your own finisher looks like a
+   * bug even though the hold below would drag you back.
+   */
+  private startMakeout(owner: Owner, victim: Fighter): void {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    const ang = Math.atan2(victim.y - f.y, victim.x - f.x);
+
+    s.dashUntil = 0;
+    s.makeoutUntil = this.now + MAKEOUT_MS;
+    s.makeoutStartedAt = this.now;
+    s.makeoutTarget = victim;
+    s.makeoutKisses = 0;
+    s.nextMakeoutKissAt = this.now + MAKEOUT_FIRST_KISS_MS;
+    s.makeoutX = Phaser.Math.Clamp((f.x + victim.x) / 2, this.left + 60, this.right - 60);
+    s.makeoutY = Phaser.Math.Clamp((f.y + victim.y) / 2, this.top + 70, this.bottom - 70);
+    // The pair stands across the bed's width, so the head end runs off at a right angle to them.
+    s.makeoutAng = ang - Math.PI / 2;
+    s.makeoutBed = owner === 'player' && this.api.matureMode;
+
+    this.avatar(owner)?.play('dash', ang);
+    this.fx(owner).heartRing(s.makeoutX, s.makeoutY, 12, 96, PSN.hot, 700);
+    this.api.showFloatingText(f.x, f.y - 60, s.makeoutBed ? '🛏️ TO BED' : '💞 MAKE-OUT',
+      this.hex(PSN.gold));
+    Sfx.playAt('whoosh', f.x, { volume: 0.7, rate: 0.8 });
+    // Same undressing as the pose, on the scene's own clock rather than the pose's.
+    if (s.makeoutBed) {
+      this.stripClothes(owner, MAKEOUT_MS);
+      Sfx.playAt('bubble', s.makeoutX, { volume: 0.7, rate: 0.45 });
+    }
+  }
+
+  /**
+   * The hold. Positions are written outright rather than driven by velocity — this runs after
+   * movement, and a five-kiss animation that the victim can walk out of isn't a finisher.
+   */
+  private updateMakeout(owner: Owner, time: number): void {
+    const s = this.side(owner);
+    if (s.makeoutUntil <= 0) return;
+    const f = this.fighter(owner);
+    const victim = s.makeoutTarget;
+
+    // Either of them gone (a husk cleaned up, the caster killed by something else) and it ends
+    // with nothing paid out — the charm below is the only way the bar ever finishes here.
+    if (!this.alive(f) || !this.alive(victim)) {
+      s.makeoutUntil = 0;
+      s.makeoutTarget = null;
+      return;
+    }
+
+    const dir = s.makeoutAng + Math.PI / 2;
+    const hold = (target: Fighter, sign: number): void => {
+      const tx = s.makeoutX + Math.cos(dir) * MAKEOUT_GAP * sign;
+      const ty = s.makeoutY + Math.sin(dir) * MAKEOUT_GAP * sign;
+      const nx = Phaser.Math.Linear(target.x, tx, 0.32);
+      const ny = Phaser.Math.Linear(target.y, ty, 0.32);
+      target.setPosition(nx, ny);
+      this.body(target).reset(nx, ny);
+    };
+    hold(f, -1);
+    hold(victim!, 1);
+
+    // Five kisses on a timer, alternating which side of the pair they land on.
+    if (time >= s.nextMakeoutKissAt && s.makeoutKisses < MAKEOUT_KISSES) {
+      s.makeoutKisses++;
+      s.nextMakeoutKissAt = time + (MAKEOUT_MS - MAKEOUT_FIRST_KISS_MS) / MAKEOUT_KISSES;
+      const spin = s.makeoutKisses * 1.7;
+      const kx = s.makeoutX + Math.cos(spin) * 12;
+      const ky = s.makeoutY + Math.sin(spin) * 8 - 6;
+      this.fx(owner).smooch(kx, ky, dir);
+      this.fx(owner).hearts(kx, ky, 5, 26, PSN.hot, 640);
+      this.marks.push({ x: kx, y: ky + 16, ang: spin, until: time + 4000, size: 12 });
+      this.api.showFloatingText(s.makeoutX, s.makeoutY - 44 - s.makeoutKisses * 4,
+        `💋 ${s.makeoutKisses}/${MAKEOUT_KISSES}`, this.hex(PSN.gold));
+      Sfx.playAt('bubble', kx, { volume: 0.95, rate: 0.6 + s.makeoutKisses * 0.07 });
+      // Mature mode: the hearts come up off the bed rather than off the pair.
+      if (s.makeoutBed) this.fx(owner).hearts(s.makeoutX, s.makeoutY + 18, 4, 30, PSN.blush, 900);
+    }
+
+    if (time < s.makeoutUntil) return;
+
+    // The animation is over, so the bar is. Fill it and let `charm` do the rest.
+    const target = victim!;
+    s.makeoutUntil = 0;
+    s.makeoutTarget = null;
+    this.api.showFloatingText(target.x, target.y - 68, '💞 HEAD OVER HEELS', this.hex(PSN.gold));
+    const l = this.loveOf(target);
+    l.cur = l.max;
+    this.charm(owner, target);
+  }
+
+  // ── Click upgrade: Show-off ────────────────────────────────────────────────
+
+  /** A Loveshot connected. Three in a row and whoever caught the third is Impressed. */
+  private landStreakHit(owner: Owner, victim: Fighter, time: number): void {
+    if (!this.ownerHasUpgrade(owner, 'click')) return;
+    const s = this.side(owner);
+    s.hitStreak++;
+    if (s.hitStreak < SHOWOFF_STREAK) {
+      this.api.showFloatingText(victim.x, victim.y - 46, `😏 ${s.hitStreak}/${SHOWOFF_STREAK}`,
+        this.hex(PSN.pink));
+      return;
+    }
+
+    s.hitStreak = 0;
+    const l = this.loveOf(victim);
+    l.impressedUntil = time + IMPRESSED_MS;
+    this.fx(owner).heartRing(victim.x, victim.y, 8, 62, PSN.gold, 620);
+    this.fx(owner).hearts(victim.x, victim.y, 8, 34, PSN.gold, 820);
+    this.api.showFloatingText(victim.x, victim.y - 62, '😍 IMPRESSED', this.hex(PSN.gold));
+    Sfx.playAt('sparkle', victim.x, { volume: 0.8, rate: 1.15 });
+  }
+
+  /** A Loveshot that hit nothing. Silent unless there was a run worth mourning. */
+  private breakStreak(owner: Owner, x: number, y: number): void {
+    const s = this.side(owner);
+    if (s.hitStreak <= 0) return;
+    s.hitStreak = 0;
+    if (!this.ownerHasUpgrade(owner, 'click')) return;
+    this.api.showFloatingText(x, y, '💔 MISSED', this.hex(PSN.wine));
+  }
+
+  // ── F upgrade: Spare ───────────────────────────────────────────────────────
+
+  /**
+   * The moment the people trying to kill you can't. It needs all three conditions at once —
+   * rose in your teeth, every living enemy at least half-charmed, and you inside the last tenth
+   * of your health — and it is worth exactly one window per rose, so the rose has to be armed
+   * *before* the fight gets desperate rather than as a reaction to it.
+   */
+  private updateSpare(owner: Owner, time: number): void {
+    const s = this.side(owner);
+    if (!this.ownerHasUpgrade(owner, 'f')) return;
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+
+    if (s.spareUntil > time) return;
+    // The window closing is worth announcing: it is the frame damage starts landing again.
+    if (s.spareUntil > 0) {
+      s.spareUntil = 0;
+      this.api.showFloatingText(f.x, f.y - 52, '🥀 THEY OVERCOME IT', this.hex(PSN.wine));
+      Sfx.playAt('thorn', f.x, { volume: 0.6, rate: 0.85 });
+      return;
+    }
+
+    if (s.spareUsedThisRose || s.roseUntil <= time) return;
+    if (f.hp > f.maxHp * SPARE_HP_RATIO) return;
+    const targets = this.targetsOf(owner);
+    if (!targets.length || targets.some((t) => this.loveRatio(t) < SPARE_MIN_LOVE)) return;
+
+    s.spareUntil = time + SPARE_MS;
+    s.spareUsedThisRose = true;
+    this.api.showFloatingText(f.x, f.y - 58, '🌹 SPARED', this.hex(PSN.gold));
+    this.fx(owner).heartRing(f.x, f.y, 10, 110, PSN.gold, 820);
+    this.fx(owner).petals(f.x, f.y - 6, 10);
+    Sfx.playAt('heartbeat', f.x, { volume: 0.9, rate: 0.7 });
+    // Every one of them stops, and says so.
+    for (const t of targets) {
+      this.fx(owner).hearts(t.x, t.y, 6, 30, PSN.blush, 900);
+      this.api.showFloatingText(t.x, t.y - 46, '💘 I CAN\'T…', this.hex(PSN.hot));
+    }
   }
 
   /**
@@ -771,14 +1061,23 @@ export class PassionKit {
     }
   }
 
-  /** Prunes expired cuts and rewrites the holder's armour from scratch, every frame. */
+  /**
+   * Prunes expired cuts and rewrites the holder's armour from scratch, every frame. Spare and
+   * Make-out ride the same field rather than a second one: both mean "nothing lands on this
+   * fighter right now", and one writer per frame is the only way that stays true when a rose is
+   * being held through either of them.
+   */
   private updateStacks(time: number): void {
     for (const owner of ['player', 'npc'] as Owner[]) {
       const s = this.side(owner);
       const f = this.fighter(owner);
       if (!f) continue;
       if (s.stacks.length) s.stacks = s.stacks.filter((until) => until > time);
-      if (s.stacks.length > 0) {
+      const untouchable = s.spareUntil > time || s.makeoutUntil > time;
+      if (untouchable) {
+        f.passionIncomingMult = 0;
+        s.multOwned = true;
+      } else if (s.stacks.length > 0) {
         // Multiplicative: "stacks infinitely" has to mean approaching zero, never reaching it.
         f.passionIncomingMult = ROSE_STACK_MULT ** s.stacks.length;
         s.multOwned = true;
@@ -806,9 +1105,13 @@ export class PassionKit {
       const off = Math.abs(Phaser.Math.Angle.Wrap(this.facingOf(t) - toward));
       if (off > POSE_VIEW_HALF_ANGLE) continue;
       watching++;
+      // Read the multiplier for the caption before the tick goes in, so the number quoted is
+      // the one the next second is actually worth.
+      const perSec = POSE_LOVE_PER_SEC * this.loveMult(owner, t);
       this.addLove(owner, t, POSE_LOVE_PER_SEC * dt);
       if (time >= s.nextPoseTextAt) {
-        this.api.showFloatingText(t.x, t.y - 34, `+${POSE_LOVE_PER_SEC} ❤`, this.hex(PSN.hot));
+        this.api.showFloatingText(t.x, t.y - 34, `+${Math.round(perSec)} ❤`,
+          this.hex(perSec > POSE_LOVE_PER_SEC + 0.01 ? PSN.gold : PSN.hot));
       }
     }
     if (time >= s.nextPoseTextAt) s.nextPoseTextAt = time + POSE_TEXT_INTERVAL_MS;
@@ -844,6 +1147,8 @@ export class PassionKit {
       if (time >= sh.diesAt || sh.x < this.left - 40 || sh.x > this.right + 40
         || sh.y < this.top - 40 || sh.y > this.bottom + 40) {
         this.shots.splice(i, 1);
+        // Show-off: a heart that touched nobody is the miss that ends the run.
+        if (sh.kind === 'heart') this.breakStreak(sh.owner, sh.x, sh.y);
         continue;
       }
 
@@ -861,7 +1166,7 @@ export class PassionKit {
       if (sh.kind === 'rose') {
         this.fx(sh.owner).petals(hit.x, hit.y, 12);
         this.api.spawnHitFlash(hit.x, hit.y, PSN.deep);
-        this.addLove(sh.owner, hit, sh.love, `+${sh.love} 🌹`);
+        this.addLove(sh.owner, hit, sh.love, '🌹');
       } else {
         // The meter feeds the gun: every 80 already on the bar is another two damage.
         const bonus = Math.floor(this.loveOf(hit).cur / SHOT_LOVE_PER_BONUS) * SHOT_BONUS_DAMAGE;
@@ -869,7 +1174,10 @@ export class PassionKit {
         this.api.spawnHitFlash(hit.x, hit.y, PSN.hot);
         this.fx(sh.owner).hearts(hit.x, hit.y, 4, 18, PSN.hot, 480);
         this.marks.push({ x: hit.x, y: hit.y + 14, ang, until: time + 1600, size: 8 });
-        this.addLove(sh.owner, hit, SHOT_LOVE, `+${SHOT_LOVE} ❤`);
+        // Love first, streak second: the shot that completes a run pays at 1× and everything
+        // after it at 1.5×. The reward is the window, not the hit that opened it.
+        this.addLove(sh.owner, hit, SHOT_LOVE, '❤');
+        this.landStreakHit(sh.owner, hit, time);
       }
     }
   }
@@ -934,6 +1242,48 @@ export class PassionKit {
     }
   }
 
+  /**
+   * Who is bare this frame, and the tint that says so.
+   *
+   * The head is the Fighter sprite rather than part of the rig, so bare skin has to be a repaint
+   * of the sprite as well as of the rig — otherwise a character goes tan from the neck down and
+   * keeps a pink face. A mature Make-out strips *both* of them, and the other fighter's rig
+   * belongs to whatever element they picked and can't be undressed, so for them the sprite tint
+   * is the whole of it.
+   */
+  private updateBareSkin(): void {
+    const bare = new Map<Fighter, PassionColorFn>();
+
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      if (!this.isPassion(owner)) continue;
+      const s = this.side(owner);
+      const f = this.fighter(owner);
+      const posing = s.poseUntil > this.now && owner === 'player' && this.api.matureMode;
+      const bedding = s.makeoutBed && s.makeoutUntil > this.now;
+      if (!posing && !bedding) continue;
+      // Both are painted through the Passion side's colour map, so a skinned Passion and
+      // whoever they dragged into the bed come out of it the same colour.
+      if (this.alive(f)) bare.set(f, this.col(owner));
+      if (bedding && this.alive(s.makeoutTarget)) bare.set(s.makeoutTarget!, this.col(owner));
+    }
+
+    for (const [f, col] of bare) {
+      // `setTintFill`, not `setTint` — a multiplicative tint over a sprite's own colours can
+      // only darken them, and tan over pink comes out red. The pair is top/bottom, so the flat
+      // repaint keeps a little vertical shading instead of reading as a silhouette.
+      //
+      // Rewritten every frame rather than on the transition: `SkinsKit` repaints equipped-skin
+      // bodies on its own per-frame pass, and a one-shot tint would simply lose that race.
+      const top = col(PASSION_SKIN_TINT[0]);
+      const bottom = col(PASSION_SKIN_TINT[1]);
+      f.setTintFill(top, top, bottom, bottom);
+    }
+    for (const f of this.bareSkinned) {
+      if (!bare.has(f) && f.active) f.clearTint();
+    }
+    this.bareSkinned = new Set(bare.keys());
+  }
+
   private updateAvatars(delta: number, playerIs: boolean, npcIs: boolean): void {
     const { scene } = this.api;
     if (playerIs && !this.playerAvatar) this.playerAvatar = new PassionAvatar(scene, this.pcol);
@@ -946,21 +1296,25 @@ export class PassionKit {
       if (!f || !f.active) { av.update(delta, -999, -999, 0); continue; }
 
       const s = this.side(owner);
-      const target = owner === 'player'
-        ? { x: s.aimX, y: s.aimY }
-        : { x: this.api.player.x, y: this.api.player.y };
+      // Mid-finisher there is only one thing worth looking at, whatever the cursor says.
+      const target = s.makeoutTarget && s.makeoutUntil > this.now
+        ? { x: s.makeoutTarget.x, y: s.makeoutTarget.y }
+        : owner === 'player'
+          ? { x: s.aimX, y: s.aimY }
+          : { x: this.api.player.x, y: this.api.player.y };
       av.setFacing(Math.atan2(target.y - f.y, target.x - f.x));
 
       const roseLeft = Math.max(0, s.roseUntil - this.now);
       av.setRose(s.roseUntil > this.now, 1 - Phaser.Math.Clamp(roseLeft / ROSE_HOLD_MS, 0, 1));
 
       const posing = s.poseUntil > this.now;
-      const censored = owner === 'player' && this.api.censoredExhibition;
+      const censored = owner === 'player' && this.api.matureMode;
       av.setPosing(posing ? 1 : 0);
       av.setCensored(censored);
-      // Undressed for exactly as long as the pose runs — the garments on the floor outlive it
-      // only by their fade, by which point the suit is back on.
-      av.setStripped(posing && censored);
+      // Undressed for exactly as long as the scene runs — the garments on the floor outlive it
+      // only by their fade, by which point the suit is back on. `updateBareSkin` ran first and
+      // has already decided who that is, so the rig and the sprite can't disagree.
+      av.setStripped(this.bareSkinned.has(f));
       // A pose is a held stance, not a gesture — the arms have to stay put for five seconds.
       av.setHold(posing ? 'ride' : null);
       av.setIntensity(posing ? 1.25 : 1);
@@ -976,6 +1330,16 @@ export class PassionKit {
     if (!g) return;
     g.clear();
     const now = this.now;
+
+    // The bed goes down first — everything else on this layer, and both fighters, stand on it.
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const s = this.side(owner);
+      if (!s.makeoutBed || s.makeoutUntil <= now) continue;
+      const rise = Phaser.Math.Clamp((now - s.makeoutStartedAt) / 260, 0, 1);
+      const fade = Phaser.Math.Clamp((s.makeoutUntil - now) / 300, 0, 1);
+      drawBed(g, this.col(owner), s.makeoutX, s.makeoutY, s.makeoutAng, fade, rise);
+    }
+
     for (const m of this.marks) {
       const life = Phaser.Math.Clamp((m.until - now) / 1400, 0, 1);
       heartOutline(g, this.pcol, m.x, m.y, m.size * (0.7 + life * 0.4), m.ang, PSN.deep, life * 0.5, 2);
@@ -1043,6 +1407,21 @@ export class PassionKit {
 
         loveBar(g, tint, victim.x, victim.y + LOVE_BAR_Y, LOVE_BAR_W, LOVE_BAR_H, ratio, t);
 
+        // Show-off: a gold frame around the meter for as long as they are Impressed, because
+        // the effect is a multiplier on a bar and so has to be readable *on* that bar.
+        if (l.impressedUntil > this.now) {
+          const beat = 0.6 + Math.abs(Math.sin(t * 6)) * 0.4;
+          g.lineStyle(1.6, tint(PSN.gold), beat);
+          g.strokeRect(victim.x - LOVE_BAR_W / 2 - 2.5, victim.y + LOVE_BAR_Y - 2.5,
+            LOVE_BAR_W + 5, LOVE_BAR_H + 5);
+          for (let i = 0; i < 3; i++) {
+            const a = t * 2.2 + (i / 3) * Math.PI * 2;
+            heart(g, tint, victim.x + Math.cos(a) * (LOVE_BAR_W / 2 + 7),
+              victim.y + LOVE_BAR_Y + LOVE_BAR_H / 2 + Math.sin(a) * 5,
+              3.4, Math.PI / 2, PSN.gold, beat * 0.9);
+          }
+        }
+
         if (stage >= 1) {
           blush(g, tint, victim.x, victim.y, Math.min(stage, 3) as 1 | 2 | 3, victim.alpha, t);
         }
@@ -1050,6 +1429,91 @@ export class PassionKit {
           heartEyes(g, tint, victim.x, victim.y, victim.alpha, t);
         }
       }
+
+      this.paintSpare(g, owner, tint, t);
+      this.paintMakeout(g, owner, tint, t);
+    }
+  }
+
+  /**
+   * Spare, on the people it is happening to. They are drawn hesitating — a heart welling up
+   * over each of them and their own weapon-hand shaking — because the player's only clue that
+   * five seconds of immunity just started is what the enemies do about it.
+   */
+  private paintSpare(
+    g: Phaser.GameObjects.Graphics, owner: Owner, tint: PassionColorFn, t: number,
+  ): void {
+    const s = this.side(owner);
+    if (s.spareUntil <= this.now) return;
+    const left = (s.spareUntil - this.now) / SPARE_MS;
+    // The whole thing tightens as the window runs out: they are visibly getting over it.
+    const wobble = (1 - left) * 3.4;
+
+    for (const victim of this.targetsOf(owner)) {
+      const shake = Math.sin(this.now / 34) * wobble;
+      const hy = victim.y - 40 - left * 6;
+      g.fillStyle(tint(PSN.hot), 0.16 * left);
+      g.fillCircle(victim.x, victim.y, 30 + Math.sin(t * 5) * 3);
+      heart(g, tint, victim.x + shake, hy, 11 + Math.sin(t * 7) * 1.6, Math.PI / 2,
+        PSN.hot, 0.55 + left * 0.4, true);
+      // A crack across the heart once they are more than halfway to shaking it off.
+      if (left < 0.5) {
+        g.lineStyle(1.6, tint(PSN.ink), (0.5 - left) * 1.8);
+        g.lineBetween(victim.x + shake - 1, hy - 9, victim.x + shake + 2, hy);
+        g.lineBetween(victim.x + shake + 2, hy, victim.x + shake - 2, hy + 8);
+      }
+    }
+
+    // And on the one being spared: petals raining off the rose that bought it.
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    for (let i = 0; i < 5; i++) {
+      const ph = (t * 0.9 + i * 0.2) % 1;
+      g.fillStyle(tint(i % 2 ? PSN.deep : PSN.hot), (1 - ph) * 0.6 * left);
+      g.fillEllipse(f.x + Math.sin(ph * 6 + i) * 14, f.y - 26 + ph * 44, 5.4, 3.4);
+    }
+  }
+
+  /**
+   * Make-out. The pair is already held in place by the sim; this is the bloom of hearts around
+   * them and the prints coming off it, drawn over everything so a finisher never ends up behind
+   * somebody else's aura.
+   */
+  private paintMakeout(
+    g: Phaser.GameObjects.Graphics, owner: Owner, tint: PassionColorFn, t: number,
+  ): void {
+    const s = this.side(owner);
+    if (s.makeoutUntil <= this.now) return;
+    const done = Phaser.Math.Clamp(1 - (s.makeoutUntil - this.now) / MAKEOUT_MS, 0, 1);
+    const { makeoutX: x, makeoutY: y } = s;
+
+    // The halo, opening wider with every kiss that has landed.
+    g.fillStyle(tint(PSN.hot), 0.1 + done * 0.14);
+    g.fillCircle(x, y, 34 + done * 26 + Math.sin(t * 6) * 3);
+    const ring = 12;
+    for (let i = 0; i < ring; i++) {
+      const a = (i / ring) * Math.PI * 2 + t * 1.1;
+      const r = 30 + done * 22 + Math.sin(t * 4 + i) * 4;
+      heart(g, tint, x + Math.cos(a) * r, y + Math.sin(a) * r * 0.72,
+        4.4 + done * 3, a + Math.PI / 2, PSN.pink, 0.5 + done * 0.45);
+    }
+    // One print per kiss so far, laid out in an arc above them — the counter, drawn.
+    for (let i = 0; i < s.makeoutKisses; i++) {
+      const a = -Math.PI / 2 + (i - (MAKEOUT_KISSES - 1) / 2) * 0.34;
+      kissMark(g, tint, x + Math.cos(a) * 40, y + Math.sin(a) * 34,
+        a + Math.PI / 2, 11, 0.85);
+    }
+
+    // Mature mode: both of them get bars, not just the one whose element this is. The enemy's
+    // rig belongs to whatever they picked and can't be undressed, so the bars are painted here
+    // over both bodies rather than on either avatar.
+    if (!s.makeoutBed) return;
+    const f = this.fighter(owner);
+    const pair = [f, s.makeoutTarget].filter((b): b is Fighter => this.alive(b));
+    for (const b of pair) {
+      const j = Math.floor(this.now / 110) + (b === f ? 0 : 7);
+      censorBar(g, b.x + (jitter(b.x, j) - 0.5) * 1.4, b.y + 15, 22, 10,
+        (jitter(b.x, j + 1) - 0.5) * 0.07, 1);
     }
   }
 
@@ -1087,6 +1551,30 @@ export class PassionKit {
       count: against, priority: 30,
     } : null);
 
+    // ── Shop upgrades ──
+    this.api.setStatusIndicator('passion-spare', playerIsPassion && s.spareUntil > time ? {
+      name: 'Spared', emoji: '🌹', color: PSN.gold,
+      description: 'They are too in love with you to land a blow. Nothing they do hurts you until '
+        + 'they get over it.',
+      until: s.spareUntil, priority: 130,
+    } : null);
+
+    const streak = playerIsPassion && this.api.hasUpgrade('click') ? s.hitStreak : 0;
+    this.api.setStatusIndicator('passion-showoff', streak > 0 ? {
+      name: 'Show-off', emoji: '😏', color: PSN.pink,
+      description: `${streak} of ${SHOWOFF_STREAK} Loveshots landed in a row. Land the rest without `
+        + 'missing and they are Impressed for 5s — all love worth 1.5×.',
+      count: streak, priority: 60,
+    } : null);
+
+    const dates = playerIsPassion && this.api.hasUpgrade('e') ? s.flirtCount : 0;
+    this.api.setStatusIndicator('passion-dating', dates > 0 ? {
+      name: 'Dating', emoji: '💌', color: PSN.deep,
+      description: `Every Flirt so far has made the next one land harder. The next is worth `
+        + `+${dates * DATING_STEP} love.`,
+      count: dates, priority: 58,
+    } : null);
+
     // ── Victim side: the player's own meter, when the bot is the one playing Passion. ──
     const l = this.api.npcElementId === 'passion' ? this.loves.get(p) : undefined;
     this.api.setStatusIndicator('passion-love', l ? {
@@ -1094,6 +1582,13 @@ export class PassionKit {
       description: 'Their love for you fills a bar the size of your starting health. Nothing lowers '
         + 'it, and it kills you outright when it fills. Stop looking at them while they pose.',
       count: Math.round((l.cur / l.max) * 100), suffix: '%', priority: 4,
+    } : null);
+
+    this.api.setStatusIndicator('passion-impressed', l && l.impressedUntil > time ? {
+      name: 'Impressed', emoji: '😍', color: PSN.gold,
+      description: 'Three Loveshots in a row landed on you. Everything they do to that bar is '
+        + 'worth 1.5× until it wears off.',
+      until: l!.impressedUntil, priority: 5,
     } : null);
   }
 

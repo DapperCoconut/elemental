@@ -33,6 +33,15 @@ export interface OnlineArenaApi {
   onConquestSnapshot(snap: NetConquestSnap): void;
   /** Mastery: replay a bindable mastery ability the opponent cast (id not in element.abilities). */
   replayNpcMastery(enhId: string, tx: number, ty: number): void;
+  /**
+   * Quantum: the opponent collapsed their bond. Re-keys our replica of them onto the named
+   * half, carrying that half's upgrades, mastery binds and skin — all three belong to the
+   * element being worn, not to the fighter wearing it.
+   */
+  onNpcQuantumSwap(
+    elementId: string, upgrades: string[], masteryBinds: Record<string, string>,
+    masteryOn: boolean, skin: string | null,
+  ): void;
   /** Aggregate speed multiplier our sim is applying to the opponent replica (slows included). */
   npcSpeedMult(): number;
   /** Game clock (`scene.time.now`) for re-basing relayed effect timers. */
@@ -290,7 +299,10 @@ export class OnlineKit {
       // Our own damage reduction travels with us: the peer resolves their hits against
       // their replica, which has no copy of the armour buffs we granted ourselves.
       dm: Math.round(p.droneArmorMult * p.kineticShieldMult * p.steelShieldMult
-        * p.potionArmorMult * p.smokeIncomingMult * p.cardDamageTakenMult * 1000) / 1000,
+        * p.potionArmorMult * p.smokeIncomingMult * p.cardDamageTakenMult
+        // Quantum instability is a self-granted *vulnerability* rather than armour, but it
+        // travels for exactly the same reason: the peer's replica of us has no copy of it.
+        * p.quantumIncomingMult * 1000) / 1000,
       fr: p.flatDamageReduction,
       dc: p.hardDamageCap,
     });
@@ -365,6 +377,18 @@ export class OnlineKit {
     body.setVelocity(this.lastInterpVx, this.lastInterpVy);
   }
 
+  /**
+   * Broadcast a Quantum collapse. Called from the kit's swap path rather than from the dodge,
+   * so a Quantum with no bond — or any other element's dodge — never sends anything.
+   */
+  sendQuantumSwap(
+    elementId: string, upgrades: string[], masteryBinds: Record<string, string>,
+    masteryOn: boolean, skin: string | null,
+  ): void {
+    if (this.matchEnded) return;
+    Net.send({ t: 'qswap', elementId, upgrades, masteryBinds, masteryOn, skin });
+  }
+
   private onMessage(msg: NetMsg): void {
     if (this.matchEnded) return;
     switch (msg.t) {
@@ -425,6 +449,9 @@ export class OnlineKit {
         player.netShoveUntil = this.api.gameNow() + msg.ms;
         break;
       }
+      case 'qswap':
+        this.api.onNpcQuantumSwap(msg.elementId, msg.upgrades, msg.masteryBinds, msg.masteryOn, msg.skin);
+        break;
       case 'death':
         this.matchEnded = true;
         this.api.endOnlineMatch(true);

@@ -35,6 +35,8 @@ const ELEMENT_COLORS: Record<string, number> = {
   magnet:      0xcc2244,
   metal:       0xaabbcc,
   plasma:      0xdd66ff,
+  passion:     0xff5fa2,
+  chalk:       0xf4f1e6,
 };
 
 const ELEMENT_EMOJIS: Record<string, string> = {
@@ -42,11 +44,11 @@ const ELEMENT_EMOJIS: Record<string, string> = {
   water:       '💧',
   life:        '🌿',
   air:         '💨',
-  earth:       '🪨',
+  earth:       '🗿',
   oil:         '🛢️',
   shadow:      '🌑',
-  ice:         '🧊',
-  growth:      '🦠',
+  ice:         '❄️',
+  growth:      '🐛',
   crystal:     '💎',
   soul:        '👻',
   hunt:        '🐺',
@@ -54,13 +56,15 @@ const ELEMENT_EMOJIS: Record<string, string> = {
   gravity:     '🌌',
   creation:    '⚒️',
   electricity: '⚡',
-  slime:       '🟢',
+  slime:       '💚',
   fate:        '🃏',
   sound:       '🔊',
   light:       '✨',
-  magnet:      '🧲',
+  magnet:      '🔗',
   metal:       '⚙️',
   plasma:      '🔮',
+  passion:     '💘',
+  chalk:       '🖍️',
 };
 
 const BASE_ELEMENT_IDS = ['fire', 'water', 'life', 'air', 'earth'];
@@ -164,7 +168,7 @@ export class ShopScene extends Phaser.Scene {
       accent: C.arcane, originX: 1, fontSize: 13,
     });
     addChip(this, {
-      x: width - 130, y: 52, icon: '🩸', value: `${PlayerData.getCorruptShards()}`,
+      x: width - 130, y: 52, icon: '🔴', value: `${PlayerData.getCorruptShards()}`,
       accent: C.corrupt, originX: 1, fontSize: 13,
     });
 
@@ -221,8 +225,8 @@ export class ShopScene extends Phaser.Scene {
     if (this.currentPage === ABSTRACT_PAGE || this.currentPage === MIX_PAGE) {
       const ids = this.currentPage === ABSTRACT_PAGE ? abstractIds : mixIds;
       const emptyMsg = this.currentPage === ABSTRACT_PAGE
-        ? 'Complete a Gauntlet to unlock Abstract Elements.\nTheir upgrades are bought with 🩸 corrupt shards.'
-        : 'Fuse two Abstract Elements in the LAB to unlock Abstract-Mix.\nTheir upgrades are bought with 🩸 corrupt shards.';
+        ? 'Complete a Gauntlet to unlock Abstract Elements.\nTheir upgrades are bought with 🔴 corrupt shards.'
+        : 'Fuse two Abstract Elements in the LAB to unlock Abstract-Mix.\nTheir upgrades are bought with 🔴 corrupt shards.';
       if (ids.length === 0) {
         this.buildEmptyState(cx, height / 2, emptyMsg, pageInfo.accent);
         return;
@@ -347,7 +351,7 @@ export class ShopScene extends Phaser.Scene {
 
         const statusStr = owned
           ? (active ? '● ACTIVE' : '○ SHELVED')
-          : `${currency === 'shards' ? '💎' : '🩸'} ${price}`;
+          : `${currency === 'shards' ? '💎' : '🔴'} ${price}`;
         this.add.text(colCX, by + slotH / 2 - 11, statusStr, {
           fontSize: '10px', fontFamily: FONT_DISPLAY,
           color: owned
@@ -407,7 +411,7 @@ export class ShopScene extends Phaser.Scene {
     const owned = PlayerData.isUpgradeOwned(elementId, slot);
     const active = PlayerData.isUpgradeActive(elementId, slot);
     const wallet = currency === 'shards' ? PlayerData.getShards() : PlayerData.getCorruptShards();
-    const coin = currency === 'shards' ? '💎' : '🩸';
+    const coin = currency === 'shards' ? '💎' : '🔴';
     const coinAccent = currency === 'shards' ? C.gold : C.corrupt;
     const canAfford = wallet >= price;
 
@@ -700,7 +704,7 @@ export class ShopScene extends Phaser.Scene {
       const cost = upg.cost ?? LAB_UPGRADE_COST;
       const corruptCost = upg.corruptCost ?? 0;
       const statusText = owned ? 'OWNED'
-        : available ? (corruptCost > 0 ? `💎 ${cost}  +  🩸 ${corruptCost}` : `💎 ${cost}`)
+        : available ? (corruptCost > 0 ? `💎 ${cost}  +  🔴 ${corruptCost}` : `💎 ${cost}`)
         : 'LOCKED';
 
       const canBuy = available && !owned;

@@ -1,50 +1,59 @@
 import { Element } from './Element';
 import { Ability } from './Ability';
 
-const rhythmShot: Ability = {
-  id: 'rhythm-shot',
-  name: 'Rhythm Range',
-  description: 'Time clicks with the rhythm track to fire 25 dmg sound blasts. Missing costs 10 HP. Rare red circles deal 35 dmg.',
+/**
+ * Sound is a concert soloist. Every ability restarts a two-second metronome; an ability
+ * played *on* the next beat comes out harmonized and hits harder. Nothing else about the
+ * element is a resource — the only thing being managed is your timing.
+ *
+ * All five are resolved in SoundKit; the casts here exist so the cooldown, the ability bar
+ * and the online relay all run through Fighter.castAbility like every other element.
+ */
+
+const staccato: Ability = {
+  id: 'staccato',
+  name: 'Staccato',
+  description: 'PASSIVE — Metronome: every ability you use starts a 2 second meter above the ability bar. Play your next ability inside the gold window at the far end of it and that cast comes out harmonized, which is what every line below means by the word.\n\nStrike the violin with the bow and throw a sound shockwave forward for 10 damage — 15 harmonized. Every phantom violin you have conducted plays a wave of its own on the same stroke.',
   displayKey: 'Click',
-  cooldown: 0,
-  cast(ctx) { void ctx; }, // Rhythm mechanic handled in ArenaScene
+  cooldown: 1000,
+  cast(ctx) { void ctx; }, // Resolved in SoundKit
 };
 
-const flowMode: Ability = {
-  id: 'flow-mode',
-  name: 'Flow Mode',
-  description: 'Toggle: 2× rhythm speed. Circles reaching the left edge deal 5 dmg to you.',
+const discDice: Ability = {
+  id: 'disc-dice',
+  name: 'Disc Dice',
+  description: 'Sling a record out around you, slicing everything within 130px for 15 damage and taking +15% move speed for 3s per fighter cut. Harmonized: change the record on the deck — Accelerando (green) → Bass (red) → Calm (blue).',
   displayKey: 'E',
-  cooldown: 0,
-  cast(ctx) { void ctx; }, // Toggle handled in ArenaScene
+  cooldown: 5000,
+  cast(ctx) { void ctx; }, // Resolved in SoundKit
 };
 
-const screechBarrier: Ability = {
-  id: 'screech-barrier',
-  name: 'Screech Barrier',
-  description: 'Place a sonic barrier at cursor (5s). Only its wall bites — 15 dmg while an enemy stands in the ring, nothing in the quiet middle. In Flow Mode: red, 25 dmg.',
+const conduct: Ability = {
+  id: 'conduct',
+  name: 'Conduct',
+  description: 'Hang a phantom violin of music energy at the cursor. It never fades, and it plays a 5 damage mini shockwave every time you Staccato — 10 when that strike is harmonized. Conducted on the beat it comes out golden: 8 damage, 12 harmonized. Three at most; a fourth replaces the oldest.',
   displayKey: 'R',
-  cooldown: 16000,
-  cast(ctx) { void ctx; }, // Handled in ArenaScene
+  cooldown: 15000,
+  cast(ctx) { void ctx; }, // Resolved in SoundKit
 };
 
-const soundGrapple: Ability = {
-  id: 'sound-grapple',
-  name: 'Sonic Grapple',
-  description: 'Grapple to cursor, leaving 5 music note pickups. Collecting notes grants 5% dodge for 5s (up to 25%). Time with a rhythm circle for an AoE explosion at destination.',
+const bugle: Ability = {
+  id: 'bugle',
+  name: 'Bugle',
+  description: 'Swap the violin for a brass bugle and sound a note: +2% move and attack speed, stacking, and decaying away on its own. The first blow of the match hands the cooldown straight back, and so does every later blow struck on the beat. A harmonized opening note is worth 5% instead. Phantom violins ride the same buff.',
   displayKey: 'F',
-  cooldown: 12000,
-  cast(ctx) { void ctx; }, // Handled in ArenaScene
+  cooldown: 10000,
+  cast(ctx) { void ctx; }, // Resolved in SoundKit
 };
 
-const solo: Ability = {
-  id: 'solo',
-  name: 'Solo',
-  description: 'Summon a disco ball and shred a guitar solo on stage. The rhythm track runs 4× faster and your hits auto-aim the enemy. One missed note ends the solo (accidentals save you). Cancels Flow Mode.',
+const soli: Ability = {
+  id: 'soli',
+  name: 'Soli',
+  description: 'Take the stage alone. A randomised rhythm bar runs beneath you and every note you strike throws a wall of music across the whole screen, hitting every enemy at once. Drop a single note and the performance is over. Press Q again to bow out.',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 25000,
-  cast(ctx) { void ctx; }, // Handled in ArenaScene
+  cast(ctx) { void ctx; }, // Resolved in SoundKit
 };
 
 export const soundElement: Element = {
@@ -52,5 +61,5 @@ export const soundElement: Element = {
   name: 'Sound',
   color: 0xff66cc,
   emoji: '🔊',
-  abilities: [rhythmShot, flowMode, screechBarrier, soundGrapple, solo],
+  abilities: [staccato, discDice, conduct, bugle, soli],
 };

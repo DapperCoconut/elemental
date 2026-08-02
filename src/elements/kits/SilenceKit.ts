@@ -1280,7 +1280,7 @@ export class SilenceKit {
       });
     }
     fx.rupture(s.x, s.y, 40, { claws: 0, rings: 1, mark: false, duration: 380 });
-    this.arena.showFloatingText(s.x, s.y - 26, '🪽 IT SEES', '#ff2244');
+    this.arena.showFloatingText(s.x, s.y - 26, '🕊️ IT SEES', '#ff2244');
     this.arena.scene.cameras.main.shake(150, 0.003);
   }
 
@@ -1505,7 +1505,7 @@ export class SilenceKit {
     if (this.weepUnwatched !== wasUnwatched) {
       this.arena.setStatusIndicator('silence-weep', this.weepUnwatched ? {
         name: 'Weep',
-        emoji: '🥲',
+        emoji: '😢',
         color: 0x8844cc,
         description: 'Nothing is looking at you. +50% movement speed, and stealth drains 25% slower.',
         priority: 118,
@@ -1611,7 +1611,7 @@ export class SilenceKit {
       angle: Math.atan2(y - target.y, x - target.x), spread: 0.5, speed: 200,
       size: 12, life: 380, depth: DEPTH_EYE, color: SILENCE.twine,
     });
-    this.arena.showFloatingText(x, y - 40, '🪆 EFFIGY', '#ffddaa');
+    this.arena.showFloatingText(x, y - 40, '🎎 EFFIGY', '#ffddaa');
     this.arena.spawnHitFlash(target.x, target.y, 0xb49a6a);
     scene.cameras.main.shake(160, 0.003);
   }
@@ -1668,7 +1668,7 @@ export class SilenceKit {
   }
 
   private showDollHit(d: VoodooDoll, relayed: number): void {
-    this.arena.showFloatingText(d.x, d.y - 34, `🪆 ${relayed}`, '#ffddaa');
+    this.arena.showFloatingText(d.x, d.y - 34, `🎎 ${relayed}`, '#ffddaa');
     d.hitFlashUntil = this.arena.scene.time.now + 110;
     // Pins jolt out of it, and a puff of stuffing goes with them.
     const fx = this.fx(d.owner);
@@ -1687,7 +1687,7 @@ export class SilenceKit {
     fx.shred(x, y, 12, { color: SILENCE.burlap, speed: 210, size: 6, life: 520, depth: DEPTH_EYE });
     fx.shred(x, y, 8, { color: SILENCE.twine, speed: 140, size: 3, life: 620, depth: DEPTH_EYE });
     fx.graspRing(x, y, 8, 52, SILENCE.twine, 420, DEPTH_EYE);
-    this.arena.showFloatingText(x, y - 34, '🪆 THE DOLL BREAKS', '#ffddaa');
+    this.arena.showFloatingText(x, y - 34, '🎎 THE DOLL BREAKS', '#ffddaa');
     this.clearDoll(owner);
     if (owner === 'player' && this.isPvpNet()) {
       this.arena.sendSilenceMsg({ t: 'sil', k: 'doll-gone' });
@@ -1794,7 +1794,7 @@ export class SilenceKit {
       priority: 100,
     } : {
       name: 'Possessed',
-      emoji: '🪆',
+      emoji: '🎎',
       color: 0x8844cc,
       description: 'Something has climbed inside you. It is steering your body and tearing it apart from within.',
       until,
@@ -1976,14 +1976,14 @@ export class SilenceKit {
       const eaten = this.kinAtCursor(a, tx, ty);
       if (eaten >= 0) {
         const k = this.kin[eaten];
-        this.arena.showFloatingText(k.x, k.y - 20, '🦷 EATEN', '#ffcccc');
+        this.arena.showFloatingText(k.x, k.y - 20, '😬 EATEN', '#ffcccc');
         fx.shred(k.x, k.y, 6, { color: SILENCE.void, speed: 130, size: 4, life: 380, depth: DEPTH_STALKER });
         this.kin.splice(eaten, 1);
       }
       this.healPuppeteer(a, AWAKEN_BITE_HEAL);
       return;
     }
-    this.hurtHost(a, AWAKEN_BITE_DMG, '🦷 BITE');
+    this.hurtHost(a, AWAKEN_BITE_DMG, '😬 BITE');
     this.healPuppeteer(a, AWAKEN_BITE_HEAL);
   }
 
@@ -2010,7 +2010,7 @@ export class SilenceKit {
     const fx = this.fx(owner);
     fx.graspRing(host.x, host.y, 34, 4, SILENCE.blood, 320, DEPTH_EYE, true);
     fx.stain(host.x, host.y, 18, DEPTH_GROUND_FX, true);
-    this.hurtHost(a, AWAKEN_CANNIBAL_DMG, '🩸 CANNIBALIZE');
+    this.hurtHost(a, AWAKEN_CANNIBAL_DMG, '🔴 CANNIBALIZE');
     this.healPuppeteer(a, AWAKEN_CANNIBAL_HEAL);
   }
 
@@ -3818,7 +3818,7 @@ export class SilenceKit {
       slashesLeft: SANGUINE_SLASHES,
       nextSlashAt: 0,
     };
-    this.arena.showFloatingText(caster.x, caster.y - 36, '🩸 SANGUINE ELIMINATION', '#ff1133');
+    this.arena.showFloatingText(caster.x, caster.y - 36, '🔴 SANGUINE ELIMINATION', '#ff1133');
   }
 
   private sanguineContains(sg: SanguineCharge, f: Fighter): boolean {
@@ -3876,7 +3876,7 @@ export class SilenceKit {
         pack.push({ x, y, angle: 0, nextBiteAt: 0 });
       }
       this.midgets.set(f, pack);
-      this.arena.showFloatingText(f.x, f.y - 44, '🦷 THEY COME', '#ffaaaa');
+      this.arena.showFloatingText(f.x, f.y - 44, '😬 THEY COME', '#ffaaaa');
     }
 
     for (const [f, pack] of this.midgets) {

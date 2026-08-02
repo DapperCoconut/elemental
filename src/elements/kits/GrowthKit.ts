@@ -318,7 +318,7 @@ interface Syringe {
 
 /**
  * One active Sickness. All of the Syringe tree's upgrades are folded into this single
- * effect — the tray only ever shows one 🩸 box no matter how deep the tree goes.
+ * effect — the tray only ever shows one 🔴 box no matter how deep the tree goes.
  */
 interface Sickness {
   target: Fighter;
@@ -735,7 +735,7 @@ export class GrowthKit {
       player.increaseMaxHp(K_SPEC_HP);
       player.heal(K_SPEC_HP);
     }
-    this.arena.showFloatingText(player.x, player.y - 30, `🧫 ${def.name}!`, '#ffdd66');
+    this.arena.showFloatingText(player.x, player.y - 30, `🥣 ${def.name}!`, '#ffdd66');
   }
 
   // ── Mastery: Syringe Shot / Sickness ─────────────────────────────────
@@ -908,7 +908,7 @@ export class GrowthKit {
     target.on('damaged', entry.onDamaged);
     target.sicknessUntil = entry.until;
     this.sicknesses.push(entry);
-    this.arena.showFloatingText(target.x, target.y - 44, '🩸 SICKNESS', '#ff5566');
+    this.arena.showFloatingText(target.x, target.y - 44, '🔴 SICKNESS', '#ff5566');
   }
 
   private detachSickness(s: Sickness): void {
@@ -929,7 +929,7 @@ export class GrowthKit {
         if (t.active && t.hp > 0 && this.sickTier(s.owner, 'carrier') > 0 && !t.sicknessCarrier) {
           t.sicknessCarrier = true;
           this.carriers.set(t, 0);
-          this.arena.showFloatingText(t.x, t.y - 44, '🦠 CARRIER', '#aadd55');
+          this.arena.showFloatingText(t.x, t.y - 44, '🐛 CARRIER', '#aadd55');
         }
         this.detachSickness(s);
         this.sicknesses.splice(i, 1);
@@ -1368,7 +1368,7 @@ export class GrowthKit {
       inherit = { ...this.puddles[pi].levels };
       this.puddles[pi].container.destroy();
       this.puddles.splice(pi, 1);
-      this.arena.showFloatingText(nx, ny - 26, '🧬 Soup absorbed!', '#88ff88');
+      this.arena.showFloatingText(nx, ny - 26, '🔬 Soup absorbed!', '#88ff88');
     }
 
     // Both arms thrust out and hold — the ultimate plants something, and the nest is
@@ -1951,7 +1951,7 @@ export class GrowthKit {
     this.arena.scene.tweens.add({ targets: icon, scaleX: 1.35, scaleY: 1.35, yoyo: true, repeat: -1, duration: 380 });
     this.infections.push({ target, owner, srcBody, until: time + durationMs, nextExpelAt: time + this.expelIntervalFor(owner), icon });
     this.arena.showFloatingText(target.x, target.y - 44,
-      this.hasVirusPerk(owner) ? '🦠 PLAGUED' : '🦠 INFECTED', '#99ee55');
+      this.hasVirusPerk(owner) ? '🐛 PLAGUED' : '🐛 INFECTED', '#99ee55');
   }
 
   private updateInfections(time: number): void {
@@ -2027,7 +2027,7 @@ export class GrowthKit {
           // Viral Consumption (secret): digesting a healthy virus fires you up briefly.
           if (fv.owner === 'player' && this.hasSecret('viral-consumption')) {
             this.viralBoostUntil = time + VIRAL_BOOST_MS;
-            this.arena.showFloatingText(caster.x, caster.y - 46, '🧬 +20% SPD/DMG', '#aaff66');
+            this.arena.showFloatingText(caster.x, caster.y - 46, '🔬 +20% SPD/DMG', '#aaff66');
           }
           fv.tri.destroy();
           this.floorViruses.splice(i, 1);
@@ -2262,7 +2262,7 @@ export class GrowthKit {
     const { scene } = this.arena;
     const jx = x + (Math.random() * 30 - 15);
     const jy = y + (Math.random() * 30 - 15);
-    const gfx = scene.add.text(jx, jy, '🧬', { fontSize: '16px' }).setOrigin(0.5).setDepth(9);
+    const gfx = scene.add.text(jx, jy, '🔬', { fontSize: '16px' }).setOrigin(0.5).setDepth(9);
 
     // Sweating: DNA flies straight to you.
     if (owner === 'player' && this.lvl(this.fighterBody, 'sweating') > 0) {
@@ -2298,7 +2298,7 @@ export class GrowthKit {
     // Mitosis (secret): the strand copies itself on the way in.
     if (owner === 'player' && this.hasSecret('mitosis') && Math.random() < MITOSIS_CHANCE) {
       amount *= 2;
-      this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 36, '🧬 MITOSIS', '#66ffcc');
+      this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 36, '🔬 MITOSIS', '#66ffcc');
     }
     if (owner === 'player') this.playerDna = Math.min(DNA_CAP, this.playerDna + amount);
     else this.npcDna = Math.min(DNA_CAP, this.npcDna + amount);
@@ -2533,7 +2533,7 @@ export class GrowthKit {
     };
     this.clones.push(clone);
     this.applyCloneTint(clone);
-    this.arena.showFloatingText(caster.x, caster.y - 40, '🧬 Clone hatched!', '#88bb22');
+    this.arena.showFloatingText(caster.x, caster.y - 40, '🔬 Clone hatched!', '#88bb22');
   }
 
   private updateClones(time: number, delta: number): void {
@@ -2741,8 +2741,8 @@ export class GrowthKit {
     gfx.lineStyle(2, accent, 0.9);
     gfx.strokeRoundedRect(panelX - 10, panelY - 6, panelW + 20, panelH, 14);
 
-    const titleText = sickTab ? '🩸 SICKNESS'
-      : body.isCloneBody ? '🧬 EVOLVE — CLONE BODY' : '🧬 EVOLVE';
+    const titleText = sickTab ? '🔴 SICKNESS'
+      : body.isCloneBody ? '🔬 EVOLVE — CLONE BODY' : '🔬 EVOLVE';
     const title = scene.add.text(W / 2, panelY + 10, titleText, {
       fontSize: '17px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
       color: sickTab ? '#ff8899' : body.isCloneBody ? '#ffcc88' : '#aaffcc',
@@ -2775,8 +2775,8 @@ export class GrowthKit {
     const { scene } = this.arena;
     const tabW = 130, tabH = 22;
     const tabs: Array<{ id: 'body' | 'sickness'; label: string; color: number }> = [
-      { id: 'body', label: '🧬 BODY', color: 0x4a8a2a },
-      { id: 'sickness', label: '🩸 SICKNESS', color: 0x8a2a2a },
+      { id: 'body', label: '🔬 BODY', color: 0x4a8a2a },
+      { id: 'sickness', label: '🔴 SICKNESS', color: 0x8a2a2a },
     ];
     tabs.forEach((t, i) => {
       const cx = W / 2 + (i - 0.5) * (tabW + 8);
@@ -2953,7 +2953,7 @@ export class GrowthKit {
         gfx.fillRoundedRect(bx, rowY - cardH / 2, cardW, cardH, 8);
         gfx.lineStyle(2, owned ? 0xbb99ff : affordable ? 0x8866cc : 0x443366, 1);
         gfx.strokeRoundedRect(bx, rowY - cardH / 2, cardW, cardH, 8);
-        const nameLabel = scene.add.text(bx + 7, rowY - cardH / 2 + 5, `🧫 ${def.name}`, {
+        const nameLabel = scene.add.text(bx + 7, rowY - cardH / 2 + 5, `🥣 ${def.name}`, {
           fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ddccff',
         }).setOrigin(0, 0).setDepth(41);
         const costLabel = scene.add.text(bx + cardW - 7, rowY - cardH / 2 + 5,

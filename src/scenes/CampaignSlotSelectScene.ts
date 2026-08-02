@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import * as CP from '../data/CampaignProgress';
-import { TOTAL_FIGHTS, TOTAL_CHALLENGES } from '../data/Worlds';
+import { TOTAL_FIGHTS, TOTAL_CHALLENGES } from '../data/AbstractWorlds';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackdrop, addBackButton, addButton, addCardPlate, addTitle,

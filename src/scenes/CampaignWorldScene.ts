@@ -3,12 +3,14 @@ import { WorldNode, getFightNodes } from '../data/Worlds';
 import { getAbstractWorld, getAnyWorld } from '../data/AbstractWorlds';
 import * as CP from '../data/CampaignProgress';
 import {
-  getCampaignFightDef, getCampaignReward, DIFFICULTY_LABEL, ELEMENT_DISPLAY,
+  getCampaignFightDef, getCampaignReward, isCorruptWorld, DIFFICULTY_LABEL, ELEMENT_DISPLAY,
 } from '../data/CampaignFights';
 import { getMutationDef } from '../data/Mutations';
 import { getItemsForElement } from '../data/Items';
+import { getWorldBossDef } from '../boss/bosses';
 import { drawCampaignBackground } from './CampaignBackground';
 import { addInventoryButton } from './InventoryScene';
+import { maybePlayStory } from './DialogueScene';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackButton, addChip, addWell, fillDiamond, fillHex, strokeHex,
@@ -46,7 +48,9 @@ export class CampaignWorldScene extends Phaser.Scene {
     const { width, height } = this.scale;
     const cx = width / 2;
     const world = getAnyWorld(this.worldId);
-    const mapMode: 'normal' | 'abstract' = getAbstractWorld(this.worldId) ? 'abstract' : 'normal';
+    const mapMode: 'normal' | 'abstract' | 'corrupt' =
+      isCorruptWorld(this.worldId) ? 'corrupt'
+        : getAbstractWorld(this.worldId) ? 'abstract' : 'normal';
     if (!world) { this.scene.start('CampaignWorldMapScene', { slotIdx: this.slotIdx, mode: mapMode }); return; }
 
     drawCampaignBackground(this, this.worldId, width, height).setDepth(DEPTH.backdrop);
@@ -144,6 +148,9 @@ export class CampaignWorldScene extends Phaser.Scene {
 
     this.infoDefault = 'Hover a node to scout it   ·   five fights opens the next worlds   ·   the Challenge is optional';
     this.setInfo('', this.infoDefault);
+
+    // First visit: the Herald introduces the world.
+    maybePlayStory(this, this.slotIdx, `world-enter:${this.worldId}`);
   }
 
   private setInfo(title: string, body: string): void {
@@ -168,7 +175,7 @@ export class CampaignWorldScene extends Phaser.Scene {
       };
     }
     if (node.kind === 'invasion') {
-      return { title: '👾  INVASION', body: 'Endless husk waves. Pays 🩸 Corrupt Shards. Always open.' };
+      return { title: '👾  INVASION', body: 'Endless husk waves. Pays 🔴 Corrupt Shards. Always open.' };
     }
     if (node.kind === 'gauntlet') {
       const done = CP.isGauntletCompleted(this.slotIdx, this.worldId);
@@ -193,6 +200,23 @@ export class CampaignWorldScene extends Phaser.Scene {
           ? 'Clear every fight in this world first. Optional — the next worlds open without it.'
           : 'Win the fight before it first.',
       };
+    }
+
+    // A world with a Sovereign ends on a boss, not a mutation rematch.
+    if (node.kind === 'challenge') {
+      const boss = getWorldBossDef(this.worldId);
+      if (boss) {
+        const reward = getCampaignReward(this.worldId, node.id, true, false);
+        return {
+          title: `👑  ${boss.name.toUpperCase()}`,
+          body: [
+            boss.title,
+            `${boss.phases.length} phases${boss.hard?.extraPhase ? ' (+1 on Hard)' : ''}`,
+            `⚡${reward.sparks}  🗝️${reward.keys}`,
+            'optional — keys open the Portal',
+          ].join('   ·   '),
+        };
+      }
     }
 
     const elem = ELEMENT_DISPLAY[def.enemyElementId];
@@ -252,11 +276,14 @@ export class CampaignWorldScene extends Phaser.Scene {
 
     if (node.kind === 'challenge') {
       const unlocked = CP.isChallengeUnlocked(slot, worldId);
+      const boss = getWorldBossDef(worldId);
       this.buildNode({
         node,
         x: node.x, y: node.y, r: style.radius,
-        accent: style.accent, glyph: style.glyph, label: style.label,
-        caption: unlocked ? getCampaignFightDef(node.id)?.name : undefined,
+        accent: style.accent,
+        glyph: boss ? '👑' : style.glyph,
+        label: boss ? 'BOSS' : style.label,
+        caption: unlocked ? (boss?.name ?? getCampaignFightDef(node.id)?.name) : undefined,
         unlocked,
         completed: CP.isChallengeCompleted(slot, worldId),
         onClick: () => this.openFightMenu(node.id, true),

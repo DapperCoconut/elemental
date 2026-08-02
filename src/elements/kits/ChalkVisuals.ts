@@ -42,6 +42,13 @@ export const CHK = {
   /** Masterpiece — haste. */
   teal: 0x3fd9d1,
   tealDeep: 0x11706b,
+  /**
+   * Masterpiece — power, and only ever with the Prodigy upgrade. Pushed well into pink so it
+   * cannot be read as Explosive Chalk's orange-red at a glance; the two are never both on the
+   * floor doing the same thing, and mistaking one for the other would be a death.
+   */
+  crimson: 0xff3b6b,
+  crimsonDeep: 0x8c1030,
   spark: 0xfff6d8,
 };
 

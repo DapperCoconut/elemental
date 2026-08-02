@@ -421,7 +421,7 @@ export class GlassKit {
     if (s.hidden) return;
     if (s.shards.length === 0) {
       f.resetCooldown('glass-splinter');
-      this.api.showFloatingText(f.x, f.y - 46, '🪟 NOTHING TO THROW', this.hex(GLA.pane));
+      this.api.showFloatingText(f.x, f.y - 46, '🔷 NOTHING TO THROW', this.hex(GLA.pane));
       return;
     }
 
@@ -519,7 +519,7 @@ export class GlassKit {
     this.avatar(owner)?.play('raise');
     const fx = this.fx(owner);
     fx.chime(f.x, f.y, 90, 24, 700, 9, s.hue0, this.dark(owner));
-    this.api.showFloatingText(f.x, f.y - 52, '🪟 GLASS BLOW', this.hex(GLA.citrine));
+    this.api.showFloatingText(f.x, f.y - 52, '🔷 GLASS BLOW', this.hex(GLA.citrine));
     this.api.showFloatingText(f.x, f.y - 32, 'INVINCIBLE 2s', this.hex(GLA.bright));
     Sfx.playAt('crystal-chime', f.x, { volume: 0.95, rate: 0.6 });
   }
@@ -969,7 +969,7 @@ export class GlassKit {
     const fx = this.fx(owner);
     fx.chime(rally.x, rally.y, 8, 96, 520, 10, s.hue0, this.dark(owner));
     fx.dust(rally.x, rally.y, 10, 34, 620, 9, s.hue0, this.dark(owner));
-    this.api.showFloatingText(rally.x, rally.y - 46, '🪟 RE-FORMED', this.hex(GLA.citrine));
+    this.api.showFloatingText(rally.x, rally.y - 46, '🔷 RE-FORMED', this.hex(GLA.citrine));
     Sfx.playAt('crystal-chime', rally.x, { volume: 1, rate: 0.75 });
   }
 
@@ -1145,7 +1145,7 @@ export class GlassKit {
     const tempered = time < s.temperUntil;
 
     this.api.setStatusIndicator('glass-fragile', isGlass && !tempered ? {
-      name: 'Fragile', emoji: '🪟', color: GLA.rose,
+      name: 'Fragile', emoji: '🔷', color: GLA.rose,
       description: 'Made of glass: everything hits you harder, and every hit you take fires 15 shards in all directions. Throwing your shards away adds another 25%.',
       count: bonusPct, suffix: '%', priority: 6,
     } : null);

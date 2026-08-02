@@ -193,7 +193,7 @@ const CAST_GESTURES: Record<string, ArmGesture> = {
 
 // ── Wheel data ────────────────────────────────────────────────────────────────
 
-const GRIMOIRE_LABELS  = ['🔥 Flame Burst', '🌧️ Storm Cloud', '🌿 V. Thorns', '💨 Compression', '🪨 Gaia Guide'];
+const GRIMOIRE_LABELS  = ['🔥 Flame Burst', '🌧️ Storm Cloud', '🌿 V. Thorns', '💨 Compression', '🗿 Gaia Guide'];
 const GRIMOIRE_COLORS  = [0xff7733, 0x3388ff, 0x33aa44, 0x888888, 0x885522];
 const NECRO_LABELS     = ['🌋 Flame Barrage', '🌊 Final Drench', '🌿 Thorn Prison', '🌪️ Tornado', '🌋 Gaia Rage'];
 const NECRO_COLORS     = [0xcc2200, 0x1144aa, 0x226622, 0x444444, 0x553311];
@@ -204,7 +204,7 @@ const DECAY_GRIMOIRE_COST = 25;
 /** …and for the Necronomicon's. One point short of the 100 that kills you outright. */
 const DECAY_NECRO_COST = 99;
 
-const DARK_GRIMOIRE_LABELS = ['🔥 Corrupt Flames', '⛈️ Acid Cloud', '🌿 Drain Thorns', '💨 Dark Gale', '🛕 Gaia Temple'];
+const DARK_GRIMOIRE_LABELS = ['🔥 Corrupt Flames', '⛈️ Acid Cloud', '🌿 Drain Thorns', '💨 Dark Gale', '⛩️ Gaia Temple'];
 const DARK_GRIMOIRE_COLORS = [0xff5500, 0x3366cc, 0x22aa44, 0x888888, 0x775533];
 const DARK_NECRO_LABELS    = ['🌋 Dark Barrage', '🌊 Acid Rain', '🌿 Torture Trap', '🌪️ Hurricane Vac.', '🌋 Gaia Monument'];
 const DARK_NECRO_COLORS    = [0xcc1100, 0x112255, 0x226633, 0x333333, 0x442200];
@@ -1800,7 +1800,7 @@ export class MagicKit {
           this._destroyRockSet(owner === 'player' ? this.playerRockSet : this.npcRockSet);
           const rs = this._spawnRockSet(owner, 4, 56, now + 5000, 10, false);
           if (owner === 'player') this.playerRockSet = rs; else this.npcRockSet = rs;
-          this.api.showFloatingText(caster.x, caster.y - 30, '🪨⚡ Charged Guidance', '#aa7733');
+          this.api.showFloatingText(caster.x, caster.y - 30, '🗿⚡ Charged Guidance', '#aa7733');
         } else {
           this.doGaiasGuidance(owner);
         }
@@ -1841,7 +1841,7 @@ export class MagicKit {
           this._destroyRockSet(owner === 'player' ? this.playerRockSet : this.npcRockSet);
           const rs = this._spawnRockSet(owner, 5, 56, now + 8000, 12, true);
           if (owner === 'player') this.playerRockSet = rs; else this.npcRockSet = rs;
-          this.api.showFloatingText(caster.x, caster.y - 30, '🪨⚡ Gaia\'s Rage+', '#aa7733');
+          this.api.showFloatingText(caster.x, caster.y - 30, '🗿⚡ Gaia\'s Rage+', '#aa7733');
         } else {
           this.doGaiasRage(owner);
         }
@@ -2381,7 +2381,7 @@ export class MagicKit {
     this.api.showFloatingText(
       owner === 'player' ? this.api.player.x : this.api.npc.x,
       (owner === 'player' ? this.api.player.y : this.api.npc.y) - 30,
-      '🪨 Gaia\'s Guidance', '#aa7733');
+      '🗿 Gaia\'s Guidance', '#aa7733');
   }
 
   private _spawnRockSet(owner: 'player' | 'npc', count: number, orbitR: number, expireAt: number, dmg: number, canCrack: boolean): RockOrbSet {
@@ -2671,7 +2671,7 @@ export class MagicKit {
       slowMs: 1000,
       stunMs: 0,
     });
-    this.api.showFloatingText(tx, ty - 30, '🛕 Gaia\'s Temple', '#aa7733');
+    this.api.showFloatingText(tx, ty - 30, '⛩️ Gaia\'s Temple', '#aa7733');
     this.addDarkness(25);
   }
 

@@ -70,6 +70,6 @@ export const glassElement: Element = {
   id: 'glass',
   name: 'Glass',
   color: 0x9fe8ff,
-  emoji: '🪟',
+  emoji: '🔷',
   abilities: [shardOrbit, shardSplinter, mosaicTwirl, temper, glassBlow],
 };

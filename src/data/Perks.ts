@@ -56,7 +56,7 @@ export const ALL_PERKS: ElementPerks[] = [
         // id kept as 'plume' so previously-forged copies of this perk survive the rework.
         id: 'plume',
         name: 'String',
-        emoji: '🧵',
+        emoji: '🎀',
         color: 0x6633aa,
         description: 'Snap Traps become Snap Stakes, which do nothing on their own and last twice as long. Every two stakes are joined by a tripline — an enemy crossing it takes 5 dmg, 10% Hopelessness and a 50% slow for 3s. With Tentacle upgraded you can drag stakes around, and the string follows.',
         ingredients: ['fire', 'water', 'air', 'earth'],
@@ -71,7 +71,7 @@ export const ALL_PERKS: ElementPerks[] = [
       {
         id: 'obsidian',
         name: 'Obsidian',
-        emoji: '🪨',
+        emoji: '🗿',
         color: 0x333344,
         description: 'Shield HP increased to 100 (75 each with Double Shield). You move 15% slower while this perk is equipped.',
         ingredients: ['fire', 'water', 'earth'],
@@ -133,7 +133,7 @@ export const ALL_PERKS: ElementPerks[] = [
         // Infect ability, so it now supercharges the R infection that replaced it.
         id: 'virus',
         name: 'Virus',
-        emoji: '🦠',
+        emoji: '🐛',
         color: 0x77dd33,
         description: 'Your infection becomes a plague: it lasts 12s instead of 8s, hosts expel 5 floor viruses every 1.4s instead of 3 every 2s, and any floor virus that hits re-infects for 3s — so the outbreak keeps itself alive.',
         ingredients: ['water', 'life', 'air'],
@@ -322,7 +322,7 @@ export const ALL_PERKS: ElementPerks[] = [
         name: 'Harmony',
         emoji: '🎶',
         color: 0xff99ff,
-        description: 'Replaces Sonic Grapple with a Sonic Grenade: flies to cursor, lingers 2s, then explodes. Note-timed grenades auto-explode on arrival. On hit: star aura + +15% song speed & move speed for 20s (stackable). With F upgrade: perfect-timed grenades also refresh the cooldown (max 3/cycle, same as Grace Note).',
+        description: 'Every cast you land on the metronome beat also lobs a brass resonator at your cursor. It flies out, sits a beat, then goes off for 20 damage in a wide blast. Each one that connects grants +15% move and attack speed for 20s, stacking to four. One resonator every 3 seconds.',
         ingredients: ['slime', 'sound', 'light'],
         tier: 'abstract-triple',
         elementId: 'sound',
@@ -383,7 +383,7 @@ export const ALL_PERKS: ElementPerks[] = [
       {
         id: 'rage',
         name: 'Rage',
-        emoji: '🩸',
+        emoji: '🔴',
         color: 0xcc2233,
         description: "Trail marks last 2s longer. Standing on your own trail builds Rage at 10/sec. At 100 Rage the beast is dragged out early, whatever its clock says — and while that beast is out you take 50% less damage.",
         ingredients: ['fire', 'life', 'air', 'earth'],
@@ -443,7 +443,7 @@ export const ALL_PERKS: ElementPerks[] = [
       {
         id: 'gunpowder',
         name: 'Exsanguinate',
-        emoji: '🩸',
+        emoji: '🔴',
         color: 0xcc0022,
         description: 'Clot Armor shard bursts fire 8 shards instead of 5. Blood puddles created by all sources (passive, bleeding, shard hits) are 50% bigger, so every drain tick fills your blood bar faster.',
         ingredients: ['electricity', 'fate', 'sound', 'light'],
@@ -471,7 +471,7 @@ export const ALL_PERKS: ElementPerks[] = [
     // Sonic Boom was a charge-zone whip on the old Wave Reducer click. The whip is gone,
     // but the dagger recall is the same "everything snaps back at once" beat, so the
     // boom now rides the recall.
-    elementId: 'quantum',
+    elementId: 'subterfuge',
     perks: [
       {
         id: 'sonic-boom',
@@ -481,7 +481,7 @@ export const ALL_PERKS: ElementPerks[] = [
         description: 'Recalled daggers break the sound barrier. Every dagger that makes it home detonates a shockwave where it launched from — 10 damage in a wide ring, a hard shove and a stagger. A dagger that connects on the way back booms on the victim instead.',
         ingredients: ['electricity', 'slime', 'sound', 'light'],
         tier: 'quad',
-        elementId: 'quantum',
+        elementId: 'subterfuge',
       },
     ],
   },
@@ -494,7 +494,7 @@ export const ALL_PERKS: ElementPerks[] = [
       {
         id: 'uber-gear',
         name: 'Uber-Gear',
-        emoji: '🪀',
+        emoji: '🎾',
         color: 0xff5577,
         description: 'Every rubber hit — punch, sling, or ball — winds you up +4% elasticity, up to +60%, decaying only when you go 5s without landing one. Elasticity boosts punch damage, sling launch speed and Rubberage ball damage alike, and Rubberage itself runs 50% longer with balls that never lose speed.',
         ingredients: ['electricity', 'slime', 'fate', 'sound', 'light'],

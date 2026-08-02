@@ -462,7 +462,7 @@ export class DreamKit {
     this.avatar(owner)?.play('slam');
     this.fx(owner).ring(x, y, 8, CATCHER_RADIUS * 2.2, DRM.web, 460, 4, 5);
     this.fx(owner).stardust(x, y, 8, 26, 700, 5);
-    this.api.showFloatingText(f.x, f.y - 42, '🪶 DREAMCATCHER', '#e8ecff');
+    this.api.showFloatingText(f.x, f.y - 42, '🍃 DREAMCATCHER', '#e8ecff');
   }
 
   /** F — Nightmare. Ten seconds of something only they can see. */
@@ -809,7 +809,7 @@ export class DreamKit {
     }
 
     this.fx(by).stardust(f.x, f.y, 7, 26, 640, 7);
-    this.api.showFloatingText(f.x, f.y - 40, why === 'damage' ? '⏰ AWAKE!' : '🥱 Woke up', '#d8e2ff');
+    this.api.showFloatingText(f.x, f.y - 40, why === 'damage' ? '⏰ AWAKE!' : '😪 Woke up', '#d8e2ff');
   }
 
   /** Tips a fighter over into sleep once the meter is full. */
@@ -1212,7 +1212,7 @@ export class DreamKit {
     } : null);
 
     this.api.setStatusIndicator('dream-drowsy', st && st.asleepUntil <= time && st.drowsy > 0.5 ? {
-      name: 'Drowsy', emoji: '🥱', color: DRM.blue,
+      name: 'Drowsy', emoji: '😪', color: DRM.blue,
       description: 'Sleepiness is stacking up. At 100% you fall asleep for 8 seconds. Get out of the pendulum\'s reach and it wears off.',
       count: Math.round(st!.drowsy), suffix: '%', priority: 13,
     } : null);

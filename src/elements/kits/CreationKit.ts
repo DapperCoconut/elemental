@@ -290,9 +290,9 @@ const CREATION_POTION_ARM: Record<CreationPotionKind, MechArmKind> = {
 };
 
 export const CREATION_MECH_ARM_INFO: Record<MechArmKind, { name: string; emoji: string; effect: string }> = {
-  chainsaw:  { name: 'Chainsaw Arm',  emoji: '🪚', effect: 'Cuts anything that comes close, on its own. Overheats after 5s and vents for 3s.' },
+  chainsaw:  { name: 'Chainsaw Arm',  emoji: '🔨', effect: 'Cuts anything that comes close, on its own. Overheats after 5s and vents for 3s.' },
   medcore:   { name: 'Med Core Arm',  emoji: '💊', effect: 'Lobs 3 repair orbs around you every 8s. Each one you walk over restores 15 mech HP.' },
-  grabber:   { name: 'Grabber Arm',   emoji: '🦾', effect: 'Seizes anyone who gets close and holds them for 3s. They cannot attack in the claw.' },
+  grabber:   { name: 'Grabber Arm',   emoji: '🤖', effect: 'Seizes anyone who gets close and holds them for 3s. They cannot attack in the claw.' },
   shield:    { name: 'Shield Arm',    emoji: '🛡️', effect: '+25 mech HP, and every 5th hit is blocked outright (every 3rd with two shields).' },
   barrage:   { name: 'Barrage Arm',   emoji: '🚀', effect: 'Fires 3 homing rockets every 8s — 5 damage each, plus a small blast.' },
   overclock: { name: 'Overclock Arm', emoji: '⚙️', effect: '+25% mech speed, supercharges the other arm, and steel-plates everything you build.' },
@@ -323,8 +323,8 @@ const SPRINGBOARD_PAD_MS = 10000;
  * potion's own effect. Gold is absent on purpose: it lands unchanged (see `applyMortarHex`).
  */
 const CREATION_HEXES: Record<Exclude<CreationPotionKind, 'gold'>, { name: string; emoji: string; effect: string }> = {
-  buff:       { name: 'Weakened',  emoji: '🩸', effect: 'Deal 25% less damage.' },
-  heal:       { name: 'Corroding', emoji: '🧫', effect: 'Lose 3 HP every second.' },
+  buff:       { name: 'Weakened',  emoji: '🔴', effect: 'Deal 25% less damage.' },
+  heal:       { name: 'Corroding', emoji: '🥣', effect: 'Lose 3 HP every second.' },
   protection: { name: 'Brittle',   emoji: '🥀', effect: 'Take 25% more damage.' },
   speed:      { name: 'Leaden',    emoji: '🐌', effect: 'Move half as fast.' },
   reload:     { name: 'Jammed',    emoji: '⛓️', effect: 'Ability cooldowns recharge 25% slower.' },
@@ -2080,7 +2080,7 @@ export class CreationKit {
           v.extend = 1;
           this.pfx.ring(nearest.x, nearest.y, 34, 10, MECH_ARM_TONES.grabber, 300, 4, 9);
           this.pfx.gearPulse(mech.x, mech.y, 34, 420, CREATION.brass, 9);
-          this.api.showFloatingText(nearest.x, nearest.y - 44, '🦾 GRABBED', '#ffcc22');
+          this.api.showFloatingText(nearest.x, nearest.y - 44, '🤖 GRABBED', '#ffcc22');
         }
         break;
       }

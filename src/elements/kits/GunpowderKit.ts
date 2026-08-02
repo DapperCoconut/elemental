@@ -27,11 +27,11 @@ const WEAPON_DEFS: Record<WeaponType, WeaponDef> = {
   rifle: { type: 'rifle', name: 'Rifle', emoji: '🎯', desc: 'Large hitscan, 15 dmg. Each copy: +25% Musket Shot damage.' },
   grenade: { type: 'grenade', name: 'Grenade Launcher', emoji: '💣', desc: 'Lobs a grenade that explodes after a short fuse.' },
   machinegun: { type: 'machinegun', name: 'Machine Gun', emoji: '🔥', desc: '20 hitscan shots, 2 dmg each, up to 10° inaccurate.' },
-  flamethrower: { type: 'flamethrower', name: 'Flamethrower', emoji: '🧯', desc: '10 flame clouds, 3 dmg each, fade in 3s or on contact. Each copy: muskets cool 20% slower.' },
+  flamethrower: { type: 'flamethrower', name: 'Flamethrower', emoji: '🚒', desc: '10 flame clouds, 3 dmg each, fade in 3s or on contact. Each copy: muskets cool 20% slower.' },
   rpg: { type: 'rpg', name: 'RPG', emoji: '🚀', desc: 'Explosive rocket, 20 dmg in a large AOE. Each copy: +20% Fire at Will cooldown.' },
   minigun: { type: 'minigun', name: 'Minigun', emoji: '🌪️', desc: '30 hitscan shots, 2 dmg each. Slows you 50% while firing. Each copy: muskets cool 35% slower.' },
   sniper: { type: 'sniper', name: 'Sniper', emoji: '🔭', desc: 'Hitscan, 20 dmg. Only fires every other Fire at Will (red slot = will skip next).' },
-  raygun: { type: 'raygun', name: 'Ray-Gun', emoji: '🟢', desc: 'Bouncy piercing bullet, 5 dmg + knockback, up to 3 hits before it burns out.' },
+  raygun: { type: 'raygun', name: 'Ray-Gun', emoji: '💚', desc: 'Bouncy piercing bullet, 5 dmg + knockback, up to 3 hits before it burns out.' },
   freezeray: { type: 'freezeray', name: 'Freeze-Ray', emoji: '❄️', desc: 'Hitscan, 3 dmg + 1s stun. Each copy: muskets cool 20% faster.' },
   gunblade: { type: 'gunblade', name: 'Gunblade', emoji: '⚔️', desc: 'Long shot (10 dmg) or point-blank slash (15 dmg). Grants 20% damage reduction for 2s after firing.' },
 };
@@ -902,7 +902,7 @@ export class GunpowderKit {
     player.cooldownMult = this.angerCdBaseline;
     player.clearTint();
     this.angerTrail = [];
-    this.arena.showFloatingText(player.x, player.y - 40, '😮‍💨 Spent.', '#998877');
+    this.arena.showFloatingText(player.x, player.y - 40, '😤 Spent.', '#998877');
   }
 
   private updateAnger(time: number, delta: number): void {

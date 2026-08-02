@@ -89,7 +89,7 @@ export const KIND_LABEL: Record<BuildKind, string> = {
 };
 
 export const KIND_EMOJI: Record<BuildKind, string> = {
-  town: '🏛️', barracks: '⚔️', turret: '🔫', barricade: '🧱',
+  town: '🏛️', barracks: '⚔️', turret: '🔫', barricade: '🚧',
 };
 
 /** What each path is *for*, shown as the column heading in the menu. */

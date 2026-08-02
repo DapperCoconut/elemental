@@ -1,4 +1,4 @@
-import { saveKey } from './Cheats';
+import { saveKey, isCheatMode } from './Cheats';
 
 const STORAGE_BASE = 'elemental_save';
 
@@ -37,6 +37,10 @@ interface SaveData {
   passionQTaps: number;                // taps on Passion's Q row in the info panel — 10 unlocks the toggle
   passionQCensored: boolean;           // whether that toggle is currently on
   paperJournal: Record<string, PaperJournalRecord>; // enemy elementId -> fights won/lost as Paper
+  quantumBond: string[];               // the two elementIds Quantum currently carries, [] if none
+  quantumResearched: string[];         // bond keys ("a+b", sorted) whose research is finished
+  quantumResearching: string;          // the one bond key being worked on now, '' if none
+  quantumQuestProgress: Record<string, number>; // "<bondKey>:<questId>" -> count so far
 }
 
 /**
@@ -47,6 +51,43 @@ interface SaveData {
 export interface PaperJournalRecord {
   wins: number;
   losses: number;
+}
+
+/**
+ * Subterfuge shipped under the element id `quantum` for its whole life, because it began as
+ * a revamp of an element by that name and kept the slot. The id was handed over when the real
+ * Quantum element arrived, so every save written before that still files Subterfuge's
+ * upgrades, perks, mastery, skins and journal under `quantum`.
+ *
+ * Rewrites those keys in place, in memory, on every load. Idempotent — once any write lands
+ * the migrated shape is what's on disk and this becomes a no-op. Deliberately does *not*
+ * clobber: if a `subterfuge` key somehow already exists it wins, and the stale one is dropped.
+ */
+function migrateSubterfugeId(d: SaveData): void {
+  const OLD = 'quantum';
+  const NEW = 'subterfuge';
+
+  // elementId-keyed records
+  const records: Array<Record<string, unknown>> = [
+    d.owned, d.active, d.unlockedPerks, d.equippedPerks, d.masteryProgress,
+    d.masteryEnabled, d.masteryBinds, d.equippedSkins, d.paperJournal,
+  ];
+  for (const rec of records) {
+    if (!(OLD in rec)) continue;
+    if (!(NEW in rec)) rec[NEW] = rec[OLD];
+    delete rec[OLD];
+  }
+
+  // elementId-valued arrays
+  const lists: Array<string[]> = [
+    d.unlockedElements, d.gauntletsCompleted, d.gauntletsCompletedHard,
+  ];
+  for (const list of lists) {
+    const at = list.indexOf(OLD);
+    if (at < 0) continue;
+    if (list.includes(NEW)) list.splice(at, 1);
+    else list[at] = NEW;
+  }
 }
 
 function load(): SaveData {
@@ -86,7 +127,12 @@ function load(): SaveData {
         passionQTaps: parsed.passionQTaps ?? 0,
         passionQCensored: parsed.passionQCensored ?? false,
         paperJournal: parsed.paperJournal ?? {},
+        quantumBond: parsed.quantumBond ?? [],
+        quantumResearched: parsed.quantumResearched ?? [],
+        quantumResearching: parsed.quantumResearching ?? '',
+        quantumQuestProgress: parsed.quantumQuestProgress ?? {},
       };
+      migrateSubterfugeId(d);
       // Sanity: clear equipped perk if no longer unlocked
       for (const el of Object.keys(d.equippedPerks)) {
         if (!(d.unlockedPerks[el] ?? []).includes(d.equippedPerks[el])) {
@@ -98,7 +144,7 @@ function load(): SaveData {
   } catch {
     // corrupted save — start fresh
   }
-  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedSkins: {}, divineNuclei: 0, kingDefeated: false, devourerDefeated: false, devourerChoice: '', bountyRerollOffset: 0, completedBountyKeys: [], passionQTaps: 0, passionQCensored: false, paperJournal: {} };
+  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedSkins: {}, divineNuclei: 0, kingDefeated: false, devourerDefeated: false, devourerChoice: '', bountyRerollOffset: 0, completedBountyKeys: [], passionQTaps: 0, passionQCensored: false, paperJournal: {}, quantumBond: [], quantumResearched: [], quantumResearching: '', quantumQuestProgress: {} };
 }
 
 function save(data: SaveData): void {
@@ -300,9 +346,12 @@ export function getLabLevel(): number {
   return load().labLevel;
 }
 
+/** Highest Lab level the Nucleus upgrades climb to. */
+export const MAX_LAB_LEVEL = 4;
+
 export function upgradelab(): boolean {
   const data = load();
-  if (data.labLevel >= 4) return false;
+  if (data.labLevel >= MAX_LAB_LEVEL) return false;
   data.labLevel += 1;
   save(data);
   return true;
@@ -631,5 +680,96 @@ export function setEquippedSkin(elementId: string, skinId: string | null): void 
     next[elementId] = skinId;
   }
   data.equippedSkins = next;
+  save(data);
+}
+
+// ── Quantum bonds ────────────────────────────────────────────────────
+
+/**
+ * A bond is an unordered pair, so it is keyed by its two element ids sorted and joined —
+ * `fire+water` is the same bond as `water+fire`. Every lookup below goes through this, so
+ * nothing downstream has to care which order the player picked them in.
+ */
+export function bondKey(a: string, b: string): string {
+  return [a, b].sort().join('+');
+}
+
+/** The two elements Quantum is currently carrying, or null if no bond is set. */
+export function getQuantumBond(): [string, string] | null {
+  const bond = load().quantumBond;
+  return bond.length === 2 ? [bond[0], bond[1]] : null;
+}
+
+/**
+ * Sets the carried bond. Order is preserved here on purpose even though the key is not:
+ * the first element is the half the player spawns as, which is a real choice.
+ */
+export function setQuantumBond(a: string, b: string): void {
+  const data = load();
+  data.quantumBond = [a, b];
+  save(data);
+}
+
+export function clearQuantumBond(): void {
+  const data = load();
+  data.quantumBond = [];
+  save(data);
+}
+
+/**
+ * Fire+Water is granted, not researched. Quantum with nothing bonded is an element with no
+ * abilities, so there has to be one pair that is always available — and the two elements
+ * every save owns are the only honest candidates.
+ */
+export const STARTER_BOND: [string, string] = ['fire', 'water'];
+
+export function isBondResearched(a: string, b: string): boolean {
+  // A cheat profile is supposed to have everything, and there are on the order of twelve
+  // hundred pairs — far too many to write into a save. Answering yes is the same grant
+  // without the storage, and it is what makes the bond roster usable for testing.
+  if (isCheatMode()) return true;
+  const key = bondKey(a, b);
+  if (key === bondKey(STARTER_BOND[0], STARTER_BOND[1])) return true;
+  return load().quantumResearched.includes(key);
+}
+
+export function getResearchedBonds(): string[] {
+  return [...load().quantumResearched];
+}
+
+/** The bond currently being researched, or null. Only ever one at a time. */
+export function getResearchingBond(): string | null {
+  return load().quantumResearching || null;
+}
+
+/**
+ * Picks the bond to work on. Switching away does *not* wipe the progress already banked
+ * on the old one — quest counts are keyed by bond, so coming back resumes where it left off.
+ */
+export function setResearchingBond(key: string | null): void {
+  const data = load();
+  data.quantumResearching = key ?? '';
+  save(data);
+}
+
+export function getBondQuestProgress(key: string, questId: string): number {
+  return load().quantumQuestProgress[`${key}:${questId}`] ?? 0;
+}
+
+/** Adds to one quest's tally. Only counts toward the bond currently being researched. */
+export function addBondQuestProgress(key: string, questId: string, amount: number): void {
+  if (amount <= 0) return;
+  const data = load();
+  if (data.quantumResearching !== key) return;
+  const at = `${key}:${questId}`;
+  data.quantumQuestProgress[at] = (data.quantumQuestProgress[at] ?? 0) + amount;
+  save(data);
+}
+
+/** Marks a bond researched and clears it as the active research slot. Idempotent. */
+export function completeBondResearch(key: string): void {
+  const data = load();
+  if (!data.quantumResearched.includes(key)) data.quantumResearched.push(key);
+  if (data.quantumResearching === key) data.quantumResearching = '';
   save(data);
 }

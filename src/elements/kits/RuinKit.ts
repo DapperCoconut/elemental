@@ -436,7 +436,7 @@ export class RuinKit {
 
     this.avatar(owner)?.play('dash', ang);
     this.fx(owner).rustPuff(f.x, f.y, 8, 26, 480, 9);
-    this.api.showFloatingText(f.x, f.y - 46, '🩸 RUSTY SKEWER', this.hex(RUI.rust));
+    this.api.showFloatingText(f.x, f.y - 46, '🔴 RUSTY SKEWER', this.hex(RUI.rust));
     Sfx.playAt('whoosh', f.x, { volume: 0.8, rate: 0.7 });
   }
 
@@ -479,7 +479,7 @@ export class RuinKit {
     fx.ring(f.x, f.y, 20, Math.max(this.api.width, this.api.height) * 0.75, RUI.decay, 900);
     for (const t of this.targetsOf(owner)) {
       fx.rustPuff(t.x, t.y, 12, 34, 700, 10);
-      this.api.showFloatingText(t.x, t.y - 44, `🦠 DECAY ×${s.decay}`, this.hex(RUI.decay));
+      this.api.showFloatingText(t.x, t.y - 44, `🐛 DECAY ×${s.decay}`, this.hex(RUI.decay));
     }
     this.api.showFloatingText(f.x, f.y - 56, '☠️ UNSTOPPABLE DECAY', this.hex(RUI.decay));
     Sfx.playAt('curse-cast', f.x, { volume: 0.95, rate: 0.65 });
@@ -644,7 +644,7 @@ export class RuinKit {
     fx.bite(victim.x, victim.y, 32, RUI.blood);
     fx.rustPuff(victim.x, victim.y, 8, 26, 520, 10);
     this.api.spawnHitFlash(victim.x, victim.y, RUI.blood);
-    this.api.showFloatingText(victim.x, victim.y - 38, '🩸 SKEWERED', this.hex(RUI.red));
+    this.api.showFloatingText(victim.x, victim.y - 38, '🔴 SKEWERED', this.hex(RUI.red));
     Sfx.playAt('stab', victim.x, { volume: 0.9, rate: 0.75 });
   }
 
@@ -657,7 +657,7 @@ export class RuinKit {
       const py = Phaser.Math.Clamp(f.y, this.top + 30, this.bottom - 30);
       this.body(f).reset(px, py);
       fx.shatter(px, py, 7, 34, RUI.blood, 460, 10);
-      this.api.showFloatingText(px, py - 42, onWall ? '🧱 TORN OFF' : '🩸 SLID FREE', this.hex(RUI.rust));
+      this.api.showFloatingText(px, py - 42, onWall ? '🚧 TORN OFF' : '🔴 SLID FREE', this.hex(RUI.rust));
     }
     const ex = Phaser.Math.Clamp(s.x, this.left, this.right);
     const ey = Phaser.Math.Clamp(s.y, this.top, this.bottom);
@@ -967,7 +967,7 @@ export class RuinKit {
     // ── Victim side: all of this can be on the player whoever is playing Ruin. ──
     const stacks = this.decayStacksOn(p);
     this.api.setStatusIndicator('ruin-decayed', stacks > 0 ? {
-      name: 'Unstoppable Decay', emoji: '🦠', color: RUI.decay,
+      name: 'Unstoppable Decay', emoji: '🐛', color: RUI.decay,
       description: 'Rotting. Each stack is 10% slower, 10% more damage taken and 10% less damage dealt — and it never wears off.',
       count: stacks, priority: 4,
     } : null);

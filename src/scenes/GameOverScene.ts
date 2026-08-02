@@ -3,13 +3,15 @@ import * as PlayerData from '../data/PlayerData';
 import * as CP from '../data/CampaignProgress';
 import { SHARD_REWARDS } from '../data/Upgrades';
 import { MUTATIONS } from '../data/Mutations';
-import { getCampaignReward, getCampaignFightDef } from '../data/CampaignFights';
+import { getCampaignReward } from '../data/CampaignFights';
+import { getEffectiveFightDef } from '../data/CampaignFightsHard';
 import { getAnyWorld } from '../data/AbstractWorlds';
 import { currentBountySeed } from '../data/Bounties';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackdrop, addButton, addPanel, addTitle, fillDiamond,
 } from '../ui';
+import { maybePlayStory } from './DialogueScene';
 import { Sfx } from '../audio';
 
 type CampaignPayload = {
@@ -137,12 +139,21 @@ export class GameOverScene extends Phaser.Scene {
     let campaignHardMode = false;
     // Worlds opened by this win — the five fights are the gate, not the challenge.
     let worldsOpened: string[] = [];
+    /** Set only on the run that first pulls Quantum out of the Amalgam. */
+    let quantumFirstUnlock = false;
     if (isCampaign && data.playerWon && data.campaign) {
       const c = data.campaign;
       campaignHardMode = !!c.hardMode;
       const reward = getCampaignReward(c.worldId, c.fightId, c.isChallenge, campaignHardMode);
       if (c.isChallenge) {
         CP.markChallengeCompleted(c.slot, c.worldId);
+        // The sealed 43rd element, behind the thing that was wearing all the others. Granted
+        // on the profile rather than the slot: elements are account-wide, and a finale clear
+        // on any save is a clear. `unlockElement` is idempotent, so replays are free.
+        if (c.worldId === CP.AMALGAM_WORLD_ID) {
+          quantumFirstUnlock = !PlayerData.isElementUnlocked('quantum');
+          PlayerData.unlockElement('quantum');
+        }
       } else {
         const wasAlreadyWon = CP.isFightCompleted(c.slot, c.worldId, c.fightId);
         CP.markFightCompleted(c.slot, c.worldId, c.fightId);
@@ -190,7 +201,7 @@ export class GameOverScene extends Phaser.Scene {
       [title, subtitle, accent] = ['GAUNTLET FAILED', 'Your run has ended…', C.blood];
     } else if (isCampaign && data.campaign) {
       // Campaign results name the bout that was won or lost, so a run reads as a story.
-      const boutName = getCampaignFightDef(data.campaign.fightId)?.name;
+      const boutName = getEffectiveFightDef(data.campaign.fightId, !!data.campaign.hardMode)?.name;
       const hardTag = data.campaign.hardMode ? '  ·  HARD MODE' : '';
       [title, subtitle, accent] = data.playerWon
         ? ['VICTORY', boutName ? `${boutName} cleared${hardTag}` : 'The world bends a little further.', C.gold]
@@ -234,7 +245,7 @@ export class GameOverScene extends Phaser.Scene {
       lines.push({ icon: '🗝️', text: `+${keysEarned}  Key${keysEarned === 1 ? '' : 's'}`, color: T.gold });
     }
     if (isInvasion && (data.corruptShardsEarned ?? 0) > 0) {
-      lines.push({ icon: '🩸', text: `+${data.corruptShardsEarned}  Corrupt Shards`, color: hex(mix(C.corrupt, 0xffffff, 0.4)) });
+      lines.push({ icon: '🔴', text: `+${data.corruptShardsEarned}  Corrupt Shards`, color: hex(mix(C.corrupt, 0xffffff, 0.4)) });
     }
     if (bossShards > 0) {
       lines.push({ icon: '💎', text: `+${bossShards}  shards`, color: T.gold, big: true });
@@ -268,6 +279,19 @@ export class GameOverScene extends Phaser.Scene {
           big: true,
         });
       }
+    }
+    if (quantumFirstUnlock) {
+      lines.push({
+        icon: '⚛️',
+        text: 'QUANTUM UNLOCKED — the sealed element, from behind what was wearing the others',
+        color: '#7df9ff',
+        big: true,
+      });
+      lines.push({
+        icon: '🔗',
+        text: 'It has no abilities of its own. Bond two elements to it in the Entanglement Lab.',
+        color: T.faint,
+      });
     }
     if (divineEarned > 0) {
       lines.push({
@@ -336,6 +360,9 @@ export class GameOverScene extends Phaser.Scene {
         this.scene.start('ShopScene', { page: 999 });
       } else if (data.bounty) {
         this.scene.start('DisgracedLabScene', { tab: 1 });
+      } else if (data.campaign?.worldId === 'amalgam') {
+        // The finale has no world scene — it hangs off the corrupt map.
+        this.scene.start('CampaignWorldMapScene', { slotIdx: data.campaign.slot, mode: 'corrupt' });
       } else if (data.campaign) {
         this.scene.start('CampaignWorldScene', {
           worldId: data.campaign!.worldId,
@@ -388,6 +415,13 @@ export class GameOverScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(DEPTH.content);
 
     this.input.keyboard!.on('keydown-ESC', goBack);
+
+    // A freed Sovereign gets the last word — once, on the first clear.
+    if (isCampaign && data.playerWon && data.campaign?.isChallenge) {
+      this.time.delayedCall(600, () => {
+        maybePlayStory(this, data.campaign!.slot, `boss-post:${data.campaign!.worldId}`);
+      });
+    }
   }
 
   /** Diamond shards flung outward from the headline on a win. */

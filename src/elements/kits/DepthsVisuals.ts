@@ -59,7 +59,7 @@ export const FISH_LABEL: Record<FishKind, string> = {
 };
 
 export const FISH_EMOJI: Record<FishKind, string> = {
-  icefish: '🧊', barracuda: '🗡️', pufferfish: '🐡', bombfish: '💣', gulper: '🐍',
+  icefish: '❄️', barracuda: '🗡️', pufferfish: '🐡', bombfish: '💣', gulper: '🐍',
 };
 
 export const FISH_COLOR: Record<FishKind, number> = {

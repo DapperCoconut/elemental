@@ -502,7 +502,7 @@ export class MagmaKit {
     const fx = this.fx(owner);
     fx.shock(f.x, f.y, 10, 44, MAG.gold, 420);
     fx.ember(f.x, f.y - 6, 10, 30, 600);
-    this.api.showFloatingText(f.x, f.y - 48, '🫧 BLOATED', this.hex(MAG.gold));
+    this.api.showFloatingText(f.x, f.y - 48, '💦 BLOATED', this.hex(MAG.gold));
   }
 
   /** F — Magma Fist. */
@@ -1394,7 +1394,7 @@ export class MagmaKit {
     } : null);
 
     this.api.setStatusIndicator('magma-bloat', playerIsMagma && s.bloatUntil > time ? {
-      name: 'Magma Bloat', emoji: '🫧', color: MAG.gold,
+      name: 'Magma Bloat', emoji: '💦', color: MAG.gold,
       description: `Swollen with magma. The next hit that lands is blocked outright and bursts for ${BLOAT_DMG} around you.`,
       until: s.bloatUntil, priority: 106,
     } : null);

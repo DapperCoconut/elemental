@@ -132,46 +132,46 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
   air: {
     elementId: 'air',
     name: 'Air Mastery',
-    enhancedEmoji: '🌪️',
-    enhancedColor: 0x4a4a52,
+    enhancedEmoji: '🍃',
+    enhancedColor: 0xccddff,
     requirements: [
       {
-        key: 'windTrapSnipes',
-        label: 'Caged Quarry',
-        howTo: 'Shoot enemies while they are ensnared in your Wind Trap (R)',
-        target: 75,
+        key: 'spinRefundSeconds',
+        label: 'Perfect Tempo',
+        howTo: 'Take cooldown off your other abilities by landing Spin Dance (E) — counts the seconds actually refunded',
+        target: 200,
       },
       {
-        key: 'beamMultiHits',
-        label: 'Through and Through',
-        howTo: 'Hit 2 or more enemies with a single Charged Beam (Q)',
-        target: 3,
-      },
-      {
-        key: 'grappleDodges',
+        key: 'windDodges',
         label: 'Untouchable',
-        howTo: 'Dodge incoming hits using the Grapple (F) dodge charge',
+        howTo: 'Ride attacks out on your wind dodge',
         target: 50,
       },
       {
-        key: 'snipeStreaks',
-        label: 'Deadeye',
-        howTo: 'Land 5 Air Snipes in a row without missing — each completed streak counts once',
-        target: 20,
+        key: 'glaiveReturns',
+        label: 'Coming Home',
+        howTo: 'Catch enemies with the Gale Glaive (R) on its way back to you',
+        target: 25,
+      },
+      {
+        key: 'tornadoKills',
+        label: 'Eye of the Storm',
+        howTo: 'Finish enemies off while they are circling inside your Wind Breaker (Q)',
+        target: 5,
       },
     ],
     enhancements: [
       {
-        id: 'swift-as-the-wind',
-        name: 'Swift as the Wind',
-        description: 'Passive: every Air Snipe that connects grants +5% move speed and +5% dodge chance, stacking up to +50% of each. A single missed shot blows the whole stack away.',
+        id: 'dancers-momentum',
+        name: "Dancer's Momentum",
+        description: 'Passive: every second on your feet is +5% move speed, stacking to +100%. Every hit that gets through knocks 10% back off it — the dance is only fast while nothing is touching you.',
       },
       {
-        id: 'sweeping-tornado',
-        name: 'Sweeping Tornado',
+        id: 'winds-of-change',
+        name: 'Winds of Change',
         bindable: true,
-        hudDescription: 'Rolling tornado that drags enemies to the wall',
-        description: 'Launch a tornado forward that sucks every enemy it passes into its centre and carries them along with it. It keeps hold of them until it reaches the edge of the arena, where it bursts and releases everything it caught. Deals no damage — it is pure displacement. 12 second cooldown.',
+        hudDescription: 'Petals reset every cooldown, +20% wind dodge',
+        description: 'Blossom sweeps up around you: every ability comes off cooldown at once, Spin Dance refills all of its charges, and your wind dodge grows by a further 20 points on top of whatever you had already banked. 25 second cooldown.',
       },
     ],
   },
@@ -684,14 +684,14 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         name: 'Tarot of Fate',
         bindable: true,
         hudDescription: 'Greatly enchant the hovered card — 4x power, one curse',
-        description: 'The card your mouse is hovering becomes GREATLY ENCHANTED: 4x a normal card, overruling (and never stacking with) a plain Enchant. It also picks up a curse, shown as a small emoji on the bottom line of the card, which fires the moment you play it. Painful 🩹 deals you 30. Immolating 🔥 burns every other card out of your hand. Weakening 🦠 slows you 33% for 10s. Confusing 🌀 inverts your WASD for 5s. Vulnerable 🦴 makes the next hit you take double. Cursed 💀 rains 15 purple bullets at you from the sides of the arena for 3 each. Stunning ⭐ locks you out of playing cards for 5s. Cocky 😈 makes All In wager your entire health bar for the rest of the match. Purging ✨ strips enchant, great enchant and preserve off your whole hand and puts Tarot, Preserve and Enchant on 20s cooldowns. 20 second cooldown.',
+        description: 'The card your mouse is hovering becomes GREATLY ENCHANTED: 4x a normal card, overruling (and never stacking with) a plain Enchant. It also picks up a curse, shown as a small emoji on the bottom line of the card, which fires the moment you play it. Painful 💊 deals you 30. Immolating 🔥 burns every other card out of your hand. Weakening 🐛 slows you 33% for 10s. Confusing 🌀 inverts your WASD for 5s. Vulnerable 💀 makes the next hit you take double. Cursed 💀 rains 15 purple bullets at you from the sides of the arena for 3 each. Stunning ⭐ locks you out of playing cards for 5s. Cocky 😈 makes All In wager your entire health bar for the rest of the match. Purging ✨ strips enchant, great enchant and preserve off your whole hand and puts Tarot, Preserve and Enchant on 20s cooldowns. 20 second cooldown.',
       },
     ],
   },
   magnet: {
     elementId: 'magnet',
     name: 'Magnet Mastery',
-    enhancedEmoji: '🧲',
+    enhancedEmoji: '🔗',
     enhancedColor: 0x7733aa,
     requirements: [
       {
@@ -737,7 +737,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
   growth: {
     elementId: 'growth',
     name: 'Growth Mastery',
-    enhancedEmoji: '🦠',
+    enhancedEmoji: '🐛',
     enhancedColor: 0x66aa33,
     requirements: [
       {
@@ -973,7 +973,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
   rubber: {
     elementId: 'rubber',
     name: 'Rubber Mastery',
-    enhancedEmoji: '🛞',
+    enhancedEmoji: '☸️',
     enhancedColor: 0x992233,
     requirements: [
       {
@@ -1202,9 +1202,8 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       },
     ],
   },
-  // Subterfuge keeps the legacy element id 'quantum'.
-  quantum: {
-    elementId: 'quantum',
+  subterfuge: {
+    elementId: 'subterfuge',
     name: 'Subterfuge Mastery',
     enhancedEmoji: '🚬',
     enhancedColor: 0x6b0f1a,
@@ -1347,7 +1346,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
   silence: {
     elementId: 'silence',
     name: 'Silence Mastery',
-    enhancedEmoji: '🪆',
+    enhancedEmoji: '🎎',
     enhancedColor: 0x2b0a30,
     requirements: [
       {
@@ -1388,53 +1387,6 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         excludeSlots: ['r'],
         hudDescription: 'Spend 25 terror on a voodoo doll of the enemy — ritual the doll to awaken and possess them',
         description: 'Within 5 seconds of a stab landing, spend 25 terror to stitch a voodoo doll of the enemy and plant it in the ground. Every knife you put into the doll — Stab, Striker slashes, anything you shoot at it — is relayed straight into the opponent with a 25% bonus, and they cannot touch the thing themselves. It breaks after 50 damage has gone through it.\n\nCast Ritual (R) on the doll and it survives; the enemy awakens instead. Their eyes go white, their body cracks open, and something with black eyes and four spider-legged tentacles climbs out wearing them. You steer that instead of your own body: Click slashes for 15, E bites for 10 and heals you 12, R cannibalizes their own muck for 20 and heals you 20, F slams the ground and drags up awakened-kin that crawl over and stab them for 10 apiece. Bite a kin to eat it and heal 12; ritual a kin and it becomes a corrupted copy of the enemy — black, eyeless, grinning — that fights on your side for 20 seconds, though you gain no stealth at all while one is out. Q hands the body back and costs them 20 on the way out. 12 second cooldown.',
-      },
-    ],
-  },
-  sound: {
-    elementId: 'sound',
-    name: 'Sound Mastery',
-    enhancedEmoji: '🎵',
-    enhancedColor: 0xffffff,
-    requirements: [
-      {
-        key: 'flowNotes',
-        label: 'In the Flow',
-        howTo: 'Hit rhythm notes while Flow Mode (E) is running',
-        target: 250,
-      },
-      {
-        key: 'perfectScreeches',
-        label: 'Perfect Pitch',
-        howTo: 'Cast Screech Barrier (R) on the beat, with a rhythm note sitting over the hit line',
-        target: 50,
-      },
-      {
-        key: 'soloNotes',
-        label: 'Showstopper',
-        howTo: 'Hit rhythm notes while performing a Solo (Q)',
-        target: 50,
-      },
-      {
-        key: 'grappleChain',
-        label: 'Grace Under Pressure',
-        howTo: 'Chain 3 note-timed Sonic Grapples (F) in a row without the cooldown ever starting — needs the F+ Grace Note upgrade. One qualifying chain completes this permanently',
-        target: 3,
-        isBest: true,
-      },
-    ],
-    enhancements: [
-      {
-        id: 'resonance-barrier',
-        name: 'Resonance Barrier',
-        description: 'Passive: every note you land rings another plate of armour into place — 10 shield HP a note, stacking with no ceiling. Drop one and the whole barrier shatters back to nothing. An accidental spends itself to cover the miss, and notes lost during a Solo never count against you.',
-      },
-      {
-        id: 'bugle',
-        name: 'Bugle',
-        bindable: true,
-        hudDescription: 'Sound the charge — a caravan tears across the screen for 35 and leaves them vibrating',
-        description: 'Put a brass bugle to your lips and sound the charge. A moment later a full caravan comes barrelling across the screen at the height your cursor was, running down anything in its lane for 35 damage and hurling it aside. Whoever it hits is left Vibrating for 15 seconds, and every note you hit while that lasts shakes another 5 damage out of them. 15 second cooldown.',
       },
     ],
   },

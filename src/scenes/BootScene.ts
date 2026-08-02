@@ -1802,9 +1802,9 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('elem-echo', 48, 48);
     gfx.clear();
 
-    // ── Subterfuge element (abstract combined: slime + fate; id 'quantum') ───
+    // ── Subterfuge element (abstract combined: slime + fate; id 'subterfuge') ───
 
-    // elem-quantum — 48×48 menu icon: a man in a hat, a banknote fanned out of the band,
+    // elem-subterfuge — 48×48 menu icon: a man in a hat, a banknote fanned out of the band,
     // shades, a red tie and a lit cigarette. Everything Subterfuge does is somewhere in here.
     gfx.fillStyle(0x0a0a0a, 1);
     gfx.fillCircle(24, 24, 22);
@@ -1851,17 +1851,82 @@ export class BootScene extends Phaser.Scene {
     gfx.fillRect(9, 24, 9, 2.6);
     gfx.fillStyle(0xff5522, 1);
     gfx.fillCircle(8.4, 25.3, 1.7);
-    gfx.generateTexture('elem-quantum', 48, 48);
+    gfx.generateTexture('elem-subterfuge', 48, 48);
     gfx.clear();
 
-    // proj-quantum — 10×10 pellet: a black round with a red jacket and a lit tip.
+    // proj-subterfuge — 10×10 pellet: a black round with a red jacket and a lit tip.
     gfx.fillStyle(0x0a0a0a, 1);
     gfx.fillCircle(5, 5, 5);
     gfx.fillStyle(0xcc2233, 1);
     gfx.fillCircle(5, 5, 3.4);
     gfx.fillStyle(0xffdd33, 1);
     gfx.fillCircle(4, 4, 1.5);
-    gfx.generateTexture('proj-quantum', 10, 10);
+    gfx.generateTexture('proj-subterfuge', 10, 10);
+    gfx.clear();
+
+    // ── Quantum element (bonds two other elements; swaps between them on dodge) ──
+
+    // elem-quantum — 48×48 menu icon: a Bohr atom. Three electron shells at 60° to each
+    // other, a hot nucleus, and one electron riding each shell. Quantum fires nothing of
+    // its own, so there is no proj- texture to match this: it borrows the bonded half's.
+    gfx.fillStyle(0x061014, 1);
+    gfx.fillCircle(24, 24, 22);
+    gfx.lineStyle(3, 0x7df9ff, 1);
+    gfx.strokeCircle(24, 24, 22);
+
+    // Shells: a rotated ellipse has no Graphics primitive, so each one is walked out as a
+    // parametric polyline. Two passes — a wide dim pass under a narrow bright one — so the
+    // orbits read as glowing wire rather than as flat strokes.
+    const shell = (rot: number, rx: number, ry: number): void => {
+      const cos = Math.cos(rot);
+      const sin = Math.sin(rot);
+      const at = (a: number): [number, number] => {
+        const ex = Math.cos(a) * rx;
+        const ey = Math.sin(a) * ry;
+        return [24 + ex * cos - ey * sin, 24 + ex * sin + ey * cos];
+      };
+      for (const [w, alpha] of [[3.2, 0.28], [1.4, 0.95]] as Array<[number, number]>) {
+        gfx.lineStyle(w, 0x7df9ff, alpha);
+        gfx.beginPath();
+        const [sx, sy] = at(0);
+        gfx.moveTo(sx, sy);
+        for (let i = 1; i <= 48; i++) {
+          const [px, py] = at((i / 48) * Math.PI * 2);
+          gfx.lineTo(px, py);
+        }
+        gfx.closePath();
+        gfx.strokePath();
+      }
+      return undefined;
+    };
+    shell(0, 17, 6.5);
+    shell(Math.PI / 3, 17, 6.5);
+    shell((Math.PI * 2) / 3, 17, 6.5);
+
+    // Electrons — one per shell, each parked at a different phase so the icon does not
+    // read as symmetrical at a glance.
+    const electron = (rot: number, a: number): void => {
+      const ex = Math.cos(a) * 17;
+      const ey = Math.sin(a) * 6.5;
+      const px = 24 + ex * Math.cos(rot) - ey * Math.sin(rot);
+      const py = 24 + ex * Math.sin(rot) + ey * Math.cos(rot);
+      gfx.fillStyle(0xd8fdff, 1);
+      gfx.fillCircle(px, py, 2.4);
+      gfx.fillStyle(0x7df9ff, 0.5);
+      gfx.fillCircle(px, py, 3.8);
+    };
+    electron(0, 0.35);
+    electron(Math.PI / 3, 2.6);
+    electron((Math.PI * 2) / 3, 4.4);
+
+    // Nucleus: a blown-out core, so the centre is the brightest thing in the icon.
+    gfx.fillStyle(0x7df9ff, 0.30);
+    gfx.fillCircle(24, 24, 8);
+    gfx.fillStyle(0xbdf6ff, 0.75);
+    gfx.fillCircle(24, 24, 5.2);
+    gfx.fillStyle(0xffffff, 1);
+    gfx.fillCircle(24, 24, 3.2);
+    gfx.generateTexture('elem-quantum', 48, 48);
     gfx.clear();
 
     // Fate's card pellets. Each one is a cut card rather than a bead: a dark edge, a coloured
@@ -2288,6 +2353,46 @@ export class BootScene extends Phaser.Scene {
     gfx.fillCircle(28, 20, 2);
     gfx.fillCircle(28, 27, 2);
     gfx.generateTexture('husk-larva', 48, 48);
+    gfx.clear();
+
+    // Thrall — the shared summon every world Sovereign calls (WorldBossKit's
+    // summon move). Deliberately colour-neutral ash-and-shadow so it sits under
+    // any boss's palette: a hunched figure of cinders with a cracked mask.
+    gfx.fillStyle(0x08060e, 0.5);
+    gfx.fillEllipse(24, 44, 28, 8); // ground shadow
+    // Hunched body — a leaning teardrop of ash.
+    gfx.fillStyle(0x1c1a24, 1);
+    gfx.fillEllipse(24, 28, 26, 30);
+    gfx.fillStyle(0x2c2438, 1);
+    gfx.fillEllipse(22, 26, 19, 23);
+    // Cracks of dim heat running up the body.
+    gfx.lineStyle(1.5, 0x6a5f85, 0.8);
+    gfx.lineBetween(19, 38, 22, 27);
+    gfx.lineBetween(27, 39, 26, 30);
+    gfx.lineBetween(23, 26, 21, 19);
+    // Trailing wisps where legs would be.
+    gfx.fillStyle(0x14121c, 1);
+    gfx.fillTriangle(14, 40, 22, 38, 16, 46);
+    gfx.fillTriangle(26, 39, 33, 40, 31, 46);
+    // The mask: a pale oval split by a crack, two hollow eyes.
+    gfx.fillStyle(0x9a93ab, 1);
+    gfx.fillEllipse(24, 15, 17, 15);
+    gfx.lineStyle(1.2, 0x3c3550, 1);
+    gfx.lineBetween(24, 8, 22, 15);
+    gfx.lineBetween(22, 15, 25, 22);
+    gfx.fillStyle(0x0a0812, 1);
+    gfx.fillEllipse(20, 14, 4.5, 6);
+    gfx.fillEllipse(29, 14, 4.5, 6);
+    // Claw hands held forward.
+    gfx.fillStyle(0x2c2438, 1);
+    gfx.fillCircle(11, 28, 5);
+    gfx.fillCircle(37, 28, 5);
+    gfx.lineStyle(1.5, 0x0a0812, 1);
+    gfx.lineBetween(9, 26, 6, 22);
+    gfx.lineBetween(11, 25, 9, 21);
+    gfx.lineBetween(39, 26, 42, 22);
+    gfx.lineBetween(37, 25, 39, 21);
+    gfx.generateTexture('husk-thrall', 48, 48);
     gfx.clear();
 
     // Disgraced King body sprite. The fight draws the mech and the King itself
@@ -3030,6 +3135,43 @@ export class BootScene extends Phaser.Scene {
     gfx.fillEllipse(29, 27, 3, 6);
     gfx.fillCircle(29, 30, 1.7);
     gfx.generateTexture('elem-gum', 48, 48);
+    gfx.clear();
+
+    // Gluttony — a chef's toque over a knife, with one drop of blood on the blade. The hat has
+    // to be tall and pleated or it reads as a cloud, and the knife has to cross it diagonally so
+    // the two silhouettes never merge into one blob at icon size.
+    gfx.fillStyle(0x1a1218, 0.5);
+    gfx.fillEllipse(24, 44, 28, 7);
+    // The blade, running lower-left to upper-right behind the hat.
+    gfx.fillStyle(0x5d6873, 1);
+    gfx.fillTriangle(9, 41, 15, 44, 41, 15);
+    gfx.fillStyle(0xd6dee6, 1);
+    gfx.fillTriangle(11, 40, 15, 42.5, 39, 16);
+    gfx.lineStyle(1.2, 0xffffff, 0.85);
+    gfx.lineBetween(13, 39, 38, 17);
+    // Handle and bolster at the low end.
+    gfx.fillStyle(0x94a1ad, 1);
+    gfx.fillTriangle(9, 41, 15, 44, 12, 46);
+    gfx.fillStyle(0x2a2930, 1);
+    gfx.fillTriangle(4, 44, 12, 47, 9, 41);
+    // Toque: band, then a pleated crown sitting on it.
+    gfx.fillStyle(0xd6cfbe, 1);
+    gfx.fillRect(11, 26, 24, 6);
+    gfx.fillStyle(0xf6f2e8, 1);
+    gfx.fillEllipse(23, 19, 27, 17);
+    gfx.fillEllipse(15, 15, 13, 12);
+    gfx.fillEllipse(31, 15, 13, 12);
+    gfx.fillEllipse(23, 12, 14, 12);
+    gfx.lineStyle(1, 0xb8b0a0, 0.8);
+    gfx.lineBetween(17, 26, 16, 13);
+    gfx.lineBetween(23, 26, 23, 11);
+    gfx.lineBetween(29, 26, 30, 13);
+    // The blood: one drop on the edge, and one that has already fallen.
+    gfx.fillStyle(0xa81f2b, 1);
+    gfx.fillCircle(35, 20, 2.4);
+    gfx.fillTriangle(33.4, 20.6, 36.6, 20.6, 35, 25);
+    gfx.fillCircle(35.5, 30, 1.5);
+    gfx.generateTexture('elem-gluttony', 48, 48);
     gfx.clear();
 
     // Soul — grave headstone: a weathered, chipped slab leaning slightly, with a carved cross

@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { WORLDS } from '../data/Worlds';
 import { ABSTRACT_WORLDS } from '../data/AbstractWorlds';
+import { CORRUPT_WORLDS } from '../data/CorruptWorlds';
 
 type ThemeFn = (
   scene: Phaser.Scene,
@@ -710,9 +711,9 @@ const THEMES: Record<string, ThemeFn> = {
     scene.tweens.add({ targets: g, alpha: { from: 0.45, to: 0.88 }, duration: 2700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
   },
 
-  quantum: (scene, ctr, w, h) => {
+  subterfuge: (scene, ctr, w, h) => {
     base(scene, ctr, w, h, 0x08041a, 0xaa44ff);
-    const rnd = new Phaser.Math.RandomDataGenerator(['quantum-bg']);
+    const rnd = new Phaser.Math.RandomDataGenerator(['subterfuge-bg']);
     // Two ghost-copies of a particle cloud, slightly offset
     for (let copy = 0; copy < 2; copy++) {
       const g = scene.add.graphics();
@@ -736,6 +737,426 @@ const THEMES: Record<string, ThemeFn> = {
       ctr.add(g);
       scene.tweens.add({ targets: g, alpha: { from: copy === 0 ? 0.3 : 0.7, to: copy === 0 ? 0.8 : 0.3 }, duration: 3000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
     }
+  },
+
+  // ── Corrupt Realm themes — every one carries a thread of the same sickly
+  // red rot (0xc4392c family), so the realm reads as one poisoned place.
+
+  ruin: (scene, ctr, w, h) => {
+    base(scene, ctr, w, h, 0x140806, 0xc4392c);
+    const rnd = new Phaser.Math.RandomDataGenerator(['ruin-bg']);
+    const g = scene.add.graphics();
+    // Broken skyline: jagged wall stumps along the lower half.
+    for (let i = 0; i < 9; i++) {
+      const bx = rnd.integerInRange(0, w);
+      const bw = rnd.integerInRange(30, 90);
+      const bh = rnd.integerInRange(30, 120);
+      g.fillStyle(rnd.pick([0x2a1410, 0x1e0f0c]), 0.8);
+      g.fillRect(bx, h - bh, bw, bh);
+      // A bite taken out of the top.
+      g.fillStyle(0x140806, 1);
+      g.fillTriangle(bx + bw * 0.3, h - bh, bx + bw * 0.7, h - bh, bx + bw * 0.5, h - bh + rnd.integerInRange(10, 26));
+    }
+    // Drifting mortar dust.
+    for (let i = 0; i < 26; i++) {
+      g.fillStyle(0xc4392c, rnd.realInRange(0.06, 0.2));
+      g.fillCircle(rnd.integerInRange(0, w), rnd.integerInRange(0, h), rnd.realInRange(1, 3));
+    }
+    ctr.add(g);
+    scene.tweens.add({ targets: g, alpha: { from: 0.7, to: 1 }, duration: 2600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+  },
+
+  death: (scene, ctr, w, h) => {
+    base(scene, ctr, w, h, 0x0c0a14, 0x4a4468);
+    const rnd = new Phaser.Math.RandomDataGenerator(['death-bg']);
+    const g = scene.add.graphics();
+    // A field of leaning headstones.
+    for (let i = 0; i < 12; i++) {
+      const x = rnd.integerInRange(20, w - 20);
+      const y = rnd.integerInRange(h * 0.4, h - 20);
+      const lean = rnd.realInRange(-0.2, 0.2);
+      g.fillStyle(0x241f36, 0.85);
+      g.save();
+      g.translateCanvas(x, y);
+      g.rotateCanvas(lean);
+      g.fillRoundedRect(-8, -22, 16, 22, 5);
+      g.restore();
+    }
+    // Wisps rising.
+    for (let i = 0; i < 14; i++) {
+      g.fillStyle(rnd.pick([0x7a70a8, 0x4a4468]), rnd.realInRange(0.08, 0.2));
+      g.fillCircle(rnd.integerInRange(0, w), rnd.integerInRange(0, h), rnd.realInRange(2, 6));
+    }
+    ctr.add(g);
+    scene.tweens.add({ targets: g, alpha: { from: 0.55, to: 0.95 }, duration: 3400, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+  },
+
+  illusion: (scene, ctr, w, h) => {
+    base(scene, ctr, w, h, 0x120820, 0xb45cff);
+    const rnd = new Phaser.Math.RandomDataGenerator(['illusion-bg']);
+    // Two offset ghost copies of the same diamond scatter — nothing here agrees
+    // with itself about where it is.
+    for (let copy = 0; copy < 2; copy++) {
+      const g = scene.add.graphics();
+      const ox = copy === 0 ? -14 : 14;
+      for (let i = 0; i < 16; i++) {
+        const x = rnd.integerInRange(20, w - 20) + ox;
+        const y = rnd.integerInRange(20, h - 20);
+        const r = rnd.realInRange(4, 12);
+        g.lineStyle(1, copy === 0 ? 0xb45cff : 0xff5fa2, rnd.realInRange(0.12, 0.3));
+        g.strokeRect(x - r / 2, y - r / 2, r, r);
+      }
+      ctr.add(g);
+      scene.tweens.add({ targets: g, alpha: { from: copy === 0 ? 0.9 : 0.3, to: copy === 0 ? 0.3 : 0.9 }, duration: 2400, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    }
+  },
+
+  conquest: (scene, ctr, w, h) => {
+    base(scene, ctr, w, h, 0x180a08, 0xc23a2e);
+    const rnd = new Phaser.Math.RandomDataGenerator(['conquest-bg']);
+    const g = scene.add.graphics();
+    // Battlement silhouette across the bottom.
+    g.fillStyle(0x241008, 0.9);
+    for (let x = 0; x < w; x += 46) {
+      g.fillRect(x, h - 46, 30, 46);
+      g.fillRect(x, h - 62, 14, 16);
+    }
+    // Planted banners.
+    for (let i = 0; i < 6; i++) {
+      const x = rnd.integerInRange(30, w - 30);
+      const y = rnd.integerInRange(h * 0.25, h * 0.7);
+      g.lineStyle(1.5, 0x3a1a12, 1);
+      g.lineBetween(x, y, x, y - 34);
+      g.fillStyle(rnd.pick([0xc23a2e, 0x8a2a20]), 0.7);
+      g.fillTriangle(x, y - 34, x + 16, y - 29, x, y - 22);
+    }
+    ctr.add(g);
+    scene.tweens.add({ targets: g, alpha: { from: 0.7, to: 1 }, duration: 2900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+  },
+
+  gluttony: (scene, ctr, w, h) => {
+    base(scene, ctr, w, h, 0x160804, 0xd8452f);
+    const rnd = new Phaser.Math.RandomDataGenerator(['gluttony-bg']);
+    const g = scene.add.graphics();
+    // Hanging hooks and long tables.
+    for (let i = 0; i < 7; i++) {
+      const x = rnd.integerInRange(30, w - 30);
+      g.lineStyle(1.2, 0x4a2a1a, 0.8);
+      g.lineBetween(x, 0, x, rnd.integerInRange(30, 80));
+      g.lineStyle(2, 0x6a3a22, 0.9);
+      g.beginPath();
+      g.arc(x + 4, rnd.integerInRange(30, 80), 6, Math.PI * 0.2, Math.PI * 1.2, false);
+      g.strokePath();
+    }
+    for (let i = 0; i < 3; i++) {
+      const y = h - 30 - i * 60;
+      g.fillStyle(0x2a140a, 0.7);
+      g.fillRect(rnd.integerInRange(0, 80), y, rnd.integerInRange(w * 0.5, w * 0.9), 10);
+    }
+    // Grease motes.
+    for (let i = 0; i < 20; i++) {
+      g.fillStyle(0xd8452f, rnd.realInRange(0.06, 0.18));
+      g.fillCircle(rnd.integerInRange(0, w), rnd.integerInRange(0, h), rnd.realInRange(1.5, 4));
+    }
+    ctr.add(g);
+    scene.tweens.add({ targets: g, alpha: { from: 0.65, to: 1 }, duration: 2500, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+  },
+
+  amber: (scene, ctr, w, h) => {
+    base(scene, ctr, w, h, 0x160e02, 0xd98b1f);
+    const rnd = new Phaser.Math.RandomDataGenerator(['amber-bg']);
+    const g = scene.add.graphics();
+    // Suspended droplets, each with a fleck caught inside.
+    for (let i = 0; i < 13; i++) {
+      const x = rnd.integerInRange(20, w - 20);
+      const y = rnd.integerInRange(20, h - 20);
+      const r = rnd.realInRange(6, 18);
+      g.fillStyle(0xd98b1f, rnd.realInRange(0.1, 0.22));
+      g.fillEllipse(x, y, r * 1.4, r * 1.8);
+      g.fillStyle(0x241608, 0.8);
+      g.fillCircle(x + rnd.realInRange(-3, 3), y + rnd.realInRange(-3, 3), r * 0.2);
+    }
+    ctr.add(g);
+    scene.tweens.add({ targets: g, alpha: { from: 0.6, to: 0.95 }, duration: 3600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+  },
+
+  bind: (scene, ctr, w, h) => {
+    base(scene, ctr, w, h, 0x100c04, 0xe0b743);
+    const rnd = new Phaser.Math.RandomDataGenerator(['bind-bg']);
+    const g = scene.add.graphics();
+    // Chains draped in catenaries across the dark.
+    for (let i = 0; i < 6; i++) {
+      const x0 = rnd.integerInRange(-40, w * 0.4);
+      const x1 = x0 + rnd.integerInRange(w * 0.4, w * 0.8);
+      const yTop = rnd.integerInRange(10, h * 0.6);
+      const sag = rnd.integerInRange(30, 80);
+      g.lineStyle(1.5, 0x8a742c, 0.5);
+      let px = x0;
+      let py = yTop;
+      for (let s = 1; s <= 12; s++) {
+        const t = s / 12;
+        const nx = x0 + (x1 - x0) * t;
+        const ny = yTop + Math.sin(t * Math.PI) * sag;
+        g.lineBetween(px, py, nx, ny);
+        if (s % 2 === 0) { g.fillStyle(0xe0b743, 0.3); g.fillCircle(nx, ny, 2); }
+        px = nx; py = ny;
+      }
+    }
+    ctr.add(g);
+    scene.tweens.add({ targets: g, alpha: { from: 0.55, to: 0.9 }, duration: 3000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+  },
+
+  paper: (scene, ctr, w, h) => {
+    base(scene, ctr, w, h, 0x14120c, 0xf2ead6);
+    const rnd = new Phaser.Math.RandomDataGenerator(['paper-bg']);
+    const g = scene.add.graphics();
+    // Loose pages tumbling, some with ruled lines.
+    for (let i = 0; i < 11; i++) {
+      const x = rnd.integerInRange(20, w - 20);
+      const y = rnd.integerInRange(20, h - 20);
+      const pw = rnd.integerInRange(14, 26);
+      const ph = pw * 1.3;
+      const rot = rnd.realInRange(-0.6, 0.6);
+      g.save();
+      g.translateCanvas(x, y);
+      g.rotateCanvas(rot);
+      g.fillStyle(0xf2ead6, rnd.realInRange(0.1, 0.25));
+      g.fillRect(-pw / 2, -ph / 2, pw, ph);
+      g.lineStyle(0.6, 0x8a8272, 0.4);
+      for (let l = 1; l <= 3; l++) g.lineBetween(-pw / 2 + 3, -ph / 2 + (ph * l) / 4, pw / 2 - 3, -ph / 2 + (ph * l) / 4);
+      g.restore();
+    }
+    ctr.add(g);
+    scene.tweens.add({ targets: g, alpha: { from: 0.6, to: 0.95 }, duration: 2800, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+  },
+
+  chalk: (scene, ctr, w, h) => {
+    base(scene, ctr, w, h, 0x101410, 0xf4f1e6);
+    const rnd = new Phaser.Math.RandomDataGenerator(['chalk-bg']);
+    const g = scene.add.graphics();
+    // A blackboard of half-erased scribbles: loops, arrows, sums.
+    for (let i = 0; i < 12; i++) {
+      const x = rnd.integerInRange(20, w - 40);
+      const y = rnd.integerInRange(20, h - 30);
+      g.lineStyle(1.2, 0xf4f1e6, rnd.realInRange(0.08, 0.22));
+      const kind = rnd.integerInRange(0, 2);
+      if (kind === 0) {
+        g.beginPath();
+        g.arc(x, y, rnd.integerInRange(8, 20), 0, Math.PI * rnd.realInRange(1.2, 2), false);
+        g.strokePath();
+      } else if (kind === 1) {
+        g.lineBetween(x, y, x + rnd.integerInRange(16, 40), y + rnd.integerInRange(-10, 10));
+        g.lineBetween(x + 36, y - 4, x + 42, y);
+        g.lineBetween(x + 36, y + 4, x + 42, y);
+      } else {
+        g.lineBetween(x, y, x + 10, y - 12);
+        g.lineBetween(x + 10, y - 12, x + 20, y);
+      }
+    }
+    ctr.add(g);
+    scene.tweens.add({ targets: g, alpha: { from: 0.5, to: 0.85 }, duration: 3200, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+  },
+
+  psychic: (scene, ctr, w, h) => {
+    base(scene, ctr, w, h, 0x120826, 0x9b4dff);
+    const rnd = new Phaser.Math.RandomDataGenerator(['psychic-bg']);
+    const g = scene.add.graphics();
+    // Concentric thought-rings around several silent centres, plus one iris.
+    for (let i = 0; i < 5; i++) {
+      const x = rnd.integerInRange(60, w - 60);
+      const y = rnd.integerInRange(60, h - 60);
+      for (let r = 1; r <= 3; r++) {
+        g.lineStyle(0.8, 0x9b4dff, 0.16 - r * 0.03);
+        g.strokeCircle(x, y, r * rnd.integerInRange(12, 20));
+      }
+    }
+    const ix = rnd.integerInRange(w * 0.3, w * 0.7);
+    const iy = rnd.integerInRange(h * 0.3, h * 0.7);
+    g.lineStyle(1.5, 0xd8b8ff, 0.3);
+    g.strokeEllipse(ix, iy, 44, 20);
+    g.fillStyle(0x9b4dff, 0.35);
+    g.fillCircle(ix, iy, 8);
+    ctr.add(g);
+    scene.tweens.add({ targets: g, alpha: { from: 0.5, to: 1 }, duration: 2200, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+  },
+
+  passion: (scene, ctr, w, h) => {
+    base(scene, ctr, w, h, 0x1c0610, 0xff5fa2);
+    const rnd = new Phaser.Math.RandomDataGenerator(['passion-bg']);
+    const g = scene.add.graphics();
+    // Drifting embers and a few broken hearts — two lobes with a crack.
+    for (let i = 0; i < 22; i++) {
+      g.fillStyle(rnd.pick([0xff5fa2, 0xff8fb8, 0xc23a5e]), rnd.realInRange(0.08, 0.24));
+      g.fillCircle(rnd.integerInRange(0, w), rnd.integerInRange(0, h), rnd.realInRange(1.5, 4));
+    }
+    for (let i = 0; i < 4; i++) {
+      const x = rnd.integerInRange(40, w - 40);
+      const y = rnd.integerInRange(40, h - 40);
+      const s = rnd.realInRange(6, 12);
+      g.fillStyle(0xff5fa2, 0.2);
+      g.fillCircle(x - s * 0.5, y, s * 0.6);
+      g.fillCircle(x + s * 0.5, y, s * 0.6);
+      g.fillTriangle(x - s, y + s * 0.2, x + s, y + s * 0.2, x, y + s * 1.5);
+      g.lineStyle(1, 0x1c0610, 1);
+      g.lineBetween(x, y - s * 0.3, x - s * 0.2, y + s * 0.6);
+      g.lineBetween(x - s * 0.2, y + s * 0.6, x + s * 0.15, y + s * 1.1);
+    }
+    ctr.add(g);
+    scene.tweens.add({ targets: g, alpha: { from: 0.6, to: 1 }, duration: 1900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+  },
+
+  glass: (scene, ctr, w, h) => {
+    base(scene, ctr, w, h, 0x081418, 0x9fe8ff);
+    const rnd = new Phaser.Math.RandomDataGenerator(['glass-bg']);
+    const g = scene.add.graphics();
+    // Shard slivers and one big radial crack.
+    for (let i = 0; i < 14; i++) {
+      const x = rnd.integerInRange(20, w - 20);
+      const y = rnd.integerInRange(20, h - 20);
+      const len = rnd.integerInRange(8, 26);
+      const a = rnd.realInRange(0, Math.PI);
+      g.lineStyle(1, 0x9fe8ff, rnd.realInRange(0.1, 0.28));
+      g.lineBetween(x, y, x + Math.cos(a) * len, y + Math.sin(a) * len);
+    }
+    const cx2 = rnd.integerInRange(w * 0.3, w * 0.7);
+    const cy2 = rnd.integerInRange(h * 0.3, h * 0.7);
+    for (let i = 0; i < 7; i++) {
+      const a = rnd.realInRange(0, Math.PI * 2);
+      g.lineStyle(1.2, 0xd8f6ff, 0.22);
+      let px = cx2;
+      let py = cy2;
+      let ca = a;
+      for (let s = 0; s < 3; s++) {
+        const nx = px + Math.cos(ca) * rnd.integerInRange(14, 34);
+        const ny = py + Math.sin(ca) * rnd.integerInRange(14, 34);
+        g.lineBetween(px, py, nx, ny);
+        px = nx; py = ny;
+        ca += rnd.realInRange(-0.5, 0.5);
+      }
+    }
+    ctr.add(g);
+    scene.tweens.add({ targets: g, alpha: { from: 0.55, to: 0.9 }, duration: 3100, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+  },
+
+  fortune: (scene, ctr, w, h) => {
+    base(scene, ctr, w, h, 0x161004, 0xd8a531);
+    const rnd = new Phaser.Math.RandomDataGenerator(['fortune-bg']);
+    const g = scene.add.graphics();
+    // Falling coins — ellipses at random tumble angles, a few lit edges.
+    for (let i = 0; i < 18; i++) {
+      const x = rnd.integerInRange(15, w - 15);
+      const y = rnd.integerInRange(15, h - 15);
+      const r = rnd.realInRange(3, 7);
+      const squash = rnd.realInRange(0.3, 1);
+      g.lineStyle(1, 0xd8a531, rnd.realInRange(0.15, 0.4));
+      g.strokeEllipse(x, y, r * 2, r * 2 * squash);
+      if (i % 4 === 0) {
+        g.fillStyle(0xf5d576, 0.3);
+        g.fillEllipse(x, y, r * 2, r * 2 * squash);
+      }
+    }
+    ctr.add(g);
+    scene.tweens.add({ targets: g, alpha: { from: 0.6, to: 1 }, duration: 2300, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+  },
+
+  magma: (scene, ctr, w, h) => {
+    base(scene, ctr, w, h, 0x180602, 0xff5a1e);
+    const rnd = new Phaser.Math.RandomDataGenerator(['magma-bg']);
+    const g = scene.add.graphics();
+    // Lava seams snaking up from the bottom, plus heat motes.
+    for (let i = 0; i < 6; i++) {
+      let x = rnd.integerInRange(20, w - 20);
+      let y = h;
+      g.lineStyle(rnd.realInRange(1.5, 3), rnd.pick([0xff5a1e, 0xff8a3d]), rnd.realInRange(0.25, 0.5));
+      for (let s = 0; s < 6; s++) {
+        const nx = x + rnd.integerInRange(-24, 24);
+        const ny = y - rnd.integerInRange(20, 50);
+        g.lineBetween(x, y, nx, ny);
+        x = nx; y = ny;
+        if (y < 40) break;
+      }
+    }
+    for (let i = 0; i < 24; i++) {
+      g.fillStyle(rnd.pick([0xff5a1e, 0xffb347]), rnd.realInRange(0.1, 0.3));
+      g.fillCircle(rnd.integerInRange(0, w), rnd.integerInRange(0, h), rnd.realInRange(1, 3.5));
+    }
+    ctr.add(g);
+    scene.tweens.add({ targets: g, alpha: { from: 0.65, to: 1 }, duration: 1600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+  },
+
+  radiation: (scene, ctr, w, h) => {
+    base(scene, ctr, w, h, 0x0a1404, 0x7cff3d);
+    const rnd = new Phaser.Math.RandomDataGenerator(['radiation-bg']);
+    const g = scene.add.graphics();
+    // Trefoil ghosts and a green haze of particles.
+    for (let i = 0; i < 3; i++) {
+      const x = rnd.integerInRange(60, w - 60);
+      const y = rnd.integerInRange(60, h - 60);
+      const r = rnd.integerInRange(14, 26);
+      for (let k = 0; k < 3; k++) {
+        const a0 = -Math.PI / 2 + (k * Math.PI * 2) / 3 - 0.5;
+        g.fillStyle(0x7cff3d, 0.12);
+        g.slice(x, y, r, a0, a0 + 1, false);
+        g.fillPath();
+      }
+      g.fillStyle(0x7cff3d, 0.16);
+      g.fillCircle(x, y, r * 0.25);
+    }
+    for (let i = 0; i < 30; i++) {
+      g.fillStyle(0x7cff3d, rnd.realInRange(0.05, 0.18));
+      g.fillCircle(rnd.integerInRange(0, w), rnd.integerInRange(0, h), rnd.realInRange(0.8, 2.5));
+    }
+    ctr.add(g);
+    scene.tweens.add({ targets: g, alpha: { from: 0.5, to: 1 }, duration: 2000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+  },
+
+  depths: (scene, ctr, w, h) => {
+    base(scene, ctr, w, h, 0x02101a, 0x0e8f9c);
+    const rnd = new Phaser.Math.RandomDataGenerator(['depths-bg']);
+    const g = scene.add.graphics();
+    // Sinking light shafts and a few lure-lights in the dark.
+    for (let i = 0; i < 4; i++) {
+      const x = rnd.integerInRange(40, w - 40);
+      g.fillStyle(0x0e8f9c, 0.05);
+      g.fillTriangle(x - 8, 0, x + 8, 0, x + rnd.integerInRange(-30, 30), h * 0.7);
+    }
+    for (let i = 0; i < 6; i++) {
+      const x = rnd.integerInRange(20, w - 20);
+      const y = rnd.integerInRange(h * 0.4, h - 20);
+      g.fillStyle(0xbdf3ff, rnd.realInRange(0.25, 0.5));
+      g.fillCircle(x, y, 2.2);
+      g.fillStyle(0x0e8f9c, 0.12);
+      g.fillCircle(x, y, 8);
+    }
+    // Rising bubbles.
+    for (let i = 0; i < 16; i++) {
+      g.lineStyle(0.8, 0x9adfe8, rnd.realInRange(0.1, 0.25));
+      g.strokeCircle(rnd.integerInRange(0, w), rnd.integerInRange(0, h), rnd.realInRange(1.5, 4));
+    }
+    ctr.add(g);
+    scene.tweens.add({ targets: g, alpha: { from: 0.55, to: 0.9 }, duration: 3400, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+  },
+
+  gum: (scene, ctr, w, h) => {
+    base(scene, ctr, w, h, 0x081404, 0x46b93f);
+    const rnd = new Phaser.Math.RandomDataGenerator(['gum-bg']);
+    const g = scene.add.graphics();
+    // Slime drips from the ceiling and puddles below.
+    for (let i = 0; i < 8; i++) {
+      const x = rnd.integerInRange(20, w - 20);
+      const len = rnd.integerInRange(20, 70);
+      g.fillStyle(0x46b93f, rnd.realInRange(0.15, 0.3));
+      g.fillTriangle(x - 5, 0, x + 5, 0, x, len);
+      g.fillCircle(x, len, 4);
+    }
+    for (let i = 0; i < 6; i++) {
+      const x = rnd.integerInRange(30, w - 30);
+      const y = rnd.integerInRange(h * 0.6, h - 12);
+      g.fillStyle(0x46b93f, rnd.realInRange(0.12, 0.22));
+      g.fillEllipse(x, y, rnd.integerInRange(24, 60), rnd.integerInRange(8, 14));
+    }
+    ctr.add(g);
+    scene.tweens.add({ targets: g, alpha: { from: 0.6, to: 0.95 }, duration: 2700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
   },
 };
 
@@ -812,6 +1233,51 @@ export function drawAbstractWorldMapBackground(
       const my = Math.max(8, Math.min(height - 8, world.mapY + rnd.integerInRange(-80, 80)));
       motifG.fillStyle(world.color, rnd.realInRange(0.05, 0.14));
       motifG.fillCircle(mx, my, rnd.realInRange(3, 10));
+    }
+  }
+  container.add(motifG);
+
+  scene.tweens.add({ targets: motifG, alpha: { from: 0.6, to: 1 }, duration: 5000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+
+  return container;
+}
+
+export function drawCorruptWorldMapBackground(
+  scene: Phaser.Scene,
+  width: number,
+  height: number,
+): Phaser.GameObjects.Container {
+  const container = scene.add.container(0, 0);
+
+  // A darker, sicker sky than the other realms, with a wound of red at the centre.
+  const g = scene.add.graphics();
+  g.fillStyle(0x120608, 1);
+  g.fillRect(0, 0, width, height);
+  g.fillStyle(0x521a14, 0.12);
+  g.fillCircle(width / 2, height / 2, Math.max(width, height) * 0.7);
+  g.fillStyle(0x8a2a20, 0.07);
+  g.fillCircle(width / 2, height / 2, Math.max(width, height) * 0.45);
+  // The scar itself: a jagged tear of light running behind the world tree.
+  const rnd = new Phaser.Math.RandomDataGenerator(['corrupt-map-scar']);
+  g.lineStyle(2, 0xc4392c, 0.28);
+  let sx = width * 0.1;
+  let sy = height * 0.16;
+  for (let s = 0; s < 8; s++) {
+    const nx = sx + width * 0.11;
+    const ny = sy + rnd.integerInRange(-26, 26);
+    g.lineBetween(sx, sy, nx, ny);
+    sx = nx; sy = ny;
+  }
+  container.add(g);
+
+  const motifG = scene.add.graphics();
+  for (const world of CORRUPT_WORLDS) {
+    const wrnd = new Phaser.Math.RandomDataGenerator([world.id + '-corrupt-map']);
+    for (let i = 0; i < 3; i++) {
+      const mx = Math.max(8, Math.min(width - 8, world.mapX + wrnd.integerInRange(-100, 100)));
+      const my = Math.max(8, Math.min(height - 8, world.mapY + wrnd.integerInRange(-80, 80)));
+      motifG.fillStyle(world.color, wrnd.realInRange(0.05, 0.14));
+      motifG.fillCircle(mx, my, wrnd.realInRange(3, 10));
     }
   }
   container.add(motifG);

@@ -60,7 +60,7 @@ export class HealthBar {
       fillEnd += shieldRatio;
     }
 
-    // Weak HP fill (gray) — bonus HP like shield, but decays over time (Quantum blue E).
+    // Weak HP fill (gray) — bonus HP like shield, but decays over time.
     if (weakHp > 0) {
       const weakRatio = Math.min(weakHp / this.maxHp, 1 - fillEnd);
       this.graphics.fillStyle(0x999999, 0.85);

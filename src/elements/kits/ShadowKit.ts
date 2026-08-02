@@ -888,7 +888,7 @@ export class ShadowKit {
           lastTripAt: -Infinity,
         });
         this.pendingStake[owner] = null;
-        this.arena.showFloatingText(caster.x, caster.y - 24, '🧵 STRUNG', '#cc88ff');
+        this.arena.showFloatingText(caster.x, caster.y - 24, '🎀 STRUNG', '#cc88ff');
       } else {
         this.pendingStake[owner] = stake;
       }
@@ -1823,7 +1823,7 @@ export class ShadowKit {
         this.arena.spawnHitFlash(v.x, v.y, SHADOW.mauve);
         // The string snaps taut and drags the victim's feet out from under them.
         this.fx(line.owner).tendrilBurst(v.x, v.y, 30, 6, 7);
-        this.arena.showFloatingText(v.x, v.y - 38, '🧵 TRIPPED', '#cc88ff');
+        this.arena.showFloatingText(v.x, v.y - 38, '🎀 TRIPPED', '#cc88ff');
         this.arena.recordMasteryStat('trapped', 1);
         break;
       }

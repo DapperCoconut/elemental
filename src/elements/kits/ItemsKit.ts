@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import type { Player } from '../../entities/Player';
 import type { Fighter } from '../../entities/Fighter';
-import { getItem, ItemEffect } from '../../data/Items';
+import { getItem, ItemBehavior, ItemEffect } from '../../data/Items';
 
 export interface ItemsArenaApi {
   get scene(): Phaser.Scene;
@@ -36,6 +36,11 @@ export class ItemsKit {
   private hudText: Phaser.GameObjects.Text | null = null;
   private activeIds: string[] = [];
 
+  /** Live triggered behaviors, with their firing bookkeeping. */
+  private behaviors: { b: ItemBehavior; emoji: string; lastFiredAt: number; fired: boolean }[] = [];
+  private sears: { remaining: number; perTick: number; nextAt: number }[] = [];
+  private elapsedMs = 0;
+
   constructor(private api: ItemsArenaApi) {}
 
   reset(): void {
@@ -46,6 +51,9 @@ export class ItemsKit {
     this.reviveFrac = 0;
     this.reviveUsed = false;
     this.activeIds = [];
+    this.behaviors = [];
+    this.sears = [];
+    this.elapsedMs = 0;
     // GameObjects do not survive a scene restart — drop the stale handle so the
     // next applyConsumed() rebuilds the strip instead of writing to a dead Text.
     this.hudText = null;
@@ -60,12 +68,16 @@ export class ItemsKit {
       if (!def) continue;
       this.activeIds.push(id);
       this.applyEffect(def.effect);
+      for (const b of def.effect.behaviors ?? []) {
+        this.behaviors.push({ b, emoji: def.emoji, lastFiredAt: -Infinity, fired: false });
+      }
     }
 
     if (this.activeIds.length === 0) return;
 
     if (this.lifestealFrac > 0) this.hookLifesteal();
     if (this.reviveFrac > 0) this.hookRevive();
+    this.hookBehaviors();
 
     this.buildHud();
 
@@ -185,6 +197,104 @@ export class ItemsKit {
     };
   }
 
+  // ── Triggered behaviors ────────────────────────────────────────────
+
+  /** Wire the event-driven triggers. Callbacks chain — never replace. */
+  private hookBehaviors(): void {
+    const { player, npc } = this.api;
+    if (this.behaviors.some((s) => s.b.trigger === 'onHitTaken')) {
+      const prev = player.onDamaged;
+      player.onDamaged = (amount: number) => {
+        prev?.(amount);
+        if (amount > 0) this.tryFire('onHitTaken');
+      };
+    }
+    if (this.behaviors.some((s) => s.b.trigger === 'onHitDealt')) {
+      const prev = npc.onDamaged;
+      npc.onDamaged = (amount: number) => {
+        prev?.(amount);
+        if (amount > 0) this.tryFire('onHitDealt');
+      };
+    }
+    if (this.behaviors.some((s) => s.b.trigger === 'onCast')) {
+      const prev = player.onCastStamp;
+      player.onCastStamp = (abilityId, aim) => {
+        prev?.(abilityId, aim);
+        this.tryFire('onCast');
+      };
+    }
+  }
+
+  private tryFire(trigger: ItemBehavior['trigger']): void {
+    const now = this.elapsedMs;
+    for (const s of this.behaviors) {
+      if (s.b.trigger !== trigger) continue;
+      if (s.fired && (s.b.oncePerMatch ?? trigger === 'onLowHp')) continue;
+      if (now - s.lastFiredAt < (s.b.cooldownSec ?? 0) * 1000) continue;
+      if (s.b.chance !== undefined && Math.random() > s.b.chance) continue;
+      s.lastFiredAt = now;
+      s.fired = true;
+      this.runAction(s.b, s.emoji);
+    }
+  }
+
+  private runAction(b: ItemBehavior, emoji: string): void {
+    const { scene, player, npc } = this.api;
+    if (!player.active || player.hp <= 0) return;
+
+    switch (b.action) {
+      case 'burstAoe': {
+        const radius = b.radius ?? 120;
+        const ring = scene.add.circle(player.x, player.y, radius, 0xffb347, 0.35).setDepth(18).setScale(0.25);
+        scene.tweens.add({ targets: ring, scaleX: 1, scaleY: 1, alpha: 0, duration: 320, onComplete: () => ring.destroy() });
+        if (npc.active && npc.hp > 0 && Phaser.Math.Distance.Between(player.x, player.y, npc.x, npc.y) <= radius) {
+          npc.takeDamage(b.amount ?? 20);
+        }
+        break;
+      }
+      case 'healBurst':
+        player.heal(b.amount ?? 15);
+        break;
+      case 'tempHaste': {
+        const mult = b.mult ?? 1.3;
+        this.api.applyPlayerSpeedMult(mult);
+        scene.time.delayedCall(b.durationMs ?? 3000, () => this.api.applyPlayerSpeedMult(1 / mult));
+        break;
+      }
+      case 'tempDamage': {
+        const mult = b.mult ?? 1.3;
+        player.cardOutgoingDamageMult *= mult;
+        scene.time.delayedCall(b.durationMs ?? 3000, () => { player.cardOutgoingDamageMult /= mult; });
+        break;
+      }
+      case 'shieldCharge':
+        player.shieldCharges += b.amount ?? 1;
+        break;
+      case 'cooldownRefund':
+        player.reduceCooldowns(b.amount ?? 1000);
+        break;
+      case 'sear': {
+        const durationMs = b.durationMs ?? 3000;
+        const ticks = Math.max(1, Math.round(durationMs / 500));
+        this.sears.push({
+          remaining: ticks,
+          perTick: Math.max(1, Math.round((b.amount ?? 15) / ticks)),
+          nextAt: this.elapsedMs + 500,
+        });
+        break;
+      }
+      case 'slowEnemy': {
+        const mult = b.mult ?? 0.7;
+        npc.walkSpeedMult *= mult;
+        scene.time.delayedCall(b.durationMs ?? 2000, () => {
+          if (npc.active) npc.walkSpeedMult /= mult;
+        });
+        break;
+      }
+    }
+    this.api.showFloatingText(player.x, player.y - 52, emoji, '#7cf5d8');
+  }
+
   // ── HUD ───────────────────────────────────────────────────────────
 
   private buildHud(): void {
@@ -212,8 +322,37 @@ export class ItemsKit {
   }
 
   update(dt: number): void {
+    this.elapsedMs += dt;
+    const { player, npc } = this.api;
+
+    // Clock triggers + the low-HP latch.
+    for (const s of this.behaviors) {
+      if (s.b.trigger === 'everyNSec') {
+        const period = (s.b.periodSec ?? 5) * 1000;
+        if (this.elapsedMs - s.lastFiredAt >= period && player.active && player.hp > 0) {
+          if (s.lastFiredAt === -Infinity) { s.lastFiredAt = this.elapsedMs; continue; }
+          s.lastFiredAt = this.elapsedMs;
+          if (s.b.chance === undefined || Math.random() <= s.b.chance) this.runAction(s.b, s.emoji);
+        }
+      }
+      if (s.b.trigger === 'onLowHp' && !s.fired && player.active && player.hp > 0
+        && player.hp / Math.max(1, player.maxHp) < (s.b.thresholdFrac ?? 0.3)) {
+        s.fired = true;
+        s.lastFiredAt = this.elapsedMs;
+        this.runAction(s.b, s.emoji);
+      }
+    }
+
+    // Sear DoTs.
+    for (const sear of this.sears) {
+      if (this.elapsedMs < sear.nextAt) continue;
+      sear.nextAt = this.elapsedMs + 500;
+      sear.remaining--;
+      if (npc.active && npc.hp > 0) npc.takeDamage(sear.perTick);
+    }
+    this.sears = this.sears.filter((s) => s.remaining > 0);
+
     if (this.selfDamagePerSec <= 0) return;
-    const { player } = this.api;
     if (!player.active || player.hp <= 0) return;
     this.tickAccum += dt;
     while (this.tickAccum >= 1000) {

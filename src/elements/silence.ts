@@ -51,7 +51,7 @@ export const silenceElement: Element = {
   id: 'silence',
   name: 'Silence',
   color: 0x1a0022,
-  emoji: '🫥',
+  emoji: '😶',
   abilities: [
     silenceStab,
     silenceWatch,

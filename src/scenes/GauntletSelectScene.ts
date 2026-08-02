@@ -127,7 +127,7 @@ export class GauntletSelectScene extends Phaser.Scene {
       sublabel: infinityUnlocked
         ? (infinityBest > 0 ? `Endless · best run reached fight ${infinityBest}` : 'Endless mode — how far can you go?')
         : `Clear all 5 base gauntlets to unlock  (${cleared}/5)`,
-      icon: '♾️',
+      icon: '∞',
       accent: C.arcane,
       variant: infinityUnlocked ? 'solid' : 'quiet',
       fontSize: 19,

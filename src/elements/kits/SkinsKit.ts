@@ -120,6 +120,7 @@ export class SkinsKit {
   radiationColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   bindColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   gumColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  gluttonyColor(owner: Owner, base: number): number { return this.remap(owner, base); }
 
   // ── Per-frame repaint ───────────────────────────────────────────────────
 

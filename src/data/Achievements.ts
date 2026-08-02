@@ -24,9 +24,9 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   },
   {
     id: 'sharpshooter',
-    name: 'Sharpshooter',
-    emoji: '🎯',
-    description: 'Land 8 Air Snipes in a row without missing a single shot.',
+    name: 'Featherweight',
+    emoji: '🍃',
+    description: 'Bank 100% wind dodge in a single fight (Air).',
     skinReward: 'sand',
   },
   {

@@ -40,12 +40,12 @@ export const WORLDS: World[] = [
   { id: 'water',    name: 'Water',    emoji: '💧', color: 0x0088ff, parentId: 'fire', mapX: 140, mapY: 210, nodes: makeNodes('water') },
   { id: 'life',     name: 'Life',     emoji: '🌿', color: 0x44cc44, parentId: 'fire', mapX: 360, mapY: 210, nodes: makeNodes('life') },
   { id: 'air',      name: 'Air',      emoji: '💨', color: 0xaaddff, parentId: 'fire', mapX: 580, mapY: 210, nodes: makeNodes('air') },
-  { id: 'earth',    name: 'Earth',    emoji: '🪨', color: 0x887755, parentId: 'fire', mapX: 800, mapY: 210, nodes: makeNodes('earth') },
+  { id: 'earth',    name: 'Earth',    emoji: '🗿', color: 0x887755, parentId: 'fire', mapX: 800, mapY: 210, nodes: makeNodes('earth') },
 
   // ── Tier 2: Water children ────────────────────────────────────────
   { id: 'oil',      name: 'Oil',      emoji: '🛢️', color: 0x664400, parentId: 'water', mapX: 40,  mapY: 390, nodes: makeNodes('oil') },
-  { id: 'ice',      name: 'Ice',      emoji: '🧊', color: 0x88ccff, parentId: 'water', mapX: 130, mapY: 390, nodes: makeNodes('ice') },
-  { id: 'growth',   name: 'Growth',   emoji: '🦠', color: 0x88bb22, parentId: 'water', mapX: 225, mapY: 390, nodes: makeNodes('growth') },
+  { id: 'ice',      name: 'Ice',      emoji: '❄️', color: 0x88ccff, parentId: 'water', mapX: 130, mapY: 390, nodes: makeNodes('ice') },
+  { id: 'growth',   name: 'Growth',   emoji: '🐛', color: 0x88bb22, parentId: 'water', mapX: 225, mapY: 390, nodes: makeNodes('growth') },
   { id: 'crystal',  name: 'Crystal',  emoji: '💎', color: 0x88ccff, parentId: 'water', mapX: 320, mapY: 390, nodes: makeNodes('crystal') },
 
   // ── Tier 2: Life children ─────────────────────────────────────────
@@ -73,5 +73,6 @@ export function getFightNodes(world: World): WorldNode[] {
   return world.nodes.filter((n) => n.kind === 'fight');
 }
 
-export const TOTAL_FIGHTS = WORLDS.length * 5;
-export const TOTAL_CHALLENGES = WORLDS.length;
+// Campaign totals live in AbstractWorlds.ts, next to ALL_WORLDS — counting them here
+// would have meant counting one realm out of three, and this module cannot see the
+// other two without an import cycle.

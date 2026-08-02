@@ -51,6 +51,6 @@ export const earthElement: Element = {
   id: 'earth',
   name: 'Earth',
   color: 0x887755,
-  emoji: '🪨',
+  emoji: '🗿',
   abilities: [bash, repair, rockDance, quake, golemRitual],
 };

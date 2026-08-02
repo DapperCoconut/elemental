@@ -95,7 +95,7 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     write: (f, t) => { f.burningUntil = t; },
   },
   {
-    id: 'lava-burn', name: 'Scorched', emoji: '🪨', color: 0xdd5511, priority: 2, kind: 'timer',
+    id: 'lava-burn', name: 'Scorched', emoji: '🗿', color: 0xdd5511, priority: 2, kind: 'timer',
     description: 'Standing lava rock is cooking you. Takes damage every tick.',
     read: (f) => f.lavaRockBurnUntil,
     write: (f, t) => { f.lavaRockBurnUntil = t; },
@@ -113,13 +113,13 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     write: (f, t) => { f.toxicUntil = t; },
   },
   {
-    id: 'bleeding', name: 'Bleeding', emoji: '🩸', color: 0xcc1122, priority: 5, kind: 'timer',
+    id: 'bleeding', name: 'Bleeding', emoji: '🔴', color: 0xcc1122, priority: 5, kind: 'timer',
     description: 'Open wound. Loses health over time.',
     read: (f) => (f.bleeding ? f.bleedingUntil : 0),
     write: (f, t) => { f.bleedingUntil = t; },
   },
   {
-    id: 'sickness', name: 'Sickness', emoji: '🩸', color: 0xdd2233, priority: 6, kind: 'timer',
+    id: 'sickness', name: 'Sickness', emoji: '🔴', color: 0xdd2233, priority: 6, kind: 'timer',
     description: 'A syringe plague. Ticks damage on a timer, and carries every upgrade the syringe was built with — mounting vulnerability, slows, weakened attacks and contagion all ride on this one effect.',
     read: (f) => f.sicknessUntil,
     write: (f, t) => { f.sicknessUntil = t; },
@@ -127,7 +127,7 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
 
   // ── Hard control ─────────────────────────────────────────────────
   {
-    id: 'frozen', name: 'Frozen', emoji: '🧊', color: 0x88ddff, priority: 10, kind: 'timer',
+    id: 'frozen', name: 'Frozen', emoji: '❄️', color: 0x88ddff, priority: 10, kind: 'timer',
     description: 'Frozen solid. Cannot move until the ice breaks.',
     read: (f) => f.frozenUntil,
     write: (f, t) => { f.frozenUntil = t; },
@@ -163,12 +163,6 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     write: (f, t) => { f.skeweredUntil = t; },
   },
   {
-    id: 'vibration', name: 'Vibration', emoji: '📳', color: 0xeeeeff, priority: 16, kind: 'timer',
-    description: 'Still ringing from a bugle caravan. Every note the Sound player lands shakes another 5 damage out of you.',
-    read: (f) => f.vibrationUntil,
-    write: (f, t) => { f.vibrationUntil = t; },
-  },
-  {
     id: 'wrenched', name: 'Wrenched', emoji: '🔧', color: 0xcc6622, priority: 17, kind: 'timer',
     description: 'A wrench is jammed in your gear. Every ability you use costs you health until it works loose.',
     read: (f) => f.castPunishUntil,
@@ -183,13 +177,13 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     readUntil: (f) => latest(f.frostStackTimers),
   },
   {
-    id: 'void-frost', name: 'Void Frost', emoji: '🟣', color: 0x8844cc, priority: 21, kind: 'stack',
+    id: 'void-frost', name: 'Void Frost', emoji: '💜', color: 0x8844cc, priority: 21, kind: 'stack',
     description: 'Void chill. Stacks slow you and drain health over time.',
     read: (f) => f.voidFrostStacks,
     readUntil: (f) => latest(f.voidFrostStackTimers),
   },
   {
-    id: 'permafrost', name: 'Permafrost', emoji: '🥶', color: 0x44aadd, priority: 22, kind: 'stack',
+    id: 'permafrost', name: 'Permafrost', emoji: '☃️', color: 0x44aadd, priority: 22, kind: 'stack',
     description: 'Permanent chill stacks. These do not expire for the rest of the match.',
     read: (f) => f.permafrostStacks,
   },
@@ -269,7 +263,7 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     write: (f, t) => { f.exposedUntil = t; },
   },
   {
-    id: 'marked', name: 'Marked', emoji: '🦴', color: 0xddccaa, priority: 39, kind: 'flag',
+    id: 'marked', name: 'Marked', emoji: '💀', color: 0xddccaa, priority: 39, kind: 'flag',
     description: 'The next hit you take deals double damage, then this is consumed.',
     read: (f) => (f.vulnerableNextHit ? 1 : 0),
   },
@@ -334,13 +328,13 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     suffix: '%',
   },
   {
-    id: 'hobbled', name: 'Hobbled', emoji: '🦵', color: 0x8899aa, priority: 49, kind: 'amount',
+    id: 'hobbled', name: 'Hobbled', emoji: '👣', color: 0x8899aa, priority: 49, kind: 'amount',
     description: 'Your attack cadence has been slowed.',
     read: (f) => (f.attackIntervalMult > 1.001 ? Math.round((f.attackIntervalMult - 1) * 100) : 0),
     suffix: '%',
   },
   {
-    id: 'slowed', name: 'Slowed', emoji: '🧱', color: 0x7788aa, priority: 50, kind: 'amount',
+    id: 'slowed', name: 'Slowed', emoji: '🚧', color: 0x7788aa, priority: 50, kind: 'amount',
     description: 'Your movement speed is reduced.',
     read: (f) => {
       const mult = f.walkSpeedMult * f.purgeSpeedMult;
@@ -366,12 +360,12 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     read: (f) => Math.round(f.shieldHp),
   },
   {
-    id: 'clotted', name: 'Clotted', emoji: '🫀', color: 0x882233, priority: 103, kind: 'amount',
+    id: 'clotted', name: 'Clotted', emoji: '💓', color: 0x882233, priority: 103, kind: 'amount',
     description: 'Clotted health. Spent before normal health and soaks damage at half rate.',
     read: (f) => Math.round(f.clottedHp),
   },
   {
-    id: 'weak-hp', name: 'Weak HP', emoji: '🩶', color: 0x999999, priority: 104, kind: 'amount',
+    id: 'weak-hp', name: 'Weak HP', emoji: '🖤', color: 0x999999, priority: 104, kind: 'amount',
     description: 'Temporary bonus health that soaks damage but decays at 3/s.',
     read: (f) => Math.round(f.weakHp),
   },
@@ -381,7 +375,7 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     read: (f) => (f.damageAbsorber ? 1 : 0),
   },
   {
-    id: 'armored', name: 'Armored', emoji: '🪖', color: 0x88aacc, priority: 106, kind: 'amount',
+    id: 'armored', name: 'Armored', emoji: '⛑️', color: 0x88aacc, priority: 106, kind: 'amount',
     description: 'Incoming damage is reduced by an active armor effect.',
     read: (f) => {
       const mult = f.droneArmorMult * f.kineticShieldMult * f.steelShieldMult
@@ -432,6 +426,14 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     suffix: '%',
   },
   {
+    id: 'wind-dodge', name: 'Wind Dodge', emoji: '🍃', color: 0xccddff, priority: 114, kind: 'amount',
+    description: 'Chance to ride an incoming hit out on the wind. Never decays with time — each dodge spends 10%, and nothing else takes it off you.',
+    // Not clamped to 1: wind dodge is allowed past 100%, and hiding the overflow would make
+    // the whole point of stacking it invisible.
+    read: (f) => Math.round(f.windDodge * 100),
+    suffix: '%',
+  },
+  {
     id: 'crit', name: 'Critical Chance', emoji: '🎲', color: 0xffaa00, priority: 115, kind: 'amount',
     description: 'Chance for your attacks to land a critical hit.',
     read: (f) => Math.round(Math.min(1, f.critChance) * 100),
@@ -452,7 +454,7 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
 
   // ── Always-on mastery passives (lowest priority — they never expire) ─
   {
-    id: 'levitating', name: 'Levitating', emoji: '🪶', color: 0xccddff, priority: 150, kind: 'flag',
+    id: 'levitating', name: 'Levitating', emoji: '🍃', color: 0xccddff, priority: 150, kind: 'flag',
     description: 'Immune to ground hazards that have sat in the same spot for 3s.',
     read: (f) => (f.levitating ? 1 : 0),
   },
@@ -462,7 +464,7 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     read: (f) => Math.round(f.hardDamageCap),
   },
   {
-    id: 'natural-clot', name: 'Natural Clot', emoji: '🧷', color: 0xaa7788, priority: 152, kind: 'amount',
+    id: 'natural-clot', name: 'Natural Clot', emoji: '📌', color: 0xaa7788, priority: 152, kind: 'amount',
     description: 'This much damage is subtracted from every hit you take.',
     read: (f) => Math.round(f.flatDamageReduction),
   },
@@ -472,7 +474,7 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     read: (f) => (f.unstoppable ? 1 : 0),
   },
   {
-    id: 'plague-carrier', name: 'Carrier', emoji: '🦠', color: 0x88aa33, priority: 154, kind: 'flag',
+    id: 'plague-carrier', name: 'Carrier', emoji: '🐛', color: 0x88aa33, priority: 154, kind: 'flag',
     description: 'You survived a plague but never shook it off: 1 damage per second, 5% slower, 5% less damage, for the rest of the match.',
     read: (f) => (f.sicknessCarrier ? 1 : 0),
   },

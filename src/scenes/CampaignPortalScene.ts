@@ -10,13 +10,16 @@ const PORTAL_COST = 10;
 
 export class CampaignPortalScene extends Phaser.Scene {
   private slotIdx: 0 | 1 | 2 = 0;
+  /** Which crossing this modal is selling: the Abstract portal, or the scar. */
+  private realm: 'abstract' | 'corrupt' = 'abstract';
 
   constructor() {
     super({ key: 'CampaignPortalScene' });
   }
 
-  init(data: { slotIdx: 0 | 1 | 2 }): void {
+  init(data: { slotIdx: 0 | 1 | 2; realm?: 'abstract' | 'corrupt' }): void {
     this.slotIdx = data?.slotIdx ?? 0;
+    this.realm = data?.realm ?? 'abstract';
   }
 
   create(): void {
@@ -24,14 +27,22 @@ export class CampaignPortalScene extends Phaser.Scene {
     const { width, height } = this.scale;
     const cx = width / 2;
     const cy = height / 2;
-    const purchased = CP.isPortalUnlocked(this.slotIdx);
+    const corrupt = this.realm === 'corrupt';
+    const purchased = corrupt
+      ? CP.isCorruptPortalUnlocked(this.slotIdx)
+      : CP.isPortalUnlocked(this.slotIdx);
     const keys = CP.getKeys(this.slotIdx);
-    const canAfford = keys >= PORTAL_COST;
-    const accent = C.arcane;
+    const cost = corrupt ? CP.CORRUPT_PORTAL_COST : PORTAL_COST;
+    // The scar wants blood as well as keys: Sovereigns felled in the Abstract Realm.
+    const prereqMet = !corrupt || CP.canOpenCorruptPortal(this.slotIdx);
+    const canAfford = keys >= cost && prereqMet;
+    const accent = corrupt ? C.blood : C.arcane;
 
     const panel = addModal(this, {
       w: 520, h: 372, accent,
-      title: purchased ? '🌀  PORTAL ACTIVE' : '🌀  OPEN THE PORTAL',
+      title: corrupt
+        ? (purchased ? '🔴  THE SCAR IS OPEN' : '🔴  THE SCAR')
+        : (purchased ? '🌀  PORTAL ACTIVE' : '🌀  OPEN THE PORTAL'),
       glow: 0.6,
     });
 
@@ -67,7 +78,9 @@ export class CampaignPortalScene extends Phaser.Scene {
     fillDiamond(core, cx, riftY, 16, mix(C.plate, accent, purchased ? 0.5 : 0.15), 0.95);
 
     if (purchased) {
-      this.add.text(cx, cy + 46, 'Press SPACE on the world map\nto cross between realms.', {
+      this.add.text(cx, cy + 46, corrupt
+        ? 'Press SPACE on the world map to reach\nthe Corrupt Realm. It knows you now.'
+        : 'Press SPACE on the world map\nto cross between realms.', {
         fontSize: '16px', fontFamily: FONT_UI, color: T.normal, align: 'center', lineSpacing: 7,
       }).setOrigin(0.5).setDepth(DEPTH.modalContent);
 
@@ -78,7 +91,9 @@ export class CampaignPortalScene extends Phaser.Scene {
         onClick: () => this.close(),
       });
     } else {
-      this.add.text(cx, cy + 12, 'Travel between realms.\nThe Abstract awaits beyond.', {
+      this.add.text(cx, cy + 12, corrupt
+        ? 'A tear in the Abstract sky, weeping red.\nThe cast-out elements are on the other side.'
+        : 'Travel between realms.\nThe Abstract awaits beyond.', {
         fontSize: '15px', fontFamily: FONT_UI, color: T.normal, align: 'center', lineSpacing: 6,
       }).setOrigin(0.5).setDepth(DEPTH.modalContent);
 
@@ -87,34 +102,49 @@ export class CampaignPortalScene extends Phaser.Scene {
       this.add.text(cx - 130, cy + 74, 'COST', {
         fontSize: '9px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2,
       }).setOrigin(0, 0.5).setDepth(DEPTH.modalContent);
-      this.add.text(cx - 84, cy + 74, `🗝️ ${PORTAL_COST}`, {
+      this.add.text(cx - 84, cy + 74, `🗝️ ${cost}`, {
         fontSize: '16px', fontFamily: FONT_DISPLAY, color: T.gold,
       }).setOrigin(0, 0.5).setDepth(DEPTH.modalContent);
       this.add.text(cx + 130, cy + 74, `YOU HAVE  🗝️ ${keys}`, {
         fontSize: '12px', fontFamily: FONT_DISPLAY,
-        color: canAfford ? T.good : T.bad, letterSpacing: 0.5,
+        color: keys >= cost ? T.good : T.bad, letterSpacing: 0.5,
       }).setOrigin(1, 0.5).setDepth(DEPTH.modalContent);
+
+      if (corrupt && !prereqMet) {
+        this.add.text(cx, cy + 104,
+          `The scar only answers strength: fell ${CP.CORRUPT_PORTAL_CHALLENGES} Sovereigns in the Abstract Realm ` +
+          `(${CP.abstractChallengesCleared(this.slotIdx)}/${CP.CORRUPT_PORTAL_CHALLENGES}).`, {
+            fontSize: '10.5px', fontFamily: FONT_UI, color: T.bad, align: 'center',
+            wordWrap: { width: 420 },
+          }).setOrigin(0.5).setDepth(DEPTH.modalContent);
+      }
 
       addButton(this, {
         x: cx, y: cy + 136, w: 220, h: 50,
-        label: 'PURCHASE', icon: '✦',
-        sublabel: canAfford ? undefined : 'Not enough keys',
-        accent: canAfford ? C.verdant : C.steel,
+        label: corrupt ? 'TEAR IT WIDER' : 'PURCHASE', icon: '✦',
+        sublabel: canAfford ? undefined : (prereqMet ? 'Not enough keys' : 'Sovereigns still stand'),
+        accent: canAfford ? (corrupt ? C.blood : C.verdant) : C.steel,
         variant: canAfford ? 'solid' : 'quiet',
         fontSize: 18,
         depth: DEPTH.modalContent,
         disabled: !canAfford,
         onClick: () => {
-          if (!CP.purchasePortal(this.slotIdx)) return;
-          // Opening the portal is the campaign's biggest single moment — step
-          // straight through it rather than dumping the player back on the old map
+          const bought = corrupt
+            ? CP.purchaseCorruptPortal(this.slotIdx)
+            : CP.purchasePortal(this.slotIdx);
+          if (!bought) return;
+          // Opening a portal is a campaign-defining moment — step straight
+          // through it rather than dumping the player back on the old map
           // (which is also stale by now, since it was drawn with the rift sealed).
-          this.cameras.main.flash(420, 157, 92, 255);
+          this.cameras.main.flash(420, corrupt ? 220 : 157, corrupt ? 40 : 92, corrupt ? 40 : 255);
           this.input.keyboard!.removeAllListeners();
           this.time.delayedCall(520, () => {
             this.scene.stop('CampaignWorldMapScene');
             this.scene.stop();
-            this.scene.start('CampaignWorldMapScene', { slotIdx: this.slotIdx, mode: 'abstract' });
+            this.scene.start('CampaignWorldMapScene', {
+              slotIdx: this.slotIdx,
+              mode: corrupt ? 'corrupt' : 'abstract',
+            });
           });
         },
       });

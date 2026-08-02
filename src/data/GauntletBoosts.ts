@@ -70,7 +70,7 @@ export const CARDS: BoostDef[] = [
     description: 'Q ability cooldown is halved',
   },
   {
-    id: 'cripple', name: 'Cripple', emoji: '🩶', rarity: 'rare', kind: 'card', baseWeight: 0.10,
+    id: 'cripple', name: 'Cripple', emoji: '🖤', rarity: 'rare', kind: 'card', baseWeight: 0.10,
     description: 'Every hit you land slows the enemy 15% for 2s',
   },
   {
@@ -132,11 +132,11 @@ export const CURSES: BoostDef[] = [
     description: '-25% damage dealt. +20% shard reward',
   },
   {
-    id: 'weak', name: 'Weak', emoji: '🩹', rarity: 'common', kind: 'curse', baseWeight: 1,
+    id: 'weak', name: 'Weak', emoji: '💊', rarity: 'common', kind: 'curse', baseWeight: 1,
     description: '-25 max HP. +20% shard reward',
   },
   {
-    id: 'petri', name: 'Petri', emoji: '🧫', rarity: 'common', kind: 'curse', baseWeight: 1,
+    id: 'petri', name: 'Petri', emoji: '🥣', rarity: 'common', kind: 'curse', baseWeight: 1,
     description: 'Enemy gains an extra random mutation. +100% shard reward',
   },
   {
@@ -144,7 +144,7 @@ export const CURSES: BoostDef[] = [
     description: 'Enemies have a 10% chance to crit for 2× damage. +20% shard reward',
   },
   {
-    id: 'fat', name: 'Fat', emoji: '🪨', rarity: 'common', kind: 'curse', baseWeight: 1,
+    id: 'fat', name: 'Fat', emoji: '🗿', rarity: 'common', kind: 'curse', baseWeight: 1,
     description: 'You grow 15% larger (bigger hitbox). +20% shard reward',
   },
 ];

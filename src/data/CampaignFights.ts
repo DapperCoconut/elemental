@@ -1,5 +1,9 @@
 import { WORLDS } from './Worlds';
 import { ABSTRACT_WORLDS } from './AbstractWorlds';
+import { CORRUPT_WORLDS, isCorruptWorld } from './CorruptWorlds';
+import { FightFormat } from './FightFormats';
+
+export { isCorruptWorld };
 
 export interface CampaignFightDef {
   enemyElementId: string;
@@ -10,6 +14,8 @@ export interface CampaignFightDef {
   name?: string;
   /** One line from the opponent, shown under the title. */
   taunt?: string;
+  /** Rule change for the bout — tag-team chain, horde, survival, flood. */
+  format?: FightFormat;
 }
 
 /**
@@ -55,7 +61,7 @@ export const CAMPAIGN_FIGHTS: Record<string, CampaignFightDef> = {
   'water-fight-1':   { enemyElementId: 'water',   difficulty: 2, name: 'Tide Pool',    taunt: 'Nothing drowns quietly.' },
   'water-fight-2':   { enemyElementId: 'ice',     difficulty: 2, name: 'Cold Front',   taunt: 'Water that stopped forgiving.',             mutations: ['titanic'] },
   'water-fight-3':   { enemyElementId: 'crystal', difficulty: 3, name: 'Reef Break',   taunt: 'Every current cuts stone eventually.',      mutations: ['encroach'] },
-  'water-fight-4':   { enemyElementId: 'slime',   difficulty: 3, name: 'The Undertow', taunt: 'Down here, light is a rumour.',             mutations: ['abyss'] },
+  'water-fight-4':   { enemyElementId: 'slime',   difficulty: 3, name: 'The Undertow', taunt: 'Down here, light is a rumour.',             mutations: ['abyss'], format: { kind: 'horde' } },
   'water-fight-5':   { enemyElementId: 'growth',  difficulty: 3, name: 'Red Bloom',    taunt: 'The water feeds me. You just float in it.', mutations: ['parasitic', 'blustery'], starredMutations: ['parasitic'] },
   'water-challenge': { enemyElementId: 'water',   difficulty: 4, name: 'Leviathan',    taunt: 'The deep has been waiting a long time.',    mutations: ['summoner', 'encroach'] },
 
@@ -70,14 +76,14 @@ export const CAMPAIGN_FIGHTS: Record<string, CampaignFightDef> = {
   // ── Air ───────────────────────────────────────────────────────────
   'air-fight-1':   { enemyElementId: 'air',         difficulty: 2, name: 'Draft',          taunt: "You can't punch what you can't hold." },
   'air-fight-2':   { enemyElementId: 'sound',       difficulty: 2, name: 'Whistle',        taunt: "Listen. That's the last thing you'll do.", mutations: ['blustery'] },
-  'air-fight-3':   { enemyElementId: 'shadow',      difficulty: 3, name: 'Nightwind',      taunt: 'The dark moves faster than you look.',     mutations: ['phantom'] },
+  'air-fight-3':   { enemyElementId: 'shadow',      difficulty: 3, name: 'Nightwind',      taunt: 'The dark moves faster than you look.',     mutations: ['phantom'], format: { kind: 'survival', seconds: 75 } },
   'air-fight-4':   { enemyElementId: 'electricity', difficulty: 3, name: 'Storm Front',    taunt: 'Every storm starts as a breeze.',          mutations: ['blustery'],          starredMutations: ['blustery'] },
   'air-fight-5':   { enemyElementId: 'gravity',     difficulty: 3, name: 'The Jet Stream', taunt: 'Up is a suggestion.',                      mutations: ['order', 'blustery'], starredMutations: ['blustery'] },
   'air-challenge': { enemyElementId: 'air',         difficulty: 4, name: 'The Eye',        taunt: 'There is no wind in here. That should frighten you.', mutations: ['apprehension', 'blustery'] },
 
   // ── Earth ─────────────────────────────────────────────────────────
   'earth-fight-1':   { enemyElementId: 'earth',    difficulty: 2, name: 'Bedrock',           taunt: 'Move me.' },
-  'earth-fight-2':   { enemyElementId: 'crystal',  difficulty: 2, name: 'The Vein',          taunt: 'Pressure makes better things than you.',       mutations: ['titanic'] },
+  'earth-fight-2':   { enemyElementId: 'crystal',  difficulty: 2, name: 'The Vein',          taunt: 'Pressure makes better things than you.',       mutations: ['titanic'], format: { kind: 'horde' } },
   'earth-fight-3':   { enemyElementId: 'metal',    difficulty: 3, name: 'The Forge Below',   taunt: 'Rock learns. Then it sharpens.',               mutations: ['order'] },
   'earth-fight-4':   { enemyElementId: 'gravity',  difficulty: 3, name: 'Deep Pressure',     taunt: "Everything falls. You're just slow about it.",  mutations: ['titanic'],           starredMutations: ['titanic'] },
   'earth-fight-5':   { enemyElementId: 'creation', difficulty: 3, name: 'The Mason',         taunt: 'I build. You are raw material.',               mutations: ['tinker', 'titanic'], starredMutations: ['titanic'] },
@@ -99,7 +105,7 @@ export const CAMPAIGN_FIGHTS: Record<string, CampaignFightDef> = {
   'ice-fight-1':   { enemyElementId: 'ice',     difficulty: 3, name: 'First Frost',     taunt: "Stand still. It's easier." },
   'ice-fight-2':   { enemyElementId: 'water',   difficulty: 3, name: 'Glacier',         taunt: 'Slow is not the same as safe.',    mutations: ['titanic'] },
   'ice-fight-3':   { enemyElementId: 'crystal', difficulty: 4, name: 'The Shelf',       taunt: "It's already cracking under you.", mutations: ['encroach'] },
-  'ice-fight-4':   { enemyElementId: 'silence', difficulty: 4, name: 'Whiteout',        taunt: 'No one hears anything out here.',  mutations: ['abyss'] },
+  'ice-fight-4':   { enemyElementId: 'silence', difficulty: 4, name: 'Whiteout',        taunt: 'No one hears anything out here.',  mutations: ['abyss'], format: { kind: 'survival', seconds: 80 } },
   'ice-fight-5':   { enemyElementId: 'air',     difficulty: 4, name: 'Blizzard',        taunt: 'The cold gets in eventually.',     mutations: ['blustery', 'titanic'], starredMutations: ['blustery'] },
   'ice-challenge': { enemyElementId: 'ice',     difficulty: 5, name: 'The Long Winter', taunt: 'Nothing thaws.',                   mutations: ['apprehension', 'wither'] },
 
@@ -121,7 +127,7 @@ export const CAMPAIGN_FIGHTS: Record<string, CampaignFightDef> = {
 
   // ── Hunt ──────────────────────────────────────────────────────────
   'hunt-fight-1':   { enemyElementId: 'hunt',      difficulty: 3, name: 'The Scent',        taunt: "You've already been tracked for an hour." },
-  'hunt-fight-2':   { enemyElementId: 'life',      difficulty: 3, name: 'Flush the Quarry', taunt: "Run. It's more fun that way.",           mutations: ['blustery'] },
+  'hunt-fight-2':   { enemyElementId: 'life',      difficulty: 3, name: 'Flush the Quarry', taunt: "Run. It's more fun that way.",           mutations: ['blustery'], format: { kind: 'tagteam', enemies: ['life', 'hunt'] } },
   'hunt-fight-3':   { enemyElementId: 'shadow',    difficulty: 4, name: 'Night Stalk',      taunt: "I don't need to see you.",               mutations: ['phantom'] },
   'hunt-fight-4':   { enemyElementId: 'gunpowder', difficulty: 4, name: 'The Blind',        taunt: 'One shot is plenty.',                    mutations: ['order'] },
   'hunt-fight-5':   { enemyElementId: 'soul',      difficulty: 4, name: 'The Pack',         taunt: 'We are never alone.',                    mutations: ['amber', 'blustery'], starredMutations: ['blustery'] },
@@ -130,7 +136,7 @@ export const CAMPAIGN_FIGHTS: Record<string, CampaignFightDef> = {
   // ── Soul ──────────────────────────────────────────────────────────
   'soul-fight-1':   { enemyElementId: 'soul',    difficulty: 3, name: 'Wisp',          taunt: "You're louder than the dead." },
   'soul-fight-2':   { enemyElementId: 'shadow',  difficulty: 3, name: 'Grave Chill',   taunt: 'Everything you spend is gone for good.', mutations: ['wither'] },
-  'soul-fight-3':   { enemyElementId: 'silence', difficulty: 4, name: 'The Vigil',     taunt: 'The quiet ones remember most.',          mutations: ['phantom'] },
+  'soul-fight-3':   { enemyElementId: 'silence', difficulty: 4, name: 'The Vigil',     taunt: 'The quiet ones remember most.',          mutations: ['phantom'], format: { kind: 'horde' } },
   'soul-fight-4':   { enemyElementId: 'life',    difficulty: 4, name: 'Tether',        taunt: 'Your warmth was always a loan.',         mutations: ['parasitic'],         starredMutations: ['parasitic'] },
   'soul-fight-5':   { enemyElementId: 'sand',    difficulty: 4, name: 'The Long Wake', taunt: "Time doesn't heal. It files it away.",   mutations: ['wither', 'phantom'], starredMutations: ['phantom'] },
   'soul-challenge': { enemyElementId: 'soul',    difficulty: 5, name: 'The Ferryman',  taunt: 'Everyone pays. Some pay twice.',         mutations: ['summoner', 'wither'] },
@@ -139,13 +145,13 @@ export const CAMPAIGN_FIGHTS: Record<string, CampaignFightDef> = {
   'shadow-fight-1':   { enemyElementId: 'shadow',  difficulty: 3, name: 'First Dark',            taunt: 'Turn the light off. Please.' },
   'shadow-fight-2':   { enemyElementId: 'silence', difficulty: 3, name: 'Hush',                  taunt: 'No one is coming.',                 mutations: ['phantom'] },
   'shadow-fight-3':   { enemyElementId: 'air',     difficulty: 4, name: 'Cold Draft',            taunt: 'Something just moved behind you.',  mutations: ['blustery'] },
-  'shadow-fight-4':   { enemyElementId: 'soul',    difficulty: 4, name: 'Hopelessness',          taunt: 'Stop swinging. It never mattered.', mutations: ['abyss'] },
-  'shadow-fight-5':   { enemyElementId: 'quantum', difficulty: 4, name: 'The Long Con',          taunt: "You've been fighting a shape.",     mutations: ['phantom', 'wither'], starredMutations: ['phantom'] },
+  'shadow-fight-4':   { enemyElementId: 'soul',    difficulty: 4, name: 'Hopelessness',          taunt: 'Stop swinging. It never mattered.', mutations: ['abyss'], format: { kind: 'flood', graceSeconds: 35 } },
+  'shadow-fight-5':   { enemyElementId: 'subterfuge', difficulty: 4, name: 'The Long Con',          taunt: "You've been fighting a shape.",     mutations: ['phantom', 'wither'], starredMutations: ['phantom'] },
   'shadow-challenge': { enemyElementId: 'shadow',  difficulty: 5, name: 'The Thing In The Maze', taunt: 'Do not look for me. Just wait.',    mutations: ['apprehension', 'phantom'] },
 
   // ── Creation ──────────────────────────────────────────────────────
   'creation-fight-1':   { enemyElementId: 'creation',   difficulty: 3, name: 'The Workshop',     taunt: 'I made better than you before breakfast.' },
-  'creation-fight-2':   { enemyElementId: 'technology', difficulty: 3, name: 'Assembly Line',    taunt: "Turrets don't get tired.",        mutations: ['tinker'] },
+  'creation-fight-2':   { enemyElementId: 'technology', difficulty: 3, name: 'Assembly Line',    taunt: "Turrets don't get tired.",        mutations: ['tinker'], format: { kind: 'horde' } },
   'creation-fight-3':   { enemyElementId: 'metal',      difficulty: 4, name: 'Forgework',        taunt: 'Iron first. Then you.',           mutations: ['titanic'] },
   'creation-fight-4':   { enemyElementId: 'earth',      difficulty: 4, name: 'The Foundry',      taunt: 'Build. Break. Build again.',      mutations: ['tinker'],          starredMutations: ['tinker'] },
   'creation-fight-5':   { enemyElementId: 'magic',      difficulty: 4, name: 'The Grand Design', taunt: 'Every piece is already placed.',  mutations: ['order', 'tinker'], starredMutations: ['order'] },
@@ -154,7 +160,7 @@ export const CAMPAIGN_FIGHTS: Record<string, CampaignFightDef> = {
   // ── Gravity ───────────────────────────────────────────────────────
   'gravity-fight-1':   { enemyElementId: 'gravity', difficulty: 3, name: 'Downward',          taunt: 'Everything comes to me.' },
   'gravity-fight-2':   { enemyElementId: 'earth',   difficulty: 3, name: 'Terminal Velocity', taunt: 'The ground always wins.', mutations: ['titanic'] },
-  'gravity-fight-3':   { enemyElementId: 'sand',    difficulty: 4, name: 'Event Horizon',     taunt: "You're already late.",    mutations: ['order'] },
+  'gravity-fight-3':   { enemyElementId: 'sand',    difficulty: 4, name: 'Event Horizon',     taunt: "You're already late.",    mutations: ['order'], format: { kind: 'flood', graceSeconds: 40 } },
   'gravity-fight-4':   { enemyElementId: 'magnet',  difficulty: 4, name: 'The Well',          taunt: 'Pull is just patience.',  mutations: ['titanic'],        starredMutations: ['titanic'] },
   'gravity-fight-5':   { enemyElementId: 'plasma',  difficulty: 4, name: 'Collapse',          taunt: 'Stars end like this.',    mutations: ['chaos', 'order'], starredMutations: ['order'] },
   'gravity-challenge': { enemyElementId: 'gravity', difficulty: 5, name: 'Singularity',       taunt: 'Nothing leaves.',         mutations: ['empyreon', 'order'] },
@@ -163,7 +169,7 @@ export const CAMPAIGN_FIGHTS: Record<string, CampaignFightDef> = {
   'sand-fight-1':   { enemyElementId: 'sand',    difficulty: 3, name: 'The Hourglass',      taunt: 'You have less than you think.' },
   'sand-fight-2':   { enemyElementId: 'crystal', difficulty: 3, name: 'Countdown',          taunt: 'Tick.',                             mutations: ['nuclear'] },
   'sand-fight-3':   { enemyElementId: 'gravity', difficulty: 4, name: 'Dilation',           taunt: 'I moved twice while you blinked.',  mutations: ['order'] },
-  'sand-fight-4':   { enemyElementId: 'echo',    difficulty: 4, name: 'Rewind',             taunt: "We've done this before.",           mutations: ['phantom'] },
+  'sand-fight-4':   { enemyElementId: 'echo',    difficulty: 4, name: 'Rewind',             taunt: "We've done this before.",           mutations: ['phantom'], format: { kind: 'survival', seconds: 70 } },
   'sand-fight-5':   { enemyElementId: 'soul',    difficulty: 4, name: 'The Last Grain',     taunt: 'Sixty seconds. Be interesting.',    mutations: ['nuclear', 'order'], starredMutations: ['order'] },
   'sand-challenge': { enemyElementId: 'sand',    difficulty: 5, name: 'The Endless Minute', taunt: 'I will outlast you by definition.', mutations: ['apprehension', 'order'] },
 
@@ -175,7 +181,7 @@ export const CAMPAIGN_FIGHTS: Record<string, CampaignFightDef> = {
   'electricity-fight-1':   { enemyElementId: 'electricity', difficulty: 3, name: 'Static',          taunt: "Feel that? That's the air deciding." },
   'electricity-fight-2':   { enemyElementId: 'metal',       difficulty: 3, name: 'Conductor',       taunt: 'You are a very good ground.',        mutations: ['order'] },
   'electricity-fight-3':   { enemyElementId: 'magnet',      difficulty: 4, name: 'Polarity',        taunt: 'Push, pull, fall down.',             mutations: ['blustery'] },
-  'electricity-fight-4':   { enemyElementId: 'technology',  difficulty: 4, name: 'Grid Fault',      taunt: 'The city runs on this. So do I.',    mutations: ['tinker'] },
+  'electricity-fight-4':   { enemyElementId: 'technology',  difficulty: 4, name: 'Grid Fault',      taunt: 'The city runs on this. So do I.',    mutations: ['tinker'], format: { kind: 'horde' } },
   'electricity-fight-5':   { enemyElementId: 'plasma',      difficulty: 4, name: 'Arc Flash',       taunt: "One flash. That's all it takes.",    mutations: ['chaos', 'order'], starredMutations: ['order'] },
   'electricity-challenge': { enemyElementId: 'electricity', difficulty: 4, name: 'The Storm Crown', taunt: 'The sky signed a contract with me.', mutations: ['empyreon', 'order'] },
 
@@ -201,7 +207,7 @@ export const CAMPAIGN_FIGHTS: Record<string, CampaignFightDef> = {
 
   // ── Sound ─────────────────────────────────────────────────────────
   'sound-fight-1':   { enemyElementId: 'sound',      difficulty: 3, name: 'Feedback',      taunt: 'Loud enough yet?' },
-  'sound-fight-2':   { enemyElementId: 'echo',       difficulty: 4, name: 'Reverb',        taunt: "You'll hear this again.",            mutations: ['blustery'] },
+  'sound-fight-2':   { enemyElementId: 'echo',       difficulty: 4, name: 'Reverb',        taunt: "You'll hear this again.",            mutations: ['blustery'], format: { kind: 'horde' } },
   'sound-fight-3':   { enemyElementId: 'air',        difficulty: 4, name: 'Shockwave',     taunt: "Air is a weapon when it's angry.",   mutations: ['order'] },
   'sound-fight-4':   { enemyElementId: 'silence',    difficulty: 4, name: 'Dead Air',      taunt: 'Say something. I dare you.',         mutations: ['abyss'] },
   'sound-fight-5':   { enemyElementId: 'technology', difficulty: 5, name: 'The Amp Stack', taunt: 'Turn it up until something breaks.', mutations: ['tinker', 'blustery'], starredMutations: ['blustery'] },
@@ -210,7 +216,7 @@ export const CAMPAIGN_FIGHTS: Record<string, CampaignFightDef> = {
   // ── Light ─────────────────────────────────────────────────────────
   'light-fight-1':   { enemyElementId: 'light',   difficulty: 3, name: 'Glare',            taunt: "You're squinting already." },
   'light-fight-2':   { enemyElementId: 'crystal', difficulty: 4, name: 'Prism Run',        taunt: "I bend. You don't.",                  mutations: ['order'] },
-  'light-fight-3':   { enemyElementId: 'air',     difficulty: 4, name: 'Speed of Light',   taunt: 'You saw me leave. Not arrive.',       mutations: ['blustery'],          starredMutations: ['blustery'] },
+  'light-fight-3':   { enemyElementId: 'air',     difficulty: 4, name: 'Speed of Light',   taunt: 'You saw me leave. Not arrive.',       mutations: ['blustery'],          starredMutations: ['blustery'], format: { kind: 'survival', seconds: 70 } },
   'light-fight-4':   { enemyElementId: 'shadow',  difficulty: 4, name: 'Eclipse',          taunt: 'Even I have a back.',                 mutations: ['abyss'] },
   'light-fight-5':   { enemyElementId: 'magic',   difficulty: 5, name: 'The Lantern Duel', taunt: 'Nothing hides from a straight line.', mutations: ['order', 'blustery'], starredMutations: ['order'] },
   'light-challenge': { enemyElementId: 'light',   difficulty: 5, name: 'Solar Court',      taunt: 'Look up. That was your mistake.',     mutations: ['empyreon', 'chaos'] },
@@ -231,14 +237,14 @@ export const CAMPAIGN_FIGHTS: Record<string, CampaignFightDef> = {
   'metal-fight-1':   { enemyElementId: 'metal',     difficulty: 4, name: 'Tempering',        taunt: "You're soft. That's fixable. Painfully." },
   'metal-fight-2':   { enemyElementId: 'earth',     difficulty: 4, name: 'Ore Body',         taunt: 'Rock with ambition.',                     mutations: ['titanic'] },
   'metal-fight-3':   { enemyElementId: 'creation',  difficulty: 4, name: 'The Anvil',        taunt: 'Hold still. This is shaping.',            mutations: ['tinker'] },
-  'metal-fight-4':   { enemyElementId: 'slime',     difficulty: 5, name: 'Rust',             taunt: 'Everything I am, you will be.',           mutations: ['wither'] },
+  'metal-fight-4':   { enemyElementId: 'slime',     difficulty: 5, name: 'Rust',             taunt: 'Everything I am, you will be.',           mutations: ['wither'], format: { kind: 'flood', graceSeconds: 40 } },
   'metal-fight-5':   { enemyElementId: 'gunpowder', difficulty: 5, name: 'Barrel and Blade', taunt: 'Steel first. Powder second.',             mutations: ['order', 'titanic'], starredMutations: ['titanic'] },
   'metal-challenge': { enemyElementId: 'metal',     difficulty: 5, name: 'The Iron Legion',  taunt: 'One of me was always enough. Now count.', mutations: ['archfiend', 'tinker'] },
 
   // ── Plasma ────────────────────────────────────────────────────────
   'plasma-fight-1':   { enemyElementId: 'plasma',      difficulty: 4, name: 'Ionised',          taunt: "This isn't fire. This is after fire." },
   'plasma-fight-2':   { enemyElementId: 'fire',        difficulty: 4, name: 'Overheat',         taunt: 'Cute. Watch this.',                    mutations: ['molten'] },
-  'plasma-fight-3':   { enemyElementId: 'electricity', difficulty: 4, name: 'Arc Chaos',        taunt: 'Nothing here obeys anything.',         mutations: ['chaos'] },
+  'plasma-fight-3':   { enemyElementId: 'electricity', difficulty: 4, name: 'Arc Chaos',        taunt: 'Nothing here obeys anything.',         mutations: ['chaos'], format: { kind: 'flood', graceSeconds: 35 } },
   'plasma-fight-4':   { enemyElementId: 'gravity',     difficulty: 5, name: 'Stellar Core',     taunt: 'Pressure and heat. Nothing personal.', mutations: ['chaos'],          starredMutations: ['chaos'] },
   'plasma-fight-5':   { enemyElementId: 'magic',       difficulty: 5, name: 'Pure CHAOS',       taunt: 'There is no plan. There never was.',   mutations: ['chaos', 'order'], starredMutations: ['chaos'] },
   'plasma-challenge': { enemyElementId: 'plasma',      difficulty: 5, name: 'The Unbound Star', taunt: 'I stopped having a shape.',            mutations: ['archfiend', 'chaos'] },
@@ -262,7 +268,7 @@ export const CAMPAIGN_FIGHTS: Record<string, CampaignFightDef> = {
   // ── Echo ──────────────────────────────────────────────────────────
   'echo-fight-1':   { enemyElementId: 'echo',    difficulty: 4, name: 'First Call',    taunt: 'I heard you three rooms ago.' },
   'echo-fight-2':   { enemyElementId: 'sound',   difficulty: 4, name: 'Return Signal', taunt: 'Everything comes back louder.',        mutations: ['blustery'] },
-  'echo-fight-3':   { enemyElementId: 'silence', difficulty: 4, name: 'Dead Zone',     taunt: 'Nothing returns from here.',           mutations: ['abyss'] },
+  'echo-fight-3':   { enemyElementId: 'silence', difficulty: 4, name: 'Dead Zone',     taunt: 'Nothing returns from here.',           mutations: ['abyss'], format: { kind: 'survival', seconds: 75 } },
   'echo-fight-4':   { enemyElementId: 'shadow',  difficulty: 5, name: 'Blind Spot',    taunt: "You are the only one who can't see.",  mutations: ['phantom'],           starredMutations: ['phantom'] },
   'echo-fight-5':   { enemyElementId: 'sand',    difficulty: 5, name: 'Reverberation', taunt: 'Which one of these is now?',           mutations: ['phantom', 'wither'], starredMutations: ['phantom'] },
   'echo-challenge': { enemyElementId: 'echo',    difficulty: 5, name: 'The Cavern',    taunt: 'Follow the sound. I made it for you.', mutations: ['apprehension', 'phantom'] },
@@ -272,13 +278,13 @@ export const CAMPAIGN_FIGHTS: Record<string, CampaignFightDef> = {
   'silence-fight-2':   { enemyElementId: 'shadow',  difficulty: 4, name: 'Blackout',         taunt: "Don't run. It hears running.",         mutations: ['phantom'] },
   'silence-fight-3':   { enemyElementId: 'soul',    difficulty: 4, name: 'The Long Hall',    taunt: 'There is a door. There is not a door.', mutations: ['abyss'] },
   'silence-fight-4':   { enemyElementId: 'echo',    difficulty: 5, name: 'Nothing Answers',  taunt: 'You are shouting into a closed room.',  mutations: ['wither'] },
-  'silence-fight-5':   { enemyElementId: 'quantum', difficulty: 5, name: 'Vanishing Act',    taunt: 'You will not notice when it starts.',   mutations: ['phantom', 'abyss'], starredMutations: ['phantom'] },
+  'silence-fight-5':   { enemyElementId: 'subterfuge', difficulty: 5, name: 'Vanishing Act',    taunt: 'You will not notice when it starts.',   mutations: ['phantom', 'abyss'], starredMutations: ['phantom'] },
   'silence-challenge': { enemyElementId: 'silence', difficulty: 5, name: 'The Puppetmaster', taunt: 'Your hands were never yours.',          mutations: ['apprehension', 'wither'] },
 
   // ── Magic ─────────────────────────────────────────────────────────
   'magic-fight-1':   { enemyElementId: 'magic',    difficulty: 4, name: 'Cantrip',         taunt: 'Borrowed power is still power.' },
   'magic-fight-2':   { enemyElementId: 'light',    difficulty: 4, name: 'The Bright Page', taunt: 'I read faster than you cast.',            mutations: ['order'] },
-  'magic-fight-3':   { enemyElementId: 'fate',     difficulty: 4, name: 'Sleight',         taunt: 'Watch the other hand.',                   mutations: ['phantom'] },
+  'magic-fight-3':   { enemyElementId: 'fate',     difficulty: 4, name: 'Sleight',         taunt: 'Watch the other hand.',                   mutations: ['phantom'], format: { kind: 'tagteam', enemies: ['fate', 'light', 'magic'] } },
   'magic-fight-4':   { enemyElementId: 'creation', difficulty: 5, name: 'Grimoire Engine', taunt: 'The book builds itself now.',             mutations: ['tinker'],         starredMutations: ['tinker'] },
   'magic-fight-5':   { enemyElementId: 'plasma',   difficulty: 5, name: 'Wild Surge',      taunt: "I don't know what this one does either.", mutations: ['chaos', 'order'], starredMutations: ['chaos'] },
   'magic-challenge': { enemyElementId: 'magic',    difficulty: 5, name: 'The Archmage',    taunt: 'Every school. All at once.',              mutations: ['empyreon', 'phantom'] },
@@ -291,13 +297,166 @@ export const CAMPAIGN_FIGHTS: Record<string, CampaignFightDef> = {
   'technology-fight-5':   { enemyElementId: 'gunpowder',   difficulty: 5, name: 'Kill Switch',        taunt: 'Sixty seconds until deprecation.',    mutations: ['nuclear', 'order'], starredMutations: ['order'] },
   'technology-challenge': { enemyElementId: 'technology',  difficulty: 5, name: 'The Swarm Protocol', taunt: 'One instance was never the plan.',    mutations: ['summoner', 'order'] },
 
-  // ── Subterfuge (world id `quantum`) ───────────────────────────────
-  'quantum-fight-1':   { enemyElementId: 'quantum',   difficulty: 4, name: 'The Mark',     taunt: "You already paid me. You just don't know." },
-  'quantum-fight-2':   { enemyElementId: 'shadow',    difficulty: 4, name: 'The Alley',    taunt: "Nothing personal. It's business.",       mutations: ['phantom'] },
-  'quantum-fight-3':   { enemyElementId: 'fate',      difficulty: 4, name: 'The Wager',    taunt: 'First to three. I never lose three.',    mutations: ['honor'] },
-  'quantum-fight-4':   { enemyElementId: 'silence',   difficulty: 5, name: 'Smoke Break',  taunt: 'Take your time. I have.',                mutations: ['phantom'],          starredMutations: ['phantom'] },
-  'quantum-fight-5':   { enemyElementId: 'gunpowder', difficulty: 5, name: 'The Contract', taunt: "It's signed. You just haven't read it.", mutations: ['honor', 'phantom'], starredMutations: ['honor'] },
-  'quantum-challenge': { enemyElementId: 'quantum',   difficulty: 5, name: 'The Kingpin',  taunt: 'You were hired to lose.',                mutations: ['apprehension', 'pain'] },
+  // ── Subterfuge (world id `subterfuge`) ───────────────────────────────
+  'subterfuge-fight-1':   { enemyElementId: 'subterfuge',   difficulty: 4, name: 'The Mark',     taunt: "You already paid me. You just don't know." },
+  'subterfuge-fight-2':   { enemyElementId: 'shadow',    difficulty: 4, name: 'The Alley',    taunt: "Nothing personal. It's business.",       mutations: ['phantom'] },
+  'subterfuge-fight-3':   { enemyElementId: 'fate',      difficulty: 4, name: 'The Wager',    taunt: 'First to three. I never lose three.',    mutations: ['honor'] },
+  'subterfuge-fight-4':   { enemyElementId: 'silence',   difficulty: 5, name: 'Smoke Break',  taunt: 'Take your time. I have.',                mutations: ['phantom'],          starredMutations: ['phantom'] },
+  'subterfuge-fight-5':   { enemyElementId: 'gunpowder', difficulty: 5, name: 'The Contract', taunt: "It's signed. You just haven't read it.", mutations: ['honor', 'phantom'], starredMutations: ['honor'] },
+  'subterfuge-challenge': { enemyElementId: 'subterfuge',   difficulty: 5, name: 'The Kingpin',  taunt: 'You were hired to lose.',                mutations: ['apprehension', 'pain'] },
+
+  // ═══════════════════════════════════════════════════════════════════
+  // CORRUPT REALM — the cast-out elements, behind the scarred portal.
+  // Everything here is endgame: difficulty 4 exists only on the very first
+  // steps, and the challenge entries are *fallbacks* — once a world's
+  // Sovereign ships in src/boss/bosses, its challenge node becomes that boss
+  // fight and the entry below stops being read.
+  // ═══════════════════════════════════════════════════════════════════
+
+  // ── Ruin (Tier 0 root) ────────────────────────────────────────────
+  'ruin-fight-1':   { enemyElementId: 'ruin',      difficulty: 4, name: 'The Rubble Gate',  taunt: 'The realm fell before you were a rumour. Mind the debris.' },
+  'ruin-fight-2':   { enemyElementId: 'earth',     difficulty: 4, name: 'Load-Bearing',     taunt: 'Everything standing here is a mistake I intend to fix.',        mutations: ['titanic'] },
+  'ruin-fight-3':   { enemyElementId: 'gunpowder', difficulty: 5, name: 'Demolition',       taunt: 'This district comes down at noon. You are ahead of schedule.',  mutations: ['order'], format: { kind: 'horde' } },
+  'ruin-fight-4':   { enemyElementId: 'shadow',    difficulty: 5, name: 'The Fallen Court', taunt: 'The thrones here emptied first. Listen — they still creak.',    mutations: ['phantom'] },
+  'ruin-fight-5':   { enemyElementId: 'ruin',      difficulty: 5, name: 'Condemned',        taunt: 'You are standing in the last room with a roof.',               mutations: ['pain', 'titanic'], starredMutations: ['pain'] },
+  'ruin-challenge': { enemyElementId: 'ruin',      difficulty: 5, name: 'The Wrecking Crown', taunt: 'Every wall I ever raised, I was also aiming.',               mutations: ['archfiend', 'pain'] },
+
+  // ── Death (Tier 1) ────────────────────────────────────────────────
+  'death-fight-1':   { enemyElementId: 'death',   difficulty: 4, name: 'Last Rites',        taunt: 'You are early. The paperwork is not.' },
+  'death-fight-2':   { enemyElementId: 'soul',    difficulty: 5, name: 'The Waiting Room',  taunt: 'Everyone in here has an appointment. Yours just moved up.',  mutations: ['wither'], format: { kind: 'tagteam', enemies: ['soul', 'silence', 'death'] } },
+  'death-fight-3':   { enemyElementId: 'silence', difficulty: 5, name: 'The Hospice',       taunt: 'Hush. Some of them are almost finished.',                    mutations: ['phantom'] },
+  'death-fight-4':   { enemyElementId: 'sand',    difficulty: 5, name: 'Midnight Sharp',    taunt: 'The clock in my chest has one hand. Guess which hour.',      mutations: ['order'],            starredMutations: ['order'] },
+  'death-fight-5':   { enemyElementId: 'death',   difficulty: 5, name: 'The Second Bell',   taunt: 'The first bell was for the realm. This one is for you.',     mutations: ['wither', 'phantom'], starredMutations: ['phantom'] },
+  'death-challenge': { enemyElementId: 'death',   difficulty: 5, name: 'The Undertaker',    taunt: 'I buried the Sovereigns myself. I kept the measurements.',   mutations: ['apprehension', 'wither'] },
+
+  // ── Illusion (Tier 1) ─────────────────────────────────────────────
+  'illusion-fight-1':   { enemyElementId: 'illusion', difficulty: 4, name: 'The Cracked Stage', taunt: 'Everything past this wall is scenery. Including the wall.' },
+  'illusion-fight-2':   { enemyElementId: 'echo',     difficulty: 5, name: 'House of Answers',  taunt: 'Shout something true. This room only returns lies.',         mutations: ['phantom'] },
+  'illusion-fight-3':   { enemyElementId: 'magic',    difficulty: 5, name: 'The Borrowed Face', taunt: 'I wore your victory once. It fit badly.',                    mutations: ['order'] },
+  'illusion-fight-4':   { enemyElementId: 'silence',  difficulty: 5, name: 'Fourth Wall',       taunt: 'The audience left years ago. I kept performing.',            mutations: ['abyss'] },
+  'illusion-fight-5':   { enemyElementId: 'illusion', difficulty: 5, name: 'The Understudy',    taunt: 'Which of us rehearsed this? Wrong. Both.',                   mutations: ['phantom', 'chaos'], starredMutations: ['phantom'], format: { kind: 'tagteam', enemies: ['illusion', 'illusion'] } },
+  'illusion-challenge': { enemyElementId: 'illusion', difficulty: 5, name: 'The Final Curtain', taunt: 'Bow. The realm is watching what it used to be.',             mutations: ['apprehension', 'phantom'] },
+
+  // ── Conquest (Tier 1) ─────────────────────────────────────────────
+  'conquest-fight-1':   { enemyElementId: 'conquest', difficulty: 4, name: 'The Border Post',  taunt: 'This land was annexed while you read the sign.' },
+  'conquest-fight-2':   { enemyElementId: 'metal',    difficulty: 5, name: 'The Siege Line',   taunt: 'Walls are a promise. I collect on promises.',            mutations: ['titanic'] },
+  'conquest-fight-3':   { enemyElementId: 'technology', difficulty: 5, name: 'Supply Chain',   taunt: 'Your defeat was requisitioned in triplicate.',           mutations: ['tinker'] },
+  'conquest-fight-4':   { enemyElementId: 'gunpowder', difficulty: 5, name: 'Scorched Policy', taunt: 'I do not burn bridges. I burn the river.',               mutations: ['order'],            starredMutations: ['order'] },
+  'conquest-fight-5':   { enemyElementId: 'conquest', difficulty: 5, name: 'The Long March',   taunt: 'Every step you take, my banner is already there.',       mutations: ['order', 'tinker'],  starredMutations: ['order'], format: { kind: 'horde' } },
+  'conquest-challenge': { enemyElementId: 'conquest', difficulty: 5, name: 'The Warmaster',    taunt: 'I lost one war in my life. I am wearing what won.',      mutations: ['summoner', 'order'] },
+
+  // ── Gluttony (Tier 1) ─────────────────────────────────────────────
+  'gluttony-fight-1':   { enemyElementId: 'gluttony', difficulty: 4, name: 'First Course',     taunt: 'Sit. The kitchen has been expecting you for years.' },
+  'gluttony-fight-2':   { enemyElementId: 'slime',    difficulty: 5, name: 'The Broth',        taunt: 'Everything dissolves eventually. Chefs just hurry it.',   mutations: ['wither'] },
+  'gluttony-fight-3':   { enemyElementId: 'hunt',     difficulty: 5, name: 'Game Meat',        taunt: 'The difference between hunter and butcher is patience.',  mutations: ['blustery'] },
+  'gluttony-fight-4':   { enemyElementId: 'fire',     difficulty: 5, name: 'The Roast',        taunt: 'Low and slow. You have somewhere to be? Shame.',          mutations: ['molten'],            starredMutations: ['molten'], format: { kind: 'survival', seconds: 90 } },
+  'gluttony-fight-5':   { enemyElementId: 'gluttony', difficulty: 5, name: 'Seconds',          taunt: 'The realm was the first plate. You are the garnish.',     mutations: ['parasitic', 'molten'], starredMutations: ['parasitic'] },
+  'gluttony-challenge': { enemyElementId: 'gluttony', difficulty: 5, name: 'The Devouring Board', taunt: 'A feast is only a war you eat.',                       mutations: ['summoner', 'parasitic'] },
+
+  // ── Amber (Tier 2, Death) ─────────────────────────────────────────
+  'amber-fight-1':   { enemyElementId: 'amber',   difficulty: 5, name: 'The Preserved',     taunt: 'Everything in here is exactly as it died. Join the exhibit.' },
+  'amber-fight-2':   { enemyElementId: 'sand',    difficulty: 5, name: 'Slow Cure',         taunt: 'Time does the sealing. I only pour.',                       mutations: ['order'] },
+  'amber-fight-3':   { enemyElementId: 'life',    difficulty: 5, name: 'The Inclusion',     taunt: 'It was alive when it went in. That is the craft.',          mutations: ['parasitic'] },
+  'amber-fight-4':   { enemyElementId: 'crystal', difficulty: 5, name: 'Museum Piece',      taunt: 'Stand still and you will outlast empires.',                 mutations: ['encroach'],           starredMutations: ['encroach'], format: { kind: 'survival', seconds: 75 } },
+  'amber-fight-5':   { enemyElementId: 'amber',   difficulty: 5, name: 'Set in Gold',       taunt: 'The Sovereigns I keep do not struggle any more.',           mutations: ['amber', 'order'],     starredMutations: ['order'] },
+  'amber-challenge': { enemyElementId: 'amber',   difficulty: 5, name: 'The Curator',       taunt: 'Your pose is wrong. Hold still while I correct it. Forever.', mutations: ['empyreon', 'amber'] },
+
+  // ── Bind (Tier 2, Death) ──────────────────────────────────────────
+  'bind-fight-1':   { enemyElementId: 'bind',        difficulty: 5, name: 'The First Link',   taunt: 'One chain is a threat. Two is a habit. I have thousands.' },
+  'bind-fight-2':   { enemyElementId: 'metal',       difficulty: 5, name: 'Forged Shut',      taunt: 'I do not make locks. I make things that used to be doors.', mutations: ['titanic'] },
+  'bind-fight-3':   { enemyElementId: 'soul',        difficulty: 5, name: 'The Tether',       taunt: 'The dead here are not restless. They are restrained.',      mutations: ['wither'] },
+  'bind-fight-4':   { enemyElementId: 'magnet',      difficulty: 5, name: 'Drawn and Held',   taunt: 'Come closer. That was not a request. Nothing here is.',     mutations: ['order'],             starredMutations: ['order'] },
+  'bind-fight-5':   { enemyElementId: 'bind',        difficulty: 5, name: 'Oathkeeper',       taunt: 'You promised yourself you would win. I keep promises now.', mutations: ['pain', 'order'],     starredMutations: ['pain'], format: { kind: 'flood', graceSeconds: 40 } },
+  'bind-challenge': { enemyElementId: 'bind',        difficulty: 5, name: 'The Gaoler',       taunt: 'Every cell in this realm has a name on it. Yours is fresh.', mutations: ['apprehension', 'pain'] },
+
+  // ── Paper (Tier 2, Death) ─────────────────────────────────────────
+  'paper-fight-1':   { enemyElementId: 'paper',   difficulty: 5, name: 'The Records Hall',  taunt: 'Your whole life fits on one page. I have read shorter.' },
+  'paper-fight-2':   { enemyElementId: 'air',     difficulty: 5, name: 'Loose Leaves',      taunt: 'A library with no shelves is just weather.',              mutations: ['blustery'] },
+  'paper-fight-3':   { enemyElementId: 'magic',   difficulty: 5, name: 'The Forbidden Text', taunt: 'They sealed this book for a reason. I am the reason.',    mutations: ['order'] },
+  'paper-fight-4':   { enemyElementId: 'fire',    difficulty: 5, name: 'Book Burning',      taunt: 'Some stories end. Some are ended. Learn the difference.',  mutations: ['molten'],           starredMutations: ['molten'], format: { kind: 'flood', graceSeconds: 35 } },
+  'paper-fight-5':   { enemyElementId: 'paper',   difficulty: 5, name: 'The Final Draft',   taunt: 'I have written your defeat nine times. This one sings.',   mutations: ['phantom', 'order'], starredMutations: ['phantom'] },
+  'paper-challenge': { enemyElementId: 'paper',   difficulty: 5, name: 'The Chronicler',    taunt: 'History is whatever survives the edit. You will not.',     mutations: ['empyreon', 'order'] },
+
+  // ── Chalk (Tier 2, Illusion) ──────────────────────────────────────
+  'chalk-fight-1':   { enemyElementId: 'chalk',       difficulty: 5, name: 'The Blackboard',   taunt: 'The lesson today is subtraction. Of you.' },
+  'chalk-fight-2':   { enemyElementId: 'crystal',     difficulty: 5, name: 'Hard Lines',       taunt: 'A drawing with edges enough becomes a blade.',           mutations: ['encroach'] },
+  'chalk-fight-3':   { enemyElementId: 'echo',        difficulty: 5, name: 'Copied Homework',  taunt: 'Everything you do, I sketch faster.',                    mutations: ['phantom'], format: { kind: 'tagteam', enemies: ['echo', 'chalk'] } },
+  'chalk-fight-4':   { enemyElementId: 'light',       difficulty: 5, name: 'White on White',   taunt: 'Try reading me against this glare.',                     mutations: ['blustery'],         starredMutations: ['blustery'] },
+  'chalk-fight-5':   { enemyElementId: 'chalk',       difficulty: 5, name: 'The Eraser',       taunt: 'I drew this arena. Watch what I do to things I drew.',   mutations: ['chaos', 'phantom'], starredMutations: ['phantom'] },
+  'chalk-challenge': { enemyElementId: 'chalk',       difficulty: 5, name: 'The Draughtsman',  taunt: 'You are a rough sketch. I am the fair copy.',            mutations: ['apprehension', 'chaos'] },
+
+  // ── Psychic (Tier 2, Illusion) ────────────────────────────────────
+  'psychic-fight-1':   { enemyElementId: 'psychic', difficulty: 5, name: 'The Open Mind',    taunt: 'Do not bother announcing yourself. You did, in 1994.' },
+  'psychic-fight-2':   { enemyElementId: 'fate',    difficulty: 5, name: 'The Reading',      taunt: 'Your cards were dealt before your grip existed.',       mutations: ['honor'] },
+  'psychic-fight-3':   { enemyElementId: 'silence', difficulty: 5, name: 'Quiet Thoughts',   taunt: 'The loudest thing in this room is your doubt.',         mutations: ['phantom'] },
+  'psychic-fight-4':   { enemyElementId: 'echo',    difficulty: 5, name: 'Feedback Loop',    taunt: 'I heard your plan. Then I heard you hearing me hear it.', mutations: ['order'],          starredMutations: ['order'], format: { kind: 'horde' } },
+  'psychic-fight-5':   { enemyElementId: 'psychic', difficulty: 5, name: 'Migraine',         taunt: 'The pressure you feel is me, taking notes.',            mutations: ['pain', 'phantom'], starredMutations: ['pain'] },
+  'psychic-challenge': { enemyElementId: 'psychic', difficulty: 5, name: 'The Overmind',     taunt: 'One of us is imagining the other. Care to check?',      mutations: ['apprehension', 'order'] },
+
+  // ── Passion (Tier 2, Illusion) ────────────────────────────────────
+  'passion-fight-1':   { enemyElementId: 'passion', difficulty: 5, name: 'First Flutter',    taunt: 'The realm broke my heart. Yours will do as a replacement.' },
+  'passion-fight-2':   { enemyElementId: 'fire',    difficulty: 5, name: 'Old Flame',        taunt: 'We burned bright once. Now I just burn.',               mutations: ['molten'] },
+  'passion-fight-3':   { enemyElementId: 'sound',   difficulty: 5, name: 'The Serenade',     taunt: 'This song was written for someone. Congratulations.',   mutations: ['blustery'] },
+  'passion-fight-4':   { enemyElementId: 'shadow',  difficulty: 5, name: 'Jealousy',         taunt: 'Do not look at anything that is not me.',               mutations: ['phantom'],          starredMutations: ['phantom'], format: { kind: 'survival', seconds: 70 } },
+  'passion-fight-5':   { enemyElementId: 'passion', difficulty: 5, name: 'Till Death',       taunt: 'Love means never having to say "yield".',               mutations: ['pain', 'molten'],   starredMutations: ['pain'] },
+  'passion-challenge': { enemyElementId: 'passion', difficulty: 5, name: 'The Heartbreaker', taunt: 'I will cherish the memory of this. You will not have one.', mutations: ['empyreon', 'pain'] },
+
+  // ── Glass (Tier 2, Illusion) ──────────────────────────────────────
+  'glass-fight-1':   { enemyElementId: 'glass',   difficulty: 5, name: 'The Gallery',       taunt: 'Mind the floor. It remembers every step as a crack.' },
+  'glass-fight-2':   { enemyElementId: 'light',   difficulty: 5, name: 'Refraction Row',    taunt: 'Nine of me arrive before your swing does.',           mutations: ['order'] },
+  'glass-fight-3':   { enemyElementId: 'ice',     difficulty: 5, name: 'Cold Pane',         taunt: 'Frost and glass agree on one thing: shatter first.',  mutations: ['encroach'] },
+  'glass-fight-4':   { enemyElementId: 'sound',   difficulty: 5, name: 'The Resonant Note', taunt: 'Every pane in this hall knows your breaking pitch.',  mutations: ['blustery'],        starredMutations: ['blustery'] },
+  'glass-fight-5':   { enemyElementId: 'glass',   difficulty: 5, name: 'Seven Years',       taunt: 'Break me again. See what the luck does.',             mutations: ['pain', 'encroach'], starredMutations: ['pain'], format: { kind: 'flood', graceSeconds: 40 } },
+  'glass-challenge': { enemyElementId: 'glass',   difficulty: 5, name: 'The Mirrorwright',  taunt: 'I kept a reflection of the realm before it fell. You are standing in it.', mutations: ['apprehension', 'encroach'] },
+
+  // ── Fortune (Tier 2, Conquest) ────────────────────────────────────
+  'fortune-fight-1':   { enemyElementId: 'fortune', difficulty: 5, name: 'The Counting House', taunt: 'Entry fee is everything you have. Exit fee negotiable.' },
+  'fortune-fight-2':   { enemyElementId: 'fate',    difficulty: 5, name: 'Loaded Dice',        taunt: 'Chance is for people who cannot afford certainty.',     mutations: ['honor'] },
+  'fortune-fight-3':   { enemyElementId: 'subterfuge', difficulty: 5, name: 'The Embezzler',      taunt: 'Your winnings were laundered before you won them.',     mutations: ['phantom'], format: { kind: 'horde' } },
+  'fortune-fight-4':   { enemyElementId: 'metal',   difficulty: 5, name: 'Gold Standard',      taunt: 'Everything has a price. Yours was insultingly low.',    mutations: ['titanic'],         starredMutations: ['titanic'] },
+  'fortune-fight-5':   { enemyElementId: 'fortune', difficulty: 5, name: 'The Long Bet',       taunt: 'I wagered the realm would fall. Collecting took ages.', mutations: ['honor', 'order'],  starredMutations: ['honor'] },
+  'fortune-challenge': { enemyElementId: 'fortune', difficulty: 5, name: 'The Broker of Ruin', taunt: 'The house always wins. I bought the house.',            mutations: ['summoner', 'honor'] },
+
+  // ── Magma (Tier 2, Conquest) ──────────────────────────────────────
+  'magma-fight-1':   { enemyElementId: 'magma',  difficulty: 5, name: 'The Vent Field',    taunt: 'The ground here holds grudges under pressure.' },
+  'magma-fight-2':   { enemyElementId: 'fire',   difficulty: 5, name: 'Overpressure',      taunt: 'Fire is a temper. I am the tantrum.',                   mutations: ['molten'] },
+  'magma-fight-3':   { enemyElementId: 'earth',  difficulty: 5, name: 'The Melting Floor', taunt: 'Stone remembers being liquid. I remind it.',            mutations: ['titanic'] },
+  'magma-fight-4':   { enemyElementId: 'plasma', difficulty: 5, name: 'Eruption Column',   taunt: 'Vents do not warn twice. Neither do I.',                mutations: ['chaos'],           starredMutations: ['chaos'], format: { kind: 'flood', graceSeconds: 30 } },
+  'magma-fight-5':   { enemyElementId: 'magma',  difficulty: 5, name: 'Pyroclast',         taunt: 'The mountain kept its word. It always comes down.',     mutations: ['molten', 'chaos'], starredMutations: ['molten'] },
+  'magma-challenge': { enemyElementId: 'magma',  difficulty: 5, name: 'The Caldera King',  taunt: 'The realm cracked open and I was what leaked out.',     mutations: ['archfiend', 'molten'] },
+
+  // ── Radiation (Tier 2, Conquest) ──────────────────────────────────
+  'radiation-fight-1':   { enemyElementId: 'radiation', difficulty: 5, name: 'The Green Glow',   taunt: 'You will feel this fight for the rest of your life. Both weeks.' },
+  'radiation-fight-2':   { enemyElementId: 'slime',     difficulty: 5, name: 'Runoff Pond',      taunt: 'Do not drink the water. Do not touch the water. The water knows.', mutations: ['wither'] },
+  'radiation-fight-3':   { enemyElementId: 'technology', difficulty: 5, name: 'The Reactor',     taunt: 'It is perfectly safe. It is the safest thing that has ever exploded.', mutations: ['tinker'], format: { kind: 'horde' } },
+  'radiation-fight-4':   { enemyElementId: 'plasma',    difficulty: 5, name: 'Half-Life',        taunt: 'Half of you leaves this room. I decide which half.',    mutations: ['nuclear'] },
+  'radiation-fight-5':   { enemyElementId: 'radiation', difficulty: 5, name: 'The Exclusion Zone', taunt: 'The signs said keep out. You are why we have signs.', mutations: ['wither', 'chaos'], starredMutations: ['chaos'] },
+  'radiation-challenge': { enemyElementId: 'radiation', difficulty: 5, name: 'The Halflife Court', taunt: 'My kingdom decays at a fixed rate. Guests decay faster.', mutations: ['summoner', 'wither'] },
+
+  // ── Depths (Tier 2, Gluttony) ─────────────────────────────────────
+  'depths-fight-1':   { enemyElementId: 'depths',  difficulty: 5, name: 'The Drop-Off',     taunt: 'The light ends here. I brought my own. It is bait.' },
+  'depths-fight-2':   { enemyElementId: 'water',   difficulty: 5, name: 'Crush Depth',      taunt: 'The sea does not hate you. It just closes.',           mutations: ['encroach'] },
+  'depths-fight-3':   { enemyElementId: 'ice',     difficulty: 5, name: 'The Cold Current', taunt: 'Down here even the cold sinks.',                       mutations: ['titanic'] },
+  'depths-fight-4':   { enemyElementId: 'silence', difficulty: 5, name: 'The Silent Zone',  taunt: 'No one has ever screamed usefully at this depth.',     mutations: ['abyss'], format: { kind: 'survival', seconds: 80 } },
+  'depths-fight-5':   { enemyElementId: 'depths',  difficulty: 5, name: 'The Trench Choir', taunt: 'Everything the surface dropped, I kept. And fed.',     mutations: ['parasitic', 'encroach'], starredMutations: ['parasitic'] },
+  'depths-challenge': { enemyElementId: 'depths',  difficulty: 5, name: 'The Sunken Throne', taunt: 'Crowns sink. Mine simply arrived first.',             mutations: ['summoner', 'encroach'] },
+
+  // ── Slime (world id `gum`, Tier 2, Gluttony) ──────────────────────
+  'gum-fight-1':   { enemyElementId: 'gum',    difficulty: 5, name: 'The Sticking Point', taunt: 'Go on. Take one more step. See how that goes for your shoes.' },
+  'gum-fight-2':   { enemyElementId: 'slime',  difficulty: 5, name: 'Family Reunion',     taunt: 'Acid is my cousin. I got the patience, it got the temper.', mutations: ['wither'] },
+  'gum-fight-3':   { enemyElementId: 'rubber', difficulty: 5, name: 'Tensile Argument',   taunt: 'It stretches. I engulf. We agreed to settle it on you.',    mutations: ['blustery'] },
+  'gum-fight-4':   { enemyElementId: 'growth', difficulty: 5, name: 'The Culture',        taunt: 'Something is growing in me. Several somethings. Say hello.', mutations: ['parasitic'],        starredMutations: ['parasitic'], format: { kind: 'horde' } },
+  'gum-fight-5':   { enemyElementId: 'gum',    difficulty: 5, name: 'Full Absorption',    taunt: 'I am not a wall. I am a door that closes behind you.',      mutations: ['parasitic', 'titanic'], starredMutations: ['parasitic'] },
+  'gum-challenge': { enemyElementId: 'gum',    difficulty: 5, name: 'The Ooze Eternal',   taunt: 'The realm fell into me. It is still falling.',              mutations: ['summoner', 'parasitic'] },
+
+  // ── The Amalgam ───────────────────────────────────────────────────
+  // Not a world — the finale hangs off the corrupt map's heart, behind all
+  // forty-seven thrones. `amalgam` is a pseudo-world id; the boss def is
+  // looked up by it, and the clear is filed under it.
+  // The pledge is the whole point of the finale: forty-seven Sovereigns owe you, and three
+  // of them will take the floor when you go down. The Amalgam keeps its phase and its
+  // wounds across every tag, so the fight is one long body, fought by several elements.
+  'amalgam-challenge': { enemyElementId: 'ruin', difficulty: 5, name: 'The Amalgam', taunt: 'I AM THE COURT. All of it. Every throne you knelt at, I have already been wearing.', mutations: ['archfiend', 'pain'], starredMutations: ['archfiend'], format: { kind: 'pledge', pledges: 3 } },
 };
 
 export function getCampaignFightDef(nodeId: string): CampaignFightDef | undefined {
@@ -314,14 +473,14 @@ export const DIFFICULTY_LABEL: Record<number, string> = {
  */
 export const ELEMENT_DISPLAY: Record<string, { name: string; emoji: string }> =
   Object.fromEntries(
-    [...WORLDS, ...ABSTRACT_WORLDS].map((w) => [w.id, { name: w.name, emoji: w.emoji }]),
+    [...WORLDS, ...ABSTRACT_WORLDS, ...CORRUPT_WORLDS].map((w) => [w.id, { name: w.name, emoji: w.emoji }]),
   );
 
 // ── Rewards ──────────────────────────────────────────────────────────
 
 /** How deep in the tree a world sits — root 0, its children 1, theirs 2. */
 export function getWorldTier(worldId: string): number {
-  const all = [...WORLDS, ...ABSTRACT_WORLDS];
+  const all = [...WORLDS, ...ABSTRACT_WORLDS, ...CORRUPT_WORLDS];
   let tier = 0;
   let cur = all.find((w) => w.id === worldId);
   while (cur?.parentId) {
@@ -351,11 +510,16 @@ export function getCampaignReward(
 ): CampaignReward {
   const def = getCampaignFightDef(nodeId);
   const difficulty = def?.difficulty ?? (isChallenge ? 3 : 2);
-  const tier = getWorldTier(worldId);
+  // The Amalgam has no world, so it is banded by hand: deeper than anything
+  // with a map node, because everything with a map node had to fall first.
+  const amalgam = worldId === 'amalgam';
+  const tier = amalgam ? 3 : getWorldTier(worldId);
   const abstract = isAbstractWorld(worldId);
+  const corrupt = isCorruptWorld(worldId) || amalgam;
 
-  // Base scale: +1 per difficulty step, +2 per tier, +3 across the portal.
-  let sparks = 1 + difficulty + tier * 2 + (abstract ? 3 : 0);
+  // Base scale: +1 per difficulty step, +2 per tier, +3 across the first
+  // portal, +6 across the scarred one — the Corrupt Realm funds the endgame.
+  let sparks = 1 + difficulty + tier * 2 + (abstract ? 3 : 0) + (corrupt ? 6 : 0);
   // Every starred mutation is a real spike — pay for it.
   sparks += (def?.starredMutations?.length ?? 0) * 2;
   if (isChallenge) sparks = Math.round(sparks * 2.5);

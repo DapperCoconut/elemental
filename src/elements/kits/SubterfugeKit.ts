@@ -333,7 +333,7 @@ export class SubterfugeKit {
   private moneyAccumMs = 0;
   private npcMoneyAccumMs = 0;
 
-  // ── Molecular Cutter daggers (Click — unchanged from Quantum) ────────────
+  // ── Molecular Cutter daggers (Click — unchanged since the Quantum-era kit) ─
   private playerDaggers: SubDagger[] = [];
   private npcDaggers: SubDagger[] = [];
   private npcDaggerNextThrowAt = 0;
@@ -420,7 +420,7 @@ export class SubterfugeKit {
   private smokeHidden = { player: false, npc: false };
   private smokeStatusShown = false;
 
-  // ── Atom-Nhilego (preserved from Quantum — NOT currently bound to any input.
+  // ── Atom-Nhilego (preserved from the Quantum-era kit — NOT bound to any input.
   //    Kept intact per request: it will return as a new ability soon. Call
   //    doPlayerAtomNhilego()/doNpcAtomNhilego() to activate. ────────────────
   private playerNhilegoActive = false;
@@ -602,7 +602,7 @@ export class SubterfugeKit {
   /** True if the given side (player/npc, Subterfuge) has the shop upgrade `slot`. */
   private _up(owner: 'player' | 'npc', slot: string): boolean {
     return owner === 'player'
-      ? this.api.elementId === 'quantum' && this.api.hasUpgrade(slot)
+      ? this.api.elementId === 'subterfuge' && this.api.hasUpgrade(slot)
       : this.api.hasNpcUpgrade(slot);
   }
 
@@ -614,7 +614,7 @@ export class SubterfugeKit {
 
   handleInput(time: number, _delta: number, pointer: Phaser.Input.Pointer): void {
     const { api } = this;
-    if (api.elementId !== 'quantum') return;
+    if (api.elementId !== 'subterfuge') return;
     if (api.nukeChanneling) return;
 
     const { player } = api;
@@ -722,8 +722,8 @@ export class SubterfugeKit {
   update(time: number, delta: number): void {
     const { api } = this;
     const dt = delta / 1000;
-    const isPlayerSub = api.elementId === 'quantum';
-    const isNpcSub = api.npcElementId === 'quantum';
+    const isPlayerSub = api.elementId === 'subterfuge';
+    const isNpcSub = api.npcElementId === 'subterfuge';
 
     if (isPlayerSub) {
       this._tickMoney('player', delta);
@@ -1716,7 +1716,7 @@ export class SubterfugeKit {
 
     switch (enemyId) {
       // ── Fully custom copies ──
-      case 'quantum': // mirror match: gain 3 money instantly
+      case 'subterfuge': // mirror match: gain 3 money instantly
         this._addMoney(owner, 3);
         api.showFloatingText(caster.x, caster.y - 40, '💵💵💵 Insider Trading!', '#ff5555');
         break;
@@ -1874,7 +1874,7 @@ export class SubterfugeKit {
     const y = 90;
     this.discoBalls.push({ owner, x, y, endsAt: time + DISCO_MS, nextShotAt: time + DISCO_SHOT_INTERVAL });
     void scene;
-    this.api.showFloatingText(x, y - 36, '🪩 Disco!', '#ff66cc');
+    this.api.showFloatingText(x, y - 36, '💫 Disco!', '#ff66cc');
   }
 
   private _updateDiscoBalls(time: number): void {
@@ -1948,7 +1948,7 @@ export class SubterfugeKit {
     }
   }
 
-  // ── Molecular Cutter daggers (Click — behavior unchanged from Quantum) ───
+  // ── Molecular Cutter daggers (Click — behavior unchanged since Quantum) ──
 
   private _pickBalancedColor(owner: 'player' | 'npc'): 'red' | 'black' {
     const list = owner === 'player' ? this.playerDaggers : this.npcDaggers;
@@ -2203,7 +2203,7 @@ export class SubterfugeKit {
   // ── CastContext dispatchers ──────────────────────────────────────────────
 
   doPlayerCutter(tx: number, ty: number): void {
-    if (this.api.elementId !== 'quantum') return;
+    if (this.api.elementId !== 'subterfuge') return;
     this._playerClickDaggers(tx, ty);
   }
 

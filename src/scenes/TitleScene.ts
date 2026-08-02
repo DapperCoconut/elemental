@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import * as PlayerData from '../data/PlayerData';
 import * as Cheats from '../data/Cheats';
-import { createCheatSave, applyKonamiCheat } from '../data/CheatSave';
+import { createCheatSave, verifyCheatSave, applyKonamiCheat } from '../data/CheatSave';
 import { GAUNTLET_COST } from '../data/GauntletData';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
@@ -20,7 +20,7 @@ const SIGIL_ELEMENTS: Array<{ emoji: string; color: number }> = [
   { emoji: '💧', color: 0x0088ff },
   { emoji: '🌿', color: 0x44cc44 },
   { emoji: '💨', color: 0xaaddff },
-  { emoji: '🪨', color: 0x887755 },
+  { emoji: '🗿', color: 0x887755 },
 ];
 
 export class TitleScene extends Phaser.Scene {
@@ -181,8 +181,8 @@ export class TitleScene extends Phaser.Scene {
           konamiIdx = 0;
           const { campaignSlot } = applyKonamiCheat();
           showToast(this, campaignSlot
-            ? '🏆 All Gauntlets Complete!\n+9999 💎  +9999 🩸  +9999 🗝️  +9999 ✨ (Slot 1)\n🌀 Slot 1 cheat-flagged'
-            : '🏆 All Gauntlets Complete!\n+9999 💎  +9999 🩸', { accent: C.gold });
+            ? '🏆 All Gauntlets Complete!\n+9999 💎  +9999 🔴  +9999 🗝️  +9999 ✨ (Slot 1)\n🌀 Slot 1 cheat-flagged'
+            : '🏆 All Gauntlets Complete!\n+9999 💎  +9999 🔴', { accent: C.gold });
         }
       } else {
         konamiIdx = key === KONAMI[0] ? 1 : 0;
@@ -343,7 +343,16 @@ export class TitleScene extends Phaser.Scene {
     if (on) {
       addIconButton(this, {
         x: bx - 122, y: by, r: 16, icon: '↻', accent: C.steel, tooltip: 'Rebuild cheat save',
-        onClick: () => { createCheatSave(); this.scene.restart(); },
+        onClick: () => {
+          // A rebuild that cannot reach some content is the one moment anybody would ever
+          // notice, so say so here rather than only in the console.
+          const gaps = createCheatSave();
+          if (gaps.length) {
+            showToast(this, `⚠ Cheat save incomplete\n${gaps.length} gap${gaps.length === 1 ? '' : 's'} — see console`, { accent: C.blood, holdMs: 4000 });
+          } else {
+            this.scene.restart();
+          }
+        },
       });
     }
   }
@@ -351,8 +360,13 @@ export class TitleScene extends Phaser.Scene {
   private toggleCheatMode(): void {
     const goingCheat = !Cheats.isCheatMode();
 
-    // First entry mints the fully-unlocked profile; later entries reuse it.
-    if (goingCheat && !Cheats.cheatSaveExists()) createCheatSave();
+    // First entry mints the fully-unlocked profile. Later entries reuse it, but a profile
+    // minted before some content existed is short of it — so audit and top it up rather
+    // than leaving whole realms locked until somebody finds the rebuild button.
+    if (goingCheat) {
+      if (!Cheats.cheatSaveExists()) createCheatSave();
+      else if (verifyCheatSave().length > 0) createCheatSave();
+    }
 
     Cheats.setCheatMode(goingCheat);
     this.scene.restart();

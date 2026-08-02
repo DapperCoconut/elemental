@@ -44,6 +44,12 @@ const WRAITH_HP = 520;
 const KING_HIT_R = 22;
 
 const INTRO_MS = 2600;
+/**
+ * Breathing room a tagged-in element gets before the body it inherited starts
+ * swinging again. Shorter than the intro — the fight is already underway and the
+ * floor may still be covered in the last element's mistakes.
+ */
+const RESUME_GRACE_MS = 2000;
 /** Beat between moves. Tightens once the current body is under half health. */
 const REST_MS = 780;
 const REST_MS_ENRAGED = 430;
@@ -359,6 +365,21 @@ const DEVOURER_LARVA: HuskVariantDef = {
 /** How the fight finished. Only hard mode ever produces one. */
 export type BossOutcome = 'spare' | 'kill';
 
+/**
+ * Where a tagged-in element picks the fight up.
+ *
+ * Deliberately shaped like the Sovereigns' `BossResumeState` so both travel in
+ * the same `TagTeamState.bossResume` slot, plus the one thing this fight needs
+ * that they do not: whether the body being handed on has already spent its
+ * once-per-fight set piece (the Last Coronation, or the Feast).
+ */
+export interface KingResumeState {
+  /** 0 mech · 1 King · 2 wraith · 3 Devourer. Interludes resolve forward to the next body. */
+  phaseIdx: number;
+  hp: number;
+  setPieceUsed?: boolean;
+}
+
 /** The narrow surface the fight needs from ArenaScene. */
 export interface DisgracedKingArenaApi {
   get scene(): Phaser.Scene;
@@ -661,8 +682,10 @@ export class DisgracedKingKit {
   /**
    * @param hard The Devourer of Kings. Same fight, harder numbers, no heals, a
    * fourth phase behind the third, and a completely repainted look.
+   * @param resume A tag-team switch: the body, health and spent set piece the
+   * element that just fell is handing on. Null starts the fight from the door.
    */
-  reset(hard = false): void {
+  reset(hard = false, resume: KingResumeState | null = null): void {
     const scene = this.arena.scene;
     const W = this.arena.width;
     const H = this.arena.height;
@@ -778,6 +801,13 @@ export class DisgracedKingKit {
       color: '#d8c4ff', stroke: '#0a0510', strokeThickness: 4, letterSpacing: 3,
     }).setOrigin(0.5).setDepth(26);
 
+    // A tagged-in element walks into the fight already in progress, so the
+    // opening announcement is not theirs to hear.
+    if (resume) {
+      this.resumeInto(resume, now);
+      return;
+    }
+
     if (hard) {
       this.banner('☠  THE DEVOURER OF KINGS  ☠', '#f0688f', 32);
       scene.time.delayedCall(1500, () => {
@@ -789,6 +819,114 @@ export class DisgracedKingKit {
       this.banner('👑  THE DISGRACED KING', '#b98cff', 34);
       scene.cameras.main.shake(500, 0.004);
     }
+  }
+
+  /** The full pool of a resumable body, so an interlude hands the next one on whole. */
+  private phasePoolHp(idx: number): number {
+    switch (idx) {
+      case 0: return this.hard ? MECH_HP_HARD : MECH_HP;
+      case 1: return this.hard ? KING_HP_HARD : KING_HP;
+      case 2: return this.hard ? WRAITH_HP_HARD : WRAITH_HP;
+      default: return DEVOURER_HP;
+    }
+  }
+
+  /**
+   * What the element that just fell is handing on. Mid-interlude the current
+   * pool is already spent and the next body has not been dealt yet, so the
+   * handover resolves forward to that body at full health — which is exactly
+   * where the fight would have picked up anyway.
+   */
+  getResumeState(): KingResumeState | null {
+    const hp = Math.max(1, Math.round(this.arena.npc.hp));
+    switch (this.phase) {
+      case 'intro':    return { phaseIdx: 0, hp: this.phasePoolHp(0) };
+      case 'mech':     return { phaseIdx: 0, hp };
+      case 'wreck':    return { phaseIdx: 1, hp: this.phasePoolHp(1) };
+      case 'king':     return { phaseIdx: 1, hp, setPieceUsed: this.ultUsed || this.ultActive };
+      case 'ascend':   return { phaseIdx: 2, hp: this.phasePoolHp(2) };
+      case 'wraith':   return { phaseIdx: 2, hp };
+      case 'consume':  return { phaseIdx: 3, hp: this.phasePoolHp(3) };
+      case 'devourer': return { phaseIdx: 3, hp, setPieceUsed: this.feastUsed || this.feastActive };
+      // Beaten, mid-slump, with the choice not yet taken: hand the last body back
+      // on its last point of health rather than replaying the whole phase.
+      case 'kneel':    return { phaseIdx: 3, hp: 1, setPieceUsed: true };
+      case 'done':     return null;
+    }
+  }
+
+  /**
+   * A tagged-in element picks the fight up where the last one dropped it: the
+   * same body, the health it had left, and its set piece already spent.
+   *
+   * Deliberately *not* a replay of the phase handoffs. The wreck, the ascension
+   * and the crown coming apart are one-time set pieces — sitting through one
+   * again after a death would be the opposite of generous — so each branch here
+   * does only the mechanical half of the handoff (pool, hitbox, position, floor)
+   * and the fight resumes a beat later.
+   */
+  private resumeInto(resume: KingResumeState, now: number): void {
+    const W = this.arena.width;
+    const H = this.arena.height;
+    const npc = this.arena.npc;
+    // The fourth body exists only in hard mode; a stale state can never drop a
+    // normal run into it.
+    const idx = Phaser.Math.Clamp(Math.round(resume.phaseIdx), 0, this.hard ? 3 : 2);
+    const hp = Phaser.Math.Clamp(Math.round(resume.hp), 1, this.phasePoolHp(idx));
+
+    if (idx === 0) {
+      // Still the machine. Everything the fresh-start setup did is right — only
+      // the health it kept is different, and its intro doubles as the grace beat.
+      npc.hp = hp;
+      this.banner('IT IS STILL STANDING', '#ff9a4d', 26);
+      return;
+    }
+
+    this.phase = idx === 1 ? 'king' : idx === 2 ? 'wraith' : 'devourer';
+    this.phaseStartedAt = now;
+    this.cycleIdx = 0;
+    this.busyUntil = 0;
+    this.hurtFlashUntil = 0;
+    this.harassIdx = 0;
+    this.harassNextAt = now + HARASS_GRACE_MS;
+    this.nextMoveAt = now + RESUME_GRACE_MS;
+    this.kingRise = 1;
+
+    npc.setMaxHp(this.phasePoolHp(idx));
+    npc.hp = hp;
+    npc.isInvincible = false;
+
+    if (idx === 1) {
+      this.ultUsed = resume.setPieceUsed === true;
+      this.setBodyRadius(KING_HIT_R);
+      this.kingX = W / 2;
+      this.kingY = H * 0.42;
+      this.banner('👑  THE KING HIMSELF', '#b98cff', 30);
+    } else if (idx === 2) {
+      // The Coronation belonged to the body before this one.
+      this.ultUsed = true;
+      // Backdated so the pall the wraith drags over the hall is already fully up
+      // rather than fading in on a fight that has been going for minutes.
+      this.wraithStartedAt = now - 2000;
+      this.setBodyRadius(KING_HIT_R);
+      this.kingX = W / 2;
+      this.kingY = H * 0.42;
+      this.seedOrbitShards(WRAITH_SHARDS);
+      this.banner('☠  THE CROWNED WRAITH  ☠', '#ffe9a8', 32);
+    } else {
+      this.ultUsed = true;
+      this.feastUsed = resume.setPieceUsed === true;
+      // Same trick as the veil: the gullet is already closed around the hall.
+      this.devourStartedAt = now - 4000;
+      this.setBodyRadius(DEVOURER_HIT_R);
+      this.kingX = W / 2;
+      this.kingY = H * 0.40;
+      this.seedOrbitShards(DEVOUR_SHARDS);
+      this.banner('☠  THE DEVOURER OF KINGS  ☠', '#bdfff0', 34);
+    }
+
+    this.driveKingBody();
+    this.arena.scene.cameras.main.shake(500, 0.008);
   }
 
   /**
@@ -1678,7 +1816,7 @@ export class DisgracedKingKit {
     const x = this.kingX + Math.cos(angle) * FEAST_HEART_R;
     const y = this.kingY + Math.sin(angle) * FEAST_HEART_R * 0.8;
     const hitbox = new Fighter(this.arena.scene, x, y, 'elem-king', {
-      id: 'devourer-heart', name: 'Heart', color: DEVOUR.warn, emoji: '🫀', abilities: [],
+      id: 'devourer-heart', name: 'Heart', color: DEVOUR.warn, emoji: '💓', abilities: [],
     }, FEAST_HEART_HP, 0);
     hitbox.setAlpha(0);
     hitbox.forceInvisible = true;

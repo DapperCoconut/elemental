@@ -34,12 +34,12 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'pressure-dagger': ['water-jet', 1.5, 0.9],
   'pain-rain': 'rain',
 
-  // ── Air ──
-  'air-snipe': 'air-snipe',
-  'quick-shot': ['air-snipe', 1.35, 0.8],
-  'wind-trap': 'tornado',
-  'grapple': 'grapple',
-  'charged-beam': 'beam-fire',
+  // ── Air (the wind dancer) ──
+  'wind-splice': ['air-snipe', 1.25, 0.75],
+  'spin-dance': ['gust', 1.1, 1.1],
+  'gale-glaive': ['slash', 0.9, 1.1],
+  'sky-grapple': 'grapple',
+  'wind-breaker': 'tornado',
 
   // ── Earth ──
   'bash': ['stone-slam', 1.35, 0.9],
@@ -119,11 +119,11 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'lunar-landing': 'moon-landing',
 
   // ── Sound ──
-  'rhythm-shot': 'drum-hit',
-  'flow-mode': ['sonic-pulse', 1.25, 0.9],
-  'screech-barrier': 'screech',
-  'sound-grapple': 'grapple',
-  'solo': 'guitar-solo',
+  'staccato': ['drum-hit', 1.3],
+  'disc-dice': ['sonic-pulse', 1.15, 0.9],
+  'conduct': ['holy-chord', 1.25, 0.8],
+  'bugle': ['train-horn', 1.6, 0.75],
+  'soli': 'guitar-solo',
 
   // ── Echo (element id `echo`) ──
   'echo-shot': 'echo-ping',
@@ -132,7 +132,7 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'echo-bat': ['screech', 1.6, 0.8],
   'echo-eclipse': ['sonic-pulse', 0.6, 1.2],
 
-  // ── Subterfuge (element id `quantum`) ──
+  // ── Subterfuge (element id `subterfuge`) ──
   'sub-cutter': 'stab',
   'sub-spray': 'claw',
   'sub-recruit': 'money',
@@ -338,6 +338,20 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'gum-oozorbtion': ['stretch', 0.7, 0.95],
   'gum-solidify': ['ice-shatter', 1.1, 1.0],
 
+  // ── Gluttony ──
+  // The chef's row is kitchen noises and the butcher's row is the same actions gone wrong: the
+  // knife throw becomes a slash, the skewer becomes a stab, and the pot becomes a roar.
+  'glut-knife': ['whoosh', 1.35, 0.7],
+  'glut-forage': ['vine-grow', 1.1, 0.6],
+  'glut-charcoal': ['rock-throw', 0.85, 0.8],
+  'glut-butcher': ['beast-transform', 0.7, 1.0],
+  'glut-feast': ['craft-complete', 0.8, 0.9],
+  'glut-cleave': ['slash', 0.95, 0.9],
+  'glut-poach': ['spear-throw', 1.05, 0.9],
+  'glut-cannibalize': ['claw', 0.75, 1.0],
+  'glut-return': ['ui-toggle-off', 1.0, 0.7],
+  'glut-maw': ['roar', 0.5, 1.25],
+
   // ── Death ──
   // Three of the five deal no damage, so none of them gets an impact sound — they get a drain,
   // a curse and a bell. Only the two that touch steel are allowed to be loud.
@@ -392,7 +406,7 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   // ── Mastery bindables ──
   'burning-body': ['inferno', 1.1, 0.7],
   'slipstream': 'gust',
-  'swift-as-the-wind': 'status-haste',
+  'dancers-momentum': 'status-haste',
   'drone-array': 'drone-buzz',
   'thorn-thrash': ['thorn', 0.85, 1.15],
   'unbreakable': 'shield-up',
@@ -420,14 +434,13 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'unstable-orbital': ['plasma-arc', 0.8, 1.05],
   'weak-points': 'status-mark',
   'puppetmaster': ['curse-cast', 0.85, 1.15],
-  'resonance-barrier': ['screech', 0.9, 1.05],
 
   // The rest of the mastery table. Passives never reach `stampCast`, so some of
   // these will never fire — mapping the whole table anyway means a passive that
   // is later made bindable arrives with a sound already chosen for it.
   'heatwave': 'flame-burst',
   'siphon': 'status-drain',
-  'sweeping-tornado': 'tornado',
+  'winds-of-change': ['status-haste', 1.3, 1.15],
   'turret': 'drone-buzz',
   'reap': ['slash', 0.85, 1.1],
   'dust-screen': 'sand',
@@ -454,7 +467,6 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'chaos-storm': ['chaos', 0.75, 1.2],
   'beastling': ['roar', 1.5, 0.75],
   'weep': 'ghost-wail',
-  'bugle': ['train-horn', 1.5, 0.85],
 
   // The training-dummy element casts nothing — explicitly silent so it doesn't
   // fall through to the generic cast sound.
@@ -470,13 +482,13 @@ const ELEMENT_PITCH: Record<string, number> = {
   fire: 0.9, water: 1.05, air: 1.3, earth: 0.72, life: 1.12,
   ice: 1.35, electricity: 1.2, metal: 0.95, shadow: 0.68, soul: 0.8,
   sand: 1.0, crystal: 1.4, light: 1.45, gravity: 0.65, sound: 0.85,
-  echo: 1.25, quantum: 1.0, slime: 0.88, oil: 0.78, magnet: 1.15,
+  echo: 1.25, subterfuge: 1.0, slime: 0.88, oil: 0.78, magnet: 1.15,
   fate: 1.2, magic: 1.1, growth: 0.92, gunpowder: 0.8, hunt: 0.85,
   rubber: 1.05, silence: 0.75, technology: 1.3, plasma: 1.25,
   creation: 1.0, dream: 1.2, justice: 0.95, king: 0.6, chalk: 1.35, illusion: 1.15, conquest: 0.85,
   magma: 0.7, depths: 0.72, passion: 1.28, ruin: 0.7, glass: 1.5, paper: 1.18,
   death: 0.6, fortune: 1.08, amber: 0.75, psychic: 1.22,
-  radiation: 1.12, bind: 0.66,
+  radiation: 1.12, bind: 0.66, gum: 0.86, gluttony: 0.82,
 };
 
 /** Key → generic recipe. Shapes an unlisted ability by how big its slot implies it is. */

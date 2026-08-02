@@ -51,6 +51,6 @@ export const slimeElement: Element = {
   id: 'slime',
   name: 'Acid',
   color: 0x66cc44,
-  emoji: '🟢',
+  emoji: '💚',
   abilities: [poisonWhip, vileSpray, snakeBurrow, purge, acidApocalypse],
 };

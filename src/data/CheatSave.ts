@@ -8,17 +8,18 @@
 import * as Cheats from './Cheats';
 import * as PlayerData from './PlayerData';
 import * as CP from './CampaignProgress';
-import { RECIPES } from './Recipes';
-import { ABSTRACT_ELEMENT_IDS, ABSTRACT_MIX_ELEMENT_IDS } from './AbstractElements';
 import { ALL_UPGRADES } from './Upgrades';
 import { ALL_PERKS } from './Perks';
 import { DIVINE_PERKS } from './DivinePerks';
 import { MUTATIONS } from './Mutations';
-import { MASTERY_DEFS, MASTERY_SLOTS } from './Mastery';
-import { WORLDS, getFightNodes } from './Worlds';
-import { ABSTRACT_WORLDS } from './AbstractWorlds';
+import { MASTERY_DEFS, MASTERY_SLOTS, isMasteryComplete } from './Mastery';
+import { getFightNodes } from './Worlds';
+import { ALL_WORLDS } from './AbstractWorlds';
 import { ITEMS } from './Items';
 import { ACHIEVEMENTS } from './Achievements';
+import { SKINS, isSkinUnlocked } from './Skins';
+import { getAllStoryBeatIds } from './CampaignStory';
+import { ELEMENT_MAP } from '../elements/ElementRegistry';
 
 const BASE_ELEMENTS = ['fire', 'water', 'life', 'air', 'earth'];
 
@@ -28,18 +29,24 @@ const MAX_KEYS = 9999;
 const MAX_SPARKS = 9999;
 const MAX_ITEM_STACK = 99;
 
+/** The cheat slot. Slots 1 and 2 are left free for real saves. */
+const CHEAT_SLOT = 0;
+
 /**
- * Every element ID beyond the five you start with: the Lab's combined, abstract and
- * abstract-mix recipes, plus the two divine elements — which come from the Devourer's
- * endings rather than the Lab, so nothing recipe-shaped would ever list them.
+ * Registry entries that are not player elements: the training dummy, and the body the
+ * Disgraced King fights in. Everything else in `ELEMENT_MAP` is something a cheat profile
+ * is supposed to own.
+ */
+const NON_PLAYER_ELEMENT_IDS = new Set(['dummy', 'king']);
+
+/**
+ * Every element the profile should have, taken from the element registry rather than from
+ * the routes that normally grant them (Lab recipes, the Devourer's two endings, the seal
+ * behind the Amalgam). Reading the registry is the point: an element added later is in the
+ * cheat save the moment it exists, without anyone remembering to come back here.
  */
 function allUnlockableElementIds(): string[] {
-  return [
-    ...RECIPES.map((r) => r.result),
-    ...ABSTRACT_ELEMENT_IDS,
-    ...ABSTRACT_MIX_ELEMENT_IDS,
-    ...PlayerData.DIVINE_ELEMENT_IDS,
-  ];
+  return Object.keys(ELEMENT_MAP).filter((id) => !NON_PLAYER_ELEMENT_IDS.has(id));
 }
 
 /**
@@ -106,15 +113,31 @@ function maxOutCurrentProfile(): void {
       if (slot) PlayerData.setMasteryBind(elementId, slot, enh.id);
     });
   }
+
+  // ── Quantum: an element with no bond has no abilities at all ───────
+  // Every pair reads as researched in cheat mode, but the carried bond is still a stored
+  // choice — leave it empty and picking Quantum drops you into a fight with nothing.
+  if (!PlayerData.getQuantumBond()) {
+    PlayerData.setQuantumBond(PlayerData.STARTER_BOND[0], PlayerData.STARTER_BOND[1]);
+  }
+
+  // ── Passion's Exhibition toggle (found by tapping, not by playing) ──
+  for (let i = 0; i < PlayerData.PASSION_Q_TAPS_REQUIRED; i++) PlayerData.tapPassionQ();
 }
 
-/** Completes every campaign world (normal + abstract) in the given slot. */
+/** Completes the whole campaign — every realm, both portals and the finale — in one slot. */
 function maxOutCampaignSlot(idx: 0 | 1 | 2): void {
-  CP.addKeys(idx, MAX_KEYS - CP.getKeys(idx));
-  CP.addSparks(idx, MAX_SPARKS - CP.getSparks(idx));
   CP.markCheated(idx);
 
-  for (const world of [...WORLDS, ...ABSTRACT_WORLDS]) {
+  // Both portals are granted outright rather than bought. Purchasing them has
+  // prerequisites (the scar wants five Abstract Sovereigns down) which would make this
+  // function's result depend on the order its own lines run in.
+  CP.unlockPortal(idx);
+  CP.unlockCorruptPortal(idx);
+
+  // Every world of every realm — normal, Abstract and Corrupt. Derived from ALL_WORLDS so
+  // a realm added later completes itself here instead of being quietly left locked.
+  for (const world of ALL_WORLDS) {
     for (const node of getFightNodes(world)) {
       CP.markFightCompleted(idx, world.id, node.id);
     }
@@ -122,38 +145,125 @@ function maxOutCampaignSlot(idx: 0 | 1 | 2): void {
     CP.markGauntletCompleted(idx, world.id);
   }
 
-  // Portal costs 10 keys — granted above, so this always succeeds.
-  if (!CP.isPortalUnlocked(idx)) CP.purchasePortal(idx);
+  // The Amalgam is not a world — its clear is filed under a pseudo-world id of its own.
+  CP.markChallengeCompleted(idx, CP.AMALGAM_WORLD_ID);
+
+  // The campaign is finished, so the dialogue has notionally already been heard.
+  for (const beatId of getAllStoryBeatIds()) CP.markStoryBeatSeen(idx, beatId);
 
   for (const item of ITEMS) {
     const have = CP.getInventory(idx)[item.id] ?? 0;
     if (have < MAX_ITEM_STACK) CP.addItem(idx, item.id, MAX_ITEM_STACK - have);
   }
 
-  // Top the keys back up after the portal purchase.
   CP.addKeys(idx, MAX_KEYS - CP.getKeys(idx));
+  CP.addSparks(idx, MAX_SPARKS - CP.getSparks(idx));
 }
 
 /**
- * Builds (or rebuilds) the cheat profile with everything unlocked.
- *
- * Temporarily switches the storage namespace to the cheat keys so the whole
- * thing can be written through the normal PlayerData / CampaignProgress
- * setters, then restores the previous mode. The real save is never written to.
+ * Runs `fn` against the cheat storage namespace, whatever mode is currently on, and puts
+ * the mode back afterwards. The real save is never written to or read from inside it.
  */
-export function createCheatSave(): void {
+function inCheatProfile<T>(fn: () => T): T {
   const previous = Cheats.isCheatMode();
   Cheats.setCheatMode(true);
   try {
-    maxOutCurrentProfile();
-
-    // Campaign slot 0 is the cheat slot; slots 1 and 2 are left free.
-    if (CP.getSlot(0) === null) CP.createSlot(0, 'CHEAT');
-    CP.setActiveSlot(0);
-    maxOutCampaignSlot(0);
+    return fn();
   } finally {
     Cheats.setCheatMode(previous);
   }
+}
+
+/**
+ * Builds (or rebuilds) the cheat profile with everything unlocked, then audits itself.
+ *
+ * Returns whatever `verifyCheatSave()` still found missing — empty when the profile is
+ * genuinely complete. Callers can surface that; nothing has to.
+ */
+export function createCheatSave(): string[] {
+  inCheatProfile(() => {
+    maxOutCurrentProfile();
+
+    if (CP.getSlot(CHEAT_SLOT) === null) CP.createSlot(CHEAT_SLOT, 'CHEAT');
+    CP.setActiveSlot(CHEAT_SLOT);
+    maxOutCampaignSlot(CHEAT_SLOT);
+  });
+
+  const gaps = verifyCheatSave();
+  if (gaps.length) console.warn('[cheat save] still incomplete after rebuild:', gaps);
+  return gaps;
+}
+
+/**
+ * Audits the cheat profile against the live content tables and reports what it does not
+ * have. Empty means complete.
+ *
+ * This exists because the cheat save is written by hand while the content it is supposed to
+ * mirror keeps growing — the Corrupt Realm shipped and this file kept completing two realms
+ * out of three, with nothing anywhere to say so. Every check below is derived from a
+ * content table, so new content shows up as a reported gap rather than as a locked door
+ * somebody trips over months later. When one fires, fix the grant above; do not delete the
+ * check.
+ */
+export function verifyCheatSave(): string[] {
+  return inCheatProfile(() => {
+    const gaps: string[] = [];
+    const want = (ok: boolean, what: string) => { if (!ok) gaps.push(what); };
+
+    // ── Profile ──────────────────────────────────────────────────────
+    for (const id of allUnlockableElementIds()) {
+      want(PlayerData.isElementUnlocked(id), `element ${id} locked`);
+    }
+    for (const el of ALL_UPGRADES) {
+      for (const up of el.upgrades) {
+        want(PlayerData.isUpgradeOwned(el.elementId, up.slot), `upgrade ${el.elementId}/${up.slot} unowned`);
+      }
+    }
+    for (const el of ALL_PERKS) {
+      for (const perk of el.perks) {
+        want(PlayerData.isPerkUnlocked(el.elementId, perk.id), `perk ${el.elementId}/${perk.id} locked`);
+      }
+    }
+    for (const perk of DIVINE_PERKS) {
+      want(PlayerData.isPerkUnlocked(perk.elementId, perk.id), `divine perk ${perk.id} locked`);
+    }
+    for (const m of MUTATIONS) want(PlayerData.isMutationUnlocked(m.id), `mutation ${m.id} locked`);
+    for (const a of ACHIEVEMENTS) want(PlayerData.isAchievementUnlocked(a.id), `achievement ${a.id} locked`);
+    for (const s of SKINS) want(isSkinUnlocked(s.id), `skin ${s.id} locked`);
+    for (const elementId of Object.keys(MASTERY_DEFS)) {
+      want(isMasteryComplete(elementId), `mastery ${elementId} incomplete`);
+    }
+
+    want(PlayerData.getLabLevel() >= PlayerData.MAX_LAB_LEVEL, 'lab not fully upgraded');
+    want(PlayerData.isGauntletUnlocked(), 'gauntlet locked');
+    want(PlayerData.isGauntletHardUnlocked(), 'hard gauntlet locked');
+    want(PlayerData.isKingDefeated(), 'Disgraced King not felled');
+    want(PlayerData.isDevourerDefeated(), 'Devourer not felled');
+    want(PlayerData.isDummyUnlocked(), 'training dummy locked');
+    want(PlayerData.getQuantumBond() !== null, 'Quantum carries no bond');
+    want(PlayerData.isPassionQUnlocked(), "Passion's Q toggle locked");
+
+    // ── Campaign ─────────────────────────────────────────────────────
+    const idx = CHEAT_SLOT;
+    if (CP.getSlot(idx) === null) {
+      gaps.push('cheat campaign slot missing');
+      return gaps;
+    }
+    want(CP.isPortalUnlocked(idx), 'Abstract portal shut');
+    want(CP.isCorruptPortalUnlocked(idx), 'Corrupt portal shut');
+    for (const world of ALL_WORLDS) {
+      want(CP.isWorldUnlocked(idx, world.id), `world ${world.id} locked`);
+      want(CP.areFightsCleared(idx, world.id), `world ${world.id} fights unfinished`);
+      want(CP.isChallengeCompleted(idx, world.id), `world ${world.id} boss standing`);
+      want(CP.isGauntletCompleted(idx, world.id), `world ${world.id} gauntlet unfinished`);
+    }
+    want(CP.isAmalgamFelled(idx), 'the Amalgam still stands');
+    for (const item of ITEMS) {
+      want((CP.getInventory(idx)[item.id] ?? 0) > 0, `item ${item.id} not stocked`);
+    }
+
+    return gaps;
+  });
 }
 
 /**

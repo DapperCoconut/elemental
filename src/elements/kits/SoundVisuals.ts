@@ -30,35 +30,46 @@ export const SOUND = {
   blush: 0xffcdee,
   violet: 0x9955cc,
   plum: 0x66225c,
-  /** Flow Mode, and the blue note that slows. */
+  /** The Calm disc, and the cool half of the NPC's palette. */
   flow: 0x3388ff,
-  /** The Bass note's water charges — the only wet colours in the kit. */
+  /** Water — the Bass perk's charges are the only wet colours in the kit. */
   aqua: 0x22bbdd,
   brine: 0x0a3d66,
   foam: 0xd8f6ff,
   flowPale: 0x9ecdff,
-  /** Red notes, and a barrier screeching in Flow. */
+  /** The Bass disc, and anything that went wrong. */
   crimson: 0xff3333,
-  /** Green hold notes and the sustain beam they open. */
+  /** The Accelerando disc. */
   mint: 0x44ee88,
   mintPale: 0x9cffcc,
-  /** Solo, stars, accidentals — anything that is going well. */
+  /** Soli, golden violins, the beat itself — anything that is going well. */
   gold: 0xffdd44,
   amber: 0xffaa22,
-  /** The bugle, and the caravan's lantern. */
+  /** The bugle. */
   brass: 0xd9a441,
   brassHi: 0xffe9a8,
   brassShade: 0x8c6420,
-  /** Disco ball chrome and the mirror facets on it. */
+  /** Chrome for strings, tuners and the metronome's rod. */
   chrome: 0xccccff,
   steel: 0x8888aa,
-  /** Caravan timber, canvas and the dust it throws. */
+  /** Timber: the metronome case, and the violin's varnish over it. */
   wood: 0x6b4a2c,
   woodDark: 0x3d2916,
+  varnish: 0xa4501f,
+  varnishHi: 0xd98a44,
+  varnishDark: 0x5a2a10,
+  /** The bow: pale hair over a dark stick. */
+  hair: 0xf4ead4,
   canvas: 0xf2ead8,
   canvasShade: 0xbfae90,
-  dust: 0xcfc4b0,
   ink: 0x2b2018,
+  /** Ebony — fingerboard, tailpiece, and the vinyl of a record. */
+  ebony: 0x14101a,
+  vinyl: 0x1a1620,
+  /** The concert dress: midnight jacket, dress shirt, and the tie that reads at a glance. */
+  suit: 0x1e1b33,
+  suitHi: 0x3a3560,
+  shirt: 0xf7f2ff,
   ivory: 0xfff4fb,
   white: 0xffffff,
 } as const;
@@ -97,6 +108,29 @@ function fillOval(
     pts.push({ x: cx + lx * cos - ly * sin, y: cy + lx * sin + ly * cos });
   }
   fillPts(g, pts);
+}
+
+/**
+ * The violin's silhouette in one instrument-local profile, sampled tail (-24) to neck join
+ * (+13) as half-widths. Kept as data rather than as arcs because the waist pinching between
+ * the two bouts is what makes the shape read, and it has to survive being scaled from a
+ * 0.6× phantom up to the full-size instrument in the performer's hands.
+ */
+const VIOLIN_PROFILE: Array<[number, number]> = [
+  [-24, 4.6], [-22, 9.4], [-19, 12.5], [-15, 13.6], [-11, 12.9], [-7.5, 10.2],
+  [-5, 8.1], [-3, 7.3], [-1, 7.5], [1.5, 9.1], [5, 11.3], [8, 11.7],
+  [10.5, 10.4], [12, 7.8], [13, 4.6],
+];
+
+function violinOutline(at: (lx: number, ly: number) => Pt, s: number): Pt[] {
+  const top: Pt[] = [];
+  const bot: Pt[] = [];
+  for (const [lx, hw] of VIOLIN_PROFILE) {
+    top.push(at(lx * s, -hw * s));
+    bot.push(at(lx * s, hw * s));
+  }
+  bot.reverse();
+  return top.concat(bot);
 }
 
 // ── The primitive ─────────────────────────────────────────────────────────
@@ -512,6 +546,51 @@ export class SoundFx extends FxBase {
     });
   }
 
+  /**
+   * Disc Dice: the record itself flung out around the caster, spinning as it goes, with the cut
+   * it leaves opening behind it. Drawn as the actual disc rather than as a ring, because the
+   * ability is a thrown object and the player has to see what left their hand.
+   */
+  discSlice(x: number, y: number, radius: number, color: number, depth = 8): void {
+    const start = Math.random() * TAU;
+    this.anim(depth, 460, (g, t) => {
+      const fade = 1 - t * t;
+      const r = radius * easeOut(t);
+      // The cut: a ring opening outward at the disc's own edge.
+      g.fillStyle(this.tint(color), 0.28 * fade);
+      rippleBand(g, x, y, r, 9 * (1 - t * 0.5), 8, t * 10, r * 0.05);
+      g.fillStyle(this.tint(SOUND.white), 0.6 * fade);
+      rippleBand(g, x, y, r, 2.4, 8, -t * 12, r * 0.04);
+      // Three copies of the disc riding the cut, so it reads as one record whipping round.
+      for (let i = 0; i < 3; i++) {
+        const a = start + t * 9 + (i / 3) * TAU;
+        SoundFx.drawRecord(g, this.tint, x + Math.cos(a) * r, y + Math.sin(a) * r * 0.9,
+          13 * (1 - t * 0.25), a * 3, color, fade * 0.95);
+      }
+    });
+  }
+
+  /**
+   * A Soli note landing: a wall of music sweeping the whole room. Two fronts leaving the stage
+   * in opposite directions plus a full ring, so it reads as the performance filling the venue
+   * rather than as one more blast.
+   */
+  musicWall(x: number, y: number, reach: number, color: number, depth = 9): void {
+    this.anim(depth, 640, (g, t) => {
+      const fade = 1 - t * t;
+      const r = reach * easeOut(t);
+      for (const side of [0, Math.PI]) {
+        g.fillStyle(this.tint(color), 0.3 * fade);
+        waveCrescent(g, x, y, side, r, 1.15, 34 * (1 - t * 0.4), 8, t * 14);
+        g.fillStyle(this.tint(SOUND.white), 0.45 * fade);
+        waveCrescent(g, x, y, side, r, 1.05, 9 * (1 - t * 0.4), 5, t * 20);
+      }
+      g.fillStyle(this.tint(color), 0.22 * fade);
+      rippleBand(g, x, y, r * 0.8, 12, 9, t * 8, r * 0.05);
+    });
+    this.notes(x, y, 6, { speed: reach * 1.1, size: 9, life: 700, depth: depth + 1, color, rise: 40 });
+  }
+
   /** Sparks of gold thrown off anything that just went right — hits, stars, grace notes. */
   sparkle(x: number, y: number, count: number, radius: number, depth = 10, color: number = SOUND.gold): void {
     const motes = Array.from({ length: count }, () => ({
@@ -602,95 +681,280 @@ export class SoundFx extends FxBase {
   // gameplay state (a barrier's remaining life, a beam's endpoints, a wagon's wheel phase).
 
   /**
-   * A sustained beam between two points: three ribbons out of phase with each other, so the beam
-   * visibly *carries* a note rather than just connecting two dots.
+   * A shockwave in flight: a crescent of wavefront travelling away from where it was struck,
+   * widening as it goes. Three passes out of step with each other, so the wall reads as air
+   * being pushed rather than as an arc sliding across the floor.
    */
-  static drawSustainBeam(
+  static drawShockwave(
     g: Phaser.GameObjects.Graphics, tint: SoundColorFn,
-    x1: number, y1: number, x2: number, y2: number, t: number, color: number, alpha = 1,
+    x: number, y: number, angle: number, radius: number, spread: number, thick: number,
+    t: number, color: number, alpha = 1,
   ): void {
-    const dist = Phaser.Math.Distance.Between(x1, y1, x2, y2) || 1;
-    const freq = Math.max(2, dist / 70);
     for (let i = 0; i < 3; i++) {
-      waveRibbonLayered(g, tint, x1, y1, x2, y2, color, alpha * (i === 0 ? 0.9 : 0.42), {
-        amp: 5 + i * 5, freq, phase: t * (9 + i * 3) + i * 2, width: 6 - i * 1.6,
-        taper: 0.7, segments: 44,
-      });
+      const r = radius - i * thick * 0.85;
+      if (r <= 2) continue;
+      g.fillStyle(tint(color), alpha * (0.26 - i * 0.06));
+      waveCrescent(g, x, y, angle, r, spread, thick * 2.4, 4, t * 12 + i);
+      g.fillStyle(tint(color), alpha * (0.85 - i * 0.26));
+      waveCrescent(g, x, y, angle, r, spread * (1 - i * 0.1), thick * (1 - i * 0.22), 3, t * 12 + i);
     }
-    const ang = Math.atan2(y2 - y1, x2 - x1);
-    g.fillStyle(tint(SOUND.white), alpha * 0.9);
-    waveCrescent(g, x2, y2, ang + Math.PI, 12, 1.2, 6, 2, t * 18);
+    g.fillStyle(tint(SOUND.white), alpha * 0.8);
+    waveCrescent(g, x, y, angle, radius, spread * 0.82, thick * 0.28, 2, t * 18);
   }
 
   /**
-   * The Screech Barrier: a standing wave held in a circle, ringing in place. Drawn hollow — the
-   * wall is what bites and the quiet middle is safe, so the art says exactly what the damage does.
+   * The violin, held across the body: two bouts either side of a waist, f-holes, a bridge, an
+   * ebony fingerboard running out to a pegbox and a scrolled head. `angle` points down the neck.
+   *
+   * The outline is a sampled half-width profile rather than two circles and a rectangle — the
+   * waist pinching between the bouts is the entire reason a violin reads as a violin.
    */
-  static drawBarrier(
+  static drawViolin(
     g: Phaser.GameObjects.Graphics, tint: SoundColorFn,
-    x: number, y: number, radius: number, band: number, t: number,
-    color: number, alpha = 1, star = false,
+    x: number, y: number, angle: number, scale: number, alpha = 1,
+    o: { body?: number; edge?: number; board?: number; phantom?: boolean } = {},
   ): void {
-    const pulse = 0.72 + 0.28 * Math.sin(t * 5.5);
+    const body = o.body ?? SOUND.varnish;
+    const edge = o.edge ?? SOUND.varnishDark;
+    const board = o.board ?? SOUND.ebony;
+    const s = scale;
+    const cos = Math.cos(angle), sin = Math.sin(angle);
+    const at = (lx: number, ly: number): Pt => ({
+      x: x + lx * cos - ly * sin, y: y + lx * sin + ly * cos,
+    });
 
-    // The quiet middle, marked just enough to read as a place you can stand.
-    g.fillStyle(tint(SOUND.shade), alpha * 0.16);
-    g.fillCircle(x, y, radius - band);
+    const shell = violinOutline(at, s);
 
-    if (star) {
-      // Starsong: five arms of wave instead of a closed ring, sweeping as the star tracks.
-      for (let i = 0; i < 5; i++) {
-        const a = t * 0.9 + (i / 5) * TAU - Math.PI / 2;
-        for (const [rr, w, al] of [[radius * 0.98, band * 0.9, 0.85], [radius * 0.7, band * 0.5, 0.5]] as const) {
-          g.fillStyle(tint(i % 2 === 0 ? SOUND.gold : color), alpha * al * pulse);
-          waveCrescent(g, x, y, a, rr, 0.42, w, 3, t * 8);
-        }
-      }
-      g.fillStyle(tint(SOUND.gold), alpha * 0.7 * pulse);
-      rippleBand(g, x, y, radius * 0.36, 3, 5, t * 3, 4);
-      return;
+    // Neck + fingerboard, drawn under the body so the join disappears behind the upper bout.
+    g.fillStyle(tint(board), alpha);
+    fillPts(g, [at(8 * s, -4 * s), at(30 * s, -3 * s), at(30 * s, 3 * s), at(8 * s, 4 * s)]);
+    g.fillStyle(tint(edge), alpha);
+    fillPts(g, [at(29 * s, -4.5 * s), at(38 * s, -5.5 * s), at(38 * s, 4.5 * s), at(29 * s, 3.5 * s)]);
+
+    // Pegs, two a side off the pegbox.
+    g.fillStyle(tint(o.phantom ? body : SOUND.ink), alpha);
+    for (let i = 0; i < 2; i++) {
+      const px = (31 + i * 4) * s;
+      g.fillCircle(at(px, -7 * s).x, at(px, -7 * s).y, 1.9 * s);
+      g.fillCircle(at(px, 7 * s).x, at(px, 7 * s).y, 1.9 * s);
     }
 
-    // The wall: a thick standing wave, a thinner counter-wave running the other way inside it.
-    g.fillStyle(tint(color), alpha * 0.26 * pulse);
-    rippleBand(g, x, y, radius - band * 0.5, band * 1.5, 12, t * 2.4, band * 0.22);
-    g.fillStyle(tint(color), alpha * 0.8 * pulse);
-    rippleBand(g, x, y, radius - band * 0.5, band * 0.72, 12, t * 2.4, band * 0.2);
-    g.fillStyle(tint(SOUND.white), alpha * 0.55 * pulse);
-    rippleBand(g, x, y, radius - band * 0.5, band * 0.2, 12, -t * 3.6, band * 0.16);
-
-    // Emitter posts around the wall, so the ring reads as something that was *placed*.
-    for (let i = 0; i < 6; i++) {
-      const a = -t * 0.6 + (i / 6) * TAU;
-      const px = x + Math.cos(a) * (radius - band * 0.5);
-      const py = y + Math.sin(a) * (radius - band * 0.5);
-      g.fillStyle(tint(SOUND.white), alpha * 0.9);
-      g.fillCircle(px, py, 2.4 + Math.sin(t * 7 + i) * 0.7);
+    // The scroll: three tightening turns, which is the one detail that names the instrument.
+    g.lineStyle(1.7 * s, tint(edge), alpha);
+    const spiral: Pt[] = [];
+    for (let i = 0; i <= 22; i++) {
+      const a = (i / 22) * TAU * 1.6;
+      const rr = (4.4 - i * 0.16) * s;
+      spiral.push(at(41 * s + Math.cos(a) * rr, -2 * s + Math.sin(a) * rr));
     }
+    strokePts(g, spiral);
+
+    // Body: soft halo, the varnished plate, then the purfling line just inside the edge.
+    g.fillStyle(tint(body), alpha * (o.phantom ? 0.2 : 0.14));
+    fillPts(g, violinOutline(at, s * 1.18));
+    g.fillStyle(tint(body), alpha * (o.phantom ? 0.5 : 1));
+    fillPts(g, shell);
+    g.lineStyle(1.6 * s, tint(edge), alpha * 0.95);
+    strokePts(g, shell, true);
+    g.lineStyle(0.9 * s, tint(o.phantom ? SOUND.white : SOUND.varnishHi), alpha * 0.6);
+    strokePts(g, violinOutline(at, s * 0.86), true);
+
+    // f-holes, one either side of the waist: an upper eye, a slot, a lower eye.
+    for (const side of [-1, 1]) {
+      const fy = side * 6.4 * s;
+      g.fillStyle(tint(o.phantom ? SOUND.white : SOUND.ink), alpha * (o.phantom ? 0.75 : 0.9));
+      g.fillCircle(at(1.5 * s, fy - side * 1.2 * s).x, at(1.5 * s, fy - side * 1.2 * s).y, 1.5 * s);
+      g.fillCircle(at(-6 * s, fy + side * 1.2 * s).x, at(-6 * s, fy + side * 1.2 * s).y, 1.5 * s);
+      fillPts(g, [
+        at(1.5 * s, fy - side * 2.1 * s), at(-6 * s, fy + side * 0.3 * s),
+        at(-6 * s, fy + side * 2.1 * s), at(1.5 * s, fy - side * 0.3 * s),
+      ]);
+    }
+
+    // Tailpiece, bridge and the four strings running over both.
+    g.fillStyle(tint(board), alpha);
+    fillPts(g, [at(-21 * s, -3 * s), at(-11 * s, -4 * s), at(-11 * s, 4 * s), at(-21 * s, 3 * s)]);
+    g.fillStyle(tint(o.phantom ? body : SOUND.varnishHi), alpha);
+    fillPts(g, [at(-4 * s, -5.4 * s), at(-2 * s, -5.4 * s), at(-2 * s, 5.4 * s), at(-4 * s, 5.4 * s)]);
+    g.lineStyle(0.7 * s, tint(o.phantom ? SOUND.white : SOUND.chrome), alpha * 0.9);
+    for (let i = 0; i < 4; i++) {
+      const off = (-2.4 + i * 1.6) * s;
+      strokePts(g, [at(-18 * s, off * 0.7), at(34 * s, off)]);
+    }
+
+    // Chinrest, tucked under the tail end on the near side.
+    g.fillStyle(tint(board), alpha * 0.95);
+    fillOval(g, at(-17 * s, 9 * s).x, at(-17 * s, 9 * s).y, 6 * s, 3.4 * s, angle);
   }
 
   /**
-   * A rhythm note as it sits on the track: the note glyph, a ringing tail behind it that says
-   * which way it is travelling, and a hold note drawn as a long tied bar instead.
+   * The bow, drawn across an aim: a dark stick with pale hair strung under it, a frog at the
+   * hand end and the tip curving away at the other. `draw` slides it along its own length so a
+   * stroke reads as the bow being *pulled*, not as the bow jumping.
+   */
+  static drawBow(
+    g: Phaser.GameObjects.Graphics, tint: SoundColorFn,
+    x: number, y: number, angle: number, scale: number, draw: number, alpha = 1,
+    color: number = SOUND.woodDark,
+  ): void {
+    const s = scale;
+    const slide = (draw - 0.5) * 14 * s;
+    const cos = Math.cos(angle), sin = Math.sin(angle);
+    const at = (lx: number, ly: number): Pt => ({
+      x: x + (lx + slide) * cos - ly * sin, y: y + (lx + slide) * sin + ly * cos,
+    });
+
+    // Hair — a shallow ribbon, because a dead straight line reads as a stick, not as horsehair.
+    g.fillStyle(tint(SOUND.hair), alpha * 0.95);
+    waveRibbon(g, at(-26 * s, 2.2 * s).x, at(-26 * s, 2.2 * s).y, at(26 * s, 2.2 * s).x, at(26 * s, 2.2 * s).y,
+      { amp: 0.6 * s, freq: 0.5, phase: draw * 6, width: 1.9 * s, taper: 0.35, segments: 16 });
+    // Stick.
+    g.lineStyle(1.9 * s, tint(color), alpha);
+    strokePts(g, [at(-26 * s, 0), at(0, -0.8 * s), at(24 * s, 0.4 * s), at(27 * s, 2.4 * s)]);
+    // Frog + winding at the hand end.
+    g.fillStyle(tint(SOUND.ink), alpha);
+    fillPts(g, [at(-27 * s, -1.6 * s), at(-21 * s, -1.6 * s), at(-21 * s, 3.4 * s), at(-27 * s, 3.4 * s)]);
+    g.fillStyle(tint(SOUND.brassHi), alpha * 0.9);
+    fillPts(g, [at(-20.5 * s, -1.4 * s), at(-18.5 * s, -1.4 * s), at(-18.5 * s, 3.2 * s), at(-20.5 * s, 3.2 * s)]);
+  }
+
+  /**
+   * A conducted phantom violin: the instrument itself made of standing wave, hanging in the air
+   * over its own shadow with a ghost bow sawing across it and rings dropping off the sound post.
+   * Golden ones are the harmonized placements, and read as gold from across the arena.
+   */
+  static drawPhantomViolin(
+    g: Phaser.GameObjects.Graphics, tint: SoundColorFn,
+    x: number, y: number, t: number, golden: boolean, alpha = 1, charge = 0,
+  ): void {
+    const col = golden ? SOUND.gold : SOUND.magenta;
+    const bob = Math.sin(t * 2.2) * 3;
+    const cy = y + bob;
+
+    // What it hangs over.
+    g.fillStyle(tint(SOUND.shade), alpha * 0.3);
+    g.fillEllipse(x, y + 22, 34, 10);
+
+    // Rings dropping off it, faster while a stroke is charging up.
+    for (let i = 0; i < 2; i++) {
+      const p = (t * (0.9 + charge) + i / 2) % 1;
+      g.fillStyle(tint(col), alpha * 0.34 * (1 - p));
+      rippleBand(g, x, cy, 16 + p * 26, 2.4, 8, t * 4, 2);
+    }
+
+    SoundFx.drawViolin(g, tint, x, cy, -0.55 + Math.sin(t * 1.3) * 0.06, 0.62, alpha * 0.9, {
+      body: col, edge: golden ? SOUND.brassHi : SOUND.rose, board: golden ? SOUND.amber : SOUND.violet,
+      phantom: true,
+    });
+    SoundFx.drawBow(g, tint, x + 2, cy + 3, 1.05, 0.6, (Math.sin(t * 2.6) + 1) / 2,
+      alpha * 0.85, golden ? SOUND.brassHi : SOUND.blush);
+
+    // A note sitting on the scroll, so the thing reads as playing rather than as furniture.
+    musicNoteLayered(g, tint, x + 16, cy - 16 + Math.sin(t * 3.1) * 2, 5, Math.sin(t * 2) * 0.2,
+      golden ? SOUND.brassHi : SOUND.blush, alpha * 0.9, { flags: 1 });
+  }
+
+  /**
+   * A record: black vinyl with the grooves cut into it, a coloured label at the centre and a
+   * sheen sweeping round as it turns. The label colour is the whole read on which disc is
+   * loaded, so it is drawn big enough to see at HUD size.
+   */
+  static drawRecord(
+    g: Phaser.GameObjects.Graphics, tint: SoundColorFn,
+    x: number, y: number, r: number, spin: number, color: number, alpha = 1,
+  ): void {
+    g.fillStyle(tint(color), alpha * 0.2);
+    g.fillCircle(x, y, r * 1.28);
+    g.fillStyle(tint(SOUND.vinyl), alpha);
+    g.fillCircle(x, y, r);
+    // Grooves.
+    g.lineStyle(Math.max(0.5, r * 0.045), tint(SOUND.steel), alpha * 0.3);
+    for (let i = 0; i < 5; i++) g.strokeCircle(x, y, r * (0.94 - i * 0.11));
+    // The sheen: a wedge of reflected light that goes round with the disc.
+    g.fillStyle(tint(SOUND.white), alpha * 0.16);
+    fillPts(g, [
+      { x, y },
+      { x: x + Math.cos(spin - 0.28) * r, y: y + Math.sin(spin - 0.28) * r },
+      { x: x + Math.cos(spin) * r * 1.02, y: y + Math.sin(spin) * r * 1.02 },
+      { x: x + Math.cos(spin + 0.28) * r, y: y + Math.sin(spin + 0.28) * r },
+    ]);
+    // Label + spindle.
+    g.fillStyle(tint(color), alpha);
+    g.fillCircle(x, y, r * 0.38);
+    g.lineStyle(Math.max(0.6, r * 0.05), tint(SOUND.white), alpha * 0.55);
+    g.strokeCircle(x, y, r * 0.38);
+    g.fillStyle(tint(SOUND.shade), alpha);
+    g.fillCircle(x, y, r * 0.09);
+  }
+
+  /**
+   * The metronome: a tapered wooden case on a plinth, a chromed rod pivoting out of the top and
+   * the sliding weight riding it. `swing` runs -1 → 1 across one beat, so the rod is at the far
+   * right exactly when the beat lands and `beat` flares the weight gold.
+   */
+  static drawMetronome(
+    g: Phaser.GameObjects.Graphics, tint: SoundColorFn,
+    x: number, y: number, s: number, swing: number, beat: number, alpha = 1,
+  ): void {
+    const halfBase = 9 * s;
+    const halfTop = 3.6 * s;
+    const h = 20 * s;
+    const baseY = y + h * 0.5;
+    const topY = y - h * 0.5;
+
+    // The rod, pinned at the top of the case and swinging over it.
+    const a = -Math.PI / 2 + swing * 0.62;
+    const rodLen = 17 * s;
+    const tipX = x + Math.cos(a) * rodLen;
+    const tipY = topY + Math.sin(a) * rodLen;
+    g.lineStyle(1.6 * s, tint(SOUND.chrome), alpha * 0.95);
+    strokePts(g, [{ x, y: topY }, { x: tipX, y: tipY }]);
+    // The weight, two thirds up the rod.
+    const wx = x + Math.cos(a) * rodLen * 0.66;
+    const wy = topY + Math.sin(a) * rodLen * 0.66;
+    if (beat > 0.01) {
+      g.fillStyle(tint(SOUND.gold), alpha * 0.4 * beat);
+      g.fillCircle(tipX, tipY, 7 * s * (0.6 + beat));
+    }
+    g.fillStyle(tint(beat > 0.01 ? SOUND.gold : SOUND.brass), alpha);
+    fillPts(g, [
+      { x: wx - 3.4 * s, y: wy - 2.2 * s }, { x: wx + 3.4 * s, y: wy - 2.2 * s },
+      { x: wx + 3.4 * s, y: wy + 2.2 * s }, { x: wx - 3.4 * s, y: wy + 2.2 * s },
+    ]);
+    g.fillStyle(tint(SOUND.white), alpha * 0.85);
+    g.fillCircle(tipX, tipY, 1.7 * s);
+
+    // Case: a tapered pyramid with a lighter front panel and a plinth under it.
+    g.fillStyle(tint(SOUND.woodDark), alpha);
+    fillPts(g, [
+      { x: x - halfBase, y: baseY }, { x: x - halfTop, y: topY },
+      { x: x + halfTop, y: topY }, { x: x + halfBase, y: baseY },
+    ]);
+    g.fillStyle(tint(SOUND.wood), alpha);
+    fillPts(g, [
+      { x: x - halfBase * 0.68, y: baseY - 1.5 * s }, { x: x - halfTop * 0.6, y: topY + 2 * s },
+      { x: x + halfTop * 0.6, y: topY + 2 * s }, { x: x + halfBase * 0.68, y: baseY - 1.5 * s },
+    ]);
+    // The graduated scale down the open front.
+    g.lineStyle(0.8 * s, tint(SOUND.brassHi), alpha * 0.55);
+    for (let i = 1; i < 5; i++) {
+      const ly = topY + (h - 2 * s) * (i / 5);
+      const hw = halfTop * 0.5 + (halfBase * 0.55 - halfTop * 0.5) * (i / 5);
+      strokePts(g, [{ x: x - hw, y: ly }, { x: x + hw, y: ly }]);
+    }
+    g.fillStyle(tint(SOUND.ink), alpha);
+    g.fillRect(x - halfBase - 1.2 * s, baseY, halfBase * 2 + 2.4 * s, 2.6 * s);
+  }
+  /**
+   * A Soli note as it sits on the bar: the note glyph over a soft disc, with a ringing tail
+   * trailing it back up the track so the direction of travel reads even when the bar is still.
+   * `accent` marks the double-value gold notes with a ring and a second flag.
    */
   static drawTrackNote(
     g: Phaser.GameObjects.Graphics, tint: SoundColorFn,
-    width: number, color: number, hold: boolean, t: number,
+    width: number, color: number, accent: boolean, t: number,
   ): void {
     g.clear();
-    if (hold) {
-      const w = width / 2;
-      // A tied bar: the sustained line, a wave running along it, and a head at the near end.
-      g.fillStyle(tint(color), 0.28);
-      g.fillRoundedRect(-w, -11, width, 22, 8);
-      g.fillStyle(tint(color), 0.75);
-      g.fillRoundedRect(-w, -7, width, 14, 6);
-      g.fillStyle(tint(SOUND.white), 0.85);
-      waveRibbon(g, -w + 4, 0, w - 4, 0, { amp: 4, freq: 3.2, phase: t * 7, width: 3, taper: 0.6, segments: 30 });
-      g.fillStyle(tint(color), 1);
-      musicNote(g, -w + 9, 2, 6, 0, { flags: 0 });
-      return;
-    }
     // Ringing tail, trailing the note back up the track.
     for (let i = 0; i < 2; i++) {
       g.fillStyle(tint(color), 0.24 - i * 0.08);
@@ -698,7 +962,11 @@ export class SoundFx extends FxBase {
     }
     g.fillStyle(tint(color), 0.3);
     g.fillCircle(0, 0, width * 0.52);
-    musicNoteLayered(g, tint, -1, 3, width * 0.34, 0, color, 1, { flags: 1 });
+    if (accent) {
+      g.fillStyle(tint(SOUND.gold), 0.75);
+      rippleBand(g, 0, 0, width * 0.6, 2.2, 7, t * 5, 1.8);
+    }
+    musicNoteLayered(g, tint, -1, 3, width * 0.34, 0, color, 1, { flags: accent ? 2 : 1 });
   }
 
   /**
@@ -748,155 +1016,8 @@ export class SoundFx extends FxBase {
   }
 
   /**
-   * The caravan: a covered wagon under a ribbed canvas arch, on two spoked wheels that turn with
-   * the distance travelled, throwing dust off the back and still trailing the horn call that
-   * summoned it — it is a wagon called up by a note, not a wagon that drove here.
-   */
-  static drawCaravan(
-    g: Phaser.GameObjects.Graphics, tint: SoundColorFn,
-    x: number, y: number, dir: 1 | -1, bodyW: number, wheelPhase: number, t: number,
-  ): void {
-    const s = dir;
-    const halfW = bodyW / 2;
-    const bedTop = y - 2;
-    const bedH = 26;
-    const archTop = y - 48;
-
-    g.clear();
-
-    // Dust boiling off the back.
-    g.fillStyle(tint(SOUND.dust), 0.26);
-    for (let i = 0; i < 5; i++) {
-      g.fillCircle(x - s * (halfW + 6 + i * 20), y + 26 - i * 3, 10 + i * 5);
-    }
-
-    // The horn call still ringing out behind the wagon.
-    const back = s > 0 ? Math.PI : 0;
-    for (let i = 0; i < 3; i++) {
-      const lt = (t * 0.9 + i / 3) % 1;
-      g.fillStyle(tint(SOUND.brassHi), 0.34 * (1 - lt));
-      waveCrescent(g, x - s * (halfW + 4), y - 6, back, 22 + lt * 52, 0.7, 8 * (1 - lt * 0.5), 3, t * 10);
-    }
-
-    // Wheels sit behind the bed, so they are drawn first.
-    const wheelR = 21;
-    for (const wx of [-halfW + 30, halfW - 30]) {
-      const cx = x + wx;
-      const cy = y + 20;
-      g.fillStyle(tint(SOUND.ink), 1);
-      g.fillCircle(cx, cy, wheelR);
-      g.fillStyle(tint(SOUND.wood), 1);
-      g.fillCircle(cx, cy, wheelR - 4);
-      g.lineStyle(2.5, tint(SOUND.canvasShade), 0.9);
-      for (let i = 0; i < 8; i++) {
-        const a = wheelPhase + (i / 8) * TAU;
-        strokePts(g, [{ x: cx, y: cy }, { x: cx + Math.cos(a) * (wheelR - 5), y: cy + Math.sin(a) * (wheelR - 5) }]);
-      }
-      g.lineStyle(3, tint(SOUND.canvas), 1);
-      g.strokeCircle(cx, cy, wheelR);
-      g.fillStyle(tint(SOUND.canvas), 1);
-      g.fillCircle(cx, cy, 4);
-    }
-
-    // Plank bed.
-    g.fillStyle(tint(SOUND.wood), 1);
-    g.fillRect(x - halfW, bedTop, bodyW, bedH);
-    g.lineStyle(1.5, tint(SOUND.woodDark), 0.75);
-    for (let i = 1; i < 6; i++) {
-      const px = x - halfW + (bodyW / 6) * i;
-      strokePts(g, [{ x: px, y: bedTop }, { x: px, y: bedTop + bedH }]);
-    }
-    g.lineStyle(3, tint(SOUND.woodDark), 1);
-    g.strokeRect(x - halfW, bedTop, bodyW, bedH);
-
-    // Canvas arch over the bed.
-    const archPoint = (f: number): Pt => ({
-      x: x - halfW + 4 + f * (bodyW - 8),
-      y: bedTop - Math.sin(f * Math.PI) * (bedTop - archTop),
-    });
-    const arch: Pt[] = [{ x: x - halfW + 4, y: bedTop }];
-    for (let i = 0; i <= 24; i++) arch.push(archPoint(i / 24));
-    arch.push({ x: x + halfW - 4, y: bedTop });
-    g.fillStyle(tint(SOUND.canvas), 0.97);
-    fillPts(g, arch);
-    g.lineStyle(2, tint(SOUND.canvasShade), 1);
-    strokePts(g, arch, true);
-
-    // Ribs under the canvas.
-    g.lineStyle(2, tint(SOUND.canvasShade), 0.85);
-    for (let i = 1; i < 5; i++) {
-      const p = archPoint(i / 5);
-      strokePts(g, [{ x: p.x, y: bedTop }, p]);
-    }
-
-    // The open mouth of the canopy at the leading edge.
-    g.fillStyle(tint(SOUND.ink), 0.5);
-    g.fillEllipse(x + s * (halfW - 8), y - 20, 12, 36);
-
-    // Lantern swinging off the front post.
-    const lx = x + s * (halfW + 6);
-    const ly = bedTop - 6;
-    g.lineStyle(2, tint(SOUND.woodDark), 1);
-    strokePts(g, [{ x: x + s * (halfW - 2), y: bedTop - 14 }, { x: lx, y: ly - 6 }]);
-    g.fillStyle(tint(SOUND.amber), 0.35);
-    g.fillCircle(lx, ly, 11);
-    g.fillStyle(tint(SOUND.brassHi), 1);
-    g.fillCircle(lx, ly, 5);
-    g.lineStyle(1.5, tint(SOUND.wood), 1);
-    g.strokeCircle(lx, ly, 5.5);
-  }
-
-  /**
-   * A disco ball: a chrome sphere cut into mirror facets that catch the light in bands, with
-   * beams of colour sweeping out of it across the stage.
-   */
-  static drawDiscoBall(
-    g: Phaser.GameObjects.Graphics, tint: SoundColorFn,
-    x: number, y: number, r: number, t: number, beamLen: number, alpha = 1,
-  ): void {
-    // Beams sweeping the room, drawn first so the ball sits on top of its own light.
-    for (let i = 0; i < 8; i++) {
-      const a = t * 0.9 + (i / 8) * TAU;
-      const col = i % 3 === 0 ? SOUND.magenta : i % 3 === 1 ? SOUND.flow : SOUND.gold;
-      g.fillStyle(tint(col), alpha * 0.1);
-      fillPts(g, [
-        { x: x + Math.cos(a) * r, y: y + Math.sin(a) * r },
-        { x: x + Math.cos(a - 0.09) * beamLen, y: y + Math.sin(a - 0.09) * beamLen },
-        { x: x + Math.cos(a + 0.09) * beamLen, y: y + Math.sin(a + 0.09) * beamLen },
-      ]);
-    }
-
-    // Cord.
-    g.lineStyle(2, tint(SOUND.steel), alpha * 0.9);
-    strokePts(g, [{ x, y: y - r - 44 }, { x, y: y - r }]);
-
-    g.fillStyle(tint(SOUND.steel), alpha);
-    g.fillCircle(x, y, r);
-    g.fillStyle(tint(SOUND.chrome), alpha);
-    g.fillCircle(x - r * 0.1, y - r * 0.12, r * 0.9);
-
-    // Facets: latitude bands cut into tiles, each catching the light on its own phase.
-    for (let row = -2; row <= 2; row++) {
-      const ry = y + row * r * 0.36;
-      const halfChord = Math.sqrt(Math.max(0, r * r - (ry - y) * (ry - y)));
-      const tiles = 7;
-      for (let c = 0; c < tiles; c++) {
-        const f = (c + 0.5) / tiles;
-        const px = x - halfChord + f * halfChord * 2;
-        const lit = 0.25 + 0.6 * Math.max(0, Math.sin(t * 4 + c * 1.3 + row));
-        g.fillStyle(tint(lit > 0.6 ? SOUND.white : SOUND.chrome), alpha * lit);
-        g.fillRect(px - halfChord / tiles * 0.8, ry - r * 0.15, (halfChord / tiles) * 1.6, r * 0.3);
-      }
-    }
-    g.lineStyle(1.4, tint(SOUND.steel), alpha * 0.7);
-    g.strokeCircle(x, y, r);
-    g.fillStyle(tint(SOUND.white), alpha * 0.9);
-    g.fillCircle(x - r * 0.35, y - r * 0.4, r * 0.16);
-  }
-
-  /**
-   * The stage: a lit riser with a checker front, footlights along the lip and a haze of light
-   * standing over the boards.
+   * The Soli stage: a lit riser with a checker front, footlights along the lip and a haze of
+   * light standing over the boards.
    */
   static drawStage(
     g: Phaser.GameObjects.Graphics, tint: SoundColorFn,
@@ -931,66 +1052,6 @@ export class SoundFx extends FxBase {
       g.fillCircle(lx, y - 13, 3);
     }
   }
-
-  /**
-   * An electric guitar held across the performer: body with a cutaway horn, pickups, a fretted
-   * neck, six strings and a headstock. `strum` drives the pick hand and rings the strings.
-   */
-  static drawGuitar(
-    g: Phaser.GameObjects.Graphics, tint: SoundColorFn,
-    x: number, y: number, lean: number, scale: number, strum: number, alpha = 1,
-  ): void {
-    const cos = Math.cos(lean), sin = Math.sin(lean);
-    const at = (lx: number, ly: number): Pt => ({
-      x: x + lx * scale * cos - ly * scale * sin,
-      y: y + lx * scale * sin + ly * scale * cos,
-    });
-
-    // Neck, running up to the right.
-    g.fillStyle(tint(SOUND.woodDark), alpha);
-    fillPts(g, [at(4, -3.4), at(40, -2.6), at(40, 2.6), at(4, 3.4)]);
-    // Frets.
-    g.lineStyle(1, tint(SOUND.chrome), alpha * 0.8);
-    for (let i = 1; i < 9; i++) {
-      const f = 4 + i * 4;
-      strokePts(g, [at(f, -3), at(f, 3)]);
-    }
-    // Headstock.
-    g.fillStyle(tint(SOUND.ink), alpha);
-    fillPts(g, [at(40, -4), at(50, -5.5), at(50, 4.5), at(40, 4)]);
-
-    // Body: a rounded slab with a cutaway horn on the neck side.
-    g.fillStyle(tint(SOUND.crimson), alpha);
-    fillPts(g, [
-      at(-16, -9), at(-6, -12), at(4, -9), at(9, -4),
-      at(6, 3), at(9, 9), at(0, 13), at(-11, 12), at(-17, 5), at(-18, -3),
-    ]);
-    g.fillStyle(tint(SOUND.ink), alpha * 0.85);
-    // Pickups + bridge.
-    fillPts(g, [at(-6, -5), at(1, -5), at(1, 5), at(-6, 5)]);
-    g.fillStyle(tint(SOUND.chrome), alpha);
-    fillPts(g, [at(-13, -4), at(-10, -4), at(-10, 5), at(-13, 5)]);
-
-    // Strings, ringing right after a strum.
-    const ring = Math.max(0, 1 - strum);
-    for (let i = 0; i < 6; i++) {
-      const off = -2.6 + i * 1.05;
-      const wob = Math.sin(strum * 26 + i * 1.7) * ring * 1.1;
-      g.lineStyle(0.8, tint(SOUND.chrome), alpha * (0.55 + ring * 0.45));
-      strokePts(g, [at(-12, off), at(48, off + wob * 0.3)]);
-    }
-
-    // Pick hand blur over the bridge while strumming.
-    if (ring > 0.05) {
-      g.fillStyle(tint(SOUND.white), alpha * ring * 0.5);
-      fillOval(g, at(-11, 0).x, at(-11, 0).y, 6 * scale, 2.4 * scale, lean);
-    }
-  }
-
-  /**
-   * The Harmony grenade: a sealed brass resonator with a wave rattling around inside it and a
-   * fuse ring that closes as it comes due.
-   */
   static drawGrenade(
     g: Phaser.GameObjects.Graphics, tint: SoundColorFn,
     x: number, y: number, t: number, fuse: number, alpha = 1,
@@ -1062,39 +1123,30 @@ export class SoundFx extends FxBase {
     g.strokePath();
   }
 
-  /** A music-note pickup lying on the ground, bobbing and ringing to be collected. */
-  static drawNotePickup(
-    g: Phaser.GameObjects.Graphics, tint: SoundColorFn,
-    x: number, y: number, t: number, phase: number, alpha = 1,
-  ): void {
-    const bob = Math.sin(t * 3 + phase) * 3;
-    g.fillStyle(tint(SOUND.shade), alpha * 0.3);
-    g.fillEllipse(x, y + 10, 13, 5);
-    g.fillStyle(tint(SOUND.gold), alpha * 0.22);
-    rippleBand(g, x, y + bob, 12 + Math.sin(t * 4 + phase) * 2, 2.4, 6, t * 3, 1.6);
-    musicNoteLayered(g, tint, x, y + bob, 6, Math.sin(t * 2 + phase) * 0.2, SOUND.gold, alpha, { flags: 1 });
-  }
 }
 
 // ── SoundAura ─────────────────────────────────────────────────────────────
 
 export type SoundAuraStyle =
-  | 'flow'        // Flow Mode: cold standing waves running up the body
-  | 'solo'        // On stage: a gold spotlight pool and rising sparks
-  | 'resonance'   // Mastery passive: the shield shell, ringing at its own pitch
-  | 'harmony'     // Harmony perk: stars orbiting on a shallow ellipse
-  | 'vibration';  // Run down by the caravan: the victim shaking itself apart
+  | 'disc'       // The record on the deck: a turning platter of standing wave underfoot
+  | 'solo'       // On stage: a gold spotlight pool and rising sparks
+  | 'bugle'      // Riding the brass buff: chevrons of brass climbing the body
+  | 'harmony';   // Harmony perk: stars orbiting on a shallow ellipse
 
 /**
  * A persistent field riding on a fighter. One Graphics, driven by whoever owns it.
  *
- * The styles differ in *shape*, not tint: flow climbs, solo pools, resonance encloses, harmony
- * orbits, vibration blurs. Several can be up at once and must stay separable.
+ * The styles differ in *shape*, not tint: the disc turns, solo pools, bugle climbs, harmony
+ * orbits. Several can be up at once and must stay separable — which is why `disc` is the only
+ * one that takes a colour, since the loaded record is the one thing read by hue.
  */
 export class SoundAura {
   private g: Phaser.GameObjects.Graphics;
   private t = 0;
   private intensity = 1;
+  // Spelled `: number` because the SOUND palette is `as const` — without it TypeScript
+  // narrows this to the literal mint and refuses every other record colour.
+  private color: number = SOUND.mint;
 
   constructor(
     scene: Phaser.Scene,
@@ -1106,8 +1158,11 @@ export class SoundAura {
     this.g = scene.add.graphics().setDepth(depth);
   }
 
-  /** For resonance this is the shield's size relative to its announce step; elsewhere a buff scale. */
+  /** A buff scale — how hard this field is being driven. */
   setIntensity(v: number): void { this.intensity = v; }
+
+  /** `disc` only: the label colour of whichever record is loaded. */
+  setColor(c: number): void { this.color = c; }
 
   update(delta: number, x: number, y: number, alpha = 1): void {
     if (!this.g.active) return;
@@ -1119,17 +1174,31 @@ export class SoundAura {
     const r = this.radius;
 
     switch (this.style) {
-      case 'flow': {
-        // Cold wavefronts climbing the body — Flow is the track running away from you.
-        g.fillStyle(this.tint(SOUND.flow), 0.1 * alpha);
-        g.fillCircle(x, y, r * 1.05);
-        for (let i = 0; i < 4; i++) {
-          const p = (this.t * 1.5 + i / 4) % 1;
-          const lift = (0.5 - p) * r * 2.4;
-          const fade = 1 - Math.abs(p - 0.5) * 1.7;
-          g.fillStyle(this.tint(i % 2 === 0 ? SOUND.flow : SOUND.flowPale), 0.75 * alpha * Math.max(0, fade));
-          waveRibbon(g, x - r * 0.95, y + lift, x + r * 0.95, y + lift,
-            { amp: 4, freq: 1.8, phase: this.t * 8 + i, width: 3.4, taper: 1, segments: 22 });
+      case 'disc': {
+        // The deck: a platter turning under the performer with the record's colour on it.
+        g.fillStyle(this.tint(this.color), 0.12 * alpha);
+        g.fillEllipse(x, y + 14, r * 2.5, r * 0.95);
+        for (let i = 0; i < 3; i++) {
+          const p = (this.t * 0.7 + i / 3) % 1;
+          g.fillStyle(this.tint(this.color), 0.5 * alpha * (1 - p));
+          rippleBand(g, x, y + 14, r * (0.5 + p * 1.1), 2.4, 8, this.t * 4, 2);
+        }
+        // Two notes riding the platter round, so the disc reads as spinning rather than glowing.
+        for (let i = 0; i < 2; i++) {
+          const a = this.t * 2.2 + i * Math.PI;
+          musicNoteLayered(g, this.tint, x + Math.cos(a) * r * 1.05, y + 14 + Math.sin(a) * r * 0.42,
+            4.4, 0, this.color, 0.85 * alpha, { flags: 1, stemDown: Math.sin(a) > 0 });
+        }
+        break;
+      }
+      case 'bugle': {
+        // Brass chevrons climbing the body — the buff is a tempo, so it moves upward.
+        for (let i = 0; i < 3; i++) {
+          const p = (this.t * (1.1 + k) + i / 3) % 1;
+          const lift = (0.5 - p) * r * 2.3;
+          g.fillStyle(this.tint(i % 2 === 0 ? SOUND.brass : SOUND.brassHi),
+            0.7 * alpha * Math.max(0, 1 - Math.abs(p - 0.5) * 1.8) * Math.min(1, 0.4 + k));
+          waveCrescent(g, x, y + lift, -Math.PI / 2, r * 0.8, 0.9, 3.2, 2, this.t * 9 + i);
         }
         break;
       }
@@ -1144,18 +1213,6 @@ export class SoundAura {
           const sx = x + Math.sin(i * 2.1 + this.t) * r * 0.8;
           g.fillStyle(this.tint(SOUND.gold), 0.85 * (1 - p) * alpha);
           g.fillCircle(sx, y + 12 - p * r * 2.2, 2.2 * (1 - p * 0.5));
-        }
-        break;
-      }
-      case 'resonance': {
-        // The barrier itself: a shell of standing wave, thicker the more shield is banked.
-        const shell = r * (0.95 + Math.min(0.6, k * 0.25));
-        g.fillStyle(this.tint(SOUND.white), 0.09 * alpha);
-        g.fillCircle(x, y, shell);
-        for (let i = 0; i < 2; i++) {
-          g.fillStyle(this.tint(i === 0 ? SOUND.white : SOUND.blush), (0.55 - i * 0.22) * alpha);
-          rippleBand(g, x, y, shell - i * 5, 2.6 - i * 0.8, 10 + i * 4,
-            (i === 0 ? 1 : -1) * this.t * 2.4, 2.4);
         }
         break;
       }
@@ -1181,21 +1238,6 @@ export class SoundAura {
         }
         break;
       }
-      case 'vibration': {
-        // Ghost outlines shaken off the victim, so a vibrating fighter reads between ticks.
-        for (let i = 0; i < 3; i++) {
-          const ox = Math.sin(this.t * 41 + i * 2.2) * (3 + i * 1.6);
-          const oy = Math.cos(this.t * 37 + i * 1.7) * (2 + i);
-          g.lineStyle(1.6, this.tint(SOUND.blush), (0.5 - i * 0.14) * alpha);
-          g.strokeCircle(x + ox, y + oy, r * 0.85);
-        }
-        for (let i = 0; i < 2; i++) {
-          const p = (this.t * 1.8 + i / 2) % 1;
-          g.fillStyle(this.tint(SOUND.white), 0.5 * (1 - p) * alpha);
-          rippleBand(g, x, y, r * (0.7 + p * 0.9), 2, 9, this.t * 6, 2.4);
-        }
-        break;
-      }
     }
   }
 
@@ -1204,55 +1246,79 @@ export class SoundAura {
 
 // ── SoundAvatar ───────────────────────────────────────────────────────────
 
-/** Concentric discs of one amp-cone ball hand, outermost first. */
+/**
+ * One hand of the soloist, outermost disc first: a ring of sound around a dark jacket cuff,
+ * a white shirt cuff inside that, and the hand itself. Read at gameplay zoom it is a formally
+ * dressed arm rather than a glowing ball, which is the whole point of the character.
+ */
 const SOUND_AVATAR: AvatarSpec = {
   hands: [
-    { r: 11, color: SOUND.magenta, alpha: 0.24 },
-    { r: 7, color: SOUND.violet, alpha: 0.92 },
-    { r: 4.2, color: SOUND.magenta, alpha: 1 },
-    { r: 1.6, color: SOUND.blush, alpha: 1, ox: -2, oy: -2 },
+    { r: 10.5, color: SOUND.magenta, alpha: 0.22 },
+    { r: 7.2, color: SOUND.suit, alpha: 1 },
+    { r: 5.4, color: SOUND.shirt, alpha: 1 },
+    { r: 3.8, color: SOUND.blush, alpha: 1 },
+    { r: 1.4, color: SOUND.white, alpha: 0.9, ox: -1.4, oy: -1.6 },
   ],
   eyeWhite: SOUND.ivory,
   eyePupil: SOUND.night,
-  // A drummer's hands: they snap, and they smear hard on the way through a beat.
+  // A player's hands: they snap onto the strings and smear on the way through a stroke.
   squash: { div: 12, x: 0.55, y: 0.3 },
 };
 
+/** Whatever the soloist currently has in their hands. */
+export type SoundInstrument = 'violin' | 'bugle' | 'record' | 'none';
+
 /**
- * The sound character rig: two speaker-cone ball hands, a pair of eyes, and a chord of music
- * notes hovering over the crown, each bobbing on its own beat. Hands, eyes and gestures come from
- * BaseAvatar; what sound adds is the wave pooling underfoot and the notes held overhead.
+ * The soloist: a concert musician in a dinner jacket and tie, an instrument in their hands and
+ * a ring of music notes orbiting them. Hands, eyes, gestures and holds come from BaseAvatar;
+ * what Sound adds is the suit painted over the sprite (`drawBody`), the instrument held across
+ * it, and the notes circling the whole figure.
+ *
+ * The instrument is the character's read on what it is doing right now, so it is a setter the
+ * kit drives rather than anything this class works out for itself.
  */
 export class SoundAvatar extends BaseAvatar {
   private fx: SoundFx;
   /** Warm palette for the player, cool for the NPC, so two sound fighters never blur together. */
   private accent: number;
+  private tieColor: number;
+  private instrument: SoundInstrument = 'violin';
+  /** 0 → 1 across one bow stroke; drives the bow sliding along its own length. */
+  private bowDraw = 0.5;
+  /** Label colour of whichever record is loaded — the disc in hand and the notes pick it up. */
+  private discColor: number = SOUND.mint;
 
   constructor(scene: Phaser.Scene, tint: SoundColorFn, owner: 'player' | 'npc' = 'player', depth = 6) {
     super(scene, tint, depth, SOUND_AVATAR);
     this.fx = new SoundFx(scene, tint);
     this.accent = owner === 'player' ? SOUND.magenta : SOUND.flow;
+    this.tieColor = owner === 'player' ? SOUND.magenta : SOUND.flow;
     if (owner === 'npc') {
-      this.forEachHandLayer(0, (halo) => halo.setFillStyle(this.tint(SOUND.flow), 0.24));
-      this.forEachHandLayer(2, (core) => core.setFillStyle(this.tint(SOUND.flowPale), 1));
+      this.forEachHandLayer(0, (halo) => halo.setFillStyle(this.tint(SOUND.flow), 0.22));
     }
   }
 
+  /** What is in the soloist's hands this frame. */
+  setInstrument(i: SoundInstrument): void { this.instrument = i; }
+  /** Where the bow is through its stroke, 0 → 1. */
+  setBowDraw(v: number): void { this.bowDraw = Phaser.Math.Clamp(v, 0, 1); }
+  /** The loaded record's colour, worn on the pocket square and the orbiting notes. */
+  setDiscColor(c: number): void { this.discColor = c; }
+
   /**
-   * Mastery tell — a permanent, readable upgrade to the character, so a mastered sound user is
-   * identifiable before they play a note: brass eyes, a brass rim and wider cone on each hand, a
-   * four-note chord over the crown instead of two, and the resonance shell ringing around the
-   * body. Shape changes, not brighter tints — a tint alone vanishes at gameplay zoom.
+   * Mastery tell — a permanent, silhouette-level upgrade, so a mastered soloist is identifiable
+   * before they play a note: a top hat with a brass band (drawn in `drawExtras`), brass eyes and
+   * a brass rim around each cuff. Shape changes, not brighter tints.
    */
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? SOUND.brassHi : SOUND.ivory);
     this.forEachHandLayer(0, (halo) => {
-      halo.setRadius(on ? 14.5 : 11);
-      halo.setFillStyle(this.tint(on ? SOUND.brass : this.accent), on ? 0.3 : 0.24);
+      halo.setRadius(on ? 13.5 : 10.5);
+      halo.setFillStyle(this.tint(on ? SOUND.brass : this.accent), on ? 0.28 : 0.22);
     });
-    this.forEachHandLayer(1, (shell) => {
-      if (on) shell.setStrokeStyle(1.8, this.tint(SOUND.brassHi), 0.95);
-      else shell.setStrokeStyle();
+    this.forEachHandLayer(1, (cuff) => {
+      if (on) cuff.setStrokeStyle(1.8, this.tint(SOUND.brassHi), 0.95);
+      else cuff.setStrokeStyle();
     });
   }
 
@@ -1261,7 +1327,7 @@ export class SoundAvatar extends BaseAvatar {
     this.fx.notes(x, y, 1, { speed: 18, size: 5, life: 620, depth: 5, color: this.accent, rise: 20 });
   }
 
-  /** Working an instrument: hands held close and low, picking rather than pushing. */
+  /** Working an instrument: hands held close and low, fingering rather than pushing. */
   protected extraHoldPose(hold: ArmHold, side: number, idle: ArmPose): ArmPose | null {
     if (hold !== 'brace') return null;
     const pick = Math.sin(this.t * 18 + side * 1.6);
@@ -1285,40 +1351,144 @@ export class SoundAvatar extends BaseAvatar {
   }
 
   /**
-   * The crown: a chord of music notes hovering over the head, each on its own beat, with the
-   * wavefront they are riding drawn under them. Rooted at y - 18 so nothing covers the face, and
-   * drawn over the sprite so the noteheads read instead of only their stems clearing the body.
+   * The dinner jacket. Painted opaque and wide enough to cover the 44px element sprite entirely,
+   * because the character *is* the suit — anything of the old magenta ball showing past the
+   * shoulders reads as a costume draped over a blob.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    void a;
+    const breathe = 1 + Math.sin(this.t * 2.6) * 0.015;
+    const w = 23 * breathe;
+    const h = 23.5 * breathe;
+
+    // Shoulders and torso as one rounded slab — the jacket.
+    g.fillStyle(this.tint(SOUND.suit), alpha);
+    g.fillEllipse(x, y + 1, w * 2, h * 2);
+    // Sheen down the left of the jacket, so it reads as cloth and not as a hole.
+    g.fillStyle(this.tint(SOUND.suitHi), alpha * 0.55);
+    fillPts(g, [
+      { x: x - w * 0.82, y: y - h * 0.3 }, { x: x - w * 0.3, y: y - h * 0.72 },
+      { x: x - w * 0.18, y: y + h * 0.62 }, { x: x - w * 0.7, y: y + h * 0.5 },
+    ]);
+
+    // Dress shirt: a V of white between the lapels, with the collar points at the top.
+    g.fillStyle(this.tint(SOUND.shirt), alpha);
+    fillPts(g, [
+      { x: x - w * 0.34, y: y - h * 0.66 }, { x: x + w * 0.34, y: y - h * 0.66 },
+      { x: x + w * 0.2, y: y + h * 0.5 }, { x: x - w * 0.2, y: y + h * 0.5 },
+    ]);
+    // Lapels, laid back over the shirt on both sides.
+    g.fillStyle(this.tint(SOUND.suit), alpha);
+    fillPts(g, [
+      { x: x - w * 0.62, y: y - h * 0.72 }, { x: x - w * 0.16, y: y - h * 0.62 },
+      { x: x - w * 0.05, y: y + h * 0.5 }, { x: x - w * 0.5, y: y + h * 0.34 },
+    ]);
+    fillPts(g, [
+      { x: x + w * 0.62, y: y - h * 0.72 }, { x: x + w * 0.16, y: y - h * 0.62 },
+      { x: x + w * 0.05, y: y + h * 0.5 }, { x: x + w * 0.5, y: y + h * 0.34 },
+    ]);
+    g.lineStyle(1, this.tint(SOUND.suitHi), alpha * 0.8);
+    strokePts(g, [
+      { x: x - w * 0.62, y: y - h * 0.72 }, { x: x - w * 0.16, y: y - h * 0.62 },
+      { x: x - w * 0.05, y: y + h * 0.5 },
+    ]);
+    strokePts(g, [
+      { x: x + w * 0.62, y: y - h * 0.72 }, { x: x + w * 0.16, y: y - h * 0.62 },
+      { x: x + w * 0.05, y: y + h * 0.5 },
+    ]);
+
+    // The tie: a knot at the collar and a blade hanging down the shirt.
+    const tie = this.mastered ? SOUND.gold : this.tieColor;
+    g.fillStyle(this.tint(tie), alpha);
+    fillPts(g, [
+      { x: x - w * 0.13, y: y - h * 0.62 }, { x: x + w * 0.13, y: y - h * 0.62 },
+      { x: x + w * 0.1, y: y - h * 0.4 }, { x: x - w * 0.1, y: y - h * 0.4 },
+    ]);
+    fillPts(g, [
+      { x: x - w * 0.1, y: y - h * 0.4 }, { x: x + w * 0.1, y: y - h * 0.4 },
+      { x: x + w * 0.14, y: y + h * 0.34 }, { x: x, y: y + h * 0.52 }, { x: x - w * 0.14, y: y + h * 0.34 },
+    ]);
+    g.fillStyle(this.tint(SOUND.white), alpha * 0.4);
+    fillPts(g, [
+      { x: x - w * 0.1, y: y - h * 0.38 }, { x: x - w * 0.03, y: y - h * 0.38 },
+      { x: x - w * 0.01, y: y + h * 0.28 }, { x: x - w * 0.09, y: y + h * 0.2 },
+    ]);
+
+    // Pocket square, in whichever record is loaded — the cheapest read on the disc at a glance.
+    g.fillStyle(this.tint(this.discColor), alpha);
+    fillPts(g, [
+      { x: x + w * 0.5, y: y - h * 0.06 }, { x: x + w * 0.78, y: y - h * 0.02 },
+      { x: x + w * 0.74, y: y + h * 0.12 }, { x: x + w * 0.48, y: y + h * 0.08 },
+    ]);
+  }
+
+  /**
+   * Everything worn or carried: the instrument in the soloist's hands, the notes orbiting them,
+   * and — once mastered — the top hat. Rooted so nothing sits over the eyes.
    */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    const rootY = y - 22;
-    const count = this.mastered ? 4 : 2;
-    const scale = (this.mastered ? 1.25 : 1) * this.intensity;
+    const crown = y - 20;
+    const dir = Math.cos(this.facing) >= 0 ? 1 : -1;
 
-    // The stave the chord is riding: one wavefront across the crown.
-    g.fillStyle(this.tint(this.accent), a * 0.5);
-    waveRibbon(g, x - 17 * scale, rootY + 3, x + 17 * scale, rootY + 3,
-      { amp: 3, freq: 1.6, phase: this.t * 5, width: 2.6, taper: 1, segments: 20 });
-
+    // ── The orbiting chord ──
+    // Notes circling the whole figure on a shallow ellipse, half of them behind at any moment
+    // (drawn dimmer as they pass) so the ring reads as going round rather than as a flat halo.
+    const count = this.mastered ? 5 : 3;
+    const spin = this.t * (0.8 + (this.intensity - 1) * 1.2);
     for (let i = 0; i < count; i++) {
-      const side = (i - (count - 1) / 2) / Math.max(0.5, (count - 1) / 2);
-      const cx = x + side * 13 * scale;
-      const cy = rootY - 6 * scale - Math.sin(this.t * 3.4 + i * 1.3) * 3.5 * scale;
+      const ang = spin + (i / count) * TAU;
+      const behind = Math.sin(ang) < 0;
+      const nx = x + Math.cos(ang) * 30;
+      const ny = crown + 4 + Math.sin(ang) * 11 - Math.sin(this.t * 3 + i) * 2.5;
       musicNoteLayered(
-        g, this.tint, cx, cy, 5.4 * scale, Math.sin(this.t * 2 + i) * 0.16,
-        i % 2 === 0 ? this.accent : SOUND.blush, a * 0.95,
-        { flags: i % 2 === 0 ? 1 : 2, stemDown: side > 0.2 },
+        g, this.tint, nx, ny, behind ? 4.4 : 5.8, Math.sin(this.t * 2 + i) * 0.18,
+        i % 3 === 0 ? this.discColor : i % 3 === 1 ? this.accent : SOUND.blush,
+        a * (behind ? 0.45 : 0.95), { flags: i % 2 === 0 ? 1 : 2, stemDown: behind },
       );
     }
 
-    // Mastery: the resonance shell ringing around the body, and a brass wavefront off the crown.
-    if (this.mastered) {
-      g.fillStyle(this.tint(SOUND.brassHi), alpha * 0.55);
-      rippleBand(g, x, y, 26, 2, 10, this.t * 2.2, 2.2);
-      for (let i = 0; i < 2; i++) {
-        const p = (this.t * 1.1 + i / 2) % 1;
-        g.fillStyle(this.tint(SOUND.brass), alpha * 0.6 * (1 - p));
-        waveCrescent(g, x, rootY, -Math.PI / 2, 14 + p * 20, 0.85, 5 * (1 - p * 0.5), 2, this.t * 9);
+    // ── The instrument ──
+    switch (this.instrument) {
+      case 'violin': {
+        // Tucked under the chin on the far side, bow drawn across the bridge.
+        const vAng = dir > 0 ? -0.42 : Math.PI + 0.42;
+        SoundFx.drawViolin(g, this.tint, x + dir * 3, y + 3, vAng, 0.6, alpha);
+        SoundFx.drawBow(g, this.tint, x + dir * 6, y + 5, vAng + dir * 1.35, 0.52, this.bowDraw, alpha);
+        break;
       }
+      case 'bugle':
+        SoundFx.drawBugle(g, this.tint, x, y + 2, dir > 0 ? 1 : -1, this.t);
+        break;
+      case 'record': {
+        // Held out at arm's length, spinning on a fingertip.
+        SoundFx.drawRecord(g, this.tint, x + dir * 20, y - 2, 12, this.t * 7, this.discColor, alpha);
+        break;
+      }
+      case 'none':
+        break;
+    }
+
+    // ── Mastery: the top hat ──
+    if (this.mastered) {
+      const lean = Math.cos(this.facing) * 2.2;
+      g.fillStyle(this.tint(SOUND.shade), alpha * 0.35);
+      g.fillEllipse(x + lean, crown + 1, 40, 9);
+      g.fillStyle(this.tint(SOUND.suit), alpha);
+      g.fillEllipse(x + lean, crown - 1, 38, 8.5);
+      fillPts(g, [
+        { x: x + lean - 12, y: crown - 1 }, { x: x + lean - 13, y: crown - 17 },
+        { x: x + lean + 13, y: crown - 17 }, { x: x + lean + 12, y: crown - 1 },
+      ]);
+      g.fillStyle(this.tint(SOUND.suitHi), alpha);
+      g.fillEllipse(x + lean, crown - 17, 26, 6);
+      // Brass hatband.
+      g.fillStyle(this.tint(SOUND.brass), alpha);
+      fillPts(g, [
+        { x: x + lean - 12.6, y: crown - 4 }, { x: x + lean + 12.6, y: crown - 4 },
+        { x: x + lean + 12.2, y: crown - 8 }, { x: x + lean - 12.2, y: crown - 8 },
+      ]);
+      g.fillStyle(this.tint(SOUND.brassHi), alpha * 0.9);
+      g.fillCircle(x + lean + 8, crown - 6, 2.2);
     }
   }
 }

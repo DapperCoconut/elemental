@@ -35,6 +35,13 @@ export const PSN = {
   gold: 0xf7d774,
   leaf: 0x3f8f52,
   stem: 0x2c6b3a,
+  /**
+   * Bare skin, for the two mature-mode scenes. The only colours in the palette that aren't a
+   * pink — which is the point: the suit coming off has to change the silhouette's *hue*, or a
+   * pink character losing a pink suit reads as nothing happening at all.
+   */
+  tan: 0xd9a066,
+  tanDeep: 0xa06d3e,
   /** The bar itself, and the white of a bulb going off. */
   censor: 0x101014,
   flash: 0xfff6d8,
@@ -438,6 +445,133 @@ export function garment(
   }
 }
 
+/**
+ * The bare head, drawn over the fighter sprite while the suit is off.
+ *
+ * This exists because the `elem-passion` texture has the fedora *baked into it* — the sprite is
+ * a heart, a revolver and a hat brim, and the rig's own fedora has always been a second hat sat
+ * on top of the first. Suppressing the rig's one therefore leaves the sprite's one behind, so
+ * the only way to actually take the hat off is to paint over the sprite. It is drawn on the rig's
+ * body layer, which sits above the sprite and below the eyes.
+ *
+ * The hair is the payoff: nobody has seen this character's head before, because the hat has
+ * covered it in every frame the game has ever drawn.
+ */
+export function bareHead(
+  g: Phaser.GameObjects.Graphics,
+  tint: PassionColorFn,
+  x: number, y: number, alpha: number, t: number,
+): void {
+  // Neck first, so the jaw and the torso both close over it.
+  g.fillStyle(tint(PSN.tanDeep), alpha * 0.95);
+  g.fillRect(x - 6, y + 2, 12, 10);
+
+  g.fillStyle(tint(PSN.tanDeep), alpha * 0.9);
+  g.fillCircle(x, y - 3, 21);
+  g.fillStyle(tint(PSN.tan), alpha);
+  g.fillCircle(x, y - 4, 20);
+  // Ears, and the jaw shadow under the cheekbones.
+  for (const side of [-1, 1]) {
+    g.fillStyle(tint(PSN.tan), alpha);
+    g.fillEllipse(x + side * 19.5, y - 2, 6, 9);
+    g.fillStyle(tint(PSN.tanDeep), alpha * 0.5);
+    g.fillEllipse(x + side * 19.5, y - 2, 2.6, 4.4);
+  }
+  g.fillStyle(tint(PSN.tanDeep), alpha * 0.34);
+  g.fillEllipse(x, y + 8, 26, 9);
+
+  // Hair: a slicked-back cap with a fringe swept to the left, breathing a little so it doesn't
+  // read as a helmet.
+  const sway = Math.sin(t * 1.7) * 0.7;
+  g.fillStyle(tint(PSN.ink), alpha);
+  g.fillPoints([
+    new Phaser.Geom.Point(x - 20, y - 6),
+    new Phaser.Geom.Point(x - 17, y - 17),
+    new Phaser.Geom.Point(x - 6, y - 23),
+    new Phaser.Geom.Point(x + 8, y - 23),
+    new Phaser.Geom.Point(x + 18, y - 16),
+    new Phaser.Geom.Point(x + 20, y - 5),
+    new Phaser.Geom.Point(x + 15, y - 9),
+    new Phaser.Geom.Point(x + 4, y - 12 + sway),
+    new Phaser.Geom.Point(x - 9, y - 10 + sway),
+    new Phaser.Geom.Point(x - 15, y - 7),
+  ], true);
+  // The kiss-curl that escapes the sweep, and the shine along the top of it.
+  g.fillStyle(tint(PSN.ink), alpha * 0.95);
+  g.fillEllipse(x - 12, y - 8 + sway, 7, 5);
+  g.fillStyle(tint(PSN.wine), alpha * 0.55);
+  g.fillEllipse(x - 5, y - 18, 13, 4);
+  g.fillStyle(tint(PSN.cream), alpha * 0.28);
+  g.fillEllipse(x - 8, y - 19, 6, 2.2);
+
+  // Cheek highlight, upper-left like every other fill in the element.
+  g.fillStyle(tint(PSN.cream), alpha * 0.22);
+  g.fillEllipse(x - 8, y - 1, 9, 6);
+}
+
+/**
+ * The bed, thrown down under a mature-mode Make-out. The head end is along `ang`, so the two
+ * fighters standing on it line up with the pillows.
+ *
+ * `rise` is 0 while it is still dropping into the arena and 1 once it has arrived: it scales the
+ * whole thing up from nothing and drags a shadow out from under it, because a bed that simply
+ * appears at full size reads as a texture pop rather than as something that landed.
+ */
+export function bed(
+  g: Phaser.GameObjects.Graphics,
+  tint: PassionColorFn,
+  x: number, y: number, ang: number, alpha: number, rise = 1, scale = 1,
+): void {
+  const s = scale * (0.55 + easeOut(Phaser.Math.Clamp(rise, 0, 1)) * 0.45);
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  // Local u runs across the bed, v from the head (-) to the foot (+).
+  const P = (u: number, v: number) => pt(x, y, ca, sa, u * s, v * s);
+  const poly = (pts: Array<[number, number]>, color: number, a: number): void => {
+    g.fillStyle(tint(color), alpha * a);
+    g.fillPoints(pts.map(([u, v]) => P(u, v)), true);
+  };
+
+  // Contact shadow, offset down-screen rather than along the bed's own axis.
+  g.fillStyle(tint(PSN.ink), alpha * 0.34);
+  g.fillEllipse(x, y + 9 * s, 78 * s, 44 * s);
+
+  // Frame, then the mattress inset into it.
+  poly([[-33, -46], [33, -46], [33, 46], [-33, 46]], PSN.ink, 0.95);
+  poly([[-29, -42], [29, -42], [29, 42], [-29, 42]], PSN.cream, 0.9);
+
+  // Headboard: a slab with a heart cut into its top edge.
+  poly([[-35, -56], [35, -56], [35, -44], [-35, -44]], PSN.wine, 0.98);
+  poly([[-31, -54], [31, -54], [31, -47], [-31, -47]], PSN.deep, 0.6);
+  const crest = P(0, -50);
+  heart(g, tint, crest.x, crest.y, 9 * s, ang + Math.PI / 2, PSN.hot, alpha * 0.95);
+
+  // Two pillows at the head end, each with a crease down its middle.
+  for (const side of [-1, 1]) {
+    const pc = P(side * 14, -33);
+    g.fillStyle(tint(PSN.cream), alpha * 0.98);
+    g.fillEllipse(pc.x, pc.y, 26 * s, 17 * s);
+    g.fillStyle(tint(PSN.blush), alpha * 0.45);
+    g.fillEllipse(pc.x, pc.y, 18 * s, 10 * s);
+  }
+
+  // The duvet, pulled up over the foot half, with a turned-back cream cuff along its top edge.
+  poly([[-31, 2], [31, 2], [31, 44], [-31, 44]], PSN.wine, 0.96);
+  poly([[-31, 2], [31, 2], [31, 9], [-31, 9]], PSN.cream, 0.75);
+  // Quilting: hearts in a staggered grid, the pattern that makes it a Passion bed.
+  for (let row = 0; row < 3; row++) {
+    for (let col = -1; col <= 1; col++) {
+      const hp = P(col * 17 + (row % 2 ? 8.5 : 0), 17 + row * 11);
+      heart(g, tint, hp.x, hp.y, 5 * s, ang + Math.PI / 2, PSN.hot, alpha * 0.55);
+    }
+  }
+  // Folds running the length of the duvet.
+  g.lineStyle(1.1 * s, tint(PSN.ink), alpha * 0.25);
+  for (const u of [-16, 0, 16]) {
+    g.lineBetween(P(u, 10).x, P(u, 10).y, P(u * 1.1, 43).x, P(u * 1.1, 43).y);
+  }
+}
+
 /** A censor bar — black, hard-edged, with the hazard hatching along its long sides. */
 export function censorBar(
   g: Phaser.GameObjects.Graphics,
@@ -680,6 +814,16 @@ const PASSION_AVATAR: AvatarSpec = {
   squash: { div: 14, x: 0.45, y: 0.26 },
 };
 
+/** What each hand layer becomes once the suit is off, indexed against `PASSION_AVATAR.hands`. */
+const BARE_HANDS = [PSN.tan, PSN.tan, PSN.cream];
+
+/**
+ * The fighter sprite's colours while stripped — the head is the sprite, not part of the rig.
+ * Top and bottom, because the repaint has to be a `setTintFill`: a plain multiplicative tint can
+ * only ever darken the sprite's own pink, so tan comes out red rather than tan.
+ */
+export const PASSION_SKIN_TINT: [number, number] = [PSN.tan, PSN.tanDeep];
+
 /**
  * The gunner: a fedora, a pink revolver and a rose when there is one. Nothing about the
  * silhouette is threatening on purpose — the pistol is held low and loose, and the only time
@@ -703,7 +847,20 @@ export class PassionAvatar extends BaseAvatar {
   setRose(on: boolean, wilt = 0): void { this.rose = on; this.roseWilt = Phaser.Math.Clamp(wilt, 0, 1); }
   setPosing(v: number): void { this.posing = Phaser.Math.Clamp(v, 0, 1); }
   setCensored(on: boolean): void { this.censored = on; }
-  setStripped(on: boolean): void { this.stripped = on; }
+
+  /**
+   * The suit coming off, and with it the character's whole colour. The hands are the one part
+   * of the silhouette the base class owns, so they have to be repainted here or they read as
+   * gloves somebody kept on. Early-outs, because kits call this every frame.
+   */
+  setStripped(on: boolean): void {
+    if (on === this.stripped) return;
+    this.stripped = on;
+    PASSION_AVATAR.hands.forEach((layer, i) => {
+      const color = on ? BARE_HANDS[i] ?? layer.color : layer.color;
+      this.forEachHandLayer(i, (arc) => arc.setFillStyle(this.tint(color), layer.alpha));
+    });
+  }
   /** Rocks the pistol back. Decays on its own, so a kit can fire this and forget it. */
   recoil(): void { this.kick = 1; }
 
@@ -764,21 +921,28 @@ export class PassionAvatar extends BaseAvatar {
   protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
     if (this.stripped) {
+      // The head goes on first and covers the sprite outright — hat, heart, revolver and all.
+      // See `bareHead`: the fedora is part of the texture, so this is the only way it comes off.
+      bareHead(g, this.tint, x, y, alpha, this.t);
       // Suit's on the floor. What is left has to be a shape in its own right rather than a hole,
-      // because the censor bars only cover the middle of it.
-      g.fillStyle(this.tint(PSN.blush), alpha * 0.95);
+      // because the censor bars only cover the middle of it — and it is tan rather than pink so
+      // that the change is legible on a character whose every other part is already pink.
+      g.fillStyle(this.tint(PSN.tan), alpha * 0.98);
       g.fillPoints([
         new Phaser.Geom.Point(x - 12, y + 2), new Phaser.Geom.Point(x + 12, y + 2),
         new Phaser.Geom.Point(x + 8, y + 10), new Phaser.Geom.Point(x + 11, y + 19),
         new Phaser.Geom.Point(x - 11, y + 19), new Phaser.Geom.Point(x - 8, y + 10),
       ], true);
-      g.fillStyle(this.tint(PSN.deep), alpha * 0.3);
+      // Shading down the right-hand side, and the waist crease across the middle.
+      g.fillStyle(this.tint(PSN.tanDeep), alpha * 0.45);
       g.fillPoints([
         new Phaser.Geom.Point(x + 4, y + 2), new Phaser.Geom.Point(x + 12, y + 2),
         new Phaser.Geom.Point(x + 8, y + 10), new Phaser.Geom.Point(x + 11, y + 19),
         new Phaser.Geom.Point(x + 3, y + 19),
       ], true);
-      g.fillStyle(this.tint(PSN.cream), alpha * 0.4);
+      g.lineStyle(1.2, this.tint(PSN.tanDeep), alpha * 0.5);
+      g.lineBetween(x - 8, y + 10, x + 8, y + 10);
+      g.fillStyle(this.tint(PSN.cream), alpha * 0.32);
       g.fillEllipse(x - 6, y + 6, 8, 5);
       return;
     }
@@ -831,13 +995,12 @@ export class PassionAvatar extends BaseAvatar {
     // ── Posing ──
     const p = this.posing;
     if (this.censored) {
-      // The joke version. Bars over the eyes and the torso, jittering a frame at a time so it
-      // reads as broadcast censorship rather than as part of the costume.
+      // The joke version. One small bar, over the only part that needs one — the face and the
+      // chest stay visible, because the point of the pose is being looked at. It jitters a frame
+      // at a time so it reads as broadcast censorship rather than as costume.
       const j = Math.floor(this.t * 9);
-      censorBar(g, x + (jitter(this.seed, j) - 0.5) * 1.6, y - 4, 40, 12,
-        (jitter(this.seed, j + 1) - 0.5) * 0.08, alpha * p);
-      censorBar(g, x + (jitter(this.seed, j + 2) - 0.5) * 1.6, y + 12, 52, 20,
-        (jitter(this.seed, j + 3) - 0.5) * 0.06, alpha * p);
+      censorBar(g, x + (jitter(this.seed, j) - 0.5) * 1.4, y + 15, 22, 10,
+        (jitter(this.seed, j + 1) - 0.5) * 0.07, alpha * p);
     } else {
       // A sash of light across the chest and a burst of glamour sparkle.
       g.fillStyle(this.tint(PSN.cream), alpha * p * 0.22);

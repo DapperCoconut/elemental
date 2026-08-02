@@ -1120,7 +1120,7 @@ export class PsychicKit {
 
     const st = this.stress.get(p);
     this.api.setStatusIndicator('psychic-stress', st ? {
-      name: 'Stress', emoji: '🩸', color: PSY.stress, priority: 6,
+      name: 'Stress', emoji: '🔴', color: PSY.stress, priority: 6,
       description: 'A pool of psychic pressure. It does nothing until it goes off, then lands all at once and straight through every scrap of armour you own. Every new point puts the fuse back to 10 seconds.',
       until: st.releaseAt, count: Math.round(st.amount),
     } : null);

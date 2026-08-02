@@ -6,9 +6,10 @@ import { Ability, CastContext } from './Ability';
  *
  * Every other element in the game aims something. Chalk *draws* — four of its five abilities
  * open a timed window during which your cursor lays a line of chalk behind it, and what that
- * line then does is the only difference between them. White detonates a moment later, red
- * waits and then runs the whole length like a fuse, blue stays on the floor until you replace
- * it, and the fourth kind rips itself off the ground and orbits you as a shield.
+ * line then does is the only difference between them. White goes up all at once and hits
+ * harder the more of it you scribbled onto someone, red waits and then runs the whole length
+ * like a fuse, blue stays on the floor until you replace it, and the fourth kind rips itself
+ * off the ground and orbits you as a shield.
  *
  * The consequence is that Chalk's damage is entirely a function of where you moved the mouse,
  * not where you clicked. Nothing it does is aimed at the enemy — it is aimed at the floor the
@@ -20,7 +21,7 @@ import { Ability, CastContext } from './Ability';
 const ward: Ability = {
   id: 'chalk-ward',
   name: 'Chalk Ward',
-  description: 'Your cursor lays white chalk for 1s. Every mark blows 0.5s after you draw it for 10 dmg.',
+  description: 'Your cursor lays white chalk for 1s. 0.5s later the whole scribble blows at once — 10 dmg, +5 per extra mark on them (max 30).',
   displayKey: 'Click',
   cooldown: 2000,
   cast(ctx: CastContext) { ctx.chalkWard(); },
@@ -38,7 +39,7 @@ const explosive: Ability = {
 const perma: Ability = {
   id: 'chalk-perma',
   name: 'Perma-Chalk',
-  description: 'Blue chalk for 0.5s that never wears off. Burns anything standing on it. Recast to redraw it somewhere else.',
+  description: 'Blue chalk for 0.5s that never wears off. Burns anything standing on it for 30 dmg/s. Recast to redraw it somewhere else.',
   displayKey: 'R',
   cooldown: 6000,
   cast(ctx: CastContext) { ctx.chalkPerma(); },

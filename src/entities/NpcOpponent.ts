@@ -41,8 +41,10 @@ export interface NpcAiState {
   plantCount: number;
   thornDragActive: boolean;
   enemyNearPlant: boolean;
-  windTrapActive: boolean;
-  chargedBeamReady: boolean;
+  /** Air: the NPC's own Wind Breaker is up, so it should be holding the player, not chasing. */
+  airTornadoActive: boolean;
+  /** Air: wind dodge the NPC has banked — high enough and it can afford to dance in close. */
+  airWindDodge: number;
   earthShieldHp: number;
   npcEarthRocksActive?: boolean;
   oilDroneCount?: number;
@@ -159,6 +161,30 @@ export interface NpcAiState {
   npcDepthsTargetLatches?: number;
   /** The AI is the one drowning: everything except running for air can wait. */
   npcDepthsDrowning?: boolean;
+
+  // Gluttony
+  /**
+   * Somewhere the AI has to physically be, overriding chase/strafe entirely. Only ever a
+   * collection: something of its own has finished on the grill, is speared on a landed skewer,
+   * or is lying on the floor where a throw missed.
+   */
+  gluttonySeekPoint?: { x: number; y: number };
+  /** In butcher form: five different keys, and damage lands on the bar rather than the health. */
+  npcGluttonyButcher?: boolean;
+  /** Milliseconds left of butcher form. */
+  npcGluttonyHunger?: number;
+  /** How much is in the prep strip — the currency for both Feast and Maw Awakening. */
+  npcGluttonyFood?: number;
+  npcGluttonyHasMeat?: boolean;
+  /** Head down, half speed, two seconds committed. Nothing may interrupt it. */
+  npcGluttonyForaging?: boolean;
+  /** Room on the grate. A full grill makes throwing ingredients at it pointless. */
+  npcGluttonyGrillRoom?: boolean;
+  npcGluttonyMawAwake?: boolean;
+  /** How many of the bot's own ingredients are on the grate right now. */
+  npcGluttonyCooking?: number;
+  /** Where the grill is, so Charcoal Chuck can be aimed at it as fuel rather than as a weapon. */
+  gluttonyGrillPoint?: { x: number; y: number };
 
   // Ruin
   /** A spike ring is already counting down; a second F would only replace it with itself. */
@@ -497,6 +523,20 @@ export class NpcOpponent extends Fighter {
       }
     }
 
+    // ── Gluttony: fetching what it cooked ────────────────────────
+    // Same shape as the Depths seek above: a bot that has something finished on the grate has
+    // nothing to gain from strafing on its way to pick it up.
+    if (aiState.gluttonySeekPoint) {
+      const seek = aiState.gluttonySeekPoint;
+      const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
+      if (d > 6) {
+        const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
+        body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
+      } else {
+        body.setVelocity(0, 0);
+      }
+    }
+
     // ── Conquest: walking to a build site ────────────────────────
     // Same shape as the Depths seek above, and for the same reason: a bot that has decided
     // where its next barracks goes has nothing to gain from strafing on the way there.
@@ -602,7 +642,7 @@ export class NpcOpponent extends Fighter {
     if (this.element.id === 'echo') {
       return this.doEchoAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
-    if (this.element.id === 'quantum') {
+    if (this.element.id === 'subterfuge') {
       return this.doSubterfugeAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
     if (this.element.id === 'justice') {
@@ -658,6 +698,95 @@ export class NpcOpponent extends Fighter {
     }
     if (this.element.id === 'gum') {
       return this.doGumAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'gluttony') {
+      return this.doGluttonyAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    return null;
+  }
+
+  /**
+   * Gluttony. Two entirely different routines behind one method, because the element is two
+   * kits sharing five keys — and the thing that decides which one it is running is a thirty
+   * second clock rather than anything about the fight.
+   *
+   * As the chef the ordering is economic before it is aggressive: Forage while it is too far
+   * away to be punished for standing still, throw whatever is raw at the grill (which the kit
+   * folds into the click for it, since the bot has no strip to click), and hold Feast until the
+   * larder is actually worth doubling. Charcoal is aimed at the grill roughly half the time it
+   * has something cooking, because superheating is worth more than fifteen damage.
+   *
+   * As the butcher it stops economising entirely. Damage is free while the bar holds, so it
+   * closes, and the only patience left in the routine is holding the ultimate until there is
+   * something in the strip to feed the maw — a three-second awakening is not worth the key.
+   */
+  private doGluttonyAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    void target;
+    void time;
+    // Two seconds head-down is a real commitment; casting over the top of it wastes the slow.
+    if (aiState.npcGluttonyForaging) return null;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const food = aiState.npcGluttonyFood ?? 0;
+
+    if (aiState.npcGluttonyButcher) {
+      const hunger = aiState.npcGluttonyHunger ?? 0;
+
+      // The maw is worth exactly what was fed into it, so a bare-larder awakening is refused.
+      if (!aiState.npcGluttonyMawAwake && !skipSpecials && food >= 2 && dist < 520) {
+        if (this.castAbility('glut-maw', buildContext(aimX, aimY))) return 'glut-maw';
+      }
+      // Cannibalize is the only thing in the form that buys time back without eating.
+      if (!skipSpecials && dist < 110) {
+        if (this.castAbility('glut-cannibalize', buildContext(aimX, aimY))) return 'glut-cannibalize';
+      }
+      // The skewer wants a lane, not a scuffle — and meat is the best food in the game.
+      if (!aiState.npcGluttonyHasMeat && !skipSpecials && dist > 130 && dist < 620) {
+        if (this.castAbility('glut-poach', buildContext(aimX, aimY))) return 'glut-poach';
+      }
+      // Change back on the last of the bar rather than being dumped out of the form mid-swing.
+      if (hunger > 0 && hunger < 2600 && food === 0) {
+        if (this.castAbility('glut-return', buildContext(aimX, aimY))) return 'glut-return';
+      }
+      if (dist < 120) {
+        if (this.castAbility('glut-cleave', buildContext(aimX, aimY))) return 'glut-cleave';
+      }
+      return null;
+    }
+
+    // ── Chef ──
+    // Transform on damage taken, or once there is enough in the strip to survive the form.
+    if (!skipSpecials && (hpRatio < 0.55 || (food >= 3 && dist < 340))) {
+      if (this.castAbility('glut-butcher', buildContext(aimX, aimY))) return 'glut-butcher';
+    }
+    // Feast is a heal, and a heal at full health is thrown away.
+    if (!skipSpecials && hpRatio < 0.7 && food >= 3) {
+      if (this.castAbility('glut-feast', buildContext(aimX, aimY))) return 'glut-feast';
+    }
+    if (!skipSpecials && dist < 540) {
+      // Half the time the charcoal is fuel rather than a weapon — a superheated grill is worth
+      // more over a fight than one briquette to the chest, but only while something is on it.
+      const grill = aiState.gluttonyGrillPoint;
+      const atGrill = !!grill && (aiState.npcGluttonyCooking ?? 0) > 0 && Math.random() < 0.5;
+      const tx = atGrill ? grill!.x : aimX;
+      const ty = atGrill ? grill!.y : aimY;
+      if (this.castAbility('glut-charcoal', buildContext(tx, ty))) return 'glut-charcoal';
+    }
+    // Two seconds of half speed is affordable out of reach and nowhere else.
+    if (!skipSpecials && food < 4 && dist > 260) {
+      if (this.castAbility('glut-forage', buildContext(aimX, aimY))) return 'glut-forage';
+    }
+    // The click is both the knife and the grill loader; GluttonyKit decides which from the strip.
+    if (dist < 700 || (aiState.npcGluttonyGrillRoom && food > 0)) {
+      if (this.castAbility('glut-knife', buildContext(aimX, aimY))) return 'glut-knife';
     }
     return null;
   }
@@ -1833,6 +1962,10 @@ export class NpcOpponent extends Fighter {
     return null;
   }
 
+  /**
+   * The soloist. Its metronome runs in SoundKit off the cast ids returned here, so the harder
+   * difficulties land harmonized casts simply by casting more often — no special-casing needed.
+   */
   private doSoundAbilities(
     target: Fighter,
     buildContext: (tX: number, tY: number) => CastContext,
@@ -1844,8 +1977,10 @@ export class NpcOpponent extends Fighter {
     aiState: NpcAiState,
   ): string | null {
     void aiState;
-    const AIR_HIT_CHANCES = [0.20, 0.35, 0.50, 0.65, 0.80];
-    const hitChance = AIR_HIT_CHANCES[this.difficulty.level - 1];
+    void aimX;
+    void aimY;
+    const SOUND_HIT_CHANCES = [0.20, 0.35, 0.50, 0.65, 0.80];
+    const hitChance = SOUND_HIT_CHANCES[this.difficulty.level - 1];
     const angleToTarget = Phaser.Math.Angle.Between(this.x, this.y, target.x, target.y);
     const soundAimCtx = (chance: number) => {
       if (Math.random() < chance) return buildContext(target.x, target.y);
@@ -1857,19 +1992,23 @@ export class NpcOpponent extends Fighter {
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skipSpecials) {
-      // Screech Barrier — place on player when close
-      if (dist < 260) {
-        if (this.castAbility('screech-barrier', buildContext(target.x, target.y))) return 'screech-barrier';
+      // Soli — the whole-screen performance, worth opening with whenever it is up.
+      if (this.castAbility('soli', buildContext(target.x, target.y))) return 'soli';
+      // Bugle — free tempo, and its cooldown is short enough to keep topped up.
+      if (this.castAbility('bugle', buildContext(target.x, target.y))) return 'bugle';
+      // Disc Dice — only worth slinging when the player is inside the cut.
+      if (dist < 130) {
+        if (this.castAbility('disc-dice', buildContext(target.x, target.y))) return 'disc-dice';
       }
-      // Sound Grapple — gap close when far
-      if (dist > 380) {
-        if (this.castAbility('sound-grapple', buildContext(target.x, target.y))) return 'sound-grapple';
+      // Conduct — hang a violin on the player's ground while there is distance to cover.
+      if (dist > 200) {
+        if (this.castAbility('conduct', buildContext(target.x, target.y))) return 'conduct';
       }
     }
 
-    // Default: rhythm shot hitscan
+    // Default: strike the violin.
     if (this.aiState === 'attack' || this.aiState === 'chase') {
-      if (this.castAbility('rhythm-shot', soundAimCtx(hitChance))) return 'rhythm-shot';
+      if (this.castAbility('staccato', soundAimCtx(hitChance))) return 'staccato';
     }
     return null;
   }
@@ -2011,6 +2150,11 @@ export class NpcOpponent extends Fighter {
     return null;
   }
 
+  /**
+   * The wind dancer's opponent brain. Air is now a dancer rather than a sniper, so the AI plays
+   * it as one: close the gap, spin on contact (which pays its own cooldowns back), throw the
+   * glaive at range, and save Wind Breaker for someone standing near enough to be swept up.
+   */
   private doAirAbilities(
     target: Fighter,
     buildContext: (tX: number, tY: number) => CastContext,
@@ -2021,45 +2165,44 @@ export class NpcOpponent extends Fighter {
     aimY: number,
     aiState: NpcAiState,
   ): string | null {
-    // Per-difficulty hit probability for hitscan abilities (ignores aimOffsetDeg)
-    const AIR_HIT_CHANCES = [0.20, 0.35, 0.50, 0.65, 0.80];
-    const airHitChance = AIR_HIT_CHANCES[this.difficulty.level - 1];
-    const angleToTarget = Phaser.Math.Angle.Between(this.x, this.y, target.x, target.y);
-
-    const airAimCtx = (hitChance: number) => {
-      if (Math.random() < hitChance) return buildContext(target.x, target.y);
-      // Guaranteed miss: aim 60–120° perpendicular to the real angle
-      const side = Math.random() < 0.5 ? 1 : -1;
-      const missAng = angleToTarget + side * (Math.PI / 2 + (Math.random() - 0.5) * Math.PI / 3);
-      return buildContext(this.x + Math.cos(missAng) * 600, this.y + Math.sin(missAng) * 600);
-    };
+    void time; void aimX; void aimY;
+    // Already the weather — nothing else can be cast until the funnel opens.
+    if (aiState.airTornadoActive) return null;
 
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skipSpecials) {
-      // 1. Charged Beam — 50% hit chance regardless of difficulty
-      if (aiState.chargedBeamReady) {
-        if (this.castAbility('charged-beam', airAimCtx(0.50))) return 'charged-beam';
+      // 1. Wind Breaker — only worth it with the target already inside the funnel's reach.
+      if (dist < 140) {
+        if (this.castAbility('wind-breaker', buildContext(target.x, target.y))) return 'wind-breaker';
       }
 
-      // 2. Wind Trap — place on enemy when not active and in mid range
-      if (!aiState.windTrapActive && dist < 400) {
-        if (this.castAbility('wind-trap', buildContext(target.x, target.y))) return 'wind-trap';
+      // 2. Spin Dance — the tempo engine. Thrown the moment the target is in the circle, since
+      //    a connecting spin hands every other ability two seconds back.
+      if (dist < 120) {
+        if (this.castAbility('spin-dance', buildContext(target.x, target.y))) return 'spin-dance';
       }
 
-      // 3. Quick Shot — charge up before snipe when in attack range
-      if (dist < 350) {
-        if (this.castAbility('quick-shot', buildContext(this.x, this.y))) return 'quick-shot';
+      // 3. Gale Glaive — parked on the target at mid range, where it has time to grind.
+      if (dist > 90 && dist < 520) {
+        if (this.castAbility('gale-glaive', buildContext(target.x, target.y))) return 'gale-glaive';
       }
 
-      // 4. Grapple — gap close when far
-      if (dist > 300) {
-        if (this.castAbility('grapple', buildContext(target.x, target.y))) return 'grapple';
+      // 4. Sky Grapple — closing tool when far, escape when hurt. Either way it banks dodge,
+      //    which is the only defence air has.
+      if (dist > 260) {
+        if (this.castAbility('sky-grapple', buildContext(target.x, target.y))) return 'sky-grapple';
+      } else if (hpRatio < 0.35 && aiState.airWindDodge < 0.3) {
+        const away = Phaser.Math.Angle.Between(target.x, target.y, this.x, this.y);
+        if (this.castAbility('sky-grapple', buildContext(
+          this.x + Math.cos(away) * 260, this.y + Math.sin(away) * 260,
+        ))) return 'sky-grapple';
       }
     }
 
-    // 5. Air Snipe — difficulty-scaled hit probability
-    if (this.castAbility('air-snipe', airAimCtx(airHitChance))) return 'air-snipe';
+    // 5. Wind Splice — the click. Always aimed true: the shear half misses on its own if the
+    //    target is moving, so no artificial miss chance is needed on top.
+    if (this.castAbility('wind-splice', buildContext(target.x, target.y))) return 'wind-splice';
 
     return null;
   }

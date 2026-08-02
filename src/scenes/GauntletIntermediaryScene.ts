@@ -41,14 +41,14 @@ const INFINITY_BASE_ELEMENTS: ElementDef[] = [
   { id: 'water', name: 'Water', emoji: '💧' },
   { id: 'life',  name: 'Life',  emoji: '🌿' },
   { id: 'air',   name: 'Air',   emoji: '💨' },
-  { id: 'earth', name: 'Earth', emoji: '🪨' },
+  { id: 'earth', name: 'Earth', emoji: '🗿' },
 ];
 
 const INFINITY_COMBINED_ELEMENTS: ElementDef[] = [
   { id: 'oil',      name: 'Oil',      emoji: '🛢️' },
   { id: 'shadow',   name: 'Shadow',   emoji: '🌑'  },
-  { id: 'ice',      name: 'Ice',      emoji: '🧊'  },
-  { id: 'growth',   name: 'Growth',   emoji: '🦠'  },
+  { id: 'ice',      name: 'Ice',      emoji: '❄️'  },
+  { id: 'growth',   name: 'Growth',   emoji: '🐛'  },
   { id: 'crystal',  name: 'Crystal',  emoji: '💎'  },
   { id: 'soul',     name: 'Soul',     emoji: '👻'  },
   { id: 'hunt',     name: 'Hunt',     emoji: '🐺'  },
@@ -59,23 +59,23 @@ const INFINITY_COMBINED_ELEMENTS: ElementDef[] = [
 
 const INFINITY_ABSTRACT_ELEMENTS: ElementDef[] = [
   { id: 'electricity', name: 'Electricity', emoji: '⚡' },
-  { id: 'slime',       name: 'Acid',        emoji: '🟢' },
+  { id: 'slime',       name: 'Acid',        emoji: '💚' },
   { id: 'fate',        name: 'Fate',        emoji: '🃏' },
   { id: 'sound',       name: 'Sound',       emoji: '🔊' },
   { id: 'light',       name: 'Light',       emoji: '✨' },
 ];
 
 const INFINITY_ABSTRACT_COMBINED_ELEMENTS: ElementDef[] = [
-  { id: 'magnet',     name: 'Magnet',     emoji: '🧲' },
+  { id: 'magnet',     name: 'Magnet',     emoji: '🔗' },
   { id: 'metal',      name: 'Metal',      emoji: '⚙️'  },
   { id: 'plasma',     name: 'Plasma',     emoji: '🔮'  },
   { id: 'gunpowder', name: 'Gunpowder', emoji: '💀'  },
   { id: 'echo',       name: 'Echo',       emoji: '🦇'  },
-  { id: 'rubber',     name: 'Rubber',     emoji: '🪀'  },
+  { id: 'rubber',     name: 'Rubber',     emoji: '🎾'  },
   { id: 'magic',      name: 'Magic',      emoji: '📖'  },
   { id: 'technology', name: 'Technology', emoji: '💻'  },
-  { id: 'silence',    name: 'Silence',    emoji: '🫥'  },
-  { id: 'quantum',    name: 'Quantum',    emoji: '⚛️'  },
+  { id: 'silence',    name: 'Silence',    emoji: '😶'  },
+  { id: 'subterfuge', name: 'Subterfuge', emoji: '🕴️' },
 ];
 
 const ABSTRACT_UNLOCK_MAP: Record<string, string> = {
@@ -246,7 +246,7 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
     const runAccent = isInfinity ? C.arcane : gs.hardMode ? C.corrupt : C.gold;
 
     if (isInfinity) {
-      this.add.text(cx, 32, `♾️  INFINITY GAUNTLET${gs.hardMode ? '   🔥 HARD' : ''}`, {
+      this.add.text(cx, 32, `∞  INFINITY GAUNTLET${gs.hardMode ? '   🔥 HARD' : ''}`, {
         fontSize: '18px', fontFamily: FONT_DISPLAY,
         color: hex(mix(C.arcane, 0xffffff, 0.5)), letterSpacing: 4,
       }).setOrigin(0.5).setDepth(DEPTH.content);
@@ -437,7 +437,7 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
     const allParts = [
       ...parts.map((p) => `💠 ${p}`),
       ...charmParts.map((p) => `🔮 ${p}`),
-      ...curseParts.map((p) => `🩸 ${p}`),
+      ...curseParts.map((p) => `🔴 ${p}`),
     ];
 
     this.add.text(cx, y, allParts.join('   '), {

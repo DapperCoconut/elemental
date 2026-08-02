@@ -101,6 +101,9 @@ const SAND_PALETTE: Record<number, number> = {
   0xffffff: 0xfff8e6, // white
   0xffee44: 0xffd24a, // charge — already warm, pushed to amber
   0xfff7bb: 0xffeeb8, // bolt
+  0xb4854a: 0x8a6a30, // wood — the fan ribs, sunk into the dune
+  0x6a4a26: 0x3d2c12, // woodDark
+  0xffd2e4: 0xf0d8a8, // blossom — the mastery's petals, bleached to sand
 };
 
 /**

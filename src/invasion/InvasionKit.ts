@@ -255,7 +255,7 @@ export class InvasionKit implements HuskWorld {
       stroke: '#101c08', strokeThickness: 3,
     }).setOrigin(0.5).setDepth(25);
     this.shardLabel?.destroy();
-    this.shardLabel = scene.add.text(width - 16, 16, '🩸 0', {
+    this.shardLabel = scene.add.text(width - 16, 16, '🔴 0', {
       fontSize: '16px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#cc44ff',
     }).setOrigin(1, 0).setDepth(25);
 
@@ -290,7 +290,7 @@ export class InvasionKit implements HuskWorld {
       this.clearedWaves = this.wave;
       const bonus = Math.round(this.wave * 3 * this.difficulty.shardMult);
       this.shards += bonus;
-      this.arena.showFloatingText(player.x, player.y - 50, `WAVE ${this.wave} CLEARED  +${bonus} 🩸`, '#88ff44');
+      this.arena.showFloatingText(player.x, player.y - 50, `WAVE ${this.wave} CLEARED  +${bonus} 🔴`, '#88ff44');
       this.intermissionUntil = time + INTERMISSION_MS;
       this.coopHooks?.onWaveCleared(this.wave, bonus);
       // Achievement — Plants vs Zombies: hold the line to wave 8 with a garden.
@@ -329,7 +329,7 @@ export class InvasionKit implements HuskWorld {
 
     this.updateShots(time, delta, targets);
 
-    this.shardLabel?.setText(`🩸 ${this.shards}`);
+    this.shardLabel?.setText(`🔴 ${this.shards}`);
     this.remaining = alive.length + this.pendingSpawns + (this.pendingBoss ? 1 : 0);
     this.waveLabel?.setText(formatWaveLabel(this.wave, this.remaining));
   }
@@ -444,7 +444,7 @@ export class InvasionKit implements HuskWorld {
     const base = 1 + Math.floor((this.wave - 1) / 3);
     const reward = Math.round(base * this.difficulty.shardMult * (husk.variant.isBoss ? 10 : 1));
     this.shards += reward;
-    this.arena.showFloatingText(husk.x, husk.y - 30, `+${reward} 🩸`, '#cc44ff');
+    this.arena.showFloatingText(husk.x, husk.y - 30, `+${reward} 🔴`, '#cc44ff');
     this.coopHooks?.onHuskDefeated(husk, reward);
     this.arena.notifyHuskDefeated?.(husk);
     husk.hideHealthBar();

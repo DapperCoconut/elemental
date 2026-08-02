@@ -1,8 +1,10 @@
 import Phaser from 'phaser';
 import { WORLDS, World, getFightNodes } from '../data/Worlds';
 import { ABSTRACT_WORLDS } from '../data/AbstractWorlds';
+import { CORRUPT_WORLDS } from '../data/CorruptWorlds';
 import * as CP from '../data/CampaignProgress';
-import { drawWorldMapBackground, drawAbstractWorldMapBackground } from './CampaignBackground';
+import { drawWorldMapBackground, drawAbstractWorldMapBackground, drawCorruptWorldMapBackground } from './CampaignBackground';
+import { maybePlayStory } from './DialogueScene';
 import { addInventoryButton } from './InventoryScene';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
@@ -12,13 +14,13 @@ import { Music } from '../audio';
 
 export class CampaignWorldMapScene extends Phaser.Scene {
   private slotIdx: 0 | 1 | 2 = 0;
-  private mode: 'normal' | 'abstract' = 'normal';
+  private mode: 'normal' | 'abstract' | 'corrupt' = 'normal';
 
   constructor() {
     super({ key: 'CampaignWorldMapScene' });
   }
 
-  init(data: { slotIdx: 0 | 1 | 2; mode?: 'normal' | 'abstract' }): void {
+  init(data: { slotIdx: 0 | 1 | 2; mode?: 'normal' | 'abstract' | 'corrupt' }): void {
     this.slotIdx = data?.slotIdx ?? 0;
     this.mode = data?.mode ?? 'normal';
   }
@@ -29,11 +31,13 @@ export class CampaignWorldMapScene extends Phaser.Scene {
     const cx = width / 2;
     const slot = this.slotIdx;
     const isAbstract = this.mode === 'abstract';
-    const worlds = isAbstract ? ABSTRACT_WORLDS : WORLDS;
-    const accent = isAbstract ? C.arcane : C.ember;
+    const isCorrupt = this.mode === 'corrupt';
+    const worlds = isCorrupt ? CORRUPT_WORLDS : isAbstract ? ABSTRACT_WORLDS : WORLDS;
+    const accent = isCorrupt ? C.blood : isAbstract ? C.arcane : C.ember;
 
     // The painted map art stays — only the chrome over it is restyled.
-    const bgFn = isAbstract ? drawAbstractWorldMapBackground : drawWorldMapBackground;
+    const bgFn = isCorrupt ? drawCorruptWorldMapBackground
+      : isAbstract ? drawAbstractWorldMapBackground : drawWorldMapBackground;
     bgFn(this, width, height).setDepth(DEPTH.backdrop);
 
     // ── Title plaque ────────────────────────────────────────────────
@@ -46,11 +50,11 @@ export class CampaignWorldMapScene extends Phaser.Scene {
     plaque.beginPath(); plaque.moveTo(60, 62); plaque.lineTo(width - 60, 62); plaque.strokePath();
     fillDiamond(plaque, cx, 62, 5, mix(accent, 0xffffff, 0.4), 0.95);
 
-    // Clearing every world in both realms is the end of the campaign — say so.
-    const allDone = [...WORLDS, ...ABSTRACT_WORLDS].every((w) => CP.isChallengeCompleted(slot, w.id));
+    // Clearing every world in all three realms is the end of the campaign — say so.
+    const allDone = [...WORLDS, ...ABSTRACT_WORLDS, ...CORRUPT_WORLDS].every((w) => CP.isChallengeCompleted(slot, w.id));
     const titleAccent = allDone ? C.gold : accent;
     const titleText = this.add.text(cx, 24,
-      allDone ? '★  CAMPAIGN COMPLETE  ★' : (isAbstract ? 'ABSTRACT REALM' : 'WORLD MAP'), {
+      allDone ? '★  CAMPAIGN COMPLETE  ★' : (isCorrupt ? 'CORRUPT REALM' : isAbstract ? 'ABSTRACT REALM' : 'WORLD MAP'), {
         fontSize: '24px', fontFamily: FONT_DISPLAY,
         color: hex(mix(titleAccent, 0xffffff, 0.6)),
         stroke: hex(mix(titleAccent, 0x000000, 0.8)), strokeThickness: 4,
@@ -93,14 +97,17 @@ export class CampaignWorldMapScene extends Phaser.Scene {
     addBackButton(this, back);
     this.input.keyboard!.on('keydown-ESC', back);
 
-    // SPACE: toggle between normal and abstract map (only if portal is unlocked)
+    // SPACE: cycle realms — normal → abstract → corrupt → normal, skipping
+    // whichever portals are still sealed.
     this.input.keyboard!.on('keydown-SPACE', () => {
       if (this.scene.isPaused()) return;
       if (!CP.isPortalUnlocked(this.slotIdx)) return;
-      this.scene.start('CampaignWorldMapScene', {
-        slotIdx: this.slotIdx,
-        mode: this.mode === 'normal' ? 'abstract' : 'normal',
-      });
+      const corruptOpen = CP.isCorruptPortalUnlocked(this.slotIdx);
+      const next: 'normal' | 'abstract' | 'corrupt' =
+        this.mode === 'normal' ? 'abstract'
+          : this.mode === 'abstract' ? (corruptOpen ? 'corrupt' : 'normal')
+          : 'normal';
+      this.scene.start('CampaignWorldMapScene', { slotIdx: this.slotIdx, mode: next });
     });
 
     // ── Connector lines (below the nodes) ───────────────────────────
@@ -130,8 +137,10 @@ export class CampaignWorldMapScene extends Phaser.Scene {
 
     addInventoryButton(this, this.slotIdx, DEPTH.content + 5);
 
-    // ── Portal (normal map only) ────────────────────────────────────
-    if (!isAbstract) {
+    // ── Portals ─────────────────────────────────────────────────────
+    // The normal map carries the Abstract portal; the abstract map carries the
+    // scar into the Corrupt Realm. The corrupt map is the end of the line.
+    if (!isAbstract && !isCorrupt) {
       const portalUnlocked = CP.isPortalUnlocked(slot);
       addButton(this, {
         x: cx, y: 578, w: 230, h: 52,
@@ -142,6 +151,51 @@ export class CampaignWorldMapScene extends Phaser.Scene {
         onClick: () => {
           this.scene.pause();
           this.scene.launch('CampaignPortalScene', { slotIdx: this.slotIdx });
+        },
+      });
+    }
+
+    // ── Story beats: the prologue and each realm's arrival ──────────
+    maybePlayStory(this, slot,
+      isCorrupt ? 'portal-corrupt' : isAbstract ? 'portal-abstract' : 'prologue');
+
+    // The corrupt map's heart. Every Sovereign in the scar has to be back on
+    // its feet before the thing they were eaten to make will come up.
+    if (isCorrupt) {
+      const open = CP.canFightAmalgam(slot);
+      const felled = CP.isAmalgamFelled(slot);
+      const cleared = CP.corruptChallengesCleared(slot);
+      addButton(this, {
+        x: cx, y: 578, w: 280, h: 52,
+        label: felled ? 'THE AMALGAM  ★' : 'THE AMALGAM', icon: '🕳️',
+        sublabel: felled ? 'It comes apart again on request'
+          : open ? 'It has been waiting for all of them'
+          : `${cleared}/${CORRUPT_WORLDS.length} thrones standing`,
+        accent: C.blood, variant: open ? 'solid' : 'ghost',
+        fontSize: 19, align: 'left',
+        onClick: () => {
+          if (!open) return;
+          this.scene.start('CampaignFightMenuScene', {
+            worldId: 'amalgam', nodeId: 'amalgam-challenge',
+            isChallenge: true, kind: 'challenge', slotIdx: this.slotIdx,
+          });
+        },
+      });
+    }
+
+    if (isAbstract) {
+      const scarOpen = CP.isCorruptPortalUnlocked(slot);
+      addButton(this, {
+        x: cx, y: 578, w: 250, h: 52,
+        label: 'THE SCAR', icon: '🔴',
+        sublabel: scarOpen ? 'SPACE to cross realms'
+          : CP.canOpenCorruptPortal(slot) ? 'Something bleeds through…'
+          : `Fell ${CP.CORRUPT_PORTAL_CHALLENGES} Sovereigns here first`,
+        accent: C.blood, variant: scarOpen ? 'solid' : 'ghost',
+        fontSize: 19, align: 'left',
+        onClick: () => {
+          this.scene.pause();
+          this.scene.launch('CampaignPortalScene', { slotIdx: this.slotIdx, realm: 'corrupt' });
         },
       });
     }
@@ -196,7 +250,11 @@ export class CampaignWorldMapScene extends Phaser.Scene {
     // Per-world progress, or the reason it is shut.
     const fightNodes = getFightNodes(world);
     const done = fightNodes.filter((n) => CP.isFightCompleted(slot, world.id, n.id)).length;
-    const parent = world.parentId ? (WORLDS.find((w) => w.id === world.parentId) ?? ABSTRACT_WORLDS.find((w) => w.id === world.parentId)) : null;
+    const parent = world.parentId
+      ? (WORLDS.find((w) => w.id === world.parentId)
+        ?? ABSTRACT_WORLDS.find((w) => w.id === world.parentId)
+        ?? CORRUPT_WORLDS.find((w) => w.id === world.parentId))
+      : null;
     const caption = !unlocked
       ? (parent ? `clear ${parent.name}` : 'locked')
       : challengeDone ? '★ CLEARED'

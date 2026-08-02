@@ -15,6 +15,7 @@ import {
 } from '../data/Mastery';
 import { INVASION_DIFFICULTIES, InvasionDifficultyId } from '../invasion/InvasionKit';
 import { Bounty, difficultyLabel } from '../data/Bounties';
+import { TagTeamState, freshKingTagTeam } from '../data/FightFormats';
 import { FATE_CARD_DEFS } from '../elements/kits/FateKit';
 
 import { Element } from '../elements/Element';
@@ -46,8 +47,9 @@ import { rubberElement } from '../elements/rubber';
 import { magicElement } from '../elements/magic';
 import { technologyElement } from '../elements/technology';
 import { silenceElement } from '../elements/silence';
-import { echoElement } from '../elements/quantum';
-import { quantumElement } from '../elements/quantum-element';
+import { echoElement } from '../elements/echo';
+import { subterfugeElement } from '../elements/subterfuge';
+import { quantumElement } from '../elements/quantum';
 import { dummyElement } from '../elements/dummy';
 import { justiceElement } from '../elements/justice';
 import { dreamElement } from '../elements/dream';
@@ -90,6 +92,7 @@ const ELEMENT_DATA_MAP: Record<string, Element> = {
   technology: technologyElement,
   silence: silenceElement,
   echo: echoElement,
+  subterfuge: subterfugeElement,
   quantum: quantumElement,
   dummy: dummyElement,
   // Kit-less for now, but their info panels are the whole point of unlocking
@@ -120,14 +123,14 @@ export const ELEMENTS: ElementDef[] = [
   { id: 'water', name: 'Water', emoji: '💧', color: 0x0088ff, available: true  },
   { id: 'life',  name: 'Life',  emoji: '🌿', color: 0x44cc44, available: true  },
   { id: 'air',   name: 'Air',   emoji: '💨', color: 0xaaddff, available: true  },
-  { id: 'earth', name: 'Earth', emoji: '🪨', color: 0x887755, available: true  },
+  { id: 'earth', name: 'Earth', emoji: '🗿', color: 0x887755, available: true  },
 ];
 
 export const COMBINED_ELEMENTS: ElementDef[] = [
   { id: 'oil',    name: 'Oil',    emoji: '🛢️', color: 0x664400, available: true },
   { id: 'shadow', name: 'Shadow', emoji: '🌑', color: 0x330044, available: true },
-  { id: 'ice',    name: 'Ice',    emoji: '🧊', color: 0x88ccff, available: true },
-  { id: 'growth',  name: 'Growth',  emoji: '🦠', color: 0x88bb22, available: true },
+  { id: 'ice',    name: 'Ice',    emoji: '❄️', color: 0x88ccff, available: true },
+  { id: 'growth',  name: 'Growth',  emoji: '🐛', color: 0x88bb22, available: true },
   { id: 'crystal', name: 'Crystal', emoji: '💎', color: 0x88ccff, available: true },
   { id: 'soul',    name: 'Soul',    emoji: '👻', color: 0xccaaff, available: true },
   { id: 'hunt',    name: 'Hunt',    emoji: '🐺', color: 0xcc4400, available: true },
@@ -147,7 +150,7 @@ export const ABSTRACT_ELEMENT_UNLOCK_MAP: Record<string, string> = {
 
 export const ABSTRACT_ELEMENTS: ElementDef[] = [
   { id: 'electricity', name: 'Electricity', emoji: '⚡', color: 0xffee00, available: true },
-  { id: 'slime', name: 'Acid', emoji: '🟢', color: 0x66cc44, available: true },
+  { id: 'slime', name: 'Acid', emoji: '💚', color: 0x66cc44, available: true },
   { id: 'fate', name: 'Fate', emoji: '🃏', color: 0x88eecc, available: true },
   { id: 'sound', name: 'Sound', emoji: '🔊', color: 0xff66cc, available: true },
   { id: 'light', name: 'Light', emoji: '✨', color: 0xfff4a8, available: true },
@@ -166,6 +169,29 @@ export const DIVINE_ELEMENTS: ElementDef[] = [
 ];
 
 /**
+ * The sealed element, cut out from behind the Amalgam by finishing the campaign. Its own
+ * roster because it is the only element that is not a thing on its own: a Quantum is whatever
+ * pair has been bonded to it in the Entanglement Lab.
+ */
+export const FINALE_ELEMENTS: ElementDef[] = [
+  { id: 'quantum', name: 'Quantum', emoji: '⚛️', color: 0x7df9ff, available: true },
+];
+
+/**
+ * The finale elements this profile may pick, for every roster in the game.
+ *
+ * Cheat mode counts as unlocked rather than being asked to prove it. A cheat profile is
+ * minted once by `createCheatSave()` and never topped up, so anything added to the grant list
+ * afterwards is missing from every profile that already exists — the ↻ rebuild button on the
+ * title screen exists for that, but a roster that quietly hides content until someone finds
+ * that button is worse than one that trusts the mode.
+ */
+export function unlockedFinaleElements(): ElementDef[] {
+  if (isCheatMode()) return FINALE_ELEMENTS;
+  return FINALE_ELEMENTS.filter((e) => PlayerData.isElementUnlocked(e.id));
+}
+
+/**
  * Elements that have no obtainment yet.
  *
  * These are playable, finished kits with nothing in the game that hands them out — so the
@@ -174,6 +200,39 @@ export const DIVINE_ELEMENTS: ElementDef[] = [
  * to every unlock, recipe and reward path in the game until it is given a real one, at which
  * point it moves out of this list and into whichever roster it actually belongs to.
  */
+/**
+ * Elements whose ability list is really two or three kits sharing five keys. The info panel
+ * gives them a form selector rather than ten or fifteen rows in one column, and reads
+ * `element.abilities` in blocks of five in exactly the order the tabs are listed here.
+ */
+export const ELEMENT_FORM_TABS: Record<string,
+  Array<{ label: string; accent: number; text: string; hint: string }>> = {
+  hunt: [
+    {
+      label: '🏹 HUMAN', accent: 0xcc6622, text: '#ffbb88',
+      hint: 'The beast comes out on its own after 30s — Q is a clock, not a button.',
+    },
+    {
+      label: '🐺 BEAST', accent: 0xcc2233, text: '#ff9999',
+      hint: 'Beast form lasts 12s, then 50s before it takes you again.',
+    },
+    {
+      label: '🌗 HYBRID', accent: 0x99a3ad, text: '#dde4ec',
+      hint: 'Hybrid form needs the Q+ upgrade. The beast seizes the controls every 10s.',
+    },
+  ],
+  gluttony: [
+    {
+      label: '👨‍🍳 CHEF', accent: 0xd6dee6, text: '#f6f2e8',
+      hint: 'The grill is in the middle of the arena and the prep strip is at the top of the screen. Click a tile to hold that ingredient; right-click eats it.',
+    },
+    {
+      label: '🔪 BUTCHER', accent: 0xa81f2b, text: '#ff9aa2',
+      hint: '30 seconds, and damage comes off the hunger bar instead of your health. Eating is the only way to put time back on it.',
+    },
+  ],
+};
+
 export const TEST_ELEMENTS: ElementDef[] = [
   { id: 'chalk', name: 'Chalk', emoji: '🖍️', color: 0xf4f1e6, available: true },
   { id: 'magma', name: 'Magma', emoji: '🌋', color: 0xff5a1e, available: true },
@@ -181,31 +240,32 @@ export const TEST_ELEMENTS: ElementDef[] = [
   { id: 'depths', name: 'Depths', emoji: '🐟', color: 0x0e8f9c, available: true },
   { id: 'conquest', name: 'Conquest', emoji: '🏰', color: 0xc23a2e, available: true },
   { id: 'passion', name: 'Passion', emoji: '💘', color: 0xff5fa2, available: true },
-  { id: 'ruin', name: 'Ruin', emoji: '🧱', color: 0xc4392c, available: true },
-  { id: 'glass', name: 'Glass', emoji: '🪟', color: 0x9fe8ff, available: true },
+  { id: 'ruin', name: 'Ruin', emoji: '🚧', color: 0xc4392c, available: true },
+  { id: 'glass', name: 'Glass', emoji: '🔷', color: 0x9fe8ff, available: true },
   { id: 'paper', name: 'Paper', emoji: '📄', color: 0xf2ead6, available: true },
   { id: 'death', name: 'Death', emoji: '⚰️', color: 0x4a4468, available: true },
-  { id: 'fortune', name: 'Fortune', emoji: '🪙', color: 0xd8a531, available: true },
-  { id: 'amber', name: 'Amber', emoji: '🟠', color: 0xd98b1f, available: true },
+  { id: 'fortune', name: 'Fortune', emoji: '💰', color: 0xd8a531, available: true },
+  { id: 'amber', name: 'Amber', emoji: '🔶', color: 0xd98b1f, available: true },
   { id: 'psychic', name: 'Psychic', emoji: '👁️', color: 0x9b4dff, available: true },
   { id: 'radiation', name: 'Radiation', emoji: '☢️', color: 0x7cff3d, available: true },
   { id: 'bind', name: 'Bind', emoji: '⛓️', color: 0xe0b743, available: true },
   // Slime keeps the id `gum` — `slime` still belongs to Acid, which kept the old name's slot.
-  { id: 'gum', name: 'Slime', emoji: '🫠', color: 0x46b93f, available: true },
+  { id: 'gum', name: 'Slime', emoji: '🤢', color: 0x46b93f, available: true },
+  { id: 'gluttony', name: 'Gluttony', emoji: '🍖', color: 0xd8452f, available: true },
 ];
 
 /** Abstract combined elements — created by fusing two abstract elements in a Lvl 1+ Lab. */
 export const ABSTRACT_COMBINED_ELEMENTS: ElementDef[] = [
-  { id: 'magnet', name: 'Magnet', emoji: '🧲', color: 0xcc2244, available: true },
+  { id: 'magnet', name: 'Magnet', emoji: '🔗', color: 0xcc2244, available: true },
   { id: 'metal',  name: 'Metal',  emoji: '⚙️',  color: 0x8899aa, available: true },
   { id: 'plasma', name: 'Plasma', emoji: '🔮',  color: 0xaa22ff, available: true },
   { id: 'gunpowder', name: 'Gunpowder', emoji: '💀',  color: 0x440066, available: true },
   { id: 'echo',   name: 'Echo',   emoji: '🦇',  color: 0xccccff, available: true },
-  { id: 'rubber', name: 'Rubber', emoji: '🪀', color: 0xff5577, available: true },
+  { id: 'rubber', name: 'Rubber', emoji: '🎾', color: 0xff5577, available: true },
   { id: 'magic', name: 'Magic', emoji: '📖', color: 0x9944ff, available: true },
   { id: 'technology', name: 'Technology', emoji: '💻', color: 0x44ccaa, available: true },
-  { id: 'silence', name: 'Silence', emoji: '🫥', color: 0x1a0022, available: true },
-  { id: 'quantum', name: 'Subterfuge', emoji: '🕴️', color: 0xcc2233, available: true },
+  { id: 'silence', name: 'Silence', emoji: '😶', color: 0x1a0022, available: true },
+  { id: 'subterfuge', name: 'Subterfuge', emoji: '🕴️', color: 0xcc2233, available: true },
 ];
 
 const DIFF_COLORS = [0x22cc44, 0x88cc22, 0xddaa00, 0xee5500, 0xcc0022];
@@ -215,6 +275,13 @@ const DUMMY_SEQUENCE = ['W','W','S','S','A','D','A','D','B','A'];
 
 export class MenuScene extends Phaser.Scene {
   private selectionPhase: 'player' | 'enemy' | 'difficulty' = 'player';
+  /**
+   * Quantum only, and only inside its customization screen: the first half of a bond being
+   * built, held while the second is being picked. `null` when the bond editor is closed.
+   */
+  private bondDraftFirst: string | null = null;
+  /** Whether the Quantum customization screen is showing the bond builder. */
+  private bondEditing = false;
   private playerChoice: string | null = null;
   private enemyChoice: string | null = null;
   private elemPage = 0;
@@ -227,10 +294,22 @@ export class MenuScene extends Phaser.Scene {
   private isBoss = false;
   /** The Devourer of Kings — the hard mode behind the same door. */
   private isBossHard = false;
+  /**
+   * The King's tag-team run: three elements, two switches. Present from the
+   * first pick onward, and handed back here by ArenaScene every time an element
+   * falls — carrying the elements already burned and the body the King is on.
+   */
+  private bossTag: TagTeamState | null = null;
   private bounty: Bounty | null = null;
   private invasionDifficultyId: InvasionDifficultyId = 'normal';
   // Preserves scroll position across showCustomizeScreen rebuilds triggered by toggles/equips.
   private customizeScrollY = 0;
+  /**
+   * Which half of the bond the Quantum customization screen is editing. Quantum owns no
+   * mastery, perks, upgrades or skins of its own — everything it fights with belongs to the
+   * two elements it carries — so its page is a pair of tabs over their loadouts.
+   */
+  private customizeHalf: string | null = null;
 
   private phaseObjects: Phaser.GameObjects.GameObject[] = [];
   private infoOverlayObjects: Phaser.GameObjects.GameObject[] = [];
@@ -246,7 +325,7 @@ export class MenuScene extends Phaser.Scene {
   private elementInfoMode: 'base' | 'upgraded' | 'build' | 'journal' = 'base';
   /** Which elements' journal entries are expanded on Paper's Journal tab. */
   private expandedJournal = new Set<string>();
-  /** Hunt only: which of its three forms the info panel is listing. */
+  /** Form-swapping elements only: which block of five the info panel is listing. */
   private elementInfoHuntForm: 0 | 1 | 2 = 0;
   private expandedVariants: Set<string> = new Set();
   private hoveredDifficulty = 1;
@@ -256,18 +335,22 @@ export class MenuScene extends Phaser.Scene {
     super({ key: 'MenuScene' });
   }
 
-  create(data?: { mode?: string; bounty?: Bounty; hard?: boolean }): void {
+  create(data?: { mode?: string; bounty?: Bounty; hard?: boolean; tagTeam?: TagTeamState }): void {
     Music.play('menu');
     this.isInvasion = data?.mode === 'invasion';
     this.isBoss = data?.mode === 'boss';
     // Guarded rather than trusted: the door is the only way in, but a stale
     // scene payload must never open hard mode for a save that has not earned it.
     this.isBossHard = this.isBoss && data?.hard === true && PlayerData.isDevourerUnlocked();
+    // Absent on the way in through the door, present on every tag-in after a fall.
+    this.bossTag = this.isBoss ? (data?.tagTeam ?? null) : null;
     this.bounty = data?.mode === 'bounty' ? (data.bounty ?? null) : null;
     this.invasionDifficultyId = 'normal';
     clearMutationSelection();
     clearConsumedItems();
     this.selectionPhase = 'player';
+    this.bondDraftFirst = null;
+    this.bondEditing = false;
     this.playerChoice = null;
     this.enemyChoice = null;
     this.elemPage = 0;
@@ -301,8 +384,8 @@ export class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(DEPTH.content);
 
     const mission = this.isInvasion ? 'Survive as long as you can.'
-      : this.isBossHard ? 'Four phases. No heals. One decision at the end of it.'
-      : this.isBoss ? 'Two phases. No second chances.'
+      : this.isBossHard ? 'Four phases. No heals. Three elements, two tags. One decision at the end of it.'
+      : this.isBoss ? 'Two phases. Three elements, two tags. He keeps every wound.'
       : this.bounty ? 'Complete the contract to claim its Divine Nuclei.'
       : 'Defeat the enemy to win.';
     this.add.text(cx, height - 22, mission, {
@@ -371,11 +454,44 @@ export class MenuScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Every non-base element this save may play, in roster order. The element phase pages
+   * through it and Quantum's bond builder lists it, so it lives here rather than inline.
+   */
+  private unlockedExtraElements(): ElementDef[] {
+    const completedGauntlets = PlayerData.getCompletedGauntlets();
+    const unlockedCombined = COMBINED_ELEMENTS.filter((e) => PlayerData.isElementUnlocked(e.id));
+    const unlockedAbstract = ABSTRACT_ELEMENTS.filter((e) => {
+      const neededGauntlet = ABSTRACT_ELEMENT_UNLOCK_MAP[e.id];
+      return neededGauntlet ? completedGauntlets.includes(neededGauntlet) : false;
+    });
+    const unlockedAbstractCombined = ABSTRACT_COMBINED_ELEMENTS.filter((e) => PlayerData.isElementUnlocked(e.id));
+    // Earned from the Devourer. Listed last so the rarest thing in the game sits
+    // at the end of the roster rather than in the middle of it.
+    const unlockedDivine = DIVINE_ELEMENTS.filter((e) => PlayerData.isElementUnlocked(e.id));
+    const unlockedFinale = unlockedFinaleElements();
+    // Elements with no obtainment yet. Gated on cheat mode rather than on a save flag, so a
+    // legitimate profile can never see one however it was reached.
+    const testElements = isCheatMode() ? TEST_ELEMENTS : [];
+    return [
+      ...unlockedCombined, ...unlockedAbstract, ...unlockedAbstractCombined, ...unlockedDivine,
+      ...unlockedFinale, ...testElements,
+    ];
+  }
+
   private renderElementPhase(width: number, height: number, cx: number): void {
     const isPlayerPhase = this.selectionPhase === 'player';
 
+    // Mid-run the door is a tag-in, not a start: say which it is, and how many
+    // switches are left, before the player commits the next element.
+    const tagsLeft = this.bossTag?.pledgesLeft ?? 0;
+    const tagPips = this.bossTag
+      ? `${'●'.repeat(tagsLeft)}${'○'.repeat(this.bossTag.usedElements.length)}`
+      : '';
     const subtitle = isPlayerPhase
       ? this.isInvasion ? 'INVASION — pick your element'
+        : this.bossTag && this.bossTag.usedElements.length > 0
+          ? `⟳ TAG IN  ${tagPips}  — he kept every wound`
         : this.isBoss ? '👑 THE DISGRACED KING — pick your element'
         : this.bounty ? `${this.bounty.emoji} ${this.bounty.name.toUpperCase()} CONTRACT — pick your element`
         : 'Choose your element'
@@ -405,23 +521,7 @@ export class MenuScene extends Phaser.Scene {
     }
 
     // Determine which elements to show on this page
-    const completedGauntlets = PlayerData.getCompletedGauntlets();
-    const unlockedCombined = COMBINED_ELEMENTS.filter((e) => PlayerData.isElementUnlocked(e.id));
-    const unlockedAbstract = ABSTRACT_ELEMENTS.filter((e) => {
-      const neededGauntlet = ABSTRACT_ELEMENT_UNLOCK_MAP[e.id];
-      return neededGauntlet ? completedGauntlets.includes(neededGauntlet) : false;
-    });
-    const unlockedAbstractCombined = ABSTRACT_COMBINED_ELEMENTS.filter((e) => PlayerData.isElementUnlocked(e.id));
-    // Earned from the Devourer. Listed last so the rarest thing in the game sits
-    // at the end of the roster rather than in the middle of it.
-    const unlockedDivine = DIVINE_ELEMENTS.filter((e) => PlayerData.isElementUnlocked(e.id));
-    // Elements with no obtainment yet. Gated on cheat mode rather than on a save flag, so a
-    // legitimate profile can never see one however it was reached.
-    const testElements = isCheatMode() ? TEST_ELEMENTS : [];
-    // Pool all non-base unlocked elements together for pagination
-    const unlockedExtra = [
-      ...unlockedCombined, ...unlockedAbstract, ...unlockedAbstractCombined, ...unlockedDivine, ...testElements,
-    ];
+    const unlockedExtra = this.unlockedExtraElements();
     const PAGE_SIZE = 5;
     const extraPages = Math.max(1, Math.ceil(unlockedExtra.length / PAGE_SIZE));
     const maxPage = unlockedExtra.length > 0 ? extraPages : 0; // 0 = no extra pages
@@ -477,7 +577,10 @@ export class MenuScene extends Phaser.Scene {
       const bx = startX + i * (cardW + gap) + cardW / 2;
       const by = height / 2 + 20;
 
-      const clickable = el.available;
+      // Tag team: an element fights the King at most once per run. Burned ones
+      // stay on the board, greyed, so the roster you have left is legible.
+      const burned = isPlayerPhase && this.bossTag?.usedElements.includes(el.id) === true;
+      const clickable = el.available && !burned;
       const fillAlpha = clickable ? 0.8 : 0.3;
       const masteryDef = getMasteryDef(el.id);
       const masteryOn = clickable && PlayerData.isMasteryEnabled(el.id);
@@ -518,8 +621,9 @@ export class MenuScene extends Phaser.Scene {
       const statusColor = hex(mix(displayColor, 0xffffff, 0.55));
       // A divine element is *earned* and locked, not undiscovered — say so, or
       // the reward for the hardest fight in the game reads like a stub.
-      const lockedLabel = DIVINE_ELEMENTS.some((d) => d.id === el.id)
-        ? 'AWAITING ITS KIT' : 'COMING SOON';
+      const lockedLabel = burned ? '⟳ ALREADY FOUGHT'
+        : DIVINE_ELEMENTS.some((d) => d.id === el.id) ? 'AWAITING ITS KIT'
+        : 'COMING SOON';
       const statusText = this.add.text(bx, by + 50, clickable ? '▶  SELECT' : lockedLabel, {
         fontSize: clickable ? '11px' : '10px', fontFamily: FONT_DISPLAY,
         color: clickable ? statusColor : T.ghost, letterSpacing: 2,
@@ -559,7 +663,12 @@ export class MenuScene extends Phaser.Scene {
           label: 'CUSTOMIZE', icon: '⚙', fontSize: 10,
           accent: C.arcane, variant: 'ghost', cut: 8,
           depth: DEPTH.content + 3,
-          onClick: () => { this.customizeScrollY = 0; this.showCustomizeScreen(el.id, width, height, cx); },
+          onClick: () => {
+            this.customizeScrollY = 0;
+            this.bondEditing = false;
+            this.bondDraftFirst = null;
+            this.showCustomizeScreen(el.id, width, height, cx);
+          },
         });
         this.phaseObjects.push(custBtn.container);
       }
@@ -625,6 +734,19 @@ export class MenuScene extends Phaser.Scene {
       this.phaseObjects.push(indicator);
     }
 
+    // Mid-run: what is left of the team, and what the King is still standing on.
+    if (boss && this.bossTag && this.bossTag.usedElements.length > 0) {
+      const left = this.bossTag.pledgesLeft ?? 0;
+      const burned = this.bossTag.usedElements
+        .map((id) => this.findElement(id)?.name.toUpperCase() ?? id.toUpperCase())
+        .join('  ·  ');
+      const tagLine = this.add.text(cx, 232,
+        `⟳  ${'●'.repeat(left)}${'○'.repeat(this.bossTag.usedElements.length)}   SWITCHES LEFT      FALLEN:  ${burned}`, {
+        fontSize: '12px', fontFamily: FONT_DISPLAY, color: hex(C.frost), letterSpacing: 1.5,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+      this.phaseObjects.push(tagLine);
+    }
+
     const bodyY = 262;
 
     if (boss) {
@@ -646,6 +768,11 @@ export class MenuScene extends Phaser.Scene {
         '',
         'He does not repeat himself by accident. Learn the order.',
       ];
+      // The tag rules are the same in both modes, so they are stated once here
+      // rather than folded into either briefing.
+      lines.push('',
+        'TAG TEAM  ·  three elements, two switches. Fall, and a fresh element',
+        'takes the floor — he keeps the body and every wound you put in it.');
       const body = this.add.text(cx, bodyY + 44, lines.join('\n'), {
         fontSize: '13px', fontFamily: FONT_UI, color: T.normal,
         align: 'center', lineSpacing: 8,
@@ -708,6 +835,8 @@ export class MenuScene extends Phaser.Scene {
         mode: 'boss',
         bossHard: this.isBossHard,
         playerPerk: PlayerData.getEquippedPerk(elementId),
+        // Carried across a tag-in; minted here on the way in through the door.
+        tagTeam: this.bossTag ?? freshKingTagTeam(),
       });
       return;
     }
@@ -1310,10 +1439,11 @@ export class MenuScene extends Phaser.Scene {
     const showUpgraded = this.elementInfoMode === 'upgraded';
     const showBuild = this.elementInfoMode === 'build';
     const showJournal = this.elementInfoMode === 'journal';
-    // Hunt is really three kits sharing five keys, so its abilities get a form selector of
-    // their own rather than fifteen rows in one list.
-    const huntForms = elementId === 'hunt';
-    if (!huntForms) this.elementInfoHuntForm = 0;
+    // Hunt is really three kits sharing five keys and Gluttony is two, so their abilities get a
+    // form selector of their own rather than fifteen rows in one list.
+    const formTabs = ELEMENT_FORM_TABS[elementId] ?? null;
+    const huntForms = !!formTabs;
+    if (!formTabs || this.elementInfoHuntForm >= formTabs.length) this.elementInfoHuntForm = 0;
 
     const SCROLL_TOP = huntForms ? 158 : 128;
     const SCROLL_BOT = height - 44;
@@ -1376,13 +1506,9 @@ export class MenuScene extends Phaser.Scene {
       this.infoOverlayObjects.push(btn, lbl);
     });
 
-    // ── Hunt form selector: Human / Beast / Hybrid ──
-    if (huntForms) {
-      const formDefs: Array<{ idx: 0 | 1 | 2; label: string; accent: number; text: string }> = [
-        { idx: 0, label: '🏹 HUMAN', accent: 0xcc6622, text: '#ffbb88' },
-        { idx: 1, label: '🐺 BEAST', accent: 0xcc2233, text: '#ff9999' },
-        { idx: 2, label: '🌗 HYBRID', accent: 0x99a3ad, text: '#dde4ec' },
-      ];
+    // ── Form selector: Hunt's three, Gluttony's two ──
+    if (formTabs) {
+      const formDefs = formTabs.map((t, i) => ({ ...t, idx: i as 0 | 1 | 2 }));
       const formY = 98;
       const fw = 118;
       const fgap = 6;
@@ -1410,13 +1536,10 @@ export class MenuScene extends Phaser.Scene {
         this.infoOverlayObjects.push(plate.g, btn, lbl);
       });
       const hint = this.add.text(cx, formY + 20,
-        this.elementInfoHuntForm === 0
-          ? 'The beast comes out on its own after 30s — Q is a clock, not a button.'
-          : this.elementInfoHuntForm === 1
-            ? 'Beast form lasts 12s, then 50s before it takes you again.'
-            : 'Hybrid form needs the Q+ upgrade. The beast seizes the controls every 10s.',
+        formTabs[this.elementInfoHuntForm]?.hint ?? '',
         {
-          fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#7a7a8c',
+          fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
+          color: '#7a7a8c', wordWrap: { width: width - 120 }, align: 'center',
         }).setOrigin(0.5, 0).setDepth(55);
       this.infoOverlayObjects.push(hint);
     }
@@ -1455,13 +1578,42 @@ export class MenuScene extends Phaser.Scene {
     } else {
 
     // Subterfuge-specific passives (shown above the abilities list)
-    if (elementId === 'quantum') {
+    if (elementId === 'subterfuge') {
       sectionHdr('— PASSIVES —', '#ff5566');
       const passiveText =
         '💵 Dirty Money: three red money icons hover above you. You start each match with 2 money and earn 1 every 5 seconds (max 3). Money buys Spray reloads, Lackeys, and Bribes.\n\n' +
         '🔫 Kickbacks: every 10 damage you deal with daggers or Spray earns 3 bullets (up to 50).';
       const passiveDesc = this.add.text(COL_X + 14, innerY, passiveText, {
         fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#e09aa2',
+        wordWrap: { width: COL_W - 28 }, lineSpacing: 3,
+      });
+      scrollContainer.add(passiveDesc);
+      innerY += passiveDesc.height + 20;
+    }
+
+    // Quantum has no abilities of its own, so the passive block *is* its info panel — without
+    // this the card opens on an empty column.
+    if (elementId === 'quantum') {
+      sectionHdr('— THE BOND —', '#7df9ff');
+      const bond = PlayerData.getQuantumBond();
+      const nameOf = (id: string) => this.findElement(id)?.name ?? id;
+      const bondLine = bond
+        ? `Currently bonded: ${nameOf(bond[0])} ⇄ ${nameOf(bond[1])}.`
+        : 'No bond set yet — you will choose two elements before the fight.';
+      const passiveText =
+        `⚛️ Bonded: Quantum has no abilities. It carries two other elements at once, and ${bondLine} `
+        + 'Both halves share one body — the same health, shields, status effects and cooldowns — '
+        + 'so a swap changes what you can do, never what has been done to you.\n\n'
+        + '🔄 Collapse: your dodge is the swap. Dodging becomes the other half of the bond, '
+        + 'with its own five abilities, its own upgrades, its own mastery binds and its own skin. '
+        + 'Anything the half you left behind put into the world stays there and keeps running.\n\n'
+        + '💥 Quantum Instability: carrying two kits is paid for one hit at a time. Every hit you '
+        + 'take adds 1% to your instability, and instability is damage vulnerability one for one — '
+        + 'at the 50% cap everything hits you half again as hard. It bleeds off at 1 every 2 seconds.\n\n'
+        + '⚠️ Torn Collapse: swapping at 40% instability or above costs you 25 health. The bond is '
+        + 'not a way out of a fight going badly — it is a rhythm you keep before it gets that far.';
+      const passiveDesc = this.add.text(COL_X + 14, innerY, passiveText, {
+        fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#9fdde6',
         wordWrap: { width: COL_W - 28 }, lineSpacing: 3,
       });
       scrollContainer.add(passiveDesc);
@@ -1481,6 +1633,33 @@ export class MenuScene extends Phaser.Scene {
         + 'their eyes turn into hearts.';
       const passiveDesc = this.add.text(COL_X + 14, innerY, passiveText, {
         fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#ffb3d0',
+        wordWrap: { width: COL_W - 28 }, lineSpacing: 3,
+      });
+      scrollContainer.add(passiveDesc);
+      innerY += passiveDesc.height + 20;
+    }
+
+    // Gluttony's kitchen is the element. None of the five keys make sense without it, so it goes
+    // above them rather than being scattered through five descriptions.
+    if (elementId === 'gluttony') {
+      sectionHdr('— PASSIVE —', '#f6f2e8');
+      const passiveText = this.elementInfoHuntForm === 0
+        ? '🔥 The Grill: a lit grill stands in the middle of every arena. Ingredients thrown onto '
+          + 'it cook — walk over it to collect them, and cooked is worth roughly double raw. '
+          + 'Standing on it with the knife in hand heats the blade over 2 seconds, which is the '
+          + 'difference between a 25-damage throw and a 35-damage one.\n\n'
+          + '📦 The Prep Strip: six tiles along the top of the screen. Click one to hold that '
+          + 'ingredient instead of the knife — your click then throws the ingredient, and '
+          + 'right-click eats it. Click the knife tile to go back to the blade.'
+        : '👄 The Maw: while you are the butcher the grill is a mouth with teeth and tentacles. It '
+          + 'spits a chunk of meat at whoever you are fighting every second for 5 damage — 10 for '
+          + '6 seconds after a Cannibalize connects.\n\n'
+          + '🔴 The Hunger Bar: 30 seconds, and every point of damage aimed at you takes 0.2s off '
+          + 'it instead of your health. It cannot be shielded and it cannot be dodged; it can only '
+          + 'be fed.';
+      const passiveDesc = this.add.text(COL_X + 14, innerY, passiveText, {
+        fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
+        color: this.elementInfoHuntForm === 0 ? '#e8e2d4' : '#ff9aa2',
         wordWrap: { width: COL_W - 28 }, lineSpacing: 3,
       });
       scrollContainer.add(passiveDesc);
@@ -1509,7 +1688,7 @@ export class MenuScene extends Phaser.Scene {
 
     // Hybrid form gets its own passive spelled out — nothing else in the game takes the
     // controls off you, so it needs saying before the ability list.
-    if (huntForms && this.elementInfoHuntForm === 2) {
+    if (elementId === 'hunt' && this.elementInfoHuntForm === 2) {
       sectionHdr('— PASSIVE —', '#ccd4dd');
       const passiveDesc = this.add.text(COL_X + 14, innerY,
         '👹 Possession: every 10 seconds the spirit of the beast takes your body for 3 seconds. '
@@ -1652,7 +1831,7 @@ export class MenuScene extends Phaser.Scene {
       // name, which is why it is built here rather than with the tap zone.
       if (passionQ && PlayerData.isPassionQUnlocked()) {
         const on = PlayerData.isPassionQCensored();
-        const toggle = this.add.text(COL_X + 62 + abilityName.width, innerY + 13, on ? '💖' : '🤍', {
+        const toggle = this.add.text(COL_X + 62 + abilityName.width, innerY + 13, on ? '💖' : '🖤', {
           fontSize: '13px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
         }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
         toggle.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
@@ -1740,8 +1919,8 @@ export class MenuScene extends Phaser.Scene {
     } else {
       const equippedId = PlayerData.getEquippedPerk(elementId);
       const ELEM_EMOJI: Record<string, string> = {
-        fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🪨',
-        electricity: '⚡', slime: '🟢', fate: '🃏', sound: '🔊', light: '✨',
+        fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🗿',
+        electricity: '⚡', slime: '💚', fate: '🃏', sound: '🔊', light: '✨',
       };
       perks.forEach((perk) => {
         const unlocked = PlayerData.isPerkUnlocked(elementId, perk.id);
@@ -2429,14 +2608,32 @@ export class MenuScene extends Phaser.Scene {
    * Every action persists immediately via PlayerData and rebuilds the overlay in place
    * (scroll offset preserved via customizeScrollY, like the mastery screen does).
    */
-  private showCustomizeScreen(elementId: string, width: number, height: number, cx: number): void {
+  /**
+   * `screenId` is the card that was clicked; `elementId` below is whose loadout is actually
+   * being edited. They differ only for Quantum, which owns no mastery, perk, upgrade or skin
+   * of its own — it fights as the two elements it carries, so its page is a pair of tabs over
+   * those halves' loadouts rather than four empty sections.
+   */
+  private showCustomizeScreen(screenId: string, width: number, height: number, cx: number): void {
     this.closeElementInfo();
 
-    const element = ELEMENT_DATA_MAP[elementId];
+    const element = ELEMENT_DATA_MAP[screenId];
     if (!element) return;
-    const elemColor = '#' + element.color.toString(16).padStart(6, '0');
 
-    const SCROLL_TOP = 96;
+    // Falls back to the starter bond so the page still works on a save that has never
+    // walked through the bond phase — that pair is granted, so it is always a real loadout.
+    const bond = screenId === 'quantum'
+      ? (PlayerData.getQuantumBond() ?? PlayerData.STARTER_BOND)
+      : null;
+    if (bond && (this.customizeHalf === null || !bond.includes(this.customizeHalf))) {
+      this.customizeHalf = bond[0];
+    }
+    const elementId = bond ? this.customizeHalf as string : screenId;
+    const dataElement = ELEMENT_DATA_MAP[elementId] ?? element;
+    const elemColor = '#' + dataElement.color.toString(16).padStart(6, '0');
+
+    const HDR_BOT = 84;
+    const SCROLL_TOP = bond ? 130 : 96;
     const SCROLL_BOT = height - 44;
     const SCROLL_H = SCROLL_BOT - SCROLL_TOP;
 
@@ -2445,17 +2642,21 @@ export class MenuScene extends Phaser.Scene {
     this.infoOverlayObjects.push(bg);
 
     const header = this.add.text(cx, 34, `⚙  ${element.name.toUpperCase()} CUSTOMIZATION`, {
-      fontSize: '26px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: elemColor,
+      fontSize: '26px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+      color: '#' + element.color.toString(16).padStart(6, '0'),
       stroke: '#000000', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(51);
     this.infoOverlayObjects.push(header);
 
-    const subHdr = this.add.text(cx, 62, '— mastery · perk · upgrades · skin —', {
+    const halfName = (id: string) => ELEMENT_DATA_MAP[id]?.name ?? id;
+    const subHdr = this.add.text(cx, 62, bond
+      ? `— carrying ${halfName(bond[0])} + ${halfName(bond[1])} · load out each half —`
+      : '— mastery · perk · upgrades · skin —', {
       fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#555577',
     }).setOrigin(0.5).setDepth(51);
     this.infoOverlayObjects.push(subHdr);
 
-    const divLine = this.add.line(cx, SCROLL_TOP - 12, -width / 2 + 40, 0, width / 2 - 40, 0, C.arcane, 0.45).setDepth(51).setLineWidth(1);
+    const divLine = this.add.line(cx, HDR_BOT, -width / 2 + 40, 0, width / 2 - 40, 0, C.arcane, 0.45).setDepth(51).setLineWidth(1);
     this.infoOverlayObjects.push(divLine);
 
     // Back button — closing re-renders the phase so card emoji/mastery state refresh.
@@ -2463,8 +2664,50 @@ export class MenuScene extends Phaser.Scene {
       x: 66, y: 32, w: 100, h: 32,
       label: 'BACK', icon: '◄', fontSize: 12, variant: 'quiet', accent: C.arcane,
       depth: 56, cut: 8,
-      onClick: () => { this.closeElementInfo(); this.renderPhase(width, height, cx); },
+      onClick: () => {
+        this.bondEditing = false;
+        this.bondDraftFirst = null;
+        this.closeElementInfo();
+        this.renderPhase(width, height, cx);
+      },
     }).container);
+
+    // ── Bond half tabs (Quantum only) — fixed above the scroll window ───
+    if (bond) {
+      const tabW = 188, tabH = 28, tabGap = 10;
+      const totalW = bond.length * tabW + (bond.length - 1) * tabGap;
+      bond.forEach((halfId, hi) => {
+        const tx = cx - totalW / 2 + tabW / 2 + hi * (tabW + tabGap);
+        const ty = 106;
+        const selected = halfId === elementId;
+        const halfEl = ELEMENT_DATA_MAP[halfId];
+        const accent = halfEl?.color ?? C.arcane;
+        const plate = addCardPlate(this, {
+          x: tx, y: ty, w: tabW, h: tabH, accent, cut: 8, depth: 55, muted: !selected,
+        });
+        if (selected) plate.paint('active');
+        const lbl = this.add.text(tx, ty,
+          `${halfEl?.emoji ?? '◆'}  ${halfName(halfId).toUpperCase()}${hi === 0 ? '  (start)' : ''}`, {
+            fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+            color: selected ? hex(mix(accent, 0xffffff, 0.6)) : '#666677',
+          }).setOrigin(0.5).setDepth(57);
+        const hit = this.add.rectangle(tx, ty, tabW, tabH, 0xffffff, 0)
+          .setDepth(56).setInteractive({ useHandCursor: true });
+        hit
+          .on('pointerover', () => { if (!selected) plate.paint('hover'); })
+          .on('pointerout', () => plate.paint(selected ? 'active' : 'idle'))
+          .on('pointerdown', () => {
+            if (selected) return;
+            this.customizeHalf = halfId;
+            this.customizeScrollY = 0;
+            // Switching halves is a loadout action, so it leaves the bond builder.
+            this.bondEditing = false;
+            this.bondDraftFirst = null;
+            this.showCustomizeScreen(screenId, width, height, cx);
+          });
+        this.infoOverlayObjects.push(plate.g, lbl, hit);
+      });
+    }
 
     const scrollContainer = this.add.container(0, SCROLL_TOP).setDepth(51);
     this.infoOverlayObjects.push(scrollContainer);
@@ -2479,7 +2722,7 @@ export class MenuScene extends Phaser.Scene {
     const COL_W = width - 80;
     let innerY = 4;
 
-    const rebuild = () => this.showCustomizeScreen(elementId, width, height, cx);
+    const rebuild = () => this.showCustomizeScreen(screenId, width, height, cx);
     const inView = (localY: number) => this.isInScrollWindow(scrollContainer, localY, SCROLL_TOP, SCROLL_BOT);
 
     const sectionHdr = (text: string, color: string) => {
@@ -2490,10 +2733,95 @@ export class MenuScene extends Phaser.Scene {
       innerY += 20;
     };
 
-    const ELEM_EMOJI: Record<string, string> = {
-      fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🪨',
-      electricity: '⚡', slime: '🟢', fate: '🃏', sound: '🔊', light: '✨',
+    /**
+     * Closes out the page: scroll extent, wheel handler and the overflow hint. Declared
+     * rather than inlined at the bottom because the bond builder returns early — while it is
+     * open it *is* the page, and the loadout sections below it would only be in the way.
+     */
+    const finishScroll = (): void => {
+      const maxScroll = Math.max(0, innerY - SCROLL_H);
+      let scrollY = Phaser.Math.Clamp(this.customizeScrollY, 0, maxScroll);
+      this.customizeScrollY = scrollY;
+      scrollContainer.setY(SCROLL_TOP - scrollY);
+      this.infoScrollHandler = (_ptr: unknown, _over: unknown, _dx: unknown, deltaY: unknown) => {
+        scrollY = Phaser.Math.Clamp(scrollY + (deltaY as number) * 0.5, 0, maxScroll);
+        this.customizeScrollY = scrollY;
+        scrollContainer.setY(SCROLL_TOP - scrollY);
+      };
+      this.input.on('wheel', this.infoScrollHandler);
+
+      if (maxScroll > 0) {
+        const hint = this.add.text(width - 12, SCROLL_BOT + 6, '▼ scroll for more', {
+          fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#444466',
+        }).setOrigin(1, 0).setDepth(55);
+        this.infoOverlayObjects.push(hint);
+      }
     };
+
+    const ELEM_EMOJI: Record<string, string> = {
+      fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🗿',
+      electricity: '⚡', slime: '💚', fate: '🃏', sound: '🔊', light: '✨',
+    };
+
+    // ── BOND (Quantum only) ─────────────────────────────────────────
+    // The pair Quantum carries is built here, not at the element roster: it is loadout, and
+    // it belongs next to the mastery, perk and skin of the two halves it decides.
+    if (bond) {
+      sectionHdr('— BOND —', '#7df9ff');
+
+      if (this.bondEditing) {
+        innerY = this.renderBondBuilder(scrollContainer, cx, COL_X, COL_W, innerY, inView, rebuild);
+        finishScroll();
+        return;
+      }
+
+      const rowH = 46;
+      const rowLocalY = innerY + rowH / 2;
+      const rowBg = this.overlayRow(cx, rowLocalY, COL_W, rowH - 6, 0x7df9ff).g;
+      const ea = ELEMENT_DATA_MAP[bond[0]];
+      const eb = ELEMENT_DATA_MAP[bond[1]];
+      const pairLbl = this.add.text(COL_X + 14, rowLocalY,
+        `${ea?.emoji ?? '◆'} ${halfName(bond[0]).toUpperCase()}   ⇄   ${eb?.emoji ?? '◆'} ${halfName(bond[1]).toUpperCase()}`, {
+          fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#9fdde6',
+        }).setOrigin(0, 0.5);
+      scrollContainer.add([rowBg, pairLbl]);
+
+      // Two buttons on the right of the carried row: flip which half you spawn as, or
+      // throw the pair away and build another.
+      const mkBtn = (label: string, xRight: number, w: number, onClick: () => void) => {
+        const bx = COL_X + COL_W - xRight - w / 2;
+        const b = this.add.rectangle(bx, rowLocalY, w, 24, 0x11333a, 0.95)
+          .setStrokeStyle(2, 0x3f8f9c, 0.9).setInteractive({ useHandCursor: true });
+        const l = this.add.text(bx, rowLocalY, label, {
+          fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#9fdde6',
+        }).setOrigin(0.5);
+        b.on('pointerover', () => b.setStrokeStyle(2, 0xffffff, 1))
+          .on('pointerout',  () => b.setStrokeStyle(2, 0x3f8f9c, 0.9))
+          .on('pointerdown', () => { if (inView(rowLocalY)) onClick(); });
+        scrollContainer.add([b, l]);
+      };
+      mkBtn('⇄ SWAP START', 118, 104, () => {
+        PlayerData.setQuantumBond(bond[1], bond[0]);
+        this.customizeHalf = bond[1];
+        rebuild();
+      });
+      mkBtn('CHANGE ▸', 14, 92, () => {
+        this.bondEditing = true;
+        this.bondDraftFirst = null;
+        this.customizeScrollY = 0;
+        rebuild();
+      });
+      innerY += rowH;
+
+      const caption = this.add.text(COL_X + 14, innerY + 2,
+        `Fights start as ${halfName(bond[0])} — dodge collapses to ${halfName(bond[1])} and back. `
+        + 'Each half keeps its own mastery, perk, upgrades and skin below.', {
+          fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#556677',
+          wordWrap: { width: COL_W - 28 }, lineSpacing: 2,
+        });
+      scrollContainer.add(caption);
+      innerY += caption.height + 16;
+    }
 
     // ── MASTERY ─────────────────────────────────────────────────────
     sectionHdr('— MASTERY —', '#ffcc00');
@@ -2799,33 +3127,118 @@ export class MenuScene extends Phaser.Scene {
       innerY += 8;
     }
 
-    // ── Scroll logic (offset preserved across rebuilds) ─────────────
-    const totalContentH = innerY;
-    const maxScroll = Math.max(0, totalContentH - SCROLL_H);
-    let scrollY = Phaser.Math.Clamp(this.customizeScrollY, 0, maxScroll);
-    this.customizeScrollY = scrollY;
-    scrollContainer.setY(SCROLL_TOP - scrollY);
-    this.infoScrollHandler = (_ptr: unknown, _over: unknown, _dx: unknown, deltaY: unknown) => {
-      scrollY = Phaser.Math.Clamp(scrollY + (deltaY as number) * 0.5, 0, maxScroll);
-      this.customizeScrollY = scrollY;
-      scrollContainer.setY(SCROLL_TOP - scrollY);
-    };
-    this.input.on('wheel', this.infoScrollHandler);
+    finishScroll();
+  }
 
-    if (maxScroll > 0) {
-      const hint = this.add.text(width - 12, SCROLL_BOT + 6, '▼ scroll for more', {
-        fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#444466',
-      }).setOrigin(1, 0).setDepth(55);
-      this.infoOverlayObjects.push(hint);
-    }
+  /**
+   * Quantum's bond builder, drawn into the customization page's scroll container.
+   *
+   * Two picks, one roster each time: the first half is anything that appears in a researched
+   * pair, the second is filtered to that half's researched partners — so there is no way to
+   * walk into a dead end. The first pick is the half you spawn as, which is why it is asked
+   * for first rather than sorted out afterwards. Returns the new content height.
+   */
+  private renderBondBuilder(
+    container: Phaser.GameObjects.Container,
+    cx: number, colX: number, colW: number, startY: number,
+    inView: (localY: number) => boolean,
+    rebuild: () => void,
+  ): number {
+    let innerY = startY;
+    const first = this.bondDraftFirst;
+    const nameOf = (id: string) => ELEMENT_DATA_MAP[id]?.name ?? id;
+
+    const prompt = this.add.text(colX + 14, innerY, first
+      ? `Pick the second half — paired with ${nameOf(first)}.`
+      : 'Pick the first half. You start every fight as it; dodging collapses to the other.', {
+      fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#9fdde6',
+      wordWrap: { width: colW - 130 }, lineSpacing: 2,
+    });
+    container.add(prompt);
+
+    // Cancel steps back one pick at a time — out of the second half to the first, out of the
+    // first to the carried bond, which is never discarded until a new pair is complete.
+    const cancelY = innerY + 10;
+    const cancelBg = this.add.rectangle(colX + colW - 14 - 46, cancelY, 92, 24, 0x2a1a1a, 0.95)
+      .setStrokeStyle(2, 0x774444, 0.9).setInteractive({ useHandCursor: true });
+    const cancelLbl = this.add.text(colX + colW - 14 - 46, cancelY, first ? '◄ FIRST HALF' : '✕ CANCEL', {
+      fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ddaaaa',
+    }).setOrigin(0.5);
+    cancelBg
+      .on('pointerover', () => cancelBg.setStrokeStyle(2, 0xffffff, 1))
+      .on('pointerout',  () => cancelBg.setStrokeStyle(2, 0x774444, 0.9))
+      .on('pointerdown', () => {
+        if (!inView(cancelY)) return;
+        if (this.bondDraftFirst) this.bondDraftFirst = null;
+        else this.bondEditing = false;
+        rebuild();
+      });
+    container.add([cancelBg, cancelLbl]);
+    innerY += Math.max(prompt.height, 24) + 14;
+
+    const roster = [...ELEMENTS, ...this.unlockedExtraElements()]
+      .filter((e) => e.available && e.id !== 'quantum' && e.id !== 'dummy');
+
+    const COLS = 4;
+    const gap = 8;
+    const chipW = (colW - (COLS - 1) * gap) / COLS;
+    const chipH = 32;
+    roster.forEach((el, i) => {
+      const col = i % COLS;
+      const row = Math.floor(i / COLS);
+      const bx = colX + col * (chipW + gap) + chipW / 2;
+      const by = innerY + row * (chipH + gap) + chipH / 2;
+      // Greyed rather than hidden: seeing which elements you cannot pair yet is the whole
+      // reason to walk down to the Entanglement Lab.
+      const allowed = this.isBondPartnerAllowed(el.id) && el.id !== first;
+
+      const plate = this.add.rectangle(bx, by, chipW, chipH, allowed ? 0x122029 : 0x15151c, 0.95)
+        .setStrokeStyle(2, allowed ? el.color : 0x333344, allowed ? 0.8 : 0.6);
+      const lbl = this.add.text(bx, by, `${el.emoji} ${el.name.toUpperCase()}`, {
+        fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+        color: allowed ? '#ddeeff' : '#444455',
+      }).setOrigin(0.5);
+      container.add([plate, lbl]);
+
+      if (!allowed) return;
+      const hit = this.add.rectangle(bx, by, chipW, chipH, 0xffffff, 0.001)
+        .setInteractive({ useHandCursor: true });
+      hit
+        .on('pointerover', () => plate.setStrokeStyle(2, 0xffffff, 1))
+        .on('pointerout',  () => plate.setStrokeStyle(2, el.color, 0.8))
+        .on('pointerdown', () => {
+          if (!inView(by)) return;
+          Sfx.play('ui-equip');
+          if (!this.bondDraftFirst) {
+            this.bondDraftFirst = el.id;
+          } else {
+            PlayerData.setQuantumBond(this.bondDraftFirst, el.id);
+            this.customizeHalf = this.bondDraftFirst;
+            this.bondDraftFirst = null;
+            this.bondEditing = false;
+            this.customizeScrollY = 0;
+          }
+          rebuild();
+        });
+      container.add(hit);
+    });
+    innerY += Math.ceil(roster.length / COLS) * (chipH + gap) + 6;
+
+    const footer = this.add.text(cx, innerY, 'Greyed-out elements have no researched pair yet — research bonds in the Lab ▸ Entanglement Lab.', {
+      fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#555577',
+    }).setOrigin(0.5, 0);
+    container.add(footer);
+    innerY += footer.height + 12;
+
+    return innerY;
   }
 
   private showPerkDictionary(width: number, height: number, cx: number): void {
     this.closeElementInfo(); // reuse the same overlay list
 
     const ELEM_EMOJI: Record<string, string> = {
-      fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🪨',
-      electricity: '⚡', slime: '🟢', fate: '🃏', sound: '🔊', light: '✨',
+      fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🗿',
+      electricity: '⚡', slime: '💚', fate: '🃏', sound: '🔊', light: '✨',
     };
 
     const SCROLL_TOP = 104;
@@ -3002,12 +3415,43 @@ export class MenuScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Whether an element can be picked as the half currently being chosen in the bond builder.
+   *
+   * Before a first half is picked this asks the looser question — "is this element in any
+   * researched bond at all" — so the roster greys out everything the player could not
+   * finish a pair with, rather than letting them pick a first half and hit a dead end.
+   */
+  private isBondPartnerAllowed(id: string): boolean {
+    if (id === 'quantum' || id === 'dummy') return false;
+    if (this.bondDraftFirst) return PlayerData.isBondResearched(this.bondDraftFirst, id);
+    // A cheat profile is granted every pair without any of them being stored (see
+    // `PlayerData.isBondResearched`), so reading the saved list alone would leave it with two
+    // pickable first halves and a wide-open second roster — ask the same question the second
+    // pick asks. The carried bond is included for the same reason it is in `BondPicker`: a pair
+    // equipped from a fuller roster must not become unpickable here.
+    if (isCheatMode()) return true;
+    const carried = PlayerData.getQuantumBond();
+    const researched = [
+      PlayerData.bondKey(PlayerData.STARTER_BOND[0], PlayerData.STARTER_BOND[1]),
+      ...(carried ? [PlayerData.bondKey(carried[0], carried[1])] : []),
+      ...PlayerData.getResearchedBonds(),
+    ];
+    return researched.some((key) => key.split('+').includes(id));
+  }
+
   private handleElementClick(elementId: string, width: number, height: number, cx: number): void {
     // Locking in a choice moves the whole screen on, so it gets the heavier
     // equip sound rather than the plain button click.
     Sfx.play('ui-equip');
     if (this.selectionPhase === 'player') {
       this.playerChoice = elementId;
+      // Quantum walks into the fight carrying whatever bond its customization screen built —
+      // the pair is loadout, like a perk or a skin, not a question asked at the door. A save
+      // that has never opened that screen still owns the granted starter pair.
+      if (elementId === 'quantum' && !PlayerData.getQuantumBond()) {
+        PlayerData.setQuantumBond(PlayerData.STARTER_BOND[0], PlayerData.STARTER_BOND[1]);
+      }
       if (this.isInvasion || this.isBoss || this.bounty) {
         // These modes have no enemy to pick — the fight is already decided.
         this.selectionPhase = 'difficulty';

@@ -1,9 +1,10 @@
 import { Element } from './Element';
 
-// Subterfuge — the red/black money element (revamp of Quantum; keeps id 'quantum'
-// so existing unlocks and recipes stay valid).
-export const quantumElement: Element = {
-  id: 'quantum',
+// Subterfuge — the red/black money element. Once shipped under the name Quantum and the
+// id 'quantum'; both were handed over when the real Quantum element arrived, so this is
+// now 'subterfuge' end to end (old saves are migrated in PlayerData/CampaignProgress).
+export const subterfugeElement: Element = {
+  id: 'subterfuge',
   name: 'Subterfuge',
   color: 0xcc2233,
   emoji: '🕴️',

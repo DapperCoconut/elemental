@@ -41,13 +41,13 @@ export const FATE_CARD_DEFS: FateCardDef[] = [
   { type: 'barrier',   name: 'Barrier',   emoji: '🛡️', color: 0x4488ff, blurb: '15× 3 dmg bullet ring' },
   { type: 'explosion', name: 'Explosion', emoji: '💣', color: 0xcc2222, blurb: '20 dmg AoE bomb' },
   { type: 'infect',    name: 'Infect',    emoji: '☠️', color: 0x55cc55, blurb: '3× 5 dmg + poison' },
-  { type: 'coin',      name: 'Coin',      emoji: '🪙', color: 0xffcc00, blurb: 'Reflects bullets ×2 dmg' },
+  { type: 'coin',      name: 'Coin',      emoji: '💰', color: 0xffcc00, blurb: 'Reflects bullets ×2 dmg' },
   { type: 'heal',      name: 'Heal',      emoji: '💚', color: 0x44dd88, blurb: '12 orbs, 8 HP each' },
   { type: 'buff',      name: 'Buff',      emoji: '💪', color: 0xdd88ff, blurb: '+10% spd/dmg/DR (8s)' },
   { type: 'lightning', name: 'Lightning', emoji: '⚡', color: 0xffee44, blurb: '20 dmg + 2s stun' },
   { type: 'slots',     name: 'Slots',     emoji: '🎰', color: 0xff66cc, blurb: 'Summon a slot machine' },
   // New Cards — colours chosen distinct from every base card above.
-  { type: 'boomerang', name: 'Boomerang', emoji: '🪃', color: 0xb87333, blurb: 'Orbits you 3s, 15 dmg on hit' },
+  { type: 'boomerang', name: 'Boomerang', emoji: '🔄', color: 0xb87333, blurb: 'Orbits you 3s, 15 dmg on hit' },
   { type: 'slash',     name: 'Slash',     emoji: '⚔️', color: 0x8b0000, blurb: 'Close red slash, 15 dmg' },
   { type: 'phase',     name: 'Phase',     emoji: '💨', color: 0x00c2c7, blurb: 'Dash at cursor, 10 dmg through' },
   { type: 'striker',   name: 'Striker',   emoji: '⚫', color: 0x333344, blurb: 'Very slow black shot, 35 dmg' },
@@ -84,7 +84,7 @@ export const FATE_FACE_CARDS: FateFaceCardDef[] = [
   { face: 'king',   name: 'King',   emoji: '🤴', color: 0xffd54a, allow: ['heal', 'buff', 'barrier', 'phase', 'emperor'] },
   { face: 'queen',  name: 'Queen',  emoji: '👸', color: 0xff6fae, allow: ['explosion', 'lightning', 'chill', 'chain'] },
   { face: 'jack',   name: 'Jack',   emoji: '🃏', color: 0x66d38a, allow: ['boomerang', 'slash', 'burst', 'pulse'] },
-  { face: 'ace',    name: 'Ace',    emoji: '🂡', color: 0xd0d0e0, allow: ['laser', 'coin', 'infect', 'striker'] },
+  { face: 'ace',    name: 'Ace',    emoji: '♠️', color: 0xd0d0e0, allow: ['laser', 'coin', 'infect', 'striker'] },
   { face: 'jester', name: 'Jester', emoji: '🎭', color: 0xaa77ff, allow: null },
 ];
 const FACE_BY_ID = new Map<FateFaceCard, FateFaceCardDef>(FATE_FACE_CARDS.map((f) => [f.face, f]));
@@ -96,11 +96,11 @@ export type FateCurse =
 
 export interface FateCurseDef { curse: FateCurse; name: string; emoji: string; blurb: string; }
 export const FATE_CURSES: FateCurseDef[] = [
-  { curse: 'painful',    name: 'Painful',    emoji: '🩹', blurb: 'Deals 30 damage to you' },
+  { curse: 'painful',    name: 'Painful',    emoji: '💊', blurb: 'Deals 30 damage to you' },
   { curse: 'immolating', name: 'Immolating', emoji: '🔥', blurb: 'Burns every other card out of your hand' },
-  { curse: 'weakening',  name: 'Weakening',  emoji: '🦠', blurb: '33% slower for 10s' },
+  { curse: 'weakening',  name: 'Weakening',  emoji: '🐛', blurb: '33% slower for 10s' },
   { curse: 'confusing',  name: 'Confusing',  emoji: '🌀', blurb: 'Inverts WASD for 5s' },
-  { curse: 'vulnerable', name: 'Vulnerable', emoji: '🦴', blurb: 'Next hit you take is doubled' },
+  { curse: 'vulnerable', name: 'Vulnerable', emoji: '💀', blurb: 'Next hit you take is doubled' },
   { curse: 'cursed',     name: 'Cursed',     emoji: '💀', blurb: '15 purple bullets hunt you for 3 each' },
   { curse: 'stunning',   name: 'Stunning',   emoji: '⭐', blurb: 'No cards for 5s' },
   { curse: 'cocky',      name: 'Cocky',      emoji: '😈', blurb: 'All In wagers all your HP for the rest of the match' },

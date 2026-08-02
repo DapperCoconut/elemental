@@ -4,7 +4,7 @@ import type { NetStatusEntry } from './NetStatusSync';
 import type { NetConquestSnap } from '../elements/kits/ConquestKit';
 
 /** Bump when the wire protocol or gameplay sync changes incompatibly. */
-export const NET_PROTOCOL_VERSION = 15;
+export const NET_PROTOCOL_VERSION = 17;
 
 /** Lobby selection payload exchanged while both players pick loadouts. */
 export interface NetSelection {
@@ -18,6 +18,13 @@ export interface NetSelection {
   masteryOn: boolean;
   /** Equipped skin id for the selected element (null = default look), rendered by the peer. */
   skin: string | null;
+  /**
+   * Quantum only: the two element ids this player bonded, in the order they picked. The
+   * peer needs it to build a replica that starts as the right half — and `elementId` above
+   * is already that first half rather than `'quantum'`, so a peer that ignores this field
+   * still gets a fighter that works, just one that never swaps.
+   */
+  bond: string[] | null;
   ready: boolean;
 }
 
@@ -116,14 +123,14 @@ export type NetMatchMode = 'pvp' | 'invasion';
 
 export type NetMsg =
   | { t: 'hello'; version: number }
-  | { t: 'sel'; elementId: string | null; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; skin?: string | null; ready: boolean }
+  | { t: 'sel'; elementId: string | null; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; skin?: string | null; bond?: string[] | null; ready: boolean }
   | { t: 'mode'; mode: NetMatchMode; invasionDifficulty: string }
   | {
       t: 'start';
       mode: NetMatchMode;
       invasionDifficulty?: string;
-      hostSel: { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; skin?: string | null };
-      guestSel: { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; skin?: string | null };
+      hostSel: { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; skin?: string | null; bond?: string[] | null };
+      guestSel: { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; skin?: string | null; bond?: string[] | null };
     }
   // inv/fa/st: Silence remaster — invisibility flag, facing angle (radians), stealth meter.
   // dm/fr/dc: the sender's own damage reduction, cap and flat soak, applied by the peer's
@@ -138,6 +145,10 @@ export type NetMsg =
   | { t: 'fx'; e: NetStatusEntry[]; spd: number; cd: number }
   // Attacker → victim: a knockback/pull the attacker's sim applied to its replica.
   | { t: 'push'; vx: number; vy: number; ms: number }
+  // Quantum: the sender collapsed their bond onto the other half. Self-contained on purpose —
+  // the receiver re-keys its replica of them wholesale, because a Quantum's upgrades, mastery
+  // binds and skin all belong to the half being worn rather than to the fighter.
+  | { t: 'qswap'; elementId: string; upgrades: string[]; masteryBinds: Record<string, string>; masteryOn: boolean; skin: string | null }
   | { t: 'death' }
   | { t: 'lobby' }
   | { t: 'ping'; ts: number }

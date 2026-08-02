@@ -162,7 +162,7 @@ const JOURNAL_ELEMENTS: Record<string, JournalElement> = {
     ],
   },
   earth: {
-    name: 'Earth', emoji: '🪨', color: 0x887755, archetype: 'attrition',
+    name: 'Earth', emoji: '🗿', color: 0x887755, archetype: 'attrition',
     pages: [
       ['Buried', 'You had nothing left to spend and it had barely started. Bring reserves.'],
       ['Shield First', 'Every exchange started on its terms because it was armoured before the bell.'],
@@ -195,7 +195,7 @@ const JOURNAL_ELEMENTS: Record<string, JournalElement> = {
     ],
   },
   ice: {
-    name: 'Ice', emoji: '🧊', color: 0x88ccff, archetype: 'control',
+    name: 'Ice', emoji: '❄️', color: 0x88ccff, archetype: 'control',
     pages: [
       ['Frozen Solid', 'You died standing up. The damage was almost a formality.'],
       ['Sliding Away', 'Fighting the slip loses. Using it wins. This took several attempts to learn.'],
@@ -206,7 +206,7 @@ const JOURNAL_ELEMENTS: Record<string, JournalElement> = {
     ],
   },
   growth: {
-    name: 'Growth', emoji: '🦠', color: 0x88bb22, archetype: 'dot',
+    name: 'Growth', emoji: '🐛', color: 0x88bb22, archetype: 'dot',
     pages: [
       ['Infected', 'The sickness did more than the body did. You were fighting the wrong thing.'],
       ['Culture Notes', 'It gets stronger between exchanges. Rest is a resource you were donating.'],
@@ -294,7 +294,7 @@ const JOURNAL_ELEMENTS: Record<string, JournalElement> = {
     ],
   },
   slime: {
-    name: 'Acid', emoji: '🧪', color: 0x88dd22, archetype: 'dot',
+    name: 'Acid', emoji: '⚗️', color: 0x88dd22, archetype: 'dot',
     pages: [
       ['Eaten Through', 'The damage kept arriving after the ability ended. That is most of its output.'],
       ['Corrosion Log', 'It stacks. You treated each application as one hit and lost the count.'],
@@ -338,7 +338,7 @@ const JOURNAL_ELEMENTS: Record<string, JournalElement> = {
     ],
   },
   magnet: {
-    name: 'Magnet', emoji: '🧲', color: 0xcc2244, archetype: 'control',
+    name: 'Magnet', emoji: '🔗', color: 0xcc2244, archetype: 'control',
     pages: [
       ['Dragged', 'You were furniture. Every position in that fight was chosen for you.'],
       ['Polarity Notes', 'Push and pull look the same until you are already moving. Watch the hands.'],
@@ -382,7 +382,7 @@ const JOURNAL_ELEMENTS: Record<string, JournalElement> = {
     ],
   },
   rubber: {
-    name: 'Rubber', emoji: '🪀', color: 0xff5577, archetype: 'mobile',
+    name: 'Rubber', emoji: '🎾', color: 0xff5577, archetype: 'mobile',
     pages: [
       ['Bounced', 'It came back from everywhere. Committing to a direction was always a mistake.'],
       ['Rebound Angle', 'Your own shots came home. Watch what is behind it, not just it.'],
@@ -415,7 +415,7 @@ const JOURNAL_ELEMENTS: Record<string, JournalElement> = {
     ],
   },
   silence: {
-    name: 'Silence', emoji: '🫥', color: 0x1a0022, archetype: 'control',
+    name: 'Silence', emoji: '😶', color: 0x1a0022, archetype: 'control',
     pages: [
       ['Lost in It', 'You never saw the fight. That is the fight — everything else is decoration.'],
       ['Keep Walking', 'Standing still in the fog is how it finds you. It is not subtle about this.'],
@@ -436,7 +436,7 @@ const JOURNAL_ELEMENTS: Record<string, JournalElement> = {
       ['Break the Lantern', 'What it lights the arena with can be taken away from it.'],
     ],
   },
-  quantum: {
+  subterfuge: {
     name: 'Subterfuge', emoji: '🕴️', color: 0xcc2233, archetype: 'mobile',
     pages: [
       ['Outnumbered', 'It never fought you alone and you kept letting it choose the terms.'],
@@ -525,7 +525,7 @@ const JOURNAL_ELEMENTS: Record<string, JournalElement> = {
     ],
   },
   ruin: {
-    name: 'Ruin', emoji: '🧱', color: 0xc4392c, archetype: 'burst',
+    name: 'Ruin', emoji: '🚧', color: 0xc4392c, archetype: 'burst',
     pages: [
       ['Undone', 'It took your abilities away and then took its time. Bring defence for the taking.'],
       ['Locked Out', 'Losing a key mid-fight is worse than losing health. Have a plan without it.'],
@@ -536,7 +536,7 @@ const JOURNAL_ELEMENTS: Record<string, JournalElement> = {
     ],
   },
   glass: {
-    name: 'Glass', emoji: '🪟', color: 0x9fe8ff, archetype: 'burst',
+    name: 'Glass', emoji: '🔷', color: 0x9fe8ff, archetype: 'burst',
     pages: [
       ['Cut Down', 'Every hit you landed came back at you as fifteen shards. Hitting it was the mistake.'],
       ['Answered', 'Its defence is being struck. Come to that exchange with something in reserve.'],

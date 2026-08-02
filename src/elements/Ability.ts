@@ -40,19 +40,17 @@ export interface CastContext {
   growPlants: () => void;
   thornPlants: () => void;
   startThornDrag: () => void;
-  activateQuickShot: () => void;
-  placeWindTrap: (x: number, y: number) => void;
-  grappleTo: (x: number, y: number) => void;
-  /** `hitTargets` carries where each connecting shot landed, so Air Mastery can score wind-trap hits. */
-  reportAirSnipeResult: (hit: boolean, hitTargets?: Array<{ x: number; y: number }>) => void;
-  /** How many enemies a single Charged Beam ran through — feeds the Air Mastery multi-hit requirement. */
-  reportAirBeamHits: (count: number) => void;
-  quickShotActive: boolean;
-  /**
-   * Storm perk (divine): this snipe is carrying a charge earthed out of a wind trap or a
-   * tornado, so it lands for electro damage. Optional — only the air click sets it.
-   */
-  airStormShot?: boolean;
+  // ── Air (the wind dancer) — every one of these lands in AirKit ──
+  /** Click: the near fan cut plus the shear of wind thrown off it. */
+  airSplice: (x: number, y: number) => void;
+  /** E: the 360° turn, or E+'s flip along the aim. */
+  airSpinDance: (x: number, y: number) => void;
+  /** R: both fans thrown as one glaive, parked on the point, then recalled. */
+  airGaleGlaive: (x: number, y: number) => void;
+  /** F: hook to the point, untouchable in flight. */
+  airSkyGrapple: (x: number, y: number) => void;
+  /** Q: five seconds of being the weather, then the throw along this aim. */
+  airWindBreaker: (x: number, y: number) => void;
   addShieldHp: (amount: number) => void;
   getShieldHp: () => number;
   setShieldHp: (amount: number) => void;
@@ -202,7 +200,7 @@ export interface CastContext {
   echoLantern: (tx: number, ty: number) => void;
   echoBatForm: (tx: number, ty: number) => void;
   echoEclipse: (tx: number, ty: number) => void;
-  // Subterfuge (abstract combined: slime + fate; element id stays 'quantum')
+  // Subterfuge (abstract combined: slime + fate)
   subterfugeCutter: (tx: number, ty: number) => void;
   subterfugeSpray: (tx: number, ty: number) => void;
   subterfugeRecruit: (tx: number, ty: number) => void;
@@ -319,6 +317,17 @@ export interface CastContext {
   gumGumball: (tx: number, ty: number) => void;
   gumOozorbtion: () => void;
   gumSolidify: () => void;
+  // Gluttony (test element: cheat mode only for now). Two forms, so ten entries.
+  gluttonyKnife: (tx: number, ty: number) => void;
+  gluttonyForage: () => void;
+  gluttonyCharcoal: (tx: number, ty: number) => void;
+  gluttonyButcher: () => void;
+  gluttonyFeast: () => void;
+  gluttonyCleave: (tx: number, ty: number) => void;
+  gluttonyPoach: (tx: number, ty: number) => void;
+  gluttonyCannibalize: (tx: number, ty: number) => void;
+  gluttonyReturn: () => void;
+  gluttonyMawAwakening: () => void;
   hasPerk: (perkId: string) => boolean;
 }
 

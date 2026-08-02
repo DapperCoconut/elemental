@@ -1110,7 +1110,7 @@ export class PaperKit implements SummonPurgeTarget {
     });
     t.bleeding = true;
     t.bleedingUntil = Math.max(t.bleedingUntil, until);
-    this.api.showFloatingText(t.x, t.y - 34, '🩸 BLEEDING', this.hex(PAP.blood));
+    this.api.showFloatingText(t.x, t.y - 34, '🔴 BLEEDING', this.hex(PAP.blood));
   }
 
   private updateBleeds(time: number): void {

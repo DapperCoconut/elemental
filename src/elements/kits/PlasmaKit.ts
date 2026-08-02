@@ -1311,7 +1311,7 @@ export class PlasmaKit {
       active: true,
     });
 
-    this.arena.showFloatingText(caster.x, caster.y - 44, '♾️ PERMANENT CHAOS', '#ff88ff');
+    this.arena.showFloatingText(caster.x, caster.y - 44, '∞ PERMANENT CHAOS', '#ff88ff');
   }
 
   private doPlasmaPermanentOrbPop(orb: PlasmaPermanentOrb, victim: Fighter): void {

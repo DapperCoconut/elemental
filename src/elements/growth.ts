@@ -61,6 +61,6 @@ export const growthElement: Element = {
   id: 'growth',
   name: 'Growth',
   color: 0x88bb22,
-  emoji: '🦠',
+  emoji: '🐛',
   abilities: [growthClick, growthEvolve, growthVirus, sporeSpray, auxiliaryGrowth],
 };

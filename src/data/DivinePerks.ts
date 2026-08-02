@@ -29,7 +29,7 @@ export const DIVINE_PERKS: PerkDef[] = [
     name: 'Bass',
     emoji: '🎵',
     color: 0x3388ff,
-    description: 'Composing gains a fifth note: the blue Bass note, 5 composure a piece. Striking one lays a row of 7 water charges along your aim line, centred on your cursor — each detonates a moment later for 10 damage. It fires no wave of its own.',
+    description: 'With the Bass record on the deck, every Staccato also lays a row of 5 water charges along your aim line, centred on your cursor. They go off in sequence from the near end outward, 10 damage a piece.',
     ingredients: ['water', 'sound'],
     tier: 'divine',
     elementId: 'sound',
@@ -69,7 +69,7 @@ export const DIVINE_PERKS: PerkDef[] = [
     name: 'Storm',
     emoji: '⛈️',
     color: 0x556688,
-    description: 'Wind Trap and Sweeping Tornado darken into thunderheads. Sniping anything held inside one charges your next shot to a full 45-damage electro shot — it still has to be drawn, but it hits like the charged one.',
+    description: "Wind Breaker's funnel darkens into a thunderhead. Everything circling inside it is struck by lightning on every grind, taking 10 extra damage a tick, and the strikes light up the whole storm.",
     ingredients: ['air', 'electricity'],
     tier: 'divine',
     elementId: 'air',
@@ -102,7 +102,7 @@ export const DIVINE_PERKS: PerkDef[] = [
     description: 'Every recruit is hired with 25% more loyalty, and the Rolodex gains the Bard for 1💵. The Bard never fights — it bounces around like a money runner, and while it is on the payroll every other recruit loses loyalty 75% slower. Bards do not buff bards.',
     ingredients: ['air', 'sound'],
     tier: 'divine',
-    elementId: 'quantum',
+    elementId: 'subterfuge',
   },
   {
     id: 'gasoline',
@@ -127,7 +127,7 @@ export const DIVINE_PERKS: PerkDef[] = [
   {
     id: 'electromagnet',
     name: 'Electromagnet',
-    emoji: '🧲',
+    emoji: '🔗',
     color: 0xffaa33,
     description: 'The Atom Smasher no longer flings your magnets away — it charges them. A charged magnet arcs into anyone standing near it and stuns for half a second when it lands a hit. The charge holds 10s, or forever once the Smasher is enhanced.',
     ingredients: ['fire', 'electricity'],
@@ -137,7 +137,7 @@ export const DIVINE_PERKS: PerkDef[] = [
   {
     id: 'sulphur',
     name: 'Sulphur',
-    emoji: '🟡',
+    emoji: '💛',
     color: 0xffdd44,
     description: 'Your geysers cap themselves and build sulphurous pressure instead — about 5 a second, up to 100. Step on one and it blows: a speed boost equal to the stored pressure for 8s, and the geyser is spent.',
     ingredients: ['fire', 'slime'],
@@ -217,7 +217,7 @@ export const DIVINE_PERKS: PerkDef[] = [
   {
     id: 'hell',
     name: 'Hell',
-    emoji: '🐕‍🦺',
+    emoji: '🐕',
     color: 0xcc3322,
     description: 'The beast you release is a hellhound instead — a smaller, meaner thing that deals 30% more damage, swings 20% faster and runs 30% quicker, but takes 25% more damage itself.',
     ingredients: ['earth', 'electricity'],
@@ -227,7 +227,7 @@ export const DIVINE_PERKS: PerkDef[] = [
   {
     id: 'copper',
     name: 'Copper',
-    emoji: '🟠',
+    emoji: '🔶',
     color: 0xdd8844,
     description: 'You earth every hit you take into the floor. Each wound scatters copper sparks that burn for a fifth of the damage you took, twice a second, for 3s.',
     ingredients: ['earth', 'slime'],

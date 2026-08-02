@@ -492,7 +492,7 @@ export class GumKit {
       s.held = { kind: 'body', ball: null, victim };
       this.flung.delete(victim);
       this.avatar(owner)?.setCarry(true);
-      this.api.showFloatingText(victim.x, victim.y - 40, '🫳 GRABBED', this.hex(GUM.gumLit));
+      this.api.showFloatingText(victim.x, victim.y - 40, '🤚 GRABBED', this.hex(GUM.gumLit));
       Sfx.playAt('stretch', victim.x, { rate: 0.75, volume: 0.9 });
       return;
     }
@@ -523,7 +523,7 @@ export class GumKit {
       s.held = { kind: 'ball', ball, victim: null };
       this.avatar(owner)?.setCarry(true);
       this.fx(owner).pop(hx, hy, 16);
-      this.api.showFloatingText(hx, hy - 26, `🫳 CAUGHT ${caught}`, this.hex(GUM.oozeLit));
+      this.api.showFloatingText(hx, hy - 26, `🤚 CAUGHT ${caught}`, this.hex(GUM.oozeLit));
       Sfx.playAt('boing', hx, { rate: 1.2, volume: 0.8 });
       return;
     }
@@ -648,7 +648,7 @@ export class GumKit {
     const s = this.side(owner);
     if (this.now < s.handBackAt) {
       this.refund(f, 'gum-grab');
-      this.api.showFloatingText(f.x, f.y - 48, '🫠 NO HAND', this.hex(GUM.solidLit));
+      this.api.showFloatingText(f.x, f.y - 48, '🤢 NO HAND', this.hex(GUM.solidLit));
       return;
     }
     this.ensureLayers();
@@ -725,7 +725,7 @@ export class GumKit {
       this.fx(owner).splat(x, y, 18, 4);
     }
     this.avatar(owner)?.play('sweep', base);
-    this.api.showFloatingText(f.x, f.y - 48, '🟢 SLIME SURGE', this.hex(GUM.oozeLit));
+    this.api.showFloatingText(f.x, f.y - 48, '💚 SLIME SURGE', this.hex(GUM.oozeLit));
     Sfx.playAt('slime-splat', f.x, { rate: 0.8, volume: 0.95 });
   }
 
@@ -752,7 +752,7 @@ export class GumKit {
       });
     }
     this.avatar(owner)?.play('sweep', base);
-    this.api.showFloatingText(f.x, f.y - 48, '🩷 GUMBALL', this.hex(GUM.gum));
+    this.api.showFloatingText(f.x, f.y - 48, '💗 GUMBALL', this.hex(GUM.gum));
     Sfx.playAt('bubble', f.x, { rate: 0.9, volume: 1 });
   }
 
@@ -768,7 +768,7 @@ export class GumKit {
     this.installAbsorber(owner);
     this.avatar(owner)?.play('flex');
     this.fx(owner).swallow(f.x, f.y);
-    this.api.showFloatingText(f.x, f.y - 52, '🫧 OOZORBTION', this.hex(GUM.oozeLit));
+    this.api.showFloatingText(f.x, f.y - 52, '💦 OOZORBTION', this.hex(GUM.oozeLit));
     Sfx.playAt('stretch', f.x, { rate: 0.7, volume: 0.95 });
   }
 
@@ -816,7 +816,7 @@ export class GumKit {
     this.avatar(owner)?.play('raise');
     this.api.scene.cameras.main.shake(320, 0.008);
     this.api.showFloatingText(f.x, f.y - 58,
-      hardened > 0 ? `🧊 SOLIDIFY · ${hardened} HARDENED` : '🧊 SOLIDIFY', this.hex(GUM.solidLit));
+      hardened > 0 ? `❄️ SOLIDIFY · ${hardened} HARDENED` : '❄️ SOLIDIFY', this.hex(GUM.solidLit));
     Sfx.playAt('ice-shatter', f.x, { rate: 1.1, volume: 1 });
     Sfx.playAt('crystal-shatter', f.x, { rate: 0.85, volume: 0.8 });
   }
@@ -881,7 +881,7 @@ export class GumKit {
     this.dropAbsorber(owner);
     if (!this.alive(f)) return;
     this.fx(owner).swallow(f.x, f.y);
-    this.api.showFloatingText(f.x, f.y - 46, `🫗 ABSORBED ${damage}`, this.hex(GUM.oozeLit));
+    this.api.showFloatingText(f.x, f.y - 46, `💧 ABSORBED ${damage}`, this.hex(GUM.oozeLit));
     Sfx.playAt('boing', f.x, { rate: 0.8, volume: 0.9 });
   }
 
@@ -900,7 +900,7 @@ export class GumKit {
         this.unswell(owner);
         this.dropAbsorber(owner);
         if (this.alive(f)) {
-          this.api.showFloatingText(f.x, f.y - 44, '🫠 NOTHING CAME', this.hex(GUM.oozeDeep));
+          this.api.showFloatingText(f.x, f.y - 44, '🤢 NOTHING CAME', this.hex(GUM.oozeDeep));
         }
       }
 
@@ -1178,7 +1178,7 @@ export class GumKit {
       return;
     }
     this.encased.set(victim, { owner, until, hard: false });
-    this.api.showFloatingText(victim.x, victim.y - 40, '🩷 ENCASED', this.hex(GUM.gumLit));
+    this.api.showFloatingText(victim.x, victim.y - 40, '💗 ENCASED', this.hex(GUM.gumLit));
     Sfx.playAt('bubble', victim.x, { rate: 0.7, volume: 0.9 });
   }
 
@@ -1215,7 +1215,7 @@ export class GumKit {
         this.stuckUntil.set(victim, { owner: fl.owner, until: this.now + WALL_STUCK_MS });
         (victim.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
         this.fx(fl.owner).splat(victim.x, victim.y, 30, 6, true);
-        this.api.showFloatingText(victim.x, victim.y - 46, '🧱 STUCK', this.hex(GUM.gumLit));
+        this.api.showFloatingText(victim.x, victim.y - 46, '🚧 STUCK', this.hex(GUM.gumLit));
         this.api.scene.cameras.main.shake(200, 0.006);
         Sfx.playAt('hit-heavy', victim.x, { rate: 0.8, volume: 1 });
         if (fl.hard) {
@@ -1522,7 +1522,7 @@ export class GumKit {
         : null;
     this.api.setStatusIndicator('gum-hand', playerIs ? {
       name: handless ? 'No Hand' : holding ? 'Carrying' : s.anchored ? 'Gripping' : 'Stretchy Hand',
-      emoji: handless ? '🫠' : holding ? '🫳' : s.anchored ? '✊' : '🖐',
+      emoji: handless ? '🤢' : holding ? '🤚' : s.anchored ? '✊' : '🖐',
       color: handless ? GUM.solidLit : s.anchored ? GUM.shine : GUM.oozeLit,
       priority: handless ? 2 : 140,
       description: handless
@@ -1537,7 +1537,7 @@ export class GumKit {
 
     const mine = this.balls.filter((b) => b.owner === 'player' && !b.flying).length;
     this.api.setStatusIndicator('gum-balls', playerIs && mine > 0 ? {
-      name: 'Slimeballs', emoji: '🟢', color: GUM.ooze, priority: 141,
+      name: 'Slimeballs', emoji: '💚', color: GUM.ooze, priority: 141,
       description: `Lying on the floor waiting to be picked up. A thrown one is ${BALL_DAMAGE} damage and a ${Math.round((1 - BALL_SLOW_MULT) * 100)}% slow for 3 seconds; one that misses lands and can be thrown again. Solidify hardens them to ${BALL_HARD_DAMAGE} and makes them shatter on walls.`,
       count: mine, suffix: `/${BALL_MAX}`,
     } : null);
@@ -1547,7 +1547,7 @@ export class GumKit {
       description: 'Something is breaking down inside you. When it finishes you are healed for exactly the damage it never got to do.',
       count: s.lodged.damage, until: s.lodged.digestAt,
     } : {
-      name: 'Oozorbtion', emoji: '🫧', color: GUM.oozeLit, priority: 133,
+      name: 'Oozorbtion', emoji: '💦', color: GUM.oozeLit, priority: 133,
       description: `Swollen by ${Math.round((OOZE_SWELL - 1) * 100)}% and open. The next attack that reaches you is swallowed instead of landing — bigger body, bigger target, until something is caught.`,
       until: s.absorbUntil,
     }) : null);
@@ -1555,14 +1555,14 @@ export class GumKit {
     // Victim side: what the opposing slime has done to us.
     const encased = p ? this.encased.get(p) : undefined;
     this.api.setStatusIndicator('gum-encased', encased && encased.owner === 'npc' ? {
-      name: 'Encased', emoji: '🩷', color: encased.hard ? GUM.solidLit : GUM.gum, priority: 3,
+      name: 'Encased', emoji: '💗', color: encased.hard ? GUM.solidLit : GUM.gum, priority: 3,
       description: `Sealed in gum: badly slowed, and light enough for a slime's hand to pick you up and throw you at a wall.${encased.hard ? ' Hardened — it lasts longer and bursts into shards when you land.' : ''}`,
       until: encased.until,
     } : null);
 
     const stuck = p ? this.stuckUntil.get(p) : undefined;
     this.api.setStatusIndicator('gum-stuck', stuck && this.now < stuck.until ? {
-      name: 'Stuck to the Wall', emoji: '🧱', color: GUM.gumLit, priority: 1,
+      name: 'Stuck to the Wall', emoji: '🚧', color: GUM.gumLit, priority: 1,
       description: 'Thrown into a wall and glued there by the gum around you. You cannot move until it gives.',
       until: stuck.until,
     } : null);

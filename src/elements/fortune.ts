@@ -67,6 +67,6 @@ export const fortuneElement: Element = {
   id: 'fortune',
   name: 'Fortune',
   color: 0xd8a531,
-  emoji: '🪙',
+  emoji: '💰',
   abilities: [fire, safeInvestment, riskyInvestment, paywall, payToWin],
 };

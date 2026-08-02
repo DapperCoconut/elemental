@@ -61,6 +61,6 @@ export const iceElement: Element = {
   id: 'ice',
   name: 'Ice',
   color: 0x88ccff,
-  emoji: '🧊',
+  emoji: '❄️',
   abilities: [iceSpike, frostBlast, blockUp, skate, frozenSolid],
 };

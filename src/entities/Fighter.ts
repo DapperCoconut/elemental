@@ -57,7 +57,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public shieldHp = 0;
   /** Metal R+ (Blood Clottage): dark-red HP layer. Absorbs damage at half rate and is spent before normal HP. */
   public clottedHp = 0;
-  /** Quantum blue E: gray "weak HP" layer. Absorbs damage like shield HP (bonus), but decays 3/s. */
+  /** Gray "weak HP" layer. Absorbs damage like shield HP (bonus), but decays 3/s. */
   public weakHp = 0;
   /**
    * Audio: true only for the fighter the local player is driving. Set by `Player`
@@ -119,6 +119,13 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    * fragile one is exactly the right interaction.
    */
   public glassIncomingMult = 1;
+  /**
+   * Quantum (Instability): 1 + one point per percent of instability, so a fighter sitting at the
+   * 50% cap takes half again as much of everything. Its own field for the same reason Justice,
+   * Magma, Conquest, Passion and Glass have theirs — and inside the mitigation product on
+   * purpose, because carrying two kits is meant to be paid for against every source at once.
+   */
+  public quantumIncomingMult = 1;
   /**
    * Death (Styx Shot): 1 − 15% per brand this fighter's *attacker* is carrying, doubled under a
    * Hospice noose — the victim-side stand-in for "the branded deal less", since `takeDamage` has
@@ -245,6 +252,14 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public forceInvisible = false;
   /** 0–1+ probability that an incoming hit is dodged (can exceed 1.0, stacks). Each dodge subtracts 0.2. */
   public dodgeChance = 0;
+  /**
+   * Air's wind dodge: a second, independent evasion pool the dancer builds up over a match.
+   * Deliberately separate from `dodgeChance` because it obeys different rules — it never decays
+   * with time, only ever spends 0.1 on a dodge that actually saved you, and is allowed past
+   * 1.0 (where it simply cannot fail until it has been spent back down). Written only by
+   * AirKit; kept here so the status tray and any future reader can see it.
+   */
+  public windDodge = 0;
   /** Timestamp after which the fighter can cast abilities again (Disarm effect). */
   public disarmedUntil = 0;
   /**
@@ -524,12 +539,6 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Growth Mastery — Carrier: permanent leftovers of a survived sickness. Never clears. */
   public sicknessCarrier = false;
 
-  /**
-   * Sound Mastery — Bugle: rattled by a caravan until this `scene.time.now` timestamp.
-   * Every note the bugler lands while this holds shakes a little more damage loose.
-   */
-  public vibrationUntil = 0;
-
   /** Metal Mastery — Natural Clot: flat amount subtracted from every incoming hit. Default 0. */
   public flatDamageReduction = 0;
   /** Metal Mastery — Steel Shield: incoming damage multiplier while the shield is up. Default 1. */
@@ -664,7 +673,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // Tallied here: after the crit roll (a crit really is a bigger hit) but before every
       // mitigation multiplier on the line below, which is what "damage aimed at you" means.
       this.rawDamageTaken += amount;
-      let mitigation = this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.glassIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.orderIncomingMult * this.netDefenseMult;
+      let mitigation = this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.glassIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.orderIncomingMult * this.netDefenseMult;
       // Ruin's spikes turn armour inside out — 25% less damage taken comes back as 25% more.
       // Only a net *buff* is flipped; a fighter already taking extra damage is left alone.
       if (mitigation < 1 && this.scene.time.now < this.buffsInvertedUntil) mitigation = 2 - mitigation;
@@ -752,7 +761,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       }
     }
 
-    // Quantum weak HP: a gray bonus layer that soaks damage like shield HP.
+    // Weak HP: a gray bonus layer that soaks damage like shield HP.
     if (!opts?.pierce && this.weakHp > 0) {
       const absorbed = Math.min(this.weakHp, amount);
       this.weakHp -= absorbed;
@@ -960,6 +969,10 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   private announceCast(abilityId: string): void {
     this.lastCastAbilityId = abilityId;
+    // The one place every ability passes through is also the only honest place to count
+    // them, so bond research listens here rather than in each kit. Emitted for both sides;
+    // ArenaScene subscribes on the player alone.
+    this.emit('cast', abilityId);
     // The one place every ability in the game passes through, so it is also the
     // one place any of them needs to be given a voice — see `AbilitySounds.ts`.
     const ability = this.element.abilities.find((a) => a.id === abilityId);
@@ -1039,6 +1052,34 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Make an ability immediately ready (clears its cooldown). */
   resetCooldown(abilityId: string): void {
     this.cooldowns.set(abilityId, 0);
+  }
+
+  /** Every ability comes back at once (Air Mastery — Winds of Change). */
+  clearAllCooldowns(): void {
+    this.cooldowns.clear();
+  }
+
+  /**
+   * Air (Spin Dance): pull every running cooldown forward by up to `ms`, and report how much
+   * was actually taken off. The clamp matters — an ability with 400ms left can only give up
+   * 400ms, and the mastery requirement counts *time removed*, not times pressed.
+   */
+  reduceCooldowns(ms: number, exceptId?: string): number {
+    const now = Date.now();
+    let removed = 0;
+    for (const [id, stamp] of this.cooldowns) {
+      if (id === exceptId) continue;
+      const ability = this.element.abilities.find((a) => a.id === id);
+      if (!ability) continue;
+      const ultimateExtra = (ability as { isUltimate?: boolean }).isUltimate ? this.ultimateCooldownMult : 1;
+      const full = ability.cooldown * (this.cooldownMult || 1) * this.netCooldownMult * ultimateExtra;
+      const left = full - (now - stamp);
+      if (left <= 0) continue;
+      const take = Math.min(ms, left);
+      this.cooldowns.set(id, stamp - take);
+      removed += take;
+    }
+    return removed;
   }
 
   /** Returns 0 = on cooldown, 1 = ready */
