@@ -38,8 +38,15 @@ const Q_CYAN = 0x7df9ff;
 
 /** HUD geometry. Depth 21–23 is the arena's tray band — see `ArenaScene.createHUD`. */
 const HUD_DEPTH = 23;
-const HUD_W = 172;
+/** Per bond slot, so the plate grows when Third State adds a third stop rather than cramping. */
+const HUD_SLOT_W = 86;
 const HUD_H = 40;
+
+/**
+ * The id of Quantum's own third stop. It is the element id, not a sentinel: a bond wearing it
+ * really is `ELEMENT_MAP['quantum']`, whose five abilities `QuantumCoreKit` supplies.
+ */
+const THIRD_STATE = 'quantum';
 
 /**
  * The per-frame tick for whichever half is *not* currently being played. Keyed by element id
@@ -63,6 +70,12 @@ export interface QuantumArenaApi {
   get npcIsQuantum(): boolean;
   /** 1–5, driving how briskly an npc Quantum rotates its bond. */
   get npcDifficultyLevel(): number;
+  /**
+   * True when the player owns Quantum's one upgrade, Third State — which is the only thing that
+   * puts a third stop on the cycle. Read once per fight in `setPlayerBond`, because a shop
+   * purchase mid-match is not a thing that can happen.
+   */
+  get playerHasThirdState(): boolean;
   /** Online: the "npc" is a remote human, so nothing local may decide when it swaps. */
   get isOnline(): boolean;
   /**
@@ -104,8 +117,15 @@ export class QuantumKit {
   /** `[first, second]` as the player ordered them. Index 0 is what the fight starts as. */
   private playerBond: [string, string] | null = null;
   private npcBond: [string, string] | null = null;
-  private playerHalf: 0 | 1 = 0;
-  private npcHalf: 0 | 1 = 0;
+  /**
+   * Every stop on the cycle in order — the two bonded elements, plus Quantum itself when the
+   * fighter owns Third State. This, not the bond, is what the collapse walks; the bond stays a
+   * pair because that is what the Entanglement Lab researched and what the save records.
+   */
+  private playerForms: string[] = [];
+  private npcForms: string[] = [];
+  private playerIdx = 0;
+  private npcIdx = 0;
 
   private instability: Record<Owner, number> = { player: 0, npc: 0 };
   /** Carries the sub-millisecond remainder so decay is frame-rate independent. */
@@ -119,8 +139,8 @@ export class QuantumKit {
   private npcPanicSwapUsed = false;
 
   private hud: Phaser.GameObjects.Graphics | null = null;
-  private hudLeft: Phaser.GameObjects.Text | null = null;
-  private hudRight: Phaser.GameObjects.Text | null = null;
+  /** One label per stop on the cycle, built to match `playerForms` the first time it is drawn. */
+  private hudLabels: Phaser.GameObjects.Text[] = [];
 
   constructor(api: QuantumArenaApi, dormantTicks: DormantTicks) {
     this.api = api;
@@ -136,27 +156,37 @@ export class QuantumKit {
   reset(): void {
     this.playerBond = null;
     this.npcBond = null;
-    this.playerHalf = 0;
-    this.npcHalf = 0;
+    this.playerForms = [];
+    this.npcForms = [];
+    this.playerIdx = 0;
+    this.npcIdx = 0;
     this.instability = { player: 0, npc: 0 };
     this.decayAccum = { player: 0, npc: 0 };
     this.npcNextSwapAt = 0;
     this.npcPanicSwapUsed = false;
     this.tracked = new WeakSet<Fighter>();
     this.hud?.destroy(); this.hud = null;
-    this.hudLeft?.destroy(); this.hudLeft = null;
-    this.hudRight?.destroy(); this.hudRight = null;
+    for (const t of this.hudLabels) t.destroy();
+    this.hudLabels = [];
   }
 
   /** Called from `create()` once the bond for this fight is known. */
   setPlayerBond(a: string, b: string): void {
     this.playerBond = [a, b];
-    this.playerHalf = 0;
+    this.playerForms = this.api.playerHasThirdState ? [a, b, THIRD_STATE] : [a, b];
+    this.playerIdx = 0;
   }
 
+  /**
+   * The npc side never grows a third stop of its own: Third State is a shop purchase and a bot
+   * has no save to buy it from. An *online* opponent who owns it is handled the other way
+   * round — their collapses arrive as `qswap` messages naming the element, and
+   * {@link noteNpcSwapped} adopts whatever they became, Quantum included.
+   */
   setNpcBond(a: string, b: string): void {
     this.npcBond = [a, b];
-    this.npcHalf = 0;
+    this.npcForms = [a, b];
+    this.npcIdx = 0;
   }
 
   // ── Queries ────────────────────────────────────────────────────────────────
@@ -169,22 +199,35 @@ export class QuantumKit {
     return this.npcBond;
   }
 
-  /** The half the player is currently wearing, or null when the player is not Quantum. */
-  playerActiveElement(): string | null {
-    return this.playerBond ? this.playerBond[this.playerHalf] : null;
+  /** Every stop the player's cycle visits, in order. Two entries, or three with Third State. */
+  getPlayerForms(): string[] {
+    return this.playerForms;
   }
 
-  /** The half the player is *not* wearing — the one that needs a dormant tick. */
-  playerDormantElement(): string | null {
-    return this.playerBond ? this.playerBond[this.playerHalf === 0 ? 1 : 0] : null;
+  /** Which stop the player is on right now. */
+  getPlayerFormIndex(): number {
+    return this.playerIdx;
+  }
+
+  /** The form the player is currently wearing, or null when the player is not Quantum. */
+  playerActiveElement(): string | null {
+    return this.playerForms[this.playerIdx] ?? null;
+  }
+
+  /**
+   * The forms the player is *not* wearing — the ones that need a dormant tick. With Third State
+   * there are two of them, which is exactly why this is a list.
+   */
+  playerDormantElements(): string[] {
+    return this.playerForms.filter((_, i) => i !== this.playerIdx);
   }
 
   npcActiveElement(): string | null {
-    return this.npcBond ? this.npcBond[this.npcHalf] : null;
+    return this.npcForms[this.npcIdx] ?? null;
   }
 
-  npcDormantElement(): string | null {
-    return this.npcBond ? this.npcBond[this.npcHalf === 0 ? 1 : 0] : null;
+  npcDormantElements(): string[] {
+    return this.npcForms.filter((_, i) => i !== this.npcIdx);
   }
 
   getInstability(owner: Owner): number {
@@ -199,20 +242,18 @@ export class QuantumKit {
    * either way, and a Quantum with no bond simply dodges like anyone else.
    */
   swapPlayer(): void {
-    const bond = this.playerBond;
-    if (!bond) return;
-    this.playerHalf = this.playerHalf === 0 ? 1 : 0;
-    const next = bond[this.playerHalf];
+    if (this.playerForms.length < 2) return;
+    this.playerIdx = (this.playerIdx + 1) % this.playerForms.length;
+    const next = this.playerForms[this.playerIdx];
     this.api.applyPlayerElement(next);
     this.onCollapse('player', this.api.player, next);
   }
 
   /** The npc-side equivalent, driven by `NpcOpponent`'s dodge. */
   swapNpc(): void {
-    const bond = this.npcBond;
-    if (!bond) return;
-    this.npcHalf = this.npcHalf === 0 ? 1 : 0;
-    const next = bond[this.npcHalf];
+    if (this.npcForms.length < 2) return;
+    this.npcIdx = (this.npcIdx + 1) % this.npcForms.length;
+    const next = this.npcForms[this.npcIdx];
     this.api.applyNpcElement(next);
     this.onCollapse('npc', this.api.npc, next);
   }
@@ -348,19 +389,19 @@ export class QuantumKit {
    * the HUD — see `DormantTicks`.
    */
   private tickDormant(time: number, delta: number): void {
-    if (this.api.playerIsQuantum) {
-      const dormant = this.playerDormantElement();
-      const tick = dormant ? this.dormantTicks[dormant] : undefined;
-      if (tick) tick(time, delta);
-    }
-    if (this.api.npcIsQuantum) {
-      const dormant = this.npcDormantElement();
-      // Skip a half the player is also dormant in — one tick per element per frame.
-      if (dormant && dormant !== this.playerDormantElement()) {
-        const tick = this.dormantTicks[dormant];
-        if (tick) tick(time, delta);
+    // One tick per element per frame, however many dormant slots point at it. Third State makes
+    // that a real possibility rather than a theoretical one: with three stops on the player's
+    // cycle and two on the npc's, four dormant slots are live at once.
+    const done = new Set<string>();
+    const run = (ids: string[]): void => {
+      for (const id of ids) {
+        if (done.has(id)) continue;
+        done.add(id);
+        this.dormantTicks[id]?.(time, delta);
       }
-    }
+    };
+    if (this.api.playerIsQuantum) run(this.playerDormantElements());
+    if (this.api.npcIsQuantum) run(this.npcDormantElements());
   }
 
   /**
@@ -423,51 +464,61 @@ export class QuantumKit {
     if (!this.npcBond) {
       // A peer whose bond we never learned — adopt it from the swap so the readout still works.
       this.npcBond = [this.api.npcElementId, elementId];
-      this.npcHalf = 1;
+      this.npcForms = [...this.npcBond];
+      this.npcIdx = 1;
       return;
     }
-    const at = this.npcBond.indexOf(elementId);
-    if (at === 0 || at === 1) this.npcHalf = at;
+    // A peer who owns Third State has a stop we were never told about, since their bond came
+    // over the wire as a pair. Grow the cycle the first time they land on it rather than
+    // ignoring a form we can plainly see them wearing.
+    let at = this.npcForms.indexOf(elementId);
+    if (at < 0) {
+      this.npcForms.push(elementId);
+      at = this.npcForms.length - 1;
+    }
+    this.npcIdx = at;
     if (this.api.npc?.active) this.collapseRing(this.api.npc.x, this.api.npc.y, this.api.elementColor(elementId));
   }
 
   // ── Bond readout ───────────────────────────────────────────────────────────
 
   /**
-   * A two-slot plate above the ability tray: the live half lit and named, the dormant half
-   * dimmed. Screen-space, so it does not move with the camera.
+   * A slot per stop on the cycle, above the ability tray: the live one lit and named, the
+   * dormant ones dimmed. Screen-space, so it does not move with the camera. Two slots normally,
+   * three once Third State is bought — the plate is sized off `playerForms` rather than being a
+   * fixed width, so the third stop widens it instead of squeezing the other two.
    */
   private drawHud(): void {
-    const bond = this.playerBond;
-    if (!bond || !this.api.playerIsQuantum) return;
+    const forms = this.playerForms;
+    if (forms.length < 2 || !this.api.playerIsQuantum) return;
 
     const cx = this.api.width / 2;
     const y = this.api.height - 92;
-    const half = HUD_W / 2;
+    const totalW = HUD_SLOT_W * forms.length;
+    const half = totalW / 2;
 
     if (!this.hud) {
       this.hud = this.api.scene.add.graphics().setDepth(HUD_DEPTH - 1).setScrollFactor(0);
-      this.hudLeft = this.api.scene.add.text(cx - half / 2, y, '', {
+    }
+    while (this.hudLabels.length < forms.length) {
+      this.hudLabels.push(this.api.scene.add.text(0, y, '', {
         fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
-      }).setOrigin(0.5).setDepth(HUD_DEPTH).setScrollFactor(0);
-      this.hudRight = this.api.scene.add.text(cx + half / 2, y, '', {
-        fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
-      }).setOrigin(0.5).setDepth(HUD_DEPTH).setScrollFactor(0);
+      }).setOrigin(0.5).setDepth(HUD_DEPTH).setScrollFactor(0));
     }
 
     const g = this.hud;
     g.clear();
     g.fillStyle(0x061014, 0.88);
-    g.fillRoundedRect(cx - half, y - HUD_H / 2, HUD_W, HUD_H, 8);
+    g.fillRoundedRect(cx - half, y - HUD_H / 2, totalW, HUD_H, 8);
     g.lineStyle(1.5, Q_CYAN, 0.55);
-    g.strokeRoundedRect(cx - half, y - HUD_H / 2, HUD_W, HUD_H, 8);
+    g.strokeRoundedRect(cx - half, y - HUD_H / 2, totalW, HUD_H, 8);
 
-    // The live half gets a filled slot in its own element's colour; the dormant one a hairline.
-    for (let i = 0; i < 2; i++) {
-      const live = i === this.playerHalf;
-      const sx = cx - half + 6 + i * (HUD_W / 2 - 4);
-      const sw = HUD_W / 2 - 8;
-      const col = this.api.elementColor(bond[i]);
+    // The live stop gets a filled slot in its own element's colour; the dormant ones a hairline.
+    for (let i = 0; i < forms.length; i++) {
+      const live = i === this.playerIdx;
+      const sx = cx - half + 6 + i * HUD_SLOT_W;
+      const sw = HUD_SLOT_W - 8;
+      const col = this.api.elementColor(forms[i]);
       if (live) {
         g.fillStyle(col, 0.34);
         g.fillRoundedRect(sx, y - HUD_H / 2 + 6, sw, HUD_H - 12, 6);
@@ -476,15 +527,14 @@ export class QuantumKit {
         g.lineStyle(1, col, 0.3);
       }
       g.strokeRoundedRect(sx, y - HUD_H / 2 + 6, sw, HUD_H - 12, 6);
-    }
 
-    const label = (t: Phaser.GameObjects.Text | null, id: string, live: boolean): void => {
-      if (!t) return;
-      t.setText(`${this.api.elementEmoji(id)} ${this.api.elementName(id)}`);
+      const t = this.hudLabels[i];
+      t.setPosition(sx + sw / 2, y);
+      t.setText(`${this.api.elementEmoji(forms[i])} ${this.api.elementName(forms[i])}`);
       t.setColor(live ? '#ffffff' : '#5d7076');
       t.setAlpha(live ? 1 : 0.75);
-    };
-    label(this.hudLeft, bond[0], this.playerHalf === 0);
-    label(this.hudRight, bond[1], this.playerHalf === 1);
+      t.setVisible(true);
+    }
+    for (let i = forms.length; i < this.hudLabels.length; i++) this.hudLabels[i].setVisible(false);
   }
 }

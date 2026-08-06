@@ -73,6 +73,6 @@ export const gumElement: Element = {
   id: 'gum',
   name: 'Slime',
   color: 0x46b93f,
-  emoji: '🤢',
+  emoji: '🫠',
   abilities: [grab, surge, gumball, oozorbtion, solidify],
 };

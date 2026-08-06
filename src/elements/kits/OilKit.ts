@@ -2415,8 +2415,15 @@ export class OilKit {
    * Drones, orbiting or detached. They are built machines, and the array they orbit in is
    * rebuilt from whatever is left, so pulling one out of the middle is safe.
    */
-  purgeSummons(x: number, y: number, radius: number, exceptOwner: 'player' | 'npc'): number {
-    const near = (g: Phaser.GameObjects.Graphics): boolean => Phaser.Math.Distance.Between(x, y, g.x, g.y) <= radius;
+  purgeSummons(
+    x: number, y: number, radius: number, exceptOwner: 'player' | 'npc',
+    report?: (px: number, py: number) => void,
+  ): number {
+    const near = (g: Phaser.GameObjects.Graphics): boolean => {
+      if (Phaser.Math.Distance.Between(x, y, g.x, g.y) > radius) return false;
+      report?.(g.x, g.y);
+      return true;
+    };
     let razed = 0;
     const cull = (list: Drone[], owner: 'player' | 'npc'): void => {
       if (owner === exceptOwner) return;

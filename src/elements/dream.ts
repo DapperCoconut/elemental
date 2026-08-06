@@ -9,9 +9,11 @@ import { Ability, CastContext } from './Ability';
  * wakes up wrong. Nothing Dream does is fast on its own — but a sleeping enemy is a sleeping
  * enemy, and a pillow to a sleeping head hurts.
  *
- * The passive lives entirely in the cursor: it is a real weapon that deals five damage every
- * time it crosses into a body, so flicking on and off a target is a genuine (if frantic)
- * damage rotation with no cooldown at all.
+ * There are two passives, and they pull in opposite directions. The cursor is a real weapon
+ * that deals five damage every time it crosses into a body, so flicking on and off a target
+ * is a genuine (if frantic) damage rotation with no cooldown at all. Rest pays five health a
+ * second for standing perfectly still — which is also the one thing that stops the pendulum
+ * swinging, so the element is always asking whether this second is for pressure or repair.
  *
  * Every `cast` here is a one-line delegate; the whole simulation lives in DreamKit.
  */
@@ -55,7 +57,7 @@ const nightmare: Ability = {
 const oasis: Ability = {
   id: 'dream-oasis',
   name: 'Oasis',
-  description: 'Open a doorway behind you that only you can use. Step through for 10 HP/s, untouchable and unseen, until you are healed or 15s runs out.',
+  description: 'Open a doorway behind you that only you can use. Step through to a meadow under a waterfall: 10 HP/s, untouchable and unseen, until you are healed or 15s runs out.',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 45000,

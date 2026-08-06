@@ -62,15 +62,22 @@ const flameDash: Ability = {
 const pressureBomb: Ability = {
   id: 'pressure-bomb',
   name: 'Pressure Bomb',
-  description: 'Detonate an AoE explosion at the cursor',
+  description: 'Plant a charge at the cursor — it blows 1.5s later',
   displayKey: 'R',
   cooldown: 3000,
   cast(ctx) {
     // Molten (divine perk): the charge is packed hotter — 20% more out of it, and a burn back.
     const molten = ctx.hasPerk('molten');
-    ctx.dealAoeDamage(ctx.targetX, ctx.targetY, 100, molten ? 38 : 32);
-    fx(ctx).explosion(ctx.targetX, ctx.targetY, 100);
-    ctx.scene.cameras.main.shake(molten ? 200 : 140, molten ? 0.006 : 0.004);
+    const damage = molten ? 38 : 32;
+    if (ctx.fireLobPressureBomb) {
+      // FireKit owns the fuse: it marks the ground red, then blows the charge.
+      ctx.fireLobPressureBomb(ctx.targetX, ctx.targetY, damage);
+    } else {
+      // No kit on this context (raids) — the charge goes off the moment it lands.
+      ctx.dealAoeDamage(ctx.targetX, ctx.targetY, 100, damage);
+      fx(ctx).explosion(ctx.targetX, ctx.targetY, 100);
+      ctx.scene.cameras.main.shake(molten ? 200 : 140, molten ? 0.006 : 0.004);
+    }
     if (molten) ctx.fireScorchCaster?.();
   },
 };

@@ -218,7 +218,7 @@ export class CampaignFightMenuScene extends Phaser.Scene {
     } else {
       const blurb = this.kind === 'gauntlet'
         ? 'A randomised run — five bouts and a boss, back to back, no healing between them.'
-        : 'Endless husk waves. Every tenth wave brings a boss. Pays 🔴 Corrupt Shards, not Sparks.';
+        : 'Endless husk waves. Every tenth wave brings a boss. Pays 🩸 Corrupt Shards, not Sparks.';
       this.add.text(cx, y - 8, blurb, {
         fontSize: '12.5px', fontFamily: FONT_UI, color: T.dim,
         wordWrap: { width: PANEL_W - 110 }, align: 'center',

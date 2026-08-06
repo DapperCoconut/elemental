@@ -925,7 +925,7 @@ export class GravityKit {
     }
     this.playerAvatar?.play('slam', Math.PI / 2);
     this.arena.scene.cameras.main.shake(600, 0.012);
-    this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 40, '🌌 CRUSHING FIELD', '#ccbbee');
+    this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 40, '🪐 CRUSHING FIELD', '#ccbbee');
 
     for (const target of this.arena.enemies) {
       if (!target.active || target.hp <= 0) continue;

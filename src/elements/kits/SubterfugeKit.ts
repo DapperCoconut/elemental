@@ -1874,7 +1874,7 @@ export class SubterfugeKit {
     const y = 90;
     this.discoBalls.push({ owner, x, y, endsAt: time + DISCO_MS, nextShotAt: time + DISCO_SHOT_INTERVAL });
     void scene;
-    this.api.showFloatingText(x, y - 36, '💫 Disco!', '#ff66cc');
+    this.api.showFloatingText(x, y - 36, '🪩 Disco!', '#ff66cc');
   }
 
   private _updateDiscoBalls(time: number): void {
@@ -2615,8 +2615,15 @@ export class SubterfugeKit {
    * Ruin's Spikes of Ruin (see `combat/SummonPurge.ts`).
    * Hired lackeys and the disco ball — both bought and placed, neither a fighter.
    */
-  purgeSummons(x: number, y: number, radius: number, exceptOwner: 'player' | 'npc'): number {
-    const near = (px: number, py: number): boolean => Phaser.Math.Distance.Between(x, y, px, py) <= radius;
+  purgeSummons(
+    x: number, y: number, radius: number, exceptOwner: 'player' | 'npc',
+    report?: (px: number, py: number) => void,
+  ): number {
+    const near = (px: number, py: number): boolean => {
+      if (Phaser.Math.Distance.Between(x, y, px, py) > radius) return false;
+      report?.(px, py);
+      return true;
+    };
     let razed = 0;
     for (let i = this.lackeys.length - 1; i >= 0; i--) {
       const l = this.lackeys[i];

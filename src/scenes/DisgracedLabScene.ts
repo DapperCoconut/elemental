@@ -30,11 +30,11 @@ const NORMAL_ELEMENTS: ElementDef[] = [
   { id: 'water',    name: 'Water',    emoji: '💧',  color: 0x0088ff },
   { id: 'life',     name: 'Life',     emoji: '🌿',  color: 0x44cc44 },
   { id: 'air',      name: 'Air',      emoji: '💨',  color: 0xaaddff },
-  { id: 'earth',    name: 'Earth',    emoji: '🗿',  color: 0x887755 },
+  { id: 'earth',    name: 'Earth',    emoji: '🪨',  color: 0x887755 },
   { id: 'oil',      name: 'Oil',      emoji: '🛢️', color: 0x664400 },
   { id: 'shadow',   name: 'Shadow',   emoji: '🌑',  color: 0x330044 },
-  { id: 'ice',      name: 'Ice',      emoji: '❄️',  color: 0x88ccff },
-  { id: 'growth',   name: 'Growth',   emoji: '🐛',  color: 0x88bb22 },
+  { id: 'ice',      name: 'Ice',      emoji: '🧊',  color: 0x88ccff },
+  { id: 'growth',   name: 'Growth',   emoji: '🦠',  color: 0x88bb22 },
   { id: 'crystal',  name: 'Crystal',  emoji: '💎',  color: 0x88ccff },
   { id: 'soul',     name: 'Soul',     emoji: '👻',  color: 0xccaaff },
   { id: 'hunt',     name: 'Hunt',     emoji: '🐺',  color: 0xcc4400 },
@@ -46,7 +46,7 @@ const NORMAL_ELEMENTS: ElementDef[] = [
 /** Abstract elements — exactly one goes in the right socket. */
 const ABSTRACT_ELEMENTS: ElementDef[] = [
   { id: 'electricity', name: 'Electricity', emoji: '⚡', color: 0xffee00 },
-  { id: 'slime',       name: 'Acid',        emoji: '💚', color: 0x66cc44 },
+  { id: 'slime',       name: 'Acid',        emoji: '🟢', color: 0x66cc44 },
   { id: 'fate',        name: 'Fate',        emoji: '🃏', color: 0x88eecc },
   { id: 'sound',       name: 'Sound',       emoji: '🔊', color: 0xff66cc },
   { id: 'light',       name: 'Light',       emoji: '✨', color: 0xfff4a8 },

@@ -1816,7 +1816,7 @@ export class DisgracedKingKit {
     const x = this.kingX + Math.cos(angle) * FEAST_HEART_R;
     const y = this.kingY + Math.sin(angle) * FEAST_HEART_R * 0.8;
     const hitbox = new Fighter(this.arena.scene, x, y, 'elem-king', {
-      id: 'devourer-heart', name: 'Heart', color: DEVOUR.warn, emoji: '💓', abilities: [],
+      id: 'devourer-heart', name: 'Heart', color: DEVOUR.warn, emoji: '🫀', abilities: [],
     }, FEAST_HEART_HP, 0);
     hitbox.setAlpha(0);
     hitbox.forceInvisible = true;

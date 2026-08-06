@@ -1025,6 +1025,11 @@ export class AirKit {
       const dmg = Math.round(banked * FINAL_FLIGHT_SHARE);
       if (dmg <= 0) continue;
       t.takeDamage(dmg);
+      // A ram never banks itself. The ledger is polled from `rawDamageTaken` deltas, so
+      // without moving the watermark past this hit the next frame would read the ram as
+      // fresh damage dealt and refill the ledger it just spent — every grapple paying for
+      // the next one, compounding as long as they keep landing.
+      this.ledgerSeen.set(t, t.rawDamageTaken);
       this.arena.spawnHitFlash(t.x, t.y, AIR.white);
       this.pfx.gustBurst(t.x, t.y, 72, { duration: 420, dust: false });
       this.pfx.featherPuff(t.x, t.y, 8);

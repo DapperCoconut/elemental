@@ -222,15 +222,15 @@ export const ITEMS: ItemDef[] = [
       behaviors: [{ trigger: 'onHitDealt', chance: 0.15, cooldownSec: 4, action: 'sear', amount: 12, durationMs: 3000 }] } },
 
   // ══ Water ═════════════════════════════════════════════════════════
-  { id: 'bubble', name: 'Bubble', emoji: '💦', elementId: 'water', priceSparks: 5,
+  { id: 'bubble', name: 'Bubble', emoji: '🫧', elementId: 'water', priceSparks: 5,
     flavor: 'Impossibly stubborn for something made of nothing.',
     effect: { shieldCharges: 2,
       behaviors: [{ trigger: 'onLowHp', thresholdFrac: 0.35, action: 'shieldCharge', amount: 2 }] } },
-  { id: 'canteen', name: 'Deep Canteen', emoji: '🍶', elementId: 'water', priceSparks: 7,
+  { id: 'canteen', name: 'Deep Canteen', emoji: '🧴', elementId: 'water', priceSparks: 7,
     flavor: 'Never empties. Nobody has asked where the water comes from.',
     effect: { regenPerSecond: 2,
       behaviors: [{ trigger: 'everyNSec', periodSec: 10, action: 'healBurst', amount: 8 }] } },
-  { id: 'riptide-boots', name: 'Riptide Boots', emoji: '👢', elementId: 'water', priceSparks: 9,
+  { id: 'riptide-boots', name: 'Riptide Boots', emoji: '🥾', elementId: 'water', priceSparks: 9,
     flavor: 'The current decides where you go. Usually somewhere useful.',
     effect: { speedMult: 1.12, dodgeChance: 0.10,
       behaviors: [{ trigger: 'onHitTaken', chance: 0.25, cooldownSec: 5, action: 'tempHaste', mult: 1.35, durationMs: 1800 }] } },
@@ -250,7 +250,7 @@ export const ITEMS: ItemDef[] = [
       behaviors: [{ trigger: 'onHitTaken', chance: 0.2, cooldownSec: 4, action: 'burstAoe', amount: 16, radius: 110 }] } },
 
   // ══ Air ═══════════════════════════════════════════════════════════
-  { id: 'stormfeather', name: 'Stormfeather', emoji: '🍃', elementId: 'air', priceSparks: 7,
+  { id: 'stormfeather', name: 'Stormfeather', emoji: '🪶', elementId: 'air', priceSparks: 7,
     flavor: 'Pulled from something that never landed.',
     effect: { speedMult: 1.18,
       behaviors: [{ trigger: 'everyNSec', periodSec: 9, action: 'tempHaste', mult: 1.3, durationMs: 2000 }] } },
@@ -264,7 +264,7 @@ export const ITEMS: ItemDef[] = [
       behaviors: [{ trigger: 'onCast', chance: 0.2, action: 'cooldownRefund', amount: 600 }] } },
 
   // ══ Earth ═════════════════════════════════════════════════════════
-  { id: 'granite-slab', name: 'Granite Slab', emoji: '🗿', elementId: 'earth', priceSparks: 7,
+  { id: 'granite-slab', name: 'Granite Slab', emoji: '🪨', elementId: 'earth', priceSparks: 7,
     flavor: 'Strapped to the chest. Deeply unfashionable. Extremely effective.',
     effect: { shieldHp: 40,
       behaviors: [{ trigger: 'onHitTaken', chance: 0.12, cooldownSec: 5, action: 'burstAoe', amount: 14, radius: 110 }] } },
@@ -296,11 +296,11 @@ export const ITEMS: ItemDef[] = [
     flavor: 'Preserved perfectly. For rather longer than anyone intended.',
     effect: { maxHp: 50,
       behaviors: [{ trigger: 'onLowHp', thresholdFrac: 0.35, action: 'healBurst', amount: 45 }] } },
-  { id: 'glacier-plate', name: 'Glacier Plate', emoji: '❄️', elementId: 'ice', priceSparks: 13,
+  { id: 'glacier-plate', name: 'Glacier Plate', emoji: '🧊', elementId: 'ice', priceSparks: 13,
     flavor: 'A thousand winters, compressed into one very cold sheet.',
     effect: { shieldHp: 60,
       behaviors: [{ trigger: 'onHitTaken', chance: 0.2, cooldownSec: 6, action: 'slowEnemy', mult: 0.55, durationMs: 2000 }] } },
-  { id: 'chill-draught', name: 'Chill Draught', emoji: '☃️', elementId: 'ice', priceSparks: 12,
+  { id: 'chill-draught', name: 'Chill Draught', emoji: '🥶', elementId: 'ice', priceSparks: 12,
     flavor: 'Cold hands do not swing well.',
     effect: { enemyDamageMult: 0.88,
       behaviors: [{ trigger: 'onHitDealt', chance: 0.12, cooldownSec: 3, action: 'slowEnemy', mult: 0.6, durationMs: 1500 }] } },
@@ -310,11 +310,11 @@ export const ITEMS: ItemDef[] = [
     flavor: 'Do not open indoors. Do not open outdoors either.',
     effect: { regenPerSecond: 3,
       behaviors: [{ trigger: 'everyNSec', periodSec: 8, action: 'sear', amount: 6, durationMs: 3000 }] } },
-  { id: 'petri-dish', name: 'Petri Dish', emoji: '🥣', elementId: 'growth', priceSparks: 14,
+  { id: 'petri-dish', name: 'Petri Dish', emoji: '🧫', elementId: 'growth', priceSparks: 14,
     flavor: 'Something in here has been eating and it has opinions.',
     effect: { lifestealFrac: 0.12,
       behaviors: [{ trigger: 'onHitDealt', chance: 0.12, cooldownSec: 4, action: 'healBurst', amount: 12 }] } },
-  { id: 'mutagen', name: 'Mutagen', emoji: '🔬', elementId: 'growth', priceSparks: 12,
+  { id: 'mutagen', name: 'Mutagen', emoji: '🧬', elementId: 'growth', priceSparks: 12,
     flavor: 'Rewrites you slightly. The new draft hits harder and lives less.',
     effect: { damageMult: 1.20, maxHp: -15,
       behaviors: [{ trigger: 'onHitDealt', chance: 0.1, cooldownSec: 3, action: 'sear', amount: 10, durationMs: 2000 }] } },
@@ -334,7 +334,7 @@ export const ITEMS: ItemDef[] = [
       behaviors: [{ trigger: 'onHitDealt', chance: 0.14, cooldownSec: 4, action: 'sear', amount: 10, durationMs: 3500 }] } },
 
   // ══ Hunt ══════════════════════════════════════════════════════════
-  { id: 'bone-whistle', name: 'Bone Whistle', emoji: '💀', elementId: 'hunt', priceSparks: 14,
+  { id: 'bone-whistle', name: 'Bone Whistle', emoji: '🦴', elementId: 'hunt', priceSparks: 14,
     flavor: 'One note. Everything soft nearby stops moving.',
     effect: { critChance: 0.25, critMult: 2.5,
       behaviors: [{ trigger: 'onHitDealt', chance: 0.08, cooldownSec: 7, action: 'burstAoe', amount: 30, radius: 130 }] } },
@@ -366,7 +366,7 @@ export const ITEMS: ItemDef[] = [
     flavor: 'The opening exchange happens to somebody else.',
     effect: { invincibleMs: 3000,
       behaviors: [{ trigger: 'onLowHp', thresholdFrac: 0.3, action: 'burstAoe', amount: 40, radius: 160 }] } },
-  { id: 'night-oil', name: 'Night Oil', emoji: '🏺', elementId: 'shadow', priceSparks: 13,
+  { id: 'night-oil', name: 'Night Oil', emoji: '🫙', elementId: 'shadow', priceSparks: 13,
     flavor: 'Rubbed into the knuckles. It works. It is not free.',
     effect: { damageMult: 1.25, damageTakenMult: 1.15,
       behaviors: [{ trigger: 'onHitDealt', chance: 0.1, cooldownSec: 6, action: 'sear', amount: 14, durationMs: 3000 }] } },
@@ -376,7 +376,7 @@ export const ITEMS: ItemDef[] = [
       behaviors: [{ trigger: 'everyNSec', periodSec: 12, action: 'slowEnemy', mult: 0.6, durationMs: 2500 }] } },
 
   // ══ Creation ══════════════════════════════════════════════════════
-  { id: 'toolbelt', name: 'Toolbelt', emoji: '💼', elementId: 'creation', priceSparks: 15,
+  { id: 'toolbelt', name: 'Toolbelt', emoji: '🧰', elementId: 'creation', priceSparks: 15,
     flavor: 'Everything within reach, and reaching takes no time at all.',
     effect: { cooldownMult: 0.75,
       behaviors: [{ trigger: 'onCast', chance: 0.18, action: 'cooldownRefund', amount: 550 }] } },
@@ -422,7 +422,7 @@ export const ITEMS: ItemDef[] = [
     flavor: 'Holds a grudge, then discharges it all at once.',
     effect: { damageMult: 1.25,
       behaviors: [{ trigger: 'onCast', chance: 0.15, cooldownSec: 3, action: 'burstAoe', amount: 20, radius: 120 }] } },
-  { id: 'copper-coil', name: 'Copper Coil', emoji: '🎀', elementId: 'electricity', priceSparks: 14,
+  { id: 'copper-coil', name: 'Copper Coil', emoji: '🧵', elementId: 'electricity', priceSparks: 14,
     flavor: 'Wound tight. Everything cycles faster near it.',
     effect: { cooldownMult: 0.80,
       behaviors: [{ trigger: 'onCast', chance: 0.16, action: 'cooldownRefund', amount: 600 }] } },
@@ -432,21 +432,21 @@ export const ITEMS: ItemDef[] = [
       behaviors: [{ trigger: 'onHitTaken', chance: 0.16, cooldownSec: 6, action: 'burstAoe', amount: 22, radius: 130 }] } },
 
   // ══ Acid (world id `slime`) ═══════════════════════════════════════
-  { id: 'acid-vial', name: 'Acid Vial', emoji: '⚗️', elementId: 'slime', priceSparks: 17,
+  { id: 'acid-vial', name: 'Acid Vial', emoji: '🧪', elementId: 'slime', priceSparks: 17,
     flavor: 'Thrown before the bell. They start the fight already leaking.',
     effect: { enemyMaxHpMult: 0.85,
       behaviors: [{ trigger: 'onHitDealt', chance: 0.14, cooldownSec: 4, action: 'sear', amount: 12, durationMs: 3500 }] } },
-  { id: 'caustic-coat', name: 'Caustic Coat', emoji: '👕', elementId: 'slime', priceSparks: 15,
+  { id: 'caustic-coat', name: 'Caustic Coat', emoji: '🥼', elementId: 'slime', priceSparks: 15,
     flavor: 'Hitting you is a mistake with consequences.',
     effect: { reflectFraction: 0.30,
       behaviors: [{ trigger: 'onHitTaken', chance: 0.22, cooldownSec: 4, action: 'sear', amount: 10, durationMs: 3000 }] } },
-  { id: 'ooze-flask', name: 'Ooze Flask', emoji: '💚', elementId: 'slime', priceSparks: 15,
+  { id: 'ooze-flask', name: 'Ooze Flask', emoji: '🟢', elementId: 'slime', priceSparks: 15,
     flavor: 'Whatever you put on them, it clings.',
     effect: { statusDurMult: 1.40,
       behaviors: [{ trigger: 'onHitDealt', chance: 0.16, cooldownSec: 4, action: 'slowEnemy', mult: 0.62, durationMs: 2200 }] } },
 
   // ══ Fate ══════════════════════════════════════════════════════════
-  { id: 'lucky-coin', name: 'Lucky Coin', emoji: '💰', elementId: 'fate', priceSparks: 17,
+  { id: 'lucky-coin', name: 'Lucky Coin', emoji: '🪙', elementId: 'fate', priceSparks: 17,
     flavor: 'It has two faces and both of them are yours.',
     effect: { critChance: 0.30,
       behaviors: [{ trigger: 'onHitDealt', chance: 0.07, cooldownSec: 8, action: 'healBurst', amount: 20 }] } },
@@ -478,7 +478,7 @@ export const ITEMS: ItemDef[] = [
     flavor: 'Warm all the way through, and it shares.',
     effect: { maxHp: 60, regenPerSecond: 2,
       behaviors: [{ trigger: 'everyNSec', periodSec: 9, action: 'healBurst', amount: 15 }] } },
-  { id: 'mirror-shard', name: 'Mirror Shard', emoji: '🔮', elementId: 'light', priceSparks: 16,
+  { id: 'mirror-shard', name: 'Mirror Shard', emoji: '🪞', elementId: 'light', priceSparks: 16,
     flavor: 'They keep hitting their own reflection.',
     effect: { reflectFraction: 0.35,
       behaviors: [{ trigger: 'onHitTaken', chance: 0.2, cooldownSec: 5, action: 'burstAoe', amount: 24, radius: 120 }] } },
@@ -488,7 +488,7 @@ export const ITEMS: ItemDef[] = [
       behaviors: [{ trigger: 'onHitDealt', chance: 0.12, cooldownSec: 5, action: 'tempHaste', mult: 1.4, durationMs: 1600 }] } },
 
   // ══ Magnet ════════════════════════════════════════════════════════
-  { id: 'lodestone', name: 'Lodestone', emoji: '🔗', elementId: 'magnet', priceSparks: 19,
+  { id: 'lodestone', name: 'Lodestone', emoji: '🧲', elementId: 'magnet', priceSparks: 19,
     flavor: 'They are dragging half their own kit backwards.',
     effect: { enemySpeedMult: 0.70,
       behaviors: [{ trigger: 'everyNSec', periodSec: 10, action: 'slowEnemy', mult: 0.55, durationMs: 2600 }] } },
@@ -530,7 +530,7 @@ export const ITEMS: ItemDef[] = [
       behaviors: [{ trigger: 'onCast', chance: 0.18, action: 'cooldownRefund', amount: 700 }] } },
 
   // ══ Rubber ════════════════════════════════════════════════════════
-  { id: 'bouncy-core', name: 'Bouncy Core', emoji: '🎾', elementId: 'rubber', priceSparks: 20,
+  { id: 'bouncy-core', name: 'Bouncy Core', emoji: '🪀', elementId: 'rubber', priceSparks: 20,
     flavor: 'You are extremely difficult to land on.',
     effect: { dodgeChance: 0.30,
       behaviors: [{ trigger: 'onHitTaken', chance: 0.25, cooldownSec: 4, action: 'tempHaste', mult: 1.5, durationMs: 1500 }] } },
@@ -538,13 +538,13 @@ export const ITEMS: ItemDef[] = [
     flavor: 'Almost half of it goes straight back where it came from.',
     effect: { reflectFraction: 0.45,
       behaviors: [{ trigger: 'onHitTaken', chance: 0.2, cooldownSec: 5, action: 'burstAoe', amount: 26, radius: 125 }] } },
-  { id: 'vulcanised-hide', name: 'Vulcanised Hide', emoji: '🤖', elementId: 'rubber', priceSparks: 20,
+  { id: 'vulcanised-hide', name: 'Vulcanised Hide', emoji: '🦾', elementId: 'rubber', priceSparks: 20,
     flavor: 'Cured over a fire until it stopped caring.',
     effect: { maxHp: 100,
       behaviors: [{ trigger: 'onLowHp', thresholdFrac: 0.3, action: 'healBurst', amount: 60 }] } },
 
   // ══ Gunpowder ═════════════════════════════════════════════════════
-  { id: 'powder-keg', name: 'Powder Keg', emoji: '💣', elementId: 'gunpowder', priceSparks: 21,
+  { id: 'powder-keg', name: 'Powder Keg', emoji: '🧨', elementId: 'gunpowder', priceSparks: 21,
     flavor: 'Carried on the back. Everyone agrees this is a bad idea.',
     effect: { damageMult: 1.50, maxHp: -30,
       behaviors: [{ trigger: 'onLowHp', thresholdFrac: 0.3, action: 'burstAoe', amount: 60, radius: 170 }] } },
@@ -572,7 +572,7 @@ export const ITEMS: ItemDef[] = [
       behaviors: [{ trigger: 'onHitDealt', chance: 0.14, cooldownSec: 5, action: 'sear', amount: 16, durationMs: 3600 }] } },
 
   // ══ Silence ═══════════════════════════════════════════════════════
-  { id: 'void-cloak', name: 'Void Cloak', emoji: '😶', elementId: 'silence', priceSparks: 21,
+  { id: 'void-cloak', name: 'Void Cloak', emoji: '🫥', elementId: 'silence', priceSparks: 21,
     flavor: 'For five seconds, the fight cannot find you.',
     effect: { invincibleMs: 5000,
       behaviors: [{ trigger: 'onLowHp', thresholdFrac: 0.3, action: 'tempHaste', mult: 1.6, durationMs: 4500 }] } },
@@ -785,17 +785,17 @@ export const ITEMS: ItemDef[] = [
     effect: { reflectFraction: 0.45,
       behaviors: [{ trigger: 'onHitTaken', chance: 0.22, cooldownSec: 4, action: 'sear', amount: 14, durationMs: 3200 }] } },
 
-  // ══ Glass ═════════════════════════════════════════════════════════
-  { id: 'glass-cannon', name: 'Glass Cannon', emoji: '🔷', elementId: 'glass', priceSparks: 36,
-    flavor: 'The finest weapon ever made, twice as fragile as anything it kills.',
+  // ══ Sand ══════════════════════════════════════════════════════════
+  { id: 'powder-horn', name: 'Powder Horn', emoji: '🦬', elementId: 'dune', priceSparks: 36,
+    flavor: 'A full charge every time. It does not ask what the barrel can take.',
     effect: { damageMult: 1.6, maxHp: -60,
       behaviors: [{ trigger: 'onHitDealt', chance: 0.08, cooldownSec: 6, action: 'burstAoe', amount: 30, radius: 140 }] } },
-  { id: 'pane-shard', name: 'Pane Shard', emoji: '🔍', elementId: 'glass', priceSparks: 33,
+  { id: 'mirage-glass', name: 'Mirage Glass', emoji: '🔍', elementId: 'dune', priceSparks: 33,
     flavor: 'It shows the enemy exactly what they are doing to you. Precisely half of it.',
     effect: { reflectFraction: 0.5,
       behaviors: [{ trigger: 'onHitTaken', chance: 0.2, cooldownSec: 5, action: 'burstAoe', amount: 32, radius: 145 }] } },
-  { id: 'tempered-pane', name: 'Tempered Pane', emoji: '❄️', elementId: 'glass', priceSparks: 32,
-    flavor: 'Annealed until breaking became someone else’s job.',
+  { id: 'cut-sandstone', name: 'Cut Sandstone', emoji: '🧱', elementId: 'dune', priceSparks: 32,
+    flavor: 'Dressed and stacked until falling over became someone else’s job.',
     effect: { shieldHp: 100, shieldCharges: 2,
       behaviors: [{ trigger: 'onLowHp', thresholdFrac: 0.35, action: 'shieldCharge', amount: 3 }] } },
 

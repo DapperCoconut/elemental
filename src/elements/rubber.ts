@@ -51,6 +51,6 @@ export const rubberElement: Element = {
   id: 'rubber',
   name: 'Rubber',
   color: 0xff5577,
-  emoji: '🎾',
+  emoji: '🪀',
   abilities: [punch, slingShot, bounceForm, rubberBanding, rubberage],
 };

@@ -1344,12 +1344,16 @@ export class SoundKit {
    * Ruin's Spikes of Ruin (see `combat/SummonPurge.ts`).
    * The conducted phantom violins.
    */
-  purgeSummons(x: number, y: number, radius: number, exceptOwner: 'player' | 'npc'): number {
+  purgeSummons(
+    x: number, y: number, radius: number, exceptOwner: 'player' | 'npc',
+    report?: (px: number, py: number) => void,
+  ): number {
     let razed = 0;
     for (let i = this.violins.length - 1; i >= 0; i--) {
       const v = this.violins[i];
       if (v.owner === exceptOwner) continue;
       if (Phaser.Math.Distance.Between(x, y, v.x, v.y) > radius) continue;
+      report?.(v.x, v.y);
       this.fx(v.owner).shatter(v.x, v.y, 20, 8, 9, v.golden ? SOUND.gold : SOUND.magenta);
       this.violins.splice(i, 1);
       razed++;

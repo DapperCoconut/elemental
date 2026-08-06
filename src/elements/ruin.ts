@@ -67,6 +67,6 @@ export const ruinElement: Element = {
   id: 'ruin',
   name: 'Ruin',
   color: 0xc4392c,
-  emoji: '🚧',
+  emoji: '🧱',
   abilities: [shredSlice, lockdown, rustySkewer, spikesOfRuin, unstoppableDecay],
 };

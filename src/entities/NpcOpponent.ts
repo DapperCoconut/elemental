@@ -196,15 +196,15 @@ export interface NpcAiState {
   /** The target has actually used something that isn't already locked. */
   npcRuinCanLock?: boolean;
 
-  // Glass
-  /** Mid-Glass Blow: there is no body, so nothing at all can be cast until it re-forms. */
-  npcGlassBodyGone?: boolean;
-  /** Shards are in the ring rather than out in the world — E has something to throw. */
-  npcGlassHasShards?: boolean;
-  /** Temper is already up; re-casting would only reset a buff that is already doing its job. */
-  npcGlassTempered?: boolean;
-  /** Already twirling. The kit owns the body for the duration, so a second R is thrown away. */
-  npcGlassTwirling?: boolean;
+  // Sand (element id `dune`)
+  /** A course is standing and unclaimed — the kit is flying the body up it, so stay off the keys. */
+  npcDuneOnCourse?: boolean;
+  /** The flintlock has finished reloading. Its ability cooldown says nothing about that. */
+  npcDuneReloaded?: boolean;
+  /** A Final Trail is already running; a second Q would be refused by the kit anyway. */
+  npcDuneTrailUp?: boolean;
+  /** The idol is awake and already shooting, so R has nothing left to buy. */
+  npcDunePyramidAwake?: boolean;
 
   // Death
   /** Mid-handshake: the kit owns the body and refuses every key until it lets go. */
@@ -213,12 +213,17 @@ export interface NpcAiState {
   npcDeathGuarding?: boolean;
   /** A deal is running. The kit refuses a second one, so the cast would be eaten. */
   npcDeathDealing?: boolean;
-  /** A noose is already up; re-hanging it buys nothing but a 25 second cooldown. */
-  npcDeathHospiceOut?: boolean;
+  /** Limbs already off the target. Two is all a body has to give, and the third cast is wasted. */
+  npcDeathLimbsTaken?: number;
   /** Styx stacks already on the target. Three is the cap and a fourth shot is wasted. */
   npcDeathTargetStyx?: number;
   /** Seconds left before midnight — the bot plays for time once it is close. */
   npcDeathClock?: number;
+  /**
+   * Its own weapon, lying where a Death's Disarm upgrade put it. Nothing it presses works until
+   * it is standing on this, so fetching it overrides chase/strafe the way Depths' air does.
+   */
+  deathWeaponPoint?: { x: number; y: number };
 
   // Fortune
   /** Coins in the purse. Everything the element does costs some of these. */
@@ -551,6 +556,20 @@ export class NpcOpponent extends Fighter {
       }
     }
 
+    // ── Death: going to pick its weapon back up ──────────────────
+    // Same shape as the Depths seek above, and the strongest of them: a disarmed bot cannot
+    // cast anything at all until it is standing on the core, so nothing else is worth doing.
+    if (aiState.deathWeaponPoint) {
+      const seek = aiState.deathWeaponPoint;
+      const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
+      if (d > 6) {
+        const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
+        body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
+      } else {
+        body.setVelocity(0, 0);
+      }
+    }
+
     // ── Stationary override (Boss mutation) ──────────────────────
     if (this.stationary) body.setVelocity(0, 0);
 
@@ -672,8 +691,8 @@ export class NpcOpponent extends Fighter {
     if (this.element.id === 'ruin') {
       return this.doRuinAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
-    if (this.element.id === 'glass') {
-      return this.doGlassAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    if (this.element.id === 'dune') {
+      return this.doDuneAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
     if (this.element.id === 'paper') {
       return this.doPaperAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
@@ -1194,14 +1213,17 @@ export class NpcOpponent extends Fighter {
       if (this.castAbility('death-deal', buildContext(aimX, aimY))) return 'death-deal';
     }
 
-    // Doubling everything that lands for the next fifteen seconds is worth more than any one
-    // thing landing, so it goes up before the brand rather than after it.
-    if (!skipSpecials && !aiState.npcDeathHospiceOut && dist < 620) {
-      if (this.castAbility('death-hospice', buildContext(aimX, aimY))) return 'death-hospice';
+    // Taking a leg off is permanent and the dash closes the gap for free, so it outranks
+    // everything except the deal — but only twice, because that is all the body has.
+    if (!skipSpecials && (aiState.npcDeathLimbsTaken ?? 0) < 2 && dist < 400) {
+      if (this.castAbility('death-amputate', buildContext(aimX, aimY))) return 'death-amputate';
     }
 
-    // A cleave, not a poke: it only exists inside its own arc.
-    if (!skipSpecials && dist < 120) {
+    // A cleave, not a poke: it only exists inside its own arc. The stun is now bought with Styx
+    // stacks, so swinging at an unbranded target is worth only the speed boost — still worth
+    // something, just not worth committing to, hence the roll.
+    if (!skipSpecials && dist < 120
+      && ((aiState.npcDeathTargetStyx ?? 0) > 0 || Math.random() < 0.3)) {
       if (this.castAbility('death-disarm', buildContext(aimX, aimY))) return 'death-disarm';
     }
 
@@ -1283,16 +1305,16 @@ export class NpcOpponent extends Fighter {
   }
 
   /**
-   * Glass. The orbit does the damage, so every branch below is really asking the same question:
-   * how do I get the ring onto them and keep it there. Twirl is the approach, the held click is
-   * the reach, and E is the only thing here that gives the ring *up* — which is why it is gated
-   * on the target being far enough away that the shards have somewhere useful to go.
+   * Sand. The one element whose AI has to decide between fighting and *climbing*, and the
+   * ordering below is that decision: while a course is standing the kit owns the body, so the
+   * only thing worth doing is pulling the trigger on the way up — which is exactly the deal the
+   * player takes, and the reason the flintlock's platform bonus is worth building for.
    *
-   * Temper is checked before anything else that isn't the ultimate: the passive is a permanent
-   * 25% vulnerability, so five seconds of it running backwards is worth more to a Glass bot
-   * than any single cast it could spend the time on instead.
+   * Everything else is gated on kit state rather than on cooldowns, because three of the five
+   * spend most of their lives in a condition their ability cooldown knows nothing about: a
+   * reloading gun, a standing course, a worm still in the sand.
    */
-  private doGlassAbilities(
+  private doDuneAbilities(
     target: Fighter,
     buildContext: (tX: number, tY: number) => CastContext,
     time: number,
@@ -1304,36 +1326,43 @@ export class NpcOpponent extends Fighter {
   ): string | null {
     void target;
     void time;
-    // In pieces: there is no body to cast from, and the kit is flying it home on its own.
-    if (aiState.npcGlassBodyGone) return null;
+    void hpRatio;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
-    // The escape *and* the biggest burst in the kit. Spent low, or spent point-blank where the
-    // fifteen shards can't miss — both are the same cast, which is what makes it good.
-    if (hpRatio < 0.4 || dist < 130) {
-      if (this.castAbility('glass-blow', buildContext(aimX, aimY))) return 'glass-blow';
+    // Mid-course: shoot, and nothing else. Starting a second obby on top of the first one is the
+    // single worst thing this element can do to itself.
+    if (aiState.npcDuneOnCourse) {
+      if (aiState.npcDuneReloaded && this.castAbility('dune-striker', buildContext(aimX, aimY))) {
+        return 'dune-striker';
+      }
+      return null;
     }
 
-    if (!skipSpecials && !aiState.npcGlassTempered && dist < 340) {
-      if (this.castAbility('glass-temper', buildContext(aimX, aimY))) return 'glass-temper';
+    // The race is the whole ultimate, and it is a coin-flip it can lose — so it is thrown when
+    // the npc is winning the exchange anyway and 70 either way is a trade worth taking.
+    if (!aiState.npcDuneTrailUp && !skipSpecials) {
+      if (this.castAbility('dune-final-trail', buildContext(aimX, aimY))) return 'dune-final-trail';
     }
 
-    // Twirl closes the gap *and* triples the ring's rate on the way in, so it is worth casting
-    // at any range where there is actually ground to cover.
-    if (!skipSpecials && !aiState.npcGlassTwirling && dist > 150) {
-      if (this.castAbility('glass-twirl', buildContext(aimX, aimY))) return 'glass-twirl';
+    // The idol out-damages anything else this kit can do standing still, so the long course is
+    // worth the climb whenever there is room to build one.
+    if (!skipSpecials && !aiState.npcDunePyramidAwake && dist > 220) {
+      if (this.castAbility('dune-pyramid', buildContext(aimX, aimY))) return 'dune-pyramid';
     }
 
-    // Throwing the ring away doubles the vulnerability, so it only pays at a range where the
-    // orbit was doing nothing anyway.
-    if (!skipSpecials && aiState.npcGlassHasShards && dist > 200 && dist < 560) {
-      if (this.castAbility('glass-splinter', buildContext(aimX, aimY))) return 'glass-splinter';
+    // The short course is the cheap one: eight seconds of double rate of fire for four jumps.
+    if (!skipSpecials && dist > 170) {
+      if (this.castAbility('dune-ruins', buildContext(aimX, aimY))) return 'dune-ruins';
     }
 
-    // Close in, push the ring out — that is the whole click, and the kit reads the intent for
-    // nearly two seconds off one cast.
-    if (dist < 190) {
-      if (this.castAbility('glass-orbit', buildContext(aimX, aimY))) return 'glass-orbit';
+    // Aimed at the target, so a deck cast on open floor is at least pointed the right way and
+    // the conveyor closes the gap rather than opening it.
+    if (!skipSpecials) {
+      if (this.castAbility('dune-sandwalk', buildContext(aimX, aimY))) return 'dune-sandwalk';
+    }
+
+    if (aiState.npcDuneReloaded) {
+      if (this.castAbility('dune-striker', buildContext(aimX, aimY))) return 'dune-striker';
     }
     return null;
   }
@@ -2031,9 +2060,14 @@ export class NpcOpponent extends Fighter {
         if (this.castAbility('flame-nuke', buildContext(this.x, this.y))) return 'flame-nuke';
       }
 
-      // 2. Pressure Bomb — mid range
+      // 2. Pressure Bomb — mid range. The charge sits on a 1.5s fuse, so it is planted where
+      //    the target is heading rather than where they stand; sharper NPCs lead it further.
       if (dist >= 140 && dist <= 360) {
-        if (this.castAbility('pressure-bomb', buildContext(aimX, aimY))) return 'pressure-bomb';
+        const tb = target.body as Phaser.Physics.Arcade.Body | null;
+        const lead = 1.5 * (this.difficulty.level / 5) * 0.8;
+        const leadX = aimX + (tb?.velocity.x ?? 0) * lead;
+        const leadY = aimY + (tb?.velocity.y ?? 0) * lead;
+        if (this.castAbility('pressure-bomb', buildContext(leadX, leadY))) return 'pressure-bomb';
       }
 
       // 3. Flame Dash — gap-close when far

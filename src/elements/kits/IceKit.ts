@@ -642,7 +642,7 @@ export class IceKit {
         t.frostVisual.destroy(); t.frostVisual = null;
       }
 
-      const pfLabel = t.permafrostStacks > 0 ? `❄️×${t.permafrostStacks}` : '';
+      const pfLabel = t.permafrostStacks > 0 ? `🧊×${t.permafrostStacks}` : '';
       if (pfLabel) {
         if (!t.permafrostVisual) {
           t.permafrostVisual = scene.add.text(t.x, t.y - 78, pfLabel,
@@ -692,7 +692,7 @@ export class IceKit {
       this.playerFrostVisual.destroy(); this.playerFrostVisual = null;
     }
 
-    const playerPfLabel = player.permafrostStacks > 0 ? `❄️×${player.permafrostStacks}` : '';
+    const playerPfLabel = player.permafrostStacks > 0 ? `🧊×${player.permafrostStacks}` : '';
     if (playerPfLabel) {
       if (!this.playerPermafrostVisual) {
         this.playerPermafrostVisual = scene.add.text(player.x, player.y - 54, playerPfLabel,
@@ -1425,7 +1425,7 @@ export class IceKit {
       player.y + Math.sin(angle) * ICICLE_DASH_SPEED * (ICICLE_DASH_DURATION_MS / 1000),
       5, this.playerBlackIceMorphActive,
     );
-    this.arena.showFloatingText(player.x, player.y - 30, '❄️ ICICLE IMPALE', '#aaddff');
+    this.arena.showFloatingText(player.x, player.y - 30, '🧊 ICICLE IMPALE', '#aaddff');
   }
 
   /** Live icicles track damage taken by their host and shatter at the threshold. Owner-agnostic. */
@@ -1490,7 +1490,7 @@ export class IceKit {
     this.pfx.icePillar(target.x, target.y - 8, 14, 46, 10, isVoid);
     this.pfx.shards(target.x, target.y, 10, { speed: 150, size: 3, life: 460, fall: 44, depth: 10, isVoid });
     scene.cameras.main.shake(140, 0.005);
-    this.arena.showFloatingText(target.x, target.y - 30, '❄️ IMPALED', '#aaddff');
+    this.arena.showFloatingText(target.x, target.y - 30, '🧊 IMPALED', '#aaddff');
   }
 
   /** `charge` is 0–1 toward the shatter threshold and fills the band on the shaft. */
@@ -1979,7 +1979,7 @@ export class IceKit {
       if (d > radius) continue;
       if (isVoid) {
         t.permavoidStacks = Math.min(3, t.permavoidStacks + 1);
-        this.arena.showFloatingText(t.x, t.y - 30, '💜 PERMAVOID', '#cc88ff');
+        this.arena.showFloatingText(t.x, t.y - 30, '🟣 PERMAVOID', '#cc88ff');
       } else {
         t.permafrostStacks = Math.min(3, t.permafrostStacks + 1);
         this.arena.showFloatingText(t.x, t.y - 30, '❄️ PERMAFROST', '#aaddff');

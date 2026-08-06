@@ -271,6 +271,132 @@ export function harlequinMask(
   g.fillPoints([face[0], face[1], face[2]], true);
 }
 
+/**
+ * Phantom (R+): the understudy left standing where the illusionist was. Deliberately the one
+ * thing this element draws that *is* a figure — a recognisable body, in a colour nothing else
+ * here uses, so the moment it appears there is no question about what it is a copy of. It
+ * winds tighter as its fuse burns: the ring closes, the seams pull inward, the mask brightens.
+ */
+export function phantomFigure(
+  g: Phaser.GameObjects.Graphics,
+  tint: IllusionColorFn,
+  x: number, y: number, t: number, charge: number, alpha: number, seed: number,
+): void {
+  // Charge runs 0 → 1 over the fuse. Everything below reads off it.
+  const wind = easeIn(charge);
+  const r = 21 * (1 - wind * 0.14);
+
+  g.fillStyle(tint(ILL.crimsonDeep), alpha * (0.36 + wind * 0.3));
+  g.fillCircle(x, y, r + 3 + Math.sin(t * 5) * 1.2);
+  g.lineStyle(2, tint(ILL.crimson), alpha * (0.6 + wind * 0.4));
+  g.strokeCircle(x, y, r);
+
+  // Seams running in from outside the body: the space around it being pulled in.
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * TAU + seed * 0.01 + t * 0.6;
+    const outer = 46 * (1 - wind * 0.72);
+    fracture(g, tint, x + Math.cos(a) * outer, y + Math.sin(a) * outer,
+      x + Math.cos(a) * r, y + Math.sin(a) * r, 1.5, ILL.crimson, alpha * (0.3 + wind * 0.5),
+      seed + i, 1.5);
+  }
+
+  harlequinMask(g, tint, x, y - 2, 8.5, alpha * (0.7 + wind * 0.3), ILL.crimson);
+
+  // The fuse itself: a ring closing onto the body.
+  const fuse = 52 - wind * 30;
+  g.lineStyle(2.4, tint(ILL.spark), alpha * (0.35 + wind * 0.55));
+  const steps = 22;
+  let px = 0;
+  let py = 0;
+  for (let i = 0; i <= steps; i++) {
+    const a = (i / steps) * TAU;
+    const rr = fuse * (1 + (jitter(seed, i) - 0.5) * 0.1);
+    const cx = x + Math.cos(a) * rr;
+    const cy = y + Math.sin(a) * rr;
+    if (i > 0 && jitter(seed, 50 + i) > 0.22) g.lineBetween(px, py, cx, cy);
+    px = cx;
+    py = cy;
+  }
+}
+
+/**
+ * Mind-Boggle (F+): the wedge of exposed geometry hanging off a folded body. Drawn as a
+ * hatched cone with a bright bead at the apex, because the player has to be able to read
+ * *which side* of a spinning shape they are supposed to be standing on, at a glance, while
+ * the shape is turning and both of them are moving.
+ */
+export function weakCone(
+  g: Phaser.GameObjects.Graphics,
+  tint: IllusionColorFn,
+  x: number, y: number, ang: number, half: number, reach: number, alpha: number, t: number,
+): void {
+  const pulse = 0.75 + 0.25 * Math.sin(t * 6);
+  const rim: Phaser.Geom.Point[] = [new Phaser.Geom.Point(x, y)];
+  const arcSteps = 7;
+  for (let i = 0; i <= arcSteps; i++) {
+    const a = ang - half + (half * 2) * (i / arcSteps);
+    rim.push(new Phaser.Geom.Point(x + Math.cos(a) * reach, y + Math.sin(a) * reach));
+  }
+  g.fillStyle(tint(ILL.crimson), alpha * 0.2 * pulse);
+  g.fillPoints(rim, true);
+
+  // Hatching across the wedge — the tell that this patch of them is unfinished.
+  for (let i = 1; i < 5; i++) {
+    const d = reach * (i / 5);
+    const a0 = ang - half;
+    const a1 = ang + half;
+    g.lineStyle(1.2, tint(ILL.crimson), alpha * 0.5 * pulse);
+    g.lineBetween(x + Math.cos(a0) * d, y + Math.sin(a0) * d,
+      x + Math.cos(a1) * d, y + Math.sin(a1) * d);
+  }
+
+  g.lineStyle(1.8, tint(ILL.crimson), alpha * 0.9);
+  g.lineBetween(x, y, x + Math.cos(ang - half) * reach, y + Math.sin(ang - half) * reach);
+  g.lineBetween(x, y, x + Math.cos(ang + half) * reach, y + Math.sin(ang + half) * reach);
+  g.lineStyle(2.2, tint(ILL.spark), alpha * pulse);
+  g.lineBetween(x + Math.cos(ang) * reach * 0.55, y + Math.sin(ang) * reach * 0.55,
+    x + Math.cos(ang) * reach, y + Math.sin(ang) * reach);
+  g.fillStyle(tint(ILL.spark), alpha * pulse);
+  g.fillCircle(x + Math.cos(ang) * reach, y + Math.sin(ang) * reach, 2.6);
+}
+
+/**
+ * One Blade Dance dagger. A stage prop and a real knife at the same time: a solid violet
+ * blade with its own lagging copy behind it, which is the element's whole visual grammar
+ * applied to the one thing in the kit that is a straightforward stab.
+ */
+export function illusionDagger(
+  g: Phaser.GameObjects.Graphics,
+  tint: IllusionColorFn,
+  x: number, y: number, ang: number, size: number, alpha: number,
+): void {
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const blade = (bx: number, by: number, s: number, a: number, color: number) => {
+    const pts = [
+      new Phaser.Geom.Point(bx + ca * s, by + sa * s),
+      new Phaser.Geom.Point(bx - sa * s * 0.26, by + ca * s * 0.26),
+      new Phaser.Geom.Point(bx - ca * s * 0.55, by - sa * s * 0.55),
+      new Phaser.Geom.Point(bx + sa * s * 0.26, by - ca * s * 0.26),
+    ];
+    g.fillStyle(tint(color), a);
+    g.fillPoints(pts, true);
+    g.lineStyle(1.2, tint(ILL.spark), a * 0.8);
+    g.strokePoints(pts, true, true);
+  };
+
+  // The ghost first, trailing behind the point of travel.
+  blade(x - ca * size * 0.5, y - sa * size * 0.5, size * 0.9, alpha * 0.3, ILL.magenta);
+  blade(x, y, size, alpha * 0.95, ILL.violet);
+
+  // Crossguard and grip, so it reads as a thrown weapon rather than a shard.
+  g.lineStyle(2.4, tint(ILL.crimson), alpha * 0.9);
+  g.lineBetween(x - ca * size * 0.5 - sa * size * 0.34, y - sa * size * 0.5 + ca * size * 0.34,
+    x - ca * size * 0.5 + sa * size * 0.34, y - sa * size * 0.5 - ca * size * 0.34);
+  g.lineStyle(2, tint(ILL.voidDark), alpha * 0.9);
+  g.lineBetween(x - ca * size * 0.5, y - sa * size * 0.5, x - ca * size * 0.95, y - sa * size * 0.95);
+}
+
 // ── Fx ────────────────────────────────────────────────────────────────────
 
 export class IllusionFx extends FxBase {
@@ -364,6 +490,73 @@ export class IllusionFx extends FxBase {
       g.strokeCircle(x, y, 14 + e * 46);
     });
     this.shards(x, y, 9, 40, color, 520, depth);
+  }
+
+  /** Immersion Breaker: a bullet coming out the far side of somebody. */
+  pierceSpray(x: number, y: number, through: number, color = ILL.crimson, depth = 9): void {
+    const seed = Math.random() * 999;
+    this.anim(depth, 300, (g, t) => {
+      const e = easeOut(t);
+      for (let i = 0; i < 5; i++) {
+        const a = through + (jitter(seed, i) - 0.5) * 1.1;
+        const d = (10 + jitter(seed, 20 + i) * 30) * e;
+        g.lineStyle(2 * (1 - t) + 0.5, this.tint(color), (1 - t) * 0.9);
+        g.lineBetween(x, y, x + Math.cos(a) * d, y + Math.sin(a) * d);
+      }
+    });
+    this.flashIn(x, y, 13, ILL.spark, color, depth);
+  }
+
+  /** A Crack Shot splitting in two across a pane. */
+  split(x: number, y: number, ang: number, spread: number, color = ILL.warp, depth = 9): void {
+    this.anim(depth, 320, (g, t) => {
+      const e = easeOut(t);
+      for (const side of [-1, 1]) {
+        const a = ang + spread * side;
+        g.lineStyle(2.4 * (1 - t) + 0.6, this.tint(color), (1 - t) * 0.9);
+        g.lineBetween(x, y, x + Math.cos(a) * 34 * e, y + Math.sin(a) * 34 * e);
+      }
+      g.fillStyle(this.tint(ILL.spark), (1 - t) * 0.8);
+      g.fillCircle(x, y, 4 * (1 - t) + 1);
+    });
+    this.shards(x, y, 4, 20, color, 320, depth);
+  }
+
+  /** The Phantom going off: the understudy tears itself apart and the tear spreads. */
+  phantomBurst(x: number, y: number, radius: number, depth = 10): void {
+    const seed = Math.random() * 999;
+    this.flashIn(x, y, 26, ILL.spark, ILL.crimson, depth);
+    this.anim(depth, 620, (g, t) => {
+      const e = easeOut(t);
+      const a = 1 - t;
+      g.fillStyle(this.tint(ILL.crimsonDeep), a * 0.28);
+      g.fillCircle(x, y, radius * (0.25 + e * 0.85));
+      g.lineStyle(3 * a + 1, this.tint(ILL.crimson), a * 0.85);
+      g.strokeCircle(x, y, radius * (0.2 + e));
+      for (let i = 0; i < 8; i++) {
+        const ang = (i / 8) * TAU + jitter(seed, i) * 0.7;
+        const d = radius * (0.3 + e * 0.95);
+        fracture(g, this.tint, x, y, x + Math.cos(ang) * d, y + Math.sin(ang) * d,
+          2, ILL.crimson, a * 0.8, seed + i * 5, 1.5);
+      }
+      // The figure itself, breaking up as it goes.
+      harlequinMask(g, this.tint, x, y - 2, 8.5 * (1 + e * 0.5), a * 0.7, ILL.crimson);
+    });
+    this.shards(x, y, 11, radius * 0.8, ILL.crimson, 620, depth);
+  }
+
+  /** A dagger arriving. Short, hard, and pointed the way it was travelling. */
+  stab(x: number, y: number, ang: number, depth = 10): void {
+    const seed = Math.random() * 999;
+    this.flashIn(x, y, 16, ILL.spark, ILL.violet, depth);
+    this.anim(depth, 340, (g, t) => {
+      const e = easeOut(t);
+      for (let i = 0; i < 4; i++) {
+        const a = ang + Math.PI + (jitter(seed, i) - 0.5) * 1.6;
+        fracture(g, this.tint, x, y, x + Math.cos(a) * 26 * e, y + Math.sin(a) * 26 * e,
+          1.8, ILL.magenta, (1 - t) * 0.85, seed + i, 1.3);
+      }
+    });
   }
 
   /** A warped ring — casts and expiries. Never quite a circle, because nothing here is. */

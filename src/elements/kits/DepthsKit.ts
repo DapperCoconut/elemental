@@ -5,7 +5,7 @@ import type { CustomStatus } from './StatusHudKit';
 import { Sfx } from '../../audio';
 import {
   DPT, DepthsAvatar, DepthsColorFn, DepthsFx, FISH_COLOR, FISH_EMOJI, FISH_LABEL,
-  FISH_PROFILE, FishKind, algaeOrb, bubbleColumn, darkPuddle, fishBody,
+  FISH_PROFILE, FishKind, REMORA_PROFILE, algaeOrb, bubbleColumn, darkPuddle, fishBody,
   oxygenBar, piranha as drawPiranha, sharkBody,
 } from './DepthsVisuals';
 
@@ -83,6 +83,14 @@ const FISH_STATS: Record<FishKind, { speed: number; r: number; life: number; len
   pufferfish: { speed: 400, r: 30, life: PUFFER_LIFE_MS, len: 34 },
   bombfish: { speed: 540, r: 24, life: 2400, len: 32 },
   gulper: { speed: 460, r: 30, life: 5000, len: 52 },
+  sawfish: { speed: 560, r: 24, life: 2400, len: 46 },
+  swordfish: { speed: 880, r: 22, life: 2200, len: 54 },
+  // Speed and life restated rather than shared with WHALE_* below: this table is built at
+  // module load, and those constants are declared further down the file.
+  whaleshark: { speed: 150, r: 44, life: 12000, len: 100 },
+  flyingfish: { speed: 900, r: 22, life: 3000, len: 32 },
+  // Never actually thrown — resolved the instant it leaves your jaw. Here for the held-fish art.
+  catfish: { speed: 420, r: 26, life: 2000, len: 42 },
 };
 
 // ── Megalodon (Q) ────────────────────────────────────────────────────────────
@@ -95,6 +103,58 @@ const SHARK_HOLD_MS = 8000;
 /** Nothing in its mouth: it still beaches itself, but only long enough to be seen leaving. */
 const SHARK_EMPTY_HOLD_MS = 1400;
 const SHARK_DPS = 8;
+
+// ── Click+ — Swarm Tactics ───────────────────────────────────────────────────
+/** Piranhas on one body at which the school starts biting twice as hard, and then slowing. */
+const SWARM_DAMAGE_AT = 3;
+const SWARM_SLOW_AT = 5;
+const SWARM_DAMAGE_MULT = 2;
+const SWARM_SLOW_MULT = 0.8;
+const SWARM_SLOW_MS = 5000;
+/** How much longer a piranha swims, and chews, with the upgrade equipped. */
+const SWARM_LIFE_MULT = 1.5;
+
+// ── E+ — Knock the Breath Out ────────────────────────────────────────────────
+/**
+ * Fraction of the oxygen bar each point of damage costs while a drown is running. Deliberately
+ * per-point rather than per-hit: a piranha's 1s should cost a sip and a 50-damage sword fish
+ * should cost a third of the bar, and a flat rate per hit would get both of those wrong.
+ */
+const BREATH_PER_DAMAGE = 0.006;
+
+// ── R+ — Algae Trap ──────────────────────────────────────────────────────────
+const RED_ALGAE_DAMAGE = 18;
+
+// ── F+ — Deep Fishing ────────────────────────────────────────────────────────
+/** How long F has to be held on a landed fish before it becomes bait instead of a throw. */
+const BAIT_HOLD_MS = 500;
+const RARE_FISH: FishKind[] = ['sawfish', 'swordfish', 'whaleshark', 'flyingfish', 'catfish'];
+
+/** Saw fish: it doesn't pass through, it stays in. */
+const SAW_STICK_MS = 5000;
+const SAW_TICK_MS = 100;
+const SAW_TICK_DAMAGE = 1;
+const SWORD_DAMAGE = 50;
+/** Whale shark: a slow gun platform that steers itself to wherever you are pointing. */
+const WHALE_SPEED = 150;
+const WHALE_LIFE_MS = 12000;
+const WHALE_BURST_MS = 3000;
+const WHALE_BURST_SHOTS = 5;
+const WHALE_BURST_SPREAD = 0.5;
+const REMORA_DAMAGE = 3;
+const REMORA_SPEED = 620;
+const REMORA_LIFE_MS = 1700;
+const REMORA_R = 14;
+const FLYER_DAMAGE = 15;
+const FLYER_RETURN_SPEED = 820;
+/** How close the returning flying fish has to get before it is back in your jaw. */
+const FLYER_CATCH_R = 34;
+/** The catfish pays out every heal it ate, and a quarter again on top. */
+const CATFISH_BONUS = 1.25;
+
+// ── Q+ — Command the Depths ──────────────────────────────────────────────────
+const SHARK_FOLLOW_SPEED = 120;
+const SHARK_ALGAE_DAMAGE = 30;
 
 // ── World objects ────────────────────────────────────────────────────────────
 
@@ -131,11 +191,20 @@ interface Drown {
   seed: number;
   /** Milliseconds since the last devastating tick. */
   tick: number;
+  /**
+   * `rawDamageTaken` as of the last frame — the poll behind Knock the Breath Out. Damage
+   * dealt *by* the drown is billed through the same counter, but only ever once the bar is
+   * already empty, so there is no loop to guard against.
+   */
+  lastRaw: number;
 }
 
 /**
  * A real healing orb. It feeds whoever gets there first, which is the whole ability — `owner`
  * is carried only so the bloom is painted through the right side's skin.
+ *
+ * `bad` is Algae Trap's poisoned half. It is a real, damaging object in the world for
+ * everybody, and a red one *only* on the caster's own screen.
  */
 interface Algae {
   owner: Owner;
@@ -143,6 +212,30 @@ interface Algae {
   y: number;
   until: number;
   seed: number;
+  bad: boolean;
+}
+
+/** A saw fish that stuck. It rides the body it found until its five seconds are up. */
+interface Saw {
+  owner: Owner;
+  victim: Fighter;
+  until: number;
+  /** Milliseconds since the last 1-damage tick. */
+  tick: number;
+  /** Where on the body it went in — fixed, because a stuck fish does not orbit. */
+  orbit: number;
+  wig: number;
+}
+
+/** One of the whale shark's remoras. Small, fast, and gone the moment it finds anything. */
+interface Remora {
+  owner: Owner;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  diesAt: number;
+  wig: number;
 }
 
 /** A thrown fish. What it does on arrival is entirely a function of `kind`. */
@@ -160,6 +253,10 @@ interface FishProj {
   /** Gulper eel only: who is inside it. */
   swallowed: Fighter | null;
   eatAccum: number;
+  /** Whale shark only: when the next five-round burst goes out. */
+  burstAt: number;
+  /** Flying fish only: true once it has hit something and is on its way home. */
+  returning: boolean;
 }
 
 interface Shark {
@@ -205,6 +302,13 @@ interface Side {
   /** `rawDamageTaken` as of the last frame — the poll behind the +1s penalty. */
   lastRaw: number;
   npcThrowAt: number;
+  // F+ — Deep Fishing
+  /** When the current F press started, or 0 if the key is up. Drives the tap/hold split. */
+  fHeldSince: number;
+  /** True once this press has already turned the catch into bait, so the release does nothing. */
+  fConsumed: boolean;
+  /** A fish has been given up to the hook. The next landed catch comes off the rare table. */
+  baited: boolean;
 }
 
 function makeSide(owner: Owner): Side {
@@ -214,6 +318,7 @@ function makeSide(owner: Owner): Side {
     boostUntil: 0, alphaOwned: false, barHidden: false,
     dashUntil: 0, dashVx: 0, dashVy: 0,
     fishing: false, fishRemain: 0, fish: null, lastRaw: 0, npcThrowAt: 0,
+    fHeldSince: 0, fConsumed: false, baited: false,
   };
 }
 
@@ -243,6 +348,10 @@ export interface DepthsArenaApi {
   setStatusIndicator(id: string, status: CustomStatus | null): void;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /** Shop upgrades: the local player's equipped slots. */
+  hasUpgrade(slot: string): boolean;
+  /** …and the online opponent's, so their upgraded water reproduces on this sim. */
+  hasNpcUpgrade(slot: string): boolean;
 }
 
 // ── DepthsKit ────────────────────────────────────────────────────────────────
@@ -274,8 +383,14 @@ export class DepthsKit {
   private algae: Algae[] = [];
   private fishes: FishProj[] = [];
   private sharks: Shark[] = [];
+  private saws: Saw[] = [];
+  private remoras: Remora[] = [];
   /** Icefish chill: fighter → the timestamp it wears off. */
   private slowed = new Map<Fighter, number>();
+  /** Swarm Tactics' own slow, kept apart from the chill so the two can stack and read apart. */
+  private swarmSlow = new Map<Fighter, number>();
+  /** Who is currently under a doubled school — recomputed every frame, read by the status tray. */
+  private swarming = new Set<Fighter>();
   /** Latched each frame from `handleInput` — the player's real cursor. */
   private aimX = 0;
   private aimY = 0;
@@ -343,6 +458,21 @@ export class DepthsKit {
     return owner === 'player' ? this.api.elementId === 'depths' : this.api.npcElementId === 'depths';
   }
 
+  /**
+   * Whether this side is running the given shop upgrade. The npc only ever answers true in
+   * online play, where it is a real person's replica carrying that person's purchases.
+   */
+  private up(owner: Owner, slot: string): boolean {
+    return owner === 'player' ? this.api.hasUpgrade(slot) : this.api.hasNpcUpgrade(slot);
+  }
+
+  /** Where this side is pointing. The Q upgrade steers a beached shark off exactly this. */
+  private aimOf(owner: Owner): { x: number; y: number } {
+    return owner === 'player'
+      ? { x: this.aimX, y: this.aimY }
+      : { x: this.npcAimX, y: this.npcAimY };
+  }
+
   /** Whether a fighter's body currently belongs to something else — an eel, or a shark. */
   private isHeld(f: Fighter): boolean {
     return this.fishes.some((p) => p.swallowed === f) || this.sharks.some((s) => s.swallowed.includes(f));
@@ -384,7 +514,11 @@ export class DepthsKit {
     this.algae = [];
     this.fishes = [];
     this.sharks = [];
+    this.saws = [];
+    this.remoras = [];
     this.slowed.clear();
+    this.swarmSlow.clear();
+    this.swarming.clear();
     this.aimX = 0;
     this.aimY = 0;
     this.npcAimX = 0;
@@ -406,18 +540,38 @@ export class DepthsKit {
     this.aimY = mouseY;
 
     const p = this.api.player;
+    const s = this.sides.player;
     const ctx = this.api.buildPlayerContext(mouseX, mouseY);
     const clicked = pointer.isDown && !this.api.pointerWasDown;
 
     if (clicked) p.castAbility('depths-piranha', ctx);
     if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('depths-lungfish', ctx);
     if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('depths-eutrophication', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) {
+
+    // F is one key with two meanings once Deep Fishing is equipped: a tap still throws the
+    // catch, a hold gives it up to the hook. That forces the throw down to the *release* —
+    // on the press there is no way yet to know which of the two this is going to be. The
+    // JustDown flag is consumed exactly once either way, so the two paths can't fight over it.
+    const fJust = Phaser.Input.Keyboard.JustDown(this.api.fKey);
+    const fDown = this.api.fKey.isDown;
+    if (this.up('player', 'f') && (s.fish || s.fHeldSince > 0)) {
+      if (fJust) { s.fHeldSince = time; s.fConsumed = false; }
+      if (fDown && s.fish && !s.fConsumed && s.fHeldSince > 0 && time - s.fHeldSince >= BAIT_HOLD_MS) {
+        this.makeBait('player');
+        s.fConsumed = true;
+      }
+      if (!fDown && s.fHeldSince > 0) {
+        if (!s.fConsumed && s.fish) this.throwFish('player', mouseX, mouseY);
+        s.fHeldSince = 0;
+        s.fConsumed = false;
+      }
+    } else if (fJust) {
       // The throw is a recast, not a second cast: a landed fish has already paid the
       // cooldown, and routing it back through `castAbility` would strand it in your mouth.
-      if (this.sides.player.fish) this.throwFish('player', mouseX, mouseY);
+      if (s.fish) this.throwFish('player', mouseX, mouseY);
       else p.castAbility('depths-angler', ctx);
     }
+
     if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('depths-megalodon', ctx);
   }
 
@@ -432,10 +586,13 @@ export class DepthsKit {
     const ang = Math.atan2(ty - f.y, tx - f.x);
     const sx = f.x + Math.cos(ang) * 26;
     const sy = f.y + Math.sin(ang) * 26;
+    // Swarm Tactics stretches the whole life of a piranha, not just the chew — a school that
+    // swims 50% further is a school that can be assembled from 50% further out.
+    const life = this.up(owner, 'click') ? SWARM_LIFE_MULT : 1;
     this.swimmers.push({
       owner, x: sx, y: sy,
       vx: Math.cos(ang) * PIRANHA_SPEED, vy: Math.sin(ang) * PIRANHA_SPEED,
-      diesAt: this.now + PIRANHA_LIFE_MS, wig: Math.random() * 6,
+      diesAt: this.now + PIRANHA_LIFE_MS * life, wig: Math.random() * 6,
     });
 
     this.avatar(owner)?.play('punch', ang);
@@ -477,10 +634,10 @@ export class DepthsKit {
 
     this.avatar(owner)?.play('dash', ang);
     this.fx(owner).slashArc(f.x, f.y, ang, SLASH_REACH * 0.8, boosted ? DPT.lure : DPT.cyan);
-    if (boosted) this.api.showFloatingText(f.x, f.y - 50, '🔴 FED', this.hex(DPT.blood));
+    if (boosted) this.api.showFloatingText(f.x, f.y - 50, '🩸 FED', this.hex(DPT.blood));
 
     if (victim) this.startDrown(owner, victim);
-    else this.api.showFloatingText(f.x, f.y - 46, '💦 MISSED', this.hex(DPT.trench));
+    else this.api.showFloatingText(f.x, f.y - 46, '🫧 MISSED', this.hex(DPT.trench));
   }
 
   /** R — Eutrophication. The only ability in the kit that helps the person it is aimed at. */
@@ -488,8 +645,14 @@ export class DepthsKit {
     const f = this.fighter(owner);
     if (!this.alive(f)) return;
 
+    // R+ — Algae Trap. Twelve more orbs that are not orbs. They alternate with the real ones
+    // rather than being appended, so the poisoned half gets the same quality of placement:
+    // a trap that always landed in the leftover corners would be a trap you could read.
+    const trap = this.up(owner, 'r');
+    const total = trap ? ALGAE_COUNT * 2 : ALGAE_COUNT;
+
     const placed: Array<{ x: number; y: number }> = [];
-    for (let i = 0; i < ALGAE_COUNT; i++) {
+    for (let i = 0; i < total; i++) {
       let x = 0;
       let y = 0;
       // Ten tries at a spot that isn't on top of one already down; the bloom should cover
@@ -500,12 +663,16 @@ export class DepthsKit {
         if (placed.every((p) => Phaser.Math.Distance.Between(p.x, p.y, x, y) > 80)) break;
       }
       placed.push({ x, y });
-      this.algae.push({ owner, x, y, until: this.now + ALGAE_LIFE_MS, seed: Math.random() * 999 });
+      this.algae.push({
+        owner, x, y, until: this.now + ALGAE_LIFE_MS, seed: Math.random() * 999,
+        bad: trap && i % 2 === 1,
+      });
     }
 
     this.avatar(owner)?.play('flex');
-    this.fx(owner).ring(f.x, f.y, 20, 240, DPT.algae, 700);
-    this.api.showFloatingText(f.x, f.y - 50, '🌿 EUTROPHICATION', this.hex(DPT.algae));
+    this.fx(owner).ring(f.x, f.y, 20, 240, trap ? DPT.rot : DPT.algae, 700);
+    this.api.showFloatingText(f.x, f.y - 50,
+      trap ? '🌿 ALGAE TRAP' : '🌿 EUTROPHICATION', this.hex(trap ? DPT.rot : DPT.algae));
     Sfx.playAt('bloom', f.x, { volume: 0.8 });
   }
 
@@ -577,6 +744,8 @@ export class DepthsKit {
     this.updateSwimmers(time, delta);
     this.updateLatches(time, delta);
     this.updateFishProjectiles(time, delta);
+    this.updateSaws(time, delta);
+    this.updateRemoras(time, delta);
     this.updateSharks(time, delta);
     this.updateDrowns(time, delta);
     this.updateAlgae(time);
@@ -716,14 +885,15 @@ export class DepthsKit {
 
   /** A piranha arrives. Past five on one body the newest one just shoulders the oldest aside. */
   private latchOn(owner: Owner, victim: Fighter): void {
+    const chewMs = LATCH_MS * (this.up(owner, 'click') ? SWARM_LIFE_MULT : 1);
     const mine = this.latches.filter((l) => l.victim === victim);
     if (mine.length >= MAX_LATCH) {
       const oldest = mine.reduce((a, b) => (a.until <= b.until ? a : b));
-      oldest.until = this.now + LATCH_MS;
+      oldest.until = this.now + chewMs;
       oldest.owner = owner;
     } else {
       this.latches.push({
-        owner, victim, until: this.now + LATCH_MS,
+        owner, victim, until: this.now + chewMs,
         orbit: Math.random() * Math.PI * 2, chew: Math.random() * 6,
       });
     }
@@ -741,10 +911,29 @@ export class DepthsKit {
     }
 
     // Chewing is billed per victim rather than per piranha, so five of them are one number
-    // on the health bar instead of five racing accumulators.
+    // on the health bar instead of five racing accumulators. Swarm Tactics is a property of
+    // the *pile*, so the count has to be known before any of it is charged — which is the
+    // same reason this loop was already shaped this way.
     this.latchAccum.clear();
+    this.swarming.clear();
+    const counts = new Map<Fighter, number>();
+    const upgraded = new Set<Fighter>();
     for (const l of this.latches) {
-      this.latchAccum.set(l.victim, (this.latchAccum.get(l.victim) ?? 0) + LATCH_DPS);
+      counts.set(l.victim, (counts.get(l.victim) ?? 0) + 1);
+      if (this.up(l.owner, 'click')) upgraded.add(l.victim);
+    }
+    for (const [victim, n] of counts) {
+      const swarm = upgraded.has(victim) && n >= SWARM_DAMAGE_AT;
+      if (swarm) this.swarming.add(victim);
+      this.latchAccum.set(victim, n * LATCH_DPS * (swarm ? SWARM_DAMAGE_MULT : 1));
+      // A full school doesn't just bite harder, it holds you still enough to be bitten.
+      if (upgraded.has(victim) && n >= SWARM_SLOW_AT) {
+        const had = (this.swarmSlow.get(victim) ?? 0) > time;
+        this.swarmSlow.set(victim, time + SWARM_SLOW_MS);
+        if (!had) {
+          this.api.showFloatingText(victim.x, victim.y - 52, '🐟 SWARMED', this.hex(DPT.blood));
+        }
+      }
     }
     for (const [victim, dps] of this.latchAccum) {
       const carry = (this.chewCarry.get(victim) ?? 0) + dps * (delta / 1000);
@@ -779,11 +968,14 @@ export class DepthsKit {
     this.drowns.push({
       owner, victim, o2: 1, endsAt: this.now + DROWN_TOTAL_MS,
       px, py, seed: Math.random() * 999, tick: 0,
+      // Latched after the slash that started this, so the hit that bought the drown isn't
+      // also billed against the bar it just opened.
+      lastRaw: victim.rawDamageTaken,
     });
 
     this.fx(owner).ring(px, py, 14, PUDDLE_R * 1.6, DPT.cyan, 620);
     this.fx(owner).splash(victim.x, victim.y, 30, DPT.trench);
-    this.api.showFloatingText(victim.x, victim.y - 48, '💦 NO AIR', this.hex(DPT.cyan));
+    this.api.showFloatingText(victim.x, victim.y - 48, '🫧 NO AIR', this.hex(DPT.cyan));
     Sfx.playAt('bubble', victim.x, { volume: 0.85, rate: 0.7 });
   }
 
@@ -792,12 +984,18 @@ export class DepthsKit {
       const d = this.drowns[i];
       if (!this.alive(d.victim) || time >= d.endsAt) {
         if (this.alive(d.victim)) {
-          this.api.showFloatingText(d.victim.x, d.victim.y - 46, '💦 SURFACED', this.hex(DPT.foam));
+          this.api.showFloatingText(d.victim.x, d.victim.y - 46, '🫧 SURFACED', this.hex(DPT.foam));
           this.fx(d.owner).bubbles(d.px, d.py, 8, 40, DPT.foam, 520, 7);
         }
         this.drowns.splice(i, 1);
         continue;
       }
+
+      // Polled every frame, whether or not the upgrade is on and whether or not they are
+      // standing in air — a hit taken in the puddle must not be banked against the next breath.
+      const raw = d.victim.rawDamageTaken;
+      const took = raw - d.lastRaw;
+      d.lastRaw = raw;
 
       // The puddle is the only answer, and touching it is a full breath rather than a trickle.
       if (Phaser.Math.Distance.Between(d.victim.x, d.victim.y, d.px, d.py) <= PUDDLE_R) {
@@ -812,6 +1010,20 @@ export class DepthsKit {
       }
 
       d.o2 = Math.max(0, d.o2 - delta / O2_DRAIN_MS);
+
+      // E+ — Knock the Breath Out. Every point that lands on somebody with no air to spare
+      // costs them some of what is left, which is what turns the drown from a timer you wait
+      // out into something the rest of the kit can shorten.
+      if (took > 0.01 && d.o2 > 0 && this.up(d.owner, 'e')) {
+        const cost = took * BREATH_PER_DAMAGE;
+        d.o2 = Math.max(0, d.o2 - cost);
+        // Only the hits worth seeing — a piranha's 1s would otherwise bury the screen.
+        if (cost >= 0.05) {
+          this.api.showFloatingText(d.victim.x, d.victim.y - 58, '💨 WINDED', this.hex(DPT.cyan));
+          this.fx(d.owner).bubbles(d.victim.x, d.victim.y - 12, 4, 16, DPT.foam, 380, 9);
+        }
+      }
+
       if (d.o2 > 0) continue;
 
       d.tick += delta;
@@ -832,12 +1044,23 @@ export class DepthsKit {
       if (time >= a.until) { this.algae.splice(i, 1); continue; }
 
       for (const f of this.everyone()) {
-        if (f.hp >= f.maxHp) continue;
         if (Phaser.Math.Distance.Between(f.x, f.y, a.x, a.y) > ALGAE_R) continue;
-        f.heal(ALGAE_HEAL);
-        const fx = f === this.api.player ? this.pfx : this.nfx;
-        fx.bubbles(a.x, a.y, 7, 26, DPT.algae, 520, 9);
-        this.api.showFloatingText(f.x, f.y - 44, `+${ALGAE_HEAL}`, this.hex(DPT.algae));
+
+        if (a.bad) {
+          // A red orb feeds on whoever reaches it first, exactly like a green one — and that
+          // includes the person who planted it. There is no owner check here on purpose.
+          f.takeDamage(RED_ALGAE_DAMAGE);
+          this.api.spawnHitFlash(f.x, f.y, DPT.rot);
+          this.fx(a.owner).bubbles(a.x, a.y, 7, 26, DPT.rot, 520, 9);
+          Sfx.playAt('slime-splat', f.x, { volume: 0.6, rate: 0.9 });
+        } else {
+          if (f.hp >= f.maxHp) continue;
+          f.heal(ALGAE_HEAL);
+          const fx = f === this.api.player ? this.pfx : this.nfx;
+          fx.bubbles(a.x, a.y, 7, 26, DPT.algae, 520, 9);
+          this.api.showFloatingText(f.x, f.y - 44, `+${ALGAE_HEAL}`, this.hex(DPT.algae));
+        }
+
         this.algae.splice(i, 1);
         break;
       }
@@ -865,7 +1088,10 @@ export class DepthsKit {
       if (this.isStill(f)) s.fishRemain -= delta;
       if (s.fishRemain <= 0) {
         s.fishing = false;
-        s.fish = ALL_FISH[Math.floor(Math.random() * ALL_FISH.length)];
+        // A baited line pulls from the rare table instead, and the bait is spent doing it.
+        const table = s.baited ? RARE_FISH : ALL_FISH;
+        s.baited = false;
+        s.fish = table[Math.floor(Math.random() * table.length)];
         s.npcThrowAt = time + NPC_THROW_DELAY_MS;
         this.fx(owner).splash(f.x, f.y - 20, 34, FISH_COLOR[s.fish]);
         this.api.showFloatingText(f.x, f.y - 54,
@@ -881,12 +1107,34 @@ export class DepthsKit {
     }
   }
 
+  /**
+   * F+ — the hold half of Deep Fishing. The catch goes on the hook rather than at them, and
+   * the rod comes back with something from the bottom next time.
+   */
+  private makeBait(owner: Owner): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    const kind = s.fish;
+    if (!kind || !this.alive(f)) return;
+    s.fish = null;
+    s.baited = true;
+
+    this.avatar(owner)?.play('flex');
+    this.fx(owner).bubbles(f.x, f.y - 12, 8, 26, FISH_COLOR[kind], 560, 9);
+    this.fx(owner).ring(f.x, f.y, 8, 60, DPT.lure, 420);
+    this.api.showFloatingText(f.x, f.y - 52, '🎣 BAITED', this.hex(DPT.lure));
+    Sfx.playAt('bubble', f.x, { volume: 0.75, rate: 0.85 });
+  }
+
   private throwFish(owner: Owner, tx: number, ty: number): void {
     const s = this.side(owner);
     const kind = s.fish;
     const f = this.fighter(owner);
     if (!kind || !this.alive(f)) return;
     s.fish = null;
+
+    // The catfish never flies. Its whole ability is what it does to the bloom on the floor.
+    if (kind === 'catfish') { this.doCatfish(owner); return; }
 
     const stats = FISH_STATS[kind];
     const ang = Math.atan2(ty - f.y, tx - f.x);
@@ -901,6 +1149,9 @@ export class DepthsKit {
       hits: new Map<Fighter, number>(),
       swallowed: null,
       eatAccum: 0,
+      // A whale shark opens fire the moment it is in the water, then every three seconds.
+      burstAt: this.now,
+      returning: false,
     });
 
     this.avatar(owner)?.play('punch', ang);
@@ -910,18 +1161,139 @@ export class DepthsKit {
     Sfx.playAt('whoosh', f.x, { volume: 0.6, rate: 1.15 });
   }
 
+  /**
+   * The catfish. It doesn't attack anybody — it strips the bloom off the floor and hands you
+   * every heal that was standing in it, plus a quarter. Only the green half: a red orb is not
+   * food, and eating your own trap would defeat the point of having laid one.
+   */
+  private doCatfish(owner: Owner): void {
+    const f = this.fighter(owner);
+    let eaten = 0;
+    for (let i = this.algae.length - 1; i >= 0; i--) {
+      const a = this.algae[i];
+      if (a.bad) continue;
+      this.fx(owner).bubbles(a.x, a.y, 5, 20, DPT.algae, 460, 9);
+      this.algae.splice(i, 1);
+      eaten++;
+    }
+
+    const heal = Math.round(eaten * ALGAE_HEAL * CATFISH_BONUS);
+    this.avatar(owner)?.play('flex');
+    this.fx(owner).ring(f.x, f.y, 16, 200, DPT.cat, 660);
+    if (heal > 0) {
+      f.heal(heal);
+      this.api.showFloatingText(f.x, f.y - 52, `🐈 +${heal}`, this.hex(DPT.algae));
+      Sfx.playAt('bloom', f.x, { volume: 0.85, rate: 1.1 });
+    } else {
+      this.api.showFloatingText(f.x, f.y - 52, '🐈 NOTHING TO EAT', this.hex(DPT.cat));
+      Sfx.playAt('bubble', f.x, { volume: 0.5, rate: 0.7 });
+    }
+  }
+
+  /** A saw fish went in and stayed in. Ten one-point ticks a second for five seconds. */
+  private stickSaw(owner: Owner, victim: Fighter): void {
+    const existing = this.saws.find((s) => s.owner === owner && s.victim === victim);
+    if (existing) {
+      existing.until = this.now + SAW_STICK_MS;
+    } else {
+      this.saws.push({
+        owner, victim, until: this.now + SAW_STICK_MS, tick: 0,
+        orbit: Math.random() * Math.PI * 2, wig: Math.random() * 6,
+      });
+    }
+    this.fx(owner).chomp(victim.x, victim.y, Math.random() * Math.PI * 2, 26, DPT.blood);
+    this.api.spawnHitFlash(victim.x, victim.y, DPT.saw);
+    this.api.showFloatingText(victim.x, victim.y - 50, '🔪 STUCK', this.hex(DPT.saw));
+    Sfx.playAt('claw', victim.x, { volume: 0.7, rate: 0.9 });
+  }
+
+  /** The whale shark's five-round burst, fanned at whoever is nearest to it. */
+  private whaleBurst(p: FishProj): void {
+    const target = this.targetsOf(p.owner)
+      .reduce<Fighter | null>((best, t) => {
+        if (!best) return t;
+        return Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y)
+          < Phaser.Math.Distance.Between(p.x, p.y, best.x, best.y) ? t : best;
+      }, null);
+    if (!target) return;
+
+    const base = Math.atan2(target.y - p.y, target.x - p.x);
+    for (let i = 0; i < WHALE_BURST_SHOTS; i++) {
+      const a = base + (i / (WHALE_BURST_SHOTS - 1) - 0.5) * WHALE_BURST_SPREAD;
+      this.remoras.push({
+        owner: p.owner,
+        x: p.x + Math.cos(a) * 30,
+        y: p.y + Math.sin(a) * 30,
+        vx: Math.cos(a) * REMORA_SPEED,
+        vy: Math.sin(a) * REMORA_SPEED,
+        diesAt: this.now + REMORA_LIFE_MS,
+        wig: Math.random() * 6,
+      });
+    }
+    this.fx(p.owner).bubbles(p.x, p.y, 6, 30, DPT.foam, 460, 9);
+    Sfx.playAt('whoosh', p.x, { volume: 0.45, rate: 1.4 });
+  }
+
   private updateFishProjectiles(time: number, delta: number): void {
     const dt = delta / 1000;
     for (let i = this.fishes.length - 1; i >= 0; i--) {
       const p = this.fishes[i];
       const stats = FISH_STATS[p.kind];
+      const f = this.fighter(p.owner);
+
+      // ── Whale shark: it doesn't fly at anything, it swims to where you are pointing ──
+      if (p.kind === 'whaleshark') {
+        const aim = this.aimOf(p.owner);
+        const d = Phaser.Math.Distance.Between(p.x, p.y, aim.x, aim.y);
+        if (d > 14) {
+          const a = Math.atan2(aim.y - p.y, aim.x - p.x);
+          p.vx = Math.cos(a) * WHALE_SPEED;
+          p.vy = Math.sin(a) * WHALE_SPEED;
+        } else {
+          p.vx = 0;
+          p.vy = 0;
+        }
+        if (time >= p.burstAt) {
+          this.whaleBurst(p);
+          p.burstAt = time + WHALE_BURST_MS;
+        }
+      }
+
+      // ── Flying fish: it comes back, and it is inert on the way ──
+      if (p.returning) {
+        if (!this.alive(f)) {
+          this.fishes.splice(i, 1);
+          continue;
+        }
+        const a = Math.atan2(f.y - p.y, f.x - p.x);
+        p.vx = Math.cos(a) * FLYER_RETURN_SPEED;
+        p.vy = Math.sin(a) * FLYER_RETURN_SPEED;
+        if (Phaser.Math.Distance.Between(p.x, p.y, f.x, f.y) <= FLYER_CATCH_R) {
+          // Straight back into the jaw, ready to be thrown again — no cast, no cooldown.
+          this.side(p.owner).fish = 'flyingfish';
+          this.fishes.splice(i, 1);
+          this.fx(p.owner).splash(f.x, f.y - 16, 26, DPT.flyer);
+          this.api.showFloatingText(f.x, f.y - 52, '🐬 CAUGHT', this.hex(DPT.flyer));
+          Sfx.playAt('splash', f.x, { volume: 0.6, rate: 1.35 });
+          continue;
+        }
+      }
+
       p.x += p.vx * dt;
       p.y += p.vy * dt;
       p.wig += dt * 14;
 
       const hitWall = p.x <= this.left || p.x >= this.right || p.y <= this.top || p.y >= this.bottom;
 
-      if (p.kind === 'pufferfish' && hitWall) {
+      if (p.kind === 'whaleshark') {
+        // Too big to be stopped by a wall, and it has nowhere else to be.
+        p.x = Phaser.Math.Clamp(p.x, this.left, this.right);
+        p.y = Phaser.Math.Clamp(p.y, this.top, this.bottom);
+      } else if (p.returning && hitWall) {
+        // Coming home takes precedence over the arena's edges — it is already inside them.
+        p.x = Phaser.Math.Clamp(p.x, this.left + 1, this.right - 1);
+        p.y = Phaser.Math.Clamp(p.y, this.top + 1, this.bottom - 1);
+      } else if (p.kind === 'pufferfish' && hitWall) {
         // Bouncy, and only bouncy — a pufferfish that expired on a wall would be a dud.
         if (p.x <= this.left || p.x >= this.right) p.vx *= -1;
         if (p.y <= this.top || p.y >= this.bottom) p.vy *= -1;
@@ -960,6 +1332,10 @@ export class DepthsKit {
         continue;
       }
 
+      // A whale shark is a platform, not a projectile — its body is harmless, and a flying
+      // fish on the way home has already spent its one hit.
+      if (p.kind === 'whaleshark' || p.returning) continue;
+
       let consumed = false;
       for (const t of this.targetsOf(p.owner)) {
         if (Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) > stats.r + 12) continue;
@@ -971,7 +1347,7 @@ export class DepthsKit {
             this.slowed.set(t, time + ICEFISH_SLOW_MS);
             this.api.spawnHitFlash(t.x, t.y, DPT.ice);
             this.fx(p.owner).bubbles(t.x, t.y, 7, 26, DPT.ice, 520, 9);
-            this.api.showFloatingText(t.x, t.y - 44, '❄️ CHILLED', this.hex(DPT.ice));
+            this.api.showFloatingText(t.x, t.y - 44, '🧊 CHILLED', this.hex(DPT.ice));
             consumed = true;
             break;
           }
@@ -1009,8 +1385,39 @@ export class DepthsKit {
             Sfx.playAt('slime-splat', t.x, { volume: 0.8, rate: 0.75 });
             break;
           }
+          case 'sawfish': {
+            // It stops here. Everything it is worth happens over the next five seconds.
+            this.stickSaw(p.owner, t);
+            consumed = true;
+            break;
+          }
+          case 'swordfish': {
+            if (time - last < 400) break;
+            p.hits.set(t, time);
+            t.takeDamage(SWORD_DAMAGE);
+            this.api.spawnHitFlash(t.x, t.y, DPT.sword);
+            this.fx(p.owner).slashArc(t.x, t.y, Math.atan2(p.vy, p.vx), 40, DPT.sword);
+            this.api.showFloatingText(t.x, t.y - 48, '⚔️ RUN THROUGH', this.hex(DPT.sword));
+            Sfx.playAt('claw', t.x, { volume: 0.8, rate: 0.7 });
+            // Pierces, like the barracuda it is an escalation of.
+            break;
+          }
+          case 'flyingfish': {
+            t.takeDamage(FLYER_DAMAGE);
+            this.api.spawnHitFlash(t.x, t.y, DPT.flyer);
+            this.fx(p.owner).chomp(t.x, t.y, Math.atan2(p.vy, p.vx), 20, DPT.flyer);
+            // Not consumed — it turns around instead, and the clock is reset so the trip
+            // home can't be cut short by the throw's own two seconds running out.
+            p.returning = true;
+            p.diesAt = time + FISH_STATS.flyingfish.life;
+            break;
+          }
+          // A catfish never becomes a projectile — it resolves the moment it leaves your jaw.
+          // (The whale shark is already gone by here; the guard above skips it entirely.)
+          case 'catfish':
+            break;
         }
-        if (consumed || p.swallowed) break;
+        if (consumed || p.swallowed || p.returning) break;
       }
 
       if (consumed) this.fishes.splice(i, 1);
@@ -1040,6 +1447,54 @@ export class DepthsKit {
     );
     this.api.showFloatingText(v.x, v.y - 46, onWall ? '🐍 SPAT AT THE WALL' : '🐍 RELEASED',
       this.hex(DPT.gulper));
+  }
+
+  // ── Rare fish: the saw, and the whale shark's escort ───────────────────────
+
+  /**
+   * Saw fish, once it is in. Ten one-point ticks a second is deliberately not one ten-point
+   * tick: the point of this fish is that the health bar never stops moving for five seconds.
+   */
+  private updateSaws(time: number, delta: number): void {
+    for (let i = this.saws.length - 1; i >= 0; i--) {
+      const s = this.saws[i];
+      if (!this.alive(s.victim) || time >= s.until) {
+        if (this.alive(s.victim)) this.fx(s.owner).bubbles(s.victim.x, s.victim.y, 4, 18, DPT.saw, 380, 9);
+        this.saws.splice(i, 1);
+        continue;
+      }
+      s.wig += (delta / 1000) * 18;
+      s.tick += delta;
+      while (s.tick >= SAW_TICK_MS) {
+        s.tick -= SAW_TICK_MS;
+        s.victim.takeDamage(SAW_TICK_DAMAGE);
+      }
+    }
+  }
+
+  private updateRemoras(time: number, delta: number): void {
+    const dt = delta / 1000;
+    for (let i = this.remoras.length - 1; i >= 0; i--) {
+      const r = this.remoras[i];
+      r.x += r.vx * dt;
+      r.y += r.vy * dt;
+      r.wig += dt * 22;
+
+      let hit = false;
+      for (const t of this.targetsOf(r.owner)) {
+        if (Phaser.Math.Distance.Between(r.x, r.y, t.x, t.y) > REMORA_R + 12) continue;
+        t.takeDamage(REMORA_DAMAGE);
+        this.api.spawnHitFlash(t.x, t.y, DPT.whale);
+        this.fx(r.owner).bubbles(t.x, t.y, 3, 14, DPT.foam, 320, 9);
+        hit = true;
+        break;
+      }
+
+      if (hit || time >= r.diesAt
+        || r.x < this.left || r.x > this.right || r.y < this.top || r.y > this.bottom) {
+        this.remoras.splice(i, 1);
+      }
+    }
   }
 
   // ── Megalodon ──────────────────────────────────────────────────────────────
@@ -1086,9 +1541,42 @@ export class DepthsKit {
       // ── Holding against the wall ──
       s.gape = 0.15 + 0.15 * Math.sin(time / 90);
       s.swallowed = s.swallowed.filter((f) => this.alive(f));
+
+      // Q+ — Command the Depths. The beached shark stops being furniture and becomes a body
+      // you steer, which is what lets it be driven over the bloom below.
+      const commanded = this.up(s.owner, 'q');
+      if (commanded) {
+        const aim = this.aimOf(s.owner);
+        const d = Phaser.Math.Distance.Between(s.x, s.y, aim.x, aim.y);
+        if (d > 12) {
+          const a = Math.atan2(aim.y - s.y, aim.x - s.x);
+          const step = Math.min(SHARK_FOLLOW_SPEED * dt, d);
+          s.x = Phaser.Math.Clamp(s.x + Math.cos(a) * step, this.left + 40, this.right - 40);
+          s.y = Phaser.Math.Clamp(s.y + Math.sin(a) * step, this.top + 40, this.bottom - 40);
+          s.ang = a;
+        }
+      }
+
       const mouthX = s.x + Math.cos(s.ang) * SHARK_LEN * 0.3;
       const mouthY = s.y + Math.sin(s.ang) * SHARK_LEN * 0.3;
       for (const f of s.swallowed) this.body(f).reset(mouthX, mouthY);
+
+      if (commanded) {
+        // Anything the mouth passes over goes in with them, and lands on whoever is in there.
+        // Green or red makes no difference — the damage is the grinding, not the algae.
+        for (let k = this.algae.length - 1; k >= 0; k--) {
+          const a = this.algae[k];
+          if (Phaser.Math.Distance.Between(mouthX, mouthY, a.x, a.y) > SHARK_MOUTH_R) continue;
+          this.algae.splice(k, 1);
+          this.fx(s.owner).chomp(a.x, a.y, s.ang, 26, a.bad ? DPT.rot : DPT.algae);
+          for (const f of s.swallowed) {
+            f.takeDamage(SHARK_ALGAE_DAMAGE);
+            this.api.spawnHitFlash(f.x, f.y, DPT.blood);
+            this.api.showFloatingText(f.x, f.y - 54, '🦈 GROUND UP', this.hex(DPT.blood));
+          }
+          if (s.swallowed.length) Sfx.playAt('claw', mouthX, { volume: 0.8, rate: 0.6 });
+        }
+      }
 
       s.tick += delta;
       while (s.tick >= 1000) {
@@ -1121,6 +1609,9 @@ export class DepthsKit {
   private updateSlows(time: number): void {
     for (const [f, until] of [...this.slowed]) {
       if (time >= until || !this.alive(f)) this.slowed.delete(f);
+    }
+    for (const [f, until] of [...this.swarmSlow]) {
+      if (time >= until || !this.alive(f)) this.swarmSlow.delete(f);
     }
   }
 
@@ -1179,7 +1670,11 @@ export class DepthsKit {
 
     for (const a of this.algae) {
       const fade = Phaser.Math.Clamp((a.until - time) / 800, 0, 1);
-      algaeOrb(g, this.col(a.owner), a.x, a.y, 8, this.vizT, fade, a.seed);
+      // Algae Trap. The red is a *view*, not a property: only the side that planted the orb
+      // is shown what it really is, and on this client that can only ever be the player. An
+      // online opponent's trap arrives painted green, which is the entire ability.
+      algaeOrb(g, this.col(a.owner), a.x, a.y, 8, this.vizT, fade, a.seed,
+        a.bad && a.owner === 'player');
     }
 
     for (const owner of ['player', 'npc'] as Owner[]) {
@@ -1237,6 +1732,27 @@ export class DepthsKit {
       }
     }
 
+    // ── Saw fish, stuck where they landed ──
+    for (const s of this.saws) {
+      if (!this.alive(s.victim)) continue;
+      const r = 24 * s.victim.sizeMult * s.victim.shapeSizeMult;
+      const sx = s.victim.x + Math.cos(s.orbit) * r;
+      const sy = s.victim.y + Math.sin(s.orbit) * r * 0.9;
+      const fade = Phaser.Math.Clamp((s.until - time) / 400, 0, 1);
+      // Nose-in, and buried to the gills — only the back half of a stuck fish shows.
+      fishBody(g, this.col(s.owner), sx, sy, s.orbit + Math.PI, FISH_STATS.sawfish.len * 0.8,
+        FISH_COLOR.sawfish, fade, FISH_PROFILE.sawfish, s.wig);
+      g.fillStyle(this.col(s.owner)(DPT.blood), fade * 0.5);
+      g.fillCircle(s.victim.x + Math.cos(s.orbit) * r * 0.7,
+        s.victim.y + Math.sin(s.orbit) * r * 0.63, 5 + Math.sin(s.wig) * 1.4);
+    }
+
+    // ── Remoras ──
+    for (const r of this.remoras) {
+      const ang = Math.atan2(r.vy, r.vx) + Math.sin(r.wig) * 0.3;
+      fishBody(g, this.col(r.owner), r.x, r.y, ang, 17, DPT.scale, 1, REMORA_PROFILE, r.wig);
+    }
+
     // ── Sharks ──
     for (const s of this.sharks) {
       sharkBody(g, this.col(s.owner), s.x, s.y, s.ang, SHARK_LEN, 1, s.gape, this.vizT);
@@ -1270,7 +1786,7 @@ export class DepthsKit {
     } : null);
 
     this.api.setStatusIndicator('depths-frenzy', playerIsDepths && s.boostUntil > time ? {
-      name: 'Feeding Frenzy', emoji: '🔴', color: DPT.blood,
+      name: 'Feeding Frenzy', emoji: '🩸', color: DPT.blood,
       description: 'Something took the bait. +50% movement speed, and Lungfish Strike hits for 30 instead of 15.',
       until: s.boostUntil, priority: 100,
     } : null);
@@ -1284,28 +1800,53 @@ export class DepthsKit {
     this.api.setStatusIndicator('depths-catch', playerIsDepths && s.fish ? {
       name: FISH_LABEL[s.fish].toLowerCase().replace(/^\w/, (c) => c.toUpperCase()),
       emoji: FISH_EMOJI[s.fish], color: FISH_COLOR[s.fish],
-      description: 'A fish is clamped in your jaw. Press F again to throw it.',
+      description: this.api.hasUpgrade('f')
+        ? 'A fish is clamped in your jaw. Tap F to throw it, or hold F to give it up as bait.'
+        : 'A fish is clamped in your jaw. Press F again to throw it.',
       priority: 108,
+    } : null);
+
+    this.api.setStatusIndicator('depths-bait', playerIsDepths && s.baited ? {
+      name: 'Baited Line', emoji: '🎣', color: DPT.lure,
+      description: 'A fish is on the hook. The next catch comes off the rare table — saw fish, sword fish, whale shark, flying fish or catfish.',
+      priority: 110,
     } : null);
 
     // ── Victim side: everything below can be on the player whoever is playing Depths. ──
     const drown = this.drowns.find((d) => d.victim === p);
     this.api.setStatusIndicator('depths-drowning', drown ? {
-      name: drown.o2 > 0 ? 'Drowning' : 'No Air', emoji: '💦', color: DPT.cyan,
+      name: drown.o2 > 0 ? 'Drowning' : 'No Air', emoji: '🫧', color: DPT.cyan,
       description: 'Your oxygen is running out. Reach the dark puddle to refill it — once the bar empties, the water takes 12 HP a second.',
       until: drown.endsAt, priority: 8,
     } : null);
 
     const chewed = this.latches.filter((l) => l.victim === p).length;
+    const swarmed = this.swarming.has(p);
     this.api.setStatusIndicator('depths-chewed', chewed ? {
-      name: 'Chewed', emoji: '🐟', color: DPT.blood,
-      description: 'Piranhas are latched on, taking 3 HP a second each until they let go.',
+      name: swarmed ? 'Swarmed' : 'Chewed', emoji: '🐟', color: DPT.blood,
+      description: swarmed
+        ? `The school has you. ${LATCH_DPS * SWARM_DAMAGE_MULT} HP a second each while three or more are latched on.`
+        : `Piranhas are latched on, taking ${LATCH_DPS} HP a second each until they let go.`,
       count: chewed, priority: 20,
+    } : null);
+
+    const dragged = this.swarmSlow.get(p);
+    this.api.setStatusIndicator('depths-dragged', dragged && dragged > time ? {
+      name: 'Dragged Down', emoji: '🐟', color: DPT.trench,
+      description: 'A full school got on you. 20% slower until you shake the weight.',
+      until: dragged, priority: 28,
+    } : null);
+
+    const sawed = this.saws.find((sw) => sw.victim === p);
+    this.api.setStatusIndicator('depths-sawed', sawed ? {
+      name: 'Saw Fish', emoji: '🔪', color: DPT.saw,
+      description: 'There is a saw fish in you. 10 HP a second until it works itself loose.',
+      until: sawed.until, priority: 18,
     } : null);
 
     const chill = this.slowed.get(p);
     this.api.setStatusIndicator('depths-chilled', chill && chill > time ? {
-      name: 'Chilled', emoji: '❄️', color: DPT.ice,
+      name: 'Chilled', emoji: '🧊', color: DPT.ice,
       description: 'An icefish caught you. 20% slower until it wears off.',
       until: chill, priority: 30,
     } : null);
@@ -1329,6 +1870,8 @@ export class DepthsKit {
     if (this.sides.player.boostUntil > this.now) m *= BOOST_MULT;
     const chill = this.slowed.get(this.api.player);
     if (chill && chill > this.now) m *= ICEFISH_SLOW_MULT;
+    const drag = this.swarmSlow.get(this.api.player);
+    if (drag && drag > this.now) m *= SWARM_SLOW_MULT;
     return m;
   }
 
@@ -1337,6 +1880,8 @@ export class DepthsKit {
     if (this.sides.npc.boostUntil > this.now) m *= BOOST_MULT;
     const chill = this.slowed.get(this.api.npc);
     if (chill && chill > this.now) m *= ICEFISH_SLOW_MULT;
+    const drag = this.swarmSlow.get(this.api.npc);
+    if (drag && drag > this.now) m *= SWARM_SLOW_MULT;
     return m;
   }
 

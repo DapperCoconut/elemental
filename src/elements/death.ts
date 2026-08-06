@@ -7,20 +7,20 @@ import { Ability, CastContext } from './Ability';
  * A sentinel of doom clouded in darkness, holding a katana high over his head. He does not
  * need to swing it: the clock in the corner of the screen is already running, and when it
  * reaches midnight the person in front of him dies. Everything he owns is arithmetic on that
- * one minute — Styx Shot buys time by taking their legs and their bite, Disarm buys three
- * seconds of nothing happening, Riposte buys a window where their bullets are not his problem,
- * Hospice makes all of it twice as heavy, and the Deal is the only thing in the kit that moves
- * the clock itself.
+ * one minute — the shurikens buy time by taking their legs and their bite, Disarm cashes those
+ * brands in for a stun, Riposte buys a window where their bullets are not his problem, Amputate
+ * takes a piece of them that never comes back, and the Deal is the only thing in the kit that
+ * moves the clock itself.
  *
- * Three of the five deal no damage at all. That is the point: Death's damage is a timer.
+ * Four of the five deal no damage at all. That is the point: Death's damage is a timer.
  *
  * Every `cast` below is a one-line delegate; the whole simulation lives in DeathKit.
  */
 
-const styxShot: Ability = {
+const styxShurikens: Ability = {
   id: 'death-styx',
-  name: 'Styx Shot',
-  description: 'Throw a draught of the river forward. It deals no damage — instead it brands whoever it touches for 3 seconds: 15% slower, and 15% less damage against you. Stacks three times, to 45% of each. Passive — Midnight: a clock runs in the corner from the moment the fight starts. When it strikes midnight your enemy dies where they stand, with no catch and no save.',
+  name: 'Styx Shurikens',
+  description: 'Fan three shurikens of the river out in a cone. They deal no damage — instead each one that touches somebody brands them for 3 seconds: 15% slower, and 15% less damage against you. Stacks three times, to 45% of each, so all three landing at close range brands them to the cap in one throw. Passive — Midnight: a clock runs in the corner from the moment the fight starts. When it strikes midnight your enemy dies where they stand, with no catch and no save.',
   displayKey: 'Click',
   cooldown: 620,
   cast(ctx: CastContext) { ctx.deathStyxShot(ctx.targetX, ctx.targetY); },
@@ -29,7 +29,7 @@ const styxShot: Ability = {
 const disarm: Ability = {
   id: 'death-disarm',
   name: 'Disarm',
-  description: 'Bring the katana down through everything in front of you, leaving a yellow afterimage hanging in the air. Deals no damage. Anyone caught in the arc is stunned for 3 seconds — no moving, no casting — and you take a 30% speed boost for 5 seconds.',
+  description: 'Bring the katana down through everything in front of you, leaving a yellow afterimage hanging in the air. Deals no damage. Anyone caught in the arc is stunned for 1 second per Styx stack they are carrying — 3 seconds at the cap — and every stack is stripped off them to pay for it. You take the 30% speed boost for 5 seconds either way, stacks or no stacks.',
   displayKey: 'E',
   cooldown: 6000,
   cast(ctx: CastContext) { ctx.deathDisarm(ctx.targetX, ctx.targetY); },
@@ -44,13 +44,13 @@ const riposte: Ability = {
   cast(ctx: CastContext) { ctx.deathRiposte(ctx.targetX, ctx.targetY); },
 };
 
-const hospice: Ability = {
-  id: 'death-hospice',
-  name: 'Hospice',
-  description: 'A noose looms over your enemy for 15 seconds. Every negative effect on them counts double for as long as it hangs there: Styx Shot brands at 30% a stack instead of 15% — 90% at three — and every debuff anyone lands on them lasts twice as long.',
+const amputate: Ability = {
+  id: 'death-amputate',
+  name: 'Amputate',
+  description: 'Pick a limb, then dash to your cursor and take it off everything you pass through. Deals no damage. A body has two arms and two legs and can lose two of them for the whole game — nothing grows back. One leg: 33% slower. Two legs: 66% slower. One arm: 25% longer cooldowns and 10% less damage. Two arms: 33% longer cooldowns and 25% less damage.',
   displayKey: 'F',
-  cooldown: 25000,
-  cast(ctx: CastContext) { ctx.deathHospice(ctx.targetX, ctx.targetY); },
+  cooldown: 15000,
+  cast(ctx: CastContext) { ctx.deathAmputate(ctx.targetX, ctx.targetY); },
 };
 
 const dealWithDeath: Ability = {
@@ -68,5 +68,5 @@ export const deathElement: Element = {
   name: 'Death',
   color: 0x4a4468,
   emoji: '⚰️',
-  abilities: [styxShot, disarm, riposte, hospice, dealWithDeath],
+  abilities: [styxShurikens, disarm, riposte, amputate, dealWithDeath],
 };

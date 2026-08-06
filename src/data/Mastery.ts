@@ -684,14 +684,14 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         name: 'Tarot of Fate',
         bindable: true,
         hudDescription: 'Greatly enchant the hovered card — 4x power, one curse',
-        description: 'The card your mouse is hovering becomes GREATLY ENCHANTED: 4x a normal card, overruling (and never stacking with) a plain Enchant. It also picks up a curse, shown as a small emoji on the bottom line of the card, which fires the moment you play it. Painful 💊 deals you 30. Immolating 🔥 burns every other card out of your hand. Weakening 🐛 slows you 33% for 10s. Confusing 🌀 inverts your WASD for 5s. Vulnerable 💀 makes the next hit you take double. Cursed 💀 rains 15 purple bullets at you from the sides of the arena for 3 each. Stunning ⭐ locks you out of playing cards for 5s. Cocky 😈 makes All In wager your entire health bar for the rest of the match. Purging ✨ strips enchant, great enchant and preserve off your whole hand and puts Tarot, Preserve and Enchant on 20s cooldowns. 20 second cooldown.',
+        description: 'The card your mouse is hovering becomes GREATLY ENCHANTED: 4x a normal card, overruling (and never stacking with) a plain Enchant. It also picks up a curse, shown as a small emoji on the bottom line of the card, which fires the moment you play it. Painful 🩹 deals you 30. Immolating 🔥 burns every other card out of your hand. Weakening 🦠 slows you 33% for 10s. Confusing 🌀 inverts your WASD for 5s. Vulnerable 🦴 makes the next hit you take double. Cursed 💀 rains 15 purple bullets at you from the sides of the arena for 3 each. Stunning ⭐ locks you out of playing cards for 5s. Cocky 😈 makes All In wager your entire health bar for the rest of the match. Purging ✨ strips enchant, great enchant and preserve off your whole hand and puts Tarot, Preserve and Enchant on 20s cooldowns. 20 second cooldown.',
       },
     ],
   },
   magnet: {
     elementId: 'magnet',
     name: 'Magnet Mastery',
-    enhancedEmoji: '🔗',
+    enhancedEmoji: '🧲',
     enhancedColor: 0x7733aa,
     requirements: [
       {
@@ -737,7 +737,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
   growth: {
     elementId: 'growth',
     name: 'Growth Mastery',
-    enhancedEmoji: '🐛',
+    enhancedEmoji: '🦠',
     enhancedColor: 0x66aa33,
     requirements: [
       {
@@ -973,7 +973,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
   rubber: {
     elementId: 'rubber',
     name: 'Rubber Mastery',
-    enhancedEmoji: '☸️',
+    enhancedEmoji: '🛞',
     enhancedColor: 0x992233,
     requirements: [
       {
@@ -1346,7 +1346,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
   silence: {
     elementId: 'silence',
     name: 'Silence Mastery',
-    enhancedEmoji: '🎎',
+    enhancedEmoji: '🪆',
     enhancedColor: 0x2b0a30,
     requirements: [
       {

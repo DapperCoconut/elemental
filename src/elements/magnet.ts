@@ -54,6 +54,6 @@ export const magnetElement: Element = {
   id: 'magnet',
   name: 'Magnet',
   color: 0xcc2244,
-  emoji: '🔗',
+  emoji: '🧲',
   abilities: [magPulse, nailImplant, magnetize, protect, atomSmasher],
 };

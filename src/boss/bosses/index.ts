@@ -40,7 +40,7 @@ import { PAPER_BOSS } from './PaperBoss';
 import { CHALK_BOSS } from './ChalkBoss';
 import { PSYCHIC_BOSS } from './PsychicBoss';
 import { PASSION_BOSS } from './PassionBoss';
-import { GLASS_BOSS } from './GlassBoss';
+import { DUNE_BOSS } from './DuneBoss';
 import { FORTUNE_BOSS } from './FortuneBoss';
 import { MAGMA_BOSS } from './MagmaBoss';
 import { RADIATION_BOSS } from './RadiationBoss';
@@ -100,7 +100,7 @@ const WORLD_BOSSES: Record<string, WorldBossDef> = {
   chalk: CHALK_BOSS,
   psychic: PSYCHIC_BOSS,
   passion: PASSION_BOSS,
-  glass: GLASS_BOSS,
+  dune: DUNE_BOSS,
   fortune: FORTUNE_BOSS,
   magma: MAGMA_BOSS,
   radiation: RADIATION_BOSS,

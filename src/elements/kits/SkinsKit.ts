@@ -109,7 +109,8 @@ export class SkinsKit {
   illusionColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   depthsColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   ruinColor(owner: Owner, base: number): number { return this.remap(owner, base); }
-  glassColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  /** Sand's element id is `dune` — `sand` was already Time's. */
+  duneColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   conquestColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   passionColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   paperColor(owner: Owner, base: number): number { return this.remap(owner, base); }

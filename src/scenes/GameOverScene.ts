@@ -245,7 +245,7 @@ export class GameOverScene extends Phaser.Scene {
       lines.push({ icon: '🗝️', text: `+${keysEarned}  Key${keysEarned === 1 ? '' : 's'}`, color: T.gold });
     }
     if (isInvasion && (data.corruptShardsEarned ?? 0) > 0) {
-      lines.push({ icon: '🔴', text: `+${data.corruptShardsEarned}  Corrupt Shards`, color: hex(mix(C.corrupt, 0xffffff, 0.4)) });
+      lines.push({ icon: '🩸', text: `+${data.corruptShardsEarned}  Corrupt Shards`, color: hex(mix(C.corrupt, 0xffffff, 0.4)) });
     }
     if (bossShards > 0) {
       lines.push({ icon: '💎', text: `+${bossShards}  shards`, color: T.gold, big: true });

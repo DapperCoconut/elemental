@@ -659,7 +659,7 @@ export class EarthKit {
             if (d < 22) {
               t.takeDamage(8);
               this.arena.spawnHitFlash(t.x, t.y, lavaRocks ? EARTH.ember : EARTH.clay);
-              this.arena.showFloatingText(t.x, t.y - 20, '🗿 8', '#aa8844');
+              this.arena.showFloatingText(t.x, t.y - 20, '🪨 8', '#aa8844');
               // A glancing blow: chips off the rock, not a full detonation.
               this.pfx.debris(rock.sprite.x, rock.sprite.y, 4, {
                 angle: ang, spread: 1.1, speed: 130, size: 2.6, life: 420, fall: 70,
@@ -706,7 +706,7 @@ export class EarthKit {
             const launchDmg = lavaRocks ? 60 : 40;
             t.takeDamage(launchDmg);
             this.arena.spawnHitFlash(t.x, t.y, lavaRocks ? EARTH.ember : EARTH.clay);
-            this.arena.showFloatingText(t.x, t.y - 20, lavaRocks ? `🔥 LAVA HIT ${launchDmg}` : `🗿 LAUNCH STUN ${launchDmg}`, '#ffcc44');
+            this.arena.showFloatingText(t.x, t.y - 20, lavaRocks ? `🔥 LAVA HIT ${launchDmg}` : `🪨 LAUNCH STUN ${launchDmg}`, '#ffcc44');
             t.earthStunnedUntil = Math.max(t.earthStunnedUntil, time + 3000);
             // A boulder at 500px/s meeting a body: the full detonation stack, upgraded to the
             // molten flavour when it is a lava rock rather than merely recoloured.
@@ -817,7 +817,7 @@ export class EarthKit {
           if (this.earthQuakeStandAccum >= 3000 && this.earthRocks.length < 4) {
             this.earthQuakeStandAccum = 0;
             this.spawnEarthRock(true, 0);
-            this.arena.showFloatingText(player.x, player.y - 30, '🗿 QUAKE ROCK', '#ccaa66');
+            this.arena.showFloatingText(player.x, player.y - 30, '🪨 QUAKE ROCK', '#ccaa66');
             // Torn out of the shaking floor at the player's feet.
             this.pfx.pillar(player.x, player.y + 10, 13, 30, 7);
             this.pfx.ring(player.x, player.y, 10, 44, EARTH.dust, 320, 3, 6);
@@ -1006,7 +1006,7 @@ export class EarthKit {
           if (d < 22) {
             player.takeDamage(8);
             this.arena.spawnHitFlash(player.x, player.y, EARTH.clay);
-            this.arena.showFloatingText(player.x, player.y - 20, '🗿 8', '#aa8844');
+            this.arena.showFloatingText(player.x, player.y - 20, '🪨 8', '#aa8844');
             this.nfx.debris(rock.sprite.x, rock.sprite.y, 4,
               { angle: ang, spread: 1.1, speed: 130, size: 2.6, life: 420, fall: 70, depth: 8 });
             this.nfx.ring(player.x, player.y, 6, 26, EARTH.dust, 260, 3, 7);
@@ -1033,7 +1033,7 @@ export class EarthKit {
         if (d < 28) {
           player.takeDamage(40);
           this.arena.spawnHitFlash(player.x, player.y, EARTH.clay);
-          this.arena.showFloatingText(player.x, player.y - 20, '🗿 LAUNCH STUN 40', '#ffcc44');
+          this.arena.showFloatingText(player.x, player.y - 20, '🪨 LAUNCH STUN 40', '#ffcc44');
           this.playerEarthStunnedUntil = Math.max(this.playerEarthStunnedUntil, time + 3000);
           this.nfx.impact(player.x, player.y, 74, { shards: 11, dust: 3, depth: 7, duration: 420 });
           this.arena.scene.cameras.main.shake(190, 0.011);
@@ -1111,7 +1111,7 @@ export class EarthKit {
       }
       if (this.arena.npcCastId === 'rock-dance' && this.npcEarthRocks.length === 0) {
         for (let i = 0; i < 4; i++) this.spawnEarthRock(false, i * Math.PI / 2);
-        this.arena.showFloatingText(npc.x, npc.y - 30, '🗿 ROCK DANCE', '#ccaa66');
+        this.arena.showFloatingText(npc.x, npc.y - 30, '🪨 ROCK DANCE', '#ccaa66');
         this.rockDanceBurst(this.nfx, npc.x, npc.y, false);
       }
       if (this.arena.npcCastId === 'quake') {
@@ -1142,7 +1142,7 @@ export class EarthKit {
     if (this.arena.elementId === 'earth' && this.playerEarthCastId) {
       if (this.playerEarthCastId === 'rock-dance' && this.earthRocks.length === 0) {
         for (let i = 0; i < 4; i++) this.spawnEarthRock(true, i * Math.PI / 2);
-        this.arena.showFloatingText(player.x, player.y - 30, '🗿 ROCK DANCE', '#ccaa66');
+        this.arena.showFloatingText(player.x, player.y - 30, '🪨 ROCK DANCE', '#ccaa66');
         this.playPlayerGesture('flex');
         this.rockDanceBurst(this.pfx, player.x, player.y, this.arena.hasUpgrade('r'));
       }
@@ -2171,7 +2171,7 @@ export class EarthKit {
       if (Phaser.Math.Distance.Between(r.lx, r.ly, t.x, t.y) > r.radius) continue;
       t.takeDamage(r.dmg);
       this.arena.spawnHitFlash(t.x, t.y, EARTH.sand);
-      this.arena.showFloatingText(t.x, t.y - 26, '🗿 ROCKFALL', '#ccaa66');
+      this.arena.showFloatingText(t.x, t.y - 26, '🪨 ROCKFALL', '#ccaa66');
     }
   }
 
@@ -2509,7 +2509,7 @@ export class EarthKit {
       this.erosionAura.update(delta, p.forceInvisible ? 0 : p.alpha);
       if (this.earthShieldLabel) {
         this.earthShieldLabel.setPosition(p.x, p.y - 44);
-        this.earthShieldLabel.setText(`🗿${Math.floor(this.earthShieldHp)}/${maxHp}`);
+        this.earthShieldLabel.setText(`🪨${Math.floor(this.earthShieldHp)}/${maxHp}`);
       }
       return;
     }
@@ -2615,7 +2615,7 @@ export class EarthKit {
     if (lava) {
       this.arena.showFloatingText(fighter.x, fighter.y - 30, '🔥 LAVA LAUNCH!', '#ff8844');
     } else {
-      this.arena.showFloatingText(fighter.x, fighter.y - 30, '🗿 LAUNCH!', '#ccaa66');
+      this.arena.showFloatingText(fighter.x, fighter.y - 30, '🪨 LAUNCH!', '#ccaa66');
     }
   }
 

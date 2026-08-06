@@ -26,12 +26,12 @@ const BASE_ELEMENTS = [
   { id: 'water', name: 'Water', emoji: '💧', color: 0x0088ff },
   { id: 'life',  name: 'Life',  emoji: '🌿', color: 0x44cc44 },
   { id: 'air',   name: 'Air',   emoji: '💨', color: 0xaaddff },
-  { id: 'earth', name: 'Earth', emoji: '🗿', color: 0x887755 },
+  { id: 'earth', name: 'Earth', emoji: '🪨', color: 0x887755 },
 ];
 
 const ALL_ABSTRACT_ELEMENTS = [
   { id: 'electricity', name: 'Electricity', emoji: '⚡', color: 0xffee00 },
-  { id: 'slime',       name: 'Acid',        emoji: '💚', color: 0x66cc44 },
+  { id: 'slime',       name: 'Acid',        emoji: '🟢', color: 0x66cc44 },
   { id: 'fate',        name: 'Fate',        emoji: '🃏', color: 0x88eecc },
   { id: 'sound',       name: 'Sound',       emoji: '🔊', color: 0xff66cc },
   { id: 'light',       name: 'Light',       emoji: '✨', color: 0xfff4a8 },
@@ -837,8 +837,8 @@ export class LabScene extends Phaser.Scene {
     const cx = width / 2;
 
     const ELEM_EMOJI: Record<string, string> = {
-      fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🗿',
-      electricity: '⚡', slime: '💚', fate: '🃏', sound: '🔊', light: '✨',
+      fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🪨',
+      electricity: '⚡', slime: '🟢', fate: '🃏', sound: '🔊', light: '✨',
     };
 
     const SCROLL_TOP = 104;

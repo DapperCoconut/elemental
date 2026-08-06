@@ -403,6 +403,164 @@ export function styxBrand(
 }
 
 /**
+ * A shuriken of the river.
+ *
+ * Four **hooked** blades rather than four spikes: each one has a short straight back and a long
+ * concave sweep into the next tip, which is the shape that reads as a throwing star instead of a
+ * plus sign. The metal is river-green and wet — there is a bored hole through the middle, a
+ * bright edge running the whole silhouette, and a drop hanging off the trailing blade.
+ */
+export function shuriken(
+  g: Phaser.GameObjects.Graphics,
+  tint: DeathColorFn,
+  x: number, y: number, ang: number, size: number, alpha: number,
+  { dark = 1, seed = 0, color = DEA.styx, points = 4, t = 0 } = {},
+): void {
+  const SEG = 10;
+  const face: Phaser.Geom.Point[] = [];
+  for (let i = 0; i < points * SEG; i++) {
+    const p = (i % SEG) / SEG;
+    // Straight back for the first eighth, then a concave sweep all the way to the next tip.
+    const k = p < 0.12 ? 1 - (p / 0.12) * 0.66 : 0.34 + 0.66 * Math.pow((p - 0.12) / 0.88, 2.2);
+    const a = ang + (i / (points * SEG)) * TAU;
+    face.push(new Phaser.Geom.Point(x + Math.cos(a) * size * k, y + Math.sin(a) * size * k));
+  }
+
+  // Lead under the whole silhouette, so a green star never sits directly on the arena.
+  g.fillStyle(shade(tint(DEA.void_), dark), alpha * 0.85);
+  g.fillPoints(face.map((p) => new Phaser.Geom.Point(x + (p.x - x) * 1.18, y + (p.y - y) * 1.18)), true);
+  g.fillStyle(shade(tint(color), dark), alpha * 0.92);
+  g.fillPoints(face, true);
+  g.lineStyle(1.1, shade(tint(DEA.edge), dark), alpha * 0.55);
+  g.strokePoints(face, true, true);
+
+  // The hub: a shaded collar with a hole bored clean through it.
+  g.fillStyle(shade(tint(DEA.deep), dark), alpha * 0.95);
+  g.fillCircle(x, y, size * 0.3);
+  g.fillStyle(shade(tint(DEA.void_), dark), alpha * 0.9);
+  g.fillCircle(x, y, size * 0.14);
+
+  // A hard glint on each tip — four little lights turning as the star spins.
+  for (let i = 0; i < points; i++) {
+    const a = ang + (i / points) * TAU;
+    g.fillStyle(shade(tint(DEA.edge), dark), alpha * (0.35 + 0.45 * jitter(seed, i)));
+    g.fillCircle(x + Math.cos(a) * size * 0.86, y + Math.sin(a) * size * 0.86, size * 0.11);
+  }
+
+  // Two drops running off the trailing blades. The river does not dry.
+  for (let i = 0; i < 2; i++) {
+    const a = ang + Math.PI * (0.6 + i * 0.5);
+    const fall = ((t * 40 + seed + i * 11) % 16);
+    g.fillStyle(shade(tint(color), dark), alpha * Math.max(0, 0.5 - fall / 34));
+    g.fillEllipse(x + Math.cos(a) * size * 0.7, y + Math.sin(a) * size * 0.7 + fall, 1.9, 3.2);
+  }
+}
+
+/**
+ * A limb that is no longer attached to anybody. Cloth sleeve, a wet bone stump at the cut end,
+ * and the hand or the foot still on the other — because the thing that sells an amputation is
+ * seeing which piece it was.
+ */
+export function severedLimb(
+  g: Phaser.GameObjects.Graphics,
+  tint: DeathColorFn,
+  x: number, y: number, ang: number, size: number, alpha: number,
+  { dark = 1, seed = 0, leg = false } = {},
+): void {
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const P = (u: number, v: number) => pt(x, y, ca, sa, u, v);
+  const w = size * (leg ? 0.3 : 0.22);
+
+  // The sleeve, tapering from the stump toward the extremity.
+  const sleeve = [
+    P(-size * 0.5, -w), P(size * 0.34, -w * 0.78),
+    P(size * 0.34, w * 0.78), P(-size * 0.5, w),
+  ];
+  g.fillStyle(shade(tint(DEA.void_), dark), alpha * 0.9);
+  g.fillPoints(sleeve.map((p) => new Phaser.Geom.Point(x + (p.x - x) * 1.15, y + (p.y - y) * 1.15)), true);
+  g.fillStyle(shade(tint(DEA.shroud), dark), alpha * 0.9);
+  g.fillPoints(sleeve, true);
+  // Two creases down the cloth, so it is fabric rather than a stick.
+  for (let i = 0; i < 2; i++) {
+    const v = (i - 0.5) * w * 0.9;
+    const a0 = P(-size * 0.4, v);
+    const a1 = P(size * 0.28, v * 0.8);
+    g.lineStyle(1, shade(tint(DEA.ash), dark), alpha * 0.5);
+    g.lineBetween(a0.x, a0.y, a1.x, a1.y);
+  }
+
+  // The cut end: bone with two condyles, and the blood still on it.
+  const b = P(-size * 0.5, 0);
+  g.fillStyle(shade(tint(DEA.bone), dark), alpha * 0.95);
+  g.fillCircle(b.x, b.y, w * 0.62);
+  for (const s of [1, -1]) {
+    const c = P(-size * 0.56, s * w * 0.44);
+    g.fillStyle(shade(tint(DEA.pale), dark), alpha * 0.9);
+    g.fillCircle(c.x, c.y, w * 0.34);
+  }
+  g.fillStyle(shade(tint(DEA.blood), dark), alpha * 0.75);
+  g.fillCircle(b.x, b.y + w * 0.3, w * 0.36);
+
+  // The extremity. A hand is a ball with three knuckles; a foot is a wedge.
+  const e = P(size * 0.46, 0);
+  if (leg) {
+    g.fillStyle(shade(tint(DEA.void_), dark), alpha * 0.92);
+    g.fillPoints([
+      P(size * 0.3, -w * 0.8), P(size * 0.72, -w * 0.5),
+      P(size * 0.66, w * 0.6), P(size * 0.3, w * 0.8),
+    ], true);
+  } else {
+    g.fillStyle(shade(tint(DEA.ash), dark), alpha * 0.9);
+    g.fillCircle(e.x, e.y, w * 0.95);
+    for (let i = 0; i < 3; i++) {
+      const k = P(size * 0.62, (i - 1) * w * 0.5);
+      g.fillStyle(shade(tint(DEA.bone), dark), alpha * (0.7 - i * 0.1));
+      g.fillCircle(k.x, k.y, w * 0.24 + jitter(seed, i) * 0.6);
+    }
+  }
+}
+
+/**
+ * The permanent tell on an amputee: a bandaged nub where each missing limb used to be, wrapped
+ * twice and still seeping. Arms sit at the shoulders, legs under the hips, filled left first —
+ * so a glance at the body says how many of each are gone without reading the status tray.
+ */
+export function stumps(
+  g: Phaser.GameObjects.Graphics,
+  tint: DeathColorFn,
+  x: number, y: number, r: number, arms: number, legs: number, t: number, alpha: number,
+  { dark = 1, seed = 0 } = {},
+): void {
+  const nub = (nx: number, ny: number, size: number, i: number) => {
+    const pulse = 0.6 + 0.4 * Math.sin(t * 3.2 + i * 1.7);
+    g.fillStyle(shade(tint(DEA.void_), dark), alpha * 0.8);
+    g.fillCircle(nx, ny, size * 1.25);
+    g.fillStyle(shade(tint(DEA.pale), dark), alpha * 0.9);
+    g.fillCircle(nx, ny, size);
+    // Two wraps of bandage across it.
+    for (let k = 0; k < 2; k++) {
+      g.lineStyle(1.4, shade(tint(DEA.bone), dark), alpha * 0.85);
+      g.lineBetween(nx - size, ny - size * 0.4 + k * size * 0.75,
+        nx + size, ny - size * 0.1 + k * size * 0.75);
+    }
+    // The seep, and a drop leaving it.
+    g.fillStyle(shade(tint(DEA.blood), dark), alpha * (0.5 + pulse * 0.4));
+    g.fillCircle(nx, ny + size * 0.3, size * 0.42);
+    const fall = ((t * 26 + seed + i * 9) % 14);
+    g.fillStyle(shade(tint(DEA.blood), dark), alpha * Math.max(0, 0.55 - fall / 26));
+    g.fillEllipse(nx, ny + size * 0.5 + fall, 1.6, 2.8);
+  };
+
+  for (let i = 0; i < Math.min(2, arms); i++) {
+    nub(x + (i === 0 ? -1 : 1) * r * 0.92, y - r * 0.22, r * 0.24, i);
+  }
+  for (let i = 0; i < Math.min(2, legs); i++) {
+    nub(x + (i === 0 ? -1 : 1) * r * 0.44, y + r * 0.78, r * 0.28, 2 + i);
+  }
+}
+
+/**
  * Half a bullet, freshly cut. A stubby body with a rounded nose on one side and a **ragged flat
  * face** on the other — the cut is the whole point, so it gets the detail: three jagged steps
  * down the sheared side, and a bright scar along it that fades as the piece tumbles.
@@ -437,6 +595,352 @@ export function slicedBullet(
   const c0 = P(-size * 0.5, 0);
   const c1 = P(size * 0.55, 0);
   g.lineBetween(c0.x, c0.y, c1.x, c1.y);
+}
+
+// ── Upgrade primitives ────────────────────────────────────────────────────
+
+/**
+ * The sheath. Drawn hanging at the reaper's hip while the katana is put away and the next
+ * strike is charging: a lacquered saya with a brass throat and a single bright line running its
+ * length, which fills from the throat downward as the three seconds pass. Full and it hums.
+ *
+ * Deliberately the one shape in the kit built out of *straight* lines other than the blade —
+ * being sheathed is the state where the steel is the only thing that matters.
+ */
+export function sheath(
+  g: Phaser.GameObjects.Graphics,
+  tint: DeathColorFn,
+  x: number, y: number, ang: number, len: number, charge: number, alpha: number,
+  { dark = 1, t = 0 } = {},
+): void {
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const P = (u: number, v: number) => pt(x, y, ca, sa, u, v);
+  const w = len * 0.075;
+
+  const shell = [P(0, -w), P(len, -w * 0.62), P(len + w * 0.7, 0), P(len, w * 0.62), P(0, w)];
+  g.fillStyle(shade(tint(DEA.void_), dark), alpha * 0.95);
+  g.fillPoints(shell, true);
+  g.fillStyle(shade(tint(DEA.shroud), dark), alpha * 0.9);
+  g.fillPoints(shell.map((p) => new Phaser.Geom.Point(x + (p.x - x) * 0.9, y + (p.y - y) * 0.9)), true);
+
+  // The brass throat, where the blade goes in.
+  const k0 = P(0, -w * 1.25);
+  const k1 = P(0, w * 1.25);
+  g.lineStyle(3, shade(tint(DEA.brass), dark), alpha * 0.9);
+  g.lineBetween(k0.x, k0.y, k1.x, k1.y);
+
+  // The charge line: a hairline of edge-white filling from the throat out.
+  const hum = charge >= 1 ? 0.55 + 0.45 * Math.sin(t * 9) : 0.55;
+  const c0 = P(len * 0.06, 0);
+  const c1 = P(len * 0.06 + (len * 0.88) * Phaser.Math.Clamp(charge, 0, 1), 0);
+  g.lineStyle(1.6, shade(tint(charge >= 1 ? DEA.edge : DEA.after), dark), alpha * hum);
+  g.lineBetween(c0.x, c0.y, c1.x, c1.y);
+  if (charge >= 1) {
+    g.lineStyle(4.5, shade(tint(DEA.after), dark), alpha * 0.22 * hum);
+    g.lineBetween(c0.x, c0.y, c1.x, c1.y);
+  }
+}
+
+/**
+ * Somebody's weapon, knocked out of their hands and lying on the floor.
+ *
+ * Nobody in this game is actually holding anything, so what comes off them is the thing they
+ * were really fighting with: a faceted core of their own element, cracked across the middle and
+ * leaking the colour it is made of. `color` is that element's colour and is used **raw** — it is
+ * the one thing on screen that is deliberately not in Death's palette, because the whole point
+ * is that it belongs to somebody else and they have to come and get it.
+ */
+export function weaponCore(
+  g: Phaser.GameObjects.Graphics,
+  tint: DeathColorFn,
+  x: number, y: number, ang: number, size: number, alpha: number,
+  { color = DEA.styx, seed = 0, t = 0, dark = 1 } = {},
+): void {
+  const pulse = 0.55 + 0.45 * Math.sin(t * 3.6 + seed);
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const P = (u: number, v: number) => pt(x, y, ca, sa, u, v);
+
+  // The halo it sits in, so a dropped core is findable on a dark floor.
+  g.fillStyle(color, alpha * 0.1 * (0.6 + pulse * 0.6));
+  g.fillCircle(x, y, size * (2.4 + pulse * 0.5));
+
+  // Eight facets: a hard gem, not a ball of light.
+  const hull: Phaser.Geom.Point[] = [];
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * TAU;
+    const r = size * (0.78 + jitter(seed, i) * 0.34);
+    hull.push(P(Math.cos(a) * r, Math.sin(a) * r * 0.92));
+  }
+  g.fillStyle(shade(tint(DEA.void_), dark), alpha * 0.9);
+  g.fillPoints(hull.map((p) => new Phaser.Geom.Point(x + (p.x - x) * 1.22, y + (p.y - y) * 1.22)), true);
+  g.fillStyle(shade(color, 0.45), alpha * 0.95);
+  g.fillPoints(hull, true);
+  // Two lit faces off the top-left, so the gem has a light source.
+  g.fillStyle(color, alpha * (0.65 + pulse * 0.3));
+  g.fillPoints([hull[5], hull[6], hull[7], P(0, 0)], true);
+  g.lineStyle(1.2, shade(color, 1.5), alpha * 0.8);
+  g.strokePoints(hull, true);
+
+  // The crack: the reason it is on the floor and not in their hand.
+  const q0 = P(-size * 0.9, size * 0.15);
+  const q1 = P(size * 0.2, -size * 0.35);
+  const q2 = P(size * 0.95, size * 0.1);
+  g.lineStyle(1.6, shade(tint(DEA.void_), dark), alpha * 0.85);
+  g.lineBetween(q0.x, q0.y, q1.x, q1.y);
+  g.lineBetween(q1.x, q1.y, q2.x, q2.y);
+
+  // Three glints orbiting it, so it reads as loose rather than placed.
+  for (let i = 0; i < 3; i++) {
+    const a = t * 1.9 + seed + i * (TAU / 3);
+    const d = size * (1.7 + 0.35 * Math.sin(t * 2.6 + i));
+    g.fillStyle(color, alpha * (0.35 + pulse * 0.4));
+    g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d * 0.6, 1.9);
+  }
+}
+
+/**
+ * The line between somebody and the weapon they are not holding. Yellow, because it is the
+ * Disarm colour and this is what Disarm did — drawn as a run of dashes crawling *toward* the
+ * core, so the picture says "go there" rather than "these two things are related".
+ */
+export function leash(
+  g: Phaser.GameObjects.Graphics,
+  tint: DeathColorFn,
+  x0: number, y0: number, x1: number, y1: number, t: number, alpha: number,
+  { dark = 1 } = {},
+): void {
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  const step = 15;
+  const crawl = (t * 46) % step;
+  g.lineStyle(3.4, shade(tint(DEA.void_), dark), alpha * 0.25);
+  g.lineBetween(x0, y0, x1, y1);
+  for (let d = crawl; d < len - 6; d += step) {
+    const k = 1 - d / len;
+    g.lineStyle(1.7, shade(tint(DEA.after), dark), alpha * (0.35 + k * 0.5));
+    g.lineBetween(x0 + ux * d, y0 + uy * d, x0 + ux * (d + 7), y0 + uy * (d + 7));
+  }
+}
+
+/**
+ * One cut of the thousand: a lens-shaped gash left on the floor behind a running blade, with a
+ * white edge along the inside of it and two hairline strays crossing at a slight angle. Fades
+ * from the edge inward, so an old cut is a smudge and a fresh one is a wound.
+ */
+export function cutMark(
+  g: Phaser.GameObjects.Graphics,
+  tint: DeathColorFn,
+  x: number, y: number, ang: number, len: number, alpha: number,
+  { dark = 1, seed = 0 } = {},
+): void {
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const P = (u: number, v: number) => pt(x, y, ca, sa, u, v);
+  const w = len * 0.16;
+
+  const lens: Phaser.Geom.Point[] = [];
+  for (let i = 0; i <= 6; i++) {
+    const u = -len / 2 + (len * i) / 6;
+    lens.push(P(u, -w * Math.cos((i / 6 - 0.5) * Math.PI) * (0.6 + jitter(seed, i) * 0.7)));
+  }
+  for (let i = 6; i >= 0; i--) {
+    const u = -len / 2 + (len * i) / 6;
+    lens.push(P(u, w * Math.cos((i / 6 - 0.5) * Math.PI) * (0.6 + jitter(seed, 10 + i) * 0.7)));
+  }
+  g.fillStyle(shade(tint(DEA.void_), dark), alpha * 0.7);
+  g.fillPoints(lens, true);
+
+  const e0 = P(-len / 2, 0);
+  const e1 = P(len / 2, 0);
+  g.lineStyle(1.3, shade(tint(DEA.edge), dark), alpha * 0.7);
+  g.lineBetween(e0.x, e0.y, e1.x, e1.y);
+  for (let i = 0; i < 2; i++) {
+    const off = (jitter(seed, 20 + i) - 0.5) * len * 0.5;
+    const skew = (jitter(seed, 30 + i) - 0.5) * 0.5;
+    const s0 = P(off - len * 0.22, -w * 1.6);
+    const s1 = P(off + len * 0.22 + skew * 10, w * 1.6);
+    g.lineStyle(0.9, shade(tint(DEA.pale), dark), alpha * 0.35);
+    g.lineBetween(s0.x, s0.y, s1.x, s1.y);
+  }
+}
+
+/**
+ * The arena wall, once Dishonor is watching it. A slab of dark stone standing inside the arena
+ * edge with bone ribs set into it at intervals and a lit seam along the inner face — so a shot
+ * flying past a wall reads as flying past *something*, and a shot that ends on one has a place
+ * to leave its mark.
+ *
+ * `(ax, ay) → (bx, by)` is the inner face; `inAng` points into the arena, and the slab is drawn
+ * away from it.
+ */
+export function wallFace(
+  g: Phaser.GameObjects.Graphics,
+  tint: DeathColorFn,
+  ax: number, ay: number, bx: number, by: number,
+  inAng: number, thick: number, t: number, alpha: number,
+  { dark = 1, seed = 0 } = {},
+): void {
+  const ox = -Math.cos(inAng) * thick;
+  const oy = -Math.sin(inAng) * thick;
+  const len = Math.hypot(bx - ax, by - ay) || 1;
+  const ux = (bx - ax) / len;
+  const uy = (by - ay) / len;
+
+  g.fillStyle(shade(tint(DEA.void_), dark), alpha * 0.85);
+  g.fillPoints([
+    new Phaser.Geom.Point(ax, ay), new Phaser.Geom.Point(bx, by),
+    new Phaser.Geom.Point(bx + ox, by + oy), new Phaser.Geom.Point(ax + ox, ay + oy),
+  ], true);
+  g.fillStyle(shade(tint(DEA.shroud), dark), alpha * 0.7);
+  g.fillPoints([
+    new Phaser.Geom.Point(ax + ox * 0.35, ay + oy * 0.35), new Phaser.Geom.Point(bx + ox * 0.35, by + oy * 0.35),
+    new Phaser.Geom.Point(bx + ox, by + oy), new Phaser.Geom.Point(ax + ox, ay + oy),
+  ], true);
+
+  // Ribs set into the stone every 46px — bone, half-buried, alternating depth.
+  const ribs = Math.max(1, Math.floor(len / 46));
+  for (let i = 0; i <= ribs; i++) {
+    const d = (len * i) / ribs;
+    const px = ax + ux * d;
+    const py = ay + uy * d;
+    const deep = thick * (0.45 + jitter(seed, i) * 0.4);
+    g.lineStyle(2.6, shade(tint(DEA.pale), dark), alpha * (0.2 + jitter(seed, 40 + i) * 0.16));
+    g.lineBetween(px, py, px - Math.cos(inAng) * deep, py - Math.sin(inAng) * deep);
+  }
+
+  // The inner seam: one lit line, breathing, so the wall is alive rather than painted on.
+  g.lineStyle(1.4, shade(tint(DEA.ash), dark), alpha * (0.4 + 0.18 * Math.sin(t * 1.6 + seed)));
+  g.lineBetween(ax, ay, bx, by);
+}
+
+/**
+ * Where a shot ended its life against the stone. A blown crater with cracks running out of it
+ * and a bright rim that cools from white to blood over the twenty seconds the stack lasts —
+ * the wall keeps the receipt for exactly as long as the shooter keeps the penalty.
+ */
+export function wallScar(
+  g: Phaser.GameObjects.Graphics,
+  tint: DeathColorFn,
+  x: number, y: number, inAng: number, heat: number, alpha: number,
+  { dark = 1, seed = 0 } = {},
+): void {
+  const r = 5 + heat * 4;
+  g.fillStyle(shade(tint(DEA.void_), dark), alpha * 0.9);
+  g.fillCircle(x, y, r * 1.5);
+  g.fillStyle(shade(tint(heat > 0.6 ? DEA.edge : DEA.blood), dark), alpha * (0.35 + heat * 0.55));
+  g.fillCircle(x, y, r * 0.55);
+  for (let i = 0; i < 6; i++) {
+    const a = inAng + (jitter(seed, i) - 0.5) * 2.6;
+    const d = r * (1.4 + jitter(seed, 10 + i) * 2.4);
+    g.lineStyle(1.1, shade(tint(DEA.ash), dark), alpha * (0.25 + heat * 0.4));
+    g.lineBetween(x, y, x + Math.cos(a) * d, y + Math.sin(a) * d);
+  }
+  g.lineStyle(1.2, shade(tint(DEA.blood), dark), alpha * (0.2 + heat * 0.5));
+  g.strokeCircle(x, y, r);
+}
+
+/**
+ * One of the things that come out of him during a Deal. A tapering ink-black arm built from a
+ * wavy centreline — three sampled ribs to a side rather than a stroked line, so it has volume
+ * and the tip can curl. Suckers down the inner edge, and a wet highlight down the outer one.
+ */
+export function tentacle(
+  g: Phaser.GameObjects.Graphics,
+  tint: DeathColorFn,
+  x: number, y: number, ang: number, len: number, alpha: number,
+  { dark = 1, seed = 0, t = 0, curl = 1, thick = 7 } = {},
+): void {
+  const steps = 9;
+  const spine: { x: number; y: number; w: number }[] = [];
+  let px = x;
+  let py = y;
+  let a = ang;
+  for (let i = 0; i <= steps; i++) {
+    const k = i / steps;
+    spine.push({ x: px, y: py, w: thick * (1 - k * 0.88) });
+    a += Math.sin(t * 3.1 + seed + k * 5.5) * 0.19 * curl + k * 0.055 * curl;
+    px += Math.cos(a) * (len / steps);
+    py += Math.sin(a) * (len / steps);
+  }
+
+  const left: Phaser.Geom.Point[] = [];
+  const right: Phaser.Geom.Point[] = [];
+  for (let i = 0; i < spine.length; i++) {
+    const s = spine[i];
+    const n = i < spine.length - 1
+      ? Math.atan2(spine[i + 1].y - s.y, spine[i + 1].x - s.x) + Math.PI / 2
+      : Math.atan2(s.y - spine[i - 1].y, s.x - spine[i - 1].x) + Math.PI / 2;
+    left.push(new Phaser.Geom.Point(s.x + Math.cos(n) * s.w, s.y + Math.sin(n) * s.w));
+    right.unshift(new Phaser.Geom.Point(s.x - Math.cos(n) * s.w, s.y - Math.sin(n) * s.w));
+  }
+  g.fillStyle(shade(tint(DEA.void_), dark), alpha * 0.95);
+  g.fillPoints([...left, ...right], true);
+  g.fillStyle(shade(tint(DEA.shroud), dark), alpha * 0.55);
+  g.fillPoints([...left.map((p, i) => new Phaser.Geom.Point(
+    p.x + (spine[i].x - p.x) * 0.45, p.y + (spine[i].y - p.y) * 0.45,
+  )), ...right], true);
+
+  // Suckers: pale rings down the inner side, smaller toward the tip.
+  for (let i = 1; i < spine.length - 1; i += 2) {
+    const p = left[i];
+    g.fillStyle(shade(tint(DEA.pale), dark), alpha * 0.4);
+    g.fillCircle(p.x, p.y, spine[i].w * 0.34);
+  }
+  // ...and the wet line down the outer one.
+  g.lineStyle(1, shade(tint(DEA.smoke), dark), alpha * 0.5);
+  g.strokePoints(right, false);
+}
+
+/**
+ * The mask. A bone oval a size too small for the face behind it, with two hollow slits and a
+ * stitched grin — and it cracks as it is spent: one fracture across it per hit taken, so the
+ * three charges are readable on the object rather than only in the tray.
+ */
+export function deathMask(
+  g: Phaser.GameObjects.Graphics,
+  tint: DeathColorFn,
+  x: number, y: number, r: number, cracks: number, alpha: number,
+  { dark = 1, seed = 0, t = 0 } = {},
+): void {
+  const sway = Math.sin(t * 2.2 + seed) * 0.7;
+  g.fillStyle(shade(tint(DEA.void_), dark), alpha * 0.8);
+  g.fillEllipse(x + sway, y + 1.5, r * 2.1, r * 2.6);
+  g.fillStyle(shade(tint(DEA.bone), dark), alpha * 0.97);
+  g.fillEllipse(x + sway, y, r * 2, r * 2.5);
+  g.lineStyle(1.2, shade(tint(DEA.pale), dark), alpha * 0.8);
+  g.strokeEllipse(x + sway, y, r * 2, r * 2.5);
+
+  // Two hollow slits, angled inward. Nothing behind them.
+  for (const side of [-1, 1]) {
+    g.fillStyle(shade(tint(DEA.void_), dark), alpha * 0.95);
+    g.fillPoints([
+      new Phaser.Geom.Point(x + sway + side * r * 0.22, y - r * 0.42),
+      new Phaser.Geom.Point(x + sway + side * r * 0.78, y - r * 0.58),
+      new Phaser.Geom.Point(x + sway + side * r * 0.74, y - r * 0.18),
+      new Phaser.Geom.Point(x + sway + side * r * 0.26, y - r * 0.12),
+    ], true);
+  }
+  // The grin: a straight mouth with five stitches over it.
+  const my = y + r * 0.72;
+  g.lineStyle(1.6, shade(tint(DEA.void_), dark), alpha * 0.9);
+  g.lineBetween(x + sway - r * 0.62, my, x + sway + r * 0.62, my);
+  for (let i = 0; i < 5; i++) {
+    const sx = x + sway - r * 0.55 + (r * 1.1 * i) / 4;
+    g.lineStyle(1, shade(tint(DEA.pale), dark), alpha * 0.85);
+    g.lineBetween(sx, my - r * 0.22, sx + r * 0.1, my + r * 0.22);
+  }
+  // One fracture per charge already spent, thrown from a different corner each time.
+  for (let i = 0; i < cracks; i++) {
+    const a = TAU * jitter(seed, 50 + i);
+    g.lineStyle(1.5, shade(tint(DEA.smoke), dark), alpha * 0.9);
+    g.lineBetween(x + sway + Math.cos(a) * r * 1.8, y + Math.sin(a) * r * 2.2,
+      x + sway + Math.cos(a + 2.2) * r * 0.5, y + Math.sin(a + 2.2) * r * 0.6);
+  }
 }
 
 // ── Fx ────────────────────────────────────────────────────────────────────
@@ -526,6 +1030,132 @@ export class DeathFx extends FxBase {
         g.fillStyle(shade(this.tint(DEA.styx), dark), (1 - t) * 0.7);
         g.fillEllipse(x + Math.cos(p.a) * p.d, y + Math.sin(p.a) * p.d * 0.5 + e * 26, 2.6, 4.6);
       }
+    });
+  }
+
+  /**
+   * A limb coming off. One hard white line where the blade went through, an arterial fan behind
+   * it, and the piece itself tumbling away — the only red in the kit outside midnight, because
+   * this is the only other thing he does that a body never gets back.
+   */
+  amputate(x: number, y: number, ang: number, leg: boolean, ms = 900, depth = 12, dark = 1): void {
+    const seed = Math.random() * 999;
+    const away = ang + (jitter(seed, 0) - 0.5) * 1.4;
+    this.anim(depth, ms, (g, t) => {
+      const e = easeOut(t);
+      // The cut: a bright line across the wound, snapping wide then gone.
+      if (t < 0.35) {
+        const k = 1 - t / 0.35;
+        const len = 34 * (0.4 + easeOut(t / 0.35));
+        g.lineStyle(2.6 * k + 0.6, shade(this.tint(DEA.edge), dark), k * 0.95);
+        g.lineBetween(x - Math.cos(ang + Math.PI / 2) * len, y - Math.sin(ang + Math.PI / 2) * len,
+          x + Math.cos(ang + Math.PI / 2) * len, y + Math.sin(ang + Math.PI / 2) * len);
+      }
+      // The arterial fan, thrown along the cut and falling as it goes.
+      for (let i = 0; i < 11; i++) {
+        const a = away + (jitter(seed, i) - 0.5) * 1.5;
+        const d = (16 + jitter(seed, 20 + i) * 62) * e;
+        g.fillStyle(shade(this.tint(DEA.blood), dark), (1 - t) * 0.8);
+        g.fillEllipse(x + Math.cos(a) * d, y + Math.sin(a) * d + e * e * 30,
+          2.4 + jitter(seed, 40 + i) * 2, 3.6 + jitter(seed, 50 + i) * 2.4);
+      }
+      // ...and the limb, tumbling out of the picture.
+      severedLimb(g, this.tint, x + Math.cos(away) * 74 * e, y + Math.sin(away) * 74 * e + e * e * 34,
+        away + t * 7, 26, (1 - t) * 0.95, { dark, seed, leg });
+    });
+  }
+
+  /**
+   * The wave a sheathed Riposte lets go of when the guard drops. A low ring that drags rather
+   * than blasts: a wide grinding band on the floor with a serrated leading edge, and a comb of
+   * short blades sticking out of it — everything it passes is slowed, not hurt.
+   */
+  shockwave(x: number, y: number, r0: number, r1: number, ms = 720, depth = 4, dark = 1): void {
+    const seed = Math.random() * 999;
+    this.anim(depth, ms, (g, t) => {
+      const e = easeOut(t);
+      const r = r0 + (r1 - r0) * e;
+      g.lineStyle(16 * (1 - t) + 3, shade(this.tint(DEA.shroud), dark), (1 - t) * 0.35);
+      g.strokeCircle(x, y, r);
+      // The serrated edge: sampled points rather than a circle, so the front is a saw.
+      const pts: Phaser.Geom.Point[] = [];
+      for (let i = 0; i <= 30; i++) {
+        const a = (i / 30) * TAU;
+        const rr = r * (1 + (jitter(seed, i) - 0.5) * 0.06);
+        pts.push(new Phaser.Geom.Point(x + Math.cos(a) * rr, y + Math.sin(a) * rr));
+      }
+      g.lineStyle(2.2 * (1 - t) + 0.6, shade(this.tint(DEA.blade), dark), (1 - t) * 0.9);
+      g.strokePoints(pts, true);
+      // A comb of short blades standing up out of the wave.
+      for (let i = 0; i < 14; i++) {
+        const a = (i / 14) * TAU + seed * 0.01;
+        const h = 13 * (1 - t);
+        g.lineStyle(1.4, shade(this.tint(DEA.edge), dark), (1 - t) * 0.55);
+        g.lineBetween(x + Math.cos(a) * r, y + Math.sin(a) * r,
+          x + Math.cos(a) * (r + h), y + Math.sin(a) * (r + h) - h * 0.4);
+      }
+    });
+  }
+
+  /**
+   * A tentacle closing on a bullet. The arm whips out along `ang`, the shot goes dark, and what
+   * comes back is ink — the only thing in the kit that eats a projectile instead of cutting it.
+   */
+  grab(x: number, y: number, ang: number, ms = 340, depth = 11, dark = 1): void {
+    const seed = Math.random() * 999;
+    this.anim(depth, ms, (g, t) => {
+      const e = easeOut(Math.min(1, t * 2));
+      const back = t > 0.5 ? (t - 0.5) * 2 : 0;
+      tentacle(g, this.tint, x - Math.cos(ang) * 70, y - Math.sin(ang) * 70, ang,
+        70 * e * (1 - back * 0.85), (1 - t * 0.5) * 0.95,
+        { dark, seed, t: t * 4, curl: 1.6, thick: 6 });
+      g.fillStyle(shade(this.tint(DEA.void_), dark), (1 - t) * 0.85);
+      g.fillCircle(x, y, 11 * (1 - t) + 3);
+      for (let i = 0; i < 7; i++) {
+        const a = TAU * jitter(seed, i);
+        const d = (6 + jitter(seed, 10 + i) * 26) * easeOut(t);
+        g.fillStyle(shade(this.tint(DEA.shroud), dark), (1 - t) * 0.7);
+        g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d, 2.6 * (1 - t) + 0.8);
+      }
+    });
+  }
+
+  /** The mask coming apart: bone shards thrown flat, and a last white flare where the face was. */
+  maskBreak(x: number, y: number, ms = 640, depth = 12, dark = 1): void {
+    const seed = Math.random() * 999;
+    this.flashIn(x, y, 16, DEA.bone, DEA.pale, depth);
+    this.anim(depth, ms, (g, t) => {
+      const e = easeOut(t);
+      for (let i = 0; i < 9; i++) {
+        const a = TAU * jitter(seed, i);
+        const d = (10 + jitter(seed, 20 + i) * 58) * e;
+        const sz = 2.4 + jitter(seed, 40 + i) * 3.4;
+        const px = x + Math.cos(a) * d;
+        const py = y + Math.sin(a) * d + e * e * 26;
+        g.fillStyle(shade(this.tint(DEA.bone), dark), (1 - t) * 0.9);
+        g.fillPoints([
+          new Phaser.Geom.Point(px, py - sz),
+          new Phaser.Geom.Point(px + sz, py + sz * 0.6),
+          new Phaser.Geom.Point(px - sz * 0.7, py + sz),
+        ], true);
+      }
+    });
+  }
+
+  /** Exsanguination: a body quietly running out from underneath itself. */
+  bleed(x: number, y: number, ms = 760, depth = 9, dark = 1): void {
+    const seeds = Array.from({ length: 9 }, (_, i) => ({
+      ox: (Math.random() - 0.5) * 26, delay: Math.random() * 0.4, i,
+    }));
+    this.anim(depth, ms, (g, t) => {
+      for (const p of seeds) {
+        const k = Phaser.Math.Clamp((t - p.delay) / (1 - p.delay), 0, 1);
+        if (k <= 0) continue;
+        g.fillStyle(shade(this.tint(DEA.blood), dark), (1 - k) * 0.75);
+        g.fillEllipse(x + p.ox, y - 6 + easeIn(k) * 40, 2.2, 4.4);
+      }
+      g.fillStyle(shade(this.tint(DEA.blood), dark), (1 - t) * 0.4);
+      g.fillEllipse(x, y + 20, 20 * easeOut(t), 5 * easeOut(t));
     });
   }
 

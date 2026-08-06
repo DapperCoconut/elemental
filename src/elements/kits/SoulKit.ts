@@ -543,7 +543,7 @@ export class SoulKit {
         fx.bloom(grave.x, grave.y, 30, 9, 4, ANGERED_TONES);
         fx.wisps(grave.x, grave.y, 8, { speed: 90, size: 3, life: 620, rise: -40, depth: 6, tones: ANGERED_TONES });
         fx.ring(grave.x, grave.y, 8, 54, SOUL.blood, 420, 4, 5);
-        this.arena.showFloatingText(grave.x, grave.y - 30, '🔴 GRAVE ENHANCED', '#ff3333');
+        this.arena.showFloatingText(grave.x, grave.y - 30, '🩸 GRAVE ENHANCED', '#ff3333');
         return;
       }
     }
@@ -577,7 +577,7 @@ export class SoulKit {
     fx.bloom(x, y + 6, 26, 8, 4, tones);
     fx.ring(x, y + 14, 6, 44, tones.glow, 420, 3.5, 4);
     fx.motes(x, y, 4, 22, 5, tones);
-    this.arena.showFloatingText(x, y - 26, '⚰️ GRAVE PLACED', '#ccaaff');
+    this.arena.showFloatingText(x, y - 26, '🪦 GRAVE PLACED', '#ccaaff');
   }
 
   doDeathWhistle(tx: number, ty: number, owner: Owner): void {
@@ -878,7 +878,7 @@ export class SoulKit {
             rec.carrionUntil = time + CARRION_BUFF_MS;
             husk.walkSpeedMult = CARRION_SPEED_MULT;
             if (rec.dashUntil === 0) husk.biteDamage = this.effectiveDamage(rec, rec.baseBiteDamage, time);
-            this.arena.showFloatingText(husk.x, husk.y - 46, '🔴 CARRION CALL', '#ff3333');
+            this.arena.showFloatingText(husk.x, husk.y - 46, '🩸 CARRION CALL', '#ff3333');
           }
           rec.waypoint = null;
         } else {
@@ -1682,8 +1682,15 @@ export class SoulKit {
    * arena its death blast on the way out. The Alpha is left alone: it turns on whoever raised
    * it, which makes it an enemy rather than a summon.
    */
-  purgeSummons(x: number, y: number, radius: number, exceptOwner: 'player' | 'npc'): number {
-    const near = (px: number, py: number): boolean => Phaser.Math.Distance.Between(x, y, px, py) <= radius;
+  purgeSummons(
+    x: number, y: number, radius: number, exceptOwner: 'player' | 'npc',
+    report?: (px: number, py: number) => void,
+  ): number {
+    const near = (px: number, py: number): boolean => {
+      if (Phaser.Math.Distance.Between(x, y, px, py) > radius) return false;
+      report?.(px, py);
+      return true;
+    };
     let razed = 0;
     for (let i = this.graves.length - 1; i >= 0; i--) {
       const g = this.graves[i];

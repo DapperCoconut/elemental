@@ -738,7 +738,7 @@ export class WaterKit {
     fx.crown(g.x, g.y, g.radius * 1.5, 16, 5);
     fx.spray(g.x, g.y, 20, { speed: 320, size: 3.4, life: 620, fall: -40, depth: 6 });
     this.arena.scene.cameras.main.shake(200, 0.006);
-    this.arena.showFloatingText(f.x, f.y - 40, `💛 SULPHUR +${pressure}%`,
+    this.arena.showFloatingText(f.x, f.y - 40, `🟡 SULPHUR +${pressure}%`,
       pressure >= 80 ? '#ffee44' : '#ddcc66');
   }
 

@@ -175,7 +175,7 @@ export class CampaignWorldScene extends Phaser.Scene {
       };
     }
     if (node.kind === 'invasion') {
-      return { title: '👾  INVASION', body: 'Endless husk waves. Pays 🔴 Corrupt Shards. Always open.' };
+      return { title: '👾  INVASION', body: 'Endless husk waves. Pays 🩸 Corrupt Shards. Always open.' };
     }
     if (node.kind === 'gauntlet') {
       const done = CP.isGauntletCompleted(this.slotIdx, this.worldId);

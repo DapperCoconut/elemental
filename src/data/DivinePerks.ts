@@ -127,7 +127,7 @@ export const DIVINE_PERKS: PerkDef[] = [
   {
     id: 'electromagnet',
     name: 'Electromagnet',
-    emoji: '🔗',
+    emoji: '🧲',
     color: 0xffaa33,
     description: 'The Atom Smasher no longer flings your magnets away — it charges them. A charged magnet arcs into anyone standing near it and stuns for half a second when it lands a hit. The charge holds 10s, or forever once the Smasher is enhanced.',
     ingredients: ['fire', 'electricity'],
@@ -137,7 +137,7 @@ export const DIVINE_PERKS: PerkDef[] = [
   {
     id: 'sulphur',
     name: 'Sulphur',
-    emoji: '💛',
+    emoji: '🟡',
     color: 0xffdd44,
     description: 'Your geysers cap themselves and build sulphurous pressure instead — about 5 a second, up to 100. Step on one and it blows: a speed boost equal to the stored pressure for 8s, and the geyser is spent.',
     ingredients: ['fire', 'slime'],
@@ -217,7 +217,7 @@ export const DIVINE_PERKS: PerkDef[] = [
   {
     id: 'hell',
     name: 'Hell',
-    emoji: '🐕',
+    emoji: '🐕‍🦺',
     color: 0xcc3322,
     description: 'The beast you release is a hellhound instead — a smaller, meaner thing that deals 30% more damage, swings 20% faster and runs 30% quicker, but takes 25% more damage itself.',
     ingredients: ['earth', 'electricity'],
@@ -227,7 +227,7 @@ export const DIVINE_PERKS: PerkDef[] = [
   {
     id: 'copper',
     name: 'Copper',
-    emoji: '🔶',
+    emoji: '🟠',
     color: 0xdd8844,
     description: 'You earth every hit you take into the floor. Each wound scatters copper sparks that burn for a fifth of the damage you took, twice a second, for 3s.',
     ingredients: ['earth', 'slime'],

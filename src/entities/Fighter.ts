@@ -111,26 +111,17 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   public ruinIncomingMult = 1;
   /**
-   * Glass: 1.25 for being made of glass, 1.5 with every shard thrown away — and the same
-   * numbers the other way up (0.75 / 0.5) while Temper is running, which is what "the
-   * vulnerabilities are replaced with equal amounts of resistance" has to mean. Its own field
-   * for the same reason Justice, Magma, Conquest and Passion have theirs, and inside the
-   * mitigation product below on purpose: Ruin's spikes turning a tempered Glass back into a
-   * fragile one is exactly the right interaction.
-   */
-  public glassIncomingMult = 1;
-  /**
    * Quantum (Instability): 1 + one point per percent of instability, so a fighter sitting at the
    * 50% cap takes half again as much of everything. Its own field for the same reason Justice,
-   * Magma, Conquest, Passion and Glass have theirs — and inside the mitigation product on
-   * purpose, because carrying two kits is meant to be paid for against every source at once.
+   * Magma, Conquest and Passion have theirs — and inside the mitigation product on purpose,
+   * because carrying two kits is meant to be paid for against every source at once.
    */
   public quantumIncomingMult = 1;
   /**
    * Death (Styx Shot): 1 − 15% per brand this fighter's *attacker* is carrying, doubled under a
    * Hospice noose — the victim-side stand-in for "the branded deal less", since `takeDamage` has
    * no attacker reference. Same shape as `bribeIncomingMult` and `hopelessIncomingMult`, and its
-   * own field for the same reason Justice, Magma and Glass have theirs: DeathKit rewrites it
+   * own field for the same reason Justice, Magma and Conquest have theirs: DeathKit rewrites it
    * from scratch every frame and must not stomp whatever else wrote armour that tick.
    */
   public deathIncomingMult = 1;
@@ -144,19 +135,26 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public journalIncomingMult = 1;
   /**
    * Psychic (Coma): 0.5 while this fighter is under. Its own field for the same reason Justice,
-   * Magma, Glass and Death have theirs — PsychicKit rewrites it from scratch every frame, and
+   * Magma and Death have theirs — PsychicKit rewrites it from scratch every frame, and
    * sharing `incomingDamageMultiplier` would stomp whatever else wrote armour that tick. The
    * half of every hit this field eats is not lost: PsychicKit banks it straight back as stress.
    */
   public psychicIncomingMult = 1;
   /**
    * Bind (Shards of Oblivion): 1.1^tithes of vulnerability the patron has charged this fighter
-   * for its favours. Its own field for the same reason Justice, Magma, Glass and Psychic have
+   * for its favours. Its own field for the same reason Justice, Magma and Psychic have
    * theirs — BindKit rewrites it from scratch every frame, and sharing
    * `incomingDamageMultiplier` would stomp whatever else wrote armour that tick. Permanent for
    * the match on purpose: a tithe is not a debuff, it is a price.
    */
   public bindIncomingMult = 1;
+  /**
+   * Illusion's two upgrade vulnerabilities, folded into one field and rewritten from scratch
+   * by IllusionKit every frame — Justice's arrangement, and for Justice's reason. A Phantom's
+   * blast marks a body for 1.2 and Mind-Boggle's turning weak point is worth 1.5 while the
+   * illusionist is standing on that side of it, and the two are allowed to multiply.
+   */
+  public illusionIncomingMult = 1;
   /**
    * Radiation (Irradiated): `Date.now()` epoch until which every point of healing aimed at this
    * fighter lands as damage instead — see `heal`. One field rather than a hook per healing
@@ -244,6 +242,40 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public damageWasSelfInflicted = false;
   /** Multiply all ability cooldowns by this factor (< 1 = faster, e.g. Reborn post-revival). */
   public cooldownMult = 1;
+  /**
+   * Death (Amputate): 1.25 with one arm gone, 1.33 with both. Its own field rather than a share
+   * of `cooldownMult` because an amputation is permanent for the match while `cooldownMult` is
+   * written *wholesale* by Timeless, Rebirth and Slime's Melt table — a kit that folded its own
+   * factor in there would be erased the first time any of them set it.
+   */
+  public amputationCooldownMult = 1;
+  /**
+   * Quantum (Ability Split): the factor the *next* ability stamped on this fighter carries into
+   * its own cooldown, then reset to 1. Kept here rather than in QuantumCoreKit because the
+   * charge is explicitly meant to survive a bond collapse — by the time it is spent the caster
+   * is usually a different element with a different kit, and only the body is common to both.
+   */
+  public nextCastCooldownMult = 1;
+  /**
+   * Per-ability cooldown factors banked by {@link nextCastCooldownMult} at the moment the
+   * ability was stamped. An entry lives exactly one cooldown: the next stamp of the same id
+   * overwrites it, so a halved cooldown can never be inherited by a later press.
+   */
+  private cooldownScales = new Map<string, number>();
+  /**
+   * Abilities a banked {@link nextCastCooldownMult} refuses to be spent on. Exists for exactly
+   * one case and is documented rather than hidden: Quantum's Atom Splicers re-cast on a held
+   * mouse button, so without this an Ability Split armed on E would be eaten by the Click on
+   * the very next frame — and halving a 900ms hold-modifier is worth nothing to anybody.
+   */
+  public splitExemptAbilities = new Set<string>();
+  /**
+   * Quantum (Effect Split): `scene.time.now` timestamp until which every generic multiplier on
+   * this fighter is pulled halfway back toward 1. Read at the same two places Ruin's
+   * `buffsInvertedUntil` is — the mitigation product below and the speed aggregate in
+   * ArenaScene — so an effect owned by any kit is halved without that kit knowing about it.
+   */
+  public effectSplitUntil = 0;
   /** If set, called with the damage amount before shields; return true to absorb the hit entirely. */
   public damageAbsorber: ((amount: number) => boolean) | null = null;
   /** Gauntlet boost: multiplies all incoming damage (stacks with incomingDamageMultiplier). Default 1. */
@@ -673,10 +705,14 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // Tallied here: after the crit roll (a crit really is a bigger hit) but before every
       // mitigation multiplier on the line below, which is what "damage aimed at you" means.
       this.rawDamageTaken += amount;
-      let mitigation = this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.glassIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.orderIncomingMult * this.netDefenseMult;
+      let mitigation = this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.orderIncomingMult * this.netDefenseMult;
       // Ruin's spikes turn armour inside out — 25% less damage taken comes back as 25% more.
       // Only a net *buff* is flipped; a fighter already taking extra damage is left alone.
       if (mitigation < 1 && this.scene.time.now < this.buffsInvertedUntil) mitigation = 2 - mitigation;
+      // Quantum's Effect Split: everything riding on this body is running at half strength, so
+      // whatever the product came out as is dragged halfway back to neutral. Applied after the
+      // Ruin flip so a split armour buff is still a buff when the spikes turn it over.
+      if (this.scene.time.now < this.effectSplitUntil) mitigation = 1 + (mitigation - 1) * 0.5;
       amount = Math.round(amount * mitigation * this.ruinIncomingMult);
       if (this.darkVulnStacks > 0) amount = Math.round(amount * (1 + 0.25 * this.darkVulnStacks));
       // Fire Mastery — Heatwave: exposed amplifies the next hit, then is consumed.
@@ -926,8 +962,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     if (now < this.disarmedUntil || now < this.chickenUntil) return false;
     if (now < this.silencedUntil && ability.displayKey !== 'Click') return false;
     if (now < (this.lockouts.get(abilityId)?.until ?? 0)) return false;
-    const ultimateExtra = (ability as { isUltimate?: boolean }).isUltimate ? this.ultimateCooldownMult : 1;
-    if (now - (this.cooldowns.get(abilityId) ?? 0) < ability.cooldown * this.cooldownMult * this.netCooldownMult * ultimateExtra) return false;
+    if (now - (this.cooldowns.get(abilityId) ?? 0) < this.storedCooldown(abilityId, ability)) return false;
 
     // Psychic (Opened Eyes): the press is real — it commits the cooldown here and now — but
     // the ability itself is handed to the kit to resolve two seconds later. Everything the
@@ -959,8 +994,37 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   private stampCast(abilityId: string): void {
     this.cooldowns.set(abilityId, Date.now());
+    // Quantum's Ability Split is spent here rather than at the press, so it lands on whatever
+    // ability actually went off — including the charge-and-release ones that never reach
+    // `castAbility`. Always written, never merely set, so an id that had a split last time
+    // does not keep it.
+    const exempt = this.splitExemptAbilities.has(abilityId);
+    this.cooldownScales.set(abilityId, exempt ? 1 : this.nextCastCooldownMult);
+    if (!exempt && this.nextCastCooldownMult !== 1) {
+      this.nextCastCooldownMult = 1;
+      this.onCooldownSplitSpent?.(abilityId);
+    }
     this.announceCast(abilityId);
   }
+
+  /**
+   * The real length of an ability's cooldown, with every multiplier that can stretch or
+   * shorten it. Three call sites need this in agreement — the refusal in `castAbility`, the
+   * clamp in `reduceCooldowns` and the bar in `getCooldownRatio` — and they disagreed once.
+   */
+  private effectiveCooldown(ability: { cooldown: number; isUltimate?: boolean }): number {
+    const ultimateExtra = ability.isUltimate ? this.ultimateCooldownMult : 1;
+    return ability.cooldown * (this.cooldownMult || 1) * this.netCooldownMult
+      * this.amputationCooldownMult * ultimateExtra;
+  }
+
+  /** As {@link effectiveCooldown}, including whatever split was banked when this id was stamped. */
+  private storedCooldown(abilityId: string, ability: { cooldown: number; isUltimate?: boolean }): number {
+    return this.effectiveCooldown(ability) * (this.cooldownScales.get(abilityId) ?? 1);
+  }
+
+  /** Fired when a banked Ability Split is actually spent, so QuantumCoreKit can draw it. */
+  public onCooldownSplitSpent: ((abilityId: string) => void) | null = null;
 
   /**
    * The half of `stampCast` that is about the ability *happening* rather than about it being
@@ -1071,9 +1135,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       if (id === exceptId) continue;
       const ability = this.element.abilities.find((a) => a.id === id);
       if (!ability) continue;
-      const ultimateExtra = (ability as { isUltimate?: boolean }).isUltimate ? this.ultimateCooldownMult : 1;
-      const full = ability.cooldown * (this.cooldownMult || 1) * this.netCooldownMult * ultimateExtra;
-      const left = full - (now - stamp);
+      const left = this.storedCooldown(id, ability) - (now - stamp);
       if (left <= 0) continue;
       const take = Math.min(ms, left);
       this.cooldowns.set(id, stamp - take);
@@ -1087,9 +1149,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     const ability = this.element.abilities.find((a) => a.id === abilityId);
     if (!ability) return 1;
     const elapsed = Date.now() - (this.cooldowns.get(abilityId) ?? 0);
-    const ultimateCdExtra = (ability as { isUltimate?: boolean }).isUltimate ? this.ultimateCooldownMult : 1;
-    const effectiveCd = ability.cooldown * (this.cooldownMult || 1) * this.netCooldownMult * ultimateCdExtra;
-    const ratio = Math.min(1, elapsed / effectiveCd);
+    const ratio = Math.min(1, elapsed / this.storedCooldown(abilityId, ability));
     // A lock outranks the cooldown underneath it: whichever has longer to run is what the
     // card should be draining, or a locked ability would show as ready and refuse the press.
     const lock = this.lockouts.get(abilityId);

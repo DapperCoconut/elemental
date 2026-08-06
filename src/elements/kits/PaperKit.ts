@@ -10,7 +10,8 @@ import { JournalBonuses, NO_JOURNAL_BONUSES, journalBonuses, journalElementName 
 import { Sfx } from '../../audio';
 import {
   BOOK_TONE, BookId, PAP, PaperAvatar, PaperColorFn, PaperFx, arcaneSpike, burningScrap,
-  flameSpirit, fortuneTeller, ghostBlade, ghostKnight, paperPlaneShape, paperSheet, portalTear,
+  chainRun, crucifixShape, flameSpirit, fortuneTeller, ghostBlade, ghostKnight, herbSeed,
+  lightSlab, lotusBloom, paperPlaneShape, paperSheet, pinwheelShape, portalTear,
   shurikenShape, targetRing,
 } from './PaperVisuals';
 
@@ -46,6 +47,48 @@ const SPIKE_LIFE_MS = 3200;
 const SPIKE_WARP_DIST = 96;
 const SPIKE_WARP_MS = 280;
 
+/**
+ * Bible — the slab of light. Thrown broadside on: `SLAB_LEN` runs *across* the direction of
+ * travel, so it sweeps a lane rather than drilling a line.
+ */
+const SLAB_DAMAGE = 12;
+const SLAB_SPEED = 520;
+const SLAB_LEN = 96;
+const SLAB_WIDTH = 22;
+const SLAB_LIFE_MS = 1800;
+/** How far the slab throws a body, and over how long. High: this is its whole identity. */
+const SLAB_KNOCK = 320;
+const SHOVE_MS = 280;
+
+/**
+ * Herbology — the three seeds. They heal only when they reach a wall, and only as much as they
+ * dared: the heal is banked from the closest a seed came to a body without touching it.
+ */
+const SEED_COUNT = 3;
+const SEED_SPEED = 620;
+const SEED_R = 7;
+const SEED_SPREAD = 0.13;
+const SEED_LIFE_MS = 2600;
+const SEED_HEAL = 3;
+const SEED_HEAL_BONUS = 6;
+/**
+ * Grazing pays from `SEED_FAR` inward, and pays in full at `SEED_NEAR`. `SEED_NEAR` has to sit a
+ * clear margin outside the seed's own hit reach (~19px against a normal body) or the window
+ * between "full value" and "wasted" would be a handful of pixels wide and nobody could aim at it.
+ */
+const SEED_FAR = 150;
+const SEED_NEAR = 42;
+
+// ── Larger Library, the endings (Click upgrade + Q) ──────────────────────────
+
+/** Bible — the crucifix. A root, not a stun: five seconds of standing exactly where you are. */
+const CROSS_MS = 5000;
+const CROSS_FADE_MS = 600;
+
+/** Herbology — the lotus. */
+const LOTUS_HEAL = 100;
+const LOTUS_MS = 2200;
+
 // ── Paper Plane (E) ──────────────────────────────────────────────────────────
 
 const PLANE_DAMAGE = 10;
@@ -57,6 +100,10 @@ const PLANE_LIFE_MS = 2600;
 const PLANE_STEER = 2.4;
 const PLANE_HIT_R = 20;
 
+/** Plane Drill (E upgrade): what the wall costs whoever was being carried into it. */
+const DRILL_AOE_R = 96;
+const DRILL_AOE_DAMAGE = 10;
+
 // ── Paper Shuriken (R) ───────────────────────────────────────────────────────
 
 const SHURIKEN_DAMAGE = 15;
@@ -65,6 +112,16 @@ const SHURIKEN_R = 20;
 /** How long it spins in the wall, and how often the same body can cut itself on it. */
 const SHURIKEN_STUCK_MS = 8000;
 const SHURIKEN_STUCK_GATE_MS = 1200;
+
+/**
+ * Paper Pinwheel (R upgrade): twice the size, twice as long in the wall, and a shot passing over
+ * one kicks it off into the room again.
+ */
+const PINWHEEL_SIZE_MULT = 2;
+const PINWHEEL_STUCK_MULT = 2;
+/** What each launch is worth in extra wall time, and how long before it can be kicked again. */
+const PINWHEEL_BONUS_MS = 2000;
+const PINWHEEL_GATE_MS = 260;
 
 /** The bleed: 2% of what the victim has left, every second, for four seconds. */
 const BLEED_MS = 4000;
@@ -84,6 +141,14 @@ const MACHE_CHARGE_SPEED = 330;
 const MACHE_CHARGE_LIFE_MS = 5000;
 const MACHE_R = 15;
 
+/**
+ * Magical Monsters (F upgrade): they get up the moment they land and walk the enemy down for 4.
+ * Eating a bullet still enrages them into the ordinary 8-damage charge, so the upgrade changes
+ * what a monster does with its life, not what an enraged one is worth.
+ */
+const MACHE_HUNT_SPEED = 185;
+const MACHE_HUNT_DAMAGE = 4;
+
 // ── Climax (Q) ───────────────────────────────────────────────────────────────
 
 /** Knight — the charge. One wave, one hit, fifty damage; the twelve riders are all one attack. */
@@ -93,15 +158,21 @@ const CHARGE_SPEED = 760;
 const CHARGE_HIT_R = 40;
 
 /** Alien — the bombardment. */
-const BOMB_COUNT = 12;
+const BOMB_COUNT = 60;
 const BOMB_DAMAGE = 25;
 const BOMB_R = 46;
 const BOMB_ARM_MS = 2000;
-/** Staggered so twelve bombs read as a bombardment rather than one screen-wide flash. */
-const BOMB_STAGGER_MS = 85;
+/**
+ * Staggered so the barrage reads as a barrage rather than one screen-wide flash. Tightened
+ * from 85ms when the count went to sixty — at the old spacing the last beam landed five
+ * seconds after the cast, which is a siege, not a climax.
+ */
+const BOMB_STAGGER_MS = 25;
+/** No more than one explosion per this, or forty beams a second sum into white noise. */
+const BOMB_SFX_GAP_MS = 70;
 const BOMB_STUN_MS = 2000;
-/** How many of the twelve are aimed at somebody rather than scattered. */
-const BOMB_AIMED = 5;
+/** How many of the sixty are aimed at somebody rather than scattered. */
+const BOMB_AIMED = 25;
 const BOMB_AIM_SPREAD = 90;
 
 /** Fantasy — the spirit, and the fire it leaves behind. */
@@ -155,6 +226,63 @@ interface Plane {
   bank: number;
   diesAt: number;
   hits: Set<Fighter>;
+  /**
+   * Plane Drill: everybody speared on the nose and being carried to the wall. Emptying it is
+   * what marks the blast as paid — a plane that picks somebody up again later gets another.
+   */
+  drilled: Fighter[];
+}
+
+/** The Bible book's slab of light, mid-flight. */
+interface Slab {
+  owner: Owner;
+  x: number;
+  y: number;
+  ang: number;
+  diesAt: number;
+  seed: number;
+  hits: Set<Fighter>;
+}
+
+/** One Herbology seed. `near` is the closest it has come to a body — that is what it is worth. */
+interface Seed {
+  owner: Owner;
+  x: number;
+  y: number;
+  ang: number;
+  near: number;
+  diesAt: number;
+}
+
+/** A planted crucifix and whoever it has chained to the spot. */
+interface Cross {
+  owner: Owner;
+  target: Fighter;
+  x: number;
+  y: number;
+  endsAt: number;
+}
+
+/** An open lotus. Purely a drawing — the 100 is paid the instant it is cast. */
+interface Lotus {
+  owner: Owner;
+  x: number;
+  y: number;
+  bornAt: number;
+  diesAt: number;
+  seed: number;
+}
+
+/**
+ * A knockback in progress. Both movement systems rewrite a fighter's velocity every frame, so a
+ * shove handed to the physics body is gone before it renders — it has to be played out as
+ * position, exactly as Magma's does.
+ */
+interface Shove {
+  target: Fighter;
+  vx: number;
+  vy: number;
+  until: number;
 }
 
 /** A shuriken, in the air or buried in a wall. */
@@ -171,6 +299,10 @@ interface Shuriken {
   gate: Map<Fighter, number>;
   hits: Set<Fighter>;
   diesAt: number;
+  /** Pinwheel: extra wall time earned by being kicked off it, accumulated across launches. */
+  bonusMs: number;
+  /** Pinwheel: the earliest it can be kicked again, so one bullet is one launch. */
+  nextKickAt: number;
 }
 
 /** One fortune-teller: face-up on the floor, or up and running after somebody. */
@@ -182,9 +314,12 @@ interface Mache {
   open: number;
   spin: number;
   seed: number;
+  /** Up and moving. Face-down mines start false; Magical Monsters start true. */
   alive: boolean;
+  /** It has eaten a bullet: 8 damage instead of 4, and it runs. */
+  enraged: boolean;
   diesAt: number;
-  /** Who it is chasing, once it has eaten something. */
+  /** Who it is chasing, once it is on its feet. */
   target: Fighter | null;
 }
 
@@ -260,6 +395,15 @@ interface Side {
   nextBookAt: number;
 }
 
+/** What the status tray says about whichever book is open. Indexed by `BookId`. */
+const BOOK_BLURB = [
+  'Click throws Excalibur — 15, and it bends toward anyone it passes near. Q sends the cavalry across the whole arena for 50.',
+  'Click opens a 2-second laser — 4 every half-second, then a 1.5s reload. Q paints the floor with rings and bombards them for 25 and a 2s stun each.',
+  'Click throws a spike for 6 that portals back for two more strikes. Q lets a flame spirit loose to ricochet for 8 seconds.',
+  'Click hurls a slab of scripture-light — 12, and it throws whoever it catches a long way. Q plants a crucifix that chains one enemy to the spot for 5 seconds.',
+  'Click sows 3 seeds. They heal you only if they reach a wall, and only as much as they dared: the closer one passes a body without touching it, the darker and richer it comes home. Q opens a lotus for 100 health.',
+];
+
 function makeSide(owner: Owner): Side {
   return {
     owner, book: 0, aimX: 0, aimY: 0,
@@ -299,6 +443,10 @@ export interface PaperArenaApi {
   setStatusIndicator(id: string, status: CustomStatus | null): void;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /** Shop upgrades: the local player's equipped slots. */
+  hasUpgrade(slot: string): boolean;
+  /** …and the online opponent's, so their upgraded books reproduce on this sim. */
+  hasNpcUpgrade(slot: string): boolean;
 }
 
 // ── PaperKit ─────────────────────────────────────────────────────────────────
@@ -328,8 +476,15 @@ export class PaperKit implements SummonPurgeTarget {
   private maches: Mache[] = [];
   private charges: Charge[] = [];
   private bombs: Bomb[] = [];
+  /** Timestamp of the last bombardment explosion that was allowed to make a sound. */
+  private lastBombSfxAt = 0;
   private spirits: Spirit[] = [];
   private trails: Trail[] = [];
+  private slabs: Slab[] = [];
+  private seeds: Seed[] = [];
+  private crosses: Cross[] = [];
+  private lotuses: Lotus[] = [];
+  private shoves: Shove[] = [];
   private bleeds = new Map<Fighter, Bleed>();
   /** Everyone this kit has stunned, so it can hold their velocity at zero itself. */
   private stunned = new Map<Fighter, number>();
@@ -394,6 +549,19 @@ export class PaperKit implements SummonPurgeTarget {
     return owner === 'player' ? this.api.elementId === 'paper' : this.api.npcElementId === 'paper';
   }
 
+  /**
+   * Whether that side owns a shop upgrade. The npc side only ever answers true online — a bot has
+   * no save to have bought anything out of, which is also why the two branches never collide.
+   */
+  private up(owner: Owner, slot: string): boolean {
+    return owner === 'player' ? this.api.hasUpgrade(slot) : this.api.hasNpcUpgrade(slot);
+  }
+
+  /** How many books that side is carrying. Larger Library is the only thing that changes it. */
+  private bookCount(owner: Owner): number {
+    return this.up(owner, 'click') ? BOOK_TONE.length : 3;
+  }
+
   /** Everything this side is allowed to hurt. */
   private targetsOf(owner: Owner): Fighter[] {
     const list = owner === 'player' ? this.api.enemies : [this.api.player];
@@ -443,11 +611,12 @@ export class PaperKit implements SummonPurgeTarget {
     }
     this.bleeds.clear();
     this.stunned.clear();
+    this.shoves = [];
     this.setDodgeClaim(false);
 
     this.sides = { player: makeSide('player'), npc: makeSide('npc') };
     // The npc's book is rolled rather than fixed, so consecutive bot fights are not identical.
-    this.sides.npc.book = Math.floor(Math.random() * 3) as BookId;
+    this.sides.npc.book = Math.floor(Math.random() * this.bookCount('npc')) as BookId;
     this.blades = [];
     this.spikes = [];
     this.planes = [];
@@ -455,8 +624,13 @@ export class PaperKit implements SummonPurgeTarget {
     this.maches = [];
     this.charges = [];
     this.bombs = [];
+    this.lastBombSfxAt = 0;
     this.spirits = [];
     this.trails = [];
+    this.slabs = [];
+    this.seeds = [];
+    this.crosses = [];
+    this.lotuses = [];
     this.vizT = 0;
 
     this.bonuses = NO_JOURNAL_BONUSES;
@@ -508,7 +682,9 @@ export class PaperKit implements SummonPurgeTarget {
   private cycleBook(owner: Owner): void {
     const s = this.sides[owner];
     const from = BOOK_TONE[s.book].cover;
-    s.book = ((s.book + 1) % 3) as BookId;
+    // Larger Library widens the ring from three to five rather than adding a second key: the
+    // Bible and the Herbology book are shelved with the other three, not beside them.
+    s.book = ((s.book + 1) % this.bookCount(owner)) as BookId;
     const tone = BOOK_TONE[s.book];
     // Cycling out of a half-fired laser drops the burst but not the reload — you do not get to
     // dodge the downside of the Alien book by flipping the page.
@@ -539,7 +715,9 @@ export class PaperKit implements SummonPurgeTarget {
     switch (s.book) {
       case 0: this.castExcalibur(owner, f, ang); break;
       case 1: this.castLaser(owner, f); break;
-      default: this.castSpike(owner, f, ang); break;
+      case 2: this.castSpike(owner, f, ang); break;
+      case 3: this.castSlab(owner, f, ang); break;
+      default: this.castSeeds(owner, f, ang); break;
     }
   }
 
@@ -586,6 +764,44 @@ export class PaperKit implements SummonPurgeTarget {
   }
 
   /**
+   * Bible — a slab of scripture-light, thrown broadside. Wide across the lane and slow enough to
+   * walk out of, and what it is really for is the shove: 12 is a rounding error next to being put
+   * three hundred pixels back into a wall you were trying to leave.
+   */
+  private castSlab(owner: Owner, f: Fighter, ang: number): void {
+    this.slabs.push({
+      owner, x: f.x, y: f.y, ang,
+      diesAt: this.now + SLAB_LIFE_MS,
+      seed: Math.random() * 999,
+      hits: new Set<Fighter>(),
+    });
+    this.avatar(owner)?.play('sweep', ang);
+    this.fx(owner).ripple(f.x, f.y, 12, 52, 340, 9, PAP.halo);
+    this.api.showFloatingText(f.x, f.y - 44, '📙 SCRIPTURE', this.hex(PAP.halo));
+    Sfx.playAt('holy-chord', f.x, { volume: 0.7, rate: 1.15 });
+  }
+
+  /**
+   * Herbology — three seeds that are worth nothing at all if they land. They pay out on the wall
+   * behind you, and they pay more the closer they came to a body on the way, so the ability is
+   * entirely about how tightly you are willing to shave somebody.
+   */
+  private castSeeds(owner: Owner, f: Fighter, ang: number): void {
+    for (let i = 0; i < SEED_COUNT; i++) {
+      this.seeds.push({
+        owner, x: f.x, y: f.y,
+        ang: ang + (i - (SEED_COUNT - 1) / 2) * SEED_SPREAD,
+        near: Infinity,
+        diesAt: this.now + SEED_LIFE_MS,
+      });
+    }
+    this.avatar(owner)?.play('punch', ang);
+    this.fx(owner).ripple(f.x, f.y, 8, 38, 300, 9, PAP.leaf);
+    this.api.showFloatingText(f.x, f.y - 44, `📓 SEEDS ×${SEED_COUNT}`, this.hex(PAP.leaf));
+    Sfx.playAt('spore', f.x, { volume: 0.65, rate: 1.25 });
+  }
+
+  /**
    * E — Paper Plane. One object with two completely different jobs: let go of the key and it is a
    * projectile, hold it and it is a mount. The caster is put on board immediately rather than on
    * a hold timer, so a tap throws it and anything longer rides it.
@@ -608,6 +824,7 @@ export class PaperKit implements SummonPurgeTarget {
       owner, x: f.x, y: f.y, ang, rider: wantsRide ? f : null, bank: 0,
       diesAt: this.now + PLANE_LIFE_MS,
       hits: new Set<Fighter>(),
+      drilled: [],
     };
     this.planes.push(plane);
     if (wantsRide && owner === 'player') this.setDodgeClaim(true);
@@ -653,6 +870,7 @@ export class PaperKit implements SummonPurgeTarget {
       gate: new Map<Fighter, number>(),
       hits: new Set<Fighter>(),
       diesAt: this.now + 4000,
+      bonusMs: 0, nextKickAt: 0,
     });
 
     this.avatar(owner)?.play('sweep', ang);
@@ -668,24 +886,30 @@ export class PaperKit implements SummonPurgeTarget {
   doMache(owner: Owner): void {
     const f = this.fighter(owner);
     if (!this.alive(f)) return;
+    // Magical Monsters: they land on their feet and go looking. The ring they are scattered in is
+    // the same either way — six mines and six hunters want the same spread.
+    const magical = this.up(owner, 'f');
 
     const phase = Math.random() * TAU;
     for (let i = 0; i < MACHE_COUNT; i++) {
       const a = phase + (i / MACHE_COUNT) * TAU + (Math.random() - 0.5) * 0.4;
       const d = 58 + Math.random() * 78;
+      const x = Phaser.Math.Clamp(f.x + Math.cos(a) * d, this.left + MACHE_R, this.right - MACHE_R);
+      const y = Phaser.Math.Clamp(f.y + Math.sin(a) * d, this.top + MACHE_R, this.bottom - MACHE_R);
       this.maches.push({
-        owner,
-        x: Phaser.Math.Clamp(f.x + Math.cos(a) * d, this.left + MACHE_R, this.right - MACHE_R),
-        y: Phaser.Math.Clamp(f.y + Math.sin(a) * d, this.top + MACHE_R, this.bottom - MACHE_R),
+        owner, x, y,
         open: 0.35, spin: Math.random() * TAU, seed: Math.random() * 999,
-        alive: false, diesAt: this.now + MACHE_LIFE_MS, target: null,
+        alive: magical, enraged: false,
+        diesAt: this.now + MACHE_LIFE_MS,
+        target: magical ? this.nearestTarget(owner, x, y) : null,
       });
     }
 
     this.avatar(owner)?.play('clap');
     this.fx(owner).ripple(f.x, f.y, 20, 140, 460, 9, PAP.pulp);
-    this.api.showFloatingText(f.x, f.y - 46, `👹 MÂCHÉ ×${MACHE_COUNT}`, this.hex(PAP.crease));
-    Sfx.playAt('trap-set', f.x, { volume: 0.8, rate: 1.1 });
+    this.api.showFloatingText(f.x, f.y - 46,
+      magical ? `👹 MONSTERS ×${MACHE_COUNT}` : `👹 MÂCHÉ ×${MACHE_COUNT}`, this.hex(PAP.crease));
+    Sfx.playAt('trap-set', f.x, { volume: 0.8, rate: magical ? 0.9 : 1.1 });
   }
 
   /** Q — Climax. Same key, three endings; which one you get is whichever book is open. */
@@ -697,10 +921,30 @@ export class PaperKit implements SummonPurgeTarget {
     s.aimY = ty;
 
     this.avatar(owner)?.play('raise');
-    switch (s.book) {
+    this.runClimax(owner, s.book, f, tx, ty);
+
+    // Open-Ended: a second book's ending goes off with the first. Rolled out of everything on the
+    // shelf *except* the one that is open, so the upgrade always adds an ability rather than
+    // occasionally casting the same one twice.
+    if (!this.up(owner, 'q')) return;
+    const n = this.bookCount(owner);
+    if (n < 2) return;
+    let other = Math.floor(Math.random() * (n - 1));
+    if (other >= s.book) other++;
+    const tone = BOOK_TONE[other];
+    this.api.showFloatingText(f.x, f.y - 68, `📖 OPEN-ENDED · ${tone.name.toUpperCase()}`, this.hex(PAP.gilt));
+    this.fx(owner).ripple(f.x, f.y, 16, 120, 460, 9, PAP.gilt);
+    this.runClimax(owner, other as BookId, f, tx, ty);
+  }
+
+  /** One book's ending, decoupled from whose turn it is so Open-Ended can fire a second. */
+  private runClimax(owner: Owner, book: BookId, f: Fighter, tx: number, ty: number): void {
+    switch (book) {
       case 0: this.climaxCharge(owner, f, tx); break;
       case 1: this.climaxBombardment(owner, f); break;
-      default: this.climaxSpirit(owner, f, tx, ty); break;
+      case 2: this.climaxSpirit(owner, f, tx, ty); break;
+      case 3: this.climaxCrucifix(owner, f, tx, ty); break;
+      default: this.climaxLotus(owner, f); break;
     }
   }
 
@@ -729,7 +973,7 @@ export class PaperKit implements SummonPurgeTarget {
     Sfx.playAt('roar', f.x, { volume: 1, rate: 0.9 });
   }
 
-  /** Alien: twelve rings painted on the floor, five of them on top of somebody. */
+  /** Alien: sixty rings painted on the floor, twenty-five of them on top of somebody. */
   private climaxBombardment(owner: Owner, f: Fighter): void {
     const mark = this.nearestTarget(owner, f.x, f.y);
     for (let i = 0; i < BOMB_COUNT; i++) {
@@ -771,6 +1015,47 @@ export class PaperKit implements SummonPurgeTarget {
     Sfx.playAt('flame-burst', f.x, { volume: 0.9, rate: 0.85 });
   }
 
+  /**
+   * Bible: a crucifix comes down on whoever is nearest the cursor and chains them to the floor for
+   * five seconds. No damage at all — it is the only ending in the kit that buys time instead of
+   * spending it, and five seconds of a stationary opponent is worth more than fifty damage to
+   * every other book Paper is holding.
+   */
+  private climaxCrucifix(owner: Owner, f: Fighter, tx: number, ty: number): void {
+    const mark = this.nearestTarget(owner, tx, ty) ?? this.nearestTarget(owner, f.x, f.y);
+    this.api.showFloatingText(f.x, f.y - 52, '📙 JUDGEMENT', this.hex(PAP.halo));
+    Sfx.playAt('holy-chord', f.x, { volume: 0.95, rate: 0.85 });
+    // Nothing to plant it on if they cannot be held — a cross with no chain on it would be a
+    // five-second lie about what just happened.
+    if (!mark || mark.unstoppable) {
+      if (mark) this.api.showFloatingText(mark.x, mark.y - 40, '⛓️ UNBOUND', this.hex(PAP.gilt));
+      return;
+    }
+
+    this.crosses.push({
+      owner, target: mark, x: mark.x, y: mark.y,
+      endsAt: this.now + CROSS_MS,
+    });
+    this.stun(mark, CROSS_MS, '⛓️ CHAINED', PAP.gilt);
+    this.fx(owner).godRay(mark.x, mark.y, 54);
+    Sfx.playAt('chain', mark.x, { volume: 0.85, rate: 0.9 });
+  }
+
+  /** Herbology: the whole book's payoff in one press — a lotus opens and hands back 100 health. */
+  private climaxLotus(owner: Owner, f: Fighter): void {
+    this.lotuses.push({
+      owner, x: f.x, y: f.y + 6,
+      bornAt: this.now, diesAt: this.now + LOTUS_MS,
+      seed: Math.random() * 999,
+    });
+    const before = f.hp;
+    f.heal(LOTUS_HEAL);
+    const gained = Math.round(f.hp - before);
+    this.fx(owner).petals(f.x, f.y, 18, 110);
+    this.api.showFloatingText(f.x, f.y - 52, `🪷 +${gained}`, this.hex(PAP.petal));
+    Sfx.playAt('bloom', f.x, { volume: 0.9, rate: 0.95 });
+  }
+
   // ── Update ─────────────────────────────────────────────────────────────────
 
   /**
@@ -797,8 +1082,13 @@ export class PaperKit implements SummonPurgeTarget {
     this.updateBombs(time);
     this.updateSpirits(time, delta);
     this.updateTrails(time);
+    this.updateSlabs(delta);
+    this.updateSeeds(delta);
+    this.updateCrosses(time);
+    this.updateLotuses(time);
     this.updateBleeds(time);
     this.updateStuns();
+    this.updateShoves(delta / 1000);
     this.updateJournal(playerIs, delta);
     this.updateAvatars(delta, playerIs, npcIs);
 
@@ -812,6 +1102,8 @@ export class PaperKit implements SummonPurgeTarget {
     return this.blades.length > 0 || this.spikes.length > 0 || this.planes.length > 0
       || this.shurikens.length > 0 || this.maches.length > 0 || this.charges.length > 0
       || this.bombs.length > 0 || this.spirits.length > 0 || this.trails.length > 0
+      || this.slabs.length > 0 || this.seeds.length > 0 || this.crosses.length > 0
+      || this.lotuses.length > 0 || this.shoves.length > 0
       || this.bleeds.size > 0 || this.touched.size > 0 || this.claimsDodge;
   }
 
@@ -1009,6 +1301,7 @@ export class PaperKit implements SummonPurgeTarget {
       pl.x += Math.cos(pl.ang) * speed * dt;
       pl.y += Math.sin(pl.ang) * speed * dt;
 
+      const drill = this.up(pl.owner, 'e');
       for (const t of this.targetsOf(pl.owner)) {
         if (pl.hits.has(t)) continue;
         if (Phaser.Math.Distance.Between(pl.x, pl.y, t.x, t.y) > this.reach(t, PLANE_HIT_R)) continue;
@@ -1016,6 +1309,11 @@ export class PaperKit implements SummonPurgeTarget {
         t.takeDamage(PLANE_DAMAGE);
         this.api.spawnHitFlash(t.x, t.y, PAP.pulp);
         this.fx(pl.owner).cut(t.x, t.y, 24, PAP.crease);
+        // Plane Drill: the plane does not pass through, it picks them up. Anything that cannot be
+        // moved is simply hit — a drill that silently fails to carry reads as a broken upgrade.
+        if (!drill || t.unstoppable || pl.drilled.includes(t)) continue;
+        pl.drilled.push(t);
+        this.api.showFloatingText(t.x, t.y - 38, '✈️ DRILLED', this.hex(PAP.crease));
       }
 
       // A ridden plane is clamped rather than killed at the wall, so a rider is never carried out
@@ -1030,12 +1328,48 @@ export class PaperKit implements SummonPurgeTarget {
         r.setPosition(pl.x, pl.y);
         this.body(r).reset(pl.x, pl.y);
       }
+      // Passengers ride the nose, one frame behind nothing — the same position stomp the rider
+      // gets, because anything gentler loses the fight with WASD.
+      this.carryDrilled(pl);
+      if (hitWall) this.detonateDrill(pl);
 
       if (this.now < pl.diesAt && !(hitWall && !riding)) continue;
       if (riding) this.dismount(pl, true);
+      pl.drilled.length = 0;
       this.fx(pl.owner).shred(pl.x, pl.y, 6, 22, 420, 9);
       this.planes.splice(i, 1);
     }
+  }
+
+  /** Hold everyone the drill has speared on the plane's nose, inside the arena. */
+  private carryDrilled(pl: Plane): void {
+    if (pl.drilled.length === 0) return;
+    for (let j = pl.drilled.length - 1; j >= 0; j--) {
+      const t = pl.drilled[j];
+      if (!this.alive(t) || t.unstoppable) { pl.drilled.splice(j, 1); continue; }
+      const x = Phaser.Math.Clamp(pl.x + Math.cos(pl.ang) * 16, this.left + 12, this.right - 12);
+      const y = Phaser.Math.Clamp(pl.y + Math.sin(pl.ang) * 16, this.top + 12, this.bottom - 12);
+      t.setPosition(x, y);
+      this.body(t).reset(x, y);
+    }
+  }
+
+  /** The end of a drill run: everyone let go, and a small blast where the plane met the wall. */
+  private detonateDrill(pl: Plane): void {
+    if (pl.drilled.length === 0) return;
+    const x = Phaser.Math.Clamp(pl.x, this.left, this.right);
+    const y = Phaser.Math.Clamp(pl.y, this.top, this.bottom);
+    pl.drilled.length = 0;
+
+    for (const t of this.targetsOf(pl.owner)) {
+      if (Phaser.Math.Distance.Between(x, y, t.x, t.y) > DRILL_AOE_R + 8 * t.sizeMult) continue;
+      t.takeDamage(DRILL_AOE_DAMAGE);
+      this.api.spawnHitFlash(t.x, t.y, PAP.crease);
+    }
+    this.fx(pl.owner).ripple(x, y, 10, DRILL_AOE_R, 380, 10, PAP.crease);
+    this.fx(pl.owner).shred(x, y, 12, DRILL_AOE_R * 0.7, 460, 10);
+    this.api.showFloatingText(x, y - 40, '✈️ CRASH', this.hex(PAP.crease));
+    Sfx.playAt('explosion-small', x, { volume: 0.75, rate: 1.2 });
   }
 
   // ── Shuriken ───────────────────────────────────────────────────────────────
@@ -1045,6 +1379,8 @@ export class PaperKit implements SummonPurgeTarget {
     for (let i = this.shurikens.length - 1; i >= 0; i--) {
       const sh = this.shurikens[i];
       const stuck = sh.stuckUntil > 0;
+      const pinwheel = this.up(sh.owner, 'r');
+      const r = SHURIKEN_R * (pinwheel ? PINWHEEL_SIZE_MULT : 1);
       sh.spin += dt * (stuck ? 9 : 22);
 
       if (!stuck) {
@@ -1053,7 +1389,7 @@ export class PaperKit implements SummonPurgeTarget {
 
         for (const t of this.targetsOf(sh.owner)) {
           if (sh.hits.has(t)) continue;
-          if (Phaser.Math.Distance.Between(sh.x, sh.y, t.x, t.y) > this.reach(t, SHURIKEN_R)) continue;
+          if (Phaser.Math.Distance.Between(sh.x, sh.y, t.x, t.y) > this.reach(t, r)) continue;
           sh.hits.add(t);
           this.cutAndBleed(sh.owner, t);
         }
@@ -1064,7 +1400,9 @@ export class PaperKit implements SummonPurgeTarget {
         if (past || time >= sh.diesAt) {
           sh.x = Phaser.Math.Clamp(sh.x, this.left, this.right);
           sh.y = Phaser.Math.Clamp(sh.y, this.top, this.bottom);
-          sh.stuckUntil = time + SHURIKEN_STUCK_MS;
+          // Every launch it has survived is banked here, so a pinwheel that keeps being shot off
+          // the wall keeps getting harder to be rid of.
+          sh.stuckUntil = time + SHURIKEN_STUCK_MS * (pinwheel ? PINWHEEL_STUCK_MULT : 1) + sh.bonusMs;
           sh.vx = 0;
           sh.vy = 0;
           this.fx(sh.owner).shred(sh.x, sh.y, 5, 16, 340, 9);
@@ -1075,16 +1413,56 @@ export class PaperKit implements SummonPurgeTarget {
 
       // Buried: an ordinary hazard with a per-victim clock, and it cuts its owner's enemies only.
       for (const t of this.targetsOf(sh.owner)) {
-        if (Phaser.Math.Distance.Between(sh.x, sh.y, t.x, t.y) > this.reach(t, SHURIKEN_R)) continue;
+        if (Phaser.Math.Distance.Between(sh.x, sh.y, t.x, t.y) > this.reach(t, r)) continue;
         if (time < (sh.gate.get(t) ?? 0)) continue;
         sh.gate.set(t, time + SHURIKEN_STUCK_GATE_MS);
         this.cutAndBleed(sh.owner, t);
+      }
+
+      // Anything flying past a pinwheel spins it off the wall. Either side's shots count and the
+      // shot is not eaten — the wheel is a thing in the room that reacts, not a shield.
+      if (pinwheel && time >= sh.nextKickAt && this.projectileNear(sh.x, sh.y, r + 8)) {
+        this.kickPinwheel(sh, time);
+        continue;
       }
 
       if (time < sh.stuckUntil) continue;
       this.fx(sh.owner).shred(sh.x, sh.y, 7, 24, 420, 9);
       this.shurikens.splice(i, 1);
     }
+  }
+
+  /** Any live projectile from either side within `r` of a point, from both projectile systems. */
+  private projectileNear(x: number, y: number, r: number): boolean {
+    for (const obj of this.api.projectiles.getChildren()) {
+      const p = obj as Projectile;
+      if (!p.active || p.isHeal) continue;
+      if (Phaser.Math.Distance.Between(p.x, p.y, x, y) <= r) return true;
+    }
+    return !!this.api.projectileRegistry.nearest('player', x, y, r)
+      || !!this.api.projectileRegistry.nearest('npc', x, y, r);
+  }
+
+  /**
+   * Kick a stuck pinwheel back into the room. Aimed roughly inward rather than truly at random —
+   * it is pinned flat against a wall, so half of a full circle would put it straight back into
+   * the same wall on the next frame and the launch would never be seen.
+   */
+  private kickPinwheel(sh: Shuriken, time: number): void {
+    const inward = Math.atan2((this.top + this.bottom) / 2 - sh.y, (this.left + this.right) / 2 - sh.x);
+    const ang = inward + (Math.random() - 0.5) * Math.PI * 1.1;
+    sh.vx = Math.cos(ang) * SHURIKEN_SPEED;
+    sh.vy = Math.sin(ang) * SHURIKEN_SPEED;
+    sh.stuckUntil = 0;
+    sh.hits.clear();
+    sh.gate.clear();
+    sh.bonusMs += PINWHEEL_BONUS_MS;
+    sh.nextKickAt = time + PINWHEEL_GATE_MS;
+    // No expiry in flight: "only stopping when hitting another wall" is the whole promise.
+    sh.diesAt = time + 8000;
+    this.fx(sh.owner).ripple(sh.x, sh.y, 8, 46, 300, 9, PAP.crease);
+    this.api.showFloatingText(sh.x, sh.y - 34, '🌀 SPUN OFF', this.hex(PAP.crease));
+    Sfx.playAt('whoosh', sh.x, { volume: 0.6, rate: 1.5 });
   }
 
   private cutAndBleed(owner: Owner, t: Fighter): void {
@@ -1110,7 +1488,7 @@ export class PaperKit implements SummonPurgeTarget {
     });
     t.bleeding = true;
     t.bleedingUntil = Math.max(t.bleedingUntil, until);
-    this.api.showFloatingText(t.x, t.y - 34, '🔴 BLEEDING', this.hex(PAP.blood));
+    this.api.showFloatingText(t.x, t.y - 34, '🩸 BLEEDING', this.hex(PAP.blood));
   }
 
   private updateBleeds(time: number): void {
@@ -1138,22 +1516,29 @@ export class PaperKit implements SummonPurgeTarget {
       if (m.alive) {
         if (!this.alive(m.target)) m.target = this.nearestTarget(m.owner, m.x, m.y);
         const t = m.target;
+        // A monster that has not eaten anything yet walks; an enraged one runs and bites twice
+        // as hard. Both are the same creature, which is why only the two numbers differ.
+        const speed = m.enraged ? MACHE_CHARGE_SPEED : MACHE_HUNT_SPEED;
+        const damage = m.enraged ? MACHE_CHARGE_DAMAGE : MACHE_HUNT_DAMAGE;
         if (t) {
           const a = Math.atan2(t.y - m.y, t.x - m.x);
-          m.x += Math.cos(a) * MACHE_CHARGE_SPEED * dt;
-          m.y += Math.sin(a) * MACHE_CHARGE_SPEED * dt;
-          m.spin += dt * 6;
-          m.open = 0.6 + Math.sin(this.vizT * 16) * 0.4;
+          m.x += Math.cos(a) * speed * dt;
+          m.y += Math.sin(a) * speed * dt;
+          m.spin += dt * (m.enraged ? 6 : 3.4);
+          m.open = 0.6 + Math.sin(this.vizT * (m.enraged ? 16 : 8)) * 0.4;
           if (Phaser.Math.Distance.Between(m.x, m.y, t.x, t.y) <= this.reach(t, MACHE_BITE_R)) {
-            t.takeDamage(MACHE_CHARGE_DAMAGE);
+            t.takeDamage(damage);
             this.api.spawnHitFlash(t.x, t.y, PAP.pulp);
             this.fx(m.owner).shred(t.x, t.y, 7, 22, 420, 10);
             this.api.showFloatingText(t.x, t.y - 36, '👹 CHOMP', this.hex(PAP.crease));
-            Sfx.playAt('claw', t.x, { volume: 0.7, rate: 1.15 });
+            Sfx.playAt('claw', t.x, { volume: 0.7, rate: m.enraged ? 1.15 : 1.35 });
             this.maches.splice(i, 1);
             continue;
           }
         }
+        // Still swallows the bullet that would have flown past it — that is what enrages it, and
+        // the bullet stopping is half of why a wall of monsters is worth having.
+        if (!m.enraged && this.eatNearbyProjectile(m)) this.enrage(m);
         if (this.now < m.diesAt) continue;
         this.fx(m.owner).shred(m.x, m.y, 5, 18, 380, 9);
         this.maches.splice(i, 1);
@@ -1178,12 +1563,7 @@ export class PaperKit implements SummonPurgeTarget {
       if (bit) { this.maches.splice(i, 1); continue; }
 
       if (this.eatNearbyProjectile(m)) {
-        m.alive = true;
-        m.target = this.nearestTarget(m.owner, m.x, m.y);
-        m.diesAt = this.now + MACHE_CHARGE_LIFE_MS;
-        this.fx(m.owner).ripple(m.x, m.y, 6, 34, 320, 9, PAP.pulp);
-        this.api.showFloatingText(m.x, m.y - 26, '👹 ALIVE!', this.hex(PAP.ink));
-        Sfx.playAt('trap-snap', m.x, { volume: 0.75, rate: 0.85 });
+        this.enrage(m);
         continue;
       }
 
@@ -1191,6 +1571,17 @@ export class PaperKit implements SummonPurgeTarget {
       this.fx(m.owner).shred(m.x, m.y, 4, 14, 340, 9);
       this.maches.splice(i, 1);
     }
+  }
+
+  /** A monster that has just swallowed a shot: on its feet, faster, and worth 8 instead of 4. */
+  private enrage(m: Mache): void {
+    m.alive = true;
+    m.enraged = true;
+    m.target = this.nearestTarget(m.owner, m.x, m.y);
+    m.diesAt = this.now + MACHE_CHARGE_LIFE_MS;
+    this.fx(m.owner).ripple(m.x, m.y, 6, 34, 320, 9, PAP.pulp);
+    this.api.showFloatingText(m.x, m.y - 26, '👹 ENRAGED!', this.hex(PAP.ink));
+    Sfx.playAt('trap-snap', m.x, { volume: 0.75, rate: 0.85 });
   }
 
   /**
@@ -1257,7 +1648,11 @@ export class PaperKit implements SummonPurgeTarget {
 
       this.fx(b.owner).beam(b.x, b.y - 260, b.x, b.y, 8, 200, 12);
       this.fx(b.owner).detonation(b.x, b.y, BOMB_R, 520, 12);
-      Sfx.playAt('explosion-medium', b.x, { volume: 0.8, rate: 1.15 });
+      // Every beam still gets its own light and crater; only the audio is thinned.
+      if (time - this.lastBombSfxAt >= BOMB_SFX_GAP_MS) {
+        this.lastBombSfxAt = time;
+        Sfx.playAt('explosion-medium', b.x, { volume: 0.8, rate: 1.15 });
+      }
 
       for (const t of this.targetsOf(b.owner)) {
         if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) > BOMB_R + 8 * t.sizeMult) continue;
@@ -1274,12 +1669,12 @@ export class PaperKit implements SummonPurgeTarget {
    * override already read, but nothing consumes it for the *player* — so the kit holds the
    * velocity at zero itself, exactly as Hunt and Fate do.
    */
-  private stun(t: Fighter, ms: number): void {
+  private stun(t: Fighter, ms: number, label = '💫 STUNNED', color = PAP.beam): void {
     if (t.unstoppable) return;
     const until = this.now + ms;
     t.earthStunnedUntil = Math.max(t.earthStunnedUntil, until);
     this.stunned.set(t, Math.max(this.stunned.get(t) ?? 0, until));
-    this.api.showFloatingText(t.x, t.y - 38, '💫 STUNNED', this.hex(PAP.beam));
+    this.api.showFloatingText(t.x, t.y - 38, label, this.hex(color));
   }
 
   private updateStuns(): void {
@@ -1333,6 +1728,165 @@ export class PaperKit implements SummonPurgeTarget {
       }
       if (time < tr.diesAt) continue;
       this.trails.splice(i, 1);
+    }
+  }
+
+  // ── Larger Library: the Bible's slab ───────────────────────────────────────
+
+  /**
+   * The slab is tested as the rectangle it is drawn as rather than as a circle: it is four times
+   * wider than it is thick, and a radius around its centre would miss most of what it visibly
+   * sweeps through.
+   */
+  private updateSlabs(delta: number): void {
+    const dt = delta / 1000;
+    for (let i = this.slabs.length - 1; i >= 0; i--) {
+      const sl = this.slabs[i];
+      const ca = Math.cos(sl.ang);
+      const sa = Math.sin(sl.ang);
+      sl.x += ca * SLAB_SPEED * dt;
+      sl.y += sa * SLAB_SPEED * dt;
+
+      for (const t of this.targetsOf(sl.owner)) {
+        if (sl.hits.has(t)) continue;
+        const dx = t.x - sl.x;
+        const dy = t.y - sl.y;
+        const along = Math.abs(dx * ca + dy * sa);
+        const across = Math.abs(-dx * sa + dy * ca);
+        if (along > this.reach(t, SLAB_WIDTH * 0.5) || across > this.reach(t, SLAB_LEN * 0.5)) continue;
+        sl.hits.add(t);
+        t.takeDamage(SLAB_DAMAGE);
+        this.api.spawnHitFlash(t.x, t.y, PAP.halo);
+        this.fx(sl.owner).cut(t.x, t.y, 30, PAP.halo);
+        this.shove(t, sl.ang, SLAB_KNOCK);
+        this.api.showFloatingText(t.x, t.y - 40, '📙 CAST OUT', this.hex(PAP.halo));
+        Sfx.playAt('judgement', t.x, { volume: 0.8, rate: 1.05 });
+      }
+
+      const out = sl.x < this.left - SLAB_LEN || sl.x > this.right + SLAB_LEN
+        || sl.y < this.top - SLAB_LEN || sl.y > this.bottom + SLAB_LEN;
+      if (!out && this.now < sl.diesAt) continue;
+      this.fx(sl.owner).ripple(sl.x, sl.y, 8, 40, 300, 9, PAP.halo);
+      this.slabs.splice(i, 1);
+    }
+  }
+
+  // ── Larger Library: the Herbology seeds ────────────────────────────────────
+
+  /**
+   * A seed is worth whatever the closest it ever came to a body was — banked as it flies, cashed
+   * on the wall, and thrown away entirely if it actually connects. Nothing else in the kit asks
+   * you to *miss* on purpose, so the running minimum is the whole ability.
+   */
+  private updateSeeds(delta: number): void {
+    const dt = delta / 1000;
+    for (let i = this.seeds.length - 1; i >= 0; i--) {
+      const sd = this.seeds[i];
+      sd.x += Math.cos(sd.ang) * SEED_SPEED * dt;
+      sd.y += Math.sin(sd.ang) * SEED_SPEED * dt;
+
+      let spent = false;
+      for (const t of this.targetsOf(sd.owner)) {
+        const d = Phaser.Math.Distance.Between(sd.x, sd.y, t.x, t.y);
+        if (d < sd.near) sd.near = d;
+        if (d > this.reach(t, SEED_R)) continue;
+        // It touched them. No damage, no heal — a seed that hits is simply wasted.
+        spent = true;
+        this.fx(sd.owner).splat(sd.x, sd.y, 12, PAP.leafDeep);
+        this.api.showFloatingText(sd.x, sd.y - 26, '📓 WASTED', this.hex(PAP.leafDeep));
+        break;
+      }
+      if (spent) { this.seeds.splice(i, 1); continue; }
+
+      const wall = sd.x <= this.left || sd.x >= this.right || sd.y <= this.top || sd.y >= this.bottom;
+      if (wall) {
+        this.cashSeed(sd);
+        this.seeds.splice(i, 1);
+        continue;
+      }
+      if (this.now < sd.diesAt) continue;
+      this.fx(sd.owner).shred(sd.x, sd.y, 3, 12, 280, 9, PAP.leaf);
+      this.seeds.splice(i, 1);
+    }
+  }
+
+  /** How much a seed has banked: base at arm's length, everything at a graze. */
+  private seedCharge(sd: Seed): number {
+    if (!isFinite(sd.near)) return 0;
+    return Phaser.Math.Clamp((SEED_FAR - sd.near) / (SEED_FAR - SEED_NEAR), 0, 1);
+  }
+
+  private cashSeed(sd: Seed): void {
+    const f = this.fighter(sd.owner);
+    const charge = this.seedCharge(sd);
+    const amount = SEED_HEAL + Math.round(SEED_HEAL_BONUS * charge);
+    const x = Phaser.Math.Clamp(sd.x, this.left, this.right);
+    const y = Phaser.Math.Clamp(sd.y, this.top, this.bottom);
+    this.fx(sd.owner).ripple(x, y, 5, 26 + charge * 22, 320, 9, PAP.leaf);
+    if (!this.alive(f)) return;
+    const before = f.hp;
+    f.heal(amount);
+    const gained = Math.round(f.hp - before);
+    if (gained <= 0) return;
+    this.api.showFloatingText(f.x, f.y - 30, `🌿 +${gained}`, this.hex(PAP.leaf));
+  }
+
+  // ── Larger Library: the crucifix and the lotus ─────────────────────────────
+
+  /**
+   * The chain is re-asserted every frame rather than applied once, because a stun written as a
+   * timestamp can be overwritten by anything that writes the same field — and five seconds is
+   * long enough for something to.
+   */
+  private updateCrosses(time: number): void {
+    for (let i = this.crosses.length - 1; i >= 0; i--) {
+      const c = this.crosses[i];
+      const held = this.alive(c.target) && !c.target.unstoppable;
+      if (held && time < c.endsAt) {
+        c.x = c.target.x;
+        c.y = c.target.y;
+        c.target.earthStunnedUntil = Math.max(c.target.earthStunnedUntil, c.endsAt);
+        this.stunned.set(c.target, Math.max(this.stunned.get(c.target) ?? 0, c.endsAt));
+        continue;
+      }
+      // Left standing for a beat after it lets go, so the release is visible.
+      if (time < c.endsAt + CROSS_FADE_MS) continue;
+      this.fx(c.owner).shred(c.x, c.y, 6, 26, 420, 9, PAP.halo);
+      this.crosses.splice(i, 1);
+    }
+  }
+
+  private updateLotuses(time: number): void {
+    for (let i = this.lotuses.length - 1; i >= 0; i--) {
+      if (time < this.lotuses[i].diesAt) continue;
+      this.lotuses.splice(i, 1);
+    }
+  }
+
+  // ── Knockback ──────────────────────────────────────────────────────────────
+
+  private shove(t: Fighter, ang: number, distance: number): void {
+    const speed = distance / (SHOVE_MS / 1000);
+    this.shoves = this.shoves.filter((s) => s.target !== t);
+    this.shoves.push({
+      target: t,
+      vx: Math.cos(ang) * speed,
+      vy: Math.sin(ang) * speed,
+      until: this.now + SHOVE_MS,
+    });
+  }
+
+  private updateShoves(dt: number): void {
+    if (this.shoves.length === 0) return;
+    for (let i = this.shoves.length - 1; i >= 0; i--) {
+      const s = this.shoves[i];
+      if (!this.alive(s.target) || this.now >= s.until) { this.shoves.splice(i, 1); continue; }
+      // Eases out over its life, so a shove decelerates rather than stopping dead.
+      const left = Phaser.Math.Clamp((s.until - this.now) / SHOVE_MS, 0, 1);
+      const x = Phaser.Math.Clamp(s.target.x + s.vx * dt * left * 2, this.left + 12, this.right - 12);
+      const y = Phaser.Math.Clamp(s.target.y + s.vy * dt * left * 2, this.top + 12, this.bottom - 12);
+      s.target.setPosition(x, y);
+      this.body(s.target).reset(x, y);
     }
   }
 
@@ -1451,6 +2005,21 @@ export class PaperKit implements SummonPurgeTarget {
         0.5 + life * 0.5, { seed: tr.seed, t: this.vizT });
     }
 
+    // Crucifixes go on the floor layer on purpose: whoever is chained to one should be standing
+    // in front of it, not behind it.
+    for (const c of this.crosses) {
+      const over = this.now - c.endsAt;
+      const fade = over <= 0 ? 1 : Phaser.Math.Clamp(1 - over / CROSS_FADE_MS, 0, 1);
+      crucifixShape(g, this.col(c.owner), c.x, c.y + 14, 26, fade, { t: this.vizT });
+    }
+
+    for (const lo of this.lotuses) {
+      const age = (this.now - lo.bornAt) / 460;
+      const open = Phaser.Math.Clamp(age, 0, 1);
+      const fade = Phaser.Math.Clamp((lo.diesAt - this.now) / 700, 0, 1);
+      lotusBloom(g, this.col(lo.owner), lo.x, lo.y, 54, open, fade, { t: this.vizT, seed: lo.seed });
+    }
+
     for (const m of this.maches) {
       if (m.alive) continue;
       const left = Phaser.Math.Clamp((m.diesAt - this.now) / MACHE_LIFE_MS, 0, 1);
@@ -1475,12 +2044,38 @@ export class PaperKit implements SummonPurgeTarget {
         { seed: m.seed, spin: m.spin, drop: 4 + hop });
     }
 
-    // ── Shuriken ──
+    // ── Shuriken, or the pinwheel it becomes ──
     for (const sh of this.shurikens) {
       const stuck = sh.stuckUntil > 0;
       const fade = stuck ? Phaser.Math.Clamp((sh.stuckUntil - this.now) / 900, 0, 1) : 1;
-      shurikenShape(g, this.col(sh.owner), sh.x, sh.y, sh.spin, SHURIKEN_R * (stuck ? 1 : 1.1), fade,
-        { accent: stuck ? PAP.blood : PAP.crease });
+      const pinwheel = this.up(sh.owner, 'r');
+      const r = SHURIKEN_R * (pinwheel ? PINWHEEL_SIZE_MULT : 1) * (stuck ? 1 : 1.1);
+      if (pinwheel) {
+        pinwheelShape(g, this.col(sh.owner), sh.x, sh.y, sh.spin, r, fade,
+          { accent: stuck ? PAP.blood : PAP.crease, stuck: stuck ? 1 : 0 });
+      } else {
+        shurikenShape(g, this.col(sh.owner), sh.x, sh.y, sh.spin, r, fade,
+          { accent: stuck ? PAP.blood : PAP.crease });
+      }
+    }
+
+    // ── The Bible's slabs, and the chains its crucifixes are holding ──
+    for (const sl of this.slabs) {
+      lightSlab(g, this.col(sl.owner), sl.x, sl.y, sl.ang, SLAB_LEN, SLAB_WIDTH, 1, { seed: sl.seed });
+    }
+    for (const c of this.crosses) {
+      if (this.now >= c.endsAt || !this.alive(c.target)) continue;
+      // Two runs from the crossbar down to the wrists — the chain is what says "held", and it has
+      // to be drawn over the body rather than under it.
+      const barY = c.y + 14 - 26 * 2 * 0.56;
+      for (const s of [-1, 1]) {
+        chainRun(g, this.col(c.owner), c.x + s * 24, barY, c.target.x + s * 11, c.target.y - 2, 5, 0.95);
+      }
+    }
+
+    // ── The Herbology seeds ──
+    for (const sd of this.seeds) {
+      herbSeed(g, this.col(sd.owner), sd.x, sd.y, sd.ang, SEED_R, this.seedCharge(sd), 1);
     }
 
     // ── Excalibur, the spike and its portals ──
@@ -1541,11 +2136,7 @@ export class PaperKit implements SummonPurgeTarget {
 
     this.api.setStatusIndicator('paper-book', playerIs ? {
       name: `${tone.name} Book`, emoji: tone.emoji, color: tone.accent,
-      description: s.book === 0
-        ? 'Click throws Excalibur — 15, and it bends toward anyone it passes near. Q sends the cavalry across the whole arena for 50. Right-click to turn the page.'
-        : s.book === 1
-          ? 'Click opens a 2-second laser — 4 every half-second, then a 1.5s reload. Q paints 12 rings and bombards them for 25 and a 2s stun each. Right-click to turn the page.'
-          : 'Click throws a spike for 6 that portals back for two more strikes. Q lets a flame spirit loose to ricochet for 8 seconds. Right-click to turn the page.',
+      description: BOOK_BLURB[s.book] + ' Right-click to turn the page.',
       priority: 152,
     } : null);
 
@@ -1581,12 +2172,16 @@ export class PaperKit implements SummonPurgeTarget {
    * floor, so both go; planes, blades, spikes and the spirit are in flight and stay, and the
    * bleed is a status rather than a structure.
    */
-  purgeSummons(x: number, y: number, radius: number, exceptOwner: Owner): number {
+  purgeSummons(
+    x: number, y: number, radius: number, exceptOwner: Owner,
+    report?: (px: number, py: number) => void,
+  ): number {
     let razed = 0;
     for (let i = this.maches.length - 1; i >= 0; i--) {
       const m = this.maches[i];
       if (m.owner === exceptOwner) continue;
       if (Phaser.Math.Distance.Between(x, y, m.x, m.y) > radius) continue;
+      report?.(m.x, m.y);
       this.fx(m.owner).shred(m.x, m.y, 5, 18, 380, 9);
       this.maches.splice(i, 1);
       razed++;
@@ -1595,6 +2190,7 @@ export class PaperKit implements SummonPurgeTarget {
       const sh = this.shurikens[i];
       if (sh.owner === exceptOwner || sh.stuckUntil === 0) continue;
       if (Phaser.Math.Distance.Between(x, y, sh.x, sh.y) > radius) continue;
+      report?.(sh.x, sh.y);
       this.fx(sh.owner).shred(sh.x, sh.y, 6, 20, 400, 9);
       this.shurikens.splice(i, 1);
       razed++;

@@ -48,8 +48,18 @@ The `CastContext` (defined in `src/elements/Ability.ts`) is a large object passe
 4. `src/scenes/ArenaScene.ts` — wire the kit in (import, field, adapter, call sites); add ability bar color in the color map
 5. `src/scenes/BootScene.ts` — generate any new projectile/element textures
 6. `src/entities/NpcOpponent.ts` — implement `do[Element]Abilities()` and wire it in `doAI()`; add any new fields to `NpcAiState`
-7. `src/scenes/MenuScene.ts` — add to `ELEMENTS` or `COMBINED_ELEMENTS`
+7. `src/data/ElementRoster.ts` — add to `ELEMENTS` / `COMBINED_ELEMENTS` / `TEST_ELEMENTS` etc., and to `ELEMENT_DATA_MAP`. This one table feeds every element-selection screen (menu, campaign, gauntlet, online lobby) — nothing else needs touching to make an element appear in a mode.
 8. `src/data/Recipes.ts` — if it's a combined element, add the recipe
+
+### Element Selection Screens
+
+Four screens pick an element for a fight: `MenuScene`, `CampaignElementSelectScene`, `GauntletElementSelectScene` and `OnlineLobbyScene`. They must never hand-copy the roster — that is what left the campaign and gauntlet years out of date. Instead:
+
+- `src/data/ElementRoster.ts` — the roster tables plus `unlockedExtraElements()`, `allSelectableElements()` and `findElementDef()`.
+- `src/ui/ElementSelectGrid.ts` — `renderElementGrid(scene, opts)` draws the paged card grid (mastery crown, ℹ info, M mastery, ⚙ customize). Returns the objects it made; the caller destroys them on its next render.
+- `src/ui/ElementPanels.ts` — the four full-screen overlays behind those buttons. Construct one per scene with a redraw callback: `new ElementPanels(this, () => this.renderElements())`.
+
+The lobby draws its own compact tile grid (it lives inside a panel), but still reads `allSelectableElements()`.
 
 ### ElementKit Pattern
 

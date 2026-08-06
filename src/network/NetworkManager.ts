@@ -4,7 +4,7 @@ import type { NetStatusEntry } from './NetStatusSync';
 import type { NetConquestSnap } from '../elements/kits/ConquestKit';
 
 /** Bump when the wire protocol or gameplay sync changes incompatibly. */
-export const NET_PROTOCOL_VERSION = 17;
+export const NET_PROTOCOL_VERSION = 18;
 
 /** Lobby selection payload exchanged while both players pick loadouts. */
 export interface NetSelection {
@@ -73,7 +73,11 @@ export type NetSilenceMsg =
 export type NetIllusionMsg =
   // Attacker → victim: you have been folded into this shape for this long. The victim wears
   // it (bigger body, bigger hitbox) and spends the duration looking at an inverted screen.
-  | { t: 'ill'; k: 'shape'; s: 'square' | 'star' | 'rhombus'; ms: number };
+  | { t: 'ill'; k: 'shape'; s: 'square' | 'star' | 'rhombus'; ms: number }
+  // Attacker → victim: a Blade Dance dagger found you, and you are now over there. Sent
+  // rather than resolved locally because a replica's position belongs to the peer's state
+  // stream — moving our copy would simply be undone by their next packet.
+  | { t: 'ill'; k: 'blink'; x: number; y: number };
 
 /**
  * Psychic events, and the one element whose netcode runs *backwards*.

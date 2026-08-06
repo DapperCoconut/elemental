@@ -1954,7 +1954,7 @@ export class EchoKit {
     this.arena.showFloatingText(tx, ty - 40, '✨ BIOLUMINESCENT', '#66ffcc');
     if (wasTerror) {
       player.weakHp += TERROR_WARP_WEAK_HP;
-      this.arena.showFloatingText(tx, ty - 56, `+${TERROR_WARP_WEAK_HP} 🖤`, '#cccccc');
+      this.arena.showFloatingText(tx, ty - 56, `+${TERROR_WARP_WEAK_HP} 🩶`, '#cccccc');
     }
     this.arena.broadcastMasteryCast('echo-bloom-warp');
   }

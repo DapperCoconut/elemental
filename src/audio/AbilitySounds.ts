@@ -23,7 +23,8 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   // ── Fire ──
   'fireball': 'fireball',
   'flame-dash': ['flame-burst', 1.3, 0.85],
-  'pressure-bomb': 'explosion-medium',
+  // The charge being planted — FireKit plays the explosion itself when the fuse runs out.
+  'pressure-bomb': ['flame-burst', 0.75, 0.5],
   'flame-body': ['inferno', 1.15, 0.6],
   'flame-nuke': 'explosion-large',
 
@@ -270,14 +271,15 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'illusion-tesseract': ['portal', 1.2, 0.9],
   'illusion-dance': ['teleport', 0.8, 1.15],
 
-  // ── Glass ──
-  // Every one of these is the same material being asked a different question, so they are all
-  // crystal: struck, thrown, spun, hardened, or blown apart.
-  'glass-orbit': ['crystal-chime', 0.55, 1.5],
-  'glass-splinter': ['crystal-shatter', 0.9, 1.15],
-  'glass-twirl': ['whoosh', 0.85, 1.25],
-  'glass-temper': ['shield-up', 0.9, 0.7],
-  'glass-blow': ['crystal-chime', 1.0, 0.6],
+  // ── Sand (element id `dune`) ──
+  // The click is voiced by the kit per shot so the golden barrel can be heard as a different
+  // gun; the rest is masonry coming up out of the floor, wind, and something very large under
+  // the sand. The Q takes the trap, not the worm — the worm announces itself when it arrives.
+  'dune-striker': ['ui-click', 0.2, 1.5],
+  'dune-ruins': ['stone-rise', 0.85, 1.15],
+  'dune-pyramid': ['golem-ritual', 0.9, 0.85],
+  'dune-sandwalk': ['stone-rise', 1.25, 0.7],
+  'dune-final-trail': ['holy-chord', 0.7, 0.9],
 
   // ── Paper ──
   // The click and the Q are three abilities each, so both take a neutral page-turn rather than
@@ -338,6 +340,16 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'gum-oozorbtion': ['stretch', 0.7, 0.95],
   'gum-solidify': ['ice-shatter', 1.1, 1.0],
 
+  // ── Quantum's Third State ──
+  // Every one of these is a *split*, so the row is built out of things that come apart: a
+  // shatter, a teleport's fold, a stretch. The Click is near-silent on purpose — the blades are
+  // permanent, and a ring that chimed every 900ms would be unbearable.
+  'quantum-splicers': ['whoosh', 1.6, 0.25],
+  'quantum-ability-split': ['teleport', 1.5, 0.7],
+  'quantum-arena-split': ['crystal-shatter', 0.6, 1.0],
+  'quantum-effect-split': ['stretch', 0.75, 0.9],
+  'quantum-parasite': ['beast-transform', 0.6, 1.0],
+
   // ── Gluttony ──
   // The chef's row is kitchen noises and the butcher's row is the same actions gone wrong: the
   // knife throw becomes a slash, the skewer becomes a stab, and the pot becomes a roar.
@@ -353,12 +365,13 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'glut-maw': ['roar', 0.5, 1.25],
 
   // ── Death ──
-  // Three of the five deal no damage, so none of them gets an impact sound — they get a drain,
-  // a curse and a bell. Only the two that touch steel are allowed to be loud.
+  // Four of the five deal no damage, so none of them gets an impact sound — they get a drain,
+  // a cut and a bell. Only the ones that touch steel are allowed to be loud, and Amputate is
+  // the lowest of them: the same blade, pitched down to something that hit bone.
   'death-styx': ['dark-drain', 0.7, 1.2],
   'death-disarm': ['slash', 1.0, 0.85],
   'death-riposte': ['clang', 0.75, 0.7],
-  'death-hospice': ['curse-cast', 0.9, 0.7],
+  'death-amputate': ['slash', 1.0, 0.55],
   'death-deal': ['judgement', 0.9, 0.7],
 
   // ── Ruin ──
@@ -486,7 +499,7 @@ const ELEMENT_PITCH: Record<string, number> = {
   fate: 1.2, magic: 1.1, growth: 0.92, gunpowder: 0.8, hunt: 0.85,
   rubber: 1.05, silence: 0.75, technology: 1.3, plasma: 1.25,
   creation: 1.0, dream: 1.2, justice: 0.95, king: 0.6, chalk: 1.35, illusion: 1.15, conquest: 0.85,
-  magma: 0.7, depths: 0.72, passion: 1.28, ruin: 0.7, glass: 1.5, paper: 1.18,
+  magma: 0.7, depths: 0.72, passion: 1.28, ruin: 0.7, dune: 0.76, paper: 1.18,
   death: 0.6, fortune: 1.08, amber: 0.75, psychic: 1.22,
   radiation: 1.12, bind: 0.66, gum: 0.86, gluttony: 0.82,
 };

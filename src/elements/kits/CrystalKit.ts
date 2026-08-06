@@ -1417,8 +1417,15 @@ export class CrystalKit {
    * Nodes, portal gates, mirror clones and parked shredders — everything Crystal leaves
    * standing on the floor.
    */
-  purgeSummons(x: number, y: number, radius: number, exceptOwner: 'player' | 'npc'): number {
-    const near = (px: number, py: number): boolean => Phaser.Math.Distance.Between(x, y, px, py) <= radius;
+  purgeSummons(
+    x: number, y: number, radius: number, exceptOwner: 'player' | 'npc',
+    report?: (px: number, py: number) => void,
+  ): number {
+    const near = (px: number, py: number): boolean => {
+      if (Phaser.Math.Distance.Between(x, y, px, py) > radius) return false;
+      report?.(px, py);
+      return true;
+    };
     let razed = 0;
     const cullNodes = (list: CrystalNode[], owner: 'player' | 'npc'): void => {
       if (owner === exceptOwner) return;

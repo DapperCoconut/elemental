@@ -1254,7 +1254,7 @@ export class RadiationKit {
     } : null);
 
     this.api.setStatusIndicator('radiation-xray', playerIs && this.now < s.xrayUntil ? {
-      name: 'X-Ray Vision', emoji: '💀', color: RAD.neonLit, priority: 140,
+      name: 'X-Ray Vision', emoji: '🦴', color: RAD.neonLit, priority: 140,
       description: 'Seeing through lead. Every enemy is drawn as its own skeleton whether it is visible or not, and every enemy hitbox is 25% larger.',
       until: s.xrayUntil,
     } : null);

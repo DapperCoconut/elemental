@@ -16,7 +16,7 @@ import { electricityElement } from './electricity';
 import { fateElement } from './fate';
 import { fireElement } from './fire';
 import { fortuneElement } from './fortune';
-import { glassElement } from './glass';
+import { duneElement } from './dune';
 import { gluttonyElement } from './gluttony';
 import { gravityElement } from './gravity';
 import { growthElement } from './growth';
@@ -106,7 +106,7 @@ export const ELEMENT_MAP: Record<string, Element> = {
   conquest: conquestElement,
   passion: passionElement,
   ruin: ruinElement,
-  glass: glassElement,
+  dune: duneElement,
   paper: paperElement,
   death: deathElement,
   fortune: fortuneElement,

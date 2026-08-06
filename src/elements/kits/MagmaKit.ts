@@ -502,7 +502,7 @@ export class MagmaKit {
     const fx = this.fx(owner);
     fx.shock(f.x, f.y, 10, 44, MAG.gold, 420);
     fx.ember(f.x, f.y - 6, 10, 30, 600);
-    this.api.showFloatingText(f.x, f.y - 48, '💦 BLOATED', this.hex(MAG.gold));
+    this.api.showFloatingText(f.x, f.y - 48, '🫧 BLOATED', this.hex(MAG.gold));
   }
 
   /** F — Magma Fist. */
@@ -1394,7 +1394,7 @@ export class MagmaKit {
     } : null);
 
     this.api.setStatusIndicator('magma-bloat', playerIsMagma && s.bloatUntil > time ? {
-      name: 'Magma Bloat', emoji: '💦', color: MAG.gold,
+      name: 'Magma Bloat', emoji: '🫧', color: MAG.gold,
       description: `Swollen with magma. The next hit that lands is blocked outright and bursts for ${BLOAT_DMG} around you.`,
       until: s.bloatUntil, priority: 106,
     } : null);
@@ -1489,8 +1489,15 @@ export class MagmaKit {
    * Pressure vessels — volcanoes and dragon eggs alike. A vessel razed this way is simply
    * gone: it does not top out, so nothing erupts and nothing hatches.
    */
-  purgeSummons(x: number, y: number, radius: number, exceptOwner: 'player' | 'npc'): number {
-    const near = (px: number, py: number): boolean => Phaser.Math.Distance.Between(x, y, px, py) <= radius;
+  purgeSummons(
+    x: number, y: number, radius: number, exceptOwner: 'player' | 'npc',
+    report?: (px: number, py: number) => void,
+  ): number {
+    const near = (px: number, py: number): boolean => {
+      if (Phaser.Math.Distance.Between(x, y, px, py) > radius) return false;
+      report?.(px, py);
+      return true;
+    };
     let razed = 0;
     for (let i = this.vessels.length - 1; i >= 0; i--) {
       const v = this.vessels[i];

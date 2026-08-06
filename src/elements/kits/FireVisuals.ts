@@ -87,6 +87,60 @@ export function flameTongueLayered(
   flameTongue(g, cx, cy, angle, len * 0.48, halfW * 0.4, curve * 0.5);
 }
 
+/**
+ * The ground mark left by a live Pressure Bomb charge. Deliberately small and red — it says
+ * "the blast lands here", not "this is how wide it will be", so it can be read at a glance
+ * without hiding the fight underneath it.
+ *
+ * Redrawn every frame from `t` (0 the moment the charge is planted, 1 when it goes off): the
+ * reticle closes in on the charge and the core strobes faster the nearer detonation gets.
+ */
+export function bombMarker(
+  g: Phaser.GameObjects.Graphics,
+  tint: FireColorFn,
+  x: number, y: number,
+  t: number,
+  scale = 1,
+): void {
+  g.clear();
+  // Quadratic on t, so the blink starts as a slow pulse and ends as a hard strobe.
+  const blink = 0.5 + 0.5 * Math.sin(t * t * 46);
+  const hot = tint(FIRE.red);
+  const dark = tint(FIRE.deep);
+
+  // Scorch under the charge — without it the reticle floats rather than sitting on the floor.
+  g.fillStyle(dark, 0.14 + 0.08 * blink);
+  g.fillEllipse(x, y, 30 * scale, 21 * scale);
+
+  // Four arcs closing in: the fuse read as distance rather than as a number.
+  const r = (17 - 8 * easeOut(t)) * scale;
+  g.lineStyle(2 * scale, hot, 0.4 + 0.45 * blink);
+  for (let i = 0; i < 4; i++) {
+    const a0 = i * (Math.PI / 2) + 0.3;
+    g.beginPath();
+    g.arc(x, y, r, a0, a0 + Math.PI / 2 - 0.6);
+    g.strokePath();
+  }
+  // Corner ticks pointing inward at the charge.
+  g.lineStyle(1.5 * scale, hot, 0.25 + 0.4 * blink);
+  for (let i = 0; i < 4; i++) {
+    const a = i * (Math.PI / 2) + Math.PI / 4;
+    const cos = Math.cos(a), sin = Math.sin(a);
+    g.beginPath();
+    g.moveTo(x + cos * (r + 3 * scale), y + sin * (r + 3 * scale));
+    g.lineTo(x + cos * (r + 8 * scale), y + sin * (r + 8 * scale));
+    g.strokePath();
+  }
+
+  // The charge itself: a dark shell with a core winding up inside it.
+  g.fillStyle(dark, 0.85);
+  g.fillCircle(x, y, 5.2 * scale);
+  g.fillStyle(hot, 0.5 + 0.5 * blink);
+  g.fillCircle(x, y, (2.4 + 1.6 * t) * scale * (0.75 + 0.25 * blink));
+  g.fillStyle(tint(FIRE.white), 0.55 * blink * t);
+  g.fillCircle(x, y, 1.7 * scale);
+}
+
 export interface ExplosionOpts {
   /** Ember shards flung outward. Defaults to radius/7. */
   shards?: number;

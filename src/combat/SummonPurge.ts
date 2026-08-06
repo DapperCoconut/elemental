@@ -15,7 +15,14 @@
  * - Skip anything owned by `exceptOwner` — the caster's own board is not what is being razed.
  * - Clean up exactly as the kit's own expiry path does (destroy sprites, splice arrays, hand
  *   back anything written onto a fighter), and return how many objects died.
+ * - Call `report` once per object destroyed, with where it was standing. Ruin's Spike Shrapnel
+ *   upgrade grows a crystal cluster on each corpse, and this is the only way it can know where
+ *   the corpses are. Most implementations get this for free by moving the call into the
+ *   `near(px, py)` helper they already test with, since for them a true answer *is* a kill.
  */
 export interface SummonPurgeTarget {
-  purgeSummons(x: number, y: number, radius: number, exceptOwner: 'player' | 'npc'): number;
+  purgeSummons(
+    x: number, y: number, radius: number, exceptOwner: 'player' | 'npc',
+    report?: (px: number, py: number) => void,
+  ): number;
 }

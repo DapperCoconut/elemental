@@ -47,7 +47,7 @@ export const MUTATIONS: MutationDef[] = [
   {
     id: 'parasitic',
     name: 'Parasitic',
-    emoji: '🐛',
+    emoji: '🦠',
     shortDesc: 'Enemy heals from its regen and from hurting you.',
     fullDesc: 'Enemy gains a purple tint, regenerates 2 HP/s, and heals for 10% of all damage dealt to the player.',
     starredDesc: '5 HP/s regen, 25% lifesteal. Additionally, all player healing is completely disabled for the duration of the fight.',
@@ -117,7 +117,7 @@ export const MUTATIONS: MutationDef[] = [
   {
     id: 'clot',
     name: 'Clot',
-    emoji: '🔴',
+    emoji: '🩸',
     shortDesc: 'A blood tree shields the enemy until you destroy it.',
     fullDesc: 'A blood tree (50 HP) sprouts at the top center of the arena. The enemy cannot be damaged until the tree is destroyed. A red tether links the tree to the enemy.',
     starredDesc: 'Tree has 100 HP and fires bursts of 5 blood projectiles every 5s. Each projectile that hits you deals 10 damage and heals the tree for 10 HP. The tree stops firing once destroyed.',

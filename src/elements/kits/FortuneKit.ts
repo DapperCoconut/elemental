@@ -18,7 +18,7 @@ const BOTH: Owner[] = ['player', 'npc'];
 
 // ── Passive: Shopkeeper ──────────────────────────────────────────────────────
 /** Damage anybody deals, per blood coin it is worth. */
-const DAMAGE_PER_COIN = 10;
+const DAMAGE_PER_COIN = 20;
 /** How close you have to stand to the counter to be served. */
 const SHOP_RANGE = 132;
 /** What an enemy's purchase kicks back to the shopkeeper. */
@@ -113,10 +113,10 @@ interface ShopEntry {
  * passive: every one of these that an enemy takes hands half its price back to the shopkeeper.
  */
 const GENERAL: ShopEntry[] = [
-  { id: 'bandages', name: 'Bandages', emoji: '💊', cost: 4, page: 'shop', desc: 'Heal 20 HP.' },
+  { id: 'bandages', name: 'Bandages', emoji: '🩹', cost: 4, page: 'shop', desc: 'Heal 20 HP.' },
   { id: 'pepper', name: 'Spicy Pepper', emoji: '🌶️', cost: 3, page: 'shop', desc: 'Burn a fire trail behind you for 5s.' },
-  { id: 'pouch', name: 'Explosives Pouch', emoji: '💣', cost: 3, page: 'shop', desc: 'Next 5 hits blast everyone ELSE nearby.' },
-  { id: 'cureall', name: 'Cure-All', emoji: '⚗️', cost: 10, page: 'shop', desc: 'Cleanse, heal 50, no new debuffs for 20s.' },
+  { id: 'pouch', name: 'Explosives Pouch', emoji: '🧨', cost: 3, page: 'shop', desc: 'Next 5 hits blast everyone ELSE nearby.' },
+  { id: 'cureall', name: 'Cure-All', emoji: '🧪', cost: 10, page: 'shop', desc: 'Cleanse, heal 50, no new debuffs for 20s.' },
   { id: 'daggers', name: 'Ornate Daggers', emoji: '🗡️', cost: 5, page: 'shop', desc: '3 volleys of 8 daggers, 2 dmg each.' },
   { id: 'roomba', name: 'Death Machine', emoji: '🤖', cost: 8, page: 'shop', desc: 'A knife on a vacuum. 25 dmg on touch, max 3.' },
   { id: 'miracle', name: 'The Miracle', emoji: '🏺', cost: 12, page: 'shop', desc: 'Double every good thing for 20s.' },
@@ -127,7 +127,7 @@ const GENERAL: ShopEntry[] = [
 const ARMS: ShopEntry[] = [
   { id: 'pistol', name: 'Pistol', emoji: '🔫', cost: 0, page: 'arms', desc: '10 dmg · 10 rounds · fast.' },
   { id: 'revolver', name: 'Revolver', emoji: '🎯', cost: 5, page: 'arms', desc: '20 dmg · 6 rounds.' },
-  { id: 'rifle', name: 'Rifle', emoji: '⛑️', cost: 10, page: 'arms', desc: '30 dmg · 1 round · begging for a mag.' },
+  { id: 'rifle', name: 'Rifle', emoji: '🪖', cost: 10, page: 'arms', desc: '30 dmg · 1 round · begging for a mag.' },
   { id: 'ar', name: 'AR', emoji: '💥', cost: 15, page: 'arms', desc: '3-round burst · 8 dmg each · 30 rounds.' },
   { id: 'golden', name: 'Golden Pistol', emoji: '🌟', cost: 30, page: 'arms', desc: 'Hitscan · 20 dmg +1 per 2 coins held.' },
 ];
@@ -402,6 +402,7 @@ export class FortuneKit {
     this.setupKeys();
   }
 
+  /** Idempotent — `addKey` hands back the existing Key when one is still registered. */
   private setupKeys(): void {
     const kb = this.api.scene.input.keyboard;
     if (!kb) return;
@@ -459,12 +460,17 @@ export class FortuneKit {
   }
 
   /**
-   * Which side gets paid for hurting `victim`. The player and the npc slot are always "yours to
-   * lose" — in Invasion the npc slot is a co-op ally, so a husk chewing on it still pays the
-   * husks — and everything else in `enemies` is the player's to bleed.
+   * Which side gets paid for hurting `victim`.
+   *
+   * The player is always the npc side's to bleed, and everything in `enemies` is the player's.
+   * The npc slot is the one that changes meaning: in Invasion it is a co-op ally, so a husk
+   * chewing on it still pays the husks — but in a plain 1v1 it *is* the enemy, and reading it
+   * as an ally there paid the player's own hits to the opponent.
    */
   private creditFor(victim: Fighter): Owner {
-    return victim === this.api.player || victim === this.api.npc ? 'npc' : 'player';
+    if (victim === this.api.player) return 'npc';
+    if (victim === this.api.npc) return this.api.isInvasion ? 'npc' : 'player';
+    return 'player';
   }
 
   /** The body that receives an item bought by `owner`. In Invasion the buyers are the husks. */
@@ -493,6 +499,9 @@ export class FortuneKit {
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
   reset(): void {
+    // Phaser's KeyboardPlugin destroys every Key in `shutdown()`, so the ones the constructor
+    // registered are corpses from the second match on — the counter has to re-claim them here.
+    this.setupKeys();
     this.sides = { player: makeSide('player'), npc: makeSide('npc') };
     this.bullets = [];
     this.daggers = [];
@@ -918,7 +927,7 @@ export class FortuneKit {
         const kf = this.fighter(shop);
         if (this.alive(kf)) {
           this.fx(shop).coinBurst(kf.x, kf.y - 10, Math.min(6, cut), 26);
-          this.api.showFloatingText(kf.x, kf.y - 56, `💰 +${cut} COMMISSION`, this.hex(FOR.goldLit));
+          this.api.showFloatingText(kf.x, kf.y - 56, `🪙 +${cut} COMMISSION`, this.hex(FOR.goldLit));
         }
       }
     }
@@ -948,7 +957,7 @@ export class FortuneKit {
     switch (entry.id) {
       case 'bandages':
         body.heal(20 * miracle);
-        this.api.showFloatingText(body.x, body.y - 30, `💊 +${20 * miracle}`, this.hex(FOR.blood));
+        this.api.showFloatingText(body.x, body.y - 30, `🩹 +${20 * miracle}`, this.hex(FOR.blood));
         Sfx.playAt('heal', body.x, { volume: 0.7 });
         break;
       case 'pepper':
@@ -1094,7 +1103,7 @@ export class FortuneKit {
    *
    * There is no central "damage dealt" hook in the game, so the meter is `rawDamageTaken` on
    * every body in play, diffed each frame. Whatever a body lost, the other side dealt — and
-   * every 10 of it is a blood coin. The same diff drives the Explosives Pouch and the risky
+   * every 20 of it is a blood coin. The same diff drives the Explosives Pouch and the risky
    * market's two thresholds, so all three read exactly the same number.
    */
   private updateEconomy(delta: number): void {
@@ -1152,7 +1161,7 @@ export class FortuneKit {
     }
     if (owner === 'player') {
       this.api.showFloatingText(victim.x, victim.y - 52,
-        struck > 0 ? `💣 SPLASH ×${struck}` : '💣 NOBODY ELSE', this.hex(FOR.gold));
+        struck > 0 ? `🧨 SPLASH ×${struck}` : '🧨 NOBODY ELSE', this.hex(FOR.gold));
     }
   }
 
@@ -1223,7 +1232,7 @@ export class FortuneKit {
     s.coins += amount;
     if (this.alive(f)) {
       this.fx(owner).coinBurst(f.x, f.y - 10, Math.min(9, amount), 40, 800);
-      this.api.showFloatingText(f.x, f.y - 48, `💰 WITHDREW ${amount}`, this.hex(FOR.goldLit));
+      this.api.showFloatingText(f.x, f.y - 48, `🪙 WITHDREW ${amount}`, this.hex(FOR.goldLit));
       Sfx.playAt('jackpot', f.x, { volume: 0.7 });
     }
   }
@@ -1820,7 +1829,7 @@ export class FortuneKit {
 
     const head = this.shopTexts[0];
     head.setVisible(true).setPosition(x + 8, y + 20)
-      .setText(`${PAGE_NAME[page]}  ·  💰 ${s.coins}${mine ? '   [T] TAB' : ''}`);
+      .setText(`${PAGE_NAME[page]}  ·  🪙 ${s.coins}${mine ? '   [T] TAB' : ''}`);
     this.tintRow(0, this.hex(accent), '11px', true);
 
     for (let i = 0; i < list.length; i++) {
@@ -1829,7 +1838,7 @@ export class FortuneKit {
       const owned = !this.canBuy('player', e);
       const poor = s.coins < e.cost;
       t.setVisible(true).setPosition(x + 8, y + 36 + i * rowH)
-        .setText(`${i + 1} ${e.emoji} ${e.name} — ${e.cost === 0 ? 'FREE' : `${e.cost}💰`}  ${e.desc}`);
+        .setText(`${i + 1} ${e.emoji} ${e.name} — ${e.cost === 0 ? 'FREE' : `${e.cost}🪙`}  ${e.desc}`);
       this.tintRow(i + 1, owned ? '#7d7466' : poor ? '#b3202e' : '#ffffff', '10px', false);
     }
 
@@ -1860,8 +1869,8 @@ export class FortuneKit {
     const mine = shop === 'player';
 
     this.api.setStatusIndicator('fortune-coins', shop ? {
-      name: 'Blood Coins', emoji: '💰', color: FOR.gold,
-      description: `Every 10 damage you deal mints 1 blood coin. Spend them at the stall in the middle of the arena — stand next to it and press 1–8.${mine ? ' Press T to reach the illegal pages.' : ' Half of everything you spend goes to the shopkeeper.'}`,
+      name: 'Blood Coins', emoji: '🪙', color: FOR.gold,
+      description: `Every 20 damage you deal mints 1 blood coin. Spend them at the stall in the middle of the arena — stand next to it and press 1–8.${mine ? ' Press T to reach the illegal pages.' : ' Half of everything you spend goes to the shopkeeper.'}`,
       count: s.coins, priority: 150,
     } : null);
 
@@ -1890,13 +1899,13 @@ export class FortuneKit {
     } : null);
 
     this.api.setStatusIndicator('fortune-pouch', s.pouch > 0 ? {
-      name: 'Explosives Pouch', emoji: '💣', color: FOR.gold,
+      name: 'Explosives Pouch', emoji: '🧨', color: FOR.gold,
       description: 'Your next hits each set off a blast around the body you hit, worth the same damage — to everyone ELSE standing near them.',
       count: s.pouch, priority: 122,
     } : null);
 
     this.api.setStatusIndicator('fortune-cure', this.now < s.cureUntil ? {
-      name: 'Cure-All', emoji: '⚗️', color: FOR.neon,
+      name: 'Cure-All', emoji: '🧪', color: FOR.neon,
       description: 'Nothing negative can stick to you. Every debuff is scrubbed off the moment it lands.',
       until: s.cureUntil, priority: 123,
     } : null);

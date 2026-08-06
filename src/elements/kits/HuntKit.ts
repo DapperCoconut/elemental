@@ -820,7 +820,7 @@ export class HuntKit {
       this.hit(t, dmg, owner, pulled ? 0xff2200 : 0xcc4422);
       this.onDamageDealt(owner, t);
       if (pulled) {
-        this.api.showFloatingText(t.x, t.y - 30, '🔴 Bolt ripped out!', '#ff4444');
+        this.api.showFloatingText(t.x, t.y - 30, '🩸 Bolt ripped out!', '#ff4444');
         this.fx(owner).splatter(t.x, t.y, 7, { speed: 190, angle, spread: 1.1, size: 3, life: 480, depth: 8, tones: BEAST_TONES });
       }
     }
@@ -943,7 +943,7 @@ export class HuntKit {
     s.scentUntil = this.now + BLOOD_SCENT_MS;
     this.avatar(owner)?.play('flex');
     this.fx(owner).bloom(f.x, f.y, 40, 10, 6, MOON_TONES);
-    this.api.showFloatingText(f.x, f.y - 32, '🔴 BLOOD SCENT', '#ff2244');
+    this.api.showFloatingText(f.x, f.y - 32, '🩸 BLOOD SCENT', '#ff2244');
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1113,7 +1113,7 @@ export class HuntKit {
     );
     this.api.scene.cameras.main.shake(360, 0.009);
     this.api.showFloatingText(f.x, f.y - 44,
-      hell ? '🐕 HELLHOUND' : s.alpha ? '🐺 ALPHA' : permanent ? '🐺 GIVE IN' : '🐺 RELEASE THE BEAST',
+      hell ? '🐕‍🦺 HELLHOUND' : s.alpha ? '🐺 ALPHA' : permanent ? '🐺 GIVE IN' : '🐺 RELEASE THE BEAST',
       hell ? '#ff6600' : s.alpha ? '#ccd4dd' : '#ff3322');
     if (owner === 'player') this.api.setHudForm('beast');
   }
@@ -1493,7 +1493,7 @@ export class HuntKit {
         this.stun(v, WALL_SLAM_STUN_MS, fl.owner);
         this.fx(fl.owner).frag(v.x, v.y, 62, { tones: BEAST_TONES, shards: 10, smoke: 2, crater: false });
         this.api.scene.cameras.main.shake(260, 0.008);
-        this.api.showFloatingText(v.x, v.y - 40, '🚧 WALL SLAM', '#ff5533');
+        this.api.showFloatingText(v.x, v.y - 40, '🧱 WALL SLAM', '#ff5533');
         this.flings.splice(i, 1);
       }
     }
@@ -2616,8 +2616,15 @@ export class HuntKit {
    * The beastling pup. Anything it happens to be carrying goes with it, the same as when
    * its own timer runs out.
    */
-  purgeSummons(x: number, y: number, radius: number, exceptOwner: 'player' | 'npc'): number {
-    const near = (px: number, py: number): boolean => Phaser.Math.Distance.Between(x, y, px, py) <= radius;
+  purgeSummons(
+    x: number, y: number, radius: number, exceptOwner: 'player' | 'npc',
+    report?: (px: number, py: number) => void,
+  ): number {
+    const near = (px: number, py: number): boolean => {
+      if (Phaser.Math.Distance.Between(x, y, px, py) > radius) return false;
+      report?.(px, py);
+      return true;
+    };
     let razed = 0;
     for (let i = this.beastlings.length - 1; i >= 0; i--) {
       const b = this.beastlings[i];

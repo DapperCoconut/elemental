@@ -1084,7 +1084,7 @@ export class RubberKit {
       this.pfx.boing(hx, hy, 4, 26, RUBBER.pink, 300, 8, 4);
       this.pfx.motes(hx, hy, 5, { speed: 90, size: 2, life: 400 });
     }
-    this.arena.showFloatingText(player.x, player.y - 40, '🎾 SLING SET', '#ff5577');
+    this.arena.showFloatingText(player.x, player.y - 40, '🪀 SLING SET', '#ff5577');
   }
 
   doRubberSlingShotRelease(_vx: number, _vy: number, _owner: 'player' | 'npc'): void {
@@ -2300,7 +2300,7 @@ export class RubberKit {
     this.uber[owner] = Math.min(UBER_MAX, before + UBER_GAIN_PER_HIT);
     if (before < UBER_MAX && this.uber[owner] >= UBER_MAX) {
       const f = owner === 'player' ? this.arena.player : this.arena.npc;
-      this.arena.showFloatingText(f.x, f.y - 52, '🎾 UBER-GEAR MAXED', '#ff88aa');
+      this.arena.showFloatingText(f.x, f.y - 52, '🪀 UBER-GEAR MAXED', '#ff88aa');
     }
   }
 
@@ -2315,7 +2315,7 @@ export class RubberKit {
     const k = this.uberK('player');
     if (k > 0.001) {
       this.arena.setStatusIndicator('uber-gear', {
-        name: 'Uber-Gear', emoji: '🎾', color: 0xff5577,
+        name: 'Uber-Gear', emoji: '🪀', color: 0xff5577,
         description: 'Wound-up elasticity: boosts punch damage, sling launch speed and Rubberage ball damage. Winds up on every rubber hit, unwinds after 5s without one.',
         count: Math.round(k * 100), suffix: '%', priority: 118,
       });
@@ -2389,7 +2389,7 @@ export class RubberKit {
     // The standing tell is RubberAura 'vulc', driven from `this.vulc` in updateAuras.
     this.arena.setStatusIndicator('vulcanization', {
       name: 'Vulcanization',
-      emoji: this.vulcFire() ? '🔥' : '☸️',
+      emoji: this.vulcFire() ? '🔥' : '🛞',
       color: this.vulcFire() ? 0xff7733 : 0x992233,
       count: Math.round(this.vulc * 100),
       suffix: '%',

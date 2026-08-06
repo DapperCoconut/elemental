@@ -660,7 +660,7 @@ export class MagnetKit {
       } else {
         this.magnetNpcSpeedBuffUntil = scene.time.now + 3000;
       }
-      this.arena.showFloatingText(caster.x, caster.y - 26, '🔗 MAGNET DASH', '#cc2244');
+      this.arena.showFloatingText(caster.x, caster.y - 26, '🧲 MAGNET DASH', '#cc2244');
     }
   }
 
@@ -730,7 +730,7 @@ export class MagnetKit {
       fx.grasp(caster.x, caster.y, target.x, target.y, MAGNET.rose);
       fx.pulse(target.x, target.y, 90, MAGNET.red, 420, 6, 10, true);
       this.avatar(owner)?.play('sweep', Math.atan2(target.y - caster.y, target.x - caster.x));
-      this.arena.showFloatingText(target.x, target.y - 28, '🔗 MAGNETIZED', '#ff4488');
+      this.arena.showFloatingText(target.x, target.y - 28, '🧲 MAGNETIZED', '#ff4488');
     }
   }
 
@@ -1629,7 +1629,7 @@ export class MagnetKit {
     fx.pulse(caster.x, caster.y + 16, 46, MAGNET.lilac, 420, 6, 10, true);
     fx.sparks(caster.x, caster.y + 16, 5, -Math.PI / 2, 10, MAGNET.lilac);
     this.avatar(owner)?.play('flex');
-    this.arena.showFloatingText(caster.x, caster.y - 40, '🛴 MAG-LEV', '#aa66ff');
+    this.arena.showFloatingText(caster.x, caster.y - 40, '🛹 MAG-LEV', '#aa66ff');
   }
 
   private dismountMagLev(owner: 'player' | 'npc'): void {
@@ -1639,7 +1639,7 @@ export class MagnetKit {
     else this.npcMagLevMounted = false;
     // The cushion collapsing — the board comes apart into the field it was made of.
     this.fx(owner).shrapnel(caster.x, caster.y + 16, 5, { speed: 150, size: 9, color: MAGNET.violet, depth: 8 });
-    this.arena.showFloatingText(caster.x, caster.y - 40, '🛴 DISMOUNT', '#8877aa');
+    this.arena.showFloatingText(caster.x, caster.y - 40, '🛹 DISMOUNT', '#8877aa');
   }
 
   private magLevSling(mouseX: number, mouseY: number): void {
@@ -1668,7 +1668,7 @@ export class MagnetKit {
         const hx = npc.x, hy = npc.y;
         npc.takeDamage(MAGLEV_BASH_DMG);
         this.pfx.sparks(hx, hy, 6, Math.atan2(hy - player.y, hx - player.x), 10, MAGNET.lilac);
-        this.arena.showFloatingText(npc.x, npc.y - 30, `🛴 ${MAGLEV_BASH_DMG}`, '#cc99ff');
+        this.arena.showFloatingText(npc.x, npc.y - 30, `🛹 ${MAGLEV_BASH_DMG}`, '#cc99ff');
       }
     }
     if (this.npcMagLevMounted) {

@@ -68,6 +68,6 @@ export const amberElement: Element = {
   id: 'amber',
   name: 'Amber',
   color: 0xd98b1f,
-  emoji: '🔶',
+  emoji: '🟠',
   abilities: [sling, mosquitoDrones, beginTheHunt, stampede, endTheHunt],
 };

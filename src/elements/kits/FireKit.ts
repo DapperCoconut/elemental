@@ -3,7 +3,8 @@ import { Fighter } from '../../entities/Fighter';
 import { Projectile } from '../../combat/Projectile';
 import { CastContext } from '../Ability';
 import { CustomStatus } from './StatusHudKit';
-import { ArmGesture, FireAvatar, FireColorFn, FireFx, FireWreath, FIRE } from './FireVisuals';
+import { Sfx } from '../../audio';
+import { ArmGesture, FireAvatar, FireColorFn, FireFx, FireWreath, FIRE, bombMarker } from './FireVisuals';
 import { BaseAvatar } from './ElementVisuals';
 import { makeSkinAvatar } from './skins/SkinAvatars';
 
@@ -27,6 +28,40 @@ interface Heatwave {
   hit: Set<Fighter>;
   /** 'player' waves expose enemies; 'npc' waves (online replay) expose the local player. */
   owner: 'player' | 'npc';
+}
+
+// ── Pressure Bomb ────────────────────────────────────────────────────────
+/** The fuse on a planted charge: long enough to be walked out of, short enough to matter. */
+const PRESSURE_FUSE_MS = 1500;
+const PRESSURE_RADIUS = 100;
+// Cluster Bomb (R+): the shell splits on detonation and throws bomblets around the crater.
+const CLUSTER_COUNT = 6;
+const CLUSTER_FUSE_MS = 700;
+/** Staggered so the bomblets crackle off in sequence rather than as one flat thump. */
+const CLUSTER_STAGGER_MS = 70;
+const CLUSTER_DAMAGE = 12;
+const CLUSTER_RADIUS = 55;
+const CLUSTER_MIN_THROW = 30;
+const CLUSTER_MAX_THROW = 85;
+
+/**
+ * A Pressure Bomb sitting on its fuse. Owner-agnostic: the marker is painted in the owner's
+ * colours and only their enemies are caught by the blast, so the NPC's charges live here too.
+ */
+interface PressureCharge {
+  x: number; y: number;
+  /** Scene time the charge goes off. */
+  fireAt: number;
+  fuseMs: number;
+  damage: number;
+  radius: number;
+  /** Cluster shells throw bomblets when they blow; the bomblets themselves do not. */
+  cluster: boolean;
+  owner: 'player' | 'npc';
+  /** Ground reticle, redrawn every frame from how much fuse is left. */
+  marker: Phaser.GameObjects.Graphics;
+  /** Marker scale — a bomblet gets a smaller reticle than the shell that threw it. */
+  markerScale: number;
 }
 
 /** Which arm gesture the opponent's rig plays when the NPC lands each ability. */
@@ -149,13 +184,11 @@ export class FireKit {
   private flameChargeWaitVisual: Phaser.GameObjects.Arc | null = null;
   private flameChargePending: { x: number; y: number; fireAt: number; visual: Phaser.GameObjects.Arc } | null = null;
   private playerLastMovedAt = 0;
-  private pressureCharging = false;
-  private pressureChargeStart = 0;
-  private pressureChargeVisual: Phaser.GameObjects.Arc | null = null;
-  private pressureTremorAccum = 0;
-  private pressureLastMouseX = 0;
-  private pressureLastMouseY = 0;
   private firePointerWasDown = false;
+
+  // ── Shared state ──────────────────────────────────────────────────────
+  /** Live Pressure Bomb charges from either side, each waiting out its own fuse. */
+  private pressureCharges: PressureCharge[] = [];
 
   // ── NPC state ─────────────────────────────────────────────────────────
   private npcFlameBodyActive = false;
@@ -193,7 +226,6 @@ export class FireKit {
 
   // ── Public accessors ──────────────────────────────────────────────────
 
-  isPressureCharging(): boolean { return this.pressureCharging; }
   isFlameBodyActive(): boolean { return this.flameBodyActive; }
   isEnhancedFlameBody(): boolean { return this.enhancedFlameBody; }
   isNpcFlameBodyActive(): boolean { return this.npcFlameBodyActive; }
@@ -219,13 +251,11 @@ export class FireKit {
     if (this.flameChargeWaitVisual) { this.flameChargeWaitVisual.destroy(); this.flameChargeWaitVisual = null; }
     this.flameChargePending = null;
     this.playerLastMovedAt = 0;
-    this.pressureCharging = false;
-    this.pressureChargeStart = 0;
-    if (this.pressureChargeVisual) { this.pressureChargeVisual.destroy(); this.pressureChargeVisual = null; }
-    this.pressureTremorAccum = 0;
-    this.pressureLastMouseX = 0;
-    this.pressureLastMouseY = 0;
     this.firePointerWasDown = false;
+
+    // Shared — a charge left ticking when the match ended never gets to go off.
+    for (const c of this.pressureCharges) c.marker.destroy();
+    this.pressureCharges = [];
 
     // NPC
     this.npcFlameBodyActive = false;
@@ -261,6 +291,8 @@ export class FireKit {
     this.updateFireballTrails(delta);
     // Owner-agnostic: an eruption's magma outlives the frame either side set it down on.
     this.updateMagma(time, delta);
+    // Same for planted charges — a fuse belongs to whoever lit it, not to whoever is fire.
+    this.updatePressureCharges(time);
 
     if (isPlayerFire) {
       // Status tray: Flame Body is a toggle with no expiry, so mirror it every frame.
@@ -318,11 +350,6 @@ export class FireKit {
         this.pfx.firePillar(fx, fy, 52, 170);
         scene.cameras.main.shake(320, 0.010);
         this.arena.showFloatingText(fx, fy - 28, '💥 Flame Charge!', '#ff6600');
-      }
-
-      // Charge ratio: only meaningful during pressure-charging
-      if (!this.pressureCharging) {
-        player.chargeRatio = 0;
       }
 
       // Alcohol perk updates
@@ -555,103 +582,14 @@ export class FireKit {
       }
       this.alcoholEWasDown = eKey.isDown;
 
-      // ── R: Pressure Bomb / Pressure Charge upgrade ────────────────
-      if (hwSlot === 'r') {
-        if (Phaser.Input.Keyboard.JustDown(rKey)) this.tryCastHeatwave(time, mouseX, mouseY);
-      } else if (this.arena.hasUpgrade('r')) {
-        if (rKey.isDown) {
-          if (!this.pressureCharging && player.getCooldownRatio('pressure-bomb') >= 1) {
-            this.pressureCharging = true;
-            this.pressureChargeStart = time;
-            this.pressureTremorAccum = 0;
-            player.incomingDamageMultiplier = this.enhancedFlameBody ? 2 : 1.5;
-            const cv = scene.add.circle(player.x, player.y, 12, this.pcol(FIRE.amber), 0.6).setDepth(4);
-            cv.setStrokeStyle(2, this.pcol(FIRE.yellow), 0.8);
-            scene.tweens.add({ targets: cv, scaleX: 0.5, scaleY: 0.5, yoyo: true, repeat: -1, duration: 300 });
-            this.pressureChargeVisual = cv;
-          }
-          if (this.pressureCharging) {
-            // Arms whirl in tight against the body while pressure builds.
-            this.playerAvatar?.setHold('charge');
-            if (this.pressureChargeVisual) this.pressureChargeVisual.setPosition(player.x, player.y);
-            this.pressureLastMouseX = mouseX;
-            this.pressureLastMouseY = mouseY;
-            const heldMs = time - this.pressureChargeStart;
-            const chargeLevel = heldMs >= 6000 ? 2 : heldMs >= 3000 ? 1 : 0;
-            player.chargeRatio = Math.min(1, heldMs / 6000);
-            if (chargeLevel >= 1) {
-              this.pressureTremorAccum += delta;
-              if (this.pressureTremorAccum >= 1000) {
-                this.pressureTremorAccum -= 1000;
-                const tremorDmg = chargeLevel === 2 ? 10 : 5;
-                for (const t of this.arena.enemies) {
-                  if (!t.active || t.hp <= 0) continue;
-                  if (Phaser.Math.Distance.Between(mouseX, mouseY, t.x, t.y) <= 60) {
-                    t.takeDamage(tremorDmg);
-                    this.arena.spawnHitFlash(t.x, t.y, this.pcol(FIRE.orange));
-                  }
-                }
-                // Ground tremor under the cursor: the ordnance rattling before release.
-                this.pfx.ring(mouseX, mouseY, 8, 62, FIRE.orange, 350, 4, 4);
-                this.pfx.embers(mouseX, mouseY, 5, { speed: 90, size: 2.8, life: 400, depth: 4 });
-              }
-            } else {
-              this.pressureTremorAccum = 0;
-            }
-          }
-        } else if (this.pressureCharging) {
-          // Released — fire the charged bomb
-          this.pressureCharging = false;
-          this.playerAvatar?.setHold(null);
-          this.playerAvatar?.play('slam', Math.atan2(this.pressureLastMouseY - player.y, this.pressureLastMouseX - player.x));
-          player.chargeRatio = 0;
-          player.incomingDamageMultiplier = this.enhancedFlameBody ? 2 : 1;
-          if (this.pressureChargeVisual) { this.pressureChargeVisual.destroy(); this.pressureChargeVisual = null; }
-          const heldMs = time - this.pressureChargeStart;
-          const chargeLevel = heldMs >= 6000 ? 2 : heldMs >= 3000 ? 1 : 0;
-          const dmgMult = chargeLevel === 2 ? 2 : chargeLevel === 1 ? 1.5 : 1;
-          const finalDmg = Math.round(32 * dmgMult);
-          const mx = this.pressureLastMouseX;
-          const my = this.pressureLastMouseY;
-          for (const t of this.arena.enemies) {
-            if (!t.active || t.hp <= 0) continue;
-            if (Phaser.Math.Distance.Between(mx, my, t.x, t.y) <= 100) {
-              t.takeDamage(finalDmg);
-              this.arena.spawnHitFlash(t.x, t.y, this.pcol(FIRE.amber));
-            }
-          }
-          // Alcohol perk: ignite any alcohol puddles in blast radius
-          if (this.arena.hasPerk('player', 'alcohol')) {
-            this.igniteAlcoholPuddlesNear(mx, my, 120, scene);
-          }
-          // Overcharging makes the blast visibly meatier without changing its radius.
-          this.pfx.explosion(mx, my, 100, { shards: 14 + chargeLevel * 8, smoke: 3 + chargeLevel, duration: 380 + chargeLevel * 120 });
-          if (chargeLevel > 0) this.pfx.firePillar(mx, my, 34, 90 + chargeLevel * 50);
-          scene.cameras.main.shake(140 + chargeLevel * 70, 0.004 + chargeLevel * 0.003);
-          player.triggerCooldown('pressure-bomb');
-          // Chaos Cluster (R+): 5 scattered explosions around the blast site
-          if (this.arena.hasUpgrade('r')) {
-            for (let i = 0; i < 5; i++) {
-              scene.time.delayedCall(i * 500, () => {
-                if (!player.active) return;
-                const ang = Math.random() * Math.PI * 2;
-                const dist = Math.random() * 150;
-                const cx = mx + Math.cos(ang) * dist;
-                const cy = my + Math.sin(ang) * dist;
-                this.arena.damagePlayerTargets(cx, cy, 60, 5, this.pcol(FIRE.amber));
-                this.pfx.explosion(cx, cy, 60, { shards: 8, smoke: 1, duration: 340 });
-              });
-            }
-          }
-        }
-      } else {
-        if (Phaser.Input.Keyboard.JustDown(rKey)) {
-          if (player.castAbility('pressure-bomb', playerCtx)) {
-            this.playerAvatar?.play('slam', aimAngle);
-            if (this.arena.hasPerk('player', 'alcohol')) {
-              this.igniteAlcoholPuddlesNear(mouseX, mouseY, 120, scene);
-            }
-          }
+      // ── R: Pressure Bomb (Cluster Bomb with R+) ───────────────────
+      // The upgrade changes what the charge does when it goes off, not how it is thrown,
+      // so both paths are one cast — everything else happens on the fuse in update().
+      if (Phaser.Input.Keyboard.JustDown(rKey)) {
+        if (hwSlot === 'r') {
+          this.tryCastHeatwave(time, mouseX, mouseY);
+        } else if (player.castAbility('pressure-bomb', playerCtx)) {
+          this.playerAvatar?.play('slam', aimAngle);
         }
       }
 
@@ -1188,6 +1126,96 @@ export class FireKit {
         this.arena.spawnHitFlash(v.x, v.y, 0xff6600);
       }
     }
+  }
+
+  // ── Pressure Bomb ───────────────────────────────────────────────────────
+
+  /**
+   * Plant a Pressure Bomb at the cursor. Called from the ability itself, so the NPC's charges
+   * run the same fuse the player's do. Cluster Bomb (R+) turns the player's shells into
+   * cluster shells, which split into bomblets when they go off.
+   */
+  lobPressureBomb(x: number, y: number, damage: number, owner: 'player' | 'npc'): void {
+    const cluster = owner === 'player' && this.arena.hasUpgrade('r');
+    const fx = owner === 'player' ? this.pfx : this.nfx;
+    this.plantCharge(x, y, damage, PRESSURE_RADIUS, PRESSURE_FUSE_MS, cluster, owner, 1);
+    // The charge landing: a puff of embers where it comes to rest.
+    fx.embers(x, y, 7, { speed: 95, size: 2.8, life: 420, rise: 12, depth: 4 });
+  }
+
+  private plantCharge(
+    x: number, y: number, damage: number, radius: number, fuseMs: number,
+    cluster: boolean, owner: 'player' | 'npc', markerScale: number,
+  ): void {
+    const marker = this.arena.scene.add.graphics().setDepth(3);
+    this.pressureCharges.push({
+      x, y, fireAt: this.arena.scene.time.now + fuseMs, fuseMs,
+      damage, radius, cluster, owner, marker, markerScale,
+    });
+  }
+
+  private updatePressureCharges(time: number): void {
+    for (let i = this.pressureCharges.length - 1; i >= 0; i--) {
+      const c = this.pressureCharges[i];
+      if (time >= c.fireAt) {
+        c.marker.destroy();
+        this.pressureCharges.splice(i, 1);
+        this.detonateCharge(c);
+        continue;
+      }
+      const t = 1 - (c.fireAt - time) / c.fuseMs;
+      bombMarker(c.marker, c.owner === 'player' ? this.pcol : this.ncol, c.x, c.y, t, c.markerScale);
+    }
+  }
+
+  private detonateCharge(c: PressureCharge): void {
+    const { scene } = this.arena;
+    const fx = c.owner === 'player' ? this.pfx : this.nfx;
+    const col = c.owner === 'player' ? this.pcol : this.ncol;
+
+    if (c.owner === 'player') {
+      this.arena.damagePlayerTargets(c.x, c.y, c.radius, c.damage, col(FIRE.amber));
+      // Alcohol perk: the blast lights any spirits pooled inside it.
+      if (this.arena.hasPerk('player', 'alcohol')) {
+        this.igniteAlcoholPuddlesNear(c.x, c.y, c.radius + 20, scene);
+      }
+    } else {
+      const v = this.arena.player;
+      if (v?.active && v.hp > 0 && Phaser.Math.Distance.Between(c.x, c.y, v.x, v.y) <= c.radius) {
+        v.takeDamage(c.damage, { source: c, sourceX: c.x, sourceY: c.y });
+        this.arena.spawnHitFlash(v.x, v.y, col(FIRE.amber));
+      }
+    }
+
+    const big = c.radius >= PRESSURE_RADIUS;
+    fx.explosion(c.x, c.y, c.radius, {
+      shards: big ? 16 : 9, smoke: big ? 3 : 1, duration: big ? 400 : 320,
+    });
+    scene.cameras.main.shake(big ? 150 : 90, big ? 0.005 : 0.002);
+    Sfx.playAt(big ? 'explosion-medium' : 'explosion-small', c.x, {
+      rate: big ? 1 : 1.2, volume: big ? 0.9 : 0.55,
+    });
+
+    if (c.cluster) this.scatterBomblets(c);
+  }
+
+  /** Cluster Bomb (R+): the shell breaks up and throws bomblets clear of its own crater. */
+  private scatterBomblets(c: PressureCharge): void {
+    const fx = c.owner === 'player' ? this.pfx : this.nfx;
+    const pad = 24;
+    for (let i = 0; i < CLUSTER_COUNT; i++) {
+      // Evenly spaced around the crater with a little wobble, so the spread is reliable
+      // to play around but never lands twice the same way.
+      const ang = (i / CLUSTER_COUNT) * Math.PI * 2 + (Math.random() - 0.5) * 0.7;
+      const dist = CLUSTER_MIN_THROW + Math.random() * (CLUSTER_MAX_THROW - CLUSTER_MIN_THROW);
+      const bx = Phaser.Math.Clamp(c.x + Math.cos(ang) * dist, pad, this.arena.width - pad);
+      const by = Phaser.Math.Clamp(c.y + Math.sin(ang) * dist, pad, this.arena.height - pad);
+      // The throw itself: a spray of embers out of the crater along each bomblet's line.
+      fx.embers(c.x, c.y, 4, { angle: ang, spread: 0.22, speed: dist * 2.2, size: 2.6, life: 300, rise: 10, depth: 5 });
+      this.plantCharge(bx, by, CLUSTER_DAMAGE, CLUSTER_RADIUS,
+        CLUSTER_FUSE_MS + i * CLUSTER_STAGGER_MS, false, c.owner, 0.72);
+    }
+    if (c.owner === 'player') this.arena.showFloatingText(c.x, c.y - 36, '💣 Cluster!', '#ff7733');
   }
 
   /** Molten's Pressure Bomb sears the hand that threw it. Called from the fire ability itself. */

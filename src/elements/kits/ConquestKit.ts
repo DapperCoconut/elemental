@@ -79,6 +79,9 @@ const TURRET_RANGE = 220;
 const BULLET_LIFE_MS = 1600;
 /** Radius a building occupies for projectile and bullet collision. */
 const BUILDING_R = 24;
+/** The same, for a single soldier — a little wider than the 12 a turret bullet needs, because
+ *  arena projectiles are drawn much larger than a tracer. */
+const TROOP_HIT_R = 16;
 /** How long a building's HP bar stays up after it was last touched. */
 const HP_BAR_MS = 4000;
 
@@ -697,17 +700,22 @@ export class ConquestKit implements ConquestMenuHost {
     this.fx(owner).thrust(f.x, f.y, ang, PIKE_REACH, color);
 
     // One target: a poke that swept a 260px line through everything would be the best
-    // clear in the game rather than the worst basic attack.
-    let victim: Fighter | null = null;
+    // clear in the game rather than the worst basic attack. Soldiers are in the running for
+    // it — a pike that passed straight through a garrison would leave the other side's board
+    // untouchable by hand.
+    let victim: Mark | null = null;
     let victimDist = Infinity;
-    for (const t of this.targetsOf(owner)) {
-      if (this.distToSegment(f.x, f.y, ex, ey, t.x, t.y) > PIKE_HALF_WIDTH) continue;
-      const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
-      if (d < victimDist) { victimDist = d; victim = t; }
+    for (const m of this.marksAgainst(owner)) {
+      if (m.kind === 'building') continue;
+      if (this.distToSegment(f.x, f.y, ex, ey, m.x, m.y) > PIKE_HALF_WIDTH) continue;
+      const d = Phaser.Math.Distance.Between(f.x, f.y, m.x, m.y);
+      if (d < victimDist) { victimDist = d; victim = m; }
     }
-    if (victim) {
-      victim.takeDamage(dmg);
-      this.api.spawnHitFlash(victim.x, victim.y, CNQ.steel);
+    if (victim?.kind === 'fighter') {
+      victim.f.takeDamage(dmg);
+      this.api.spawnHitFlash(victim.f.x, victim.f.y, CNQ.steel);
+    } else if (victim) {
+      this.hitMark(victim, dmg, { kind: 'fighter', f }, owner);
     }
 
     // The pike also reaches the other side's buildings — a base is not immune to the one
@@ -1139,25 +1147,62 @@ export class ConquestKit implements ConquestMenuHost {
   }
 
   /**
-   * Ordinary projectiles knocking down buildings. Done here rather than through an overlap in
-   * ArenaScene because buildings are not physics bodies — and because the town center's
+   * Ordinary projectiles knocking down buildings and soldiers. Done here rather than through an
+   * overlap in ArenaScene because neither is a physics body — and because the town center's
    * "shots fly over it" rule is simply a matter of not being in this list.
+   *
+   * Soldiers are tested first: they stand in front of the building that trained them, so a shot
+   * into an occupied square hits the garrison rather than the walls behind it.
    */
   private tickIncomingProjectiles(): void {
-    if (!this.buildings.length) return;
+    if (!this.buildings.length && !this.troops.length) return;
     // Snapshotted: `destroy()` splices the group's live array under us.
     for (const child of [...this.api.projectiles.getChildren()]) {
       const proj = child as Projectile;
       if (!proj.active) continue;
-      for (const b of this.buildings) {
-        const hostile = b.owner === 'player' ? !proj.isFromPlayer : proj.isFromPlayer;
+      const dmg = Math.max(1, Math.round(proj.damage * proj.perkBoost));
+
+      let struck = false;
+      for (const t of [...this.troops]) {
+        const hostile = t.owner === 'player' ? !proj.isFromPlayer : proj.isFromPlayer;
         if (!hostile) continue;
-        if (Phaser.Math.Distance.Between(b.x, b.y, proj.x, proj.y) > BUILDING_R) continue;
-        this.damageBuilding(b, Math.max(1, Math.round(proj.damage * proj.perkBoost)), null);
-        this.api.spawnHitFlash(proj.x, proj.y, CNQ.stone);
-        proj.destroy();
+        const tx = this.troopX(t);
+        const ty = this.troopY(t);
+        if (Phaser.Math.Distance.Between(tx, ty, proj.x, proj.y) > TROOP_HIT_R) continue;
+        this.hitMark({ kind: 'troop', t, x: tx, y: ty }, dmg, null, this.other(t.owner));
+        struck = true;
         break;
       }
+
+      if (!struck) {
+        for (const b of this.buildings) {
+          const hostile = b.owner === 'player' ? !proj.isFromPlayer : proj.isFromPlayer;
+          if (!hostile) continue;
+          if (Phaser.Math.Distance.Between(b.x, b.y, proj.x, proj.y) > BUILDING_R) continue;
+          this.damageBuilding(b, dmg, null);
+          this.api.spawnHitFlash(proj.x, proj.y, CNQ.stone);
+          struck = true;
+          break;
+        }
+      }
+
+      if (struck) proj.destroy();
+    }
+  }
+
+  /**
+   * Area damage from anywhere in the arena, routed in from ArenaScene's AoE chokepoint. Only
+   * soldiers answer to it: they are the one thing on the board with no physics body of their
+   * own, so without this hook a whole garrison sits inside a nuke and takes nothing.
+   */
+  notifyAoeDamage(cx: number, cy: number, radius: number, owner: Owner, damage: number): void {
+    if (!this.troops.length || damage <= 0) return;
+    for (const t of [...this.troops]) {
+      if (t.owner === owner) continue;
+      const tx = this.troopX(t);
+      const ty = this.troopY(t);
+      if (Phaser.Math.Distance.Between(cx, cy, tx, ty) > radius) continue;
+      this.hitMark({ kind: 'troop', t, x: tx, y: ty }, Math.max(1, Math.round(damage)), null, owner);
     }
   }
 
@@ -1186,26 +1231,28 @@ export class ConquestKit implements ConquestMenuHost {
       this.dragging = false;
       const from = this.dragFrom;
       this.dragFrom = -1;
-      if (cell >= 0 && cell !== from && this.adjacent(from, cell)) this.marchTroops('player', from, cell);
-      else if (cell >= 0 && cell !== from) {
+      // A press that never left its square was a click, not a march — so it falls through to
+      // whatever building the soldiers were standing on.
+      if (cell === from) { this.openMenuAt(from); return; }
+      if (cell >= 0 && this.adjacent(from, cell)) this.marchTroops('player', from, cell);
+      else if (cell >= 0) {
         this.api.showFloatingText(mouseX, mouseY - 20, 'ONE SQUARE AT A TIME', this.hex(CNQ.stoneDark));
       }
       return;
     }
 
     if (clicked && cell >= 0) {
-      // ── Open an upgrade menu ──
-      const town = this.townAt(cell);
-      const building = this.buildingAt(cell);
-      if (town && town.owner === 'player') { this.openMenu(town); return; }
-      if (building && building.owner === 'player') { this.openMenu(building); return; }
-
       // ── Start a drag ──
+      // Soldiers outrank the ground they stand on: troops spawn on top of their own barracks,
+      // so opening the menu here first would make that stack impossible to move at all.
       if (this.troops.some((t) => t.owner === 'player' && t.cell === cell)) {
         this.dragging = true;
         this.dragFrom = cell;
         return;
       }
+
+      // ── Open an upgrade menu ──
+      if (this.openMenuAt(cell)) return;
     }
 
     if (clicked) p.castAbility('conquest-banner', ctx);
@@ -1260,6 +1307,16 @@ export class ConquestKit implements ConquestMenuHost {
   }
 
   // ── Upgrade menu ───────────────────────────────────────────────────────────
+
+  /** Opens whatever of yours sits on a square. Returns false when nothing there is yours. */
+  private openMenuAt(cell: number): boolean {
+    if (cell < 0) return false;
+    const town = this.townAt(cell);
+    if (town && town.owner === 'player') { this.openMenu(town); return true; }
+    const building = this.buildingAt(cell);
+    if (building && building.owner === 'player') { this.openMenu(building); return true; }
+    return false;
+  }
 
   private openMenu(target: Building | Town): void {
     this.menuTarget = target;
@@ -1947,8 +2004,17 @@ export class ConquestKit implements ConquestMenuHost {
    * and soldier on the board indexes back into one, and razing a town would leave its empire
    * pointing at nothing.
    */
-  purgeSummons(x: number, y: number, radius: number, exceptOwner: 'player' | 'npc'): number {
-    const near = (px: number, py: number): boolean => Phaser.Math.Distance.Between(x, y, px, py) <= radius;
+  purgeSummons(
+    x: number, y: number, radius: number, exceptOwner: 'player' | 'npc',
+    report?: (px: number, py: number) => void,
+  ): number {
+    // Every caller here short-circuits the owner test first, so a true answer is always a kill —
+    // which makes this the one honest place to tell Ruin where the corpse fell.
+    const near = (px: number, py: number): boolean => {
+      if (Phaser.Math.Distance.Between(x, y, px, py) > radius) return false;
+      report?.(px, py);
+      return true;
+    };
     let razed = 0;
     for (const b of [...this.buildings]) {
       if (b.owner === exceptOwner || !near(b.x, b.y)) continue;

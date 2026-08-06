@@ -615,7 +615,7 @@ export class ChalkKit {
     const f = this.fighter(owner);
     this.avatar(owner)?.play('sweep');
     this.fx(owner).ring(f.x, f.y, 10, 46, CHK.red, 360);
-    this.api.showFloatingText(f.x, f.y - 44, '💣 FUSE LAID', this.hex(CHK.red));
+    this.api.showFloatingText(f.x, f.y - 44, '🧨 FUSE LAID', this.hex(CHK.red));
   }
 
   /** R — Perma-Chalk. Half a second of blue that stays until it is drawn again. */

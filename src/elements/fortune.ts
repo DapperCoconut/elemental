@@ -20,7 +20,7 @@ import { Ability, CastContext } from './Ability';
 const fire: Ability = {
   id: 'fortune-fire',
   name: 'Open Fire',
-  description: 'Fire whatever you are holding. You start with the pistol; everything better is behind the illegal tab of your own shop. Passive — Shopkeeper: a stall stands in the middle of the arena. Every 10 damage anybody deals earns that side 1 blood coin, and both sides can spend them at the counter — stand next to it and press 1–8, or T to change tab. Anything your enemy buys hands you back half of what they paid.',
+  description: 'Fire whatever you are holding. You start with the pistol; everything better is behind the illegal tab of your own shop. Passive — Shopkeeper: a stall stands in the middle of the arena. Every 20 damage anybody deals earns that side 1 blood coin, and both sides can spend them at the counter — stand next to it and press 1–8, or T to change tab. Anything your enemy buys hands you back half of what they paid.',
   displayKey: 'Click',
   cooldown: 140,
   cast(ctx: CastContext) { ctx.fortuneFire(ctx.targetX, ctx.targetY); },
@@ -67,6 +67,6 @@ export const fortuneElement: Element = {
   id: 'fortune',
   name: 'Fortune',
   color: 0xd8a531,
-  emoji: '💰',
+  emoji: '🪙',
   abilities: [fire, safeInvestment, riskyInvestment, paywall, payToWin],
 };

@@ -1220,7 +1220,7 @@ export class TechnologyKit {
           const fy = Phaser.Math.Clamp(c.y, 10, H - 10);
           this.arena.spawnHitFlash(fx, fy, 0xff8822);
           if (c.owner === 'player') {
-            this.arena.spawnFloatingText(fx, fy, '🚧 absorbed', '#ff9944');
+            this.arena.spawnFloatingText(fx, fy, '🧱 absorbed', '#ff9944');
           }
           if (this.firewallCharges[c.owner] === 0) {
             this.firewallRegenAt[c.owner] = time + FIREWALL_REGEN_MS;
@@ -1252,7 +1252,7 @@ export class TechnologyKit {
         this.firewallCharges[o] = FIREWALL_CHARGES;
         this.firewallRegenAt[o] = 0;
         if (o === 'player') {
-          this.arena.spawnFloatingText(this.arena.player.x, this.arena.player.y - 40, '🚧 Firewall restored', '#ff9944');
+          this.arena.spawnFloatingText(this.arena.player.x, this.arena.player.y - 40, '🧱 Firewall restored', '#ff9944');
         }
       }
     }
@@ -1281,7 +1281,7 @@ export class TechnologyKit {
           );
         }
         this.firewallObjs.push(
-          this.arena.scene.add.text(12, this.arena.scene.scale.height - 12, `🚧 ${charges}/${FIREWALL_CHARGES}`, {
+          this.arena.scene.add.text(12, this.arena.scene.scale.height - 12, `🧱 ${charges}/${FIREWALL_CHARGES}`, {
             fontSize: '13px', color: '#ff9944', fontFamily: 'monospace',
           }).setOrigin(0, 1).setDepth(50).setScrollFactor(0),
         );
@@ -1342,7 +1342,7 @@ export class TechnologyKit {
     const speedMult = Math.max(1, speed / (fighter.speed || 200));
     const dmg = Math.round(VIRUS_BASE_DMG * speedMult);
     fighter.takeDamage(dmg);
-    this.arena.showFloatingText(fighter.x, fighter.y - 30, `🐛 -${dmg}`, '#55dd55');
+    this.arena.showFloatingText(fighter.x, fighter.y - 30, `🦠 -${dmg}`, '#55dd55');
     return dmg;
   }
 
@@ -1547,7 +1547,7 @@ export class TechnologyKit {
         if (d < 34) {
           enemy.takeDamage(GOOSE_POKE_DMG);
           this.arena.spawnHitFlash(enemy.x, enemy.y, 0xeeeecc);
-          this.arena.spawnFloatingText(enemy.x, enemy.y - 44, '🦆 HONK!', '#eeeecc');
+          this.arena.spawnFloatingText(enemy.x, enemy.y - 44, '🪿 HONK!', '#eeeecc');
           this.gooseBackToWander(g, time);
         }
         break;
@@ -1574,7 +1574,7 @@ export class TechnologyKit {
             g.modeUntil = time + Phaser.Math.Between(1500, 2000);
             g.targetX = Phaser.Math.Between(60, W - 60);
             g.targetY = Phaser.Math.Between(60, H - 60);
-            this.arena.spawnFloatingText(enemy.x, enemy.y - 44, '🦆 grabbed!', '#eeeecc');
+            this.arena.spawnFloatingText(enemy.x, enemy.y - 44, '🪿 grabbed!', '#eeeecc');
           }
         }
         break;
@@ -1589,7 +1589,7 @@ export class TechnologyKit {
           g.bulletIcon = scene.add.text(g.x, g.y - 24, '•', { fontSize: '20px', color: '#ffee66' }).setOrigin(0.5).setDepth(16);
           g.mode = 'throw';
           g.modeUntil = time + 1200;
-          this.arena.spawnFloatingText(g.x, g.y - 40, '🦆 yoink!', '#ffee66');
+          this.arena.spawnFloatingText(g.x, g.y - 40, '🪿 yoink!', '#ffee66');
         }
         break;
       }
@@ -2046,7 +2046,7 @@ export class TechnologyKit {
     const title = scene.add.text(cx - BROWSER_W / 2 + 10, cy - BROWSER_H / 2 + 14, '🌐 NetScape Explorer', { fontSize: '13px', color: '#ccddee', fontFamily: 'monospace' }).setOrigin(0, 0.5).setDepth(46).setScrollFactor(0);
     const urlBar = scene.add.rectangle(cx, cy - BROWSER_H / 2 + 42, BROWSER_W - 24, 20, 0x0e0e18, 1).setStrokeStyle(1, 0x555577).setDepth(45).setScrollFactor(0);
     const url = scene.add.text(cx - BROWSER_W / 2 + 20, cy - BROWSER_H / 2 + 42, 'https://totally.legit.web', { fontSize: '11px', color: '#88aa88', fontFamily: 'monospace' }).setOrigin(0, 0.5).setDepth(46).setScrollFactor(0);
-    this.browserCoinText = scene.add.text(cx + BROWSER_W / 2 - 12, cy - BROWSER_H / 2 + 14, '💰 0', { fontSize: '13px', color: '#ffdd66', fontFamily: 'monospace' }).setOrigin(1, 0.5).setDepth(46).setScrollFactor(0);
+    this.browserCoinText = scene.add.text(cx + BROWSER_W / 2 - 12, cy - BROWSER_H / 2 + 14, '🪙 0', { fontSize: '13px', color: '#ffdd66', fontFamily: 'monospace' }).setOrigin(1, 0.5).setDepth(46).setScrollFactor(0);
     this.browserObjs = [frame, titleBar, title, urlBar, url, this.browserCoinText];
     this.showBrowserHome();
   }
@@ -2085,7 +2085,7 @@ export class TechnologyKit {
   }
 
   private updateBrowserCoinText(): void {
-    this.browserCoinText?.setText(`💰 ${this.browserCoins}`);
+    this.browserCoinText?.setText(`🪙 ${this.browserCoins}`);
   }
 
   /** Every coin earned on the web — clicker, factory or wheel — counts toward the mastery. */
@@ -2100,8 +2100,8 @@ export class TechnologyKit {
     const { cx, cy } = this.browserCenter();
     const bw = 190, bh = 54;
     this.browserContentObjs = [
-      ...this.mkBrowserButton(cx - 105, cy - 24, bw, bh, '💰 Coin clicker', 0x555522, () => this.showCoinClicker()),
-      ...this.mkBrowserButton(cx + 105, cy - 24, bw, bh, '🍩 Grub-Shop', 0x225544, () => this.showGrubShop()),
+      ...this.mkBrowserButton(cx - 105, cy - 24, bw, bh, '🪙 Coin clicker', 0x555522, () => this.showCoinClicker()),
+      ...this.mkBrowserButton(cx + 105, cy - 24, bw, bh, '🥯 Grub-Shop', 0x225544, () => this.showGrubShop()),
       ...this.mkBrowserButton(cx - 105, cy + 44, bw, bh, '🎡 Wheel of fortune', 0x442266, () => this.showWheel()),
       ...this.mkBrowserButton(cx + 105, cy + 44, bw, bh, '🚪 Door', 0x662222, () => this.doorExit()),
     ];
@@ -2111,7 +2111,7 @@ export class TechnologyKit {
     this.clearBrowserContent();
     const scene = this.arena.scene;
     const { cx, cy } = this.browserCenter();
-    const coin = scene.add.text(cx, cy + 14, '💰', { fontSize: '84px' }).setOrigin(0.5).setDepth(46).setScrollFactor(0)
+    const coin = scene.add.text(cx, cy + 14, '🪙', { fontSize: '84px' }).setOrigin(0.5).setDepth(46).setScrollFactor(0)
       .setInteractive({ useHandCursor: true });
     coin.on('pointerdown', () => {
       this.gainBrowserCoins(1);
@@ -2986,7 +2986,10 @@ export class TechnologyKit {
    * Ad boxes — pop-ups nailed to the floor, and the one thing Technology actually builds.
    * They are rectangles rather than points, so the circle is tested against the whole box.
    */
-  purgeSummons(x: number, y: number, radius: number, exceptOwner: 'player' | 'npc'): number {
+  purgeSummons(
+    x: number, y: number, radius: number, exceptOwner: 'player' | 'npc',
+    report?: (px: number, py: number) => void,
+  ): number {
     let razed = 0;
     for (let i = this.ads.length - 1; i >= 0; i--) {
       const ad = this.ads[i];
@@ -2994,6 +2997,9 @@ export class TechnologyKit {
       const nx = Phaser.Math.Clamp(x, ad.x, ad.x + ad.w);
       const ny = Phaser.Math.Clamp(y, ad.y, ad.y + ad.h);
       if (Phaser.Math.Distance.Between(x, y, nx, ny) > radius) continue;
+      // The box is a rectangle, so the corpse is reported at its middle rather than at the
+      // clamped point, which would sit on whichever edge the ring happened to touch.
+      report?.(ad.x + ad.w / 2, ad.y + ad.h / 2);
       this.ads.splice(i, 1);
       razed++;
     }

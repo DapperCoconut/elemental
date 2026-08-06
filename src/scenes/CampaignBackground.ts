@@ -1005,35 +1005,32 @@ const THEMES: Record<string, ThemeFn> = {
     scene.tweens.add({ targets: g, alpha: { from: 0.6, to: 1 }, duration: 1900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
   },
 
-  glass: (scene, ctr, w, h) => {
-    base(scene, ctr, w, h, 0x081418, 0x9fe8ff);
-    const rnd = new Phaser.Math.RandomDataGenerator(['glass-bg']);
+  dune: (scene, ctr, w, h) => {
+    base(scene, ctr, w, h, 0x1a1006, 0xe8c87a);
+    const rnd = new Phaser.Math.RandomDataGenerator(['dune-bg']);
     const g = scene.add.graphics();
-    // Shard slivers and one big radial crack.
+    // Ripple lines running across the drift, and one stepped ruin rising out of it.
     for (let i = 0; i < 14; i++) {
-      const x = rnd.integerInRange(20, w - 20);
       const y = rnd.integerInRange(20, h - 20);
-      const len = rnd.integerInRange(8, 26);
-      const a = rnd.realInRange(0, Math.PI);
-      g.lineStyle(1, 0x9fe8ff, rnd.realInRange(0.1, 0.28));
-      g.lineBetween(x, y, x + Math.cos(a) * len, y + Math.sin(a) * len);
-    }
-    const cx2 = rnd.integerInRange(w * 0.3, w * 0.7);
-    const cy2 = rnd.integerInRange(h * 0.3, h * 0.7);
-    for (let i = 0; i < 7; i++) {
-      const a = rnd.realInRange(0, Math.PI * 2);
-      g.lineStyle(1.2, 0xd8f6ff, 0.22);
-      let px = cx2;
-      let py = cy2;
-      let ca = a;
-      for (let s = 0; s < 3; s++) {
-        const nx = px + Math.cos(ca) * rnd.integerInRange(14, 34);
-        const ny = py + Math.sin(ca) * rnd.integerInRange(14, 34);
-        g.lineBetween(px, py, nx, ny);
-        px = nx; py = ny;
-        ca += rnd.realInRange(-0.5, 0.5);
+      const x = rnd.integerInRange(10, w - 60);
+      const len = rnd.integerInRange(24, 70);
+      g.lineStyle(1, 0xe8c87a, rnd.realInRange(0.1, 0.26));
+      g.beginPath();
+      g.moveTo(x, y);
+      for (let s = 1; s <= 4; s++) {
+        g.lineTo(x + (len * s) / 4, y + Math.sin(s * 1.6 + i) * 3);
       }
+      g.strokePath();
     }
+    const bx = rnd.integerInRange(w * 0.35, w * 0.65);
+    const by = rnd.integerInRange(h * 0.45, h * 0.7);
+    for (let s = 0; s < 4; s++) {
+      const bw = 30 - s * 6;
+      g.fillStyle(s === 0 ? 0x8d8b86 : 0xd9ab63, 0.2 + s * 0.05);
+      g.fillRect(bx - bw / 2 + s * 5, by - s * 11, bw, 9);
+    }
+    g.fillStyle(0xffd54a, 0.35);
+    g.fillCircle(bx + 15, by - 48, 4);
     ctr.add(g);
     scene.tweens.add({ targets: g, alpha: { from: 0.55, to: 0.9 }, duration: 3100, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
   },

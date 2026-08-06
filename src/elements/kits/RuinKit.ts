@@ -6,7 +6,7 @@ import type { CustomStatus } from './StatusHudKit';
 import { Sfx } from '../../audio';
 import {
   RUI, RuinAvatar, RuinColorFn, RuinFx, chainRun, crackWeb, decayCoat, jitter,
-  padlock, ruinRing, rustySpike, shredWedge,
+  padlock, rubyJewel, ruinCluster, ruinRing, rustySpike, shrapnelShard, shredWedge,
 } from './RuinVisuals';
 
 type Owner = 'player' | 'npc';
@@ -59,6 +59,60 @@ const DECAY_WEAKEN = 0.9;
 /** It never expires, so it has to stop somewhere: ten stacks is 2.6× damage taken. */
 const MAX_DECAY = 10;
 
+// ── Shatter Starter (Click upgrade) ──────────────────────────────────────────
+/**
+ * The ruin crystal. Red, half see-through, and the seed of every other Ruin upgrade: the
+ * skewer drinks them, the spikes chain off them, the cracks charge them. Buying anything else
+ * on this element without buying this first is buying a hook with nothing to hang on it.
+ */
+const CRYSTAL_R = 15;
+const CRYSTAL_TOUCH_DAMAGE = 10;
+/** Per victim, so walking over one costs a bite rather than a frame's worth of them. */
+const CRYSTAL_TOUCH_MS = 800;
+/** However many shots get shredded, the floor stops taking more than this. */
+const CRYSTAL_MAX = 14;
+/** Shred Slice grows one of its own every time it has dealt this much. */
+const CRYSTAL_PER_DAMAGE = 50;
+/** How close a shot has to pass to come out the other side rusted. */
+const RUST_R = CRYSTAL_R + 7;
+/** A rusted shot is half the size it was, and reads that way. */
+const RUST_SCALE = 0.5;
+
+// ── Lockjaw (E upgrade) ──────────────────────────────────────────────────────
+/** Per stack, every single time the ability is used — for the rest of the match. */
+const LOCKJAW_DAMAGE = 12;
+
+// ── Ruin Transfusion (R upgrade) ─────────────────────────────────────────────
+/** What a fed skewer takes instead of the rust: real damage, off whatever health they have. */
+const TRANSFUSION_FRACTION = 0.15;
+
+// ── Chain Reaction (F upgrade) ───────────────────────────────────────────────
+const BLAST_R = 150;
+const BLAST_DAMAGE = 25;
+/** A beat between links, so six crystals going up reads as a chain rather than one bang. */
+const CHAIN_DELAY_MS = 110;
+const SPIKE_COUNT = 12;
+const SPIKE_DAMAGE = 15;
+const SPIKE_SPEED = 440;
+const SPIKE_LIFE_MS = 1000;
+const SPIKE_HIT_R = 16;
+const SPIKE_LEN = 14;
+/** What one spike takes off the attack its victim last used, permanently. */
+const BLUNT_STEP = 0.1;
+const BLUNT_MAX = 7;
+
+// ── Ruin Cracks (Q upgrade) ──────────────────────────────────────────────────
+const CRACKS_PER_CAST = 2;
+const CRACK_R = 46;
+const CRACK_DPS = 12;
+const CRACK_TICK_MS = 500;
+/** Every crystal that goes off widens every crack. Deliberately uncapped. */
+const CRACK_GROWTH = 0.03;
+/** A crystal grown on top of a crack lashes out on this beat. */
+const BOLT_MS = 1500;
+const BOLT_DAMAGE = 15;
+const BOLT_RANGE = 200;
+
 // ── World objects ────────────────────────────────────────────────────────────
 
 /** A shredding wedge in flight. `hits` is per-fighter so it pierces without double-dipping. */
@@ -86,6 +140,63 @@ interface Skewer {
   vy: number;
   diesAt: number;
   riders: Fighter[];
+  seed: number;
+  /** Ruin Transfusion: it has drunk a crystal, so it glows and takes health instead of rust. */
+  fed: boolean;
+}
+
+/**
+ * A ruin crystal: the thing Shred Slice leaves where it tore a shot out of the air.
+ *
+ * It is a hazard, a filter and a fuse all at once — it bites whoever touches it, it rusts
+ * whatever flies through it, and the R, F and Q upgrades all read it rather than adding
+ * anything of their own to the board.
+ */
+interface Crystal {
+  owner: Owner;
+  x: number;
+  y: number;
+  seed: number;
+  bornAt: number;
+  /** Per-victim contact cooldown, so standing in one isn't instant death. */
+  bitAt: Map<Fighter, number>;
+  /** Grown on top of one of your cracks, so it throws ruinic lightning. */
+  charged: boolean;
+  nextBoltAt: number;
+  /** Chain Reaction: queued to go off at this timestamp. 0 while it is just sitting there. */
+  blowAt: number;
+}
+
+/** A ruin crack: a permanent sore on the floor that eats whoever stands in it. */
+interface Crack {
+  owner: Owner;
+  x: number;
+  y: number;
+  /** Starts at CRACK_R and grows 3% every time a crystal goes off. Nothing shrinks it. */
+  r: number;
+  seed: number;
+}
+
+/** One ruin spike thrown out of a detonating crystal. Pierces, so it remembers who it hit. */
+interface Spike {
+  owner: Owner;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  diesAt: number;
+  seed: number;
+  hits: Set<Fighter>;
+}
+
+/** A bolt of ruinic lightning, drawn for a few frames after it has already landed. */
+interface Bolt {
+  owner: Owner;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  until: number;
   seed: number;
 }
 
@@ -125,10 +236,12 @@ interface Side {
   aimY: number;
   /** How many stacks of rot this side has put on the arena. Never goes down. */
   decay: number;
+  /** Damage Shred Slice has dealt since it last grew a crystal, counting down from 50. */
+  shredDamage: number;
 }
 
 function makeSide(owner: Owner): Side {
-  return { owner, aimX: 0, aimY: 0, decay: 0 };
+  return { owner, aimX: 0, aimY: 0, decay: 0, shredDamage: 0 };
 }
 
 // ── Arena API ────────────────────────────────────────────────────────────────
@@ -162,9 +275,14 @@ export interface RuinArenaApi {
    * `exceptOwner`'s, and return how many died. ArenaScene owns the dispatch because it is the
    * only object that holds every kit.
    */
-  purgeSummons(x: number, y: number, radius: number, exceptOwner: Owner): number;
+  purgeSummons(
+    x: number, y: number, radius: number, exceptOwner: Owner,
+    report?: (px: number, py: number) => void,
+  ): number;
   /** Shred Slice: tear up the kit-local registered projectiles owned by `owner` in range. */
   shredRegisteredProjectiles(owner: Owner, x: number, y: number, radius: number): number;
+  hasUpgrade(slot: string): boolean;
+  hasNpcUpgrade(slot: string): boolean;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
 }
@@ -194,6 +312,24 @@ export class RuinKit {
   private rings: SpikeRing[] = [];
   private locks: Lock[] = [];
   private flecks: Fleck[] = [];
+  private crystals: Crystal[] = [];
+  private cracks: Crack[] = [];
+  private spikes: Spike[] = [];
+  private bolts: Bolt[] = [];
+  /** Accumulates toward CRACK_TICK_MS, so the cracks bite on a beat rather than every frame. */
+  private crackTick = 0;
+  /**
+   * Chain Reaction's blunting. Attacker → ability → how many ruin spikes have taken a bite out
+   * of it. Like Lockjaw it never expires, so it outlives everything else here.
+   */
+  private blunt = new Map<Fighter, { owner: Owner; stacks: Map<string, number> }>();
+  /**
+   * Lockjaw. Victim → ability → how many padlocks that ability has worn. It never expires and
+   * never comes off, so this outlives every lock in `locks`.
+   */
+  private lockjaw = new Map<Fighter, Map<string, number>>();
+  /** The `'cast'` listener attached to each lockjawed victim, kept so `reset()` can take it off. */
+  private lockjawHooks = new Map<Fighter, (abilityId: string) => void>();
   /** Everyone this kit has written `ruinIncomingMult` / `buffsInvertedUntil` onto. */
   private touched = new Set<Fighter>();
   private fleckAccum = 0;
@@ -263,6 +399,11 @@ export class RuinKit {
     return owner === 'player' ? this.api.elementId === 'ruin' : this.api.npcElementId === 'ruin';
   }
 
+  /** Whether that side has bought the shop upgrade in `slot`. */
+  private up(owner: Owner, slot: string): boolean {
+    return owner === 'player' ? this.api.hasUpgrade(slot) : this.api.hasNpcUpgrade(slot);
+  }
+
   /** True while `f` is threaded onto somebody's skewer. */
   private isRidden(f: Fighter): boolean {
     return this.skewers.some((s) => s.riders.includes(f));
@@ -288,6 +429,12 @@ export class RuinKit {
     for (const l of this.locks) {
       if (l.victim.active) l.victim.clearLocks();
     }
+    // Lockjaw's bite is an event listener rather than a field, so it is the one thing here that
+    // would survive a match on its own if it weren't unhooked by hand.
+    for (const [victim, hook] of this.lockjawHooks) victim.off('cast', hook);
+    this.lockjawHooks.clear();
+    this.lockjaw.clear();
+    this.blunt.clear();
 
     this.sides = { player: makeSide('player'), npc: makeSide('npc') };
     this.wedges = [];
@@ -295,6 +442,11 @@ export class RuinKit {
     this.rings = [];
     this.locks = [];
     this.flecks = [];
+    this.crystals = [];
+    this.cracks = [];
+    this.spikes = [];
+    this.bolts = [];
+    this.crackTick = 0;
     this.fleckAccum = 0;
     this.vizT = 0;
 
@@ -330,6 +482,11 @@ export class RuinKit {
    * Click — Shred Slice. The damage is ordinary; what the wedge is really for is the lane it
    * clears, since it keeps going through bodies *and* through whatever the other side had in
    * the air on the same line.
+   *
+   * With Shatter Starter, the lane it clears doesn't stay clear: every shot it tears apart
+   * leaves a ruin crystal standing where the shot died, and every fifty damage it deals grows
+   * one more. Nothing else on the element makes crystals, so this is where all four upgrades
+   * actually start.
    */
   doShred(owner: Owner, tx: number, ty: number): void {
     const f = this.fighter(owner);
@@ -405,6 +562,48 @@ export class RuinKit {
     this.api.showFloatingText(victim.x, victim.y - 52, `🔒 ${abilityName.toUpperCase()}`, this.hex(RUI.rust));
     this.api.showFloatingText(victim.x, victim.y - 32, 'LOCKED 20s', this.hex(RUI.red));
     Sfx.playAt('chain', victim.x, { volume: 0.9, rate: 0.8 });
+
+    if (this.up(owner, 'e')) this.addLockjaw(owner, victim, abilityId, abilityName);
+  }
+
+  /**
+   * Lockjaw. The padlock comes off after twenty seconds; the teeth marks don't. From here on
+   * that ability costs its owner 12 HP every single time they use it, and locking it again
+   * simply adds another set of teeth — there is no cap and no expiry, so a Ruin player who
+   * keeps picking the same ability turns it into a self-inflicted wound.
+   *
+   * Hung off `Fighter`'s `'cast'` event because that is the only place *every* route into an
+   * ability passes through: charge-and-release abilities stamp via `triggerCooldown`, and
+   * Psychic's delayed casts announce two seconds after they were paid for.
+   */
+  private addLockjaw(owner: Owner, victim: Fighter, abilityId: string, abilityName: string): void {
+    let byAbility = this.lockjaw.get(victim);
+    if (!byAbility) { byAbility = new Map<string, number>(); this.lockjaw.set(victim, byAbility); }
+    const stacks = (byAbility.get(abilityId) ?? 0) + 1;
+    byAbility.set(abilityId, stacks);
+
+    if (!this.lockjawHooks.has(victim)) {
+      const hook = (castId: string): void => this.biteLockjaw(owner, victim, castId);
+      this.lockjawHooks.set(victim, hook);
+      victim.on('cast', hook);
+    }
+
+    this.fx(owner).shatter(victim.x, victim.y - 20, 6, 22, RUI.rust, 420, 11);
+    this.api.showFloatingText(victim.x, victim.y - 68,
+      `🦷 LOCKJAW ×${stacks} — ${abilityName.toUpperCase()}`, this.hex(RUI.ember));
+  }
+
+  /** Somebody used an ability the jaws are still on. */
+  private biteLockjaw(owner: Owner, victim: Fighter, abilityId: string): void {
+    const stacks = this.lockjaw.get(victim)?.get(abilityId) ?? 0;
+    if (stacks <= 0 || !this.alive(victim)) return;
+    const cost = LOCKJAW_DAMAGE * stacks;
+    // The teeth belong to whoever set them, so this is not self-inflicted damage — it still has
+    // to land on a co-op ally carrying `allyDamageBlocked`.
+    Fighter.asNonAllyDamage(() => victim.takeDamage(cost));
+    this.fx(owner).bite(victim.x, victim.y, 24, RUI.rust);
+    this.api.showFloatingText(victim.x, victim.y - 56, `🦷 LOCKJAW ×${stacks}`, this.hex(RUI.ember));
+    Sfx.playAt('chain', victim.x, { volume: 0.55, rate: 1.35 });
   }
 
   /**
@@ -432,11 +631,12 @@ export class RuinKit {
       diesAt: this.now + SKEWER_LIFE_MS,
       riders: [],
       seed: Math.random() * 999,
+      fed: false,
     });
 
     this.avatar(owner)?.play('dash', ang);
     this.fx(owner).rustPuff(f.x, f.y, 8, 26, 480, 9);
-    this.api.showFloatingText(f.x, f.y - 46, '🔴 RUSTY SKEWER', this.hex(RUI.rust));
+    this.api.showFloatingText(f.x, f.y - 46, '🩸 RUSTY SKEWER', this.hex(RUI.rust));
     Sfx.playAt('whoosh', f.x, { volume: 0.8, rate: 0.7 });
   }
 
@@ -479,10 +679,56 @@ export class RuinKit {
     fx.ring(f.x, f.y, 20, Math.max(this.api.width, this.api.height) * 0.75, RUI.decay, 900);
     for (const t of this.targetsOf(owner)) {
       fx.rustPuff(t.x, t.y, 12, 34, 700, 10);
-      this.api.showFloatingText(t.x, t.y - 44, `🐛 DECAY ×${s.decay}`, this.hex(RUI.decay));
+      this.api.showFloatingText(t.x, t.y - 44, `🦠 DECAY ×${s.decay}`, this.hex(RUI.decay));
     }
     this.api.showFloatingText(f.x, f.y - 56, '☠️ UNSTOPPABLE DECAY', this.hex(RUI.decay));
     Sfx.playAt('curse-cast', f.x, { volume: 0.95, rate: 0.65 });
+
+    if (this.up(owner, 'q')) this.openCracks(owner);
+  }
+
+  /**
+   * Ruin Cracks. Two more sores torn into the floor with every cast of the rot — they hurt
+   * whoever stands in them, they never close, and every crystal that goes off anywhere on the
+   * board widens all of them by another three percent.
+   *
+   * The other half is what they do to a crystal grown on top of one: the crack feeds it, and
+   * a fed crystal stops being a thing you have to walk into and starts shooting at you.
+   */
+  private openCracks(owner: Owner): void {
+    const fx = this.fx(owner);
+    for (let i = 0; i < CRACKS_PER_CAST; i++) {
+      const spot = this.findCrackSpot(owner);
+      this.cracks.push({ owner, x: spot.x, y: spot.y, r: CRACK_R, seed: Math.random() * 999 });
+      fx.crack(spot.x, spot.y, CRACK_R * 1.2);
+      fx.ring(spot.x, spot.y, 6, CRACK_R, RUI.ancient, 620);
+      Sfx.playAt('quake', spot.x, { volume: 0.75, rate: 1.1 });
+    }
+    this.api.showFloatingText(this.fighter(owner).x, this.fighter(owner).y - 74,
+      `🕳️ ${CRACKS_PER_CAST} RUIN CRACKS`, this.hex(RUI.ancient));
+  }
+
+  /**
+   * Somewhere to tear the next crack open. Sampled rather than solved: twenty throws, keep the
+   * one furthest from every crack already down, so a long match spreads them over the floor
+   * instead of stacking a tower of them on one spot.
+   */
+  private findCrackSpot(owner: Owner): { x: number; y: number } {
+    const pad = CRACK_R + 24;
+    let best = { x: (this.left + this.right) / 2, y: (this.top + this.bottom) / 2 };
+    let bestScore = -1;
+    for (let i = 0; i < 20; i++) {
+      const x = Phaser.Math.Between(this.left + pad, this.right - pad);
+      const y = Phaser.Math.Between(this.top + pad, this.bottom - pad);
+      let score = Infinity;
+      for (const c of this.cracks) {
+        if (c.owner !== owner) continue;
+        score = Math.min(score, Phaser.Math.Distance.Between(x, y, c.x, c.y));
+      }
+      if (score === Infinity) return { x, y };
+      if (score > bestScore) { bestScore = score; best = { x, y }; }
+    }
+    return best;
   }
 
   // ── Update ─────────────────────────────────────────────────────────────────
@@ -498,6 +744,10 @@ export class RuinKit {
     this.updateWedges(time, delta);
     this.updateSkewers(time, delta);
     this.updateRings(time);
+    this.updateCrystals(time, delta);
+    this.rustProjectiles();
+    this.updateCracks(time, delta);
+    this.updateSpikes(time, delta);
     this.updateLocks(time, delta);
     this.updateDecay(time, delta);
     this.updateAvatars(delta, playerIs, npcIs);
@@ -513,6 +763,318 @@ export class RuinKit {
     // goes over, because a spike that passes behind a body reads as a decal.
     if (!this.groundGfx) this.groundGfx = scene.add.graphics().setDepth(4);
     if (!this.airGfx) this.airGfx = scene.add.graphics().setDepth(8);
+  }
+
+  // ── Ruin crystals (Shatter Starter) ────────────────────────────────────────
+
+  private crystalsOf(owner: Owner): Crystal[] {
+    return this.crystals.filter((c) => c.owner === owner);
+  }
+
+  /**
+   * Grow a crystal. The board is capped per side, and the cap is enforced by shattering the
+   * *oldest* one — a Ruin player who keeps shredding gets a moving field of them rather than a
+   * floor that silently stops accepting new ones.
+   */
+  private spawnCrystal(owner: Owner, x: number, y: number): void {
+    const mine = this.crystalsOf(owner);
+    if (mine.length >= CRYSTAL_MAX) {
+      const oldest = mine.reduce((a, b) => (a.bornAt <= b.bornAt ? a : b));
+      this.removeCrystal(oldest);
+      this.fx(owner).shatter(oldest.x, oldest.y, 5, 20, RUI.ruby, 340, 9);
+    }
+    this.crystals.push({
+      owner,
+      x: Phaser.Math.Clamp(x, this.left + CRYSTAL_R, this.right - CRYSTAL_R),
+      y: Phaser.Math.Clamp(y, this.top + CRYSTAL_R, this.bottom - CRYSTAL_R),
+      seed: Math.random() * 999,
+      bornAt: this.now,
+      bitAt: new Map<Fighter, number>(),
+      charged: false,
+      nextBoltAt: this.now + BOLT_MS,
+      blowAt: 0,
+    });
+    this.fx(owner).shatter(x, y, 6, 20, RUI.ruby, 380, 9);
+    Sfx.playAt('crystal-shatter', x, { volume: 0.45, rate: 1.15 });
+  }
+
+  private removeCrystal(c: Crystal): void {
+    const i = this.crystals.indexOf(c);
+    if (i >= 0) this.crystals.splice(i, 1);
+  }
+
+  /** Shred Slice's other tally: fifty damage dealt is one more crystal, wherever it landed. */
+  private creditShredDamage(owner: Owner, amount: number, x: number, y: number): void {
+    if (!this.up(owner, 'click')) return;
+    const s = this.side(owner);
+    s.shredDamage += amount;
+    while (s.shredDamage >= CRYSTAL_PER_DAMAGE) {
+      s.shredDamage -= CRYSTAL_PER_DAMAGE;
+      this.spawnCrystal(owner, x + (Math.random() - 0.5) * 30, y + (Math.random() - 0.5) * 30);
+    }
+  }
+
+  private updateCrystals(time: number, delta: number): void {
+    void delta;
+    if (this.crystals.length === 0) return;
+
+    for (let i = this.crystals.length - 1; i >= 0; i--) {
+      const c = this.crystals[i];
+
+      // Sitting on one of your own cracks: the crack feeds it, and it starts shooting.
+      c.charged = this.cracks.some((k) => k.owner === c.owner
+        && Phaser.Math.Distance.Between(c.x, c.y, k.x, k.y) <= k.r);
+
+      // Contact. Cheap enough to be an accident and slow enough not to be a wall.
+      for (const t of this.targetsOf(c.owner)) {
+        if (Phaser.Math.Distance.Between(c.x, c.y, t.x, t.y) > CRYSTAL_R + 16) continue;
+        if (time - (c.bitAt.get(t) ?? -Infinity) < CRYSTAL_TOUCH_MS) continue;
+        c.bitAt.set(t, time);
+        t.takeDamage(CRYSTAL_TOUCH_DAMAGE);
+        this.api.spawnHitFlash(t.x, t.y, RUI.ruby);
+        this.fx(c.owner).bite(t.x, t.y, 22, RUI.ruby);
+      }
+
+      if (c.charged && time >= c.nextBoltAt) this.lash(c, time);
+
+      if (c.blowAt > 0 && time >= c.blowAt) {
+        this.crystals.splice(i, 1);
+        this.blowCrystal(c, time);
+      }
+    }
+  }
+
+  /**
+   * Ruinic lightning off a crystal standing in a crack. It picks the nearest thing it can
+   * reach and hits it — there is no dodging it and no line of sight to break, which is the
+   * reward for having built a crystal on top of a crack in the first place.
+   */
+  private lash(c: Crystal, time: number): void {
+    c.nextBoltAt = time + BOLT_MS;
+    let victim: Fighter | null = null;
+    let best = BOLT_RANGE;
+    for (const t of this.targetsOf(c.owner)) {
+      const d = Phaser.Math.Distance.Between(c.x, c.y, t.x, t.y);
+      if (d < best) { best = d; victim = t; }
+    }
+    if (!victim) return;
+
+    victim.takeDamage(BOLT_DAMAGE);
+    this.bolts.push({
+      owner: c.owner, x0: c.x, y0: c.y, x1: victim.x, y1: victim.y,
+      until: time + 180, seed: Math.random() * 999,
+    });
+    this.api.spawnHitFlash(victim.x, victim.y, RUI.ancient);
+    this.api.showFloatingText(victim.x, victim.y - 50, '⚡ RUINIC LIGHTNING', this.hex(RUI.ancient));
+    Sfx.playAt('zap', victim.x, { volume: 0.7, rate: 0.85 });
+  }
+
+  /**
+   * Every shot in the air, checked against every crystal on the floor.
+   *
+   * Deliberately blind to whose shot it is: a crystal field is a filter over a piece of the
+   * arena, not a shield, so shooting through your own is as much of a decision as walking
+   * through it. What comes out the far side is half the size and no longer does damage at all
+   * — it moves health into the weak pool instead, which walks past shields but can never
+   * finish anybody off.
+   *
+   * The first half of the sweep is housekeeping: a spent shot hands its rust back, because the
+   * projectile group recycles dead members and a stale flag would rust the next thing fired
+   * out of the same object.
+   */
+  private rustProjectiles(): void {
+    for (const obj of this.api.projectiles.getChildren()) {
+      const p = obj as Projectile;
+      if (!p.active) {
+        if (!p.ruinRusted) continue;
+        p.ruinRusted = false;
+        p.setScale(p.scaleX / RUST_SCALE, p.scaleY / RUST_SCALE);
+        continue;
+      }
+      if (p.isHeal || p.ruinRusted) continue;
+      for (const c of this.crystals) {
+        if (Phaser.Math.Distance.Between(p.x, p.y, c.x, c.y) > RUST_R) continue;
+        p.ruinRusted = true;
+        p.setScale(p.scaleX * RUST_SCALE, p.scaleY * RUST_SCALE);
+        this.fx(c.owner).rustPuff(p.x, p.y, 4, 12, 300, 9);
+        break;
+      }
+    }
+  }
+
+  /**
+   * A rusted shot landing, called from ArenaScene's two projectile chokepoints before the
+   * ordinary damage is worked out. Returns true when it has handled the hit outright.
+   *
+   * The move between the two health pools is not damage, so it goes around shields the same
+   * way the skewer's rust does — and for the same reason it is skipped for a body whose HP
+   * isn't ours to write, which falls back to the shot simply landing normally.
+   */
+  applyRustedHit(proj: Projectile, victim: Fighter): boolean {
+    if (!proj.ruinRusted) return false;
+    if (victim.netGhost || victim.allyDamageBlocked || !this.alive(victim)) return false;
+
+    const want = Math.max(1, Math.round(proj.damage));
+    const moved = Math.min(want, Math.max(0, victim.hp - 1));
+    victim.hp -= moved;
+    victim.weakHp += moved;
+    const owner: Owner = this.isEnemyOf('player', victim) ? 'player' : 'npc';
+    this.fx(owner).rustPuff(victim.x, victim.y, 8, 24, 480, 10);
+    this.api.spawnHitFlash(proj.x, proj.y, RUI.rust);
+    this.api.showFloatingText(victim.x, victim.y - 40, `⚙️ ${Math.round(moved)} RUSTED`, this.hex(RUI.rust));
+    Sfx.playAt('crystal-shatter', victim.x, { volume: 0.5, rate: 0.9 });
+    proj.setActive(false).setVisible(false);
+    (proj.body as Phaser.Physics.Arcade.Body | null)?.stop();
+    return true;
+  }
+
+  // ── Chain Reaction ─────────────────────────────────────────────────────────
+
+  /** Line a crystal up to go off. First writer wins, which is what stops a chain looping. */
+  private queueBlast(c: Crystal, at: number): void {
+    if (c.blowAt > 0) return;
+    c.blowAt = at;
+  }
+
+  /**
+   * One link of the chain: a blast, a full turn of spikes, three percent onto every crack, and
+   * a fuse lit under every other crystal in reach. Nothing here recurses — neighbours are
+   * *queued*, so a field of a dozen goes off as a run of bangs rather than one stack overflow.
+   */
+  private blowCrystal(c: Crystal, time: number): void {
+    const fx = this.fx(c.owner);
+    fx.shatter(c.x, c.y, 18, BLAST_R * 0.5, RUI.ruby, 640, 11);
+    fx.ring(c.x, c.y, 16, BLAST_R, RUI.ruby, 560);
+    fx.crack(c.x, c.y, BLAST_R * 0.6);
+    Sfx.playAt('explosion-medium', c.x, { volume: 0.85, rate: 1 });
+
+    for (const t of this.targetsOf(c.owner)) {
+      if (Phaser.Math.Distance.Between(c.x, c.y, t.x, t.y) > BLAST_R) continue;
+      t.takeDamage(BLAST_DAMAGE);
+      this.api.spawnHitFlash(t.x, t.y, RUI.ruby);
+    }
+
+    // The spikes. Fanned off a random offset so two crystals going up together don't throw
+    // their spikes down identical lines.
+    const off = Math.random() * Math.PI * 2;
+    for (let i = 0; i < SPIKE_COUNT; i++) {
+      const a = off + (i / SPIKE_COUNT) * Math.PI * 2;
+      this.spikes.push({
+        owner: c.owner,
+        x: c.x + Math.cos(a) * 12,
+        y: c.y + Math.sin(a) * 12,
+        vx: Math.cos(a) * SPIKE_SPEED,
+        vy: Math.sin(a) * SPIKE_SPEED,
+        diesAt: time + SPIKE_LIFE_MS,
+        seed: Math.random() * 999,
+        hits: new Set<Fighter>(),
+      });
+    }
+
+    for (const k of this.cracks) {
+      if (k.owner === c.owner) k.r *= 1 + CRACK_GROWTH;
+    }
+
+    for (const other of this.crystals) {
+      if (other.owner !== c.owner) continue;
+      if (Phaser.Math.Distance.Between(c.x, c.y, other.x, other.y) > BLAST_R) continue;
+      this.queueBlast(other, time + CHAIN_DELAY_MS);
+    }
+  }
+
+  private updateSpikes(time: number, delta: number): void {
+    const dt = delta / 1000;
+    for (let i = this.spikes.length - 1; i >= 0; i--) {
+      const sp = this.spikes[i];
+      sp.x += sp.vx * dt;
+      sp.y += sp.vy * dt;
+
+      for (const t of this.targetsOf(sp.owner)) {
+        if (sp.hits.has(t)) continue;
+        if (Phaser.Math.Distance.Between(sp.x, sp.y, t.x, t.y) > SPIKE_HIT_R) continue;
+        sp.hits.add(t);
+        t.takeDamage(SPIKE_DAMAGE);
+        this.api.spawnHitFlash(t.x, t.y, RUI.ruby);
+        this.addBlunt(sp.owner, t);
+      }
+
+      // A spike into another crystal keeps the chain running past the blast radius.
+      for (const c of this.crystals) {
+        if (c.owner !== sp.owner || c.blowAt > 0) continue;
+        if (Phaser.Math.Distance.Between(sp.x, sp.y, c.x, c.y) > CRYSTAL_R + 6) continue;
+        this.queueBlast(c, time + CHAIN_DELAY_MS);
+      }
+
+      const gone = time >= sp.diesAt
+        || sp.x < this.left - 12 || sp.x > this.right + 12
+        || sp.y < this.top - 12 || sp.y > this.bottom + 12;
+      if (gone) this.spikes.splice(i, 1);
+    }
+
+    for (let i = this.bolts.length - 1; i >= 0; i--) {
+      if (time >= this.bolts[i].until) this.bolts.splice(i, 1);
+    }
+  }
+
+  /**
+   * A spike's real payload: it takes a permanent bite out of whatever attack its victim used
+   * last. Seven bites is the floor, at which point that one ability is doing 48% of what it
+   * used to — and since nothing here ever expires, a long fight against Ruin is a fight where
+   * everything you like using slowly stops working.
+   */
+  private addBlunt(owner: Owner, victim: Fighter): void {
+    const abilityId = victim.lastCastAbilityId;
+    if (!abilityId) return;
+    let rec = this.blunt.get(victim);
+    if (!rec) { rec = { owner, stacks: new Map<string, number>() }; this.blunt.set(victim, rec); }
+    const stacks = Math.min(BLUNT_MAX, (rec.stacks.get(abilityId) ?? 0) + 1);
+    if (stacks === rec.stacks.get(abilityId)) return;
+    rec.stacks.set(abilityId, stacks);
+    this.api.showFloatingText(victim.x, victim.y - 70,
+      `🪓 ${this.nameOfAbility(victim, abilityId).toUpperCase()} −${stacks * 10}%`, this.hex(RUI.ruby));
+  }
+
+  /**
+   * What the blunting is worth, seen from the receiving end.
+   *
+   * `takeDamage` has no attacker reference, so — exactly like the decay's "they deal 10% less"
+   * — the cut is applied to whoever the blunted attacker is aimed at rather than to the
+   * attacker themselves. The ability it reads is `lastCastAbilityId`, which is the same
+   * "whatever they just used" that the spikes bit into.
+   */
+  private bluntAgainst(victim: Fighter): number {
+    if (this.blunt.size === 0) return 1;
+    let m = 1;
+    for (const [attacker, rec] of this.blunt) {
+      // Only the side that planted the spikes gets the benefit.
+      if (this.isEnemyOf(rec.owner, victim) || !this.alive(attacker)) continue;
+      const id = attacker.lastCastAbilityId;
+      if (!id) continue;
+      const n = rec.stacks.get(id) ?? 0;
+      if (n > 0) m = Math.min(m, Math.pow(1 - BLUNT_STEP, n));
+    }
+    return m;
+  }
+
+  // ── Ruin cracks ────────────────────────────────────────────────────────────
+
+  private updateCracks(time: number, delta: number): void {
+    if (this.cracks.length === 0) return;
+    void time;
+    this.crackTick += delta;
+    if (this.crackTick < CRACK_TICK_MS) return;
+    this.crackTick = 0;
+
+    const bite = Math.round(CRACK_DPS * (CRACK_TICK_MS / 1000));
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const mine = this.cracks.filter((k) => k.owner === owner);
+      if (mine.length === 0) continue;
+      for (const t of this.targetsOf(owner)) {
+        if (!mine.some((k) => Phaser.Math.Distance.Between(k.x, k.y, t.x, t.y) <= k.r)) continue;
+        t.takeDamage(bite);
+        this.fx(owner).rustPuff(t.x, t.y + 8, 4, 14, 320, 4);
+      }
+    }
   }
 
   // ── Shred Slice ────────────────────────────────────────────────────────────
@@ -533,6 +1095,7 @@ export class RuinKit {
         t.takeDamage(SHRED_DAMAGE);
         this.api.spawnHitFlash(t.x, t.y, RUI.red);
         this.fx(w.owner).bite(t.x, t.y, 26, RUI.red);
+        this.creditShredDamage(w.owner, SHRED_DAMAGE, t.x, t.y);
       }
 
       w.eaten += this.shredProjectilesAt(w.owner, w.x, w.y);
@@ -558,10 +1121,16 @@ export class RuinKit {
    * Tear apart every one of the other side's shots near a point. Two pools have to be swept:
    * the shared physics group (where most elements' projectiles live) and the kit-local
    * registry, which is the only handle on the ones that never join a group.
+   *
+   * With Shatter Starter every kill leaves a crystal standing where the shot died. The
+   * kit-local pool only reports a count rather than positions, so those crystals grow around
+   * the wedge instead — close enough, since that is where the shot was.
    */
   private shredProjectilesAt(owner: Owner, x: number, y: number): number {
     let eaten = 0;
+    const eatR = SHRED_EAT_R;
     const mineIsPlayer = owner === 'player';
+    const shatters = this.up(owner, 'click');
     // Copied first: `getChildren()` hands back the group's live array, and destroying out of
     // it mid-loop would step over the shot that slid into the gap.
     for (const obj of this.api.projectiles.getChildren().slice()) {
@@ -569,14 +1138,20 @@ export class RuinKit {
       if (!p.active) continue;
       // `isHeal` shots are somebody's medicine, not an attack — leave them alone.
       if (p.isFromPlayer === mineIsPlayer || p.isHeal) continue;
-      if (Phaser.Math.Distance.Between(p.x, p.y, x, y) > SHRED_EAT_R) continue;
+      if (Phaser.Math.Distance.Between(p.x, p.y, x, y) > eatR) continue;
       this.fx(owner).shatter(p.x, p.y, 5, 20, RUI.bone, 380, 10);
       Sfx.playAt('crystal-shatter', p.x, { volume: 0.4, rate: 1.4 });
+      const px = p.x;
+      const py = p.y;
       p.destroy();
       eaten++;
+      if (shatters) this.spawnCrystal(owner, px, py);
     }
-    eaten += this.api.shredRegisteredProjectiles(mineIsPlayer ? 'npc' : 'player', x, y, SHRED_EAT_R);
-    return eaten;
+    const registered = this.api.shredRegisteredProjectiles(mineIsPlayer ? 'npc' : 'player', x, y, eatR);
+    for (let i = 0; shatters && i < registered; i++) {
+      this.spawnCrystal(owner, x + (Math.random() - 0.5) * 34, y + (Math.random() - 0.5) * 34);
+    }
+    return eaten + registered;
   }
 
   // ── Rusty Skewer ───────────────────────────────────────────────────────────
@@ -590,6 +1165,10 @@ export class RuinKit {
 
       const tipX = s.x + Math.cos(s.ang) * SKEWER_LEN * 0.5;
       const tipY = s.y + Math.sin(s.ang) * SKEWER_LEN * 0.5;
+
+      // Ruin Transfusion: a crystal in the spike's path is drunk rather than passed, and the
+      // shaft comes out the far side lit. It only ever needs one.
+      if (this.up(s.owner, 'r') && !s.fed) this.drinkCrystal(s, tipX, tipY);
 
       if (s.riders.length < SKEWER_MAX_RIDERS) {
         for (const t of this.targetsOf(s.owner)) {
@@ -623,6 +1202,30 @@ export class RuinKit {
     }
   }
 
+  /**
+   * Ruin Transfusion. The spike runs through one of your own crystals on the way out and comes
+   * back lit with what was inside it.
+   *
+   * What it changes is the *kind* of harm: an ordinary skewer moves a tenth of somebody into
+   * the grey pool, where it drains slowly and soaks the hits behind it on the way. A fed one
+   * skips all of that and takes fifteen percent of them outright, which is worse for anybody
+   * who was ever going to survive the ride.
+   */
+  private drinkCrystal(s: Skewer, tipX: number, tipY: number): void {
+    for (const c of this.crystals) {
+      if (c.owner !== s.owner || c.blowAt > 0) continue;
+      if (Phaser.Math.Distance.Between(tipX, tipY, c.x, c.y) > CRYSTAL_R + SKEWER_HALF_WIDTH) continue;
+      this.removeCrystal(c);
+      s.fed = true;
+      const fx = this.fx(s.owner);
+      fx.shatter(c.x, c.y, 12, 34, RUI.ruby, 480, 11);
+      fx.ring(c.x, c.y, 6, 40, RUI.ruby, 380);
+      this.api.showFloatingText(c.x, c.y - 30, '🩸 TRANSFUSION', this.hex(RUI.ruby));
+      Sfx.playAt('crystal-shatter', c.x, { volume: 0.9, rate: 0.6 });
+      return;
+    }
+  }
+
   /** Somebody goes onto the spike: ten damage, and a tenth of them turned to rust. */
   private impale(s: Skewer, victim: Fighter): void {
     s.riders.push(victim);
@@ -630,10 +1233,16 @@ export class RuinKit {
     victim.skeweredUntil = this.now + 300;
     victim.applyDisarm(250);
 
-    // The conversion is a straight move between two health pools rather than damage, so it
-    // walks past shields on purpose — and is skipped for a fighter whose HP isn't ours to
-    // write (an online replica, or an ally under co-op friendly fire).
-    if (!victim.netGhost && !victim.allyDamageBlocked) {
+    if (s.fed) {
+      // A fed spike deals it instead of moving it, so this one goes through the ordinary
+      // damage path — shields, mitigation and all — rather than around it.
+      const bled = Math.max(1, Math.round(victim.hp * TRANSFUSION_FRACTION));
+      victim.takeDamage(bled);
+      this.api.showFloatingText(victim.x, victim.y - 56, `🩸 ${bled} TRANSFUSED`, this.hex(RUI.ruby));
+    } else if (!victim.netGhost && !victim.allyDamageBlocked) {
+      // The conversion is a straight move between two health pools rather than damage, so it
+      // walks past shields on purpose — and is skipped for a fighter whose HP isn't ours to
+      // write (an online replica, or an ally under co-op friendly fire).
       const rusted = Math.max(1, Math.round(victim.hp * SKEWER_RUST_FRACTION));
       victim.hp = Math.max(1, victim.hp - rusted);
       victim.weakHp += rusted;
@@ -641,10 +1250,10 @@ export class RuinKit {
     }
 
     const fx = this.fx(s.owner);
-    fx.bite(victim.x, victim.y, 32, RUI.blood);
+    fx.bite(victim.x, victim.y, 32, s.fed ? RUI.ruby : RUI.blood);
     fx.rustPuff(victim.x, victim.y, 8, 26, 520, 10);
     this.api.spawnHitFlash(victim.x, victim.y, RUI.blood);
-    this.api.showFloatingText(victim.x, victim.y - 38, '🔴 SKEWERED', this.hex(RUI.red));
+    this.api.showFloatingText(victim.x, victim.y - 38, '🩸 SKEWERED', this.hex(RUI.red));
     Sfx.playAt('stab', victim.x, { volume: 0.9, rate: 0.75 });
   }
 
@@ -657,7 +1266,7 @@ export class RuinKit {
       const py = Phaser.Math.Clamp(f.y, this.top + 30, this.bottom - 30);
       this.body(f).reset(px, py);
       fx.shatter(px, py, 7, 34, RUI.blood, 460, 10);
-      this.api.showFloatingText(px, py - 42, onWall ? '🚧 TORN OFF' : '🔴 SLID FREE', this.hex(RUI.rust));
+      this.api.showFloatingText(px, py - 42, onWall ? '🧱 TORN OFF' : '🩸 SLID FREE', this.hex(RUI.rust));
     }
     const ex = Phaser.Math.Clamp(s.x, this.left, this.right);
     const ey = Phaser.Math.Clamp(s.y, this.top, this.bottom);
@@ -709,6 +1318,21 @@ export class RuinKit {
     if (razed > 0) {
       this.api.showFloatingText(r.x, r.y - 60, `🏚️ ${razed} RAZED`, this.hex(RUI.rust));
       Sfx.playAt('explosion-medium', r.x, { volume: 0.8, rate: 0.6 });
+    }
+
+    // Chain Reaction: the eruption is also a detonator. Every crystal it reaches goes off, and
+    // every crystal *those* reach goes off behind it — the ring is only ever the first link.
+    if (!this.up(r.owner, 'f')) return;
+    let lit = 0;
+    for (const c of this.crystals) {
+      if (c.owner !== r.owner || c.blowAt > 0) continue;
+      if (Phaser.Math.Distance.Between(r.x, r.y, c.x, c.y) > RING_R) continue;
+      this.queueBlast(c, this.now + lit * CHAIN_DELAY_MS);
+      lit++;
+    }
+    if (lit > 0) {
+      this.api.showFloatingText(r.x, r.y - 78, `💥 CHAIN REACTION ×${lit}`, this.hex(RUI.ruby));
+      Sfx.playAt('crystal-shatter', r.x, { volume: 0.8, rate: 0.7 });
     }
   }
 
@@ -785,8 +1409,11 @@ export class RuinKit {
       for (const owner of ['player', 'npc'] as Owner[]) {
         const st = this.sides[owner].decay;
         if (!st) continue;
-        m *= this.isEnemyOf(owner, f) ? Math.pow(DECAY_VULN, st) : Math.pow(DECAY_WEAKEN, st);
+        const curve = this.decayCurve(owner);
+        m *= this.isEnemyOf(owner, f) ? curve.vuln : curve.weaken;
       }
+      // Chain Reaction's blunting rides the same field, for the same reason.
+      m *= this.bluntAgainst(f);
       f.ruinIncomingMult = m;
       this.touched.add(f);
     }
@@ -829,6 +1456,26 @@ export class RuinKit {
       if (this.sides[owner].decay && this.isEnemyOf(owner, f)) n += this.sides[owner].decay;
     }
     return n;
+  }
+
+  /** What one side's rot is worth, as three products — a flat 10% a stack, compounded. */
+  private decayCurve(owner: Owner): { vuln: number; weaken: number; slow: number } {
+    const n = this.sides[owner].decay;
+    return {
+      vuln: Math.pow(DECAY_VULN, n),
+      weaken: Math.pow(DECAY_WEAKEN, n),
+      slow: Math.pow(DECAY_SLOW, n),
+    };
+  }
+
+  /** Everything of this kit's that makes `f` walk slower, as one number. */
+  private ruinSpeedMult(f: Fighter): number {
+    let m = 1;
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      if (!this.isEnemyOf(owner, f)) continue;
+      if (this.sides[owner].decay) m *= this.decayCurve(owner).slow;
+    }
+    return m;
   }
 
   // ── Avatars ────────────────────────────────────────────────────────────────
@@ -874,6 +1521,41 @@ export class RuinKit {
     if (!g) return;
     g.clear();
 
+    // ── Ruin cracks ──
+    // Under everything: an open sore in the floor with the bedrock showing through it and a
+    // teal seam of ruin running along the bottom, which is where a charged crystal is drinking.
+    for (const k of this.cracks) {
+      const tint = this.col(k.owner);
+      const pulse = 0.9 + Math.sin(this.vizT * 2 + k.seed) * 0.05;
+      g.fillStyle(tint(RUI.voidDark), 0.55);
+      g.fillEllipse(k.x, k.y, k.r * 2 * pulse, k.r * 1.24 * pulse);
+      g.fillStyle(tint(RUI.stone), 0.3);
+      g.fillEllipse(k.x, k.y + 2, k.r * 1.5, k.r * 0.86);
+      g.lineStyle(2, tint(RUI.ancient), 0.35 + Math.sin(this.vizT * 3 + k.seed) * 0.12);
+      g.strokeEllipse(k.x, k.y, k.r * 2 * pulse, k.r * 1.24 * pulse);
+      crackWeb(g, tint, k.x, k.y, k.r * 1.05, k.seed, 0.7, 1,
+        { runs: 9, squash: 0.62, width: 2.2, color: RUI.voidDark });
+      crackWeb(g, tint, k.x, k.y, k.r * 0.7, k.seed + 4, 0.4, 1,
+        { runs: 5, squash: 0.62, width: 1.2, color: RUI.ancient });
+    }
+
+    // ── Ruin crystals ──
+    // Painted at 70% so the floor reads through them — they are meant to look like something
+    // that grew out of the ground rather than something standing on it. A crystal with a fuse
+    // lit under it swells and brightens; a charged one wears a teal core it did not grow.
+    for (const c of this.crystals) {
+      const tint = this.col(c.owner);
+      const grow = Phaser.Math.Clamp((time - c.bornAt) / 260, 0, 1);
+      const fuse = c.blowAt > 0
+        ? Phaser.Math.Clamp(1 - (c.blowAt - time) / CHAIN_DELAY_MS, 0, 1)
+        : 0.25 + Math.sin(this.vizT * 2 + c.seed) * 0.06;
+      ruinCluster(g, tint, c.x, c.y, CRYSTAL_R * (0.6 + grow * 0.4), fuse, this.vizT, 0.7, c.seed);
+      if (!c.charged) continue;
+      rubyJewel(g, tint, c.x, c.y - 4, CRYSTAL_R * 0.36, this.vizT, 0.85, c.seed);
+      g.fillStyle(tint(RUI.ancient), 0.16 + Math.sin(this.vizT * 6 + c.seed) * 0.07);
+      g.fillCircle(c.x, c.y, CRYSTAL_R * 1.7);
+    }
+
     for (const r of this.rings) {
       const charge = Phaser.Math.Clamp((time - r.startedAt) / RING_FUSE_MS, 0, 1);
       ruinRing(g, this.col(r.owner), r.x, r.y, RING_R, this.vizT, 1, charge, r.seed);
@@ -911,17 +1593,56 @@ export class RuinKit {
       crackWeb(g, this.pcol, f.x, f.y, 30, f.x, fade * 0.5, 1, { runs: 5, width: 1.6, color: RUI.bright });
     }
 
+    // ── Ruin spikes in flight ──
+    for (const sp of this.spikes) {
+      shrapnelShard(g, this.col(sp.owner), sp.x, sp.y, Math.atan2(sp.vy, sp.vx), SPIKE_LEN, 1, sp.seed);
+    }
+
+    // ── Ruinic lightning ──
+    // Drawn for a fifth of a second after the hit already landed, and rebuilt off the seed each
+    // frame so the bolt crawls rather than sitting there as a straight line.
+    for (const b of this.bolts) {
+      const tint = this.col(b.owner);
+      const fade = Phaser.Math.Clamp((b.until - time) / 180, 0, 1);
+      const segs = 7;
+      let px = b.x0;
+      let py = b.y0;
+      for (let i = 1; i <= segs; i++) {
+        const s = i / segs;
+        const kink = i === segs ? 0 : (jitter(b.seed, i + Math.floor(this.vizT * 30)) - 0.5) * 22;
+        const nx = b.x0 + (b.x1 - b.x0) * s - (b.y1 - b.y0) / SKEWER_LEN * kink;
+        const ny = b.y0 + (b.y1 - b.y0) * s + (b.x1 - b.x0) / SKEWER_LEN * kink;
+        g.lineStyle(4, tint(RUI.ancient), fade * 0.35);
+        g.lineBetween(px, py, nx, ny);
+        g.lineStyle(1.6, tint(RUI.bone), fade * 0.9);
+        g.lineBetween(px, py, nx, ny);
+        px = nx;
+        py = ny;
+      }
+    }
+
     // ── Wedges ──
     for (const w of this.wedges) {
-      shredWedge(g, this.col(w.owner), w.x, w.y, Math.atan2(w.vy, w.vx), SHRED_LEN, 1, w.spin, w.seed);
+      shredWedge(g, this.col(w.owner), w.x, w.y, Math.atan2(w.vy, w.vx),
+        SHRED_LEN, 1, w.spin, w.seed);
     }
 
     // ── The skewer, and whoever is on it ──
     for (const s of this.skewers) {
       const tint = this.col(s.owner);
+      const buttX = s.x - Math.cos(s.ang) * SKEWER_LEN * 0.5;
+      const buttY = s.y - Math.sin(s.ang) * SKEWER_LEN * 0.5;
       // Drawn from the butt so the point lands where the tip maths says it does.
-      rustySpike(g, tint, s.x - Math.cos(s.ang) * SKEWER_LEN * 0.5, s.y - Math.sin(s.ang) * SKEWER_LEN * 0.5,
+      rustySpike(g, tint, buttX, buttY,
         s.ang, SKEWER_LEN, SKEWER_HALF_WIDTH, 1, { seed: s.seed, wear: 0.85, barbs: 4 });
+      // Fed on a crystal: the whole shaft burns red down its length, which is the only tell
+      // that this one is going to take fifteen percent rather than move ten.
+      if (s.fed) {
+        g.lineStyle(7, tint(RUI.ruby), 0.22 + Math.sin(this.vizT * 11) * 0.08);
+        g.lineBetween(buttX, buttY, buttX + Math.cos(s.ang) * SKEWER_LEN, buttY + Math.sin(s.ang) * SKEWER_LEN);
+        g.lineStyle(2.2, tint(RUI.bright), 0.7 + Math.sin(this.vizT * 14) * 0.25);
+        g.lineBetween(buttX, buttY, buttX + Math.cos(s.ang) * SKEWER_LEN, buttY + Math.sin(s.ang) * SKEWER_LEN);
+      }
       for (const f of s.riders) {
         // Blood at the entry point, and the shaft passing visibly through them.
         g.fillStyle(tint(RUI.blood), 0.55);
@@ -964,12 +1685,50 @@ export class RuinKit {
       count: myDecay, priority: 114,
     } : null);
 
+    // ── Ruin crystals on the board ──
+    const mine = this.crystalsOf('player');
+    const charged = mine.filter((c) => c.charged).length;
+    this.api.setStatusIndicator('ruin-crystals', playerIsRuin && this.api.hasUpgrade('click') ? {
+      name: 'Ruin Crystals', emoji: '💎', color: RUI.ruby,
+      description: `Grown wherever Shred Slice killed a shot, and one more for every ${CRYSTAL_PER_DAMAGE} damage it deals. They bite for ${CRYSTAL_TOUCH_DAMAGE}, they rust anything that flies through them, and ${CRYSTAL_MAX} is as many as the floor will hold.${charged > 0 ? ` ${charged} of them are standing in a crack and throwing lightning.` : ''}`,
+      count: mine.length, priority: 112,
+    } : null);
+
+    // ── Ruin cracks ──
+    const myCracks = this.cracks.filter((k) => k.owner === 'player');
+    this.api.setStatusIndicator('ruin-cracks', playerIsRuin && myCracks.length > 0 ? {
+      name: 'Ruin Cracks', emoji: '🕳️', color: RUI.ancient,
+      description: `Open floor that eats anyone standing in it for ${CRACK_DPS}/s. Every crystal that goes off widens all of them, and a crystal grown on top of one throws ${BOLT_DAMAGE} lightning at whoever comes near.`,
+      count: myCracks.length, priority: 110,
+    } : null);
+
     // ── Victim side: all of this can be on the player whoever is playing Ruin. ──
     const stacks = this.decayStacksOn(p);
+    let worstVuln = 1;
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      if (this.sides[owner].decay && this.isEnemyOf(owner, p)) {
+        worstVuln = Math.max(worstVuln, this.decayCurve(owner).vuln);
+      }
+    }
     this.api.setStatusIndicator('ruin-decayed', stacks > 0 ? {
-      name: 'Unstoppable Decay', emoji: '🐛', color: RUI.decay,
-      description: 'Rotting. Each stack is 10% slower, 10% more damage taken and 10% less damage dealt — and it never wears off.',
+      name: 'Unstoppable Decay', emoji: '🦠', color: RUI.decay,
+      description: `Rotting, and it never wears off. You are taking ${worstVuln.toFixed(2)}× damage, moving at ${Math.round(this.ruinSpeedMult(p) * 100)}% speed, and dealing less of everything.`,
       count: stacks, priority: 4,
+    } : null);
+
+    // ── Victim side: Chain Reaction's blunting ──
+    const blunted = this.blunt.get(p);
+    let worstBlunt = 0;
+    let bluntName = '';
+    for (const [id, n] of blunted?.stacks ?? []) {
+      if (n <= worstBlunt) continue;
+      worstBlunt = n;
+      bluntName = this.nameOfAbility(p, id);
+    }
+    this.api.setStatusIndicator('ruin-blunted', worstBlunt > 0 ? {
+      name: 'Blunted', emoji: '🪓', color: RUI.ruby,
+      description: `Ruin spikes have taken a permanent bite out of the attacks you use. Worst hit is ${bluntName}, down ${Math.round((1 - Math.pow(1 - BLUNT_STEP, worstBlunt)) * 100)}%. It never comes back.`,
+      count: worstBlunt, priority: 7,
     } : null);
 
     const locked = this.locks.find((l) => l.victim === p);
@@ -977,6 +1736,14 @@ export class RuinKit {
       name: `Locked: ${locked.abilityName}`, emoji: '🔒', color: RUI.rust,
       description: 'A rusted padlock is on that ability. It will not fire however ready its cooldown looks.',
       until: locked.until, priority: 10,
+    } : null);
+
+    let teeth = 0;
+    for (const n of this.lockjaw.get(p)?.values() ?? []) teeth += n;
+    this.api.setStatusIndicator('ruin-lockjaw', teeth > 0 ? {
+      name: 'Lockjaw', emoji: '🦷', color: RUI.ember,
+      description: `Abilities that have worn a Ruin padlock keep the teeth marks. Each one costs you ${LOCKJAW_DAMAGE} HP every time you use it, for the rest of the match.`,
+      count: teeth, priority: 9,
     } : null);
 
     this.api.setStatusIndicator('ruin-inverted', time < p.buffsInvertedUntil ? {
@@ -993,11 +1760,11 @@ export class RuinKit {
    * after the frame's movement has already resolved.
    */
   getPlayerSpeedMult(): number {
-    return Math.pow(DECAY_SLOW, this.decayStacksOn(this.api.player));
+    return this.ruinSpeedMult(this.api.player);
   }
 
   getNpcSpeedMult(): number {
-    return Math.pow(DECAY_SLOW, this.decayStacksOn(this.api.npc));
+    return this.ruinSpeedMult(this.api.npc);
   }
 
   /** True while a ring is already counting down for that side — a second cast is wasted. */

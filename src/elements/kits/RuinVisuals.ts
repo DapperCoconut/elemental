@@ -32,6 +32,12 @@ export const RUI = {
   bone: 0xe6d8cf,
   /** Unstoppable Decay's sickly ochre — the one colour that isn't red. */
   decay: 0xb08a3a,
+  /** Bedrock showing through a ruin crack, a shade colder than the iron. */
+  stone: 0x574a49,
+  /** Ruinic energy: the seam along a crack, the core of a charged crystal, the lightning. */
+  ancient: 0x7fd6b4,
+  /** The ruin crystals, and everything thrown out of one when it goes off. */
+  ruby: 0xd8203c,
 };
 
 /** Deterministic 0–1 noise, so anything that has to break the same way every frame can. */
@@ -348,6 +354,117 @@ export function decayCoat(
     g.fillStyle(tint(i % 3 === 0 ? RUI.rust : RUI.decay), alpha * (1 - ph) * 0.8);
     g.fillRect(fx, fy, 2.4, 2.4);
   }
+}
+
+/**
+ * A cut gem, set in a pitted iron claw — the one clean, uncracked thing Ruin owns, which is
+ * exactly why it draws the eye. It burns in the core of a charged ruin crystal. Cut as an
+ * octahedron seen face-on so the facets can catch light independently.
+ */
+export function rubyJewel(
+  g: Phaser.GameObjects.Graphics,
+  tint: RuinColorFn,
+  x: number, y: number, r: number, t: number, alpha: number, seed = 0,
+): void {
+  const pulse = 1 + Math.sin(t * 3.4 + seed) * 0.06;
+  const rr = r * pulse;
+  const setting = [
+    new Phaser.Geom.Point(x - rr * 0.9, y), new Phaser.Geom.Point(x, y - rr * 0.9),
+    new Phaser.Geom.Point(x + rr * 0.9, y), new Phaser.Geom.Point(x, y + rr * 0.9),
+  ];
+  // A pitted iron claw holding it, so the gem reads as *set into* the shaft.
+  g.fillStyle(tint(RUI.iron), alpha * 0.9);
+  g.fillPoints(setting.map((p) => new Phaser.Geom.Point(
+    x + (p.x - x) * 1.35, y + (p.y - y) * 1.35)), true);
+
+  const gem = [
+    new Phaser.Geom.Point(x, y - rr), new Phaser.Geom.Point(x + rr * 0.78, y),
+    new Phaser.Geom.Point(x, y + rr), new Phaser.Geom.Point(x - rr * 0.78, y),
+  ];
+  g.fillStyle(tint(RUI.blood), alpha * 0.95);
+  g.fillPoints(gem, true);
+  // Four facets, two lit and two in shadow — the split is what makes it read as cut.
+  g.fillStyle(tint(RUI.ruby), alpha * 0.95);
+  g.fillPoints([gem[0], gem[1], new Phaser.Geom.Point(x, y)], true);
+  g.fillStyle(tint(RUI.red), alpha * 0.8);
+  g.fillPoints([gem[3], gem[0], new Phaser.Geom.Point(x, y)], true);
+  g.lineStyle(1, tint(RUI.voidDark), alpha * 0.7);
+  g.strokePoints(gem, true, true);
+  g.lineBetween(gem[0].x, gem[0].y, gem[2].x, gem[2].y);
+  g.lineBetween(gem[1].x, gem[1].y, gem[3].x, gem[3].y);
+
+  // Highlight and halo — the whole point is that this catches the eye across the arena.
+  g.fillStyle(tint(RUI.bone), alpha * 0.8);
+  g.fillCircle(x - rr * 0.24, y - rr * 0.3, rr * 0.17);
+  g.fillStyle(tint(RUI.ruby), alpha * 0.18 * pulse);
+  g.fillCircle(x, y, rr * 2.1);
+}
+
+/**
+ * A ruin crystal: the splintered red growth Shred Slice leaves where it tore a shot out of the
+ * air. `charge` (0–1) is the fuse — the shards climb out of the ground and the core lights, so
+ * a crystal about to go off is the shape swelling rather than a number over it.
+ */
+export function ruinCluster(
+  g: Phaser.GameObjects.Graphics,
+  tint: RuinColorFn,
+  x: number, y: number, r: number, charge: number, t: number, alpha: number, seed = 0,
+): void {
+  const grow = easeOut(Math.min(1, charge * 1.6));
+  const hot = charge * charge;
+
+  g.fillStyle(tint(RUI.voidDark), alpha * 0.45);
+  g.fillEllipse(x, y + 3, r * 1.9 * grow, r * 0.7 * grow);
+
+  // The shards themselves — splinters raked outward, each a different length off the seed so
+  // no two clusters are the same silhouette.
+  const shards = 7;
+  for (let i = 0; i < shards; i++) {
+    const a = (i / shards) * TAU + jitter(seed, i) * 0.7;
+    const len = r * (0.7 + jitter(seed, 20 + i) * 0.8) * grow;
+    const lean = -Math.PI / 2 + (a - Math.PI) * 0.32;
+    const bx = x + Math.cos(a) * r * 0.34 * grow;
+    const by = y + Math.sin(a) * r * 0.2 * grow;
+    const ca = Math.cos(lean);
+    const sa = Math.sin(lean);
+    const P = (u: number, v: number) => pt(bx, by, ca, sa, u, v);
+    const w = r * 0.2 * (0.6 + jitter(seed, 40 + i) * 0.8);
+    const face = [P(0, -w), P(len * 0.7, -w * 0.4), P(len, 0), P(len * 0.7, w * 0.4), P(0, w)];
+    g.fillStyle(tint(RUI.blood), alpha * 0.9);
+    g.fillPoints(face, true);
+    // One lit flank per shard, brightening as the fuse runs out.
+    g.fillStyle(tint(RUI.ruby), alpha * (0.5 + hot * 0.5));
+    g.fillPoints([P(0, -w), P(len * 0.7, -w * 0.4), P(len, 0), P(len * 0.5, 0), P(0, 0)], true);
+    g.lineStyle(1, tint(RUI.voidDark), alpha * 0.6);
+    g.strokePoints(face, true, true);
+  }
+
+  // The core, and the cracks it is opening in the floor under it.
+  g.fillStyle(tint(RUI.ruby), alpha * (0.25 + hot * 0.6));
+  g.fillCircle(x, y, r * (0.36 + hot * 0.3) * grow + Math.sin(t * 14) * hot * 2);
+  g.fillStyle(tint(RUI.bone), alpha * hot * 0.8);
+  g.fillCircle(x, y, r * 0.16 * grow);
+  crackWeb(g, tint, x, y, r * 1.4, seed + 5, alpha * (0.25 + hot * 0.5), grow,
+    { runs: 5, squash: 0.5, width: 1.6, color: RUI.blood });
+}
+
+/** One flying ruin spike, thrown out of a crystal that has just gone off. */
+export function shrapnelShard(
+  g: Phaser.GameObjects.Graphics,
+  tint: RuinColorFn,
+  x: number, y: number, ang: number, len: number, alpha: number, seed = 0,
+): void {
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const P = (u: number, v: number) => pt(x, y, ca, sa, u, v);
+  const w = len * 0.28;
+  g.fillStyle(tint(RUI.blood), alpha * 0.35);
+  g.fillPoints([P(-len * 2.2, 0), P(0, -w * 0.7), P(0, w * 0.7)], true);
+  const body = [P(len * 0.6, 0), P(-len * 0.4, -w), P(-len * 0.2, 0), P(-len * 0.4, w)];
+  g.fillStyle(tint(RUI.ruby), alpha * 0.95);
+  g.fillPoints(body, true);
+  g.lineStyle(1, tint(RUI.bone), alpha * (0.4 + jitter(seed, 1) * 0.3));
+  g.lineBetween(P(len * 0.6, 0).x, P(len * 0.6, 0).y, P(-len * 0.4, -w).x, P(-len * 0.4, -w).y);
 }
 
 // ── Fx ────────────────────────────────────────────────────────────────────

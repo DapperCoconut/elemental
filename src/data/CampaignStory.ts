@@ -468,8 +468,8 @@ const beats: StoryBeat[] = [
   { id: 'world-enter:passion', lines: [
     h('The Jilted Court. Passion was cast out for burning too hot to govern. The floor keeps a heartbeat, and on every beat your hands hurry. It wants the fight to be beautiful. Oblige it.'),
   ] },
-  { id: 'world-enter:glass', lines: [
-    h('The Gallery of Panes. Glass kept a perfect reflection of the realm before the fall, and lives in it. The ceiling sheds in sheets. The rings mark the drop.'),
+  { id: 'world-enter:dune', lines: [
+    h('The Hall of Haze. Sand kept a perfect picture of the realm before the fall, painted in heat, and lives in it. The slope above sheds in slabs. The rings mark the drop.'),
   ] },
   { id: 'world-enter:fortune', lines: [
     h('The Counting House. Fortune was exiled for winning too often, wagered the realm would fall, and collected. A jackpot ring roams the floor. It pays out to whoever stands their ground in it.'),
@@ -581,13 +581,13 @@ const beats: StoryBeat[] = [
     s('The Heartbreaker', '💘', 0xffc0dc, 'You LEFT. Everyone leaves. Nobody has ever left and then come back up the stairs for me.'),
     s('The Heartbreaker', '💘', 0xffc0dc, 'When the last door opens, I will be the thing in front of you, burning. Try to be worth it.'),
   ] },
-  { id: 'boss-pre:glass', lines: [
-    s('The Mirrorwright', '🔷', 0xe0f8ff, 'I kept a reflection of the realm before it fell. You are standing in it.'),
-    h('Glass cannot lie about geometry: the bouncing beam draws its whole path before any of it is hot. The reflection copies you — so stop doing the thing it is copying.'),
+  { id: 'boss-pre:dune', lines: [
+    s('The Miragewright', '🏜️', 0xf7e2b4, 'I kept a picture of the realm before it fell. You are standing in it.'),
+    h('A mirage cannot lie about geometry: the bent beam draws its whole path before any of it is hot. The double copies you — so stop doing the thing it is copying.'),
   ] },
-  { id: 'boss-post:glass', lines: [
-    s('The Mirrorwright', '🔷', 0xe0f8ff, 'The copy is cracked. Good. It was a lovely room and nobody ever lived in it.'),
-    s('The Mirrorwright', '🔷', 0xe0f8ff, 'I will hold a true reflection for you instead. When the last door opens, the light in there will bend the way you need it to.'),
+  { id: 'boss-post:dune', lines: [
+    s('The Miragewright', '🏜️', 0xf7e2b4, 'The picture is scattered. Good. It was a lovely room and nobody ever lived in it.'),
+    s('The Miragewright', '🏜️', 0xf7e2b4, 'I will hold a true one for you instead. When the last door opens, the light in there will bend the way you need it to.'),
   ] },
   { id: 'boss-pre:fortune', lines: [
     s('The Broker of Ruin', '💰', 0xffe08a, 'The house always wins. I bought the house.'),

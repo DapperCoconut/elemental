@@ -42,13 +42,26 @@ export const DRM = {
   /** Nightmare. */
   dread: 0xff3b6b,
   dreadDeep: 0x6b0f26,
-  /** Oasis. */
-  sand: 0xe8cf9a,
-  sandDark: 0xbe9d63,
+  /** Oasis — a meadow under a waterfall. */
+  /** The rose the sky goes at the horizon, so the place reads as dawn and not as night. */
+  dusk: 0xe8a9c6,
+  grass: 0x74d18c,
+  grassDark: 0x2f8a58,
+  grassDeep: 0x1a5b3c,
+  /** Distant ridges, hazed toward the sky so they sit behind everything. */
+  hillFar: 0x3a5590,
+  bark: 0x8a6b4a,
+  barkDark: 0x54402c,
+  leaf: 0x5fbf7d,
+  leafDark: 0x27714b,
+  bloom: 0xffb3dd,
+  bloomWarm: 0xffe08a,
+  rock: 0x6f6a90,
+  rockDark: 0x3b365e,
   water: 0x3fc7d6,
   waterDeep: 0x136a78,
-  palm: 0x2e8b57,
-  palmDark: 0x1a5535,
+  foam: 0xf2fbff,
+  mist: 0xbfe8f5,
   sun: 0xffd98a,
 };
 
@@ -359,6 +372,38 @@ export function dreamOrb(
 }
 
 /**
+ * A drifting "z", for a fighter who has stopped moving. Built from three tapered bars
+ * rather than a text glyph, so it takes the owner's palette like everything else and can
+ * be faded letter by letter as it climbs.
+ */
+export function sleepyZ(
+  g: Phaser.GameObjects.Graphics,
+  tint: DreamColorFn,
+  x: number, y: number, s: number,
+  alpha = 1,
+  tilt = 0,
+): void {
+  const w = s, h = s * 1.1, th = Math.max(1.2, s * 0.26);
+  const at = (dx: number, dy: number) => ({
+    x: x + dx * Math.cos(tilt) - dy * Math.sin(tilt),
+    y: y + dx * Math.sin(tilt) + dy * Math.cos(tilt),
+  });
+  const bar = (x0: number, y0: number, x1: number, y1: number, color: number, a: number) => {
+    const p0 = at(x0, y0), p1 = at(x1, y1);
+    g.lineStyle(th, tint(color), a);
+    g.lineBetween(p0.x, p0.y, p1.x, p1.y);
+  };
+  // Offset shadow pass first, so the glyph survives a bright arena floor behind it.
+  for (const [dx, dy, col, a] of [[1.4, 1.4, DRM.deep, alpha * 0.5], [0, 0, DRM.pale, alpha]] as const) {
+    bar(-w / 2 + dx, -h / 2 + dy, w / 2 + dx, -h / 2 + dy, col, a);
+    bar(w / 2 + dx, -h / 2 + dy, -w / 2 + dx, h / 2 + dy, col, a);
+    bar(-w / 2 + dx, h / 2 + dy, w / 2 + dx, h / 2 + dy, col, a);
+  }
+  const tipx = at(w / 2, -h / 2);
+  star(g, tint, tipx.x, tipx.y, s * 0.3, alpha * 0.7, DRM.star);
+}
+
+/**
  * A dreamcatcher lying on the floor: a bound hoop, a radial web woven inward, three
  * feathers on cords, and whatever dreams it has caught turning inside the ring.
  */
@@ -462,57 +507,106 @@ export function pendulumBob(
   star(g, tint, x - r * 0.32, y + r * 0.3, r * 0.3, alpha * 0.9, DRM.white, t * 2);
 }
 
-/** A palm tree for the oasis: leaning trunk with ring scars and a fan of fronds. */
-export function palmTree(
+/**
+ * A meadow tree for the oasis: a leaning trunk with two boughs under a canopy of leaf
+ * clusters. The canopy is built from overlapping blobs rather than one circle, because one
+ * circle on a stick is a lollipop and a handful of blobs is a tree.
+ */
+export function meadowTree(
   g: Phaser.GameObjects.Graphics,
   tint: DreamColorFn,
   x: number, y: number, h: number, lean: number, sway: number,
   alpha = 1,
 ): void {
   const topX = x + lean * h;
-  const topY = y - h;
+  const topY = y - h * 0.72;
+  const drift = Math.sin(sway) * h * 0.022;
 
-  g.lineStyle(h * 0.1, tint(DRM.palmDark), alpha);
+  // Trunk: wide at the root, tapering into the canopy.
+  g.fillStyle(tint(DRM.barkDark), alpha);
+  g.fillPoints([
+    new Phaser.Geom.Point(x - h * 0.075, y),
+    new Phaser.Geom.Point(x + lean * h * 0.36 - h * 0.035, y - h * 0.42),
+    new Phaser.Geom.Point(topX - h * 0.028, topY),
+    new Phaser.Geom.Point(topX + h * 0.028, topY),
+    new Phaser.Geom.Point(x + lean * h * 0.36 + h * 0.04, y - h * 0.42),
+    new Phaser.Geom.Point(x + h * 0.075, y),
+  ], true);
+  // A lit strip down one side, so the trunk is round and not a plank.
+  g.fillStyle(tint(DRM.bark), alpha * 0.85);
+  g.fillPoints([
+    new Phaser.Geom.Point(x + h * 0.018, y),
+    new Phaser.Geom.Point(topX + h * 0.008, topY),
+    new Phaser.Geom.Point(topX + h * 0.026, topY),
+    new Phaser.Geom.Point(x + h * 0.072, y),
+  ], true);
+
+  // Two boughs reaching into the canopy.
+  g.lineStyle(h * 0.035, tint(DRM.barkDark), alpha);
+  for (const side of [-1, 1]) {
+    const bx = x + lean * h * 0.52, by = y - h * 0.5;
+    g.lineBetween(bx, by, bx + side * h * 0.2, by - h * 0.16);
+  }
+
+  // Canopy. Dark mass first, then a sunlit crown up and to the left of each blob.
+  const blobs: [number, number, number][] = [
+    [0, -0.30, 0.30], [-0.30, -0.12, 0.25], [0.30, -0.14, 0.25],
+    [-0.16, -0.02, 0.23], [0.18, 0.00, 0.22], [0, -0.16, 0.28],
+  ];
+  for (const [ox, oy, r] of blobs) {
+    g.fillStyle(tint(DRM.leafDark), alpha);
+    g.fillCircle(topX + ox * h + drift * (1 - oy), topY + oy * h, r * h);
+  }
+  for (const [ox, oy, r] of blobs) {
+    g.fillStyle(tint(DRM.leaf), alpha * 0.9);
+    g.fillCircle(topX + ox * h - r * h * 0.2 + drift * (1 - oy), topY + oy * h - r * h * 0.24, r * h * 0.66);
+  }
+}
+
+/** A tuft of grass: three curved blades off one root, leaning together in the breeze. */
+export function grassTuft(
+  g: Phaser.GameObjects.Graphics,
+  tint: DreamColorFn,
+  x: number, y: number, h: number, sway: number, color: number,
+  alpha = 1,
+): void {
+  g.fillStyle(tint(color), alpha);
+  for (let i = -1; i <= 1; i++) {
+    const lean = i * 0.34 + sway;
+    const bh = h * (1 - Math.abs(i) * 0.2);
+    const w = Math.max(1, h * 0.075);
+    g.fillPoints([
+      new Phaser.Geom.Point(x - w, y),
+      new Phaser.Geom.Point(x + lean * bh * 0.45 - w * 0.5, y - bh * 0.6),
+      new Phaser.Geom.Point(x + lean * bh, y - bh),
+      new Phaser.Geom.Point(x + lean * bh * 0.45 + w * 0.6, y - bh * 0.55),
+      new Phaser.Geom.Point(x + w, y),
+    ], true);
+  }
+}
+
+/** A wildflower: a nodding stem with a five-petal head and a bright eye. */
+export function wildflower(
+  g: Phaser.GameObjects.Graphics,
+  tint: DreamColorFn,
+  x: number, y: number, r: number, color: number, sway: number,
+  alpha = 1,
+): void {
+  const hx = x + Math.sin(sway) * r * 1.1;
+  const hy = y - r * 3.4;
+  g.lineStyle(Math.max(1, r * 0.3), tint(DRM.leafDark), alpha * 0.9);
   g.beginPath();
   g.moveTo(x, y);
-  g.lineTo(x + lean * h * 0.35, y - h * 0.55);
-  g.lineTo(topX, topY);
+  g.lineTo(x + Math.sin(sway) * r * 0.4, y - r * 1.8);
+  g.lineTo(hx, hy);
   g.strokePath();
-  // Ring scars up the trunk.
-  g.lineStyle(1.2, tint(DRM.sandDark), alpha * 0.7);
-  for (let i = 1; i < 7; i++) {
-    const f = i / 7;
-    const tx = x + lean * h * f * (0.35 + f * 0.65);
-    const ty = y - h * f;
-    g.lineBetween(tx - h * 0.05, ty, tx + h * 0.05, ty);
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * TAU + sway * 0.4;
+    g.fillStyle(tint(color), alpha);
+    g.fillCircle(hx + Math.cos(a) * r * 0.85, hy + Math.sin(a) * r * 0.85, r * 0.6);
   }
-
-  // Fronds: each a tapered spine with barbs, drooping further the longer it is.
-  for (let i = 0; i < 7; i++) {
-    const a = -Math.PI + (i / 6) * Math.PI + Math.sin(sway + i) * 0.06;
-    const len = h * (0.42 + (i % 2) * 0.12);
-    const droop = 0.5;
-    let px = topX, py = topY;
-    g.lineStyle(2.2, tint(i % 2 ? DRM.palm : DRM.palmDark), alpha);
-    g.beginPath();
-    g.moveTo(px, py);
-    for (let s = 1; s <= 5; s++) {
-      const f = s / 5;
-      px = topX + Math.cos(a) * len * f;
-      py = topY + Math.sin(a) * len * f + droop * len * f * f;
-      g.lineTo(px, py);
-    }
-    g.strokePath();
-    g.lineStyle(1.1, tint(DRM.palm), alpha * 0.8);
-    for (let s = 1; s <= 4; s++) {
-      const f = s / 5;
-      const bx = topX + Math.cos(a) * len * f;
-      const by = topY + Math.sin(a) * len * f + droop * len * f * f;
-      const bl = len * 0.16 * (1 - f * 0.4);
-      g.lineBetween(bx, by, bx - Math.sin(a) * bl, by + Math.cos(a) * bl);
-      g.lineBetween(bx, by, bx + Math.sin(a) * bl, by - Math.cos(a) * bl);
-    }
-  }
+  g.fillStyle(tint(DRM.star), alpha);
+  g.fillCircle(hx, hy, r * 0.48);
 }
 
 // ── DreamFx ───────────────────────────────────────────────────────────────
@@ -730,18 +824,40 @@ export class TrancePendulum {
 // ── OasisView ─────────────────────────────────────────────────────────────
 
 /**
- * The Q set piece: a full-screen oasis that replaces the arena for as long as the caster is
+ * The Q set piece: a full-screen meadow that replaces the arena for as long as the caster is
  * resting in it. Persistent because it runs for fifteen seconds and everything in it — the
- * water, the fronds, the sky — has to keep moving the whole time.
+ * falls, the grass, the fireflies — has to keep moving the whole time.
  *
- * It is drawn as a *place*, not a filter: horizon, dunes, pool, trees and a sleeping figure,
- * layered back to front. Anything less and it reads as a tint over the fight you left.
+ * It is drawn as a *place*, not a filter: sky, ridges, a cliff with a waterfall coming off it,
+ * the pool it lands in, the stream it feeds, and a sleeping figure in the grass, layered back
+ * to front. Anything less and it reads as a tint over the fight you left.
+ *
+ * Nothing in here is sharp or fast. The falls are the only thing moving at speed, and they are
+ * moving in one direction — the whole point of the place is that it is calm.
  */
 export class OasisView {
   private g: Phaser.GameObjects.Graphics;
   private t = 0;
   private stars: { x: number; y: number; r: number; ph: number }[];
-  private dunes: { x: number; y: number; w: number; h: number }[];
+  private clouds: { x: number; y: number; w: number; sp: number }[];
+  /** Three ridge lines, each a row of humps. Index 0 is furthest away. */
+  private ridges: { x: number; w: number; h: number }[][];
+  /** Falling water: each strand runs the drop on its own phase and its own speed. */
+  private strands: { off: number; sp: number; ph: number; len: number; w: number }[];
+  /** Spray at the foot of the falls, rising and fading on a loop. */
+  private spray: { ox: number; sp: number; ph: number; r: number }[];
+  private tufts: { x: number; y: number; h: number; ph: number }[];
+  private flowers: { x: number; y: number; r: number; c: number; ph: number }[];
+  private flies: { x: number; y: number; r: number; ph: number; sp: number }[];
+
+  /** Where the sky stops. */
+  private readonly horizon: number;
+  /** Where the meadow starts — below the horizon, so the ridges sit between the two. */
+  private readonly meadowTop: number;
+  private readonly cliffX: number;
+  private readonly lipY: number;
+  private readonly poolY: number;
+  private readonly sheetW: number;
 
   constructor(
     scene: Phaser.Scene,
@@ -751,17 +867,61 @@ export class OasisView {
     depth = 14,
   ) {
     this.g = scene.add.graphics().setDepth(depth).setScrollFactor(0);
-    this.stars = Array.from({ length: 60 }, () => ({
+
+    this.horizon = h * 0.44;
+    this.meadowTop = h * 0.49;
+    this.cliffX = w * 0.63;
+    this.lipY = h * 0.27;
+    this.poolY = h * 0.66;
+    this.sheetW = w * 0.115;
+
+    this.stars = Array.from({ length: 44 }, () => ({
       x: Math.random() * w,
-      y: Math.random() * h * 0.55,
-      r: 0.7 + Math.random() * 1.8,
+      y: Math.random() * h * 0.4,
+      r: 0.7 + Math.random() * 1.6,
       ph: Math.random() * TAU,
     }));
-    this.dunes = Array.from({ length: 5 }, (_, i) => ({
-      x: (i / 4) * w + (Math.random() - 0.5) * 80,
-      y: h * 0.56 + Math.random() * 14,
-      w: 150 + Math.random() * 190,
-      h: 40 + Math.random() * 46,
+    this.clouds = Array.from({ length: 4 }, (_, i) => ({
+      x: Math.random() * w,
+      y: h * (0.07 + i * 0.075),
+      w: 140 + Math.random() * 190,
+      sp: 3 + Math.random() * 5,
+    }));
+    this.ridges = [0, 1, 2].map((layer) => Array.from({ length: 6 }, (_, i) => ({
+      x: (i / 5) * w + (Math.random() - 0.5) * 100,
+      w: 200 + Math.random() * 190,
+      h: 40 + Math.random() * 30 + layer * 12,
+    })));
+    this.strands = Array.from({ length: 22 }, () => ({
+      off: Math.random() * 2 - 1,
+      sp: 0.72 + Math.random() * 0.6,
+      ph: Math.random(),
+      len: Math.random(),
+      w: 2 + Math.random() * 4,
+    }));
+    this.spray = Array.from({ length: 14 }, () => ({
+      ox: (Math.random() - 0.5) * this.sheetW * 2.4,
+      sp: 0.24 + Math.random() * 0.3,
+      ph: Math.random(),
+      r: 10 + Math.random() * 20,
+    }));
+    this.tufts = Array.from({ length: 30 }, () => {
+      const f = Math.random();
+      return { x: Math.random() * w, y: h * (0.78 + f * 0.26), h: 15 + f * 32, ph: Math.random() * TAU };
+    });
+    this.flowers = Array.from({ length: 14 }, () => {
+      const f = Math.random();
+      return {
+        x: Math.random() * w, y: h * (0.72 + f * 0.28), r: 2.6 + f * 3.2,
+        c: Math.random() < 0.5 ? DRM.bloom : DRM.bloomWarm, ph: Math.random() * TAU,
+      };
+    });
+    this.flies = Array.from({ length: 16 }, () => ({
+      x: Math.random() * w,
+      y: h * (0.5 + Math.random() * 0.44),
+      r: 1.4 + Math.random() * 1.6,
+      ph: Math.random() * TAU,
+      sp: 0.3 + Math.random() * 0.5,
     }));
   }
 
@@ -774,91 +934,348 @@ export class OasisView {
     const a = Phaser.Math.Clamp(grow, 0, 1);
     if (a <= 0.02) return;
 
-    const { w, h } = this;
-    const horizon = h * 0.58;
+    this.drawSky(a);
+    this.drawRidges(a);
+    this.drawMeadow(a);
+    this.drawCliff(a);
+    this.drawPool(a);
+    this.drawFalls(a);
+    this.drawStream(a);
+    this.drawTrees(a);
+    this.drawSpray(a);
+    this.drawGround(a);
+    this.drawFlies(a);
+    this.drawSleeper(g, restX, restY, a, healPulse);
 
-    // ── Sky: banded gradient from deep night down to a warm dawn at the horizon ──
-    const bands = 14;
+    // Vignette, so the edges of the arena the meadow is covering never peek through.
+    const { w, h } = this;
+    g.fillStyle(this.tint(DRM.night), a * 0.3);
+    g.fillRect(0, 0, w, 16);
+    g.fillRect(0, h - 16, w, 16);
+    g.fillRect(0, 0, 16, h);
+    g.fillRect(w - 16, 0, 16, h);
+  }
+
+  /** Night above, dawn at the horizon: stars, a low moon and a few slow clouds. */
+  private drawSky(a: number): void {
+    const g = this.g;
+    const { w, horizon } = this;
+
+    // Two-stage gradient — night into violet for most of it, violet into rose at the bottom.
+    const bands = 16;
     for (let i = 0; i < bands; i++) {
       const f = i / (bands - 1);
+      const near = f > 0.62;
       const c = Phaser.Display.Color.Interpolate.ColorWithColor(
-        Phaser.Display.Color.ValueToColor(DRM.night),
-        Phaser.Display.Color.ValueToColor(DRM.violet),
-        100, f * 100,
+        Phaser.Display.Color.ValueToColor(near ? DRM.violet : DRM.night),
+        Phaser.Display.Color.ValueToColor(near ? DRM.dusk : DRM.violet),
+        100, (near ? (f - 0.62) / 0.38 : f / 0.62) * 100,
       );
       g.fillStyle(this.tint(Phaser.Display.Color.GetColor(c.r, c.g, c.b)), a);
       g.fillRect(0, (i / bands) * horizon, w, horizon / bands + 1);
     }
 
+    // Stars fade out as the sky warms toward the horizon.
     for (const s of this.stars) {
       const tw = 0.45 + 0.55 * Math.abs(Math.sin(this.t * 1.4 + s.ph));
-      star(g, this.tint, s.x, s.y, s.r * (0.8 + tw * 0.5), a * tw * 0.95, DRM.star, s.ph + this.t * 0.3);
+      const high = 1 - Phaser.Math.Clamp(s.y / (horizon * 0.9), 0, 1);
+      star(g, this.tint, s.x, s.y, s.r * (0.8 + tw * 0.5), a * tw * high * 0.9, DRM.star, s.ph + this.t * 0.3);
     }
 
-    // Moon low over the horizon, with a haze around it.
-    const mx = w * 0.76, my = horizon - h * 0.3;
-    g.fillStyle(this.tint(DRM.sun), a * 0.12);
-    g.fillCircle(mx, my, 92);
-    g.fillStyle(this.tint(DRM.sun), a * 0.22);
-    g.fillCircle(mx, my, 58);
+    // The moon, opposite the falls so the two set pieces do not fight.
+    const mx = this.w * 0.2, my = horizon - this.h * 0.28;
+    g.fillStyle(this.tint(DRM.sun), a * 0.1);
+    g.fillCircle(mx, my, 88);
+    g.fillStyle(this.tint(DRM.sun), a * 0.2);
+    g.fillCircle(mx, my, 54);
     g.fillStyle(this.tint(DRM.star), a);
-    g.fillCircle(mx, my, 34);
-    g.fillStyle(this.tint(DRM.pale), a * 0.55);
-    g.fillCircle(mx - 9, my - 7, 8);
-    g.fillCircle(mx + 11, my + 5, 5.5);
+    g.fillCircle(mx, my, 31);
+    g.fillStyle(this.tint(DRM.pale), a * 0.5);
+    g.fillCircle(mx - 8, my - 7, 7);
+    g.fillCircle(mx + 10, my + 5, 5);
 
-    // ── Dunes behind the pool ──
-    for (const d of this.dunes) {
-      g.fillStyle(this.tint(DRM.sandDark), a * 0.9);
-      g.fillEllipse(d.x, d.y, d.w, d.h * 2);
+    // Clouds: flat, slow, and low-contrast. They pass, they do not billow.
+    for (const c of this.clouds) {
+      const cx = ((c.x + this.t * c.sp) % (w + c.w)) - c.w * 0.5;
+      for (let i = 0; i < 4; i++) {
+        const f = i / 3;
+        g.fillStyle(this.tint(i < 2 ? DRM.pale : DRM.dusk), a * 0.11);
+        g.fillEllipse(cx + (f - 0.5) * c.w * 0.7, c.y + Math.sin(f * 3) * 4, c.w * (0.5 - f * 0.1), 16 - i * 2);
+      }
+    }
+  }
+
+  /** Rolling ridges between the sky and the meadow, hazing out with distance. */
+  private drawRidges(a: number): void {
+    const g = this.g;
+    const colors = [DRM.hillFar, DRM.grassDeep, DRM.grassDark];
+    for (let layer = 0; layer < 3; layer++) {
+      const base = this.horizon + layer * this.h * 0.022;
+      g.fillStyle(this.tint(colors[layer]), a * (0.8 + layer * 0.1));
+      for (const hump of this.ridges[layer]) {
+        g.fillEllipse(hump.x, base, hump.w, hump.h * 2);
+      }
+      g.fillRect(0, base, this.w, this.h * 0.05);
+    }
+  }
+
+  /** The grass field, receding: broad light bands, wider and softer toward the viewer. */
+  private drawMeadow(a: number): void {
+    const g = this.g;
+    const { w, h, meadowTop: top } = this;
+    g.fillStyle(this.tint(DRM.grassDark), a);
+    g.fillRect(0, top, w, h - top);
+    // A lit rim where the field meets the ridges — the far grass catches the dawn.
+    g.fillStyle(this.tint(DRM.grass), a * 0.45);
+    g.fillRect(0, top - 2, w, 5);
+    for (let i = 0; i < 7; i++) {
+      const f = i / 7;
+      g.fillStyle(this.tint(f > 0.55 ? DRM.grassDeep : DRM.grass), a * 0.16);
+      g.fillEllipse(w * (0.12 + 0.76 * ((i * 0.41) % 1)), top + (h - top) * f * f * 1.05, 250 + f * 380, 18 + f * 34);
+    }
+  }
+
+  /** The rock shelf the water comes off, running away to the right-hand edge. */
+  private drawCliff(a: number): void {
+    const g = this.g;
+    const { w, cliffX, lipY, poolY } = this;
+    const x0 = cliffX - w * 0.2;
+    const capH = this.h * 0.03;
+
+    // Face. Slanted on the left, straight off the screen on the right.
+    g.fillStyle(this.tint(DRM.rockDark), a);
+    g.fillPoints([
+      new Phaser.Geom.Point(x0 + 22, lipY),
+      new Phaser.Geom.Point(w, lipY - this.h * 0.04),
+      new Phaser.Geom.Point(w, poolY + 10),
+      new Phaser.Geom.Point(x0 - 10, poolY + 6),
+    ], true);
+    // Facets, so the wall has planes instead of being a slab.
+    g.fillStyle(this.tint(DRM.rock), a * 0.5);
+    g.fillPoints([
+      new Phaser.Geom.Point(x0 + 30, lipY + 6),
+      new Phaser.Geom.Point(x0 + 96, lipY + 2),
+      new Phaser.Geom.Point(x0 + 70, poolY),
+      new Phaser.Geom.Point(x0 + 6, poolY - 4),
+    ], true);
+    g.fillStyle(this.tint(DRM.rock), a * 0.32);
+    g.fillPoints([
+      new Phaser.Geom.Point(w - 150, lipY - this.h * 0.02),
+      new Phaser.Geom.Point(w - 30, lipY - this.h * 0.035),
+      new Phaser.Geom.Point(w - 44, poolY + 4),
+      new Phaser.Geom.Point(w - 168, poolY),
+    ], true);
+    // Damp streaks under the lip, either side of where the water actually falls.
+    g.lineStyle(2, this.tint(DRM.waterDeep), a * 0.35);
+    for (const dx of [-0.13, -0.09, 0.11, 0.16, 0.21]) {
+      const sx = cliffX + w * dx;
+      g.lineBetween(sx, lipY + 6, sx + 4, poolY - 8);
     }
 
-    // ── Sand floor ──
-    g.fillStyle(this.tint(DRM.sand), a);
-    g.fillRect(0, horizon, w, h - horizon);
-    g.fillStyle(this.tint(DRM.sandDark), a * 0.5);
-    for (let i = 0; i < 9; i++) {
-      // Wind ripples, spaced wider toward the viewer.
-      const f = i / 9;
-      const y = horizon + (h - horizon) * f * f;
-      g.fillEllipse(w * (0.15 + 0.7 * ((i * 0.37) % 1)), y, 130 + f * 190, 5 + f * 5);
+    // The grass cap on top of the shelf, with tufts hanging over the edge.
+    g.fillStyle(this.tint(DRM.grassDark), a);
+    g.fillPoints([
+      new Phaser.Geom.Point(x0 + 16, lipY + 2),
+      new Phaser.Geom.Point(w, lipY - this.h * 0.04),
+      new Phaser.Geom.Point(w, lipY - this.h * 0.04 - capH),
+      new Phaser.Geom.Point(x0 + 26, lipY - capH),
+    ], true);
+    g.fillStyle(this.tint(DRM.grass), a * 0.6);
+    g.fillPoints([
+      new Phaser.Geom.Point(x0 + 26, lipY - capH),
+      new Phaser.Geom.Point(w, lipY - this.h * 0.04 - capH),
+      new Phaser.Geom.Point(w, lipY - this.h * 0.04 - capH - 5),
+      new Phaser.Geom.Point(x0 + 30, lipY - capH - 5),
+    ], true);
+    for (let i = 0; i < 7; i++) {
+      const f = i / 6;
+      const tx = x0 + 34 + (w - x0 - 44) * f;
+      // Skip the notch the water comes through.
+      if (Math.abs(tx - cliffX) < this.sheetW * 0.7) continue;
+      const ty = lipY - capH + (lipY - this.h * 0.04 - lipY) * f;
+      grassTuft(g, this.tint, tx, ty + 3, 13, Math.sin(this.t * 1.2 + i) * 0.2, DRM.grassDeep, a * 0.9);
     }
+  }
 
-    // ── Pool ──
-    const px = w * 0.5, py = horizon + (h - horizon) * 0.52;
-    const prx = w * 0.3, pry = (h - horizon) * 0.34;
+  /** The plunge pool: dark under the falls, lit toward the near bank. */
+  private drawPool(a: number): void {
+    const g = this.g;
+    const { w, h, cliffX: px, poolY: py } = this;
+    const prx = w * 0.2, pry = h * 0.055;
+
+    // Damp, dark grass around the rim.
+    g.fillStyle(this.tint(DRM.grassDeep), a);
+    g.fillEllipse(px, py + 5, prx * 2.2, pry * 2.5);
     g.fillStyle(this.tint(DRM.waterDeep), a);
-    g.fillEllipse(px, py + 4, prx * 2, pry * 2);
-    g.fillStyle(this.tint(DRM.water), a * 0.92);
-    g.fillEllipse(px, py, prx * 2 * 0.94, pry * 2 * 0.9);
-    // Ripple rings — one every couple of seconds, expanding and fading.
-    for (let i = 0; i < 3; i++) {
-      const f = ((this.t * 0.35 + i / 3) % 1);
-      g.lineStyle(1.6, this.tint(DRM.pale), a * (1 - f) * 0.5);
-      g.strokeEllipse(px, py, prx * 2 * f * 0.9, pry * 2 * f * 0.9);
+    g.fillEllipse(px, py, prx * 2, pry * 2);
+    g.fillStyle(this.tint(DRM.water), a * 0.8);
+    g.fillEllipse(px, py + 3, prx * 1.78, pry * 1.55);
+
+    // Rings pushed out by the falls, over and over.
+    for (let i = 0; i < 4; i++) {
+      const f = (this.t * 0.3 + i / 4) % 1;
+      g.lineStyle(1.5, this.tint(DRM.foam), a * (1 - f) * 0.4);
+      g.strokeEllipse(px, py + 4, prx * 2 * f * 0.95, pry * 2 * f * 0.95);
     }
-    // Moon reflection, broken into slats by the surface.
+    // Broken glimmer on the surface.
+    for (let i = 0; i < 5; i++) {
+      const wob = Math.sin(this.t * 1.8 + i) * 8;
+      g.fillStyle(this.tint(DRM.star), a * 0.22 * (1 - i / 7));
+      g.fillEllipse(px - prx * 0.45 + wob, py + pry * 0.1 + i * pry * 0.24, 50 - i * 6, 3);
+    }
+  }
+
+  /**
+   * The waterfall. A spreading sheet, shimmer bands scrolling down it, individual strands
+   * that accelerate as they fall, a bulging crest at the lip, and churn at the foot.
+   */
+  private drawFalls(a: number): void {
+    const g = this.g;
+    const { cliffX: cx, lipY, poolY, sheetW } = this;
+    const fallH = poolY - lipY;
+    const topH = sheetW * 0.5, botH = sheetW * 0.66;
+
+    const sheet = (k: number, color: number, alpha: number) => {
+      g.fillStyle(this.tint(color), alpha);
+      g.fillPoints([
+        new Phaser.Geom.Point(cx - topH * k, lipY),
+        new Phaser.Geom.Point(cx + topH * k, lipY),
+        new Phaser.Geom.Point(cx + botH * k, poolY),
+        new Phaser.Geom.Point(cx - botH * k, poolY),
+      ], true);
+    };
+    sheet(1, DRM.waterDeep, a * 0.92);
+    sheet(0.72, DRM.water, a * 0.7);
+
+    // Shimmer bands: the whole sheet is moving, not just the strands on it.
     for (let i = 0; i < 6; i++) {
-      const ry = py - pry * 0.55 + i * (pry * 0.24);
-      const wob = Math.sin(this.t * 2.2 + i) * 7;
-      g.fillStyle(this.tint(DRM.star), a * 0.3 * (1 - i / 8));
-      g.fillEllipse(mx * 0.5 + w * 0.25 + wob, ry, 44 - i * 4, 3);
+      const p = (this.t * 0.45 + i / 6) % 1;
+      const half = topH + (botH - topH) * p;
+      g.fillStyle(this.tint(DRM.pale), a * 0.12 * (1 - p * 0.4));
+      g.fillEllipse(cx, lipY + fallH * p, half * 1.9, 6);
     }
 
-    // ── Palms, framing the pool ──
-    palmTree(g, this.tint, w * 0.2, horizon + 26, 150, 0.12, this.t * 1.1, a);
-    palmTree(g, this.tint, w * 0.83, horizon + 34, 122, -0.16, this.t * 1.3 + 2, a);
-    palmTree(g, this.tint, w * 0.68, horizon + 10, 92, 0.08, this.t * 0.9 + 4, a * 0.9);
+    // Strands. `p` is eased so each one speeds up on the way down, the way water does.
+    for (const s of this.strands) {
+      const p = (this.t * s.sp + s.ph) % 1;
+      const drop2 = p * 0.55 + p * p * 0.45;
+      const y = lipY + fallH * drop2;
+      const half = topH + (botH - topH) * drop2;
+      const x = cx + s.off * half * 0.86;
+      const len = fallH * (0.1 + s.len * 0.16) * (0.6 + drop2 * 0.6);
+      const fade = Math.min(1, (1 - p) * 3) * Math.min(1, p * 8);
+      g.fillStyle(this.tint(DRM.pale), a * 0.32 * fade);
+      g.fillEllipse(x, y, s.w * 1.8, len);
+      g.fillStyle(this.tint(DRM.foam), a * 0.5 * fade);
+      g.fillEllipse(x, y, s.w * 0.7, len * 0.66);
+    }
 
-    // ── The dreamer, asleep against the near palm ──
-    this.drawSleeper(g, restX, restY, a, healPulse);
+    // The crest: water bulges over the edge before it lets go.
+    g.fillStyle(this.tint(DRM.water), a);
+    g.fillEllipse(cx, lipY, sheetW * 1.14, 15);
+    g.fillStyle(this.tint(DRM.foam), a * 0.85);
+    g.fillEllipse(cx, lipY - 3, sheetW * 0.98, 8);
+    g.lineStyle(2, this.tint(DRM.foam), a * 0.7);
+    g.lineBetween(cx - sheetW * 0.56, lipY + 2, cx + sheetW * 0.56, lipY + 2);
 
-    // Vignette, so the edges of the arena the oasis is covering never peek through.
-    g.fillStyle(this.tint(DRM.night), a * 0.34);
-    g.fillRect(0, 0, w, 16);
-    g.fillRect(0, h - 16, w, 16);
-    g.fillRect(0, 0, 16, h);
-    g.fillRect(w - 16, 0, 16, h);
+    // The foot: churn stacked into a low mound, breathing with the impact.
+    const churn = 0.5 + 0.5 * Math.sin(this.t * 3.1);
+    for (let i = 0; i < 4; i++) {
+      const f = i / 4;
+      g.fillStyle(this.tint(DRM.foam), a * (0.48 - f * 0.1) * (0.72 + churn * 0.28));
+      g.fillEllipse(
+        cx + Math.sin(this.t * 2 + i) * 6, poolY - 6 + i * 3,
+        sheetW * (1.1 + f * 0.95), 20 - i * 3,
+      );
+    }
+  }
+
+  /** The outflow, running toward the viewer and widening as it comes. */
+  private drawStream(a: number): void {
+    const g = this.g;
+    const sx = this.cliffX, sy = this.poolY + this.h * 0.03;
+    const ex = this.w * 0.8, ey = this.h + 24;
+    const N = 9;
+    const left: Phaser.Geom.Point[] = [];
+    const right: Phaser.Geom.Point[] = [];
+    for (let i = 0; i <= N; i++) {
+      const f = i / N;
+      const cx = sx + (ex - sx) * f * f + Math.sin(f * 3 + this.t * 0.4) * 6;
+      const cy = sy + (ey - sy) * f;
+      const half = 12 + f * 54;
+      left.push(new Phaser.Geom.Point(cx - half, cy));
+      right.push(new Phaser.Geom.Point(cx + half, cy));
+    }
+    const band = (pad: number, color: number, alpha: number) => {
+      const pts = [
+        ...left.map((p) => new Phaser.Geom.Point(p.x - pad, p.y)),
+        ...right.slice().reverse().map((p) => new Phaser.Geom.Point(p.x + pad, p.y)),
+      ];
+      g.fillStyle(this.tint(color), alpha);
+      g.fillPoints(pts, true);
+    };
+    band(8, DRM.grassDeep, a);
+    band(0, DRM.waterDeep, a);
+    band(-6, DRM.water, a * 0.75);
+
+    // Current lines travelling downstream — the only thing that says which way it flows.
+    for (let i = 0; i < 4; i++) {
+      const p = (this.t * 0.32 + i / 4) % 1;
+      const idx = Math.min(N - 0.001, p * N);
+      const j = Math.floor(idx);
+      const fr = idx - j;
+      const lx = left[j].x + (left[j + 1].x - left[j].x) * fr;
+      const rx = right[j].x + (right[j + 1].x - right[j].x) * fr;
+      const y = left[j].y + (left[j + 1].y - left[j].y) * fr;
+      g.lineStyle(1.6, this.tint(DRM.foam), a * (1 - p) * 0.45);
+      g.lineBetween(lx + (rx - lx) * 0.28, y, lx + (rx - lx) * 0.72, y);
+    }
+  }
+
+  /** Two trees back in the field and one big one framing the near edge. */
+  private drawTrees(a: number): void {
+    const { w, h, meadowTop: top } = this;
+    meadowTree(this.g, this.tint, w * 0.13, top + h * 0.1, h * 0.3, 0.05, this.t, a * 0.95);
+    meadowTree(this.g, this.tint, w * 0.3, top + h * 0.04, h * 0.19, -0.06, this.t * 1.2 + 2, a * 0.85);
+    meadowTree(this.g, this.tint, w * 0.95, h * 0.96, h * 0.6, -0.08, this.t * 0.85 + 4, a);
+  }
+
+  /** Mist off the plunge pool, drifting up and thinning out. */
+  private drawSpray(a: number): void {
+    const g = this.g;
+    g.fillStyle(this.tint(DRM.pale), a * 0.05);
+    g.fillCircle(this.cliffX, this.poolY - 26, this.sheetW * 1.7);
+    for (const s of this.spray) {
+      const p = (this.t * s.sp + s.ph) % 1;
+      const y = this.poolY - p * 86;
+      g.fillStyle(this.tint(DRM.mist), a * 0.28 * Math.sin(p * Math.PI));
+      g.fillEllipse(
+        this.cliffX + s.ox + Math.sin(this.t * 0.8 + s.ph * 9) * 11, y,
+        s.r * (1 + p * 1.7), s.r * (0.7 + p),
+      );
+    }
+  }
+
+  /** Foreground grass and wildflowers, darkening as they come toward the viewer. */
+  private drawGround(a: number): void {
+    for (const tf of this.tufts) {
+      const near = Phaser.Math.Clamp((tf.y / this.h - 0.78) / 0.26, 0, 1);
+      const color = near > 0.62 ? DRM.grassDeep : near > 0.3 ? DRM.grassDark : DRM.grass;
+      grassTuft(this.g, this.tint, tf.x, tf.y, tf.h, Math.sin(this.t * 1.1 + tf.ph) * 0.16, color, a * (0.85 + near * 0.15));
+    }
+    for (const fl of this.flowers) {
+      wildflower(this.g, this.tint, fl.x, fl.y, fl.r, fl.c, Math.sin(this.t * 0.9 + fl.ph) * 0.5, a * 0.95);
+    }
+  }
+
+  /** Fireflies over the field. Dream's stars, brought down to grass height. */
+  private drawFlies(a: number): void {
+    for (const f of this.flies) {
+      const x = f.x + Math.sin(this.t * f.sp + f.ph) * 28;
+      const y = f.y + Math.cos(this.t * f.sp * 0.8 + f.ph * 1.7) * 16;
+      const tw = 0.35 + 0.65 * Math.abs(Math.sin(this.t * 1.8 + f.ph));
+      star(this.g, this.tint, x, y, f.r * (0.8 + tw * 0.6), a * tw * 0.9, DRM.bloomWarm, f.ph + this.t);
+    }
   }
 
   /** The caster, curled up and healing. Drawn from the same parts as the avatar rig. */
@@ -867,8 +1284,9 @@ export class OasisView {
   ): void {
     const breathe = Math.sin(this.t * 1.6) * 1.6;
 
-    g.fillStyle(this.tint(DRM.night), a * 0.32);
-    g.fillEllipse(x, y + 20, 62, 14);
+    // Flattened grass under the sleeper, rather than a shadow on sand.
+    g.fillStyle(this.tint(DRM.grassDeep), a * 0.6);
+    g.fillEllipse(x, y + 20, 74, 18);
 
     // Green healing bloom, beating once a second with the heal tick.
     g.fillStyle(this.tint(DRM.water), a * (0.1 + healPulse * 0.22));
@@ -888,7 +1306,7 @@ export class OasisView {
       g.strokePath();
     }
 
-    // Nightcap, flopped to one side with its pompom resting on the sand.
+    // Nightcap, flopped to one side with its pompom resting in the grass.
     const capA = -2.2 + Math.sin(this.t * 0.9) * 0.06;
     g.fillStyle(this.tint(DRM.purple), a);
     g.fillTriangle(
@@ -902,6 +1320,14 @@ export class OasisView {
     g.fillCircle(x + Math.cos(capA) * 46, y - 14 + Math.sin(capA) * 30 + breathe, 6);
 
     zzz(g, this.tint, x + 26, y - 30, 10, a * 0.95, this.t);
+
+    // A few blades standing in front of the body, so they are lying *in* the grass.
+    for (let i = -3; i <= 3; i++) {
+      grassTuft(
+        g, this.tint, x + i * 13 + Math.sin(i * 2.3) * 4, y + 20 + Math.abs(i) * 1.5,
+        13 + Math.abs(i) * 3, Math.sin(this.t * 1.2 + i) * 0.2, DRM.grassDeep, a * 0.95,
+      );
+    }
   }
 
   destroy(): void { this.g.destroy(); }

@@ -2745,43 +2745,46 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('elem-ruin', 48, 48);
     gfx.clear();
 
-    // Glass — a leaded rose window with one pane knocked out of it. GlassKit paints the
-    // character rig per-frame, so the sprite only has to say "stained glass, and broken":
-    // six coloured wedges, black came between them, and a hole where the seventh was.
-    const GLASS_WEDGES = [0xe0424f, 0xf2a33c, 0xf5e055, 0x3fc98a, 0x3f8ce8, 0xa25ce8, 0xf07ab8];
-    gfx.fillStyle(0x1b1430, 1);
+    // Sand (element id `dune`) — a dune with a stepped pillar rising out of it. SandKit paints
+    // the character rig per-frame, so the sprite only has to carry the two ideas the element is
+    // actually about: loose sand, and something built on it that you are meant to climb.
+    gfx.fillStyle(0x8f6b38, 1);
     gfx.fillCircle(24, 24, 21);
-    for (let i = 0; i < 7; i++) {
-      // The last wedge is left as bare came — that is the missing pane.
-      if (i === 6) continue;
-      const a0 = (i / 7) * Math.PI * 2 - Math.PI / 2;
-      const a1 = ((i + 1) / 7) * Math.PI * 2 - Math.PI / 2;
-      const pts: Phaser.Geom.Point[] = [];
-      for (let s = 0; s <= 4; s++) {
-        const a = a0 + ((a1 - a0) * s) / 4;
-        pts.push(new Phaser.Geom.Point(24 + Math.cos(a) * 18.5, 24 + Math.sin(a) * 18.5));
-      }
-      for (let s = 4; s >= 0; s--) {
-        const a = a0 + ((a1 - a0) * s) / 4;
-        pts.push(new Phaser.Geom.Point(24 + Math.cos(a) * 6.5, 24 + Math.sin(a) * 6.5));
-      }
-      gfx.fillStyle(GLASS_WEDGES[i], 0.92);
-      gfx.fillPoints(pts, true);
+    // The dune itself: a slip face across the lower two thirds, lit from up-left.
+    gfx.fillStyle(0xc9a05a, 1);
+    gfx.fillPoints([
+      new Phaser.Geom.Point(3, 30), new Phaser.Geom.Point(16, 20), new Phaser.Geom.Point(26, 27),
+      new Phaser.Geom.Point(45, 22), new Phaser.Geom.Point(45, 45), new Phaser.Geom.Point(3, 45),
+    ], true);
+    gfx.fillStyle(0xe8c87a, 1);
+    gfx.fillPoints([
+      new Phaser.Geom.Point(3, 30), new Phaser.Geom.Point(16, 20), new Phaser.Geom.Point(26, 27),
+      new Phaser.Geom.Point(24, 31), new Phaser.Geom.Point(14, 26), new Phaser.Geom.Point(3, 34),
+    ], true);
+    // Three stacked blocks stepping up out of the crest — the obby, in miniature.
+    const STEPS: [number, number, number][] = [[30, 30, 0x8d8b86], [34, 24, 0xd9ab63], [38, 18, 0xd9ab63]];
+    for (const [sx, sy, col] of STEPS) {
+      gfx.fillStyle(0x3a2a18, 0.55);
+      gfx.fillRect(sx - 6, sy + 3, 12, 9);
+      gfx.fillStyle(col, 1);
+      gfx.fillRect(sx - 6, sy - 3, 12, 7);
+      gfx.fillStyle(col === 0x8d8b86 ? 0xb6b3ad : 0xf0cd8e, 1);
+      gfx.fillRect(sx - 6, sy - 3, 12, 2.4);
     }
-    // Hub, and the specular streak that stops the whole thing reading as a pie chart.
-    gfx.fillStyle(0x1b1430, 1);
-    gfx.fillCircle(24, 24, 6.5);
-    gfx.fillStyle(0xdff2ff, 0.9);
-    gfx.fillCircle(24, 24, 4);
-    gfx.lineStyle(2.4, 0xffffff, 0.65);
-    gfx.lineBetween(13, 15, 22, 10);
-    gfx.lineStyle(1.4, 0xffffff, 0.45);
-    gfx.lineBetween(11, 20, 16, 16);
-    // A crack running out of the empty wedge to the rim.
-    gfx.lineStyle(1.6, 0x0b0818, 1);
-    gfx.lineBetween(24, 24, 31, 34);
-    gfx.lineBetween(31, 34, 28, 43);
-    gfx.generateTexture('elem-glass', 48, 48);
+    // The golden orb waiting on the top block.
+    gfx.fillStyle(0xffd54a, 0.35);
+    gfx.fillCircle(38, 11, 6);
+    gfx.fillStyle(0xffd54a, 1);
+    gfx.fillCircle(38, 11, 3.4);
+    gfx.fillStyle(0xfff3bc, 1);
+    gfx.fillCircle(37, 10, 1.5);
+    // Grain lifting off the crest, which is the one thing that says "sand" and not "stone".
+    gfx.fillStyle(0xf0cd8e, 0.85);
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * Math.PI * 2;
+      gfx.fillRect(13 + Math.cos(a * 3.1) * 8, 18 + Math.sin(a * 2.3) * 6, 1.6, 1.6);
+    }
+    gfx.generateTexture('elem-dune', 48, 48);
     gfx.clear();
 
     // Paper — an open storybook with a paper plane taking off out of it. PaperKit paints the

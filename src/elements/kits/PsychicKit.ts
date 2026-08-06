@@ -36,7 +36,14 @@ const WHIP_DAMAGE = 12;
 const WHIP_STRESS = 5;
 const WHIP_TIP_BONUS = 5;
 const WHIP_LEN = 196;
-const WHIP_HIT_R = 22;
+/**
+ * How far off the cord still counts, *on top of* the victim's own body radius — the cord is a
+ * cord, not a point, and a lash laid across someone's shoulder should land. Checked against the
+ * segments rather than the 18 sample points so there are no cold gaps between them.
+ */
+const WHIP_HIT_R = 18;
+/** Fallback body radius for a target with no physics body. Matches `Fighter.applySizeMult`. */
+const WHIP_BODY_R = 22;
 /** Past this far along the lash counts as the tip. The last ~45 px of a 196 px whip. */
 const WHIP_TIP_FRAC = 0.77;
 const WHIP_ANIM_MS = 260;
@@ -406,15 +413,20 @@ export class PsychicKit {
     s.aimX = tx;
     s.aimY = ty;
 
-    const ang = Math.atan2(ty - f.y, tx - f.x);
     const av = this.avatar(owner);
     const hand = av ? this.handOf(av, f) : { x: f.x, y: f.y };
+    // Aim from the hand the cord actually leaves, not from the body centre. The two sit ~25 px
+    // apart, and a lash thrown *parallel* to the aim instead of *along* it slides past a target
+    // the cursor was sitting right on top of.
+    const ang = Math.atan2(ty - hand.y, tx - hand.x);
     const pts = this.lashPoints(hand.x, hand.y, ang, WHIP_CRACK_T);
 
     const hit = new Map<Fighter, boolean>();   // victim → was it the tip
     for (const t of this.targetsOf(owner)) {
+      const body = t.body as Phaser.Physics.Arcade.Body | null;
+      const reach = WHIP_HIT_R + (body?.radius || WHIP_BODY_R);
       for (let i = 1; i < pts.length; i++) {
-        if (Phaser.Math.Distance.Between(pts[i].x, pts[i].y, t.x, t.y) > WHIP_HIT_R) continue;
+        if (this.segDist(pts[i - 1], pts[i], t.x, t.y) > reach) continue;
         const isTip = i / (pts.length - 1) >= WHIP_TIP_FRAC;
         hit.set(t, (hit.get(t) ?? false) || isTip);
       }
@@ -913,6 +925,15 @@ export class PsychicKit {
   }
 
   /** The whip's cord: a snaking walk out from the hand, with a wave travelling down it. */
+  /** Distance from a point to the segment a→b, so the cord hits along its length, not at its knots. */
+  private segDist(a: { x: number; y: number }, b: { x: number; y: number }, px: number, py: number): number {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    const u = len2 > 0 ? Phaser.Math.Clamp(((px - a.x) * dx + (py - a.y) * dy) / len2, 0, 1) : 0;
+    return Phaser.Math.Distance.Between(a.x + dx * u, a.y + dy * u, px, py);
+  }
+
   private lashPoints(x: number, y: number, ang: number, t: number): { x: number; y: number }[] {
     const N = 18;
     const reach = WHIP_LEN * Math.min(1, 0.2 + t * 1.7);
@@ -924,7 +945,10 @@ export class PsychicKit {
       const u = (i + 1) / N;
       // Amplitude grows toward the tip and dies as the crack completes, so the lash is straight
       // at exactly the moment it lands and coiled either side of it.
-      const wave = Math.sin(u * Math.PI * 1.4 - t * 7.2) * (0.62 - t * 0.46) * u;
+      // The amplitude crosses zero at exactly WHIP_CRACK_T and goes negative after, so the cord
+      // is dead straight on the frame the hit is resolved and coils the *other* way on the
+      // follow-through. Anything else and the tip lands a fist's width off where it was aimed.
+      const wave = Math.sin(u * Math.PI * 1.4 - t * 7.2) * (0.62 - t * (0.62 / WHIP_CRACK_T)) * u;
       const a = ang + wave;
       px += Math.cos(a) * step;
       py += Math.sin(a) * step;
@@ -1120,7 +1144,7 @@ export class PsychicKit {
 
     const st = this.stress.get(p);
     this.api.setStatusIndicator('psychic-stress', st ? {
-      name: 'Stress', emoji: '🔴', color: PSY.stress, priority: 6,
+      name: 'Stress', emoji: '🩸', color: PSY.stress, priority: 6,
       description: 'A pool of psychic pressure. It does nothing until it goes off, then lands all at once and straight through every scrap of armour you own. Every new point puts the fuse back to 10 seconds.',
       until: st.releaseAt, count: Math.round(st.amount),
     } : null);

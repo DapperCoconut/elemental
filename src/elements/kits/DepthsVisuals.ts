@@ -41,14 +41,35 @@ export const DPT = {
   puffer: 0xe8c85a,
   bomb: 0xff6a3d,
   gulper: 0x7b52a8,
+  /** The five rare fish, landed only on a baited line. */
+  saw: 0xb9c9c4,
+  sword: 0x6d8fe0,
+  whale: 0x3f7a8c,
+  flyer: 0x6fe3ff,
+  cat: 0x9a7444,
+  /**
+   * Algae Trap's poisoned bloom. Only ever painted on the caster's own screen — everybody
+   * else is shown `algae`, which is the entire ability.
+   */
+  rot: 0xd4344a,
+  rotDeep: 0x5e0f1c,
+  rotLure: 0xffb0b0,
   /** Megalodon. */
   shark: 0x4a6672,
   sharkDark: 0x1d2f38,
   bone: 0xf2f7f2,
 };
 
-/** Which fish is on the end of the line. Every one of these throws differently. */
-export type FishKind = 'icefish' | 'barracuda' | 'pufferfish' | 'bombfish' | 'gulper';
+/**
+ * Which fish is on the end of the line. Every one of these throws differently.
+ *
+ * The first five are the ordinary catch. The last five only come up on a baited line
+ * (the F upgrade), and each one is a whole ability rather than a variation on "a fish
+ * flies at them" — which is why the silhouettes below diverge as hard as they do.
+ */
+export type FishKind =
+  | 'icefish' | 'barracuda' | 'pufferfish' | 'bombfish' | 'gulper'
+  | 'sawfish' | 'swordfish' | 'whaleshark' | 'flyingfish' | 'catfish';
 
 export const FISH_LABEL: Record<FishKind, string> = {
   icefish: 'ICEFISH',
@@ -56,10 +77,16 @@ export const FISH_LABEL: Record<FishKind, string> = {
   pufferfish: 'PUFFERFISH',
   bombfish: 'BOMB FISH',
   gulper: 'GULPER EEL',
+  sawfish: 'SAW FISH',
+  swordfish: 'SWORD FISH',
+  whaleshark: 'WHALE SHARK',
+  flyingfish: 'FLYING FISH',
+  catfish: 'CATFISH',
 };
 
 export const FISH_EMOJI: Record<FishKind, string> = {
-  icefish: '❄️', barracuda: '🗡️', pufferfish: '🐡', bombfish: '💣', gulper: '🐍',
+  icefish: '🧊', barracuda: '🗡️', pufferfish: '🐡', bombfish: '💣', gulper: '🐍',
+  sawfish: '🔪', swordfish: '⚔️', whaleshark: '🐋', flyingfish: '🐬', catfish: '🐈',
 };
 
 export const FISH_COLOR: Record<FishKind, number> = {
@@ -68,6 +95,11 @@ export const FISH_COLOR: Record<FishKind, number> = {
   pufferfish: DPT.puffer,
   bombfish: DPT.bomb,
   gulper: DPT.gulper,
+  sawfish: DPT.saw,
+  swordfish: DPT.sword,
+  whaleshark: DPT.whale,
+  flyingfish: DPT.flyer,
+  catfish: DPT.cat,
 };
 
 /** How each fish is built. One table so a thrown fish and a held fish never disagree. */
@@ -83,6 +115,16 @@ export interface FishProfile {
   stripe?: boolean;
   /** The bomb fish's fuse. */
   fuse?: boolean;
+  /** The saw fish's toothed rostrum, sticking out past the nose. */
+  saw?: boolean;
+  /** The sword fish's bill — the same idea, ground to a single point. */
+  bill?: boolean;
+  /** Pale constellations across the flank. The whale shark, and nothing else. */
+  spots?: boolean;
+  /** Oversized pectorals held out like a glider's. */
+  wings?: boolean;
+  /** Barbels trailing off the snout. */
+  whiskers?: boolean;
 }
 
 export const FISH_PROFILE: Record<FishKind, FishProfile> = {
@@ -91,7 +133,15 @@ export const FISH_PROFILE: Record<FishKind, FishProfile> = {
   pufferfish: { depth: 1.35, tail: 0.2, teeth: false, spines: true },
   bombfish: { depth: 0.95, tail: 0.24, teeth: false, fuse: true },
   gulper: { depth: 0.42, tail: 0.14, teeth: true },
+  sawfish: { depth: 0.36, tail: 0.24, teeth: false, saw: true, stripe: true },
+  swordfish: { depth: 0.34, tail: 0.32, teeth: false, bill: true, stripe: true },
+  whaleshark: { depth: 0.46, tail: 0.28, teeth: false, spots: true },
+  flyingfish: { depth: 0.4, tail: 0.3, teeth: false, wings: true, stripe: true },
+  catfish: { depth: 0.62, tail: 0.22, teeth: false, whiskers: true },
 };
+
+/** The whale shark's remoras: too small for a profile of their own to read, so they share one. */
+export const REMORA_PROFILE: FishProfile = { depth: 0.44, tail: 0.3, teeth: false, stripe: true };
 
 // ── Primitives ────────────────────────────────────────────────────────────
 
@@ -216,6 +266,105 @@ export function fishBody(
     }
   }
 
+  if (profile.saw) {
+    // A rostrum half again as long as the head, with teeth down both edges. It is the whole
+    // read on this fish — everything else about a saw fish is a plain grey body.
+    const r0 = P(0.5 * len, curve(0.5 * len));
+    const r1 = P(0.98 * len, 0);
+    g.lineStyle(Math.max(2.4, h * 0.34), tint(DPT.bone), alpha * 0.9);
+    g.lineBetween(r0.x, r0.y, r1.x, r1.y);
+    g.lineStyle(1, tint(DPT.abyss), alpha * 0.5);
+    g.lineBetween(r0.x, r0.y, r1.x, r1.y);
+    for (let i = 0; i < 7; i++) {
+      const u = (0.56 + i * 0.06) * len;
+      for (const side of [-1, 1]) {
+        const a = P(u, side * h * 0.08);
+        const b = P(u + len * 0.022, side * h * 0.5);
+        g.lineStyle(1.7, tint(DPT.bone), alpha * 0.95);
+        g.lineBetween(a.x, a.y, b.x, b.y);
+      }
+    }
+  }
+
+  if (profile.bill) {
+    // One spike, tapered to nothing. Long enough that the fish arrives point-first.
+    const b0 = P(0.46 * len, -h * 0.16);
+    const b1 = P(0.46 * len, h * 0.16);
+    const b2 = P(1.1 * len, 0);
+    g.fillStyle(tint(DPT.abyss), alpha * 0.5);
+    g.fillPoints([new Phaser.Geom.Point(b0.x, b0.y + 2), new Phaser.Geom.Point(b1.x, b1.y + 2),
+      new Phaser.Geom.Point(b2.x, b2.y + 2)], true);
+    g.fillStyle(tint(DPT.bone), alpha * 0.95);
+    g.fillPoints([b0, b1, b2], true);
+    g.lineStyle(1.2, tint(DPT.foam), alpha * 0.7);
+    g.lineBetween(b0.x, b0.y, b2.x, b2.y);
+  }
+
+  if (profile.spots) {
+    // Two staggered rows of pale checks — the one marking everybody recognises on sight.
+    g.fillStyle(tint(DPT.foam), alpha * 0.5);
+    for (let i = 0; i < 20; i++) {
+      const row = Math.floor(i / 10);
+      const u = (0.38 - (i % 10) * 0.085) * len;
+      const v = (row === 0 ? -1 : 1) * h * (0.24 + jitter(11, i) * 0.42);
+      const s = P(u, v + curve(u));
+      g.fillCircle(s.x, s.y, Math.max(1.3, len * 0.024));
+    }
+    // A vast, permanently open mouth. It is a filter feeder — it never closes.
+    const m0 = P(0.5 * len, -h * 0.18);
+    const m1 = P(0.34 * len, -h * 0.5);
+    const m2 = P(0.34 * len, h * 0.5);
+    const m3 = P(0.5 * len, h * 0.18);
+    g.fillStyle(tint(DPT.abyss), alpha * 0.9);
+    g.fillPoints([m0, m1, m2, m3], true);
+    g.lineStyle(1.4, tint(DPT.foam), alpha * 0.4);
+    for (let i = 0; i < 4; i++) {
+      const u = (0.44 - i * 0.03) * len;
+      g.lineBetween(P(u, -h * 0.42).x, P(u, -h * 0.42).y, P(u, h * 0.42).x, P(u, h * 0.42).y);
+    }
+  }
+
+  if (profile.wings) {
+    // Pectorals held out stiff and translucent, beating on their own slower phase. A flying
+    // fish that folded them would just be an icefish.
+    const beat = Math.sin(wiggle * 0.8) * 0.25;
+    for (const side of [-1, 1]) {
+      const w0 = P(0.2 * len, side * h * 0.3);
+      const w1 = P(-0.24 * len, side * h * 0.45);
+      const w2 = P(-0.02 * len, side * h * (2.6 + beat));
+      g.fillStyle(tint(color), alpha * 0.45);
+      g.fillPoints([w0, w1, w2], true);
+      g.lineStyle(1.1, tint(DPT.foam), alpha * 0.55);
+      g.lineBetween(w0.x, w0.y, w2.x, w2.y);
+      g.lineBetween(w1.x, w1.y, w2.x, w2.y);
+      // Two ribs, so the fin reads as a wing rather than a smear.
+      const rib = P(-0.12 * len, side * h * (1.4 + beat * 0.5));
+      g.lineStyle(0.9, tint(DPT.foam), alpha * 0.3);
+      g.lineBetween(w0.x, w0.y, rib.x, rib.y);
+    }
+  }
+
+  if (profile.whiskers) {
+    // Four barbels dragging off the snout, each drawn as three segments so they hang.
+    for (let i = 0; i < 4; i++) {
+      const side = i < 2 ? -1 : 1;
+      const spread = 0.45 + (i % 2) * 0.4;
+      const root = P(0.44 * len, side * h * 0.24);
+      let px = root.x;
+      let py = root.y;
+      g.lineStyle(1.5, tint(DPT.abyss), alpha * 0.85);
+      for (let j = 1; j <= 3; j++) {
+        const a = ang + side * spread + Math.sin(wiggle * 0.9 + i * 1.7 + j) * 0.22;
+        const d = len * 0.17 * j;
+        const cx = root.x + Math.cos(a) * d;
+        const cy = root.y + Math.sin(a) * d;
+        g.lineBetween(px, py, cx, cy);
+        px = cx;
+        py = cy;
+      }
+    }
+  }
+
   if (profile.fuse) {
     // A lit fuse curling off the back, sparking at the tip.
     const f0 = P(-0.1 * len, -1.0 * h);
@@ -285,21 +434,28 @@ export function piranha(
  * A healing algae orb: a bead of light with fronds of weed streaming off it. Drawn the same
  * way whether it is real (Eutrophication) or a lie (the anglerfish lure) — which is the whole
  * point of the passive, so the two must not be told apart by their art.
+ *
+ * `poison` swaps the palette to red for Algae Trap. Only the shape survives the swap, and
+ * deliberately so: the caller decides *whose screen* gets the red, and everybody else is
+ * shown a heal.
  */
 export function algaeOrb(
   g: Phaser.GameObjects.Graphics,
   tint: DepthsColorFn,
-  x: number, y: number, r: number, t: number, alpha: number, seed = 0,
+  x: number, y: number, r: number, t: number, alpha: number, seed = 0, poison = false,
 ): void {
   const pulse = 0.85 + 0.15 * Math.sin(t * 2.6 + seed);
+  const bright = poison ? DPT.rot : DPT.algae;
+  const dark = poison ? DPT.rotDeep : DPT.algaeDeep;
+  const lit = poison ? DPT.rotLure : DPT.lure;
 
-  g.fillStyle(tint(DPT.algae), alpha * 0.13);
+  g.fillStyle(tint(bright), alpha * 0.13);
   g.fillCircle(x, y, r * 2.6 * pulse);
-  g.fillStyle(tint(DPT.algae), alpha * 0.2);
+  g.fillStyle(tint(bright), alpha * 0.2);
   g.fillCircle(x, y, r * 1.7 * pulse);
 
   // Fronds: five weeds swaying on their own phases, rooted at the bead.
-  g.lineStyle(2, tint(DPT.algaeDeep), alpha * 0.85);
+  g.lineStyle(2, tint(dark), alpha * 0.85);
   for (let i = 0; i < 5; i++) {
     const base = (i / 5) * TAU + seed;
     let px = x;
@@ -313,15 +469,15 @@ export function algaeOrb(
       px = cx;
       py = cy;
     }
-    g.fillStyle(tint(DPT.algae), alpha * 0.7);
+    g.fillStyle(tint(bright), alpha * 0.7);
     g.fillCircle(px, py, 1.8);
   }
 
-  g.fillStyle(tint(DPT.algaeDeep), alpha * 0.95);
+  g.fillStyle(tint(dark), alpha * 0.95);
   g.fillCircle(x, y, r * pulse);
-  g.fillStyle(tint(DPT.algae), alpha);
+  g.fillStyle(tint(bright), alpha);
   g.fillCircle(x, y, r * 0.68 * pulse);
-  g.fillStyle(tint(DPT.lure), alpha);
+  g.fillStyle(tint(lit), alpha);
   g.fillCircle(x - r * 0.22, y - r * 0.24, r * 0.3 * pulse);
 }
 

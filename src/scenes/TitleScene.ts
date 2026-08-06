@@ -20,7 +20,7 @@ const SIGIL_ELEMENTS: Array<{ emoji: string; color: number }> = [
   { emoji: '💧', color: 0x0088ff },
   { emoji: '🌿', color: 0x44cc44 },
   { emoji: '💨', color: 0xaaddff },
-  { emoji: '🗿', color: 0x887755 },
+  { emoji: '🪨', color: 0x887755 },
 ];
 
 export class TitleScene extends Phaser.Scene {
@@ -181,8 +181,8 @@ export class TitleScene extends Phaser.Scene {
           konamiIdx = 0;
           const { campaignSlot } = applyKonamiCheat();
           showToast(this, campaignSlot
-            ? '🏆 All Gauntlets Complete!\n+9999 💎  +9999 🔴  +9999 🗝️  +9999 ✨ (Slot 1)\n🌀 Slot 1 cheat-flagged'
-            : '🏆 All Gauntlets Complete!\n+9999 💎  +9999 🔴', { accent: C.gold });
+            ? '🏆 All Gauntlets Complete!\n+9999 💎  +9999 🩸  +9999 🗝️  +9999 ✨ (Slot 1)\n🌀 Slot 1 cheat-flagged'
+            : '🏆 All Gauntlets Complete!\n+9999 💎  +9999 🩸', { accent: C.gold });
         }
       } else {
         konamiIdx = key === KONAMI[0] ? 1 : 0;

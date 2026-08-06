@@ -64,7 +64,7 @@ const climax: Ability = {
   name: 'Climax',
   description: 'The ending of whichever book is open. '
     + '📗 Knight: ghostly knights and cavalry charge the length of the arena for 50. '
-    + '📘 Alien: 12 targeting rings paint the ground, then take laser bombardment — 25 and a 2s stun each. '
+    + '📘 Alien: 60 targeting rings paint the ground, then take laser bombardment — 25 and a 2s stun each. '
     + '📕 Fantasy: a flame spirit ricochets around the arena for 8 seconds, burning a trail behind it.',
   displayKey: 'Q',
   isUltimate: true,

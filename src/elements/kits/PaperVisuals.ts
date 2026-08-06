@@ -11,7 +11,7 @@ import { ArmGesture, AvatarSpec, BaseAvatar, ColorFn, FxBase, TAU, easeIn, easeO
  *
  * Three rules hold the look together:
  *
- * 1. Paper is opaque and it casts a shadow. This is the opposite of Glass and it is deliberate —
+ * 1. Paper is opaque and it casts a shadow. Deliberate, against every translucent kit in the game —
  *    every sheet gets a dark offset copy underneath, which is the single thing that stops the
  *    element reading as flat cream rectangles.
  * 2. Nothing here is a smooth curve. Every edge is drawn from straight segments with a per-vertex
@@ -50,15 +50,30 @@ export const PAP = {
   blood: 0xc8324a,
   /** The Journal's own colour — leather and gilt. */
   gilt: 0xe8c65c,
+  /** Bible book (Larger Library) — the light it throws, and the gold of the crucifix. */
+  halo: 0xfff3c4,
+  haloDeep: 0xb8862a,
+  /** Herbology book (Larger Library) — a fresh seed, and the sap it darkens to as it grazes. */
+  leaf: 0x7fe06a,
+  leafDeep: 0x1f6b2a,
+  /** The lotus at the end of the Herbology book. */
+  petal: 0xffb3dd,
+  petalDeep: 0xb0407f,
 };
 
-export type BookId = 0 | 1 | 2;
+/**
+ * Three books as standard; the Larger Library shop upgrade adds the last two, which is why the
+ * id runs to 4 rather than 2 and why every book lookup goes through `BOOK_TONE` by index.
+ */
+export type BookId = 0 | 1 | 2 | 3 | 4;
 
 /** Everything one storybook recolours. Indexed by `BookId`, never looked up by name. */
 export const BOOK_TONE: { name: string; emoji: string; accent: number; deep: number; cover: number }[] = [
   { name: 'Knight', emoji: '📗', accent: PAP.spectre, deep: PAP.spectreDeep, cover: 0x2f7d55 },
   { name: 'Alien', emoji: '📘', accent: PAP.beam, deep: PAP.beamDeep, cover: 0x2c548f },
   { name: 'Fantasy', emoji: '📕', accent: PAP.arcane, deep: PAP.arcaneDeep, cover: 0x7d2a52 },
+  { name: 'Bible', emoji: '📙', accent: PAP.halo, deep: PAP.haloDeep, cover: 0x8a6a1e },
+  { name: 'Herbology', emoji: '📓', accent: PAP.leaf, deep: PAP.leafDeep, cover: 0x2f6b34 },
 ];
 
 /** Deterministic 0–1 noise, so a torn edge tears the same way every frame. */
@@ -222,6 +237,285 @@ export function shurikenShape(
   g.fillCircle(x, y, r * 0.16);
   g.lineStyle(1, tint(accent), alpha);
   g.strokeCircle(x, y, r * 0.16);
+}
+
+/**
+ * The same folded star, built as a pinwheel instead — what a shuriken becomes once Paper Pinwheel
+ * is bought.
+ *
+ * Six sails rather than four kites, and the difference that makes it read as a toy is the fold:
+ * each sail's outer corner is bent forward across the direction of spin and caught brightly, so
+ * the wheel has a visible cupped face. Stuck in a wall it grows the pin it spins on.
+ */
+export function pinwheelShape(
+  g: Phaser.GameObjects.Graphics,
+  tint: PaperColorFn,
+  x: number, y: number, ang: number, r: number, alpha: number,
+  { accent = PAP.crease, sails = 6, drop = 3, stuck = 0 } = {},
+): void {
+  // The pin, driven into the wall, drawn first so the sails spin in front of it.
+  if (stuck > 0) {
+    g.lineStyle(4, tint(PAP.drop), alpha * 0.35);
+    g.lineBetween(x + 2, y + 2, x + 2, y + r * 0.95 + 2);
+    g.lineStyle(3, tint(PAP.crease), alpha * 0.85);
+    g.lineBetween(x, y, x, y + r * 0.95);
+  }
+
+  for (let i = 0; i < sails; i++) {
+    const a = ang + (i / sails) * TAU;
+    const ca = Math.cos(a);
+    const sa = Math.sin(a);
+    const P = (u: number, v: number) => pt(x, y, ca, sa, u, v);
+    const face = [P(r * 0.12, 0), P(r, -r * 0.12), P(r * 0.9, r * 0.46), P(r * 0.3, r * 0.36)];
+    if (drop > 0) {
+      g.fillStyle(tint(PAP.drop), alpha * 0.28);
+      g.fillPoints(offset(face, drop, drop), true);
+    }
+    g.fillStyle(tint(i % 2 === 0 ? PAP.pulp : PAP.shade), alpha);
+    g.fillPoints(face, true);
+    // The bent corner: the whole reason this reads as a pinwheel and not a star.
+    g.fillStyle(tint(PAP.bright), alpha * 0.88);
+    g.fillPoints([P(r, -r * 0.12), P(r * 0.9, r * 0.46), P(r * 0.64, r * 0.02)], true);
+    g.lineStyle(1.1, tint(accent), alpha * 0.85);
+    g.strokePoints(face, true, true);
+    // The crease running from hub to tip, which is where the sail folds.
+    g.lineStyle(1, tint(PAP.crease), alpha * 0.55);
+    g.lineBetween(P(r * 0.16, 0).x, P(r * 0.16, 0).y, P(r * 0.9, r * 0.24).x, P(r * 0.9, r * 0.24).y);
+  }
+
+  // Hub: a pin head with a highlight, so the wheel has an axis to turn on.
+  g.fillStyle(tint(accent), alpha);
+  g.fillCircle(x, y, r * 0.17);
+  g.fillStyle(tint(PAP.bright), alpha);
+  g.fillCircle(x - r * 0.05, y - r * 0.05, r * 0.09);
+}
+
+/**
+ * The Bible book's click: a slab of scripture-light thrown broadside on.
+ *
+ * `ang` is the direction of travel and the slab's *long* axis runs across it, so what the caster
+ * sees leaving their hands is the long edge — a wall, not a spear. Ruled like a page and lit
+ * hardest along the leading edge, with the light it is shedding trailing out behind.
+ */
+export function lightSlab(
+  g: Phaser.GameObjects.Graphics,
+  tint: PaperColorFn,
+  x: number, y: number, ang: number, len: number, width: number, alpha: number,
+  { accent = PAP.halo, deep = PAP.haloDeep, seed = 0 } = {},
+): void {
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const P = (u: number, v: number) => pt(x, y, ca, sa, u, v);
+  const hu = width * 0.5;
+  const hv = len * 0.5;
+
+  // Halo: a bigger, fainter copy of the same slab.
+  g.fillStyle(tint(accent), alpha * 0.15);
+  g.fillPoints([P(hu * 2.3, -hv * 1.14), P(hu * 2.3, hv * 1.14), P(-hu * 2.3, hv * 1.14), P(-hu * 2.3, -hv * 1.14)], true);
+
+  // Light shed backwards, one streak per rule line.
+  for (let i = 0; i < 7; i++) {
+    const v = (i / 6 - 0.5) * len * 0.9;
+    const tail = width * (1.1 + jitter(seed, i) * 1.9);
+    g.lineStyle(2, tint(accent), alpha * 0.2);
+    g.lineBetween(P(-hu, v).x, P(-hu, v).y, P(-hu - tail, v).x, P(-hu - tail, v).y);
+  }
+
+  // Body: the trailing half in deep gold, the leading half in white gold.
+  g.fillStyle(tint(deep), alpha * 0.88);
+  g.fillPoints([P(0, -hv), P(0, hv), P(-hu, hv), P(-hu, -hv)], true);
+  g.fillStyle(tint(accent), alpha * 0.95);
+  g.fillPoints([P(hu, -hv), P(hu, hv), P(0, hv), P(0, -hv)], true);
+
+  // Ruled lines, so a bar of light still reads as a page.
+  g.lineStyle(1, tint(PAP.bright), alpha * 0.45);
+  for (let i = 1; i < 6; i++) {
+    const v = -hv + (i / 6) * len;
+    g.lineBetween(P(hu * 0.72, v).x, P(hu * 0.72, v).y, P(-hu * 0.72, v).x, P(-hu * 0.72, v).y);
+  }
+
+  g.lineStyle(3, tint(PAP.bright), alpha);
+  g.lineBetween(P(hu, -hv).x, P(hu, -hv).y, P(hu, hv).x, P(hu, hv).y);
+  g.lineStyle(1.4, tint(PAP.gilt), alpha * 0.85);
+  g.strokePoints([P(hu, -hv), P(hu, hv), P(-hu, hv), P(-hu, -hv)], true, true);
+}
+
+/**
+ * The Bible book's ending: a crucifix planted in the floor, gilt-edged, with a halo turning over
+ * it. Drawn under the fighters — whoever it has caught stands in front of it.
+ */
+export function crucifixShape(
+  g: Phaser.GameObjects.Graphics,
+  tint: PaperColorFn,
+  x: number, y: number, s: number, alpha: number,
+  { accent = PAP.halo, deep = PAP.haloDeep, t = 0 } = {},
+): void {
+  const up = s * 2;
+  const down = s * 1.1;
+  const arm = s * 0.95;
+  const beam = s * 0.3;
+  const barY = y - up * 0.56;
+
+  // The light it stands in, breathing.
+  g.fillStyle(tint(accent), alpha * 0.11 * (0.7 + 0.3 * Math.sin(t * 3)));
+  g.fillEllipse(x, y - s * 0.4, s * 2.9, s * 4.4);
+  g.fillStyle(tint(PAP.drop), alpha * 0.3);
+  g.fillEllipse(x + 3, y + down * 0.9, s * 1.8, s * 0.6);
+
+  for (const [dx, dy, col, a] of [
+    [3, 3, PAP.drop, alpha * 0.3],
+    [0, 0, deep, alpha],
+  ] as [number, number, number, number][]) {
+    g.fillStyle(tint(col), a);
+    g.fillRect(x - beam * 0.5 + dx, y - up + dy, beam, up + down);
+    g.fillRect(x - arm + dx, barY - beam * 0.5 + dy, arm * 2, beam);
+  }
+  // The lit face of each timber — one edge only, so the cross has a light source.
+  g.fillStyle(tint(accent), alpha);
+  g.fillRect(x - beam * 0.5, y - up, beam * 0.42, up + down);
+  g.fillRect(x - arm, barY - beam * 0.5, arm * 2, beam * 0.4);
+
+  g.lineStyle(1.4, tint(PAP.gilt), alpha * 0.9);
+  g.strokeRect(x - beam * 0.5, y - up, beam, up + down);
+  g.strokeRect(x - arm, barY - beam * 0.5, arm * 2, beam);
+
+  // Halo, turning above the head of the cross.
+  const wob = 0.55 + 0.45 * Math.sin(t * 3.4);
+  g.lineStyle(2.6, tint(PAP.bright), alpha * wob);
+  g.strokeEllipse(x, y - up - s * 0.26, s * 1.05, s * 0.3 + s * 0.14 * wob);
+}
+
+/** One link of chain, drawn as an oriented ring so a run of them reads as rope rather than dots. */
+export function chainLink(
+  g: Phaser.GameObjects.Graphics,
+  tint: PaperColorFn,
+  x: number, y: number, ang: number, r: number, alpha: number,
+  { color = PAP.gilt } = {},
+): void {
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const ring: Phaser.Geom.Point[] = [];
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * TAU;
+    ring.push(pt(x, y, ca, sa, Math.cos(a) * r, Math.sin(a) * r * 0.5));
+  }
+  g.lineStyle(Math.max(1.6, r * 0.42), tint(PAP.drop), alpha * 0.35);
+  g.strokePoints(offset(ring, 1.4, 1.4), true, true);
+  g.lineStyle(Math.max(1.4, r * 0.34), tint(color), alpha);
+  g.strokePoints(ring, true, true);
+  g.lineStyle(Math.max(0.8, r * 0.14), tint(PAP.bright), alpha * 0.8);
+  g.strokePoints(ring.slice(0, 5), false, false);
+}
+
+/** A run of links from a to b. Alternating orientation, the way real chain lies. */
+export function chainRun(
+  g: Phaser.GameObjects.Graphics,
+  tint: PaperColorFn,
+  x0: number, y0: number, x1: number, y1: number, r: number, alpha: number,
+  { color = PAP.gilt } = {},
+): void {
+  const ang = Math.atan2(y1 - y0, x1 - x0);
+  const dist = Math.hypot(x1 - x0, y1 - y0);
+  const step = r * 1.5;
+  const n = Math.max(1, Math.round(dist / step));
+  for (let i = 0; i <= n; i++) {
+    const k = i / n;
+    chainLink(g, tint, x0 + (x1 - x0) * k, y0 + (y1 - y0) * k,
+      ang + (i % 2 === 0 ? 0 : Math.PI / 2), r, alpha, { color });
+  }
+}
+
+/**
+ * A Herbology seed in flight. `charge` 0–1 is how close it has come to a body — it darkens from
+ * fresh green toward sap and grows an aura, because the whole ability is threading it *past*
+ * somebody, and the colour is the only readout of what it is carrying home.
+ */
+export function herbSeed(
+  g: Phaser.GameObjects.Graphics,
+  tint: PaperColorFn,
+  x: number, y: number, ang: number, r: number, charge: number, alpha: number,
+): void {
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const P = (u: number, v: number) => pt(x, y, ca, sa, u, v);
+  const body = shade(tint(PAP.leaf), 1 - charge * 0.6);
+  const under = shade(body, 0.68);
+
+  g.fillStyle(body, alpha * (0.1 + charge * 0.28));
+  g.fillCircle(x, y, r * (1.7 + charge * 1.4));
+
+  // Two leaf halves either side of a spine, the far one shaded.
+  g.fillStyle(under, alpha);
+  g.fillPoints([P(r * 1.6, 0), P(-r * 0.5, -r), P(-r * 1.1, 0)], true);
+  g.fillStyle(body, alpha);
+  g.fillPoints([P(r * 1.6, 0), P(-r * 0.5, r), P(-r * 1.1, 0)], true);
+
+  g.lineStyle(1, tint(PAP.bright), alpha * 0.7);
+  g.lineBetween(P(r * 1.6, 0).x, P(r * 1.6, 0).y, P(-r * 1.1, 0).x, P(-r * 1.1, 0).y);
+  g.lineStyle(1, tint(PAP.leafDeep), alpha * 0.6);
+  for (let i = 0; i < 3; i++) {
+    const u = r * (0.9 - i * 0.62);
+    const w = r * (0.3 + i * 0.2);
+    g.lineBetween(P(u, 0).x, P(u, 0).y, P(u - w, w).x, P(u - w, w).y);
+    g.lineBetween(P(u, 0).x, P(u, 0).y, P(u - w, -w).x, P(u - w, -w).y);
+  }
+
+  // The bead of sap it has banked, riding at the back of the leaf.
+  if (charge > 0.04) {
+    g.fillStyle(tint(PAP.bright), alpha * (0.4 + charge * 0.5));
+    g.fillCircle(P(-r * 0.4, 0).x, P(-r * 0.4, 0).y, r * 0.34 * charge + 0.7);
+  }
+}
+
+/**
+ * The Herbology book's ending: a lotus opening on a lily pad, seen at the arena's shallow angle.
+ * Three rings of petals with a gilt seed head turning at the middle; `open` 0–1 unfurls it.
+ */
+export function lotusBloom(
+  g: Phaser.GameObjects.Graphics,
+  tint: PaperColorFn,
+  x: number, y: number, r: number, open: number, alpha: number,
+  { t = 0, seed = 0 } = {},
+): void {
+  g.fillStyle(tint(PAP.drop), alpha * 0.28);
+  g.fillEllipse(x + 4, y + r * 0.3, r * 2.6, r * 1.2);
+  g.fillStyle(tint(PAP.leafDeep), alpha * 0.6);
+  g.fillEllipse(x, y + r * 0.22, r * 2.5, r * 1.15);
+  g.lineStyle(1.4, tint(PAP.leaf), alpha * 0.6);
+  g.strokeEllipse(x, y + r * 0.22, r * 2.5, r * 1.15);
+
+  const rings = [
+    { n: 9, len: 1, w: 0.34, col: PAP.petalDeep, lift: 0 },
+    { n: 7, len: 0.76, w: 0.3, col: PAP.petal, lift: 0.14 },
+    { n: 5, len: 0.52, w: 0.26, col: PAP.bright, lift: 0.28 },
+  ];
+  rings.forEach((ring, ri) => {
+    for (let i = 0; i < ring.n; i++) {
+      const a = (i / ring.n) * TAU + ri * 0.42 + (jitter(seed, ri * 10 + i) - 0.5) * 0.2;
+      const L = r * ring.len * (0.35 + open * 0.65);
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+      // Squashed on the vertical, because the floor is seen at an angle everywhere else too.
+      const Q = (u: number, v: number) => new Phaser.Geom.Point(
+        x + (ca * u - sa * v),
+        y - r * ring.lift * open + (sa * u + ca * v) * 0.52,
+      );
+      const petal = [Q(0, 0), Q(L * 0.55, -r * ring.w), Q(L, 0), Q(L * 0.55, r * ring.w)];
+      g.fillStyle(tint(ring.col), alpha * 0.92);
+      g.fillPoints(petal, true);
+      g.lineStyle(1, tint(PAP.petalDeep), alpha * 0.65);
+      g.strokePoints(petal, true, true);
+    }
+  });
+
+  const pulse = 1 + Math.sin(t * 5) * 0.14;
+  g.fillStyle(tint(PAP.gilt), alpha);
+  g.fillCircle(x, y - r * 0.3 * open, r * 0.2 * pulse);
+  g.fillStyle(tint(PAP.bright), alpha * 0.9);
+  for (let i = 0; i < 6; i++) {
+    const a = t * 1.4 + (i / 6) * TAU;
+    g.fillCircle(x + Math.cos(a) * r * 0.14, y - r * 0.3 * open + Math.sin(a) * r * 0.07, r * 0.05);
+  }
 }
 
 /**
@@ -707,6 +1001,55 @@ export class PaperFx extends FxBase {
       g.strokeCircle(x, y, r * e * 0.7);
     });
     this.shred(x, y, 9, r * 0.8, ms, depth);
+  }
+
+  /** A column of light dropping onto a point — the Bible book's crucifix arriving. */
+  godRay(x: number, y: number, r: number, ms = 640, depth = 11): void {
+    this.anim(depth, ms, (g, t) => {
+      const k = 1 - t;
+      const h = 420 * Math.min(1, t * 2.6);
+      g.fillStyle(this.tint(PAP.halo), k * 0.22);
+      g.fillPoints([
+        new Phaser.Geom.Point(x - r * 0.5, y - h),
+        new Phaser.Geom.Point(x + r * 0.5, y - h),
+        new Phaser.Geom.Point(x + r, y),
+        new Phaser.Geom.Point(x - r, y),
+      ], true);
+      const e = 0.4 + easeOut(t);
+      g.lineStyle(3 * k + 1, this.tint(PAP.gilt), k * 0.85);
+      g.strokeEllipse(x, y, r * 2 * e, r * 0.8 * e);
+      g.lineStyle(1.6 * k, this.tint(PAP.bright), k * 0.7);
+      g.strokeEllipse(x, y, r * 1.4 * e, r * 0.56 * e);
+    });
+  }
+
+  /** Petals thrown off a bloom — the Herbology book's lotus opening. */
+  petals(x: number, y: number, count = 16, spread = 90, ms = 820, depth = 11): void {
+    const seeds = Array.from({ length: count }, (_, i) => ({
+      a: Math.random() * TAU,
+      d: spread * (0.4 + Math.random() * 0.85),
+      s: 3 + Math.random() * 4,
+      r: (Math.random() - 0.5) * 7,
+      i,
+    }));
+    this.anim(depth, ms, (g, t) => {
+      const e = easeOut(t);
+      for (const p of seeds) {
+        // Thrown up and out, then settling — petals fall slower than scraps do.
+        const px = x + Math.cos(p.a) * p.d * e;
+        const py = y + Math.sin(p.a) * p.d * e * 0.6 - e * 28 + e * e * 18;
+        const ang = p.a + p.r * t;
+        const ca = Math.cos(ang);
+        const sa = Math.sin(ang);
+        g.fillStyle(this.tint(p.i % 3 === 0 ? PAP.bright : PAP.petal), (1 - t) * 0.9);
+        g.fillPoints([
+          new Phaser.Geom.Point(px + ca * p.s * 2, py + sa * p.s * 2),
+          new Phaser.Geom.Point(px - sa * p.s, py + ca * p.s),
+          new Phaser.Geom.Point(px - ca * p.s * 2, py - sa * p.s * 2),
+          new Phaser.Geom.Point(px + sa * p.s, py - ca * p.s),
+        ], true);
+      }
+    });
   }
 
   /** A journal entry being written — the between-match reward, shown on the game-over screen. */

@@ -401,13 +401,13 @@ export const CAMPAIGN_FIGHTS: Record<string, CampaignFightDef> = {
   'passion-fight-5':   { enemyElementId: 'passion', difficulty: 5, name: 'Till Death',       taunt: 'Love means never having to say "yield".',               mutations: ['pain', 'molten'],   starredMutations: ['pain'] },
   'passion-challenge': { enemyElementId: 'passion', difficulty: 5, name: 'The Heartbreaker', taunt: 'I will cherish the memory of this. You will not have one.', mutations: ['empyreon', 'pain'] },
 
-  // ── Glass (Tier 2, Illusion) ──────────────────────────────────────
-  'glass-fight-1':   { enemyElementId: 'glass',   difficulty: 5, name: 'The Gallery',       taunt: 'Mind the floor. It remembers every step as a crack.' },
-  'glass-fight-2':   { enemyElementId: 'light',   difficulty: 5, name: 'Refraction Row',    taunt: 'Nine of me arrive before your swing does.',           mutations: ['order'] },
-  'glass-fight-3':   { enemyElementId: 'ice',     difficulty: 5, name: 'Cold Pane',         taunt: 'Frost and glass agree on one thing: shatter first.',  mutations: ['encroach'] },
-  'glass-fight-4':   { enemyElementId: 'sound',   difficulty: 5, name: 'The Resonant Note', taunt: 'Every pane in this hall knows your breaking pitch.',  mutations: ['blustery'],        starredMutations: ['blustery'] },
-  'glass-fight-5':   { enemyElementId: 'glass',   difficulty: 5, name: 'Seven Years',       taunt: 'Break me again. See what the luck does.',             mutations: ['pain', 'encroach'], starredMutations: ['pain'], format: { kind: 'flood', graceSeconds: 40 } },
-  'glass-challenge': { enemyElementId: 'glass',   difficulty: 5, name: 'The Mirrorwright',  taunt: 'I kept a reflection of the realm before it fell. You are standing in it.', mutations: ['apprehension', 'encroach'] },
+  // ── Sand (Tier 2, Illusion — the desert is where a mirage comes true) ──
+  'dune-fight-1':   { enemyElementId: 'dune',    difficulty: 5, name: 'The Long Climb',    taunt: 'Everything worth shooting from, I built. Come up if you dare.' },
+  'dune-fight-2':   { enemyElementId: 'light',   difficulty: 5, name: 'Mirage Row',        taunt: 'Nine of me arrive before your swing does.',           mutations: ['order'] },
+  'dune-fight-3':   { enemyElementId: 'ice',     difficulty: 5, name: 'Cold Dune',         taunt: 'Frost and sand agree on one thing: nothing stands.',  mutations: ['encroach'] },
+  'dune-fight-4':   { enemyElementId: 'sound',   difficulty: 5, name: 'The Resonant Note', taunt: 'Every grain in this hall knows your breaking pitch.', mutations: ['blustery'],        starredMutations: ['blustery'] },
+  'dune-fight-5':   { enemyElementId: 'dune',    difficulty: 5, name: 'Buried Twice',      taunt: 'Knock it down again. See what comes up out of it.',   mutations: ['pain', 'encroach'], starredMutations: ['pain'], format: { kind: 'flood', graceSeconds: 40 } },
+  'dune-challenge': { enemyElementId: 'dune',    difficulty: 5, name: 'The Miragewright',  taunt: 'I kept a picture of the realm before it fell. You are standing in it.', mutations: ['apprehension', 'encroach'] },
 
   // ── Fortune (Tier 2, Conquest) ────────────────────────────────────
   'fortune-fight-1':   { enemyElementId: 'fortune', difficulty: 5, name: 'The Counting House', taunt: 'Entry fee is everything you have. Exit fee negotiable.' },

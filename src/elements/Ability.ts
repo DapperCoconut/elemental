@@ -27,6 +27,12 @@ export interface CastContext {
   fireMoltenEruption?: () => void;
   /** Molten perk (divine): burn the caster for the hotter Pressure Bomb they just threw. */
   fireScorchCaster?: () => void;
+  /**
+   * Pressure Bomb's fuse: FireKit plants the charge, marks the ground red and detonates it
+   * 1.5s later (scattering bomblets with Cluster Bomb, R+). Optional — only fire's R reaches
+   * for it, so the other CastContext implementers are free to leave it out.
+   */
+  fireLobPressureBomb?: (x: number, y: number, damage: number) => void;
   dashCaster: (vx: number, vy: number) => void;
   healCaster: (amount: number) => void;
   damageCaster: (amount: number) => void;
@@ -247,12 +253,12 @@ export interface CastContext {
   ruinSkewer: (tx: number, ty: number) => void;
   ruinSpikes: () => void;
   ruinDecay: () => void;
-  // Glass (test element: cheat mode only for now)
-  glassOrbit: () => void;
-  glassSplinter: (tx: number, ty: number) => void;
-  glassTwirl: (tx: number, ty: number) => void;
-  glassTemper: () => void;
-  glassBlow: () => void;
+  // Sand — element id `dune` (test element: cheat mode only for now)
+  duneStriker: (tx: number, ty: number) => void;
+  duneRuins: () => void;
+  dunePyramid: () => void;
+  duneSandwalk: (tx: number, ty: number) => void;
+  duneFinalTrail: () => void;
   // Depths (test element: cheat mode only for now)
   depthsPiranha: (tx: number, ty: number) => void;
   depthsLungfish: (tx: number, ty: number) => void;
@@ -291,7 +297,7 @@ export interface CastContext {
   deathStyxShot: (tx: number, ty: number) => void;
   deathDisarm: (tx: number, ty: number) => void;
   deathRiposte: (tx: number, ty: number) => void;
-  deathHospice: (tx: number, ty: number) => void;
+  deathAmputate: (tx: number, ty: number) => void;
   deathDeal: (tx: number, ty: number) => void;
   // Psychic (test element: cheat mode only for now)
   psychicHeadache: (tx: number, ty: number) => void;
@@ -317,6 +323,13 @@ export interface CastContext {
   gumGumball: (tx: number, ty: number) => void;
   gumOozorbtion: () => void;
   gumSolidify: () => void;
+
+  // Quantum's Third State — the kit the bond's third stop supplies (QuantumCoreKit)
+  quantumSplicers: () => void;
+  quantumAbilitySplit: () => void;
+  quantumArenaSplit: () => void;
+  quantumEffectSplit: () => void;
+  quantumParasite: (tx: number, ty: number) => void;
   // Gluttony (test element: cheat mode only for now). Two forms, so ten entries.
   gluttonyKnife: (tx: number, ty: number) => void;
   gluttonyForage: () => void;

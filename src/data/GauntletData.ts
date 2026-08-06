@@ -23,7 +23,7 @@ export const GAUNTLET_ELEMENTS: Array<{ id: string; name: string; emoji: string;
   { id: 'water', name: 'Water', emoji: '💧',  color: 0x0088ff },
   { id: 'life',  name: 'Life',  emoji: '🌿',  color: 0x44cc44 },
   { id: 'air',   name: 'Air',   emoji: '🌬️', color: 0xaaddff },
-  { id: 'earth', name: 'Earth', emoji: '🗿',  color: 0x887755 },
+  { id: 'earth', name: 'Earth', emoji: '🪨',  color: 0x887755 },
 ];
 
 /** Entry in the cards/charms/curses record. effectiveMult accounts for Supremacy stacking. */

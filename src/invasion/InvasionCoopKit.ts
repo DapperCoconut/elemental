@@ -517,7 +517,7 @@ export class InvasionCoopKit {
   private applyHuskDeath(id: number, reward: number, x: number, y: number): void {
     this.shards += reward;
     this.updateGuestHud();
-    this.api.showFloatingText(x, y - 30, `+${reward} 🔴`, '#cc44ff');
+    this.api.showFloatingText(x, y - 30, `+${reward} 🩸`, '#cc44ff');
 
     const rep = this.huskReplicas.get(id);
     if (!rep) return;
@@ -564,7 +564,7 @@ export class InvasionCoopKit {
         if (!this.isHost) {
           this.shards += msg.bonus;
           this.updateGuestHud();
-          this.api.showFloatingText(this.api.player.x, this.api.player.y - 50, `WAVE ${msg.wave} CLEARED  +${msg.bonus} 🔴`, '#88ff44');
+          this.api.showFloatingText(this.api.player.x, this.api.player.y - 50, `WAVE ${msg.wave} CLEARED  +${msg.bonus} 🩸`, '#88ff44');
         }
         break;
       case 'huskDamage':
@@ -631,7 +631,7 @@ export class InvasionCoopKit {
         fontSize: '14px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#aacc88',
         stroke: '#101c08', strokeThickness: 3,
       }).setOrigin(0.5).setDepth(25);
-      this.shardLabel = scene.add.text(width - 16, 16, '🔴 0', {
+      this.shardLabel = scene.add.text(width - 16, 16, '🩸 0', {
         fontSize: '16px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#cc44ff',
       }).setOrigin(1, 0).setDepth(25);
       this.leaveBtn = scene.add.rectangle(62, 30, 92, 30, 0x221111, 0.9)
@@ -648,7 +648,7 @@ export class InvasionCoopKit {
 
   private updateGuestHud(): void {
     this.waveLabel?.setText(formatWaveLabel(this.wave, this.remaining));
-    this.shardLabel?.setText(`🔴 ${this.shards}`);
+    this.shardLabel?.setText(`🩸 ${this.shards}`);
   }
 
   private destroyHud(): void {

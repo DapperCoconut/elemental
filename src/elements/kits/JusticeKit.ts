@@ -636,7 +636,7 @@ export class JusticeKit {
     this.anchors = this.anchors.filter((a) => a.owner !== owner);
     this.chains = this.chains.filter((c) => c.owner !== owner);
     this.fx(owner).rubble(f.x, f.y + 14, 6, 22);
-    this.api.showFloatingText(f.x, f.y - 40, `🍃 ${why}`, '#e6e1d2');
+    this.api.showFloatingText(f.x, f.y - 40, `🪶 ${why}`, '#e6e1d2');
     if (owner === 'player') this.pushHudForm();
   }
 

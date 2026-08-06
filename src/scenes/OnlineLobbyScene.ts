@@ -4,15 +4,7 @@ import { openBondPicker } from '../ui';
 import { getPerksForElement, getPerkById } from '../data/Perks';
 import { Net, NetMsg, NetStatus, NetMatchMode } from '../network/NetworkManager';
 import { INVASION_DIFFICULTIES } from '../invasion/InvasionKit';
-import {
-  ElementDef,
-  ELEMENTS,
-  COMBINED_ELEMENTS,
-  ABSTRACT_ELEMENTS,
-  ABSTRACT_COMBINED_ELEMENTS,
-  unlockedFinaleElements,
-  ABSTRACT_ELEMENT_UNLOCK_MAP,
-} from './MenuScene';
+import { allSelectableElements, findElementDef } from '../data/ElementRoster';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackdrop, addButton, addCardPlate, addPanel, addTitle, addWell, showToast, UiButton,
@@ -333,10 +325,13 @@ export class OnlineLobbyScene extends Phaser.Scene {
     // Element grid — every element this save has unlocked (dummy excluded).
     // Compact 8-wide tiles so even a fully-unlocked save (30 elements, 4 rows)
     // stays clear of the perk row and READY button below.
-    const pool = this.unlockedElements();
-    const cols = Math.min(8, pool.length);
-    const tile = 48;
-    const gap = 6;
+    const pool = allSelectableElements();
+    // A fully-unlocked save carries far more than the eight-wide grid was drawn for,
+    // so the tiles shrink to keep the whole roster inside the panel.
+    const dense = pool.length > 32;
+    const tile = dense ? 38 : 48;
+    const gap = dense ? 5 : 6;
+    const cols = Math.min(pool.length, Math.floor((440 + gap) / (tile + gap)));
     const gridW = cols * tile + (cols - 1) * gap;
     const gx0 = 250 - gridW / 2 + tile / 2;
     const gy0 = panelY + 56;
@@ -350,10 +345,10 @@ export class OnlineLobbyScene extends Phaser.Scene {
       const plate = addCardPlate(this, {
         x: bx, y: by, w: tile, h: tile, accent: el.color, cut: 9,
       });
-      const emoji = this.add.text(bx, by - 7, el.emoji, { fontSize: '19px' })
+      const emoji = this.add.text(bx, by - (dense ? 5 : 7), el.emoji, { fontSize: dense ? '15px' : '19px' })
         .setOrigin(0.5).setDepth(DEPTH.content);
-      const name = this.add.text(bx, by + 15, el.name, {
-        fontSize: '8px', fontFamily: FONT_UI, color: T.normal,
+      const name = this.add.text(bx, by + (dense ? 12 : 15), el.name, {
+        fontSize: dense ? '7px' : '8px', fontFamily: FONT_UI, color: T.normal,
       }).setOrigin(0.5).setDepth(DEPTH.content);
 
       const hit = this.add.rectangle(bx, by, tile, tile, 0xffffff, 0)
@@ -447,18 +442,6 @@ export class OnlineLobbyScene extends Phaser.Scene {
     this.refreshRoomWidgets();
   }
 
-  private unlockedElements(): ElementDef[] {
-    const completedGauntlets = PlayerData.getCompletedGauntlets();
-    const unlockedCombined = COMBINED_ELEMENTS.filter((e) => PlayerData.isElementUnlocked(e.id));
-    const unlockedAbstract = ABSTRACT_ELEMENTS.filter((e) => {
-      const needed = ABSTRACT_ELEMENT_UNLOCK_MAP[e.id];
-      return needed ? completedGauntlets.includes(needed) : false;
-    });
-    const unlockedAbstractCombined = ABSTRACT_COMBINED_ELEMENTS.filter((e) => PlayerData.isElementUnlocked(e.id));
-    const unlockedFinale = unlockedFinaleElements();
-    return [...ELEMENTS, ...unlockedCombined, ...unlockedAbstract, ...unlockedAbstractCombined, ...unlockedFinale];
-  }
-
   private pickElement(elementId: string): void {
     // Quantum has to resolve to a real half before any of the loadout below means anything:
     // the upgrades, binds and skin all belong to the element being worn. The bond travels
@@ -543,7 +526,7 @@ export class OnlineLobbyScene extends Phaser.Scene {
         oppPerk.setText('');
         oppReady.setText('AWAY').setColor('#886666');
       } else {
-        const el = this.oppSel.elementId ? this.findElementDef(this.oppSel.elementId) : null;
+        const el = this.oppSel.elementId ? findElementDef(this.oppSel.elementId) : null;
         oppEmoji.setText(el?.emoji ?? '❔');
         oppName.setText(el ? el.name : 'Choosing…');
         const perk = this.oppSel.perkId ? getPerkById(this.oppSel.perkId) : null;
@@ -591,13 +574,6 @@ export class OnlineLobbyScene extends Phaser.Scene {
     this.roomInvasionDifficulty = INVASION_DIFFICULTIES[(idx + dir + INVASION_DIFFICULTIES.length) % INVASION_DIFFICULTIES.length].id;
     Net.send({ t: 'mode', mode: this.roomMode, invasionDifficulty: this.roomInvasionDifficulty });
     this.refreshRoomWidgets();
-  }
-
-  private findElementDef(id: string): ElementDef | undefined {
-    return ELEMENTS.find((e) => e.id === id)
-      ?? COMBINED_ELEMENTS.find((e) => e.id === id)
-      ?? ABSTRACT_ELEMENTS.find((e) => e.id === id)
-      ?? ABSTRACT_COMBINED_ELEMENTS.find((e) => e.id === id);
   }
 
   private hostStart(): void {

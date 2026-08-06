@@ -480,7 +480,7 @@ export class AmberKit {
     this.fx(owner).dust(start.x, start.y, 3, 10, 320, 8);
     Sfx.playAt('rock-throw', f.x, { volume: 0.55 + charge * 0.4, rate: 1.25 - charge * 0.4 });
     if (charge > 0.65) {
-      this.api.showFloatingText(f.x, f.y - 48, `🗿 ${damage}`, this.hex(AMB.resinLit));
+      this.api.showFloatingText(f.x, f.y - 48, `🪨 ${damage}`, this.hex(AMB.resinLit));
     }
   }
 
@@ -508,7 +508,7 @@ export class AmberKit {
       });
     }
     this.avatar(owner)?.play('flex');
-    this.api.showFloatingText(f.x, f.y - 46, '🐝 ×3', this.hex(AMB.resinLit));
+    this.api.showFloatingText(f.x, f.y - 46, '🦟 ×3', this.hex(AMB.resinLit));
     Sfx.playAt('drone-buzz', f.x, { volume: 0.8, rate: 1.4 });
   }
 
@@ -784,7 +784,7 @@ export class AmberKit {
         // Home with a full belly: the owner drinks it, the mosquito is patched up and sent back.
         if (m.fill > 0.05) {
           home.heal(MOZ_HEAL);
-          this.api.showFloatingText(home.x, home.y - 34, `🔴 +${MOZ_HEAL}`, this.hex(AMB.bloodLit));
+          this.api.showFloatingText(home.x, home.y - 34, `🩸 +${MOZ_HEAL}`, this.hex(AMB.bloodLit));
           Sfx.playAt('heal', home.x, { volume: 0.5, rate: 1.3 });
         }
         m.fill = 0;
@@ -831,7 +831,7 @@ export class AmberKit {
       m.ox = Math.cos(a) * 12;
       m.oy = Math.sin(a) * 12;
       this.api.spawnHitFlash(t.x, t.y, AMB.blood);
-      this.api.showFloatingText(t.x, t.y - 30, '🐝 LATCHED', this.hex(AMB.bloodLit));
+      this.api.showFloatingText(t.x, t.y - 30, '🦟 LATCHED', this.hex(AMB.bloodLit));
       Sfx.playAt('stab', t.x, { volume: 0.5, rate: 1.6 });
     }
   }
@@ -893,7 +893,7 @@ export class AmberKit {
         if (!this.alive(f)) continue;
         if (Phaser.Math.Distance.Between(p.x, p.y, f.x, f.y) > PUDDLE_R + 8 * f.sizeMult) continue;
         f.heal(PUDDLE_HEAL);
-        this.api.showFloatingText(f.x, f.y - 34, `🔴 +${PUDDLE_HEAL}`, this.hex(AMB.bloodLit));
+        this.api.showFloatingText(f.x, f.y - 34, `🩸 +${PUDDLE_HEAL}`, this.hex(AMB.bloodLit));
         Sfx.playAt('heal', f.x, { volume: 0.6, rate: 0.95 });
         this.puddles.splice(i, 1);
         break;
@@ -1315,7 +1315,7 @@ export class AmberKit {
     const p = this.api.player;
 
     this.api.setStatusIndicator('amber-charge', playerIs && s.swinging ? {
-      name: 'Sling', emoji: '🗿', color: AMB.resinLit,
+      name: 'Sling', emoji: '🪨', color: AMB.resinLit,
       description: `Keep circling the mouse around yourself to wind up. Release to throw for ${Math.round(SLING_MIN_DAMAGE + (SLING_MAX_DAMAGE - SLING_MIN_DAMAGE) * s.charge)} damage — the stone also hits anything it passes through for ${SLING_CONTACT}.`,
       count: Math.round(s.charge * 100), suffix: '%', priority: 128,
     } : null);
@@ -1323,14 +1323,14 @@ export class AmberKit {
     const mine = this.mosquitoes.filter((m) => m.owner === 'player').length;
     const loaded = this.mosquitoes.filter((m) => m.owner === 'player' && m.fill > PUDDLE_MIN_FILL).length;
     this.api.setStatusIndicator('amber-swarm', playerIs && mine > 0 ? {
-      name: 'Mosquitoes', emoji: '🐝', color: AMB.bloodLit,
+      name: 'Mosquitoes', emoji: '🦟', color: AMB.bloodLit,
       description: `${mine} alive${loaded ? `, ${loaded} carrying blood` : ''}. Each has 20 HP, deals 5 a second while buried, and heals you 15 every time one makes it home. Shoot one down while it is loaded and the blood spills as a puddle either side can drink.`,
       count: mine, priority: 129,
     } : null);
 
     const onMe = this.mosquitoes.filter((m) => m.state === 'stuck' && m.target === p).length;
     this.api.setStatusIndicator('amber-bitten', onMe > 0 ? {
-      name: 'Bitten', emoji: '🔴', color: AMB.blood,
+      name: 'Bitten', emoji: '🩸', color: AMB.blood,
       description: 'Mosquitoes are buried in you, draining 5 HP a second each. They cannot be hurt while they are in — but they have to fly home afterwards.',
       count: onMe, priority: 6,
     } : null);

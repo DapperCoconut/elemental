@@ -472,6 +472,13 @@ export const SOUNDS: Record<string, SoundRecipe> = {
     ...repeat(tone(1800, 0.05, { wave: 'sine', gain: 0.05 }), 8, 0.13, { rate: 0.96, gain: 0.94 }),
   ], { minGap: 500 }),
 
+  // Dream's oasis: the falls at the far end of the meadow. Retriggered on a loop while the
+  // caster rests, so the attack and release are long enough for one play to fade into the next.
+  'meadow-falls': fx([
+    noise(2.2, { gain: 0.12, color: 'pink', filter: { type: 'lowpass', freq: 1300 }, attack: 0.8, decay: 0.3, sustain: 0.9, release: 1.1, reverb: 0.4 }),
+    noise(2.2, { gain: 0.05, color: 'white', filter: { type: 'bandpass', freq: 2800, q: 0.5 }, attack: 1.0, decay: 0.3, sustain: 0.85, release: 1.0 }),
+  ], { minGap: 900 }),
+
   'bubble': fx([
     ...repeat(rise(300, 900, 0.09, { wave: 'sine', gain: 0.09, reverb: 0.3 }), 3, 0.07, { rate: 1.2, gain: 0.85 }),
   ], { minGap: 90 }),

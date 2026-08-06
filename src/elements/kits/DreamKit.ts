@@ -1,10 +1,11 @@
 import Phaser from 'phaser';
+import { Sfx } from '../../audio';
 import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
 import {
   DRM, DreamAvatar, DreamColorFn, DreamFx, DreamPortal, OasisView, TrancePendulum,
-  dreamOrb, dreamcatcherShape, ekgTrace, sleepMeter, star,
+  dreamOrb, dreamcatcherShape, ekgTrace, sleepMeter, sleepyZ, star,
 } from './DreamVisuals';
 
 type Owner = 'player' | 'npc';
@@ -19,6 +20,16 @@ const SLEEP_MS = 8000;
 const CURSOR_DAMAGE = 5;
 /** A body's worth of hitbox. The cursor has to leave this and come back to score again. */
 const CURSOR_HITBOX = 24;
+
+// ── Rest (the second passive) ────────────────────────────────────────────────
+/**
+ * The pendulum's opposite number: standing perfectly still hands health back. Trance wants
+ * you pacing and Rest wants you planted, so the element is always asking which one you need.
+ */
+const REST_HEAL = 5;
+const REST_TICK_MS = 1000;
+/** Body speed (px/s) below which a fighter counts as standing still. */
+const REST_STILL_SPEED = 6;
 
 // ── Trance (Click) ───────────────────────────────────────────────────────────
 const PEND_LEN = 68;
@@ -76,6 +87,8 @@ const PORTAL_RY = 58;
 /** How far behind the caster the doorway opens. */
 const PORTAL_BACK = 78;
 const PORTAL_ENTER_R = 40;
+/** How often the waterfall bed is retriggered. Shorter than the sound, so it never gaps. */
+const FALLS_LOOP_MS = 1500;
 
 const ARENA_PAD = 32;
 
@@ -145,12 +158,20 @@ interface Side {
   /** `scene.time.now` the rest ends. 0 = not inside. */
   oasisUntil: number;
   oasisHealAccum: number;
+  /** HP the place has actually given back this stay. Gates the "healed up" early exit. */
+  oasisHealed: number;
   /** Eased 0→1 so the oasis opens and collapses instead of blinking. */
   oasisGrow: number;
   oasis: OasisView | null;
   /** What the fighter's own flags were before the oasis took them, to hand back on exit. */
   savedInvincible: boolean;
   savedInvisible: boolean;
+
+  // ── Rest passive ──
+  /** Time held still since the last heal tick. Reset to 0 the moment the body moves. */
+  restAccum: number;
+  /** `scene.time.now` this stillness began. 0 = moving, which is also the HUD's tell. */
+  restSince: number;
 
   // ── Cursor passive ──
   /** Who the cursor is currently resting on — a hit scores on entry, never while inside. */
@@ -172,8 +193,9 @@ function makeSide(owner: Owner): Side {
     smoothAx: 0, smoothAy: 0,
     pendulum: null,
     portalX: 0, portalY: 0, portalUntil: 0, portalOpen: 0, portal: null,
-    oasisUntil: 0, oasisHealAccum: 0, oasisGrow: 0, oasis: null,
+    oasisUntil: 0, oasisHealAccum: 0, oasisHealed: 0, oasisGrow: 0, oasis: null,
     savedInvincible: false, savedInvisible: false,
+    restAccum: 0, restSince: 0,
     cursorInside: new Set(),
     ghostX: 0, ghostY: 0, ghostVx: 0, ghostVy: 0,
     nextCatcherAt: 0,
@@ -246,6 +268,8 @@ export class DreamKit {
   private gained = new Map<Fighter, number>();
   private lastAimX = 0;
   private lastAimY = 0;
+  /** Time since the waterfall bed was last retriggered, while the player is resting. */
+  private fallsAccum = 0;
   /** Latched swing strength per side, for the HUD and the avatar. */
   private swing: Record<Owner, number> = { player: 0, npc: 0 };
 
@@ -325,6 +349,7 @@ export class DreamKit {
     this.catchers = [];
     this.swing = { player: 0, npc: 0 };
     this.vizT = 0;
+    this.fallsAccum = 0;
 
     this.playerAvatar?.destroy(); this.playerAvatar = null;
     this.npcAvatar?.destroy(); this.npcAvatar = null;
@@ -462,7 +487,7 @@ export class DreamKit {
     this.avatar(owner)?.play('slam');
     this.fx(owner).ring(x, y, 8, CATCHER_RADIUS * 2.2, DRM.web, 460, 4, 5);
     this.fx(owner).stardust(x, y, 8, 26, 700, 5);
-    this.api.showFloatingText(f.x, f.y - 42, '🍃 DREAMCATCHER', '#e8ecff');
+    this.api.showFloatingText(f.x, f.y - 42, '🪶 DREAMCATCHER', '#e8ecff');
   }
 
   /** F — Nightmare. Ten seconds of something only they can see. */
@@ -553,7 +578,36 @@ export class DreamKit {
     if (dt <= 0) return;
 
     this.updatePendulum(s, f, owner, dt);
+    this.updateRest(s, f, owner, delta);
     this.updateOasis(s, f, owner, time, delta);
+  }
+
+  /**
+   * Rest: 5 HP a second for standing perfectly still, paid one whole second at a time so a
+   * step-stop-step shuffle never collects. Not while asleep (that is a debuff, not a rest)
+   * and not in the oasis, which is already handing out twice as much.
+   */
+  private updateRest(s: Side, f: Fighter, owner: Owner, delta: number): void {
+    const body = this.body(f);
+    const speed = body ? Math.hypot(body.velocity.x, body.velocity.y) : 0;
+    if (speed > REST_STILL_SPEED || f.hp <= 0 || s.oasisUntil > this.now || this.isAsleep(f)) {
+      s.restAccum = 0;
+      s.restSince = 0;
+      return;
+    }
+
+    if (s.restSince === 0) s.restSince = this.now;
+    s.restAccum += delta;
+    while (s.restAccum >= REST_TICK_MS) {
+      s.restAccum -= REST_TICK_MS;
+      const before = f.hp;
+      f.heal(REST_HEAL);
+      const got = Math.round(f.hp - before);
+      if (got > 0) {
+        this.api.showFloatingText(f.x, f.y - 30, `💤 +${got}`, '#3fc7d6');
+        this.fx(owner).stardust(f.x, f.y - 4, 4, 20, 620, 6);
+      }
+    }
   }
 
   /**
@@ -614,14 +668,30 @@ export class DreamKit {
       f.forceInvisible = true;
       s.oasisGrow = Math.min(1, s.oasisGrow + delta / 420);
 
+      // The falls, on a loop. Only for the side that is actually looking at the meadow.
+      if (owner === 'player') {
+        this.fallsAccum += delta;
+        if (this.fallsAccum >= FALLS_LOOP_MS) {
+          this.fallsAccum = 0;
+          Sfx.play('meadow-falls');
+        }
+      }
+
       s.oasisHealAccum += delta;
       while (s.oasisHealAccum >= OASIS_HEAL_TICK_MS) {
         s.oasisHealAccum -= OASIS_HEAL_TICK_MS;
+        const before = f.hp;
         f.heal(OASIS_HEAL);
-        this.api.showFloatingText(f.x, f.y - 30, `+${OASIS_HEAL}`, '#3fc7d6');
+        const got = Math.round(f.hp - before);
+        if (got > 0) {
+          s.oasisHealed += got;
+          this.api.showFloatingText(f.x, f.y - 30, `+${got}`, '#3fc7d6');
+        }
       }
-      // Full HP ends it early — the point of the place is the healing, not the hiding.
-      if (f.hp >= f.maxHp) this.exitOasis(s, f, owner, 'RESTED');
+      // Topped up ends it early — but only once the place has actually given something back.
+      // Stepping through on full HP is an escape, not a wasted ultimate, so it does not throw
+      // you straight out again. Clotted HP holds part of the pool, so "full" is hp + clot.
+      if (s.oasisHealed > 0 && f.hp + f.clottedHp >= f.maxHp) this.exitOasis(s, f, owner, 'RESTED');
       return;
     }
     if (s.oasisUntil !== 0) this.exitOasis(s, f, owner, 'AWAKE');
@@ -650,6 +720,7 @@ export class DreamKit {
   private enterOasis(s: Side, f: Fighter, owner: Owner): void {
     s.oasisUntil = this.now + OASIS_MS;
     s.oasisHealAccum = 0;
+    s.oasisHealed = 0;
     s.savedInvincible = f.isInvincible;
     s.savedInvisible = f.forceInvisible;
     // The door shuts behind you — nothing else was ever getting through it anyway.
@@ -663,9 +734,11 @@ export class DreamKit {
     if (owner === 'player') {
       s.oasis?.destroy();
       s.oasis = new OasisView(this.api.scene, this.pcol, this.api.width, this.api.height);
+      // Due on the first frame on the other side, so the falls are already running.
+      this.fallsAccum = FALLS_LOOP_MS;
     }
     this.fx(owner).tear(s.portalX, s.portalY, PORTAL_RX, PORTAL_RY, true);
-    this.api.showFloatingText(s.portalX, s.portalY - 40, '🏝️ OASIS', '#3fc7d6');
+    this.api.showFloatingText(s.portalX, s.portalY - 40, '🏞️ OASIS', '#74d18c');
   }
 
   private exitOasis(s: Side, f: Fighter, owner: Owner, why: string): void {
@@ -809,7 +882,7 @@ export class DreamKit {
     }
 
     this.fx(by).stardust(f.x, f.y, 7, 26, 640, 7);
-    this.api.showFloatingText(f.x, f.y - 40, why === 'damage' ? '⏰ AWAKE!' : '😪 Woke up', '#d8e2ff');
+    this.api.showFloatingText(f.x, f.y - 40, why === 'damage' ? '⏰ AWAKE!' : '🥱 Woke up', '#d8e2ff');
   }
 
   /** Tips a fighter over into sleep once the meter is full. */
@@ -926,32 +999,44 @@ export class DreamKit {
     }
 
     // ── The NPC's dream pocket ──
-    // It gets no full-screen oasis (that is the local player's view of their own rest), so
-    // its version is a bubble of somewhere else standing where the portal was.
+    // It gets no full-screen meadow (that is the local player's view of their own rest), so
+    // its version is a bubble of somewhere else standing where the portal was: a scrap of
+    // grass, a pool, and the falls coming down into it.
     const ns = this.sides.npc;
     if (ns.oasisGrow > 0.02) {
       const tint = this.ncol;
       const g = ns.oasisGrow;
       const r = 62 * g;
+      const cx = ns.portalX, cy = ns.portalY;
       sg.fillStyle(tint(DRM.night), 0.85 * g);
-      sg.fillCircle(ns.portalX, ns.portalY, r);
-      sg.fillStyle(tint(DRM.waterDeep), 0.7 * g);
-      sg.fillEllipse(ns.portalX, ns.portalY + r * 0.35, r * 1.3, r * 0.5);
-      sg.fillStyle(tint(DRM.sand), 0.8 * g);
-      sg.fillEllipse(ns.portalX, ns.portalY + r * 0.72, r * 1.7, r * 0.4);
+      sg.fillCircle(cx, cy, r);
+      sg.fillStyle(tint(DRM.grassDark), 0.85 * g);
+      sg.fillEllipse(cx, cy + r * 0.62, r * 1.8, r * 0.75);
+      sg.fillStyle(tint(DRM.waterDeep), 0.85 * g);
+      sg.fillEllipse(cx, cy + r * 0.38, r * 1.15, r * 0.42);
+      // The falls: a sheet with one bright strand running down it.
+      sg.fillStyle(tint(DRM.water), 0.8 * g);
+      sg.fillRect(cx - r * 0.16, cy - r * 0.62, r * 0.32, r * 1.02);
+      const p = (this.vizT * 1.1) % 1;
+      sg.fillStyle(tint(DRM.foam), 0.75 * g * (1 - p));
+      sg.fillEllipse(cx, cy - r * 0.62 + r * p, r * 0.12, r * 0.3);
+      sg.fillStyle(tint(DRM.foam), 0.7 * g);
+      sg.fillEllipse(cx, cy - r * 0.6, r * 0.34, r * 0.1);
+      sg.fillEllipse(cx, cy + r * 0.36, r * 0.5, r * 0.12);
       for (let i = 0; i < 7; i++) {
         const a = this.vizT * 0.7 + (i / 7) * Math.PI * 2;
-        star(sg, tint, ns.portalX + Math.cos(a) * r * 0.7, ns.portalY + Math.sin(a) * r * 0.55,
+        star(sg, tint, cx + Math.cos(a) * r * 0.7, cy + Math.sin(a) * r * 0.55,
           2.4, 0.8 * g, DRM.star, a);
       }
       sg.lineStyle(3, tint(DRM.violet), 0.8 * g);
-      sg.strokeCircle(ns.portalX, ns.portalY, r);
+      sg.strokeCircle(cx, cy, r);
     }
 
-    // ── Pendulums and portals ──
+    // ── Pendulums, portals and the rest halo ──
     for (const owner of ['player', 'npc'] as Owner[]) {
       const s = this.side(owner);
       const f = this.fighter(owner);
+      if (this.isDream(owner)) this.paintRest(gg, ag, s, f, owner);
       if (s.pendulum) {
         const hidden = !this.isDream(owner) || !f?.active || s.oasisUntil > time;
         if (hidden) {
@@ -979,6 +1064,47 @@ export class DreamKit {
       const inside = ps.oasisUntil > time;
       const pulse = inside ? Math.max(0, 1 - (ps.oasisHealAccum / OASIS_HEAL_TICK_MS)) : 0;
       ps.oasis.update(delta, ps.oasisGrow, this.api.width * 0.38, this.bottom - 74, pulse);
+    }
+  }
+
+  /**
+   * Rest, seen from outside: a slow breathing ring around the feet and three zs climbing off
+   * the head. Fades in over the first half second so a momentary pause does not flash it on.
+   */
+  private paintRest(
+    gg: Phaser.GameObjects.Graphics,
+    ag: Phaser.GameObjects.Graphics,
+    s: Side, f: Fighter, owner: Owner,
+  ): void {
+    if (s.restSince === 0 || !f?.active || f.hp <= 0) return;
+    const tint = this.col(owner);
+    const a = Phaser.Math.Clamp((this.now - s.restSince) / 500, 0, 1);
+    // Breathing, and timed off the heal accumulator so the ring swells into every tick.
+    const breathe = 0.5 - 0.5 * Math.cos((s.restAccum / REST_TICK_MS) * Math.PI * 2);
+    const rx = 40 + breathe * 9;
+    const ry = 14 + breathe * 3.5;
+
+    gg.fillStyle(tint(DRM.water), a * 0.1);
+    gg.fillEllipse(f.x, f.y + 20, rx * 2, ry * 2);
+    gg.lineStyle(2, tint(DRM.water), a * (0.28 + 0.34 * breathe));
+    gg.strokeEllipse(f.x, f.y + 20, rx * 2, ry * 2);
+    gg.lineStyle(1, tint(DRM.foam), a * 0.35 * (1 - breathe));
+    gg.strokeEllipse(f.x, f.y + 20, rx * 2.5, ry * 2.5);
+    for (let i = 0; i < 5; i++) {
+      const ang = this.vizT * 0.5 + (i / 5) * Math.PI * 2;
+      star(ag, tint, f.x + Math.cos(ang) * rx, f.y + 20 + Math.sin(ang) * ry,
+        2, a * 0.55, DRM.star, ang);
+    }
+
+    // Three zs on a slow climb, each a third of a cycle behind the one above it.
+    for (let i = 0; i < 3; i++) {
+      const p = (this.vizT * 0.45 + i / 3) % 1;
+      sleepyZ(ag, tint,
+        f.x + 17 + Math.sin(p * 3.2 + i) * 7,
+        f.y - 32 - p * 28,
+        4.5 + p * 3.5,
+        a * (1 - p) * 0.95,
+        -0.18 + Math.sin(p * 2 + i) * 0.12);
     }
   }
 
@@ -1199,9 +1325,15 @@ export class DreamKit {
       count: Math.round(this.swing.player * 100), suffix: '%', priority: 110,
     } : null);
 
+    this.api.setStatusIndicator('dream-rest', playerIsDream && s.restSince > 0 ? {
+      name: 'Rest', emoji: '💤', color: DRM.water,
+      description: `Standing still. ${REST_HEAL} HP every second you stay put — the first step you take ends it and starts the count again.`,
+      count: REST_HEAL, suffix: '/s', priority: 108,
+    } : null);
+
     this.api.setStatusIndicator('dream-oasis', playerIsDream && s.oasisUntil > time ? {
-      name: 'Oasis', emoji: '🏝️', color: DRM.water,
-      description: `Resting somewhere else. ${OASIS_HEAL} HP a second, untouchable, and out of sight until you are healed or the place collapses.`,
+      name: 'Oasis', emoji: '🏞️', color: DRM.water,
+      description: `Asleep in a meadow under a waterfall. ${OASIS_HEAL} HP a second, untouchable, and out of sight until you are healed or the place collapses.`,
       until: s.oasisUntil, priority: 100,
     } : null);
 
@@ -1212,7 +1344,7 @@ export class DreamKit {
     } : null);
 
     this.api.setStatusIndicator('dream-drowsy', st && st.asleepUntil <= time && st.drowsy > 0.5 ? {
-      name: 'Drowsy', emoji: '😪', color: DRM.blue,
+      name: 'Drowsy', emoji: '🥱', color: DRM.blue,
       description: 'Sleepiness is stacking up. At 100% you fall asleep for 8 seconds. Get out of the pendulum\'s reach and it wears off.',
       count: Math.round(st!.drowsy), suffix: '%', priority: 13,
     } : null);

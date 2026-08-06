@@ -61,7 +61,7 @@ export const CAMPAIGN_FIGHTS_HARD: Record<string, CampaignFightDef> = {
   'oil-fight-5':   { enemyElementId: 'oil',       difficulty: 5, name: 'Black Tide Rising', taunt: 'Everything you love is still fuel. There is just more of it.', mutations: ['phantom', 'molten'], starredMutations: ['phantom'], format: { kind: 'flood', graceSeconds: 35 } },
 
   // ── Ice ───────────────────────────────────────────────────────────
-  'ice-fight-1':   { enemyElementId: 'glass',   difficulty: 4, name: 'First Frost, Shattered', taunt: 'Frozen once, broken once. The echo kept the shards.' },
+  'ice-fight-1':   { enemyElementId: 'dune',    difficulty: 4, name: 'First Frost, Buried', taunt: 'Frozen once, buried once. The echo kept the grains.' },
   'ice-fight-2':   { enemyElementId: 'depths',  difficulty: 5, name: 'Under The Shelf',  taunt: 'The glacier\'s underside has been busy.',          mutations: ['encroach'] },
   'ice-fight-3':   { enemyElementId: 'amber',   difficulty: 5, name: 'The Slow Freeze',  taunt: 'Ice preserves. So do I. Permanently.',             mutations: ['order'], starredMutations: ['order'] },
   'ice-fight-4':   { enemyElementId: 'silence', difficulty: 5, name: 'Whiteout Total',   taunt: 'This time the snow does not stop between waves.',  mutations: ['abyss'], format: { kind: 'survival', seconds: 90 } },
@@ -75,7 +75,7 @@ export const CAMPAIGN_FIGHTS_HARD: Record<string, CampaignFightDef> = {
   'growth-fight-5':   { enemyElementId: 'growth',   difficulty: 5, name: 'Patient One',    taunt: 'You were the first infection I could not take. Rematch.', mutations: ['summoner', 'parasitic'] },
 
   // ── Crystal ───────────────────────────────────────────────────────
-  'crystal-fight-1':   { enemyElementId: 'glass',  difficulty: 4, name: 'Geode, Cracked', taunt: 'You opened the geode. The echo shows its teeth.' },
+  'crystal-fight-1':   { enemyElementId: 'dune',   difficulty: 4, name: 'Geode, Buried', taunt: 'You opened the geode. The echo poured the desert into it.' },
   'crystal-fight-2':   { enemyElementId: 'amber',  difficulty: 5, name: 'Pressure, Preserved', taunt: 'Squeezed properly this time. And kept.',      mutations: ['encroach'] },
   'crystal-fight-3':   { enemyElementId: 'light',  difficulty: 5, name: 'Total Refraction', taunt: 'Every facet aims at you now. All of them.',      mutations: ['order'], starredMutations: ['order'] },
   'crystal-fight-4':   { enemyElementId: 'psychic', difficulty: 5, name: 'The Resonant Mind', taunt: 'The lattice learned to think between tellings.', mutations: ['phantom'] },
@@ -157,7 +157,7 @@ export const CAMPAIGN_FIGHTS_HARD: Record<string, CampaignFightDef> = {
   'sound-fight-5':   { enemyElementId: 'sound',   difficulty: 5, name: 'The Crescendo, Unresolved', taunt: 'You ended it on a chord. Endings are for pieces that finish.', mutations: ['chaos', 'apprehension'], starredMutations: ['apprehension'] },
 
   // ── Light ─────────────────────────────────────────────────────────
-  'light-fight-1':   { enemyElementId: 'glass',  difficulty: 4, name: 'Refracted Court', taunt: 'The echo put a pane in front of the sun. Everything doubled.' },
+  'light-fight-1':   { enemyElementId: 'dune',   difficulty: 4, name: 'Refracted Court', taunt: 'The echo put a haze in front of the sun. Everything doubled.' },
   'light-fight-2':   { enemyElementId: 'shadow', difficulty: 5, name: 'The Long Noon',  taunt: 'Where there is that much light there is exactly that much of me.', mutations: ['phantom'], starredMutations: ['phantom'] },
   'light-fight-3':   { enemyElementId: 'crystal', difficulty: 5, name: 'The Lens Array', taunt: 'One beam was a courtesy. Here is what focusing means.', mutations: ['order'] },
   'light-fight-4':   { enemyElementId: 'radiation', difficulty: 5, name: 'Beyond Visible', taunt: 'You dodged the light. This part of the spectrum does not care.', mutations: ['wither'], format: { kind: 'horde' } },
@@ -223,7 +223,7 @@ export const CAMPAIGN_FIGHTS_HARD: Record<string, CampaignFightDef> = {
   'technology-fight-1':   { enemyElementId: 'metal',      difficulty: 4, name: 'Legacy Hardware', taunt: 'The echo rolled back to a version that still had teeth.' },
   'technology-fight-2':   { enemyElementId: 'technology', difficulty: 5, name: 'Horizontal Scaling', taunt: 'One instance was never the plan. You have met the plan.', mutations: ['summoner'], starredMutations: ['summoner'], format: { kind: 'horde' } },
   'technology-fight-3':   { enemyElementId: 'electricity', difficulty: 5, name: 'Thermal Throttle', taunt: 'Everything computes. Some of it computes at you.', mutations: ['tinker'] },
-  'technology-fight-4':   { enemyElementId: 'glass',      difficulty: 5, name: 'The Screen Cracks', taunt: 'I am rendering you at a resolution you will not enjoy.', mutations: ['order'], starredMutations: ['order'] },
+  'technology-fight-4':   { enemyElementId: 'dune',       difficulty: 5, name: 'The Buffer Fills', taunt: 'I am rendering you at a resolution you will not enjoy.', mutations: ['order'], starredMutations: ['order'] },
   'technology-fight-5':   { enemyElementId: 'technology', difficulty: 5, name: 'The Swarm Protocol, Forked', taunt: 'Incident report: you. Remediation: several thousand of me.', mutations: ['tinker', 'titanic'], format: { kind: 'tagteam', enemies: ['technology', 'metal'] } },
 
   // ── Subterfuge (world id `subterfuge`) ───────────────────────────────
@@ -253,7 +253,7 @@ export const CAMPAIGN_FIGHTS_HARD: Record<string, CampaignFightDef> = {
   'death-fight-5':   { enemyElementId: 'death',  difficulty: 5, name: 'The Parish Full', taunt: 'Every plot dug, every measurement kept. Yours was always going to fit.', mutations: ['summoner', 'phantom'], starredMutations: ['summoner'] },
 
   // ── Illusion ──────────────────────────────────────────────────────
-  'illusion-fight-1':   { enemyElementId: 'glass',    difficulty: 5, name: 'The House Reflects', taunt: 'The stage found a mirror. Now there are two of everything, and one of you.' },
+  'illusion-fight-1':   { enemyElementId: 'dune',     difficulty: 5, name: 'The House Shimmers', taunt: 'The stage found a mirage. Now there are two of everything, and one of you.' },
   'illusion-fight-2':   { enemyElementId: 'illusion', difficulty: 5, name: 'The Understudy Went On', taunt: 'The real one never came back. Nobody in the audience noticed.', mutations: ['phantom'], starredMutations: ['phantom'] },
   'illusion-fight-3':   { enemyElementId: 'psychic',  difficulty: 5, name: 'Suspension Of Disbelief', taunt: 'It is only a trick if you are outside it.', mutations: ['apprehension'] },
   'illusion-fight-4':   { enemyElementId: 'chalk',    difficulty: 5, name: 'Painted Company', taunt: 'The scenery has parts now. It has been rehearsing with the cast.', mutations: ['summoner'], starredMutations: ['summoner'], format: { kind: 'horde' } },
@@ -315,12 +315,12 @@ export const CAMPAIGN_FIGHTS_HARD: Record<string, CampaignFightDef> = {
   'passion-fight-4':   { enemyElementId: 'bind',    difficulty: 5, name: 'Attachment',      taunt: 'Distance breaks the thread. Look how much distance there is not.', mutations: ['encroach'], starredMutations: ['encroach'], format: { kind: 'flood', graceSeconds: 32 } },
   'passion-fight-5':   { enemyElementId: 'passion', difficulty: 5, name: 'The Heartbreaker, Unhealed', taunt: 'I will cherish the memory of this one too. You still will not have one.', mutations: ['apprehension', 'chaos'], starredMutations: ['apprehension'] },
 
-  // ── Glass ─────────────────────────────────────────────────────────
-  'glass-fight-1':   { enemyElementId: 'crystal', difficulty: 5, name: 'The Facet Count', taunt: 'The gallery added angles. Every one of them is looking at you.' },
-  'glass-fight-2':   { enemyElementId: 'glass',   difficulty: 5, name: 'The True Copy',   taunt: 'The realm before the fall. You are standing in it and you are the flaw.', mutations: ['order'], starredMutations: ['order'] },
-  'glass-fight-3':   { enemyElementId: 'light',   difficulty: 5, name: 'Total Internal',  taunt: 'Nothing gets out of a mirrored room. Nothing HAS.', mutations: ['pain'] },
-  'glass-fight-4':   { enemyElementId: 'ice',     difficulty: 5, name: 'The Ceiling Sheds', taunt: 'Rings mark the drop. There are a great many rings now.', mutations: ['apprehension'], starredMutations: ['apprehension'], format: { kind: 'survival', seconds: 84 } },
-  'glass-fight-5':   { enemyElementId: 'glass',   difficulty: 5, name: 'The Mirrorwright, Recut', taunt: 'You cracked the last true copy. I made a copy of the crack.', mutations: ['phantom', 'chaos'], starredMutations: ['phantom'] },
+  // ── Sand ──────────────────────────────────────────────────────────
+  'dune-fight-1':   { enemyElementId: 'crystal', difficulty: 5, name: 'The Higher Ledge', taunt: 'The hall added storeys. Every one of them is looking down at you.' },
+  'dune-fight-2':   { enemyElementId: 'dune',    difficulty: 5, name: 'The True Picture', taunt: 'The realm before the fall. You are standing in it and you are the flaw.', mutations: ['order'], starredMutations: ['order'] },
+  'dune-fight-3':   { enemyElementId: 'light',   difficulty: 5, name: 'Total Glare',     taunt: 'Nothing gets out of a hall of heat. Nothing HAS.', mutations: ['pain'] },
+  'dune-fight-4':   { enemyElementId: 'ice',     difficulty: 5, name: 'The Slope Sheds', taunt: 'Rings mark the drop. There are a great many rings now.', mutations: ['apprehension'], starredMutations: ['apprehension'], format: { kind: 'survival', seconds: 84 } },
+  'dune-fight-5':   { enemyElementId: 'dune',    difficulty: 5, name: 'The Miragewright, Redrawn', taunt: 'You scattered the last true picture. I painted the scattering.', mutations: ['phantom', 'chaos'], starredMutations: ['phantom'] },
 
   // ── Fortune ───────────────────────────────────────────────────────
   'fortune-fight-1':   { enemyElementId: 'fate',    difficulty: 5, name: 'The House Rules', taunt: 'Luck came in to complain. Luck now works the door.' },
