@@ -7,6 +7,7 @@ import {
   GauntletState,
   GAUNTLET_DIFFICULTY,
   GAUNTLET_HARD_DIFFICULTY,
+  gauntletDifficulty,
   INFINITY_GAUNTLET_ID,
   emptyRunBoosts,
 } from '../data/GauntletData';
@@ -143,13 +144,13 @@ export class GauntletElementSelectScene extends Phaser.Scene {
       const regularMutations = Array.from({ length: 7 }, () => pickN(1));
       const bossSlot = [bossId, ...pickN(1)];
       fightMutations = [...regularMutations, bossSlot];
-      difficulty0 = GAUNTLET_HARD_DIFFICULTY[0];
+      difficulty0 = gauntletDifficulty(GAUNTLET_HARD_DIFFICULTY[0]);
       mutations0 = fightMutations[0];
     } else {
       fightOrder = [...pool].sort(() => Math.random() - 0.5);
       const regularMutations = Array.from({ length: 5 }, () => pickN(1));
       fightMutations = [...regularMutations, [bossId]];
-      difficulty0 = GAUNTLET_DIFFICULTY[0];
+      difficulty0 = gauntletDifficulty(GAUNTLET_DIFFICULTY[0]);
       mutations0 = fightMutations[0];
     }
 

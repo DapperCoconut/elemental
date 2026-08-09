@@ -11,6 +11,7 @@ import {
   CampaignGauntletContext,
   GAUNTLET_DIFFICULTY,
   GAUNTLET_HARD_DIFFICULTY,
+  gauntletDifficulty,
   emptyRunBoosts,
 } from '../data/GauntletData';
 import { MUTATIONS, getBossMutationIds } from '../data/Mutations';
@@ -260,7 +261,9 @@ export class CampaignElementSelectScene extends Phaser.Scene {
     const bossSlot = [bossId, ...pickN(1)];
     const fightMutations = [...regularMutations, bossSlot];
 
-    const difficulty0 = this.hardMode ? GAUNTLET_HARD_DIFFICULTY[0] : GAUNTLET_DIFFICULTY[0];
+    const difficulty0 = gauntletDifficulty(
+      this.hardMode ? GAUNTLET_HARD_DIFFICULTY[0] : GAUNTLET_DIFFICULTY[0],
+    );
     const mutations0 = fightMutations[0];
 
     const campaignContext: CampaignGauntletContext = { slot: this.slotIdx, worldId: this.worldId };

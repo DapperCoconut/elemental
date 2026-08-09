@@ -52,7 +52,9 @@ export function addBoostPick(boosts: RunBoosts, kind: 'cards' | 'charms' | 'curs
   let newSacrifice = boosts.sacrificeActive;
   // Handle charm special effects
   if (kind === 'charms') {
-    if (id === 'charm-of-supremacy') newSupremacy = boosts.supremacyMult * 2;
+    // Supremacy doubled along with everything else it is named after: a pick now
+    // quadruples what every later pick is worth.
+    if (id === 'charm-of-supremacy') newSupremacy = boosts.supremacyMult * 4;
     if (id === 'charm-of-sacrifice') newSacrifice = true;
   }
   return { ...boosts, [kind]: pile, supremacyMult: newSupremacy, sacrificeActive: newSacrifice };
@@ -96,23 +98,42 @@ export const GAUNTLET_HARD_REWARD = 3000;
 
 export const INFINITY_GAUNTLET_ID = 'infinity';
 
-/** Difficulty level for each fight: 1=Easy … 5=Nightmare. Boss is also level 5. */
-export const GAUNTLET_DIFFICULTY: number[] = [1, 2, 3, 4, 5, 5];
+/**
+ * A run's own ceiling, matching the campaign's (`CAMPAIGN_MAX_DIFFICULTY`).
+ * Nightmare is free-play only — the ladder here tops out at Expert, boss and
+ * Hard Mode included, and a run gets harder through mutations, curses and the
+ * one-life rule rather than through a rung nothing else in the game uses.
+ */
+export const GAUNTLET_MAX_DIFFICULTY = 4;
 
-/** Hard-mode difficulty for 7 regular fights + 1 boss (all capped at 5=Nightmare). */
-export const GAUNTLET_HARD_DIFFICULTY: number[] = [2, 3, 4, 5, 5, 5, 5, 5];
+/**
+ * Every gauntlet launch goes through this, so the ceiling can't be dodged by a
+ * table entry, an Infinity step, or a boss slot that hard-codes its level.
+ */
+export function gauntletDifficulty(level: number): number {
+  return Math.min(GAUNTLET_MAX_DIFFICULTY, level);
+}
+
+/** Difficulty level for each fight: 1=Easy … 4=Expert. Boss is also level 4. */
+export const GAUNTLET_DIFFICULTY: number[] = [1, 2, 3, 4, 4, 4];
+
+/** Hard-mode difficulty for 7 regular fights + 1 boss (all capped at 4=Expert). */
+export const GAUNTLET_HARD_DIFFICULTY: number[] = [2, 3, 4, 4, 4, 4, 4, 4];
 
 export const DIFFICULTY_LABELS = ['Easy', 'Normal', 'Hard', 'Expert', 'Nightmare'];
 
 // ── Infinity gauntlet scaling ────────────────────────────────────────────────
 
-/** Difficulty step-function for Infinity. Returns 1–5 for fight index (1-based). */
+/**
+ * Difficulty step-function for Infinity. Returns 1–4 for fight index (1-based) —
+ * past fight 15 the run keeps climbing through HP and damage multipliers, not
+ * through the difficulty rung.
+ */
 export function infinityDifficulty(fightNum: number): number {
   if (fightNum < 5)  return 1;
   if (fightNum < 10) return 2;
   if (fightNum < 15) return 3;
-  if (fightNum < 20) return 4;
-  return 5;
+  return gauntletDifficulty(4);
 }
 
 /** NPC HP multiplier for an Infinity fight (1-based fightNum). */

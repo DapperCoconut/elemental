@@ -156,6 +156,25 @@ const EXPERT_DIFFICULTY_LEVEL = 4;
 /** Practice range: how long a damage tally runs before it rolls over. */
 const DUMMY_COMBO_WINDOW_MS = 5000;
 
+/**
+ * Apprehension's flashlight. The fog cut-out and the "is the boss lit?" test must
+ * agree exactly — a boss standing in visible light but still counting as unlit is
+ * the single most unfair thing this mutation can do — so both read these.
+ */
+const APPREHENSION_LIGHT_RANGE = 280;
+const APPREHENSION_LIGHT_HALF_DEG = 45;
+
+/** How many of Summoner's zombies may stand on the floor at once. */
+const SUMMONER_ZOMBIE_CAP = 14;
+
+/**
+ * What the four boss mutations are meant to feel like: a big healthy thing that
+ * takes its time. Every one of them walks at ~2/3 pace, so the pressure comes from
+ * what it *does* — beams, tridents, hordes, the dark — rather than from a heavy
+ * body that also outruns you.
+ */
+const BOSS_MUTATION_SPEED_MULT = 0.66;
+
 interface AbilityBarEntry {
   fill: Phaser.GameObjects.Rectangle;
   abilityId: string;
@@ -6073,10 +6092,10 @@ export class ArenaScene extends Phaser.Scene {
     if (this.cardBomberStacks > 0) {
       const bx = this.player.x;
       const by = this.player.y;
-      this.dealAoeDamageFromOwner(bx, by, 70, Math.round(10 * this.cardBomberStacks * this.player.cardOutgoingDamageMult), 'player');
+      this.dealAoeDamageFromOwner(bx, by, 70, Math.round(20 * this.cardBomberStacks * this.player.cardOutgoingDamageMult), 'player');
       const boom = this.add.circle(bx, by, 10, 0xff8800, 0.8).setDepth(9);
       this.tweens.add({ targets: boom, scaleX: 8, scaleY: 8, alpha: 0, duration: 300, onComplete: () => boom.destroy() });
-      this.showFloatingText(bx, by - 20, `💥 ${10 * this.cardBomberStacks}`, '#ffaa44');
+      this.showFloatingText(bx, by - 20, `💥 ${20 * this.cardBomberStacks}`, '#ffaa44');
     }
 
     const trail = this.add.circle(this.player.x, this.player.y, 18, 0x8844ff, 0.4);
@@ -6235,10 +6254,10 @@ export class ArenaScene extends Phaser.Scene {
       this.npc.setTint(0xfff4a8);
       this.npc.setScale(1.5);
       (this.npc.body as Phaser.Physics.Arcade.Body).setCircle(33, -9, -9);
-      this.npc.maxHp = Math.round(this.npc.maxHp * 2);
+      this.npc.maxHp = Math.round(this.npc.maxHp * 1.5);
       this.npc.hp = this.npc.maxHp;
-      this.npc.speed = Math.round(this.npc.speed * 1.25);
-      this.empyreonNextBeamAt = this.time.now + 8000;
+      this.npc.speed = Math.round(this.npc.speed * BOSS_MUTATION_SPEED_MULT);
+      this.empyreonNextBeamAt = this.time.now + 10000;
       this.empyreonBeamOrientation = 'h';
       this.empyreonPhase2 = false;
     }
@@ -6246,20 +6265,22 @@ export class ArenaScene extends Phaser.Scene {
       this.npc.setTint(0xff3311);
       this.npc.setScale(1.5);
       (this.npc.body as Phaser.Physics.Arcade.Body).setCircle(33, -9, -9);
-      this.npc.maxHp = Math.round(this.npc.maxHp * 2);
+      this.npc.maxHp = Math.round(this.npc.maxHp * 1.5);
       this.npc.hp = this.npc.maxHp;
-      this.npc.outgoingDamageMult *= 1.25;
-      this.archfiendNextBarrageAt = this.time.now + 12000;
+      this.npc.outgoingDamageMult *= 1.1;
+      this.npc.speed = Math.round(this.npc.speed * BOSS_MUTATION_SPEED_MULT);
+      this.archfiendNextBarrageAt = this.time.now + 14000;
       this.archfiendPhase2 = false;
     }
     if (this.mutations.has('summoner')) {
       this.npc.setTint(0x55cc44);
       this.npc.setScale(1.5);
       (this.npc.body as Phaser.Physics.Arcade.Body).setCircle(33, -9, -9);
-      this.npc.maxHp = Math.round(this.npc.maxHp * 2);
+      this.npc.maxHp = Math.round(this.npc.maxHp * 1.5);
       this.npc.hp = this.npc.maxHp;
-      this.npc.incomingDamageMultiplier *= 0.85;
-      this.summonerNextWaveAt = this.time.now + 8000;
+      this.npc.incomingDamageMultiplier *= 0.92;
+      this.npc.speed = Math.round(this.npc.speed * BOSS_MUTATION_SPEED_MULT);
+      this.summonerNextWaveAt = this.time.now + 10000;
       this.summonerPhase2 = false;
     }
     if (this.mutations.has('nuclear')) {
@@ -6296,10 +6317,11 @@ export class ArenaScene extends Phaser.Scene {
       (this.npc.body as Phaser.Physics.Arcade.Body).setCircle(16, 8, 8);
       this.npc.maxHp = Math.round(this.npc.maxHp * 1.10);
       this.npc.hp = this.npc.maxHp;
+      this.npc.speed = Math.round(this.npc.speed * BOSS_MUTATION_SPEED_MULT);
       this.spawnApprehensionMaze();
       this.initApprehensionFog();
       this.apprehensionPhase2 = false;
-      this.apprehensionNextTeleportAt = this.time.now + 5000;
+      this.apprehensionNextTeleportAt = this.time.now + 7000;
     }
     if (this.mutations.has('wither')) {
       this.npc.setTint(0x88ee44);
@@ -6562,13 +6584,13 @@ export class ArenaScene extends Phaser.Scene {
       // Phase 2 latch at 50% HP
       if (!this.empyreonPhase2 && this.npc.hp <= this.npc.maxHp * 0.5) {
         this.empyreonPhase2 = true;
-        this.npc.speed = Math.round(this.npc.speed * 1.5);
-        this.empyreonNextTeleportAt = time + 5000;
+        this.npc.speed = Math.round(this.npc.speed * 1.25);
+        this.empyreonNextTeleportAt = time + 7000;
         this.showFloatingText(this.npc.x, this.npc.y - 40, '☀️ PHASE 2', '#fff4a8');
       }
       // Phase 2 teleport
       if (this.empyreonPhase2 && time >= this.empyreonNextTeleportAt) {
-        this.empyreonNextTeleportAt = time + 5000;
+        this.empyreonNextTeleportAt = time + 7000;
         const wb = this.physics.world.bounds;
         const tx = Phaser.Math.Between(wb.x + 70, wb.x + wb.width - 70);
         const ty = Phaser.Math.Between(wb.y + 70, wb.y + wb.height - 70);
@@ -6582,15 +6604,18 @@ export class ArenaScene extends Phaser.Scene {
         this.showFloatingText(tx, ty - 30, '☀️ TELEPORT', '#fff4a8');
       }
       // Beam attack
-      const beamCooldown = this.empyreonPhase2 ? 5000 : 8000;
+      const beamCooldown = this.empyreonPhase2 ? 7000 : 10000;
       if (time >= this.empyreonNextBeamAt) {
         this.empyreonNextBeamAt = time + beamCooldown;
         const wb = this.physics.world.bounds;
-        const count = 8;
+        // Six bars with 11px of half-thickness leave a gap you can stand in without
+        // pixel-perfect placement; eight fat ones did not, which made the sweep a
+        // damage tax rather than something to dodge.
+        const count = 6;
         const orientation = this.empyreonBeamOrientation;
         this.empyreonBeamOrientation = orientation === 'h' ? 'v' : 'h';
-        const halfThick = 14;
-        const beamDuration = 2000;
+        const halfThick = 11;
+        const beamDuration = 1400;
         for (let i = 0; i < count; i++) {
           let bx: number, by: number, bw: number, bh: number;
           const isH = orientation === 'h';
@@ -6625,9 +6650,9 @@ export class ArenaScene extends Phaser.Scene {
         const inBeam = b.isH
           ? Math.abs(this.player.y - b.fixedCoord) <= b.halfThick
           : Math.abs(this.player.x - b.fixedCoord) <= b.halfThick;
-        if (inBeam && time - b.lastTickAt >= 250) {
+        if (inBeam && time - b.lastTickAt >= 300) {
           b.lastTickAt = time;
-          this.player.takeDamage(12);
+          this.player.takeDamage(6);
           this.spawnHitFlash(this.player.x, this.player.y, 0xfff4a8);
         }
       }
@@ -6638,15 +6663,15 @@ export class ArenaScene extends Phaser.Scene {
       // Phase 2 latch
       if (!this.archfiendPhase2 && this.npc.hp <= this.npc.maxHp * 0.5) {
         this.archfiendPhase2 = true;
-        this.npc.outgoingDamageMult *= 1.25;
+        this.npc.outgoingDamageMult *= 1.1;
         this.archfiendFirePoolAccum = 0;
         this.showFloatingText(this.npc.x, this.npc.y - 40, '🔱 PHASE 2', '#ff4422');
       }
       // Trident barrage
-      const tridentCooldown = this.archfiendPhase2 ? 10000 : 12000;
+      const tridentCooldown = this.archfiendPhase2 ? 12000 : 14000;
       if (time >= this.archfiendNextBarrageAt) {
         this.archfiendNextBarrageAt = time + tridentCooldown;
-        const count = 5;
+        const count = 4;
         const spreadRad = Math.PI / 3;
         const baseAngle = Math.atan2(this.player.y - this.npc.y, this.player.x - this.npc.x);
         for (let i = 0; i < count; i++) {
@@ -6670,8 +6695,8 @@ export class ArenaScene extends Phaser.Scene {
           const dy = this.npc.y - t.sprite.y;
           const dist = Math.hypot(dx, dy);
           if (dist < 22) {
-            this.npc.hp = Math.min(this.npc.maxHp, this.npc.hp + 5);
-            this.showFloatingText(this.npc.x, this.npc.y - 28, '+5', '#ff8866');
+            this.npc.hp = Math.min(this.npc.maxHp, this.npc.hp + 2);
+            this.showFloatingText(this.npc.x, this.npc.y - 28, '+2', '#ff8866');
             t.sprite.destroy();
             this.archfiendTridents.splice(i, 1);
             continue;
@@ -6684,7 +6709,7 @@ export class ArenaScene extends Phaser.Scene {
           t.sprite.setRotation(Math.atan2(t.vy, t.vx));
           // Damage player if returning trident hits
           if (this.player.active && Phaser.Math.Distance.Between(t.sprite.x, t.sprite.y, this.player.x, this.player.y) < 20) {
-            this.player.takeDamage(Math.round(12 * this.npc.outgoingDamageMult));
+            this.player.takeDamage(Math.round(7 * this.npc.outgoingDamageMult));
             this.spawnHitFlash(this.player.x, this.player.y, 0xcc4422);
             this.showFloatingText(this.player.x, this.player.y - 28, '🔱 TRIDENT', '#ff4422');
             t.sprite.destroy();
@@ -6703,7 +6728,7 @@ export class ArenaScene extends Phaser.Scene {
           }
           // Damage player on contact
           if (this.player.active && Phaser.Math.Distance.Between(t.sprite.x, t.sprite.y, this.player.x, this.player.y) < 20) {
-            this.player.takeDamage(Math.round(12 * this.npc.outgoingDamageMult));
+            this.player.takeDamage(Math.round(7 * this.npc.outgoingDamageMult));
             this.spawnHitFlash(this.player.x, this.player.y, 0xcc4422);
             this.showFloatingText(this.player.x, this.player.y - 28, '🔱 TRIDENT', '#ff4422');
             t.sprite.destroy();
@@ -6714,15 +6739,18 @@ export class ArenaScene extends Phaser.Scene {
       // Phase 2: fire pools around the arena
       if (this.archfiendPhase2) {
         this.archfiendFirePoolAccum += delta;
-        if (this.archfiendFirePoolAccum >= 1500) {
-          this.archfiendFirePoolAccum -= 1500;
+        // One pool every 3s living 4s means at most two burning at once — at the old
+        // 1.5s/6s the floor filled up faster than it drained and phase 2 became a
+        // room with no clean tiles left in it.
+        if (this.archfiendFirePoolAccum >= 3000) {
+          this.archfiendFirePoolAccum -= 3000;
           const wb3 = this.physics.world.bounds;
           const px = Phaser.Math.Between(wb3.x + 40, wb3.x + wb3.width - 40);
           const py = Phaser.Math.Between(wb3.y + 40, wb3.y + wb3.height - 40);
-          const spr = this.add.circle(px, py, 35, 0xff4422, 0.55).setDepth(2)
+          const spr = this.add.circle(px, py, 30, 0xff4422, 0.55).setDepth(2)
             .setStrokeStyle(1, 0xff8844, 0.6);
           this.tweens.add({ targets: spr, fillAlpha: 0.3, yoyo: true, repeat: -1, duration: 800 });
-          this.puddles.push({ sprite: spr, expiresAt: time + 6000, x: px, y: py, radius: 35, tickAccum: 0, owner: 'npc', kind: 'lava' });
+          this.puddles.push({ sprite: spr, expiresAt: time + 4000, x: px, y: py, radius: 30, tickAccum: 0, owner: 'npc', kind: 'lava' });
         }
       }
     }
@@ -6732,15 +6760,19 @@ export class ArenaScene extends Phaser.Scene {
       // Phase 2 latch
       if (!this.summonerPhase2 && this.npc.hp <= this.npc.maxHp * 0.5) {
         this.summonerPhase2 = true;
-        this.npc.incomingDamageMultiplier *= 0.85;
+        this.npc.incomingDamageMultiplier *= 0.92;
         this.summonerNextHealCheckAt = time + 12000;
         this.showFloatingText(this.npc.x, this.npc.y - 40, '💀 PHASE 2', '#55cc44');
       }
       // Spawn zombie wave
       if (time >= this.summonerNextWaveAt) {
-        this.summonerNextWaveAt = time + 8000;
+        this.summonerNextWaveAt = time + 10000;
         const wb = this.physics.world.bounds;
-        for (let i = 0; i < 10; i++) {
+        // Waves used to stack without limit, so a fight that ran long ended up with
+        // forty zombies on the floor and no way back. The horde is capped now: a wave
+        // only fills the room that is left.
+        const wave = Math.min(5, Math.max(0, SUMMONER_ZOMBIE_CAP - this.summonerZombies.length));
+        for (let i = 0; i < wave; i++) {
           const edge = Phaser.Math.Between(0, 3);
           let sx: number, sy: number;
           switch (edge) {
@@ -6752,9 +6784,9 @@ export class ArenaScene extends Phaser.Scene {
           const spr = this.add.circle(sx, sy, 14, 0x448822, 0.9).setDepth(4)
             .setStrokeStyle(1, 0x66cc44, 1);
           const lbl = this.add.text(sx, sy, '🧟', { fontSize: '11px' }).setOrigin(0.5).setDepth(5);
-          this.summonerZombies.push({ sprite: spr, label: lbl, hp: 25, attackCdUntil: 0 });
+          this.summonerZombies.push({ sprite: spr, label: lbl, hp: 20, attackCdUntil: 0 });
         }
-        this.showFloatingText(this.npc.x, this.npc.y - 50, '💀 ZOMBIES', '#55cc44');
+        if (wave > 0) this.showFloatingText(this.npc.x, this.npc.y - 50, '💀 ZOMBIES', '#55cc44');
       }
       // Update zombies
       for (let i = this.summonerZombies.length - 1; i >= 0; i--) {
@@ -6763,13 +6795,11 @@ export class ArenaScene extends Phaser.Scene {
           z.sprite.destroy(); z.label.destroy();
           this.summonerZombies.splice(i, 1);
           if (this.summonerPhase2) {
-            for (let k = 0; k < 2; k++) {
-              const zx = z.sprite.x + Phaser.Math.Between(-12, 12);
-              const zy = z.sprite.y + Phaser.Math.Between(-12, 12);
-              const zlSpr = this.add.circle(zx, zy, 7, 0x33aa22, 0.9).setDepth(4)
-                .setStrokeStyle(1, 0x77ee44, 1);
-              this.summonerZombielings.push({ sprite: zlSpr, hp: 15, attackCdUntil: 0 });
-            }
+            const zx = z.sprite.x + Phaser.Math.Between(-12, 12);
+            const zy = z.sprite.y + Phaser.Math.Between(-12, 12);
+            const zlSpr = this.add.circle(zx, zy, 7, 0x33aa22, 0.9).setDepth(4)
+              .setStrokeStyle(1, 0x77ee44, 1);
+            this.summonerZombielings.push({ sprite: zlSpr, hp: 10, attackCdUntil: 0 });
           }
           continue;
         }
@@ -6779,13 +6809,13 @@ export class ArenaScene extends Phaser.Scene {
           const dy = zTarget.y - z.sprite.y;
           const dist = Math.hypot(dx, dy);
           if (dist > 2) {
-            z.sprite.x += (dx / dist) * 110 * (delta / 1000);
-            z.sprite.y += (dy / dist) * 110 * (delta / 1000);
+            z.sprite.x += (dx / dist) * 95 * (delta / 1000);
+            z.sprite.y += (dy / dist) * 95 * (delta / 1000);
             z.label.setPosition(z.sprite.x, z.sprite.y);
           }
           if (dist <= 28 && time >= z.attackCdUntil) {
-            z.attackCdUntil = time + 800;
-            const zDmg = Math.round(8 * this.npc.outgoingDamageMult);
+            z.attackCdUntil = time + 1000;
+            const zDmg = Math.round(4 * this.npc.outgoingDamageMult);
             zTarget.takeDamage(zDmg);
             this.spawnHitFlash(zTarget.x, zTarget.y, 0x66cc44);
             this.showFloatingText(zTarget.x, zTarget.y - 20, '🧟 -' + zDmg, '#66cc44');
@@ -6811,12 +6841,12 @@ export class ArenaScene extends Phaser.Scene {
           const dy = zlTarget.y - zl.sprite.y;
           const dist = Math.hypot(dx, dy);
           if (dist > 2) {
-            zl.sprite.x += (dx / dist) * 220 * (delta / 1000);
-            zl.sprite.y += (dy / dist) * 220 * (delta / 1000);
+            zl.sprite.x += (dx / dist) * 180 * (delta / 1000);
+            zl.sprite.y += (dy / dist) * 180 * (delta / 1000);
           }
           if (dist <= 18 && time >= zl.attackCdUntil) {
-            zl.attackCdUntil = time + 800;
-            zlTarget.takeDamage(Math.round(4 * this.npc.outgoingDamageMult));
+            zl.attackCdUntil = time + 1000;
+            zlTarget.takeDamage(Math.round(2 * this.npc.outgoingDamageMult));
             this.spawnHitFlash(zlTarget.x, zlTarget.y, 0x66cc44);
           }
         }
@@ -6824,9 +6854,10 @@ export class ArenaScene extends Phaser.Scene {
       // Phase 2: heal check (20+ zombies)
       if (this.summonerPhase2 && time >= this.summonerNextHealCheckAt) {
         this.summonerNextHealCheckAt = time + 12000;
-        if (this.summonerZombies.length >= 20) {
-          this.npc.hp = Math.min(this.npc.maxHp, this.npc.hp + 25);
-          this.showFloatingText(this.npc.x, this.npc.y - 28, '💀 +25', '#55cc44');
+        // Threshold follows the cap: 12 of a possible 14 is still "the floor is theirs".
+        if (this.summonerZombies.length >= 12) {
+          this.npc.hp = Math.min(this.npc.maxHp, this.npc.hp + 15);
+          this.showFloatingText(this.npc.x, this.npc.y - 28, '💀 +15', '#55cc44');
         }
       }
     }
@@ -6943,9 +6974,11 @@ export class ArenaScene extends Phaser.Scene {
         this.apprehensionMazeWalls = [];
         this.npc.setTint(0x111111);
         this.apprehensionEyeSprite = this.add.circle(this.npc.x, this.npc.y, 7, 0xffffff, 1).setDepth(11);
-        this.npc.speed = Math.round(this.npc.speed * 3);
-        this.npc.outgoingDamageMult *= 1.5;
-        this.apprehensionNextTeleportAt = time + 5000;
+        // Triple speed on something you can only hurt while it is lit was unplayable —
+        // it crossed the arena faster than the flashlight could follow it.
+        this.npc.speed = Math.round(this.npc.speed * 1.7);
+        this.npc.outgoingDamageMult *= 1.2;
+        this.apprehensionNextTeleportAt = time + 7000;
         this.showFloatingText(this.npc.x, this.npc.y - 44, '👁️ AWAKENED', '#ff5577');
         this.cameras.main.shake(300, 0.015);
         this.npc.cooldownMult = 1;
@@ -6983,7 +7016,7 @@ export class ArenaScene extends Phaser.Scene {
           this.apprehensionEyeSprite.setPosition(this.npc.x, this.npc.y);
         }
         if (time >= this.apprehensionNextTeleportAt) {
-          this.apprehensionNextTeleportAt = time + 5000;
+          this.apprehensionNextTeleportAt = time + 7000;
           this.doApprehensionBorderTeleport();
         }
       }
@@ -7724,7 +7757,7 @@ export class ArenaScene extends Phaser.Scene {
   private spawnApprehensionMaze(): void {
     const W = this.scale.width;
     const H = this.scale.height;
-    const wallCount = 22;
+    const wallCount = 16;
     const maxAttempts = 400;
     let placed = 0;
     for (let attempt = 0; attempt < maxAttempts && placed < wallCount; attempt++) {
@@ -7761,8 +7794,8 @@ export class ArenaScene extends Phaser.Scene {
     // Flashlight cone aimed at cursor
     const ptr = this.input.activePointer;
     const aim = Math.atan2(ptr.worldY - this.player.y, ptr.worldX - this.player.x);
-    const range = 230;
-    const halfAngle = Phaser.Math.DegToRad(35);
+    const range = APPREHENSION_LIGHT_RANGE;
+    const halfAngle = Phaser.Math.DegToRad(APPREHENSION_LIGHT_HALF_DEG);
     this.apprehensionFogEraser.beginPath();
     this.apprehensionFogEraser.moveTo(this.player.x, this.player.y);
     this.apprehensionFogEraser.arc(this.player.x, this.player.y, range, aim - halfAngle, aim + halfAngle, false);
@@ -7777,7 +7810,8 @@ export class ArenaScene extends Phaser.Scene {
     const angleToTarget = Math.atan2(y - this.player.y, x - this.player.x);
     const angleDiff = Phaser.Math.Angle.Wrap(angleToTarget - aim);
     const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, x, y);
-    return dist <= 230 && Math.abs(angleDiff) <= Phaser.Math.DegToRad(35);
+    return dist <= APPREHENSION_LIGHT_RANGE
+      && Math.abs(angleDiff) <= Phaser.Math.DegToRad(APPREHENSION_LIGHT_HALF_DEG);
   }
 
   private apprehensionLosBlocked(ax: number, ay: number, bx: number, by: number): boolean {
@@ -7829,45 +7863,49 @@ export class ArenaScene extends Phaser.Scene {
     const sac = b.sacrificeActive;
 
     // ── Cards ───────────────────────────────────────────────────────
+    // Every per-stack figure below is twice what it originally was: a full run of
+    // picks used to leave the fight feeling exactly the same as fight one. Curses
+    // are deliberately left at their old strength — they are what the shard bonus
+    // is paying for, and doubling both sides would just cancel out.
     const quick = getEffectiveStacks(b, 'quick');
-    if (quick > 0) this.gauntletSpeedMult *= Math.pow(1.15, quick);
+    if (quick > 0) this.gauntletSpeedMult *= Math.pow(1.30, quick);
 
     const dodgy = getEffectiveStacks(b, 'dodgy');
-    if (dodgy > 0) this.player.dodgeChance += 0.10 * dodgy;
+    if (dodgy > 0) this.player.dodgeChance += 0.20 * dodgy;
 
     const deadly = getEffectiveStacks(b, 'deadly');
-    if (deadly > 0) this.player.cardOutgoingDamageMult *= Math.pow(1.15, deadly);
+    if (deadly > 0) this.player.cardOutgoingDamageMult *= Math.pow(1.30, deadly);
 
     const healthy = getEffectiveStacks(b, 'healthy');
-    if (healthy > 0) this.player.setMaxHp(this.player.maxHp + 20 * healthy);
+    if (healthy > 0) this.player.setMaxHp(this.player.maxHp + 40 * healthy);
 
     const regenerative = getEffectiveStacks(b, 'regenerative');
-    if (regenerative > 0) this.player.regenPerSecond += 3 * regenerative;
+    if (regenerative > 0) this.player.regenPerSecond += 6 * regenerative;
 
     const aggressive = getEffectiveStacks(b, 'aggressive');
-    if (aggressive > 0) this.player.cooldownMult *= Math.pow(0.9, aggressive);
+    if (aggressive > 0) this.player.cooldownMult *= Math.pow(0.8, aggressive);
 
     const technique = getEffectiveStacks(b, 'technique');
-    if (technique > 0) this.cardDodgeLengthMult = Math.pow(1.30, technique);
+    if (technique > 0) this.cardDodgeLengthMult = Math.pow(1.60, technique);
 
     const protected_ = getEffectiveStacks(b, 'protected');
-    if (protected_ > 0) this.player.cardDamageTakenMult *= Math.pow(0.9, protected_);
+    if (protected_ > 0) this.player.cardDamageTakenMult *= Math.pow(0.8, protected_);
 
     const thorns = getEffectiveStacks(b, 'thorns');
-    if (thorns > 0) this.player.reflectFraction = 1 - Math.pow(0.95, thorns);
+    if (thorns > 0) this.player.reflectFraction = 1 - Math.pow(0.90, thorns);
 
     const bomber = getEffectiveStacks(b, 'bomber');
     if (bomber > 0) this.cardBomberStacks = bomber;
 
     const painful = getEffectiveStacks(b, 'painful');
     if (painful > 0) {
-      this.npc.statusDurMult *= Math.pow(1.15, painful);
-      this.npc.statusDmgMult *= Math.pow(1.15, painful);
+      this.npc.statusDurMult *= Math.pow(1.30, painful);
+      this.npc.statusDmgMult *= Math.pow(1.30, painful);
     }
 
     // Rare cards
     const finality = getEffectiveStacks(b, 'finality');
-    if (finality > 0) this.player.ultimateCooldownMult *= Math.pow(0.5, finality);
+    if (finality > 0) this.player.ultimateCooldownMult *= Math.pow(0.25, finality);
 
     const cripple = getEffectiveStacks(b, 'cripple');
     if (cripple > 0) this.cardCrippleActive = true;
@@ -7875,7 +7913,7 @@ export class ArenaScene extends Phaser.Scene {
     const psycho = getEffectiveStacks(b, 'psycho');
     if (psycho >= 1) {
       this.cardPsychoActive = true;
-      if (psycho > 1) this.cardDodgeCdMult *= Math.pow(0.85, psycho - 1);
+      if (psycho > 1) this.cardDodgeCdMult *= Math.pow(0.70, psycho - 1);
     }
 
     // ── Curses ──────────────────────────────────────────────────────
@@ -9176,7 +9214,7 @@ export class ArenaScene extends Phaser.Scene {
     }
     // Silence slasher dread aura: kit applies via applyNpcSpeedMult / applyPlayerSpeedMult in update()
     // Card — Cripple: 15% slow on NPC for 2s after any player hit
-    if (this.cardCrippleActive && time < this.cardCrippleSlowUntil) this.npcSpeedMult *= 0.85;
+    if (this.cardCrippleActive && time < this.cardCrippleSlowUntil) this.npcSpeedMult *= 0.70;
     // Magic storm cloud slow + upgrade speed effects
     if (this.elementId === 'magic' || this.npcElement.id === 'magic') {
       this.playerSpeedMult *= this.magicKit.getPlayerSlowMult();

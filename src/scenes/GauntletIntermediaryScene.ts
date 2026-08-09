@@ -10,6 +10,8 @@ import {
   GAUNTLET_HARD_DIFFICULTY,
   GAUNTLET_REWARD,
   GAUNTLET_HARD_REWARD,
+  GAUNTLET_MAX_DIFFICULTY,
+  gauntletDifficulty,
   DIFFICULTY_LABELS,
   INFINITY_GAUNTLET_ID,
   infinityDifficulty,
@@ -388,11 +390,18 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
     const renderRow = (items: BoostDef[], rowY: number, rowLabel: string): void => {
       addSectionLabel(this, { x: cx, y: rowY - 10, text: rowLabel, accent: C.steel, width: 480 });
 
-      const totalW = items.length * cardCellW + (items.length - 1) * cellGap;
-      const startX = cx - totalW / 2 + cardCellW / 2;
+      // Charm of Greed adds two cards per stack, which is more than a 960-wide row
+      // holds at full size — the cells narrow to fit rather than sliding off-screen.
+      const maxRowW = this.scale.width - 40;
+      const rawW = items.length * cardCellW + (items.length - 1) * cellGap;
+      const cellW = rawW <= maxRowW
+        ? cardCellW
+        : Math.floor((maxRowW - (items.length - 1) * cellGap) / items.length);
+      const totalW = items.length * cellW + (items.length - 1) * cellGap;
+      const startX = cx - totalW / 2 + cellW / 2;
 
       items.forEach((def, i) => {
-        buildPick(def, startX + i * (cardCellW + cellGap), rowY + cardCellH / 2 + 6, cardCellW, cardCellH, false);
+        buildPick(def, startX + i * (cellW + cellGap), rowY + cardCellH / 2 + 6, cellW, cardCellH, false);
       });
     };
 
@@ -522,7 +531,7 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
       this.scene.start('ArenaScene', {
         elementId: gs.playerElement,
         enemyElementId: gs.gauntletElement,
-        difficulty: 5,
+        difficulty: GAUNTLET_MAX_DIFFICULTY,
         mutations: bossMutations,
         starredMutations: gs.hardMode ? bossMutations : [],
         gauntlet: gs,
@@ -539,7 +548,7 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
       this.scene.start('ArenaScene', {
         elementId: gs.playerElement,
         enemyElementId: gs.fightOrder[idx],
-        difficulty: diffArray[idx],
+        difficulty: gauntletDifficulty(diffArray[idx]),
         mutations,
         starredMutations: gs.hardMode ? mutations : [],
         gauntlet: gs,
@@ -552,7 +561,7 @@ export class GauntletIntermediaryScene extends Phaser.Scene {
   private launchInfinityFight(gs: GauntletState): void {
     const fightNum = gs.currentFight;
     const isBoss = fightNum % 10 === 0;
-    const difficulty = infinityDifficulty(fightNum);
+    const difficulty = gauntletDifficulty(infinityDifficulty(fightNum));
     const hpMult = infinityHpMult(fightNum, gs.hardMode, isBoss);
     const dmgMult = infinityDmgMult(fightNum, gs.hardMode);
 

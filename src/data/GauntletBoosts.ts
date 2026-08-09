@@ -22,60 +22,60 @@ export const CARDS: BoostDef[] = [
   // Common cards
   {
     id: 'quick', name: 'Quick', emoji: '💨', rarity: 'common', kind: 'card', baseWeight: 1,
-    description: '+15% movement speed',
+    description: '+30% movement speed',
   },
   {
     id: 'dodgy', name: 'Dodgy', emoji: '🌀', rarity: 'common', kind: 'card', baseWeight: 1,
-    description: '+10% chance to dodge incoming hits',
+    description: '+20% chance to dodge incoming hits',
   },
   {
     id: 'deadly', name: 'Deadly', emoji: '⚔️', rarity: 'common', kind: 'card', baseWeight: 1,
-    description: '+15% damage dealt',
+    description: '+30% damage dealt',
   },
   {
     id: 'healthy', name: 'Healthy', emoji: '❤️', rarity: 'common', kind: 'card', baseWeight: 1,
-    description: '+20 max HP',
+    description: '+40 max HP',
   },
   {
     id: 'regenerative', name: 'Regenerative', emoji: '💚', rarity: 'common', kind: 'card', baseWeight: 1,
-    description: '+3 HP/s passive regeneration',
+    description: '+6 HP/s passive regeneration',
   },
   {
     id: 'aggressive', name: 'Aggressive', emoji: '⚡', rarity: 'common', kind: 'card', baseWeight: 1,
-    description: '-10% ability cooldowns',
+    description: '-20% ability cooldowns',
   },
   {
     id: 'technique', name: 'Technique', emoji: '🏃', rarity: 'common', kind: 'card', baseWeight: 1,
-    description: 'Dodge distance +30%',
+    description: 'Dodge distance +60%',
   },
   {
     id: 'protected', name: 'Protected', emoji: '🛡️', rarity: 'common', kind: 'card', baseWeight: 1,
-    description: 'Take 10% less damage from all sources',
+    description: 'Take 20% less damage from all sources',
   },
   {
     id: 'thorns', name: 'Thorns', emoji: '🌵', rarity: 'common', kind: 'card', baseWeight: 1,
-    description: 'Reflect 5% of incoming damage back to enemy',
+    description: 'Reflect 10% of incoming damage back to enemy',
   },
   {
     id: 'bomber', name: 'Bomber', emoji: '💥', rarity: 'common', kind: 'card', baseWeight: 1,
-    description: 'Leave a 10-dmg AOE explosion on dodge (×stacks)',
+    description: 'Leave a 20-dmg AOE explosion on dodge (×stacks)',
   },
   {
     id: 'painful', name: 'Painful', emoji: '🔥', rarity: 'common', kind: 'card', baseWeight: 1,
-    description: 'Status effects you apply last 15% longer and deal 15% more damage',
+    description: 'Status effects you apply last 30% longer and deal 30% more damage',
   },
   // Rare cards
   {
     id: 'finality', name: 'Finality', emoji: '☄️', rarity: 'rare', kind: 'card', baseWeight: 0.10,
-    description: 'Q ability cooldown is halved',
+    description: 'Q ability cooldown is quartered',
   },
   {
     id: 'cripple', name: 'Cripple', emoji: '🩶', rarity: 'rare', kind: 'card', baseWeight: 0.10,
-    description: 'Every hit you land slows the enemy 15% for 2s',
+    description: 'Every hit you land slows the enemy 30% for 2s',
   },
   {
     id: 'psycho', name: 'Psycho', emoji: '🌀', rarity: 'rare', kind: 'card', baseWeight: 0.10,
-    description: 'Dodge teleports you to your cursor. (Extra stacks: -15% dodge cooldown)',
+    description: 'Dodge teleports you to your cursor. (Extra stacks: -30% dodge cooldown)',
   },
 ];
 
@@ -108,11 +108,11 @@ export const CHARMS: BoostDef[] = [
   // Rare charms
   {
     id: 'charm-of-supremacy', name: 'Charm of Supremacy', emoji: '👑', rarity: 'rare', kind: 'charm', baseWeight: 0.15,
-    description: 'All future cards, charms, and curses have doubled effects',
+    description: 'All future cards, charms, and curses are worth four times as much',
   },
   {
     id: 'charm-of-greed', name: 'Charm of Greed', emoji: '💰', rarity: 'rare', kind: 'charm', baseWeight: 0.15,
-    description: 'Future boost screens show one extra card to choose from',
+    description: 'Future boost screens show two extra cards to choose from',
   },
   {
     id: 'charm-of-sacrifice', name: 'Charm of Sacrifice', emoji: '⚖️', rarity: 'rare', kind: 'charm', baseWeight: 0.15,
@@ -181,30 +181,33 @@ export interface RollResult {
 }
 
 export function rollPicks(boosts: RunBoosts): RollResult {
+  // Every charm weight below is twice the pull it used to have, matching the doubled
+  // card effects in `applyGauntletBoosts`. A charm that barely bent the next roll was
+  // a wasted pick.
   const cardWeights = new Map<string, number>();
   for (const c of CARDS) {
     let w = c.baseWeight;
     // Rare boost from Charm of Luck
-    if (c.rarity === 'rare') w *= Math.pow(2, boosts.charms['charm-of-luck'] ?? 0);
+    if (c.rarity === 'rare') w *= Math.pow(4, boosts.charms['charm-of-luck'] ?? 0);
     // Per-category bias from speed/strength/resistance charms
     const biasCharms = CHARMS.filter((ch) => ch.biasedCardIds?.includes(c.id));
     for (const bc of biasCharms) {
-      w *= Math.pow(3, boosts.charms[bc.id] ?? 0);
+      w *= Math.pow(6, boosts.charms[bc.id] ?? 0);
     }
     // Compounding: boost cards already owned
     if ((boosts.cards[c.id] ?? 0) > 0) {
-      w *= Math.pow(1.5, boosts.charms['charm-of-compounding'] ?? 0);
+      w *= Math.pow(2, boosts.charms['charm-of-compounding'] ?? 0);
     }
     cardWeights.set(c.id, w);
   }
 
   const charmWeights = new Map<string, number>();
   for (const c of CHARMS) {
-    const w = c.rarity === 'rare' ? c.baseWeight * Math.pow(2, boosts.charms['charm-of-luck'] ?? 0) : c.baseWeight;
+    const w = c.rarity === 'rare' ? c.baseWeight * Math.pow(4, boosts.charms['charm-of-luck'] ?? 0) : c.baseWeight;
     charmWeights.set(c.id, w);
   }
 
-  const greedExtra = Math.floor(boosts.charms['charm-of-greed'] ?? 0);
+  const greedExtra = Math.floor(boosts.charms['charm-of-greed'] ?? 0) * 2;
   const cardCount = 5 + greedExtra;
 
   const cards = weightedSample(CARDS, cardWeights, cardCount);
