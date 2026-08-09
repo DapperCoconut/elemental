@@ -3,14 +3,15 @@ import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
 import { Projectile } from '../../combat/Projectile';
 import {
-  BarracksStats, BarricadeStats, BuildKind, TurretStats, Tiers,
-  BUILD_COST, EXPANSION_COST, KIND_LABEL, barracksStats, barricadeStats,
-  empireStats, nextUpgrade, turretStats,
+  BannerForm, BannerStats, BarracksStats, BarricadeStats, BuildKind, PathIdx, TurretStats, Tiers,
+  BANNER_AURA, BANNER_ORDER, BANNER_STATS, BUILD_COST, EXPANSION_COST, EXPANSION_COST_ENHANCED,
+  KIND_LABEL, PATHS, SHOP_SLOT, barracksStats, barricadeStats,
+  empireStats, nextUpgrade, pathLocked, townStats, turretStats,
 } from './ConquestUpgrades';
 import {
   CNQ, ConquestAvatar, ConquestColorFn, ConquestFx, barbarianKing, barracksBody,
-  barricadeBody, buildingHpBar, contestTile, gridCell, soldier, territoryTile,
-  townCenterBody, townColor, turretBody,
+  barricadeBody, buildingHpBar, contestTile, fireballOrb, gridCell, hasteRing, linkChain,
+  revengeBomb, soldier, territoryTile, townCenterBody, townColor, turretBody, wizardTroop,
 } from './ConquestVisuals';
 
 type Owner = 'player' | 'npc';
@@ -31,12 +32,19 @@ export interface NetConquestSnap {
   a: number;
   /** One character per square: `.` for not-theirs, otherwise the owning town center's digit. */
   c: string;
-  /** Town centers, as groups of 3: cell, path-0 tier, path-1 tier. */
+  /** Town centers, as groups of 5: cell, path-0/1/2 tiers, fireball-ready flag. */
   tw: number[];
-  /** Buildings, as groups of 6: cell, kind code, town, hp, path-0 tier, path-1 tier. */
+  /** Buildings, as groups of 7: cell, kind code, town, hp, path-0/1/2 tiers. */
   b: number[];
-  /** Soldiers, as groups of 8: cell, town, hp, base HP, king, damage, attack interval, crowd bonus. */
+  /**
+   * Soldiers, as groups of 11: cell, town, hp, base HP, king, damage, attack interval, crowd
+   * bonus, wizard, march range, and a flag byte (1 surprise, 2 cloak, 4 guild).
+   */
   tr: number[];
+  /** Banner Bearer's chosen form, as an index into `BANNER_ORDER`; -1 without the upgrade. */
+  bf: number;
+  /** The cell of their Personal Wall, or -1. Carried only so the chain can be drawn. */
+  lw: number;
 }
 
 // ── The board ────────────────────────────────────────────────────────────────
@@ -88,6 +96,40 @@ const HP_BAR_MS = 4000;
 const KING_POTION_HEAL = 50;
 const KING_POTION_AT = 0.33;
 
+// ── Shop-gated third paths ───────────────────────────────────────────────────
+
+/** Wizard School: three squares of reach, which is the whole point of a wizard. */
+const WIZARD_RANGE = CELL * 3;
+/** Academy of Ash: what a wizard leaves behind. */
+const ASH_RADIUS = 80;
+const ASH_DAMAGE = 25;
+/** Wizard Tower / Wizard School clocks. */
+const FIREBALL_MS = 10000;
+const SCHOOL_MS = 20000;
+/** How far above the dome the fireball hovers, and how close a press has to be to grab it. */
+const FIREBALL_LIFT = 34;
+const FIREBALL_GRAB = 26;
+const FIREBALL_DAMAGE = 30;
+const FIREBALL_SPEED = 420;
+const FIREBALL_RADIUS = 44;
+/** Surprise! and Assassin Guild. */
+const SURPRISE_BONUS = 10;
+const GUILD_TRAMPLE = 12;
+/** Speedy Walls. Capped: nine walls of an uncapped 1.15 would be three and a half times speed. */
+const HASTE_RANGE = 110;
+const HASTE_PER = 1.15;
+const HASTE_MAX_STACKS = 4;
+/** Force Shield. */
+const FORCE_SPEED = 1.25;
+const FORCE_DAMAGE = 1.2;
+/** Boom Back: bomb flight, and the tower's own patience between retorts. */
+const BOMB_SPEED = 300;
+const BOMB_RADIUS = 40;
+const BOMB_COOLDOWN_MS = 1200;
+/** Atomic Annihilation's haul, and how long the victim's legs belong to the turret. */
+const BOMB_DRAG_SPEED = 320;
+const BOMB_DRAG_MS = 420;
+
 /** Standing positions inside a square, by rank. Five is the largest garrison a barracks reaches. */
 const TROOP_FORMATION: [number, number][] = [
   [0, 6], [-17, -4], [17, -4], [-11, 18], [11, 18],
@@ -114,6 +156,11 @@ interface Town {
   tiers: Tiers;
   /** Milliseconds since the last coin spray. */
   coinAccum: number;
+  /** Wizard Tower: time toward the next fireball, and whether one is sitting over the dome. */
+  fireAccum: number;
+  fireReady: boolean;
+  /** Wizard School: time toward the next promotion. */
+  schoolAccum: number;
 }
 
 interface Building {
@@ -138,6 +185,8 @@ interface Building {
   /** Damage soaked since the last spike retort — see `damageBuilding`. */
   spikeCarry: number;
   lastHitAt: number;
+  /** Boom Back: when this turret last threw one, so a DoT can't turn it into a mortar battery. */
+  bombAt: number;
   seed: number;
 }
 
@@ -163,10 +212,31 @@ interface Troop {
   /** Barbarian King only. */
   potionUsed: boolean;
   enraged: boolean;
+  // ── SHADOW path, snapshotted from the barracks that trained this soldier ──
+  /** Speedy: squares it can cross in one drag. */
+  marchRange: number;
+  /** Surprise!: whether it opens with a bonus swing on new ground. */
+  surprise: boolean;
+  /** Set the moment it arrives somewhere it has not stood, spent by the next swing. */
+  fresh: boolean;
+  /** Shadow Cloak: the first hit aimed at it always misses. */
+  cloak: boolean;
+  cloakUsed: boolean;
+  /** Chance every later hit misses too. */
+  dodge: number;
+  /** Assassin Guild: marching through the enemy cuts them. */
+  guild: boolean;
+  // ── ARCANE path ──
+  /** Wizard School promoted this one: three squares of reach, double HP, half damage. */
+  wizard: boolean;
 }
+
+/** What a bullet is. Plain shots fly and hit; the other two detonate. */
+type BulletKind = 'shot' | 'bomb' | 'fireball';
 
 interface Bullet {
   owner: Owner;
+  kind: BulletKind;
   x: number;
   y: number;
   vx: number;
@@ -174,6 +244,25 @@ interface Bullet {
   damage: number;
   diesAt: number;
   head: boolean;
+  /** Boom Bullets: radius and damage of the burst a landed shot leaves. 0 for no burst. */
+  boomR: number;
+  boomDamage: number;
+  /** Bombs and fireballs: when they go off regardless of having hit anything. */
+  explodeAt: number;
+  /** Atomic Annihilation: this bomb hauls whoever it catches back toward `homeX/homeY`. */
+  drag: boolean;
+  homeX: number;
+  homeY: number;
+  /** Free-running phase for the bomb's fuse and spin. */
+  spin: number;
+}
+
+/** Atomic Annihilation's haul: a fighter whose legs belong to a turret for a moment. */
+interface Pull {
+  f: Fighter;
+  x: number;
+  y: number;
+  until: number;
 }
 
 /** Anything a turret bullet or a soldier can swing at. */
@@ -199,12 +288,22 @@ interface Side {
   seek: { x: number; y: number } | null;
   /** What the NPC intends to place when it gets there. */
   seekKind: PlaceKind | 'expansion' | null;
+  /** Banner Bearer: which standard this commander is carrying. */
+  banner: BannerForm;
+  /** Personal Wall: the barricade currently taking this commander's hits. */
+  linkedWall: Building | null;
+  /**
+   * The cell of the *remote* opponent's linked wall. Their absorber runs on their own sim — this
+   * is carried purely so the chain is drawn on both screens.
+   */
+  netLinkCell: number;
 }
 
 function makeSide(owner: Owner): Side {
   return {
     owner, authority: START_AUTHORITY, towns: [], lastRaw: 0, insuranceCarry: 0,
     thinkAccum: 0, dragAccum: 0, seek: null, seekKind: null,
+    banner: 'offense', linkedWall: null, netLinkCell: -1,
   };
 }
 
@@ -225,16 +324,28 @@ export interface ConquestMenuModel {
   /** Null when the building is indestructible (the town center). */
   destructible: boolean;
   authority: number;
+  /**
+   * Which columns to draw. Two without the matching shop upgrade, three with it — the third path
+   * is not shown greyed out, because a column you cannot ever open in this match is noise.
+   */
+  paths: PathIdx[];
   /** Per path: the next upgrade's name/desc/cost, or null when there isn't one. */
-  next: [{ name: string; desc: string; cost: number } | null, { name: string; desc: string; cost: number } | null];
+  next: ({ name: string; desc: string; cost: number } | null)[];
   /** Per path: why the next upgrade can't be bought, or null when it can. */
-  blocked: [string | null, string | null];
+  blocked: (string | null)[];
+  /**
+   * Personal Wall. `null` on anything that isn't a linkable barricade; otherwise whether this is
+   * the wall you are linked to, another one is, or none is.
+   */
+  link: 'linked' | 'elsewhere' | 'free' | null;
   color: number;
 }
 
 export interface ConquestMenuHost {
   getMenuModel(): ConquestMenuModel | null;
-  buyUpgrade(path: 0 | 1): boolean;
+  buyUpgrade(path: PathIdx): boolean;
+  /** Personal Wall: link to this barricade, or unlink if it is already the linked one. */
+  toggleLink(): boolean;
   closeUpgradeMenu(): void;
 }
 
@@ -252,6 +363,8 @@ export interface ConquestArenaApi {
   get fKey(): Phaser.Input.Keyboard.Key;
   get qKey(): Phaser.Input.Keyboard.Key;
   get pointerWasDown(): boolean;
+  /** Banner Bearer cycles forms on the right button, so the kit needs its rising edge too. */
+  get rightPointerWasDown(): boolean;
   get elementId(): string;
   get npcElementId(): string;
   get width(): number;
@@ -270,6 +383,10 @@ export interface ConquestArenaApi {
   get isCoop(): boolean;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /** True if the local player (Conquest) has the given shop upgrade slot equipped. */
+  hasUpgrade(slot: string): boolean;
+  /** True if the online opponent (Conquest) has it — their upgraded board replays on this sim. */
+  hasNpcUpgrade(slot: string): boolean;
 }
 
 // ── ConquestKit ──────────────────────────────────────────────────────────────
@@ -305,8 +422,17 @@ export class ConquestKit implements ConquestMenuHost {
   private buildings: Building[] = [];
   private troops: Troop[] = [];
   private bullets: Bullet[] = [];
+  /** Fighters an Atomic bomb is currently hauling. Applied after ArenaScene resolves movement. */
+  private pulls: Pull[] = [];
+  /**
+   * The `damageAbsorber` closures this kit installed, per side. Kept so the field is only ever
+   * cleared when it is still *ours* — every other kit that uses it owns the same one slot.
+   */
+  private absorbers: Partial<Record<Owner, (amount: number) => boolean>> = {};
   /** Squares being stood on by the other side: cell → { by, ms }. */
   private contest = new Map<number, { by: Owner; ms: number }>();
+  /** Fractional seconds carried between frames by the Healing standard, per side. */
+  private bannerHealCarry: Record<Owner, number> = { player: 0, npc: 0 };
   /** True once both sides' opening territory has been laid down. */
   private seeded = false;
 
@@ -316,6 +442,10 @@ export class ConquestKit implements ConquestMenuHost {
   /** The square a troop drag started from, or -1. */
   private dragFrom = -1;
   private dragging = false;
+  /** Moving Walls: the barricade being dragged, or null. */
+  private wallDrag: Building | null = null;
+  /** Wizard Tower: the town whose fireball is currently in hand, or null. */
+  private fireDrag: Town | null = null;
   /** The building or town whose menu is open (or about to be). */
   private menuTarget: Building | Town | null = null;
 
@@ -371,6 +501,58 @@ export class ConquestKit implements ConquestMenuHost {
     return owner === 'player' ? this.playerAvatar : this.npcAvatar;
   }
 
+  // ── Shop upgrades ──────────────────────────────────────────────────────────
+
+  /**
+   * Whether a side has one of Conquest's five corrupt-shard upgrades. An offline bot never does
+   * (`hasNpcUpgrade` is online-only), which is exactly right: the third paths are the player's
+   * reward, and a bot that had them for free would be a different fight entirely.
+   */
+  private owns(owner: Owner, slot: string): boolean {
+    return owner === 'player' ? this.api.hasUpgrade(slot) : this.api.hasNpcUpgrade(slot);
+  }
+
+  /** Whether a tree's shop-gated third column is open to this side at all. */
+  private pathUnlocked(owner: Owner, kind: BuildKind): boolean {
+    return this.owns(owner, SHOP_SLOT[kind]);
+  }
+
+  /** Which columns a side may spend into — three with the shop upgrade, two without. */
+  private pathsFor(owner: Owner, kind: BuildKind): PathIdx[] {
+    return this.pathUnlocked(owner, kind) ? PATHS : [0, 1];
+  }
+
+  /** The standard this commander is carrying, or null before Banner Bearer is bought. */
+  private bannerOf(owner: Owner): BannerStats | null {
+    return this.owns(owner, 'click') ? BANNER_STATS[this.side(owner).banner] : null;
+  }
+
+  /** Q+ — Expansion Enhanced knocks a third off a second capital. */
+  private expansionCost(owner: Owner): number {
+    return this.owns(owner, 'q') ? EXPANSION_COST_ENHANCED : EXPANSION_COST;
+  }
+
+  /** The wall this side is linked to, if it is still standing and still linkable. */
+  private linkedWall(owner: Owner): Building | null {
+    const w = this.side(owner).linkedWall;
+    if (!w || !this.buildings.includes(w)) {
+      this.side(owner).linkedWall = null;
+      return null;
+    }
+    return barricadeStats(w.tiers, this.empire(owner).fortressHp).linkable ? w : null;
+  }
+
+  /**
+   * Force Shield's damage boost, folded into everything Conquest itself deals — the pike, its
+   * soldiers, its turrets and its fireballs. Kept inside the kit rather than on a generic Fighter
+   * field because every one of those sources is already a kit-internal number.
+   */
+  private outMult(owner: Owner): number {
+    const w = this.linkedWall(owner);
+    if (!w) return 1;
+    return barricadeStats(w.tiers, this.empire(owner).fortressHp).forceShield ? FORCE_DAMAGE : 1;
+  }
+
   // ── Grid maths ─────────────────────────────────────────────────────────────
 
   private cellAt(x: number, y: number): number {
@@ -402,10 +584,51 @@ export class ConquestKit implements ConquestMenuHost {
     return out;
   }
 
-  private adjacent(a: number, b: number): boolean {
+  /** Every cell within `n` squares of `i` — the reach of a march, once Speedy makes that two. */
+  private within(i: number, n: number): number[] {
+    const c = i % COLS;
+    const r = Math.floor(i / COLS);
+    const out: number[] = [];
+    for (let dr = -n; dr <= n; dr++) {
+      for (let dc = -n; dc <= n; dc++) {
+        if (dr === 0 && dc === 0) continue;
+        const nc = c + dc;
+        const nr = r + dr;
+        if (nc < 0 || nc >= COLS || nr < 0 || nr >= ROWS) continue;
+        out.push(nr * COLS + nc);
+      }
+    }
+    return out;
+  }
+
+  private inRange(a: number, b: number, n: number): boolean {
     const dc = Math.abs((a % COLS) - (b % COLS));
     const dr = Math.abs(Math.floor(a / COLS) - Math.floor(b / COLS));
-    return dc <= 1 && dr <= 1 && (dc + dr) > 0;
+    return dc <= n && dr <= n && (dc + dr) > 0;
+  }
+
+  private adjacent(a: number, b: number): boolean {
+    return this.inRange(a, b, 1);
+  }
+
+  /**
+   * The squares a march actually crosses, destination included. Only ever longer than one entry
+   * once Speedy is bought — and it exists for exactly one upgrade, the Assassin Guild's habit of
+   * cutting whatever it walks past.
+   */
+  private pathCells(from: number, to: number): number[] {
+    const fc = from % COLS;
+    const fr = Math.floor(from / COLS);
+    const tc = to % COLS;
+    const tr = Math.floor(to / COLS);
+    const steps = Math.max(Math.abs(tc - fc), Math.abs(tr - fr));
+    const out: number[] = [];
+    for (let i = 1; i <= steps; i++) {
+      const c = fc + Math.round(((tc - fc) * i) / steps);
+      const r = fr + Math.round(((tr - fr) * i) / steps);
+      out.push(r * COLS + c);
+    }
+    return out;
   }
 
   private ownerOf(cell: number): Owner | null {
@@ -450,8 +673,13 @@ export class ConquestKit implements ConquestMenuHost {
     // back or the next match starts with somebody permanently armoured.
     for (const owner of ['player', 'npc'] as Owner[]) {
       const f = this.fighter(owner);
-      if (f) f.conquestIncomingMult = 1;
+      if (!f) continue;
+      f.conquestIncomingMult = 1;
+      // Personal Wall's absorber is the one field here another kit also writes, so it is handed
+      // back only if it is still the closure we installed.
+      if (this.absorbers[owner] && f.damageAbsorber === this.absorbers[owner]) f.damageAbsorber = null;
     }
+    this.absorbers = {};
 
     this.sides = { player: makeSide('player'), npc: makeSide('npc') };
     this.cellOwner = new Array(CELLS).fill(null);
@@ -459,13 +687,17 @@ export class ConquestKit implements ConquestMenuHost {
     this.buildings = [];
     this.troops = [];
     this.bullets = [];
+    this.pulls = [];
     this.contest.clear();
+    this.bannerHealCarry = { player: 0, npc: 0 };
     this.seeded = false;
     this.gridDirty = true;
     this.aimX = 0;
     this.aimY = 0;
     this.dragFrom = -1;
     this.dragging = false;
+    this.wallDrag = null;
+    this.fireDrag = null;
     this.menuTarget = null;
     this.vizT = 0;
 
@@ -527,8 +759,11 @@ export class ConquestKit implements ConquestMenuHost {
       cell,
       x: this.centreX(cell),
       y: this.centreY(cell),
-      tiers: [0, 0],
+      tiers: [0, 0, 0],
       coinAccum: 0,
+      fireAccum: 0,
+      fireReady: false,
+      schoolAccum: 0,
     };
     side.towns.push(town);
     this.setCell(cell, owner, town.index);
@@ -582,6 +817,7 @@ export class ConquestKit implements ConquestMenuHost {
         t.coinAccum = 0;
         this.fx(owner).coins(t.x, t.y - 18, 3);
       }
+      this.tickArcane(t, dt * 1000);
     }
 
     // Insurance polls raw damage rather than hooking `damaged`, so a hit that a shield ate
@@ -598,6 +834,92 @@ export class ConquestKit implements ConquestMenuHost {
       side.authority += INSURANCE_PAYS;
       this.api.showFloatingText(f.x, f.y - 52, `🛡️ +${INSURANCE_PAYS}`, this.hex(CNQ.gold));
     }
+  }
+
+  // ── The ARCANE path (Q+) ───────────────────────────────────────────────────
+
+  /**
+   * A town center's two clocks: the Wizard Tower growing a fireball, and the Wizard School
+   * promoting a soldier. Both are per *town* rather than per empire, so Expansion is what
+   * actually scales the arcane path — a second capital is a second fireball every ten seconds.
+   */
+  private tickArcane(t: Town, dtMs: number): void {
+    const s = townStats(t.tiers);
+
+    if (s.fireball) {
+      // The clock only runs while the last one is still unspent, so a fireball left sitting over
+      // the dome is a fireball you are wasting rather than one that stacks.
+      if (!t.fireReady) {
+        t.fireAccum += dtMs;
+        if (t.fireAccum >= FIREBALL_MS) {
+          t.fireAccum = 0;
+          t.fireReady = true;
+          this.fx(t.owner).fireburst(t.x, t.y - FIREBALL_LIFT, 16);
+        }
+      }
+    } else {
+      t.fireReady = false;
+      t.fireAccum = 0;
+    }
+
+    if (!s.wizardSchool) return;
+    t.schoolAccum += dtMs;
+    if (t.schoolAccum < SCHOOL_MS) return;
+    // Held rather than reset when there is nobody to promote — a school with no students should
+    // graduate the next recruit the moment one exists, not restart its twenty seconds.
+    const pool = this.troops.filter((tr) => tr.owner === t.owner && !tr.wizard && !tr.king);
+    if (!pool.length) { t.schoolAccum = SCHOOL_MS; return; }
+    t.schoolAccum = 0;
+    this.promote(pool[Math.floor(Math.random() * pool.length)]);
+  }
+
+  /**
+   * A soldier becoming a wizard. The new stats are taken *from the man*, not from a table: a
+   * Berserker-trained veteran promotes into a much better wizard than a raw recruit does, which
+   * is what makes the STRENGTH path and the ARCANE path worth owning together.
+   */
+  private promote(t: Troop): void {
+    t.wizard = true;
+    t.baseHp *= 2;
+    t.hp = this.troopMaxHp(t);
+    t.damage = Math.max(1, Math.round(t.damage * 0.5));
+    this.fx(t.owner).promote(this.troopX(t), this.troopY(t));
+    this.api.showFloatingText(this.troopX(t), this.troopY(t) - 28, '🧙 WIZARD', this.hex(CNQ.arcane));
+  }
+
+  /** Wizard Tower: the orb hovers here, and this is what a press has to be near to grab it. */
+  private fireballPos(t: Town): { x: number; y: number } {
+    return { x: t.x, y: t.y - FIREBALL_LIFT };
+  }
+
+  /** Whichever ready fireball a press at (x, y) is reaching for. */
+  private fireballAt(owner: Owner, x: number, y: number): Town | null {
+    for (const t of this.side(owner).towns) {
+      if (!t.fireReady) continue;
+      const p = this.fireballPos(t);
+      if (Phaser.Math.Distance.Between(x, y, p.x, p.y) <= FIREBALL_GRAB) return t;
+    }
+    return null;
+  }
+
+  /** Hurling one. A slow, fat, obvious projectile that bursts where it lands. */
+  private hurlFireball(t: Town, tx: number, ty: number): void {
+    t.fireReady = false;
+    t.fireAccum = 0;
+    const p = this.fireballPos(t);
+    const ang = Math.atan2(ty - p.y, tx - p.x);
+    const ash = this.empire(t.owner).ash;
+    this.bullets.push({
+      owner: t.owner, kind: 'fireball',
+      x: p.x, y: p.y,
+      vx: Math.cos(ang) * FIREBALL_SPEED, vy: Math.sin(ang) * FIREBALL_SPEED,
+      damage: Math.max(1, Math.round(FIREBALL_DAMAGE * (ash ? 1.5 : 1) * this.outMult(t.owner))),
+      diesAt: this.now + 2600, head: false,
+      boomR: 0, boomDamage: 0,
+      explodeAt: this.now + 2600,
+      drag: false, homeX: p.x, homeY: p.y, spin: 0,
+    });
+    this.api.showFloatingText(p.x, p.y - 18, '🔥 FIREBALL', this.hex(CNQ.ember));
   }
 
   // ── Territory ──────────────────────────────────────────────────────────────
@@ -666,7 +988,7 @@ export class ConquestKit implements ConquestMenuHost {
   private expansionRefusal(owner: Owner): string | null {
     const f = this.fighter(owner);
     if (!this.alive(f)) return 'DEAD';
-    if (this.side(owner).authority < EXPANSION_COST) return 'NOT ENOUGH AUTHORITY';
+    if (this.side(owner).authority < this.expansionCost(owner)) return 'NOT ENOUGH AUTHORITY';
     const cell = this.cellAt(f.x, f.y);
     if (cell < 0) return 'OFF THE BOARD';
     const c = cell % COLS;
@@ -693,8 +1015,13 @@ export class ConquestKit implements ConquestMenuHost {
     const ex = f.x + Math.cos(ang) * PIKE_REACH;
     const ey = f.y + Math.sin(ang) * PIKE_REACH;
     const home = this.standingTown(owner) >= 0;
-    const dmg = Math.round(PIKE_DAMAGE * (home ? PIKE_HOME_MULT : 1));
-    const color = townColor(owner, Math.max(0, this.standingTown(owner)));
+    // Banner Bearer replaces the pike's flat 20 with whichever standard is being carried, and
+    // Enchantment adds on top of that. The home-ground quarter still applies to all of it —
+    // the land is where you are safe, never where you are strong, and no upgrade changes that.
+    const banner = this.bannerOf(owner);
+    const base = (banner?.damage ?? PIKE_DAMAGE) + this.empire(owner).bannerBonus;
+    const dmg = Math.max(1, Math.round(base * (home ? PIKE_HOME_MULT : 1) * this.outMult(owner)));
+    const color = banner?.color ?? townColor(owner, Math.max(0, this.standingTown(owner)));
 
     this.avatar(owner)?.play('punch', ang);
     this.fx(owner).thrust(f.x, f.y, ang, PIKE_REACH, color);
@@ -749,11 +1076,11 @@ export class ConquestKit implements ConquestMenuHost {
     const b: Building = {
       owner, kind, town, cell,
       x: this.centreX(cell), y: this.centreY(cell),
-      hp: 0, tiers: [0, 0],
+      hp: 0, tiers: [0, 0, 0],
       accum: 0, regenCarry: 0,
       burstLeft: 0, burstAccum: 0,
       aimAng: owner === 'player' ? 0 : Math.PI,
-      recoil: 0, spikeCarry: 0, lastHitAt: -HP_BAR_MS,
+      recoil: 0, spikeCarry: 0, lastHitAt: -HP_BAR_MS, bombAt: -BOMB_COOLDOWN_MS,
       seed: Math.random() * 999,
     };
     b.hp = this.maxHpOf(b);
@@ -772,7 +1099,7 @@ export class ConquestKit implements ConquestMenuHost {
 
     const cell = this.cellAt(f.x, f.y);
     const side = this.side(owner);
-    side.authority -= EXPANSION_COST;
+    side.authority -= this.expansionCost(owner);
     const town = this.foundTown(owner, cell);
 
     this.avatar(owner)?.play('raise');
@@ -809,7 +1136,7 @@ export class ConquestKit implements ConquestMenuHost {
    * see every hit, and a second damage path would silently miss both.
    */
   private damageBuilding(b: Building, amount: number, src: Source): void {
-    const dealt = Math.max(1, Math.round(amount * this.wardMultFor(b)));
+    const dealt = Math.max(1, Math.round(amount * this.wardMultFor(b) * this.bannerWardFor(b)));
     b.hp -= dealt;
     b.lastHitAt = this.now;
     this.api.spawnHitFlash(b.x, b.y, CNQ.stone);
@@ -827,7 +1154,79 @@ export class ConquestKit implements ConquestMenuHost {
       }
     }
 
+    // Boom Back. Rate-limited per tower, because otherwise a single burn tick turns a turret
+    // into a mortar battery firing forty times a second.
+    if (b.kind === 'turret' && src && this.now - b.bombAt >= BOMB_COOLDOWN_MS) {
+      const s = turretStats(b.tiers, fort);
+      if (s.boomBack) {
+        b.bombAt = this.now;
+        this.lobBomb(b, s, src);
+      }
+    }
+
     if (b.hp <= 0) this.destroyBuilding(b);
+  }
+
+  /**
+   * The Defensive standard's shelter over nearby buildings. A separate factor from the barricade
+   * aura rather than folded into `wardMultFor`, because the two stack deliberately: a wall behind
+   * a defensive banner is the toughest thing Conquest can put on the board.
+   */
+  private bannerWardFor(b: Building): number {
+    const banner = this.bannerOf(b.owner);
+    if (!banner || banner.buildingMult >= 1) return 1;
+    const f = this.fighter(b.owner);
+    if (!this.alive(f)) return 1;
+    return Phaser.Math.Distance.Between(f.x, f.y, b.x, b.y) <= BANNER_AURA ? banner.buildingMult : 1;
+  }
+
+  /** Boom Back answering: a slow bomb thrown at whoever just hurt the tower. */
+  private lobBomb(b: Building, s: TurretStats, src: Source): void {
+    if (!src) return;
+    const tx = src.kind === 'fighter' ? src.f.x : this.troopX(src.t);
+    const ty = src.kind === 'fighter' ? src.f.y : this.troopY(src.t);
+    const d = Phaser.Math.Distance.Between(b.x, b.y, tx, ty);
+    if (d < 1) return;
+    const ang = Math.atan2(ty - b.y, tx - b.x);
+    this.bullets.push({
+      owner: b.owner, kind: 'bomb',
+      x: b.x, y: b.y,
+      vx: Math.cos(ang) * BOMB_SPEED, vy: Math.sin(ang) * BOMB_SPEED,
+      damage: Math.max(1, Math.round(s.bombDamage * this.outMult(b.owner))),
+      diesAt: this.now + 3000, head: false,
+      boomR: 0, boomDamage: 0,
+      // Aimed at where they *were*: a bomb you can walk out of is the price of it being a bomb.
+      explodeAt: this.now + (d / BOMB_SPEED) * 1000,
+      drag: s.bombDrag, homeX: b.x, homeY: b.y, spin: Math.random() * Math.PI * 2,
+    });
+  }
+
+  /**
+   * Area damage from one of Conquest's own detonations — bursts, blasts, bombs, fireballs and a
+   * dying wizard all land through here. `except` is the mark the parent hit already billed, so a
+   * Boom Bullet cannot charge its victim twice for the same shot.
+   */
+  private splash(
+    x: number, y: number, radius: number, owner: Owner, damage: number, except?: Mark,
+  ): void {
+    if (damage <= 0) return;
+    for (const m of this.marksAgainst(owner)) {
+      if (!this.stillThere(m)) continue;
+      if (except && this.sameMark(m, except)) continue;
+      // Re-read the position: a soldier's slot moves as the ranks in front of it die.
+      const mx = m.kind === 'troop' ? this.troopX(m.t) : m.x;
+      const my = m.kind === 'troop' ? this.troopY(m.t) : m.y;
+      if (Phaser.Math.Distance.Between(x, y, mx, my) > radius) continue;
+      this.hitMark(m, damage, null, owner);
+    }
+  }
+
+  private sameMark(a: Mark, b: Mark): boolean {
+    if (a.kind !== b.kind) return false;
+    if (a.kind === 'fighter' && b.kind === 'fighter') return a.f === b.f;
+    if (a.kind === 'troop' && b.kind === 'troop') return a.t === b.t;
+    if (a.kind === 'building' && b.kind === 'building') return a.b === b.b;
+    return false;
   }
 
   /** Spiked Walls answering whoever swung. */
@@ -875,9 +1274,31 @@ export class ConquestKit implements ConquestMenuHost {
   }
 
   private killTroop(t: Troop): void {
+    // The position has to be read before the splice — `troopSlot` walks the live array, so a
+    // dead soldier's coordinates change the instant it leaves it.
+    const x = this.troopX(t);
+    const y = this.troopY(t);
     const i = this.troops.indexOf(t);
     if (i >= 0) this.troops.splice(i, 1);
-    this.api.spawnHitFlash(this.troopX(t), this.troopY(t), CNQ.blood);
+    this.api.spawnHitFlash(x, y, CNQ.blood);
+
+    // Academy of Ash. Recursion is bounded — every step of it has already removed a soldier.
+    if (t.wizard && this.empire(t.owner).ash) {
+      this.fx(t.owner).ashBurst(x, y, ASH_RADIUS);
+      this.api.showFloatingText(x, y - 24, '🔥 ASH', this.hex(CNQ.ember));
+      this.splash(x, y, ASH_RADIUS, t.owner, Math.round(ASH_DAMAGE * this.outMult(t.owner)));
+    }
+  }
+
+  /**
+   * Shadow Cloak. The first hit ever aimed at one of these soldiers misses outright; everything
+   * after it rolls. Placed inside `hitMark` rather than at each call site so that the pike, a
+   * turret bullet, an arena projectile and a nuke all have to get past it.
+   */
+  private troopDodges(t: Troop): boolean {
+    if (!t.cloak) return false;
+    if (!t.cloakUsed) { t.cloakUsed = true; return true; }
+    return Math.random() < t.dodge;
   }
 
   /** Everything on the far side of `owner`, flattened into one list for range checks. */
@@ -907,6 +1328,10 @@ export class ConquestKit implements ConquestMenuHost {
       m.f.takeDamage(damage);
       this.api.spawnHitFlash(m.f.x, m.f.y, CNQ.tracer);
     } else if (m.kind === 'troop') {
+      if (this.troopDodges(m.t)) {
+        this.fx(m.t.owner).cloakMiss(this.troopX(m.t), this.troopY(m.t));
+        return;
+      }
       m.t.hp -= damage;
       this.fx(owner).chip(m.x, m.y, CNQ.blood);
       if (m.t.hp <= 0) this.killTroop(m.t);
@@ -955,6 +1380,9 @@ export class ConquestKit implements ConquestMenuHost {
       accum: 0,
       march: Math.random() * 6, ang: b.owner === 'player' ? 0 : Math.PI,
       potionUsed: false, enraged: false,
+      marchRange: s.marchRange, surprise: s.surprise, fresh: false,
+      cloak: s.cloak, cloakUsed: false, dodge: s.dodge, guild: s.guild,
+      wizard: false,
     });
   }
 
@@ -997,10 +1425,29 @@ export class ConquestKit implements ConquestMenuHost {
     b.recoil = 1;
     const mx = b.x + Math.cos(ang) * 20;
     const my = b.y + Math.sin(ang) * 20;
+    const out = this.outMult(b.owner);
+
+    // Blast Nucleus replaces the gun outright — no muzzle, no bullet, no line. It goes off on
+    // whatever it acquired, which is why the tower had to give up half its range for it.
+    if (s.blast) {
+      let d = s.range * 0.55;
+      let bestD = Infinity;
+      for (const m of this.marksAgainst(b.owner)) {
+        const md = Phaser.Math.Distance.Between(b.x, b.y, m.x, m.y);
+        if (md <= s.range && md < bestD) bestD = md;
+      }
+      if (bestD < Infinity) d = bestD;
+      const bx = b.x + Math.cos(ang) * d;
+      const by = b.y + Math.sin(ang) * d;
+      this.fx(b.owner).blast(bx, by, s.blastRadius, s.atomic);
+      this.splash(bx, by, s.blastRadius, b.owner, Math.max(1, Math.round(s.blastDamage * out)));
+      return;
+    }
+
     this.fx(b.owner).muzzle(mx, my, ang);
 
     const head = s.headhunter && Math.random() < 0.1;
-    const damage = s.damage * (head ? 2 : 1);
+    const damage = Math.max(1, Math.round(s.damage * (head ? 2 : 1) * out));
 
     if (s.hitscan) {
       // Sniper Nest: resolve immediately along the line, nearest thing wins.
@@ -1018,14 +1465,23 @@ export class ConquestKit implements ConquestMenuHost {
       if (best) {
         this.hitMark(best, damage, null, b.owner);
         if (head) this.api.showFloatingText(best.x, best.y - 24, '🎯 HEADSHOT', this.hex(CNQ.tracer));
+        // Boom Bullets works on a hitscan shot too — the burst is what the round does when it
+        // arrives, not how long it took to get there.
+        if (s.boomBullets) {
+          this.fx(b.owner).boom(best.x, best.y, s.boomRadius);
+          this.splash(best.x, best.y, s.boomRadius, b.owner, Math.round(s.boomDamage * out), best);
+        }
       }
       return;
     }
 
     this.bullets.push({
-      owner: b.owner, x: mx, y: my,
+      owner: b.owner, kind: 'shot', x: mx, y: my,
       vx: Math.cos(ang) * s.bulletSpeed, vy: Math.sin(ang) * s.bulletSpeed,
       damage, diesAt: this.now + BULLET_LIFE_MS, head,
+      boomR: s.boomBullets ? s.boomRadius : 0,
+      boomDamage: Math.round(s.boomDamage * out),
+      explodeAt: Infinity, drag: false, homeX: b.x, homeY: b.y, spin: 0,
     });
   }
 
@@ -1083,7 +1539,7 @@ export class ConquestKit implements ConquestMenuHost {
       const tx = this.troopX(t);
       const ty = this.troopY(t);
       let best: Mark | null = null;
-      let bestD = TROOP_RANGE;
+      let bestD = this.troopRange(t);
       for (const m of marks) {
         const d = Phaser.Math.Distance.Between(tx, ty, m.x, m.y);
         if (d < bestD) { bestD = d; best = m; }
@@ -1097,7 +1553,12 @@ export class ConquestKit implements ConquestMenuHost {
       const crowd = t.crowdBonus
         ? this.troops.filter((o) => o.owner === t.owner && o.cell === t.cell).length
         : 0;
-      const damage = Math.max(1, Math.round((t.damage + crowd) * mult));
+      // Surprise! is spent by the swing it pays for, not by the arrival — a soldier marched onto
+      // empty ground keeps the opener until there is somebody there to use it on.
+      let bonus = this.bannerTroopBonus(t);
+      if (t.surprise && t.fresh) { bonus += SURPRISE_BONUS; t.fresh = false; }
+      const wiz = t.wizard && this.empire(t.owner).ash ? 1.5 : 1;
+      const damage = Math.max(1, Math.round((t.damage + crowd + bonus) * mult * wiz * this.outMult(t.owner)));
       this.hitMark(best, damage, { kind: 'troop', t }, t.owner);
     }
   }
@@ -1105,6 +1566,47 @@ export class ConquestKit implements ConquestMenuHost {
   /** A soldier's real ceiling: its trained HP through whatever military tier is bought now. */
   private troopMaxHp(t: Troop): number {
     return Math.round(t.baseHp * this.empire(t.owner).troopMult);
+  }
+
+  /** How far it can swing. A wizard reaches three squares; everybody else reaches across one. */
+  private troopRange(t: Troop): number {
+    return t.wizard ? WIZARD_RANGE : TROOP_RANGE;
+  }
+
+  /** The Offensive standard's bonus, for soldiers standing inside the commander's aura. */
+  private bannerTroopBonus(t: Troop): number {
+    const banner = this.bannerOf(t.owner);
+    if (!banner || banner.troopDamage <= 0) return 0;
+    const f = this.fighter(t.owner);
+    if (!this.alive(f)) return 0;
+    const d = Phaser.Math.Distance.Between(f.x, f.y, this.troopX(t), this.troopY(t));
+    return d <= BANNER_AURA ? banner.troopDamage : 0;
+  }
+
+  /**
+   * The Healing standard, pouring into the soldiers around the commander. Its own tick rather
+   * than a line in `tickTroops` because it is a heal on a one-second clock, and folding it into
+   * the attack loop would tie it to how often a soldier happens to swing.
+   */
+  private tickBannerHeal(owner: Owner, dt: number): void {
+    const banner = this.bannerOf(owner);
+    if (!banner || banner.troopHeal <= 0) return;
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    this.bannerHealCarry[owner] += dt;
+    if (this.bannerHealCarry[owner] < 1) return;
+    this.bannerHealCarry[owner] -= 1;
+
+    for (const t of this.troops) {
+      if (t.owner !== owner) continue;
+      const tx = this.troopX(t);
+      const ty = this.troopY(t);
+      if (Phaser.Math.Distance.Between(f.x, f.y, tx, ty) > BANNER_AURA) continue;
+      const max = this.troopMaxHp(t);
+      if (t.hp >= max) continue;
+      t.hp = Math.min(max, t.hp + banner.troopHeal);
+      this.fx(owner).mend(tx, ty - 10);
+    }
   }
 
   // ── Bullets and incoming projectiles ───────────────────────────────────────
@@ -1124,10 +1626,18 @@ export class ConquestKit implements ConquestMenuHost {
       const p = this.bullets[i];
       p.x += p.vx * dt;
       p.y += p.vy * dt;
+      p.spin += dt * 9;
 
-      if (this.now >= p.diesAt
-        || p.x < ORIGIN_X - 20 || p.x > ORIGIN_X + COLS * CELL + 20
-        || p.y < ORIGIN_Y - 20 || p.y > ORIGIN_Y + ROWS * CELL + 20) {
+      const offBoard = p.x < ORIGIN_X - 20 || p.x > ORIGIN_X + COLS * CELL + 20
+        || p.y < ORIGIN_Y - 20 || p.y > ORIGIN_Y + ROWS * CELL + 20;
+      // A bomb or a fireball that reaches the end of its arc goes off there. A plain shot that
+      // runs out simply stops — that difference is the whole reason the kind is carried.
+      if (this.now >= p.explodeAt || (offBoard && p.kind !== 'shot')) {
+        this.detonate(p);
+        this.bullets.splice(i, 1);
+        continue;
+      }
+      if (this.now >= p.diesAt || offBoard) {
         this.bullets.splice(i, 1);
         continue;
       }
@@ -1140,9 +1650,57 @@ export class ConquestKit implements ConquestMenuHost {
       }
       if (!hit) continue;
 
+      if (p.kind !== 'shot') {
+        // Bombs and fireballs never single-target: whatever they touched is inside their own
+        // burst anyway, so let the burst be the only thing that bills.
+        this.detonate(p);
+        this.bullets.splice(i, 1);
+        continue;
+      }
+
       this.hitMark(hit, p.damage, null, p.owner);
       if (p.head) this.api.showFloatingText(hit.x, hit.y - 24, '🎯 HEADSHOT', this.hex(CNQ.tracer));
+      // Boom Bullets.
+      if (p.boomR > 0) {
+        this.fx(p.owner).boom(p.x, p.y, p.boomR);
+        this.splash(p.x, p.y, p.boomR, p.owner, p.boomDamage, hit);
+      }
       this.bullets.splice(i, 1);
+    }
+  }
+
+  /** A bomb or a fireball arriving. */
+  private detonate(p: Bullet): void {
+    const r = p.kind === 'fireball' ? FIREBALL_RADIUS : BOMB_RADIUS;
+    if (p.kind === 'fireball') this.fx(p.owner).fireburst(p.x, p.y, r);
+    else this.fx(p.owner).blast(p.x, p.y, r, p.drag);
+    this.splash(p.x, p.y, r, p.owner, p.damage);
+
+    if (!p.drag) return;
+    // Atomic Annihilation. Only fighters are hauled — a soldier is defined by the square it
+    // stands on, and dragging one off its square would break the formation it is derived from.
+    for (const f of this.targetsOf(p.owner)) {
+      if (Phaser.Math.Distance.Between(p.x, p.y, f.x, f.y) > r) continue;
+      this.pulls = this.pulls.filter((q) => q.f !== f);
+      this.pulls.push({ f, x: p.homeX, y: p.homeY, until: this.now + BOMB_DRAG_MS });
+      this.api.showFloatingText(f.x, f.y - 44, '☢️ DRAGGED', this.hex(CNQ.arcane));
+    }
+  }
+
+  /**
+   * The haul itself, applied at the very end of the frame. ArenaScene resolves WASD into a
+   * velocity long before the kit updates, so a pull written any earlier would simply be
+   * overwritten — the same post-movement override Hunt uses to steal control.
+   */
+  private tickPulls(): void {
+    for (let i = this.pulls.length - 1; i >= 0; i--) {
+      const q = this.pulls[i];
+      if (this.now >= q.until || !this.alive(q.f)) { this.pulls.splice(i, 1); continue; }
+      const d = Phaser.Math.Distance.Between(q.f.x, q.f.y, q.x, q.y);
+      if (d < 24) { this.pulls.splice(i, 1); continue; }
+      const ang = Math.atan2(q.y - q.f.y, q.x - q.f.x);
+      const body = q.f.body as Phaser.Physics.Arcade.Body | null;
+      body?.setVelocity(Math.cos(ang) * BOMB_DRAG_SPEED, Math.sin(ang) * BOMB_DRAG_SPEED);
     }
   }
 
@@ -1226,6 +1784,35 @@ export class ConquestKit implements ConquestMenuHost {
     const released = !pointer.isDown && this.api.pointerWasDown;
     const cell = this.cellAt(mouseX, mouseY);
 
+    // ── Banner Bearer: right-click cycles the standard ──
+    if (pointer.rightButtonDown() && !this.api.rightPointerWasDown && this.owns('player', 'click')) {
+      this.cycleBanner('player');
+    }
+
+    // ── Drop a fireball ──
+    if (released && this.fireDrag) {
+      const town = this.fireDrag;
+      this.fireDrag = null;
+      // Released back on the dome: the player changed their mind, so the fireball is kept and
+      // the town's own menu opens instead — the same "a press that went nowhere is a click" rule
+      // the garrison drag follows.
+      if (Phaser.Math.Distance.Between(mouseX, mouseY, town.x, town.y) < CELL * 0.5) {
+        this.openMenu(town);
+      } else {
+        this.hurlFireball(town, mouseX, mouseY);
+      }
+      return;
+    }
+
+    // ── Drop a wall ──
+    if (released && this.wallDrag) {
+      const wall = this.wallDrag;
+      this.wallDrag = null;
+      if (cell === wall.cell) { this.openMenu(wall); return; }
+      if (cell >= 0) this.marchWall(wall, cell);
+      return;
+    }
+
     // ── Drop a drag ──
     if (released && this.dragging) {
       this.dragging = false;
@@ -1234,11 +1821,22 @@ export class ConquestKit implements ConquestMenuHost {
       // A press that never left its square was a click, not a march — so it falls through to
       // whatever building the soldiers were standing on.
       if (cell === from) { this.openMenuAt(from); return; }
-      if (cell >= 0 && this.adjacent(from, cell)) this.marchTroops('player', from, cell);
+      const range = this.marchRangeOf('player', from);
+      if (cell >= 0 && this.inRange(from, cell, range)) this.marchTroops('player', from, cell);
       else if (cell >= 0) {
-        this.api.showFloatingText(mouseX, mouseY - 20, 'ONE SQUARE AT A TIME', this.hex(CNQ.stoneDark));
+        const why = range > 1 ? 'TWO SQUARES AT A TIME' : 'ONE SQUARE AT A TIME';
+        this.api.showFloatingText(mouseX, mouseY - 20, why, this.hex(CNQ.stoneDark));
       }
       return;
+    }
+
+    if (clicked) {
+      // ── Take a fireball off the dome ──
+      // Tested before anything cell-based, and against the orb's own position rather than its
+      // square: the orb floats above the town center, so grabbing it can never be confused with
+      // pressing the building underneath it.
+      const town = this.fireballAt('player', mouseX, mouseY);
+      if (town) { this.fireDrag = town; return; }
     }
 
     if (clicked && cell >= 0) {
@@ -1251,11 +1849,30 @@ export class ConquestKit implements ConquestMenuHost {
         return;
       }
 
+      // ── Pick up a Moving Wall ──
+      // Same press-and-release split as a garrison: a press that goes nowhere still opens the
+      // wall's menu, which is the only way to reach Personal Wall's link button.
+      const wall = this.buildingAt(cell);
+      if (wall && wall.owner === 'player' && wall.kind === 'barricade'
+        && barricadeStats(wall.tiers, this.empire('player').fortressHp).movable) {
+        this.wallDrag = wall;
+        return;
+      }
+
       // ── Open an upgrade menu ──
       if (this.openMenuAt(cell)) return;
     }
 
-    if (clicked) p.castAbility('conquest-banner', ctx);
+    if (clicked) {
+      // Banner Bearer's forms change how fast the pike comes back. Banked on the fighter right
+      // before the cast and handed back straight after: `stampCast` consumes it, but a cast that
+      // was refused for being on cooldown would otherwise leave the factor armed for the next
+      // build key.
+      const banner = this.bannerOf('player');
+      if (banner) p.nextCastCooldownMult = banner.cooldownMult;
+      p.castAbility('conquest-banner', ctx);
+      p.nextCastCooldownMult = 1;
+    }
 
     if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) this.tryBuild(p, ctx, 'barracks');
     if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) this.tryBuild(p, ctx, 'turret');
@@ -1264,6 +1881,61 @@ export class ConquestKit implements ConquestMenuHost {
       const why = this.expansionRefusal('player');
       if (why) this.api.showFloatingText(p.x, p.y - 46, why, this.hex(CNQ.blood));
       else p.castAbility('conquest-expansion', ctx);
+    }
+  }
+
+  /** Banner Bearer: offensive → defensive → healing → offensive. */
+  private cycleBanner(owner: Owner): void {
+    const side = this.side(owner);
+    const i = BANNER_ORDER.indexOf(side.banner);
+    side.banner = BANNER_ORDER[(i + 1) % BANNER_ORDER.length];
+    const s = BANNER_STATS[side.banner];
+    const f = this.fighter(owner);
+    if (this.alive(f)) {
+      this.fx(owner).bannerSwap(f.x, f.y - 20, s.color);
+      this.api.showFloatingText(f.x, f.y - 58, `🚩 ${s.label}`, this.hex(s.color));
+    }
+  }
+
+  /** How far a stack on this square can march — the best march range among the soldiers on it. */
+  private marchRangeOf(owner: Owner, cell: number): number {
+    let range = 1;
+    for (const t of this.troops) {
+      if (t.owner === owner && t.cell === cell) range = Math.max(range, t.marchRange);
+    }
+    return range;
+  }
+
+  /**
+   * Moving Walls. A wall marches by the garrison's rules — one square, onto your own ground or
+   * onto nothing, never onto something already standing there.
+   */
+  private marchWall(wall: Building, to: number): void {
+    if (!this.adjacent(wall.cell, to)) {
+      this.api.showFloatingText(this.centreX(to), this.centreY(to) - 16, 'ONE SQUARE AT A TIME', this.hex(CNQ.stoneDark));
+      return;
+    }
+    if (this.buildingAt(to) || this.townAt(to)) {
+      this.api.showFloatingText(this.centreX(to), this.centreY(to) - 16, 'SQUARE TAKEN', this.hex(CNQ.stoneDark));
+      return;
+    }
+    const owner = wall.owner;
+    if (this.cellOwner[to] !== null && this.cellOwner[to] !== owner) {
+      this.api.showFloatingText(this.centreX(to), this.centreY(to) - 16, 'NOT YOUR LAND', this.hex(CNQ.blood));
+      return;
+    }
+
+    wall.cell = to;
+    wall.x = this.centreX(to);
+    wall.y = this.centreY(to);
+    this.fx(owner).raise(wall.x, wall.y, CELL, townColor(owner, wall.town));
+
+    // A wall shoved onto nothing claims it, exactly as a garrison would.
+    if (this.cellOwner[to] === null) {
+      const town = this.nearestTown(owner, to);
+      this.setCell(to, owner, town);
+      this.fx(owner).claim(this.cellX(to), this.cellY(to), CELL, townColor(owner, town));
+      this.api.showFloatingText(this.centreX(to), this.centreY(to) - 16, 'CLAIMED', this.hex(townColor(owner, town)));
     }
   }
 
@@ -1296,7 +1968,15 @@ export class ConquestKit implements ConquestMenuHost {
       return;
     }
 
-    for (const t of moving.slice(0, room)) t.cell = to;
+    const went = moving.slice(0, room);
+    for (const t of went) {
+      t.cell = to;
+      // Surprise! arms on arrival somewhere new; the swing that spends it may be seconds away.
+      if (t.surprise) t.fresh = true;
+    }
+
+    // Assassin Guild: everything the column walked past, destination included.
+    if (went.some((t) => t.guild)) this.trample(owner, from, to);
 
     if (this.cellOwner[to] === null) {
       const town = this.nearestTown(owner, to);
@@ -1304,6 +1984,23 @@ export class ConquestKit implements ConquestMenuHost {
       this.fx(owner).claim(this.cellX(to), this.cellY(to), CELL, townColor(owner, town));
       this.api.showFloatingText(this.centreX(to), this.centreY(to) - 16, 'CLAIMED', this.hex(townColor(owner, town)));
     }
+  }
+
+  /**
+   * The Assassin Guild cutting its way through. Every square on the line takes it, including the
+   * one they land on — a column that marched *onto* the enemy walked through them to get there.
+   */
+  private trample(owner: Owner, from: number, to: number): void {
+    const damage = Math.max(1, Math.round(GUILD_TRAMPLE * this.outMult(owner)));
+    for (const cell of this.pathCells(from, to)) {
+      for (const t of [...this.troops]) {
+        if (t.owner === owner || t.cell !== cell) continue;
+        this.hitMark({ kind: 'troop', t, x: this.troopX(t), y: this.troopY(t) }, damage, null, owner);
+      }
+      const b = this.buildingAt(cell);
+      if (b && b.owner !== owner) this.damageBuilding(b, damage, null);
+    }
+    this.fx(owner).chip(this.centreX(to), this.centreY(to), CNQ.shroud);
   }
 
   // ── Upgrade menu ───────────────────────────────────────────────────────────
@@ -1336,35 +2033,63 @@ export class ConquestKit implements ConquestMenuHost {
     const isTown = kind === 'town';
     const b = isTown ? null : (t as Building);
 
-    const next: ConquestMenuModel['next'] = [null, null];
-    const blocked: ConquestMenuModel['blocked'] = [null, null];
-    for (const path of [0, 1] as const) {
+    const paths = this.pathsFor(owner, kind);
+    const next: ConquestMenuModel['next'] = [];
+    const blocked: ConquestMenuModel['blocked'] = [];
+    for (const path of paths) {
       const up = nextUpgrade(kind, t.tiers, path);
       if (!up) {
-        next[path] = null;
-        blocked[path] = t.tiers[path] >= 4 ? 'MAXED' : 'LOCKED — the other path is committed';
+        next.push(null);
+        blocked.push(t.tiers[path] >= 4 ? 'MAXED' : 'LOCKED — another path is committed');
         continue;
       }
-      next[path] = { name: up.name, desc: up.desc, cost: up.cost };
-      blocked[path] = side.authority < up.cost ? `NEEDS ${up.cost} AUTHORITY` : null;
+      next.push({ name: up.name, desc: up.desc, cost: up.cost });
+      blocked.push(side.authority < up.cost ? `NEEDS ${up.cost} AUTHORITY` : null);
     }
 
     return {
       kind,
       title: KIND_LABEL[kind],
-      tiers: [t.tiers[0], t.tiers[1]],
+      tiers: [t.tiers[0], t.tiers[1], t.tiers[2]],
       hp: b ? Math.max(0, Math.round(b.hp)) : 0,
       maxHp: b ? this.maxHpOf(b) : 0,
       destructible: !isTown,
       authority: Math.floor(side.authority),
+      paths,
       next,
       blocked,
+      link: this.linkStateOf(b),
       color: townColor(owner, isTown ? (t as Town).index : (t as Building).town),
     };
   }
 
-  buyUpgrade(path: 0 | 1): boolean {
+  /** Whether the menu should offer Personal Wall's link button, and what it should say. */
+  private linkStateOf(b: Building | null): ConquestMenuModel['link'] {
+    if (!b || b.kind !== 'barricade') return null;
+    if (!barricadeStats(b.tiers, this.empire(b.owner).fortressHp).linkable) return null;
+    const linked = this.side(b.owner).linkedWall;
+    if (linked === b) return 'linked';
+    return linked && this.buildings.includes(linked) ? 'elsewhere' : 'free';
+  }
+
+  buyUpgrade(path: PathIdx): boolean {
     return this.purchase(this.menuTarget, path);
+  }
+
+  /**
+   * Personal Wall. One link at a time — the wall is a place to put your hits, and being able to
+   * spread them over a whole row of walls would simply be nine times the health.
+   */
+  toggleLink(): boolean {
+    const t = this.menuTarget;
+    if (!t || !('kind' in t) || t.kind !== 'barricade') return false;
+    if (this.linkStateOf(t) === null) return false;
+    const side = this.side(t.owner);
+    side.linkedWall = side.linkedWall === t ? null : t;
+    if (side.linkedWall) {
+      this.api.showFloatingText(t.x, t.y - 32, '⛓️ LINKED', this.hex(CNQ.iron));
+    }
+    return true;
   }
 
   /**
@@ -1373,10 +2098,13 @@ export class ConquestKit implements ConquestMenuHost {
    * up: buying Iron Walls on a wall that is nearly down should give you 200 more HP, not repair
    * the 250 it had already lost.
    */
-  private purchase(t: Building | Town | null, path: 0 | 1): boolean {
+  private purchase(t: Building | Town | null, path: PathIdx): boolean {
     if (!t) return false;
     const kind = this.targetKind(t);
     const side = this.side(t.owner);
+    // The shop gate lives here and in `getMenuModel`, never in `nextUpgrade` — see the note on
+    // that function for why the rule and the unlock are kept apart.
+    if (path === 2 && !this.pathUnlocked(t.owner, kind)) return false;
     const up = nextUpgrade(kind, t.tiers, path);
     if (!up || side.authority < up.cost) return false;
 
@@ -1437,11 +2165,47 @@ export class ConquestKit implements ConquestMenuHost {
     if (side.seek && side.seekKind) {
       const cell = this.cellAt(side.seek.x, side.seek.y);
       const stillGood = side.seekKind === 'expansion'
-        ? this.cellOwner[cell] === null && side.authority >= EXPANSION_COST
+        ? this.cellOwner[cell] === null && side.authority >= this.expansionCost('npc')
         : this.cellOwner[cell] === 'npc' && !this.buildingAt(cell) && !this.townAt(cell);
       if (!stillGood) { side.seek = null; side.seekKind = null; }
     }
     if (!side.seek) this.npcPickBuild();
+
+    // ── Spend what the shop paths gave it ──
+    this.npcLink();
+    this.npcFireball();
+  }
+
+  /** Personal Wall, on the bot's side: link the first wall that can be linked to and stay linked. */
+  private npcLink(): void {
+    const side = this.side('npc');
+    if (this.linkedWall('npc')) return;
+    const fort = this.empire('npc').fortressHp;
+    for (const b of this.buildings) {
+      if (b.owner !== 'npc' || b.kind !== 'barricade') continue;
+      if (!barricadeStats(b.tiers, fort).linkable) continue;
+      side.linkedWall = b;
+      return;
+    }
+  }
+
+  /**
+   * Wizard Tower, on the bot's side. It has no pointer to drag with, so a ready fireball is
+   * simply thrown at whoever is nearest the town that grew it — the same decision a player makes
+   * with the mouse, without the mouse.
+   */
+  private npcFireball(): void {
+    for (const t of this.side('npc').towns) {
+      if (!t.fireReady) continue;
+      const target = this.targetsOf('npc')
+        .reduce<Fighter | null>((best, f) => {
+          if (!best) return f;
+          return Phaser.Math.Distance.Between(t.x, t.y, f.x, f.y)
+            < Phaser.Math.Distance.Between(t.x, t.y, best.x, best.y) ? f : best;
+        }, null);
+      if (!target) continue;
+      this.hurlFireball(t, target.x, target.y);
+    }
   }
 
   /** What the NPC wants next, in the order a person would want it. */
@@ -1451,7 +2215,7 @@ export class ConquestKit implements ConquestMenuHost {
     const cap = this.buildingCap('npc');
 
     // A second capital, once the first one is genuinely full and paid for.
-    if (owned >= cap && side.authority >= EXPANSION_COST && side.towns.length < 3) {
+    if (owned >= cap && side.authority >= this.expansionCost('npc') && side.towns.length < 3) {
       const spot = this.npcExpansionSpot();
       if (spot >= 0) {
         side.seek = { x: this.centreX(spot), y: this.centreY(spot) };
@@ -1529,19 +2293,19 @@ export class ConquestKit implements ConquestMenuHost {
     ];
 
     let bestTarget: Building | Town | null = null;
-    let bestPath: 0 | 1 = 0;
+    let bestPath: PathIdx = 0;
     let bestCost = Infinity;
     for (const t of targets) {
       const kind = this.targetKind(t);
-      for (const path of [0, 1] as const) {
+      for (const path of this.pathsFor('npc', kind)) {
         const up = nextUpgrade(kind, t.tiers, path);
         if (!up || up.cost > side.authority) continue;
         // A town center's income compounds, so it is worth overpaying for early; everything
         // else is bought by price alone.
         const weight = kind === 'town' ? 0.6 : 1;
-        // Never open a second path on a building that has already committed to one — that is
+        // Never open another path on a building that has already committed to one — that is
         // the player's restriction too, and spending into a dead end is how a bot stalls.
-        if (t.tiers[path === 0 ? 1 : 0] >= 3 && t.tiers[path] >= 2) continue;
+        if (pathLocked(t.tiers, path)) continue;
         const score = up.cost * weight;
         if (score < bestCost) { bestCost = score; bestTarget = t; bestPath = path; }
       }
@@ -1550,7 +2314,7 @@ export class ConquestKit implements ConquestMenuHost {
 
     // Hold back the down payment on whatever it is currently walking toward, so a stream of
     // cheap upgrades can't starve the build queue forever.
-    const reserve = side.seekKind === 'expansion' ? EXPANSION_COST
+    const reserve = side.seekKind === 'expansion' ? this.expansionCost('npc')
       : side.seekKind ? this.costOf('npc', side.seekKind) : 0;
     const up = nextUpgrade(this.targetKind(bestTarget), bestTarget.tiers, bestPath);
     if (!up || side.authority - up.cost < reserve) return;
@@ -1573,7 +2337,7 @@ export class ConquestKit implements ConquestMenuHost {
     for (const [from, count] of stacks) {
       // Never strip a square bare; a barracks square with one soldier left still holds it.
       if (count < 2 && !this.buildingAt(from)) continue;
-      for (const to of this.around(from)) {
+      for (const to of this.within(from, this.marchRangeOf('npc', from))) {
         if (this.cellOwner[to] !== null) continue;
         // Claiming toward the enemy is worth more than claiming into the corner.
         const d = this.alive(this.api.player)
@@ -1644,22 +2408,35 @@ export class ConquestKit implements ConquestMenuHost {
     }
 
     const tw: number[] = [];
-    for (const t of side.towns) tw.push(t.cell, t.tiers[0], t.tiers[1]);
+    for (const t of side.towns) {
+      tw.push(t.cell, t.tiers[0], t.tiers[1], t.tiers[2], t.fireReady ? 1 : 0);
+    }
 
     const b: number[] = [];
     for (const bd of this.buildings) {
       if (bd.owner !== 'player') continue;
-      b.push(bd.cell, KIND_CODE[bd.kind], bd.town, Math.round(bd.hp), bd.tiers[0], bd.tiers[1]);
+      b.push(bd.cell, KIND_CODE[bd.kind], bd.town, Math.round(bd.hp),
+        bd.tiers[0], bd.tiers[1], bd.tiers[2]);
     }
 
     const tr: number[] = [];
     for (const t of this.troops) {
       if (t.owner !== 'player') continue;
+      // The SHADOW path's three booleans ride as one byte rather than three slots — this packet
+      // already carries eleven numbers per soldier and goes out four times a second.
+      const flags = (t.surprise ? 1 : 0) | (t.cloak ? 2 : 0) | (t.guild ? 4 : 0);
       tr.push(t.cell, t.town, Math.round(t.hp), Math.round(t.baseHp), t.king ? 1 : 0,
-        Math.round(t.damage), Math.round(t.atkMs), t.crowdBonus ? 1 : 0);
+        Math.round(t.damage), Math.round(t.atkMs), t.crowdBonus ? 1 : 0,
+        t.wizard ? 1 : 0, t.marchRange, flags);
     }
 
-    return { a: Math.round(side.authority), c: cells, tw, b, tr };
+    const linked = this.side('player').linkedWall;
+
+    return {
+      a: Math.round(side.authority), c: cells, tw, b, tr,
+      bf: this.owns('player', 'click') ? BANNER_ORDER.indexOf(side.banner) : -1,
+      lw: linked && this.buildings.includes(linked) ? linked.cell : -1,
+    };
   }
 
   /**
@@ -1686,21 +2463,33 @@ export class ConquestKit implements ConquestMenuHost {
     }
 
     // ── Town centers ──
+    // Their fireball as we last saw it, kept across the rebuild: a ready orb that has vanished is
+    // the only evidence on this sim that they threw one, and it is what makes their Wizard Tower
+    // land on this screen at all. Same approximation as an npc oil turret — we cannot know where
+    // they aimed, so it comes at us.
+    const wasReady = new Set(side.towns.filter((t) => t.fireReady).map((t) => t.cell));
     side.towns = [];
-    for (let i = 0; i + 2 < snap.tw.length; i += 3) {
+    for (let i = 0; i + 4 < snap.tw.length; i += 5) {
       const cell = this.mirrorCell(snap.tw[i]);
       side.towns.push({
         owner: 'npc', index: side.towns.length, cell,
         x: this.centreX(cell), y: this.centreY(cell),
-        tiers: [snap.tw[i + 1], snap.tw[i + 2]],
+        tiers: [snap.tw[i + 1], snap.tw[i + 2], snap.tw[i + 3]],
         coinAccum: 0,
+        // Their clocks are theirs; we only ever learn whether the orb is currently sitting there.
+        fireAccum: 0, fireReady: snap.tw[i + 4] === 1, schoolAccum: 0,
       });
+    }
+    for (const t of side.towns) {
+      if (t.fireReady || !wasReady.has(t.cell)) continue;
+      const target = this.api.player;
+      if (this.alive(target)) this.hurlFireball(t, target.x, target.y);
     }
 
     // ── Buildings ──
     const keptBuildings: Building[] = [];
     const spare = this.buildings.filter((bd) => bd.owner === 'npc');
-    for (let i = 0; i + 5 < snap.b.length; i += 6) {
+    for (let i = 0; i + 6 < snap.b.length; i += 7) {
       const cell = this.mirrorCell(snap.b[i]);
       const kind = KIND_OF_CODE[snap.b[i + 1]] ?? 'barricade';
       const idx = spare.findIndex((bd) => bd.cell === cell && bd.kind === kind);
@@ -1711,9 +2500,10 @@ export class ConquestKit implements ConquestMenuHost {
         bd = {
           owner: 'npc', kind, town: 0, cell,
           x: this.centreX(cell), y: this.centreY(cell),
-          hp: 0, tiers: [0, 0], accum: 0, regenCarry: 0,
+          hp: 0, tiers: [0, 0, 0], accum: 0, regenCarry: 0,
           burstLeft: 0, burstAccum: 0, aimAng: Math.PI, recoil: 0,
-          spikeCarry: 0, lastHitAt: -HP_BAR_MS, seed: Math.random() * 999,
+          spikeCarry: 0, lastHitAt: -HP_BAR_MS, bombAt: -BOMB_COOLDOWN_MS,
+          seed: Math.random() * 999,
         };
         this.fx('npc').raise(bd.x, bd.y, CELL, townColor('npc', snap.b[i + 2]));
       }
@@ -1722,7 +2512,7 @@ export class ConquestKit implements ConquestMenuHost {
       // same bar timer a local hit would.
       if (snap.b[i + 3] < bd.hp) bd.lastHitAt = this.now;
       bd.hp = snap.b[i + 3];
-      bd.tiers = [snap.b[i + 4], snap.b[i + 5]];
+      bd.tiers = [snap.b[i + 4], snap.b[i + 5], snap.b[i + 6]];
       keptBuildings.push(bd);
     }
     for (const dead of spare) this.fx('npc').rubble(dead.x, dead.y, CELL);
@@ -1731,7 +2521,7 @@ export class ConquestKit implements ConquestMenuHost {
     // ── Soldiers ──
     const keptTroops: Troop[] = [];
     const spareTroops = this.troops.filter((t) => t.owner === 'npc');
-    for (let i = 0; i + 7 < snap.tr.length; i += 8) {
+    for (let i = 0; i + 10 < snap.tr.length; i += 11) {
       const cell = this.mirrorCell(snap.tr[i]);
       const king = snap.tr[i + 4] === 1;
       const idx = spareTroops.findIndex((t) => t.cell === cell && t.king === king);
@@ -1744,6 +2534,9 @@ export class ConquestKit implements ConquestMenuHost {
           damage: 3, atkMs: 1000, crowdBonus: false, king,
           accum: 0, march: Math.random() * 6, ang: Math.PI,
           potionUsed: false, enraged: false,
+          marchRange: 1, surprise: false, fresh: false,
+          cloak: false, cloakUsed: false, dodge: 0, guild: false,
+          wizard: false,
         };
       }
       t.town = snap.tr[i + 1];
@@ -1752,9 +2545,35 @@ export class ConquestKit implements ConquestMenuHost {
       t.damage = snap.tr[i + 5];
       t.atkMs = snap.tr[i + 6];
       t.crowdBonus = snap.tr[i + 7] === 1;
+      t.wizard = snap.tr[i + 8] === 1;
+      t.marchRange = snap.tr[i + 9];
+      const flags = snap.tr[i + 10];
+      t.surprise = (flags & 1) !== 0;
+      t.cloak = (flags & 2) !== 0;
+      t.guild = (flags & 4) !== 0;
+      // Their dodge is derived rather than sent: the two tiers that grant it are exactly the two
+      // flags already on the wire.
+      t.dodge = t.guild ? 0.5 : t.cloak ? 0.25 : 0;
       keptTroops.push(t);
     }
+    // A wizard of theirs that is no longer in the packet died on their sim, and Academy of Ash
+    // means dying is an attack. Done here rather than in `killTroop` because a networked soldier
+    // is never killed locally — it simply stops being sent.
+    const ash = this.empire('npc').ash;
     this.troops = [...this.troops.filter((t) => t.owner !== 'npc'), ...keptTroops];
+    if (ash) {
+      for (const dead of spareTroops) {
+        if (!dead.wizard) continue;
+        const x = this.centreX(dead.cell);
+        const y = this.centreY(dead.cell);
+        this.fx('npc').ashBurst(x, y, ASH_RADIUS);
+        this.splash(x, y, ASH_RADIUS, 'npc', ASH_DAMAGE);
+      }
+    }
+
+    // ── Banner Bearer and Personal Wall ──
+    if (snap.bf >= 0 && snap.bf < BANNER_ORDER.length) side.banner = BANNER_ORDER[snap.bf];
+    side.netLinkCell = snap.lw >= 0 ? this.mirrorCell(snap.lw) : -1;
   }
 
   /** Reflect a cell across the board's vertical centre line. */
@@ -1788,6 +2607,12 @@ export class ConquestKit implements ConquestMenuHost {
     this.tickBullets(dt);
     this.tickIncomingProjectiles();
 
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      if (!this.isConquest(owner)) continue;
+      this.tickBannerHeal(owner, dt);
+      this.syncAbsorber(owner);
+    }
+
     // Territory armour, pushed onto both fighters every frame — the field is rewritten from
     // scratch here rather than accumulated, so nothing else's armour is stomped.
     for (const owner of ['player', 'npc'] as Owner[]) {
@@ -1796,7 +2621,75 @@ export class ConquestKit implements ConquestMenuHost {
       f.conquestIncomingMult = this.isConquest(owner) && this.standingTown(owner) >= 0 ? HOME_ARMOUR : 1;
     }
 
+    // Last thing before drawing: ArenaScene has already resolved this frame's movement, so a
+    // stolen velocity written here is the one that survives.
+    this.tickPulls();
+
     this.draw(delta);
+  }
+
+  /**
+   * Personal Wall's redirect, kept in step with the link every frame.
+   *
+   * `damageAbsorber` is a single slot that several kits write, so this only ever installs into an
+   * empty one and only ever clears the closure it put there itself. It is also deliberately never
+   * installed on a *remote* opponent: their wall eats their hits on their own sim, and doing it
+   * twice would take the wall down twice as fast on one screen as on the other.
+   */
+  private syncAbsorber(owner: Owner): void {
+    const f = this.fighter(owner);
+    if (!f) return;
+    const mine = this.absorbers[owner];
+    const wall = owner === 'npc' && this.npcIsRemote ? null : this.linkedWall(owner);
+
+    if (!wall) {
+      if (mine && f.damageAbsorber === mine) f.damageAbsorber = null;
+      delete this.absorbers[owner];
+      return;
+    }
+    if (mine && f.damageAbsorber === mine) return;
+    if (f.damageAbsorber) return;
+
+    // The closure re-reads the link rather than closing over the wall, so unlinking mid-match —
+    // or the wall being knocked down — takes effect without reinstalling anything.
+    const fn = (amount: number): boolean => {
+      const w = this.linkedWall(owner);
+      if (!w) return false;
+      this.damageBuilding(w, amount, null);
+      this.api.showFloatingText(w.x, w.y - 32, `⛓️ ${Math.round(amount)}`, this.hex(CNQ.iron));
+      return true;
+    };
+    this.absorbers[owner] = fn;
+    f.damageAbsorber = fn;
+  }
+
+  // ── Speed ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Speedy Walls and Force Shield, pulled by ArenaScene rather than pushed onto the fighter —
+   * this kit's `update` runs long after the frame's movement has already resolved.
+   */
+  getPlayerSpeedMult(): number { return this.speedMultFor('player'); }
+  getNpcSpeedMult(): number { return this.speedMultFor('npc'); }
+
+  private speedMultFor(owner: Owner): number {
+    if (!this.isConquest(owner)) return 1;
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return 1;
+    const fort = this.empire(owner).fortressHp;
+
+    let stacks = 0;
+    for (const b of this.buildings) {
+      if (b.owner !== owner || b.kind !== 'barricade') continue;
+      if (!barricadeStats(b.tiers, fort).speedAura) continue;
+      if (Phaser.Math.Distance.Between(f.x, f.y, b.x, b.y) > HASTE_RANGE) continue;
+      stacks++;
+    }
+    let mult = HASTE_PER ** Math.min(stacks, HASTE_MAX_STACKS);
+
+    const wall = this.linkedWall(owner);
+    if (wall && barricadeStats(wall.tiers, fort).forceShield) mult *= FORCE_SPEED;
+    return mult;
   }
 
   // ── Drawing ────────────────────────────────────────────────────────────────
@@ -1853,25 +2746,64 @@ export class ConquestKit implements ConquestMenuHost {
       contestTile(g, this.cellX(cell), this.cellY(cell), CELL, rec.ms / CONTEST_MS, col, this.vizT);
     }
 
+    // Speedy Walls, drawn on the floor so a wall that is hurrying you along says so before you
+    // have to notice you are moving faster.
+    if (this.alive(this.api.player) || this.alive(this.api.npc)) {
+      for (const owner of ['player', 'npc'] as Owner[]) {
+        if (!this.isConquest(owner)) continue;
+        const fort = this.empire(owner).fortressHp;
+        for (const b of this.buildings) {
+          if (b.owner !== owner || b.kind !== 'barricade') continue;
+          if (!barricadeStats(b.tiers, fort).speedAura) continue;
+          const f = this.fighter(owner);
+          const on = this.alive(f) && Phaser.Math.Distance.Between(f.x, f.y, b.x, b.y) <= HASTE_RANGE;
+          hasteRing(g, this.col(owner), b.x, b.y, HASTE_RANGE, townColor(owner, b.town), this.vizT, on ? 1 : 0.35);
+        }
+      }
+    }
+
     if (this.dragging && this.dragFrom >= 0) {
       const from = this.dragFrom;
+      const range = this.marchRangeOf('player', from);
       const col = this.pcol(townColor('player', this.cellTown[from]));
       g.lineStyle(2.5, col, 0.85);
       g.strokeRect(this.cellX(from) + 3, this.cellY(from) + 3, CELL - 6, CELL - 6);
-      // Every square the stack can reach, so the one-square rule is visible rather than
-      // something you discover by failing at it. Neutral ground is drawn brighter, because a
-      // march onto it is a capture and a march anywhere else is only a move.
-      for (const n of this.around(from)) {
+      // Every square the stack can reach, so the march rule is visible rather than something you
+      // discover by failing at it. Neutral ground is drawn brighter, because a march onto it is
+      // a capture and a march anywhere else is only a move.
+      for (const n of this.within(from, range)) {
         const claims = this.cellOwner[n] === null;
         g.lineStyle(claims ? 2 : 1.4, col, claims ? 0.7 : 0.3);
+        g.strokeRect(this.cellX(n) + 8, this.cellY(n) + 8, CELL - 16, CELL - 16);
+      }
+      const to = this.cellAt(this.aimX, this.aimY);
+      if (to >= 0 && this.inRange(from, to, range)) {
+        g.fillStyle(col, 0.2);
+        g.fillRect(this.cellX(to), this.cellY(to), CELL, CELL);
+        g.lineStyle(3, col, 0.95);
+        g.strokeRect(this.cellX(to) + 2, this.cellY(to) + 2, CELL - 4, CELL - 4);
+      }
+      g.lineStyle(2, col, 0.6);
+      g.lineBetween(this.centreX(from), this.centreY(from), this.aimX, this.aimY);
+    }
+
+    // A wall being shoved. Same affordance as a garrison drag, one square only.
+    if (this.wallDrag) {
+      const from = this.wallDrag.cell;
+      const col = this.pcol(townColor('player', this.wallDrag.town));
+      g.lineStyle(2.5, col, 0.85);
+      g.strokeRect(this.cellX(from) + 3, this.cellY(from) + 3, CELL - 6, CELL - 6);
+      for (const n of this.around(from)) {
+        const free = !this.buildingAt(n) && !this.townAt(n)
+          && (this.cellOwner[n] === null || this.cellOwner[n] === 'player');
+        if (!free) continue;
+        g.lineStyle(2, col, 0.55);
         g.strokeRect(this.cellX(n) + 8, this.cellY(n) + 8, CELL - 16, CELL - 16);
       }
       const to = this.cellAt(this.aimX, this.aimY);
       if (to >= 0 && this.adjacent(from, to)) {
         g.fillStyle(col, 0.2);
         g.fillRect(this.cellX(to), this.cellY(to), CELL, CELL);
-        g.lineStyle(3, col, 0.95);
-        g.strokeRect(this.cellX(to) + 2, this.cellY(to) + 2, CELL - 4, CELL - 4);
       }
       g.lineStyle(2, col, 0.6);
       g.lineBetween(this.centreX(from), this.centreY(from), this.aimX, this.aimY);
@@ -1918,7 +2850,30 @@ export class ConquestKit implements ConquestMenuHost {
       const x = this.troopX(t);
       const y = this.troopY(t);
       if (t.king) barbarianKing(g, c, x, y, col, t.ang, t.march, t.enraged, 1);
+      else if (t.wizard) wizardTroop(g, c, x, y, col, t.ang, t.march, this.empire(t.owner).ash, 1);
       else soldier(g, c, x, y, col, t.ang, t.march, 1, 1);
+      // Shadow Cloak: a low shroud under a soldier that has not spent its free miss yet, so the
+      // one that is still untouchable is the one you can pick out of a stack.
+      if (t.cloak && !t.cloakUsed && !t.wizard) {
+        g.fillStyle(c(CNQ.shroud), 0.4 + 0.15 * Math.sin(this.vizT * 3 + t.march));
+        g.fillEllipse(x, y + 6, 18, 7);
+      }
+    }
+
+    // Personal Wall's chain, on both sides — a remote opponent's link arrives as a cell.
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      if (!this.isConquest(owner)) continue;
+      const f = this.fighter(owner);
+      if (!this.alive(f)) continue;
+      const fort = this.empire(owner).fortressHp;
+      const side = this.side(owner);
+      const wall = owner === 'npc' && this.npcIsRemote
+        ? (side.netLinkCell >= 0 ? this.buildingAt(side.netLinkCell) : null)
+        : this.linkedWall(owner);
+      if (!wall || wall.owner !== owner) continue;
+      const shielded = barricadeStats(wall.tiers, fort).forceShield;
+      linkChain(g, this.col(owner), f.x, f.y, wall.x, wall.y,
+        townColor(owner, wall.town), this.vizT, shielded, 1);
     }
   }
 
@@ -1929,10 +2884,38 @@ export class ConquestKit implements ConquestMenuHost {
 
     for (const p of this.bullets) {
       const c = this.col(p.owner);
+      if (p.kind === 'bomb') { revengeBomb(g, c, p.x, p.y, p.spin, 1); continue; }
+      if (p.kind === 'fireball') {
+        fireballOrb(g, c, p.x, p.y, this.vizT, 1.15, 1);
+        // A tail, so a fireball in flight is unmistakably travelling rather than parked.
+        for (let i = 1; i <= 3; i++) {
+          g.fillStyle(c(CNQ.ember), 0.35 / i);
+          g.fillCircle(p.x - p.vx * 0.011 * i, p.y - p.vy * 0.011 * i, 6 - i);
+        }
+        continue;
+      }
       g.fillStyle(c(p.head ? CNQ.blood : CNQ.tracer), 0.9);
       g.fillCircle(p.x, p.y, p.head ? 4 : 3);
       g.fillStyle(c(CNQ.muzzle), 0.7);
       g.fillCircle(p.x - p.vx * 0.006, p.y - p.vy * 0.006, 1.8);
+    }
+
+    // Wizard Tower orbs, waiting over their domes. Drawn over the fighters rather than under
+    // them because the whole point is that they are grabbable.
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      for (const t of this.side(owner).towns) {
+        if (!t.fireReady || this.fireDrag === t) continue;
+        const p = this.fireballPos(t);
+        fireballOrb(g, this.col(owner), p.x, p.y + Math.sin(this.vizT * 2.2) * 3, this.vizT, 1, 1);
+      }
+    }
+
+    // The one in hand, riding the cursor.
+    if (this.fireDrag) {
+      const p = this.fireballPos(this.fireDrag);
+      g.lineStyle(2, this.pcol(CNQ.ember), 0.5);
+      g.lineBetween(p.x, p.y, this.aimX, this.aimY);
+      fireballOrb(g, this.pcol, this.aimX, this.aimY, this.vizT, 1.25, 1);
     }
 
     // Building HP bars, but only for buildings that have actually been hit — twenty full bars
@@ -1965,18 +2948,35 @@ export class ConquestKit implements ConquestMenuHost {
     const emp = this.empire('player');
     const owned = this.cellOwner.reduce((n, o) => n + (o === 'player' ? 1 : 0), 0);
 
+    const banner = this.bannerOf('player');
     const x = 14;
     const y = 78;
+    const h = banner ? 64 : 46;
     g.fillStyle(0x0a0a14, 0.78);
-    g.fillRect(x - 6, y - 6, 190, 46);
-    g.lineStyle(1.5, this.pcol(CNQ.gold), 0.6);
-    g.strokeRect(x - 6, y - 6, 190, 46);
+    g.fillRect(x - 6, y - 6, 190, h);
+    g.lineStyle(1.5, this.pcol(banner ? banner.color : CNQ.gold), 0.6);
+    g.strokeRect(x - 6, y - 6, 190, h);
 
     txt.setPosition(x, y);
     txt.setText(
       `👑 ${Math.floor(side.authority)}  (+${emp.income}/s)\n`
-      + `🏗️ ${this.buildingCount('player')}/${this.buildingCap('player')}   🗺️ ${owned}`,
+      + `🏗️ ${this.buildingCount('player')}/${this.buildingCap('player')}   🗺️ ${owned}`
+      // Which standard is up, and the reminder of how to change it — the right button is the
+      // only input in the element that nothing else uses, so it needs saying.
+      + (banner ? `\n🚩 ${banner.label}  ·  RMB` : ''),
     );
+
+    if (!banner) return;
+    // A little pennant in the corner of the readout, in the form's own colour — parked on the
+    // short first row rather than beside the label it would otherwise run into.
+    const px = x + 166;
+    const py = y - 2;
+    g.lineStyle(1.4, this.pcol(CNQ.timberDark), 0.9);
+    g.lineBetween(px, py - 4, px, py + 14);
+    g.fillStyle(this.pcol(banner.color), 0.95);
+    g.fillTriangle(px + 1, py, px + 17, py + 5, px + 1, py + 11);
+    g.fillStyle(this.pcol(CNQ.gold), 0.9);
+    g.fillCircle(px, py - 5, 2);
   }
 
   private drawAvatars(delta: number): void {
@@ -1988,6 +2988,7 @@ export class ConquestKit implements ConquestMenuHost {
       const town = this.standingTown(owner);
       a.setStanding(town >= 0 ? townColor(owner, town) : 0);
       a.setTowns(this.side(owner).towns.length);
+      a.setBanner(this.bannerOf(owner)?.color ?? 0);
       a.setMastered(owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
       const aim = owner === 'player'
         ? Math.atan2(this.aimY - f.y, this.aimX - f.x)

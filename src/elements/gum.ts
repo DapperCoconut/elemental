@@ -62,7 +62,7 @@ const oozorbtion: Ability = {
 const solidify: Ability = {
   id: 'gum-solidify',
   name: 'Solidify',
-  description: 'Every scrap of your slime on the field goes glassy at once. Your hand bursts into shards in all directions for 8 damage each and takes 3 seconds to grow back — you cannot move at all until it does. Your slimeballs harden to 45 damage and shatter on walls, and anyone you have gummed is sealed for 5 seconds longer and bursts when they are thrown.',
+  description: 'Every scrap of your slime on the field goes glassy at once. Your hand bursts into shards in all directions for 8 damage each and takes 3 seconds to grow back — you cannot move at all until it does. Your slimeballs harden to 45 damage and shatter on walls, anyone you have gummed is sealed for 5 seconds longer and bursts when they are thrown, and any slime puddles you have laid set into beacons: pick one up, shake it, and it emits an aura for as long as you shook it.',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 22000,

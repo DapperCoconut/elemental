@@ -701,17 +701,17 @@ export const ITEMS: ItemDef[] = [
     effect: { dodgeChance: 0.2, speedMult: 1.18,
       behaviors: [{ trigger: 'onHitTaken', chance: 0.25, cooldownSec: 4, action: 'tempHaste', mult: 1.45, durationMs: 1700 }] } },
 
-  // ══ Amber ═════════════════════════════════════════════════════════
-  { id: 'preserved-heart', name: 'Preserved Heart', emoji: '💓', elementId: 'amber', priceSparks: 36,
-    flavor: 'Sealed at its strongest beat. It lends you the moment forever.',
+  // ══ Marrow ════════════════════════════════════════════════════════
+  { id: 'marrow-graft', name: 'Marrow Graft', emoji: '🩸', elementId: 'marrow', priceSparks: 36,
+    flavor: 'Somebody else\'s blood, and it has not been told it changed hands.',
     effect: { maxHp: 110,
       behaviors: [{ trigger: 'onLowHp', thresholdFrac: 0.3, action: 'shieldCharge', amount: 3 }] } },
-  { id: 'amber-plate', name: 'Amber Plate', emoji: '🔶', elementId: 'amber', priceSparks: 34,
-    flavor: 'Light passes through. Almost nothing else does.',
+  { id: 'callus-plate', name: 'Callus Plate', emoji: '🦴', elementId: 'marrow', priceSparks: 34,
+    flavor: 'Bone that healed wrong. Thicker than bone that healed right.',
     effect: { shieldHp: 130,
       behaviors: [{ trigger: 'onHitTaken', chance: 0.2, cooldownSec: 5, action: 'slowEnemy', mult: 0.5, durationMs: 2400 }] } },
-  { id: 'sap-vial', name: 'Slow Sap', emoji: '⚗️', elementId: 'amber', priceSparks: 33,
-    flavor: 'One drop and the world runs a beat behind you.',
+  { id: 'febrile-vial', name: 'Fever Draught', emoji: '🌡️', elementId: 'marrow', priceSparks: 33,
+    flavor: 'Everything moves a beat slower once the room is this warm.',
     effect: { enemySpeedMult: 0.78,
       behaviors: [{ trigger: 'onHitDealt', chance: 0.18, cooldownSec: 3, action: 'slowEnemy', mult: 0.55, durationMs: 2000 }] } },
 

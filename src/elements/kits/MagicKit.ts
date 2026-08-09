@@ -193,10 +193,11 @@ const CAST_GESTURES: Record<string, ArmGesture> = {
 
 // ── Wheel data ────────────────────────────────────────────────────────────────
 
-const GRIMOIRE_LABELS  = ['🔥 Flame Burst', '🌧️ Storm Cloud', '🌿 V. Thorns', '💨 Compression', '🪨 Gaia Guide'];
-const GRIMOIRE_COLORS  = [0xff7733, 0x3388ff, 0x33aa44, 0x888888, 0x885522];
-const NECRO_LABELS     = ['🌋 Flame Barrage', '🌊 Final Drench', '🌿 Thorn Prison', '🌪️ Tornado', '🌋 Gaia Rage'];
-const NECRO_COLORS     = [0xcc2200, 0x1144aa, 0x226622, 0x444444, 0x553311];
+// Exported because the codex showcase opens the same two wheels the arena does.
+export const GRIMOIRE_LABELS  = ['🔥 Flame Burst', '🌧️ Storm Cloud', '🌿 V. Thorns', '💨 Compression', '🪨 Gaia Guide'];
+export const GRIMOIRE_COLORS  = [0xff7733, 0x3388ff, 0x33aa44, 0x888888, 0x885522];
+export const NECRO_LABELS     = ['🌋 Flame Barrage', '🌊 Final Drench', '🌿 Thorn Prison', '🌪️ Tornado', '🌋 Gaia Rage'];
+export const NECRO_COLORS     = [0xcc2200, 0x1144aa, 0x226622, 0x444444, 0x553311];
 
 // ── Decay (divine perk) ───────────────────────────────────────────────────────
 /** Dark energy charged for buying the Grimoire's cooldown back. */
@@ -204,10 +205,10 @@ const DECAY_GRIMOIRE_COST = 25;
 /** …and for the Necronomicon's. One point short of the 100 that kills you outright. */
 const DECAY_NECRO_COST = 99;
 
-const DARK_GRIMOIRE_LABELS = ['🔥 Corrupt Flames', '⛈️ Acid Cloud', '🌿 Drain Thorns', '💨 Dark Gale', '🛕 Gaia Temple'];
-const DARK_GRIMOIRE_COLORS = [0xff5500, 0x3366cc, 0x22aa44, 0x888888, 0x775533];
-const DARK_NECRO_LABELS    = ['🌋 Dark Barrage', '🌊 Acid Rain', '🌿 Torture Trap', '🌪️ Hurricane Vac.', '🌋 Gaia Monument'];
-const DARK_NECRO_COLORS    = [0xcc1100, 0x112255, 0x226633, 0x333333, 0x442200];
+export const DARK_GRIMOIRE_LABELS = ['🔥 Corrupt Flames', '⛈️ Acid Cloud', '🌿 Drain Thorns', '💨 Dark Gale', '🛕 Gaia Temple'];
+export const DARK_GRIMOIRE_COLORS = [0xff5500, 0x3366cc, 0x22aa44, 0x888888, 0x775533];
+export const DARK_NECRO_LABELS    = ['🌋 Dark Barrage', '🌊 Acid Rain', '🌿 Torture Trap', '🌪️ Hurricane Vac.', '🌋 Gaia Monument'];
+export const DARK_NECRO_COLORS    = [0xcc1100, 0x112255, 0x226633, 0x333333, 0x442200];
 
 // ── MagicKit ──────────────────────────────────────────────────────────────────
 
@@ -1627,27 +1628,11 @@ export class MagicKit {
     const cy = this.api.player.y;
     const R = 130;
     const count = 5;
-    const angleStep = (Math.PI * 2) / count;
     const colors = slot === 'grimoire' ? GRIMOIRE_COLORS : NECRO_COLORS;
-    for (let i = 0; i < count; i++) {
-      const startA = i * angleStep - Math.PI / 2 - angleStep / 2;
-      const endA = startA + angleStep;
-      const isSelected = i === selectedIndex;
-      gfx.fillStyle(colors[i], isSelected ? 0.9 : 0.55);
-      gfx.beginPath(); gfx.moveTo(cx, cy);
-      gfx.arc(cx, cy, isSelected ? R + 10 : R, startA, endA, false);
-      gfx.closePath(); gfx.fillPath();
-      gfx.lineStyle(isSelected ? 3 : 1, isSelected ? 0xffffff : 0xaaaaaa, isSelected ? 0.9 : 0.4);
-      gfx.beginPath(); gfx.moveTo(cx, cy);
-      gfx.arc(cx, cy, isSelected ? R + 10 : R, startA, endA, false);
-      gfx.closePath(); gfx.strokePath();
-    }
+    MagicFx.drawWheel(gfx, cx, cy, R, colors, selectedIndex);
     const lblObjs: Phaser.GameObjects.Text[] = [];
     for (let i = 0; i < count; i++) {
-      const midA = i * angleStep - Math.PI / 2;
-      const rr = i === selectedIndex ? R + 10 : R;
-      const lx = cx + Math.cos(midA) * (rr * 0.65);
-      const ly = cy + Math.sin(midA) * (rr * 0.65);
+      const { x: lx, y: ly } = MagicFx.wheelLabelPos(cx, cy, R, i, count, selectedIndex);
       const t = this.api.scene.add.text(lx, ly, labels[i], { fontSize: '10px', color: '#ffffff', fontFamily: 'Arial', align: 'center', wordWrap: { width: 72 } })
         .setOrigin(0.5, 0.5).setDepth(32);
       lblObjs.push(t);
@@ -1673,7 +1658,6 @@ export class MagicKit {
     const cy = this.api.player.y;
     const R = 130;
     const count = 5;
-    const angleStep = (Math.PI * 2) / count;
     const isDark = slot === 'grimoire' ? this.darkGrimoireMode : this.darkNecroMode;
     const colors = isDark
       ? (slot === 'grimoire' ? DARK_GRIMOIRE_COLORS : DARK_NECRO_COLORS)
@@ -1682,32 +1666,15 @@ export class MagicKit {
       ? (slot === 'grimoire' ? DARK_GRIMOIRE_LABELS : DARK_NECRO_LABELS)
       : (slot === 'grimoire' ? GRIMOIRE_LABELS : NECRO_LABELS);
     gfx.clear();
-    for (let i = 0; i < count; i++) {
-      const startA = i * angleStep - Math.PI / 2 - angleStep / 2;
-      const endA = startA + angleStep;
-      const isSelected = i === selectedIndex;
-      gfx.fillStyle(colors[i], isSelected ? 0.9 : 0.55);
-      gfx.beginPath(); gfx.moveTo(cx, cy);
-      gfx.arc(cx, cy, isSelected ? R + 10 : R, startA, endA, false);
-      gfx.closePath(); gfx.fillPath();
-      gfx.lineStyle(isSelected ? 3 : 1, isSelected ? 0xffffff : 0xaaaaaa, isSelected ? 0.9 : 0.4);
-      gfx.beginPath(); gfx.moveTo(cx, cy);
-      gfx.arc(cx, cy, isSelected ? R + 10 : R, startA, endA, false);
-      gfx.closePath(); gfx.strokePath();
-    }
-    // Center toggle button (only when upgrade is owned)
-    if (this.api.hasUpgrade(slot === 'grimoire' ? 'e' : 'q')) {
-      const btnColor = isDark ? 0x440088 : 0xddaa00;
-      gfx.fillStyle(btnColor, 0.92);
-      gfx.fillCircle(cx, cy, 24);
-      gfx.lineStyle(2, isDark ? 0xcc44ff : 0xffffff, 0.9);
-      gfx.strokeCircle(cx, cy, 24);
-    }
+    // Center toggle button only when the upgrade that owns it is bought.
+    const toggle = this.api.hasUpgrade(slot === 'grimoire' ? 'e' : 'q')
+      ? (isDark ? 'dark' : 'light')
+      : 'none';
+    MagicFx.drawWheel(gfx, cx, cy, R, colors, selectedIndex, toggle);
     for (let i = 0; i < count; i++) {
       if (!lbls[i]) continue;
-      const midA = i * angleStep - Math.PI / 2;
-      const rr = i === selectedIndex ? R + 10 : R;
-      lbls[i].setPosition(cx + Math.cos(midA) * (rr * 0.65), cy + Math.sin(midA) * (rr * 0.65));
+      const { x: lx, y: ly } = MagicFx.wheelLabelPos(cx, cy, R, i, count, selectedIndex);
+      lbls[i].setPosition(lx, ly);
       lbls[i].setText(labels[i]);
     }
   }

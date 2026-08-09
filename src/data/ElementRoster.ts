@@ -55,7 +55,7 @@ import { conquestElement } from '../elements/conquest';
 import { passionElement } from '../elements/passion';
 import { deathElement } from '../elements/death';
 import { fortuneElement } from '../elements/fortune';
-import { amberElement } from '../elements/amber';
+import { marrowElement } from '../elements/marrow';
 import { psychicElement } from '../elements/psychic';
 import { radiationElement } from '../elements/radiation';
 import { bindElement } from '../elements/bind';
@@ -103,7 +103,7 @@ export const ELEMENT_DATA_MAP: Record<string, Element> = {
   paper: paperElement,
   death: deathElement,
   fortune: fortuneElement,
-  amber: amberElement,
+  marrow: marrowElement,
   psychic: psychicElement,
   radiation: radiationElement,
   bind: bindElement,
@@ -232,6 +232,16 @@ export const ELEMENT_FORM_TABS: Record<string,
       hint: '30 seconds, and damage comes off the hunger bar instead of your health. Eating is the only way to put time back on it.',
     },
   ],
+  justice: [
+    {
+      label: '⚖️ GROUND', accent: 0xc9a13a, text: '#f0d68a',
+      hint: 'The magistrate. F takes off — it needs 5 Willpower and runs a 2.5s cooldown.',
+    },
+    {
+      label: '🕊️ FLIGHT', accent: 0x2f7bff, text: '#a8ccff',
+      hint: '+33% speed and +20% damage taken, for 2 Willpower a second. F lands you again.',
+    },
+  ],
 };
 
 export const TEST_ELEMENTS: ElementDef[] = [
@@ -246,7 +256,7 @@ export const TEST_ELEMENTS: ElementDef[] = [
   { id: 'paper', name: 'Paper', emoji: '📄', color: 0xf2ead6, available: true },
   { id: 'death', name: 'Death', emoji: '⚰️', color: 0x4a4468, available: true },
   { id: 'fortune', name: 'Fortune', emoji: '🪙', color: 0xd8a531, available: true },
-  { id: 'amber', name: 'Amber', emoji: '🟠', color: 0xd98b1f, available: true },
+  { id: 'marrow', name: 'Marrow', emoji: '🦴', color: 0xd1435c, available: true },
   { id: 'psychic', name: 'Psychic', emoji: '👁️', color: 0x9b4dff, available: true },
   { id: 'radiation', name: 'Radiation', emoji: '☢️', color: 0x7cff3d, available: true },
   { id: 'bind', name: 'Bind', emoji: '⛓️', color: 0xe0b743, available: true },

@@ -738,18 +738,7 @@ export class ElectricityKit {
     for (const f of this.playerPhoenixFlames) {
       // Fade out over the last second of life so a field of flames thins rather than popping.
       const a = Phaser.Math.Clamp((f.expiresAt - time) / 1000, 0, 1);
-      const flick = 0.82 + 0.18 * Math.sin(t * 9 + f.phase);
-      g.fillStyle(this.pcol(PHOENIX_TONES.glow), 0.28 * a);
-      g.fillCircle(f.x, f.y, 13 * flick);
-      // Three tongues leaning off the same root — a single disc reads as a token, not a fire.
-      for (let i = 0; i < 3; i++) {
-        const lean = -Math.PI / 2 + (i - 1) * 0.55 + Math.sin(t * 4 + f.phase + i) * 0.22;
-        const len = (11 + i % 2 * 4) * flick;
-        g.fillStyle(this.pcol(i === 1 ? PHOENIX_TONES.hot : PHOENIX_TONES.body), 0.85 * a);
-        g.fillEllipse(f.x + Math.cos(lean) * len * 0.5, f.y + Math.sin(lean) * len * 0.5, 6, len);
-      }
-      g.fillStyle(this.pcol(PHOENIX_TONES.core), 0.9 * a);
-      g.fillCircle(f.x, f.y - 2, 2.4 * flick);
+      ElectricityFx.drawPhoenixFlame(g, this.pcol, f.x, f.y, t, f.phase, a);
     }
   }
 

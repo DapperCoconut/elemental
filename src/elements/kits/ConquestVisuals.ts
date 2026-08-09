@@ -48,6 +48,14 @@ export const CNQ = {
   neutral: 0x3a3d4a,
   grid: 0x54596b,
   parchment: 0xf2e8d0,
+  /** The shop-gated third paths, each with its own family so a tier-3 read is instant. */
+  arcane: 0x9a6ad8,
+  arcaneDeep: 0x4a2c78,
+  ember: 0xff7a2a,
+  emberCore: 0xffe08a,
+  ash: 0x6b6270,
+  shroud: 0x2a2438,
+  mend: 0x6ee87a,
 };
 
 /**
@@ -375,6 +383,174 @@ export function barbarianKing(
   g.fillTriangle(x - 5, y + bob - 8, x + 5, y + bob - 8, x + sway, y + bob + 10);
 }
 
+/**
+ * A wizard — a soldier the Wizard School has promoted. Built on the same rig so the promotion
+ * reads as *that soldier, changed* rather than a new unit type: same size, same bob, same tabard
+ * colour. What is new is a pointed hood, a staff instead of a spear, and an orb whose glow is the
+ * only thing at three squares' distance that says this one outranges everything else on the board.
+ */
+export function wizardTroop(
+  g: Phaser.GameObjects.Graphics,
+  tint: ConquestColorFn,
+  x: number, y: number,
+  color: number, ang: number, march: number, ashen: boolean, alpha: number,
+): void {
+  const bob = Math.sin(march) * 1.2;
+  const cy = y + bob;
+  const ca = Math.cos(ang), sa = Math.sin(ang);
+
+  g.fillStyle(0x000000, alpha * 0.25);
+  g.fillEllipse(x, y + 6, 9, 3.4);
+
+  // Robe: a trapezoid rather than the soldier's rectangle, so the silhouette differs at a glance.
+  g.fillStyle(tint(CNQ.arcaneDeep), alpha);
+  g.fillTriangle(x - 6, cy + 5.4, x + 6, cy + 5.4, x, cy - 4);
+  g.fillStyle(tint(color), alpha * 0.95);
+  g.fillTriangle(x - 4, cy + 5, x + 4, cy + 5, x, cy - 3);
+  // A sash of arcane trim down the front.
+  g.fillStyle(tint(ashen ? CNQ.ember : CNQ.arcane), alpha * 0.9);
+  g.fillTriangle(x - 1.2, cy + 5, x + 1.2, cy + 5, x, cy - 2);
+
+  // Pointed hood, brim and all.
+  g.fillStyle(tint(CNQ.arcaneDeep), alpha);
+  g.fillTriangle(x - 4.4, cy - 4.2, x + 4.4, cy - 4.2, x + ca * 1.5, cy - 12.5);
+  g.fillStyle(tint(CNQ.arcane), alpha * 0.9);
+  g.fillTriangle(x - 3, cy - 4.6, x + 3, cy - 4.6, x + ca * 1.2, cy - 10.5);
+  // The face under it is a shadow with two lit eyes — never skin, so a wizard never reads as a
+  // soldier who happens to be wearing a hat.
+  g.fillStyle(0x120c1c, alpha * 0.9);
+  g.fillCircle(x, cy - 5.2, 2.4);
+  g.fillStyle(tint(ashen ? CNQ.emberCore : CNQ.arcane), alpha);
+  g.fillCircle(x - 1, cy - 5.4, 0.75);
+  g.fillCircle(x + 1, cy - 5.4, 0.75);
+
+  // Staff, held out along the facing, with the orb at its head.
+  const sx = x + ca * 6.5, sy = cy + sa * 5 - 1.5;
+  g.lineStyle(1.6, tint(CNQ.timberDark), alpha);
+  g.lineBetween(x + ca * 2, cy, sx, sy - 6);
+  const pulse = 0.7 + 0.3 * Math.sin(march * 2.2);
+  g.fillStyle(tint(ashen ? CNQ.ember : CNQ.arcane), alpha * 0.3 * pulse);
+  g.fillCircle(sx, sy - 7, 6.5);
+  g.fillStyle(tint(ashen ? CNQ.ember : CNQ.arcane), alpha);
+  g.fillCircle(sx, sy - 7, 3);
+  g.fillStyle(tint(ashen ? CNQ.emberCore : CNQ.parchment), alpha * 0.85);
+  g.fillCircle(sx - 0.8, sy - 7.8, 1.3);
+}
+
+/**
+ * The Wizard Tower's fireball, sitting over its town center waiting to be dragged. Drawn as a
+ * held charge rather than a projectile — it hovers, it breathes, and it trails a wisp — because
+ * the player has to notice it is *ready* from across the board without it looking like something
+ * already flying at them.
+ */
+export function fireballOrb(
+  g: Phaser.GameObjects.Graphics,
+  tint: ConquestColorFn,
+  x: number, y: number, t: number, scale: number, alpha: number,
+): void {
+  const s = scale;
+  const breathe = 1 + Math.sin(t * 3.4) * 0.09;
+  // Outer corona.
+  g.fillStyle(tint(CNQ.ember), alpha * 0.22);
+  g.fillCircle(x, y, 13 * s * breathe);
+  g.fillStyle(tint(CNQ.ember), alpha * 0.5);
+  g.fillCircle(x, y, 8 * s * breathe);
+  // Licking tongues around the rim, each on its own phase.
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * TAU + t * 1.7;
+    const reach = (9 + Math.sin(t * 6 + i * 1.9) * 3.4) * s;
+    g.fillStyle(tint(CNQ.ember), alpha * 0.7);
+    g.fillTriangle(
+      x + Math.cos(a) * 5 * s, y + Math.sin(a) * 5 * s,
+      x + Math.cos(a + 0.5) * 5 * s, y + Math.sin(a + 0.5) * 5 * s,
+      x + Math.cos(a + 0.25) * reach, y + Math.sin(a + 0.25) * reach,
+    );
+  }
+  // Core.
+  g.fillStyle(tint(CNQ.emberCore), alpha * 0.95);
+  g.fillCircle(x, y, 4.2 * s);
+  g.fillStyle(tint(CNQ.parchment), alpha * 0.8);
+  g.fillCircle(x - 1.2 * s, y - 1.4 * s, 1.7 * s);
+}
+
+/**
+ * The Boom Back bomb in flight — a cast-iron sphere with a lit fuse, spinning as it goes. Kept
+ * deliberately unlike a bullet: it is slower, it arcs, and it is the one turret output the player
+ * is meant to be able to run away from.
+ */
+export function revengeBomb(
+  g: Phaser.GameObjects.Graphics,
+  tint: ConquestColorFn,
+  x: number, y: number, spin: number, alpha: number,
+): void {
+  g.fillStyle(tint(CNQ.ironDark), alpha);
+  g.fillCircle(x, y, 5.5);
+  g.fillStyle(tint(CNQ.iron), alpha * 0.7);
+  g.fillCircle(x - 1.6, y - 1.6, 2.2);
+  // Fuse, whipping behind the spin, with a spark on the end.
+  const fa = spin;
+  const fx = x + Math.cos(fa) * 8, fy = y + Math.sin(fa) * 8;
+  g.lineStyle(1.4, tint(CNQ.timberDark), alpha * 0.9);
+  g.lineBetween(x + Math.cos(fa) * 4, y + Math.sin(fa) * 4, fx, fy);
+  g.fillStyle(tint(CNQ.emberCore), alpha);
+  g.fillCircle(fx, fy, 2 + Math.sin(spin * 9) * 0.6);
+  g.fillStyle(tint(CNQ.ember), alpha * 0.4);
+  g.fillCircle(fx, fy, 4);
+}
+
+/**
+ * The tether between a commander and their Personal Wall. A chain rather than a beam: the link
+ * is a *contract* — hits travel down it — and a chain is the one line shape nobody reads as a
+ * projectile in flight.
+ */
+export function linkChain(
+  g: Phaser.GameObjects.Graphics,
+  tint: ConquestColorFn,
+  x0: number, y0: number, x1: number, y1: number,
+  color: number, t: number, shielded: boolean, alpha: number,
+): void {
+  const dx = x1 - x0, dy = y1 - y0;
+  const len = Math.hypot(dx, dy);
+  if (len < 4) return;
+  const links = Math.max(3, Math.min(18, Math.round(len / 16)));
+  const px = -dy / len, py = dx / len;
+  for (let i = 0; i <= links; i++) {
+    const s = i / links;
+    // A slack sag in the middle, breathing so a live link never looks like a static decal.
+    const sag = Math.sin(s * Math.PI) * (6 + Math.sin(t * 2.6) * 2);
+    const lx = x0 + dx * s + px * sag;
+    const ly = y0 + dy * s + py * sag;
+    g.lineStyle(i % 2 === 0 ? 2.2 : 1.4, tint(i % 2 === 0 ? color : CNQ.iron), alpha * (shielded ? 0.75 : 0.45));
+    g.strokeCircle(lx, ly, i % 2 === 0 ? 3 : 2.2);
+  }
+  if (shielded) {
+    // Force Shield: a bead of light running the chain, so the buffed state is legible.
+    const s = (t * 0.55) % 1;
+    const sag = Math.sin(s * Math.PI) * (6 + Math.sin(t * 2.6) * 2);
+    g.fillStyle(tint(CNQ.parchment), alpha * 0.9);
+    g.fillCircle(x0 + dx * s + px * sag, y0 + dy * s + py * sag, 3.4);
+  }
+}
+
+/** The Speedy Walls aura: a ring on the floor around a wall that is hurrying somebody along. */
+export function hasteRing(
+  g: Phaser.GameObjects.Graphics,
+  tint: ConquestColorFn,
+  x: number, y: number, r: number, color: number, t: number, alpha: number,
+): void {
+  g.lineStyle(1.4, tint(color), alpha * 0.28);
+  g.strokeCircle(x, y, r);
+  // Chevrons running the rim, all pointing the same way round — motion, not a boundary.
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * TAU + t * 1.9;
+    const cx = x + Math.cos(a) * r, cy = y + Math.sin(a) * r;
+    const ta = a + Math.PI / 2;
+    g.lineStyle(2, tint(color), alpha * 0.5);
+    g.lineBetween(cx - Math.cos(ta) * 5 - Math.cos(a) * 3, cy - Math.sin(ta) * 5 - Math.sin(a) * 3, cx + Math.cos(ta) * 4, cy + Math.sin(ta) * 4);
+    g.lineBetween(cx - Math.cos(ta) * 5 + Math.cos(a) * 3, cy - Math.sin(ta) * 5 + Math.sin(a) * 3, cx + Math.cos(ta) * 4, cy + Math.sin(ta) * 4);
+  }
+}
+
 /** A building's HP bar. Only drawn once it has actually been hit — twenty full bars is noise. */
 export function buildingHpBar(
   g: Phaser.GameObjects.Graphics,
@@ -554,9 +730,154 @@ export class ConquestFx extends FxBase {
   mend(x: number, y: number, depth = 10): void {
     this.anim(depth, 460, (g, t) => {
       const y2 = y - t * 18;
-      g.lineStyle(2.4, this.tint(0x6ee87a), (1 - t) * 0.85);
+      g.lineStyle(2.4, this.tint(CNQ.mend), (1 - t) * 0.85);
       g.lineBetween(x - 4, y2, x + 4, y2);
       g.lineBetween(x, y2 - 4, x, y2 + 4);
+    });
+  }
+
+  /** Boom Bullets: a small hard crack where a bullet landed. */
+  boom(x: number, y: number, r: number, depth = 11): void {
+    const seed = Math.random() * 999;
+    this.anim(depth, 260, (g, t) => {
+      const e = easeOut(t);
+      g.fillStyle(this.tint(CNQ.ember), (1 - t) * 0.45);
+      g.fillCircle(x, y, r * e);
+      g.lineStyle(2.4 * (1 - t) + 0.5, this.tint(CNQ.emberCore), (1 - t) * 0.9);
+      g.strokeCircle(x, y, r * e);
+      for (let i = 0; i < 6; i++) {
+        const a = jitter(seed, i) * TAU;
+        const d = r * e * (0.7 + jitter(seed, 20 + i) * 0.6);
+        g.fillStyle(this.tint(CNQ.tracer), (1 - t) * 0.8);
+        g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d, 2 * (1 - t) + 0.6);
+      }
+    });
+  }
+
+  /**
+   * Blast Nucleus. Deliberately the biggest thing Conquest draws — a shockwave ring, a fireball
+   * core and a debris crown — because a turret that has given up its range for this needs the
+   * detonation to look worth the trade from anywhere on the board.
+   */
+  blast(x: number, y: number, r: number, atomic: boolean, depth = 11): void {
+    const seed = Math.random() * 999;
+    this.flashIn(x, y, r * 0.5, CNQ.parchment, CNQ.emberCore, depth);
+    this.anim(depth, 520, (g, t) => {
+      const e = easeOut(t);
+      // Shockwave, outrunning the fire.
+      g.lineStyle(4 * (1 - t) + 1, this.tint(atomic ? CNQ.arcane : CNQ.tracer), (1 - t) * 0.85);
+      g.strokeCircle(x, y, r * (0.35 + e * 0.9));
+      // The fireball itself, collapsing as it fades.
+      g.fillStyle(this.tint(CNQ.ember), (1 - t) * 0.5);
+      g.fillCircle(x, y, r * (0.3 + e * 0.7) * (1 - t * 0.35));
+      g.fillStyle(this.tint(CNQ.emberCore), (1 - t) * 0.75);
+      g.fillCircle(x, y, r * 0.42 * (1 - t * 0.7));
+      // Debris thrown out and dropping.
+      for (let i = 0; i < 10; i++) {
+        const a = jitter(seed, i) * TAU;
+        const d = r * (0.5 + jitter(seed, 40 + i) * 0.8) * e;
+        const px = x + Math.cos(a) * d;
+        const py = y + Math.sin(a) * d * 0.72 + t * t * r * 0.4;
+        const w = 3 + jitter(seed, 70 + i) * 4;
+        g.fillStyle(this.tint(i % 3 === 0 ? CNQ.stoneDark : CNQ.stone), (1 - t) * 0.85);
+        g.fillRect(px - w / 2, py - w / 2, w, w * 0.8);
+      }
+      if (atomic) {
+        // The extra tier gets a second, violet ring running behind the first.
+        g.lineStyle(2 * (1 - t), this.tint(CNQ.arcane), (1 - t) * 0.6);
+        g.strokeCircle(x, y, r * (0.1 + e * 0.6));
+      }
+    });
+  }
+
+  /** Shadow Cloak eating a hit — the soldier goes to smoke for an instant and comes back. */
+  cloakMiss(x: number, y: number, depth = 10): void {
+    const seed = Math.random() * 999;
+    this.anim(depth, 340, (g, t) => {
+      for (let i = 0; i < 7; i++) {
+        const a = jitter(seed, i) * TAU;
+        const d = (3 + easeOut(t) * 15) * (0.5 + jitter(seed, 30 + i));
+        g.fillStyle(this.tint(CNQ.shroud), (1 - t) * 0.55);
+        g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d - t * 6, 4 * (1 - t * 0.5));
+      }
+      g.lineStyle(1.6 * (1 - t), this.tint(CNQ.arcane), (1 - t) * 0.7);
+      g.strokeCircle(x, y, 6 + easeOut(t) * 12);
+    });
+  }
+
+  /** A soldier promoted by the Wizard School — the old man rising into the new one. */
+  promote(x: number, y: number, depth = 11): void {
+    this.anim(depth, 620, (g, t) => {
+      const e = easeOut(t);
+      // A column of light that closes shut.
+      const w = 14 * (1 - t) + 3;
+      g.fillStyle(this.tint(CNQ.arcane), (1 - t) * 0.35);
+      g.fillRect(x - w / 2, y - 34 * e, w, 34 * e + 6);
+      // Runes climbing it.
+      for (let i = 0; i < 4; i++) {
+        const s = ((t * 1.6) + i * 0.25) % 1;
+        const ry = y + 4 - s * 38;
+        g.lineStyle(1.8, this.tint(CNQ.arcane), (1 - s) * (1 - t) * 0.95);
+        g.strokeCircle(x, ry, 4 + i);
+      }
+      g.lineStyle(2 * (1 - t) + 0.6, this.tint(CNQ.arcane), (1 - t) * 0.9);
+      g.strokeEllipse(x, y + 5, 26 * (0.4 + e), 9 * (0.4 + e));
+    });
+  }
+
+  /** Academy of Ash: a wizard's last act. Cinders out, then a soot ring left on the ground. */
+  ashBurst(x: number, y: number, r: number, depth = 11): void {
+    const seed = Math.random() * 999;
+    this.anim(depth, 700, (g, t) => {
+      const e = easeOut(t);
+      g.fillStyle(this.tint(CNQ.ash), (1 - t) * 0.35);
+      g.fillCircle(x, y, r * e);
+      g.lineStyle(3 * (1 - t) + 0.8, this.tint(CNQ.ember), (1 - t) * 0.85);
+      g.strokeCircle(x, y, r * e);
+      for (let i = 0; i < 14; i++) {
+        const a = jitter(seed, i) * TAU;
+        const d = r * e * (0.4 + jitter(seed, 50 + i) * 0.8);
+        // Cinders rise rather than fall — that is the whole difference between ash and rubble.
+        const px = x + Math.cos(a) * d;
+        const py = y + Math.sin(a) * d * 0.7 - e * 16 * jitter(seed, 90 + i);
+        g.fillStyle(this.tint(i % 3 === 0 ? CNQ.emberCore : CNQ.ash), (1 - t) * 0.9);
+        g.fillCircle(px, py, 2.6 * (1 - t * 0.6));
+      }
+    });
+  }
+
+  /** A fireball landing. Smaller cousin of `blast`, in the arcane family rather than the stone one. */
+  fireburst(x: number, y: number, r: number, depth = 11): void {
+    const seed = Math.random() * 999;
+    this.flashIn(x, y, r * 0.5, CNQ.emberCore, CNQ.ember, depth);
+    this.anim(depth, 420, (g, t) => {
+      const e = easeOut(t);
+      g.fillStyle(this.tint(CNQ.ember), (1 - t) * 0.45);
+      g.fillCircle(x, y, r * e);
+      for (let i = 0; i < 9; i++) {
+        const a = jitter(seed, i) * TAU;
+        const d = r * e * (0.5 + jitter(seed, 25 + i) * 0.7);
+        g.fillStyle(this.tint(i % 2 === 0 ? CNQ.emberCore : CNQ.ember), (1 - t) * 0.85);
+        g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d, 4 * (1 - t) + 1);
+      }
+      g.lineStyle(2.4 * (1 - t) + 0.5, this.tint(CNQ.emberCore), (1 - t) * 0.9);
+      g.strokeCircle(x, y, r * (0.3 + e * 0.85));
+    });
+  }
+
+  /** The banner changing hands to another form — the old standard furling, the new one snapping out. */
+  bannerSwap(x: number, y: number, color: number, depth = 12): void {
+    this.anim(depth, 480, (g, t) => {
+      const e = easeOut(t);
+      for (let i = 0; i < 3; i++) {
+        const a = -Math.PI / 2 + (i - 1) * 0.5;
+        const d = 10 + e * 30;
+        const px = x + Math.cos(a) * d, py = y + Math.sin(a) * d;
+        g.fillStyle(this.tint(color), (1 - t) * 0.8);
+        g.fillTriangle(px, py, px + 12 * (1 - t), py + 5, px, py + 11 * (1 - t));
+      }
+      g.lineStyle(2.5 * (1 - t) + 0.6, this.tint(color), (1 - t) * 0.9);
+      g.strokeCircle(x, y - 6, 12 + e * 22);
     });
   }
 }
@@ -586,6 +907,13 @@ export class ConquestAvatar extends BaseAvatar {
   private standing = 0;
   /** How many town centers this commander has — drives the laurel. */
   private towns = 1;
+  /**
+   * Banner Bearer's chosen standard, or 0 before the upgrade is owned. It outranks the standing
+   * colour on the shoulder banner specifically: once a player can *choose* a form, which form
+   * they are carrying matters more moment to moment than which of their own squares they happen
+   * to be on — and the crest on the helm still carries the territory read either way.
+   */
+  private bannerColor = 0;
   private seed = Math.random() * 999;
 
   constructor(scene: Phaser.Scene, tint: ConquestColorFn, depth = 6) {
@@ -594,6 +922,7 @@ export class ConquestAvatar extends BaseAvatar {
 
   setStanding(color: number): void { this.standing = color; }
   setTowns(n: number): void { this.towns = n; }
+  setBanner(color: number): void { this.bannerColor = color; }
 
   protected applyMastery(on: boolean): void {
     this.forEachHandLayer(0, (glow) => {
@@ -680,7 +1009,8 @@ export class ConquestAvatar extends BaseAvatar {
     g.fillCircle(px, poleTop - 3, 3);
     // The banner itself, rippling on its own phase.
     const bw = 22, bh = 26;
-    g.fillStyle(this.tint(this.standing || CNQ.banner), alpha * 0.95);
+    const cloth = this.bannerColor || this.standing || CNQ.banner;
+    g.fillStyle(this.tint(cloth), alpha * 0.95);
     g.beginPath();
     g.moveTo(px, poleTop);
     for (let i = 0; i <= 6; i++) {

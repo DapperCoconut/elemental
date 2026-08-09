@@ -6,8 +6,8 @@ import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
 import { Sfx } from '../../audio';
 import {
-  GUM, GumAvatar, GumColorFn, GumFx, drips, gripSplat, gumBubble, gumShell,
-  oozeBlob, slimeShard,
+  GUM, GumAvatar, GumColorFn, GumFx, bloatShell, drips, gripSplat, gumBubble, gumShell,
+  oozeBlob, slimeBeacon, slimePuddle, slimeShard, zipLine,
 } from './GumVisuals';
 
 type Owner = 'player' | 'npc';
@@ -82,6 +82,66 @@ const HAND_REGROW_MS = 3000;
 const HARD_ENCASE_BONUS_MS = 5000;
 const WALL_SHATTER_SHARDS = 8;
 
+// ── Zip-Line (Click upgrade) ─────────────────────────────────────────────────
+/** Three strands slung wall to wall, splitting the arena into bands. */
+const ZIP_COUNT = 3;
+/** How close to a line the hand has to land to catch it. Kept tight so the floor stays grabbable. */
+const ZIP_BAND = 22;
+const ZIP_SPEED = 640;
+/** The shard hand grinding along the line. */
+const ZIP_SPARK_MS = 110;
+const ZIP_SPARK_COUNT = 7;
+const ZIP_SPARK_DAMAGE = 4;
+const ZIP_SPARK_SPEED = 300;
+const ZIP_SPARK_LIFE_MS = 260;
+
+// ── Slime Splash (E upgrade) ─────────────────────────────────────────────────
+const BOMB_AOE_R = 78;
+const PUDDLE_MS = 12000;
+const PUDDLE_R = 46;
+/** The slowest a fully-soaked body gets. The ramp is the point — one step in is nearly free. */
+const PUDDLE_SLOW_FLOOR = 0.4;
+const SOAK_RAMP_MS = 2500;
+const SOAK_FADE_MS = 1500;
+/** A rethrown puddle is a repositioning tool, not a projectile: it barely leaves your hand. */
+const PUDDLE_THROW_MAX = 340;
+const PUDDLE_FLIGHT_MS = 420;
+const PUDDLE_MAX = 8;
+const PUDDLE_GRAB_R = 40;
+
+// ── Bubble Bloat (R upgrade) ─────────────────────────────────────────────────
+/** One bubble is a gumball. Two or more and the shell starts inflating. */
+const BLOAT_MIN_LAYERS = 2;
+const BLOAT_DAMAGE = 12;
+const BLOAT_HARD_DAMAGE = 18;
+const BLOAT_BASE_R = 30;
+const BLOAT_R_PER_LAYER = 7;
+const BLOAT_MAX_R = 96;
+
+// ── Emesis (F upgrade) ───────────────────────────────────────────────────────
+const EMESIS_COUNT = 3;
+const HEAL_RAMP_MS = 3000;
+const HEAL_MIN_RATE = 3;
+const HEAL_MAX_RATE = 12;
+
+// ── Shard Hand (Q upgrade) ───────────────────────────────────────────────────
+const SHARD_HAND_MS = 8000;
+const SHARD_PUNCH_BONUS = 12;
+const SHARD_SMACK_BONUS = 9;
+/** Reach of the "everything it touches solidifies" pass. */
+const SHARD_TOUCH_R = 32;
+
+// ── Beacons (what a solidified puddle becomes) ───────────────────────────────
+const BEACON_MS = 30000;
+const BEACON_R = 15;
+const BEACON_AURA_R = 122;
+/** Hand speed that counts as shaking rather than carrying. */
+const BEACON_SHAKE_SPEED = 430;
+const BEACON_MIN_SHAKE_MS = 250;
+const BEACON_MAX_ACTIVE_MS = 6000;
+const BEACON_HEAL_RATE = 8;
+const BEACON_SLOW_MULT = 0.5;
+
 // ── World objects ────────────────────────────────────────────────────────────
 
 /**
@@ -100,6 +160,8 @@ interface Ball {
   hard: boolean;
   /** Caught enemy fire. Deals its own damage, applies no slow, and never comes to rest. */
   stolen: boolean;
+  /** Slime Splash: this one goes off in a radius and leaves a puddle where it landed. */
+  bomb: boolean;
   damage: number;
   seed: number;
   /** Game-clock time a throw gives up and the ball drops where it is. */
@@ -115,9 +177,10 @@ interface Bubble {
   vy: number;
   diesAt: number;
   seed: number;
+  hard: boolean;
 }
 
-/** One splinter of a shattered hand or a shattered ball. */
+/** One splinter of a shattered hand or a shattered ball — or a spark off a ridden zip-line. */
 interface Shard {
   owner: Owner;
   x: number;
@@ -126,6 +189,9 @@ interface Shard {
   vy: number;
   diesAt: number;
   seed: number;
+  damage: number;
+  /** Struck off stone rather than broken off slime. Grey, short, and much weaker. */
+  spark: boolean;
   hit: Set<Fighter>;
 }
 
@@ -133,6 +199,45 @@ interface Encased {
   owner: Owner;
   until: number;
   hard: boolean;
+}
+
+/**
+ * A slime puddle — and, once solidified, a slime beacon. The two are one struct for the same
+ * reason a slimeball and a caught shot are: from the hand's point of view they are the same
+ * object lying on the floor, and solidifying one is a state change rather than a replacement.
+ */
+interface Puddle {
+  owner: Owner;
+  /** Green puddles slow whoever stands in them; pink ones (Emesis) feed the slime that made them. */
+  kind: 'slow' | 'heal';
+  x: number;
+  y: number;
+  r: number;
+  until: number;
+  seed: number;
+  /** Solidified. Still pickable, no longer throwable, and shaking it wakes it up. */
+  beacon: boolean;
+  /** Beacon only: ms of shaking banked while it was being carried. */
+  shake: number;
+  /** Beacon only: game-clock time its aura closes. 0 while it is asleep. */
+  activeUntil: number;
+  /** Puddles only: mid-throw. */
+  flying: boolean;
+  vx: number;
+  vy: number;
+  landsAt: number;
+}
+
+/** One horizontal strand of slime slung across the arena. */
+interface Zip {
+  y: number;
+  seed: number;
+}
+
+/** The extra shell Bubble Bloat grows around somebody hit by more than one gumball. */
+interface Bloat {
+  owner: Owner;
+  layers: number;
 }
 
 /** Something swallowed by Oozorbtion, sitting in the body until it breaks down. */
@@ -143,9 +248,10 @@ interface Lodged {
 }
 
 interface Held {
-  kind: 'ball' | 'body';
+  kind: 'ball' | 'body' | 'puddle';
   ball: Ball | null;
   victim: Fighter | null;
+  puddle: Puddle | null;
 }
 
 interface Side {
@@ -167,6 +273,12 @@ interface Side {
   held: Held | null;
   /** Game-clock time the hand finishes growing back after Solidify. */
   handBackAt: number;
+  /** Q+: game-clock time the hand of stone softens back into slime. */
+  shardUntil: number;
+
+  /** Click+: riding a zip-line. The ride owns the body until it lets go or hits a wall. */
+  riding: { y: number; dir: number } | null;
+  nextSparkAt: number;
 
   absorbUntil: number;
   swollen: boolean;
@@ -191,7 +303,8 @@ function makeSide(owner: Owner): Side {
     owner, aimX: 0, aimY: 0,
     handX: 0, handY: 0, handVx: 0, handVy: 0, handSeeded: false,
     anchored: false, anchorX: 0, anchorY: 0, anchorWall: false,
-    held: null, handBackAt: 0,
+    held: null, handBackAt: 0, shardUntil: 0,
+    riding: null, nextSparkAt: 0,
     absorbUntil: 0, swollen: false, lodged: null, prevAbsorber: null, absorberInstalled: false,
     prevMouseX: 0, prevMouseY: 0, haveMouse: false, smackGate: new Map(),
     haul: 0, nextBotThrowAt: 0,
@@ -228,6 +341,10 @@ export interface GumArenaApi {
   setStatusIndicator(id: string, status: CustomStatus | null): void;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /** Shop upgrades: the local player's equipped slots. */
+  hasUpgrade(slot: string): boolean;
+  /** …and the online opponent's, so their upgraded tricks reproduce on this sim. */
+  hasNpcUpgrade(slot: string): boolean;
 }
 
 // ── GumKit ───────────────────────────────────────────────────────────────────
@@ -275,7 +392,19 @@ export class GumKit {
   private balls: Ball[] = [];
   private bubbles: Bubble[] = [];
   private shards: Shard[] = [];
+  private puddles: Puddle[] = [];
+  /** Built once a side owns the Click upgrade; they are part of the arena, not of a cast. */
+  private zips: Zip[] = [];
   private encased = new Map<Fighter, Encased>();
+  private bloat = new Map<Fighter, Bloat>();
+  /**
+   * How deep somebody has sunk into a slime puddle, 0–1. Rises while they stand in one and falls
+   * when they step out — the ramp *is* the ability, so this is the one number that matters.
+   */
+  private slowSoak = new Map<Fighter, number>();
+  private healSoak = new Map<Fighter, number>();
+  /** Fractional healing carried between frames, so a 3 HP/s trickle is not rounded away to nothing. */
+  private healAcc = new Map<Fighter, number>();
   /**
    * Bodies mid-throw, watching for a wall. The velocity is kept here and re-applied every frame
    * because the AI writes its own the moment `doAI` runs, which is *before* this kit updates —
@@ -322,6 +451,16 @@ export class GumKit {
 
   private isGum(owner: Owner): boolean {
     return owner === 'player' ? this.api.elementId === 'gum' : this.api.npcElementId === 'gum';
+  }
+
+  /** Does this side own the shop upgrade in that slot? */
+  private up(owner: Owner, slot: string): boolean {
+    return owner === 'player' ? this.api.hasUpgrade(slot) : this.api.hasNpcUpgrade(slot);
+  }
+
+  /** True while this side is holding the hand of stone Q+ leaves behind. */
+  private hasShardHand(owner: Owner): boolean {
+    return this.now < this.side(owner).shardUntil;
   }
 
   private avatar(owner: Owner): GumAvatar | null {
@@ -395,7 +534,13 @@ export class GumKit {
     this.balls = [];
     this.bubbles = [];
     this.shards = [];
+    this.puddles = [];
+    this.zips = [];
     this.encased.clear();
+    this.bloat.clear();
+    this.slowSoak.clear();
+    this.healSoak.clear();
+    this.healAcc.clear();
     this.flung.clear();
     this.slowUntil.clear();
     this.stuckUntil.clear();
@@ -414,6 +559,25 @@ export class GumKit {
     this.api.setStatusIndicator('gum-ooze', null);
     this.api.setStatusIndicator('gum-encased', null);
     this.api.setStatusIndicator('gum-stuck', null);
+    this.api.setStatusIndicator('gum-shard', null);
+    this.api.setStatusIndicator('gum-puddles', null);
+    this.api.setStatusIndicator('gum-mire', null);
+    this.api.setStatusIndicator('gum-bloat', null);
+  }
+
+  /**
+   * The zip-lines, hung once. They belong to the arena rather than to a cast, so they are built
+   * the first frame somebody who owns the upgrade is in play and never rebuilt after that.
+   */
+  private ensureZips(): void {
+    if (this.zips.length) return;
+    const owns = (this.isGum('player') && this.up('player', 'click'))
+      || (this.isGum('npc') && this.up('npc', 'click'));
+    if (!owns) return;
+    const h = this.bottom - this.top;
+    for (let i = 0; i < ZIP_COUNT; i++) {
+      this.zips.push({ y: this.top + (h * (i + 1)) / (ZIP_COUNT + 1), seed: 4 + i * 3 });
+    }
   }
 
   private ensureLayers(): void {
@@ -482,14 +646,14 @@ export class GumKit {
   private pressHand(owner: Owner): void {
     const s = this.side(owner);
     const f = this.fighter(owner);
-    if (!this.alive(f) || s.held || s.anchored) return;
+    if (!this.alive(f) || s.held || s.anchored || s.riding) return;
     const { x: hx, y: hy } = this.handPoint(owner);
 
     // 1 — a body we have gummed.
     for (const [victim, enc] of this.encased) {
       if (enc.owner !== owner || !this.alive(victim)) continue;
       if (Phaser.Math.Distance.Between(hx, hy, victim.x, victim.y) > GRAB_R + 14) continue;
-      s.held = { kind: 'body', ball: null, victim };
+      s.held = { kind: 'body', ball: null, victim, puddle: null };
       this.flung.delete(victim);
       this.avatar(owner)?.setCarry(true);
       this.api.showFloatingText(victim.x, victim.y - 40, '🫳 GRABBED', this.hex(GUM.gumLit));
@@ -506,21 +670,41 @@ export class GumKit {
       if (d <= bestD) { best = b; bestD = d; }
     }
     if (best) {
-      s.held = { kind: 'ball', ball: best, victim: null };
+      s.held = { kind: 'ball', ball: best, victim: null, puddle: null };
       this.avatar(owner)?.setCarry(true);
       Sfx.playAt('slime-splat', best.x, { rate: 1.3, volume: 0.5 });
       return;
     }
 
-    // 3 — an enemy shot passing through the hand. Caught, and now ours to throw.
+    // 3 — one of our own puddles, or the beacon it hardened into. Both come up off the floor.
+    let bestPud: Puddle | null = null;
+    let bestPudD = PUDDLE_GRAB_R;
+    for (const pd of this.puddles) {
+      if (pd.owner !== owner || pd.flying) continue;
+      const d = Phaser.Math.Distance.Between(hx, hy, pd.x, pd.y);
+      if (d <= bestPudD) { bestPud = pd; bestPudD = d; }
+    }
+    if (bestPud) {
+      s.held = { kind: 'puddle', ball: null, victim: null, puddle: bestPud };
+      // Picking a lit beacon back up puts it out. Winding it again is the price of moving it.
+      bestPud.activeUntil = 0;
+      bestPud.shake = 0;
+      this.avatar(owner)?.setCarry(true);
+      this.api.showFloatingText(bestPud.x, bestPud.y - 26,
+        bestPud.beacon ? '🫳 BEACON' : '🫳 SCOOPED', this.hex(bestPud.kind === 'heal' ? GUM.gumLit : GUM.oozeLit));
+      Sfx.playAt('slime-splat', bestPud.x, { rate: 0.7, volume: 0.6 });
+      return;
+    }
+
+    // 4 — an enemy shot passing through the hand. Caught, and now ours to throw.
     const caught = this.catchShot(owner, hx, hy, GRAB_R);
     if (caught !== null) {
       const ball: Ball = {
-        owner, x: hx, y: hy, vx: 0, vy: 0, flying: false, hard: false, stolen: true,
+        owner, x: hx, y: hy, vx: 0, vy: 0, flying: false, hard: false, stolen: true, bomb: false,
         damage: caught, seed: Math.random() * 999, landsAt: 0, hit: new Set(),
       };
       this.balls.push(ball);
-      s.held = { kind: 'ball', ball, victim: null };
+      s.held = { kind: 'ball', ball, victim: null, puddle: null };
       this.avatar(owner)?.setCarry(true);
       this.fx(owner).pop(hx, hy, 16);
       this.api.showFloatingText(hx, hy - 26, `🫳 CAUGHT ${caught}`, this.hex(GUM.oozeLit));
@@ -528,7 +712,7 @@ export class GumKit {
       return;
     }
 
-    // 4 — somebody standing in the hand. This is the only part of the click that costs anything.
+    // 5 — somebody standing in the hand. This is the only part of the click that costs anything.
     for (const t of this.targetsOf(owner)) {
       if (Phaser.Math.Distance.Between(hx, hy, t.x, t.y) > PUNCH_R) continue;
       if (owner === 'player') {
@@ -539,7 +723,28 @@ export class GumKit {
       return;
     }
 
-    // 5 — the floor, or a wall. This is how the element walks.
+    // 6 — a zip-line. The one thing in the arena that moves you without a drag: catch it and it
+    // hauls you flat across the room on its own until a wall stops you.
+    if (this.up(owner, 'click') && owner === 'player') {
+      let line: Zip | null = null;
+      let lineD = ZIP_BAND;
+      for (const z of this.zips) {
+        const d = Math.abs(hy - z.y);
+        if (d <= lineD) { line = z; lineD = d; }
+      }
+      if (line) {
+        const dir = Math.sign(hx - f.x) || Math.sign(s.aimX - f.x) || 1;
+        s.riding = { y: line.y, dir };
+        s.nextSparkAt = 0;
+        this.avatar(owner)?.setGrip(true);
+        this.fx(owner).splat(hx, line.y, 14, 8);
+        this.api.showFloatingText(f.x, f.y - 50, '🪢 ZIP-LINE', this.hex(GUM.oozeLit));
+        Sfx.playAt('whoosh', f.x, { rate: 1.4, volume: 0.8 });
+        return;
+      }
+    }
+
+    // 7 — the floor, or a wall. This is how the element walks.
     s.anchored = true;
     s.anchorX = Phaser.Math.Clamp(hx, this.left, this.right);
     s.anchorY = Phaser.Math.Clamp(hy, this.top, this.bottom);
@@ -557,16 +762,51 @@ export class GumKit {
       s.anchored = false;
       av?.setGrip(false);
     }
+    if (s.riding) {
+      s.riding = null;
+      av?.setGrip(false);
+      const f = this.fighter(owner);
+      if (this.alive(f)) (f.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+    }
     if (!s.held) { av?.setCarry(false); return; }
     const held = s.held;
     s.held = null;
     av?.setCarry(false);
+    // A beacon is never thrown, however it came out of the hand — it is set down, and whatever
+    // shaking it collected on the way is what it runs on.
+    if (held.kind === 'puddle' && held.puddle?.beacon) { this.setDownBeacon(owner, held.puddle); return; }
     if (!throwIt) {
       // Dropped rather than thrown — a ball falls where it is, a body simply stops being carried.
       if (held.kind === 'ball' && held.ball) { held.ball.flying = false; held.ball.vx = 0; held.ball.vy = 0; }
+      if (held.kind === 'puddle' && held.puddle) { held.puddle.flying = false; held.puddle.vx = 0; held.puddle.vy = 0; }
       return;
     }
     this.throwHeld(owner, held);
+  }
+
+  /** A beacon leaves the hand where it is, and wakes up for as long as it was shaken. */
+  private setDownBeacon(owner: Owner, pd: Puddle): void {
+    const s = this.side(owner);
+    pd.x = Phaser.Math.Clamp(s.handX, this.left, this.right);
+    pd.y = Phaser.Math.Clamp(s.handY, this.top, this.bottom);
+    pd.flying = false;
+    pd.vx = 0;
+    pd.vy = 0;
+    if (pd.shake < BEACON_MIN_SHAKE_MS) {
+      pd.shake = 0;
+      this.api.showFloatingText(pd.x, pd.y - 26, '💤 UNSHAKEN', this.hex(GUM.stoneLit));
+      return;
+    }
+    const ms = Math.min(BEACON_MAX_ACTIVE_MS, pd.shake);
+    pd.activeUntil = this.now + ms;
+    pd.until = Math.max(pd.until, pd.activeUntil + 1000);
+    pd.shake = 0;
+    const heal = pd.kind === 'heal';
+    this.fx(owner).harden(pd.x, pd.y, 26);
+    this.api.showFloatingText(pd.x, pd.y - 30,
+      `${heal ? '💗' : '🐌'} BEACON · ${(ms / 1000).toFixed(1)}s`,
+      this.hex(heal ? GUM.gumLit : GUM.oozeLit));
+    Sfx.playAt('boing', pd.x, { rate: heal ? 1.3 : 0.7, volume: 0.85 });
   }
 
   /** Release. The hand's own velocity is the throw, which is why a flick beats a nudge. */
@@ -586,6 +826,23 @@ export class GumKit {
     if (sp > THROW_MAX_SPEED) {
       vx = (vx / sp) * THROW_MAX_SPEED;
       vy = (vy / sp) * THROW_MAX_SPEED;
+    }
+
+    if (held.kind === 'puddle' && held.puddle) {
+      // A puddle is a heavy sack of slime. It is clamped far below a slimeball's throw, which is
+      // what keeps Slime Splash a way of moving your own ground rather than a second projectile.
+      const pd = held.puddle;
+      const psp = Math.hypot(vx, vy);
+      const k = Math.min(1, PUDDLE_THROW_MAX / Math.max(1, psp));
+      pd.x = s.handX;
+      pd.y = s.handY;
+      pd.vx = vx * k;
+      pd.vy = vy * k;
+      pd.flying = true;
+      pd.landsAt = this.now + PUDDLE_FLIGHT_MS;
+      this.fx(owner).splat(pd.x, pd.y, 16, 4, pd.kind === 'heal');
+      Sfx.playAt('slime-splat', pd.x, { rate: 0.7, volume: 0.7 });
+      return;
     }
 
     if (held.kind === 'ball' && held.ball) {
@@ -656,12 +913,19 @@ export class GumKit {
 
     const a = Math.atan2(ty - f.y, tx - f.x);
     const { x: hx, y: hy } = this.handPoint(owner);
+    const stone = this.hasShardHand(owner);
     let landed = false;
     for (const t of this.targetsOf(owner)) {
       if (Phaser.Math.Distance.Between(hx, hy, t.x, t.y) > PUNCH_R
         && Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > PUNCH_R + HAND_MIN) continue;
-      this.hurt(owner, t, PUNCH_DAMAGE, GUM.oozeLit);
-      this.fx(owner).splat(t.x, t.y, 22);
+      this.hurt(owner, t, PUNCH_DAMAGE + (stone ? SHARD_PUNCH_BONUS : 0),
+        stone ? GUM.stoneLit : GUM.oozeLit);
+      if (stone) {
+        this.solidifyTouch(owner, t);
+        this.fx(owner).shardBurst(t.x, t.y, 5);
+      } else {
+        this.fx(owner).splat(t.x, t.y, 22);
+      }
       landed = true;
     }
 
@@ -712,6 +976,7 @@ export class GumKit {
       }
     }
 
+    const bomb = this.up(owner, 'e');
     const base = Math.atan2(ty - f.y, tx - f.x);
     for (let i = 0; i < SURGE_COUNT; i++) {
       const a = base + (i - 1) * 0.42;
@@ -719,13 +984,14 @@ export class GumKit {
       const x = Phaser.Math.Clamp(f.x + Math.cos(a) * d, this.left, this.right);
       const y = Phaser.Math.Clamp(f.y + Math.sin(a) * d, this.top, this.bottom);
       this.balls.push({
-        owner, x, y, vx: 0, vy: 0, flying: false, hard: false, stolen: false,
+        owner, x, y, vx: 0, vy: 0, flying: false, hard: false, stolen: false, bomb,
         damage: BALL_DAMAGE, seed: Math.random() * 999, landsAt: 0, hit: new Set(),
       });
       this.fx(owner).splat(x, y, 18, 4);
     }
     this.avatar(owner)?.play('sweep', base);
-    this.api.showFloatingText(f.x, f.y - 48, '🟢 SLIME SURGE', this.hex(GUM.oozeLit));
+    this.api.showFloatingText(f.x, f.y - 48, bomb ? '💣 SLIME SPLASH' : '🟢 SLIME SURGE',
+      this.hex(GUM.oozeLit));
     Sfx.playAt('slime-splat', f.x, { rate: 0.8, volume: 0.95 });
   }
 
@@ -749,6 +1015,7 @@ export class GumKit {
         vy: Math.sin(a) * sp,
         diesAt: this.now + BUBBLE_LIFE_MS,
         seed: Math.random() * 999,
+        hard: false,
       });
     }
     this.avatar(owner)?.play('sweep', base);
@@ -780,23 +1047,35 @@ export class GumKit {
     this.ensureAvatars();
     const s = this.side(owner);
 
-    // Whatever the hand was doing stops. Dropped, not thrown — the hand no longer exists.
-    this.letGo(owner, false);
-    s.handBackAt = this.now + HAND_REGROW_MS;
-    this.avatar(owner)?.setHandless(true);
-
     const hx = s.handSeeded ? s.handX : f.x;
     const hy = s.handSeeded ? s.handY : f.y;
-    for (let i = 0; i < SOLIDIFY_SHARDS; i++) {
-      const a = (i / SOLIDIFY_SHARDS) * TAU + Math.random() * 0.2;
-      const sp = SHARD_SPEED * (0.8 + Math.random() * 0.45);
-      this.shards.push({
-        owner, x: hx, y: hy,
-        vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-        diesAt: this.now + SHARD_LIFE_MS, seed: Math.random() * 999, hit: new Set(),
-      });
+    const stone = this.up(owner, 'q');
+
+    // Whatever the hand was doing stops either way. Dropped, not thrown — with the upgrade the
+    // hand is setting rock hard, and without it there is about to be no hand at all.
+    this.letGo(owner, false);
+    if (stone) {
+      // Q+: the hand does not shatter, so there is no three seconds of standing still. It sets
+      // into a claw of stone instead, and everything it brushes past goes glassy with it.
+      s.shardUntil = this.now + SHARD_HAND_MS;
+      this.avatar(owner)?.setShardHand(true);
+      this.fx(owner).harden(hx, hy, 30);
+      this.fx(owner).sparks(hx, hy, 34);
+    } else {
+      s.handBackAt = this.now + HAND_REGROW_MS;
+      this.avatar(owner)?.setHandless(true);
+      for (let i = 0; i < SOLIDIFY_SHARDS; i++) {
+        const a = (i / SOLIDIFY_SHARDS) * TAU + Math.random() * 0.2;
+        const sp = SHARD_SPEED * (0.8 + Math.random() * 0.45);
+        this.shards.push({
+          owner, x: hx, y: hy,
+          vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+          diesAt: this.now + SHARD_LIFE_MS, seed: Math.random() * 999,
+          damage: SHARD_DAMAGE, spark: false, hit: new Set(),
+        });
+      }
+      this.fx(owner).harden(hx, hy, 36);
     }
-    this.fx(owner).harden(hx, hy, 36);
 
     let hardened = 0;
     for (const b of this.balls) {
@@ -812,13 +1091,313 @@ export class GumKit {
       enc.until += HARD_ENCASE_BONUS_MS;
       this.fx(owner).harden(victim.x, victim.y, 34);
     }
+    // Puddles do not simply harden — they set into beacons, which is a different object with a
+    // different job. This happens with or without the upgrade; it is what Solidify does to slime
+    // that is lying on the ground.
+    let beacons = 0;
+    for (const pd of this.puddles) {
+      if (pd.owner !== owner || pd.beacon) continue;
+      this.makeBeacon(owner, pd);
+      beacons++;
+    }
 
     this.avatar(owner)?.play('raise');
     this.api.scene.cameras.main.shake(320, 0.008);
+    const tally = [
+      hardened > 0 ? `${hardened} HARDENED` : '',
+      beacons > 0 ? `${beacons} BEACONS` : '',
+    ].filter(Boolean).join(' · ');
     this.api.showFloatingText(f.x, f.y - 58,
-      hardened > 0 ? `🧊 SOLIDIFY · ${hardened} HARDENED` : '🧊 SOLIDIFY', this.hex(GUM.solidLit));
+      tally ? `🧊 SOLIDIFY · ${tally}` : '🧊 SOLIDIFY', this.hex(GUM.solidLit));
     Sfx.playAt('ice-shatter', f.x, { rate: 1.1, volume: 1 });
     Sfx.playAt('crystal-shatter', f.x, { rate: 0.85, volume: 0.8 });
+  }
+
+  // ── Puddles and beacons ────────────────────────────────────────────────────
+
+  /**
+   * Lay a puddle. Green ones come out from under a Slime Bomb and slow whoever wades into them;
+   * pink ones come up out of the slime itself after Oozorbtion and feed it.
+   */
+  private spawnPuddle(owner: Owner, kind: 'slow' | 'heal', x: number, y: number): void {
+    // Oldest first, so a player who keeps casting refreshes their ground rather than being refused.
+    const mine = this.puddles.filter((p) => p.owner === owner);
+    while (mine.length >= PUDDLE_MAX) {
+      const oldest = mine.shift();
+      if (!oldest) break;
+      const idx = this.puddles.indexOf(oldest);
+      if (idx >= 0) this.puddles.splice(idx, 1);
+    }
+    this.puddles.push({
+      owner, kind,
+      x: Phaser.Math.Clamp(x, this.left, this.right),
+      y: Phaser.Math.Clamp(y, this.top, this.bottom),
+      r: PUDDLE_R,
+      until: this.now + PUDDLE_MS,
+      seed: Math.random() * 999,
+      beacon: false, shake: 0, activeUntil: 0,
+      flying: false, vx: 0, vy: 0, landsAt: 0,
+    });
+  }
+
+  /** A puddle sets. It stops being ground and becomes an object with a switch on it. */
+  private makeBeacon(owner: Owner, pd: Puddle): void {
+    pd.beacon = true;
+    pd.until = this.now + BEACON_MS;
+    pd.shake = 0;
+    pd.activeUntil = 0;
+    this.fx(owner).harden(pd.x, pd.y, 24);
+  }
+
+  /**
+   * Q+: anything the hand of stone brushes past goes glassy. One pass, one radius, every kind of
+   * slime on the field — which is the point of the upgrade, since the ultimate itself is now a
+   * weapon rather than a field effect.
+   */
+  private solidifyTouch(owner: Owner, victim?: Fighter): void {
+    const s = this.side(owner);
+    const hx = s.handX;
+    const hy = s.handY;
+
+    if (victim) {
+      const enc = this.encased.get(victim);
+      if (enc && enc.owner === owner && !enc.hard) {
+        enc.hard = true;
+        enc.until += HARD_ENCASE_BONUS_MS;
+        this.fx(owner).harden(victim.x, victim.y, 34);
+      }
+      return;
+    }
+
+    for (const b of this.balls) {
+      if (b.owner !== owner || b.hard || b.stolen) continue;
+      if (Phaser.Math.Distance.Between(hx, hy, b.x, b.y) > SHARD_TOUCH_R + BALL_R) continue;
+      b.hard = true;
+      b.damage = BALL_HARD_DAMAGE;
+      this.fx(owner).harden(b.x, b.y, 20);
+    }
+    for (const pd of this.puddles) {
+      if (pd.owner !== owner || pd.beacon || pd.flying) continue;
+      if (Phaser.Math.Distance.Between(hx, hy, pd.x, pd.y) > SHARD_TOUCH_R + pd.r * 0.6) continue;
+      this.makeBeacon(owner, pd);
+      this.api.showFloatingText(pd.x, pd.y - 28, '🪨 BEACON', this.hex(GUM.stoneLit));
+    }
+    for (const b of this.bubbles) {
+      if (b.owner !== owner || b.hard) continue;
+      if (Phaser.Math.Distance.Between(hx, hy, b.x, b.y) > SHARD_TOUCH_R + BUBBLE_R) continue;
+      b.hard = true;
+    }
+    for (const [v, enc] of this.encased) {
+      if (enc.owner !== owner || enc.hard || !this.alive(v)) continue;
+      if (Phaser.Math.Distance.Between(hx, hy, v.x, v.y) > SHARD_TOUCH_R + 24) continue;
+      enc.hard = true;
+      enc.until += HARD_ENCASE_BONUS_MS;
+      this.fx(owner).harden(v.x, v.y, 34);
+    }
+  }
+
+  /** A Slime Bomb going off: one radius, everybody in it, and fresh ground where it landed. */
+  private bombBurst(owner: Owner, b: Ball): void {
+    for (const t of this.targetsOf(owner)) {
+      if (b.hit.has(t)) continue;
+      if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) > BOMB_AOE_R) continue;
+      b.hit.add(t);
+      this.hurt(owner, t, b.damage, b.hard ? GUM.solidLit : GUM.oozeLit);
+      this.applySlow(t, BALL_SLOW_MS);
+    }
+    this.spawnPuddle(owner, 'slow', b.x, b.y);
+    this.fx(owner).splat(b.x, b.y, 42, 6);
+    this.api.scene.cameras.main.shake(140, 0.004);
+    this.api.showFloatingText(b.x, b.y - 34, '💥 SPLASH', this.hex(GUM.oozeLit));
+    Sfx.playAt('explosion-medium', b.x, { rate: 1.25, volume: 0.8 });
+  }
+
+  /**
+   * Everything on the ground, every frame: flight, expiry, the soak ramps that are the whole
+   * point of a puddle, and the auras beacons run once they have been shaken awake.
+   */
+  private updatePuddles(delta: number): void {
+    const dt = delta / 1000;
+
+    for (let i = this.puddles.length - 1; i >= 0; i--) {
+      const pd = this.puddles[i];
+      const s = this.side(pd.owner);
+
+      // Carried: it rides the hand, and a beacon banks the shaking it gets on the way.
+      if (s.held?.kind === 'puddle' && s.held.puddle === pd) {
+        pd.x = s.handX;
+        pd.y = s.handY;
+        if (pd.beacon && Math.hypot(s.handVx, s.handVy) >= BEACON_SHAKE_SPEED) {
+          pd.shake = Math.min(BEACON_MAX_ACTIVE_MS, pd.shake + delta);
+        }
+        continue;
+      }
+
+      if (pd.flying) {
+        pd.x = Phaser.Math.Clamp(pd.x + pd.vx * dt, this.left, this.right);
+        pd.y = Phaser.Math.Clamp(pd.y + pd.vy * dt, this.top, this.bottom);
+        if (this.now >= pd.landsAt) {
+          pd.flying = false;
+          pd.vx = 0;
+          pd.vy = 0;
+          this.fx(pd.owner).splat(pd.x, pd.y, 22, 4, pd.kind === 'heal');
+        }
+        continue;
+      }
+
+      // A lit beacon does not age out from under its own aura.
+      if (this.now >= pd.until && this.now >= pd.activeUntil) {
+        this.fx(pd.owner).pop(pd.x, pd.y, pd.beacon ? 18 : 26);
+        this.puddles.splice(i, 1);
+      }
+    }
+
+    // ── The ramps ──
+    // Slow: rises while a body is standing in enemy slime, falls once it steps out. Rebuilt from
+    // scratch each frame from "is this fighter in one right now", so nothing has to be handed back.
+    // Hoisted: `targetsOf` builds a fresh array, and this is a fighters × puddles loop.
+    const foes: Record<Owner, Fighter[]> = { player: this.targetsOf('player'), npc: this.targetsOf('npc') };
+    for (const f of this.allFighters()) {
+      if (!this.alive(f)) { this.slowSoak.delete(f); this.healSoak.delete(f); continue; }
+
+      let inSlow = false;
+      let inHeal = false;
+      for (const pd of this.puddles) {
+        if (pd.flying || pd.beacon) continue;
+        if (Phaser.Math.Distance.Between(pd.x, pd.y, f.x, f.y) > pd.r) continue;
+        if (pd.kind === 'slow') {
+          // Your own slime never slows you; that would make Slime Splash unusable up close.
+          if (!foes[pd.owner].includes(f)) continue;
+          inSlow = true;
+        } else if (this.fighter(pd.owner) === f) {
+          inHeal = true;
+        }
+      }
+
+      const slow = Phaser.Math.Clamp(
+        (this.slowSoak.get(f) ?? 0) + (inSlow ? delta / SOAK_RAMP_MS : -delta / SOAK_FADE_MS), 0, 1);
+      if (slow > 0) this.slowSoak.set(f, slow); else this.slowSoak.delete(f);
+
+      const heal = Phaser.Math.Clamp(
+        (this.healSoak.get(f) ?? 0) + (inHeal ? delta / HEAL_RAMP_MS : -delta / SOAK_FADE_MS), 0, 1);
+      if (heal > 0) this.healSoak.set(f, heal); else this.healSoak.delete(f);
+
+      // Healing is paid out in whole points, with the remainder carried, so the slowest trickle
+      // still lands rather than being rounded to zero every frame.
+      if (inHeal) {
+        const rate = HEAL_MIN_RATE + (HEAL_MAX_RATE - HEAL_MIN_RATE) * heal;
+        const acc = (this.healAcc.get(f) ?? 0) + rate * dt;
+        const whole = Math.floor(acc);
+        this.healAcc.set(f, acc - whole);
+        if (whole > 0 && f.hp < f.maxHp) {
+          f.heal(whole);
+          if (Math.random() < 0.25) this.fx(this.ownerOf(f) ?? 'player').digest(f.x, f.y);
+        }
+      } else {
+        this.healAcc.delete(f);
+      }
+    }
+
+    // ── Beacon auras ──
+    for (const pd of this.puddles) {
+      if (!pd.beacon || this.now >= pd.activeUntil) continue;
+      if (pd.kind === 'heal') {
+        const f = this.fighter(pd.owner);
+        if (!this.alive(f)) continue;
+        if (Phaser.Math.Distance.Between(pd.x, pd.y, f.x, f.y) > BEACON_AURA_R) continue;
+        const acc = (this.healAcc.get(f) ?? 0) + BEACON_HEAL_RATE * dt;
+        const whole = Math.floor(acc);
+        this.healAcc.set(f, acc - whole);
+        if (whole > 0 && f.hp < f.maxHp) f.heal(whole);
+      }
+      // The slowing half is read straight out of `speedMultFor`, which is where every other slow
+      // in this element already lives.
+    }
+  }
+
+  /** Which side owns this fighter, if either. Only used to pick which palette an effect wears. */
+  private ownerOf(f: Fighter): Owner | null {
+    if (f === this.api.player) return 'player';
+    if (f === this.api.npc) return 'npc';
+    return null;
+  }
+
+  // ── Bubble Bloat ───────────────────────────────────────────────────────────
+
+  /**
+   * The extra shell. It grows a layer per bubble past the first and comes off against a wall —
+   * any wall, whether the victim walked into it or was thrown at it by the slime that gummed them.
+   */
+  private updateBloat(): void {
+    for (const [victim, bl] of [...this.bloat]) {
+      if (!this.alive(victim) || !this.encased.has(victim)) { this.bloat.delete(victim); continue; }
+      if (bl.layers < BLOAT_MIN_LAYERS) continue;
+      const onWall = victim.x <= this.left + 8 || victim.x >= this.right - 8
+        || victim.y <= this.top + 8 || victim.y >= this.bottom - 8;
+      if (!onWall) continue;
+
+      const hard = this.encased.get(victim)?.hard ?? false;
+      const dmg = (hard ? BLOAT_HARD_DAMAGE : BLOAT_DAMAGE) * bl.layers;
+      this.bloat.delete(victim);
+      this.hurt(bl.owner, victim, dmg, hard ? GUM.solidLit : GUM.gumLit);
+      this.fx(bl.owner).bloatBurst(victim.x, victim.y, this.bloatRadius(bl.layers), hard);
+      this.api.showFloatingText(victim.x, victim.y - 52,
+        `🎈 BLOAT ×${bl.layers}`, this.hex(hard ? GUM.solidLit : GUM.gumLit));
+      this.api.scene.cameras.main.shake(240, 0.007);
+      Sfx.playAt('bubble', victim.x, { rate: 0.55, volume: 1 });
+      Sfx.playAt(hard ? 'crystal-shatter' : 'hit-heavy', victim.x, { rate: 0.9, volume: 0.9 });
+    }
+  }
+
+  private bloatRadius(layers: number): number {
+    return Math.min(BLOAT_MAX_R, BLOAT_BASE_R + layers * BLOAT_R_PER_LAYER);
+  }
+
+  // ── Zip-lines ──────────────────────────────────────────────────────────────
+
+  /**
+   * The ride. A grip on a zip-line does not read the mouse at all — it simply hauls the body flat
+   * across the arena until a wall stops it, which makes it the one movement in the element that
+   * costs no cursor work. The price is that you are committed: you go the way you set off.
+   */
+  private updateRide(): void {
+    const s = this.sides.player;
+    const p = this.api.player;
+    if (!s.riding) return;
+    if (!this.alive(p) || this.api.isDodging) { this.letGo('player', false); return; }
+
+    const body = p.body as Phaser.Physics.Arcade.Body;
+    // Settle onto the line rather than snapping to it, so catching one from below reads as a haul.
+    const vy = (s.riding.y - p.y) * 6;
+    body.setVelocity(ZIP_SPEED * s.riding.dir * this.speedMultFor(p),
+      Phaser.Math.Clamp(vy, -ZIP_SPEED, ZIP_SPEED));
+
+    // Q+: stone on slime. The line throws sparks the whole way across.
+    if (this.hasShardHand('player') && this.now >= s.nextSparkAt) {
+      s.nextSparkAt = this.now + ZIP_SPARK_MS;
+      const sx = s.handX;
+      const sy = s.handY;
+      for (let i = 0; i < ZIP_SPARK_COUNT; i++) {
+        const a = (i / ZIP_SPARK_COUNT) * TAU + Math.random() * 0.4;
+        const sp = ZIP_SPARK_SPEED * (0.6 + Math.random() * 0.8);
+        this.shards.push({
+          owner: 'player', x: sx, y: sy,
+          vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+          diesAt: this.now + ZIP_SPARK_LIFE_MS, seed: Math.random() * 999,
+          damage: ZIP_SPARK_DAMAGE, spark: true, hit: new Set(),
+        });
+      }
+      this.pfx.sparks(sx, sy, 22);
+      Sfx.playAt('clang', sx, { rate: 1.7, volume: 0.3 });
+    }
+
+    if ((s.riding.dir < 0 && p.x <= this.left + 6) || (s.riding.dir > 0 && p.x >= this.right - 6)) {
+      this.pfx.splat(p.x, p.y, 26, 8);
+      this.api.showFloatingText(p.x, p.y - 46, '🧱 END OF THE LINE', this.hex(GUM.oozeLit));
+      Sfx.playAt('hit-light', p.x, { rate: 0.8, volume: 0.6 });
+      this.letGo('player', false);
+      body.setVelocity(0, 0);
+    }
   }
 
   // ── Oozorbtion plumbing ────────────────────────────────────────────────────
@@ -883,6 +1462,18 @@ export class GumKit {
     this.fx(owner).swallow(f.x, f.y);
     this.api.showFloatingText(f.x, f.y - 46, `🫗 ABSORBED ${damage}`, this.hex(GUM.oozeLit));
     Sfx.playAt('boing', f.x, { rate: 0.8, volume: 0.9 });
+
+    // F+ — Emesis. Swallowing something brings some of you back up with it: three pink puddles
+    // around your feet that feed you instead of slowing anybody.
+    if (!this.up(owner, 'f')) return;
+    for (let i = 0; i < EMESIS_COUNT; i++) {
+      const a = (i / EMESIS_COUNT) * TAU + Math.random() * 0.5;
+      const d = 46 + Math.random() * 26;
+      this.spawnPuddle(owner, 'heal', f.x + Math.cos(a) * d, f.y + Math.sin(a) * d);
+    }
+    this.fx(owner).splat(f.x, f.y, 30, 4, true);
+    this.api.showFloatingText(f.x, f.y - 66, '🤮 EMESIS', this.hex(GUM.gumLit));
+    Sfx.playAt('slime-splat', f.x, { rate: 0.6, volume: 0.9 });
   }
 
   private updateAbsorb(): void {
@@ -946,9 +1537,15 @@ export class GumKit {
         continue;
       }
 
+      av.setShardHand(this.hasShardHand(owner));
+
       let tx: number;
       let ty: number;
-      if (s.anchored) {
+      if (s.riding) {
+        // Riding: the hand belongs to the line, out ahead of the body in the direction of travel.
+        tx = f.x + s.riding.dir * 46;
+        ty = s.riding.y;
+      } else if (s.anchored) {
         tx = s.anchorX;
         ty = s.anchorY;
       } else {
@@ -984,14 +1581,21 @@ export class GumKit {
       const s = this.side(owner);
       if (s.held || s.anchored || this.now < s.handBackAt) continue;
       if (Math.hypot(s.handVx, s.handVy) < SMACK_SPEED) continue;
+      const stone = this.hasShardHand(owner);
       for (const t of this.targetsOf(owner)) {
         if (Phaser.Math.Distance.Between(s.handX, s.handY, t.x, t.y) > SMACK_R) continue;
         const gate = s.smackGate.get(t) ?? 0;
         if (this.now < gate) continue;
         s.smackGate.set(t, this.now + SMACK_GATE_MS);
-        this.hurt(owner, t, SMACK_DAMAGE, GUM.oozeLit);
-        this.fx(owner).splat(t.x, t.y, 18);
-        Sfx.playAt('hit-light', t.x, { rate: 1.15, volume: 0.7 });
+        this.hurt(owner, t, SMACK_DAMAGE + (stone ? SHARD_SMACK_BONUS : 0),
+          stone ? GUM.stoneLit : GUM.oozeLit);
+        if (stone) {
+          this.solidifyTouch(owner, t);
+          this.fx(owner).sparks(t.x, t.y, 20);
+        } else {
+          this.fx(owner).splat(t.x, t.y, 18);
+        }
+        Sfx.playAt('hit-light', t.x, { rate: stone ? 0.85 : 1.15, volume: 0.7 });
       }
     }
   }
@@ -1013,6 +1617,10 @@ export class GumKit {
     // makes without its arm, and letting the drag fight it would eat the dash entirely.
     if (this.api.isDodging) { this.mouseDX = 0; this.mouseDY = 0; return; }
     const body = p.body as Phaser.Physics.Arcade.Body;
+
+    // A zip-line ride writes the velocity itself, and reading the mouse on top of it would fight
+    // the only movement in this element the cursor is not responsible for.
+    if (s.riding) { this.mouseDX = 0; this.mouseDY = 0; return; }
 
     if (!s.anchored || s.held || this.now < s.handBackAt) {
       body.setVelocity(0, 0);
@@ -1081,6 +1689,9 @@ export class GumKit {
       for (const t of this.targetsOf(b.owner)) {
         if (b.hit.has(t)) continue;
         if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) > BALL_R + 16) continue;
+        // A Slime Bomb never lands a single hit — it goes off, and the body it touched is simply
+        // the closest thing to the blast.
+        if (b.bomb) { this.bombBurst(b.owner, b); done = true; break; }
         b.hit.add(t);
         this.hurt(b.owner, t, b.damage, b.hard ? GUM.solidLit : GUM.oozeLit);
         this.fx(b.owner).splat(t.x, t.y, b.hard ? 26 : 30);
@@ -1102,6 +1713,12 @@ export class GumKit {
       if (hitWall) {
         b.x = Phaser.Math.Clamp(b.x, this.left, this.right);
         b.y = Phaser.Math.Clamp(b.y, this.top, this.bottom);
+        if (b.bomb) {
+          this.bombBurst(b.owner, b);
+          if (b.hard) this.burstShards(b.owner, b.x, b.y, WALL_SHATTER_SHARDS);
+          this.balls.splice(i, 1);
+          continue;
+        }
         if (b.hard) {
           // Hardened slime does not stick — it breaks, and the wall is what breaks it.
           this.fx(b.owner).harden(b.x, b.y, 22);
@@ -1138,7 +1755,8 @@ export class GumKit {
       const sp = SHARD_SPEED * (0.7 + Math.random() * 0.5);
       this.shards.push({
         owner, x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-        diesAt: this.now + SHARD_LIFE_MS, seed: Math.random() * 999, hit: new Set(),
+        diesAt: this.now + SHARD_LIFE_MS, seed: Math.random() * 999,
+        damage: SHARD_DAMAGE, spark: false, hit: new Set(),
       });
     }
     this.fx(owner).shardBurst(x, y, Math.min(10, count));
@@ -1170,6 +1788,21 @@ export class GumKit {
   }
 
   private encase(owner: Owner, victim: Fighter): void {
+    // R+ — Bubble Bloat. Every bubble past the first inflates the shell one more layer, and each
+    // layer is both a bigger balloon and more damage waiting for the next wall.
+    if (this.up(owner, 'r')) {
+      const bl = this.bloat.get(victim);
+      if (bl && bl.owner === owner) {
+        bl.layers++;
+        if (bl.layers === BLOAT_MIN_LAYERS) {
+          this.api.showFloatingText(victim.x, victim.y - 58, '🎈 BLOATED', this.hex(GUM.gumLit));
+          Sfx.playAt('stretch', victim.x, { rate: 0.6, volume: 0.9 });
+        }
+      } else {
+        this.bloat.set(victim, { owner, layers: 1 });
+      }
+    }
+
     const existing = this.encased.get(victim);
     const until = this.now + ENCASE_MS;
     if (existing) {
@@ -1185,9 +1818,11 @@ export class GumKit {
   private updateEncased(): void {
     for (const [victim, enc] of [...this.encased]) {
       const carried = this.side(enc.owner).held?.victim === victim;
-      if (!this.alive(victim)) { this.encased.delete(victim); continue; }
+      if (!this.alive(victim)) { this.encased.delete(victim); this.bloat.delete(victim); continue; }
       if (this.now < enc.until || carried) continue;
       this.encased.delete(victim);
+      // The bloat is grown on top of the gum, so it goes when the gum does.
+      this.bloat.delete(victim);
       this.fx(enc.owner).pop(victim.x, victim.y, 26);
       Sfx.playAt('bubble', victim.x, { rate: 1.4, volume: 0.6 });
     }
@@ -1247,7 +1882,7 @@ export class GumKit {
         if (sh.hit.has(t)) continue;
         if (Phaser.Math.Distance.Between(sh.x, sh.y, t.x, t.y) > 20) continue;
         sh.hit.add(t);
-        this.hurt(sh.owner, t, SHARD_DAMAGE, GUM.solidLit);
+        this.hurt(sh.owner, t, sh.damage, sh.spark ? GUM.stoneLit : GUM.solidLit);
         spent = true;
         break;
       }
@@ -1271,6 +1906,17 @@ export class GumKit {
     let m = 1;
     if (this.now < (this.slowUntil.get(f) ?? 0)) m *= BALL_SLOW_MULT;
     if (this.encased.has(f)) m *= ENCASE_SLOW_MULT;
+    // The puddle ramp: shallow the moment you step in, crippling if you stand there.
+    const soak = this.slowSoak.get(f) ?? 0;
+    if (soak > 0) m *= 1 - (1 - PUDDLE_SLOW_FLOOR) * soak;
+    // A lit green beacon slows flat, wherever inside its aura you are.
+    for (const pd of this.puddles) {
+      if (!pd.beacon || pd.kind !== 'slow' || this.now >= pd.activeUntil) continue;
+      if (!this.targetsOf(pd.owner).includes(f)) continue;
+      if (Phaser.Math.Distance.Between(pd.x, pd.y, f.x, f.y) > BEACON_AURA_R) continue;
+      m *= BEACON_SLOW_MULT;
+      break;
+    }
     return m;
   }
 
@@ -1331,23 +1977,27 @@ export class GumKit {
     const playerIs = this.isGum('player');
     const npcIs = this.isGum('npc');
     const anyState = this.balls.length || this.bubbles.length || this.shards.length
-      || this.encased.size || this.flung.size || this.stuckUntil.size || this.slowUntil.size
-      || this.sides.player.lodged || this.sides.npc.lodged;
+      || this.puddles.length || this.encased.size || this.flung.size || this.stuckUntil.size
+      || this.slowUntil.size || this.sides.player.lodged || this.sides.npc.lodged;
     if (!playerIs && !npcIs && !anyState) return;
 
     this.ensureLayers();
     this.ensureAvatars();
+    this.ensureZips();
     this.vizT += delta / 1000;
     this.sides.npc.haul += delta / 1000;
 
     this.updateHand(delta);
     this.updateDrag(delta);
+    this.updateRide();
     this.updateSmack();
     this.updateBalls(delta);
     this.updateBubbles(delta);
     this.updateEncased();
+    this.updateBloat();
     this.updateCarriedAndFlung();
     this.updateShards(delta);
+    this.updatePuddles(delta);
     this.updateAbsorb();
     this.pushWalkSpeeds();
 
@@ -1364,6 +2014,19 @@ export class GumKit {
           Sfx.playAt('boing', f.x, { rate: 0.9, volume: 0.8 });
         }
       }
+      // …and the hand of stone softens back into slime.
+      if (s.shardUntil && this.now >= s.shardUntil) {
+        s.shardUntil = 0;
+        this.avatar(owner)?.setShardHand(false);
+        const f = this.fighter(owner);
+        if (this.alive(f)) {
+          this.fx(owner).splat(f.x, f.y, 20);
+          this.api.showFloatingText(f.x, f.y - 48, '🫠 HAND SOFTENED', this.hex(GUM.oozeLit));
+          Sfx.playAt('slime-splat', f.x, { rate: 0.7, volume: 0.7 });
+        }
+      }
+      // Q+: everything the claw drags through goes glassy on its own, no cast required.
+      if (this.hasShardHand(owner)) this.solidifyTouch(owner);
     }
 
     this.paintGround();
@@ -1377,6 +2040,24 @@ export class GumKit {
     const g = this.groundGfx;
     if (!g) return;
     g.clear();
+
+    // Puddles first — they are the floor everything else is lying on.
+    for (const pd of this.puddles) {
+      const s = this.side(pd.owner);
+      const carried = s.held?.kind === 'puddle' && s.held.puddle === pd;
+      if (pd.beacon || carried) continue;
+      const life = Phaser.Math.Clamp((pd.until - this.now) / 1200, 0, 1);
+      // The ring shows the deepest anybody standing in this one has sunk.
+      let soak = 0;
+      for (const f of this.allFighters()) {
+        if (!this.alive(f)) continue;
+        if (Phaser.Math.Distance.Between(pd.x, pd.y, f.x, f.y) > pd.r) continue;
+        const v = pd.kind === 'heal' ? (this.healSoak.get(f) ?? 0) : (this.slowSoak.get(f) ?? 0);
+        soak = Math.max(soak, v);
+      }
+      slimePuddle(g, this.col(pd.owner), pd.x, pd.y, pd.r, 1, this.vizT,
+        { seed: pd.seed, heal: pd.kind === 'heal', soak, life });
+    }
 
     // Grips.
     for (const owner of BOTH) {
@@ -1412,6 +2093,7 @@ export class GumKit {
         g.lineStyle(1.6, tint(GUM.shine), 0.8);
         g.strokeCircle(b.x, b.y, BALL_R * 0.55);
       }
+      if (b.bomb) this.paintFuse(g, tint, b.x, b.y);
       drips(g, this.col(b.owner), b.x, b.y + BALL_R * 0.6, BALL_R, 2, 0.55, this.vizT, { seed: b.seed });
     }
   }
@@ -1420,6 +2102,46 @@ export class GumKit {
     const g = this.airGfx;
     if (!g) return;
     g.clear();
+
+    // Zip-lines, hung across the room. On the air layer because they are overhead — the player
+    // has to read them as something to reach up and catch rather than a stripe on the floor.
+    for (const z of this.zips) {
+      const lit = !!this.sides.player.riding && Math.abs(this.sides.player.riding.y - z.y) < 2;
+      zipLine(g, this.pcol, this.left, this.right, z.y, lit ? 1 : 0.72, this.vizT,
+        { seed: z.seed, lit });
+    }
+
+    // Beacons, and anything currently in flight or in a hand.
+    for (const pd of this.puddles) {
+      const s = this.side(pd.owner);
+      const carried = s.held?.kind === 'puddle' && s.held.puddle === pd;
+      if (pd.beacon) {
+        const active = this.now < pd.activeUntil
+          ? Phaser.Math.Clamp((pd.activeUntil - this.now) / 800, 0, 1) : 0;
+        slimeBeacon(g, this.col(pd.owner), pd.x, pd.y, BEACON_R, 1, this.vizT, {
+          seed: pd.seed, heal: pd.kind === 'heal',
+          charge: pd.shake / BEACON_MAX_ACTIVE_MS,
+          active, auraR: BEACON_AURA_R,
+        });
+      } else if (carried || pd.flying) {
+        // A puddle off the ground is a sagging sack of slime, not a disc.
+        oozeBlob(g, this.col(pd.owner), pd.x, pd.y, pd.r * 0.44, 0.95, this.vizT, {
+          seed: pd.seed, squat: 0.6, wobble: 0.22,
+          deep: pd.kind === 'heal' ? GUM.gumDeep : GUM.oozeDeep,
+          fill: pd.kind === 'heal' ? GUM.gum : GUM.ooze,
+          lit: pd.kind === 'heal' ? GUM.gumLit : GUM.oozeLit,
+        });
+        drips(g, this.col(pd.owner), pd.x, pd.y + pd.r * 0.3, pd.r * 0.7, 3, 0.7, this.vizT,
+          { seed: pd.seed, color: pd.kind === 'heal' ? GUM.gum : GUM.ooze });
+      }
+    }
+
+    // The extra shell Bubble Bloat grew, drawn under the gum shell it is wrapped around.
+    for (const [victim, bl] of this.bloat) {
+      if (!this.alive(victim) || bl.layers < BLOAT_MIN_LAYERS) continue;
+      bloatShell(g, this.col(bl.owner), victim.x, victim.y, this.bloatRadius(bl.layers),
+        bl.layers, 0.95, this.vizT, { hard: this.encased.get(victim)?.hard ?? false });
+    }
 
     // Thrown balls, stretched along their own flight.
     for (const b of this.balls) {
@@ -1444,6 +2166,7 @@ export class GumKit {
           slimeShard(g, tint, b.x, b.y, ang + (i / 4) * TAU, BALL_R * 1.2, 0.9, { seed: i + b.seed });
         }
       }
+      if (b.bomb) this.paintFuse(g, tint, b.x, b.y);
     }
 
     // Gum bubbles.
@@ -1479,10 +2202,13 @@ export class GumKit {
       }
     }
 
-    // Shards in the air.
+    // Shards in the air. Sparks are the same shape struck off stone: shorter, greyer, weaker.
     for (const sh of this.shards) {
-      slimeShard(g, this.col(sh.owner), sh.x, sh.y, Math.atan2(sh.vy, sh.vx), 15, 0.95,
-        { seed: sh.seed });
+      slimeShard(g, this.col(sh.owner), sh.x, sh.y, Math.atan2(sh.vy, sh.vx),
+        sh.spark ? 9 : 15, 0.95,
+        sh.spark
+          ? { seed: sh.seed, deep: GUM.stoneDeep, fill: GUM.stone, lit: GUM.stoneLit }
+          : { seed: sh.seed });
     }
 
     // Whatever is sitting in a body being digested.
@@ -1510,6 +2236,21 @@ export class GumKit {
     }
   }
 
+  /**
+   * The tell that a slimeball is a Slime Bomb: a dark core with a ring pulsing out of it. Drawn
+   * on both the resting and the flying ball, because the whole risk of the upgrade is that you
+   * are picking up something that goes off.
+   */
+  private paintFuse(g: Phaser.GameObjects.Graphics, tint: GumColorFn, x: number, y: number): void {
+    const pulse = (this.vizT * 1.6) % 1;
+    g.fillStyle(tint(GUM.murk), 0.85);
+    g.fillCircle(x, y, BALL_R * 0.38);
+    g.fillStyle(tint(GUM.oozeLit), 0.9);
+    g.fillCircle(x, y, BALL_R * 0.18);
+    g.lineStyle(1.6, tint(GUM.shine), 0.8 * (1 - pulse));
+    g.strokeCircle(x, y, BALL_R * (0.4 + pulse * 0.8));
+  }
+
   // ── HUD ────────────────────────────────────────────────────────────────────
 
   private pushStatuses(playerIs: boolean): void {
@@ -1518,22 +2259,47 @@ export class GumKit {
 
     const handless = this.now < s.handBackAt;
     const holding = s.held?.kind === 'body' ? 'a body'
-      : s.held?.kind === 'ball' ? (s.held.ball?.stolen ? 'a caught shot' : 'a slimeball')
-        : null;
+      : s.held?.kind === 'puddle' ? (s.held.puddle?.beacon ? 'a beacon' : 'a puddle')
+        : s.held?.kind === 'ball' ? (s.held.ball?.stolen ? 'a caught shot' : 'a slimeball')
+          : null;
     this.api.setStatusIndicator('gum-hand', playerIs ? {
-      name: handless ? 'No Hand' : holding ? 'Carrying' : s.anchored ? 'Gripping' : 'Stretchy Hand',
-      emoji: handless ? '🫠' : holding ? '🫳' : s.anchored ? '✊' : '🖐',
-      color: handless ? GUM.solidLit : s.anchored ? GUM.shine : GUM.oozeLit,
+      name: handless ? 'No Hand' : s.riding ? 'Zipping' : holding ? 'Carrying'
+        : s.anchored ? 'Gripping' : 'Stretchy Hand',
+      emoji: handless ? '🫠' : s.riding ? '🪢' : holding ? '🫳' : s.anchored ? '✊' : '🖐',
+      color: handless ? GUM.solidLit : s.anchored || s.riding ? GUM.shine : GUM.oozeLit,
       priority: handless ? 2 : 140,
       description: handless
         ? 'Solidify threw your hand away. Until it grows back you cannot grip, grab, punch or move a single pixel.'
-        : holding
-          ? `The hand is full — it is carrying ${holding}, so it cannot take your weight. Let go to throw.`
-          : s.anchored
-            ? `Gripping ${s.anchorWall ? 'a wall' : 'the floor'}. Move the mouse and the arm hauls your body the other way; a wall pulls harder than the ground. Wind too far past the grip and it tears loose.`
-            : 'You have no legs. Hold Click on the floor or a wall to grip it, then drag the mouse to haul yourself along — everything else the hand does costs you the ability to move while you do it.',
+        : s.riding
+          ? 'Hanging off a zip-line. It hauls you flat across the room the way you set off and does not stop until you hit a wall or let go — the one time this element moves without you dragging it.'
+          : holding
+            ? `The hand is full — it is carrying ${holding}, so it cannot take your weight. Let go to ${s.held?.puddle?.beacon ? 'set it down' : 'throw'}.`
+            : s.anchored
+              ? `Gripping ${s.anchorWall ? 'a wall' : 'the floor'}. Move the mouse and the arm hauls your body the other way; a wall pulls harder than the ground. Wind too far past the grip and it tears loose.`
+              : 'You have no legs. Hold Click on the floor or a wall to grip it, then drag the mouse to haul yourself along — everything else the hand does costs you the ability to move while you do it.',
       until: handless ? s.handBackAt : undefined,
     } : null);
+
+    this.api.setStatusIndicator('gum-shard', playerIs && this.hasShardHand('player') ? {
+      name: 'Hand of Stone', emoji: '🪨', color: GUM.stoneLit, priority: 134,
+      description: `Solidify set your hand instead of shattering it. Punches hit for ${PUNCH_DAMAGE + SHARD_PUNCH_BONUS} and passing smacks for ${SMACK_DAMAGE + SHARD_SMACK_BONUS}, everything it brushes past turns glassy on contact, and riding a zip-line with it throws sparks in every direction.`,
+      until: s.shardUntil,
+    } : null);
+
+    const beaconHeld = s.held?.kind === 'puddle' && s.held.puddle?.beacon ? s.held.puddle : null;
+    const mud = this.puddles.filter((pd) => pd.owner === 'player');
+    const lit = mud.filter((pd) => pd.beacon && this.now < pd.activeUntil).length;
+    this.api.setStatusIndicator('gum-puddles', playerIs && mud.length > 0 ? (beaconHeld ? {
+      name: 'Shaking a Beacon', emoji: '🫨', color: beaconHeld.kind === 'heal' ? GUM.gumLit : GUM.oozeLit,
+      priority: 135,
+      description: `Whip the hand back and forth to wind it up, then let go to set it down — it runs its aura for exactly as long as you shook it, up to ${BEACON_MAX_ACTIVE_MS / 1000} seconds. ${beaconHeld.kind === 'heal' ? 'Pink: it heals you while you stand in it.' : 'Green: it slows anyone inside it.'}`,
+      count: Math.round(beaconHeld.shake / 100) / 10, suffix: 's',
+    } : {
+      name: lit > 0 ? 'Beacons Lit' : 'Slime on the Floor', emoji: lit > 0 ? '📡' : '🟩',
+      color: lit > 0 ? GUM.stoneLit : GUM.ooze, priority: 136,
+      description: `Your puddles. Green ones slow anyone standing in them, and the longer they stay the worse it gets; pink ones feed you the same way. The hand can pick any of them up and lob them somewhere better, and Solidify sets them into beacons that emit an aura once you have shaken them awake.`,
+      count: mud.length, suffix: `/${PUDDLE_MAX}`,
+    }) : null);
 
     const mine = this.balls.filter((b) => b.owner === 'player' && !b.flying).length;
     this.api.setStatusIndicator('gum-balls', playerIs && mine > 0 ? {
@@ -1565,6 +2331,21 @@ export class GumKit {
       name: 'Stuck to the Wall', emoji: '🧱', color: GUM.gumLit, priority: 1,
       description: 'Thrown into a wall and glued there by the gum around you. You cannot move until it gives.',
       until: stuck.until,
+    } : null);
+
+    const bl = p ? this.bloat.get(p) : undefined;
+    this.api.setStatusIndicator('gum-bloat', bl && bl.owner === 'npc' && bl.layers >= BLOAT_MIN_LAYERS ? {
+      name: 'Bloated', emoji: '🎈', color: GUM.gum, priority: 2,
+      description: `A second, much larger bubble has grown around the gum — one layer per gumball that caught you. Touch any wall and it bursts for ${(this.encased.get(p)?.hard ? BLOAT_HARD_DAMAGE : BLOAT_DAMAGE) * bl.layers} damage. Stay off the walls.`,
+      count: bl.layers,
+    } : null);
+
+    // Your own slime never mires you, so this only ever fires for the other side's puddles.
+    const soak = p ? (this.slowSoak.get(p) ?? 0) : 0;
+    this.api.setStatusIndicator('gum-mire', soak > 0.02 ? {
+      name: 'Miring', emoji: '🥾', color: GUM.oozeDeep, priority: 4,
+      description: `You are sinking into slime. The longer you stand in it the slower you get — down to ${Math.round(PUDDLE_SLOW_FLOOR * 100)}% speed — and it only drains back off once you are out of the puddle.`,
+      count: Math.round(soak * 100), suffix: '%',
     } : null);
   }
 

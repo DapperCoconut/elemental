@@ -4,8 +4,9 @@ import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
 import { Sfx } from '../../audio';
 import {
-  BND, BindAvatar, BindColorFn, BindFx, chainLink, cosmicVeil, darkMark, faithRing,
-  godBeam, hexWard, idolStatue, oblivionShard, patronEye,
+  BND, BindAvatar, BindColorFn, BindFx, arenaBinding, chainLink, chainRun, cosmicVeil, cultistFigure,
+  darkMark, eviscerateCharge, faithRing, godBeam, hexWard, idolStatue, oblivionShard, overrageAura,
+  patronEye, spreadReticle, vesselHalo,
 } from './BindVisuals';
 
 type Owner = 'player' | 'npc';
@@ -34,6 +35,12 @@ const OVERHEAT_ANGER = 20;
 /** How long one cast keeps the beam alive — long enough to bridge the click's own cooldown. */
 const BEAM_HOLD_MS = 420;
 
+// ── Over-rage (Click+) ───────────────────────────────────────────────────────
+/** Damage a second, taken by the person holding the button, in 1-point bites. */
+const OVERRAGE_SELF_DPS = 2;
+/** Anger a second while over-raging — flat, unlike everything else in the kit. */
+const OVERRAGE_ANGER_RATE = 7;
+
 // ── Shards of Oblivion (E) ───────────────────────────────────────────────────
 const SHARD_COUNT = 25;
 const SHARD_DAMAGE = 10;
@@ -50,6 +57,13 @@ const SHARD_STAGGER_MS = 26;
 const TAX_STEP = 0.9;
 const TAX_VULN_STEP = 1.1;
 
+// ── Eviscerate (E+) ──────────────────────────────────────────────────────────
+const EVIS_CHARGE_MS = 1500;
+/** The tightest the barrage will ever land. Below the blast radius, so a full charge is a spear. */
+const EVIS_TIGHT_SPREAD = 18;
+/** Anger a second for standing there winding it up. The god is not paid in patience. */
+const EVIS_ANGER_RATE = 4;
+
 // ── Summon Idol (R) ──────────────────────────────────────────────────────────
 const IDOL_R = 118;
 const IDOL_FAITH_MAX = 10;
@@ -60,9 +74,25 @@ const IDOL_STARVE_ANGER = 5;
 /** How long an idol is allowed to sit empty before the patron takes it back. */
 const IDOL_CRUMBLE_MS = 6000;
 
+// ── Cult of the Broken God (R+) ──────────────────────────────────────────────
+const CULT_MAX = 3;
+/** Anger *gain* is cut by this per linked cultist, and speed raised by the next one. */
+const CULT_ANGER_CUT = 0.12;
+const CULT_SPEED = 0.10;
+/**
+ * Faith a cultist standing in the ring puts back per tick. Exactly a third, so three of them
+ * cancel the one-a-second drain and the idol becomes self-dependent — and two do not.
+ */
+const CULT_FAITH_SHARE = 1 / 3;
+const CULT_SPEED_PX = 190;
+/** How far off its post a cultist mills, so three of them never stack into one shape. */
+const CULT_ORBIT = 52;
+
 // ── Prophet's Protection (F) ─────────────────────────────────────────────────
 const WARD_CHARGES = 3;
 const WARD_ANGER_SHARE = 0.5;
+/** Chosen Vessel (F+): speed and damage, per hex still standing. */
+const VESSEL_STEP = 0.15;
 
 // ── God of Treachery (Q) ─────────────────────────────────────────────────────
 const AWAKE_MS = 15_000;
@@ -80,6 +110,28 @@ const AWAKE_BLAST_R = 122;
 const AWAKE_BLAST_DAMAGE = 38;
 /** A slot given up is gone for the match; this is simply longer than any match can be. */
 const SACRIFICE_MS = 900_000;
+/**
+ * How long the prompt stands there before it will accept an answer. Q is cast mid-fight with a
+ * hand on every key, so without this the reflex press that follows it — usually the attack
+ * button — pays the price before the player has seen the question.
+ */
+const SACRIFICE_GRACE_MS = 800;
+
+/** How hard the corner chains hold the summoner in the middle of the room. */
+const CHAIN_LERP_MS = 130;
+
+// ── Awakening (Q+) ───────────────────────────────────────────────────────────
+const AWK_VOLLEY_MS = 1600;
+const AWK_SHARDS = 3;
+const AWK_SHARD_DAMAGE = 9;
+/** They are converts, not marksmen. This is deliberately wider than the player's own barrage. */
+const AWK_SHARD_SPREAD = 130;
+const AWK_DASH_MS = 2900;
+const AWK_DASH_SPEED = 780;
+const AWK_DASH_DAMAGE = 18;
+const AWK_DASH_HIT_R = 34;
+/** How far past the target the run carries, so the dash goes *through* rather than up to. */
+const AWK_DASH_OVERSHOOT = 120;
 
 const SACRIFICE_SLOTS: { id: string; key: string }[] = [
   { id: 'bind-summon', key: 'Click' },
@@ -138,6 +190,32 @@ interface Spray {
   turned: boolean;
 }
 
+/**
+ * One convert. Not a Fighter and not damageable — a cultist is a piece of the summoner's economy
+ * that happens to have a body, which is why nothing in the game can take one away except the
+ * ultimate they are spent on.
+ */
+interface Cultist {
+  owner: Owner;
+  x: number;
+  y: number;
+  /** Fixed per convert: its wander phase and the seed its face is drawn from. */
+  seed: number;
+  /** Q+ — hood off, eyes out, taking orders from the cursor. */
+  awakened: boolean;
+  nextVolleyAt: number;
+  nextDashAt: number;
+  /** Non-null for the length of one charge across the room. */
+  dash: {
+    tx: number;
+    ty: number;
+    /** Everyone it has already gone through on this run — a dash hits each body once. */
+    hit: Fighter[];
+    lastX: number;
+    lastY: number;
+  } | null;
+}
+
 interface Ward {
   charges: number;
   /** Whatever absorber the fighter was already wearing, handed back when the ward is spent. */
@@ -155,11 +233,20 @@ interface Side {
 
   heat: number;
   overheated: boolean;
+  /** Click+ — the button is being held past the top of the bar, and it is being paid for. */
+  overrage: boolean;
+  /** Fractional self-damage owed by the over-rage, cashed in whole points so it reads as hits. */
+  overrageDebt: number;
   /** Game-clock time the beam stops, refreshed by every cast while the button is held. */
   firingUntil: number;
   nextBeamTickAt: number;
   /** Rate-limits the "it is not listening" refusal so a held button doesn't spam it. */
   lastRefusalAt: number;
+
+  /** E+ — game-clock time the key went down, or 0 when nothing is winding up. */
+  chargeStartedAt: number;
+  /** 0–1, latched on release so the cast that follows knows how tight to throw. */
+  chargeAtCast: number;
 
   taxSpeed: number;
   taxVuln: number;
@@ -175,17 +262,21 @@ interface Side {
 
   /** Q has been paid for but not yet priced — the next slot pressed is the one that dies. */
   pendingSacrifice: boolean;
-  /** Which slot was given up, for the HUD. */
-  sacrificed: string | null;
+  /** Game-clock time the prompt went up. Nothing may be given up for the first moment of it. */
+  sacrificeAskedAt: number;
+  /** Which slots have been given up, in order, for the HUD. Two ultimates cost two of them. */
+  sacrificed: string[];
 }
 
 function makeSide(owner: Owner): Side {
   return {
     owner, aimX: 0, aimY: 0, anger: 0, wrathUntil: 0,
-    heat: 0, overheated: false, firingUntil: 0, nextBeamTickAt: 0, lastRefusalAt: 0,
+    heat: 0, overheated: false, overrage: false, overrageDebt: 0,
+    firingUntil: 0, nextBeamTickAt: 0, lastRefusalAt: 0,
+    chargeStartedAt: 0, chargeAtCast: 0,
     taxSpeed: 0, taxVuln: 0, taxWeak: 0, ward: null,
     awakeUntil: 0, nextVolleyAt: 0, nextSwipeAt: 0, nextLaserAt: 0, nextBlastAt: 0,
-    pendingSacrifice: false, sacrificed: null,
+    pendingSacrifice: false, sacrificeAskedAt: 0, sacrificed: [],
   };
 }
 
@@ -213,6 +304,10 @@ export interface BindArenaApi {
   setStatusIndicator(id: string, status: CustomStatus | null): void;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /** Shop upgrades: the local player's equipped slots. */
+  hasUpgrade(slot: string): boolean;
+  /** …and the online opponent's, so their upgraded tricks reproduce on this sim. */
+  hasNpcUpgrade(slot: string): boolean;
 }
 
 // ── BindKit ──────────────────────────────────────────────────────────────────
@@ -258,6 +353,9 @@ export class BindKit {
   /** The patron itself, its bar and every beam it fires — over everything. */
   private godGfx: Phaser.GameObjects.Graphics | null = null;
   private prompt: Phaser.GameObjects.Text | null = null;
+  /** The slots the prompt is currently offering, and whether it has stopped stalling yet. */
+  private promptKeys = '';
+  private promptReady = false;
   private vizT = 0;
 
   // ── Sim ──
@@ -266,6 +364,8 @@ export class BindKit {
   private shards: Shard[] = [];
   private marks: Mark[] = [];
   private sprays: Spray[] = [];
+  /** Both sides' converts in one list — they carry their own owner, like every other relic here. */
+  private cultists: Cultist[] = [];
   /** Everything this kit has written an outgoing multiplier onto, and what it last wrote. */
   private appliedOut = new Map<Fighter, number>();
   /**
@@ -331,6 +431,46 @@ export class BindKit {
     return this.now < this.side(owner).wrathUntil;
   }
 
+  /** Shop upgrades, for whichever side is asking. */
+  private up(owner: Owner, slot: string): boolean {
+    return owner === 'player' ? this.api.hasUpgrade(slot) : this.api.hasNpcUpgrade(slot);
+  }
+
+  /**
+   * The sky is open and the summoner is bolted to the middle of the floor by four chains. Nothing
+   * in the kit answers while this is true — the god has the hands, and that is the point of it.
+   */
+  private chained(owner: Owner): boolean {
+    return this.now < this.side(owner).awakeUntil;
+  }
+
+  private cult(owner: Owner): Cultist[] {
+    return this.cultists.filter((c) => c.owner === owner);
+  }
+
+  private cultCount(owner: Owner): number {
+    let n = 0;
+    for (const c of this.cultists) if (c.owner === owner) n++;
+    return n;
+  }
+
+  /** Hexes still standing, capped at what Chosen Vessel is willing to pay for. */
+  private vesselHexes(owner: Owner): number {
+    if (!this.up(owner, 'f')) return 0;
+    return Math.min(3, this.side(owner).ward?.charges ?? 0);
+  }
+
+  /** The centre of the room — where the corner chains put you, and hold you. */
+  private get centreX(): number { return this.api.width / 2; }
+  private get centreY(): number { return this.api.height / 2; }
+
+  private corners(): [number, number][] {
+    return [
+      [this.left, this.top], [this.right, this.top],
+      [this.right, this.bottom], [this.left, this.bottom],
+    ];
+  }
+
   /**
    * Who the god is actually hurting right now. Every attack it makes goes through this, which is
    * the entire implementation of "it uses all of its attacks against you instead".
@@ -358,6 +498,11 @@ export class BindKit {
   private addAnger(owner: Owner, amount: number, why?: string): void {
     const s = this.side(owner);
     if (this.turned(owner)) return;
+    // The cult prays on your behalf. Every convert takes 12% off the bill — never off the bar,
+    // which is why this is applied to the *gain* rather than to the decay.
+    const cut = 1 - CULT_ANGER_CUT * this.cultCount(owner);
+    amount *= Math.max(0, cut);
+    if (amount <= 0) return;
     const before = s.anger;
     s.anger = Math.min(ANGER_MAX, s.anger + amount);
     if (why && amount >= 3 && s.anger > before) {
@@ -397,6 +542,7 @@ export class BindKit {
     this.shards = [];
     this.marks = [];
     this.sprays = [];
+    this.cultists = [];
     this.sacrificeClickArmed = false;
     this.vizT = 0;
 
@@ -406,12 +552,17 @@ export class BindKit {
     this.airGfx?.destroy(); this.airGfx = null;
     this.godGfx?.destroy(); this.godGfx = null;
     this.prompt?.destroy(); this.prompt = null;
+    this.promptKeys = '';
+    this.promptReady = false;
 
     this.api.setStatusIndicator('bind-anger', null);
     this.api.setStatusIndicator('bind-wrath', null);
     this.api.setStatusIndicator('bind-ward', null);
     this.api.setStatusIndicator('bind-awake', null);
     this.api.setStatusIndicator('bind-tithe', null);
+    this.api.setStatusIndicator('bind-cult', null);
+    this.api.setStatusIndicator('bind-vessel', null);
+    this.api.setStatusIndicator('bind-overrage', null);
   }
 
   private ensureLayers(): void {
@@ -444,24 +595,72 @@ export class BindKit {
     // The price of the ultimate is paid before anything else can happen: the next slot pressed
     // is the one that dies, and nothing casts until one of them has been.
     if (s.pendingSacrifice) {
-      if (!pointer.isDown) this.sacrificeClickArmed = true;
+      // Presses inside the grace are drained rather than banked — JustDown has to be consumed
+      // every frame or a key tapped while the prompt was still going up would pay the moment
+      // the grace expired, which is the accident the grace exists to stop.
+      const ready = this.now - s.sacrificeAskedAt >= SACRIFICE_GRACE_MS;
+      this.setPromptReady(ready);
+      // Click doubles as the attack button, so it takes a full release-and-press *after* the
+      // grace to count. Holding the beam through the prompt must never cost you the beam.
+      if (!pointer.isDown) this.sacrificeClickArmed = ready;
       for (const slot of SACRIFICE_SLOTS) {
         const pressed = slot.key === 'Click'
           ? (pointer.isDown && this.sacrificeClickArmed)
           : Phaser.Input.Keyboard.JustDown(this.keyFor(slot.key));
-        if (!pressed) continue;
+        // A slot the god already owns is not a price; it has to be one of the ones still alive.
+        if (!ready || !pressed || s.sacrificed.includes(slot.key)) continue;
         this.takeSacrifice('player', slot.id, slot.key);
         return;
       }
       return;
     }
 
+    // Chained to the middle of the room with the sky open: the god is using the hands, so there
+    // is nothing to press. Every key is drained rather than ignored, or the whole fifteen seconds
+    // would come out at once the frame the chains fall off.
+    if (this.chained('player')) {
+      s.chargeStartedAt = 0;
+      Phaser.Input.Keyboard.JustDown(this.api.eKey);
+      Phaser.Input.Keyboard.JustDown(this.api.rKey);
+      Phaser.Input.Keyboard.JustDown(this.api.fKey);
+      Phaser.Input.Keyboard.JustDown(this.api.qKey);
+      return;
+    }
+
     const ctx = this.api.buildPlayerContext(mouseX, mouseY);
     if (pointer.isDown) p.castAbility('bind-summon', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('bind-shards', ctx);
+
+    // ── E, with or without Eviscerate ──
+    // Charged, the key is a hold: winding up costs anger by the second and buys accuracy, and
+    // the cast itself only happens on the release, so the barrage lands where you finished
+    // aiming rather than where you started.
+    if (this.up('player', 'e')) {
+      const held = this.api.eKey.isDown;
+      const ready = p.getCooldownRatio('bind-shards') >= 1;
+      if (held && !s.chargeStartedAt && ready && !this.turned('player')) {
+        s.chargeStartedAt = this.now;
+        Sfx.playAt('beam-charge', p.x, { rate: 0.55, volume: 0.5 });
+      }
+      if (s.chargeStartedAt && !held) {
+        s.chargeAtCast = this.chargeOf('player');
+        s.chargeStartedAt = 0;
+        p.castAbility('bind-shards', ctx);
+      }
+      Phaser.Input.Keyboard.JustDown(this.api.eKey);
+    } else if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) {
+      p.castAbility('bind-shards', ctx);
+    }
+
     if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('bind-idol', ctx);
     if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('bind-protection', ctx);
     if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('bind-treachery', ctx);
+  }
+
+  /** 0–1 of the Eviscerate wind-up, or 0 when nothing is being held. */
+  private chargeOf(owner: Owner): number {
+    const s = this.side(owner);
+    if (!s.chargeStartedAt) return 0;
+    return Phaser.Math.Clamp((this.now - s.chargeStartedAt) / EVIS_CHARGE_MS, 0, 1);
   }
 
   private keyFor(displayKey: string): Phaser.Input.Keyboard.Key {
@@ -477,15 +676,25 @@ export class BindKit {
    * all *its*, so while it is pointed at you none of them answers — and the cooldown is handed
    * back, because being ignored should not also cost you the button.
    */
-  private refuse(owner: Owner, abilityId: string): void {
+  private refuse(owner: Owner, abilityId: string, why = '⛓ IT IS NOT LISTENING'): void {
     const f = this.fighter(owner);
     this.refund(f, abilityId);
     const s = this.side(owner);
     if (this.now - s.lastRefusalAt < 900) return;
     s.lastRefusalAt = this.now;
     if (!this.alive(f)) return;
-    this.api.showFloatingText(f.x, f.y - 50, '⛓ IT IS NOT LISTENING', this.hex(BND.wrath));
+    this.api.showFloatingText(f.x, f.y - 50, why, this.hex(BND.wrath));
     Sfx.playAt('ui-denied', f.x, { rate: 0.6, volume: 0.8 });
+  }
+
+  /**
+   * The two states in which the kit answers nothing: the patron pointed inward, and the patron
+   * using the body. Both hand the cooldown back, because neither of them is your fault twice.
+   */
+  private refused(owner: Owner, abilityId: string): boolean {
+    if (this.turned(owner)) { this.refuse(owner, abilityId); return true; }
+    if (this.chained(owner)) { this.refuse(owner, abilityId, '⛓ THE CHAINS HOLD YOU'); return true; }
+    return false;
   }
 
   // ── Ability entry points (called from build*Context) ───────────────────────
@@ -501,9 +710,11 @@ export class BindKit {
   doSummon(owner: Owner, tx: number, ty: number): void {
     const f = this.fighter(owner);
     if (!this.alive(f)) { this.refund(f, 'bind-summon'); return; }
-    if (this.turned(owner)) { this.refuse(owner, 'bind-summon'); return; }
+    if (this.refused(owner, 'bind-summon')) return;
     const s = this.side(owner);
-    if (s.overheated) {
+    // Over-rage: the button no longer stops at the top of the bar. The beam simply keeps going,
+    // and `updateBeam` starts charging blood for it — see the OVERRAGE constants.
+    if (s.overheated && !this.up(owner, 'click')) {
       // Refused, loudly and only once a second — the bar over the head is the real explanation.
       this.refund(f, 'bind-summon');
       if (this.now - s.lastRefusalAt >= 900) {
@@ -536,16 +747,26 @@ export class BindKit {
   doShards(owner: Owner, tx: number, ty: number): void {
     const f = this.fighter(owner);
     if (!this.alive(f)) { this.refund(f, 'bind-shards'); return; }
-    if (this.turned(owner)) { this.refuse(owner, 'bind-shards'); return; }
+    if (this.refused(owner, 'bind-shards')) return;
     this.ensureLayers();
     this.ensureAvatars();
     const s = this.side(owner);
     s.aimX = tx;
     s.aimY = ty;
 
-    this.throwVolley(owner, tx, ty, SHARD_COUNT, SHARD_DAMAGE, SHARD_SPREAD, false);
+    // Eviscerate: the wind-up is spent here and nowhere else. Twenty-five shards inside a
+    // eighteen-pixel footprint is the whole barrage landing on one body instead of six of it.
+    const charge = s.chargeAtCast;
+    s.chargeAtCast = 0;
+    const spread = Phaser.Math.Linear(SHARD_SPREAD, EVIS_TIGHT_SPREAD, charge);
+    this.throwVolley(owner, tx, ty, SHARD_COUNT, SHARD_DAMAGE, spread, false);
     this.avatar(owner)?.play('slam', Math.atan2(ty - f.y, tx - f.x));
-    Sfx.playAt('crystal-shatter', f.x, { rate: 0.85, volume: 0.9 });
+    Sfx.playAt('crystal-shatter', f.x, { rate: 0.85 + charge * 0.4, volume: 0.9 });
+    if (charge > 0.15) {
+      this.api.showFloatingText(f.x, f.y - 78,
+        charge >= 0.995 ? '⛓ EVISCERATE' : `⛓ EVISCERATE ${Math.round(charge * 100)}%`,
+        this.hex(BND.goldLit));
+    }
 
     // The tithe. Three prices, chosen by the god, and none of them ever comes off again.
     const roll = Math.floor(Math.random() * 3);
@@ -573,9 +794,17 @@ export class BindKit {
   doIdol(owner: Owner, tx: number, ty: number): void {
     const f = this.fighter(owner);
     if (!this.alive(f)) { this.refund(f, 'bind-idol'); return; }
-    if (this.turned(owner)) { this.refuse(owner, 'bind-idol'); return; }
+    if (this.refused(owner, 'bind-idol')) return;
     this.ensureLayers();
     this.ensureAvatars();
+
+    // Cult of the Broken God. Once there is something to worship, the key stops raising idols
+    // and starts finding people to stand in front of them — which is the only way the idol's
+    // bill ever gets paid by somebody other than you.
+    if (this.up(owner, 'r') && this.idols[owner] && this.cultCount(owner) < CULT_MAX) {
+      this.summonCultist(owner);
+      return;
+    }
 
     this.idols[owner] = {
       owner,
@@ -600,7 +829,7 @@ export class BindKit {
   doProtection(owner: Owner): void {
     const f = this.fighter(owner);
     if (!this.alive(f)) { this.refund(f, 'bind-protection'); return; }
-    if (this.turned(owner)) { this.refuse(owner, 'bind-protection'); return; }
+    if (this.refused(owner, 'bind-protection')) return;
     this.ensureLayers();
     this.ensureAvatars();
 
@@ -646,7 +875,7 @@ export class BindKit {
   doTreachery(owner: Owner): void {
     const f = this.fighter(owner);
     if (!this.alive(f)) { this.refund(f, 'bind-treachery'); return; }
-    if (this.turned(owner)) { this.refuse(owner, 'bind-treachery'); return; }
+    if (this.refused(owner, 'bind-treachery')) return;
     this.ensureLayers();
     this.ensureAvatars();
     const s = this.side(owner);
@@ -656,23 +885,37 @@ export class BindKit {
     s.nextSwipeAt = this.now + 700;
     s.nextLaserAt = this.now + 200;
     s.nextBlastAt = this.now + 1200;
+    // The beam and the wind-up both die on the press — the hands are not yours for fifteen seconds.
+    s.firingUntil = 0;
+    s.chargeStartedAt = 0;
 
     this.avatar(owner)?.play('raise');
     this.avatar(owner)?.setChannelling(true);
     this.fx(owner).wrath(this.eyeX, EYE_Y);
+    this.fx(owner).chainDown(this.centreX, this.centreY, this.corners());
     this.api.scene.cameras.main.shake(700, 0.008);
     this.api.showFloatingText(f.x, f.y - 70, '⛓ THE GOD IS AWAKE', this.hex(BND.goldLit));
     Sfx.playAt('ghost-wail', f.x, { rate: 0.55, volume: 1 });
     Sfx.playAt('judgement', f.x, { rate: 0.7, volume: 0.85 });
+    Sfx.playAt('chain', f.x, { rate: 0.5, volume: 1 });
+
+    // Awakening: every convert this side owns comes out from under its hood at once.
+    if (this.up(owner, 'q')) this.awakenCult(owner);
+
+    // Whatever is still alive to be taken. A second ultimate cannot be bought with a limb the
+    // god removed the first time.
+    const left = SACRIFICE_SLOTS.filter((slot) => !s.sacrificed.includes(slot.key));
+    if (!left.length) return;
 
     if (owner === 'player') {
       s.pendingSacrifice = true;
+      s.sacrificeAskedAt = this.now;
       this.sacrificeClickArmed = false;
-      this.showPrompt();
+      this.showPrompt(left);
     } else {
       // The bot pays immediately and at random, so the ability costs it the same thing it
       // costs a player: one of the four, gone.
-      const slot = SACRIFICE_SLOTS[Math.floor(Math.random() * SACRIFICE_SLOTS.length)];
+      const slot = left[Math.floor(Math.random() * left.length)];
       this.takeSacrifice('npc', slot.id, slot.key);
     }
   }
@@ -680,7 +923,7 @@ export class BindKit {
   private takeSacrifice(owner: Owner, abilityId: string, key: string): void {
     const s = this.side(owner);
     s.pendingSacrifice = false;
-    s.sacrificed = key;
+    if (!s.sacrificed.includes(key)) s.sacrificed.push(key);
     this.hidePrompt();
     const f = this.fighter(owner);
     if (!this.alive(f)) return;
@@ -690,19 +933,205 @@ export class BindKit {
     Sfx.playAt('chain', f.x, { rate: 0.6, volume: 1 });
   }
 
-  private showPrompt(): void {
-    if (this.prompt) { this.prompt.setVisible(true); return; }
+  private showPrompt(left: { id: string; key: string }[]): void {
+    this.hidePrompt();
     const { width, height } = this.api.scene.scale;
+    this.promptKeys = left.map((slot) => slot.key).join(' / ');
+    this.promptReady = false;
     this.prompt = this.api.scene.add.text(width / 2, height - 96,
-      'THE GOD TAKES A LIMB — press Click / E / R / F to give one up', {
+      this.promptText(false), {
         fontFamily: 'monospace', fontSize: '17px', fontStyle: 'bold',
         color: this.hex(BND.goldLit), backgroundColor: '#160a26', padding: { x: 12, y: 7 },
       }).setOrigin(0.5).setScrollFactor(0).setDepth(30);
   }
 
+  private promptText(ready: boolean): string {
+    return ready
+      ? `THE GOD TAKES A LIMB — press ${this.promptKeys} to give one up`
+      : 'THE GOD TAKES A LIMB — it is deciding what to ask for…';
+  }
+
+  /** Flips the banner out of its grace wording. Called every frame; only redraws on the change. */
+  private setPromptReady(ready: boolean): void {
+    if (!this.prompt || ready === this.promptReady) return;
+    this.promptReady = ready;
+    this.prompt.setText(this.promptText(ready));
+  }
+
   private hidePrompt(): void {
     this.prompt?.destroy();
     this.prompt = null;
+    this.promptReady = false;
+  }
+
+  // ── The cult ───────────────────────────────────────────────────────────────
+
+  /**
+   * A convert, walked in from the edge of the room.
+   *
+   * They are not a summon in the usual sense: nothing kills them, nothing times them out, and
+   * they never touch the enemy until the ultimate. What they do is *stand in the ring*, which is
+   * the one job in this element nobody wants, and take a twelfth of the god's bill each while
+   * they are at it. Three of them and the idol pays for itself; three of them and the anger bar
+   * fills at roughly two-thirds the rate it did.
+   */
+  private summonCultist(owner: Owner): void {
+    const f = this.fighter(owner);
+    const idol = this.idols[owner];
+    const seed = Math.random() * 999;
+    // They arrive at the idol they are being given to, offset so they never land on each other.
+    const a = Math.random() * TAU;
+    const x = Phaser.Math.Clamp((idol?.x ?? f.x) + Math.cos(a) * CULT_ORBIT, this.left, this.right);
+    const y = Phaser.Math.Clamp((idol?.y ?? f.y) + Math.sin(a) * CULT_ORBIT, this.top, this.bottom);
+    this.cultists.push({
+      owner, x, y, seed,
+      awakened: false,
+      nextVolleyAt: 0,
+      nextDashAt: 0,
+      dash: null,
+    });
+
+    this.fx(owner).cultistRise(x, y);
+    this.avatar(owner)?.play('raise');
+    const n = this.cultCount(owner);
+    this.api.showFloatingText(f.x, f.y - 66,
+      `⛓ CULTIST ${n}/${CULT_MAX} · −${Math.round(CULT_ANGER_CUT * n * 100)}% ANGER`,
+      this.hex(BND.goldLit));
+    Sfx.playAt('incantation', x, { rate: 0.55, volume: 0.9 });
+    Sfx.playAt('chain', x, { rate: 0.9, volume: 0.55 });
+  }
+
+  /** Q+ — the hoods come off and the cursor takes over. */
+  private awakenCult(owner: Owner): void {
+    const cult = this.cult(owner);
+    if (!cult.length) return;
+    for (let i = 0; i < cult.length; i++) {
+      const c = cult[i];
+      c.awakened = true;
+      c.dash = null;
+      c.nextVolleyAt = this.now + 500 + i * 320;
+      c.nextDashAt = this.now + 1400 + i * 700;
+      this.fx(owner).cultistAwaken(c.x, c.y);
+    }
+    const f = this.fighter(owner);
+    if (this.alive(f)) {
+      this.api.showFloatingText(f.x, f.y - 88, '👁️ THE CULT AWAKENS', this.hex(BND.goldLit));
+    }
+    Sfx.playAt('holy-chord', this.eyeX, { rate: 0.5, volume: 1 });
+  }
+
+  /**
+   * The end of the ultimate. There is no dismissal here and no expiry — every awakened convert
+   * puts a shard of oblivion into its own chest, which is the price of having been allowed to
+   * see. A cult that never woke up simply keeps standing in the ring.
+   */
+  private sacrificeCult(owner: Owner): void {
+    for (let i = this.cultists.length - 1; i >= 0; i--) {
+      const c = this.cultists[i];
+      if (c.owner !== owner || !c.awakened) continue;
+      this.cultists.splice(i, 1);
+      this.fx(owner).cultistStab(c.x, c.y);
+      Sfx.playAt('crystal-shatter', c.x, { rate: 0.55, volume: 0.7 });
+    }
+  }
+
+  private updateCultists(delta: number): void {
+    const dt = delta / 1000;
+    for (const c of this.cultists) {
+      const owner = c.owner;
+      const s = this.side(owner);
+      const f = this.fighter(owner);
+      const idol = this.idols[owner];
+
+      if (c.dash) {
+        this.stepCultistDash(c, dt);
+        continue;
+      }
+
+      // Where it is trying to be. Awakened, that is wherever the cursor is; hooded, it is the
+      // faith ring — and only the summoner's own body if there is nothing to worship.
+      const wander = Math.sin(this.vizT * 0.9 + c.seed) * CULT_ORBIT * 0.5;
+      const wobble = Math.cos(this.vizT * 0.7 + c.seed * 1.4) * CULT_ORBIT * 0.5;
+      let gx: number;
+      let gy: number;
+      if (c.awakened) {
+        gx = s.aimX + wander;
+        gy = s.aimY + wobble;
+      } else if (idol) {
+        // Inside the ring on purpose — a cultist standing on the rim feeds nothing.
+        gx = idol.x + wander;
+        gy = idol.y + wobble;
+      } else {
+        gx = (this.alive(f) ? f.x : c.x) + wander;
+        gy = (this.alive(f) ? f.y : c.y) + wobble;
+      }
+
+      const d = Phaser.Math.Distance.Between(c.x, c.y, gx, gy);
+      if (d > 4) {
+        const step = Math.min(d, CULT_SPEED_PX * dt * (c.awakened ? 1.5 : 1));
+        c.x += ((gx - c.x) / d) * step;
+        c.y += ((gy - c.y) / d) * step;
+      }
+      c.x = Phaser.Math.Clamp(c.x, this.left, this.right);
+      c.y = Phaser.Math.Clamp(c.y, this.top, this.bottom);
+
+      if (!c.awakened) continue;
+
+      const victims = this.targetsOf(owner);
+      if (!victims.length) continue;
+
+      // Three shards, thrown badly. The spread is the ability — a convert with a god's weapon
+      // and none of a god's aim is a threat you have to be unlucky to walk into.
+      if (this.now >= c.nextVolleyAt) {
+        c.nextVolleyAt = this.now + AWK_VOLLEY_MS + Math.random() * 600;
+        const v = victims[Math.floor(Math.random() * victims.length)];
+        this.throwVolley(owner, v.x, v.y, AWK_SHARDS, AWK_SHARD_DAMAGE, AWK_SHARD_SPREAD, false,
+          { x: c.x, y: c.y });
+        Sfx.playAt('crystal-shatter', c.x, { rate: 1.25, volume: 0.45 });
+      }
+
+      // The charge. It runs *through* the target and out the far side, and the cursor pulls it
+      // back afterwards on its own — there is no return leg here because there does not need
+      // to be one.
+      if (this.now >= c.nextDashAt) {
+        c.nextDashAt = this.now + AWK_DASH_MS + Math.random() * 900;
+        const v = victims[Math.floor(Math.random() * victims.length)];
+        const ang = Math.atan2(v.y - c.y, v.x - c.x);
+        c.dash = {
+          tx: Phaser.Math.Clamp(v.x + Math.cos(ang) * AWK_DASH_OVERSHOOT, this.left, this.right),
+          ty: Phaser.Math.Clamp(v.y + Math.sin(ang) * AWK_DASH_OVERSHOOT, this.top, this.bottom),
+          hit: [],
+          lastX: c.x,
+          lastY: c.y,
+        };
+        Sfx.playAt('space-slash', c.x, { rate: 1.1, volume: 0.6 });
+      }
+    }
+  }
+
+  private stepCultistDash(c: Cultist, dt: number): void {
+    const dash = c.dash;
+    if (!dash) return;
+    const d = Phaser.Math.Distance.Between(c.x, c.y, dash.tx, dash.ty);
+    const step = Math.min(d, AWK_DASH_SPEED * dt);
+    if (d > 0.5) {
+      c.x += ((dash.tx - c.x) / d) * step;
+      c.y += ((dash.ty - c.y) / d) * step;
+    }
+
+    // Swept, not sampled: at 780px/s a per-frame circle test would walk straight through
+    // somebody standing between two frames' worth of positions.
+    for (const t of this.targetsOf(c.owner)) {
+      if (dash.hit.includes(t)) continue;
+      if (this.distToSegment(t.x, t.y, dash.lastX, dash.lastY, c.x, c.y) > AWK_DASH_HIT_R) continue;
+      dash.hit.push(t);
+      this.hurt(c.owner, t, AWK_DASH_DAMAGE, false, BND.goldLit);
+    }
+    this.fx(c.owner).cultistDash(dash.lastX, dash.lastY, c.x, c.y);
+    dash.lastX = c.x;
+    dash.lastY = c.y;
+
+    if (d <= step + 0.5) c.dash = null;
   }
 
   // ── The patron ─────────────────────────────────────────────────────────────
@@ -717,8 +1146,16 @@ export class BindKit {
     s.nextSwipeAt = this.now + 500;
     s.nextLaserAt = this.now;
     s.nextBlastAt = this.now + 800;
-    // Everything it was doing on your behalf stops immediately.
+    // Everything it was doing on your behalf stops immediately — including, if a starving idol
+    // managed to top the bar out mid-ultimate, the ultimate. The converts still pay for having
+    // been woken; the god turning around is not a refund.
     s.firingUntil = 0;
+    s.chargeStartedAt = 0;
+    if (s.awakeUntil) {
+      s.awakeUntil = 0;
+      this.avatar(owner)?.setChannelling(false);
+      this.sacrificeCult(owner);
+    }
     this.fx(owner).wrath(this.eyeX, EYE_Y);
     this.api.scene.cameras.main.shake(900, 0.014);
     this.api.scene.cameras.main.flash(220, 190, 40, 30);
@@ -738,6 +1175,39 @@ export class BindKit {
       if (this.turned(owner)) continue;
       s.anger = Math.max(0, s.anger - ANGER_DECAY * dt);
     }
+  }
+
+  /**
+   * Eviscerate winding up. The wind-up is billed by the second rather than on the release, so a
+   * charge abandoned halfway still cost something — the god was already listening.
+   */
+  private updateCharge(delta: number): void {
+    const dt = delta / 1000;
+    for (const owner of BOTH) {
+      const s = this.side(owner);
+      if (!s.chargeStartedAt) continue;
+      const f = this.fighter(owner);
+      if (!this.alive(f) || this.turned(owner) || this.chained(owner)) {
+        s.chargeStartedAt = 0;
+        continue;
+      }
+      this.addAnger(owner, EVIS_ANGER_RATE * dt);
+    }
+  }
+
+  /**
+   * The four chains, holding. Applied *after* the scene has already moved the body this frame,
+   * which is the only ordering in which a movement lock actually locks anything — pushing on
+   * the velocity would just fight the input for the whole fifteen seconds.
+   */
+  private holdChained(owner: Owner, delta: number): void {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    const k = Math.min(1, delta / CHAIN_LERP_MS);
+    f.x = Phaser.Math.Linear(f.x, this.centreX, k);
+    f.y = Phaser.Math.Linear(f.y, this.centreY, k);
+    const body = f.body as Phaser.Physics.Arcade.Body | null;
+    body?.setVelocity(0, 0);
   }
 
   /**
@@ -811,9 +1281,15 @@ export class BindKit {
 
   // ── Shards ─────────────────────────────────────────────────────────────────
 
+  /**
+   * `from` overrides where the shards leave: the god throws everything out of the eye, but an
+   * awakened cultist throws its own, and a volley that fell out of the sky would read as the
+   * patron's rather than as theirs.
+   */
   private throwVolley(
     owner: Owner, tx: number, ty: number,
     count: number, damage: number, spread: number, turned: boolean,
+    from?: { x: number; y: number },
   ): void {
     for (let i = 0; i < count; i++) {
       const a = Math.random() * TAU;
@@ -821,8 +1297,8 @@ export class BindKit {
       const px = Phaser.Math.Clamp(tx + Math.cos(a) * d, this.left, this.right);
       const py = Phaser.Math.Clamp(ty + Math.sin(a) * d, this.top, this.bottom);
       // They all leave the eye, fanned across its width, so a volley reads as coming *down*.
-      const ox = this.eyeX + (Math.random() - 0.5) * 150;
-      const oy = EYE_Y + 14 + Math.random() * 20;
+      const ox = from ? from.x + (Math.random() - 0.5) * 16 : this.eyeX + (Math.random() - 0.5) * 150;
+      const oy = from ? from.y - 8 + (Math.random() - 0.5) * 12 : EYE_Y + 14 + Math.random() * 20;
       this.shards.push({
         owner, x: ox, y: oy, tx: px, ty: py,
         ang: Math.atan2(py - oy, px - ox),
@@ -867,14 +1343,41 @@ export class BindKit {
     for (const owner of BOTH) {
       const s = this.side(owner);
       const f = this.fighter(owner);
-      const firing = this.now < s.firingUntil && this.alive(f) && !s.overheated && !this.turned(owner);
+      const held = this.now < s.firingUntil && this.alive(f)
+        && !this.turned(owner) && !this.chained(owner);
+      // Over-rage. The heat bar stops being a limit and becomes a meter: the beam keeps its
+      // hottest tick rate for as long as the button is down, and the two things it used to be
+      // paid for with — the anger and the stop — are replaced by a steady 2 HP a second and an
+      // anger climb that does not slow down or top out.
+      const overrage = held && s.overheated && this.up(owner, 'click');
+      s.overrage = overrage;
+      if (overrage) {
+        s.heat = 1;
+        s.overrageDebt += OVERRAGE_SELF_DPS * dt;
+        // Cashed in whole points so it lands as hits rather than as a per-frame trickle.
+        if (s.overrageDebt >= 1) {
+          const bite = Math.floor(s.overrageDebt);
+          s.overrageDebt -= bite;
+          f.applySelfDamage(bite);
+        }
+        this.addAnger(owner, OVERRAGE_ANGER_RATE * dt);
+        if (this.now >= s.nextBeamTickAt) {
+          s.nextBeamTickAt = this.now + BEAM_TICK_HOT_MS;
+          this.beamTick(owner);
+        }
+        continue;
+      }
+      s.overrageDebt = 0;
+      const firing = held && !s.overheated;
 
       if (firing) {
         s.heat = Math.min(1, s.heat + dt / HEAT_RISE_S);
         if (s.heat >= 1) {
-          // Topped out. Twenty anger, and nothing until the last of it has bled off.
+          // Topped out. Twenty anger, and nothing until the last of it has bled off — unless
+          // Over-rage is equipped, in which case the beam is not cut and next frame's held
+          // button walks straight into the branch above with no gap in the light.
           s.overheated = true;
-          s.firingUntil = 0;
+          if (!this.up(owner, 'click')) s.firingUntil = 0;
           this.addAnger(owner, OVERHEAT_ANGER, 'OVERHEAT');
           this.api.showFloatingText(f.x, f.y - 58, '🔥 OVERHEATED', this.hex(BND.heat));
           Sfx.playAt('error-popup', f.x, { rate: 0.7, volume: 0.9 });
@@ -920,16 +1423,25 @@ export class BindKit {
       if (this.now < idol.nextTickAt) continue;
       idol.nextTickAt += IDOL_TICK_MS;
 
-      // Faith in, faith out. Anyone from the summoning side standing in the ring feeds it.
+      // Faith in, faith out. Standing in the ring feeds it; step out and it burns what it stored.
+      // A cultist in the ring is worth a third of a body — three of them exactly cancel the
+      // drain and the idol stops needing you at all, which is the entire point of the cult.
       const f = this.fighter(owner);
       const fed = this.alive(f) && Phaser.Math.Distance.Between(f.x, f.y, idol.x, idol.y) <= IDOL_R;
-      if (fed) {
-        idol.faith = Math.min(IDOL_FAITH_MAX, idol.faith + 1);
-        this.fx(owner).offering(f.x, f.y);
+      let flock = 0;
+      for (const c of this.cultists) {
+        if (c.owner !== owner) continue;
+        if (Phaser.Math.Distance.Between(c.x, c.y, idol.x, idol.y) > IDOL_R) continue;
+        flock++;
+        this.fx(owner).offering(c.x, c.y);
       }
-      idol.faith = Math.max(0, idol.faith - 1);
+      const swing = (fed ? 1 : -1) + flock * CULT_FAITH_SHARE;
+      idol.faith = Phaser.Math.Clamp(idol.faith + swing, 0, IDOL_FAITH_MAX);
+      if (fed) this.fx(owner).offering(f.x, f.y);
 
-      if (idol.faith > 0) {
+      // A fraction of a point is neither worship nor neglect: the volleys want a whole one, and
+      // the starvation bill only starts once there is nothing left in it at all.
+      if (idol.faith >= 1) {
         idol.emptySince = 0;
         const turned = this.turned(owner);
         const victims = this.godVictims(owner, turned);
@@ -937,6 +1449,14 @@ export class BindKit {
           const v = victims[Math.floor(Math.random() * victims.length)];
           this.throwVolley(owner, v.x, v.y, IDOL_VOLLEY, IDOL_SHARD_DAMAGE, SHARD_SPREAD * 0.6, turned);
         }
+        continue;
+      }
+
+      // The gap. A cult too small to hold the idol drags it down in thirds rather than in whole
+      // points, and it would be a lie to start billing for an empty idol that still has faith in
+      // it — this band is the "drains a little slower" the cult is actually paying for.
+      if (idol.faith > 0) {
+        idol.emptySince = 0;
         continue;
       }
 
@@ -985,7 +1505,9 @@ export class BindKit {
       if (!f) continue;
       if (!this.isBind(owner)) { f.bindIncomingMult = 1; this.setOutgoing(f, 1); continue; }
       f.bindIncomingMult = TAX_VULN_STEP ** s.taxVuln;
-      this.setOutgoing(f, TAX_STEP ** s.taxWeak);
+      // Chosen Vessel rides on the same multiplier the tithe eats out of — one writer, so a
+      // vessel with two debts on it still lands on exactly the number both of them agreed to.
+      this.setOutgoing(f, (TAX_STEP ** s.taxWeak) * (1 + VESSEL_STEP * this.vesselHexes(owner)));
     }
   }
 
@@ -996,7 +1518,7 @@ export class BindKit {
     const playerIs = this.isBind('player');
     const npcIs = this.isBind('npc');
     const anyState = this.shards.length || this.marks.length || this.sprays.length
-      || this.idols.player || this.idols.npc || this.appliedOut.size;
+      || this.cultists.length || this.idols.player || this.idols.npc || this.appliedOut.size;
     if (!playerIs && !npcIs && !anyState) return;
 
     this.ensureLayers();
@@ -1004,8 +1526,10 @@ export class BindKit {
     this.vizT += delta / 1000;
 
     this.updatePatron(delta);
+    this.updateCharge(delta);
     this.updateBeam(delta);
     this.updateIdols();
+    this.updateCultists(delta);
     this.updateShards(delta);
     this.updateMarks();
     this.updateTithes();
@@ -1017,9 +1541,18 @@ export class BindKit {
         this.runGod(owner, true);
       } else if (this.now < s.awakeUntil) {
         this.runGod(owner, false);
+        this.holdChained(owner, delta);
       } else if (s.awakeUntil) {
         s.awakeUntil = 0;
         this.avatar(owner)?.setChannelling(false);
+        // The chains come off, the converts pay for what they were shown, and the bill for
+        // fifteen seconds of an open sky comes due all at once: the bar goes straight to the top.
+        this.sacrificeCult(owner);
+        const f = this.fighter(owner);
+        if (this.alive(f)) {
+          this.api.showFloatingText(f.x, f.y - 82, '⛓ THE SKY CLOSES', this.hex(BND.wrath));
+        }
+        this.beginWrath(owner);
       }
       if (!turned && s.wrathUntil && this.now >= s.wrathUntil) {
         s.wrathUntil = 0;
@@ -1055,6 +1588,27 @@ export class BindKit {
       const k = Phaser.Math.Clamp(1 - (m.landsAt - this.now) / AWAKE_BLAST_TELL_MS, 0, 1);
       darkMark(g, this.col(m.owner), m.x, m.y, AWAKE_BLAST_R, 0.95, k, this.vizT);
     }
+
+    // The leashes. One run of chain per convert, slack while they are worshipping and pulled
+    // taut the moment they are awake and taking orders — the link is the ability's whole tell.
+    for (const c of this.cultists) {
+      const f = this.fighter(c.owner);
+      if (!this.alive(f)) continue;
+      chainRun(g, this.col(c.owner), f.x, f.y + 6, c.x, c.y + 4,
+        0.75, c.awakened ? 0.85 : 0.25, this.vizT, c.seed);
+    }
+
+    // The footprint the barrage is currently aimed to land in. Drawn on the floor because the
+    // charge buys a *place*, and a bar over the head cannot show a place.
+    for (const owner of BOTH) {
+      const s = this.side(owner);
+      if (!s.chargeStartedAt) continue;
+      const k = this.chargeOf(owner);
+      spreadReticle(g, this.col(owner),
+        Phaser.Math.Clamp(s.aimX, this.left, this.right),
+        Phaser.Math.Clamp(s.aimY, this.top, this.bottom),
+        Phaser.Math.Linear(SHARD_SPREAD, EVIS_TIGHT_SPREAD, k), 0.95, k, this.vizT);
+    }
   }
 
   private paintAir(): void {
@@ -1065,7 +1619,14 @@ export class BindKit {
     for (const owner of BOTH) {
       const idol = this.idols[owner];
       if (!idol) continue;
-      idolStatue(g, this.col(owner), idol.x, idol.y, 1, idol.faith, IDOL_FAITH_MAX, this.vizT);
+      // Floored: a cult holding an idol at 3⅓ faith must not light a fourth bead for the third.
+      idolStatue(g, this.col(owner), idol.x, idol.y, 1, Math.floor(idol.faith), IDOL_FAITH_MAX, this.vizT);
+    }
+
+    // Sorted down the screen so a cultist standing behind another is drawn behind it.
+    for (const c of [...this.cultists].sort((a, b) => a.y - b.y)) {
+      cultistFigure(g, this.col(c.owner), c.x, c.y, 1,
+        { awakened: c.awakened, t: this.vizT, seed: c.seed, lean: c.dash ? 0.6 : 0 });
     }
 
     for (const sh of this.shards) {
@@ -1079,7 +1640,14 @@ export class BindKit {
       const f = this.fighter(owner);
       if (!this.alive(f)) continue;
 
+      // Chosen Vessel goes under the hexes, so the rungs read as coming off the ward itself.
+      const hexes = this.vesselHexes(owner);
+      if (hexes) vesselHalo(g, this.col(owner), f.x, f.y, hexes, 0.9, this.vizT);
       if (s.ward) hexWard(g, this.col(owner), f.x, f.y, 34, 0.9, s.ward.charges, this.vizT);
+      if (s.overrage) overrageAura(g, this.col(owner), f.x, f.y, 0.95, this.vizT);
+      if (s.chargeStartedAt) {
+        eviscerateCharge(g, this.col(owner), f.x, f.y, this.chargeOf(owner), 0.95, this.vizT);
+      }
 
       // The heat bar, sitting above the health bar. Only ever shown when there is heat in it.
       if (s.heat > 0.01 || s.overheated) {
@@ -1156,6 +1724,17 @@ export class BindKit {
       }
     }
 
+    // ── The binding ──
+    // Four chains out of the corners of the room, holding the summoner in the middle of it for
+    // as long as the sky is open. Drawn over everything, because it is the reason nothing else
+    // in the kit is going to answer.
+    for (const owner of BOTH) {
+      if (!this.chained(owner)) continue;
+      const f = this.fighter(owner);
+      if (!this.alive(f)) continue;
+      arenaBinding(g, this.col(owner), f.x, f.y, this.corners(), 0.9, 0.92, this.vizT);
+    }
+
     // ── The beam ──
     for (const owner of BOTH) {
       const s = this.side(owner);
@@ -1222,14 +1801,33 @@ export class BindKit {
 
     this.api.setStatusIndicator('bind-awake', playerIs && this.now < s.awakeUntil ? {
       name: 'God of Treachery', emoji: '🌌', color: BND.iris, priority: 131,
-      description: 'The sky is open. Shard volleys, claw swipes, laser sprays and beams of dark light, all of them free, for as long as this lasts.',
+      description: 'The sky is open. Shard volleys, claw swipes, laser sprays and beams of dark light, all of them free — but four chains out of the corners of the arena have you pinned in the middle of it, you cannot cast a thing while it runs, and the moment it closes the patron\'s anger is at the top of the bar.',
       until: s.awakeUntil,
     } : null);
 
+    const cult = this.cultCount('player');
+    this.api.setStatusIndicator('bind-cult', playerIs && cult > 0 ? {
+      name: 'Cult of the Broken God', emoji: '🕯️', color: BND.goldLit, priority: 132,
+      description: `${cult} convert${cult > 1 ? 's' : ''} chained to you. Anger comes ${Math.round(CULT_ANGER_CUT * cult * 100)}% cheaper and you move ${Math.round(CULT_SPEED * cult * 100)}% faster, and each one standing inside a faith ring pays a third of what the idol costs — three of them and it never needs you again.`,
+      count: cult, suffix: `/${CULT_MAX}`,
+    } : null);
+
+    const hexes = this.vesselHexes('player');
+    this.api.setStatusIndicator('bind-vessel', playerIs && hexes > 0 ? {
+      name: 'Chosen Vessel', emoji: '✨', color: BND.gold, priority: 133,
+      description: `The hexes are not only armour. ${Math.round(VESSEL_STEP * hexes * 100)}% more speed and ${Math.round(VESSEL_STEP * hexes * 100)}% more damage while ${hexes} of them still stand — and it drops a rung with every hit they eat.`,
+      count: hexes,
+    } : null);
+
+    this.api.setStatusIndicator('bind-overrage', playerIs && s.overrage ? {
+      name: 'Over-rage', emoji: '🔥', color: BND.wrath, priority: 5,
+      description: `The beam is being held past the point the patron said stop. It keeps its fastest tick rate for as long as the button is down, and it costs ${OVERRAGE_SELF_DPS} HP and ${OVERRAGE_ANGER_RATE} anger every second you keep it there.`,
+    } : null);
+
     const taxes = s.taxSpeed + s.taxVuln + s.taxWeak;
-    this.api.setStatusIndicator('bind-tithe', playerIs && (taxes > 0 || s.sacrificed) ? {
+    this.api.setStatusIndicator('bind-tithe', playerIs && (taxes > 0 || s.sacrificed.length) ? {
       name: 'Tithe', emoji: '⛓️', color: BND.wrathDeep, priority: 4,
-      description: `What the god has already taken: ${s.taxSpeed} × speed, ${s.taxVuln} × vulnerability, ${s.taxWeak} × damage${s.sacrificed ? `, and your ${s.sacrificed} slot` : ''}. None of it comes back.`,
+      description: `What the god has already taken: ${s.taxSpeed} × speed, ${s.taxVuln} × vulnerability, ${s.taxWeak} × damage${s.sacrificed.length ? `, and your ${s.sacrificed.join(' and ')} slot${s.sacrificed.length > 1 ? 's' : ''}` : ''}. None of it comes back.`,
       count: taxes,
     } : null);
   }
@@ -1247,7 +1845,11 @@ export class BindKit {
 
   private speedMult(owner: Owner): number {
     if (!this.isBind(owner)) return 1;
-    return TAX_STEP ** this.side(owner).taxSpeed;
+    // The tithe takes, the cult and the hexes give back. All three are read from here so the
+    // pulled multiplier is the only place any of them exists.
+    return (TAX_STEP ** this.side(owner).taxSpeed)
+      * (1 + CULT_SPEED * this.cultCount(owner))
+      * (1 + VESSEL_STEP * this.vesselHexes(owner));
   }
 
   /** 0–100. The bot's whole decision surface. */
@@ -1258,6 +1860,22 @@ export class BindKit {
   /** True while the patron is pointed at that side — nothing it presses will answer. */
   isForsaken(owner: Owner): boolean {
     return this.turned(owner);
+  }
+
+  /** True while the corner chains have that side pinned to the middle of the room. */
+  isChained(owner: Owner): boolean {
+    return this.chained(owner);
+  }
+
+  /**
+   * Converts standing, 0–3 — or **-1** when that side has no Cult of the Broken God at all, which
+   * is what the bot reads to tell "R still has somebody to convert" apart from "R only ever
+   * moves the idol". Without the distinction it would relocate a perfectly good idol every
+   * twenty seconds for a cultist it was never going to get.
+   */
+  cultSize(owner: Owner): number {
+    if (!this.up(owner, 'r')) return -1;
+    return this.cultCount(owner);
   }
 
   /** 0–1. The bot lets go before it tops out, which is the whole skill in the click. */

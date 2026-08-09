@@ -4,7 +4,7 @@ import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
 import {
   BEAST_TONES, HELL_TONES, HUNT, HUNTER_TONES, HuntAura, HuntAvatar, HuntColorFn, HuntForm,
-  HuntFx, HuntTones, MOON_TONES, NPC_TONES, SILVER_TONES,
+  HuntFx, HuntTones, MOON_TONES, NPC_TONES, SILVER_TONES, WEAK_HALF_ANGLE,
 } from './HuntVisuals';
 
 /**
@@ -150,10 +150,7 @@ const ALPHA_CD_MULT = 0.8;
 
 // ── Mastery: Weak Points (passive) ───────────────────────────────────────────
 
-const WEAK_HALF_ANGLE = Phaser.Math.DegToRad(30);
 const WEAK_SPIN_RAD_PER_SEC = 0.9;
-const WEAK_INNER_R = 24;
-const WEAK_OUTER_R = 54;
 const WEAK_DMG_MULT = 2;
 
 // ── Mastery: Beastling (bindable) ────────────────────────────────────────────
@@ -170,20 +167,10 @@ const PUP_FOLLOW_DIST = 46;
 const PUP_AGGRO_RANGE = 420;
 const MOON_SPEED_MULT = 1.35;
 const MOON_DMG_MULT = 1.6;
-const MOON_SCALE = 1.4;
 const PUP_ROAR_SLOW_MULT = 0.8;
 const PUP_ROAR_SLOW_MS = 5000;
 const FETCH_PICKUP_R = 22;
 const FETCH_DELIVER_R = 44;
-
-/** Palette — a warm, friendly brown pup, reddened under a Blood Moon. */
-const PUP_COAT = 0x8b5a2b;
-const PUP_COAT_MOON = 0xa4442c;
-const PUP_BELLY = 0xc99a63;
-const PUP_BELLY_MOON = 0xd07a5e;
-const PUP_MUZZLE = 0xe8cba6;
-const PUP_EAR = 0x6b4423;
-const PUP_EAR_MOON = 0x7d2e22;
 
 /** Alpha's coat: the beast that came out on purpose is ash-grey, not blood-red. */
 const ALPHA_TONES: HuntTones = {
@@ -2085,57 +2072,7 @@ export class HuntKit {
   }
 
   private drawWeakWedge(gfx: Phaser.GameObjects.Graphics, cx: number, cy: number, pulse: number): void {
-    const a0 = this.weakAngle - WEAK_HALF_ANGLE;
-    const a1 = this.weakAngle + WEAK_HALF_ANGLE;
-    gfx.clear();
-    gfx.setPosition(0, 0);
-
-    gfx.fillStyle(0x8b0000, 0.26 + pulse * 0.08);
-    gfx.beginPath();
-    gfx.arc(cx, cy, WEAK_OUTER_R, a0, a1, false);
-    gfx.arc(cx, cy, WEAK_INNER_R, a1, a0, true);
-    gfx.closePath();
-    gfx.fillPath();
-
-    gfx.fillStyle(0xff2222, 0.14 + pulse * 0.10);
-    gfx.beginPath();
-    gfx.arc(cx, cy, WEAK_OUTER_R - 8, a0 + 0.12, a1 - 0.12, false);
-    gfx.arc(cx, cy, WEAK_INNER_R + 3, a1 - 0.12, a0 + 0.12, true);
-    gfx.closePath();
-    gfx.fillPath();
-
-    // The two crust edges, leading one brighter so the sweep direction reads.
-    gfx.lineStyle(2, 0xff6655, 0.85);
-    gfx.beginPath();
-    gfx.moveTo(cx + Math.cos(a1) * WEAK_INNER_R, cy + Math.sin(a1) * WEAK_INNER_R);
-    gfx.lineTo(cx + Math.cos(a1) * WEAK_OUTER_R, cy + Math.sin(a1) * WEAK_OUTER_R);
-    gfx.strokePath();
-    gfx.lineStyle(1, 0xaa2222, 0.55);
-    gfx.beginPath();
-    gfx.moveTo(cx + Math.cos(a0) * WEAK_INNER_R, cy + Math.sin(a0) * WEAK_INNER_R);
-    gfx.lineTo(cx + Math.cos(a0) * WEAK_OUTER_R, cy + Math.sin(a0) * WEAK_OUTER_R);
-    gfx.strokePath();
-
-    gfx.lineStyle(1, 0xff8877, 0.5);
-    for (let i = 0; i <= 4; i++) {
-      const a = a0 + (i / 4) * (a1 - a0);
-      gfx.beginPath();
-      gfx.moveTo(cx + Math.cos(a) * (WEAK_OUTER_R - 6), cy + Math.sin(a) * (WEAK_OUTER_R - 6));
-      gfx.lineTo(cx + Math.cos(a) * WEAK_OUTER_R, cy + Math.sin(a) * WEAK_OUTER_R);
-      gfx.strokePath();
-    }
-
-    // Crosshair pip riding the middle of the slice — the thing you actually aim at.
-    const px = cx + Math.cos(this.weakAngle) * (WEAK_OUTER_R + 5);
-    const py = cy + Math.sin(this.weakAngle) * (WEAK_OUTER_R + 5);
-    gfx.lineStyle(1.5, 0xff4444, 0.75 + pulse * 0.25);
-    gfx.strokeCircle(px, py, 3.5);
-    gfx.beginPath();
-    gfx.moveTo(px - 6, py); gfx.lineTo(px - 2, py);
-    gfx.moveTo(px + 2, py); gfx.lineTo(px + 6, py);
-    gfx.moveTo(px, py - 6); gfx.lineTo(px, py - 2);
-    gfx.moveTo(px, py + 2); gfx.lineTo(px, py + 6);
-    gfx.strokePath();
+    HuntFx.drawWeakWedge(gfx, cx, cy, this.weakAngle, pulse);
   }
 
   private updateWeakPoints(time: number, dt: number): void {
@@ -2407,158 +2344,12 @@ export class HuntKit {
     }
   }
 
-  /**
-   * The pup, drawn from scratch every frame: gait-bobbed legs, floppy ears that lag the
-   * turn, a wagging tail, a blinking face, and a Blood Moon variant that is bigger,
-   * redder, and dripping.
-   */
+  /** The pup. The art lives in HuntVisuals so the info screen can stage the same animal. */
   private drawPup(pup: Beastling, time: number, moon: boolean): void {
-    const g = pup.gfx;
-    g.clear();
-
-    const s = (moon ? MOON_SCALE : 1) * (time < pup.lungeUntil ? 1.12 : 1);
-    const flip = Math.cos(pup.heading) < 0 ? -1 : 1;
-    const cx = pup.x;
-    const bob = Math.sin(pup.gait) * 1.4 * s;
-    const cy = pup.y + bob;
-
-    const coat = moon ? PUP_COAT_MOON : PUP_COAT;
-    const belly = moon ? PUP_BELLY_MOON : PUP_BELLY;
-    const ear = moon ? PUP_EAR_MOON : PUP_EAR;
-
-    g.fillStyle(0x000000, 0.22);
-    g.fillEllipse(cx, pup.y + 13 * s, 26 * s - bob, 7 * s);
-
-    // Tail: four tapering segments curling up off the rump.
-    const wag = Math.sin(pup.tailPhase) * 0.5;
-    let tx = cx - 13 * s * flip;
-    let ty = cy - 4 * s;
-    let tang = (flip > 0 ? Math.PI : 0) - 0.35 * flip + wag;
-    for (let seg = 0; seg < 4; seg++) {
-      const len = (5.2 - seg * 0.8) * s;
-      const nx = tx + Math.cos(tang) * len;
-      const ny = ty + Math.sin(tang) * len;
-      g.lineStyle((5.2 - seg * 0.95) * s, coat, 1);
-      g.beginPath();
-      g.moveTo(tx, ty);
-      g.lineTo(nx, ny);
-      g.strokePath();
-      tx = nx; ty = ny;
-      tang += 0.62 * flip;
-    }
-    g.fillStyle(PUP_MUZZLE, 1);
-    g.fillCircle(tx, ty, 1.9 * s);
-
-    const legPairs: Array<[number, number]> = [
-      [-9 * s * flip, 0], [-6 * s * flip, Math.PI],
-      [7 * s * flip, Math.PI], [10 * s * flip, 0],
-    ];
-    for (const [ox, phase] of legPairs) {
-      const swing = Math.sin(pup.gait * 2 + phase);
-      g.fillStyle(coat, 1);
-      g.fillRoundedRect(cx + ox - 2 * s, cy + 4 * s, 4 * s, (7 + swing * 1.6) * s, 2 * s);
-      g.fillStyle(PUP_MUZZLE, 1);
-      g.fillEllipse(cx + ox, cy + (11.5 + swing * 1.6) * s, 5 * s, 3 * s);
-    }
-
-    g.fillStyle(coat, 1);
-    g.fillEllipse(cx, cy, 30 * s, 19 * s);
-    g.fillStyle(belly, 1);
-    g.fillEllipse(cx, cy + 4 * s, 22 * s, 9 * s);
-    g.fillStyle(ear, 0.55);
-    g.fillEllipse(cx - 5 * s * flip, cy - 5 * s, 9 * s, 5 * s);
-    g.fillEllipse(cx + 6 * s * flip, cy - 4 * s, 6 * s, 4 * s);
-
-    const collarX = cx + 10 * s * flip;
-    g.lineStyle(2.4 * s, 0xaa2233, 1);
-    g.beginPath();
-    g.arc(collarX, cy - 1 * s, 8 * s, flip > 0 ? -1.15 : Math.PI - 1.15, flip > 0 ? 1.15 : Math.PI + 1.15, false);
-    g.strokePath();
-    g.fillStyle(0xffcc44, 1);
-    g.fillCircle(collarX + 2 * s * flip, cy + 7.5 * s, 2.2 * s);
-
-    const hx = cx + 15 * s * flip;
-    const hy = cy - 6 * s + Math.sin(pup.gait) * 0.8 * s;
-
-    const drawEar = (hingeDx: number, swing: number, shade: number, len: number, wide: number) => {
-      const bx = hx + hingeDx * s * flip;
-      const by = hy - 7 * s;
-      const a = Math.PI / 2 + swing;
-      const midX = bx + Math.cos(a) * len * 0.55 * s * flip - wide * 0.3 * s * flip;
-      const midY = by + Math.sin(a) * len * 0.55 * s;
-      const tipX = bx + Math.cos(a) * len * s * flip;
-      const tipY = by + Math.sin(a) * len * s;
-      g.fillStyle(shade, 1);
-      g.beginPath();
-      g.moveTo(bx - wide * 0.5 * s, by);
-      g.lineTo(bx + wide * 0.5 * s, by + 1 * s);
-      g.lineTo(midX + wide * 0.45 * s, midY);
-      g.lineTo(tipX, tipY);
-      g.lineTo(midX - wide * 0.5 * s, midY);
-      g.closePath();
-      g.fillPath();
-      g.fillCircle(tipX, tipY, wide * 0.42 * s);
-    };
-
-    drawEar(-1, pup.earLag * 0.6 - 0.22, 0x4e3018, 12, 7);
-
-    g.fillStyle(coat, 1);
-    g.fillCircle(hx, hy, 10 * s);
-    g.fillStyle(belly, 0.35);
-    g.fillEllipse(hx + 2 * s * flip, hy - 4 * s, 11 * s, 6 * s);
-
-    const mx = hx + 6 * s * flip;
-    const my = hy + 3 * s;
-    g.fillStyle(PUP_MUZZLE, 1);
-    g.fillEllipse(mx, my, 12 * s, 8 * s);
-    g.fillStyle(0x241a12, 1);
-    g.fillEllipse(mx + 4 * s * flip, my - 1 * s, 4 * s, 3 * s);
-
-    const eyeY = hy - 1.5 * s;
-    for (const side of [-1, 1]) {
-      const ex = hx + (side === 1 ? 4.5 : -1.5) * s * flip;
-      if (time < pup.blinkUntil) {
-        g.lineStyle(1.4 * s, 0x241a12, 1);
-        g.beginPath();
-        g.moveTo(ex - 2.2 * s, eyeY); g.lineTo(ex + 2.2 * s, eyeY);
-        g.strokePath();
-        continue;
-      }
-      if (moon) {
-        g.fillStyle(0xff3322, 0.35);
-        g.fillCircle(ex, eyeY, 4.4 * s);
-      }
-      g.fillStyle(moon ? 0x3a0e08 : 0xfdf3e0, 1);
-      g.fillCircle(ex, eyeY, 3 * s);
-      g.fillStyle(moon ? 0xff4433 : 0x241a12, 1);
-      g.fillCircle(ex + 0.5 * s * flip, eyeY, 2 * s);
-      g.fillStyle(0xffffff, 0.95);
-      g.fillCircle(ex + 1.1 * s * flip, eyeY - 1 * s, 0.9 * s);
-    }
-
-    drawEar(-3.5, pup.earLag, ear, 15, 8.5);
-
-    // Carried grenade, clamped in the jaws.
-    if (pup.carrying) {
-      const gx = mx + 8 * s * flip;
-      const gy = my + 3 * s;
-      g.fillStyle(0x3c4a1f, 1);
-      g.fillCircle(gx, gy, 6 * s);
-      g.lineStyle(1.4 * s, 0xff8800, 1);
-      g.strokeCircle(gx, gy, 6 * s);
-      g.fillStyle(0x776655, 1);
-      g.fillRect(gx - 1.2 * s, gy - 9 * s, 2.4 * s, 4 * s);
-      g.fillStyle(0xffdd44, 0.7 + 0.3 * Math.sin(time / 70));
-      g.fillCircle(gx, gy - 9 * s, 2 * s);
-    }
-
-    if (moon) {
-      g.lineStyle(1.5, 0xcc2222, 0.35 + 0.2 * Math.sin(time / 220));
-      g.strokeCircle(cx, cy, 24 * s);
-      g.fillStyle(0xaa1111, 0.7);
-      g.fillCircle(mx + 3 * s * flip, my + 6 * s + (time / 12 % 6), 1.6 * s);
-      g.fillCircle(mx - 2 * s * flip, my + 5 * s + ((time / 15 + 3) % 6), 1.2 * s);
-    }
+    HuntFx.drawBeastling(pup.gfx, pup.x, pup.y, time, moon, {
+      heading: pup.heading, gait: pup.gait, tailPhase: pup.tailPhase, earLag: pup.earLag,
+      blinkUntil: pup.blinkUntil, lungeUntil: pup.lungeUntil, carrying: !!pup.carrying,
+    });
   }
 
   // ── Requirement tracking ───────────────────────────────────────────────────

@@ -15,6 +15,15 @@ type AiState = 'chase' | 'attack';
  */
 const COMA_WORTH_IT = 60;
 
+/**
+ * Psychic: how far ahead the bot throws a Migraine charge. The fuse is 2.5 seconds, but leading
+ * by all of it puts the mark somewhere the target was never really going — 1.4 s lands it just
+ * in front of them, which is close enough to punish a straight line and loose enough to dodge.
+ * `MAX_LEAD` caps the throw in pixels so a dash never drags the charge across the whole arena.
+ */
+const PSYCHIC_BOMB_LEAD_S = 1.4;
+const PSYCHIC_BOMB_MAX_LEAD = 180;
+
 export interface DifficultyConfig {
   level: number;
   label: string;
@@ -237,16 +246,15 @@ export interface NpcAiState {
   /** Turnstiles already up — a second wall would only restart a live one. */
   npcFortuneWall?: boolean;
 
-  // Amber
-  /** The sling is wound up and how far, 0–1. The bot releases when it is worth releasing. */
-  npcAmberSwinging?: boolean;
-  npcAmberCharge?: number;
-  /** Its tyrannosaur is out. Nothing else it owns will spawn while that is true. */
-  npcAmberRex?: boolean;
-  /** Mosquitoes still alive — a second cast on top of a full swarm is wasted. */
-  npcAmberSwarm?: number;
-  /** In something's jaws: the kit owns the body and every cast is refused. */
-  npcAmberHeld?: boolean;
+  // Marrow
+  /** Occupied sockets on the bone bar, 0–5. A sixth cell is refused outright. */
+  npcMarrowCells?: number;
+  /** Mast cells still on their fuse — a second Mastacre on top of a live one is wasted. */
+  npcMarrowMasts?: number;
+  /** The fever, 0–100. High enough and the bot is happy to trade hits. */
+  npcMarrowInflammation?: number;
+  /** Dendricles has transformed: F is a T-cell summon, not a strike. */
+  npcMarrowTcellArmed?: boolean;
 
   // Psychic
   /** Abilities currently sitting in the target's delayed-cast queue — the E/R decision. */
@@ -277,6 +285,10 @@ export interface NpcAiState {
   /** Faith left in its idol, or -1 with none standing — the difference between a turret and a bill. */
   npcBindIdolFaith?: number;
   npcBindWard?: number;
+  /** Chained to the middle of the arena with the sky open — the hands are the god's, not its. */
+  npcBindChained?: boolean;
+  /** Converts standing, or -1 with no cult unlocked. Below the cap, R buys a body, not an idol. */
+  npcBindCult?: number;
 
   // Slime (id: gum)
   /** Solidify threw its hand away — nothing it presses will answer until it grows back. */
@@ -703,8 +715,8 @@ export class NpcOpponent extends Fighter {
     if (this.element.id === 'fortune') {
       return this.doFortuneAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
-    if (this.element.id === 'amber') {
-      return this.doAmberAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    if (this.element.id === 'marrow') {
+      return this.doMarrowAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
     if (this.element.id === 'psychic') {
       return this.doPsychicAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
@@ -958,8 +970,9 @@ export class NpcOpponent extends Fighter {
   ): string | null {
     void target;
     void time;
-    // Forsaken: the god is busy with its own summoner and answers nothing.
-    if (aiState.npcBindForsaken) return null;
+    // Forsaken: the god is busy with its own summoner and answers nothing. Chained is the same
+    // silence from the other direction — the sky is open and the bot's hands are not its own.
+    if (aiState.npcBindForsaken || aiState.npcBindChained) return null;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
     const anger = aiState.npcBindAnger ?? 0;
     const heat = aiState.npcBindHeat ?? 0;
@@ -978,6 +991,14 @@ export class NpcOpponent extends Fighter {
     // An idol is a turret while it is standing on top of you and a bill the moment it is not,
     // so the bot only ever plants one at its own feet — and only while it can afford to be wrong.
     if (!skipSpecials && calm && (aiState.npcBindIdolFaith ?? -1) < 0 && dist < 420) {
+      if (this.castAbility('bind-idol', buildContext(this.x, this.y))) return 'bind-idol';
+    }
+
+    // With the cult unlocked the same key stops asking that question: an idol already standing
+    // means the press buys a permanent body to stand in front of it instead, and three of those
+    // is the difference between an idol that bills and one that pays for itself.
+    const cult = aiState.npcBindCult ?? -1;
+    if (!skipSpecials && cult >= 0 && cult < 3 && (aiState.npcBindIdolFaith ?? -1) >= 0) {
       if (this.castAbility('bind-idol', buildContext(this.x, this.y))) return 'bind-idol';
     }
 
@@ -1017,7 +1038,6 @@ export class NpcOpponent extends Fighter {
     aimY: number,
     aiState: NpcAiState,
   ): string | null {
-    void target;
     void time;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
     const queued = aiState.npcPsychicQueue ?? 0;
@@ -1039,9 +1059,18 @@ export class NpcOpponent extends Fighter {
       if (this.castAbility('psychic-dodge-destiny', buildContext(aimX, aimY))) return 'psychic-dodge-destiny';
     }
 
-    // Free stress and a defensive in one. Only worth it in range, where their misses matter.
+    // The charge. It sits for two and a half seconds before it goes off, so it is thrown where
+    // they are going rather than where they are — dead reckoning off their current velocity,
+    // led by rather less than the full fuse because nobody walks a straight line for that long.
     if (!skipSpecials && dist < 480) {
-      if (this.castAbility('psychic-migraine', buildContext(aimX, aimY))) return 'psychic-migraine';
+      const vel = (target.body as Phaser.Physics.Arcade.Body | null)?.velocity;
+      const vx = vel?.x ?? 0;
+      const vy = vel?.y ?? 0;
+      // Seconds of lead, shortened so the throw itself never exceeds MAX_LEAD pixels.
+      const secs = Math.min(PSYCHIC_BOMB_LEAD_S, PSYCHIC_BOMB_MAX_LEAD / Math.max(1, Math.hypot(vx, vy)));
+      const tx = aimX + vx * secs;
+      const ty = aimY + vy * secs;
+      if (this.castAbility('psychic-migraine', buildContext(tx, ty))) return 'psychic-migraine';
     }
 
     // The engine. Aimed slightly long so the tip does the work whenever the range allows it.
@@ -1118,17 +1147,18 @@ export class NpcOpponent extends Fighter {
   }
 
   /**
-   * Amber. Four of the five are animals, and the tyrannosaur locks the other three out entirely
-   * — so the branch order is really "is the big one out, and if not, is this the moment to spend
-   * it". Everything else is a range question: the stampede is a lane the bot has to be standing
-   * in, the meat wants to land where the target already is, and the swarm is the only thing that
-   * is never a bad idea.
+   * Marrow. There is no aiming decision in the whole element — the cells walk themselves — so
+   * the only thing worth being clever about is the bone bar. Five sockets, and the sixth cast
+   * is refused and refunded rather than queued, which means a bot that spams E ends up with
+   * five macrophages and no way to make a neutrophil. The order below is therefore a
+   * composition: keep one macrophage up for the inflammation upkeep, spend the rest on
+   * neutrophils (which are meant to die and leave webs), and save the last socket for the
+   * T-cell whenever Dendricles has actually transformed.
    *
-   * The sling is not cast here. It is a hold-and-swing, so the AI opens the swing through the
-   * kit (`npcBeginSwing`) and this method only decides when to let go — a full wind-up is worth
-   * nearly three pebbles, so it waits unless the target is about to leave.
+   * Mastacre is exempt from the cap and is simply the biggest button it owns, so it goes off
+   * whenever anything is close enough for five homing bombs to reach.
    */
-  private doAmberAbilities(
+  private doMarrowAbilities(
     target: Fighter,
     buildContext: (tX: number, tY: number) => CastContext,
     time: number,
@@ -1141,39 +1171,49 @@ export class NpcOpponent extends Fighter {
     void target;
     void time;
     void hpRatio;
-    // In something's jaws. Nothing it presses will resolve.
-    if (aiState.npcAmberHeld) return null;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    const rexOut = !!aiState.npcAmberRex;
+    const cells = aiState.npcMarrowCells ?? 0;
+    const full = cells >= 5;
 
-    // ── The sling ──
-    // Released at full charge, or early if the target has already walked out of throwing range.
-    if (aiState.npcAmberSwinging) {
-      const charge = aiState.npcAmberCharge ?? 0;
-      if (charge >= 0.98 || dist > 520) {
-        if (this.castAbility('amber-sling', buildContext(aimX, aimY))) return 'amber-sling';
-      }
-      return null;
+    // ── Q ──
+    // Five mast cells that home and then detonate. They cost no socket, so the only question is
+    // whether it is worth spending: in range it is 125 damage, and out of range it is still a
+    // full fever bar — which is why a bot whose inflammation has run dry casts it anyway.
+    const fever = aiState.npcMarrowInflammation ?? 0;
+    if (!skipSpecials && (aiState.npcMarrowMasts ?? 0) === 0 && (dist < 520 || fever < 30)) {
+      if (this.castAbility('marrow-mastacre', buildContext(aimX, aimY))) return 'marrow-mastacre';
     }
 
-    if (!rexOut && dist < 340) {
-      if (this.castAbility('amber-trex', buildContext(aimX, aimY))) return 'amber-trex';
+    // ── F ──
+    // Armed, it is a T-cell and worth a socket. Unarmed it is a short-range strike that is only
+    // worth pressing in somebody's face, where all five tentacles land and arm the next one.
+    if (aiState.npcMarrowTcellArmed) {
+      if (!full && this.castAbility('marrow-dendricles', buildContext(aimX, aimY))) return 'marrow-dendricles';
+    } else if (dist < 150) {
+      if (this.castAbility('marrow-dendricles', buildContext(aimX, aimY))) return 'marrow-dendricles';
     }
 
-    // The lane is locked in where the bot is standing, so it is only worth casting when the
-    // target is already sharing that band — otherwise it charges through empty floor.
-    if (!skipSpecials && !rexOut && Math.abs(aimY - this.y) < 70) {
-      if (this.castAbility('amber-stampede', buildContext(aimX, aimY))) return 'amber-stampede';
+    if (full) return null;
+
+    // ── E ──
+    // The first socket always goes to a macrophage: it is the only thing in the kit that keeps
+    // the fever up on its own, and everything else in the element scales off that bar.
+    if (cells === 0) {
+      if (this.castAbility('marrow-macrosma', buildContext(aimX, aimY))) return 'marrow-macrosma';
     }
 
-    // Meat, thrown where they are. A standing target gets it stuck to them, which is the whole
-    // upside — so the bot prefers to throw it at somebody who has stopped.
-    if (!skipSpecials && !rexOut && dist < 480) {
-      if (this.castAbility('amber-hunt', buildContext(aimX, aimY))) return 'amber-hunt';
+    // ── R ──
+    // Cheap, fast, hits hardest, and leaves a web where it falls. The bot's default spend.
+    if (!skipSpecials) {
+      if (this.castAbility('marrow-neutralize', buildContext(aimX, aimY))) return 'marrow-neutralize';
     }
+    if (this.castAbility('marrow-macrosma', buildContext(aimX, aimY))) return 'marrow-macrosma';
 
-    if ((aiState.npcAmberSwarm ?? 0) < 2) {
-      if (this.castAbility('amber-mosquitoes', buildContext(aimX, aimY))) return 'amber-mosquitoes';
+    // ── Click ──
+    // Nothing else was ready. An antibody is 12 damage and a permanent mark, and it is the only
+    // thing in the kit the bot can do at range every half second.
+    if (dist < 620) {
+      if (this.castAbility('marrow-antibody', buildContext(aimX, aimY))) return 'marrow-antibody';
     }
     return null;
   }
@@ -2021,18 +2061,16 @@ export class NpcOpponent extends Fighter {
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skipSpecials) {
-      // Soli — the whole-screen performance, worth opening with whenever it is up.
-      if (this.castAbility('soli', buildContext(target.x, target.y))) return 'soli';
-      // Bugle — free tempo, and its cooldown is short enough to keep topped up.
+      // Coda — cash the banked buffs in for a level whenever the ultimate is up.
+      if (this.castAbility('coda', buildContext(target.x, target.y))) return 'coda';
+      // Bugle — tempo, and its cooldown is short enough to keep topped up.
       if (this.castAbility('bugle', buildContext(target.x, target.y))) return 'bugle';
       // Disc Dice — only worth slinging when the player is inside the cut.
       if (dist < 130) {
         if (this.castAbility('disc-dice', buildContext(target.x, target.y))) return 'disc-dice';
       }
-      // Conduct — hang a violin on the player's ground while there is distance to cover.
-      if (dist > 200) {
-        if (this.castAbility('conduct', buildContext(target.x, target.y))) return 'conduct';
-      }
+      // Boombox — dropped underfoot, so it is a self-buff first and a shove second.
+      if (this.castAbility('boombox', buildContext(this.x, this.y))) return 'boombox';
     }
 
     // Default: strike the violin.

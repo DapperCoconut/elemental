@@ -24,6 +24,10 @@ export interface CampaignSlot {
   inventory?: Record<string, number>; // itemId → count
   /** Story beats already shown, so dialogue never replays. */
   seenStoryBeats?: string[];
+  /** Set once `migrateSubterfugeWorld` has run on this slot — it must never run twice. */
+  migratedSubterfugeWorld?: boolean;
+  /** Set once `migrateAmberWorld` has run on this slot — same rule, same reason. */
+  migratedAmberWorld?: boolean;
 }
 
 interface CampaignData {
@@ -38,12 +42,23 @@ interface CampaignData {
  * The id moved to `subterfuge` when the real Quantum element took the name, so a campaign
  * slot written before that has clears filed under ids nothing looks up any more.
  *
- * Rewrites them in place on load. Idempotent, and never clobbers an existing `subterfuge`
- * entry — a slot that somehow has both keeps the newer one and merges the clears in.
+ * Rewrites them in place, never clobbering an existing `subterfuge` entry — a slot that somehow
+ * has both keeps the newer one and merges the clears in.
+ *
+ * **Once per slot, guarded by `migratedSubterfugeWorld`.** `quantum` is a live id again now, so
+ * a rename that runs on every load is a rename that eats new data forever — see the twin guard
+ * in `PlayerData.migrateSubterfugeId`, where exactly that cost Quantum its unlock and its
+ * upgrade.
  */
 function migrateSubterfugeWorld(slot: CampaignSlot): void {
   const OLD = 'quantum';
   const NEW = 'subterfuge';
+
+  // Already been through it — see the same guard in `PlayerData.migrateSubterfugeId`.
+  if (NEW in (slot.fightsCompleted ?? {})
+    || slot.challengesCompleted?.includes(NEW)
+    || slot.gauntletsCompleted?.includes(NEW)) return;
+
   const rename = (id: string): string => (id === OLD || id.startsWith(`${OLD}-`)
     ? NEW + id.slice(OLD.length)
     : id);
@@ -75,6 +90,75 @@ function migrateSubterfugeWorld(slot: CampaignSlot): void {
   }
 }
 
+/**
+ * Amber's world became Marrow's — its fight nodes were `amber-fight-1..5`, its challenge
+ * `amber-challenge`, its story beats `world-enter:amber` and friends, and its three shop items
+ * `preserved-heart` / `amber-plate` / `sap-vial`. The element behind the world was replaced
+ * outright, so a slot written before that has clears and stock filed under ids nothing looks up
+ * any more.
+ *
+ * Same shape as {@link migrateSubterfugeWorld}, including the inventory rename — items are keyed
+ * by item id and the three Amber ones were rethemed along with the world.
+ *
+ * **Once per slot, guarded by `migratedAmberWorld`.** `amber` is not a live world id any more,
+ * unlike `quantum` when that rename landed, so the stamp is belt to the evidence check's braces
+ * rather than the only thing standing between this and eating somebody's data — but the stamp is
+ * still what makes that true, so it ships from day one.
+ */
+function migrateAmberWorld(slot: CampaignSlot): void {
+  const OLD = 'amber';
+  const NEW = 'marrow';
+  const ITEMS: Record<string, string> = {
+    'preserved-heart': 'marrow-graft',
+    'amber-plate': 'callus-plate',
+    'sap-vial': 'febrile-vial',
+  };
+
+  // Already been through it — see the same guard in `migrateSubterfugeWorld`.
+  if (NEW in (slot.fightsCompleted ?? {})
+    || slot.challengesCompleted?.includes(NEW)
+    || slot.gauntletsCompleted?.includes(NEW)) return;
+
+  const rename = (id: string): string => (id === OLD || id.startsWith(`${OLD}-`)
+    ? NEW + id.slice(OLD.length)
+    : id);
+
+  const oldFights = slot.fightsCompleted?.[OLD];
+  if (oldFights) {
+    const merged = new Set([...(slot.fightsCompleted[NEW] ?? []), ...oldFights.map(rename)]);
+    slot.fightsCompleted[NEW] = [...merged];
+    delete slot.fightsCompleted[OLD];
+  }
+
+  const worldLists: Array<string[] | undefined> = [
+    slot.challengesCompleted, slot.gauntletsCompleted,
+  ];
+  for (const list of worldLists) {
+    if (!list) continue;
+    const at = list.indexOf(OLD);
+    if (at < 0) continue;
+    if (list.includes(NEW)) list.splice(at, 1);
+    else list[at] = NEW;
+  }
+
+  if (slot.seenStoryBeats) {
+    // Beat ids are `<kind>:<worldId>` — rewrite only the world half.
+    slot.seenStoryBeats = [...new Set(slot.seenStoryBeats.map((id) => {
+      const colon = id.lastIndexOf(':');
+      return colon < 0 ? id : `${id.slice(0, colon + 1)}${rename(id.slice(colon + 1))}`;
+    }))];
+  }
+
+  if (slot.inventory) {
+    for (const [from, to] of Object.entries(ITEMS)) {
+      const held = slot.inventory[from];
+      if (!held) continue;
+      slot.inventory[to] = (slot.inventory[to] ?? 0) + held;
+      delete slot.inventory[from];
+    }
+  }
+}
+
 function load(): CampaignData {
   try {
     const raw = localStorage.getItem(campaignKey());
@@ -85,12 +169,28 @@ function load(): CampaignData {
         parsed.slots?.[1] ?? null,
         parsed.slots?.[2] ?? null,
       ];
-      for (const slot of slots) if (slot) migrateSubterfugeWorld(slot);
-      return {
+      let migrated = false;
+      for (const slot of slots) {
+        if (!slot) continue;
+        if (!slot.migratedSubterfugeWorld) {
+          migrateSubterfugeWorld(slot);
+          slot.migratedSubterfugeWorld = true;
+          migrated = true;
+        }
+        if (!slot.migratedAmberWorld) {
+          migrateAmberWorld(slot);
+          slot.migratedAmberWorld = true;
+          migrated = true;
+        }
+      }
+      const data: CampaignData = {
         version: 1,
         activeSlot: parsed.activeSlot ?? null,
         slots,
       };
+      // Stamped immediately, so the rename cannot run a second time on a later load.
+      if (migrated) save(data);
+      return data;
     }
   } catch {
     // corrupted — start fresh
@@ -128,7 +228,7 @@ export function setActiveSlot(idx: 0 | 1 | 2): void {
 
 export function createSlot(idx: 0 | 1 | 2, name: string): void {
   const data = load();
-  data.slots[idx] = { name, createdAt: Date.now(), fightsCompleted: {}, challengesCompleted: [], gauntletsCompleted: [], keys: 0, sparks: 0, cheated: false, portalUnlocked: false, inventory: {} };
+  data.slots[idx] = { name, createdAt: Date.now(), fightsCompleted: {}, challengesCompleted: [], gauntletsCompleted: [], keys: 0, sparks: 0, cheated: false, portalUnlocked: false, inventory: {}, migratedSubterfugeWorld: true, migratedAmberWorld: true };
   save(data);
 }
 

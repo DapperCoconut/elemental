@@ -1,9 +1,11 @@
 import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
+import { Projectile } from '../../combat/Projectile';
 import { CastContext } from '../Ability';
 import {
-  ArmGesture, SOUND, SoundAura, SoundAvatar, SoundColorFn, SoundFx, SoundInstrument,
+  ArmGesture, SOUND, SoundAura, SoundAvatar, SoundColorFn, SoundFx, SoundInstrument, TrackNoteKind,
 } from './SoundVisuals';
+import { CustomStatus } from './StatusHudKit';
 
 // ── SoundArenaApi ─────────────────────────────────────────────────────────
 
@@ -12,14 +14,20 @@ export interface SoundArenaApi {
   readonly npc: Fighter;
   readonly enemies: Fighter[];
   readonly scene: Phaser.Scene;
+  readonly projectiles: Phaser.Physics.Arcade.Group;
   readonly eKey: Phaser.Input.Keyboard.Key;
   readonly rKey: Phaser.Input.Keyboard.Key;
   readonly fKey: Phaser.Input.Keyboard.Key;
   readonly qKey: Phaser.Input.Keyboard.Key;
+  /** Jukebox (R+) reads Space directly. Consuming the JustDown here suppresses the dodge. */
+  readonly spaceKey: Phaser.Input.Keyboard.Key;
   readonly width: number;
   readonly height: number;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
+  hasUpgrade(slot: string): boolean;
   showFloatingText(x: number, y: number, text: string, color: string): void;
+  /** Publish (or with `null`, clear) one of this kit's buffs in the top-right effect tray. */
+  setStatusIndicator(id: string, status: CustomStatus | null): void;
   buildPlayerContext(x: number, y: number): CastContext;
   /** `(owner, base) => displayed` — the owner's skin, or the identity. */
   soundColor(owner: 'player' | 'npc', base: number): number;
@@ -47,22 +55,19 @@ const STACCATO_DMG = 10;
 const STACCATO_HARM_DMG = 15;
 const WAVE_SPEED = 780;
 const WAVE_RANGE = 470;
-/** Half-angle of the crescent. A shockwave is a wall, not a bullet. */
-const WAVE_SPREAD = 0.5;
+/**
+ * Half-angle of the crescent. Sound's click used to be a wall across a fifth of the room; it is
+ * now a fifth of that — a struck note rather than a broadside. Encore Streak (Click+) is the
+ * only thing that grows it back.
+ */
+const WAVE_SPREAD = 0.1;
 /** Half-thickness of the band that bites, in pixels — about one body radius. */
 const WAVE_THICK = 28;
 
-// ── R: Conduct ────────────────────────────────────────────────────────────
+// ── Click+: Encore Streak ─────────────────────────────────────────────────
 
-const VIOLIN_MAX = 3;
-const VIOLIN_DMG = 5;
-const VIOLIN_HARM_DMG = 10;
-const GOLD_VIOLIN_DMG = 8;
-const GOLD_VIOLIN_HARM_DMG = 12;
-const MINI_SPEED = 640;
-const MINI_RANGE = 330;
-const MINI_SPREAD = 0.62;
-const MINI_THICK = 22;
+/** Every unbroken harmonized cast makes the next shockwave this much wider. */
+const STREAK_SIZE_PER = 0.01;
 
 // ── E: Disc Dice ──────────────────────────────────────────────────────────
 
@@ -93,32 +98,125 @@ const ACCEL_CD_RATE = 0.25;
 const BASS_DAMAGE_MULT = 1.2;
 const CALM_HEAL_PER_SEC = 2;
 
+// ── E+: Sound System ──────────────────────────────────────────────────────
+
+/** What one fighter cut by each record is permanently worth, once Sound System is bought. */
+const DISC_BANK_MOVE = 0.03;
+const DISC_BANK_DMG = 0.02;
+const DISC_BANK_RES = 0.01;
+/** Floor under the banked armour — a long match must not make anyone untouchable. */
+const BANK_RES_FLOOR = 0.25;
+
+// ── R: Boombox ────────────────────────────────────────────────────────────
+
+const BOOMBOX_MS = 8000;
+const BOOMBOX_RADIUS = 150;
+const BOOMBOX_RADIUS_GOLD = 205;
+/** Attack speed banked per second spent standing in the field. No cap, and it never decays. */
+const BOOMBOX_ATK_PER_SEC = 0.01;
+/** Move speed, but only while you are actually inside — this half of the buff is positional. */
+const BOOMBOX_MOVE_BONUS = 0.20;
+const BOOMBOX_PULSE_MS = 3000;
+/** How far the pulse throws a fighter, and the floor it puts under a bounced projectile. */
+const BOOMBOX_SHOVE_DIST = 190;
+const BOOMBOX_PROJ_SPEED = 300;
+/** A harmonized box makes every buff handed out inside it this much stronger. */
+const BOOMBOX_POTENCY = 1.5;
+
+/** Both movement systems rewrite velocity every frame, so a shove is played out as position. */
+const SHOVE_MS = 260;
+
+// ── R+: Jukebox ───────────────────────────────────────────────────────────
+
+/** Hype off the ladder to put a coin in the box. Only ever paid once per boombox. */
+const JUKEBOX_HYPE_COST = 10;
+const JUKEBOX_RADIUS_MULT = 1.33;
+const JUKEBOX_PULSE_MS = 2000;
+/** How far outside the field you can still reach the buttons. */
+const JUKEBOX_REACH = 40;
+
 // ── F: Bugle ──────────────────────────────────────────────────────────────
 
-const BUGLE_GAIN = 0.02;
-/** A harmonized *opening* note is worth more; every note after it is worth the usual 2%. */
-const BUGLE_OPENING_HARM_GAIN = 0.05;
-const BUGLE_CAP = 0.30;
-/** Percentage points shed per second. Slow enough that blowing on the beat still builds. */
-const BUGLE_DECAY_PER_SEC = 0.004;
+/** One landed note on the bugle bar: +1% move *and* attack speed, permanently. */
+const BUGLE_NOTE_GAIN = 0.01;
+/** A harmonized opening buys one mistake — and taking it winds the bar up by this much. */
+const BUGLE_SLIP_SPEEDUP = 1.2;
 const BUGLE_HOLD_MS = 700;
+/** What the NPC gets per blow, since it has no bar to play. */
+const NPC_BUGLE_GAIN = 0.04;
 
-// ── Q: Soli ───────────────────────────────────────────────────────────────
+// ── The performance bar (the bugle minigame, and Coda's Solo) ─────────────
 
-const SOLI_NOTE_SPEED = 470;
-const SOLI_SPAWN_MIN = 420;
-const SOLI_SPAWN_MAX = 940;
-const SOLI_NOTE_DMG = 12;
-const SOLI_ACCENT_DMG = 22;
-const SOLI_ACCENT_CHANCE = 0.18;
-const SOLI_TOLERANCE = 42;
-const SOLI_NOTE_WIDTH = 30;
+const PERF_NOTE_SPEED = 470;
+const PERF_SPAWN_MIN = 420;
+const PERF_SPAWN_MAX = 940;
+const PERF_TOLERANCE = 42;
+const PERF_NOTE_WIDTH = 30;
 /**
  * Beat of quiet after taking the stage before the bar starts feeding. Kept short because the
- * runway itself — half a screen at `SOLI_NOTE_SPEED` — is already well over a second of
- * standing still, and the performer cannot move while any of it is running.
+ * runway itself — half a screen at `PERF_NOTE_SPEED` — is already well over a second of standing
+ * still, and the performer cannot move while any of it is running.
  */
-const SOLI_GRACE_MS = 400;
+const PERF_GRACE_MS = 400;
+
+const SOLO_NOTE_DMG = 12;
+const SOLO_ACCENT_DMG = 22;
+const SOLO_ACCENT_CHANCE = 0.18;
+
+// ── F+: Perfect Pitch — the two notes that are not struck ─────────────────
+
+/** A red note left alone. Struck, it is a mistake instead. */
+const RED_NOTE_DMG = 0.01;
+/** A green hold note carried the whole way. Anything short pays pro rata. */
+const HOLD_NOTE_ATK = 0.03;
+/** Length of a hold note's tail, in pixels of track. */
+const HOLD_NOTE_LEN = 150;
+/** How often the bar asks for one of the two. It leans on you after your first slip. */
+const FANCY_NOTE_CHANCE = 0.16;
+const FANCY_NOTE_CHANCE_AFTER_SLIP = 0.34;
+
+// ── Q: Coda ───────────────────────────────────────────────────────────────
+
+/** Hype needed for one level. Overflow carries, so a huge burn can climb two rungs at once. */
+const CODA_PER_LEVEL = 200;
+const CODA_MAX_LEVEL = 3;
+/** Indexed by the level just reached. Level 1 is where everyone starts, so it heals nothing. */
+const CODA_HEAL = [0, 0, 150, 200];
+/** Every percentage this kit hands out is scaled by the level you are on. */
+const CODA_BOOST_MULT = [1, 1, 1.25, 1.5];
+/** The instrument getting louder: a guitar hits harder than a violin, and an electric harder still. */
+const CODA_DAMAGE_MULT = [1, 1, 1.3, 1.6];
+const CODA_DASH_LEN_MULT = 2;
+const CODA_DASH_SPEED_BONUS = 0.20;
+const CODA_DASH_SPEED_MS = 3000;
+/**
+ * Q is two abilities on one cooldown: climbing the ladder is cheap and comes back in a second,
+ * but once Coda is maxed the key becomes Solo and pays the full ultimate price. Expressed as a
+ * multiple of the 1s cooldown declared on the ability so the two can never drift apart.
+ */
+const SOLO_COOLDOWN_MULT = 25;
+
+// ── Q+: Raise the Roof / PARTY MODE ───────────────────────────────────────
+
+/** How long Q has to be held for the ball to reach the bottom of its rope. */
+const PARTY_HOLD_MS = 3000;
+const PARTY_MS = 12000;
+/** Playing the room instead of yourself pays double — which is the whole trade. */
+const PARTY_HYPE_MULT = 2;
+/** A multiple of the 1s cooldown declared on the ability, as with Solo above. */
+const PARTY_COOLDOWN_MULT = 15;
+
+const BALL_RADIUS = 34;
+const BALL_SWING_DMG = 20;
+/** Pendulum constants: gravity over rope length, and how fast a swing bleeds out. */
+const BALL_GRAVITY = 5.2;
+const BALL_DAMP = 0.5;
+/** What one click puts into the swing, and the ceiling repeated clicks cannot pass. */
+const BALL_PUSH = 2.2;
+const BALL_SPIN_MAX = 4;
+/** Below this the ball is hanging, not swinging, and cannot hurt anybody. */
+const BALL_SWING_MIN = 0.8;
+const BALL_HIT_COOLDOWN = 700;
 
 // ── Bass perk (water + sound) ─────────────────────────────────────────────
 
@@ -158,15 +256,32 @@ interface Shock {
   hit: Set<Fighter>;
 }
 
-/** A conducted phantom violin. It never expires; only a fourth placement or a purge removes one. */
-interface PhantomViolin {
+/**
+ * A boombox on the floor. It deals no damage at all: what it does is hand its owner buffs for
+ * standing near it and shove everyone else — and everyone else's shots — back out of it.
+ */
+interface Boombox {
   owner: 'player' | 'npc';
   x: number;
   y: number;
-  /** Placed on the beat: gold, and worth more per stroke. */
+  /** Placed on the beat: bigger, four-coned, and every buff inside it is worth 1.5×. */
   golden: boolean;
-  /** Ramps to 1 in the frames after it plays, so the art visibly saws. */
-  charge: number;
+  radius: number;
+  expiresAt: number;
+  lastPulseAt: number;
+  nextPulseAt: number;
+  /** How long between pulses. Jukebox (R+) buys this down for the rest of the box's life. */
+  pulseMs: number;
+  /** True once a coin has gone in. One per box — the buttons only take the one. */
+  jukebox: boolean;
+}
+
+/** A knockback in progress, played out as position because velocity is stomped every frame. */
+interface Shove {
+  target: Fighter;
+  vx: number;
+  vy: number;
+  until: number;
 }
 
 /** One water charge laid down by the Bass perk. */
@@ -178,21 +293,53 @@ interface BassCharge {
   explodeAt: number;
 }
 
-/** A note on the Soli bar. */
-interface SoliNote {
+/** A note on the performance bar. */
+interface PerfNote {
   sprite: Phaser.GameObjects.Container;
   gfx: Phaser.GameObjects.Graphics;
   x: number;
   accent: boolean;
+  /** Strike it, leave it, or hold it. Anything but `note` needs Perfect Pitch (F+). */
+  kind: TrackNoteKind;
+  /** Hold notes: length of the tail in pixels, and how much of it was carried. */
+  len: number;
+  held: number;
+  /** True between catching a hold note's head and its tail clearing the line. */
+  holding: boolean;
+}
+
+/** Which performance is on the bar: the bugle's buff run, or Coda's damaging Solo. */
+type PerfMode = 'bugle' | 'solo';
+
+/**
+ * The mirror ball Raise the Roof winds out of the ceiling. It is a pendulum on a rope tied to
+ * the top of the arena: the rope pays out while Q is held, and a click sends the ball across
+ * the room hard enough to flatten anyone standing in the arc.
+ */
+interface DiscoBall {
+  anchorX: number;
+  anchorY: number;
+  /** Live rope length, easing toward `targetRope`. */
+  rope: number;
+  targetRope: number;
+  /** Angle from straight down, and its rate, in radians. */
+  ang: number;
+  angVel: number;
+  x: number;
+  y: number;
+  /** Per-fighter re-hit gate, so one pass does not saw through somebody. */
+  hitAt: Map<Fighter, number>;
+  /** Set when the party is over: the rope winds back in and the ball is dropped. */
+  leaving: boolean;
 }
 
 /** Every ability drives an arm gesture, on the NPC rig as well as the player's. */
 const CAST_GESTURES: Record<string, ArmGesture> = {
   staccato: 'punch',
   'disc-dice': 'sweep',
-  conduct: 'slam',
+  boombox: 'slam',
   bugle: 'raise',
-  soli: 'raise',
+  coda: 'raise',
 };
 
 // ── SoundKit ──────────────────────────────────────────────────────────────
@@ -209,29 +356,35 @@ export class SoundKit {
   /** Stance tells. The disc aura sits lowest so the record reads under everything else. */
   private discAura: SoundAura | null = null;
   private bugleAura: SoundAura | null = null;
-  private soliAura: SoundAura | null = null;
+  private soloAura: SoundAura | null = null;
+  private codaAura: SoundAura | null = null;
   private harmonyAura: SoundAura | null = null;
   /**
-   * Three world layers, because these objects are not in the same place: phantom violins and
-   * bass charges lie on the floor, shockwaves and the resonator ride over the fighters, and the
-   * Soli stage is furniture everything else stands on.
+   * Three world layers, because these objects are not in the same place: boomboxes and bass
+   * charges lie on the floor, shockwaves and the resonator ride over the fighters, and the
+   * performance stage is furniture everything else stands on.
    */
   private groundGfx: Phaser.GameObjects.Graphics | null = null;
   private airGfx: Phaser.GameObjects.Graphics | null = null;
   private stageGfx: Phaser.GameObjects.Graphics | null = null;
+  /** PARTY MODE's deck. Its own layer because it covers the whole arena, under everything else. */
+  private partyGfx: Phaser.GameObjects.Graphics | null = null;
   /** Shared animation clock for every per-frame painter in this kit. */
   private vizT = 0;
   /** Last cursor position, cached in handleInput — `update` has no pointer to face. */
   private lastAimX = 0;
   private lastAimY = 0;
-  /** 0 → 1 across a bow stroke. Held past 1 so the arm settles between strokes. */
+  /** 0 → 1 across a bow stroke or a strum. Held past 1 so the arm settles between them. */
   private bowT = 1;
 
   // ── HUD ─────────────────────────────────────────────────────────────
   private hudGfx: Phaser.GameObjects.Graphics | null = null;
   private discLabel: Phaser.GameObjects.Text | null = null;
-  private bugleLabel: Phaser.GameObjects.Text | null = null;
-  private soliLabel: Phaser.GameObjects.Text | null = null;
+  private buffLabel: Phaser.GameObjects.Text | null = null;
+  private perfLabel: Phaser.GameObjects.Text | null = null;
+  private hypeLabel: Phaser.GameObjects.Text | null = null;
+  /** Everything the upgrades have banked, on its own line under the ladder. */
+  private bankLabel: Phaser.GameObjects.Text | null = null;
 
   // ── Metronome ────────────────────────────────────────────────────────
   private metroAt = 0;
@@ -242,8 +395,9 @@ export class SoundKit {
   // ── Shockwaves ───────────────────────────────────────────────────────
   private waves: Shock[] = [];
 
-  // ── Phantom violins ──────────────────────────────────────────────────
-  private violins: PhantomViolin[] = [];
+  // ── Boomboxes ────────────────────────────────────────────────────────
+  private boomboxes: Boombox[] = [];
+  private shoves: Shove[] = [];
 
   // ── Records ──────────────────────────────────────────────────────────
   private discIdx = 0;
@@ -258,28 +412,73 @@ export class SoundKit {
   private discDmgApplied = 1;
   private calmAccum = 0;
 
-  // ── Bugle ────────────────────────────────────────────────────────────
-  private bugleBonus = 0;
-  private bugleOpened = false;
+  // ── The upgrade banks ────────────────────────────────────────────────
+  /**
+   * Unbroken harmonized casts (Click+ — Encore Streak). Each one is worth 1% of shockwave, and
+   * the whole run is worth its own count in hype when Q burns it.
+   */
+  private clickStreak = 0;
+  /**
+   * Percentages banked by Sound System (E+) and Perfect Pitch (F+). Permanent for the match,
+   * like tempo, and burned by Q along with everything else.
+   */
+  private bank = { move: 0, atk: 0, dmg: 0, res: 0 };
+  /** True once this side has written a non-1 `soundIncomingMult`, so it can be handed back. */
+  private resOwned = false;
+
+  // ── The two banked buff pools ────────────────────────────────────────
+  /** Tempo: move *and* attack speed, +1% a note off the bugle bar. It never decays. */
+  private tempo = 0;
+  private npcTempo = 0;
+  /** Attack speed only, banked a percent a second for standing in your own boombox. */
+  private boomAtk = 0;
+  private npcBoomAtk = 0;
   private bugleHoldUntil = 0;
-  private npcBugleBonus = 0;
   private npcBugleHoldUntil = 0;
 
-  // ── Soli ─────────────────────────────────────────────────────────────
-  private soliActive = false;
-  private soliReturnX = 0;
-  private soliReturnY = 0;
-  private soliGraceUntil = 0;
-  private soliStageX = 0;
-  private soliStageY = 0;
-  private soliNotes: SoliNote[] = [];
-  private soliNextSpawnAt = 0;
-  private soliStreak = 0;
+  // ── The performance bar ──────────────────────────────────────────────
+  private perfMode: PerfMode | null = null;
+  private perfNotes: PerfNote[] = [];
+  private perfNextSpawnAt = 0;
+  private perfGraceUntil = 0;
+  private perfStreak = 0;
+  /** Winds up as slips are spent, so a saved run gets harder rather than free. */
+  private perfSpeed = 1;
+  private perfSlips = 0;
+  /** Perfect Pitch: the bar starts asking for the awkward notes once you have slipped. */
+  private perfSlipSpent = false;
+  private perfReturnX = 0;
+  private perfReturnY = 0;
+  private perfStageX = 0;
+  private perfStageY = 0;
   private pointerWasDown = false;
   private lastClickAt = 0;
   /** Online: a remote soloist's performance is replayed as timed walls rather than a bar. */
-  private npcSoliUntil = 0;
-  private npcSoliNextAt = 0;
+  private npcSoloUntil = 0;
+  private npcSoloNextAt = 0;
+
+  // ── Coda ─────────────────────────────────────────────────────────────
+  /** 1 = violin, 2 = guitar, 3 = electric. Never goes back down. */
+  private codaLevel = 1;
+  private hype = 0;
+  private codaDashUntil = 0;
+  private npcCodaLevel = 1;
+  private npcHype = 0;
+
+  // ── Q+: Raise the Roof / PARTY MODE ──────────────────────────────────
+  /** When the current Q hold started, or 0 if the key is not being wound. */
+  private partyHoldStart = 0;
+  /** True once this hold has been called out — a tap is a plain Coda and says nothing. */
+  private partyHoldAnnounced = false;
+  private partyUntil = 0;
+  private ball: DiscoBall | null = null;
+  /**
+   * The buff bundle handed to the other side for the length of the party. Move speed is pulled
+   * by ArenaScene, attack speed is spent per frame, and the damage share is pushed once and
+   * divided back out — the same single-writer arrangement the records use.
+   */
+  private partyGift = { move: 0, atk: 0, dmg: 0, until: 0 };
+  private partyDmgApplied = 1;
 
   // ── Bass perk ────────────────────────────────────────────────────────
   private bassCharges: BassCharge[] = [];
@@ -327,7 +526,15 @@ export class SoundKit {
     return this.airGfx;
   }
 
-  /** The Soli set. Under the fighters, over the floor. */
+  /** PARTY MODE's dance floor — the whole arena, under every other layer this kit owns. */
+  private party(): Phaser.GameObjects.Graphics {
+    if (!this.partyGfx || !this.partyGfx.active) {
+      this.partyGfx = this.arena.scene.add.graphics().setDepth(2);
+    }
+    return this.partyGfx;
+  }
+
+  /** The performance set. Under the fighters, over the floor. */
   private stage(): Phaser.GameObjects.Graphics {
     if (!this.stageGfx || !this.stageGfx.active) {
       this.stageGfx = this.arena.scene.add.graphics().setDepth(4);
@@ -336,7 +543,7 @@ export class SoundKit {
   }
 
   /**
-   * Screen-space HUD strip. Depth 20 puts it under the Soli notes (21) and the labels (23), so
+   * Screen-space HUD strip. Depth 20 puts it under the bar's notes (21) and the labels (23), so
    * the hit ring reads as a target sitting *behind* the note you are aiming at.
    */
   private hud(): Phaser.GameObjects.Graphics {
@@ -348,25 +555,71 @@ export class SoundKit {
 
   // ── Public accessors ──────────────────────────────────────────────────
 
-  isSoliActive(): boolean { return this.soliActive; }
+  /** True while the player is stood on the bar and cannot move — either performance counts. */
+  isPerforming(): boolean { return this.perfMode !== null; }
 
   /**
    * Everything this element does to move speed, in one number ArenaScene pulls each frame:
-   * the loaded record, the Disc Dice stacks, the bugle buff and the Harmony perk.
+   * the loaded record, the Disc Dice stacks, the tempo buff, the boombox field, Coda's dash
+   * and the Harmony perk.
    */
   getPlayerSpeedMult(): number {
     const time = this.arena.scene.time.now;
+    const pot = this.potency('player');
     let m = 1;
     if (this.disc() === 'accelerando') m *= (1 + ACCEL_SPEED_BONUS);
     if (time < this.discSpeedUntil) m *= (1 + DISC_SPEED_PER_HIT * this.discSpeedStacks);
-    m *= (1 + this.bugleBonus);
+    m *= (1 + this.tempo * this.boostMult('player') * pot);
+    if (this.bank.move > 0) m *= (1 + this.bank.move * this.boostMult('player') * pot);
+    if (this.standingInOwnBox('player')) m *= (1 + BOOMBOX_MOVE_BONUS * pot);
+    if (time < this.codaDashUntil) m *= (1 + CODA_DASH_SPEED_BONUS * pot);
     if (time < this.harmonyUntil) m *= (1 + HARMONY_BONUS_PER_STACK * this.harmonyStacks);
     return m;
+  }
+
+  /**
+   * PARTY MODE's half of the trade: for twelve seconds the enemy walks around wearing every
+   * percentage of move speed the soloist had banked. Pulled by ArenaScene each frame, as the
+   * player's is — pushing it would be stomped by whatever writes `npcSpeedMult` next.
+   */
+  getNpcSpeedMult(): number {
+    if (this.arena.scene.time.now >= this.partyGift.until) return 1;
+    return 1 + this.partyGift.move;
+  }
+
+  /**
+   * Coda level 2 doubles the length of the Space dash. Read by ArenaScene's `executeDodge`, which
+   * owns the dash for every element.
+   */
+  getDashLengthMult(): number { return this.codaLevel >= 2 ? CODA_DASH_LEN_MULT : 1; }
+
+  /** Called by ArenaScene right after a dash: the note trail and the burst of speed behind it. */
+  onPlayerDash(): void {
+    if (this.codaLevel < 2) return;
+    const { player } = this.arena;
+    const time = this.arena.scene.time.now;
+    this.codaDashUntil = time + CODA_DASH_SPEED_MS;
+    this.pfx.notes(player.x, player.y, 7, {
+      speed: 150, size: 7, life: 720, depth: 8,
+      color: this.codaLevel >= 3 ? SOUND.neon : SOUND.magenta, rise: 26,
+    });
+    this.pfx.sparkle(player.x, player.y, 5, 26, 9, SOUND.gold);
+    this.arena.showFloatingText(player.x, player.y - 44, '🎶 RIFF DASH', '#ff99dd');
   }
 
   /** Which record is on the deck. */
   private disc(): DiscMode { return DISC_ORDER[this.discIdx % DISC_ORDER.length]; }
   private npcDisc(): DiscMode { return DISC_ORDER[this.npcDiscIdx % DISC_ORDER.length]; }
+
+  /** Coda's scaling on every percentage this kit hands out. */
+  private boostMult(owner: 'player' | 'npc'): number {
+    return CODA_BOOST_MULT[owner === 'player' ? this.codaLevel : this.npcCodaLevel];
+  }
+
+  /** Coda's scaling on everything this kit hits with. */
+  private damageMult(owner: 'player' | 'npc'): number {
+    return CODA_DAMAGE_MULT[owner === 'player' ? this.codaLevel : this.npcCodaLevel];
+  }
 
   // ── Reset ────────────────────────────────────────────────────────────
 
@@ -374,15 +627,19 @@ export class SoundKit {
     // Visuals — every GameObject dies with the old scene run, so rebuild lazily in update().
     if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
     if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
-    for (const a of [this.discAura, this.bugleAura, this.soliAura, this.harmonyAura]) a?.destroy();
-    this.discAura = null; this.bugleAura = null; this.soliAura = null; this.harmonyAura = null;
+    for (const a of [this.discAura, this.bugleAura, this.soloAura, this.codaAura, this.harmonyAura]) a?.destroy();
+    this.discAura = null; this.bugleAura = null; this.soloAura = null;
+    this.codaAura = null; this.harmonyAura = null;
     if (this.groundGfx) { this.groundGfx.destroy(); this.groundGfx = null; }
     if (this.airGfx) { this.airGfx.destroy(); this.airGfx = null; }
     if (this.stageGfx) { this.stageGfx.destroy(); this.stageGfx = null; }
+    if (this.partyGfx) { this.partyGfx.destroy(); this.partyGfx = null; }
     if (this.hudGfx) { this.hudGfx.destroy(); this.hudGfx = null; }
     if (this.discLabel) { this.discLabel.destroy(); this.discLabel = null; }
-    if (this.bugleLabel) { this.bugleLabel.destroy(); this.bugleLabel = null; }
-    if (this.soliLabel) { this.soliLabel.destroy(); this.soliLabel = null; }
+    if (this.buffLabel) { this.buffLabel.destroy(); this.buffLabel = null; }
+    if (this.perfLabel) { this.perfLabel.destroy(); this.perfLabel = null; }
+    if (this.hypeLabel) { this.hypeLabel.destroy(); this.hypeLabel = null; }
+    if (this.bankLabel) { this.bankLabel.destroy(); this.bankLabel = null; }
     this.vizT = 0;
     this.bowT = 1;
 
@@ -391,7 +648,8 @@ export class SoundKit {
     this.harmonyFlash = 0;
 
     this.waves = [];
-    this.violins = [];
+    this.boomboxes = [];
+    this.shoves = [];
 
     // Accelerando is the record loaded at the start of every match.
     this.discIdx = 0;
@@ -404,26 +662,49 @@ export class SoundKit {
     this.discDmgApplied = 1;
     this.calmAccum = 0;
 
-    this.bugleBonus = 0;
-    this.bugleOpened = false;
+    // Same reasoning as `discDmgApplied`: the old fighters carried the armour away with them,
+    // so this only has to forget it was ever written.
+    this.clickStreak = 0;
+    this.bank = { move: 0, atk: 0, dmg: 0, res: 0 };
+    this.resOwned = false;
+
+    this.tempo = 0;
+    this.npcTempo = 0;
+    this.boomAtk = 0;
+    this.npcBoomAtk = 0;
     this.bugleHoldUntil = 0;
-    this.npcBugleBonus = 0;
     this.npcBugleHoldUntil = 0;
 
-    this.soliActive = false;
-    this.soliReturnX = 0;
-    this.soliReturnY = 0;
-    this.soliGraceUntil = 0;
-    this.soliStageX = 0;
-    this.soliStageY = 0;
-    for (const n of this.soliNotes) n.sprite.destroy();
-    this.soliNotes = [];
-    this.soliNextSpawnAt = 0;
-    this.soliStreak = 0;
+    this.perfMode = null;
+    for (const n of this.perfNotes) n.sprite.destroy();
+    this.perfNotes = [];
+    this.perfNextSpawnAt = 0;
+    this.perfGraceUntil = 0;
+    this.perfStreak = 0;
+    this.perfSpeed = 1;
+    this.perfSlips = 0;
+    this.perfSlipSpent = false;
+    this.perfReturnX = 0;
+    this.perfReturnY = 0;
+    this.perfStageX = 0;
+    this.perfStageY = 0;
     this.pointerWasDown = false;
     this.lastClickAt = 0;
-    this.npcSoliUntil = 0;
-    this.npcSoliNextAt = 0;
+    this.npcSoloUntil = 0;
+    this.npcSoloNextAt = 0;
+
+    this.codaLevel = 1;
+    this.hype = 0;
+    this.codaDashUntil = 0;
+    this.npcCodaLevel = 1;
+    this.npcHype = 0;
+
+    this.partyHoldStart = 0;
+    this.partyHoldAnnounced = false;
+    this.partyUntil = 0;
+    this.ball = null;
+    this.partyGift = { move: 0, atk: 0, dmg: 0, until: 0 };
+    this.partyDmgApplied = 1;
 
     this.bassCharges = [];
 
@@ -451,7 +732,18 @@ export class SoundKit {
     const harmonized = at > 0 && Math.abs(time - (at + BEAT_MS)) <= HARMONY_WINDOW;
     if (owner === 'player') this.metroAt = time; else this.npcMetroAt = time;
     if (harmonized && owner === 'player') this.harmonyFlash = 1;
+    // Encore Streak (Click+). A bar and a Solo are played on the stage's own clock rather than
+    // the metronome's, so nothing struck up there is allowed to break the run.
+    if (owner === 'player') {
+      if (harmonized) this.clickStreak++;
+      else if (!this.perfMode) this.clickStreak = 0;
+    }
     return harmonized;
+  }
+
+  /** The streak, or zero if Encore Streak was never bought. */
+  private streak(): number {
+    return this.arena.hasUpgrade('click') ? this.clickStreak : 0;
   }
 
   /** Announce a harmonized cast and throw the perk resonator if it is owned. */
@@ -473,17 +765,25 @@ export class SoundKit {
     const clickJustDown = pointer.isDown && !this.pointerWasDown;
     this.pointerWasDown = pointer.isDown;
 
-    // ── On stage: the bar owns the click, and only Q gets you off it ────
-    if (this.soliActive) {
-      // Clicks during the opening beat are free — ending the performance to a click thrown
-      // before the first note was even on the bar would read as the ability being broken.
-      if (clickJustDown && time >= this.soliGraceUntil && time - this.lastClickAt >= 140) {
+    // ── On the bar: it owns the click, and only its own key gets you off it ──
+    if (this.perfMode) {
+      // Clicks during the opening beat are free — ending the run on a click thrown before the
+      // first note was even on the bar would read as the ability being broken.
+      if (clickJustDown && time >= this.perfGraceUntil && time - this.lastClickAt >= 140) {
         this.lastClickAt = time;
-        this.strikeSoliNote(time);
+        this.strikePerfNote(time);
       }
-      if (Phaser.Input.Keyboard.JustDown(qKey)) this.endSoli(time, 'ENCORE!');
+      if (this.perfMode === 'bugle' && Phaser.Input.Keyboard.JustDown(fKey)) {
+        this.endPerformance(time, 'CURTAIN');
+      }
+      if (this.perfMode === 'solo' && Phaser.Input.Keyboard.JustDown(qKey)) {
+        this.endPerformance(time, 'ENCORE!');
+      }
       return;
     }
+
+    // ── R+ Jukebox: Space at the box, paid for out of the hype bar ─────
+    if (this.arena.hasUpgrade('r')) this.tryJukebox(time);
 
     // ── Click: Staccato ────────────────────────────────────────────────
     if (clickJustDown && player.castAbility('staccato', this.arena.buildPlayerContext(mouseX, mouseY))) {
@@ -496,10 +796,10 @@ export class SoundKit {
       this.playDiscDice(time, mouseX, mouseY);
     }
 
-    // ── R: Conduct ─────────────────────────────────────────────────────
+    // ── R: Boombox ─────────────────────────────────────────────────────
     if (Phaser.Input.Keyboard.JustDown(rKey)
-      && player.castAbility('conduct', this.arena.buildPlayerContext(mouseX, mouseY))) {
-      this.playConduct(time, mouseX, mouseY);
+      && player.castAbility('boombox', this.arena.buildPlayerContext(mouseX, mouseY))) {
+      this.playBoombox(time, mouseX, mouseY);
     }
 
     // ── F: Bugle ───────────────────────────────────────────────────────
@@ -508,10 +808,15 @@ export class SoundKit {
       this.playBugle(time, mouseX, mouseY);
     }
 
-    // ── Q: Soli ────────────────────────────────────────────────────────
-    if (Phaser.Input.Keyboard.JustDown(qKey)
-      && player.castAbility('soli', this.arena.buildPlayerContext(mouseX, mouseY))) {
-      this.startSoli(time);
+    // ── Q: Coda — or, once it is maxed, Solo. Q+ turns the key into a hold ──
+    if (this.arena.hasUpgrade('q')) {
+      this.handleRaiseTheRoof(time, mouseX, mouseY);
+    } else if (Phaser.Input.Keyboard.JustDown(qKey)
+      && player.castAbility('coda', this.arena.buildPlayerContext(mouseX, mouseY))) {
+      if (this.codaLevel >= CODA_MAX_LEVEL) {
+        player.scaleStampedCooldown('coda', SOLO_COOLDOWN_MULT);
+        this.startPerformance(time, 'solo', 0);
+      } else this.playCoda(time);
     }
   }
 
@@ -521,34 +826,24 @@ export class SoundKit {
     const { player } = this.arena;
     const harmonized = this.beat('player', time);
     const ang = Math.atan2(aimY - player.y, aimX - player.x);
-    const dmg = harmonized ? STACCATO_HARM_DMG : STACCATO_DMG;
+    const base = harmonized ? STACCATO_HARM_DMG : STACCATO_DMG;
+    const dmg = Math.round(base * this.damageMult('player'));
+
+    // Encore Streak: a run of harmonized casts widens the crescent a percent at a time. The
+    // streak is counted by `beat` above, so the cast that starts a run is already worth 1%.
+    const size = 1 + STREAK_SIZE_PER * this.streak();
 
     this.bowT = 0;
     this.playerAvatar?.play('punch', ang);
     this.fireWave('player', player.x, player.y, ang, dmg, {
-      color: harmonized ? SOUND.gold : SOUND.magenta,
-      range: WAVE_RANGE, speed: WAVE_SPEED, spread: WAVE_SPREAD, thick: WAVE_THICK,
+      color: this.codaLevel >= 3 ? SOUND.neon : harmonized ? SOUND.gold : SOUND.magenta,
+      range: WAVE_RANGE, speed: WAVE_SPEED, spread: WAVE_SPREAD * size, thick: WAVE_THICK * size,
     });
-    this.pfx.waveBurst(player.x, player.y, ang, harmonized ? 1.3 : 1, 9,
+    this.pfx.waveBurst(player.x, player.y, ang, (harmonized ? 1.3 : 1) * size, 9,
       harmonized ? SOUND.gold : SOUND.magenta);
 
-    // Every phantom violin plays with you, on the same stroke.
-    for (const v of this.violins) {
-      if (v.owner !== 'player') continue;
-      v.charge = 1;
-      const target = this.nearestTo(v.x, v.y, this.arena.enemies);
-      const vAng = target ? Math.atan2(target.y - v.y, target.x - v.x) : ang;
-      const base = v.golden
-        ? (harmonized ? GOLD_VIOLIN_HARM_DMG : GOLD_VIOLIN_DMG)
-        : (harmonized ? VIOLIN_HARM_DMG : VIOLIN_DMG);
-      // The bugle buff rides the phantoms too — harder strokes, thrown further out.
-      this.fireWave('player', v.x, v.y, vAng, Math.round(base * (1 + this.bugleBonus)), {
-        color: v.golden ? SOUND.gold : SOUND.rose,
-        range: MINI_RANGE, speed: MINI_SPEED * (1 + this.bugleBonus),
-        spread: MINI_SPREAD, thick: MINI_THICK,
-      });
-      this.fx('player').waveBurst(v.x, v.y, vAng, 0.7, 9, v.golden ? SOUND.gold : SOUND.rose);
-    }
+    // The mirror ball is furniture until somebody puts a note through it.
+    this.strikeBall(aimX, aimY);
 
     // Bass (divine perk): with the red record on the deck, the stroke lays a row of charges.
     if (this.disc() === 'bass' && this.arena.hasPerk('player', 'bass')) {
@@ -574,7 +869,7 @@ export class SoundKit {
       if (!t.active || t.hp <= 0) continue;
       if (Phaser.Math.Distance.Between(player.x, player.y, t.x, t.y) > DISC_RADIUS) continue;
       hits++;
-      t.takeDamage(DISC_DMG);
+      t.takeDamage(Math.round(DISC_DMG * this.damageMult('player')));
       this.pfx.waveBurst(t.x, t.y, Math.atan2(t.y - player.y, t.x - player.x), 0.9, 8, color);
     }
 
@@ -583,6 +878,9 @@ export class SoundKit {
       this.discSpeedUntil = time + DISC_SPEED_MS;
       this.arena.showFloatingText(player.x, player.y - 34,
         `💿 +${Math.round(DISC_SPEED_PER_HIT * this.discSpeedStacks * 100)}% SPEED`, '#ffaadd');
+      // Sound System (E+): what the record is worth is banked for the rest of the match, and
+      // which stat it banks is whichever record was on the deck when it cut somebody.
+      if (this.arena.hasUpgrade('e')) this.bankDiscHits(hits);
     }
 
     // Harmonized: change the record. This is the only way the deck ever advances.
@@ -595,59 +893,242 @@ export class SoundKit {
     }
   }
 
-  // ── R: Conduct ────────────────────────────────────────────────────────
-
-  private playConduct(time: number, aimX: number, aimY: number): void {
+  /**
+   * Sound System (E+). Green pays in stride, red in weight and blue in armour — one bank per
+   * record, permanent for the match, and all three burn for hype like everything else this
+   * element carries.
+   */
+  private bankDiscHits(hits: number): void {
     const { player } = this.arena;
-    const harmonized = this.beat('player', time);
-    this.placeViolin('player', aimX, aimY, harmonized);
-    this.playerAvatar?.play('slam', Math.atan2(aimY - player.y, aimX - player.x));
-    if (harmonized) this.onHarmonized(time, 'GOLDEN VIOLIN');
-    else this.arena.showFloatingText(aimX, aimY - 40, '🎻 CONDUCTED', '#ff88cc');
+    const mode = this.disc();
+    if (mode === 'accelerando') {
+      this.bank.move += DISC_BANK_MOVE * hits;
+      this.arena.showFloatingText(player.x, player.y - 50,
+        `💚 +${Math.round(this.bank.move * 100)}% SPEED BANKED`, '#9cffcc');
+    } else if (mode === 'bass') {
+      this.bank.dmg += DISC_BANK_DMG * hits;
+      this.arena.showFloatingText(player.x, player.y - 50,
+        `🔴 +${Math.round(this.bank.dmg * 100)}% DAMAGE BANKED`, '#ff8888');
+    } else {
+      this.bank.res += DISC_BANK_RES * hits;
+      this.arena.showFloatingText(player.x, player.y - 50,
+        `🔵 +${Math.round(this.bank.res * 100)}% RESIST BANKED`, '#9ecdff');
+    }
+    this.pfx.sparkle(player.x, player.y, 5, 26, 10, DISC_COLORS[mode]);
   }
 
-  private placeViolin(owner: 'player' | 'npc', x: number, y: number, golden: boolean): void {
-    const mine = this.violins.filter((v) => v.owner === owner);
-    if (mine.length >= VIOLIN_MAX) {
-      // A fourth replaces the oldest, so the stage never fills up beyond a trio.
-      const oldest = mine[0];
-      const i = this.violins.indexOf(oldest);
-      if (i !== -1) this.violins.splice(i, 1);
-      this.fx(owner).shatter(oldest.x, oldest.y, 20, 7, 9,
-        oldest.golden ? SOUND.gold : SOUND.magenta);
+  // ── R: Boombox ────────────────────────────────────────────────────────
+
+  private playBoombox(time: number, aimX: number, aimY: number): void {
+    const { player } = this.arena;
+    const harmonized = this.beat('player', time);
+    this.placeBoombox('player', aimX, aimY, harmonized, time);
+    this.playerAvatar?.play('slam', Math.atan2(aimY - player.y, aimX - player.x));
+    if (harmonized) this.onHarmonized(time, 'STACKED BOOMBOX');
+    else this.arena.showFloatingText(aimX, aimY - 46, '📻 BOOMBOX', '#ff88cc');
+  }
+
+  /** One box per owner: dropping a second one packs the first away rather than stacking them. */
+  private placeBoombox(
+    owner: 'player' | 'npc', x: number, y: number, golden: boolean, time: number,
+  ): void {
+    const W = this.arena.width;
+    const H = this.arena.height;
+    const bx = Phaser.Math.Clamp(x, 40, W - 40);
+    const by = Phaser.Math.Clamp(y, 40, H - 40);
+
+    for (let i = this.boomboxes.length - 1; i >= 0; i--) {
+      const b = this.boomboxes[i];
+      if (b.owner !== owner) continue;
+      this.fx(owner).shatter(b.x, b.y, 24, 8, 9, b.golden ? SOUND.gold : SOUND.magenta);
+      this.boomboxes.splice(i, 1);
     }
-    this.violins.push({ owner, x, y, golden, charge: 0 });
+
+    const radius = golden ? BOOMBOX_RADIUS_GOLD : BOOMBOX_RADIUS;
+    this.boomboxes.push({
+      owner, x: bx, y: by, golden, radius,
+      expiresAt: time + BOOMBOX_MS,
+      lastPulseAt: time,
+      nextPulseAt: time + BOOMBOX_PULSE_MS,
+      pulseMs: BOOMBOX_PULSE_MS,
+      jukebox: false,
+    });
 
     const fx = this.fx(owner);
     const col = golden ? SOUND.gold : SOUND.magenta;
-    fx.ripple(x, y, 8, 54, col, 460, 5, 7, 9);
-    fx.notes(x, y, 4, { speed: 130, color: col, depth: 9 });
-    if (golden) fx.sparkle(x, y, 8, 30, 10, SOUND.gold);
+    fx.ripple(bx, by, 10, radius, col, 520, 6, 7, 9);
+    fx.notes(bx, by, 6, { speed: 170, color: col, depth: 9 });
+    if (golden) fx.sparkle(bx, by, 10, 40, 10, SOUND.gold);
+  }
+
+  /** The owner's live box, or null. There is never more than one. */
+  private boxOf(owner: 'player' | 'npc'): Boombox | null {
+    return this.boomboxes.find((b) => b.owner === owner) ?? null;
+  }
+
+  private standingInOwnBox(owner: 'player' | 'npc'): boolean {
+    const box = this.boxOf(owner);
+    if (!box) return false;
+    const f = owner === 'player' ? this.arena.player : this.arena.npc;
+    return Phaser.Math.Distance.Between(f.x, f.y, box.x, box.y) <= box.radius;
+  }
+
+  /**
+   * How much every buff this kit hands out is worth right now. A harmonized boombox makes
+   * everything you pick up inside its field 1.5× stronger — the tempo you are already carrying,
+   * the attack speed the box itself banks, and the speed off a Coda dash.
+   */
+  private potency(owner: 'player' | 'npc'): number {
+    const box = this.boxOf(owner);
+    if (!box || !box.golden) return 1;
+    return this.standingInOwnBox(owner) ? BOOMBOX_POTENCY : 1;
+  }
+
+  private updateBoomboxes(time: number, delta: number): void {
+    for (let i = this.boomboxes.length - 1; i >= 0; i--) {
+      const b = this.boomboxes[i];
+      if (time >= b.expiresAt) {
+        this.fx(b.owner).shatter(b.x, b.y, 26, 9, 9, b.golden ? SOUND.gold : SOUND.magenta);
+        this.fx(b.owner).notes(b.x, b.y, 4, { speed: 120, color: SOUND.plum, depth: 9 });
+        this.boomboxes.splice(i, 1);
+        continue;
+      }
+
+      // ── Banking attack speed for whoever is stood in their own field ──
+      const f = b.owner === 'player' ? this.arena.player : this.arena.npc;
+      if (f?.active && f.hp > 0
+        && Phaser.Math.Distance.Between(f.x, f.y, b.x, b.y) <= b.radius) {
+        const gain = (delta / 1000) * BOOMBOX_ATK_PER_SEC * (b.golden ? BOOMBOX_POTENCY : 1);
+        if (b.owner === 'player') this.boomAtk += gain; else this.npcBoomAtk += gain;
+      }
+
+      // ── The pulse ──
+      if (time >= b.nextPulseAt) {
+        b.lastPulseAt = time;
+        b.nextPulseAt = time + b.pulseMs;
+        this.pulseBoombox(b, time);
+      }
+    }
+    this.updateShoves(delta / 1000);
+  }
+
+  /** The three-second wave: nothing takes damage, everything hostile gets thrown back out. */
+  private pulseBoombox(b: Boombox, time: number): void {
+    const fx = this.fx(b.owner);
+    const col = b.golden ? SOUND.gold : SOUND.magenta;
+    fx.bounceWave(b.x, b.y, b.radius, col);
+    this.arena.scene.cameras.main.shake(120, 0.003);
+
+    // Fighters on the wrong side of the box.
+    const targets = b.owner === 'player' ? this.arena.enemies : [this.arena.player];
+    let caught = 0;
+    for (const t of targets) {
+      if (!t.active || t.hp <= 0) continue;
+      const d = Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y);
+      if (d > b.radius) continue;
+      caught++;
+      const ang = d < 1 ? Math.random() * Math.PI * 2 : Math.atan2(t.y - b.y, t.x - b.x);
+      this.shove(t, ang, BOOMBOX_SHOVE_DIST * (b.golden ? 1.25 : 1), time);
+      fx.waveBurst(t.x, t.y, ang, 1, 9, col);
+    }
+
+    // …and their shots, turned around and sent back out of the field.
+    for (const obj of this.arena.projectiles.getChildren().slice()) {
+      const p = obj as Projectile;
+      if (!p.active || p.isHeal) continue;
+      // A box only bounces the *other* side's shots.
+      if (p.isFromPlayer === (b.owner === 'player')) continue;
+      if (Phaser.Math.Distance.Between(b.x, b.y, p.x, p.y) > b.radius) continue;
+      const body = p.body as Phaser.Physics.Arcade.Body | null;
+      if (!body) continue;
+      const ang = Math.atan2(p.y - b.y, p.x - b.x);
+      const speed = Math.max(BOOMBOX_PROJ_SPEED, Math.hypot(body.velocity.x, body.velocity.y));
+      body.setVelocity(Math.cos(ang) * speed, Math.sin(ang) * speed);
+      p.setRotation(ang);
+      fx.waveBurst(p.x, p.y, ang, 0.6, 9, SOUND.white);
+      caught++;
+    }
+
+    if (caught > 0 && b.owner === 'player') {
+      this.arena.showFloatingText(b.x, b.y - b.radius * 0.55, `📻 BOUNCE ×${caught}`, '#ff88cc');
+    }
+  }
+
+  /**
+   * Jukebox (R+). Space at the box — and only Space, which is why the dodge does not fire on the
+   * same press — takes ten hype off the ladder and buys the field a third again as wide and a
+   * pulse every two seconds instead of every three, for whatever is left of the box's life.
+   *
+   * The JustDown is read *last*, after every reason to refuse has been checked, because reading
+   * it is what consumes it: an early read would eat a dodge the player never got.
+   */
+  private tryJukebox(time: number): void {
+    const box = this.boxOf('player');
+    if (!box || box.jukebox || this.hype < JUKEBOX_HYPE_COST) return;
+    const { player, spaceKey } = this.arena;
+    if (Phaser.Math.Distance.Between(player.x, player.y, box.x, box.y) > box.radius + JUKEBOX_REACH) return;
+    if (!Phaser.Input.Keyboard.JustDown(spaceKey)) return;
+
+    this.hype -= JUKEBOX_HYPE_COST;
+    box.jukebox = true;
+    box.radius *= JUKEBOX_RADIUS_MULT;
+    box.pulseMs = JUKEBOX_PULSE_MS;
+    box.nextPulseAt = Math.min(box.nextPulseAt, time + JUKEBOX_PULSE_MS);
+
+    const col = box.golden ? SOUND.gold : SOUND.magenta;
+    this.pfx.ripple(box.x, box.y, 14, box.radius, col, 620, 7, 7, 9);
+    this.pfx.notes(box.x, box.y, 8, { speed: 190, color: col, depth: 9, size: 8 });
+    this.pfx.sparkle(box.x, box.y, 10, 44, 10, SOUND.gold);
+    this.arena.scene.cameras.main.shake(180, 0.004);
+    this.arena.showFloatingText(box.x, box.y - 52, '🎛️ JUKEBOX!', '#ffdd44');
+    this.arena.showFloatingText(player.x, player.y - 44, `🔥 −${JUKEBOX_HYPE_COST} HYPE`, '#ff88cc');
+  }
+
+  private shove(target: Fighter, ang: number, distance: number, time: number): void {
+    const speed = distance / (SHOVE_MS / 1000);
+    this.shoves = this.shoves.filter((s) => s.target !== target);
+    this.shoves.push({
+      target, vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed, until: time + SHOVE_MS,
+    });
+  }
+
+  private updateShoves(dt: number): void {
+    if (!this.shoves.length) return;
+    const now = this.arena.scene.time.now;
+    const W = this.arena.width;
+    const H = this.arena.height;
+    for (const s of this.shoves) {
+      const t = s.target;
+      if (!t || !t.active) continue;
+      // Eases out over its life, so a bounce decelerates instead of stopping dead.
+      const left = Phaser.Math.Clamp((s.until - now) / SHOVE_MS, 0, 1);
+      t.setPosition(
+        Phaser.Math.Clamp(t.x + s.vx * dt * left * 2, 24, W - 24),
+        Phaser.Math.Clamp(t.y + s.vy * dt * left * 2, 24, H - 24),
+      );
+    }
+    this.shoves = this.shoves.filter((s) => s.until > now && s.target?.active);
   }
 
   // ── F: Bugle ──────────────────────────────────────────────────────────
 
+  /**
+   * The bugle no longer hands out a buff for being pressed — it puts you on a rhythm bar and pays
+   * a percent a note. Harmonized, it also buys you one mistake, at the price of the bar winding
+   * up 1.2× faster the moment you spend it.
+   */
   private playBugle(time: number, aimX: number, aimY: number): void {
     const { player } = this.arena;
     const harmonized = this.beat('player', time);
-    const opening = !this.bugleOpened;
-    const gain = opening && harmonized ? BUGLE_OPENING_HARM_GAIN : BUGLE_GAIN;
 
-    this.bugleBonus = Math.min(BUGLE_CAP, this.bugleBonus + gain);
     this.bugleHoldUntil = time + BUGLE_HOLD_MS;
     this.blowBugle('player', aimX, aimY);
+    this.startPerformance(time, 'bugle', harmonized ? 1 : 0);
 
-    // The opening note is free, and so is every later note struck on the beat.
-    if (opening || harmonized) {
-      player.resetCooldown('bugle');
-      this.arena.showFloatingText(player.x, player.y - 62,
-        opening ? '🎺 OPENING NOTE — FREE' : '🎺 ON THE BEAT — FREE', '#ffe9a8');
+    if (harmonized) {
+      this.arena.showFloatingText(player.x, player.y - 62, '🎺 ONE SLIP ALLOWED', '#ffe9a8');
+      this.onHarmonized(time, 'FANFARE');
     }
-    this.bugleOpened = true;
-
-    this.arena.showFloatingText(player.x, player.y - 40,
-      `🎺 +${Math.round(this.bugleBonus * 100)}% TEMPO`, '#ffe9a8');
-    if (harmonized) this.onHarmonized(time, 'FANFARE');
   }
 
   /** The horn coming up to the lips: three blasts out of the bell, widening each time. */
@@ -670,89 +1151,160 @@ export class SoundKit {
     void ty;
   }
 
-  // ── Q: Soli ───────────────────────────────────────────────────────────
+  // ── The performance bar ───────────────────────────────────────────────
 
-  private startSoli(time: number): void {
+  /**
+   * Take the stage. Both performances run the same bar: the bugle's pays in tempo and the Solo's
+   * pays in walls of music, but the note track, the miss rule and the lock in place are one
+   * system, because the player has to learn the timing exactly once.
+   */
+  private startPerformance(time: number, mode: PerfMode, slips: number): void {
     const { player, scene } = this.arena;
     const W = this.arena.width;
     const H = this.arena.height;
-    this.beat('player', time);
 
-    this.soliActive = true;
-    this.soliReturnX = player.x;
-    this.soliReturnY = player.y;
-    this.soliStageX = W / 2;
-    this.soliStageY = H * 0.52;
-    this.soliStreak = 0;
-    this.soliGraceUntil = time + SOLI_GRACE_MS;
-    this.soliNextSpawnAt = time + SOLI_GRACE_MS;
-    for (const n of this.soliNotes) n.sprite.destroy();
-    this.soliNotes = [];
+    this.perfMode = mode;
+    this.perfReturnX = player.x;
+    this.perfReturnY = player.y;
+    this.perfStageX = W / 2;
+    this.perfStageY = H * 0.52;
+    this.perfStreak = 0;
+    this.perfSpeed = 1;
+    this.perfSlips = slips;
+    this.perfSlipSpent = false;
+    // Taking the stage abandons whatever Q was winding — the bar owns the click from here, so
+    // any ball that is not part of a running party goes back up.
+    this.partyHoldStart = 0;
+    if (this.ball && time >= this.partyUntil) this.ball.leaving = true;
+    this.perfGraceUntil = time + PERF_GRACE_MS;
+    this.perfNextSpawnAt = time + PERF_GRACE_MS;
+    for (const n of this.perfNotes) n.sprite.destroy();
+    this.perfNotes = [];
 
     // Take the stage.
-    const px = this.soliStageX;
-    const py = this.soliStageY - 18;
+    const px = this.perfStageX;
+    const py = this.perfStageY - 18;
     player.setPosition(px, py);
     const body = player.body as Phaser.Physics.Arcade.Body;
     body.reset(px, py);
     body.setVelocity(0, 0);
 
-    this.pfx.ripple(px, this.soliStageY, 20, 190, SOUND.gold, 640, 6, 5, 9);
-    this.pfx.notes(px, py, 8, { speed: 200, color: SOUND.gold, depth: 10, size: 8 });
+    const col = mode === 'solo' ? SOUND.gold : SOUND.brass;
+    this.pfx.ripple(px, this.perfStageY, 20, 190, col, 640, 6, 5, 9);
+    this.pfx.notes(px, py, 8, { speed: 200, color: col, depth: 10, size: 8 });
     this.pfx.sparkle(px, py - 20, 10, 60, 11, SOUND.white);
     scene.cameras.main.shake(220, 0.005);
     this.playerAvatar?.play('raise', -Math.PI / 2, 900);
     this.bowT = 0;
-    this.arena.showFloatingText(px, py - 48, '🎻 SOLI!', '#ffdd44');
+    this.arena.showFloatingText(px, py - 48,
+      mode === 'solo' ? '🎸 SOLO!' : '🎺 BUGLE CALL!', mode === 'solo' ? '#ffdd44' : '#ffe9a8');
   }
 
-  private endSoli(time: number, label: string): void {
-    if (!this.soliActive) return;
-    this.soliActive = false;
-    void time;
+  private endPerformance(time: number, label: string): void {
+    const mode = this.perfMode;
+    if (!mode) return;
+    this.perfMode = null;
 
-    this.pfx.ripple(this.soliStageX, this.soliStageY, 30, 160, SOUND.gold, 480, 5, 5, 7);
-    this.pfx.notes(this.soliStageX, this.soliStageY - 20, 6, { speed: 150, color: SOUND.gold, depth: 10 });
+    const col = mode === 'solo' ? SOUND.gold : SOUND.brass;
+    this.pfx.ripple(this.perfStageX, this.perfStageY, 30, 160, col, 480, 5, 5, 7);
+    this.pfx.notes(this.perfStageX, this.perfStageY - 20, 6, { speed: 150, color: col, depth: 10 });
     if (this.stageGfx?.active) this.stageGfx.clear();
-    for (const n of this.soliNotes) n.sprite.destroy();
-    this.soliNotes = [];
+    for (const n of this.perfNotes) n.sprite.destroy();
+    this.perfNotes = [];
 
     const { player } = this.arena;
-    player.setPosition(this.soliReturnX, this.soliReturnY);
+    player.setPosition(this.perfReturnX, this.perfReturnY);
     const body = player.body as Phaser.Physics.Arcade.Body;
-    body.reset(this.soliReturnX, this.soliReturnY);
+    body.reset(this.perfReturnX, this.perfReturnY);
     body.setVelocity(0, 0);
 
-    this.pfx.waveBurst(player.x, player.y, -Math.PI / 2, 1.3, 9, SOUND.gold, 1.4);
-    this.arena.showFloatingText(player.x, player.y - 40, `🎻 ${label}`, '#ffdd44');
+    // The bugle's cooldown is counted from the end of the run, not from stepping onto the bar —
+    // otherwise a long, well-played performance would eat its own downtime and a fumbled one
+    // would be handed the horn straight back.
+    if (mode === 'bugle') player.restampCooldown('bugle');
+    void time;
+
+    this.pfx.waveBurst(player.x, player.y, -Math.PI / 2, 1.3, 9, col, 1.4);
+    this.arena.showFloatingText(player.x, player.y - 40,
+      `${mode === 'solo' ? '🎸' : '🎺'} ${label}`, mode === 'solo' ? '#ffdd44' : '#ffe9a8');
   }
 
-  /** A click while on stage: land the note under the line, or bring the house down. */
-  private strikeSoliNote(time: number): void {
+  /**
+   * A missed note. The harmonized bugle's one slip is spent here — and spending it winds the bar
+   * up rather than letting you off, so the mercy costs something.
+   */
+  private missPerfNote(time: number, reason: string): void {
+    this.pfx.discord(this.arena.player.x, this.arena.player.y);
+    if (this.perfSlips > 0) {
+      this.perfSlips--;
+      this.perfSlipSpent = true;
+      this.perfSpeed *= BUGLE_SLIP_SPEEDUP;
+      this.arena.scene.cameras.main.shake(160, 0.004);
+      this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 56,
+        '🎺 SLIP! ×1.2 FASTER', '#ff8866');
+      return;
+    }
+    this.endPerformance(time, reason);
+  }
+
+  /** A click while on the bar: land the note under the line, or bring the house down. */
+  private strikePerfNote(time: number): void {
     const hitLineX = this.arena.width / 2;
-    const idx = this.soliNotes.findIndex((n) => Math.abs(n.x - hitLineX) <= SOLI_TOLERANCE);
+    const idx = this.perfNotes.findIndex((n) => Math.abs(n.x - hitLineX) <= PERF_TOLERANCE);
     if (idx === -1) {
-      this.pfx.discord(this.arena.player.x, this.arena.player.y);
-      this.endSoli(time, 'FLUBBED!');
+      this.missPerfNote(time, 'FLUBBED!');
       return;
     }
 
-    const note = this.soliNotes[idx];
+    const note = this.perfNotes[idx];
+
+    // Perfect Pitch: a red note is the one you are supposed to let go past. Playing it is the
+    // mistake — which is why letting it run off the end of the bar is not.
+    if (note.kind === 'red') {
+      note.sprite.destroy();
+      this.perfNotes.splice(idx, 1);
+      this.missPerfNote(time, 'WRONG NOTE!');
+      return;
+    }
+
+    // …and a hold note is caught here and paid for later, as its tail crosses the line.
+    if (note.kind === 'hold') {
+      if (note.holding) return;
+      note.holding = true;
+      this.perfStreak++;
+      this.bowT = 0;
+      this.pfx.waveBurst(this.arena.player.x, this.arena.player.y - 6, -Math.PI / 2, 1, 10, SOUND.mint, 0.9);
+      this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 56, '🎵 HOLD IT', '#9cffcc');
+      return;
+    }
+
     note.sprite.destroy();
-    this.soliNotes.splice(idx, 1);
-    this.soliStreak++;
+    this.perfNotes.splice(idx, 1);
+    this.perfStreak++;
     this.bowT = 0;
-    this.playSoliWall(note.accent);
+    if (this.perfMode === 'solo') this.playSoloWall(note.accent);
+    else this.landBugleNote();
   }
 
-  /** The wall of music every landed note throws across the entire room. */
-  private playSoliWall(accent: boolean): void {
+  /** A landed bugle note: a flat percent onto both stats, worth more inside a harmonized box. */
+  private landBugleNote(): void {
+    const { player } = this.arena;
+    const gain = BUGLE_NOTE_GAIN * this.potency('player');
+    this.tempo += gain;
+    this.pfx.waveBurst(player.x, player.y - 6, -Math.PI / 2, 1, 10, SOUND.brassHi, 0.9);
+    this.pfx.notes(player.x, player.y - 10, 2, { speed: 130, color: SOUND.brass, depth: 10 });
+    this.arena.showFloatingText(player.x, player.y - 56,
+      `🎺 +${(gain * 100).toFixed(gain > 0.0105 ? 1 : 0)}% · ${Math.round(this.tempo * 100)}%`, '#ffe9a8');
+  }
+
+  /** The wall of music every landed Solo note throws across the entire room. */
+  private playSoloWall(accent: boolean): void {
     const { player, scene } = this.arena;
     const W = this.arena.width;
     const H = this.arena.height;
     const reach = Math.hypot(W, H);
-    const dmg = accent ? SOLI_ACCENT_DMG : SOLI_NOTE_DMG;
-    const color = accent ? SOUND.gold : SOUND.magenta;
+    const dmg = Math.round((accent ? SOLO_ACCENT_DMG : SOLO_NOTE_DMG) * this.damageMult('player'));
+    const color = accent ? SOUND.gold : SOUND.neon;
 
     this.pfx.musicWall(player.x, player.y, reach, color);
     this.playerAvatar?.play('punch', -Math.PI / 2);
@@ -764,8 +1316,383 @@ export class SoundKit {
       this.pfx.ripple(t.x, t.y, 8, 40, color, 320, 3, 8, 8);
     }
     this.arena.showFloatingText(player.x, player.y - 56,
-      accent ? `⭐ ACCENT! ×${this.soliStreak}` : `🎵 ×${this.soliStreak}`,
+      accent ? `⭐ ACCENT! ×${this.perfStreak}` : `🎵 ×${this.perfStreak}`,
       accent ? '#ffdd44' : '#ff88cc');
+  }
+
+  /**
+   * Which note the bar asks for next. Perfect Pitch (F+) only ever writes on the bugle's bar —
+   * a Solo is a wall of music a note, and there is nothing there to hold or to leave alone.
+   */
+  private rollNoteKind(): TrackNoteKind {
+    if (this.perfMode !== 'bugle' || !this.arena.hasUpgrade('f')) return 'note';
+    const chance = this.perfSlipSpent ? FANCY_NOTE_CHANCE_AFTER_SLIP : FANCY_NOTE_CHANCE;
+    if (Math.random() >= chance) return 'note';
+    return Math.random() < 0.5 ? 'red' : 'hold';
+  }
+
+  private noteColor(n: { kind: TrackNoteKind; accent: boolean }, solo: boolean): number {
+    if (n.kind === 'red') return SOUND.crimson;
+    if (n.kind === 'hold') return SOUND.mint;
+    return n.accent ? SOUND.gold : solo ? SOUND.rose : SOUND.brass;
+  }
+
+  private updatePerformance(time: number, delta: number): void {
+    const W = this.arena.width;
+    const hitLineX = W / 2;
+    const trackY = this.trackY();
+    const solo = this.perfMode === 'solo';
+
+    // Randomised spacing: the bar is meant to be read, not memorised.
+    if (time >= this.perfGraceUntil && time >= this.perfNextSpawnAt) {
+      const kind = this.rollNoteKind();
+      const len = kind === 'hold' ? HOLD_NOTE_LEN : 0;
+      // A hold note occupies the bar for as long as its tail does, so the next one waits it out.
+      const gap = PERF_SPAWN_MIN + Math.random() * (PERF_SPAWN_MAX - PERF_SPAWN_MIN)
+        + (len / PERF_NOTE_SPEED) * 1000;
+      this.perfNextSpawnAt = time + gap / this.perfSpeed;
+      const accent = kind === 'note' && solo && Math.random() < SOLO_ACCENT_CHANCE;
+      const gfx = this.arena.scene.add.graphics();
+      SoundFx.drawTrackNote(gfx, this.pcol, PERF_NOTE_WIDTH,
+        this.noteColor({ kind, accent }, solo), accent, 0, kind, len, 0);
+      const sprite = this.arena.scene.add.container(W + 24 + len, trackY, [gfx]).setDepth(21);
+      this.perfNotes.push({ sprite, gfx, x: W + 24 + len, accent, kind, len, held: 0, holding: false });
+    }
+
+    for (let i = this.perfNotes.length - 1; i >= 0; i--) {
+      const n = this.perfNotes[i];
+      const prevX = n.x;
+      n.x -= PERF_NOTE_SPEED * this.perfSpeed * delta / 1000;
+      n.sprite.setX(n.x);
+      n.sprite.setY(trackY);
+
+      // ── Hold notes: the reading head is the hit line, and the tail is paid for by the
+      //    pixel as it crosses. Let go and the rest of it simply goes unpaid. ──
+      if (n.kind === 'hold') {
+        const before = Phaser.Math.Clamp(hitLineX - prevX, 0, n.len);
+        const now = Phaser.Math.Clamp(hitLineX - n.x, 0, n.len);
+        if (n.holding && this.pointerWasDown) n.held += now - before;
+        if (now >= n.len) {
+          n.sprite.destroy();
+          this.perfNotes.splice(i, 1);
+          if (n.held <= 0) {
+            this.missPerfNote(time, 'DROPPED!');
+            return;
+          }
+          this.landHoldNote(n.held / n.len);
+          continue;
+        }
+      }
+
+      if (n.gfx.active) {
+        SoundFx.drawTrackNote(n.gfx, this.pcol, PERF_NOTE_WIDTH,
+          this.noteColor(n, solo), n.accent, this.vizT + n.x * 0.01, n.kind, n.len, n.held);
+      }
+
+      // A note that reaches the far edge is a note you dropped — unless it is red, in which
+      // case letting it get there is exactly what it was asking for.
+      if (n.x < -24) {
+        n.sprite.destroy();
+        this.perfNotes.splice(i, 1);
+        if (n.kind === 'red') {
+          this.landRedNote();
+          continue;
+        }
+        this.missPerfNote(time, 'MISSED!');
+        return;
+      }
+    }
+  }
+
+  /** A green hold note carried across the line. Pays attack speed in proportion to how much. */
+  private landHoldNote(frac: number): void {
+    const { player } = this.arena;
+    const gain = HOLD_NOTE_ATK * Phaser.Math.Clamp(frac, 0, 1) * this.potency('player');
+    this.bank.atk += gain;
+    this.pfx.notes(player.x, player.y - 10, 3, { speed: 140, color: SOUND.mint, depth: 10 });
+    this.pfx.sparkle(player.x, player.y, frac > 0.95 ? 9 : 4, 30, 10, SOUND.mintPale);
+    this.arena.showFloatingText(player.x, player.y - 56,
+      `${frac > 0.95 ? '⭐ PERFECT HOLD' : '🎵 HELD'} +${(gain * 100).toFixed(1)}% ATK`, '#9cffcc');
+  }
+
+  /** A red note allowed to run off the end of the bar, which is the whole trick of them. */
+  private landRedNote(): void {
+    const { player } = this.arena;
+    this.bank.dmg += RED_NOTE_DMG;
+    this.pfx.sparkle(player.x, player.y, 4, 26, 10, SOUND.crimson);
+    this.arena.showFloatingText(player.x, player.y - 56,
+      `🔴 RESTED +${Math.round(this.bank.dmg * 100)}% DMG`, '#ff8888');
+  }
+
+  // ── Q: Coda ───────────────────────────────────────────────────────────
+
+  /**
+   * Burn everything you have banked. Percentages become hype at a point apiece — tempo counts
+   * twice because it buffs two stats — and every 200 hype is a rung up the ladder.
+   */
+  /**
+   * Everything the soloist is carrying, in hype points — a point a percent. Tempo counts twice
+   * because it buffs two stats, and Encore Streak counts once because each rung of it is worth
+   * exactly one percent of shockwave.
+   */
+  private bankedHype(): number {
+    return Math.round(
+      this.tempo * 100 * 2 + this.boomAtk * 100
+      + (this.bank.move + this.bank.atk + this.bank.dmg + this.bank.res) * 100
+      + this.streak());
+  }
+
+  /** Hand back every percentage this element has banked. Q is the only thing that calls it. */
+  private clearBanks(): void {
+    this.tempo = 0;
+    this.boomAtk = 0;
+    this.bank = { move: 0, atk: 0, dmg: 0, res: 0 };
+    this.clickStreak = 0;
+  }
+
+  /** Put hype on the ladder and climb whatever rungs it reaches. */
+  private gainHype(gained: number): void {
+    this.hype += gained;
+    while (this.hype >= CODA_PER_LEVEL && this.codaLevel < CODA_MAX_LEVEL) {
+      this.hype -= CODA_PER_LEVEL;
+      this.codaLevel++;
+      this.codaLevelUp();
+    }
+  }
+
+  private playCoda(time: number): void {
+    const { player, scene } = this.arena;
+    const gained = this.bankedHype();
+
+    if (gained <= 0) {
+      // Nothing to burn. Hand the ultimate straight back rather than eating the cooldown for it.
+      player.resetCooldown('coda');
+      this.arena.showFloatingText(player.x, player.y - 46, '🎸 NOTHING TO BURN', '#997788');
+      return;
+    }
+
+    this.clearBanks();
+
+    this.playerAvatar?.play('raise', -Math.PI / 2, 700);
+    this.pfx.boom(player.x, player.y, 90, { color: SOUND.neon, petals: 9, notes: 7 });
+    this.pfx.sparkle(player.x, player.y, 12, 44, 11, SOUND.gold);
+    scene.cameras.main.shake(200, 0.005);
+    this.arena.showFloatingText(player.x, player.y - 46, `🔥 +${gained} HYPE`, '#ff66cc');
+
+    this.gainHype(gained);
+    void time;
+  }
+
+  private codaLevelUp(): void {
+    const { player, scene } = this.arena;
+    const lv = this.codaLevel;
+    const heal = CODA_HEAL[lv];
+    if (heal > 0) player.heal(heal);
+
+    const col = lv >= 3 ? SOUND.neon : SOUND.gold;
+    this.pfx.boom(player.x, player.y, lv >= 3 ? 170 : 130, { color: col, petals: 12, notes: 10 });
+    this.pfx.ripple(player.x, player.y, 20, 220, SOUND.white, 700, 6, 9, 9);
+    this.pfx.sparkle(player.x, player.y, 18, 70, 12, SOUND.gold);
+    scene.cameras.main.shake(400, 0.009);
+    this.arena.showFloatingText(player.x, player.y - 68,
+      lv >= 3 ? '⚡ LEVEL 3 — ELECTRIC!' : '🎸 LEVEL 2 — GUITAR!', lv >= 3 ? '#ff44bb' : '#ffdd44');
+    this.arena.showFloatingText(player.x, player.y - 88, `💚 +${heal} HP`, '#66ff99');
+  }
+
+  // ── Q+: Raise the Roof ────────────────────────────────────────────────
+
+  /** Where the ball hangs when the rope is all the way out. */
+  private fullRope(): number { return this.arena.height * 0.45; }
+
+  /**
+   * Q+ turns the key into a hold. Pressing it starts winding a mirror ball down out of the
+   * ceiling; three full seconds of that is PARTY MODE. At max Coda the tap underneath is still
+   * Solo, so letting go early plays the ultimate and holding through plays the room instead.
+   */
+  private handleRaiseTheRoof(time: number, aimX: number, aimY: number): void {
+    const { player, qKey } = this.arena;
+    const maxed = this.codaLevel >= CODA_MAX_LEVEL;
+
+    if (Phaser.Input.Keyboard.JustDown(qKey)) {
+      // Nothing comes out of the ceiling until the key can actually pay for what it is winding.
+      if (player.getCooldownRatio('coda') < 1) return;
+      this.partyHoldStart = time;
+      this.partyHoldAnnounced = false;
+      this.dropBall();
+      return;
+    }
+
+    if (this.partyHoldStart === 0) return;
+
+    // Announced once the press is unmistakably a hold, so a plain Coda tap says nothing.
+    if (!this.partyHoldAnnounced && time - this.partyHoldStart >= 450) {
+      this.partyHoldAnnounced = true;
+      this.arena.showFloatingText(player.x, player.y - 62, '🪩 RAISE THE ROOF', '#ccddff');
+    }
+
+    if (!qKey.isDown) {
+      this.partyHoldStart = 0;
+      // Let go early and the ball goes back up — unless the party is already running, in which
+      // case it is not this hold's ball to take away.
+      if (this.ball && time >= this.partyUntil) this.ball.leaving = true;
+      // The tap underneath the hold is untouched: Coda climbing the ladder, or Solo once it
+      // is maxed. Raise the Roof is what the *hold* buys, not a replacement for the key.
+      if (!player.castAbility('coda', this.arena.buildPlayerContext(aimX, aimY))) return;
+      if (maxed) {
+        player.scaleStampedCooldown('coda', SOLO_COOLDOWN_MULT);
+        this.startPerformance(time, 'solo', 0);
+      } else this.playCoda(time);
+      return;
+    }
+
+    if (time - this.partyHoldStart >= PARTY_HOLD_MS) {
+      this.partyHoldStart = 0;
+      if (player.castAbility('coda', this.arena.buildPlayerContext(aimX, aimY))) {
+        player.scaleStampedCooldown('coda', PARTY_COOLDOWN_MULT);
+        this.startParty(time);
+      } else if (this.ball) {
+        this.ball.leaving = true;
+      }
+    }
+  }
+
+  private dropBall(): void {
+    if (this.ball) { this.ball.leaving = false; return; }
+    this.ball = {
+      anchorX: this.arena.width / 2,
+      anchorY: -14,
+      rope: 6,
+      targetRope: 6,
+      ang: 0,
+      angVel: 0,
+      x: this.arena.width / 2,
+      y: -8,
+      hitAt: new Map<Fighter, number>(),
+      leaving: false,
+    };
+  }
+
+  /**
+   * PARTY MODE. Everything the soloist has banked is stripped off and handed to the other side
+   * for twelve seconds; in exchange the burn pays double hype, the room turns into a dance floor
+   * and the mirror ball stays down, where a click can swing it through somebody for real damage.
+   */
+  private startParty(time: number): void {
+    const { player, scene } = this.arena;
+    const gained = Math.round(this.bankedHype() * PARTY_HYPE_MULT);
+
+    // Read the bundle before the burn eats it — this is what changes hands.
+    this.partyGift = {
+      move: this.tempo + this.bank.move,
+      atk: this.tempo + this.boomAtk + this.bank.atk,
+      dmg: this.bank.dmg,
+      until: time + PARTY_MS,
+    };
+    this.clearBanks();
+    this.discSpeedStacks = 0;
+    this.discSpeedUntil = 0;
+    this.codaDashUntil = 0;
+    this.partyUntil = time + PARTY_MS;
+    this.dropBall();
+
+    this.playerAvatar?.play('raise', -Math.PI / 2, 900);
+    this.pfx.boom(player.x, player.y, 160, { color: SOUND.neon, petals: 12, notes: 12 });
+    this.pfx.ripple(player.x, player.y, 24, 260, SOUND.white, 720, 6, 9, 9);
+    this.pfx.sparkle(player.x, player.y, 20, 80, 12, SOUND.gold);
+    scene.cameras.main.shake(420, 0.009);
+    this.arena.showFloatingText(player.x, player.y - 70, '🪩 PARTY MODE!', '#ffffff');
+    if (gained > 0) {
+      this.arena.showFloatingText(player.x, player.y - 46, `🔥 +${gained} HYPE (×2)`, '#ff66cc');
+      this.gainHype(gained);
+    }
+    const shared = Math.round((this.partyGift.move + this.partyGift.atk + this.partyGift.dmg) * 100);
+    const { npc } = this.arena;
+    if (shared > 0 && npc?.active) {
+      this.arena.showFloatingText(npc.x, npc.y - 54, `🎁 +${shared}% SHARED`, '#ffaa55');
+    }
+  }
+
+  /**
+   * The other half of the trade, ticked every frame regardless of who is playing Sound. Move
+   * speed is pulled by ArenaScene, attack speed is spent here, and the damage share is pushed
+   * once and divided back out when the party ends.
+   */
+  private updatePartyGift(time: number, delta: number): void {
+    const { npc } = this.arena;
+    const live = time < this.partyGift.until;
+    const wantDmg = live ? 1 + this.partyGift.dmg : 1;
+    if (npc?.active && wantDmg !== this.partyDmgApplied) {
+      npc.outgoingDamageMult = npc.outgoingDamageMult / this.partyDmgApplied * wantDmg;
+      this.partyDmgApplied = wantDmg;
+    }
+    if (live && npc?.active && this.partyGift.atk > 0) {
+      npc.reduceCooldowns(delta * this.partyGift.atk);
+    }
+    // The lights come up. The ball is wound back in rather than deleted, so it reads as leaving.
+    if (!live && this.partyUntil > 0 && time >= this.partyUntil) {
+      this.partyUntil = 0;
+      if (this.ball && this.partyHoldStart === 0) this.ball.leaving = true;
+      this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 52,
+        '🪩 LIGHTS UP', '#ccddff');
+    }
+  }
+
+  /**
+   * The mirror ball, as a pendulum on a rope tied to the ceiling. The rope pays out while Q is
+   * held and winds back in when the party ends; everything else is a swing, and a swing that is
+   * actually moving is a wrecking ball.
+   */
+  private updateBall(time: number, delta: number): void {
+    const b = this.ball;
+    if (!b) return;
+    const dt = Math.min(delta, 50) / 1000;
+
+    b.targetRope = b.leaving ? 4
+      : this.partyHoldStart > 0
+        ? Math.max(24, this.fullRope() * Phaser.Math.Clamp((time - this.partyHoldStart) / PARTY_HOLD_MS, 0, 1))
+        : this.fullRope();
+    b.rope = Phaser.Math.Linear(b.rope, b.targetRope, Math.min(1, dt * 3.4));
+    if (b.leaving && b.rope <= 8) { this.ball = null; return; }
+
+    // Pendulum, damped. Rope length is folded into BALL_GRAVITY rather than divided out, so a
+    // half-wound ball swings at the same rate as a fully wound one and reads as one object.
+    b.angVel += -BALL_GRAVITY * Math.sin(b.ang) * dt;
+    b.angVel *= Math.exp(-BALL_DAMP * dt);
+    b.ang += b.angVel * dt;
+    b.x = b.anchorX + Math.sin(b.ang) * b.rope;
+    b.y = b.anchorY + Math.cos(b.ang) * b.rope;
+
+    // Only a party ball is a wrecking ball. One still being wound out of the ceiling can be
+    // shoved around, but it cannot be farmed for damage by tapping Q and letting go again.
+    if (time >= this.partyUntil || Math.abs(b.angVel) < BALL_SWING_MIN) return;
+    for (const t of this.arena.enemies) {
+      if (!t.active || t.hp <= 0) continue;
+      if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) > BALL_RADIUS + 18) continue;
+      if (time < (b.hitAt.get(t) ?? 0)) continue;
+      b.hitAt.set(t, time + BALL_HIT_COOLDOWN);
+      const hx = t.x, hy = t.y;
+      t.takeDamage(BALL_SWING_DMG);
+      this.pfx.shatter(hx, hy, 34, 11, 11, SOUND.glint);
+      this.pfx.boom(hx, hy, 60, { color: SOUND.mirrorLit, mark: false, notes: 3, duration: 340 });
+      this.arena.scene.cameras.main.shake(200, 0.006);
+      this.arena.showFloatingText(hx, hy - 46, '🪩 WRECKED!', '#e6f0ff');
+    }
+  }
+
+  /** A click that lands on the glass sends it across the room. */
+  private strikeBall(aimX: number, aimY: number): void {
+    const b = this.ball;
+    if (!b || b.leaving || b.rope < 24) return;
+    if (Phaser.Math.Distance.Between(aimX, aimY, b.x, b.y) > BALL_RADIUS + 16) return;
+
+    const { player } = this.arena;
+    const push = b.x >= player.x ? 1 : -1;
+    b.angVel = Phaser.Math.Clamp(b.angVel + push * BALL_PUSH, -BALL_SPIN_MAX, BALL_SPIN_MAX);
+    // A fresh shove is a fresh pass, so everyone is allowed to be hit by it again.
+    b.hitAt.clear();
+    this.pfx.sparkle(b.x, b.y, 14, 46, 11, SOUND.glint);
+    this.pfx.notes(b.x, b.y, 5, { speed: 170, color: SOUND.white, depth: 11 });
+    this.arena.showFloatingText(b.x, b.y - BALL_RADIUS - 12, '🪩 SWING!', '#ffffff');
   }
 
   // ── Shockwaves ────────────────────────────────────────────────────────
@@ -818,16 +1745,22 @@ export class SoundKit {
     this.vizT += delta / 1000;
     if (this.bowT < 1) this.bowT = Math.min(1, this.bowT + delta / 260);
     if (this.harmonyFlash > 0) this.harmonyFlash = Math.max(0, this.harmonyFlash - delta / 420);
-    for (const v of this.violins) if (v.charge > 0) v.charge = Math.max(0, v.charge - delta / 500);
 
-    // Waves and charges carry an owner, so they tick whichever side is playing Sound.
+    // Waves, boxes and charges carry an owner, so they tick whichever side is playing Sound.
     this.updateWaves(delta);
+    this.updateBoomboxes(time, delta);
     this.updateBassCharges(time);
+    // Both of these outlive whoever started them, so they tick outside the per-side blocks.
+    this.updatePartyGift(time, delta);
+    this.updateBall(time, delta);
     if (isPlayerSound) this.updatePlayer(time, delta);
     if (isNpcSound) this.updateNpc(time, delta);
     this.paintWorld(time);
     this.updateAvatars(time, delta, isPlayerSound, isNpcSound);
-    if (isPlayerSound) this.paintHud(time);
+    if (isPlayerSound) {
+      this.paintHud(time);
+      this.pushStatuses(time);
+    }
   }
 
   private updatePlayer(time: number, delta: number): void {
@@ -845,18 +1778,29 @@ export class SoundKit {
     } else {
       this.calmAccum = 0;
     }
-    // Bass is a standing multiplier, so it is pushed once and divided back out on a swap.
-    const wantDmg = mode === 'bass' ? BASS_DAMAGE_MULT : 1;
+    // Bass is a standing multiplier, so it is pushed once and divided back out on a swap. The
+    // red record's bank rides the same factor rather than a second one, so the two can never
+    // leave a stray multiplier behind between them.
+    const wantDmg = (mode === 'bass' ? BASS_DAMAGE_MULT : 1) * (1 + this.bank.dmg);
     if (wantDmg !== this.discDmgApplied) {
       player.outgoingDamageMult = player.outgoingDamageMult / this.discDmgApplied * wantDmg;
       this.discDmgApplied = wantDmg;
     }
 
-    // ── The bugle buff: attack speed, then the decay that eats it ────
-    if (this.bugleBonus > 0) {
-      player.reduceCooldowns(delta * this.bugleBonus);
-      this.bugleBonus = Math.max(0, this.bugleBonus - BUGLE_DECAY_PER_SEC * delta / 1000);
+    // ── The blue record's armour, rewritten from scratch every frame ──
+    if (this.bank.res > 0) {
+      player.soundIncomingMult = Math.max(BANK_RES_FLOOR, 1 - this.bank.res);
+      this.resOwned = true;
+    } else if (this.resOwned) {
+      player.soundIncomingMult = 1;
+      this.resOwned = false;
     }
+
+    // ── Attack speed: the tempo you have played for, the boombox's bank, and the held notes ──
+    const atk = (this.tempo + this.boomAtk + this.bank.atk)
+      * this.boostMult('player') * this.potency('player');
+    if (atk > 0) player.reduceCooldowns(delta * atk);
+
     // Harmony (perk) drives attack speed the same way it drives movement.
     if (time < this.harmonyUntil) {
       player.reduceCooldowns(delta * HARMONY_BONUS_PER_STACK * this.harmonyStacks);
@@ -864,77 +1808,56 @@ export class SoundKit {
       this.harmonyStacks = 0;
     }
 
-    if (this.soliActive) this.updateSoli(time, delta);
+    if (this.perfMode) this.updatePerformance(time, delta);
     this.updateResonator(time);
-  }
-
-  private updateSoli(time: number, delta: number): void {
-    const W = this.arena.width;
-    const trackY = this.trackY();
-
-    // Randomised spacing: the bar is meant to be read, not memorised.
-    if (time >= this.soliGraceUntil && time >= this.soliNextSpawnAt) {
-      this.soliNextSpawnAt = time + SOLI_SPAWN_MIN + Math.random() * (SOLI_SPAWN_MAX - SOLI_SPAWN_MIN);
-      const accent = Math.random() < SOLI_ACCENT_CHANCE;
-      const gfx = this.arena.scene.add.graphics();
-      SoundFx.drawTrackNote(gfx, this.pcol, SOLI_NOTE_WIDTH,
-        accent ? SOUND.gold : SOUND.rose, accent, 0);
-      const sprite = this.arena.scene.add.container(W + 24, trackY, [gfx]).setDepth(21);
-      this.soliNotes.push({ sprite, gfx, x: W + 24, accent });
-    }
-
-    for (let i = this.soliNotes.length - 1; i >= 0; i--) {
-      const n = this.soliNotes[i];
-      n.x -= SOLI_NOTE_SPEED * delta / 1000;
-      n.sprite.setX(n.x);
-      n.sprite.setY(trackY);
-      if (n.gfx.active) {
-        SoundFx.drawTrackNote(n.gfx, this.pcol, SOLI_NOTE_WIDTH,
-          n.accent ? SOUND.gold : SOUND.rose, n.accent, this.vizT + n.x * 0.01);
-      }
-      // A note that reaches the far edge is a note you dropped.
-      if (n.x < -24) {
-        n.sprite.destroy();
-        this.soliNotes.splice(i, 1);
-        this.pfx.discord(this.arena.player.x, this.arena.player.y);
-        this.endSoli(time, 'MISSED!');
-        return;
-      }
-    }
   }
 
   private updateNpc(time: number, delta: number): void {
     const { player, npc } = this.arena;
-    if (this.npcBugleBonus > 0) {
-      npc.reduceCooldowns(delta * this.npcBugleBonus);
-      this.npcBugleBonus = Math.max(0, this.npcBugleBonus - BUGLE_DECAY_PER_SEC * delta / 1000);
-    }
+    const atk = (this.npcTempo + this.npcBoomAtk) * this.boostMult('npc') * this.potency('npc');
+    if (atk > 0) npc.reduceCooldowns(delta * atk);
+
     // Online: a remote soloist's bar never reaches this sim, so their performance is replayed
     // as walls arriving on the beat instead.
-    if (time < this.npcSoliUntil && time >= this.npcSoliNextAt) {
-      this.npcSoliNextAt = time + 900;
+    if (time < this.npcSoloUntil && time >= this.npcSoloNextAt) {
+      this.npcSoloNextAt = time + 900;
       const reach = Math.hypot(this.arena.width, this.arena.height);
       this.nfx.musicWall(npc.x, npc.y, reach, SOUND.flow);
       if (player.active && player.hp > 0) {
-        player.takeDamage(SOLI_NOTE_DMG);
+        player.takeDamage(Math.round(SOLO_NOTE_DMG * this.damageMult('npc')));
         this.nfx.ripple(player.x, player.y, 8, 40, SOUND.flow, 320, 3, 8, 8);
       }
     }
   }
 
   /**
-   * Every per-frame painter in one pass: the phantom violins and bass charges on the floor, the
-   * shockwaves and the resonator in the air, and the Soli set under the performer.
+   * Every per-frame painter in one pass: the boomboxes and bass charges on the floor, the
+   * shockwaves and the resonator in the air, and the stage under the performer.
    */
   private paintWorld(time: number): void {
-    const anyGround = this.violins.length > 0 || this.bassCharges.length > 0;
-    const anyAir = this.waves.length > 0 || this.harmonyGrenade !== null;
+    const anyGround = this.boomboxes.length > 0 || this.bassCharges.length > 0;
+    const anyAir = this.waves.length > 0 || this.harmonyGrenade !== null || this.ball !== null;
+
+    // ── PARTY MODE's deck, under everything ──
+    if (this.partyUntil > time) {
+      const g = this.party();
+      g.clear();
+      SoundFx.drawDanceFloor(g, this.pcol, this.arena.width, this.arena.height, this.vizT,
+        Phaser.Math.Clamp((this.partyUntil - time) / 900, 0, 1));
+    } else if (this.partyGfx?.active) {
+      this.partyGfx.clear();
+    }
 
     if (anyGround || this.groundGfx) {
       const g = this.ground();
       g.clear();
-      for (const v of this.violins) {
-        SoundFx.drawPhantomViolin(g, this.col(v.owner), v.x, v.y, this.vizT, v.golden, 1, v.charge);
+      for (const b of this.boomboxes) {
+        const span = b.nextPulseAt - b.lastPulseAt;
+        const charge = span > 0 ? Phaser.Math.Clamp(1 - (b.nextPulseAt - time) / span, 0, 1) : 0;
+        // The box fades out over its last second rather than blinking away.
+        const left = Phaser.Math.Clamp((b.expiresAt - time) / 900, 0, 1);
+        SoundFx.drawBoomboxField(g, this.col(b.owner), b.x, b.y, b.radius, this.vizT, b.golden, left, charge);
+        SoundFx.drawBoombox(g, this.col(b.owner), b.x, b.y, this.vizT, b.golden, left, charge);
       }
       for (const c of this.bassCharges) {
         const total = c.explodeAt - c.armedAt;
@@ -954,12 +1877,18 @@ export class SoundKit {
           : 0;
         SoundFx.drawGrenade(g, this.pcol, this.harmonyGrenade.x, this.harmonyGrenade.y, this.vizT, fuse);
       }
+      if (this.ball) {
+        const b = this.ball;
+        SoundFx.drawDiscoBall(g, this.pcol, b.anchorX, b.anchorY, b.x, b.y,
+          BALL_RADIUS * Phaser.Math.Clamp(b.rope / 60, 0.25, 1), this.vizT, b.ang,
+          Phaser.Math.Clamp(b.rope / 40, 0, 1));
+      }
     }
 
-    if (this.soliActive) {
+    if (this.perfMode) {
       const g = this.stage();
       g.clear();
-      SoundFx.drawStage(g, this.pcol, this.soliStageX, this.soliStageY, 160, this.vizT);
+      SoundFx.drawStage(g, this.pcol, this.perfStageX, this.perfStageY, 160, this.vizT);
     } else if (this.stageGfx?.active) {
       this.stageGfx.clear();
     }
@@ -974,22 +1903,25 @@ export class SoundKit {
       if (!this.playerAvatar) this.playerAvatar = new SoundAvatar(scene, this.pcol, 'player');
       const av = this.playerAvatar;
       const aim = Math.atan2(this.lastAimY - player.y, this.lastAimX - player.x);
+      const instrument = this.playerInstrument(time);
       av.setFacing(aim);
-      av.setIntensity(this.soliActive ? 1.45 : this.discSpeedStacks > 0 && time < this.discSpeedUntil ? 1.15 : 1);
+      av.setIntensity(this.perfMode ? 1.45 : this.discSpeedStacks > 0 && time < this.discSpeedUntil ? 1.15 : 1);
       av.setMastered(this.arena.masteryActive);
-      av.setInstrument(this.playerInstrument(time));
+      av.setInstrument(instrument);
       av.setBowDraw(this.bowT < 1 ? this.bowT : (Math.sin(this.vizT * 1.6) + 1) / 2);
       av.setDiscColor(DISC_COLORS[this.disc()]);
       // Both hands are on the instrument unless it is a record being flung.
-      av.setHold(this.playerInstrument(time) === 'record' ? 'spray' : 'brace', aim);
+      av.setHold(instrument === 'record' ? 'spray' : 'brace', aim);
       const alpha = player.forceInvisible ? 0 : player.alpha;
       av.update(delta, player.x, player.y, alpha);
 
       this.discAura = this.syncAura(this.discAura, true, 'disc', 22, 2, alpha, delta, player);
       this.discAura?.setColor(DISC_COLORS[this.disc()]);
-      this.bugleAura = this.syncAura(this.bugleAura, this.bugleBonus > 0.001, 'bugle', 24, 3, alpha, delta, player);
-      this.bugleAura?.setIntensity(this.bugleBonus / BUGLE_CAP);
-      this.soliAura = this.syncAura(this.soliAura, this.soliActive, 'solo', 26, 3, alpha, delta, player);
+      this.bugleAura = this.syncAura(this.bugleAura, this.tempo > 0.001, 'bugle', 24, 3, alpha, delta, player);
+      this.bugleAura?.setIntensity(Phaser.Math.Clamp(this.tempo / 0.3, 0, 1.5));
+      this.soloAura = this.syncAura(this.soloAura, this.perfMode !== null, 'solo', 26, 3, alpha, delta, player);
+      this.codaAura = this.syncAura(this.codaAura, this.codaLevel > 1, 'coda', 30, 2, alpha, delta, player);
+      this.codaAura?.setIntensity(this.codaLevel - 1);
       this.harmonyAura = this.syncAura(
         this.harmonyAura, time < this.harmonyUntil, 'harmony', 30, 4, alpha, delta, player);
     } else if (this.playerAvatar) {
@@ -1001,7 +1933,7 @@ export class SoundKit {
       if (!this.npcAvatar) this.npcAvatar = new SoundAvatar(scene, this.ncol, 'npc');
       this.npcAvatar.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
       this.npcAvatar.setMastered(this.arena.npcMasteryActive);
-      this.npcAvatar.setInstrument(time < this.npcBugleHoldUntil ? 'bugle' : 'violin');
+      this.npcAvatar.setInstrument(this.npcInstrument(time));
       this.npcAvatar.setBowDraw((Math.sin(this.vizT * 1.6) + 1) / 2);
       this.npcAvatar.setDiscColor(DISC_COLORS[this.npcDisc()]);
       this.npcAvatar.setHold('brace', Math.atan2(player.y - npc.y, player.x - npc.x));
@@ -1012,10 +1944,10 @@ export class SoundKit {
     }
   }
 
-  /** Build-or-tear-down for one stance aura, so each of the four is a single line above. */
+  /** Build-or-tear-down for one stance aura, so each of the five is a single line above. */
   private syncAura(
     aura: SoundAura | null, want: boolean,
-    style: 'disc' | 'bugle' | 'solo' | 'harmony', radius: number, depth: number,
+    style: 'disc' | 'bugle' | 'solo' | 'coda' | 'harmony', radius: number, depth: number,
     alpha: number, delta: number, on: Fighter,
   ): SoundAura | null {
     if (!want) {
@@ -1027,15 +1959,21 @@ export class SoundKit {
     return a;
   }
 
+  /** What the soloist is holding: the horn while blowing it, the record mid-throw, else Coda's. */
   private playerInstrument(time: number): SoundInstrument {
-    if (time < this.bugleHoldUntil) return 'bugle';
+    if (this.perfMode === 'bugle' || time < this.bugleHoldUntil) return 'bugle';
     if (time < this.discHoldUntil) return 'record';
-    return 'violin';
+    return this.codaLevel >= 3 ? 'electric' : this.codaLevel >= 2 ? 'guitar' : 'violin';
+  }
+
+  private npcInstrument(time: number): SoundInstrument {
+    if (time < this.npcBugleHoldUntil) return 'bugle';
+    return this.npcCodaLevel >= 3 ? 'electric' : this.npcCodaLevel >= 2 ? 'guitar' : 'violin';
   }
 
   // ── HUD ───────────────────────────────────────────────────────────────
 
-  /** Centre line of the metronome strip / the Soli bar — clear of the ability bar below it. */
+  /** Centre line of the metronome strip / the performance bar — clear of the ability bar. */
   private trackY(): number { return this.arena.height - 93; }
 
   private paintHud(time: number): void {
@@ -1051,29 +1989,47 @@ export class SoundKit {
         fontSize: '9px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
       }).setOrigin(0.5).setDepth(23);
     }
-    if (!this.bugleLabel) {
-      this.bugleLabel = scene.add.text(cx - 104, y - 22, '', {
+    if (!this.buffLabel) {
+      this.buffLabel = scene.add.text(cx - 104, y - 22, '', {
         fontSize: '9px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
         color: '#ffe9a8',
       }).setOrigin(0.5).setDepth(23);
     }
-    if (!this.soliLabel) {
-      this.soliLabel = scene.add.text(W - 8, y, '', {
+    if (!this.perfLabel) {
+      this.perfLabel = scene.add.text(W - 8, y, '', {
         fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
         color: '#ffdd44',
       }).setOrigin(1, 0.5).setDepth(23);
     }
+    if (!this.hypeLabel) {
+      this.hypeLabel = scene.add.text(cx - 122, y + 27, '', {
+        fontSize: '9px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+        color: '#ff88cc',
+      }).setOrigin(0, 0.5).setDepth(23);
+    }
+    if (!this.bankLabel) {
+      this.bankLabel = scene.add.text(cx, y + 41, '', {
+        fontSize: '9px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+        color: '#ffcdee',
+      }).setOrigin(0.5).setDepth(23);
+    }
+    this.bankLabel.setText(this.bankText());
 
-    if (this.soliActive) {
-      this.paintSoliBar(g, y);
+    if (this.perfMode) {
+      this.paintPerfBar(g, y);
       this.discLabel.setVisible(false);
-      this.bugleLabel.setVisible(false);
-      this.soliLabel.setVisible(true).setText(`🎻 SOLI  ×${this.soliStreak}`);
+      this.buffLabel.setVisible(false);
+      this.hypeLabel.setVisible(false);
+      this.perfLabel.setVisible(true).setText(
+        this.perfMode === 'solo'
+          ? `🎸 SOLO  ×${this.perfStreak}`
+          : `🎺 ${Math.round(this.tempo * 100)}%  ×${this.perfStreak}${this.perfSlips > 0 ? '  ♥' : ''}`);
       return;
     }
-    this.soliLabel.setVisible(false);
+    this.perfLabel.setVisible(false);
     this.discLabel.setVisible(true);
-    this.bugleLabel.setVisible(true);
+    this.buffLabel.setVisible(true);
+    this.hypeLabel.setVisible(true);
 
     // ── The plate ───────────────────────────────────────────────────
     g.fillStyle(this.pcol(SOUND.shade), 0.9);
@@ -1120,37 +2076,249 @@ export class SoundKit {
     SoundFx.drawRecord(g, this.pcol, cx + 58, y, 13, this.vizT * 3.4, DISC_COLORS[mode]);
     this.discLabel.setText(DISC_NAMES[mode]).setColor(`#${DISC_COLORS[mode].toString(16).padStart(6, '0')}`);
 
-    // ── The bugle buff ──────────────────────────────────────────────
-    if (this.bugleBonus > 0.001) {
-      this.bugleLabel.setText(`🎺 +${Math.round(this.bugleBonus * 100)}%`);
-      const k = this.bugleBonus / BUGLE_CAP;
+    // ── The two banked pools ────────────────────────────────────────
+    const tempoPct = Math.round(this.tempo * 100);
+    const boomPct = Math.round(this.boomAtk * 100);
+    const parts: string[] = [];
+    if (tempoPct > 0) parts.push(`🎺+${tempoPct}%`);
+    if (boomPct > 0) parts.push(`📻+${boomPct}%`);
+    this.buffLabel.setText(parts.join(' '));
+    if (tempoPct + boomPct > 0) {
       g.fillStyle(this.pcol(SOUND.brass), 0.9);
-      g.fillRect(cx - 118, y + 10, 28 * k, 3);
-    } else {
-      this.bugleLabel.setText('');
+      g.fillRect(cx - 118, y + 10, Math.min(28, (tempoPct + boomPct) * 0.5), 3);
     }
 
-    // ── Conducted violins, as pips down the right of the plate ──────
-    const mine = this.violins.filter((v) => v.owner === 'player');
-    for (let i = 0; i < VIOLIN_MAX; i++) {
-      const px = cx + 84 + i * 12;
-      const v = mine[i];
-      g.fillStyle(this.pcol(v ? (v.golden ? SOUND.gold : SOUND.magenta) : SOUND.plum), v ? 1 : 0.45);
-      g.fillCircle(px, y, v ? 4 : 2.6);
+    // ── The live boombox, as a countdown pip at the right of the plate ──
+    const box = this.boxOf('player');
+    if (box) {
+      const left = Phaser.Math.Clamp((box.expiresAt - time) / BOOMBOX_MS, 0, 1);
+      const bx = cx + 100;
+      g.fillStyle(this.pcol(box.golden ? SOUND.gold : SOUND.magenta), 0.25);
+      g.fillCircle(bx, y, 10);
+      g.lineStyle(2.4, this.pcol(box.golden ? SOUND.gold : SOUND.magenta), 0.95);
+      g.beginPath();
+      g.arc(bx, y, 9, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * left, false);
+      g.strokePath();
+      // A speaker cone in the middle, pumping on the box's own beat.
+      g.fillStyle(this.pcol(SOUND.cone), 1);
+      g.fillCircle(bx, y, 5 + Math.sin(this.vizT * 7) * 0.6);
+      g.fillStyle(this.pcol(box.golden ? SOUND.gold : SOUND.magenta), 1);
+      g.fillCircle(bx, y, 2.2);
+    }
+
+    // ── The streak, as a run of pips along the top of the plate ─────
+    const streak = this.streak();
+    if (streak > 0) {
+      g.fillStyle(this.pcol(SOUND.gold), 0.9);
+      for (let i = 0; i < Math.min(20, streak); i++) g.fillRect(cx - 118 + i * 5, y - 13, 3, 3);
+    }
+
+    // ── Coda: the level ladder, as a strip under the plate ──────────
+    const maxed = this.codaLevel >= CODA_MAX_LEVEL;
+    const frac = maxed ? 1 : Phaser.Math.Clamp(this.hype / CODA_PER_LEVEL, 0, 1);
+    g.fillStyle(this.pcol(SOUND.night), 0.9);
+    g.fillRoundedRect(cx - 125, y + 21, 250, 12, 4);
+    g.fillStyle(this.pcol(maxed ? SOUND.neon : SOUND.magenta), 0.95);
+    if (frac > 0) g.fillRoundedRect(cx - 125, y + 21, Math.max(4, 250 * frac), 12, 4);
+    g.lineStyle(1, this.pcol(maxed ? SOUND.neon : SOUND.plum), 0.95);
+    g.strokeRoundedRect(cx - 125, y + 21, 250, 12, 4);
+    // The two rungs, marked on the strip so the ladder is legible before it is climbed.
+    if (!maxed) {
+      g.fillStyle(this.pcol(SOUND.white), 0.5);
+      g.fillRect(cx + 123, y + 21, 2, 12);
+    }
+    this.hypeLabel.setText(maxed
+      ? `⚡ LV3 · SOLO READY · ${this.hype} HYPE`
+      : `${this.codaLevel >= 2 ? '🎸' : '🎻'} LV${this.codaLevel} · ${this.hype}/${CODA_PER_LEVEL} HYPE`)
+      .setColor(maxed ? '#ff44bb' : '#ff88cc');
+
+    // ── Raise the Roof: the rope paying out, drawn over the ladder ───
+    if (this.partyHoldStart > 0) {
+      const wind = Phaser.Math.Clamp((time - this.partyHoldStart) / PARTY_HOLD_MS, 0, 1);
+      g.fillStyle(this.pcol(SOUND.glint), 0.95);
+      g.fillRoundedRect(cx - 125, y + 36, Math.max(3, 250 * wind), 4, 2);
+    } else if (time < this.partyUntil) {
+      const left = (this.partyUntil - time) / PARTY_MS;
+      g.fillStyle(this.pcol(SOUND.mirrorLit), 0.9);
+      g.fillRoundedRect(cx - 125, y + 36, Math.max(3, 250 * left), 4, 2);
     }
   }
 
-  private paintSoliBar(g: Phaser.GameObjects.Graphics, y: number): void {
+  /** The upgrade banks, in one line under the ladder. Empty pools are simply not shown. */
+  private bankText(): string {
+    const parts: string[] = [];
+    const streak = this.streak();
+    if (this.partyUntil > this.arena.scene.time.now) parts.push('🪩 PARTY MODE');
+    if (streak > 0) parts.push(`🎼 ×${streak} · +${streak}% SIZE`);
+    if (this.bank.move > 0) parts.push(`💚+${Math.round(this.bank.move * 100)}%`);
+    if (this.bank.atk > 0) parts.push(`🎵+${Math.round(this.bank.atk * 100)}%`);
+    if (this.bank.dmg > 0) parts.push(`🔴+${Math.round(this.bank.dmg * 100)}%`);
+    if (this.bank.res > 0) parts.push(`🔵+${Math.round(this.bank.res * 100)}%`);
+    return parts.join('  ');
+  }
+
+  /**
+   * Every percentage this element is currently handing the player, published to the top-right
+   * effect tray. The plate above the ability bar carries the same numbers, but it is Sound's own
+   * furniture — these boxes are where the rest of the game expects to read a buff, and where
+   * hovering one explains what earned it.
+   *
+   * Percentages are shown *as they land*: the tempo bank is scaled by Coda's level and by a
+   * golden boombox exactly the way `updatePlayer` spends it, so the box and the stat agree.
+   */
+  private pushStatuses(time: number): void {
+    const pct = (v: number) => Math.round(v * 100);
+    // What every banked percentage is really worth right now.
+    const scale = this.boostMult('player') * this.potency('player');
+
+    // ── The record on the deck ────────────────────────────────────────
+    const mode = this.disc();
+    this.arena.setStatusIndicator('sound-disc', {
+      name: `${DISC_NAMES[mode]} Record`,
+      emoji: mode === 'accelerando' ? '💚' : mode === 'bass' ? '🔴' : '🔵',
+      color: this.pcol(DISC_COLORS[mode]), priority: 124,
+      description: mode === 'accelerando'
+        ? `Green is spinning: +${pct(ACCEL_SPEED_BONUS)}% move speed, and your cooldowns run `
+          + `${pct(ACCEL_CD_RATE)}% of real time faster. Harmonize E to change the record.`
+        : mode === 'bass'
+          ? `Red is spinning: everything you deal is worth ×${BASS_DAMAGE_MULT}. `
+            + 'Harmonize E to change the record.'
+          : `Blue is spinning: ${CALM_HEAL_PER_SEC} HP a second, for as long as it is on the deck. `
+            + 'Harmonize E to change the record.',
+    });
+
+    // ── The two pools that never decay ────────────────────────────────
+    const tempo = pct(this.tempo * scale);
+    this.arena.setStatusIndicator('sound-tempo', tempo > 0 ? {
+      name: 'Tempo', emoji: '🎺', color: this.pcol(SOUND.brass), priority: 126,
+      description: `+${tempo}% move speed *and* +${tempo}% attack speed. Every note landed on the `
+        + 'bugle bar is worth another percent, and nothing takes it back except burning it for hype.',
+      count: tempo, suffix: '%',
+    } : null);
+
+    const amped = pct(this.boomAtk * scale);
+    this.arena.setStatusIndicator('sound-amp', amped > 0 ? {
+      name: 'Amplified', emoji: '📻', color: this.pcol(SOUND.magenta), priority: 125,
+      description: `+${amped}% attack speed, banked a percent a second for standing in your own `
+        + 'boombox. It never decays.',
+      count: amped, suffix: '%',
+    } : null);
+
+    // ── Standing in your own field ────────────────────────────────────
+    const box = this.boxOf('player');
+    const inBox = box !== null && this.standingInOwnBox('player');
+    this.arena.setStatusIndicator('sound-field', inBox && box ? {
+      name: box.golden ? 'Golden Field' : 'In the Field', emoji: '🔊',
+      color: this.pcol(box.golden ? SOUND.gold : SOUND.magenta), priority: 127,
+      description: `+${pct(BOOMBOX_MOVE_BONUS)}% move speed while you stand in your own boombox`
+        + (box.golden
+          ? `, and every percentage this element hands you is worth ×${BOOMBOX_POTENCY} inside a `
+            + 'harmonized one.'
+          : '.'),
+      until: box.expiresAt,
+    } : null);
+
+    // ── Disc Dice's timed stacks ──────────────────────────────────────
+    const spun = time < this.discSpeedUntil ? this.discSpeedStacks : 0;
+    this.arena.setStatusIndicator('sound-spun', spun > 0 ? {
+      name: 'Spun Up', emoji: '💨', color: this.pcol(SOUND.mint), priority: 128,
+      description: `+${pct(DISC_SPEED_PER_HIT * spun)}% move speed — ${pct(DISC_SPEED_PER_HIT)}% per `
+        + `fighter the record cut, up to ${DISC_SPEED_MAX_STACKS} of them.`,
+      until: this.discSpeedUntil, count: pct(DISC_SPEED_PER_HIT * spun), suffix: '%',
+    } : null);
+
+    // ── Coda's ladder ─────────────────────────────────────────────────
+    this.arena.setStatusIndicator('sound-coda', this.codaLevel > 1 ? {
+      name: this.codaLevel >= 3 ? 'Electric' : 'Guitar',
+      emoji: this.codaLevel >= 3 ? '⚡' : '🎸',
+      color: this.pcol(this.codaLevel >= 3 ? SOUND.neon : SOUND.magenta), priority: 129,
+      description: `Coda level ${this.codaLevel}. Every percentage this element hands you is worth `
+        + `×${CODA_BOOST_MULT[this.codaLevel]}, everything it hits with is worth `
+        + `×${CODA_DAMAGE_MULT[this.codaLevel]}, and your dash is ${CODA_DASH_LEN_MULT}× as long.`,
+      count: this.codaLevel,
+    } : null);
+
+    this.arena.setStatusIndicator('sound-riff', time < this.codaDashUntil ? {
+      name: 'Riff Dash', emoji: '🎶', color: this.pcol(SOUND.magenta), priority: 121,
+      description: `+${pct(CODA_DASH_SPEED_BONUS)}% move speed off the back of a dash.`,
+      until: this.codaDashUntil,
+    } : null);
+
+    // ── Harmony (perk) ────────────────────────────────────────────────
+    const harm = time < this.harmonyUntil ? this.harmonyStacks : 0;
+    this.arena.setStatusIndicator('sound-harmony', harm > 0 ? {
+      name: 'Harmony', emoji: '🔔', color: this.pcol(SOUND.glint), priority: 122,
+      description: `+${pct(HARMONY_BONUS_PER_STACK * harm)}% move *and* attack speed — `
+        + `${pct(HARMONY_BONUS_PER_STACK)}% a resonator stack, up to ${HARMONY_MAX_STACKS}.`,
+      until: this.harmonyUntil, count: harm,
+    } : null);
+
+    // ── The upgrade banks ─────────────────────────────────────────────
+    const bMove = pct(this.bank.move * scale);
+    this.arena.setStatusIndicator('sound-bank-move', bMove > 0 ? {
+      name: 'Banked Stride', emoji: '💚', color: this.pcol(SOUND.mint), priority: 118,
+      description: `+${bMove}% move speed, cut out of everyone the green record has hit. `
+        + 'Permanent for the match, and burned with everything else when Coda goes off.',
+      count: bMove, suffix: '%',
+    } : null);
+
+    const bAtk = pct(this.bank.atk * scale);
+    this.arena.setStatusIndicator('sound-bank-atk', bAtk > 0 ? {
+      name: 'Banked Rhythm', emoji: '🎵', color: this.pcol(SOUND.brass), priority: 117,
+      description: `+${bAtk}% attack speed, carried off the hold notes on the bugle bar. `
+        + 'Permanent for the match, and burned with everything else when Coda goes off.',
+      count: bAtk, suffix: '%',
+    } : null);
+
+    const bDmg = pct(this.bank.dmg);
+    this.arena.setStatusIndicator('sound-bank-dmg', bDmg > 0 ? {
+      name: 'Banked Weight', emoji: '🔴', color: this.pcol(SOUND.crimson), priority: 119,
+      description: `Everything you deal is worth +${bDmg}%, cut out of everyone the red record `
+        + 'has hit. Permanent for the match, and burned when Coda goes off.',
+      count: bDmg, suffix: '%',
+    } : null);
+
+    // The armour is floored, so show what is actually being taken off rather than the raw bank.
+    const bRes = pct(1 - Math.max(BANK_RES_FLOOR, 1 - this.bank.res));
+    this.arena.setStatusIndicator('sound-bank-res', bRes > 0 ? {
+      name: 'Banked Armour', emoji: '🔵', color: this.pcol(SOUND.flow), priority: 120,
+      description: `Everything hitting you is dealing ${bRes}% less, cut out of everyone the blue `
+        + `record has hit. It cannot pass ${pct(1 - BANK_RES_FLOOR)}%, and Coda burns it.`,
+      count: bRes, suffix: '%',
+    } : null);
+
+    // ── Encore Streak ─────────────────────────────────────────────────
+    const streak = this.streak();
+    this.arena.setStatusIndicator('sound-streak', streak > 0 ? {
+      name: 'Encore Streak', emoji: '🎼', color: this.pcol(SOUND.gold), priority: 123,
+      description: `${streak} harmonized casts in a row: your shockwave is `
+        + `+${pct(STREAK_SIZE_PER * streak)}% wider, and the run is worth ${streak} hype when Q `
+        + 'burns it. One mistimed cast ends it.',
+      count: streak,
+    } : null);
+
+    // ── PARTY MODE ────────────────────────────────────────────────────
+    this.arena.setStatusIndicator('sound-party', time < this.partyUntil ? {
+      name: 'PARTY MODE', emoji: '🪩', color: this.pcol(SOUND.mirrorLit), priority: 131,
+      description: 'You played the room instead of yourself. Everything you had banked is on the '
+        + 'enemy for the length of the party — and every point of hype it pays is worth double.',
+      until: this.partyUntil,
+    } : null);
+  }
+
+  private paintPerfBar(g: Phaser.GameObjects.Graphics, y: number): void {
     const W = this.arena.width;
+    const solo = this.perfMode === 'solo';
     g.fillStyle(this.pcol(SOUND.shade), 0.92);
     g.fillRect(0, y - 15, W, 30);
     g.lineStyle(1, this.pcol(SOUND.plum), 1);
     g.strokeRect(0, y - 15, W, 30);
     // The hit line, ringing on its own.
     const pulse = 0.7 + 0.3 * Math.sin(this.vizT * 8);
-    g.lineStyle(3, this.pcol(SOUND.gold), pulse);
+    const col = solo ? SOUND.gold : SOUND.brass;
+    g.lineStyle(3, this.pcol(col), pulse);
     g.strokeCircle(W / 2, y, 15);
-    g.fillStyle(this.pcol(SOUND.gold), 0.2 * pulse);
+    g.fillStyle(this.pcol(col), 0.2 * pulse);
     g.fillCircle(W / 2, y, 15);
   }
 
@@ -1167,23 +2335,12 @@ export class SoundKit {
 
     switch (castId) {
       case 'staccato': {
-        this.fireWave('npc', npc.x, npc.y, ang, harmonized ? STACCATO_HARM_DMG : STACCATO_DMG, {
+        const base = harmonized ? STACCATO_HARM_DMG : STACCATO_DMG;
+        this.fireWave('npc', npc.x, npc.y, ang, Math.round(base * this.damageMult('npc')), {
           color: harmonized ? SOUND.gold : SOUND.flow,
           range: WAVE_RANGE, speed: WAVE_SPEED, spread: WAVE_SPREAD, thick: WAVE_THICK,
         });
         this.nfx.waveBurst(npc.x, npc.y, ang, 1, 9, harmonized ? SOUND.gold : SOUND.flow);
-        for (const v of this.violins) {
-          if (v.owner !== 'npc') continue;
-          v.charge = 1;
-          const vAng = Math.atan2(player.y - v.y, player.x - v.x);
-          const base = v.golden
-            ? (harmonized ? GOLD_VIOLIN_HARM_DMG : GOLD_VIOLIN_DMG)
-            : (harmonized ? VIOLIN_HARM_DMG : VIOLIN_DMG);
-          this.fireWave('npc', v.x, v.y, vAng, Math.round(base * (1 + this.npcBugleBonus)), {
-            color: v.golden ? SOUND.gold : SOUND.flowPale,
-            range: MINI_RANGE, speed: MINI_SPEED, spread: MINI_SPREAD, thick: MINI_THICK,
-          });
-        }
         break;
       }
       case 'disc-dice': {
@@ -1191,26 +2348,48 @@ export class SoundKit {
         this.nfx.discSlice(npc.x, npc.y, DISC_RADIUS, color);
         if (player.active && player.hp > 0
           && Phaser.Math.Distance.Between(npc.x, npc.y, player.x, player.y) <= DISC_RADIUS) {
-          player.takeDamage(DISC_DMG);
+          player.takeDamage(Math.round(DISC_DMG * this.damageMult('npc')));
           this.nfx.waveBurst(player.x, player.y, ang, 0.9, 8, color);
         }
         if (harmonized) this.npcDiscIdx = (this.npcDiscIdx + 1) % DISC_ORDER.length;
         break;
       }
-      case 'conduct':
-        this.placeViolin('npc', player.x, player.y, harmonized);
+      case 'boombox':
+        // Dropped on itself: the field is a self-buff first and a shove second.
+        this.placeBoombox('npc', npc.x, npc.y, harmonized, time);
         break;
       case 'bugle':
-        this.npcBugleBonus = Math.min(BUGLE_CAP, this.npcBugleBonus + BUGLE_GAIN);
+        // No bar reaches this sim, so a blow is worth a flat block of what a run would pay.
+        this.npcTempo += NPC_BUGLE_GAIN;
         this.npcBugleHoldUntil = time + BUGLE_HOLD_MS;
         this.blowBugle('npc', player.x, player.y);
         break;
-      case 'soli':
-        this.npcSoliUntil = time + 8000;
-        this.npcSoliNextAt = time + 1200;
-        this.nfx.ripple(npc.x, npc.y, 20, 190, SOUND.gold, 640, 6, 5, 9);
-        this.arena.showFloatingText(npc.x, npc.y - 48, '🎻 SOLI!', '#ffdd44');
+      case 'coda': {
+        if (this.npcCodaLevel >= CODA_MAX_LEVEL) {
+          npc.scaleStampedCooldown('coda', SOLO_COOLDOWN_MULT);
+          this.npcSoloUntil = time + 8000;
+          this.npcSoloNextAt = time + 1200;
+          this.nfx.ripple(npc.x, npc.y, 20, 190, SOUND.gold, 640, 6, 5, 9);
+          this.arena.showFloatingText(npc.x, npc.y - 48, '🎸 SOLO!', '#ffdd44');
+          break;
+        }
+        const gained = Math.round(this.npcTempo * 100 * 2 + this.npcBoomAtk * 100);
+        this.npcTempo = 0;
+        this.npcBoomAtk = 0;
+        this.npcHype += gained;
+        this.nfx.boom(npc.x, npc.y, 90, { color: SOUND.flow, petals: 9, notes: 7 });
+        this.arena.showFloatingText(npc.x, npc.y - 46, `🔥 +${gained} HYPE`, '#66aaff');
+        while (this.npcHype >= CODA_PER_LEVEL && this.npcCodaLevel < CODA_MAX_LEVEL) {
+          this.npcHype -= CODA_PER_LEVEL;
+          this.npcCodaLevel++;
+          const heal = CODA_HEAL[this.npcCodaLevel];
+          if (heal > 0) npc.heal(heal);
+          this.nfx.boom(npc.x, npc.y, 150, { color: SOUND.flow, petals: 12, notes: 10 });
+          this.arena.showFloatingText(npc.x, npc.y - 68,
+            this.npcCodaLevel >= 3 ? '⚡ LEVEL 3!' : '🎸 LEVEL 2!', '#66aaff');
+        }
         break;
+      }
       default:
         break;
     }
@@ -1329,33 +2508,22 @@ export class SoundKit {
 
   // ── Helpers ───────────────────────────────────────────────────────────
 
-  private nearestTo(x: number, y: number, pool: Fighter[]): Fighter | null {
-    let nearest: Fighter | null = null;
-    let best = Infinity;
-    for (const t of pool) {
-      if (!t.active || t.hp <= 0) continue;
-      const d = Phaser.Math.Distance.Between(x, y, t.x, t.y);
-      if (d < best) { best = d; nearest = t; }
-    }
-    return nearest;
-  }
-
   /**
    * Ruin's Spikes of Ruin (see `combat/SummonPurge.ts`).
-   * The conducted phantom violins.
+   * The boomboxes on the floor.
    */
   purgeSummons(
     x: number, y: number, radius: number, exceptOwner: 'player' | 'npc',
     report?: (px: number, py: number) => void,
   ): number {
     let razed = 0;
-    for (let i = this.violins.length - 1; i >= 0; i--) {
-      const v = this.violins[i];
-      if (v.owner === exceptOwner) continue;
-      if (Phaser.Math.Distance.Between(x, y, v.x, v.y) > radius) continue;
-      report?.(v.x, v.y);
-      this.fx(v.owner).shatter(v.x, v.y, 20, 8, 9, v.golden ? SOUND.gold : SOUND.magenta);
-      this.violins.splice(i, 1);
+    for (let i = this.boomboxes.length - 1; i >= 0; i--) {
+      const b = this.boomboxes[i];
+      if (b.owner === exceptOwner) continue;
+      if (Phaser.Math.Distance.Between(x, y, b.x, b.y) > radius) continue;
+      report?.(b.x, b.y);
+      this.fx(b.owner).shatter(b.x, b.y, 24, 9, 9, b.golden ? SOUND.gold : SOUND.magenta);
+      this.boomboxes.splice(i, 1);
       razed++;
     }
     return razed;

@@ -715,6 +715,54 @@ export class MagicFx extends FxBase {
       monument ? MAGIC.ember : MAGIC.orchid, 0.9, 5, false);
   }
 
+  /**
+   * The five-wedge spell wheel, and the Dark Magic button at its hub.
+   *
+   * Lives here rather than inline in the kit because the codex showcase opens the same ring the
+   * arena does — the wheel is as much a part of what Magic looks like as any cloud it summons.
+   * Wedge colours are passed through untinted: they are the borrowed elements' own colours and
+   * a skin has no business repainting fire blue.
+   */
+  static drawWheel(
+    g: Phaser.GameObjects.Graphics,
+    cx: number, cy: number, radius: number,
+    colors: readonly number[], selected: number,
+    toggle: 'none' | 'light' | 'dark' = 'none',
+  ): void {
+    const count = colors.length;
+    const step = (Math.PI * 2) / count;
+    for (let i = 0; i < count; i++) {
+      const startA = i * step - Math.PI / 2 - step / 2;
+      const endA = startA + step;
+      const isSelected = i === selected;
+      const r = isSelected ? radius + 10 : radius;
+      g.fillStyle(colors[i], isSelected ? 0.9 : 0.55);
+      g.beginPath(); g.moveTo(cx, cy);
+      g.arc(cx, cy, r, startA, endA, false);
+      g.closePath(); g.fillPath();
+      g.lineStyle(isSelected ? 3 : 1, isSelected ? 0xffffff : 0xaaaaaa, isSelected ? 0.9 : 0.4);
+      g.beginPath(); g.moveTo(cx, cy);
+      g.arc(cx, cy, r, startA, endA, false);
+      g.closePath(); g.strokePath();
+    }
+    if (toggle !== 'none') {
+      const dark = toggle === 'dark';
+      g.fillStyle(dark ? 0x440088 : 0xddaa00, 0.92);
+      g.fillCircle(cx, cy, 24);
+      g.lineStyle(2, dark ? 0xcc44ff : 0xffffff, 0.9);
+      g.strokeCircle(cx, cy, 24);
+    }
+  }
+
+  /** Where wedge `i`'s label sits, given which wedge is selected (the selected one bulges). */
+  static wheelLabelPos(
+    cx: number, cy: number, radius: number, i: number, count: number, selected: number,
+  ): { x: number; y: number } {
+    const midA = i * ((Math.PI * 2) / count) - Math.PI / 2;
+    const rr = i === selected ? radius + 10 : radius;
+    return { x: cx + Math.cos(midA) * (rr * 0.65), y: cy + Math.sin(midA) * (rr * 0.65) };
+  }
+
   /** A Sparkle Shot sitting armed, or in flight. */
   static drawSparkle(
     g: Phaser.GameObjects.Graphics, tint: MagicColorFn,

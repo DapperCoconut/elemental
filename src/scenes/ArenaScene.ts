@@ -93,7 +93,7 @@ import { SandKit, SandArenaApi } from '../elements/kits/SandKit';
 import { PaperKit, PaperArenaApi } from '../elements/kits/PaperKit';
 import { DeathKit, DeathArenaApi } from '../elements/kits/DeathKit';
 import { FortuneKit, FortuneArenaApi } from '../elements/kits/FortuneKit';
-import { AmberKit, AmberArenaApi } from '../elements/kits/AmberKit';
+import { MarrowKit, MarrowArenaApi } from '../elements/kits/MarrowKit';
 import { PsychicKit, PsychicArenaApi } from '../elements/kits/PsychicKit';
 import { RadiationKit, RadiationArenaApi } from '../elements/kits/RadiationKit';
 import { BindKit, BindArenaApi } from '../elements/kits/BindKit';
@@ -125,7 +125,7 @@ import { duneElement } from '../elements/dune';
 import { paperElement } from '../elements/paper';
 import { deathElement } from '../elements/death';
 import { fortuneElement } from '../elements/fortune';
-import { amberElement } from '../elements/amber';
+import { marrowElement } from '../elements/marrow';
 import { psychicElement } from '../elements/psychic';
 import { radiationElement } from '../elements/radiation';
 import { bindElement } from '../elements/bind';
@@ -610,8 +610,8 @@ export class ArenaScene extends Phaser.Scene {
   private deathKit!: DeathKit;
   /** Fortune (test element) — managed by FortuneKit. The stall, the blood coins and the guns. */
   private fortuneKit!: FortuneKit;
-  /** Amber (test element) — managed by AmberKit. The sling and the four animals. */
-  private amberKit!: AmberKit;
+  /** Marrow (test element) — managed by MarrowKit. The bone bar, the fever and the cells. */
+  private marrowKit!: MarrowKit;
   /** Psychic (test element) — managed by PsychicKit. Foreknowledge, stress and the whip. */
   private psychicKit!: PsychicKit;
   /** Radiation (test element) — managed by RadiationKit. The tracer chain and the burning clock. */
@@ -1507,14 +1507,18 @@ export class ArenaScene extends Phaser.Scene {
         get npc() { return arena.npc; },
         get enemies() { return arena.enemies; },
         get scene(): Phaser.Scene { return arena; },
+        get projectiles() { return arena.projectiles; },
         get eKey() { return arena.eKey; },
         get rKey() { return arena.rKey; },
         get fKey() { return arena.fKey; },
         get qKey() { return arena.qKey; },
+        get spaceKey() { return arena.spaceKey; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        setStatusIndicator: (id, s) => arena.setStatusIndicator(id, s),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         soundColor: (owner, base) => arena.skinsKit.soundColor(owner, base),
         get masteryActive() { return arena.soundMasteryOn && arena.elementId === 'sound'; },
@@ -2444,11 +2448,14 @@ export class ArenaScene extends Phaser.Scene {
         get fKey() { return arena.fKey; },
         get qKey() { return arena.qKey; },
         get pointerWasDown() { return arena.pointerWasDown; },
+        get rightPointerWasDown() { return arena.rightPointerWasDown; },
         get elementId() { return arena.elementId; },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
         get isInvasion() { return arena.isInvasion; },
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
         fortuneColor: (owner, base) => arena.skinsKit.fortuneColor(owner, base),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
@@ -2461,12 +2468,12 @@ export class ArenaScene extends Phaser.Scene {
       this.fortuneKit = new FortuneKit(fortuneApi);
     }
 
-    // ── Amber kit (test element) ──────────────────────────────
-    if (this.amberKit) {
-      this.amberKit.reset();
+    // ── Marrow kit (test element) ─────────────────────────────
+    if (this.marrowKit) {
+      this.marrowKit.reset();
     } else {
       const arena = this;
-      const amberApi: AmberArenaApi = {
+      const marrowApi: MarrowArenaApi = {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
@@ -2477,22 +2484,23 @@ export class ArenaScene extends Phaser.Scene {
         get rKey() { return arena.rKey; },
         get fKey() { return arena.fKey; },
         get qKey() { return arena.qKey; },
-        get pointerWasDown() { return arena.pointerWasDown; },
         get elementId() { return arena.elementId; },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
-        get isInvasion() { return arena.isInvasion; },
-        amberColor: (owner, base) => arena.skinsKit.amberColor(owner, base),
+        marrowColor: (owner, base) => arena.skinsKit.marrowColor(owner, base),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
-        getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        purgeSummons: (x, y, r, except) => arena.purgeSummonsInCircle(x, y, r, except),
+        hasUpgrade: (owner, slot) => (owner === 'player'
+          ? arena.hasUpgrade(slot)
+          : arena.hasNpcUpgrade(slot)),
         get masteryActive() { return false; },
         get npcMasteryActive() { return false; },
       };
-      this.amberKit = new AmberKit(amberApi);
+      this.marrowKit = new MarrowKit(marrowApi);
     }
 
     // ── Psychic kit (test element) ────────────────────────────
@@ -2522,6 +2530,8 @@ export class ArenaScene extends Phaser.Scene {
         sendPsychicMsg: (msg) => Net.send(msg),
         get masteryActive() { return false; },
         get npcMasteryActive() { return false; },
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
       };
       this.psychicKit = new PsychicKit(psychicApi);
     }
@@ -2553,6 +2563,8 @@ export class ArenaScene extends Phaser.Scene {
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
         get masteryActive() { return false; },
         get npcMasteryActive() { return false; },
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
       };
       this.radiationKit = new RadiationKit(radiationApi);
     }
@@ -2582,6 +2594,8 @@ export class ArenaScene extends Phaser.Scene {
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
         get masteryActive() { return false; },
         get npcMasteryActive() { return false; },
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
       };
       this.bindKit = new BindKit(bindApi);
     }
@@ -2614,6 +2628,8 @@ export class ArenaScene extends Phaser.Scene {
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
         get masteryActive() { return false; },
         get npcMasteryActive() { return false; },
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
       };
       this.gumKit = new GumKit(gumApi);
     }
@@ -2634,10 +2650,13 @@ export class ArenaScene extends Phaser.Scene {
         get fKey() { return arena.fKey; },
         get qKey() { return arena.qKey; },
         get pointerWasDown() { return arena.pointerWasDown; },
+        get rightPointerWasDown() { return arena.rightPointerWasDown; },
         get elementId() { return arena.elementId; },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
         conquestColor: (owner, base) => arena.skinsKit.conquestColor(owner, base),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
@@ -4215,12 +4234,12 @@ export class ArenaScene extends Phaser.Scene {
       'fortune-risky':         0x2f8f57,
       'fortune-paywall':       0xa8791e,
       'fortune-p2w':           0xfff6d0,
-      // Amber: resin for the two things he throws, blood for the two things that eat.
-      'amber-sling':           0xf7c25a,
-      'amber-mosquitoes':      0xd4413f,
-      'amber-hunt':            0x86b45c,
-      'amber-stampede':        0xc4a678,
-      'amber-trex':            0x9c6d42,
+      // Marrow: bone for the antibody, then each cell's own hue — violet, green, cyan, magenta.
+      'marrow-antibody':       0xf1e7d0,
+      'marrow-macrosma':       0x7b6cd9,
+      'marrow-neutralize':     0x2fc79b,
+      'marrow-dendricles':     0x46c8f5,
+      'marrow-mastacre':       0xf05fa8,
       // Gluttony: the chef's row is whites and produce, the butcher's is all meat.
       'glut-knife':            0xd6dee6,
       'glut-forage':           0x63a53c,
@@ -4338,9 +4357,9 @@ export class ArenaScene extends Phaser.Scene {
       'fate-all-in':       0xff4400,
       'staccato':           0xff66cc,
       'disc-dice':          0x44ee88,
-      'conduct':            0xff3388,
+      'boombox':            0xff3388,
       'bugle':              0xd9a441,
-      'soli':               0xffdd44,
+      'coda':               0xffdd44,
       // Magnet
       'mag-pulse':          0xcc2244,
       'nail-implant':       0x888899,
@@ -5006,16 +5025,16 @@ export class ArenaScene extends Phaser.Scene {
       fortuneRiskyInvest: () => this.fortuneKit.doRiskyInvest('player'),
       fortunePaywall: (tx, ty) => this.fortuneKit.doPaywall('player', tx, ty),
       fortunePayToWin: (tx, ty) => this.fortuneKit.doPayToWin('player', tx, ty),
-      amberSling: (tx, ty) => this.amberKit.doSling('player', tx, ty),
-      amberMosquitoes: () => this.amberKit.doMosquitoes('player'),
-      amberBeginHunt: (tx, ty) => this.amberKit.doBeginHunt('player', tx, ty),
-      amberStampede: () => this.amberKit.doStampede('player'),
-      amberEndHunt: (tx, ty) => this.amberKit.doEndHunt('player', tx, ty),
+      marrowAntibody: (tx, ty) => this.marrowKit.doAntibody('player', tx, ty),
+      marrowMacrosma: () => this.marrowKit.doMacrosma('player'),
+      marrowNeutralize: () => this.marrowKit.doNeutralize('player'),
+      marrowDendricles: (tx, ty) => this.marrowKit.doDendricles('player', tx, ty),
+      marrowMastacre: () => this.marrowKit.doMastacre('player'),
       // Psychic
       psychicHeadache: (tx, ty) => this.psychicKit.doHeadache('player', tx, ty),
       psychicMindControl: () => this.psychicKit.doMindControl('player'),
       psychicDodgeDestiny: () => this.psychicKit.doDodgeDestiny('player'),
-      psychicMigraine: () => this.psychicKit.doMigraine('player'),
+      psychicMigraine: (tx, ty) => this.psychicKit.doMigraine('player', tx, ty),
       psychicComa: () => this.psychicKit.doComa('player'),
       radiationRailgun: (tx, ty) => this.radiationKit.doRailgun('player', tx, ty),
       radiationBaton: (tx, ty) => this.radiationKit.doBaton('player', tx, ty),
@@ -5348,16 +5367,16 @@ export class ArenaScene extends Phaser.Scene {
       fortuneRiskyInvest: () => this.fortuneKit.doRiskyInvest('npc'),
       fortunePaywall: (tx, ty) => this.fortuneKit.doPaywall('npc', tx, ty),
       fortunePayToWin: (tx, ty) => this.fortuneKit.doPayToWin('npc', tx, ty),
-      amberSling: (tx, ty) => this.amberKit.doSling('npc', tx, ty),
-      amberMosquitoes: () => this.amberKit.doMosquitoes('npc'),
-      amberBeginHunt: (tx, ty) => this.amberKit.doBeginHunt('npc', tx, ty),
-      amberStampede: () => this.amberKit.doStampede('npc'),
-      amberEndHunt: (tx, ty) => this.amberKit.doEndHunt('npc', tx, ty),
+      marrowAntibody: (tx, ty) => this.marrowKit.doAntibody('npc', tx, ty),
+      marrowMacrosma: () => this.marrowKit.doMacrosma('npc'),
+      marrowNeutralize: () => this.marrowKit.doNeutralize('npc'),
+      marrowDendricles: (tx, ty) => this.marrowKit.doDendricles('npc', tx, ty),
+      marrowMastacre: () => this.marrowKit.doMastacre('npc'),
       // Psychic
       psychicHeadache: (tx, ty) => this.psychicKit.doHeadache('npc', tx, ty),
       psychicMindControl: () => this.psychicKit.doMindControl('npc'),
       psychicDodgeDestiny: () => this.psychicKit.doDodgeDestiny('npc'),
-      psychicMigraine: () => this.psychicKit.doMigraine('npc'),
+      psychicMigraine: (tx, ty) => this.psychicKit.doMigraine('npc', tx, ty),
       psychicComa: () => this.psychicKit.doComa('npc'),
       radiationRailgun: (tx, ty) => this.radiationKit.doRailgun('npc', tx, ty),
       radiationBaton: (tx, ty) => this.radiationKit.doBaton('npc', tx, ty),
@@ -5651,11 +5670,11 @@ export class ArenaScene extends Phaser.Scene {
       fortuneRiskyInvest: () => {},
       fortunePaywall: () => {},
       fortunePayToWin: () => {},
-      amberSling: () => {},
-      amberMosquitoes: () => {},
-      amberBeginHunt: () => {},
-      amberStampede: () => {},
-      amberEndHunt: () => {},
+      marrowAntibody: () => {},
+      marrowMacrosma: () => {},
+      marrowNeutralize: () => {},
+      marrowDendricles: () => {},
+      marrowMastacre: () => {},
       psychicHeadache: () => {},
       psychicMindControl: () => {},
       psychicDodgeDestiny: () => {},
@@ -5821,17 +5840,23 @@ export class ArenaScene extends Phaser.Scene {
     const mouseY = this.input.activePointer.worldY;
 
     // A teleport and a dash are different moves and should not share a sound.
-    Sfx.playAt(this.cardPsychoActive ? 'teleport' : 'dash', this.player.x);
+    Sfx.playAt(this.cardPsychoActive || this.fortuneKit.isTeleportDash() ? 'teleport' : 'dash', this.player.x);
 
-    // Card — Psycho: teleport to cursor; Card — Technique: extended dash length
-    if (this.cardPsychoActive) {
+    // Sound — Coda level 2+: the dash carries twice as far and trails notes behind it.
+    const soundDash = this.elementId === 'sound' ? this.soundKit.getDashLengthMult() : 1;
+
+    // Card — Psycho: teleport to cursor; Card — Technique: extended dash length.
+    // Fortune's Tele-Core (E+) is the same move bought off a shelf, so it rides the same branch.
+    if (this.cardPsychoActive || this.fortuneKit.isTeleportDash()) {
       const { width, height } = this.scale;
       const pad = 44;
       playerBody.reset(Math.max(pad, Math.min(width - pad, mouseX)), Math.max(pad, Math.min(height - pad, mouseY)));
       playerBody.setVelocity(0, 0);
     } else {
-      playerBody.setVelocity(dx * 520 * this.cardDodgeLengthMult, dy * 520 * this.cardDodgeLengthMult);
+      const len = 520 * this.cardDodgeLengthMult * soundDash;
+      playerBody.setVelocity(dx * len, dy * len);
     }
+    if (this.elementId === 'sound') this.soundKit.onPlayerDash();
 
     // Quantum: the dodge *is* the swap. The dash still happens either way — a Quantum with
     // no bond dodges like anyone else — and the collapse rides on top of it.
@@ -8634,6 +8659,10 @@ export class ArenaScene extends Phaser.Scene {
     if (this.npcElement.id === 'water') {
       this.npcSpeedMult *= this.waterKit.getNpcSpeedMult();
     }
+    // Sound: PARTY MODE (Q+) hands the soloist's whole stride to the other side for 12s.
+    if (this.elementId === 'sound') {
+      this.npcSpeedMult *= this.soundKit.getNpcSpeedMult();
+    }
     // Time kit speed mults (puddles, bounty aura, speed aura)
     if (this.elementId === 'sand' || this.npcElement.id === 'sand') {
       if (this.elementId !== 'sand') this.playerSpeedMult *= this.timeKit.getPlayerSpeedMult();
@@ -8653,6 +8682,11 @@ export class ArenaScene extends Phaser.Scene {
       this.npcSpeedMult *= this.shadowKit.getNpcSpeedMult(time);
       this.playerSpeedMult *= this.shadowKit.getPlayerSpeedMult(time);
     }
+    // Fortune: the Chilly Pepper's ring and the auditor's rifle. Pulled for the same reason
+    // Justice is — FortuneKit.update() runs long after movement has resolved — and unconditional
+    // because a slow the shopkeeper put on somebody outlives him being the one holding the stall.
+    this.playerSpeedMult *= this.fortuneKit.getPlayerSpeedMult();
+    this.npcSpeedMult *= this.fortuneKit.getNpcSpeedMult();
     // Paper: the Journal's footwork entries against this specific opponent. Player-side only —
     // the journal lives in the save, so an npc Paper has nothing written up. Pulled for the same
     // reason Justice is: PaperKit.update() runs long after movement has resolved.
@@ -8671,6 +8705,12 @@ export class ArenaScene extends Phaser.Scene {
     if (this.elementId === 'chalk' || this.npcElement.id === 'chalk') {
       this.playerSpeedMult *= this.chalkKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.chalkKit.getNpcSpeedMult();
+    }
+    // Conquest: Speedy Walls and Force Shield, on whoever is standing beside their own masonry.
+    // Pulled for the same reason Justice is — ConquestKit.update() runs after movement resolves.
+    if (this.elementId === 'conquest' || this.npcElement.id === 'conquest') {
+      this.playerSpeedMult *= this.conquestKit.getPlayerSpeedMult();
+      this.npcSpeedMult *= this.conquestKit.getNpcSpeedMult();
     }
     // Magma: Dragon Kin's haste, on whoever is currently hatched. Pulled for the same reason.
     if (this.elementId === 'magma' || this.npcElement.id === 'magma') {
@@ -8710,11 +8750,11 @@ export class ArenaScene extends Phaser.Scene {
       this.playerSpeedMult *= this.illusionKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.illusionKit.getNpcSpeedMult();
     }
-    // Amber holds a body completely still while its tyrannosaur is carrying it, and a fully
-    // wound sling is a 25% drag — both have to be pulled here, after movement has resolved.
-    if (this.elementId === 'amber' || this.npcElement.id === 'amber') {
-      this.playerSpeedMult *= this.amberKit.getPlayerSpeedMult();
-      this.npcSpeedMult *= this.amberKit.getNpcSpeedMult();
+    // Marrow's fever is a haste on its own host and its NETs are a slow on whoever is standing
+    // in one — both pulled here, after movement has resolved, because the kit's update runs last.
+    if (this.elementId === 'marrow' || this.npcElement.id === 'marrow') {
+      this.playerSpeedMult *= this.marrowKit.getPlayerSpeedMult();
+      this.npcSpeedMult *= this.marrowKit.getNpcSpeedMult();
     }
     // Psychic holds a comatose body completely still. Pulled here rather than pushed onto the
     // body for the same reason Death and Ruin are — the kit's update runs after movement.
@@ -8925,8 +8965,8 @@ export class ArenaScene extends Phaser.Scene {
       playerBody.setVelocity(0, 0);
     }
 
-    // ── Sound Soli: locked on stage while performing ──────────────
-    if (this.elementId === 'sound' && this.soundKit.isSoliActive() && !this.isDodging) {
+    // ── Sound: locked on stage while playing the bugle bar or a Solo ──
+    if (this.elementId === 'sound' && this.soundKit.isPerforming() && !this.isDodging) {
       playerBody.setVelocity(0, 0);
     }
 
@@ -9066,8 +9106,8 @@ export class ArenaScene extends Phaser.Scene {
       this.paperKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'death') {
       this.deathKit.handleInput(time, pointer, mouseX, mouseY);
-    } else if (this.elementId === 'amber') {
-      this.amberKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'marrow') {
+      this.marrowKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'psychic') {
       this.psychicKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'radiation') {
@@ -9449,13 +9489,12 @@ export class ArenaScene extends Phaser.Scene {
       npcFortuneBeaming: this.fortuneKit.isBeaming('npc'),
       npcFortuneWall: this.fortuneKit.hasWall('npc'),
 
-      // Amber: the sling is a hold, so the bot only ever decides when to let go — and the
-      // tyrannosaur locks out three of the other four keys while it is on the field.
-      npcAmberSwinging: this.amberKit.isSwinging('npc'),
-      npcAmberCharge: this.amberKit.swingCharge('npc'),
-      npcAmberRex: this.amberKit.hasRex('npc'),
-      npcAmberSwarm: this.amberKit.mosquitoCount('npc'),
-      npcAmberHeld: this.amberKit.isHeld('npc'),
+      // Marrow: every decision the bot makes is about the five sockets and the fever, and it
+      // can see neither from the arena.
+      npcMarrowCells: this.marrowKit.summonCount('npc'),
+      npcMarrowMasts: this.marrowKit.mastCount('npc'),
+      npcMarrowInflammation: this.marrowKit.inflammationOf('npc'),
+      npcMarrowTcellArmed: this.marrowKit.isTcellArmed('npc'),
 
       // Psychic: every decision the bot makes is about a queue and a pool it can see and the
       // arena cannot, so both are handed over rather than guessed at.
@@ -9477,6 +9516,8 @@ export class ArenaScene extends Phaser.Scene {
       npcBindOverheated: this.bindKit.isOverheated('npc'),
       npcBindIdolFaith: this.bindKit.idolFaith('npc'),
       npcBindWard: this.bindKit.wardCharges('npc'),
+      npcBindChained: this.bindKit.isChained('npc'),
+      npcBindCult: this.bindKit.cultSize('npc'),
       // Slime: the bot's whole decision surface is what its one hand is currently able to do.
       npcGumHandless: this.gumKit.isHandless('npc'),
       npcGumBalls: this.gumKit.ballsReady('npc'),
@@ -9781,7 +9822,7 @@ export class ArenaScene extends Phaser.Scene {
     // damage mirror and a running Deal all outlive being Death. It early-outs itself.
     this.deathKit.update(time, delta);
     this.fortuneKit.update(time, delta);
-    this.amberKit.update(time, delta);
+    this.marrowKit.update(time, delta);
     // Unconditional for the same reason Paper and Death are: a queue of borrowed casts, a
     // coma and a stress pool all outlive the psychic that started them, and this loop is the
     // only thing that hands any of them back. It early-outs itself.
@@ -10007,10 +10048,10 @@ export class ArenaScene extends Phaser.Scene {
         // The click counts a reload rather than its own cooldown, and the wall and the beam
         // are both durations — the kit decides what all three cards are showing.
         entry.fill.setSize(entry.maxWidth * this.fortuneKit.getBarRatio(entry.abilityId, time), entry.fill.height);
-      } else if (entry.abilityId.startsWith('amber-')) {
-        // The sling's card is a wind-up meter, not a cooldown, and the shank, the stampede and
-        // the tyrannosaur all outlast theirs.
-        entry.fill.setSize(entry.maxWidth * this.amberKit.getBarRatio(entry.abilityId, time), entry.fill.height);
+      } else if (entry.abilityId.startsWith('marrow-')) {
+        // F reads as ready the moment it is armed with a T-cell, and the Q counts the mast
+        // cells' five-second fuse rather than its own cooldown while any are still out.
+        entry.fill.setSize(entry.maxWidth * this.marrowKit.getBarRatio(entry.abilityId, time), entry.fill.height);
       } else if (entry.abilityId.startsWith('death-')) {
         // A blade being held out, a noose hanging and the ten seconds of a deal all outlast
         // their own cooldowns, so the kit decides what those three cards are counting.
@@ -10337,7 +10378,7 @@ export class ArenaScene extends Phaser.Scene {
       this.conquestKit, this.soulKit, this.subterfugeKit, this.creationKit, this.huntKit,
       this.growthKit, this.oilKit, this.crystalKit, this.silenceKit, this.shadowKit,
       this.magicKit, this.soundKit, this.magmaKit, this.lifeKit, this.techKit, this.illusionKit,
-      this.paperKit, this.sandKit, this.quantumCoreKit,
+      this.paperKit, this.sandKit, this.quantumCoreKit, this.marrowKit,
     ];
     let razed = 0;
     for (const kit of kits) razed += kit?.purgeSummons(cx, cy, radius, exceptOwner, report) ?? 0;

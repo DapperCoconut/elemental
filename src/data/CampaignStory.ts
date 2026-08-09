@@ -450,8 +450,8 @@ const beats: StoryBeat[] = [
   { id: 'world-enter:gluttony', lines: [
     h('The Devouring Board. Gluttony was cast out for hunger, and then the Voice arrived — imagine the reunion. The kitchen floor spits grease. The menu is you.'),
   ] },
-  { id: 'world-enter:amber', lines: [
-    h('The Still Gallery. Amber preserves what it loves. It loved the whole realm, once, very slowly. Keep moving or be curated.'),
+  { id: 'world-enter:marrow', lines: [
+    h('The Inflamed Cavity. Marrow was exiled for defending too well — it read the whole realm as an infection and never called the response off. The floor is still swollen. It still bursts.'),
   ] },
   { id: 'world-enter:bind', lines: [
     h('The Gaol. Bind was exiled for holding on. The chains haul everything toward the centre on a cycle — including debts, grudges, and you.'),
@@ -533,13 +533,13 @@ const beats: StoryBeat[] = [
     s('The Devouring Board', '🍖', 0xffb07a, 'You took food off my table. Do you know how long since anyone DARED?'),
     s('The Devouring Board', '🍖', 0xffb07a, 'The thing downstairs eats and never sets a place. I set two. When the last door opens, sit down and we will eat IT.'),
   ] },
-  { id: 'boss-pre:amber', lines: [
-    s('The Curator', '🔶', 0xffd27a, 'Your pose is wrong. Hold still while I correct it. Forever.'),
-    h('Amber loved this realm so thoroughly that it stopped it. The resin only slows you while it is wet — being caught when it sets is the mistake. And the case always has a door.'),
+  { id: 'boss-pre:marrow', lines: [
+    s('Sepsis', '🦴', 0xf5788c, 'You are a foreign body. Hold still. This will be thorough.'),
+    h('Marrow defended this realm to death and did not notice the difference. An abscess only swells before it bursts — that is the warning, not the wound. And the quarantine always leaves a gap.'),
   ] },
-  { id: 'boss-post:amber', lines: [
-    s('The Curator', '🔶', 0xffd27a, 'Moving. Still moving. I had forgotten what it looked like on something I liked.'),
-    s('The Curator', '🔶', 0xffd27a, 'The collection opens. When the last door opens, everything I ever kept comes out of its case at once.'),
+  { id: 'boss-post:marrow', lines: [
+    s('Sepsis', '🦴', 0xf5788c, 'Not an infection. Not an infection. I have been wrong for an age and I have been thorough about it.'),
+    s('Sepsis', '🦴', 0xf5788c, 'Then the thing beneath the worlds is the wound. When the last door opens I will finally have something worth swelling for.'),
   ] },
   { id: 'boss-pre:bind', lines: [
     s('The Gaoler', '⛓️', 0xffe9a0, 'Every cell in this realm has a name on it. Yours is fresh.'),

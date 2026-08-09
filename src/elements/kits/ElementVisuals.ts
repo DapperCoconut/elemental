@@ -21,6 +21,17 @@ export const TAU = Math.PI * 2;
 export const easeOut = (t: number): number => 1 - (1 - t) * (1 - t);
 export const easeIn = (t: number): number => t * t;
 
+/**
+ * Handed every display object an Fx or avatar creates, when one is installed.
+ *
+ * In the arena nobody installs one and effects go straight to the scene root at world
+ * coordinates, which is what they want. The ability previews on the info screen install one
+ * to pull the very same effects into a small masked box — see `ui/AbilityPreview.ts`. That is
+ * the whole reason this hook exists: a preview that redrew the art itself would drift from
+ * the real ability the moment anyone tuned it.
+ */
+export type GfxSink = (obj: Phaser.GameObjects.GameObject) => void;
+
 // ── FxBase ────────────────────────────────────────────────────────────────
 
 /**
@@ -28,7 +39,31 @@ export const easeIn = (t: number): number => t * t;
  * animation runner and the impact flash.
  */
 export abstract class FxBase {
+  /** Installed by a preview harness; undefined in the arena. See `GfxSink`. */
+  protected sink?: GfxSink;
+
   constructor(protected scene: Phaser.Scene, protected tint: ColorFn = (c) => c) {}
+
+  /**
+   * Route everything this Fx draws from here on into `sink` instead of leaving it loose in
+   * the scene. Sticky for the life of the instance, so effects an ability spawns from a
+   * `delayedCall` land in the same place as the ones it spawned immediately.
+   */
+  setSink(sink?: GfxSink): this {
+    this.sink = sink;
+    return this;
+  }
+
+  /**
+   * The one place an Fx makes a Graphics. Subclasses with their own persistent layers must
+   * come through here rather than calling `scene.add.graphics()`, or their art escapes the
+   * preview box and paints itself across the menu.
+   */
+  protected gfx(depth: number): Phaser.GameObjects.Graphics {
+    const g = this.scene.add.graphics().setDepth(depth);
+    this.sink?.(g);
+    return g;
+  }
 
   /**
    * Runs `draw(g, t)` every frame for `duration` ms with `t` sweeping 0→1, then cleans up.
@@ -36,7 +71,7 @@ export abstract class FxBase {
    * this on scene 'update' leaks a Graphics across every match restart.
    */
   anim(depth: number, duration: number, draw: (g: Phaser.GameObjects.Graphics, t: number) => void): void {
-    const g = this.scene.add.graphics().setDepth(depth);
+    const g = this.gfx(depth);
     this.scene.tweens.addCounter({
       from: 0, to: 1, duration,
       onUpdate: (tw) => {
@@ -155,6 +190,17 @@ export abstract class BaseAvatar {
   private blinkUntil = 0;
   private trailAccum = 0;
 
+  /**
+   * Uniform scale for the whole rig, about the fighter's own position. 1 is normal.
+   *
+   * Every layer here is drawn in world coordinates off the `(x, y)` handed to `update`, so this
+   * cannot be a `setScale` on the objects alone — the graphics layers are scaled *and* offset so
+   * that `(x, y)` stays put and everything around it shrinks toward it. Added for Radiation's
+   * Final Vision, which shrinks the operative rather than swelling the target; a kit that shrinks
+   * a fighter's `sizeMult` should set this to the same factor or the sprite and the rig part ways.
+   */
+  private rigScale = 1;
+
   private squash: { div: number; x: number; y: number };
 
   constructor(
@@ -182,11 +228,28 @@ export abstract class BaseAvatar {
     this.blinkAt = 1500 + Math.random() * 3000;
   }
 
+  /**
+   * Hand every layer of the rig to `sink`. Unlike `FxBase.setSink` this is a one-shot sweep
+   * rather than a standing hook, because an avatar builds all of its objects in the
+   * constructor and never makes another — call it once, immediately after construction.
+   */
+  captureInto(sink: GfxSink): this {
+    for (const c of this.armObjs) sink(c);
+    for (const e of this.eyeObjs) { sink(e.white); sink(e.pupil); }
+    sink(this.glow);
+    sink(this.body);
+    sink(this.extras);
+    return this;
+  }
+
   /** Aim direction in radians — hands and eyes orient off this. */
   setFacing(angle: number): void { this.facing = angle; }
 
   /** 1 = normal, higher while a stance buff is up (bigger, faster, wider). */
   setIntensity(v: number): void { this.intensity = v; }
+
+  /** Shrink or grow the whole rig about the fighter's own position. See {@link rigScale}. */
+  setRigScale(v: number): void { this.rigScale = Phaser.Math.Clamp(v, 0.2, 3); }
 
   /**
    * Mastery tell. The setter early-outs when unchanged, so kits can call this every frame
@@ -237,11 +300,12 @@ export abstract class BaseAvatar {
     for (const e of this.eyeObjs) { e.white.setVisible(visible); e.pupil.setVisible(visible); }
 
     // ── Hands ───────────────────────────────────────────────────────────
+    const rs = this.rigScale;
     for (let i = 0; i < 2; i++) {
       const side = i === 0 ? -1 : 1;
       const pose = this.poseFor(side);
-      const tx = x + Math.cos(pose.ang) * pose.dist;
-      const ty = y + Math.sin(pose.ang) * pose.dist;
+      const tx = x + Math.cos(pose.ang) * pose.dist * rs;
+      const ty = y + Math.sin(pose.ang) * pose.dist * rs;
 
       // Spring follow: the hands lag the body, so running drags them behind you.
       const k = Math.min(1, ARM_STIFFNESS * (delta / 16.67));
@@ -256,7 +320,7 @@ export abstract class BaseAvatar {
       const vx = this.armX[i] - prevX, vy = this.armY[i] - prevY;
       const sp = Math.min(1, Math.hypot(vx, vy) / this.squash.div);
       c.setRotation(sp > 0.05 ? Math.atan2(vy, vx) : 0);
-      c.setScale(this.armScale[i] * (1 + sp * this.squash.x), this.armScale[i] * (1 - sp * this.squash.y));
+      c.setScale(this.armScale[i] * rs * (1 + sp * this.squash.x), this.armScale[i] * rs * (1 - sp * this.squash.y));
       c.setAlpha(alpha);
     }
 
@@ -283,17 +347,23 @@ export abstract class BaseAvatar {
     for (let i = 0; i < 2; i++) {
       const side = i === 0 ? -1 : 1;
       const e = this.eyeObjs[i];
-      const ex = x + side * 7.2 + Math.cos(look) * 2.4;
-      const ey = y - 4 + Math.sin(look) * 2.0 + bob;
+      const ex = x + (side * 7.2 + Math.cos(look) * 2.4) * rs;
+      const ey = y + (-4 + Math.sin(look) * 2.0 + bob) * rs;
       e.white.setPosition(ex, ey);
-      e.white.setScale(1, open);
+      e.white.setScale(rs, open * rs);
       e.white.setAlpha(alpha);
-      e.pupil.setPosition(ex + Math.cos(look) * 1.8, ey + Math.sin(look) * 1.6);
-      e.pupil.setScale(1, open);
+      e.pupil.setPosition(ex + Math.cos(look) * 1.8 * rs, ey + Math.sin(look) * 1.6 * rs);
+      e.pupil.setScale(rs, open * rs);
       e.pupil.setAlpha(alpha);
     }
 
     // ── Element-owned layers ────────────────────────────────────────────
+    // The painters below all work in world coordinates off `(x, y)`, so the rig scale is applied
+    // as a transform that leaves that one point exactly where it is.
+    for (const g of [this.glow, this.body, this.extras]) {
+      g.setPosition(x * (1 - rs), y * (1 - rs));
+      g.setScale(rs);
+    }
     this.glow.clear();
     this.body.clear();
     this.extras.clear();

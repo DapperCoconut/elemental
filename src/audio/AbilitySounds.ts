@@ -122,9 +122,9 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   // ── Sound ──
   'staccato': ['drum-hit', 1.3],
   'disc-dice': ['sonic-pulse', 1.15, 0.9],
-  'conduct': ['holy-chord', 1.25, 0.8],
+  'boombox': ['sonic-pulse', 1.5, 0.65],
   'bugle': ['train-horn', 1.6, 0.75],
-  'soli': 'guitar-solo',
+  'coda': 'guitar-solo',
 
   // ── Echo (element id `echo`) ──
   'echo-shot': 'echo-ping',
@@ -299,12 +299,14 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'fortune-paywall': ['gear-turn', 0.85, 0.95],
   'fortune-p2w': ['beam-charge', 0.95, 0.9],
 
-  // ── Amber ──
-  'amber-sling': ['whoosh', 0.7, 0.85],
-  'amber-mosquitoes': ['drone-buzz', 0.9, 1.35],
-  'amber-hunt': ['screech', 0.8, 1.1],
-  'amber-stampede': ['quake', 0.95, 0.75],
-  'amber-trex': ['roar', 1.0, 0.65],
+  // ── Marrow ──
+  // Nothing here is a weapon being swung: four of the five are something wet being released,
+  // so the set is a flick, two spawns, a whip and a swarm of fuses being lit.
+  'marrow-antibody': ['nail', 0.4, 1.5],
+  'marrow-macrosma': ['slime-splat', 0.85, 0.7],
+  'marrow-neutralize': ['spore', 0.85, 1.25],
+  'marrow-dendricles': ['whip', 0.9, 1.15],
+  'marrow-mastacre': ['bubble', 1.0, 0.75],
 
   // ── Psychic ──
   // Nothing in the kit is physical except the whip, so nothing else gets an impact: a
@@ -312,7 +314,8 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'psychic-headache': ['whip', 0.85, 1.05],
   'psychic-mind-control': ['incantation', 0.8, 1.2],
   'psychic-dodge-destiny': ['blink', 0.85, 1.3],
-  'psychic-migraine': ['torment', 0.9, 1.15],
+  // The charge being planted — PsychicKit plays the torment itself when the fuse runs out.
+  'psychic-migraine': ['incantation', 1.25, 0.5],
   'psychic-coma': ['status-sleep', 1.0, 0.65],
 
   // ── Radiation ──
@@ -500,7 +503,7 @@ const ELEMENT_PITCH: Record<string, number> = {
   rubber: 1.05, silence: 0.75, technology: 1.3, plasma: 1.25,
   creation: 1.0, dream: 1.2, justice: 0.95, king: 0.6, chalk: 1.35, illusion: 1.15, conquest: 0.85,
   magma: 0.7, depths: 0.72, passion: 1.28, ruin: 0.7, dune: 0.76, paper: 1.18,
-  death: 0.6, fortune: 1.08, amber: 0.75, psychic: 1.22,
+  death: 0.6, fortune: 1.08, marrow: 0.92, psychic: 1.22,
   radiation: 1.12, bind: 0.66, gum: 0.86, gluttony: 0.82,
 };
 

@@ -287,12 +287,12 @@ export interface CastContext {
   fortuneRiskyInvest: () => void;
   fortunePaywall: (tx: number, ty: number) => void;
   fortunePayToWin: (tx: number, ty: number) => void;
-  // Amber (test element: cheat mode only for now)
-  amberSling: (tx: number, ty: number) => void;
-  amberMosquitoes: () => void;
-  amberBeginHunt: (tx: number, ty: number) => void;
-  amberStampede: () => void;
-  amberEndHunt: (tx: number, ty: number) => void;
+  // Marrow (test element: cheat mode only for now)
+  marrowAntibody: (tx: number, ty: number) => void;
+  marrowMacrosma: () => void;
+  marrowNeutralize: () => void;
+  marrowDendricles: (tx: number, ty: number) => void;
+  marrowMastacre: () => void;
   // Death (test element: cheat mode only for now)
   deathStyxShot: (tx: number, ty: number) => void;
   deathDisarm: (tx: number, ty: number) => void;
@@ -303,7 +303,7 @@ export interface CastContext {
   psychicHeadache: (tx: number, ty: number) => void;
   psychicMindControl: () => void;
   psychicDodgeDestiny: () => void;
-  psychicMigraine: () => void;
+  psychicMigraine: (tx: number, ty: number) => void;
   psychicComa: () => void;
   // Radiation (test element: cheat mode only for now)
   radiationRailgun: (tx: number, ty: number) => void;

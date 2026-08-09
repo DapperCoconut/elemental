@@ -37,6 +37,14 @@ export const GUM = {
   solidDeep: 0x2b8b76,
   solid: 0x7fe3c6,
   solidLit: 0xd6fff2,
+  /**
+   * Dark grey stone. The one part of the palette that is not slime at all: the shard hand the
+   * Q upgrade leaves you holding, and the sparks it strikes off a zip-line. Deliberately drab,
+   * because the whole point of that hand is that it stopped being alive.
+   */
+  stoneDeep: 0x1b1e23,
+  stone: 0x4a525c,
+  stoneLit: 0xb9c6d2,
 };
 
 /** Deterministic 0–1 noise, so a blob keeps the same lumps between frames. */
@@ -207,7 +215,7 @@ export function slimeShard(
   g: Phaser.GameObjects.Graphics,
   tint: GumColorFn,
   x: number, y: number, ang: number, len: number, alpha: number,
-  { seed = 1 } = {},
+  { seed = 1, deep = GUM.solidDeep, fill = GUM.solid, lit = GUM.solidLit } = {},
 ): void {
   const w = len * (0.24 + jitter(seed, 0) * 0.12);
   const skew = (jitter(seed, 1) - 0.5) * 0.5;
@@ -215,12 +223,12 @@ export function slimeShard(
   const s = Math.sin(ang);
   const P = (fx: number, fy: number) => new Phaser.Geom.Point(x + c * fx - s * fy, y + s * fx + c * fy);
   const body = [P(len * 0.55, 0), P(-len * 0.3, w), P(-len * 0.45, w * skew), P(-len * 0.28, -w * 0.8)];
-  g.fillStyle(tint(GUM.solidDeep), alpha);
+  g.fillStyle(tint(deep), alpha);
   g.fillPoints(body, true);
-  g.fillStyle(tint(GUM.solid), alpha);
+  g.fillStyle(tint(fill), alpha);
   g.fillPoints([P(len * 0.45, 0), P(-len * 0.24, w * 0.7), P(-len * 0.3, -w * 0.5)], true);
   // The facet: one bright edge along the long side, which is all a shard needs to look glassy.
-  g.lineStyle(1.3, tint(GUM.solidLit), alpha * 0.95);
+  g.lineStyle(1.3, tint(lit), alpha * 0.95);
   const a = P(len * 0.5, 0);
   const b = P(-len * 0.26, -w * 0.6);
   g.lineBetween(a.x, a.y, b.x, b.y);
@@ -271,6 +279,197 @@ export function gumShell(
     g.arc(x, y, r * (0.75 + jitter(seed, 10 + i) * 0.22), a, a + 1.5 + jitter(seed, 20 + i), false);
     g.strokePath();
   }
+}
+
+/**
+ * A zip-line: a strand of slime slung wall to wall, sagging under its own weight with beads of
+ * ooze sliding along it. Drawn as one sagging curve rather than a straight rule so it reads as
+ * something hanging in the air rather than a UI divider — the whole reason it is on the air layer
+ * is that the player has to see it as a thing to grab.
+ */
+export function zipLine(
+  g: Phaser.GameObjects.Graphics,
+  tint: GumColorFn,
+  x0: number, x1: number, y: number, alpha: number, t: number,
+  { seed = 4, sag = 9, lit = false } = {},
+): void {
+  const segs = 26;
+  const at = (u: number): { x: number; y: number } => ({
+    x: x0 + (x1 - x0) * u,
+    // A travelling ripple on top of the sag, so a line nobody is riding is still alive.
+    y: y + Math.sin(u * Math.PI) * sag + Math.sin(t * 2.2 - u * 5 + seed) * 1.6,
+  });
+
+  g.lineStyle(5, tint(GUM.oozeDeep), alpha * 0.55);
+  g.beginPath();
+  for (let i = 0; i <= segs; i++) {
+    const p = at(i / segs);
+    if (i === 0) g.moveTo(p.x, p.y + 1.6); else g.lineTo(p.x, p.y + 1.6);
+  }
+  g.strokePath();
+
+  g.lineStyle(2.8, tint(lit ? GUM.oozeLit : GUM.ooze), alpha * 0.9);
+  g.beginPath();
+  for (let i = 0; i <= segs; i++) {
+    const p = at(i / segs);
+    if (i === 0) g.moveTo(p.x, p.y); else g.lineTo(p.x, p.y);
+  }
+  g.strokePath();
+
+  // Beads sliding along it, each on its own clock.
+  for (let i = 0; i < 5; i++) {
+    const j = jitter(seed, i);
+    const u = (t * (0.05 + j * 0.07) + j) % 1;
+    const p = at(u);
+    g.fillStyle(tint(GUM.ooze), alpha * 0.85);
+    g.fillCircle(p.x, p.y, 3 + j * 1.8);
+    g.fillStyle(tint(GUM.shine), alpha * 0.7);
+    g.fillCircle(p.x - 1, p.y - 1.2, 1.1 + j * 0.6);
+  }
+  // The anchors at each end.
+  for (const x of [x0, x1]) {
+    g.fillStyle(tint(GUM.oozeDeep), alpha * 0.9);
+    g.fillEllipse(x, y, 9, 16);
+  }
+}
+
+/**
+ * A slime puddle on the floor. `soak` (0–1) is how deep whoever is standing in it has sunk, and
+ * it is the only readout for the ramp: the puddle darkens and its ring closes as the slow builds.
+ * `heal` swaps the green ladder for the pink one — the same object, doing the opposite job.
+ */
+export function slimePuddle(
+  g: Phaser.GameObjects.Graphics,
+  tint: GumColorFn,
+  x: number, y: number, r: number, alpha: number, t: number,
+  { seed = 7, heal = false, soak = 0, life = 1 } = {},
+): void {
+  const deep = heal ? GUM.gumDeep : GUM.oozeDeep;
+  const fill = heal ? GUM.gum : GUM.ooze;
+  const lit = heal ? GUM.gumLit : GUM.oozeLit;
+  const pts = 16;
+  const ring = (k: number): Phaser.Geom.Point[] => {
+    const out: Phaser.Geom.Point[] = [];
+    for (let i = 0; i < pts; i++) {
+      const a = (i / pts) * TAU;
+      // Lobes, not a circle. A puddle that spread out has an edge that found things in its way.
+      const w = 1 + Math.sin(a * 3 + seed) * 0.13 + Math.sin(t * 1.4 + i * 0.8 + seed) * 0.05;
+      out.push(new Phaser.Geom.Point(x + Math.cos(a) * r * k * w, y + Math.sin(a) * r * k * w * 0.62));
+    }
+    return out;
+  };
+
+  g.fillStyle(tint(deep), alpha * 0.55 * life);
+  g.fillPoints(ring(1.06), true);
+  g.fillStyle(tint(fill), alpha * (0.34 + soak * 0.3) * life);
+  g.fillPoints(ring(0.95), true);
+  // Slow-moving swirls inside it, so a puddle never sits perfectly flat.
+  for (let i = 0; i < 3; i++) {
+    const j = jitter(seed, i);
+    const a = t * (0.4 + j * 0.5) + j * TAU;
+    g.fillStyle(tint(lit), alpha * 0.28 * life);
+    g.fillEllipse(x + Math.cos(a) * r * 0.42, y + Math.sin(a) * r * 0.24,
+      r * (0.3 + j * 0.2), r * (0.16 + j * 0.1));
+  }
+  g.lineStyle(1.8, tint(lit), alpha * (0.4 + soak * 0.5) * life);
+  g.strokeEllipse(x, y, r * 2 * 0.98, r * 1.24 * 0.98);
+
+  // The soak ring: how far the ramp has run on whoever is standing in it.
+  if (soak > 0.02) {
+    g.lineStyle(2.6, tint(heal ? GUM.gumLit : GUM.shine), 0.85);
+    g.beginPath();
+    g.arc(x, y, r * 0.7, -Math.PI / 2, -Math.PI / 2 + TAU * soak, false);
+    g.strokePath();
+  }
+}
+
+/**
+ * A slime beacon — what a puddle becomes once it has been solidified. A small grey ball of
+ * hardened slime with a coloured eye in the middle: pink for the healing ones, green for the
+ * slowing ones. `charge` (0–1) is how much shaking has been banked into it while carried, and
+ * `active` opens the aura it emits once it has been put down.
+ */
+export function slimeBeacon(
+  g: Phaser.GameObjects.Graphics,
+  tint: GumColorFn,
+  x: number, y: number, r: number, alpha: number, t: number,
+  { seed = 5, heal = false, charge = 0, active = 0, auraR = 0 } = {},
+): void {
+  const eye = heal ? GUM.gum : GUM.ooze;
+  const eyeLit = heal ? GUM.gumLit : GUM.oozeLit;
+
+  // The aura first, so the ball sits on top of its own field.
+  if (active > 0 && auraR > 0) {
+    const pulse = 0.5 + Math.sin(t * 4) * 0.5;
+    g.fillStyle(tint(eye), 0.1 + active * 0.08);
+    g.fillCircle(x, y, auraR);
+    g.lineStyle(2.4, tint(eyeLit), 0.35 + pulse * 0.35);
+    g.strokeCircle(x, y, auraR * (0.94 + pulse * 0.06));
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * TAU + t * (heal ? 0.6 : -0.6);
+      const d = auraR * (0.3 + ((t * 0.35 + i / 9) % 1) * 0.7);
+      g.fillStyle(tint(eyeLit), 0.5 * (1 - d / auraR));
+      g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d, 3);
+    }
+  }
+
+  // The shell: grey stone with a couple of facets, shaking visibly once it is charged.
+  const shiver = charge > 0 ? Math.sin(t * 34) * charge * 2.2 : 0;
+  const bx = x + shiver;
+  g.fillStyle(tint(GUM.stoneDeep), alpha);
+  g.fillCircle(bx, y + 1.5, r * 1.08);
+  g.fillStyle(tint(GUM.stone), alpha);
+  g.fillCircle(bx, y, r);
+  for (let i = 0; i < 3; i++) {
+    slimeShard(g, tint, bx, y, (i / 3) * TAU + seed, r * 1.15, alpha * 0.75,
+      { seed: seed + i, deep: GUM.stoneDeep, fill: GUM.stone, lit: GUM.stoneLit });
+  }
+  g.fillStyle(tint(eye), alpha);
+  g.fillCircle(bx, y, r * 0.5);
+  g.lineStyle(1.4, tint(eyeLit), alpha * 0.95);
+  g.strokeCircle(bx, y, r * 0.5);
+  g.fillStyle(tint(GUM.stoneLit), alpha * 0.8);
+  g.fillCircle(bx - r * 0.35, y - r * 0.4, r * 0.16);
+
+  // The charge ring: how long the aura will run for once it is put down.
+  if (charge > 0.02) {
+    g.lineStyle(2.4, tint(eyeLit), 0.9);
+    g.beginPath();
+    g.arc(bx, y, r * 1.6, -Math.PI / 2, -Math.PI / 2 + TAU * Math.min(1, charge), false);
+    g.strokePath();
+  }
+}
+
+/**
+ * The extra bubble Bubble Bloat grows around somebody who ate more than one gumball. One shell
+ * per layer, nested and each a little brighter, so the count is legible at a glance — that count
+ * is the damage the thing does when it goes off.
+ */
+export function bloatShell(
+  g: Phaser.GameObjects.Graphics,
+  tint: GumColorFn,
+  x: number, y: number, r: number, layers: number, alpha: number, t: number,
+  { hard = false, seed = 8 } = {},
+): void {
+  const deep = hard ? GUM.solidDeep : GUM.gumDeep;
+  const fill = hard ? GUM.solid : GUM.gum;
+  const lit = hard ? GUM.solidLit : GUM.gumLit;
+  const breathe = 1 + Math.sin(t * 2.6 + seed) * 0.045;
+  g.fillStyle(tint(deep), alpha * 0.3);
+  g.fillCircle(x, y, r * breathe * 1.04);
+  g.fillStyle(tint(fill), alpha * 0.2);
+  g.fillCircle(x, y, r * breathe);
+  for (let i = 0; i < layers; i++) {
+    const k = 1 - i * (0.62 / Math.max(1, layers));
+    g.lineStyle(1.6 + i * 0.2, tint(i === 0 ? lit : fill), alpha * (0.75 - i * 0.06));
+    g.strokeCircle(x, y, r * breathe * k);
+  }
+  // One big shine, low and to the right, so the whole thing reads as a single inflated sphere.
+  const sa = -2.2 + Math.sin(t * 1.1 + seed) * 0.15;
+  g.lineStyle(Math.max(1.6, r * 0.09), tint(lit), alpha * 0.8);
+  g.beginPath();
+  g.arc(x, y, r * 0.72, sa, sa + 0.85, false);
+  g.strokePath();
 }
 
 // ── Fx ────────────────────────────────────────────────────────────────────
@@ -373,6 +572,46 @@ export class GumFx extends FxBase {
     });
   }
 
+  /** Stone striking stone: the shard hand dragging along a zip-line. */
+  sparks(x: number, y: number, r = 26, depth = 9): void {
+    const bits = Array.from({ length: 10 }, (_, i) => ({
+      a: (i / 10) * TAU + Math.random() * 0.6,
+      d: 0.6 + Math.random() * 0.9,
+    }));
+    this.anim(depth, 260, (g, t) => {
+      const e = easeOut(t);
+      for (const b of bits) {
+        const px = x + Math.cos(b.a) * r * b.d * e;
+        const py = y + Math.sin(b.a) * r * b.d * e;
+        g.lineStyle(2 * (1 - t) + 0.5, this.tint(t < 0.4 ? GUM.stoneLit : GUM.solidLit), (1 - t) * 0.95);
+        g.lineBetween(px, py, px - Math.cos(b.a) * 7 * (1 - t), py - Math.sin(b.a) * 7 * (1 - t));
+      }
+      g.fillStyle(this.tint(GUM.stoneLit), (1 - t) * 0.6);
+      g.fillCircle(x, y, 4 * (1 - t) + 1);
+    });
+  }
+
+  /** The bloat going off: a wall of nested shells blowing outward at once. */
+  bloatBurst(x: number, y: number, r = 60, hard = false, depth = 9): void {
+    const bits = Array.from({ length: 14 }, (_, i) => ({
+      a: (i / 14) * TAU + Math.random() * 0.3,
+      d: 0.7 + Math.random() * 0.7,
+      s: 0.2 + Math.random() * 0.4,
+    }));
+    this.anim(depth, 520, (g, t) => {
+      const e = easeOut(t);
+      for (let i = 0; i < 3; i++) {
+        g.lineStyle((5 - i) * (1 - t) + 0.6, this.tint(hard ? GUM.solidLit : GUM.gumLit), (1 - t) * (0.9 - i * 0.2));
+        g.strokeCircle(x, y, r * (0.3 + e * (1.2 + i * 0.35)));
+      }
+      for (const b of bits) {
+        g.fillStyle(this.tint(hard ? GUM.solid : GUM.gum), (1 - t) * 0.85);
+        g.fillCircle(x + Math.cos(b.a) * r * b.d * e * 1.5, y + Math.sin(b.a) * r * b.d * e * 1.5,
+          r * b.s * (1 - t * 0.7));
+      }
+    });
+  }
+
   /** The shed particle behind a moving hand. */
   mote(x: number, y: number, depth = 4): void {
     const a = Math.random() * TAU;
@@ -428,6 +667,11 @@ export class GumAvatar extends BaseAvatar {
   /** 0–1: no arm at all (Solidify). */
   private stump = 0;
   private stumpTarget = 0;
+  /** 0–1: the upgraded Solidify, which sets the hand instead of throwing it away. */
+  private shard = 0;
+  private shardTarget = 0;
+  /** Which way the hand's persistent layers are currently painted. */
+  private shardPainted = false;
   /** 0–1: how much of full reach is used — thins the arm as it runs out. */
   private stretch = 0;
 
@@ -447,6 +691,8 @@ export class GumAvatar extends BaseAvatar {
   setGrip(on: boolean): void { this.gripTarget = on ? 1 : 0; }
   setCarry(on: boolean): void { this.carryTarget = on ? 1 : 0; }
   setHandless(on: boolean): void { this.stumpTarget = on ? 1 : 0; }
+  /** Q+: the hand has set into dark stone rather than shattering. */
+  setShardHand(on: boolean): void { this.shardTarget = on ? 1 : 0; }
 
   /** Where the hand actually ended up. The kit treats this as the hitbox, so it can never lie. */
   handPos(): { x: number; y: number } {
@@ -458,6 +704,9 @@ export class GumAvatar extends BaseAvatar {
     this.grip += (this.gripTarget - this.grip) * k;
     this.carry += (this.carryTarget - this.carry) * k;
     this.stump += (this.stumpTarget - this.stump) * Math.min(1, delta / 200);
+    this.shard += (this.shardTarget - this.shard) * Math.min(1, delta / 260);
+    const stone = this.shard > 0.5;
+    if (stone !== this.shardPainted) { this.shardPainted = stone; this.paintHand(stone); }
     super.update(delta, x, y, alpha);
   }
 
@@ -466,6 +715,25 @@ export class GumAvatar extends BaseAvatar {
     this.forEachHandLayer(2, (glint) => {
       glint.setFillStyle(this.tint(on ? GUM.solidLit : GUM.shine), on ? 0.95 : 0.85);
       glint.setRadius(on ? 4 : 3);
+    });
+    this.shardPainted = false;
+  }
+
+  /**
+   * The hand's own layers, repainted when it sets into stone and back again when it softens.
+   * Done on the flip rather than every frame because these are three persistent Arc objects,
+   * not something the graphics pass redraws.
+   */
+  private paintHand(stone: boolean): void {
+    this.forEachHandLayer(0, (halo) => {
+      halo.setFillStyle(this.tint(stone ? GUM.stoneDeep : GUM.oozeDeep), stone ? 0.6 : 0.4);
+    });
+    this.forEachHandLayer(1, (core) => {
+      core.setFillStyle(this.tint(stone ? GUM.stone : GUM.ooze), 0.95);
+    });
+    this.forEachHandLayer(2, (glint) => {
+      const soft = this.mastered ? GUM.solidLit : GUM.shine;
+      glint.setFillStyle(this.tint(stone ? GUM.stoneLit : soft), stone ? 1 : 0.85);
     });
   }
 
@@ -553,10 +821,42 @@ export class GumAvatar extends BaseAvatar {
       return;
     }
 
+    const stone = this.shard > 0.5;
     const w0 = (this.mastered ? 9.5 : 8) * (1 + this.grip * 0.2);
     const w1 = (this.mastered ? 7.5 : 6.2) * (1 + this.grip * 0.35 + this.carry * 0.15);
     gummyArm(g, this.tint, x + Math.cos(this.reachAng) * 6, y + Math.sin(this.reachAng) * 6 + 2,
-      hx, hy, w0, w1, alpha * (1 - this.stump), this.t, { stretch: this.stretch, seed: 5 });
+      hx, hy, w0, w1, alpha * (1 - this.stump), this.t, {
+        stretch: this.stretch, seed: 5,
+        // The arm goes grey from the hand backwards, so a set hand reads as a limb that died
+        // rather than a limb holding a weapon.
+        deep: stone ? GUM.stoneDeep : GUM.oozeDeep,
+        fill: stone ? GUM.stone : GUM.ooze,
+        shine: stone ? GUM.stoneLit : GUM.shine,
+      });
+
+    // Q+: five fingers of sharp stone, fanned around the aim. Drawn over the ball hand so the
+    // silhouette changes from "blob" to "claw" — this is the whole tell that the ultimate is up.
+    if (this.shard > 0.05) {
+      const a = alpha * this.shard;
+      g.fillStyle(this.tint(GUM.stoneDeep), a * 0.95);
+      g.fillCircle(hx, hy, 10.5);
+      g.fillStyle(this.tint(GUM.stone), a);
+      g.fillCircle(hx, hy, 8);
+      for (let i = 0; i < 5; i++) {
+        // A hand, not a starburst: the fingers fan forward across a bit over a right angle, and
+        // the middle one is the longest.
+        const spread = (i - 2) * 0.34;
+        const len = (17 - Math.abs(i - 2) * 2.6) * this.shard;
+        const wag = Math.sin(this.t * 3 + i) * 0.05;
+        slimeShard(g, this.tint, hx + Math.cos(this.reachAng + spread) * 6,
+          hy + Math.sin(this.reachAng + spread) * 6,
+          this.reachAng + spread + wag, len, a,
+          { seed: i * 3 + 1, deep: GUM.stoneDeep, fill: GUM.stone, lit: GUM.stoneLit });
+      }
+      g.fillStyle(this.tint(GUM.stoneLit), a * 0.8);
+      g.fillCircle(hx - 2.4, hy - 2.6, 2.2);
+      return;
+    }
 
     // A mastered arm carries a thread of jade down its length.
     if (this.mastered) {

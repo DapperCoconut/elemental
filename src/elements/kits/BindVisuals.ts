@@ -467,6 +467,325 @@ export function darkMark(
   }
 }
 
+/**
+ * A run of chain between two points, sagging under its own weight.
+ *
+ * Every chain in the element is drawn with this: the leash from a prophet to one of their cult,
+ * and the four that come out of the corners of the room when the god takes the body. `pull` is
+ * how taut it is — 0 hangs in a deep curve, 1 is a straight line that has been pulled hard — and
+ * it is the only thing that separates *linked to* from *held down*.
+ */
+export function chainRun(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  x0: number, y0: number, x1: number, y1: number,
+  alpha: number, pull: number, t: number, seed = 3,
+): void {
+  const len = Math.hypot(x1 - x0, y1 - y0);
+  if (len < 6) return;
+  const links = Phaser.Math.Clamp(Math.round(len / 11), 2, 42);
+  const sag = (1 - Phaser.Math.Clamp(pull, 0, 1)) * Math.min(46, len * 0.22);
+  // The sway runs perpendicular to the chain, so a slack run swings instead of stretching.
+  const nx = -(y1 - y0) / len;
+  const ny = (x1 - x0) / len;
+
+  let px = x0;
+  let py = y0;
+  for (let i = 1; i <= links; i++) {
+    const u = i / links;
+    const bow = Math.sin(u * Math.PI);
+    const sway = Math.sin(t * 2.1 + u * 4.2 + seed) * (1.2 + sag * 0.12);
+    const cx = x0 + (x1 - x0) * u + nx * sway;
+    const cy = y0 + (y1 - y0) * u + ny * sway + bow * sag;
+    chainLink(g, tint, cx, cy, Math.atan2(cy - py, cx - px), alpha, 0.86, pull);
+    px = cx; py = cy;
+  }
+}
+
+/**
+ * The four chains that come out of the corners of the arena and hold a body in the middle of it.
+ * Drawn taut, with a shackle ring at the wrist end and the corner anchors bolted into the floor —
+ * the god is using the summoner as a fixture, and fixtures do not move.
+ */
+export function arenaBinding(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  x: number, y: number,
+  corners: [number, number][],
+  alpha: number, pull: number, t: number,
+): void {
+  for (let i = 0; i < corners.length; i++) {
+    const [cx, cy] = corners[i];
+    // Anchor plate: a gold boss hammered into the corner, with the chain coming out of its eye.
+    g.fillStyle(tint(BND.void), alpha * 0.8);
+    g.fillCircle(cx, cy, 11);
+    g.fillStyle(tint(BND.goldDeep), alpha);
+    g.fillCircle(cx, cy, 8.5);
+    g.fillStyle(tint(BND.gold), alpha);
+    g.fillCircle(cx, cy, 5.5);
+    g.fillStyle(tint(BND.void), alpha);
+    g.fillCircle(cx, cy, 2.6);
+    chainRun(g, tint, cx, cy, x, y, alpha, pull, t, i * 2.7);
+  }
+  // The shackle: a gold ring around the middle of it all, rattling as the chains pull.
+  const rattle = Math.sin(t * 21) * 1.1 * pull;
+  g.lineStyle(4, tint(BND.void), alpha * 0.8);
+  g.strokeCircle(x + rattle * 0.4, y, 19);
+  g.lineStyle(2.6, tint(BND.chainLit), alpha);
+  g.strokeCircle(x + rattle * 0.4, y, 19);
+  g.lineStyle(1.4, tint(BND.gold), alpha * 0.85);
+  g.strokeCircle(x + rattle * 0.4, y, 22.5);
+}
+
+/**
+ * A cultist of the Broken God.
+ *
+ * Hooded, they are a silhouette and nothing else: a robe with no body in it, a cowl with one of
+ * the patron's eyes stitched onto the front, and hands folded because they are not here to fight.
+ * Awakened, the hood is thrown back and there is no head under it at all — a cluster of golden
+ * eyes, all open, all looking somewhere slightly different, which is the only moment in the
+ * element where the thing wearing the jewellery is visible.
+ */
+export function cultistFigure(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  x: number, y: number, alpha: number,
+  { awakened = false, t = 0, seed = 0, lean = 0, scale = 1 } = {},
+): void {
+  const bob = Math.sin(t * 2.2 + seed) * 1.6 * scale;
+  const sway = Math.sin(t * 1.3 + seed * 1.7) * 1.9 * scale + lean * 9;
+  const S = scale;
+
+  g.fillStyle(tint(BND.void), alpha * 0.5);
+  g.fillEllipse(x, y + 20 * S, 30 * S, 9 * S);
+
+  // ── Robe ──
+  // A bell with a wandering hem, so three of them standing together do not read as one shape.
+  const hem: Phaser.Geom.Point[] = [];
+  for (let i = 0; i <= 8; i++) {
+    const u = i / 8;
+    const hx = x - 16 * S + u * 32 * S + sway * (0.2 + u * 0.1);
+    const hy = y + 18 * S + Math.sin(u * 7 + t * 3 + seed) * 1.8 * S;
+    hem.push(new Phaser.Geom.Point(hx, hy));
+  }
+  const robe: Phaser.Geom.Point[] = [
+    new Phaser.Geom.Point(x - 8 * S + sway * 0.5, y - 12 * S + bob),
+    new Phaser.Geom.Point(x + 8 * S + sway * 0.5, y - 12 * S + bob),
+    ...hem.slice().reverse(),
+  ];
+  g.fillStyle(tint(BND.void), alpha);
+  g.fillPoints(robe.map((p) => new Phaser.Geom.Point(x + (p.x - x) * 1.14, y + (p.y - y) * 1.06)), true);
+  g.fillStyle(tint(BND.cosmicDeep), alpha);
+  g.fillPoints(robe, true);
+  // One lit fold down the near side — the robe has a body-shaped absence in it.
+  g.fillStyle(tint(BND.cosmic), alpha * (awakened ? 0.7 : 0.45));
+  g.fillEllipse(x - 3 * S + sway * 0.4, y + 4 * S, 10 * S, 20 * S);
+
+  // Hem band and vertical seams: gold, because everything the patron issues is a relic.
+  g.lineStyle(2 * S, tint(BND.goldDeep), alpha * 0.95);
+  g.strokePoints(hem, false);
+  g.lineStyle(1 * S, tint(BND.gold), alpha * 0.7);
+  for (let i = 0; i < 3; i++) {
+    const u = 0.28 + i * 0.22;
+    g.lineBetween(x - 6 * S + u * 12 * S + sway * 0.5, y - 8 * S + bob,
+      x - 15 * S + u * 30 * S + sway * 0.3, y + 17 * S);
+  }
+
+  // ── Sleeves ──
+  // Folded in front while hooded; thrown wide the moment the eyes are showing.
+  const spread = awakened ? 11 * S : 4 * S;
+  for (const side of [-1, 1] as const) {
+    const ax = x + side * spread + sway * 0.6;
+    const ay = y + (awakened ? -2 : 4) * S + bob * 0.6;
+    g.fillStyle(tint(BND.cosmicDeep), alpha);
+    g.fillEllipse(ax, ay, 8 * S, 11 * S);
+    g.fillStyle(tint(BND.goldDeep), alpha * 0.9);
+    g.fillEllipse(ax, ay + 5 * S, 6.4 * S, 3 * S);
+    if (awakened) {
+      // Bare hands out of the cuffs, lit from inside.
+      g.fillStyle(tint(BND.goldLit), alpha * 0.85);
+      g.fillCircle(ax + side * 2 * S, ay + 8 * S, 2.6 * S);
+    }
+  }
+
+  // Cord belt with a hanging tassel.
+  g.lineStyle(1.6 * S, tint(BND.gold), alpha * 0.9);
+  g.lineBetween(x - 8 * S + sway * 0.5, y + 3 * S, x + 8 * S + sway * 0.5, y + 3 * S);
+  const tas = Math.sin(t * 2.6 + seed) * 2 * S;
+  g.lineStyle(1.2 * S, tint(BND.goldDeep), alpha * 0.85);
+  g.lineBetween(x + 6 * S + sway * 0.5, y + 3 * S, x + 6 * S + tas, y + 12 * S);
+
+  const hx = x + sway * 0.7;
+  const hy = y - 16 * S + bob;
+
+  if (!awakened) {
+    // ── Cowl ──
+    // A peak that overhangs the face, so what is under it is a hole rather than a head.
+    const cowl: Phaser.Geom.Point[] = [
+      new Phaser.Geom.Point(hx, hy - 12 * S),
+      new Phaser.Geom.Point(hx + 10 * S, hy - 2 * S),
+      new Phaser.Geom.Point(hx + 11 * S, hy + 8 * S),
+      new Phaser.Geom.Point(hx - 11 * S, hy + 8 * S),
+      new Phaser.Geom.Point(hx - 10 * S, hy - 2 * S),
+    ];
+    g.fillStyle(tint(BND.void), alpha);
+    g.fillPoints(cowl.map((p) => new Phaser.Geom.Point(hx + (p.x - hx) * 1.16, hy + (p.y - hy) * 1.12)), true);
+    g.fillStyle(tint(BND.cosmicDeep), alpha);
+    g.fillPoints(cowl, true);
+
+    // The face opening: an almond of absolute nothing, set low under the brow of the hood.
+    g.fillStyle(tint(BND.void), alpha);
+    g.fillEllipse(hx, hy + 4 * S, 12 * S, 7 * S);
+    // Two pinpricks in it, barely there. A hood with nothing in it is scenery.
+    g.fillStyle(tint(BND.aether), alpha * (0.4 + 0.3 * Math.sin(t * 3 + seed)));
+    g.fillCircle(hx - 3 * S, hy + 4 * S, 1.1 * S);
+    g.fillCircle(hx + 3 * S, hy + 4.4 * S, 1.1 * S);
+
+    // Gold trim running the edge of the cowl, and the patron's eye stitched on the front of it.
+    g.lineStyle(1.8 * S, tint(BND.goldDeep), alpha * 0.95);
+    g.strokePoints(cowl, true);
+    patronEye(g, tint, hx, hy - 3.5 * S, 5.6 * S,
+      0.34 + 0.16 * Math.sin(t * 1.7 + seed), alpha,
+      { drift: Math.sin(t * 0.9 + seed), t, brow: false });
+    return;
+  }
+
+  // ── Awakened ──
+  // The hood comes off backwards and folds into a collar; the light it was hiding comes out.
+  g.fillStyle(tint(BND.cosmicDeep), alpha);
+  g.fillEllipse(hx - 9 * S, hy + 11 * S, 15 * S, 9 * S);
+  g.fillEllipse(hx + 9 * S, hy + 11 * S, 15 * S, 9 * S);
+  g.lineStyle(1.6 * S, tint(BND.goldDeep), alpha * 0.9);
+  g.strokeEllipse(hx - 9 * S, hy + 11 * S, 15 * S, 9 * S);
+  g.strokeEllipse(hx + 9 * S, hy + 11 * S, 15 * S, 9 * S);
+
+  // Glow first, so the cluster reads as a light source sitting on the shoulders.
+  g.fillStyle(tint(BND.goldLit), alpha * (0.12 + 0.06 * Math.sin(t * 5 + seed)));
+  g.fillCircle(hx, hy + 2 * S, 20 * S);
+  g.fillStyle(tint(BND.cosmicDeep), alpha * 0.9);
+  g.fillEllipse(hx, hy + 2 * S, 22 * S, 24 * S);
+
+  // The mass. Seven eyes on a fixed seed so the face keeps its shape between frames, each with
+  // its own aperture and its own drift — none of them is looking at what the others are.
+  for (let i = 0; i < 7; i++) {
+    const a = jitter(seed + 5, i) * TAU;
+    const d = (0.25 + jitter(seed + 5, 10 + i) * 0.75) * 9 * S;
+    const r = (2.6 + jitter(seed + 5, 20 + i) * 2.6) * S;
+    patronEye(g, tint,
+      hx + Math.cos(a) * d, hy + 2 * S + Math.sin(a) * d * 1.15, r,
+      0.5 + 0.45 * Math.sin(t * (1.4 + i * 0.3) + i * 2), alpha,
+      { drift: Math.sin(t * (0.8 + i * 0.2) + i), t, brow: false });
+  }
+  // Light spilling out of the seams the eyes are set in.
+  g.lineStyle(1 * S, tint(BND.goldLit), alpha * (0.3 + 0.25 * Math.sin(t * 6 + seed)));
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * TAU + t * 0.5;
+    g.lineBetween(hx + Math.cos(a) * 10 * S, hy + 2 * S + Math.sin(a) * 11 * S,
+      hx + Math.cos(a) * 16 * S, hy + 2 * S + Math.sin(a) * 18 * S);
+  }
+}
+
+/**
+ * Eviscerate, winding up. Shards spiral in toward the caster's raised hand and the ring around
+ * them closes as the charge fills — the same gesture the barrage will make in reverse.
+ */
+export function eviscerateCharge(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  x: number, y: number, k: number, alpha: number, t: number,
+): void {
+  const full = k >= 0.995;
+  g.lineStyle(2 + k * 2, tint(full ? BND.goldLit : BND.gold), alpha * (0.4 + k * 0.55));
+  g.strokeCircle(x, y - 34, 30 * (1 - k * 0.62) + 4);
+  g.lineStyle(1.2, tint(BND.cosmicLit), alpha * 0.5);
+  g.strokeCircle(x, y - 34, 34 * (1 - k * 0.5) + 4);
+
+  const n = 3 + Math.round(k * 5);
+  for (let i = 0; i < n; i++) {
+    const a = t * (2.2 + k * 3.4) + (i / n) * TAU;
+    const d = (30 - k * 19) + Math.sin(t * 5 + i) * 2;
+    oblivionShard(g, tint, x + Math.cos(a) * d, y - 34 + Math.sin(a) * d * 0.7,
+      a + Math.PI, alpha * (0.55 + k * 0.45), { scale: 0.5 + k * 0.34, eye: k });
+  }
+  if (full) {
+    // Topped out: the god has heard enough. A hard gold flare, and nothing more is gained.
+    g.fillStyle(tint(BND.goldLit), alpha * (0.2 + 0.2 * Math.sin(t * 16)));
+    g.fillCircle(x, y - 34, 13);
+  }
+}
+
+/**
+ * The footprint the barrage is currently going to land in, drawn at the cursor. A charge that
+ * tightens the spread has to be legible as a *place*, not as a bar — this is that place.
+ */
+export function spreadReticle(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  x: number, y: number, r: number, alpha: number, k: number, t: number,
+): void {
+  g.lineStyle(1.6, tint(BND.goldDeep), alpha * 0.5);
+  g.strokeCircle(x, y, r);
+  // Dashes, closing in as the charge fills.
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * TAU + t * 0.6;
+    if (i % 2) continue;
+    g.lineStyle(2.2, tint(k > 0.85 ? BND.goldLit : BND.gold), alpha * (0.5 + k * 0.45));
+    g.lineBetween(x + Math.cos(a) * r * 0.86, y + Math.sin(a) * r * 0.86,
+      x + Math.cos(a) * r, y + Math.sin(a) * r);
+  }
+  g.lineStyle(1.4, tint(BND.aether), alpha * 0.8);
+  g.lineBetween(x - 7, y, x + 7, y);
+  g.lineBetween(x, y - 7, x, y + 7);
+}
+
+/**
+ * Over-rage: the beam being held past the point the patron said stop. Red where the element is
+ * usually gold, with the heat cracking off the body in rings — the only place in Bind where the
+ * alarm colour touches the *player* rather than the bar.
+ */
+export function overrageAura(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  x: number, y: number, alpha: number, t: number,
+): void {
+  for (let i = 0; i < 3; i++) {
+    const u = ((t * 1.5 + i / 3) % 1);
+    g.lineStyle(2.6 * (1 - u) + 0.4, tint(i % 2 ? BND.wrath : BND.heat), alpha * (1 - u) * 0.7);
+    g.strokeCircle(x, y, 16 + u * 30);
+  }
+  // Embers coming off the shoulders, because something is actually burning.
+  for (let i = 0; i < 7; i++) {
+    const u = ((t * 1.1 + jitter(9, i)) % 1);
+    const a = jitter(9, 10 + i) * TAU;
+    g.fillStyle(tint(u < 0.5 ? BND.heat : BND.wrath), alpha * (1 - u) * 0.8);
+    g.fillCircle(x + Math.cos(a) * 15, y - u * 34 + Math.sin(a) * 8, 2.4 * (1 - u) + 0.6);
+  }
+}
+
+/**
+ * Chosen Vessel: a rung of gold light per hex still standing, climbing the body. Deliberately
+ * drawn as steps rather than as a glow — the bonus is counted, so the tell has to be countable.
+ */
+export function vesselHalo(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  x: number, y: number, hexes: number, alpha: number, t: number,
+): void {
+  for (let i = 0; i < hexes; i++) {
+    const lift = ((t * 0.7 + i * 0.33) % 1);
+    const ry = y + 16 - lift * 42;
+    const w = 30 - lift * 10;
+    g.lineStyle(2.2, tint(BND.goldLit), alpha * (1 - lift) * 0.8);
+    g.strokeEllipse(x, ry, w * 2, w * 0.6);
+    g.fillStyle(tint(BND.gold), alpha * (1 - lift) * 0.7);
+    for (const side of [-1, 1] as const) {
+      g.fillTriangle(x + side * w, ry, x + side * (w - 5), ry - 5, x + side * (w - 5), ry + 5);
+    }
+  }
+  g.fillStyle(tint(BND.goldLit), alpha * (0.06 + hexes * 0.05));
+  g.fillEllipse(x, y, 46, 54);
+}
+
 /** One link of chain, drawn as a ring squashed along its run. The avatar is made of these. */
 export function chainLink(
   g: Phaser.GameObjects.Graphics,
@@ -612,6 +931,93 @@ export class BindFx extends FxBase {
       g.fillEllipse(x, y, 700 * e, 380 * e);
       patronEye(g, this.tint, x, y + 12, 54 * (1 + e * 0.3), 1, 1 - easeIn(t),
         { wrath: 1, drift: Math.sin(t * 9), t: t * 6 });
+    });
+  }
+
+  /** A convert arriving: the robe rising out of the floor with the eye lighting up last. */
+  cultistRise(x: number, y: number, depth = 16): void {
+    this.anim(depth, 700, (g, t) => {
+      const e = easeOut(t);
+      g.lineStyle(2.6 * (1 - t) + 0.5, this.tint(BND.gold), (1 - t) * 0.8);
+      g.strokeEllipse(x, y + 18, 46 * e, 15 * e);
+      // The robe unfolding upward out of its own shadow.
+      cultistFigure(g, this.tint, x, y + (1 - e) * 26, Math.min(1, t * 2.4) * 0.9,
+        { t: t * 6, seed: 4, scale: 0.5 + e * 0.5 });
+      for (let i = 0; i < 6; i++) {
+        const a = jitter(21, i) * TAU;
+        g.fillStyle(this.tint(BND.aether), (1 - t) * 0.7);
+        g.fillCircle(x + Math.cos(a) * 20 * e, y + 14 - e * 32 + Math.sin(a) * 6, 2.4 * (1 - t) + 0.6);
+      }
+    });
+  }
+
+  /** The hood coming off: it flies back and the light that was under it floods out. */
+  cultistAwaken(x: number, y: number, depth = 17): void {
+    this.anim(depth, 620, (g, t) => {
+      const e = easeOut(t);
+      g.fillStyle(this.tint(BND.goldLit), (1 - t) * 0.5);
+      g.fillCircle(x, y - 16, 10 + e * 30);
+      g.lineStyle(3 * (1 - t) + 0.5, this.tint(BND.gold), (1 - t) * 0.9);
+      g.strokeCircle(x, y - 16, 8 + e * 40);
+      // Eyes opening outward through the flare.
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * TAU + t * 2;
+        const d = e * 26;
+        patronEye(g, this.tint, x + Math.cos(a) * d, y - 16 + Math.sin(a) * d * 0.8,
+          5 * (1 - t * 0.4), e, (1 - t) * 0.95, { drift: Math.sin(t * 8 + i), t: t * 5, brow: false });
+      }
+    });
+  }
+
+  /** A cultist crossing the room: a gold smear with the robe's afterimages strung along it. */
+  cultistDash(x0: number, y0: number, x1: number, y1: number, depth = 16): void {
+    this.anim(depth, 300, (g, t) => {
+      const a = 1 - t;
+      g.lineStyle(13 * a + 1, this.tint(BND.cosmic), a * 0.3);
+      g.lineBetween(x0, y0, x1, y1);
+      g.lineStyle(4.4 * a + 0.6, this.tint(BND.goldLit), a * 0.85);
+      g.lineBetween(x0, y0, x1, y1);
+      for (let i = 1; i <= 3; i++) {
+        const u = i / 4;
+        cultistFigure(g, this.tint, x0 + (x1 - x0) * u, y0 + (y1 - y0) * u, a * 0.35,
+          { awakened: true, t: t * 4, seed: i, scale: 0.85 });
+      }
+    });
+  }
+
+  /** The end of the ultimate: a cultist puts a shard of oblivion into its own chest. */
+  cultistStab(x: number, y: number, depth = 17): void {
+    const seed = Math.random() * 999;
+    this.anim(depth, 760, (g, t) => {
+      const e = easeOut(t);
+      // The figure folding, then coming apart into the gold it was wearing.
+      cultistFigure(g, this.tint, x, y + e * 8, (1 - t) * 0.95,
+        { awakened: true, t: t * 3, seed, lean: e * 0.5, scale: 1 - e * 0.25 });
+      // The shard going in, hilt-first out of the chest.
+      const k = Math.min(1, t * 3);
+      oblivionShard(g, this.tint, x, y - 2 - (1 - k) * 22, Math.PI / 2,
+        (1 - t) * 0.95, { scale: 1.15, eye: 1 - t });
+      if (t > 0.3) {
+        const u = (t - 0.3) / 0.7;
+        g.lineStyle(2.4 * (1 - u) + 0.4, this.tint(BND.gold), (1 - u) * 0.8);
+        g.strokeCircle(x, y - 2, 6 + u * 30);
+        for (let i = 0; i < 7; i++) {
+          const a = jitter(seed, i) * TAU;
+          const d = u * (14 + jitter(seed, 10 + i) * 26);
+          g.fillStyle(this.tint(BND.goldLit), (1 - u) * 0.75);
+          g.fillCircle(x + Math.cos(a) * d, y - 2 + Math.sin(a) * d * 0.8 - u * 12, 2.2 * (1 - u) + 0.5);
+        }
+      }
+    });
+  }
+
+  /** The corner chains arriving: four runs slamming taut around whoever just opened the sky. */
+  chainDown(x: number, y: number, corners: [number, number][], depth = 18): void {
+    this.anim(depth, 520, (g, t) => {
+      const e = easeOut(t);
+      arenaBinding(g, this.tint, x, y, corners, (1 - t) * 0.9, e, t * 8);
+      g.lineStyle(4 * (1 - t) + 0.6, this.tint(BND.chainLit), (1 - t) * 0.8);
+      g.strokeCircle(x, y, 20 + e * 38);
     });
   }
 

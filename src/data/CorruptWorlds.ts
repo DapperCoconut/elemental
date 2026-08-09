@@ -24,8 +24,8 @@ export const CORRUPT_WORLDS: World[] = [
   { id: 'conquest',  name: 'Conquest',  emoji: '🏰', color: 0xc23a2e, parentId: 'ruin',      mapX: 580, mapY: 210, nodes: makeNodes('conquest') },
   { id: 'gluttony',  name: 'Gluttony',  emoji: '🍖', color: 0xd8452f, parentId: 'ruin',      mapX: 800, mapY: 210, nodes: makeNodes('gluttony') },
 
-  // Tier 2: Death children — the preserved, the chained, the recorded.
-  { id: 'amber',     name: 'Amber',     emoji: '🟠', color: 0xd98b1f, parentId: 'death',     mapX: 40,  mapY: 390, nodes: makeNodes('amber') },
+  // Tier 2: Death children — the infected, the chained, the recorded.
+  { id: 'marrow',    name: 'Marrow',    emoji: '🦴', color: 0xd1435c, parentId: 'death',     mapX: 40,  mapY: 390, nodes: makeNodes('marrow') },
   { id: 'bind',      name: 'Bind',      emoji: '⛓️', color: 0xe0b743, parentId: 'death',     mapX: 130, mapY: 390, nodes: makeNodes('bind') },
   { id: 'paper',     name: 'Paper',     emoji: '📄', color: 0xf2ead6, parentId: 'death',     mapX: 220, mapY: 390, nodes: makeNodes('paper') },
 

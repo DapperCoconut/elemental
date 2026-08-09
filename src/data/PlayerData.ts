@@ -41,6 +41,12 @@ interface SaveData {
   quantumResearched: string[];         // bond keys ("a+b", sorted) whose research is finished
   quantumResearching: string;          // the one bond key being worked on now, '' if none
   quantumQuestProgress: Record<string, number>; // "<bondKey>:<questId>" -> count so far
+  /**
+   * Set once `migrateSubterfugeId` has run on this save. It must never run twice: after the
+   * rename landed, `quantum` is a live element id again, and a second pass would hand the real
+   * Quantum's unlock, upgrades, perks and mastery to Subterfuge.
+   */
+  migratedSubterfugeId: boolean;
 }
 
 /**
@@ -59,13 +65,30 @@ export interface PaperJournalRecord {
  * Quantum element arrived, so every save written before that still files Subterfuge's
  * upgrades, perks, mastery, skins and journal under `quantum`.
  *
- * Rewrites those keys in place, in memory, on every load. Idempotent — once any write lands
- * the migrated shape is what's on disk and this becomes a no-op. Deliberately does *not*
- * clobber: if a `subterfuge` key somehow already exists it wins, and the stale one is dropped.
+ * Rewrites those keys in place. Deliberately does *not* clobber: if a `subterfuge` key somehow
+ * already exists it wins, and the stale one is dropped.
+ *
+ * **Runs exactly once per save, guarded by `migratedSubterfugeId`.** It used to run on every
+ * load, which was wrong the moment the real Quantum shipped: `quantum` is a live element id
+ * again, so every load ate whatever had just been written under it. Unlocking Quantum from the
+ * Amalgam, and buying its Third State upgrade, both landed and were silently rewritten to
+ * Subterfuge on the very next read — the upgrade could not be bought at all, in any profile,
+ * cheat or not.
  */
 function migrateSubterfugeId(d: SaveData): void {
   const OLD = 'quantum';
   const NEW = 'subterfuge';
+
+  // A save that already mentions `subterfuge` anywhere has been through this before — the
+  // unguarded version ran on every load, so every save still in circulation has. Its `quantum`
+  // keys are therefore the *new* element's, not stale ones, and moving them would be the very
+  // theft this guard exists to stop. Only a save that has never heard the name needs the rename.
+  const migrated = [
+    d.owned, d.active, d.unlockedPerks, d.equippedPerks, d.masteryProgress,
+    d.masteryEnabled, d.masteryBinds, d.equippedSkins, d.paperJournal,
+  ].some((rec) => NEW in rec)
+    || [d.unlockedElements, d.gauntletsCompleted, d.gauntletsCompletedHard].some((l) => l.includes(NEW));
+  if (migrated) return;
 
   // elementId-keyed records
   const records: Array<Record<string, unknown>> = [
@@ -131,8 +154,15 @@ function load(): SaveData {
         quantumResearched: parsed.quantumResearched ?? [],
         quantumResearching: parsed.quantumResearching ?? '',
         quantumQuestProgress: parsed.quantumQuestProgress ?? {},
+        migratedSubterfugeId: parsed.migratedSubterfugeId ?? false,
       };
-      migrateSubterfugeId(d);
+      if (!d.migratedSubterfugeId) {
+        migrateSubterfugeId(d);
+        d.migratedSubterfugeId = true;
+        // Stamped straight back to disk rather than waiting for the next write: until the flag
+        // lands, every load would migrate again and keep eating Quantum's keys.
+        save(d);
+      }
       // Sanity: clear equipped perk if no longer unlocked
       for (const el of Object.keys(d.equippedPerks)) {
         if (!(d.unlockedPerks[el] ?? []).includes(d.equippedPerks[el])) {
@@ -144,7 +174,8 @@ function load(): SaveData {
   } catch {
     // corrupted save — start fresh
   }
-  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedSkins: {}, divineNuclei: 0, kingDefeated: false, devourerDefeated: false, devourerChoice: '', bountyRerollOffset: 0, completedBountyKeys: [], passionQTaps: 0, passionQCensored: false, paperJournal: {}, quantumBond: [], quantumResearched: [], quantumResearching: '', quantumQuestProgress: {} };
+  // A save that never existed has nothing to migrate — born already stamped.
+  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedSkins: {}, divineNuclei: 0, kingDefeated: false, devourerDefeated: false, devourerChoice: '', bountyRerollOffset: 0, completedBountyKeys: [], passionQTaps: 0, passionQCensored: false, paperJournal: {}, quantumBond: [], quantumResearched: [], quantumResearching: '', quantumQuestProgress: {}, migratedSubterfugeId: true };
 }
 
 function save(data: SaveData): void {

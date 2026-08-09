@@ -786,6 +786,31 @@ export class ElectricityFx extends FxBase {
       );
     }
   }
+
+  /**
+   * A Phoenix flame lying on the floor: a guttering root with three tongues leaning off it. The
+   * one warm thing this element ever puts on the ground, and the only thing it can heal from.
+   *
+   * Painted into a caller-owned Graphics for the same reason the storm cloud is — a phoenix
+   * window can leave five of these down at once and they share one Graphics between them.
+   */
+  static drawPhoenixFlame(
+    g: Phaser.GameObjects.Graphics, tint: ElectricColorFn,
+    x: number, y: number, t: number, phase: number, alpha: number,
+  ): void {
+    const flick = 0.82 + 0.18 * Math.sin(t * 9 + phase);
+    g.fillStyle(tint(PHOENIX_TONES.glow), 0.28 * alpha);
+    g.fillCircle(x, y, 13 * flick);
+    // Three tongues leaning off the same root — a single disc reads as a token, not a fire.
+    for (let i = 0; i < 3; i++) {
+      const lean = -Math.PI / 2 + (i - 1) * 0.55 + Math.sin(t * 4 + phase + i) * 0.22;
+      const len = (11 + i % 2 * 4) * flick;
+      g.fillStyle(tint(i === 1 ? PHOENIX_TONES.hot : PHOENIX_TONES.body), 0.85 * alpha);
+      g.fillEllipse(x + Math.cos(lean) * len * 0.5, y + Math.sin(lean) * len * 0.5, 6, len);
+    }
+    g.fillStyle(tint(PHOENIX_TONES.core), 0.9 * alpha);
+    g.fillCircle(x, y - 2, 2.4 * flick);
+  }
 }
 
 // ── ElectricityAura ───────────────────────────────────────────────────────

@@ -88,7 +88,7 @@ export interface GauntletState {
   campaignContext?: CampaignGauntletContext;
 }
 
-export const GAUNTLET_COST = 2500;
+export const GAUNTLET_COST = 250;
 export const GAUNTLET_REWARD = 1000;
 
 export const GAUNTLET_HARD_COST = 1500;

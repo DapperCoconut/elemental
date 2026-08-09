@@ -166,6 +166,35 @@ export function psiWhip(
 }
 
 /**
+ * The cord's shape at `t` through its crack, as the polyline `psiWhip` draws and the kit tests
+ * against. Shared rather than duplicated because it is both the art *and* the hitbox: the two
+ * drifting apart is the one bug this ability cannot survive.
+ *
+ * The amplitude of the travelling wave crosses zero at exactly `crackT` and goes negative after,
+ * so the cord is dead straight on the frame the hit is resolved and coils the *other* way on the
+ * follow-through. Anything else and the tip lands a fist's width off where it was aimed.
+ */
+export function lashPoints(
+  x: number, y: number, ang: number, t: number,
+  { len = 196, crackT = 0.55, n = 18 } = {},
+): { x: number; y: number }[] {
+  const reach = len * Math.min(1, 0.2 + t * 1.7);
+  const step = reach / n;
+  const pts: { x: number; y: number }[] = [{ x, y }];
+  let px = x;
+  let py = y;
+  for (let i = 0; i < n; i++) {
+    const u = (i + 1) / n;
+    const wave = Math.sin(u * Math.PI * 1.4 - t * 7.2) * (0.62 - t * (0.62 / crackT)) * u;
+    const a = ang + wave;
+    px += Math.cos(a) * step;
+    py += Math.sin(a) * step;
+    pts.push({ x: px, y: py });
+  }
+  return pts;
+}
+
+/**
  * A sigil: a ring, a ring of spokes, and a pupil. Used wherever the element has to put a mark on
  * something without saying what the mark does — the seized ability, the migraine, the ward under
  * a comatose body. `phase` spins the spokes, `sides` changes how occult it looks.
@@ -328,6 +357,125 @@ export function keyChip(
 }
 
 /**
+ * A migraine charge sitting on the floor, waiting.
+ *
+ * Three readings in one mark, because the player on the other end of it has two and a half
+ * seconds to get out and needs all three at a glance: the outer rim never moves and is exactly
+ * where the blast stops, the hand sweeping that rim is how much fuse is left, and the ring
+ * collapsing toward the sigil is the same number said again for anyone watching the middle. The
+ * whole thing pulses harder over the last second and the sigil turns red as it does, so a charge
+ * about to go off cannot be mistaken for one that was just planted.
+ */
+export function migraineMark(
+  g: Phaser.GameObjects.Graphics,
+  tint: PsychicColorFn,
+  x: number, y: number, r: number, t: number, alpha = 1,
+): void {
+  const k = Phaser.Math.Clamp(t, 0, 1);
+  // Calm for the first 60%, then a hard blink that speeds up into the detonation.
+  const puls = k < 0.6 ? 0.72 : 0.5 + 0.5 * Math.abs(Math.sin(k * 34));
+
+  g.fillStyle(tint(PSY.robeDeep), alpha * (0.14 + 0.22 * k));
+  g.fillCircle(x, y, r);
+  g.lineStyle(1.6 + 1.8 * k, tint(PSY.violet), alpha * (0.5 + 0.4 * k) * puls);
+  g.strokeCircle(x, y, r);
+
+  // The fuse: a hand sweeping the rim clockwise from noon.
+  g.lineStyle(3.2, tint(PSY.stress), alpha * 0.85 * puls);
+  g.beginPath();
+  g.arc(x, y, r * 0.94, -Math.PI / 2, -Math.PI / 2 + k * TAU, false);
+  g.strokePath();
+
+  // The same countdown said inward, so the middle of the mark reads on its own.
+  g.lineStyle(2, tint(PSY.violetLit), alpha * 0.8 * puls);
+  g.strokeCircle(x, y, r * (1 - k * 0.74));
+
+  // Spokes just inside the rim — a seal being drawn, not a targeting reticle.
+  g.lineStyle(1.1, tint(PSY.violet), alpha * 0.45);
+  for (let i = 0; i < 8; i++) {
+    const a = k * 1.6 + (i / 8) * TAU;
+    g.lineBetween(
+      x + Math.cos(a) * r * 0.82, y + Math.sin(a) * r * 0.82,
+      x + Math.cos(a) * r * 0.97, y + Math.sin(a) * r * 0.97,
+    );
+  }
+
+  mindSigil(g, tint, x, y, r * 0.3, alpha * (0.55 + 0.45 * k), {
+    phase: k * 7, sides: 7, color: k > 0.75 ? PSY.stress : PSY.violet,
+  });
+}
+
+/**
+ * Mind's Focus (F+), while the charge is still in his hand.
+ *
+ * The same three readings `migraineMark` gives, said in advance: the outer rim is the blast the
+ * charge would have if it went down *now*, the arc filling clockwise is how much of the five
+ * seconds has been wound in, and the sigil in the middle grows with it. Drawn hollow rather than
+ * filled, because nothing is on the floor yet — this is where the charge would land, not a charge.
+ */
+export function focusMark(
+  g: Phaser.GameObjects.Graphics,
+  tint: PsychicColorFn,
+  x: number, y: number, r: number, charge: number, t: number,
+): void {
+  const k = Phaser.Math.Clamp(charge, 0, 1);
+  const breathe = 0.8 + 0.2 * Math.sin(t * 6 + k * 4);
+
+  g.lineStyle(1.2, tint(PSY.violet), 0.3 + 0.25 * k);
+  g.strokeCircle(x, y, r);
+  // The wind-up, as an arc closing the rim from noon. Full circle = five seconds in.
+  g.lineStyle(3.4, tint(k >= 1 ? PSY.gold : PSY.violetLit), (0.55 + 0.4 * k) * breathe);
+  g.beginPath();
+  g.arc(x, y, r * 0.92, -Math.PI / 2, -Math.PI / 2 + k * TAU, false);
+  g.strokePath();
+
+  // Thought being drawn inward: spokes marching toward the middle as it winds up.
+  g.lineStyle(1, tint(PSY.violet), 0.35 + 0.3 * k);
+  for (let i = 0; i < 10; i++) {
+    const a = -t * 1.2 + (i / 10) * TAU;
+    const inner = r * (0.55 - k * 0.2);
+    const outer = r * (0.86 - k * 0.14);
+    g.lineBetween(x + Math.cos(a) * inner, y + Math.sin(a) * inner,
+      x + Math.cos(a) * outer, y + Math.sin(a) * outer);
+  }
+  mindSigil(g, tint, x, y, r * (0.16 + k * 0.2), 0.5 + 0.5 * k,
+    { phase: t * 3 + k * 6, sides: 7, color: k >= 1 ? PSY.gold : PSY.violetLit });
+}
+
+/**
+ * Whip Snap (Click+): the cord catching the end of somebody's route.
+ *
+ * A taut line from where they were to where they were always going to be, with the destination
+ * ring closing on the spot. It has to read as a *pull* rather than a hit, which is why the line
+ * is drawn with arrow chevrons walking along it toward the ring rather than as a plain lash.
+ */
+export function snapLine(
+  g: Phaser.GameObjects.Graphics,
+  tint: PsychicColorFn,
+  fromX: number, fromY: number, toX: number, toY: number, alpha: number, t: number,
+): void {
+  const ang = Math.atan2(toY - fromY, toX - fromX);
+  const d = Phaser.Math.Distance.Between(fromX, fromY, toX, toY);
+  g.lineStyle(5, tint(PSY.robeDeep), alpha * 0.28);
+  g.lineBetween(fromX, fromY, toX, toY);
+  g.lineStyle(1.8, tint(PSY.gold), alpha * 0.9);
+  g.lineBetween(fromX, fromY, toX, toY);
+  // Chevrons chasing the destination, so the direction of the yank is never ambiguous.
+  for (let i = 0; i < 5; i++) {
+    const u = ((i / 5) + t) % 1;
+    const px = fromX + Math.cos(ang) * d * u;
+    const py = fromY + Math.sin(ang) * d * u;
+    g.lineStyle(1.6, tint(PSY.aether), alpha * 0.75);
+    for (const s of [-1, 1]) {
+      const a = ang + Math.PI + s * 0.6;
+      g.lineBetween(px, py, px + Math.cos(a) * 7, py + Math.sin(a) * 7);
+    }
+  }
+  g.lineStyle(2.2, tint(PSY.gold), alpha * 0.85);
+  g.strokeCircle(toX, toY, 10 + (1 - t) * 22);
+}
+
+/**
  * A coma: a slow spiral collapsing into the body, with the three rings of a mandala around it.
  * Drawn under the victim so it never covers the health bar the player is watching drain.
  */
@@ -409,6 +557,38 @@ export class PsychicFx extends FxBase {
     });
   }
 
+  /** A migraine charge going down: a sigil stamped onto the floor, settling as it lands. */
+  plant(x: number, y: number, r: number, depth = 4): void {
+    this.anim(depth, 360, (g, t) => {
+      const e = easeOut(t);
+      mindSigil(g, this.tint, x, y, r * (1.5 - e * 0.6), (1 - t) * 0.9,
+        { phase: t * 4, sides: 7, color: PSY.violetLit, eye: false });
+    });
+  }
+
+  /**
+   * A charge going off: the blast edge thrown out as a ring of eyes opening on the way and
+   * shutting as they reach the rim, so the reach of the thing is legible for exactly as long
+   * as it matters and then gone.
+   */
+  detonation(x: number, y: number, r: number, depth = 5): void {
+    this.flashIn(x, y, r * 0.5, PSY.aether, PSY.stress, depth);
+    this.anim(depth, 480, (g, t) => {
+      const e = easeOut(t);
+      g.lineStyle(4 * (1 - t) + 1, this.tint(PSY.stress), (1 - t) * 0.9);
+      g.strokeCircle(x, y, r * e);
+      g.lineStyle(1.6, this.tint(PSY.violetLit), (1 - t) * 0.55);
+      g.strokeCircle(x, y, r * e * 1.16);
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * TAU + 0.2;
+        const d = r * e;
+        thirdEye(g, this.tint, x + Math.cos(a) * d, y + Math.sin(a) * d,
+          6 * (1 - t) + 2.5, 1 - t, (1 - t) * 0.85,
+          { iris: PSY.stress, lash: false, glow: 0.4 });
+      }
+    });
+  }
+
   /** Migraine landing: the victim's head splitting, as expanding off-axis rings. */
   throb(x: number, y: number, depth = 16): void {
     this.anim(depth, 620, (g, t) => {
@@ -458,6 +638,57 @@ export class PsychicFx extends FxBase {
       const e = easeOut(t);
       g.lineStyle(2.4 * (1 - t), this.tint(PSY.violet), (1 - t) * 0.7);
       g.strokeCircle(x, y, 70 * (1 - e * 0.8) + 12);
+    });
+  }
+
+  /**
+   * Whip Snap (Click+): the cord closes on the ghost at the end of the route and the body it was
+   * predicting arrives to fill it. The ghost is drawn shutting rather than fading, because the
+   * point of the upgrade is that the prediction stopped being a prediction.
+   */
+  snap(fromX: number, fromY: number, toX: number, toY: number, depth = 16): void {
+    this.flashIn(toX, toY, 22, PSY.aether, PSY.gold, depth);
+    this.anim(depth, 460, (g, t) => {
+      snapLine(g, this.tint, fromX, fromY, toX, toY, 1 - easeIn(t), (t * 2.2) % 1);
+      const e = easeOut(t);
+      // The ghost's eye, shutting as the real body lands in it.
+      thirdEye(g, this.tint, toX, toY - 6, 8 + e * 4, 1 - t, (1 - t) * 0.95,
+        { iris: PSY.gold, lash: false, glow: 0.7 });
+      g.lineStyle(2 * (1 - t), this.tint(PSY.violetLit), (1 - t) * 0.7);
+      g.strokeEllipse(toX, toY + 4, 22 + e * 10, 30 + e * 12);
+    });
+  }
+
+  /**
+   * Cycle of Abuse (Q+): a point of stress coming out of a comatose body sideways.
+   *
+   * Exactly the crack figure the pool is drawn with, thrown out to `r` and left as a rim — the
+   * shockwave has to be recognisable as *the stress*, since the whole upgrade is stress leaving
+   * one body and landing on everything around it.
+   */
+  bleedBurst(x: number, y: number, r: number, depth = 15): void {
+    const seed = Math.random() * 999;
+    this.anim(depth, 520, (g, t) => {
+      const e = easeOut(t);
+      // The cracks, at ten times the size they are drawn on a body.
+      for (let i = 0; i < 10; i++) {
+        const a = jitter(seed, i) * TAU;
+        let px = x + Math.cos(a) * 8;
+        let py = y + Math.sin(a) * 8;
+        let ca = a;
+        g.lineStyle(4.5 * (1 - t) + 0.8, this.tint(PSY.stressDeep), (1 - t) * 0.5);
+        g.lineBetween(px, py, x + Math.cos(a) * r * e, y + Math.sin(a) * r * e);
+        g.lineStyle(2.2 * (1 - t) + 0.5, this.tint(PSY.stress), (1 - t) * 0.9);
+        for (let k = 0; k < 3; k++) {
+          ca += (jitter(seed, 40 + i * 3 + k) - 0.5) * 0.8;
+          const nx = px + Math.cos(ca) * (r * e / 3);
+          const ny = py + Math.sin(ca) * (r * e / 3);
+          g.lineBetween(px, py, nx, ny);
+          px = nx; py = ny;
+        }
+      }
+      g.lineStyle(3 * (1 - t) + 0.6, this.tint(PSY.stress), (1 - t) * 0.8);
+      g.strokeCircle(x, y, r * e);
     });
   }
 

@@ -1,7 +1,13 @@
 import Phaser from 'phaser';
 import { C, T, DEPTH, FONT_DISPLAY, FONT_MONO, FONT_UI, addButton, addModal, hex, mix } from '../ui';
 import type { ConquestMenuHost, ConquestMenuModel } from '../elements/kits/ConquestKit';
-import { KIND_EMOJI, PATH_LABEL, UPGRADES } from '../elements/kits/ConquestUpgrades';
+import { KIND_EMOJI, PATH_LABEL, PathIdx, UPGRADES } from '../elements/kits/ConquestUpgrades';
+
+/** Column geometry, by how many paths the building is showing. Three is the shop-upgraded tree. */
+const LAYOUT = {
+  2: { modalW: 660, colW: 286, gap: 320 },
+  3: { modalW: 924, colW: 282, gap: 292 },
+} as const;
 
 /**
  * The building upgrade menu — Conquest's one piece of UI, and the only place in the game where
@@ -40,7 +46,7 @@ export class ConquestMenuScene extends Phaser.Scene {
     const cy = height / 2;
 
     const modal = addModal(this, {
-      w: 660, h: 520, accent: model.color,
+      w: LAYOUT[model.paths.length === 3 ? 3 : 2].modalW, h: 520, accent: model.color,
       title: `${KIND_EMOJI[model.kind]}  ${model.title}`,
       glow: 0.5, scrimAlpha: 0.72,
       onScrimClick: () => this.close(),
@@ -81,22 +87,52 @@ export class ConquestMenuScene extends Phaser.Scene {
       fontSize: '17px', fontFamily: FONT_DISPLAY, color: T.gold, letterSpacing: 2,
     }).setOrigin(0.5).setDepth(DEPTH.modalContent));
 
-    for (const path of [0, 1] as const) {
-      this.renderPath(model, path, cx + (path === 0 ? -160 : 160), cy - 150);
+    const lay = LAYOUT[model.paths.length === 3 ? 3 : 2];
+    // Columns are centred as a group, so a two-path tree keeps the layout it always had and a
+    // three-path one simply grows outward from the same middle.
+    const span = lay.gap * (model.paths.length - 1);
+    model.paths.forEach((path, i) => {
+      this.renderPath(model, path, i, cx - span / 2 + i * lay.gap, cy - 150, lay.colW);
+    });
+
+    // Personal Wall's one action. Sits under the columns because it spends nothing — it is a
+    // choice about this wall rather than a purchase on it.
+    if (model.link) {
+      const label = model.link === 'linked' ? 'UNLINK FROM THIS WALL'
+        : model.link === 'elsewhere' ? 'LINK HERE INSTEAD'
+        : 'LINK YOURSELF TO THIS WALL';
+      const btn = addButton(this, {
+        x: cx, y: cy + 158, w: 300, h: 34,
+        label, icon: '⛓️',
+        accent: model.link === 'linked' ? C.gold : model.color,
+        variant: model.link === 'linked' ? 'solid' : 'quiet',
+        fontSize: 11, depth: DEPTH.modalContent,
+        onClick: () => {
+          if (!this.host.toggleLink()) return;
+          this.render(this.scale.width / 2, this.scale.height / 2);
+        },
+      });
+      this.push(btn.container);
     }
 
     // The rule, stated where it can still be acted on rather than discovered.
     this.push(this.add.text(cx, cy + 186,
-      'One path only past tier 2 — committing to a third tier caps the other side.', {
+      'One path only past tier 2 — committing to a third tier caps the others.', {
         fontSize: '10px', fontFamily: FONT_UI, color: T.faint, letterSpacing: 1,
       }).setOrigin(0.5).setDepth(DEPTH.modalContent));
   }
 
   /** One column: four tier plates, then the buy button for whichever is next. */
-  private renderPath(model: ConquestMenuModel, path: 0 | 1, x: number, top: number): void {
+  private renderPath(
+    model: ConquestMenuModel, path: PathIdx, slot: number, x: number, top: number, w: number,
+  ): void {
     const defs = UPGRADES[model.kind][path];
     const tier = model.tiers[path];
-    const accent = path === 0 ? model.color : mix(model.color, 0xffffff, 0.4);
+    // Each column takes a distinct shade of the town's own colour, so which track a plate belongs
+    // to survives being read at the far edge of a 900px modal.
+    const accent = path === 0 ? model.color
+      : path === 1 ? mix(model.color, 0xffffff, 0.4)
+      : mix(model.color, C.arcane, 0.65);
 
     this.push(this.add.text(x, top, PATH_LABEL[model.kind][path], {
       fontSize: '13px', fontFamily: FONT_DISPLAY, color: hex(mix(accent, 0xffffff, 0.5)), letterSpacing: 3,
@@ -107,7 +143,6 @@ export class ConquestMenuScene extends Phaser.Scene {
       const owned = i < tier;
       const isNext = i === tier;
       const g = this.add.graphics().setDepth(DEPTH.modalContent - 1);
-      const w = 286;
       const h = 52;
       // Owned tiers are lit; the next one is outlined; anything past it is a ghost, so the
       // column reads as a track you are partway along.
@@ -141,17 +176,18 @@ export class ConquestMenuScene extends Phaser.Scene {
 
     // ── The buy button ──
     const y = top + 30 + 4 * 58 + 6;
-    const next = model.next[path];
-    const blocked = model.blocked[path];
+    const next = model.next[slot];
+    const blocked = model.blocked[slot];
     if (!next) {
       this.push(this.add.text(x, y, blocked ?? 'MAXED', {
         fontSize: '11px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2,
+        wordWrap: { width: w },
       }).setOrigin(0.5).setDepth(DEPTH.modalContent));
       return;
     }
 
     const btn = addButton(this, {
-      x, y, w: 286, h: 38,
+      x, y, w, h: 38,
       label: next.name.toUpperCase(),
       trailing: `👑 ${next.cost}`,
       trailingColor: blocked ? T.bad : T.gold,

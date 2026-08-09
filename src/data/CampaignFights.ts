@@ -353,13 +353,13 @@ export const CAMPAIGN_FIGHTS: Record<string, CampaignFightDef> = {
   'gluttony-fight-5':   { enemyElementId: 'gluttony', difficulty: 5, name: 'Seconds',          taunt: 'The realm was the first plate. You are the garnish.',     mutations: ['parasitic', 'molten'], starredMutations: ['parasitic'] },
   'gluttony-challenge': { enemyElementId: 'gluttony', difficulty: 5, name: 'The Devouring Board', taunt: 'A feast is only a war you eat.',                       mutations: ['summoner', 'parasitic'] },
 
-  // ── Amber (Tier 2, Death) ─────────────────────────────────────────
-  'amber-fight-1':   { enemyElementId: 'amber',   difficulty: 5, name: 'The Preserved',     taunt: 'Everything in here is exactly as it died. Join the exhibit.' },
-  'amber-fight-2':   { enemyElementId: 'sand',    difficulty: 5, name: 'Slow Cure',         taunt: 'Time does the sealing. I only pour.',                       mutations: ['order'] },
-  'amber-fight-3':   { enemyElementId: 'life',    difficulty: 5, name: 'The Inclusion',     taunt: 'It was alive when it went in. That is the craft.',          mutations: ['parasitic'] },
-  'amber-fight-4':   { enemyElementId: 'crystal', difficulty: 5, name: 'Museum Piece',      taunt: 'Stand still and you will outlast empires.',                 mutations: ['encroach'],           starredMutations: ['encroach'], format: { kind: 'survival', seconds: 75 } },
-  'amber-fight-5':   { enemyElementId: 'amber',   difficulty: 5, name: 'Set in Gold',       taunt: 'The Sovereigns I keep do not struggle any more.',           mutations: ['amber', 'order'],     starredMutations: ['order'] },
-  'amber-challenge': { enemyElementId: 'amber',   difficulty: 5, name: 'The Curator',       taunt: 'Your pose is wrong. Hold still while I correct it. Forever.', mutations: ['empyreon', 'amber'] },
+  // ── Marrow (Tier 2, Death) ────────────────────────────────────────
+  'marrow-fight-1':   { enemyElementId: 'marrow',  difficulty: 5, name: 'First Responders',  taunt: 'Something came in. Everything in here is already walking toward it.' },
+  'marrow-fight-2':   { enemyElementId: 'growth',  difficulty: 5, name: 'Culture',           taunt: 'You are being grown so that you can be answered.',            mutations: ['parasitic'] },
+  'marrow-fight-3':   { enemyElementId: 'life',    difficulty: 5, name: 'Autoimmune',        taunt: 'It stopped telling us apart a long time ago.',               mutations: ['order'] },
+  'marrow-fight-4':   { enemyElementId: 'crystal', difficulty: 5, name: 'Running A Fever',   taunt: 'Stay warm. It only hurts you.',                              mutations: ['encroach'],           starredMutations: ['encroach'], format: { kind: 'survival', seconds: 75 } },
+  'marrow-fight-5':   { enemyElementId: 'marrow',  difficulty: 5, name: 'Swelling',          taunt: 'The Sovereigns I answered do not complain any more.',        mutations: ['summoner', 'titanic'], starredMutations: ['summoner'] },
+  'marrow-challenge': { enemyElementId: 'marrow',  difficulty: 5, name: 'Sepsis',            taunt: 'You are a foreign body. Hold still. This will be thorough.', mutations: ['empyreon', 'apprehension'] },
 
   // ── Bind (Tier 2, Death) ──────────────────────────────────────────
   'bind-fight-1':   { enemyElementId: 'bind',        difficulty: 5, name: 'The First Link',   taunt: 'One chain is a threat. Two is a habit. I have thousands.' },

@@ -301,7 +301,7 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     description: 'Taking extra damage from every source.',
     read: (f) => {
       const mult = f.incomingDamageMultiplier * f.gauntletDamageTakenMult * f.cardDamageTakenMult
-        * f.empoweredIncomingMult;
+        * f.empoweredIncomingMult * f.fortuneIncomingMult;
       return mult > 1.001 ? Math.round((mult - 1) * 100) : 0;
     },
     suffix: '%',

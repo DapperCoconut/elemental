@@ -44,7 +44,60 @@ export const RAD = {
   /** Bones, under X-ray. */
   bone: 0xd9ffcf,
   boneShade: 0x5c8a4c,
+  /**
+   * The hot ladder — the shop upgrades' colour, and nothing else uses it.
+   *
+   * Everything Radiation owns is green because green is contained. These four are what the
+   * element looks like when it stops being careful: a tracer landing dead centre, a Final Vision
+   * that shrank the operative instead of swelling the target, and a body growing something it
+   * should not. Deliberately the same five steps as the neon ladder so `redshift` can walk one
+   * onto the other rung for rung.
+   */
+  hotDeep: 0x4d0c05,
+  hotMid: 0xa8180b,
+  hot: 0xff3524,
+  hotLit: 0xff9b84,
+  /** Meat, for the cancerous arm. The one organic colour in an element made of plate. */
+  flesh: 0xc4566a,
+  fleshDeep: 0x571f2c,
 };
+
+/** Channel-wise blend, `k` of `b` over `a`. */
+export function mixColor(a: number, b: number, k: number): number {
+  const t = Math.max(0, Math.min(1, k));
+  const r = Math.round(((a >> 16) & 0xff) * (1 - t) + ((b >> 16) & 0xff) * t);
+  const g = Math.round(((a >> 8) & 0xff) * (1 - t) + ((b >> 8) & 0xff) * t);
+  const bl = Math.round((a & 0xff) * (1 - t) + (b & 0xff) * t);
+  return (r << 16) | (g << 8) | bl;
+}
+
+/** The neon ladder walked onto the hot one, rung for rung. Lead is left exactly as it is. */
+const RED_MAP: Record<number, number> = {
+  [RAD.neonDeep]: RAD.hotDeep,
+  [RAD.neonMid]: RAD.hotMid,
+  [RAD.neon]: RAD.hot,
+  [RAD.neonLit]: RAD.hotLit,
+  [RAD.wash]: 0xffe4dc,
+  [RAD.bone]: 0xffd4cb,
+  [RAD.boneShade]: 0x8a4c4c,
+  [RAD.core]: 0xfff0ea,
+};
+
+/**
+ * Wrap a colour function so the green in it comes out red, `k` of the way.
+ *
+ * Every painter in this file takes its palette through a `RadiationColorFn` — that is how skins
+ * recolour the element — so an upgrade that wants the *same* art in a different colour can wrap
+ * the function rather than growing a `red` flag on nineteen signatures. Lead is deliberately
+ * untouched: Heart Stopper reddens the load, not the suit carrying it.
+ */
+export function redshift(tint: RadiationColorFn, k: number): RadiationColorFn {
+  if (k <= 0.002) return tint;
+  return (base) => {
+    const to = RED_MAP[base];
+    return to === undefined ? tint(base) : mixColor(tint(base), tint(to), k);
+  };
+}
 
 /** Deterministic 0–1 noise, so a puddle keeps its outline between frames. */
 export function jitter(seed: number, i: number): number {
@@ -424,6 +477,328 @@ export function mushroomCloud(
   g.fillCircle(x, capY - capR * 0.1, capR * 0.42);
 }
 
+// ── Upgrade primitives ────────────────────────────────────────────────────
+
+/**
+ * Heart Stopper's afterimage: the rail line, still there after the shot that made it.
+ *
+ * Drawn thinner and dimmer than the shot itself and with the ionisation crawling along it, so
+ * it reads as the ghost of a beam rather than a second beam. `left` (1→0) sags the whole thing
+ * toward nothing as the four seconds run out.
+ */
+export function afterimageLance(
+  g: Phaser.GameObjects.Graphics,
+  tint: RadiationColorFn,
+  x0: number, y0: number, x1: number, y1: number, alpha: number, left: number, t: number,
+): void {
+  const flick = 0.62 + 0.38 * Math.sin(t * 21) * Math.sin(t * 7.3);
+  const a = alpha * left * flick;
+  for (const [w, k, color] of [[11, 0.12, RAD.hotDeep], [5, 0.34, RAD.hotMid], [2.2, 0.8, RAD.hot], [0.9, 0.95, RAD.hotLit]] as const) {
+    g.lineStyle(w * (0.55 + left * 0.45), tint(color), a * k);
+    g.lineBetween(x0, y0, x1, y1);
+  }
+  // Motes crawling the length of it, so a static line still reads as live.
+  const ang = Math.atan2(y1 - y0, x1 - x0);
+  const len = Math.hypot(x1 - x0, y1 - y0);
+  const n = Math.min(18, Math.max(5, Math.round(len / 38)));
+  for (let i = 0; i < n; i++) {
+    const u = ((i / n) + t * 0.35) % 1;
+    const px = x0 + (x1 - x0) * u;
+    const py = y0 + (y1 - y0) * u;
+    const side = jitter(i * 17.3, 3) > 0.5 ? 1 : -1;
+    const off = Math.sin(t * 6 + i) * 3.4 * side;
+    g.fillStyle(tint(RAD.hotLit), a * 0.75);
+    g.fillCircle(px + Math.cos(ang + 1.57) * off, py + Math.sin(ang + 1.57) * off, 1.5 + left * 1.3);
+  }
+}
+
+/**
+ * Final Vision's beam: not a hitscan flash but five seconds of held lance.
+ *
+ * The railgun's line is perfectly straight because it is instantaneous; this one is the opposite
+ * kind of weapon, so it boils — a slow sine along its own length, a throat that flares at the
+ * muzzle and a bloom where it lands. `bite` (0–1) grows with the escalating dose.
+ */
+export function sustainedBeam(
+  g: Phaser.GameObjects.Graphics,
+  tint: RadiationColorFn,
+  x0: number, y0: number, x1: number, y1: number, alpha: number, t: number, bite: number,
+): void {
+  const ang = Math.atan2(y1 - y0, x1 - x0);
+  const len = Math.hypot(x1 - x0, y1 - y0);
+  const nx = Math.cos(ang + Math.PI / 2);
+  const ny = Math.sin(ang + Math.PI / 2);
+  const SEG = Math.max(6, Math.round(len / 26));
+  const wob = (u: number): number => Math.sin(u * 9 - t * 15) * (1.4 + bite * 1.8) * Math.sin(u * Math.PI);
+
+  for (const [w, k, color] of [[18, 0.14, RAD.hotDeep], [9, 0.4, RAD.hotMid], [4.4, 0.9, RAD.hot], [1.7, 1, RAD.core]] as const) {
+    g.lineStyle(w * (0.8 + bite * 0.5), tint(color), alpha * k);
+    g.beginPath();
+    for (let i = 0; i <= SEG; i++) {
+      const u = i / SEG;
+      const px = x0 + (x1 - x0) * u + nx * wob(u);
+      const py = y0 + (y1 - y0) * u + ny * wob(u);
+      if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+    }
+    g.strokePath();
+  }
+
+  // Throat at the muzzle: a cone of escaping load that widens with the bite.
+  const throat = 9 + bite * 7;
+  g.fillStyle(tint(RAD.hotLit), alpha * 0.4);
+  g.fillTriangle(
+    x0 + nx * throat, y0 + ny * throat,
+    x0 - nx * throat, y0 - ny * throat,
+    x0 + Math.cos(ang) * (26 + bite * 16), y0 + Math.sin(ang) * (26 + bite * 16),
+  );
+  g.fillStyle(tint(RAD.core), alpha * (0.55 + 0.45 * Math.abs(Math.sin(t * 30))));
+  g.fillCircle(x0, y0, 4 + bite * 3);
+
+  // The bloom where it lands, and the ring being pushed off the impact.
+  const pulse = 0.6 + 0.4 * Math.sin(t * 24);
+  g.fillStyle(tint(RAD.hot), alpha * 0.28 * pulse);
+  g.fillCircle(x1, y1, 22 + bite * 12);
+  g.fillStyle(tint(RAD.hotLit), alpha * 0.55 * pulse);
+  g.fillCircle(x1, y1, 11 + bite * 6);
+  g.fillStyle(tint(RAD.core), alpha * 0.9);
+  g.fillCircle(x1, y1, 3.6 + bite * 2);
+  g.lineStyle(2, tint(RAD.hot), alpha * (1 - ((t * 1.6) % 1)) * 0.8);
+  g.strokeCircle(x1, y1, 12 + ((t * 1.6) % 1) * 34);
+  trefoil(g, tint, x1, y1, 9 + bite * 4, alpha * 0.45, { phase: t * 5, color: RAD.hotLit });
+}
+
+/**
+ * Cutdown's revolver. A stubby lead sidearm — six-shot cylinder, hazard-banded grip and a stripe
+ * of green down the barrel where the rounds are coming from. `spent` (0–6) empties the chambers
+ * one at a time; `recoil` kicks the whole thing back along its own line.
+ */
+export function revolver(
+  g: Phaser.GameObjects.Graphics,
+  tint: RadiationColorFn,
+  x: number, y: number, ang: number, alpha: number,
+  { spent = 0, recoil = 0 } = {},
+): void {
+  const c = Math.cos(ang);
+  const s = Math.sin(ang);
+  const px = x - c * recoil * 7;
+  const py = y - s * recoil * 7;
+  const at = (f: number, r: number): [number, number] => [px + c * f - s * r, py + s * f - c * -r];
+
+  // Grip, canted back off the line of the barrel.
+  const [gx, gy] = at(-5, 0);
+  g.fillStyle(tint(RAD.ink), alpha * 0.9);
+  g.fillCircle(gx - c * 2, gy - s * 2 + 4, 5.4);
+  g.fillStyle(tint(RAD.hazardDeep), alpha);
+  g.fillCircle(gx - c * 2, gy - s * 2 + 3.4, 4.4);
+
+  // Barrel.
+  const [bx0, by0] = at(0, 0);
+  const [bx1, by1] = at(21 + recoil * 3, 0);
+  g.lineStyle(7, tint(RAD.leadDeep), alpha);
+  g.lineBetween(bx0, by0, bx1, by1);
+  g.lineStyle(4, tint(RAD.lead), alpha);
+  g.lineBetween(bx0, by0, bx1, by1);
+  g.lineStyle(1.3, tint(RAD.neon), alpha * 0.85);
+  g.lineBetween(bx0 + c * 3, by0 + s * 3, bx1 - c * 2, by1 - s * 2);
+
+  // Cylinder: six chambers around the hub, going dark as they are fired.
+  const [cx, cy] = at(2.5, 0);
+  g.fillStyle(tint(RAD.leadDeep), alpha);
+  g.fillCircle(cx, cy, 6.6);
+  g.fillStyle(tint(RAD.leadLit), alpha * 0.9);
+  g.fillCircle(cx, cy, 5.2);
+  for (let i = 0; i < 6; i++) {
+    const a = ang + (i / 6) * TAU + recoil * 0.9;
+    const loaded = i >= spent;
+    g.fillStyle(tint(loaded ? RAD.neon : RAD.ink), alpha * (loaded ? 0.95 : 0.8));
+    g.fillCircle(cx + Math.cos(a) * 3.2, cy + Math.sin(a) * 3.2, 1.5);
+  }
+  g.fillStyle(tint(RAD.hazard), alpha * 0.9);
+  g.fillCircle(cx, cy, 1.5);
+
+  // Muzzle flash, only on the frames the recoil is live.
+  if (recoil > 0.05) {
+    g.fillStyle(tint(RAD.core), alpha * recoil);
+    g.fillCircle(bx1, by1, 3 + recoil * 5);
+    g.fillStyle(tint(RAD.neonLit), alpha * recoil * 0.6);
+    g.fillTriangle(bx1 + c * (8 + recoil * 12), by1 + s * (8 + recoil * 12),
+      bx1 - s * 6 * recoil, by1 + c * 6 * recoil,
+      bx1 + s * 6 * recoil, by1 - c * 6 * recoil);
+  }
+}
+
+/**
+ * Supercritical's armour: four slabs of lead clamped over the wearer with the bolts still hot.
+ *
+ * `clamp` (0–1) runs the plates in from outside the body, so the moment it goes on is a machine
+ * closing rather than a texture appearing. `cracked` (0–1) is the last half-second before it
+ * fails, which is the only warning the wearer gets.
+ */
+export function leadArmour(
+  g: Phaser.GameObjects.Graphics,
+  tint: RadiationColorFn,
+  x: number, y: number, alpha: number, t: number,
+  { clamp = 1, cracked = 0 } = {},
+): void {
+  const out = (1 - clamp) * 26;
+  const plates: [number, number, number, number][] = [
+    // dx, dy, w, h — chest, back-skirt and two flank slabs.
+    [0, -12 - out, 30, 13],
+    [0, 12 + out, 26, 11],
+    [-15 - out, 0, 11, 24],
+    [15 + out, 0, 11, 24],
+  ];
+  for (const [dx, dy, w, h] of plates) {
+    const px = x + dx;
+    const py = y + dy;
+    g.fillStyle(tint(RAD.ink), alpha * 0.9);
+    g.fillRect(px - w / 2 - 1.4, py - h / 2 - 1.4, w + 2.8, h + 2.8);
+    g.fillStyle(tint(RAD.leadDeep), alpha);
+    g.fillRect(px - w / 2, py - h / 2, w, h);
+    g.fillStyle(tint(RAD.leadLit), alpha * 0.85);
+    g.fillRect(px - w / 2 + 1.6, py - h / 2 + 1.6, w - 3.2, h * 0.42);
+    // Bolt heads at the corners.
+    g.fillStyle(tint(RAD.hazard), alpha * 0.9);
+    for (const sx of [-1, 1]) {
+      for (const sy of [-1, 1]) g.fillCircle(px + sx * (w / 2 - 2.4), py + sy * (h / 2 - 2.4), 1.3);
+    }
+    if (cracked > 0.02) {
+      // The failure: a hot seam opening down the middle of every plate.
+      g.lineStyle(1 + cracked * 2.4, tint(RAD.neon), alpha * cracked * (0.5 + 0.5 * Math.sin(t * 26)));
+      g.lineBetween(px - w * 0.32, py - h * 0.4, px + w * 0.18, py + h * 0.42);
+      g.lineBetween(px + w * 0.12, py - h * 0.44, px + w * 0.36, py + h * 0.2);
+    }
+  }
+  // The trefoil stamped across the chest plate, which is how you tell it from any other armour.
+  trefoil(g, tint, x, y - 12 - out, 5, alpha * (0.7 + cracked * 0.3),
+    { phase: t * 0.6, color: cracked > 0.02 ? RAD.neonLit : RAD.hazard });
+}
+
+/**
+ * Supercritical with the armour gone: the wearer as the source rather than the carrier.
+ *
+ * A hard white-green core, a boiling halo at the aura's real radius, and rungs of contamination
+ * climbing out of it. The radius drawn is the radius that doses people — nothing here is
+ * decoration for its own sake.
+ */
+export function criticalAura(
+  g: Phaser.GameObjects.Graphics,
+  tint: RadiationColorFn,
+  x: number, y: number, r: number, alpha: number, t: number,
+): void {
+  const breathe = 0.86 + 0.14 * Math.sin(t * 4.4);
+  g.fillStyle(tint(RAD.neonDeep), alpha * 0.2 * breathe);
+  g.fillCircle(x, y, r * breathe);
+  g.fillStyle(tint(RAD.neonMid), alpha * 0.14);
+  g.fillCircle(x, y, r * 0.62 * breathe);
+  g.lineStyle(2.6, tint(RAD.neon), alpha * 0.75 * breathe);
+  g.strokeCircle(x, y, r * breathe);
+
+  // Rungs riding out on their own loops, so the aura reads as emitting rather than sitting.
+  for (let i = 0; i < 3; i++) {
+    const u = (t * 0.55 + i / 3) % 1;
+    g.lineStyle(1.6 * (1 - u), tint(RAD.neonLit), alpha * (1 - u) * 0.6);
+    g.strokeCircle(x, y, 18 + u * (r - 18));
+  }
+  for (let i = 0; i < 10; i++) {
+    const a = t * 1.1 + (i / 10) * TAU;
+    const d = r * (0.42 + 0.5 * ((t * 0.7 + jitter(i * 31.7, 2)) % 1));
+    g.fillStyle(tint(RAD.neonLit), alpha * 0.7);
+    g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d, 1.8 + Math.sin(t * 9 + i) * 0.8);
+  }
+  // The wearer, lit from inside.
+  g.fillStyle(tint(RAD.neon), alpha * 0.4 * breathe);
+  g.fillCircle(x, y, 26);
+  g.fillStyle(tint(RAD.neonLit), alpha * 0.55);
+  g.fillCircle(x, y, 15);
+  g.fillStyle(tint(RAD.core), alpha * 0.8);
+  g.fillCircle(x, y, 6);
+  trefoil(g, tint, x, y, 13, alpha * 0.55, { phase: -t * 2.2, color: RAD.core });
+}
+
+/**
+ * Level 3 irradiated: the arm the victim has grown.
+ *
+ * Three segments of swollen meat hinged off the shoulder, veined in hot red, with a hand of four
+ * hooked claws on the end. `wind` runs −1 → 1 across the slash: negative is the arm cocking back
+ * behind the body, positive is it coming through. Drawn from the victim's own centre so it
+ * tracks them wherever they run, because it is theirs now.
+ */
+export function cancerArm(
+  g: Phaser.GameObjects.Graphics,
+  tint: RadiationColorFn,
+  x: number, y: number, ang: number, alpha: number, wind: number, t: number,
+): void {
+  const swing = ang + wind * 1.5;
+  const pulse = 1 + 0.07 * Math.sin(t * 7);
+  // Shoulder, elbow, wrist.
+  const sx = x + Math.cos(ang - 1.9) * 13;
+  const sy = y + Math.sin(ang - 1.9) * 13 - 3;
+  const reach = (20 + Math.abs(wind) * 9) * pulse;
+  const ex = sx + Math.cos(swing - 0.55) * reach;
+  const ey = sy + Math.sin(swing - 0.55) * reach;
+  const wx = ex + Math.cos(swing + 0.3) * reach * 1.05;
+  const wy = ey + Math.sin(swing + 0.3) * reach * 1.05;
+
+  // The limb: a dark casing with meat inside it, drawn as two tapering bones.
+  for (const [x0, y0, x1, y1, w] of [[sx, sy, ex, ey, 9], [ex, ey, wx, wy, 7]] as const) {
+    g.lineStyle(w * pulse + 2.5, tint(RAD.fleshDeep), alpha);
+    g.lineBetween(x0, y0, x1, y1);
+    g.lineStyle(w * pulse, tint(RAD.flesh), alpha * 0.95);
+    g.lineBetween(x0, y0, x1, y1);
+    // Veins: a hot line worming down the inside of each segment.
+    g.lineStyle(1.4, tint(RAD.hot), alpha * (0.5 + 0.5 * Math.abs(Math.sin(t * 5))));
+    const mx = (x0 + x1) / 2 + Math.sin(t * 4) * 2;
+    const my = (y0 + y1) / 2 + Math.cos(t * 4) * 2;
+    g.beginPath();
+    g.moveTo(x0, y0); g.lineTo(mx, my); g.lineTo(x1, y1);
+    g.strokePath();
+  }
+  // Knuckles at the joints, so it reads as jointed rather than as a bent hose.
+  g.fillStyle(tint(RAD.fleshDeep), alpha);
+  g.fillCircle(sx, sy, 6.4 * pulse);
+  g.fillCircle(ex, ey, 5.4 * pulse);
+  g.fillStyle(tint(RAD.flesh), alpha * 0.9);
+  g.fillCircle(sx, sy, 4.4 * pulse);
+
+  // Four hooked claws, splayed wider as the arm comes through.
+  const spread = 0.45 + Math.max(0, wind) * 0.45;
+  for (let i = 0; i < 4; i++) {
+    const a = swing + 0.3 + (i - 1.5) * spread * 0.5;
+    const l = 11 + i % 2 * 3;
+    const tipX = wx + Math.cos(a) * l;
+    const tipY = wy + Math.sin(a) * l;
+    g.lineStyle(3.4, tint(RAD.fleshDeep), alpha);
+    g.lineBetween(wx, wy, tipX, tipY);
+    g.lineStyle(1.8, tint(RAD.hotLit), alpha * 0.9);
+    g.lineBetween(wx + Math.cos(a) * 3, wy + Math.sin(a) * 3, tipX, tipY);
+    g.fillStyle(tint(RAD.core), alpha * 0.8);
+    g.fillCircle(tipX, tipY, 1.5);
+  }
+  // The tumour it grew out of, sitting on the shoulder.
+  g.fillStyle(tint(RAD.hotDeep), alpha * 0.85);
+  g.fillCircle(sx - Math.cos(ang) * 3, sy - Math.sin(ang) * 3, 8 * pulse);
+  g.fillStyle(tint(RAD.hot), alpha * (0.35 + 0.25 * Math.sin(t * 6)));
+  g.fillCircle(sx - Math.cos(ang) * 3, sy - Math.sin(ang) * 3, 5 * pulse);
+}
+
+/** Roman numerals for the dose ladder — I, II, III — drawn as bars so no font is involved. */
+export function doseTicks(
+  g: Phaser.GameObjects.Graphics,
+  tint: RadiationColorFn,
+  x: number, y: number, level: number, alpha: number,
+): void {
+  const n = Math.max(1, Math.min(3, level));
+  const color = n >= 3 ? RAD.hot : n === 2 ? RAD.hazard : RAD.neon;
+  for (let i = 0; i < n; i++) {
+    const px = x - ((n - 1) * 4) / 2 + i * 4;
+    g.fillStyle(tint(RAD.ink), alpha * 0.8);
+    g.fillRect(px - 1.4, y - 5, 2.8, 10);
+    g.fillStyle(tint(color), alpha);
+    g.fillRect(px - 0.9, y - 4.4, 1.8, 8.8);
+  }
+}
+
 // ── Fx ────────────────────────────────────────────────────────────────────
 
 /** Radiation's one-shot effects. Everything sustained is painted per-frame by the kit instead. */
@@ -565,6 +940,122 @@ export class RadiationFx extends FxBase {
     this.flashIn(x, y, 260, RAD.core, RAD.neonLit, depth);
     this.anim(depth, 1600, (g, t) => {
       mushroomCloud(g, this.tint, x, y, t, 1 - easeIn(Math.max(0, (t - 0.6) / 0.4)), seed);
+    });
+  }
+
+  // ── Upgrades ──
+
+  /** A tracer landing dead centre: the lamp going red rather than green. */
+  heartbeat(x: number, y: number, heat: number, depth = 17): void {
+    const tint = redshift(this.tint, heat);
+    this.anim(depth, 380, (g, t) => {
+      const e = easeOut(t);
+      g.lineStyle(2.6 * (1 - t) + 0.6, tint(RAD.neon), (1 - t) * 0.95);
+      g.strokeCircle(x, y, 8 + e * 22);
+      // The trace on a monitor, jumping once: flat, spike, flat.
+      const w = 34;
+      g.lineStyle(1.8, tint(RAD.neonLit), (1 - t) * 0.9);
+      g.beginPath();
+      g.moveTo(x - w, y - 18 - e * 8);
+      g.lineTo(x - 8, y - 18 - e * 8);
+      g.lineTo(x - 3, y - 30 - e * 8);
+      g.lineTo(x + 2, y - 8 - e * 8);
+      g.lineTo(x + 7, y - 18 - e * 8);
+      g.lineTo(x + w, y - 18 - e * 8);
+      g.strokePath();
+    });
+  }
+
+  /** A revolver round leaving the barrel — the rail line, cut down to a pistol's worth. */
+  pistolShot(x0: number, y0: number, x1: number, y1: number, depth = 17): void {
+    const seed = Math.random() * 999;
+    this.anim(depth, 180, (g, t) => {
+      const a = 1 - t;
+      railBeam(g, this.tint, x0, y0, x1, y1, a * 0.85, { width: 0.45, seed, spurs: false });
+      g.fillStyle(this.tint(RAD.hazard), a * 0.8);
+      g.fillCircle(x1, y1, 5 * (1 - t) + 1);
+    });
+  }
+
+  /** A spent casing tumbling out of the cylinder and rolling. */
+  casing(x: number, y: number, depth = 16): void {
+    const a = Math.random() * TAU;
+    const spin = (Math.random() - 0.5) * 22;
+    this.anim(depth, 700, (g, t) => {
+      const e = easeOut(t);
+      const cx = x + Math.cos(a) * 24 * e;
+      const cy = y + Math.sin(a) * 10 * e + t * t * 26;
+      g.fillStyle(this.tint(RAD.hazardDeep), (1 - t) * 0.9);
+      g.fillRect(cx - 2.4, cy - 1.2, 4.8, 2.4);
+      g.fillStyle(this.tint(RAD.hazard), (1 - t));
+      g.fillRect(cx - 2 + Math.cos(spin * t) * 0.6, cy - 0.8, 3.6, 1.6);
+    });
+  }
+
+  /** Supercritical opening: the plates slamming in from outside the body. */
+  armourOn(x: number, y: number, depth = 17): void {
+    this.flashIn(x, y, 40, RAD.core, RAD.hazard, depth);
+    this.anim(depth, 420, (g, t) => {
+      leadArmour(g, this.tint, x, y, 1 - t * 0.35, t * 3, { clamp: easeOut(t) });
+      g.lineStyle(3 * (1 - t) + 0.6, this.tint(RAD.hazard), (1 - t) * 0.9);
+      g.strokeCircle(x, y, 26 + easeOut(t) * 22);
+    });
+  }
+
+  /** Supercritical's armour failing: the plates blowing off and the load getting out. */
+  armourBreak(x: number, y: number, depth = 17): void {
+    const seed = Math.random() * 999;
+    this.flashIn(x, y, 70, RAD.core, RAD.neonLit, depth);
+    this.anim(depth, 620, (g, t) => {
+      const e = easeOut(t);
+      for (let i = 0; i < 6; i++) {
+        const a = jitter(seed, i) * TAU;
+        const d = e * (34 + jitter(seed, 20 + i) * 44);
+        const px = x + Math.cos(a) * d;
+        const py = y + Math.sin(a) * d + t * t * 20;
+        g.fillStyle(this.tint(RAD.ink), (1 - t) * 0.9);
+        g.fillRect(px - 6, py - 3.4, 12, 6.8);
+        g.fillStyle(this.tint(RAD.leadLit), (1 - t));
+        g.fillRect(px - 5, py - 2.6, 10, 3);
+      }
+      g.lineStyle(5 * (1 - t) + 1, this.tint(RAD.neon), (1 - t) * 0.9);
+      g.strokeCircle(x, y, 18 + e * 96);
+      trefoil(g, this.tint, x, y, 14 + e * 20, (1 - t) * 0.6, { phase: t * 5, color: RAD.neonLit });
+    });
+  }
+
+  /** The come-down: hot venting straight out of the wearer with nothing left to hold it. */
+  meltdown(x: number, y: number, depth = 17): void {
+    const seed = Math.random() * 999;
+    this.anim(depth, 520, (g, t) => {
+      const e = easeOut(t);
+      for (let i = 0; i < 7; i++) {
+        const a = -Math.PI / 2 + (jitter(seed, i) - 0.5) * 2.2;
+        const d = e * (16 + jitter(seed, 20 + i) * 30);
+        g.fillStyle(this.tint(jitter(seed, 40 + i) > 0.5 ? RAD.hot : RAD.hotLit), (1 - t) * 0.85);
+        g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d, 3.2 * (1 - t) + 0.8);
+      }
+      g.lineStyle(2.4 * (1 - t) + 0.5, this.tint(RAD.hot), (1 - t) * 0.8);
+      g.strokeCircle(x, y, 12 + e * 30);
+    });
+  }
+
+  /** The cancerous arm connecting: four claw lines opened across the body. */
+  clawSlash(x: number, y: number, ang: number, depth = 17): void {
+    this.anim(depth, 340, (g, t) => {
+      const e = easeOut(t);
+      for (let i = 0; i < 4; i++) {
+        const off = (i - 1.5) * 7;
+        const nx = Math.cos(ang + Math.PI / 2) * off;
+        const ny = Math.sin(ang + Math.PI / 2) * off;
+        const l = 22 * e;
+        g.lineStyle(3.4 * (1 - t) + 0.5, this.tint(RAD.fleshDeep), (1 - t) * 0.9);
+        g.lineBetween(x + nx - Math.cos(ang) * l, y + ny - Math.sin(ang) * l,
+          x + nx + Math.cos(ang) * l, y + ny + Math.sin(ang) * l);
+        g.lineStyle(1.4 * (1 - t) + 0.3, this.tint(RAD.hotLit), (1 - t));
+        g.lineBetween(x + nx - Math.cos(ang) * l, y + ny - Math.sin(ang) * l,
+          x + nx + Math.cos(ang) * l, y + ny + Math.sin(ang) * l);
+      }
     });
   }
 

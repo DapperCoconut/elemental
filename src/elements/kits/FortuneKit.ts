@@ -7,14 +7,16 @@ import { Projectile } from '../../combat/Projectile';
 import { STATUS_DESCRIPTORS, isDebuff, seedEffectSnapshot, stretchNewEffects } from '../../combat/StatusEffects';
 import { Sfx } from '../../audio';
 import {
-  FOR, FortuneAvatar, FortuneColorFn, FortuneFx, bulletShape, daggerShape,
-  goldBeam, muzzleOf, pepperFlame, roombaShape, stall, turnstile,
+  FOR, FortuneAvatar, FortuneColorFn, FortuneFx, auditMark, auditor, bouncyBolt, bulletShape,
+  daggerShape, gildedAura, goldBeam, goldCone, grenadeShape, healPylon, midasBullet, muzzleOf,
+  pepperFlame, roombaShape, stall, turnstile,
 } from './FortuneVisuals';
 
 type Owner = 'player' | 'npc';
 
 const ARENA_PAD = 32;
 const BOTH: Owner[] = ['player', 'npc'];
+const TAU_LOCAL = Math.PI * 2;
 
 // ── Passive: Shopkeeper ──────────────────────────────────────────────────────
 /** Damage anybody deals, per blood coin it is worth. */
@@ -31,6 +33,14 @@ const BULLET_LIFE_MS = 1600;
 const BULLET_R = 8;
 /** Attachments are capped at two. The gun is capped at one. That is the whole loadout. */
 const MAX_ATTACHMENTS = 2;
+/**
+ * Acceleration Gear: how fast the action cycles on the last round compared with a full magazine.
+ *
+ * Linear in how empty the magazine is, so it is a reason to shoot the thing dry rather than a
+ * reason to top it up — and it argues directly against the two magazine mods, because a bigger
+ * drum is a longer stretch of the mag spent at the slow end of the ramp.
+ */
+const ACCEL_MAX = 2.2;
 
 // ── Safe Investment (E) ──────────────────────────────────────────────────────
 const DEPOSIT = 5;
@@ -53,6 +63,17 @@ const WALL_MS = 5000;
 const WALL_HALF = 15;
 const TOLL_SHOT = 1;
 const TOLL_BODY = 3;
+/**
+ * What an unpaid coin costs in blood.
+ *
+ * The turnstile used to wave a broke customer through, which meant that against anybody who was
+ * not already running Fortune's economy the whole ability did nothing at all. It is a toll: if
+ * they cannot pay it in coin they pay it out of the coin's raw material, and that damage mints
+ * its own coins through the ordinary passive.
+ */
+const BLOOD_PER_COIN = 8;
+/** Minimum gap between two blood tolls on one side, so a burst weapon cannot be billed to death. */
+const BLOOD_GATE_MS = 400;
 
 // ── Pay-to-Win (Q) ───────────────────────────────────────────────────────────
 const BEAM_MS = 8000;
@@ -62,6 +83,74 @@ const BEAM_DPS = 95;
 const BEAM_COINS_PER_SEC = 6;
 /** Radians per second the beam is allowed to turn. Deliberately slow — it is walked, not aimed. */
 const BEAM_TURN = 1.15;
+
+// ── Alt-Fire (Click+) ────────────────────────────────────────────────────────
+
+/** The pistol dump: the whole magazine, as fast as the slide will cycle, aimed by hope. */
+const DUMP_SPREAD = 0.34;
+const DUMP_GAP_MS = 55;
+/** The revolver's spin-up. Three seconds is the whole bar. */
+const SPIN_MS = 3000;
+const SPIN_DAMAGE = 30;
+/** The AR's thrown clip. */
+const CLIP_SPEED = 640;
+const CLIP_BURST_SPEED = 760;
+/** The Midas round. */
+const MIDAS_COINS = 5;
+const MIDAS_AMMO = 2;
+const MIDAS_DAMAGE = 25;
+const MIDAS_SPEED = 250;
+const GILD_MS = 5000;
+/** What a gilded body is worth. Coins, not damage — the mult is on the payout, not the wound. */
+const GILD_PAYOUT = 2;
+
+// ── Safe Marketing (E+) ──────────────────────────────────────────────────────
+const CHILLY_MS = 12_000;
+const CHILLY_EVERY_MS = 3000;
+const CHILLY_R = 132;
+const CHILLY_SLOW = 0.8;
+const CHILLY_SLOW_MS = 5000;
+const PYLON_MAX = 4;
+const PYLON_HEAL = 10;
+const PYLON_COOL_MS = 5000;
+const PYLON_R = 30;
+const TELE_MS = 12_000;
+
+// ── Risky Marketing (R+) ─────────────────────────────────────────────────────
+const GRENADE_DAMAGE = 20;
+const GRENADE_R = 94;
+const GRENADE_LIFE_MS = 2600;
+/** The self-launch: everything at your feet, and you are not here for three seconds. */
+const LAUNCH_MS = 3000;
+const BOUNCE_MAX = 3;
+const LASER_BOUNCES = 12;
+const LASER_DAMAGE = 20;
+const LASER_AMMO = 4;
+/** The grips. Each one is a straight trade between the two triggers. */
+const GRIP_SPEC = { main: 0.7, alt: 1.5 };
+const GRIP_BASIC = { main: 1.35, alt: 0.6 };
+
+// ── Tax Evasion (F+) ─────────────────────────────────────────────────────────
+const WALL_TAX_MULT = 1.5;
+/** Coins through one wall before somebody at the revenue service notices. */
+const AUDIT_TRIGGER = 10;
+const AUDIT_AIM_MS = 5000;
+const AUDIT_DAMAGE = 35;
+const AUDIT_SLOW = 0.8;
+const AUDIT_DEBUFF_MS = 8000;
+const AUDIT_VULN = 1.2;
+
+// ── Golden Excess (Q+) ───────────────────────────────────────────────────────
+/** Half-angle of the cone, in radians, empty and per coin the beam has burned. */
+const EXCESS_HALF0 = 0.10;
+const EXCESS_HALF_PER_COIN = 0.011;
+const EXCESS_HALF_MAX = 1.2;
+/** Damage per second, likewise. There is a ceiling, but it is a long way up. */
+const EXCESS_DPS_PER_COIN = 4.5;
+const EXCESS_DPS_MAX = 700;
+/** The drain accelerates with the cone, so a fortune goes into it in seconds. */
+const EXCESS_DRAIN_PER_COIN = 0.22;
+const EXCESS_DRAIN_MAX = 70;
 
 // ── Items ────────────────────────────────────────────────────────────────────
 
@@ -97,6 +186,8 @@ const ROOMBA_GATE_MS = 1400;
 type Page = 'shop' | 'arms' | 'mods';
 const PAGES: Page[] = ['shop', 'arms', 'mods'];
 const PAGE_NAME: Record<Page, string> = { shop: 'GENERAL', arms: 'ARMS ☠', mods: 'MODS ☠' };
+/** The key printed against each row of the counter, in the order `numberKeys` registers them. */
+const ROW_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-'];
 
 interface ShopEntry {
   id: string;
@@ -106,6 +197,12 @@ interface ShopEntry {
   page: Page;
   /** One line, shown on the counter. */
   desc: string;
+  /**
+   * The shop upgrade that puts this line on the shelf. Stock is the *shopkeeper's* — an enemy
+   * standing at a counter that sells Tele-Cores can buy one, which is the passive working as
+   * designed and not a leak.
+   */
+  needs?: 'click' | 'e' | 'r' | 'f' | 'q';
 }
 
 /**
@@ -121,6 +218,9 @@ const GENERAL: ShopEntry[] = [
   { id: 'roomba', name: 'Death Machine', emoji: '🤖', cost: 8, page: 'shop', desc: 'A knife on a vacuum. 25 dmg on touch, max 3.' },
   { id: 'miracle', name: 'The Miracle', emoji: '🏺', cost: 12, page: 'shop', desc: 'Double every good thing for 20s.' },
   { id: 'donation', name: 'Donation', emoji: '💝', cost: 20, page: 'shop', desc: 'Thank you for your generous support.' },
+  { id: 'chilly', name: 'Chilly Pepper', emoji: '🥶', cost: 3, page: 'shop', needs: 'e', desc: 'Freezing ring every 3s for 12s. 20% slow.' },
+  { id: 'pylon', name: 'Heal Pylon', emoji: '🗼', cost: 5, page: 'shop', needs: 'e', desc: 'Touch it to heal 10. Recharges every 5s.' },
+  { id: 'telecore', name: 'Tele-Core', emoji: '🌀', cost: 8, page: 'shop', needs: 'e', desc: 'Your dash becomes a teleport for 12s.' },
 ];
 
 /** Guns. One at a time; buying a second replaces the first. */
@@ -130,6 +230,8 @@ const ARMS: ShopEntry[] = [
   { id: 'rifle', name: 'Rifle', emoji: '🪖', cost: 10, page: 'arms', desc: '30 dmg · 1 round · begging for a mag.' },
   { id: 'ar', name: 'AR', emoji: '💥', cost: 15, page: 'arms', desc: '3-round burst · 8 dmg each · 30 rounds.' },
   { id: 'golden', name: 'Golden Pistol', emoji: '🌟', cost: 30, page: 'arms', desc: 'Hitscan · 20 dmg +1 per 2 coins held.' },
+  { id: 'launcher', name: 'Grenade Launcher', emoji: '💣', cost: 20, page: 'arms', needs: 'r', desc: '20 dmg blast · 3 shells · slow reload.' },
+  { id: 'bouncy', name: 'Bouncy Blaster', emoji: '🟢', cost: 12, page: 'arms', needs: 'r', desc: '10 dmg · 8 rounds · bounces 3× off walls.' },
 ];
 
 /** Attachments. Two at a time. */
@@ -141,6 +243,10 @@ const MODS: ShopEntry[] = [
   { id: 'fiftycal', name: '50 Cal.', emoji: '🛢️', cost: 15, page: 'mods', desc: '+10 bullet damage.' },
   { id: 'scope', name: 'Sniper Scope', emoji: '🔭', cost: 3, page: 'mods', desc: 'Bullets +100% speed and pierce.' },
   { id: 'prop', name: 'Action Movie Prop', emoji: '🎬', cost: 10, page: 'mods', desc: 'Every shot launches you backwards.' },
+  { id: 'accelgear', name: 'Acceleration Gear', emoji: '⚙️', cost: 9, page: 'mods', desc: 'Fires up to 2.2× faster as the mag empties.' },
+  { id: 'specgrip', name: 'Specialized Grip', emoji: '🖐️', cost: 6, page: 'mods', needs: 'r', desc: 'Alt-fire ×1.5 dmg, normal fire ×0.7.' },
+  { id: 'basicgrip', name: 'Basic Grip', emoji: '✊', cost: 6, page: 'mods', needs: 'r', desc: 'Normal fire ×1.35, alt-fire ×0.6.' },
+  { id: 'dualgrip', name: 'Dual Grip', emoji: '🤞', cost: 25, page: 'mods', needs: 'r', desc: 'Next gun you buy goes in your right hand.' },
 ];
 
 const CATALOGUE: Record<Page, ShopEntry[]> = { shop: GENERAL, arms: ARMS, mods: MODS };
@@ -162,20 +268,32 @@ interface GunDef {
   coinScaled?: boolean;
   sfx: string;
   rate: number;
+  /** Bullets that ricochet rather than die on the wall, and how many times. */
+  bounces?: number;
+  /** A shell rather than a bullet: it flies slowly and bursts where it lands. */
+  lobbed?: boolean;
+  /** One line for the alt-fire, shown on the counter under the loadout. */
+  alt?: string;
 }
 
 const GUNS: Record<string, GunDef> = {
-  pistol:   { damage: 10, mag: 10, reloadMs: 1150, fireMs: 190, speed: 900, size: 5, sfx: 'musket', rate: 1.55 },
-  revolver: { damage: 20, mag: 6, reloadMs: 1500, fireMs: 380, speed: 880, size: 6, sfx: 'musket', rate: 1.15 },
+  pistol:   { damage: 10, mag: 10, reloadMs: 1150, fireMs: 190, speed: 900, size: 5, sfx: 'musket', rate: 1.55, alt: 'dump the magazine' },
+  revolver: { damage: 20, mag: 6, reloadMs: 1500, fireMs: 380, speed: 880, size: 6, sfx: 'musket', rate: 1.15, alt: 'hold to spin up' },
   rifle:    { damage: 30, mag: 1, reloadMs: 1250, fireMs: 420, speed: 1120, size: 7, sfx: 'shotgun', rate: 0.85 },
-  ar:       { damage: 8, mag: 30, reloadMs: 1700, fireMs: 340, speed: 980, size: 4.4, burst: 3, sfx: 'musket', rate: 1.9 },
-  golden:   { damage: 20, mag: 10, reloadMs: 1400, fireMs: 300, speed: 0, size: 5, hitscan: true, sfx: 'light-beam', rate: 1.2 },
+  ar:       { damage: 8, mag: 30, reloadMs: 1700, fireMs: 340, speed: 980, size: 4.4, burst: 3, sfx: 'musket', rate: 1.9, alt: 'throw the clip' },
+  golden:   { damage: 20, mag: 10, reloadMs: 1400, fireMs: 300, speed: 0, size: 5, hitscan: true, sfx: 'light-beam', rate: 1.2, alt: 'Midas round' },
+  launcher: { damage: GRENADE_DAMAGE, mag: 3, reloadMs: 2700, fireMs: 700, speed: 380, size: 7, lobbed: true, sfx: 'shotgun', rate: 0.6, alt: 'drop them all and leave' },
+  bouncy:   { damage: 10, mag: 8, reloadMs: 1300, fireMs: 260, speed: 700, size: 5, bounces: BOUNCE_MAX, sfx: 'musket', rate: 1.8, alt: 'heavy laser' },
 };
 
 // ── World objects ────────────────────────────────────────────────────────────
 
+/** What a bullet is, beyond a slug of lead. Everything the alt-fires add is a flag on this. */
+type BulletKind = 'slug' | 'grenade' | 'clip' | 'laser' | 'midas';
+
 interface Bullet {
   owner: Owner;
+  kind: BulletKind;
   x: number;
   y: number;
   vx: number;
@@ -188,6 +306,37 @@ interface Bullet {
   diesAt: number;
   hit: Set<Fighter>;
   reg: RegisteredProjectile | null;
+  /** Wall bounces left. Zero is the ordinary bullet, which dies on the edge of the arena. */
+  bounces: number;
+  /** Blast radius for the ones that burst rather than land. */
+  blast: number;
+  /** The AR's thrown clip: how many rounds are folded up inside it. */
+  rounds: number;
+  /** Where a lobbed shell is trying to land — it bursts there whether or not it hit anybody. */
+  toX: number;
+  toY: number;
+  spin: number;
+}
+
+/** A Heal Pylon standing on the floor. The light on it is the cooldown. */
+interface Pylon {
+  owner: Owner;
+  x: number;
+  y: number;
+  readyAt: number;
+  seed: number;
+}
+
+/** The revenue service, once a Paywall has collected enough to be worth investigating. */
+interface Audit {
+  owner: Owner;
+  target: Fighter;
+  x: number;
+  firesAt: number;
+  /** Non-zero for a few frames after the shot, purely so the muzzle flash can be drawn. */
+  flash: number;
+  /** True once the rifle has gone off; he stays on screen for as long as the flash lasts. */
+  done: boolean;
 }
 
 interface Dagger {
@@ -230,13 +379,24 @@ interface Wall {
   owner: Owner;
   x: number;
   diesAt: number;
+  span: number;
   seed: number;
   /** Shots already charged, so a slow bullet is not billed every frame it is inside the band. */
   tolledShots: Set<object>;
+  /**
+   * Which side of the line each shot was on last frame. A band the width of the turnstiles is
+   * narrower than a fast projectile's step, so presence in it is not a reliable test — the
+   * crossing is. Keyed on the projectile object, cleared when it is billed.
+   */
+  shotSide: Map<object, number>;
   /** Which side of the line each body was on last frame. */
   sideOf: Map<Fighter, number>;
   /** Recent payments, for the turnstile slots to light up. */
   flash: number;
+  /** Coins actually collected through this wall — the trigger for the audit. */
+  take: number;
+  /** True once the auditor has been called out for this wall, so he is only called once. */
+  audited: boolean;
 }
 
 interface Beam {
@@ -245,6 +405,8 @@ interface Beam {
   endsAt: number;
   /** Per-victim tick accumulator, so damage is dealt in readable chunks rather than per frame. */
   tick: number;
+  /** Coins this cast has burned. Golden Excess reads everything off it. */
+  spent: number;
 }
 
 /** A push that has to survive the movement code, so it is applied as displacement in `update`. */
@@ -252,6 +414,37 @@ interface Shove {
   vx: number;
   vy: number;
   until: number;
+}
+
+/**
+ * One weapon in one hand.
+ *
+ * There is normally exactly one of these. Dual Grip is the reason it is a record rather than a
+ * handful of fields on `Side`: the second gun has to hold its own magazine, its own reload and
+ * its own burst, and the alternative was writing every one of them twice.
+ */
+interface Hand {
+  gun: string | null;
+  ammo: number;
+  reloadUntil: number;
+  nextShotAt: number;
+  burstLeft: number;
+  burstAt: number;
+  burstAng: number;
+  /** Angular error added to each shot of the burst. The pistol dump is the wide one. */
+  burstSpread: number;
+  burstGap: number;
+  /** Whether the burst in progress is an alt-fire, so the grips price it correctly. */
+  burstAlt: boolean;
+}
+
+function makeHand(gun: string | null): Hand {
+  return {
+    gun,
+    ammo: gun ? GUNS[gun].mag : 0,
+    reloadUntil: 0, nextShotAt: 0,
+    burstLeft: 0, burstAt: 0, burstAng: 0, burstSpread: 0.07, burstGap: 70, burstAlt: false,
+  };
 }
 
 interface Side {
@@ -266,15 +459,15 @@ interface Side {
   stockDealt: number;
   stockTaken: number;
 
-  gun: string | null;
+  main: Hand;
+  /** Dual Grip's second gun, once one has been bought for it. */
+  off: Hand | null;
+  /** Dual Grip bought, waiting for a gun to hand the right trigger to. */
+  dualPending: boolean;
   attachments: string[];
-  ammo: number;
-  reloadUntil: number;
-  nextShotAt: number;
-  burstLeft: number;
-  burstAt: number;
-  burstAng: number;
   lastShotAt: number;
+  /** The revolver's alt-fire: when the right button went down, or 0 while it is not held. */
+  spinFrom: number;
 
   /**
    * The body a lingering item was actually bought for. In Invasion the "npc side" is a whole
@@ -289,10 +482,21 @@ interface Side {
   cureUntil: number;
   miracleUntil: number;
   miracleSnap: Map<string, number>;
+  /** Safe Marketing's three lines. */
+  chillyUntil: number;
+  chillyNext: number;
+  teleUntil: number;
 
   wall: Wall | null;
   beam: Beam | null;
   shove: Shove | null;
+  audit: Audit | null;
+  /** Grenade Launcher alt: off the floor, invisible and untouchable, until this stamp. */
+  airborneUntil: number;
+  /** Damage the beam has dealt that the passive must not be paid for. */
+  unpaid: Map<Fighter, number>;
+  /** Gate on paying a toll in blood, so one burst weapon cannot be billed to death. */
+  bloodGate: number;
 
   page: Page;
   aimX: number;
@@ -306,11 +510,13 @@ function makeSide(owner: Owner): Side {
   return {
     owner, coins: 0, coinFrac: 0, bank: 0, bankTimer: 0, stocks: 0, stockTimer: 0,
     stockDealt: 0, stockTaken: 0,
-    gun: 'pistol', attachments: [], ammo: GUNS.pistol.mag, reloadUntil: 0, nextShotAt: 0,
-    burstLeft: 0, burstAt: 0, burstAng: 0, lastShotAt: 0,
+    main: makeHand('pistol'), off: null, dualPending: false, attachments: [], lastShotAt: 0,
+    spinFrom: 0,
     effectBody: null, pepperUntil: 0, pepperDrop: 0, pouch: 0, pouchGate: 0, cureUntil: 0,
     miracleUntil: 0, miracleSnap: new Map(),
-    wall: null, beam: null, shove: null,
+    chillyUntil: 0, chillyNext: 0, teleUntil: 0,
+    wall: null, beam: null, shove: null, audit: null, airborneUntil: 0,
+    unpaid: new Map(), bloodGate: 0,
     page: 'shop', aimX: 0, aimY: 0, botBuyAt: 0, spent: 0,
   };
 }
@@ -332,6 +538,8 @@ export interface FortuneArenaApi {
   get fKey(): Phaser.Input.Keyboard.Key;
   get qKey(): Phaser.Input.Keyboard.Key;
   get pointerWasDown(): boolean;
+  /** Alt-fire lives on the right button, and every alt-fire is edge-triggered off this. */
+  get rightPointerWasDown(): boolean;
   get elementId(): string;
   get npcElementId(): string;
   get width(): number;
@@ -346,6 +554,10 @@ export interface FortuneArenaApi {
   setStatusIndicator(id: string, status: CustomStatus | null): void;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /** Shop upgrades: the local player's equipped slots. */
+  hasUpgrade(slot: string): boolean;
+  /** …and the online opponent's, so their upgraded tricks reproduce on this sim. */
+  hasNpcUpgrade(slot: string): boolean;
 }
 
 // ── FortuneKit ───────────────────────────────────────────────────────────────
@@ -378,10 +590,17 @@ export class FortuneKit {
   private volleys: Volley[] = [];
   private flames: Flame[] = [];
   private roombas: Roomba[] = [];
+  private pylons: Pylon[] = [];
   /** Last seen `rawDamageTaken` per body — the only meter the whole economy runs off. */
   private rawSeen = new Map<Fighter, number>();
   /** Bodies whose debuffs this kit is holding down for a Cure-All. */
   private cured = new Set<Fighter>();
+  /** Bodies the Midas round has gilded, and until when. Every coin off them is worth double. */
+  private gilded = new Map<Fighter, number>();
+  /** Bodies this kit is slowing — the Chilly Pepper's ring and the auditor's rifle. */
+  private chilled = new Map<Fighter, { until: number; mult: number }>();
+  /** Bodies carrying the auditor's vulnerability, so `fortuneIncomingMult` can be rewritten. */
+  private audited = new Map<Fighter, number>();
 
   // ── Input ──
   private numberKeys: Phaser.Input.Keyboard.Key[] = [];
@@ -406,11 +625,15 @@ export class FortuneKit {
   private setupKeys(): void {
     const kb = this.api.scene.input.keyboard;
     if (!kb) return;
+    // Eleven rows is what a fully stocked general page comes to, so the row keys run past the
+    // number row's end. The glyphs in ROW_KEYS are what the counter prints against each line.
     const codes = [
       Phaser.Input.Keyboard.KeyCodes.ONE, Phaser.Input.Keyboard.KeyCodes.TWO,
       Phaser.Input.Keyboard.KeyCodes.THREE, Phaser.Input.Keyboard.KeyCodes.FOUR,
       Phaser.Input.Keyboard.KeyCodes.FIVE, Phaser.Input.Keyboard.KeyCodes.SIX,
       Phaser.Input.Keyboard.KeyCodes.SEVEN, Phaser.Input.Keyboard.KeyCodes.EIGHT,
+      Phaser.Input.Keyboard.KeyCodes.NINE, Phaser.Input.Keyboard.KeyCodes.ZERO,
+      Phaser.Input.Keyboard.KeyCodes.MINUS,
     ];
     this.numberKeys = codes.map((c) => kb.addKey(c));
     this.tabKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.T);
@@ -441,6 +664,24 @@ export class FortuneKit {
 
   private isFortune(owner: Owner): boolean {
     return owner === 'player' ? this.api.elementId === 'fortune' : this.api.npcElementId === 'fortune';
+  }
+
+  /**
+   * Whether that side has paid for a shop upgrade. The npc branch is the online opponent's
+   * loadout — a local bot never owns one, which is why every upgraded path is written to be
+   * harmless rather than absent when it says no.
+   */
+  private owns(owner: Owner, slot: string): boolean {
+    return owner === 'player' ? this.api.hasUpgrade(slot) : this.api.hasNpcUpgrade(slot);
+  }
+
+  /**
+   * What is actually on the shelf. The stock is the shopkeeper's — an enemy at a counter that
+   * sells Tele-Cores can buy one, and pays the shopkeeper half of it for the privilege.
+   */
+  private catalogue(page: Page): ShopEntry[] {
+    const shop = this.shopOwner;
+    return CATALOGUE[page].filter((e) => !e.needs || (!!shop && this.owns(shop, e.needs)));
   }
 
   /** Which side, if any, owns the stall. There is only ever one shop in an arena. */
@@ -502,14 +743,25 @@ export class FortuneKit {
     // Phaser's KeyboardPlugin destroys every Key in `shutdown()`, so the ones the constructor
     // registered are corpses from the second match on — the counter has to re-claim them here.
     this.setupKeys();
+    // A match that ended mid-flight left somebody invisible and untouchable. Hand that back
+    // before the sides are thrown away, because the sides are what remember it happened.
+    for (const owner of BOTH) {
+      if (this.sides[owner].airborneUntil <= 0) continue;
+      const f = this.fighter(owner);
+      if (f?.active) { f.isInvincible = false; f.setAlpha(1); }
+    }
     this.sides = { player: makeSide('player'), npc: makeSide('npc') };
     this.bullets = [];
     this.daggers = [];
     this.volleys = [];
     this.flames = [];
     this.roombas = [];
+    this.pylons = [];
     this.rawSeen.clear();
     this.cured.clear();
+    this.gilded.clear();
+    this.releaseChills();
+    this.audited.clear();
     this.vizT = 0;
     this.eDownAt = 0;
     this.rDownAt = 0;
@@ -554,6 +806,7 @@ export class FortuneKit {
     // ability's voice line, so asking it 60 times a second through a reload would be a machine
     // gun made of UI noise.
     if (pointer.isDown && this.canFireNow('player')) p.castAbility('fortune-fire', ctx);
+    this.handleRightHand(pointer, mouseX, mouseY);
     if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('fortune-paywall', ctx);
     if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('fortune-p2w', ctx);
 
@@ -562,6 +815,44 @@ export class FortuneKit {
     // to know it was not a hold — so `castAbility` is deliberately not on JustDown here.
     this.investKey(this.api.eKey, 'e', ctx);
     this.investKey(this.api.rKey, 'r', ctx);
+  }
+
+  /**
+   * The right button.
+   *
+   * With Dual Grip and a second gun bought for it, the right hand is simply a second trigger and
+   * everything below about alt-fire is bypassed. Otherwise, with Alt-Fire owned, it is the
+   * current gun's second trigger — and for the revolver that trigger is held rather than tapped,
+   * which is why the spin-up is tracked here rather than inside the fire path.
+   */
+  private handleRightHand(pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
+    const s = this.sides.player;
+    const down = pointer.rightButtonDown();
+    const justDown = down && !this.api.rightPointerWasDown;
+
+    // A revolver swapped out mid-spin leaves the wind-up hanging, so the clock is cleared by
+    // anything that is not the revolver's own branch below.
+    if (s.off || s.main.gun !== 'revolver') s.spinFrom = 0;
+
+    if (s.off) {
+      // Priced as an alt-fire: the grips are sold as "right click attacks", and with Dual Grip
+      // fitted the right button is this gun rather than an alt-fire.
+      if (down && this.canFireHand('player', s.off)) this.fireHand('player', s.off, mouseX, mouseY, true);
+      return;
+    }
+    if (!this.owns('player', 'click')) return;
+
+    // The revolver is a hold. Wind it up while the button is down, fire it on the release.
+    if (s.main.gun === 'revolver') {
+      if (justDown && this.canFireHand('player', s.main)) s.spinFrom = this.now;
+      if (!down && s.spinFrom > 0) {
+        const held = this.now - s.spinFrom;
+        s.spinFrom = 0;
+        this.fireSpunRound('player', held, mouseX, mouseY);
+      }
+      return;
+    }
+    if (justDown) this.doAltFire('player', mouseX, mouseY);
   }
 
   private investKey(key: Phaser.Input.Keyboard.Key, which: 'e' | 'r', ctx: CastContext): void {
@@ -601,7 +892,7 @@ export class FortuneKit {
       Sfx.playAt('ui-tab', p.x, { volume: 0.6 });
     }
 
-    const list = CATALOGUE[s.page];
+    const list = this.catalogue(s.page);
     for (let i = 0; i < this.numberKeys.length && i < list.length; i++) {
       if (!Phaser.Input.Keyboard.JustDown(this.numberKeys[i])) continue;
       this.buy('player', list[i]);
@@ -624,22 +915,33 @@ export class FortuneKit {
     s.aimX = tx;
     s.aimY = ty;
 
-    if (s.beam) { this.refund(f, 'fortune-fire'); return; }
-    const gun = s.gun ? GUNS[s.gun] : null;
-    if (!gun) { this.refund(f, 'fortune-fire'); return; }
+    if (!this.canFireHand(owner, s.main)) { this.refund(f, 'fortune-fire'); return; }
+    if (s.main.ammo <= 0) { this.beginReload(owner, s.main); this.refund(f, 'fortune-fire'); return; }
+    this.fireHand(owner, s.main, tx, ty, false);
+  }
 
-    if (this.now < s.reloadUntil || this.now < s.nextShotAt) { this.refund(f, 'fortune-fire'); return; }
-    if (s.ammo <= 0) { this.beginReload(owner); this.refund(f, 'fortune-fire'); return; }
+  /** One trigger pull from one hand, main or off. */
+  private fireHand(owner: Owner, hand: Hand, tx: number, ty: number, alt: boolean): void {
+    const f = this.fighter(owner);
+    const gun = hand.gun ? GUNS[hand.gun] : null;
+    if (!gun || !this.alive(f)) return;
+    if (hand.ammo <= 0) { this.beginReload(owner, hand); return; }
 
     const ang = Math.atan2(ty - f.y, tx - f.x);
-    s.nextShotAt = this.now + gun.fireMs;
+    // Priced off what is left once this round has gone, which is what `shoot` will see.
+    const accel = this.accelMult(this.side(owner), hand, hand.ammo - 1);
+    hand.nextShotAt = this.now + gun.fireMs / accel;
     if (gun.burst && gun.burst > 1) {
-      s.burstLeft = Math.min(gun.burst, s.ammo);
-      s.burstAt = this.now;
-      s.burstAng = ang;
+      hand.burstLeft = Math.min(gun.burst, hand.ammo);
+      hand.burstAt = this.now;
+      hand.burstAng = ang;
+      hand.burstSpread = 0.07;
+      // The burst tightens with the trigger, so a nearly-dry AR is one hard three-round bark.
+      hand.burstGap = 70 / accel;
+      hand.burstAlt = alt;
       return;
     }
-    this.shoot(owner, ang);
+    this.shoot(owner, ang, hand, { alt, aimX: tx, aimY: ty });
   }
 
   /** E — put money in the bank. */
@@ -687,14 +989,19 @@ export class FortuneKit {
     const f = this.fighter(owner);
     if (!this.alive(f)) { this.refund(f, 'fortune-paywall'); return; }
     const s = this.side(owner);
+    const span = WALL_MS * (this.owns(owner, 'f') ? WALL_TAX_MULT : 1);
     s.wall = {
       owner,
       x: Phaser.Math.Clamp(tx, this.left + 24, this.right - 24),
-      diesAt: this.now + WALL_MS,
+      diesAt: this.now + span,
+      span,
       seed: Math.random() * 999,
       tolledShots: new Set(),
+      shotSide: new Map(),
       sideOf: new Map(),
       flash: 0,
+      take: 0,
+      audited: false,
     };
     this.avatar(owner)?.play('slam', Math.atan2(ty - f.y, tx - f.x));
     this.api.showFloatingText(s.wall.x, this.top + 30, '🎫 PAYWALL', this.hex(FOR.gold));
@@ -714,7 +1021,7 @@ export class FortuneKit {
       Sfx.playAt('ui-denied', f.x, { volume: 0.7 });
       return;
     }
-    s.beam = { owner, ang: Math.atan2(ty - f.y, tx - f.x), endsAt: this.now + BEAM_MS, tick: 0 };
+    s.beam = { owner, ang: Math.atan2(ty - f.y, tx - f.x), endsAt: this.now + BEAM_MS, tick: 0, spent: 0 };
     this.avatar(owner)?.play('raise', s.beam.ang);
     this.api.showFloatingText(f.x, f.y - 50, '💰 PAY-TO-WIN', this.hex(FOR.goldLit));
     Sfx.playAt('beam-charge', f.x, { volume: 0.9, rate: 0.9 });
@@ -730,18 +1037,25 @@ export class FortuneKit {
    */
   canFireNow(owner: Owner): boolean {
     const s = this.side(owner);
-    if (s.beam || !s.gun) return false;
-    if (this.now < s.reloadUntil || this.now < s.nextShotAt) return false;
-    return s.ammo > 0;
+    return this.canFireHand(owner, s.main) && s.main.ammo > 0;
+  }
+
+  /** Whether that hand could put something downrange right now. Ammo is checked separately. */
+  private canFireHand(owner: Owner, hand: Hand): boolean {
+    const s = this.side(owner);
+    if (s.beam || !hand.gun) return false;
+    if (this.now < s.airborneUntil) return false;
+    if (this.now < hand.reloadUntil || this.now < hand.nextShotAt) return false;
+    return true;
   }
 
   // ── Guns ───────────────────────────────────────────────────────────────────
 
   /** Every attachment folded into one set of numbers. */
-  private loadout(s: Side): {
+  private loadout(s: Side, hand: Hand): {
     def: GunDef; damage: number; mag: number; speed: number; pierce: boolean; silencer: boolean; prop: boolean;
   } | null {
-    const def = s.gun ? GUNS[s.gun] : null;
+    const def = hand.gun ? GUNS[hand.gun] : null;
     if (!def) return null;
     const has = (id: string): boolean => s.attachments.includes(id);
     let damage = def.damage;
@@ -755,45 +1069,88 @@ export class FortuneKit {
       def,
       damage,
       mag,
-      speed: def.speed * (scope ? 2 : 1),
-      pierce: scope,
+      // A thrown shell is not a bullet and a scope does not make it fly twice as fast.
+      speed: def.speed * (scope && !def.lobbed ? 2 : 1),
+      pierce: scope && !def.lobbed,
       silencer: has('silencer'),
       prop: has('prop'),
     };
   }
 
-  private magSize(s: Side): number { return this.loadout(s)?.mag ?? 0; }
+  /**
+   * The grips. Both triggers are always priced, so a grip is a straight trade rather than a
+   * bonus — and with neither fitted this is 1 and costs nothing to ask.
+   */
+  private gripMult(s: Side, alt: boolean): number {
+    let mult = 1;
+    if (s.attachments.includes('specgrip')) mult *= alt ? GRIP_SPEC.alt : GRIP_SPEC.main;
+    if (s.attachments.includes('basicgrip')) mult *= alt ? GRIP_BASIC.alt : GRIP_BASIC.main;
+    return mult;
+  }
 
-  private beginReload(owner: Owner): void {
+  private magSize(s: Side, hand: Hand): number { return this.loadout(s, hand)?.mag ?? 0; }
+
+  /**
+   * Acceleration Gear. The action cycles faster the emptier the magazine is: 1× on a full one,
+   * `ACCEL_MAX`× on the last round in it.
+   *
+   * `rounds` is what will be left *after* the shot being fired, because what this scales is the
+   * wait for the *next* one — a gun that has just spat its last round is cycling flat out, and
+   * the reload is what takes the speed away again.
+   */
+  private accelMult(s: Side, hand: Hand, rounds: number): number {
+    if (!s.attachments.includes('accelgear')) return 1;
+    const mag = this.magSize(s, hand);
+    if (mag <= 0) return 1;
+    const empty = 1 - Phaser.Math.Clamp(rounds / mag, 0, 1);
+    return 1 + (ACCEL_MAX - 1) * empty;
+  }
+
+  private beginReload(owner: Owner, hand: Hand): void {
     const s = this.side(owner);
-    const kit = this.loadout(s);
-    if (!kit || this.now < s.reloadUntil) return;
-    s.reloadUntil = this.now + kit.def.reloadMs;
-    s.burstLeft = 0;
+    const kit = this.loadout(s, hand);
+    if (!kit || this.now < hand.reloadUntil) return;
+    hand.reloadUntil = this.now + kit.def.reloadMs;
+    hand.burstLeft = 0;
     const f = this.fighter(owner);
     if (this.alive(f)) {
-      this.avatar(owner)?.setGun(null);
+      if (hand === s.main) this.avatar(owner)?.setGun(null);
       Sfx.playAt('reload', f.x, { volume: 0.65 });
       if (owner === 'player') this.api.showFloatingText(f.x, f.y - 40, '🔄 RELOADING', this.hex(FOR.steel));
     }
   }
 
-  private shoot(owner: Owner, ang: number): void {
+  /**
+   * One round leaving one hand.
+   *
+   * `opts.alt` only prices the shot — every alt-fire that behaves differently from a normal one
+   * is its own method and never comes through here. `aimX/aimY` matter for the shells, which
+   * burst where they were aimed rather than where they run out.
+   */
+  private shoot(owner: Owner, ang: number, hand: Hand,
+    opts: { alt?: boolean; aimX?: number; aimY?: number } = {}): void {
     const s = this.side(owner);
     const f = this.fighter(owner);
-    const kit = this.loadout(s);
+    const kit = this.loadout(s, hand);
     if (!kit || !this.alive(f)) return;
 
-    s.ammo = Math.max(0, s.ammo - 1);
+    hand.ammo = Math.max(0, hand.ammo - 1);
     s.lastShotAt = this.now;
+    const accel = this.accelMult(s, hand, hand.ammo);
     const av = this.avatar(owner);
     av?.play('punch', ang);
     av?.kick(kit.def.hitscan ? 0.6 : 1);
-    const mz = muzzleOf(f.x, f.y, ang, s.gun ?? 'pistol');
+    const mz = muzzleOf(f.x, f.y, ang, hand.gun ?? 'pistol');
     const fx = this.fx(owner);
     fx.muzzle(mz.x, mz.y, ang, kit.def.hitscan ? 0.8 : 1);
     fx.brass(f.x, f.y - 4, ang);
-    Sfx.playAt(kit.def.sfx, f.x, { volume: kit.silencer ? 0.28 : 0.8, rate: kit.def.rate * (kit.silencer ? 1.5 : 1) });
+    // The gear is audible and visible before it is readable: the report pitches up and a cog
+    // spins out of the port, both harder the emptier the magazine is.
+    if (accel > 1.05) fx.gear(mz.x, mz.y, ang, accel);
+    Sfx.playAt(kit.def.sfx, f.x, {
+      volume: kit.silencer ? 0.28 : 0.8,
+      rate: kit.def.rate * (kit.silencer ? 1.5 : 1) * (1 + (accel - 1) * 0.35),
+    });
 
     // Action Movie Prop: the shot moves the shooter. Applied as displacement in `update`,
     // because ArenaScene rewrites the body's velocity from WASD every frame.
@@ -802,39 +1159,70 @@ export class FortuneKit {
       s.shove = { vx: -Math.cos(ang) * push, vy: -Math.sin(ang) * push, until: this.now + 260 };
     }
 
+    const damage = kit.damage * this.gripMult(s, !!opts.alt);
     if (kit.def.hitscan) {
-      this.hitscan(owner, ang, kit.damage, kit.silencer, kit.pierce);
+      this.hitscan(owner, ang, damage, kit.silencer, kit.pierce);
+    } else if (kit.def.lobbed) {
+      // A shell is aimed at a point on the floor, not at a direction.
+      const range = Math.hypot((opts.aimX ?? f.x + Math.cos(ang) * 260) - f.x,
+        (opts.aimY ?? f.y + Math.sin(ang) * 260) - f.y);
+      this.addBullet(owner, {
+        kind: 'grenade', x: mz.x, y: mz.y, ang, speed: kit.speed, damage,
+        size: kit.def.size, silencer: kit.silencer, blast: GRENADE_R, life: GRENADE_LIFE_MS,
+        toX: f.x + Math.cos(ang) * range, toY: f.y + Math.sin(ang) * range,
+      });
     } else {
-      const bullet: Bullet = {
-        owner,
-        x: mz.x, y: mz.y,
-        vx: Math.cos(ang) * kit.speed,
-        vy: Math.sin(ang) * kit.speed,
-        damage: kit.damage,
-        pierce: kit.pierce,
-        silencer: kit.silencer,
-        size: kit.def.size,
-        seed: Math.random() * 999,
-        diesAt: this.now + BULLET_LIFE_MS,
-        hit: new Set(),
-        reg: null,
-      };
-      const reg: RegisteredProjectile = {
-        owner,
-        getX: () => bullet.x,
-        getY: () => bullet.y,
-        damage: bullet.damage,
-        steal: () => {
-          const i = this.bullets.indexOf(bullet);
-          if (i >= 0) this.bullets.splice(i, 1);
-        },
-      };
-      bullet.reg = reg;
-      this.api.projectileRegistry.add(reg);
-      this.bullets.push(bullet);
+      this.addBullet(owner, {
+        kind: 'slug', x: mz.x, y: mz.y, ang, speed: kit.speed, damage,
+        size: kit.def.size, pierce: kit.pierce, silencer: kit.silencer,
+        bounces: kit.def.bounces ?? 0,
+      });
     }
 
-    if (s.ammo <= 0) this.beginReload(owner);
+    if (hand.ammo <= 0) this.beginReload(owner, hand);
+  }
+
+  /** Everything that flies goes on the same list, and everything on that list is registered. */
+  private addBullet(owner: Owner, o: {
+    kind: BulletKind; x: number; y: number; ang: number; speed: number; damage: number;
+    size: number; pierce?: boolean; silencer?: boolean; bounces?: number; blast?: number;
+    rounds?: number; life?: number; toX?: number; toY?: number;
+  }): Bullet {
+    const bullet: Bullet = {
+      owner,
+      kind: o.kind,
+      x: o.x, y: o.y,
+      vx: Math.cos(o.ang) * o.speed,
+      vy: Math.sin(o.ang) * o.speed,
+      damage: o.damage,
+      pierce: !!o.pierce,
+      silencer: !!o.silencer,
+      size: o.size,
+      seed: Math.random() * 999,
+      diesAt: this.now + (o.life ?? BULLET_LIFE_MS),
+      hit: new Set(),
+      reg: null,
+      bounces: o.bounces ?? 0,
+      blast: o.blast ?? 0,
+      rounds: o.rounds ?? 0,
+      toX: o.toX ?? 0,
+      toY: o.toY ?? 0,
+      spin: Math.random() * TAU_LOCAL,
+    };
+    const reg: RegisteredProjectile = {
+      owner,
+      getX: () => bullet.x,
+      getY: () => bullet.y,
+      damage: bullet.damage,
+      steal: () => {
+        const i = this.bullets.indexOf(bullet);
+        if (i >= 0) this.bullets.splice(i, 1);
+      },
+    };
+    bullet.reg = reg;
+    this.api.projectileRegistry.add(reg);
+    this.bullets.push(bullet);
+    return bullet;
   }
 
   /** The Golden Pistol. Instant, and the purse is part of the damage roll. */
@@ -879,6 +1267,206 @@ export class FortuneKit {
       this.api.showFloatingText(victim.x, victim.y - 34, '🤫 SILENCED', this.hex(FOR.contraband));
       Sfx.playAt('status-silence', victim.x, { volume: 0.5 });
     }
+  }
+
+  // ── Alt-fire (Click+) ──────────────────────────────────────────────────────
+
+  /**
+   * The right trigger, for every gun whose second one is a tap. The revolver's is a hold and
+   * lives in `fireSpunRound`; the rifle has none at all — it is a single round and there is
+   * nothing clever to do with one round.
+   */
+  private doAltFire(owner: Owner, tx: number, ty: number): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!this.alive(f) || !this.canFireHand(owner, s.main)) return;
+    s.aimX = tx;
+    s.aimY = ty;
+    switch (s.main.gun) {
+      case 'pistol': this.dumpMagazine(owner, tx, ty); break;
+      case 'ar': this.throwClip(owner, tx, ty); break;
+      case 'golden': this.midasRound(owner, tx, ty); break;
+      case 'launcher': this.dropAndLeave(owner); break;
+      case 'bouncy': this.heavyLaser(owner, tx, ty); break;
+      default: break;
+    }
+  }
+
+  /** Pistol: the whole magazine, as fast as the slide will cycle, at whatever is over there. */
+  private dumpMagazine(owner: Owner, tx: number, ty: number): void {
+    const s = this.side(owner);
+    const hand = s.main;
+    const f = this.fighter(owner);
+    if (hand.ammo <= 0) { this.beginReload(owner, hand); return; }
+    hand.burstLeft = hand.ammo;
+    hand.burstAt = this.now;
+    hand.burstAng = Math.atan2(ty - f.y, tx - f.x);
+    hand.burstSpread = DUMP_SPREAD;
+    hand.burstGap = DUMP_GAP_MS;
+    hand.burstAlt = true;
+    // The trigger is locked for the length of the dump plus the reload it is about to start.
+    hand.nextShotAt = this.now + hand.burstLeft * DUMP_GAP_MS + 140;
+    this.avatar(owner)?.play('sweep', hand.burstAng);
+    if (owner === 'player') this.api.showFloatingText(f.x, f.y - 44, '🔫 MAG DUMP', this.hex(FOR.gold));
+  }
+
+  /** Revolver: however long it was spun for, in one round. Three seconds is the whole bar. */
+  private fireSpunRound(owner: Owner, heldMs: number, tx: number, ty: number): void {
+    const s = this.side(owner);
+    const hand = s.main;
+    const f = this.fighter(owner);
+    if (!this.alive(f) || !this.canFireHand(owner, hand)) return;
+    if (hand.ammo <= 0) { this.beginReload(owner, hand); return; }
+    const kit = this.loadout(s, hand);
+    if (!kit) return;
+
+    const k = Phaser.Math.Clamp(heldMs / SPIN_MS, 0, 1);
+    // The attachments ride on top of the spun figure, exactly as they do on the ordinary one.
+    const damage = (kit.damage + (SPIN_DAMAGE - GUNS.revolver.damage) * k) * this.gripMult(s, true);
+    const ang = Math.atan2(ty - f.y, tx - f.x);
+
+    hand.ammo = Math.max(0, hand.ammo - 1);
+    hand.nextShotAt = this.now + GUNS.revolver.fireMs / this.accelMult(s, hand, hand.ammo);
+    s.lastShotAt = this.now;
+    const av = this.avatar(owner);
+    av?.play('punch', ang);
+    av?.kick(1 + k);
+    const mz = muzzleOf(f.x, f.y, ang, 'revolver');
+    const fx = this.fx(owner);
+    fx.muzzle(mz.x, mz.y, ang, 1 + k * 0.9);
+    fx.brass(f.x, f.y - 4, ang);
+    Sfx.playAt('shotgun', f.x, { volume: 0.7 + k * 0.3, rate: 1.1 - k * 0.35 });
+
+    this.addBullet(owner, {
+      kind: 'slug', x: mz.x, y: mz.y, ang,
+      speed: GUNS.revolver.speed * (1 + k * 0.5),
+      damage, size: GUNS.revolver.size * (1 + k * 0.6),
+      pierce: kit.pierce || k >= 1, silencer: kit.silencer,
+    });
+    if (owner === 'player') {
+      this.api.showFloatingText(f.x, f.y - 46,
+        k >= 1 ? '🎯 FULLY SPUN' : `🎯 ${Math.round(k * 100)}% SPUN`, this.hex(k >= 1 ? FOR.goldLit : FOR.gold));
+    }
+    if (hand.ammo <= 0) this.beginReload(owner, hand);
+  }
+
+  /** AR: what is left of the clip, thrown at the cursor in one lump that comes apart there. */
+  private throwClip(owner: Owner, tx: number, ty: number): void {
+    const s = this.side(owner);
+    const hand = s.main;
+    const f = this.fighter(owner);
+    const rounds = hand.ammo;
+    if (rounds <= 0) { this.beginReload(owner, hand); return; }
+    const kit = this.loadout(s, hand);
+    if (!kit) return;
+
+    hand.ammo = 0;
+    const ang = Math.atan2(ty - f.y, tx - f.x);
+    this.addBullet(owner, {
+      kind: 'clip', x: f.x + Math.cos(ang) * 20, y: f.y + Math.sin(ang) * 20, ang,
+      speed: CLIP_SPEED, damage: kit.damage * this.gripMult(s, true), size: 9,
+      silencer: kit.silencer, rounds, toX: tx, toY: ty, life: 3000,
+    });
+    this.avatar(owner)?.play('sweep', ang);
+    Sfx.playAt('whoosh', f.x, { volume: 0.7, rate: 0.8 });
+    if (owner === 'player') this.api.showFloatingText(f.x, f.y - 44, `💥 CLIP × ${rounds}`, this.hex(FOR.gold));
+    this.beginReload(owner, hand);
+  }
+
+  /** Golden Pistol: one slow, enormous, gilding round, and it is charged for in coin. */
+  private midasRound(owner: Owner, tx: number, ty: number): void {
+    const s = this.side(owner);
+    const hand = s.main;
+    const f = this.fighter(owner);
+    if (s.coins < MIDAS_COINS) {
+      if (owner === 'player') this.api.showFloatingText(f.x, f.y - 46, `💸 NEED ${MIDAS_COINS - s.coins} MORE`, this.hex(FOR.blood));
+      Sfx.playAt('ui-denied', f.x, { volume: 0.7 });
+      return;
+    }
+    if (hand.ammo < MIDAS_AMMO) { this.beginReload(owner, hand); return; }
+    const kit = this.loadout(s, hand);
+    if (!kit) return;
+
+    s.coins -= MIDAS_COINS;
+    s.spent += MIDAS_COINS;
+    hand.ammo -= MIDAS_AMMO;
+    const ang = Math.atan2(ty - f.y, tx - f.x);
+    const mz = muzzleOf(f.x, f.y, ang, 'golden');
+    this.avatar(owner)?.play('punch', ang);
+    this.fx(owner).muzzle(mz.x, mz.y, ang, 1.6);
+    Sfx.playAt('light-beam', f.x, { volume: 0.85, rate: 0.7 });
+    this.addBullet(owner, {
+      kind: 'midas', x: mz.x, y: mz.y, ang, speed: MIDAS_SPEED,
+      damage: MIDAS_DAMAGE * this.gripMult(s, true), size: 11,
+      silencer: kit.silencer, life: 4200,
+    });
+    if (owner === 'player') this.api.showFloatingText(f.x, f.y - 50, '🌟 MIDAS ROUND', this.hex(FOR.goldLit));
+    if (hand.ammo <= 0) this.beginReload(owner, hand);
+  }
+
+  /** Grenade Launcher: every shell at your own feet, and then you are not there. */
+  private dropAndLeave(owner: Owner): void {
+    const s = this.side(owner);
+    const hand = s.main;
+    const f = this.fighter(owner);
+    const shells = hand.ammo;
+    if (shells <= 0) { this.beginReload(owner, hand); return; }
+    const kit = this.loadout(s, hand);
+    if (!kit) return;
+
+    hand.ammo = 0;
+    const damage = kit.damage * shells * this.gripMult(s, true);
+    this.fx(owner).blast(f.x, f.y, GRENADE_R * 1.2);
+    this.fx(owner).rift(f.x, f.y + 6, 30);
+    Sfx.playAt('explosion-big', f.x, { volume: 0.95 });
+    for (const t of this.targetsOf(owner)) {
+      if (Phaser.Math.Distance.Between(t.x, t.y, f.x, f.y) > GRENADE_R * 1.2) continue;
+      t.takeDamage(damage);
+      this.api.spawnHitFlash(t.x, t.y, FOR.gold);
+      this.api.showFloatingText(t.x, t.y - 36, '💣 POINT BLANK', this.hex(FOR.blood));
+    }
+
+    // Off the floor. Invisible and untouchable until the fall.
+    s.airborneUntil = this.now + LAUNCH_MS;
+    f.isInvincible = true;
+    f.setAlpha(0);
+    if (owner === 'player') this.api.showFloatingText(f.x, f.y - 60, '🚀 EXIT STRATEGY', this.hex(FOR.goldLit));
+    this.beginReload(owner, hand);
+  }
+
+  /** Bouncy Blaster: one heavy bolt with a dozen bounces in it. */
+  private heavyLaser(owner: Owner, tx: number, ty: number): void {
+    const s = this.side(owner);
+    const hand = s.main;
+    const f = this.fighter(owner);
+    if (hand.ammo < LASER_AMMO) { this.beginReload(owner, hand); return; }
+    const kit = this.loadout(s, hand);
+    if (!kit) return;
+
+    hand.ammo -= LASER_AMMO;
+    hand.nextShotAt = this.now + 500;
+    const ang = Math.atan2(ty - f.y, tx - f.x);
+    const mz = muzzleOf(f.x, f.y, ang, 'bouncy');
+    this.avatar(owner)?.play('punch', ang);
+    this.fx(owner).muzzle(mz.x, mz.y, ang, 1.4);
+    Sfx.playAt('beam-fire', f.x, { volume: 0.8, rate: 1.2 });
+    this.addBullet(owner, {
+      kind: 'laser', x: mz.x, y: mz.y, ang, speed: 900,
+      damage: LASER_DAMAGE * this.gripMult(s, true), size: 8,
+      // It passes through bodies rather than stopping on the first one. A bolt bought for a
+      // dozen bounces that died on the first shoulder it met would never spend any of them —
+      // and the per-victim set is wiped on every wall, so a second pass counts again.
+      pierce: true, silencer: kit.silencer, bounces: LASER_BOUNCES, life: 5000,
+    });
+    if (owner === 'player') this.api.showFloatingText(f.x, f.y - 46, '🟢 HEAVY LASER', this.hex(FOR.neon));
+    if (hand.ammo <= 0) this.beginReload(owner, hand);
+  }
+
+  /** The Midas round landing: they are worth double for five seconds, and they look it. */
+  private gild(victim: Fighter): void {
+    this.gilded.set(victim, this.now + GILD_MS);
+    this.api.showFloatingText(victim.x, victim.y - 40, '🌟 GILDED', this.hex(FOR.goldLit));
+    Sfx.playAt('jackpot', victim.x, { volume: 0.7, rate: 1.2 });
   }
 
   // ── The shop ───────────────────────────────────────────────────────────────
@@ -941,12 +1529,13 @@ export class FortuneKit {
   /** Whether a purchase would actually change anything. */
   private canBuy(buyer: Owner, entry: ShopEntry): boolean {
     const s = this.side(buyer);
-    if (entry.page === 'arms') return s.gun !== entry.id;
+    if (entry.page === 'arms') return s.main.gun !== entry.id && s.off?.gun !== entry.id;
     if (entry.page === 'mods') {
       if (s.attachments.includes(entry.id)) return false;
       return s.attachments.length < MAX_ATTACHMENTS;
     }
     if (entry.id === 'roomba') return this.roombas.filter((r) => r.owner === buyer).length < ROOMBA_MAX;
+    if (entry.id === 'pylon') return this.pylons.filter((p) => p.owner === buyer).length < PYLON_MAX;
     return true;
   }
 
@@ -1002,22 +1591,60 @@ export class FortuneKit {
         this.api.showFloatingText(body.x, body.y - 32, '💝 THANK YOU', this.hex(FOR.goldLit));
         Sfx.playAt('jackpot', body.x, { volume: 0.75 });
         break;
+      case 'chilly':
+        s.chillyUntil = this.now + CHILLY_MS * miracle;
+        // The first ring goes off in the buyer's hand rather than three seconds later.
+        s.chillyNext = this.now;
+        Sfx.playAt('ice-crack', body.x, { volume: 0.7, rate: 1.2 });
+        break;
+      case 'pylon':
+        this.pylons.push({
+          owner: buyer,
+          x: Phaser.Math.Between(this.left + 60, this.right - 60),
+          y: Phaser.Math.Between(this.top + 60, this.bottom - 60),
+          readyAt: 0,
+          seed: Math.random() * 999,
+        });
+        Sfx.playAt('robot-power', body.x, { volume: 0.7, rate: 1.3 });
+        break;
+      case 'telecore':
+        s.teleUntil = this.now + TELE_MS * miracle;
+        Sfx.playAt('teleport', body.x, { volume: 0.8 });
+        break;
       default:
         if (entry.page === 'arms') {
-          s.gun = entry.id;
-          s.ammo = this.magSize(s);
-          s.reloadUntil = 0;
-          s.burstLeft = 0;
-          this.avatar(buyer)?.setGun(entry.id);
+          // Dual Grip: the next gun bought goes in the right hand instead, with its own
+          // magazine and its own reload, and the main hand keeps whatever it was holding.
+          if (s.dualPending) {
+            s.off = makeHand(entry.id);
+            s.off.ammo = this.magSize(s, s.off);
+            s.dualPending = false;
+            this.api.showFloatingText(body.x, body.y - 62, '🤞 OFF HAND', this.hex(FOR.neon));
+          } else {
+            s.main.gun = entry.id;
+            s.main.ammo = this.magSize(s, s.main);
+            s.main.reloadUntil = 0;
+            s.main.burstLeft = 0;
+            this.avatar(buyer)?.setGun(entry.id);
+          }
           Sfx.playAt('anvil', body.x, { volume: 0.7, rate: 1.2 });
         } else if (entry.page === 'mods') {
           s.attachments.push(entry.id);
+          if (entry.id === 'dualgrip') s.dualPending = true;
           // A bigger magazine that does not go in until you next reload is just a worse item.
-          s.ammo = Math.min(this.magSize(s), s.ammo + (entry.id === 'biggermag' ? 3 : entry.id === 'drummag' ? 10 : 0));
+          const top = entry.id === 'biggermag' ? 3 : entry.id === 'drummag' ? 10 : 0;
+          for (const hand of this.hands(s)) {
+            hand.ammo = Math.min(this.magSize(s, hand), hand.ammo + top);
+          }
           Sfx.playAt('gear-turn', body.x, { volume: 0.7 });
         }
         break;
     }
+  }
+
+  /** Both triggers, in the order they fire. Normally just the one. */
+  private hands(s: Side): Hand[] {
+    return s.off ? [s.main, s.off] : [s.main];
   }
 
   private aimAngle(owner: Owner, from: Fighter): number {
@@ -1067,9 +1694,14 @@ export class FortuneKit {
     this.updateDaggers(delta);
     this.updateFlames(delta);
     this.updateRoombas(delta);
+    this.updatePylons();
+    this.updateChilly();
     this.updateWalls(delta);
+    this.updateAudits(delta);
     this.updateBeams(delta);
     this.updateShoves(delta);
+    this.updateAirborne();
+    this.updateMarks();
     this.updateItemAuras();
     this.updateBots(delta);
     this.updateAvatars(delta);
@@ -1085,7 +1717,9 @@ export class FortuneKit {
   private hasLiveState(): boolean {
     return this.bullets.length > 0 || this.daggers.length > 0 || this.volleys.length > 0
       || this.flames.length > 0 || this.roombas.length > 0 || this.cured.size > 0
-      || BOTH.some((o) => !!this.sides[o].wall || !!this.sides[o].beam);
+      || this.pylons.length > 0 || this.chilled.size > 0 || this.gilded.size > 0
+      || BOTH.some((o) => !!this.sides[o].wall || !!this.sides[o].beam || !!this.sides[o].audit
+        || this.now < this.sides[o].airborneUntil);
   }
 
   private ensureLayers(): void {
@@ -1115,12 +1749,18 @@ export class FortuneKit {
       const raw = f.rawDamageTaken;
       this.rawSeen.set(f, raw);
       if (prev === undefined) continue;
-      const dealt = raw - prev;
-      if (dealt <= 0) continue;
 
       const earner = this.creditFor(f);
       const s = this.side(earner);
-      s.coinFrac += dealt;
+      // The golden beam does not pay for itself. Whatever it burned off this body last frame is
+      // subtracted here — the same units, one frame later, because the beam runs after this
+      // loop does and the wound is only visible on the next pass.
+      const free = s.unpaid.get(f) ?? 0;
+      const dealt = Math.max(0, raw - prev - free);
+      if (free > 0) s.unpaid.delete(f);
+      if (dealt <= 0) continue;
+
+      s.coinFrac += dealt * (this.now < (this.gilded.get(f) ?? 0) ? GILD_PAYOUT : 1);
       s.stockDealt += dealt;
       this.side(this.other(earner)).stockTaken += dealt;
 
@@ -1242,24 +1882,32 @@ export class FortuneKit {
   private updateBursts(): void {
     for (const owner of BOTH) {
       const s = this.sides[owner];
-      if (s.burstLeft <= 0) continue;
-      if (this.now < s.burstAt) continue;
-      s.burstLeft--;
-      s.burstAt = this.now + 70;
-      this.shoot(owner, s.burstAng + (Math.random() - 0.5) * 0.07);
+      for (const hand of this.hands(s)) {
+        if (hand.burstLeft <= 0) continue;
+        if (this.now < hand.burstAt) continue;
+        if (hand.ammo <= 0) { hand.burstLeft = 0; continue; }
+        hand.burstLeft--;
+        hand.burstAt = this.now + hand.burstGap;
+        this.shoot(owner, hand.burstAng + (Math.random() - 0.5) * hand.burstSpread, hand,
+          { alt: hand.burstAlt, aimX: s.aimX, aimY: s.aimY });
+      }
     }
     for (const owner of BOTH) {
       const s = this.sides[owner];
-      // An empty magazine reloads itself. `canFireNow` gates the trigger, so nothing else in
-      // the kit would ever notice the gun had run dry.
-      if (s.gun && s.ammo <= 0 && s.reloadUntil === 0 && this.isFortune(owner)) this.beginReload(owner);
-      // A finished reload puts the gun back in the hand.
-      if (s.reloadUntil > 0 && this.now >= s.reloadUntil) {
-        s.reloadUntil = 0;
-        s.ammo = this.magSize(s);
-        this.avatar(owner)?.setGun(s.gun);
-        const f = this.fighter(owner);
-        if (this.alive(f)) Sfx.playAt('ui-click', f.x, { volume: 0.5, rate: 0.8 });
+      for (const hand of this.hands(s)) {
+        // An empty magazine reloads itself. `canFireNow` gates the trigger, so nothing else in
+        // the kit would ever notice the gun had run dry.
+        if (hand.gun && hand.ammo <= 0 && hand.reloadUntil === 0 && this.isFortune(owner)) {
+          this.beginReload(owner, hand);
+        }
+        // A finished reload puts the gun back in the hand.
+        if (hand.reloadUntil > 0 && this.now >= hand.reloadUntil) {
+          hand.reloadUntil = 0;
+          hand.ammo = this.magSize(s, hand);
+          if (hand === s.main) this.avatar(owner)?.setGun(hand.gun);
+          const f = this.fighter(owner);
+          if (this.alive(f)) Sfx.playAt('ui-click', f.x, { volume: 0.5, rate: 0.8 });
+        }
       }
     }
   }
@@ -1268,25 +1916,92 @@ export class FortuneKit {
     const dt = delta / 1000;
     for (let i = this.bullets.length - 1; i >= 0; i--) {
       const b = this.bullets[i];
+      const px = b.x;
+      const py = b.y;
       b.x += b.vx * dt;
       b.y += b.vy * dt;
-      const ang = Math.atan2(b.vy, b.vx);
+      b.spin += dt * 9;
+      let ang = Math.atan2(b.vy, b.vx);
+
+      // Ricochet: the Bouncy Blaster's rounds and its heavy laser come off the arena edges
+      // rather than dying on them, and spend one bounce doing it.
+      if (b.bounces > 0) {
+        let hitWall = false;
+        if (b.x < this.left || b.x > this.right) {
+          b.vx = -b.vx;
+          b.x = Phaser.Math.Clamp(b.x, this.left, this.right);
+          hitWall = true;
+        }
+        if (b.y < this.top || b.y > this.bottom) {
+          b.vy = -b.vy;
+          b.y = Phaser.Math.Clamp(b.y, this.top, this.bottom);
+          hitWall = true;
+        }
+        if (hitWall) {
+          b.bounces--;
+          ang = Math.atan2(b.vy, b.vx);
+          // A ricochet is a fresh shot as far as anybody it has already passed through is
+          // concerned — otherwise a bounced laser walks harmlessly back through its own victim.
+          b.hit.clear();
+          this.fx(b.owner).impact(b.x, b.y, ang, 160);
+          Sfx.playAt('ricochet', b.x, { volume: 0.4, rate: 1.3 });
+        }
+      }
 
       let spent = false;
+      const reach = b.kind === 'midas' ? 16 : b.kind === 'clip' ? 12 : BULLET_R;
       for (const t of this.targetsOf(b.owner)) {
         if (b.hit.has(t)) continue;
-        if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) > BULLET_R + 12 * t.sizeMult) continue;
+        if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) > reach + 12 * t.sizeMult) continue;
         b.hit.add(t);
+        // A shell and a thrown clip do not *hit* anybody — they stop on them and come apart.
+        if (b.blast > 0 || b.kind === 'clip') { spent = true; break; }
         this.landHit(b.owner, t, b.damage, ang, b.silencer);
+        if (b.kind === 'midas') this.gild(t);
         if (!b.pierce) { spent = true; break; }
       }
 
-      const gone = spent || this.now >= b.diesAt
-        || b.x < this.left || b.x > this.right || b.y < this.top || b.y > this.bottom;
-      if (!gone) continue;
-      if (!spent) this.fx(b.owner).impact(b.x, b.y, ang + Math.PI, 180);
+      // A shell bursts where it was aimed even if nothing was standing there — it crosses the
+      // landing point once, and the crossing is what sets it off.
+      const landed = (b.kind === 'grenade' || b.kind === 'clip')
+        && (px - b.toX) * (b.x - b.toX) + (py - b.toY) * (b.y - b.toY) <= 0;
+      const timedOut = this.now >= b.diesAt;
+      const offArena = b.bounces <= 0
+        && (b.x < this.left || b.x > this.right || b.y < this.top || b.y > this.bottom);
+
+      if (!spent && !landed && !timedOut && !offArena) continue;
+
+      if (b.kind === 'clip') this.burstClip(b);
+      else if (b.blast > 0) this.burstShell(b);
+      else if (!spent) this.fx(b.owner).impact(b.x, b.y, ang + Math.PI, 180);
       if (b.reg) this.api.projectileRegistry.remove(b.reg);
       this.bullets.splice(i, 1);
+    }
+  }
+
+  /** A grenade going off, wherever it stopped. */
+  private burstShell(b: Bullet): void {
+    this.fx(b.owner).blast(b.x, b.y, b.blast);
+    Sfx.playAt('explosion-small', b.x, { volume: 0.85, rate: 0.85 });
+    for (const t of this.targetsOf(b.owner)) {
+      const d = Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y);
+      if (d > b.blast) continue;
+      // Full damage at the centre, half at the rim — a blast you can be on the edge of.
+      t.takeDamage(b.damage * (1 - 0.5 * (d / b.blast)));
+      this.api.spawnHitFlash(t.x, t.y, FOR.gold);
+    }
+  }
+
+  /** The AR's thrown clip coming apart into the rounds that were still in it. */
+  private burstClip(b: Bullet): void {
+    this.fx(b.owner).blast(b.x, b.y, 34);
+    Sfx.playAt('explosion-small', b.x, { volume: 0.7, rate: 1.4 });
+    for (let k = 0; k < b.rounds; k++) {
+      const a = (k / Math.max(1, b.rounds)) * TAU_LOCAL + Math.random() * 0.2;
+      this.addBullet(b.owner, {
+        kind: 'slug', x: b.x + Math.cos(a) * 8, y: b.y + Math.sin(a) * 8, ang: a,
+        speed: CLIP_BURST_SPEED, damage: b.damage, size: 4.4, silencer: b.silencer, life: 900,
+      });
     }
   }
 
@@ -1417,6 +2132,124 @@ export class FortuneKit {
     }
   }
 
+  // ── Safe Marketing ─────────────────────────────────────────────────────────
+
+  /** Everybody on that side. In Invasion the npc side is a whole wave of them. */
+  private friendsOf(owner: Owner): Fighter[] {
+    if (owner === 'player') return this.alive(this.api.player) ? [this.api.player] : [];
+    if (this.api.isInvasion) return this.api.enemies.filter((f) => this.alive(f));
+    return this.alive(this.api.npc) ? [this.api.npc] : [];
+  }
+
+  /** Heal Pylons. The light on the crystal is the cooldown, and touching a lit one spends it. */
+  private updatePylons(): void {
+    for (const p of this.pylons) {
+      if (this.now < p.readyAt) continue;
+      for (const f of this.friendsOf(p.owner)) {
+        if (Phaser.Math.Distance.Between(p.x, p.y, f.x, f.y) > PYLON_R + 12 * f.sizeMult) continue;
+        // A full-health body does not discharge it — the charge waits for somebody who needs it.
+        if (f.hp >= f.maxHp) continue;
+        const boost = this.now < this.sides[p.owner].miracleUntil ? 2 : 1;
+        f.heal(PYLON_HEAL * boost);
+        p.readyAt = this.now + PYLON_COOL_MS;
+        this.fx(p.owner).cash(p.x, p.y - 16, 26, 420, 12);
+        this.api.showFloatingText(f.x, f.y - 34, `🗼 +${PYLON_HEAL * boost}`, this.hex(FOR.neon));
+        Sfx.playAt('heal', p.x, { volume: 0.6, rate: 1.25 });
+        break;
+      }
+    }
+  }
+
+  /** The Chilly Pepper's ring, every three seconds for twelve. */
+  private updateChilly(): void {
+    for (const owner of BOTH) {
+      const s = this.sides[owner];
+      if (this.now >= s.chillyUntil || this.now < s.chillyNext) continue;
+      s.chillyNext = this.now + CHILLY_EVERY_MS;
+      const f = s.effectBody ?? this.buyerFor(owner);
+      if (!this.alive(f)) continue;
+
+      this.fx(owner).frost(f!.x, f!.y, CHILLY_R);
+      Sfx.playAt('ice-crack', f!.x, { volume: 0.6, rate: 0.9 });
+      let struck = 0;
+      for (const t of this.targetsOf(owner)) {
+        if (Phaser.Math.Distance.Between(t.x, t.y, f!.x, f!.y) > CHILLY_R + 10 * t.sizeMult) continue;
+        this.chill(t, CHILLY_SLOW_MS, CHILLY_SLOW, '🥶 CHILLED');
+        struck++;
+      }
+      if (owner === 'player' && struck === 0) {
+        this.api.showFloatingText(f!.x, f!.y - 46, '🥶 COLD SNAP', this.hex(0x9fe4ff));
+      }
+    }
+  }
+
+  /**
+   * Put a slow on somebody. Strongest wins and the longer clock is kept, so an auditor's rifle
+   * landing on an already-chilled body does not read as a weaker effect than the pepper.
+   */
+  private chill(victim: Fighter, ms: number, mult: number, label: string): void {
+    const cur = this.chilled.get(victim);
+    this.chilled.set(victim, {
+      until: Math.max(cur?.until ?? 0, this.now + ms),
+      mult: Math.min(cur?.mult ?? 1, mult),
+    });
+    this.api.showFloatingText(victim.x, victim.y - 30, label, this.hex(0x9fe4ff));
+  }
+
+  /**
+   * Everything this kit is holding on somebody else's body, refreshed once a frame.
+   *
+   * Husks read `walkSpeedMult` themselves. The player and the npc do not — their movement has
+   * already resolved by the time this runs — so both are pulled out of `get*SpeedMult` by
+   * ArenaScene instead, the same way Justice and Shadow are.
+   */
+  private updateMarks(): void {
+    for (const [f, until] of [...this.gilded]) {
+      if (this.now >= until || !f.active) this.gilded.delete(f);
+    }
+    for (const [f, c] of [...this.chilled]) {
+      const done = this.now >= c.until || !f.active;
+      if (f.active && f !== this.api.player && f !== this.api.npc) {
+        f.walkSpeedMult = done ? 1 : Math.min(f.walkSpeedMult, c.mult);
+      }
+      if (done) this.chilled.delete(f);
+    }
+    for (const [f, until] of [...this.audited]) {
+      const done = this.now >= until || !f.active;
+      if (f.active) f.fortuneIncomingMult = done ? 1 : AUDIT_VULN;
+      if (done) this.audited.delete(f);
+    }
+  }
+
+  /** Hands every mark back. Called on reset, so nothing survives into the next match. */
+  private releaseChills(): void {
+    for (const f of this.chilled.keys()) if (f.active) f.walkSpeedMult = 1;
+    this.chilled.clear();
+    for (const f of this.audited.keys()) if (f.active) f.fortuneIncomingMult = 1;
+    this.audited.clear();
+  }
+
+  /** The three seconds after an Exit Strategy, and the landing at the end of them. */
+  private updateAirborne(): void {
+    for (const owner of BOTH) {
+      const s = this.sides[owner];
+      if (s.airborneUntil === 0) continue;
+      const f = this.fighter(owner);
+      if (this.now < s.airborneUntil) {
+        if (this.alive(f)) { f.isInvincible = true; f.setAlpha(0); }
+        continue;
+      }
+      s.airborneUntil = 0;
+      if (!this.alive(f)) continue;
+      f.isInvincible = false;
+      f.setAlpha(1);
+      this.fx(owner).rift(f.x, f.y, 30);
+      this.fx(owner).impact(f.x, f.y + 8, -Math.PI / 2, 320);
+      Sfx.playAt('stone-rise', f.x, { volume: 0.8, rate: 0.7 });
+      if (owner === 'player') this.api.showFloatingText(f.x, f.y - 44, '🪂 TOUCHDOWN', this.hex(FOR.gold));
+    }
+  }
+
   // ── Paywall ────────────────────────────────────────────────────────────────
 
   private updateWalls(delta: number): void {
@@ -1435,20 +2268,14 @@ export class FortuneKit {
         const p = obj as Projectile;
         if (!p.active || p.isHeal) continue;
         if (p.isFromPlayer === mineIsPlayer) continue;
-        if (Math.abs(p.x - w.x) > WALL_HALF) continue;
-        if (w.tolledShots.has(p)) continue;
-        w.tolledShots.add(p);
-        this.toll(owner, theirs, TOLL_SHOT, w.x, p.y, w);
+        this.tollShot(owner, theirs, w, p, p.x, p.y);
       }
       // ...and the kit-local ones.
       // Radius has to reach the far corners of the arena from the wall's midpoint, or a shot
       // crossing near the top of the screen would slip through unbilled.
       for (const rp of this.api.projectileRegistry.within(theirs, w.x, this.api.height / 2,
         Math.hypot(this.api.width, this.api.height))) {
-        if (Math.abs(rp.getX() - w.x) > WALL_HALF) continue;
-        if (w.tolledShots.has(rp)) continue;
-        w.tolledShots.add(rp);
-        this.toll(owner, theirs, TOLL_SHOT, w.x, rp.getY(), w);
+        this.tollShot(owner, theirs, w, rp, rp.getX(), rp.getY());
       }
 
       // Bodies. Charged on the crossing, not on standing in the band, so leaning on a turnstile
@@ -1458,26 +2285,120 @@ export class FortuneKit {
         const prev = w.sideOf.get(t);
         w.sideOf.set(t, side);
         if (prev === undefined || prev === side) continue;
-        this.toll(owner, theirs, TOLL_BODY, w.x, t.y, w);
+        this.toll(owner, theirs, TOLL_BODY, w.x, t.y, w, t);
       }
     }
   }
 
-  /** Somebody has just used the turnstile. Take their money and give it to the shopkeeper. */
-  private toll(owner: Owner, payer: Owner, amount: number, x: number, y: number, w: Wall): void {
+  /**
+   * One shot at the turnstiles.
+   *
+   * Billed on the *crossing* rather than on being found inside the band. The band is 30px wide
+   * and a rifle round covers twenty of those in a frame, so presence in it was never a reliable
+   * test — a fast enough shot simply stepped over the wall and was never charged for it. A shot
+   * that spawns inside the band has no previous side to compare against, so that one case still
+   * bills on presence.
+   */
+  private tollShot(owner: Owner, payer: Owner, w: Wall, key: object, x: number, y: number): void {
+    if (w.tolledShots.has(key)) return;
+    const side = Math.sign(x - w.x) || 1;
+    const prev = w.shotSide.get(key);
+    w.shotSide.set(key, side);
+    const crossed = prev !== undefined && prev !== side;
+    if (!crossed && Math.abs(x - w.x) > WALL_HALF) return;
+    w.tolledShots.add(key);
+    this.toll(owner, payer, TOLL_SHOT, w.x, y, w);
+  }
+
+  /**
+   * Somebody has just used the turnstile. Take their money and give it to the shopkeeper — and
+   * if they have not got any, take it out of them: an unpaid coin is worth `BLOOD_PER_COIN` in
+   * damage, which mints its own coins back through the passive at the ordinary rate.
+   */
+  private toll(owner: Owner, payer: Owner, amount: number, x: number, y: number, w: Wall,
+    payerBody?: Fighter): void {
     const from = this.side(payer);
     const to = this.side(owner);
     const paid = Math.min(amount, from.coins);
     w.flash = 1;
-    Sfx.playAt(paid > 0 ? 'money' : 'ui-denied', x, { volume: 0.55, rate: paid > 0 ? 1.4 : 1 });
-    if (paid <= 0) {
-      this.api.showFloatingText(x, y - 18, '🎫 NO FUNDS', this.hex(FOR.canvasShade));
-      return;
+
+    if (paid > 0) {
+      from.coins -= paid;
+      to.coins += paid;
+      w.take += paid;
+      this.fx(owner).coinBurst(x, y, Math.min(4, paid), 20, 560);
+      this.api.showFloatingText(x, y - 18, `🎫 −${paid}`, this.hex(FOR.gold));
+      Sfx.playAt('money', x, { volume: 0.55, rate: 1.4 });
     }
-    from.coins -= paid;
-    to.coins += paid;
-    this.fx(owner).coinBurst(x, y, Math.min(4, paid), 20, 560);
-    this.api.showFloatingText(x, y - 18, `🎫 −${paid}`, this.hex(FOR.gold));
+    if (amount - paid > 0) this.bleedToll(payer, amount - paid, x, y, payerBody);
+    this.maybeAudit(owner, w);
+  }
+
+  /** The other way of paying. Gated, so a burst weapon cannot be billed to death in a second. */
+  private bleedToll(payer: Owner, owed: number, x: number, y: number, payerBody?: Fighter): void {
+    const from = this.side(payer);
+    if (this.now < from.bloodGate) return;
+    const body = payerBody ?? this.buyerFor(payer);
+    if (!this.alive(body)) return;
+    from.bloodGate = this.now + BLOOD_GATE_MS;
+    body!.takeDamage(owed * BLOOD_PER_COIN);
+    this.api.spawnHitFlash(body!.x, body!.y, FOR.blood);
+    this.api.showFloatingText(x, y - 18, `🎫 ${owed * BLOOD_PER_COIN} IN BLOOD`, this.hex(FOR.blood));
+    Sfx.playAt('gear-turn', x, { volume: 0.6, rate: 0.8 });
+  }
+
+  /**
+   * Tax Evasion. A wall that has taken more than ten coins is a wall somebody notices, and the
+   * man they send is on the screen for five seconds before he does anything about it.
+   */
+  private maybeAudit(owner: Owner, w: Wall): void {
+    if (w.audited || w.take <= AUDIT_TRIGGER) return;
+    if (!this.owns(owner, 'f')) return;
+    const s = this.side(owner);
+    if (s.audit) return;
+    const target = this.targetsOf(owner)
+      .sort((a, b) => b.hp - a.hp)[0];
+    if (!target) return;
+
+    w.audited = true;
+    s.audit = {
+      owner,
+      target,
+      x: Phaser.Math.Clamp(w.x, this.left + 40, this.right - 40),
+      firesAt: this.now + AUDIT_AIM_MS,
+      flash: 0,
+      done: false,
+    };
+    this.api.showFloatingText(w.x, this.top + 46, '🕵️ AUDIT', this.hex(FOR.blood));
+    Sfx.playAt('alarm', w.x, { volume: 0.7 });
+  }
+
+  /** The five seconds he takes to be sure, and the one frame in which he is not. */
+  private updateAudits(delta: number): void {
+    for (const owner of BOTH) {
+      const s = this.sides[owner];
+      const a = s.audit;
+      if (!a) continue;
+      a.flash = Math.max(0, a.flash - delta / 240);
+      if (a.done) {
+        if (a.flash <= 0) s.audit = null;
+        continue;
+      }
+      if (!this.alive(a.target)) { s.audit = null; continue; }
+      if (this.now < a.firesAt) continue;
+
+      a.done = true;
+      a.flash = 1;
+      const t = a.target;
+      t.takeDamage(AUDIT_DAMAGE);
+      this.chill(t, AUDIT_DEBUFF_MS, AUDIT_SLOW, '🕵️ AUDITED');
+      this.audited.set(t, this.now + AUDIT_DEBUFF_MS);
+      t.fortuneIncomingMult = AUDIT_VULN;
+      this.api.spawnHitFlash(t.x, t.y, FOR.blood);
+      this.fx(owner).impact(t.x, t.y, Math.atan2(t.y - this.top, t.x - a.x) + Math.PI, 420);
+      this.api.showFloatingText(t.x, t.y - 52, '🎯 ASSESSED', this.hex(FOR.blood));
+      Sfx.playAt('shotgun', t.x, { volume: 0.95, rate: 0.7 });
+    }
   }
 
   // ── Pay-to-Win ─────────────────────────────────────────────────────────────
@@ -1496,23 +2417,60 @@ export class FortuneKit {
       const want = Math.atan2(s.aimY - f.y, s.aimX - f.x);
       b.ang = Phaser.Math.Angle.RotateTo(b.ang, want, BEAM_TURN * dt);
 
-      // The bill, taken in whole coins as they come due.
-      b.tick += dt * BEAM_COINS_PER_SEC;
+      const excess = this.owns(owner, 'q');
+      // The bill, taken in whole coins as they come due. Golden Excess makes the drain climb
+      // with everything it has already burned, so a full purse goes into it in seconds.
+      b.tick += dt * this.beamDrain(b, excess);
       while (b.tick >= 1) {
         b.tick -= 1;
         if (s.coins <= 0) { this.endBeam(owner, 'broke'); break; }
         s.coins--;
+        s.spent++;
+        b.spent++;
       }
       if (!s.beam) continue;
 
-      const ex = f.x + Math.cos(b.ang) * BEAM_LEN;
-      const ey = f.y + Math.sin(b.ang) * BEAM_LEN;
+      const dps = excess ? Math.min(EXCESS_DPS_MAX, BEAM_DPS + b.spent * EXCESS_DPS_PER_COIN) : BEAM_DPS;
+      const half = excess ? this.beamHalfAngle(b) : 0;
       for (const t of this.targetsOf(owner)) {
-        if (this.distToSegment(t.x, t.y, f.x, f.y, ex, ey) > BEAM_HALF + 10 * t.sizeMult) continue;
-        t.takeDamage(BEAM_DPS * dt);
+        if (!this.inBeam(f, b, half, t)) continue;
+        // The beam is the one source of damage in the element that does not mint coins: it is
+        // paid for in them, and paying for it with itself made the ultimate free.
+        const before = t.rawDamageTaken;
+        t.takeDamage(dps * dt);
+        // Recorded as what the meter actually saw rather than as what was asked for, so a hit
+        // the target was invincible through does not cancel a real wound on the next frame.
+        const landed = t.rawDamageTaken - before;
+        if (landed > 0) s.unpaid.set(t, (s.unpaid.get(t) ?? 0) + landed);
         if (Math.random() < dt * 8) this.api.spawnHitFlash(t.x, t.y, FOR.goldLit);
       }
     }
+  }
+
+  /** Coins a second the beam is currently asking for. */
+  private beamDrain(b: Beam, excess: boolean): number {
+    if (!excess) return BEAM_COINS_PER_SEC;
+    return Math.min(EXCESS_DRAIN_MAX, BEAM_COINS_PER_SEC + b.spent * EXCESS_DRAIN_PER_COIN);
+  }
+
+  /** Half-angle of the Golden Excess cone, in radians. */
+  private beamHalfAngle(b: Beam): number {
+    return Math.min(EXCESS_HALF_MAX, EXCESS_HALF0 + b.spent * EXCESS_HALF_PER_COIN);
+  }
+
+  /** Inside the line, or inside the wedge once the wedge exists. */
+  private inBeam(f: Fighter, b: Beam, half: number, t: Fighter): boolean {
+    if (half <= 0) {
+      const ex = f.x + Math.cos(b.ang) * BEAM_LEN;
+      const ey = f.y + Math.sin(b.ang) * BEAM_LEN;
+      return this.distToSegment(t.x, t.y, f.x, f.y, ex, ey) <= BEAM_HALF + 10 * t.sizeMult;
+    }
+    const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
+    if (d > BEAM_LEN + 10 * t.sizeMult) return false;
+    const off = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(t.y - f.y, t.x - f.x) - b.ang));
+    // A body has width: near the emitter that is worth a lot of degrees, far out it is worth
+    // almost none, which is what keeps a narrow cone from missing somebody standing on it.
+    return off <= half + Math.atan2(BEAM_HALF + 10 * t.sizeMult, Math.max(1, d));
   }
 
   private endBeam(owner: Owner, why: 'spent' | 'broke' | 'dead'): void {
@@ -1597,7 +2555,8 @@ export class FortuneKit {
       if (this.now < s.botBuyAt) continue;
       s.botBuyAt = this.now + BOT_BUY_MS * (0.7 + Math.random() * 0.8);
 
-      const affordable = GENERAL.filter((e) => e.cost <= s.coins && e.id !== 'donation' && this.canBuy(owner, e));
+      const affordable = this.catalogue('shop')
+        .filter((e) => e.cost <= s.coins && e.id !== 'donation' && this.canBuy(owner, e));
       if (affordable.length === 0) continue;
       // Bias toward the expensive end of what they can afford — a husk hoarding 19 coins so it
       // can keep buying bandages is not a threat.
@@ -1622,12 +2581,12 @@ export class FortuneKit {
     for (const id of ladder) {
       const e = ENTRY_BY_ID.get(id);
       if (!e || s.coins < e.cost || !this.canBuy(owner, e)) continue;
-      if (ladder.indexOf(s.gun ?? 'pistol') <= ladder.indexOf(id) && s.gun !== 'pistol') break;
+      if (ladder.indexOf(s.main.gun ?? 'pistol') <= ladder.indexOf(id) && s.main.gun !== 'pistol') break;
       this.buy(owner, e);
       return;
     }
     if (s.attachments.length < MAX_ATTACHMENTS) {
-      for (const id of ['fiftycal', 'hollow', 'drummag', 'scope']) {
+      for (const id of ['fiftycal', 'hollow', 'accelgear', 'drummag', 'scope']) {
         const e = ENTRY_BY_ID.get(id);
         if (e && s.coins >= e.cost && this.canBuy(owner, e)) { this.buy(owner, e); return; }
       }
@@ -1657,7 +2616,7 @@ export class FortuneKit {
       if (!av) {
         av = new FortuneAvatar(this.api.scene, this.col(owner));
         if (owner === 'player') this.playerAvatar = av; else this.npcAvatar = av;
-        av.setGun(this.sides[owner].gun);
+        av.setGun(this.sides[owner].main.gun);
       }
 
       const s = this.sides[owner];
@@ -1666,9 +2625,10 @@ export class FortuneKit {
         : (this.targetsOf(owner)[0] ?? { x: s.aimX, y: s.aimY });
       av.setFacing(Math.atan2(target.y - f.y, target.x - f.x));
       av.setWealth(Phaser.Math.Clamp((s.coins + s.bank + s.stocks) / 40, 0, 1));
-      av.setGun(this.now < s.reloadUntil ? null : s.gun);
+      av.setGun(this.now < s.main.reloadUntil ? null : s.main.gun);
       av.setMastered(owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
-      av.setIntensity(s.beam ? 1.4 : 1);
+      // The revolver being spun up reads as the same wound-up posture as the beam.
+      av.setIntensity(s.beam ? 1.4 : s.spinFrom > 0 ? 1.25 : 1);
       // The beam is cupped in both hands; a gun that has gone off in the last second is held in
       // a two-handed stance. Anything else and the arms go back to the rig's idle sway.
       const aim = Math.atan2(target.y - f.y, target.x - f.x);
@@ -1692,11 +2652,17 @@ export class FortuneKit {
         { t: this.vizT, seed: fl.seed });
     }
 
+    // Heal Pylons stand on the floor, and are walked in front of.
+    for (const p of this.pylons) {
+      healPylon(g, this.col(p.owner), p.x, p.y, 1,
+        { t: this.vizT + p.seed, ready: this.now >= p.readyAt ? 1 : 0 });
+    }
+
     // The paywall's footings, which are on the floor even though its heads are not.
     for (const owner of BOTH) {
       const w = this.sides[owner].wall;
       if (!w) continue;
-      const left = this.remainingRatio(w.diesAt, WALL_MS);
+      const left = this.remainingRatio(w.diesAt, w.span);
       g.fillStyle(this.col(owner)(FOR.gold), 0.1 + left * 0.12);
       g.fillRect(w.x - WALL_HALF, this.top, WALL_HALF * 2, this.bottom - this.top);
       g.lineStyle(2, this.col(owner)(FOR.gold), 0.35 + left * 0.35);
@@ -1722,8 +2688,32 @@ export class FortuneKit {
     g.clear();
 
     for (const b of this.bullets) {
-      bulletShape(g, this.col(b.owner), b.x, b.y, Math.atan2(b.vy, b.vx), b.size, 1,
-        { seed: b.seed, color: b.pierce ? FOR.goldLit : FOR.steel, tracer: b.pierce ? 1.6 : 1 });
+      const ang = Math.atan2(b.vy, b.vx);
+      const col = this.col(b.owner);
+      if (b.kind === 'grenade') {
+        grenadeShape(g, col, b.x, b.y, ang, 1, { spin: b.spin, size: b.size });
+      } else if (b.kind === 'clip') {
+        // The thrown magazine: a box tumbling end over end with its rounds showing.
+        grenadeShape(g, col, b.x, b.y, ang, 1, { spin: b.spin * 1.6, size: b.size * 0.8 });
+        g.fillStyle(FOR.brass, 0.9);
+        g.fillCircle(b.x, b.y, 2.6);
+      } else if (b.kind === 'laser') {
+        bouncyBolt(g, col, b.x, b.y, ang, b.size, 1,
+          { charge: b.bounces / LASER_BOUNCES, t: this.vizT });
+      } else if (b.kind === 'midas') {
+        midasBullet(g, col, b.x, b.y, ang, 1, { t: this.vizT, seed: b.seed, size: b.size });
+      } else if (b.bounces > 0) {
+        bouncyBolt(g, col, b.x, b.y, ang, b.size, 1, { charge: b.bounces / BOUNCE_MAX, t: this.vizT });
+      } else {
+        bulletShape(g, col, b.x, b.y, ang, b.size, 1,
+          { seed: b.seed, color: b.pierce ? FOR.goldLit : FOR.steel, tracer: b.pierce ? 1.6 : 1 });
+      }
+    }
+
+    // Gilded bodies, drawn under whoever the Midas round caught.
+    for (const [f, until] of this.gilded) {
+      if (!this.alive(f) || this.now >= until) continue;
+      gildedAura(g, this.pcol, f.x, f.y, 22 * f.sizeMult, 1, { t: this.vizT });
     }
     for (const d of this.daggers) {
       daggerShape(g, this.col(d.owner), d.x, d.y, d.ang, 1);
@@ -1739,7 +2729,7 @@ export class FortuneKit {
     for (const owner of BOTH) {
       const w = this.sides[owner].wall;
       if (!w) continue;
-      const left = this.remainingRatio(w.diesAt, WALL_MS);
+      const left = this.remainingRatio(w.diesAt, w.span);
       const span = this.bottom - this.top;
       const n = Math.max(3, Math.round(span / 74));
       for (let i = 0; i < n; i++) {
@@ -1749,14 +2739,35 @@ export class FortuneKit {
       }
     }
 
+    // The auditor, lying at the very top of the arena with a laser on somebody.
+    for (const owner of BOTH) {
+      const a = this.sides[owner].audit;
+      if (!a) continue;
+      const t = a.target;
+      const ay = this.top - 6;
+      const ang = Math.atan2(t.y - ay, t.x - a.x);
+      auditor(g, this.col(owner), a.x, ay, ang, 1, { fired: a.done ? a.flash : 0 });
+      if (!a.done) {
+        const lock = Phaser.Math.Clamp(1 - (a.firesAt - this.now) / AUDIT_AIM_MS, 0, 1);
+        auditMark(g, this.col(owner), a.x + Math.cos(ang) * 30, ay + Math.sin(ang) * 30,
+          t.x, t.y, 1, { t: this.vizT, lock });
+      }
+    }
+
     for (const owner of BOTH) {
       const b = this.sides[owner].beam;
       if (!b) continue;
       const f = this.fighter(owner);
       if (!this.alive(f)) continue;
       const mz = { x: f.x + Math.cos(b.ang) * 26, y: f.y + Math.sin(b.ang) * 26 };
-      goldBeam(g, this.col(owner), mz.x, mz.y, b.ang, BEAM_LEN, BEAM_HALF, 1,
-        { t: this.vizT, seed: owner === 'player' ? 1 : 2 });
+      const half = this.owns(owner, 'q') ? this.beamHalfAngle(b) : 0;
+      if (half > 0) {
+        goldCone(g, this.col(owner), mz.x, mz.y, b.ang, BEAM_LEN, half, 1,
+          { t: this.vizT, heat: Math.min(1, b.spent / 90) });
+      } else {
+        goldBeam(g, this.col(owner), mz.x, mz.y, b.ang, BEAM_LEN, BEAM_HALF, 1,
+          { t: this.vizT, seed: owner === 'player' ? 1 : 2 });
+      }
     }
   }
 
@@ -1785,7 +2796,7 @@ export class FortuneKit {
     const s = this.sides.player;
     const mine = shop === 'player';
     const page: Page = mine ? s.page : 'shop';
-    const list = CATALOGUE[page];
+    const list = this.catalogue(page);
     const accent = page === 'shop' ? FOR.gold : FOR.neon;
 
     // Sized off the longest row rather than off the stall: an item line is a name, a price and
@@ -1838,15 +2849,15 @@ export class FortuneKit {
       const owned = !this.canBuy('player', e);
       const poor = s.coins < e.cost;
       t.setVisible(true).setPosition(x + 8, y + 36 + i * rowH)
-        .setText(`${i + 1} ${e.emoji} ${e.name} — ${e.cost === 0 ? 'FREE' : `${e.cost}🪙`}  ${e.desc}`);
+        .setText(`${ROW_KEYS[i] ?? '·'} ${e.emoji} ${e.name} — ${e.cost === 0 ? 'FREE' : `${e.cost}🪙`}  ${e.desc}`);
       this.tintRow(i + 1, owned ? '#7d7466' : poor ? '#b3202e' : '#ffffff', '10px', false);
     }
 
     const foot = this.shopTexts[list.length + 1];
-    const gunName = s.gun ? (ENTRY_BY_ID.get(s.gun)?.name ?? s.gun) : 'none';
     const mods = s.attachments.map((a) => ENTRY_BY_ID.get(a)?.emoji ?? '?').join(' ') || '—';
     foot.setVisible(true).setPosition(x + 8, y + H - 15)
-      .setText(mine ? `${gunName} · ${mods} · ${s.ammo}/${this.magSize(s)}` : 'the shopkeeper takes half of everything you spend');
+      .setText(mine ? `${this.handLine(s, s.main)}${s.off ? `  ✚  ${this.handLine(s, s.off)}` : ''} · ${mods}`
+        : 'the shopkeeper takes half of everything you spend');
     this.tintRow(list.length + 1, '#c9bda6', '10px', false);
   }
 
@@ -1855,6 +2866,12 @@ export class FortuneKit {
    * canvas texture every call, and this panel has eleven rows that are otherwise static — doing
    * it unguarded costs more per frame than everything else the kit draws put together.
    */
+  /** One hand's line on the counter: what it is holding and how much of it is left. */
+  private handLine(s: Side, hand: Hand): string {
+    const name = hand.gun ? (ENTRY_BY_ID.get(hand.gun)?.name ?? hand.gun) : 'none';
+    return `${name} ${hand.ammo}/${this.magSize(s, hand)}`;
+  }
+
   private tintRow(i: number, color: string, size: string, bold: boolean): void {
     const key = `${color}|${size}|${bold}`;
     if (this.shopColors[i] === key) return;
@@ -1886,10 +2903,77 @@ export class FortuneKit {
       count: s.stocks, priority: 152,
     } : null);
 
+    const gunName = ENTRY_BY_ID.get(s.main.gun ?? '')?.name ?? 'Unarmed';
+    const alt = s.main.gun ? GUNS[s.main.gun]?.alt : undefined;
     this.api.setStatusIndicator('fortune-gun', mine ? {
-      name: ENTRY_BY_ID.get(s.gun ?? '')?.name ?? 'Unarmed', emoji: '🔫', color: FOR.steel,
-      description: `Your loadout: ${ENTRY_BY_ID.get(s.gun ?? '')?.name ?? 'nothing'}${s.attachments.length ? ` with ${s.attachments.map((a) => ENTRY_BY_ID.get(a)?.name).join(' and ')}` : ''}. One gun and two attachments at a time.`,
-      count: this.now < s.reloadUntil ? 0 : s.ammo, suffix: `/${this.magSize(s)}`, priority: 153,
+      name: gunName, emoji: '🔫', color: FOR.steel,
+      description: `Your loadout: ${gunName}${s.attachments.length ? ` with ${s.attachments.map((a) => ENTRY_BY_ID.get(a)?.name).join(' and ')}` : ''}. One gun and two attachments at a time.${alt && this.owns('player', 'click') ? ` Right click — ${alt}.` : ''}`,
+      count: this.now < s.main.reloadUntil ? 0 : s.main.ammo, suffix: `/${this.magSize(s, s.main)}`, priority: 153,
+    } : null);
+
+    this.api.setStatusIndicator('fortune-offhand', mine && s.off ? {
+      name: `${ENTRY_BY_ID.get(s.off.gun ?? '')?.name ?? 'Off hand'} (right)`, emoji: '🤞', color: FOR.neon,
+      description: 'Dual Grip: your right hand has a gun of its own, with its own magazine and its own reload. Right click fires it.',
+      count: this.now < s.off.reloadUntil ? 0 : s.off.ammo, suffix: `/${this.magSize(s, s.off)}`, priority: 154,
+    } : null);
+
+    // The gear's whole point is that the number moves, so it gets a box of its own rather than
+    // a line in the loadout description: the percentage is the reason to keep the trigger down.
+    this.api.setStatusIndicator('fortune-accel', mine && s.attachments.includes('accelgear') ? {
+      name: 'Acceleration Gear', emoji: '⚙️', color: FOR.steel,
+      description: `Your weapons cycle faster the emptier the magazine is — normal speed on a full one, ${ACCEL_MAX}× on the last round in it. Reloading hands the speed back. It works on both hands, and on the revolver's spun round.`,
+      count: Math.round(this.accelMult(s, s.main, s.main.ammo) * 100), suffix: '%', priority: 156,
+    } : null);
+
+    this.api.setStatusIndicator('fortune-dual', mine && s.dualPending ? {
+      name: 'Dual Grip', emoji: '🤞', color: FOR.neon,
+      description: 'Waiting on a gun. The next weapon you buy goes into your right hand instead of replacing the one you are holding.',
+      priority: 155,
+    } : null);
+
+    this.api.setStatusIndicator('fortune-spin', mine && s.spinFrom > 0 ? {
+      name: 'Spinning Up', emoji: '🎯', color: FOR.goldLit,
+      description: 'Holding right click winds the revolver. Three seconds walks the round from 20 damage to 30, and a full charge pierces. Release to fire it.',
+      count: Math.round(Math.min(1, (this.now - s.spinFrom) / SPIN_MS) * 100), suffix: '%', priority: 107,
+    } : null);
+
+    this.api.setStatusIndicator('fortune-chilly', this.now < s.chillyUntil ? {
+      name: 'Chilly Pepper', emoji: '🥶', color: 0x9fe4ff,
+      description: 'Every 3 seconds you throw out a freezing ring. Anything of theirs it catches moves 20% slower for 5 seconds.',
+      until: s.chillyUntil, priority: 126,
+    } : null);
+
+    this.api.setStatusIndicator('fortune-tele', this.now < s.teleUntil ? {
+      name: 'Tele-Core', emoji: '🌀', color: FOR.neon,
+      description: 'Your dash is a teleport. Space puts you at the cursor rather than throwing you in a direction.',
+      until: s.teleUntil, priority: 127,
+    } : null);
+
+    const minePylons = this.pylons.filter((p) => p.owner === 'player').length;
+    this.api.setStatusIndicator('fortune-pylon', minePylons > 0 ? {
+      name: 'Heal Pylons', emoji: '🗼', color: FOR.neon,
+      description: 'Touch a lit pylon to heal 10 HP. It goes dark for 5 seconds and lights green again when it has another charge in it.',
+      count: minePylons, priority: 128,
+    } : null);
+
+    this.api.setStatusIndicator('fortune-airborne', this.now < s.airborneUntil ? {
+      name: 'Exit Strategy', emoji: '🚀', color: FOR.goldLit,
+      description: 'You are somewhere above the arena. Nothing can see you and nothing can touch you until you come down.',
+      until: s.airborneUntil, priority: 108,
+    } : null);
+
+    this.api.setStatusIndicator('fortune-audit', s.audit ? {
+      name: 'Audit', emoji: '🕵️', color: FOR.blood,
+      description: 'A man with a rifle is sighted on your enemy. When the laser settles it is 35 damage, a 20% slow, and 20% extra damage taken for 8 seconds.',
+      until: s.audit.firesAt, priority: 109,
+    } : null);
+
+    // …and the same rifle pointed the other way, when the shopkeeper is the one across the room.
+    const marked = this.audited.get(this.api.player) ?? 0;
+    this.api.setStatusIndicator('fortune-assessed', this.now < marked ? {
+      name: 'Assessed', emoji: '🎯', color: FOR.blood,
+      description: 'The revenue service has taken an interest. You move 20% slower and take 20% more damage from everything.',
+      until: marked, priority: 40,
     } : null);
 
     this.api.setStatusIndicator('fortune-pepper', this.now < s.pepperUntil ? {
@@ -1952,14 +3036,14 @@ export class FortuneKit {
     const p = this.api.player;
     const s = this.sides.player;
     if (abilityId === 'fortune-paywall' && s.wall) {
-      return Phaser.Math.Clamp((s.wall.diesAt - time) / WALL_MS, 0, 1);
+      return Phaser.Math.Clamp((s.wall.diesAt - time) / s.wall.span, 0, 1);
     }
     if (abilityId === 'fortune-p2w' && s.beam) {
       return Phaser.Math.Clamp((s.beam.endsAt - time) / BEAM_MS, 0, 1);
     }
-    if (abilityId === 'fortune-fire' && time < s.reloadUntil) {
-      const kit = this.loadout(s);
-      return kit ? Phaser.Math.Clamp((s.reloadUntil - time) / kit.def.reloadMs, 0, 1) : 0;
+    if (abilityId === 'fortune-fire' && time < s.main.reloadUntil) {
+      const kit = this.loadout(s, s.main);
+      return kit ? Phaser.Math.Clamp((s.main.reloadUntil - time) / kit.def.reloadMs, 0, 1) : 0;
     }
     return p.getCooldownRatio(abilityId);
   }
@@ -1977,6 +3061,31 @@ export class FortuneKit {
    * the AI has to be told "not yet" rather than be allowed to find out.
    */
   ammoOf(owner: Owner): number {
-    return this.canFireNow(owner) ? this.sides[owner].ammo : 0;
+    return this.canFireNow(owner) ? this.sides[owner].main.ammo : 0;
+  }
+
+  /** Tele-Core (E+): Space is a teleport to the cursor rather than a dash, for 12 seconds. */
+  isTeleportDash(): boolean {
+    return this.now < this.sides.player.teleUntil;
+  }
+
+  /** Off the floor after an Exit Strategy — ArenaScene hides the HUD ring for it. */
+  isAirborne(owner: Owner): boolean {
+    return this.now < this.sides[owner].airborneUntil;
+  }
+
+  /**
+   * The Chilly Pepper's ring and the auditor's rifle, on whoever is wearing them. Pulled by
+   * ArenaScene rather than pushed, because both bodies' movement resolves before this kit's
+   * `update` gets to run — the husks in Invasion read `walkSpeedMult` directly instead.
+   */
+  getPlayerSpeedMult(): number {
+    const c = this.chilled.get(this.api.player);
+    return c && this.now < c.until ? c.mult : 1;
+  }
+
+  getNpcSpeedMult(): number {
+    const c = this.chilled.get(this.api.npc);
+    return c && this.now < c.until ? c.mult : 1;
   }
 }

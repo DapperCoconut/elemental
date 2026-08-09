@@ -116,7 +116,7 @@ export class SkinsKit {
   paperColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   deathColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   fortuneColor(owner: Owner, base: number): number { return this.remap(owner, base); }
-  amberColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  marrowColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   psychicColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   radiationColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   bindColor(owner: Owner, base: number): number { return this.remap(owner, base); }

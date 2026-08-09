@@ -34,7 +34,7 @@ import { DEATH_BOSS } from './DeathBoss';
 import { ILLUSION_BOSS } from './IllusionBoss';
 import { CONQUEST_BOSS } from './ConquestBoss';
 import { GLUTTONY_BOSS } from './GluttonyBoss';
-import { AMBER_BOSS } from './AmberBoss';
+import { MARROW_BOSS } from './MarrowBoss';
 import { BIND_BOSS } from './BindBoss';
 import { PAPER_BOSS } from './PaperBoss';
 import { CHALK_BOSS } from './ChalkBoss';
@@ -94,7 +94,7 @@ const WORLD_BOSSES: Record<string, WorldBossDef> = {
   illusion: ILLUSION_BOSS,
   conquest: CONQUEST_BOSS,
   gluttony: GLUTTONY_BOSS,
-  amber: AMBER_BOSS,
+  marrow: MARROW_BOSS,
   bind: BIND_BOSS,
   paper: PAPER_BOSS,
   chalk: CHALK_BOSS,

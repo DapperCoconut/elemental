@@ -154,6 +154,244 @@ export function padlock(
   g.fillCircle(x, y + r * 0.25, r * 0.24);
 }
 
+/**
+ * The grapple head on the leading end of a live chain: two swept barbs and a bright tip.
+ * Drawn pointing along `angle`, so the caller passes the chain's own heading.
+ */
+export function chainHead(
+  g: Phaser.GameObjects.Graphics,
+  tint: JusticeColorFn,
+  x: number, y: number, angle: number, alpha = 1,
+): void {
+  g.fillStyle(tint(JUS.gold), alpha);
+  for (let i = -1; i <= 1; i += 2) {
+    const a = angle + i * 0.8;
+    g.fillTriangle(
+      x, y,
+      x - Math.cos(a) * 12, y - Math.sin(a) * 12,
+      x - Math.cos(angle) * 9, y - Math.sin(angle) * 9,
+    );
+  }
+  g.fillStyle(tint(JUS.pale), alpha);
+  g.fillCircle(x, y, 3);
+}
+
+/**
+ * A ripped-out arena wall on its way across the map: two-tone masonry with courses cut along
+ * its length and dust boiling off the leading face. `(x, y)` is the centre of the slab and
+ * `nx`/`ny` is the direction of travel, which is the only thing that says which face is leading.
+ */
+export function wallSlab(
+  g: Phaser.GameObjects.Graphics,
+  tint: JusticeColorFn,
+  o: {
+    x: number; y: number; vertical: boolean;
+    span: number; thick: number;
+    nx: number; ny: number;
+    /** Seconds, for the dust shimmer. */
+    t: number;
+  },
+): void {
+  const { x, y, vertical, span, thick, nx, ny, t } = o;
+  const halfLen = span / 2;
+
+  g.fillStyle(tint(JUS.stoneDark), 0.95);
+  if (vertical) g.fillRect(x - thick / 2, y - halfLen, thick, span);
+  else g.fillRect(x - halfLen, y - thick / 2, span, thick);
+  g.fillStyle(tint(JUS.stone), 0.95);
+  if (vertical) g.fillRect(x - thick / 2, y - halfLen, thick * 0.55, span);
+  else g.fillRect(x - halfLen, y - thick / 2, span, thick * 0.55);
+
+  // Masonry courses along its length, so a slab this big isn't a flat bar.
+  g.lineStyle(1.2, tint(JUS.stoneDark), 0.8);
+  const courses = Math.round(span / 34);
+  for (let i = 1; i < courses; i++) {
+    const f = -halfLen + (i / courses) * span;
+    if (vertical) g.lineBetween(x - thick / 2, y + f, x + thick / 2, y + f);
+    else g.lineBetween(x + f, y - thick / 2, x + f, y + thick / 2);
+  }
+  // Dust boiling off the leading face.
+  g.fillStyle(tint(JUS.stone), 0.2 + 0.08 * Math.sin(t * 12));
+  if (vertical) g.fillRect(x + nx * thick * 0.6, y - halfLen, 10, span);
+  else g.fillRect(x - halfLen, y + ny * thick * 0.6, span, 10);
+}
+
+/**
+ * The two beams a tranced victim's eyes throw back at whoever opened them — the tell that a
+ * body walking at you is not walking of its own accord.
+ */
+export function tranceBeams(
+  g: Phaser.GameObjects.Graphics,
+  tint: JusticeColorFn,
+  vx: number, vy: number,
+  angle: number, t: number, alpha = 1,
+): void {
+  for (const side of [-1, 1]) {
+    const ex = vx + Math.cos(angle) * 6 + Math.cos(angle + Math.PI / 2) * side * 6;
+    const ey = vy - 4 + Math.sin(angle) * 6 + Math.sin(angle + Math.PI / 2) * side * 6;
+    g.fillStyle(tint(JUS.white), (0.5 + 0.2 * Math.sin(t * 9 + side)) * alpha);
+    g.fillTriangle(
+      ex, ey,
+      ex + Math.cos(angle) * 120 - Math.sin(angle) * 11, ey + Math.sin(angle) * 120 + Math.cos(angle) * 11,
+      ex + Math.cos(angle) * 120 + Math.sin(angle) * 11, ey + Math.sin(angle) * 120 - Math.cos(angle) * 11,
+    );
+    g.fillStyle(tint(JUS.pale), 0.9 * alpha);
+    g.fillCircle(ex, ey, 2.6);
+  }
+}
+
+/**
+ * The Willpower meter. A deep trough, the live fill, a pale gloss over its top third and
+ * quarter ticks — the drain rate is meant to be legible at a glance, so the ticks matter.
+ * Reads red under a quarter full.
+ */
+export function willMeter(
+  g: Phaser.GameObjects.Graphics,
+  tint: JusticeColorFn,
+  x: number, y: number, w: number, h: number, ratio: number,
+): void {
+  g.fillStyle(0x05070f, 0.85);
+  g.fillRoundedRect(x - 3, y - 3, w + 6, h + 6, 4);
+  g.lineStyle(1.5, tint(JUS.will), 0.7);
+  g.strokeRoundedRect(x - 3, y - 3, w + 6, h + 6, 4);
+  g.fillStyle(tint(JUS.willDeep), 0.9);
+  g.fillRect(x, y, w, h);
+  g.fillStyle(tint(ratio < 0.25 ? JUS.damned : JUS.will), 1);
+  g.fillRect(x, y, w * ratio, h);
+  g.fillStyle(tint(JUS.willPale), 0.55);
+  g.fillRect(x, y, w * ratio, h * 0.38);
+  g.lineStyle(1, 0x05070f, 0.7);
+  for (let i = 1; i < 4; i++) g.lineBetween(x + (w * i) / 4, y, x + (w * i) / 4, y + h);
+}
+
+// ── Judgement Day ─────────────────────────────────────────────────────────
+
+/**
+ * The whole scale rig, in one place. Both the painter and the defendant's position read from
+ * this — computing them separately is how a defendant ends up hanging in mid-air next to the
+ * pan they are supposed to be sitting in.
+ *
+ * `t` runs 0→1 across the scene and `guilt` 0→1 with the damage on the record; the left pan
+ * sinks with both.
+ */
+export interface JudgeRig {
+  t: number; scale: number;
+  gx: number; gy: number;
+  fistX: number; fistY: number;
+  bx: number; by: number;
+  lx: number; ly: number;
+  rx: number; ry: number;
+  tilt: number;
+  /** Where a body sitting in the left pan actually rests. */
+  seat: { x: number; y: number };
+}
+
+export function judgeRig(o: { cx: number; bottom: number; t: number; guilt: number }): JudgeRig {
+  const { cx, bottom, t, guilt } = o;
+  const scale = 1 + t * 0.35;
+  const gx = cx + 150;
+  const gy = bottom + 40;
+  const fistX = gx - 96 * scale;
+  const fistY = gy - 220 * scale;
+  // Guilt weighs: the more damage on the record, the further the left pan sinks.
+  const tilt = Math.sin(t * Math.PI * 1.5) * 0.15 + t * guilt * 0.45;
+  const beamLen = 92;
+  const bx = fistX;
+  const by = fistY + 34;
+  const lx = bx - Math.cos(tilt) * beamLen;
+  const ly = by - Math.sin(tilt) * beamLen;
+  const rx = bx + Math.cos(tilt) * beamLen;
+  const ry = by + Math.sin(tilt) * beamLen;
+  return { t, scale, gx, gy, fistX, fistY, bx, by, lx, ly, rx, ry, tilt, seat: { x: lx, y: ly + 30 } };
+}
+
+/**
+ * The courtroom: everything that is not the scale drops away, a laurel-crowned giant rises out
+ * of the floor holding the scales out of one fist, and the defendant's pan is weighed against a
+ * feather. The verdict itself is Text dropped by the caller — the placard here is its frame.
+ */
+export function drawJudgeScene(
+  g: Phaser.GameObjects.Graphics,
+  tint: JusticeColorFn,
+  r: JudgeRig,
+  o: {
+    width: number; height: number;
+    /** Arena top, for the placard. */
+    top: number;
+    cx: number;
+    fade: number;
+    /** Border colour of the placard — the caller decides whether this verdict is damnation. */
+    placardColor: number;
+  },
+): void {
+  const { width, height, top, cx, fade, placardColor } = o;
+  const sc = r.scale;
+
+  // Court dark: everything that is not the scale drops away.
+  g.fillStyle(0x05040a, 0.62 * fade);
+  g.fillRect(0, 0, width, height);
+
+  // The judge, risen out of the floor to fill the right half of the arena.
+  g.fillStyle(tint(JUS.umber), 0.92 * fade);
+  g.fillEllipse(r.gx, r.gy - 120 * sc, 150 * sc, 250 * sc);
+  g.fillStyle(tint(JUS.bronze), 0.75 * fade);
+  g.fillEllipse(r.gx - 18 * sc, r.gy - 150 * sc, 96 * sc, 150 * sc);
+  // Head + laurel.
+  const hx = r.gx - 10 * sc;
+  const hy = r.gy - 250 * sc;
+  g.fillStyle(tint(JUS.umber), 0.95 * fade);
+  g.fillCircle(hx, hy, 52 * sc);
+  for (let i = 0; i < 7; i++) {
+    const a = -Math.PI + (i / 6) * Math.PI;
+    g.fillStyle(tint(JUS.gold), 0.9 * fade);
+    g.fillEllipse(hx + Math.cos(a) * 54 * sc, hy + Math.sin(a) * 40 * sc, 20 * sc, 9 * sc);
+  }
+  // Eyes, blazing.
+  for (const side of [-1, 1]) {
+    g.fillStyle(tint(JUS.pale), fade);
+    g.fillCircle(hx + side * 18 * sc, hy - 8 * sc, 8 * sc);
+    g.fillStyle(tint(JUS.gold), fade);
+    g.fillCircle(hx + side * 18 * sc, hy - 8 * sc, 4 * sc);
+  }
+
+  // The scales, hanging out of the giant's fist.
+  g.fillStyle(tint(JUS.gold), fade);
+  g.fillCircle(r.fistX, r.fistY, 22 * sc);
+  g.lineStyle(7 * sc, tint(JUS.gold), fade);
+  g.lineBetween(r.fistX, r.fistY, r.bx, r.by);
+  g.lineStyle(6 * sc, tint(JUS.bright), fade);
+  g.lineBetween(r.lx, r.ly, r.rx, r.ry);
+  g.fillStyle(tint(JUS.pale), fade);
+  g.fillCircle(r.bx, r.by, 7 * sc);
+
+  // Two pans on chains. The left one is where the defendant is sitting — its dish is drawn from
+  // the same `seat` the victim is pinned to, so they never come apart.
+  const pans: [number, number, number][] = [[r.lx, r.ly, -1], [r.rx, r.ry, 1]];
+  for (const [px, py, dir] of pans) {
+    chainRun(g, tint, px, py, px, py + 42, fade, 10, 2, 0);
+    g.fillStyle(tint(JUS.gold), fade);
+    g.fillEllipse(px, py + 46, 62, 15);
+    g.fillStyle(tint(JUS.bronze), fade);
+    g.fillEllipse(px, py + 50, 54, 11);
+    if (dir > 0) {
+      // A feather on the other pan — the thing being weighed against.
+      g.fillStyle(tint(JUS.white), fade * 0.95);
+      g.fillEllipse(px, py + 34, 12, 30);
+      g.lineStyle(1.6, tint(JUS.stone), fade);
+      g.lineBetween(px, py + 20, px, py + 48);
+    }
+  }
+
+  // Verdict placard, once the beam has settled.
+  if (r.t > 0.62) {
+    const a = Math.min(1, (r.t - 0.62) / 0.15) * fade;
+    g.fillStyle(tint(JUS.umber), 0.85 * a);
+    g.fillRoundedRect(cx - 125, top + 62, 250, 54, 10);
+    g.lineStyle(3, placardColor, a);
+    g.strokeRoundedRect(cx - 125, top + 62, 250, 54, 10);
+  }
+}
+
 /** One coliseum column: a fluted marble drum with a lit face and a capital. */
 export function column(
   g: Phaser.GameObjects.Graphics,

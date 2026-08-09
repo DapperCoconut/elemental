@@ -18,6 +18,10 @@ import { Ability, CastContext } from './Ability';
  * at the victim lands as a hit instead. It costs nothing to hold and it does nothing on its own,
  * which is exactly why it is worth stacking on everything before the payload arrives.
  *
+ * The five corrupt shop upgrades all hang off one addition: **the irradiation ladder**, which
+ * turns that flat window into three rungs. See `RadiationKit` for the mechanics and
+ * `data/codex/radiation.ts` for the long form.
+ *
  * Every `cast` below is a one-line delegate; the whole simulation lives in RadiationKit.
  */
 
@@ -42,7 +46,7 @@ const baton: Ability = {
 const xray: Ability = {
   id: 'radiation-xray',
   name: 'X-Ray Vision',
-  description: 'Eight seconds of seeing through the arena. The screen goes green, everything on it is drawn as its own skeleton — invisible or not — and every enemy hitbox swells 25%. The bones are for you; the hitboxes are for them.',
+  description: 'Eight seconds of seeing through the arena. The screen goes green, everything on it is drawn as its own skeleton — invisible or not — and every enemy hitbox swells 33%. The bones are for you; the hitboxes are for them.',
   displayKey: 'R',
   cooldown: 12000,
   cast(ctx: CastContext) { ctx.radiationXray(); },

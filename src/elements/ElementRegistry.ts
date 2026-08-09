@@ -1,6 +1,6 @@
 import { Element } from './Element';
 import { airElement } from './air';
-import { amberElement } from './amber';
+import { marrowElement } from './marrow';
 import { bindElement } from './bind';
 import { chalkElement } from './chalk';
 import { conquestElement } from './conquest';
@@ -110,7 +110,7 @@ export const ELEMENT_MAP: Record<string, Element> = {
   paper: paperElement,
   death: deathElement,
   fortune: fortuneElement,
-  amber: amberElement,
+  marrow: marrowElement,
   psychic: psychicElement,
   radiation: radiationElement,
   bind: bindElement,

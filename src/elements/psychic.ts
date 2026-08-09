@@ -53,10 +53,10 @@ const dodgeDestiny: Ability = {
 const migraine: Ability = {
   id: 'psychic-migraine',
   name: 'Migraine',
-  description: 'Three seconds of splitting psychological distress. Two casts in every three go wide by up to 30 degrees — the enemy keeps firing and keeps missing — and they gain 10 stress for every second of it.',
+  description: 'Plant a charge at the cursor — it goes off 2.5s later, and everything caught in it gets three seconds of splitting psychological distress. Two casts in every three go wide by up to 30 degrees, and they gain 10 stress on the blast plus 10 for every second after it.',
   displayKey: 'F',
   cooldown: 15000,
-  cast(ctx: CastContext) { ctx.psychicMigraine(); },
+  cast(ctx: CastContext) { ctx.psychicMigraine(ctx.targetX, ctx.targetY); },
 };
 
 const coma: Ability = {

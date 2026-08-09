@@ -260,6 +260,43 @@ export function gunShape(
       }
       break;
     }
+    case 'launcher': {
+      // Fat, short and ugly: a drum of three shells under a stubby tube with a leaf sight.
+      poly([[-8, -2.6], [6, -2.6], [6, 2.4], [-8, 3.2]], FOR.grip, 1);   // shoulder stock
+      poly([[0, -4], [14, -4], [14, 2.2], [0, 2.2]], metal, 1);          // receiver
+      poly([[14, -3.4], [30, -3.4], [30, 1.6], [14, 1.6]], metal, 1);    // bore
+      poly([[28, -3.8], [31, -3.8], [31, 2], [28, 2]], lit, 0.8);        // muzzle ring
+      g.fillStyle(shade(tint(FOR.gunmetal), dark), alpha);
+      const drum = P(7, 3.6);
+      g.fillCircle(drum.x, drum.y, 5.6);                                  // shell drum
+      g.fillStyle(shade(tint(FOR.contraband), dark), alpha * 0.9);
+      for (let i = 0; i < 3; i++) {
+        const a = (i / 3) * TAU + ang * 0.5;
+        g.fillCircle(drum.x + Math.cos(a) * 3, drum.y + Math.sin(a) * 3, 1.5);
+      }
+      poly([[10, -6.4], [12, -6.4], [12, -3.8], [10, -3.8]], lit, 0.85);  // leaf sight
+      break;
+    }
+    case 'bouncy': {
+      // A toy. Rounded shell, a coil you can see charging, and a rubber cup instead of a muzzle.
+      poly([[-4, -3.6], [12, -3.6], [12, 2.2], [-4, 2.2]], FOR.contraband, 1);
+      poly([[12, -2.8], [24, -2.8], [24, 1.6], [12, 1.6]], metal, 1);
+      g.fillStyle(shade(tint(FOR.neon), dark), alpha * 0.9);
+      const coil = P(4, -0.6);
+      g.fillCircle(coil.x, coil.y, 3.4);
+      g.lineStyle(1, shade(tint(FOR.hot), dark), alpha * 0.8);
+      for (let i = 0; i < 3; i++) {
+        const c0 = P(13 + i * 3.2, -2.6);
+        const c1 = P(13 + i * 3.2, 1.4);
+        g.lineBetween(c0.x, c0.y, c1.x, c1.y);                            // barrel ribs
+      }
+      g.fillStyle(shade(tint(FOR.grip), dark), alpha);
+      const cup = P(25.5, -0.6);
+      g.fillCircle(cup.x, cup.y, 3.2);                                    // rubber cup
+      g.fillStyle(shade(tint(FOR.neon), dark), alpha * 0.75);
+      g.fillCircle(cup.x, cup.y, 1.6);
+      break;
+    }
     default: { // pistol
       poly([[-4, -3], [15, -3], [15, 1.6], [-4, 1.6]], metal, 1);        // slide
       poly([[-3, 1.6], [10, 1.6], [10, 3], [-3, 3]], lit, 0.55);         // frame rail
@@ -277,8 +314,8 @@ export function gunShape(
 
 /** The muzzle end of whichever gun is drawn above, in world space. */
 export function muzzleOf(x: number, y: number, ang: number, kind: string): { x: number; y: number } {
-  const reach = kind === 'rifle' ? 38 : kind === 'ar' ? 32 : kind === 'golden' ? 28
-    : kind === 'revolver' ? 24 : 17;
+  const reach = kind === 'rifle' ? 38 : kind === 'ar' ? 32 : kind === 'launcher' ? 31
+    : kind === 'golden' ? 28 : kind === 'bouncy' ? 26 : kind === 'revolver' ? 24 : 17;
   return { x: x + Math.cos(ang) * reach, y: y + Math.sin(ang) * reach - 1 };
 }
 
@@ -566,6 +603,329 @@ export function goldBeam(
   }
 }
 
+/**
+ * Pay-to-Win, once Golden Excess has been paid for. The same beam opened out into a wedge —
+ * `half` is the half-angle in radians — with the palette pushed from gold toward furnace orange
+ * by `heat`, and a burning fan of arcs sliding out through it.
+ */
+export function goldCone(
+  g: Phaser.GameObjects.Graphics,
+  tint: FortuneColorFn,
+  x: number, y: number, ang: number, len: number, half: number, alpha: number,
+  { t = 0, dark = 1, heat = 0 } = {},
+): void {
+  // The palette walks from money to furnace as the bill climbs.
+  const mix = (cold: number, hot: number): number => {
+    const k = Phaser.Math.Clamp(heat, 0, 1);
+    const c = (s: number): number => Math.round(((cold >> s) & 0xff) * (1 - k) + ((hot >> s) & 0xff) * k);
+    return (c(16) << 16) | (c(8) << 8) | c(0);
+  };
+  const outer = mix(FOR.brass, 0xd2410f);
+  const mid = mix(FOR.gold, 0xff7a1a);
+  const inner = mix(FOR.goldLit, 0xffb347);
+
+  const wedge = (k: number, color: number, a: number): void => {
+    const pts: Phaser.Geom.Point[] = [new Phaser.Geom.Point(x, y)];
+    const N = Math.max(6, Math.round(half * 14));
+    for (let i = 0; i <= N; i++) {
+      const s = ang - half * k + (2 * half * k) * (i / N);
+      pts.push(new Phaser.Geom.Point(x + Math.cos(s) * len, y + Math.sin(s) * len));
+    }
+    g.fillStyle(shade(tint(color), dark), alpha * a);
+    g.fillPoints(pts, true);
+  };
+
+  wedge(1, outer, 0.22);
+  wedge(0.78, mid, 0.42);
+  wedge(0.5, inner, 0.6);
+  wedge(0.22, FOR.hot, 0.85);
+
+  // Arcs riding outward through the wedge, so the cone reads as pouring rather than standing.
+  for (let i = 0; i < 6; i++) {
+    const k = ((t * 1.4 + i / 6) % 1);
+    g.lineStyle(2.4 * (1 - k) + 0.6, shade(tint(FOR.hot), dark), alpha * (1 - k) * 0.55);
+    g.beginPath();
+    g.arc(x, y, len * k, ang - half, ang + half, false);
+    g.strokePath();
+  }
+
+  // Emitter, hotter and larger the more it is costing.
+  g.fillStyle(shade(tint(FOR.hot), dark), alpha * 0.9);
+  g.fillCircle(x, y, 10 + heat * 8);
+  g.fillStyle(shade(tint(mid), dark), alpha * 0.4);
+  g.fillCircle(x, y, 18 + heat * 14);
+}
+
+/**
+ * A 40mm shell in the air. Blunt nose, a band of copper, and four fins that tumble — the shell
+ * is drawn spinning because the thing is lobbed, not fired flat.
+ */
+export function grenadeShape(
+  g: Phaser.GameObjects.Graphics,
+  tint: FortuneColorFn,
+  x: number, y: number, ang: number, alpha: number,
+  { spin = 0, dark = 1, size = 7 } = {},
+): void {
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const P = (u: number, v: number) => pt(x, y, ca, sa, u, v);
+
+  // Fins first, so the body sits over their roots.
+  for (let i = 0; i < 4; i++) {
+    const f = Math.cos(spin * 3 + (i / 4) * TAU);
+    g.fillStyle(shade(tint(FOR.gunmetal), dark * (0.7 + 0.3 * Math.abs(f))), alpha * 0.9);
+    g.fillPoints([P(-size * 0.9, 0), P(-size * 1.7, f * size * 0.85), P(-size * 0.5, f * size * 0.5)], true);
+  }
+  g.fillStyle(shade(tint(FOR.ink), dark), alpha * 0.7);
+  g.fillEllipse(x, y, size * 2.5, size * 1.9);
+  g.fillStyle(shade(tint(FOR.contraband), dark), alpha);
+  g.fillEllipse(x, y, size * 2.1, size * 1.5);
+  // Copper band and the blunt gold nose.
+  g.lineStyle(Math.max(1, size * 0.28), shade(tint(FOR.brass), dark), alpha * 0.9);
+  const b0 = P(-size * 0.15, -size * 0.72);
+  const b1 = P(-size * 0.15, size * 0.72);
+  g.lineBetween(b0.x, b0.y, b1.x, b1.y);
+  g.fillStyle(shade(tint(FOR.gold), dark), alpha);
+  const nose = P(size * 0.95, 0);
+  g.fillCircle(nose.x, nose.y, size * 0.46);
+  g.fillStyle(shade(tint(FOR.hot), dark), alpha * (0.5 + 0.5 * Math.abs(Math.sin(spin * 5))));
+  g.fillCircle(nose.x, nose.y, size * 0.2);
+}
+
+/**
+ * The Bouncy Blaster's heavy round. A capsule of green light with a hard core and a spent-arc
+ * tail; `charge` is how much of its bounce budget is left, and it dims as it is used up.
+ */
+export function bouncyBolt(
+  g: Phaser.GameObjects.Graphics,
+  tint: FortuneColorFn,
+  x: number, y: number, ang: number, size: number, alpha: number,
+  { dark = 1, charge = 1, t = 0 } = {},
+): void {
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const P = (u: number, v: number) => pt(x, y, ca, sa, u, v);
+  const w = size * (0.5 + charge * 0.3);
+
+  g.fillStyle(shade(tint(FOR.neon), dark), alpha * 0.2 * charge);
+  g.fillPoints([P(-size * 4.5, 0), P(-size, -w * 0.9), P(-size, w * 0.9)], true);
+  g.fillStyle(shade(tint(FOR.contraband), dark), alpha * 0.85);
+  g.fillPoints([P(size * 1.6, 0), P(0, -w), P(-size * 1.4, 0), P(0, w)], true);
+  g.fillStyle(shade(tint(FOR.neon), dark), alpha);
+  g.fillPoints([P(size * 1.05, 0), P(0, -w * 0.5), P(-size * 0.8, 0), P(0, w * 0.5)], true);
+  g.fillStyle(shade(tint(FOR.hot), dark), alpha * (0.7 + 0.3 * Math.sin(t * 14)));
+  const core = P(size * 0.2, 0);
+  g.fillCircle(core.x, core.y, size * 0.34);
+}
+
+/**
+ * The Midas round. Slow, fat and obviously expensive: a gilded slug with a heavy corona and
+ * flakes of gold shedding off it as it travels.
+ */
+export function midasBullet(
+  g: Phaser.GameObjects.Graphics,
+  tint: FortuneColorFn,
+  x: number, y: number, ang: number, alpha: number,
+  { t = 0, dark = 1, seed = 0, size = 11 } = {},
+): void {
+  g.fillStyle(shade(tint(FOR.gold), dark), alpha * 0.22);
+  g.fillCircle(x, y, size * 1.9 + Math.sin(t * 6) * 1.4);
+  g.fillStyle(shade(tint(FOR.brass), dark), alpha * 0.4);
+  g.fillCircle(x, y, size * 1.25);
+  bulletShape(g, tint, x, y, ang, size, alpha, { dark, color: FOR.gold, tracer: 1.4, seed });
+  // Flakes shedding off the jacket.
+  for (let i = 0; i < 4; i++) {
+    const k = ((t * 1.6 + i / 4) % 1);
+    const a = ang + Math.PI + (jitter(seed, i) - 0.5) * 1.5;
+    g.fillStyle(shade(tint(FOR.goldLit), dark), alpha * (1 - k) * 0.8);
+    g.fillCircle(x + Math.cos(a) * 16 * k, y + Math.sin(a) * 16 * k - 6 * k, 2 * (1 - k) + 0.6);
+  }
+}
+
+/**
+ * A gilded body. Drawn under whoever the Midas round caught — a slow gold shell with a running
+ * seam of light, so a doubled payout is visible on the target rather than only in the purse.
+ */
+export function gildedAura(
+  g: Phaser.GameObjects.Graphics,
+  tint: FortuneColorFn,
+  x: number, y: number, r: number, alpha: number,
+  { t = 0, dark = 1 } = {},
+): void {
+  g.fillStyle(shade(tint(FOR.gold), dark), alpha * 0.2);
+  g.fillCircle(x, y, r * 1.15);
+  g.lineStyle(2.2, shade(tint(FOR.goldLit), dark), alpha * 0.75);
+  g.strokeCircle(x, y, r);
+  for (let i = 0; i < 3; i++) {
+    const a = t * 2.4 + (i / 3) * TAU;
+    g.lineStyle(1.4, shade(tint(FOR.hot), dark), alpha * 0.7);
+    g.beginPath();
+    g.arc(x, y, r * (0.72 + i * 0.14), a, a + 1.1, false);
+    g.strokePath();
+  }
+}
+
+/**
+ * The Chilly Pepper's ring. A rime front thrown out from the buyer's feet, with frost spurs
+ * standing up off it — cold in a kit where every other effect is fire or gold.
+ */
+export function frostRing(
+  g: Phaser.GameObjects.Graphics,
+  tint: FortuneColorFn,
+  x: number, y: number, r: number, alpha: number,
+  { t = 0, dark = 1, seed = 0 } = {},
+): void {
+  const ice = 0x9fe4ff;
+  const deep = 0x4a86b8;
+  g.fillStyle(shade(tint(deep), dark), alpha * 0.16);
+  g.fillCircle(x, y, r);
+  g.lineStyle(3.2, shade(tint(ice), dark), alpha * 0.8);
+  g.strokeCircle(x, y, r);
+  g.lineStyle(1.2, shade(tint(FOR.hot), dark), alpha * 0.4);
+  g.strokeCircle(x, y, r * 0.82);
+  // Spurs of rime standing off the front, tilted by the seed so no two rings match.
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * TAU + jitter(seed, i) * 0.4 + t * 0.3;
+    const h = 5 + jitter(seed, 30 + i) * 7;
+    const bx = x + Math.cos(a) * r;
+    const by = y + Math.sin(a) * r;
+    g.fillStyle(shade(tint(ice), dark), alpha * 0.85);
+    g.fillPoints([
+      new Phaser.Geom.Point(bx + Math.cos(a) * h, by + Math.sin(a) * h),
+      new Phaser.Geom.Point(bx + Math.cos(a + 1.9) * 3.4, by + Math.sin(a + 1.9) * 3.4),
+      new Phaser.Geom.Point(bx + Math.cos(a - 1.9) * 3.4, by + Math.sin(a - 1.9) * 3.4),
+    ], true);
+  }
+}
+
+/**
+ * A Heal Pylon. A tripod under a crystal that is green and lit when it has a charge in it and
+ * grey and dark when it does not — the light *is* the cooldown readout.
+ */
+export function healPylon(
+  g: Phaser.GameObjects.Graphics,
+  tint: FortuneColorFn,
+  x: number, y: number, alpha: number,
+  { t = 0, dark = 1, ready = 1 } = {},
+): void {
+  const lit = ready > 0.5;
+  const bulb = lit ? FOR.neon : FOR.gunmetal;
+
+  g.fillStyle(shade(tint(FOR.ink), dark), alpha * 0.5);
+  g.fillEllipse(x, y + 15, 26, 8);
+  // Three legs to a collar.
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * TAU + 0.5;
+    g.lineStyle(2.6, shade(tint(FOR.gunmetal), dark), alpha);
+    g.lineBetween(x, y - 2, x + Math.cos(a) * 11, y + 14);
+  }
+  g.fillStyle(shade(tint(FOR.steel), dark), alpha);
+  g.fillRect(x - 4, y - 12, 8, 11);
+  g.fillStyle(shade(tint(FOR.gunmetal), dark), alpha);
+  g.fillRect(x - 5.5, y - 4, 11, 4);
+
+  // The crystal, breathing while charged.
+  const pulse = lit ? 0.75 + 0.25 * Math.sin(t * 4) : 0.35;
+  g.fillStyle(shade(tint(bulb), dark), alpha * 0.22 * pulse);
+  g.fillCircle(x, y - 16, 15 * pulse);
+  g.fillStyle(shade(tint(bulb), dark), alpha * pulse);
+  g.fillPoints([
+    new Phaser.Geom.Point(x, y - 25),
+    new Phaser.Geom.Point(x + 5.5, y - 16),
+    new Phaser.Geom.Point(x, y - 8),
+    new Phaser.Geom.Point(x - 5.5, y - 16),
+  ], true);
+  if (lit) {
+    g.fillStyle(shade(tint(FOR.hot), dark), alpha * 0.9);
+    g.fillPoints([
+      new Phaser.Geom.Point(x, y - 21),
+      new Phaser.Geom.Point(x + 2.4, y - 16),
+      new Phaser.Geom.Point(x, y - 11),
+      new Phaser.Geom.Point(x - 2.4, y - 16),
+    ], true);
+    // A little green cross floating over a charged pylon.
+    g.fillStyle(shade(tint(FOR.neon), dark), alpha * 0.8);
+    const fy = y - 32 - Math.sin(t * 2.6) * 2.5;
+    g.fillRect(x - 1.4, fy - 4.5, 2.8, 9);
+    g.fillRect(x - 4.5, fy - 1.4, 9, 2.8);
+  }
+}
+
+/**
+ * The auditor. A man in a hat lying prone at the top of the arena with a rifle out, drawn small
+ * because he is a long way off — and he is only ever on screen for five seconds.
+ */
+export function auditor(
+  g: Phaser.GameObjects.Graphics,
+  tint: FortuneColorFn,
+  x: number, y: number, ang: number, alpha: number,
+  { dark = 1, fired = 0 } = {},
+): void {
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const P = (u: number, v: number) => pt(x, y, ca, sa, u, v);
+
+  // Rifle, along the line of sight.
+  g.fillStyle(shade(tint(FOR.gunmetal), dark), alpha);
+  g.fillPoints([P(-6, -2), P(30, -1.4), P(30, 1.4), P(-6, 2.6)], true);
+  g.fillStyle(shade(tint(FOR.steel), dark), alpha * 0.8);
+  g.fillPoints([P(6, -4.4), P(14, -4.4), P(14, -2), P(6, -2)], true);   // scope
+  // Bipod.
+  g.lineStyle(1.4, shade(tint(FOR.gunmetal), dark), alpha * 0.9);
+  const bp = P(22, 1.4);
+  g.lineBetween(bp.x, bp.y, bp.x - 4, bp.y + 6);
+  g.lineBetween(bp.x, bp.y, bp.x + 4, bp.y + 6);
+
+  // Body: a suit, prone. Shoulders, then the hat over the head.
+  g.fillStyle(shade(tint(FOR.soot), dark), alpha);
+  g.fillEllipse(x - ca * 12, y - sa * 12, 20, 15);
+  g.fillStyle(shade(tint(FOR.canvasShade), dark), alpha * 0.8);
+  g.fillRect(x - ca * 12 - 1.5, y - sa * 12 - 5, 3, 10);                 // shirt collar
+  g.fillStyle(shade(tint(FOR.ink), dark), alpha);
+  g.fillCircle(x - ca * 4, y - sa * 4, 5.4);                             // head
+  g.fillStyle(shade(tint(FOR.soot), dark), alpha);
+  g.fillEllipse(x - ca * 4, y - sa * 4 - 2, 18, 6);                      // hat brim
+  g.fillRect(x - ca * 4 - 4.5, y - sa * 4 - 8, 9, 6);                    // crown
+
+  if (fired > 0) {
+    const mz = P(31, 0);
+    g.fillStyle(shade(tint(FOR.hot), dark), alpha * fired);
+    g.fillCircle(mz.x, mz.y, 9 * fired);
+  }
+}
+
+/**
+ * The auditor's laser and the reticle it is sitting on. `lock` runs 0→1 over the five seconds
+ * he takes to be sure, and the dot stops wandering as it closes.
+ */
+export function auditMark(
+  g: Phaser.GameObjects.Graphics,
+  tint: FortuneColorFn,
+  fromX: number, fromY: number, x: number, y: number, alpha: number,
+  { t = 0, dark = 1, lock = 0 } = {},
+): void {
+  const wob = (1 - lock) * 5;
+  const px = x + Math.sin(t * 7) * wob;
+  const py = y + Math.cos(t * 5.5) * wob;
+
+  g.lineStyle(1, shade(tint(FOR.blood), dark), alpha * (0.35 + lock * 0.4));
+  g.lineBetween(fromX, fromY, px, py);
+  g.lineStyle(2.6, shade(tint(FOR.blood), dark), alpha * 0.18 * (0.5 + lock));
+  g.lineBetween(fromX, fromY, px, py);
+
+  // Reticle: a ring closing onto the dot with four ticks around it.
+  const r = 22 - lock * 12;
+  g.lineStyle(1.6, shade(tint(FOR.blood), dark), alpha * (0.5 + lock * 0.5));
+  g.strokeCircle(px, py, r);
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * TAU + t * 0.8;
+    g.lineBetween(px + Math.cos(a) * r * 0.55, py + Math.sin(a) * r * 0.55,
+      px + Math.cos(a) * r * 1.3, py + Math.sin(a) * r * 1.3);
+  }
+  g.fillStyle(shade(tint(FOR.blood), dark), alpha * (0.55 + 0.45 * Math.sin(t * 12)));
+  g.fillCircle(px, py, 2.6);
+}
+
 /** A lick of chilli fire off the Spicy Pepper trail. Ragged, low, and leaning with the draught. */
 export function pepperFlame(
   g: Phaser.GameObjects.Graphics,
@@ -684,6 +1044,59 @@ export class FortuneFx extends FxBase {
     });
   }
 
+  /** The Chilly Pepper going off: a rime front thrown outward and a fall of frost behind it. */
+  frost(x: number, y: number, r: number, ms = 620, depth = 11, dark = 1): void {
+    const seed = Math.random() * 999;
+    this.anim(depth, ms, (g, t) => {
+      const e = easeOut(t);
+      frostRing(g, this.tint, x, y, r * (0.25 + e * 0.85), (1 - t) * 0.9, { t: t * 4, dark, seed });
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * TAU + jitter(seed, i) * 0.6;
+        const d = r * (0.3 + jitter(seed, 40 + i) * 0.9) * e;
+        g.fillStyle(shade(this.tint(0xdff3ff), dark), (1 - t) * 0.8);
+        g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d + easeIn(t) * 10, 2.4 * (1 - t) + 0.6);
+      }
+    });
+  }
+
+  /** A shell detonating: a hard shock ring, a soot ball, and fragments thrown flat and far. */
+  blast(x: number, y: number, r: number, ms = 560, depth = 12, dark = 1): void {
+    const seed = Math.random() * 999;
+    this.flashIn(x, y, r * 0.45, FOR.hot, FOR.gold, depth);
+    this.anim(depth, ms, (g, t) => {
+      const e = easeOut(t);
+      g.lineStyle(7 * (1 - t) + 1.4, shade(this.tint(FOR.gold), dark), (1 - t) * 0.8);
+      g.strokeCircle(x, y, r * e);
+      g.lineStyle(2, shade(this.tint(FOR.hot), dark), (1 - t) * 0.5);
+      g.strokeCircle(x, y, r * e * 0.6);
+      g.fillStyle(shade(this.tint(FOR.soot), dark), (1 - t) * 0.5);
+      g.fillCircle(x, y, r * e * 0.7);
+      for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * TAU + jitter(seed, i) * 0.5;
+        const d = r * (0.6 + jitter(seed, 60 + i) * 0.7) * e;
+        g.lineStyle(2 * (1 - t) + 0.5, shade(this.tint(i % 3 ? FOR.gold : FOR.contraband), dark), (1 - t) * 0.9);
+        g.lineBetween(x + Math.cos(a) * d * 0.6, y + Math.sin(a) * d * 0.6,
+          x + Math.cos(a) * d, y + Math.sin(a) * d);
+      }
+    });
+  }
+
+  /** Somebody leaving the floor — up the way for a grenade launch, or sideways for a Tele-Core. */
+  rift(x: number, y: number, r = 26, ms = 420, depth = 11, dark = 1): void {
+    this.anim(depth, ms, (g, t) => {
+      const k = 1 - easeOut(t);
+      g.lineStyle(3.4 * k + 0.6, shade(this.tint(FOR.goldLit), dark), k * 0.9);
+      g.strokeEllipse(x, y, r * (2 - k) * 0.8, r * k * 1.4 + 4);
+      g.lineStyle(1.4, shade(this.tint(FOR.hot), dark), k * 0.7);
+      g.strokeEllipse(x, y, r * k, r * k * 1.8);
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * TAU + t * 4;
+        g.fillStyle(shade(this.tint(FOR.gold), dark), k * 0.8);
+        g.fillCircle(x + Math.cos(a) * r * (1 - k) , y + Math.sin(a) * r * (1 - k) * 0.5, 2.2 * k + 0.5);
+      }
+    });
+  }
+
   /** Spent brass off the ejection port. Small, and the only thing in the kit that bounces. */
   brass(x: number, y: number, ang: number, ms = 620, depth = 9, dark = 1): void {
     const a = ang + Math.PI / 2 + (Math.random() - 0.5) * 0.5;
@@ -700,6 +1113,55 @@ export class FortuneFx extends FxBase {
         new Phaser.Geom.Point(px - Math.cos(ra) * 2.6, py - Math.sin(ra) * 2.6),
         new Phaser.Geom.Point(px - Math.cos(ra + 1.6) * 1.1, py - Math.sin(ra + 1.6) * 1.1),
       ], true);
+    });
+  }
+
+  /**
+   * The Acceleration Gear, doing its one job.
+   *
+   * A steel cog thrown out of the ejection port alongside the brass, spinning back down the line
+   * of the shot. `accel` is the live rate multiplier: it sets how many teeth are on the cog, how
+   * fast it turns, and whether it has gone gold — the mod at full song is a bright, obviously
+   * over-driven thing, and on a nearly full magazine it is a dull grey nothing.
+   */
+  gear(x: number, y: number, ang: number, accel: number, ms = 340, depth = 10, dark = 1): void {
+    const k = Phaser.Math.Clamp((accel - 1) / 1.2, 0, 1);
+    const teeth = 7 + Math.round(k * 5);
+    const a = ang + Math.PI + (Math.random() - 0.5) * 0.7;
+    const d = 12 + k * 20;
+    const r0 = 3.4 + k * 2.6;
+    const spin = Math.random() * TAU;
+    const hot = k > 0.55;
+    this.anim(depth, ms, (g, t) => {
+      const px = x + Math.cos(a) * d * easeOut(t);
+      const py = y + Math.sin(a) * d * easeOut(t) + easeIn(t) * 16;
+      const fade = 1 - t;
+      const ra = spin + t * (10 + k * 26);
+      const r = r0 * (0.7 + fade * 0.3);
+
+      // The teeth, drawn as a ring of stubs so the cog reads as toothed at 7px across.
+      g.fillStyle(shade(this.tint(hot ? FOR.gold : FOR.steel), dark), fade * 0.9);
+      for (let i = 0; i < teeth; i++) {
+        const ta = ra + (i / teeth) * TAU;
+        const tx = px + Math.cos(ta) * r * 1.32;
+        const ty = py + Math.sin(ta) * r * 1.32;
+        g.fillPoints([
+          new Phaser.Geom.Point(tx + Math.cos(ta + 1.57) * r * 0.28, ty + Math.sin(ta + 1.57) * r * 0.28),
+          new Phaser.Geom.Point(tx - Math.cos(ta + 1.57) * r * 0.28, ty - Math.sin(ta + 1.57) * r * 0.28),
+          new Phaser.Geom.Point(px - Math.cos(ta + 1.57) * r * 0.34 + Math.cos(ta) * r * 0.8,
+            py - Math.sin(ta + 1.57) * r * 0.34 + Math.sin(ta) * r * 0.8),
+          new Phaser.Geom.Point(px + Math.cos(ta + 1.57) * r * 0.34 + Math.cos(ta) * r * 0.8,
+            py + Math.sin(ta + 1.57) * r * 0.34 + Math.sin(ta) * r * 0.8),
+        ], true);
+      }
+      // Body, then the bore through the middle so it is a cog rather than a saw blade.
+      g.fillStyle(shade(this.tint(hot ? FOR.brass : FOR.gunmetal), dark), fade * 0.95);
+      g.fillCircle(px, py, r);
+      g.fillStyle(shade(this.tint(FOR.ink), dark), fade * 0.9);
+      g.fillCircle(px, py, r * 0.34);
+      // One tooth catches the light, which is what makes the spin legible at this size.
+      g.fillStyle(shade(this.tint(hot ? FOR.hot : FOR.canvasShade), dark), fade * 0.8);
+      g.fillCircle(px + Math.cos(ra) * r * 1.32, py + Math.sin(ra) * r * 1.32, r * 0.3);
     });
   }
 }

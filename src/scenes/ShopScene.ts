@@ -3,6 +3,7 @@ import * as PlayerData from '../data/PlayerData';
 import { ALL_UPGRADES, getElementUpgrades, UpgradeDef } from '../data/Upgrades';
 import { GAUNTLET_COST, GAUNTLET_HARD_COST } from '../data/GauntletData';
 import { ABSTRACT_ELEMENT_IDS, ABSTRACT_ELEMENT_UNLOCK_MAP, ABSTRACT_MIX_ELEMENT_IDS } from '../data/AbstractElements';
+import { allSelectableElements, findElementDef } from '../data/ElementRoster';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix, tintPlate,
   addBackdrop, addBackButton, addButton, addChip, addHeaderBar, addModal, addPanel, addPagerButton,
@@ -43,6 +44,10 @@ const ELEMENT_COLORS: Record<string, number> = {
   paper:       0xf2ead6,
   death:       0x4a4468,
   quantum:     0x7df9ff,
+  gum:         0x46b93f,
+  bind:        0xe0b743,
+  radiation:   0x7cff3d,
+  psychic:     0x9b4dff,
 };
 
 const ELEMENT_EMOJIS: Record<string, string> = {
@@ -77,6 +82,10 @@ const ELEMENT_EMOJIS: Record<string, string> = {
   paper:       '📄',
   death:       '⚰️',
   quantum:     '⚛️',
+  gum:         '🫠',
+  bind:        '⛓️',
+  radiation:   '☢️',
+  psychic:     '👁️',
 };
 
 const BASE_ELEMENT_IDS = ['fire', 'water', 'life', 'air', 'earth'];
@@ -124,16 +133,23 @@ export class ShopScene extends Phaser.Scene {
     const cx = width / 2;
 
     // ── Page routing ─────────────────────────────────────────────
+    // What the shop stocks is decided by the same roster the element-select screens use, not
+    // by `PlayerData.isElementUnlocked` on its own. The two disagree: a cheat profile is
+    // minted once and never topped up, so `unlockedFinaleElements()`/`TEST_ELEMENTS` hand out
+    // Quantum, Slime, Bind and friends on the strength of the mode alone. Asking the save
+    // directly left those elements playable but unshoppable — you could field a Quantum and
+    // never find the plate that sells it Third State.
+    const playable = new Set(allSelectableElements().map((e) => e.id));
     const combinedIds = ALL_UPGRADES
       .map((e) => e.elementId)
-      .filter((id) => !BASE_ELEMENT_IDS.includes(id) && !ABSTRACT_ELEMENT_IDS.includes(id) && !ABSTRACT_MIX_ELEMENT_IDS.includes(id) && PlayerData.isElementUnlocked(id));
+      .filter((id) => !BASE_ELEMENT_IDS.includes(id) && !ABSTRACT_ELEMENT_IDS.includes(id) && !ABSTRACT_MIX_ELEMENT_IDS.includes(id) && playable.has(id));
     const COMBINED_PER_PAGE = 5;
     const totalCombinedPages = combinedIds.length > 0 ? Math.ceil(combinedIds.length / COMBINED_PER_PAGE) : 0;
     const abstractIds = ABSTRACT_ELEMENT_IDS.filter(
-      (id) => PlayerData.getCompletedGauntlets().includes(ABSTRACT_ELEMENT_UNLOCK_MAP[id]) &&
+      (id) => (playable.has(id) || PlayerData.getCompletedGauntlets().includes(ABSTRACT_ELEMENT_UNLOCK_MAP[id])) &&
                ALL_UPGRADES.some((e) => e.elementId === id),
     );
-    const mixIds = ABSTRACT_MIX_ELEMENT_IDS.filter((id) => PlayerData.isElementUnlocked(id) && ALL_UPGRADES.some((e) => e.elementId === id));
+    const mixIds = ABSTRACT_MIX_ELEMENT_IDS.filter((id) => playable.has(id) && ALL_UPGRADES.some((e) => e.elementId === id));
     // Page 0 = base, 1..totalCombined = combined, ABSTRACT_PAGE = abstract, MIX_PAGE = abstract-mix,
     // SPECIALS_PAGE = specials, DOOR_PAGE = the room past the end of the shop.
     const ABSTRACT_PAGE = 1 + totalCombinedPages;
@@ -291,8 +307,12 @@ export class ShopScene extends Phaser.Scene {
 
     elementIds.forEach((elementId, colIdx) => {
       const colCX = colIdx * colW + colW / 2;
-      const accent = ELEMENT_COLORS[elementId] ?? C.steel;
-      const emoji = ELEMENT_EMOJIS[elementId] ?? '?';
+      // The two maps above win where they exist — a few shop crests deliberately differ from
+      // the roster's (`sand` here is Time, not the Sand element). Anything they never got an
+      // entry for falls back to the roster card rather than to a grey '?' plate.
+      const rosterDef = findElementDef(elementId);
+      const accent = ELEMENT_COLORS[elementId] ?? rosterDef?.color ?? C.steel;
+      const emoji = ELEMENT_EMOJIS[elementId] ?? rosterDef?.emoji ?? '?';
       const upgrades = getElementUpgrades(elementId);
 
       // ── Element crest ────────────────────────────────────────

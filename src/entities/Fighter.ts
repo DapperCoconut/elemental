@@ -103,6 +103,13 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   public passionIncomingMult = 1;
   /**
+   * Fortune (Tax Evasion, F+): 1.2 for the 8 seconds after the auditor's rifle lands, and 1
+   * every other frame of the game. Its own field for the same reason Justice, Magma, Conquest
+   * and Passion have theirs — FortuneKit rewrites it from scratch every frame, and sharing
+   * `incomingDamageMultiplier` would stomp whatever else had written armour that tick.
+   */
+  public fortuneIncomingMult = 1;
+  /**
    * Ruin (Unstoppable Decay): 1.1^stacks of rot on this fighter, times 0.9^stacks carried by
    * whoever is hitting it — the victim-side stand-in for "the decayed deal less", since
    * `takeDamage` has no attacker reference. Rewritten from scratch by RuinKit every frame,
@@ -155,6 +162,20 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    * illusionist is standing on that side of it, and the two are allowed to multiply.
    */
   public illusionIncomingMult = 1;
+  /**
+   * Marrow (Cytokine Storm, R+): the vulnerability a neutrophil's cytokine pellets stack onto
+   * whatever they hit. Its own field for the reason Justice, Illusion and Sound have theirs —
+   * MarrowKit rewrites it from scratch every frame off its own stack table, and sharing
+   * `incomingDamageMultiplier` would stomp whatever else wrote armour that tick.
+   */
+  public marrowIncomingMult = 1;
+  /**
+   * Sound (Sound System, E+): the armour banked by cutting people with the blue record. Its own
+   * field for the reason Justice, Magma and Illusion have theirs — SoundKit rewrites it from
+   * scratch every frame, and sharing `incomingDamageMultiplier` would stomp whatever else wrote
+   * armour that tick. Floored well above zero so a long match cannot make anyone untouchable.
+   */
+  public soundIncomingMult = 1;
   /**
    * Radiation (Irradiated): `Date.now()` epoch until which every point of healing aimed at this
    * fighter lands as damage instead — see `heal`. One field rather than a hook per healing
@@ -705,7 +726,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // Tallied here: after the crit roll (a crit really is a bigger hit) but before every
       // mitigation multiplier on the line below, which is what "damage aimed at you" means.
       this.rawDamageTaken += amount;
-      let mitigation = this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.orderIncomingMult * this.netDefenseMult;
+      let mitigation = this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.marrowIncomingMult * this.orderIncomingMult * this.fortuneIncomingMult * this.netDefenseMult;
       // Ruin's spikes turn armour inside out — 25% less damage taken comes back as 25% more.
       // Only a net *buff* is flipped; a fighter already taking extra damage is left alone.
       if (mitigation < 1 && this.scene.time.now < this.buffsInvertedUntil) mitigation = 2 - mitigation;
@@ -1021,6 +1042,16 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** As {@link effectiveCooldown}, including whatever split was banked when this id was stamped. */
   private storedCooldown(abilityId: string, ability: { cooldown: number; isUltimate?: boolean }): number {
     return this.effectiveCooldown(ability) * (this.cooldownScales.get(abilityId) ?? 1);
+  }
+
+  /**
+   * Stretch (or shorten) the cooldown of the cast that just went off, for one key that resolves
+   * into two different abilities — Sound's Q is a cheap Coda until it maxes, then becomes Solo
+   * and has to pay full ultimate price. Multiplies the scale `stampCast` banked, so it composes
+   * with a Quantum split rather than overwriting it, and the next stamp clears it.
+   */
+  scaleStampedCooldown(abilityId: string, mult: number): void {
+    this.cooldownScales.set(abilityId, (this.cooldownScales.get(abilityId) ?? 1) * mult);
   }
 
   /** Fired when a banked Ability Split is actually spent, so QuantumCoreKit can draw it. */

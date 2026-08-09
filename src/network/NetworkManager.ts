@@ -4,7 +4,7 @@ import type { NetStatusEntry } from './NetStatusSync';
 import type { NetConquestSnap } from '../elements/kits/ConquestKit';
 
 /** Bump when the wire protocol or gameplay sync changes incompatibly. */
-export const NET_PROTOCOL_VERSION = 18;
+export const NET_PROTOCOL_VERSION = 21;
 
 /** Lobby selection payload exchanged while both players pick loadouts. */
 export interface NetSelection {
@@ -97,7 +97,11 @@ export type NetPsychicMsg =
   | { t: 'psy'; k: 'scatter'; ms: number }
   // Psychic → victim: Coma. Held still and disarmed for `ms`. The half-damage half of the
   // ability is resolved on the psychic's own replica, so it is deliberately not sent.
-  | { t: 'psy'; k: 'coma'; ms: number };
+  | { t: 'psy'; k: 'coma'; ms: number }
+  // Psychic → victim: Whip Snap (Click+) caught the end of your route. Put yourself there.
+  // Sent rather than applied because a replica's position is streamed from the machine that
+  // owns it — moving the copy here would be undone by the next position packet.
+  | { t: 'psy'; k: 'snap'; x: number; y: number };
 
 /**
  * Conquest ships its whole board rather than events.

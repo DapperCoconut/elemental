@@ -4,8 +4,9 @@ import { Projectile } from '../../combat/Projectile';
 import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
 import {
-  ColiseumRing, FlamePillar, JUS, JusticeAvatar, JusticeColorFn, JusticeFx, SeraphForm,
-  chainRun, padlock, spearShape,
+  ColiseumRing, FlamePillar, JUS, JudgeRig, JusticeAvatar, JusticeColorFn, JusticeFx, SeraphForm,
+  chainHead, chainRun, drawJudgeScene, judgeRig, padlock, spearShape, tranceBeams, wallSlab,
+  willMeter,
 } from './JusticeVisuals';
 
 type Owner = 'player' | 'npc';
@@ -1034,32 +1035,14 @@ export class JusticeKit {
     this.judge = null;
   }
 
-  /**
-   * The whole scale rig, in one place. Both the painter and the victim's position read
-   * from this — computing them separately is how a defendant ends up hanging in mid-air
-   * next to the pan they are supposed to be sitting in.
-   */
-  private judgeRig(j: JudgeScene, time: number) {
-    const cx = (this.left + this.right) / 2;
-    const t = Phaser.Math.Clamp(1 - (j.until - time) / JUDGE_SCENE_MS, 0, 1);
-    const scale = 1 + t * 0.35;
-    const gx = cx + 150;
-    const gy = this.bottom + 40;
-    const fistX = gx - 96 * scale;
-    const fistY = gy - 220 * scale;
-    // Guilt weighs: the more damage on the record, the further the left pan sinks.
-    const guilt = Phaser.Math.Clamp(j.damage / 400, 0, 1);
-    const tilt = Math.sin(t * Math.PI * 1.5) * 0.15 + t * guilt * 0.45;
-    const beamLen = 92;
-    const bx = fistX;
-    const by = fistY + 34;
-    const lx = bx - Math.cos(tilt) * beamLen;
-    const ly = by - Math.sin(tilt) * beamLen;
-    const rx = bx + Math.cos(tilt) * beamLen;
-    const ry = by + Math.sin(tilt) * beamLen;
-    /** Where a body sitting in the left pan actually rests. */
-    const seat = { x: lx, y: ly + 30 };
-    return { t, scale, gx, gy, fistX, fistY, bx, by, lx, ly, rx, ry, tilt, seat };
+  /** The scale rig for the frame, from the shared geometry in JusticeVisuals. */
+  private judgeRig(j: JudgeScene, time: number): JudgeRig {
+    return judgeRig({
+      cx: (this.left + this.right) / 2,
+      bottom: this.bottom,
+      t: Phaser.Math.Clamp(1 - (j.until - time) / JUDGE_SCENE_MS, 0, 1),
+      guilt: Phaser.Math.Clamp(j.damage / 400, 0, 1),
+    });
   }
 
   private updateBinds(time: number): void {
@@ -1204,31 +1187,16 @@ export class JusticeKit {
     // ── Flying walls ──
     for (const w of this.walls) {
       const face = this.wallFace(w);
-      const tint = this.col(w.owner);
       const vertical = face.nx !== 0;
-      const x = vertical ? face.x : (this.left + this.right) / 2;
-      const y = vertical ? (this.top + this.bottom) / 2 : face.y;
-      const halfLen = w.span / 2;
-
-      gg.fillStyle(tint(JUS.stoneDark), 0.95);
-      if (vertical) gg.fillRect(x - WALL_THICK / 2, y - halfLen, WALL_THICK, w.span);
-      else gg.fillRect(x - halfLen, y - WALL_THICK / 2, w.span, WALL_THICK);
-      gg.fillStyle(tint(JUS.stone), 0.95);
-      if (vertical) gg.fillRect(x - WALL_THICK / 2, y - halfLen, WALL_THICK * 0.55, w.span);
-      else gg.fillRect(x - halfLen, y - WALL_THICK / 2, w.span, WALL_THICK * 0.55);
-
-      // Masonry courses along its length, so a slab this big isn't a flat bar.
-      gg.lineStyle(1.2, tint(JUS.stoneDark), 0.8);
-      const courses = Math.round(w.span / 34);
-      for (let i = 1; i < courses; i++) {
-        const f = -halfLen + (i / courses) * w.span;
-        if (vertical) gg.lineBetween(x - WALL_THICK / 2, y + f, x + WALL_THICK / 2, y + f);
-        else gg.lineBetween(x + f, y - WALL_THICK / 2, x + f, y + WALL_THICK / 2);
-      }
-      // Dust boiling off the leading face.
-      gg.fillStyle(tint(JUS.stone), 0.2 + 0.08 * Math.sin(this.vizT * 12));
-      if (vertical) gg.fillRect(x + face.nx * WALL_THICK * 0.6, y - halfLen, 10, w.span);
-      else gg.fillRect(x - halfLen, y + face.ny * WALL_THICK * 0.6, w.span, 10);
+      wallSlab(gg, this.col(w.owner), {
+        x: vertical ? face.x : (this.left + this.right) / 2,
+        y: vertical ? (this.top + this.bottom) / 2 : face.y,
+        vertical,
+        span: w.span,
+        thick: WALL_THICK,
+        nx: face.nx, ny: face.ny,
+        t: this.vizT,
+      });
     }
 
     // ── Bind chains on the guilty ──
@@ -1252,19 +1220,7 @@ export class JusticeKit {
     for (const c of this.chains) {
       const f = this.fighter(c.owner);
       chainRun(ag, this.col(c.owner), f.x, f.y, c.x, c.y, 0.95, 11, 2.4, 6);
-      // Grapple head.
-      const ang = Math.atan2(c.vy, c.vx);
-      ag.fillStyle(this.col(c.owner)(JUS.gold), 1);
-      for (let i = -1; i <= 1; i += 2) {
-        const a = ang + i * 0.8;
-        ag.fillTriangle(
-          c.x, c.y,
-          c.x - Math.cos(a) * 12, c.y - Math.sin(a) * 12,
-          c.x - Math.cos(ang) * 9, c.y - Math.sin(ang) * 9,
-        );
-      }
-      ag.fillStyle(this.col(c.owner)(JUS.pale), 1);
-      ag.fillCircle(c.x, c.y, 3);
+      chainHead(ag, this.col(c.owner), c.x, c.y, Math.atan2(c.vy, c.vx));
     }
 
     // ── Anchored chains, waiting on a recast ──
@@ -1292,20 +1248,7 @@ export class JusticeKit {
       const v = s.tranceVictim;
       if (!v || !v.active || s.tranceUntil <= time || s.seraphUntil > time) continue;
       const f = this.fighter(owner);
-      const ang = Math.atan2(f.y - v.y, f.x - v.x);
-      const tint = this.col(owner);
-      for (const side of [-1, 1]) {
-        const ex = v.x + Math.cos(ang) * 6 + Math.cos(ang + Math.PI / 2) * side * 6;
-        const ey = v.y - 4 + Math.sin(ang) * 6 + Math.sin(ang + Math.PI / 2) * side * 6;
-        ag.fillStyle(tint(JUS.white), 0.5 + 0.2 * Math.sin(this.vizT * 9 + side));
-        ag.fillTriangle(
-          ex, ey,
-          ex + Math.cos(ang) * 120 - Math.sin(ang) * 11, ey + Math.sin(ang) * 120 + Math.cos(ang) * 11,
-          ex + Math.cos(ang) * 120 + Math.sin(ang) * 11, ey + Math.sin(ang) * 120 - Math.cos(ang) * 11,
-        );
-        ag.fillStyle(tint(JUS.pale), 0.9);
-        ag.fillCircle(ex, ey, 2.6);
-      }
+      tranceBeams(ag, this.col(owner), v.x, v.y, Math.atan2(f.y - v.y, f.x - v.x), this.vizT);
     }
   }
 
@@ -1331,74 +1274,16 @@ export class JusticeKit {
     if (!j || time >= j.until) return;
     const r = this.judgeRig(j, time);
     const tint = this.col(j.owner);
-    const cx = (this.left + this.right) / 2;
-    const fade = r.t < 0.12 ? r.t / 0.12 : r.t > 0.9 ? (1 - r.t) / 0.1 : 1;
-    const sc = r.scale;
-
-    // Court dark: everything that is not the scale drops away.
-    g.fillStyle(0x05040a, 0.62 * fade);
-    g.fillRect(0, 0, this.api.width, this.api.height);
-
-    // The judge, risen out of the floor to fill the right half of the arena.
-    g.fillStyle(tint(JUS.umber), 0.92 * fade);
-    g.fillEllipse(r.gx, r.gy - 120 * sc, 150 * sc, 250 * sc);
-    g.fillStyle(tint(JUS.bronze), 0.75 * fade);
-    g.fillEllipse(r.gx - 18 * sc, r.gy - 150 * sc, 96 * sc, 150 * sc);
-    // Head + laurel.
-    const hx = r.gx - 10 * sc;
-    const hy = r.gy - 250 * sc;
-    g.fillStyle(tint(JUS.umber), 0.95 * fade);
-    g.fillCircle(hx, hy, 52 * sc);
-    for (let i = 0; i < 7; i++) {
-      const a = -Math.PI + (i / 6) * Math.PI;
-      g.fillStyle(tint(JUS.gold), 0.9 * fade);
-      g.fillEllipse(hx + Math.cos(a) * 54 * sc, hy + Math.sin(a) * 40 * sc, 20 * sc, 9 * sc);
-    }
-    // Eyes, blazing.
-    for (const side of [-1, 1]) {
-      g.fillStyle(tint(JUS.pale), fade);
-      g.fillCircle(hx + side * 18 * sc, hy - 8 * sc, 8 * sc);
-      g.fillStyle(tint(JUS.gold), fade);
-      g.fillCircle(hx + side * 18 * sc, hy - 8 * sc, 4 * sc);
-    }
-
-    // The scales, hanging out of the giant's fist.
-    g.fillStyle(tint(JUS.gold), fade);
-    g.fillCircle(r.fistX, r.fistY, 22 * sc);
-    g.lineStyle(7 * sc, tint(JUS.gold), fade);
-    g.lineBetween(r.fistX, r.fistY, r.bx, r.by);
-    g.lineStyle(6 * sc, tint(JUS.bright), fade);
-    g.lineBetween(r.lx, r.ly, r.rx, r.ry);
-    g.fillStyle(tint(JUS.pale), fade);
-    g.fillCircle(r.bx, r.by, 7 * sc);
-
-    // Two pans on chains. The left one is where the defendant is sitting — its dish is
-    // drawn from the same `seat` the victim is pinned to, so they never come apart.
-    const pans: [number, number, number][] = [[r.lx, r.ly, -1], [r.rx, r.ry, 1]];
-    for (const [px, py, dir] of pans) {
-      chainRun(g, tint, px, py, px, py + 42, fade, 10, 2, 0);
-      g.fillStyle(tint(JUS.gold), fade);
-      g.fillEllipse(px, py + 46, 62, 15);
-      g.fillStyle(tint(JUS.bronze), fade);
-      g.fillEllipse(px, py + 50, 54, 11);
-      if (dir > 0) {
-        // A feather on the other pan — the thing being weighed against.
-        g.fillStyle(tint(JUS.white), fade * 0.95);
-        g.fillEllipse(px, py + 34, 12, 30);
-        g.lineStyle(1.6, tint(JUS.stone), fade);
-        g.lineBetween(px, py + 20, px, py + 48);
-      }
-    }
-
-    // Verdict placard, once the beam has settled. The word itself is Text, dropped by
-    // showFloatingText when the sentence lands — this plate is the frame it appears in.
-    if (r.t > 0.62) {
-      const a = Math.min(1, (r.t - 0.62) / 0.15) * fade;
-      g.fillStyle(tint(JUS.umber), 0.85 * a);
-      g.fillRoundedRect(cx - 125, this.top + 62, 250, 54, 10);
-      g.lineStyle(3, j.tier.damned ? this.pcol(JUS.damned) : tint(JUS.gold), a);
-      g.strokeRoundedRect(cx - 125, this.top + 62, 250, 54, 10);
-    }
+    // The word on the placard is Text, dropped by showFloatingText when the sentence lands —
+    // the plate the painter draws is the frame it appears in.
+    drawJudgeScene(g, tint, r, {
+      width: this.api.width,
+      height: this.api.height,
+      top: this.top,
+      cx: (this.left + this.right) / 2,
+      fade: r.t < 0.12 ? r.t / 0.12 : r.t > 0.9 ? (1 - r.t) / 0.1 : 1,
+      placardColor: j.tier.damned ? this.pcol(JUS.damned) : tint(JUS.gold),
+    });
   }
 
   /** The Willpower meter — the one number both stances spend. */
@@ -1417,21 +1302,9 @@ export class JusticeKit {
     const y = this.top + 8;
     const ratio = s.will / WILL_MAX;
 
-    g.fillStyle(0x05070f, 0.85);
-    g.fillRoundedRect(x - 3, y - 3, w + 6, h + 6, 4);
-    g.lineStyle(1.5, this.pcol(JUS.will), 0.7);
-    g.strokeRoundedRect(x - 3, y - 3, w + 6, h + 6, 4);
-    g.fillStyle(this.pcol(JUS.willDeep), 0.9);
-    g.fillRect(x, y, w, h);
     // Draining reads red-hot at the bottom of the bar; regen glows.
     const low = ratio < 0.25;
-    g.fillStyle(this.pcol(low ? JUS.damned : JUS.will), 1);
-    g.fillRect(x, y, w * ratio, h);
-    g.fillStyle(this.pcol(JUS.willPale), 0.55);
-    g.fillRect(x, y, w * ratio, h * 0.38);
-    // Quarter ticks, so the drain rate is legible at a glance.
-    g.lineStyle(1, 0x05070f, 0.7);
-    for (let i = 1; i < 4; i++) g.lineBetween(x + (w * i) / 4, y, x + (w * i) / 4, y + h);
+    willMeter(g, this.pcol, x, y, w, h, ratio);
 
     if (!this.hudLabel) {
       this.hudLabel = this.api.scene.add.text(x, y + h + 3, '', {

@@ -45,7 +45,7 @@ const shards: Ability = {
 const idol: Ability = {
   id: 'bind-idol',
   name: 'Summon Idol',
-  description: 'Plant an idol with a ring of ground around it. It runs on faith: standing in the ring feeds it one a second, it burns one a second on its own, it holds ten, and every second it has any it throws a volley of oblivion shards. Starve it and it stops asking politely — an empty idol feeds the patron 5 anger a second until you come back or it crumbles.',
+  description: 'Plant an idol with a ring of ground around it. It runs on faith: standing in the ring feeds it one a second, stepping out burns one a second, it holds ten, and every second it has any it throws a volley of oblivion shards. Starve it and it stops asking politely — an empty idol feeds the patron 5 anger a second until you come back or it crumbles.',
   displayKey: 'R',
   cooldown: 20000,
   cast(ctx: CastContext) { ctx.bindIdol(ctx.targetX, ctx.targetY); },
@@ -63,7 +63,7 @@ const protection: Ability = {
 const treachery: Ability = {
   id: 'bind-treachery',
   name: 'God of Treachery',
-  description: 'The eye opens all the way for 15 seconds — shard volleys, claw swipes, lasers out of every eye it has and slow beams of dark light dropped across whole stretches of the arena. The price is paid on the press: choose one of your other four abilities and it is dead for the rest of the match.',
+  description: 'The eye opens all the way for 15 seconds — shard volleys, claw swipes, lasers out of every eye it has and slow beams of dark light dropped across whole stretches of the arena. You do none of it: four chains come out of the corners of the arena and hold you in the middle of it, and you cannot cast a thing until they let go. The price is paid on the press — choose one of your other four abilities and it is dead for the rest of the match — and the moment the sky closes the patron\'s anger is at the top of the bar.',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 60000,
