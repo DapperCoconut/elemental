@@ -10,6 +10,10 @@ import { WorldBossKit, WorldBossArenaApi } from '../boss/framework/WorldBossKit'
 import { getWorldBossDef } from '../boss/bosses';
 import { CampaignFormatKit, CampaignFormatArenaApi } from '../elements/kits/CampaignFormatKit';
 import { GimmickKit, GimmickArenaApi } from '../elements/kits/GimmickKit';
+import { SecretMapKit, SecretMapArenaApi } from '../elements/kits/SecretMapKit';
+import { DuoKit, DuoArenaApi } from '../elements/kits/DuoKit';
+import { SecretTagState } from '../data/SecretModes';
+import { setProgressLocked } from '../data/ProgressLock';
 import { TagTeamState, isPledgeFight } from '../data/FightFormats';
 import { getEffectiveFightDef } from '../data/CampaignFightsHard';
 import { Projectile } from '../combat/Projectile';
@@ -136,8 +140,10 @@ import * as PlayerData from '../data/PlayerData';
 import { getEnhancement } from '../data/Mastery';
 import { getTotalRewardMult, MUTATIONS, getBossMutationIds } from '../data/Mutations';
 import { consumedItemIds, clearConsumedItems } from '../data/Items';
+import { armedArtifactIds, clearArmedArtifacts } from '../data/Artifacts';
 import { HP_SCALE } from '../data/Balance';
 import { ItemsKit } from '../elements/kits/ItemsKit';
+import { ArtifactsKit } from '../elements/kits/ArtifactsKit';
 import { computeCurseShardMult } from '../data/GauntletBoosts';
 import { INFINITY_GAUNTLET_ID, infinityHpMult, infinityDmgMult, infinityFightShards, infinityDifficulty, GauntletState, getEffectiveStacks } from '../data/GauntletData';
 import { drawCampaignBackground } from './CampaignBackground';
@@ -146,6 +152,9 @@ import { Sfx, Music } from '../audio';
 
 /** `DIFFICULTY_PRESETS[3]` — the "Expert" rung, named for the achievements that gate on it. */
 const EXPERT_DIFFICULTY_LEVEL = 4;
+
+/** Practice range: how long a damage tally runs before it rolls over. */
+const DUMMY_COMBO_WINDOW_MS = 5000;
 
 interface AbilityBarEntry {
   fill: Phaser.GameObjects.Rectangle;
@@ -364,13 +373,38 @@ export class ArenaScene extends Phaser.Scene {
   private invasionCoopKit: InvasionCoopKit | null = null;
 
 
-  // Dummy mode keys (arrow keys + P for dummy control)
+  // Dummy mode keys (arrow keys move the target, P fires, O wakes its abilities up)
   private dummyUpKey!: Phaser.Input.Keyboard.Key;
   private dummyDownKey!: Phaser.Input.Keyboard.Key;
   private dummyLeftKey!: Phaser.Input.Keyboard.Key;
   private dummyRightKey!: Phaser.Input.Keyboard.Key;
   private dummyFireKey!: Phaser.Input.Keyboard.Key;
+  private dummyToggleKey!: Phaser.Input.Keyboard.Key;
   private dummyBackBtn: Phaser.GameObjects.Text | null = null;
+
+  // ── Secret modes ───────────────────────────────────────────────────
+  /** Which secret mode this bout is, if any. See `src/data/SecretModes.ts`. */
+  private secretMode: string | null = null;
+  /**
+   * Dummy mode. The opponent is the real element the player picked, standing
+   * still and unable to die, with a five-second damage tally over its head.
+   */
+  private dummyPractice = false;
+  /** O toggles the target's abilities back on. It still never moves on its own. */
+  private dummyAttacksOn = false;
+  private dummyComboDamage = 0;
+  private dummyComboResetAt = 0;
+  private dummyComboText: Phaser.GameObjects.Text | null = null;
+  private dummyBestCombo = 0;
+  private dummyHudTexts: Phaser.GameObjects.Text[] = [];
+  /** Tag Team: three of yours against three of theirs. */
+  private secretTag: SecretTagState | null = null;
+  /** Set when this tag chain is settling an unstable forge — see the Disgraced Lab's second tier. */
+  private stabilize: { result: string } | null = null;
+  /** World Shift's five arenas. Idle (mapId null) in every other mode. */
+  private secretMapKit!: SecretMapKit;
+  /** Duo's second opponent. */
+  private duoKit!: DuoKit;
 
   // Input keys
   private wKey!: Phaser.Input.Keyboard.Key;
@@ -806,6 +840,7 @@ export class ArenaScene extends Phaser.Scene {
 
   // ── Items kit ─────────────────────────────────────────────────────────
   private itemsKit!: ItemsKit;
+  private artifactsKit!: ArtifactsKit;
 
   // ── Fate kit ──────────────────────────────────────────────────────────
   private fateKit!: FateKit;
@@ -834,8 +869,23 @@ export class ArenaScene extends Phaser.Scene {
     super({ key: 'ArenaScene' });
   }
 
-  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; starredMutations?: string[]; mode?: string; invasionDifficulty?: string; gauntlet?: import('../data/GauntletData').GauntletState; playerPerk?: string | null; npcPerk?: string | null; campaign?: { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean; hardMode?: boolean }; quantumBond?: [string, string]; npcQuantumBond?: [string, string]; hpMult?: number; npcOutgoingDamageMult?: number; bounty?: { key: string; reward: number }; bossHard?: boolean; bossId?: string; tagTeam?: TagTeamState; online?: { isHost: boolean; npcUpgrades?: string[]; npcMasteryBinds?: Record<string, string>; npcMasteryOn?: boolean; npcSkin?: string | null } }): void {
+  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; starredMutations?: string[]; mode?: string; invasionDifficulty?: string; gauntlet?: import('../data/GauntletData').GauntletState; playerPerk?: string | null; npcPerk?: string | null; campaign?: { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean; hardMode?: boolean }; quantumBond?: [string, string]; npcQuantumBond?: [string, string]; hpMult?: number; npcOutgoingDamageMult?: number; bounty?: { key: string; reward: number }; bossHard?: boolean; bossId?: string; tagTeam?: TagTeamState; secretMode?: string; secretMap?: string; duoEnemyElementId?: string; secretTag?: SecretTagState; stabilize?: { result: string }; online?: { isHost: boolean; npcUpgrades?: string[]; npcMasteryBinds?: Record<string, string>; npcMasteryOn?: boolean; npcSkin?: string | null } }): void {
     this.selectedElementId = data.elementId ?? 'fire';
+    // ── Secret modes ────────────────────────────────────────────────
+    this.secretMode = data.secretMode ?? null;
+    this.dummyPractice = this.secretMode === 'dummy';
+    this.secretTag = data.secretTag ?? null;
+    // A tag chain that is settling an unstable forge. Carried, not acted on:
+    // the fight plays out as an ordinary three-on-three and the results screen
+    // is what grants (or burns) the element.
+    this.stabilize = data.stabilize ?? null;
+    this.dummyAttacksOn = false;
+    this.dummyComboDamage = 0;
+    this.dummyBestCombo = 0;
+    this.dummyComboResetAt = 0;
+    // Nothing in a practice bout is written to the save. Set on every entry,
+    // both ways, so a mode change can never leave the lock stuck on.
+    setProgressLocked(this.dummyPractice);
     // Quantum is two elements wearing one body: resolve the bond up front and run the whole
     // of create() as the first half, so every downstream read (upgrades, mastery binds, the
     // skin, the ability tray, every per-element gate) keys off a real kit rather than off
@@ -2246,6 +2296,8 @@ export class ArenaScene extends Phaser.Scene {
         setHudForm: (form) => arena.gluttonySetHudForm(form),
         get masteryActive() { return false; },
         get npcMasteryActive() { return false; },
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
       };
       this.gluttonyKit = new GluttonyKit(gluttonyApi);
     }
@@ -3192,6 +3244,8 @@ export class ArenaScene extends Phaser.Scene {
     };
     this.npc = new NpcOpponent(this, W - 180, cy, this.npcElement, npcTexture, difficultyConfig);
     this.npc.onHeal = (amt) => { this.npcHealNumAccum += amt; };
+    // True Nightmare: it dashes out of the way, and one cast in four goes twice.
+    (this.npc as NpcOpponent).trueNightmare = this.secretMode === 'truenightmare';
     // In 1v1 the single opponent is tracked in enemies; invasion starts empty and fills via the InvasionKit
     this.enemies = this.isInvasion ? [] : [this.npc];
 
@@ -3203,16 +3257,29 @@ export class ArenaScene extends Phaser.Scene {
     // so mutations must not touch it.
     if (!this.isInvasion && !this.isBossFight && !this.worldBossId) {
       if (this.npcElement.id === 'dummy') {
+        // The Konami-code dummy: still a straw man with a lot of health.
         this.npc.maxHp = 5000;
         this.npc.hp = 5000;
         (this.npc as NpcOpponent).stationary = true;
+      } else if (this.dummyPractice) {
+        // The secret practice range: a real element, immortal in the literal
+        // sense rather than the "very large number" sense.
+        this.npc.immortal = true;
+        this.npc.hideHealthBar();
       } else {
         this.applyMutationsToNpc();
       }
     }
 
-    // ── Dummy mode back button ────────────────────────────────────────
-    if (this.npcElement.id === 'dummy') {
+    // Tag Team: the foe on the floor keeps whatever the last element left it at.
+    if (this.secretTag && this.secretTag.enemyHp !== null) {
+      this.npc.hp = Math.max(1, Math.min(this.npc.maxHp, this.secretTag.enemyHp));
+    }
+
+    // ── Dummy mode furniture ─────────────────────────────────────────
+    // The old Konami dummy and the new practice range both want a way out and a
+    // control legend; the practice range additionally gets the damage tally.
+    if (this.npcElement.id === 'dummy' || this.dummyPractice) {
       this.dummyBackBtn = this.add.text(14, 14, '◀ BACK', {
         fontSize: '15px',
         fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
@@ -3225,10 +3292,17 @@ export class ArenaScene extends Phaser.Scene {
         .on('pointerout',  () => this.dummyBackBtn!.setColor('#aaaaaa'))
         // Explicit {} (not omitted) — Phaser only overwrites scene data when the
         // argument is truthy, so omitting it here would leak a stale { mode: 'invasion' }.
-        .on('pointerdown', () => this.scene.start('MenuScene', {}));
+        .on('pointerdown', () => {
+          // The lock is per-bout; leaving has to lower it or the whole profile
+          // stays frozen until the next fight starts.
+          setProgressLocked(false);
+          this.scene.start('MenuScene', {});
+        });
     } else {
       this.dummyBackBtn = null;
     }
+
+    if (this.dummyPractice) this.buildDummyHud();
 
     // ── Unified enemy physics group ────────────────────────────────
     this.enemyGroup = this.physics.add.group();
@@ -3282,6 +3356,23 @@ export class ArenaScene extends Phaser.Scene {
       }
       this.itemsKit.applyConsumed(consumedItemIds);
       clearConsumedItems();
+
+      // Vault artifacts ride the same arming step but are their own kit — see ArtifactsKit
+      // for why a rule-changing relic cannot be expressed as an ItemEffect.
+      if (this.artifactsKit) {
+        this.artifactsKit.reset();
+      } else {
+        this.artifactsKit = new ArtifactsKit({
+          get scene() { return arena; },
+          get player() { return arena.player; },
+          get npc() { return arena.npc; },
+          get projectiles() { return arena.projectiles; },
+          applyPlayerSpeedMult: (f) => { arena.gauntletSpeedMult *= f; },
+          showFloatingText: (x, y, t, c) => arena.spawnFloatingText(x, y, t, c),
+        });
+      }
+      this.artifactsKit.arm(armedArtifactIds);
+      clearArmedArtifacts();
     }
 
     // ── Infinity scaling — apply after boosts and mutations ──────────
@@ -3303,8 +3394,21 @@ export class ArenaScene extends Phaser.Scene {
         // so an instanceof-based swap here would silently misidentify proj/target and eat the hit.)
         const proj = a as Projectile;
         const target = b as Fighter;
-        if (!proj.active || !proj.isFromPlayer) return;
-        if (!target.active || target.hp <= 0) return;
+        if (!proj.active || !target.active || target.hp <= 0) return;
+        if (!proj.isFromPlayer) {
+          // An npc-owned shot normally only ever looks for the player. On a map
+          // that puts a third party on the field, it can also hit that — which
+          // is what lets a bot earn its own runic charge in the Graveyard.
+          if (!this.secretMapKit.ownsBody(target)) return;
+          if (target.projectilePhase) return;
+          target.lastDamageOwner = 'npc';
+          target.takeDamage(proj.damage);
+          this.spawnHitFlash(proj.x, proj.y, 0xff6655);
+          this.spawnDamageNumber(proj.x, proj.y - 20, proj.damage);
+          proj.setActive(false).setVisible(false);
+          (proj.body as Phaser.Physics.Arcade.Body).stop();
+          return;
+        }
         // Illusion Dance: shots go straight through. Deliberately before every on-hit rider
         // below, so a phased hit applies nothing at all rather than landing its side effects.
         if (target.projectilePhase) return;
@@ -3321,6 +3425,11 @@ export class ArenaScene extends Phaser.Scene {
         } else if (this.bossKit?.ownsEnemy(target)) {
           // Boss-owned hitboxes (the King's destructible dark orbs). Without this
           // the fall-through below would send the shot into the boss instead.
+          this.applyProjectileToEnemy(proj, target);
+        } else if (this.duoKit.owns(target) || this.secretMapKit.ownsBody(target)) {
+          // Duo's second opponent and the Graveyard's risen have bodies of their
+          // own. Without this they would fall through to the `this.npc` route
+          // below and quietly damage the front bot instead of themselves.
           this.applyProjectileToEnemy(proj, target);
         } else if (this.clotTree && target === this.clotTree.hitbox) {
           if (!proj.isHeal) {
@@ -3472,6 +3581,12 @@ export class ArenaScene extends Phaser.Scene {
         this.tagTeamSwapOut();
         return;
       }
+      // Secret Tag Team: the bench was picked up front, so there is nobody to
+      // ask — the next element simply walks on.
+      if (this.secretTag) {
+        this.secretTagSwapIn();
+        return;
+      }
       this.endGame(false);
     });
 
@@ -3490,6 +3605,19 @@ export class ArenaScene extends Phaser.Scene {
       if (amount <= 0) return;
       this.timeKit.onDamageReceived('npc', amount);
     });
+
+    // Practice range: the five-second tally. Reading the `damaged` event rather
+    // than `onDamaged` on purpose — that callback already belongs to other
+    // systems, and a combo counter has no business evicting one.
+    if (this.dummyPractice) {
+      this.npc.on('damaged', (amount: number) => {
+        if (amount <= 0) return;
+        // The first hit of a window starts its clock, so a tally always measures
+        // five seconds of *fighting* rather than five seconds of standing still.
+        if (this.dummyComboDamage === 0) this.dummyComboResetAt = this.time.now + DUMMY_COMBO_WINDOW_MS;
+        this.dummyComboDamage += amount;
+      });
+    }
 
     // Wither + Honor: react to player taking damage from enemy
     this.player.on('damaged', (amount: number) => {
@@ -3563,6 +3691,16 @@ export class ArenaScene extends Phaser.Scene {
         // Tag-team: this was one head of the hydra, not the bout.
         if (this.tagTeam && this.tagTeam.index + 1 < this.tagTeam.enemies.length) {
           this.tagTeamNextEnemy();
+          return;
+        }
+        // Secret Tag Team: same idea, its own chain — see `secretTagNextEnemy`.
+        if (this.secretTag && this.secretTag.enemyIndex + 1 < this.secretTag.enemies.length) {
+          this.secretTagNextEnemy();
+          return;
+        }
+        // Duo: the other one is still standing, so this is not the bout either.
+        if (this.duoKit.isActive) {
+          this.showFloatingText(this.npc.x, this.npc.y - 50, '☠ ONE DOWN', '#ffd27a');
           return;
         }
         this.endGame(true);
@@ -3666,6 +3804,8 @@ export class ArenaScene extends Phaser.Scene {
     this.dummyLeftKey  = kb.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT);
     this.dummyRightKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT);
     this.dummyFireKey  = kb.addKey(Phaser.Input.Keyboard.KeyCodes.P);
+    // Practice range only: wakes the target's abilities back up (it still never walks).
+    this.dummyToggleKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.O);
 
     // Pause menu: Esc opens PauseMenuScene overlay.
     // Online: pausing would desync the peers, so ESC-ESC forfeits instead.
@@ -3847,10 +3987,12 @@ export class ArenaScene extends Phaser.Scene {
       }
     }
 
-    // ── Campaign formats + world gimmick ───────────────────────────
+    // ── Standing arena rules: formats, gimmicks, secret modes ──────
     // Formats come off the fight def; the gimmick is the world's standing rule
     // and also runs under boss fights. Invasion and gauntlet nodes get neither
     // (their ids resolve to no def, and their modes carry their own machinery).
+    // World Shift's map kit and Duo's second opponent are built here too — they
+    // are the same shape of thing: a rule the whole arena is playing under.
     {
       const arena = this;
       if (!this.formatKit) {
@@ -3889,6 +4031,66 @@ export class ArenaScene extends Phaser.Scene {
       this.gimmickKit.reset(
         this.campaign && !this.isInvasion && !this.gauntletState ? this.campaign.worldId : null,
       );
+
+      // ── World Shift ──────────────────────────────────────────────
+      // The kit is built against a roster rather than against the npc slot, so
+      // the same five arenas can later be handed a co-op team or an invasion
+      // run without anything in SecretMapKit changing. Nothing does that today.
+      if (!this.secretMapKit) {
+        const api: SecretMapArenaApi = {
+          get scene() { return arena as Phaser.Scene; },
+          get width() { return arena.scale.width; },
+          get height() { return arena.scale.height; },
+          get allies() { return [arena.player as Fighter]; },
+          get foes() {
+            const second = arena.duoKit?.second;
+            return second && second.active && second.hp > 0 ? [arena.npc, second] : [arena.npc];
+          },
+          get projectiles() { return arena.projectiles; },
+          addEnemy: (f) => arena.addMapEnemy(f),
+          removeEnemy: (f) => arena.removeMapEnemy(f),
+          showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+          spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+          get aimX() { return arena.input.activePointer.worldX; },
+          get aimY() { return arena.input.activePointer.worldY; },
+          get playerDashing() { return arena.isDodging; },
+        };
+        this.secretMapKit = new SecretMapKit(api);
+      }
+      this.secretMapKit.reset(data.secretMap ?? null);
+
+      // ── Duo ──────────────────────────────────────────────────────
+      if (!this.duoKit) {
+        const api: DuoArenaApi = {
+          get scene() { return arena as Phaser.Scene; },
+          get player() { return arena.player as Fighter; },
+          get projectiles() { return arena.projectiles; },
+          get width() { return arena.scale.width; },
+          get height() { return arena.scale.height; },
+          get gameEnded() { return arena.gameEnded; },
+          addEnemy: (f) => arena.addMapEnemy(f),
+          removeEnemy: (f) => arena.removeMapEnemy(f),
+          showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+          withNpcSlot: (f, el, fn) => arena.withNpcSlot(f, el, fn),
+          buildNpcContext: (tx, ty) => arena.buildNpcContext(tx, ty),
+          mapSeekPointFor: (f) => arena.secretMapKit.seekPointFor(f),
+        };
+        this.duoKit = new DuoKit(api);
+      }
+      this.duoKit.reset();
+      this.duoKit.destroyNameplate();
+      if (this.secretMode === 'duo' && data.duoEnemyElementId) {
+        const secondEl = ELEMENT_MAP[data.duoEnemyElementId] ?? waterElement;
+        const secondTex = ELEMENT_TEXTURES[data.duoEnemyElementId] ?? 'elem-water';
+        const second = this.duoKit.spawn(secondEl, secondTex, difficultyConfig, W - 180, cy + 120);
+        second.onHeal = (amt) => { this.npcHealNumAccum += amt; };
+        // Both of them have to go down; the first one falling is not the bout.
+        second.once('defeated', () => {
+          this.duoKit.destroyNameplate();
+          if (!this.npc.active || this.npc.hp <= 0) this.endGame(true);
+          else this.showFloatingText(second.x, second.y - 50, '☠ ONE DOWN', '#ffd27a');
+        });
+      }
 
       // A tag-team enemy carries its wounds across the player's element swap. A boss does
       // too, but through its own kit — its HP is a per-phase pool, not one bar.
@@ -7869,6 +8071,171 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
+  // ── Dummy mode (the practice range under the Easy plate) ───────────
+
+  /**
+   * The tally over the target's head and the control legend under the arena.
+   *
+   * Deliberately loud: the whole mode is a measuring instrument, and a combo
+   * number you have to hunt for is not one.
+   */
+  private buildDummyHud(): void {
+    for (const t of this.dummyHudTexts) t.destroy();
+    this.dummyHudTexts = [];
+
+    this.dummyComboText = this.add.text(this.npc.x, this.npc.y - 62, '0', {
+      fontSize: '26px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+      color: '#ffd27a', stroke: '#1a1005', strokeThickness: 5,
+    }).setOrigin(0.5).setDepth(23);
+    this.dummyHudTexts.push(this.dummyComboText);
+
+    // "∞" where the health bar used to be — the bar itself is hidden, and an
+    // empty space over an enemy reads as a bug rather than as a rule.
+    const inf = this.add.text(this.npc.x, this.npc.y - 38, '∞ HP', {
+      fontSize: '12px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+      color: '#8ad2ff', stroke: '#04101a', strokeThickness: 3, letterSpacing: 1,
+    }).setOrigin(0.5).setDepth(22);
+    this.dummyHudTexts.push(inf);
+    inf.setData('follow', true);
+
+    const legend = this.add.text(this.scale.width / 2, this.scale.height - 16,
+      '🎯 PRACTICE RANGE     ARROWS move the target     P makes it shoot     O wakes its abilities up     ·     nothing here is recorded', {
+      fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+      color: '#9aa2b8', letterSpacing: 1,
+    }).setOrigin(0.5).setDepth(23);
+    this.dummyHudTexts.push(legend);
+
+    const state = this.add.text(this.scale.width / 2, this.scale.height - 34, '', {
+      fontSize: '12px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+      color: '#7ad48f', letterSpacing: 1,
+    }).setOrigin(0.5).setDepth(23);
+    state.setData('role', 'state');
+    this.dummyHudTexts.push(state);
+  }
+
+  /**
+   * The practice range, per frame: drive the target, roll the five-second tally
+   * over, and keep the readouts glued to the body.
+   */
+  private updateDummyPractice(time: number, delta: number): void {
+    void delta;
+    const dummyBody = this.npc.body as Phaser.Physics.Arcade.Body;
+
+    // The target never walks on its own — in either state. `O` buys its
+    // abilities back, not its feet.
+    const dSpeed = 220;
+    let dvx = 0, dvy = 0;
+    if (this.dummyUpKey.isDown)    dvy -= dSpeed;
+    if (this.dummyDownKey.isDown)  dvy += dSpeed;
+    if (this.dummyLeftKey.isDown)  dvx -= dSpeed;
+    if (this.dummyRightKey.isDown) dvx += dSpeed;
+    dummyBody.setVelocity(dvx, dvy);
+
+    if (Phaser.Input.Keyboard.JustDown(this.dummyToggleKey)) {
+      this.dummyAttacksOn = !this.dummyAttacksOn;
+      this.showFloatingText(this.npc.x, this.npc.y - 80,
+        this.dummyAttacksOn ? '⚔ ABILITIES ON' : '🛑 ABILITIES OFF',
+        this.dummyAttacksOn ? '#ff9a66' : '#7ad48f');
+    }
+
+    // P: a plain shot at the player, so the range can be used to practise
+    // dodging as well as hitting.
+    if (Phaser.Input.Keyboard.JustDown(this.dummyFireKey)) {
+      const proj = new Projectile(this, this.npc.x, this.npc.y, 'proj-fire', 10, false);
+      this.projectiles.add(proj);
+      const a = Math.atan2(this.player.y - this.npc.y, this.player.x - this.npc.x);
+      proj.launch(Math.cos(a) * 500, Math.sin(a) * 500);
+      this.showFloatingText(this.npc.x, this.npc.y - 20, '🔥 PEW!', '#ff8800');
+    }
+
+    // ── The tally ──────────────────────────────────────────────────
+    if (this.dummyComboDamage > 0 && time >= this.dummyComboResetAt) {
+      if (this.dummyComboDamage > this.dummyBestCombo) {
+        this.dummyBestCombo = this.dummyComboDamage;
+        this.showFloatingText(this.npc.x, this.npc.y - 96, `★ BEST ${this.dummyBestCombo}`, '#ffd27a');
+      }
+      this.dummyComboDamage = 0;
+      this.dummyComboResetAt = 0;
+    }
+
+    if (this.dummyComboText?.active) {
+      const left = this.dummyComboResetAt > 0 ? Math.max(0, (this.dummyComboResetAt - time) / 1000) : 0;
+      this.dummyComboText
+        .setText(this.dummyComboDamage > 0 ? `${this.dummyComboDamage}  ·  ${left.toFixed(1)}s` : '0')
+        .setPosition(this.npc.x, this.npc.y - 62)
+        .setColor(this.dummyComboDamage > 0 && this.dummyComboDamage >= this.dummyBestCombo ? '#ffe9a8' : '#ffd27a');
+    }
+    for (const t of this.dummyHudTexts) {
+      if (t.getData('follow')) t.setPosition(this.npc.x, this.npc.y - 38);
+      if (t.getData('role') === 'state') {
+        t.setText(this.dummyAttacksOn
+          ? `⚔ ABILITIES ON  ·  BEST 5s: ${this.dummyBestCombo}`
+          : `🛑 ABILITIES OFF  ·  BEST 5s: ${this.dummyBestCombo}`)
+          .setColor(this.dummyAttacksOn ? '#ff9a66' : '#7ad48f');
+      }
+    }
+  }
+
+  // ── Secret Tag Team transitions ───────────────────────────────────
+
+  /**
+   * A foe fell and there are more of them. Straight into the next one — this
+   * chain was chosen up front, so unlike the campaign's tag team there is no
+   * picker to go back to.
+   */
+  private secretTagNextEnemy(): void {
+    if (this.gameEnded || !this.secretTag) return;
+    this.gameEnded = true;
+    const tag = this.secretTag;
+    const nextIdx = tag.enemyIndex + 1;
+    Sfx.play('victory');
+    this.cameras.main.flash(300, 255, 200, 60);
+    this.showFloatingText(this.scale.width / 2, this.scale.height / 2 - 40,
+      `⚔ ${tag.enemies.length - nextIdx} LEFT`, '#ffd27a');
+    this.time.delayedCall(1300, () => {
+      this.scene.restart({
+        ...this.bootData,
+        elementId: tag.playerTeam[tag.playerIndex],
+        enemyElementId: tag.enemies[nextIdx],
+        // A fresh foe arrives whole; only a foe you were mid-way through keeps its wounds.
+        secretTag: { ...tag, enemyIndex: nextIdx, enemyHp: null },
+      });
+    });
+  }
+
+  /**
+   * You fell. The next element on your bench takes the floor and the foe keeps
+   * every wound you put in it. Run out of bench and the bout is lost.
+   */
+  private secretTagSwapIn(): void {
+    if (this.gameEnded || !this.secretTag) return;
+    const tag = this.secretTag;
+    const nextIdx = tag.playerIndex + 1;
+    if (nextIdx >= tag.playerTeam.length) {
+      this.endGame(false);
+      return;
+    }
+
+    this.gameEnded = true;
+    Music.stop(0.5);
+    Sfx.play('defeat');
+    this.cameras.main.flash(350, 120, 40, 60);
+    const next = ELEMENT_MAP[tag.playerTeam[nextIdx]];
+    this.showFloatingText(this.scale.width / 2, this.scale.height / 2 - 40,
+      `🔁 ${next ? next.name.toUpperCase() : 'NEXT ELEMENT'} STEPS UP`, '#8ad2ff');
+
+    const carriedHp = Math.max(1, this.npc.hp);
+    this.time.delayedCall(1500, () => {
+      this.scene.restart({
+        ...this.bootData,
+        elementId: tag.playerTeam[nextIdx],
+        enemyElementId: tag.enemies[tag.enemyIndex],
+        playerPerk: PlayerData.getEquippedPerk(tag.playerTeam[nextIdx]),
+        secretTag: { ...tag, playerIndex: nextIdx, enemyHp: carriedHp },
+      });
+    });
+  }
+
   private endGame(playerWon: boolean): void {
     if (this.gameEnded) return;
     this.gameEnded = true;
@@ -7983,6 +8350,10 @@ export class ArenaScene extends Phaser.Scene {
           rewardMult: playerWon ? getTotalRewardMult() : undefined,
           campaign: this.campaign ?? undefined,
           bounty: this.bounty ?? undefined,
+          // A secret mode pays its own flat purse instead of the difficulty table's.
+          secretMode: this.secretMode ?? undefined,
+          // An unstable forge is settled on the results screen, win or lose.
+          stabilize: this.stabilize ?? undefined,
         });
       }
     });
@@ -8827,6 +9198,11 @@ export class ArenaScene extends Phaser.Scene {
     // ── World Sovereigns hold their slows the same way ────────────────
     if (this.worldBossId && this.worldBossKit) this.playerSpeedMult *= this.worldBossKit.getPlayerSpeedMult();
 
+    // ── World Shift: what the ground itself is doing to you ───────────
+    // Pulled, like every other contribution on this chain — the whole value is
+    // rebuilt each frame, so a map that wrote into it would be overwritten.
+    if (this.secretMapKit.mapId) this.playerSpeedMult *= this.secretMapKit.speedMultFor(this.player);
+
     // ── Ruin's spikes: a speed buff comes back as the same-sized slow ──
     // The one-shot flip in RuinKit can only reach fields on `Fighter`; a boost owned by some
     // other kit is only ever visible here, as a number greater than 1.
@@ -9525,14 +9901,34 @@ export class ArenaScene extends Phaser.Scene {
       npcGumTargetEncased: this.gumKit.isTargetEncased('npc'),
     };
 
+    // ── World Shift steering ──────────────────────────────────────
+    // The map is allowed to override where the bot walks (a campfire it is about
+    // to die without, a potion worth crossing for) and to tell it which side of
+    // a lava river it belongs on. Written here, one line before the decision, so
+    // it is always this frame's answer.
+    if (this.secretMapKit.mapId) {
+      aiState.mapSeekPoint = this.secretMapKit.seekPointFor(this.npc);
+      const band = this.secretMapKit.avoidBand();
+      if (band) {
+        aiState.mapAvoidBandX = band.x;
+        aiState.mapAvoidBandHalfWidth = band.halfWidth;
+        aiState.mapCrossBand = this.secretMapKit.shouldCrossBand(this.npc, this.player);
+      }
+    }
+    // The Graveyard is a three-way fight; the bot is allowed to turn on whatever
+    // climbed out of the ground and is currently biting it.
+    const npcTarget = this.secretMapKit.aiTargetOverride(this.npc, this.player) ?? this.player;
+
     const npcPreDashX = this.npc.x;
     const npcPreDashY = this.npc.y;
     const npcCastId = this.isOnline
       ? (this.isInvasion ? (this.invasionCoopKit?.consumeNpcCast() ?? null) : (this.onlineKit?.consumeNpcCast() ?? null))
       // The boss never runs the NPC state machine — DisgracedKingKit drives its
       // body and every attack it makes.
-      : (this.isInvasion || this.isBossFight || !!this.worldBossId || this.shadowKit.isConsumeActive() || this.time.now < this.shadowKit.getNpcThrowUntil()) ? null : (this.npc as NpcOpponent).doAI(
-        this.player,
+      // The practice range is the other body that never decides for itself: the
+      // player drives it, and `O` is the only thing that hands it back its kit.
+      : (this.isInvasion || this.isBossFight || !!this.worldBossId || (this.dummyPractice && !this.dummyAttacksOn) || this.shadowKit.isConsumeActive() || this.time.now < this.shadowKit.getNpcThrowUntil()) ? null : (this.npc as NpcOpponent).doAI(
+        npcTarget,
         (tx: number, ty: number) => this.buildNpcContext(tx, ty),
         time,
         aiState,
@@ -9550,6 +9946,18 @@ export class ArenaScene extends Phaser.Scene {
       if (this.isOnline) this.invasionCoopKit?.update(time, delta);
       else this.invasionKit.update(time, delta);
     }
+
+    // ── Duo: the second opponent takes its turn ───────────────────
+    // Immediately after the front bot's, and inside its own borrowed slot —
+    // see DuoKit for why the slot is borrowed rather than widened.
+    if (this.duoKit.isActive) {
+      this.duoKit.update(time, delta);
+      this.duoKit.clampToArena();
+      this.duoKit.drawNameplate();
+    }
+
+    // ── World Shift: the arena's own rules ────────────────────────
+    this.secretMapKit.update(time, delta);
 
 
     // Earth and Light kit updates (after npcCastId is known)
@@ -9624,6 +10032,11 @@ export class ArenaScene extends Phaser.Scene {
         this.showFloatingText(this.npc.x, this.npc.y - 20, '🔥 PEW!', '#ff8800');
       }
     }
+
+    // ── Practice range ────────────────────────────────────────────
+    // After the AI block, so the velocity written here is the last word even
+    // once the target's abilities have been switched back on.
+    if (this.dummyPractice) this.updateDummyPractice(time, delta);
 
     // ── Generic toxic DOT (Death / Life kits) ──────────────
     for (const t of this.enemies) {
@@ -9748,6 +10161,10 @@ export class ArenaScene extends Phaser.Scene {
     if (this.elementId === 'creation' || this.npcElement.id === 'creation') {
       this.creationKit.update(time, delta);
     }
+
+    // The opponent's half of the same pull. Split from the player's because the
+    // two multipliers are consumed at different points in the frame.
+    if (this.secretMapKit.mapId) this.npcSpeedMult *= this.secretMapKit.speedMultFor(this.npc);
 
     // ── Post-AI NPC velocity multiplier ──────────────────────────
     if (this.npcNukeChanneling) {
@@ -9925,6 +10342,12 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Clean up projectiles ──────────────────────────────────────
+    // Chaos Realm gets first refusal: anything it bounces back inside the arena
+    // is still in play when the cull below looks at it. The Ricochet Glyph has the
+    // same claim, which is why the artifact kit ticks here rather than down with the
+    // item kit — a bounced shot has to be turned around before the cull sees it.
+    this.artifactsKit?.update(delta);
+    this.secretMapKit.reflectProjectiles();
     const wb = this.physics.world.bounds;
     const allProj = this.projectiles.getChildren().slice() as Projectile[];
     for (const p of allProj) {
@@ -9939,6 +10362,8 @@ export class ArenaScene extends Phaser.Scene {
     // ── Clamp all enemies to arena bounds ────────────────────────
     {
       const wb = this.physics.world.bounds;
+      // Duo's partner and the Graveyard's risen are clamped by their own kits;
+      // this is still the slot body's clamp.
       const allEnemies: Fighter[] = [this.npc];
       for (const e of allEnemies) {
         if (!e.active || this.silenceKit.isCarriedByVulture(e)) continue;
@@ -10159,6 +10584,9 @@ export class ArenaScene extends Phaser.Scene {
   private applyProjectileToEnemy(proj: Projectile, target: Fighter): void {
     const isNpc = target === this.npc;
     if (proj.isHeal) return; // heal projectiles don't damage the enemy
+    // Kill credit — see Fighter.lastDamageOwner. Stamped before any of the
+    // on-hit riders below, so a shot that kills through a status still counts.
+    target.lastDamageOwner = 'player';
     // Amber: route damage to dinosaur mount first
     if (isNpc && this.mutations.has('amber') && this.amberDino && this.amberDino.hp > 0) {
       const dmg = proj.damage;
@@ -10412,6 +10840,46 @@ export class ArenaScene extends Phaser.Scene {
     return { hits, kills };
   }
 
+  // ── Secret-mode plumbing ─────────────────────────────────────────
+
+  /** Register a body a secret mode brought with it (map husks, Duo's partner). */
+  private addMapEnemy(f: Fighter): void {
+    this.enemies.push(f);
+    this.enemyGroup.add(f, true);
+  }
+
+  private removeMapEnemy(f: Fighter): void {
+    this.enemies = this.enemies.filter((e) => e !== f);
+    this.enemyGroup.remove(f, false, false);
+  }
+
+  /**
+   * Point the arena's single npc slot at `f` for the length of `fn`, then put it
+   * back exactly as it was.
+   *
+   * Duo's whole approach rests on this: the slot is what `buildNpcContext()` and
+   * every kit's NPC mirror are written against, so the only honest way for a
+   * second opponent to cast its own element is to *be* the npc while it does.
+   * The window is one synchronous decision-plus-cast and never spans a frame —
+   * `finally` rather than a plain restore, so a throwing ability cannot strand
+   * the arena pointing at the wrong body.
+   */
+  public withNpcSlot<T>(f: NpcOpponent, el: Element, fn: () => T): T {
+    const prevNpc = this.npc;
+    const prevEl = this.npcElement;
+    const prevId = this.npcElementId;
+    this.npc = f;
+    this.npcElement = el;
+    this.npcElementId = el.id;
+    try {
+      return fn();
+    } finally {
+      this.npc = prevNpc;
+      this.npcElement = prevEl;
+      this.npcElementId = prevId;
+    }
+  }
+
   private dealAoeDamageFromOwner(cx: number, cy: number, radius: number, damage: number, owner: 'player' | 'npc', except?: Fighter): void {
     // Any AoE can wipe silence stalkers caught in the blast.
     this.silenceKit.notifyAoeDamage(cx, cy, radius, owner);
@@ -10421,13 +10889,29 @@ export class ArenaScene extends Phaser.Scene {
       for (const t of this.enemies) {
         if (!t.active || t.hp <= 0 || t === except) continue;
         if (Phaser.Math.Distance.Between(cx, cy, t.x, t.y) <= radius) {
+          // Kill credit — see Fighter.lastDamageOwner. The Graveyard's runic bars
+          // are the only reader today, and they only ask about husks.
+          t.lastDamageOwner = 'player';
           t.takeDamage(damage);
           this.spawnHitFlash(t.x, t.y, 0x9944ff);
           this.spawnDamageNumber(t.x, t.y - 28, damage);
         }
       }
     } else {
+      // An npc-owned blast also catches the map's own bodies, which is what lets
+      // a bot earn runic charge off husk kills. Deliberately limited to those:
+      // the two opponents in a Duo must not splash each other.
+      for (const t of this.enemies) {
+        if (!t.active || t.hp <= 0 || t === except) continue;
+        if (!this.secretMapKit.ownsBody(t)) continue;
+        if (Phaser.Math.Distance.Between(cx, cy, t.x, t.y) <= radius) {
+          t.lastDamageOwner = 'npc';
+          t.takeDamage(damage);
+          this.spawnHitFlash(t.x, t.y, 0x9944ff);
+        }
+      }
       if (this.player !== except && Phaser.Math.Distance.Between(cx, cy, this.player.x, this.player.y) <= radius) {
+        this.player.lastDamageOwner = 'npc';
         this.player.takeDamage(damage);
         this.spawnHitFlash(this.player.x, this.player.y, 0x9944ff);
         this.spawnDamageNumber(this.player.x, this.player.y - 28, damage);

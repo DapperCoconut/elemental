@@ -53,6 +53,26 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public speed: number;
   public element: Element;
   public isInvincible = false;
+  /**
+   * Dummy mode: this body cannot run out of health.
+   *
+   * Deliberately *not* `isInvincible` — the whole point of a practice target is
+   * that hits land, resolve and get counted. Damage is computed normally, every
+   * `damaged` listener still fires (which is what feeds the combo tally), the
+   * flash and the numbers still happen; the health simply refuses to move and
+   * `defeated` is never reached. Real infinity, not a very large number.
+   */
+  public immortal = false;
+  /**
+   * Which side landed the most recent hit on this body — stamped at ArenaScene's
+   * two damage chokepoints (projectile contact and owner-tagged AoE), which
+   * between them carry effectively everything that hurts anyone.
+   *
+   * Exists so a third party can be *credited* to a fighter: the Graveyard hands
+   * its runic charge to whoever actually put a husk down. Deliberately a side
+   * rather than a Fighter reference, so nothing holds a body past its death.
+   */
+  public lastDamageOwner: 'player' | 'npc' | null = null;
   public shieldCharges = 0;
   public shieldHp = 0;
   /** Metal R+ (Blood Clottage): dark-red HP layer. Absorbs damage at half rate and is spent before normal HP. */
@@ -170,12 +190,27 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   public marrowIncomingMult = 1;
   /**
+   * Gluttony (Head Chef, E+ and Murderous Intent, F+): the kitchen's two food-and-teeth
+   * multipliers folded into one field — a winter mint's 20% resistance on the cook, and the
+   * 15% vulnerability the maw's cone of bullets stacks onto whatever it hits. Its own field
+   * for the reason Justice, Illusion and Marrow have theirs: GluttonyKit rewrites it from
+   * scratch every frame off its own timers, and sharing `incomingDamageMultiplier` would
+   * stomp whatever else wrote armour that tick.
+   */
+  public gluttonyIncomingMult = 1;
+  /**
    * Sound (Sound System, E+): the armour banked by cutting people with the blue record. Its own
    * field for the reason Justice, Magma and Illusion have theirs — SoundKit rewrites it from
    * scratch every frame, and sharing `incomingDamageMultiplier` would stomp whatever else wrote
    * armour that tick. Floored well above zero so a long match cannot make anyone untouchable.
    */
   public soundIncomingMult = 1;
+  /**
+   * Vault artifacts (Rime Brand): vulnerability written by `ArtifactsKit`. Its own field for
+   * the same reason as every neighbour above — the kit rewrites it outright when a freeze
+   * lands and again when it lifts, and sharing anyone else's would stomp their value.
+   */
+  public artifactIncomingMult = 1;
   /**
    * Radiation (Irradiated): `Date.now()` epoch until which every point of healing aimed at this
    * fighter lands as damage instead — see `heal`. One field rather than a hook per healing
@@ -234,6 +269,14 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public empoweredIncomingMult = 1;
   /** Creation Protection Potion: 0.75 while this fighter is potion-protected. */
   public potionArmorMult = 1;
+  /**
+   * World Shift: armour the *arena* is granting, not an element.
+   *
+   * Its own field rather than a share of `potionArmorMult` because that one is
+   * assigned outright by CreationKit every frame while Creation is on the
+   * field, which would quietly eat a map's buff in exactly one matchup.
+   */
+  public mapArmorMult = 1;
   /**
    * Shadow Hopelessness: 0–100. Applied by Shadow's pools, traps and tentacles. Every 2%
    * cuts the afflicted fighter's outgoing damage by 1% (capped at 50% at 100%). Held here
@@ -726,7 +769,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // Tallied here: after the crit roll (a crit really is a bigger hit) but before every
       // mitigation multiplier on the line below, which is what "damage aimed at you" means.
       this.rawDamageTaken += amount;
-      let mitigation = this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.marrowIncomingMult * this.orderIncomingMult * this.fortuneIncomingMult * this.netDefenseMult;
+      let mitigation = this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.marrowIncomingMult * this.gluttonyIncomingMult * this.orderIncomingMult * this.fortuneIncomingMult * this.mapArmorMult * this.netDefenseMult;
       // Ruin's spikes turn armour inside out — 25% less damage taken comes back as 25% more.
       // Only a net *buff* is flipped; a fighter already taking extra damage is left alone.
       if (mitigation < 1 && this.scene.time.now < this.buffsInvertedUntil) mitigation = 2 - mitigation;
@@ -851,7 +894,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       }
     }
 
-    this.hp = Math.max(0, this.hp - amount);
+    // Practice target: the hit is fully resolved and reported, it just never sticks.
+    if (!this.immortal) this.hp = Math.max(0, this.hp - amount);
     this.emit('damaged', amount);
     // A crit already announced itself above with its own, louder sound.
     if (amount > 0 && !isCrit) Sfx.hit(amount, this.x, this.isPlayerFighter);
@@ -941,7 +985,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     // Divine perk Order: the other self-harm route — see `selfDamageImmune`.
     if (this.selfDamageImmune) { this.onSelfDamageBlocked?.(amount); return; }
     this.damageWasSelfInflicted = true;
-    this.hp = Math.max(0, this.hp - amount);
+    if (!this.immortal) this.hp = Math.max(0, this.hp - amount);
     this.emit('damaged', amount);
     // Quieter than a real hit: self-damage is usually a steady drip (Flame Body,
     // Pain Battery) and shouldn't compete with the fight for attention.

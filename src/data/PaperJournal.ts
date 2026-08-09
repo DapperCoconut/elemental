@@ -1,4 +1,5 @@
 import * as PlayerData from './PlayerData';
+import { isProgressLocked } from './ProgressLock';
 
 /**
  * Paper's passive: the Journal.
@@ -712,6 +713,8 @@ export function journalTotalPossible(): number {
  * returns nothing and costs nothing.
  */
 export function recordJournalResult(elementId: string, won: boolean): JournalEntry[] {
+  // Nothing is learned from a target that cannot fight back — see ProgressLock.
+  if (isProgressLocked()) return [];
   if (!JOURNAL_ELEMENTS[elementId]) return [];
   const before = PlayerData.getPaperJournal(elementId);
   const source: 'loss' | 'win' = won ? 'win' : 'loss';

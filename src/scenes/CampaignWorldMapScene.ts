@@ -6,6 +6,7 @@ import * as CP from '../data/CampaignProgress';
 import { drawWorldMapBackground, drawAbstractWorldMapBackground, drawCorruptWorldMapBackground } from './CampaignBackground';
 import { maybePlayStory } from './DialogueScene';
 import { addInventoryButton } from './InventoryScene';
+import { VAULT_CHESTS, totalOpened as vaultOpened } from '../data/Vault';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackButton, addButton, addChip, fillDiamond, fillHex, strokeHex,
@@ -136,6 +137,22 @@ export class CampaignWorldMapScene extends Phaser.Scene {
     }
 
     addInventoryButton(this, this.slotIdx, DEPTH.content + 5);
+
+    // ── The Vault ───────────────────────────────────────────────────
+    // Bottom-left in every realm, opposite the 🎒 bag. Keys are earned in all three, so
+    // the door to spend them on is in all three too.
+    {
+      const opened = vaultOpened(slot);
+      addButton(this, {
+        x: 132, y: 586, w: 210, h: 50,
+        label: 'THE VAULT', icon: '🗝️',
+        sublabel: opened === VAULT_CHESTS.length
+          ? 'Every lid up' : `${opened}/${VAULT_CHESTS.length} chests opened`,
+        accent: C.gold, variant: 'ghost', fontSize: 17, align: 'left',
+        depth: DEPTH.content + 5,
+        onClick: () => this.scene.start('VaultScene', { slotIdx: this.slotIdx, mode: this.mode }),
+      });
+    }
 
     // ── Portals ─────────────────────────────────────────────────────
     // The normal map carries the Abstract portal; the abstract map carries the

@@ -98,7 +98,8 @@ export const ELEMENT_MAP: Record<string, Element> = {
   // so the info panel and any future wiring have a real Element to read.
   justice: justiceElement,
   dream: dreamElement,
-  // Test elements. Only a cheat-mode save can pick these — see MenuScene.TEST_ELEMENTS.
+  // Late-roster elements: the unstable ten out of the Disgraced Lab, and the seven behind
+  // the Vault's mimic chests — see `ElementRoster.VAULT_ELEMENTS`.
   chalk: chalkElement,
   magma: magmaElement,
   illusion: illusionElement,

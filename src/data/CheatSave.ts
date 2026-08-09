@@ -9,6 +9,7 @@ import * as Cheats from './Cheats';
 import * as PlayerData from './PlayerData';
 import * as CP from './CampaignProgress';
 import { ALL_UPGRADES } from './Upgrades';
+import { isUpgradeUnlocked } from './UpgradeUnlocks';
 import { ALL_PERKS } from './Perks';
 import { DIVINE_PERKS } from './DivinePerks';
 import { MUTATIONS } from './Mutations';
@@ -16,8 +17,11 @@ import { MASTERY_DEFS, MASTERY_SLOTS, isMasteryComplete } from './Mastery';
 import { getFightNodes } from './Worlds';
 import { ALL_WORLDS } from './AbstractWorlds';
 import { ITEMS } from './Items';
+import { ARTIFACTS } from './Artifacts';
+import { VAULT_CHESTS, grantReward } from './Vault';
 import { ACHIEVEMENTS } from './Achievements';
 import { SKINS, isSkinUnlocked } from './Skins';
+import { SECRET_MODES, SCREWS_PER_PLATE } from './SecretModes';
 import { getAllStoryBeatIds } from './CampaignStory';
 import { ELEMENT_MAP } from '../elements/ElementRegistry';
 
@@ -85,6 +89,13 @@ function maxOutCurrentProfile(): void {
   // ── Mutations + secret enemy ───────────────────────────────────────
   for (const m of MUTATIONS) PlayerData.unlockMutation(m.id);
   PlayerData.unlockDummy();
+
+  // ── Secret modes: screwdriver in hand, every plate already off ─────
+  PlayerData.findScrewdriver();
+  for (const mode of SECRET_MODES) {
+    for (let corner = 0; corner < SCREWS_PER_PLATE; corner++) PlayerData.removeScrew(mode.id, corner);
+    PlayerData.unlockSecretMode(mode.id);
+  }
 
   // ── Achievements (skins unlock with them, not auto-equipped) ───
   for (const a of ACHIEVEMENTS) PlayerData.unlockAchievement(a.id);
@@ -156,6 +167,21 @@ function maxOutCampaignSlot(idx: 0 | 1 | 2): void {
     if (have < MAX_ITEM_STACK) CP.addItem(idx, item.id, MAX_ITEM_STACK - have);
   }
 
+  // The Vault, emptied. Every chest is stamped open and its contents granted directly —
+  // `openVaultChest` would charge for them, and a profile built by paying for things depends
+  // on the order these lines run in (see the portals above).
+  for (const chest of VAULT_CHESTS) {
+    if (CP.isVaultChestOpened(idx, chest.id)) continue;
+    grantReward(idx, chest.reward);
+    CP.markVaultChestOpened(idx, chest.id);
+  }
+  // Artifacts are handed out by the chests above, but a rebuild on an existing profile can
+  // land with them mid-cooldown. Nothing in a cheat save should be on a timer.
+  CP.clearArtifactCooldowns(idx);
+
+  // Keys and sparks last: the Vault spends neither here, but the grants above pay sparks in,
+  // and topping up afterwards is what makes the final number the maximum rather than
+  // the maximum plus whatever fifty chests happened to contain.
   CP.addKeys(idx, MAX_KEYS - CP.getKeys(idx));
   CP.addSparks(idx, MAX_SPARKS - CP.getSparks(idx));
 }
@@ -217,6 +243,9 @@ export function verifyCheatSave(): string[] {
     for (const el of ALL_UPGRADES) {
       for (const up of el.upgrades) {
         want(PlayerData.isUpgradeOwned(el.elementId, up.slot), `upgrade ${el.elementId}/${up.slot} unowned`);
+        // The unstable ten gate their slots on Corrupt-world progress. Owning one
+        // and being allowed to buy it are separate facts, so both are audited.
+        want(isUpgradeUnlocked(el.elementId, up.slot), `upgrade ${el.elementId}/${up.slot} still gated`);
       }
     }
     for (const el of ALL_PERKS) {
@@ -240,6 +269,10 @@ export function verifyCheatSave(): string[] {
     want(PlayerData.isKingDefeated(), 'Disgraced King not felled');
     want(PlayerData.isDevourerDefeated(), 'Devourer not felled');
     want(PlayerData.isDummyUnlocked(), 'training dummy locked');
+    want(PlayerData.isScrewdriverFound(), 'screwdriver not found');
+    for (const mode of SECRET_MODES) {
+      want(PlayerData.isSecretModeUnlocked(mode.id), `secret mode ${mode.id} still bolted down`);
+    }
     want(PlayerData.getQuantumBond() !== null, 'Quantum carries no bond');
     want(PlayerData.isPassionQUnlocked(), "Passion's Q toggle locked");
 
@@ -260,6 +293,13 @@ export function verifyCheatSave(): string[] {
     want(CP.isAmalgamFelled(idx), 'the Amalgam still stands');
     for (const item of ITEMS) {
       want((CP.getInventory(idx)[item.id] ?? 0) > 0, `item ${item.id} not stocked`);
+    }
+    for (const chest of VAULT_CHESTS) {
+      want(CP.isVaultChestOpened(idx, chest.id), `vault chest ${chest.id} still locked`);
+    }
+    for (const artifact of ARTIFACTS) {
+      want(CP.hasArtifact(idx, artifact.id), `artifact ${artifact.id} not owned`);
+      want(CP.isArtifactReady(idx, artifact.id), `artifact ${artifact.id} on cooldown`);
     }
 
     return gaps;

@@ -18,6 +18,7 @@ import { CampaignPortalScene } from './scenes/CampaignPortalScene';
 import { CampaignElementSelectScene } from './scenes/CampaignElementSelectScene';
 import { GauntletElementSelectScene } from './scenes/GauntletElementSelectScene';
 import { InventoryScene } from './scenes/InventoryScene';
+import { VaultScene } from './scenes/VaultScene';
 import { OnlineLobbyScene } from './scenes/OnlineLobbyScene';
 import { AchievementsScene } from './scenes/AchievementsScene';
 import { DisgracedLabScene } from './scenes/DisgracedLabScene';
@@ -38,7 +39,7 @@ const config: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
-  scene: [BootScene, TitleScene, MenuScene, ShopScene, LabScene, ArenaScene, GameOverScene, GauntletSelectScene, GauntletIntermediaryScene, PauseMenuScene, CampaignSlotSelectScene, CampaignWorldMapScene, CampaignWorldScene, CampaignFightMenuScene, CampaignShopScene, CampaignPortalScene, CampaignElementSelectScene, GauntletElementSelectScene, InventoryScene, OnlineLobbyScene, AchievementsScene, DisgracedLabScene, QuantumLabScene, AudioSettingsScene, ConquestMenuScene, DialogueScene],
+  scene: [BootScene, TitleScene, MenuScene, ShopScene, LabScene, ArenaScene, GameOverScene, GauntletSelectScene, GauntletIntermediaryScene, PauseMenuScene, CampaignSlotSelectScene, CampaignWorldMapScene, CampaignWorldScene, CampaignFightMenuScene, CampaignShopScene, CampaignPortalScene, CampaignElementSelectScene, GauntletElementSelectScene, InventoryScene, VaultScene, OnlineLobbyScene, AchievementsScene, DisgracedLabScene, QuantumLabScene, AudioSettingsScene, ConquestMenuScene, DialogueScene],
 };
 
 const game = new Phaser.Game(config);

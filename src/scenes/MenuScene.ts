@@ -9,6 +9,13 @@ import { getPerksForElement, getPerkById } from '../data/Perks';
 import { INVASION_DIFFICULTIES, InvasionDifficultyId } from '../invasion/InvasionKit';
 import { Bounty, difficultyLabel } from '../data/Bounties';
 import { TagTeamState, freshKingTagTeam } from '../data/FightFormats';
+import {
+  SECRET_MODES, SCREWS_PER_PLATE, SecretModeDef, SecretModeId,
+  secretModeForDifficulty, getSecretMode, freshSecretTag,
+} from '../data/SecretModes';
+import { SECRET_MAPS, SecretMapId } from '../data/SecretMaps';
+import { setProgressLocked } from '../data/ProgressLock';
+import { getUnstableRecipe } from '../data/UnstableRecipes';
 
 import { ElementDef, findElementDef } from '../data/ElementRoster';
 import {
@@ -25,11 +32,25 @@ const DIFF_COLORS = [0x22cc44, 0x88cc22, 0xddaa00, 0xee5500, 0xcc0022];
 // WWSSADADBA (Konami-style, using WASD mapping: W=Up S=Down A=Left D=Right then B A)
 const DUMMY_SEQUENCE = ['W','W','S','S','A','D','A','D','B','A'];
 
+/** How many elements a Tag Team side fields. */
+const TAG_TEAM_SIZE = 3;
+
+/** The rung a stabilisation bout is fought at. Expert — see `DIFFICULTY_PRESETS`. */
+const STABILISE_DIFFICULTY = 4;
+
 export class MenuScene extends Phaser.Scene {
-  private selectionPhase: 'player' | 'enemy' | 'difficulty' = 'player';
+  private selectionPhase:
+    | 'player' | 'enemy' | 'difficulty'
+    // Secret-mode follow-ups, each entered from the difficulty screen.
+    | 'duoEnemy' | 'teamPlayer' | 'teamEnemy' | 'mapSelect' = 'player';
   private playerChoice: string | null = null;
   private enemyChoice: string | null = null;
   private elemPage = 0;
+  /** The secret mode being loaded out, while its extra picks are being made. */
+  private pendingSecret: SecretModeId | null = null;
+  /** Tag Team benches, built up over the two team phases. */
+  private teamPlayer: string[] = [];
+  private teamEnemy: string[] = [];
   private isInvasion = false;
   /**
    * The Disgraced content reuses this screen rather than carrying its own
@@ -46,6 +67,12 @@ export class MenuScene extends Phaser.Scene {
    */
   private bossTag: TagTeamState | null = null;
   private bounty: Bounty | null = null;
+  /**
+   * The unstable forge this visit is here to settle, read off the save rather
+   * than passed in — the Disgraced Lab records it before it sends us here, so a
+   * reload cannot lose track of a nucleus that has already been spent.
+   */
+  private stabilize: PlayerData.PendingUnstableForge | null = null;
   private invasionDifficultyId: InvasionDifficultyId = 'normal';
 
   /** The info / mastery / customize / dictionary overlays behind the element cards. */
@@ -56,6 +83,12 @@ export class MenuScene extends Phaser.Scene {
   private mutationScrollHandler: (...args: unknown[]) => void = () => {};
   private hoveredDifficulty = 1;
   private konamiBuffer: string[] = [];
+  /**
+   * Y of the MUTATIONS heading on the difficulty screen. The rewards sidebar is
+   * rebuilt on hover without re-running the layout, so the one number both
+   * passes need lives here rather than being hardcoded in two places.
+   */
+  private mutPanelTop = 327;
 
   constructor() {
     super({ key: 'MenuScene' });
@@ -63,6 +96,9 @@ export class MenuScene extends Phaser.Scene {
 
   create(data?: { mode?: string; bounty?: Bounty; hard?: boolean; tagTeam?: TagTeamState }): void {
     Music.play('menu');
+    // Backing out of the practice range comes through here. Lowering the lock on
+    // the way past means nothing can strand a profile with its progress frozen.
+    setProgressLocked(false);
     this.isInvasion = data?.mode === 'invasion';
     this.isBoss = data?.mode === 'boss';
     // Guarded rather than trusted: the door is the only way in, but a stale
@@ -71,6 +107,7 @@ export class MenuScene extends Phaser.Scene {
     // Absent on the way in through the door, present on every tag-in after a fall.
     this.bossTag = this.isBoss ? (data?.tagTeam ?? null) : null;
     this.bounty = data?.mode === 'bounty' ? (data.bounty ?? null) : null;
+    this.stabilize = data?.mode === 'stabilize' ? PlayerData.getPendingUnstable() : null;
     this.invasionDifficultyId = 'normal';
     clearMutationSelection();
     clearConsumedItems();
@@ -79,6 +116,17 @@ export class MenuScene extends Phaser.Scene {
     this.enemyChoice = null;
     this.elemPage = 0;
     this.phaseObjects = [];
+    this.pendingSecret = null;
+    this.teamPlayer = [];
+    this.teamEnemy = [];
+
+    // A stabilisation walks straight into the bench picker: the far side is
+    // already decided (it is the three things that came off the forge), so the
+    // only question left is which three of yours go and hold them down.
+    if (this.stabilize) {
+      this.teamEnemy = [...this.stabilize.ingredients];
+      this.selectionPhase = 'teamPlayer';
+    }
 
     const { width, height } = this.scale;
     const cx = width / 2;
@@ -89,8 +137,10 @@ export class MenuScene extends Phaser.Scene {
 
     // ── Persistent chrome ──────────────────────────────────────────
     const isDisgraced = this.isBoss || !!this.bounty;
+    const stabiliseRecipe = this.stabilize ? getUnstableRecipe(this.stabilize.result) : null;
     const sceneAccent = this.isInvasion || this.isBoss ? C.corrupt
       : this.bounty ? C.gold
+      : this.stabilize ? 0x7cc93d
       : C.ember;
     addBackdrop(this, {
       accent: sceneAccent,
@@ -101,8 +151,9 @@ export class MenuScene extends Phaser.Scene {
     addTitle(this, {
       x: cx, y: 76,
       text: this.isBossHard ? 'THE DOOR BEHIND THE DOOR'
-        : this.isBoss ? 'THE SEALED DOOR' : isDisgraced ? 'BOUNTY CONTRACT' : 'ELEMENTAL',
-      accent: sceneAccent, size: this.isBoss ? 46 : isDisgraced ? 44 : 54, rule: true,
+        : this.isBoss ? 'THE SEALED DOOR'
+        : this.stabilize ? 'STABILISATION' : isDisgraced ? 'BOUNTY CONTRACT' : 'ELEMENTAL',
+      accent: sceneAccent, size: this.isBoss ? 46 : this.stabilize || isDisgraced ? 44 : 54, rule: true,
     });
 
     // Footer: controls first, mission statement beneath it.
@@ -115,6 +166,8 @@ export class MenuScene extends Phaser.Scene {
       : this.isBossHard ? 'Four phases. No heals. Three elements, two tags. One decision at the end of it.'
       : this.isBoss ? 'Two phases. Three elements, two tags. He keeps every wound.'
       : this.bounty ? 'Complete the contract to claim its Divine Nuclei.'
+      : this.stabilize
+        ? `Put down all three and ${stabiliseRecipe?.resultName ?? 'the forge'} is yours. Fall, and the Nucleus goes with it.`
       : 'Defeat the enemy to win.';
     this.add.text(cx, height - 22, mission, {
       fontSize: '12px', fontFamily: FONT_UI, color: T.ghost,
@@ -167,13 +220,21 @@ export class MenuScene extends Phaser.Scene {
       this.renderDisgracedStartPhase(width, height, cx, playerEl);
     } else if (this.selectionPhase === 'difficulty') {
       this.renderDifficultyPhase(width, height, cx);
+    } else if (this.selectionPhase === 'mapSelect') {
+      this.renderMapSelectPhase(width, height, cx);
     } else {
       this.renderElementPhase(width, height, cx);
     }
   }
 
   private renderElementPhase(width: number, height: number, cx: number): void {
-    const isPlayerPhase = this.selectionPhase === 'player';
+    const isPlayerPhase = this.selectionPhase === 'player' || this.selectionPhase === 'teamPlayer';
+    // Secret-mode phases pick several elements, so the grid's "already taken"
+    // list and the heading both come from whichever bench is being filled.
+    const secret = getSecretMode(this.pendingSecret);
+    const bench = this.selectionPhase === 'teamPlayer' ? this.teamPlayer
+      : this.selectionPhase === 'teamEnemy' ? this.teamEnemy
+      : null;
 
     // Mid-run the door is a tag-in, not a start: say which it is, and how many
     // switches are left, before the player commits the next element.
@@ -181,7 +242,14 @@ export class MenuScene extends Phaser.Scene {
     const tagPips = this.bossTag
       ? `${'●'.repeat(tagsLeft)}${'○'.repeat(this.bossTag.usedElements.length)}`
       : '';
-    const subtitle = isPlayerPhase
+    const stabiliseRecipe = this.stabilize ? getUnstableRecipe(this.stabilize.result) : null;
+    const subtitle = this.stabilize
+      ? `⚗ ${(stabiliseRecipe?.resultName ?? this.stabilize.result).toUpperCase()} — YOUR BENCH  ${this.teamPlayer.length}/${TAG_TEAM_SIZE}`
+      : bench
+      ? `${secret?.icon ?? '🔁'} ${this.selectionPhase === 'teamPlayer' ? 'YOUR BENCH' : 'THEIR SIDE'}  —  ${bench.length}/${TAG_TEAM_SIZE} CHOSEN`
+      : this.selectionPhase === 'duoEnemy'
+        ? `${secret?.icon ?? '⚔️'} DUO — choose the second enemy element`
+      : isPlayerPhase
       ? this.isInvasion ? 'INVASION — pick your element'
         : this.bossTag && this.bossTag.usedElements.length > 0
           ? `⟳ TAG IN  ${tagPips}  — he kept every wound`
@@ -195,7 +263,46 @@ export class MenuScene extends Phaser.Scene {
     });
     this.phaseObjects.push(subtitleObj);
 
-    if (!isPlayerPhase && this.playerChoice) {
+    // The bench so far, so a three-element choice can be made as a set.
+    if (bench) {
+      const slots = Array.from({ length: TAG_TEAM_SIZE }, (_, i) => {
+        const el = bench[i] ? findElementDef(bench[i]) : null;
+        return el ? `${el.emoji} ${el.name.toUpperCase()}` : '◇ ——';
+      });
+      const benchLine = this.add.text(cx, 190, slots.join('    ·    '), {
+        fontSize: '14px', fontFamily: FONT_DISPLAY, color: T.gold, letterSpacing: 1.5,
+        backgroundColor: hex(C.void_), padding: { x: 10, y: 3 },
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+      this.phaseObjects.push(benchLine);
+    }
+
+    // Stabilisation: the far side is fixed, so name it rather than making the
+    // player remember which binder they picked at the forge.
+    if (this.stabilize) {
+      const foes = this.teamEnemy
+        .map((id) => { const d = findElementDef(id); return d ? `${d.emoji} ${d.name.toUpperCase()}` : id; })
+        .join('    ·    ');
+      const foeLine = this.add.text(cx, 216, `FACING:  ${foes}    ·    EXPERT`, {
+        fontSize: '12px', fontFamily: FONT_DISPLAY,
+        color: hex(mix(C.blood, 0xffffff, 0.5)), letterSpacing: 1.5,
+        backgroundColor: hex(C.void_), padding: { x: 10, y: 3 },
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+      this.phaseObjects.push(foeLine);
+    }
+
+    // Duo: remind them who is already on the far side of the arena.
+    if (this.selectionPhase === 'duoEnemy' && this.enemyChoice) {
+      const first = findElementDef(this.enemyChoice);
+      if (first) {
+        const line = this.add.text(cx, 190, `ALREADY FACING:  ${first.emoji} ${first.name.toUpperCase()}`, {
+          fontSize: '14px', fontFamily: FONT_DISPLAY, color: hex(mix(C.blood, 0xffffff, 0.5)), letterSpacing: 1.5,
+          backgroundColor: hex(C.void_), padding: { x: 10, y: 3 },
+        }).setOrigin(0.5).setDepth(DEPTH.content);
+        this.phaseObjects.push(line);
+      }
+    }
+
+    if (this.selectionPhase === 'enemy' && this.playerChoice) {
       const chosen = findElementDef(this.playerChoice);
       if (chosen) {
         // Reminder of the pick you already locked in, framed as a duel card.
@@ -221,15 +328,21 @@ export class MenuScene extends Phaser.Scene {
       onSelect: (id) => this.handleElementClick(id, width, height, cx),
       // Tag team: an element fights the King at most once per run. Burned ones
       // stay on the board, greyed, so the roster you have left is legible.
-      lockedLabel: (el) => (isPlayerPhase && this.bossTag?.usedElements.includes(el.id) === true)
-        ? '⟳ ALREADY FOUGHT' : null,
+      lockedLabel: (el) => {
+        if (isPlayerPhase && this.bossTag?.usedElements.includes(el.id) === true) return '⟳ ALREADY FOUGHT';
+        // A Tag Team side fields three *different* elements — one body cannot tag itself in.
+        if (bench?.includes(el.id)) return '✔ ON THE BENCH';
+        // Duo's two foes must be different, or "pick a second element" means nothing.
+        if (this.selectionPhase === 'duoEnemy' && el.id === this.enemyChoice) return '✔ ALREADY FACING';
+        return null;
+      },
       // You load out the element you are about to play, not the one you are fighting.
       showCustomize: isPlayerPhase,
       showPerkDictionary: isPlayerPhase,
     }));
 
     // Dummy enemy — shown only on enemy phase when unlocked via konami code
-    if (!isPlayerPhase && PlayerData.isDummyUnlocked()) {
+    if (this.selectionPhase === 'enemy' && PlayerData.isDummyUnlocked()) {
       const dBtn = addButton(this, {
         x: cx, y: height / 2 + 130, w: 200, h: 34,
         label: 'DUMMY MODE', icon: '🎯', fontSize: 13,
@@ -493,34 +606,45 @@ export class MenuScene extends Phaser.Scene {
     const playerEl = findElementDef(this.playerChoice ?? '');
     const enemyEl  = findElementDef(this.enemyChoice ?? '');
 
-    const diffBtnY  = 228;
-    const descY     = 292;
-    const mutTitleY = 327;
+    // A plate that has come off is a permanent second row, so the whole screen
+    // is laid out around whether there is one — everything above it tightens up
+    // and the difficulty plates lose a few pixels of height to make the room.
+    const revealed = SECRET_MODES.filter((m) => PlayerData.isSecretModeUnlocked(m.id));
+    const hasRow    = revealed.length > 0;
+    const headingY  = hasRow ? 146 : 152;
+    const bannerY   = hasRow ? 178 : 186;
+    const diffBtnY  = hasRow ? 214 : 228;
+    const btnH      = hasRow ? 52 : 60;
+    const descY     = hasRow ? 252 : 292;
+    const secretLabelY = 274;
+    const secretRowY   = 304;
+    const mutTitleY = hasRow ? 340 : 327;
+    this.mutPanelTop = mutTitleY;
 
     this.phaseObjects.push(addSectionLabel(this, {
-      x: cx, y: 152, text: 'CHOOSE DIFFICULTY', accent: C.gold, width: 560,
+      x: cx, y: headingY, text: 'CHOOSE DIFFICULTY', accent: C.gold, width: 560,
     }));
 
     if (playerEl && enemyEl) {
       // The matchup banner: your element, a struck VS, then the opponent.
       const g = this.add.graphics().setDepth(DEPTH.content - 1);
       g.lineStyle(1, C.line, 0.7);
-      g.beginPath(); g.moveTo(cx - 220, 186); g.lineTo(cx - 26, 186); g.strokePath();
-      g.beginPath(); g.moveTo(cx + 26, 186); g.lineTo(cx + 220, 186); g.strokePath();
-      fillDiamond(g, cx - 220, 186, 3, C.verdant, 0.7);
-      fillDiamond(g, cx + 220, 186, 3, C.blood, 0.7);
+      g.beginPath(); g.moveTo(cx - 220, bannerY); g.lineTo(cx - 26, bannerY); g.strokePath();
+      g.beginPath(); g.moveTo(cx + 26, bannerY); g.lineTo(cx + 220, bannerY); g.strokePath();
+      fillDiamond(g, cx - 220, bannerY, 3, C.verdant, 0.7);
+      fillDiamond(g, cx + 220, bannerY, 3, C.blood, 0.7);
 
-      const you = this.add.text(cx - 34, 186, `${playerEl.emoji}  ${playerEl.name.toUpperCase()}`, {
+      const you = this.add.text(cx - 34, bannerY, `${playerEl.emoji}  ${playerEl.name.toUpperCase()}`, {
         fontSize: '15px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 1,
         backgroundColor: hex(C.void_), padding: { x: 8, y: 3 },
       }).setOrigin(1, 0.5).setDepth(DEPTH.content);
 
-      const vs = this.add.text(cx, 186, 'VS', {
+      const vs = this.add.text(cx, bannerY, 'VS', {
         fontSize: '13px', fontFamily: FONT_DISPLAY, color: T.gold, letterSpacing: 2,
         backgroundColor: hex(C.void_), padding: { x: 6, y: 3 },
       }).setOrigin(0.5).setDepth(DEPTH.content);
 
-      const foe = this.add.text(cx + 34, 186, `${enemyEl.emoji}  ${enemyEl.name.toUpperCase()}`, {
+      const foe = this.add.text(cx + 34, bannerY, `${enemyEl.emoji}  ${enemyEl.name.toUpperCase()}`, {
         fontSize: '15px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 1,
         backgroundColor: hex(C.void_), padding: { x: 8, y: 3 },
       }).setOrigin(0, 0.5).setDepth(DEPTH.content);
@@ -529,7 +653,6 @@ export class MenuScene extends Phaser.Scene {
     }
 
     const btnW = 148;
-    const btnH = 60;
     const btnGap = 10;
     const totalW = DIFFICULTY_PRESETS.length * btnW + (DIFFICULTY_PRESETS.length - 1) * btnGap;
     const startX = cx - totalW / 2;
@@ -597,10 +720,356 @@ export class MenuScene extends Phaser.Scene {
         });
 
       this.phaseObjects.push(plate.g, pips, btn, labelText, hpText);
+
+      // ── The four screws ──────────────────────────────────────────
+      // Drawn on every plate from the very first visit, whether or not the
+      // player owns anything that could turn them. They are the hint.
+      this.renderPlateScrews(i, bx, diffBtnY, btnW, btnH, color, width, height, cx);
     });
+
+    // ── Whatever has already come off the wall ────────────────────────
+    if (hasRow) this.renderSecretRow(revealed, cx, secretLabelY, secretRowY, width, height);
 
     // ── New mutation panel (scrollable list + rewards sidebar) ────────
     this.renderMutationPanel(width, height, cx, mutTitleY);
+  }
+
+  // ── Screws, plates, and what is under them ──────────────────────────
+
+  /**
+   * The four corner screws on one difficulty plate.
+   *
+   * With no screwdriver they are decoration: still drawn, still shiny, entirely
+   * inert. With one they come out a click at a time — persisted per corner, so
+   * a half-opened plate stays half-opened between visits — and the fourth one
+   * lifts the plate off for good.
+   */
+  private renderPlateScrews(
+    index: number, bx: number, by: number, w: number, h: number, accent: number,
+    width: number, height: number, cx: number,
+  ): void {
+    const mode = secretModeForDifficulty(index);
+    if (!mode) return;
+    // Once the plate is off there is nothing left to unscrew — the mode lives
+    // in the row below and the corners go back to being plain rivets.
+    const done = PlayerData.isSecretModeUnlocked(mode.id);
+    const removed = new Set(done ? [] : PlayerData.getRemovedScrews(mode.id));
+    const hasTool = PlayerData.isScrewdriverFound();
+
+    const inset = 9;
+    const corners: Array<{ x: number; y: number }> = [
+      { x: bx - w / 2 + inset, y: by - h / 2 + inset },
+      { x: bx + w / 2 - inset, y: by - h / 2 + inset },
+      { x: bx + w / 2 - inset, y: by + h / 2 - inset },
+      { x: bx - w / 2 + inset, y: by + h / 2 - inset },
+    ];
+
+    corners.forEach((pt, corner) => {
+      const out = removed.has(corner);
+      // Drawn at the origin and *moved* into place, so a hover scale grows the
+      // screw rather than flinging it away from the canvas corner.
+      const g = this.add.graphics().setDepth(DEPTH.content + 2).setPosition(pt.x, pt.y);
+      this.phaseObjects.push(g);
+      this.paintScrew(g, 0, 0, accent, out, done);
+
+      // Inert without the tool, and never interactive once the plate is off —
+      // the hit rect below would otherwise sit on top of the difficulty button.
+      // (Phaser's input is top-only by default, so while it exists it does
+      // consume the click, which is exactly what a screw should do.)
+      if (!hasTool || out || done) return;
+
+      const hit = this.add.circle(pt.x, pt.y, 9, 0xffffff, 0)
+        .setDepth(DEPTH.content + 3)
+        .setInteractive({ useHandCursor: true });
+      this.phaseObjects.push(hit);
+      hit.on('pointerover', () => g.setScale(1.3));
+      hit.on('pointerout', () => g.setScale(1));
+      hit.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+        ptr.event.stopPropagation();
+        this.unscrew(mode, corner, pt.x, pt.y, width, height, cx);
+      });
+    });
+  }
+
+  /** One screw head, or the empty hole it left behind. */
+  private paintScrew(
+    g: Phaser.GameObjects.Graphics, x: number, y: number, accent: number,
+    out: boolean, plateOff: boolean,
+  ): void {
+    if (out) {
+      // An empty countersunk hole: dark well, thin lit rim on the low side.
+      g.fillStyle(C.void_, 0.95);
+      g.fillCircle(x, y, 4.2);
+      g.lineStyle(1, mix(accent, 0x000000, 0.5), 0.8);
+      g.strokeCircle(x, y, 4.2);
+      return;
+    }
+    const head = plateOff ? mix(accent, 0x000000, 0.45) : mix(C.steel, 0xffffff, 0.35);
+    g.fillStyle(mix(head, 0x000000, 0.55), 1);
+    g.fillCircle(x, y + 0.8, 4.6);
+    g.fillStyle(head, 1);
+    g.fillCircle(x, y, 4.4);
+    // Cross slot, tilted so the five plates do not read as a stamped pattern.
+    g.lineStyle(1.4, mix(head, 0x000000, 0.7), 1);
+    g.beginPath(); g.moveTo(x - 3, y - 1.2); g.lineTo(x + 3, y + 1.2); g.strokePath();
+    g.beginPath(); g.moveTo(x - 1.2, y + 3); g.lineTo(x + 1.2, y - 3); g.strokePath();
+    // Highlight — this is a metal thing under a light.
+    g.fillStyle(0xffffff, 0.35);
+    g.fillCircle(x - 1.4, y - 1.6, 1.1);
+  }
+
+  /**
+   * Take one screw out. The fourth one takes the whole plate with it.
+   */
+  private unscrew(
+    mode: SecretModeDef, corner: number, sx: number, sy: number,
+    width: number, height: number, cx: number,
+  ): void {
+    // The reveal holds the old plate on screen for a beat before repainting, so
+    // the fourth screw's hit rect outlives its own click. Nothing to do twice.
+    if (PlayerData.isSecretModeUnlocked(mode.id)) return;
+    const count = PlayerData.removeScrew(mode.id, corner);
+    Sfx.play('ui-toggle-off');
+
+    // The screw itself, spinning off the plate.
+    const spinner = this.add.graphics().setDepth(DEPTH.content + 6);
+    this.paintScrew(spinner, 0, 0, mode.color, false, false);
+    spinner.setPosition(sx, sy);
+    this.tweens.add({
+      targets: spinner,
+      x: sx + Phaser.Math.Between(-40, 40), y: sy + 70,
+      angle: 720, alpha: 0, duration: 620, ease: 'Quad.easeIn',
+      onComplete: () => spinner.destroy(),
+    });
+
+    if (count < SCREWS_PER_PLATE) {
+      const left = SCREWS_PER_PLATE - count;
+      this.showLoosePlateHint(sx, sy - 22, `${left} LEFT`, mode.color);
+      this.renderPhase(width, height, cx);
+      return;
+    }
+
+    // ── The plate comes off ───────────────────────────────────────────
+    PlayerData.unlockSecretMode(mode.id);
+    Sfx.play('reward-big');
+    this.cameras.main.shake(260, 0.006);
+    this.cameras.main.flash(240, 255, 230, 170);
+
+    const banner = this.add.text(cx, 196, `${mode.icon}  ${mode.name}`, {
+      fontSize: '30px', fontFamily: FONT_DISPLAY,
+      color: hex(mix(mode.color, 0xffffff, 0.6)),
+      stroke: hex(mix(mode.color, 0x000000, 0.8)), strokeThickness: 6, letterSpacing: 4,
+    }).setOrigin(0.5).setDepth(80).setAlpha(0);
+    const sub = this.add.text(cx, 232, mode.tagline.toUpperCase(), {
+      fontSize: '13px', fontFamily: FONT_DISPLAY, color: T.gold, letterSpacing: 2,
+    }).setOrigin(0.5).setDepth(80).setAlpha(0);
+    this.tweens.add({ targets: [banner, sub], alpha: 1, duration: 260 });
+    this.tweens.add({
+      targets: [banner, sub], alpha: 0, delay: 1200, duration: 400,
+      onComplete: () => { banner.destroy(); sub.destroy(); },
+    });
+
+    this.time.delayedCall(1100, () => {
+      if (this.scene.isActive()) this.renderPhase(width, height, cx);
+    });
+  }
+
+  private showLoosePlateHint(x: number, y: number, text: string, color: number): void {
+    const t = this.add.text(x, y, text, {
+      fontSize: '11px', fontFamily: FONT_DISPLAY,
+      color: hex(mix(color, 0xffffff, 0.6)), letterSpacing: 1.5,
+    }).setOrigin(0.5).setDepth(80);
+    this.tweens.add({
+      targets: t, y: y - 22, alpha: 0, duration: 900, ease: 'Quad.easeOut',
+      onComplete: () => t.destroy(),
+    });
+  }
+
+  /**
+   * The second row: every plate that has already come off, permanently.
+   *
+   * These are not difficulties — they are whole modes, and each one either
+   * launches straight into a fight or steps sideways into the extra picks it
+   * needs (a second foe, two benches, a map).
+   */
+  private renderSecretRow(
+    modes: SecretModeDef[], cx: number, labelY: number, y: number, width: number, height: number,
+  ): void {
+    this.phaseObjects.push(addSectionLabel(this, {
+      x: cx, y: labelY, text: '🪛  UNDER THE PLATES', accent: C.gold, width: 620,
+    }));
+
+    const gap = 8;
+    const btnW = Math.min(178, Math.floor((760 - gap * (modes.length - 1)) / modes.length));
+    const totalW = modes.length * btnW + (modes.length - 1) * gap;
+    let x = cx - totalW / 2 + btnW / 2;
+
+    for (const mode of modes) {
+      const btn = addButton(this, {
+        x, y, w: btnW, h: 40,
+        label: mode.name, icon: mode.icon, fontSize: 12,
+        sublabel: mode.shardReward > 0 ? `💎 +${mode.shardReward}` : 'no reward',
+        accent: mode.color, variant: 'ghost', cut: 8,
+        onClick: () => this.startSecretMode(mode, width, height, cx),
+      });
+      this.phaseObjects.push(btn.container);
+      x += btnW + gap;
+    }
+  }
+
+  // ── Secret mode entry ───────────────────────────────────────────────
+
+  /**
+   * Clicking a secret mode. Two of them start the fight on the spot; the other
+   * three need something more from the player first and step into their own
+   * selection phase to get it.
+   */
+  private startSecretMode(mode: SecretModeDef, width: number, height: number, cx: number): void {
+    Sfx.play('ui-equip');
+    this.pendingSecret = mode.id;
+
+    switch (mode.id) {
+      case 'duo':
+        this.selectionPhase = 'duoEnemy';
+        this.elemPage = 0;
+        this.renderPhase(width, height, cx);
+        return;
+      case 'tagteam':
+        // The two picks already made are the first name on each bench — there is
+        // no sense making the player choose them twice.
+        this.teamPlayer = this.playerChoice ? [this.playerChoice] : [];
+        this.teamEnemy = this.enemyChoice ? [this.enemyChoice] : [];
+        this.selectionPhase = 'teamPlayer';
+        this.elemPage = 0;
+        this.renderPhase(width, height, cx);
+        return;
+      case 'worldshift':
+        this.selectionPhase = 'mapSelect';
+        this.renderPhase(width, height, cx);
+        return;
+      case 'dummy':
+      case 'truenightmare':
+        this.launchSecretFight(mode, {});
+        return;
+    }
+  }
+
+  /**
+   * Every secret mode ends up here. The extras each one gathered ride along in
+   * `extra`; everything shared — loadout, mutations, the mode's own difficulty
+   * rung and its flat payout — is assembled once.
+   */
+  private launchSecretFight(mode: SecretModeDef, extra: Record<string, unknown>): void {
+    const npcPool = getPerksForElement(this.enemyChoice ?? '');
+    // Same rule as the ordinary plates: the top two rungs bring a perk along.
+    const npcPerk: string | null = (mode.difficultyLevel >= 4 && npcPool.length > 0)
+      ? npcPool[Math.floor(Math.random() * npcPool.length)].id
+      : null;
+
+    this.scene.start('ArenaScene', {
+      elementId: this.playerChoice,
+      enemyElementId: this.enemyChoice,
+      difficulty: mode.difficultyLevel,
+      mutations: [...activeMutationIds],
+      starredMutations: [...starredMutationIds],
+      playerPerk: PlayerData.getEquippedPerk(this.playerChoice ?? ''),
+      npcPerk,
+      secretMode: mode.id,
+      ...extra,
+    });
+  }
+
+  /**
+   * The stabilisation bout: your three against the three that came off the
+   * forge, on Expert.
+   *
+   * Mechanically this is Secret Tag Team — same chain, same carried wounds —
+   * but it is deliberately *not* launched as one: a secret mode pays a flat
+   * purse and this fight's reward is the element. `stabilize` rides the boot
+   * payload so ArenaScene hands it back to the results screen, which is where
+   * the forge is actually settled.
+   */
+  private launchStabilisation(): void {
+    const pending = this.stabilize;
+    if (!pending) return;
+    Sfx.play('ui-equip');
+
+    this.scene.start('ArenaScene', {
+      elementId: this.teamPlayer[0],
+      enemyElementId: this.teamEnemy[0],
+      difficulty: STABILISE_DIFFICULTY,
+      mutations: [...activeMutationIds],
+      starredMutations: [...starredMutationIds],
+      playerPerk: PlayerData.getEquippedPerk(this.teamPlayer[0]),
+      npcPerk: null,
+      secretTag: freshSecretTag([...this.teamPlayer], [...this.teamEnemy]),
+      stabilize: { result: pending.result },
+    });
+  }
+
+  /** World Shift: the five grounds. */
+  private renderMapSelectPhase(width: number, height: number, cx: number): void {
+    const mode = getSecretMode('worldshift')!;
+
+    this.phaseObjects.push(addSectionLabel(this, {
+      x: cx, y: 152, text: '🌍  CHOOSE YOUR GROUND', accent: mode.color, width: 600,
+    }));
+
+    const note = this.add.text(cx, 182,
+      'Every hazard is impartial. It will kill whichever of you is standing in it.', {
+      fontSize: '12px', fontFamily: FONT_UI, color: T.ghost,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
+    this.phaseObjects.push(note);
+
+    // Five cards across, with the rules for the hovered one printed underneath —
+    // the maps differ enough that a one-line tagline would be a lie.
+    const cardW = 168;
+    const cardH = 132;
+    const gap = 12;
+    const totalW = SECRET_MAPS.length * cardW + (SECRET_MAPS.length - 1) * gap;
+    const startX = cx - totalW / 2 + cardW / 2;
+    const cardY = 274;
+
+    const rulesText = this.add.text(cx, cardY + cardH / 2 + 26, '', {
+      fontSize: '12px', fontFamily: FONT_UI, color: T.normal,
+      align: 'center', lineSpacing: 5, wordWrap: { width: width - 120 },
+    }).setOrigin(0.5, 0).setDepth(DEPTH.content);
+    this.phaseObjects.push(rulesText);
+
+    SECRET_MAPS.forEach((map, i) => {
+      const mx = startX + i * (cardW + gap);
+      const plate = addCardPlate(this, {
+        x: mx, y: cardY, w: cardW, h: cardH, accent: map.accent, cut: 12,
+      });
+
+      const emoji = this.add.text(mx, cardY - 34, map.emoji, { fontSize: '34px' })
+        .setOrigin(0.5).setDepth(DEPTH.content);
+      const name = this.add.text(mx, cardY + 6, map.name, {
+        fontSize: '13px', fontFamily: FONT_DISPLAY,
+        color: hex(mix(map.accent, 0xffffff, 0.6)), letterSpacing: 1,
+        align: 'center', wordWrap: { width: cardW - 18 },
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+      const tag = this.add.text(mx, cardY + 40, map.tagline, {
+        fontSize: '9px', fontFamily: FONT_UI, color: T.ghost,
+        align: 'center', wordWrap: { width: cardW - 20 }, lineSpacing: 2,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+
+      const hit = this.add.rectangle(mx, cardY, cardW, cardH, 0xffffff, 0)
+        .setDepth(DEPTH.content + 1)
+        .setInteractive({ useHandCursor: true });
+      hit.on('pointerover', () => { plate.paint('hover'); rulesText.setText(map.rules.join('\n')); });
+      hit.on('pointerout', () => { plate.paint('idle'); rulesText.setText(''); });
+      hit.on('pointerdown', () => this.launchWorldShift(map.id));
+
+      this.phaseObjects.push(plate.g, emoji, name, tag, hit);
+    });
+  }
+
+  private launchWorldShift(mapId: SecretMapId): void {
+    const mode = getSecretMode('worldshift');
+    if (!mode) return;
+    Sfx.play('ui-equip');
+    this.launchSecretFight(mode, { secretMap: mapId });
   }
 
   // ── Mutation panel (scrollable list + rewards sidebar) ──────────────
@@ -879,7 +1348,7 @@ export class MenuScene extends Phaser.Scene {
     const RWD_CX = RWD_X + RWD_W / 2;
     const height = this.scale.height;
     // Only ever called from the difficulty phase's hover handler — invasion mode has no mutation panel to size.
-    const panelTop = 327 + 28;
+    const panelTop = this.mutPanelTop + 28;
     const panelH   = (height - 70) - panelTop;
     this.buildRewardsPanel(RWD_CX, panelTop, panelH, RWD_W);
   }
@@ -965,11 +1434,43 @@ export class MenuScene extends Phaser.Scene {
     if (this.selectionPhase === 'player') {
       // Each mode backs out to wherever it was entered from.
       if (this.isBoss) this.scene.start('ShopScene', { page: 999 });
-      else if (this.bounty) this.scene.start('DisgracedLabScene', { tab: 1 });
+      else if (this.bounty) this.scene.start('DisgracedLabScene', { tab: 'bounties' });
       else this.scene.start('TitleScene');
     } else if (this.selectionPhase === 'enemy') {
       this.playerChoice = null;
       this.selectionPhase = 'player';
+      this.elemPage = 0;
+      this.renderPhase(width, height, cx);
+    } else if (this.selectionPhase === 'duoEnemy' || this.selectionPhase === 'mapSelect') {
+      // Both are one step past the difficulty screen — back out to it.
+      this.pendingSecret = null;
+      this.selectionPhase = 'difficulty';
+      this.elemPage = 0;
+      this.renderPhase(width, height, cx);
+    } else if (this.selectionPhase === 'teamPlayer' && this.stabilize) {
+      // The forge is already paid for and stays pending — backing out here is a
+      // pause, not a forfeit. The lab offers it again the moment you walk in.
+      if (this.teamPlayer.length > 0) {
+        this.teamPlayer.pop();
+        this.elemPage = 0;
+        this.renderPhase(width, height, cx);
+      } else {
+        this.scene.start('DisgracedLabScene', { tab: 'synthesis' });
+      }
+    } else if (this.selectionPhase === 'teamPlayer' || this.selectionPhase === 'teamEnemy') {
+      // Backs a pick off the bench at a time; emptying your bench leaves the mode.
+      const bench = this.selectionPhase === 'teamPlayer' ? this.teamPlayer : this.teamEnemy;
+      if (bench.length > 1) {
+        bench.pop();
+      } else if (this.selectionPhase === 'teamEnemy') {
+        this.teamEnemy = [];
+        this.selectionPhase = 'teamPlayer';
+        this.teamPlayer.pop();
+      } else {
+        this.pendingSecret = null;
+        this.teamPlayer = [];
+        this.selectionPhase = 'difficulty';
+      }
       this.elemPage = 0;
       this.renderPhase(width, height, cx);
     } else if (this.selectionPhase === 'difficulty') {
@@ -1015,6 +1516,37 @@ export class MenuScene extends Phaser.Scene {
     } else if (this.selectionPhase === 'enemy') {
       this.enemyChoice = elementId;
       this.selectionPhase = 'difficulty';
+    } else if (this.selectionPhase === 'duoEnemy') {
+      // The second foe: nothing left to ask, so this click is the start button.
+      const mode = getSecretMode('duo');
+      if (mode) { this.launchSecretFight(mode, { duoEnemyElementId: elementId }); return; }
+    } else if (this.selectionPhase === 'teamPlayer' && this.stabilize) {
+      if (!this.teamPlayer.includes(elementId)) this.teamPlayer.push(elementId);
+      if (this.teamPlayer.length >= TAG_TEAM_SIZE) {
+        this.launchStabilisation();
+        return;
+      }
+    } else if (this.selectionPhase === 'teamPlayer') {
+      if (!this.teamPlayer.includes(elementId)) this.teamPlayer.push(elementId);
+      if (this.teamPlayer.length >= TAG_TEAM_SIZE) {
+        // Your bench is set — the element at the front of it is the one that
+        // takes the floor, so it becomes the loadout the fight actually boots with.
+        this.playerChoice = this.teamPlayer[0];
+        this.selectionPhase = 'teamEnemy';
+        this.elemPage = 0;
+      }
+    } else if (this.selectionPhase === 'teamEnemy') {
+      if (!this.teamEnemy.includes(elementId)) this.teamEnemy.push(elementId);
+      if (this.teamEnemy.length >= TAG_TEAM_SIZE) {
+        const mode = getSecretMode('tagteam');
+        if (mode) {
+          this.enemyChoice = this.teamEnemy[0];
+          this.launchSecretFight(mode, {
+            secretTag: freshSecretTag([...this.teamPlayer], [...this.teamEnemy]),
+          });
+          return;
+        }
+      }
     }
     this.renderPhase(width, height, cx);
   }

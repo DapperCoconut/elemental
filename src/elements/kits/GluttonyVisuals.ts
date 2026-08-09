@@ -59,6 +59,26 @@ export const GLT = {
   potatoFlesh: 0xf2e6c2,
   meat: 0xd0525c,
   bone: 0xf1ead0,
+  /** The Head Chef larder — the four things only an upgraded forage turns up. */
+  berry: 0x9b3fd4,
+  berryDark: 0x54186f,
+  mint: 0x74d6a6,
+  mintFrost: 0xdff5ec,
+  pineapple: 0xe8c447,
+  pineappleSkin: 0x9b7a1c,
+  deathcap: 0xd3d9bc,
+  deathcapGill: 0x8f9a74,
+  venom: 0x6fe04a,
+  /** Leftovers, and the film that grows on anything left on the maw. */
+  parcel: 0xc9b48a,
+  rot: 0x7d9b34,
+  rotDark: 0x3c4d18,
+  /** Pit Master's blue coals, and the char an over-seared thing carries. */
+  blueCoal: 0x3fa9ff,
+  blueHot: 0xd6f0ff,
+  /** The ichor a cleaver picks up off the maw. */
+  ichor: 0x5c0a14,
+  ichorLit: 0x9c1524,
   /** The Feast pot. */
   pot: 0x43424c,
   stew: 0xc8823a,
@@ -67,7 +87,12 @@ export const GLT = {
 
 // ── The larder ────────────────────────────────────────────────────────────
 
-export type FoodKind = 'mushroom' | 'carrot' | 'potato' | 'meat';
+export type FoodKind =
+  | 'mushroom' | 'carrot' | 'potato' | 'meat'
+  // Head Chef (E+) opens the second half of the larder.
+  | 'berries' | 'mint' | 'pineapple' | 'deathcap'
+  // Resourceful (Q+) — what is scraped out of the pot afterwards.
+  | 'leftovers';
 
 export interface FoodProfile {
   label: string;
@@ -79,8 +104,17 @@ export interface FoodProfile {
   cookMs: number;
   healRaw: number;
   healCooked: number;
+  /**
+   * Fractions of the eater's own max HP, added on top of the flat figures above. Only Winter
+   * Mint uses them — it is the one ingredient written as a percentage rather than a number,
+   * and a flat value would mean something different on a 400 HP player and a husk.
+   */
+  healPctRaw?: number;
+  healPctCooked?: number;
   /** Seconds of butcher form eating it is worth. */
   hungerSec: number;
+  /** Head Chef's rare drop: one entry in ten rather than one in seven. */
+  rare?: boolean;
 }
 
 export const FOOD: Record<FoodKind, FoodProfile> = {
@@ -100,10 +134,51 @@ export const FOOD: Record<FoodKind, FoodProfile> = {
     label: 'MEAT', emoji: '🍖', color: GLT.meat, cookedColor: 0x8e4327,
     cookMs: 15000, healRaw: 20, healCooked: 50, hungerSec: 15,
   },
+  berries: {
+    label: 'BRISTLE BERRIES', emoji: '🫐', color: GLT.berry, cookedColor: GLT.berryDark,
+    cookMs: 5000, healRaw: 5, healCooked: 12, hungerSec: 2,
+  },
+  mint: {
+    label: 'WINTER MINT', emoji: '🍃', color: GLT.mint, cookedColor: 0x6c7a4a,
+    cookMs: 2000, healRaw: 0, healCooked: 0, healPctRaw: 0.10, healPctCooked: 0.01, hungerSec: 3,
+  },
+  pineapple: {
+    label: 'PINEAPPLE', emoji: '🍍', color: GLT.pineapple, cookedColor: 0xd08e1e,
+    cookMs: 20000, healRaw: 30, healCooked: 50, hungerSec: 10,
+  },
+  deathcap: {
+    label: 'DEATH CAP', emoji: '☠️', color: GLT.deathcap, cookedColor: 0x8a6d3f,
+    cookMs: 25000, healRaw: -30, healCooked: 50, hungerSec: 12, rare: true,
+  },
+  leftovers: {
+    label: 'LEFTOVERS', emoji: '🥡', color: GLT.parcel, cookedColor: 0xb08334,
+    cookMs: 25000, healRaw: 0, healCooked: 0, hungerSec: 4,
+  },
 };
 
 /** What Forage can turn up. Meat is butchery, not foraging — it only comes off a skewer. */
 export const FORAGEABLE: FoodKind[] = ['mushroom', 'carrot', 'potato'];
+
+/**
+ * What Forage turns up once Head Chef is owned. Death Cap is listed once against six common
+ * entries and gated behind {@link FoodProfile.rare} on top of that, so it stays the thing you
+ * are pleased to see rather than the thing you expect.
+ */
+export const FORAGEABLE_PLUS: FoodKind[] = [
+  'mushroom', 'carrot', 'potato', 'berries', 'mint', 'pineapple', 'deathcap',
+];
+
+/**
+ * One thing in a slot, everywhere it can be drawn — the strip, the grate, in flight, in hand.
+ * `rotten` and `overseared` are mutually exclusive by construction: one comes off the maw and
+ * the other off the grill, and the two are never the same object at the same time.
+ */
+export interface FoodStamp {
+  kind: FoodKind;
+  cooked: boolean;
+  rotten?: boolean;
+  overseared?: boolean;
+}
 
 export function foodColor(kind: FoodKind, cooked: boolean): number {
   return cooked ? FOOD[kind].cookedColor : FOOD[kind].color;
@@ -207,9 +282,106 @@ export function kitchenKnife(
 }
 
 /**
+ * The cleaver a Click upgrade turns the knife into.
+ *
+ * Deliberately the opposite shape to `kitchenKnife`: where that is a needle with a bellied
+ * edge, this is a rectangle — a deep rectangular blade with a spine you could stand on, a
+ * lightening hole punched near the heel, and a stubby handle that reads as an afterthought.
+ * The silhouette has to say "this goes *through* people" from across the arena, because that
+ * is exactly what it now does. `ichor` (0–1) hangs a dark film off the edge with drips.
+ */
+export function chefCleaver(
+  g: Phaser.GameObjects.Graphics,
+  tint: GluttonyColorFn,
+  x: number, y: number, ang: number,
+  len: number,
+  heat: number,
+  alpha: number,
+  ichor = 0,
+  t = 0,
+): void {
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const P = (u: number, v: number) => pt(x, y, ca, sa, u, v);
+  const h = len * 0.3;
+
+  if (heat > 0.02) {
+    g.fillStyle(tint(GLT.heat), alpha * 0.24 * heat);
+    g.fillEllipse(x + ca * len * 0.14, y + sa * len * 0.14, len * 0.86, h * 2.4);
+  }
+
+  // ── Blade: a slab. Square tip, square heel, dead-flat spine. ──
+  const blade = [
+    P(len * 0.46, -h * 0.86),
+    P(len * 0.5, -h * 0.6),
+    P(len * 0.5, h * 0.72),
+    P(len * 0.42, h * 0.92),
+    P(-len * 0.14, h * 0.86),
+    P(-len * 0.14, -h * 0.9),
+  ];
+  g.fillStyle(tint(GLT.steelDark), alpha * 0.9);
+  g.fillPoints(blade.map((p) => new Phaser.Geom.Point(p.x + sa * 1.8, p.y - ca * 1.8)), true);
+  g.fillStyle(tint(GLT.steel), alpha * 0.96);
+  g.fillPoints(blade, true);
+  // The forge line across the middle, and the lightening hole above the heel.
+  g.lineStyle(1.5, tint(0xffffff), alpha * 0.45);
+  g.lineBetween(P(len * 0.44, -h * 0.5).x, P(len * 0.44, -h * 0.5).y,
+    P(-len * 0.1, -h * 0.56).x, P(-len * 0.1, -h * 0.56).y);
+  g.fillStyle(tint(GLT.steelDark), alpha * 0.9);
+  const hole = P(-len * 0.02, -h * 0.42);
+  g.fillCircle(hole.x, hole.y, len * 0.05);
+  g.lineStyle(1, tint(GLT.char), alpha * 0.7);
+  g.strokeCircle(hole.x, hole.y, len * 0.05);
+
+  // The edge, along the whole bottom. Hot, it burns the full length rather than the tip.
+  const edgeA = P(len * 0.5, h * 0.72);
+  const edgeB = P(-len * 0.14, h * 0.86);
+  g.lineStyle(2, tint(GLT.steel), alpha * 0.92);
+  g.lineBetween(edgeA.x, edgeA.y, edgeB.x, edgeB.y);
+  if (heat > 0.02) {
+    g.lineStyle(4.2, tint(GLT.heat), alpha * 0.5 * heat);
+    g.lineBetween(edgeA.x, edgeA.y, edgeB.x, edgeB.y);
+    g.lineStyle(2, tint(heat > 0.85 ? GLT.emberHot : GLT.ember), alpha * heat);
+    g.lineBetween(edgeA.x, edgeA.y, edgeB.x, edgeB.y);
+  }
+  if (ichor > 0.02) {
+    // A skin of it over the steel, thickest along the edge, with two drips falling off.
+    g.fillStyle(tint(GLT.ichor), alpha * 0.6 * ichor);
+    g.fillPoints(blade, true);
+    g.lineStyle(4, tint(GLT.ichorLit), alpha * 0.9 * ichor);
+    g.lineBetween(edgeA.x, edgeA.y, edgeB.x, edgeB.y);
+    for (let i = 0; i < 2; i++) {
+      const ph = ((t * 1.1 + i * 0.5) % 1);
+      const u = len * (0.32 - i * 0.3);
+      const d = P(u, h * 0.8);
+      g.fillStyle(tint(GLT.ichorLit), alpha * ichor * (1 - ph));
+      g.fillCircle(d.x, d.y + ph * len * 0.3, len * 0.035 * (1 - ph * 0.4));
+    }
+  }
+
+  // ── Bolster and handle ──
+  const bolster = [P(-len * 0.14, -h * 0.92), P(-len * 0.22, -h * 0.8),
+    P(-len * 0.22, h * 0.72), P(-len * 0.14, h * 0.88)];
+  g.fillStyle(tint(GLT.steelMid), alpha);
+  g.fillPoints(bolster, true);
+  const grip = [P(-len * 0.22, -h * 0.62), P(-len * 0.52, -h * 0.48),
+    P(-len * 0.54, h * 0.4), P(-len * 0.22, h * 0.56)];
+  g.fillStyle(tint(GLT.char), alpha);
+  g.fillPoints(grip, true);
+  g.fillStyle(tint(GLT.band), alpha * 0.9);
+  g.fillPoints(grip.map((p) => new Phaser.Geom.Point(p.x - sa * 1.2, p.y + ca * 1.2)), true);
+  g.fillStyle(tint(GLT.steelMid), alpha * 0.95);
+  for (let i = 0; i < 2; i++) {
+    const r = P(-len * (0.3 + i * 0.11), 0);
+    g.fillCircle(r.x, r.y, Math.max(1, len * 0.026));
+  }
+}
+
+/**
  * A briquette of charcoal. Deliberately a square — it is the one thing Gluttony throws that is
  * not organic, and the silhouette has to say "lump of fuel" mid-flight — with the cracks between
- * its faces lit from inside.
+ * its faces lit from inside. `blue` is Pit Master's: the same lump burning far hotter, so the
+ * cracks go cyan-white instead of orange.
  */
 export function charcoalLump(
   g: Phaser.GameObjects.Graphics,
@@ -219,14 +391,17 @@ export function charcoalLump(
   glow: number,
   alpha: number,
   seed = 3,
+  blue = false,
 ): void {
+  const hotA = blue ? GLT.blueCoal : GLT.heat;
+  const hotB = blue ? GLT.blueHot : GLT.ember;
   const ca = Math.cos(ang);
   const sa = Math.sin(ang);
   const P = (u: number, v: number) => pt(x, y, ca, sa, u, v);
   const s = size * 0.5;
 
   if (glow > 0.02) {
-    g.fillStyle(tint(GLT.heat), alpha * 0.2 * glow);
+    g.fillStyle(tint(hotA), alpha * 0.2 * glow);
     g.fillCircle(x, y, size * (0.95 + 0.12 * Math.sin(seed + glow * 9)));
   }
 
@@ -243,7 +418,7 @@ export function charcoalLump(
   g.fillPoints([pts[0], pts[1], P(s * 0.2, -s * 0.1), P(-s * 0.35, -s * 0.05)], true);
 
   // Cracks — lit only when the lump is live.
-  g.lineStyle(Math.max(1, size * 0.09), tint(glow > 0.5 ? GLT.ember : GLT.heat), alpha * (0.25 + glow * 0.7));
+  g.lineStyle(Math.max(1, size * 0.09), tint(glow > 0.5 ? hotB : hotA), alpha * (0.25 + glow * 0.7));
   for (let i = 0; i < 3; i++) {
     const a = P(-s * 0.7 + i * s * 0.55, -s * (0.5 - jitter(seed, 10 + i) * 0.9));
     const b = P(-s * 0.3 + i * s * 0.5, s * (0.3 + jitter(seed, 20 + i) * 0.7));
@@ -417,7 +592,287 @@ export function foodShape(
       if (cooked) sear(g, tint, P(s * 0.08, 0).x, P(s * 0.08, 0).y, s * 0.62, s * 0.6, ang + 0.5, alpha, 3);
       break;
     }
+
+    case 'berries': {
+      // Four beads on a common stem, each one wearing the bristles it is named for. Cooking
+      // bursts them: the bristles singe off and the skins go glossy and near-black.
+      const s = size;
+      const beads: Array<[number, number, number]> = [
+        [-0.22, -0.14, 0.26], [0.18, -0.2, 0.22], [0.02, 0.14, 0.28], [0.3, 0.12, 0.19],
+      ];
+      g.lineStyle(Math.max(1.2, s * 0.06), tint(cooked ? 0x4a3a1e : GLT.frond), alpha * 0.9);
+      g.lineBetween(x - s * 0.34, y + s * 0.3, x + s * 0.1, y - s * 0.02);
+      g.lineBetween(x + s * 0.1, y - s * 0.02, x + s * 0.26, y - s * 0.18);
+      for (let i = 0; i < beads.length; i++) {
+        const [ox, oy, br] = beads[i];
+        const bx = x + ox * s + Math.sin(wob + i) * 0.6;
+        const by = y + oy * s;
+        const r = br * s;
+        if (!cooked) {
+          // Bristles first, so the bead sits on top of its own halo of spines.
+          g.lineStyle(1, tint(0xd8a8f0), alpha * 0.85);
+          for (let k = 0; k < 7; k++) {
+            const a = (k / 7) * TAU + i * 0.6 + wob * 0.2;
+            g.lineBetween(bx + Math.cos(a) * r * 0.8, by + Math.sin(a) * r * 0.8,
+              bx + Math.cos(a) * r * 1.6, by + Math.sin(a) * r * 1.6);
+          }
+        }
+        g.fillStyle(tint(cooked ? 0x2c0c3d : GLT.berryDark), alpha * 0.95);
+        g.fillCircle(bx + 0.8, by + 1, r);
+        g.fillStyle(tint(body), alpha);
+        g.fillCircle(bx, by, r * (cooked ? 0.92 : 1));
+        g.fillStyle(tint(cooked ? 0xd88ff0 : 0xf0d4ff), alpha * (cooked ? 0.8 : 0.55));
+        g.fillCircle(bx - r * 0.34, by - r * 0.36, r * 0.3);
+        // The calyx star on the crown — what makes a purple circle read as a berry.
+        g.lineStyle(0.9, tint(cooked ? 0x1a0725 : 0x5f2a7a), alpha * 0.7);
+        for (let k = 0; k < 3; k++) {
+          const a = k * 2.09 + i;
+          g.lineBetween(bx, by, bx + Math.cos(a) * r * 0.55, by + Math.sin(a) * r * 0.55);
+        }
+      }
+      if (cooked) sear(g, tint, x, y, s * 0.7, s * 0.5, 0.25, alpha, 2);
+      break;
+    }
+
+    case 'mint': {
+      // Two lance leaves off a shared stem. Raw they carry a frost rim and stand up; cooked
+      // they curl in on themselves and brown, because the nerf has to be visible in the tile.
+      const s = size;
+      const droop = cooked ? 0.55 : 0;
+      g.lineStyle(Math.max(1.2, s * 0.055), tint(cooked ? 0x5a5030 : 0x3f7a35), alpha);
+      g.lineBetween(x, y + s * 0.42, x, y - s * 0.06);
+      for (const side of [-1, 1]) {
+        const a = side * (0.72 + droop * 0.5) - Math.PI / 2 + Math.sin(wob + side) * 0.05;
+        const ca = Math.cos(a);
+        const sa = Math.sin(a);
+        const P = (u: number, v: number) => pt(x, y + s * 0.04, ca, sa, u, v);
+        const leaf = [
+          P(0, 0), P(s * 0.16, -s * 0.15 * (1 - droop * 0.5)), P(s * 0.4, -s * 0.08),
+          P(s * 0.5, 0), P(s * 0.4, s * 0.08), P(s * 0.16, s * 0.15 * (1 - droop * 0.5)),
+        ];
+        g.fillStyle(tint(cooked ? 0x3f4426 : 0x3f8c62), alpha * 0.9);
+        g.fillPoints(leaf.map((p) => new Phaser.Geom.Point(p.x + 1, p.y + 1.4)), true);
+        g.fillStyle(tint(body), alpha);
+        g.fillPoints(leaf, true);
+        // Midrib and side veins.
+        g.lineStyle(0.9, tint(cooked ? 0x2c3018 : 0xcdf2e0), alpha * 0.7);
+        g.lineBetween(P(0, 0).x, P(0, 0).y, P(s * 0.48, 0).x, P(s * 0.48, 0).y);
+        for (let k = 1; k <= 3; k++) {
+          const u = s * 0.1 * k;
+          g.lineBetween(P(u, 0).x, P(u, 0).y, P(u + s * 0.08, -s * 0.1).x, P(u + s * 0.08, -s * 0.1).y);
+          g.lineBetween(P(u, 0).x, P(u, 0).y, P(u + s * 0.08, s * 0.1).x, P(u + s * 0.08, s * 0.1).y);
+        }
+        if (!cooked) {
+          // Frost along the serrated edge. This is the whole reason it is a *winter* mint.
+          g.lineStyle(1.4, tint(GLT.mintFrost), alpha * 0.85);
+          g.strokePoints(leaf, true, true);
+          for (let k = 0; k < 4; k++) {
+            const u = s * (0.12 + k * 0.1);
+            const p = P(u, -s * 0.14);
+            g.fillStyle(tint(GLT.mintFrost), alpha * 0.9);
+            g.fillCircle(p.x, p.y, s * 0.035);
+          }
+        }
+      }
+      if (cooked) sear(g, tint, x, y + s * 0.02, s * 0.6, s * 0.3, 0.1, alpha, 2);
+      break;
+    }
+
+    case 'pineapple': {
+      // A barrel of diamond scales under a crown of blades. Cooked it loses the crown and
+      // becomes a ring: the two silhouettes are unmistakable at HUD size.
+      const s = size;
+      if (cooked) {
+        g.fillStyle(tint(0x6d4a10), alpha * 0.9);
+        g.fillEllipse(x + 1, y + 1.6, s * 0.92, s * 0.62);
+        g.fillStyle(tint(body), alpha);
+        g.fillEllipse(x, y, s * 0.92, s * 0.6);
+        g.fillStyle(tint(0xf5dc86), alpha * 0.85);
+        g.fillEllipse(x, y - s * 0.02, s * 0.66, s * 0.4);
+        // The hole in the middle of the ring.
+        g.fillStyle(tint(0x2a1f0a), alpha * 0.85);
+        g.fillEllipse(x, y, s * 0.2, s * 0.13);
+        g.lineStyle(1, tint(0x8a6110), alpha * 0.7);
+        g.strokeEllipse(x, y, s * 0.66, s * 0.4);
+        sear(g, tint, x, y, s * 0.8, s * 0.5, 0.05, alpha, 3);
+      } else {
+        const crown = s * 0.34;
+        // Crown blades, drawn first so the body's rim overlaps their bases.
+        for (let i = -2; i <= 2; i++) {
+          const lean = i * 0.28 + Math.sin(wob + i) * 0.05;
+          g.fillStyle(tint(i % 2 ? 0x3f7a2c : GLT.frond), alpha * 0.95);
+          g.fillTriangle(x + i * s * 0.06 - s * 0.05, y - s * 0.24,
+            x + i * s * 0.06 + s * 0.05, y - s * 0.24,
+            x + i * s * 0.06 + lean * crown, y - s * 0.24 - crown);
+        }
+        g.fillStyle(tint(GLT.pineappleSkin), alpha * 0.95);
+        g.fillEllipse(x + 1, y + s * 0.12, s * 0.66, s * 0.86);
+        g.fillStyle(tint(body), alpha);
+        g.fillEllipse(x, y + s * 0.1, s * 0.6, s * 0.8);
+        // Diamond lattice — a plain yellow oval is an egg.
+        g.lineStyle(1, tint(GLT.pineappleSkin), alpha * 0.8);
+        for (let i = -2; i <= 2; i++) {
+          g.lineBetween(x - s * 0.3, y + s * (0.1 + i * 0.14) - s * 0.16,
+            x + s * 0.3, y + s * (0.1 + i * 0.14) + s * 0.16);
+          g.lineBetween(x - s * 0.3, y + s * (0.1 + i * 0.14) + s * 0.16,
+            x + s * 0.3, y + s * (0.1 + i * 0.14) - s * 0.16);
+        }
+        g.fillStyle(tint(0xfaeaa2), alpha * 0.45);
+        g.fillEllipse(x - s * 0.14, y - s * 0.06, s * 0.16, s * 0.34);
+      }
+      break;
+    }
+
+    case 'deathcap': {
+      // Pale cap, hanging skirt, bulbous cup at the base — the three field marks of the real
+      // thing, plus a green breath off it while raw so nobody eats one by accident.
+      const s = size * (cooked ? 0.86 : 1);
+      if (!cooked) {
+        g.fillStyle(tint(GLT.venom), alpha * (0.1 + 0.06 * Math.sin(wob * 2)));
+        g.fillCircle(x, y, s * 0.62);
+      }
+      // Volva: the cup the stalk grows out of.
+      g.fillStyle(tint(cooked ? 0x6b5330 : 0xe7e4d2), alpha * 0.9);
+      g.fillEllipse(x, y + s * 0.4, s * 0.36, s * 0.22);
+      // Stalk.
+      g.fillStyle(tint(cooked ? 0x8f7448 : 0xf1efdf), alpha);
+      g.fillEllipse(x, y + s * 0.2, s * 0.2, s * 0.5);
+      // Skirt, burnt off once cooked.
+      if (!cooked) {
+        g.fillStyle(tint(0xe7e4d2), alpha * 0.95);
+        g.fillEllipse(x, y + s * 0.06, s * 0.44, s * 0.12);
+      }
+      // Cap: a smooth dome, greenish while raw and shrunken brown once cooked.
+      g.fillStyle(tint(cooked ? 0x5c4526 : GLT.deathcapGill), alpha * 0.9);
+      g.fillEllipse(x, y - s * 0.1, s * 0.9, s * 0.5);
+      g.fillStyle(tint(body), alpha);
+      g.fillEllipse(x, y - s * 0.14, s * 0.86, s * 0.44);
+      g.fillStyle(tint(cooked ? 0xb59258 : 0xeff2e0), alpha * 0.6);
+      g.fillEllipse(x - s * 0.14, y - s * 0.2, s * 0.4, s * 0.18);
+      if (cooked) {
+        sear(g, tint, x, y - s * 0.12, s * 0.66, s * 0.4, 0.2, alpha, 2);
+      } else {
+        // The skull the cap wears, small enough to be a texture and clear enough to be a warning.
+        g.fillStyle(tint(GLT.char), alpha * 0.8);
+        g.fillCircle(x - s * 0.08, y - s * 0.2, s * 0.055);
+        g.fillCircle(x + s * 0.08, y - s * 0.2, s * 0.055);
+        g.fillRect(x - s * 0.05, y - s * 0.13, s * 0.1, s * 0.05);
+        // Spore drift.
+        for (let i = 0; i < 3; i++) {
+          const a = wob * 1.4 + i * 2.1;
+          g.fillStyle(tint(GLT.venom), alpha * 0.5);
+          g.fillCircle(x + Math.cos(a) * s * 0.5, y - s * 0.3 - ((wob * 8 + i * 5) % 10),
+            s * 0.045);
+        }
+      }
+      break;
+    }
+
+    case 'leftovers': {
+      // A folded parcel tied with string. Rested (cooked) it is warm, open at one corner and
+      // steaming; fresh out of the pot it is cold, shut and tied tight.
+      const s = size;
+      const box = [
+        new Phaser.Geom.Point(x - s * 0.34, y - s * 0.18),
+        new Phaser.Geom.Point(x + s * 0.34, y - s * 0.18),
+        new Phaser.Geom.Point(x + s * 0.28, y + s * 0.34),
+        new Phaser.Geom.Point(x - s * 0.28, y + s * 0.34),
+      ];
+      g.fillStyle(tint(cooked ? 0x6d5218 : 0x8f7f5c), alpha * 0.9);
+      g.fillPoints(box.map((p) => new Phaser.Geom.Point(p.x + 1.2, p.y + 1.6)), true);
+      g.fillStyle(tint(body), alpha);
+      g.fillPoints(box, true);
+      // Folded lid: two flaps meeting at a crease, one of them peeled back once rested.
+      const peel = cooked ? s * 0.14 : 0;
+      g.fillStyle(tint(cooked ? 0xdcb460 : 0xe3d6b4), alpha * 0.95);
+      g.fillTriangle(x - s * 0.34, y - s * 0.18, x, y - s * 0.34, x, y - s * 0.14);
+      g.fillTriangle(x + s * 0.34, y - s * 0.18, x, y - s * 0.34 - peel, x, y - s * 0.14);
+      g.lineStyle(1, tint(cooked ? 0x6d5218 : 0x8f7f5c), alpha * 0.8);
+      g.lineBetween(x, y - s * 0.32, x, y + s * 0.34);
+      // String, and the knot on it.
+      g.lineStyle(1.3, tint(GLT.band), alpha * 0.9);
+      g.lineBetween(x - s * 0.32, y + s * 0.08, x + s * 0.31, y + s * 0.08);
+      g.fillStyle(tint(GLT.band), alpha * 0.9);
+      g.fillCircle(x + s * 0.04, y + s * 0.08, s * 0.05);
+      if (cooked) {
+        for (let i = 0; i < 3; i++) {
+          const ph = (wob * 0.3 + i * 0.33) % 1;
+          g.fillStyle(tint(0xe6dcc0), alpha * 0.25 * (1 - ph));
+          g.fillCircle(x + Math.sin(wob + i * 2) * s * 0.2, y - s * 0.4 - ph * s * 0.5,
+            s * (0.07 + ph * 0.1));
+        }
+      }
+      break;
+    }
   }
+}
+
+/**
+ * The film something grows after a spell on the maw. Drawn over `foodShape` rather than as a
+ * fifth branch of it, because rot is a state any ingredient can be in and duplicating nine
+ * drawings to add a green haze to each would be nine places to get it wrong.
+ */
+export function rotFilm(
+  g: Phaser.GameObjects.Graphics,
+  tint: GluttonyColorFn,
+  x: number, y: number, size: number, alpha: number, t: number,
+): void {
+  // Bloom: a wet green skin over the whole thing.
+  g.fillStyle(tint(GLT.rot), alpha * 0.3);
+  g.fillCircle(x, y, size * 0.5);
+  g.fillStyle(tint(GLT.rotDark), alpha * 0.45);
+  for (let i = 0; i < 5; i++) {
+    const a = jitter(31, i) * TAU;
+    const d = size * 0.3 * jitter(31, 10 + i);
+    g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d, size * (0.05 + jitter(31, 20 + i) * 0.09));
+  }
+  // A drip off the underside — the read that says "this is going to hurt somebody".
+  const drip = (t * 0.9) % 1;
+  g.fillStyle(tint(GLT.rot), alpha * 0.8 * (1 - drip));
+  g.fillCircle(x + size * 0.16, y + size * 0.3 + drip * size * 0.4, size * 0.06 * (1 - drip * 0.4));
+  // Flies. Three of them, on their own orbits, and they are what sells it from across the arena.
+  for (let i = 0; i < 3; i++) {
+    const a = t * (3.4 + i) + i * 2.3;
+    const r = size * (0.5 + 0.12 * Math.sin(t * 6 + i * 2));
+    g.fillStyle(tint(GLT.char), alpha * 0.9);
+    g.fillCircle(x + Math.cos(a) * r, y + Math.sin(a) * r * 0.7 - size * 0.12, size * 0.055);
+  }
+}
+
+/** Pit Master's second pass: a blue-black char edge with a bright rim inside it. */
+export function searGlaze(
+  g: Phaser.GameObjects.Graphics,
+  tint: GluttonyColorFn,
+  x: number, y: number, size: number, alpha: number, t: number,
+): void {
+  g.lineStyle(Math.max(1.4, size * 0.07), tint(GLT.blueCoal), alpha * 0.55);
+  g.strokeCircle(x, y, size * 0.5);
+  g.lineStyle(Math.max(1, size * 0.04), tint(GLT.blueHot), alpha * (0.5 + 0.3 * Math.sin(t * 4)));
+  g.strokeCircle(x, y, size * 0.42);
+  for (let i = 0; i < 4; i++) {
+    const a = t * 1.2 + (i / 4) * TAU;
+    g.fillStyle(tint(GLT.blueHot), alpha * 0.75);
+    g.fillCircle(x + Math.cos(a) * size * 0.46, y + Math.sin(a) * size * 0.46, size * 0.05);
+  }
+}
+
+/**
+ * One inventory item, wherever it is drawn. The single entry point every caller should use —
+ * it puts the rot film and the over-sear glaze on top of the base drawing so no caller has to
+ * remember that either state exists.
+ */
+export function itemShape(
+  g: Phaser.GameObjects.Graphics,
+  tint: GluttonyColorFn,
+  x: number, y: number,
+  item: FoodStamp,
+  size: number,
+  alpha: number,
+  wob = 0,
+): void {
+  foodShape(g, tint, x, y, item.kind, item.cooked, size, alpha, wob);
+  if (item.rotten) rotFilm(g, tint, x, y, size, alpha, wob);
+  else if (item.overseared) searGlaze(g, tint, x, y, size, alpha, wob);
 }
 
 /**
@@ -436,7 +891,11 @@ export function grillRig(
   t: number,
   superheat: number,
   alpha: number,
+  blue = false,
 ): void {
+  const HEAT = blue ? GLT.blueCoal : GLT.heat;
+  const EMBER = blue ? GLT.blueCoal : GLT.ember;
+  const EMBER_HOT = blue ? GLT.blueHot : GLT.emberHot;
   // Shadow and legs.
   g.fillStyle(tint(0x000000), alpha * 0.35);
   g.fillEllipse(x, y + r * 0.42, r * 2.1, r * 0.7);
@@ -462,14 +921,14 @@ export function grillRig(
     const hot = beat * (0.55 + superheat * 0.45);
     g.fillStyle(tint(GLT.coal), alpha);
     g.fillCircle(cx, cy, r * 0.15);
-    g.fillStyle(tint(superheat > 0.5 ? GLT.emberHot : GLT.heat), alpha * hot * 0.85);
+    g.fillStyle(tint(superheat > 0.5 ? EMBER_HOT : HEAT), alpha * hot * 0.85);
     g.fillCircle(cx, cy, r * 0.115 * (0.7 + hot * 0.5));
-    g.fillStyle(tint(GLT.emberHot), alpha * hot * hot * 0.7);
+    g.fillStyle(tint(EMBER_HOT), alpha * hot * hot * 0.7);
     g.fillCircle(cx - r * 0.02, cy - r * 0.02, r * 0.05);
   }
 
   // Grate: bars across, plus the rim they are welded to. The bars glow when superheated.
-  const barColor = superheat > 0.35 ? GLT.heat : GLT.steelDark;
+  const barColor = superheat > 0.35 ? HEAT : GLT.steelDark;
   g.lineStyle(Math.max(1.6, r * 0.07), tint(barColor), alpha * (0.75 + superheat * 0.25));
   for (let i = -3; i <= 3; i++) {
     const v = i * r * 0.24;
@@ -480,7 +939,7 @@ export function grillRig(
   g.lineStyle(Math.max(2, r * 0.1), tint(GLT.steelDark), alpha);
   g.strokeEllipse(x, y, r * 1.9, r * 1.05);
   if (superheat > 0.02) {
-    g.lineStyle(Math.max(1.4, r * 0.06), tint(GLT.ember), alpha * superheat * 0.8);
+    g.lineStyle(Math.max(1.4, r * 0.06), tint(EMBER), alpha * superheat * 0.8);
     g.strokeEllipse(x, y, r * 1.9, r * 1.05);
   }
 }
@@ -494,7 +953,11 @@ export function grillHeat(
   t: number,
   superheat: number,
   alpha: number,
+  blue = false,
 ): void {
+  const FLAME = blue ? GLT.blueCoal : GLT.flame;
+  const EMBER = blue ? 0x8fd4ff : GLT.ember;
+  const EMBER_HOT = blue ? GLT.blueHot : GLT.emberHot;
   const licks = 5 + Math.round(superheat * 4);
   for (let i = 0; i < licks; i++) {
     const ph = t * (2.2 + jitter(19, i)) + i * 1.9;
@@ -503,10 +966,10 @@ export function grillHeat(
     const bx = x + (jitter(19, 30 + i) - 0.5) * r * 1.4;
     const by = y - r * 0.1;
     const tip = new Phaser.Geom.Point(bx + sway, by - hgt);
-    g.fillStyle(tint(GLT.flame), alpha * 0.5);
+    g.fillStyle(tint(FLAME), alpha * 0.5);
     g.fillPoints([new Phaser.Geom.Point(bx - r * 0.13, by), tip,
       new Phaser.Geom.Point(bx + r * 0.13, by)], true);
-    g.fillStyle(tint(superheat > 0.4 ? GLT.emberHot : GLT.ember), alpha * 0.65);
+    g.fillStyle(tint(superheat > 0.4 ? EMBER_HOT : EMBER), alpha * 0.65);
     g.fillPoints([new Phaser.Geom.Point(bx - r * 0.07, by), tip,
       new Phaser.Geom.Point(bx + r * 0.07, by)], true);
   }
@@ -535,8 +998,53 @@ export function mawBody(
   gape: number,
   rage: number,
   alpha: number,
+  dread = 0,
 ): void {
   const breathe = 1 + Math.sin(t * 2.4) * 0.05;
+
+  // ── Dread (Resourceful, Q+): what an awakened maw becomes when it is fed properly ──
+  // A halo of bone spurs pushed up out of the floor around the lip, and a ring of eyes
+  // between them. Drawn under the lip so the mouth still reads first.
+  if (dread > 0.02) {
+    const pulse = 0.7 + 0.3 * Math.sin(t * 3.1);
+    g.fillStyle(tint(GLT.blood), alpha * 0.16 * dread * pulse);
+    g.fillEllipse(x, y, r * 4.2, r * 2.6);
+    const spurs = 12;
+    for (let i = 0; i < spurs; i++) {
+      const a = (i / spurs) * TAU + t * 0.12;
+      const base = r * 1.5;
+      const tipR = base + r * (0.5 + 0.3 * jitter(13, i)) * dread;
+      const bx = x + Math.cos(a) * base;
+      const by = y + Math.sin(a) * base * 0.62;
+      const txp = x + Math.cos(a) * tipR;
+      const typ = y + Math.sin(a) * tipR * 0.62 - r * 0.18 * dread;
+      const nx = -Math.sin(a) * r * 0.11;
+      const ny = Math.cos(a) * r * 0.07;
+      g.fillStyle(tint(GLT.bone), alpha * 0.9 * dread);
+      g.fillPoints([new Phaser.Geom.Point(bx + nx, by + ny),
+        new Phaser.Geom.Point(bx - nx, by - ny), new Phaser.Geom.Point(txp, typ)], true);
+      g.lineStyle(0.9, tint(GLT.bloodDark), alpha * 0.6 * dread);
+      g.lineBetween(bx + nx, by + ny, txp, typ);
+    }
+    // The eyes. Odd count, unevenly spaced, all of them looking the same way at once.
+    const look = Math.sin(t * 0.9) * 0.5;
+    for (let i = 0; i < 7; i++) {
+      const a = (i / 7) * TAU + 0.4 + Math.sin(i * 2.3) * 0.12;
+      const d = r * (1.22 + 0.1 * jitter(17, i));
+      const ex = x + Math.cos(a) * d;
+      const ey = y + Math.sin(a) * d * 0.62;
+      const er = r * 0.13 * dread;
+      const lid = 0.55 + 0.45 * Math.abs(Math.sin(t * 1.3 + i * 1.7));
+      g.fillStyle(tint(GLT.bloodDark), alpha * dread);
+      g.fillEllipse(ex, ey, er * 2.3, er * 2 * lid);
+      g.fillStyle(tint(0xf6e2c8), alpha * dread * 0.95);
+      g.fillEllipse(ex, ey, er * 1.9, er * 1.6 * lid);
+      g.fillStyle(tint(0x1a0206), alpha * dread);
+      g.fillCircle(ex + look * er * 0.7, ey, er * 0.7 * Math.max(0.2, lid));
+      g.fillStyle(tint(0xff5a66), alpha * dread * 0.55);
+      g.fillCircle(ex + look * er * 0.7, ey, er * 0.35 * Math.max(0.2, lid));
+    }
+  }
 
   // Lip: a fleshy annulus, walked with noise so it never reads as a circle.
   const lip: Phaser.Geom.Point[] = [];
@@ -574,7 +1082,7 @@ export function mawBody(
   for (let i = 0; i < count; i++) {
     const a = (i / count) * TAU + Math.sin(t * 0.6) * 0.04;
     const base = r * (1.0 + 0.06 * (i % 2)) * open;
-    const len = r * (0.3 + 0.16 * (i % 2)) * (1 + rage * 0.5);
+    const len = r * (0.3 + 0.16 * (i % 2)) * (1 + rage * 0.5 + dread * 0.6);
     const bx = x + Math.cos(a) * base;
     const by = y + Math.sin(a) * base * 0.62;
     const tx = x + Math.cos(a) * (base - len);
@@ -586,6 +1094,28 @@ export function mawBody(
       new Phaser.Geom.Point(bx - nx, by - ny), new Phaser.Geom.Point(tx, ty)], true);
     g.lineStyle(0.8, tint(GLT.fleshDark), alpha * 0.5);
     g.lineBetween(bx + nx, by + ny, tx, ty);
+  }
+
+  // The second jaw, deep in the throat and turning the other way. Only ever on a dread maw,
+  // and the reason the awakened version reads as a different creature rather than a bigger one.
+  if (dread > 0.02) {
+    const inner = 9;
+    for (let i = 0; i < inner; i++) {
+      const a = (i / inner) * TAU - t * 0.9;
+      const base = r * 0.62 * open;
+      const len = r * 0.26 * dread;
+      const bx = x + Math.cos(a) * base;
+      const by = y + Math.sin(a) * base * 0.62;
+      const txp = x + Math.cos(a) * (base - len);
+      const typ = y + Math.sin(a) * (base - len) * 0.62;
+      const nx = -Math.sin(a) * r * 0.06;
+      const ny = Math.cos(a) * r * 0.04;
+      g.fillStyle(tint(0xe8cfae), alpha * 0.9 * dread);
+      g.fillPoints([new Phaser.Geom.Point(bx + nx, by + ny),
+        new Phaser.Geom.Point(bx - nx, by - ny), new Phaser.Geom.Point(txp, typ)], true);
+    }
+    g.lineStyle(1.4, tint(GLT.blood), alpha * 0.7 * dread);
+    g.strokeEllipse(x, y, r * 1.3 * open, r * 0.8 * open);
   }
 }
 
@@ -851,18 +1381,27 @@ export function prepSlot(
   g.strokePoints(plate, true, true);
 }
 
-/** The cook's own progress ring, drawn around whatever is sitting on the grate. */
+/**
+ * The cook's own progress ring, drawn around whatever is sitting on the grate. `oversear` is
+ * Pit Master's: the same ring run in blue rather than ember, so a glance at the grate says
+ * whether what is on it is going to come off worth 25% more. Green on completion either way.
+ */
 export function cookRing(
   g: Phaser.GameObjects.Graphics,
   tint: GluttonyColorFn,
   x: number, y: number, r: number, ratio: number, alpha: number, done: boolean,
+  oversear = false,
 ): void {
   g.lineStyle(2.4, tint(GLT.char), alpha * 0.5);
   g.strokeCircle(x, y, r);
-  g.lineStyle(2.4, tint(done ? 0x7ada6a : GLT.ember), alpha * 0.95);
+  g.lineStyle(2.4, tint(done ? 0x7ada6a : oversear ? GLT.blueCoal : GLT.ember), alpha * 0.95);
   g.beginPath();
   g.arc(x, y, r, -Math.PI / 2, -Math.PI / 2 + TAU * Phaser.Math.Clamp(ratio, 0, 1), false);
   g.strokePath();
+  if (oversear && !done) {
+    g.lineStyle(1, tint(GLT.blueHot), alpha * 0.5);
+    g.strokeCircle(x, y, r + 2.6);
+  }
 }
 
 // ── Fx ────────────────────────────────────────────────────────────────────
@@ -1037,9 +1576,13 @@ export class GluttonyAvatar extends BaseAvatar {
   /** 0–1, how hot the blade is. Only ever visible on the knife itself. */
   private knifeHeat = 0;
   /** What is being held out in front instead of the knife, if anything. */
-  private heldFood: { kind: FoodKind; cooked: boolean } | null = null;
+  private heldFood: FoodStamp | null = null;
   /** 0–1 — how full the belly is, which is how far the jacket strains. */
   private fed = 0;
+  /** Click upgrade: the knife is a cleaver, in both forms and in every drawing of it. */
+  private cleaver = false;
+  /** 0–1 — how much of the maw is currently running down the blade. */
+  private ichor = 0;
   private seed = Math.random() * 999;
 
   constructor(scene: Phaser.Scene, tint: GluttonyColorFn, depth = 6) {
@@ -1049,8 +1592,10 @@ export class GluttonyAvatar extends BaseAvatar {
   /** Ramped rather than switched, so the transformation is something you watch happen. */
   setButcher(v: number): void { this.butcher = Phaser.Math.Clamp(v, 0, 1); }
   setKnifeHeat(v: number): void { this.knifeHeat = Phaser.Math.Clamp(v, 0, 1); }
-  setHeld(food: { kind: FoodKind; cooked: boolean } | null): void { this.heldFood = food; }
+  setHeld(food: FoodStamp | null): void { this.heldFood = food; }
   setFed(v: number): void { this.fed = Phaser.Math.Clamp(v, 0, 1); }
+  setCleaver(on: boolean): void { this.cleaver = on; }
+  setIchor(v: number): void { this.ichor = Phaser.Math.Clamp(v, 0, 1); }
 
   protected applyMastery(on: boolean): void {
     this.forEachHandLayer(0, (glow) => {
@@ -1161,24 +1706,29 @@ export class GluttonyAvatar extends BaseAvatar {
     // behind the spine, pointing back the way he came.
     const lead = Math.cos(this.facing) * (this.armX[1] - x) + Math.sin(this.facing) * (this.armY[1] - y)
       >= Math.cos(this.facing) * (this.armX[0] - x) + Math.sin(this.facing) * (this.armY[0] - y) ? 1 : 0;
+    const blade = (bx: number, by: number, ba: number, len: number, al: number) => {
+      if (this.cleaver) {
+        chefCleaver(g, this.tint, bx, by, ba, len, this.knifeHeat, al, this.ichor, this.t);
+      } else {
+        kitchenKnife(g, this.tint, bx, by, ba, len, this.knifeHeat, al);
+      }
+    };
     if (b < 0.5) {
       const hx = this.armX[lead];
       const hy = this.armY[lead];
       if (this.heldFood) {
-        foodShape(g, this.tint, hx, hy, this.heldFood.kind, this.heldFood.cooked, 20, alpha, this.t * 3);
+        itemShape(g, this.tint, hx, hy, this.heldFood, 20, alpha, this.t * 3);
       } else {
-        kitchenKnife(g, this.tint, hx + Math.cos(this.facing) * 8, hy + Math.sin(this.facing) * 8,
-          this.facing, 30, this.knifeHeat, alpha * (1 - b * 2));
+        blade(hx + Math.cos(this.facing) * 8, hy + Math.sin(this.facing) * 8,
+          this.facing, 30, alpha * (1 - b * 2));
       }
     } else {
       const back = this.facing + Math.PI;
       const bx = x + Math.cos(back) * 15;
       const by = y + Math.sin(back) * 9 + 3;
-      kitchenKnife(g, this.tint, bx, by, back - 0.5 + Math.sin(this.t * 2.2) * 0.12, 32,
-        this.knifeHeat, alpha * b);
+      blade(bx, by, back - 0.5 + Math.sin(this.t * 2.2) * 0.12, 32, alpha * b);
       if (this.heldFood) {
-        foodShape(g, this.tint, this.armX[lead], this.armY[lead],
-          this.heldFood.kind, this.heldFood.cooked, 20, alpha, this.t * 3);
+        itemShape(g, this.tint, this.armX[lead], this.armY[lead], this.heldFood, 20, alpha, this.t * 3);
       }
     }
 

@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { getAnyWorld } from '../data/AbstractWorlds';
 import {
   getCampaignFightDef, getCampaignReward, getWorldTier, isAbstractWorld, isCorruptWorld,
-  DIFFICULTY_LABEL, ELEMENT_DISPLAY,
+  DIFFICULTY_LABEL, ELEMENT_DISPLAY, CAMPAIGN_MAX_DIFFICULTY,
 } from '../data/CampaignFights';
 import { getEffectiveFightDef, hasHardRemix } from '../data/CampaignFightsHard';
 import { MUTATIONS, getMutationDef } from '../data/Mutations';
@@ -12,6 +12,7 @@ import { describeFormat } from '../data/FightFormats';
 import { getWorldGimmick } from '../data/WorldGimmicks';
 import { maybePlayStory } from './DialogueScene';
 import { consumedItemIds, getItem } from '../data/Items';
+import { armedArtifactIds, getArtifact } from '../data/Artifacts';
 import * as CP from '../data/CampaignProgress';
 import { drawCampaignBackground } from './CampaignBackground';
 import {
@@ -67,11 +68,14 @@ export class CampaignFightMenuScene extends Phaser.Scene {
   /**
    * Difficulty actually used, once Hard Mode is folded in. A Second Telling
    * remix carries its own difficulty; only un-remixed nodes get the +1 bump.
+   * Either way the campaign's Expert ceiling holds.
    */
   private get effectiveDifficulty(): number {
     const base = getEffectiveFightDef(this.nodeId, this.hardMode)?.difficulty
       ?? (this.kind === 'fight' ? 1 : 2);
-    return this.hardMode && !hasHardRemix(this.nodeId) ? Math.min(5, base + 1) : base;
+    return this.hardMode && !hasHardRemix(this.nodeId)
+      ? Math.min(CAMPAIGN_MAX_DIFFICULTY, base + 1)
+      : base;
   }
 
   /** Mirrors CampaignElementSelectScene.invasionDifficultyId() for the briefing. */
@@ -270,15 +274,21 @@ export class CampaignFightMenuScene extends Phaser.Scene {
       y += line.height + 8;
     }
 
-    // ── Armed items ─────────────────────────────────────────────────
-    const armed = [...consumedItemIds].map((id) => getItem(id)).filter(Boolean);
-    this.add.text(cx - PANEL_W / 2 + 40, y, 'ARMED ITEMS', {
+    // ── Armed items + artifacts ─────────────────────────────────────
+    // One line, both lists: what is riding on this fight is one fact, however it was armed.
+    const armed = [
+      ...[...consumedItemIds].map((id) => getItem(id)).filter(Boolean)
+        .map((d) => `${d!.emoji} ${d!.name}`),
+      ...[...armedArtifactIds].map((id) => getArtifact(id)).filter(Boolean)
+        .map((a) => `✦ ${a!.emoji} ${a!.name}`),
+    ];
+    this.add.text(cx - PANEL_W / 2 + 40, y, 'ARMED', {
       fontSize: '9px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2,
     }).setOrigin(0, 0.5).setDepth(DEPTH.modalContent);
     this.add.text(cx - PANEL_W / 2 + 132, y,
       armed.length > 0
-        ? armed.map((d) => `${d!.emoji} ${d!.name}`).join('   ')
-        : 'none — open the 🎒 bag to use one before you start', {
+        ? armed.join('   ')
+        : 'none — open the 🎒 bag to use an item or arm an artifact before you start', {
         fontSize: '11px', fontFamily: FONT_UI,
         color: armed.length > 0 ? T.good : T.ghost,
         wordWrap: { width: PANEL_W - 180 },

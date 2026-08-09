@@ -1,6 +1,7 @@
 import { ELEMENT_MAP } from '../elements/ElementRegistry';
 import { getAnyWorld } from './AbstractWorlds';
 import * as PlayerData from './PlayerData';
+import { isProgressLocked } from './ProgressLock';
 
 /**
  * Bond research — what it takes to teach Quantum a new pair.
@@ -159,6 +160,9 @@ export function bondProgress(a: string, b: string): { done: number; total: numbe
  * through here, so "did that complete the research" is asked in exactly one place.
  */
 function bank(key: string, questId: string, amount: number): void {
+  // Practice fights are not research — see ProgressLock. Guarded here rather than at
+  // each hook so a new hook cannot forget.
+  if (isProgressLocked()) return;
   const active = PlayerData.getResearchingBond();
   if (active !== key) return;
   PlayerData.addBondQuestProgress(key, questId, amount);

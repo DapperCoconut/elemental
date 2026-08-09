@@ -4,10 +4,10 @@ import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
 import { Sfx } from '../../audio';
 import {
-  FOOD, FORAGEABLE, FoodKind, GLT, GluttonyAvatar, GluttonyColorFn, GluttonyFx,
-  charcoalLump, cookRing, foodColor, foodHeal, foodShape, gobbet as drawGobbet, grillHeat,
-  grillRig, hungerBar, kitchenKnife, mawBody, mawTentacle, prepSlot, skewerShape,
-  spatter, stewPot,
+  FOOD, FORAGEABLE, FORAGEABLE_PLUS, FoodKind, GLT, GluttonyAvatar, GluttonyColorFn, GluttonyFx,
+  charcoalLump, chefCleaver, cookRing, foodColor, gobbet as drawGobbet, grillHeat,
+  grillRig, hungerBar, itemShape, jitter, kitchenKnife, mawBody, mawTentacle, prepSlot,
+  skewerShape, spatter, stewPot,
 } from './GluttonyVisuals';
 
 type Owner = 'player' | 'npc';
@@ -96,6 +96,9 @@ const GOBBET_HIT_R = 20;
 const AWAKEN_BASE_MS = 3000;
 const AWAKEN_BONUS: Record<FoodKind, number> = {
   mushroom: 3000, carrot: 1000, potato: 5000, meat: 10000,
+  // Head Chef's four, priced the way the original four are: roughly a second per 5 HP the
+  // maw would otherwise have had to earn. Leftovers are scraps and the maw knows it.
+  berries: 1000, mint: 3000, pineapple: 6000, deathcap: 8000, leftovers: 1000,
 };
 const AWAKEN_SPEED = 165;
 const AWAKEN_WHIP_MS = 1000;
@@ -104,6 +107,98 @@ const AWAKEN_WHIP_DAMAGE = 15;
 const AWAKEN_BARRAGE_MS = 1400;
 const AWAKEN_BARRAGE_COUNT = 5;
 const AWAKEN_BULLET_DAMAGE = 6;
+
+// ── Click+: Cleave ───────────────────────────────────────────────────────────
+/** How long a cleaver stays red once it comes off the coals — including in flight. */
+const CLEAVER_HOT_MS = 4000;
+const CLEAVE_HASTE_MS = 2000;
+const CLEAVE_HASTE_MULT = 1.25;
+
+// ── E+: Head Chef ────────────────────────────────────────────────────────────
+/** Weight of a `rare` larder entry against 1 for everything else on the forage table. */
+const RARE_WEIGHT = 0.34;
+/** How long something sits on the maw before it is worth throwing at somebody. */
+const ROT_MS = 6000;
+const ROT_SLOTS = 4;
+/** Winter Mint is the one rotten item priced off the target rather than off a table. */
+const ROT_MINT_PCT = 0.15;
+
+/**
+ * What eating an ingredient does beyond healing. Head Chef's four are the only entries: the
+ * original larder is pure sustain, and that is the point of paying for the upgrade.
+ */
+interface FoodBuff {
+  /** Outgoing damage multiplier while it lasts. */
+  dmg?: number;
+  /** Incoming damage multiplier while it lasts. */
+  resist?: number;
+  /** Walk speed multiplier while it lasts. */
+  speed?: number;
+  ms: number;
+  label: string;
+  color: number;
+}
+
+const FOOD_BUFF: Partial<Record<FoodKind, { raw?: FoodBuff; cooked?: FoodBuff }>> = {
+  berries: {
+    raw: { dmg: 1.20, ms: 8000, label: '🫐 +20% DAMAGE', color: GLT.berry },
+    cooked: { dmg: 1.35, ms: 8000, label: '🫐 +35% DAMAGE', color: GLT.berry },
+  },
+  mint: {
+    // Cooking a winter mint is a mistake, and it has to be a visible one: the buff is gone.
+    raw: { resist: 0.80, ms: 8000, label: '🍃 −20% DAMAGE TAKEN', color: GLT.mint },
+  },
+  deathcap: {
+    raw: { speed: 1.25, ms: 8000, label: '☠️ +25% SPEED', color: GLT.venom },
+    cooked: { speed: 1.35, ms: 8000, label: '☠️ +35% SPEED', color: GLT.venom },
+  },
+};
+
+// ── R+: Pit Master ───────────────────────────────────────────────────────────
+/** Blue coals cook and heat at this rate instead of the orange 2×. */
+const BLUE_SUPERHEAT_RATE = 3;
+/**
+ * The second pass, as a fraction of the ingredient's own cook time. Over-searing is a stage
+ * *after* cooking, not a longer cook: the thing finishes, goes collectable, and only keeps
+ * going if you leave it there — so the cost of the extra 25% is the walk you did not take.
+ */
+const OVERSEAR_EXTRA = 0.5;
+const OVERSEAR_HEAL_MULT = 1.25;
+const OVERSEAR_BUFF_BONUS_MS = 3000;
+const ICHOR_MS = 5000;
+/** Milliseconds of butcher form per point of ichorous cleaver damage — 25 damage = 1 second. */
+const ICHOR_HUNGER_PER_DAMAGE = 40;
+
+// ── F+: Murderous Intent ─────────────────────────────────────────────────────
+/** Fraction of Special Ingredient's cooldown that transforming back knocks off. */
+const RETURN_CD_REFUND = 0.2;
+const MAW_CONE_COUNT = 5;
+const MAW_CONE_SPREAD = 0.19;
+/** The vulnerability a cone bullet stacks onto whatever it lands on. */
+const MAW_VULN_MULT = 1.15;
+const MAW_VULN_MS = 2000;
+const MAW_GRAB_MS = 10000;
+const MAW_GRAB_RANGE = 300;
+const MAW_GRAB_STUN_MS = 2000;
+const MAW_BITE_MS = 1600;
+const MAW_BITE_REACH = 78;
+const MAW_BITE_DAMAGE = 30;
+
+// ── Q+: Resourceful ──────────────────────────────────────────────────────────
+const LEFTOVER_COUNT = 2;
+const LEFTOVER_FRESH_PCT = 0.12;
+const LEFTOVER_RESTED_PCT = 0.25;
+const LEFTOVER_REST_MS = 25000;
+/** Everything a dread maw does hits this much harder. */
+const DREAD_DAMAGE_MULT = 1.5;
+/** The band along each screen edge the dread maw's tentacles fill. */
+const TENDRIL_BAND = 30;
+const TENDRIL_DAMAGE = 8;
+const TENDRIL_TICK_MS = 500;
+const SCREAM_MS = 5000;
+const SCREAM_DAMAGE = 35;
+const SCREAM_RADIUS = 240;
+const SCREAM_STUN_MS = 2000;
 
 // ── HUD ──────────────────────────────────────────────────────────────────────
 /** Screen space, top-left, clear of the centre health bar and the top-right status tray. */
@@ -123,6 +218,18 @@ const HUNGER_H = 15;
 interface InvItem {
   kind: FoodKind;
   cooked: boolean;
+  /** Head Chef (E+): it spent time on the maw instead of the grill. A weapon, not a meal. */
+  rotten?: boolean;
+  /** Pit Master (R+): it went round the grate a second time. Worth 25% more, and 3s longer. */
+  overseared?: boolean;
+  /**
+   * Resourceful (Q+) leftovers carry their own value, because it is a share of the Feast that
+   * made them rather than anything the food table knows about.
+   */
+  healRaw?: number;
+  healCooked?: number;
+  /** Leftovers rest by themselves on the strip. `scene.time.now` at which they turn. */
+  ripenAt?: number;
 }
 
 /** Something sitting on the grate, and how far through it is. */
@@ -130,6 +237,30 @@ interface Cooking {
   owner: Owner;
   kind: FoodKind;
   /** Milliseconds of heat it has taken. */
+  progress: number;
+  slot: number;
+  seed: number;
+  /**
+   * Latched when it was put on rather than read every frame: shelving Pit Master mid-cook must
+   * not silently retarget something already three quarters of the way through a longer run.
+   */
+  oversear: boolean;
+  /**
+   * 0 cooking, 1 cooked (collectable), 2 over-seared. Held rather than derived from `progress`
+   * so each boundary can be announced exactly once, and so the ring knows which of its two
+   * runs it is drawing.
+   */
+  stage: 0 | 1 | 2;
+  /** Leftovers keep their own value across the grate too. */
+  healRaw?: number;
+  healCooked?: number;
+}
+
+/** Something left on the maw to spoil. */
+interface Rotting {
+  owner: Owner;
+  item: InvItem;
+  /** Milliseconds it has spent on the teeth. */
   progress: number;
   slot: number;
   seed: number;
@@ -145,6 +276,10 @@ interface KnifeProj {
   heated: boolean;
   diesAt: number;
   spin: number;
+  /** Click upgrade: a cleaver goes through bodies rather than stopping in the first one. */
+  cleaver: boolean;
+  /** Everything a piercing throw has already cut, so it cannot cut the same body twice. */
+  hit: Fighter[];
 }
 
 interface FoodProj {
@@ -176,6 +311,8 @@ interface Coal {
   vy: number;
   diesAt: number;
   spin: number;
+  /** Pit Master (R+): the lump burns blue, and the grill it lands on runs at 3× rather than 2×. */
+  blue: boolean;
 }
 
 interface SkewerProj {
@@ -201,6 +338,8 @@ interface Gobbet {
   hot: boolean;
   diesAt: number;
   spin: number;
+  /** Murderous Intent (F+): this one leaves a 15% vulnerability behind it. */
+  vuln: boolean;
 }
 
 interface Side {
@@ -213,6 +352,11 @@ interface Side {
   held: InvItem | null;
   /** 0–1. A full bar is a 35-damage knife. */
   knifeHeat: number;
+  /**
+   * Click upgrade: `scene.time.now` at which a red cleaver goes cold again. Base Gluttony has
+   * no such clock — the heat lives until it is thrown — so this is 0 without the upgrade.
+   */
+  knifeHotUntil: number;
   // E
   forageUntil: number;
   // F
@@ -229,14 +373,31 @@ interface Side {
   prevAbsorber: ((amount: number) => boolean) | null;
   /** NPC pacing — it does not have a mouse, so the kit decides when it eats. */
   npcNextEat: number;
+  // ── Head Chef (E+): what the second half of the larder does when you eat it ──
+  /** Bristle Berries. Outgoing damage multiplier, and when it runs out. */
+  dmgMult: number;
+  dmgUntil: number;
+  /** Winter Mint. Incoming damage multiplier, and when it runs out. */
+  resistMult: number;
+  resistUntil: number;
+  /** Death Cap. Walk speed multiplier, and when it runs out. */
+  foodSpeedMult: number;
+  foodSpeedUntil: number;
+  // ── Click+ / R+ (butcher halves) ──
+  /** Cleave landed: 25% for two seconds, refreshed rather than stacked. */
+  hasteUntil: number;
+  /** Standing over the maw painted the blade. `scene.time.now` at which it dries. */
+  ichorUntil: number;
 }
 
 function makeSide(owner: Owner): Side {
   return {
-    owner, form: 'chef', formBlend: 0, inv: [], held: null, knifeHeat: 0,
+    owner, form: 'chef', formBlend: 0, inv: [], held: null, knifeHeat: 0, knifeHotUntil: 0,
     forageUntil: 0, hunger: 0, potUntil: 0, potHeal: 0,
     dashUntil: 0, dashVx: 0, dashVy: 0,
     absorberOwned: false, prevAbsorber: null, npcNextEat: 0,
+    dmgMult: 1, dmgUntil: 0, resistMult: 1, resistUntil: 0,
+    foodSpeedMult: 1, foodSpeedUntil: 0, hasteUntil: 0, ichorUntil: 0,
   };
 }
 
@@ -269,6 +430,10 @@ export interface GluttonyArenaApi {
   setHudForm(form: GluttonyForm): void;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /** Shop upgrades: the local player's equipped slots. */
+  hasUpgrade(slot: string): boolean;
+  /** …and the online opponent's, so their upgraded kitchen reproduces on this sim. */
+  hasNpcUpgrade(slot: string): boolean;
 }
 
 // ── GluttonyKit ──────────────────────────────────────────────────────────────
@@ -296,6 +461,8 @@ export class GluttonyKit {
   private sides: Record<Owner, Side> = { player: makeSide('player'), npc: makeSide('npc') };
   private cooking: Cooking[] = [];
   private superheatUntil = 0;
+  /** Pit Master (R+): the coals that lit this superheat were blue, so it runs at 3× not 2×. */
+  private superheatBlue = false;
   private knives: KnifeProj[] = [];
   private foods: FoodProj[] = [];
   private drops: Drop[] = [];
@@ -317,6 +484,26 @@ export class GluttonyKit {
   private mawAwakenUntil = 0;
   private mawAwakenTotal = 0;
   private mawNextBarrageAt = 0;
+  /** Head Chef (E+): what is spoiling on the teeth. */
+  private rotting: Rotting[] = [];
+  /** Murderous Intent (F+): the maw's grab, its close bite, and the dread maw's scream. */
+  private mawNextGrabAt = 0;
+  private mawNextBiteAt = 0;
+  private mawNextScreamAt = 0;
+  /** Resourceful (Q+): 0–1 ramp on the awakened maw's second face, so it grows rather than pops. */
+  private dreadBlend = 0;
+  private nextTendrilAt = 0;
+
+  /**
+   * Murderous Intent's cone vulnerability: fighter → the timestamp it wears off. The kit owns
+   * the timers and rewrites `Fighter.gluttonyIncomingMult` from scratch every frame, so a
+   * match that ends mid-debuff cannot leave a multiplier behind on anybody.
+   */
+  private vulnerable = new Map<Fighter, number>();
+  /** Every fighter this kit wrote `gluttonyIncomingMult` onto last frame. */
+  private incomingTouched = new Set<Fighter>();
+  /** The maw's grab and its scream. `earthStunnedUntil` is inert for a player, so we pin them. */
+  private stunned = new Map<Fighter, number>();
 
   /** Latched each frame from `handleInput` — the player's real cursor. */
   private aimX = 0;
@@ -395,6 +582,113 @@ export class GluttonyKit {
 
   private get superheated(): boolean { return this.now < this.superheatUntil; }
 
+  /**
+   * Whether a side has a shop upgrade equipped. The npc branch only ever answers true online —
+   * `hasNpcUpgrade` is gated on that inside ArenaScene — so a bot opponent plays the base kit
+   * and a real one plays the kitchen they paid for.
+   */
+  private up(owner: Owner, slot: string): boolean {
+    if (!this.isGluttony(owner)) return false;
+    return owner === 'player' ? this.api.hasUpgrade(slot) : this.api.hasNpcUpgrade(slot);
+  }
+
+  /** Bristle Berries, applied at every damage site the kit owns. */
+  private dmg(owner: Owner, amount: number): number {
+    const s = this.side(owner);
+    return s.dmgUntil > this.now ? Math.max(1, Math.round(amount * s.dmgMult)) : amount;
+  }
+
+  /** What a side's blade is currently worth as a name — the HUD and the tray both read it. */
+  private bladeName(owner: Owner): string {
+    return this.up(owner, 'click') ? 'CLEAVER' : 'KNIFE';
+  }
+
+  /** True while the maw is spilling down somebody's cleaver. */
+  private ichored(owner: Owner): boolean {
+    return this.side(owner).ichorUntil > this.now;
+  }
+
+  /** True while the awakened maw is wearing its second face. */
+  private get dread(): boolean {
+    return !!this.mawOwner && this.now < this.mawAwakenUntil && this.up(this.mawOwner, 'q');
+  }
+
+  /** Everything the maw's own attacks are multiplied by. */
+  private mawDamage(owner: Owner, base: number): number {
+    return this.dmg(owner, this.dread ? Math.round(base * DREAD_DAMAGE_MULT) : base);
+  }
+
+  // ── What a thing on the strip is worth ─────────────────────────────────────
+
+  /**
+   * Healing, in points, for one item eaten by one fighter. Three things layer here that
+   * `foodHeal` alone cannot express: Winter Mint is a percentage of the eater, leftovers carry
+   * a value copied off the Feast that made them, and an over-seared anything is worth a
+   * quarter more. Rot halves whatever comes out of all that — it is a weapon, not a meal.
+   */
+  private healValue(f: Fighter, item: InvItem): number {
+    const prof = FOOD[item.kind];
+    let flat = item.cooked
+      ? (item.healCooked ?? prof.healCooked)
+      : (item.healRaw ?? prof.healRaw);
+    const pct = item.cooked ? prof.healPctCooked : prof.healPctRaw;
+    if (pct) flat += Math.round(f.maxHp * pct);
+    if (item.overseared && flat > 0) flat = Math.round(flat * OVERSEAR_HEAL_MULT);
+    if (item.rotten) flat = Math.round(flat / 2);
+    return flat;
+  }
+
+  /**
+   * What a rotten item does to whoever it lands on. The cooked value of the same ingredient,
+   * which is why rotting a potato is worth so much more than rotting a carrot — except Winter
+   * Mint, which has no cooked value worth speaking of and is priced off the target instead.
+   */
+  private rottenDamage(item: InvItem, target: Fighter): number {
+    if (item.kind === 'mint') return Math.max(1, Math.round(target.maxHp * ROT_MINT_PCT));
+    return Math.max(1, item.healCooked ?? FOOD[item.kind].healCooked);
+  }
+
+  /** The buff eating this item hands out, with Pit Master's three extra seconds folded in. */
+  private buffOf(item: InvItem): FoodBuff | null {
+    const entry = FOOD_BUFF[item.kind];
+    if (!entry) return null;
+    const base = item.cooked ? entry.cooked : entry.raw;
+    if (!base) return null;
+    if (!item.overseared) return base;
+    return { ...base, ms: base.ms + OVERSEAR_BUFF_BONUS_MS };
+  }
+
+  private applyBuff(owner: Owner, buff: FoodBuff): void {
+    const s = this.side(owner);
+    const until = this.now + buff.ms;
+    if (buff.dmg !== undefined) { s.dmgMult = buff.dmg; s.dmgUntil = Math.max(s.dmgUntil, until); }
+    if (buff.resist !== undefined) {
+      s.resistMult = buff.resist;
+      s.resistUntil = Math.max(s.resistUntil, until);
+    }
+    if (buff.speed !== undefined) {
+      s.foodSpeedMult = buff.speed;
+      s.foodSpeedUntil = Math.max(s.foodSpeedUntil, until);
+    }
+    const f = this.fighter(owner);
+    if (this.alive(f)) this.api.showFloatingText(f.x, f.y - 62, buff.label, this.hex(buff.color));
+  }
+
+  /** A short label for a tile or a pop-up: the state first, then the name. */
+  private itemLabel(item: InvItem): string {
+    const prefix = item.rotten ? 'ROTTEN ' : item.overseared ? 'SEARED ' : item.cooked ? 'COOKED ' : '';
+    return `${FOOD[item.kind].emoji} ${prefix}${FOOD[item.kind].label}`;
+  }
+
+  /** A stun the kit pins itself, because `earthStunnedUntil` is inert for a player. */
+  private stun(t: Fighter, ms: number, label: string): void {
+    if (t.unstoppable) return;
+    const until = this.now + ms;
+    t.earthStunnedUntil = Math.max(t.earthStunnedUntil, until);
+    this.stunned.set(t, Math.max(this.stunned.get(t) ?? 0, until));
+    this.api.showFloatingText(t.x, t.y - 40, label, this.hex(GLT.flesh));
+  }
+
   private isBurnt(f: Fighter): boolean {
     return (this.burnt.get(f) ?? 0) > this.now;
   }
@@ -408,6 +702,19 @@ export class GluttonyKit {
       if (!this.cooking.some((c) => c.slot === i)) return i;
     }
     return -1;
+  }
+
+  private freeRotSlot(): number {
+    for (let i = 0; i < ROT_SLOTS; i++) {
+      if (!this.rotting.some((r) => r.slot === i)) return i;
+    }
+    return -1;
+  }
+
+  /** Where a thing spoiling on the maw sits — a ring around the lip rather than a grate. */
+  private rotPos(slot: number): { x: number; y: number } {
+    const a = (slot / ROT_SLOTS) * Math.PI * 2 + Math.PI / 4;
+    return { x: this.mawX + Math.cos(a) * GRILL_R * 1.1, y: this.mawY + Math.sin(a) * GRILL_R * 0.72 };
   }
 
   private slotPos(slot: number): { x: number; y: number } {
@@ -441,9 +748,18 @@ export class GluttonyKit {
     // would otherwise start the next one with every hit vanishing into a bar that is not there.
     for (const owner of ['player', 'npc'] as Owner[]) this.removeAbsorber(owner);
 
+    // Same reasoning as the absorber above: a match that ended with a mint down somebody's
+    // throat or a maw bullet in them would otherwise start the next one still carrying it.
+    for (const f of this.incomingTouched) f.gluttonyIncomingMult = 1;
+    this.incomingTouched.clear();
+    this.vulnerable.clear();
+    this.stunned.clear();
+
     this.sides = { player: makeSide('player'), npc: makeSide('npc') };
     this.cooking = [];
+    this.rotting = [];
     this.superheatUntil = 0;
+    this.superheatBlue = false;
     this.knives = [];
     this.foods = [];
     this.drops = [];
@@ -461,6 +777,11 @@ export class GluttonyKit {
     this.mawAwakenUntil = 0;
     this.mawAwakenTotal = 0;
     this.mawNextBarrageAt = 0;
+    this.mawNextGrabAt = 0;
+    this.mawNextBiteAt = 0;
+    this.mawNextScreamAt = 0;
+    this.nextTendrilAt = 0;
+    this.dreadBlend = 0;
     this.aimX = 0;
     this.aimY = 0;
     this.npcAimX = 0;
@@ -468,7 +789,9 @@ export class GluttonyKit {
     this.vizT = 0;
 
     for (const id of ['glut-prep', 'glut-hot-knife', 'glut-butcher', 'glut-superheat',
-      'glut-cooking', 'glut-pot', 'glut-maw', 'glut-burnt', 'glut-forage']) {
+      'glut-cooking', 'glut-pot', 'glut-maw', 'glut-burnt', 'glut-forage',
+      'glut-berries', 'glut-mint', 'glut-deathcap', 'glut-haste', 'glut-ichor',
+      'glut-rotting', 'glut-vuln']) {
       this.api.setStatusIndicator(id, null);
     }
 
@@ -538,7 +861,9 @@ export class GluttonyKit {
     if (!s.held) return;
     s.held = null;
     const f = this.fighter(owner);
-    if (this.alive(f)) this.api.showFloatingText(f.x, f.y - 44, '🔪 KNIFE', this.hex(GLT.steel));
+    if (this.alive(f)) {
+      this.api.showFloatingText(f.x, f.y - 44, `🔪 ${this.bladeName(owner)}`, this.hex(GLT.steel));
+    }
     Sfx.playAt('ui-click', this.alive(f) ? f.x : this.grillX, { volume: 0.4, rate: 1.2 });
   }
 
@@ -551,18 +876,18 @@ export class GluttonyKit {
       // An empty tile is how you go back to the knife.
       if (s.held) {
         s.held = null;
-        if (this.alive(f)) this.api.showFloatingText(f.x, f.y - 44, '🔪 KNIFE', this.hex(GLT.steel));
+        if (this.alive(f)) {
+          this.api.showFloatingText(f.x, f.y - 44, `🔪 ${this.bladeName(owner)}`, this.hex(GLT.steel));
+        }
       }
       return;
     }
     s.held = s.held === item ? null : item;
     Sfx.playAt('ui-click', this.alive(f) ? f.x : this.grillX, { volume: 0.4, rate: 1.2 });
     if (this.alive(f)) {
-      const label = s.held
-        ? `${FOOD[item.kind].emoji} ${item.cooked ? 'COOKED ' : ''}${FOOD[item.kind].label}`
-        : '🔪 KNIFE';
+      const label = s.held ? this.itemLabel(item) : `🔪 ${this.bladeName(owner)}`;
       this.api.showFloatingText(f.x, f.y - 44, label,
-        this.hex(s.held ? foodColor(item.kind, item.cooked) : GLT.steel));
+        this.hex(s.held ? (item.rotten ? GLT.rot : foodColor(item.kind, item.cooked)) : GLT.steel));
     }
   }
 
@@ -584,13 +909,25 @@ export class GluttonyKit {
     s.inv.splice(i, 1);
     if (s.held === item) s.held = null;
 
-    const heal = foodHeal(item.kind, item.cooked);
-    f.heal(heal);
-    const col = foodColor(item.kind, item.cooked);
+    const heal = this.healValue(f, item);
+    const col = item.rotten ? GLT.rot : foodColor(item.kind, item.cooked);
+    if (heal >= 0) {
+      f.heal(heal);
+      this.api.showFloatingText(f.x, f.y - 46,
+        `${FOOD[item.kind].emoji} +${heal}`, this.hex(col));
+    } else {
+      // A raw Death Cap. It is still food, it still feeds the bar, and it still costs you 30.
+      f.applySelfDamage(-heal);
+      this.api.spawnHitFlash(f.x, f.y, GLT.venom);
+      this.fx(owner).splat(f.x, f.y, 20, GLT.venom);
+      this.api.showFloatingText(f.x, f.y - 46,
+        `${FOOD[item.kind].emoji} ${heal}`, this.hex(GLT.venom));
+    }
     this.fx(owner).crumbs(f.x, f.y + 6, col);
-    this.api.showFloatingText(f.x, f.y - 46,
-      `${FOOD[item.kind].emoji} +${heal}`, this.hex(col));
     Sfx.playAt('potion-drink', f.x, { volume: 0.7, rate: item.cooked ? 0.95 : 1.1 });
+
+    const buff = this.buffOf(item);
+    if (buff) this.applyBuff(owner, buff);
 
     // The butcher's stomach is the clock. Eating is the only thing that puts time back on it.
     if (s.form === 'butcher') {
@@ -632,6 +969,7 @@ export class GluttonyKit {
   private throwKnife(owner: Owner, tx: number, ty: number): void {
     const f = this.fighter(owner);
     const s = this.side(owner);
+    const cleaver = this.up(owner, 'click');
     const ang = Math.atan2(ty - f.y, tx - f.x);
     const heated = s.knifeHeat >= 0.999;
     this.knives.push({
@@ -641,9 +979,11 @@ export class GluttonyKit {
       vx: Math.cos(ang) * KNIFE_SPEED,
       vy: Math.sin(ang) * KNIFE_SPEED,
       ang, heated, diesAt: this.now + KNIFE_LIFE_MS, spin: 0,
+      cleaver, hit: [],
     });
-    // The heat goes with the blade. The next one comes out of the block cold.
-    s.knifeHeat = 0;
+    // The heat goes with the blade, and the next one comes out of the block cold — unless it
+    // is a cleaver, which holds its own four seconds of heat whether or not it is in your hand.
+    if (!cleaver) s.knifeHeat = 0;
 
     this.avatar(owner)?.play('punch', ang);
     if (heated) {
@@ -700,6 +1040,7 @@ export class GluttonyKit {
       vy: Math.sin(ang) * COAL_SPEED,
       diesAt: this.now + COAL_LIFE_MS,
       spin: Math.random() * 6,
+      blue: this.up(owner, 'r'),
     });
     this.avatar(owner)?.play('slam', ang);
     this.fx(owner).sizzle(f.x + Math.cos(ang) * 20, f.y + Math.sin(ang) * 20, 5, 16, 380);
@@ -720,11 +1061,28 @@ export class GluttonyKit {
     const s = this.side(owner);
 
     let total = 0;
-    for (const item of s.inv) total += foodHeal(item.kind, item.cooked);
+    for (const item of s.inv) total += Math.max(0, this.healValue(f, item));
     s.inv = [];
     s.held = null;
     s.potHeal = Math.round(total * FEAST_MULT);
     s.potUntil = this.now + FEAST_MS;
+
+    // Resourceful, chef half. Two parcels off the bottom of the pot, worth a share of what the
+    // pot itself is about to pay — and worth twice that again if you can leave them alone.
+    if (this.up(owner, 'q') && s.potHeal > 0) {
+      const fresh = Math.max(1, Math.round(s.potHeal * LEFTOVER_FRESH_PCT));
+      const rested = Math.max(1, Math.round(s.potHeal * LEFTOVER_RESTED_PCT));
+      for (let i = 0; i < LEFTOVER_COUNT; i++) {
+        const item: InvItem = {
+          kind: 'leftovers', cooked: false,
+          healRaw: fresh, healCooked: rested, ripenAt: this.now + LEFTOVER_REST_MS,
+        };
+        // A strip with no room still gets them — they land at your feet like a full forage.
+        if (!this.stow(owner, item)) this.drop(owner, item, f.x + (i ? 22 : -22), f.y + 20);
+      }
+      this.api.showFloatingText(f.x, f.y - 70,
+        `🥡 ${LEFTOVER_COUNT} LEFTOVERS — ${fresh} → ${rested}`, this.hex(GLT.parcel));
+    }
 
     this.avatar(owner)?.play('raise');
     this.fx(owner).ring(f.x, f.y, 14, 90, GLT.stew, 560);
@@ -739,22 +1097,48 @@ export class GluttonyKit {
     if (!this.alive(f)) return;
     if (owner === 'npc') { this.npcAimX = tx; this.npcAimY = ty; }
 
+    const s = this.side(owner);
+
+    // Head Chef, butcher half. The butcher's click is a swing, not a throw — but the moment
+    // there is a rot rack to load and a spoiled potato to sling, he needs the chef's hand
+    // back. Only with the upgrade: base Gluttony's cleave never stops being a cleave.
+    if (s.held && this.up(owner, 'e')) { this.throwFood(owner, s.held, tx, ty); return; }
+
     const ang = Math.atan2(ty - f.y, tx - f.x);
+    const ichor = this.ichored(owner) && this.up(owner, 'r');
     let landed = false;
+    let dealt = 0;
     for (const t of this.targetsOf(owner)) {
       const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
       if (d > CLEAVE_REACH) continue;
       const off = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(t.y - f.y, t.x - f.x) - ang));
       if (off > CLEAVE_HALF_ARC) continue;
-      t.takeDamage(CLEAVE_DAMAGE);
-      this.api.spawnHitFlash(t.x, t.y, GLT.blood);
-      this.fx(owner).splat(t.x, t.y, 24, GLT.blood);
+      const amount = this.dmg(owner, CLEAVE_DAMAGE);
+      t.takeDamage(amount);
+      dealt += amount;
+      this.api.spawnHitFlash(t.x, t.y, ichor ? GLT.ichorLit : GLT.blood);
+      this.fx(owner).splat(t.x, t.y, 24, ichor ? GLT.ichor : GLT.blood);
       landed = true;
     }
 
     this.avatar(owner)?.play('sweep', ang);
-    this.fx(owner).slashArc(f.x, f.y, ang, CLEAVE_REACH * 0.85, landed ? GLT.blood : GLT.steel);
+    this.fx(owner).slashArc(f.x, f.y, ang, CLEAVE_REACH * 0.85,
+      landed ? (ichor ? GLT.ichorLit : GLT.blood) : GLT.steel);
     Sfx.playAt(landed ? 'slash' : 'whoosh', f.x, { volume: landed ? 0.85 : 0.45, rate: 0.95 });
+    if (!landed) return;
+
+    // Click upgrade, butcher half: connecting is what makes you fast, so a whiffed swing is
+    // still a whiffed swing.
+    if (this.up(owner, 'click')) {
+      s.hasteUntil = this.now + CLEAVE_HASTE_MS;
+      this.api.showFloatingText(f.x, f.y - 58, '🏃 +25% SPEED', this.hex(GLT.steel));
+    }
+    // R upgrade, butcher half: an ichorous blade feeds the bar with what it cuts.
+    if (ichor && dealt > 0) {
+      const gain = Math.round(dealt * ICHOR_HUNGER_PER_DAMAGE);
+      s.hunger = Math.min(HUNGER_MAX, s.hunger + gain);
+      this.api.showFloatingText(f.x, f.y - 72, `🩸 +${(gain / 1000).toFixed(1)}s`, this.hex(GLT.ichorLit));
+    }
   }
 
   /** E, butcher form — Poach. The damage is small; the meat is the ability. */
@@ -793,7 +1177,7 @@ export class GluttonyKit {
     let landed = false;
     for (const t of this.targetsOf(owner)) {
       if (Phaser.Math.Distance.Between(bx, by, t.x, t.y) > BITE_REACH * 0.7) continue;
-      t.takeDamage(20);
+      t.takeDamage(this.dmg(owner, 20));
       this.api.spawnHitFlash(t.x, t.y, GLT.blood);
       landed = true;
     }
@@ -817,6 +1201,19 @@ export class GluttonyKit {
   doReturn(owner: Owner): void {
     if (this.side(owner).form !== 'butcher') return;
     this.setForm(owner, 'chef');
+
+    // Murderous Intent, chef half. Walking back into the kitchen is worth a fifth of the wait
+    // for the next transformation — the cheaper the exit, the more often you take the door.
+    if (!this.up(owner, 'f')) return;
+    const f = this.fighter(owner);
+    const ability = f?.element.abilities.find((a) => a.id === 'glut-butcher');
+    if (!ability) return;
+    const off = ability.cooldown * RETURN_CD_REFUND;
+    f.reduceCooldown('glut-butcher', off);
+    if (this.alive(f)) {
+      this.api.showFloatingText(f.x, f.y - 68,
+        `🔪 −${(off / 1000).toFixed(1)}s`, this.hex(GLT.blood));
+    }
   }
 
   /** Q, butcher form — Maw Awakening. Worth exactly as much as the larder you built. */
@@ -836,6 +1233,8 @@ export class GluttonyKit {
     this.mawAwakenUntil = this.now + ms;
     this.mawNextBarrageAt = this.now + 500;
     this.mawNextWhipAt = this.now + 400;
+    this.mawNextScreamAt = this.now + 1200;
+    this.nextTendrilAt = this.now;
 
     this.avatar(owner)?.play('raise');
     this.fx(owner).ring(this.mawX, this.mawY, 24, 190, GLT.blood, 700);
@@ -844,6 +1243,10 @@ export class GluttonyKit {
       `👄 AWAKENED — ${(ms / 1000).toFixed(1)}s`, this.hex(GLT.flesh));
     if (eaten > 0) {
       this.api.showFloatingText(f.x, f.y - 50, `🍽️ ${eaten} FED IN`, this.hex(GLT.stewLit));
+    }
+    if (this.up(owner, 'q')) {
+      this.fx(owner).ring(this.mawX, this.mawY, 40, 320, GLT.bone, 900);
+      this.api.showFloatingText(this.mawX, this.mawY - 84, '💀 IT HAS A FACE NOW', this.hex(GLT.bone));
     }
     Sfx.playAt('roar', this.mawX, { volume: 1, rate: 0.55 });
   }
@@ -957,10 +1360,13 @@ export class GluttonyKit {
       this.updateForm(owner, time, delta);
       this.updateFeast(owner, time);
       this.updateCollection(owner);
+      this.updateIchor(owner, time);
+      this.updateRipen(owner, time);
       if (owner === 'npc') this.updateNpcBrain(time);
     }
 
     this.updateGrill(delta);
+    this.updateRotting(delta);
     this.updateKnives(time, delta);
     this.updateFoodProjectiles(time, delta);
     this.updateDrops(time);
@@ -968,7 +1374,10 @@ export class GluttonyKit {
     this.updateSkewers(time, delta);
     this.updateMaw(time, delta);
     this.updateGobbets(time, delta);
+    this.updateTendrils(time, delta);
     this.updateBurnt(time);
+    this.updateStuns();
+    this.refreshIncoming(time);
     this.updateAvatars(delta, playerIs, npcIs);
 
     this.paintGround();
@@ -1005,12 +1414,16 @@ export class GluttonyKit {
 
     s.forageUntil = 0;
     this.avatar(owner)?.setHold(null);
-    const kind = FORAGEABLE[Math.floor(Math.random() * FORAGEABLE.length)];
+    const kind = this.rollForage(owner);
     const got = this.stow(owner, { kind, cooked: false });
     if (got) {
       this.api.showFloatingText(f.x, f.y - 48,
         `${FOOD[kind].emoji} ${FOOD[kind].label}`, this.hex(FOOD[kind].color));
       this.fx(owner).crumbs(f.x, f.y + 8, FOOD[kind].color);
+      if (FOOD[kind].rare) {
+        this.fx(owner).ring(f.x, f.y, 10, 60, GLT.venom, 620);
+        Sfx.playAt('unlock', f.x, { volume: 0.5, rate: 1.2 });
+      }
       Sfx.playAt('vine-grow', f.x, { volume: 0.6, rate: 1.15 });
     } else {
       // Full strip: it still came out of the ground, it just lands at your feet.
@@ -1019,20 +1432,87 @@ export class GluttonyKit {
     }
   }
 
+  /**
+   * What comes out of the ground. Head Chef widens the table from three to seven, and the one
+   * rare entry on it is weighted rather than gated — a Death Cap is roughly one dig in twenty,
+   * which is often enough to plan around and rare enough to be worth seeing.
+   */
+  private rollForage(owner: Owner): FoodKind {
+    const table = this.up(owner, 'e') ? FORAGEABLE_PLUS : FORAGEABLE;
+    let total = 0;
+    for (const k of table) total += FOOD[k].rare ? RARE_WEIGHT : 1;
+    let roll = Math.random() * total;
+    for (const k of table) {
+      roll -= FOOD[k].rare ? RARE_WEIGHT : 1;
+      if (roll <= 0) return k;
+    }
+    return table[0];
+  }
+
   /** Two seconds over the coals, or one if somebody threw charcoal on them. */
   private updateKnifeHeat(owner: Owner, delta: number): void {
     const s = this.side(owner);
     const f = this.fighter(owner);
+    const cleaver = this.up(owner, 'click');
+
+    // A cleaver holds its heat on a clock rather than until it is thrown, so the clock has to
+    // run everywhere — mid-flight, in butcher form, and nowhere near the grill.
+    if (cleaver && s.knifeHotUntil && this.now >= s.knifeHotUntil) {
+      s.knifeHotUntil = 0;
+      s.knifeHeat = 0;
+      if (this.alive(f)) this.api.showFloatingText(f.x, f.y - 48, '🧊 GONE COLD', this.hex(GLT.steelMid));
+    }
+
     if (!this.alive(f) || s.form !== 'chef' || s.held) return;
     if (this.mawOwner) return;
     if (!this.nearGrill(f)) return;
 
     const before = s.knifeHeat;
-    s.knifeHeat = Math.min(1, s.knifeHeat + (delta / KNIFE_HEAT_MS) * (this.superheated ? 2 : 1));
+    s.knifeHeat = Math.min(1, s.knifeHeat + (delta / KNIFE_HEAT_MS) * this.heatRate);
     if (before < 1 && s.knifeHeat >= 1) {
-      this.api.showFloatingText(f.x, f.y - 48, '🔥 KNIFE HEATED', this.hex(GLT.heat));
+      if (cleaver) s.knifeHotUntil = this.now + CLEAVER_HOT_MS;
+      this.api.showFloatingText(f.x, f.y - 48,
+        `🔥 ${this.bladeName(owner)} HEATED`, this.hex(GLT.heat));
       this.fx(owner).sizzle(f.x, f.y, 8, 22, 500);
       Sfx.playAt('sizzle', f.x, { volume: 0.7, rate: 1.05 });
+    }
+  }
+
+  /** How fast the coals are working: 1 cold, 2 orange-hot, 3 with Pit Master's blue in them. */
+  private get heatRate(): number {
+    if (!this.superheated) return 1;
+    return this.superheatBlue ? BLUE_SUPERHEAT_RATE : 2;
+  }
+
+  /** Pit Master, butcher half: the maw paints whatever blade is standing over it. */
+  private updateIchor(owner: Owner, time: number): void {
+    if (!this.up(owner, 'r')) return;
+    const s = this.side(owner);
+    if (s.form !== 'butcher' || this.mawOwner !== owner) return;
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    if (Phaser.Math.Distance.Between(f.x, f.y, this.mawX, this.mawY) > GRILL_REACH) return;
+    const fresh = s.ichorUntil <= time;
+    s.ichorUntil = time + ICHOR_MS;
+    if (fresh) {
+      this.api.showFloatingText(f.x, f.y - 54, '🩸 ICHOROUS BLADE', this.hex(GLT.ichorLit));
+      this.fx(owner).splat(f.x, f.y + 6, 18, GLT.ichor);
+      Sfx.playAt('slime-splat', f.x, { volume: 0.55, rate: 0.7 });
+    }
+  }
+
+  /** Resourceful leftovers rest on the strip rather than on the grate. */
+  private updateRipen(owner: Owner, time: number): void {
+    const s = this.side(owner);
+    for (const item of s.inv) {
+      if (!item.ripenAt || item.cooked || time < item.ripenAt) continue;
+      item.cooked = true;
+      item.ripenAt = 0;
+      const f = this.fighter(owner);
+      if (this.alive(f)) {
+        this.api.showFloatingText(f.x, f.y - 52,
+          `🥡 RESTED — ${item.healCooked ?? 0}`, this.hex(FOOD.leftovers.cookedColor));
+      }
     }
   }
 
@@ -1091,15 +1571,37 @@ export class GluttonyKit {
       for (let i = this.cooking.length - 1; i >= 0; i--) {
         const c = this.cooking[i];
         if (c.owner !== owner) continue;
-        if (c.progress < this.cookMs(c.kind)) continue;
+        // Collectable the moment the first pass finishes. Taking it now is a cooked item;
+        // leaving it is what buys the over-sear, and that choice is the whole upgrade.
+        if (c.stage < 1) continue;
         if (s.inv.length >= INV_SLOTS) break;
         this.cooking.splice(i, 1);
-        s.inv.push({ kind: c.kind, cooked: true });
+        const done: InvItem = {
+          kind: c.kind, cooked: true, overseared: c.stage >= 2 || undefined,
+          healRaw: c.healRaw, healCooked: c.healCooked,
+        };
+        s.inv.push(done);
         const pos = this.slotPos(c.slot);
         this.fx(owner).sizzle(pos.x, pos.y, 6, 18, 400);
-        this.api.showFloatingText(f.x, f.y - 48,
-          `${FOOD[c.kind].emoji} COOKED`, this.hex(FOOD[c.kind].cookedColor));
-        Sfx.playAt('craft-complete', f.x, { volume: 0.6, rate: 1.2 });
+        this.api.showFloatingText(f.x, f.y - 48, this.itemLabel(done),
+          this.hex(done.overseared ? GLT.blueHot : FOOD[c.kind].cookedColor));
+        Sfx.playAt('craft-complete', f.x, { volume: 0.6, rate: done.overseared ? 0.95 : 1.2 });
+      }
+    }
+
+    // ── Off the maw ──
+    if (this.mawOwner === owner
+      && Phaser.Math.Distance.Between(f.x, f.y, this.mawX, this.mawY) <= GRILL_REACH) {
+      for (let i = this.rotting.length - 1; i >= 0; i--) {
+        const r = this.rotting[i];
+        if (r.owner !== owner || r.progress < ROT_MS) continue;
+        if (s.inv.length >= INV_SLOTS) break;
+        this.rotting.splice(i, 1);
+        r.item.rotten = true;
+        s.inv.push(r.item);
+        this.api.showFloatingText(f.x, f.y - 48, this.itemLabel(r.item), this.hex(GLT.rot));
+        this.fx(owner).splat(f.x, f.y + 6, 14, GLT.rotDark);
+        Sfx.playAt('slime-splat', f.x, { volume: 0.5, rate: 0.75 });
       }
     }
 
@@ -1133,19 +1635,82 @@ export class GluttonyKit {
 
   // ── The grill ──────────────────────────────────────────────────────────────
 
+  /** Heat needed to finish the first pass — the point at which it becomes collectable food. */
+  private cookFull(c: Cooking): number {
+    return this.cookMs(c.kind);
+  }
+
+  /** Heat needed to finish the second pass. The same as the first without Pit Master. */
+  private searFull(c: Cooking): number {
+    return this.cookMs(c.kind) * (c.oversear ? 1 + OVERSEAR_EXTRA : 1);
+  }
+
+  /**
+   * How full the ring around one thing on the grate is, and what colour it runs in. The two
+   * passes each get their own sweep from empty: an over-searing item is not "still cooking",
+   * it is cooked and doing something else, and one continuous ring would say otherwise.
+   */
+  private cookRingState(c: Cooking): { ratio: number; done: boolean; blue: boolean } {
+    if (c.stage >= 2) return { ratio: 1, done: true, blue: true };
+    if (c.stage >= 1) {
+      if (!c.oversear) return { ratio: 1, done: true, blue: false };
+      const cooked = this.cookFull(c);
+      const span = Math.max(1, this.searFull(c) - cooked);
+      return { ratio: (c.progress - cooked) / span, done: false, blue: true };
+    }
+    return { ratio: c.progress / this.cookFull(c), done: false, blue: false };
+  }
+
   private updateGrill(delta: number): void {
-    const rate = this.superheated ? 2 : 1;
+    const rate = this.heatRate;
     for (const c of this.cooking) {
-      const full = this.cookMs(c.kind);
-      if (c.progress >= full) continue;
-      c.progress = Math.min(full, c.progress + delta * rate);
-      if (c.progress >= full) {
-        const pos = this.slotPos(c.slot);
+      const total = this.searFull(c);
+      if (c.progress >= total) continue;
+      c.progress = Math.min(total, c.progress + delta * rate);
+      const pos = this.slotPos(c.slot);
+
+      // First pass: it is food now, and walking over the grill will take it.
+      if (c.stage === 0 && c.progress >= this.cookFull(c)) {
+        c.stage = 1;
         this.fx(c.owner).sizzle(pos.x, pos.y, 7, 20, 480);
         this.fx(c.owner).smoke(pos.x, pos.y, 3, 30, 0xa89a86, 800);
         this.api.showFloatingText(pos.x, pos.y - 26,
           `${FOOD[c.kind].emoji} DONE`, this.hex(FOOD[c.kind].cookedColor));
         Sfx.playAt('sizzle', pos.x, { volume: 0.55, rate: 0.9 });
+        if (c.oversear) {
+          this.api.showFloatingText(pos.x, pos.y - 44, '🔵 SEARING', this.hex(GLT.blueCoal));
+        }
+      }
+
+      // Second pass, and only for somebody who left it alone through the first.
+      if (c.stage === 1 && c.oversear && c.progress >= total) {
+        c.stage = 2;
+        this.fx(c.owner).sizzle(pos.x, pos.y, 9, 24, 520);
+        this.fx(c.owner).ring(pos.x, pos.y, 8, 34, GLT.blueHot, 480);
+        this.api.showFloatingText(pos.x, pos.y - 26,
+          `${FOOD[c.kind].emoji} OVER-SEARED`, this.hex(GLT.blueHot));
+        Sfx.playAt('sizzle', pos.x, { volume: 0.7, rate: 0.7 });
+      }
+    }
+  }
+
+  /** The maw's own grate. Nothing here needs heat — it just needs to be left alone. */
+  private updateRotting(delta: number): void {
+    if (!this.mawOwner) {
+      // The kitchen came back. Whatever was spoiling falls off the teeth onto the floor.
+      for (const r of this.rotting) this.drop(r.owner, r.item, this.grillX, this.grillY + 26);
+      this.rotting = [];
+      return;
+    }
+    for (const r of this.rotting) {
+      if (r.progress >= ROT_MS) continue;
+      r.progress = Math.min(ROT_MS, r.progress + delta);
+      if (r.progress >= ROT_MS) {
+        const pos = this.rotPos(r.slot);
+        this.fx(r.owner).splat(pos.x, pos.y, 16, GLT.rot);
+        this.api.showFloatingText(pos.x, pos.y - 24,
+          `${FOOD[r.item.kind].emoji} ROTTEN`, this.hex(GLT.rot));
+        Sfx.playAt('slime-splat', pos.x, { volume: 0.5, rate: 0.65 });
       }
     }
   }
@@ -1160,8 +1725,13 @@ export class GluttonyKit {
       k.y += k.vy * dt;
       k.spin += dt * 22;
 
+      // A cleaver keeps its heat as long as the side that threw it does — the four-second
+      // clock in `updateKnifeHeat` runs whether the blade is in a hand or in the air.
+      if (k.cleaver) k.heated = this.side(k.owner).knifeHotUntil > time;
+
       let hit: Fighter | null = null;
       for (const t of this.targetsOf(k.owner)) {
+        if (k.hit.includes(t)) continue;
         if (Phaser.Math.Distance.Between(k.x, k.y, t.x, t.y) <= KNIFE_HIT_R) { hit = t; break; }
       }
 
@@ -1171,13 +1741,18 @@ export class GluttonyKit {
         // whatever the target has been through.
         const seared = k.heated && this.isBurnt(hit);
         if (seared) dmg = Math.round(dmg * BURNT_KNIFE_MULT);
-        hit.takeDamage(dmg);
+        k.hit.push(hit);
+        hit.takeDamage(this.dmg(k.owner, dmg));
         this.api.spawnHitFlash(hit.x, hit.y, k.heated ? GLT.heat : GLT.steel);
         this.fx(k.owner).splat(hit.x, hit.y, 20, GLT.blood);
         if (k.heated) this.fx(k.owner).sizzle(hit.x, hit.y, 7, 22, 460);
         if (seared) this.api.showFloatingText(hit.x, hit.y - 48, '🔥 SEARED', this.hex(GLT.ember));
-        this.knives.splice(i, 1);
-        continue;
+        // The whole point of the slab: it does not stop in the first body it finds.
+        if (!k.cleaver) {
+          this.knives.splice(i, 1);
+          continue;
+        }
+        this.api.showFloatingText(hit.x, hit.y - 34, '🪓 THROUGH', this.hex(GLT.steel));
       }
 
       if (time >= k.diesAt || k.x < this.left || k.x > this.right || k.y < this.top || k.y > this.bottom) {
@@ -1200,14 +1775,16 @@ export class GluttonyKit {
         && Phaser.Math.Distance.Between(p.x, p.y, this.grillX, this.grillY) <= GRILL_R * 1.4) {
         const slot = this.freeSlot();
         this.foods.splice(i, 1);
-        if (slot >= 0 && !p.item.cooked) {
+        if (slot >= 0 && !p.item.cooked && !p.item.rotten) {
+          const oversear = this.up(p.owner, 'r');
           this.cooking.push({
             owner: p.owner, kind: p.item.kind, progress: 0, slot, seed: Math.random() * 999,
+            oversear, stage: 0, healRaw: p.item.healRaw, healCooked: p.item.healCooked,
           });
           const pos = this.slotPos(slot);
           this.fx(p.owner).sizzle(pos.x, pos.y, 8, 20, 520);
           this.api.showFloatingText(pos.x, pos.y - 26,
-            `${FOOD[p.item.kind].emoji} ON THE GRILL`, this.hex(GLT.ember));
+            `${FOOD[p.item.kind].emoji} ON THE GRILL`, this.hex(oversear ? GLT.blueCoal : GLT.ember));
           Sfx.playAt('sizzle', pos.x, { volume: 0.75, rate: 1.1 });
         } else {
           // Grate full, or it was cooked already — it bounces off onto the floor.
@@ -1217,16 +1794,47 @@ export class GluttonyKit {
         continue;
       }
 
-      // A body stops it, and there is a joke in being hit with a raw potato.
+      // Onto the teeth. Head Chef's butcher half: the maw is the second cooker, and what it
+      // does to food is not cooking.
+      if (this.mawOwner === p.owner && this.up(p.owner, 'e')
+        && Phaser.Math.Distance.Between(p.x, p.y, this.mawX, this.mawY) <= GRILL_R * 1.4) {
+        const slot = this.freeRotSlot();
+        this.foods.splice(i, 1);
+        if (slot >= 0 && !p.item.rotten) {
+          this.rotting.push({
+            owner: p.owner, item: p.item, progress: 0, slot, seed: Math.random() * 999,
+          });
+          const pos = this.rotPos(slot);
+          this.api.showFloatingText(pos.x, pos.y - 24,
+            `${FOOD[p.item.kind].emoji} LEFT TO ROT`, this.hex(GLT.rotDark));
+          Sfx.playAt('slime-splat', pos.x, { volume: 0.6, rate: 0.8 });
+        } else {
+          this.drop(p.owner, p.item, p.x + (Math.random() - 0.5) * 60, p.y + 40);
+        }
+        continue;
+      }
+
+      // A body stops it, and there is a joke in being hit with a raw potato — right up until
+      // somebody throws a fortnight-old potato instead.
       let hit: Fighter | null = null;
       for (const t of this.targetsOf(p.owner)) {
         if (Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) <= 24) { hit = t; break; }
       }
       if (hit) {
-        hit.takeDamage(3);
-        this.api.spawnHitFlash(hit.x, hit.y, foodColor(p.item.kind, p.item.cooked));
-        this.fx(p.owner).crumbs(hit.x, hit.y, foodColor(p.item.kind, p.item.cooked));
-        this.drop(p.owner, p.item, hit.x + (Math.random() - 0.5) * 50, hit.y + 34);
+        if (p.item.rotten) {
+          const amount = this.dmg(p.owner, this.rottenDamage(p.item, hit));
+          hit.takeDamage(amount);
+          this.api.spawnHitFlash(hit.x, hit.y, GLT.rot);
+          this.fx(p.owner).splat(hit.x, hit.y, 28, GLT.rot);
+          this.api.showFloatingText(hit.x, hit.y - 46,
+            `${FOOD[p.item.kind].emoji} SPOILED`, this.hex(GLT.rot));
+          Sfx.playAt('slime-splat', hit.x, { volume: 0.85, rate: 0.7 });
+        } else {
+          hit.takeDamage(this.dmg(p.owner, 3));
+          this.api.spawnHitFlash(hit.x, hit.y, foodColor(p.item.kind, p.item.cooked));
+          this.fx(p.owner).crumbs(hit.x, hit.y, foodColor(p.item.kind, p.item.cooked));
+          this.drop(p.owner, p.item, hit.x + (Math.random() - 0.5) * 50, hit.y + 34);
+        }
         this.foods.splice(i, 1);
         continue;
       }
@@ -1258,9 +1866,13 @@ export class GluttonyKit {
         && Phaser.Math.Distance.Between(c.x, c.y, this.grillX, this.grillY) <= GRILL_R * 1.5) {
         this.coals.splice(i, 1);
         this.superheatUntil = Math.max(this.superheatUntil, this.now + SUPERHEAT_MS);
+        // Blue wins a tie: the last lump in is the one whose colour the coals take.
+        this.superheatBlue = c.blue;
         this.fx(c.owner).flare(this.grillX, this.grillY, GRILL_R * 1.7);
-        this.api.showFloatingText(this.grillX, this.grillY - 46, '🔥 SUPERHEATED', this.hex(GLT.emberHot));
-        Sfx.playAt('flame-burst', this.grillX, { volume: 0.9, rate: 0.9 });
+        this.api.showFloatingText(this.grillX, this.grillY - 46,
+          c.blue ? '🔵 BLUE COALS' : '🔥 SUPERHEATED',
+          this.hex(c.blue ? GLT.blueHot : GLT.emberHot));
+        Sfx.playAt('flame-burst', this.grillX, { volume: 0.9, rate: c.blue ? 1.25 : 0.9 });
         continue;
       }
 
@@ -1269,7 +1881,7 @@ export class GluttonyKit {
         if (Phaser.Math.Distance.Between(c.x, c.y, t.x, t.y) <= COAL_HIT_R) { hit = t; break; }
       }
       if (hit) {
-        hit.takeDamage(COAL_DAMAGE);
+        hit.takeDamage(this.dmg(c.owner, COAL_DAMAGE));
         this.burnt.set(hit, this.now + BURNT_MS);
         this.api.spawnHitFlash(hit.x, hit.y, GLT.heat);
         this.fx(c.owner).flare(hit.x, hit.y, 34);
@@ -1303,7 +1915,7 @@ export class GluttonyKit {
         if (k.hit.includes(t)) continue;
         if (Phaser.Math.Distance.Between(k.x, k.y, t.x, t.y) > SKEWER_HIT_R) continue;
         k.hit.push(t);
-        t.takeDamage(SKEWER_DAMAGE);
+        t.takeDamage(this.dmg(k.owner, SKEWER_DAMAGE));
         this.api.spawnHitFlash(t.x, t.y, GLT.steel);
         this.fx(k.owner).splat(t.x, t.y, 26, GLT.blood);
         // It takes a cut out of them on the way past, and carries it to the wall.
@@ -1340,14 +1952,19 @@ export class GluttonyKit {
       this.mawX = this.grillX;
       this.mawY = this.grillY;
       this.mawNextShotAt = time + MAW_SHOT_MS;
+      this.mawNextGrabAt = time + MAW_GRAB_MS;
+      this.mawNextBiteAt = time + MAW_BITE_MS;
       if (!owner) { this.mawAwakenUntil = 0; this.mawFrenzyUntil = 0; }
     }
     if (!owner) {
       this.mawGape = Phaser.Math.Linear(this.mawGape, 0, Math.min(1, delta / 200));
+      this.dreadBlend = Phaser.Math.Linear(this.dreadBlend, 0, Math.min(1, delta / 260));
       return;
     }
 
     const awake = time < this.mawAwakenUntil;
+    this.dreadBlend = Phaser.Math.Linear(this.dreadBlend, this.dread ? 1 : 0,
+      Math.min(1, delta / 420));
     this.mawGape = Phaser.Math.Linear(this.mawGape, awake ? 1 : 0.3 + 0.2 * Math.sin(time / 300),
       Math.min(1, delta / 220));
 
@@ -1370,7 +1987,7 @@ export class GluttonyKit {
         let landed = false;
         for (const t of this.targetsOf(owner)) {
           if (Phaser.Math.Distance.Between(this.mawX, this.mawY, t.x, t.y) > AWAKEN_WHIP_REACH) continue;
-          t.takeDamage(AWAKEN_WHIP_DAMAGE);
+          t.takeDamage(this.mawDamage(owner, AWAKEN_WHIP_DAMAGE));
           this.api.spawnHitFlash(t.x, t.y, GLT.flesh);
           this.fx(owner).splat(t.x, t.y, 22, GLT.fleshDark);
           landed = true;
@@ -1385,9 +2002,16 @@ export class GluttonyKit {
         this.mawNextBarrageAt = time + AWAKEN_BARRAGE_MS;
         for (let i = 0; i < AWAKEN_BARRAGE_COUNT; i++) {
           const spread = (i - (AWAKEN_BARRAGE_COUNT - 1) / 2) * 0.16;
-          this.spitGobbet(owner, a + spread, AWAKEN_BULLET_DAMAGE, true);
+          this.spitGobbet(owner, a + spread, this.mawDamage(owner, AWAKEN_BULLET_DAMAGE), true);
         }
         Sfx.playAt('musket', this.mawX, { volume: 0.6, rate: 0.75 });
+      }
+
+      // Resourceful, butcher half. The scream is the dread maw's whole reason to exist: an
+      // unaimed 35 through the middle of the arena that leaves everyone in it standing still.
+      if (this.dread && time >= this.mawNextScreamAt) {
+        this.mawNextScreamAt = time + SCREAM_MS;
+        this.doScream(owner);
       }
     } else {
       // Back on the grill, and back to one lazy shot a second.
@@ -1397,24 +2021,82 @@ export class GluttonyKit {
       }
     }
 
+    // ── The regular spit ──
+    const cone = this.up(owner, 'f');
     if (time >= this.mawNextShotAt) {
       this.mawNextShotAt = time + MAW_SHOT_MS;
       if (target) {
         const hot = time < this.mawFrenzyUntil;
-        this.spitGobbet(owner, Math.atan2(target.y - this.mawY, target.x - this.mawX),
-          hot ? MAW_FRENZY_DAMAGE : MAW_DAMAGE, hot);
+        const base = this.mawDamage(owner, hot ? MAW_FRENZY_DAMAGE : MAW_DAMAGE);
+        const aim = Math.atan2(target.y - this.mawY, target.x - this.mawX);
+        // Murderous Intent, butcher half: one gobbet a second becomes a fan of five, each of
+        // them carrying the vulnerability that makes everything else you own hit harder.
+        const shots = cone ? MAW_CONE_COUNT : 1;
+        for (let i = 0; i < shots; i++) {
+          const off = cone ? (i - (shots - 1) / 2) * MAW_CONE_SPREAD : 0;
+          this.spitGobbet(owner, aim + off, base, hot, cone);
+        }
+        if (cone) Sfx.playAt('musket', this.mawX, { volume: 0.45, rate: 1.1 });
+      }
+    }
+
+    if (!cone) return;
+
+    // ── The reach ──
+    if (time >= this.mawNextGrabAt) {
+      this.mawNextGrabAt = time + MAW_GRAB_MS;
+      const grab = this.targetsOf(owner)
+        .filter((t) => Phaser.Math.Distance.Between(this.mawX, this.mawY, t.x, t.y) <= MAW_GRAB_RANGE)
+        .sort((p, q) => Phaser.Math.Distance.Between(this.mawX, this.mawY, p.x, p.y)
+          - Phaser.Math.Distance.Between(this.mawX, this.mawY, q.x, q.y))[0];
+      if (grab) {
+        const ga = Math.atan2(grab.y - this.mawY, grab.x - this.mawX);
+        this.stun(grab, MAW_GRAB_STUN_MS, '🖐️ GRABBED');
+        this.fx(owner).slashArc(this.mawX, this.mawY, ga,
+          Phaser.Math.Distance.Between(this.mawX, this.mawY, grab.x, grab.y), GLT.fleshDark);
+        this.fx(owner).ring(grab.x, grab.y, 8, 44, GLT.flesh, 480);
+        Sfx.playAt('whip', grab.x, { volume: 0.8, rate: 0.7 });
+      }
+    }
+
+    // ── The close bite ──
+    if (time >= this.mawNextBiteAt) {
+      const near = this.targetsOf(owner)
+        .find((t) => Phaser.Math.Distance.Between(this.mawX, this.mawY, t.x, t.y) <= MAW_BITE_REACH);
+      if (near) {
+        this.mawNextBiteAt = time + MAW_BITE_MS;
+        const ba = Math.atan2(near.y - this.mawY, near.x - this.mawX);
+        near.takeDamage(this.mawDamage(owner, MAW_BITE_DAMAGE));
+        this.api.spawnHitFlash(near.x, near.y, GLT.tooth);
+        this.fx(owner).bite(near.x, near.y, ba, 38);
+        this.api.showFloatingText(near.x, near.y - 50, '🦷 BITTEN', this.hex(GLT.tooth));
+        Sfx.playAt('stab', near.x, { volume: 0.9, rate: 0.7 });
       }
     }
   }
 
-  private spitGobbet(owner: Owner, ang: number, damage: number, hot: boolean): void {
+  /** The dread maw's scream. Nothing to dodge and nothing to block — only distance works. */
+  private doScream(owner: Owner): void {
+    this.fx(owner).ring(this.mawX, this.mawY, 30, SCREAM_RADIUS, GLT.bone, 780);
+    this.fx(owner).ring(this.mawX, this.mawY, 14, SCREAM_RADIUS * 0.7, GLT.blood, 620);
+    this.api.showFloatingText(this.mawX, this.mawY - 70, '😱 SCREAM', this.hex(GLT.bone));
+    Sfx.playAt('roar', this.mawX, { volume: 1, rate: 0.45 });
+    for (const t of this.targetsOf(owner)) {
+      if (Phaser.Math.Distance.Between(this.mawX, this.mawY, t.x, t.y) > SCREAM_RADIUS) continue;
+      t.takeDamage(this.dmg(owner, SCREAM_DAMAGE));
+      this.api.spawnHitFlash(t.x, t.y, GLT.bone);
+      this.stun(t, SCREAM_STUN_MS, '💫 DEAFENED');
+    }
+  }
+
+  private spitGobbet(owner: Owner, ang: number, damage: number, hot: boolean, vuln = false): void {
     this.gobbets.push({
       owner,
       x: this.mawX + Math.cos(ang) * 20,
       y: this.mawY + Math.sin(ang) * 14,
       vx: Math.cos(ang) * GOBBET_SPEED,
       vy: Math.sin(ang) * GOBBET_SPEED,
-      damage, hot, diesAt: this.now + GOBBET_LIFE_MS, spin: Math.random() * 6,
+      damage, hot, diesAt: this.now + GOBBET_LIFE_MS, spin: Math.random() * 6, vuln,
     });
   }
 
@@ -1434,6 +2116,11 @@ export class GluttonyKit {
         hit.takeDamage(b.damage);
         this.api.spawnHitFlash(hit.x, hit.y, b.hot ? GLT.blood : GLT.meat);
         this.fx(b.owner).splat(hit.x, hit.y, 16, GLT.blood);
+        if (b.vuln) {
+          const fresh = (this.vulnerable.get(hit) ?? 0) <= time;
+          this.vulnerable.set(hit, time + MAW_VULN_MS);
+          if (fresh) this.api.showFloatingText(hit.x, hit.y - 44, '🦷 TENDERISED', this.hex(GLT.flesh));
+        }
         this.gobbets.splice(i, 1);
         continue;
       }
@@ -1444,6 +2131,62 @@ export class GluttonyKit {
         this.gobbets.splice(i, 1);
       }
     }
+  }
+
+  /**
+   * Resourceful, butcher half: the dread maw's limbs go up the walls. A band along every edge
+   * of the arena that hurts anybody standing in it — anybody except the butcher, who is the
+   * only person in the room the thing recognises.
+   */
+  private updateTendrils(time: number, delta: number): void {
+    void delta;
+    const owner = this.mawOwner;
+    if (!owner || !this.dread) return;
+    if (time < this.nextTendrilAt) return;
+    this.nextTendrilAt = time + TENDRIL_TICK_MS;
+
+    for (const t of this.targetsOf(owner)) {
+      const inBand = t.x <= this.left + TENDRIL_BAND || t.x >= this.right - TENDRIL_BAND
+        || t.y <= this.top + TENDRIL_BAND || t.y >= this.bottom - TENDRIL_BAND;
+      if (!inBand) continue;
+      t.takeDamage(this.dmg(owner, TENDRIL_DAMAGE));
+      this.api.spawnHitFlash(t.x, t.y, GLT.fleshDark);
+      this.fx(owner).splat(t.x, t.y, 14, GLT.fleshDark);
+    }
+  }
+
+  private updateStuns(): void {
+    for (const [t, until] of [...this.stunned]) {
+      if (!this.alive(t) || this.now >= until || t.unstoppable) { this.stunned.delete(t); continue; }
+      this.body(t).setVelocity(0, 0);
+    }
+  }
+
+  /**
+   * The one place `Fighter.gluttonyIncomingMult` is written. Rewritten from scratch every
+   * frame off the kit's own timers — a mint on the cook and a cone bullet in whoever it hit
+   * are allowed to multiply, and nobody the kit is no longer touching keeps a multiplier.
+   */
+  private refreshIncoming(time: number): void {
+    const next = new Map<Fighter, number>();
+
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      if (!this.isGluttony(owner)) continue;
+      const s = this.side(owner);
+      if (s.resistUntil <= time) continue;
+      const f = this.fighter(owner);
+      if (!this.alive(f)) continue;
+      next.set(f, (next.get(f) ?? 1) * s.resistMult);
+    }
+
+    for (const [f, until] of [...this.vulnerable]) {
+      if (!this.alive(f) || time >= until) { this.vulnerable.delete(f); continue; }
+      next.set(f, (next.get(f) ?? 1) * MAW_VULN_MULT);
+    }
+
+    for (const f of this.incomingTouched) if (!next.has(f)) f.gluttonyIncomingMult = 1;
+    this.incomingTouched.clear();
+    for (const [f, m] of next) { f.gluttonyIncomingMult = m; this.incomingTouched.add(f); }
   }
 
   private updateBurnt(time: number): void {
@@ -1471,9 +2214,13 @@ export class GluttonyKit {
     if (!s.inv.length) return;
 
     // Cooked first, and the biggest of them — a bot that eats a raw carrot at 20% health is
-    // throwing away the only thing on the strip that could have saved it.
-    const best = [...s.inv].sort((a, b) =>
-      (Number(b.cooked) - Number(a.cooked)) || (foodHeal(b.kind, b.cooked) - foodHeal(a.kind, a.cooked)))[0];
+    // throwing away the only thing on the strip that could have saved it. Anything worth
+    // nothing or less (a rotten scrap, a raw Death Cap) is skipped outright: those are
+    // weapons, and a bot swallowing one at 20% health would be finishing the job for you.
+    const best = [...s.inv]
+      .filter((it) => this.healValue(f, it) > 0)
+      .sort((a, b) => (Number(b.cooked) - Number(a.cooked))
+        || (this.healValue(f, b) - this.healValue(f, a)))[0];
     if (!best) return;
     this.eatItem('npc', best);
     s.npcNextEat = time + 1200;
@@ -1488,7 +2235,7 @@ export class GluttonyKit {
       const f = this.api.player;
       const s = this.sides.player;
       if (!this.playerAvatar) this.playerAvatar = new GluttonyAvatar(scene, this.pcol);
-      this.dressAvatar(this.playerAvatar, s, Math.atan2(this.aimY - f.y, this.aimX - f.x));
+      this.dressAvatar(this.playerAvatar, s, Math.atan2(this.aimY - f.y, this.aimX - f.x), 'player');
       this.playerAvatar.setMastered(this.api.masteryActive);
       this.playerAvatar.update(delta, f.x, f.y, 1);
     } else if (this.playerAvatar) {
@@ -1500,7 +2247,7 @@ export class GluttonyKit {
       const f = this.api.npc;
       const s = this.sides.npc;
       if (!this.npcAvatar) this.npcAvatar = new GluttonyAvatar(scene, this.ncol);
-      this.dressAvatar(this.npcAvatar, s, Math.atan2(this.npcAimY - f.y, this.npcAimX - f.x));
+      this.dressAvatar(this.npcAvatar, s, Math.atan2(this.npcAimY - f.y, this.npcAimX - f.x), 'npc');
       this.npcAvatar.setMastered(this.api.npcMasteryActive);
       this.npcAvatar.update(delta, f.x, f.y, 1);
     } else if (this.npcAvatar) {
@@ -1509,11 +2256,13 @@ export class GluttonyKit {
     }
   }
 
-  private dressAvatar(av: GluttonyAvatar, s: Side, facing: number): void {
+  private dressAvatar(av: GluttonyAvatar, s: Side, facing: number, owner: Owner): void {
     av.setFacing(facing);
     av.setButcher(s.formBlend);
     av.setKnifeHeat(s.knifeHeat);
-    av.setHeld(s.held ? { kind: s.held.kind, cooked: s.held.cooked } : null);
+    av.setCleaver(this.up(owner, 'click'));
+    av.setIchor(this.ichored(owner) ? Phaser.Math.Clamp((s.ichorUntil - this.now) / 900, 0, 1) : 0);
+    av.setHeld(s.held);
     av.setFed(s.inv.length / INV_SLOTS);
     av.setIntensity(s.form === 'butcher' ? 1.25 : 1);
   }
@@ -1537,14 +2286,16 @@ export class GluttonyKit {
         const a = (i / arms) * Math.PI * 2 + t * 0.35;
         mawTentacle(g, tint, this.mawX + Math.cos(a) * GRILL_R * 0.8,
           this.mawY + Math.sin(a) * GRILL_R * 0.5, a,
-          GRILL_R * (1.5 + rage * 1.5), t, i * 3.1, 4.4 + rage * 2, 0.95, rage);
+          GRILL_R * (1.5 + rage * 1.5 + this.dreadBlend), t, i * 3.1,
+          4.4 + rage * 2 + this.dreadBlend * 2, 0.95, rage);
       }
-      mawBody(g, tint, this.mawX, this.mawY, GRILL_R, t, this.mawGape, rage, 1);
+      mawBody(g, tint, this.mawX, this.mawY, GRILL_R, t, this.mawGape, rage, 1, this.dreadBlend);
+      this.paintEdgeTendrils(g, tint, t);
     } else {
       const superheat = this.superheated
         ? Phaser.Math.Clamp((this.superheatUntil - this.now) / 900, 0, 1)
         : 0;
-      grillRig(g, tint, this.grillX, this.grillY, GRILL_R, t, superheat, 1);
+      grillRig(g, tint, this.grillX, this.grillY, GRILL_R, t, superheat, 1, this.superheatBlue);
     }
 
     // Dropped ingredients, with the shadow that says they are on the floor.
@@ -1552,8 +2303,7 @@ export class GluttonyKit {
       const fade = Phaser.Math.Clamp((d.until - this.now) / 1500, 0, 1);
       g.fillStyle(this.col(d.owner)(0x000000), 0.3 * fade);
       g.fillEllipse(d.x, d.y + 8, 22, 8);
-      foodShape(g, this.col(d.owner), d.x, d.y, d.item.kind, d.item.cooked, 22, fade,
-        this.vizT * 1.6 + d.seed);
+      itemShape(g, this.col(d.owner), d.x, d.y, d.item, 22, fade, this.vizT * 1.6 + d.seed);
     }
 
     // Skewers, and the mess where they landed.
@@ -1561,6 +2311,39 @@ export class GluttonyKit {
       if (k.state !== 'landed') continue;
       const fade = Phaser.Math.Clamp((k.until - this.now) / 800, 0, 1);
       spatter(g, this.col(k.owner), k.x, k.y, 12, GLT.blood, 4, fade * 0.7);
+    }
+  }
+
+  /**
+   * The band of limbs a dread maw puts up the four walls. Drawn as a run of tapering tentacles
+   * rooted just off-screen and reaching inward, so the hazard's depth is honestly the band the
+   * kit actually tests against rather than a decorative fringe.
+   */
+  private paintEdgeTendrils(g: Phaser.GameObjects.Graphics, tint: GluttonyColorFn, t: number): void {
+    if (this.dreadBlend < 0.02) return;
+    const a = this.dreadBlend;
+    const reach = TENDRIL_BAND * (0.9 + 0.35 * a);
+    const edges: Array<{ n: number; at: (s: number) => [number, number]; ang: number }> = [
+      { n: 9, at: (s) => [this.left, this.top + s * (this.bottom - this.top)], ang: 0 },
+      { n: 9, at: (s) => [this.right, this.top + s * (this.bottom - this.top)], ang: Math.PI },
+      { n: 12, at: (s) => [this.left + s * (this.right - this.left), this.top], ang: Math.PI / 2 },
+      { n: 12, at: (s) => [this.left + s * (this.right - this.left), this.bottom], ang: -Math.PI / 2 },
+    ];
+    // The band itself, so a player can see exactly where standing becomes a mistake.
+    g.fillStyle(tint(GLT.fleshDark), a * 0.16);
+    g.fillRect(this.left, this.top, this.right - this.left, TENDRIL_BAND);
+    g.fillRect(this.left, this.bottom - TENDRIL_BAND, this.right - this.left, TENDRIL_BAND);
+    g.fillRect(this.left, this.top, TENDRIL_BAND, this.bottom - this.top);
+    g.fillRect(this.right - TENDRIL_BAND, this.top, TENDRIL_BAND, this.bottom - this.top);
+
+    for (const e of edges) {
+      for (let i = 0; i < e.n; i++) {
+        const s = (i + 0.5) / e.n;
+        const [x, y] = e.at(s);
+        const sway = Math.sin(t * 2.2 + i * 1.7) * 0.35;
+        mawTentacle(g, tint, x, y, e.ang + sway, reach * (0.8 + 0.4 * jitter(41, i)),
+          t, i * 2.7, 3.4 * a, 0.9 * a, 0.8);
+      }
     }
   }
 
@@ -1576,31 +2359,46 @@ export class GluttonyKit {
       const superheat = this.superheated
         ? Phaser.Math.Clamp((this.superheatUntil - this.now) / 900, 0, 1)
         : 0;
-      grillHeat(g, this.pcol, this.grillX, this.grillY, GRILL_R, t, superheat, 1);
+      grillHeat(g, this.pcol, this.grillX, this.grillY, GRILL_R, t, superheat, 1, this.superheatBlue);
     }
     for (const c of this.cooking) {
       const pos = this.slotPos(c.slot);
-      const full = this.cookMs(c.kind);
-      const done = c.progress >= full;
+      const ring = this.cookRingState(c);
       const bob = Math.sin(t * 3 + c.seed) * 1.4;
-      foodShape(g, this.col(c.owner), pos.x, pos.y + bob, c.kind, done, 21, 1, t * 2 + c.seed);
-      cookRing(g, this.col(c.owner), pos.x, pos.y + bob, 15, c.progress / full, 0.9, done);
+      itemShape(g, this.col(c.owner), pos.x, pos.y + bob,
+        { kind: c.kind, cooked: c.stage >= 1, overseared: c.stage >= 2 }, 21, 1, t * 2 + c.seed);
+      cookRing(g, this.col(c.owner), pos.x, pos.y + bob, 15, ring.ratio, 0.9, ring.done, ring.blue);
     }
 
-    // ── Knives ──
+    // ── What is spoiling on the teeth ──
+    for (const r of this.rotting) {
+      const pos = this.rotPos(r.slot);
+      const done = r.progress >= ROT_MS;
+      const bob = Math.sin(t * 2.2 + r.seed) * 1.6;
+      itemShape(g, this.col(r.owner), pos.x, pos.y + bob,
+        { ...r.item, rotten: done }, 20, 1, t * 1.6 + r.seed);
+      cookRing(g, this.col(r.owner), pos.x, pos.y + bob, 14, r.progress / ROT_MS, 0.85, done);
+    }
+
+    // ── Blades in flight ──
     for (const k of this.knives) {
       const ang = Math.atan2(k.vy, k.vx) + Math.sin(k.spin) * 0.5;
-      kitchenKnife(g, this.col(k.owner), k.x, k.y, ang, 30, k.heated ? 1 : 0, 1);
+      if (k.cleaver) {
+        chefCleaver(g, this.col(k.owner), k.x, k.y, ang, 32, k.heated ? 1 : 0, 1,
+          this.ichored(k.owner) ? 1 : 0, t);
+      } else {
+        kitchenKnife(g, this.col(k.owner), k.x, k.y, ang, 30, k.heated ? 1 : 0, 1);
+      }
     }
 
     // ── Thrown food ──
     for (const p of this.foods) {
-      foodShape(g, this.col(p.owner), p.x, p.y, p.item.kind, p.item.cooked, 22, 1, p.spin);
+      itemShape(g, this.col(p.owner), p.x, p.y, p.item, 22, 1, p.spin);
     }
 
     // ── Charcoal ──
     for (const c of this.coals) {
-      charcoalLump(g, this.col(c.owner), c.x, c.y, c.spin * 0.4, 15, 0.85, 1, 5);
+      charcoalLump(g, this.col(c.owner), c.x, c.y, c.spin * 0.4, 15, 0.85, 1, 5, c.blue);
     }
 
     // ── Skewers ──
@@ -1659,25 +2457,45 @@ export class GluttonyKit {
       const item = s.inv[i] ?? null;
       prepSlot(g, this.pcol, x, HUD_Y, SLOT_SIZE, item !== null && item === s.held, !item, 1);
       if (!item) continue;
-      foodShape(g, this.pcol, x + SLOT_SIZE / 2, HUD_Y + SLOT_SIZE / 2,
-        item.kind, item.cooked, SLOT_SIZE * 0.72, 1, this.vizT * 1.4 + i);
-      // A green pip in the corner is the fastest read on "this one is cooked".
-      if (item.cooked) {
-        g.fillStyle(this.pcol(0x7ada6a), 0.95);
+      itemShape(g, this.pcol, x + SLOT_SIZE / 2, HUD_Y + SLOT_SIZE / 2,
+        item, SLOT_SIZE * 0.72, 1, this.vizT * 1.4 + i);
+      // A pip in the corner is the fastest read on what state a tile is in: green cooked,
+      // blue over-seared, and the rotten green of something that is not food any more.
+      const pip = item.rotten ? GLT.rot : item.overseared ? GLT.blueHot : item.cooked ? 0x7ada6a : 0;
+      if (pip) {
+        g.fillStyle(this.pcol(pip), 0.95);
         g.fillCircle(x + SLOT_SIZE - 6, HUD_Y + 6, 3);
+      }
+      // Leftovers rest on their own clock, so the tile carries it.
+      if (item.ripenAt && item.ripenAt > this.now) {
+        const left = 1 - (item.ripenAt - this.now) / LEFTOVER_REST_MS;
+        g.fillStyle(this.pcol(GLT.char), 0.8);
+        g.fillRect(x + 3, HUD_Y + SLOT_SIZE - 6, SLOT_SIZE - 6, 3);
+        g.fillStyle(this.pcol(GLT.parcel), 1);
+        g.fillRect(x + 3, HUD_Y + SLOT_SIZE - 6, (SLOT_SIZE - 6) * Phaser.Math.Clamp(left, 0, 1), 3);
       }
     }
 
-    // The knife tile: what you are holding when you are not holding food.
+    // The blade tile: what you are holding when you are not holding food.
     const kx = KNIFE_TILE_X;
+    const cleaver = this.up('player', 'click');
     prepSlot(g, this.pcol, kx, HUD_Y, SLOT_SIZE, s.held === null, false, 1);
-    kitchenKnife(g, this.pcol, kx + SLOT_SIZE / 2 - 4, HUD_Y + SLOT_SIZE / 2, -0.5, 26,
-      s.knifeHeat, 1);
-    if (s.knifeHeat > 0 && s.knifeHeat < 1) {
+    if (cleaver) {
+      chefCleaver(g, this.pcol, kx + SLOT_SIZE / 2 - 3, HUD_Y + SLOT_SIZE / 2, -0.35, 24,
+        s.knifeHeat, 1, this.ichored('player') ? 1 : 0, this.vizT);
+    } else {
+      kitchenKnife(g, this.pcol, kx + SLOT_SIZE / 2 - 4, HUD_Y + SLOT_SIZE / 2, -0.5, 26,
+        s.knifeHeat, 1);
+    }
+    // Cold: how far through heating you are. Red: how long you have left before it goes out.
+    const heatBar = s.knifeHotUntil > this.now
+      ? (s.knifeHotUntil - this.now) / CLEAVER_HOT_MS
+      : (s.knifeHeat > 0 && s.knifeHeat < 1 ? s.knifeHeat : 0);
+    if (heatBar > 0) {
       g.fillStyle(this.pcol(GLT.char), 0.85);
       g.fillRect(kx + 3, HUD_Y + SLOT_SIZE - 7, SLOT_SIZE - 6, 4);
-      g.fillStyle(this.pcol(GLT.heat), 1);
-      g.fillRect(kx + 3, HUD_Y + SLOT_SIZE - 7, (SLOT_SIZE - 6) * s.knifeHeat, 4);
+      g.fillStyle(this.pcol(s.knifeHotUntil > this.now ? GLT.emberHot : GLT.heat), 1);
+      g.fillRect(kx + 3, HUD_Y + SLOT_SIZE - 7, (SLOT_SIZE - 6) * Phaser.Math.Clamp(heatBar, 0, 1), 4);
     }
 
     // ── The hunger bar ──
@@ -1697,14 +2515,18 @@ export class GluttonyKit {
     }
     this.hudLabel.setVisible(true);
     if (s.form === 'butcher') {
-      this.hudLabel.setText(`BUTCHER · ${(s.hunger / 1000).toFixed(1)}s`);
-      this.hudLabel.setColor(this.hex(GLT.blood));
+      const rot = this.rotting.filter((r) => r.owner === 'player').length;
+      this.hudLabel.setText(`BUTCHER · ${(s.hunger / 1000).toFixed(1)}s`
+        + (rot ? `   ·   ${rot} ON THE MAW` : '')
+        + (this.ichored('player') ? '   ·   ICHOROUS' : ''));
+      this.hudLabel.setColor(this.hex(this.ichored('player') ? GLT.ichorLit : GLT.blood));
     } else {
       const cooking = this.cooking.filter((c) => c.owner === 'player').length;
       this.hudLabel.setText(
-        `PREP · CLICK A TILE${cooking ? `   ·   ${cooking} ON THE GRILL` : ''}${this.superheated ? '   ·   SUPERHEATED' : ''}`,
+        `PREP · CLICK A TILE${cooking ? `   ·   ${cooking} ON THE GRILL` : ''}${this.superheated ? (this.superheatBlue ? '   ·   BLUE COALS' : '   ·   SUPERHEATED') : ''}`,
       );
-      this.hudLabel.setColor(this.hex(this.superheated ? GLT.ember : GLT.white));
+      this.hudLabel.setColor(this.hex(
+        this.superheated ? (this.superheatBlue ? GLT.blueHot : GLT.ember) : GLT.white));
     }
   }
 
@@ -1739,18 +2561,63 @@ export class GluttonyKit {
     } : null);
 
     const cooking = this.cooking.filter((c) => c.owner === 'player');
-    const done = cooking.filter((c) => c.progress >= this.cookMs(c.kind)).length;
+    const done = cooking.filter((c) => c.stage >= 1).length;
+    const searing = cooking.filter((c) => c.stage === 1 && c.oversear).length;
     this.api.setStatusIndicator('glut-cooking', playerIsGluttony && cooking.length ? {
-      name: done ? 'Ready to Collect' : 'On the Grill', emoji: done ? '🍽️' : '♨️',
-      color: done ? 0x7ada6a : GLT.ember,
-      description: 'Ingredients on the grate. Walk over the grill to take back whatever has finished — cooked is worth double what raw is.',
+      name: searing ? 'Over-Searing' : done ? 'Ready to Collect' : 'On the Grill',
+      emoji: searing ? '🔵' : done ? '🍽️' : '♨️',
+      color: searing ? GLT.blueCoal : done ? 0x7ada6a : GLT.ember,
+      description: searing
+        ? 'Cooked, collectable, and still on the fire. Leave it through the second pass and it comes off worth 25% more with 3 more seconds on its buff — walk over the grill now and you take it as it is.'
+        : 'Ingredients on the grate. Walk over the grill to take back whatever has finished — cooked is worth double what raw is.',
       count: cooking.length, priority: 112,
     } : null);
 
+    const rotting = this.rotting.filter((r) => r.owner === 'player');
+    this.api.setStatusIndicator('glut-rotting', playerIsGluttony && rotting.length ? {
+      name: 'Left to Rot', emoji: '🪰', color: GLT.rot,
+      description: 'Ingredients on the maw. Six seconds and they spoil: half the healing of a raw one, and thrown at somebody they do what the cooked one would have healed.',
+      count: rotting.length, priority: 111,
+    } : null);
+
     this.api.setStatusIndicator('glut-superheat', playerIsGluttony && this.superheated ? {
-      name: 'Superheated', emoji: '🔥', color: GLT.emberHot,
-      description: 'Charcoal on the coals. Everything on the grate cooks at double speed, and the knife heats at double speed with it.',
+      name: this.superheatBlue ? 'Blue Coals' : 'Superheated', emoji: '🔥',
+      color: this.superheatBlue ? GLT.blueHot : GLT.emberHot,
+      description: this.superheatBlue
+        ? 'Pit Master charcoal. Everything on the grate cooks at triple speed, and the blade heats at triple speed with it.'
+        : 'Charcoal on the coals. Everything on the grate cooks at double speed, and the knife heats at double speed with it.',
       until: this.superheatUntil, priority: 110,
+    } : null);
+
+    // ── Head Chef's larder, and what the maw does to a blade ──
+    this.api.setStatusIndicator('glut-berries', playerIsGluttony && s.dmgUntil > time ? {
+      name: 'Bristling', emoji: '🫐', color: GLT.berry,
+      description: `Bristle Berries. Everything you deal is worth ${Math.round((s.dmgMult - 1) * 100)}% more while it lasts.`,
+      until: s.dmgUntil, priority: 106,
+    } : null);
+
+    this.api.setStatusIndicator('glut-mint', playerIsGluttony && s.resistUntil > time ? {
+      name: 'Minted', emoji: '🍃', color: GLT.mint,
+      description: `Winter Mint. Everything aimed at you is worth ${Math.round((1 - s.resistMult) * 100)}% less while it lasts.`,
+      until: s.resistUntil, priority: 105,
+    } : null);
+
+    this.api.setStatusIndicator('glut-deathcap', playerIsGluttony && s.foodSpeedUntil > time ? {
+      name: 'Death Cap', emoji: '☠️', color: GLT.venom,
+      description: `A poisonous mushroom does exactly one good thing: +${Math.round((s.foodSpeedMult - 1) * 100)}% walk speed.`,
+      until: s.foodSpeedUntil, priority: 103,
+    } : null);
+
+    this.api.setStatusIndicator('glut-haste', playerIsGluttony && s.hasteUntil > time ? {
+      name: 'Carving', emoji: '🏃', color: GLT.steel,
+      description: 'The cleaver landed. +25% walk speed for 2 seconds, refreshed every time it lands again.',
+      until: s.hasteUntil, priority: 102,
+    } : null);
+
+    this.api.setStatusIndicator('glut-ichor', playerIsGluttony && s.ichorUntil > time ? {
+      name: 'Ichorous Blade', emoji: '🩸', color: GLT.ichorLit,
+      description: 'The maw is running down your cleaver. Every 25 damage it deals buys a second of butcher form back.',
+      until: s.ichorUntil, priority: 101,
     } : null);
 
     this.api.setStatusIndicator('glut-maw', playerIsGluttony && this.mawOwner === 'player'
@@ -1760,12 +2627,19 @@ export class GluttonyKit {
       until: this.mawAwakenUntil, priority: 94,
     } : null);
 
-    // ── Victim side: the burn can be on the player whoever is playing Gluttony. ──
+    // ── Victim side: the burn and the maw's mark can be on the player whoever is Gluttony. ──
     const burn = this.burnt.get(p);
     this.api.setStatusIndicator('glut-burnt', burn && burn > time ? {
       name: 'Burnt', emoji: '🌳', color: GLT.char,
       description: 'Charcoal caught you. A heated kitchen knife does 50% more damage to you until it wears off.',
       until: burn, priority: 24,
+    } : null);
+
+    const vuln = this.vulnerable.get(p);
+    this.api.setStatusIndicator('glut-vuln', vuln && vuln > time ? {
+      name: 'Tenderised', emoji: '🦷', color: GLT.flesh,
+      description: 'The maw spat on you. Everything aimed at you does 15% more until it wears off, and its cone refreshes it every second.',
+      until: vuln, priority: 23,
     } : null);
   }
 
@@ -1777,7 +2651,12 @@ export class GluttonyKit {
    */
   private speedMultFor(owner: Owner): number {
     if (!this.isGluttony(owner)) return 1;
-    return this.side(owner).forageUntil > this.now ? FORAGE_SPEED_MULT : 1;
+    const s = this.side(owner);
+    let mult = s.forageUntil > this.now ? FORAGE_SPEED_MULT : 1;
+    // A Death Cap and a landed Cleave are separate things and both are worth having at once.
+    if (s.foodSpeedUntil > this.now) mult *= s.foodSpeedMult;
+    if (s.hasteUntil > this.now) mult *= CLEAVE_HASTE_MULT;
+    return mult;
   }
 
   getPlayerSpeedMult(): number { return this.speedMultFor('player'); }
@@ -1812,8 +2691,7 @@ export class GluttonyKit {
     const s = this.sides.npc;
     if (!this.alive(npc) || s.inv.length >= INV_SLOTS) return null;
 
-    if (!this.mawOwner
-      && this.cooking.some((c) => c.owner === 'npc' && c.progress >= this.cookMs(c.kind))) {
+    if (!this.mawOwner && this.cooking.some((c) => c.owner === 'npc' && c.stage >= 1)) {
       return { x: this.grillX, y: this.grillY };
     }
     const skewer = this.skewers.find((k) => k.owner === 'npc' && k.state === 'landed' && k.meat);

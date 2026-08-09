@@ -22,6 +22,12 @@ export interface CampaignSlot {
   /** Set when the player spends 20 keys on the scarred portal to the Corrupt Realm. */
   corruptPortalUnlocked?: boolean;
   inventory?: Record<string, number>; // itemId → count
+  /** Vault chest ids this slot has already emptied. See `Vault.ts`. */
+  vaultOpened?: string[];
+  /** Artifact ids pulled out of the Vault. Unlike items these are never spent. */
+  artifacts?: string[];
+  /** artifactId → epoch ms it may next be armed. Real time, so it survives a reload. */
+  artifactReadyAt?: Record<string, number>;
   /** Story beats already shown, so dialogue never replays. */
   seenStoryBeats?: string[];
   /** Set once `migrateSubterfugeWorld` has run on this slot — it must never run twice. */
@@ -365,6 +371,75 @@ export function consumeItem(idx: 0 | 1 | 2, itemId: string): boolean {
   }
   save(data);
   return true;
+}
+
+// ── The Vault ────────────────────────────────────────────────────────
+// Chests are per *slot*, because keys are: a save that ground out its own keys should not
+// find the Vault already emptied by another one. The upgrades and elements a chest pays out
+// land in the account-wide `PlayerData` regardless — that is where every other unlock lives,
+// and splitting an element unlock per-slot would mean owning Death on Tuesday and not
+// Wednesday. (`Vault.ts` does the granting; this file only remembers which lids are up.)
+
+export function isVaultChestOpened(idx: 0 | 1 | 2, chestId: string): boolean {
+  return load().slots[idx]?.vaultOpened?.includes(chestId) ?? false;
+}
+
+export function markVaultChestOpened(idx: 0 | 1 | 2, chestId: string): void {
+  const data = load();
+  const slot = data.slots[idx];
+  if (!slot) return;
+  if (!slot.vaultOpened) slot.vaultOpened = [];
+  if (!slot.vaultOpened.includes(chestId)) {
+    slot.vaultOpened.push(chestId);
+    save(data);
+  }
+}
+
+export function getArtifacts(idx: 0 | 1 | 2): string[] {
+  return load().slots[idx]?.artifacts ?? [];
+}
+
+export function hasArtifact(idx: 0 | 1 | 2, artifactId: string): boolean {
+  return getArtifacts(idx).includes(artifactId);
+}
+
+export function addArtifact(idx: 0 | 1 | 2, artifactId: string): void {
+  const data = load();
+  const slot = data.slots[idx];
+  if (!slot) return;
+  if (!slot.artifacts) slot.artifacts = [];
+  if (!slot.artifacts.includes(artifactId)) {
+    slot.artifacts.push(artifactId);
+    save(data);
+  }
+}
+
+/** Epoch ms this artifact may next be armed. 0 (or the past) means it is ready now. */
+export function getArtifactReadyAt(idx: 0 | 1 | 2, artifactId: string): number {
+  return load().slots[idx]?.artifactReadyAt?.[artifactId] ?? 0;
+}
+
+export function isArtifactReady(idx: 0 | 1 | 2, artifactId: string): boolean {
+  return Date.now() >= getArtifactReadyAt(idx, artifactId);
+}
+
+/** Arms the artifact's cooldown. Wall-clock, so closing the game does not pause it. */
+export function startArtifactCooldown(idx: 0 | 1 | 2, artifactId: string, durationMs: number): void {
+  const data = load();
+  const slot = data.slots[idx];
+  if (!slot) return;
+  if (!slot.artifactReadyAt) slot.artifactReadyAt = {};
+  slot.artifactReadyAt[artifactId] = Date.now() + durationMs;
+  save(data);
+}
+
+/** Clears every artifact cooldown at once — the cheat save's route in. */
+export function clearArtifactCooldowns(idx: 0 | 1 | 2): void {
+  const data = load();
+  const slot = data.slots[idx];
+  if (!slot) return;
+  slot.artifactReadyAt = {};
+  save(data);
 }
 
 export function isCheated(idx: 0 | 1 | 2): boolean {

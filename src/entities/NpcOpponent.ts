@@ -24,6 +24,15 @@ const COMA_WORTH_IT = 60;
 const PSYCHIC_BOMB_LEAD_S = 1.4;
 const PSYCHIC_BOMB_MAX_LEAD = 180;
 
+/** True Nightmare — chance a cast's effect happens a second time. */
+const TRUE_NIGHTMARE_DOUBLE_CHANCE = 0.25;
+/** ...and the beat between the two, so the echo reads as an echo rather than a rendering bug. */
+const TRUE_NIGHTMARE_ECHO_MS = 180;
+/** True Nightmare dash: how long it lasts, how fast it goes, and how often it is available. */
+const TRUE_DODGE_MS = 220;
+const TRUE_DODGE_SPEED_MULT = 3.4;
+const TRUE_DODGE_COOLDOWN_MS = 900;
+
 export interface DifficultyConfig {
   level: number;
   label: string;
@@ -326,6 +335,25 @@ export interface NpcAiState {
   /** Set once it is standing on that square and can afford what it went there for. */
   npcConquestReady?: 'barracks' | 'turret' | 'barricade' | 'expansion';
   npcConquestAuthority?: number;
+
+  // ── World Shift arenas ─────────────────────────────────────────────
+  // Filled by SecretMapKit. Same shape as the seek/avoid overrides above, and
+  // read in the same place, so a map can steer the bot without any map
+  // knowing anything about the AI.
+  /**
+   * Somewhere the arena itself says the bot needs to be — the nearest campfire
+   * when it is close to freezing, a potion worth crossing the room for. Wins
+   * over chase and strafe, exactly like the Depths seek does.
+   */
+  mapSeekPoint?: { x: number; y: number } | null;
+  /**
+   * A vertical band the bot should not walk into (Magma Falls' lava river).
+   * It will hold its side of the line unless `mapCrossBand` says the fight has
+   * moved to the far bank and it has to come across to reach anything.
+   */
+  mapAvoidBandX?: number;
+  mapAvoidBandHalfWidth?: number;
+  mapCrossBand?: boolean;
 }
 
 export class NpcOpponent extends Fighter {
@@ -337,6 +365,18 @@ export class NpcOpponent extends Fighter {
   private readonly difficulty: DifficultyConfig;
   /** When true, the NPC stays put (Boss mutation): casts abilities but never moves. */
   public stationary = false;
+
+  /**
+   * True Nightmare (the secret mode under the Nightmare plate).
+   *
+   * Two changes, both here: incoming shots are answered with a real dash rather
+   * than a sidestep, and one cast in four fires its effect a second time.
+   */
+  public trueNightmare = false;
+  private trueDodgeUntil = 0;
+  private nextTrueDodgeAt = 0;
+  private trueDodgeVx = 0;
+  private trueDodgeVy = 0;
 
   /**
    * Psychic (Opened Eyes): the locomotion rule this bot is following right now, so a kit can
@@ -367,6 +407,30 @@ export class NpcOpponent extends Fighter {
   /** Silence hallucinations: 20% of shots wildly miss while afflicted. */
   private hallucinationMissDeg(): number {
     return Date.now() < this.hallucinatingUntil && Math.random() < 0.2 ? 50 : 0;
+  }
+
+  /**
+   * True Nightmare's second barrel.
+   *
+   * Every route the bot has into an ability goes through `Fighter.castAbility`,
+   * so overriding it here catches all of them — the ordinary per-element
+   * decisions, the charge-and-release path, and the delayed Psychic queue.
+   *
+   * The echo is the *effect* happening again, not a second press: no second
+   * cooldown stamp and no second announce, because the bot only paid once.
+   */
+  override castAbility(abilityId: string, ctx: CastContext): boolean {
+    const fired = super.castAbility(abilityId, ctx);
+    if (!fired || !this.trueNightmare) return fired;
+    if (Math.random() >= TRUE_NIGHTMARE_DOUBLE_CHANCE) return fired;
+    const ability = this.element.abilities.find((a) => a.id === abilityId);
+    if (!ability) return fired;
+    this.scene.time.delayedCall(TRUE_NIGHTMARE_ECHO_MS, () => {
+      // The bout can end, or the body can be swapped out, inside that beat.
+      if (!this.active || this.hp <= 0) return;
+      ability.cast(ctx);
+    });
+    return fired;
   }
 
   constructor(
@@ -449,7 +513,12 @@ export class NpcOpponent extends Fighter {
 
     // ── Dodge incoming projectiles ────────────────────────────────
     let dodging = false;
-    if (this.difficulty.dodgeRange > 0) {
+    // True Nightmare: a dash already in flight owns the body until it lands.
+    if (time < this.trueDodgeUntil) {
+      body.setVelocity(this.trueDodgeVx, this.trueDodgeVy);
+      dodging = true;
+    }
+    if (!dodging && this.difficulty.dodgeRange > 0) {
       const projs = aiState.projectiles.getChildren();
       for (const go of projs) {
         if (!(go instanceof Projectile)) continue;
@@ -474,7 +543,22 @@ export class NpcOpponent extends Fighter {
         const approachDot = (vx / speed) * (toNpcX / toNpcLen) + (vy / speed) * (toNpcY / toNpcLen);
         if (approachDot < 0.4) continue; // not heading toward NPC
 
-        // Dodge perpendicular to bullet velocity
+        // Dodge perpendicular to bullet velocity. True Nightmare upgrades the
+        // sidestep into a committed dash — it clears the lane instead of drifting
+        // out of it, and then holds that heading for the length of the dash.
+        if (this.trueNightmare && time >= this.nextTrueDodgeAt) {
+          const dash = this.speed * TRUE_DODGE_SPEED_MULT;
+          // Away from the arena wall it is nearest, so a dash never pins it flat.
+          const wb = this.scene.physics.world.bounds;
+          const side = (this.y - wb.centerY) * (vx / speed) - (this.x - wb.centerX) * (vy / speed) > 0 ? -1 : 1;
+          this.trueDodgeVx = -vy / speed * dash * side;
+          this.trueDodgeVy = vx / speed * dash * side;
+          this.trueDodgeUntil = time + TRUE_DODGE_MS;
+          this.nextTrueDodgeAt = time + TRUE_DODGE_COOLDOWN_MS;
+          body.setVelocity(this.trueDodgeVx, this.trueDodgeVy);
+          dodging = true;
+          break;
+        }
         const dodgeSpeed = this.speed * (this.difficulty.level >= 5 ? 1.3 : 1.05);
         body.setVelocity(-vy / speed * dodgeSpeed, vx / speed * dodgeSpeed);
         dodging = true;
@@ -522,6 +606,35 @@ export class NpcOpponent extends Fighter {
         // then commit to crossing rather than dithering on the line.
         const targetSide = Math.sign(target.x - aiState.justicePillarX) || 1;
         const out = Math.abs(off) < halfW * 0.35 ? targetSide : Math.sign(off) || targetSide;
+        body.setVelocityX(out * this.speed);
+      }
+    }
+
+    // ── World Shift: the arena's own destination ─────────────────
+    // Same shape and the same placement as the Depths seek below: a bot that is
+    // about to freeze solid, or that has spotted a potion worth crossing for,
+    // has nothing to gain from strafing on the way there.
+    if (aiState.mapSeekPoint) {
+      const seek = aiState.mapSeekPoint;
+      const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
+      if (d > 8) {
+        const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
+        body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
+      } else {
+        body.setVelocity(0, 0);
+      }
+    }
+
+    // ── World Shift: the lava river ──────────────────────────────
+    // Held after the seek so a bot walking to a campfire is still not walking
+    // into the river to get there. It only crosses when the map says the thing
+    // it wants is genuinely on the other bank.
+    if (aiState.mapAvoidBandX !== undefined && !aiState.mapCrossBand) {
+      const halfW = aiState.mapAvoidBandHalfWidth ?? 60;
+      const off = this.x - aiState.mapAvoidBandX;
+      if (Math.abs(off) < halfW + 18) {
+        // Back out the way it came in; dead-centre picks the nearer bank.
+        const out = off === 0 ? (target.x > aiState.mapAvoidBandX ? -1 : 1) : Math.sign(off);
         body.setVelocityX(out * this.speed);
       }
     }

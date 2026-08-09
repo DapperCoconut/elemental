@@ -458,6 +458,18 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'gluttony:glut-cannibalize': gluttony.cannibalize,
   'gluttony:glut-return': gluttony.returnToKitchen,
   'gluttony:glut-maw': gluttony.mawAwakening,
+  // Gluttony's five upgrades each buy two abilities, so each one owns two upgraded loops:
+  // the chef's half and the butcher's.
+  'gluttony:glut-knife:up': gluttony.knifeUp,
+  'gluttony:glut-forage:up': gluttony.forageUp,
+  'gluttony:glut-charcoal:up': gluttony.charcoalUp,
+  'gluttony:glut-butcher:up': gluttony.butcherUp,
+  'gluttony:glut-feast:up': gluttony.feastUp,
+  'gluttony:glut-cleave:up': gluttony.cleaveUp,
+  'gluttony:glut-poach:up': gluttony.poachUp,
+  'gluttony:glut-cannibalize:up': gluttony.cannibalizeUp,
+  'gluttony:glut-return:up': gluttony.returnUp,
+  'gluttony:glut-maw:up': gluttony.mawAwakeningUp,
 
   // ── Quantum (the Third State's five; the bond itself is in the passives) ──
   'quantum:quantum-splicers': quantum.splicers,

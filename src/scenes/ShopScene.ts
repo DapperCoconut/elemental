@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import * as PlayerData from '../data/PlayerData';
 import { ALL_UPGRADES, getElementUpgrades, UpgradeDef } from '../data/Upgrades';
+import { UpgradeGate, isUpgradeUnlocked, upgradeGate } from '../data/UpgradeUnlocks';
 import { GAUNTLET_COST, GAUNTLET_HARD_COST } from '../data/GauntletData';
 import { ABSTRACT_ELEMENT_IDS, ABSTRACT_ELEMENT_UNLOCK_MAP, ABSTRACT_MIX_ELEMENT_IDS } from '../data/AbstractElements';
 import { allSelectableElements, findElementDef } from '../data/ElementRoster';
@@ -228,6 +229,10 @@ export class ShopScene extends Phaser.Scene {
         i === this.currentPage ? mix(pageInfo.accent, 0xffffff, 0.5) : C.line, i === this.currentPage ? 1 : 0.7);
     }
 
+    // Something somebody left on the floor. Drawn before the page body so the
+    // early-returning pages (the door, specials, empty states) get it too.
+    this.maybeDrawScrewdriver(width, height, totalPages);
+
     const contentTop = header.bottom + 18;
 
     // ── Page bodies ──────────────────────────────────────────────
@@ -281,6 +286,98 @@ export class ShopScene extends Phaser.Scene {
 
     showClickHint();
     this.buildColumns(width, columnsTop, elementIds, 'shards');
+  }
+
+  // ── The screwdriver ────────────────────────────────────────────
+
+  /**
+   * A screwdriver lying along the bottom edge of exactly one shop page.
+   *
+   * Which page is drawn once per save and then never moves, so hunting it is a
+   * matter of walking the shop rather than re-rolling a page until it appears.
+   * It is deliberately quiet — no label, no glow, no hint text. The tell is the
+   * four screws already visible on every difficulty plate in the fight menu;
+   * this is the thing that turns them.
+   */
+  private maybeDrawScrewdriver(width: number, height: number, totalPages: number): void {
+    if (PlayerData.isScrewdriverFound()) return;
+    if (PlayerData.getScrewdriverPage(totalPages) !== this.currentPage) return;
+
+    // Placement is fixed per page, not per visit — a tool does not wander.
+    const rnd = new Phaser.Math.RandomDataGenerator([`screwdriver-${this.currentPage}`]);
+    const x = rnd.integerInRange(140, Math.max(160, width - 140));
+    const y = height - rnd.integerInRange(14, 26);
+    const tilt = rnd.realInRange(-0.22, 0.22);
+
+    const g = this.add.graphics().setDepth(DEPTH.content + 4);
+    g.setPosition(x, y);
+    g.setRotation(tilt);
+
+    // Handle — a fat amber grip with two moulded ridges.
+    g.fillStyle(mix(C.gold, 0x000000, 0.42), 1);
+    g.fillRoundedRect(-34, -6, 26, 12, 5);
+    g.fillStyle(mix(C.gold, 0x000000, 0.18), 1);
+    g.fillRoundedRect(-33, -5, 24, 5, 2);
+    g.lineStyle(1, mix(C.gold, 0x000000, 0.65), 0.9);
+    g.beginPath(); g.moveTo(-26, -6); g.lineTo(-26, 6); g.strokePath();
+    g.beginPath(); g.moveTo(-20, -6); g.lineTo(-20, 6); g.strokePath();
+
+    // Ferrule, shaft, and a flat-head tip.
+    g.fillStyle(mix(C.steel, 0xffffff, 0.35), 1);
+    g.fillRect(-9, -3.5, 4, 7);
+    g.fillStyle(mix(C.steel, 0xffffff, 0.5), 1);
+    g.fillRect(-5, -2, 28, 4);
+    g.fillStyle(mix(C.steel, 0xffffff, 0.75), 1);
+    g.fillRect(-5, -2, 28, 1.4);
+    g.fillStyle(mix(C.steel, 0xffffff, 0.6), 1);
+    g.fillRect(23, -3, 6, 6);
+
+    // Graphics take no input of their own — see the UI kit's hit-rect rule.
+    const hit = this.add.rectangle(x, y, 78, 26, 0xffffff, 0)
+      .setDepth(DEPTH.content + 5)
+      .setInteractive({ useHandCursor: true });
+    hit.on('pointerover', () => g.setAlpha(0.75));
+    hit.on('pointerout', () => g.setAlpha(1));
+    hit.on('pointerdown', () => {
+      PlayerData.findScrewdriver();
+      Sfx.play('ui-purchase');
+      g.destroy();
+      hit.destroy();
+      this.showScrewdriverFound();
+    });
+  }
+
+  /** The one moment this thing announces itself. */
+  private showScrewdriverFound(): void {
+    this.closeSlotDetail();
+    const { width, height } = this.scale;
+    const cx = width / 2;
+
+    const modal = addModal(this, {
+      w: 520, h: 292, accent: C.gold, glow: 0.6,
+      title: '🪛  YOU PICKED SOMETHING UP',
+      onScrimClick: () => this.closeSlotDetail(),
+    });
+    this.detailObjects.push(modal.scrim, ...modal.objects);
+
+    this.detailObjects.push(this.add.text(cx, modal.contentTop + 34, 'A SCREWDRIVER', {
+      fontSize: '26px', fontFamily: FONT_DISPLAY,
+      color: hex(mix(C.gold, 0xffffff, 0.6)), letterSpacing: 2,
+    }).setOrigin(0.5).setDepth(DEPTH.modalContent));
+
+    this.detailObjects.push(this.add.text(cx, modal.contentTop + 78,
+      'Somebody bolted the difficulty plates down.\n\n'
+      + 'They did not bolt them down very well.', {
+      fontSize: '15px', fontFamily: FONT_UI, color: T.normal,
+      wordWrap: { width: 420 }, align: 'center', lineSpacing: 6,
+    }).setOrigin(0.5, 0).setDepth(DEPTH.modalContent));
+
+    this.detailObjects.push(addButton(this, {
+      x: cx, y: modal.bottom - 46, w: 220, h: 48,
+      label: 'POCKET IT', icon: '🪛', accent: C.gold, variant: 'solid',
+      fontSize: 17, depth: DEPTH.modalContent,
+      onClick: () => this.closeSlotDetail(),
+    }).container);
   }
 
   private buildEmptyState(cx: number, cy: number, message: string, accent: number): void {
@@ -341,17 +438,23 @@ export class ShopScene extends Phaser.Scene {
 
         const owned = PlayerData.isUpgradeOwned(elementId, slot);
         const active = PlayerData.isUpgradeActive(elementId, slot);
+        // The unstable ten buy their kit back one Corrupt bout at a time. An
+        // owned slot is never re-locked — only the right to *buy* is gated.
+        const gate = owned ? null : upgradeGate(elementId, slot);
+        const gated = !!gate && !isUpgradeUnlocked(elementId, slot);
 
         // State drives the whole plate: green when live, red when shelved,
-        // element-coloured when purchasable, dead grey when unimplemented.
+        // element-coloured when purchasable, dead grey when unimplemented or
+        // still behind its world.
         const stateAccent = !upgDef ? C.steel
           : owned && active ? C.verdant
           : owned ? C.blood
+          : gated ? C.steel
           : accent;
 
         const plate = addCardPlate(this, {
           x: colCX, y: by, w: colW - 14, h: slotH,
-          accent: stateAccent, cut: 10, depth: DEPTH.panel, muted: !upgDef,
+          accent: stateAccent, cut: 10, depth: DEPTH.panel, muted: !upgDef || gated,
         });
 
         const left = colCX - (colW - 14) / 2;
@@ -374,20 +477,23 @@ export class ShopScene extends Phaser.Scene {
         }
 
         // Name only — what the upgrade *does* lives in the detail card, so a
-        // full page of 25 slots stays scannable.
+        // full page of 25 slots stays scannable. A gated slot keeps its name so
+        // the player can see what they are working toward.
         this.add.text(colCX, by - 2, upgDef.name, {
           fontSize: '12px', fontFamily: FONT_DISPLAY,
-          color: hex(mix(stateAccent, 0xffffff, 0.6)),
+          color: hex(mix(stateAccent, 0xffffff, gated ? 0.35 : 0.6)),
           wordWrap: { width: colW - 30 }, align: 'center', lineSpacing: 2,
         }).setOrigin(0.5).setDepth(DEPTH.content);
 
         const statusStr = owned
           ? (active ? '● ACTIVE' : '○ SHELVED')
+          : gated ? `🔒 ${gate!.stepLabel}`
           : `${currency === 'shards' ? '💎' : '🩸'} ${price}`;
         this.add.text(colCX, by + slotH / 2 - 11, statusStr, {
           fontSize: '10px', fontFamily: FONT_DISPLAY,
           color: owned
             ? (active ? T.good : T.bad)
+            : gated ? T.faint
             : hex(mix(currency === 'shards' ? C.gold : C.corrupt, 0xffffff, 0.3)),
           letterSpacing: 1,
         }).setOrigin(0.5).setDepth(DEPTH.content);
@@ -400,15 +506,21 @@ export class ShopScene extends Phaser.Scene {
         hit.on('pointerdown', () => this.openSlotDetail({
           elementId, elementAccent: accent, emoji,
           slot, slotLabel: SLOT_DISPLAY[slotIdx],
-          def: upgDef, price, currency,
+          def: upgDef, price, currency, gate: gated ? gate : null,
         }));
       });
 
-      // Column footer: how much of this element's kit you own.
+      // Column footer: how much of this element's kit you own — and, for the
+      // unstable ten, how much of it the Corrupt Realm has handed over at all.
       const ownedCount = SLOT_KEYS.filter((slot) => PlayerData.isUpgradeOwned(elementId, slot)).length;
       const definedCount = SLOT_KEYS.filter((slot) => upgrades.some((u) => u.slot === slot)).length;
+      const earnedCount = SLOT_KEYS.filter((slot) => upgrades.some((u) => u.slot === slot)
+        && isUpgradeUnlocked(elementId, slot)).length;
       const footY = firstSlotY + SLOT_KEYS.length * (slotH + slotGap) + 8;
-      this.add.text(colCX, footY, `${ownedCount} / ${definedCount} OWNED`, {
+      this.add.text(colCX, footY,
+        earnedCount < definedCount
+          ? `${ownedCount} / ${definedCount} OWNED   ·   ${definedCount - earnedCount} 🔒`
+          : `${ownedCount} / ${definedCount} OWNED`, {
         fontSize: '9px', fontFamily: FONT_DISPLAY,
         color: ownedCount === definedCount && definedCount > 0 ? T.good : T.faint,
         letterSpacing: 2,
@@ -432,6 +544,8 @@ export class ShopScene extends Phaser.Scene {
     def: UpgradeDef;
     price: number;
     currency: Currency;
+    /** Set when the Corrupt bout that pays this slot out is still standing. */
+    gate?: UpgradeGate | null;
   }): void {
     this.closeSlotDetail();
 
@@ -439,6 +553,7 @@ export class ShopScene extends Phaser.Scene {
     const cx = width / 2;
     const cy = height / 2;
     const { elementId, slot, def, price, currency } = opts;
+    const gate = opts.gate ?? null;
 
     const owned = PlayerData.isUpgradeOwned(elementId, slot);
     const active = PlayerData.isUpgradeActive(elementId, slot);
@@ -447,7 +562,7 @@ export class ShopScene extends Phaser.Scene {
     const coinAccent = currency === 'shards' ? C.gold : C.corrupt;
     const canAfford = wallet >= price;
 
-    const accent = owned ? (active ? C.verdant : C.blood) : opts.elementAccent;
+    const accent = owned ? (active ? C.verdant : C.blood) : gate ? C.steel : opts.elementAccent;
 
     const modal = addModal(this, {
       w: 520, h: 330, accent, glow: 0.5,
@@ -467,9 +582,20 @@ export class ShopScene extends Phaser.Scene {
       wordWrap: { width: 440 }, align: 'center', lineSpacing: 6,
     }).setOrigin(0.5, 0).setDepth(DEPTH.modalContent));
 
-    // Price / wallet ledger — only meaningful before you own the upgrade.
+    // Price / wallet ledger — only meaningful before you own the upgrade, and
+    // only once the Corrupt Realm has actually handed the slot over.
     const ledgerY = modal.bottom - 108;
-    if (!owned) {
+    if (gate) {
+      this.detailObjects.push(addWell(this, cx, ledgerY, 400, 42, C.corrupt, DEPTH.modal + 1, 6));
+      this.detailObjects.push(this.add.text(cx, ledgerY, `🔒  WIN  ${gate.stepLabel}  ·  ${gate.fightName}`, {
+        fontSize: '14px', fontFamily: FONT_DISPLAY,
+        color: hex(mix(C.corrupt, 0xffffff, 0.55)), letterSpacing: 1,
+      }).setOrigin(0.5).setDepth(DEPTH.modalContent));
+      this.detailObjects.push(this.add.text(cx, ledgerY + 32,
+        `in the Corrupt Realm's ${gate.worldId.toUpperCase()} world`, {
+        fontSize: '11px', fontFamily: FONT_UI, color: T.faint,
+      }).setOrigin(0.5).setDepth(DEPTH.modalContent));
+    } else if (!owned) {
       this.detailObjects.push(addWell(this, cx, ledgerY, 320, 42, coinAccent, DEPTH.modal + 1, 6));
       this.detailObjects.push(this.add.text(cx - 140, ledgerY, 'COST', {
         fontSize: '9px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2,
@@ -494,7 +620,15 @@ export class ShopScene extends Phaser.Scene {
     };
 
     const actionY = modal.bottom - 46;
-    if (!owned) {
+    if (gate) {
+      this.detailObjects.push(addButton(this, {
+        x: cx - 78, y: actionY, w: 200, h: 48,
+        label: 'LOCKED', icon: '🔒', sublabel: 'Clear its world',
+        accent: C.steel, variant: 'quiet', fontSize: 18,
+        depth: DEPTH.modalContent, disabled: true,
+        onClick: () => { /* nothing to buy yet */ },
+      }).container);
+    } else if (!owned) {
       this.detailObjects.push(addButton(this, {
         x: cx - 78, y: actionY, w: 200, h: 48,
         label: 'BUY', icon: coin,

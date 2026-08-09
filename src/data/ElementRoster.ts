@@ -193,15 +193,6 @@ export function unlockedFinaleElements(): ElementDef[] {
 }
 
 /**
- * Elements that have no obtainment yet.
- *
- * These are playable, finished kits with nothing in the game that hands them out — so the
- * only way to reach one is a cheat-mode save, which is what `isCheatMode()` gates below.
- * Deliberately *not* routed through `PlayerData.unlockElement`: an entry here is invisible
- * to every unlock, recipe and reward path in the game until it is given a real one, at which
- * point it moves out of this list and into whichever roster it actually belongs to.
- */
-/**
  * Elements whose ability list is really two or three kits sharing five keys. The info panel
  * gives them a form selector rather than ten or fifteen rows in one column, and reads
  * `element.abilities` in blocks of five in exactly the order the tabs are listed here.
@@ -244,25 +235,49 @@ export const ELEMENT_FORM_TABS: Record<string,
   ],
 };
 
-export const TEST_ELEMENTS: ElementDef[] = [
-  { id: 'chalk', name: 'Chalk', emoji: '🖍️', color: 0xf4f1e6, available: true },
-  { id: 'magma', name: 'Magma', emoji: '🌋', color: 0xff5a1e, available: true },
+/**
+ * The seven the Vault's mimics guard.
+ *
+ * These used to be the *test* elements: finished kits with no obtainment at all, visible only
+ * to a cheat profile. The Vault gave them one — the seven black-and-silver chests on its last
+ * page are the only route to them (see `Vault.ts`), and each one hands out a real
+ * `PlayerData.unlockElement`, so a legitimate save can now own every element in the game.
+ *
+ * Cheat mode still grants them outright, on the same grounds as `unlockedFinaleElements`: a
+ * cheat profile is minted once and never topped up.
+ */
+export const VAULT_ELEMENTS: ElementDef[] = [
   { id: 'illusion', name: 'Illusion', emoji: '🎭', color: 0xb45cff, available: true },
-  { id: 'depths', name: 'Depths', emoji: '🐟', color: 0x0e8f9c, available: true },
   { id: 'conquest', name: 'Conquest', emoji: '🏰', color: 0xc23a2e, available: true },
   { id: 'passion', name: 'Passion', emoji: '💘', color: 0xff5fa2, available: true },
-  { id: 'ruin', name: 'Ruin', emoji: '🧱', color: 0xc4392c, available: true },
-  { id: 'dune', name: 'Sand', emoji: '🏜️', color: 0xe8c87a, available: true },
-  { id: 'paper', name: 'Paper', emoji: '📄', color: 0xf2ead6, available: true },
   { id: 'death', name: 'Death', emoji: '⚰️', color: 0x4a4468, available: true },
   { id: 'fortune', name: 'Fortune', emoji: '🪙', color: 0xd8a531, available: true },
-  { id: 'marrow', name: 'Marrow', emoji: '🦴', color: 0xd1435c, available: true },
-  { id: 'psychic', name: 'Psychic', emoji: '👁️', color: 0x9b4dff, available: true },
-  { id: 'radiation', name: 'Radiation', emoji: '☢️', color: 0x7cff3d, available: true },
-  { id: 'bind', name: 'Bind', emoji: '⛓️', color: 0xe0b743, available: true },
   // Slime keeps the id `gum` — `slime` still belongs to Acid, which kept the old name's slot.
   { id: 'gum', name: 'Slime', emoji: '🫠', color: 0x46b93f, available: true },
   { id: 'gluttony', name: 'Gluttony', emoji: '🍖', color: 0xd8452f, available: true },
+];
+
+/**
+ * The unstable ten — each the abstract echo of an ordinary combined element,
+ * and each cut out of the Disgraced Lab's second tier by forging it and then
+ * beating the three ingredients that made it. See `UnstableRecipes.ts`.
+ *
+ * Unlike the test elements above, these are earned: a profile that has never
+ * stabilised one does not see it, cheat mode or not. (A cheat profile still
+ * gets them — `createCheatSave` unlocks every element in the registry outright,
+ * which is a real save flag rather than a roster exemption.)
+ */
+export const UNSTABLE_ELEMENTS: ElementDef[] = [
+  { id: 'radiation', name: 'Radiation', emoji: '☢️', color: 0x7cff3d, available: true },
+  { id: 'depths', name: 'Depths', emoji: '🐟', color: 0x0e8f9c, available: true },
+  { id: 'psychic', name: 'Psychic', emoji: '👁️', color: 0x9b4dff, available: true },
+  { id: 'ruin', name: 'Ruin', emoji: '🧱', color: 0xc4392c, available: true },
+  { id: 'marrow', name: 'Marrow', emoji: '🦴', color: 0xd1435c, available: true },
+  { id: 'magma', name: 'Magma', emoji: '🌋', color: 0xff5a1e, available: true },
+  { id: 'chalk', name: 'Chalk', emoji: '🖍️', color: 0xf4f1e6, available: true },
+  { id: 'paper', name: 'Paper', emoji: '📄', color: 0xf2ead6, available: true },
+  { id: 'bind', name: 'Bind', emoji: '⛓️', color: 0xe0b743, available: true },
+  { id: 'dune', name: 'Sand', emoji: '🏜️', color: 0xe8c87a, available: true },
 ];
 
 /** Abstract combined elements — created by fusing two abstract elements in a Lvl 1+ Lab. */
@@ -297,12 +312,15 @@ export function unlockedExtraElements(): ElementDef[] {
   // at the end of the roster rather than in the middle of it.
   const unlockedDivine = DIVINE_ELEMENTS.filter((e) => PlayerData.isElementUnlocked(e.id));
   const unlockedFinale = unlockedFinaleElements();
-  // Elements with no obtainment yet. Gated on cheat mode rather than on a save flag, so a
-  // legitimate profile can never see one however it was reached.
-  const testElements = isCheatMode() ? TEST_ELEMENTS : [];
+  // Stabilised in the Disgraced Lab's second tier. A real save flag, so unlike the test
+  // elements below these are not handed to cheat mode by the mode alone.
+  const unlockedUnstable = UNSTABLE_ELEMENTS.filter((e) => PlayerData.isElementUnlocked(e.id));
+  // Cut out of the Vault's mimic chests. A real save flag like the unstable ten, with cheat
+  // mode short-circuiting it for the reason given on `unlockedFinaleElements`.
+  const unlockedVault = VAULT_ELEMENTS.filter((e) => isCheatMode() || PlayerData.isElementUnlocked(e.id));
   return [
     ...unlockedCombined, ...unlockedAbstract, ...unlockedAbstractCombined, ...unlockedDivine,
-    ...unlockedFinale, ...testElements,
+    ...unlockedFinale, ...unlockedUnstable, ...unlockedVault,
   ];
 }
 
@@ -323,5 +341,6 @@ export function findElementDef(id: string): ElementDef | undefined {
     ?? ABSTRACT_COMBINED_ELEMENTS.find((e) => e.id === id)
     ?? DIVINE_ELEMENTS.find((e) => e.id === id)
     ?? FINALE_ELEMENTS.find((e) => e.id === id)
-    ?? TEST_ELEMENTS.find((e) => e.id === id);
+    ?? UNSTABLE_ELEMENTS.find((e) => e.id === id)
+    ?? VAULT_ELEMENTS.find((e) => e.id === id);
 }

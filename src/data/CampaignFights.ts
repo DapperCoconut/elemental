@@ -29,6 +29,8 @@ export interface CampaignFightDef {
  *
  * ── Rules the table obeys ──
  * • `clot` never appears — the blood-tree mutation is broken.
+ * • Nothing above Expert and no `golf` ever reaches the arena: whatever the raw entries
+ *   say, `sanitizeCampaignFightDef()` clamps every def on the way out (see below).
  * • A **challenge's** second mutation is never starred. Boss mutations already grant
  *   +50% size and ×2 HP; Hard Mode is the opt-in spike on top, and it stars exactly the
  *   regular mutations, which keeps the base challenge beatable and Hard Mode meaningful.
@@ -459,8 +461,32 @@ export const CAMPAIGN_FIGHTS: Record<string, CampaignFightDef> = {
   'amalgam-challenge': { enemyElementId: 'ruin', difficulty: 5, name: 'The Amalgam', taunt: 'I AM THE COURT. All of it. Every throne you knelt at, I have already been wearing.', mutations: ['archfiend', 'pain'], starredMutations: ['archfiend'], format: { kind: 'pledge', pledges: 3 } },
 };
 
+/**
+ * The campaign's own ceiling. Nightmare stays a Gauntlet / free-play thing — a story
+ * node tops out at Expert, Hard Mode's +1 bump included.
+ */
+export const CAMPAIGN_MAX_DIFFICULTY = 4;
+
+/** Modifiers a campaign bout may never carry, whatever the raw table says. */
+const CAMPAIGN_BANNED_MUTATIONS = new Set(['golf']);
+
+/**
+ * Every reader of a campaign bout goes through this, so the ceiling can't be dodged by
+ * a table entry, a Hard Mode remix, or a future author forgetting the rule.
+ */
+export function sanitizeCampaignFightDef(def: CampaignFightDef | undefined): CampaignFightDef | undefined {
+  if (!def) return undefined;
+  const difficulty = Math.min(CAMPAIGN_MAX_DIFFICULTY, def.difficulty);
+  const mutations = def.mutations?.filter((id) => !CAMPAIGN_BANNED_MUTATIONS.has(id));
+  const starredMutations = def.starredMutations?.filter((id) => !CAMPAIGN_BANNED_MUTATIONS.has(id));
+  if (difficulty === def.difficulty
+    && mutations?.length === def.mutations?.length
+    && starredMutations?.length === def.starredMutations?.length) return def;
+  return { ...def, difficulty, mutations, starredMutations };
+}
+
 export function getCampaignFightDef(nodeId: string): CampaignFightDef | undefined {
-  return CAMPAIGN_FIGHTS[nodeId];
+  return sanitizeCampaignFightDef(CAMPAIGN_FIGHTS[nodeId]);
 }
 
 export const DIFFICULTY_LABEL: Record<number, string> = {

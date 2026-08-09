@@ -1,4 +1,5 @@
 import { saveKey, isCheatMode } from './Cheats';
+import { isProgressLocked } from './ProgressLock';
 
 const STORAGE_BASE = 'elemental_save';
 
@@ -47,6 +48,36 @@ interface SaveData {
    * Quantum's unlock, upgrades, perks and mastery to Subterfuge.
    */
   migratedSubterfugeId: boolean;
+  /** True once the screwdriver has been picked up off a shop page. */
+  screwdriverFound: boolean;
+  /**
+   * Which shop page it is lying on. Minted the first time the shop is opened and
+   * then fixed for the life of the save, so "somewhere in the shop" is a hunt
+   * rather than a lottery you re-roll by paging back and forth. -1 = not yet drawn.
+   */
+  screwdriverPage: number;
+  /** secret mode id → which of the four corner screws have been taken out. */
+  screwsRemoved: Record<string, number[]>;
+  /** Secret mode ids whose plate has come all the way off. */
+  secretModesUnlocked: string[];
+  /**
+   * An unstable synthesis whose Divine Nucleus has been spent and whose
+   * stabilisation fight has not been settled yet.
+   *
+   * Persisted rather than carried in a scene payload so closing the tab
+   * mid-loadout does not eat the nucleus silently — the Disgraced Lab offers
+   * the fight again on the next visit. It is cleared either way the fight ends:
+   * a win grants the element, a loss consumes the forge.
+   */
+  pendingUnstable: PendingUnstableForge | null;
+}
+
+/** A forge waiting on its three-on-three. */
+export interface PendingUnstableForge {
+  /** Element id the synthesis produces. */
+  result: string;
+  /** The two bases and the binder, in socket order — this is the enemy team. */
+  ingredients: string[];
 }
 
 /**
@@ -155,6 +186,11 @@ function load(): SaveData {
         quantumResearching: parsed.quantumResearching ?? '',
         quantumQuestProgress: parsed.quantumQuestProgress ?? {},
         migratedSubterfugeId: parsed.migratedSubterfugeId ?? false,
+        screwdriverFound: parsed.screwdriverFound ?? false,
+        screwdriverPage: parsed.screwdriverPage ?? -1,
+        screwsRemoved: parsed.screwsRemoved ?? {},
+        secretModesUnlocked: parsed.secretModesUnlocked ?? [],
+        pendingUnstable: parsed.pendingUnstable ?? null,
       };
       if (!d.migratedSubterfugeId) {
         migrateSubterfugeId(d);
@@ -175,7 +211,7 @@ function load(): SaveData {
     // corrupted save — start fresh
   }
   // A save that never existed has nothing to migrate — born already stamped.
-  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedSkins: {}, divineNuclei: 0, kingDefeated: false, devourerDefeated: false, devourerChoice: '', bountyRerollOffset: 0, completedBountyKeys: [], passionQTaps: 0, passionQCensored: false, paperJournal: {}, quantumBond: [], quantumResearched: [], quantumResearching: '', quantumQuestProgress: {}, migratedSubterfugeId: true };
+  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedSkins: {}, divineNuclei: 0, kingDefeated: false, devourerDefeated: false, devourerChoice: '', bountyRerollOffset: 0, completedBountyKeys: [], passionQTaps: 0, passionQCensored: false, paperJournal: {}, quantumBond: [], quantumResearched: [], quantumResearching: '', quantumQuestProgress: {}, migratedSubterfugeId: true, screwdriverFound: false, screwdriverPage: -1, screwsRemoved: {}, secretModesUnlocked: [], pendingUnstable: null };
 }
 
 function save(data: SaveData): void {
@@ -373,6 +409,68 @@ export function unlockDummy(): void {
   }
 }
 
+// ── Secret modes ─────────────────────────────────────────────────────
+// The screwdriver, the four screws on every difficulty plate, and the modes
+// that come off with them. See `src/data/SecretModes.ts` for the table.
+
+export function isScrewdriverFound(): boolean {
+  return load().screwdriverFound;
+}
+
+export function findScrewdriver(): void {
+  const data = load();
+  if (data.screwdriverFound) return;
+  data.screwdriverFound = true;
+  save(data);
+}
+
+/**
+ * Which shop page the screwdriver is lying on, drawing it once if it has never
+ * been placed. `pageCount` is the shop's current page total — a save made
+ * before an element was unlocked would otherwise hide it on a page that does
+ * not exist yet, so the draw happens on first sight of the real page count.
+ */
+export function getScrewdriverPage(pageCount: number): number {
+  const data = load();
+  if (data.screwdriverPage >= 0 && data.screwdriverPage < pageCount) return data.screwdriverPage;
+  data.screwdriverPage = Math.floor(Math.random() * Math.max(1, pageCount));
+  save(data);
+  return data.screwdriverPage;
+}
+
+/** Corner indices (0-3) already unscrewed on this mode's plate. */
+export function getRemovedScrews(modeId: string): number[] {
+  return load().screwsRemoved[modeId] ?? [];
+}
+
+/** Idempotent. Returns the new count of removed screws. */
+export function removeScrew(modeId: string, corner: number): number {
+  const data = load();
+  const had = data.screwsRemoved[modeId] ?? [];
+  if (had.includes(corner)) return had.length;
+  const next = [...had, corner];
+  data.screwsRemoved = { ...data.screwsRemoved, [modeId]: next };
+  save(data);
+  return next.length;
+}
+
+export function isSecretModeUnlocked(modeId: string): boolean {
+  return load().secretModesUnlocked.includes(modeId);
+}
+
+/** Idempotent. Returns true only the first time, so the menu can celebrate once. */
+export function unlockSecretMode(modeId: string): boolean {
+  const data = load();
+  if (data.secretModesUnlocked.includes(modeId)) return false;
+  data.secretModesUnlocked = [...data.secretModesUnlocked, modeId];
+  save(data);
+  return true;
+}
+
+export function getUnlockedSecretModes(): string[] {
+  return load().secretModesUnlocked;
+}
+
 export function getLabLevel(): number {
   return load().labLevel;
 }
@@ -451,6 +549,8 @@ export function getMasteryStat(elementId: string, key: string): number {
 }
 
 export function addMasteryStat(elementId: string, key: string, amount: number): void {
+  // Practice fights teach you the element; they do not grind it. See ProgressLock.
+  if (isProgressLocked()) return;
   const data = load();
   const el = { ...(data.masteryProgress[elementId] ?? {}) };
   el[key] = (el[key] ?? 0) + amount;
@@ -459,6 +559,7 @@ export function addMasteryStat(elementId: string, key: string, amount: number): 
 }
 
 export function recordMasteryBest(elementId: string, key: string, value: number): void {
+  if (isProgressLocked()) return;
   const data = load();
   const el = { ...(data.masteryProgress[elementId] ?? {}) };
   if (value > (el[key] ?? 0)) {
@@ -512,6 +613,8 @@ export function isAchievementUnlocked(id: string): boolean {
 
 /** Idempotent. Returns true only on the first unlock so callers can show the popup once. */
 export function unlockAchievement(id: string): boolean {
+  // A dummy that cannot fight back is not an achievement. See ProgressLock.
+  if (isProgressLocked()) return false;
   const data = load();
   if (data.achievements.includes(id)) return false;
   data.achievements = [...data.achievements, id];
@@ -541,6 +644,37 @@ export function spendDivineNuclei(n: number): boolean {
   data.divineNuclei -= n;
   save(data);
   return true;
+}
+
+// ── Unstable synthesis (Disgraced Lab, tier two) ─────────────────────
+
+/** The forge waiting on its stabilisation fight, or null. */
+export function getPendingUnstable(): PendingUnstableForge | null {
+  return load().pendingUnstable;
+}
+
+/**
+ * Records a forge whose nucleus has just been spent. Only one can be pending at
+ * a time — the lab refuses a second while one is outstanding, so an overwrite
+ * here would mean a bug upstream rather than a lost nucleus.
+ */
+export function setPendingUnstable(forge: PendingUnstableForge): void {
+  const data = load();
+  data.pendingUnstable = forge;
+  save(data);
+}
+
+/** Settles the pending forge. `won` grants the element; either way it stops being pending. */
+export function resolvePendingUnstable(won: boolean): PendingUnstableForge | null {
+  const data = load();
+  const forge = data.pendingUnstable;
+  if (!forge) return null;
+  data.pendingUnstable = null;
+  if (won && !data.unlockedElements.includes(forge.result)) {
+    data.unlockedElements.push(forge.result);
+  }
+  save(data);
+  return forge;
 }
 
 export function isKingDefeated(): boolean {

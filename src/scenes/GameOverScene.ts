@@ -7,6 +7,9 @@ import { getCampaignReward } from '../data/CampaignFights';
 import { getEffectiveFightDef } from '../data/CampaignFightsHard';
 import { getAnyWorld } from '../data/AbstractWorlds';
 import { currentBountySeed } from '../data/Bounties';
+import { getSecretMode } from '../data/SecretModes';
+import { getUnstableRecipe } from '../data/UnstableRecipes';
+import { setProgressLocked } from '../data/ProgressLock';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackdrop, addButton, addPanel, addTitle, fillDiamond,
@@ -53,9 +56,18 @@ export class GameOverScene extends Phaser.Scene {
     onlineReason?: string;
     bossHard?: boolean;
     devourerChoice?: 'spare' | 'kill';
+    /** Set for a fight that came out from under a difficulty plate. */
+    secretMode?: string;
+    /** Set for a stabilisation bout — the Disgraced Lab's second-tier forge rides on the result. */
+    stabilize?: { result: string };
   }): void {
     const { width, height } = this.scale;
     const cx = width / 2;
+
+    // The practice range's progress lock is lowered here, on the far side of
+    // ArenaScene's own end-of-fight bookkeeping. This is the last screen every
+    // bout passes through, so nothing can leave a profile frozen.
+    setProgressLocked(false);
 
     // No music here on purpose: ArenaScene's victory/defeat sting is still
     // ringing out, and a track starting under it would step on the moment.
@@ -88,6 +100,22 @@ export class GameOverScene extends Phaser.Scene {
       PlayerData.addShards(bossShards);
     }
 
+    // ── Unstable synthesis ──────────────────────────────────────────
+    // The forge's Divine Nucleus went in the moment it was struck. This is where
+    // it turns into an element or into nothing — settled on both branches, so a
+    // loss cannot leave a forge pending and re-fightable for free.
+    const isStabilise = !!data.stabilize;
+    const stabiliseRecipe = data.stabilize ? getUnstableRecipe(data.stabilize.result) : null;
+    let stabilised = false;
+    let forgeLost = false;
+    if (isStabilise) {
+      // Null means there was nothing pending — a re-entered results screen, or a
+      // forge already settled. Neither branch should re-announce itself.
+      const settled = PlayerData.resolvePendingUnstable(data.playerWon);
+      stabilised = data.playerWon && !!settled;
+      forgeLost = !data.playerWon && !!settled;
+    }
+
     // ── Bounty payout ───────────────────────────────────────────────
     // Marked against the live board's seed, so a contract cashed on an expired
     // board leaves nothing behind and cannot be claimed twice on this one.
@@ -106,7 +134,15 @@ export class GameOverScene extends Phaser.Scene {
       PlayerData.setInfinityBestFight(data.infinityFightsCleared!, data.hardMode ?? false);
     }
 
-    const baseShard = (!isInvasion && !isBoss && !isCampaign && !isInfinityRun && !isOnline && data.playerWon) ? SHARD_REWARDS[data.difficulty - 1] : 0;
+    // ── Secret modes ────────────────────────────────────────────────
+    // A mode from under a plate pays a flat purse of its own instead of the
+    // difficulty table's, so the number on the button is the number you get.
+    // Mutations still multiply it — with none equipped the multiplier is 1, so
+    // the advertised figure is exactly what lands.
+    const secretMode = getSecretMode(data.secretMode);
+    const baseShard = secretMode
+      ? (data.playerWon ? secretMode.shardReward : 0)
+      : (!isInvasion && !isBoss && !isCampaign && !isInfinityRun && !isOnline && data.playerWon) ? SHARD_REWARDS[data.difficulty - 1] : 0;
     const shardsEarned = Math.round(baseShard * (data.rewardMult ?? 1));
     if (shardsEarned > 0) {
       PlayerData.addShards(shardsEarned);
@@ -197,6 +233,11 @@ export class GameOverScene extends Phaser.Scene {
       [title, subtitle, accent] = data.playerWon
         ? ['THE KING IS DEAD', 'The crown is spent. The hall is quiet.', C.corrupt]
         : ['THE KING REMAINS', 'The door is still open. Go back.', C.corrupt];
+    } else if (isStabilise) {
+      const name = stabiliseRecipe?.resultName ?? 'IT';
+      [title, subtitle, accent] = data.playerWon
+        ? ['STABILISED', `${name} holds. It is yours.`, 0x7cc93d]
+        : ['IT CAME APART', `${name} went back into the dark, and the Nucleus with it.`, C.blood];
     } else if (data.isGauntlet && !data.playerWon) {
       [title, subtitle, accent] = ['GAUNTLET FAILED', 'Your run has ended…', C.blood];
     } else if (isCampaign && data.campaign) {
@@ -293,6 +334,26 @@ export class GameOverScene extends Phaser.Scene {
         color: T.faint,
       });
     }
+    if (stabilised && stabiliseRecipe) {
+      lines.push({
+        icon: stabiliseRecipe.resultEmoji,
+        text: `${stabiliseRecipe.resultName.toUpperCase()} UNLOCKED — the abstract ${stabiliseRecipe.echoName}, held down and made to keep`,
+        color: '#a8f070',
+        big: true,
+      });
+      lines.push({
+        icon: '🔒',
+        text: 'Its five upgrades are locked behind its own Corrupt world — one per fight, from the second on.',
+        color: T.faint,
+      });
+    } else if (forgeLost) {
+      lines.push({
+        icon: '💠',
+        text: 'The forge collapsed. The Divine Nucleus is spent.',
+        color: hex(mix(C.blood, 0xffffff, 0.4)),
+        big: true,
+      });
+    }
     if (divineEarned > 0) {
       lines.push({
         icon: '💠',
@@ -359,7 +420,9 @@ export class GameOverScene extends Phaser.Scene {
         // Back to the door itself — 999 clamps to the last shop page.
         this.scene.start('ShopScene', { page: 999 });
       } else if (data.bounty) {
-        this.scene.start('DisgracedLabScene', { tab: 1 });
+        this.scene.start('DisgracedLabScene', { tab: 'bounties' });
+      } else if (isStabilise) {
+        this.scene.start('DisgracedLabScene', { tab: 'synthesis' });
       } else if (data.campaign?.worldId === 'amalgam') {
         // The finale has no world scene — it hangs off the corrupt map.
         this.scene.start('CampaignWorldMapScene', { slotIdx: data.campaign.slot, mode: 'corrupt' });
@@ -393,6 +456,7 @@ export class GameOverScene extends Phaser.Scene {
     const btnLabel = isOnline ? 'BACK TO LOBBY'
       : isBoss ? 'BACK TO THE DOOR'
       : data.bounty ? 'BACK TO CONTRACTS'
+      : isStabilise ? 'BACK TO THE BENCH'
       : data.campaign ? 'BACK TO WORLD'
       : 'PLAY AGAIN';
     const mainBtn = addButton(this, {

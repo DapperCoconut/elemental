@@ -1,4 +1,4 @@
-import { CampaignFightDef, getCampaignFightDef } from './CampaignFights';
+import { CampaignFightDef, getCampaignFightDef, sanitizeCampaignFightDef } from './CampaignFights';
 
 /**
  * THE SECOND TELLING — hard mode as a remix, not a stat bump.
@@ -366,7 +366,7 @@ export const CAMPAIGN_FIGHTS_HARD: Record<string, CampaignFightDef> = {
 export function getEffectiveFightDef(nodeId: string, hardMode: boolean): CampaignFightDef | undefined {
   if (hardMode) {
     const hard = CAMPAIGN_FIGHTS_HARD[nodeId];
-    if (hard) return hard;
+    if (hard) return sanitizeCampaignFightDef(hard);
   }
   return getCampaignFightDef(nodeId);
 }

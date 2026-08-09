@@ -4,6 +4,7 @@
  */
 export * from './Theme';
 export * from './Shapes';
+export * from './ChestArt';
 export * from './Backdrop';
 export * from './Panel';
 export * from './Button';

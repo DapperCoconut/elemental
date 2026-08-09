@@ -1907,6 +1907,56 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
       },
     ],
   },
+  // Gluttony's five each buy two things, because every one of its keys is two abilities: the
+  // chef's and the butcher's. The descriptions below are written as a pair for that reason —
+  // the kitchen first, then what happens once the toque comes off. (The comment sits outside
+  // the object literal on purpose: `.check-codex.mjs` finds these blocks by splitting on
+  // `{\n    elementId:`, and a comment in between hides the whole element from the report.)
+  {
+    elementId: 'gluttony',
+    upgrades: [
+      {
+        slot: 'click',
+        displayKey: 'Click',
+        name: 'Cleave',
+        description: 'The kitchen knife becomes a cleaver. Thrown, it goes clean through bodies instead of stopping in the first one, and it holds its heat for 4 seconds off the coals — throwing it no longer spends the red. As the butcher, every Cleave that connects is +25% walk speed for 2 seconds, refreshed by the next one rather than stacked.',
+        price: 100,
+        currency: 'corrupt',
+      },
+      {
+        slot: 'e',
+        displayKey: 'E',
+        name: 'Head Chef',
+        description: 'Four more things to forage. Bristle Berries heal 5 and give +20% damage for 8s, or 12 and +35% cooked. Winter Mint heals 10% of your health and gives 20% damage resistance for 8s — and cooking it ruins it, down to 1% and nothing else. Pineapple is a flat 30, or 50 cooked. Death Cap is rare and costs you 30 HP raw for +25% speed, but 25 seconds on the grill turns it into a 50 heal and +35% speed. As the butcher, food can be left on the maw to rot instead: rotten items heal half what the raw one would and are thrown as weapons, dealing what the *cooked* one would have healed — 15% of the target\'s health for a mint.',
+        price: 200,
+        currency: 'corrupt',
+      },
+      {
+        slot: 'r',
+        displayKey: 'R',
+        name: 'Pit Master',
+        description: 'Your charcoal burns blue: the grate and the blade both run at triple speed instead of double. Food finishes cooking when it always did, and then starts a second pass — leave it there for another 50% of its cook time and it comes off over-seared, worth +25% healing with 3 more seconds on whatever buff it carries. The ring restarts in blue for that pass and turns green when it lands. As the butcher, standing over the maw coats the cleaver in ichor for 5 seconds, and an ichorous blade buys a second of butcher form for every 25 damage it deals.',
+        price: 350,
+        currency: 'corrupt',
+      },
+      {
+        slot: 'f',
+        displayKey: 'F',
+        name: 'Murderous Intent',
+        description: 'Transforming back knocks 20% off Special Ingredient\'s cooldown, so the door swings both ways cheaply. As the butcher, the maw stops spitting one gobbet and starts firing a cone of five — each one leaving 15% damage vulnerability for 2 seconds — reaches out every 10 seconds to grab somebody and stun them for 2, and bites anybody who comes within reach of it for 30.',
+        price: 500,
+        currency: 'corrupt',
+      },
+      {
+        slot: 'q',
+        displayKey: 'Q',
+        name: 'Resourceful',
+        description: 'Feast leaves two parcels of leftovers in the strip, each worth 12% of what the pot healed for. Leave them 25 seconds and they rest into 25% instead. As the butcher, Maw Awakening wakes something with a face: +50% damage on everything the maw does, tentacles up all four walls of the arena that hurt anyone but you, and a scream every 5 seconds for 35 damage and a 2-second stun.',
+        price: 750,
+        currency: 'corrupt',
+      },
+    ],
+  },
   {
     // Quantum owns exactly one upgrade, and it is not an ability upgrade at all: it adds a
     // third state to the bond. Everything the third state *does* lives in `quantumElement`,
