@@ -94,12 +94,6 @@ const BASE_HP = 24;
 const BASE_SPEED = 92;
 const BASE_BITE = 6;
 
-/**
- * Husks only fight as a pack: until this many stand in the victim's room,
- * every bite, shot, detonation and elemental effect claws harmlessly.
- */
-const HUSK_DAMAGE_PACK_SIZE = 5;
-
 /** More husks than this in one room and it starts taking damage. */
 const ROOM_CROWD_LIMIT = 12;
 /** Room HP lost per second, per husk over the crowd limit. */
@@ -631,10 +625,6 @@ export class InvasionKit implements HuskWorld, EffectWorld {
   private damageTargetInternal(target: Fighter, amount: number): void {
     if (amount <= 0) return;
     const isLocal = target === this.arena.player || this.arena.plantTargets().includes(target);
-    // Below pack size in the victim's room the husks are all bark — the
-    // lunges and shots still play, but nothing lands.
-    const room = isLocal ? (this.mansion?.currentRoom ?? 0) : this.allyRoom;
-    if (this.husksInRoom(room) < HUSK_DAMAGE_PACK_SIZE) return;
     if (isLocal) {
       // Husks are the one thing that may hit a co-op player through their
       // friendly-fire block.

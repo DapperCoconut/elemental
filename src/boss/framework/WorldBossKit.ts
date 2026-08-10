@@ -192,9 +192,10 @@ export class WorldBossKit {
     });
     npc.on('defeated', () => this.onBodyDefeated());
 
-    // ── HUD: the boss bar owns the foot of the screen (player HP owns y=18).
+    // ── HUD: the boss bar sits just above the ability tray, which owns the
+    // bottom 52px of the screen (player HP owns y=18).
     this.barG = scene.add.graphics().setDepth(25);
-    this.barLabel = scene.add.text(W / 2, H - 46, '', {
+    this.barLabel = scene.add.text(W / 2, H - 94, '', {
       fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
       color: hex(def.colorLit), stroke: '#0a0510', strokeThickness: 4, letterSpacing: 3,
     }).setOrigin(0.5).setDepth(26);
@@ -608,7 +609,7 @@ export class WorldBossKit {
     const barW = Math.min(560, W - 220);
     const barH = 13;
     const x = W / 2 - barW / 2;
-    const y = H - 30;
+    const y = H - 78;
 
     g.fillStyle(0x08060e, 0.85);
     g.fillRect(x - 3, y - 3, barW + 6, barH + 6);

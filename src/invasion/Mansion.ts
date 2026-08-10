@@ -142,7 +142,9 @@ export class Mansion {
     this.doorPulseG?.destroy();
     this.doorPulseG = this.scene.add.graphics().setDepth(1.6);
     this.roomLabel?.destroy();
-    this.roomLabel = this.scene.add.text(14, this.H - 26, '', {
+    // Sits directly under the minimap cross; the foot of the screen belongs
+    // to the ability tray.
+    this.roomLabel = this.scene.add.text(16, 152, '', {
       fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
       color: '#d8c8a0', stroke: '#171008', strokeThickness: 3,
     }).setDepth(25);
@@ -848,9 +850,10 @@ export class Mansion {
   // ── Minimap ───────────────────────────────────────────────────────
 
   private mapCellRect(room: number): { x: number; y: number; w: number; h: number } {
-    // Cross layout anchored top-right, below the shard/difficulty labels.
+    // Cross layout anchored top-left, below the LEAVE button — the top-right
+    // corner belongs to the shard/difficulty labels and the status effect tray.
     const cw = 34, ch = 24, gap = 3;
-    const cx = this.W - 16 - cw * 1.5 - gap;
+    const cx = 16 + cw + gap;
     const cy = 92;
     switch (room) {
       case 1: return { x: cx, y: cy - ch - gap, w: cw, h: ch };            // kitchen — up

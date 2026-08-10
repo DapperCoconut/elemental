@@ -793,10 +793,11 @@ export class DisgracedKingKit {
     });
     npc.on('defeated', () => this.onBossBodyDefeated());
 
-    // ── HUD: a boss bar across the foot of the screen. The player's own bar
-    // owns the top of the arena (y=18), so this never competes with it.
+    // ── HUD: a boss bar just above the ability tray (which owns the bottom
+    // 52px). The player's own bar owns the top of the arena (y=18), so this
+    // never competes with it.
     this.barG = scene.add.graphics().setDepth(25);
-    this.barLabel = scene.add.text(W / 2, H - 46, '', {
+    this.barLabel = scene.add.text(W / 2, H - 94, '', {
       fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
       color: '#d8c4ff', stroke: '#0a0510', strokeThickness: 4, letterSpacing: 3,
     }).setOrigin(0.5).setDepth(26);
@@ -3945,7 +3946,7 @@ export class DisgracedKingKit {
     const barW = 560;
     const barH = 16;
     const x = W / 2 - barW / 2;
-    const y = H - 30;
+    const y = H - 78;
     const interlude = this.phase === 'wreck' || this.phase === 'ascend' || this.phase === 'consume';
     const devourPhase = this.phase === 'consume' || this.phase === 'devourer'
       || this.phase === 'kneel' || (this.phase === 'done' && this.devourStartedAt > 0);
