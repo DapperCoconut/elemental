@@ -35,23 +35,17 @@ const TABS: DisgracedTab[] = ['forge', 'synthesis', 'bounties'];
 
 interface ElementDef { id: string; name: string; emoji: string; color: number }
 
-/** Normal elements — base and combined. Exactly one goes in the left socket. */
+/**
+ * Normal elements — base only. Exactly one goes in the left socket. Every
+ * divine recipe pairs an abstract with a base element; combined (duo)
+ * elements can never forge anything, so they are not offered at all.
+ */
 const NORMAL_ELEMENTS: ElementDef[] = [
   { id: 'fire',     name: 'Fire',     emoji: '🔥',  color: 0xff4400 },
   { id: 'water',    name: 'Water',    emoji: '💧',  color: 0x0088ff },
   { id: 'life',     name: 'Life',     emoji: '🌿',  color: 0x44cc44 },
   { id: 'air',      name: 'Air',      emoji: '💨',  color: 0xaaddff },
   { id: 'earth',    name: 'Earth',    emoji: '🪨',  color: 0x887755 },
-  { id: 'oil',      name: 'Oil',      emoji: '🛢️', color: 0x664400 },
-  { id: 'shadow',   name: 'Shadow',   emoji: '🌑',  color: 0x330044 },
-  { id: 'ice',      name: 'Ice',      emoji: '🧊',  color: 0x88ccff },
-  { id: 'growth',   name: 'Growth',   emoji: '🦠',  color: 0x88bb22 },
-  { id: 'crystal',  name: 'Crystal',  emoji: '💎',  color: 0x88ccff },
-  { id: 'soul',     name: 'Soul',     emoji: '👻',  color: 0xccaaff },
-  { id: 'hunt',     name: 'Hunt',     emoji: '🐺',  color: 0xcc4400 },
-  { id: 'sand',     name: 'Time',     emoji: '⏳',  color: 0xffdd44 },
-  { id: 'gravity',  name: 'Gravity',  emoji: '🌌',  color: 0x8844cc },
-  { id: 'creation', name: 'Creation', emoji: '⚒️', color: 0xcc6622 },
 ];
 
 /** Abstract elements — exactly one goes in the right socket. */
