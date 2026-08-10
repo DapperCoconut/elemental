@@ -100,7 +100,7 @@ function buildInfinityEnemyPool(): ElementDef[] {
   return result;
 }
 
-const GAUNTLET_EXCLUDED_MUTATIONS = new Set(['boss', 'raid']);
+const GAUNTLET_EXCLUDED_MUTATIONS = new Set(['boss', 'raid', 'golf']);
 
 export class GauntletIntermediaryScene extends Phaser.Scene {
   constructor() {

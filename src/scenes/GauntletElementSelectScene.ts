@@ -17,7 +17,7 @@ import {
 } from '../ui';
 import { Music } from '../audio';
 
-const GAUNTLET_EXCLUDED_MUTATIONS = new Set(['boss', 'raid']);
+const GAUNTLET_EXCLUDED_MUTATIONS = new Set(['boss', 'raid', 'golf']);
 
 export class GauntletElementSelectScene extends Phaser.Scene {
   /** Set once the bond modal has answered, so re-entry does not reopen it. */

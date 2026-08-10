@@ -22,7 +22,7 @@ import { TagTeamState, isPledgeFight } from '../data/FightFormats';
 import { getWorldBossDef } from '../boss/bosses';
 import { Music } from '../audio';
 
-const GAUNTLET_EXCLUDED_MUTATIONS = new Set(['boss', 'raid']);
+const GAUNTLET_EXCLUDED_MUTATIONS = new Set(['boss', 'raid', 'golf']);
 
 export class CampaignElementSelectScene extends Phaser.Scene {
   /** Set once the bond modal has answered, so re-entry does not reopen it. */
