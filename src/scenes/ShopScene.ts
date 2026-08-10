@@ -4,7 +4,7 @@ import { ALL_UPGRADES, getElementUpgrades, UpgradeDef } from '../data/Upgrades';
 import { UpgradeGate, isUpgradeUnlocked, upgradeGate } from '../data/UpgradeUnlocks';
 import { GAUNTLET_COST, GAUNTLET_HARD_COST } from '../data/GauntletData';
 import { ABSTRACT_ELEMENT_IDS, ABSTRACT_ELEMENT_UNLOCK_MAP, ABSTRACT_MIX_ELEMENT_IDS } from '../data/AbstractElements';
-import { allSelectableElements, findElementDef } from '../data/ElementRoster';
+import { allSelectableElements, findElementDef, VAULT_ELEMENTS } from '../data/ElementRoster';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix, tintPlate,
   addBackdrop, addBackButton, addButton, addChip, addHeaderBar, addModal, addPanel, addPagerButton,
@@ -141,9 +141,12 @@ export class ShopScene extends Phaser.Scene {
     // directly left those elements playable but unshoppable — you could field a Quantum and
     // never find the plate that sells it Third State.
     const playable = new Set(allSelectableElements().map((e) => e.id));
+    // The Vault elements' upgrades come out of Vault chests now, one per chest —
+    // the shop no longer sells them (equip/shelve lives in the ⚙ customize panel).
+    const vaultIds = new Set(VAULT_ELEMENTS.map((e) => e.id));
     const combinedIds = ALL_UPGRADES
       .map((e) => e.elementId)
-      .filter((id) => !BASE_ELEMENT_IDS.includes(id) && !ABSTRACT_ELEMENT_IDS.includes(id) && !ABSTRACT_MIX_ELEMENT_IDS.includes(id) && playable.has(id));
+      .filter((id) => !BASE_ELEMENT_IDS.includes(id) && !ABSTRACT_ELEMENT_IDS.includes(id) && !ABSTRACT_MIX_ELEMENT_IDS.includes(id) && !vaultIds.has(id) && playable.has(id));
     const COMBINED_PER_PAGE = 5;
     const totalCombinedPages = combinedIds.length > 0 ? Math.ceil(combinedIds.length / COMBINED_PER_PAGE) : 0;
     const abstractIds = ABSTRACT_ELEMENT_IDS.filter(

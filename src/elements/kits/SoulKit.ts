@@ -5,7 +5,7 @@ import { BASIC_HUSK, HUSK_VARIANTS, HuskVariantDef, huskTextureKey } from '../..
 import { Projectile } from '../../combat/Projectile';
 import { CastContext } from '../Ability';
 import {
-  AmalgamQuirk, ANGERED_TONES, NPC_TONES, ROT_TONES, SOUL, SPIRIT_TONES, SoulAmalgamBody,
+  ANGERED_TONES, NPC_TONES, ROT_TONES, SOUL, SPIRIT_TONES, SoulAmalgamBody,
   SoulAvatar, SoulColorFn, SoulFx, SoulShroud, SoulTones, TORMENT_TONES, tonesFor,
 } from './SoulVisuals';
 
@@ -193,7 +193,12 @@ const GRAVE_ZOMBIE_BITE_CD_MS = 1200;
 
 const CRUEL_OFFERING_RADIUS = 70;
 const VARIANT_ZOMBIE_CHANCE = 0.35;
-const RECRUITABLE_VARIANTS: HuskVariantDef[] = HUSK_VARIANTS.filter((v) => !v.isBoss && v.id !== 'basic');
+/**
+ * Every rollable elemental variant, all three tiers — a grave zombie can come
+ * up wearing any element the invasion lightning knows. Decoys and other
+ * no-reward husks are excluded; they are props, not bodies worth raising.
+ */
+const RECRUITABLE_VARIANTS: HuskVariantDef[] = HUSK_VARIANTS.filter((v) => !v.isBoss && v.id !== 'basic' && !v.noReward);
 const ANGERED_HP_MULT = 2;
 const ANGERED_SPEED_MULT = 1.25;
 
@@ -213,18 +218,9 @@ const AMALGAM_MELEE_TICK_MS = 800;
 /** Body radius the drawn amalgam is built at, before the husk's own `sizeMult`. */
 const AMALGAM_BODY_SIZE = 19;
 
-/**
- * The silhouette quirk a recruited invasion variant brings with it, so a Tank amalgam and a
- * Spitter amalgam are told apart by shape and not only by the colour bled into their flesh.
- */
-const VARIANT_QUIRKS: Record<string, AmalgamQuirk> = {
-  tank: 'bulk',
-  speedster: 'lean',
-  spitter: 'sac',
-  medic: 'halo',
-  rusher: 'horns',
-  blaster: 'gut',
-};
+// The silhouette quirk a recruited variant brings with it now rides on the
+// variant def itself (`variant.quirk`), so an Earth amalgam and a Water
+// amalgam are told apart by shape and not only by the colour of their flesh.
 
 /** Call of the Void (divine perk): how far the invitation carries from the shriek. */
 const VOID_CALL_RADIUS = 150;
@@ -705,7 +701,7 @@ export class SoulKit {
     return new SoulAmalgamBody(this.arena.scene, this.col(owner), {
       size: AMALGAM_BODY_SIZE * husk.sizeMult,
       fleshColor: variant.id !== 'basic' ? variant.color : undefined,
-      quirk: VARIANT_QUIRKS[variant.id],
+      quirk: variant.quirk,
       alpha: isAlpha,
       depth: 6,
     });

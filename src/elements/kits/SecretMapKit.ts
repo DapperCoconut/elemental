@@ -58,7 +58,9 @@ const GY_MAX_HUSKS = 14;
 const GY_HUSK_HP = 46;
 const GY_HUSK_SPEED = 88;
 const GY_HUSK_BITE = 12;
-const GY_VARIANTS = ['basic', 'basic', 'speedster', 'tank', 'spitter', 'rusher'];
+// Ordered mild → mean, drawn from the elemental variant table (the old
+// speedster/tank/spitter/rusher bodies are gone).
+const GY_VARIANTS = ['basic', 'basic', 'elem-air-t1', 'elem-earth-t1', 'elem-electricity-t1', 'elem-hunt-t1'];
 const GY_ENERGY_MAX = 100;
 const GY_ENERGY_PER_KILL = 12;
 const GY_TITAN_HP = 900;

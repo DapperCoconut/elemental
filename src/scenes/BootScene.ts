@@ -2168,27 +2168,349 @@ export class BootScene extends Phaser.Scene {
 
     // One husk body per invasion variant, drawn from the variant's own colour.
     // Dark bodies get a lighter outline (and vice versa) so the silhouette
-    // stays legible against the arena floor at either extreme.
+    // stays legible against the arena floor at either extreme. Elemental
+    // variants also wear their element's glyph on the chest, and tiers II/III
+    // grow horns and a crown so the dangerous ones read across the room.
+    const drawHuskMarker = (marker: string, mc: number, md: number): void => {
+      // Chest badge centred at (33, 31), ~6px — a heraldic patch of the element.
+      const mx = 33, my = 31;
+      gfx.fillStyle(md, 0.85);
+      gfx.fillCircle(mx, my, 7.5);
+      gfx.lineStyle(1, mc, 0.9);
+      gfx.strokeCircle(mx, my, 7.5);
+      switch (marker) {
+        case 'flame':
+          gfx.fillStyle(mc, 1);
+          gfx.fillTriangle(mx - 4, my + 4, mx, my - 5, mx + 4, my + 4);
+          gfx.fillTriangle(mx - 2, my + 4, mx + 1, my - 1, mx + 3, my + 4);
+          break;
+        case 'droplet':
+        case 'wave':
+          gfx.fillStyle(mc, 1);
+          gfx.fillTriangle(mx, my - 5, mx - 3.5, my + 1, mx + 3.5, my + 1);
+          gfx.fillCircle(mx, my + 1.5, 3.5);
+          if (marker === 'wave') { gfx.lineStyle(1, md, 1); gfx.lineBetween(mx - 4, my + 3, mx + 4, my + 3); }
+          break;
+        case 'leaf':
+          gfx.fillStyle(mc, 1);
+          gfx.fillEllipse(mx, my, 8, 5);
+          gfx.lineStyle(1, md, 1);
+          gfx.lineBetween(mx - 4, my, mx + 4, my);
+          break;
+        case 'gust':
+          gfx.lineStyle(1.5, mc, 1);
+          gfx.lineBetween(mx - 4, my - 3, mx + 4, my - 3);
+          gfx.lineBetween(mx - 5, my, mx + 3, my);
+          gfx.lineBetween(mx - 3, my + 3, mx + 5, my + 3);
+          break;
+        case 'rock':
+          gfx.fillStyle(mc, 1);
+          gfx.fillTriangle(mx - 4, my + 4, mx - 1, my - 4, mx + 2, my + 4);
+          gfx.fillTriangle(mx, my + 4, mx + 3, my - 2, mx + 5, my + 4);
+          break;
+        case 'brick':
+          gfx.fillStyle(mc, 1);
+          gfx.fillRect(mx - 5, my - 4, 10, 8);
+          gfx.lineStyle(1, md, 1);
+          gfx.lineBetween(mx - 5, my, mx + 5, my);
+          gfx.lineBetween(mx, my - 4, mx, my);
+          break;
+        case 'slick':
+          gfx.fillStyle(mc, 1);
+          gfx.fillCircle(mx - 2, my, 3);
+          gfx.fillCircle(mx + 2, my + 2, 2.4);
+          gfx.fillCircle(mx + 1, my - 3, 1.8);
+          break;
+        case 'crescent':
+          gfx.fillStyle(mc, 1);
+          gfx.fillCircle(mx, my, 4.5);
+          gfx.fillStyle(md, 1);
+          gfx.fillCircle(mx + 2, my - 1, 3.8);
+          break;
+        case 'snow':
+          gfx.lineStyle(1.5, mc, 1);
+          for (let a = 0; a < 6; a++) {
+            const r = (a / 6) * Math.PI * 2;
+            gfx.lineBetween(mx, my, mx + Math.cos(r) * 5, my + Math.sin(r) * 5);
+          }
+          break;
+        case 'gem':
+          gfx.fillStyle(mc, 1);
+          gfx.fillTriangle(mx - 4, my - 1, mx + 4, my - 1, mx, my + 5);
+          gfx.fillTriangle(mx - 2.5, my - 4, mx + 2.5, my - 4, mx + 4, my - 1);
+          gfx.fillTriangle(mx - 2.5, my - 4, mx - 4, my - 1, mx + 4, my - 1);
+          break;
+        case 'ghost':
+          gfx.fillStyle(mc, 1);
+          gfx.fillCircle(mx, my - 1, 3.5);
+          gfx.fillRect(mx - 3.5, my - 1, 7, 4);
+          gfx.fillStyle(md, 1);
+          gfx.fillCircle(mx - 1.4, my - 1.5, 0.9);
+          gfx.fillCircle(mx + 1.4, my - 1.5, 0.9);
+          break;
+        case 'fang':
+          gfx.fillStyle(mc, 1);
+          gfx.fillTriangle(mx - 4, my - 3, mx - 1, my - 3, mx - 2.5, my + 4);
+          gfx.fillTriangle(mx + 1, my - 3, mx + 4, my - 3, mx + 2.5, my + 4);
+          break;
+        case 'hourglass':
+          gfx.lineStyle(1.5, mc, 1);
+          gfx.strokeRect(mx - 3.5, my - 4.5, 7, 9);
+          gfx.fillStyle(mc, 1);
+          gfx.fillTriangle(mx - 3, my - 4, mx + 3, my - 4, mx, my);
+          gfx.fillTriangle(mx - 3, my + 4, mx + 3, my + 4, mx, my);
+          break;
+        case 'ring':
+          gfx.lineStyle(1.5, mc, 1);
+          gfx.strokeEllipse(mx, my, 10, 4);
+          gfx.fillStyle(mc, 1);
+          gfx.fillCircle(mx, my, 2.2);
+          break;
+        case 'hammer':
+          gfx.fillStyle(mc, 1);
+          gfx.fillRect(mx - 1, my - 2, 2, 7);
+          gfx.fillRect(mx - 4, my - 5, 8, 4);
+          break;
+        case 'bolt':
+          gfx.fillStyle(mc, 1);
+          gfx.fillTriangle(mx + 2, my - 5, mx - 3, my + 1, mx + 0.5, my + 1);
+          gfx.fillTriangle(mx - 2, my + 5, mx + 3, my - 1, mx - 0.5, my - 1);
+          break;
+        case 'flask':
+          gfx.fillStyle(mc, 1);
+          gfx.fillCircle(mx - 2, my + 1, 2.6);
+          gfx.fillCircle(mx + 2, my - 1, 2);
+          gfx.fillCircle(mx + 1, my + 3, 1.6);
+          break;
+        case 'card':
+          gfx.fillStyle(mc, 1);
+          gfx.fillRect(mx - 3, my - 4.5, 6, 9);
+          gfx.lineStyle(1, md, 1);
+          gfx.strokeRect(mx - 3, my - 4.5, 6, 9);
+          gfx.fillStyle(md, 1);
+          gfx.fillCircle(mx, my, 1.4);
+          break;
+        case 'note':
+          gfx.fillStyle(mc, 1);
+          gfx.fillEllipse(mx - 2, my + 3, 4.5, 3.5);
+          gfx.fillRect(mx - 0.4, my - 4, 1.6, 7);
+          gfx.fillRect(mx - 0.4, my - 4.5, 4.5, 2);
+          break;
+        case 'star':
+          gfx.fillStyle(mc, 1);
+          for (let a = 0; a < 4; a++) {
+            const r = (a / 4) * Math.PI;
+            gfx.fillTriangle(
+              mx + Math.cos(r) * 5.5, my + Math.sin(r) * 5.5,
+              mx + Math.cos(r + Math.PI / 2) * 1.4, my + Math.sin(r + Math.PI / 2) * 1.4,
+              mx - Math.cos(r + Math.PI / 2) * 1.4, my - Math.sin(r + Math.PI / 2) * 1.4,
+            );
+          }
+          break;
+        case 'magnet':
+          gfx.lineStyle(2.4, mc, 1);
+          gfx.beginPath();
+          gfx.arc(mx, my - 1, 3.6, Math.PI, 0, false);
+          gfx.strokePath();
+          gfx.fillStyle(mc, 1);
+          gfx.fillRect(mx - 5, my - 1, 2.4, 4.5);
+          gfx.fillRect(mx + 2.6, my - 1, 2.4, 4.5);
+          break;
+        case 'gear':
+          gfx.fillStyle(mc, 1);
+          gfx.fillCircle(mx, my, 3.4);
+          for (let a = 0; a < 6; a++) {
+            const r = (a / 6) * Math.PI * 2;
+            gfx.fillRect(mx + Math.cos(r) * 4.4 - 1, my + Math.sin(r) * 4.4 - 1, 2, 2);
+          }
+          gfx.fillStyle(md, 1);
+          gfx.fillCircle(mx, my, 1.4);
+          break;
+        case 'orb':
+          gfx.fillStyle(mc, 1);
+          gfx.fillCircle(mx, my, 4);
+          gfx.fillStyle(md, 0.8);
+          gfx.fillCircle(mx + 1.4, my - 1.4, 1.4);
+          break;
+        case 'skull':
+          gfx.fillStyle(mc, 1);
+          gfx.fillCircle(mx, my - 1, 4);
+          gfx.fillRect(mx - 2.4, my + 1, 4.8, 3);
+          gfx.fillStyle(md, 1);
+          gfx.fillCircle(mx - 1.6, my - 1.4, 1.1);
+          gfx.fillCircle(mx + 1.6, my - 1.4, 1.1);
+          break;
+        case 'ball':
+          gfx.fillStyle(mc, 1);
+          gfx.fillCircle(mx, my, 4.2);
+          gfx.lineStyle(1, md, 1);
+          gfx.strokeCircle(mx, my, 2.2);
+          break;
+        case 'book':
+        case 'page':
+          gfx.fillStyle(mc, 1);
+          gfx.fillRect(mx - 3.6, my - 4.4, 7.2, 8.8);
+          gfx.lineStyle(1, md, 1);
+          gfx.lineBetween(mx - 2, my - 2.4, mx + 2, my - 2.4);
+          gfx.lineBetween(mx - 2, my, mx + 2, my);
+          gfx.lineBetween(mx - 2, my + 2.4, mx + 1, my + 2.4);
+          if (marker === 'book') { gfx.lineStyle(1.4, md, 1); gfx.lineBetween(mx, my - 4.4, mx, my + 4.4); }
+          break;
+        case 'mask':
+          gfx.fillStyle(mc, 1);
+          gfx.fillEllipse(mx, my - 0.5, 9, 6.5);
+          gfx.fillStyle(md, 1);
+          gfx.fillEllipse(mx - 2, my - 1, 2.4, 1.6);
+          gfx.fillEllipse(mx + 2, my - 1, 2.4, 1.6);
+          break;
+        case 'scribble':
+          gfx.lineStyle(1.4, mc, 1);
+          gfx.lineBetween(mx - 4, my - 3, mx + 4, my - 2);
+          gfx.lineBetween(mx + 4, my - 2, mx - 3, my + 1);
+          gfx.lineBetween(mx - 3, my + 1, mx + 3, my + 4);
+          break;
+        case 'banner':
+          gfx.fillStyle(mc, 1);
+          gfx.fillRect(mx - 1, my - 5, 1.6, 10);
+          gfx.fillTriangle(mx + 0.6, my - 5, mx + 5.5, my - 3, mx + 0.6, my - 1);
+          break;
+        case 'heart':
+          gfx.fillStyle(mc, 1);
+          gfx.fillCircle(mx - 1.8, my - 1.4, 2.4);
+          gfx.fillCircle(mx + 1.8, my - 1.4, 2.4);
+          gfx.fillTriangle(mx - 4, my - 0.4, mx + 4, my - 0.4, mx, my + 4.6);
+          break;
+        case 'coin':
+          gfx.fillStyle(mc, 1);
+          gfx.fillCircle(mx, my, 4.2);
+          gfx.lineStyle(1, md, 1);
+          gfx.strokeCircle(mx, my, 2.6);
+          gfx.lineBetween(mx, my - 2, mx, my + 2);
+          break;
+        case 'bone':
+          gfx.lineStyle(2, mc, 1);
+          gfx.lineBetween(mx - 3, my + 3, mx + 3, my - 3);
+          gfx.fillStyle(mc, 1);
+          gfx.fillCircle(mx - 3.6, my + 2, 1.6);
+          gfx.fillCircle(mx - 2, my + 3.8, 1.6);
+          gfx.fillCircle(mx + 3.6, my - 2, 1.6);
+          gfx.fillCircle(mx + 2, my - 3.8, 1.6);
+          break;
+        case 'eye':
+          gfx.fillStyle(mc, 1);
+          gfx.fillEllipse(mx, my, 9, 5);
+          gfx.fillStyle(md, 1);
+          gfx.fillCircle(mx, my, 2);
+          gfx.fillStyle(mc, 1);
+          gfx.fillCircle(mx + 0.7, my - 0.7, 0.7);
+          break;
+        case 'rad':
+          gfx.fillStyle(mc, 1);
+          gfx.fillCircle(mx, my, 1.6);
+          for (let a = 0; a < 3; a++) {
+            const r = (a / 3) * Math.PI * 2 - Math.PI / 2;
+            gfx.fillTriangle(
+              mx + Math.cos(r - 0.5) * 5.5, my + Math.sin(r - 0.5) * 5.5,
+              mx + Math.cos(r + 0.5) * 5.5, my + Math.sin(r + 0.5) * 5.5,
+              mx + Math.cos(r) * 1.8, my + Math.sin(r) * 1.8,
+            );
+          }
+          break;
+        case 'chain':
+          gfx.lineStyle(1.4, mc, 1);
+          gfx.strokeEllipse(mx - 2.4, my - 1.6, 4, 3);
+          gfx.strokeEllipse(mx + 0.4, my + 0.8, 4, 3);
+          gfx.strokeEllipse(mx + 3, my + 3, 4, 3);
+          break;
+        case 'meat':
+          gfx.fillStyle(mc, 1);
+          gfx.fillEllipse(mx - 1, my - 1, 7, 5.5);
+          gfx.lineStyle(1.6, mc, 1);
+          gfx.lineBetween(mx + 2, my + 1, mx + 4.5, my + 3.5);
+          gfx.fillStyle(md, 1);
+          gfx.fillCircle(mx + 4.5, my + 3.5, 1.2);
+          break;
+        case 'echo':
+          gfx.lineStyle(1.4, mc, 1);
+          gfx.strokeCircle(mx, my, 2);
+          gfx.lineStyle(1, mc, 0.7);
+          gfx.strokeCircle(mx, my, 4);
+          gfx.lineStyle(1, mc, 0.4);
+          gfx.strokeCircle(mx, my, 6);
+          break;
+        case 'dagger':
+          gfx.fillStyle(mc, 1);
+          gfx.fillTriangle(mx - 1.4, my - 4, mx + 1.4, my - 4, mx, my + 3);
+          gfx.fillRect(mx - 3, my + 2.4, 6, 1.6);
+          gfx.fillRect(mx - 0.8, my + 4, 1.6, 2);
+          break;
+        case 'pit':
+          gfx.fillStyle(mc, 1);
+          gfx.fillEllipse(mx, my + 1, 9, 5);
+          gfx.fillStyle(md, 1);
+          gfx.fillEllipse(mx, my + 1, 5.5, 2.8);
+          break;
+        default:
+          gfx.fillStyle(mc, 1);
+          gfx.fillCircle(mx, my, 3);
+          break;
+      }
+    };
+
     for (const variant of HUSK_VARIANTS) {
       const base = Phaser.Display.Color.IntegerToColor(variant.color);
       const dark = base.red * 0.299 + base.green * 0.587 + base.blue * 0.114 < 90;
       const outline = dark ? lighten(variant.color, 0.45) : darken(variant.color, 0.42);
       const blotch  = lighten(variant.color, dark ? 0.60 : 0.25);
       const feature = dark ? lighten(variant.color, 0.70) : darken(variant.color, 0.22);
+      const tier = variant.tier ?? 1;
 
+      // Tier III wears a faint elemental corona behind the body.
+      if (tier >= 3) {
+        gfx.fillStyle(lighten(variant.color, 0.5), 0.28);
+        gfx.fillCircle(24, 24, 23.5);
+      }
       gfx.fillStyle(variant.color, 1);
       gfx.fillCircle(24, 24, 20);
       gfx.lineStyle(3, outline, 1);
       gfx.strokeCircle(24, 24, 20);
+      if (tier >= 2) {
+        // A second, inner ring — the brand burning deeper.
+        gfx.lineStyle(1.5, outline, 0.8);
+        gfx.strokeCircle(24, 24, 16);
+      }
       gfx.fillStyle(blotch, 0.6);
       gfx.fillCircle(19, 18, 8); // decayed blotch
-      gfx.fillStyle(feature, 1);
+      // Tier II grows horns; tier III wears a crooked crown over them.
+      if (tier >= 2) {
+        gfx.fillStyle(outline, 1);
+        gfx.fillTriangle(11, 12, 16, 5, 18, 12);
+        gfx.fillTriangle(30, 12, 32, 5, 37, 12);
+      }
+      if (tier >= 3) {
+        gfx.fillStyle(0xd8b23a, 1);
+        gfx.fillTriangle(18, 8, 20, 1, 22, 8);
+        gfx.fillTriangle(22, 8, 24, 0, 26, 8);
+        gfx.fillTriangle(26, 8, 28, 1, 30, 8);
+        gfx.fillRect(18, 7, 12, 3);
+      }
+      // Eyes: vacant at tier 1, lit from within at tier 3.
+      gfx.fillStyle(tier >= 3 ? 0x0e0e0e : feature, 1);
       gfx.fillCircle(17, 19, 4);
       gfx.fillCircle(31, 19, 4);
+      if (tier >= 3) {
+        gfx.fillStyle(lighten(variant.color, 0.75), 1);
+        gfx.fillCircle(17, 19, 1.8);
+        gfx.fillCircle(31, 19, 1.8);
+      }
       gfx.lineStyle(2, feature, 1);
       gfx.lineBetween(16, 31, 22, 33);
       gfx.lineBetween(22, 33, 27, 30);
       gfx.lineBetween(27, 30, 33, 32);
+      // The elemental brand on the chest.
+      if (variant.marker) {
+        drawHuskMarker(variant.marker, dark ? lighten(variant.color, 0.75) : lighten(variant.color, 0.45), darken(variant.color, 0.5));
+      }
       gfx.generateTexture(huskTextureKey(variant), 48, 48);
       gfx.clear();
     }

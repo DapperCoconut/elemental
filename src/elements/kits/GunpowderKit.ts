@@ -607,14 +607,14 @@ export class GunpowderKit {
     // Right-click: discard a weapon from the arsenal HUD.
     const rightDown = pointer.rightButtonDown();
     if (rightDown && !this.wasRightDown && !this.menuOpen) {
-      this.tryRemoveArsenalWeapon(pointer.x, pointer.y);
+      this.tryRemoveArsenalWeapon(pointer.worldX, pointer.worldY);
     }
     this.wasRightDown = rightDown;
 
     // ── Click: Musket Shot / menu selection ──────────────────────────────
     if (pointer.isDown && !pointerWasDown) {
       if (this.menuOpen) {
-        this.handleMenuClick(pointer.x, pointer.y);
+        this.handleMenuClick(pointer.worldX, pointer.worldY);
       } else {
         player.castAbility('gunpowder-musket-shot', ctx());
       }

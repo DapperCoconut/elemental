@@ -24,6 +24,9 @@ export class Projectile extends Phaser.Physics.Arcade.Image {
   ) {
     super(scene, x, y, textureKey);
     scene.add.existing(this);
+    // Above every world floor (Mansion rooms 0.6–1.6, World Shift 1–2, boss grounds ≤3),
+    // below the fighters at 5. At the default 0 a shot vanishes under any painted floor.
+    this.setDepth(4);
     // Do NOT call scene.physics.add.existing here.
     // The Phaser.Physics.Arcade.Group that owns this projectile will enable
     // physics via its createCallbackHandler when group.add(this) is called.

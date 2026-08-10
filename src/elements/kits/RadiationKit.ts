@@ -62,7 +62,12 @@ const AFTERIMAGE_R = 18;
 const VISION_SHRINK = 0.67;
 const BEAM_MS = 5000;
 const BEAM_TICK_MS = 200;
-const BEAM_DPS = 15;
+/**
+ * Deliberately worth more than the railgun it replaces (50, or 125 under a perfect Heart Stopper
+ * set): under Final Vision every enemy is a third smaller, so a confirm costs more misses to
+ * reach and has to pay accordingly.
+ */
+const BEAM_DPS = 22;
 /** Every third of the beam's run adds a rung to the dose it is holding on the victim. */
 const BEAM_STEP_MS = BEAM_MS / 3;
 
@@ -135,6 +140,23 @@ const FLARE_RANGE = 900;
 const FLARE_WINDOW_MS = 12_000;
 const AIRDROP_TELL_MS = 1700;
 const AIRDROP_DAMAGE = 200;
+
+/**
+ * Closest point on the segment (ax,ay)→(bx,by) to (px,py).
+ *
+ * Everything this kit fires is hand-rolled rather than a `Projectile`, so nothing else sweeps
+ * these for it — see `updateRounds`.
+ */
+function nearestOnSegment(
+  ax: number, ay: number, bx: number, by: number, px: number, py: number,
+): { x: number; y: number } {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 1e-6) return { x: ax, y: ay };
+  const t = Phaser.Math.Clamp(((px - ax) * dx + (py - ay) * dy) / len2, 0, 1);
+  return { x: ax + dx * t, y: ay + dy * t };
+}
 
 // ── World objects ────────────────────────────────────────────────────────────
 
@@ -428,8 +450,11 @@ export class RadiationKit {
   private knocked = new Map<Fighter, { until: number; vx: number; vy: number }>();
   /** Everything this kit has written an outgoing multiplier onto, and what it last wrote. */
   private appliedOut = new Map<Fighter, number>();
-  /** Everything currently wearing an inflated hitbox, so it can always be handed back. */
-  private swollen = new Set<Fighter>();
+  /**
+   * Everything currently wearing an X-ray hitbox — swollen under the base ability, tightened
+   * under Final Vision — so whichever it is can always be handed back.
+   */
+  private xrayed = new Set<Fighter>();
   /** Everything Final Vision has shrunk, and the factor this kit multiplied into `sizeMult`. */
   private shrunk = new Map<Fighter, number>();
 
@@ -532,13 +557,13 @@ export class RadiationKit {
       if (!f) continue;
       f.healInvertedUntil = 0;
       f.onHealInverted = null;
-      this.shrink(f);
+      this.clearHitbox(f);
     }
     // The outgoing multiplier is shared with half a dozen other systems, so it is handed back
     // by dividing out exactly what this kit put in rather than by writing 1 over the top.
     for (const [f] of this.appliedOut) this.setOutgoing(f, 1);
     this.appliedOut.clear();
-    this.swollen.clear();
+    this.xrayed.clear();
     // Same reasoning for the body scale: Fate's slots and Illusion's folds own `sizeMult` too,
     // so Final Vision's third is divided back out rather than written over.
     for (const [f] of [...this.shrunk]) this.setSize(f, 1);
@@ -1005,6 +1030,8 @@ export class RadiationKit {
     for (let i = this.rounds.length - 1; i >= 0; i--) {
       const r = this.rounds[i];
       const step = Math.hypot(r.vx, r.vy) * dt;
+      const fromX = r.x;
+      const fromY = r.y;
       r.x += r.vx * dt;
       r.y += r.vy * dt;
       r.left -= step;
@@ -1012,11 +1039,19 @@ export class RadiationKit {
       const out = r.x < this.left || r.x > this.right || r.y < this.top || r.y > this.bottom;
       let landed: Fighter | null = null;
       let reach = 0;
+      let contactX = r.x;
       const hitR = r.kind === 'tracer' ? TRACER_HIT_R : FLARE_HIT_R;
       for (const t of this.targetsOf(r.owner)) {
-        reach = hitR + 18 + this.swell(t);
-        if (Phaser.Math.Distance.Between(r.x, r.y, t.x, t.y) > reach) continue;
+        const rr = hitR + 18 + this.swell(t);
+        // Swept, not sampled. A tracer covers ~16px of arena between two frames and a flare
+        // ~23px — and twice that on a dropped one — so testing only where the round *ended*
+        // let it step clean over a body it went straight through. That got worse the smaller
+        // the target was, which is exactly when the chain most needs the hit to count.
+        const near = nearestOnSegment(fromX, fromY, r.x, r.y, t.x, t.y);
+        if (Phaser.Math.Distance.Between(near.x, near.y, t.x, t.y) > rr) continue;
         landed = t;
+        reach = rr;
+        contactX = near.x;
         break;
       }
 
@@ -1026,7 +1061,8 @@ export class RadiationKit {
           // Heart Stopper reads how far off the body's own centre line the tracer clamped on:
           // dead centre is 1, the edge of the catch radius is 0. Horizontal only, because
           // "dead centre" on a body is a left-right thing and a high shot is still a hit.
-          const off = Math.abs(r.x - landed.x) / Math.max(1, reach);
+          // Measured at the contact point on the swept step, not at the frame's end point.
+          const off = Math.abs(contactX - landed.x) / Math.max(1, reach);
           this.onTracerHit(r.owner, landed, Phaser.Math.Clamp(1 - off, 0, 1));
         } else this.onFlareHit(r.owner, landed);
         continue;
@@ -1659,13 +1695,14 @@ export class RadiationKit {
 
   /**
    * How much wider than a normal body that target currently is, in pixels. Zero unless something
-   * has swelled or folded it.
+   * has swelled, folded or tightened it — and **negative** under Final Vision, which takes a
+   * third off every enemy hitbox rather than adding one.
    *
    * `hitboxMult` reaches Phaser's colliders through `Fighter.applySizeMult`, but this kit fires no
    * `Projectile`s — tracers, flares, the baton arc, the drum and the puddle sweep are all
-   * hand-rolled range checks — so without this term X-Ray inflated a body that nothing Radiation
+   * hand-rolled range checks — so without this term X-Ray resized a body that nothing Radiation
    * owns was ever measuring against. Added rather than multiplied so every tuned constant below
-   * keeps its exact unswollen value.
+   * keeps its exact unmodified value.
    */
   private swell(t: Fighter): number {
     const scale = t.sizeMult * t.shapeSizeMult * t.oozeSizeMult * t.hitboxMult;
@@ -1673,7 +1710,7 @@ export class RadiationKit {
   }
 
   /** Give a body its real hitbox back. Safe to call on something that never had one taken. */
-  private shrink(f: Fighter): void {
+  private clearHitbox(f: Fighter): void {
     if (f.hitboxMult === 1) return;
     f.hitboxMult = 1;
     f.applySizeMult();
@@ -1696,31 +1733,36 @@ export class RadiationKit {
 
   /**
    * Rewritten from scratch every frame — the Justice pattern — so an X-ray that ends between two
-   * ticks, or a target that dies mid-window, can never leave a permanently inflated hitbox behind.
+   * ticks, or a target that dies mid-window, can never leave a body the wrong size behind.
    *
-   * Final Vision (R+) flips which side of the fight the geometry lands on. Base X-Ray swells
-   * every enemy 33%; the upgrade leaves them alone and takes a third off the operative instead,
-   * body *and* rig, so what he buys is not an easier shot but a harder target.
+   * Final Vision (R+) turns the ability round without moving it off the enemy. Base X-Ray swells
+   * every enemy 33% so that bad aim lands; the upgrade tightens them by the same third instead,
+   * so only good aim does — and what it pays back for the misses is the beam a confirm under it
+   * fires. The operative shrinks alongside them, which is the half of the trade that keeps him
+   * standing while each chain takes longer.
    */
   private updateXray(): void {
-    const swell = new Set<Fighter>();
+    const want = new Map<Fighter, number>();
     const shrink = new Set<Fighter>();
     for (const owner of BOTH) {
       const s = this.side(owner);
       const f = this.fighter(owner);
       if (this.now >= s.xrayUntil || !this.alive(f)) { s.xrayUntil = 0; s.finalVision = false; continue; }
       if (s.finalVision) shrink.add(f);
-      else for (const t of this.targetsOf(owner)) swell.add(t);
+      const mult = s.finalVision ? VISION_SHRINK : XRAY_HITBOX;
+      // Two X-rays reading the same body: the tighter one wins, so an ordinary one running on
+      // the other side of the fight can never hand a Final Vision's mark its full hitbox back.
+      for (const t of this.targetsOf(owner)) want.set(t, Math.min(want.get(t) ?? Infinity, mult));
     }
-    for (const f of [...this.swollen]) {
-      if (swell.has(f) && this.alive(f)) continue;
-      this.swollen.delete(f);
-      if (f) this.shrink(f);
+    for (const f of [...this.xrayed]) {
+      if (want.has(f) && this.alive(f)) continue;
+      this.xrayed.delete(f);
+      if (f) this.clearHitbox(f);
     }
-    for (const f of swell) {
-      if (this.swollen.has(f)) continue;
-      this.swollen.add(f);
-      f.hitboxMult = XRAY_HITBOX;
+    for (const [f, mult] of want) {
+      this.xrayed.add(f);
+      if (f.hitboxMult === mult) continue;
+      f.hitboxMult = mult;
       f.applySizeMult();
     }
     for (const [f] of [...this.shrunk]) {
@@ -1750,7 +1792,7 @@ export class RadiationKit {
     const playerIs = this.isRadiation('player');
     const npcIs = this.isRadiation('npc');
     const anyState = this.rounds.length || this.puddles.length || this.irradiated.size
-      || this.stunned.size || this.swollen.size || this.airdrop || this.appliedOut.size
+      || this.stunned.size || this.xrayed.size || this.airdrop || this.appliedOut.size
       || this.afterimages.length || this.shrunk.size || this.knocked.size;
     if (!playerIs && !npcIs && !anyState) return;
 
@@ -2069,7 +2111,7 @@ export class RadiationKit {
       name: s.finalVision ? 'Final Vision' : 'X-Ray Vision', emoji: '🦴',
       color: s.finalVision ? RAD.hot : RAD.neonLit, priority: 140,
       description: s.finalVision
-        ? `Seeing through lead, and a third smaller for it — body and hitbox both down ${Math.round((1 - VISION_SHRINK) * 100)}%. Every enemy is still drawn as its own skeleton whether it is visible or not, and the next three tracers on one body fire a held beam instead of the railgun.`
+        ? `Every enemy hitbox is ${Math.round((1 - VISION_SHRINK) * 100)}% *smaller* — nothing lands that was not aimed — and you are a third smaller with them. Every enemy is still drawn as its own skeleton whether it is visible or not, and three tracers on one body fire a held beam worth more than the railgun instead.`
         : `Seeing through lead. Every enemy is drawn as its own skeleton whether it is visible or not, and every enemy hitbox is ${Math.round((XRAY_HITBOX - 1) * 100)}% larger.`,
       until: s.xrayUntil,
     } : null);

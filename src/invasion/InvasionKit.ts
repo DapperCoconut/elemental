@@ -4,10 +4,14 @@ import { Fighter } from '../entities/Fighter';
 import { Projectile } from '../combat/Projectile';
 import { HP_SCALE } from '../data/Balance';
 import { Sfx, Music } from '../audio';
+import { Mansion, ROOM_META, HALL_ROOM, ROOM_MAX_HP } from './Mansion';
+import { HuskEffectEngine, EffectWorld } from './HuskEffects';
 import {
   HuskVariantDef,
   BASIC_HUSK,
-  rollHuskVariant,
+  InvasionTheme,
+  getInvasionTheme,
+  rollLightningVariant,
   rollBossVariant,
   isBossWave,
   huskVariantIndex,
@@ -52,20 +56,25 @@ export interface InvasionArenaApi {
   notifyHuskDefeated?(husk: Husk): void;
 }
 
-const INTERMISSION_MS = 3000;
+const INTERMISSION_MS = 2600;
 const FIRST_WAVE_DELAY_MS = 2500;
+/** How long the "husks are coming for THE KITCHEN" warning gives you to walk there. */
+const ROOM_WARNING_MS = 5200;
 
 /** Wave a Life player must clear for the Plants vs Zombies achievement (and the Wither skin). */
 const PLANTS_VS_ZOMBIES_WAVE = 8;
 
-/** Husk projectiles (spitter/ranger shots). */
+/** Husk projectiles (ranged variants / ranger shots). */
 const SHOT_SPEED = 290;
 const SHOT_LIFETIME_MS = 3200;
 const SHOT_RADIUS = 7;
 const SHOT_HIT_RADIUS = 22;
+/** Psychic husk orbs: slower, but they turn toward you. */
+const HOMING_SHOT_SPEED = 190;
+const HOMING_TURN_RAD_PER_S = 2.2;
 
 const BLASTER_BOOM_RADIUS = 130;
-/** Blaster damage to *other husks*, as a fraction of its damage to players. */
+/** Explosion damage to *other husks*, as a fraction of its damage to players. */
 const BLASTER_HUSK_DAMAGE_FRAC = 1.5;
 
 const POSSESS_HP_MULT = 2.5;
@@ -74,11 +83,27 @@ const POSSESS_DAMAGE_MULT = 2;
 const POSSESS_SIZE_MULT = 1.25;
 const POSSESS_TINT = 0xaa1133;
 
-/** Speedsters would otherwise become literally undodgeable in the late game. */
+/** Air husks at tier 3 would otherwise become literally undodgeable. */
 const MAX_HUSK_SPEED = 430;
 
-/** Ceiling on titan-summoned adds, so a long boss fight can't spiral. */
+/** Ceiling on live husks, so a titan fight or an ignored room can't spiral. */
 const MAX_LIVE_HUSKS = 45;
+
+/** Base husk statline — flat now; only variants and difficulty scale it. */
+const BASE_HP = 24;
+const BASE_SPEED = 92;
+const BASE_BITE = 6;
+
+/**
+ * Husks only fight as a pack: until this many stand in the victim's room,
+ * every bite, shot, detonation and elemental effect claws harmlessly.
+ */
+const HUSK_DAMAGE_PACK_SIZE = 5;
+
+/** More husks than this in one room and it starts taking damage. */
+const ROOM_CROWD_LIMIT = 12;
+/** Room HP lost per second, per husk over the crowd limit. */
+const ROOM_GNAW_PER_EXTRA = 1;
 
 /**
  * The arena's player health bar is centred at y=18 and 24px tall, so anything
@@ -93,9 +118,11 @@ export const WAVE_BANNER_Y = 96;
  * During an intermission (no husks left) the wave number stays on screen instead
  * of the whole readout blanking out.
  */
-export function formatWaveLabel(wave: number, remaining: number): string {
+export function formatWaveLabel(wave: number, remaining: number, roomName?: string): string {
   if (wave <= 0) return '';
-  return remaining > 0 ? `WAVE ${wave}  —  🧟 ${remaining}` : `WAVE ${wave} CLEARED`;
+  if (remaining <= 0) return `WAVE ${wave} CLEARED`;
+  const where = roomName ? `  →  ${roomName}` : '';
+  return `WAVE ${wave}${where}  —  🧟 ${remaining}`;
 }
 
 export type InvasionDifficultyId = 'normal' | 'brutal' | 'masochistic';
@@ -116,17 +143,17 @@ export interface InvasionDifficultyDef {
 export const INVASION_DIFFICULTIES: InvasionDifficultyDef[] = [
   {
     id: 'normal', label: 'NORMAL', color: 0x88cc44, colorHex: '#88cc44',
-    description: 'Standard husk waves.',
+    description: 'Defend the mansion.  Elemental lightning brands husks with the fifteen ordinary elements.',
     hpMult: 1, dmgMult: 1, shardMult: 1,
   },
   {
     id: 'brutal', label: 'BRUTAL', color: 0xff8844, colorHex: '#ff8844',
-    description: '2× husk health.  More mutated husks.  2× corrupt shards.',
+    description: '2× husk health.  The lightning strikes more often — and now carries the ABSTRACT elements.  2× corrupt shards.',
     hpMult: 2, dmgMult: 1, shardMult: 2,
   },
   {
     id: 'masochistic', label: 'MASOCHISTIC', color: 0xff2244, colorHex: '#ff2244',
-    description: '3× husk health.  2× husk damage.  Far more mutated husks.  3× corrupt shards.',
+    description: '3× husk health.  2× husk damage.  Constant lightning, and the CORRUPT elements walk.  3× corrupt shards.',
     hpMult: 3, dmgMult: 2, shardMult: 3,
   },
 ];
@@ -135,11 +162,6 @@ export function getInvasionDifficulty(id: string | undefined): InvasionDifficult
   return INVASION_DIFFICULTIES.find((d) => d.id === id) ?? INVASION_DIFFICULTIES[0];
 }
 
-/**
- * One-shot visual effects the co-op guest replays locally. Husk *behaviour* is
- * simulated only on the host, so these carry just enough to look right — the
- * host stays the sole authority on any damage they represent.
- */
 /**
  * An on-hit status a player's projectile inflicts on a husk. Sent over the
  * wire when a co-op guest lands the hit, since only the host simulates husks.
@@ -156,12 +178,22 @@ export type HuskStatus =
   // Silence E+ seeker cone: stabs on a panicked target drain only 50 stealth.
   | { k: 'panic'; ms: number };
 
+/**
+ * One-shot visual effects the co-op guest replays locally. Husk *behaviour* is
+ * simulated only on the host, so these carry just enough to look right — the
+ * host stays the sole authority on any damage they represent. `r` is the room
+ * the effect happened in; the guest skips effects it isn't looking at.
+ */
 export type InvasionFx =
-  | { k: 'boom'; x: number; y: number; r: number }
-  | { k: 'lane'; x: number; y: number; x2: number; y2: number; c: number; ms: number }
-  | { k: 'heal'; x: number; y: number; r: number }
-  | { k: 'shot'; x: number; y: number; vx: number; vy: number; ms: number }
-  | { k: 'possess'; x: number; y: number };
+  | { k: 'boom'; x: number; y: number; r: number; rm?: number }
+  | { k: 'lane'; x: number; y: number; x2: number; y2: number; c: number; ms: number; rm?: number }
+  | { k: 'heal'; x: number; y: number; r: number; rm?: number }
+  | { k: 'shot'; x: number; y: number; vx: number; vy: number; ms: number; rm?: number }
+  | { k: 'possess'; x: number; y: number; rm?: number }
+  // Elemental lightning branding a fresh spawn.
+  | { k: 'bolt'; x: number; y: number; c: number; rm?: number }
+  // A ground zone (puddle / slick / lava / goo) appearing.
+  | { k: 'zone'; x: number; y: number; r: number; c: number; ms: number; rm?: number };
 
 /**
  * Invasion co-op hooks — wired in by InvasionCoopKit on the host side only.
@@ -181,6 +213,10 @@ export interface InvasionCoopHooks {
   onFx: (fx: InvasionFx) => void;
   /** A boss just spawned — the guest shows the same banner. */
   onBossSpawned: (name: string, colorHex: string) => void;
+  /** A new wave was announced — the guest shows the target-room warning. */
+  onWaveAnnounced: (wave: number, room: number) => void;
+  /** A room fell — the guest seals it too. */
+  onRoomLost: (room: number) => void;
 }
 
 interface HuskShot {
@@ -189,23 +225,34 @@ interface HuskShot {
   vy: number;
   damage: number;
   expiresAt: number;
+  room: number;
+  /** Elemental flavour of the shooter (psychic orbs home, depths shots splash). */
+  elementId?: string;
 }
 
+type WavePhase = 'idle' | 'warning' | 'active' | 'rest';
+
 /**
- * Invasion mode director: endless waves of husks. Each wave spawns more
- * (and slightly tougher, faster, meaner) husks than the last, and mixes in
- * progressively rarer mutated variants — see HuskVariants.ts. Every tenth
- * wave adds a boss on top. Every kill pays corrupt shards; clearing a wave
- * pays a bonus.
+ * Invasion mode director — mansion defense.
+ *
+ * Five rooms: the grand hall and four wings. Every wave picks a room still
+ * standing (the hall included — it just can't fall), warns the player with
+ * plenty of time to walk over, then pours husks in through that room's
+ * windows. Each spawn risks an elemental lightning strike
+ * that brands it with one of 47 elemental variants (tiered I–III; abstract
+ * variants join on BRUTAL, corrupt ones on MASOCHISTIC). Husks left to crowd a
+ * room gnaw it down; a room at zero is abandoned for the rest of the run, and
+ * when all four wings have fallen the mansion is lost. Every kill pays corrupt
+ * shards; clearing a wave pays a bonus. Every tenth wave adds a boss.
  */
-export class InvasionKit implements HuskWorld {
+export class InvasionKit implements HuskWorld, EffectWorld {
   private wave = 0;
+  private phase: WavePhase = 'idle';
+  private phaseEndsAt = 0;
   private pendingSpawns = 0;
   private nextSpawnAt = 0;
   /** Boss queued for the current wave, spawned alongside the first regular husks. */
   private pendingBoss: HuskVariantDef | null = null;
-  /** > 0 while counting down to the next wave; 0 while a wave is live. */
-  private intermissionUntil = 0;
   private shards = 0;
   private clearedWaves = 0;
   /** Husks still owed this wave: alive on the field + not yet spawned. */
@@ -214,6 +261,26 @@ export class InvasionKit implements HuskWorld {
   private coopHooks: InvasionCoopHooks | null = null;
   private nextHuskId = 1;
   private shots: HuskShot[] = [];
+  private targetRoom = -1;
+  private lastTargetRoom = -1;
+  private nextGnawTickAt = 0;
+  private lastGnawWarnAt = 0;
+  private ending = false;
+
+  /** Mansion + effect engine exist only after reset() — a co-op guest's kit never resets. */
+  private mansion: Mansion | null = null;
+  private effects: HuskEffectEngine | null = null;
+  /** Co-op guest's current room, injected by InvasionCoopKit for the targetable gate. */
+  private guestRoom = -1;
+  /** Co-op host: the ally's current room, from their state packets. */
+  private allyRoom = 0;
+
+  /** Elemental hazard slow on the local player (ice bites, oil slicks, gum). */
+  private slowMult = 1;
+  private slowUntil = 0;
+
+  /** Campaign world theme: kin-only lightning strikes and an element-tinted manor. */
+  private theme: InvasionTheme | null = null;
 
   private waveBanner: Phaser.GameObjects.Text | null = null;
   private waveLabel: Phaser.GameObjects.Text | null = null;
@@ -227,9 +294,15 @@ export class InvasionKit implements HuskWorld {
   get shardsEarned(): number { return this.shards; }
   get wavesCompleted(): number { return this.clearedWaves; }
 
-  reset(difficulty: InvasionDifficultyDef = INVASION_DIFFICULTIES[0], coopHooks: InvasionCoopHooks | null = null): void {
+  reset(
+    difficulty: InvasionDifficultyDef = INVASION_DIFFICULTIES[0],
+    coopHooks: InvasionCoopHooks | null = null,
+    campaignWorldId: string | null = null,
+  ): void {
     const scene = this.arena.scene;
     this.wave = 0;
+    this.phase = 'idle';
+    this.phaseEndsAt = scene.time.now + FIRST_WAVE_DELAY_MS;
     this.pendingSpawns = 0;
     this.nextSpawnAt = 0;
     this.pendingBoss = null;
@@ -239,9 +312,27 @@ export class InvasionKit implements HuskWorld {
     this.difficulty = difficulty;
     this.coopHooks = coopHooks;
     this.nextHuskId = 1;
-    this.intermissionUntil = scene.time.now + FIRST_WAVE_DELAY_MS;
+    this.targetRoom = -1;
+    this.lastTargetRoom = -1;
+    this.nextGnawTickAt = 0;
+    this.lastGnawWarnAt = 0;
+    this.ending = false;
+    this.guestRoom = -1;
+    this.allyRoom = 0;
+    this.slowMult = 1;
+    this.slowUntil = 0;
     for (const s of this.shots) s.gfx.destroy();
     this.shots = [];
+
+    this.theme = getInvasionTheme(campaignWorldId);
+
+    if (!this.mansion) {
+      this.mansion = new Mansion(scene, { onRoomChanged: () => this.refreshRoomVisibility() });
+    }
+    this.mansion.setTheme(this.theme?.color ?? null);
+    this.mansion.reset();
+    if (!this.effects) this.effects = new HuskEffectEngine(this);
+    this.effects.reset();
 
     const { width } = scene.scale;
     this.waveBanner?.destroy();
@@ -284,14 +375,19 @@ export class InvasionKit implements HuskWorld {
   update(time: number, delta: number): void {
     const player = this.arena.player;
     const alive = this.livingHusks();
+    const mansion = this.mansion;
+    if (!mansion) return;
 
-    // Wave cleared → pay bonus, start intermission
-    if (this.wave > 0 && this.pendingSpawns === 0 && !this.pendingBoss && alive.length === 0 && this.intermissionUntil === 0) {
+    // Wave cleared → pay bonus, rest, then warn about the next room.
+    if (this.phase === 'active' && this.pendingSpawns === 0 && !this.pendingBoss && alive.length === 0) {
       this.clearedWaves = this.wave;
       const bonus = Math.round(this.wave * 3 * this.difficulty.shardMult);
       this.shards += bonus;
       this.arena.showFloatingText(player.x, player.y - 50, `WAVE ${this.wave} CLEARED  +${bonus} 🩸`, '#88ff44');
-      this.intermissionUntil = time + INTERMISSION_MS;
+      this.phase = 'rest';
+      this.phaseEndsAt = time + INTERMISSION_MS;
+      this.targetRoom = -1;
+      mansion.setTarget(-1);
       this.coopHooks?.onWaveCleared(this.wave, bonus);
       // Achievement — Plants vs Zombies: hold the line to wave 8 with a garden.
       if (this.wave >= PLANTS_VS_ZOMBIES_WAVE && this.arena.elementId === 'life') {
@@ -299,81 +395,103 @@ export class InvasionKit implements HuskWorld {
       }
     }
 
-    // Intermission over → next wave
-    if (this.intermissionUntil > 0 && time >= this.intermissionUntil) {
-      this.intermissionUntil = 0;
-      this.startWave(this.wave + 1, time);
+    // Rest over (or first-wave delay) → announce the next wave's target room.
+    if ((this.phase === 'rest' || this.phase === 'idle') && time >= this.phaseEndsAt && !this.ending) {
+      this.announceWave(this.wave + 1, time);
     }
 
-    // Trickle out this wave's spawns
-    while ((this.pendingSpawns > 0 || this.pendingBoss) && time >= this.nextSpawnAt) {
+    // Warning over → the husks arrive.
+    if (this.phase === 'warning' && time >= this.phaseEndsAt) {
+      this.beginWave(time);
+    }
+
+    // Trickle out this wave's spawns through the target room's windows.
+    while (this.phase === 'active' && (this.pendingSpawns > 0 || this.pendingBoss) && time >= this.nextSpawnAt) {
+      if (this.targetRoom < 0) { this.pendingSpawns = 0; this.pendingBoss = null; break; }
       if (this.pendingBoss) {
         const boss = this.pendingBoss;
         this.pendingBoss = null;
-        this.spawnHusk(boss);
+        this.spawnWaveHusk(boss);
         this.announceBoss(boss);
       } else {
         this.pendingSpawns--;
-        this.spawnHusk(rollHuskVariant(this.wave, this.difficulty.id, Math.random));
+        const struck = rollLightningVariant(this.wave, this.difficulty.id, Math.random, this.theme);
+        this.spawnWaveHusk(struck ?? BASIC_HUSK, !!struck);
       }
-      this.nextSpawnAt = time + Math.max(250, 900 - this.wave * 40);
+      this.nextSpawnAt = time + Math.max(600, 1800 - this.wave * 60);
     }
 
-    // Life's plants pull aggro: while any are standing, husks ignore the players.
-    const targets = this.currentTargets();
+    // Husks act. Each one only sees the fighters standing in its own room.
     const stalkerHunt = this.arena.silenceStalkerHunt();
+    const currentRoom = mansion.currentRoom;
     for (const husk of alive) {
-      husk.huntInvisibleTargets = stalkerHunt;
-      husk.update(targets, time, delta);
+      husk.huntInvisibleTargets = stalkerHunt && husk.roomIndex === currentRoom;
+      husk.update(this.targetsInRoom(husk.roomIndex), time, delta);
     }
 
-    this.updateShots(time, delta, targets);
+    this.effects?.update(time, delta);
+    this.updateShots(time, delta);
+    this.tickRoomPressure(time, alive);
+
+    // Mansion: door travel, door pulses, minimap (with live husk counts).
+    const counts = [0, 0, 0, 0, 0];
+    for (const h of alive) counts[h.roomIndex] = (counts[h.roomIndex] ?? 0) + 1;
+    mansion.update(time, player, counts);
 
     this.shardLabel?.setText(`🩸 ${this.shards}`);
     this.remaining = alive.length + this.pendingSpawns + (this.pendingBoss ? 1 : 0);
-    this.waveLabel?.setText(formatWaveLabel(this.wave, this.remaining));
+    const roomName = this.targetRoom >= 0
+      ? `${ROOM_META[this.targetRoom].emoji} ${ROOM_META[this.targetRoom].name}`
+      : undefined;
+    this.waveLabel?.setText(formatWaveLabel(this.wave, this.remaining, roomName));
   }
 
-  private livingHusks(): Husk[] {
-    return this.arena.enemies.filter((e): e is Husk => e instanceof Husk && e.active && e.hp > 0);
-  }
+  // ── Wave flow ─────────────────────────────────────────────────────
 
-  /** Who husks chase and shoot at right now (plants take priority over players). */
-  private currentTargets(): Fighter[] {
-    const plants = this.arena.plantTargets();
-    if (plants.length > 0) return plants;
-    const player = this.arena.player;
-    const locals = this.arena.isSilencePlayerHidden() ? [] : [player];
-    return this.coopHooks ? [...locals, ...this.coopHooks.extraTargets()] : locals;
-  }
+  private announceWave(waveNum: number, time: number): void {
+    const mansion = this.mansion!;
+    const standing = mansion.standingRooms();
+    if (standing.length === 0) return;
+    // The grand hall is fair game too — it just can't be gnawed down.
+    const candidates = [HALL_ROOM, ...standing];
+    // Prefer somewhere new, so the defence keeps you moving through the house.
+    const options = candidates.filter((r) => r !== this.lastTargetRoom);
+    const room = options[Math.floor(Math.random() * options.length)] ?? candidates[0];
 
-  /** Route husk-sourced damage to whichever fighter ate it (ally hits go over the wire). */
-  private damageTarget(target: Fighter, amount: number): void {
-    if (target === this.arena.player || this.arena.plantTargets().includes(target)) {
-      // Husks are the one thing that may hit a co-op player through their
-      // friendly-fire block.
-      Fighter.asNonAllyDamage(() => target.takeDamage(amount));
-      this.arena.spawnHitFlash(target.x, target.y, 0x88aa33);
-    } else {
-      // Co-op: hit the ally, not the local player — forward it to them.
-      this.coopHooks?.onAllyBite(amount, target.x, target.y);
-    }
-  }
-
-  private startWave(waveNum: number, time: number): void {
     this.wave = waveNum;
-    // Each wave is a small escalation, so the announcement climbs in pitch with
-    // the wave number and the music thickens alongside it.
+    this.targetRoom = room;
+    this.lastTargetRoom = room;
+    this.phase = 'warning';
+    this.phaseEndsAt = time + ROOM_WARNING_MS;
+    mansion.setTarget(room);
+    this.coopHooks?.onWaveAnnounced(waveNum, room);
+
     Sfx.play('countdown-go', { rate: Math.min(1.6, 0.9 + waveNum * 0.04) });
     Music.setIntensity(Math.min(1, 0.35 + waveNum * 0.05));
-    this.pendingSpawns = Math.round((4 + 3 * (waveNum - 1)) * (this.coopHooks?.spawnMultiplier ?? 1));
-    this.pendingBoss = isBossWave(waveNum) ? rollBossVariant(Math.random) : null;
+    this.showWaveWarning(waveNum, room);
+  }
+
+  /** Also used by the co-op guest so both players get the same warning. */
+  showWaveWarning(waveNum: number, room: number): void {
+    if (!this.waveBanner) return;
+    const meta = ROOM_META[room];
+    this.waveBanner
+      .setText(`WAVE ${waveNum}  —  ${meta.emoji} THEY'RE COMING FOR THE ${meta.name}!`)
+      .setFontSize(20).setColor('#ffcc66').setAlpha(1);
+    this.arena.scene.tweens.killTweensOf(this.waveBanner);
+    this.arena.scene.tweens.add({ targets: this.waveBanner, alpha: 0, delay: ROOM_WARNING_MS - 900, duration: 700 });
+  }
+
+  private beginWave(time: number): void {
+    this.phase = 'active';
+    this.pendingSpawns = Math.round((4 + 3 * (this.wave - 1)) * (this.coopHooks?.spawnMultiplier ?? 1));
+    this.pendingBoss = isBossWave(this.wave) ? rollBossVariant(Math.random) : null;
     this.nextSpawnAt = time;
 
     if (!this.waveBanner) return;
-    this.waveBanner.setText(`WAVE ${waveNum}`).setAlpha(1);
+    this.waveBanner.setText(`WAVE ${this.wave}`).setFontSize(28).setColor('#88cc44').setAlpha(1);
     this.arena.scene.tweens.killTweensOf(this.waveBanner);
-    this.arena.scene.tweens.add({ targets: this.waveBanner, alpha: 0, delay: 1600, duration: 600 });
+    this.arena.scene.tweens.add({ targets: this.waveBanner, alpha: 0, delay: 1400, duration: 600 });
   }
 
   private announceBoss(boss: HuskVariantDef): void {
@@ -395,40 +513,272 @@ export class InvasionKit implements HuskWorld {
     scene.cameras.main.shake(400, 0.006);
   }
 
-  private spawnHusk(variant: HuskVariantDef = BASIC_HUSK, at?: { x: number; y: number }): void {
-    const scene = this.arena.scene;
-    const pos = at ?? this.pickEdgeSpawn();
-    const hp = Math.round((16 + 7 * (this.wave - 1)) * this.difficulty.hpMult * HP_SCALE * variant.hpMult);
-    const baseSpeed = Math.min(185, 78 + 6 * (this.wave - 1));
-    const speed = Math.min(MAX_HUSK_SPEED, baseSpeed * variant.speedMult);
-    const biteDamage = Math.round((5 + Math.floor(this.wave / 2)) * this.difficulty.dmgMult * variant.damageMult);
+  // ── Room pressure ─────────────────────────────────────────────────
 
-    const husk = new Husk(scene, pos.x, pos.y, hp, speed, biteDamage, 950, variant);
+  /** Crowded rooms take damage: each husk over the limit gnaws at the walls. */
+  private tickRoomPressure(time: number, alive: Husk[]): void {
+    const mansion = this.mansion;
+    if (!mansion || this.ending || time < this.nextGnawTickAt) return;
+    this.nextGnawTickAt = time + 1000;
+
+    const counts = new Map<number, number>();
+    for (const h of alive) counts.set(h.roomIndex, (counts.get(h.roomIndex) ?? 0) + 1);
+
+    for (const [room, count] of counts) {
+      if (room === HALL_ROOM || mansion.lost[room]) continue;
+      const extra = count - ROOM_CROWD_LIMIT;
+      if (extra <= 0) continue;
+      const nowLost = mansion.damageRoom(room, extra * ROOM_GNAW_PER_EXTRA);
+      if (nowLost) {
+        this.onRoomLost(room);
+      } else if (time - this.lastGnawWarnAt > 4000) {
+        this.lastGnawWarnAt = time;
+        const meta = ROOM_META[room];
+        const player = this.arena.player;
+        this.arena.showFloatingText(player.x, player.y - 64,
+          `🏚️ THE ${meta.name} IS BEING TORN APART! (${Math.ceil(mansion.hp[room])}/${ROOM_MAX_HP})`, '#ff8855');
+        this.arena.scene.cameras.main.shake(120, 0.002);
+      }
+    }
+  }
+
+  private onRoomLost(room: number): void {
+    const mansion = this.mansion!;
+    const scene = this.arena.scene;
+    const meta = ROOM_META[room];
+    Sfx.play('boss-phase');
+    scene.cameras.main.shake(500, 0.008);
+    this.showRoomLostBanner(room);
+    this.coopHooks?.onRoomLost(room);
+
+    // Whatever was chewing on it wanders off into the dark — no rewards.
+    for (const h of this.livingHusks()) {
+      if (h.roomIndex !== room) continue;
+      h.noRewardKill = true;
+      this.effects?.unregister(h);
+      this.arena.removeEnemy(h);
+      h.hideHealthBar();
+      scene.tweens.add({
+        targets: h, alpha: 0, duration: 500,
+        onComplete: () => { if (h.scene) h.destroy(); },
+      });
+    }
+    // A wave aimed at the fallen room has nothing left to send.
+    if (this.targetRoom === room) {
+      this.pendingSpawns = 0;
+      this.pendingBoss = null;
+      this.targetRoom = -1;
+    }
+
+    if (mansion.allOuterRoomsLost()) {
+      this.ending = true;
+      const { width, height } = scene.scale;
+      const doom = scene.add.text(width / 2, height / 2 - 40, '🏚️ THE MANSION HAS FALLEN', {
+        fontSize: '34px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+        color: '#ff5544', stroke: '#000000', strokeThickness: 6,
+      }).setOrigin(0.5).setDepth(41);
+      scene.tweens.add({ targets: doom, scaleX: 1.15, scaleY: 1.15, duration: 1800 });
+      scene.time.delayedCall(2200, () => { doom.destroy(); this.arena.endRun(); });
+    }
+    void meta;
+  }
+
+  /** Also called on the guest side so both players mourn the same room. */
+  showRoomLostBanner(room: number): void {
+    const scene = this.arena.scene;
+    const { width } = scene.scale;
+    const meta = ROOM_META[room];
+    const text = scene.add.text(width / 2, WAVE_BANNER_Y + 40, `💥 THE ${meta.name} IS LOST`, {
+      fontSize: '26px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+      color: '#ff5544', stroke: '#220000', strokeThickness: 5,
+    }).setOrigin(0.5).setDepth(26);
+    scene.tweens.add({ targets: text, alpha: 0, delay: 1800, duration: 700, onComplete: () => text.destroy() });
+  }
+
+  // ── Targeting / rooms ─────────────────────────────────────────────
+
+  /** Public: also the effect engine's view of the field (EffectWorld). */
+  livingHusks(): Husk[] {
+    return this.arena.enemies.filter((e): e is Husk => e instanceof Husk && e.active && e.hp > 0);
+  }
+
+  /** Who a husk standing in `room` may chase and shoot at right now. */
+  private targetsInRoomInternal(room: number): Fighter[] {
+    const mansion = this.mansion;
+    const playerHere = mansion ? mansion.currentRoom === room : true;
+    // Life's plants pull aggro — but a garden only guards the room it's planted
+    // in, which is wherever its keeper is standing.
+    if (playerHere) {
+      const plants = this.arena.plantTargets();
+      if (plants.length > 0) return plants;
+    }
+    const out: Fighter[] = [];
+    if (playerHere && !this.arena.isSilencePlayerHidden()) out.push(this.arena.player);
+    if (this.coopHooks && this.allyRoom === room) out.push(...this.coopHooks.extraTargets());
+    return out;
+  }
+
+  /** Alive husks standing in `room`. */
+  private husksInRoom(room: number): number {
+    let n = 0;
+    for (const e of this.arena.enemies) {
+      if (e instanceof Husk && e.active && e.roomIndex === room) n++;
+    }
+    return n;
+  }
+
+  /** Route husk-sourced damage to whichever fighter ate it (ally hits go over the wire). */
+  private damageTargetInternal(target: Fighter, amount: number): void {
+    if (amount <= 0) return;
+    const isLocal = target === this.arena.player || this.arena.plantTargets().includes(target);
+    // Below pack size in the victim's room the husks are all bark — the
+    // lunges and shots still play, but nothing lands.
+    const room = isLocal ? (this.mansion?.currentRoom ?? 0) : this.allyRoom;
+    if (this.husksInRoom(room) < HUSK_DAMAGE_PACK_SIZE) return;
+    if (isLocal) {
+      // Husks are the one thing that may hit a co-op player through their
+      // friendly-fire block.
+      Fighter.asNonAllyDamage(() => target.takeDamage(amount));
+      this.arena.spawnHitFlash(target.x, target.y, 0x88aa33);
+    } else {
+      // Co-op: hit the ally, not the local player — forward it to them.
+      this.coopHooks?.onAllyBite(amount, target.x, target.y);
+    }
+  }
+
+  /**
+   * Room gate for ArenaScene: projectiles, colliders and kit AoEs should only
+   * touch husks standing in the room the local player is looking at.
+   */
+  isHuskTargetable(husk: Husk): boolean {
+    if (this.mansion) return husk.roomIndex === this.mansion.currentRoom;
+    if (this.guestRoom >= 0) return husk.roomIndex === this.guestRoom;
+    return true;
+  }
+
+  /** Co-op guest: InvasionCoopKit tells the kit which room the guest is viewing. */
+  setGuestRoom(room: number): void {
+    this.guestRoom = room;
+  }
+
+  /** Co-op host: the ally told us which room they're standing in. */
+  setAllyRoom(room: number): void {
+    this.allyRoom = room;
+  }
+
+  /** Elemental hazards (ice bites, oil slicks, gum trails) slowing the player. */
+  playerHazardSpeedMult(time: number): number {
+    return time < this.slowUntil ? this.slowMult : 1;
+  }
+
+  /** Mansion snapshot for the co-op wire: room HPs, lost mask, target. */
+  mansionState(): { hp: number[]; lost: number; target: number } {
+    const m = this.mansion;
+    if (!m) return { hp: [ROOM_MAX_HP, ROOM_MAX_HP, ROOM_MAX_HP, ROOM_MAX_HP], lost: 0, target: -1 };
+    let mask = 0;
+    for (let r = 1; r <= 4; r++) if (m.lost[r]) mask |= 1 << (r - 1);
+    return { hp: [m.hp[1], m.hp[2], m.hp[3], m.hp[4]], lost: mask, target: this.targetRoom };
+  }
+
+  /** Show/hide every husk (and its health bar) as the player changes rooms. */
+  private refreshRoomVisibility(): void {
+    const current = this.mansion?.currentRoom ?? 0;
+    for (const e of this.arena.enemies) {
+      if (!(e instanceof Husk) || !e.active) continue;
+      const inRoom = e.roomIndex === current;
+      e.setVisible(inRoom && !e.possessing);
+      e.setHealthBarVisible(inRoom && !e.possessing && e.hp > 0);
+    }
+    for (const s of this.shots) s.gfx.setVisible(s.room === current);
+  }
+
+  // ── Spawning ──────────────────────────────────────────────────────
+
+  private spawnWaveHusk(variant: HuskVariantDef, struck = false): void {
+    if (this.targetRoom < 0) return;
+    const pos = this.mansion!.windowSpawn(this.targetRoom, Math.random);
+    const husk = this.spawnHusk(variant, pos, this.targetRoom);
+    if (husk && struck) this.lightningFx(pos.x, pos.y, variant.color, this.targetRoom);
+  }
+
+  private spawnHusk(
+    variant: HuskVariantDef,
+    at: { x: number; y: number },
+    room: number,
+    opts: { hpFrac?: number; alpha?: number; noReward?: boolean } = {},
+  ): Husk | null {
+    const scene = this.arena.scene;
+    const hp = Math.max(1, Math.round(
+      BASE_HP * this.difficulty.hpMult * HP_SCALE * variant.hpMult * (opts.hpFrac ?? 1)));
+    const speed = Math.min(MAX_HUSK_SPEED, BASE_SPEED * variant.speedMult);
+    const biteDamage = Math.round(BASE_BITE * this.difficulty.dmgMult * variant.damageMult);
+
+    const husk = new Husk(scene, at.x, at.y, hp, speed, biteDamage, 950, variant);
     husk.netId = this.nextHuskId++;
     husk.world = this;
-    husk.onBite = (dmg, target) => this.damageTarget(target, dmg);
+    husk.roomIndex = room;
+    husk.noRewardKill = !!(opts.noReward || variant.noReward);
+    if (opts.alpha !== undefined) husk.setAlpha(opts.alpha);
+    husk.onBite = (dmg, target) => {
+      this.damageTargetInternal(target, dmg);
+      this.effects?.onBiteLanded(husk, target);
+    };
     husk.on('damaged', (amount: number) => {
-      if (amount > 0 && husk.active) this.arena.spawnDamageNumber(husk.x, husk.y - 20, amount);
+      if (amount > 0 && husk.active && husk.visible) this.arena.spawnDamageNumber(husk.x, husk.y - 20, amount);
     });
     husk.once('defeated', () => this.onHuskKilled(husk));
     this.arena.addEnemy(husk);
+    this.effects?.register(husk);
 
-    // Spawn poof
-    const poof = scene.add.circle(pos.x, pos.y, 26 * variant.sizeMult, variant.color, 0.5).setDepth(4);
-    scene.tweens.add({ targets: poof, scaleX: 0.2, scaleY: 0.2, alpha: 0, duration: 350, onComplete: () => poof.destroy() });
+    const inView = !this.mansion || this.mansion.currentRoom === room;
+    if (!inView) {
+      husk.setVisible(false);
+      husk.setHealthBarVisible(false);
+    } else {
+      // Spawn poof
+      const poof = scene.add.circle(at.x, at.y, 26 * variant.sizeMult, variant.color, 0.5).setDepth(4);
+      scene.tweens.add({ targets: poof, scaleX: 0.2, scaleY: 0.2, alpha: 0, duration: 350, onComplete: () => poof.destroy() });
+    }
+    return husk;
   }
 
-  /** Random point on one of the four arena edges, inside the physics bounds. */
-  private pickEdgeSpawn(): { x: number; y: number } {
-    const wb = (this.arena.scene as Phaser.Scene & { physics: Phaser.Physics.Arcade.ArcadePhysics }).physics.world.bounds;
-    const inset = 30;
-    const edge = Phaser.Math.Between(0, 3);
-    switch (edge) {
-      case 0: return { x: Phaser.Math.Between(wb.x + inset, wb.right - inset), y: wb.y + inset };
-      case 1: return { x: Phaser.Math.Between(wb.x + inset, wb.right - inset), y: wb.bottom - inset };
-      case 2: return { x: wb.x + inset, y: Phaser.Math.Between(wb.y + inset, wb.bottom - inset) };
-      default: return { x: wb.right - inset, y: Phaser.Math.Between(wb.y + inset, wb.bottom - inset) };
+  /**
+   * The elemental lightning. A jagged bolt from the ceiling in the element's
+   * colour, a flash, and the fresh husk stands branded.
+   */
+  private lightningFx(x: number, y: number, color: number, room: number): void {
+    this.coopHooks?.onFx({ k: 'bolt', x, y, c: color, rm: room });
+    if (this.mansion && this.mansion.currentRoom !== room) return;
+    this.drawLightning(x, y, color);
+  }
+
+  /** Also replayed on the co-op guest. */
+  drawLightning(x: number, y: number, color: number): void {
+    const scene = this.arena.scene;
+    const g = scene.add.graphics().setDepth(8);
+    let px = x + Phaser.Math.Between(-30, 30);
+    let py = 0;
+    g.lineStyle(4, 0xffffff, 0.9);
+    g.beginPath();
+    g.moveTo(px, py);
+    while (py < y - 14) {
+      px += Phaser.Math.Between(-22, 22);
+      py += Phaser.Math.Between(24, 44);
+      g.lineTo(Math.min(px, x + 60), Math.min(py, y));
     }
+    g.lineTo(x, y);
+    g.strokePath();
+    g.lineStyle(2, color, 1);
+    g.beginPath();
+    g.moveTo(x + Phaser.Math.Between(-26, 26), 0);
+    g.lineTo(x, y);
+    g.strokePath();
+    const flash = scene.add.circle(x, y, 34, color, 0.75).setDepth(8);
+    scene.cameras.main.flash(120, 255, 255, 255);
+    scene.tweens.add({
+      targets: [g, flash], alpha: 0, duration: 260,
+      onComplete: () => { g.destroy(); flash.destroy(); },
+    });
   }
 
   private onHuskKilled(husk: Husk): void {
@@ -440,13 +790,21 @@ export class InvasionKit implements HuskWorld {
     if (husk.possessing) { husk.possessing.possessedBy = null; husk.possessing = null; }
 
     if (husk.variant.explodes) this.detonate(husk);
+    this.effects?.onHuskDeath(husk);
+    this.effects?.unregister(husk);
 
-    const base = 1 + Math.floor((this.wave - 1) / 3);
-    const reward = Math.round(base * this.difficulty.shardMult * (husk.variant.isBoss ? 10 : 1));
-    this.shards += reward;
-    this.arena.showFloatingText(husk.x, husk.y - 30, `+${reward} 🩸`, '#cc44ff');
-    this.coopHooks?.onHuskDefeated(husk, reward);
-    this.arena.notifyHuskDefeated?.(husk);
+    if (!husk.noRewardKill) {
+      const base = 1 + Math.floor((this.wave - 1) / 3);
+      // Fortune husks are walking purses — twice the shards if you can pin one.
+      const gild = husk.variant.elementId === 'fortune' ? 2 : 1;
+      const reward = Math.round(base * this.difficulty.shardMult * (husk.variant.isBoss ? 10 : 1) * gild);
+      this.shards += reward;
+      if (husk.visible) this.arena.showFloatingText(husk.x, husk.y - 30, `+${reward} 🩸`, '#cc44ff');
+      this.coopHooks?.onHuskDefeated(husk, reward);
+      this.arena.notifyHuskDefeated?.(husk);
+    } else {
+      this.coopHooks?.onHuskDefeated(husk, 0);
+    }
     husk.hideHealthBar();
     husk.setTint(0x334411);
     this.arena.scene.tweens.add({
@@ -460,18 +818,19 @@ export class InvasionKit implements HuskWorld {
     });
   }
 
-  /** Blaster death blast — hurts players *and* other husks caught in it. */
+  /** Explosive death blast — hurts players *and* other husks caught in it. */
   private detonate(blaster: Husk): void {
     const r = BLASTER_BOOM_RADIUS;
     const dmg = blaster.biteDamage * 2;
-    this.boomVisual(blaster.x, blaster.y, r, 0xff5522);
-    this.coopHooks?.onFx({ k: 'boom', x: blaster.x, y: blaster.y, r });
+    const room = blaster.roomIndex;
+    if (!this.mansion || this.mansion.currentRoom === room) this.boomVisual(blaster.x, blaster.y, r, 0xff5522);
+    this.coopHooks?.onFx({ k: 'boom', x: blaster.x, y: blaster.y, r, rm: room });
 
-    for (const t of this.currentTargets()) {
-      if (Phaser.Math.Distance.Between(blaster.x, blaster.y, t.x, t.y) <= r) this.damageTarget(t, dmg);
+    for (const t of this.targetsInRoomInternal(room)) {
+      if (Phaser.Math.Distance.Between(blaster.x, blaster.y, t.x, t.y) <= r) this.damageTargetInternal(t, dmg);
     }
     for (const other of this.livingHusks()) {
-      if (other === blaster) continue;
+      if (other === blaster || other.roomIndex !== room) continue;
       if (Phaser.Math.Distance.Between(blaster.x, blaster.y, other.x, other.y) <= r) {
         other.takeDamage(Math.round(dmg * BLASTER_HUSK_DAMAGE_FRAC));
       }
@@ -485,17 +844,71 @@ export class InvasionKit implements HuskWorld {
     scene.cameras.main.shake(160, 0.004);
   }
 
+  // ── EffectWorld (the elemental effect engine's window on the arena) ──
+
+  get scene(): Phaser.Scene { return this.arena.scene; }
+
+  targetsInRoom(room: number): Fighter[] {
+    return this.targetsInRoomInternal(room);
+  }
+
+  damageTarget(target: Fighter, amount: number): void {
+    this.damageTargetInternal(target, amount);
+  }
+
+  roomOf(husk: Husk): number {
+    return husk.roomIndex;
+  }
+
+  currentRoom(): number {
+    return this.mansion?.currentRoom ?? 0;
+  }
+
+  showFloatingText(x: number, y: number, text: string, color: string): void {
+    this.arena.showFloatingText(x, y, text, color);
+  }
+
+  slowPlayer(mult: number, ms: number): void {
+    const now = this.arena.scene.time.now;
+    if (now >= this.slowUntil) this.slowMult = 1;
+    this.slowMult = Math.min(this.slowMult, mult);
+    this.slowUntil = Math.max(this.slowUntil, now + ms);
+  }
+
+  spawnChild(
+    variant: HuskVariantDef,
+    x: number,
+    y: number,
+    room: number,
+    opts: { hpFrac?: number; alpha?: number; noReward?: boolean } = {},
+  ): Husk | null {
+    if (this.livingHusks().length >= MAX_LIVE_HUSKS) return null;
+    return this.spawnHusk(variant, { x, y }, room, opts);
+  }
+
+  mirrorZone(x: number, y: number, r: number, color: number, ms: number, room: number): void {
+    this.coopHooks?.onFx({ k: 'zone', x, y, r, c: color, ms, rm: room });
+  }
+
   // ── HuskWorld (variant world-effects) ────────────────────────────
 
   fireShot(from: Husk, tx: number, ty: number, damage: number): void {
     const scene = this.arena.scene;
+    const elementId = from.variant.elementId;
+    const speed = elementId === 'psychic' ? HOMING_SHOT_SPEED : SHOT_SPEED;
     const ang = Math.atan2(ty - from.y, tx - from.x);
-    const vx = Math.cos(ang) * SHOT_SPEED;
-    const vy = Math.sin(ang) * SHOT_SPEED;
+    const vx = Math.cos(ang) * speed;
+    const vy = Math.sin(ang) * speed;
     const gfx = scene.add.circle(from.x, from.y, SHOT_RADIUS, from.variant.color, 1)
       .setDepth(7).setStrokeStyle(2, 0x220022, 0.8);
-    this.shots.push({ gfx, vx, vy, damage, expiresAt: scene.time.now + SHOT_LIFETIME_MS });
-    this.coopHooks?.onFx({ k: 'shot', x: from.x, y: from.y, vx, vy, ms: SHOT_LIFETIME_MS });
+    if (this.mansion && this.mansion.currentRoom !== from.roomIndex) gfx.setVisible(false);
+    this.shots.push({
+      gfx, vx, vy, damage,
+      expiresAt: scene.time.now + SHOT_LIFETIME_MS,
+      room: from.roomIndex,
+      elementId,
+    });
+    this.coopHooks?.onFx({ k: 'shot', x: from.x, y: from.y, vx, vy, ms: SHOT_LIFETIME_MS, rm: from.roomIndex });
   }
 
   summon(count: number, x: number, y: number): void {
@@ -506,32 +919,51 @@ export class InvasionKit implements HuskWorld {
     if (alive >= MAX_LIVE_HUSKS) return;
     count = Math.min(count, MAX_LIVE_HUSKS - alive);
 
+    // The titan calls its dead up wherever it stands, in its own room.
+    const titan = this.livingHusks().find((h) => h.x === x && h.y === y);
+    const room = titan?.roomIndex ?? this.targetRoom;
+    if (room < 0) return;
+    const wb = (this.arena.scene as Phaser.Scene & { physics: Phaser.Physics.Arcade.ArcadePhysics }).physics.world.bounds;
     for (let i = 0; i < count; i++) {
       const ang = (Math.PI * 2 * i) / count + Math.random() * 0.4;
       const d = 70 + Math.random() * 40;
-      this.spawnHusk(BASIC_HUSK, { x: x + Math.cos(ang) * d, y: y + Math.sin(ang) * d });
+      this.spawnHusk(BASIC_HUSK, {
+        x: Phaser.Math.Clamp(x + Math.cos(ang) * d, wb.x + 40, wb.right - 40),
+        y: Phaser.Math.Clamp(y + Math.sin(ang) * d, wb.y + 40, wb.bottom - 40),
+      }, room);
     }
-    this.arena.showFloatingText(x, y - 50, 'SUMMON!', '#bb88ff');
+    if (!this.mansion || this.mansion.currentRoom === room) {
+      this.arena.showFloatingText(x, y - 50, 'SUMMON!', '#bb88ff');
+    }
   }
 
   healNearbyHusks(source: Husk, radius: number, frac: number): void {
     const scene = this.arena.scene;
-    const ring = scene.add.circle(source.x, source.y, radius, 0x66ff88, 0.18).setDepth(3).setScale(0.4);
-    scene.tweens.add({ targets: ring, scaleX: 1, scaleY: 1, alpha: 0, duration: 500, onComplete: () => ring.destroy() });
-    this.coopHooks?.onFx({ k: 'heal', x: source.x, y: source.y, r: radius });
+    if (!this.mansion || this.mansion.currentRoom === source.roomIndex) {
+      const ring = scene.add.circle(source.x, source.y, radius, 0x66ff88, 0.18).setDepth(3).setScale(0.4);
+      scene.tweens.add({ targets: ring, scaleX: 1, scaleY: 1, alpha: 0, duration: 500, onComplete: () => ring.destroy() });
+    }
+    this.coopHooks?.onFx({ k: 'heal', x: source.x, y: source.y, r: radius, rm: source.roomIndex });
 
     for (const other of this.livingHusks()) {
-      if (other === source || other.hp >= other.maxHp) continue;
+      if (other === source || other.hp >= other.maxHp || other.roomIndex !== source.roomIndex) continue;
       if (this.arena.scene.time.now < other.purgedUntil) continue;
       if (Phaser.Math.Distance.Between(source.x, source.y, other.x, other.y) > radius) continue;
       other.heal(Math.max(1, Math.round(other.maxHp * frac)));
-      this.arena.showFloatingText(other.x, other.y - 26, '+', '#66ff88');
+      if (other.visible) this.arena.showFloatingText(other.x, other.y - 26, '+', '#66ff88');
     }
   }
 
   telegraph(x1: number, y1: number, x2: number, y2: number, color: number, durationMs: number): void {
-    this.drawLane(x1, y1, x2, y2, color, durationMs);
-    this.coopHooks?.onFx({ k: 'lane', x: x1, y: y1, x2, y2, c: color, ms: durationMs });
+    // The lane starts under the charger's feet — recover its room from that.
+    let room = this.currentRoom();
+    let bestDist = Infinity;
+    for (const h of this.livingHusks()) {
+      const d = Phaser.Math.Distance.Between(h.x, h.y, x1, y1);
+      if (d < bestDist) { bestDist = d; room = h.roomIndex; }
+    }
+    if (!this.mansion || this.mansion.currentRoom === room) this.drawLane(x1, y1, x2, y2, color, durationMs);
+    this.coopHooks?.onFx({ k: 'lane', x: x1, y: y1, x2, y2, c: color, ms: durationMs, rm: room });
   }
 
   /** Also called on the guest side to replay a rusher telegraph. */
@@ -552,7 +984,7 @@ export class InvasionKit implements HuskWorld {
     let best: Husk | null = null;
     let bestDist = Infinity;
     for (const h of this.livingHusks()) {
-      if (h === demon || h.variant.isBoss || h.possessedBy) continue;
+      if (h === demon || h.variant.isBoss || h.possessedBy || h.roomIndex !== demon.roomIndex) continue;
       const d = Phaser.Math.Distance.Between(demon.x, demon.y, h.x, h.y);
       if (d < bestDist) { bestDist = d; best = h; }
     }
@@ -575,28 +1007,43 @@ export class InvasionKit implements HuskWorld {
     demon.setVisible(false);
     demon.hideHealthBar();
 
-    this.arena.showFloatingText(victim.x, victim.y - 44, 'POSSESSED!', '#ff4466');
-    this.boomVisual(victim.x, victim.y, 60, 0x880022);
-    this.coopHooks?.onFx({ k: 'possess', x: victim.x, y: victim.y });
+    if (victim.visible) this.arena.showFloatingText(victim.x, victim.y - 44, 'POSSESSED!', '#ff4466');
+    if (!this.mansion || this.mansion.currentRoom === victim.roomIndex) this.boomVisual(victim.x, victim.y, 60, 0x880022);
+    this.coopHooks?.onFx({ k: 'possess', x: victim.x, y: victim.y, rm: victim.roomIndex });
   }
 
   // ── Husk projectiles ─────────────────────────────────────────────
 
-  private updateShots(time: number, delta: number, targets: Fighter[]): void {
+  private updateShots(time: number, delta: number): void {
     if (this.shots.length === 0) return;
     const dt = delta / 1000;
     const wb = (this.arena.scene as Phaser.Scene & { physics: Phaser.Physics.Arcade.ArcadePhysics }).physics.world.bounds;
+    const current = this.currentRoom();
 
     for (let i = this.shots.length - 1; i >= 0; i--) {
       const s = this.shots[i];
+      const targets = this.targetsInRoomInternal(s.room);
+
+      // Psychic orbs bend toward the nearest thing they can see.
+      if (s.elementId === 'psychic' && targets.length > 0) {
+        const t = targets[0];
+        const want = Math.atan2(t.y - s.gfx.y, t.x - s.gfx.x);
+        const have = Math.atan2(s.vy, s.vx);
+        const turn = Phaser.Math.Angle.RotateTo(have, want, HOMING_TURN_RAD_PER_S * dt);
+        const spd = Math.hypot(s.vx, s.vy);
+        s.vx = Math.cos(turn) * spd;
+        s.vy = Math.sin(turn) * spd;
+      }
+
       s.gfx.x += s.vx * dt;
       s.gfx.y += s.vy * dt;
+      s.gfx.setVisible(s.room === current);
 
       let done = time >= s.expiresAt
         || s.gfx.x < wb.x || s.gfx.x > wb.right || s.gfx.y < wb.y || s.gfx.y > wb.bottom;
 
       // Blind-fire shots can clip a silence stalker — one hit kills it.
-      if (!done && this.arena.tryHitSilenceStalker(s.gfx.x, s.gfx.y, SHOT_HIT_RADIUS)) done = true;
+      if (!done && s.room === current && this.arena.tryHitSilenceStalker(s.gfx.x, s.gfx.y, SHOT_HIT_RADIUS)) done = true;
 
       if (!done) {
         for (const t of targets) {
@@ -605,7 +1052,7 @@ export class InvasionKit implements HuskWorld {
           if (t.projectilePhase) continue;
           if (Phaser.Math.Distance.Between(s.gfx.x, s.gfx.y, t.x, t.y)
               <= SHOT_HIT_RADIUS + 22 * t.sizeMult * t.shapeSizeMult) {
-            this.damageTarget(t, s.damage);
+            this.damageTargetInternal(t, s.damage);
             done = true;
             break;
           }
@@ -613,6 +1060,10 @@ export class InvasionKit implements HuskWorld {
       }
 
       if (done) {
+        // Depths shots burst into a brief tidepool where they land.
+        if (s.elementId === 'depths' && time < s.expiresAt) {
+          this.effects?.spawnZone(s.gfx.x, s.gfx.y, 30, 0x0e8f9c, s.room, 2600, { tickDamage: 2 });
+        }
         s.gfx.destroy();
         this.shots.splice(i, 1);
       }

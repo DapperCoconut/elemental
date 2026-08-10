@@ -3,8 +3,9 @@ import { Fighter } from '../entities/Fighter';
 import { CastContext } from '../elements/Ability';
 import { Net, NetMsg, NetHuskState } from '../network/NetworkManager';
 import { Husk } from './Husk';
-import { InvasionKit, InvasionDifficultyDef, INVASION_DIFFICULTIES, WAVE_LABEL_Y, formatWaveLabel, InvasionFx } from './InvasionKit';
+import { InvasionKit, InvasionDifficultyDef, INVASION_DIFFICULTIES, WAVE_LABEL_Y, WAVE_BANNER_Y, formatWaveLabel, InvasionFx } from './InvasionKit';
 import { huskVariantFromIndex, huskVariantIndex } from './HuskVariants';
+import { Mansion, ROOM_META } from './Mansion';
 
 /** Narrow surface the invasion co-op kit needs from ArenaScene. */
 export interface InvasionCoopArenaApi {
@@ -57,6 +58,7 @@ interface GhostShot {
   vx: number;
   vy: number;
   expiresAt: number;
+  room: number;
 }
 
 /**
@@ -96,6 +98,13 @@ export class InvasionCoopKit {
   private wave = 0;
   private shards = 0;
   private remaining = 0;
+  /** The room the OTHER player is standing in (from their state packets). */
+  private remoteRoom = 0;
+  /** Guest-side mansion: layout, doors and minimap; HP fed from the host's snaps. */
+  private guestMansion: Mansion | null = null;
+  /** Guest-side cosmetic layer: orbitals/auras on replicas the host simulates. */
+  private replicaFxG: Phaser.GameObjects.Graphics | null = null;
+  private orbitAngle = 0;
 
   private downedBanner: Phaser.GameObjects.Text | null = null;
   private reviveHint: Phaser.GameObjects.Text | null = null;
@@ -147,6 +156,12 @@ export class InvasionCoopKit {
     onBossSpawned: (name: string, color: string) => {
       Net.send({ t: 'boss', name, color });
     },
+    onWaveAnnounced: (wave: number, room: number) => {
+      Net.send({ t: 'waveWarn', wave, room });
+    },
+    onRoomLost: (room: number) => {
+      Net.send({ t: 'roomLost', room });
+    },
   };
 
   constructor(private api: InvasionCoopArenaApi) {}
@@ -169,11 +184,30 @@ export class InvasionCoopKit {
     this.wave = 0;
     this.shards = 0;
     this.remaining = 0;
+    this.remoteRoom = 0;
 
     for (const rep of this.huskReplicas.values()) { this.api.removeEnemy(rep.husk); rep.husk.destroy(); }
     this.huskReplicas.clear();
     for (const s of this.ghostShots) s.gfx.destroy();
     this.ghostShots = [];
+
+    // The guest walks its own copy of the mansion (layout and travel are
+    // deterministic); only room HP/loss/target arrive from the host's snaps.
+    if (!isHost) {
+      if (!this.guestMansion) {
+        this.guestMansion = new Mansion(this.api.scene, {
+          onRoomChanged: (room) => {
+            this.api.invasionKit.setGuestRoom(room);
+            this.refreshReplicaVisibility();
+            this.sendState(true);
+          },
+        });
+      }
+      this.guestMansion.reset();
+      this.api.invasionKit.setGuestRoom(this.guestMansion.currentRoom);
+      this.replicaFxG?.destroy();
+      this.replicaFxG = this.api.scene.add.graphics().setDepth(3.5);
+    }
 
     this.api.npc.netGhost = true;
     this.api.npc.downed = false;
@@ -211,7 +245,18 @@ export class InvasionCoopKit {
         this.api.player.off('defeated', this.onLocalDefeated);
       }
     }
+    this.guestMansion?.destroyHud();
+    this.guestMansion = null;
+    this.replicaFxG?.destroy();
+    this.replicaFxG = null;
     this.destroyHud();
+  }
+
+  /** The room the LOCAL player is looking at, on either side of the wire. */
+  private myRoom(): number {
+    return this.isHost
+      ? this.api.invasionKit.currentRoom()
+      : (this.guestMansion?.currentRoom ?? 0);
   }
 
   /** Per-frame update. */
@@ -227,6 +272,22 @@ export class InvasionCoopKit {
     } else {
       this.interpolateHuskReplicas();
       this.updateGhostShots(delta);
+      // Guest mansion: door travel, door pulses and the minimap husk counts.
+      if (this.guestMansion) {
+        const counts = [0, 0, 0, 0, 0];
+        for (const rep of this.huskReplicas.values()) {
+          if (rep.husk.active) counts[rep.husk.roomIndex] = (counts[rep.husk.roomIndex] ?? 0) + 1;
+        }
+        this.guestMansion.update(time, this.api.player, counts);
+      }
+      this.drawReplicaFx(time, delta);
+    }
+
+    // The ally replica only shows when you're both in the same room.
+    const sameRoom = this.remoteRoom === this.myRoom();
+    if (this.api.npc.visible !== sameRoom) {
+      this.api.npc.setVisible(sameRoom);
+      this.api.npc.setHealthBarVisible(sameRoom);
     }
 
     this.updateRevive(delta);
@@ -299,6 +360,7 @@ export class InvasionCoopKit {
       shieldHp: p.shieldHp,
       shieldCharges: p.shieldCharges,
       downed: this.localDowned,
+      room: this.myRoom(),
     });
   }
 
@@ -319,6 +381,7 @@ export class InvasionCoopKit {
         maxHp: h.maxHp,
         v: huskVariantIndex(h.variant),
         p: !!h.possessedBy,
+        r: h.roomIndex,
       }));
     Net.send({
       t: 'huskSnap',
@@ -328,6 +391,7 @@ export class InvasionCoopKit {
       // the host's instead of ticking up as the wave trickles in.
       remaining: this.api.invasionKit.remainingThisWave,
       husks,
+      m: this.api.invasionKit.mansionState(),
     });
   }
 
@@ -354,10 +418,12 @@ export class InvasionCoopKit {
   /**
    * Replay a host-side husk effect locally. Every branch here is cosmetic:
    * damage from explosions and shots is resolved on the host and arrives
-   * separately as an 'allyBite'.
+   * separately as an 'allyBite'. Effects stamped with a room the guest isn't
+   * looking at are skipped outright.
    */
   private playFx(fx: InvasionFx): void {
     const scene = this.api.scene;
+    if (fx.rm !== undefined && fx.rm !== this.myRoom()) return;
     switch (fx.k) {
       case 'boom': {
         const ring = scene.add.circle(fx.x, fx.y, fx.r, 0xff5522, 0.45).setDepth(6).setScale(0.25);
@@ -375,13 +441,24 @@ export class InvasionCoopKit {
         break;
       case 'shot': {
         const gfx = scene.add.circle(fx.x, fx.y, 7, 0x9944cc, 1).setDepth(7).setStrokeStyle(2, 0x220022, 0.8);
-        this.ghostShots.push({ gfx, vx: fx.vx, vy: fx.vy, expiresAt: Date.now() + fx.ms });
+        this.ghostShots.push({ gfx, vx: fx.vx, vy: fx.vy, expiresAt: Date.now() + fx.ms, room: fx.rm ?? this.myRoom() });
         break;
       }
       case 'possess': {
         const ring = scene.add.circle(fx.x, fx.y, 60, 0x880022, 0.45).setDepth(6).setScale(0.25);
         scene.tweens.add({ targets: ring, scaleX: 1, scaleY: 1, alpha: 0, duration: 320, onComplete: () => ring.destroy() });
         this.api.showFloatingText(fx.x, fx.y - 44, 'POSSESSED!', '#ff4466');
+        break;
+      }
+      case 'bolt':
+        this.api.invasionKit.drawLightning(fx.x, fx.y, fx.c);
+        break;
+      case 'zone': {
+        const zone = scene.add.circle(fx.x, fx.y, fx.r, fx.c, 0.22).setDepth(3.5);
+        scene.tweens.add({
+          targets: zone, alpha: 0, duration: Math.min(fx.ms, 5000),
+          onComplete: () => zone.destroy(),
+        });
         break;
       }
     }
@@ -392,19 +469,78 @@ export class InvasionCoopKit {
     if (this.ghostShots.length === 0) return;
     const dt = delta / 1000;
     const now = Date.now();
+    const room = this.myRoom();
     for (let i = this.ghostShots.length - 1; i >= 0; i--) {
       const s = this.ghostShots[i];
       s.gfx.x += s.vx * dt;
       s.gfx.y += s.vy * dt;
+      s.gfx.setVisible(s.room === room);
       // Pop it on contact so the visual lands with the host's damage report,
       // rather than sailing on through whoever it just hit.
-      const hit = [this.api.player, this.api.npc].some((f) =>
+      const hit = s.room === room && [this.api.player, this.api.npc].some((f) =>
         f.active && f.hp > 0 && Phaser.Math.Distance.Between(s.gfx.x, s.gfx.y, f.x, f.y) <= 22 + 22 * f.sizeMult);
       if (hit || now >= s.expiresAt) {
         s.gfx.destroy();
         this.ghostShots.splice(i, 1);
       }
     }
+  }
+
+  /** Re-gate every replica's visibility after the guest walks through a door. */
+  private refreshReplicaVisibility(): void {
+    const room = this.myRoom();
+    for (const rep of this.huskReplicas.values()) {
+      if (!rep.husk.active) continue;
+      const inRoom = rep.husk.roomIndex === room;
+      rep.husk.setVisible(inRoom);
+      rep.husk.setHealthBarVisible(inRoom && rep.husk.hp > 0);
+    }
+  }
+
+  /**
+   * Guest-side cosmetic layer: the host simulates orbitals and auras, but
+   * their damage arrives as plain 'allyBite's — draw the shapes locally so the
+   * guest can at least see what's hitting them.
+   */
+  private drawReplicaFx(time: number, delta: number): void {
+    const g = this.replicaFxG;
+    if (!g) return;
+    g.clear();
+    this.orbitAngle += (delta / 1000) * 2.4;
+    const room = this.myRoom();
+    for (const rep of this.huskReplicas.values()) {
+      const h = rep.husk;
+      if (!h.active || h.hp <= 0 || h.roomIndex !== room) continue;
+      const el = h.variant.elementId;
+      if (el === 'gravity' || el === 'magnet') {
+        const count = el === 'magnet' ? 3 : 2;
+        const radius = el === 'magnet' ? 62 : 52;
+        for (let i = 0; i < count; i++) {
+          const a = this.orbitAngle + (i / count) * Math.PI * 2;
+          g.fillStyle(el === 'magnet' ? 0xcc2244 : 0x8844cc, 0.85);
+          g.fillCircle(h.x + Math.cos(a) * radius, h.y + Math.sin(a) * radius, 8);
+        }
+      } else if (el === 'radiation') {
+        g.lineStyle(2, 0x7cff3d, 0.25 + Math.sin(time / 200) * 0.12);
+        g.strokeCircle(h.x, h.y, 84);
+      } else if (el === 'conquest') {
+        g.lineStyle(2, 0xc23a2e, 0.3);
+        g.strokeCircle(h.x, h.y, 140);
+      }
+    }
+  }
+
+  /** Guest-side wave warning — the host's own banner lives inside InvasionKit. */
+  private showGuestWarning(wave: number, room: number): void {
+    const scene = this.api.scene;
+    const meta = ROOM_META[room];
+    const { width } = scene.scale;
+    const text = scene.add.text(width / 2, WAVE_BANNER_Y,
+      `WAVE ${wave}  —  ${meta.emoji} THEY'RE COMING FOR THE ${meta.name}!`, {
+        fontSize: '20px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+        color: '#ffcc66', stroke: '#1d2e0f', strokeThickness: 4,
+      }).setOrigin(0.5).setDepth(25);
+    scene.tweens.add({ targets: text, alpha: 0, delay: 4200, duration: 700, onComplete: () => text.destroy() });
   }
 
   /**
@@ -443,6 +579,13 @@ export class InvasionCoopKit {
       this.reviveHint?.setText('');
       return;
     }
+    // Rooms share screen coordinates, so a bare distance check could "revive
+    // through a wall" — the two of you must actually be in the same room.
+    if (this.remoteRoom !== this.myRoom()) {
+      this.reviveProgress = 0;
+      this.reviveHint?.setText('Your ally is down in another room!');
+      return;
+    }
     const dist = Phaser.Math.Distance.Between(this.api.player.x, this.api.player.y, this.api.npc.x, this.api.npc.y);
     if (dist > REVIVE_RADIUS) {
       this.reviveProgress = 0;
@@ -476,8 +619,12 @@ export class InvasionCoopKit {
     this.wave = msg.wave;
     this.shards = msg.shards;
     this.remaining = msg.remaining;
+    if (msg.m && this.guestMansion) {
+      this.guestMansion.applyRemoteState(msg.m.hp, msg.m.lost, msg.m.target);
+    }
     this.updateGuestHud();
 
+    const myRoom = this.myRoom();
     const seen = new Set<number>();
     for (const hs of msg.husks) {
       seen.add(hs.id);
@@ -488,17 +635,28 @@ export class InvasionCoopKit {
         husk.netId = hs.id;
         husk.netGhost = true;
         husk.hp = hs.hp;
+        husk.roomIndex = hs.r ?? 0;
         if (hs.p) husk.setTint(0xaa1133);
         husk.onGhostDamage = (amount) => {
           Net.send({ t: 'huskDamage', id: hs.id, amount });
-          this.api.spawnDamageNumber(husk.x, husk.y - 20, amount);
+          if (husk.visible) this.api.spawnDamageNumber(husk.x, husk.y - 20, amount);
         };
         husk.onGhostStatus = (s) => Net.send({ t: 'huskStatus', id: hs.id, s });
         this.api.addEnemy(husk);
+        if (husk.roomIndex !== myRoom) {
+          husk.setVisible(false);
+          husk.setHealthBarVisible(false);
+        }
         this.huskReplicas.set(hs.id, { husk, targetX: hs.x, targetY: hs.y, possessed: !!hs.p });
       } else {
         rep.targetX = hs.x;
         rep.targetY = hs.y;
+        rep.husk.roomIndex = hs.r ?? 0;
+        const inRoom = rep.husk.roomIndex === myRoom;
+        if (rep.husk.visible !== inRoom) {
+          rep.husk.setVisible(inRoom);
+          rep.husk.setHealthBarVisible(inRoom && rep.husk.hp > 0);
+        }
         rep.husk.netSyncVitals(hs.hp, hs.maxHp, 0, 0);
         // Possession can start or end mid-life; keep the tint in step.
         if (rep.possessed !== !!hs.p) {
@@ -544,6 +702,8 @@ export class InvasionCoopKit {
         this.api.npc.netSyncVitals(msg.hp, msg.maxHp, msg.shieldHp, msg.shieldCharges);
         this.allyDowned = msg.downed ?? false;
         this.api.npc.downed = this.allyDowned;
+        this.remoteRoom = msg.room ?? 0;
+        if (this.isHost) this.api.invasionKit.setAllyRoom(this.remoteRoom);
         break;
       }
       case 'cast':
@@ -581,6 +741,18 @@ export class InvasionCoopKit {
         break;
       case 'boss':
         if (!this.isHost) this.api.invasionKit.showBossBanner(msg.name, msg.color);
+        break;
+      case 'waveWarn':
+        if (!this.isHost) {
+          this.guestMansion?.setTarget(msg.room);
+          this.showGuestWarning(msg.wave, msg.room);
+        }
+        break;
+      case 'roomLost':
+        if (!this.isHost) {
+          this.api.invasionKit.showRoomLostBanner(msg.room);
+          this.api.scene.cameras.main.shake(500, 0.008);
+        }
         break;
       case 'allyBite':
         // A husk on the host's sim bit us — hostile, so it goes through the block.
@@ -647,7 +819,9 @@ export class InvasionCoopKit {
   }
 
   private updateGuestHud(): void {
-    this.waveLabel?.setText(formatWaveLabel(this.wave, this.remaining));
+    const target = this.guestMansion?.targetRoom ?? -1;
+    const roomName = target >= 0 ? `${ROOM_META[target].emoji} ${ROOM_META[target].name}` : undefined;
+    this.waveLabel?.setText(formatWaveLabel(this.wave, this.remaining, roomName));
     this.shardLabel?.setText(`🩸 ${this.shards}`);
   }
 

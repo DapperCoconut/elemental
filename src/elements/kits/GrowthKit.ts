@@ -1167,9 +1167,9 @@ export class GrowthKit {
 
     if (this.evolveOpen) {
       if (pointer.leftButtonDown() && !pointerWasDown) {
-        this.handleEvolveClick(pointer.x, pointer.y, false);
+        this.handleEvolveClick(pointer.worldX, pointer.worldY, false);
       } else if (pointer.rightButtonDown() && !this.evolveRightWasDown) {
-        this.handleEvolveClick(pointer.x, pointer.y, true);
+        this.handleEvolveClick(pointer.worldX, pointer.worldY, true);
       }
       this.evolveRightWasDown = pointer.rightButtonDown();
       if (Phaser.Input.Keyboard.JustDown(eKey)) this.closeEvolve();

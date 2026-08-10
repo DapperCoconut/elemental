@@ -41,7 +41,10 @@ interface TrackDef {
   swing?: number;
 }
 
-type VoiceName = 'kick' | 'snare' | 'hat' | 'bass' | 'arp' | 'pad' | 'lead' | 'pulse' | 'toms';
+type VoiceName =
+  | 'kick' | 'snare' | 'hat' | 'bass' | 'arp' | 'pad' | 'lead' | 'pulse' | 'toms'
+  // The haunted-mansion voices — only the invasion track uses them.
+  | 'drone' | 'bell' | 'wail';
 
 export type TrackName =
   | 'title' | 'menu' | 'shop' | 'lab' | 'campaign'
@@ -82,9 +85,13 @@ const TRACKS: Record<TrackName, TrackDef> = {
     voices: { kick: 0, bass: 0, snare: 0.1, hat: 0.2, pad: 0, toms: 0.4, lead: 0.55, arp: 0.7 },
     gain: 1.0,
   },
+  // The mansion under siege. A slow phrygian dirge: a beating low drone, a
+  // funeral bell with a tritone ghost, and a far-off wail a half-step out of
+  // tune with itself. The kick is a heartbeat that only arrives once the
+  // fight turns desperate — at rest the house just breathes.
   invasion: {
-    bpm: 126, root: 49, scale: 'phrygian', progression: [0, 0, 3, 1],
-    voices: { kick: 0, bass: 0, hat: 0.2, snare: 0.35, pulse: 0, toms: 0.6, arp: 0.7 },
+    bpm: 72, root: 43.7, scale: 'phrygian', progression: [0, 0, 1, -4],
+    voices: { drone: 0, bell: 0, pad: 0, wail: 0.25, bass: 0.35, hat: 0.5, kick: 0.55, toms: 0.65, snare: 0.75, arp: 0.85 },
     gain: 0.95,
   },
   online: {
@@ -312,6 +319,41 @@ function scheduleStep(c: AudioContext, dest: AudioNode, s: number, at: number): 
   if (on('pulse') && s % 8 === 0) {
     note(c, dest, hz(root, 0) * 4, at, 0.3, {
       wave: 'sine', gain: 0.07 * drive, attack: 0.01, release: 0.2,
+    });
+  }
+
+  // Drone: two reeds a few cents apart held across the bar, so the unison
+  // beats slowly — like something breathing under the floorboards.
+  if (on('drone') && s === 0) {
+    const barLen = (60 / d.bpm) * 4;
+    note(c, dest, hz(root, 0) * 2, at, barLen * 1.04, {
+      wave: 'sawtooth', gain: 0.05 * drive, filter: 260, q: 2,
+      attack: barLen * 0.3, release: barLen * 0.5, sustain: 0.9,
+    });
+    note(c, dest, hz(root, 0) * 2, at, barLen * 1.04, {
+      wave: 'sawtooth', gain: 0.045 * drive, filter: 200, detune: 9,
+      attack: barLen * 0.35, release: barLen * 0.5, sustain: 0.9,
+    });
+  }
+
+  // Bell: a funeral toll every other bar, its tritone ghost ringing just after.
+  if (on('bell') && s === 0 && bar % 2 === 0) {
+    note(c, dest, hz(root, 0) * 8, at, 2.6, {
+      wave: 'sine', gain: 0.1 * drive, attack: 0.002, release: 2.2, sustain: 0.2,
+    });
+    note(c, dest, hz(root, 6) * 8, at + 0.04, 2.3, {
+      wave: 'sine', gain: 0.035 * drive, attack: 0.002, release: 2.0, sustain: 0.15,
+    });
+  }
+
+  // Wail: a high minor-second cluster that drifts in every fourth bar and
+  // slides across the stereo field — the voice heard through the walls.
+  if (on('wail') && s === 8 && bar % 4 === 2) {
+    note(c, dest, hz(root, 0) * 16, at, 1.8, {
+      wave: 'triangle', gain: 0.03 * drive, attack: 0.6, release: 1.0, sustain: 0.8, pan: 0.35,
+    });
+    note(c, dest, hz(root, 1) * 16, at + 0.15, 1.6, {
+      wave: 'triangle', gain: 0.026 * drive, attack: 0.6, release: 0.9, sustain: 0.8, pan: -0.35,
     });
   }
 

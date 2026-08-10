@@ -820,7 +820,7 @@ export class GluttonyKit {
     // The prep strip eats the press. Clicking a slot is picking something up, not an attack,
     // and routing it through the click ability would throw whatever you just selected.
     if (clicked) {
-      const slot = this.hitPrepSlot(pointer.x, pointer.y);
+      const slot = this.hitPrepSlot(pointer.worldX, pointer.worldY);
       if (slot === KNIFE_TILE) { this.selectKnife('player'); return; }
       if (slot >= 0) { this.selectSlot('player', slot); return; }
     }

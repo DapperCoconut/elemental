@@ -1369,7 +1369,7 @@ export class CreationKit {
   private updateInventionSliderInput(pointer: Phaser.Input.Pointer): boolean {
     if (!this.creatInventionActive) return false;
     const x0 = INVENTION_SLIDER_X, y0 = INVENTION_SLIDER_Y, trackW = INVENTION_SLIDER_W, rowH = INVENTION_SLIDER_ROW;
-    const px = pointer.x, py = pointer.y;
+    const px = pointer.worldX, py = pointer.worldY;
     if (pointer.isDown) {
       if (this.creatInventionDragSlider < 0) {
         for (let i = 0; i < 3; i++) {

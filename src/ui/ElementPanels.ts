@@ -1291,9 +1291,9 @@ export class ElementPanels {
     chip.setAlpha(0.35);
     chipLbl.setAlpha(0.35);
 
-    const ghost = this.scene.add.rectangle(pointer.x, pointer.y, chip.width, chip.height, 0x552200, 0.95)
+    const ghost = this.scene.add.rectangle(pointer.worldX, pointer.worldY, chip.width, chip.height, 0x552200, 0.95)
       .setStrokeStyle(2, 0xffcc44, 1).setDepth(70);
-    const ghostLbl = this.scene.add.text(pointer.x, pointer.y, `${emoji} ${enh.name}`, {
+    const ghostLbl = this.scene.add.text(pointer.worldX, pointer.worldY, `${emoji} ${enh.name}`, {
       fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffdd66',
     }).setOrigin(0.5).setDepth(71);
     this.masteryDragGhost = [ghost, ghostLbl];
@@ -1302,13 +1302,13 @@ export class ElementPanels {
     const hitTest = (p: Phaser.Input.Pointer) => {
       const worldSlotY = container.y + slotY;
       return dropTargets.find((t) =>
-        Math.abs(p.x - t.x) <= slotW / 2 && Math.abs(p.y - worldSlotY) <= slotH / 2) ?? null;
+        Math.abs(p.worldX - t.x) <= slotW / 2 && Math.abs(p.worldY - worldSlotY) <= slotH / 2) ?? null;
     };
 
     this.masteryDragMove = (...a: unknown[]) => {
       const p = a[0] as Phaser.Input.Pointer;
-      ghost.setPosition(p.x, p.y);
-      ghostLbl.setPosition(p.x, p.y);
+      ghost.setPosition(p.worldX, p.worldY);
+      ghostLbl.setPosition(p.worldX, p.worldY);
       const over = hitTest(p);
       ghost.setStrokeStyle(2, over ? 0x66ff88 : 0xffcc44, 1);
     };

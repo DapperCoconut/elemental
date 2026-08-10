@@ -106,6 +106,16 @@ export class Husk extends Fighter {
   /** Silence: set each frame by InvasionKit while an invisible player has stalkers out. */
   public huntInvisibleTargets = false;
 
+  /** Mansion invasion: which room this husk haunts (0 = grand hall). */
+  public roomIndex = 0;
+  /** Killing this pays no shards (decoys, echo splits, soul re-rises). */
+  public noRewardKill = false;
+  /** Elemental effect buffs (Time haste, Passion thrall, Subterfuge reveal…). */
+  public effectSpeedMult = 1;
+  public effectHasteUntil = 0;
+  public effectDamageMult = 1;
+  public effectRageUntil = 0;
+
   constructor(
     scene: Phaser.Scene,
     x: number,
@@ -127,6 +137,11 @@ export class Husk extends Fighter {
   }
 
   update(targets: Fighter[], time: number, delta: number): void {
+    this.updateAi(targets, time, delta);
+    if (this.active && this.hp > 0 && !this.possessing) this.keepOnScreen();
+  }
+
+  private updateAi(targets: Fighter[], time: number, delta: number): void {
     if (!this.active || this.hp <= 0) return;
     this.tickDots(time, delta);
     if (!this.active || this.hp <= 0) return; // a DOT tick may have killed it
@@ -151,6 +166,7 @@ export class Husk extends Fighter {
     if (this.magicChainBound && time >= this.magicChainBoundEnd) this.magicChainBound = false;
     const hardCCed = this.frozenUntil > time
       || this.earthStunnedUntil > time
+      || this.skeweredUntil > time
       || this.magicChainBound;
     if (hardCCed) {
       body.setVelocity(0, 0);
@@ -208,8 +224,26 @@ export class Husk extends Fighter {
 
   // ── Movement helpers ─────────────────────────────────────────────
 
+  /**
+   * Kiters backing off (and confused wanderers) must never leave the play
+   * area: cancel any outward velocity at the mansion's wall band, and drag a
+   * husk that something already shoved out (knockback, charges) back inside.
+   */
+  private keepOnScreen(): void {
+    const body = this.body as Phaser.Physics.Arcade.Body | null;
+    if (!body) return;
+    const W = this.scene.scale.width;
+    const H = this.scene.scale.height;
+    const m = 46; // just inside the mansion wall band
+    if ((this.x <= m && body.velocity.x < 0) || (this.x >= W - m && body.velocity.x > 0)) body.velocity.x = 0;
+    if ((this.y <= m && body.velocity.y < 0) || (this.y >= H - m && body.velocity.y > 0)) body.velocity.y = 0;
+    const cx = Phaser.Math.Clamp(this.x, m, W - m);
+    const cy = Phaser.Math.Clamp(this.y, m, H - m);
+    if (cx !== this.x || cy !== this.y) body.reset(cx, cy);
+  }
+
   private get moveSpeed(): number {
-    let spd = this.speed * this.walkSpeedMult * this.purgeSpeedMult;
+    let spd = this.speed * this.walkSpeedMult * this.purgeSpeedMult * this.effectSpeedMult;
     if (this.frostStacks > 0) spd *= Math.max(0.2, 1 - this.frostStacks * 0.1);
     return spd;
   }
@@ -284,7 +318,7 @@ export class Husk extends Fighter {
     });
     // Hallucinating husks whiff 20% of their bites (the lunge still plays).
     if (Date.now() < this.hallucinatingUntil && Math.random() < 0.2) return;
-    this.onBite?.(Math.round(this.biteDamage * damageMult), target);
+    this.onBite?.(Math.round(this.biteDamage * damageMult * this.effectDamageMult), target);
   }
 
   // ── Per-variant behaviour ────────────────────────────────────────

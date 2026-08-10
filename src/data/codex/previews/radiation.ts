@@ -939,7 +939,7 @@ export const xrayUpgraded: PreviewScript = {
   duration: 16000,
   scale: 0.9,
   bodyTexture: '',
-  caption: 'R+ — the operative shrinks 33% instead, and three tracers fire a 5s held beam',
+  caption: 'R+ — every enemy hitbox shrinks 33% instead of swelling, and three tracers fire a 5s held beam',
   run(ctx) {
     const fx = fxOf(ctx);
     const clock = clockOf(ctx);
@@ -1034,15 +1034,16 @@ export const xrayUpgraded: PreviewScript = {
     });
 
     ctx.at(400, () => {
-      on.xray = true; shrink.k = 0.67;
+      on.xray = true; shrink.k = 0.67; on.hitbox = 0.67;
       suit(av)?.ping();
       av.play('flex');
       ctx.capture(() => fx.heartbeat(at.x, at.y, 1));
       float(ctx, at.x, at.y - 52, '☢ FINAL VISION', hex(RAD.hot), 13);
-      readout.setText('everything goes red, and the operative loses a third of himself');
+      float(ctx, victim.x, victim.y - 56, '◎ 67% HITBOX', hex(RAD.hot), 12);
+      readout.setText('everything goes red, and their hitbox is pulled in rather than pushed out');
     });
-    ctx.at(1800, () => readout.setText('body and hitbox both down to 67% — 22px becomes about 15px'));
-    ctx.at(3400, () => readout.setText('their hitbox is untouched now: the 33% swell is what you gave up'));
+    ctx.at(1800, () => readout.setText('their catch radius drops to 67% — 22px becomes about 15px, on every range check in the kit'));
+    ctx.at(3400, () => readout.setText('the operative shrinks with them: harder to hit while each chain takes longer'));
     tag(4600);
     tag(5500);
     tag(6400);
@@ -1054,7 +1055,7 @@ export const xrayUpgraded: PreviewScript = {
       beam.bite = Phaser.Math.Clamp(run / 5000, 0, 1);
       if (dose.level) dose.left = Math.max(0, dose.left - (dt / 1000) / (10 * (dose.level === 3 ? 4 : dose.level === 2 ? 2 : 1)));
       tick += dt;
-      if (tick >= 500) { tick = 0; float(ctx, victim.x, victim.y - 20, '7', '#ffb3aa', 12); }
+      if (tick >= 500) { tick = 0; float(ctx, victim.x, victim.y - 20, '11', '#ffb3aa', 12); }
       if (run > 1700 && !steps[0]) {
         steps[0] = true; dose.level = 2; dose.left = 1;
         float(ctx, victim.x, victim.y - 48, '☢ IRRADIATED II', hex(RAD.hazard), 12);
@@ -1064,9 +1065,9 @@ export const xrayUpgraded: PreviewScript = {
         float(ctx, victim.x, victim.y - 48, '☢ IRRADIATED III', hex(RAD.hot), 12);
       }
     });
-    ctx.at(8200, () => readout.setText('15 damage a second for 5 seconds — 75 total, and your Click is locked for all of it'));
+    ctx.at(8200, () => readout.setText('22 damage a second for 5 seconds — 110 total against a railgun\'s 50, and your Click is locked for all of it'));
     ctx.at(10600, () => readout.setText('a rung of irradiation every 1.7 seconds: the only route to level 3 that is not an E'));
-    ctx.at(13400, () => readout.setText('what you bought is not an easier shot — it is being a much harder target while you take it'));
+    ctx.at(13400, () => readout.setText('what you bought is a harder shot that is worth more than twice as much when it lands'));
   },
 };
 

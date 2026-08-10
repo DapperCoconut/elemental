@@ -113,7 +113,8 @@ const radiation: ElementCodex = {
         'The board-scrubbing miss is the entire reason the ability is interesting: the click is free, the confirm is not, and without it the ability would be "hold the mouse down and wait".',
         'Two of three landed and then a stray is worse than nothing — you are back to zero with the cooldown spent.',
         'While the flare gun from Q is out, the click fires flares instead and no tracers are placed at all.',
-        'X-Ray Vision makes the tracers easier to land as well as everything else: the 33% hitbox swell is added to the tracer\'s own catch radius.',
+        'X-Ray Vision makes the tracers easier to land as well as everything else: the 33% hitbox swell is added to the tracer\'s own catch radius. Final Vision takes the same third off it instead.',
+        'A tracer is swept across its whole step rather than sampled at the end of it, so a fast round on a small target cannot skip through the body between two frames.',
       ],
     },
 
@@ -169,25 +170,29 @@ const radiation: ElementCodex = {
       ],
       upgrade: {
         magic:
-          'Final Vision. The wash goes red, the skeletons go red, and the ability turns round: '
-          + 'nothing swells, and the operative shrinks instead — a third off the suit and a third '
-          + 'off the body under it, so the sniper spends eight seconds as a much harder thing to '
-          + 'hit. What he gets back for the lost hitboxes is the beam. Confirm three tracers '
-          + 'while it is running and the railgun does not fire; a held lance comes out of the '
-          + 'muzzle instead and stays on them for five seconds, boiling as it goes.',
+          'Final Vision. The wash goes red, the skeletons go red, and the ability turns round on '
+          + 'the same bodies it was helping: every enemy hitbox is pulled in a third instead of '
+          + 'pushed out one, so eight seconds of it is eight seconds in which nothing lands that '
+          + 'was not aimed. The operative shrinks with them, which is what keeps him standing '
+          + 'while each chain takes longer. What he gets back for the harder shot is the beam. '
+          + 'Confirm three tracers while it is running and the railgun does not fire; a held '
+          + 'lance comes out of the muzzle instead and stays on them for five seconds, boiling '
+          + 'as it goes.',
         effects: [
-          { tag: 'buff', label: 'The shrink', detail: 'The operative\'s body and sprite both drop to 67% for the full 8 seconds — a 22px radius becomes about 15px. Applied through the shared size multiplier by division, so a Fate roll or an Illusion fold on the same body is handed back untouched.' },
+          { tag: 'debuff', label: 'The tightening', detail: 'Every enemy body drops to 67% for the whole window — a 22px radius becomes about 15px. Subtracted from every range check this kit makes, so tracers, flares, the baton wedge, the drum blast and the puddle sweep all have to be aimed properly.' },
+          { tag: 'buff', label: 'The shrink', detail: 'The operative\'s body and sprite both drop to 67% too. Applied through the shared size multiplier by division, so a Fate roll or an Illusion fold on the same body is handed back untouched.' },
           { tag: 'utility', label: 'What is kept', detail: 'The skeletons, in full: every enemy is still drawn through its own sprite\'s alpha, so stealth and invisibility still do not hide from it.' },
-          { tag: 'utility', label: 'What is given up', detail: 'The 33% enemy hitbox swell, entirely. Tracers, flares, the baton wedge, the drum and the puddle sweep are all back to their real ranges.' },
-          { tag: 'damage', label: 'The beam', detail: '15 damage a second for 5 seconds — 75 total, ticked as 3 every 200ms. It tracks the victim rather than a point, so it cannot be walked out of.' },
+          { tag: 'utility', label: 'What is given up', detail: 'The 33% enemy hitbox swell, and then some — the same third goes the other way. Bad aim that the base ability would have caught now misses, and a miss scrubs every tracer on the field.' },
+          { tag: 'damage', label: 'The beam', detail: '22 damage a second for 5 seconds — 110 total, ticked as 4.4 every 200ms, against a railgun\'s 50. It tracks the victim rather than a point, so it cannot be walked out of.' },
           { tag: 'debuff', label: 'The escalation', detail: 'Irradiated on contact, then a rung every 1.7 seconds: level 1 at the start, level 2 at 1.7s, level 3 at 3.3s. It is the only route in the kit to a level 3 that does not spend an E.' },
           { tag: 'cost', label: 'The lockout', detail: 'Click is locked for the whole 5 seconds. No tracers, no flares, no second chain — the beam is the ability for its entire run.' },
         ],
       },
       notes: [
-        'The bones are for you and the hitboxes are for them: it makes bad aim land, which is exactly what a three-tracer confirm chain is short of.',
-        'The swell is applied through the body\'s own hitbox multiplier rather than its size, so a Fate slots roll or an Illusion fold running on the same target is not disturbed and is handed back untouched.',
-        'The multiplier is rewritten from scratch every frame, so a window that ends between two ticks — or a target that dies mid-window — can never leave a permanently inflated body behind.',
+        'The bones are for you and the hitboxes are for them: it makes bad aim land, which is exactly what a three-tracer confirm chain is short of. Final Vision sells that back — the bones stay, the charity does not.',
+        'The resize is applied through the body\'s own hitbox multiplier rather than its size, so a Fate slots roll or an Illusion fold running on the same target is not disturbed and is handed back untouched.',
+        'The multiplier is rewritten from scratch every frame, so a window that ends between two ticks — or a target that dies mid-window — can never leave a permanently resized body behind.',
+        'Two X-rays reading one body take the tighter of the two, so an ordinary one on the far side of the fight cannot hand a Final Vision\'s mark its full hitbox back.',
         'A Radiation NPC gets the hitbox half but paints no bones and no wash. Those are the player\'s screen.',
       ],
     },

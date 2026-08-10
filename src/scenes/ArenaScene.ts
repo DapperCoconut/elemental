@@ -11,6 +11,7 @@ import { getWorldBossDef } from '../boss/bosses';
 import { CampaignFormatKit, CampaignFormatArenaApi } from '../elements/kits/CampaignFormatKit';
 import { GimmickKit, GimmickArenaApi } from '../elements/kits/GimmickKit';
 import { SecretMapKit, SecretMapArenaApi } from '../elements/kits/SecretMapKit';
+import { SummonerKit, SummonerArenaApi } from '../elements/kits/SummonerKit';
 import { DuoKit, DuoArenaApi } from '../elements/kits/DuoKit';
 import { SecretTagState } from '../data/SecretModes';
 import { setProgressLocked } from '../data/ProgressLock';
@@ -163,9 +164,6 @@ const DUMMY_COMBO_WINDOW_MS = 5000;
  */
 const APPREHENSION_LIGHT_RANGE = 280;
 const APPREHENSION_LIGHT_HALF_DEG = 45;
-
-/** How many of Summoner's zombies may stand on the floor at once. */
-const SUMMONER_ZOMBIE_CAP = 14;
 
 /**
  * What the four boss mutations are meant to feel like: a big healthy thing that
@@ -559,12 +557,8 @@ export class ArenaScene extends Phaser.Scene {
   private archfiendTridents: Array<{ sprite: Phaser.GameObjects.Rectangle; vx: number; vy: number; stuck: boolean; returnsAt: number }> = [];
   private archfiendPhase2 = false;
   private archfiendFirePoolAccum = 0;
-  // Summoner boss mutation state
-  private summonerNextWaveAt = 0;
-  private summonerZombies: Array<{ sprite: Phaser.GameObjects.Arc; label: Phaser.GameObjects.Text; hp: number; attackCdUntil: number }> = [];
-  private summonerZombielings: Array<{ sprite: Phaser.GameObjects.Arc; hp: number; attackCdUntil: number }> = [];
-  private summonerPhase2 = false;
-  private summonerNextHealCheckAt = 0;
+  /** Summoner boss mutation — owns the whole risen horde (see SummonerKit). */
+  private summonerKit!: SummonerKit;
   // Nuclear mutation state
   private nuclearStartedAt = 0;
   private nuclearDurationMs = 0;
@@ -1874,13 +1868,23 @@ export class ArenaScene extends Phaser.Scene {
     this.archfiendNextBarrageAt = 0;
     this.archfiendPhase2 = false;
     this.archfiendFirePoolAccum = 0;
-    for (const z of this.summonerZombies) { z.sprite.destroy(); z.label.destroy(); }
-    this.summonerZombies = [];
-    for (const zl of this.summonerZombielings) zl.sprite.destroy();
-    this.summonerZombielings = [];
-    this.summonerNextWaveAt = 0;
-    this.summonerPhase2 = false;
-    this.summonerNextHealCheckAt = 0;
+    if (!this.summonerKit) {
+      const arena = this;
+      const summonerApi: SummonerArenaApi = {
+        get scene() { return arena as Phaser.Scene; },
+        get player() { return arena.player as Fighter; },
+        get npc() { return arena.npc as Fighter; },
+        plantTargets: () => arena.lifeKit.getPlantTargets('player'),
+        addEnemy: (f) => arena.addMapEnemy(f),
+        removeEnemy: (f) => arena.removeMapEnemy(f),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
+        spawnToxicPuddle: (x, y, r, ms) => arena.spawnToxicPuddle(x, y, r, ms),
+      };
+      this.summonerKit = new SummonerKit(summonerApi);
+    }
+    this.summonerKit.reset();
     if (this.nuclearText) { this.nuclearText.destroy(); this.nuclearText = null; }
     this.nuclearStartedAt = 0;
     this.nuclearDurationMs = 0;
@@ -3434,6 +3438,9 @@ export class ArenaScene extends Phaser.Scene {
         if (target instanceof Husk) {
           // A possessing demon is untouchable — shots pass straight through it.
           if (target.possessing) return;
+          // Mansion invasion: a husk gnawing on another room is out of sight
+          // and out of reach — shots only land in the room you're standing in.
+          if (this.isInvasion && !this.invasionKit.isHuskTargetable(target)) return;
           if (target.netGhost) {
             // Co-op guest: replicas never simulate — report damage/statuses to the host.
             this.invasionKit.onProjectileHitHusk(proj, target);
@@ -3930,12 +3937,24 @@ export class ArenaScene extends Phaser.Scene {
         this.npc.setHealthBarVisible(false);
         this.npc.setActive(false).setVisible(false);
         (this.npc.body as Phaser.Physics.Arcade.Body).enable = false;
-        this.invasionKit.reset(invasionDifficulty);
+        // A campaign invasion is themed to its world: element-tinted manor,
+        // kin-only elemental husks.
+        this.invasionKit.reset(invasionDifficulty, null, data.campaign?.worldId ?? null);
       }
 
-      // Husks shove each other and the player instead of stacking
-      this.physics.add.collider(this.enemyGroup, this.enemyGroup);
-      this.physics.add.collider(this.player, this.enemyGroup);
+      // Husks shove each other and the player instead of stacking. Bodies in
+      // different mansion rooms share screen coordinates, so the process
+      // callbacks keep a kitchen husk from invisibly body-blocking the cellar.
+      this.physics.add.collider(this.enemyGroup, this.enemyGroup, undefined, (a, b) => {
+        const ha = a as Fighter;
+        const hb = b as Fighter;
+        if (ha instanceof Husk && hb instanceof Husk) return ha.roomIndex === hb.roomIndex;
+        return true;
+      });
+      this.physics.add.collider(this.player, this.enemyGroup, undefined, (_p, e) => {
+        const husk = e as Fighter;
+        return !(husk instanceof Husk) || this.invasionKit.isHuskTargetable(husk);
+      });
     }
 
     // ── Disgraced King setup ───────────────────────────────────────
@@ -4914,22 +4933,6 @@ export class ArenaScene extends Phaser.Scene {
     if (this.isInvasion && this.elementId === 'fire' && kills > 0) {
       PlayerData.recordMasteryBest('fire', 'nukeZombieBest', kills);
     }
-  }
-
-  /**
-   * Who a melee minion should walk at. Life's plants pull aggro off the player
-   * entirely — while any are standing, minions chew on the nearest one instead.
-   */
-  private aggroTargetFor(x: number, y: number): Fighter {
-    const plants = this.lifeKit.getPlantTargets('player');
-    if (plants.length === 0) return this.player;
-    let best = plants[0];
-    let bestD = Phaser.Math.Distance.Between(x, y, best.x, best.y);
-    for (let i = 1; i < plants.length; i++) {
-      const d = Phaser.Math.Distance.Between(x, y, plants[i].x, plants[i].y);
-      if (d < bestD) { bestD = d; best = plants[i]; }
-    }
-    return best;
   }
 
   /**
@@ -6098,7 +6101,7 @@ export class ArenaScene extends Phaser.Scene {
       this.showFloatingText(bx, by - 20, `💥 ${20 * this.cardBomberStacks}`, '#ffaa44');
     }
 
-    const trail = this.add.circle(this.player.x, this.player.y, 18, 0x8844ff, 0.4);
+    const trail = this.add.circle(this.player.x, this.player.y, 18, 0x8844ff, 0.4).setDepth(4);
     this.tweens.add({ targets: trail, alpha: 0, scaleX: 0.5, scaleY: 0.5, duration: 300, onComplete: () => trail.destroy() });
 
     this.time.delayedCall(280, () => {
@@ -6280,8 +6283,7 @@ export class ArenaScene extends Phaser.Scene {
       this.npc.hp = this.npc.maxHp;
       this.npc.incomingDamageMultiplier *= 0.92;
       this.npc.speed = Math.round(this.npc.speed * BOSS_MUTATION_SPEED_MULT);
-      this.summonerNextWaveAt = this.time.now + 10000;
-      this.summonerPhase2 = false;
+      this.summonerKit.begin(this.time.now);
     }
     if (this.mutations.has('nuclear')) {
       const starred = this.starredMutations.has('nuclear');
@@ -6756,111 +6758,9 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Summoner boss mutation ────────────────────────────────────────
-    if (this.mutations.has('summoner') && this.npc.active) {
-      // Phase 2 latch
-      if (!this.summonerPhase2 && this.npc.hp <= this.npc.maxHp * 0.5) {
-        this.summonerPhase2 = true;
-        this.npc.incomingDamageMultiplier *= 0.92;
-        this.summonerNextHealCheckAt = time + 12000;
-        this.showFloatingText(this.npc.x, this.npc.y - 40, '💀 PHASE 2', '#55cc44');
-      }
-      // Spawn zombie wave
-      if (time >= this.summonerNextWaveAt) {
-        this.summonerNextWaveAt = time + 10000;
-        const wb = this.physics.world.bounds;
-        // Waves used to stack without limit, so a fight that ran long ended up with
-        // forty zombies on the floor and no way back. The horde is capped now: a wave
-        // only fills the room that is left.
-        const wave = Math.min(5, Math.max(0, SUMMONER_ZOMBIE_CAP - this.summonerZombies.length));
-        for (let i = 0; i < wave; i++) {
-          const edge = Phaser.Math.Between(0, 3);
-          let sx: number, sy: number;
-          switch (edge) {
-            case 0:  sx = Phaser.Math.Between(wb.x, wb.x + wb.width); sy = wb.y + 8; break;
-            case 1:  sx = Phaser.Math.Between(wb.x, wb.x + wb.width); sy = wb.y + wb.height - 8; break;
-            case 2:  sx = wb.x + 8; sy = Phaser.Math.Between(wb.y, wb.y + wb.height); break;
-            default: sx = wb.x + wb.width - 8; sy = Phaser.Math.Between(wb.y, wb.y + wb.height); break;
-          }
-          const spr = this.add.circle(sx, sy, 14, 0x448822, 0.9).setDepth(4)
-            .setStrokeStyle(1, 0x66cc44, 1);
-          const lbl = this.add.text(sx, sy, '🧟', { fontSize: '11px' }).setOrigin(0.5).setDepth(5);
-          this.summonerZombies.push({ sprite: spr, label: lbl, hp: 20, attackCdUntil: 0 });
-        }
-        if (wave > 0) this.showFloatingText(this.npc.x, this.npc.y - 50, '💀 ZOMBIES', '#55cc44');
-      }
-      // Update zombies
-      for (let i = this.summonerZombies.length - 1; i >= 0; i--) {
-        const z = this.summonerZombies[i];
-        if (z.hp <= 0) {
-          z.sprite.destroy(); z.label.destroy();
-          this.summonerZombies.splice(i, 1);
-          if (this.summonerPhase2) {
-            const zx = z.sprite.x + Phaser.Math.Between(-12, 12);
-            const zy = z.sprite.y + Phaser.Math.Between(-12, 12);
-            const zlSpr = this.add.circle(zx, zy, 7, 0x33aa22, 0.9).setDepth(4)
-              .setStrokeStyle(1, 0x77ee44, 1);
-            this.summonerZombielings.push({ sprite: zlSpr, hp: 10, attackCdUntil: 0 });
-          }
-          continue;
-        }
-        const zTarget = this.aggroTargetFor(z.sprite.x, z.sprite.y);
-        if (zTarget.active) {
-          const dx = zTarget.x - z.sprite.x;
-          const dy = zTarget.y - z.sprite.y;
-          const dist = Math.hypot(dx, dy);
-          if (dist > 2) {
-            z.sprite.x += (dx / dist) * 95 * (delta / 1000);
-            z.sprite.y += (dy / dist) * 95 * (delta / 1000);
-            z.label.setPosition(z.sprite.x, z.sprite.y);
-          }
-          if (dist <= 28 && time >= z.attackCdUntil) {
-            z.attackCdUntil = time + 1000;
-            const zDmg = Math.round(4 * this.npc.outgoingDamageMult);
-            zTarget.takeDamage(zDmg);
-            this.spawnHitFlash(zTarget.x, zTarget.y, 0x66cc44);
-            this.showFloatingText(zTarget.x, zTarget.y - 20, '🧟 -' + zDmg, '#66cc44');
-          }
-        }
-      }
-      // Update zombielings
-      for (let i = this.summonerZombielings.length - 1; i >= 0; i--) {
-        const zl = this.summonerZombielings[i];
-        if (zl.hp <= 0) {
-          const sx2 = zl.sprite.x, sy2 = zl.sprite.y;
-          const puddleSpr = this.add.circle(sx2, sy2, 22, 0x33cc22, 0.5).setDepth(2)
-            .setStrokeStyle(1, 0x77ee44, 0.5);
-          this.tweens.add({ targets: puddleSpr, fillAlpha: 0.15, duration: 3000, onComplete: () => puddleSpr.destroy() });
-          this.puddles.push({ sprite: puddleSpr, expiresAt: time + 3000, x: sx2, y: sy2, radius: 22, tickAccum: 0, owner: 'npc', kind: 'toxic' });
-          zl.sprite.destroy();
-          this.summonerZombielings.splice(i, 1);
-          continue;
-        }
-        const zlTarget = this.aggroTargetFor(zl.sprite.x, zl.sprite.y);
-        if (zlTarget.active) {
-          const dx = zlTarget.x - zl.sprite.x;
-          const dy = zlTarget.y - zl.sprite.y;
-          const dist = Math.hypot(dx, dy);
-          if (dist > 2) {
-            zl.sprite.x += (dx / dist) * 180 * (delta / 1000);
-            zl.sprite.y += (dy / dist) * 180 * (delta / 1000);
-          }
-          if (dist <= 18 && time >= zl.attackCdUntil) {
-            zl.attackCdUntil = time + 1000;
-            zlTarget.takeDamage(Math.round(2 * this.npc.outgoingDamageMult));
-            this.spawnHitFlash(zlTarget.x, zlTarget.y, 0x66cc44);
-          }
-        }
-      }
-      // Phase 2: heal check (20+ zombies)
-      if (this.summonerPhase2 && time >= this.summonerNextHealCheckAt) {
-        this.summonerNextHealCheckAt = time + 12000;
-        // Threshold follows the cap: 12 of a possible 14 is still "the floor is theirs".
-        if (this.summonerZombies.length >= 12) {
-          this.npc.hp = Math.min(this.npc.maxHp, this.npc.hp + 15);
-          this.showFloatingText(this.npc.x, this.npc.y - 28, '💀 +15', '#55cc44');
-        }
-      }
-    }
+    // The horde is real invasion husks registered in `enemies`, so every player
+    // damage path reaches it for free — SummonerKit owns all of it.
+    if (this.mutations.has('summoner')) this.summonerKit.update(time, delta);
 
     // ── Nuclear mutation ─────────────────────────────────────────────
     if (this.mutations.has('nuclear') && !this.nuclearDetonated && this.nuclearText && this.npc.active) {
@@ -8400,7 +8300,7 @@ export class ArenaScene extends Phaser.Scene {
   // ── Visual helpers ───────────────────────────────────────────────
 
   private spawnHitFlash(x: number, y: number, color: number): void {
-    const flash = this.add.circle(x, y, 8, color, 0.9);
+    const flash = this.add.circle(x, y, 8, color, 0.9).setDepth(4);
     this.tweens.add({
       targets: flash,
       scaleX: 3,
@@ -9323,7 +9223,8 @@ export class ArenaScene extends Phaser.Scene {
       // NPC silence yank in progress — keep yank velocity, block WASD override
     } else if (this.elementId === 'ice' && this.iceKit.isPlayerSkaterActive() && !this.isDodging) {
       // Skater mode: cursor-following movement overrides WASD
-      const moveMult = this.playerSpeedMult * this.gauntletSpeedMult;
+      const moveMult = this.playerSpeedMult * this.gauntletSpeedMult
+        * (this.isInvasion ? this.invasionKit.playerHazardSpeedMult(time) : 1);
       playerBody.setVelocity(
         Math.cos(this.iceKit.getPlayerSkaterHeading()) * this.iceKit.getPlayerSkaterSpeed() * moveMult,
         Math.sin(this.iceKit.getPlayerSkaterHeading()) * this.iceKit.getPlayerSkaterSpeed() * moveMult,
@@ -9341,7 +9242,8 @@ export class ArenaScene extends Phaser.Scene {
       // Fate Mastery — Confusing curse: every direction key does the opposite.
       if (this.player.invertedControlsUntil > time) { vx = -vx; vy = -vy; }
 
-      const moveMult = this.playerSpeedMult * this.gauntletSpeedMult;
+      const moveMult = this.playerSpeedMult * this.gauntletSpeedMult
+        * (this.isInvasion ? this.invasionKit.playerHazardSpeedMult(time) : 1);
 
       playerBody.setVelocity(vx * moveMult, vy * moveMult);
     }
@@ -9625,38 +9527,6 @@ export class ArenaScene extends Phaser.Scene {
     this.lifeKit.update(time, delta);
 
     const allActiveProj = this.projectiles.getChildren() as Projectile[];
-
-    // ── Summoner: player projectiles damage zombies and zombielings ──
-    if (this.mutations.has('summoner')) {
-      for (let zi = this.summonerZombies.length - 1; zi >= 0; zi--) {
-        const z = this.summonerZombies[zi];
-        for (const go of allActiveProj) {
-          const proj = go as Projectile;
-          if (!proj.active || !proj.isFromPlayer) continue;
-          if (Phaser.Math.Distance.Between(proj.x, proj.y, z.sprite.x, z.sprite.y) <= 18) {
-            z.hp -= proj.damage;
-            (proj.body as Phaser.Physics.Arcade.Body).stop();
-            proj.setActive(false).setVisible(false);
-            this.spawnHitFlash(z.sprite.x, z.sprite.y, 0x66cc44);
-            break;
-          }
-        }
-      }
-      for (let zi = this.summonerZombielings.length - 1; zi >= 0; zi--) {
-        const zl = this.summonerZombielings[zi];
-        for (const go of allActiveProj) {
-          const proj = go as Projectile;
-          if (!proj.active || !proj.isFromPlayer) continue;
-          if (Phaser.Math.Distance.Between(proj.x, proj.y, zl.sprite.x, zl.sprite.y) <= 11) {
-            zl.hp -= proj.damage;
-            (proj.body as Phaser.Physics.Arcade.Body).stop();
-            proj.setActive(false).setVisible(false);
-            this.spawnHitFlash(zl.sprite.x, zl.sprite.y, 0x66cc44);
-            break;
-          }
-        }
-      }
-    }
 
     // ── Archfiend: player projectiles can destroy tridents ───────────
     if (this.mutations.has('archfiend')) {
@@ -10889,6 +10759,21 @@ export class ArenaScene extends Phaser.Scene {
   private removeMapEnemy(f: Fighter): void {
     this.enemies = this.enemies.filter((e) => e !== f);
     this.enemyGroup.remove(f, false, false);
+  }
+
+  /**
+   * An npc-owned toxic pool, added to the arena's shared puddle list so it ticks,
+   * expires and reads exactly like every other hazard on the floor. Summoner's
+   * bursting zombielings are the only thing that leaves one.
+   */
+  private spawnToxicPuddle(x: number, y: number, radius: number, durationMs: number): void {
+    const sprite = this.add.circle(x, y, radius, 0x33cc22, 0.5).setDepth(2)
+      .setStrokeStyle(1, 0x77ee44, 0.5);
+    this.tweens.add({ targets: sprite, fillAlpha: 0.15, duration: durationMs });
+    this.puddles.push({
+      sprite, expiresAt: this.time.now + durationMs, x, y, radius,
+      tickAccum: 0, owner: 'npc', kind: 'toxic',
+    });
   }
 
   /**

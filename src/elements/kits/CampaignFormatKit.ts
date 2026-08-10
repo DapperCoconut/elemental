@@ -26,7 +26,9 @@ export interface CampaignFormatArenaApi {
 }
 
 const HORDE_CAP = 5;
-const HORDE_VARIANTS = ['basic', 'basic', 'speedster', 'tank', 'spitter'];
+// Ordered mild → mean: shamblers, then the fast one, the tank and the spitter
+// from the elemental variant table (old bespoke variants are gone).
+const HORDE_VARIANTS = ['basic', 'basic', 'elem-air-t1', 'elem-earth-t1', 'elem-electricity-t1'];
 const SURVIVAL_TANK_MULT = 0.22;
 const FLOOD_SPEED = 9; // px/s of arena eaten from each edge
 const FLOOD_TICK_MS = 600;

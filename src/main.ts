@@ -26,11 +26,18 @@ import { QuantumLabScene } from './scenes/QuantumLabScene';
 import { AudioSettingsScene } from './scenes/AudioSettingsScene';
 import { ConquestMenuScene } from './scenes/ConquestMenuScene';
 import { DialogueScene } from './scenes/DialogueScene';
+import { installSuperSampling, maskLogicalSize, LOGICAL_WIDTH, LOGICAL_HEIGHT, RENDER_SCALE } from './render/SuperSample';
+
+installSuperSampling();
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
-  width: 960,
-  height: 640,
+  width: LOGICAL_WIDTH * RENDER_SCALE,
+  height: LOGICAL_HEIGHT * RENDER_SCALE,
+  scale: {
+    mode: Phaser.Scale.FIT,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+  },
   backgroundColor: '#0d0d1a',
   physics: {
     default: 'arcade',
@@ -43,6 +50,7 @@ const config: Phaser.Types.Core.GameConfig = {
 };
 
 const game = new Phaser.Game(config);
+maskLogicalSize(game.scale);
 
 // Audio boots before the first scene so saved volumes are in place, but the
 // browser will not actually start playback until the player's first click or

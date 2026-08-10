@@ -4,7 +4,7 @@ import type { NetStatusEntry } from './NetStatusSync';
 import type { NetConquestSnap } from '../elements/kits/ConquestKit';
 
 /** Bump when the wire protocol or gameplay sync changes incompatibly. */
-export const NET_PROTOCOL_VERSION = 21;
+export const NET_PROTOCOL_VERSION = 23;
 
 /** Lobby selection payload exchanged while both players pick loadouts. */
 export interface NetSelection {
@@ -125,6 +125,18 @@ export interface NetHuskState {
   v?: number;
   /** True while a demon is riding this husk (guest tints it to match). */
   p?: boolean;
+  /** Mansion room index this husk haunts (guest hides out-of-room replicas). */
+  r?: number;
+}
+
+/** Host → guest: the mansion's authoritative room state, inside huskSnap. */
+export interface NetMansionState {
+  /** Room HP for rooms 1–4 (the hall is indestructible). */
+  hp: number[];
+  /** Bitmask of lost rooms (bit 0 = room 1). */
+  lost: number;
+  /** Room index the current wave targets, or -1. */
+  target: number;
 }
 
 export type NetMatchMode = 'pvp' | 'invasion';
@@ -143,7 +155,8 @@ export type NetMsg =
   // inv/fa/st: Silence remaster — invisibility flag, facing angle (radians), stealth meter.
   // dm/fr/dc: the sender's own damage reduction, cap and flat soak, applied by the peer's
   // sim when it resolves a hit on their replica of us (see Fighter.netDefenseMult).
-  | { t: 'state'; x: number; y: number; vx: number; vy: number; hp: number; maxHp: number; shieldHp: number; shieldCharges: number; downed?: boolean; inv?: boolean; fa?: number; st?: number; dm?: number; fr?: number; dc?: number }
+  // room: the mansion room this player is standing in (invasion co-op only).
+  | { t: 'state'; x: number; y: number; vx: number; vy: number; hp: number; maxHp: number; shieldHp: number; shieldCharges: number; downed?: boolean; inv?: boolean; fa?: number; st?: number; dm?: number; fr?: number; dc?: number; room?: number }
   | { t: 'cast'; id: string; tx: number; ty: number }
   | { t: 'hit'; amount: number }
   // Attacker → victim: a hit the attacker's sim resolved against its replica of the
@@ -162,7 +175,11 @@ export type NetMsg =
   | { t: 'ping'; ts: number }
   | { t: 'pong'; ts: number }
   // ── Invasion co-op (host → guest unless noted) ──────────────────
-  | { t: 'huskSnap'; wave: number; shards: number; remaining: number; husks: NetHuskState[] }
+  | { t: 'huskSnap'; wave: number; shards: number; remaining: number; husks: NetHuskState[]; m?: NetMansionState }
+  // Host → guest: a wave was announced — show the target-room warning.
+  | { t: 'waveWarn'; wave: number; room: number }
+  // Host → guest: a room fell. The snap's mansion state seals it; this shows the banner.
+  | { t: 'roomLost'; room: number }
   | { t: 'huskDeath'; id: number; reward: number; x: number; y: number }
   | { t: 'waveClear'; wave: number; bonus: number }
   | { t: 'huskDamage'; id: number; amount: number } // guest → host

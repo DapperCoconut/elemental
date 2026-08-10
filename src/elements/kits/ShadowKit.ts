@@ -837,7 +837,7 @@ export class ShadowKit {
   private pointerOnTrapBar(pointer: Phaser.Input.Pointer): boolean {
     if (this.trapBarSlots.length === 0) return false;
     const b = this.trapBarBounds;
-    return pointer.x >= b.x1 && pointer.x <= b.x2 && pointer.y >= b.y1 && pointer.y <= b.y2;
+    return pointer.worldX >= b.x1 && pointer.worldX <= b.x2 && pointer.worldY >= b.y1 && pointer.worldY <= b.y2;
   }
 
   /** One trap drawn small, for the bar. Shares the shapes the real traps use on the floor. */

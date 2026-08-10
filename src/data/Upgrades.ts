@@ -1705,7 +1705,7 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
         slot: 'r',
         displayKey: 'R',
         name: 'Final Vision',
-        description: 'X-Ray Vision stops swelling them and shrinks you instead — body and hitbox both a third smaller for the full 8 seconds — and everything it draws comes out red. You still see every skeleton through every wall. What you get for the lost hitboxes is the payoff: while it is running, three tracers on one body fire a held beam rather than the railgun — 15 damage a second for 5 seconds, irradiating on contact and climbing a level every 1.7 seconds, up to level 3. Your Click is locked for the whole beam.',
+        description: 'X-Ray Vision turns round: instead of swelling every enemy hitbox 33% it shrinks them a third for the full 8 seconds, so nothing lands that was not aimed — and you shrink with them, body and hitbox both, which is what keeps you standing while each chain takes longer. Everything it draws comes out red, and you still see every skeleton through every wall. The payoff for the harder shot: while it is running, three tracers on one body fire a held beam rather than the railgun — 22 damage a second for 5 seconds, irradiating on contact and climbing a level every 1.7 seconds, up to level 3. Your Click is locked for the whole beam.',
         price: 350,
         currency: 'corrupt',
       },

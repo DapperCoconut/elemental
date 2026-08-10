@@ -740,8 +740,8 @@ export class LifeKit {
 
   handleInput(pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
     if (!this.api.isPlayerLife()) return;
-    this.lastPointerX = pointer.x;
-    this.lastPointerY = pointer.y;
+    this.lastPointerX = pointer.worldX;
+    this.lastPointerY = pointer.worldY;
     this.lastMouseX = mouseX;
     this.lastMouseY = mouseY;
 
